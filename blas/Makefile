@@ -4,7 +4,7 @@ KFLAG=
 #scal.s : scal.b
 #	../bin/fko $(KFLAG) -o scal.s scal.b
 clean :
-	rm -f *.s
+	rm -f *.s dot.out
 
 build_comp:
 	cd ../bin ; $(MAKE) fko

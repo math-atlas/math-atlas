@@ -26,7 +26,7 @@ void PrintUsage(char *name)
 void PrintUsageN(char *name)
 {
    int i;
-   fprintf(stderr, "\n%d known optimization phases:\n", MaxOpt);
+   fprintf(stderr, "\n%d repeatable optimization phases:\n", MaxOpt);
    for (i=0; i < MaxOpt; i++)
       fprintf(stderr, "%3d. %s   : %s\n", i+1, optabbr[i], optmnem[i]);
    fprintf(stderr, "\nUSAGE: %s [flags]\n", name);
