@@ -170,7 +170,7 @@ fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    for (lbase=NULL,bp=bbbase; bp; bp = bp->down)
       lbase = AddBlockToList(lbase, bp);
    DoScopeRegAsg(lbase, 2, &i);   
-   DoCopyProp(lbase);
+   DoCopyProp(lbase); 
    KillBlockList(lbase);
 #endif
    INDEADU2D = CFUSETU2D = 0;
