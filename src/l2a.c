@@ -296,7 +296,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
    #ifdef SPARC
       int SeenSave=0;
    #endif
-   int i;
+   int i, j;
    char ln[1024], *sptr;
    extern int DTabsd, DTnzerod, DTabs, DTnzero, DTx87, DTx87d;
    /* End of declaration */
@@ -1737,7 +1737,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                archvdregs[-VDREGBEG-op1]);
          break;
       case VDLDS:
-         ap->next = PrintAssln("\tmovpd\t%s, %s\n", GetDeref(op2),
+         ap->next = PrintAssln("\tmovsd\t%s, %s\n", GetDeref(op2),
                                archvdregs[-VDREGBEG-op1]);
          break;
       case VDLDL:  /* NOTE: dest is also source */
@@ -1753,7 +1753,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                GetDeref(op2));
          break;
       case VDSTS:
-         ap->next = PrintAssln("\tmovps\t%s, %s\n", archvdregs[-VDREGBEG-op1],
+         ap->next = PrintAssln("\tmovsd\t%s, %s\n", archvdregs[-VDREGBEG-op1],
                                GetDeref(op2));
          break;
       case VDMOV:
@@ -1781,10 +1781,15 @@ struct assmln *lil2ass(BBLOCK *bbase)
          ap->next = PrintAssln("\txorpd\t%s,%s\n", archvdregs[-VDREGBEG-op1],
                                archvdregs[-VDREGBEG-op1]);
          break;
-      case VDSHUF:  /* tough, leave for last */
+      case VDSHUF:
          cp = imap2cmap(SToff[op3-1].i);
          if (cp[0] == 0 && cp[1] == 2)
             ap->next = PrintAssln("\tunpcklpd\t%s,%s\n", 
+               archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
+         else if (cp[0] == 0 && cp[1] == 1)
+            fko_warn(__LINE__, "Useless VDSHUF");
+         else if (cp[0] == 3 && cp[1] == 4)
+            ap->next = PrintAssln("\tmovapd\t%s,%s\n", 
                archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
          else if (cp[0] == 1 && cp[1] == 3)
             ap->next = PrintAssln("\tunpckhpd\t%s,%s\n", 
@@ -1798,15 +1803,139 @@ struct assmln *lil2ass(BBLOCK *bbase)
                archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
          }
          else
-            fko_error(__LINE__, "No such shuffle inst, imap=%d,%d!\n",
-                      cp[0], cp[1]);
+         {
+            if (op1 == op2)  /* any shuffling is possible if both regs same */
+            {
+               for (i=0; i < 2; i++)
+                  if (cp[i] > 1) cp[i] -= 2;
+               if (cp[0] == 0)
+               {
+                  if (cp[1] == 0)
+                     ap->next = PrintAssln("\tunpcklpd\t%s,%s\n", 
+                        archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
+                  else
+                     fko_warn(__LINE__, "Useless VDSHUF");
+               }
+               else /* cp[0] == 1 */
+               {
+                  if (cp[1] == 0)  /* cp[0] == 1 && cp[1] == 0 */
+                     ap->next = PrintAssln("\tshufpd\t$%d,%s,%s\n", 1,
+                        archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
+
+                  else /* cp[0] == 1 && cp[1] == 1 */
+                     ap->next = PrintAssln("\tunpckhpd\t%s,%s\n", 
+                        archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
+
+               }
+            }
+            else
+               fko_error(__LINE__, "No such shuffle inst, imap=%d,%d!\n",
+                         cp[0], cp[1]);
+         }
          break;
-         
    #endif
 /*
  * Only x86 and PowerPC have single prec vector instructions
  */
-   #if 1 && (defined(X86) || defined(PPC))
+   #if defined(X86)
+      case VFLD:
+         ap->next = PrintAssln("\tmovaps\t%s, %s\n", GetDeref(op2),
+                               archvfregs[-VFREGBEG-op1]);
+         break;
+      case VFLDS:
+         ap->next = PrintAssln("\tmovss\t%s, %s\n", GetDeref(op2),
+                               archvfregs[-VFREGBEG-op1]);
+         break;
+      case VFLDL:  /* NOTE: dest is also source */
+         ap->next = PrintAssln("\tmovlps\t%s, %s\n", GetDeref(op2),
+                               archvfregs[-VFREGBEG-op1]);
+         break;
+      case VFLDH:  /* NOTE: dest is also source */
+         ap->next = PrintAssln("\tmovhps\t%s, %s\n", GetDeref(op2),
+                               archvfregs[-VFREGBEG-op1]);
+         break;
+      case VFST:
+         ap->next = PrintAssln("\tmovaps\t%s, %s\n", archvfregs[-VFREGBEG-op1],
+                               GetDeref(op2));
+         break;
+      case VFSTS:
+         ap->next = PrintAssln("\tmovss\t%s, %s\n", archvfregs[-VFREGBEG-op1],
+                               GetDeref(op2));
+         break;
+      case VFMOV:
+         ap->next = PrintAssln("\tmovaps\t%s, %s\n", archvfregs[-VFREGBEG-op2],
+                               archvfregs[-VFREGBEG-op1]);
+         break;
+      case VFMUL:
+         assert(op1 == op2);
+         ap->next = PrintAssln("\tmulps\t%s, %s\n", GetDregOrDeref(op3),
+                               archvfregs[-VFREGBEG-op1]);
+         break;
+      case VFADD:
+         assert(op1 == op2);
+         ap->next = PrintAssln("\taddps\t%s, %s\n", GetDregOrDeref(op3),
+                               archvfregs[-VFREGBEG-op1]);
+         break;
+      case VFABS:
+	 assert(op1 == op2);
+	 assert(DTabsd);
+         ap->next = PrintAssln("\tandps\t%s,%s\n",
+                               GetDeref(SToff[DTabs-1].sa[2]),
+	                       archvfregs[-VFREGBEG-op1]);
+         break;
+      case VFZERO:
+         ap->next = PrintAssln("\txorps\t%s,%s\n", archvfregs[-VFREGBEG-op1],
+                               archvfregs[-VFREGBEG-op1]);
+         break;
+      case VFSHUF:
+         cp = imap2cmap(SToff[op3-1].i);
+         if (op1 == op2)  /* any shuffling legal if they are the same reg */
+         {
+            for (i=0; i < 4; i++)
+               if (cp[i] > 3) cp[i] -= 4;
+            if (cp[0] == 0 && cp[1] == 0 && cp[2] == 1 && cp[3] == 1)
+               ap->next = PrintAssln("\tunpcklps\t%s,%s\n", 
+                  archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
+            else if (cp[0] == 2 && cp[1] == 2 && cp[2] == 3 && cp[3] == 3)
+               ap->next = PrintAssln("\tunpckhps\t%s,%s\n", 
+                  archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
+            else if (cp[0] == 0 && cp[1] == 1 && cp[2] == 0 && cp[3] == 1)
+               ap->next = PrintAssln("\tmovlhps\t%s,%s\n", 
+                  archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
+            else if (cp[0] == 2 && cp[1] == 3 && cp[2] == 2 && cp[3] == 3)
+               ap->next = PrintAssln("\tmovhlps\t%s,%s\n", 
+                  archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
+            else if (cp[0] == 0 && cp[1] == 1 && cp[2] == 2 && cp[3] == 3)
+               fko_warn(__LINE__, "Useless VFSHUF");
+            else
+            {
+               i = cp[0] | ((cp[1])<<2) | (cp[2]<<4) | (cp[3]<<6);
+               ap->next = PrintAssln("\tshufps\t$%d,%s,%s\n", i,
+                  archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
+            }
+         }
+         else if (cp[0] == 0 && cp[1] == 4 && cp[2] == 1 && cp[3] == 5)
+            ap->next = PrintAssln("\tunpcklps\t%s,%s\n", 
+               archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
+         else if (cp[0] == 2 && cp[1] == 6 && cp[2] == 3 && cp[3] == 7)
+            ap->next = PrintAssln("\tunpckhps\t%s,%s\n", 
+               archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
+         else if (cp[0] == 0 && cp[1] == 1 && cp[2] == 4 && cp[3] == 5)
+            ap->next = PrintAssln("\tmovlhps\t%s,%s\n", 
+               archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
+         else if (cp[0] == 6 && cp[1] == 7 && cp[2] == 2 && cp[3] == 3)
+            ap->next = PrintAssln("\tmovhlps\t%s,%s\n", 
+               archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
+         else if (cp[0] < 4 && cp[1] < 4 && cp[2] > 3 && cp[3] > 3)
+         {
+            i = cp[0] | ((cp[1])<<2) | ((cp[2]-4)<<4) | ((cp[3]-4)<<6);
+            ap->next = PrintAssln("\tshufps\t$%d,%s,%s\n", i,
+               archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
+         }
+         else
+            fko_error(__LINE__, "No such Sshuffle inst, imap=%d,%d,%d,%d!\n",
+                      cp[0], cp[1],cp[2],cp[3]);
+         break;
    #endif
 /*
  *  HERE HERE HERE:

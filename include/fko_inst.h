@@ -155,19 +155,24 @@ enum inst
           /* should reside in vr0[0], 4th in vr0[3];  Words are numbered */
           /* starting in vr0[0], and ending in vr1[N], N=veclen-1 */
 /*
- * Vector instructions, add to these later (double, scalar).
+ * Single precision vector instructions
+ * [memA] is a vector-aligned mem @ [mem] is any alignment
  */
-   VFLD,
-   VFST,
-   VFMOV,
-   VFABS,
-   VFMAC,
-   VFMUL,
-   VFDIV,
-   VFADD,
-   VFSUB,
-   VFCMP,
-   VSHUF,
+   VFZERO,                     /* [vr0]        : vr0[0:N] = 0.0 */
+   VFLD,                       /* [vr0], [memA]  : vr0 = mem */
+   VFLDS,                      /* [vr0], [mem]  :  vr0[0] = mem; vr0[1] = 0 */
+   VFLDL,                      /* [vr], [mem]   : vr[0] = mem; vr[1] = vr[1] */
+   VFLDH,                      /* [vr], [mem]   : vr[0] = vr[0]; vr[1] = mem */
+   VFST,                       /* [memA], vr0    : mem = vr0 */
+   VFSTS,                      /* [mem], [vr0]  :  mem = vr[0] */
+   VFMOV,                      /* [vr0], [vr1]   : vr0 = vr1 */
+   VFADD,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 + vr2 */
+   VFMUL,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
+   VFABS,                      /* [vr0], [vr1] : vr0 = abs(vr1) */
+   VFSHUF,                     /* [vr0], [vr1], [int32]; vr0 = shuf(vr1|vr0) */
+          /* [int32] is split into 8 4 bit words; 1st word indicates which */
+          /* should reside in vr0[0], 4th in vr0[3];  Words are numbered */
+          /* starting in vr0[0], and ending in vr1[N], N=veclen-1 */
 /*
  * x86-only instructions
  */
