@@ -204,14 +204,12 @@ int Reg2Regstate(int k)
    #ifdef X86
       else if (k >= VFREGBEG && k < VFREGEND)
       {
-fprintf(stderr, "k=%d, VFRB=%d, VFRE=%d\n", k, VFREGBEG, VFREGEND);
          SetVecBit(iv, k-VFREGBEG+VDREGBEG-1, 1);
          SetVecBit(iv, k-VFREGBEG+FREGBEG-1, 1);
          SetVecBit(iv, k-VFREGBEG+DREGBEG-1, 1);
       }
       else if (k >= VDREGBEG && k < VDREGEND)
       {
-fprintf(stderr, "k=%d, VDRB=%d, VDRE=%d\n", k, VDREGBEG, VDREGEND);
          SetVecBit(iv, k-VDREGBEG+VFREGBEG-1, 1);
          SetVecBit(iv, k-VDREGBEG+FREGBEG-1, 1);
          SetVecBit(iv, k-VDREGBEG+DREGBEG-1, 1);

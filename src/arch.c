@@ -285,43 +285,50 @@ void CreateSysLocals()
 {
 #ifdef X86
    extern int DTnzerod, DTabsd, DTnzero, DTabs, DTx87, DTx87d;
-   if (DTnzerod == -1)
+   if (DTnzerod)
    {
-      DTnzerod = STdef("_NEGZEROD", T_VDOUBLE | LOCAL_BIT, 0);
+      if (DTnzerod == -1)
+         DTnzerod = STdef("_NEGZEROD", T_VDOUBLE | LOCAL_BIT, 0);
       SToff[DTnzerod-1].sa[2] = AddDerefEntry(-REG_SP, DTnzerod, -DTnzerod, 0,
                                               DTnzerod);
    }
-   if (DTabsd == -1)
+   if (DTabsd)
    {
-      DTabsd = STdef("_ABSVLD", T_VDOUBLE | LOCAL_BIT, 0);
+      if (DTabsd == -1)
+         DTabsd = STdef("_ABSVLD", T_VDOUBLE | LOCAL_BIT, 0);
       SToff[DTabsd-1].sa[2] = AddDerefEntry(-REG_SP, DTabsd, -DTabsd, 0,
                                             DTabsd);
 fprintf(stderr, "DTabsd = %d,%d\n", DTabsd, SToff[DTabsd-1].sa[2]);
    }
-   if (DTnzero == -1)
+   if (DTnzero)
    {
-      DTnzero = STdef("_NEGZERO", T_VFLOAT | LOCAL_BIT, 0);
+      if (DTnzero == -1)
+         DTnzero = STdef("_NEGZERO", T_VFLOAT | LOCAL_BIT, 0);
       SToff[DTnzero-1].sa[2] = AddDerefEntry(-REG_SP, DTnzero, -DTnzero, 0,
                                              DTnzero);
    }
-   if (DTabs == -1)
+   if (DTabs)
    {
-      DTabs = STdef("_ABSVAL", T_VFLOAT | LOCAL_BIT, 0);
+      if (DTabs == -1)
+         DTabs = STdef("_ABSVAL", T_VFLOAT | LOCAL_BIT, 0);
       SToff[DTabs-1].sa[2] = AddDerefEntry(-REG_SP, DTabs, -DTabs, 0,
                                            DTabs);
    }
    #ifdef X86_32
-   if (DTx87 == -1)
+   if (DTx87)
    {
-      DTx87 = STdef("_x87f", T_FLOAT | LOCAL_BIT, 0);
+      if (DTx87 == -1)
+         DTx87 = STdef("_x87f", T_FLOAT | LOCAL_BIT, 0);
       SToff[DTx87-1].sa[2] = AddDerefEntry(-REG_SP, DTx87, -DTx87, 0,
                                            DTx87);
    }
-   if (DTx87d == -1)
+   if (DTx87d)
    {
-      DTx87d = STdef("_x87d", T_DOUBLE | LOCAL_BIT, 0);
+      if (DTx87d == -1)
+         DTx87d = STdef("_x87d", T_DOUBLE | LOCAL_BIT, 0);
       SToff[DTx87d-1].sa[2] = AddDerefEntry(-REG_SP, DTx87d, -DTx87d, 0,
                                             DTx87d);
+fprintf(stderr, "\n\nDTx87d=[%d,%d]\n\n", DTx87d, SToff[DTx87d-1].sa[2]);
    }
    #endif
 #else
@@ -613,6 +620,9 @@ void Extern2Local(INSTQ *next, int rsav)
    #endif
    extern short STderef;
 
+   if (ParaDerefQ)
+      KillAllLocinit(ParaDerefQ);
+   ParaDerefQ = 0;
    dreg = GetReg(T_DOUBLE);
    freg = GetReg(T_FLOAT);
    if (NPARA)
