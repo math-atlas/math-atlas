@@ -221,12 +221,13 @@ void DoArrayStore(short ptr, short id)
    INSTQ *ip;
    short lreg, ireg=0, preg, k, type;
 
+   k = (ptr-1)<<2;
    type = FLAG2TYPE(STflag[id-1]);
-   fprintf(stderr, "idname='%s', idflag=%d\n", STname[id-1], STflag[id-1]);
+   fprintf(stderr, "pnam=%s, pflag=%d, idname='%s', idflag=%d\n", 
+           STname[DT[k]-1], STflag[DT[k]-1], STname[id-1], STflag[id-1]);
 
    lreg = LocalLoad(id);
-   k = (ptr-1)<<2;
-   assert(((!PTR_BIT) & FLAG2TYPE(STflag[DT[k]-1])) == type);
+   assert(FLAG2TYPE(STflag[DT[k]-1]) == type);
    FixDeref(ptr);
    switch(type)
    {
