@@ -88,7 +88,7 @@ def ifko_pftype(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
          if m1 > m0:
             KF0 = KF
             m0 = m1
-   return KF0
+   return [m0,KF0]
 
 #
 # attempt to find best prefetch distance for given array
@@ -140,11 +140,12 @@ def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr,
    print "      %s : NO PREFETCH:   mflop = %.2f" % (arr, mf)
    if mf >= mfM:
       KF0 = KF0 + " -P %s -1 0" % (arr)
+      mfM = mf
    elif pfdM != ipd:
       KF0 = KF0 + " -P %s %d %d" % (arr, pflvl, pfdM)
-   return (KF0)
+   return [mfM,KF0]
 
-def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=32):
+def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=64):
 
    print "   Finding best unroll:"
 #
@@ -175,7 +176,7 @@ def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=32):
       UR *= 2
 
    KF0 = KF0 + " -U %d" % URB
-   return KF0
+   return [mf0,KF0]
 
 def ifko0(l1bla, pre, N):
    (IFKOdir, fko) = fkocmnd.GetFKOinfo()
@@ -188,6 +189,16 @@ def ifko0(l1bla, pre, N):
    npf = len(pfarrs)
    KFLAGS = fkocmnd.GetStandardFlags(fko, rout, pre)
    KFLAGS = KFLAGS + " -o " + str(outf) + " " + rout
+   mflist = []
+   testlist = []
+#
+#  Find performance of default case
+#
+   fkocmnd.callfko(fko, KFLAGS)
+   [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, l1bla, N, "fkorout.s", 
+                        "gcc", "-x assembler-with-cpp", opt=opt)
+   mflist.append(mf)
+   testlist.append("default")
 #
 #  Eventually, want to try both -V and scalar, but for now, use -V whenever
 #  possible
@@ -195,31 +206,38 @@ def ifko0(l1bla, pre, N):
 #
 #  Find best pf type
 #
-   KFLAGS = ifko_pftype(ATLdir, ARCH, KFLAGS, ncache, fko, rout, pre, l1bla, N,
-                        info, pfarrs, pfsets)
+   [mf,KFLAGS] = ifko_pftype(ATLdir, ARCH, KFLAGS, ncache, fko, rout, pre, 
+                             l1bla, N, info, pfarrs, pfsets)
+   mflist.append(mf)
+   testlist.append("pftype")
    print "\n   FLAGS so far =", fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS)
 #
 #  Find best PFD for each pfarr
 #
    for arr in pfarrs:
-      KFLAGS = FindPFD(ATLdir, ARCH, KFLAGS, fko, rout, pre,l1bla, N, info, arr)
+      [mf,KFLAGS] = FindPFD(ATLdir, ARCH, KFLAGS, fko, rout, pre,l1bla, N, 
+                            info, arr)
+   mflist.append(mf)
+   testlist.append("pfdist")
    KFLAGS = fkocmnd.RemoveRedundantPrefFlags(KFLAGS, pfarrs)
 #
 #  Find best unroll
 #
-   KFLAGS = FindUR(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N, info)
+   [mf,KFLAGS] = FindUR(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N, info)
+   mflist.append(mf)
+   testlist.append("unroll")
 #
 #  Find performance of best case
 #
-   fkocmnd.callfko(fko, KFLAGS)
-   [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, l1bla, N, "fkorout.s", 
-                        "gcc", "-x assembler-with-cpp", opt=opt)
+#   fkocmnd.callfko(fko, KFLAGS)
+#   [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, l1bla, N, "fkorout.s", 
+#                        "gcc", "-x assembler-with-cpp", opt=opt)
    print "\n\n   BEST FLAGS FOUND (%f.2) = %s" % (mf,
          fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS))
    res = fkocmnd.GetOptVals(KFLAGS, pfarrs, pfsets)
    tst = l1cmnd.test(ATLdir, ARCH, pre, l1bla, N, "fkorout.s",
                      cc="gcc", ccf="-x assembler-with-cpp", opt=optT)
-   return(res, KFLAGS, mf, tst)
+   return(res, KFLAGS, mf, tst, testlist, mflist)
 
 def ifko(routs, pres, N):
    if routs.find("default") != -1:
@@ -241,14 +259,18 @@ def ifko(routs, pres, N):
    blalist = []
    mflist = []
    tstlist = []
+   ideclist = []
+   idecmflist = []
    for l1bla in routlist:
       for pre in prelist:
          print "\niFKO TUNING %s" % (pre + l1bla)
-         (res,flags,mf, tst) = ifko0(l1bla, pre, N)
+         (res,flags,mf,tst,dec,decmf) = ifko0(l1bla, pre, N)
          reslist.append(res)
          blalist.append(pre + l1bla)
          mflist.append(mf)
          tstlist.append(tst)
+         ideclist.append(dec)
+         idecmflist.append(decmf)
    i = 0
    n = len(reslist)
    while i < n :
@@ -274,6 +296,23 @@ def ifko(routs, pres, N):
       if tstlist[i] : tst = "FAIL"
       else : tst = "PASS"
       print "%10s : %5.5s %9.2f" % (blalist[i], tst, mflist[i])
+      i += 1
+   i = 0
+   print "\n"
+   m = len(ideclist[0])
+   st = "%7.7s" % ("BLAS")
+   j = 1
+   while j < m:
+      st = st + " %6.6s" % (ideclist[0][j])
+      j += 1
+   print st
+   while i < n :
+      st = "%7.7s" % blalist[i]
+      j = 1
+      while j < m :
+         st = st + " %6.2f" % (idecmflist[i][j] / idecmflist[i][j-1])
+         j += 1
+      print st
       i += 1
 
 nargs = len(sys.argv)

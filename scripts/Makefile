@@ -24,5 +24,6 @@ build :
 	
 build_comp : 
 	$(MAKE) $(FKO)
-$(FKO) : 
+force_build:
+$(FKO) : force_build
 	cd ../bin ; $(MAKE) fko
