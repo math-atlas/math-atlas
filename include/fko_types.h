@@ -60,7 +60,7 @@ struct ptrinfo
    struct ptrinfo *next;
    short ptr;
    short flag;            /* see PTRF_* defined in fko_optloop.h */
-   ushort nupdate;        /* # of times updated */
+   short nupdate;         /* # of times updated */
 };
 
 struct idlist
