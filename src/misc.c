@@ -2,6 +2,16 @@
 #include "fko_loop.h"
 #include <stdarg.h>
 
+int Size2Shift(int n)
+/*
+ * If N is a power of two, i of 2^i, otherwise, returns 0
+ */
+{
+   for (i=0,j=1; j < n; i++)
+      j = 1<<i;
+   return(j==n ? i : 0);
+}
+
 short *NewShortTable(int *n, short *old, int chunk)
 {
    short *new;
