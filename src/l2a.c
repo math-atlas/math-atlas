@@ -157,6 +157,14 @@ static char *GetDregOrDeref(short id)
 {
    if (id < 0)
    {
+      #ifdef VDREGBEG
+         if(-id >= VDREGBEG)
+            return(archvdregs[-DREGBEG-id]);
+      #endif
+      #ifdef VFREGBEG
+         if(-id >= VFREGBEG)
+            return(archvfregs[-FREGBEG-id]);
+      #endif
       if (-id >= DREGBEG)
          return(archdregs[-DREGBEG-id]);
       else
@@ -1709,16 +1717,45 @@ struct assmln *lil2ass(BBLOCK *bbase)
          break;
 #endif
 /*
- * Only x86 and PowerPC have vector instructions
+ * Only x86 has double precision SIMD inst
+ */
+   #ifdef X86
+      case VDLD:
+         ap->next = PrintAssln("\tmovapd\t%s, %s\n", GetDeref(op2),
+                               archvdregs[-VDREGBEG-op1]);
+         break;
+      case VDLDS:
+         ap->next = PrintAssln("\tmovps\t%s, %s\n", GetDeref(op2),
+                               archvdregs[-VDREGBEG-op1]);
+         break;
+      case VDST:
+         ap->next = PrintAssln("\tmovapd\t%s, %s\n", archvdregs[-VDREGBEG-op1],
+                               GetDeref(op2));
+         break;
+      case VDSTS:
+         ap->next = PrintAssln("\tmovps\t%s, %s\n", archvdregs[-VDREGBEG-op1],
+                               GetDeref(op2));
+         break;
+      case VDMOV:
+         ap->next = PrintAssln("\tmovapd\t%s, %s\n", archvdregs[-VDREGBEG-op2],
+                               archvdregs[-VDREGBEG-op1]);
+         break;
+      case VDADD:
+         assert(op1 == op2);
+         ap->next = PrintAssln("\tmulpd\t%s, %s\n", GetDregOrDeref(op3),
+                               archvdregs[-VDREGBEG-op1]);
+         break;
+      case VDABS:
+	 assert(op1 == op2);
+	 assert(DTabsd);
+         ap->next = PrintAssln("\tandpd\t%s,%s\n",
+                               GetDeref(SToff[DTabsd-1].sa[2]),
+	                       archvdregs[-VDREGBEG-op1]);
+   #endif
+/*
+ * Only x86 and PowerPC have single prec vector instructions
  */
    #if 1 && (defined(X86) || defined(PPC))
-      case VDLD:
-         #ifdef X86
-            ap->next = PrintAssln("\tmovapd\t%s, %s\n", GetDeref(op2),
-                                  archvdregs[-VDREGBEG-op1]);
-         #elif defined(PPC)
-         #endif
-         break;
    #endif
 /*
  *  HERE HERE HERE:
