@@ -242,7 +242,7 @@ BBLOCK *FindBlockByNumber(BBLOCK *bp, const short bnum)
 
 char *PrintBlockList(BLIST *lp)
 {
-   static char ln[512];
+   static char ln[2048];
    int j;
 
    for (j=0; lp; lp=lp->next)
@@ -251,6 +251,7 @@ char *PrintBlockList(BLIST *lp)
          j += sprintf(ln+j, "%d,", lp->blk->bnum);
       else
          j += sprintf(ln+j, "0,");
+      assert(j < 2048);
    }
    if (j) ln[j-1] = '\0';
    else strcpy(ln, "NONE");
@@ -991,12 +992,17 @@ void FinalizeLoops()
  *    Find preds of header that are not in loop.  If there is only one,
  *    it's the preheader if it has no other successors
  */
+#if 0
       BitVecInvert(phbv, lp->blkvec);
       i = BlockList2BitVec(lp->header->preds);
       BitVecComb(phbv, phbv, i, '&');
+#else
+      i = BlockList2BitVec(lp->header->preds);
+      BitVecComb(phbv, i, lp->blkvec, '-');
+#endif
       if (CountBitsSet(phbv) == 1)
       {
-         i = GetSetBitX(phbv, 1);  /* i now block number of preheader */
+         i = GetSetBitX(phbv, 1)-1;  /* i now block number of preheader */
          lp->preheader = FindBlockByNumber(NULL, i+1);
          if ( (lp->preheader->usucc && lp->preheader->usucc != lp->header) ||
               (lp->preheader->csucc && lp->preheader->csucc != lp->header) )

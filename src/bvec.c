@@ -249,7 +249,7 @@ int GetSetBitX(int iv, int I)
       {
          if (v & (1<<i))
          {
-            if (++k == I) return(j*32+i);
+            if (++k == I) return(j*32+i+1);
          }
       }
    }
@@ -298,6 +298,8 @@ char *PrintVecList(int iv, int ioff)
    char *sptr;
    int i, j, k, n;
 
+   if (!iv)
+      return("NOT SET");
    sptr = ln;
    iv--;
    n = ni[iv];
@@ -308,6 +310,7 @@ char *PrintVecList(int iv, int ioff)
       {
          if (k & (1<<i))
             sptr += sprintf(sptr, "%d, ", j*32+i+ioff);
+         assert((size_t)sptr < (size_t) ln + 2048);
       }
    }
    if (sptr != ln) sptr[-2] = '\0';
@@ -354,7 +357,7 @@ short *BitVec2StaticArray(int iv)
       }
       vals[0] = n;
       for (i=1; i <= n; i++)
-         vals[i] = GetSetBitX(iv, i);
+         vals[i] = GetSetBitX(iv, i)-1;
       #if IFKO_DEBUG_LEVEL > 0  && 0
          fprintf(stderr, "ivals = ");
          for (i=1; i <= n; i++)
@@ -387,7 +390,7 @@ short *BitVec2Array(int iv, int off)
    assert(vals);
    vals[0] = n;
    for (i=1; i <= n; i++)
-      vals[i] = GetSetBitX(iv, i) + off;
+      vals[i] = GetSetBitX(iv, i)-1 + off;
    #if IFKO_DEBUG_LEVEL > 0  && 0
       fprintf(stderr, "ivals = ");
       for (i=1; i <= n; i++)

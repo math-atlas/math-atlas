@@ -1,7 +1,8 @@
-#include "fko.h"
 #define ARCH_DECLARE
+#include "fko.h"
 #include "fko_arch.h"
 
+#if 1
 char *Int2Reg(int i)
 /*
  * Translates integral encoding to machine-specific registers
@@ -25,6 +26,7 @@ char *Int2Reg(int i)
       sprintf(ln, "UNUSED");
    return(ln);
 }
+#endif
 
 int main(int nargs, char **args)
 {

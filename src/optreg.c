@@ -225,6 +225,82 @@ int Reg2Regstate(int k)
    return(iv);
 }
 
+int FindLiveregs(INSTQ *here)
+/*
+ * Finds the livereg up to instruction here (here itself is not included
+ * in the analysis)
+ * RETURNS: bitvector with all live regs set
+ */
+{
+   INSTQ *ip;
+   int i, j, k, iv;
+   static int liveregs=0, mask, vtmp;
+
+   if (here)
+   {
+      if (!liveregs)
+      {
+         liveregs = NewBitVec(TNREG);
+         mask     = NewBitVec(TNREG);
+         vtmp     = NewBitVec(TNREG);
+/*
+ *       Set only those regs we're interested in
+ */
+         SetVecAll(mask, 0);
+         SetAllTypeReg(mask, T_INT);
+         SetAllTypeReg(mask, T_FLOAT);
+         SetAllTypeReg(mask, T_DOUBLE);
+         SetAllTypeReg(mask, T_VFLOAT);
+         SetAllTypeReg(mask, T_VDOUBLE);
+         SetVecBit(mask, REG_SP-1, 0);
+         #ifdef X86_32
+            SetVecBit(mask, Reg2Int("@st")-1, 0);
+         #endif
+      }
+      else
+         SetVecAll(liveregs, 0);
+
+/*
+ *    Add all regs live on block entry to liveregs by adding regs from ins to lr
+ */
+      BitVecComb(vtmp, here->myblk->ins, mask, '&');
+      for (i=1; k = GetSetBitX(vtmp, i); i++)
+         BitVecComb(liveregs, liveregs, Reg2Regstate(k), '|');
+      for (ip=here->myblk->inst1; ip != here; ip = ip->next)
+      {
+/*
+ *       Remove all dead regs from livereg
+ */
+         if (ip->deads)
+         {
+            BitVecComb(vtmp, ip->deads, mask, '&');
+            for (i=1; k = GetSetBitX(vtmp, i); i++)
+               BitVecComb(liveregs, liveregs, Reg2Regstate(k), '-');
+         }
+/*
+ *       If a register is set, add it to liveregs
+ */
+         if (ip->set)
+         {
+            BitVecComb(vtmp, ip->set, mask, '&');
+            for (i=1; k = GetSetBitX(vtmp, i); i++)
+               BitVecComb(liveregs, liveregs, Reg2Regstate(k), '|');
+         }
+      }
+   }
+   else
+   {
+      if (liveregs)
+      {
+         KillBitVec(liveregs);
+         KillBitVec(mask);
+         KillBitVec(vtmp);
+      }
+      vtmp = mask = liveregs = 0;
+   }
+   return(liveregs);
+}
+
 void NewIGTable(int chunk)
 {
    int i, n;
@@ -491,9 +567,11 @@ void CalcBlockIG(BBLOCK *bp)
          }
 /*
  *       If it is a register that's dead, delete it from liveregs
+ * HERE HERE NOTE: shouldn't we use Reg2RegState here?
  */
          else
-            SetVecBit(liveregs, k, 0);
+            BitVecComb(liveregs, liveregs, Reg2Regstate(k+1), '-');
+/*            SetVecBit(liveregs, k, 0); */
       }
 /* 
  *    Handle sets

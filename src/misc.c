@@ -221,6 +221,7 @@ INSTQ *PrintComment(BBLOCK *blk, INSTQ *prev, INSTQ *next, ...)
    va_start(argptr, next);
    form = va_arg(argptr, char*);
    vsprintf(ln, form, argptr);
+   assert(strlen(ln) < 2048);
    va_end(argptr);
    return(InsNewInst(blk, prev, next, COMMENT, STstrconstlookup(ln), 0, 0));
 }

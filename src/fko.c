@@ -245,7 +245,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
                if (args[i+1][0] == 'b')
                   PFCHUNK = -PFCHUNK;
                PFISKIP = atoi(args[i+3]);
-               assert(PFISKIP >= 0);
+//               assert(PFISKIP >= 0);
                PFINST = args[i+2][0];
                i += 4;
             }
@@ -1011,6 +1011,11 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
       if (unroll > 1)
       {
          UnrollLoop(optloop, unroll);
+         InvalidateLoopInfo();
+         bbbase = NewBasicBlocks(bbbase);
+         CheckFlow(bbbase, __FILE__, __LINE__);
+         FindLoops();
+         CheckFlow(bbbase, __FILE__, __LINE__);
       }
       else
       {
@@ -1032,7 +1037,13 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
       if (optloop->pfarrs)
          AddPrefetch(optloop, unroll);
    }
-   bbbase = NewBasicBlocks(bbbase);
+   else
+   {
+      bbbase = NewBasicBlocks(bbbase);
+      CheckFlow(bbbase, __FILE__, __LINE__);
+      FindLoops();
+      CheckFlow(bbbase, __FILE__, __LINE__);
+   }
    CalcInsOuts(bbbase); 
    CalcAllDeadVariables();
 
