@@ -1133,7 +1133,6 @@ void FixFrame()
    int i, ni, nf, nd, isav[TNIR], fsav[TNFR], dsav[TNDR], savr[64];
    MarkUnusedLocals(); 
    CreateSysLocals();
-   KillUnusedLocals();
    NumberLocalsByType();
    FindRegUsage(iqhead, &ni, isav, &nf, fsav, &nd, dsav);
    #ifdef X86_64
