@@ -98,9 +98,28 @@ void DoConvert(short dest, short src)
 
 void DoFpConstLoad(short dest, short src)
 {
-/* HERE HERE HERE */
-   fprintf(stderr, "FP constants not yet supported\n");
-   exit(-1);
+   char *ln;
+   int type;
+   
+fprintf(stderr, "Handling fpconst!\n");
+/*
+ * Reserve integer reg for @ ld (store in op3), as well as reg for actual
+ * move.  Encode fp const load as special case of FMOV.
+ */
+   type = FLAG2TYPE(STflag[dest-1]);
+   InsNewInst(NULL, NULL, type == T_FLOAT ? FMOV : FMOVD, 
+   #ifdef X86
+           GetReg(type), src, 0);
+   #else
+           GetReg(type), src, GetReg(T_INT));
+   #endif
+/*
+ * Allocate a static data entry
+ */
+   if (type == T_FLOAT)
+      AddStaticData(STname[src-1], 4, 4, &(SToff[src-1].f));
+   else
+      AddStaticData(STname[src-1], 8, 8, &(SToff[src-1].d));
 }
 
 void DoMove(short dest, short src)
@@ -108,6 +127,7 @@ void DoMove(short dest, short src)
    short rsrc;
    int sflag;
    sflag = STflag[src-1];
+fprintf(stderr, "DoMove %d %d (%s %s)\n", dest, src, STname[dest-1]?STname[dest-1] : "NULL", STname[src-1]?STname[src-1] : "NULL");
    if (IS_CONST(sflag) && (IS_FLOAT(sflag) || IS_DOUBLE(sflag)))
       DoFpConstLoad(dest, src);
    if (FLAG2TYPE(STflag[dest-1]) == FLAG2TYPE(sflag))
@@ -443,33 +463,56 @@ void DoArith(short dest, short src0, char op, short src1)
 void DoReturn(short rret)
 {
    int retreg, srcreg;
-   int mov;
+   int mov, ld, type;
    if (rret)
    {
-      switch(FLAG2TYPE(STflag[rret-1]))
+      type = STflag[rret-1];
+      if (IS_PTR(type))
+         #if ArchPtrIsLong
+	    type = T_LONG;
+         #else 
+	    type = T_INT;
+	 #endif
+      else type = FLAG2TYPE(type);
+      switch(type)
       {
+      case T_LONG:
+	 ld = LDL;
+	 mov = MOVL;
+         rout_flag |= IRET_BIT;
+         retreg = IRETREG;
+         break;
       case T_INT:
          mov = MOV;
+	 ld = LD;
          rout_flag |= IRET_BIT;
          retreg = IRETREG;
          break;
       case T_FLOAT:
          mov = FMOV;
+         ld = FLD;
          rout_flag |= FRET_BIT;
          retreg = FRETREG;
          break;
       case T_DOUBLE:
          mov = FMOVD;
+         ld = FLDD;
          rout_flag |= DRET_BIT;
          retreg = DRETREG;
          break;
       }
+#if 0
       if (IS_CONST(STflag[rret-1])) srcreg = -rret;
       else srcreg = LocalLoad(rret);
       InsNewInst(NULL, NULL, mov, -retreg, -srcreg, 0);
-      InsNewInst(NULL, NULL, JMP, STstrconstlookup("IFKO_EPILOGUE"), 0, 0);
+#else
+      if (IS_CONST(STflag[rret-1]))
+         InsNewInst(NULL, NULL, mov, -retreg, rret, 0);
+      else 
+         InsNewInst(NULL, NULL, ld, -retreg, SToff[rret-1].sa[2], 0);
+#endif
    }
-   else InsNewInst(NULL, NULL, JMP, STstrconstlookup("IFKO_EPILOGUE"), 0, 0);
+   InsNewInst(NULL, NULL, JMP, STstrconstlookup("IFKO_EPILOGUE"), 0, 0);
    GetReg(-1);
 }
 

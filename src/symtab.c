@@ -8,6 +8,7 @@ short *DT;
 static int N=0, Nalloc=0, Ndt=0, Ndtalloc=0;
 static int niloc=0, nlloc=0, nfloc=0, ndloc=0, nvfloc=0, nvdloc=0;
 int    LOCSIZE=0, LOCALIGN=0, NPARA=0;
+struct sdata *SDhead=NULL;
 
 #define STCHUNK 256
 #define DTCHUNK 256
@@ -160,13 +161,17 @@ short STdconstlookup(double f)
 {
    short i;
    union valoff val;
+   static int ndc=0;
+   char name[16];
    for (i=0; i != N; i++)
    {
       if (SToff[i].d == f && IS_CONST(STflag[i]) && IS_DOUBLE(STflag[i]))
          return(i);
    }
+   sprintf(name, "_FPDC_%d", ndc);
+   ndc++;
    val.d = f;
-   return(STnew(NULL, CONST_BIT | T_DOUBLE, val));
+   return(STnew(name, GLOB_BIT | CONST_BIT | T_DOUBLE, val));
 }
 
 short STfconstlookup(float f)
@@ -177,14 +182,18 @@ short STfconstlookup(float f)
  */
 {
    short i;
+   static int nfc=0;
+   char name[16];
    union valoff val;
    for (i=0; i != N; i++)
    {
       if (SToff[i].f == f && IS_CONST(STflag[i]) && IS_FLOAT(STflag[i]))
          return(i+1);
    }
-   val.d = f;
-   return(STnew(NULL, CONST_BIT | T_DOUBLE, val));
+   sprintf(name, "_FPFC_%d", nfc);
+   nfc++;
+   val.f = f;
+   return(STnew(name, GLOB_BIT | CONST_BIT | T_DOUBLE, val));
 }
 
 
@@ -369,4 +378,34 @@ void CorrectLocalOffsets(int ldist)
 int STlen(void)
 {
    return(N);
+}
+
+void AddStaticData(char *name, short align, short len, void *vbytarr)
+{
+   struct sdata *np;
+   unsigned char *bytarr = vbytarr;
+   short i;
+
+   np = malloc(sizeof(struct sdata));
+   assert(np);
+   np->align = align;
+   np->vals = malloc(len);
+   assert(np->vals);
+   np->name = name;
+   np->len = len;
+   for (i=0; i < len; i++) np->vals[i] = bytarr[i];
+   np->next = SDhead;
+   SDhead = np;
+}
+
+void KillStaticData(void)
+{
+   struct sdata *np;
+   while(SDhead)
+   {
+      np = SDhead->next;
+      free(np->vals);
+      free(SDhead);
+      SDhead = np;
+   }
 }

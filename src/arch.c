@@ -120,6 +120,7 @@ void CreateSysLocals()
       DTnzero = STdef("_NEGZERO", VEC_BIT | T_DOUBLE, 0);
    if (DTabs == -1)
       DTabs = STdef("_ABSVAL", VEC_BIT | T_DOUBLE, 0);
+#else
 #endif
 }
 
@@ -169,12 +170,11 @@ void Param2Local(INSTQ *next, short rsav, int fsize)
          {
             InsNewInst(NULL, next, LD, -ir,
                        AddDerefEntry(rsav, 0, 0, fsize+4+j*4), 0);
-            k = (SToff[paras[i]].sa[2])<<2;
-            k = DT[k+3] + 4;
-            k = AddDerefEntry(-REG_SP, 0, 0, k);
-            InsNewInst(NULL, next, ST, k, -ir, __LINE__);
+	    k = SToff[paras[i]].sa[2] - 1;
+	    k = DT[(k<<2)+3] + 4;
+            InsNewInst(NULL, next, ST, AddDerefEntry(rsav, 0, 0, k), 
+	               -ir, __LINE__);
             j++;
-            assert(IS_DOUBLE(flag));
          }
       }
       if (DTnzerod > 0)

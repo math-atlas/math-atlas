@@ -53,7 +53,9 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 {ICON}	{ yylval.inum = atoi(yytext); return(ICONST); }
 {HCON}    { sscanf(yytext, "%x", &yylval.inum);  return(ICONST); }
 {FCON}    { sscanf(yytext, "%f", &yylval.fnum);  return(FCONST); }
-{DCON}    { yylval.dnum = atof(yytext); return(DCONST); }
+{DCON}    { yylval.dnum = atof(yytext); 
+fprintf(stderr, "returning DCON of %f\n", yylval.dnum);
+return(DCONST); }
 
 "::"    { return(LST); }
 %%

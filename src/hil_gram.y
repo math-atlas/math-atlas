@@ -32,7 +32,9 @@
 %right UNMIN NOT
 
 %type <inum> icexpr
-%type <sh> ID avar iconst fconst dconst ptrderef
+%type <fnum> fcexpr
+%type <dnum> dcexpr
+%type <sh> ID avar iconst fpconst fconst dconst ptrderef
 
 %%
 
@@ -95,6 +97,7 @@ statement : arith
           | ptrderef '=' ID       {DoArrayStore($1, $3);}
           | ID '=' ptrderef       {DoArrayLoad($1, $3);}
           | ID '=' ID             {DoMove($1, $3);}
+	  | ID '=' fpconst	  {DoMove($1, $3);}
           | RETURN avar           {DoReturn($2);}
           | NAME ':'              {DoLabel($1);}
 	  ;
@@ -117,9 +120,36 @@ icexpr  : icexpr '+' icexpr             {$$ = $1 + $3;}
         | '(' icexpr ')' { $$ = $2; }
         | ICONST                        {$$ = $1;}
 	;
+fcexpr  : fcexpr '+' fcexpr             {$$ = $1 + $3;}
+        | fcexpr '-' fcexpr             {$$ = $1 - $3;}
+        | fcexpr '*' fcexpr             {$$ = $1 * $3;}
+        | fcexpr '/' fcexpr             
+        {
+           if ($3 == 0.0) yyerror("divide by zero");
+           else $$ = $1 / $3;
+        }
+        | '-' fcexpr %prec UNMIN        {$$ = -$2;}
+        | '(' fcexpr ')' { $$ = $2; }
+        | FCONST                        {$$ = $1;}
+	;
+dcexpr  : dcexpr '+' dcexpr             {$$ = $1 + $3;}
+        | dcexpr '-' dcexpr             {$$ = $1 - $3;}
+        | dcexpr '*' dcexpr             {$$ = $1 * $3;}
+        | dcexpr '/' dcexpr             
+        {
+           if ($3 == 0.0) yyerror("divide by zero");
+           else $$ = $1 / $3;
+        }
+        | '-' dcexpr %prec UNMIN        {$$ = -$2;}
+        | '(' dcexpr ')' { $$ = $2; }
+        | DCONST                        {$$ = $1;}
+	;
 
-fconst : FCONST         {$$ = STfconstlookup($1);} ;
-dconst : DCONST         {$$ = STdconstlookup($1);} ;
+fpconst : fconst	{$$ = $1; }
+        | dconst	{$$ = $1; }
+	;
+fconst : fcexpr         {$$ = STfconstlookup($1);} ;
+dconst : dcexpr         {$$ = STdconstlookup($1);} ;
 iconst : icexpr         {$$ = STiconstlookup($1);} ;
 ID : NAME               
    {if (!($$ = STstrlookup($1))) fko_error(__LINE__,"unknown ID '%s'", $1); }

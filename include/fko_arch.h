@@ -88,13 +88,12 @@
    #define NSIR 3
    #define NFR   8                      /* # of float regs */
    #define TNFR  9
-   #define STFP -TNFR
    #define NSFR  8
    #define NDR   8                      /* # of double regs */
    #define NSDR  8
    #define IRETREG 4
-   #define FRETREG (TNFR+FREGBEG)
-   #define DRETREG (1+NFR)
+   #define FRETREG (NFR+FREGBEG)
+   #define DRETREG (NFR+DREGBEG)
    #ifdef ARCH_DECLARE
       char *archiregs[NIR] = 
       {"@esp", "@edx", "@ecx", "@eax", "@ebp", "@ebx", "@esi", "@edi"};

@@ -4,5 +4,6 @@
 void KillAllAssln(struct assmln *base);
 struct assmln *lil2ass(INSTQ *head);
 void dump_assembly(FILE *fp, struct assmln *abase);
+struct assmln *DumpData(void);
 
 #endif

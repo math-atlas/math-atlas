@@ -28,4 +28,13 @@ struct assmln
    struct assmln *next;
 };
 
+struct sdata  /* Structure for static data */
+{
+   char *name;           /* global variable name */
+   short len;            /* length in chars of data */
+   short align;          /* required memory alignment */
+   unsigned char *vals;  /* values of data */
+   struct sdata *next;
+};
+
 #endif

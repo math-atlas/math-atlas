@@ -22,7 +22,10 @@ int main(int nargs, char **args)
    CreatePrologue(LOCALIGN, LOCSIZE, 0, NIR-1, savr, 0, NULL, 0, NULL);
    abase = lil2ass(iqhead);
    dump_assembly(stdout, abase);
-   KillAllInst(iqhead);
    KillAllAssln(abase);
+   abase = DumpData();
+   dump_assembly(stdout, abase);
+   KillAllAssln(abase);
+   KillAllInst(iqhead);
    return(0);
 }

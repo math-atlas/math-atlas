@@ -59,5 +59,8 @@ void CorrectLocalOffsets(int ldist);
 int STlen(void);
 char *STi2str(short i);
 void CreateLocalDerefs(void);
+void AddStaticData(char *name, short align, short len, void *vbytarr);
+void KillStaticData(void);
+
 
 #endif
