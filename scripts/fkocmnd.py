@@ -57,6 +57,7 @@ def info(fko, routine):
       arrs = []
       pref = []
       sets = []
+      uses = []
       assert(len(pref) == 0)
       i = 0;
       while (i < mfp):
@@ -67,10 +68,12 @@ def info(fko, routine):
          pref.append(int(words[2][j+1:]))
          j = words[3].rfind("=")
          sets.append(int(words[3][j+1:]))
+         j = words[4].rfind("=")
+         uses.append(int(words[4][j+1:]))
          i += 1;
    else:
       maxunroll = lnf = vec = mfp = 0
-   return(nc, LS, ol, maxunroll, lnf, vec, arrs, pref, sets)
+   return(nc, LS, ol, maxunroll, lnf, vec, arrs, pref, sets, uses)
 
 def RemoveFilesFromFlags(blas, flags):
    words = flags.split()
@@ -106,17 +109,19 @@ def RemoveRedundantPrefFlags(flags, pfarrs):
 #      if (i != -1)
 #         words = flags[j:].split()
    return flags
-def GetPFInfo(inf):
+def GetFPInfo(inf):
    na = len(inf[6])
    i=0
    pfarrs = []
    pfsets = []
+   pfuses = []
    while(i < na):
       if (inf[7][i] != 0):
          pfarrs.append(inf[6][i])
          pfsets.append(inf[8][i])
+         pfuses.append(inf[9][i])
       i += 1
-   return(pfarrs, pfsets)
+   return(pfarrs, pfsets, pfuses)
 
 def BuildFKO(IFKOdir):
    cmnd = 'cd ' + IFKOdir + '/bin ; make fko'
@@ -139,7 +144,7 @@ def GetStandardFlags(fko, rout, pre):
    inf = info(fko, rout)
    VEC = inf[5]
    LS  = inf[1][0]
-   (pfarrs, pfsets) = GetPFInfo(inf)
+   (pfarrs, pfsets, pfuses) = GetFPInfo(inf)
    npf = len(pfarrs)
    if (VEC == 0):
       if (pre == 's'): psiz = 4

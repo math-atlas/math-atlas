@@ -23,6 +23,8 @@ def GetDefaultRefBlas(blas):
          refb.append("scal1_x1.c")
       elif bla.find('amax') != -1:
          refb.append("iamax_abs1_x1.c")
+      elif bla.find("copy") != -1:
+         refb.append("copy1_x1y1.c")
       else:
          print "Unknown BLAS : %s" % (bla)
          sys.exit(1)

@@ -6,6 +6,31 @@ import l1cmnd
 
 optT = "-X 1 1 -Y 1 1 -Fx 16 -Fy 16"
 #
+# Given set of arrs that are write-only (no uses), tries using non-temporal
+# writes
+#
+def ifko_writeNT(ATLdir, ARCH, KF0, fko, rout, pre, l1bla, N, wnt):
+#
+#  Time the default case
+#
+   warrs = []
+   fkocmnd.callfko(fko, KF0)
+   [t0,m0] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                         "gcc", "-x assembler-with-cpp", opt=opt)
+   print "WNT none : %.2f" % (m0)
+   for wa in wnt:
+      KFN = KF0 + " -W " + wa
+      fkocmnd.callfko(fko, KFN)
+      [tN,mN] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                            "gcc", "-x assembler-with-cpp", opt=opt)
+      print "WNT %s : %2.f" % (wa, mN)
+      if mN > m0:
+         KF0 = KFN
+         m0 = mN
+         warrs.append(wa)
+      
+   return [m0,KF0,warrs]
+#
 #  Given a set of flags, try differing pf inst for read & write arrays
 #
 def ifko_pftype(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
@@ -178,6 +203,23 @@ def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=64):
    KF0 = KF0 + " -U %d" % URB
    return [mf0,KF0]
 
+#
+# Returns array of indexes in st0 that are also in st1
+#
+def FindMatchList(st0, st1):
+   n0 = len(st0)
+   n1 = len(st1)
+   i = 0
+   matches = []
+   while i < n0:
+      j = 0
+      while j < n1:
+         if st0[i] == st1[j] or \
+            (len(st0[i]) == len(st1[j]) and st0[i].find(st1[j]) != -1):
+            matches.append(i)
+         j += 1
+      i += 1
+   return(matches)
 def ifko0(l1bla, pre, N):
    (IFKOdir, fko) = fkocmnd.GetFKOinfo()
    (ATLdir, ARCH) = fkocmnd.FindAtlas(IFKOdir)
@@ -185,8 +227,8 @@ def ifko0(l1bla, pre, N):
    outf =  ATLdir + '/tune/blas/level1/' + l1bla.upper() + '/fkorout.s'
    info = fkocmnd.info(fko, rout)
    ncache = info[0]
-   (pfarrs, pfsets) = fkocmnd.GetPFInfo(info)
-   npf = len(pfarrs)
+   (fparrs, fpsets, fpuses) = fkocmnd.GetFPInfo(info)
+   nfp = len(fparrs)
    KFLAGS = fkocmnd.GetStandardFlags(fko, rout, pre)
    KFLAGS = KFLAGS + " -o " + str(outf) + " " + rout
    mflist = []
@@ -217,6 +259,40 @@ def ifko0(l1bla, pre, N):
 #  Eventually, want to try both -V and scalar, but for now, use -V whenever
 #  possible
 
+#
+#  Find if we want to use cache-through writes on any arrays
+#
+   n = len(fpsets)
+   i = 0
+   wnt = []
+   while i < n:
+      if fpsets[i] > 0 and fpuses[i] == 0:
+         wnt.append(fparrs[i])
+      i += 1
+   if len(wnt) > 0:
+      [mf,KFLAGS,wnt] = ifko_writeNT(ATLdir, ARCH, KFLAGS, fko, rout, pre,
+                                     l1bla, N, wnt)
+   mflist.append(mf)
+   testlist.append("writeNT")
+#
+#  Don't try prefetching non-temporal arrays
+#  HERE HERE: need to take wnt out of pfarr
+#
+   if len(wnt) > 0:
+      mat = FindMatchList(fparrs, wnt)
+      i = 0;
+      n = len(fparrs)
+      pfarrs = []
+      pfsets = []
+      while i < n:
+         if wnt.count(i) == 0:
+            pfarrs.append(fparrs[i])
+            pfsets.append(fpsets[i])
+         i += 1
+      print "\n   FLAGS so far =", fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS)
+   else :
+      pfarrs = fparrs
+      pfsets = fpsets
 #
 #  Find best pf type
 #
