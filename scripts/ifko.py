@@ -194,11 +194,25 @@ def ifko0(l1bla, pre, N):
 #
 #  Find performance of default case
 #
-   fkocmnd.callfko(fko, KFLAGS)
-   [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, l1bla, N, "fkorout.s", 
-                        "gcc", "-x assembler-with-cpp", opt=opt)
+   j = KFLAGS.find("-V")
+   if j != -1 :
+      KFn = KFLAGS[0:j-1] + KFLAGS[j+2:]
+      fkocmnd.callfko(fko, KFn)
+      [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, l1bla, N, "fkorout.s", 
+                           "gcc", "-x assembler-with-cpp", opt=opt)
+      mflist.append(mf)
+      testlist.append("default")
+      fkocmnd.callfko(fko, KFLAGS)
+      [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, l1bla, N, "fkorout.s", 
+                           "gcc", "-x assembler-with-cpp", opt=opt)
+   else :
+      fkocmnd.callfko(fko, KFLAGS)
+      [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, l1bla, N, "fkorout.s", 
+                           "gcc", "-x assembler-with-cpp", opt=opt)
+      testlist.append("default")
+      mflist.append(mf)
    mflist.append(mf)
-   testlist.append("default")
+   testlist.append("vect")
 #
 #  Eventually, want to try both -V and scalar, but for now, use -V whenever
 #  possible
