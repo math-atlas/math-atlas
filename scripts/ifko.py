@@ -282,11 +282,11 @@ def FindAE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=4):
                mfB = mf
                urB = j
                aeB = i
-
-         if mfB > mf0*1.001:
-            KFN = KFN + " -U %d -AE %s %d" % (j, ac, i)
-            mf0 = mfB
          i += 1
+
+      if mfB > mf0*1.001:
+         KFN = KFN + " -U %d -AE %s %d" % (j, ac, i)
+         mf0 = mfB
 
 #   print "   mfB=%2.f, KFN=%s" % (mfB, KFN)
    return[mfB, KFN]
