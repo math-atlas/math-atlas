@@ -81,33 +81,38 @@ for blas in l1routs:
 
 refT  = []
 refMF = []
+proT  = []
+proMF = []
 atlT  = []
 atlMF = []
 fkoT  = []
 fkoMF = []
 j = i = 0
 
+ICC = 1
 CALLREF=1
 CALLATL=1
 CALLFKO=1
 PROFILE=1
-if PROFILE:
-   PROFCC="iccprof"
-   PROFF = "-xP -O3 -mp1 -static -w"
-else:
-   PROFCC=None
-   PROFF=None
-#PROFCC = 
+PFLAGS = "-xP -O3 -mp1 -static"
+
 # print 'l1atl = ', l1atl
 for blas in l1routs:
    for pre in pres:
       if (CALLREF != 0):
-         [time,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, l1refs[i], 
-                                 opt=opt, cc=PROFCC, ccf=PROFF)
+         [time,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, l1refs[i], opt=opt)
          assert(time > 0.0)
          print "REF %20.20s : time=%f, mflop=%f" % (pre+l1refs[i], time, mf)
          refT.append(time)
          refMF.append(mf)
+
+         if ICC and PROFILE:
+            [time,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, l1refs[i], 
+                                    opt=opt, cc="iccprof", ccf=PFLAGS)
+            assert(time > 0.0)
+            print "PRO %20.20s : time=%f, mflop=%f" % (pre+l1refs[i], time, mf)
+            proT.append(time)
+            proMF.append(mf)
 
       if (CALLATL != 0):
          [time,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, l1atl[j], 
@@ -135,14 +140,9 @@ for blas in l1routs:
       j += 1
    i += 1
 
-print r"OPERATION   & gcc+ref & icc+ref &gcc+atlas&icc+atlas& fko     &     ifko\\\hline\hline"
-form = "%12s& %7.0f &         & %7.0f &         & %7.0f &        \\\\\\hline"
-#form2= "%12s& %7.0f &         & %7.0f\\footnotemark[1] &         & %7.0f &        \\\\\\hline"
-form2= "%12s& %7.0f &         & %7.0f*&         & %7.0f &        \\\\\\hline"
-
-form3= "%12s& %7.2f &         & %7.2f &         & %7.2f &        \\\\\\hline"
-form4= "%12s& %7.2f &         & %7.2f*&         & %7.2f &        \\\\\\hline"
-#form4= "%12s& %7.2f &         & %7.2f\\footnotemark[1] &         & %7.2f &        \\\\\\hline"
+print r"OPERATION   & gcc+ref & icc+ref & icc+prof & gcc+atlas&icc+atlas& fko     &     ifko\\\hline\hline"
+form = "%12s& %5.0f & %5.0f & %5.0f & %5.0f & %5.0f & %5.0f &      \\\\\\hline"
+form2= "%12s& %5.0f & %5.0f & %5.0f & %5.0f*& %5.0f*& %5.0f &      \\\\\\hline"
 
 #fkoMF = [1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8, 9.9, 10.1];
 #atlMF = [1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8, 9.9, 10.1];
@@ -152,28 +152,29 @@ i = 0
 j = 0
 for blas in l1routs:
    for pre in pres:
+      iccmf = 0.0 ; gccmf = 0.0; profmf = 0.0; atlg = 0.0; atli = 0.0
+      fkomf = 0.0
+      if CALLREF:
+         if ICC:
+            iccmf = refMF[j]
+            if PROFILE:
+               profmf = proMF[j]
+         else:
+            gccmf = refMF[j]
+      if CALLATL:
+         if ICC: atli = atlMF[j]
+         else : atlg = atlMF[j]
+      if CALLFKO:
+         fkomf = fkoMF[j]
       if (CCFat[j] == None or CCFat[j].find("assembler") == -1):
-         print form \
-         % ('{\\tt ' + pre + blas + '}', refMF[j], atlMF[j], fkoMF[j])
+         print form % ('{\\tt ' + pre + blas + '}', 
+                       gccmf, iccmf, profmf, atlg, atli, fkomf)
       else:
-         print form2 \
-         % ('{\\tt ' + pre + blas + '}', refMF[j], atlMF[j], fkoMF[j])
+         print form2 % ('{\\tt ' + pre + blas + '}', 
+                        gccmf, iccmf, profmf, atlg, atli, fkomf)
 
       j += 1
    i += 1
 i = 0
 j = 0
 print "\n\n"
-for blas in l1routs:
-   for pre in pres:
-      if (CCFat[j] == None or CCFat[j].find("assembler") == -1):
-         print form3 \
-         % ('{\\tt ' + pre + blas + '}', 1.0, atlMF[j]/refMF[j], 
-            fkoMF[j]/refMF[j])
-      else:
-         print form4 \
-         % ('{\\tt ' + pre + blas + '}',  1.0, atlMF[j]/refMF[j], 
-            fkoMF[j]/refMF[j])
-
-      j += 1
-   i += 1
