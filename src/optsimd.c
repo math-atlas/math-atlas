@@ -445,7 +445,7 @@ int SimdLoop(LOOPQ *lp)
 /*
  * Figure out what type of insts to translate
  */
-   if (IS_FLOAT(lp->vflag))
+   if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
    {
       sinst = sfinsts;
       vinst = vfinsts;

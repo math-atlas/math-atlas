@@ -1906,8 +1906,24 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                archvfregs[-VFREGBEG-op1]);
          break;
       case VFMOVS:
-         ap->next = PrintAssln("\tmovss\t%s, %s\n", archvdregs[-VFREGBEG-op2],
-                               archvdregs[-VFREGBEG-op1]);
+/*
+ *       Allow vector-to-fp regs for reg asg opt
+ */
+         assert (op1 < 0 && op2 < 0);
+         op1 = -op1;
+         op2 = -op2;
+         if (op1 >= FREGBEG && op1 < FREGEND)
+            op1 = op1 - FREGBEG + VFREGBEG;
+         if (op2 >= FREGBEG && op2 < FREGEND)
+            op2 = op2 - FREGBEG + VFREGBEG;
+         op1 = -op1;
+         op2 = -op2;
+         if (op1 != op2)
+            sptr = "movss";
+         else sptr = "movaps";
+         ap->next = PrintAssln("\t%s\t%s, %s\n", sptr, 
+                               archvfregs[-VFREGBEG-op2],
+                               archvfregs[-VFREGBEG-op1]);
          break;
       case VFMUL:
          assert(op1 == op2);
@@ -1921,7 +1937,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          break;
       case VFABS:
 	 assert(op1 == op2);
-	 assert(DTabsd);
+	 assert(DTabs);
          ap->next = PrintAssln("\tandps\t%s,%s\n",
                                GetDeref(SToff[DTabs-1].sa[2]),
 	                       archvfregs[-VFREGBEG-op1]);
@@ -1974,6 +1990,26 @@ struct assmln *lil2ass(BBLOCK *bbase)
             i = cp[0] | ((cp[1])<<2) | ((cp[2]-4)<<4) | ((cp[3]-4)<<6);
             ap->next = PrintAssln("\tshufps\t$%d,%s,%s\n", i,
                archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
+         }
+/*
+ *       Can use pshufd if all ops come from source
+ */
+         else if (cp[0] > 3 && cp[1] > 3 && cp[2] > 3 && cp[3] > 3)
+         {
+            j = 0;
+            for (i=0; i < 4; i++)
+            {
+               if (cp[i] == 4)
+                  j |= 0x0 << (i*2);
+               else if (cp[i] == 5)
+                  j |= 0x1 << (i*2);
+               else if (cp[i] == 6)
+                  j |= 0x2 << (i*2);
+               else 
+                  j |= 0x3 << (i*2);
+            }
+            ap->next = PrintAssln("\tpshufd\t$0x%x,%s,%s\n",
+               j, archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
          }
          else
             fko_error(__LINE__, "No such Sshuffle inst, imap=%d,%d,%d,%d!\n",
@@ -2044,7 +2080,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
         fko_error(__LINE__, "Unknown instruction %d after %s\n", ip->inst[0],
                   ap->ln);
       }
-/*      fprintf(stderr, "%s", ap->ln); */
+      fprintf(stderr, "%s", ap->ln); 
       ap = ap->next;
    }
    }
