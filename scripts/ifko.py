@@ -122,7 +122,10 @@ def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr,
                            "gcc", "-x assembler-with-cpp", opt=opt)
 #      mfs.append(mf)
       print "      %s : PFD = %d mflop = %s" % (arr, pfd, mf)
-      if mf > mfM:
+#
+#     Demand higher PFD is at least 1.0001 faster
+#
+      if mf > mfM*1.0001:
          mfM = mf
          pfdM = pfd
       pfd += LS
@@ -156,6 +159,7 @@ def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=32):
       print "      UR=%d, mflop=%.2f" % (UR, mf)
 #
 #     Demand that higher unrollings get at least 1% better
+#
       if (mf >= mf0*1.01):
          URB = UR
          mf0 = mf
