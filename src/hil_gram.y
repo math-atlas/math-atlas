@@ -2,6 +2,7 @@
 /*   #define YYDEBUG 1  */
    #include "ifko.h"
    #include "fko_h2l.h"
+   #include "fko_arch.h"
    int WhereAt=0, lnno=1;
    static short *LMA[8] = {NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL};
    static short *aalign=NULL;
@@ -85,7 +86,11 @@ fprintf(stderr, "grammer setting rout_name='%s'\n", rout_name);
                yyerror("Improper ROUT_BEGIN statement");
             CreateSysLocals();
             NumberLocalsByType();
-            CreateLocalDerefs();
+            #ifdef X86_64
+               CreateLocalDerefs(8);
+            #else
+               CreateLocalDerefs(4);
+            #endif
             WhereAt = 3;
          }
          | ROUT_END

@@ -69,62 +69,35 @@ int main(int nargs, char **args)
       case NEG:
          inststr = "NEG";
 	 break;
-      case LDL:
-         inststr = "LDL";
+      case LDS:
+         inststr = "LDS";
 	 break;
-      case STL:
-         inststr = "STL";
+      case STS:
+         inststr = "STS";
 	 break;
-      case SHLL:
-         inststr = "SHLL";
+      case SHLS:
+         inststr = "SHLS";
 	 break;
-      case SHLCCL:
-         inststr = "SHLCCL";
+      case SHRS:
+         inststr = "SHRS";
 	 break;
-      case SHRL:
-         inststr = "SHRL";
+      case SARS:
+         inststr = "SARS";
 	 break;
-      case SHRCCL:
-         inststr = "SHRCCL";
+      case ADDS:
+         inststr = "ADDS";
 	 break;
-      case SARL:
-         inststr = "SARL";
+      case SUBS:
+         inststr = "SUBS";
 	 break;
-      case ADDL:
-         inststr = "ADDL";
+      case CMPS:
+         inststr = "CMPS";
 	 break;
-      case ADDCCL:
-         inststr = "ADDCCL";
+      case MOVS:
+         inststr = "MOVS";
 	 break;
-      case SUBL:
-         inststr = "SUBL";
-	 break;
-      case SUBCCL:
-         inststr = "SUBCCL";
-	 break;
-      case MULL:
-         inststr = "MULL";
-	 break;
-      case UMULL:
-         inststr = "UMULL";
-	 break;
-      case DIVL:
-         inststr = "DIVL";
-	 break;
-      case UDIVL:
-         inststr = "UDIVL";
-	 break;
-      case CMPL:
-         inststr = "CMPL";
-	 break;
-      case MOVL:
-         inststr = "MOVL";
-	 break;
-      case NEGL:
-         inststr = "NEGL";
-	 break;
-      case ABSL:
-         inststr = "ABSL";
+      case NEGS:
+         inststr = "NEGS";
 	 break;
       case JMP:
          inststr = "JMP";
@@ -258,11 +231,11 @@ int main(int nargs, char **args)
       case VSHUF:
          inststr = "VSHUF";
 	 break;
-      case CVTIL:
-         inststr = "CVTIL";
+      case CVTIS:
+         inststr = "CVTIS";
 	 break;
-      case CVTLI:
-         inststr = "CVTLI";
+      case CVTSI:
+         inststr = "CVTSI";
 	 break;
       case CVTFI:
          inststr = "CVTFI";
@@ -276,17 +249,17 @@ int main(int nargs, char **args)
       case CVTID:
          inststr = "CVTID";
 	 break;
-      case CVTFL:
-         inststr = "CVTFL";
+      case CVTFS:
+         inststr = "CVTFS";
 	 break;
-      case CVTLF:
-         inststr = "CVTLF";
+      case CVTSF:
+         inststr = "CVTSF";
 	 break;
-      case CVTDL:
-         inststr = "CVTDL";
+      case CVTDS:
+         inststr = "CVTDS";
 	 break;
-      case CVTLD:
-         inststr = "CVTLD";
+      case CVTSD:
+         inststr = "CVTSD";
 	 break;
       case LAST_INST:
          inststr = "UNIMP";

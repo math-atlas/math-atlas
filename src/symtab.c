@@ -330,9 +330,6 @@ void NumberLocalsByType()
          case T_INT:
             SToff[k].sa[1] = niloc++;
             break;
-         case T_LONG:
-            SToff[k].sa[1] = nlloc++;
-            break;
          case T_FLOAT:
             if (IS_VEC(fl)) SToff[k].sa[1] = nvfloc++;
             else SToff[k].sa[1] = nfloc++;

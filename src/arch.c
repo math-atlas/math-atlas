@@ -115,25 +115,6 @@ short GetReg(short type)
 #else
    #define ASPALIGN 4
 #endif
-#ifdef ADDR64
-   #define AMOV MOVL
-   #define ASUB SUBL
-   #define AADD ADDL
-   #define ASHL SHLL
-   #define ASHR SHRL
-   #define AST  STL
-   #define ALD  LDL
-   #define ASIZE  8
-#else
-   #define AMOV MOV
-   #define ASUB SUB
-   #define AADD ADD
-   #define ASHL SHL
-   #define ASHR SHR
-   #define AST  ST
-   #define ALD  LD
-   #define ASIZE  4
-#endif
 
 void CreateSysLocals()
 /*
@@ -145,7 +126,7 @@ void CreateSysLocals()
    if (DTnzerod == -1)
       DTnzerod = STdef("_NEGZEROD", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
    if (DTabsd == -1)
-      DTabsd = STdef("_ABSVALD", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
+      DTabsd = STdef("_ABSVLD", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
    if (DTnzero == -1)
       DTnzero = STdef("_NEGZERO", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
    if (DTabs == -1)
@@ -679,10 +660,10 @@ void CreateEpilogue(int fsize,  /* frame size of returning func */
  * Restore stack pointer and return
  */
    if (savesp)
-      InsNewInst(NULL, NULL, ALD, -REG_SP, 
+      InsNewInst(NULL, NULL, LD, -REG_SP, 
                  AddDerefEntry(-REG_SP, 0, 0, savesp), 0);
    else
-      InsNewInst(NULL, NULL, AADD, -REG_SP, -REG_SP, STiconstlookup(fsize));
+      InsNewInst(NULL, NULL, ADD, -REG_SP, -REG_SP, STiconstlookup(fsize));
    InsNewInst(NULL, NULL, RET, 0, 0, 0);
    GetReg(-1);
 }
@@ -699,7 +680,7 @@ void CreatePrologue(int align,  /* local-area required byte-alignment */
                     )
 {
    short prog, rsav=0, k;
-   int i, k, maxalign=align, tsize, ssize=0;
+   int i, maxalign=align, tsize, ssize=0;
    int Aoff;  /* offset to arguments, from frame pointer */
    int Soff=0; /* system-dependant skip offset */
    INSTQ *ip, *oldhead, *oldtail;
@@ -777,7 +758,7 @@ fprintf(stderr, "prog=%d!, rout_name=%s\n", prog, rout_name);
    #endif
 /*   tsize = Aoff + csize + ssize + lsize; */
    Soff += csize;
-   #ifdef X86-64
+   #ifdef X86_64
       Loff = Soff + 8*(nir+ndr) + 4*nfr;
       tsize = Loff + lsize;
       if (tsize % ASPALIGN) tsize = (tsize/ASPALIGN)*ASPALIGN + ASPALIGN;
@@ -795,8 +776,8 @@ fprintf(stderr, "prog=%d!, rout_name=%s\n", prog, rout_name);
       }
       if (maxalign > ASPALIGN)
       {
-         Loff = Soff + 8*ndr + 4*nfr + 4*nir + ASIZE;
-         SAVESP = Loff-ASIZE;
+         Loff = Soff + 8*ndr + 4*nfr + 4*nir + 4;
+         SAVESP = Loff-4;
       }
       else Loff = Soff + 8*ndr + 4*nfr + 4*nir;
       if (Loff%align) Loff = (Loff/align)*align + align;
@@ -810,7 +791,7 @@ fprintf(stderr, "prog=%d!, rout_name=%s\n", prog, rout_name);
          rsav = GetReg(T_INT);
          assert(rsav <= NSIR);
          rsav = -rsav;
-         InsNewInst(NULL, oldhead, AMOV, rsav, -REG_SP, 0);
+         InsNewInst(NULL, oldhead, MOV, rsav, -REG_SP, 0);
       }
       else
    #endif
@@ -819,15 +800,15 @@ fprintf(stderr, "prog=%d!, rout_name=%s\n", prog, rout_name);
       InsNewInst(NULL, oldhead, COMMENT, STstrconstlookup("Adjust sp"), 0, 0);
       InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
    }
-   InsNewInst(NULL, oldhead, ASUB, -REG_SP, -REG_SP, STiconstlookup(tsize));
+   InsNewInst(NULL, oldhead, SUB, -REG_SP, -REG_SP, STiconstlookup(tsize));
    if (SAVESP)
    {
       i = const2shift(maxalign);
       assert(i >= 3);
       i = STiconstlookup(i);
-      InsNewInst(NULL, oldhead, ASHR, -REG_SP, -REG_SP, i);
-      InsNewInst(NULL, oldhead, ASHL, -REG_SP, -REG_SP, i);
-      InsNewInst(NULL, oldhead, AST, AddDerefEntry(-REG_SP, 0, 0, SAVESP), 
+      InsNewInst(NULL, oldhead, SHR, -REG_SP, -REG_SP, i);
+      InsNewInst(NULL, oldhead, SHL, -REG_SP, -REG_SP, i);
+      InsNewInst(NULL, oldhead, ST, AddDerefEntry(-REG_SP, 0, 0, SAVESP), 
                  rsav, 0);
    }
 fprintf(stderr, "Local offset=%d\n", Loff);

@@ -99,8 +99,8 @@
    #define NDR   8                      /* # of double regs */
    #define NSDR  8
    #define IRETREG 4
-   #define FRETREG FREGBEG
-   #define DRETREG DREGBEG
+   #define FRETREG (NFR+FREGBEG)
+   #define DRETREG (NFR+DREGBEG)
    #ifdef ARCH_DECLARE
       char *archiregs[NIR] = 
       {"@esp", "@edx", "@ecx", "@eax", "@ebp", "@ebx", "@esi", "@edi"};
@@ -118,13 +118,12 @@
    #define NIR 16
    #define NSIR 3
    #define NFR   16                      /* # of float regs */
-   #define TNFR  16
    #define NSFR  16 
    #define NDR   16                      /* # of double regs */
    #define NSDR  16 
    #define IRETREG 4
-   #define FRETREG (NFR+FREGBEG)
-   #define DRETREG (NFR+DREGBEG)
+   #define FRETREG FREGBEG
+   #define DRETREG DREGBEG
    #ifdef ARCH_DECLARE
       char *archsregs[NSR] = 
       {"@esp", "@edx", "@ecx", "@eax", "@ebp", "@ebx", "@esi", "@edi"};
@@ -187,6 +186,12 @@
 #endif
 #ifndef TNIR
    #define TNIR NIR
+#endif
+#ifndef TNFR
+   #define TNFR NFR
+#endif
+#ifndef TNDR
+   #define TNDR NDR
 #endif
 
 short GetReg(short type);

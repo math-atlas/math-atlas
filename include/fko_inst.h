@@ -134,16 +134,16 @@ enum inst
 /*
  * Type conversion instructions
  */
-   CVTIL,
-   CVTLI,
+   CVTIS,
+   CVTSI,
    CVTFI,
    CVTIF,
    CVTDI,
    CVTID,
-   CVTFL,
-   CVTLF,
-   CVTDL,
-   CVTLD,
+   CVTFS,
+   CVTSF,
+   CVTDS,
+   CVTSD,
    LAST_INST
 };
 

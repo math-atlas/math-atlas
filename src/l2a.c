@@ -313,7 +313,7 @@ struct assmln *lil2ass(INSTQ *head)
          #ifdef X86_64
             ap->next = PrintAssln("\tmovq\t%s,%s\n", GetDeref(op2),
                                   archiregs[-IREGBEG-op1]);
-         elif defined(X86)
+         #elif defined(X86)
             ap->next = PrintAssln("\tmovl\t%s,%s\n", GetDeref(op2),
                                   archiregs[-IREGBEG-op1]);
          #elif defined(SPARC)
@@ -650,7 +650,7 @@ struct assmln *lil2ass(INSTQ *head)
             assert(op1 == op2);
             ap->next = PrintAssln("\tsubq\t%s, %s\n", GetIregOrConst(op3), 
                                   archiregs[-IREGBEG-op1]);
-         #ifdef X86
+         #elif defined(X86)
             assert(op1 == op2);
             ap->next = PrintAssln("\tsubl\t%s, %s\n", GetIregOrConst(op3), 
                                   archiregs[-IREGBEG-op1]);
@@ -1186,7 +1186,7 @@ struct assmln *lil2ass(INSTQ *head)
       case CVTDI:
       case CVTID:
       case CVTSF:
-      case CVTLD:
+      case CVTSD:
    #ifdef X86_64
       case CVTDS:
       case CVTFS:

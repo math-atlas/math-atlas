@@ -4,27 +4,23 @@
 static short type2len(int type)
 {
    short len=4;
-   if (type == T_LONG || type == T_DOUBLE) len = 8;
+   #ifdef ArchPtrIsLong
+      if (type == T_INT || type == T_DOUBLE) len = 8;
+   #else
+      if (type == T_DOUBLE) len = 8;
+   #endif
    return(len);
 }
 static short type2shift(int type)
 {
    short len=2;
-   if (type == T_LONG || type == T_DOUBLE) len = 3;
+   #ifdef  ArchPtrIsLong
+      if (type == T_DOUBLE || type == T_INT) len = 3;
+   #else
+      if (type == T_DOUBLE) len = 3;
+   #endif
    return(len);
 }
-
-#ifdef ArchPtrIsLong
-   #define ASHL SHLL
-   #define AADD ADDL
-   #define ASUB SUBL
-   #define AINT T_LONG
-#else
-   #define ASHL SHL
-   #define AADD ADD
-   #define ASUB SUB
-   #define AINT T_INT
-#endif
 
 static int LocalLoad(short id)
 /*
@@ -37,13 +33,8 @@ static int LocalLoad(short id)
    id--;
    if (IS_PTR(STflag[id]))
    {
-      #ifdef ArchPtrIsLong
-         inst = LDL;
-         reg = GetReg(T_LONG);
-      #else
-         inst = LD;
-         reg = GetReg(T_INT);
-      #endif
+      inst = LD;
+      reg = GetReg(T_INT);
    }
    else
    {
@@ -53,9 +44,6 @@ static int LocalLoad(short id)
       {
       case T_INT:
          inst = LD;
-         break;
-      case T_LONG:
-         inst = LDL;
          break;
       case T_FLOAT:
          inst = FLD;
@@ -79,9 +67,6 @@ static void LocalStore(short id, short sreg)
    {
    case T_INT:
       inst = ST;
-      break;
-   case T_LONG:
-      inst = STL;
       break;
    case T_FLOAT:
       inst = FST;
@@ -136,14 +121,11 @@ fprintf(stderr, "DoMove %d %d (%s %s)\n", dest, src, STname[dest-1]?STname[dest-
    {
       type = FLAG2PTYPE(sflag);
       rsrc = GetReg(type);
-      if (IS_CONST(sflag) && (type == T_INT || type == T_LONG) && 
-          SToff[src-1].i == 0)
-         InsNewInst(NULL, NULL, type == T_INT ? SUB : SUBL, -rsrc, 
-                    -rsrc, -rsrc);
+      if (IS_CONST(sflag) && (type == T_INT) && SToff[src-1].i == 0)
+         InsNewInst(NULL, NULL, XOR, -rsrc, -rsrc, -rsrc);
       else
       {
          if (type == T_INT) mov = MOV;
-         else if (type == T_LONG) mov = MOVL;
          else if (type == T_FLOAT) mov = FMOV;
          else 
          {
@@ -169,10 +151,17 @@ short AddArrayDeref(short array, short index, int offset)
  *    array[index+offset]
  */
 {
-   int mul=4, flag;
-   flag = STflag[array-1];
-   if (IS_DOUBLE(flag) || IS_LONG(flag)) mul = 8;
-   else if (IS_CHAR(flag)) mul = 1;
+   #ifdef X86_64
+      int mul=8, flag;
+      flag = STflag[array-1];
+         if (IS_FLOAT(flag)) mul = 4;
+      else if (IS_CHAR(flag)) mul = 1;
+   #else
+      int mul=4, flag;
+      flag = STflag[array-1];
+         if (IS_DOUBLE(flag)) mul = 8;
+      else if (IS_CHAR(flag)) mul = 1;
+   #endif
    assert(!IS_VEC(flag));
    return(AddDerefEntry(array, index, mul, offset));
 }
@@ -213,7 +202,7 @@ fprintf(stderr, "FixDeref: [%d, %d, %d, %d]\n", DT[k], DT[k+1], DT[k+2], DT[k+3]
  */
       if (!ArchHasLoadMul(DT[k+2]))
       {
-         InsNewInst(NULL, NULL, ASHL, DT[k+1], DT[k+1], 
+         InsNewInst(NULL, NULL, SHL, DT[k+1], DT[k+1], 
                     STiconstlookup(type2shift(type)));
          DT[k+2] = 1;
       }
@@ -225,7 +214,7 @@ fprintf(stderr, "FixDeref: [%d, %d, %d, %d]\n", DT[k], DT[k+1], DT[k+2], DT[k+3]
       #ifndef ArchConstAndIndex
          if (DT[k+3])
          {
-            InsNewInst(NULL, NULL, AADD, DT[k+1], DT[k+1], 
+            InsNewInst(NULL, NULL, ADD, DT[k+1], DT[k+1], 
                        STiconstlookup(DT[k+3]));
             DT[k+3] = 0;
          }
@@ -250,9 +239,6 @@ void DoArrayStore(short ptr, short id)
    {
    case T_INT:
       inst = ST;
-      break;
-   case T_LONG:
-      inst = STL;
       break;
    case T_FLOAT:
       inst = FST;
@@ -282,9 +268,6 @@ fprintf(stderr, "\n\nANAME=%s, TYPE=%d\n\n", STname[ptr-1] ? STname[ptr-1] : "NU
    {
    case T_INT:
       ld = LD;
-      break;
-   case T_LONG:
-      ld = LDL;
       break;
    case T_FLOAT:
       ld = FLD;
@@ -328,10 +311,10 @@ void HandlePtrArith(short dest, short src0, char op, short src1)
    else
    {
       rs1 = LocalLoad(src1);
-      InsNewInst(NULL, NULL, ASHL, -rs1, -rs1, 
+      InsNewInst(NULL, NULL, SHL, -rs1, -rs1, 
                  STiconstlookup(type2shift(type)));
    }
-   InsNewInst(NULL, NULL, op == '+' ? AADD : ASUB, -rs0, -rs0, -rs1);
+   InsNewInst(NULL, NULL, op == '+' ? ADD : SUB, -rs0, -rs0, -rs1);
    LocalStore(dest, rs0);
    GetReg(-1);
 }
@@ -360,7 +343,7 @@ void DoArith(short dest, short src0, char op, short src1)
    }
    else rs1 = 0;
    if ( (op == '%' || op == '>' || op == '<') && 
-        (type != T_INT && type != T_LONG) )
+        (type != T_INT && type != T_SHORT) )
       yyerror("modulo and shift not defined for non-integer types");
    switch(op)
    {
@@ -369,9 +352,6 @@ void DoArith(short dest, short src0, char op, short src1)
       {
       case T_INT:
          inst = ADD;
-         break;
-      case T_LONG:
-         inst = ADDL;
          break;
       case T_FLOAT:
          inst = FADD;
@@ -387,9 +367,6 @@ void DoArith(short dest, short src0, char op, short src1)
       case T_INT:
          inst = SUB;
          break;
-      case T_LONG:
-         inst = SUBL;
-         break;
       case T_FLOAT:
          inst = FSUB;
          break;
@@ -403,9 +380,6 @@ void DoArith(short dest, short src0, char op, short src1)
       {
       case T_INT:
          inst = MUL;
-         break;
-      case T_LONG:
-         inst = MULL;
          break;
       case T_FLOAT:
          inst = FMUL;
@@ -421,9 +395,6 @@ void DoArith(short dest, short src0, char op, short src1)
       case T_INT:
          inst = DIV;
          break;
-      case T_LONG:
-         inst = DIVL;
-         break;
       case T_FLOAT:
          inst = FDIV;
          break;
@@ -437,11 +408,9 @@ void DoArith(short dest, short src0, char op, short src1)
       break;
    case '>': /* dest = src0 >> src1 */
       if (type == T_INT) inst = SHR;
-      else inst = SHRL;
       break;
    case '<': /* dest = src0 << src1 */
       if (type == T_INT) inst = SHL;
-      else inst = SHLL;
       break;
    case 'm': /* dest += src0 * src1 */
       if (type == T_FLOAT || type == T_DOUBLE)
@@ -471,9 +440,6 @@ void DoArith(short dest, short src0, char op, short src1)
       case T_INT:
          inst = NEG;
          break;
-      case T_LONG:
-         inst = NEGL;
-         break;
       case T_FLOAT:
          inst = FNEG;
 	 DTnzerod = -1;
@@ -490,9 +456,6 @@ void DoArith(short dest, short src0, char op, short src1)
 /*
       case T_INT:
          inst = ABS;
-         break;
-      case T_LONG:
-         inst = ABSL;
          break;
 */
       case T_FLOAT:
@@ -522,12 +485,6 @@ void DoReturn(short rret)
       type = FLAG2PTYPE(STflag[rret-1]);
       switch(type)
       {
-      case T_LONG:
-	 ld = LDL;
-	 mov = MOVL;
-         rout_flag |= IRET_BIT;
-         retreg = IRETREG;
-         break;
       case T_INT:
          mov = MOV;
 	 ld = LD;
