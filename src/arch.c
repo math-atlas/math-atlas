@@ -536,6 +536,7 @@ fprintf(stderr, "tsize=%d, SAVESP=%d\n\n", tsize, SAVESP);
       InsNewInst(NULL, oldhead, AST, AddDerefEntry(-REG_SP, 0, 0, SAVESP), 
                  -rsav, 0);
    }
+fprintf(stderr, "Local offset=%d\n", Loff);
    CorrectLocalOffsets(Loff);
 /*
  * Save registers

@@ -1,0 +1,12 @@
+ROUTINE fsimple;
+PARAMS :: f1, f2;
+DOUBLE :: f1, f2;
+ROUT_LOCALS;
+   DOUBLE :: two, pf, tmp;
+   CONST_INIT :: two=2.0, pf=0.5;
+ROUT_BEGIN;
+   tmp = f1 + pf;
+   f2 += two;
+   tmp += f2;
+   RETURN tmp;
+ROUT_END;
