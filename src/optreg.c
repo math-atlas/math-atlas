@@ -2157,7 +2157,6 @@ INSTQ *CopyPropTrans(BLIST *scope, int scopeblks, BBLOCK *blk, INSTQ *ipret)
    int i, iv;
    int change;
    short dest, src, mov;
-   extern int FKO_BVTMP;
 
    dest = -ipret->inst[1];
    src = -ipret->inst[2];
@@ -2239,3 +2238,20 @@ int DoCopyProp(BLIST *scope)
 /*   fprintf(stderr, "\nCopyProp CHANGE=%d\n", CHANGE); */
    return(CHANGE);
 }
+
+#if 0
+int EnforceLoadStore(BLIST *scope)
+/*
+ * transforms all instructions that directly access memory to LD/ST followed
+ * by inst operating on registers
+ */
+{
+   extern int FKO_BVTMP;
+
+   if (!INDEADU2D)
+      CalcAllDeadVariables();
+   else if (!CFUSETU2D || !CFU2D || !INUSETU2D)
+      CalcInsOuts(bbbase);
+
+}
+#endif
