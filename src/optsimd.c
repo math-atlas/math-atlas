@@ -1,6 +1,6 @@
 #include "fko.h"
 
-ILIST *FindPrevStore(INSTQ *ipstart, short var, int blkvec)
+ILIST *FindPrevStore(INSTQ *ipstart, short var, int blkvec, int ivseen)
 /*
  * Finds prev store of var starting with inst ipstart, stopping search if
  * pred block is not in blkvec.
@@ -13,15 +13,17 @@ ILIST *FindPrevStore(INSTQ *ipstart, short var, int blkvec)
    BLIST *bl;
    if (ipstart)
    {
+      SetVecBit(ivseen, ipstart->myblk->bnum-1, 1);
       for (ip=ipstart; ip; ip = ip->prev)
          if (IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]] == var)
             return(NewIlist(ip, NULL));
       for (bl=ipstart->myblk->preds; bl; bl = bl->next)
       {
          if (BitVecCheck(blkvec, bl->blk->bnum-1) &&
+             !BitVecCheck(ivseen, bl->blk->bnum-1) &&
              BitVecCheck(bl->blk->outs, var+TNREG-1))
          {
-            il2 = FindPrevStore(bl->blk->ainstN, var, blkvec);
+            il2 = FindPrevStore(bl->blk->ainstN, var, blkvec, ivseen);
             if (il)
                il2->next = il;
             il = il2;
@@ -31,7 +33,7 @@ ILIST *FindPrevStore(INSTQ *ipstart, short var, int blkvec)
    return(il);
 }
 
-ILIST *FindNextLoad(INSTQ *ipstart, short var, int blkvec)
+ILIST *FindNextLoad(INSTQ *ipstart, short var, int blkvec, int ivseen)
 /*
  * Finds next load of var starting with inst ipstart
  * RETURNS : list of INSTQ that mark the next load of var (multiple in the
@@ -43,20 +45,24 @@ ILIST *FindNextLoad(INSTQ *ipstart, short var, int blkvec)
 
    if (ipstart)
    {
+      SetVecBit(ivseen, ipstart->myblk->bnum-1, 1);
       for (ip=ipstart; ip; ip = ip->next)
       {
          if (IS_LOAD(ip->inst[0]) && STpts2[ip->inst[1]] == var)
             return(NewIlist(ip, NULL));
       }
       assert(ipstart->myblk);
+
       if (ipstart->myblk->usucc && 
+          !BitVecCheck(ivseen, ipstart->myblk->usucc->bnum-1) &&
           BitVecCheck(blkvec, ipstart->myblk->usucc->bnum-1) &&
           BitVecCheck(ipstart->myblk->usucc->ins, var+TNREG-1))
-         il = FindNextLoad(ipstart->myblk->usucc->ainst1, var, blkvec);
-      if (ipstart->myblk->csucc && 
+         il = FindNextLoad(ipstart->myblk->usucc->ainst1, var, blkvec, ivseen);
+      if (ipstart->myblk->csucc &&  
+          !BitVecCheck(ivseen, ipstart->myblk->csucc->bnum-1) &&
           BitVecCheck(blkvec, ipstart->myblk->csucc->bnum-1) &&
           BitVecCheck(ipstart->myblk->csucc->ins, var+TNREG-1))
-         il2 = FindNextLoad(ipstart->myblk->csucc->ainst1, var, blkvec);
+         il2 = FindNextLoad(ipstart->myblk->csucc->ainst1, var, blkvec, ivseen);
       if (!il)
          il = il2;
       else 
@@ -73,8 +79,13 @@ short FindReadUseType(INSTQ *ip, short var, int blkvec)
 {
    short j=0;
    ILIST *ib, *il;
+   static int iv=0;
 
-   ib = FindNextLoad(ip, var, blkvec);
+   if (!iv)
+      iv = NewBitVec(32);
+   else
+      SetVecAll(iv, 0);
+   ib = FindNextLoad(ip, var, blkvec, iv);
    for (il=ib; il; il = il->next)
    {
       if (ip->next->inst[0] == FADD || ip->next->inst[0] == FADDD)
@@ -361,7 +372,8 @@ int DoLoopSimdAnal(LOOPQ *lp)
  */
          else if (s[i] & VS_LIVEOUT)
          {
-            ib = FindPrevStore(lp->posttails->blk->inst1, sp[i],lp->blkvec);
+            SetVecAll(iv, 0);
+            ib = FindPrevStore(lp->posttails->blk->inst1, sp[i],lp->blkvec, iv);
             j = 0;
             for (il=ib; il; il = il->next)
             {
