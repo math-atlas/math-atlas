@@ -2423,6 +2423,8 @@ int DoReverseCopyProp(BLIST *scope)
                 nuse = 0;
                 for (ips=ip->prev; ips; ips = ips->next)
                 {
+                   if (!ips->set)
+                      continue;
                    if (BitVecCheck(ips->set, src-1) && 
                        !BitVecCheck(ips->use, src-1))
                       break;
@@ -2443,7 +2445,7 @@ int DoReverseCopyProp(BLIST *scope)
    }
    if (nchanges)
       CFUSETU2D = INDEADU2D = 0;
-   fprintf(stderr, "RCP: nchanges=%d\n", nchanges);
+//   fprintf(stderr, "RCP: nchanges=%d\n", nchanges);
    return(nchanges);
 }
 int DoEnforceLoadStore(BLIST *scope)
@@ -2558,7 +2560,7 @@ int DoEnforceLoadStore(BLIST *scope)
 }
 
 #if 1
-INSTQ *FindNextUseInBlock(INSTQ *ip0, int iv)
+INSTQ *FindNextUseInBlock(INSTQ *ip0, int var)
 /*
  * RETURNS: INSTQ of next instruction that uses all vars set in iv within
  *          block starting at ip0, NULL if not found
@@ -2569,7 +2571,7 @@ INSTQ *FindNextUseInBlock(INSTQ *ip0, int iv)
    {
       for (ip=ip0->next; ip; ip = ip->next)
       {
-         if (ip->use && !BitVecCheckComb(iv, ip->use, '-'))
+         if (ip->use && BitVecCheck(ip->use, var))
             return(ip);
       }
    }
@@ -2585,6 +2587,7 @@ int DoRemoveOneUseLoads(BLIST *scope)
    BLIST *bl;
    int nchanges=0, iv, reg;
    enum inst inst;
+   short k;
    extern int FKO_BVTMP;
 
    if (!INDEADU2D)
@@ -2603,13 +2606,13 @@ int DoRemoveOneUseLoads(BLIST *scope)
          inst = ip->inst[0];
          if (IS_LOAD(inst) && inst != VFLDS && inst != VDLDS)
          {
-            BitVecCopy(iv, Reg2Regstate(-ip->inst[1]));
-            ipuse = FindNextUseInBlock(ip, iv);
+            k = -ip->inst[1];
+            ipuse = FindNextUseInBlock(ip, k-1);
             if (ipuse && ipuse->inst[3] == ip->inst[1] &&
-                !BitVecCheckComb(iv, ip->deads, '-'))
+                BitVecCheck(ipuse->deads, k-1))
             {
                ipuse->inst[3] = ip->inst[2];
-               KillThisInst(ip);
+               DelInst(ip);
                CalcThisUseSet(ipuse);
                nchanges++;
             }
@@ -2618,7 +2621,7 @@ int DoRemoveOneUseLoads(BLIST *scope)
    }
    if (nchanges)
       CFUSETU2D = INDEADU2D = 0;
-   fprintf(stderr, "U1: nchanges=%d\n", nchanges);
+//   fprintf(stderr, "U1: nchanges=%d\n", nchanges);
    return(nchanges);
 }
 #endif
