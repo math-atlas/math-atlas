@@ -1586,9 +1586,8 @@ fprintf(stderr, "\n\n** rsav=%d,%s**\n\n", rsav, Int2Reg(rsav <= 0 ? rsav : -rsa
          if (rsav < 0)
          {
             LOAD1 = -rsav;
-            rsav = GetReg(T_INT);
-            rsav = GetReg(T_INT);
-            while (iparareg[rsav-IREGBEG]) rsav = GetReg(T_INT);
+            rsav = IREGBEG+1;
+            while(iparareg[rsav-IREGBEG]) rsav++;
          }
 #else
          rsav = GetReg(T_INT);

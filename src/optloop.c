@@ -265,9 +265,6 @@ void KillLoopControl(LOOPQ *lp)
          else
             ip = ip->next;
       }
-      #if IFKO_DEBUG_LEVEL >= 1
-         assert(ip);
-      #endif
    }
 }
 
@@ -282,37 +279,41 @@ static void ForwardLoop(LOOPQ *lp, INSTQ **ipinit, INSTQ **ipupdate,
 
    r0 = GetReg(T_INT);
    r1 = GetReg(T_INT);
+
    if (IS_CONST(STflag[lp->beg-1]))
       *ipinit = ip = NewInst(NULL, NULL, NULL, MOV, -r0, lp->beg, 0);
    else
-      *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r0, lp->beg, 0);
-   ip->next = NewInst(NULL, NULL, NULL, ST, lp->I, -r0, 0);
-   *ipupdate = ip = NewInst(NULL, NULL, NULL, LD, -r0, lp->I, 0);
-   ip = ip->next;
+      *ipinit=ip=NewInst(NULL, NULL, NULL, LD, -r0, SToff[lp->beg-1].sa[2], 0);
+   ip->next = NewInst(NULL, NULL, NULL, ST, SToff[lp->I-1].sa[2], -r0, 0);
+
+   *ipupdate = ip = NewInst(NULL, NULL, NULL, LD, -r0, SToff[lp->I-1].sa[2], 0);
    if (IS_CONST(STflag[lp->inc-1]))
       ip->next = NewInst(NULL, NULL, NULL, ADD, -r0, -r0, lp->inc);
    else
    {
-      ip->next = NewInst(NULL, NULL, NULL, LD, -r1, lp->inc, 0);
+      ip->next = NewInst(NULL, NULL, NULL, LD, -r1, SToff[lp->inc-1].sa[2], 0);
       ip = ip->next;
       ip->next = NewInst(NULL, NULL, NULL, ADD, -r0, -r0, -r1);
    }
-   *iptest = ip = NewInst(NULL, NULL, NULL, LD, -r0, lp->I, 0);
+   ip = ip->next;
+   ip->next = NewInst(NULL, NULL, NULL, ST, SToff[lp->I-1].sa[2], -r0, 0);
+
+   *iptest = ip = NewInst(NULL, NULL, NULL, LD, -r0, SToff[lp->I-1].sa[2], 0);
    if (IS_CONST(STflag[lp->end-1]))
       ip->next = NewInst(NULL, NULL, NULL, CMP, -ICC0, -r0, lp->end);
    else
    {
-      ip->next = NewInst(NULL, NULL, NULL, LD, -r1, lp->end, 0);
+      ip->next = NewInst(NULL, NULL, NULL, LD, -r1, SToff[lp->end-1].sa[2], 0);
       ip = ip->next;
       ip->next = NewInst(NULL, NULL, NULL, CMP, -ICC0, -r0, -r1);
    }
    ip = ip->next;
    if (lp->flag & L_MINC_BIT)
-      InsNewInst(NULL, NULL, NULL, JNE, -PCREG, -ICC0, lp->body_label);
+      ip->next = NewInst(NULL, NULL, NULL, JNE, -PCREG, -ICC0, lp->body_label);
    else if (lp->flag & L_NINC_BIT)
-      InsNewInst(NULL, NULL, NULL, JGT, -PCREG, -ICC0, lp->body_label);
+      ip->next = NewInst(NULL, NULL, NULL, JGT, -PCREG, -ICC0, lp->body_label);
    else
-      InsNewInst(NULL, NULL, NULL, JLT, -PCREG, -ICC0, lp->body_label);
+      ip->next = NewInst(NULL, NULL, NULL, JLT, -PCREG, -ICC0, lp->body_label);
 
 }
 
@@ -364,6 +365,36 @@ static void SimpleLC(short I, short I0, short N, short inc, short lab,
    GetReg(-1);
 }
 
+void AddLoopControl(LOOPQ *lp, INSTQ *ipinit, INSTQ *ipupdate, INSTQ *iptest)
+{
+   INSTQ *ip, *ipl;
+   BLIST *bl;
+
+   ipl = FindCompilerFlag(lp->preheader, CF_LOOP_INIT);
+   for (ip = ipinit; ip; ip = ip->next)
+      ipl = InsNewInst(NULL, ipl, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
+                       ip->inst[3]);
+
+   for (bl=lp->tails; bl; bl = bl->next)
+   {
+      ipl = FindCompilerFlag(bl->blk, CF_LOOP_UPDATE);
+      #if IFKO_DEBUG_LEVEL >= 1
+         assert(ipl);
+      #endif
+      for (ip = ipupdate; ip; ip = ip->next)
+         ipl = InsNewInst(NULL, ipl, NULL, ip->inst[0], ip->inst[1],
+                          ip->inst[2], ip->inst[3]);
+
+      ipl = FindCompilerFlag(bl->blk, CF_LOOP_TEST);
+      #if IFKO_DEBUG_LEVEL >= 1
+         assert(ipl);
+      #endif
+      for (ip = iptest; ip; ip = ip->next)
+         ipl = InsNewInst(NULL, ipl, NULL, ip->inst[0], ip->inst[1],
+                          ip->inst[2], ip->inst[3]);
+   }
+}
+
 int OptimizeLoopControl(LOOPQ *lp, int unroll)
 /*
  * attempts to generate optimized loop control for the given loop
@@ -377,6 +408,14 @@ int OptimizeLoopControl(LOOPQ *lp, int unroll)
    int CHANGE=0;
 
    if (unroll <= 1) unroll = 1;
+#if 1
+   KillLoopControl(lp);
+   ForwardLoop(lp, &ipinit, &ipupdate, &iptest);
+   AddLoopControl(lp, ipinit, ipupdate, iptest);
+   KillAllInst(ipinit);
+   KillAllInst(ipupdate);
+   KillAllInst(iptest);
+#else
 /*
  * If I is not referenced in loop, we can do simple N..0 iteration
  */
@@ -408,4 +447,5 @@ int OptimizeLoopControl(LOOPQ *lp, int unroll)
       CHANGE = 1;
    }
    return(CHANGE);
+#endif
 }

@@ -334,6 +334,8 @@ int GoToTown(int SAVESP)
    NewBasicBlocks(bbbase);
    FindLoops(); 
    CheckFlow(bbbase, __FILE__, __LINE__);
+   if (optloop && 1)
+      OptimizeLoopControl(optloop, 1);
    CalcInsOuts(bbbase); 
    CalcAllDeadVariables();
 
@@ -343,7 +345,7 @@ int GoToTown(int SAVESP)
       CalcAllDeadVariables();
    AddBlockComments(bbbase);
    AddLoopComments();
-#if 1
+#if 0
    AddSetUseComments(bbbase);   
    AddDeadComments(bbbase); 
 #endif
