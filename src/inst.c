@@ -36,7 +36,7 @@ INSTQ *InsNewInst(BBLOCK *blk, INSTQ *prev, INSTQ *next, enum inst ins,
  * Otherwise (both prev and next are NULL), instruction is added to end.
  */
 {
-   INSTQ *ip;
+   INSTQ *ip, *p;
    extern BBLOCK *bbbase;
 /*
  * Adding to end of queue (which may not yet exist)
@@ -77,6 +77,16 @@ INSTQ *InsNewInst(BBLOCK *blk, INSTQ *prev, INSTQ *next, enum inst ins,
                                 ins, dest, src1, src2);
       if (ip->prev) ip->prev->next = ip;
       else blk->inst1 = ip;
+   }
+/*
+ * Reset ainst1 and ainstN if necessary
+ */
+   if (ins != COMMENT)
+   {
+      for (p=blk->inst1; p && p->inst[0] == COMMENT; p = p->next);
+      blk->ainst1 = p;
+      for (p=blk->instN; p && p->inst[0] == COMMENT; p = p->prev);
+      blk->ainstN = p;
    }
    return(ip);
 }

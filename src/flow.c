@@ -315,6 +315,7 @@ BBLOCK *FindBlockWithLabel(BBLOCK *bp, int ilab)
    {
       do
       {
+fprintf(stderr, "looking for %d, block=%d, ilab=%d\n", ilab, bp->bnum, bp->ilab);
          if (bp->ilab == ilab) break;
          bp = bp->down;
       }
@@ -384,6 +385,12 @@ void FindPredSuccBlocks(BBLOCK *bbase)
          else if (inst != RET)
          {
             bp->usucc = FindBlockWithLabel(bbase, bp->ainstN->inst[2]);
+            if (!bp->usucc)
+            {
+               fprintf(stderr, "could not find label %d (%s)!!\n",
+                       bp->ainstN->inst[2], STname[bp->ainstN->inst[2]-1]);
+               while(1);
+            }
             assert(bp->usucc);
          }
       }

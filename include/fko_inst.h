@@ -7,6 +7,7 @@ enum comp_flag
  */
 {
    CF_REGSAVE,
+   CF_REGRESTORE,
    CF_LOOP_INIT,  /* loop# */
    CF_LOOP_BODY,
    CF_LOOP_UPDATE,

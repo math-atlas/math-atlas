@@ -21,10 +21,7 @@ int main(int nargs, char **args)
    bp->inst1 = bp->instN = NULL;
    yyparse();
    fclose(fpin);
-   bp = FindBasicBlocks(bbbase);
-   KillAllBasicBlocks(bbbase);
-   bbbase = bp;
-   FixFrame(bbbase);
+   GenPrologueEpilogueStubs(bbbase);
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    NewBasicBlocks(bbbase);
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
@@ -47,6 +44,7 @@ fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    AddDeadComments(bbbase);
 #endif
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
+   FinalizePrologueEpilogue(bbbase);
    abase = lil2ass(bbbase);
    KillAllBasicBlocks(bbbase);
    dump_assembly(stdout, abase);

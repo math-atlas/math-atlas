@@ -837,30 +837,3 @@ fprintf(stderr, "dhoisting/pushing %d, %s\n", dregs[i], STname[dregs[i]-1]);
                 "START global asg sunk stores");
    CFU2D = CFUSETU2D = INUSETU2D = INDEADU2D = 0;
 }
-
-#if 0
-void SaveRestoreRegs(BBLOCK *bbase)
-/*
- * Inserts instructions to save and restore callee-saved regs
- */
-{
-   INSTQ *ip;
-   int i, ni, nf, nd;
-   int isav[TNIR], fsav[TNFR], dsav[TNDR];
-/* 
- * Find place to Insert save statements
- */
-   FindRegUsage(bbase, &ni, isav, &nf, fsav, &nd, dsav);
-   RemoveNosaveregs(IREGBEG, TNIR, isav, icalleesave);
-   ni = GetRegSaveList(IREGBEG, ni, isav);
-   RemoveNosaveregs(FREGBEG, TNFR, fsav, fcalleesave);
-   nf = GetRegSaveList(FREGBEG, nf, fsav);
-   RemoveNosaveregs(DREGBEG, TNDR, dsav, dcalleesave);
-   nd = GetRegSaveList(DREGBEG, nd, dsav);
-
-   for (ip=bbase->inst1; ip; ip = ip->next)
-      if (ip->inst[0] == CMPFLAG && ip->inst[1] == CF_REGSAVE) break;
-   assert(ip);
-   PrintMajorComment(bbase, ip, NULL, "Save registers");
-}
-#endif

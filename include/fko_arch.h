@@ -350,6 +350,7 @@
 #endif
 
 short GetReg(short type);
-void FixFrame(BBLOCK *bbase);
+void GenPrologueEpilogueStubs(BBLOCK *bbase);
+void FinalizePrologueEpilogue(BBLOCK *bbase);
 
 #endif

@@ -1548,6 +1548,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
       case CMPFLAG:
          switch (op1)
          {
+         case CF_REGRESTORE:
+            sptr = "REGISTER RESTORE FLAG";
+            break;
          case CF_REGSAVE:
             sptr = "REGISTER SAVE FLAG";
             break;

@@ -601,7 +601,7 @@ void DoReturn(short rret)
 #endif
    }
    InsNewInst(NULL, NULL, NULL, JMP, -PCREG, 
-              STstrconstlookup("IFKO_EPILOGUE"), 0);
+              STlabellookup("_IFKO_EPILOGUE"), 0);
    GetReg(-1);
 }
 

@@ -1,7 +1,8 @@
 #include "ifko.h"
 #define ARCH_DECLARE
 #include "fko_arch.h"
-struct locinit *LIhead=NULL;
+struct locinit *LIhead=NULL,       /* Locals to be init to constant vals */
+               *ParaDerefQ=NULL;   /* Derefs created for parameters */
 
 #ifdef X86_64
    #define ISIZE 8
@@ -369,11 +370,11 @@ void FPConstStore(INSTQ *next, short id, short con,
             InsNewInst(NULL, NULL, next, FSTD, SToff[id-1].sa[2], -dreg, 0);
          #else
             i = SToff[SToff[id-1].sa[2]].sa[3];
-            k = AddDerefEntry(-REG_SP, 0, 0, i)
+            k = AddDerefEntry(-REG_SP, id, -id, i)
             InsNewInst(NULL, NULL, next, XOR, -reg, -reg, -reg);
             InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
-            InsNewInst(NULL, NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i+4),
-                       -reg, 0);
+            InsNewInst(NULL, NULL, next, ST, 
+                       AddDerefEntry(-REG_SP, id, -id, i+4), -reg, 0);
             SignalSet(next, id, k, dreg);
          #endif
       }
@@ -382,13 +383,13 @@ void FPConstStore(INSTQ *next, short id, short con,
          #ifdef X86_32
             ip = (int*) &d;
             i = SToff[SToff[id-1].sa[2]-1].sa[3];
-            k = AddDerefEntry(-REG_SP, 0, 0, i);
+            k = AddDerefEntry(-REG_SP, id, -id, i);
             InsNewInst(NULL, NULL, next, MOV, -reg, STiconstlookup(*ip), 0);
             InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
             InsNewInst(NULL, NULL, next, MOV, -reg, STiconstlookup(ip[1]),
                        0);
-            InsNewInst(NULL, NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i+4), 
-                       -reg, 0);
+            InsNewInst(NULL, NULL, next, ST,
+                       AddDerefEntry(-REG_SP, id, -id, i+4), -reg, 0);
          #elif defined(X86_64)
             lp = (long*) &d;
             InsNewInst(NULL, NULL, next, MOV, -reg, STlconstlookup(*lp), 0);
@@ -399,24 +400,24 @@ void FPConstStore(INSTQ *next, short id, short con,
          #elif defined(SPARC)
             ip = (int*) &d;
             i = SToff[SToff[id-1].sa[2]-1].sa[3];
-            k = AddDerefEntry(-REG_SP, 0, 0, i);
+            k = AddDerefEntry(-REG_SP, id, -id, i);
             bitload(next, reg, 12, *ip);
             InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
             bitload(next, reg, 12, ip[1]);
-            InsNewInst(NULL, NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i+4),
-                       -reg, 0);
+            InsNewInst(NULL, NULL, next, ST, 
+                       AddDerefEntry(-REG_SP, id, -id, i+4), -reg, 0);
 /*
  *       PPC loads 16 bits at a time
  */
          #elif defined(PPC)
             ip = (int*) &d;
             i = SToff[SToff[id-1].sa[2]-1].sa[3];
-            k = AddDerefEntry(-REG_SP, 0, 0, i);
+            k = AddDerefEntry(-REG_SP, id, -id, i);
             bitload(next, reg, 16, *ip);
             InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
             bitload(next, reg, 16, ip[1]);
-            InsNewInst(NULL, NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i+4),
-                       -reg, 0);
+            InsNewInst(NULL, NULL, next, ST,
+                       AddDerefEntry(-REG_SP, id, -id, i+4), -reg, 0);
          #endif
          #ifndef X86_64
             SignalSet(next, id, k, dreg);
@@ -498,7 +499,7 @@ void InitLocalConst(INSTQ *next, short reg, short freg, short dreg)
    }
 }
 
-void Extern2Local(INSTQ *next, short rsav, int fsize)
+void Extern2Local(INSTQ *next)
 /*
  * After stack frame fully qualified, inserts proper store instructions before
  * next in queue in order to save parameter/system/fp const values to local
@@ -512,7 +513,8 @@ void Extern2Local(INSTQ *next, short rsav, int fsize)
  */
 {
    extern int NPARA, DTnzerod, DTnzero, DTabsd, DTabs;
-   short i, j=0, flag, ir, k, kk, reg1=0, freg, dreg;
+   short ii, i, j=0, flag, ir, k, kk, reg1=0, freg, dreg;
+   const int rsav = 0;
    int USED;
    #ifdef X86_64
       int nof, ni, nd, dr, dreg1;
@@ -531,8 +533,6 @@ void Extern2Local(INSTQ *next, short rsav, int fsize)
 
    dreg = GetReg(T_DOUBLE);
    freg = GetReg(T_FLOAT);
-   if (!rsav) rsav = -REG_SP;
-fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
    if (NPARA)
    {
       InsNewInst(NULL, NULL, next, COMMENT, 0, 0, 0);
@@ -611,9 +611,10 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
             else
             {
                ir = reg1;
+               k = AddDerefEntry(rsav, 0, 0, nof*8);
+               ParaDerefQ = NewLocinit(k, 0, ParaDerefQ);
                if (USED)
-                  InsNewInst(NULL, NULL, next, LD, -ir,
-                             AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
+                  InsNewInst(NULL, NULL, next, LD, -ir, k, 0);
                nof++;
             }
             if (USED)
@@ -629,8 +630,9 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
             else
             {
                ir = reg1;
-               if (USED) InsNewInst(NULL, NULL, next, LDS, -ir,
-                                    AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
+               k = AddDerefEntry(rsav, 0, 0, nof*8);
+               ParaDerefQ = NewLocinit(k, 0, ParaDerefQ);
+               if (USED) InsNewInst(NULL, NULL, next, LDS, -ir, k, 0);
                nof++;
             }
 /*
@@ -664,8 +666,9 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                ir = reg1;
                if (USED)
                {
-                  InsNewInst(NULL, NULL, next, FLD, -freg,
-                             AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
+                  k = AddDerefEntry(rsav, 0, 0, nof*8);
+                  ParaDerefQ = NewLocinit(k, 0, ParaDerefQ);
+                  InsNewInst(NULL, NULL, next, FLD, -freg, k, 0);
                   InsNewInst(NULL, NULL, next, FST, SToff[paras[i]].sa[2],
                              -freg, 0);
                }
@@ -688,8 +691,9 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                ir = reg1;
                if (USED)
                {
-                  InsNewInst(NULL, NULL, next, FLDD, -dreg,
-                             AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
+                  k = AddDerefEntry(rsav, 0, 0, nof*8);
+                  ParaDerefQ = NewLocinit(k, 0, ParaDerefQ);
+                  InsNewInst(NULL, NULL, next, FLDD, -dreg, k, 0);
                   InsNewInst(NULL, NULL, next, FSTD, SToff[paras[i]].sa[2],
                              -dreg, 0);
                }
@@ -708,8 +712,8 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                     STlconstlookup(0x8000000000000000), 0);
          k = SToff[SToff[DTnzerod-1].sa[2]-1].sa[3];
          InsNewInst(NULL, NULL, next, ST, SToff[DTnzerod-1].sa[2], -ir, 0);
-         InsNewInst(NULL,NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, k+8),
-                    -ir, 0);
+         InsNewInst(NULL, NULL, next, ST, 
+                    AddDerefEntry(-REG_SP, DTnzerod, -DTnzerod, k+8), -ir, 0);
       }
       if (DTnzero > 0)
       {
@@ -720,7 +724,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
          k = ((SToff[DTnzero-1].sa[2]-1)<<2) + 3;
          k = SToff[SToff[DTnzero-1].sa[2]-1].sa[3];
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, k+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTnzero, -DTnzero, k+8), -ir, 0);
       }
       if (DTabsd)
       {
@@ -730,7 +734,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
          k = SToff[SToff[DTabsd-1].sa[2]-1].sa[3];
          InsNewInst(NULL, NULL, next, ST, SToff[DTabsd-1].sa[2], -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, k+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTabs, -DTabs, k+8), -ir, 0);
       }
       if (DTabs)
       {
@@ -740,7 +744,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                     STlconstlookup(0x7fffffff7fffffff), 0);
          InsNewInst(NULL, NULL, next, ST, SToff[DTabs-1].sa[2], -ir, 0);
          InsNewInst(NULL, NULL, next, ST, 
-                    AddDerefEntry(-REG_SP, 0, 0, k+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTabs, -DTabs, k+8), -ir, 0);
       }
       InsNewInst(NULL, NULL, next, COMMENT, STstrconstlookup("done archspec"), 
                  0, 0);
@@ -761,8 +765,9 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
          {
             if (USED)
             {
-               InsNewInst(NULL, NULL, next, FLDD, -dreg,
-                          AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
+               k = AddDerefEntry(rsav, 0, 0, j*4);
+               ParaDerefQ = NewLocinit(k, 0, ParaDerefQ);
+               InsNewInst(NULL, NULL, next, FLDD, -dreg, k, 0);
                InsNewInst(NULL, NULL, next, FSTD, SToff[paras[i]].sa[2], 
                           -dreg, 0);
             }
@@ -770,8 +775,9 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
          }
          else if (USED)
          {
-            InsNewInst(NULL, NULL, next, LD, -ir,
-                       AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
+            k = AddDerefEntry(rsav, 0, 0, j*4);
+            ParaDerefQ = NewLocinit(k, 0, ParaDerefQ);
+            InsNewInst(NULL, NULL, next, LD, -ir, k, 0);
             InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
          }
          j++;
@@ -786,12 +792,12 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
          InsNewInst(NULL, NULL, next, XOR, -ir, -ir, -ir);
          InsNewInst(NULL, NULL, next, ST, SToff[DTnzerod-1].sa[2], -ir, 0);
          InsNewInst(NULL, NULL, next, ST, 
-                    AddDerefEntry(-REG_SP, 0, 0, k+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTnzerod, -DTnzerod, k+8), -ir, 0);
          InsNewInst(NULL, NULL, next, MOV, -ir, STiconstlookup(0x80000000), 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, k+4), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTnzerod, -DTnzerod, k+4), -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, k+12), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTnzerod, -DTnzerod, k+12), -ir, 0);
       }
       if (DTnzero > 0)
       {
@@ -800,11 +806,11 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
          InsNewInst(NULL, NULL, next, ST, SToff[DTnzero-1].sa[2], -ir, 0);
          k = SToff[SToff[DTnzero-1].sa[2]-1].sa[3];
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, k+4), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTnzero, -DTnzero, k+4), -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, k+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTnzero, -DTnzero, k+8), -ir, 0);
          InsNewInst(NULL, NULL, next, ST, 
-                    AddDerefEntry(-REG_SP, 0, 0, k+12), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTnzero, -DTnzero, k+12), -ir, 0);
       }
       if (DTabsd)
       {
@@ -814,12 +820,12 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
          InsNewInst(NULL, NULL, next, NOT, -ir, -ir, -ir);
          InsNewInst(NULL, NULL, next, ST, SToff[DTabsd-1].sa[2], -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, k+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTabsd, -DTabsd, k+8), -ir, 0);
          InsNewInst(NULL, NULL, next, MOV, -ir, STiconstlookup(0x7fffffff), 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, k+4), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTabsd, -DTabsd, k+4), -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, k+12), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTabsd, -DTabsd, k+12), -ir, 0);
       }
       if (DTabs)
       {
@@ -828,11 +834,11 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
          InsNewInst(NULL, NULL, next, MOV, -ir, STiconstlookup(0x7fffffff), 0);
          InsNewInst(NULL, NULL, next, ST, SToff[DTabs-1].sa[2], -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, k+4), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTabs, -DTabs, k+4), -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, k+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTabs, -DTabs, k+8), -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, k+12), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTabs, -DTabs, k+12), -ir, 0);
       }
       InsNewInst(NULL, NULL, next, COMMENT, STstrconstlookup("done archspec"), 0, 0);
    #endif
@@ -862,8 +868,9 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
             }
             else if (USED)
             {
-               InsNewInst(NULL, NULL, next, LD, -ir,
-                          AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
+               k = AddDerefEntry(rsav, 0, 0, j*4);
+               ParaDerefQ = NewLocinit(k, 0, ParaDerefQ);
+               InsNewInst(NULL, NULL, next, LD, -ir, k, 0);
                InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
             }
             j++;
@@ -879,12 +886,13 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                if (USED)
                {
                   kk = SToff[SToff[paras[i]].sa[2]-1].sa[3];
-                  k = AddDerefEntry(-REG_SP, 0, 0, kk);
+                  k = AddDerefEntry(-REG_SP, paras[i], -paras[i], kk);
                   InsNewInst(NULL, NULL, next, ST, k, -ir, 0);
                   nam[2] = j + '0';
                   ir = iName2Reg(nam);
                   InsNewInst(NULL, NULL, next, ST, 
-                             AddDerefEntry(-REG_SP, 0, 0, kk+4), -ir, 0);
+                             AddDerefEntry(-REG_SP, paras[i], -paras[i], kk+4),
+                             -ir, 0);
                   SignalSet(next, paras[i]+1, k, dreg);
                }
                j++;
@@ -897,12 +905,14 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                if (USED)
                {
                   kk = SToff[SToff[paras[i]].sa[2]-1].sa[3];
-                  k = AddDerefEntry(-REG_SP, 0, 0, k);
+                  k = AddDerefEntry(-REG_SP, paras[i], -paras[i], k);
                   InsNewInst(NULL, NULL, next, ST, k, -ir, 0);
-                  InsNewInst(NULL, NULL, next, LD, -ir,
-                             AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
-                  InsNewInst(NULL, NULL, next, ST, 
-                             AddDerefEntry(-REG_SP, 0, 0, k+4, -ir, 0);
+                  ii = AddDerefEntry(rsav, 0, 0, j*4);
+                  ParaDerefQ = NewLocinit(ii, 0, ParaDerefQ);
+                  InsNewInst(NULL, NULL, next, LD, -ir, ii, 0);
+                  ii = AddDerefEntry(-REG_SP, paras[i], -paras[i], kk+4);
+                  ParaDerefQ = NewLocinit(ii, 0, ParaDerefQ);
+                  InsNewInst(NULL, NULL, next, ST, ii, -ir, 0);
                   SignalSet(next, paras[i]+1, k, dreg);
                }
                j++;
@@ -911,8 +921,9 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
             {
                if (USED)
                {
-                  InsNewInst(NULL, NULL, next, FLDD, -dreg,
-                             AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
+                  ii = AddDerefEntry(rsav, 0, 0, j*4);
+                  ParaDerefQ = NewLocinit(ii, 0, ParaDerefQ);
+                  InsNewInst(NULL, NULL, next, FLDD, -dreg, ii, 0);
                   InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], 
                              -dreg, 0);
                }
@@ -950,9 +961,10 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                }
                else
                {
+                  ii = AddDerefEntry(rsav, 0, 0, j*4);
+                  ParaDerefQ = NewLocinit(ii, 0, ParaDerefQ);
                   if (j == 8) ir = GetReg(T_INT);
-                  InsNewInst(NULL, NULL, next, LD, -ir,
-                             AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
+                  InsNewInst(NULL, NULL, next, LD, -ir, ii, 0);
                   InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], 
                              -ir, 0);
                }
@@ -974,8 +986,9 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                }
                else
                {
-                  InsNewInst(NULL, NULL, next, FLD, -freg,
-                             AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
+                  ii = AddDerefEntry(rsav, 0, 0, j*4);
+                  ParaDerefQ = NewLocinit(ii, 0, ParaDerefQ);
+                  InsNewInst(NULL, NULL, next, FLD, -freg, ii, 0);
                   InsNewInst(NULL, NULL, next, FST, SToff[paras[i]].sa[2], 
                              -freg, 0);
                }
@@ -1000,8 +1013,9 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                }
                else
                {
-                  InsNewInst(NULL, NULL, next, FLDD, -dreg,
-                             AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
+                  ii = AddDerefEntry(rsav, 0, 0, j*4);
+                  ParaDerefQ = NewLocinit(ii, 0, ParaDerefQ);
+                  InsNewInst(NULL, NULL, next, FLDD, -dreg, ii, 0);
                   InsNewInst(NULL, NULL, next, FSTD, SToff[paras[i]].sa[2],
                              -dreg, 0);
                   j += 2;
@@ -1020,76 +1034,89 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
    InitLocalConst(next, reg1, freg, dreg);
 }
 
-void CreateEpilogue(BBLOCK *blk,
-                    int fsize,  /* frame size of returning func */
-                    int Soff,   /* start of reg save area in frame */
-                    int savesp, /* offset we saved sp at */
-                    int nir,    /* number of int regs saved */
-                    int *ir,    /* int regs saved */
-                    int nfr,    /* number of single regs saved */
-                    int *fr,    /* float regs saved */
-                    int ndr,    /* number of double regs saved */
-                    int *dr     /* double regs saved */
-                    )
+void FinalizeEpilogue(BBLOCK *bbase,
+                      int fsize,  /* frame size of returning func */
+                      int Soff,   /* start of reg save area in frame */
+                      int savesp, /* offset we saved sp at */
+                      int nir,    /* number of int regs saved */
+                      int *ir,    /* int regs saved */
+                      int nfr,    /* number of single regs saved */
+                      int *fr,    /* float regs saved */
+                      int ndr,    /* number of double regs saved */
+                      int *dr     /* double regs saved */
+                      )
 {
    int i;
-   for (; blk->down; blk = blk->down);
+   INSTQ *next;
+   BBLOCK *blk;
 
-   blk->down = NewBasicBlock(blk, NULL);
-   blk = blk->down;
-   InsNewInst(blk, NULL, NULL, LABEL, STstrconstlookup("IFKO_EPILOGUE"), 0, 0);
+   i = STlabellookup("_IFKO_EPILOGUE");
+   fprintf(stderr, "i=%d\n", i);
+   blk = FindBlockWithLabel(bbase, STlabellookup("_IFKO_EPILOGUE"));
+   assert(blk);
+/* 
+ * Find place to insert save statements
+ */
+   for (next=blk->inst1; next; next = next->next)
+      if (next->inst[0] == CMPFLAG && next->inst[1] == CF_REGRESTORE) break;
+   assert(next);
+/*
 /*
  * Restore registers
  */
    for (i=0; i < ndr; i++)
-      InsNewInst(blk, NULL, NULL, FLDD, -dr[i],
+      InsNewInst(blk, NULL, next, FLDD, -dr[i],
                  AddDerefEntry(-REG_SP, 0, 0, Soff+i*8), 0);
    for (i=0; i < nir; i++)
-      InsNewInst(blk, NULL, NULL, LD, -ir[i],
+      InsNewInst(blk, NULL, next, LD, -ir[i],
                  AddDerefEntry(-REG_SP, 0,0, Soff+ndr*8+i*ISIZE), 0);
    for (i=0; i < nfr; i++)
-      InsNewInst(blk, NULL, NULL, FLD, -fr[i],
+      InsNewInst(blk, NULL, next, FLD, -fr[i],
                  AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+nir*ISIZE+i*4), 0);
 /*
- * Restore stack pointer and return
+ * Restore stack pointer
  */
    if (savesp >= 0)
-      InsNewInst(blk, NULL, NULL, LD, -REG_SP, 
+      InsNewInst(blk, NULL, next, LD, -REG_SP, 
                  AddDerefEntry(-REG_SP, 0, 0, savesp), 0);
    else
-      InsNewInst(blk, NULL, NULL, ADD, -REG_SP, -REG_SP,STiconstlookup(fsize));
-   InsNewInst(blk, NULL, NULL, RET, 0, 0, 0);
-   GetReg(-1);
+      InsNewInst(blk, NULL, next, ADD, -REG_SP, -REG_SP,
+                 STiconstlookup(fsize));
 }
 
-void CreatePrologue(BBLOCK *bbase,
-                    int align,  /* local-area required byte-alignment */
-                    int lsize,  /* size of all required locals */
-                    int csize,  /* call parameter area size */
-                    int nir,    /* number of int regs to save */
-                    int *ir,    /* int regs to save */
-                    int ndr,    /* number of double regs to save */
-                    int *dr,    /* double regs to save */
-                    int nfr,    /* number of single regs to save */
-                    int *fr     /* float regs to save */
-                    )
+void FinalizePrologueEpilogue(BBLOCK *bbase)
+/*
+ * Calculates required frame size, corrects local and parameter offsets
+ * appropriately, and then inserts instructions to save and restore
+ * callee-saved regs
+ */
 {
-   short prog, rsav=0, k;
-   int i, maxalign=align, tsize, ssize=0;
+   INSTQ *ip, *oldhead;
+   int i, nir, nfr, ndr;
+   int ir[TNIR], fr[TNFR], dr[TNDR];
    int Aoff;  /* offset to arguments, from frame pointer */
    int Soff=0; /* system-dependant skip offset */
    int Loff;   /* called routines frame size excluding locals */
    int SAVESP=(-1);  /* must we save SP to stack? */
-   INSTQ *ip, *oldhead, *oldtail;
-   BBLOCK *bp;
+   int align;        /* local area required byte alignment */
+   int lsize;        /* size of all required locals */
+   int tsize;        /* total frame size */
+   int rsav=0, maxalign, ssize=0;
+   const int csize=0;/* call parameter area size */
+   extern int LOCALIGN, LOCSIZE;
 
-   if (!bbase) return;
-   #ifdef FKO_ANSIC
-      Extern2Local(oldhead, rsav, rsav ? Aoff : Aoff+tsize);
-      CreateEpilogue(bbase, tsize, Soff, SAVESP, nir, ir, nfr, fr, ndr, dr);
-      return;
-   #endif
-fprintf(stderr, "align=%d,lsize=%d,csize=%d\n", align, lsize, csize);
+   maxalign = align = LOCALIGN;
+   lsize = LOCSIZE;
+/*
+ * Find registers that need to be saved
+ */
+   FindRegUsage(bbase, &nir, ir, &nfr, fr, &ndr, dr);
+   RemoveNosaveregs(IREGBEG, TNIR, ir, icalleesave);
+   nir = GetRegSaveList(IREGBEG, nir, ir);
+   RemoveNosaveregs(FREGBEG, TNFR, fr, fcalleesave);
+   nfr = GetRegSaveList(FREGBEG, nfr, fr);
+   RemoveNosaveregs(DREGBEG, TNDR, dr, dcalleesave);
+   ndr = GetRegSaveList(DREGBEG, ndr, dr);
 /*
  * If we return values in a register, no need to save and restore it
  */
@@ -1117,17 +1144,14 @@ fprintf(stderr, "align=%d,lsize=%d,csize=%d\n", align, lsize, csize);
    #else
       if (!align) align = 4;
    #endif
-   oldhead = bbase->inst1;
-   for (bp=bbase; bp->down; bp = bp->down);
-   oldtail = bp->instN;
-/* 
- * Put routine name label
- */
-   prog = STstrconstlookup(rout_name);
-fprintf(stderr, "prog=%d!, rout_name=%s\n", prog, rout_name);
-   STflag[prog-1] |= GLOB_BIT;
-   InsNewInst(NULL, NULL, oldhead, LABEL, prog, 0, 0);
 
+/* 
+ * Find place to insert save statements
+ */
+   for (ip=bbase->inst1; ip; ip = ip->next)
+      if (ip->inst[0] == CMPFLAG && ip->inst[1] == CF_REGSAVE) break;
+   assert(ip);
+   oldhead = ip;
 /*
  * For x86-64, save %rbp, if necessary, to the reserved location of 0(%rsp)
  */
@@ -1136,7 +1160,7 @@ fprintf(stderr, "prog=%d!, rout_name=%s\n", prog, rout_name);
       for (i=0; i < nir && ir[i] != k; i++);
       if (i < nir)
       {
-         InsNewInst(NULL, NULL, oldhead, ST, 
+         InsNewInst(NULL, NULL, oldhead, ST,
                     AddDerefEntry(-REG_SP, 0, 0, 0), -k, 0);
          for (nir--; i < nir; i++) ir[i] = ir[i+1];
       }
@@ -1171,7 +1195,7 @@ fprintf(stderr, "tsize=%d, Loff=%d, Soff=%d lsize=%d\n", tsize, Loff, Soff, lsiz
    #else
 /*
  *    We assume sp already 4-byte aligned but may need to make 8-byte aligned
- *    if demanded by save 
+ *    if demanded by save
  */
       if (ndr)
       {
@@ -1191,9 +1215,9 @@ fprintf(stderr, "tsize=%d, Loff=%d, Soff=%d lsize=%d\n", tsize, Loff, Soff, lsiz
       if (tsize % ASPALIGN) tsize = (tsize/ASPALIGN)*ASPALIGN + ASPALIGN;
       if (SAVESP >= 0)
       {
-         InsNewInst(NULL, NULL, oldhead, COMMENT, 0, 0, 0);
-         InsNewInst(NULL, NULL, oldhead, COMMENT, STstrconstlookup("To ensure greater alignment than sp, save old sp to stack and move sp"), 0, 0);
-         InsNewInst(NULL, NULL, oldhead, COMMENT, 0, 0, 0);
+         PrintMajorComment(bbase, NULL, oldhead, 
+     "To ensure greater alignment than sp, save old sp to stack and move sp");
+         rsav = GetReg(T_INT);
          rsav = GetReg(T_INT);
          assert(rsav <= NSIR);
          rsav = -rsav;
@@ -1202,11 +1226,10 @@ fprintf(stderr, "tsize=%d, Loff=%d, Soff=%d lsize=%d\n", tsize, Loff, Soff, lsiz
       else
    #endif
    {
-      InsNewInst(NULL, NULL, oldhead, COMMENT, 0, 0, 0);
-      InsNewInst(NULL, NULL, oldhead, COMMENT, STstrconstlookup("Adjust sp"), 0, 0);
-      InsNewInst(NULL, NULL, oldhead, COMMENT, 0, 0, 0);
+      PrintMajorComment(bbase, NULL, oldhead, "Adjust sp");
    }
-   InsNewInst(NULL, NULL, oldhead, SUB, -REG_SP, -REG_SP, STiconstlookup(tsize));
+   InsNewInst(NULL, NULL, oldhead, SUB, -REG_SP, -REG_SP,
+              STiconstlookup(tsize)); 
    if (SAVESP >= 0)
    {
       i = const2shift(maxalign);
@@ -1214,64 +1237,88 @@ fprintf(stderr, "tsize=%d, Loff=%d, Soff=%d lsize=%d\n", tsize, Loff, Soff, lsiz
       i = STiconstlookup(i);
       InsNewInst(NULL, NULL, oldhead, SHR, -REG_SP, -REG_SP, i);
       InsNewInst(NULL, NULL, oldhead, SHL, -REG_SP, -REG_SP, i);
-      InsNewInst(NULL, NULL, oldhead, ST, AddDerefEntry(-REG_SP, 0, 0, SAVESP), 
+      InsNewInst(NULL, NULL, oldhead, ST, AddDerefEntry(-REG_SP, 0, 0, SAVESP),
                  rsav, 0);
    }
-   InsNewInst(NULL, NULL, oldhead, CMPFLAG, CF_REGSAVE, 0, 0);
-fprintf(stderr, "Local offset=%d\n", Loff);
+   PrintMajorComment(bbase, NULL, oldhead, "Save registers");
+   fprintf(stderr, "Local offset=%d\n", Loff);
    CorrectLocalOffsets(Loff);
-   InsNewInst(NULL, NULL, oldhead, COMMENT, 0, 0, 0);
-   InsNewInst(NULL, NULL, oldhead, COMMENT, STstrconstlookup("Save registers"), 0, 0);
-   InsNewInst(NULL, NULL, oldhead, COMMENT, 0, 0, 0);
+   CorrectParamDerefs(ParaDerefQ, rsav ? rsav : -REG_SP, 
+                      rsav ? Aoff : tsize+Aoff);
 /*
- * Save registers
+ * Insert insts in header to save callee-saved registers
  */
    for (i=0; i < ndr; i++)
-      InsNewInst(NULL, NULL, oldhead, FSTD, 
+      InsNewInst(NULL, NULL, oldhead, FSTD,
                  AddDerefEntry(-REG_SP, 0, 0, Soff+i*8), -dr[i], 0);
    for (i=0; i < nir; i++)
-      InsNewInst(NULL, NULL, oldhead, ST, 
+      InsNewInst(NULL, NULL, oldhead, ST,
                  AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+i*ISIZE), -ir[i], 0);
    for (i=0; i < nfr; i++)
-      InsNewInst(NULL, NULL, oldhead, FST, 
-                 AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+nir*ISIZE+i*4), 
+      InsNewInst(NULL, NULL, oldhead, FST,
+                 AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+nir*ISIZE+i*4),
                  -fr[i], 0);
-   Extern2Local(oldhead, rsav, rsav ? Aoff : Aoff+tsize);
+   GetReg(-1);
+   FinalizeEpilogue(bbase, tsize, Soff, SAVESP, nir, ir, nfr, fr, ndr, dr);
+}
+
+void CreatePrologue(BBLOCK *bbase)
+{
+   short prog, k;
+   int i;
+   INSTQ *ip, *oldhead;
+   BBLOCK *bp;
+
+   if (!bbase) return;
+/*
+ * If we return values in a register, no need to save and restore it
+ */
+   oldhead = bbase->inst1;
+   for (bp=bbase; bp->down; bp = bp->down);
+/* 
+ * Put routine name label
+ */
+   prog = STlabellookup(rout_name);
+fprintf(stderr, "prog=%d!, rout_name=%s\n", prog, rout_name);
+   STflag[prog-1] |= GLOB_BIT;
+   InsNewInst(NULL, NULL, oldhead, LABEL, prog, 0, 0);
+
+   InsNewInst(NULL, NULL, oldhead, CMPFLAG, CF_REGSAVE, 0, 0);
+   Extern2Local(oldhead);
    GetReg(-1);
    InsNewInst(NULL, NULL, oldhead, COMMENT, 0, 0, 0);
    InsNewInst(NULL, NULL, oldhead, COMMENT, 
               STstrconstlookup("END OF FUNCTION PROLOGUE"), 0, 0);
    InsNewInst(NULL, NULL, oldhead, COMMENT, 0, 0, 0);
-   CreateEpilogue(bbase, tsize, Soff, SAVESP, nir, ir, nfr, fr, ndr, dr);
 }
 void KillUnusedLocals()  /* HERE, HERE: move to symtab */
 {
 }
 
-void FixFrame(BBLOCK *bbase)
+void GenPrologueEpilogueStubs(BBLOCK *bbase)
 /*
- * As final step before lil-to-assembly conversion, fix the frame info, and
- * generate function prologue and epilogue
+ * Create partially qualified local and para derefs, and generate function
+ * prologue/epilogue stubs
  */
 {
-   extern int LOCALIGN, LOCSIZE;
-   int i, ni, nf, nd, isav[TNIR], fsav[TNFR], dsav[TNDR], savr[64];
+   BBLOCK *blk;
 
    MarkUnusedLocals(bbase); 
    CreateSysLocals();
    NumberLocalsByType();
-   FindRegUsage(bbase, &ni, isav, &nf, fsav, &nd, dsav);
-   RemoveNosaveregs(IREGBEG, TNIR, isav, icalleesave);
-   ni = GetRegSaveList(IREGBEG, ni, isav);
-   RemoveNosaveregs(FREGBEG, TNFR, fsav, fcalleesave);
-   nf = GetRegSaveList(FREGBEG, nf, fsav);
-   RemoveNosaveregs(DREGBEG, TNDR, dsav, dcalleesave);
-   nd = GetRegSaveList(DREGBEG, nd, dsav);
    #ifdef X86_64
       UpdateLocalDerefs(8);
    #else
       UpdateLocalDerefs(4);
    #endif
-   for (i=0; i < NIR; i++) savr[i] = i+2; 
-   CreatePrologue(bbase, LOCALIGN, LOCSIZE, 0, ni, isav, nf, fsav, nd, dsav);
+   CreatePrologue(bbase);
+   GetReg(-1);
+   for (blk=bbase; blk->down; blk = blk->down);
+
+   blk->down = NewBasicBlock(blk, NULL);
+   blk = blk->down;
+   InsNewInst(blk, NULL, NULL, LABEL, STlabellookup("_IFKO_EPILOGUE"), 
+              0, 0);
+   InsNewInst(blk, NULL, NULL, CMPFLAG, CF_REGRESTORE, 0, 0);
+   InsNewInst(blk, NULL, NULL, RET, 0, 0, 0);
 }

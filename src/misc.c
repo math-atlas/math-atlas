@@ -2,6 +2,28 @@
 #include "fko_loop.h"
 #include <stdarg.h>
 
+struct locinit *NewLocinit(short id, short con, struct locinit *next)
+{
+   struct locinit *lp;
+   lp = malloc(sizeof(struct locinit));
+   assert(lp);
+   lp->id = id;
+   lp->con = con;
+   lp->next = next;
+   return(lp);
+}
+
+void KillAllLocinit(struct locinit *libase)
+{
+   struct locinit *lp;
+   while(libase)
+   {
+      lp = libase->next;
+      free(libase);
+      libase = lp;
+   }
+}
+
 int const2shift(int c)
 {
    int i;

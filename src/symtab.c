@@ -158,6 +158,16 @@ short STstrlookup(char *str)
    return(0);
 }
 
+short STFindLabel(char *str)
+{
+   short i;
+   for (i=0; i != N; i++)
+   {
+      if (STname[i] && IS_LABEL(STflag[i]) && !strcmp(str, STname[i]))
+         return(i+1);
+   }
+   return(0);
+}
 short STlabellookup(char *str)
 /*
  * Searches for label with name str in symtab, allocating new entry if
@@ -166,12 +176,10 @@ short STlabellookup(char *str)
  */
 {
    short i;
-   for (i=0; i != N; i++)
-   {
-      if (STname[i] && IS_LABEL(STflag[i]) && !strcmp(str, STname[i]))
-         return(i+1);
-   }
-   return(STdef(str, T_LABEL, 0));
+   i = STFindLabel(str);
+   if (!i) 
+     i = STdef(str, T_LABEL, 0);
+   return(i);
 }
 
 short STstrconstlookup(char *str)
@@ -385,6 +393,27 @@ fprintf(stderr, "correcting local %s, (%d,%d,%d)\n", STname[-1-SToff[i].sa[2]],
          SToff[i].sa[2] = 1;
          SToff[i].sa[3] += ldist;
       }
+   }
+}
+
+void CorrectParamDerefs(struct locinit *libase, int rsav, int fsize)
+/*
+ * Given the frame size (fsize) and a queue of parameters derefs to
+ * correct (libase), update the derefences by setting DT[0] = rsav and
+ * adding frame size to the constant
+ */
+{
+   struct locinit *lp;
+   short k;
+
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
+   for (lp = libase; lp; lp = lp->next)
+   {
+fprintf(stderr, "correcting para %d (%s)!\n", lp->id, STname[lp->id-1]);
+      k = lp->id-1;
+      SToff[k].sa[0] = rsav;
+      SToff[k].sa[2] = 1;
+      SToff[k].sa[3] += fsize;
    }
 }
 
