@@ -69,6 +69,7 @@ int DoInitLoopVecAnal(void)
  * This will be later thrown away, and we will start again with either
  * vectorized/unrolled loop, or unvectorized code.
  * RETURNS: 0 if loop cannot be vectorized, 1 if it can
+ * NOTE: supported vectorizable operations are assignment, add and mul.
  */
 {
    struct ptrinfo *pbase, *p;
@@ -269,7 +270,7 @@ int DoInitLoopVecAnal(void)
             j = 0;
             for (il=ib; il; il = il->next)
             {
-               if (ip->prev->inst[0] == FADD || ip->prev->inst[0] == FADDD)
+               if (ip->next->inst[0] == FADD || ip->next->inst[0] == FADDD)
                   j |= VS_ACC;
                else
                   j |= VS_MUL;
@@ -299,7 +300,7 @@ int DoInitLoopVecAnal(void)
                if (ip->prev->inst[0] != FADD || ip->prev->inst[0] != FADDD)
                {
                   fko_warn(__LINE__, 
-                  "Mixed use of output var %d(%s) prevents vectorization!!\n\n",
+                "Non-add use of output var %d(%s) prevents vectorization!!\n\n",
                            sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
                   return(0);
                }
@@ -309,5 +310,10 @@ int DoInitLoopVecAnal(void)
          }
       }
    }
+/*
+ * HERE HERE HERE
+ * Now, need to scope optloop->varrs to make sure they are always operated on
+ * by '=', '+' or '*'
+ */
    return(1);
 }

@@ -116,8 +116,10 @@ struct blist
    void *ptr;   /* used only for ignodes */
 };
 
-#define VS_ACC 1
-#define VS_MUL 2
+#define VS_LIVEIN  1
+#define VS_LIVEOUT 2
+#define VS_ACC     4
+#define VS_MUL     8
 typedef struct loopq LOOPQ;
 struct loopq
 {
@@ -131,10 +133,9 @@ struct loopq
    short maxunroll;
    short writedd;     /* write dependence distance */
 /* In vectorization, arrays that are not incremented are still called scalars */
-   short *vslivein, *vsliveout; /* vectorized scalars live loop entry/exit */
-   short *vsflagin, *vsflagout;
-   short *vstmp;     /* vectorized scalars not live on loop entry or exit */
    short *varrs;     /* vectorized arrays */
+   short *vscal;     /* vectorized scalars */
+   short *vsflag;    /* info array for vscal */
    short *nopf;      /* arrays which should not be prefetched */
    short *aaligned;   /* arrays that have known alignment */
    uchar *abalign;    /* alignments of above arrays */
