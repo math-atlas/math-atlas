@@ -101,7 +101,7 @@ void SetVecBit(int iv, int ibit, int val)
 /*
  * If we are out of space, get new bit vec and trash the old
  */
-   if (i > ni[iv]) ExtendBitVec(iv+1, i);
+   if (i >= ni[iv]) ExtendBitVec(iv+1, i);
    v = &bvecs[iv][i];
    ibit -= i << 5;
    if (!val) *v &= ~(1<<ibit);
