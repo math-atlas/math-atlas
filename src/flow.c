@@ -724,6 +724,8 @@ LOOPQ *KillLoop(LOOPQ *lp)
       ln = lp->next;
       if (lp->vsflag)
          free(lp->vsflag);
+      if (lp->vsoflag)
+         free(lp->vsoflag);
       if (lp->vscal)
          free(lp->vscal);
       if (lp->varrs)
@@ -823,6 +825,7 @@ void InvalidateLoopInfo(void)
       lp->varrs = optloop->varrs;
       lp->vscal = optloop->vscal;
       lp->vsflag = optloop->vsflag;
+      lp->vsoflag = optloop->vsoflag;
       lp->vvscal = optloop->vvscal;
       lp->vflag = optloop->vflag;
       lp->pfarrs = optloop->pfarrs;
@@ -833,8 +836,8 @@ void InvalidateLoopInfo(void)
       lp->abalign = optloop->abalign;
       lp->CU_label = optloop->CU_label;
       lp->PTCU_label = optloop->PTCU_label;
-      optloop->vsflag = optloop->vscal = optloop->varrs = optloop->nopf = 
-         optloop->aaligned = NULL;
+      optloop->vsflag = optloop->vsoflag = optloop->vscal = optloop->varrs = 
+         optloop->nopf = optloop->aaligned = NULL;
       optloop->abalign = NULL;
       KillLoop(optloop);
       optloop = lp;

@@ -122,7 +122,7 @@ struct blist
 #define VS_ACC     8   /* updated with add */
 #define VS_MUL     16  /* updated with mul */
 #define VS_EQ      32  /* updated by assignment */
-#define VS_ABS     64  /* updated by absolutle value */
+#define VS_ABS     64  /* updated by absolute value */
 typedef struct loopq LOOPQ;
 struct loopq
 {
@@ -141,6 +141,7 @@ struct loopq
    short *varrs;     /* vectorized arrays */
    short *vscal;     /* vectorized scalars */
    short *vsflag;    /* info array for vscal */
+   short *vsoflag;   /* info array for output vscal */
    short *vvscal;    /* vect locals used for vscal */
    short *nopf;      /* arrays which should not be prefetched */
    short *aaligned;   /* arrays that have known alignment */

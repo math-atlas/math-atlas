@@ -582,6 +582,7 @@ static void WriteMiscToFile(char *name)
       n = optloop->vscal ? optloop->vscal[0] : 0;
       WriteShortArrayToFile(fp, n, optloop->vscal+1);
       WriteShortArrayToFile(fp, n, optloop->vsflag+1);
+      WriteShortArrayToFile(fp, n, optloop->vsoflag+1);
       WriteShortArrayToFile(fp, n, optloop->vvscal+1);
       n = optloop->pfarrs ? optloop->pfarrs[0] : 0;
       WriteShortArrayToFile(fp, n, optloop->pfarrs+1);
@@ -656,6 +657,7 @@ static void ReadMiscFromFile(char *name)
       optloop->varrs = ReadShortArrayFromFile(fp);
       optloop->vscal  = ReadShortArrayFromFile(fp);
       optloop->vsflag  = ReadShortArrayFromFile(fp);
+      optloop->vsoflag  = ReadShortArrayFromFile(fp);
       optloop->vvscal  = ReadShortArrayFromFile(fp);
       optloop->pfarrs  = ReadShortArrayFromFile(fp);
       optloop->pfdist  = ReadShortArrayFromFile(fp);

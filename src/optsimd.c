@@ -258,9 +258,10 @@ fprintf(stderr, "moving ptr = %s\n", STname[p->ptr-1]);
    if (n)
    {
       lp->vsflag = calloc(n+1, sizeof(short));
-      assert(lp->vsflag);
+      lp->vsoflag = calloc(n+1, sizeof(short));
+      assert(lp->vsflag && lp->vsoflag);
    }
-   lp->vscal[0] = lp->vsflag[0] = n;
+   lp->vscal[0] = lp->vsflag[0] = lp->vsoflag[0] = n;
    for (i=1; i <= n; i++)
       lp->vscal[i] = sp[i-1];
 
@@ -398,7 +399,7 @@ fprintf(stderr, "moving ptr = %s\n", STname[p->ptr-1]);
                }
             }
             KillIlist(ib);
-            s[i] |= VS_ACC;
+            lp->vsoflag[i+1] |= VS_ACC;
          }
       }
    }
@@ -549,7 +550,7 @@ int SimdLoop(LOOPQ *lp)
       if (VS_LIVEOUT & lp->vsflag[i+1])
       {
          j++;
-         assert((lp->vsflag[i+1] & (VS_MUL | VS_EQ | VS_ABS)) == 0);
+         assert((lp->vsoflag[i+1] & (VS_MUL | VS_EQ | VS_ABS)) == 0);
          iptp = PrintComment(lp->posttails->blk, iptp, iptn,
                   "Reduce accumulator vector for %s", STname[lp->vscal[i+1]-1]);
          iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vld, -r0,
@@ -667,7 +668,7 @@ int VectorizeStage1(void)
  * Returns 0 on success, error code on failure.
  */
 {
-   short *varrs, *vscal, *vsflag;
+   short *varrs, *vscal, *vsflag, *vsoflag;
    short *sp;
    LOOPQ *lp;
    INSTQ *ip, *ipn;
@@ -729,12 +730,14 @@ int VectorizeStage1(void)
    varrs = optloop->varrs;
    vscal = optloop->vscal;
    vsflag = optloop->vsflag;
-   optloop->varrs = optloop->vscal = optloop->vsflag = NULL;
+   vsoflag = optloop->vsoflag;
+   optloop->varrs = optloop->vscal = optloop->vsflag = optloop->vsoflag = NULL;
    flag = lp->vflag;
    RestoreFKOState(0);
    optloop->varrs = varrs;
    optloop->vscal = vscal;
    optloop->vsflag = vsflag;
+   optloop->vsoflag = vsoflag;
    lp->vflag = flag;
 /*
  * Create vector locals for all vector scalars in loop, and their derefs
