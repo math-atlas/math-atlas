@@ -7,6 +7,7 @@ int Size2Shift(int n)
  * If N is a power of two, i of 2^i, otherwise, returns 0
  */
 {
+   int i, j;
    for (i=0,j=1; j < n; i++)
       j = 1<<i;
    return(j==n ? i : 0);
@@ -90,7 +91,8 @@ ILIST *KillIlist(ILIST *ip)
 
 struct ptrinfo *NewPtrinfo(short ptr, short flag, struct ptrinfo *next)
 {
-   struct ptrinfo *p
+   struct ptrinfo *p;
+
    p = malloc(sizeof(struct ptrinfo *));
    assert(p);
    p->ilist = NULL;

@@ -1,4 +1,5 @@
 #include "ifko.h"
+#include "fko_arch.h"
 
 static short STderef=0;
 
@@ -87,9 +88,9 @@ void CalcThisUseSet(INSTQ *ip)
          HandleUseSet(ip->use, ip->use, Reg2Int("@rdx"));
          HandleUseSet(ip->use, ip->use, ip->inst[3]);
       }
-      if (archISX86 && inst >= OR && inst <= NEG)
+      if (arch_IsX86 && inst >= OR && inst <= NEG)
          HandleUseSet(ip->set, ip->use, -ICC0);
-      else if (IS_OPCC(inst))
+      else if (IS_IOPCC(inst))
          HandleUseSet(ip->set, ip->use, -ICC0);
    }
    #if IFKO_DEBUG_LEVEL >= 1
