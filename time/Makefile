@@ -9,7 +9,8 @@ kern=error
 cache=
 NN="N=80000"
 KFLAGS= -V -G 1 1 DN
-topt=-X 1 1 -Y 1 1
+opt =-X 1 -Y 1 -Fx 16 -Fy 16
+topt=-X 1 1 -Y 1 1 -Fx 16 -Fy 16
 lower=hello
 # upper=`echo $(lower) | tr '[a-z]' 'A-Z'`
 # upper=`cat tt.in`
@@ -25,13 +26,14 @@ timel1.o : timel1.c
 l1time :
 	$(MAKE) l1time0 rout=$(rout) URT=`echo $(rout) | tr 'a-z' 'A-Z'` \
            kern=$(kern) cache="$(cache)" NN="$(NN)" KFLAGS="$(KFLAGS)" \
-           topt="$(topt)" pre=$(pre)
+           topt="$(topt)" opt="$(opt)" pre=$(pre)
 l1time0 : 
 	- rm -f ../blas/$(pre)$(rout).s $(L1Tdir)/fko.tmp if2.tmp
 	cd ../blas ; $(MAKE) $(pre)$(rout).s KFLAGS="$(KFLAGS)"
 	cp ../blas/$(pre)$(rout).s $(L1Tdir)/../$(URT)/fkorout.c
 	cd $(L1Tdir) ; make $(pre)$(rout)case urout=fkorout.c UCC=gcc \
-           UCCFLAGS="-x assembler-with-cpp" opt="$(cache)" $(NN) > fko.tmp 2>&1
+           UCCFLAGS="-x assembler-with-cpp" opt="$(opt) $(cache)" \
+           $(NN) > fko.tmp 2>&1
 	cat $(L1Tdir)/fko.tmp
 	$(MAKE) l1test pre=$(pre) rout=$(rout) N=$(NN)
 	@echo "****\n\n"
