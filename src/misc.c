@@ -98,7 +98,7 @@ struct ptrinfo *NewPtrinfo(short ptr, short flag, struct ptrinfo *next)
 {
    struct ptrinfo *p;
 
-   p = malloc(sizeof(struct ptrinfo *));
+   p = malloc(sizeof(struct ptrinfo));
    assert(p);
    p->ilist = NULL;
    p->next = next;
@@ -115,6 +115,7 @@ void KillAllPtrinfo(struct ptrinfo *base)
    while(base)
    {
       pn = base->next;
+      if (base->ilist) KillAllIlist(base->ilist);
       free(base);
       base = pn;
    }

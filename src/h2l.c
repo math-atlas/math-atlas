@@ -154,7 +154,7 @@ short AddArrayDeref(short array, short index, int offset)
    if (IS_DOUBLE(flag)) mul = 8;
    else if (IS_CHAR(flag)) mul = 1;
    assert(!IS_VEC(flag));
-   return(AddDerefEntry(array, index, mul, offset));
+   return(AddDerefEntry(array, index, mul, offset, array));
 }
 
 static void FixDeref(short ptr)

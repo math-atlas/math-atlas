@@ -269,34 +269,40 @@ void CreateSysLocals()
    if (DTnzerod == -1)
    {
       DTnzerod = STdef("_NEGZEROD", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
-      SToff[DTnzerod-1].sa[2] = AddDerefEntry(-REG_SP, DTnzerod, -DTnzerod, 0);
+      SToff[DTnzerod-1].sa[2] = AddDerefEntry(-REG_SP, DTnzerod, -DTnzerod, 0,
+                                              DTnzerod);
    }
    if (DTabsd == -1)
    {
       DTabsd = STdef("_ABSVLD", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
-      SToff[DTabsd-1].sa[2] = AddDerefEntry(-REG_SP, DTabsd, -DTabsd, 0);
+      SToff[DTabsd-1].sa[2] = AddDerefEntry(-REG_SP, DTabsd, -DTabsd, 0,
+                                            DTabsd);
 fprintf(stderr, "DTabsd = %d,%d\n", DTabsd, SToff[DTabsd-1].sa[2]);
    }
    if (DTnzero == -1)
    {
       DTnzero = STdef("_NEGZERO", VEC_BIT | T_FLOAT | LOCAL_BIT, 0);
-      SToff[DTnzero-1].sa[2] = AddDerefEntry(-REG_SP, DTnzero, -DTnzero, 0);
+      SToff[DTnzero-1].sa[2] = AddDerefEntry(-REG_SP, DTnzero, -DTnzero, 0,
+                                             DTnzero);
    }
    if (DTabs == -1)
    {
       DTabs = STdef("_ABSVAL", VEC_BIT | T_FLOAT | LOCAL_BIT, 0);
-      SToff[DTabs-1].sa[2] = AddDerefEntry(-REG_SP, DTabs, -DTabs, 0);
+      SToff[DTabs-1].sa[2] = AddDerefEntry(-REG_SP, DTabs, -DTabs, 0,
+                                           DTabs);
    }
    #ifdef X86_32
    if (DTx87 == -1)
    {
       DTx87 = STdef("_x87f", T_FLOAT | LOCAL_BIT, 0);
-      SToff[DTx87-1].sa[2] = AddDerefEntry(-REG_SP, DTx87, -DTx87, 0);
+      SToff[DTx87-1].sa[2] = AddDerefEntry(-REG_SP, DTx87, -DTx87, 0,
+                                           DTx87);
    }
    if (DTx87d == -1)
    {
       DTx87d = STdef("_x87d", T_DOUBLE | LOCAL_BIT, 0);
-      SToff[DTx87d-1].sa[2] = AddDerefEntry(-REG_SP, DTx87d, -DTx87d, 0);
+      SToff[DTx87d-1].sa[2] = AddDerefEntry(-REG_SP, DTx87d, -DTx87d, 0,
+                                            DTx87d);
    }
    #endif
 #else
@@ -405,11 +411,12 @@ void FPConstStore(INSTQ *next, short id, short con,
             InsNewInst(NULL, NULL, next, FSTD, SToff[id-1].sa[2], -dreg, 0);
          #else
             i = SToff[SToff[id-1].sa[2]-1].sa[3];
-            k = AddDerefEntry(-REG_SP, STderef, -STderef, i);
+            k = AddDerefEntry(-REG_SP, STderef, -STderef, i, con);
             InsNewInst(NULL, NULL, next, XOR, -reg, -reg, -reg);
             InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
             InsNewInst(NULL, NULL, next, ST, 
-                       AddDerefEntry(-REG_SP, STderef, -STderef, i+4), -reg, 0);
+                       AddDerefEntry(-REG_SP, STderef, -STderef, i+4), -reg, 0,
+                                     con);
             SignalSet(next, id, k, dreg);
          #endif
       }
@@ -442,24 +449,25 @@ void FPConstStore(INSTQ *next, short id, short con,
          #elif defined(SPARC)
             ip = (int*) &d;
             i = SToff[SToff[id-1].sa[2]-1].sa[3];
-            k = AddDerefEntry(-REG_SP, STderef, -STderef, i);
+            k = AddDerefEntry(-REG_SP, STderef, -STderef, i, con);
             bitload(next, reg, 12, *ip);
             InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
             bitload(next, reg, 12, ip[1]);
             InsNewInst(NULL, NULL, next, ST, 
-                       AddDerefEntry(-REG_SP, STderef, -STderef, i+4), -reg, 0);
+               AddDerefEntry(-REG_SP, STderef, -STderef, i+4), -reg, 0, con);
 /*
  *       PPC loads 16 bits at a time
  */
          #elif defined(PPC)
             ip = (int*) &d;
             i = SToff[SToff[id-1].sa[2]-1].sa[3];
-            k = AddDerefEntry(-REG_SP, STderef, -STderef, i);
+            k = AddDerefEntry(-REG_SP, STderef, -STderef, i, con);
             bitload(next, reg, 16, *ip);
             InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
             bitload(next, reg, 16, ip[1]);
             InsNewInst(NULL, NULL, next, ST,
-                       AddDerefEntry(-REG_SP, STderef, -STderef, i+4), -reg, 0);
+                       AddDerefEntry(-REG_SP, STderef, -STderef, i+4), -reg, 0,
+                                     con);
          #endif
          #ifndef X86
             SignalSet(next, id, k, dreg);
@@ -477,7 +485,7 @@ void FPConstStore(INSTQ *next, short id, short con,
             InsNewInst(NULL, NULL, next, FST, SToff[id-1].sa[2], -freg, 0);
          #else
             k = AddDerefEntry(-REG_SP, STderef, -STderef, 
-                              SToff[SToff[id-1].sa[2]-1].sa[3]);
+                              SToff[SToff[id-1].sa[2]-1].sa[3], con);
             InsNewInst(NULL, NULL, next, XOR, -reg, -reg, -reg);
             InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
             SignalSet(next, id, k, freg);
@@ -487,7 +495,7 @@ void FPConstStore(INSTQ *next, short id, short con,
       {
          ip = (int*) &f;
          k = AddDerefEntry(-REG_SP, STderef, -STderef, 
-                           SToff[SToff[id-1].sa[2]-1].sa[3]);
+                           SToff[SToff[id-1].sa[2]-1].sa[3], con);
          #ifdef X86
             InsNewInst(NULL, NULL, next, MOV, -reg, STiconstlookup(*ip), 0);
             InsNewInst(NULL, NULL, next, VGR2VR16, -dreg, -reg, 
@@ -670,7 +678,7 @@ void Extern2Local(INSTQ *next, int rsav)
             else
             {
                ir = reg1;
-               k = AddDerefEntry(rsav, 0, 0, nof*8);
+               k = AddDerefEntry(rsav, 0, 0, nof*8, paras[i]+1);
                ParaDerefQ = NewLocinit(k, 0, ParaDerefQ);
                if (USED)
                   InsNewInst(NULL, NULL, next, LD, -ir, k, 0);
@@ -689,7 +697,7 @@ void Extern2Local(INSTQ *next, int rsav)
             else
             {
                ir = reg1;
-               k = AddDerefEntry(rsav, 0, 0, nof*8);
+               k = AddDerefEntry(rsav, 0, 0, nof*8, paras[i]);
                ParaDerefQ = NewLocinit(k, 0, ParaDerefQ);
                if (USED) InsNewInst(NULL, NULL, next, LDS, -ir, k, 0);
                nof++;
@@ -725,7 +733,7 @@ void Extern2Local(INSTQ *next, int rsav)
                ir = reg1;
                if (USED)
                {
-                  k = AddDerefEntry(rsav, 0, 0, nof*8);
+                  k = AddDerefEntry(rsav, 0, 0, nof*8, paras[i]+1);
                   ParaDerefQ = NewLocinit(k, 0, ParaDerefQ);
                   InsNewInst(NULL, NULL, next, FLD, -freg, k, 0);
                   InsNewInst(NULL, NULL, next, FST, SToff[paras[i]].sa[2],
@@ -750,7 +758,7 @@ void Extern2Local(INSTQ *next, int rsav)
                ir = reg1;
                if (USED)
                {
-                  k = AddDerefEntry(rsav, 0, 0, nof*8);
+                  k = AddDerefEntry(rsav, 0, 0, nof*8, paras[i]+1);
                   ParaDerefQ = NewLocinit(k, 0, ParaDerefQ);
                   InsNewInst(NULL, NULL, next, FLDD, -dreg, k, 0);
                   InsNewInst(NULL, NULL, next, FSTD, SToff[paras[i]].sa[2],
@@ -772,7 +780,8 @@ void Extern2Local(INSTQ *next, int rsav)
          k = SToff[SToff[DTnzerod-1].sa[2]-1].sa[3];
          InsNewInst(NULL, NULL, next, ST, SToff[DTnzerod-1].sa[2], -ir, 0);
          InsNewInst(NULL, NULL, next, ST, 
-                    AddDerefEntry(-REG_SP, DTnzerod, -DTnzerod, k+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTnzerod, -DTnzerod, k+8, DTnzerod),
+                    -ir, 0);
       }
       if (DTnzero > 0)
       {
@@ -783,7 +792,8 @@ void Extern2Local(INSTQ *next, int rsav)
          k = ((SToff[DTnzero-1].sa[2]-1)<<2) + 3;
          k = SToff[SToff[DTnzero-1].sa[2]-1].sa[3];
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, DTnzero, -DTnzero, k+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTnzero, -DTnzero, k+8, DTnzero), 
+                    -ir, 0);
       }
       if (DTabsd)
       {
@@ -793,7 +803,8 @@ void Extern2Local(INSTQ *next, int rsav)
          k = SToff[SToff[DTabsd-1].sa[2]-1].sa[3];
          InsNewInst(NULL, NULL, next, ST, SToff[DTabsd-1].sa[2], -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, DTabsd, -DTabsd, k+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTabsd, -DTabsd, k+8, DTabsd), 
+                    -ir, 0);
       }
       if (DTabs)
       {
@@ -803,7 +814,7 @@ void Extern2Local(INSTQ *next, int rsav)
                     STlconstlookup(0x7fffffff7fffffff), 0);
          InsNewInst(NULL, NULL, next, ST, SToff[DTabs-1].sa[2], -ir, 0);
          InsNewInst(NULL, NULL, next, ST, 
-                    AddDerefEntry(-REG_SP, DTabs, -DTabs, k+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTabs, -DTabs, k+8, DTabs), -ir, 0);
       }
       InsNewInst(NULL, NULL, next, COMMENT, STstrconstlookup("done archspec"), 
                  0, 0);
@@ -826,7 +837,7 @@ void Extern2Local(INSTQ *next, int rsav)
          {
             if (USED)
             {
-               k = AddDerefEntry(rsav, 0, 0, j*4);
+               k = AddDerefEntry(rsav, 0, 0, j*4, paras[i]+1);
                ParaDerefQ = NewLocinit(k, 0, ParaDerefQ);
                InsNewInst(NULL, NULL, next, FLDD, -dreg, k, 0);
                InsNewInst(NULL, NULL, next, FSTD, SToff[paras[i]].sa[2], 
@@ -836,7 +847,7 @@ void Extern2Local(INSTQ *next, int rsav)
          }
          else if (USED)
          {
-            k = AddDerefEntry(rsav, 0, 0, j*4);
+            k = AddDerefEntry(rsav, 0, 0, j*4, paras[i]+1);
             ParaDerefQ = NewLocinit(k, 0, ParaDerefQ);
             if (FLAG2PTYPE(flag) == T_FLOAT)
             {
@@ -861,12 +872,15 @@ void Extern2Local(INSTQ *next, int rsav)
          InsNewInst(NULL, NULL, next, XOR, -ir, -ir, -ir);
          InsNewInst(NULL, NULL, next, ST, SToff[DTnzerod-1].sa[2], -ir, 0);
          InsNewInst(NULL, NULL, next, ST, 
-                    AddDerefEntry(-REG_SP, DTnzerod, -DTnzerod, k+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTnzerod, -DTnzerod, k+8, DTnzerod),
+                    -ir, 0);
          InsNewInst(NULL, NULL, next, MOV, -ir, STiconstlookup(0x80000000), 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, DTnzerod, -DTnzerod, k+4), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTnzerod, -DTnzerod, k+4, DTnzerod),
+                    -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, DTnzerod, -DTnzerod, k+12), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTnzerod, -DTnzerod, k+12, DTnzerod),
+                    -ir, 0);
       }
       if (DTnzero > 0)
       {
@@ -875,11 +889,14 @@ void Extern2Local(INSTQ *next, int rsav)
          InsNewInst(NULL, NULL, next, ST, SToff[DTnzero-1].sa[2], -ir, 0);
          k = SToff[SToff[DTnzero-1].sa[2]-1].sa[3];
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, DTnzero, -DTnzero, k+4), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTnzero, -DTnzero, k+4, DTnzero),
+                    -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, DTnzero, -DTnzero, k+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTnzero, -DTnzero, k+8, DTnzero),
+                    -ir, 0);
          InsNewInst(NULL, NULL, next, ST, 
-                    AddDerefEntry(-REG_SP, DTnzero, -DTnzero, k+12), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTnzero, -DTnzero, k+12, DTnzero),
+                    -ir, 0);
       }
       if (DTabsd)
       {
@@ -889,12 +906,15 @@ void Extern2Local(INSTQ *next, int rsav)
          InsNewInst(NULL, NULL, next, NOT, -ir, -ir, -ir);
          InsNewInst(NULL, NULL, next, ST, SToff[DTabsd-1].sa[2], -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, DTabsd, -DTabsd, k+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTabsd, -DTabsd, k+8, DTabsd),
+                    -ir, 0);
          InsNewInst(NULL, NULL, next, MOV, -ir, STiconstlookup(0x7fffffff), 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, DTabsd, -DTabsd, k+4), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTabsd, -DTabsd, k+4, DTabsd),
+                    -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, DTabsd, -DTabsd, k+12), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTabsd, -DTabsd, k+12, DTabsd),
+                    -ir, 0);
       }
       if (DTabs)
       {
@@ -903,11 +923,11 @@ void Extern2Local(INSTQ *next, int rsav)
          InsNewInst(NULL, NULL, next, MOV, -ir, STiconstlookup(0x7fffffff), 0);
          InsNewInst(NULL, NULL, next, ST, SToff[DTabs-1].sa[2], -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, DTabs, -DTabs, k+4), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTabs, -DTabs, k+4, DTabs), -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, DTabs, -DTabs, k+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTabs, -DTabs, k+8, DTabs), -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, DTabs, -DTabs, k+12), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTabs, -DTabs, k+12, DTabs), -ir, 0);
       }
       InsNewInst(NULL, NULL, next, COMMENT, STstrconstlookup("done archspec"), 0, 0);
    #endif
@@ -937,7 +957,7 @@ void Extern2Local(INSTQ *next, int rsav)
             }
             else if (USED)
             {
-               k = AddDerefEntry(rsav, 0, 0, j*4);
+               k = AddDerefEntry(rsav, 0, 0, j*4, paras[i]+1);
                ParaDerefQ = NewLocinit(k, 0, ParaDerefQ);
                InsNewInst(NULL, NULL, next, LD, -ir, k, 0);
                InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
@@ -953,14 +973,15 @@ void Extern2Local(INSTQ *next, int rsav)
                if (USED)
                {
                   k = AddDerefEntry(-REG_SP, STderef, -STderef, 
-                                    SToff[SToff[paras[i]].sa[2]-1].sa[3]);
+                                    SToff[SToff[paras[i]].sa[2]-1].sa[3],
+                                    paras[i]+1);
                   InsNewInst(NULL, NULL, next, ST, k, -ir, 0);
                   SignalSet(next, paras[i]+1, k, freg);
                }
             }
             else if (USED)
             {
-               k = AddDerefEntry(rsav, 0, 0, j*4);
+               k = AddDerefEntry(rsav, 0, 0, j*4, paras[i]+1);
                ParaDerefQ = NewLocinit(k, 0, ParaDerefQ);
                InsNewInst(NULL, NULL, next, FLD, -freg, k, 0);
                InsNewInst(NULL, NULL, next, FST, SToff[paras[i]].sa[2],
@@ -979,13 +1000,13 @@ void Extern2Local(INSTQ *next, int rsav)
                if (USED)
                {
                   kk = SToff[SToff[paras[i]].sa[2]-1].sa[3];
-                  k = AddDerefEntry(-REG_SP, STderef, -STderef, kk);
+                  k = AddDerefEntry(-REG_SP, STderef, -STderef, kk, paras[i]+1);
                   InsNewInst(NULL, NULL, next, ST, k, -ir, 0);
                   nam[2] = j + '0';
                   ir = iName2Reg(nam);
                   InsNewInst(NULL, NULL, next, ST, 
-                             AddDerefEntry(-REG_SP, STderef, -STderef, kk+4),
-                             -ir, 0);
+                             AddDerefEntry(-REG_SP, STderef, -STderef, kk+4, 
+                                           paras[i]+1), -ir, 0);
                   SignalSet(next, paras[i]+1, k, dreg);
                }
                j++;
@@ -998,14 +1019,15 @@ void Extern2Local(INSTQ *next, int rsav)
                if (USED)
                {
                   kk = SToff[SToff[paras[i]].sa[2]-1].sa[3];
-                  k = AddDerefEntry(-REG_SP, STderef, -STderef, kk);
+                  k = AddDerefEntry(-REG_SP, STderef, -STderef, kk, paras[i]+1);
                   InsNewInst(NULL, NULL, next, ST, k, -ir, 0);
 
-                  ii = AddDerefEntry(rsav, 0, 0, j*4);
+                  ii = AddDerefEntry(rsav, 0, 0, j*4, paras[i]+1);
                   ParaDerefQ = NewLocinit(ii, 0, ParaDerefQ);
                   InsNewInst(NULL, NULL, next, LD, -ir, ii, 0);
 
-                  ii = AddDerefEntry(-REG_SP, STderef, -STderef, kk+4);
+                  ii = AddDerefEntry(-REG_SP, STderef, -STderef, kk+4,
+                                     paras[i]+1);
                   InsNewInst(NULL, NULL, next, ST, ii, -ir, 0);
                   SignalSet(next, paras[i]+1, k, dreg);
                }
@@ -1017,11 +1039,11 @@ void Extern2Local(INSTQ *next, int rsav)
                {
                   strcpy(nam, archdregs[dreg-DREGBEG]);
                   k = fName2Reg(nam);
-                  ii = AddDerefEntry(rsav, 0, 0, j*4);
+                  ii = AddDerefEntry(rsav, 0, 0, j*4, paras[i]+1);
                   ParaDerefQ = NewLocinit(ii, 0, ParaDerefQ);
                   InsNewInst(NULL, NULL, next, FLD, -k, ii, 0);
                   k++;
-                  ii = AddDerefEntry(rsav, 0, 0, j*4+4);
+                  ii = AddDerefEntry(rsav, 0, 0, j*4+4, paras[i]+1);
                   ParaDerefQ = NewLocinit(ii, 0, ParaDerefQ);
                   InsNewInst(NULL, NULL, next, FLD, -k, ii, 0);
                   InsNewInst(NULL, NULL, next, FSTD, SToff[paras[i]].sa[2], 
@@ -1061,7 +1083,7 @@ void Extern2Local(INSTQ *next, int rsav)
                }
                else
                {
-                  ii = AddDerefEntry(rsav, 0, 0, j*4);
+                  ii = AddDerefEntry(rsav, 0, 0, j*4, paras[i]+1);
                   ParaDerefQ = NewLocinit(ii, 0, ParaDerefQ);
                   if (j == 8)
                   {
@@ -1094,7 +1116,7 @@ void Extern2Local(INSTQ *next, int rsav)
                }
                else
                {
-                  ii = AddDerefEntry(rsav, 0, 0, j*4);
+                  ii = AddDerefEntry(rsav, 0, 0, j*4, paras[i]+1);
                   ParaDerefQ = NewLocinit(ii, 0, ParaDerefQ);
                   InsNewInst(NULL, NULL, next, FLD, -freg, ii, 0);
                   InsNewInst(NULL, NULL, next, FST, SToff[paras[i]].sa[2], 
@@ -1125,7 +1147,7 @@ void Extern2Local(INSTQ *next, int rsav)
                }
                else
                {
-                  ii = AddDerefEntry(rsav, 0, 0, j*4);
+                  ii = AddDerefEntry(rsav, 0, 0, j*4, paras[i]+1);
                   ParaDerefQ = NewLocinit(ii, 0, ParaDerefQ);
                   InsNewInst(NULL, NULL, next, FLDD, -dreg, ii, 0);
                   InsNewInst(NULL, NULL, next, FSTD, SToff[paras[i]].sa[2],
@@ -1185,19 +1207,19 @@ void FinalizeEpilogue(BBLOCK *bbase,
  */
    for (i=0; i < ndr; i++)
       InsNewInst(blk, NULL, next, FLDD, -dr[i],
-                 AddDerefEntry(-REG_SP, 0, 0, Soff+i*8), 0);
+                 AddDerefEntry(-REG_SP, 0, 0, Soff+i*8, 0), 0);
    for (i=0; i < nir; i++)
       InsNewInst(blk, NULL, next, LD, -ir[i],
-                 AddDerefEntry(-REG_SP, 0,0, Soff+ndr*8+i*ISIZE), 0);
+                 AddDerefEntry(-REG_SP, 0,0, Soff+ndr*8+i*ISIZE, 0), 0);
    for (i=0; i < nfr; i++)
       InsNewInst(blk, NULL, next, FLD, -fr[i],
-                 AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+nir*ISIZE+i*4), 0);
+                 AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+nir*ISIZE+i*4, 0), 0);
 /*
  * Restore stack pointer
  */
    if (savesp >= 0)
       InsNewInst(blk, NULL, next, LD, -REG_SP, 
-                 AddDerefEntry(-REG_SP, 0, 0, savesp), 0);
+                 AddDerefEntry(-REG_SP, 0, 0, savesp, 0), 0);
    else
       InsNewInst(blk, NULL, next, ADD, -REG_SP, -REG_SP,
                  STiconstlookup(fsize));
@@ -1514,7 +1536,7 @@ fprintf(stderr, "nosave=%d nisav = %d\n", k, nir);
       if (i < nir)
       {
          InsNewInst(NULL, NULL, oldhead, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, 0), -k, 0);
+                    AddDerefEntry(-REG_SP, 0, 0, 0, 0), -k, 0);
          for (nir--; i < nir; i++) ir[i] = ir[i+1];
       }
    #endif
@@ -1621,7 +1643,7 @@ fprintf(stderr, "\n\n** rsav=%d,%s**\n\n", rsav, Int2Reg(rsav <= 0 ? rsav : -rsa
       i = STiconstlookup(i);
       InsNewInst(NULL, NULL, oldhead, SHR, -REG_SP, -REG_SP, i);
       InsNewInst(NULL, NULL, oldhead, SHL, -REG_SP, -REG_SP, i);
-      spderef = AddDerefEntry(-REG_SP, 0, 0, SAVESP);
+      spderef = AddDerefEntry(-REG_SP, 0, 0, SAVESP, 0);
       InsNewInst(NULL, NULL, oldhead, ST, spderef, rsav, 0);
       if (LOAD1)
          rsav = -LOAD1;
@@ -1636,13 +1658,13 @@ fprintf(stderr, "\n\n** rsav=%d,%s**\n\n", rsav, Int2Reg(rsav <= 0 ? rsav : -rsa
  */
    for (i=0; i < ndr; i++)
       InsNewInst(NULL, NULL, oldhead, FSTD,
-                 AddDerefEntry(-REG_SP, 0, 0, Soff+i*8), -dr[i], 0);
+                 AddDerefEntry(-REG_SP, 0, 0, Soff+i*8, 0), -dr[i], 0);
    for (i=0; i < nir; i++)
       InsNewInst(NULL, NULL, oldhead, ST,
-                 AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+i*ISIZE), -ir[i], 0);
+                 AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+i*ISIZE,0), -ir[i], 0);
    for (i=0; i < nfr; i++)
       InsNewInst(NULL, NULL, oldhead, FST,
-                 AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+nir*ISIZE+i*4),
+                 AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+nir*ISIZE+i*4, 0),
                  -fr[i], 0);
 /*
  * If we need old stack pointer in register that must be saved, load it here

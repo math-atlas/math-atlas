@@ -562,9 +562,14 @@ static void ReadMiscFromFile(char *name)
    int i;
    short n;
    FILE *fp;
+   LOOPQ *lp;
 
    if (optloop)
-      KillLoop(optloop);
+   {
+      for (lp=loopq; lp && lp != optloop; lp = lp->next);
+      if (!lp)
+         KillLoop(optloop);
+   }
    KillAllLoops();
    optloop = NewLoop(0);
    fp = fopen(name, "rb");

@@ -31,7 +31,8 @@ BBLOCK *DupBlock(BBLOCK *bold)
          k = ip->inst[i]-1;
          if (k >= 0 && NonLocalDeref(k+1))
             ip->inst[i] = AddDerefEntry(SToff[k].sa[0], SToff[k].sa[1],
-                                        SToff[k].sa[2], SToff[k].sa[3]);
+                                        SToff[k].sa[2], SToff[k].sa[3],
+                                        STpts2[k]);
       }
    }
    return(nb);
@@ -383,6 +384,7 @@ struct ptrinfo *FindMovingPointers(BLIST *scope)
                      p->nupdate++;
                      p->flag = 0;
                   }
+                  p->ilist = NewIlist(ip, p->ilist);
                }
             }
          }
@@ -467,17 +469,60 @@ INSTQ *KillPointerUpdates(struct ptrinfo *pbase, int UR)
    return(ipbase);
 }
 
+short *UpdateDeref(INSTQ *ip, int ireg, int inc)
+/*
+ * Looks through inst ip for derefs using ireg, and adds inc to them
+ * RETURNS: new instruction if inc can be added
+ *          NULL if inc cannot be added
+ */
+{
+   static short inst[4];
+   int i;
+   short ST, k;
+
+   inst[0] = ip->inst[0];
+   for (i=1; i < 4; i++)
+   {
+      ST = inst[i] = ip->inst[i];
+      ST--;
+      if (ST >= 0 && IS_DEREF(STflag[ST]))
+      {
+/*
+ *       If machine doesn't support constant & register indexing, or if
+ *       the index register is the changed one, give up
+ */
+         #ifndef ArchConstAndIndex
+            if (SToff[ST].sa[1] < 0)
+               return(NULL);
+         #else
+            if (ireg == -SToff[ST].sa[1])   /* disallow offset usage */
+               return(NULL);
+         #endif
+         if (SToff[ST].sa[0] == -ireg)
+         {
+            k = SToff[ST].sa[3];
+            k = k ? SToff[k-1].i+inc : inc;
+            inst[i] = AddDerefEntry(-ireg, SToff[ST].sa[1], SToff[ST].sa[2], k,
+                                    STpts2[ST]);
+         }
+      }
+      else if (ST+1 == -ireg)  /* disallow explicit usage */
+         return(NULL);
+   }
+   return(inst);
+}
 void UpdatePointerLoads(BLIST *scope, struct ptrinfo *pbase, int UR)
 /*
- * Finds all loads of of pointers in pbase, and adds UR*size to their deref
+ * Finds all loads of pointers in pbase, and adds UR*size to their deref
  */
 {
    BLIST *bl;
    INSTQ *ip;
    struct ptrinfo *pi;
-   short *pst;
+   short *pst, *sp;
    int i, n, inc;
-   short k;
+   short k, kk;
+
    if (!pbase || !scope)
       return;
    for (n=0,pi=pbase; pi; n++,pi=pi->next);
@@ -495,13 +540,16 @@ void UpdatePointerLoads(BLIST *scope, struct ptrinfo *pbase, int UR)
  */
       for (ip=bl->blk->ainst1; ip; ip = ip->next)
       {
-         if (ip->inst[0] == LD)
+         if (IS_LOAD(ip->inst[0]))
          {
             k = ip->inst[2];
+            assert(k > 0);
+            k = STpts2[k-1];
+            if (!k) continue;
 /*
  *          Find if load is of a moving pointer
  */
-            for (i=0; i != n && pst[i] != k; i++)
+            for (i=0; i != n && pst[i] != k; i++);
             if (i == n) continue;
 /*
  *          Now that we've got a moving pointer, determing unrolling increment
@@ -515,20 +563,29 @@ void UpdatePointerLoads(BLIST *scope, struct ptrinfo *pbase, int UR)
  *          Find use of register we just loaded ptr to (since this step is done
  *          after initial code generation, there is always 1 and only 1 use)
  */
-            k = ip->inst[1];
+/* ===========================================================================
+ * This is all wrong; doesn't take into account most important situation,
+ * where register is then used via DT entry
+ */
+            k = -ip->inst[1];
+            assert(k > 0);
             for (ip=ip->next; ip; ip = ip->next)
-               if (k == ip->inst[1] || k == ip->inst[2] || k == ip->inst[3])
+            {
+               CalcThisUseSet(ip);
+               if (BitVecCheck(ip->use, k-1))
                   break;
-            assert(ip);
+            }
+            assert(ip && BitVecCheck(ip->use, k-1));
 /*
- *          If last argument is a constant, simply add UR*size to constant
+ *          Presently not allowing ptr0 = ptr1 + ptr2, so no explicit ref
  */
-            if (ip->inst[3] > 0 && IS_CONST(STflag[ip->inst[3]-1]) && 
-                IS_INT(STflag[ip->inst[3]-1]))
-               ip->inst[3] = STiconstlookup(SToff[ip->inst[3]-1].i+inc);
-/*
- *          Otherwise, increment the register before use
- */
+            assert(k != -ip->inst[2] && k != -ip->inst[3]);
+            sp = UpdateDeref(ip, k, inc);
+            if (sp)
+            {
+               for (k=0; k < 4; k++)
+                  ip->inst[k] = sp[k];
+            }
             else
                InsNewInst(bl->blk, NULL, ip, ADD, -k, -k, STiconstlookup(inc));
          }
@@ -1220,8 +1277,8 @@ int UnrollLoop(LOOPQ *lp, int unroll)
    BBLOCK *newCF;
    BLIST **dupblks, *bl, *ntails=NULL;
    ILIST *il;
-   INSTQ *ippost=NULL;
-   struct ptrinfo *pi;
+   INSTQ *ippost=NULL, *ip;
+   struct ptrinfo *pi, *pi0;
    int i, UsesIndex=1, UsesPtrs=1;
    enum comp_flag kbeg, kend;
    extern int FKO_BVTMP;
@@ -1232,9 +1289,9 @@ PrintInst(fopen("err.tmp", "w"), bbbase);
    il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
    if (il) KillIlist(il);
    else UsesIndex = 0;
-   pi = FindMovingPointers(lp->blocks);
-   if (pi) KillAllPtrinfo(pi);
-   else UsesPtrs = 0;
+   pi0 = FindMovingPointers(lp->blocks);
+   if (!pi0)
+      UsesPtrs = 0;
    UnrollCleanup(lp, unroll);
 
    dupblks = malloc(sizeof(BLIST*)*unroll);
@@ -1274,18 +1331,28 @@ fprintf(stderr, "dupblks[%d] = %s\n", i-1, PrintBlockList(dupblks[i-1]));
 /*
  *       Kill pointer updates in loop, and get ptr inc code to add to EOL
  */
-         ippost = KillPointerUpdates(pi, i);
-         assert(ippost);
+         ip = KillPointerUpdates(pi, i);
+         assert(ip);
+         free(ip->next->next);
+         free(ip->next);
+         free(ip);
 /*
  *       Find all lds of moving ptrs, and add unrolling factor to them
  */
          UpdatePointerLoads(dupblks[i-1], pi, i);
+         KillAllPtrinfo(pi);
       }
 /*
  *    Update indices to add in unrolling factor
  */
       if (UsesIndex)
          UpdateUnrolledIndices(dupblks[i-1], lp->I, i);
+   }
+   if (pi0)
+   {
+      ippost = KillPointerUpdates(pi0, unroll);
+      KillAllPtrinfo(pi0);
+      assert(ip);
    }
    SetVecBit(lp->blkvec, lp->header->bnum-1, 1);
    KillCompflagInRange(lp->blocks, CF_LOOP_UPDATE, CF_LOOP_END);

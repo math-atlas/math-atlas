@@ -4,6 +4,7 @@
 char **STname;
 union valoff *SToff;
 int *STflag;
+short *STpts2;
 static int N=0, Nalloc=0;
 static int niloc=0, nlloc=0, nfloc=0, ndloc=0, nvfloc=0, nvdloc=0;
 int    LOCSIZE=0, LOCALIGN=0, NPARA=0;
@@ -15,6 +16,7 @@ static void GetNewSymtab(int chunk)
 {
    char **nam;
    int *flg;
+   short *pts2;
    union valoff *off;
    int i, n;
    n = Nalloc + chunk;
@@ -22,7 +24,8 @@ static void GetNewSymtab(int chunk)
    assert(nam);
    off = malloc(n*sizeof(union valoff));
    flg = malloc(n*sizeof(int));
-   assert(off && flg);
+   pts2 = malloc(n*sizeof(short));
+   assert(off && flg && pts2);
    if (Nalloc > 0)
    {
       for (i=0; i < N; i++)
@@ -30,14 +33,17 @@ static void GetNewSymtab(int chunk)
          nam[i] = STname[i];
          off[i].d = SToff[i].d;
          flg[i] = STflag[i];
+         STpts2[i] = pts2[i];
       }
       free(STname);
       free(SToff);
       free(STflag);
+      free(STpts2);
    }
    STname = nam;
    SToff = off;
    STflag = flg;
+   STpts2 = pts2;
    Nalloc = n;
 }
 
@@ -53,6 +59,7 @@ static short STnew(char *name, int flag, union valoff off)
    else STname[N] = NULL;
    STflag[N] = flag;
    SToff[N] = off;
+   STpts2[N] = 0;
    return(++N);
 }
 
@@ -317,10 +324,10 @@ void CreateLocalDerefs()
       if (IS_PARA(fl))
       {
          SToff[k].sa[0] = SToff[k].i;
-         SToff[k].sa[2] = AddDerefEntry(-REG_SP, k+1, -k-1, 0);
+         SToff[k].sa[2] = AddDerefEntry(-REG_SP, k+1, -k-1, 0, k+1);
       }
       else if (IS_LOCAL(fl))
-         SToff[k].sa[2] = AddDerefEntry(-REG_SP, k+1, -k-1, 0);
+         SToff[k].sa[2] = AddDerefEntry(-REG_SP, k+1, -k-1, 0, k+1);
    }
 }
 
@@ -514,7 +521,7 @@ short FindDerefEntry(short ptr, short ireg, short mul, short con)
    return(0);
 }
 
-short AddDerefEntry(short ptr, short reg, short mul, short con)
+short AddDerefEntry(short ptr, short reg, short mul, short con, short pts2)
 {
    int i;
    i = STdef("DT", DEREF_BIT | FLAG2TYPE(STflag[ptr-1]), 0) - 1;
@@ -522,6 +529,7 @@ short AddDerefEntry(short ptr, short reg, short mul, short con)
    SToff[i].sa[1] = reg;
    SToff[i].sa[2] = mul;
    SToff[i].sa[3] = con;
+   STpts2[i] = pts2;
    return(i+1);
 }
 
@@ -531,16 +539,21 @@ short FindLocalFromDT(short dt)
  * RETURNS: ST index of local using deref dt, or 0 if not found
  */
 {
-   int i;
+   int i, k;
    for (i=0; i != N; i++)
    {
       if (IS_LOCAL(STflag[i]) || IS_PARA(STflag[i]))
       {
          if (SToff[i].sa[2] == dt)
-            return(i+1);
+            break;
       }
    }
-   return(0);
+   if (i==N) i = 0;
+   k = STpts2[dt-1];
+   if (k > 0 && !IS_LOCAL(STflag[k]) && !IS_PARA(STflag[k]))
+      k = 0;
+   assert(k == i+1);
+   return(k);
 }
 static char flag2pre(int flag)
 {

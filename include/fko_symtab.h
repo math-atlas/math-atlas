@@ -50,10 +50,11 @@
    extern char         **STname;
    extern union valoff *SToff;
    extern int          *STflag;
+   extern short        *STpts2;
 #endif
 
 short FindDerefEntry(short ptr, short ireg, short mul, short con);
-short AddDerefEntry(short ptr, short reg, short mul, short con);
+short AddDerefEntry(short ptr, short reg, short mul, short con, short pts2);
 short STdef(char *name, int flag, int off);
 short STdconstlookup(double f);
 short STfconstlookup(float f);
