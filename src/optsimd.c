@@ -175,10 +175,10 @@ int DoLoopSimdAnal(LOOPQ *lp)
    /*
     * Make sure all vars are of same type
     */
-      j = FLAG2TYPE(sp[0]-1);
+      j = FLAG2TYPE(STflag[sp[0]-1]);
       for (i=1; i < n; i++)
       {
-         if (FLAG2TYPE(sp[i]-1) != j)
+         if (FLAG2TYPE(STflag[sp[i]-1]) != j)
          {
              fko_warn(__LINE__, 
                       "Mixed type %d(%s), %d(%s) prevents vectorization!!\n\n",
