@@ -4,7 +4,6 @@
 char **STname;
 union valoff *SToff;
 int *STflag;
-/* short *DT, *DT2ST; */
 static int N=0, Nalloc=0, Ndt=0, Ndtalloc=0;
 static int niloc=0, nlloc=0, nfloc=0, ndloc=0, nvfloc=0, nvdloc=0;
 int    LOCSIZE=0, LOCALIGN=0, NPARA=0;

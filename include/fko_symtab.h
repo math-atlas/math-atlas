@@ -50,7 +50,6 @@
    extern int          *STflag;
 #endif
 
-void CleanDereftab(void);
 short FindDerefEntry(short ptr, short ireg, short mul, short con);
 short AddDerefEntry(short ptr, short reg, short mul, short con);
 short STdef(char *name, int flag, int off);

@@ -53,7 +53,6 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "NO_PREFETCH"      { yylval.sh = 4; return(LOOP_LIST_MU); }
 "MAX_UNROLL"       { yylval.sh = 0; return(LOOP_INT_MU); }
 "WRITE_DEP_DIST"   { yylval.sh = 1; return(LOOP_INT_MU); }
-  /* "MAX_UNROLL"       { return(MAX_UNROLL); } */
 "LOOP"  { return(LOOP_BEGIN); }
 "DOUBLE" { return(DOUBLE); }
 "FLOAT" { return(FLOAT); }
