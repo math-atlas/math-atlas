@@ -289,7 +289,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
    INSTQ *ip;
    BBLOCK *bp;
    struct assmln *ahead=NULL, *ap;
-   short op1, op2, op3, k;
+   short inst, op1, op2, op3, k;
    #ifdef SPARC
       int SeenSave=0;
    #endif
@@ -302,10 +302,11 @@ struct assmln *lil2ass(BBLOCK *bbase)
    {
    for (ip=bp->inst1; ip; ip = ip->next)
    {
+      inst = ip->inst[0] & 0x3FFF;
       op1 = ip->inst[1];
       op2 = ip->inst[2];
       op3 = ip->inst[3];
-      switch(ip->inst[0])
+      switch(inst)
       {
 
 #if 0
@@ -629,7 +630,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
    #ifdef X86_64
       case XORS:
       case ORS:
-         if (ip->inst[0] == XORS) sptr = "xorl";
+         if (inst == XORS) sptr = "xorl";
          else sptr = "orl";
          assert(op1 == op2);
          ap->next = PrintAssln("\t%s\t%s, %s\n", sptr, GetSregOrConst(op3), 
@@ -639,13 +640,13 @@ struct assmln *lil2ass(BBLOCK *bbase)
       case XOR:
       case OR :
           #ifdef X86_64
-             if (ip->inst[0] == XOR) sptr = "xorq";
+             if (inst == XOR) sptr = "xorq";
              else sptr = "orq";
           #elif defined(X86)
-             if (ip->inst[0] == XOR) sptr = "xorl";
+             if (inst == XOR) sptr = "xorl";
              else sptr = "orl";
           #else
-             if (ip->inst[0] == XOR) sptr = "xor";
+             if (inst == XOR) sptr = "xor";
              else sptr = "or";
           #endif
          #ifdef X86
@@ -671,7 +672,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("   %s = %s %s %s;\n", 
                                   archiregs[-IREGBEG-op1],
                                   archiregs[-IREGBEG-op2],
-                                  ip->inst[0] == XOR ? "^" : "|",
+                                  inst == XOR ? "^" : "|",
                                   GetIregOrConst(op3));
          #endif
          break;
@@ -682,10 +683,10 @@ struct assmln *lil2ass(BBLOCK *bbase)
           #elif defined(X86)
              sptr = "andl";
           #elif defined(SPARC)
-             if (ip->inst[0] == AND) sptr = "and";
+             if (inst == AND) sptr = "and";
              else sptr = "andcc";
           #elif defined(PPC)
-             if (ip->inst[0] == AND)
+             if (inst == AND)
              {
                 if (op3 > 0) sptr = "andi";
                 else sptr = "and";
@@ -713,7 +714,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("   %s = %s %s %s;\n", 
                                   archiregs[-IREGBEG-op1],
                                   archiregs[-IREGBEG-op2],
-                                  ip->inst[0] == XOR ? "^" : "|",
+                                  inst == XOR ? "^" : "|",
                                   GetIregOrConst(op3));
          #endif
          break;
