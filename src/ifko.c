@@ -168,7 +168,7 @@ fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    AddLoopComments();
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
-#if 1
+#if 0
    AddSetUseComments(bbbase);   
    AddDeadComments(bbbase);
 #endif

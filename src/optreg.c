@@ -900,9 +900,9 @@ int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
          SetVecBit(ip->use, ig->var+TNREG-1, 0);
          SetVecBit(ip->use, ig->reg-1, 0);
          assert(ip->inst[2] == ig->deref || ip->inst[3] == ig->deref);
-         if (ip->inst[2] == ig->var)
+         if (ip->inst[2] == ig->var || ip->inst[2] == ig->deref)
             ip->inst[2] = -ig->reg;
-         if (ip->inst[3] == ig->var)
+         if (ip->inst[3] == ig->var || ip->inst[3] == ig->deref)
             ip->inst[3] = -ig->reg;
          switch(GET_INST(ip->inst[0]))
          {
@@ -1041,7 +1041,7 @@ int DoRegAsgTransforms(IGNODE *ig)
       #if IFKO_DEBUG_LEVEL >= 1
          assert(bl->ptr);
       #endif
-      ip = InsNewInst(bl->blk, NULL, bl->ptr, st, -ig->reg, ig->deref, 0);
+      ip = InsNewInst(bl->blk, NULL, bl->ptr, st, ig->deref, -ig->reg, 0);
       CalcThisUseSet(ip);
       CHANGE++;
    }
