@@ -409,13 +409,13 @@ int SimdLoop(LOOPQ *lp)
              sabs, vabs, smov, vmov, szero, vzero;
    short r0, r1;
    enum inst *sinst, *vinst;
-   int i, n, k, nfr;
+   int i, j, n, k, nfr=0;
    char ln[512];
    struct ptrinfo *pi0, *pi;
    INSTQ *ip, *ippu, *iph, *iptp, *iptn;
    short vlen;
    enum inst vsld, vsst, vshuf;
-   short fregs[TNFR];
+   short sregs[TNFR], vregs[TNFR];
 
 /*
  * Figure out what type of insts to translate
@@ -540,6 +540,7 @@ int SimdLoop(LOOPQ *lp)
          }
       }
    }
+   GetReg(-1);
 /*
  * Translate body of loop
  */
@@ -548,7 +549,7 @@ int SimdLoop(LOOPQ *lp)
       for (ip=bl->blk->ainst1; ip; ip = ip->next)
       {
          inst = GET_INST(ip->inst[0]);
-         if (ACTIVE_INST(inst) && IS_FP(inst))
+         if (ACTIVE_INST(inst))
          {
             for (i=0; i < nvinst; i++)
             {
@@ -559,16 +560,50 @@ int SimdLoop(LOOPQ *lp)
                if (sinst[i] == inst)
                {
                   ip->inst[0] = vfinsts[i];
+/*
+ *                Change scalar ops to vector ops
+ */
+                  for (j=1; j < 4; j++)
+                  {
+                     op = ip->inst[j];
+                     if (!op) continue;
+                     else if (op < 0)
+                     {
+                        op = -op;
+                        k = FindInShortList(nfr, sregs, op);
+                        if (!k)
+                        {
+                           nfr = AddToShortList(nfr, sregs, op);
+                           k = FindInShortList(nfr, sregs, op);
+                           vregs[k] = GetReg(FLAG2TYPE(lp->vflag));
+                        }
+                        ip->inst[j] = -vregs[k-1];
+                     }
+                     else
+                         !FindInShortList(lp->varrs[0], lp->varrs+1, op))
+                     {
+                        k = FindInShortList(lp->vscal[0], lp->vscal+1, op);
+                        assert(k);
+                        ip->inst[j] = lp->vvscal[k-1];
+                     }
+                  }
                   break;
                }
             }
          }
       }
    }
+   GetReg(-1);
 /*
  * Put back loop control and pointer updates
  */
-   GetReg(-1);
+   OptimizeLoopControl(lp, vlen, 0, ippu);
+   CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = CFLOOP = 0;
+   InvalidateLoopInfo();
+   NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   FindLoops();
+   CheckFlow(bbbase, __FILE__, __LINE__);
    return(0);
 }
 

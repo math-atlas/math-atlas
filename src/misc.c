@@ -11,7 +11,7 @@ int FindInShortList(int n, short *sp, short val)
    for (i=0; i < n; i++
       if (sp[i] == val)
          return(i+1);
-   return(i);
+   return(0);
 }
 
 int AddToShortList(int n, short *sp, short val)
@@ -21,7 +21,7 @@ int AddToShortList(int n, short *sp, short val)
  */
 {
    int i;
-   for (i=0; i != n && sp[i] != val; i++)
+   for (i=0; i != n && sp[i] != val; i++);
    if (i == n)
       sp[n++] = val;
    return(n);

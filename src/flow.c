@@ -823,6 +823,8 @@ void InvalidateLoopInfo(void)
       lp->varrs = optloop->varrs;
       lp->vscal = optloop->vscal;
       lp->vsflag = optloop->vsflag;
+      lp->vvscal = optloop->vvscal;
+      lp->vflag = optloop->vflag;
       lp->nopf = optloop->nopf;
       lp->aaligned = optloop->aaligned;
       lp->abalign = optloop->abalign;
