@@ -403,6 +403,7 @@ void UpdateLocalDerefs(int isize)
       fl = STflag[k];
       if (IS_PARA(fl) || IS_LOCAL(fl))
       {
+fprintf(stderr, "Updating local %s\n", STname[k]);
          switch(FLAG2PTYPE(fl))
          {
          case T_INT:
@@ -456,6 +457,8 @@ void CorrectLocalOffsets(int ldist)
    {
       if (DT[i] == -REG_SP && DT[i+1] == 0 && DT[i+2] < 0)
       {
+fprintf(stderr, "correcting local %s, (%d,%d,%d)\n", STname[-1-DT[i+2]],
+        DT[i+3], ldist, DT[i+3]+ldist);
          DT[i+2] = 1;
          DT[i+3] += ldist;
       }

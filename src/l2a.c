@@ -1072,10 +1072,11 @@ struct assmln *lil2ass(INSTQ *head)
          #ifdef X86
 	    assert(op1 == op2);
 	    assert(DTabsd);
-            ap->next = PrintAssln("\tandnpd\t%s,%s\n", GetDregOrDeref(DTabsd),
+            ap->next = PrintAssln("\tandpd\t%s,%s\n", 
+                                  GetDregOrDeref(SToff[DTabsd-1].sa[2]),
 	                          archdregs[-DREGBEG-op1]);
          #elif defined(SPARC)
-            ap->next = PrintAssln("\tfabsd\t%s,%s\n", 
+            ap->next = PrintAssln("\tfabss\t%s,%s\n", 
 	       archdregs[-DREGBEG-op2], archdregs[-DREGBEG-op1]);
          #elif defined(PPC)
             ap->next = PrintAssln("\tfabs\t%s,%s\n", 
@@ -1086,7 +1087,8 @@ struct assmln *lil2ass(INSTQ *head)
          #ifdef X86
 	    assert(op1 == op2);
 	    assert(DTabsd);
-            ap->next = PrintAssln("\tandnpd\t%s,%s\n", GetDregOrDeref(DTabsd),
+            ap->next = PrintAssln("\tandpd\t%s,%s\n",
+                                  GetDeref(SToff[DTabsd-1].sa[2]),
 	                          archdregs[-DREGBEG-op1]);
          #elif defined(SPARC)
             ap->next = PrintAssln("\tfabsd\t%s,%s\n", 
@@ -1100,7 +1102,8 @@ struct assmln *lil2ass(INSTQ *head)
          #ifdef X86
 	    assert(op1 == op2);
 	    assert(DTnzerod);
-            ap->next = PrintAssln("\txorpd\t%s,%s\n", GetDregOrDeref(DTnzerod),
+            ap->next = PrintAssln("\txorpd\t%s,%s\n", 
+                                  GetDeref(SToff[DTnzerod-1].sa[2]),
 	                          archdregs[-DREGBEG-op1]);
          #elif defined(SPARC)
             ap->next = PrintAssln("\tfabsd\t%s,%s\n", 

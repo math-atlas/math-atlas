@@ -131,22 +131,23 @@ void CreateSysLocals()
    if (DTnzerod == -1)
    {
       DTnzerod = STdef("_NEGZEROD", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
-      SToff[DTnzerod-1].sa[2] = AddDerefEntry(-REG_SP, 0, -DTnzerod, -1);
+      SToff[DTnzerod-1].sa[2] = AddDerefEntry(-REG_SP, 0, -DTnzerod, 0);
    }
    if (DTabsd == -1)
    {
       DTabsd = STdef("_ABSVLD", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
-      SToff[DTabsd-1].sa[2] = AddDerefEntry(-REG_SP, 0, -DTabsd, -1);
+      SToff[DTabsd-1].sa[2] = AddDerefEntry(-REG_SP, 0, -DTabsd, 0);
+fprintf(stderr, "DTabsd = %d,%d\n", DTabsd, SToff[DTabsd-1].sa[2]);
    }
    if (DTnzero == -1)
    {
       DTnzero = STdef("_NEGZERO", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
-      SToff[DTnzero-1].sa[2] = AddDerefEntry(-REG_SP, 0, -DTnzero, -1);
+      SToff[DTnzero-1].sa[2] = AddDerefEntry(-REG_SP, 0, -DTnzero, 0);
    }
    if (DTabs == -1)
    {
       DTabs = STdef("_ABSVAL", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
-      SToff[DTabs-1].sa[2] = AddDerefEntry(-REG_SP, 0, -DTabs, -1);
+      SToff[DTabs-1].sa[2] = AddDerefEntry(-REG_SP, 0, -DTabs, 0);
    }
 #else
 #endif
@@ -500,7 +501,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                        AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
             k = SToff[paras[i]].sa[2] - 1;
             k = DT[(k<<2)+3] + 4;
-            InsNewInst(NULL, next, ST, AddDerefEntry(rsav, 0, 0, k), 
+            InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, k), 
                        -ir, __LINE__);
             j++;
          }
@@ -508,9 +509,10 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       InsNewInst(NULL, next, COMMENT, STstrconstlookup("done paras"), 0, 0);
       if (DTnzerod > 0)
       {
-         k = ((SToff[DTnzerod].sa[2]-1)<<2) + 3;
+         PrintComment(NULL, next, "Writing -0 to memory for negation");
+         k = ((SToff[DTnzerod-1].sa[2]-1)<<2) + 3;
          InsNewInst(NULL, next, XOR, -ir, -ir, -ir);
-         InsNewInst(NULL, next, ST, SToff[DTnzerod].sa[2], -ir, __LINE__);
+         InsNewInst(NULL, next, ST, SToff[DTnzerod-1].sa[2], -ir, __LINE__);
          InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+8),
                     -ir, __LINE__);
          InsNewInst(NULL, next, MOV, -ir, STiconstlookup(0x80000000), 0);
@@ -521,10 +523,11 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       }
       if (DTabsd)
       {
-         k = ((SToff[DTabsd].sa[2]-1)<<2) + 3;
+         PrintComment(NULL, next, "Writing ~(-0) to memory for abs");
+         k = ((SToff[DTabsd-1].sa[2]-1)<<2) + 3;
          InsNewInst(NULL, next, XOR, -ir, -ir, -ir);
          InsNewInst(NULL, next, NOT, -ir, -ir, -ir);
-         InsNewInst(NULL, next, ST, SToff[DTabsd].sa[2], -ir, __LINE__);
+         InsNewInst(NULL, next, ST, SToff[DTabsd-1].sa[2], -ir, __LINE__);
          InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+8),
                     -ir, __LINE__);
          InsNewInst(NULL, next, MOV, -ir, STiconstlookup(0x7fffffff), 0);
