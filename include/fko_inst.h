@@ -321,9 +321,9 @@ char *instmnem[] =
 #define ACTIVE_INST(i_) ((i_) != COMMENT && (i_) != CMPFLAG)
 #define IS_BRANCH(i_) ((i_) >= FIRSTBRANCH && (i_) <= LASTBRANCH)
 #define IS_LOAD(i_)  ((i_) == LD || (i_) == FLD || (i_) == FLDD || \
-                      (i_) == VFLD)
+                      (i_) == VFLD || (i_) == LDS)
 #define IS_STORE(i_)  ((i_) == ST || (i_) == FST || (i_) == FSTD || \
-                       (i_) == VFST)
+                       (i_) == VFST || (i_) == STS)
 #define IS_CMP(i_) ((i_) == CMP || (i_) == CMPAND || (i_) == CMPS || \
                     (i_) == FCMP || (i_) == FCMPD || (i_) == VFCMP || \
                     (i_) == CFTBFI || (i_) == CFTBDI || (i_) == FCMPWD)

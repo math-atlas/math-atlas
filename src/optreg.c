@@ -197,8 +197,11 @@ void KillIGTableEntries()
    int i;
    for (i=0; i < NIG; i++)
    {
-      KillIGNode(IG[i]);
-      IG[i] = NULL;
+      if (IG[i])
+      {
+         KillIGNode(IG[i]);
+         IG[i] = NULL;
+      }
    }
    NIG = 0;
 }
@@ -278,6 +281,7 @@ void CalcBlockIG(BBLOCK *bp)
    short *vals;
    IGNODE **myIG = NULL;   /* array of this block's IGNODES */
    int imask, igN=0, nn=0;
+   short inst;
    extern int FKO_BVTMP;
    extern BBLOCK *bbbase;
 
@@ -352,6 +356,8 @@ void CalcBlockIG(BBLOCK *bp)
    }
    for (ip=bp->ainst1; ip; ip = ip->next)
    {
+      inst = GET_INST(ip->inst[0]);
+      if (!ACTIVE_INST(inst)) continue;
 /*
  *   If var is referenced as a use, update nread
  */
@@ -613,8 +619,8 @@ fprintf(stderr, "succ->conin=%s\n", PrintVecList(pred->conin, 0));
    }
 /*
  * If pred in scope, but successor not, and LR includes a store, must push LR
- * stores to succ. Assign the next inst of the pushed stores to
- * node->stpush->ptr.
+ * stores to succ. iff the variable is live on entering succ.
+ * Assign the next inst of the pushed stores to node->stpush->ptr.
  */
    else if (BitVecCheck(scopeblks, pred->bnum-1))
    {
@@ -622,7 +628,7 @@ fprintf(stderr, "succ->conin=%s\n", PrintVecList(pred->conin, 0));
       for (n=pig[0], i=1; i <= n; i++)
       {
          node = IG[pig[i]];
-         if (node->nwrite)
+         if (node->nwrite && BitVecCheck(succ->ins, node->var+TNREG-1) )
          {
             node->stpush = AddBlockToList(node->stpush, succ);
             if (succ->ainst1)
@@ -720,7 +726,8 @@ void CalcScopeIG(BLIST *scope)
  */
    for (bl=scope; bl; bl = bl->next)
    {
-      CombineBlockIG(scope, blkvec, bl->blk, bl->blk->usucc);
+      if (bl->blk->usucc)
+         CombineBlockIG(scope, blkvec, bl->blk, bl->blk->usucc);
       if (bl->blk->csucc)
          CombineBlockIG(scope, blkvec, bl->blk, bl->blk->csucc);
       for (lp=bl->blk->preds; lp; lp = lp->next)
@@ -905,9 +912,10 @@ void DoIGRegAsg(int N, IGNODE **igs)
  * Right now, use simple algorithm for assignment, improve later.
  */
 {
-   int iv, i, j, n;
+   int i, j, n;
    IGNODE *ig, *ig2;
    short *sp;
+   short iv, ivused;
    extern int FKO_BVTMP;
 
    if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(TNREG);
@@ -926,8 +934,9 @@ void DoIGRegAsg(int N, IGNODE **igs)
       ig->reg = AnyBitsSet(iv);
       if (ig->reg)
       {
+         ivused = Reg2Regstate(ig->reg);
          ig->reg--;
-         SetVecBit(ig->liveregs, ig->reg, 1);
+         BitVecComb(ig->liveregs, ig->liveregs, ivused, '|');
          assert(ig->reg+1 != REG_SP);
 /*
  *       Add assigned register to liveregs of conflicting IGNODEs
@@ -938,7 +947,7 @@ void DoIGRegAsg(int N, IGNODE **igs)
             for (j=1, n=sp[0]; j <= n; j++)
             {
                ig2 = IG[sp[j]];
-               SetVecBit(ig2->liveregs, ig->reg, 1);
+               BitVecComb(ig2->liveregs, ig2->liveregs, ivused, '|');
             }
          }
          ig->reg++;
@@ -1019,12 +1028,21 @@ int DoRegAsgTransforms(IGNODE *ig)
 {
    INSTQ *ip;
    BLIST *bl, *lp;
-   enum inst mov, ld, st;
+   enum inst mov, ld, st, inst;
    int i, CHANGE=0;
 
+   if (!ig->reg)  /* return if their was no available register */
+      return(0);
    i = STflag[ig->var-1];
    switch(FLAG2PTYPE(i))
    {
+#ifdef X86_64
+   case T_SHORT:
+      mov = MOVS;
+      ld  = LDS;
+      st  = STS;
+      break;
+#endif
    case T_INT:
       mov = MOV;
       ld  = LD;
@@ -1056,17 +1074,35 @@ int DoRegAsgTransforms(IGNODE *ig)
       ip = bl->ptr;
       if (ip && BitVecCheck(ip->set, ig->var+TNREG-1))
       {
+         inst = GET_INST(ip->inst[0]);
          #if IFKO_DEBUG_LEVEL >= 1
             assert(bl->ptr);
          #endif
          CHANGE++;
-         if (!IS_STORE(ip->inst[0]))
+         if (!IS_STORE(inst))
          {
             PrintThisInst(stderr, __LINE__, ip);
             exit(-1);
          }
-         ip->inst[0] = mov;
-         ip->inst[1] = -ig->reg;
+/*
+ *       If Store is of same type as variable, we just change to reg-reg move
+ */
+         if (inst == st)
+         {
+            ip->inst[0] = mov;
+            ip->inst[1] = -ig->reg;
+         }
+/*
+ *       If Store is of different type than variable (eg., fpconst init),
+ *       we must insert a ld inst to the LR register
+ */
+         else
+         {
+            ip = InsNewInst(bl->blk, ip, NULL, ld, -ig->reg, ig->deref, 0);
+            if (ip->next) bl->ptr = ip->next;
+            else
+               bl->ptr = InsNewInst(bl->blk, ip, NULL, COMMENT, 0, 0, 0);
+         }
          CalcThisUseSet(ip);
       }
 /*
@@ -1138,7 +1174,7 @@ int DoRegAsgTransforms(IGNODE *ig)
    return(CHANGE);
 }
 
-int DoScopeRegAsg(BLIST *scope)
+int DoScopeRegAsg(BLIST *scope, int thresh)
 {
    IGNODE **igs;
    int i, N;
@@ -1146,7 +1182,7 @@ int DoScopeRegAsg(BLIST *scope)
    extern BBLOCK *bbbase;
 
    CalcScopeIG(scope);
-   igs = SortIG(&N, 1);
+   igs = SortIG(&N, thresh);
    DoIGRegAsg(N, igs);
 CheckIG(N, igs);
 fprintf(stderr, "\n\n*** NIG = %d\n", N);
@@ -1172,6 +1208,7 @@ fprintf(stderr, "\n\n*** NIG = %d\n", N);
       DoRegAsgTransforms(igs[i]);
 #endif
    if (igs) free(igs);
+   KillIGTable();
    return(0);
 }
 
@@ -1277,7 +1314,7 @@ int AsgGlobalLoopVars(LOOPQ *loop, short *iregs, short *fregs, short *dregs)
       BitVecComb(loop->outs, loop->outs, bl->blk->outs, '|');
    BitVecComb(loop->outs, loop->outs, FKO_BVTMP, '&');
    FKO_BVTMP = iv = BitVecComb(FKO_BVTMP, loop->outs, loop->header->ins, '|');
-   k = STstrlookup("_DEREF");
+   k = STstrlookup("_NONLOCDEREF");
    SetVecBit(iv, k+TNREG-1, 0);
 fprintf(stderr, "\nhost/push = %s\n\n", BV2VarNames(iv));
 

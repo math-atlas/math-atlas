@@ -134,6 +134,7 @@ int main(int nargs, char **args)
    BBLOCK *bp;
    extern FILE *yyin;
    extern BBLOCK *bbbase;
+   BLIST *bl, *lbase;
 
    GetFlags(nargs, args, &fin, &fpin, &fpout);
    yyin = fpin;
@@ -156,13 +157,21 @@ fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    if (optloop)
    {
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
-#if 0
-/*      DoLoopGlobalRegAssignment(optloop);   */
-#else
+      DoLoopGlobalRegAssignment(optloop); 
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
-      DoScopeRegAsg(optloop->blocks);
-#endif
+      DoScopeRegAsg(optloop->blocks, 1);
    }
+   PrintInst(fopen("tmp.err", "w"), bbbase);
+#if 1
+/*
+ * Do reg asg on whole function
+ */
+   for (lbase=NULL,bp=bbbase; bp; bp = bp->down)
+      lbase = AddBlockToList(lbase, bp);
+   DoScopeRegAsg(lbase, 3);
+   KillBlockList(lbase);
+#endif
+
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    AddBlockComments(bbbase);
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
