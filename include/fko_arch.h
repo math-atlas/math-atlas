@@ -412,13 +412,40 @@
  * Setup cache info
  */
 #ifndef NCACHE
-   #define NCACHE 1
-   #ifdef ARCH_DECLARE
-      short LINESIZE[NCACHE] = {128};
-   #else
-      extern short LINESIZE[NCACHE];
+   #ifdef PIII
+      #define NCACHE 2
+      #ifdef ARCH_DECLARE
+         short LINESIZE[NCACHE] = {32,32};
+      #else
+         extern short LINESIZE[NCACHE];
+      #endif
+   #elif defined(HAMMER)
+      #define NCACHE 1
+      #ifdef ARCH_DECLARE
+         short LINESIZE[NCACHE] = {64};
+      #else
+         extern short LINESIZE[NCACHE];
+      #endif
+   #else /* P4/P4E defaults */
+      #define NCACHE 1
+      #ifdef ARCH_DECLARE
+         short LINESIZE[NCACHE] = {128};
+      #else
+         extern short LINESIZE[NCACHE];
+      #endif
    #endif
 #endif
+/*
+ * NOTES:
+ * For P4 & P4E, all inst fetch to L2 cache, linesize = 128
+ * For PIII : prefetchnta : fetch 32 bytes into L1 only
+ *            prefetcht0  : fetch 32 bytes into L1 & L2
+ *            prefetcht[1,2]: fetch 32 bytes into L2 only
+ * For Hammer, prefetch, prefetcht[0,1,2] all same, fetch to L1
+ *             prefetchw fetches to L1, but marks as modified
+ *             prefetchnta is brought to L1, but if evicted, not put in L2
+ *             linesize = 64.
+ */
 
 short GetReg(short type);
 void GenPrologueEpilogueStubs(BBLOCK *bbase, int rsav);
