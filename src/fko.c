@@ -274,9 +274,14 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             FKO_FLAG |= IFF_GENINTERM;
             break;
          case 'i':
-            fpLOOPINFO = fopen(args[i+1], "w");
-            assert(fpLOOPINFO);
             i++;
+            if (!strcmp(args[i], "stderr"))
+               fpLOOPINFO = stderr;
+            else if (!strcmp(args[i], "stdout"))
+               fpLOOPINFO = stdout;
+            else
+               fpLOOPINFO = fopen(args[i], "w");
+            assert(fpLOOPINFO);
             break;
          case 'I':
             fpIG = fpST = fpLIL = fpOPT = (FILE*) 1;
