@@ -403,6 +403,7 @@ INSTQ *InsNewInstAfterLabel(BBLOCK *blk, enum inst ins,
 void InsInstInBlockList(BLIST *blist, int FIRST, enum inst ins,
                         short dest, short src1, short src2);
 INSTQ *DelInst(INSTQ *del);
+INSTQ *KillThisInst(INSTQ *kp);
 void KillAllInst(INSTQ *base);
 
 #endif

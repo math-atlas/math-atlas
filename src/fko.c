@@ -216,16 +216,16 @@ int KillDupPtrinfo(char **args, struct ptrinfo *pfb)
 char **PtrinfoToStrings(char **args, int n, struct ptrinfo *pfb)
 {
    char **sarr;
-   struct ptrinfo *pb;
-   int i;
+   struct ptrinfo *pf;
+   int i, j;
 
    sarr = malloc(sizeof(char*)*(n+1));
    assert(sarr);
    sarr[n] = NULL;
    for (pf=pfb,i=0; i < n; i++, pf=pf->next)
    {
-      i = strlen(args[pf->ptr]+1;
-      sarr[i] = malloc(sizeof(char)*i);
+      j = strlen(args[pf->ptr])+1;
+      sarr[i] = malloc(sizeof(char)*j);
       assert(sarr[i]);
       strcpy(sarr[i], args[pf->ptr]);
    }
@@ -242,7 +242,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
    struct ptrinfo *pf, *pfb=NULL, *pf0, *pfK, *pfP, *aeb=NULL;
    struct idlist  *id, *idb=NULL, *idP, *idK;
    char *sp, *rpath=NULL, *rname=NULL;
-   int i, j, k;
+   int i, j, k, n;
 
    for (i=1; i < nargs; i++)
    {
@@ -711,7 +711,9 @@ static void WriteArrayOfShortArrayToFile(FILE *fp, short n, short **sp)
 
 static short **ReadArrayOfShortArrayFromFile(FILE *fp)
 {
-   short *sp=NULL;
+   short **sp=NULL;
+   short i, n;
+
    assert(fread(&n, sizeof(short), 1, fp) == 1);
    if (n)
    {
@@ -1166,7 +1168,7 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
       }
       else
       {
-         if (FKO_FLAG & IFF_VECTORIZE)
+         if (DO_VECT(FKO_FLAG))
          {
             UnrollCleanup(optloop, 1);
             InvalidateLoopInfo();
@@ -1178,6 +1180,11 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
          else
             OptimizeLoopControl(optloop, 1, 1, NULL);
       }
+/*
+ *    Do accumulator expansion if requested
+ */
+      if (optloop->ae)
+         DoAllAccumExpansion(optloop, unroll, DO_VECT(FKO_FLAG));
 /*
  *    Add any prefetch inst to header of loop
  */
@@ -1504,7 +1511,7 @@ void DoStage2(int SAVESP, int SVSTATE)
       SaveFKOState(2);
 }
 
-void AddOptSTentries()
+void AddOptSTEntries()
 /*
  * Some optimizations require additional locals to be allocated.  This routine
  * adds them to ST, though they may not be used if optimization is not applied

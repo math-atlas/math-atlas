@@ -78,6 +78,6 @@ void KillStaticData(void);
 void MarkUnusedLocals(BBLOCK *bbase);
 void CorrectParamDerefs(struct locinit *libase, int rsav, int fsize);
 short FindLocalFromDT(short dt);
-
+short FindVarFromName(char *name);
 
 #endif

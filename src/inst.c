@@ -17,14 +17,23 @@ INSTQ *NewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,
    return(ip);
 }
 
+INSTQ *KillThisInst(INSTQ *kp)
+{
+   INSTQ *kn;
+   kn = kp->next;
+   if (kp->use)
+      KillBitVec(kp->use);
+   if (kp->set)
+      KillBitVec(kp->set);
+   if (kp->deads)
+      KillBitVec(kp->deads);
+   free(kp);
+   return(kn);
+}
 void KillAllInst(INSTQ *base)
 {
-   INSTQ *next;
-   for(; base; base = next)
-   {
-      next = base->next;
-      free(base);
-   }
+   while (base)
+      base = KillThisInst(base);
 }
 
 INSTQ *InsNewInst(BBLOCK *blk, INSTQ *prev, INSTQ *next, enum inst ins,

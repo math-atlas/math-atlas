@@ -17,5 +17,7 @@ void GenCleanupLoop(LOOPQ *lp);
 void OptimizeLoopControl(LOOPQ *lp, int unroll, int NeedKilling, INSTQ *ippost);
 int UnrollLoop(LOOPQ *lp, int unroll);
 void AddPrefetch(LOOPQ *lp, int unroll);
+short *DeclareAE(int VEC, int ne, short STi);
+int DoAllAccumExpansion(LOOPQ *lp, int unroll, int vec);
 
 #endif

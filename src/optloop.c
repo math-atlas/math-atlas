@@ -2218,7 +2218,7 @@ short *DeclareAE(int VEC, int ne, short STi)
 
    sp = malloc(ne*sizeof(short));
    sp[0] = ne-1;
-   type = FLAG2TYPE(STflag[STi-1])
+   type = FLAG2TYPE(STflag[STi-1]);
    if (VEC)
    {
       if (type == T_FLOAT)
@@ -2233,13 +2233,16 @@ short *DeclareAE(int VEC, int ne, short STi)
    }
    return(sp);
 }
-void AddInstToPrehead(LOOPQ *lp, INSTQ *iadd, short r0, short r1)
+
+void AddInstToPrehead(LOOPQ *lp, INSTQ *iadd, short type, short r0, short r1)
 /*
  * Adds insts iadd to loop preheader without renaming registers
  * Adds them as last active instruction, but before any jump
  */
 {
    BBLOCK *bp;
+   INSTQ *ipn, *ip, *ipA;
+
    bp = lp->preheader;
    ipn = bp->ainstN;
 /*
@@ -2261,14 +2264,17 @@ void AddInstToPrehead(LOOPQ *lp, INSTQ *iadd, short r0, short r1)
       CalcThisUseSet(ip);
    }
 }
-void AddInstToPosttail(LOOPQ *lp, INSTQ *iadd, 
-                      short r0, short r1)
+
+void AddInstToPosttail(LOOPQ *lp, INSTQ *iadd, short type, short r0, short r1)
 /*
  * Adds insts iadd to loop posttail as the first active instruction, after label
  */
 {
    INSTQ *ip, *ipp;
+   BLIST *bl;
+   BBLOCK *bp;
    short s0, s1;
+   int i;
 /* 
  * See if we need to rename registers
  */
@@ -2276,7 +2282,11 @@ void AddInstToPosttail(LOOPQ *lp, INSTQ *iadd,
       return;
    if (r0)
    {
-/*      HERE  HERE : CALC s0, s1 using livereg */
+/*
+ *    NOTE: later change this to calc live reg & choose dead
+ */
+      s0 = GetReg(type);
+      s1 = GetReg(type);
       if (!r1)
       {
          r1 = r0;
@@ -2314,47 +2324,50 @@ void AddInstToPosttail(LOOPQ *lp, INSTQ *iadd,
       }
    }
 }
-void GetAEHeadTail(LOOPQ *lp, short ae, short ne, short *aes, int vec)
+
+INSTQ *GetAEHeadTail(LOOPQ *lp, short ae, short ne, short *aes, int vec)
 /*
  * RETURNS: dummy instq, where prev pts to inst to be added to the loop header,
  *          and next is the reduction to be added to loop tail
+ *          inst[0] is type, inst[1] is dummy reg1, inst[2] dummy reg2
  */
 {
    enum inst zero, add, ld, st;
    INSTQ *ibase, *ip, *ipb;
-   int i, n;
+   int i, j, k, i1, i2, n, type;
    short r0, r1;
 
    ibase = NewInst(NULL, NULL, NULL, 0, 0, 0, 0);
    type = FLAG2TYPE(STflag[ae]);
-   if (VEC)
+   if (vec)
    {
       if (type == T_FLOAT)
          type = T_VFLOAT;
       else if (type == T_DOUBLE)
          type = T_VDOUBLE;
    }
+   ibase->inst[0] = type;
    switch(type)
    {
-   T_FLOAT:
+   case T_FLOAT:
       ld = FLD;
       st = FST;
       add = FADD;
       zero = FZERO;
       break;
-   T_DOUBLE:
+   case T_DOUBLE:
       ld = FLDD;
       st = FSTD;
       add = FADDD;
       zero = FZEROD;
       break;
-   T_VFLOAT:
+   case T_VFLOAT:
       ld = VFLD;
       st = VFST;
       add = VFADD;
       zero = VFZERO;
       break;
-   T_VDOUBLE:
+   case T_VDOUBLE:
       ld = VDLD;
       st = VDST;
       add = VDADD;
@@ -2367,7 +2380,7 @@ void GetAEHeadTail(LOOPQ *lp, short ae, short ne, short *aes, int vec)
 /*
  * Zero shadow accumulators in loop header
  */
-   ip = ipb = NULL
+   ip = ipb = NULL;
    for (i=1; i <= ne; i++)
    {
       ip = NewInst(NULL, ip, NULL, zero, aes[i], 0, 0);
@@ -2384,6 +2397,7 @@ void GetAEHeadTail(LOOPQ *lp, short ae, short ne, short *aes, int vec)
    ibase->inst[2] = r1;
 /*
  * Use binary tree to reduce aes[:] to ae
+ */
    assert(aes[0] == ne-1);
    aes[0] = ae;
    for (j=0, i=ne; i; i >>= 1) j++;
@@ -2415,11 +2429,67 @@ void GetAEHeadTail(LOOPQ *lp, short ae, short ne, short *aes, int vec)
    aes[0] = ne-1;
    return(ibase);
 }
-void DoAllAccumExpansion(LOOPQ *lp, int unroll, int vec)
+
+int DoAccumExpansOnLoop(LOOPQ *lp, short type, short ae, short *aes)
+{
+   BLIST *bl;
+   INSTQ *ip;
+   int j, ne, nchanges=0;
+
+   ne = aes[0]+1;
+/*
+ * Note, this is not necessarily in loop order, but what the hell
+ */
+   for (j=0,bl=lp->blocks; bl; bl = bl->next)
+   {
+/*
+ *    For AE to be legal, every load must be followed by an add, which must
+ *    be followed by a store, so just change the loads & stores
+ */
+      for (ip=bl->blk->ainst1; ip; ip = ip->next)
+      {
+         if (IS_LOAD(ip->inst[0]) && ip->inst[2] == ae && j%ne)
+         {
+            ip->inst[2] = aes[j%ne];
+            CalcThisUseSet(ip);
+         }
+         if (IS_STORE(ip->inst[0]) && ip->inst[1] == ae)
+         {
+            if (j%ne)
+            {
+               nchanges++;
+               ip->inst[1] = aes[j%ne];
+               CalcThisUseSet(ip);
+            }
+            j++;
+         }
+      }
+   }
+   return(nchanges);
+}
+
+int DoAllAccumExpansion(LOOPQ *lp, int unroll, int vec)
 /*
  * Inserts inst required for Accumulator Expansion
  * NOTE: assumes called after loop unrolling, but before repeatable opt
  *       DeclareAE must have been called before Stage[1,3]
  */
 {
+   int n, i, nchanges=0;
+   INSTQ *ipb;
+
+   for (n=lp->ae[0],i=1; i <= n; i++)
+   {
+      if (unroll % lp->ae[i])
+         fko_warn(__LINE__, "UNROLL=%d, but NACCEXP=%d!", unroll, lp->ae[i]);
+      ipb = GetAEHeadTail(lp, lp->ae[i], lp->aes[i][0], lp->aes[i], vec);
+      AddInstToPrehead(lp, ipb->prev, ipb->inst[0], 0, 0);
+      KillAllInst(ipb->prev);
+      AddInstToPosttail(lp, ipb->next, ipb->inst[0],ipb->inst[1],ipb->inst[2]);
+      KillAllInst(ipb->next);
+      nchanges += DoAccumExpansOnLoop(lp, ipb->inst[0], lp->ae[i], lp->aes[i]);
+      ipb->prev = ipb->next = NULL;
+      KillThisInst(ipb);
+   }
+   CFUSETU2D = INDEADU2D = 0;
 }
