@@ -301,19 +301,35 @@ char *instmnem[] =
    "FNEGD",
    "FMOVD",
 /*
- * Vector instructions, add to these later (double, scalar).
+ * Double precision vector inst
  */
+   "VDZERO",
+   "VDLD",
+   "VDLDS",
+   "VDLDL",
+   "VDLDH",
+   "VDST",
+   "VDSTS",
+   "VDMOV",
+   "VDADD",
+   "VDMUL",
+   "VDABS",
+   "VDSHUF",
+/*
+ * Single precision vector inst
+ */
+   "VFZERO",
    "VFLD",
+   "VFLDS",
+   "VFLDL",
+   "VFLDH",
    "VFST",
+   "VFSTS",
    "VFMOV",
-   "VFABS",
-   "VFMAC",
-   "VFMUL",
-   "VFDIV",
    "VFADD",
-   "VFSUB",
-   "VFCMP",
-   "VSHUF",
+   "VFMUL",
+   "VFABS",
+   "VFSHUF",
 /*
  * x86-only instructions
  */

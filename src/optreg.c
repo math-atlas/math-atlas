@@ -14,6 +14,14 @@ int ireg2type(int ireg)
       iret = T_FLOAT;
    else if (ireg >= DREGBEG && ireg < DREGEND)
       iret = T_DOUBLE;
+#ifdef VFREGBEG
+   else if (ireg >= VFREGBEG && ireg < VFREGEND)
+      iret = T_VFLOAT;
+#endif
+#ifdef VDREGBEG
+   else if (ireg >= VDREGBEG && ireg < VDREGEND)
+      iret = T_VDOUBLE;
+#endif
    return(iret);
 }
 short Reg2Int(char *regname)
@@ -124,9 +132,17 @@ void SetAllTypeReg(int iv, int type)
       ibeg = FREGBEG;
       iend = FREGEND;
       break;
+   case T_VFLOAT:
+      ibeg = VFREGBEG;
+      iend = VFREGEND;
+      break;
    case T_DOUBLE:
       ibeg = DREGBEG;
       iend = DREGEND;
+      break;
+   case T_VDOUBLE:
+      ibeg = VDREGBEG;
+      iend = VDREGEND;
       break;
    default:
       fko_error(__LINE__, "unknown type %d, file=%s\n", type, __FILE__);
@@ -1161,6 +1177,16 @@ int DoRegAsgTransforms(IGNODE *ig)
       mov = FMOVD;
       ld  = FLDD;
       st  = FSTD;
+      break;
+   case T_VDOUBLE:
+      mov = VDMOV;
+      ld  = VDLD;
+      st  = VDST;
+      break;
+   case T_VFLOAT:
+      mov = VFMOV;
+      ld  = VFLD;
+      st  = VFST;
       break;
    default:
       fko_error(__LINE__, "Unknown type %d (flag=%d) in %s\n", FLAG2TYPE(i),

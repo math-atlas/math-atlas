@@ -2,6 +2,30 @@
 #include "fko_loop.h"
 #include <stdarg.h>
 
+int FindInShortList(int n, short *sp, short val)
+/*
+ * Finds val in list sp
+ * RETURNS: index (starting from 1) of sp entry, or 0 if not found
+ */
+{
+   for (i=0; i < n; i++
+      if (sp[i] == val)
+         return(i+1);
+   return(i);
+}
+
+int AddToShortList(int n, short *sp, short val)
+/*
+ * Adds val to list sp, if it is not already there.
+ * RETURNS: (possibly new) n
+ */
+{
+   int i;
+   for (i=0; i != n && sp[i] != val; i++)
+   if (i == n)
+      sp[n++] = val;
+   return(n);
+}
 int Size2Shift(int n)
 /*
  * If N is a power of two, i of 2^i, otherwise, returns 0

@@ -1791,7 +1791,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
          else if (cp[0] == 0 && cp[1] == 1)
             fko_warn(__LINE__, "Useless VDSHUF");
-         else if (cp[0] == 3 && cp[1] == 4)
+         else if (cp[0] == 2 && cp[1] == 3)
             ap->next = PrintAssln("\tmovapd\t%s,%s\n", 
                archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
          else if (cp[0] == 1 && cp[1] == 3)

@@ -394,24 +394,28 @@ int DoLoopSimdAnal(LOOPQ *lp)
    return(0);
 }
 
-static enum inst 
-   sfinsts[] = {FLD,  FST,  FMUL,  FADD,  FSUB,  FABS,  FMOV,  FZERO},
-   vfinsts[] = {VFLD, VFST, VFMUL, VFADD, VFSUB, VFABS  VFMOV, VFZERO},
-   sdinsts[] = {FLDD, FSTD, FMULD, FADDD, FSUBD, FABSD, FMOVD, FZEROD},
-   vdinsts[] = {VDLD, VDST, VDMUL, VDADD, VDSUB, VDABS  VDMOV, VDZERO};
 
 int SimdLoop(LOOPQ *lp)
 {
+   short *sp;
+   BLIST *bl;
+   static enum inst 
+      sfinsts[] = {FLD,  FST,  FMUL,  FADD,  FSUB,  FABS,  FMOV,  FZERO},
+      vfinsts[] = {VFLD, VFST, VFMUL, VFADD, VFSUB, VFABS  VFMOV, VFZERO},
+      sdinsts[] = {FLDD, FSTD, FMULD, FADDD, FSUBD, FABSD, FMOVD, FZEROD},
+      vdinsts[] = {VDLD, VDST, VDMUL, VDADD, VDSUB, VDABS  VDMOV, VDZERO};
+   const int nvinst=8;
    enum inst sld, vld, sst, vst, smul, vmul, sadd, vadd, ssub, vsub, 
              sabs, vabs, smov, vmov, szero, vzero;
-   short *sp;
+   short r0, r1;
    enum inst *sinst, *vinst;
-   int i, n, k;
+   int i, n, k, nfr;
    char ln[512];
    struct ptrinfo *pi0, *pi;
    INSTQ *ip, *ippu, *iph, *iptp, *iptn;
    short vlen;
    enum inst vsld, vsst, vshuf;
+   short fregs[TNFR];
 
 /*
  * Figure out what type of insts to translate
@@ -424,6 +428,8 @@ int SimdLoop(LOOPQ *lp)
       vsld = VFLDS;
       vsst = VFSTS;
       vshuf = VFSHUF;
+      vld = VFLD;
+      vst = VFST;
    }
    else
    {
@@ -432,8 +438,12 @@ int SimdLoop(LOOPQ *lp)
       vshuf = VDSHUF;
       sinst = sdinsts;
       vinst = vdinsts;
+      vld = VDLD;
       vlen = 2;
+      vst = VDST;
    }
+   r0 = GetReg(FLAG2TYPE(lp->vflag));
+   r1 = GetReg(FLAG2TYPE(lp->vflag));
 /*
  * Remove loop control logic from loop, and disallow simdification if
  * index is used in loop
@@ -456,7 +466,7 @@ int SimdLoop(LOOPQ *lp)
    pi0 = FindMovingPointers(lp->blocks);
    ippu = KillPointerUpdates(pi, vlen);
 /* 
- * Find inst in header to insert scalar init before; want it inserted last
+ * Find inst in preheader to insert scalar init before; want it inserted last
  * unless last instruction is a jump, in which case put it before the jump.
  * As long as loads don't reset condition codes, this should be safe
  * (otherwise, need to move before compare as well as jump)
@@ -487,6 +497,7 @@ int SimdLoop(LOOPQ *lp)
  * Insert scalar-to-vector initialization in preheader for vars live on entry
  * and vector-to-scalar reduction in post-tail for vars live on exit
  */
+   k = STiconstlookup(0);
    for (i=0; i < n; i++)
    {
       if (VS_LIVIN & lp->vsflag[i])
@@ -494,10 +505,11 @@ int SimdLoop(LOOPQ *lp)
 /*
  *       ADD-updated vars set v[0] = scalar, v[1:N] = 0
  */
-         if (VS_ADD & lp->vsflag[i])
-         {
-            InsNewInst(lp->preheader, NULL, iph, vsld, DTv, DTs, 0);
-         }
+         InsNewInst(lp->preheader, NULL, iph, vsld, -r0,
+                    lp->vscal[i+1].sa[2], 0);
+         if (!(VS_ADD & lp->vsflag[i]))
+            InsNewInst(lp->preheader, NULL, iph, vshuf, -r0, -r0, k);
+         InsNewInst(lp->preheader, NULL, iph, vsst, lp->vvscal[i].sa[2], -r0,0);
       }
 /*
  *    Output vars are known to be updated only by ADD
@@ -505,18 +517,58 @@ int SimdLoop(LOOPQ *lp)
       if (VS_LIVEOUT & lp->vsflag[i])
       {
          assert(lp->vsflag[i] & (VS_MUL | VS_EQ | VS_ABS) == 0);
-         InsNewInst(lp->posttail->blk, iptp, iptn, ...);
+         iptp = InsNewInst(lp->posttail->blk, iptp, iptn, vld, -r0,
+                           lp->vvscal[i].sa[2], 0);
+         if (vld == VDLD)
+         {
+            iptp = InsNewInst(lp->posttail->blk, iptp, NULL, VDSHUF, -r1, -r0
+                              STiconstlookup(0x33));
+            iptp = InsNewInst(lp->posttail->blk, iptp, NULL, VDADD,-r0,-r0,-r1);
+            iptp = InsNewInst(lp->posttail->blk, iptp, NULL, VDSTS, 
+                              lp->vscal[i+1].sa[2], -r0, 0);
+         }
+         else
+         {
+            iptp = InsNewInst(lp->posttail->blk, iptp, NULL, VFSHUF, -r1, -r0
+                              STiconstlookup(0x3276));
+            iptp = InsNewInst(lp->posttail->blk, iptp, NULL, VFADD,-r0,-r0,-r1);
+            iptp = InsNewInst(lp->posttail->blk, iptp, NULL, VFSHUF, -r1, -r0
+                              STiconstlookup(0x5555));
+            iptp = InsNewInst(lp->posttail->blk, iptp, NULL, VFADD,-r0,-r0,-r1);
+            iptp = InsNewInst(lp->posttail->blk, iptp, NULL, VFSTS, 
+                              lp->vscal[i+1].sa[2], -r0, 0);
+         }
       }
    }
 /*
- * Insert vector-to-scalar local reduction in post-tail
- */
-/*
  * Translate body of loop
  */
+   for (bl=lp->blocks; bl; bl = bl->next)
+   {
+      for (ip=bl->blk->ainst1; ip; ip = ip->next)
+      {
+         inst = GET_INST(ip->inst[0]);
+         if (ACTIVE_INST(inst) && IS_FP(inst))
+         {
+            for (i=0; i < nvinst; i++)
+            {
+/*
+ *             If the inst is scalar fp, translate to vector fp, and insist
+ *             all fp ops become vector ops
+ */
+               if (sinst[i] == inst)
+               {
+                  ip->inst[0] = vfinsts[i];
+                  break;
+               }
+            }
+         }
+      }
+   }
 /*
  * Put back loop control and pointer updates
  */
+   GetReg(-1);
    return(0);
 }
 
@@ -600,7 +652,7 @@ int VectorizeStage1(void)
    return(0);
 }
 
-int VectorizeStage3(void)
+int VectorizeStage3(int savesp)
 /*
  * Assuming Stage 1 vect done, create Stage 3, which includes vectorizing
  * the loop and generating cleanup (though jump to cleanup left to unroll)
@@ -612,7 +664,7 @@ int VectorizeStage3(void)
 /*
  * Get code into standard form for analysis
  */
-   GenPrologueEpilogueStubs(bbbase, 0);
+   GenPrologueEpilogueStubs(bbbase, savesp);
    NewBasicBlocks(bbbase);
    FindLoops();
    CheckFlow(bbbase,__FILE__,__LINE__);
