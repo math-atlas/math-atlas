@@ -1273,10 +1273,18 @@ void UnrollCleanup(LOOPQ *lp, int unroll)
  */
    assert(lp->posttails && !lp->posttails->next);
 /*
- * Put cleanup info before 1st non-label instruction in posttail
+ * Put cleanup info before 1st non-label instruction in posttail, unless
+ * we are doing vectorization, in which case put it after all live-out
+ * vectors are reduced
  */
    bp = lp->posttails->blk;
-   if (bp->ainst1 && bp->ainst1->inst[0] == LABEL)
+   if (DO_VECT(FKO_FLAG))
+   {
+      ipnext = FindCompilerFlag(bp, CF_VRED_END);
+      assert(ipnext);
+      ipnext = ipnext->next;
+   }
+   else if (bp->ainst1 && bp->ainst1->inst[0] == LABEL)
       ipnext = bp->ainst1->next;
    else
       ipnext = bp->ainst1;
