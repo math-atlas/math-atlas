@@ -2565,7 +2565,6 @@ int DoEnforceLoadStore(BLIST *scope)
    return(nchanges);
 }
 
-#if 1
 INSTQ *FindNextUseInBlock(INSTQ *ip0, int var)
 /*
  * RETURNS: INSTQ of next instruction that uses all vars set in iv within
@@ -2583,6 +2582,7 @@ INSTQ *FindNextUseInBlock(INSTQ *ip0, int var)
    }
    return(NULL);
 }
+
 int DoRemoveOneUseLoads(BLIST *scope)
 /*
  * Changes ld followed by one and only one use to mem-src instruction
@@ -2636,4 +2636,89 @@ int DoRemoveOneUseLoads(BLIST *scope)
 //   fprintf(stderr, "U1: nchanges=%d\n", nchanges);
    return(nchanges);
 }
-#endif
+
+static enum inst type2move(int type)
+{
+   enum inst mov;
+   switch(type)
+   {
+   case T_INT    :
+      mov = MOV;
+      break;
+   case T_FLOAT  :
+      mov = FMOV;
+      break;
+   case T_DOUBLE :
+      mov = FMOVD;
+      break;
+   case T_VFLOAT :
+      mov = VFMOV;
+      break;
+   case T_VDOUBLE:
+      mov = VDMOV;
+      break;
+   default:
+      fko_error(__LINE__, "Unknown type %d, file=%s\n", type, __FILE__);
+   }
+   return(mov);
+}
+int DoLastUseLoadRemoval(BLIST *scope)
+/*
+ * If there's a load that can be made implicit, and it's not handled by
+ * RemoveOneUseLoads due to being set, moves it into memory by doing
+ * a register-reg move (which should be cleaned up by CP & RCP)
+ */
+{
+   BLIST *bl;
+   INSTQ *ipld, *ip, *ipn, *ipN;
+   int nchanges=0, i, j, k, typ;
+   enum inst inst;
+/*
+ * Only x86 has these from-memory operations
+ */
+   #ifndef X86
+      return(0);
+   #endif
+   if (!INDEADU2D)
+      CalcAllDeadVariables();
+   else if (!CFUSETU2D || !CFU2D || !INUSETU2D)
+      CalcInsOuts(bbbase);
+
+   for (bl=scope; bl; bl = bl->next)
+   {
+      for (ipld=bl->blk->ainst1; ipld; ipld = ipn)
+      {
+         ipn = ipld->next;
+         inst = ipld->inst[0];
+         if (IS_LOAD(inst) && inst != VFLDS && inst != VDLDS)
+         {
+            k = -ipld->inst[1];
+            for (ip=ipld->next; ip; ip = ip->next)
+            {
+               if (!ip->use)
+                  continue;
+               if (BitVecCheck(ip->use, k-1) || BitVecCheck(ip->set, k-1))
+                  break;
+            }
+            if (ip)
+            {
+               j = -ip->inst[3];
+               typ =  j > 0 ? ireg2type(j) : 0;
+               if (j > 0 && ip->inst[1] == -k && ip->inst[2] == -k &&
+                   BitVecCheck(ip->deads, j-1) && typ == ireg2type(k))
+               {
+                  ipN = InsNewInst(NULL, NULL, ip, type2move(typ), -k, -j, 0);
+                  CalcThisUseSet(ipN);
+                  ip->inst[3] = ipld->inst[2];
+                  CalcThisUseSet(ip);
+                  DelInst(ipld);
+                  nchanges++;
+               }
+            }
+         }
+      }
+   }
+   if (nchanges)
+      CFUSETU2D = INDEADU2D = 0;
+   return(nchanges);
+}

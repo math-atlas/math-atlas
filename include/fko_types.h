@@ -17,15 +17,16 @@ union valoff
    char *optmnem[] = {"Do Nothing", "IG Reg Asg", "Copy Prop", "LP Reg Asg",
                       "Useless Jump Elim", "Useless Label Elim", 
                       "Branch Chaining", "Enforce Load Store", 
-                      "Remove One Use Loads", "ReverseCopyProp", "NONE"};
+                      "Remove One Use Loads", "Last Use Load Removal",
+                      "ReverseCopyProp", "NONE"};
    char *optabbr[] = {"DN", "ra", "cp", "gr", "uj", "ul", "bc", "ls", "u1", 
-                      "rc", "00"};
+                      "lu", "rc", "00"};
 #else
    extern char *optmnem[], *optabbr[];
 #endif
 enum FKOOPT {DoNothing, RegAsg, CopyProp, GlobRegAsg, UselessJmpElim, 
              UselessLabElim, BranchChain, EnforceLoadStore, 
-             RemoveOneUseLoads, ReverseCopyProp, MaxOpt};
+             RemoveOneUseLoads, LastUseLoadRemoval, ReverseCopyProp, MaxOpt};
 struct optblkq
 {
    enum FKOOPT *opts;    /* list of ordered opts to perform                  */

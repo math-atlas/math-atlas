@@ -1004,6 +1004,9 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
       case RemoveOneUseLoads:
          nchanges += DoRemoveOneUseLoads(scope);
          break;
+      case LastUseLoadRemoval:
+         nchanges += DoLastUseLoadRemoval(scope);
+         break;
       case ReverseCopyProp:
          nchanges += DoReverseCopyProp(scope);
          break;
