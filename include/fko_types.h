@@ -149,6 +149,9 @@ struct loopq
    short *pfarrs;     /* arrays which should be prefetched */
    short *pfdist;     /* dist in bytes to prefetch pfarrs */
    short *pfflag;     /* flag for prefetch */
+   short *ae;         /* accumulators to expand */
+   short *ne;         /* # of acc to use for each original acc */
+   short **aen;       /* shadow acc for each ae */
    BBLOCK *preheader, *header;
    BLIST *tails, *posttails;
    BLIST *blocks;     /* blocks in the loop */

@@ -2206,3 +2206,37 @@ void PrintLoopInfo()
    if (fpLOOPINFO)
       exit(0);
 }
+
+short *DeclareAE(int VEC, int ne, short STi)
+/*
+ * Declare ne-1 extra vars for accum expans on var STi
+ */
+{
+   int type, i;
+   short *sp;
+   char ln[1024];
+
+   sp = malloc(ne*sizeof(short));
+   sp[0] = ne-1;
+   type = FLAG2TYPE(STflag[STi-1])
+   if (VEC)
+   {
+      if (type == T_FLOAT)
+         type = T_VFLOAT;
+      else if (type == T_DOUBLE)
+         type = T_VDOUBLE;
+   }
+   for (i=1; i < ne; i++)
+   {
+      sprintf(ln, "_AE_%s_%d", STname[STi-1]);
+      sp[i] = STdef(ln, type | LOCAL_BIT, 0);
+   }
+   return(sp);
+}
+void DoAccumExpansion(LOOPQ *lp, int unroll)
+/*
+ * Inserts inst required for Accumulator Expansion
+ * NOTE: assumes called after loop unrolling, but before repeatable opt
+ */
+{
+}

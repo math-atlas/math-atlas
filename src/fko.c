@@ -11,7 +11,8 @@ int DTnzerods=0, DTabsds=0, DTnzeros=0, DTabss=0;
 int FKO_FLAG;
 int PFISKIP=0, PFINST=(-1), PFCHUNK=1;
 int NWNT=0;
-char **ARRWNT=NULL;
+short *AEn=NULL;
+char **ARRWNT=NULL, **AES=NULL;
 static char fST[1024], fLIL[1024], fmisc[1024];
 static short *PFDST=NULL, *PFLVL=NULL;
 static char **PFARR=NULL;
@@ -184,6 +185,53 @@ struct optblkq *OptBlockQtoTree(struct optblkq *head)
    return(root);
 }
 
+int KillDupPtrinfo(char **args, struct ptrinfo *pfb)
+/* 
+ * assumes pf->ptr is iarg of char string; deletes any pfb that
+ * have the same string
+ * RETURNS: number of unique strings
+ */
+{
+   struct ptrinfo *pfK, *pfP, *pf;
+   int n=0, nk=0;
+
+   for (pf=pfb; pf; pf = pf->next)
+   {
+      n++;
+      for (pfP=pf,pfK=pf->next; pfK; pfK = pfK->next)
+      {
+         if (!strcmp(args[pf->ptr], args[pfK->ptr]))
+         {
+            nk++;
+            pfP->next = pfK->next;
+            free(pfK);
+            pfK = pfP;
+         }
+         pfP = pf;
+      }
+   }
+   return(n-nk);
+}
+
+char **PtrinfoToStrings(char **args, int n, struct ptrinfo *pfb)
+{
+   char **sarr;
+   struct ptrinfo *pb;
+   int i;
+
+   sarr = malloc(sizeof(char*)*(n+1));
+   assert(sarr);
+   sarr[n] = NULL;
+   for (pf=pfb,i=0; i < n; i++, pf=pf->next)
+   {
+      i = strlen(args[pf->ptr]+1;
+      sarr[i] = malloc(sizeof(char)*i);
+      assert(sarr[i]);
+      strcpy(sarr[i], args[pf->ptr]);
+   }
+   return(sarr);
+}
+
 struct optblkq *GetFlagsN(int nargs, char **args, 
                           char **FIN, FILE **FPIN, FILE **FPOUT)
 {
@@ -191,7 +239,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
    FILE *fpin, *fpout;
    char *fin=NULL, *fout=NULL;
    struct optblkq *obq=NULL, *op;
-   struct ptrinfo *pf, *pfb=NULL, *pf0, *pfK, *pfP;
+   struct ptrinfo *pf, *pfb=NULL, *pf0, *pfK, *pfP, *aeb=NULL;
    struct idlist  *id, *idb=NULL, *idP, *idK;
    char *sp, *rpath=NULL, *rname=NULL;
    int i, j, k;
@@ -261,6 +309,10 @@ struct optblkq *GetFlagsN(int nargs, char **args,
                pfb = pf;
                i += 3;
             }
+            break;
+         case 'A':
+            aeb = NewPtrinfo(i+1, atoi(args[i+2]), aeb);
+            i += 2;
             break;
          case 'W':
             id = malloc(sizeof(struct idlist));
@@ -445,24 +497,22 @@ ERR:
          strcpy(ARRWNT[i], id->name);
       }
    }
+   if (aeb)
+   {
+      n = KillDupPtrinfo(args, pfb);
+      AEs = PtrinfoToStrings(args, n, pfb);
+      AEn = malloc(sizeof(short)*(n+1));
+      AEn[0] = n;
+      for (pf=aeb,i=1; i <= n; pf=pf->next,i++)
+         AEn[i] = pf->flag;
+      KillAllPtrinfo(aeb);
+   }
    if (pfb)
    {
 /*
  *    Keep only last declaration for given array
  */
-      for (pf=pfb; pf; pf = pf->next)
-      {
-         for (pfK=pf->next; pfK; pfK = pfK->next)
-         {
-            if (!strcmp(args[pf->ptr], args[pfK->ptr]))
-            {
-               for (pfP=pf; pfP->next != pfK; pfP = pfP->next);
-               pfP->next = pfK->next;
-               free(pfK);
-               pfK = pfP;
-            }
-         }
-      }
+      KillDupPtrinfo(args, pfb);
 /*
  *    Count number of <name> refs, and find any default ref
  */
@@ -651,6 +701,29 @@ static short *ReadShortArrayFromFile(FILE *fp)
    return(sp);
 }
 
+static void WriteArrayOfShortArrayToFile(FILE *fp, short n, short **sp)
+{
+   short i;
+   assert(fwrite(&n, sizeof(short), 1, fp) == 1);
+   for (i=0; i < n; i++)
+      WriteShortArrayToFile(fp, sp[i][0], &sp[i][1]);
+}
+
+static short **ReadArrayOfShortArrayFromFile(FILE *fp)
+{
+   short *sp=NULL;
+   assert(fread(&n, sizeof(short), 1, fp) == 1);
+   if (n)
+   {
+      sp = malloc(sizeof(short*)*(n+1));
+      assert(sp);
+      sp[n] = NULL;
+      for (i=0; i < n; i++)
+         sp[i] = ReadShortArrayFromFile(fp);
+   }
+   return(sp);
+}
+
 static void WriteMiscToFile(char *name)
 {
    FILE *fp;
@@ -676,11 +749,18 @@ static void WriteMiscToFile(char *name)
       n = optloop->pfarrs ? optloop->pfarrs[0] : 0;
       WriteShortArrayToFile(fp, n, optloop->pfarrs+1);
       WriteShortArrayToFile(fp, n, optloop->pfdist+1);
+      n = optloop->ne ? optloop->ne[0] : 0;
+      WriteShortArrayToFile(fp, n, optloop->ae+1);
+      WriteShortArrayToFile(fp, n, optloop->ne+1);
+      WriteArrayOfShortArrayToFile(fp, n, optloop->aen);
       assert(!optloop->abalign);  /* fix this later */
       n = PFDST ? PFDST[0] : 0;
       WriteStringArrayToFile(fp, n, PFARR);
       WriteShortArrayToFile(fp, n, PFLVL+1);
       WriteShortArrayToFile(fp, n, PFDST+1);
+      n = AEn ? AEn[0] : 0;
+      WriteStringArrayToFile(fp, n, AES);
+      WriteShortArrayToFile(fp, n, AEn+1);
    }
    else
    {
@@ -710,6 +790,17 @@ static void WriteMiscToFile(char *name)
    }
    WriteStringArrayToFile(fp, NWNT, ARRWNT);
    fclose(fp);
+}
+
+static void KillArrayOfStr(int n, char **str)
+{
+   int i;
+   if (!str)
+      return;
+   for (i=0; i < n; i++)
+      if (str[i])
+         free(str[i]);
+   free(str);
 }
 
 static void ReadMiscFromFile(char *name)
@@ -750,6 +841,9 @@ static void ReadMiscFromFile(char *name)
       optloop->vvscal  = ReadShortArrayFromFile(fp);
       optloop->pfarrs  = ReadShortArrayFromFile(fp);
       optloop->pfdist  = ReadShortArrayFromFile(fp);
+      optloop->ae      = ReadShortArrayFromFile(fp);
+      optloop->ne      = ReadShortArrayFromFile(fp);
+      optloop->aen     = ReadArrayOfShortArrayFromFile(fp);
       optloop->abalign = NULL;  /* handle this later */
       optloop->preheader = optloop->header = NULL;
       optloop->tails = optloop->posttails = NULL;
@@ -758,13 +852,8 @@ static void ReadMiscFromFile(char *name)
       else
          optloop->blocks = NULL;
       optloop->next = NULL;
-      if (PFARR)
-      {
-         for (i=PFDST[0]-1; i >= 0; i--)
-            if (PFARR[i])
-               free(PFARR[i]);
-         free(PFARR);
-      }
+      i = PFDST ? PFDST[0] : 0;
+      KillArrayOfStr(i, PFARR);
       if (PFLVL)
          free(PFLVL);
       if (PFDST)
@@ -772,6 +861,13 @@ static void ReadMiscFromFile(char *name)
       PFARR = ReadStringArrayFromFile(fp);
       PFLVL = ReadShortArrayFromFile(fp);
       PFDST = ReadShortArrayFromFile(fp);
+      if (AEn)
+      {
+         KillArrayOfStr(AEn[0], AES);
+         free(AEn);
+      }
+      AES = ReadStringArrayFromFile(fp);
+      AEn = ReadShortArrayFromFile(fp);
    }
    else 
       optloop = NULL;
@@ -1247,12 +1343,47 @@ static short FindNameMatch(int n, short *pool, char *name)
    return(0);
 }
 
-void UpdatePrefetchInfo()
+short *NamesToSTs(int n, char **names, int N, short *pool)
+/*
+ * Finds names from pool of symbol table (ST) indices
+ * RETURNS: array of ST indices corresponding to names
+ */
+{
+   short *sp;
+   int i;
+   short k;
+
+   sp = malloc(sizeof(short)*n+1);
+   assert(sp);
+   sp[0] = n;
+
+   for (i=1; i <= n; i++)
+   {
+      k = FindNameMatch(N, pool, names[i-1]);
+      assert(k);
+      sp[i] = k;
+   }
+   return(sp);
+}
+
+void UpdateNamedLoopInfo()
 {
    int n, i, j, k, N;
    short *sp;
 
-   if (optloop && PFARR)
+   if (!optloop)
+      return;
+/*
+ * HERE HERE HERE: need to finish accum expans
+ */
+   if (AES)
+   {
+      assert(optloop->vscal);
+      optloop->ae = (AEn[0], AES, optloop->vscal[0], optloop->vscal+1);
+      optloop->ne = AEn;
+      AEn = NULL;
+   }
+   if (PFARR)
    {
 /*
  *    If we don't have a default distance, be sure arrays are moving in loop
@@ -1367,9 +1498,9 @@ void DoStage2(int SAVESP, int SVSTATE)
 /*
  * Having found the optloop, save which arrays to prefetch
  */
-   if (PFARR && optloop)
+   if (optloop)
    {
-      if (!optloop->varrs)
+      if (PFARR && !optloop->varrs)
       {
          KillLoopControl(optloop);
          pi0 = FindMovingPointers(optloop->blocks);
@@ -1387,7 +1518,7 @@ void DoStage2(int SAVESP, int SVSTATE)
          FindLoops(); 
          CheckFlow(bbbase, __FILE__, __LINE__);
       }
-      UpdatePrefetchInfo();
+      UpdateNamedLoopInfo();
    }
    if (SVSTATE)
       SaveFKOState(2);
