@@ -741,9 +741,10 @@ int VectorizeStage1(void)
  * Create vector locals for all vector scalars in loop, and their derefs
  */
    k = LOCAL_BIT | FLAG2TYPE(flag);
+   n = lp->vscal[0];
    lp->vvscal = malloc(sizeof(short)*(n+1));
    assert(lp->vvscal);
-   n = lp->vvscal[0] = vscal[0];
+   lp->vvscal[0] = n;
    sp = vscal + 1;
    for (i=0; i < n; i++)
    {

@@ -410,110 +410,6 @@ ERR:
    return(obq);
 }
 
-void GetFlags(int nargs, char **args, char **FIN, FILE **FPIN, FILE **FPOUT)
-{
-   FILE *fpin, *fpout;
-   char *fin=NULL, *fout=NULL;
-   char ln[512];
-   int i, j;
-
-   FKO_FLAG = 0;
-   for (i=1; i < nargs; i++)
-   {
-      if (args[i][0] != '-')
-      {
-         if (fin) PrintUsage(args[0]);
-         else fin = args[i];
-      }
-      else
-      {
-         switch(args[i][1])
-         {
-         case 't':
-            for(++i, j=0; args[i][j]; j++)
-            {
-               switch(args[i][j])
-               {
-               case 'I': /* IG */
-                  fpIG = (FILE *) 1;
-                  break;
-               case 'S': /* symbol table */
-                  fpST = (FILE *) 1;
-                  break;
-               case 'L': /* LIL */
-                  fpLIL = (FILE *) 1;
-                  break;
-               default :
-                  fprintf(stderr, "Unknown temp label %c ignored!!\n\n",
-                          args[i][j]);
-               }
-            }
-            break;
-         case 'o':
-            fout = args[++i];
-            break;
-         case 'C':
-            j = atoi(args[++i]);
-            if (!j) FKO_FLAG |= IFF_KILLCOMMENTS;
-            break;
-         default:
-            fprintf(stderr, "Unknown flag '%s'\n", args[i]);
-            PrintUsage(args[0]);
-         }
-      }
-   }
-   if (!fin) fpin = stdin;
-   else
-   {
-      fpin = fopen(fin, "r");
-      assert(fpin);
-   }
-   if (!fout)
-   {
-      fpout = stdout;
-      strcpy(ln, "ifko_temp.");
-      i = 10;
-   }
-   else
-   {
-      fpout = fopen(fout, "w");
-      assert(fpout);
-      for (i=0; fout[i]; i++);
-      if (i > 2 && fout[i-1] == 'l' && fout[i-2] == '.')
-         FKO_FLAG |= IFF_NOASS | IFF_LIL;
-      for (i=0; fout[i]; i++) ln[i] = fout[i];
-      for (i--; i > 0 && ln[i] != '.'; i--);
-      if (ln[i] != '.')
-      {
-         for (i=0; ln[i]; i++);
-         ln[i++] = '.';
-      }
-      else ln[++i] = '\0';
-
-   }
-   if (fpIG)
-   {
-      ln[i] = 'I'; ln[i+1] = 'G'; ln[i+2] = '\0';
-      fpIG = fopen(ln, "w");
-      assert(fpIG);
-   }
-   if (fpST)
-   {
-      ln[i] = 'S'; ln[i+1] = 'T'; ln[i+2] = '\0';
-      fpST = fopen(ln, "w");
-      assert(fpST);
-   }
-   if (fpLIL)
-   {
-      ln[i] = 'L'; ln[i+1] = '\0';
-      fpLIL = fopen(ln, "w");
-      assert(fpLIL);
-   }
-   *FIN = fin;
-   *FPIN = fpin;
-   *FPOUT = fpout;
-}
-
 static void WriteShortArrayToFile(FILE *fp, short n, short *sp)
 {
    assert(fwrite(&n, sizeof(short), 1, fp) == 1);
@@ -995,11 +891,21 @@ struct optblkq *DefaultOptBlocks(void)
 {
    struct optblkq *base, *op;
 
-   op = base = NewOptBlock(1, 0, 4, 0);
-   op->opts[0] = GlobRegAsg;
-   op->opts[1] = MaxOpt+2;
-   op->opts[2] = MaxOpt+3;
-   op->opts[3] = MaxOpt+4;
+   if (DO_VECT(FKO_FLAG))
+   {
+      op = base = NewOptBlock(1, 0, 3, 0);
+      op->opts[0] = MaxOpt+2;
+      op->opts[1] = MaxOpt+3;
+      op->opts[2] = MaxOpt+4;
+   }
+   else
+   {
+      op = base = NewOptBlock(1, 0, 4, 0);
+      op->opts[0] = GlobRegAsg;
+      op->opts[1] = MaxOpt+2;
+      op->opts[2] = MaxOpt+3;
+      op->opts[3] = MaxOpt+4;
+   }
 
    op->next = NewOptBlock(2, 10, 3, IOPT_GLOB);
    op = op->next;

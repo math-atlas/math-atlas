@@ -859,7 +859,8 @@ static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
    GetReg(-1);
 }
 
-void AddLoopControl(LOOPQ *lp, INSTQ *ipinit, INSTQ *ipupdate, INSTQ *iptest)
+void AddLoopControl(LOOPQ *lp, INSTQ *ipinit, INSTQ *ipupdate, INSTQ *ippost,
+                    INSTQ *iptest)
 /*
  * Assumes loop preheader and tails info up-to-date
  */
@@ -883,6 +884,9 @@ fprintf(stderr, "%s(%d), %d,%d,%d tails=%d\n", __FILE__, __LINE__, ipinit, ipupd
       #if IFKO_DEBUG_LEVEL >= 1
          assert(ipl);
       #endif
+      for (ip = ippost; ip; ip = ip->next)
+         InsNewInst(NULL, NULL, ipl, ip->inst[0], ip->inst[1],
+                          ip->inst[2], ip->inst[3]);
       for (ip = ipupdate; ip; ip = ip->next)
          ipl = InsNewInst(NULL, ipl, NULL, ip->inst[0], ip->inst[1],
                           ip->inst[2], ip->inst[3]);
@@ -954,13 +958,7 @@ void OptimizeLoopControl(LOOPQ *lp, /* Loop whose control should be opt */
       fprintf(stderr, "\nLoop good for SimpleLC!!!\n\n");
       SimpleLC(lp, unroll, &ipinit, &ipupdate, &iptest);
    }
-   if (ippost)
-   {
-      for (ip=ippost; ip->next; ip = ip->next);
-      ip->next = ipupdate;
-      ipupdate = ippost;
-   }
-   AddLoopControl(lp, lp->preheader ? ipinit : NULL, ipupdate, iptest);
+   AddLoopControl(lp, lp->preheader ? ipinit : NULL, ipupdate, ippost, iptest);
    KillAllInst(ipinit);
    KillAllInst(ipupdate);
    KillAllInst(iptest);
@@ -1329,11 +1327,12 @@ int UnrollLoop(LOOPQ *lp, int unroll)
    ILIST *il;
    INSTQ *ippost=NULL, *ip, *ipn;
    struct ptrinfo *pi, *pi0;
-   int i, UsesIndex=1, UsesPtrs=1, URbase=0;
+   int i, UsesIndex=1, UsesPtrs=1, URbase=0, UR;
    enum comp_flag kbeg, kend;
    extern int FKO_BVTMP;
    extern BBLOCK *bbbase;
 
+   UR = lp->vflag ? Type2Vlen(FLAG2TYPE(lp->vflag))*unroll : unroll;
    KillLoopControl(lp);
 PrintInst(fopen("err.tmp", "w"), bbbase);
    il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
@@ -1343,7 +1342,7 @@ PrintInst(fopen("err.tmp", "w"), bbbase);
    if (!pi0)
       UsesPtrs = 0;
    UnrollCleanup(lp, unroll);
-   URbase = (lp->flag & L_FORWARDLC_BIT) ? 0 : unroll-1;
+   URbase = (lp->flag & L_FORWARDLC_BIT) ? 0 : UR-1;
 
    dupblks = malloc(sizeof(BLIST*)*unroll);
    assert(dupblks);
@@ -1391,6 +1390,8 @@ fprintf(stderr, "dupblks[%d] = %s\n", i-1, PrintBlockList(dupblks[i-1]));
          }
 /*
  *       Find all lds of moving ptrs, and add unrolling factor to them
+ * HERE HERE HERE
+ * NOTE: need to make sure this uses sizeof(vector)!!!
  */
          UpdatePointerLoads(dupblks[i-1], pi, i);
          KillAllPtrinfo(pi);
@@ -1435,7 +1436,7 @@ fprintf(stderr, "dupblks[%d] = %s\n", i-1, PrintBlockList(dupblks[i-1]));
 /*
  * Put unrolled & optimized loop control back in loop
  */
-   OptimizeLoopControl(lp, unroll, 0, ippost);
+   OptimizeLoopControl(lp, UR, 0, ippost);
 /*
  * Fix CF by recomputing it and all loop stuff
  */
