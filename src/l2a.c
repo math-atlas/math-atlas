@@ -51,8 +51,11 @@ static char *GetDeref(short id)
    #ifdef X86
       if (!reg)
       {
+fprintf(stderr, "regs[%d] = '%s'\n", -IREGBEG-ptr, archiregs[-IREGBEG-ptr]);
          if (con) sprintf(ln,"%d(%s)", con, archiregs[-IREGBEG-ptr]);
          else sprintf(ln, "(%s)", archiregs[-IREGBEG-ptr]);
+ln[8] = '\0';
+fprintf(stderr, "ln='%s', len=%d\n", ln, strlen(ln));
       }
       else if (mul)
       {
@@ -105,7 +108,7 @@ static char *GetIregOrDeref(short id)
 {
    if (id < 0)
       return(archiregs[-IREGBEG-id]);
-   else
+   else if (id)
       return(GetDeref(id));
 }
 
@@ -145,7 +148,7 @@ struct assmln *lil2ass(INSTQ *head)
    #ifdef SPARC
       int SeenSave=0;
    #endif
-   char ln[256];
+   char ln[1024];
 
    ap = ahead = NewAssln(".text\n");
    do
@@ -193,8 +196,17 @@ struct assmln *lil2ass(INSTQ *head)
          break;
       case ST:
          #ifdef X86
+	    #if 0
             ap->next = PrintAssln("\tmovl\t%s,%s\n", archiregs[-IREGBEG-op2],
                                   GetDeref(op1));
+	    #elif 1
+	    sprintf(ln, "\tmovl\t%s,%s\n", archiregs[-IREGBEG-op2], 
+	            GetDeref(op1));
+	    fprintf(stderr, "%d, '%s' %s", -IREGBEG-op2, archiregs[-IREGBEG-op2], ln);
+            ap->next = NewAssln(ln);
+	    #else
+	       ap->next = NewAssln("");
+	    #endif
          #elif defined(SPARC)
             ap->next = PrintAssln("\tst\t%s,%s\n", archiregs[-IREGBEG-op2],
                                   GetDeref(op1));

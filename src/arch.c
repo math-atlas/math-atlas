@@ -101,8 +101,12 @@ void Param2Local(INSTQ *next, short rsav, int fsize)
 
    if (rsav) fsize = 0;
    else rsav = -REG_SP;
-   paras = malloc(NPARA * sizeof(short));
-   assert(paras);
+   if (NPARA)
+   {
+      paras = malloc(NPARA * sizeof(short));
+      assert(paras);
+   }
+   else paras = NULL;
 /*
  * Find all parameters, and put them in left-to-right order
  */
