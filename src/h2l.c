@@ -174,7 +174,7 @@ short AddArrayDeref(short array, short index, int offset)
    if (IS_DOUBLE(flag) || IS_LONG(flag)) mul = 8;
    else if (IS_CHAR(flag)) mul = 1;
    assert(!IS_VEC(flag));
-   AddDerefEntry(array, index, mul, offset);
+   return(AddDerefEntry(array, index, mul, offset));
 }
 static void FixDeref(short ptr)
 /*
@@ -275,7 +275,7 @@ void DoArrayLoad(short id, short ptr)
 
    k = (ptr-1)<<2;
    type = FLAG2TYPE(STflag[id-1]);
-fprintf(stderr, "\n\nTYPE=%d\n\n", type);
+fprintf(stderr, "\n\nANAME=%s, TYPE=%d\n\n", STname[ptr-1] ? STname[ptr-1] : "NULL", type);
    FixDeref(ptr);
    switch(type)
    {
