@@ -470,6 +470,8 @@ void VDConstGen(INSTQ *next, int ir, int fr, long icon0, long icon1)
    InsNewInst(NULL, NULL, next, VGR2VR16, -fr, -ir, STiconstlookup(1));
    #ifdef X86_32
       InsNewInst(NULL, NULL, next, MOV, -ir, STiconstlookup(icon1), 0);
+   #else
+      InsNewInst(NULL, NULL, next, SHR, -ir, -ir, STiconstlookup(16));
    #endif
    InsNewInst(NULL, NULL, next, VGR2VR16, -fr, -ir, STiconstlookup(2));
    InsNewInst(NULL, NULL, next, SHR, -ir, -ir, STiconstlookup(16));
@@ -905,46 +907,57 @@ void Extern2Local(INSTQ *next, int rsav)
       if (DTnzerod > 0)
       {
          PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
-         InsNewInst(NULL, NULL, next, MOV, -ir,
-                    STlconstlookup(0x8000000000000000), 0);
-         k = SToff[SToff[DTnzerod-1].sa[2]-1].sa[3];
-         InsNewInst(NULL, NULL, next, ST, SToff[DTnzerod-1].sa[2], -ir, 0);
-         InsNewInst(NULL, NULL, next, ST, 
-                    AddDerefEntry(-REG_SP, DTnzerod, -DTnzerod, k+8, DTnzerod),
-                    -ir, 0);
+         VDConstGen(next, ir, vdreg, 0x8000000000000000);
+         InsNewInst(NULL, NULL, next, VDST, SToff[DTnzerod-1].sa[2], -vdreg, 0);
+         k = SToff[DTnzerod-1].sa[2] - 1;
+
+         DTnzerods = STdef("_NEGZERODs", T_DOUBLE | LOCAL_BIT, 0);
+         SToff[DTnzerods-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTnzerods,
+                     -DTnzerods, SToff[k].sa[3], DTnzerods);
+         k = vdreg - VDREGBEG + DREGBEG;
+         InsNewInst(NULL, NULL, next, VDMOVS, -k, -vdreg, 0);
+         InsNewInst(NULL, NULL, next, FSTD, SToff[DTnzerods-1].sa[2], -k, 0);
       }
       if (DTnzero > 0)
       {
          PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
-         InsNewInst(NULL, NULL, next, MOV, -ir,
-                    STlconstlookup(0x8000000080000000), 0);
-         InsNewInst(NULL, NULL, next, ST, SToff[DTnzero-1].sa[2], -ir, 0);
-         k = ((SToff[DTnzero-1].sa[2]-1)<<2) + 3;
-         k = SToff[SToff[DTnzero-1].sa[2]-1].sa[3];
-         InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, DTnzero, -DTnzero, k+8, DTnzero), 
-                    -ir, 0);
+         VSConstGen(next, ir, vfreg, 0x80000000);
+         InsNewInst(NULL, NULL, next, VFST, SToff[DTnzero-1].sa[2], -vfreg, 0);
+         k = SToff[DTnzero-1].sa[2] - 1;
+         DTnzeros = STdef("_NEGZEROs", T_FLOAT | LOCAL_BIT, 0);
+         SToff[DTnzeros-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTnzeros,
+                     -DTnzeros, SToff[k].sa[3], DTnzeros);
+         k = vfreg - VFREGBEG + FREGBEG;
+         InsNewInst(NULL, NULL, next, VFMOVS, -k, -vfreg, 0);
+         InsNewInst(NULL, NULL, next, FST, SToff[DTnzeros-1].sa[2], -k, 0);
       }
       if (DTabsd)
       {
          PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for absd");
-         InsNewInst(NULL, NULL, next, MOV, -ir,
-                    STlconstlookup(0x7FFFFFFFFFFFFFFF), 0);
-         k = SToff[SToff[DTabsd-1].sa[2]-1].sa[3];
-         InsNewInst(NULL, NULL, next, ST, SToff[DTabsd-1].sa[2], -ir, 0);
-         InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, DTabsd, -DTabsd, k+8, DTabsd), 
-                    -ir, 0);
+         VDConstGen(next, ir, vdreg, 0x7FFFFFFFFFFFFFFF);
+         InsNewInst(NULL, NULL, next, VDST, SToff[DTabsd-1].sa[2], -vdreg, 0);
+         k = SToff[DTabsd-1].sa[2] - 1;
+         DTabsds = STdef("_ABSVALs", T_DOUBLE | LOCAL_BIT, 0);
+         SToff[DTabsds-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTabsds,
+                     -DTabsds, SToff[k].sa[3], DTabsds);
+         k = vdreg - VDREGBEG + DREGBEG;
+         InsNewInst(NULL, NULL, next, VDMOVS, -k, -vdreg, 0);
+         InsNewInst(NULL, NULL, next, FSTD, SToff[DTabsds-1].sa[2], -k, 0);
       }
       if (DTabs)
       {
          PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for abss");
-         k = SToff[SToff[DTabs-1].sa[2]-1].sa[3];
-         InsNewInst(NULL, NULL, next, MOV, -ir,
-                    STlconstlookup(0x7fffffff7fffffff), 0);
-         InsNewInst(NULL, NULL, next, ST, SToff[DTabs-1].sa[2], -ir, 0);
-         InsNewInst(NULL, NULL, next, ST, 
-                    AddDerefEntry(-REG_SP, DTabs, -DTabs, k+8, DTabs), -ir, 0);
+         VSConstGen(next, ir, vfreg, 0x7fffffff);
+         InsNewInst(NULL, NULL, next, VFST, SToff[DTabs-1].sa[2], -vfreg, 0);
+
+         k = SToff[DTabs-1].sa[2] - 1;
+         DTabss = STdef("_ABSVALs", T_FLOAT | LOCAL_BIT, 0);
+         SToff[DTabss-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTabss,
+                     -DTabss, SToff[k].sa[3], DTabss);
+         k = vfreg - VFREGBEG + FREGBEG;
+         InsNewInst(NULL, NULL, next, VFMOVS, -k, -vfreg, 0);
+         InsNewInst(NULL, NULL, next, FST, SToff[DTabss-1].sa[2], -k, 0);
+
       }
       InsNewInst(NULL, NULL, next, COMMENT, STstrconstlookup("done archspec"), 
                  0, 0);
