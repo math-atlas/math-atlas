@@ -953,7 +953,7 @@ void CreateEpilogue(int fsize,  /* frame size of returning func */
 /*
  * Restore stack pointer and return
  */
-   if (savesp)
+   if (savesp >= 0)
       InsNewInst(NULL, NULL, LD, -REG_SP, 
                  AddDerefEntry(-REG_SP, 0, 0, savesp), 0);
    else
@@ -980,7 +980,7 @@ void CreatePrologue(int align,  /* local-area required byte-alignment */
    INSTQ *ip, *oldhead, *oldtail;
    extern INSTQ *iqhead;
    int Loff;   /* called routines frame size excluding locals */
-   int SAVESP=0;  /* must we save SP to stack? */
+   int SAVESP=(-1);  /* must we save SP to stack? */
 
 fprintf(stderr, "align=%d,lsize=%d,csize=%d\n", align, lsize, csize);
 /*
@@ -1081,7 +1081,7 @@ fprintf(stderr, "tsize=%d, Loff=%d, Soff=%d lsize=%d\n", tsize, Loff, Soff, lsiz
       if (Loff%align) Loff = (Loff/align)*align + align;
       tsize = Loff + lsize;
       if (tsize % ASPALIGN) tsize = (tsize/ASPALIGN)*ASPALIGN + ASPALIGN;
-      if (SAVESP)
+      if (SAVESP >= 0)
       {
          InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
          InsNewInst(NULL, oldhead, COMMENT, STstrconstlookup("To ensure greater alignment than sp, save old sp to stack and move sp"), 0, 0);
@@ -1099,7 +1099,7 @@ fprintf(stderr, "tsize=%d, Loff=%d, Soff=%d lsize=%d\n", tsize, Loff, Soff, lsiz
       InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
    }
    InsNewInst(NULL, oldhead, SUB, -REG_SP, -REG_SP, STiconstlookup(tsize));
-   if (SAVESP)
+   if (SAVESP >= 0)
    {
       i = const2shift(maxalign);
       assert(i >= 3);

@@ -433,12 +433,6 @@ fprintf(stderr, "Updating local %s\n", STname[k]);
       }
    }
    LOCALIGN = GetArchAlign(nvdloc, nvfloc, ndloc, nfloc, nlloc, niloc);
-/*
-   if (nvdloc) LOCALIGN = FKO_DVLEN*8;
-   else if (nvfloc) LOCALIGN = FKO_SVLEN*4;
-   else if (ndloc || nlloc) LOCALIGN = 8;
-   else if (nfloc || niloc) LOCALIGN = 4;
-*/
    LOCSIZE = nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4 + 
              ndloc*8 + niloc*isize + nfloc*4;
 }
