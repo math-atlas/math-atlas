@@ -40,8 +40,10 @@ fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    AddLoopComments();
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
+#if 0
    AddSetUseComments(bbbase);   
    AddDeadComments(bbbase);
+#endif
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    abase = lil2ass(bbbase);
    KillAllBasicBlocks(bbbase);

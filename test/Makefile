@@ -158,7 +158,7 @@ xitst13 : mitst13.o itst13.o
 mitst3.c : mitst0.c
 	ln -s mitst0.c mitst3.c
 clean:
-	rm -f x* *.o *.s
+	rm -f x* *.o *.s *.i
 build_comp:
 	cd ../bin ; $(MAKE) ifko
 

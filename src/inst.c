@@ -81,6 +81,24 @@ INSTQ *InsNewInst(BBLOCK *blk, INSTQ *prev, INSTQ *next, enum inst ins,
    return(ip);
 }
 
+void InsInstInBlockList(BLIST *blist, int FIRST, enum inst ins,
+                        short dest, short src1, short src2)
+/*
+ * Inserts the given instruction in all blocks pointed to by blist.
+ * if FIRST is non-zero, insert as first instruction in block, else
+ * insert as last
+ */
+{
+   INSTQ *next=NULL;
+
+   for(; blist; blist = blist->next)
+   {
+      if (FIRST)
+         next = blist->blk->inst1;
+      InsNewInst(blist->blk, NULL, next, ins, dest, src1, src2);
+   }
+}
+
 INSTQ *DelInst(INSTQ *del)
 /*
  * Deletes inst del from Q, keeping links cosher

@@ -2,6 +2,7 @@
 #include <fko_arch.h>
 
 static IGLIST *iglist=NULL;
+static IGLIST *igrprev, *igrpost, *igrout;
 
 char *Int2Reg(int i)
 /*
@@ -75,12 +76,11 @@ IGLIST *NewIGNodeList(IGNODE *ig, IGLIST *next)
 
 IGLIST *AddIGNodeToList(IGLIST *list, IGNODE *node)
 /* 
- * Adds a ignode to list (in second position)
+ * Adds a ignode to list (in first position)
  * RETURNS: ptr to list
  */
 {
-   if (list) list->next = NewIGNodeList(node, list->next);
-   else list = NewIGNodeList(node, NULL);
+   list = NewIGNodeList(node, list);
    return(list);
 }
 
@@ -91,13 +91,13 @@ IGLIST *AddIGNodeToListCheck(IGLIST *list, IGNODE *node)
  */
 {
    IGLIST *lp;
-   if (list) list->next = NewIGNodeList(node, list->next);
-   else 
+   if (list)
    {
       for (lp=list; lp && lp->ignode != node; lp = lp->next);
       if (!lp)
-         list = NewIGNodeList(node, NULL);
+         list = NewIGNodeList(node, list);
    }
+   else list = NewIGNodeList(node, NULL);
    return(list);
 }
 
@@ -141,15 +141,20 @@ IGNODE *NewIGNode(short var, BBLOCK *blk)
    IGNODE *ig;
 
    ig = malloc(sizeof(IGNODE));
-   if (blk) ig->myblocks = NewBlockList(blk, NULL);
-   else ig->myblocks = NULL;
    ig->myblkreg = NewBitVec(32);
-   if (blk) SetVecBit(ig->myblkreg, blk->bnum-1, 1);
+   if (blk)
+   {
+      ig->blkbeg = ig->blkend = NewBlockList(blk, NULL);
+      ig->blkspan = NULL;
+      SetVecBit(ig->myblkreg, blk->bnum-1, 1);
+   }
+   else ig->blkspan = ig->blkbeg = ig->blkend = NULL;
    ig->conflicts = NULL;
    ig->freq = 0;
    ig->regstate = NewBitVec(32);
    ig->var = var;
    iglist = NewIGNodeList(ig, iglist);
+   ig->type = FLAG2PTYPE(STflag[var-1]);
    return(ig);
 }
 
@@ -157,7 +162,9 @@ void KillIGNode(IGNODE *kill)
 {
    if (kill)
    {
-      if (kill->myblocks) KillBlockList(kill->myblocks);
+      if (kill->blkbeg) KillBlockList(kill->blkbeg);
+      if (kill->blkend) KillBlockList(kill->blkbeg);
+      if (kill->blkspan) KillBlockList(kill->blkbeg);
       if (kill->conflicts) KillAllIGList(kill->conflicts);
       if (kill->regstate) KillBitVec(kill->regstate);
       if (kill->myblkreg) KillBitVec(kill->myblkreg);
@@ -168,7 +175,7 @@ void KillIGNode(IGNODE *kill)
 
 IGNODE *FindIGNodeByVar(IGLIST *list, short var)
 {
-   for (; list && list->ignode->var != var; list = list->next)
+   for (; list && list->ignode->var != var; list = list->next);
    return(list ? list->ignode : NULL);
 }
 
@@ -300,6 +307,9 @@ void CalcBlockIG(BBLOCK *bp)
    }
    for (ip=bp->ainst1; ip; ip = ip->next)
    {
+/*
+ *    If var is referenced as a use, update the freq
+ */
       vals = BitVec2StaticArray(ip->use);
       for (n=vals[0], i=1; i <= n; i++)
       {
@@ -308,9 +318,15 @@ void CalcBlockIG(BBLOCK *bp)
             k = vals[i] - TNREG + 1;
             node = FindIGNodeByVar(bp->ignodes, k);
             assert(node);
+            if (!node->blkbeg->ptr) node->blkbeg->ptr = ip;
+            node->blkend->ptr = ip;
             node->freq++;
          }
       }
+/*
+ *    If var is dead then delete it from conflict out of block
+ *    If reg is dead remove it from blkstate
+ */
       vals = BitVec2StaticArray(ip->deads);
       for (n=vals[0], i=1; i <= n; i++)
       {
@@ -320,6 +336,9 @@ void CalcBlockIG(BBLOCK *bp)
                             FindIGNodeByVar(bp->conout, k-TNREG+1));
          else SetVecBit(blkstate, k, 0);
       }
+/*
+ *    If reg/var is set
+ */
       vals = BitVec2StaticArray(ip->set);
       for (n=vals[0], i=1; i <= n; i++)
       {
@@ -328,6 +347,13 @@ void CalcBlockIG(BBLOCK *bp)
          {
             k = k - TNREG + 1;
             node = FindIGNodeByVar(bp->ignodes, k);
+/*
+ *          if var is set and not already live
+ *             a. create an ignode for it
+ *             b. Set a conflict between it and all nodes currently live
+ *             c. add it to the current live ranges
+            else update frequency
+ */
             if (!node)
             {
                node = NewIGNode(vals[i]-TNREG+1, bp);
@@ -337,11 +363,15 @@ void CalcBlockIG(BBLOCK *bp)
             }
             else node->freq++;
          }
+/*
+ *       If register is set, add it to list of live regs (blkstate),
+ *       as well as to the regstate of all currently live ranges
+ */
          else
          {
             k = vals[i] + 1;
             iv = Reg2Regstate(k);
-            UpdateIGListsRegstate(bp->conin, iv, '|');
+            UpdateIGListsRegstate(bp->conout, iv, '|');
             BitVecComb(blkstate, blkstate, iv, '|');
          }
       }
@@ -357,17 +387,24 @@ IGNODE *CombineIGNodes(IGNODE *succ, IGNODE *pred)
    IGNODE *ig;
    IGLIST *igl;
    BLIST *bl;
+   int i, j;
+   extern int FKO_BVTMP;
 
    assert(succ->var == pred->var);
    ig = NewIGNode(succ->var, NULL);
+   ig->blkbeg = pred->blkbeg;
+   ig->blkend = succ->blkend;
    BitVecComb(ig->myblkreg, succ->myblkreg, pred->myblkreg, '|');
-   ig->myblocks = BitVec2BlockList(ig->myblkreg);
+   i = FKO_BVTMP = BitVecCopy(FKO_BVTMP, ig->myblkreg);
+   j = BlockList2BitVec(ig->blkbeg);
+   BitVecComb(i, i, j, '-');
+   j = BlockList2BitVec(ig->blkend);
+   BitVecComb(i, i, j, '-');
+   ig->blkspan = BitVec2BlockList(ig->myblkreg);
    for (igl=succ->conflicts; igl; igl = igl->next)
       ig->conflicts = AddIGNodeToList(ig->conflicts, igl->ignode);
    for (igl=pred->conflicts; igl; igl = igl->next)
       ig->conflicts = AddIGNodeToListCheck(ig->conflicts, igl->ignode);
-   ig->LRbeg = pred->LRbeg;
-   ig->LRend = succ->LRend;
    ig->freq  = pred->freq + succ->freq;
    ig->regstate = BitVecComb(0, pred->regstate, succ->regstate, '|');
    ig->var = succ->var;
@@ -416,6 +453,330 @@ void CalcIG(BLIST *blist)
                }
             }
          }
+      }
+   }
+}
+
+/*
+ * ===========================================================================
+ * For every local live entering or leaving the innermost loop, we globally
+ * assign it to a register for the length of the loop.  This is done before
+ * any other asignment, and is part of getting the loop to our normal form.
+ * The following routines are involved in doing this initial global assignment
+ * ===========================================================================
+ */
+int AsgGlobalLoopVars(LOOPQ *loop, short *iregs, short *fregs, short *dregs)
+/*
+ * Finds locals live on loop entry or exit: these locals will be assigned
+ * to registers for the entire loop (i.e., global instead of live range
+ * assignment) so that their load/stores may be moved outside the loop.
+ * For each such local, search through available registers (0 in [i,f,d]regs
+ * entry means reg is available), and assign the appropriate registers.
+ * NOTE: only done on innermost loop
+ * RETURNS: 0 on success, non-zero on failure.
+ */
+{
+   int iv, i, j, k, n;
+   BLIST *bl;
+   short *sa, *s;
+   extern int FKO_BVTMP;
+
+/*
+ * Find regs and vars live on loop entry and exit(s)
+ */
+   if (!loop->outs) loop->outs = NewBitVec(TNREG+32);
+   else SetVecAll(loop->outs, 0);
+   for (bl=loop->tails; bl; bl = bl->next)
+      BitVecComb(loop->outs, loop->outs, bl->blk->outs, '|');
+   FKO_BVTMP = iv = BitVecComb(FKO_BVTMP, loop->outs, loop->header->ins, '|');
+
+   sa = BitVec2Array(iv, 1);
+   for (n=0, j=i=1; i <= sa[0]; i++) 
+   {
+      k = sa[i];
+/*
+ *    For locals (ignore registers), search appropriate type array, and
+ *    assign variable to the first available register
+ */
+      if (k > TNREG)
+      {
+         k = STflag[k-1-TNREG];
+         k = FLAG2PTYPE(k);
+         if (k == T_INT)
+         {
+            s = iregs;
+            n = NIR;
+         }
+         else if (k == T_DOUBLE)
+         {
+            s = dregs;
+            n = NDR;
+         }
+         else if (k == T_FLOAT)
+         {
+            s = fregs;
+            n = NFR;
+         }
+         else
+         {
+            fko_error(__LINE__, "Unknown type %d, file=%s\n", k, __FILE__);
+            return(1);
+         }
+         for (k=0; k != n && s[k]; k++);
+         if (k != n)
+            s[k] = sa[i] - TNREG + 1;
+         else
+         {
+            fko_error(__LINE__, "Out of regs in global asg, var=%s, file=%s\n",
+                      STname[sa[i]-TNREG], __FILE__);
+            return(1);
+         }
+      }
+   }
+   free(sa);
+   return(0);
+}
+
+void FindInitRegUsage(BLIST *bp, short *iregs, short *fregs, short *dregs)
+/*
+ * Finds all registers already being used in blocks
+ * for each data type, return an array of shorts NREG long.  0 means that
+ * register is not used, -1 means it is being used.
+ */
+{
+   
+   int iv, i, j, n;
+   extern int FKO_BVTMP;
+   short *sp;
+
+/*
+ * Init all regs to unused
+ */
+   for (i=0; i < IREGEND-IREGBEG; i++)
+      iregs[i] = 0;
+   for (i=0; i < FREGEND-FREGBEG; i++)
+      fregs[i] = 0;
+   for (i=0; i < DREGEND-DREGBEG; i++)
+      dregs[i] = 0;
+/*
+ * Find all vars & regs used or defed in all blocks
+ */
+   if (bp)
+   {
+      FKO_BVTMP = iv = BitVecCopy(FKO_BVTMP, bp->blk->uses);
+      BitVecComb(iv, iv, bp->blk->defs, '|');
+      for (bp=bp->next; bp; bp = bp->next)
+      {
+         BitVecComb(iv, iv, bp->blk->uses, '|');
+         BitVecComb(iv, iv, bp->blk->defs, '|');
+      }
+   }
+/*
+ * Mark all registers used for unknown purposes
+ */
+   sp = BitVec2Array(iv, 1);
+   for (n=sp[0], i=0; i <= n; i++)
+   {
+      j = sp[i];
+      if (j < TNREG)
+      {
+         if (j >= IREGBEG && j < IREGEND)
+            iregs[j-1] = -1;
+         else if (j >= FREGBEG && j < FREGEND)
+            fregs[j-1] = -1;
+         else if (j >= DREGBEG && j < DREGEND)
+            dregs[j-1] = -1;
+      }
+   }
+   free(sp);
+}
+
+int LoadStoreToMove(BLIST *blocks, int n, short *vars, short *regs)
+/*
+ * Replaces all loads and stores of vars in blocks with MOVs from the
+ * registers indicated in regs
+ */
+{
+   int i, iv, changes=0;
+   short is;
+   BLIST *bl;
+   INSTQ *ip;
+   extern int FKO_BVTMP;
+   enum inst *movs;
+
+/*
+ * Set up n-length array showing what mov instruction to use based on data type
+ */
+   movs = malloc(n*sizeof(enum inst));
+   assert(movs);
+   for (i=0; i != n; i++)
+   {
+      is = -regs[i];
+      if (is >= IREGBEG && is < IREGEND) movs[i] = MOV;
+      else if (is >= FREGBEG && is < FREGEND) movs[i] = FMOV;
+      else if (is >= DREGBEG && is < DREGEND) movs[i] = FMOVD;
+/*      else if (is >= VREGBEG && is < VREGEND) movs[i] = VFMOV; */
+   }
+   for (bl=blocks; bl; bl = bl->next)
+   {
+      for (ip=bl->blk->ainst1; ip; ip = ip->next)
+      {
+         is = GET_INST(ip->inst[0]);
+         switch(is)
+         {
+         case LD:
+         case FLD:
+         case FLDD:
+         case VFLD:
+/* 
+ *       See if variable being loaded from (inst[2]) is one of our targets
+ *       change LD instruction to MOV instruction
+ */
+            is = ip->inst[2];
+            for (i=0; i != n && is != vars[i]; i++);
+            if (i != n)
+            {
+               changes++;
+               ip->inst[0] = movs[i];
+               ip->inst[2] = regs[i];
+/*
+ *             Change var use to reg use
+ */
+               SetVecBit(ip->use, is-1, 0);
+               SetVecBit(ip->use, -regs[i]-1, 1);
+            }
+            break;
+         case ST:
+         case FST:
+         case FSTD:
+         case VFST:
+/* 
+ *       See if variable being stored to (inst[1]) is one of our targets
+ *       change ST instruction to MOV instruction
+ */
+            is = ip->inst[1];
+            for (i=0; i != n && is != vars[i]; i++);
+            if (i != n)
+            {
+               changes++;
+               ip->inst[0] = movs[i];
+               ip->inst[1] = regs[i];
+/*
+ *             Change var set to reg set
+ */
+               SetVecBit(ip->set, is-1, 0);
+               SetVecBit(ip->set, -regs[i]-1, 1);
+            }
+            break;
+         default:;
+         }
+      }
+   }
+   free(movs);
+/*
+ * This routine keeps the instq set/use up to date, but invalidates
+ * block-level set/use (CFUSETU2D) and deads (INDEADU2D)
+ */
+   INDEADU2D = CFUSETU2D = 0;
+   return(changes);
+}
+
+void DoLoopGlobalRegAssignment(LOOPQ *loop)
+/* 
+ * This routine does global register assignment for all locals referenced
+ * in the loop, and live on loop entry or exit
+ */
+{
+   short *sp;
+   int i, j, n;
+   short iregs[NIR], fregs[NFR], dregs[NDR]; 
+   short *vars, *regs;
+
+   FindInitRegUsage(loop->blocks, iregs, fregs, dregs);
+   assert(!AsgGlobalLoopVars(loop, iregs, fregs, dregs));
+/*
+ * Find total number of global assignments done, and allocate space to hold
+ * mapping
+ */
+   for (n=i=0; i < NIR; i++)
+      if (iregs[i] > 0) n++;
+   for (i=0; i < NFR; i++)
+      if (fregs[i] > 0) n++;
+   for (i=0; i < NDR; i++)
+      if (dregs[i] > 0) n++;
+   regs = malloc(2*n*sizeof(short));
+   assert(regs);
+   vars = regs + n;
+/*
+ * Setup variable-to-register mapping, and perform register assignment
+ * on body of loop
+ */
+   for (j=i=0; i < NIR; i++)
+   {
+      if (iregs[i] > 0)
+      {
+         vars[j] = iregs[i];
+         regs[j++] = -i - IREGBEG;
+      }
+   }
+   for (i=0; i < NFR; i++)
+   {
+      if (fregs[i] > 0)
+      {
+         vars[j] = fregs[i];
+         regs[j++] = -i - FREGBEG;
+      }
+   }
+   for (i=0; i < NDR; i++)
+   {
+      if (dregs[i] > 0)
+      {
+         vars[j] = dregs[i];
+         regs[j++] = -i - DREGBEG;
+      }
+   }
+   i = LoadStoreToMove(loop->blocks, n, vars, regs);
+   free(regs);
+   fprintf(stderr, "Removed %d LD/ST using global register assignment!\n", i);
+/*
+ * Insert appopriate LD in preheader, and ST in post-tails
+ */
+   assert(loop->preheader);
+   assert(loop->posttails);
+   for (i=0; i < NIR; i++)
+   {
+      if (iregs[i] > 0)
+      {
+         if (BitVecCheck(loop->header->ins, iregs[i]+TNREG-1))
+            InsNewInst(loop->preheader, loop->preheader->instN, NULL, LD,
+                       -i-IREGBEG, iregs[i], 0);
+         if (BitVecCheck(loop->outs, iregs[i]+TNREG-1))
+            InsInstInBlockList(loop->posttails, 1, ST, -i-IREGBEG, 
+                               iregs[i], 0);
+      }
+   }
+   for (i=0; i < NFR; i++)
+   {
+      if (fregs[i] > 0)
+      {
+         if (BitVecCheck(loop->header->ins, fregs[i]+TNREG-1))
+            InsNewInst(loop->preheader, loop->preheader->instN, NULL, FLD,
+                       -i-FREGBEG, fregs[i], 0);
+         if (BitVecCheck(loop->outs, fregs[i]+TNREG-1))
+            InsInstInBlockList(loop->posttails, 1, FST, -i-FREGBEG, 
+                               fregs[i], 0);
+      }
+   }
+   for (i=0; i < NDR; i++)
+   {
+      if (dregs[i] > 0)
+      {
+         if (BitVecCheck(loop->header->ins, dregs[i]+TNREG-1))
+            InsNewInst(loop->preheader, loop->preheader->instN, NULL, FLDD,
+                       -i-DREGBEG, dregs[i], 0);
+         if (BitVecCheck(loop->outs, dregs[i]+TNREG-1))
+            InsInstInBlockList(loop->posttails, 1, FSTD, -i-DREGBEG, 
+                               dregs[i], 0);
       }
    }
 }

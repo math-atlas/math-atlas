@@ -9,6 +9,7 @@ BLIST *NewBlockList(BBLOCK *blk, BLIST *next)
    assert(lp);
    lp->blk = blk;
    lp->next = next;
+   lp->ptr = NULL;
    return(lp);
 }
 
@@ -64,6 +65,7 @@ int BlockList2BitVec(BLIST *lp)
       SetVecBit(iv, lp->blk->bnum-1, 1);
    return(iv);
 }
+
 BLIST *BitVec2BlockList(int iv)
 /*
  * Given a bitvec of block nums, return a BLIST of the appropriate blocks
@@ -616,15 +618,17 @@ LOOPQ *NewLoop(int flag)
    lp = malloc(sizeof(struct loopq));
    assert(lp);
    lp->flag = flag;
+   lp->depth = lp->I = lp->beg = lp->end = lp->inc = lp->body_label = 0;
+   lp->loopnum = lp->maxunroll = lp->writedd = 0;
    lp->slivein = lp->sliveout = lp->adeadin = lp->adeadout = lp->nopf =
                  lp->aaligned = NULL;
    lp->abalign = NULL;
-   lp->maxunroll = 0;
-   lp->next = NULL;
-   lp->depth = lp->loopnum = 0;
    lp->preheader = lp->header = NULL;
-   lp->footers = lp->postfooters = NULL;
    lp->blocks = NULL;
+   lp->tails = lp->posttails = NULL;
+   lp->blkvec = lp->outs = 0;
+   lp->iglist = NULL;
+   lp->next = NULL;
    return(lp);
 }
 
@@ -764,8 +768,8 @@ void SortLoops(short maxdepth)
       optloop->header = optloop->next->header;
       optloop->blocks = optloop->next->blocks;
       optloop->blkvec = optloop->next->blkvec;
-      optloop->footers = optloop->next->footers;
-      optloop->postfooters = optloop->next->postfooters;
+      optloop->tails = optloop->next->tails;
+      optloop->posttails = optloop->next->posttails;
       KillLoop(optloop->next);
       optloop->next = NULL;
    }
@@ -828,7 +832,7 @@ void FinalizeLoops()
             lp->preheader = NULL;
       }
 /*
- *    Find the footer(s) of the loop.  Loop footers are preds of the header
+ *    Find the tail(s) of the loop.  Loop tails are preds of the header
  *    which are in the loop.
  */
       fprintf(stderr, "\n\nheader preds = %s\n",
@@ -836,17 +840,17 @@ void FinalizeLoops()
       phbv = BlockList2BitVec(lp->header->preds);
       BitVecComb(phbv, phbv, lp->blkvec, '&');
       fprintf(stderr, "blkvec = %s\n", PrintVecList(lp->blkvec, 1));
-      lp->footers = BitVec2BlockList(phbv);
-      fprintf(stderr, "footers = %s\n",
-              PrintBlockList(lp->footers));
+      lp->tails = BitVec2BlockList(phbv);
+      fprintf(stderr, "tails = %s\n",
+              PrintBlockList(lp->tails));
 /*
- *    Find the post-footer(s) of the loop.  Loop post-footers are succ of
- *    footer that are outside the loop and have no non-footer preds
+ *    Find the post-tail(s) of the loop.  Loop post-tails are succ of
+ *    tail that are outside the loop and have no non-tail preds
  */
-      lp->postfooters = BitVec2BlockList(phbv);
-      iv = BlockList2BitVec(lp->footers);
+      lp->posttails = BitVec2BlockList(phbv);
+      iv = BlockList2BitVec(lp->tails);
       phbv = BitVecCopy(FKO_BVTMP, iv);
-      for (bl=lp->postfooters; bl; bl = bl->next)
+      for (bl=lp->posttails; bl; bl = bl->next)
       {
          if (bl->blk->csucc == lp->header)
          {
@@ -866,8 +870,8 @@ void FinalizeLoops()
             else bl->blk = bl->blk->csucc;
          }
       }
-      fprintf(stderr, "postfooters = %s\n",
-              PrintBlockList(lp->postfooters));
+      fprintf(stderr, "posttails = %s\n",
+              PrintBlockList(lp->posttails));
    }
 /*   prepostloops(); */
    maxdep = CalcLoopDepth();
@@ -923,10 +927,10 @@ void AddLoopComments()
       PrintComment(bp, NULL, bp->inst1, "===============================");
       PrintComment(bp, NULL, bp->inst1, "   blocks = %s",
                    PrintVecList(lp->blkvec, 1));
-      PrintComment(bp, NULL, bp->inst1, "   postfooters=%s", 
-                   PrintBlockList(lp->postfooters));
-      PrintComment(bp, NULL, bp->inst1, "   footers=%s", 
-                   PrintBlockList(lp->footers));
+      PrintComment(bp, NULL, bp->inst1, "   posttails=%s", 
+                   PrintBlockList(lp->posttails));
+      PrintComment(bp, NULL, bp->inst1, "   tails=%s", 
+                   PrintBlockList(lp->tails));
       PrintComment(bp, NULL, bp->inst1, "   header=%d, preheader=%d",
                    lp->header ? lp->header->bnum : 0,
                    lp->preheader ? lp->preheader->bnum : 0);

@@ -72,6 +72,7 @@ struct blist
 {
    BLIST *next;
    BBLOCK *blk;
+   void *ptr;   /* used only for ignodes */
 };
 
 typedef struct loopq LOOPQ;
@@ -89,21 +90,26 @@ struct loopq
    uchar *abalign;    /* alignments of above arrays */
    BBLOCK *preheader, *header;
    BLIST *blocks;     /* blocks in the loop */
-   BLIST *footers, *postfooters;
+   BLIST *tails, *posttails;
    ushort blkvec;     /* bitvec equivalent of blocks */
+   ushort outs;       /* reg/var live on loop exit */
+   struct iglist *iglist;
    struct loopq *next;
 };
 
 typedef struct ignode IGNODE;
 struct ignode
 {
-   BLIST *myblocks;             /* blocks live range spans */
+   BLIST *blkbeg;               /* block(s) live range starts in */
+   BLIST *blkend;               /* block(s) live range ends in */
+   BLIST *blkspan;              /* block(s) live range completely spans */
    struct iglist *conflicts;    /* ignode's conflicting with this one */
-   INSTQ *LRbeg, *LRend;        /* First and last inst of live range */
    int freq;                    /* # of uses of this live range */
-   ushort myblkreg;             /* blocks live range spans as bitvec */
+   ushort myblkreg;             /* blocks live range includes as bitvec */
    ushort regstate;             /* registers being used at this point */
    short var;                   /* ST index of variable */
+   short type;                  /* data type of liver range */
+   struct regscope *regscope;   /* register scope this ignode is for */
 };
 
 typedef struct iglist IGLIST;
@@ -112,4 +118,5 @@ struct iglist
    IGNODE *ignode;
    struct iglist *next;
 };
+
 #endif

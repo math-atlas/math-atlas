@@ -136,6 +136,7 @@ enum inst
  */
    VFLD,
    VFST,
+   VFMOV,
    VFABS,
    VFMAC,
    VFMUL,
@@ -171,13 +172,19 @@ enum inst
 #define LASTBRANCH  RET
 
 #define GET_INST(inst_) ((inst_) & 0x3FFF)
-#define IS_BRANCH(i_) ((i_) >= FIRSTBRANCH && (i_) <= LASTBRANCH)
 #define ACTIVE_INST(i_) ((i_) != COMMENT && (i_) != CMPFLAG)
+#define IS_BRANCH(i_) ((i_) >= FIRSTBRANCH && (i_) <= LASTBRANCH)
+#define IS_LOAD(i_)  ((i_) == LD || (i_) == FLD || (i_) == FLDD || \
+                      (i_) == VFLD)
+#define IS_STORE(i_)  ((i_) == ST || (i_) == FST || (i_) == FSTD || \
+                       (i_) == VFST)
 
 INSTQ *NewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,
                short dest, short src1, short src2);
 INSTQ *InsNewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,
                   short dest, short src1, short src2);
+void InsInstInBlockList(BLIST *blist, int FIRST, enum inst ins,
+                        short dest, short src1, short src2);
 INSTQ *DelInst(INSTQ *del);
 void KillAllInst(INSTQ *base);
 
