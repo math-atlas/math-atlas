@@ -9,8 +9,8 @@
  */
 #if !defined(LINUX_PPC) && !defined(OSX_PPC) && !defined(LINUX_X86_32) && \
     !defined(LINUX_X86_64) && !defined(SOLARIS_SPARC)
-   #define LINUX_X86_64 
-/*   #define LINUX_X86_32 */
+/*   #define LINUX_X86_64 */
+   #define LINUX_X86_32
 /*   #define SOLARIS_SPARC */
 /*   #define OSX_PPC */
 #endif
@@ -116,12 +116,12 @@
    #define FRETREG (NFR+FREGBEG)
    #define DRETREG (NFR+DREGBEG)
    #ifdef ARCH_DECLARE
-      char icallersave[NIR] = {0, 1, 1, 1, 0, 0, 0, 0};
-      char icalleesave[NIR] = {0, 0, 0, 0, 1, 1, 1, 1};
+      int icallersave[NIR] = {0, 1, 1, 1, 0, 0, 0, 0};
+      int  icalleesave[NIR] = {0, 0, 0, 0, 1, 1, 1, 1};
       char *archiregs[NIR] = 
       {"@esp", "@edx", "@ecx", "@eax", "@ebp", "@ebx", "@esi", "@edi"};
-      char fcallersave[TNFR] = {1,1,1,1,1,1,1,1, 1};
-      char fcalleesave[TNFR] = {0,0,0,0,0,0,0,0, 0};
+      int  fcallersave[TNFR] = {1,1,1,1,1,1,1,1, 1};
+      int  fcalleesave[TNFR] = {0,0,0,0,0,0,0,0, 0};
       char *archfregs[TNFR] = 
       {"@xmm0", "@xmm1", "@xmm2", "@xmm3", "@xmm4", "@xmm5", "@xmm6", "@xmm7",
        "@st"};
@@ -147,13 +147,13 @@
    #ifdef ARCH_DECLARE
       char *archsregs[NSR] = 
       {"@esp", "@edx", "@ecx", "@eax", "@esi", "@edi", "@ebp", "@ebx"};
-      char icallersave[NIR] = {0, 1,1,1,1,1,0,0, 1,1,1,1, 0,0,0,0};
-      char icalleesave[NIR] = {0, 0,0,0,0,0,1,1, 0,0,0,0, 1,1,1,1};
+      int  icallersave[NIR] = {0, 1,1,1,1,1,0,0, 1,1,1,1, 0,0,0,0};
+      int  icalleesave[NIR] = {0, 0,0,0,0,0,1,1, 0,0,0,0, 1,1,1,1};
       char *archiregs[NIR] = 
-      {"@rsp", "@rdx", "@rcx", "@rax", "@rsi", "@rdi", @rbp", "@rbx",
+      {"@rsp", "@rdx", "@rcx", "@rax", "@rsi", "@rdi", "@rbp", "@rbx",
        "@r8", "@r9", "@r10", "@r11", "@r12", "@r13", "@r14", "@r15"};
-      char fcallersave[NFR] = {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
-      char fcalleesave[NFR] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+      int  fcallersave[NFR] = {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
+      int  fcalleesave[NFR] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
       char *archfregs[NFR] = 
       {"@xmm0", "@xmm1", "@xmm2", "@xmm3", "@xmm4", "@xmm5", "@xmm6", "@xmm7",
        "@xmm8", "@xmm9", "@xmm10", "@xmm11", "@xmm12", "@xmm13", "@xmm14", 
