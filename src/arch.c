@@ -1650,7 +1650,6 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
       Loff += Soff;
       tsize = Loff + lsize;
       if (tsize % ASPALIGN) tsize = (tsize/ASPALIGN)*ASPALIGN + ASPALIGN;
-fprintf(stderr, "tsize=%d, Loff=%d, Soff=%d lsize=%d\n", tsize, Loff, Soff, lsize);
    #else
 /*
  *    We assume sp already 4-byte aligned but may need to make 8-byte aligned

@@ -1157,6 +1157,7 @@ void UpdatePrefetchInfo()
          }
          optloop->pfdist = PFDST;
          optloop->pfflag = PFLVL;
+         n = PFDST[0];
       }
 /*
  *    If we've got default prefetch info for all arrays
@@ -1189,10 +1190,11 @@ void UpdatePrefetchInfo()
             optloop->pfdist[k] = PFDST[i];
             optloop->pfflag[k] = PFLVL[i];
          }
+         n = PFDST[0];
          free(PFDST);
          free(PFLVL);
       }
-      for (n=PFDST[0],i=0; i < n; i++)
+      for (i=0; i < n; i++)
          if (PFARR[i])
             free(PFARR[i]);
       free(PFARR);
