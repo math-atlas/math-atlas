@@ -66,7 +66,6 @@ int main(int nargs, char **args)
    assert(fpin);
    fgets(ln, 4096, fpin);
    fclose(fpin);
-   fprintf(stderr, "EXEC %s", ln);
    st = strstr(ln, "time=");
    assert(st);
    st += 5;
@@ -76,7 +75,7 @@ int main(int nargs, char **args)
    assert(sscanf(st, "%lf", &mflop)==1);
    if (fpout)
    {
-      fprintf(fpout, "%le, %lf", time, mflop);
+      fprintf(fpout, "%le, %lf\n", time, mflop);
       fclose(fpout);
    }
    fprintf(stderr, "\n\ntime=%le, %lf\n", time, mflop);

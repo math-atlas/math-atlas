@@ -25,7 +25,11 @@ void PrintUsage(char *name)
 }
 void PrintUsageN(char *name)
 {
-   fprintf(stderr, "USAGE: %s [flags]\n", name);
+   int i;
+   fprintf(stderr, "\n%d known optimization phases:\n", MaxOpt);
+   for (i=0; i < MaxOpt; i++)
+      fprintf(stderr, "%3d. %s   : %s\n", i+1, optabbr[i], optmnem[i]);
+   fprintf(stderr, "\nUSAGE: %s [flags]\n", name);
    fprintf(stderr, 
            "  -I <LIL> <symtab> <misc> : start from intermediate files\n");
    fprintf(stderr, "  -c <LIL> <symtab> <misc> : generate files and quit\n");
@@ -182,13 +186,13 @@ struct optblkq *GetFlagsN(int nargs, char **args,
    char *fin=NULL, *fout=NULL;
    struct optblkq *obq=NULL, *op;
    char *sp;
-   int i, j;
+   int i, j, k;
 
    for (i=1; i < nargs; i++)
    {
       if (args[i][0] != '-')
       {
-         if (fin) PrintUsage(args[0]);
+         if (fin) PrintUsageN(args[0]);
          else fin = args[i];
       }
       else
@@ -247,6 +251,22 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             for (j=0; j < op->nopt; j++)
             {
                sp = args[++i];
+               if (isdigit(*sp))
+                  op->opts[j] = atoi(sp) + MaxOpt;
+               else
+               {
+                  for (k=0; k < MaxOpt; k++)
+                  {
+                     if (!strcmp(optabbr[k], sp))
+                     {
+                        op->opts[j] = k;
+                        break;
+                     }
+                  }
+                  if (k == MaxOpt)
+                     fko_error(__LINE__, "Unknown optimization '%s'", sp);
+               }
+#if 0
                switch(*sp)
                {
                case 'r':
@@ -280,6 +300,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
 ERR:
                   fko_error(__LINE__, "Unknown optimization '%s'", sp);
                }
+#endif
             }
             op->next = obq;
             obq = op;
@@ -296,7 +317,7 @@ ERR:
             break;
          default:
             fprintf(stderr, "Unknown flag '%s'\n", args[i]);
-            PrintUsage(args[0]);
+            PrintUsageN(args[0]);
          }
       }
    }
@@ -816,7 +837,7 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
       CalcAllDeadVariables();
    AddBlockComments(bbbase);
    AddLoopComments();
-#if 1
+#if 0
    AddSetUseComments(bbbase);   
    AddDeadComments(bbbase); 
 #endif

@@ -1,4 +1,5 @@
-include /home/whalley-scratch/whaley/AT3.5/ATLAS3.6.0_0/Make.Linux_P4SSE2
+#include /home/whalley-scratch/whaley/AT3.5/ATLAS3.6.0_0/Make.Linux_P4SSE2
+include /home/rwhaley/AT3.7/ATLAS3.7.3/Make.Linux_P4ESSE3
 
 pre=d
 rout=dot
