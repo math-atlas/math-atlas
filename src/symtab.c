@@ -389,6 +389,7 @@ void CorrectLocalOffsets(int ldist)
       if (IS_DEREF(STflag[i]) && SToff[i].sa[0] == -REG_SP && 
           SToff[i].sa[1] > 0 && SToff[i].sa[2] < 0)
       {
+/* fprintf(stderr, "correcting local %d, off=%d+%d!\n", i+1, SToff[i].sa[3], ldist); */
          SToff[i].sa[2] = 1;
          SToff[i].sa[3] += ldist;
       }
@@ -407,8 +408,8 @@ void CorrectParamDerefs(struct locinit *libase, int rsav, int fsize)
 
    for (lp = libase; lp; lp = lp->next)
    {
-/* fprintf(stderr, "correcting para %d (%s)!\n", lp->id, STname[lp->id-1]); */
       k = lp->id-1;
+/* fprintf(stderr, "correcting para %d, off=%d+%d!\n", lp->id, SToff[k].sa[3], fsize); */
       SToff[k].sa[0] = rsav;
       SToff[k].sa[2] = 1;
       SToff[k].sa[3] += fsize;

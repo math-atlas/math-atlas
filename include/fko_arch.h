@@ -11,9 +11,9 @@
     !defined(LINUX_X86_64) && !defined(SOLARIS_SPARC)
 /*   #define FKO_ANSIC32 */
 /*   #define LINUX_X86_64  */
-   #define LINUX_X86_32 
+/*   #define LINUX_X86_32  */
 /*   #define SOLARIS_SPARC  */
-/*   #define OSX_PPC  */
+   #define OSX_PPC 
 #endif
 
 #if defined(FKO_ANSIC32) || defined(FKO_ANSIC64)
@@ -367,7 +367,7 @@
 
 short GetReg(short type);
 void GenPrologueEpilogueStubs(BBLOCK *bbase, int rsav);
-int FinalizePrologueEpilogue(BBLOCK *bbase);
+int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav);
 short type2len(int type);
 short type2shift(int type);
 

@@ -1415,7 +1415,7 @@ fprintf(stderr, "%s(%d) reg=%d\n", __FILE__, __LINE__, ipld->inst[1]);
    return(k);
 }
 
-int FinalizePrologueEpilogue(BBLOCK *bbase)
+int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
 /*
  * Calculates required frame size, corrects local and parameter offsets
  * appropriately, and then inserts instructions to save and restore
@@ -1434,7 +1434,7 @@ int FinalizePrologueEpilogue(BBLOCK *bbase)
    int align;        /* local area required byte alignment */
    int lsize;        /* size of all required locals */
    int tsize;        /* total frame size */
-   int rsav=0, maxalign, ssize=0;
+   int maxalign, ssize=0;
    int csize=0;/* call parameter area size */
    extern int LOCALIGN, LOCSIZE;
 
@@ -1444,6 +1444,23 @@ int FinalizePrologueEpilogue(BBLOCK *bbase)
  * Find registers that need to be saved
  */
    FindRegUsage(bbase, &nir, ir, &nfr, fr, &ndr, dr);
+/*
+ * If we have mandated an SAVESP register, need to save it if it is callee-saved
+ */
+   if (rsav && icalleesave[rsav-1])
+   {
+#if 0
+      for (i=0; i < nir; i++)
+         if (ir[i] == rsav)
+            break;
+      if (i == nir)
+         ir[nir++] = rsav;
+      fprintf(stderr, "\n\nSAVE i=%d, nir=%d, rsav=%d\n", i, nir, ir[nir-1]);
+#else
+      if (ir[rsav-1]) nir++;
+      ir[rsav-1]++;
+#endif
+   }
    for (i=0; i < TNIR; i++) 
       irsav[i] = ir[i];
    k = RemoveNosaveregs(IREGBEG, TNIR, ir, icalleesave);
@@ -1554,13 +1571,17 @@ fprintf(stderr, "tsize=%d, Loff=%d, Soff=%d lsize=%d\n", tsize, Loff, Soff, lsiz
          PrintMajorComment(bbase, NULL, oldhead, 
      "To ensure greater alignment than sp, save old sp to stack and move sp");
 #if 1
-         rsav = GimmeRegSave(oldhead->myblk, irsav);
          if (!rsav)
          {
-            rsav = DammitGimmeRegSave(oldhead->myblk);
+            rsav = GimmeRegSave(oldhead->myblk, irsav);
             if (!rsav)
-               return(1);
+            {
+               rsav = DammitGimmeRegSave(oldhead->myblk);
+               if (!rsav)
+                  return(1);
+            }
          }
+         else if (icalleesave[rsav-1]) rsav = -rsav;
 fprintf(stderr, "\n\n** rsav=%d,%s**\n\n", rsav, Int2Reg(rsav <= 0 ? rsav : -rsav));
          if (rsav < 0)
          {
@@ -1568,7 +1589,6 @@ fprintf(stderr, "\n\n** rsav=%d,%s**\n\n", rsav, Int2Reg(rsav <= 0 ? rsav : -rsa
             rsav = GetReg(T_INT);
             rsav = GetReg(T_INT);
             while (iparareg[rsav-IREGBEG]) rsav = GetReg(T_INT);
-
          }
 #else
          rsav = GetReg(T_INT);

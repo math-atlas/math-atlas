@@ -326,7 +326,9 @@ int PerformOpt(int SAVESP)
 
 int GoToTown(int SAVESP)
 {
+   int i;
    extern BBLOCK *bbbase;
+   extern struct locinit *ParaDerefQ;
 
    GenPrologueEpilogueStubs(bbbase, SAVESP);
    NewBasicBlocks(bbbase);
@@ -345,7 +347,10 @@ int GoToTown(int SAVESP)
    AddSetUseComments(bbbase);   
    AddDeadComments(bbbase); 
 #endif
-   if (FinalizePrologueEpilogue(bbbase))
+   i = FinalizePrologueEpilogue(bbbase, SAVESP);
+   KillAllLocinit(ParaDerefQ);
+   ParaDerefQ = NULL;
+   if (i)
       return(1);
    CheckFlow(bbbase, __FILE__, __LINE__);
    return(0);
