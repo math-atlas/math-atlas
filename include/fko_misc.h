@@ -12,5 +12,8 @@ struct locinit *NewLocinit(short id, short con, struct locinit *next);
 void KillAllLocinit(struct locinit *libase);
 void *NewPtrTable(int *n, void *old, int chunk);
 short *NewShortTable(int *n, short *old, int chunk);
+ILIST *NewIlist(INSTQ *inst, ILIST *next);
+struct ptrinfo *FindPtrinfo(struct ptrinfo *base, short ptr);
+struct ptrinfo *NewPtrinfo(short ptr, short flag, struct ptrinfo *next);
 
 #endif

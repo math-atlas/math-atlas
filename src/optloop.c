@@ -18,7 +18,7 @@ BLIST *DupBlockList(BLIST *scope, int ivscope)
       ob = bl->blk;
       nb = NewBasicBlock(NULL, NULL);
       lbase = AddBlockToList(lbase, nb);
-      nb->bnum = ob->bnum
+      nb->bnum = ob->bnum;
       nb->ilab = ob->ilab;
       for (ip=ob->inst1; ip; ip = ip->next)
          InsNewInst(nb, NULL, NULL, ip->inst[0], ip->inst[1],
@@ -49,7 +49,7 @@ BLIST *DupBlockList(BLIST *scope, int ivscope)
          nb->csucc = FindBlockInListByNumber(lbase, ob->csucc->bnum);
       else
          nb->csucc = ob->csucc;
-      for (lp=bl->preds; lp; lp = lp->next)
+      for (lp=bl->blk->preds; lp; lp = lp->next)
       {
          if (BitVecCheck(ivscope, lp->blk->bnum-1))
             nb->preds = AddBlockToList(nb->preds, 
@@ -71,20 +71,22 @@ void IndividualizeDuplicatedBlockList(int ndup, BLIST *scope)
  */
 {
    struct locinit *lbase=NULL, *lp;
-   INSTQ *sp;
+   INSTQ *ip;
+   BLIST *bl;
    char *sp;
    char ln[256];
-   short k, op1, op2, ip3;
+   short k, op1, op2, op3;
 
 /*
  * Find all labels in block, and change their names
  */
    for (bl=scope; bl; bl = bl->next)
    {
-      if (bl->ilab)
+      if (bl->blk->ilab)
       {
-         assert(bl->inst1->inst[0] == LABEL && bl->inst1->inst[1] == bl->ilab);
-         sp = STname[bl->ilab-1];
+         assert(bl->blk->inst1->inst[0] == LABEL && 
+                bl->blk->inst1->inst[1] == bl->blk->ilab);
+         sp = STname[bl->blk->ilab-1];
 /*
  *       Need to increase ndup, not add whole prefix
  */
@@ -97,8 +99,8 @@ void IndividualizeDuplicatedBlockList(int ndup, BLIST *scope)
          }
          sprintf(ln, "_IFKOCD%d_%s", ndup, sp);
          k = STlabellookup(ln);
-         lbase = NewLocinit(bl->ilab, k, lbase);
-         bl->inst1->inst[1] = bl->ilab = k;
+         lbase = NewLocinit(bl->blk->ilab, k, lbase);
+         bl->blk->inst1->inst[1] = bl->blk->ilab = k;
       }
    }
 /*
@@ -106,7 +108,7 @@ void IndividualizeDuplicatedBlockList(int ndup, BLIST *scope)
  */
    for (bl=scope; bl; bl = bl->next)
    {
-      for (ip=bl->ainst1; ip != bl->ainstN; ip = ip->next)
+      for (ip=bl->blk->ainst1; ip != bl->blk->ainstN; ip = ip->next)
       {
          if (ACTIVE_INST(ip->inst[0]))
          {
@@ -179,7 +181,7 @@ struct ptrinfo *FindMovingPointers(BLIST *scope)
             flag = STflag[k];
             if (IS_PTR(flag))
             {
-               #ifdef IFKO_DEBUG_LEVEL > = 1
+               #if IFKO_DEBUG_LEVEL >= 1
                   assert(ip->prev);
                   assert(ip->prev->inst[0] == ADD || ip->prev->inst[0] == SUB);
                   assert(ip->prev->inst[1] == ip->inst[2]);
@@ -236,7 +238,7 @@ void KillLoopControl(LOOPQ *lp)
 /*
  * Delete index init that must be in preheader
  */
-   ip = FindCompilerFlag(lp->preheader, CF_LOOP_INIT)
+   ip = FindCompilerFlag(lp->preheader, CF_LOOP_INIT);
    #if IFKO_DEBUG_LEVEL >= 1
       assert(ip);
    #endif
@@ -251,7 +253,7 @@ void KillLoopControl(LOOPQ *lp)
  */
    for (bl=lp->tails; bl; bl = bl->next)
    {
-      ip = FindCompilerFlag(bl->blk, CF_LOOP_UPDATE)
+      ip = FindCompilerFlag(bl->blk, CF_LOOP_UPDATE);
       #if IFKO_DEBUG_LEVEL >= 1
          assert(ip);
       #endif
@@ -276,23 +278,24 @@ static void ForwardLoop(LOOPQ *lp, INSTQ **ipinit, INSTQ **ipupdate,
  */
 {
    short r0, r1;
+   INSTQ *ip;
 
    r0 = GetReg(T_INT);
    r1 = GetReg(T_INT);
    if (IS_CONST(STflag[lp->beg-1]))
-      *ipinit = ip = NewInst(NULL, NULL, NULL, MOV, -r0, lp->beg, 0)
+      *ipinit = ip = NewInst(NULL, NULL, NULL, MOV, -r0, lp->beg, 0);
    else
-      *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r0, lp->beg, 0)
+      *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r0, lp->beg, 0);
    ip->next = NewInst(NULL, NULL, NULL, ST, lp->I, -r0, 0);
    *ipupdate = ip = NewInst(NULL, NULL, NULL, LD, -r0, lp->I, 0);
    ip = ip->next;
    if (IS_CONST(STflag[lp->inc-1]))
-      ip->next = NewInst(NULL, NULL, NULL, ADD, -r0, -r0, lp->inc, 0);
+      ip->next = NewInst(NULL, NULL, NULL, ADD, -r0, -r0, lp->inc);
    else
    {
       ip->next = NewInst(NULL, NULL, NULL, LD, -r1, lp->inc, 0);
       ip = ip->next;
-      ip->next = NewInst(NULL, NULL, NULL, ADD, -r0, -r0, -r1, 0);
+      ip->next = NewInst(NULL, NULL, NULL, ADD, -r0, -r0, -r1);
    }
    *iptest = ip = NewInst(NULL, NULL, NULL, LD, -r0, lp->I, 0);
    if (IS_CONST(STflag[lp->end-1]))
@@ -313,53 +316,55 @@ static void ForwardLoop(LOOPQ *lp, INSTQ **ipinit, INSTQ **ipupdate,
 
 }
 
-static void SimpleLC(short I, short I0, short N, short lab
-                     INSTQ **ipinit, **ipupdate, **iptest)
+static void SimpleLC(short I, short I0, short N, short inc, short lab,
+                     INSTQ **ipinit, INSTQ **ipupdate, INSTQ **iptest)
 /*
  * Do simple N..0 loop.
  * NOTE: later specialize to use loop reg on PPC
  *       Assumes inc = 1
  */
 {
+   INSTQ *ip;
    short r0, r1;
+
    r0 = GetReg(T_INT);
    r1 = GetReg(T_INT);
    if (IS_CONST(STflag[N-1]) && IS_CONST(STflag[I0-1]))
    {
       *ipinit = ip = NewInst(NULL, NULL, NULL, MOV, -r0, 
-                             STiconstlookup(SToff[N-1].i - SToff[I0-1].i), 0)
+                             STiconstlookup(SToff[N-1].i - SToff[I0-1].i), 0);
    }
    else
    {
       if (IS_CONST(STflag[I0-1]))
       {
-         *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r0, N, 0)
+         *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r0, N, 0);
          ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, I0);
       }
       else if (IS_CONST(STflag[N-1]))
       {
-         *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r1, I0, 0)
-         ip->next = NewInst(NULL, NULL, NULL, MOV, -r0, N, 0)
+         *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r1, I0, 0);
+         ip->next = NewInst(NULL, NULL, NULL, MOV, -r0, N, 0);
          ip = ip->next;
          ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, -r1);
       }
       else
       {
-         *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r0, N, 0)
-         ip->next = NewInst(NULL, NULL, NULL, LD, -r1, I0, 0)
+         *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r0, N, 0);
+         ip->next = NewInst(NULL, NULL, NULL, LD, -r1, I0, 0);
          ip = ip->next;
          ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, -r1);
       }
       ip = ip->next;
    }
-   ip->next = NewInst(NULL, ip, NULL, SToff[I-1].sa[2], -r0, 0);
-   *ipupdate = ip = NewInst(NULL, NULL, NULL, LD, -r0, I, 0)
+   ip->next = NewInst(NULL, ip, NULL, ST, SToff[I-1].sa[2], -r0, 0);
+   *ipupdate = ip = NewInst(NULL, NULL, NULL, LD, -r0, I, 0);
    ip->next = NewInst(NULL, ip, NULL, SUBCC, -r0, -r0, inc);
    *iptest = ip = NewInst(NULL, NULL, NULL, JNE, -PCREG, -ICC0, lab);
    GetReg(-1);
 }
 
-void OptimizeLoopControl(LOOPQ *lp, int unroll)
+int OptimizeLoopControl(LOOPQ *lp, int unroll)
 /*
  * attempts to generate optimized loop control for the given loop
  * NOTE: if blind unrolling has been applied, expect that loop counter
@@ -371,7 +376,7 @@ void OptimizeLoopControl(LOOPQ *lp, int unroll)
    int I, beg, end, inc;
    int CHANGE=0;
 
-   if (unroll < = 1) unroll = 1;
+   if (unroll <= 1) unroll = 1;
 /*
  * If I is not referenced in loop, we can do simple N..0 iteration
  */
@@ -399,7 +404,7 @@ void OptimizeLoopControl(LOOPQ *lp, int unroll)
    if (I)
    {
       KillLoopControl(lp);
-      SimpleLC(I, beg, end, lp->body_label, &ipinit, &ipupdate, &iptest);
+      SimpleLC(I, beg, end, lp->inc, lp->body_label, &ipinit, &ipupdate, &iptest);
       CHANGE = 1;
    }
    return(CHANGE);
