@@ -991,7 +991,5 @@ void FixFrame()
       UpdateLocalDerefs(4);
    #endif
    for (i=0; i < NIR; i++) savr[i] = i+2;
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    CreatePrologue(LOCALIGN, LOCSIZE, 0, NIR-1, savr, 0, NULL, 0, NULL);
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
 }
