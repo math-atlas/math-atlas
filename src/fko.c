@@ -9,6 +9,7 @@ int FUNC_FLAG=0;
 int DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0, DTx87=0, DTx87d=0;
 int FKO_FLAG;
 static char fST[1024], fLIL[1024], fmisc[1024];
+static short *PFARR=NULL, *PFDST=NULL, *PFLVL=NULL;
 
 int noptrec=0;
 enum FKOOPT optrec[512];
@@ -188,6 +189,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
    FILE *fpin, *fpout;
    char *fin=NULL, *fout=NULL;
    struct optblkq *obq=NULL, *op;
+   struct ptrinfo *pf, *pfb, *pf0;
    char *sp, *rpath=NULL, *rname=NULL;
    int i, j, k;
 
@@ -202,6 +204,12 @@ struct optblkq *GetFlagsN(int nargs, char **args,
       {
          switch(args[i][1])
          {
+         case 'P': /* prefetch  -P <STentry> <cache level> <bytesdist> */
+            pf = NewPtrinfo(atoi(args[i+1]), atoi(args[i+3]), pfb);
+            pf->nupdate = atoi(args[i+2]);
+            pfb = pf;
+            i += 3;
+            break;
          case 'R':
             if (args[i+1][0] == 'd')
                rpath = args[i+2];
@@ -332,6 +340,42 @@ ERR:
          }
       }
    }
+   if (pfb)
+   {
+      for (i=0,pf0=NULL,pf=pfb; pf; pf = pf->next)
+      {
+         if (pf->ptr <= 0)
+         {
+            if (!pf0) pf0 = pf;
+         }
+         else
+            i++;
+      }
+      j = pf0 ? i+1 : i;
+      PFARR = malloc(sizeof(short)*(j+1));
+      PFDST = malloc(sizeof(short)*(j+1));
+      PFLVL = malloc(sizeof(short)*(j+1));
+      assert(PFARR && PFDST && PFLVL);
+      PFARR[0] = PFDST[0] = PFLVL[0] = j;
+      if (pf0)
+      {
+         i = 2;
+         PFARR[1] = 0;
+         PFDST[1] = pf0->flag;
+         PFLVL[1] = pf0->nupdate;
+      }
+      for (pf=pfb; pf; pf = pf->next)
+      {
+         if (pf->ptr > 0)
+         {
+            PFARR[i] = pf->ptr;
+            PFDST[i] = pf->flag;
+            PFLVL[i] = pf->nupdate;
+            i++;
+         }
+      }
+      KillAllPtrinfo(pfb);
+   }
    if (!rpath)
       rpath = "/tmp";
    if (!rname)
@@ -458,7 +502,14 @@ static void WriteMiscToFile(char *name)
       WriteShortArrayToFile(fp, n, optloop->vscal+1);
       WriteShortArrayToFile(fp, n, optloop->vsflag+1);
       WriteShortArrayToFile(fp, n, optloop->vvscal+1);
+      n = optloop->pfarrs ? optloop->pfarrs[0] : 0;
+      WriteShortArrayToFile(fp, n, optloop->pfarrs+1);
+      WriteShortArrayToFile(fp, n, optloop->pfdist+1);
       assert(!optloop->abalign);  /* fix this later */
+      n = PFARR ? PFARR[0] : 0;
+      WriteShortArrayToFile(fp, n, PFARR+1);
+      WriteShortArrayToFile(fp, n, PFLVL+1);
+      WriteShortArrayToFile(fp, n, PFDST+1);
    }
    else
    {
@@ -473,7 +524,6 @@ fprintf(stderr, "\n%s(%d)\n", __FILE__, __LINE__);
       assert(sp);
       for (n=0,lp=LIhead; lp; lp = lp->next)
          sp[n++] = lp->id;
-fprintf(stderr, "\n%s(%d), n=%d\n", __FILE__, __LINE__, n);
       WriteShortArrayToFile(fp, n, sp);
       for (n=0,lp=LIhead; lp; lp = lp->next)
       {
@@ -526,6 +576,8 @@ static void ReadMiscFromFile(char *name)
       optloop->vscal  = ReadShortArrayFromFile(fp);
       optloop->vsflag  = ReadShortArrayFromFile(fp);
       optloop->vvscal  = ReadShortArrayFromFile(fp);
+      optloop->pfarrs  = ReadShortArrayFromFile(fp);
+      optloop->pfdist  = ReadShortArrayFromFile(fp);
       optloop->abalign = NULL;  /* handle this later */
       optloop->preheader = optloop->header = NULL;
       optloop->tails = optloop->posttails = NULL;
@@ -534,6 +586,15 @@ static void ReadMiscFromFile(char *name)
       else
          optloop->blocks = NULL;
       optloop->next = NULL;
+      if (PFARR)
+         free(PFARR);
+      if (PFLVL)
+         free(PFLVL);
+      if (PFDST)
+         free(PFDST);
+      PFARR = ReadShortArrayFromFile(fp);
+      PFLVL = ReadShortArrayFromFile(fp);
+      PFDST = ReadShortArrayFromFile(fp);
    }
    else 
       optloop = NULL;
@@ -939,10 +1000,69 @@ void DoStage2(int SAVESP, int SVSTATE)
  * Assumes stage 0 has been achieved, writes files for stage 1
  */
 {
+   struct locinit *pf, *pf0;
+   int i, n, k;
+
    GenPrologueEpilogueStubs(bbbase, SAVESP);
    NewBasicBlocks(bbbase);
    FindLoops(); 
    CheckFlow(bbbase, __FILE__, __LINE__);
+/*
+ * Having found the optloop, save which arrays to prefetch
+ */
+   if (PFARR && optloop)
+   {
+      assert(optloop->varrs);
+/*
+ *    If we don't have a default distance, be sure arrays are moving in loop
+ */
+      if (PFARR[1] > 0)
+      {
+         for (n=PFARR[0]+1, i=1; i <n; i++)
+         {
+            assert(FindInShortList(optloop->pfarrs[0], optloop->pfarrs+1,
+                                   PFARR[i]));
+         }
+         optloop->pfarrs = PFARR;
+         optloop->pfdist = PFDST;
+         optloop->pfflag = PFLVL;
+      }
+/*
+ *    If we've got default prefetch info for all arrays
+ */
+      else
+      {
+         n = optloop->varrs[0];
+         optloop->pfarrs = malloc(sizeof(short)*(n+1));
+         optloop->pfdist = malloc(sizeof(short)*(n+1));
+         optloop->pfflag = malloc(sizeof(short)*(n+1));
+         optloop->pfarrs[0] = optloop->pfdist[0] = optloop->pfflag[0] = n;
+/*
+ *       Set default prefetch info for each moving pointer
+ */
+         for (i=1; i <=n; i++)
+         {
+            optloop->pfarrs[i] = optloop->varrs[i];
+            optloop->pfdist[i] = PFDST[1];
+            optloop->pfflag[i] = PFLVL[1];
+         }
+/*
+ *       Override default for non-def arrays
+ */
+         for (n=PFARR[0]+1,i=2; i < n; i++)
+         {
+            k = FindInShortList(optloop->pfarrs[0], optloop->pfarrs+1, 
+                                PFARR[i]);
+            assert(k);
+            optloop->pfdist[k] = PFDST[i];
+            optloop->pfflag[k] = PFLVL[i];
+         }
+         free(PFARR);
+         free(PFDST);
+         free(PFLVL);
+      }
+      PFARR = PFDST = PFLVL = NULL;
+   }
    if (SVSTATE)
       SaveFKOState(2);
 }

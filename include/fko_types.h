@@ -145,6 +145,9 @@ struct loopq
    short *nopf;      /* arrays which should not be prefetched */
    short *aaligned;   /* arrays that have known alignment */
    uchar *abalign;    /* alignments of above arrays */
+   short *pfarrs;     /* arrays which should be prefetched */
+   short *pfdist;     /* dist in bytes to prefetch pfarrs */
+   short *pfflag;     /* flag for prefetch */
    BBLOCK *preheader, *header;
    BLIST *tails, *posttails;
    BLIST *blocks;     /* blocks in the loop */

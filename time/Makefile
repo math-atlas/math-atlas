@@ -1,5 +1,5 @@
-#include /home/grads/whaley/AT3.7/ATLAS3.7.6.0/Make.Linux_P4SSE2
-include /home/rwhaley/TEST/ATLAS3.7.8.2/Make.Linux_EfficeonSSE2
+include /home/grads/whaley/AT3.7/ATLAS3.7.6.0/Make.Linux_P4SSE2
+#include /home/rwhaley/TEST/ATLAS3.7.8.2/Make.Linux_EfficeonSSE2
 #include /tmp/rwhaley/ATLAS3.7.3.0/Make.Linux_P4SSE2
 
 pre=d
