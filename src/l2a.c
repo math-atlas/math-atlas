@@ -185,7 +185,7 @@ static char *GetIregOrConst(short id)
  * and a constant assuming greater than zero
  */
 {
-   static char ln[64];
+   static char ln[128];
    int flag;
    if (id < 0)
       return(archiregs[-IREGBEG-id]);
@@ -197,7 +197,7 @@ static char *GetIregOrConst(short id)
       assert( IS_CONST(flag));
       #ifdef X86_64
          if (IS_INT(flag)) sprintf(ln, "$%d", SToff[id].i);
-         else if (IS_SHORT(flag)) sprintf(ln, "$%ld", SToff[id].l);
+         else if (IS_SHORT(flag)) sprintf(ln, "$0x%lx", SToff[id].l);
       #elif defined(X86)
          if (IS_INT(flag) || IS_SHORT(flag)) sprintf(ln, "$%d", SToff[id].i);
 /*         else if (IS_SHORT(flag)) sprintf(ln, "$%ld", SToff[id].l); */
@@ -277,6 +277,7 @@ struct assmln *lil2ass(INSTQ *head)
       op3 = ip->inst[3];
       switch(ip->inst[0])
       {
+
 #if 0
       case UNIMP:
          ap->next = NewAssln("\tunimp\n");
@@ -614,11 +615,6 @@ struct assmln *lil2ass(INSTQ *head)
             ap->next = PrintAssln("\taddl\t%s, %s\n", GetIregOrConst(op3), 
                                   archiregs[-IREGBEG-op1]);
          #elif defined(SPARC)
-/*
-            fprintf(stderr, "reg2='%s'\n", archiregs[-IREGBEG-op2]);
-            fprintf(stderr, "reg1='%s'\n", archiregs[-IREGBEG-op1]);
-            fprintf(stderr, "const='%s'\n", GetIregOrConst(op3));
-*/
 #if 0
             sprintf(ln, "\tadd\t%s, %s, %s\n", archiregs[-IREGBEG-op2], 
                     GetIregOrConst(op3), archiregs[-IREGBEG-op1]);

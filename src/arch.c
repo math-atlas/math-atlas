@@ -485,6 +485,45 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
             nd++;
          }
       }
+      InsNewInst(NULL, next, COMMENT, STstrconstlookup("done paras"), 0, 0);
+      ir = reg1;
+      if (DTnzerod > 0)
+      {
+         PrintComment(NULL, next, "Writing -0 to memory for negation");
+         InsNewInst(NULL, next, MOV, -ir,STlconstlookup(0x8000000000000000),0);
+         k = ((SToff[DTnzerod-1].sa[2]-1)<<2) + 3;
+         InsNewInst(NULL, next, ST, SToff[DTnzerod-1].sa[2], -ir, __LINE__);
+         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+8),
+                    -ir, __LINE__);
+      }
+      if (DTnzero > 0)
+      {
+         PrintComment(NULL, next, "Writing -0 to memory for negation");
+         InsNewInst(NULL, next, MOV, -ir,STlconstlookup(0x8000000080000000),0);
+         InsNewInst(NULL, next, ST, SToff[DTnzero-1].sa[2], -ir, 0);
+         k = ((SToff[DTnzero-1].sa[2]-1)<<2) + 3;
+         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+8),
+                    -ir, __LINE__);
+      }
+      if (DTabsd)
+      {
+         PrintComment(NULL, next, "Writing ~(-0) to memory for absd");
+         InsNewInst(NULL, next, MOV, -ir,STlconstlookup(0x7FFFFFFFFFFFFFFF),0);
+         k = ((SToff[DTabsd-1].sa[2]-1)<<2) + 3;
+         InsNewInst(NULL, next, ST, SToff[DTabsd-1].sa[2], -ir, __LINE__);
+         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+8),
+                    -ir, __LINE__);
+      }
+      if (DTabs)
+      {
+         PrintComment(NULL, next, "Writing ~(-0) to memory for abss");
+         k = ((SToff[DTabs-1].sa[2]-1)<<2) + 3;
+         InsNewInst(NULL, next, MOV, -ir,STlconstlookup(0x7fffffff7fffffff),0);
+         InsNewInst(NULL, next, ST, SToff[DTabs-1].sa[2], -ir, __LINE__);
+         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+8),
+                    -ir, __LINE__);
+      }
+      InsNewInst(NULL, next, COMMENT, STstrconstlookup("done archspec"), 0, 0);
    #endif
    #ifdef X86_32
       reg1 = ir = GetReg(T_INT);
@@ -557,6 +596,12 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
          k = ((SToff[DTabs-1].sa[2]-1)<<2) + 3;
          InsNewInst(NULL, next, MOV, -ir, STiconstlookup(0x7fffffff), 0);
          InsNewInst(NULL, next, ST, SToff[DTabs-1].sa[2], -ir, __LINE__);
+         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+4),
+                    -ir, __LINE__);
+         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+8),
+                    -ir, __LINE__);
+         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+12),
+                    -ir, __LINE__);
       }
       InsNewInst(NULL, next, COMMENT, STstrconstlookup("done archspec"), 0, 0);
    #endif
@@ -845,7 +890,9 @@ fprintf(stderr, "prog=%d!, rout_name=%s\n", prog, rout_name);
 /*   tsize = Aoff + csize + ssize + lsize; */
    Soff += csize;
    #ifdef X86_64
-      Loff = Soff + 8*(nir+ndr) + 4*nfr;
+      Loff = 8*(nir+ndr) + 4*nfr;
+      if (Loff % ASPALIGN) Loff = (Loff/ASPALIGN)*ASPALIGN + ASPALIGN;
+      Loff += Soff;
       tsize = Loff + lsize;
       if (tsize % ASPALIGN) tsize = (tsize/ASPALIGN)*ASPALIGN + ASPALIGN;
 fprintf(stderr, "tsize=%d, Loff=%d, Soff=%d lsize=%d\n", tsize, Loff, Soff, lsize);
@@ -944,5 +991,7 @@ void FixFrame()
       UpdateLocalDerefs(4);
    #endif
    for (i=0; i < NIR; i++) savr[i] = i+2;
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    CreatePrologue(LOCALIGN, LOCSIZE, 0, NIR-1, savr, 0, NULL, 0, NULL);
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
 }
