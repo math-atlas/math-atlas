@@ -538,7 +538,8 @@ PrintComment(NULL, next, "Store para %s\n", STname[paras[i]]);
             if (fc < 13)
             {
                if (fc < 9) fnam[1] = '0' + fc + 1;
-               else { fnam[1] = '0'; fnam[2] = '0' + fc - 9; }
+               else { fnam[1] = '1'; fnam[2] = '0' + fc - 9; }
+fprintf(stderr, "Getting parameter %s from %s\n", STname[paras[i]], fnam);
                fr = dName2Reg(fnam);
                InsNewInst(NULL, next, FSTD,SToff[paras[i]].sa[2],-fr,__LINE__);
                j += 2;
@@ -551,7 +552,7 @@ PrintComment(NULL, next, "Store para %s\n", STname[paras[i]]);
                j++;
                InsNewInst(NULL, next, LD, -ir,
                           AddDerefEntry(rsav, 0, 0, fsize+24+j*4), 0);
-               k = (SToff[paras[i]].sa[2])<<2;
+               k = (SToff[paras[i]].sa[2]-1)<<2;
                k = AddDerefEntry(-REG_SP, 0, 0, DT[k+3]+4);
                InsNewInst(NULL, next, ST, k, -ir, __LINE__);
                j++;
