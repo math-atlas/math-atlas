@@ -1980,10 +1980,14 @@ struct assmln *lil2ass(BBLOCK *bbase)
                       cp[0], cp[1],cp[2],cp[3]);
          break;
    #endif
+      case PREFR:
+         #ifdef X86
+            ap->next = PrintAssln("\tprefetchnta\t%s\n", GetDeref(op2));
+         #endif
+         break;
 /*
  *  HERE HERE HERE:
  */
-      case PREFR:
       case PREFW:
       case PREFRS:
       case PREFWS:

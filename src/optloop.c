@@ -1462,7 +1462,7 @@ void AddPrefetch(LOOPQ *lp, int unroll)
  */
 {
    BBLOCK *bp;
-   INSTQ *ipp, *ipn;
+   INSTQ *ipp;
    short ir, ptr, lvl;
    int i, j, n, npf;
    enum inst inst;
@@ -1473,19 +1473,26 @@ void AddPrefetch(LOOPQ *lp, int unroll)
    for (i=1,n=lp->pfarrs[0]; i <= n; i++)
    {
       ptr = lp->pfarrs[i];
+#if 0  /* sets/uses not yet figured */
       inst = BitVecCheck(lp->sets, lp->pfarrs[i]) ? PREFW : PREFR;
+#else
+      inst = PREFR;
+#endif
       lvl = lp->pfflag[i] & 0x7;
 /*
  *    # of pref to issue is CEIL(unroll*sizeof(), LINESIZE)
  */
       npf = unroll > 1 ? unroll : 1;
-      npf *= type2len(lp->pfarrs[i]) * Type2Vlen(lp->vflag);
+      npf *= type2len(lp->pfarrs[i]);
+      if (!IS_VEC(lp->pfarrs[i]) && IS_VEC(lp->vflag))
+         npf *= Type2Vlen(lp->vflag);
       npf = (npf + LINESIZE[lvl]-1) / LINESIZE[lvl];
+      ipp = bp->ainst1;
       for (j=0; j < npf; j++)
       {
-         InsNewInst(bp, bp->ainst1, NULL, LD, -ir, SToff[ptr-1].sa[2], 0);
-         InsNewInst(bp, bp->ainst1, NULL, inst, 0, AddDerefEntry(-ir, ptr, -ptr,
-                    lp->pfdist[i]+j*LINESIZE[j], ptr), STiconstlookup(lvl));
+         ipp = InsNewInst(bp, ipp, NULL, LD, -ir, SToff[ptr-1].sa[2], 0);
+         ipp = InsNewInst(bp, ipp, NULL, inst, 0, AddDerefEntry(-ir, 0, 0, 
+                          lp->pfdist[i]+j*LINESIZE[j],ptr),STiconstlookup(lvl));
       }
    }
    GetReg(-1);

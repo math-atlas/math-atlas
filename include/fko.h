@@ -84,5 +84,6 @@
  * all of fko_arch.h
  */
 int GetPtrType(void);
+void UpdatePrefetchInfo();
 
 #endif

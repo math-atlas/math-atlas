@@ -775,6 +775,7 @@ int VectorizeStage3(int savesp, int SVSTATE)
    i = SimdLoop(optloop);
    if (i)
       return(i);
+   UpdatePrefetchInfo();
    if (SVSTATE)
       SaveFKOState(3);
    return(0);

@@ -15,17 +15,6 @@ int noptrec=0;
 enum FKOOPT optrec[512];
 short optchng[512];
 
-void PrintUsage(char *name)
-{
-   fprintf(stderr, "USAGE: %s [flags] <HIL file>\n", name);
-   fprintf(stderr, "  -o <outfile>\n");
-   fprintf(stderr, "  -C 0 : suppress comments\n");
-   fprintf(stderr, "  -t [S,I,L,s] : generate temporary files:\n");
-   fprintf(stderr, "     S : dump symbol table to <file>.ST\n");
-   fprintf(stderr, "     I : dump interference graph info to <file>.IG\n");
-   fprintf(stderr, "     L : dump LIL <file>.L\n");
-   exit(-1);
-}
 void PrintUsageN(char *name)
 {
    int i;
@@ -46,6 +35,7 @@ void PrintUsageN(char *name)
    fprintf(stderr, "     o : dump opt sequence to <file>.opt\n");
    fprintf(stderr, "  -U <#> : Unroll main loop # of times\n");
    fprintf(stderr, "  -V     : Vectorize (SIMD) main loop\n");
+   fprintf(stderr, "  -P <ST#> <cache level> <dist(bytes)>\n");
    fprintf(stderr, "  -[L,G] <blknum> <maxN> <nopt> <opt1> ... <optN>\n");
    fprintf(stderr, "     Loop or global optimization block\n");
    fprintf(stderr, "     <blknum> : integer identifier > 0\n");
@@ -941,6 +931,8 @@ void DumpOptsPerformed(FILE *fpout, int verbose)
       if (FKO_UR > 1)
          fprintf(fpout, "%3d. %c %20.20s : %d\n", j++, 'L', "Loop Unroll",
                  FKO_UR);
+      if (optloop && optloop->pfarrs)
+         fprintf(fpout, "%3d. %c %20.20s : %d\n", j++, 'L', "Prefetch");
       for (i=0; i < noptrec; i++)
       {
          k = optrec[i];
@@ -1000,43 +992,14 @@ struct optblkq *DefaultOptBlocks(void)
    return(base);
 }
 
-void DoStage2(int SAVESP, int SVSTATE)
-/*
- * Assumes stage 0 has been achieved, writes files for stage 1
- */
+void UpdatePrefetchInfo()
 {
-   struct ptrinfo *pi, *pi0;
-   int i, n, k;
-
-   GenPrologueEpilogueStubs(bbbase, SAVESP);
-   NewBasicBlocks(bbbase);
-   FindLoops(); 
-   CheckFlow(bbbase, __FILE__, __LINE__);
+   int n, i, k;
 /*
- * Having found the optloop, save which arrays to prefetch
+ * If we don't have a default distance, be sure arrays are moving in loop
  */
-   if (PFARR && optloop)
+   if (optloop && PFARR)
    {
-      if (!optloop->varrs)
-      {
-         KillLoopControl(optloop);
-         pi0 = FindMovingPointers(optloop->blocks);
-         for (n=0,pi=pi0; pi; pi=pi->next,n++);
-         optloop->varrs = malloc(sizeof(short)*(n+1));
-         assert(optloop->varrs);
-         optloop->varrs[0] = n;
-         for (i=1,pi=pi0; i <= n; i++,pi=pi->next)
-            optloop->varrs[i] = pi->ptr;
-         KillAllPtrinfo(pi0);
-         RestoreFKOState(0);
-         GenPrologueEpilogueStubs(bbbase, SAVESP);
-         NewBasicBlocks(bbbase);
-         FindLoops(); 
-         CheckFlow(bbbase, __FILE__, __LINE__);
-      }
-/*
- *    If we don't have a default distance, be sure arrays are moving in loop
- */
       if (PFARR[1] > 0)
       {
          for (n=PFARR[0]+1, i=1; i <n; i++)
@@ -1083,6 +1046,44 @@ void DoStage2(int SAVESP, int SVSTATE)
          free(PFLVL);
       }
       PFARR = PFDST = PFLVL = NULL;
+   }
+}
+
+void DoStage2(int SAVESP, int SVSTATE)
+/*
+ * Assumes stage 0 has been achieved, writes files for stage 1
+ */
+{
+   struct ptrinfo *pi, *pi0;
+   int i, n, k;
+
+   GenPrologueEpilogueStubs(bbbase, SAVESP);
+   NewBasicBlocks(bbbase);
+   FindLoops(); 
+   CheckFlow(bbbase, __FILE__, __LINE__);
+/*
+ * Having found the optloop, save which arrays to prefetch
+ */
+   if (PFARR && optloop)
+   {
+      if (!optloop->varrs)
+      {
+         KillLoopControl(optloop);
+         pi0 = FindMovingPointers(optloop->blocks);
+         for (n=0,pi=pi0; pi; pi=pi->next,n++);
+         optloop->varrs = malloc(sizeof(short)*(n+1));
+         assert(optloop->varrs);
+         optloop->varrs[0] = n;
+         for (i=1,pi=pi0; i <= n; i++,pi=pi->next)
+            optloop->varrs[i] = pi->ptr;
+         KillAllPtrinfo(pi0);
+         RestoreFKOState(0);
+         GenPrologueEpilogueStubs(bbbase, SAVESP);
+         NewBasicBlocks(bbbase);
+         FindLoops(); 
+         CheckFlow(bbbase, __FILE__, __LINE__);
+      }
+      UpdatePrefetchInfo();
    }
    if (SVSTATE)
       SaveFKOState(2);
