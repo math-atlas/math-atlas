@@ -15,9 +15,41 @@ print "ATLdir='%s', ARCH='%s'" % (ATLdir, ARCH)
 # [time,mflop] = l1cmnd.l1time(ATLdir, ARCH, 'd', 'dot', 80000, 'dot1_x1y1.c')
 # print "time=%f, mflop=%f" % (time,mflop)
 
+#
+# Defaults
+#
+N=80000
 pres = l1cmnd.GetDefaultPre()
 l1routs = l1cmnd.GetDefaultBlas()
-l1refs  = l1cmnd.GetDefaultRefBlas()
+uopt = ""
+#
+# User overrides
+#
+nargs = len(sys.argv)
+if (nargs > 1):
+   blas = sys.argv[1]
+   if blas.find("default") == -1:
+      words = blas.split(",")
+      l1routs = []
+      for word in words:
+         l1routs.append(word)
+
+   if (nargs > 2):
+      pre = sys.argv[2]
+      if pre.find("default") == -1:
+         words = pre.split(",")
+         pres = []
+         for word in words:
+            pres.append(word)
+
+      if nargs > 3:
+         N = int(sys.argv[3])
+         if nargs > 4:
+            uopt = sys.argv[4]
+l1refs  = l1cmnd.GetDefaultRefBlas(l1routs)
+
+opt = "-X 1 -Y 1 -Fx 16 -Fy 16 " + uopt
+ 
 l1atl   = []
 CCatl   = []
 CCFat   = []
@@ -29,11 +61,10 @@ bob = fkocmnd.info(fko, IFKOdir + "/blas/dasum.b")
 NC = bob[0]
 LS = bob[1][0]
 VECT = bob[5]
-print LS
+print "LINESIZE = %d" % LS
 VS = ""
 KFLAG = "-P all 0 " + str(LS*2)
 
-N=80000
 
 #
 # Find the kernel names and compiler flags used by ATLAS on this arch
@@ -60,11 +91,11 @@ CALLREF=1
 CALLATL=1
 CALLFKO=1
 # print 'l1atl = ', l1atl
-opt = "-X 1 -Y 1 -Fx 16 -Fy 16"
 for blas in l1routs:
    for pre in pres:
       if (CALLREF != 0):
-         [time,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, l1refs[i])
+         [time,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, l1refs[i], 
+                                 opt=opt)
          assert(time > 0.0)
          print "REF %20.20s : time=%f, mflop=%f" % (pre+l1refs[i], time, mf)
          refT.append(time)
@@ -72,7 +103,7 @@ for blas in l1routs:
 
       if (CALLATL != 0):
          [time,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, l1atl[j], 
-                                 CCatl[j], CCFat[j])
+                                 CCatl[j], CCFat[j], opt=opt)
          assert(time > 0.0)
          print "ATL %20.20s : time=%f, mflop=%f" % (pre+l1atl[j], time, mf)
          atlT.append(time)

@@ -7,9 +7,26 @@ L1Tdir = '/tune/blas/level1/'
 def GetDefaultBlas():
    return ['asum', 'axpy', 'dot', 'scal', 'iamax']
 
-def GetDefaultRefBlas():
-   return ['asum_fabs1_x1.c', 'axpy1_x1y1.c', 'dot1_x1y1.c', 'scal1_x1.c',
-           'iamax_abs1_x1.c']
+def GetDefaultRefBlas(blas):
+   n = len(blas)
+   assert(n)
+   refb = []
+   for bla in blas:
+      if bla.find('asum') != -1:
+         refb.append("asum_fabs1_x1.c")
+      elif bla.find('axpy') != -1:
+         refb.append("axpy1_x1y1.c")
+      elif bla.find('dot') != -1:
+         refb.append("dot1_x1y1.c")
+      elif bla.find('scal') != -1:
+         refb.append("scal1_x1.c")
+      elif bla.find('amax') != -1:
+         refb.append("iamax_abs1_x1.c")
+      else:
+         print "Unknown BLAS : %s" % (bla)
+         sys.exit(1)
+
+   return refb
 
 def GetDefaultPre():
    return ['s', 'd']

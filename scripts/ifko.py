@@ -4,7 +4,7 @@ import sys
 import fkocmnd
 import l1cmnd
 
-opt = "-X 1 -Y 1 -Fx 16 -Fy 16"
+opt = "-X 1 -Y 1 -Fx 16 -Fy 16 -C 0"
 optT = "-X 1 1 -Y 1 1 -Fx 16 -Fy 16"
 #
 #  Given a set of flags, try differing pf inst for read & write arrays
@@ -121,7 +121,7 @@ def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr,
       [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
                            "gcc", "-x assembler-with-cpp", opt=opt)
 #      mfs.append(mf)
-      print "      %s : PFD = %d mflop = %s" % (arr, pfd, mf)
+      print "      %s : PFD = %d mflop = %.2f" % (arr, pfd, mf)
 #
 #     Demand higher PFD is at least 1.0001 faster
 #
@@ -129,9 +129,19 @@ def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr,
          mfM = mf
          pfdM = pfd
       pfd += LS
-
    print "\n   BEST prefetch distance = %d (%.2f)" % (pfdM, mfM)
-   if (pfdM != ipd):
+#
+#  Try not prefetching array at all
+#
+   KFn = KF0 + " -P %s -1 0" % (arr)
+   print KFn
+   fkocmnd.callfko(fko, KFn)
+   [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                        "gcc", "-x assembler-with-cpp", opt=opt)
+   print "      %s : NO PREFETCH:   mflop = %.2f" % (arr, mf)
+   if mf >= mfM:
+      KF0 = KF0 + " -P %s -1 0" % (arr)
+   elif pfdM != ipd:
       KF0 = KF0 + " -P %s %d %d" % (arr, pflvl, pfdM)
    return (KF0)
 
@@ -269,6 +279,7 @@ nargs = len(sys.argv)
 blas = "asum"
 pre  = "s"
 N = 80000
+N = 1024
 if (nargs > 1):
    blas = sys.argv[1]
    if (nargs > 2):
