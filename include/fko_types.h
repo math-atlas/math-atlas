@@ -132,6 +132,8 @@ struct loopq
    short I, beg, end, inc;
    short body_label;
    short end_label;   /* target for break */
+   short CU_label;    /* -1: cleanup not required; 0: not gened yet; */
+   short PTCU_label;  /* post-tail cleanup jmpback label */
    short loopnum;
    short maxunroll;
    short writedd;     /* write dependence distance */
@@ -139,6 +141,7 @@ struct loopq
    short *varrs;     /* vectorized arrays */
    short *vscal;     /* vectorized scalars */
    short *vsflag;    /* info array for vscal */
+   short *vvscal;    /* vect locals used for vscal */
    short *nopf;      /* arrays which should not be prefetched */
    short *aaligned;   /* arrays that have known alignment */
    uchar *abalign;    /* alignments of above arrays */

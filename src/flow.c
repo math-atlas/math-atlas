@@ -709,19 +709,9 @@ LOOPQ *NewLoop(int flag)
    LOOPQ *lp, *l;
    short lnum=0;
 
-   lp = malloc(sizeof(struct loopq));
+   lp = calloc(1, sizeof(struct loopq));
    assert(lp);
    lp->flag = flag;
-   lp->depth = lp->I = lp->beg = lp->end = lp->inc = lp->body_label = 
-               lp->end_label = 0;
-   lp->loopnum = lp->maxunroll = lp->writedd = 0;
-   lp->vsflag = lp->vscal = lp->varrs = lp->nopf = lp->aaligned = NULL;
-   lp->abalign = NULL;
-   lp->preheader = lp->header = NULL;
-   lp->blocks = NULL;
-   lp->tails = lp->posttails = NULL;
-   lp->blkvec = lp->outs = lp->sets = 0;
-   lp->next = NULL;
    return(lp);
 }
 
@@ -790,6 +780,61 @@ LOOPQ *InsNewLoop(LOOPQ *prev, LOOPQ *next, int flag)
    }
    else loopq = loop;
    return(loop);
+}
+
+void InvalidateLoopInfo(void)
+/*
+ * Retains optloop info that comes from front-end, throws rest away
+ */
+{
+   LOOPQ *lp;
+
+   CFLOOP=0;
+   if (optloop)
+   {
+/*
+ *    Remove optloop from queue
+ */
+      if (loopq)
+      {
+         if (loopq == optloop)
+            loopq = loopq->next;
+         else
+         {
+            for (lp=loopq; lp->next && lp->next != optloop; lp = lp->next);
+            if (lp->next == optloop)
+               lp->next = optloop->next;
+         }
+         optloop->next = NULL;
+      }
+/*
+ *    Keep optloop info that doesn't vary, throw rest away
+ */
+      lp = NewLoop(optloop->flag);
+      lp->ndup = optloop->ndup;
+      lp->I = optloop->I;
+      lp->beg = optloop->beg;
+      lp->end = optloop->end;
+      lp->inc = optloop->inc;
+      lp->body_label = optloop->body_label;
+      lp->end_label = optloop->end_label;
+      lp->maxunroll = optloop->maxunroll;
+      lp->writedd = optloop->writedd;
+      lp->varrs = optloop->varrs;
+      lp->vscal = optloop->vscal;
+      lp->vsflag = optloop->vsflag;
+      lp->nopf = optloop->nopf;
+      lp->aaligned = optloop->aaligned;
+      lp->abalign = optloop->abalign;
+      lp->CU_label = optloop->CU_label;
+      lp->PTCU_label = optloop->PTCU_label;
+      optloop->vsflag = optloop->vscal = optloop->varrs = optloop->nopf = 
+         optloop->aaligned = NULL;
+      optloop->abalign = NULL;
+      KillLoop(optloop);
+      optloop = lp;
+   }
+   KillAllLoops();
 }
 
 void InsertLoopBlock(short blkvec, BBLOCK *blk)

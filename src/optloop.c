@@ -1112,120 +1112,46 @@ BLIST *FindAllFallHeads(BLIST *ftheads, int iscope, BBLOCK *head, int tails,
    return(ftheads);
 }
 
-void UnrollCleanup(LOOPQ *lp, int unroll)
+void GenCleanupLoop(LOOPQ *lp)
 /*
- * Creates a cleanup loop for loop lp at end of program.
- * Presently just reproduces entire loop without I initialization (assumed
- * to be done before jmp).
- * NOTE: assumes loop control has already been deleted.
+ * Creates the cleanup loop for loop lp, so lp may be unrolled/vectorized
  */
 {
    BLIST *ftheads, *bl, *dupblks;
-   BBLOCK *bp, *bp0, *bpN, *newCF;
-   INSTQ *ipnext;
+   BBLOCK *bp0, *bp, *newCF;
    LOOPQ *lpn;
-   ILIST *il;
    char ln[512];
-   int FORWARDLOOP, iv, ivtails;
-   short ilab, ptlab, lblab;
-   short r0, r1;
+   int iv, ivtails;
    extern BBLOCK *bbbase;
    extern int FKO_BVTMP;
 
-   r0 = GetReg(T_INT);
-   r1 = GetReg(T_INT);
 /*
- * If flag's loop control not set, compute it, then set boolean based on flag
+ * If no cleanup is needed, return
  */
-   if (!(lp->flag & (L_FORWARDLC_BIT | L_SIMPLELC_BIT)))
+   if (lp->CU_label == -1)
+      return;
+/*
+ * Beginning of cleanup code is loop body label with _CU_ prefixed
+ * post-tail cleanup-done lab is body label with _CUDONE_ prefixed
+ */
+   sprintf(ln, "_CU_%s", STname[lp->body_label-1]);
+   lp->CU_label = STlabellookup(ln);
+   if (!lp->PTCU_label)
    {
-      if (AlreadySimpleLC(lp))
-         lp->flag |= (L_NSIMPLELC_BIT | L_SIMPLELC_BIT);
-      else
-      {
-         il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
-         if (!AlreadySimpleLC(lp) && il)
-            lp->flag |= L_FORWARDLC_BIT;
-         else
-            lp->flag |= L_SIMPLELC_BIT;
-         if (il) KillIlist(il);
-      }
+      sprintf(ln, "_CUDONE_%s", STname[lp->body_label-1]);
+      lp->PTCU_label = STlabellookup(ln);
    }
-   FORWARDLOOP = L_FORWARDLC_BIT & lp->flag;
 /*
- * Beginning of cleanup code is original body label with CU_ prefixed
- * post-tail cleanup-done lab is body label with CUDONE_ prefixed
- */
-   sprintf(ln, "CU_%s", STname[lp->body_label-1]);
-   ilab = STlabellookup(ln);
-   sprintf(ln, "CUDONE_%s", STname[lp->body_label-1]);
-   ptlab = STlabellookup(ln);
-/*
- * Require one and only one post-tail; later do transformation to ensure this
- * for loops where it is not natively true
- */
-   assert(lp->posttails && !lp->posttails->next);
-/*
- * Put cleanup info before 1st non-label instruction in posttail
- */
-   bp = lp->posttails->blk;
-   if (bp->ainst1 && bp->ainst1->inst[0] == LABEL)
-      ipnext = bp->ainst1->next;
-   else
-      ipnext = bp->ainst1;
-   if (FORWARDLOOP)
-   {
-/*
- *    If we've used unrolled forward loop, restore N to original value
- */
-      if (!IS_CONST(STflag[lp->end-1]))
-      {
-         InsNewInst(bp, NULL, ipnext, LD, -r1, SToff[lp->end-1].sa[2], 0);
-         InsNewInst(bp, NULL, ipnext, ADD, -r1, -r1, 
-                            STiconstlookup(unroll*SToff[lp->inc-1].i-1));
-         InsNewInst(bp, NULL, ipnext, ST, SToff[lp->end-1].sa[2], -r1, 0);
-      }
-      InsNewInst(bp, NULL, ipnext, LD, -r0, SToff[lp->I-1].sa[2], 0);
-      if (IS_CONST(STflag[lp->end-1]))
-         InsNewInst(bp, NULL, ipnext, CMP, -ICC0, -r0, lp->end);
-      else
-         InsNewInst(bp, NULL, ipnext, CMP, -ICC0, -r0, -r1);
-   }
-   else
-   {
-      InsNewInst(bp, NULL, ipnext, LD, -r0, SToff[lp->I-1].sa[2], 0);
-      InsNewInst(bp, NULL, ipnext, SUBCC, -r0, -r0,
-                 STiconstlookup(-(FKO_abs(SToff[lp->inc-1].i)*unroll-1)));
-      InsNewInst(bp, NULL, ipnext, ST, SToff[lp->I-1].sa[2], -r0, 0);
-   }
-   InsNewInst(bp, NULL, ipnext, JNE, -PCREG, -ICC0, ilab);
-/*
- * Add label to jump back to when cleanup is done (screws up block, of course)
- */
-   InsNewInst(bp, NULL, ipnext, LABEL, ptlab, 0, 0);
-/*
- * Find last block, add present block after it
+ * Find last block, add cleanup after it
  */
    for (bp0=bbbase; bp0->down; bp0 = bp0->down);
    bp = NewBasicBlock(bp0, NULL);
    bp0->down = bp;
    bp0 = bp;
 /*
- * Start new block with a cleanup label, which is original loop body label
- * with CU_ prefixed to it
+ * Start new block with a cleanup label
  */
-   InsNewInst(bp, NULL, NULL, LABEL, ilab, 0, 0);
-/*
- * Update I to find remainder of loop to do
- */
-#if 0
-   InsNewInst(bp, NULL, NULL, LD, -r0, SToff[lp->I-1].sa[2], 0);
-   assert(IS_CONST(STflag[lp->inc-1]));
-   InsNewInst(bp, NULL, NULL, FORWARDLOOP ? SUB : ADD, -r0, -r0,
-              STiconstlookup(SToff[lp->inc-1].i*unroll));
-   InsNewInst(bp, NULL, NULL, ST, SToff[lp->I-1].sa[2], -r0, 0);
-#endif
-   GetReg(-1);
+   InsNewInst(bp, NULL, NULL, LABEL, lp->CU_label, 0, 0);
 /*
  * Duplicate original loop body
  */
@@ -1293,9 +1219,96 @@ fprintf(stderr, "ftheads = %s\n", PrintBlockList(ftheads));
    {
       bp = NewBasicBlock(bl->blk, bl->blk->down);
       bl->blk->down = bp;
-      InsNewInst(bp, NULL, NULL, JMP, -PCREG, ptlab, 0);
+      InsNewInst(bp, NULL, NULL, JMP, -PCREG, lp->PTCU_label, 0);
    }
    KillLoop(lpn);
+}
+
+void UnrollCleanup(LOOPQ *lp, int unroll)
+/*
+ * Creates a cleanup loop for loop lp at end of program.
+ * Presently just reproduces entire loop without I initialization (assumed
+ * to be done before jmp).
+ * NOTE: assumes loop control has already been deleted.
+ */
+{
+   BBLOCK *bp;
+   INSTQ *ipnext;
+   ILIST *il;
+   int FORWARDLOOP;
+   short r0, r1;
+
+   if (lp->CU_label == -1)
+      return;
+/*
+ * Generate the actual code to do loop cleanup
+ */
+   GenCleanupLoop(lp);
+
+   r0 = GetReg(T_INT);
+   r1 = GetReg(T_INT);
+/*
+ * If flag's loop control not set, compute it, then set boolean based on flag
+ */
+   if (!(lp->flag & (L_FORWARDLC_BIT | L_SIMPLELC_BIT)))
+   {
+      if (AlreadySimpleLC(lp))
+         lp->flag |= (L_NSIMPLELC_BIT | L_SIMPLELC_BIT);
+      else
+      {
+         il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
+         if (!AlreadySimpleLC(lp) && il)
+            lp->flag |= L_FORWARDLC_BIT;
+         else
+            lp->flag |= L_SIMPLELC_BIT;
+         if (il) KillIlist(il);
+      }
+   }
+   FORWARDLOOP = L_FORWARDLC_BIT & lp->flag;
+/*
+ * Require one and only one post-tail; later do transformation to ensure this
+ * for loops where it is not natively true
+ */
+   assert(lp->posttails && !lp->posttails->next);
+/*
+ * Put cleanup info before 1st non-label instruction in posttail
+ */
+   bp = lp->posttails->blk;
+   if (bp->ainst1 && bp->ainst1->inst[0] == LABEL)
+      ipnext = bp->ainst1->next;
+   else
+      ipnext = bp->ainst1;
+   if (FORWARDLOOP)
+   {
+/*
+ *    If we've used unrolled forward loop, restore N to original value
+ */
+      if (!IS_CONST(STflag[lp->end-1]))
+      {
+         InsNewInst(bp, NULL, ipnext, LD, -r1, SToff[lp->end-1].sa[2], 0);
+         InsNewInst(bp, NULL, ipnext, ADD, -r1, -r1, 
+                            STiconstlookup(unroll*SToff[lp->inc-1].i-1));
+         InsNewInst(bp, NULL, ipnext, ST, SToff[lp->end-1].sa[2], -r1, 0);
+      }
+      InsNewInst(bp, NULL, ipnext, LD, -r0, SToff[lp->I-1].sa[2], 0);
+      if (IS_CONST(STflag[lp->end-1]))
+         InsNewInst(bp, NULL, ipnext, CMP, -ICC0, -r0, lp->end);
+      else
+         InsNewInst(bp, NULL, ipnext, CMP, -ICC0, -r0, -r1);
+   }
+   else
+   {
+      InsNewInst(bp, NULL, ipnext, LD, -r0, SToff[lp->I-1].sa[2], 0);
+      InsNewInst(bp, NULL, ipnext, SUBCC, -r0, -r0,
+                 STiconstlookup(-(FKO_abs(SToff[lp->inc-1].i)*unroll-1)));
+      InsNewInst(bp, NULL, ipnext, ST, SToff[lp->I-1].sa[2], -r0, 0);
+   }
+   InsNewInst(bp, NULL, ipnext, JNE, -PCREG, -ICC0, lp->CU_label);
+/*
+ * Add label to jump back to when cleanup is done (screws up block, of course)
+ */
+   InsNewInst(bp, NULL, ipnext, LABEL, lp->PTCU_label, 0, 0);
+   GetReg(-1);
 }
 
 int UnrollLoop(LOOPQ *lp, int unroll)

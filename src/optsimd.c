@@ -88,7 +88,7 @@ short FindReadUseType(INSTQ *ip, short var, int blkvec)
    KillIlist(ib);
    return(j);
 }
-int DoInitLoopVecAnal(LOOPQ *lp)
+int DoLoopSimdAnal(LOOPQ *lp)
 /*
  * Does some analysis on unoptimized code to determine how to vectorize loop
  * This will be later thrown away, and we will start again with either
@@ -140,6 +140,9 @@ int DoInitLoopVecAnal(LOOPQ *lp)
       SetVecBit(iv, i, 0);
 /*
  * Allow only fp ops & index ops
+ * HERE HERE HERE
+ * NOTE: need also array incrementing.  Probably need to delete all this crap
+ *       before doing analysis
  */
    sp = BitVec2Array(iv, 1-TNREG);
    for (N=sp[0],n=0,i=1; i <= N; i++)
@@ -324,9 +327,6 @@ int DoInitLoopVecAnal(LOOPQ *lp)
       }
 /*
  *    Find out how to init livein and reduce liveout vars
- *    NOTE: right now, we have an error, because we don't consider what happens
- *          when the first op of a scalar is to copy it to another scalar,
- *          in which case you must examine the use of both vars.
  */
       s = lp->vsflag;
       for (i=0; i < n; i++)
@@ -390,49 +390,148 @@ int DoInitLoopVecAnal(LOOPQ *lp)
    return(1);
 }
 
-void VecUnrollLoop(LOOPQ *lp, int unroll)
+static enum inst 
+   sfinsts[] = {FLD,  FST,  FMUL,  FADD,  FSUB,  FABS,  FMOV,  FZERO},
+   vfinsts[] = {VFLD, VFST, VFMUL, VFADD, VFSUB, VFABS  VFMOV, VFZERO},
+   sdinsts[] = {FLDD, FSTD, FMULD, FADDD, FSUBD, FABSD, FMOVD, FZEROD},
+   vdinsts[] = {VDLD, VDST, VDMUL, VDADD, VDSUB, VDABS  VDMOV, VDZERO};
+
+void SimdLoop(LOOPQ *lp)
 {
    enum inst sld, vld, sst, vst, smul, vmul, sadd, vadd, ssub, vsub, 
              sabs, vabs, smov, vmov, szero, vzero;
+   short *sp;
+   enum inst *sinst, *vinst;
+   int i, n, k;
+   char ln[512];
+   struct ptrinfo *pi0, *pi;
+   INSTQ *ip, *ippu, *iph, *ipt;
+   short vlen;
+   enum inst vsld, vsst, vshuf;
 
-   if (!DoInitLoopVecAnal(lp))
-     exit(-1);
+/*
+ * Figure out what type of insts to translate
+ */
    if (IS_FLOAT(lp->vflag))
    {
-      sld   = FLD;
-      sst   = FST;
-      smul  = FMUL;
-      sadd  = FADD;
-      ssub  = FSUB;
-      sabs  = FABS;
-      smov  = FMOV;
-      szero = FZERO;
-      vld   = VFLD;
-      vst   = VFST;
-      vmul  = VFMUL;
-      vadd  = VFADD;
-      vsub  = VFSUB;
-      vabs  = VFABS;
-      vmov  = VFMOV;
-      vzero = VFZERO;
+      sinst = sfinsts;
+      vinst = vfinsts;
+      vlen = 4;
+      vsld = VFLDS;
+      vsst = VFSTS;
+      vshuf = VFSHUF;
    }
    else
    {
-      sld   = FLDD;
-      sst   = FSTD;
-      smul  = FMULD;
-      sadd  = FADDD;
-      ssub  = FSUBD;
-      sabs  = FABSD;
-      smov  = FMOVD;
-      szero = FZEROD;
-      vld   = VDLD;
-      vst   = VDST;
-      vmul  = VDMUL;
-      vadd  = VDADD;
-      vsub  = VDSUB;
-      vabs  = VDABS;
-      vmov  = VDMOV;
-      vzero = VDZERO;
+      vsld = VDLDS;
+      vsst = VDSTS;
+      vshuf = VDSHUF;
+      sinst = sdinsts;
+      vinst = vdinsts;
+      vlen = 2;
    }
+/*
+ * Remove loop control logic from loop, and disallow simdification if
+ * index is used in loop
+ * NOTE: could allow index ref, but then need special case of non-vectorized
+ *       op, so don't.  Can transform loops that use I to loops that use
+ *       ptr arith instead.
+ */
+   KillLoopControl(lp);
+   if (FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]))
+   {
+      fko_error(__LINE__, "Index refs inside loop prevent vectorization!!\n");
+      exit(-1);
+   }
+/*
+ * Generate scalar cleanup loop before simdifying loop
+ */
+   GenCleanupLoop(lp);
+
+/* 
+ * Find all pointer updates, and remove them from body of loop (leaving only
+ * vectorized instructions for analysis); will put them back in loop after
+ * vectorization is done.
+ */
+
+   pi0 = FindMovingPointers(lp->blocks);
+   for (pi=pi0; pi; pi = pi->next)
+   {
+      if (pi->nupdate > 1)
+         fko_error(__LINE__, "Multiple ptr updates prevent vectorization!!\n");
+      if (!(pi->flag & PTRF_CONTIG))
+         fko_error(__LINE__, 
+                   "Non-contiguous ptr updates prevent vectorization!!\n");
+   }
+   ippu = KillPointerUpdates(pi, vlen);
+/*
+ * Get needed info and die if loop is not vectorizable
+ */
+   if (!DoLoopSimdAnal(lp))
+     exit(-1);
+/*
+ * Create vector locals for all vector scalars in loop
+ */
+   sp = BitVec2StaticArray(iv);
+   k = LOCAL_BIT | VEC_BIT | FLAG2TYPE(lp->vflag);
+   n = sp[0];
+   sp++;
+   if (!lp->vvscal)
+   {
+      lp->vvscal = malloc(sizeof(short)*n);
+      assert(lp->vvscal)
+   }
+   for (i=0; i < n; i++)
+   {
+      sprintf(ln, "_V%d_%s", i-1, STname[sp[i]-1] ? STname[sp[i]-1] : "");
+      lp->vvscal[i] = STdef(ln, k, 0);
+   }
+/* 
+ * Find inst in header to insert scalar init before; want it inserted last
+ * unless last instruction is a jump, in which case put it before the jump.
+ * As long as loads don't reset condition codes, this should be safe
+ * (otherwise, need to move before compare as well as jump)
+ */
+   iph = lp->preheader->ainstN;
+   if (iph && IS_BRANCH(iph->inst[0]))
+      iph = iph->prev;
+   else
+      iph = NULL;
+/*
+ * Find inst in posttail to insert reductions before; if 1st active inst
+ * is not a label, insert at beginning of loop, else insert after label
+ */
+   if (lp->posttails->blk->ilab)
+/*
+ * Insert scalar-to-vector initialization in preheader for vars live on entry
+ * and vector-to-scalar reduction in post-tail for vars live on exit
+ */
+   for (i=0; i < n; i++)
+   {
+      if (VS_LIVIN & lp->vsflag[i])
+      {
+/*
+ *       ADD-updated vars set v[0] = scalar, v[1:N] = 0
+ */
+         if (VS_ADD & lp->vsflag[i])
+         {
+            InsNewInst(lp->preheader, NULL, iph, ...);
+         }
+      }
+/*
+ *    Output vars are known to be updated only by ADD
+ */
+      if (VS_LIVEOUT & lp->vsflag[i])
+      {
+      }
+   }
+/*
+ * Insert vector-to-scalar local reduction in post-tail
+ */
+/*
+ * Translate body of loop
+ */
+/*
+ * Put back loop control and pointer updates
+ */
 }

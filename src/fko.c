@@ -558,59 +558,6 @@ static void WriteMiscToFile(char *name)
    fclose(fp);
 }
 
-void InvalidateLoopInfo(void)
-/*
- * Retains optloop info that comes from front-end, throws rest away
- */
-{
-   LOOPQ *lp;
-
-   CFLOOP=0;
-   if (optloop)
-   {
-/*
- *    Remove optloop from queue
- */
-      if (loopq)
-      {
-         if (loopq == optloop)
-            loopq = loopq->next;
-         else
-         {
-            for (lp=loopq; lp->next && lp->next != optloop; lp = lp->next);
-            if (lp->next == optloop)
-               lp->next = optloop->next;
-         }
-         optloop->next = NULL;
-      }
-/*
- *    Keep optloop info that doesn't vary, throw rest away
- */
-      lp = NewLoop(optloop->flag);
-      lp->ndup = optloop->ndup;
-      lp->I = optloop->I;
-      lp->beg = optloop->beg;
-      lp->end = optloop->end;
-      lp->inc = optloop->inc;
-      lp->body_label = optloop->body_label;
-      lp->end_label = optloop->end_label;
-      lp->maxunroll = optloop->maxunroll;
-      lp->writedd = optloop->writedd;
-      lp->varrs = optloop->varrs;
-      lp->vscal = optloop->vscal;
-      lp->vsflag = optloop->vsflag;
-      lp->nopf = optloop->nopf;
-      lp->aaligned = optloop->aaligned;
-      lp->abalign = optloop->abalign;
-      optloop->vsflag = optloop->vscal = optloop->varrs = optloop->nopf = 
-         optloop->aaligned = NULL;
-      optloop->abalign = NULL;
-      KillLoop(optloop);
-      optloop = lp;
-   }
-   KillAllLoops();
-}
-
 static void ReadMiscFromFile(char *name)
 {
    int i;

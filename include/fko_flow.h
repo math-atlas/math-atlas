@@ -26,6 +26,8 @@ BBLOCK *NewBasicBlocks(BBLOCK *base0);
 BBLOCK *FindBlockByNumber(BBLOCK *bp, const short bnum);
 BBLOCK *FindBlockWithLabel(BBLOCK *bp, int ilab);
 
+void InvalidateLoopInfo(void);
+
 #if IFKO_DEBUG_LEVEL > 0
    void CheckFlow(BBLOCK *bbase, char *file, int line);
 #else
