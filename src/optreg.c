@@ -2383,8 +2383,9 @@ int DoRevCopyPropTrans(INSTQ *ipsrc,  /* inst where src is set */
          CalcThisUseSet(ip);
          nseen++;
       }
-      ipdst->inst[2] = -dest;
-//      DelInst(ipdst);
+//      ipdst->inst[2] = -dest;
+//      CalcThisUseSet(ipdst);
+      DelInst(ipdst);
    }
    return(1);
 }
@@ -2399,6 +2400,11 @@ int DoReverseCopyProp(BLIST *scope)
    int nchanges=0, nuse;
    enum inst inst;
    short src, dest;
+
+   if (!INDEADU2D)
+      CalcAllDeadVariables();
+   else if (!CFUSETU2D || !CFU2D || !INUSETU2D)
+      CalcInsOuts(bbbase);
 
    for (bl=scope; bl; bl = bl->next)
    {
@@ -2590,6 +2596,12 @@ int DoRemoveOneUseLoads(BLIST *scope)
    short k;
    extern int FKO_BVTMP;
 
+/*
+ * Only x86 has these from-memory operations
+ */
+   #ifndef X86
+      return(0);
+   #endif
    if (!INDEADU2D)
       CalcAllDeadVariables();
    else if (!CFUSETU2D || !CFU2D || !INUSETU2D)

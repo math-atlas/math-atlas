@@ -1222,6 +1222,7 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
       free(ARRWNT);
       NWNT = i;
    }
+   INUSETU2D = INDEADU2D = CFUSETU2D = 0;
    if (!INDEADU2D)
       CalcAllDeadVariables();
    if (!CFLOOP)
