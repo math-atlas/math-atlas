@@ -142,7 +142,7 @@ ILIST *FindIndexRef(BLIST *scope, short I)
    BLIST *bl;
    INSTQ *ip;
    ILIST *ilbase=NULL;
-   for (bl=scope; bl; bl->next)
+   for (bl=scope; bl; bl = bl->next)
    {
       for (ip=bl->blk->ainstN; ip; ip = ip->prev)
       {
@@ -317,8 +317,8 @@ static void ForwardLoop(LOOPQ *lp, INSTQ **ipinit, INSTQ **ipupdate,
 
 }
 
-static void SimpleLC(short I, short I0, short N, short inc, short lab,
-                     INSTQ **ipinit, INSTQ **ipupdate, INSTQ **iptest)
+static void SimpleLC(LOOPQ *lp, INSTQ **ipinit, INSTQ **ipupdate,
+                     INSTQ **iptest)
 /*
  * Do simple N..0 loop.
  * NOTE: later specialize to use loop reg on PPC
@@ -327,41 +327,54 @@ static void SimpleLC(short I, short I0, short N, short inc, short lab,
 {
    INSTQ *ip;
    short r0, r1;
+   int I, I0, N, inc, Ioff;
+
+   I  = lp->I;
+   I0 = lp->beg;
+   N  = lp->end;
+   inc = lp->inc;
+   Ioff = SToff[I-1].sa[2];
 
    r0 = GetReg(T_INT);
    r1 = GetReg(T_INT);
+
    if (IS_CONST(STflag[N-1]) && IS_CONST(STflag[I0-1]))
-   {
       *ipinit = ip = NewInst(NULL, NULL, NULL, MOV, -r0, 
                              STiconstlookup(SToff[N-1].i - SToff[I0-1].i), 0);
-   }
    else
    {
       if (IS_CONST(STflag[I0-1]))
       {
-         *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r0, N, 0);
-         ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, I0);
+         *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r0, SToff[N-1].sa[2], 0);
+         if (SToff[I0-1].i)
+         {
+            ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, I0);
+            ip = ip->next;
+         }
       }
       else if (IS_CONST(STflag[N-1]))
       {
-         *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r1, I0, 0);
+         *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r1, SToff[I0-1].sa[2],0);
          ip->next = NewInst(NULL, NULL, NULL, MOV, -r0, N, 0);
          ip = ip->next;
          ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, -r1);
+         ip = ip->next;
       }
       else
       {
-         *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r0, N, 0);
-         ip->next = NewInst(NULL, NULL, NULL, LD, -r1, I0, 0);
+         *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r0, SToff[N-1].sa[2], 0);
+         ip->next = NewInst(NULL, NULL, NULL, LD, -r1, SToff[I0-1].sa[2], 0);
          ip = ip->next;
          ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, -r1);
+         ip = ip->next;
       }
-      ip = ip->next;
    }
-   ip->next = NewInst(NULL, ip, NULL, ST, SToff[I-1].sa[2], -r0, 0);
-   *ipupdate = ip = NewInst(NULL, NULL, NULL, LD, -r0, I, 0);
+   ip->next = NewInst(NULL, NULL, NULL, ST, Ioff, -r0, 0);
+   *ipupdate = ip = NewInst(NULL, NULL, NULL, LD, -r0, Ioff, 0);
    ip->next = NewInst(NULL, ip, NULL, SUBCC, -r0, -r0, inc);
-   *iptest = ip = NewInst(NULL, NULL, NULL, JNE, -PCREG, -ICC0, lab);
+   ip = ip->next;
+   ip->next = NewInst(NULL, NULL, NULL, ST, Ioff, -r0, 0);
+   *iptest = ip = NewInst(NULL, NULL, NULL, JNE, -PCREG, -ICC0, lp->body_label);
    GetReg(-1);
 }
 
@@ -404,13 +417,31 @@ int OptimizeLoopControl(LOOPQ *lp, int unroll)
  */
 {
    INSTQ *ipinit, *ipupdate, *iptest;
-   int I, beg, end, inc;
+   int I, beg, end, inc, i;
    int CHANGE=0;
+   ILIST *il;
 
    if (unroll <= 1) unroll = 1;
 #if 1
    KillLoopControl(lp);
-   ForwardLoop(lp, &ipinit, &ipupdate, &iptest);
+   i = (IS_CONST(STflag[lp->inc-1]) && IS_CONST(STflag[lp->end-1])
+        && SToff[lp->inc-1].i == -1 && SToff[lp->end-1].i == 0);
+   il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
+   if (!i && il)
+   {
+      fprintf(stderr, "\nIndex refs in loop prevent SimpleLC!!!\n\n");
+      ForwardLoop(lp, &ipinit, &ipupdate, &iptest);
+   }
+   else
+   {
+      if (i)
+         fprintf(stderr, "\nLoop already in SimpleLC!!!\n\n");
+      else
+         fprintf(stderr, "\nNo index refs in loop allow SimpleLC!!!\n\n");
+      SimpleLC(lp, &ipinit, &ipupdate, &iptest);
+   }
+   if (il)
+      KillIlist(il);
    AddLoopControl(lp, ipinit, ipupdate, iptest);
    KillAllInst(ipinit);
    KillAllInst(ipupdate);

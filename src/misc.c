@@ -89,6 +89,11 @@ ILIST *KillIlist(ILIST *ip)
    return(in);
 }
 
+void KillAllIlist(ILIST *ip)
+{
+   while(ip)
+      ip = KillIlist(ip);
+}
 struct ptrinfo *NewPtrinfo(short ptr, short flag, struct ptrinfo *next)
 {
    struct ptrinfo *p;

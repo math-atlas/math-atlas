@@ -1,7 +1,6 @@
 SHELL = /bin/tcsh
 CC = gcc
-#CCFLAGS = -g -mcpu=ultrasparc
-CCFLAGS = -g -save-temps
+CCFLAGS = -g
 IFKO = ../bin/ifko
 
 all : ibuild fbuild dbuild hbuild irun frun drun hrun
@@ -108,7 +107,7 @@ xdtst11 : mdtst11.o dtst11.o
 	$(CC) $(CCFLAGS) -o $@ mdtst11.o dtst11.o
 
 ibuild :xitst0 xitst1 xitst2 xitst3 xitst4 xitst5 xitst6 xitst7 xitst8 xitst9 \
-        xitst10 xitst11 xitst12 xitst13
+        xitst10 xitst11 xitst12 xitst13 xitst14
 irun:
 	./xitst0
 	./xitst1
@@ -124,6 +123,7 @@ irun:
 	./xitst11
 	./xitst12
 	./xitst13
+	./xitst14
 
 xitst0 : mitst0.o itst0.o
 	$(CC) $(CCFLAGS) -o $@ mitst0.o itst0.o
@@ -153,12 +153,14 @@ xitst12 : mitst12.o itst12.o
 	$(CC) $(CCFLAGS) -o $@ mitst12.o itst12.o
 xitst13 : mitst13.o itst13.o
 	$(CC) $(CCFLAGS) -o $@ mitst13.o itst13.o
+xitst14 : mitst14.o itst14.o
+	$(CC) $(CCFLAGS) -o $@ mitst14.o itst14.o
 
 
 mitst3.c : mitst0.c
 	ln -s mitst0.c mitst3.c
 clean:
-	rm -f x* *.o *.s *.i
+	rm -f x* *.o *.s
 build_comp:
 	cd ../bin ; $(MAKE) ifko
 
