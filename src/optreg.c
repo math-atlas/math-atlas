@@ -2620,13 +2620,17 @@ int DoRemoveOneUseLoads(BLIST *scope)
          {
             k = -ip->inst[1];
             ipuse = FindNextUseInBlock(ip, k-1);
-            if (ipuse && ipuse->inst[3] == ip->inst[1] &&
-                BitVecCheck(ipuse->deads, k-1))
+            if (ipuse)
             {
-               ipuse->inst[3] = ip->inst[2];
-               DelInst(ip);
-               CalcThisUseSet(ipuse);
-               nchanges++;
+               inst = ipuse->inst[0];
+               if (ipuse->inst[3] == ip->inst[1] && !IS_NOMEM(inst) &&
+                   ipuse->inst[2] != -k && BitVecCheck(ipuse->deads, k-1))
+               {
+                  ipuse->inst[3] = ip->inst[2];
+                  DelInst(ip);
+                  CalcThisUseSet(ipuse);
+                  nchanges++;
+               }
             }
          }
       }
@@ -2704,8 +2708,10 @@ int DoLastUseLoadRemoval(BLIST *scope)
             {
                j = -ip->inst[3];
                typ =  j > 0 ? ireg2type(j) : 0;
-               if (j > 0 && ip->inst[1] == -k && ip->inst[2] == -k &&
-                   BitVecCheck(ip->deads, j-1) && typ == ireg2type(k))
+               inst = ip->inst[0];
+               if (j > 0 && j != k && ip->inst[1] == -k && ip->inst[2] == -k &&
+                   BitVecCheck(ip->deads, j-1) && typ == ireg2type(k) && 
+                   !IS_NOMEM(inst) && IS_REORD(inst))
                {
                   ipN = InsNewInst(NULL, NULL, ip, type2move(typ), -k, -j, 0);
                   CalcThisUseSet(ipN);
@@ -2718,6 +2724,7 @@ int DoLastUseLoadRemoval(BLIST *scope)
          }
       }
    }
+
    if (nchanges)
       CFUSETU2D = INDEADU2D = 0;
    return(nchanges);

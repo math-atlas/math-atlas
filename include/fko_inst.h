@@ -393,6 +393,14 @@ char *instmnem[] =
                     (i_) == VDCMP || \
                     (i_) == CFTBFI || (i_) == CFTBDI || (i_) == FCMPWD)
 #define IS_IOPCC(i_) ((i_) == ANDCC || (i_) == SUBCC || (i_) == ANDCC)
+#define IS_NOMEM(i_) ((i_) == MUL || (i_) == UMUL || (i_) == DIV || \
+                      (i_) == UDIV)
+
+#define IS_REORD(i_) ((i_) == AND || (i_) == ANDCC || (i_) == XOR || \
+                      (i_) == FMUL || (i_) == FADD || \
+                      (i_) == FMULD || (i_) == FADDD || \
+                      (i_) == VDADD || (i_) == VDMUL || \
+                      (i_) == VFADD || (i_) == VFMUL)
 
 INSTQ *NewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,
                short dest, short src1, short src2);

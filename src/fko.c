@@ -1232,7 +1232,7 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
       FindLoops();
    AddBlockComments(bbbase);
    AddLoopComments();
-#if 1
+#if 0
    AddSetUseComments(bbbase);   
    AddDeadComments(bbbase); 
 #endif
@@ -1323,11 +1323,13 @@ struct optblkq *DefaultOptBlocks(void)
    op->opts[3] = RemoveOneUseLoads;
    op->opts[4] = LastUseLoadRemoval;
 
-   op->next = NewOptBlock(4, 10, 3, IOPT_GLOB);
+   op->next = NewOptBlock(4, 10, 5, IOPT_GLOB);
    op = op->next;
    op->opts[0] = RegAsg;
    op->opts[1] = CopyProp;
    op->opts[2] = ReverseCopyProp;
+   op->opts[3] = RemoveOneUseLoads;
+   op->opts[4] = LastUseLoadRemoval;
 
    return(base);
 }
