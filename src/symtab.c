@@ -260,16 +260,29 @@ void STsetflag(short i, int flag)
     STflag[i-1] = flag;
 }
 
-void CreateGlobalLocals()
+void CreateFPLocals()
 /*
- * iFKO copies all globals to locals before use.  This routine adds the
- * locals with the name _LOC_<globname> for each global.  Values will
- * be stored in these local locations after stack frame is fully qualified
- * in the routine Glob2Local().
- * NOTE: iFKO presently has no support for writing globals (they are used
- *       only for fp constants).
+ * iFKO handles floating point constants by allocating them as locals on
+ * the stack frame, and writing their values during the function prologue.
+ * This function adds the fp consts as locals, so that NumberLocalsByType
+ * will contain the fp consts.  CreatePrologue then writes the appropriate
+ * values to the frame later, looking for ST entries that are both local
+ * and constant.  For these entries, finds original ST entry in offset,
+ * and takes const value from there.
  */
 {
+   short k, n=0;
+   int fl;
+   char ln[256];
+   for (k=0; k < N; k++)
+   {
+      fl = STflag[k];
+      if (IS_CONST(fl) && (IS_DOUBLE(fl) || IS_FLOAT(fl)))
+      {
+         sprintf(ln, "_FPC_%d\n", n);
+         STdef(ln, fl, k);
+      }
+   }
 }
 void NumberLocalsByType()
 /*
@@ -283,7 +296,7 @@ void NumberLocalsByType()
    for (k=0; k != N; k++)
    {
       fl = STflag[k];
-      if (IS_PARA(fl))
+      if (IS_PARA(fl) || IS_LOCAL(fl))
       {
          SToff[k].sa[0] = SToff[k].i;
          switch(FLAG2TYPE(fl))

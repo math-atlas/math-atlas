@@ -124,11 +124,60 @@ void CreateSysLocals()
 #endif
 }
 
-void Param2Local(INSTQ *next, short rsav, int fsize)
+void FPConstStore(INSTQ *next, short k, short reg)
+{
+   int flag;
+   int *ip;
+   double d;
+   float f;
+   flag = STflag[k];
+   if (IS_VEC(flag))
+   {
+      fprintf(stderr, "Vector constants not yet supported!\n");
+      exit(-1);
+   }
+   else if (IS_DOUBLE(flag))
+   {
+      d = SToff[SToff[k].sa[0]].d
+      #ifdef x86
+         if (d == 0.0)
+      #elif
+      #endif
+   }
+   else
+   {
+      assert(IS_FLOAT(flag));
+   }
+}
+
+void FPConst2Local(INSTQ *next)
+/*
+ * Saves correct bit patterns to frame for fpconst locals
+ */
+{
+   short i, N;
+   int fl;
+   for (i=0, N=STlen(); i < N; i++)
+   {
+      fl = STflag[i];
+      if (IS_CONST(flag) && IS_LOCAL(flag))
+      {
+         assert(IS_FLOAT(flag) || IS_DOUBLE(flag));
+         FPConstStore(next, i);
+      }
+   }
+}
+void Extern2Local(INSTQ *next, short rsav, int fsize)
 /*
  * After stack frame fully qualified, inserts proper store instructions before
- * next in queue in order to save parameters to local frame.  Also writes
- * any values required by system to frame.
+ * next in queue in order to save parameter/system/fp const values to local
+ * frame.
+ *
+ * For some alignments, we may need to address the callers frame by a register
+ * other than sp (because we have lost track of size of frame in forcing
+ * the alignment beyond the machine's native alignment).  If so, rsav is
+ * set to what amounts to the callers sp.  Otherwise, we are indexing by
+ *    %sp + fsize 
  */
 {
    extern int NPARA, DTnzerod, DTnzero, DTabsd, DTabs;
