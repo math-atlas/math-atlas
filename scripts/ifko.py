@@ -4,7 +4,6 @@ import sys
 import fkocmnd
 import l1cmnd
 
-opt = "-X 1 -Y 1 -Fx 16 -Fy 16 -C 0"
 optT = "-X 1 1 -Y 1 1 -Fx 16 -Fy 16"
 #
 #  Given a set of flags, try differing pf inst for read & write arrays
@@ -280,10 +279,15 @@ blas = "asum"
 pre  = "s"
 N = 80000
 N = 1024
+uopt =""
 if (nargs > 1):
    blas = sys.argv[1]
    if (nargs > 2):
       pre = sys.argv[2]
       if (nargs > 3):
          N = int(sys.argv[3])
+         if (nargs > 4):
+            uopt = sys.argv[4]
+opt = "-X 1 -Y 1 -Fx 16 -Fy 16 " + uopt
+print opt
 ifko(blas, pre, N)
