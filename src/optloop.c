@@ -2233,10 +2233,193 @@ short *DeclareAE(int VEC, int ne, short STi)
    }
    return(sp);
 }
-void DoAccumExpansion(LOOPQ *lp, int unroll)
+void AddInstToPrehead(LOOPQ *lp, INSTQ *iadd, short r0, short r1)
+/*
+ * Adds insts iadd to loop preheader without renaming registers
+ * Adds them as last active instruction, but before any jump
+ */
+{
+   BBLOCK *bp;
+   bp = lp->preheader;
+   ipn = bp->ainstN;
+/*
+ * If we must rename registers
+ */
+   if (r0)
+   {
+      assert(0);
+   }
+   if (ipn)
+   {
+      if (!IS_BRANCH(ipn->inst[0]))
+         ipn = NULL;
+   }
+   for (ipA=iadd; ipA; ipA = ipA->next)
+   {
+      ip = InsNewInst(bp, NULL, ipn, ipA->inst[0], ipA->inst[1], ipA->inst[2], 
+                      ipA->inst[3]);
+      CalcThisUseSet(ip);
+   }
+}
+void AddInstToPosttail(LOOPQ *lp, INSTQ *iadd, 
+                      short r0, short r1)
+/*
+ * Adds insts iadd to loop posttail as the first active instruction, after label
+ */
+{
+   INSTQ *ip, *ipp;
+   short s0, s1;
+/* 
+ * See if we need to rename registers
+ */
+   if (!iadd)
+      return;
+   if (r0)
+   {
+/*      HERE  HERE : CALC s0, s1 using livereg */
+      if (!r1)
+      {
+         r1 = r0;
+         s1 = s0;
+      }
+      for (ip=iadd; ip; ip = ip->next)
+      {
+         for (i=1; i < 4; i++)
+         {
+            if (ip->inst[i] == r0)
+               ip->inst[i] = s0;
+            else if (ip->inst[i] == r1)
+               ip->inst[i] = s1;
+         }
+      }
+   }
+/*
+ * Add inst to post-tails
+ */
+   for (bl=lp->posttails; bl; bl = bl->next)
+   {
+      bp = bl->blk;
+      if (bp->ilab)
+         ipp = InsNewInst(bp, bp->ainst1, NULL, ip->inst[0], ip->inst[1], 
+                          ip->inst[2], ip->inst[3]);
+      else
+         ipp = InsNewInst(bp, NULL, bp->ainst1, ip->inst[0], ip->inst[1], 
+                          ip->inst[2], ip->inst[3]);
+      CalcThisUseSet(ipp);
+      for (ip=iadd->next; ip; ip = ip->next)
+      {
+         ipp = InsNewInst(bp, ipp, NULL, ip->inst[0], ip->inst[1], 
+                          ip->inst[2], ip->inst[3]);
+         CalcThisUseSet(ipp);
+      }
+   }
+}
+void GetAEHeadTail(LOOPQ *lp, short ae, short ne, short *aes, int vec)
+/*
+ * RETURNS: dummy instq, where prev pts to inst to be added to the loop header,
+ *          and next is the reduction to be added to loop tail
+ */
+{
+   enum inst zero, add, ld, st;
+   INSTQ *ibase, *ip, *ipb;
+   int i, n;
+   short r0, r1;
+
+   ibase = NewInst(NULL, NULL, NULL, 0, 0, 0, 0);
+   type = FLAG2TYPE(STflag[ae]);
+   if (VEC)
+   {
+      if (type == T_FLOAT)
+         type = T_VFLOAT;
+      else if (type == T_DOUBLE)
+         type = T_VDOUBLE;
+   }
+   switch(type)
+   {
+   T_FLOAT:
+      ld = FLD;
+      st = FST;
+      add = FADD;
+      zero = FZERO;
+      break;
+   T_DOUBLE:
+      ld = FLDD;
+      st = FSTD;
+      add = FADDD;
+      zero = FZEROD;
+      break;
+   T_VFLOAT:
+      ld = VFLD;
+      st = VFST;
+      add = VFADD;
+      zero = VFZERO;
+      break;
+   T_VDOUBLE:
+      ld = VDLD;
+      st = VDST;
+      add = VDADD;
+      zero = VDZERO;
+      break;
+   default:
+      fko_error(__LINE__, "Unknown type file %s", __FILE__);
+      assert(0);
+   }
+/*
+ * Zero shadow accumulators in loop header
+ */
+   ip = ipb = NULL
+   for (i=1; i <= ne; i++)
+   {
+      ip = NewInst(NULL, ip, NULL, zero, aes[i], 0, 0);
+      if (!ipb)
+         ipb = ip;
+   }
+   ibase->prev = ipb;
+/* 
+ * These are the registers that should be changed to a dead reg during insertion
+ */
+   r0 = -TNREG-1;
+   r1 = -TNREG-2;
+   ibase->inst[1] = r0;
+   ibase->inst[2] = r1;
+/*
+ * Use binary tree to reduce aes[:] to ae
+   assert(aes[0] == ne-1);
+   aes[0] = ae;
+   for (j=0, i=ne; i; i >>= 1) j++;
+   if (1<<(j-1) == ne)
+      j--;
+
+   ip = ibase;
+   for (i=1; i <= ne; i <<= 1, j--)
+   {
+      for (k=0; k < j; k++)
+      {
+         i1 = k*(i+i);
+         i2 = i1 + i;
+         if (i2 < ne)
+         {
+            i1 = aes[i1];
+            i2 = aes[i2];
+            ip->next = NewInst(NULL, ip, NULL, ld, r0, SToff[i1].sa[2], 0);
+            ip = ip->next;
+            ip->next = NewInst(NULL, ip, NULL, ld, r1, SToff[i2].sa[2], 0);
+            ip = ip->next;
+            ip->next = NewInst(NULL, ip, NULL, add, r0, r0, r1);
+            ip = ip->next;
+            ip->next = NewInst(NULL, ip, NULL, st, SToff[i1].sa[2], r0, 0);
+            ip = ip->next;
+         }
+      }
+   }
+   aes[0] = ne-1;
+   return(ibase);
+}
+void DoAllAccumExpansion(LOOPQ *lp, int unroll, int vec)
 /*
  * Inserts inst required for Accumulator Expansion
  * NOTE: assumes called after loop unrolling, but before repeatable opt
+ *       DeclareAE must have been called before Stage[1,3]
  */
 {
 }

@@ -500,7 +500,7 @@ ERR:
    if (aeb)
    {
       n = KillDupPtrinfo(args, pfb);
-      AEs = PtrinfoToStrings(args, n, pfb);
+      AES = PtrinfoToStrings(args, n, pfb);
       AEn = malloc(sizeof(short)*(n+1));
       AEn[0] = n;
       for (pf=aeb,i=1; i <= n; pf=pf->next,i++)
@@ -752,15 +752,12 @@ static void WriteMiscToFile(char *name)
       n = optloop->ne ? optloop->ne[0] : 0;
       WriteShortArrayToFile(fp, n, optloop->ae+1);
       WriteShortArrayToFile(fp, n, optloop->ne+1);
-      WriteArrayOfShortArrayToFile(fp, n, optloop->aen);
+      WriteArrayOfShortArrayToFile(fp, n, optloop->aes);
       assert(!optloop->abalign);  /* fix this later */
       n = PFDST ? PFDST[0] : 0;
       WriteStringArrayToFile(fp, n, PFARR);
       WriteShortArrayToFile(fp, n, PFLVL+1);
       WriteShortArrayToFile(fp, n, PFDST+1);
-      n = AEn ? AEn[0] : 0;
-      WriteStringArrayToFile(fp, n, AES);
-      WriteShortArrayToFile(fp, n, AEn+1);
    }
    else
    {
@@ -843,7 +840,7 @@ static void ReadMiscFromFile(char *name)
       optloop->pfdist  = ReadShortArrayFromFile(fp);
       optloop->ae      = ReadShortArrayFromFile(fp);
       optloop->ne      = ReadShortArrayFromFile(fp);
-      optloop->aen     = ReadArrayOfShortArrayFromFile(fp);
+      optloop->aes     = ReadArrayOfShortArrayFromFile(fp);
       optloop->abalign = NULL;  /* handle this later */
       optloop->preheader = optloop->header = NULL;
       optloop->tails = optloop->posttails = NULL;
@@ -861,13 +858,6 @@ static void ReadMiscFromFile(char *name)
       PFARR = ReadStringArrayFromFile(fp);
       PFLVL = ReadShortArrayFromFile(fp);
       PFDST = ReadShortArrayFromFile(fp);
-      if (AEn)
-      {
-         KillArrayOfStr(AEn[0], AES);
-         free(AEn);
-      }
-      AES = ReadStringArrayFromFile(fp);
-      AEn = ReadShortArrayFromFile(fp);
    }
    else 
       optloop = NULL;
@@ -1373,16 +1363,6 @@ void UpdateNamedLoopInfo()
 
    if (!optloop)
       return;
-/*
- * HERE HERE HERE: need to finish accum expans
- */
-   if (AES)
-   {
-      assert(optloop->vscal);
-      optloop->ae = (AEn[0], AES, optloop->vscal[0], optloop->vscal+1);
-      optloop->ne = AEn;
-      AEn = NULL;
-   }
    if (PFARR)
    {
 /*
@@ -1524,6 +1504,40 @@ void DoStage2(int SAVESP, int SVSTATE)
       SaveFKOState(2);
 }
 
+void AddOptSTentries()
+/*
+ * Some optimizations require additional locals to be allocated.  This routine
+ * adds them to ST, though they may not be used if optimization is not applied
+ * Must call this routine before initial save state, so args remain in ST for
+ * later use.
+ */
+{
+   char ln[1024];
+   int i, n;
+   short st;
+   short *sp, **asp;
+
+   if (optloop && AEn)
+   {
+      n = AEn[0];
+      sp = malloc((n+1)*sizeof(short));
+      asp = malloc((n+1)*sizeof(short*));
+      assert(sp && asp);
+      asp[n] = NULL;
+      sp[0] = n;
+      for (i=1; i <= n; i++)
+      {
+         sp[i] = FindVarFromName(AES[i-1]);
+         assert(sp[i]);
+         asp[i] = DeclareAE(DO_VECT(FKO_FLAG), AEn[i], sp[i]);
+      }
+      optloop->ae = sp;
+      optloop->ne = AEn;
+      AEn = NULL;
+      optloop->aes = asp;
+   }
+}
+
 int main(int nargs, char **args)
 {
    FILE *fpin, *fpout, *fpl;
@@ -1554,6 +1568,7 @@ int main(int nargs, char **args)
       bp->inst1 = bp->instN = NULL;
       yyparse();
       fclose(fpin);
+      AddOptSTEntries();
       SaveFKOState(0);
       if (!fpLOOPINFO && (FKO_FLAG & IFF_VECTORIZE))
       {

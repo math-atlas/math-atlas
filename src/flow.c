@@ -847,13 +847,17 @@ void InvalidateLoopInfo(void)
       lp->pfarrs = optloop->pfarrs;
       lp->pfdist = optloop->pfdist;
       lp->pfflag = optloop->pfflag;
+      lp->ae = optloop->ae;
+      lp->ne = optloop->ne;
+      lp->aes = optloop->aes;
       lp->nopf = optloop->nopf;
       lp->aaligned = optloop->aaligned;
       lp->abalign = optloop->abalign;
       lp->CU_label = optloop->CU_label;
       lp->PTCU_label = optloop->PTCU_label;
       optloop->vsflag = optloop->vsoflag = optloop->vscal = optloop->varrs = 
-         optloop->nopf = optloop->aaligned = NULL;
+         optloop->ae = optloop->ne = optloop->nopf = optloop->aaligned = NULL;
+      optloop->aes = NULL;
       optloop->abalign = NULL;
       KillLoop(optloop);
       optloop = lp;

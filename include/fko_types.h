@@ -151,7 +151,7 @@ struct loopq
    short *pfflag;     /* flag for prefetch */
    short *ae;         /* accumulators to expand */
    short *ne;         /* # of acc to use for each original acc */
-   short **aen;       /* shadow acc for each ae */
+   short **aes;       /* shadow acc for each ae */
    BBLOCK *preheader, *header;
    BLIST *tails, *posttails;
    BLIST *blocks;     /* blocks in the loop */
