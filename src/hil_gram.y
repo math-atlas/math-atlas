@@ -1,4 +1,5 @@
 %{
+/*   #define YYDEBUG 1  */
    #include "ifko.h"
    #include "fko_h2l.h"
    int WhereAt=0, lnno=1;
@@ -62,6 +63,9 @@ line : stateflag
      ;
 stateflag: ROUT_NAME NAME 
          {
+            #ifdef YYDEBUG
+               yydebug = 1;
+            #endif
             if (WhereAt != 0)
                yyerror("Improper ROUTINE statement");
             WhereAt = 1;
@@ -101,18 +105,18 @@ loopsm   : '{' PE '}'  { $$ = 1; }
          | '{' '-' '}' { $$ = -2; }
          |             { $$ = 0; }
          ;
-loop_beg :LOOP_BEGIN ID '=' avar loopsm ',' avar loopsm ',' avar loopsm2
+loop_beg : LOOP_BEGIN ID '=' avar loopsm ',' avar loopsm ',' avar loopsm2
          { $$ = DoLoop($2, $4, $7, $10, $5, $8, $11); }
-         LOOP_BEGIN ID '=' avar loopsm ',' avar loopsm
+         | LOOP_BEGIN ID '=' avar loopsm ',' avar loopsm
          { $$ = DoLoop($2, $4, $7, STiconstlookup(1), $5, $8, 2); }
          ;
-loop_markup : LOOP_LIST_MU LST idlist ';' { HandleLoopListMU($1); }
-            | MAX_UNROLL   LST icexpr ';' { maxunroll = $3; }
+loop_markup : LOOP_LIST_MU LST idlist { HandleLoopListMU($1); }
+            | MAX_UNROLL   LST icexpr { maxunroll = $3; }
             ;
 loop_markups : loop_markups loop_markup ';'
              |
              ;
-loop_body : LOOP_BODY statements LOOP_END ; 
+loop_body : LOOP_BODY statements LOOP_END ; { DoComment("Done LOOP_BODY"); }
 loop : loop_beg loop_markups loop_body ;   { UpdateLoop($1); }
 
 typedec : INT LST idlist              { declare_list(T_INT); }
@@ -142,6 +146,7 @@ inititem :  ID '=' iconst { ConstInit($1, $3); }
 comment : COMMENT { DoComment($1); }
         ;
 statements : statements statement
+           | statement
            ;
 statement : arith ';'
           | comment
@@ -204,16 +209,16 @@ fpconst : fconst	{$$ = $1; }
 	;
 ptrderef : ID '[' icexpr ']' { $$ = AddArrayDeref($1, 0, $3); }
          | ID '[' ID ']'    { $$ = AddArrayDeref($1, $3, 0); }
-         /*
          | ID '[' ID '+' icexpr ']' { $$ = AddArrayDeref($1, $3, $5); }
          | ID '[' ID '-' icexpr ']' { $$ = AddArrayDeref($1, $3, -$5); }
-         */
          ;
 fconst : fcexpr         {$$ = STfconstlookup($1);} ;
 dconst : dcexpr         {$$ = STdconstlookup($1);} ;
 iconst : icexpr         {$$ = STiconstlookup($1);} ;
 ID : NAME               
-   {if (!($$ = STstrlookup($1))) fko_error(__LINE__,"unknown ID '%s'", $1); }
+   {
+   fprintf(stderr, "strlookup %s -> %d\n", $1, STstrlookup($1));
+   if (!($$ = STstrlookup($1))) fko_error(__LINE__,"unknown ID '%s'", $1); }
    ;
 avar : ID               {$$ = $1;}
      | fconst           {$$ = $1;}
@@ -280,6 +285,8 @@ struct idlist *ReverseList(struct idlist *base0)
 
 static void UpdateLoop(struct loopq *lp)
 {
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
+/* InsNewInst(NULL, NULL, COMMENT, STstrconstlookup("start UpdateLoop"), 0, 0); */
    lp->maxunroll = maxunroll;
    lp->slivein  = LMA[0];
    lp->sliveout = LMA[1];
@@ -288,13 +295,13 @@ static void UpdateLoop(struct loopq *lp)
    lp->nopf     = LMA[4];
    lp->aaligned = aalign;
    lp->abalign  = balign;
-   lp->iend = InsNewInst(NULL, NULL, LOOP_END, lp->loopnum, 0, 0);
    LMA[0] = LMA[1] = LMA[2] = LMA[3] = LMA[4] = aalign = NULL;
    balign = NULL;
    maxunroll = 0;
+   FinishLoop(lp);
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
 }
 
-/* HERE HERE */
 void HandleLoopListMU(int which)
 /*
  * Handles loop markup consisting of simple lists.  The markups are incoded
@@ -313,6 +320,7 @@ void HandleLoopListMU(int which)
    struct idlist *id;
    for (id=idhead,n=0; id; id=id->next) n++;
 
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    if (which == 100)
    {
       assert(!aalign && !balign);
@@ -348,6 +356,7 @@ void HandleLoopListMU(int which)
       LMA[which] = sp - 1;
    }
    KillIDs();
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
 }
 
 void para_list()

@@ -12,14 +12,21 @@ frun   : fbuild
 	./xftst2
 	./xftst3
 
-ibuild : xitst0 xitst1 xitst2 xitst3
+ibuild : xitst0 xitst1 xitst2 xitst3 xitst4 xitst5 xitst6 
 irun : ibuild
 	./xitst0
 	./xitst1
 	./xitst2
 	./xitst3
+	./xitst4
+	./xitst5
+	./xitst6
 
 
+xitst8 : mitst8.o itst8.o
+	$(CC) $(CCFLAGS) -o $@ mitst8.o itst8.o
+xitst7 : mitst7.o itst7.o
+	$(CC) $(CCFLAGS) -o $@ mitst7.o itst7.o
 xitst6 : mitst6.o itst6.o
 	$(CC) $(CCFLAGS) -o $@ mitst6.o itst6.o
 xitst5 : mitst5.o itst5.o

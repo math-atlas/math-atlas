@@ -612,8 +612,8 @@ struct assmln *lil2ass(INSTQ *head)
          break;
       case CMP:
          #ifdef X86
-            ap->next = PrintAssln("\tcmp\t%s,%s\n", GetIregOrDeref(op2),
-                                  GetIregOrConst(op3));
+            ap->next = PrintAssln("\tcmp\t%s,%s\n", GetIregOrConst(op3),
+                                  GetIregOrDeref(op2));
          #elif defined(SPARC)
             ap->next = PrintAssln("\tsubcc\t%s,%s,%%g0\n", 
                                   archiregs[-IREGBEG-op2],
@@ -664,6 +664,15 @@ struct assmln *lil2ass(INSTQ *head)
             ap->next = PrintAssln("\tba\t%s\n\tnop\n", STname[op1-1]);
          #elif defined(PPC)
             ap->next = PrintAssln("\tb\t%s", STname[op1-1]);
+         #endif
+         break;
+      case JLT:
+         #ifdef X86
+            ap->next = PrintAssln("\tjl\t%s\n", STname[op1-1]);
+         #elif defined(SPARC)
+            ap->next = PrintAssln("\tbl\t%s\n", STname[op1-1]);
+         #elif defined(PPC)
+            ap->next = PrintAssln("\tblt\t%s\n", STname[op1-1]);
          #endif
          break;
       case RET:
@@ -865,14 +874,11 @@ struct assmln *lil2ass(INSTQ *head)
          break;
       case CMPFLAG:
          #ifdef X86
-	    ap->next = PrintAssln("# %s %s %s\n", STi2str(op1), 
-	                          STi2str(op2), STi2str(op3));
+	    ap->next = PrintAssln("# CMPFLAG %d %d %d\n", op1, op2, op3);
          #elif defined(SPARC)
-	    ap->next = PrintAssln("! %s %s %s\n", STi2str(op1), 
-	                          STi2str(op2), STi2str(op3));
+	    ap->next = PrintAssln("! CMPFLAG %d %d %d\n", op1, op2, op3);
          #elif defined(PPC)
-	       ap->next = PrintAssln("# %s %s %s\n", STi2str(op1), 
-	                             STi2str(op2), STi2str(op3));
+	       ap->next = PrintAssln("# CMPFLAG %d %d %d\n", op1, p2, op3);
          #endif
          break;
       case FMOVD:
@@ -935,8 +941,7 @@ fprintf(stderr, "regnam='%s'\n", archdregs[-DREGBEG-op1]);
          #endif
          break;
 /*
- *  HERE HERE HERE: need special case for when moving to fp stack (for return)!
-      DUMM
+ *  HERE HERE HERE:
  */
       case FABS:
       case FCMP:
@@ -963,7 +968,6 @@ fprintf(stderr, "regnam='%s'\n", archdregs[-DREGBEG-op1]);
       case ABSL:
       case JEQ:
       case JNE:
-      case JLT:
       case JLE:
       case JGT:
       case JGE:
