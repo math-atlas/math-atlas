@@ -285,49 +285,110 @@ void CreateSysLocals()
 {
 #ifdef X86
    extern int DTnzerod, DTabsd, DTnzero, DTabs, DTx87, DTx87d;
+   int k;
    if (DTnzerod)
    {
       if (DTnzerod == -1)
+      {
          DTnzerod = STdef("_NEGZEROD", T_VDOUBLE | LOCAL_BIT, 0);
-      SToff[DTnzerod-1].sa[2] = AddDerefEntry(-REG_SP, DTnzerod, -DTnzerod, 0,
-                                              DTnzerod);
+         SToff[DTnzerod-1].sa[2] = AddDerefEntry(-REG_SP, DTnzerod, -DTnzerod,
+                                                 0, DTnzerod);
+      }
+      else
+      {
+         k = SToff[DTnzerod-1].sa[2]-1;
+         SToff[k].sa[0] = -REG_SP;
+         SToff[k].sa[1] = DTnzerod;
+         SToff[k].sa[2] = -DTnzerod;
+         SToff[k].sa[3] = DTnzerod;
+      }
    }
    if (DTabsd)
    {
       if (DTabsd == -1)
+      {
          DTabsd = STdef("_ABSVLD", T_VDOUBLE | LOCAL_BIT, 0);
-      SToff[DTabsd-1].sa[2] = AddDerefEntry(-REG_SP, DTabsd, -DTabsd, 0,
-                                            DTabsd);
+         SToff[DTabsd-1].sa[2] = AddDerefEntry(-REG_SP, DTabsd, -DTabsd, 0,
+                                               DTabsd);
+      }
+      else
+      {
+         k = SToff[DTabsd-1].sa[2]-1;
+         SToff[k].sa[0] = -REG_SP;
+         SToff[k].sa[1] = DTabsd;
+         SToff[k].sa[2] = -DTabsd;
+         SToff[k].sa[3] = DTabsd;
+      }
 fprintf(stderr, "DTabsd = %d,%d\n", DTabsd, SToff[DTabsd-1].sa[2]);
    }
    if (DTnzero)
    {
       if (DTnzero == -1)
+      {
          DTnzero = STdef("_NEGZERO", T_VFLOAT | LOCAL_BIT, 0);
-      SToff[DTnzero-1].sa[2] = AddDerefEntry(-REG_SP, DTnzero, -DTnzero, 0,
-                                             DTnzero);
+         SToff[DTnzero-1].sa[2] = AddDerefEntry(-REG_SP, DTnzero, -DTnzero, 0,
+                                                DTnzero);
+      }
+      else
+      {
+         k = SToff[DTnzero-1].sa[2]-1;
+         SToff[k].sa[0] = -REG_SP;
+         SToff[k].sa[1] = DTnzero;
+         SToff[k].sa[2] = -DTnzero;
+         SToff[k].sa[3] = DTnzero;
+      }
    }
    if (DTabs)
    {
       if (DTabs == -1)
+      {
          DTabs = STdef("_ABSVAL", T_VFLOAT | LOCAL_BIT, 0);
-      SToff[DTabs-1].sa[2] = AddDerefEntry(-REG_SP, DTabs, -DTabs, 0,
-                                           DTabs);
+         SToff[DTabs-1].sa[2] = AddDerefEntry(-REG_SP, DTabs, -DTabs, 0,
+                                              DTabs);
+      }
+      else
+      {
+         k = SToff[DTabs-1].sa[2]-1;
+         SToff[k].sa[0] = -REG_SP;
+         SToff[k].sa[1] = DTabs;
+         SToff[k].sa[2] = -DTabs;
+         SToff[k].sa[3] = DTabs;
+      }
    }
    #ifdef X86_32
    if (DTx87)
    {
       if (DTx87 == -1)
+      {
          DTx87 = STdef("_x87f", T_FLOAT | LOCAL_BIT, 0);
-      SToff[DTx87-1].sa[2] = AddDerefEntry(-REG_SP, DTx87, -DTx87, 0,
-                                           DTx87);
+         SToff[DTx87-1].sa[2] = AddDerefEntry(-REG_SP, DTx87, -DTx87, 0,
+                                              DTx87);
+      }
+      else
+      {
+         k = SToff[DTx87-1].sa[2]-1;
+         SToff[k].sa[0] = -REG_SP;
+         SToff[k].sa[1] = DTx87;
+         SToff[k].sa[2] = -DTx87;
+         SToff[k].sa[3] = DTx87;
+      }
    }
    if (DTx87d)
    {
       if (DTx87d == -1)
+      {
          DTx87d = STdef("_x87d", T_DOUBLE | LOCAL_BIT, 0);
-      SToff[DTx87d-1].sa[2] = AddDerefEntry(-REG_SP, DTx87d, -DTx87d, 0,
-                                            DTx87d);
+         SToff[DTx87d-1].sa[2] = AddDerefEntry(-REG_SP, DTx87d, -DTx87d, 0,
+                                               DTx87d);
+      }
+      else
+      {
+         k = SToff[DTx87d-1].sa[2]-1;
+         SToff[k].sa[0] = -REG_SP;
+         SToff[k].sa[1] = DTx87d;
+         SToff[k].sa[2] = -DTx87d;
+         SToff[k].sa[3] = DTx87d;
+      }
 fprintf(stderr, "\n\nDTx87d=[%d,%d]\n\n", DTx87d, SToff[DTx87d-1].sa[2]);
    }
    #endif
@@ -620,9 +681,7 @@ void Extern2Local(INSTQ *next, int rsav)
    #endif
    extern short STderef;
 
-   if (ParaDerefQ)
-      KillAllLocinit(ParaDerefQ);
-   ParaDerefQ = 0;
+   assert(!ParaDerefQ);
    dreg = GetReg(T_DOUBLE);
    freg = GetReg(T_FLOAT);
    if (NPARA)
@@ -946,16 +1005,20 @@ void Extern2Local(INSTQ *next, int rsav)
       }
       if (DTabs)
       {
+int jk;
          PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for abss");
          k = SToff[SToff[DTabs-1].sa[2]-1].sa[3];
          InsNewInst(NULL, NULL, next, MOV, -ir, STiconstlookup(0x7fffffff), 0);
          InsNewInst(NULL, NULL, next, ST, SToff[DTabs-1].sa[2], -ir, 0);
+jk = AddDerefEntry(-REG_SP, DTabs, -DTabs, k+4, DTabs);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, DTabs, -DTabs, k+4, DTabs), -ir, 0);
+                    jk /*AddDerefEntry(-REG_SP, DTabs, -DTabs, k+4, DTabs)*/, -ir, 0);
+jk = AddDerefEntry(-REG_SP, DTabs, -DTabs, k+8, DTabs);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, DTabs, -DTabs, k+8, DTabs), -ir, 0);
+                    jk /*AddDerefEntry(-REG_SP, DTabs, -DTabs, k+8, DTabs)*/, -ir, 0);
+jk = AddDerefEntry(-REG_SP, DTabs, -DTabs, k+12, DTabs);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, DTabs, -DTabs, k+12, DTabs), -ir, 0);
+                    jk /*AddDerefEntry(-REG_SP, DTabs, -DTabs, k+12, DTabs)*/, -ir, 0);
       }
       InsNewInst(NULL, NULL, next, COMMENT, STstrconstlookup("done archspec"), 0, 0);
    #endif
