@@ -454,7 +454,7 @@ void FPConstStore(INSTQ *next, short id, short con,
             InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
             bitload(next, reg, 12, ip[1]);
             InsNewInst(NULL, NULL, next, ST, 
-               AddDerefEntry(-REG_SP, STderef, -STderef, i+4), -reg, 0, con);
+               AddDerefEntry(-REG_SP, STderef, -STderef, i+4, con), -reg, 0);
 /*
  *       PPC loads 16 bits at a time
  */
