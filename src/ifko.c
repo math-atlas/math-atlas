@@ -25,7 +25,10 @@ int main(int nargs, char **args)
    KillAllBasicBlocks(bbbase);
    bbbase = bp;
    FixFrame(bbbase);
-   SetBlockActiveInst(bbbase);
+   bp = FindBasicBlocks(bbbase);
+   KillAllBasicBlocks(bbbase);
+   bbbase = bp;
+   SetBlocksActiveInst(bbbase);
    FindPredSuccBlocks(bbbase);
    CalcDoms(bbbase);
    CheckFlow(bp, __FILE__, __LINE__);
