@@ -433,7 +433,7 @@ void InitLocalConst(INSTQ *next, short reg)
    int flag;
    InsNewInst(NULL, next, COMMENT, 0, 0, 0);
    InsNewInst(NULL, next, COMMENT, 
-              STstrconstlookup("Initialize constant locals"), 0, 0);
+              STstrconstlookup("Initialize locals to constants"), 0, 0);
    InsNewInst(NULL, next, COMMENT, 0, 0, 0);
    for (lp=LIhead; lp; lp = LIhead)
    {

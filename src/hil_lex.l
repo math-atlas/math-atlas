@@ -70,7 +70,7 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "PARAMS"   { return(PARAMS); }
 "ABS"      { return(ABST); }
 "IF"       { return(IF); }
-"GOTO"     { fprintf(stderr, "SEEN GOTO  \n"); return(GOTO); }
+"GOTO"     { return(GOTO); }
 {ID}      { sprintf(yylval.str, "%s", yytext); return(NAME); }
 
 %%

@@ -159,6 +159,7 @@ statement : arith ';'
 	  | ID '=' const ';'	  {DoMove($1, $3);}
           | RETURN avar  ';'      {DoReturn($2);}
           | NAME ':'              {DoLabel($1);}
+          | GOTO NAME ';'         {DoGoto($2);}
           | ifstate ';'
 	  ;
 
@@ -449,5 +450,6 @@ void ConstInit(short id, short con)
 }
 yyerror(char *msg)
 {
-   fprintf(stderr, "Line %d: %s\n", lnno, msg);
+   fprintf(stderr, "\n\nERROR: Line %d: %s\n\n", lnno, msg);
+   exit(-1);
 }

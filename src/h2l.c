@@ -712,6 +712,11 @@ void FinishLoop(struct loopq *lp)
    GetReg(-1);
 }
 
+void DoGoto(char *name)
+{
+fprintf(stderr, "\n\nGOT GOTO %s\n\n", name);
+   InsNewInst(NULL, NULL, JMP, 0, STlabellookup(name), 0);
+}
 void DoLabel(char *name)
 {
    InsNewInst(NULL, NULL, LABEL, STlabellookup(name), 0, 0);
@@ -837,7 +842,6 @@ fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
                     -ireg, -freg0, 0);
          InsNewInst(NULL, NULL, CMP, ICC0, -ireg, STiconstlookup(0));
          InsNewInst(NULL, NULL, br, 0, ICC0, label);
-         return;
       }
 #endif
 }

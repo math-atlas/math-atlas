@@ -1127,7 +1127,7 @@ struct assmln *lil2ass(INSTQ *head)
          assert(op3 > 0);
          k = SToff[op3-1].i;
          assert(k < 3 && k >= 0);
-         ap->next = PrintAssln("\tcmppd\t$%d, %s, %s\n", k, 
+         ap->next = PrintAssln("\tcmpsd\t$%d, %s, %s\n", k, 
                        archdregs[-DREGBEG-op2], archdregs[-DREGBEG-op1]);
          break;
       case CVTBFI:
@@ -1634,6 +1634,7 @@ struct assmln *lil2ass(INSTQ *head)
         fko_error(__LINE__, "Unknown instruction %d after %s\n", ip->inst[0],
                   ap->ln);
       }
+/*      fprintf(stderr, "%s", ap->ln); */
       ip = ip->next;
       ap = ap->next;
    }
