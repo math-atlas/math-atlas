@@ -1,5 +1,18 @@
 #ifndef FKO_INST_H
 #define FKO_INST_H
+enum comp_flag
+/*
+ * enumerated type for compiler flag, so format is:
+ * CMPFLAG, <enum comp_flag>, <info1>, <info2>
+ */
+{
+   CF_LOOP_INIT,  /* loop# */
+   CF_LOOP_BODY,
+   CF_LOOP_UPDATE,
+   CF_LOOP_TEST,
+   CF_LOOP_END
+};
+
 /*
  *
  * [r]  = integer register

@@ -48,7 +48,8 @@ struct sdata  /* Structure for static data */
 struct loopq
 {
    int flag;
-   short I, beg, end;
+   short I, beg, end, inc;
+   short body_label;
    short loopnum;
    short maxunroll;
    short *slivein, *sliveout, *adeadin, *adeadout, *nopf;

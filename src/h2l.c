@@ -596,6 +596,8 @@ struct loopq *DoLoop(short I, short start, short end, short inc,
 {
    int flag=0;
    struct loopq *lp;
+   short ireg;
+   char *lnam[128]
 /*
  * If signs of loop parts are unknown, see if we can deduce them
  */
@@ -625,30 +627,43 @@ struct loopq *DoLoop(short I, short start, short end, short inc,
    lp->I = I;
    lp->beg = start;
    lp->end = end;
-   lp->ibeg = InsNewInst(NULL, NULL,  LOOP_BEG, lp->loopnum, 0, 0);
+   lp->inc = inc;
+
+   lp->ibeg = InsNewInst(NULL, NULL, CMPFLAG, CF_LOOP_INIT, lp->loopnum, 0);
+   flag = STflag[start-1];
+   assert(!IS_PTR(flag));
+   if (IS_CONST(flag)) DoMove(I, start);
+   else
+   {
+      ireg = LocalLoad(start);
+      LocalStore(I, ireg);
+      GetFlag(-1);
+   }
+   InsNewInst(NULL, NULL, CMPFLAG, CF_LOOP_BODY, lp->loopnum, 0);
+   sprintf(lnam, "_LOOP_%d", lp->loopnum);
+   lp->body_label = STstrconstlookup(lnam);
+   InsNewInst(NULL, NULL, LABEL, lp->body_label, lp->loopnum, 0);
    return(lp);
 }
 
-void ExpandLoops()
+void FinishLoop(struct loopq *lp)
 /*
- * This routine puts in actual LIL instructions for loop control
+ * After loop_begin and loop_body written, writes loop_update and test
  */
-HERE HERE : need to finish, or just put somewhere else.
 {
-   struct loopq *lp;
-   short ireg;
-   for (lp=loopq; lp; lp=lp->next)
-   {
+   short ireg, iend;
+   int flag;
 /*
- *    Perform index initialization before loop
+ * Update loop counter
  */
-      ireg = GetReg(AINT);
-      if (IS_CONST(STflag[lp->beg
-      if (!IS_PTR(STflag[lp->beg-1])) DoMove(lp->I, lp->beg);
-      else DoArrayLoad(lp->id, lp->beg);
-
-/*
- *    Increment index, and branch on test after loop
- */
-   }
+   InsNewInst(NULL, NULL, CMPFLAG, CF_LOOP_UPDATE, lp->loopnum, 0);
+   DoArith(lp->I, lp->I, '+', lp->inc);
+   InsNewInst(NULL, NULL, CMPFLAG, CF_LOOP_TEST, lp->loopnum, 0);
+   ireg = GetReg(AINT);
+   flag = STflag[lp->end-1];
+   if (IS_CONST(flag)) iend = lp->end;
+   else iend = LocalLoad(iend);
+   InsNewInst(NULL, NULL, CMP, 0, ireg, iend);
+   InsNewInst(NULL, NULL, JLT, lp->body_label, lp->loopnum, 0);
+   GetFlag(-1);
 }
