@@ -862,9 +862,8 @@ void Extern2Local(INSTQ *next, int rsav)
          }
          j++;
       }
-      if (USED)
-         InsNewInst(NULL, NULL, next, COMMENT, STstrconstlookup("done paras"),
-                    0, 0);
+      InsNewInst(NULL, NULL, next, COMMENT, STstrconstlookup("done paras"),
+                 0, 0);
       if (DTnzerod > 0)
       {
          PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
