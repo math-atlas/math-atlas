@@ -601,7 +601,10 @@ void AddLoopControl(LOOPQ *lp, INSTQ *ipinit, INSTQ *ipupdate, INSTQ *iptest)
    }
 }
 
-int OptimizeLoopControl(LOOPQ *lp, int unroll, int NeedKilling)
+void OptimizeLoopControl(LOOPQ *lp, /* Loop whose control should be opt */
+                         int unroll, /* unroll factor to apply */
+                         int NeedKilling, /* 0 if LC already removed */
+                         INSTQ *ippost)   /* inst to add to end of loop */
 /*
  * attempts to generate optimized loop control for the given loop
  * NOTE: if blind unrolling has been applied, expect that loop counter
@@ -609,7 +612,7 @@ int OptimizeLoopControl(LOOPQ *lp, int unroll, int NeedKilling)
  *       we would call this routine with unroll=1
  */
 {
-   INSTQ *ipinit, *ipupdate, *iptest;
+   INSTQ *ipinit, *ipupdate, *iptest, *ip;
    ILIST *il;
    int I, beg, end, inc, i;
    int CHANGE=0;
@@ -641,6 +644,12 @@ int OptimizeLoopControl(LOOPQ *lp, int unroll, int NeedKilling)
    }
    if (il)
       KillIlist(il);
+   if (ippost)
+   {
+      for (ip=ippost; ip->next; ip = ip->next);
+      ip->next = ipupdate;
+      ipupdate = ippost;
+   }
    AddLoopControl(lp, ipinit, ipupdate, iptest);
    KillAllInst(ipinit);
    KillAllInst(ipupdate);
@@ -771,6 +780,7 @@ int UnrollLoop(LOOPQ *lp, int unroll)
    BBLOCK *newCF;
    BLIST **dupblks, *bl;
    ILIST *il;
+   INSTQ *ippost;
    struct ptrinfo *pi;
    int i, UsesIndex=1, UsesPtrs=1;
    enum comp_flag kbeg, kend;
@@ -810,16 +820,42 @@ int UnrollLoop(LOOPQ *lp, int unroll)
  */
       kend = (i != unroll-1) ? CF_LOOP_END : CF_LOOP_BODY;
       KillCompflagInRange(dupblks[i-1], kbeg, kend);
+      if (UsesPtrs)
+      {
+/*
+ *       Find the moving pointers used in unrolled loop
+ */
+         pi = FindMovingPointers(dupblks[i-1]);
+         assert(pi);
+/*
+ *       Kill pointer updates in loop, and get ptr inc code to add to EOL
+ */
+         ippost = KillPointerUpdates(pi, i);
+         assert(ippost);
+/*
+ *       Find all lds of moving ptrs, and add unrolling factor to them
+ */
+         UpdatePointerLoads(dupblks[i-1], pi, i);
+      }
+/*
+ *    Update indices to add in unrolling factor
+ */
       if (UsesIndex)
          UpdateUnrolledIndices(dupblks[i-1], i);
-      if (UsesPtrs)
-         UpdateUnrolledPointers(dupblks[i-1], i);
    }
    SetVecBit(lp->blkvec, lp->header->bnum-1, 1);
    KillCompflagInRange(lp->blocks, CF_LOOP_UPDATE, CF_LOOP_END);
 /*
- *   might want to operate on all UR-1 lists at once, then just take the
- *   bnum block from each list, add it in the CF, etc
+ * Put duplicated blocks into program at correct location; this means that
+ * the blocks [up,down] links are correct, but CF is messed up
  */
+   
+/*
+ * Fix CF by recomputing it and all loop stuff
+ */
+/*
+ * Put unrolled & optimized loop control back in loop
+ */
+   OptimizeLoopControl(lp, unroll, NeedKilling, ippost);
    return(0);
 }

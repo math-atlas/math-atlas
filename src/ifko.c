@@ -335,7 +335,7 @@ int GoToTown(int SAVESP)
    FindLoops(); 
    CheckFlow(bbbase, __FILE__, __LINE__);
    if (optloop && 1)
-      OptimizeLoopControl(optloop, 1, 1);
+      OptimizeLoopControl(optloop, 1, 1, NULL);
    CalcInsOuts(bbbase); 
    CalcAllDeadVariables();
 
