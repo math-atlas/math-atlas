@@ -120,6 +120,17 @@ BBLOCK *FindBlockByNumber(BBLOCK *bp, const short bnum)
    for(; bp && bp->bnum != bnum; bp = bp->down);
    return(bp);
 }
+char *PrintBlockList(BLIST *lp)
+{
+   static char ln[512];
+   int j;
+
+   for (j=0; lp; lp=lp->next)
+      j += sprintf(ln+j, "%d,", lp->blk->bnum);
+   if (j) ln[j-1] = '\0';
+   else strcpy(ln, "NONE");
+   return(ln);
+}
 void AddBlockComments(BBLOCK *bp)
 /*
  * Adds comments indicating start of basic blocks
@@ -135,6 +146,8 @@ void AddBlockComments(BBLOCK *bp)
                                bp->ilab ? STname[bp->ilab-1] : "NULL");
       PrintComment(bp, NULL, bp->inst1, "   doms = %s", bp->dom ?
                    PrintVecList(bp->dom, 1) : "NOT SET");
+      PrintComment(bp, NULL, bp->inst1, "   preds = %s", 
+                   PrintBlockList(bp->preds));
       PrintComment(bp, NULL, bp->inst1, "   usucc=%d, csucc=%d",
                    bp->usucc ? bp->usucc->bnum : 0, 
                    bp->csucc ? bp->csucc->bnum : 0);
@@ -333,7 +346,7 @@ void CalcDoms(BBLOCK *bbase)
          BitVecCopy(old, bp->dom);
          if (bp->preds)
          {
-            bp->dom = BitVecCopy(bp->dom, bp->preds->blk->dom);
+            BitVecCopy(bp->dom, bp->preds->blk->dom);
             for (lp=bp->preds->next; lp; lp = lp->next)
                BitVecComb(bp->dom, bp->dom, lp->blk->dom, '&');
          }

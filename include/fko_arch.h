@@ -210,6 +210,8 @@
          extern char *archiregs[TNIR], *archfregs[NFR];
       #endif
    #else
+      #define ICCDONE
+      #define FCCDONE
       #define NSIR  10
       #ifdef ARCH_DECLARE
          char *ICCREGS[NICC] = {"cr0", "cr2", "cr3", "cr4"};
@@ -304,9 +306,53 @@
 #ifndef TNREG
    #define TNREG (FCC0+NFCC+1)
 #endif
+#ifndef IREGEND
+   #define IREGEND (IREGBEG + TNIR)
+#endif
+#ifndef FREGEND
+   #define FREGEND (FREGBEG + TNFR)
+#endif
+#ifndef DREGEND
+   #define DREGEND (DREGBEG + TNDR)
+#endif
+#ifndef ICCBEG
+   #define ICCBEG ICC0
+#endif
+#ifndef ICCEND
+   #define ICCEND (ICCBEG + NICC)
+#endif
+#ifndef FCCBEG
+   #define FCCBEG FCC0
+#endif
+#ifndef FCCEND
+   #define FCCEND (FCCBEG + NFCC)
+#endif
+
+#ifndef ICCDONE
+   #if NICC != 1
+      #error "if ICCREGS is undefined, NICC must be 1!!"
+   #endif
+   #ifdef ARCH_DECLARE
+      char *ICCREGS[1] = {"icc"};
+   #else
+      extern char *ICCREGS[1];
+   #endif
+#endif
+#ifndef FCCDONE
+   #if NFCC != 1
+      #error "if FCCREGS is undefined, NFCC must be 1!!"
+   #endif
+   #ifdef ARCH_DECLARE
+      char *FCCREGS[1] = {"fcc"};
+   #else
+      extern char *FCCREGS[1];
+   #endif
+#endif
 
 short GetReg(short type);
 void FixFrame(BBLOCK *bbase);
 int NumberArchRegs();
+char *Int2Reg(int i);
+
 
 #endif

@@ -192,7 +192,12 @@ short STstrconstlookup(char *str)
 
 char *STi2str(short i)
 {
-   return(STname[i-1]);
+   #if IFKO_DEBUG_LEVEL > 0
+      if (i < 1 || i > N)
+         fko_error(__LINE__, "ST Index %d out of range (1,%d), file=%s",
+                   i, N, __FILE__);
+   #endif
+   return(STname[i-1] ? STname[i-1] : "NULL");
 }
 
 void STsetoffi(short i, int off)
@@ -306,12 +311,13 @@ void CreateLocalDerefs()
       if (IS_PARA(fl))
       {
          SToff[k].sa[0] = SToff[k].i;
-         SToff[k].sa[2] = AddDerefEntry(-REG_SP, 0, -k-1, 0);
+         SToff[k].sa[2] = AddDerefEntry(-REG_SP, k+1, -k-1, 0);
       }
       else if (IS_LOCAL(fl))
-         SToff[k].sa[2] = AddDerefEntry(-REG_SP, 0, -k-1, 0);
+         SToff[k].sa[2] = AddDerefEntry(-REG_SP, k+1, -k-1, 0);
    }
 }
+
 void UpdateLocalDerefs(int isize)
 /*
  * Given numbered locals, creates derefs for local access, assuming local
@@ -376,7 +382,7 @@ void CorrectLocalOffsets(int ldist)
    for (i=0; i != N; i++)
    {
       if (IS_DEREF(STflag[i]) && SToff[i].sa[0] == -REG_SP && 
-          SToff[i].sa[1] == 0 && SToff[i].sa[2] < 0)
+          SToff[i].sa[1] > 0 && SToff[i].sa[2] < 0)
       {
 fprintf(stderr, "correcting local %s, (%d,%d,%d)\n", STname[-1-SToff[i].sa[2]],
         SToff[i].sa[3], ldist, SToff[i].sa[3]+ldist);
@@ -480,9 +486,10 @@ short FindDerefEntry(short ptr, short ireg, short mul, short con)
    int i, n=4*Ndt;
    for (i=0; i != N; i++)
    {
-      if ( IS_DEREF(STflag[i]) && 
-           SToff[i].sa[0] == ptr && SToff[i].sa[1] == ireg && 
-           SToff[i].sa[2] == mul && SToff[i].sa[3] == con ) return(i+1);
+      if ( IS_DEREF(STflag[i]) && SToff[i].sa[0] == ptr && 
+           SToff[i].sa[2] == mul && SToff[i].sa[3] == con &&
+           (SToff[i].sa[1] == ireg || (!ireg && SToff[i].sa[1] > 0)) )
+              return(i+1);
    }
    return(0);
 }

@@ -25,11 +25,21 @@ int main(int nargs, char **args)
    KillAllBasicBlocks(bbbase);
    bbbase = bp;
    FixFrame(bbbase);
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    NewBasicBlocks(bbbase);
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    FindLoops(); 
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    CheckFlow(bbbase, __FILE__, __LINE__);
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
+   CalcInsOuts(bbbase); 
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    AddBlockComments(bbbase);
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    AddLoopComments();
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
+/*   AddSetUseComments(bbbase); */
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    abase = lil2ass(bbbase);
    KillAllBasicBlocks(bbbase);
    dump_assembly(stdout, abase);

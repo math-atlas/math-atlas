@@ -9,6 +9,33 @@ struct locinit *LIhead=NULL;
    #define ISIZE 4
 #endif
 
+char *Int2Reg(int i)
+/*
+ * Translates integral encoding to machine-specific registers
+ */
+{
+   static char ln[128];
+
+   assert (i < 0);
+   i = -i;
+   if (i >= IREGBEG && i < IREGEND)
+      sprintf(ln, "%s", archiregs[i-IREGBEG]);
+   else if (i >= FREGBEG && i < FREGEND)
+      sprintf(ln, "%s", archfregs[i-FREGBEG]);
+   else if (i >= FREGBEG && i < FREGEND)
+      sprintf(ln, "%s", archfregs[i-FREGBEG]);
+   else if (i >= ICCBEG && i < ICCEND)
+      sprintf(ln, "%s", ICCREGS[i-ICCBEG]);
+   else if (i >= FCCBEG && i < FCCEND)
+      sprintf(ln, "%s", FCCREGS[i-FCCBEG]);
+   else if (i == PCREG)
+      sprintf(ln, "%s", "PC");
+   else
+      fko_error(__LINE__, "Unknown register index %d, file=%s\n",
+                i, __FILE__);
+   return(ln);
+}
+
 void FindRegUsage(BBLOCK *bbase, int *ni0, int *iregs, 
                   int *nf0, int *fregs, int *nd0, int *dregs)
 /*
@@ -247,23 +274,23 @@ void CreateSysLocals()
    if (DTnzerod == -1)
    {
       DTnzerod = STdef("_NEGZEROD", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
-      SToff[DTnzerod-1].sa[2] = AddDerefEntry(-REG_SP, 0, -DTnzerod, 0);
+      SToff[DTnzerod-1].sa[2] = AddDerefEntry(-REG_SP, DTnzerod, -DTnzerod, 0);
    }
    if (DTabsd == -1)
    {
       DTabsd = STdef("_ABSVLD", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
-      SToff[DTabsd-1].sa[2] = AddDerefEntry(-REG_SP, 0, -DTabsd, 0);
+      SToff[DTabsd-1].sa[2] = AddDerefEntry(-REG_SP, DTabsd, -DTabsd, 0);
 fprintf(stderr, "DTabsd = %d,%d\n", DTabsd, SToff[DTabsd-1].sa[2]);
    }
    if (DTnzero == -1)
    {
       DTnzero = STdef("_NEGZERO", VEC_BIT | T_FLOAT | LOCAL_BIT, 0);
-      SToff[DTnzero-1].sa[2] = AddDerefEntry(-REG_SP, 0, -DTnzero, 0);
+      SToff[DTnzero-1].sa[2] = AddDerefEntry(-REG_SP, DTnzero, -DTnzero, 0);
    }
    if (DTabs == -1)
    {
       DTabs = STdef("_ABSVAL", VEC_BIT | T_FLOAT | LOCAL_BIT, 0);
-      SToff[DTabs-1].sa[2] = AddDerefEntry(-REG_SP, 0, -DTabs, 0);
+      SToff[DTabs-1].sa[2] = AddDerefEntry(-REG_SP, DTabs, -DTabs, 0);
    }
 #else
 #endif
@@ -379,7 +406,7 @@ void FPConstStore(INSTQ *next, short id, short con, short reg)
          #elif defined(PPC)
             ip = (int*) &d;
             bitload(next, reg, 16, *ip);
-            InsNewInst(NULL, NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+            InsNewInst(NULL, NULL, next, ST, SToff[id-1].sa[2], -reg, 0);
             bitload(next, reg, 16, ip[1]);
             i = SToff[id-1].sa[2] - 1;
             i = SToff[i].sa[3] + 4;
@@ -428,7 +455,7 @@ void IConstStore(INSTQ *next, short id, short con, short reg)
    int i, j;
 
    #ifdef X86_32
-      InsNewInst(NULL, NULL, next, MOV, -reg, con, __LINE__);
+      InsNewInst(NULL, NULL, next, MOV, -reg, con, 0);
 /*
  * Sparc has 13-bit constants, use 12 to rule out sign prob
  */
@@ -440,7 +467,7 @@ void IConstStore(INSTQ *next, short id, short con, short reg)
    #else
       bitload(next, reg, 16, SToff[con-1].i);
    #endif
-   InsNewInst(NULL, NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+   InsNewInst(NULL, NULL, next, ST, SToff[id-1].sa[2], -reg, 0);
 }
 
 void InitLocalConst(INSTQ *next, short reg)
@@ -673,7 +700,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
          k = SToff[SToff[DTnzerod-1].sa[2]-1].sa[3];
          InsNewInst(NULL, NULL, next, ST, SToff[DTnzerod-1].sa[2], -ir, 0);
          InsNewInst(NULL,NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, k+8),
-                    -ir, __LINE__);
+                    -ir, 0);
       }
       if (DTnzero > 0)
       {

@@ -118,7 +118,7 @@ fprintf(stderr, "Handling fpconst!\n");
  */
    type = FLAG2TYPE(STflag[dest-1]);
    InsNewInst(NULL, NULL, NULL, type == T_FLOAT ? FMOV : FMOVD, 
-              -GetReg(type), src, __LINE__);
+              -GetReg(type), src, 0);
 }
 
 void DoComment(char *str)
@@ -153,7 +153,7 @@ fprintf(stderr, "DoMove %d %d (%s %s)\n", dest, src, STname[dest-1]?STname[dest-
             assert(type == T_DOUBLE);
             mov = FMOVD;
          }
-         InsNewInst(NULL, NULL, NULL, mov, -rsrc, src, __LINE__);
+         InsNewInst(NULL, NULL, NULL, mov, -rsrc, src, 0);
       }
       LocalStore(dest, rsrc);
    }
@@ -666,9 +666,7 @@ fprintf(stderr, "%s(%d) I=%d, start=%d, end=%d\n", __FILE__, __LINE__,I,start,en
       if (sinc == 2) flag |= L_PINC_BIT;
       else /* if (sinc == -2) */ flag |= L_NINC_BIT;
    }
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    lp = optloop = NewLoop(flag);
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    lp->I = I;
    lp->beg = start;
    lp->end = end;
@@ -736,10 +734,8 @@ void DoIf(char op, short id, short avar, char *labnam)
    assert(id > 0 && label > 0 && avar > 0);
    flag = STflag[avar-1];
    type = FLAG2PTYPE(STflag[id-1]);
-fprintf(stderr, "%s(%d): label=%s\n", __FILE__,__LINE__, STname[label-1]);
    if (type == T_INT)
    {
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
       ireg = LocalLoad(id);
       if (IS_CONST(flag)) ireg1 = -avar;
       else ireg1 = LocalLoad(avar);

@@ -63,6 +63,7 @@ static char *GetDeref(short id)
    reg = SToff[id].sa[1];
    mul = SToff[id].sa[2];
    con = SToff[id].sa[3];
+   if (reg > 0) reg = 0;
    #ifdef X86
       if (!reg)
       {

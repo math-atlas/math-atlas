@@ -5,9 +5,9 @@
 #include "ifko.h"
 #define CHUNKSIZE 64
 static int nvalloc=0,      /* # of slots allocated for bit vectors*/
-           nvused=0,     /* # of slots presently in use */
-           **bvecs,        /* ptr to individual bit vectors */
-           *ni;            /* # of integers required by this bit vector */
+           nvused=0,       /* # of slots presently in use */
+           **bvecs=NULL,   /* ptr to individual bit vectors */
+           *ni=NULL;       /* # of integers required by this bit vector */
 int FKO_BVTMP=0;
 
 static void NewVecChunk(int increase)
@@ -26,6 +26,7 @@ static void NewVecChunk(int increase)
    if (ni) free(ni);
    bvecs = newv;
    ni = newni;
+   nvalloc = n;
 }
 
 static int GetUnusedBVI()
@@ -33,7 +34,7 @@ static int GetUnusedBVI()
    int i, n;
    for (i=0; i < nvused; i++)
       if (!ni[i]) return(i);
-   NewVecChunk(CHUNKSIZE);
+   if (nvused == nvalloc) NewVecChunk(CHUNKSIZE);
    return(nvused++);
 }
 
@@ -65,6 +66,7 @@ int *ExtendBitVec(int iv, int nwords)
    int j, k;
    int *v;
 
+fprintf(stderr, "Extending bit %d to %d words!!!\n", iv, nwords);
    v = bvecs[NewBitVec(nwords*32)-1];
    for (k=ni[--iv], j=0; j < k; j++) v[j] = bvecs[iv][j];
    for (ni[iv] = nwords; j < nwords; j++) v[j] = 0;
@@ -123,9 +125,12 @@ int BitVecComb(int ivD, int iv1, int iv2, char op)
    }
    if (!ivD) ivD = NewBitVec(n<<5) - 1;
    else ivD--;
+   if (n > ni[ivD]) ExtendBitVec(ivD+1, n);
    if (op == '|')
       for (i=0; i < n; i++) bvecs[ivD][i] = bvecs[iv1][i] | bvecs[iv2][i];
-   else
+   else if (op == '-')
+      for (i=0; i < n; i++) bvecs[ivD][i] = bvecs[iv1][i] & ~bvecs[iv2][i];
+   else /* op == '&' */
       for (i=0; i < n; i++) bvecs[ivD][i] = bvecs[iv1][i] & bvecs[iv2][i];
    return(ivD+1);
 }
@@ -204,9 +209,9 @@ int GetSetBitX(int iv, int I)
    for (j=0; j < n; j++)
    {
       v = bvecs[iv][j];
-      for (i=0; i < 31; i++)
+      for (i=0; i < 32; i++)
       {
-         if (k & (1<<i))
+         if (v & (1<<i))
          {
             if (++k == I) return(j*32+i);
          }
@@ -225,7 +230,7 @@ int CountBitsSet(int iv)
    for (j=0; j < m; j++)
    {
       k = bvecs[iv][j];
-      for (i=0; i < 31; i++)
+      for (i=0; i < 32; i++)
          if (k & (1<<i)) n++;
    }
    return(n);
@@ -235,7 +240,7 @@ char *PrintVecList(int iv, int ioff)
  * RETURNS: ptr to string containing # of all set bits
  */
 {
-   static char ln[128];
+   static char ln[1280];
    char *sptr;
    int i, j, k, n;
 
@@ -253,4 +258,30 @@ char *PrintVecList(int iv, int ioff)
    }
    if (sptr != ln) sptr[-2] = '\0';
    return(ln);
+}
+
+short *BitVec2Array(int iv, int off)
+/*
+ * Translates a bitvector to an array of shorts, where each element holds the
+ * (position of the set bit + off)
+ * Position 0 is N, the length of the array (the number of bits set).
+ * RETURNS: (N+1) length integer array
+ */
+{
+   int i, j, n;
+   short *vals;
+
+   n = CountBitsSet(iv);
+   vals = malloc((n+1)*sizeof(short));
+   assert(vals);
+   vals[0] = n;
+   for (i=1; i <= n; i++)
+      vals[i] = GetSetBitX(iv, i) + off;
+   #if IFKO_DEBUG_LEVEL > 0
+      fprintf(stderr, "ivals = ");
+      for (i=1; i <= n; i++)
+         fprintf(stderr, "%d,", vals[i]);
+      fprintf(stderr, "\n");
+   #endif
+   return(vals);
 }

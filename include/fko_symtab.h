@@ -36,6 +36,8 @@
 #define IS_LOCAL(flag_) ((flag_) & LOCAL_BIT)
 #define IS_DEREF(flag_) ((flag_) & DEREF_BIT)
 
+#define IS_SETUSE(flag_) (IS_LOCAL(flag_))
+
 #define FLAG2PTYPE(flag_) ( IS_PTR(flag_) ? T_INT : ((flag_) & 0x7) )
 
 
