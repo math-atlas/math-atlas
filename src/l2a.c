@@ -358,7 +358,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archiregs[-IREGBEG-op1]);
          #elif defined(PPC)
             k = op2-1;
-            if (SToff[k].sa[1])
+            if (SToff[k].sa[1] < 0)
                ap->next = PrintAssln("\tlwzx\t%s,%s\n", archiregs[-IREGBEG-op1],
                                      GetDeref(op2));
             else
@@ -381,7 +381,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tldd\t%s,%s\n", GetDeref(op2),
                                   archdregs[-DREGBEG-op1]);
          #elif defined(PPC)
-            if (SToff[op2-1].sa[1])
+            if (SToff[op2-1].sa[1] < 0)
                ap->next = PrintAssln("\tlfdx\t%s,%s\n", archdregs[-DREGBEG-op1],
                                      GetDeref(op2));
             else
@@ -404,7 +404,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tld\t%s,%s\n", GetDeref(op2),
                                   archfregs[-FREGBEG-op1]);
          #elif defined(PPC)
-            if (SToff[op2-1].sa[1])
+            if (SToff[op2-1].sa[1] < 0)
                ap->next = PrintAssln("\tlfsx\t%s,%s\n", archfregs[-FREGBEG-op1],
                                      GetDeref(op2));
             else
@@ -443,7 +443,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tst\t%s,%s\n", archiregs[-IREGBEG-op2],
                                   GetDeref(op1));
          #elif defined(PPC) /* HERE HERE */
-            if (SToff[op1-1].sa[1])
+            if (SToff[op1-1].sa[1] < 0)
                ap->next = PrintAssln("\tstwx\t%s,%s\n",
                                      archiregs[-IREGBEG-op2], GetDeref(op1));
             else
@@ -462,7 +462,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tstd\t%s,%s\n", archdregs[-DREGBEG-op2],
                                   GetDeref(op1));
          #elif defined(PPC)
-            if (SToff[op1-1].sa[1])
+            if (SToff[op1-1].sa[1] < 0)
                ap->next = PrintAssln("\tstfdx\t%s,%s\n",
                                      archdregs[-DREGBEG-op2], GetDeref(op1));
             else
@@ -481,7 +481,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tst\t%s,%s\n", archfregs[-FREGBEG-op2],
                                   GetDeref(op1));
          #elif defined(PPC)
-            if (SToff[op1-1].sa[1])
+            if (SToff[op1-1].sa[1] < 0)
                ap->next = PrintAssln("\tstfsx\t%s,%s\n",
                                      archfregs[-FREGBEG-op2], GetDeref(op1));
             else
@@ -1006,12 +1006,12 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #elif defined(PPC)
             if (op3 > 0)
                ap->next = PrintAssln("\tcmpwi\t%s,%s,%s\n", 
-                                     ICCREGS[op1-ICC0],
+                                     ICCREGS[-ICC0-op1],
                                      archiregs[-IREGBEG-op2],
                                      GetIregOrConst(op3));
             else
                ap->next = PrintAssln("\tcmpw\t%s,%s,%s\n", 
-                                     ICCREGS[op1-ICC0],
+                                     ICCREGS[-ICC0-op1],
                                      archiregs[-IREGBEG-op2],
                                      archiregs[-IREGBEG-op3]);
          #elif defined(FKO_ANSIC)
@@ -1029,7 +1029,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
 	       archfregs[-FREGBEG-op2], archfregs[-FREGBEG-op3]);
          #elif defined(PPC)
             ap->next = PrintAssln("\tfcmpo\t%s,%s,%s\n", 
-               FCCREGS[op1-FCC0], archfregs[-FREGBEG-op2],
+               FCCREGS[-FCC0-op1], archfregs[-FREGBEG-op2],
 	       archfregs[-FREGBEG-op3]);
          #endif
          break;
@@ -1042,7 +1042,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
 	       archdregs[-DREGBEG-op2], archdregs[-DREGBEG-op3]);
          #elif defined(PPC)
             ap->next = PrintAssln("\tfcmpo\t%s,%s,%s\n", 
-               FCCREGS[op1-FCC0], archdregs[-DREGBEG-op2],
+               FCCREGS[-FCC0-op1], archdregs[-DREGBEG-op2],
 	       archdregs[-DREGBEG-op3]);
          #endif
          break;
@@ -1155,13 +1155,13 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #ifdef X86
             ap->next = PrintAssln("\tje\t%s\n", STname[op3-1]);
          #elif defined(SPARC)
-            if (op1 >= ICC0 && op1 < ICC0+NICC)
+            if (-op1 >= ICC0 && -op1 < ICC0+NICC)
                ap->next = PrintAssln("\tbe\t%s\n", STname[op3-1]);
             else
                ap->next = PrintAssln("\tfbe\t%s\n", STname[op3-1]);
          #elif defined(PPC)
-            if (op2 >= ICC0 && op2 <= ICC0+NICC) sptr = ICCREGS[op2-ICC0];
-            else sptr = FCCREGS[op2-FCC0];
+            if (-op2 >= ICC0 && -op2 <= ICC0+NICC) sptr = ICCREGS[-ICC0-op2];
+            else sptr = FCCREGS[-FCC0-op2];
             k = sptr[2] - '0';
             ap->next = PrintAssln("\tbt\t%d, %s\n", k*4+2, STname[op3-1]);
          #elif defined(FKO_ANSIC)
@@ -1173,13 +1173,13 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #ifdef X86
             ap->next = PrintAssln("\tjne\t%s\n", STname[op3-1]);
          #elif defined(SPARC)
-            if (op2 >= ICC0 && op2 < ICC0+NICC)
+            if (-op2 >= ICC0 && -op2 < ICC0+NICC)
                ap->next = PrintAssln("\tbne\t%s\n", STname[op3-1]);
             else
                ap->next = PrintAssln("\tfbne\t%s\n", STname[op3-1]);
          #elif defined(PPC)
-            if (op2 >= ICC0 && op2 <= ICC0+NICC) sptr = ICCREGS[op2-ICC0];
-            else sptr = FCCREGS[op2-FCC0];
+            if (-op2 >= ICC0 && -op2 < ICC0+NICC) sptr = ICCREGS[-ICC0-op2];
+            else sptr = FCCREGS[-FCC0-op2];
             k = sptr[2] - '0';
             ap->next = PrintAssln("\tbf\t%d, %s\n", k*4+2, STname[op3-1]);
          #elif defined(FKO_ANSIC)
@@ -1191,13 +1191,13 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #ifdef X86
             ap->next = PrintAssln("\tjl\t%s\n", STname[op3-1]);
          #elif defined(SPARC)
-            if (op2 >= ICC0 && op2 < ICC0+NICC)
+            if (-op2 >= ICC0 && -op2 < ICC0+NICC)
                ap->next = PrintAssln("\tbl\t%s\n", STname[op3-1]);
             else
                ap->next = PrintAssln("\tfbl\t%s\n", STname[op3-1]);
          #elif defined(PPC)
-            if (op2 >= ICC0 && op2 <= ICC0+NICC) sptr = ICCREGS[op2-ICC0];
-            else sptr = FCCREGS[op2-FCC0];
+            if (-op2 >= ICC0 && -op2 < ICC0+NICC) sptr = ICCREGS[-ICC0-op2];
+            else sptr = FCCREGS[-FCC0-op2];
             k = sptr[2] - '0';
             ap->next = PrintAssln("\tbt\t%d, %s\n", k*4+0, STname[op3-1]);
          #elif defined(FKO_ANSIC)
@@ -1209,13 +1209,13 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #ifdef X86
             ap->next = PrintAssln("\tjg\t%s\n", STname[op3-1]);
          #elif defined(SPARC)
-            if (op2 >= ICC0 && op2 < ICC0+NICC)
+            if (-op2 >= ICC0 && -op2 < ICC0+NICC)
                ap->next = PrintAssln("\tbg\t%s\n", STname[op3-1]);
             else
                ap->next = PrintAssln("\tfbg\t%s\n", STname[op3-1]);
          #elif defined(PPC)
-            if (op2 >= ICC0 && op2 <= ICC0+NICC) sptr = ICCREGS[op2-ICC0];
-            else sptr = FCCREGS[op2-FCC0];
+            if (-op2 >= ICC0 && -op2 < ICC0+NICC) sptr = ICCREGS[-ICC0-op2];
+            else sptr = FCCREGS[-FCC0-op2];
             k = sptr[2] - '0';
             ap->next = PrintAssln("\tbt\t%d, %s\n", k*4+1, STname[op3-1]);
          #endif
@@ -1224,13 +1224,13 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #ifdef X86
             ap->next = PrintAssln("\tjle\t%s\n", STname[op3-1]);
          #elif defined(SPARC)
-            if (op2 >= ICC0 && op2 < ICC0+NICC)
+            if (-op2 >= ICC0 && -op2 < ICC0+NICC)
                ap->next = PrintAssln("\tble\t%s\n", STname[op3-1]);
             else
                ap->next = PrintAssln("\tfble\t%s\n", STname[op3-1]);
          #elif defined(PPC)
-            if (op2 >= ICC0 && op2 <= ICC0+NICC) sptr = ICCREGS[op2-ICC0];
-            else sptr = FCCREGS[op2-FCC0];
+            if (-op2 >= ICC0 && -op2 < ICC0+NICC) sptr = ICCREGS[-ICC0-op2];
+            else sptr = FCCREGS[-FCC0-op2];
             k = sptr[2] - '0';
             ap->next = PrintAssln("\tbf\t%d, %s\n", k*4+1, STname[op3-1]);
          #endif
@@ -1239,13 +1239,13 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #ifdef X86
             ap->next = PrintAssln("\tjge\t%s\n", STname[op3-1]);
          #elif defined(SPARC)
-            if (op2 >= ICC0 && op2 < ICC0+NICC)
+            if (-op2 >= ICC0 && -op2 < ICC0+NICC)
                ap->next = PrintAssln("\tbge\t%s\n", STname[op3-1]);
             else
                ap->next = PrintAssln("\tfbge\t%s\n", STname[op3-1]);
          #elif defined(PPC)
-            if (op2 >= ICC0 && op2 <= ICC0+NICC) sptr = ICCREGS[op2-ICC0];
-            else sptr = FCCREGS[op2-FCC0];
+            if (-op2 >= ICC0 && -op2 < ICC0+NICC) sptr = ICCREGS[-ICC0-op2];
+            else sptr = FCCREGS[-FCC0-op2];
             k = sptr[2] - '0';
             ap->next = PrintAssln("\tbf\t%d, %s\n", k*4+0, STname[op3-1]);
          #endif

@@ -370,7 +370,7 @@ void FPConstStore(INSTQ *next, short id, short con,
             InsNewInst(NULL, NULL, next, FSTD, SToff[id-1].sa[2], -dreg, 0);
          #else
             i = SToff[SToff[id-1].sa[2]].sa[3];
-            k = AddDerefEntry(-REG_SP, id, -id, i)
+            k = AddDerefEntry(-REG_SP, id, -id, i);
             InsNewInst(NULL, NULL, next, XOR, -reg, -reg, -reg);
             InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
             InsNewInst(NULL, NULL, next, ST, 
@@ -1102,7 +1102,7 @@ void FinalizePrologueEpilogue(BBLOCK *bbase)
    int lsize;        /* size of all required locals */
    int tsize;        /* total frame size */
    int rsav=0, maxalign, ssize=0;
-   const int csize=0;/* call parameter area size */
+   int csize=0;/* call parameter area size */
    extern int LOCALIGN, LOCSIZE;
 
    maxalign = align = LOCALIGN;
