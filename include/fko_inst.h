@@ -148,6 +148,7 @@ enum inst
    VDSTS,                      /* [mem], [vr0]  :  mem = vr[0] */
    VDMOV,                      /* [vr0], [vr1]   : vr0 = vr1 */
    VDADD,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 + vr2 */
+   VDSUB,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 - vr2 */
    VDMUL,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
    VDABS,                      /* [vr0], [vr1] : vr0 = abs(vr1) */
    VDSHUF,                     /* [vr0], [vr1], [int32]; vr0 = shuf(vr1|vr0) */
@@ -167,6 +168,7 @@ enum inst
    VFSTS,                      /* [mem], [vr0]  :  mem = vr[0] */
    VFMOV,                      /* [vr0], [vr1]   : vr0 = vr1 */
    VFADD,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 + vr2 */
+   VFSUB,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 - vr2 */
    VFMUL,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
    VFABS,                      /* [vr0], [vr1] : vr0 = abs(vr1) */
    VFSHUF,                     /* [vr0], [vr1], [int32]; vr0 = shuf(vr1|vr0) */
@@ -312,6 +314,7 @@ char *instmnem[] =
    "VDSTS",
    "VDMOV",
    "VDADD",
+   "VDSUB",
    "VDMUL",
    "VDABS",
    "VDSHUF",
@@ -327,6 +330,7 @@ char *instmnem[] =
    "VFSTS",
    "VFMOV",
    "VFADD",
+   "VFSUB",
    "VFMUL",
    "VFABS",
    "VFSHUF",

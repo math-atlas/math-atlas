@@ -27,5 +27,7 @@
 #define PTRF_CONSTINC   0x4
 #define PTRF_MIXED      0x8
 
+struct ptrinfo *FindMovingPointers(BLIST *scope);
+INSTQ *KillPointerUpdates(struct ptrinfo *pbase, int UR);
 
 #endif

@@ -1,3 +1,5 @@
+#include "fko.h"
+
 ILIST *FindPrevStore(INSTQ *ipstart, short var, int blkvec)
 /*
  * Finds prev store of var starting with inst ipstart, stopping search if
@@ -7,12 +9,12 @@ ILIST *FindPrevStore(INSTQ *ipstart, short var, int blkvec)
  */
 {
    INSTQ *ip;
-   ILIST *il=NULL, il2;
+   ILIST *il=NULL, *il2;
    BLIST *bl;
    if (ipstart)
    {
       for (ip=ipstart; ip; ip = ip->prev)
-         if (IS_STORE(ip->inst[0] && STpts2[ip->inst[1]] == var)
+         if (IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]] == var)
             return(NewIlist(ip, NULL));
       for (bl=ipstart->myblk->preds; bl; bl = bl->next)
       {
@@ -37,24 +39,24 @@ ILIST *FindNextLoad(INSTQ *ipstart, short var, int blkvec)
  */
 {
    INSTQ *ip;
-   ILIST *il=NULL, il2;
+   ILIST *il=NULL, *il2;
 
    if (ipstart)
    {
       for (ip=ipstart; ip; ip = ip->next)
       {
-         if (IS_LOAD(ip->inst[0] && STpts2[ip->inst[1]] == var)
+         if (IS_LOAD(ip->inst[0]) && STpts2[ip->inst[1]] == var)
             return(NewIlist(ip, NULL));
       }
       assert(ipstart->myblk);
       if (ipstart->myblk->usucc && 
           BitVecCheck(blkvec, ipstart->myblk->usucc->bnum-1) &&
           BitVecCheck(ipstart->myblk->usucc->ins, var+TNREG-1))
-         il = FindNextLoad(ipstart->myblk->usucc->ainst1, var);
+         il = FindNextLoad(ipstart->myblk->usucc->ainst1, var, blkvec);
       if (ipstart->myblk->csucc && 
           BitVecCheck(blkvec, ipstart->myblk->csucc->bnum-1) &&
           BitVecCheck(ipstart->myblk->csucc->ins, var+TNREG-1))
-         il2 = FindNextLoad(ipstart->myblk->csucc->ainst1, var);
+         il2 = FindNextLoad(ipstart->myblk->csucc->ainst1, var, blkvec);
       if (!il)
          il = il2;
       else 
@@ -89,6 +91,7 @@ short FindReadUseType(INSTQ *ip, short var, int blkvec)
    return(j);
 }
 
+/* ERROR: recomputing loop info fucks up lp!! */
 int DoLoopSimdAnal(LOOPQ *lp)
 /*
  * Does some analysis on unoptimized code to determine how to vectorize loop
@@ -104,6 +107,9 @@ int DoLoopSimdAnal(LOOPQ *lp)
    int i, j, k, n, N;
    extern int FKO_BVTMP;
    ILIST *il, *ib;
+   BLIST *bl;
+   INSTQ *ip;
+
    if (!lp)
       return(1);
 /*
@@ -116,7 +122,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
 /*
  * Require one and only one post-tail to simplify analysis
  */
-   if (!lp->posttail || lp->posttail->next)
+   if (!lp->posttails || lp->posttails->next)
    {
       fko_warn(__LINE__, 
       "Must have one and only one posttail for simdification!\n\n");
@@ -129,10 +135,10 @@ int DoLoopSimdAnal(LOOPQ *lp)
  */
    if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
    iv = FKO_BVTMP;
-   for (bl=blocks; bl; bl = bl->next)
+   for (bl=lp->blocks; bl; bl = bl->next)
    {
-      iv = BitVecComb(iv, bl->blk->uses, '|');
-      iv = BitVecComb(iv, bl->blk->defs, '|');
+      iv = BitVecComb(iv, iv, bl->blk->uses, '|');
+      iv = BitVecComb(iv, iv, bl->blk->defs, '|');
    }
 /*
  * Subtract off all registers
@@ -156,7 +162,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
       else if (sp[i] != lp->I && sp[i] != lp->end && 
                sp[i] != lp->inc)
       {
-         fko_warn(__LINE__, "Bailing on vect due to var %d,%s\n", sp[i]
+         fko_warn(__LINE__, "Bailing on vect due to var %d,%s\n", sp[i],
                   STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
          free(sp);
          return(3);
@@ -181,7 +187,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
          if (FLAG2TYPE(sp[i]-1) != j)
          {
              fko_warn(__LINE__, 
-                      "Mixed type %d(%s), %d(%s) prevents vectorization!!\n\n,
+                      "Mixed type %d(%s), %d(%s) prevents vectorization!!\n\n",
                       j, STname[sp[0]-1] ? STname[sp[0]-1] : "NULL", 
                       FLAG2TYPE(sp[i]-1), STname[sp[i]-1] ? STname[sp[i]-1] 
                       : "NULL");
@@ -278,7 +284,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
  *    Find fp scalars live on loop input
  */
       iv1 = Array2BitVec(n, sp, TNREG-1);
-      BitVecComb(iv1, lp->header->ins, '&');
+      BitVecComb(iv1, iv1, lp->header->ins, '&');
       s = BitVec2StaticArray(iv1);
       for (i=1; i <= s[0]; i++)
       {
@@ -300,22 +306,22 @@ int DoLoopSimdAnal(LOOPQ *lp)
  */
       SetVecAll(iv1, 0);
       SetVecAll(iv, 0);
-      for (bl=tails; bl; bl = bl->next)
+      for (bl=lp->tails; bl; bl = bl->next)
       {
          BitVecDup(iv1, bl->blk->outs, '=');
          if (bl->blk->usucc && 
-             !BitVecCheck(lp->blkvec, bl->usucc->blk->bnum-1))
-            BitVecComb(iv1, bl->blk->usucc->ins, '&');
+             !BitVecCheck(lp->blkvec, bl->blk->usucc->bnum-1))
+            BitVecComb(iv1, iv1, bl->blk->usucc->ins, '&');
          else
          {
             assert(bl->blk->csucc &&
-                   !BitVecCheck(lp->blkvec, bl->csucc->blk->bnum-1));
-            BitVecComb(iv1, bl->blk->csucc->ins, '&');
+                   !BitVecCheck(lp->blkvec, bl->blk->csucc->bnum-1));
+            BitVecComb(iv1, iv1, bl->blk->csucc->ins, '&');
          }
-         BitVecComb(iv, iv1, '|');
+         BitVecComb(iv, iv, iv1, '|');
       }
       iv1 = Array2BitVec(n, sp, TNREG-1);
-      BitVecComb(iv, iv1, '&');
+      BitVecComb(iv, iv, iv1, '&');
       s =  BitVec2StaticArray(iv);
       for (i=1; i <= s[0]; i++)
       {
@@ -361,7 +367,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
  */
          else if (s[i] & VS_LIVEOUT)
          {
-            ib = FindPrevStore(lp->posttail->inst1, sp[i],lp->blkvec);
+            ib = FindPrevStore(lp->posttails->blk->inst1, sp[i],lp->blkvec);
             j = 0;
             for (il=ib; il; il = il->next)
             {
@@ -401,13 +407,13 @@ int SimdLoop(LOOPQ *lp)
    BLIST *bl;
    static enum inst 
       sfinsts[] = {FLD,  FST,  FMUL,  FADD,  FSUB,  FABS,  FMOV,  FZERO},
-      vfinsts[] = {VFLD, VFST, VFMUL, VFADD, VFSUB, VFABS  VFMOV, VFZERO},
+      vfinsts[] = {VFLD, VFST, VFMUL, VFADD, VFSUB, VFABS, VFMOV, VFZERO},
       sdinsts[] = {FLDD, FSTD, FMULD, FADDD, FSUBD, FABSD, FMOVD, FZEROD},
-      vdinsts[] = {VDLD, VDST, VDMUL, VDADD, VDSUB, VDABS  VDMOV, VDZERO};
+      vdinsts[] = {VDLD, VDST, VDMUL, VDADD, VDSUB, VDABS, VDMOV, VDZERO};
    const int nvinst=8;
    enum inst sld, vld, sst, vst, smul, vmul, sadd, vadd, ssub, vsub, 
-             sabs, vabs, smov, vmov, szero, vzero;
-   short r0, r1;
+             sabs, vabs, smov, vmov, szero, vzero, inst;
+   short r0, r1, op;
    enum inst *sinst, *vinst;
    int i, j, n, k, nfr=0;
    char ln[512];
@@ -500,16 +506,17 @@ int SimdLoop(LOOPQ *lp)
    k = STiconstlookup(0);
    for (i=0; i < n; i++)
    {
-      if (VS_LIVIN & lp->vsflag[i])
+      if (VS_LIVEIN & lp->vsflag[i])
       {
 /*
  *       ADD-updated vars set v[0] = scalar, v[1:N] = 0
  */
          InsNewInst(lp->preheader, NULL, iph, vsld, -r0,
-                    lp->vscal[i+1].sa[2], 0);
-         if (!(VS_ADD & lp->vsflag[i]))
+                    SToff[lp->vscal[i+1]-1].sa[2], 0);
+         if (!(VS_ACC & lp->vsflag[i]))
             InsNewInst(lp->preheader, NULL, iph, vshuf, -r0, -r0, k);
-         InsNewInst(lp->preheader, NULL, iph, vsst, lp->vvscal[i].sa[2], -r0,0);
+         InsNewInst(lp->preheader, NULL, iph, vsst, 
+                    SToff[lp->vvscal[i]-1].sa[2], -r0, 0);
       }
 /*
  *    Output vars are known to be updated only by ADD
@@ -517,26 +524,26 @@ int SimdLoop(LOOPQ *lp)
       if (VS_LIVEOUT & lp->vsflag[i])
       {
          assert(lp->vsflag[i] & (VS_MUL | VS_EQ | VS_ABS) == 0);
-         iptp = InsNewInst(lp->posttail->blk, iptp, iptn, vld, -r0,
-                           lp->vvscal[i].sa[2], 0);
+         iptp = InsNewInst(lp->posttails->blk, iptp, iptn, vld, -r0,
+                           SToff[lp->vvscal[i]-1].sa[2], 0);
          if (vld == VDLD)
          {
-            iptp = InsNewInst(lp->posttail->blk, iptp, NULL, VDSHUF, -r1, -r0
+            iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1, -r0,
                               STiconstlookup(0x33));
-            iptp = InsNewInst(lp->posttail->blk, iptp, NULL, VDADD,-r0,-r0,-r1);
-            iptp = InsNewInst(lp->posttail->blk, iptp, NULL, VDSTS, 
-                              lp->vscal[i+1].sa[2], -r0, 0);
+            iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VDADD,-r0,-r0,-r1);
+            iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS, 
+                              SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
          }
          else
          {
-            iptp = InsNewInst(lp->posttail->blk, iptp, NULL, VFSHUF, -r1, -r0
+            iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF, -r1, -r0,
                               STiconstlookup(0x3276));
-            iptp = InsNewInst(lp->posttail->blk, iptp, NULL, VFADD,-r0,-r0,-r1);
-            iptp = InsNewInst(lp->posttail->blk, iptp, NULL, VFSHUF, -r1, -r0
+            iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,-r0,-r0,-r1);
+            iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF, -r1, -r0,
                               STiconstlookup(0x5555));
-            iptp = InsNewInst(lp->posttail->blk, iptp, NULL, VFADD,-r0,-r0,-r1);
-            iptp = InsNewInst(lp->posttail->blk, iptp, NULL, VFSTS, 
-                              lp->vscal[i+1].sa[2], -r0, 0);
+            iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,-r0,-r0,-r1);
+            iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSTS, 
+                              SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
          }
       }
    }
@@ -579,8 +586,7 @@ int SimdLoop(LOOPQ *lp)
                         }
                         ip->inst[j] = -vregs[k-1];
                      }
-                     else
-                         !FindInShortList(lp->varrs[0], lp->varrs+1, op))
+                     else if (!FindInShortList(lp->varrs[0], lp->varrs+1, op))
                      {
                         k = FindInShortList(lp->vscal[0], lp->vscal+1, op);
                         assert(k);
@@ -647,14 +653,14 @@ int VectorizeStage1(void)
          return(12);
       }
    }
-   ip = KillPointerUpdates(pi, vlen);
+   ip = KillPointerUpdates(pi, IS_VDOUBLE(lp->vflag) ? 2 : 4);
    KillAllPtrinfo(pi);
    for (; ip; ip = ipn)
    {
       ipn = ip->next;
       free(ip);
    }
-   i = DoLoopSimdAnal(optloop)
+   i = DoLoopSimdAnal(optloop);
    if (i)
       return(i);
 /*
@@ -673,7 +679,7 @@ int VectorizeStage1(void)
 /*
  * Create vector locals for all vector scalars in loop
  */
-   k = LOCAL_BIT | VEC_BIT | FLAG2TYPE(flag);
+   k = LOCAL_BIT | FLAG2TYPE(flag);
    lp->vvscal = malloc(sizeof(short)*n);
    assert(lp->vvscal)
    n = vscal[0];

@@ -620,7 +620,7 @@ static void ReadMiscFromFile(char *name)
    fclose(fp);
 }
 
-static void RestoreFKOState(int isav)
+void RestoreFKOState(int isav)
 {
    char ln[1024];
    extern BBLOCK *bbbase;
@@ -638,7 +638,7 @@ static void RestoreFKOState(int isav)
    CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = 0;
 }
 
-static void SaveFKOState(int isav)
+void SaveFKOState(int isav)
 /*
  * Writes out base LIL translation of routine so we can reread it in in order
  * to iteratively apply differing optimizations
