@@ -2387,6 +2387,8 @@ int DoEnforceLoadStore(BLIST *scope)
             else if (!IS_DEREF(STflag[op-1]))
                op = 0;
             #ifdef X86
+               if (ip->inst[3] >= 0)
+               {
                if (inst == FABS)
                   ip->inst[3] = op = SToff[DTabss-1].sa[2];
                else if (inst == VFABS)
@@ -2399,7 +2401,7 @@ int DoEnforceLoadStore(BLIST *scope)
                   ip->inst[3] = op = SToff[DTnzeros-1].sa[2];
                else if (inst == FNEGD)
                   ip->inst[3] = op = SToff[DTnzerods-1].sa[2];
-               else
+               }
             #endif
             if (!op)
             {
