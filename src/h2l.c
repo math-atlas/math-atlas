@@ -600,7 +600,8 @@ void DoReturn(short rret)
          InsNewInst(NULL, NULL, NULL, ld, -retreg, SToff[rret-1].sa[2], 0);
 #endif
    }
-   InsNewInst(NULL, NULL, NULL, JMP, 0, STstrconstlookup("IFKO_EPILOGUE"), 0);
+   InsNewInst(NULL, NULL, NULL, JMP, -PCREG, 
+              STstrconstlookup("IFKO_EPILOGUE"), 0);
    GetReg(-1);
 }
 
@@ -708,8 +709,8 @@ void FinishLoop(LOOPQ *lp)
    flag = STflag[lp->end-1];
    if (IS_CONST(flag)) iend = lp->end;
    else iend = -LocalLoad(lp->end);
-   InsNewInst(NULL, NULL, NULL, CMP, ICC0, -ireg, iend);
-   InsNewInst(NULL, NULL, NULL, JLT, 0, ICC0, lp->body_label);
+   InsNewInst(NULL, NULL, NULL, CMP, -ICC0, -ireg, iend);
+   InsNewInst(NULL, NULL, NULL, JLT, -PCREG, -ICC0, lp->body_label);
    lp->header->instN = InsNewInst(NULL, NULL, NULL, CMPFLAG, CF_LOOP_END,
                                   lp->loopnum, 0);
    GetReg(-1);
@@ -739,7 +740,7 @@ void DoIf(char op, short id, short avar, char *labnam)
       ireg = LocalLoad(id);
       if (IS_CONST(flag)) ireg1 = -avar;
       else ireg1 = LocalLoad(avar);
-      if (op != '&') InsNewInst(NULL, NULL, NULL, CMP, ICC0, -ireg, -ireg1);
+      if (op != '&') InsNewInst(NULL, NULL, NULL, CMP, -ICC0, -ireg, -ireg1);
       else
          #ifdef PPC
             InsNewInst(NULL, NULL, NULL, ANDCC, -ireg, -ireg, -ireg1);
@@ -749,26 +750,26 @@ void DoIf(char op, short id, short avar, char *labnam)
       switch(op)
       {
       case '>':
-         InsNewInst(NULL, NULL, NULL, JGT, -PCREG, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, JGT, -PCREG, -ICC0, label);
          break;
       case 'g':  /* >= */
-         InsNewInst(NULL, NULL, NULL, JGE, -PCREG, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, JGE, -PCREG, -ICC0, label);
          break;
       case '<':
-         InsNewInst(NULL, NULL, NULL, JLT, -PCREG, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, JLT, -PCREG, -ICC0, label);
          break;
       case 'l':  /* <= */
-         InsNewInst(NULL, NULL, NULL, JLE, -PCREG, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, JLE, -PCREG, -ICC0, label);
          br = JLE;
          break;
       case '=':
-         InsNewInst(NULL, NULL, NULL, JEQ, -PCREG, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, JEQ, -PCREG, -ICC0, label);
          break;
       case '!':
-         InsNewInst(NULL, NULL, NULL, JNE, -PCREG, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, JNE, -PCREG, -ICC0, label);
          break;
       case '&':
-         InsNewInst(NULL, NULL, NULL, JEQ, -PCREG, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, JEQ, -PCREG, -ICC0, label);
          break;
       }
    }
@@ -842,8 +843,8 @@ void DoIf(char op, short id, short avar, char *labnam)
                     -freg0, -freg1, k);
          InsNewInst(NULL, NULL, NULL, (type == T_FLOAT) ? CVTBFI:CVTBDI,
                     -ireg, -freg0, 0);
-         InsNewInst(NULL, NULL, NULL, CMP, ICC0, -ireg, STiconstlookup(0));
-         InsNewInst(NULL, NULL, NULL, br, -PCREG, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, CMP, -ICC0, -ireg, STiconstlookup(0));
+         InsNewInst(NULL, NULL, NULL, br, -PCREG, -ICC0, label);
       }
 #endif
 }

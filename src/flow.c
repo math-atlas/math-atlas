@@ -162,6 +162,7 @@ void AddBlockComments(BBLOCK *bp)
       PrintComment(bp, NULL, bp->inst1, "Begin basic block %d (%d)",
                    i+1, bp->bnum);
       PrintComment(bp, NULL, bp->inst1, "**************************");
+      PrintComment(bp, NULL, bp->inst1, "");
    }
 }
 
