@@ -2052,6 +2052,65 @@ void AddPrefetch(LOOPQ *lp, int unroll)
 #endif
 }
 
+int VarIsAccumulator(BLIST *scope, int var)
+/*
+ * Determines of var is used exclusively as an accumulator in scope.
+ * This is true iff: (1) All read followed by add inst using that read,
+ * followed by write to same location of addition
+ * NOTE: assumes h2l format, so no cross-block ops
+ */
+{
+   BLIST *bl;
+   INSTQ *ip;
+   enum inst inst, ld, st, add;
+   int i;
+
+   i = FLAG2TYPE(STflag[var-1]);
+   switch(i)
+   {
+   case T_FLOAT:
+      ld = FLD;
+      st = FST;
+      add = FADD;
+      break;
+   case T_DOUBLE:
+      ld = FLDD;
+      st = FSTD;
+      add = FADDD;
+      break;
+   case T_INT:
+      ld = LD;
+      st = ST;
+      add = ADD;
+      break;
+   default:
+   case T_VFLOAT:
+   case T_VDOUBLE:
+      fko_error(__LINE__, "Unknown type=%d, file=%s", i, __FILE__);
+   }
+   for (bl=scope; bl; bl = bl->next)
+   {
+      for (ip=bl->blk->ainst1; ip; ip = ip->next)
+      {
+         if (ip->inst[0] == ld && STpts2[ip->inst[2]-1] == var)
+         {
+            if (ip->next->inst[0] == ld)
+               ip = ip->next;
+            if (ip->next->inst[0] != add)
+               return(0);
+            ip = ip->next->next;
+            if (!ip)
+               return(0);
+            if (ip->inst[0] != st || STpts2[ip->inst[1]-1] != var)
+               return(0);
+         }
+         else if (ip->inst[0] == st && STpts2[ip->inst[0]-1] == var)
+            return(0);
+      }
+   }
+   return(1);
+}
+
 void CountArrayAccess(BLIST *scope, int ptr, int *nread, int *nwrite)
 /*
  * Finds number of read/write to *ptr in scope, 
@@ -2258,7 +2317,7 @@ void PrintLoopInfo()
          CountArrayAccess(lp->blocks, sp[i], &k, &j);
          fprintf(fpout, " sets=%d uses=%d", j, k);
          if (j == k)
-            j = -1;
+            j = VarIsAccumulator(lp->blocks, sp[i]);
          else
             j = 0;
          fprintf(fpout, " accum=%d", j);
