@@ -165,7 +165,7 @@ short STdconstlookup(double f)
    char name[16];
    for (i=0; i != N; i++)
    {
-      if (SToff[i].d == f && IS_CONST(STflag[i]) && IS_DOUBLE(STflag[i]))
+      if (IS_CONST(STflag[i]) && IS_DOUBLE(STflag[i]) && SToff[i].d == f)
          return(i);
    }
    sprintf(name, "_FPDC_%d", ndc);

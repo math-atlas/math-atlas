@@ -1,5 +1,5 @@
 SHELL = /bin/tcsh
-CC = /usr/bin/gcc
+CC = gcc
 CCFLAGS = -g
 objs = y.tab.o lex.yy.o h2l.o l2a.o inst.o symtab.o arch.o misc.o
 HDIR = ../include
@@ -8,7 +8,7 @@ heads= $(HDIR)/fko_arch.h $(HDIR)/fko_inst.h $(HDIR)/fko_misc.h \
        $(HDIR)/fko_symtab.h $(HDIR)/ifko.h
 
 ifko : $(heads) ifko.o $(objs)
-	$(CC) $(CCFLAGS) -o $@ ifko.o $(objs) -ll
+	/usr/local/rational/releases/PurifyPlusFamily.2002a.06.00/sun4_solaris2/bin/purify $(CC) $(CCFLAGS) -o $@ ifko.o $(objs) -ll
 
 xtst3 :  tst3.o fexample3.o
 	$(CC) $(CCFLAGS) -o $@ tst3.o fexample3.o

@@ -153,7 +153,9 @@ void Param2Local(INSTQ *next, short rsav, int fsize)
       flag = STflag[i];
       if (IS_PARA(flag))
       {
-         paras[SToff[i].sa[0]-1] = i;
+fprintf(stderr, "para #%d\n", SToff[i].sa[0]);
+         assert(SToff[i].sa[0] <= NPARA);
+         paras[SToff[i].sa[0]] = i;
          j++;
       }
    }
