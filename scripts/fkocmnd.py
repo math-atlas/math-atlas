@@ -45,6 +45,7 @@ def info(fko, routine):
       LS.append(int(words[i+2]))
       i += 1
 
+   scalinf = (0, [], [], [], [], [])
    arrs = None
    pref = None
    sets = None
@@ -71,9 +72,42 @@ def info(fko, routine):
          j = words[4].rfind("=")
          uses.append(int(words[4][j+1:]))
          i += 1;
+      ns = int(lines[7+mfp][25:])
+      scal = []
+      styp = []
+      sset = []
+      suse = []
+      sacc = []
+      i = 0
+      while i < ns:
+         words = lines[8+mfp+i].split()
+         j = len(words[0])
+         scal.append(words[0][1:j-2])
+         j = words[1].rfind("=")
+         styp.append(words[1][j+1])
+         j = words[2].rfind("=")
+         sset.append(int(words[2][j+1:]))
+         j = words[3].rfind("=")
+         suse.append(int(words[3][j+1:]))
+         j = words[4].rfind("=")
+         sacc.append(int(words[4][j+1:]))
+         i += 1
+      scalinf = (ns, scal, styp, sset, suse, sacc)
    else:
       maxunroll = lnf = vec = mfp = 0
-   return(nc, LS, ol, maxunroll, lnf, vec, arrs, pref, sets, uses)
+   return[nc, LS, ol, maxunroll, lnf, vec, arrs, pref, sets, uses, scalinf]
+
+def GetFPAccum(info) :
+   scalinf = info[10]
+   (ns, scal, styp, sset, suse, sacc) = scalinf
+   acc = []
+   i = 0
+   while i < ns:
+      if styp[i][0] != 'i' :
+         if sacc[i] > 0:
+            acc.append(scal[i])
+      i += 1
+   return acc
 
 def RemoveFilesFromFlags(blas, flags):
    words = flags.split()

@@ -500,7 +500,6 @@ ERR:
    if (aeb)
    {
       n = KillDupPtrinfo(args, aeb);
-fprintf(stderr, "AEB, n=%d\n", n);
       AES = PtrinfoToStrings(args, n, aeb);
       AEn = malloc(sizeof(short)*(n+1));
       AEn[0] = n;

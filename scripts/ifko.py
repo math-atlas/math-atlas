@@ -203,6 +203,76 @@ def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=64):
    KF0 = KF0 + " -U %d" % URB
    return [mf0,KF0]
 
+def FindAE(ATLdir, ARCH, KF0, fko, rout, pre, l1bla, N, acc, maxlen=4):
+#
+#  Time the default case
+#
+   fkocmnd.callfko(fko, KF0)
+   [t0,m0] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                         "gcc", "-x assembler-with-cpp", opt=opt)
+   mf0 = m0
+#
+#  Find present unrolling factor, and remove it from flags
+#
+   j = KF0.find("-U ")
+   assert(j != -1)
+   words = KF0[j:].split()
+   ur = int(words[1])
+   if j > 0: KFN = KF0[0:j-1]
+   else : KFN = ""
+   for word in words[2:] :
+      KFN = KFN + " " + word
+   KF0 = KFN
+   print "   Finding AccumExpan, UR=%d, mflop= %.2f" % (ur, m0)
+   mfB = 0.0
+   urB = ur
+   aeB = 1
+   nacc = len(acc)
+   for ac in acc:
+      i = 2
+      while i <= maxlen:
+         if ur >= i :
+            KFLAG = KFN + " -U %d -AE %s %d" % (ur, ac, i)
+            fkocmnd.callfko(fko, KFLAG)
+            [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                                 "gcc", "-x assembler-with-cpp", opt=opt)
+            print "      '%s' AE=%d, UR=%d, mflop= %.2f" % (ac, i, ur, mf)
+            if mf > mfB:
+               mfB = mf
+               urB = ur
+               aeB = i
+         if i < ur or ur%i :
+            j = ((ur+i-1) / i)*i
+            KFLAG = KFN + " -U %d -AE %s %d" % (j, ac, i)
+            fkocmnd.callfko(fko, KFLAG)
+            [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                                 "gcc", "-x assembler-with-cpp", opt=opt)
+            print "      '%s' AE=%d, UR=%d, mflop= %.2f" % (ac, i, j, mf)
+            if mf > mfB:
+               mfB = mf
+               urB = j
+               aeB = i
+
+            j = (ur / i) * i
+            if j :
+               KFLAG = KFN + " -U %d -AE %s %d" % (j, ac, i)
+               fkocmnd.callfko(fko, KFLAG)
+               [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                                    "gcc", "-x assembler-with-cpp", opt=opt)
+               print "      '%s' AE=%d, UR=%d, mflop= %.2f" % (ac, i, j, mf)
+            if mf > mfB:
+               mfB = mf
+               urB = j
+               aeB = i
+
+         if mfB > mf0*1.001:
+            KFN = KFN + " -U %d -AE %s %d" % (j, ac, i)
+            mf0 = mfB
+         i += 1
+
+   print "   mfB=%2.f, KFN=%s" % (mfB, KFN)
+   return[mfB, KFN]
+
 #
 # Returns array of indexes in st0 that are also in st1
 #
@@ -220,6 +290,8 @@ def FindMatchList(st0, st1):
          j += 1
       i += 1
    return(matches)
+
+
 def ifko0(l1bla, pre, N):
    (IFKOdir, fko) = fkocmnd.GetFKOinfo()
    (ATLdir, ARCH) = fkocmnd.FindAtlas(IFKOdir)
@@ -316,12 +388,22 @@ def ifko0(l1bla, pre, N):
    mflist.append(mf)
    testlist.append("unroll")
 #
+#  See if we can apply accumulator expansion
+#
+   acc = fkocmnd.GetFPAccum(info)
+   nacc = len(acc)
+   if nacc > 0 and nacc < 3:
+      [mf,KFLAGS] = FindAE(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N, acc,
+                           maxlen=4)
+   mflist.append(mf)
+   testlist.append("accexpans")
+#
 #  Find performance of best case
 #
 #   fkocmnd.callfko(fko, KFLAGS)
 #   [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, l1bla, N, "fkorout.s", 
 #                        "gcc", "-x assembler-with-cpp", opt=opt)
-   print "\n\n   BEST FLAGS FOUND (%f.2) = %s" % (mf,
+   print "\n\n   BEST FLAGS FOUND (%.2f) = %s" % (mf,
          fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS))
    res = fkocmnd.GetOptVals(KFLAGS, pfarrs, pfsets)
    tst = l1cmnd.test(ATLdir, ARCH, pre, l1bla, N, "fkorout.s",

@@ -2665,6 +2665,6 @@ int DoAllAccumExpansion(LOOPQ *lp, int unroll, int vec)
       KillThisInst(ipb);
    }
    CFUSETU2D = INDEADU2D = 0;
-   fprintf(stderr, "ACCEXP, nchanges=%d\n\n", nchanges);
+/*   fprintf(stderr, "ACCEXP, nchanges=%d\n\n", nchanges); */
    return(nchanges);
 }
