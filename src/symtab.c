@@ -4,7 +4,7 @@
 char **STname;
 union valoff *SToff;
 int *STflag;
-short *DT;
+short *DT, *DT2ST;
 static int N=0, Nalloc=0, Ndt=0, Ndtalloc=0;
 static int niloc=0, nlloc=0, nfloc=0, ndloc=0, nvfloc=0, nvdloc=0;
 int    LOCSIZE=0, LOCALIGN=0, NPARA=0;
@@ -20,6 +20,8 @@ int    LOCSIZE=0, LOCALIGN=0, NPARA=0;
  * con are simply short constants.
  * Addressing is: ptr+reg*mul+con
  * NOTE: this structure will likely expand.
+ * Has associated array DT2ST.  DT2ST[i] gives the STindex which is derefed
+ * by DT[i*4].
  */
 static void GetNewDereftab(int chunk)
 {
@@ -34,8 +36,18 @@ static void GetNewDereftab(int chunk)
       free(DT);
    }
    DT = dtn;
+   dtn = malloc(Ndtalloc * sizeof(short));
+   assert(dtn);
+   if (DT2ST)
+   {
+      for (i=0; i < Ndt; i++) dtn[i] = DT2ST[i];
+      free(DT2ST);
+   }
+   DT2ST = dtn;
+   for (i=Ndt; i < Ndtalloc; i++) DT2ST[i] = 0;
 }
 
+#if 0
 void CleanDereftab()
 /*
  * Searches and removes nullified deref entries
@@ -60,6 +72,7 @@ void CleanDereftab()
    }
    Ndt = j;
 }
+#endif
 
 short FindDerefEntry(short ptr, short ireg, short mul, short con)
 {
@@ -78,6 +91,7 @@ short AddDerefEntry(short ptr, short reg, short mul, short con)
    DT[i+1] = reg;
    DT[i+2] = mul;
    DT[i+3] = con;
+   if (ptr > 0) DT2ST[Ndt] = ptr;
    return(++Ndt);
 }
 

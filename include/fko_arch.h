@@ -9,12 +9,16 @@
  */
 #if !defined(LINUX_PPC) && !defined(OSX_PPC) && !defined(LINUX_X86_32) && \
     !defined(LINUX_X86_64) && !defined(SOLARIS_SPARC)
+/*   #define FKO_ANSIC32 */
 /*   #define LINUX_X86_64 */
-/*   #define LINUX_X86_32 */
+   #define LINUX_X86_32
 /*   #define SOLARIS_SPARC */
-   #define OSX_PPC
+/*   #define OSX_PPC */
 #endif
 
+#if defined(FKO_ANSIC32) || defined(FKO_ANSIC64)
+   #define FKO_ANSIC
+#endif
 #ifdef X86_64
    #define ADDR64
 #endif
@@ -224,6 +228,42 @@
          extern char *archiregs[TNIR], *archfregs[NFR];
       #endif
    #endif
+   #define archdregs archfregs
+   #define dcallersave fcallersave
+   #define dcalleesave fcalleesave
+#endif
+#ifdef FKO_ANSIC
+   #define NIR  32
+   #define NFR  32
+   #define NDR  32
+   #define IRETREG 3
+   #define FRETREG (1+FREGBEG)
+   #define DRETREG (1+DREGBEG)
+   #ifdef ARCH_DECLARE
+      int  icallersave[NIR] = 
+       {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+      int  icalleesave[TNIR] = 
+       {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+      char *archiregs[TNIR] = 
+         {"ri0", "ri1", "ri2", "ri3", "ri4", "ri5", "ri6", "ri7", "ri8", 
+          "ri9","ri10", "ri11", "ri12", "ri13", "ri14", "ri15", "ri16", 
+          "ri17", "ri18", "ri19", "ri20", "ri21", "ri22", "ri23", "ri24", 
+          "ri25", "ri26", "ri27", "ri28", "ri29", "ri30", "ri31"};
+      char *archfregs[NFR] = 
+         {"rf0", "rf1", "rf2", "rf3", "rf4", "rf5", "rf6", "rf7", "rf8", 
+          "rf9", "rf10", "rf11", "rf12", "rf13", "rf14", "rf15", "rf16", 
+          "rf17", "rf18", "rf19", "rf20", "rf21", "rf22", "rf23", "rf24",
+          "rf25", "rf26", "rf27", "rf28", "rf29", "rf30", "rf31"};
+      char *archdregs[NDR] = 
+         {"rd0", "rd1", "rd2", "rd3", "rd4", "rd5", "rd6", "rd7", 
+          "rd8", "rd9", "rd10", "rd11", "rd12", "rd13", "rd14", "rd15",
+          "rd16", "rd17", "rd18", "rd19", "rd20", "rd21", "rd22", "rd23",
+          "rd24", "rd25", "rd26", "rd27", "rd28", "rd29", "rd30", "rd31"};
+   #else
+      extern char *archiregs[TNIR], *archfregs[NFR], *archdregs[NDR];
+   #endif
+   #define fcallersave icallersave
+   #define dcallersave icallersave
    #define archdregs archfregs
    #define dcallersave fcallersave
    #define dcalleesave fcalleesave

@@ -461,6 +461,8 @@ void Extern2Local(INSTQ *next, INSTQ *end, short rsav, int fsize)
       int nof, ni, nd, dr, dreg1;
       char *rpara[6] = {"@rdi", "@rsi", "@rdx", "@rcx", "@r8", "@r9"};
       char fnam[8];
+   #elif defined(FKO_ANSIC)
+      int ld, st;
    #endif
    int nbytes=0;
    short *paras;
@@ -498,6 +500,35 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       }
    }
 /*   MarkUnusedParams(NPARA, paras); */
+   #ifdef FKO_ANSIC
+      for (i=0; i < NPARA; i++)
+      {
+         USED = DT[(SToff[paras[i]].sa[2]-1)<<2];
+         if (USED)
+            PrintComment(NULL, next, "para %d, name=%s", i, 
+                         STname[paras[i]] ? STname[paras[i]] : "NULL");
+         else
+            PrintComment(NULL, next, "para %d, name=%s: UNUSED", i, 
+                         STname[paras[i]] ? STname[paras[i]] : "NULL");
+         flag = STflag[paras[i]];
+         k = FLAG2PTYPE(flag);
+         switch(k)  /* HERE HERE HERE */
+         {
+         T_INT:
+            ld = LD;
+            st = ST;
+            break;
+         T_FLOAT:
+            ld = FLD;
+            st = FST;
+            break;
+         T_DOUBLE:
+            ld = FLDD;
+            st = FSTD;
+            break;
+         default:
+         }
+   #endif
    #ifdef X86_64
       reg1 = GetReg(T_INT);
       fnam[0] = '@';
@@ -982,6 +1013,11 @@ void CreatePrologue(int align,  /* local-area required byte-alignment */
    int Loff;   /* called routines frame size excluding locals */
    int SAVESP=(-1);  /* must we save SP to stack? */
 
+   #ifdef FKO_ANSIC
+      Extern2Local(oldhead, oldtail, rsav, rsav ? Aoff : Aoff+tsize);
+      CreateEpilogue(tsize, Soff, SAVESP, nir, ir, nfr, fr, ndr, dr);
+      return;
+   #endif
 fprintf(stderr, "align=%d,lsize=%d,csize=%d\n", align, lsize, csize);
 /*
  * If we return values in a register, no need to save and restore it
