@@ -30,6 +30,7 @@
 #define UNSIGNED_BIT 0x200
 #define LOCAL_BIT    0x400
 #define DEREF_BIT    0x800
+#define UNKILL_BIT   0x1000   /* local must be allocated */
 
 #define IS_PTR(flag_)   ((flag_) & PTR_BIT)
 #define IS_CONST(flag_) ((flag_) & CONST_BIT)
@@ -40,6 +41,7 @@
 #define IS_DEREF(flag_) ((flag_) & DEREF_BIT)
 #define IS_LABEL(flag_) ((flag_) & LABEL_BIT)
 #define IS_VAR(flag_) (!((flag_) & (CONST_BIT | LABEL_BIT)))
+#define IS_KILLABLE(flag_) (!((flag_) & UNKILL_BIT))
 
 #define IS_SETUSE(flag_) (IS_LOCAL(flag_))
 

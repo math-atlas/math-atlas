@@ -1521,10 +1521,11 @@ void AddOptSTEntries()
  */
 {
    char ln[1024];
-   int i, n;
+   int i, n, VEC, k;
    short st;
    short *sp, **asp;
 
+   VEC = DO_VECT(FKO_FLAG);
    if (optloop && AEn)
    {
       n = AEn[0];
@@ -1537,7 +1538,15 @@ void AddOptSTEntries()
       {
          sp[i] = FindVarFromName(AES[i-1]);
          assert(sp[i]);
-         asp[i-1] = DeclareAE(DO_VECT(FKO_FLAG), AEn[i], sp[i]);
+#if 0
+         if (VEC)
+         {
+            k = FindInShortList(optloop->vscal[0], optloop->vscal+1, sp[i]);
+            assert(k);
+            sp[i] = optloop->vvscal[k];
+         }
+#endif
+         asp[i-1] = DeclareAE(VEC, AEn[i], sp[i]);
       }
       optloop->ae = sp;
       optloop->ne = AEn;

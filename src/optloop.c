@@ -2213,7 +2213,7 @@ short *DeclareAE(int VEC, int ne, short STi)
  */
 {
    int type, i;
-   short *sp;
+   short *sp, k;
    char ln[1024];
 
    sp = malloc(ne*sizeof(short));
@@ -2228,8 +2228,9 @@ short *DeclareAE(int VEC, int ne, short STi)
    }
    for (i=1; i < ne; i++)
    {
-      sprintf(ln, "_AE_%s_%d", STname[STi-1]);
-      sp[i] = STdef(ln, type | LOCAL_BIT, 0);
+      sprintf(ln, "_AE_%s_%d", STname[STi-1], i);
+      k = sp[i] = STdef(ln, type | LOCAL_BIT | UNKILL_BIT, 0);
+      SToff[k-1].sa[2] = AddDerefEntry(-REG_SP, k, -k, 0, k);
    }
    return(sp);
 }
@@ -2242,6 +2243,8 @@ void AddInstToPrehead(LOOPQ *lp, INSTQ *iadd, short type, short r0, short r1)
 {
    BBLOCK *bp;
    INSTQ *ipn, *ip, *ipA;
+   short s0, s1;
+   int i;
 
    bp = lp->preheader;
    ipn = bp->ainstN;
@@ -2250,7 +2253,24 @@ void AddInstToPrehead(LOOPQ *lp, INSTQ *iadd, short type, short r0, short r1)
  */
    if (r0)
    {
-      assert(0);
+      s0 = -GetReg(type);
+      if (!r1)
+      {
+         r1 = r0;
+         s1 = s0;
+      }
+      else
+         s1 = -GetReg(type);
+      for (ip=iadd; ip; ip = ip->next)
+      {
+         for (i=1; i < 4; i++)
+         {
+            if (ip->inst[i] == r0)
+               ip->inst[i] = s0;
+            else if (ip->inst[i] == r1)
+               ip->inst[i] = s1;
+         }
+      }
    }
    if (ipn)
    {
@@ -2286,12 +2306,13 @@ void AddInstToPosttail(LOOPQ *lp, INSTQ *iadd, short type, short r0, short r1)
  *    NOTE: later change this to calc live reg & choose dead
  */
       s0 = -GetReg(type);
-      s1 = -GetReg(type);
       if (!r1)
       {
          r1 = r0;
          s1 = s0;
       }
+      else
+         s1 = -GetReg(type);
       for (ip=iadd; ip; ip = ip->next)
       {
          for (i=1; i < 4; i++)
@@ -2324,6 +2345,7 @@ void AddInstToPosttail(LOOPQ *lp, INSTQ *iadd, short type, short r0, short r1)
          CalcThisUseSet(ipp);
       }
    }
+   GetReg(-1);
 }
 
 INSTQ *GetAEHeadTail(LOOPQ *lp, short ae, short ne, short *aes, int vec)
@@ -2378,20 +2400,25 @@ INSTQ *GetAEHeadTail(LOOPQ *lp, short ae, short ne, short *aes, int vec)
       fko_error(__LINE__, "Unknown type file %s", __FILE__);
       assert(0);
    }
+   r0 = -TNREG-1;
+   r1 = -TNREG-2;
 /*
  * Zero shadow accumulators in loop header
  */
    ibase->prev = ip = NewInst(NULL, NULL, NULL, COMMENT, 
                       STstrconstlookup("Begin shadow accum init"), 0, 0);
-   for (i=1; i <= ne; i++)
-      ip = NewInst(NULL, ip, NULL, zero, aes[i], 0, 0);
-   ip = NewInst(NULL, ip, NULL, COMMENT, 
-                STstrconstlookup("End shadow accum init"), 0, 0);
+   ip->next = NewInst(NULL, ip, NULL, zero, r0, 0, 0);
+   ip = ip->next;
+   for (i=1; i < ne; i++)
+   {
+      ip->next = NewInst(NULL, ip, NULL, st, SToff[aes[i]-1].sa[2], r0, 0);
+      ip = ip->next;
+   }
+   ip->next = NewInst(NULL, ip, NULL, COMMENT, 
+                      STstrconstlookup("End shadow accum init"), 0, 0);
 /* 
  * These are the registers that should be changed to a dead reg during insertion
  */
-   r0 = -TNREG-1;
-   r1 = -TNREG-2;
    ibase->inst[1] = r0;
    ibase->inst[2] = r1;
 /*
@@ -2416,13 +2443,13 @@ INSTQ *GetAEHeadTail(LOOPQ *lp, short ae, short ne, short *aes, int vec)
          {
             i1 = aes[i1];
             i2 = aes[i2];
-            ip->next = NewInst(NULL, ip, NULL, ld, r0, SToff[i1].sa[2], 0);
+            ip->next = NewInst(NULL, ip, NULL, ld, r0, SToff[i1-1].sa[2], 0);
             ip = ip->next;
-            ip->next = NewInst(NULL, ip, NULL, ld, r1, SToff[i2].sa[2], 0);
+            ip->next = NewInst(NULL, ip, NULL, ld, r1, SToff[i2-1].sa[2], 0);
             ip = ip->next;
             ip->next = NewInst(NULL, ip, NULL, add, r0, r0, r1);
             ip = ip->next;
-            ip->next = NewInst(NULL, ip, NULL, st, SToff[i1].sa[2], r0, 0);
+            ip->next = NewInst(NULL, ip, NULL, st, SToff[i1-1].sa[2], r0, 0);
             ip = ip->next;
          }
       }
@@ -2438,8 +2465,10 @@ int DoAccumExpansOnLoop(LOOPQ *lp, short type, short ae, short *aes)
    BLIST *bl;
    INSTQ *ip;
    int j, ne, nchanges=0;
+   short dt;
 
    ne = aes[0]+1;
+   dt = SToff[ae-1].sa[2];
 /*
  * Note, this is not necessarily in loop order, but what the hell
  */
@@ -2451,17 +2480,17 @@ int DoAccumExpansOnLoop(LOOPQ *lp, short type, short ae, short *aes)
  */
       for (ip=bl->blk->ainst1; ip; ip = ip->next)
       {
-         if (IS_LOAD(ip->inst[0]) && ip->inst[2] == ae && j%ne)
+         if (IS_LOAD(ip->inst[0]) && ip->inst[2] == dt && j%ne)
          {
-            ip->inst[2] = aes[j%ne];
+            ip->inst[2] = SToff[aes[j%ne]-1].sa[2];
             CalcThisUseSet(ip);
          }
-         if (IS_STORE(ip->inst[0]) && ip->inst[1] == ae)
+         if (IS_STORE(ip->inst[0]) && ip->inst[1] == dt)
          {
             if (j%ne)
             {
                nchanges++;
-               ip->inst[1] = aes[j%ne];
+               ip->inst[1] = SToff[aes[j%ne]-1].sa[2];
                CalcThisUseSet(ip);
             }
             j++;
@@ -2478,19 +2507,27 @@ int DoAllAccumExpansion(LOOPQ *lp, int unroll, int vec)
  *       DeclareAE must have been called before Stage[1,3]
  */
 {
-   int n, i, nchanges=0;
+   int n, i, k, ae, nchanges=0;
    INSTQ *ipb;
 
    for (n=lp->ae[0],i=1; i <= n; i++)
    {
-      if (unroll % lp->ae[i])
-         fko_warn(__LINE__, "UNROLL=%d, but NACCEXP=%d!", unroll, lp->ae[i]);
-      ipb = GetAEHeadTail(lp, lp->ae[i], lp->aes[i-1][0]+1, lp->aes[i-1], vec);
-      AddInstToPrehead(lp, ipb->prev, ipb->inst[0], 0, 0);
+      ae = lp->ae[i];
+      if (vec)
+      {
+         k = FindInShortList(optloop->vscal[0], optloop->vscal+1, ae);
+         assert(k);
+         ae = optloop->vvscal[k];
+      }
+      if (unroll % (lp->aes[i-1][0]+1))
+         fko_warn(__LINE__, "UNROLL=%d, but NACCEXP=%d!", unroll, 
+                  (lp->aes[i-1][0]+1));
+      ipb = GetAEHeadTail(lp, ae, lp->aes[i-1][0]+1, lp->aes[i-1], vec);
+      AddInstToPrehead(lp, ipb->prev, ipb->inst[0], ipb->inst[1], 0);
       KillAllInst(ipb->prev);
       AddInstToPosttail(lp, ipb->next, ipb->inst[0],ipb->inst[1],ipb->inst[2]);
       KillAllInst(ipb->next);
-      nchanges += DoAccumExpansOnLoop(lp, ipb->inst[0], lp->ae[i],lp->aes[i-1]);
+      nchanges += DoAccumExpansOnLoop(lp, ipb->inst[0], ae, lp->aes[i-1]);
       ipb->prev = ipb->next = NULL;
       KillThisInst(ipb);
    }

@@ -460,7 +460,8 @@ void MarkUnusedLocals(BBLOCK *bbase)
       if (IS_DEREF(STflag[k]) && SToff[k].sa[0] == -REG_SP &&
           SToff[k].sa[2] < 0)
       {
-         SToff[k].sa[0] = 0;
+         if (IS_KILLABLE(STflag[k]))
+            SToff[k].sa[0] = 0;
       }
    }
    for (bp=bbase; bp; bp = bp->down)
@@ -552,7 +553,8 @@ short FindDerefEntry(short ptr, short ireg, short mul, short con)
 short AddDerefEntry(short ptr, short reg, short mul, short con, short pts2)
 {
    int i;
-   i = STdef("DT", DEREF_BIT | FLAG2TYPE(STflag[ptr-1]), 0) - 1;
+   i = STdef("DT", DEREF_BIT | FLAG2TYPE(STflag[pts2-1]) | 
+             (UNKILL_BIT & STflag[pts2-1]), 0) - 1;
    SToff[i].sa[0] = ptr;
    SToff[i].sa[1] = reg;
    SToff[i].sa[2] = mul;
