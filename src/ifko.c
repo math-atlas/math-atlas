@@ -334,11 +334,11 @@ int GoToTown(int SAVESP)
    NewBasicBlocks(bbbase);
    FindLoops(); 
    CheckFlow(bbbase, __FILE__, __LINE__);
-   if (optloop && 0)
-   #if 1
+   if (optloop && 1)
+   #if 0
       OptimizeLoopControl(optloop, 1, 1, NULL);
    #else
-      UnrollLoop(optloop, 2);
+      UnrollLoop(optloop, 5);
    #endif
    CalcInsOuts(bbbase); 
    CalcAllDeadVariables();

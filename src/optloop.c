@@ -72,6 +72,7 @@ BLIST *DupBlockList(BLIST *scope, int ivscope)
    return(lbase);
 }
 
+#if 0
 void IndividualizeDuplicatedBlockList(int ndup, BLIST *scope)
 /*
  * This function individualizes duped code by finding all labels, and prefacing
@@ -141,6 +142,7 @@ void IndividualizeDuplicatedBlockList(int ndup, BLIST *scope)
    }
    KillAllLocinit(lbase);
 }
+#endif
 
 BBLOCK *GetFallPath(BBLOCK *head, int loopblks, int inblks, int tails,
                     int fallblks)
@@ -252,6 +254,30 @@ void InsertUnrolledCode(LOOPQ *lp, int unroll, BLIST **dupblks)
    KillBitVec(inblks);
 }
 
+int UpdateIndexRef(BLIST *scope, short I, int ur)
+/*
+ * Finds all LDs from I in given scope, and adds UR to the lded reg.
+ */
+{
+   BLIST *bl;
+   INSTQ *ip;
+   int changes=0; 
+   short deref, k;
+   deref = SToff[I-1].sa[2];
+   for (bl=scope; bl; bl = bl->next)
+   {
+      for (ip=bl->blk->ainstN; ip; ip = ip->prev)
+      {
+         if (ip->inst[0] == LD && ip->inst[2] == deref)
+         {
+            k = ip->inst[1];
+            InsNewInst(bl->blk, ip, NULL, ADD, k, k, STiconstlookup(ur));
+            changes++;
+         }
+      }
+   }
+   return(changes);
+}
 ILIST *FindIndexRef(BLIST *scope, short I)
 /*
  * Finds all LDs from I in given scope.
@@ -864,12 +890,12 @@ BLIST *CF2BlockList(BLIST *bl, short bvblks, BBLOCK *head)
    return(bl);
 }
 
-void UpdateUnrolledIndices(BLIST *scope, int UR)
+void UpdateUnrolledIndices(BLIST *scope, short I, int UR)
 /*
  * Adds UR*sizeof to all index refs in scope
  */
 {
-   assert(0);
+   UpdateIndexRef(scope, I, UR);
 }
 
 int UnrollLoop(LOOPQ *lp, int unroll)
@@ -941,8 +967,7 @@ FILE *fpout;
  *    Update indices to add in unrolling factor
  */
       if (UsesIndex)
-         UpdateUnrolledIndices(dupblks[i-1], i);
-//      IndividualizeDuplicatedBlockList(i, dupblks[i-1]);
+         UpdateUnrolledIndices(dupblks[i-1], lp->I, i);
    }
    SetVecBit(lp->blkvec, lp->header->bnum-1, 1);
    KillCompflagInRange(lp->blocks, CF_LOOP_UPDATE, CF_LOOP_END);
