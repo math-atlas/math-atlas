@@ -8,8 +8,8 @@ main()
    double exp=2.5, dret;
    double fsimple(void);
    dret = fsimple();
-   if (exp == dret) fprintf(stdout, "0d: FPCONST RETURN PASSED\n");
-   else fprintf(stderr, "0d: FPCONST RET FAILED: got=%lf, expected=%lf\n",
+   if (exp == dret) fprintf(stdout, "2d: FPCONST RETURN PASSED\n");
+   else fprintf(stderr, "2d: FPCONST RET FAILED: got=%lf, expected=%lf\n",
                 dret, exp);
    exit(exp != dret);
 }
