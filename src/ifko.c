@@ -9,6 +9,9 @@ int FUNC_FLAG=0;
 int DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0, DTx87=0, DTx87d=0;
 int FKO_FLAG, FKO_UNROLL=0;
 
+int noptrec=0;
+enum FKOOPT optrec[512];
+
 void PrintUsage(char *name)
 {
    fprintf(stderr, "USAGE: %s [flags] <HIL file>\n", name);
@@ -579,6 +582,7 @@ static void RestoreFKOState(int isav)
    char ln[128];
    extern BBLOCK *bbbase;
 
+   noptrec = 0;
    sprintf(ln, "%s%d", fST, isav);
    ReadSTFromFile(ln);
    sprintf(ln, "%s%d", fLIL, isav);
@@ -629,11 +633,14 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope, int global)
  * 0 if no transformations applied, nonzero if some changes were made
  */
 {
-   int i, j, nchanges=0;
+   int i, j, k, nchanges=0;
 
+   if (!scope)
+      return(0);
    for (i=0; i < nopt; i++)
    {
-      switch(ops[i])
+      k = ops[i];
+      switch(k)
       {
       case GlobRegAsg:
          assert(!global);
@@ -648,56 +655,85 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope, int global)
       default:
          fko_error(__LINE__, "Unknown optimization %d\n", ops[i]);
       }
+      optrec[noptrec++] = global ? k+MaxOpt : k;
    }
    return(nchanges);
 }
 
-int DoOptBlkWhileChanges(BLIST *scope, int global, struct optblkq *op)
+int DoOptBlock(BLIST *gscope, BLIST *lscope, struct optblkq *op)
 /*
  * Returns: nchanges applied
  */
 {
-   int i, nc, tnc=0;
+   int i, nc, tnc=0, global;
    int maxN;
    struct optblkq *dp;
+   BLIST *scope;
+
+   global = op->flag & IOPT_GLOB;
+   scope = global ? gscope : lscope;
 /*
  * if we have conditional optimization block, handle it
  */
    if (op->ifblk)
    {
-      tnc = DoOptBlkWhileChanges(scope, global, op->ifblk);
+      tnc = DoOptBlock(gscope, lscope, op->ifblk);
       if (tnc)
       {
          if (op->down)
-            tnc += DoOptBlkWhileChanges(scope, global, op->down);
+            tnc += DoOptBlock(gscope, lscope, op->down);
       }
       else if (op->next)
-         tnc += DoOptBlkWhileChanges(scope, global, op->next);
+         tnc += DoOptBlock(gscope, lscope, op->next);
    }
 /*
- * Otherwise, we have normal optblk
+ * If we've got a one-time list, handle it
+ */
+   else if (!op->maxN)
+      nc = DoOptList(op->nopt, op->opts, scope, global);
+/*
+ * Otherwise, we have normal while(changes) optblk
  */
    else
    {
       maxN = op->maxN;
       for (i=0; i < maxN; i++)
       {
-         nc = DoOptList(dp->nopt, dp->opts, scope, global);
-         for (dp=op; dp; dp = dp->down)
-            nc += DoOptBlkWhileChanges(scope, global, op);
+         nc = DoOptList(op->nopt, op->opts, scope, global);
+         for (dp=op->down; dp; dp = dp->down)
+            nc += DoOptBlock(gscope, lscope, op);
          if (!nc)
             break;
          tnc += nc;
       }
+      if (!nc)
+         fprintf(stderr, "On last (%d) iteration, still had %d changes!\n",
+                 maxN, nc);
    }
-   if (!nc)
-      fprintf(stderr, "On last (%d) iteration, still had %d changes!\n",
-              maxN, nc);
    if (op->next)
-      tnc += DoOptBlkWhileChanges(scope, global, op->next);
+   {
+      tnc += DoOptBlock(gscope, lscope, op->next);
+   }
    return(tnc);
 }
 
+int PerformOptN(int SAVESP, struct optblkq *optblks)
+/*
+ * Returns: # of changes
+ */
+{
+   BLIST *bl, *lbase;
+   extern BBLOCK *bbbase;
+   BBLOCK *bp;
+   int nc;
+
+   for (lbase=NULL,bp=bbbase; bp; bp = bp->down)
+      lbase = AddBlockToList(lbase, bp);
+   nc = DoOptBlock(lbase, optloop ? optloop->blocks : NULL, optblks);
+   KillBlockList(lbase);
+   INDEADU2D = CFUSETU2D = 0;
+   return(nc);
+}
 int PerformOpt(int SAVESP)
 /*
  * Returns 0 on success, non-zero on failure
@@ -714,6 +750,7 @@ int PerformOpt(int SAVESP)
    if (optloop && 1)
    {
       DoLoopGlobalRegAssignment(optloop);  
+      optrec[noptrec++] = GlobRegAsg;
       do
       {
          j = DoScopeRegAsg(optloop->blocks, 1, &i);   
@@ -721,6 +758,8 @@ int PerformOpt(int SAVESP)
          KeepOn &= DoCopyProp(optloop->blocks); 
          if (KeepOn)
            fprintf(stderr, "\n\nREAPPLYING LOOP OPTIMIZATIONS!!\n\n");
+         optrec[noptrec++] = RegAsg;
+         optrec[noptrec++] = CopyProp;
       }
       while(KeepOn);
    }
@@ -739,6 +778,8 @@ int PerformOpt(int SAVESP)
       KeepOn = DoCopyProp(lbase);
       if (KeepOn)
         fprintf(stderr, "\n\nREAPPLYING GLOBAL OPTIMIZATIONS!!\n\n");
+      optrec[noptrec++] = RegAsg + MaxOpt;
+      optrec[noptrec++] = CopyProp+MaxOpt;
    }
    while(KeepOn);
    KillBlockList(lbase);
@@ -746,7 +787,7 @@ int PerformOpt(int SAVESP)
    return(0);
 }
 
-int GoToTown(int SAVESP, int unroll)
+int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
 {
    int i;
    extern BBLOCK *bbbase;
@@ -766,7 +807,11 @@ int GoToTown(int SAVESP, int unroll)
    CalcInsOuts(bbbase); 
    CalcAllDeadVariables();
 
+#if 1
+   PerformOptN(SAVESP, optblks);
+#else
    assert(!PerformOpt(SAVESP));
+#endif
 
    if (!INDEADU2D)
       CalcAllDeadVariables();
@@ -783,6 +828,28 @@ int GoToTown(int SAVESP, int unroll)
       return(1);
    CheckFlow(bbbase, __FILE__, __LINE__);
    return(0);
+}
+
+void DumpOptsPerformed(FILE *fpout, int verbose)
+{
+   int i, k;
+   char ch;
+   if (verbose)
+   {
+      fprintf(fpout, "\n%d optimization phases performed:\n", noptrec);
+      for (i=0; i < noptrec; i++)
+      {
+         k = optrec[i];
+         if (k >= MaxOpt)
+         {
+            ch = 'G';
+            k -= MaxOpt;
+         }
+         else
+            ch = 'L';
+         fprintf(fpout, "%3d. %c %s\n", i, ch, optmnem[k]);
+      }
+   }
 }
 
 struct optblkq *DefaultOptBlocks(void)
@@ -840,12 +907,13 @@ int main(int nargs, char **args)
    }
    if (FKO_FLAG & IFF_GENINTERM)
      exit(0);
-   if (GoToTown(0, FKO_UNROLL))
+   if (GoToTown(0, FKO_UNROLL, optblks))
    {
       fprintf(stderr, "\n\nOut of registers for SAVESP, trying again!!\n");
       RestoreFKOState(0);
-      assert(!GoToTown(IREGBEG+NIR-1, FKO_UNROLL));
+      assert(!GoToTown(IREGBEG+NIR-1, FKO_UNROLL, optblks));
    }
+   DumpOptsPerformed(stderr, 1);
 
    if (!(FKO_FLAG & IFF_READINTERM))
    {

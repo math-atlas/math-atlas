@@ -13,6 +13,28 @@ union valoff
    long l;
 };
 
+#ifdef IFKO_DECLARE
+   char *optmnem[] = {"IG Reg Asg", "Copy Prop", "LP Reg Asg", "NONE"};
+   char *optabbr[] = {"ra", "cp", "gr", "00"};
+#else
+   extern char *optmnem[], *optabbr[];
+#endif
+enum FKOOPT {RegAsg, CopyProp, GlobRegAsg, MaxOpt};
+struct optblkq
+{
+   enum FKOOPT *opts;    /* list of ordered opts to perform                  */
+   struct optblkq *down; /* opts included in while(change)                   */
+   struct optblkq *next; /* succeeding opts not in while(change)             */
+   struct optblkq *ifblk;/* if non-null, this is conditional block, and      *
+                         /* down is applied if ifblk produces changes, and   *
+                          * next is applied if not                           */
+   ushort nopt;          /* # of opt in opts                                 */
+   ushort maxN;          /* if zero, do not do while(change)                 *
+                          * if nonzero, do at most that many applications    */
+   ushort bnum;          /* number of this block                             */
+   ushort flag;
+};
+
 typedef struct instq INSTQ;
 struct instq
 {

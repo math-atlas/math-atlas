@@ -8,5 +8,7 @@ int NumberArchRegs();
 void CalcIG(BLIST *blist);
 int DoScopeRegAsg(BLIST *scope, int thresh, int *tnig);
 int DoCopyProp(BLIST *scope);
+int DoLoopGlobalRegAssignment(LOOPQ *loop);
+
 
 #endif
