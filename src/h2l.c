@@ -647,8 +647,9 @@ fprintf(stderr, "%s(%d) I=%d, start=%d, end=%d\n", __FILE__, __LINE__,I,start,en
    }
    if (sinc)
    {
-      if (sinc == 2) flag |= L_PINC_BIT;
-      else /* if (sinc == -2) */ flag |= L_NINC_BIT;
+      if (sinc == -2) flag |= L_NINC_BIT;
+      else if (sinc == 3) flag |= L_MINC_BIT;
+      else flag |= L_PINC_BIT;
    }
    lp = optloop = NewLoop(flag);
    lp->I = I;
@@ -656,9 +657,8 @@ fprintf(stderr, "%s(%d) I=%d, start=%d, end=%d\n", __FILE__, __LINE__,I,start,en
    lp->end = end;
    lp->inc = inc;
 
-   lp->header = NewBasicBlock(NULL, NULL);
-   lp->header->inst1 = InsNewInst(NULL, NULL, NULL, CMPFLAG, CF_LOOP_INIT,
-                                  lp->loopnum, 0);
+/*   lp->header = NewBasicBlock(NULL, NULL); */
+   InsNewInst(NULL, NULL, NULL, CMPFLAG, CF_LOOP_INIT, lp->loopnum, 0);
    flag = STflag[start-1];
    assert(!IS_PTR(flag));
    if (IS_CONST(flag)) DoMove(I, start);
@@ -682,6 +682,7 @@ void FinishLoop(LOOPQ *lp)
 {
    short ireg, iend;
    int flag;
+   char lnam[64];
 /*
  * Update loop counter
  */
@@ -694,8 +695,10 @@ void FinishLoop(LOOPQ *lp)
    else iend = -LocalLoad(lp->end);
    InsNewInst(NULL, NULL, NULL, CMP, -ICC0, -ireg, iend);
    InsNewInst(NULL, NULL, NULL, JLT, -PCREG, -ICC0, lp->body_label);
-   lp->header->instN = InsNewInst(NULL, NULL, NULL, CMPFLAG, CF_LOOP_END,
-                                  lp->loopnum, 0);
+   InsNewInst(NULL, NULL, NULL, CMPFLAG, CF_LOOP_END, lp->loopnum, 0);
+   sprintf(lnam, "_LOOP_END_%d", lp->loopnum);
+   lp->end_label = STstrconstlookup(lnam);
+   InsNewInst(NULL, NULL, NULL, LABEL, lp->end_label, lp->loopnum, 0);
    GetReg(-1);
 }
 

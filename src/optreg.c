@@ -971,6 +971,13 @@ int DoIGRegAsg(int N, IGNODE **igs)
       BitVecComb(iv, iv, ig->liveregs, '-');
       SetVecBit(iv, REG_SP-1, 0);
 /*
+ *    Don't use [f,d]retreg (%sp) for x86-32
+ */
+      #ifdef X86_32
+         SetVecBit(iv, FRETREG-1, 0);
+         SetVecBit(iv, DRETREG-1, 0);
+      #endif
+/*
  *    If we have a register left, assign it
  */
       ig->reg = AnyBitsSet(iv);
@@ -1875,9 +1882,11 @@ fprintf(stderr, ", src=%s\n", Int2Reg(-src));
       if (!ACTIVE_INST(j))
          continue;
 /*
- *    If src becomes live again, put move back, and stop copy prop
+ *    If src becomes live again, put move back, and stop copy prop, unless
+ *    src becomes live due to a move from dest
  */
-      if (BitVecCheckComb(ip->set, ivsrc, '&'))
+      if (BitVecCheckComb(ip->set, ivsrc, '&') &&
+          (j != mov || ip->inst[1] != -src || ip->inst[2] != -dest))
          goto PUTMOVEBACK;
 /*
  *    Stop copy prop if we see idiv on x86

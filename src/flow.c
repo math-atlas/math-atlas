@@ -262,8 +262,10 @@ void AddBlockComments(BBLOCK *bp)
                    bp->conout ? PrintVecList(bp->conout, 0): "NULL");
       PrintComment(bp, NULL, bp->inst1, "   conin  = %s", 
                    bp->conin ? PrintVecList(bp->conin, 0): "NULL");
+#if 0
       PrintComment(bp, NULL, bp->inst1, "   ignodes = %s", 
                    bp->ignodes ? PrintVecList(bp->ignodes, 0): "NULL");
+#endif
       PrintComment(bp, NULL, bp->inst1, "   uses = %s",
                    BV2VarNames(bp->uses));
       PrintComment(bp, NULL, bp->inst1, "   defs = %s",
@@ -306,7 +308,7 @@ BBLOCK *FindBasicBlocks(BBLOCK *base0)
    {
       for (ip=bp->inst1; ip; ip = ip->next)
       {
-         if (bn->inst1)
+         if (bn->ainst1)
          {
             if (ip->inst[0] != LABEL)
             {
@@ -324,7 +326,7 @@ BBLOCK *FindBasicBlocks(BBLOCK *base0)
                continue;
             }
          }
-         else  /* this is 1st inst in block, labels OK */
+         else  /* this is 1st active inst in block, labels OK */
          {
             InsNewInst(bn, NULL, NULL, ip->inst[0], ip->inst[1],
                        ip->inst[2], ip->inst[3]);
@@ -390,9 +392,9 @@ void SetBlocksActiveInst(BBLOCK *bp)
    INSTQ *ip;
    for (; bp; bp = bp->down)
    {
-      for (ip=bp->inst1; ip && ip->inst[0] == COMMENT; ip = ip->next);
+      for (ip=bp->inst1; ip && !ACTIVE_INST(ip->inst[0]); ip = ip->next);
       bp->ainst1 = ip;
-      for (ip=bp->instN; ip && ip->inst[0] == COMMENT; ip = ip->prev);
+      for (ip=bp->instN; ip && !ACTIVE_INST(ip->inst[0]); ip = ip->prev);
       bp->ainstN = ip;
    }
 }
@@ -429,28 +431,32 @@ void FindPredSuccBlocks(BBLOCK *bbase)
    #endif
    for (bp=bbase; bp; bp = bp->down)
    {
-      inst = bp->ainstN->inst[0];
-      if (IS_BRANCH(inst))
+      if (bp->ainstN)
       {
+         inst = bp->ainstN->inst[0];
+         if (IS_BRANCH(inst))
+         {
 /*
- *       Unconditional jump sets only usucc
+ *          Unconditional jump sets only usucc
  */
-         if (inst != JMP && inst != RET)
-         {
-            bp->csucc = FindBlockWithLabel(bbase, bp->ainstN->inst[3]);
-            bp->usucc = bp->down;
-         }
-         else if (inst != RET)
-         {
-            bp->usucc = FindBlockWithLabel(bbase, bp->ainstN->inst[2]);
-            if (!bp->usucc)
+            if (inst != JMP && inst != RET)
             {
-               fprintf(stderr, "could not find label %d (%s)!!\n",
-                       bp->ainstN->inst[2], STname[bp->ainstN->inst[2]-1]);
-               while(1);
+               bp->csucc = FindBlockWithLabel(bbase, bp->ainstN->inst[3]);
+               bp->usucc = bp->down;
             }
-            assert(bp->usucc);
+            else if (inst != RET)
+            {
+               bp->usucc = FindBlockWithLabel(bbase, bp->ainstN->inst[2]);
+               if (!bp->usucc)
+               {
+                  fprintf(stderr, "could not find label %d (%s)!!\n",
+                          bp->ainstN->inst[2], STname[bp->ainstN->inst[2]-1]);
+                  while(1);
+               }
+               assert(bp->usucc);
+            }
          }
+         else bp->usucc = bp->down;
       }
       else bp->usucc = bp->down;
       if (bp->usucc) bp->usucc->preds = NewBlockList(bp, bp->usucc->preds);
@@ -505,11 +511,16 @@ void CheckFlow(BBLOCK *bbase, char *file, int line)
          fprintf(stderr, "WARNING, block %d has no instructions!\n", bp->bnum);
       if (bp->inst1)
       {
-         for (ip=bp->inst1; ip && ip->inst[0] == COMMENT; ip = ip->next);
+         for (ip=bp->inst1; ip && !ACTIVE_INST(ip->inst[0]); ip = ip->next);
          if (ip != bp->ainst1)
          {
-            fprintf(stderr, "Wrong ainst (%d) for block %d, expected %d\n",
+            fprintf(stderr, "Wrong ainst1 (%d) for block %d, expected %d\n",
                     bp->ainst1, bp->bnum, ip);
+            fprintf(stderr, "ainst1 = ");
+            PrintThisInst(stderr, 0, bp->ainst1);
+            fprintf(stderr, "Expected = ");
+            if (ip) PrintThisInst(stderr, 0, ip);
+            else fprintf(stderr, "NULL\n");
             error = i+1;
          }
          for (ip=bp->inst1; ip->next; ip = ip->next);
@@ -519,11 +530,16 @@ void CheckFlow(BBLOCK *bbase, char *file, int line)
                     bp->instN, bp->bnum, ip);
             error = i+1;
          }
-         for (; ip && ip->inst[0] == COMMENT; ip = ip->prev);
+         for (; ip && !ACTIVE_INST(ip->inst[0]); ip = ip->prev);
          if (ip != bp->ainstN)
          {
             fprintf(stderr, "Wrong ainstN (%d) for block %d, expected %d\n",
                     bp->ainstN, bp->bnum, ip);
+            fprintf(stderr, "ainstN = ");
+            PrintThisInst(stderr, 0, bp->ainstN);
+            fprintf(stderr, "Expected = ");
+            if (ip) PrintThisInst(stderr, 0, ip);
+            else fprintf(stderr, "NULL\n");
             error = i+1;
          }
       }
@@ -589,6 +605,7 @@ void CheckFlow(BBLOCK *bbase, char *file, int line)
       fprintf(stderr, "Error in CheckFlow called from line %d of %s\n",
               line, file);
 /*      while(1); */
+      exit(error);
    }
 }
 #endif
@@ -683,7 +700,8 @@ LOOPQ *NewLoop(int flag)
    lp = malloc(sizeof(struct loopq));
    assert(lp);
    lp->flag = flag;
-   lp->depth = lp->I = lp->beg = lp->end = lp->inc = lp->body_label = 0;
+   lp->depth = lp->I = lp->beg = lp->end = lp->inc = lp->body_label = 
+               lp->end_label = 0;
    lp->loopnum = lp->maxunroll = lp->writedd = 0;
    lp->slivein = lp->sliveout = lp->adeadin = lp->adeadout = lp->nopf =
                  lp->aaligned = NULL;

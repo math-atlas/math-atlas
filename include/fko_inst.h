@@ -9,6 +9,7 @@ enum comp_flag
 {
    CF_REGSAVE,
    CF_REGRESTORE,
+   CF_PARASAVE,
    CF_LOOP_INIT,  /* loop# */
    CF_LOOP_BODY,
    CF_LOOP_UPDATE,
@@ -44,6 +45,7 @@ enum inst
  */
    LD,                          /* [r], [ptr], NULL */
    ST,                          /* [ptr], [r], NULL */
+   MOV,                         /* [r0], [r1/c] : r0 = r1 */
    OR,                          /* r0 = r1 | r/c */
    AND,                         /* r0 = r1 & r/c */
    ANDCC,                       /* r0 = r1 & r/c */
@@ -62,7 +64,6 @@ enum inst
    UDIV,                      
    CMPAND,                      /* cc0, r1, r2/c : set [cc] based on r1 & r2 */
    CMP,                         /* cc#, r1, r2/c: set [cc] based on r1 - r2 */
-   MOV,                         /* [r0], [r1/c] : r0 = r1 */
    NEG,                         /* [r0], [r1] : r0 = -r1 */
 /*   ABS, ; abs commented out because not widely supported */
 /*
@@ -151,6 +152,7 @@ enum inst
 /*
  * x86-only instructions
  */
+   VGR2VR16,                    /* vreg, ireg, const -- PINSRW */
    FCMPW,    /* freg0, freg1, iconst ; freg0 overwritten with T or F */
    FCMPWD,   /* iconst -- 0 : ==;  1 : < ;  2 : <= */
    CVTBFI,   /* ireg, freg    x86 only movmskps -> bit move (no conversion) */
@@ -210,6 +212,7 @@ char *instmnem[] =
  */
    "LDS",
    "STS",
+   "MOVS",
    "ORS",
    "XORS",
    "NOTS",
@@ -223,7 +226,6 @@ char *instmnem[] =
    "DIVS",
    "UDIVS",
    "CMPS",
-   "MOVS",
    "NEGS",
    "ABSS",
 /*
@@ -291,6 +293,7 @@ char *instmnem[] =
 /*
  * x86-only instructions
  */
+   "VGR2VR16",
    "FCMPW",
    "FCMPWD",
    "CVTBFI",

@@ -136,6 +136,7 @@ int main(int nargs, char **args)
    extern FILE *yyin;
    extern BBLOCK *bbbase;
    BLIST *bl, *lbase;
+FILE *fptmp;
 
    GetFlags(nargs, args, &fin, &fpin, &fpout);
    yyin = fpin;
@@ -166,7 +167,8 @@ int main(int nargs, char **args)
       while(KeepOn);
    }
 
-   PrintInst(fopen("tmp.err", "w"), bbbase);
+   PrintInst(fptmp=fopen("tmp.err", "w"), bbbase);
+   fclose(fptmp);
 /*
  * Perform global optimizations on whole function
  */
@@ -174,11 +176,11 @@ int main(int nargs, char **args)
       lbase = AddBlockToList(lbase, bp);
    do
    {
+      CalcAllDeadVariables();
 /*
  *    Do reg asg on whole function
  */
       j = DoScopeRegAsg(lbase, 2, &i);   
-break;
       KeepOn = DoCopyProp(lbase);
       if (KeepOn)
         fprintf(stderr, "\n\nREAPPLYING GLOBAL OPTIMIZATIONS!!\n\n");
@@ -188,6 +190,8 @@ break;
    INDEADU2D = CFUSETU2D = 0;
    if (!INDEADU2D)
       CalcAllDeadVariables();
+PrintInst(fptmp=fopen("tmp.LIL", "w"), bbbase);
+fclose(fptmp);
 
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    AddBlockComments(bbbase);
@@ -200,6 +204,7 @@ fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
 #endif
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    FinalizePrologueEpilogue(bbbase);
+   CheckFlow(bbbase, __FILE__, __LINE__);
    if (fpLIL)
    {
       PrintInst(fpLIL, bbbase);

@@ -123,7 +123,7 @@ INSTQ *PrintMajorComment(BBLOCK *blk, INSTQ *prev, INSTQ *next, ...)
 {
    va_list argptr;
    char *form;
-   char ln[256];
+   char ln[2048];
 
    va_start(argptr, next);
    form = va_arg(argptr, char*);
@@ -138,7 +138,7 @@ INSTQ *PrintComment(BBLOCK *blk, INSTQ *prev, INSTQ *next, ...)
 {
    va_list argptr;
    char *form;
-   char ln[256];
+   char ln[2048];
 
    va_start(argptr, next);
    form = va_arg(argptr, char*);

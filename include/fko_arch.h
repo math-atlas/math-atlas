@@ -10,8 +10,8 @@
 #if !defined(LINUX_PPC) && !defined(OSX_PPC) && !defined(LINUX_X86_32) && \
     !defined(LINUX_X86_64) && !defined(SOLARIS_SPARC)
 /*   #define FKO_ANSIC32 */
-   #define LINUX_X86_64 
-/*   #define LINUX_X86_32 */
+/*   #define LINUX_X86_64  */
+   #define LINUX_X86_32 
 /*   #define SOLARIS_SPARC  */
 /*   #define OSX_PPC */
 #endif
@@ -127,11 +127,12 @@
    #define NFR   8                      /* # of float regs */
    #define TNFR  9
    #define NSFR  8
+   #define TNDR  9
    #define NDR   8                      /* # of double regs */
    #define NSDR  8
    #define IRETREG 4
-   #define FRETREG (NFR+FREGBEG)
-   #define DRETREG (NFR+DREGBEG)
+   #define FRETREG (TNFR+FREGBEG-1)
+   #define DRETREG (TNFR+DREGBEG-1)
    #ifdef ARCH_DECLARE
       int icallersave[NIR] = {0, 1, 1, 1, 0, 0, 0, 0};
       int  icalleesave[NIR] = {0, 0, 0, 0, 1, 1, 1, 1};

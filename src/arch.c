@@ -612,6 +612,7 @@ void Extern2Local(INSTQ *next)
       InsNewInst(NULL, NULL, next, COMMENT, 
                  STstrconstlookup("Store parameters to local frame"), 0, 0);
       InsNewInst(NULL, NULL, next, COMMENT, 0, 0, 0);
+      InsNewInst(NULL, NULL, next, CMPFLAG, CF_PARASAVE, 1, 0);
       paras = malloc(NPARA * sizeof(short));
       assert(paras);
    }
@@ -1132,6 +1133,7 @@ void Extern2Local(INSTQ *next)
          }
       }
    #endif
+   InsNewInst(NULL, NULL, next, CMPFLAG, CF_PARASAVE, 2, 0);
 /*
  * Initialize constants
  */
@@ -1196,6 +1198,104 @@ void FinalizeEpilogue(BBLOCK *bbase,
                  STiconstlookup(fsize));
 }
 
+int FindUsedParaRegs(BBLOCK *bp, int *ir)
+/*
+ * Find explicit register use between instruction pair:
+ *    CMPFLAG CF_PARASAVE, 1, 0
+ *    CMPFLAG CF_PARASAVE, 2, 0
+ * RETURNS: number of integer registers used
+ * NOTE: ignores implicit use of registers (i.e., as derefs), but this is OK
+ *       since register must first be set before such use, except for SP, which
+ *       we don't care about here.
+ */
+{
+   int i, ni=0;
+   short op;
+   INSTQ *ip;
+
+   for (i=0; i < TNIR; i++)
+      ir[i] = 0;
+   for (ip=bp->inst1; ip; ip = ip->next)
+      if (ip->inst[0] == CMPFLAG && ip->inst[1] == CF_PARASAVE && 
+          ip->inst[2] == 1)
+         break;
+   if (ip)
+      ip = ip->next;
+   if (!ip)
+      return(0);
+   do
+   {
+      op = -ip->inst[1];
+      if (op >= IREGBEG && op < IREGEND)
+      {
+         if (!ir[op-IREGBEG]++) ni++;
+      }
+      op = -ip->inst[2];
+      if (op >= IREGBEG && op < IREGEND)
+      {
+         if (!ir[op-IREGBEG]++) ni++;
+      }
+      op = -ip->inst[3];
+      if (op >= IREGBEG && op < IREGEND)
+      {
+         if (!ir[op-IREGBEG]++) ni++;
+      }
+      ip = ip->next;
+   }
+   while(ip && (ip->inst[0] != CMPFLAG || ip->inst[1] != CF_PARASAVE || 
+                ip->inst[2] != 2));
+fprintf(stderr, "\nUSED PARAREGS (%d):", ni);
+for (i=0; i < TNIR; i++)
+   if (ir[i]) fprintf(stderr, "%s, ", archiregs[i]);
+fprintf(stderr, "\n\n");
+   return(ni);
+}
+
+static int GimmeRegSave(BBLOCK *bp, int *savedregs)
+/*
+ * Given the bp is the BLOCK where the parameters are stored to the frame,
+ * RETURNS: 
+ *          -ireg : non-scratch reg used to save
+ *          ireg  : scratch reg used to save
+ *          0     : no available register
+ */
+{
+   int ir[TNIR], ni;
+   int i;
+
+   ni = FindUsedParaRegs(bp, ir);
+   for (i=1; i < TNIR; i++)
+      if (!ir[i] && !icalleesave[i])
+         return(i+1);
+   for (i=1; i < TNIR; i++)
+      if (!ir[i] && savedregs[i])
+         return(-i-1);
+   return(0);
+}
+
+static void ParamDerefsWithLoads(BBLOCK *bp, struct locinit *pbase, int fsize)
+/*
+ * Given the frame size (fsize) and a queue of parameters derefs to
+ * correct (libase), and the block that stores parameters to the frame
+ * (bp) update the derefences by * adding frame size to the constant.  Then, 
+ * look for use of each deref in parameter storing section, and first load
+ * the the old stack pointer, and then the desired parameter.
+ */
+{
+/*
+ * NOTE: this won't work because register loading to may be non-integer.
+ * instead, for case where all iregs used up, should have loads only in
+ * para section, so maybe just make one load live on exit, and save it
+ * until last?
+ *
+ * Best idea probably to find an integer register which is set but not used
+ * (should be true for all).  Move this the load of this register to end of
+ * block, and then use it's register as SP save reg.
+ */
+   fprintf(stderr, "Unable to get free reg to save old stack pointer!!\n\n");
+   assert(0);
+}
+
 void FinalizePrologueEpilogue(BBLOCK *bbase)
 /*
  * Calculates required frame size, corrects local and parameter offsets
@@ -1204,12 +1304,15 @@ void FinalizePrologueEpilogue(BBLOCK *bbase)
  */
 {
    INSTQ *ip, *oldhead;
+   int LOAD1=0;          /* load old SP to register after reg save? */
+   int LOADALL=0;        /* no reg avail for load1 */
    int k, i, nir, nfr, ndr;
-   int ir[TNIR], fr[TNFR], dr[TNDR];
+   int ir[TNIR], fr[TNFR], dr[TNDR], irsav[TNIR];
    int Aoff;  /* offset to arguments, from frame pointer */
    int Soff=0; /* system-dependant skip offset */
    int Loff;   /* called routines frame size excluding locals */
    int SAVESP=(-1);  /* must we save SP to stack? */
+   int spderef=0;
    int align;        /* local area required byte alignment */
    int lsize;        /* size of all required locals */
    int tsize;        /* total frame size */
@@ -1223,6 +1326,8 @@ void FinalizePrologueEpilogue(BBLOCK *bbase)
  * Find registers that need to be saved
  */
    FindRegUsage(bbase, &nir, ir, &nfr, fr, &ndr, dr);
+   for (i=0; i < TNIR; i++) 
+      irsav[i] = ir[i];
    k = RemoveNosaveregs(IREGBEG, TNIR, ir, icalleesave);
    nir = GetRegSaveList(IREGBEG, TNIR, ir);
 fprintf(stderr, "nosave=%d nisav = %d\n", k, nir);
@@ -1330,11 +1435,28 @@ fprintf(stderr, "tsize=%d, Loff=%d, Soff=%d lsize=%d\n", tsize, Loff, Soff, lsiz
       {
          PrintMajorComment(bbase, NULL, oldhead, 
      "To ensure greater alignment than sp, save old sp to stack and move sp");
+#if 1
+         rsav = GimmeRegSave(oldhead->myblk, irsav);
+fprintf(stderr, "rsav=%d,%s\n\n", rsav, archiregs[rsav < 0 ? -rsav-1:rsav-1]);
+         if (!rsav)
+         {
+            LOADALL = 0;
+            rsav = GetReg(T_INT);
+         }
+         if (rsav < 0)
+         {
+            LOAD1 = -rsav;
+            rsav = GetReg(T_INT);
+            rsav = GetReg(T_INT);
+            while (iparareg[rsav-IREGBEG]) rsav = GetReg(T_INT);
+         }
+#else
          rsav = GetReg(T_INT);
          rsav = GetReg(T_INT);
          while (iparareg[rsav-IREGBEG]) rsav = GetReg(T_INT);
 #ifdef X86_64
          assert(rsav <= NSIR);
+#endif
 #endif
          rsav = -rsav;
          InsNewInst(NULL, NULL, oldhead, MOV, rsav, -REG_SP, 0);
@@ -1353,14 +1475,17 @@ fprintf(stderr, "tsize=%d, Loff=%d, Soff=%d lsize=%d\n", tsize, Loff, Soff, lsiz
       i = STiconstlookup(i);
       InsNewInst(NULL, NULL, oldhead, SHR, -REG_SP, -REG_SP, i);
       InsNewInst(NULL, NULL, oldhead, SHL, -REG_SP, -REG_SP, i);
-      InsNewInst(NULL, NULL, oldhead, ST, AddDerefEntry(-REG_SP, 0, 0, SAVESP),
-                 rsav, 0);
+      spderef = AddDerefEntry(-REG_SP, 0, 0, SAVESP);
+      InsNewInst(NULL, NULL, oldhead, ST, spderef, rsav, 0);
+      if (LOAD1)
+         rsav = -LOAD1;
    }
    PrintMajorComment(bbase, NULL, oldhead, "Save registers");
    fprintf(stderr, "Local offset=%d\n", Loff);
    CorrectLocalOffsets(Loff);
-   CorrectParamDerefs(ParaDerefQ, rsav ? rsav : -REG_SP, 
-                      rsav ? Aoff : tsize+Aoff);
+   if (!LOADALL)
+      CorrectParamDerefs(ParaDerefQ, rsav ? rsav : -REG_SP, 
+                         rsav ? Aoff : tsize+Aoff);
 /*
  * Insert insts in header to save callee-saved registers
  */
@@ -1374,6 +1499,15 @@ fprintf(stderr, "tsize=%d, Loff=%d, Soff=%d lsize=%d\n", tsize, Loff, Soff, lsiz
       InsNewInst(NULL, NULL, oldhead, FST,
                  AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+nir*ISIZE+i*4),
                  -fr[i], 0);
+/*
+ * If we need old stack pointer in register that must be saved, load it here
+ */
+   if (LOAD1)
+   {
+      InsNewInst(NULL, NULL, oldhead, LD, rsav, spderef, 0);
+   }
+   else if (LOADALL)
+      ParamDerefsWithLoads(oldhead->myblk, ParaDerefQ, Aoff);
    GetReg(-1);
    FinalizeEpilogue(bbase, tsize, Soff, SAVESP, nir, ir, nfr, fr, ndr, dr);
    CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = 0;

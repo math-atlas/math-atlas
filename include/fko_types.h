@@ -99,6 +99,7 @@ struct loopq
    short depth;
    short I, beg, end, inc;
    short body_label;
+   short end_label;   /* target for break */
    short loopnum;
    short maxunroll;
    short writedd;     /* write dependence distance */

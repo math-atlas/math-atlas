@@ -292,7 +292,7 @@ char *PrintVecList(int iv, int ioff)
  * RETURNS: ptr to string containing # of all set bits
  */
 {
-   static char ln[1280];
+   static char ln[2048];
    char *sptr;
    int i, j, k, n;
 

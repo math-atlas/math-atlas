@@ -17,5 +17,12 @@
 #define L_NSTART_BIT    0x40  /* Negative start */
 #define L_NEND_BIT      0x80  /* Negative end   */
 #define L_IREF_BIT      0x100 /* index is refed in body */
+#define L_MINC_BIT      0x200 /* END = BEG + INC*I for some non-zero I */
+
+#define PTRF_INC        0x1
+#define PTRF_CONTIG     0x2
+#define PTRF_CONSTINC   0x4
+#define PTRF_MIXED      0x8
+
 
 #endif

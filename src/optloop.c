@@ -1,3 +1,5 @@
+#include "ifko.h"
+
 BLIST *DupBlockList(BLIST *scope, int ivscope)
 /*
  * This function duplicates all block info for scope.  CF in duped code
@@ -265,6 +267,50 @@ void KillLoopControl(LOOPQ *lp)
          assert(ip);
       #endif
    }
+}
+
+static void ForwardLoop(LOOPQ *lp, INSTQ **ipinit, INSTQ **ipupdate,
+                        INSTQ **iptest)
+/*
+ * This loop only used when index value is referenced inside loop.
+ */
+{
+   short r0, r1;
+
+   r0 = GetReg(T_INT);
+   r1 = GetReg(T_INT);
+   if (IS_CONST(STflag[lp->beg-1]))
+      *ipinit = ip = NewInst(NULL, NULL, NULL, MOV, -r0, lp->beg, 0)
+   else
+      *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r0, lp->beg, 0)
+   ip->next = NewInst(NULL, NULL, NULL, ST, lp->I, -r0, 0);
+   *ipupdate = ip = NewInst(NULL, NULL, NULL, LD, -r0, lp->I, 0);
+   ip = ip->next;
+   if (IS_CONST(STflag[lp->inc-1]))
+      ip->next = NewInst(NULL, NULL, NULL, ADD, -r0, -r0, lp->inc, 0);
+   else
+   {
+      ip->next = NewInst(NULL, NULL, NULL, LD, -r1, lp->inc, 0);
+      ip = ip->next;
+      ip->next = NewInst(NULL, NULL, NULL, ADD, -r0, -r0, -r1, 0);
+   }
+   *iptest = ip = NewInst(NULL, NULL, NULL, LD, -r0, lp->I, 0);
+   if (IS_CONST(STflag[lp->end-1]))
+      ip->next = NewInst(NULL, NULL, NULL, CMP, -ICC0, -r0, lp->end);
+   else
+   {
+      ip->next = NewInst(NULL, NULL, NULL, LD, -r1, lp->end, 0);
+      ip = ip->next;
+      ip->next = NewInst(NULL, NULL, NULL, CMP, -ICC0, -r0, -r1);
+   }
+   ip = ip->next;
+   if (lp->flag & L_MINC_BIT)
+      InsNewInst(NULL, NULL, NULL, JNE, -PCREG, -ICC0, lp->body_label);
+   else if (lp->flag & L_NINC_BIT)
+      InsNewInst(NULL, NULL, NULL, JGT, -PCREG, -ICC0, lp->body_label);
+   else
+      InsNewInst(NULL, NULL, NULL, JLT, -PCREG, -ICC0, lp->body_label);
+
 }
 
 static void SimpleLC(short I, short I0, short N, short lab

@@ -3,9 +3,28 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <assert.h>
 
 #define IFKO_DEBUG_LEVEL 1
+
+#if IFKO_DEBUG_LEVEL >= 1
+   #define Mstr2(m) # m
+   #define Mstr(m) Mstr2(m)
+
+   #define MyAssert(arg_) \
+   { \
+      if (!(arg_)) \
+      { \
+         fprintf(stderr, \
+                 "\n\nassertion '%s' failed on line %d of %s, hanging:\n\n", \
+                 Mstr(arg_), __LINE__, __FILE__);\
+         while(1); \
+      } \
+   }
+   #define assert MyAssert
+#else
+   #include <assert.h>
+#endif
+
 
 #include "fko_types.h"
 #include "fko_symtab.h"

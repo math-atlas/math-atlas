@@ -81,11 +81,11 @@ INSTQ *InsNewInst(BBLOCK *blk, INSTQ *prev, INSTQ *next, enum inst ins,
 /*
  * Reset ainst1 and ainstN if necessary
  */
-   if (ins != COMMENT)
+   if (ACTIVE_INST(ins))
    {
-      for (p=blk->inst1; p && p->inst[0] == COMMENT; p = p->next);
+      for (p=blk->inst1; p && !ACTIVE_INST(p->inst[0]); p = p->next);
       blk->ainst1 = p;
-      for (p=blk->instN; p && p->inst[0] == COMMENT; p = p->prev);
+      for (p=blk->instN; p && !ACTIVE_INST(p->inst[0]); p = p->prev);
       blk->ainstN = p;
    }
    return(ip);
@@ -100,7 +100,7 @@ INSTQ *InsNewInstAfterLabel(BBLOCK *blk, enum inst ins,
 {
    INSTQ *ip;
    ip = blk->ainst1;
-   if (ip->inst[0] == LABEL)
+   if (ip && ip->inst[0] == LABEL)
       ip = ip->next;
    ip = InsNewInst(blk, NULL, ip, ins, dest, src1, src2);
    return(ip);
