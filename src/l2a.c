@@ -481,7 +481,7 @@ struct assmln *lil2ass(INSTQ *head)
          break;
       case MOV:
          #ifdef X86
-            ap->next = PrintAssln("\tmov\t%s,%s\n", GetIregOrConst(op2),
+            ap->next = PrintAssln("\tmovl\t%s,%s\n", GetIregOrConst(op2),
                                   archiregs[-IREGBEG-op1]);
          #elif defined(SPARC)
             ap->next = PrintAssln("\tmov\t%s,%s\n", GetIregOrConst(op2),
@@ -509,7 +509,7 @@ struct assmln *lil2ass(INSTQ *head)
          break;
       case JMP:
          #ifdef X86
-            ap->next = PrintAssln("\tjmp\t%s", STname[op1-1]);
+            ap->next = PrintAssln("\tjmp\t%s\n", STname[op1-1]);
          #elif defined(SPARC)
             ap->next = PrintAssln("\tba\t%s\n\tnop\n", STname[op1-1]);
          #elif defined(PPC)

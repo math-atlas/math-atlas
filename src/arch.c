@@ -115,7 +115,7 @@ void Param2Local(INSTQ *next, short rsav, int fsize)
       flag = STflag[i];
       if (IS_PARA(flag))
       {
-         paras[SToff[i].sa[0]] = i;
+         paras[SToff[i].sa[0]-1] = i;
          j++;
       }
    }
@@ -126,7 +126,6 @@ void Param2Local(INSTQ *next, short rsav, int fsize)
          flag = STflag[paras[i]];
          InsNewInst(NULL, next, LD, -ir,
                     AddDerefEntry(rsav, 0, 0, fsize+4+j*4), 0);
-/* HERE HERE HERE */
          InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, __LINE__);
          j++;
          if (IS_DOUBLE(flag))

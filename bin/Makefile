@@ -9,8 +9,15 @@ heads= $(HDIR)/fko_arch.h $(HDIR)/fko_inst.h $(HDIR)/fko_misc.h \
 ifko : $(heads) ifko.o $(objs)
 	$(CC) $(CCFLAGS) -o $@ ifko.o $(objs) -ll
 
-xtst :  tst.c
-	$(CC) $(CCFLAGS) -o $@ tst.c
+xtst :  tst.o example.o
+	$(CC) $(CCFLAGS) -o $@ tst.o example.o
+tst.o : tst.c
+	$(CC) $(CCFLAGS) -c tst.c
+example.o : example.s
+	$(CC) $(CCFLAGS) -c example.s
+example.s : ifko example.b
+	./ifko example.b >! example.s
+
 #arch.o : $(heads) arch.c $(heads)
 #	$(CC) $(CCFLAGS) -c arch.c
 

@@ -258,7 +258,7 @@ void NumberLocalsByType()
    for (k=0; k != N; k++)
    {
       fl = STflag[k];
-      if (IS_PARA(fl) || !IS_GLOB(fl))
+      if (IS_PARA(fl))
       {
          SToff[k].sa[0] = SToff[k].i;
          switch(FLAG2TYPE(fl))
@@ -326,9 +326,9 @@ void CreateLocalDerefs()
             fprintf(stderr, "%d: Unknown type %d!\n", __LINE__, FLAG2TYPE(fl));
             exit(-1);
          }
+         SToff[k].sa[2] = AddDerefEntry(-REG_SP, 0, -1, off);
+         fprintf(stderr, "%s, DT#=%d\n", STname[k], SToff[k].sa[2]);
       }
-      SToff[k].sa[2] = AddDerefEntry(-REG_SP, 0, -1, off);
-      fprintf(stderr, "%s, DT#=%d\n", STname[k], SToff[k].sa[2]);
    }
    if (nvdloc) LOCALIGN = FKO_DVLEN*8;
    else if (nvfloc) LOCALIGN = FKO_SVLEN*4;
