@@ -1465,14 +1465,17 @@ void AddPrefetch(LOOPQ *lp, int unroll)
    INSTQ *ipp;
    short ir, ptr, lvl;
    int i, j, n, npf;
+   int flag;
    enum inst inst;
 
    bp = lp->header;
    assert(bp->ilab == lp->body_label);
    ir = GetReg(T_INT);
+   ipp = PrintComment(bp, bp->ainst1, NULL, "START prefetching");
    for (i=1,n=lp->pfarrs[0]; i <= n; i++)
    {
       ptr = lp->pfarrs[i];
+      flag = STflag[ptr-1];
 #if 0  /* sets/uses not yet figured */
       inst = BitVecCheck(lp->sets, lp->pfarrs[i]) ? PREFW : PREFR;
 #else
@@ -1483,17 +1486,20 @@ void AddPrefetch(LOOPQ *lp, int unroll)
  *    # of pref to issue is CEIL(unroll*sizeof(), LINESIZE)
  */
       npf = unroll > 1 ? unroll : 1;
-      npf *= type2len(STflag[lp->pfarrs[i]-1]);
-      if (!IS_VEC(lp->pfarrs[i]) && IS_VEC(lp->vflag))
+      npf *= type2len(flag);
+      if (!IS_VEC(flag) && IS_VEC(lp->vflag))
          npf *= Type2Vlen(lp->vflag);
       npf = (npf + LINESIZE[lvl]-1) / LINESIZE[lvl];
-      ipp = bp->ainst1;
+      ipp = PrintComment(bp, ipp, NULL, "\tprefetching %s", STname[ptr-1] ?
+                         STname[ptr-1] : "NULL");
       for (j=0; j < npf; j++)
       {
          ipp = InsNewInst(bp, ipp, NULL, LD, -ir, SToff[ptr-1].sa[2], 0);
-         ipp = InsNewInst(bp, ipp, NULL, inst, 0, AddDerefEntry(-ir, 0, 0, 
-                          lp->pfdist[i]+j*LINESIZE[j],ptr),STiconstlookup(lvl));
+         ipp = InsNewInst(bp, ipp, NULL, inst, 0, 
+                  AddDerefEntry(-ir, 0, 0, lp->pfdist[i]+j*LINESIZE[lvl],ptr),
+                  STiconstlookup(lvl));
       }
    }
+   ipp = PrintComment(bp, ipp, NULL, "DONE prefetching");
    GetReg(-1);
 }

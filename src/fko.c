@@ -179,7 +179,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
    FILE *fpin, *fpout;
    char *fin=NULL, *fout=NULL;
    struct optblkq *obq=NULL, *op;
-   struct ptrinfo *pf, *pfb, *pf0;
+   struct ptrinfo *pf, *pfb=NULL, *pf0;
    char *sp, *rpath=NULL, *rname=NULL;
    int i, j, k;
 
