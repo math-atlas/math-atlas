@@ -319,6 +319,7 @@ IGNODE *NewIGNode(BBLOCK *blk, short var)
          new->deref = var;
       else
       {
+         assert(IS_VAR(STflag[var-1])); 
          new->deref = SToff[var-1].sa[2];
          assert(new->deref > 0);
       }
@@ -677,11 +678,16 @@ fprintf(stderr, "succ->conin=%s\n", PrintVecList(pred->conin, 0));
       for (n=sig[0], i=1; i <= n; i++)
       {
          k = sig[i];
+         if (!IG[k]) continue;
          svar = IG[k]->var;
          for (nn=pig[0], j=1; j <= nn; j++)
          {
             kk = pig[j];
-            if (svar == IG[kk]->var && k != kk)
+/*
+ *          HERE, HERE: put this in to protect when sig is joined to pig
+ */
+            if (!IG[kk] || !IG[k]) continue;
+            if (k != kk && svar == IG[kk]->var)
                CombineLiveRanges(scope, pred, kk, succ, k);
          }
       }

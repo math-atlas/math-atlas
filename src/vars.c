@@ -52,6 +52,7 @@ void CalcThisUseSet(INSTQ *ip)
    else SetVecAll(ip->use, 0);
    if (!ip->set) ip->set = NewBitVec(32);
    else SetVecAll(ip->set, 0);
+   if (inst == LABEL) return;
 
    if (ACTIVE_INST(inst))
    {
@@ -120,15 +121,16 @@ void CalcUsesDefs(BBLOCK *bp)
    INSTQ *ip;
    extern int FKO_BVTMP;
 
-   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
-   vstmp = FKO_BVTMP;
-
    if (!INUSETU2D)
       CalcUseSet(bp);
    if (!bp->uses) bp->uses = NewBitVec(32);
    else SetVecAll(bp->uses, 0);
    if (!bp->defs) bp->defs = NewBitVec(32);
    else SetVecAll(bp->defs, 0);
+
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
+   vstmp = FKO_BVTMP;
+
    for (ip = bp->ainst1; ip; ip = ip->next)
    {
       if (ACTIVE_INST(ip->inst[0]))
@@ -149,11 +151,9 @@ void CalcInsOuts(BBLOCK *base)
    extern BBLOCK *bbbase;
 
    if (base == bbbase && !CFU2D)
-      base = NewBasicBlocks(base);
+      bbbase = base = NewBasicBlocks(base);
 
    if (!STderef) STderef = STdef("_NONLOCDEREF", PTR_BIT|DEREF_BIT, 0);
-   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
-   vstmp = FKO_BVTMP;
 
    for (bp=base; bp; bp = bp->down)
    {
@@ -163,6 +163,8 @@ void CalcInsOuts(BBLOCK *base)
       if (!CFUSETU2D)
          CalcUsesDefs(bp);
    }
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
+   vstmp = FKO_BVTMP;
    do
    {
       CHANGES = 0;

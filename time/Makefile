@@ -1,8 +1,9 @@
 #include /home/grads/whaley/AT3.7/ATLAS3.7.8/Make.Linux_P4SSE2
 #include /home/rwhaley/TEST/ATLAS3.7.8.2/Make.Linux_EfficeonSSE2
 #include /home/rwhaley/AT3.7/ATLAS3.7.6.2/Make.Linux_P4ESSE3_2
-#include /home/rwhaley/AT3.7/ATLAS3.7.9.0/Make.Linux_P4ESSE3
-include /opt/whaley/TEST/ATLAS3.7.9.0/Make.Linux_P4SSE2
+include /home/rwhaley/AT3.7/ATLAS3.7.9.1/Make.Linux_P4ESSE3
+#include /home/rwhaley/AT3.7/ATLAS3.7.9.1/Make.Linux_gcc
+#include /opt/whaley/TEST/ATLAS3.7.9.0/Make.Linux_P4SSE2
 
 pre=d
 rout=dot
@@ -10,6 +11,7 @@ URT = DOT
 kern=error
 cache=
 NN="N=80000"
+#NN="N=1024"
 KFLAGS= -V -U 4
 opt =-X 1 -Y 1 -Fx 16 -Fy 16
 topt=-X 1 1 -Y 1 1 -Fx 16 -Fy 16

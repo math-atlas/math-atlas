@@ -766,7 +766,7 @@ void RestoreFKOState(int isav)
 /*
  * All annotation must be done afresh
  */
-   CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = 0;
+   CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = CFLOOP = 0;
 }
 
 void SaveFKOState(int isav)
@@ -1009,14 +1009,16 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
    if (optloop)
    {
       if (unroll > 1)
+      {
          UnrollLoop(optloop, unroll);
+      }
       else
       {
          if (FKO_FLAG & IFF_VECTORIZE)
          {
             UnrollCleanup(optloop, 1);
             InvalidateLoopInfo();
-            NewBasicBlocks(bbbase);
+            bbbase = NewBasicBlocks(bbbase);
             CheckFlow(bbbase, __FILE__, __LINE__);
             FindLoops();
             CheckFlow(bbbase, __FILE__, __LINE__);
@@ -1030,6 +1032,7 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
       if (optloop->pfarrs)
          AddPrefetch(optloop, unroll);
    }
+   bbbase = NewBasicBlocks(bbbase);
    CalcInsOuts(bbbase); 
    CalcAllDeadVariables();
 

@@ -131,6 +131,8 @@ int BitVecComb(int ivD, int iv1, int iv2, char op)
       for (i=0; i < n; i++) bvecs[ivD][i] = bvecs[iv1][i] & ~bvecs[iv2][i];
    else /* op == '&' */
       for (i=0; i < n; i++) bvecs[ivD][i] = bvecs[iv1][i] & bvecs[iv2][i];
+   if (n < ni[ivD])
+      for (n=ni[ivD]; i < n; i++) bvecs[ivD][i] = 0;
    return(ivD+1);
 }
 
@@ -305,7 +307,7 @@ char *PrintVecList(int iv, int ioff)
       for (i=0; i < 32; i++)
       {
          if (k & (1<<i))
-            sptr += sprintf(sptr, "%d, ", i+ioff);
+            sptr += sprintf(sptr, "%d, ", j*32+i+ioff);
       }
    }
    if (sptr != ln) sptr[-2] = '\0';

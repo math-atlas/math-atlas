@@ -39,6 +39,7 @@
 #define IS_LOCAL(flag_) ((flag_) & LOCAL_BIT)
 #define IS_DEREF(flag_) ((flag_) & DEREF_BIT)
 #define IS_LABEL(flag_) ((flag_) & LABEL_BIT)
+#define IS_VAR(flag_) (!((flag_) & (CONST_BIT | LABEL_BIT)))
 
 #define IS_SETUSE(flag_) (IS_LOCAL(flag_))
 
