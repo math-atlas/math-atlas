@@ -124,11 +124,13 @@ void CreateSysLocals()
 #endif
 }
 
-void FPConstStore(INSTQ *next, short k, short reg)
+void FPConstStore(INSTQ *next, short rsav, short k, short reg)
 {
    int flag;
    int *ip;
+   short *sp;
    double d;
+   short i;
    float f;
    flag = STflag[k];
    if (IS_VEC(flag))
@@ -138,36 +140,92 @@ void FPConstStore(INSTQ *next, short k, short reg)
    }
    else if (IS_DOUBLE(flag))
    {
-      d = SToff[SToff[k].sa[0]].d
+      d = SToff[SToff[k].sa[0]].d;
+      if (d == 0.0)
+      {
+         InsNewInst(NULL, next, SUB, -reg, -reg, -reg);
+         InsNewInst(NULL, next, ST, SToff[k].sa[2], -reg, __LINE__);
+	 i = SToff[k].sa[2] - 1;
+	 i = DT[(i<<2)+3] + 4;
+         InsNewInst(NULL, next, ST, AddDerefEntry(rsav,0,0,i), -reg, __LINE__);
+      }
       #ifdef x86
-         if (d == 0.0)
-      #elif
+         ip = (int*) &(SToff[SToff[k].sa[0]].d);
+         InsNewInst(NULL, next, MOV, -reg, STiconstlookup(*ip), __LINE__);
+         InsNewInst(NULL, next, ST, SToff[k].sa[2], -reg, __LINE__);
+         InsNewInst(NULL, next, MOV, -reg, STiconstlookup(ip[1]), __LINE__);
+	 i = SToff[paras[k]].sa[2] - 1;
+	 i = DT[(i<<2)+3] + 4;
+         InsNewInst(NULL, next, ST, AddDerefEntry(rsav,0,0,i), -reg, __LINE__);
+/*
+ *    Other archs must load operands 16 bits at a time
+ */
+      #else
+         sp = (short*) &(SToff[SToff[k].sa[0]].d);
+         i = STiconstlookup(16);
+         InsNewInst(NULL, next, MOV, -reg, STiconstlookup(*sp), __LINE__);
+         InsNewInst(NULL, next, SHL, -reg, i, __LINE__);
+         InsNewInst(NULL, next, ADD, -reg, -reg, STiconstlookup(sp[1]));
+         InsNewInst(NULL, next, SHL, -reg, i, __LINE__);
+         InsNewInst(NULL, next, ADD, -reg, -reg, STiconstlookup(sp[2]));
+         InsNewInst(NULL, next, SHL, -reg, i, __LINE__);
+         InsNewInst(NULL, next, ADD, -reg, -reg, STiconstlookup(sp[3]));
       #endif
    }
    else
    {
       assert(IS_FLOAT(flag));
-   }
-}
-
-void FPConst2Local(INSTQ *next)
-/*
- * Saves correct bit patterns to frame for fpconst locals
- */
-{
-   short i, N;
-   int fl;
-   for (i=0, N=STlen(); i < N; i++)
-   {
-      fl = STflag[i];
-      if (IS_CONST(flag) && IS_LOCAL(flag))
+      f = SToff[SToff[k].sa[0]].f;
+      if (f == 0.0e0)
       {
-         assert(IS_FLOAT(flag) || IS_DOUBLE(flag));
-         FPConstStore(next, i);
+         InsNewInst(NULL, next, SUB, -reg, -reg, -reg);
+         InsNewInst(NULL, next, ST, SToff[k].sa[2], -reg, __LINE__);
       }
    }
 }
-void Extern2Local(INSTQ *next, short rsav, int fsize)
+
+void FPConst2Local(INSTQ *next, INSTQ *end, short rsave, short reg1)
+/*
+ * Saves correct bit patterns to frame for fpconst locals, and then
+ * look at all instructions between *next and *end.  Find any inst that
+ * do FMOV[d] on fp const, and change them to local loads
+ */
+{
+   short i, N, FPUSE=0;
+   int flag;
+   INSTQ *ip;
+   for (i=0, N=STlen(); i < N; i++)
+   {
+      flag = STflag[i];
+      if (IS_CONST(flag) && IS_LOCAL(flag))
+      {
+         assert(IS_FLOAT(flag) || IS_DOUBLE(flag));
+         FPConstStore(next, rsave, i, reg1);
+         FPUSE++;
+      }
+   }
+/*
+ * Change FMOV[d] of fpconst to appopriate local load
+ */
+   if (FPUSE)
+   {
+      for (ip=next; ip != end; ip = ip->next)
+      {
+         if (ip->inst[0] == FMOV || ip->inst[0] == FMOVD)
+         {
+            i = ip->inst[2];
+            if (i > 0)
+            {
+               ip->inst[0] = (ip->inst[0] == FMOV) ? FLD : FLDD;
+               ip->inst[2] = FindLocalFPConst(i);
+               assert(ip->inst[2]);
+            }
+         }
+      }
+   }
+}
+
+void Extern2Local(INSTQ *next, INSTQ *end, short rsav, int fsize)
 /*
  * After stack frame fully qualified, inserts proper store instructions before
  * next in queue in order to save parameter/system/fp const values to local
@@ -181,7 +239,7 @@ void Extern2Local(INSTQ *next, short rsav, int fsize)
  */
 {
    extern int NPARA, DTnzerod, DTnzero, DTabsd, DTabs;
-   short i, j=0, flag, ir, k;
+   short i, j=0, flag, ir, k, reg1=0;
    int nbytes=0;
    short *paras;
    char nam[8];
@@ -209,7 +267,7 @@ fprintf(stderr, "para #%d\n", SToff[i].sa[0]);
       }
    }
    #ifdef X86_32
-      ir = GetReg(T_INT);
+      reg1 = ir = GetReg(T_INT);
       for (j=i=0; i < NPARA; i++)
       {
          flag = STflag[paras[i]];
@@ -321,6 +379,11 @@ fprintf(stderr, "STORE: %d, %d\n", SToff[paras[i]].sa[2], -ir);
          }
       }
    #endif
+/*
+ * Store floating point constants to stack frame
+ */
+   if (!reg1) reg1 = GetReg(T_INT);
+   FPConst2Local(next, end, rsav, reg1);
 }
 
 void CreateEpilogue(int fsize,  /* frame size of returning func */
@@ -374,7 +437,7 @@ void CreatePrologue(int align,  /* local-area required byte-alignment */
 {
    short prog, rsav=0, k;
    int i, maxalign=align, Aoff, tsize, ssize=0;
-   INSTQ *ip, *oldhead;
+   INSTQ *ip, *oldhead, *oldtail;
    extern INSTQ *iqhead;
    int Soff, Loff;
    int SAVESP=0;  /* must we save SP to stack? */
@@ -404,6 +467,7 @@ fprintf(stderr, "align=%d,lsize=%d,csize=%d\n", align, lsize, csize);
 
    if (!align) align = 4;
    oldhead = iqhead;
+   oldtail = iqhead->prev;
 /* 
  * Put routine name label
  */
@@ -479,7 +543,7 @@ fprintf(stderr, "tsize=%d, SAVESP=%d\n\n", tsize, SAVESP);
    for (i=0; i < nir; i++)
       InsNewInst(NULL, oldhead, ST, 
                  AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+nfr*4+i*4), -ir[i], 0);
-   Param2Local(oldhead, rsav, tsize);
+   Extern2Local(oldhead, oldtail, rsav, tsize);
    GetReg(-1);
    CreateEpilogue(tsize, Soff, SAVESP, nir, ir, nfr, fr, ndr, dr);
 }

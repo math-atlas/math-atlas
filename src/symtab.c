@@ -280,10 +280,30 @@ void CreateFPLocals()
       if (IS_CONST(fl) && (IS_DOUBLE(fl) || IS_FLOAT(fl)))
       {
          sprintf(ln, "_FPC_%d\n", n);
-         STdef(ln, fl, k);
+         STdef(ln, (fl & (!GLOB_BIT)), k+1);
       }
    }
 }
+
+short FindLocalFPConst(short gfp)
+/*
+ * Assuming that stack frame has been fully qualified, finds the local
+ * variable corresponding to the global floating point const gfp
+ */
+{
+   int flag, fptype;
+   short k;
+   fptype = FLAG2TYPE(STflag[gfp-1]);
+   for (k=0; k < N; k++)
+   {
+      flag = STflag[k];
+      if (FLAG2TYPE(flag) == fptype && IS_LOCAL(flag) && IS_CONST(flag) &&
+          SToff[k].sa[1] == gfp)
+         return(k+1);
+   }
+   return(0);
+}
+
 void NumberLocalsByType()
 /*
  * Searches symbol table for all locals and parameters, and assigns
@@ -404,6 +424,7 @@ int STlen(void)
    return(N);
 }
 
+#if 0
 void AddStaticData(char *name, short align, short len, void *vbytarr)
 {
    struct sdata *np;
@@ -433,3 +454,4 @@ void KillStaticData(void)
       SDhead = np;
    }
 }
+#endif

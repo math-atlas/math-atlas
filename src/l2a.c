@@ -168,6 +168,7 @@ static char *GetIregOrConst(short id)
    return(ln);
 }
 
+#if 0
 struct assmln *DumpData(void)
 {
    extern struct sdata *SDhead;
@@ -213,6 +214,7 @@ struct assmln *DumpData(void)
    }
    return(aph);
 }
+#endif
 
 struct assmln *lil2ass(INSTQ *head)
 {

@@ -108,18 +108,7 @@ fprintf(stderr, "Handling fpconst!\n");
  */
    type = FLAG2TYPE(STflag[dest-1]);
    InsNewInst(NULL, NULL, type == T_FLOAT ? FMOV : FMOVD, 
-   #ifdef X86
-           -GetReg(type), src, 0);
-   #else
-           -GetReg(type), src, GetReg(T_INT));
-   #endif
-/*
- * Allocate a static data entry
- */
-   if (type == T_FLOAT)
-      AddStaticData(STname[src-1], 4, 4, &(SToff[src-1].f));
-   else
-      AddStaticData(STname[src-1], 8, 8, &(SToff[src-1].d));
+              -GetReg(type), src, __LINE__);
 }
 
 void DoMove(short dest, short src)

@@ -23,9 +23,11 @@ int main(int nargs, char **args)
    abase = lil2ass(iqhead);
    dump_assembly(stdout, abase);
    KillAllAssln(abase);
-   abase = DumpData();
-   dump_assembly(stdout, abase);
-   KillAllAssln(abase);
+   #if 0
+      abase = DumpData();
+      dump_assembly(stdout, abase);
+      KillAllAssln(abase);
+   #endif
    KillAllInst(iqhead);
    return(0);
 }
