@@ -265,6 +265,9 @@ def GetOptVals(flags, pfarrs, pfsets, accs):
          else :
             pfinst.append(pf0)
       i += 1
+#
+#  Find AE targs
+#
    aes = []
    for acc in accs :
       j = flags.find("-AE %s" % acc)
@@ -272,5 +275,15 @@ def GetOptVals(flags, pfarrs, pfsets, accs):
          words = flags[j:].split()
          aes.append(int(words[2]))
       else : aes.append(0)
+#
+#  Find write-thru flags: -W <name>
+#
+   WT = []
+   j = flags.find(" -W ")
+   while j != -1 :
+      ln = flags[j+4:]
+      words = ln.split()
+      WT.append(words[0])
+      j = ln.find(" -W ")
 
-   return(vec, UR, npf, pfinst, pfd, aes)
+   return(vec, UR, npf, pfinst, pfd, aes, WT)

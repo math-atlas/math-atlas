@@ -445,9 +445,16 @@ def ifko(routs, pres, N):
    i = 0
    n = len(reslist)
    while i < n :
-      (vec, UR, npf, pfinst, pfd) = reslist[i]
-      if vec: sv = "Yes"
-      else : sv = "No"
+      mf0 = idecmflist[i][0]
+      (vec, UR, npf, pfinst, pfd, AE, WT) = reslist[i]
+      if vec: sv = "Y"
+      else : sv = "N"
+      mfsv = idecmflist[i][1]
+
+      if len(WT) : wt = 'Y'
+      else : wt = 'N'
+      mfwt = idecmflist[i][2]
+
       pfdX = pfd[0]
       if pfinst[0].find("none") != -1: pfIX = pfinst[0]
       else : pfIX = r"{\tt " + pfinst[0] + "}"
@@ -458,8 +465,16 @@ def ifko(routs, pres, N):
       else :
          pfdY = 0
          pfIY = "N/A"
-      print "%10s &%3s &%4d &%5d &%17s &%5d &%17s\\\\\\hline" % \
-            (r"{\tt " + blalist[i]+"}", sv, UR, pfdX, pfIX, pfdY, pfIY)
+      if len(AE) : ae = AE[0]
+      else : ae = 0
+      mfI  =  idecmflist[i][3]
+      mfpf = idecmflist[i][4]
+      mfur = idecmflist[i][5]
+      mfae = idecmflist[i][6]
+
+      print "%10s & %1.1s (%.2f) & %1.1s (%.2f) & %4.4s &%6d & %4.4s (%.2f) &%6d (%.2f) & %d (%.2f) & %d (%.2f)\\\\\\hline" % \
+            (r"{\tt " + blalist[i]+"}", sv, mfsv/mf0, wt, mfwt/mfsv, pfIX,pfdX, 
+             pfIY, mfI/mfwt, pfdY, mfpf/mfI, UR, mfur/mfpf, ae, mfae/mfur)
       i += 1
    i = 0
    print "\n"
