@@ -558,6 +558,59 @@ static void WriteMiscToFile(char *name)
    fclose(fp);
 }
 
+void InvalidateLoopInfo(void)
+/*
+ * Retains optloop info that comes from front-end, throws rest away
+ */
+{
+   LOOPQ *lp;
+
+   CFLOOP=0;
+   if (optloop)
+   {
+/*
+ *    Remove optloop from queue
+ */
+      if (loopq)
+      {
+         if (loopq == optloop)
+            loopq = loopq->next;
+         for (lp=loopq; lp->next && lp->next != optloop; lp = lp->next);
+         if (lp->next == optloop)
+            lp->next = optloop->next;
+         optloop->next = NULL;
+      }
+/*
+ *    Keep optloop info that doesn't vary, throw rest away
+ */
+      lp = NewLoop(optloop->flag);
+      lp->ndup = optloop->ndup;
+      lp->I = optloop->I;
+      lp->beg = optloop->beg;
+      lp->end = optloop->end;
+      lp->inc = optloop->inc;
+      lp->body_label = optloop->body_label;
+      lp->end_label = optloop->end_label;
+      lp->maxunroll = optloop->maxunroll;
+      lp->writedd = optloop->writedd;
+      lp->slivein = optloop->slivein;
+      lp->sliveout = optloop->sliveout;
+      lp->adeadin = optloop->adeadin;
+      lp->adeadout = optloop->adeadout;
+      lp->nopf = optloop->nopf;
+      lp->aaligned = optloop->aaligned;
+      lp->abalign = optloop->abalign;
+      optloop->slivein = optloop->sliveout = optloop->adeadin = 
+         optloop->adeadout = optloop->adeadout = optloop->nopf = 
+         optloop->aaligned = NULL;
+      optloop->abalign = NULL;
+      KillLoop(optloop);
+      optloop = lp;
+   }
+   KillAllLoops();
+   loopq = NULL;
+}
+
 static void ReadMiscFromFile(char *name)
 {
    int i;
@@ -565,6 +618,7 @@ static void ReadMiscFromFile(char *name)
    FILE *fp;
    LOOPQ *lp;
 
+#if 0
    if (optloop)
    {
       for (lp=loopq; lp && lp != optloop; lp = lp->next);
@@ -572,6 +626,10 @@ static void ReadMiscFromFile(char *name)
          KillLoop(optloop);
    }
    KillAllLoops();
+#else
+   InvalidateLoopInfo();
+   KillLoop(optloop);
+#endif
    optloop = NewLoop(0);
    fp = fopen(name, "rb");
    assert(fp);
@@ -593,7 +651,6 @@ static void ReadMiscFromFile(char *name)
          optloop->blocks = BitVec2BlockList(optloop->blkvec);
       else
          optloop->blocks = NULL;
-      optloop->iglist = NULL;
       optloop->next = NULL;
    }
    else 
@@ -668,8 +725,9 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope, int global)
  */
    if (!nlab)
    {
-      nlab = 1;
+      nlab = 2;
       labs[0] = STlabellookup(rout_name);
+      labs[1] = STlabellookup("_IFKO_EPILOGUE");
    }
    if (!scope)
       return(0);
@@ -898,26 +956,28 @@ void DumpOptsPerformed(FILE *fpout, int verbose)
 struct optblkq *DefaultOptBlocks(void)
 {
    struct optblkq *base, *op;
-#if 0
-   op = base = NewOptBlock(1, 0, 2, 0);
-   op->opts[0] = GlobRegAsg;
-   op->opts[1] = MaxOpt+2;
-   op = base->next = NewOptBlock(2, 10, 2, 0);
-   op->opts[0] = RegAsg;
-   op->opts[1] = CopyProp;
-#else
-   op = base = NewOptBlock(1, 0, 3, 0);
+
+   op = base = NewOptBlock(1, 0, 4, 0);
    op->opts[0] = GlobRegAsg;
    op->opts[1] = MaxOpt+2;
    op->opts[2] = MaxOpt+3;
-   op = base->next = NewOptBlock(2, 10, 2, 0);
-   op->opts[0] = RegAsg;
-   op->opts[1] = CopyProp;
-   op->next = NewOptBlock(3, 10, 2, IOPT_GLOB);
+   op->opts[3] = MaxOpt+4;
+
+   op->next = NewOptBlock(2, 10, 2, IOPT_GLOB);
+   op = op->next;
+   op->opts[0] = UselessJmpElim;
+   op->opts[1] = UselessLabElim;
+
+   op->next = NewOptBlock(3, 10, 2, 0);
    op = op->next;
    op->opts[0] = RegAsg;
    op->opts[1] = CopyProp;
-#endif
+
+   op->next = NewOptBlock(4, 10, 2, IOPT_GLOB);
+   op = op->next;
+   op->opts[0] = RegAsg;
+   op->opts[1] = CopyProp;
+
    return(base);
 }
 

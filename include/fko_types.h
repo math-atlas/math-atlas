@@ -136,7 +136,6 @@ struct loopq
    ushort blkvec;     /* bitvec equivalent of blocks */
    ushort outs;       /* reg/var live on loop exit */
    ushort sets;       /* reg/var set in loop */
-   struct iglist *iglist;
    struct loopq *next;
 };
 

@@ -164,6 +164,8 @@ int UselessJumpElim(void)
    }
    fprintf(stderr, "Eliminated %d useless jumps!\n", n);
    KillAllIlist(jumps);
+   if (n) 
+      NewBasicBlocks(bbbase);
    return(n);
 }
 

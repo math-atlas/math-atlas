@@ -645,6 +645,7 @@ BBLOCK *NewBasicBlocks(BBLOCK *base0)
    FindPredSuccBlocks(base);
    bbbase = base;
    CheckFlow(base, __FILE__, __LINE__);
+   CFUSETU2D = INUSETU2D = INDEADU2D = CFDOMU2D = CFLOOP = 0;
    CFU2D = 1;
    return(base);
 }
@@ -720,7 +721,6 @@ LOOPQ *NewLoop(int flag)
    lp->blocks = NULL;
    lp->tails = lp->posttails = NULL;
    lp->blkvec = lp->outs = lp->sets = 0;
-   lp->iglist = NULL;
    lp->next = NULL;
    return(lp);
 }
@@ -732,19 +732,38 @@ LOOPQ *KillLoop(LOOPQ *lp)
    if (lp)
    {
       ln = lp->next;
-      if (lp->slivein) free(lp->slivein);
-      if (lp->sliveout) free(lp->sliveout);
-      if (lp->adeadin) free(lp->adeadin);
-      if (lp->adeadout) free(lp->adeadout);
-      if (lp->nopf) free(lp->nopf);
-      if (lp->aaligned) free(lp->aaligned);
-      if (lp->blocks) KillBlockList(lp->blocks);
+      if (lp->slivein)
+         free(lp->slivein);
+      if (lp->sliveout)
+         free(lp->sliveout);
+      if (lp->adeadin)
+         free(lp->adeadin);
+      if (lp->adeadout)
+         free(lp->adeadout);
+      if (lp->nopf)
+         free(lp->nopf);
+      if (lp->aaligned)
+         free(lp->aaligned);
+      if (lp->abalign)
+         free(lp->abalign);
+      if (lp->outs)
+         KillBitVec(lp->outs);
+      if (lp->sets)
+         KillBitVec(lp->sets);
+      if (lp->blocks)
+         KillBlockList(lp->blocks);
+      if (lp->tails)
+         KillBlockList(lp->tails);
+      if (lp->blkvec)
+         KillBitVec(lp->blkvec);
+      if (lp->posttails)
+         KillBlockList(lp->posttails);
       free(lp);
    }
    return(ln);
 }
 
-void KillAllLoops()
+void KillAllLoops(void)
 {
    while (loopq) loopq = KillLoop(loopq);
 }
@@ -864,8 +883,11 @@ void SortLoops(short maxdepth)
       optloop->tails = optloop->next->tails;
       optloop->posttails = optloop->next->posttails;
       optloop->outs = optloop->next->outs;
-      optloop->next->outs = 0;
+      optloop->sets = optloop->next->sets;
+
+      optloop->next->blkvec = optloop->next->outs = optloop->next->sets = 0;
       optloop->next->blocks = NULL;
+      optloop->next->tails = optloop->next->posttails = NULL;
       KillLoop(optloop->next);
       optloop->next = NULL;
    }

@@ -48,7 +48,8 @@
     CFDOMU2D=0,   /* indicates that BBLOCK's dom field is up to date */
     CFUSETU2D=0,  /* BBLOCK's uses,defs,ins,out up to date */
     INUSETU2D=0,  /* INSTQ's use/set are up to date */
-    INDEADU2D=0;  /* INSTQ's deads is up to date */
+    INDEADU2D=0,  /* INSTQ's deads is up to date */
+    CFLOOP=0;     /* Loop info up-to-date */
 
     int FKO_UR=0; /* unroll factor */
 #else
@@ -56,7 +57,7 @@
    extern char rout_name[128];
    extern int rout_flag, FKO_FLAG;
    extern int CFU2D, CFDOMU2D, CFUSETU2D, INUSETU2D, INDEADU2D;
-   extern int FKO_UR;
+   extern int CFLOOP, FKO_UR;
 #endif
 
 #define IRET_BIT 0x1
