@@ -1245,7 +1245,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #elif defined(SPARC)
             ap->next = PrintAssln("\tret\n\trestore\n");
          #elif defined(PPC)
-            ap->next = PrintAssln("\tblr");
+            ap->next = PrintAssln("\tblr\n");
          #elif defined(FKO_ANSIC)
             ap->next = PrintAssln("   return(%s);\n", "notsupported");
          #endif

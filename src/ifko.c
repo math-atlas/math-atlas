@@ -145,6 +145,16 @@ FILE *fptmp;
    yyparse();
    fclose(fpin);
    GenPrologueEpilogueStubs(bbbase);
+/* 
+ * Perform starting point save here.  Need to save:
+ * 1. LIL
+ * 2. ST: N, STname, SToff, STflag,
+ *        niloc, nlloc, nfloc, ndloc, nvfloc, nvdloc, LOCALIGN, LOCSIZE, NPARA
+ *    - WriteSTToFile, ReadSTFromFile in symtab.c
+ * 3. Global vars: STderef
+ * 4. optloop
+ * 5. ... not finished looking ...
+ */
    NewBasicBlocks(bbbase);
    FindLoops(); 
    CheckFlow(bbbase, __FILE__, __LINE__);

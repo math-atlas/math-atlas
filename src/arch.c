@@ -491,6 +491,7 @@ void FPConstStore(INSTQ *next, short id, short con,
                               SToff[SToff[id-1].sa[2]-1].sa[3]);
             InsNewInst(NULL, NULL, next, XOR, -reg, -reg, -reg);
             InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
+            SignalSet(next, id, k, freg);
          #endif
       }
       else
@@ -1289,15 +1290,58 @@ static int GimmeRegSave(BBLOCK *bp, int *savedregs)
    return(0);
 }
 
-static void ParamDerefsWithLoads(BBLOCK *bp, struct locinit *pbase, int fsize)
+static INSTQ *LastIntLd(BBLOCK *blk, INSTQ *ipstart)
 /*
- * Given the frame size (fsize) and a queue of parameters derefs to
- * correct (libase), and the block that stores parameters to the frame
- * (bp) update the derefences by * adding frame size to the constant.  Then, 
- * look for use of each deref in parameter storing section, and first load
- * the the old stack pointer, and then the desired parameter.
+ * Finds first load of integer register from memory starting from ipstart and
+ * going backwards.  If ipstart == NULL, starts at end of block.
  */
 {
+   INSTQ *ip;
+   for (ip=ipstart?ipstart:blk->ainstN; ip; ip = ip->prev)
+   {
+      if (ip->inst[0] == LD && ip->inst[1] >= IREGBEG && ip->inst[2] < IREGEND)
+         return(ip);
+   }
+   return(NULL);
+}
+
+static INSTQ *FindNextUseInBlock(INSTQ *ipstart, int val)
+{
+   INSTQ *ip;
+   if (ipstart)
+   {
+      for (ip=ipstart; ip; ip = ip->next)
+         if (ip->use && BitVecCheck(ip->use, val))
+            return(ip);
+   }
+   return(NULL);
+}
+static INSTQ *FindPrevUseInBlock(INSTQ *ipstart, int val)
+{
+   INSTQ *ip;
+   if (ipstart)
+   {
+      for (ip=ipstart; ip; ip = ip->prev)
+         if (ip->use && BitVecCheck(ip->use, val))
+            return(ip);
+   }
+   return(NULL);
+}
+
+static int DammitGimmeRegSave(BBLOCK *blk)
+/*
+ * Given the blk is the BLOCK where the parameters are stored to the frame,
+ * RETURNS: 
+ *          -ireg : non-scratch reg used to save
+ *          ireg  : scratch reg used to save
+ *          0     : no available register
+ * This routine creates such a register when they are all used up by moving
+ * the last integer register load to end of param load block, and using
+ * that register as SAVESP.
+ */
+{
+   int KeepOn, k;
+   INSTQ *ipstart, *ipend, *ip, *ipld;
 /*
  * NOTE: this won't work because register loading to may be non-integer.
  * instead, for case where all iregs used up, should have loads only in
@@ -1308,8 +1352,81 @@ static void ParamDerefsWithLoads(BBLOCK *bp, struct locinit *pbase, int fsize)
  * (should be true for all).  Move this the load of this register to end of
  * block, and then use it's register as SP save reg.
  */
-   fprintf(stderr, "Unable to get free reg to save old stack pointer!!\n\n");
-   assert(0);
+
+/*
+ * Find beginning and ending of parameter saving instructions
+ */
+   for (ip=blk->inst1; ip; ip = ip->next)
+      if (ip->inst[0] == CMPFLAG && ip->inst[1] == CF_PARASAVE && 
+          ip->inst[2] == 1)
+         break;
+   assert(ip);
+   ipstart = ip;
+   for (ip=ipstart->next; ip; ip = ip->next)
+      if (ip->inst[0] == CMPFLAG && ip->inst[1] == CF_PARASAVE && 
+          ip->inst[2] == 2)
+         break;
+   assert(ip);
+   ipend = ip;
+/*
+ * Find a load to an integer register, where the ireg is not used in the
+ * rest of the block.  We will move this load to the end of the block, and
+ * use its reg to hold the old stack ptr
+ */
+   KeepOn = 1;
+   ipld = ipend;
+   do
+   {
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
+/*
+ *    Find candidate integer load
+ */
+      for (ipld = ipld->prev; ipld != ipstart; ipld = ipld->prev)
+         if (ipld->inst[0] == LD && 
+             -ipld->inst[1] >= IREGBEG && -ipld->inst[1] < IREGEND)
+            break;
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
+      if (ipld == ipstart)
+         break;
+PrintThisInst(stderr, -1, ipld);
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
+/*
+ *    Make sure there are no references of loaded register between the load
+ *    and the end of the parameter area
+ */
+      k = -ipld->inst[1]-1+TNREG;
+      for (ip=ipld->next; ip != ipend; ip = ip->next)
+         if (ip->use && ip->set && 
+             (BitVecCheck(ip->set, k) || BitVecCheck(ip->use, k)))
+            break;
+/*
+ *    If no post-load refs, make sure there also no pre-load refs, so we can
+ *    use same register throughout
+ */
+      if (ip == ipend)
+      {
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
+         for (ip=ipld->prev; ip != ipstart; ip = ip->prev)
+            if (ip->use && ip->set && 
+                (BitVecCheck(ip->set, k) || BitVecCheck(ip->use, k)))
+               break;
+         KeepOn = ip != ipstart;
+      }
+fprintf(stderr, "%s(%d) KeepOn = %d\n", __FILE__, __LINE__, KeepOn);
+if (KeepOn)
+   fprintf(stderr, "Rejecting candidate %s\n", Int2Reg(ipld->inst[1]));
+   }
+   while(KeepOn);
+   assert(ipld != ipstart);
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
+   if (ipld == ipstart)
+      return(0);
+fprintf(stderr, "%s(%d) reg=%d\n", __FILE__, __LINE__, ipld->inst[1]);
+   RemoveInstFromQ(ipld);
+   InsertInstBeforeQEntry(ipend, ipld);
+   k = -ipld->inst[1];
+   if (icalleesave[k-1]) k = -k;
+   return(k);
 }
 
 void FinalizePrologueEpilogue(BBLOCK *bbase)
@@ -1321,7 +1438,6 @@ void FinalizePrologueEpilogue(BBLOCK *bbase)
 {
    INSTQ *ip, *oldhead;
    int LOAD1=0;          /* load old SP to register after reg save? */
-   int LOADALL=0;        /* no reg avail for load1 */
    int k, i, nir, nfr, ndr;
    int ir[TNIR], fr[TNFR], dr[TNDR], irsav[TNIR];
    int Aoff;  /* offset to arguments, from frame pointer */
@@ -1453,18 +1569,17 @@ fprintf(stderr, "tsize=%d, Loff=%d, Soff=%d lsize=%d\n", tsize, Loff, Soff, lsiz
      "To ensure greater alignment than sp, save old sp to stack and move sp");
 #if 1
          rsav = GimmeRegSave(oldhead->myblk, irsav);
-fprintf(stderr, "rsav=%d,%s\n\n", rsav, archiregs[rsav < 0 ? -rsav-1:rsav-1]);
          if (!rsav)
-         {
-            LOADALL = 0;
-            rsav = GetReg(T_INT);
-         }
+            rsav = DammitGimmeRegSave(oldhead->myblk);
+         assert(rsav);
+fprintf(stderr, "\n\n** rsav=%d,%s**\n\n", rsav, Int2Reg(rsav <= 0 ? rsav : -rsav));
          if (rsav < 0)
          {
             LOAD1 = -rsav;
             rsav = GetReg(T_INT);
             rsav = GetReg(T_INT);
             while (iparareg[rsav-IREGBEG]) rsav = GetReg(T_INT);
+
          }
 #else
          rsav = GetReg(T_INT);
@@ -1499,9 +1614,8 @@ fprintf(stderr, "rsav=%d,%s\n\n", rsav, archiregs[rsav < 0 ? -rsav-1:rsav-1]);
    PrintMajorComment(bbase, NULL, oldhead, "Save registers");
    fprintf(stderr, "Local offset=%d\n", Loff);
    CorrectLocalOffsets(Loff);
-   if (!LOADALL)
-      CorrectParamDerefs(ParaDerefQ, rsav ? rsav : -REG_SP, 
-                         rsav ? Aoff : tsize+Aoff);
+   CorrectParamDerefs(ParaDerefQ, rsav ? rsav : -REG_SP, 
+                      rsav ? Aoff : tsize+Aoff);
 /*
  * Insert insts in header to save callee-saved registers
  */
@@ -1519,11 +1633,7 @@ fprintf(stderr, "rsav=%d,%s\n\n", rsav, archiregs[rsav < 0 ? -rsav-1:rsav-1]);
  * If we need old stack pointer in register that must be saved, load it here
  */
    if (LOAD1)
-   {
       InsNewInst(NULL, NULL, oldhead, LD, rsav, spderef, 0);
-   }
-   else if (LOADALL)
-      ParamDerefsWithLoads(oldhead->myblk, ParaDerefQ, Aoff);
    GetReg(-1);
    FinalizeEpilogue(bbase, tsize, Soff, SAVESP, nir, ir, nfr, fr, ndr, dr);
    CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = 0;

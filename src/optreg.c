@@ -983,6 +983,7 @@ int DoIGRegAsg(int N, IGNODE **igs)
       ig->reg = AnyBitsSet(iv);
       if (ig->reg)
       {
+ fprintf(stderr, "using reg=%s\n", Int2Reg(-ig->reg));
          ivused = Reg2Regstate(ig->reg);
          ig->reg--;
          BitVecComb(ig->liveregs, ig->liveregs, ivused, '|');
@@ -1995,7 +1996,7 @@ fprintf(stderr, ", src=%s\n", Int2Reg(-src));
             {
                bl->ptr = (void*) 1;
                change += CopyPropTrans0(SRCLIVE, scope, scopeblks, blk->usucc,
-                                        blk->usucc->ainst1, mov, dest, src);
+                                        NULL, mov, dest, src);
                BitVecComb(blk->usucc->ins, blk->usucc->ins, ivdst, '-');
                BitVecComb(blk->usucc->ins, blk->usucc->ins, ivsrc, '|');
             }
@@ -2007,7 +2008,7 @@ fprintf(stderr, ", src=%s\n", Int2Reg(-src));
             {
                bl->ptr = (void*) 1;
                change += CopyPropTrans0(SRCLIVE, scope, scopeblks, blk->csucc,
-                                        blk->csucc->ainst1, mov, dest, src);
+                                        NULL, mov, dest, src);
                BitVecComb(blk->csucc->ins, blk->csucc->ins, ivdst, '-');
                BitVecComb(blk->csucc->ins, blk->csucc->ins, ivsrc, '|');
             }
@@ -2090,9 +2091,7 @@ INSTQ *CopyPropTrans(BLIST *scope, int scopeblks, BBLOCK *blk, INSTQ *ipret)
    if (change)
       ipret = DelInst(ipret);
    else
-   {
       ipret = NULL;
-   }
    return(ipret);
 }
 

@@ -124,14 +124,26 @@ void InsInstInBlockList(BLIST *blist, int FIRST, enum inst ins,
    }
 }
 
-INSTQ *DelInst(INSTQ *del)
+INSTQ *InsertInstBeforeQEntry(INSTQ *list, INSTQ *add)
 /*
- * Deletes inst del from Q, keeping links cosher
+ * Inserts instruction add to INSTQ list before entry list
+ */
+{
+   assert(list && add);
+   add->prev = list->prev;
+   add->next = list;
+   list->prev->next = add;
+   list->prev = add;
+}
+
+INSTQ *RemoveInstFromQ(INSTQ *del)
+/*
+ * Removes inst del from Q, keeping links cosher
  * RETURNS: next inst in queue
  * NOTE: instruction must be in a basic block
  */
 {
-   INSTQ *ip=NULL;
+   INSTQ *ip;
    if (!del) return(NULL);
    assert(del->myblk);
 /*
@@ -152,19 +164,33 @@ INSTQ *DelInst(INSTQ *del)
    if (del->myblk->instN == del)
       del->myblk->instN = del->prev;
 /*
- * Remove instruction from queue, kill any bitvectors, and return
+ * Remove instruction from queue and return
  */
    if (del->prev)
       del->prev->next = del->next;
    if (del->next)
       del->next->prev = del->prev;
+   return(del->next);
+}
+
+INSTQ *DelInst(INSTQ *del)
+/*
+ * Deletes inst del from Q, keeping links cosher
+ * RETURNS: next inst in queue
+ * NOTE: instruction must be in a basic block
+ */
+{
+   INSTQ *ip;
+/*
+ * Remove instruction from queue, kill any bitvectors, and return
+ */
+   ip = RemoveInstFromQ(del);
    if (del->use)
       KillBitVec(del->use);
    if (del->set)
       KillBitVec(del->set);
    if (del->deads)
       KillBitVec(del->deads);
-   ip = del->next;
    free(del);
    return(ip);
 }

@@ -4,7 +4,7 @@
 char **STname;
 union valoff *SToff;
 int *STflag;
-static int N=0, Nalloc=0, Ndt=0, Ndtalloc=0;
+static int N=0, Nalloc=0;
 static int niloc=0, nlloc=0, nfloc=0, ndloc=0, nvfloc=0, nvdloc=0;
 int    LOCSIZE=0, LOCALIGN=0, NPARA=0;
 
@@ -501,7 +501,7 @@ void KillStaticData(void)
  */
 short FindDerefEntry(short ptr, short ireg, short mul, short con)
 {
-   int i, n=4*Ndt;
+   int i;
    for (i=0; i != N; i++)
    {
       if ( IS_DEREF(STflag[i]) && SToff[i].sa[0] == ptr && 
@@ -577,3 +577,30 @@ void PrintST(FILE *fpout)
          fprintf(fpout, " UNKNOWN UNKNOWN\n");
    }
 }
+
+void ReadSTFromFile(FILE *fp)
+{
+   if (STname) free(STname);  /* this is inadequate to free all strings!! */
+   if (SToff) free(SToff);
+   if (STflag) free(STflag);
+   assert(fread(&N, sizeof(int), 1, fp) == 1);
+   assert(fread(&niloc, sizeof(int), 1, fp) == 1);
+   assert(fread(&nlloc, sizeof(int), 1, fp) == 1);
+   assert(fread(&nfloc, sizeof(int), 1, fp) == 1);
+   assert(fread(&ndloc, sizeof(int), 1, fp) == 1);
+   assert(fread(&nvfloc, sizeof(int), 1, fp) == 1);
+   assert(fread(&nvdloc, sizeof(int), 1, fp) == 1);
+   assert(fread(&LOCALIGN, sizeof(int), 1, fp) == 1);
+   assert(fread(&LOCSIZE, sizeof(int), 1, fp) == 1);
+   assert(fread(&NPARA, sizeof(int), 1, fp) == 1);
+   assert(fread(SToff, sizeof(union valoff), N, fp) == N);
+   assert(fread(STflag, sizeof(int), N, fp) == N);
+/* 
+ * Must read in all strings as N <len,string> pairs
+ */
+}
+
+void WriteSTToFile(FILE *fp)
+{
+}
+
