@@ -91,6 +91,21 @@ INSTQ *InsNewInst(BBLOCK *blk, INSTQ *prev, INSTQ *next, enum inst ins,
    return(ip);
 }
 
+INSTQ *InsNewInstAfterLabel(BBLOCK *blk, enum inst ins,
+                            short dest, short src1, short src2)
+/*
+ * Inserts the instruction in the block blk as first active instruction,
+ * but after any existing label
+ */
+{
+   INSTQ *ip;
+   ip = blk->ainst1;
+   if (ip->inst[0] == LABEL)
+      ip = ip->next;
+   ip = InsNewInst(blk, NULL, ip, ins, dest, src1, src2);
+   return(ip);
+}
+
 void InsInstInBlockList(BLIST *blist, int FIRST, enum inst ins,
                         short dest, short src1, short src2)
 /*
@@ -99,13 +114,13 @@ void InsInstInBlockList(BLIST *blist, int FIRST, enum inst ins,
  * insert as last
  */
 {
-   INSTQ *next=NULL;
-
+   INSTQ *next = NULL;
    for(; blist; blist = blist->next)
    {
       if (FIRST)
-         next = blist->blk->inst1;
-      InsNewInst(blist->blk, NULL, next, ins, dest, src1, src2);
+         CalcThisUseSet(InsNewInstAfterLabel(blist->blk, ins, dest,src1,src2));
+      else
+         CalcThisUseSet(InsNewInst(blist->blk, NULL, NULL, ins,dest,src1,src2));
    }
 }
 
@@ -119,24 +134,38 @@ INSTQ *DelInst(INSTQ *del)
    INSTQ *ip=NULL;
    if (!del) return(NULL);
    assert(del->myblk);
-   for (ip=del->myblk->inst1; ip && ip != del; ip = ip->next);
-   if (ip)
+/*
+ * If necessary, reset ainst[1,N] and inst[1,N]
+ */
+   if (del->myblk->ainst1 == del)
    {
-      if (ip->prev) ip->prev->next = ip->next;
-      else
-      {
-         del->myblk->inst1 = del->myblk->inst1->next;
-         if (del->myblk->inst1) del->myblk->inst1->prev = NULL;
-      }
-      if (ip->next) ip->next->prev = ip->prev;
-      else
-      {
-         del->myblk->instN = del->myblk->instN->prev;
-         if (del->myblk->instN) del->myblk->instN->next = NULL;
-      }
-      ip = del->next;
-      free(del);
+      for (ip=del->next; ip && !ACTIVE_INST(ip->inst[0]); ip = ip->next);
+      del->myblk->ainst1 = ip;
    }
+   if (del->myblk->ainstN == del)
+   {
+      for (ip=del->prev; ip && !ACTIVE_INST(ip->inst[0]); ip = ip->prev);
+      del->myblk->ainstN = ip;
+   }
+   if (del->myblk->inst1 == del)
+      del->myblk->inst1 = del->next;
+   if (del->myblk->instN == del)
+      del->myblk->instN = del->prev;
+/*
+ * Remove instruction from queue, kill any bitvectors, and return
+ */
+   if (del->prev)
+      del->prev->next = del->next;
+   if (del->next)
+      del->next->prev = del->prev;
+   if (del->use)
+      KillBitVec(del->use);
+   if (del->set)
+      KillBitVec(del->set);
+   if (del->deads)
+      KillBitVec(del->deads);
+   ip = del->next;
+   free(del);
    return(ip);
 }
 
