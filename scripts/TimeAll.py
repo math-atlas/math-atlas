@@ -5,33 +5,33 @@ import re
 import l1cmnd
 import fkocmnd
 
-def FindAtlas(FKOdir):
-   file = os.path.join(FKOdir, 'time')
-   file = os.path.join(file, 'Makefile')
+#def FindAtlas(FKOdir):
+#   file = os.path.join(FKOdir, 'time')
+#   file = os.path.join(file, 'Makefile')
+#
+#   fi = open(file, 'r')
+#   for line in fi.readlines():
+#      if (line.startswith('include')):
+#         j = line.find('Make.')
+#         assert(j != -1)
+#         ARCH = line[j+5:].strip()
+#         ATLdir = line[8:j-1].strip()
+#         break
+#   else:
+#      print "Can't find include line in %s" % path+Makefile
+#      sys.exit(-1);
+#   fi.close()
+#   return [ATLdir, ARCH]
 
-   fi = open(file, 'r')
-   for line in fi.readlines():
-      if (line.startswith('include')):
-         j = line.find('Make.')
-         assert(j != -1)
-         ARCH = line[j+5:].strip()
-         ATLdir = line[8:j-1].strip()
-         break
-   else:
-      print "Can't find include line in %s" % path+Makefile
-      sys.exit(-1);
-   fi.close()
-
-   return [ATLdir, ARCH]
-
-pwd = os.getcwd()
-j = pwd.rfind('iFKO')
+#pwd = os.getcwd()
+#j = pwd.rfind('iFKO')
 # IFKOdir = '/home/rwhaley/PROJ/iFKO'
-IFKOdir = pwd[0:j+4]
-fko = IFKOdir + '/bin/fko'
+#IFKOdir = pwd[0:j+4]
+#fko = IFKOdir + '/bin/fko'
+(IFKOdir,fko) = fkocmnd.GetFKOinfo()
 
 
-[ATLdir, ARCH] = FindAtlas(IFKOdir)
+(ATLdir, ARCH) = fkocmnd.FindAtlas(IFKOdir)
 print ARCH
 print "ATLdir='%s', ARCH='%s'" % (ATLdir, ARCH)
 
@@ -90,6 +90,7 @@ for blas in l1routs:
    for pre in pres:
       if (CALLREF != 0):
          [time,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, l1refs[i])
+         assert(time > 0.0)
          print "REF %20.20s : time=%f, mflop=%f" % (pre+l1refs[i], time, mf)
          refT.append(time)
          refMF.append(mf)
@@ -97,6 +98,7 @@ for blas in l1routs:
       if (CALLATL != 0):
          [time,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, l1atl[j], 
                                  CCatl[j], CCFat[j])
+         assert(time > 0.0)
          print "ATL %20.20s : time=%f, mflop=%f" % (pre+l1atl[j], time, mf)
          atlT.append(time)
          atlMF.append(mf)
@@ -104,21 +106,24 @@ for blas in l1routs:
       if (CALLFKO != 0):
          rout = IFKOdir + '/blas/' + pre + blas + '.b'
          outf = ATLdir + '/tune/blas/level1/' + blas.upper() + '/fkorout.s'
-         info = fkocmnd.info(fko, rout)
-         VEC = info[5]
-         if (VEC == 0):
-            UR = LS / psiz[j%2]
-            KFLAGS = KFLAG + " "
-         else:
-            KFLAGS = KFLAG + " -V"
-            UR = LS / 16
-         KF0    = KFLAGS + " -U " + str(UR)
-         KFLAGS = KF0 + ' -o ' + outf + ' ' + rout
+         KF0 = fkocmnd.GetStandardFlags(fko, rout, pre)
+         KFLAGS = KF0 + ' -o ' + outf + " " + rout
+#         info = fkocmnd.info(fko, rout)
+#         VEC = info[5]
+#         if (VEC == 0):
+#            UR = LS / psiz[j%2]
+#            KFLAGS = KFLAG + " "
+#         else:
+#            KFLAGS = KFLAG + " -V"
+#            UR = LS / 16
+#         KF0    = KFLAGS + " -U " + str(UR)
+#         KFLAGS = KF0 + ' -o ' + outf + ' ' + rout
          if (os.path.exists(outf)):
             os.remove(outf)
          fkocmnd.callfko(fko, KFLAGS)
          [time,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, 'fkorout.s',
                                  "gcc", "-x assembler-with-cpp", opt=opt)
+         assert(time > 0.0)
          print "FKO %20.20s : time=%f, mflop=%f" % (pre+blas+'.b', time, mf)
          print "                           flags =", KF0
          fkoT.append(time)

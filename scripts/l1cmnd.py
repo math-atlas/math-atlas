@@ -25,7 +25,8 @@ def time(ATLdir, ARCH, pre, blas, N, rout, cc=None, ccf=None, opt=""):
    if (err != None):
       print 'command died with:'
       print err
-      sys.exit(err)
+      return [-1.0, -1.0]
+#      sys.exit(err)
 
    t=[]
 
@@ -42,8 +43,8 @@ def time(ATLdir, ARCH, pre, blas, N, rout, cc=None, ccf=None, opt=""):
 #
 #  find mf from avg times
 #
-   if (len(t) > 6):
-      print '**** WARNING: time = ', t
+#   if (len(t) > 6):
+#      print '**** WARNING: time = ', t
    t.sort()
    mf = (mfavg * tavg) / t[2]
    return [t[2], mf]

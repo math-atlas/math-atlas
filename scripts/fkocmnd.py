@@ -1,5 +1,30 @@
 import os
 import sys
+
+def GetFKOinfo():
+   pwd = os.getcwd()
+   j = pwd.rfind('iFKO')
+   IFKOdir = pwd[0:j+4]
+   fko = IFKOdir + '/bin/fko'
+   return(IFKOdir, fko)
+
+def FindAtlas(FKOdir):
+   file = os.path.join(FKOdir, 'time')
+   file = os.path.join(file, 'Makefile')
+
+   fi = open(file, 'r')
+   for line in fi.readlines():
+      if (line.startswith('include')):
+         j = line.find('Make.')
+         assert(j != -1)
+         ARCH = line[j+5:].strip()
+         ATLdir = line[8:j-1].strip()
+         break
+   else:
+      print "Can't find include line in %s" % path+Makefile
+      sys.exit(-1);
+   fi.close()
+   return(ATLdir, ARCH) 
 #
 # returns info from fko's analysis using -i
 #
@@ -47,6 +72,26 @@ def info(fko, routine):
       maxunroll = lnf = vec = mfp = 0
    return(nc, LS, ol, maxunroll, lnf, vec, arrs, pref, sets)
 
+def GetPFInfo(inf):
+   na = len(inf[6])
+   i=0
+   pfarrs = []
+   pfsets = []
+   while(i < na):
+      if (inf[7][i] != 0):
+         pfarrs.append(inf[6][i])
+         pfsets.append(inf[8][i])
+      i += 1
+   return(pfarrs, pfsets)
+
+def BuildFKO(IFKOdir):
+   cmnd = 'cd ' + IFKOdir + '/bin ; make fko'
+   fo = fs.popen(cmnd, 'r')
+   err = fo.close()
+   if (err != None):
+      print "command '%s' died with: %d" % (cmnd, err)
+      sys.exit(err)
+
 def callfko(fko, flag):
    cmnd = fko + ' ' + flag
 #   print cmnd
@@ -55,3 +100,22 @@ def callfko(fko, flag):
    if (err != None):
       print "command '%s' died with: %d" % (cmnd, err)
       sys.exit(err)
+
+def GetStandardFlags(fko, rout, pre):
+   inf = info(fko, rout)
+   VEC = inf[5]
+   LS  = inf[1][0]
+   (pfarrs, pfsets) = GetPFInfo(inf)
+   npf = len(pfarrs)
+   if (VEC == 0):
+      if (pre == 's'): psiz = 4
+      else: psiz = 8
+      UR = LS / psiz
+      VF = ""
+   else:
+      UR = LS / 16
+      VF = " -V"
+   assert(UR > 0)
+   KFLAG = VF + " -Ps b A 0 " + str(npf) + " -P all 0 " + str(LS*2) + " -U " \
+           + str(UR)
+   return KFLAG 
