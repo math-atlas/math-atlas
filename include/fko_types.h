@@ -19,6 +19,7 @@ struct instq
    struct bblock *myblk;
    INSTQ *prev, *next;
    short inst[4];
+   ushort use, set;
 };
 
 struct idlist

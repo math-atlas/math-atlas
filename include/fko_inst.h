@@ -22,6 +22,12 @@ enum comp_flag
  *
  * Unless otherwise noted, all instructions have format:
  * [r0], [r1], [r2/c2]
+ * NOTE: only use 1st 14 bits, 2 most sig used to encode exceptions for
+ *       instructions that update more than dest:
+ *       00 : normal (dest updated only)
+ *       01 : dest & src1 updated
+ *       10 : dest & src2 updated
+ *       11 : all ops updated
  */
 enum inst
 {

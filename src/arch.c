@@ -340,7 +340,7 @@ void FPConstStore(INSTQ *next, short id, short con, short reg)
          InsNewInst(NULL, NULL, next, ST, SToff[id-1].sa[2], -reg, 0);
          #ifndef X86_64
             i = SToff[id-1].sa[2] - 1;
-            i = DT[(i<<2)+3] + 4;
+            i = SToff[i].sa[3] + 4;
             InsNewInst(NULL, NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i),
                        -reg, 0);
          #endif
@@ -354,7 +354,7 @@ void FPConstStore(INSTQ *next, short id, short con, short reg)
             InsNewInst(NULL, NULL, next, MOV, -reg, STiconstlookup(ip[1]),
                        0);
             i = SToff[id-1].sa[2] - 1;
-            i = DT[(i<<2)+3] + 4;
+            i = SToff[i].sa[3] + 4;
             InsNewInst(NULL, NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), 
                        -reg, 0);
          #elif defined(X86_64)
@@ -370,7 +370,7 @@ void FPConstStore(INSTQ *next, short id, short con, short reg)
             InsNewInst(NULL, NULL, next, ST, SToff[id-1].sa[2], -reg, 0);
             bitload(next, reg, 12, ip[1]);
             i = SToff[id-1].sa[2] - 1;
-            i = DT[(i<<2)+3] + 4;
+            i = SToff[i].sa[3] + 4;
             InsNewInst(NULL, NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), 
                        -reg, 0);
 /*
@@ -382,7 +382,7 @@ void FPConstStore(INSTQ *next, short id, short con, short reg)
             InsNewInst(NULL, NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
             bitload(next, reg, 16, ip[1]);
             i = SToff[id-1].sa[2] - 1;
-            i = DT[(i<<2)+3] + 4;
+            i = SToff[i].sa[3] + 4;
             InsNewInst(NULL, NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), 
                        -reg, 0);
          #endif
@@ -525,7 +525,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
    #ifdef FKO_ANSIC
       for (i=0; i < NPARA; i++)
       {
-         USED = DT[(SToff[paras[i]].sa[2]-1)<<2];
+         USED = SToff[SToff[paras[i]].sa[2]-1].sa[0];
          if (USED)
             PrintComment(NULL, NULL, next, "para %d, name=%s", i, 
                          STname[paras[i]] ? STname[paras[i]] : "NULL");
@@ -560,7 +560,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       fnam[5] = '\0';
       for (i=nof=nd=ni=0; i < NPARA; i++)
       {
-         USED = DT[(SToff[paras[i]].sa[2]-1)<<2];
+         USED = SToff[SToff[paras[i]].sa[2]-1].sa[0];
          if (USED)
             PrintComment(NULL, NULL, next, "para %d, name=%s", i, 
                          STname[paras[i]] ? STname[paras[i]] : "NULL");
@@ -670,9 +670,9 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
          PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
          InsNewInst(NULL, NULL, next, MOV, -ir,
                     STlconstlookup(0x8000000000000000), 0);
-         k = ((SToff[DTnzerod-1].sa[2]-1)<<2) + 3;
+         k = SToff[SToff[DTnzerod-1].sa[2]-1].sa[3];
          InsNewInst(NULL, NULL, next, ST, SToff[DTnzerod-1].sa[2], -ir, 0);
-         InsNewInst(NULL,NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+8),
+         InsNewInst(NULL,NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, k+8),
                     -ir, __LINE__);
       }
       if (DTnzero > 0)
@@ -682,28 +682,29 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                     STlconstlookup(0x8000000080000000), 0);
          InsNewInst(NULL, NULL, next, ST, SToff[DTnzero-1].sa[2], -ir, 0);
          k = ((SToff[DTnzero-1].sa[2]-1)<<2) + 3;
+         k = SToff[SToff[DTnzero-1].sa[2]-1].sa[3];
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, 0, 0, k+8), -ir, 0);
       }
       if (DTabsd)
       {
          PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for absd");
          InsNewInst(NULL, NULL, next, MOV, -ir,
                     STlconstlookup(0x7FFFFFFFFFFFFFFF), 0);
-         k = ((SToff[DTabsd-1].sa[2]-1)<<2) + 3;
+         k = SToff[SToff[DTabsd-1].sa[2]-1].sa[3];
          InsNewInst(NULL, NULL, next, ST, SToff[DTabsd-1].sa[2], -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, 0, 0, k+8), -ir, 0);
       }
       if (DTabs)
       {
          PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for abss");
-         k = ((SToff[DTabs-1].sa[2]-1)<<2) + 3;
+         k = SToff[SToff[DTabs-1].sa[2]-1].sa[3];
          InsNewInst(NULL, NULL, next, MOV, -ir,
                     STlconstlookup(0x7fffffff7fffffff), 0);
          InsNewInst(NULL, NULL, next, ST, SToff[DTabs-1].sa[2], -ir, 0);
          InsNewInst(NULL, NULL, next, ST, 
-                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, 0, 0, k+8), -ir, 0);
       }
       InsNewInst(NULL NULL, next, COMMENT, STstrconstlookup("done archspec"), 
                  0, 0);
@@ -712,7 +713,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       reg1 = ir = GetReg(T_INT);
       for (j=i=0; i < NPARA; i++)
       {
-         USED = DT[(SToff[paras[i]].sa[2]-1)<<2];
+         USED = SToff[SToff[paras[i]].sa[2]-1].sa[0];
          if (USED)
             PrintComment(NULL, NULL, next, "para %d, name=%s", i, 
                          STname[paras[i]] ? STname[paras[i]] : "NULL");
@@ -733,8 +734,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
             {
                InsNewInst(NULL, NULL, next, LD, -ir,
                           AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
-               k = SToff[paras[i]].sa[2] - 1;
-               k = DT[(k<<2)+3] + 4;
+               k = SToff[SToff[paras[i]].sa[2]-1].sa[3] + 4;
                InsNewInst(NULL, NULL, next, ST,
                           AddDerefEntry(-REG_SP, 0, 0, k), -ir, 0);
             }
@@ -747,57 +747,57 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       if (DTnzerod > 0)
       {
          PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
-         k = ((SToff[DTnzerod-1].sa[2]-1)<<2) + 3;
+         k = SToff[SToff[DTnzerod-1].sa[2]-1].sa[3];
          InsNewInst(NULL, NULL, next, XOR, -ir, -ir, -ir);
          InsNewInst(NULL, NULL, next, ST, SToff[DTnzerod-1].sa[2], -ir, 0);
          InsNewInst(NULL, NULL, next, ST, 
-                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, 0, 0, k+8), -ir, 0);
          InsNewInst(NULL, NULL, next, MOV, -ir, STiconstlookup(0x80000000), 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+4), -ir, 0);
+                    AddDerefEntry(-REG_SP, 0, 0, k+4), -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+12), -ir, 0);
+                    AddDerefEntry(-REG_SP, 0, 0, k+12), -ir, 0);
       }
       if (DTnzero > 0)
       {
          PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
          InsNewInst(NULL, NULL, next, MOV, -ir, STiconstlookup(0x80000000), 0);
          InsNewInst(NULL, NULL, next, ST, SToff[DTnzero-1].sa[2], -ir, 0);
-         k = ((SToff[DTnzero-1].sa[2]-1)<<2) + 3;
+         k = SToff[SToff[DTnzero-1].sa[2]-1].sa[3];
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+4), -ir, 0);
+                    AddDerefEntry(-REG_SP, 0, 0, k+4), -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, 0, 0, k+8), -ir, 0);
          InsNewInst(NULL, NULL, next, ST, 
-                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+12), -ir, 0);
+                    AddDerefEntry(-REG_SP, 0, 0, k+12), -ir, 0);
       }
       if (DTabsd)
       {
          PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for absd");
-         k = ((SToff[DTabsd-1].sa[2]-1)<<2) + 3;
+         k = SToff[SToff[DTabsd-1].sa[2]-1].sa[3];
          InsNewInst(NULL, NULL, next, XOR, -ir, -ir, -ir);
          InsNewInst(NULL, NULL, next, NOT, -ir, -ir, -ir);
          InsNewInst(NULL, NULL, next, ST, SToff[DTabsd-1].sa[2], -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, 0, 0, k+8), -ir, 0);
          InsNewInst(NULL, NULL, next, MOV, -ir, STiconstlookup(0x7fffffff), 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+4), -ir, 0);
+                    AddDerefEntry(-REG_SP, 0, 0, k+4), -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+12), -ir, 0);
+                    AddDerefEntry(-REG_SP, 0, 0, k+12), -ir, 0);
       }
       if (DTabs)
       {
          PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for abss");
-         k = ((SToff[DTabs-1].sa[2]-1)<<2) + 3;
+         k = SToff[SToff[DTabs-1].sa[2]-1].sa[3];
          InsNewInst(NULL, NULL, next, MOV, -ir, STiconstlookup(0x7fffffff), 0);
          InsNewInst(NULL, NULL, next, ST, SToff[DTabs-1].sa[2], -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+4), -ir, 0);
+                    AddDerefEntry(-REG_SP, 0, 0, k+4), -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, 0, 0, k+8), -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+12), -ir, 0);
+                    AddDerefEntry(-REG_SP, 0, 0, k+12), -ir, 0);
       }
       InsNewInst(NULL, NULL, next, COMMENT, STstrconstlookup("done archspec"), 0, 0);
    #endif
@@ -807,7 +807,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       nam[3] = '\0';
       for (j=i=0; i < NPARA; i++)
       {
-         USED = DT[(SToff[paras[i]].sa[2]-1)<<2];
+         USED = SToff[SToff[paras[i]].sa[2]-1].sa[0];
          if (USED)
             PrintComment(NULL, NULL, next, "para %d, name=%s", i, 
                          STname[paras[i]] ? STname[paras[i]] : "NULL");
@@ -845,8 +845,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                   InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
                   nam[2] = j + '0';
                   ir = iName2Reg(nam);
-                  k = (SToff[paras[i]].sa[2]-1)<<2;
-                  k = DT[k+3] + 4;
+                  k = SToff[SToff[paras[i]].sa[2]-1].sa[3] + 4;
                   k = AddDerefEntry(-REG_SP, 0, 0, k);
                   InsNewInst(NULL, NULL, next, ST, k, -ir, 0);
                }
@@ -860,8 +859,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                if (USED)
                {
                   InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
-                  k = (SToff[paras[i]].sa[2]-1)<<2;
-                  k = DT[k+3] + 4;
+                  k = SToff[SToff[paras[i]].sa[2]-1].sa[3] + 4;
                   k = AddDerefEntry(-REG_SP, 0, 0, k);
                   InsNewInst(NULL, NULL, next, LD, -ir,
                              AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
@@ -880,8 +878,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                j++;
                if (USED)
                {
-                  k = (SToff[paras[i]].sa[2]-1)<<2;
-                  k = DT[k+3] + 4;
+                  k = SToff[SToff[paras[i]].sa[2]-1].sa[3] + 4;
                   k = AddDerefEntry(-REG_SP, 0, 0, k);
                   InsNewInst(NULL, NULL, next, LD, -ir,
                              AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
@@ -899,7 +896,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       fnam[2] = fnam[3] = '\0';
       for (fc=j=i=0; i < NPARA; i++)
       {
-         USED = DT[(SToff[paras[i]].sa[2]-1)<<2];
+         USED = SToff[SToff[paras[i]].sa[2]-1].sa[0];
          if (USED)
             PrintComment(NULL, NULL, next, "para %d, name=%s", i, 
                          STname[paras[i]] ? STname[paras[i]] : "NULL");
@@ -972,8 +969,8 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                   j++;
                   InsNewInst(NULL, NULL, next, LD, -ir,
                              AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
-                  k = (SToff[paras[i]].sa[2]-1)<<2;
-                  k = AddDerefEntry(-REG_SP, 0, 0, DT[k+3]+4);
+                  k = SToff[SToff[paras[i]].sa[2]-1].sa[3];
+                  k = AddDerefEntry(-REG_SP, 0, 0, k+4);
                   InsNewInst(NULL, NULL, next, ST, k, -ir, 0);
                   j++;
                }
@@ -1243,4 +1240,9 @@ void FixFrame(BBLOCK *bbase)
    #endif
    for (i=0; i < NIR; i++) savr[i] = i+2; 
    CreatePrologue(bbase, LOCALIGN, LOCSIZE, 0, ni, isav, nf, fsav, nd, dsav);
+}
+
+int NumberArchRegs()
+{
+   return(TNREG);
 }

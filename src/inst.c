@@ -13,6 +13,7 @@ INSTQ *NewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,
    ip->inst[1] = dest;
    ip->inst[2] = src1;
    ip->inst[3] = src2;
+   ip->use = ip->set = 0;
    return(ip);
 }
 

@@ -111,6 +111,15 @@ int NumberBasicBlocks(BBLOCK *bp)
    return(i-1);
 }
 
+BBLOCK *FindBlockByNumber(BBLOCK *bp, const short bnum)
+/*
+ * Finds block with number bnum, and returns its pointer
+ */
+{
+   if (!bp) bp = bbbase;
+   for(; bp && bp->bnum != bnum; bp = bp->down);
+   return(bp);
+}
 void AddBlockComments(BBLOCK *bp)
 /*
  * Adds comments indicating start of basic blocks
@@ -691,19 +700,27 @@ void FinalizeLoops()
       if (optloop && lp->body_label == optloop->body_label)
          optloop->next = lp;         
 /*
- *    See if we have a natural preheader
+ *    See if we have a natural preheader (has only header as successor,
+ *    and all paths to the header from outside the loop reach the header
+ *    through it)
  */
       if (FKO_BVTMP) phbv = FKO_BVTMP;
       else phbv = FKO_BVTMP = NewBitVec(32);
+/*
+ *    Find preds of header that are not in loop.  If there is only one,
+ *    it's the preheader if it has no other successors
+ */
       BitVecInvert(phbv, lp->blkvec);
       i = BlockList2BitVec(lp->header->preds);
       BitVecComb(phbv, phbv, i, '&');
       if (CountBitsSet(phbv) == 1)
-      {  /* HERE HERE HERE HERE */
+      {
          i = GetSetBitX(phbv, 1);  /* i now block number of preheader */
-         lp->preheader = FindBlockNumber(i+1);
+         lp->preheader = FindBlockByNumber(NULL, i+1);
+         if ( (lp->preheader->usucc && lp->preheader->usucc != lp->header) ||
+              (lp->preheader->csucc && lp->preheader->csucc != lp->header) )
+            lp->preheader = NULL;
       }
-      
    }
    maxdep = CalcLoopDepth();
    if (optloop)

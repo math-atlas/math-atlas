@@ -25,6 +25,7 @@
 #define VEC_BIT      0x100
 #define UNSIGNED_BIT 0x200
 #define LOCAL_BIT    0x400
+#define DEREF_BIT    0x800
 
 #define IS_PTR(flag_)   ((flag_) & PTR_BIT)
 #define IS_CONST(flag_) ((flag_) & CONST_BIT)
@@ -33,6 +34,7 @@
 #define IS_VEC(flag_)   ((flag_) & VEC_BIT)
 #define IS_UNSIGNED(flag_)   ((flag_) & UNSIGNED_BIT)
 #define IS_LOCAL(flag_) ((flag_) & LOCAL_BIT)
+#define IS_DEREF(flag_) ((flag_) & DEREF_BIT)
 
 #define FLAG2PTYPE(flag_) ( IS_PTR(flag_) ? T_INT : ((flag_) & 0x7) )
 
@@ -46,7 +48,6 @@
    extern char         **STname;
    extern union valoff *SToff;
    extern int          *STflag;
-   extern short        *DT;
 #endif
 
 void CleanDereftab(void);

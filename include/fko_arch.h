@@ -293,13 +293,20 @@
    #define NFCC 1
 #endif
 #ifndef ICC0
-   #define ICC0 1
+   #define ICC0 (DREGBEG+TNDR)
 #endif
 #ifndef FCC0
    #define FCC0 (1+NICC)
 #endif
+#ifndef PCREG
+   #define PCREG (FCC0 + 1)
+#endif
+#ifndef TNREG
+   #define TNREG (FCC0+NFCC+1)
+#endif
 
 short GetReg(short type);
 void FixFrame(BBLOCK *bbase);
+int NumberArchRegs();
 
 #endif

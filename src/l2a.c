@@ -57,12 +57,12 @@ static char *GetDeref(short id)
 {
    static char ln[128];
    short ptr, reg, mul, con, HC;
-   assert(id >= 1);
-   id = (id-1)<<2;
-   ptr = DT[id];
-   reg = DT[id+1];
-   mul = DT[id+2];
-   con = DT[id+3];
+   id--;
+   assert (id >= 0 && IS_DEREF(STflag[id]));
+   ptr = SToff[id].sa[0];
+   reg = SToff[id].sa[1];
+   mul = SToff[id].sa[2];
+   con = SToff[id].sa[3];
    #ifdef X86
       if (!reg)
       {
@@ -355,8 +355,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tld\t%s,%s\n", GetDeref(op2),
                                   archiregs[-IREGBEG-op1]);
          #elif defined(PPC)
-            k = (op2-1)<<2;
-            if (DT[k+1])
+            k = op2-1;
+            if (SToff[k].sa[1])
                ap->next = PrintAssln("\tlwzx\t%s,%s\n", archiregs[-IREGBEG-op1],
                                      GetDeref(op2));
             else
@@ -379,8 +379,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tldd\t%s,%s\n", GetDeref(op2),
                                   archdregs[-DREGBEG-op1]);
          #elif defined(PPC)
-            k = (op2-1)<<2;
-            if (DT[k+1])
+            if (SToff[op2-1].sa[1])
                ap->next = PrintAssln("\tlfdx\t%s,%s\n", archdregs[-DREGBEG-op1],
                                      GetDeref(op2));
             else
@@ -403,8 +402,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tld\t%s,%s\n", GetDeref(op2),
                                   archfregs[-FREGBEG-op1]);
          #elif defined(PPC)
-            k = (op2-1)<<2;
-            if (DT[k+1])
+            if (SToff[op2-1].sa[1])
                ap->next = PrintAssln("\tlfsx\t%s,%s\n", archfregs[-FREGBEG-op1],
                                      GetDeref(op2));
             else
@@ -443,8 +441,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tst\t%s,%s\n", archiregs[-IREGBEG-op2],
                                   GetDeref(op1));
          #elif defined(PPC) /* HERE HERE */
-            k = (op1-1)<<2;
-            if (DT[k+1])
+            if (SToff[op1-1].sa[1])
                ap->next = PrintAssln("\tstwx\t%s,%s\n",
                                      archiregs[-IREGBEG-op2], GetDeref(op1));
             else
@@ -463,8 +460,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tstd\t%s,%s\n", archdregs[-DREGBEG-op2],
                                   GetDeref(op1));
          #elif defined(PPC)
-            k = (op1-1)<<2;
-            if (DT[k+1])
+            if (SToff[op1-1][1])
                ap->next = PrintAssln("\tstfdx\t%s,%s\n",
                                      archdregs[-DREGBEG-op2], GetDeref(op1));
             else
@@ -483,8 +479,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tst\t%s,%s\n", archfregs[-FREGBEG-op2],
                                   GetDeref(op1));
          #elif defined(PPC)
-            k = (op1-1)<<2;
-            if (DT[k+1])
+            if (SToff[op1-1][1])
                ap->next = PrintAssln("\tstfsx\t%s,%s\n",
                                      archfregs[-FREGBEG-op2], GetDeref(op1));
             else

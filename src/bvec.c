@@ -28,20 +28,36 @@ static void NewVecChunk(int increase)
    ni = newni;
 }
 
+static int GetUnusedBVI()
+{
+   int i, n;
+   for (i=0; i < nvused; i++)
+      if (!ni[i]) return(i);
+   NewVecChunk(CHUNKSIZE);
+   return(nvused++);
+}
+
 int NewBitVec(int size)
 /*
  * Allocates a new bit vector with space for size elements
  */
 {
-   int nv, *v;
+   int nv, *v, i;
 
-   if (nvalloc == nvused) NewVecChunk(CHUNKSIZE);
+   i = GetUnusedBVI();
    nv = (size+32) >> 5;
    v = calloc(nv, sizeof(int));
    assert(v);
-   bvecs[nvused] = v;
-   ni[nvused] = nv;
-   return(++nvused);
+   bvecs[i] = v;
+   ni[i] = nv;
+   return(i+1);
+}
+
+void KillBitVec(int iv)
+{
+   free(bvecs[--iv]);
+   bvecs[iv] = NULL;
+   ni[iv] = 0;
 }
 
 int *ExtendBitVec(int iv, int nwords)
@@ -169,11 +185,11 @@ int BitVecDup(int ivD, int ivS, char op)
 
 int BitVecCopy(int ivD, int ivS)
 {
-   return(BitVecDup(int ivD, int ivS, '='));
+   return(BitVecDup(ivD, ivS, '='));
 }
 int BitVecInvert(int ivD, int ivS)
 {
-   return(BitVecDup(int ivD, int ivS, '~'));
+   return(BitVecDup(ivD, ivS, '~'));
 }
 
 int GetSetBitX(int iv, int I)
@@ -181,7 +197,7 @@ int GetSetBitX(int iv, int I)
  * RETURNS ith bit that is 1
  */
 {
-   int j, n, v, k=0;
+   int i, j, n, v, k=0;
 
    assert(I > 0);
    n = ni[--iv];
@@ -198,6 +214,7 @@ int GetSetBitX(int iv, int I)
    }
    return(0);
 }
+
 int CountBitsSet(int iv)
 /*
  * RETURNS: number of bits set in bitvec iv

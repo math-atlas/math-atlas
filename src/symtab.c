@@ -4,115 +4,13 @@
 char **STname;
 union valoff *SToff;
 int *STflag;
-short *DT, *DT2ST;
+/* short *DT, *DT2ST; */
 static int N=0, Nalloc=0, Ndt=0, Ndtalloc=0;
 static int niloc=0, nlloc=0, nfloc=0, ndloc=0, nvfloc=0, nvdloc=0;
 int    LOCSIZE=0, LOCALIGN=0, NPARA=0;
 
 #define STCHUNK 256
 #define DTCHUNK 256
-
-/* 
- * Every pointer dereference gets an entry in the dereference table.
- * Right now, deref table consists of 4 shorts:
- * <ptr> <reg> <mul> <con>
- * all of which except mul & con are indexes into the symbol table.  Mul and
- * con are simply short constants.
- * Addressing is: ptr+reg*mul+con
- * NOTE: this structure will likely expand.
- * Has associated array DT2ST.  DT2ST[i] gives the STindex which is derefed
- * by DT[i*4].
- */
-static void GetNewDereftab(int chunk)
-{
-   short *dtn;
-   int i, n;
-   Ndtalloc += chunk;
-   dtn = malloc(4*Ndtalloc * sizeof(short));
-   assert(dtn);
-   if (DT)
-   {
-      for (n=4*Ndt, i=0; i != n; i++) dtn[i] = DT[i];
-      free(DT);
-   }
-   DT = dtn;
-   dtn = malloc(Ndtalloc * sizeof(short));
-   assert(dtn);
-   if (DT2ST)
-   {
-      for (i=0; i < Ndt; i++) dtn[i] = DT2ST[i];
-      free(DT2ST);
-   }
-   DT2ST = dtn;
-   for (i=Ndt; i < Ndtalloc; i++) DT2ST[i] = 0;
-}
-
-#if 0
-void CleanDereftab()
-/*
- * Searches and removes nullified deref entries
- */
-{
-   int i, j, h, k;
-   for (i=j=0; i < Ndt; i++)
-   {
-      k = i << 2;
-      if (DT[k])
-      {
-          if (i != j)
-          {
-             h = j << 2;
-             DT[h] = DT[k];
-             DT[h+1] = DT[k+1];
-             DT[h+2] = DT[k+2];
-             DT[h+3] = DT[k+3];
-          }
-          j++;
-      }
-   }
-   Ndt = j;
-}
-#endif
-
-short FindDerefEntry(short ptr, short ireg, short mul, short con)
-{
-   int i, n=4*Ndt;
-   for (i=0; i != n; i += 4)
-       if (DT[i] == ptr && DT[i+1] == ireg && DT[i+2] == mul && DT[i+3] == con)
-          return((i>>2)+1);
-   return(0);
-}
-
-short AddDerefEntry(short ptr, short reg, short mul, short con)
-{
-   int i = 4*Ndt;
-   if (Ndt == Ndtalloc) GetNewDereftab(DTCHUNK);
-   DT[i] = ptr;
-   DT[i+1] = reg;
-   DT[i+2] = mul;
-   DT[i+3] = con;
-   if (ptr > 0) DT2ST[Ndt] = ptr;
-   return(++Ndt);
-}
-
-#if 0
-short AddFindDerefEntry(short ptr, short reg, short mul, short con)
-{
-   int i;
-   i = FindDerefEntry(ptr, reg, mul, conI)
-   if (!i)
-   {
-      if (Ndt == Ndtalloc) GetNewDereftab(DTCHUNK);
-      i = 4*Ndt;
-   }
-   else i = (i-1)<<2;
-   DT[i] = ptr;
-   DT[i+1] = reg;
-   DT[i+2] = mul;
-   DT[i+3] = con;
-   return((i>>2)+1);
-}
-#endif
 
 static void GetNewSymtab(int chunk)
 {
@@ -369,7 +267,7 @@ void NumberLocalsByType()
       {
          fprintf(stderr, "\nname='%s', flag=%d\n\n", STname[k] ? STname : NULL, fl);
       }
-      if ((IS_PARA(fl) || IS_LOCAL(fl)) && DT[(SToff[k].sa[2]-1)<<2])
+      if ((IS_PARA(fl) || IS_LOCAL(fl)) && SToff[SToff[k].sa[2]-1].sa[0])
       {
          type = FLAG2PTYPE(fl);
          switch(type)
@@ -431,7 +329,7 @@ void UpdateLocalDerefs(int isize)
    for (k=0; k != N; k++)
    {
       fl = STflag[k];
-      if ((IS_PARA(fl) || IS_LOCAL(fl)) && DT[(SToff[k].sa[2]-1)<<2])
+      if ((IS_PARA(fl) || IS_LOCAL(fl)) && SToff[SToff[k].sa[2]-1].sa[0])
       {
 fprintf(stderr, "Updating local %s\n", STname[k]);
          switch(FLAG2PTYPE(fl))
@@ -457,8 +355,7 @@ fprintf(stderr, "Updating local %s\n", STname[k]);
             fprintf(stderr, "%d: Unknown type %d!\n", __LINE__, FLAG2PTYPE(fl));
             exit(-1);
          }
-         i = (SToff[k].sa[2]-1)<<2;
-         DT[i+3] = off;
+         SToff[SToff[k].sa[2]-1].sa[3] = off;
          fprintf(stderr, "%s,%d DT#=%d, off=%d\n", STname[k],k+1,SToff[k].sa[2],off);
       }
    }
@@ -476,15 +373,16 @@ void CorrectLocalOffsets(int ldist)
  *       local alignment.
  */
 {
-   int i, k=(Ndt<<2);
-   for (i=0; i != k; i += 4)
+   int i;
+   for (i=0; i != N; i++)
    {
-      if (DT[i] == -REG_SP && DT[i+1] == 0 && DT[i+2] < 0)
+      if (IS_DEREF(STflag[i]) && SToff[i].sa[0] == -REG_SP && 
+          SToff[i].sa[1] == 0 && SToff[i].sa[2] < 0)
       {
-fprintf(stderr, "correcting local %s, (%d,%d,%d)\n", STname[-1-DT[i+2]],
-         DT[i+3], ldist, DT[i+3]+ldist);
-         DT[i+2] = 1;
-         DT[i+3] += ldist;
+fprintf(stderr, "correcting local %s, (%d,%d,%d)\n", STname[-1-SToff[i].sa[2]],
+        SToff[i].sa[3], ldist, SToff[i].sa[3]+ldist);
+         SToff[i].sa[2] = 1;
+         SToff[i].sa[3] += ldist;
       }
    }
 }
@@ -504,57 +402,30 @@ void MarkUnusedLocals(BBLOCK *bbase)
 /*
  * Start out by marking all locals as unused
  */
-   for (i=Ndt<<2,k=0; k != i; k += 4)
+   for (k=0; k != N; k++)
    {
-      if (DT[k] == -REG_SP && DT[k+2] < 0)
+      if (IS_DEREF(STflag[k]) && SToff[k].sa[0] == -REG_SP &&
+          SToff[k].sa[2] < 0)
       {
          fprintf(stderr, "Initial mark of DT[%d]: %s\n", 
-                 (k>>2)+1, STname[-DT[k+2]-1]);
-         DT[k] = 0;
+                 k+1, STname[-SToff[k].sa[2]-1]);
+         SToff[k].sa[0] = 0;
       }
    }
    for (bp=bbase; bp; bp = bp->down)
    {
       for (ip=bp->inst1; ip; ip = ip->next)
       {
-         switch(ip->inst[0])
+         for (k=1; k <= 3; k++)
          {
-/*
- *       These instructions have derefs as second operand only
- */
-         case LD:
-         case LDS:
-         case FLD:
-         case FLDD:
-            k = (ip->inst[2]-1)<<2;
-            if (!DT[k] && DT[k+2] < 0)
+            i = ip->inst[k]-1;
+            if (i >= 0 && IS_DEREF(STflag[i]) && !SToff[i].sa[0] && 
+                SToff[i].sa[2] < 0)
             {
                fprintf(stderr, "Unmarking(%d) DT[%d]: %s\n", 
-                       ip->inst[0], k>>2,STname[-DT[k+2]-1]);
-               DT[k] = -REG_SP;
+                       ip->inst[0], i, STname[-SToff[i].sa[2]-1]);
+               SToff[i].sa[0] = -REG_SP;
             }
-            break;
-/*
- *       These instructions have derefs as first operand only
- */
-         case ST:
-         case STS:
-         case FST:
-         case FSTD:
-         case PREFR:
-         case PREFW:
-         case PREFWS:
-         case PREFRS:
-            k = (ip->inst[1]-1)<<2;
-            if (!DT[k] && DT[k+2] < 0)
-            {
-               fprintf(stderr, "Unmarking(%d) DT[%d]: %s\n", 
-                       ip->inst[0], k>>2,STname[-DT[k+2]-1]);
-               DT[k] = -REG_SP;
-            }
-            break;
-         default:  /* other insts to not take derefs, so no action necessary */
-            break;
          }
       }
    }
@@ -596,3 +467,34 @@ void KillStaticData(void)
    }
 }
 #endif
+
+/* 
+ * Every pointer dereference gets an entry in the dereference table.
+ * Right now, deref table consists of 4 shorts:
+ * <ptr> <reg> <mul> <con>
+ * all of which except mul & con are indexes into the symbol table.  Mul and
+ * con are simply short constants.
+ * Addressing is: ptr+reg*mul+con
+ */
+short FindDerefEntry(short ptr, short ireg, short mul, short con)
+{
+   int i, n=4*Ndt;
+   for (i=0; i != N; i++)
+   {
+      if ( IS_DEREF(STflag[i]) && 
+           SToff[i].sa[0] == ptr && SToff[i].sa[1] == ireg && 
+           SToff[i].sa[2] == mul && SToff[i].sa[3] == con ) return(i+1);
+   }
+   return(0);
+}
+
+short AddDerefEntry(short ptr, short reg, short mul, short con)
+{
+   int i;
+   i = STdef("DT", DEREF_BIT | FLAG2TYPE(STflag[ptr-1]), 0) - 1;
+   SToff[i].sa[0] = ptr;
+   SToff[i].sa[1] = reg;
+   SToff[i].sa[2] = mul;
+   SToff[i].sa[3] = con;
+   return(i+1);
+}

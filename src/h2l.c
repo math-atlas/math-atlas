@@ -194,32 +194,32 @@ static void FixDeref(short ptr)
 {
    short k, type;
 
-   k = (ptr-1)<<2;
-   type = FLAG2TYPE(STflag[DT[k]-1]);
-fprintf(stderr, "FixDeref: [%d, %d, %d, %d]\n", DT[k], DT[k+1], DT[k+2], DT[k+3]);
+   ptr--;
+   type = FLAG2TYPE(STflag[SToff[ptr].sa[0]-1]);
+fprintf(stderr, "FixDeref: [%d, %d, %d, %d]\n", SToff[ptr].sa[0], SToff[ptr].sa[1], SToff[ptr].sa[2], SToff[ptr].sa[3]);
 /*
  * Load beginning of array
  */
-   DT[k] = -LocalLoad(DT[k]);
+   SToff[ptr].sa[0] = -LocalLoad(SToff[ptr].sa[0]);
 /*
  * Multiply constant by mul
  */
-   if (DT[k+2]) DT[k+3] *= DT[k+2];
+   if (SToff[ptr].sa[2]) SToff[ptr].sa[3] *= SToff[ptr].sa[2];
 /*
  * Load index register if needed
  */
-   if (DT[k+1])
+   if (SToff[ptr].sa[1])
    {
-      DT[k+1] = -LocalLoad(DT[k+1]);
+      SToff[ptr].sa[1] = -LocalLoad(SToff[ptr].sa[1]);
 /*
  *    Some architectures cannot multiply the index register by some (or any)
  *    constants, and in this case generate an extra shift instruction
  */
-      if (!ArchHasLoadMul(DT[k+2]))
+      if (!ArchHasLoadMul(SToff[ptr].sa[2]))
       {
-         InsNewInst(NULL, NULL, NULL, SHL, DT[k+1], DT[k+1], 
+         InsNewInst(NULL, NULL, NULL, SHL, SToff[ptr].sa[1], SToff[ptr].sa[1], 
                     STiconstlookup(type2shift(type)));
-         DT[k+2] = 1;
+         SToff[ptr].sa[2] = 1;
       }
 /*
  *    On machines with fixed-size instructions, you usually need to choose
@@ -227,11 +227,11 @@ fprintf(stderr, "FixDeref: [%d, %d, %d, %d]\n", DT[k], DT[k+1], DT[k+2], DT[k+3]
  *    on such a machine, add the constant to the index register
  */
       #ifndef ArchConstAndIndex
-         if (DT[k+3])
+         if (SToff[ptr].sa[3])
          {
-            InsNewInst(NULL, NULL, NULL, ADD, DT[k+1], DT[k+1], 
-                       STiconstlookup(DT[k+3]));
-            DT[k+3] = 0;
+            InsNewInst(NULL, NULL, NULL, ADD, SToff[ptr].sa[1], 
+                       SToff[ptr].sa[1], STiconstlookup(SToff[ptr].sa[3]));
+            SToff[ptr].sa[3] = 0;
          }
       #endif
    }
@@ -243,13 +243,14 @@ void DoArrayStore(short ptr, short id)
    INSTQ *ip;
    short lreg, ireg=0, preg, k, type;
 
-   k = (ptr-1)<<2;
+   k = ptr-1;
    type = FLAG2TYPE(STflag[id-1]);
    fprintf(stderr, "pnam=%s, pflag=%d, idname='%s', idflag=%d\n", 
-           STname[DT[k]-1], STflag[DT[k]-1], STname[id-1], STflag[id-1]);
+           STname[SToff[k].sa[0]-1], STflag[SToff[k].sa[0]-1], 
+           STname[id-1], STflag[id-1]);
 
    lreg = LocalLoad(id);
-   assert(FLAG2TYPE(STflag[DT[k]-1]) == type);
+   assert(FLAG2TYPE(STflag[SToff[k].sa[0]-1]) == type);
    FixDeref(ptr);
    switch(type)
    {
@@ -719,7 +720,7 @@ void FinishLoop(LOOPQ *lp)
 void DoGoto(char *name)
 {
 fprintf(stderr, "\n\nGOT GOTO %s\n\n", name);
-   InsNewInst(NULL, NULL, NULL, JMP, 0, STlabellookup(name), 0);
+   InsNewInst(NULL, NULL, NULL, JMP, -PCREG, STlabellookup(name), 0);
 }
 void DoLabel(char *name)
 {
@@ -752,26 +753,26 @@ fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
       switch(op)
       {
       case '>':
-         InsNewInst(NULL, NULL, NULL, JGT, 0, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, JGT, -PCREG, ICC0, label);
          break;
       case 'g':  /* >= */
-         InsNewInst(NULL, NULL, NULL, JGE, 0, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, JGE, -PCREG, ICC0, label);
          break;
       case '<':
-         InsNewInst(NULL, NULL, NULL, JLT, 0, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, JLT, -PCREG, ICC0, label);
          break;
       case 'l':  /* <= */
-         InsNewInst(NULL, NULL, NULL, JLE, 0, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, JLE, -PCREG, ICC0, label);
          br = JLE;
          break;
       case '=':
-         InsNewInst(NULL, NULL, NULL, JEQ, 0, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, JEQ, -PCREG, ICC0, label);
          break;
       case '!':
-         InsNewInst(NULL, NULL, NULL, JNE, 0, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, JNE, -PCREG, ICC0, label);
          break;
       case '&':
-         InsNewInst(NULL, NULL, NULL, JEQ, 0, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, JEQ, -PCREG, ICC0, label);
          break;
       }
    }
@@ -805,7 +806,7 @@ fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
          fko_error(__LINE__, "Illegal fp comparitor '%c'\n", op);
       }
       InsNewInst(NULL, NULL, NULL, cmp, FCC0, -freg0, -freg1);
-      InsNewInst(NULL, NULL, NULL, br, 0, FCC0, label);
+      InsNewInst(NULL, NULL, NULL, br, -PCREG, FCC0, label);
    }
 #else
       else
@@ -846,7 +847,7 @@ fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
          InsNewInst(NULL, NULL, NULL, (type == T_FLOAT) ? CVTBFI:CVTBDI,
                     -ireg, -freg0, 0);
          InsNewInst(NULL, NULL, NULL, CMP, ICC0, -ireg, STiconstlookup(0));
-         InsNewInst(NULL, NULL, NULL, br, 0, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, br, -PCREG, ICC0, label);
       }
 #endif
 }
