@@ -289,7 +289,7 @@ int PerformOpt(int SAVESP)
 /*
  * Perform optimizations on special loop first
  */
-   if (optloop)
+   if (optloop && 1)
    {
       DoLoopGlobalRegAssignment(optloop);  
       do
@@ -338,18 +338,18 @@ int GoToTown(int SAVESP)
    #if 0
       OptimizeLoopControl(optloop, 1, 1, NULL);
    #else
-      UnrollLoop(optloop, 2);
+      UnrollLoop(optloop, 3);
    #endif
    CalcInsOuts(bbbase); 
    CalcAllDeadVariables();
 
-//   assert(!PerformOpt(SAVESP));
+   assert(!PerformOpt(SAVESP));
 
    if (!INDEADU2D)
       CalcAllDeadVariables();
    AddBlockComments(bbbase);
    AddLoopComments();
-#if 0
+#if 1
    AddSetUseComments(bbbase);   
    AddDeadComments(bbbase); 
 #endif

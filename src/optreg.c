@@ -1351,6 +1351,7 @@ int AsgGlobalLoopVars(LOOPQ *loop, short *iregs, short *fregs, short *dregs)
    INSTQ *ip;
    short *sa, *s;
    extern int FKO_BVTMP;
+short id;
 
 /*
  * Find all variables set in list
@@ -1360,7 +1361,8 @@ int AsgGlobalLoopVars(LOOPQ *loop, short *iregs, short *fregs, short *dregs)
    for (bl=loop->blocks; bl; bl = bl->next)
    {
       for (ip=bl->blk->inst1; ip; ip = ip->next)
-         BitVecComb(loop->sets, loop->sets, ip->set, '|');
+         if (ip->set)
+            BitVecComb(loop->sets, loop->sets, ip->set, '|');
    }
 /*
  * Find regs and vars live on loop entry and exit(s)
@@ -1595,7 +1597,6 @@ void DoLoopGlobalRegAssignment(LOOPQ *loop)
    short *vars, *regs;
 
    FindInitRegUsage(loop->blocks, iregs, fregs, dregs);
-   assert(!AsgGlobalLoopVars(loop, iregs, fregs, dregs));
 #if 0
 fprintf(stderr, "\n%s(%d): reg usage:\n", __FILE__, __LINE__);
 fprintf(stderr, "   iregs =");
@@ -1609,6 +1610,7 @@ for (i=0; i < DREGEND-DREGBEG; i++)
    fprintf(stderr, " %d,", dregs[i]);
 fprintf(stderr, "\n\n");
 #endif
+   assert(!AsgGlobalLoopVars(loop, iregs, fregs, dregs));
 /*
  * Find total number of global assignments done, and allocate space to hold
  * mapping
@@ -1826,6 +1828,7 @@ static int SuccIsCopyPropTarg(BBLOCK *ob, /* origin block */
    int iret = 1;
    BLIST *bl;
 
+return(0);
    if (sb)
    {
 /*

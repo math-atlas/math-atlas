@@ -1,16 +1,39 @@
 #include "ifko.h"
 
+int NonLocalDeref(short dt)
+{
+   dt--;
+   if (!IS_DEREF(STflag[dt]))
+      return(0);
+   if (SToff[dt].sa[0] == -REG_SP && SToff[dt].sa[1] >= 0)
+      return(0);
+   return(1);
+}
+
 BBLOCK *DupBlock(BBLOCK *bold)
 {
    BBLOCK *nb;
    INSTQ *ip;
+   short *sp, i, k;
 
    nb = NewBasicBlock(NULL, NULL);
    nb->bnum = bold->bnum;
    nb->ilab = bold->ilab;
    for (ip=bold->inst1; ip; ip = ip->next)
+   {
       InsNewInst(nb, NULL, NULL, ip->inst[0], ip->inst[1],
                  ip->inst[2], ip->inst[3]);
+/*
+ *    Duplicate all derefs
+ */
+      for(i=1; i < 4; i++)
+      {
+         k = ip->inst[i]-1;
+         if (k >= 0 && NonLocalDeref(k+1))
+            ip->inst[i] = AddDerefEntry(SToff[k].sa[0], SToff[k].sa[1],
+                                        SToff[k].sa[2], SToff[k].sa[3]);
+      }
+   }
    return(nb);
 }
 
@@ -440,6 +463,7 @@ INSTQ *KillPointerUpdates(struct ptrinfo *pbase, int UR)
       KillAllIlist(pi->ilist);
       pi->ilist = NULL;
    }
+   GetReg(-1);
    return(ipbase);
 }
 
@@ -666,7 +690,7 @@ static void ForwardLoop(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
       ip->next = NewInst(NULL, NULL, NULL, JGT, -PCREG, -ICC0, lp->body_label);
    else
       ip->next = NewInst(NULL, NULL, NULL, JLT, -PCREG, -ICC0, lp->body_label);
-
+   GetReg(-1);
 }
 
 static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
@@ -1117,6 +1141,7 @@ void UnrollCleanup(LOOPQ *lp, int unroll)
               STiconstlookup(SToff[lp->inc-1].i*unroll));
    InsNewInst(bp, NULL, NULL, ST, SToff[lp->I-1].sa[2], -r0, 0);
 #endif
+   GetReg(-1);
 /*
  * Duplicate original loop body
  */
