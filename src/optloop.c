@@ -2283,6 +2283,7 @@ void AddInstToPrehead(LOOPQ *lp, INSTQ *iadd, short type, short r0, short r1)
                       ipA->inst[3]);
       CalcThisUseSet(ip);
    }
+   GetReg(-1);
 }
 
 void AddInstToPosttail(LOOPQ *lp, INSTQ *iadd, short type, short r0, short r1)

@@ -1538,14 +1538,6 @@ void AddOptSTEntries()
       {
          sp[i] = FindVarFromName(AES[i-1]);
          assert(sp[i]);
-#if 0
-         if (VEC)
-         {
-            k = FindInShortList(optloop->vscal[0], optloop->vscal+1, sp[i]);
-            assert(k);
-            sp[i] = optloop->vvscal[k];
-         }
-#endif
          asp[i-1] = DeclareAE(VEC, AEn[i], sp[i]);
       }
       optloop->ae = sp;

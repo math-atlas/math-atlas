@@ -14,7 +14,6 @@ CCF = "-x assembler-with-cpp"
 uopt=""
 
 teopt = "-X 1 1 -Y 1 1 -Fx 16 -Fy 16"
-opt = "-X 1 -Y 1 -Fx 16 -Fy 16 " + uopt
 
 nargs = len(sys.argv)
 if nargs < 4:
@@ -35,6 +34,7 @@ if nargs > 4 :
          if nargs > 8 :
             CCF = sys.argv[8]
 
+opt = "-X 1 -Y 1 -Fx 16 -Fy 16 " + uopt
 [t0,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, file, cc=CC, ccf=CCF, opt=opt)
 if TEST:
    i = l1cmnd.test(ATLdir, ARCH, pre, blas, N, file, cc=CC, ccf=CCF, opt=teopt)
