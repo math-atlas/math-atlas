@@ -1196,13 +1196,13 @@ int DoRegAsgTransforms(IGNODE *ig)
       CalcThisUseSet(ip);
       CHANGE++;
    }
-   if (CHANGE) 
-      INDEADU2D = CFUSETU2D = CFUSETU2D = 0;
 /*
  * Now we change all use of var in LR span to access ig->reg instead
  */
    for (bl=ig->blkspan; bl; bl = bl->next)
       CHANGE += VarUse2RegUse(ig, bl->blk, NULL, NULL);
+   if (CHANGE) 
+      INDEADU2D = CFUSETU2D = 0;
    return(CHANGE);
 }
 
@@ -1708,65 +1708,162 @@ static INSTQ *FindReg2RegMove(BBLOCK *bp, INSTQ *start, INSTQ *end)
    return(NULL);
 }
 
-void LiveCopyPropTrans(int scopeblks, BBLOCK *blk, INSTQ *ipret, 
-                       short mov, short dest, short src)
+int Dist2RefInBlock(BBLOCK *bp, int var, INSTQ *start, INSTQ *end)
+/*
+ * Finds number of instructions between start and next ref of var
+ * if start == NULL, start at beginning of block, if end == NULL go to end
+ * RETURNS:  # of inst from start otherwise (starting from 1), the negative
+ *           # of inst in block from start if not found in block
+ */
+{
+   INSTQ *ip;
+   enum inst inst;
+   int i=1;
+
+   if (!bp) return(0);
+   if (!start) start = bp->ainst1;
+   if (!start) return(0);
+   if (!end) end = bp->ainstN;
+   do
+   {
+      ip = start;
+      inst = GET_INST(ip->inst[0]);
+      if (ACTIVE_INST(inst) && inst != LABEL && inst != NOP && inst != UNIMP)
+      {
+         i++;
+         if (BitVecCheck(ip->use, var) || BitVecCheck(ip->set, var))
+            return(i);
+      }
+      start = start->next;
+   }
+   while(start && ip != end);
+   return(-i);
+}
+
+int Dist2Ref(BBLOCK *bp, int scopeblks, int var, INSTQ *start, INSTQ *end)
+{
+   int i, j=0, k=0;
+   i = Dist2RefInBlock(bp, var, start, end);
+   if (i < 0 && BitVecCheck(bp->outs, var))
+   {
+      if (bp->usucc && BitVecCheck(bp->usucc->ins, var) &&
+          BitVecCheck(scopeblks, bp->usucc->bnum-1))
+            j = Dist2Ref(bp->usucc, scopeblks, var, NULL, NULL);
+      if (bp->csucc && BitVecCheck(bp->csucc->ins, var) &&
+          BitVecCheck(scopeblks, bp->csucc->bnum-1))
+         k = Dist2Ref(bp->csucc, scopeblks,var, NULL, NULL);
+      if (k > j) j = k;
+      i += j;
+   }
+   else if (i < 0) 
+      i = -i;
+   return(i);
+}
+
+int SubRegUse(short *op, short reg, short sub)
+/*
+ * Finds if register reg is used in instruction operand op; if it is, replaces
+ * its use with a use of sub.
+ * RETURNS: 1 if register was found, 0 otherwise.
+ */
+{
+   int found=0;
+   short op1 = *op;
+
+   if (op1 == reg)
+   {
+      *op = sub;
+      found = 1;
+   }
+   else if (op1 > 0 && IS_DEREF(STflag[op1-1]))
+   {
+      if (SToff[op1-1].sa[0] == reg)
+      {
+         found = 1;
+	 SToff[op1-1].sa[0] = sub;
+      }
+      if (SToff[op1-1].sa[1] == reg)
+      {
+         found = 1;
+	 SToff[op1-1].sa[1] = sub;
+      }
+   }
+   return(found);
+}
+
+int LiveCopyPropTrans(int scopeblks, BBLOCK *blk, INSTQ *ipret, 
+                      short mov, short dest, short src)
 /*
  * Performs copy prop starting from ipret, where src reg is still live
  */
 {
-   return(NULL);
+   return(0);
 }
-void DeadCopyPropTrans(int scopeblks, BBLOCK *blk, INSTQ *ipret, 
-                       short mov, short dest, short src)
+
+int DeadCopyPropTrans(int scopeblks, BBLOCK *blk, INSTQ *ipstart,
+                      short mov, short dest, short src)
 /*
  * Performs copy prop starting from ipret, where src reg is dead
  * When src is dead, we can replace all use and set of dest with src, until
  * dest is dead or src is live again.
  */
 {
-   for (ip=ipret; ip; ip = ip->next)
+   INSTQ *ip;
+   int DestLive, SrcLive, iv, FoundIt;
+   int change=0;
+
+   if (!INDEADU2D)
+      CalcAllDeadVariables();
+   iv = Reg2Regstate(src);
+   for (ip=ipstart?ipstart->next:blk->ainst1; ip; ip = ip->next)
    {
 /*
  *    If src becomes live again, put move back, and stop copy prop
  */
-      if (BitVecCheck(ip->use, src-1) || BitVecCheck(ip->set, src-1))
-      {
-         ip = InsNewInst(blk, NULL, ip, mov, dest, src, 0);
-         CalcThisUseSet(ip);
-         return;
-      }
-/*
- *    If we have a use of former dest, change it to a use of src
- */
-      if (BitVecCheck(ip->use, dest-1))
-      {
-         SetVecBit(ip->use, dest-1, 0);
-         SetVecBit(ip->use, src-1, 1);
-         #if IFKO_DEBUG_LEVEL >= 1
-            assert(ip->inst[2] == -dest || ip->inst[3] == -dest);
-         #endif
-         if (ip->inst[2] == -dest)
-            ip->inst[2] = -src;
-         if (ip->inst[3] == -dest)
-            ip->inst[3] = -src;
-      }
+      if (BitVecCheckComb(ip->use, iv, '&')||BitVecCheckComb(ip->set, iv, '&'))
+         goto PUTMOVEBACK;
 /*
  *    If we have a set of dest, change it to a use of src, and keep going with
  *    propogation if this dest updated itself
  */
       if (BitVecCheck(ip->set, dest-1))
       {
-         #if IFKO_DEBUG_LEVEL >= 1
-            assert(ip->inst[1] == -dest);
-         #endif
-         ip->inst[1] = -src;
-         SetVecBit(ip->set, dest-1, 0);
-         SetVecBit(ip->set, src-1, 1);
-         if (BitVecCheck(ip->deads, dest-1))
-         {
-            SetVecBit(ip->deads, dest-1, 0);
-            SetVecBit(ip->deads, src-1, 1);
-         }
+         if (ip->inst[1] == dest)
+	 {
+            ip->inst[1] = -src;
+            SetVecBit(ip->set, dest-1, 0);
+            SetVecBit(ip->set, src-1, 1);
+            if (BitVecCheck(ip->deads, dest-1))
+            {
+               SetVecBit(ip->deads, dest-1, 0);
+               SetVecBit(ip->deads, src-1, 1);
+            }
+            change++;
+          }
+	  else  /* stop copy prop on implicit set */
+	     goto PUTMOVEBACK;
+      }
+/*
+ *    If we have a use of former dest, change it to a use of src
+ */
+      if (BitVecCheck(ip->use, dest-1))
+      {
+         FoundIt = 0;
+         if (ip->inst[0] != RET)
+	 {
+            FoundIt = SubRegUse(&ip->inst[2], -dest, -src);
+	    FoundIt |= SubRegUse(&ip->inst[3], -dest, -src);
+	    if (FoundIt)
+	    {
+               SetVecBit(ip->use, dest-1, 0);
+               SetVecBit(ip->use, src-1, 1);
+               change++;
+	    }
+	    else /* not found, is implicit use, put move back & stop */
+	       goto PUTMOVEBACK;
+	 }
+	 else  /* for implicit use like return, put move back & stop */
+	    goto PUTMOVEBACK;
       }
 /*
  *    If dest is dead without being used, end copy prop
@@ -1775,7 +1872,8 @@ void DeadCopyPropTrans(int scopeblks, BBLOCK *blk, INSTQ *ipret,
       {
          SetVecBit(ip->deads, dest-1, 0);
          SetVecBit(ip->deads, src-1, 1);
-         return;
+         INDEADU2D = 0;
+         return(change);
       }
    }
 /*
@@ -1790,15 +1888,16 @@ void DeadCopyPropTrans(int scopeblks, BBLOCK *blk, INSTQ *ipret,
 /*
  *       If succ is in scope and does not have src live, continue copy prop
  */
-         if (BitVecCheck(scopeblks, blk->bnum-1) ||
-             BitVecCheck(blk->usucc->ins, src-1))
+         if (BitVecCheck(scopeblks, blk->bnum-1) &&
+             !BitVecCheck(blk->usucc->ins, src-1))
          {
             if (BitVecCheck(blk->usucc->ins, dest-1))
             {
-               SetVecBit(blk->usucc->ins, dest-1, 0))
-               SetVecBit(blk->usucc->ins, src-1, 1))
-               DeadCopyPropTrans(scopeblks, blk->usucc, blk->usucc->ainst1, 
-                                 mov, dest, src);
+               SetVecBit(blk->usucc->ins, dest-1, 0);
+               SetVecBit(blk->usucc->ins, src-1, 1);
+	       if (change) INDEADU2D = 0;
+               change += DeadCopyPropTrans(scopeblks, blk->usucc,
+                                           blk->usucc->ainst1, mov, dest, src);
             }
             SrcLive = 1;
          }
@@ -1808,34 +1907,58 @@ void DeadCopyPropTrans(int scopeblks, BBLOCK *blk, INSTQ *ipret,
  */
          else
          {
-            ip = InsNewInst(blk, NULL, NULL, mov, dest, src, 0);
+            ip = InsNewInst(blk, NULL, NULL, mov, -dest, -src, 0);
             CalcThisUseSet(ip);
+            if (!ipstart || ip->prev != ipstart) change++;
             DestLive = 1;
          }
       }
       if (blk->csucc)
       {
-         if (BitVecCheck(scopeblks, blk->bnum-1))
+/*
+ *       If succ is in scope and does not have src live, continue copy prop
+ */
+         if (BitVecCheck(scopeblks, blk->bnum-1) &&
+             !BitVecCheck(blk->csucc->ins, src-1))
          {
-            DeadCopyPropTrans(scopeblks, blk->usucc, blk->usucc->ainst1, 
-                              mov, dest, src);
+            if (BitVecCheck(blk->csucc->ins, dest-1))
+            {
+               SetVecBit(blk->csucc->ins, dest-1, 0);
+               SetVecBit(blk->csucc->ins, src-1, 1);
+	       if (change) INDEADU2D = 0;
+               change += DeadCopyPropTrans(scopeblks, blk->csucc,
+                                           blk->csucc->ainst1, mov, dest, src);
+            }
             SrcLive = 1;
          }
 /*
- *       If succ block outside scope of transform, put mov back in
+ *       If succ block outside scope of transform, or has src live,
+ *       put mov back in and quit
  */
-         else
+         else if (!DestLive)
          {
-            ip = InsNewInst(blk, NULL, NULL, mov, dest, src, 0);
+            ip = InsNewInst(blk, NULL, NULL, mov, -dest, -src, 0);
+            if (!ipstart || ip->prev != ipstart) change++;
             CalcThisUseSet(ip);
             DestLive = 1;
          }
       }
       if (!DestLive)
-      {
-         SetVecBit(blk->outs, dest-1, 0))
-      }
+         SetVecBit(blk->outs, dest-1, 0);
+      if (!SrcLive)
+         SetVecBit(blk->outs, src-1, 1);
    }
+   if (change) INDEADU2D = 0;
+   return(change);
+
+PUTMOVEBACK:
+   if (change)
+   {
+      ip = InsNewInst(blk, NULL, ip, mov, -dest, -src, 0);
+      CalcThisUseSet(ip);
+      INDEADU2D = 0;
+   }
+   return(change);
 }
 
 INSTQ *CopyPropTrans(int scopeblks, BBLOCK *blk, INSTQ *ipret)
@@ -1847,6 +1970,9 @@ INSTQ *CopyPropTrans(int scopeblks, BBLOCK *blk, INSTQ *ipret)
 {
    short dest, src, mov;
    INSTQ *ip;
+   int i, iv;
+   int change;
+   extern int FKO_BVTMP;
 
    dest = -ipret->inst[1];
    src = -ipret->inst[2];
@@ -1858,38 +1984,20 @@ INSTQ *CopyPropTrans(int scopeblks, BBLOCK *blk, INSTQ *ipret)
       INDEADU2D = 0;
       return(DelInst(ipret));
    }
-/*
- * If source is used in next statement, do not attempt copy prop
- */
-   if (ipret->next)
-   {
-      if (BitVecCheck(ipret->next->set, src-1) || 
-          BitVecCheck(ipret->next->use, src-1))
-         return(NULL);
-   }
+   if (!INDEADU2D)
+      CalcAllDeadVariables();
+   mov = ipret->inst[0];
+   if (BitVecCheck(ipret->deads, src-1))
+      change = DeadCopyPropTrans(scopeblks, blk, ipret, mov, dest, src);
+   else 
+      change = LiveCopyPropTrans(scopeblks, blk, ipret, mov, dest, src);
+fprintf(stderr, "\n%s(%d): change=%d\n\n", __FILE__,__LINE__,change);
+   if (change)
+      ipret = DelInst(ipret);
    else
    {
-      if (blk->usucc)
-      {
-         if (blk->csucc)
-         {
-            if ( (BitVecCheck(blk->usucc->ainst1->set, src-1) || 
-                  BitVecCheck(blk->usucc->ainst1->use, src-1)) &&
-                 (BitVecCheck(blk->csucc->ainst1->set, src-1) || 
-                  BitVecCheck(blk->csucc->ainst1->use, src-1)) )
-               return(NULL);
-         }
-         else if (BitVecCheck(blk->usucc->ainst1->set, src-1) || 
-                  BitVecCheck(blk->usucc->ainst1->use, src-1))
-            return(NULL);
-      }
-      else return(NULL);
+      ipret = NULL;
    }
-   mov = ipret->inst[0];
-   ipret = DelInst(ipret);
-   if (BitVecCheck(ipret->deads, src-1))
-      DeadCopyPropTrans(scopeblks, blk, mov, dest, src);
-   else LiveCopyPropTrans(scopeblks, blk, mov, dest, src);
    return(ipret);
 }
 
@@ -1902,13 +2010,7 @@ int DoCopyProp(BLIST *scope)
    INSTQ *ip=NULL, *next;
    BLIST *bl, *epil=NULL;
 
-/*
- * Remove end block from scope, so we don't screw up return register
- */
    scopeblks = Scope2BV(scope);
-   epil = FindBlockListWithLabel(scope, STlabellookup("_IFKO_EPILOGUE"));
-   if (epil)
-      SetVecBit(scopeblks, epil->blk->bnum-1, 0);
    for (bl=scope; bl; bl = bl->next)
    {
       if (bl != epil)

@@ -1329,6 +1329,7 @@ void GenPrologueEpilogueStubs(BBLOCK *bbase)
  */
 {
    BBLOCK *blk;
+   int use=0;
 
    MarkUnusedLocals(bbase); 
    CreateSysLocals();
@@ -1346,6 +1347,12 @@ void GenPrologueEpilogueStubs(BBLOCK *bbase)
    blk = blk->down;
    InsNewInst(blk, NULL, NULL, LABEL, STlabellookup("_IFKO_EPILOGUE"), 
               0, 0);
+   if (rout_flag & IRET_BIT)
+      use = -IRETREG;
+   else if (rout_flag & FRET_BIT)
+      use = -FRETREG;
+   else if (rout_flag & DRET_BIT)
+      use = -DRETREG;
    InsNewInst(blk, NULL, NULL, CMPFLAG, CF_REGRESTORE, 0, 0);
-   InsNewInst(blk, NULL, NULL, RET, 0, 0, 0);
+   InsNewInst(blk, NULL, NULL, RET, 0, use, 0);
 }

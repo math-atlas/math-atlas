@@ -161,6 +161,7 @@ fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
       DoScopeRegAsg(optloop->blocks, 1, &i);
    }
+
    PrintInst(fopen("tmp.err", "w"), bbbase);
 #if 1
 /*
@@ -168,19 +169,22 @@ fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
  */
    for (lbase=NULL,bp=bbbase; bp; bp = bp->down)
       lbase = AddBlockToList(lbase, bp);
-   DoScopeRegAsg(lbase, 2, &i);
-   DoCopyProp(lbase);
+   DoScopeRegAsg(lbase, 2, &i); 
+   DoCopyProp(lbase); 
    KillBlockList(lbase);
 #endif
+   INDEADU2D = CFUSETU2D = 0;
+   if (!INDEADU2D)
+      CalcAllDeadVariables();
 
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    AddBlockComments(bbbase);
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    AddLoopComments();
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
-#if 0
+#if 1
    AddSetUseComments(bbbase);   
-   AddDeadComments(bbbase);
+   AddDeadComments(bbbase); 
 #endif
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    FinalizePrologueEpilogue(bbbase);

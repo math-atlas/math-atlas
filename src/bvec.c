@@ -134,6 +134,35 @@ int BitVecComb(int ivD, int iv1, int iv2, char op)
    return(ivD+1);
 }
 
+int BitVecCheckComb(int iv1, int iv2, char op)
+/*
+ * RETURNS : 0 if iv1 op iv2 is zero, nonzero otherwise
+ */
+{
+   int i, n;
+   iv1--; iv2--;
+   n = ni[iv1];
+   if (n > ni[iv2]) ExtendBitVec(iv2+1, n);
+   else if (n < ni[iv2])
+   {
+      n = ni[iv2];
+      ExtendBitVec(iv1+1, n);
+   }
+   if (op == '|')
+      for (i=0; i < n; i++)
+         if (bvecs[iv1][i] | bvecs[iv2][i])
+            return(1);
+   else if (op == '-')
+      for (i=0; i < n; i++) 
+         if(bvecs[iv1][i] & ~bvecs[iv2][i])
+            return(1);
+   else /* op == '&' */
+      for (i=0; i < n; i++) 
+         if (bvecs[iv1][i] & bvecs[iv2][i])
+            return(1);
+   return(0);
+}
+
 int BitVecCheck(int iv, int ibit)
 /*
  * Returns value nonzero if ibit in bit vector iv is set, zero otherwise

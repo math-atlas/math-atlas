@@ -9,7 +9,7 @@ void HandleUseSet(int iv, int iuse, int I)
 
 
    if (I < 0)
-      SetVecBit(iv, -I-1, 1);
+      BitVecComb(iv, iv, Reg2Regstate(-I), '|');
    else if (I > 0)
    {
       flag = STflag[--I];
@@ -21,9 +21,9 @@ void HandleUseSet(int iv, int iuse, int I)
          if (!tnreg) tnreg = NumberArchRegs();
          i = I;
          if (SToff[i].sa[0] < 0)
-            SetVecBit(iuse, -SToff[i].sa[0]-1, 1);
+            BitVecComb(iuse, iuse, Reg2Regstate(-SToff[i].sa[0]), '|');
          if (SToff[i].sa[1] < 0)
-            SetVecBit(iuse, -SToff[i].sa[1]-1, 1);
+            BitVecComb(iuse, iuse, Reg2Regstate(-SToff[i].sa[1]), '|');
          else if (SToff[i].sa[1])  /* local deref means use/set of local */
             SetVecBit(iv, SToff[I].sa[1]-1+tnreg, 1);
 /*
@@ -81,7 +81,8 @@ void CalcUsesDefs(BBLOCK *bp)
    if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
    vstmp = FKO_BVTMP;
 
-   CalcUseSet(bp);
+   if (!INUSETU2D)
+      CalcUseSet(bp);
    if (!bp->uses) bp->uses = NewBitVec(32);
    else SetVecAll(bp->uses, 0);
    if (!bp->defs) bp->defs = NewBitVec(32);
@@ -114,7 +115,7 @@ void CalcInsOuts(BBLOCK *base)
       if (!bp->ins) bp->ins = NewBitVec(32);
       else SetVecAll(bp->ins, 0);
       if (!bp->outs) bp->outs = NewBitVec(32);
-      if (!INUSETU2D)
+      if (!CFUSETU2D)
          CalcUsesDefs(bp);
    }
    do
