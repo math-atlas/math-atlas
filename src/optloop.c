@@ -910,7 +910,6 @@ int UnrollLoop(LOOPQ *lp, int unroll)
    enum comp_flag kbeg, kend;
    extern int FKO_BVTMP;
    extern BBLOCK *bbbase;
-FILE *fpout;
 
    KillLoopControl(lp);
    il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
@@ -1002,8 +1001,6 @@ FILE *fpout;
    KillAllLoops();
    NewBasicBlocks(bbbase);
    CheckFlow(bbbase, __FILE__, __LINE__);
-PrintInst(fpout=fopen("tmp.err", "w"), bbbase);
-fclose(fpout);
    FindLoops();  /* need to setup optloop for this */
    CheckFlow(bbbase, __FILE__, __LINE__);
    return(0);
