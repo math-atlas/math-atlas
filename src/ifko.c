@@ -28,6 +28,7 @@ int main(int nargs, char **args)
    SetBlockActiveInst(bbbase);
    FindPredSuccBlocks(bbbase);
    CalcDoms(bbbase);
+   CheckFlow(bp, __FILE__, __LINE__);
    AddBlockComments(bbbase);
    abase = lil2ass(bbbase);
    KillAllBasicBlocks(bbbase);

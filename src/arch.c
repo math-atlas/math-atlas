@@ -527,10 +527,10 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       {
          USED = DT[(SToff[paras[i]].sa[2]-1)<<2];
          if (USED)
-            PrintComment(NULL, next, "para %d, name=%s", i, 
+            PrintComment(NULL, NULL, next, "para %d, name=%s", i, 
                          STname[paras[i]] ? STname[paras[i]] : "NULL");
          else
-            PrintComment(NULL, next, "para %d, name=%s: UNUSED", i, 
+            PrintComment(NULL, NULL, next, "para %d, name=%s: UNUSED", i, 
                          STname[paras[i]] ? STname[paras[i]] : "NULL");
          flag = STflag[paras[i]];
          k = FLAG2PTYPE(flag);
@@ -562,10 +562,10 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       {
          USED = DT[(SToff[paras[i]].sa[2]-1)<<2];
          if (USED)
-            PrintComment(NULL, next, "para %d, name=%s", i, 
+            PrintComment(NULL, NULL, next, "para %d, name=%s", i, 
                          STname[paras[i]] ? STname[paras[i]] : "NULL");
          else
-            PrintComment(NULL, next, "para %d, name=%s: UNUSED", i, 
+            PrintComment(NULL, NULL, next, "para %d, name=%s: UNUSED", i, 
                          STname[paras[i]] ? STname[paras[i]] : "NULL");
          flag = STflag[paras[i]];
          if (IS_PTR(flag))
@@ -667,7 +667,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       ir = reg1;
       if (DTnzerod > 0)
       {
-         PrintComment(NULL, next, "Writing -0 to memory for negation");
+         PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
          InsNewInst(NULL, NULL, next, MOV, -ir,
                     STlconstlookup(0x8000000000000000), 0);
          k = ((SToff[DTnzerod-1].sa[2]-1)<<2) + 3;
@@ -677,7 +677,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       }
       if (DTnzero > 0)
       {
-         PrintComment(NULL, next, "Writing -0 to memory for negation");
+         PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
          InsNewInst(NULL, NULL, next, MOV, -ir,
                     STlconstlookup(0x8000000080000000), 0);
          InsNewInst(NULL, NULL, next, ST, SToff[DTnzero-1].sa[2], -ir, 0);
@@ -687,7 +687,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       }
       if (DTabsd)
       {
-         PrintComment(NULL, next, "Writing ~(-0) to memory for absd");
+         PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for absd");
          InsNewInst(NULL, NULL, next, MOV, -ir,
                     STlconstlookup(0x7FFFFFFFFFFFFFFF), 0);
          k = ((SToff[DTabsd-1].sa[2]-1)<<2) + 3;
@@ -697,7 +697,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       }
       if (DTabs)
       {
-         PrintComment(NULL, next, "Writing ~(-0) to memory for abss");
+         PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for abss");
          k = ((SToff[DTabs-1].sa[2]-1)<<2) + 3;
          InsNewInst(NULL, NULL, next, MOV, -ir,
                     STlconstlookup(0x7fffffff7fffffff), 0);
@@ -714,10 +714,10 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       {
          USED = DT[(SToff[paras[i]].sa[2]-1)<<2];
          if (USED)
-            PrintComment(NULL, next, "para %d, name=%s", i, 
+            PrintComment(NULL, NULL, next, "para %d, name=%s", i, 
                          STname[paras[i]] ? STname[paras[i]] : "NULL");
          else
-            PrintComment(NULL, next, "para %d, name=%s: UNUSED", i, 
+            PrintComment(NULL, NULL, next, "para %d, name=%s: UNUSED", i, 
                          STname[paras[i]] ? STname[paras[i]] : "NULL");
          flag = STflag[paras[i]];
          if (USED)
@@ -746,7 +746,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                     0, 0);
       if (DTnzerod > 0)
       {
-         PrintComment(NULL, next, "Writing -0 to memory for negation");
+         PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
          k = ((SToff[DTnzerod-1].sa[2]-1)<<2) + 3;
          InsNewInst(NULL, NULL, next, XOR, -ir, -ir, -ir);
          InsNewInst(NULL, NULL, next, ST, SToff[DTnzerod-1].sa[2], -ir, 0);
@@ -760,7 +760,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       }
       if (DTnzero > 0)
       {
-         PrintComment(NULL, next, "Writing -0 to memory for negation");
+         PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
          InsNewInst(NULL, NULL, next, MOV, -ir, STiconstlookup(0x80000000), 0);
          InsNewInst(NULL, NULL, next, ST, SToff[DTnzero-1].sa[2], -ir, 0);
          k = ((SToff[DTnzero-1].sa[2]-1)<<2) + 3;
@@ -773,7 +773,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       }
       if (DTabsd)
       {
-         PrintComment(NULL, next, "Writing ~(-0) to memory for absd");
+         PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for absd");
          k = ((SToff[DTabsd-1].sa[2]-1)<<2) + 3;
          InsNewInst(NULL, NULL, next, XOR, -ir, -ir, -ir);
          InsNewInst(NULL, NULL, next, NOT, -ir, -ir, -ir);
@@ -788,7 +788,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       }
       if (DTabs)
       {
-         PrintComment(NULL, next, "Writing ~(-0) to memory for abss");
+         PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for abss");
          k = ((SToff[DTabs-1].sa[2]-1)<<2) + 3;
          InsNewInst(NULL, NULL, next, MOV, -ir, STiconstlookup(0x7fffffff), 0);
          InsNewInst(NULL, NULL, next, ST, SToff[DTabs-1].sa[2], -ir, 0);
@@ -809,10 +809,10 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       {
          USED = DT[(SToff[paras[i]].sa[2]-1)<<2];
          if (USED)
-            PrintComment(NULL, next, "para %d, name=%s", i, 
+            PrintComment(NULL, NULL, next, "para %d, name=%s", i, 
                          STname[paras[i]] ? STname[paras[i]] : "NULL");
          else
-            PrintComment(NULL, next, "para %d, name=%s: UNUSED", i, 
+            PrintComment(NULL, NULL, next, "para %d, name=%s: UNUSED", i, 
                          STname[paras[i]] ? STname[paras[i]] : "NULL");
          flag = STflag[paras[i]];
          if (IS_PTR(flag) || IS_INT(flag) || IS_FLOAT(flag))
@@ -901,10 +901,10 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       {
          USED = DT[(SToff[paras[i]].sa[2]-1)<<2];
          if (USED)
-            PrintComment(NULL, next, "para %d, name=%s", i, 
+            PrintComment(NULL, NULL, next, "para %d, name=%s", i, 
                          STname[paras[i]] ? STname[paras[i]] : "NULL");
          else
-            PrintComment(NULL, next, "para %d, name=%s: UNUSED", i, 
+            PrintComment(NULL, NULL, next, "para %d, name=%s: UNUSED", i, 
                          STname[paras[i]] ? STname[paras[i]] : "NULL");
          flag = STflag[paras[i]];
          if (IS_PTR(flag) || IS_INT(flag))

@@ -10,7 +10,7 @@ int const2shift(int c)
    return(-1);
 }
 
-INSTQ *PrintComment(INSTQ *prev, INSTQ *next, ...)
+INSTQ *PrintComment(BBLOCK *blk, INSTQ *prev, INSTQ *next, ...)
 {
    va_list argptr;
    char *form;
@@ -20,8 +20,7 @@ INSTQ *PrintComment(INSTQ *prev, INSTQ *next, ...)
    form = va_arg(argptr, char*);
    vsprintf(ln, form, argptr);
    va_end(argptr);
-   assert(prev || next);
-   return(InsNewInst(NULL, prev, next, COMMENT, STstrconstlookup(ln), 0, 0));
+   return(InsNewInst(blk, prev, next, COMMENT, STstrconstlookup(ln), 0, 0));
 }
 
 void fko_error(int errno, ...)

@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <assert.h>
 
+#define IFKO_DEBUG_LEVEL 1
+
 #include "fko_types.h"
 #include "fko_symtab.h"
 #include "fko_inst.h"
@@ -31,5 +33,4 @@
  */
 int GetPtrType(void);
 
-#define IFKO_DEBUG_LEVEL 1
 #endif

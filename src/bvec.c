@@ -114,6 +114,19 @@ int BitVecComb(int ivD, int iv1, int iv2, char op)
    return(ivD+1);
 }
 
+int BitVecCheck(int iv, int ibit)
+/*
+ * Returns value nonzero if ibit in bit vector iv is set, zero otherwise
+ */
+{
+   int n, k;
+
+   n = ni[--iv];
+   k = ibit >> 5;
+   ibit -= k << 5;
+   return(bvecs[iv][k] & (1<<ibit));
+}
+
 int BitVecComp(int iv1, int iv2)
 /*
  * RETURNS : 0 if vectors are the same, 1 otherwise

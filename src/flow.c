@@ -12,6 +12,13 @@ BLIST *NewBlockList(BBLOCK *blk, BLIST *next)
    return(lp);
 }
 
+BBLOCK *FindBlockInList(BLIST *lp, BBLOCK *blk)
+{
+   for (; lp; lp = lp->next)
+      if (lp->blk == blk) return(blk);
+   return(NULL);
+}
+
 void KillBlockList(BLIST *lp)
 {
    BLIST *ln;
@@ -21,6 +28,7 @@ void KillBlockList(BLIST *lp)
       free(lp);
    }
 }
+
 
 BBLOCK *NewBasicBlock(BBLOCK *up, BBLOCK *down)
 /*
@@ -76,15 +84,17 @@ void AddBlockComments(BBLOCK *bp)
    int i;
    for (i=0; bp; bp = bp->down, i++)
    {
-      bp->inst1 = PrintComment(NULL, bp->inst1, "**************************");
-      bp->inst1 = PrintComment(NULL, bp->inst1, "   doms = %s",
-                               PrintVecList(bp->dom, 1));
-      bp->inst1 = PrintComment(NULL, bp->inst1, "   usucc=%d, csucc=%d",
-                               bp->usucc ? bp->usucc->bnum : 0, 
-                               bp->csucc ? bp->csucc->bnum : 0);
-      bp->inst1 = PrintComment(NULL, bp->inst1, "Begin basic block %d (%d)", 
-                               i+1, bp->bnum);
-      bp->inst1 = PrintComment(NULL, bp->inst1, "**************************");
+      PrintComment(bp, NULL, bp->inst1, "**************************");
+      PrintComment(bp, NULL, bp->inst1, "   label = %d (%s)", bp->ilab, 
+                               bp->ilab ? STname[bp->ilab-1] : "NULL");
+      PrintComment(bp, NULL, bp->inst1, "   doms = %s",
+                   PrintVecList(bp->dom, 1));
+      PrintComment(bp, NULL, bp->inst1, "   usucc=%d, csucc=%d",
+                   bp->usucc ? bp->usucc->bnum : 0, 
+                   bp->csucc ? bp->csucc->bnum : 0);
+      PrintComment(bp, NULL, bp->inst1, "Begin basic block %d (%d)",
+                   i+1, bp->bnum);
+      PrintComment(bp, NULL, bp->inst1, "**************************");
    }
 }
 
@@ -96,7 +106,7 @@ BBLOCK *FindBasicBlocks(BBLOCK *base0)
  */
 {
    BBLOCK *bbase=NULL, *bp, *bn;
-   INSTQ *ip, *in, *inst1=NULL;
+   INSTQ *ip, *inst1=NULL;
 
    if (!base0) return(NULL);
    bn = bbase = NewBasicBlock(NULL, NULL);
@@ -104,38 +114,38 @@ BBLOCK *FindBasicBlocks(BBLOCK *base0)
    {
       for (ip=bp->inst1; ip; ip = ip->next)
       {
+fprintf(stderr, "blk=%d, in=%d, LABEL=%d, op1=%d\n", bp->bnum, ip->inst[0], LABEL, ip->inst[1]);
          if (bn->inst1)
          {
             if (ip->inst[0] != LABEL)
             {
-               in->next = NewInst(bn, in, NULL, ip->inst[0], ip->inst[1],
-                                  ip->inst[2], ip->inst[3]);
-               in = in->next;
+               InsNewInst(bn, NULL, NULL, ip->inst[0], ip->inst[1],
+                          ip->inst[2], ip->inst[3]);
             }
             else  /* labels mark beginning of new basic block */
             {
                bn->down = NewBasicBlock(bn, NULL);
                bn = bn->down;
-               in = NewInst(bn, NULL, NULL, ip->inst[0],
-                            ip->inst[1], ip->inst[2], ip->inst[3]);
+               InsNewInst(bn, NULL, NULL, ip->inst[0],
+                          ip->inst[1], ip->inst[2], ip->inst[3]);
                bn->ilab = ip->inst[1];
                continue;
             }
          }
          else  /* this is 1st inst in block, labels OK */
          {
-            in = NewInst(bn, NULL, NULL, ip->inst[0], ip->inst[1],
-                         ip->inst[2], ip->inst[3]);
+            InsNewInst(bn, NULL, NULL, ip->inst[0], ip->inst[1],
+                       ip->inst[2], ip->inst[3]);
             if (ip->inst[0] == LABEL) bn->ilab = ip->inst[1];
+            fprintf(stderr, "in=%d, LABEL=%d, ilab=%d op1=%d\n", ip->inst[0], LABEL, bn->ilab, ip->inst[1]);
          }
 /*
  *       Branches mark end of this block
  */
-         if (IS_BRANCH(in->inst[0]))
+         if (IS_BRANCH(ip->inst[0]))
          {
             bn->down = NewBasicBlock(bn, NULL);
             bn = bn->down;
-            in = NULL;
          }
       }
    }
@@ -221,14 +231,13 @@ void FindPredSuccBlocks(BBLOCK *bbase)
 /*
  *       Unconditional jump sets only usucc
  */
-         if (inst != JMP)
+         if (inst != JMP && inst != RET)
          {
             bp->usucc = FindBlockWithLabel(bbase, bp->ainstN->inst[1]);
          }
-         else
+         else if (inst != RET)
          {
-            bp->csucc = FindBlockWithLabel(bbase, bp->ainstN->inst[1]);
-            bp->usucc = bp->down;
+            bp->usucc = FindBlockWithLabel(bbase, bp->ainstN->inst[1]);
          }
       }
       else bp->usucc = bp->down;
@@ -284,6 +293,69 @@ void CalcDoms(BBLOCK *bbase)
    }
    while(CHANGE);
 }
+
+#if IFKO_DEBUG_LEVEL > 0
+void CheckFlow(BBLOCK *bbase, char *file, int line)
+{
+   BBLOCK *bp;
+   int error=0, i;
+   if (bbase->preds)
+   {
+      fprintf(stderr, "Predecessor for root block (%d) : %d!!\n", 
+              bbase->bnum, bbase->preds->blk->bnum);
+      error = 1;
+   }
+   for (i=0, bp=bbase; bp; i++, bp = bp->down)
+   {
+      if (bp->bnum != i+1)
+      {
+         fprintf(stderr, "Block %d, should be %d\n", bp->bnum, i+1);
+         error = i+1;
+      }
+      if (!(bp->inst1 || bp->instN))
+      {
+         fprintf(stderr, "Block %d, inst1=%d, instN=%d\n", bp->bnum,
+                 bp->inst1, bp->instN);
+         error = i+1;
+      }
+/*
+ *    Make sure this node a pred of any seccessor
+ */
+      if (bp->usucc && !FindBlockInList(bp->usucc->preds, bp))
+      {
+         fprintf(stderr, 
+                 "Unconditional successor %d does not have %d in preds!\n",
+                 bp->usucc->bnum, bp->bnum);
+         error = i+1;
+      }
+      if (bp->csucc && !FindBlockInList(bp->csucc->preds, bp))
+      {
+         fprintf(stderr, 
+                 "Conditional successor %d does not have %d in preds!\n",
+                 bp->csucc->bnum, bp->bnum);
+         error = i+1;
+      }
+      if (!bp->inst1 && !bp->instN)
+         fprintf(stderr, "WARNING, block %d has no instructions!\n", bp->bnum);
+/*
+ *    Later, scan to see if this is an error or not, too lazy right now
+ */
+      if (!bp->ainst1)
+         fprintf(stderr, "WARNING, block %d ainst1 not set!\n", bp->bnum);
+      if (!bp->ainstN)
+         fprintf(stderr, "WARNING, block %d ainstN not set!\n", bp->bnum);
+/*
+ *    May want to put in dominator sanity test?
+ */
+   }
+   if (error)
+   {
+      fprintf(stderr, "Error in CheckFlow called from line %d of %s\n",
+              line, file);
+/*      while(1); */
+   }
+}
+#endif
 
 void KillUselessBlocks(BBLOCK *bbase)
 /*
