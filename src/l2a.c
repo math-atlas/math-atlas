@@ -1619,7 +1619,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                   ap->next = PrintAssln("\tmovss\t%s,%s\n",
 	                                archfregs[-FREGBEG-op2], sptr);
             #elif defined(SPARC)
-               ap->next = PrintAssln("\tfmovs\t%s,%s\n",archfregs[-FREGBEG-op1],
+               ap->next = PrintAssln("\tfmovs\t%s,%s\n",archfregs[-FREGBEG-op2],
                                      archfregs[-FREGBEG-op1]);
             #elif defined(PPC)
                ap->next = PrintAssln("\tfmr\t%s,%s\n", archfregs[-FREGBEG-op1],
@@ -1680,7 +1680,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                   ap->next = PrintAssln("\tmovsd\t%s,%s\n",
 	                                archdregs[-DREGBEG-op2], sptr);
             #elif defined(SPARC)
-               ap->next = PrintAssln("\tfmovd\t%s,%s\n",archdregs[-DREGBEG-op1],
+               ap->next = PrintAssln("\tfmovd\t%s,%s\n",archdregs[-DREGBEG-op2],
                                      archdregs[-DREGBEG-op1]);
             #elif defined(PPC)
                ap->next = PrintAssln("\tfmr\t%s,%s\n", archdregs[-DREGBEG-op1],

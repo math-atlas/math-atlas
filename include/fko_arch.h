@@ -11,8 +11,8 @@
     !defined(LINUX_X86_64) && !defined(SOLARIS_SPARC)
 /*   #define FKO_ANSIC32 */
 /*   #define LINUX_X86_64  */
-   #define LINUX_X86_32 
-/*   #define SOLARIS_SPARC  */
+/*   #define LINUX_X86_32 */
+   #define SOLARIS_SPARC 
 /*   #define OSX_PPC */
 #endif
 
@@ -52,9 +52,9 @@
    #define ArchConstAndIndex
 #endif
 
-#define IREGBEG  1
-#define FREGBEG 32
-#define DREGBEG 64
+#define IREGBEG   1
+#define FREGBEG  40
+#define DREGBEG  80
 /*
  * 1st ireg is always stack pointer.  The next NSIR iregs are registers that
  * can be used by the caller without saving, and the first such register is
@@ -77,24 +77,25 @@
    #define DRETREG DREGBEG
    #ifdef ARCH_DECLARE
       int  icallersave[TNIR] = 
-       {0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 1,1,1,1,1,1,1, 1,1,1,1,1,1,1, 0};
+       {0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0, 1,1,1,1,1,1,1, 1,1,1,1,1,1,1, 0,0,0};
 /*
  *    Note that we are using the SAVE statement, so the callee explicitly
  *    saves nothing
  */
       int  icalleesave[TNIR] = 
 #if 1
-     {0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0}; 
+     {0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 1,1,0}; 
 #else
      {0, 1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0}; 
 #endif
-      int iparareg[TNIR] = {0, 0,0,0,0,0,0,0,0, 1,1,1,1,1,1,1,1,
-                            0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0};
+      int iparareg[TNIR] = {0, 0,0,0,0,0,0, 1,1,1,1,1,1,1,1,
+                            0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0,1,1};
       char *archiregs[TNIR] = 
          {"@sp", "@l0", "@l1", "@l2", "@l3", "@l4", "@l5", "@l6", "@l7",
-          "@i0", "@i1", "@i2", "@i3", "@i4", "@i5", "@i6", "@i7", 
+          "@i0", "@i1", "@i2", "@i3", "@i4", "@i5", 
           "@o0", "@o1", "@o2", "@o3", "@o4", "@o5", "@o7",
-          "@g1", "@g2", "@g3", "@g4", "g5", "g6", "g7", "@g0"};
+          "@g1", "@g2", "@g3", "@g4", "g5", "g6", "g7", 
+          "@i6", "@i7", "@g0"};
       int  fcalleesave[NFR] = 
        {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
       int  fcallersave[NFR] = 

@@ -146,10 +146,10 @@ int Reg2Regstate(int k)
          SetVecBit(iv, k-DREGBEG+FREGBEG-1, 1);
       #elif defined(SPARC)
          i = k - DREGBEG;
-         if (i < 32)
+         if (i < 16)
          {
-            SetVecBit(iv, FREGBEG+i, 1);
-            SetVecBit(iv, FREGBEG+i+1, 1);
+            SetVecBit(iv, FREGBEG+i*2-1, 1);
+            SetVecBit(iv, FREGBEG+i*2, 1);
          }
       #endif
    }

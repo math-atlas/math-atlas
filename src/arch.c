@@ -416,11 +416,11 @@ void FPConstStore(INSTQ *next, short id, short con,
             InsNewInst(NULL, NULL, next, FSTD, SToff[id-1].sa[2], -dreg, 0);
          #else
             i = SToff[SToff[id-1].sa[2]-1].sa[3];
-            k = AddDerefEntry(-REG_SP, id, -id, i);
+            k = AddDerefEntry(-REG_SP, STderef, -STderef, i);
             InsNewInst(NULL, NULL, next, XOR, -reg, -reg, -reg);
             InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
             InsNewInst(NULL, NULL, next, ST, 
-                       AddDerefEntry(-REG_SP, id, -id, i+4), -reg, 0);
+                       AddDerefEntry(-REG_SP, STderef, -STderef, i+4), -reg, 0);
             SignalSet(next, id, k, dreg);
          #endif
       }
@@ -430,13 +430,6 @@ void FPConstStore(INSTQ *next, short id, short con,
             ip = (int*) &d;
             InsNewInst(NULL, NULL, next, MOV, -reg, STiconstlookup(*ip), 0);
             i = SToff[SToff[id-1].sa[2]-1].sa[3];
-            #if 0
-            k = AddDerefEntry(-REG_SP, id, -id, i);
-            InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
-            InsNewInst(NULL, NULL, next, MOV, -reg, STiconstlookup(ip[1]), 0);
-            InsNewInst(NULL, NULL, next, ST,
-                       AddDerefEntry(-REG_SP, id, -id, i+4), -reg, 0);
-            #else
             InsNewInst(NULL, NULL, next, VGR2VR16, -dreg, -reg, 
                        STiconstlookup(0));
             InsNewInst(NULL, NULL, next, SHR, -reg, -reg, STiconstlookup(16));
@@ -450,7 +443,6 @@ void FPConstStore(INSTQ *next, short id, short con,
                        STiconstlookup(3));
 /*            InsNewInst(NULL, NULL, next, FSTD, k, -dreg, 0); */
             InsNewInst(NULL, NULL, next, FSTD, SToff[id-1].sa[2], -dreg, 0);
-            #endif
          #elif defined(X86_64)
             lp = (long*) &d;
             InsNewInst(NULL, NULL, next, MOV, -reg, STlconstlookup(*lp), 0);
@@ -461,24 +453,24 @@ void FPConstStore(INSTQ *next, short id, short con,
          #elif defined(SPARC)
             ip = (int*) &d;
             i = SToff[SToff[id-1].sa[2]-1].sa[3];
-            k = AddDerefEntry(-REG_SP, id, -id, i);
+            k = AddDerefEntry(-REG_SP, STderef, -STderef, i);
             bitload(next, reg, 12, *ip);
             InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
             bitload(next, reg, 12, ip[1]);
             InsNewInst(NULL, NULL, next, ST, 
-                       AddDerefEntry(-REG_SP, id, -id, i+4), -reg, 0);
+                       AddDerefEntry(-REG_SP, STderef, -STderef, i+4), -reg, 0);
 /*
  *       PPC loads 16 bits at a time
  */
          #elif defined(PPC)
             ip = (int*) &d;
             i = SToff[SToff[id-1].sa[2]-1].sa[3];
-            k = AddDerefEntry(-REG_SP, id, -id, i);
+            k = AddDerefEntry(-REG_SP, STderef, -STderef, i);
             bitload(next, reg, 16, *ip);
             InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
             bitload(next, reg, 16, ip[1]);
             InsNewInst(NULL, NULL, next, ST,
-                       AddDerefEntry(-REG_SP, id, -id, i+4), -reg, 0);
+                       AddDerefEntry(-REG_SP, STderef, -STderef, i+4), -reg, 0);
          #endif
          #ifndef X86
             SignalSet(next, id, k, dreg);
@@ -491,14 +483,14 @@ void FPConstStore(INSTQ *next, short id, short con,
       f = SToff[con-1].f;
       if (f == 0.0e0)
       {
-         k = AddDerefEntry(-REG_SP, STderef, -STderef, 
-                           SToff[SToff[id-1].sa[2]-1].sa[3]);
          #ifndef PPC
             InsNewInst(NULL, NULL, next, FZERO, -freg, 0, 0);
             InsNewInst(NULL, NULL, next, FST, SToff[id-1].sa[2], -freg, 0);
          #else
+            k = AddDerefEntry(-REG_SP, STderef, -STderef, 
+                              SToff[SToff[id-1].sa[2]-1].sa[3]);
             InsNewInst(NULL, NULL, next, XOR, -reg, -reg, -reg);
-            InsNewInst(NULL, NULL, next, ST, SToff[id-1].sa[2], -reg, 0);
+            InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
          #endif
       }
       else
@@ -603,6 +595,7 @@ void Extern2Local(INSTQ *next)
       char fnam[8];
       int fc, fr=0;
    #endif
+   extern short STderef;
 
    dreg = GetReg(T_DOUBLE);
    freg = GetReg(T_FLOAT);
@@ -943,7 +936,7 @@ void Extern2Local(INSTQ *next)
             PrintComment(NULL, NULL, next, "para %d, name=%s: UNUSED", i, 
                          STname[paras[i]] ? STname[paras[i]] : "NULL");
          flag = STflag[paras[i]];
-         if (IS_PTR(flag) || IS_INT(flag) || IS_FLOAT(flag))
+         if (IS_PTR(flag) || IS_INT(flag))
          {
             if (j < 6)
             {
@@ -962,6 +955,30 @@ void Extern2Local(INSTQ *next)
             }
             j++;
          }
+         else if (IS_FLOAT(flag))
+         {
+            if (j < 6)
+            {
+               nam[2] = j + '0';
+               ir = iName2Reg(nam);
+               if (USED)
+               {
+                  k = AddDerefEntry(-REG_SP, STderef, -STderef, 
+                                    SToff[SToff[paras[i]].sa[2]-1].sa[3]);
+                  InsNewInst(NULL, NULL, next, ST, k, -ir, 0);
+                  SignalSet(next, paras[i]+1, k, freg);
+               }
+            }
+            else if (USED)
+            {
+               k = AddDerefEntry(rsav, 0, 0, j*4);
+               ParaDerefQ = NewLocinit(k, 0, ParaDerefQ);
+               InsNewInst(NULL, NULL, next, FLD, -freg, k, 0);
+               InsNewInst(NULL, NULL, next, FST, SToff[paras[i]].sa[2],
+                          -freg, 0);
+            }
+            j++;
+         }
          else
          {
             assert(IS_DOUBLE(flag));
@@ -973,12 +990,12 @@ void Extern2Local(INSTQ *next)
                if (USED)
                {
                   kk = SToff[SToff[paras[i]].sa[2]-1].sa[3];
-                  k = AddDerefEntry(-REG_SP, paras[i], -paras[i], kk);
+                  k = AddDerefEntry(-REG_SP, STderef, -STderef, kk);
                   InsNewInst(NULL, NULL, next, ST, k, -ir, 0);
                   nam[2] = j + '0';
                   ir = iName2Reg(nam);
                   InsNewInst(NULL, NULL, next, ST, 
-                             AddDerefEntry(-REG_SP, paras[i], -paras[i], kk+4),
+                             AddDerefEntry(-REG_SP, STderef, -STderef, kk+4),
                              -ir, 0);
                   SignalSet(next, paras[i]+1, k, dreg);
                }
@@ -992,15 +1009,14 @@ void Extern2Local(INSTQ *next)
                if (USED)
                {
                   kk = SToff[SToff[paras[i]].sa[2]-1].sa[3];
-                  k = AddDerefEntry(-REG_SP, paras[i], -paras[i], kk);
-                  InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2],
-                             -ir, 0);
+                  k = AddDerefEntry(-REG_SP, STderef, -STderef, kk);
+                  InsNewInst(NULL, NULL, next, ST, k, -ir, 0);
 
                   ii = AddDerefEntry(rsav, 0, 0, j*4);
                   ParaDerefQ = NewLocinit(ii, 0, ParaDerefQ);
                   InsNewInst(NULL, NULL, next, LD, -ir, ii, 0);
 
-                  ii = AddDerefEntry(-REG_SP, paras[i], -paras[i], kk+4);
+                  ii = AddDerefEntry(-REG_SP, STderef, -STderef, kk+4);
                   InsNewInst(NULL, NULL, next, ST, ii, -ir, 0);
                   SignalSet(next, paras[i]+1, k, dreg);
                }
