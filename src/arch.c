@@ -85,9 +85,9 @@ void FindRegUsage(BBLOCK *bbase, int *ni0, int *iregs,
       if (dregs[op]) fprintf(stderr, "%s, ", archdregs[op]);
    fprintf(stderr, "\n\n");
 
+   *ni0 = ni;
    *nf0 = nf;
    *nd0 = nd;
-   *ni0 = ni;
 }
 
 int RemoveNosaveregs(int rstart, int nr, int *regs, int *saves)
@@ -99,7 +99,7 @@ int RemoveNosaveregs(int rstart, int nr, int *regs, int *saves)
    int n=0, i;
    for (i=0; i < nr; i++)
    {
-      if (!saves[i])
+      if (!saves[i] && regs[i])
       {
          regs[i] = 0;
          n++;
@@ -116,6 +116,7 @@ int GetRegSaveList(int rstart, int nr, int *regs)
  */
 {
    int i, j;
+fprintf(stderr, "rstart=%d, nr=%d\n", rstart, nr);
    for (j=i=0; i < nr; i++)
    {
       if (regs[i])
@@ -1134,12 +1135,13 @@ void FinalizePrologueEpilogue(BBLOCK *bbase)
  * Find registers that need to be saved
  */
    FindRegUsage(bbase, &nir, ir, &nfr, fr, &ndr, dr);
-   RemoveNosaveregs(IREGBEG, TNIR, ir, icalleesave);
-   nir = GetRegSaveList(IREGBEG, nir, ir);
+   k = RemoveNosaveregs(IREGBEG, TNIR, ir, icalleesave);
+   nir = GetRegSaveList(IREGBEG, TNIR, ir);
+fprintf(stderr, "nosave=%d nisav = %d\n", k, nir);
    RemoveNosaveregs(FREGBEG, TNFR, fr, fcalleesave);
-   nfr = GetRegSaveList(FREGBEG, nfr, fr);
+   nfr = GetRegSaveList(FREGBEG, TNFR, fr);
    RemoveNosaveregs(DREGBEG, TNDR, dr, dcalleesave);
-   ndr = GetRegSaveList(DREGBEG, ndr, dr);
+   ndr = GetRegSaveList(DREGBEG, TNDR, dr);
 /*
  * If we return values in a register, no need to save and restore it
  */

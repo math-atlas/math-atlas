@@ -33,7 +33,7 @@ fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    CalcAllDeadVariables();
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
-/*   if (optloop) DoLoopGlobalRegAssignment(optloop); */
+   if (optloop) DoLoopGlobalRegAssignment(optloop);
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    AddBlockComments(bbbase);
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);

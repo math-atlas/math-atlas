@@ -1581,6 +1581,59 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   op1, op2, op3, sptr);
          #endif
          break;
+      case FMOV:
+/*
+ *       Handle fp constant moves seperately
+ */
+         if (op2 > 0)
+	 {
+	    assert(IS_GLOB(STflag[op2-1]));
+	    #ifdef X86
+	       ap->next = PrintAssln("\tmovss\t%s,%s\n", STname[op2-1],
+	                             archfregs[-FREGBEG-op1]);
+	    #elif defined(SPARC)
+	       ap->next = PrintAssln("\tsethi\t@hi(%s),%s\n", STname[op2-1],
+	                             archiregs[-IREGBEG-op3]);
+	       ap->next = PrintAssln("\tor\t%s, @lo(%s), %s\n", 
+	                             archiregs[-IREGBEG-op3], STname[op2-1],
+	                             archiregs[-IREGBEG-op3]);
+	       ap->next = PrintAssln("\tld\t[%s], %s\n",
+	                             archiregs[-IREGBEG-op3],
+	                             archfregs[-FREGBEG-op1]);
+            #elif defined(PPC)
+	       ap->next = PrintAssln("\tlis\t%s, ha16(%s)\n", 
+	                             archiregs[-IREGBEG-op3], STname[op2-1]);
+	       ap->next = PrintAssln("\tori\t%s, lo16(%s)\n", 
+	                             archiregs[-IREGBEG-op3], STname[op2-1]);
+               ap->next = PrintAssln("\tlfd\t%s,%s\n",
+		                     archfregs[-FREGBEG-op1],
+				     archiregs[-IREGBEG-op3]);
+            #elif defined(FKO_ANSIC)
+               ap->next = PrintAssln("   %s = %s\n", archfregs[-FREGBEG-op1],
+                                     STname[op2-1]);
+	    #endif
+	 }
+	 else
+	 {
+            #ifdef X86
+	       sptr = archfregs[-FREGBEG-op1];
+	       if (sptr[1] == 's' && sptr[2] == 't')
+	          fko_error(__LINE__, "WTF in %s!", __FILE__);
+	       else
+                  ap->next = PrintAssln("\tmovss\t%s,%s\n",
+	                                archfregs[-FREGBEG-op2], sptr);
+            #elif defined(SPARC)
+               ap->next = PrintAssln("\tfmovs\t%s,%s\n",archfregs[-FREGBEG-op1],
+                                     archfregs[-FREGBEG-op1]);
+            #elif defined(PPC)
+               ap->next = PrintAssln("\tfmr\t%s,%s\n", archfregs[-FREGBEG-op1],
+                                     archfregs[-FREGBEG-op2]);
+            #elif defined(FKO_ANSIC)
+               ap->next = PrintAssln("   %s = %s\n", archfregs[-FREGBEG-op1],
+                                     archdregs[-FREGBEG-op2]);
+            #endif
+            }
+	 break;
       case FMOVD:
 /*
  *       Handle fp constant moves seperately
@@ -1648,7 +1701,6 @@ struct assmln *lil2ass(BBLOCK *bbase)
 /*
  *  HERE HERE HERE:
  */
-      case FMOV:
       case PREFR:
       case PREFW:
       case PREFRS:
