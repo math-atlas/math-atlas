@@ -85,8 +85,7 @@ void FindRegUsage(INSTQ *head, int *ni0, int *iregs,
    *ni0 = ni;
 }
 
-/* HERE HERE HERE HERE */
-int RemoveNosaveregs(int nr, int *regs, int *saves)
+int RemoveNosaveregs(int rstart, int nr, int *regs, int *saves)
 /*
  * Zeros reg entry in regs that doesn't need to be saved
  * RETURNS: number of registers removed
@@ -101,6 +100,23 @@ int RemoveNosaveregs(int nr, int *regs, int *saves)
          n++;
       }
    }
+   return(n);
+}
+
+int GetRegSaveList(int rstart, int nr, int *regs)
+/*
+ * takes list where entry i means save reg i, and return list with
+ * each entry indicating the actual register to save
+ * RETURNS: number of registers to save.
+ */
+{
+   int i, j;
+   for (j=i=0; i < nr; i++)
+   {
+      if (regs[i])
+         regs[j++] = i + rstart;
+   }
+   return(j);
 }
 
 int GetArchAlign(int nvd, int nvf, int nd, int nf, int nl, int ni)
@@ -1135,11 +1151,17 @@ void FixFrame()
    CreateSysLocals();
    NumberLocalsByType();
    FindRegUsage(iqhead, &ni, isav, &nf, fsav, &nd, dsav);
+   RemoveNosaveregs(IREGBEG, TNIR, isav, icalleesave);
+   ni = GetRegSaveList(IREGBEG, ni, isav);
+   RemoveNosaveregs(FREGBEG, TNFR, fsav, fcalleesave);
+   nf = GetRegSaveList(FREGBEG, nf, fsav);
+   RemoveNosaveregs(DREGBEG, TNDR, dsav, dcalleesave);
+   nd = GetRegSaveList(DREGBEG, nd, dsav);
    #ifdef X86_64
       UpdateLocalDerefs(8);
    #else
       UpdateLocalDerefs(4);
    #endif
    for (i=0; i < NIR; i++) savr[i] = i+2; 
-   CreatePrologue(LOCALIGN, LOCSIZE, 0, NIR-1, savr, 0, NULL, 0, NULL);
+   CreatePrologue(LOCALIGN, LOCSIZE, 0, ni, isav, nf, fsav, nd, dsav);
 }
