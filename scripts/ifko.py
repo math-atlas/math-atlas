@@ -398,8 +398,7 @@ def ifko0(l1bla, pre, N):
    acc = fkocmnd.GetFPAccum(info)
    nacc = len(acc)
    if nacc > 0 and nacc < 3:
-      [mf,KFLAGS] = FindAE(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N, acc,
-                           maxlen=4)
+      [mf,KFLAGS] = FindAE(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N, acc)
    mflist.append(mf)
    testlist.append("accexpans")
 #
