@@ -2159,6 +2159,13 @@ fprintf(stderr, ", src=%s\n", Int2Reg(-src));
          {
             FoundIt = SubRegUse(&ip->inst[2], -dest, -src);
             FoundIt |= SubRegUse(&ip->inst[3], -dest, -src);
+/*
+ *          If we have a store, may be implicit use in memory address
+ *          ip->inst[1] != -dest should never happen, just makes sure a store
+ *          doesn't have the dest reg as a target (would screw up SubRegUse)
+ */
+            if (IS_STORE(ip->inst[0]) && ip->inst[1] != -dest)
+               FoundIt |= SubRegUse(&ip->inst[1], -dest, -src);
             if (FoundIt)
             {
                BitVecComb(ip->use, ip->use, ivdst, '-');
