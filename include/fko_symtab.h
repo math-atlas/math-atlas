@@ -1,29 +1,32 @@
 #ifndef FKO_SYMTAB_H
 #define FKO_SYMTAB_H
 
-#define T_INT        0
-#define T_SHORT      1
-#define T_FLOAT      2
-#define T_DOUBLE     3
-#define T_CHAR       4
-#define T_FUNC       5
-#define T_LABEL      6
+#define T_INT        0x0
+#define T_SHORT      0x1
+#define T_FLOAT      0x2
+#define T_DOUBLE     0x3
+#define T_CHAR       0x4
+#define T_FUNC       0x5
+#define T_VFLOAT     0x6
+#define T_VDOUBLE    0x7
 
 #define IS_INT(flag_)  (((flag_) & 0x7) == T_INT)
 #define IS_SHORT(flag_)  (((flag_) & 0x7) == T_SHORT)
 #define IS_FLOAT(flag_)  (((flag_) & 0x7) == T_FLOAT)
 #define IS_DOUBLE(flag_)  (((flag_) & 0x7) == T_DOUBLE)
 #define IS_FP(flag_)      (((flag_) & 0x7) & (T_DOUBLE | T_FLOAT))
+#define IS_VFLOAT(flag_)  (((flag_) & 0x7) == T_VFLOAT)
+#define IS_VDOUBLE(flag_)  (((flag_) & 0x7) == T_VDOUBLE)
 #define IS_CHAR(flag_)  (((flag_) & 0x7) == T_CHAR)
 #define IS_FUNC(flag_)  (((flag_) & 0x7) == T_FUNC)
-#define IS_LABEL(flag_)  (((flag_) & 0x7) == T_LABEL)
 #define FLAG2TYPE(flag_) ((flag_) & 0x7)
+#define IS_VEC(flag_)  ((flag_) & (T_VFLOAT | T_VDOUBLE))
 
 #define PTR_BIT      0x10
 #define CONST_BIT    0x20
 #define GLOB_BIT     0x40
 #define PARA_BIT     0x80
-#define VEC_BIT      0x100
+#define LABEL_BIT    0x100
 #define UNSIGNED_BIT 0x200
 #define LOCAL_BIT    0x400
 #define DEREF_BIT    0x800
@@ -36,6 +39,7 @@
 #define IS_UNSIGNED(flag_)   ((flag_) & UNSIGNED_BIT)
 #define IS_LOCAL(flag_) ((flag_) & LOCAL_BIT)
 #define IS_DEREF(flag_) ((flag_) & DEREF_BIT)
+#define IS_LABEL(flag_) ((flag_) & LABEL_BIT)
 
 #define IS_SETUSE(flag_) (IS_LOCAL(flag_))
 

@@ -8,6 +8,7 @@ FILE *fpST=NULL, *fpIG=NULL, *fpLIL=NULL, *fpOPT=NULL;
 int FUNC_FLAG=0; 
 int DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0, DTx87=0, DTx87d=0;
 int FKO_FLAG;
+static char *fST[1024], *fLIL[1024], fmisc[1024];
 
 int noptrec=0;
 enum FKOOPT optrec[512];
@@ -35,6 +36,7 @@ void PrintUsageN(char *name)
            "  -I <LIL> <symtab> <misc> : start from intermediate files\n");
    fprintf(stderr, "  -c <LIL> <symtab> <misc> : generate files and quit\n");
    fprintf(stderr, "  -o <outfile> : assembly output file\n");
+   fprintf(stderr, "  -R [d,n] <directory/name> : restore path & base name\n");
    fprintf(stderr, "  -K 0 : suppress comments\n");
    fprintf(stderr, "  -t [S,I,L,o] : generate temporary files:\n");
    fprintf(stderr, "     S : dump symbol table to <file>.ST\n");
@@ -186,7 +188,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
    FILE *fpin, *fpout;
    char *fin=NULL, *fout=NULL;
    struct optblkq *obq=NULL, *op;
-   char *sp;
+   char *sp, *rpath=NULL, *rnam=NULL;
    int i, j, k;
 
    for (i=1; i < nargs; i++)
@@ -200,6 +202,13 @@ struct optblkq *GetFlagsN(int nargs, char **args,
       {
          switch(args[i][1])
          {
+         case 'R':
+            if (args[i+1][0] == 'd')
+               rpath = args[i+2];
+            else 
+               rfile = args[i+2];
+            i += 2;
+            break;
          case 'V':
             FKO_FLAG |= IFF_VECTORIZE;
             break;
@@ -323,6 +332,13 @@ ERR:
          }
       }
    }
+   if (!rpath)
+      rpath = "/tmp";
+   if (!rnam)
+      rnam = "FKO";
+   sprintf(fST, "%s/%s_ST.", rpath, rnam);
+   sprintf(fLIL, "%s/%s_LIL.", rpath, rnam);
+   sprintf(fmisc, "%s/%s_misc.", rpath, rnam);
    if (!fin) fpin = stdin;
    else
    {
@@ -606,10 +622,7 @@ static void ReadMiscFromFile(char *name)
 
 static void RestoreFKOState(int isav)
 {
-   char *fST = "/tmp/iFKO_ST.",
-        *fLIL = "/tmp/iFKO_LIL.",
-        *fmisc =  "/tmp/iFKO_misc.";
-   char ln[128];
+   char ln[1024];
    extern BBLOCK *bbbase;
 
    noptrec = 0;
@@ -639,14 +652,13 @@ static void SaveFKOState(int isav)
  * 5. Global vars: FKO_BVTMP, FKO_FLAG, 
  *    CFU2D,CFDOMU2D CFUSETU2D, INUSETU2D, INDEADU2D
  * 5. ... not finished looking ...
+ * 7/20/04 : what about bitvecs?  Need to be written to file if we want to
+ *           be able to restore from previously created files
  *
  * DONE: 1(inst.c), 2,3(symtab.c)
  */
 {
-   char *fST = "/tmp/iFKO_ST.",
-        *fLIL = "/tmp/iFKO_LIL.",
-        *fmisc =  "/tmp/iFKO_misc.";
-   char ln[128];
+   char ln[1024];
    extern BBLOCK *bbbase;
         
    sprintf(ln, "%s%d", fST, isav);
@@ -979,7 +991,12 @@ int main(int nargs, char **args)
       optblks = DefaultOptBlocks();
    optblks = OptBlockQtoTree(optblks);
    if (FKO_FLAG & IFF_READINTERM)
-      RestoreFKOState(0);
+   {
+      if (FKO_FLAG & IFF_VECTORIZE)
+         RestoreFKOState(1);
+      else
+         RestoreFKOState(0);
+   }
    else
    {
       yyin = fpin;
@@ -988,6 +1005,8 @@ int main(int nargs, char **args)
       yyparse();
       fclose(fpin);
       SaveFKOState(0);
+      if (FKO_FLAG & IFF_VECTORIZE)
+         assert(!VectorizeLIL());
    }
    if (FKO_FLAG & IFF_GENINTERM)
      exit(0);

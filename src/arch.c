@@ -17,8 +17,10 @@ short type2len(int type)
    #else
       if (type == T_DOUBLE) len = 8;
    #endif
+   else if (IS_VEC(type)) len = 16;
    return(len);
 }
+
 short type2shift(int type)
 {
    short len=2;
@@ -27,6 +29,7 @@ short type2shift(int type)
    #else
       if (type == T_DOUBLE) len = 3;
    #endif
+   else if (IS_VEC(type)) len = 4;
    return(len);
 }
 
@@ -213,12 +216,28 @@ short GetReg(short type)
             fko_error(__LINE__, "Out of double registers on line %d", lnno);
       #endif
    }
+#ifdef X86
+   else if (type == T_VDOUBLE)
+   {
+      iret = VDREGBEG + dr;
+      if (++dr > NDR)
+         fko_error(__LINE__, "Out of double registers on line %d", lnno);
+   }
+#endif
    else if (type == T_FLOAT)
    {
       iret = FREGBEG + fr;
       if (++fr > NFR)
          fko_error(__LINE__, "Out of float registers on line %d", lnno);
    }
+#ifdef X86
+   else if (type == T_VFLOAT)
+   {
+      iret = VFREGBEG + fr;
+      if (++fr > NFR)
+         fko_error(__LINE__, "Out of double registers on line %d", lnno);
+   }
+#endif
    else if (type == T_INT)
    {
       iret = IREGBEG + ir;
@@ -268,26 +287,26 @@ void CreateSysLocals()
    extern int DTnzerod, DTabsd, DTnzero, DTabs, DTx87, DTx87d;
    if (DTnzerod == -1)
    {
-      DTnzerod = STdef("_NEGZEROD", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
+      DTnzerod = STdef("_NEGZEROD", T_VDOUBLE | LOCAL_BIT, 0);
       SToff[DTnzerod-1].sa[2] = AddDerefEntry(-REG_SP, DTnzerod, -DTnzerod, 0,
                                               DTnzerod);
    }
    if (DTabsd == -1)
    {
-      DTabsd = STdef("_ABSVLD", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
+      DTabsd = STdef("_ABSVLD", T_VDOUBLE | LOCAL_BIT, 0);
       SToff[DTabsd-1].sa[2] = AddDerefEntry(-REG_SP, DTabsd, -DTabsd, 0,
                                             DTabsd);
 fprintf(stderr, "DTabsd = %d,%d\n", DTabsd, SToff[DTabsd-1].sa[2]);
    }
    if (DTnzero == -1)
    {
-      DTnzero = STdef("_NEGZERO", VEC_BIT | T_FLOAT | LOCAL_BIT, 0);
+      DTnzero = STdef("_NEGZERO", T_VFLOAT | LOCAL_BIT, 0);
       SToff[DTnzero-1].sa[2] = AddDerefEntry(-REG_SP, DTnzero, -DTnzero, 0,
                                              DTnzero);
    }
    if (DTabs == -1)
    {
-      DTabs = STdef("_ABSVAL", VEC_BIT | T_FLOAT | LOCAL_BIT, 0);
+      DTabs = STdef("_ABSVAL", T_VFLOAT | LOCAL_BIT, 0);
       SToff[DTabs-1].sa[2] = AddDerefEntry(-REG_SP, DTabs, -DTabs, 0,
                                            DTabs);
    }
@@ -396,7 +415,7 @@ void FPConstStore(INSTQ *next, short id, short con,
    extern short STderef;
 
    flag = STflag[id-1];
-   if (IS_VEC(flag))
+   if (IS_VDOUBLE(flag) || IS_VFLOAT(flag))
    {
       fprintf(stderr, "Vector constants not yet supported!\n");
       exit(-1);

@@ -1317,7 +1317,7 @@ int UnrollLoop(LOOPQ *lp, int unroll)
    BBLOCK *newCF;
    BLIST **dupblks, *bl, *ntails=NULL;
    ILIST *il;
-   INSTQ *ippost=NULL, *ip;
+   INSTQ *ippost=NULL, *ip, *ipn;
    struct ptrinfo *pi, *pi0;
    int i, UsesIndex=1, UsesPtrs=1, URbase=0;
    enum comp_flag kbeg, kend;
@@ -1374,9 +1374,11 @@ fprintf(stderr, "dupblks[%d] = %s\n", i-1, PrintBlockList(dupblks[i-1]));
  */
          ip = KillPointerUpdates(pi, i);
          assert(ip);
-         free(ip->next->next);
-         free(ip->next);
-         free(ip);
+         for (; ip; ip = ipn)
+         {
+            ipn = ip->next;
+            free(ip);
+         }
 /*
  *       Find all lds of moving ptrs, and add unrolling factor to them
  */
@@ -1397,7 +1399,7 @@ fprintf(stderr, "dupblks[%d] = %s\n", i-1, PrintBlockList(dupblks[i-1]));
    {
       ippost = KillPointerUpdates(pi0, unroll);
       KillAllPtrinfo(pi0);
-      assert(ip);
+      assert(ippost);
    }
    SetVecBit(lp->blkvec, lp->header->bnum-1, 1);
    KillCompflagInRange(lp->blocks, CF_LOOP_UPDATE, CF_LOOP_END);

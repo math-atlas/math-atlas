@@ -186,7 +186,7 @@ short STlabellookup(char *str)
    short i;
    i = STFindLabel(str);
    if (!i) 
-     i = STdef(str, T_LABEL, 0);
+     i = STdef(str, LABEL_BIT, 0);
    return(i);
 }
 
@@ -290,13 +290,17 @@ void NumberLocalsByType()
          case T_INT:
             SToff[k].sa[1] = niloc++;
             break;
+         case T_VFLOAT:
+            SToff[k].sa[1] = nvfloc++;
+            break;
          case T_FLOAT:
-            if (IS_VEC(fl)) SToff[k].sa[1] = nvfloc++;
-            else SToff[k].sa[1] = nfloc++;
+            SToff[k].sa[1] = nfloc++;
+            break;
+         case T_VDOUBLE:
+            SToff[k].sa[1] = nvdloc++;
             break;
          case T_DOUBLE:
-            if (IS_VEC(fl)) SToff[k].sa[1] = nvdloc++;
-            else SToff[k].sa[1] = ndloc++;
+            SToff[k].sa[1] = ndloc++;
             break;
          }
          #if IFKO_DEBUG_LEVEL > 1
@@ -356,18 +360,18 @@ void UpdateLocalDerefs(int isize)
             off = SToff[k].sa[1]*isize + ndloc*8 + 
                   nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4;
             break;
+         case T_VFLOAT:
+            off = SToff[k].sa[1]*FKO_SVLEN*4 + nvdloc*FKO_DVLEN*8;
+            break;
          case T_FLOAT:
-            if (IS_VEC(fl))
-               off = SToff[k].sa[1]*FKO_SVLEN*4 + nvdloc*FKO_DVLEN*8;
-            else
-               off = SToff[k].sa[1]*4 + nvdloc*FKO_DVLEN*8 + 
-                     nvfloc*FKO_SVLEN*4 + ndloc*8 + niloc*isize;
+            off = SToff[k].sa[1]*4 + nvdloc*FKO_DVLEN*8 + 
+                  nvfloc*FKO_SVLEN*4 + ndloc*8 + niloc*isize;
+            break;
+         case T_VDOUBLE:
+            off = SToff[k].sa[1]*FKO_DVLEN*8;
             break;
          case T_DOUBLE:
-            if (IS_VEC(fl))
-               off = SToff[k].sa[1]*FKO_DVLEN*8;
-            else
-               off = SToff[k].sa[1]*8 + nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4;
+            off = SToff[k].sa[1]*8 + nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4;
             break;
          default:
             fprintf(stderr, "%d: Unknown type %d!\n", __LINE__, FLAG2PTYPE(fl));

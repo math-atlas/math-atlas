@@ -88,12 +88,13 @@ short FindReadUseType(INSTQ *ip, short var, int blkvec)
    KillIlist(ib);
    return(j);
 }
+
 int DoLoopSimdAnal(LOOPQ *lp)
 /*
  * Does some analysis on unoptimized code to determine how to vectorize loop
  * This will be later thrown away, and we will start again with either
  * vectorized/unrolled loop, or unvectorized code.
- * RETURNS: 0 if loop cannot be vectorized, 1 if it can
+ * RETURNS: error code if loop cannot be vectorized, 0 if it can
  * NOTE: supported vectorizable operations are assignment, add and mul.
  */
 {
@@ -104,7 +105,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
    extern int FKO_BVTMP;
    ILIST *il, *ib;
    if (!lp)
-      return(0);
+      return(1);
 /*
  * Get code into standard form for analysis
  */
@@ -119,7 +120,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
    {
       fko_warn(__LINE__, 
       "Must have one and only one posttail for simdification!\n\n");
-      return(0);
+      return(2);
    }
    CalcInsOuts(bbbase);
    CalcAllDeadVariables();
@@ -158,7 +159,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
          fko_warn(__LINE__, "Bailing on vect due to var %d,%s\n", sp[i]
                   STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
          free(sp);
-         return(0);
+         return(3);
       }
    }
 /*
@@ -167,7 +168,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
    if (!n)
    {
       free(sp);
-      return(0);
+      return(4);
    }
    else
    {
@@ -184,10 +185,13 @@ int DoLoopSimdAnal(LOOPQ *lp)
                       j, STname[sp[0]-1] ? STname[sp[0]-1] : "NULL", 
                       FLAG2TYPE(sp[i]-1), STname[sp[i]-1] ? STname[sp[i]-1] 
                       : "NULL");
-             return(0);
+             return(4);
          }
       }
-      lp->vflag = j;
+      if (j == T_FLOAT)
+         lp->vflag = T_VFLOAT;
+      else if (j == T_DOUBLE)
+         lp->vflag = T_VDOUBLE;
    }
 /*
  * Find arrays to vectorize
@@ -202,7 +206,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
          {
             fko_warn(__LINE__, "Ptr movement prevents vectorization!!\n");
             free(sp);
-            return(0);
+            return(5);
          }
       }
    }
@@ -349,7 +353,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
                fko_warn(__LINE__, 
                         "Mixed use of var %d(%s) prevents vectorization!!\n\n",
                         sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
-               return(0);
+               return(6);
             }
          }
 /*
@@ -366,7 +370,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
                   fko_warn(__LINE__, 
                 "Non-add use of output var %d(%s) prevents vectorization!!\n\n",
                            sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
-                  return(0);
+                  return(7);
                }
             }
             KillIlist(ib);
@@ -387,7 +391,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
  *       by the arrays.
  *     
  */
-   return(1);
+   return(0);
 }
 
 static enum inst 
@@ -396,7 +400,7 @@ static enum inst
    sdinsts[] = {FLDD, FSTD, FMULD, FADDD, FSUBD, FABSD, FMOVD, FZEROD},
    vdinsts[] = {VDLD, VDST, VDMUL, VDADD, VDSUB, VDABS  VDMOV, VDZERO};
 
-void SimdLoop(LOOPQ *lp)
+int SimdLoop(LOOPQ *lp)
 {
    enum inst sld, vld, sst, vst, smul, vmul, sadd, vadd, ssub, vsub, 
              sabs, vabs, smov, vmov, szero, vzero;
@@ -405,7 +409,7 @@ void SimdLoop(LOOPQ *lp)
    int i, n, k;
    char ln[512];
    struct ptrinfo *pi0, *pi;
-   INSTQ *ip, *ippu, *iph, *ipt;
+   INSTQ *ip, *ippu, *iph, *iptp, *iptn;
    short vlen;
    enum inst vsld, vsst, vshuf;
 
@@ -438,11 +442,6 @@ void SimdLoop(LOOPQ *lp)
  *       ptr arith instead.
  */
    KillLoopControl(lp);
-   if (FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]))
-   {
-      fko_error(__LINE__, "Index refs inside loop prevent vectorization!!\n");
-      exit(-1);
-   }
 /*
  * Generate scalar cleanup loop before simdifying loop
  */
@@ -455,37 +454,7 @@ void SimdLoop(LOOPQ *lp)
  */
 
    pi0 = FindMovingPointers(lp->blocks);
-   for (pi=pi0; pi; pi = pi->next)
-   {
-      if (pi->nupdate > 1)
-         fko_error(__LINE__, "Multiple ptr updates prevent vectorization!!\n");
-      if (!(pi->flag & PTRF_CONTIG))
-         fko_error(__LINE__, 
-                   "Non-contiguous ptr updates prevent vectorization!!\n");
-   }
    ippu = KillPointerUpdates(pi, vlen);
-/*
- * Get needed info and die if loop is not vectorizable
- */
-   if (!DoLoopSimdAnal(lp))
-     exit(-1);
-/*
- * Create vector locals for all vector scalars in loop
- */
-   sp = BitVec2StaticArray(iv);
-   k = LOCAL_BIT | VEC_BIT | FLAG2TYPE(lp->vflag);
-   n = sp[0];
-   sp++;
-   if (!lp->vvscal)
-   {
-      lp->vvscal = malloc(sizeof(short)*n);
-      assert(lp->vvscal)
-   }
-   for (i=0; i < n; i++)
-   {
-      sprintf(ln, "_V%d_%s", i-1, STname[sp[i]-1] ? STname[sp[i]-1] : "");
-      lp->vvscal[i] = STdef(ln, k, 0);
-   }
 /* 
  * Find inst in header to insert scalar init before; want it inserted last
  * unless last instruction is a jump, in which case put it before the jump.
@@ -499,9 +468,21 @@ void SimdLoop(LOOPQ *lp)
       iph = NULL;
 /*
  * Find inst in posttail to insert reductions before; if 1st active inst
- * is not a label, insert at beginning of loop, else insert after label
+ * is not a label, insert at beginning of block, else insert after label
  */
    if (lp->posttails->blk->ilab)
+   {
+      iptp = lp->posttails->blk->ainst1;
+      iptn = NULL;
+   }
+   else
+   {
+      iptp = NULL;
+      iptn = lp->posttails->blk->ainst1;
+      if (!iptn)
+         iptn = lp->posttails->blk->inst1;
+   }
+
 /*
  * Insert scalar-to-vector initialization in preheader for vars live on entry
  * and vector-to-scalar reduction in post-tail for vars live on exit
@@ -515,7 +496,7 @@ void SimdLoop(LOOPQ *lp)
  */
          if (VS_ADD & lp->vsflag[i])
          {
-            InsNewInst(lp->preheader, NULL, iph, ...);
+            InsNewInst(lp->preheader, NULL, iph, vsld, DTv, DTs, 0);
          }
       }
 /*
@@ -523,6 +504,8 @@ void SimdLoop(LOOPQ *lp)
  */
       if (VS_LIVEOUT & lp->vsflag[i])
       {
+         assert(lp->vsflag[i] & (VS_MUL | VS_EQ | VS_ABS) == 0);
+         InsNewInst(lp->posttail->blk, iptp, iptn, ...);
       }
    }
 /*
@@ -534,4 +517,108 @@ void SimdLoop(LOOPQ *lp)
 /*
  * Put back loop control and pointer updates
  */
+   return(0);
+}
+
+int VectorizeStage1(void)
+/*
+ * Assuming we have a correct scalar LIL (stage 0), creates a scalar LIL,
+ * but with all vector locals declared, and init prol/epil not called.
+ * Returns 0 on success, error code on failure.
+ */
+{
+   short *varrs, *vscal, *vsflag;
+   short *sp;
+   LOOPQ *lp;
+   INSTQ *ip, *ipn;
+   struct ptrinfo *pi0, *pi;
+   int flag, k, i, n;
+   char ln[1024];
+
+   lp = optloop;
+/*
+ * Create a bad LIL to perform vector loop analysis
+ */
+   KillLoopControl(lp);
+   if (FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]))
+   {
+      fko_error(__LINE__, "Index refs inside loop prevent vectorization!!\n");
+      return(10);
+   }
+   pi0 = FindMovingPointers(lp->blocks);
+   for (pi=pi0; pi; pi = pi->next)
+   {
+      if (pi->nupdate > 1)
+      {
+         fko_warn(__LINE__, "Multiple ptr updates prevent vectorization!!\n");
+         return(11);
+      }
+      if (!(pi->flag & PTRF_CONTIG))
+      {
+         fko_warn(__LINE__, 
+                  "Non-contiguous ptr updates prevent vectorization!!\n");
+         return(12);
+      }
+   }
+   ip = KillPointerUpdates(pi, vlen);
+   KillAllPtrinfo(pi);
+   for (; ip; ip = ipn)
+   {
+      ipn = ip->next;
+      free(ip);
+   }
+   i = DoLoopSimdAnal(optloop)
+   if (i)
+      return(i);
+/*
+ * Save vector info, and then restore good scalar state
+ */
+   varrs = optloop->varrs;
+   vscal = optloop->vscal;
+   vsflag = optloop->vsflag;
+   optloop->varrs = optloop->vscal = optloop->vsflag = NULL;
+   flag = lp->vflag;
+   RestoreFKOState(0);
+   optloop->varrs = varrs;
+   optloop->vscal = vscal;
+   optloop->vsflag = vsflag;
+   lp->vflag = flag;
+/*
+ * Create vector locals for all vector scalars in loop
+ */
+   k = LOCAL_BIT | VEC_BIT | FLAG2TYPE(flag);
+   lp->vvscal = malloc(sizeof(short)*n);
+   assert(lp->vvscal)
+   n = vscal[0];
+   sp = vscal + 1;
+   for (i=0; i < n; i++)
+   {
+      sprintf(ln, "_V%d_%s", i-1, STname[sp[i]-1] ? STname[sp[i]-1] : "");
+      lp->vvscal[i] = STdef(ln, k, 0);
+   }
+   SaveFKOState(1);
+   return(0);
+}
+
+int VectorizeStage3(void)
+/*
+ * Assuming Stage 1 vect done, create Stage 3, which includes vectorizing
+ * the loop and generating cleanup (though jump to cleanup left to unroll)
+ * This stage has already gen prol/epil, so must begin from Stage 1 if
+ * a transform changes frame layout
+ */
+{
+   int i;
+/*
+ * Get code into standard form for analysis
+ */
+   GenPrologueEpilogueStubs(bbbase, 0);
+   NewBasicBlocks(bbbase);
+   FindLoops();
+   CheckFlow(bbbase,__FILE__,__LINE__);
+   i = SimdLoop(optloop);
+   if (i)
+      return(i);
+   SaveFKOState(3);
+   return(0);
 }
