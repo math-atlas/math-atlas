@@ -365,9 +365,15 @@ void DoArith(short dest, short src0, char op, short src1)
    #ifdef X86
       if (op == '/' && IS_INT(type))
       {
-         rd = iName2Reg("@eax");
-         rs0 = iName2Reg("@edx");
-         rs1 = iName2Reg("@ecx");
+         #ifdef X86_64
+            rd = iName2Reg("@rax");
+            rs0 = iName2Reg("@rdx");
+            rs1 = iName2Reg("@rcx");
+         #else
+            rd = iName2Reg("@eax");
+            rs0 = iName2Reg("@edx");
+            rs1 = iName2Reg("@ecx");
+         #endif
          InsNewInst(NULL, NULL, LD, -rd, SToff[src0-1].sa[2], 0);
          InsNewInst(NULL, NULL, MOV, -rs0, -rd, 0);
          InsNewInst(NULL, NULL, SAR, -rs0, -rs0, STiconstlookup(31));

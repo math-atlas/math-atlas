@@ -763,14 +763,17 @@ struct assmln *lil2ass(INSTQ *head)
          #endif
          break;
       case DIV:
-         #ifdef X86
 /*
  * HERE HERE: need to remember that eax & edx are overwritten!!
  */
+         #ifdef X86_32
             fprintf(stderr, "op1=%d, op2=%d (%d,%d)\n", op1, op2,
                     iName2Reg("@eax"), iName2Reg("@edx"));
 
             assert(op1 == -iName2Reg("@eax") && op2 == -iName2Reg("@edx"));
+            ap->next = PrintAssln("\tidiv %s\n", GetIregOrDeref(op3));
+         #elif defined (X86_64)
+            assert(op1 == -iName2Reg("@rax") && op2 == -iName2Reg("@rdx"));
             ap->next = PrintAssln("\tidiv %s\n", GetIregOrDeref(op3));
          #elif defined(SPARC)
             ap->next = PrintAssln("\tsdiv\t%s,%s,%s\n", archiregs[-IREGBEG-op2],
