@@ -195,10 +195,51 @@ struct optblkq *GetFlagsN(int nargs, char **args,
          switch(args[i][1])
          {
          case 'P': /* prefetch  -P <STentry> <cache level> <bytesdist> */
-            pf = NewPtrinfo(atoi(args[i+1]), atoi(args[i+3]), pfb);
-            pf->nupdate = atoi(args[i+2]);
-            pfb = pf;
-            i += 3;
+            if (args[i][2] == 'a') /* alternate prefetch selection */
+            {
+               if (args[i][3] == 'r')
+               {
+                  i++;
+                  if (args[i][0] == '3')
+                    FKO_FLAG |= IFF_3DNOWR;
+                  else if (args[i][0] == '0')
+                    FKO_FLAG |= IFF_TAR;
+                  else if (args[i][0] == 'N' || args[i][0] == 'n')
+                     FKO_FLAG &= ~(IFF_3DNOWR | IFF_TAR);
+               }
+               else if (args[i][3] == 'w')
+               {
+                  i++;
+                  if (args[i][0] == '3')
+                    FKO_FLAG |= IFF_3DNOWW;
+                  else if (args[i][0] == '0')
+                    FKO_FLAG |= IFF_TAW;
+                  else if (args[i][0] == 'N' || args[i][0] == 'n')
+                     FKO_FLAG &= ~(IFF_3DNOWW | IFF_TAW);
+               }
+               else
+               {
+                  i++;
+                  if (args[i][0] == '3')
+                    FKO_FLAG |= (IFF_3DNOWR | IFF_3DNOWW);
+                  else if (args[i][0] == '0')
+                    FKO_FLAG |= (IFF_TAW | IFF_TAR);
+                  else if (args[i][0] == 'N' || args[i][0] == 'n')
+                     FKO_FLAG &= ~(IFF_3DNOWW | IFF_TAW | IFF_3DNOWR | IFF_TAR);
+               }
+            }
+            else if (args[i][2] == 'L') /* linesize specification*/
+            {
+               j = atoi(args[++i]);
+               LINESIZE[j] = atoi(args[++i]);
+            }
+            else
+            {
+               pf = NewPtrinfo(atoi(args[i+1]), atoi(args[i+3]), pfb);
+               pf->nupdate = atoi(args[i+2]);
+               pfb = pf;
+               i += 3;
+            }
             break;
          case 'R':
             if (args[i+1][0] == 'd')
@@ -932,7 +973,8 @@ void DumpOptsPerformed(FILE *fpout, int verbose)
          fprintf(fpout, "%3d. %c %20.20s : %d\n", j++, 'L', "Loop Unroll",
                  FKO_UR);
       if (optloop && optloop->pfarrs)
-         fprintf(fpout, "%3d. %c %20.20s : %d\n", j++, 'L', "Prefetch");
+         fprintf(fpout, "%3d. %c %20.20s : %d\n", j++, 'L', "Prefetch",
+                 optloop->pfarrs[0]);
       for (i=0; i < noptrec; i++)
       {
          k = optrec[i];

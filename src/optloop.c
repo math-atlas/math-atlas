@@ -1483,7 +1483,7 @@ void AddPrefetch(LOOPQ *lp, int unroll)
  *    # of pref to issue is CEIL(unroll*sizeof(), LINESIZE)
  */
       npf = unroll > 1 ? unroll : 1;
-      npf *= type2len(lp->pfarrs[i]);
+      npf *= type2len(STflag[lp->pfarrs[i]-1]);
       if (!IS_VEC(lp->pfarrs[i]) && IS_VEC(lp->vflag))
          npf *= Type2Vlen(lp->vflag);
       npf = (npf + LINESIZE[lvl]-1) / LINESIZE[lvl];

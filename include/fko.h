@@ -70,6 +70,10 @@
 #define IFF_GENINTERM    0x8  /* generate intermediate files and quit */
 #define IFF_READINTERM   0x10 /* Start from interm. files rather than HIL */
 #define IFF_VECTORIZE    0x20 /* Do SIMD vectorization */
+#define IFF_TAR          0x40 /* use use temporal vers for L1 read prefetch */
+#define IFF_TAW          0x80 /* use use temporal vers for L1 write prefetch */
+#define IFF_3DNOWR       0x100 /* use 3DNow! for L1 read prefetch */
+#define IFF_3DNOWW       0x200 /* use 3DNow! for L1 write prefetch */
 
 #define DO_ASS(flg_) (!((flg_) & IFF_NOASS))
 #define DO_LIL(flg_) ((flg_) & IFF_LIL)

@@ -1982,7 +1982,18 @@ struct assmln *lil2ass(BBLOCK *bbase)
    #endif
       case PREFR:
          #ifdef X86
-            ap->next = PrintAssln("\tprefetchnta\t%s\n", GetDeref(op2));
+            i = SToff[op3-1].i;
+            if (i > 0)
+               ap->next = PrintAssln("\tprefetcht%d\t%s\n",i, GetDeref(op2));
+            else
+            {
+               if (FKO_FLAG & IFF_3DNOWR)
+                  ap->next = PrintAssln("\tprefetch\t%s\n", GetDeref(op2));
+               else if (FKO_FLAG & IFF_TAR)
+                  ap->next = PrintAssln("\tprefetcht0\t%s\n", GetDeref(op2));
+               else
+                  ap->next = PrintAssln("\tprefetchnta\t%s\n", GetDeref(op2));
+            }
          #endif
          break;
 /*
