@@ -131,7 +131,7 @@ def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr,
       KF0 = KF0 + " -P %s %d %d" % (arr, pflvl, pfdM)
    return (KF0)
 
-def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=128):
+def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=32):
 
    print "   Finding best unroll:"
 #
