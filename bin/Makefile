@@ -23,7 +23,7 @@ y.tab.c : $(heads) ../src/hil_gram.y
 lex.yy.c : y.tab.h ../src/hil_lex.l
 	lex ../src/hil_lex.l
 lex.yy.o : $(heads) y.tab.h lex.yy.c
-	$(CC) -I../include $(CCFLAGS) -c lex.yy.c
+	$(CC) -I../bin -I../include $(CCFLAGS) -c lex.yy.c
 y.tab.o : $(heads) y.tab.h
 	$(CC) -I../include $(CCFLAGS) -c y.tab.c
 

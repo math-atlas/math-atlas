@@ -244,12 +244,22 @@ struct assmln *lil2ass(INSTQ *head)
          ap->next = NewAssln("\tnop\n");
          break;
       case LABEL:
-         if (IS_GLOB(STflag[--op1]))
-            ap->next = PrintAssln(".globl\t%s\n", STname[op1]);
-         else
-            ap->next = PrintAssln(".local\t%s\n", STname[op1]);
-         ap = ap->next;
-         ap->next = PrintAssln("%s:\n", STname[op1]);
+         #ifdef PPC
+            if (IS_GLOB(STflag[--op1]))
+            {
+               ap->next = PrintAssln(".globl\t_%s\n", STname[op1]);
+               ap = ap->next;
+               ap->next = PrintAssln("_%s:\n", STname[op1]);
+            }
+            else ap->next = PrintAssln("%s:\n", STname[op1]);
+         #else
+            if (IS_GLOB(STflag[--op1]))
+               ap->next = PrintAssln(".globl\t%s\n", STname[op1]);
+            else
+               ap->next = PrintAssln(".local\t%s\n", STname[op1]);
+            ap = ap->next;
+            ap->next = PrintAssln("%s:\n", STname[op1]);
+         #endif
          break;
 /*
  *    32 bit integer
@@ -313,7 +323,7 @@ struct assmln *lil2ass(INSTQ *head)
                                      GetDeref(op2));
          #endif
          break;
-      case ST:
+      case ST: 
          #ifdef X86
 	    #if 0
             ap->next = PrintAssln("\tmovl\t%s,%s\n", archiregs[-IREGBEG-op2],
@@ -331,14 +341,14 @@ struct assmln *lil2ass(INSTQ *head)
          #elif defined(SPARC)
             ap->next = PrintAssln("\tst\t%s,%s\n", archiregs[-IREGBEG-op2],
                                   GetDeref(op1));
-         #elif defined(PPC)
-            k = (op2-1)<<2;
+         #elif defined(PPC) /* HERE HERE */
+            k = (op1-1)<<2;
             if (DT[k+1])
-               ap->next = PrintAssln("\tstwx\t%s,%s\n", archiregs[-IREGBEG-op1],
-                                     GetDeref(op2));
+               ap->next = PrintAssln("\tstwx\t%s,%s\n",
+                                     archiregs[-IREGBEG-op2], GetDeref(op1));
             else
-               ap->next = PrintAssln("\tstw\t%s,%s\n", archiregs[-IREGBEG-op1], 
-                                     GetDeref(op2));
+               ap->next = PrintAssln("\tstw\t%s,%s\n", archiregs[-IREGBEG-op2], 
+                                     GetDeref(op1));
          #endif
          break;
       case FSTD:
@@ -349,13 +359,13 @@ struct assmln *lil2ass(INSTQ *head)
             ap->next = PrintAssln("\tstd\t%s,%s\n", archdregs[-DREGBEG-op2],
                                   GetDeref(op1));
          #elif defined(PPC)
-            k = (op2-1)<<2;
+            k = (op1-1)<<2;
             if (DT[k+1])
-               ap->next = PrintAssln("\tstfdx\t%s,%s\n",archdregs[-DREGBEG-op1],
-                                     GetDeref(op2));
+               ap->next = PrintAssln("\tstfdx\t%s,%s\n",
+                                     archdregs[-DREGBEG-op2], GetDeref(op1));
             else
-               ap->next = PrintAssln("\tstfd\t%s,%s\n", archdregs[-DREGBEG-op1],
-                                     GetDeref(op2));
+               ap->next = PrintAssln("\tstfd\t%s,%s\n",archdregs[-DREGBEG-op2],
+                                     GetDeref(op1));
          #endif
          break;
       case FST:
@@ -366,13 +376,13 @@ struct assmln *lil2ass(INSTQ *head)
             ap->next = PrintAssln("\tst\t%s,%s\n", archfregs[-FREGBEG-op2],
                                   GetDeref(op1));
          #elif defined(PPC)
-            k = (op2-1)<<2;
+            k = (op1-1)<<2;
             if (DT[k+1])
-               ap->next = PrintAssln("\tstfsx\t%s,%s\n",archfregs[-FREGBEG-op1],
-                                     GetDeref(op2));
+               ap->next = PrintAssln("\tstfsx\t%s,%s\n",
+                                     archfregs[-FREGBEG-op2], GetDeref(op1));
             else
-               ap->next = PrintAssln("\tstfs\t%s,%s\n", archfregs[-FREGBEG-op1],
-                                     GetDeref(op2));
+               ap->next = PrintAssln("\tstfs\t%s,%s\n", 
+                                     archfregs[-FREGBEG-op2], GetDeref(op1));
          #endif
          break;
       case SHL:
@@ -455,7 +465,7 @@ struct assmln *lil2ass(INSTQ *head)
                                   archiregs[-IREGBEG-op1]);
          #elif defined(PPC)
             if (op3 > 0)
-               ap->next = PrintAssln("\t%s\t%s, %s, %s\n", sptr,
+               ap->next = PrintAssln("\t%si\t%s, %s, %s\n", sptr,
                                      archiregs[-IREGBEG-op1],
                                      archiregs[-IREGBEG-op2], 
                                      GetIregOrConst(op3));
@@ -554,12 +564,12 @@ struct assmln *lil2ass(INSTQ *head)
             if (op3 > 0)
                ap->next = PrintAssln("\tmulli\t%s,%s,%s\n", 
                                      archiregs[-IREGBEG-op1],
-                                     archiregs[-IREGBEG-op2]
+                                     archiregs[-IREGBEG-op2],
                                      GetIregOrConst(op3));
             else
                ap->next = PrintAssln("\tmullw\t%s,%s,%s\n", 
                                      archiregs[-IREGBEG-op1],
-                                     archiregs[-IREGBEG-op2]
+                                     archiregs[-IREGBEG-op2],
                                      archiregs[-IREGBEG-op3]);
          #endif
          break;
@@ -590,12 +600,12 @@ struct assmln *lil2ass(INSTQ *head)
             if (op3 > 0)
                ap->next = PrintAssln("\tmulli\t%s,%s,%s\n", 
                                      archiregs[-IREGBEG-op1],
-                                     archiregs[-IREGBEG-op2]
+                                     archiregs[-IREGBEG-op2],
                                      GetIregOrConst(op3));
             else
                ap->next = PrintAssln("\tmullw\t%s,%s,%s\n", 
                                      archiregs[-IREGBEG-op1],
-                                     archiregs[-IREGBEG-op2]
+                                     archiregs[-IREGBEG-op2],
                                      archiregs[-IREGBEG-op3]);
          #endif
          break;
@@ -613,7 +623,7 @@ struct assmln *lil2ass(INSTQ *head)
             assert(op3 < 0);
             ap->next = PrintAssln("\tdivw\t%s,%s,%s\n", 
                                   archiregs[-IREGBEG-op1],
-                                  archiregs[-IREGBEG-op2]
+                                  archiregs[-IREGBEG-op2],
                                   archiregs[-IREGBEG-op3]);
          #endif
          break;
@@ -631,7 +641,7 @@ struct assmln *lil2ass(INSTQ *head)
             assert(op3 < 0);
             ap->next = PrintAssln("\tdivwu\t%s,%s,%s\n", 
                                   archiregs[-IREGBEG-op1],
-                                  archiregs[-IREGBEG-op2]
+                                  archiregs[-IREGBEG-op2],
                                   archiregs[-IREGBEG-op3]);
          #endif
          break;
@@ -662,7 +672,7 @@ struct assmln *lil2ass(INSTQ *head)
             ap->next = PrintAssln("\tmov\t%s,%s\n", GetIregOrConst(op2),
                                   archiregs[-IREGBEG-op1]);
          #elif defined(PPC)
-            if (op3 > 0)
+            if (op2 > 0)
                ap->next = PrintAssln("\tli\t%s,%s\n", archiregs[-IREGBEG-op1],
                                      GetIregOrConst(op2));
             else
@@ -688,7 +698,7 @@ struct assmln *lil2ass(INSTQ *head)
          #elif defined(SPARC)
             ap->next = PrintAssln("\tba\t%s\n\tnop\n", STname[op1-1]);
          #elif defined(PPC)
-            ap->next = PrintAssln("\tb\t%s", STname[op1-1]);
+            ap->next = PrintAssln("\tb\t%s\n", STname[op1-1]);
          #endif
          break;
       case JLT:
@@ -903,7 +913,7 @@ struct assmln *lil2ass(INSTQ *head)
          #elif defined(SPARC)
 	    ap->next = PrintAssln("! CMPFLAG %d %d %d\n", op1, op2, op3);
          #elif defined(PPC)
-	       ap->next = PrintAssln("# CMPFLAG %d %d %d\n", op1, p2, op3);
+	       ap->next = PrintAssln("# CMPFLAG %d %d %d\n", op1, op2, op3);
          #endif
          break;
       case FMOVD:
@@ -930,7 +940,7 @@ fprintf(stderr, "regnam='%s'\n", archdregs[-DREGBEG-op1]);
 	                             archdregs[-DREGBEG-op1]);
             #elif defined(PPC)
 	       ap->next = PrintAssln("\tlis\t%s, ha16(%s)\n", 
-	                             archiregs[-IREGBEG-op3], STname[op2-1])
+	                             archiregs[-IREGBEG-op3], STname[op2-1]);
 	       ap->next = PrintAssln("\tori\t%s, lo16(%s)\n", 
 	                             archiregs[-IREGBEG-op3], STname[op2-1]);
                ap->next = PrintAssln("\tlfd\t%s,%s\n",

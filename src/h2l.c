@@ -546,6 +546,10 @@ void DoReturn(short rret)
          rout_flag |= DRET_BIT;
          retreg = DRETREG;
          break;
+      default:
+         fprintf(stderr, "UNKNOWN TYPE %d on line %d of %s\n", 
+                 type, __LINE__, __FILE__);
+         exit(-1);
       }
 #if 0
       if (IS_CONST(STflag[rret-1])) srcreg = -rret;

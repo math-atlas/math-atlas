@@ -30,11 +30,25 @@ int GetArchAlign(int nvd, int nvf, int nd, int nf, int nl, int ni)
    #endif
    return(align);
 }
+short dName2Reg(char *rname)
+{
+   short i;
+   for (i=0; i < TNIR; i++)
+     if (!strcmp(rname, archdregs[i])) return(i+DREGBEG);
+   return(0);
+}
+short fName2Reg(char *rname)
+{
+   short i;
+   for (i=0; i < TNIR; i++)
+     if (!strcmp(rname, archfregs[i])) return(i+FREGBEG);
+   return(0);
+}
 short iName2Reg(char *rname)
 {
    short i;
    for (i=0; i < TNIR; i++)
-     if (!strcmp(rname, archiregs[i])) return(i+1);
+     if (!strcmp(rname, archiregs[i])) return(i+IREGBEG);
    return(0);
 }
 short GetReg(short type)
@@ -177,7 +191,7 @@ void bitload(INSTQ *next, int reg, int nbits, int I)
    }
 }
 
-void FPConstStore(INSTQ *next, short rsav, short id, short con, short reg)
+void FPConstStore(INSTQ *next, short id, short con, short reg)
 {
    int flag;
    int *ip;
@@ -200,7 +214,7 @@ void FPConstStore(INSTQ *next, short rsav, short id, short con, short reg)
          InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
 	 i = SToff[id-1].sa[2] - 1;
 	 i = DT[(i<<2)+3] + 4;
-         InsNewInst(NULL, next, ST, AddDerefEntry(rsav,0,0,i), -reg, __LINE__);
+         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), -reg, 0);
       }
       #ifdef X86_32
          ip = (int*) &d;
@@ -209,7 +223,7 @@ void FPConstStore(INSTQ *next, short rsav, short id, short con, short reg)
          InsNewInst(NULL, next, MOV, -reg, STiconstlookup(ip[1]), __LINE__);
 	 i = SToff[id-1].sa[2] - 1;
 	 i = DT[(i<<2)+3] + 4;
-         InsNewInst(NULL, next, ST, AddDerefEntry(rsav,0,0,i), -reg, __LINE__);
+         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), -reg, 0);
 /*
  *    Sparc has 13-bit constants, use 12 to rule out sign prob
  */
@@ -220,20 +234,18 @@ void FPConstStore(INSTQ *next, short rsav, short id, short con, short reg)
          bitload(next, reg, 13, ip[1]);
 	 i = SToff[id-1].sa[2] - 1;
 	 i = DT[(i<<2)+3] + 4;
-         InsNewInst(NULL, next, ST, AddDerefEntry(rsav,0,0,i), -reg, __LINE__);
+         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), -reg, 0);
 /*
- *    Other archs must load operands 16 bits at a time
+ *    PPC loads 16 bits at a time
  */
-      #else
-         sp = (short*) &d;
-         i = STiconstlookup(16);
-         InsNewInst(NULL, next, MOV, -reg, STiconstlookup(*sp), __LINE__);
-         InsNewInst(NULL, next, SHL, -reg, -reg, i);
-         InsNewInst(NULL, next, ADD, -reg, -reg, STiconstlookup(sp[1]));
-         InsNewInst(NULL, next, SHL, -reg, -reg, i);
-         InsNewInst(NULL, next, ADD, -reg, -reg, STiconstlookup(sp[2]));
-         InsNewInst(NULL, next, SHL, -reg, -reg, i);
-         InsNewInst(NULL, next, ADD, -reg, -reg, STiconstlookup(sp[3]));
+      #elif defined(PPC)
+         ip = (int*) &d;
+         bitload(next, reg, 16, *ip);
+         InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+         bitload(next, reg, 16, ip[1]);
+	 i = SToff[id-1].sa[2] - 1;
+	 i = DT[(i<<2)+3] + 4;
+         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), -reg, 0);
       #endif
    }
    else
@@ -248,7 +260,7 @@ void FPConstStore(INSTQ *next, short rsav, short id, short con, short reg)
    }
 }
 
-void IConstStore(INSTQ *next, short rsav, short id, short con, short reg)
+void IConstStore(INSTQ *next, short id, short con, short reg)
 {
    int i, j;
 
@@ -269,6 +281,8 @@ void IConstStore(INSTQ *next, short rsav, short id, short con, short reg)
  *    Must load constants 16 bits at a time
  */
       #else
+         bitload(next, reg, 16, SToff[con-1].i);
+         #if 0
          i = SToff[con-1].i;
          j = (i>>16);
          if (j)
@@ -280,10 +294,11 @@ void IConstStore(INSTQ *next, short rsav, short id, short con, short reg)
          else InsNewInst(NULL, next, MOV, -reg, con, __LINE__);
       #endif
       InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+      #endif
    }
 }
 
-void InitLocalConst(INSTQ *next, short rsav, short reg)
+void InitLocalConst(INSTQ *next, short reg)
 {
    struct locinit *lp;
    int flag;
@@ -296,9 +311,9 @@ void InitLocalConst(INSTQ *next, short rsav, short reg)
       LIhead = lp->next;
       flag = FLAG2PTYPE(STflag[lp->id-1]);
       if (IS_FLOAT(flag) || IS_DOUBLE(flag))
-         FPConstStore(next, rsav, lp->id, lp->con, reg);
+         FPConstStore(next, lp->id, lp->con, reg);
       else
-         IConstStore(next, rsav, lp->id, lp->con, reg);
+         IConstStore(next, lp->id, lp->con, reg);
       free(lp);
    }
 }
@@ -321,6 +336,10 @@ void Extern2Local(INSTQ *next, INSTQ *end, short rsav, int fsize)
    int nbytes=0;
    short *paras;
    char nam[8];
+   #ifdef PPC
+      char fnam[8];
+      int fc, fr=0;
+   #endif
 
    if (rsav) fsize = 0;
    else rsav = -REG_SP;
@@ -466,11 +485,86 @@ fprintf(stderr, "STORE: %d, %d\n", SToff[paras[i]].sa[2], -ir);
          }
       }
    #endif
+   #ifdef OSX_PPC
+      nam[0] = 'r';
+      nam[3] = nam[2] = '\0';
+      fnam[0] = 'f';
+      fnam[2] = fnam[3] = '\0';
+      for (fc=j=i=0; i < NPARA; i++)
+      {
+         flag = STflag[paras[i]];
+         if (IS_PTR(flag) || IS_INT(flag))
+         {
+            if (j < 8)
+            {
+PrintComment(NULL, next, "Store para %s\n", STname[paras[i]]);
+               if (j < 7) nam[1] = j + '3';
+               else { nam[1] = '1'; nam[2] = '0'; }
+               ir = iName2Reg(nam);
+               InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir,__LINE__);
+            }
+            else
+            {
+               if (j == 8) ir = GetReg(T_INT);
+               InsNewInst(NULL, next, LD, -ir,
+                          AddDerefEntry(rsav, 0, 0, fsize+24+j*4), 0);
+               InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir,__LINE__);
+            }
+            j++;
+         }
+         else if (IS_FLOAT(flag))
+         {
+            if (j == 8) ir = GetReg(T_INT);
+            if (fc < 13)
+            {
+               if (fc < 9) fnam[1] = '0' + fc + 1;
+               else { fnam[1] = '0'; fnam[2] = '0' + fc - 9; }
+               fr = fName2Reg(fnam);
+               InsNewInst(NULL, next, FST, SToff[paras[i]].sa[2],-fr,__LINE__);
+            }
+            else
+            {
+               InsNewInst(NULL, next, LD, -ir,
+                          AddDerefEntry(rsav, 0, 0, fsize+24+j*4), 0);
+               InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir,__LINE__);
+            }
+            fc++;
+            j++;
+         }
+         else
+         {
+            assert(IS_DOUBLE(flag));
+            if (j == 8 || j == 7) ir = GetReg(T_INT);
+            if (fc < 13)
+            {
+               if (fc < 9) fnam[1] = '0' + fc + 1;
+               else { fnam[1] = '0'; fnam[2] = '0' + fc - 9; }
+               fr = dName2Reg(fnam);
+               InsNewInst(NULL, next, FSTD,SToff[paras[i]].sa[2],-fr,__LINE__);
+               j += 2;
+            }
+            else
+            {
+               InsNewInst(NULL, next, LD, -ir,
+                          AddDerefEntry(rsav, 0, 0, fsize+24+j*4), 0);
+               InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir,__LINE__);
+               j++;
+               InsNewInst(NULL, next, LD, -ir,
+                          AddDerefEntry(rsav, 0, 0, fsize+24+j*4), 0);
+               k = (SToff[paras[i]].sa[2])<<2;
+               k = AddDerefEntry(-REG_SP, 0, 0, DT[k+3]+4);
+               InsNewInst(NULL, next, ST, k, -ir, __LINE__);
+               j++;
+            }
+            fc++;
+         }
+      }
+   #endif
 /*
  * Initialize constants
  */
    if (!reg1) reg1 = GetReg(T_INT);
-   InitLocalConst(next, rsav, reg1);
+   InitLocalConst(next, reg1);
 }
 
 void CreateEpilogue(int fsize,  /* frame size of returning func */
@@ -503,7 +597,7 @@ void CreateEpilogue(int fsize,  /* frame size of returning func */
  * Restore stack pointer and return
  */
    if (savesp)
-      InsNewInst(NULL, NULL, ALD, REG_SP, 
+      InsNewInst(NULL, NULL, ALD, -REG_SP, 
                  AddDerefEntry(-REG_SP, 0, 0, savesp), 0);
    else
       InsNewInst(NULL, NULL, AADD, -REG_SP, -REG_SP, STiconstlookup(fsize));
@@ -607,7 +701,8 @@ fprintf(stderr, "tsize=%d, SAVESP=%d\n\n", tsize, SAVESP);
       InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
       rsav = GetReg(T_INT);
       assert(rsav <= NSIR);
-      InsNewInst(NULL, oldhead, AMOV, -rsav, -REG_SP, 0);
+      rsav = -rsav;
+      InsNewInst(NULL, oldhead, AMOV, rsav, -REG_SP, 0);
    }
    else
    {
@@ -624,7 +719,7 @@ fprintf(stderr, "tsize=%d, SAVESP=%d\n\n", tsize, SAVESP);
       InsNewInst(NULL, oldhead, ASHR, -REG_SP, -REG_SP, i);
       InsNewInst(NULL, oldhead, ASHL, -REG_SP, -REG_SP, i);
       InsNewInst(NULL, oldhead, AST, AddDerefEntry(-REG_SP, 0, 0, SAVESP), 
-                 -rsav, 0);
+                 rsav, 0);
    }
 fprintf(stderr, "Local offset=%d\n", Loff);
    CorrectLocalOffsets(Loff);

@@ -3,8 +3,9 @@
 
 #if !defined(LINUX_PPC) && !defined(OSX_PPC) && !defined(LINUX_X86_32) && \
     !defined(LINUX_X86_64) && !defined(SOLARIS_SPARC)
-   #define LINUX_X86_32  
+/*   #define LINUX_X86_32   */
 /*   #define SOLARIS_SPARC */
+   #define OSX_PPC
 #endif
 
 #ifdef X86_64
@@ -108,19 +109,19 @@
 
 #ifdef PPC
    #define NIR  29
-   #define TNIR 30
+   #define TNIR 31
    #define NFR  32
    #define NSFR 18
    #define NDR  32
    #define NSDR 18
-   #define IRETREG 1
-   #define FRETREG (2+FREGBEG)
-   #define DRETREG (2+DREGBEG)
+   #define IRETREG 3
+   #define FRETREG (1+FREGBEG)
+   #define DRETREG (1+DREGBEG)
    #ifdef LINUX_PPC
       #define NSIR  11
       #ifdef ARCH_DECLARE
          char *archiregs[TNIR] = 
-            {"3", "4", "5", "6", "7", "8", "9", "10", "11", "12",
+            {"1", "11", "3", "4", "5", "6", "7", "8", "9", "10", "12",
              "13", "14", "15", "16", "17", "18", "19", "20", "21",
              "22", "23", "24", "25", "26", "27", "28", "29", "30", 
              "31", "0"};
@@ -129,13 +130,13 @@
              "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", 
              "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31"};
       #else
-         extern char **archiregs, **archfregs;
+         extern char *archiregs[TNIR], *archfregs[NFR];
       #endif
    #else
       #define NSIR  10
       #ifdef ARCH_DECLARE
          char *archiregs[TNIR] = 
-            {"r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12",
+            {"r1", "r11", "r3", "r4", "r5", "r6", "r7", "r8", "r9","r10","r12",
              "r13", "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21",
              "r22", "r23", "r24", "r25", "r26", "r27", "r28", "r29", "r30", 
              "r31", "r0"};
@@ -145,7 +146,7 @@
              "f20", "f21", "f22", "f23", "f24", "f25", "f26", "f27", "f28", 
              "f29", "f30", "f31"};
       #else
-         extern char **archiregs, **archfregs;
+         extern char *archiregs[TNIR], *archfregs[NFR];
       #endif
    #endif
    #define archdregs archfregs
