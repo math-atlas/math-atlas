@@ -415,7 +415,6 @@
    #ifdef X86_64
       #define HAMMER
    #endif
-   #define EFF
    #ifdef PIII
       #define NCACHE 2
       #ifdef ARCH_DECLARE
