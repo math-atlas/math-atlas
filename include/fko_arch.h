@@ -183,6 +183,8 @@
 #endif
 
 #ifdef PPC
+   #define NICC 4
+   #define NFCC 4
    #define NIR  29
    #define TNIR 31
    #define NFR  32
@@ -210,6 +212,8 @@
    #else
       #define NSIR  10
       #ifdef ARCH_DECLARE
+         char *ICCREGS[NICC] = "cr0", "cr2", "cr3", "cr4"};
+         char *FCCREGS[NFCC] = "cr1", "cr5", "cr6", "cr7"};
          int  icallersave[TNIR] = 
           {0, 1,1,1,1,1,1,1,1,1,1, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 1};
          int  icalleesave[TNIR] = 
@@ -229,7 +233,8 @@
              "f20", "f21", "f22", "f23", "f24", "f25", "f26", "f27", "f28", 
              "f29", "f30", "f31"};
       #else
-         extern char *archiregs[TNIR], *archfregs[NFR];
+         extern char *archiregs[TNIR], *archfregs[NFR], 
+                     *ICCREGS[NICC], *FCCREGS[NFCC];
       #endif
    #endif
    #define archdregs archfregs
@@ -287,17 +292,11 @@
 #ifndef NFCC
    #define NFCC 1
 #endif
-#ifndef NDCC
-   #define NDCC 1
-#endif
 #ifndef ICC0
    #define ICC0 1
 #endif
 #ifndef FCC0
    #define FCC0 (1+NICC)
-#endif
-#ifndef DCC0
-   #define DCC0 (1+NFCC)
 #endif
 
 short GetReg(short type);

@@ -51,6 +51,7 @@ enum inst
    UMUL,                        /* r0 = r1 * r/c, unsigned */
    DIV,                         /* r0 = r1 / r/c */
    UDIV,                      
+   CMPAND,                      /* cc0, r1, r2/c : set [cc] based on r1 & r2 */
    CMP,                         /* cc#, r1, r2/c: set [cc] based on r1 - r2 */
    MOV,                         /* [r0], [r1/c] : r0 = r1 */
    NEG,                         /* [r0], [r1] : r0 = -r1 */
@@ -79,8 +80,8 @@ enum inst
 /*
  * Jump instructions
  */
-   JMP,                         /* cc#, LABEL */
-   JEQ, JNE, JLT, JLE, JGT, JGE,  /* cc#, LABEL */
+   JMP,                         /* NULL, cc#, LABEL */
+   JEQ, JNE, JLT, JLE, JGT, JGE,  /* NULL, cc#, LABEL */
    PREFR,                       /* [ptr] [ilvl], NULL */
    PREFW,                       /* [ptr] [ilvl], NULL */
    RET,                         /* NULL,NULL,NULL : return to caller */

@@ -338,41 +338,44 @@ void FPConstStore(INSTQ *next, short id, short con, short reg)
             InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), -reg, 0);
          #endif
       }
-      #ifdef X86_32
-         ip = (int*) &d;
-         InsNewInst(NULL, next, MOV, -reg, STiconstlookup(*ip), __LINE__);
-         InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
-         InsNewInst(NULL, next, MOV, -reg, STiconstlookup(ip[1]), __LINE__);
-         i = SToff[id-1].sa[2] - 1;
-         i = DT[(i<<2)+3] + 4;
-         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), -reg, 0);
-      #elif defined(X86_64)
-         lp = (long*) &d;
-         InsNewInst(NULL, next, MOV, -reg, STlconstlookup(*lp), __LINE__);
-         InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+      else
+      {
+         #ifdef X86_32
+            ip = (int*) &d;
+            InsNewInst(NULL, next, MOV, -reg, STiconstlookup(*ip), __LINE__);
+            InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+            InsNewInst(NULL, next, MOV, -reg, STiconstlookup(ip[1]), __LINE__);
+            i = SToff[id-1].sa[2] - 1;
+            i = DT[(i<<2)+3] + 4;
+            InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), -reg, 0);
+         #elif defined(X86_64)
+            lp = (long*) &d;
+            InsNewInst(NULL, next, MOV, -reg, STlconstlookup(*lp), __LINE__);
+            InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
 /*
- *    Sparc has 13-bit constants, use 12 to rule out sign prob
+ *       Sparc has 13-bit constants, use 12 to rule out sign prob
  */
-      #elif defined(SPARC)
-         ip = (int*) &d;
-         bitload(next, reg, 12, *ip);
-         InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
-         bitload(next, reg, 12, ip[1]);
-         i = SToff[id-1].sa[2] - 1;
-         i = DT[(i<<2)+3] + 4;
-         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), -reg, 0);
+         #elif defined(SPARC)
+            ip = (int*) &d;
+            bitload(next, reg, 12, *ip);
+            InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+            bitload(next, reg, 12, ip[1]);
+            i = SToff[id-1].sa[2] - 1;
+            i = DT[(i<<2)+3] + 4;
+            InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), -reg, 0);
 /*
- *    PPC loads 16 bits at a time
+ *       PPC loads 16 bits at a time
  */
-      #elif defined(PPC)
-         ip = (int*) &d;
-         bitload(next, reg, 16, *ip);
-         InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
-         bitload(next, reg, 16, ip[1]);
-         i = SToff[id-1].sa[2] - 1;
-         i = DT[(i<<2)+3] + 4;
-         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), -reg, 0);
-      #endif
+         #elif defined(PPC)
+            ip = (int*) &d;
+            bitload(next, reg, 16, *ip);
+            InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+            bitload(next, reg, 16, ip[1]);
+            i = SToff[id-1].sa[2] - 1;
+            i = DT[(i<<2)+3] + 4;
+            InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), -reg, 0);
+         #endif
+      }
    }
    else
    {
@@ -383,21 +386,24 @@ void FPConstStore(INSTQ *next, short id, short con, short reg)
          InsNewInst(NULL, next, XOR, -reg, -reg, -reg);
          InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
       }
-      ip = (int*) &f;
-      #ifdef X86_32
-         InsNewInst(NULL, next, MOV, -reg, STiconstlookup(*ip), __LINE__);
-         InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
-      #elif defined(X86_64)
-         assert(reg <= 8);
-         InsNewInst(NULL, next, MOVS, -reg, STiconstlookup(*ip), __LINE__);
-         InsNewInst(NULL, next, STS, SToff[id-1].sa[2], -reg, __LINE__);
-      #elif defined(SPARC)
-         bitload(next, reg, 12, *ip);
-         InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
-      #elif defined(PPC)
-         bitload(next, reg, 16, *ip);
-         InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
-      #endif
+      else
+      {
+         ip = (int*) &f;
+         #ifdef X86_32
+            InsNewInst(NULL, next, MOV, -reg, STiconstlookup(*ip), __LINE__);
+            InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+         #elif defined(X86_64)
+            assert(reg <= 8);
+            InsNewInst(NULL, next, MOVS, -reg, STiconstlookup(*ip), __LINE__);
+            InsNewInst(NULL, next, STS, SToff[id-1].sa[2], -reg, __LINE__);
+         #elif defined(SPARC)
+            bitload(next, reg, 12, *ip);
+            InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+         #elif defined(PPC)
+            bitload(next, reg, 16, *ip);
+            InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+         #endif
+      }
    }
 }
 

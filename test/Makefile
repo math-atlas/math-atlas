@@ -1,7 +1,6 @@
 SHELL = /bin/tcsh
 CC = gcc
-#CCFLAGS = -mcpu=ultrasparc -g
-CCFLAGS =  -g
+CCFLAGS = -g
 IFKO = ../bin/ifko
 
 all : ibuild fbuild dbuild hbuild irun frun drun hrun
@@ -94,7 +93,7 @@ xdtst9 : mdtst9.o dtst9.o
 	$(CC) $(CCFLAGS) -o $@ mdtst9.o dtst9.o
 
 ibuild :xitst0 xitst1 xitst2 xitst3 xitst4 xitst5 xitst6 xitst7 xitst8 xitst9 \
-        xitst10 xitst11 xitst12
+        xitst10 xitst11 xitst12 xitst13
 irun:
 	./xitst0
 	./xitst1
@@ -109,6 +108,7 @@ irun:
 	./xitst10
 	./xitst11
 	./xitst12
+	./xitst13
 
 xitst0 : mitst0.o itst0.o
 	$(CC) $(CCFLAGS) -o $@ mitst0.o itst0.o
@@ -136,6 +136,8 @@ xitst11 : mitst11.o itst11.o
 	$(CC) $(CCFLAGS) -o $@ mitst11.o itst11.o
 xitst12 : mitst12.o itst12.o
 	$(CC) $(CCFLAGS) -o $@ mitst12.o itst12.o
+xitst13 : mitst13.o itst13.o
+	$(CC) $(CCFLAGS) -o $@ mitst13.o itst13.o
 
 
 mitst3.c : mitst0.c

@@ -261,10 +261,26 @@ short STstrlookup(char *str)
    return(0);
 }
 
+short STlabellookup(char *str)
+/*
+ * Searches for label with name str in symtab, allocating new entry if
+ * not already there.
+ * RETURNS: symtab index.
+ */
+{
+   short i;
+   for (i=0; i != N; i++)
+   {
+      if (STname[i] && IS_LABEL(STflag[i]) && !strcmp(str, STname[i]))
+         return(i+1);
+   }
+   return(STdef(str, T_LABEL, 0));
+}
+
 short STstrconstlookup(char *str)
 /*
- * Searches for string constant str in symbol table, allocating new entry if not
- * already there. 
+ * Searches for string constant str in symbol table, allocating new entry if
+ * not lready there. 
  * RETURNS: symtab index.
  */
 {

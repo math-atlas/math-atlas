@@ -31,7 +31,28 @@ static int LocalLoad(short id)
    short inst=5555, reg, typ;
 
    id--;
-   if (IS_PTR(STflag[id]))
+   if (IS_CONST(STflag[id]))
+   {
+      typ = FLAG2TYPE(STflag[id]);
+      reg = GetReg(typ);
+      switch(typ)
+      {
+      case T_INT:
+         inst = MOV;
+         break;
+      case T_FLOAT:
+         inst = FMOV;
+         break;
+      case T_DOUBLE:
+         inst = FMOVD;
+         break;
+      default:
+         fprintf(stderr, "type=%d!!\n\n", typ);
+      }
+      InsNewInst(NULL, NULL, inst, -reg, id+1, 0);
+      return(reg);
+   }
+   else if (IS_PTR(STflag[id]))
    {
       inst = LD;
       reg = GetReg(T_INT);
@@ -577,13 +598,8 @@ void DoReturn(short rret)
          InsNewInst(NULL, NULL, ld, -retreg, SToff[rret-1].sa[2], 0);
 #endif
    }
-   InsNewInst(NULL, NULL, JMP, STstrconstlookup("IFKO_EPILOGUE"), 0, 0);
+   InsNewInst(NULL, NULL, JMP, 0, STstrconstlookup("IFKO_EPILOGUE"), 0);
    GetReg(-1);
-}
-
-void DoLabel(char *name)
-{
-   InsNewInst(NULL, NULL, LABEL, STdef(name, T_LABEL, 0), 0, 0);
 }
 
 static short GetSignInfo(short k)
@@ -691,23 +707,98 @@ void FinishLoop(struct loopq *lp)
    if (IS_CONST(flag)) iend = lp->end;
    else iend = -LocalLoad(lp->end);
    InsNewInst(NULL, NULL, CMP, 0, -ireg, iend);
-   InsNewInst(NULL, NULL, JLT, lp->body_label, lp->loopnum, 0);
+   InsNewInst(NULL, NULL, JLT, ICC0, 0, lp->body_label);
    lp->iend = InsNewInst(NULL, NULL, CMPFLAG, CF_LOOP_END, lp->loopnum, 0);
    GetReg(-1);
 }
 
-void DoIf(char op, short id, short avar, short label)
+void DoLabel(char *name)
 {
-   int flag;
-   short k, cmp;
+   InsNewInst(NULL, NULL, LABEL, STlabellookup(name), 0, 0);
+}
+
+void DoIf(char op, short id, short avar, char *labnam)
+{
+   int flag, type;
+   short k, cmp, ireg, ireg1, freg0, freg1, br, label;
    assert(id > 0 && label > 0 && avar > 0);
-   id--;
-   label--;
-   avar--;
-   flag = STflag[avar];
-   type = FLAG2PTYPE(STflag[id]);
-   #ifdef X86
-      if (type != T_INT)
+   label = STlabellookup(labnam);
+   flag = STflag[avar-1];
+   type = FLAG2PTYPE(STflag[id-1]);
+fprintf(stderr, "%s(%d): label=%s\n", __FILE__,__LINE__, STname[label-1]);
+   if (type == T_INT)
+   {
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
+      ireg = LocalLoad(id);
+      if (IS_CONST(flag)) ireg1 = -avar;
+      else ireg1 = LocalLoad(avar);
+      if (op != '&') InsNewInst(NULL, NULL, CMP, ICC0, -ireg, -ireg1);
+      else
+         #ifdef PPC
+            InsNewInst(NULL, NULL, ANDCC, -ireg, -ireg, -ireg1);
+         #else
+            InsNewInst(NULL, NULL, CMPAND, -ireg, -ireg, -ireg1);
+         #endif
+      switch(op)
+      {
+      case '>':
+         InsNewInst(NULL, NULL, JGT, 0, ICC0, label);
+         break;
+      case 'g':  /* >= */
+         InsNewInst(NULL, NULL, JGE, 0, ICC0, label);
+         break;
+      case '<':
+         InsNewInst(NULL, NULL, JLT, 0, ICC0, label);
+         break;
+      case 'l':  /* <= */
+         InsNewInst(NULL, NULL, JLE, 0, ICC0, label);
+         br = JLE;
+         break;
+      case '=':
+         InsNewInst(NULL, NULL, JEQ, 0, ICC0, label);
+         break;
+      case '!':
+         InsNewInst(NULL, NULL, JNE, 0, ICC0, label);
+         break;
+      case '&':
+         InsNewInst(NULL, NULL, JEQ, 0, ICC0, label);
+         break;
+      }
+   }
+#ifndef X86
+   else
+   {
+      freg0 = LocalLoad(id);
+      freg1 = LocalLoad(avar);
+      cmp = (type == T_FLOAT) ? FCMP : FCMPD;
+      switch(op)
+      {
+      case '>':
+         br = JGT;
+         break;
+      case 'g':  /* >= */
+         br = JGE;
+         break;
+      case '<':
+         br = JLT;
+         break;
+      case 'l':  /* <= */
+         br = JLE;
+         break;
+      case '=':
+         br = JEQ;
+         break;
+      case '!':
+         br = JNE;
+         break;
+      default:
+         fko_error(__LINE__, "Illegal fp comparitor '%c'\n", op);
+      }
+      InsNewInst(NULL, NULL, cmp, FCC0, -freg0, -freg1);
+      InsNewInst(NULL, NULL, br, 0, FCC0, label);
+   }
+#else
+      else
       {
          assert(type == T_FLOAT || type == T_DOUBLE);
          ireg = GetReg(T_INT);
@@ -717,7 +808,7 @@ void DoIf(char op, short id, short avar, short label)
          {
          case '>':
             k = STiconstlookup(2);
-            br = JE;
+            br = JEQ;
             break;
          case 'l':  /* <= */
             k = STiconstlookup(2);
@@ -725,7 +816,7 @@ void DoIf(char op, short id, short avar, short label)
             break;
          case 'g':  /* >= */
             k = STiconstlookup(1);
-            br = JE;
+            br = JEQ;
             break;
          case '<':
             k = STiconstlookup(1);
@@ -737,60 +828,16 @@ void DoIf(char op, short id, short avar, short label)
             break;
          case '!':
             k = STiconstlookup(0);
-            br = JE;
+            br = JEQ;
             break;
          }
          InsNewInst(NULL, NULL, (type == T_FLOAT) ? FCMPW:FCMPWD, 
                     -freg0, -freg1, k);
          InsNewInst(NULL, NULL, (type == T_FLOAT) ? CVTBFI:CVTBDI,
-                    -freg0, -ireg, 0);
-         InsNewInst(NULL, NULL, br, ICC0, label+1, 0);
+                    -ireg, -freg0, 0);
+         InsNewInst(NULL, NULL, CMP, ICC0, -ireg, STiconstlookup(0));
+         InsNewInst(NULL, NULL, br, 0, ICC0, label);
          return;
       }
-   #endif
-   if (type == T_INT)
-   {
-      switch(op)
-      {
-      case '>':
-         br = JGT;
-         break;
-      case '<':
-         br = JLT;
-         break;
-      case '!':
-         br = JNE;
-         break;
-      case 'l':  /* <= */
-         br = JLE;
-         break;
-      case 'g':  /* >= */
-         br = JGE;
-         break;
-/*
- *    These all involve opcc
- */
-      case '-':
-         break;
-      case '+':
-         break;
-      case '*':
-         break;
-      case '/':
-         break;
-      case 'R':  /* >> */
-         break;
-      case 'L':  /* << */
-         break;
-      case '|':
-         break;
-      case '&':
-         break;
-      case '^':
-         break;
-      }
-   }
-   else if (type == T_FLOAT)
-   else if (type == T_DOUBLE)
-   else assert(0);
+#endif
 }

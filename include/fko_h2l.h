@@ -12,6 +12,6 @@ void DoLabel(char *name);
 short AddArrayDeref(short array, short index, short offset);
 struct loopq *DoLoop(short I, short start, short end, short inc,
                      short sst, short send, short sinc);
-
+void DoIf(char op, short id, short avar, char *labnam);
 
 #endif

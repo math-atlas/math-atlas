@@ -675,6 +675,48 @@ struct assmln *lil2ass(INSTQ *head)
                                   GetIregOrConst(op3));
          #endif
          break;
+      case AND:
+      case ANDCC :
+          #ifdef X86_64
+             sptr = "andq";
+          #elif defined(X86)
+             sptr = "andl";
+          #elif defined(SPARC)
+             if (ip->inst[0] == AND) sptr = "and";
+             else sptr = "andcc"
+          #elif defined(PPC)
+             if (ip->inst[0] == AND)
+             {
+                if (op3 > 0) sptr = "andi";
+                else sptr = "and";
+             }
+             else
+             {
+                if (op3 > 0) sptr = "andi.";
+                else sptr = "and.";
+             }
+          #endif
+         #ifdef X86
+            assert(op1 == op2);
+            ap->next = PrintAssln("\t%s\t%s, %s\n", sptr, GetIregOrConst(op3), 
+                                  archiregs[-IREGBEG-op1]);
+         #elif defined(SPARC)
+            ap->next = PrintAssln("\t%s\t%s, %s, %s\n", sptr,
+                                  archiregs[-IREGBEG-op2], GetIregOrConst(op3),
+                                  archiregs[-IREGBEG-op1]);
+         #elif defined(PPC)
+            ap->next = PrintAssln("\t%s\t%s, %s, %s\n", sptr,
+                                  archiregs[-IREGBEG-op1],
+                                  archiregs[-IREGBEG-op2], 
+                                  GetIregOrConst(op3));
+         #elif defined(FKO_ANSIC)
+            ap->next = PrintAssln("   %s = %s %s %s;\n", 
+                                  archiregs[-IREGBEG-op1],
+                                  archiregs[-IREGBEG-op2],
+                                  ip->inst[0] == XOR ? "^" : "|",
+                                  GetIregOrConst(op3));
+         #endif
+         break;
    #ifdef X86_64
       case ADDS:
          assert(op1 == op2);
@@ -726,6 +768,29 @@ struct assmln *lil2ass(INSTQ *head)
                                archsregs[-IREGBEG-op1]);
          break;
    #endif
+      #ifndef X86
+      case SUB:
+         #if defined(SPARC)
+            ap->next = PrintAssln("\tsubcc\t%s, %s, %s\n", 
+                                  archiregs[-IREGBEG-op2],
+                                  GetIregOrConst(op3),
+                                  archiregs[-IREGBEG-op1]);
+         #elif defined(PPC)
+            if (op3 > 0)
+               ap->next = PrintAssln("\tsubi.\t%s, %s, %s\n",
+                                     archiregs[-IREGBEG-op1],
+                                     archiregs[-IREGBEG-op2], 
+                                     GetIregOrConst(op3));
+            else
+               ap->next = PrintAssln("\tsub.\t%s, %s, %s\n", 
+                                     archiregs[-IREGBEG-op1],
+                                     archiregs[-IREGBEG-op2],
+                                     archiregs[-IREGBEG-op3]);
+         #endif
+         break;
+      #else
+      case SUBCC:
+      #endif
       case SUB:
          #ifdef X86_64
             assert(op1 == op2);
@@ -907,9 +972,31 @@ struct assmln *lil2ass(INSTQ *head)
                                   GetIregOrConst(op3));
          #endif
          break;
+      case CMPAND :
+         #ifdef X86
+            ap->next = PrintAssln("\ttest\t%s,%s\n", GetIregOrConst(op3),
+                                  GetIregOrDeref(op2));
+         #elif defined(SPARC)
+            ap->next = PrintAssln("\tandcc\t%s,%s,%%g0\n", 
+                                  archiregs[-IREGBEG-op2],
+                                  GetIregOrConst(op3));
+         #elif defined(PPC)
+            if (op3 > 0)
+               ap->next = PrintAssln("\tandi.\t%s,%s,%s\n", 
+                                     archiregs[-IREGBEG-op1],
+                                     archiregs[-IREGBEG-op2],
+                                     GetIregOrConst(op3));
+            else
+               ap->next = PrintAssln("\tand.\t%s,%s,%s\n", 
+                                     archiregs[-IREGBEG-op1],
+                                     archiregs[-IREGBEG-op2],
+                                     archiregs[-IREGBEG-op3]);
+         #endif
+         break;
       case CMP:
          #ifdef X86
-            ap->next = PrintAssln("\tcmp\t%s,%s\n", GetIregOrConst(op3),
+            ap->next = PrintAssln("\tcmp\t%s,%s\n", 
+                                  GetIregOrConst(op3),
                                   GetIregOrDeref(op2));
          #elif defined(SPARC)
             ap->next = PrintAssln("\tsubcc\t%s,%s,%%g0\n", 
@@ -917,17 +1004,45 @@ struct assmln *lil2ass(INSTQ *head)
                                   GetIregOrConst(op3));
          #elif defined(PPC)
             if (op3 > 0)
-               ap->next = PrintAssln("\tcmpwi\tcr0,%s,%s\n", 
+               ap->next = PrintAssln("\tcmpwi\tcr%s,%s,%s\n", 
+                                     ICCREGS[op1-ICC0],
                                      archiregs[-IREGBEG-op2],
                                      GetIregOrConst(op3));
             else
-               ap->next = PrintAssln("\tcmpw\tcr0,%s,%s\n", 
+               ap->next = PrintAssln("\tcmpw\t%s,%s,%s\n", 
+                                     ICCREGS[op1-ICC0],
                                      archiregs[-IREGBEG-op2],
                                      archiregs[-IREGBEG-op3]);
          #elif defined(FKO_ANSIC)
             ap->next = PrintAssln("   icc = %s - %s;\n", 
                                   archiregs[-IREGBEG-op2],
                                   GetIregOrConst(op3));
+         #endif
+         break;
+      case FCMP:
+         #ifdef X86
+            ap->next = PrintAssln("\tcomiss\t%s,%s\n", GetDregOrDeref(op3),
+	                          archdregs[-DREGBEG-op2]);
+         #elif defined(SPARC)
+            ap->next = PrintAssln("\tfcmpes\t%s,%s\n", 
+	       archdregs[-DREGBEG-op2], archdregs[-DREGBEG-op3]);
+         #elif defined(PPC)
+            ap->next = PrintAssln("\tfcmpo\t%s,%s,%s\n", 
+               FCCREGS[op1-FCC0], archdregs[-DREGBEG-op2],
+	       archdregs[-DREGBEG-op3]);
+         #endif
+         break;
+      case FCMPD:
+         #ifdef X86
+            ap->next = PrintAssln("\tcomisd\t%s,%s\n", GetDregOrDeref(op3),
+	                          archdregs[-DREGBEG-op2]);
+         #elif defined(SPARC)
+            ap->next = PrintAssln("\tfcmped\t%s,%s\n", 
+	       archdregs[-DREGBEG-op2], archdregs[-DREGBEG-op3]);
+         #elif defined(PPC)
+            ap->next = PrintAssln("\tfcmpo\t%s,%s,%s\n", 
+               FCCREGS[op1-FCC0], archdregs[-DREGBEG-op2],
+	       archdregs[-DREGBEG-op3]);
          #endif
          break;
   #ifdef X86_64
@@ -1003,48 +1118,135 @@ struct assmln *lil2ass(INSTQ *head)
    #ifdef X86
       case FCMPW:  /* special cmp that overwrites an operand */
          assert(op3 > 0);
-         k = GetIregOrConst(op3);
-         assert(k < 3);
-         ap->next = PrintAssln("\tcmpps\t$%d, %s, %s\n", k, 
+         k = SToff[op3-1].i;
+         assert(k < 3 && k >= 0);
+         ap->next = PrintAssln("\tcmpss\t$%d, %s, %s\n", k, 
                        archfregs[-FREGBEG-op2], archfregs[-FREGBEG-op1]);
          break;
       case FCMPWD:  /* special cmp that overwrites an operand */
          assert(op3 > 0);
-         k = GetIregOrConst(op3);
-         assert(k < 3);
+         k = SToff[op3-1].i;
+         assert(k < 3 && k >= 0);
          ap->next = PrintAssln("\tcmppd\t$%d, %s, %s\n", k, 
                        archdregs[-DREGBEG-op2], archdregs[-DREGBEG-op1]);
          break;
       case CVTBFI:
-         ap->next = PrintAssln("\tmovmskps\t%s, %s\n", archiregs[-IREGBEG-op1],
-                               archfregs[-FREGBEG-op2]);
+         ap->next = PrintAssln("\tmovmskps\t%s, %s\n", archfregs[-FREGBEG-op2],
+                               archiregs[-IREGBEG-op1]);
          break;
       case CVTBDI:
-         ap->next = PrintAssln("\tmovmskpd\t%s, %s\n", archiregs[-IREGBEG-op1],
-                               archfregs[-DREGBEG-op2]);
+         ap->next = PrintAssln("\tmovmskpd\t%s, %s\n", archdregs[-DREGBEG-op2],
+                               archiregs[-IREGBEG-op1]);
          break;
    #endif
       case JMP:
          #ifdef X86
-            ap->next = PrintAssln("\tjmp\t%s\n", STname[op1-1]);
+            ap->next = PrintAssln("\tjmp\t%s\n", STname[op2-1]);
          #elif defined(SPARC)
-            ap->next = PrintAssln("\tba\t%s\n\tnop\n", STname[op1-1]);
+            ap->next = PrintAssln("\tba\t%s\n\tnop\n", STname[op2-1]);
          #elif defined(PPC)
-            ap->next = PrintAssln("\tb\t%s\n", STname[op1-1]);
+            ap->next = PrintAssln("\tb\t%s\n", STname[op2-1]);
          #elif defined(FKO_ANSIC)
-            ap->next = PrintAssln("   goto %s;\n", STname[op1-1]);
+            ap->next = PrintAssln("   goto %s;\n", STname[op2-1]);
+         #endif
+         break;
+      case JEQ:
+         #ifdef X86
+            ap->next = PrintAssln("\tje\t%s\n", STname[op3-1]);
+         #elif defined(SPARC)
+            if (op1 >= ICC0 && op1 < ICC0+NICC)
+               ap->next = PrintAssln("\tbe\t%s\n", STname[op3-1]);
+            else
+               ap->next = PrintAssln("\tfbe\t%s\n", STname[op3-1]);
+         #elif defined(PPC)
+            if (op2 >= ICC0 && op2 <= ICC0+NICC) sptr = ICCREGS[op2-ICC0];
+            else sptr = FCCREGS[op2-FCC0];
+            k = sptr[2] - '0';
+            ap->next = PrintAssln("\tbt\t%d, %s\n", k*4+2, STname[op3-1]);
+         #elif defined(FKO_ANSIC)
+            ap->next = PrintAssln("   if (icc < 0) goto %s;\n",
+                                  STname[op3-1]);
+         #endif
+         break;
+      case JNE:
+         #ifdef X86
+            ap->next = PrintAssln("\tjne\t%s\n", STname[op3-1]);
+         #elif defined(SPARC)
+            if (op2 >= ICC0 && op2 < ICC0+NICC)
+               ap->next = PrintAssln("\tbne\t%s\n", STname[op3-1]);
+            else
+               ap->next = PrintAssln("\tfbne\t%s\n", STname[op3-1]);
+         #elif defined(PPC)
+            if (op2 >= ICC0 && op2 <= ICC0+NICC) sptr = ICCREGS[op2-ICC0];
+            else sptr = FCCREGS[op2-FCC0];
+            k = sptr[2] - '0';
+            ap->next = PrintAssln("\tbf\t%d, %s\n", k*4+2, STname[op3-1]);
+         #elif defined(FKO_ANSIC)
+            ap->next = PrintAssln("   if (icc < 0) goto %s;\n",
+                                  STname[op3-1]);
          #endif
          break;
       case JLT:
          #ifdef X86
-            ap->next = PrintAssln("\tjl\t%s\n", STname[op1-1]);
+            ap->next = PrintAssln("\tjl\t%s\n", STname[op3-1]);
          #elif defined(SPARC)
-            ap->next = PrintAssln("\tbl\t%s\n", STname[op1-1]);
+            if (op2 >= ICC0 && op2 < ICC0+NICC)
+               ap->next = PrintAssln("\tbl\t%s\n", STname[op3-1]);
+            else
+               ap->next = PrintAssln("\tfbl\t%s\n", STname[op3-1]);
          #elif defined(PPC)
-            ap->next = PrintAssln("\tblt\t%s\n", STname[op1-1]);
+            if (op2 >= ICC0 && op2 <= ICC0+NICC) sptr = ICCREGS[op2-ICC0];
+            else sptr = FCCREGS[op2-FCC0];
+            k = sptr[2] - '0';
+            ap->next = PrintAssln("\tbf\t%d, %s\n", k*4+0, STname[op3-1]);
          #elif defined(FKO_ANSIC)
             ap->next = PrintAssln("   if (icc < 0) goto %s;\n",
-                                  STname[op1-1]);
+                                  STname[op2-1]);
+         #endif
+         break;
+      case JGT:
+         #ifdef X86
+            ap->next = PrintAssln("\tjg\t%s\n", STname[op3-1]);
+         #elif defined(SPARC)
+            if (op2 >= ICC0 && op2 < ICC0+NICC)
+               ap->next = PrintAssln("\tbg\t%s\n", STname[op3-1]);
+            else
+               ap->next = PrintAssln("\tfbg\t%s\n", STname[op3-1]);
+         #elif defined(PPC)
+            if (op2 >= ICC0 && op2 <= ICC0+NICC) sptr = ICCREGS[op2-ICC0];
+            else sptr = FCCREGS[op2-FCC0];
+            k = sptr[2] - '0';
+            ap->next = PrintAssln("\tbt\t%d, %s\n", k*4+1, STname[op3-1]);
+         #endif
+         break;
+      case JLE:
+         #ifdef X86
+            ap->next = PrintAssln("\tjle\t%s\n", STname[op3-1]);
+         #elif defined(SPARC)
+            if (op2 >= ICC0 && op2 < ICC0+NICC)
+               ap->next = PrintAssln("\tble\t%s\n", STname[op3-1]);
+            else
+               ap->next = PrintAssln("\tfble\t%s\n", STname[op3-1]);
+         #elif defined(PPC)
+            if (op2 >= ICC0 && op2 <= ICC0+NICC) sptr = ICCREGS[op2-ICC0];
+            else sptr = FCCREGS[op2-FCC0];
+            k = sptr[2] - '0';
+            ap->next = PrintAssln("\tbf\t%d, %s\n", k*4+1, STname[op3-1]);
+         #endif
+         break;
+      case JGE:
+         #ifdef X86
+            ap->next = PrintAssln("\tjge\t%s\n", STname[op3-1]);
+         #elif defined(SPARC)
+            if (op2 >= ICC0 && op2 < ICC0+NICC)
+               ap->next = PrintAssln("\tbge\t%s\n", STname[op3-1]);
+            else
+               ap->next = PrintAssln("\tfbge\t%s\n", STname[op3-1]);
+         #elif defined(PPC)
+            if (op2 >= ICC0 && op2 <= ICC0+NICC) sptr = ICCREGS[op2-ICC0];
+            else sptr = FCCREGS[op2-FCC0];
+            k = sptr[2] - '0';
+            ap->next = PrintAssln("\tbf\t%d, %s\n", k*4+0, STname[op3-1]);
          #endif
          break;
 /*
@@ -1249,22 +1451,6 @@ struct assmln *lil2ass(INSTQ *head)
                 archfregs[-FREGBEG-op3]);
          #endif
          break;
-      case FCMPD:
-         #ifdef X86
-            ap->next = PrintAssln("\tcomisd\t%s,%s\n", GetDregOrDeref(op2),
-	                          archdregs[-DREGBEG-op1]);
-         #elif defined(SPARC)
-            ap->next = PrintAssln("\tfcmped\t%s,%s\n", 
-	       archdregs[-DREGBEG-op1], archdregs[-DREGBEG-op2]);
-         #elif defined(PPC)
-            ap->next = PrintAssln("\tfcmpo\t%s,%s,%s\n", 
-	       archdregs[-DREGBEG-op1], archdregs[-DREGBEG-op2],
-	       archdregs[-DREGBEG-op3]);
-         #elif defined(FKO_ANSIC)
-            ap->next = PrintAssln("   fcc = %s - %s;\n",
-                archdregs[-DREGBEG-op1], archdregs[-DREGBEG-op2]);
-         #endif
-         break;
       case FABS:
          #ifdef X86
 	    assert(op1 == op2);
@@ -1416,13 +1602,7 @@ struct assmln *lil2ass(INSTQ *head)
 /*
  *  HERE HERE HERE:
  */
-      case FCMP:
       case FMOV:
-      case JEQ:
-      case JNE:
-      case JLE:
-      case JGT:
-      case JGE:
       case PREFR:
       case PREFW:
       case PREFRS:

@@ -1,5 +1,5 @@
 %{
-/*   #define YYDEBUG 1  */
+/*   #define YYDEBUG 1   */
    #include "ifko.h"
    #include "fko_h2l.h"
    #include "fko_arch.h"
@@ -23,7 +23,7 @@
 
 %token ROUT_NAME ROUT_LOCALS ROUT_BEGIN ROUT_END CONST_INIT RETURN
 %token DOUBLE FLOAT INT UINT DOUBLE_PTR FLOAT_PTR INT_PTR UINT_PTR 
-%token PARAMS LST ABST ME LOOP_BEGIN LOOP_BODY LOOP_END MAX_UNROLL IF
+%token PARAMS LST ABST ME LOOP_BEGIN LOOP_BODY LOOP_END MAX_UNROLL IF GOTO
 %token <sh> LOOP_LIST_MU
 %token <inum> ICONST
 %token <fnum> FCONST
@@ -232,22 +232,15 @@ avar : ID               {$$ = $1;}
                 /* need to change to if (ID op avar) goto LABEL */
         /* > < NE LE GE * +  / RSHIFT LSHIFT | & ^ */
 IFOP : '>'  {$$ = '>';}
-       '<'  {$$ = '<';}
-       NE   {$$ = '!';}
-       LE   {$$ = 'l';}
-       GE   {$$ = 'g';}
-       '-'  {$$ = '-';}
-       '+'  {$$ = '+';}
-       '*'  {$$ = '*';}
-       '/'  {$$ = '/';}
-       RSHIFT {$$ = 'R';}
-       LSHIFT {$$ = 'L';}
-       '|'    {$$ = '|';}
-       '&'    {$$ = '&';}
-       '^'    {$$ = '^';}
-       ;
+     | '<'  {$$ = '<';}
+     | NE   {$$ = '!';}
+     | LE   {$$ = 'l';}
+     | GE   {$$ = 'g';}
+     | '&'    {$$ = '&';}
+     | '^'    {$$ = '^';}
+     ;
    
-ifstate : IF '(' ID IFOP avar ')' GOTO ID         {DoIf($4, $3, $5, $8);}
+ifstate : IF '(' ID IFOP avar ')' GOTO NAME         {DoIf($4, $3, $5, $8);} 
         ;
 arith : ID '=' ID '+' avar {DoArith($1, $3, '+', $5); }
       | ID '=' ID '*' avar {DoArith($1, $3, '*', $5); }
