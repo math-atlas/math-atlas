@@ -565,7 +565,7 @@ short FindLocalFromDT(short dt)
    }
    if (i==N) i = 0;
    k = STpts2[dt-1];
-   if (k > 0 && !IS_LOCAL(STflag[k]) && !IS_PARA(STflag[k]))
+   if (k > 0 && !IS_LOCAL(STflag[k-1]) && !IS_PARA(STflag[k-1]))
       k = 0;
    if (k != i+1)
       fprintf(stderr, "STpts2=%d, lookup=%d\n", k, i+1);

@@ -2,7 +2,7 @@ ROUTINE ATL_USERMM;
    PARAMS :: M, N, K, alpha, A0, lda, B, ldb, beta, C, ldc;
    INT    :: M, N, K, lda, ldb, ldc;
    DOUBLE :: alpha, beta;
-   DOUBLE_PTR :: A0;
+   DOUBLE_PTR :: A0, B, C;
 ROUT_LOCALS
    INT    :: i, j, k;
    DOUBLE :: a0, b0, c00;
@@ -29,9 +29,9 @@ ROUT_BEGIN
          B = B - M;
          C += 1;
          i = i - 1;
-      if (i > 0) GOTO MLOOP;
+      IF (i > 0) GOTO MLOOP;
       j = j - 1;
       B += ldb;
       C += ldc;
-   if (j > 0) GOTO NLOOP;
+   IF (j > 0) GOTO NLOOP;
 ROUT_END

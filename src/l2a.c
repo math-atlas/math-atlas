@@ -2080,7 +2080,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
         fko_error(__LINE__, "Unknown instruction %d after %s\n", ip->inst[0],
                   ap->ln);
       }
-      fprintf(stderr, "%s", ap->ln); 
+/*      fprintf(stderr, "%s", ap->ln);  */
       ap = ap->next;
    }
    }
