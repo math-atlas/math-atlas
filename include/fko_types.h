@@ -61,6 +61,8 @@ struct bblock
    struct loopq *loop;      /* set for header of loop only */
    struct blist *preds;     /* predecessors to this block */
    ushort dom;              /* dominators of this block */
+   ushort uses, defs;       /* uses and defs for this block */
+   ushort ins, outs;        /* live vars coming in and leaving block */
 };
 
 typedef struct blist BLIST;

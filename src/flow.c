@@ -81,7 +81,7 @@ BBLOCK *NewBasicBlock(BBLOCK *up, BBLOCK *down)
    bp->usucc = bp->csucc = NULL;
    bp->ainst1 = bp->ainstN = bp->inst1 = bp->instN = NULL;
    bp->preds = NULL;
-   bp->dom = 0;
+   bp->ins = bp->outs = bp->uses = bp->defs = bp->dom = 0;
    bp->loop = NULL;
    return(bp);
 }
