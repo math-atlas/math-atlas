@@ -14,10 +14,11 @@ file=fko_tt.s
 URT=DOT
 FKO = ../bin/fko
 test=1
+uopt=
 
 go : $(FKO)
 	$(MAKE) build URT=`echo $(rout) | tr 'a-z' 'A-Z'`
-	./TestTime.py $(pre) $(rout) $(file) $(N) $(test)
+	./TestTime.py $(pre) $(rout) $(file) $(N) $(test) $(uopt)
 build :
 	$(FKO) $(KFLAGS) -o $(L1Tdir)/../$(URT)/$(file) \
                ../blas/$(pre)$(rout).b

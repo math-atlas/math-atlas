@@ -7,6 +7,7 @@
 FILE *fpST=NULL, *fpIG=NULL, *fpLIL=NULL, *fpOPT=NULL, *fpLOOPINFO=NULL;
 int FUNC_FLAG=0; 
 int DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0, DTx87=0, DTx87d=0;
+int DTnzerods=0, DTabsds=0, DTnzeros=0, DTabss=0;
 int FKO_FLAG;
 int PFISKIP=0, PFINST=(-1), PFCHUNK=1;
 static char fST[1024], fLIL[1024], fmisc[1024];
@@ -854,6 +855,9 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
       case CopyProp:
          nchanges += DoCopyProp(scope);
          break;
+      case EnforceLoadStore:
+         nchanges += DoEnforceLoadStore(scope);
+         break;
       case DoNothing:  /* dummy opt does nothing */
          break;
       case UselessLabElim:
@@ -1107,25 +1111,30 @@ void DumpOptsPerformed(FILE *fpout, int verbose)
 struct optblkq *DefaultOptBlocks(void)
 /*
  * Defaults to command-line flags of:
- *     -L 1 0 4 gr 2 3 4 -G 2 10 3 bc uj ul -L 3 10 2 ra cp -G 4 10 2 ra cp
+ *     -L 1 0 6 ls gr 2 3 4 5 -G 2 10 3 bc uj ul -L 3 10 2 ra cp -G 4 0 1 ls 
+ *     -G 5 10 2 ra cp
  */
 {
    struct optblkq *base, *op;
 
    if (DO_VECT(FKO_FLAG))
    {
-      op = base = NewOptBlock(1, 0, 3, 0);
-      op->opts[0] = MaxOpt+2;
-      op->opts[1] = MaxOpt+3;
-      op->opts[2] = MaxOpt+4;
-   }
-   else
-   {
-      op = base = NewOptBlock(1, 0, 4, 0);
-      op->opts[0] = GlobRegAsg;
+      op = base = NewOptBlock(1, 0, 5, 0);
+      op->opts[0] = EnforceLoadStore;
       op->opts[1] = MaxOpt+2;
       op->opts[2] = MaxOpt+3;
       op->opts[3] = MaxOpt+4;
+      op->opts[4] = MaxOpt+5;
+   }
+   else
+   {
+      op = base = NewOptBlock(1, 0, 6, 0);
+      op->opts[0] = EnforceLoadStore;
+      op->opts[1] = GlobRegAsg;
+      op->opts[2] = MaxOpt+2;
+      op->opts[3] = MaxOpt+3;
+      op->opts[4] = MaxOpt+4;
+      op->opts[5] = MaxOpt+5;
    }
 
    op->next = NewOptBlock(2, 10, 3, IOPT_GLOB);
@@ -1139,7 +1148,11 @@ struct optblkq *DefaultOptBlocks(void)
    op->opts[0] = RegAsg;
    op->opts[1] = CopyProp;
 
-   op->next = NewOptBlock(4, 10, 2, IOPT_GLOB);
+   op->next = NewOptBlock(4, 0, 1, IOPT_GLOB);
+   op = op->next;
+   op->opts[0] = EnforceLoadStore;
+
+   op->next = NewOptBlock(5, 10, 2, IOPT_GLOB);
    op = op->next;
    op->opts[0] = RegAsg;
    op->opts[1] = CopyProp;

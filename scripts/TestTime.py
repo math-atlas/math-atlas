@@ -18,7 +18,7 @@ opt = "-X 1 -Y 1 -Fx 16 -Fy 16 " + uopt
 
 nargs = len(sys.argv)
 if nargs < 4:
-   print 'USAGE: %s <pre> <blas> <file> [<N> <TEST> <CC> <CCF>]' % sys.argv[0]
+   print 'USAGE: %s <pre> <blas> <file> [<N> <uopt> <TEST> <CC> <CCF>]' % sys.argv[0]
    sys.exit(1)
 
 pre = sys.argv[1]
@@ -28,10 +28,12 @@ if nargs > 4 :
    N = int(sys.argv[4])
    if nargs > 5 :
       TEST = int(sys.argv[5])
-      if nargs > 6 :
-         CC = sys.argv[6]
-         if nargs > 7 :
-            CCF = sys.argv[7]
+   if nargs > 6 :
+      uopt = sys.argv[6]
+      if nargs > 7 :
+         CC = sys.argv[7]
+         if nargs > 8 :
+            CCF = sys.argv[8]
 
 [t0,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, file, cc=CC, ccf=CCF, opt=opt)
 if TEST:

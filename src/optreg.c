@@ -301,6 +301,27 @@ int FindLiveregs(INSTQ *here)
    return(liveregs);
 }
 
+int GetRegForAsg(int type, int iv, int livereg)
+{
+   SetVecAll(iv, 0);
+   SetAllTypeReg(iv, type);
+   BitVecComb(iv, iv, livereg, '-');
+   SetVecBit(iv, REG_SP-1, 0);
+/*
+ * Don't use [f,d]retreg (%st) for x86-32
+ */
+   #ifdef X86_32
+      SetVecBit(iv, FRETREG-1, 0);
+      SetVecBit(iv, DRETREG-1, 0);
+   #endif
+   return(AnyBitsSet(iv));
+}
+
+int GetRegFindLR(int type, int iv, INSTQ *here)
+{
+   return(GetRegForAsg(type, iv, FindLiveregs(here)));
+}
+
 void NewIGTable(int chunk)
 {
    int i, n;
@@ -1113,6 +1134,9 @@ int DoIGRegAsg(int N, IGNODE **igs)
    for (i=0; i < N; i++)
    {
       ig = igs[i];
+#if 1
+      ig->reg = GetRegForAsg(FLAG2PTYPE(STflag[ig->var-1]), iv, ig->liveregs);
+#else
       SetVecAll(iv, 0);
       SetAllTypeReg(iv, FLAG2PTYPE(STflag[ig->var-1]));
       BitVecComb(iv, iv, ig->liveregs, '-');
@@ -1128,6 +1152,7 @@ int DoIGRegAsg(int N, IGNODE **igs)
  *    If we have a register left, assign it
  */
       ig->reg = AnyBitsSet(iv);
+#endif
       if (ig->reg)
       {
          ivused = Reg2Regstate(ig->reg);
@@ -1334,7 +1359,7 @@ int DoRegAsgTransforms(IGNODE *ig)
  */
          else
          {
-            ip = PrintComment(bl->blk, ip, NULL, "Inserted LD from %s\n",
+            ip = PrintComment(bl->blk, ip, NULL, "Inserted LD from %s",
                               STname[ig->var-1] ? STname[ig->var-1] : "NULL");
             #if IFKO_DEBUG_LEVEL > 1
                fprintf(stderr, "ireg=%s getting LD ip=%d, nr=%d, nw=%d!\n\n", 
@@ -2323,19 +2348,111 @@ int DoCopyProp(BLIST *scope)
    return(CHANGE);
 }
 
-#if 0
-int EnforceLoadStore(BLIST *scope)
+int DoEnforceLoadStore(BLIST *scope)
 /*
  * transforms all instructions that directly access memory to LD/ST followed
  * by inst operating on registers
+ * NOTE: presently can't do this, because then reg asg deletes store of
+ *       absval to mem, which is needed for cleanup; you wind up with
+ *       illegal reg move (from VFREG to FREG)
  */
 {
-   extern int FKO_BVTMP;
+   BLIST *bl;
+   INSTQ *ip, *ipN;
+   enum inst inst;
+   int j, ir;
+   int nchanges=0;
+   short op;
+   extern int FKO_BVTMP, DTabs, DTabsd, DTnzero, DTnzerod;
+   extern int DTabss, DTabsds, DTnzeros, DTnzerods;
 
+   if (!FKO_BVTMP)
+      FKO_BVTMP = NewBitVec(TNREG);
    if (!INDEADU2D)
       CalcAllDeadVariables();
    else if (!CFUSETU2D || !CFU2D || !INUSETU2D)
       CalcInsOuts(bbbase);
 
+   for (bl=scope; bl; bl = bl->next)
+   {
+      for (ip=bl->blk->ainst1; ip; ip = ip->next)
+      {
+         inst = ip->inst[0];
+         if (ACTIVE_INST(inst) && !IS_LOAD(inst) && !IS_STORE(inst) &&
+             inst != LABEL)
+         {
+            op = ip->inst[3];
+            if (op < 1)
+               op = 0;
+            else if (!IS_DEREF(STflag[op-1]))
+               op = 0;
+            #ifdef X86
+               if (inst == FABS)
+                  ip->inst[3] = op = SToff[DTabss-1].sa[2];
+               else if (inst == VFABS)
+                  ip->inst[3] = op = SToff[DTabs-1].sa[2];
+               else if (inst == FABSD)
+                  ip->inst[3] = op = SToff[DTabsds-1].sa[2];
+               else if (inst == VDABS)
+                  ip->inst[3] = op = SToff[DTabsd-1].sa[2];
+               else if (inst == FNEG)
+                  ip->inst[3] = op = SToff[DTnzeros-1].sa[2];
+               else if (inst == FNEGD)
+                  ip->inst[3] = op = SToff[DTnzerods-1].sa[2];
+               else
+            #endif
+            if (!op)
+            {
+               op = ip->inst[2];
+               if (!IS_DEREF(STflag[op-1]))
+                  op = 0;
+            }
+            if (inst == PREFR || inst == PREFW ||
+                inst == PREFRS || inst == PREFWS)
+               op = 0;
+            if (op > 0)
+            {
+               assert(ip->inst[1] < 0);  /* dest op must be register */
+               j = ireg2type(-ip->inst[1]);
+               ir = GetRegFindLR(j, FKO_BVTMP, ip);
+               if (ir)
+               {
+                  switch(j)
+                  {
+                  case T_INT:
+                     inst = LD;
+                     break;
+                  case T_FLOAT:
+                     inst = FLD;
+                     break;
+                  case T_DOUBLE:
+                     inst = FLDD;
+                     break;
+                  case T_VFLOAT:
+                     inst = VFLD;
+                     break;
+                  case T_VDOUBLE:
+                     inst = VDLD;
+                     break;
+                  }
+                  ipN = InsNewInst(NULL, NULL, ip, inst, -ir, op, 0);
+                  if (op == ip->inst[3])
+                     ip->inst[3] = -ir;
+                  else
+                  {
+                     assert(ip->inst[2] == op);
+                     ip->inst[2] = -ir;
+                  }
+                  CalcThisUseSet(ipN);
+                  CalcThisUseSet(ip);
+                  nchanges++;
+               }
+            }
+         }
+      }
+   }
+/* fprintf(stderr, "ELS, NCHANGES=%d\n\n",nchanges); */
+   if (nchanges)
+      CFUSETU2D = INDEADU2D = 0;
+   return(nchanges);
 }
-#endif
