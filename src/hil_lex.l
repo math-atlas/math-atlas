@@ -9,6 +9,7 @@ DCON	{ICON}"."{ICON}([d,D]ICON)?
 ID	[A-Za-z][A-Za-z0-9_]*
 ROUTNAM "ROUTINE"[ \t\v]+ID
 %%
+"//"[^\n]*\n    {} /* May want to pass comment to LIL later */
 [\t \v]		{}
 [\n]    {lnno++;}
 "-" |
