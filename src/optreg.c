@@ -478,17 +478,36 @@ int AsgGlobalLoopVars(LOOPQ *loop, short *iregs, short *fregs, short *dregs)
 {
    int iv, i, j, k, n;
    BLIST *bl;
+   INSTQ *ip;
    short *sa, *s;
    extern int FKO_BVTMP;
 
+/*
+ * Find all variables set in list
+ */
+   if (!loop->sets) loop->sets = NewBitVec(TNREG+32);
+   else SetVecAll(loop->sets, 0);
+   for (bl=loop->blocks; bl; bl = bl->next)
+   {
+      for (ip=bl->blk->inst1; ip; ip = ip->next)
+         BitVecComb(loop->sets, loop->sets, ip->set, '|');
+   }
 /*
  * Find regs and vars live on loop entry and exit(s)
  */
    if (!loop->outs) loop->outs = NewBitVec(TNREG+32);
    else SetVecAll(loop->outs, 0);
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(TNREG+32);
+   else SetVecAll(FKO_BVTMP, 0);
+   for (bl=loop->posttails; bl; bl = bl->next)
+      BitVecComb(FKO_BVTMP, FKO_BVTMP, bl->blk->ins, '|');
    for (bl=loop->tails; bl; bl = bl->next)
       BitVecComb(loop->outs, loop->outs, bl->blk->outs, '|');
+   BitVecComb(loop->outs, loop->outs, FKO_BVTMP, '&');
    FKO_BVTMP = iv = BitVecComb(FKO_BVTMP, loop->outs, loop->header->ins, '|');
+   k = STstrlookup("_DEREF");
+   SetVecBit(iv, k+TNREG-1, 0);
+fprintf(stderr, "\nhost/push = %s\n\n", BV2VarNames(iv));
 
    sa = BitVec2Array(iv, 1);
    for (n=0, j=i=1; i <= sa[0]; i++) 
@@ -502,6 +521,7 @@ int AsgGlobalLoopVars(LOOPQ *loop, short *iregs, short *fregs, short *dregs)
       {
          k = STflag[k-1-TNREG];
          k = FLAG2PTYPE(k);
+fprintf(stderr, "var I = %d\n", sa[i] - TNREG + 1);
          if (k == T_INT)
          {
             s = iregs;
@@ -524,7 +544,7 @@ int AsgGlobalLoopVars(LOOPQ *loop, short *iregs, short *fregs, short *dregs)
          }
          for (k=0; k != n && s[k]; k++);
          if (k != n)
-            s[k] = sa[i] - TNREG + 1;
+            s[k] = sa[i] - TNREG;
          else
          {
             fko_error(__LINE__, "Out of regs in global asg, var=%s, file=%s\n",
@@ -581,14 +601,25 @@ void FindInitRegUsage(BLIST *bp, short *iregs, short *fregs, short *dregs)
       if (j < TNREG)
       {
          if (j >= IREGBEG && j < IREGEND)
-            iregs[j-1] = -1;
+            iregs[j-IREGBEG] = -1;
          else if (j >= FREGBEG && j < FREGEND)
-            fregs[j-1] = -1;
+            fregs[j-FREGBEG] = -1;
          else if (j >= DREGBEG && j < DREGEND)
-            dregs[j-1] = -1;
+            dregs[j-DREGBEG] = -1;
       }
    }
    free(sp);
+fprintf(stderr, "\n%s(%d): reg usage:\n", __FILE__, __LINE__);
+fprintf(stderr, "   iregs =");
+for (i=0; i < IREGEND-IREGBEG; i++)
+   fprintf(stderr, " %d,", iregs[i]);
+fprintf(stderr, "\n   fregs =");
+for (i=0; i < FREGEND-FREGBEG; i++)
+   fprintf(stderr, " %d,", fregs[i]);
+fprintf(stderr, "\n   dregs =");
+for (i=0; i < DREGEND-DREGBEG; i++)
+   fprintf(stderr, " %d,", dregs[i]);
+fprintf(stderr, "\n\n");
 }
 
 int LoadStoreToMove(BLIST *blocks, int n, short *vars, short *regs)
@@ -633,7 +664,7 @@ int LoadStoreToMove(BLIST *blocks, int n, short *vars, short *regs)
  *       change LD instruction to MOV instruction
  */
             is = ip->inst[2];
-            for (i=0; i != n && is != vars[i]; i++);
+            for (i=0; i != n && is != SToff[vars[i]-1].sa[2]; i++);
             if (i != n)
             {
                changes++;
@@ -655,7 +686,7 @@ int LoadStoreToMove(BLIST *blocks, int n, short *vars, short *regs)
  *       change ST instruction to MOV instruction
  */
             is = ip->inst[1];
-            for (i=0; i != n && is != vars[i]; i++);
+            for (i=0; i != n && is != SToff[vars[i]-1].sa[2]; i++);
             if (i != n)
             {
                changes++;
@@ -689,11 +720,23 @@ void DoLoopGlobalRegAssignment(LOOPQ *loop)
 {
    short *sp;
    int i, j, n;
+   short k;
    short iregs[NIR], fregs[NFR], dregs[NDR]; 
    short *vars, *regs;
 
    FindInitRegUsage(loop->blocks, iregs, fregs, dregs);
    assert(!AsgGlobalLoopVars(loop, iregs, fregs, dregs));
+fprintf(stderr, "\n%s(%d): reg usage:\n", __FILE__, __LINE__);
+fprintf(stderr, "   iregs =");
+for (i=0; i < IREGEND-IREGBEG; i++)
+   fprintf(stderr, " %d,", iregs[i]);
+fprintf(stderr, "\n   fregs =");
+for (i=0; i < FREGEND-FREGBEG; i++)
+   fprintf(stderr, " %d,", fregs[i]);
+fprintf(stderr, "\n   dregs =");
+for (i=0; i < DREGEND-DREGBEG; i++)
+   fprintf(stderr, " %d,", dregs[i]);
+fprintf(stderr, "\n\n");
 /*
  * Find total number of global assignments done, and allocate space to hold
  * mapping
@@ -743,40 +786,81 @@ void DoLoopGlobalRegAssignment(LOOPQ *loop)
  */
    assert(loop->preheader);
    assert(loop->posttails);
+   PrintComment(loop->preheader, NULL, NULL, 
+                "START global asg preheader load");
+   PrintComment(loop->posttails->blk, NULL, loop->posttails->blk->inst1, 
+                "DONE  global asg sunk stores");
    for (i=0; i < NIR; i++)
    {
       if (iregs[i] > 0)
       {
+fprintf(stderr, "ihoisting/pushing %d, %s\n", iregs[i], STname[iregs[i]-1]);
+         k = SToff[iregs[i]-1].sa[2];
          if (BitVecCheck(loop->header->ins, iregs[i]+TNREG-1))
-            InsNewInst(loop->preheader, loop->preheader->instN, NULL, LD,
-                       -i-IREGBEG, iregs[i], 0);
-         if (BitVecCheck(loop->outs, iregs[i]+TNREG-1))
-            InsInstInBlockList(loop->posttails, 1, ST, -i-IREGBEG, 
-                               iregs[i], 0);
+            InsNewInst(loop->preheader, NULL, NULL, LD, -i-IREGBEG, k, 0);
+         if (BitVecCheck(loop->outs, iregs[i]+TNREG-1) && 
+             BitVecCheck(loop->sets, iregs[i]+TNREG-1))
+            InsInstInBlockList(loop->posttails, 1, ST, k, -i-IREGBEG, 0);
       }
    }
    for (i=0; i < NFR; i++)
    {
       if (fregs[i] > 0)
       {
+fprintf(stderr, "fhoisting/pushing %d, %s\n", fregs[i], STname[fregs[i]-1]);
+         k = SToff[fregs[i]-1].sa[2];
          if (BitVecCheck(loop->header->ins, fregs[i]+TNREG-1))
             InsNewInst(loop->preheader, loop->preheader->instN, NULL, FLD,
-                       -i-FREGBEG, fregs[i], 0);
-         if (BitVecCheck(loop->outs, fregs[i]+TNREG-1))
-            InsInstInBlockList(loop->posttails, 1, FST, -i-FREGBEG, 
-                               fregs[i], 0);
+                       -i-FREGBEG, k, 0);
+         if (BitVecCheck(loop->outs, fregs[i]+TNREG-1) &&
+             BitVecCheck(loop->sets, fregs[i]+TNREG-1))
+            InsInstInBlockList(loop->posttails, 1, FST, k, -i-FREGBEG, 0);
       }
    }
    for (i=0; i < NDR; i++)
    {
       if (dregs[i] > 0)
       {
+fprintf(stderr, "dhoisting/pushing %d, %s\n", dregs[i], STname[dregs[i]-1]);
+         k = SToff[dregs[i]-1].sa[2];
          if (BitVecCheck(loop->header->ins, dregs[i]+TNREG-1))
             InsNewInst(loop->preheader, loop->preheader->instN, NULL, FLDD,
-                       -i-DREGBEG, dregs[i], 0);
-         if (BitVecCheck(loop->outs, dregs[i]+TNREG-1))
-            InsInstInBlockList(loop->posttails, 1, FSTD, -i-DREGBEG, 
-                               dregs[i], 0);
+                       -i-DREGBEG, k, 0);
+         if (BitVecCheck(loop->outs, dregs[i]+TNREG-1) &&
+             BitVecCheck(loop->sets, dregs[i]+TNREG-1))
+            InsInstInBlockList(loop->posttails, 1, FSTD, k, -i-DREGBEG, 0);
       }
    }
+   PrintComment(loop->preheader, NULL, NULL, 
+                "DONE  global asg preheader load");
+   PrintComment(loop->posttails->blk, NULL, loop->posttails->blk->inst1, 
+                "START global asg sunk stores");
+   CFU2D = CFUSETU2D = INUSETU2D = INDEADU2D = 0;
 }
+
+#if 0
+void SaveRestoreRegs(BBLOCK *bbase)
+/*
+ * Inserts instructions to save and restore callee-saved regs
+ */
+{
+   INSTQ *ip;
+   int i, ni, nf, nd;
+   int isav[TNIR], fsav[TNFR], dsav[TNDR];
+/* 
+ * Find place to Insert save statements
+ */
+   FindRegUsage(bbase, &ni, isav, &nf, fsav, &nd, dsav);
+   RemoveNosaveregs(IREGBEG, TNIR, isav, icalleesave);
+   ni = GetRegSaveList(IREGBEG, ni, isav);
+   RemoveNosaveregs(FREGBEG, TNFR, fsav, fcalleesave);
+   nf = GetRegSaveList(FREGBEG, nf, fsav);
+   RemoveNosaveregs(DREGBEG, TNDR, dsav, dcalleesave);
+   nd = GetRegSaveList(DREGBEG, nd, dsav);
+
+   for (ip=bbase->inst1; ip; ip = ip->next)
+      if (ip->inst[0] == CMPFLAG && ip->inst[1] == CF_REGSAVE) break;
+   assert(ip);
+   PrintMajorComment(bbase, ip, NULL, "Save registers");
+}
+#endif

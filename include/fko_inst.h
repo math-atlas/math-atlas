@@ -6,6 +6,7 @@ enum comp_flag
  * CMPFLAG, <enum comp_flag>, <info1>, <info2>
  */
 {
+   CF_REGSAVE,
    CF_LOOP_INIT,  /* loop# */
    CF_LOOP_BODY,
    CF_LOOP_UPDATE,

@@ -626,7 +626,7 @@ LOOPQ *NewLoop(int flag)
    lp->preheader = lp->header = NULL;
    lp->blocks = NULL;
    lp->tails = lp->posttails = NULL;
-   lp->blkvec = lp->outs = 0;
+   lp->blkvec = lp->outs = lp->sets = 0;
    lp->iglist = NULL;
    lp->next = NULL;
    return(lp);
@@ -770,6 +770,9 @@ void SortLoops(short maxdepth)
       optloop->blkvec = optloop->next->blkvec;
       optloop->tails = optloop->next->tails;
       optloop->posttails = optloop->next->posttails;
+      optloop->outs = optloop->next->outs;
+      optloop->next->outs = 0;
+      optloop->next->blocks = NULL;
       KillLoop(optloop->next);
       optloop->next = NULL;
    }
@@ -925,6 +928,8 @@ void AddLoopComments()
    {
       bp = lp->header;
       PrintComment(bp, NULL, bp->inst1, "===============================");
+      PrintComment(bp, NULL, bp->inst1, "   live outs = %s",
+                   BV2VarNames(lp->outs));
       PrintComment(bp, NULL, bp->inst1, "   blocks = %s",
                    PrintVecList(lp->blkvec, 1));
       PrintComment(bp, NULL, bp->inst1, "   posttails=%s", 

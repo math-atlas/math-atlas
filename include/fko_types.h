@@ -89,10 +89,11 @@ struct loopq
    short *aaligned;   /* arrays that have known alignment */
    uchar *abalign;    /* alignments of above arrays */
    BBLOCK *preheader, *header;
-   BLIST *blocks;     /* blocks in the loop */
    BLIST *tails, *posttails;
+   BLIST *blocks;     /* blocks in the loop */
    ushort blkvec;     /* bitvec equivalent of blocks */
    ushort outs;       /* reg/var live on loop exit */
+   ushort sets;       /* reg/var set in loop */
    struct iglist *iglist;
    struct loopq *next;
 };

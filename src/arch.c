@@ -1217,6 +1217,7 @@ fprintf(stderr, "tsize=%d, Loff=%d, Soff=%d lsize=%d\n", tsize, Loff, Soff, lsiz
       InsNewInst(NULL, NULL, oldhead, ST, AddDerefEntry(-REG_SP, 0, 0, SAVESP), 
                  rsav, 0);
    }
+   InsNewInst(NULL, NULL, oldhead, CMPFLAG, CF_REGSAVE, 0, 0);
 fprintf(stderr, "Local offset=%d\n", Loff);
    CorrectLocalOffsets(Loff);
    InsNewInst(NULL, NULL, oldhead, COMMENT, 0, 0, 0);

@@ -1546,14 +1546,36 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #endif
          break;
       case CMPFLAG:
+         switch (op1)
+         {
+         case CF_REGSAVE:
+            sptr = "REGISTER SAVE FLAG";
+            break;
+         case CF_LOOP_INIT:
+            sptr = "LOOP INIT FLAG";
+            break;
+         case CF_LOOP_BODY:
+            sptr = "LOOP BODY FLAG";
+            break;
+         case CF_LOOP_UPDATE:
+            sptr = "LOOP UPDATE FLAG";
+            break;
+         case CF_LOOP_END:
+            sptr = "LOOP END FLAG";
+            break;
+         }
          #ifdef X86
-	    ap->next = PrintAssln("# CMPFLAG %d %d %d\n", op1, op2, op3);
+	    ap->next = PrintAssln("# CMPFLAG %d %d %d; %s\n",
+                                  op1, op2, op3, sptr);
          #elif defined(SPARC)
-	    ap->next = PrintAssln("! CMPFLAG %d %d %d\n", op1, op2, op3);
+	    ap->next = PrintAssln("! CMPFLAG %d %d %d; %s\n",
+                                  op1, op2, op3, sptr);
          #elif defined(PPC)
-	       ap->next = PrintAssln("# CMPFLAG %d %d %d\n", op1, op2, op3);
+	       ap->next = PrintAssln("# CMPFLAG %d %d %d; %s\n",
+                                     op1, op2, op3, sptr);
          #elif defined(FKO_ANSIC)
-            ap->next = PrintAssln("/* CMPFLAG %d %d %d */\n", op1, op2, op3);
+            ap->next = PrintAssln("/* CMPFLAG %d %d %d; %s */\n",
+                                  op1, op2, op3, sptr);
          #endif
          break;
       case FMOVD:
@@ -1595,7 +1617,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
 	       if (sptr[1] == 's' && sptr[2] == 't')
 	          fko_error(__LINE__, "WTF in %s!", __FILE__);
 	       else
-                  ap->next = PrintAssln("\tmovlpd\t%s,%s\n",
+                  ap->next = PrintAssln("\tmovsd\t%s,%s\n",
 	                                archdregs[-DREGBEG-op2], sptr);
             #elif defined(SPARC)
                ap->next = PrintAssln("\tfmovd\t%s,%s\n",archdregs[-DREGBEG-op1],

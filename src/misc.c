@@ -10,6 +10,21 @@ int const2shift(int c)
    return(-1);
 }
 
+INSTQ *PrintMajorComment(BBLOCK *blk, INSTQ *prev, INSTQ *next, ...)
+{
+   va_list argptr;
+   char *form;
+   char ln[256];
+
+   va_start(argptr, next);
+   form = va_arg(argptr, char*);
+   vsprintf(ln, form, argptr);
+   va_end(argptr);
+   InsNewInst(blk, prev, next, COMMENT, 0, 0, 0);
+   InsNewInst(blk, prev, next, COMMENT, STstrconstlookup(ln), 0, 0);
+   return(InsNewInst(blk, prev, next, COMMENT, 0, 0, 0));
+}
+
 INSTQ *PrintComment(BBLOCK *blk, INSTQ *prev, INSTQ *next, ...)
 {
    va_list argptr;
