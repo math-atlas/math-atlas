@@ -431,7 +431,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tmovq\t%s,%s\n", archiregs[-IREGBEG-op2],
                                   GetDeref(op1));
          #elif defined(X86)
-	    #if 0
+	    #if 1
             ap->next = PrintAssln("\tmovl\t%s,%s\n", archiregs[-IREGBEG-op2],
                                   GetDeref(op1));
 	    #elif 1

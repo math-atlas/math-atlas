@@ -1005,20 +1005,16 @@ void Extern2Local(INSTQ *next, int rsav)
       }
       if (DTabs)
       {
-int jk;
          PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for abss");
          k = SToff[SToff[DTabs-1].sa[2]-1].sa[3];
          InsNewInst(NULL, NULL, next, MOV, -ir, STiconstlookup(0x7fffffff), 0);
          InsNewInst(NULL, NULL, next, ST, SToff[DTabs-1].sa[2], -ir, 0);
-jk = AddDerefEntry(-REG_SP, DTabs, -DTabs, k+4, DTabs);
          InsNewInst(NULL, NULL, next, ST,
-                    jk /*AddDerefEntry(-REG_SP, DTabs, -DTabs, k+4, DTabs)*/, -ir, 0);
-jk = AddDerefEntry(-REG_SP, DTabs, -DTabs, k+8, DTabs);
+                    AddDerefEntry(-REG_SP, DTabs, -DTabs, k+4, DTabs), -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    jk /*AddDerefEntry(-REG_SP, DTabs, -DTabs, k+8, DTabs)*/, -ir, 0);
-jk = AddDerefEntry(-REG_SP, DTabs, -DTabs, k+12, DTabs);
+                    AddDerefEntry(-REG_SP, DTabs, -DTabs, k+8, DTabs), -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    jk /*AddDerefEntry(-REG_SP, DTabs, -DTabs, k+12, DTabs)*/, -ir, 0);
+                    AddDerefEntry(-REG_SP, DTabs, -DTabs, k+12, DTabs), -ir, 0);
       }
       InsNewInst(NULL, NULL, next, COMMENT, STstrconstlookup("done archspec"), 0, 0);
    #endif

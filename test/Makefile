@@ -2,7 +2,7 @@ SHELL = /bin/tcsh
 CC = gcc
 CCFLAGS = -g
 IFKO = ../bin/fko
-KFLAGS = -U 2 -G 1 0 1 DN
+KFLAGS = -U 4
 
 all : ibuild fbuild dbuild hbuild irun frun drun hrun
 

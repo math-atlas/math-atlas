@@ -260,7 +260,7 @@ char *op2str(short op)
 {
    static int i=0;
    int flag;
-   static char lns[3][10];
+   static char lns[3][16];
    char *sptr;
 
    if (!op)

@@ -558,7 +558,13 @@ void RestoreFKOState(int isav)
 {
    char ln[1024];
    extern BBLOCK *bbbase;
+   extern struct locinit *ParaDerefQ;
 
+   if (isav < 2 && ParaDerefQ)
+   {
+      KillAllLocinit(ParaDerefQ);
+      ParaDerefQ = NULL;
+   }
    noptrec = 0;
    sprintf(ln, "%s%d", fST, isav);
    ReadSTFromFile(ln);
