@@ -369,7 +369,7 @@ void FPConstStore(INSTQ *next, short id, short con,
             InsNewInst(NULL, NULL, next, FZEROD, -dreg, 0, 0);
             InsNewInst(NULL, NULL, next, FSTD, SToff[id-1].sa[2], -dreg, 0);
          #else
-            i = SToff[SToff[id-1].sa[2]].sa[3];
+            i = SToff[SToff[id-1].sa[2]-1].sa[3];
             k = AddDerefEntry(-REG_SP, id, -id, i);
             InsNewInst(NULL, NULL, next, XOR, -reg, -reg, -reg);
             InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
@@ -590,6 +590,7 @@ void Extern2Local(INSTQ *next)
    #endif
    #ifdef X86_64
       reg1 = GetReg(T_INT);
+      while (iparareg[reg1-IREGBEG]) reg1 = GetReg(T_INT);
       fnam[0] = '@';
       fnam[1] = 'x';
       fnam[2] = 'm';
@@ -750,7 +751,9 @@ void Extern2Local(INSTQ *next)
                  0, 0);
    #endif
    #ifdef X86_32
-      reg1 = ir = GetReg(T_INT);
+      reg1 = GetReg(T_INT);
+      while (iparareg[reg1-IREGBEG]) reg1 = GetReg(T_INT);
+      ir = reg1;
       for (j=i=0; i < NPARA; i++)
       {
          USED = SToff[SToff[paras[i]].sa[2]-1].sa[0];
@@ -963,7 +966,11 @@ void Extern2Local(INSTQ *next)
                {
                   ii = AddDerefEntry(rsav, 0, 0, j*4);
                   ParaDerefQ = NewLocinit(ii, 0, ParaDerefQ);
-                  if (j == 8) ir = GetReg(T_INT);
+                  if (j == 8)
+                  {
+                     ir = GetReg(T_INT);
+                     while (iparareg[ir-IREGBEG]) ir = GetReg(T_INT);
+                  }
                   InsNewInst(NULL, NULL, next, LD, -ir, ii, 0);
                   InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], 
                              -ir, 0);
@@ -973,7 +980,11 @@ void Extern2Local(INSTQ *next)
          }
          else if (IS_FLOAT(flag))
          {
-            if (j == 8) ir = GetReg(T_INT);
+            if (j == 8)
+            {
+               ir = GetReg(T_INT);
+               while (iparareg[ir-IREGBEG]) ir = GetReg(T_INT);
+            }
             if (USED)
             {
                if (fc < 13)
@@ -999,7 +1010,11 @@ void Extern2Local(INSTQ *next)
          else
          {
             assert(IS_DOUBLE(flag));
-            if (j == 8 || j == 7) ir = GetReg(T_INT);
+            if (j == 8 || j == 7)
+            {
+               ir = GetReg(T_INT);
+               while (iparareg[ir-IREGBEG]) ir = GetReg(T_INT);
+            }
             if (USED)
             {
                if (fc < 13)
@@ -1032,6 +1047,7 @@ void Extern2Local(INSTQ *next)
  */
    if (!reg1) reg1 = GetReg(T_INT);
    InitLocalConst(next, reg1, freg, dreg);
+   GetReg(-1);
 }
 
 void FinalizeEpilogue(BBLOCK *bbase,
@@ -1219,7 +1235,10 @@ fprintf(stderr, "tsize=%d, Loff=%d, Soff=%d lsize=%d\n", tsize, Loff, Soff, lsiz
      "To ensure greater alignment than sp, save old sp to stack and move sp");
          rsav = GetReg(T_INT);
          rsav = GetReg(T_INT);
+         while (iparareg[rsav-IREGBEG]) rsav = GetReg(T_INT);
+#ifdef X86_64
          assert(rsav <= NSIR);
+#endif
          rsav = -rsav;
          InsNewInst(NULL, NULL, oldhead, MOV, rsav, -REG_SP, 0);
       }
@@ -1285,7 +1304,6 @@ fprintf(stderr, "prog=%d!, rout_name=%s\n", prog, rout_name);
 
    InsNewInst(NULL, NULL, oldhead, CMPFLAG, CF_REGSAVE, 0, 0);
    Extern2Local(oldhead);
-   GetReg(-1);
    InsNewInst(NULL, NULL, oldhead, COMMENT, 0, 0, 0);
    InsNewInst(NULL, NULL, oldhead, COMMENT, 
               STstrconstlookup("END OF FUNCTION PROLOGUE"), 0, 0);

@@ -802,8 +802,8 @@ void DoIf(char op, short id, short avar, char *labnam)
       default:
          fko_error(__LINE__, "Illegal fp comparitor '%c'\n", op);
       }
-      InsNewInst(NULL, NULL, NULL, cmp, FCC0, -freg0, -freg1);
-      InsNewInst(NULL, NULL, NULL, br, -PCREG, FCC0, label);
+      InsNewInst(NULL, NULL, NULL, cmp, -FCC0, -freg0, -freg1);
+      InsNewInst(NULL, NULL, NULL, br, -PCREG, -FCC0, label);
    }
 #else
       else

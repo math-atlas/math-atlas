@@ -388,7 +388,8 @@ void CorrectLocalOffsets(int ldist)
       if (IS_DEREF(STflag[i]) && SToff[i].sa[0] == -REG_SP && 
           SToff[i].sa[1] > 0 && SToff[i].sa[2] < 0)
       {
-fprintf(stderr, "correcting local %s, (%d,%d,%d)\n", STname[-1-SToff[i].sa[2]],
+fprintf(stderr, "correcting local %d,%s, (%d,%d,%d)\n", i+1, 
+        STname[-1-SToff[i].sa[2]],
         SToff[i].sa[3], ldist, SToff[i].sa[3]+ldist);
          SToff[i].sa[2] = 1;
          SToff[i].sa[3] += ldist;

@@ -11,9 +11,9 @@
     !defined(LINUX_X86_64) && !defined(SOLARIS_SPARC)
 /*   #define FKO_ANSIC32 */
 /*   #define LINUX_X86_64 */
-   #define LINUX_X86_32
+/*   #define LINUX_X86_32 */
 /*   #define SOLARIS_SPARC */
-/*   #define OSX_PPC */
+   #define OSX_PPC 
 #endif
 
 #if defined(FKO_ANSIC32) || defined(FKO_ANSIC64)
@@ -88,6 +88,8 @@
 #else
      {0, 1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0}; 
 #endif
+      int iparareg[TNIR] = {0, 0,0,0,0,0,0,0,0, 1,1,1,1,1,1,1,1,
+                            0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0};
       char *archiregs[TNIR] = 
          {"@sp", "@l0", "@l1", "@l2", "@l3", "@l4", "@l5", "@l6", "@l7",
           "@i0", "@i1", "@i2", "@i3", "@i4", "@i5", "@i6", "@i7", 
@@ -111,6 +113,8 @@
          };
    #else
       extern char *archiregs[TNIR], *archfregs[NFR], *archdregs[NDR];
+      extern int iparareg[NIR], icalleesave[NIR], icallersave[NIR], 
+                 fcalleesave[TNFR], fcallersave[TNFR];
    #endif
    #define dcallersave fcallersave
    #define dcalleesave fcalleesave
@@ -131,6 +135,7 @@
    #ifdef ARCH_DECLARE
       int icallersave[NIR] = {0, 1, 1, 1, 0, 0, 0, 0};
       int  icalleesave[NIR] = {0, 0, 0, 0, 1, 1, 1, 1};
+      int iparareg[NIR] = {0,0,0,0,0,0,0,0};
       char *archiregs[NIR] = 
       {"@esp", "@edx", "@ecx", "@eax", "@ebp", "@ebx", "@esi", "@edi"};
       int  fcallersave[TNFR] = {1,1,1,1,1,1,1,1, 1};
@@ -140,6 +145,8 @@
        "@st"};
    #else
       extern char *archiregs[NIR], *archfregs[TNFR];
+      extern int iparareg[NIR], icalleesave[NIR], icallersave[NIR], 
+                 fcalleesave[TNFR], fcallersave[TNFR];
    #endif
    #define archdregs archfregs
    #define dcallersave fcallersave
@@ -165,6 +172,7 @@
       {"@esp", "@edx", "@ecx", "@eax", "@esi", "@edi", "@ebp", "@ebx"};
       int  icallersave[NIR] = {0, 1,1,1,1,1,0,0, 1,1,1,1, 0,0,0,0};
       int  icalleesave[NIR] = {0, 0,0,0,0,0,1,1, 0,0,0,0, 1,1,1,1};
+      int iparareg[NIR] = {0,0,0,0,1,1,0,0, 1,1,0,0,0,0,0,0};
       char *archiregs[NIR] = 
       {"@rsp", "@rdx", "@rcx", "@rax", "@rsi", "@rdi", "@rbp", "@rbx",
        "@r8", "@r9", "@r10", "@r11", "@r12", "@r13", "@r14", "@r15"};
@@ -176,6 +184,8 @@
        "@xmm15"};
    #else
       extern char *archiregs[NIR], *archfregs[NFR], *archsregs[NSR];
+      extern int iparareg[NIR], icalleesave[NIR], icallersave[NIR], 
+                 fcalleesave[NFR], fcallersave[NFR];
    #endif
    #define archdregs archfregs
    #define dcallersave fcallersave
@@ -220,6 +230,8 @@
           {0, 1,1,1,1,1,1,1,1,1,1, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 1};
          int  icalleesave[TNIR] = 
           {0, 0,0,0,0,0,0,0,0,0,0, 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, 0};
+         int iparareg[TNIR] = {0,0,1,1,1,1,1,1,1,1,0, 0,0,0,0,0,0,0,0,0,
+                               0,0,0,0,0,0,0,0,0, 0,0};
          char *archiregs[TNIR] = 
             {"r1", "r11", "r3", "r4", "r5", "r6", "r7", "r8", "r9","r10","r12",
              "r13", "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21",
@@ -237,6 +249,8 @@
       #else
          extern char *archiregs[TNIR], *archfregs[NFR], 
                      *ICCREGS[NICC], *FCCREGS[NFCC];
+         extern int iparareg[TNIR], icalleesave[TNIR], icallersave[TNIR], 
+                    fcalleesave[NFR], fcallersave[NFR];
       #endif
    #endif
    #define archdregs archfregs
