@@ -281,7 +281,8 @@
                     fcalleesave[NFR], fcallersave[NFR];
       #endif
    #endif
-   #define archvfregs archvdregs
+   #define archvfregs archfregs
+   #define archvdregs archfregs
    #define archdregs archfregs
    #define dcallersave fcallersave
    #define dcalleesave fcalleesave

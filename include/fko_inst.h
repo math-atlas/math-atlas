@@ -139,7 +139,21 @@ enum inst
  * Double precision vector instructions
  * [memA] is a vector-aligned mem @ [mem] is any alignment
  */
+   VDZERO,                     /* [vr0]        : vr0[0:N] = 0.0 */
    VDLD,                       /* [vr0], [memA]  : vr0 = mem */
+   VDLDS,                      /* [vr0], [mem]  :  vr0[0] = mem; vr0[1] = 0 */
+   VDLDL,                      /* [vr], [mem]   : vr[0] = mem; vr[1] = vr[1] */
+   VDLDH,                      /* [vr], [mem]   : vr[0] = vr[0]; vr[1] = mem */
+   VDST,                       /* [memA], vr0    : mem = vr0 */
+   VDSTS,                      /* [mem], [vr0]  :  mem = vr[0] */
+   VDMOV,                      /* [vr0], [vr1]   : vr0 = vr1 */
+   VDADD,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 + vr2 */
+   VDMUL,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
+   VDABS,                      /* [vr0], [vr1] : vr0 = abs(vr1) */
+   VDSHUF,                     /* [vr0], [vr1], [int32]; vr0 = shuf(vr1|vr0) */
+          /* [int32] is split into 8 4 bit words; 1st word indicates which */
+          /* should reside in vr0[0], 4th in vr0[3];  Words are numbered */
+          /* starting in vr0[0], and ending in vr1[N], N=veclen-1 */
 /*
  * Vector instructions, add to these later (double, scalar).
  */

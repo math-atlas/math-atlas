@@ -277,6 +277,15 @@ struct assmln *DumpData(void)
 }
 #endif
 
+static uchar *imap2cmap(int imap)
+{
+   static uchar ch[8];
+   int i;
+
+   for (i=0; i < 8; i++, imap >>= 4)
+      ch[i] = imap & 0x0000000F;
+   return(ch);
+}
 struct assmln *lil2ass(BBLOCK *bbase)
 {
    INSTQ *ip;
@@ -1769,10 +1778,30 @@ struct assmln *lil2ass(BBLOCK *bbase)
 	                       archvdregs[-VDREGBEG-op1]);
          break;
       case VDZERO:
-         ap->next = PrintAssLn("\txorpd\t%s,%s\n", archvdregs[-VDREGBEG-op1],
+         ap->next = PrintAssln("\txorpd\t%s,%s\n", archvdregs[-VDREGBEG-op1],
                                archvdregs[-VDREGBEG-op1]);
          break;
       case VDSHUF:  /* tough, leave for last */
+         cp = imap2cmap(SToff[op3-1].i);
+         if (cp[0] == 0 && cp[1] == 2)
+            ap->next = PrintAssln("\tunpcklpd\t%s,%s\n", 
+               archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
+         else if (cp[0] == 1 && cp[1] == 3)
+            ap->next = PrintAssln("\tunpckhpd\t%s,%s\n", 
+               archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
+         else if (cp[0] < 2 && cp[1] > 1 && cp[1] < 4) /* shufpd */
+         {
+            i = cp[0];
+            if (cp[1] == 3)
+               i |= 2;
+            ap->next = PrintAssln("\tshufpd\t$%d,%s,%s\n", i,
+               archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
+         }
+         else
+            fko_error(__LINE__, "No such shuffle inst, imap=%d,%d!\n",
+                      cp[0], cp[1]);
+         break;
+         
    #endif
 /*
  * Only x86 and PowerPC have single prec vector instructions
