@@ -37,6 +37,7 @@
 #include "fko_arch.h"
 
 #ifdef IFKO_DECLARE
+   BBLOCK *bbbase=NULL;
    char rout_name[128];
    int rout_flag=0;
    int FKO_FLAG=0;
@@ -49,6 +50,7 @@
 
     int FKO_UR=0; /* unroll factor */
 #else
+   extern BBLOCK *bbbase;
    extern char rout_name[128];
    extern int rout_flag, FKO_FLAG;
    extern int CFU2D, CFDOMU2D, CFUSETU2D, INUSETU2D, INDEADU2D;

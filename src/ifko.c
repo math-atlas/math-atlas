@@ -706,14 +706,12 @@ int DoOptBlock(BLIST *gscope, BLIST *lscope, struct optblkq *op)
             break;
          tnc += nc;
       }
-      if (!nc)
+      if (nc)
          fprintf(stderr, "On last (%d) iteration, still had %d changes!\n",
                  maxN, nc);
    }
    if (op->next)
-   {
       tnc += DoOptBlock(gscope, lscope, op->next);
-   }
    return(tnc);
 }
 
@@ -734,6 +732,7 @@ int PerformOptN(int SAVESP, struct optblkq *optblks)
    INDEADU2D = CFUSETU2D = 0;
    return(nc);
 }
+
 int PerformOpt(int SAVESP)
 /*
  * Returns 0 on success, non-zero on failure
@@ -847,7 +846,7 @@ void DumpOptsPerformed(FILE *fpout, int verbose)
          }
          else
             ch = 'L';
-         fprintf(fpout, "%3d. %c %s\n", i, ch, optmnem[k]);
+         fprintf(fpout, "%3d. %c %s\n", i+1, ch, optmnem[k]);
       }
    }
 }

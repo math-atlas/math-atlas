@@ -747,6 +747,11 @@ int CalcScopeIG(BLIST *scope)
    short *sp;
    int i, j;
 
+   if (!INDEADU2D)
+      CalcAllDeadVariables();
+   else if (!CFUSETU2D || !CFU2D || !INUSETU2D)
+      CalcInsOuts(bbbase);
+
 /*
  * Set blkvec to reflect all blocks in scope, and calculate each block's IG
  */
@@ -2070,6 +2075,9 @@ INSTQ *CopyPropTrans(BLIST *scope, int scopeblks, BBLOCK *blk, INSTQ *ipret)
    }
    if (!INDEADU2D)
       CalcAllDeadVariables();
+   else if (!CFUSETU2D || !CFU2D || !INUSETU2D)
+      CalcInsOuts(bbbase);
+
    mov = ipret->inst[0];
 /*
  * Do not do copy prop if src or dest is x87 reg

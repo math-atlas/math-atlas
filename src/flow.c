@@ -1,7 +1,5 @@
 #include "ifko.h"
 
-BBLOCK *bbbase=NULL;
-
 BLIST *NewBlockList(BBLOCK *blk, BLIST *next)
 {
    BLIST *lp;
