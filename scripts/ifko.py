@@ -198,7 +198,7 @@ def ifko0(l1bla, pre, N):
 #  Find performance of best case
 #
    fkocmnd.callfko(fko, KFLAGS)
-   [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+   [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, rout, N, "fkorout.s", 
                         "gcc", "-x assembler-with-cpp", opt=opt)
    print "\n\n   BEST FLAGS FOUND (%f.2) = %s" % (mf,
          fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS))
