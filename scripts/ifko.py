@@ -276,7 +276,6 @@ def ifko0(l1bla, pre, N):
    testlist.append("writeNT")
 #
 #  Don't try prefetching non-temporal arrays
-#  HERE HERE: need to take wnt out of pfarr
 #
    if len(wnt) > 0:
       mat = FindMatchList(fparrs, wnt)
