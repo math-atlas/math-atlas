@@ -778,22 +778,14 @@ static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
    {
       if (IS_CONST(STflag[I0-1]))
          *ipinit = ip = NewInst(NULL, NULL, NULL, MOV, -r0, 
-             STiconstlookup(SToff[I0-1].i - (unroll>1) ? unroll-1 : 0), 0);
+                                STiconstlookup(SToff[I0-1].i), 0);
       else
-      {
          *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r0, SToff[I0-1].sa[2],0);
-         if (unroll > 1)
-         {
-            ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, 
-                               STiconstlookup(unroll-1));
-            ip = ip->next;
-         }
-      }
       inc = STiconstlookup(-SToff[inc-1].i);
    }
    else if (IS_CONST(STflag[N-1]) && IS_CONST(STflag[I0-1]))
    {
-      i = SToff[N-1].i - SToff[I0-1].i - (unroll>1) ? unroll-1 : 0;
+      i = SToff[N-1].i - SToff[I0-1].i;
       *ipinit = ip = NewInst(NULL, NULL, NULL, MOV, -r0, STiconstlookup(i), 0);
    }
    else
@@ -803,28 +795,14 @@ static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
          *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r0, SToff[N-1].sa[2], 0);
          if (SToff[I0-1].i)
          {
-            if (unroll < 2)
-               ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, I0);
-            else
-               ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, 
-                                  STiconstlookup(SToff[I0].i-unroll+1));
-            ip = ip->next;
-         }
-         else if (unroll > 1)
-         {
-            ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, 
-                               STiconstlookup(unroll-1));
+            ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, I0);
             ip = ip->next;
          }
       }
       else if (IS_CONST(STflag[N-1]))
       {
          *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r1, SToff[I0-1].sa[2],0);
-         if (unroll < 2)
-            ip->next = NewInst(NULL, NULL, NULL, MOV, -r0, N, 0);
-         else
-            ip->next = NewInst(NULL, NULL, NULL, MOV, -r0, 
-                               STiconstlookup(SToff[N-1].i-unroll+1), 0);
+         ip->next = NewInst(NULL, NULL, NULL, MOV, -r0, N, 0);
          ip = ip->next;
          ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, -r1);
          ip = ip->next;
@@ -836,15 +814,40 @@ static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
          ip = ip->next;
          ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, -r1);
          ip = ip->next;
-         if (unroll > 1)
-         {
-            ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, 
-                               STiconstlookup(unroll-1));
-            ip = ip->next;
-         }
       }
    }
+   if (unroll > 1 && 0)
+   {
+      ip->next = NewInst(NULL, NULL, NULL, SUBCC, -r0, -r0, 
+                         STiconstlookup(unroll-1));
+      ip = ip->next;
+   }
    ip->next = NewInst(NULL, NULL, NULL, ST, Ioff, -r0, 0);
+   if (unroll > 1)
+   {
+      ip = ip->next;
+      ip->next = NewInst(NULL, NULL, NULL, CMP, -ICC0, -r0, 
+                         STiconstlookup(unroll));
+      ip = ip->next;
+      assert(lp->CU_label);
+      ip->next = NewInst(NULL, NULL, NULL, JGT, -PCREG, -ICC0, lp->CU_label);
+      ip = ip->next;
+      ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, 
+                         STiconstlookup(unroll-1));
+      ip = ip->next;
+      ip->next = NewInst(NULL, NULL, NULL, ST, Ioff, -r0, 0);
+      ip = ip->next;
+#if 0
+/*
+ *    Insert bogus label to artificially create new preheader that this
+ *    branch just destroyed.  Useless label elim will kill label later,
+ *    and if no hoisting has happened, blocks will be remerged
+ */
+      ip = ip->next;
+      ip->next = NewInst(NULL, NULL, NULL, LABEL, 
+                         STlabellookup("FKO_BOGUS_LAB"), 0, 0);
+#endif
+   }
    *ipupdate = ip = NewInst(NULL, NULL, NULL, LD, -r0, Ioff, 0);
    if (unroll)
       ip->next = NewInst(NULL, ip, NULL, SUBCC, -r0, -r0, 

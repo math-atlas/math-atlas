@@ -114,7 +114,7 @@ fkoMF = []
 j = i = 0
 
 CALLREF=1
-PROFILE=1
+PROFILE=0
 if PROFILE:
    PROFCC="iccprof"
    PROFF = "-xP -O3 -mp1 -static -w"

@@ -1230,9 +1230,9 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
       CalcAllDeadVariables();
    if (!CFLOOP)
       FindLoops();
+#if 0
    AddBlockComments(bbbase);
    AddLoopComments();
-#if 0
    AddSetUseComments(bbbase);   
    AddDeadComments(bbbase); 
 #endif
