@@ -1463,6 +1463,7 @@ void AddPrefetch(LOOPQ *lp, int unroll)
 {
    BBLOCK *bp;
    INSTQ *ipp;
+   BLIST *bl;
    short ir, ptr, lvl;
    int i, j, n, npf;
    int flag;
@@ -1471,13 +1472,28 @@ void AddPrefetch(LOOPQ *lp, int unroll)
    bp = lp->header;
    assert(bp->ilab == lp->body_label);
    ir = GetReg(T_INT);
+/*
+ * Find vars set in loop
+ */
+#if 1
+   if (!lp->sets) lp->sets = NewBitVec(TNREG+32);
+   else SetVecAll(lp->sets, 0);
+   for (bl=lp->blocks; bl; bl = bl->next)
+   {
+      if (!INUSETU2D)
+         CalcUseSet(bl->blk); 
+      for (ipp=bl->blk->inst1; ipp; ipp = ipp->next)
+         if (ipp->set)
+            BitVecComb(lp->sets, lp->sets, ipp->set, '|');
+   }
+#endif
    ipp = PrintComment(bp, bp->ainst1, NULL, "START prefetching");
    for (i=1,n=lp->pfarrs[0]; i <= n; i++)
    {
       ptr = lp->pfarrs[i];
       flag = STflag[ptr-1];
-#if 0  /* sets/uses not yet figured */
-      inst = BitVecCheck(lp->sets, lp->pfarrs[i]) ? PREFW : PREFR;
+#if 1  /* sets/uses not yet figured */
+      inst = BitVecCheck(lp->sets, lp->pfarrs[i]-1+TNREG) ? PREFW : PREFR;
 #else
       inst = PREFR;
 #endif
