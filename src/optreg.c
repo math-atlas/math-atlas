@@ -2348,6 +2348,104 @@ int DoCopyProp(BLIST *scope)
    return(CHANGE);
 }
 
+int DoRevCopyPropTrans(INSTQ *ipsrc,  /* inst where src is set */
+                       INSTQ *ipdst,  /* inst where dest is set */
+                       int nuse)      /* # of intervening uses of src */
+/*
+ * Actually perform Reverse Copy Prop transform on [ipsrc,ipdst] region of blk
+ * Changes all ref of src to dest
+ */
+{
+   INSTQ *ip;
+   int i, nseen=(-1);
+   short src, dest, op;
+
+   assert(ipsrc && ipdst)
+   src = -ipdst->inst[2];
+   dest = -ipdst->inst[1];
+   for (ip = ipsrc; ip != ipdst && nseen < nuse; ip = ip->next)
+   {
+      if (ip->use && (BitVecCheck(ip->use, src-1)||BitVecCheck(ip->set,src-1)))
+      {
+         for (i=1; i < 4; i++)
+         {
+            op = ip->inst[i];
+            if (op == -src)
+               ip->inst[i] = -dest;
+            else if (op > 0 && IS_DEREF(STflag[op-1]))
+            {
+               if (SToff[op-1].sa[0] == -src)
+                  SToff[op-1].sa[0] = -dest;
+               if (SToff[op-1].sa[1] == -src)
+                  SToff[op-1].sa[1] = -dest;
+            }
+         }
+         CalcThisUseSet(ip);
+         nseen++;
+      }
+      ipdst->inst[2] = -dest;
+//      DelInst(ipdst);
+   }
+   return(1);
+}
+
+int DoReverseCopyProp(BLIST *scope)
+/*
+ * This crippled version does only in-block rcp
+ */
+{
+   BLIST *bl;
+   INSTQ *ip, *ipp, *ips;
+   int nchanges=0, nuse;
+   enum inst inst;
+   short src, dest;
+
+   for (bl=scope; bl; bl = bl->next)
+   {
+      for (ip=bl->blk->ainstN; ip; ip = ipp)
+      {
+         ipp = ip->prev;
+         inst = ip->inst[0];
+         if (IS_MOVE(inst) && ip->inst[1] < 0 && ip->inst[2] < 0)
+         {
+/*
+ *          If src reg is dead on reg2reg move, possible reverseCP candidate
+ *          NOTE: leave src==dest moves for CP to clean up
+ */
+             src = -ip->inst[2];
+             dest = -ip->inst[1];
+             if (BitVecCheck(ip->deads, src-1) && src != dest &&
+                 ireg2type(src) == ireg2type(dest) && src != REG_SP)
+             {
+/*
+ *              Look for inst that set src
+ */
+                nuse = 0;
+                for (ips=ip->prev; ips; ips = ips->next)
+                {
+                   if (BitVecCheck(ips->set, src-1) && 
+                       !BitVecCheck(ips->use, src-1))
+                      break;
+                   if (BitVecCheck(ips->use, src-1))
+                      nuse++;
+                   if (BitVecCheck(ips->use, dest-1) ||
+                       BitVecCheck(ips->set, dest-1))
+                   {
+                      ips = NULL;
+                      break;
+                   }
+                }
+                if (ips && ips->inst[1] == -src)
+                   nchanges += DoRevCopyPropTrans(ips, ip, nuse);
+             }
+         }
+      }
+   }
+   if (nchanges)
+      CFUSETU2D = INDEADU2D = 0;
+   fprintf(stderr, "RCP: nchanges=%d\n", nchanges);
+   return(nchanges);
+}
 int DoEnforceLoadStore(BLIST *scope)
 /*
  * transforms all instructions that directly access memory to LD/ST followed
@@ -2458,3 +2556,69 @@ int DoEnforceLoadStore(BLIST *scope)
       CFUSETU2D = INDEADU2D = 0;
    return(nchanges);
 }
+
+#if 1
+INSTQ *FindNextUseInBlock(INSTQ *ip0, int iv)
+/*
+ * RETURNS: INSTQ of next instruction that uses all vars set in iv within
+ *          block starting at ip0, NULL if not found
+ */
+{
+   INSTQ *ip;
+   if (ip0)
+   {
+      for (ip=ip0->next; ip; ip = ip->next)
+      {
+         if (ip->use && !BitVecCheckComb(iv, ip->use, '-'))
+            return(ip);
+      }
+   }
+   return(NULL);
+}
+int DoRemoveOneUseLoads(BLIST *scope)
+/*
+ * Changes ld followed by one and only one use to mem-src instruction
+ * (possible only on x86)
+ */
+{
+   INSTQ *ip, *ipn, *ipuse;
+   BLIST *bl;
+   int nchanges=0, iv, reg;
+   enum inst inst;
+   extern int FKO_BVTMP;
+
+   if (!INDEADU2D)
+      CalcAllDeadVariables();
+   else if (!CFUSETU2D || !CFU2D || !INUSETU2D)
+      CalcInsOuts(bbbase);
+   if (!FKO_BVTMP)
+      FKO_BVTMP = NewBitVec(TNREG);
+   iv = FKO_BVTMP;
+
+   for (bl=scope; bl; bl = bl->next)
+   {
+      for (ip=bl->blk->ainst1; ip; ip = ipn)
+      {
+         ipn = ip->next;
+         inst = ip->inst[0];
+         if (IS_LOAD(inst) && inst != VFLDS && inst != VDLDS)
+         {
+            BitVecCopy(iv, Reg2Regstate(-ip->inst[1]));
+            ipuse = FindNextUseInBlock(ip, iv);
+            if (ipuse && ipuse->inst[3] == ip->inst[1] &&
+                !BitVecCheckComb(iv, ip->deads, '-'))
+            {
+               ipuse->inst[3] = ip->inst[2];
+               KillThisInst(ip);
+               CalcThisUseSet(ipuse);
+               nchanges++;
+            }
+         }
+      }
+   }
+   if (nchanges)
+      CFUSETU2D = INDEADU2D = 0;
+   fprintf(stderr, "U1: nchanges=%d\n", nchanges);
+   return(nchanges);
+}
+#endif

@@ -954,7 +954,7 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
 {
    BLIST *scope;
    BBLOCK *bp;
-   int i, j, k, nchanges=0;
+   int i, j, k, nchanges=0, nc0;
    static short nlab=0, labs[4];
 
 /*
@@ -987,6 +987,7 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
       return(0);
    for (i=0; i < nopt; i++)
    {
+      nc0 = nchanges;
       k = ops[i];
       switch(k)
       {
@@ -999,6 +1000,12 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
          break;
       case CopyProp:
          nchanges += DoCopyProp(scope);
+         break;
+      case RemoveOneUseLoads:
+         nchanges += DoRemoveOneUseLoads(scope);
+         break;
+      case ReverseCopyProp:
+         nchanges += DoReverseCopyProp(scope);
          break;
       case EnforceLoadStore:
          nchanges += DoEnforceLoadStore(scope);
@@ -1017,7 +1024,7 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
       default:
          fko_error(__LINE__, "Unknown optimization %d\n", ops[i]);
       }
-      optchng[noptrec] = nchanges;
+      optchng[noptrec] = nchanges - nc0;
       optrec[noptrec++] = global ? k+MaxOpt : k;
    }
    return(nchanges);
@@ -1221,7 +1228,7 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
       FindLoops();
    AddBlockComments(bbbase);
    AddLoopComments();
-#if 0
+#if 1
    AddSetUseComments(bbbase);   
    AddDeadComments(bbbase); 
 #endif
@@ -1274,8 +1281,8 @@ void DumpOptsPerformed(FILE *fpout, int verbose)
 struct optblkq *DefaultOptBlocks(void)
 /*
  * Defaults to command-line flags of:
- *     -L 1 0 6 ls gr 2 3 4 5 -G 2 10 3 bc uj ul -L 3 10 2 ra cp -G 4 0 1 ls 
- *     -G 5 10 2 ra cp
+ *     -L 1 0 6 ls gr 2 3 4 5 -G 2 10 3 bc uj ul -L 3 10 3 ra cp rc -G 4 0 1 ls 
+ *     -G 5 10 3 ra cp rc
  */
 {
    struct optblkq *base, *op;
@@ -1306,19 +1313,21 @@ struct optblkq *DefaultOptBlocks(void)
    op->opts[1] = UselessJmpElim;
    op->opts[2] = UselessLabElim;
 
-   op->next = NewOptBlock(3, 10, 2, 0);
+   op->next = NewOptBlock(3, 10, 3, 0);
    op = op->next;
    op->opts[0] = RegAsg;
    op->opts[1] = CopyProp;
+   op->opts[2] = ReverseCopyProp;
 
    op->next = NewOptBlock(4, 0, 1, IOPT_GLOB);
    op = op->next;
    op->opts[0] = EnforceLoadStore;
 
-   op->next = NewOptBlock(5, 10, 2, IOPT_GLOB);
+   op->next = NewOptBlock(5, 10, 3, IOPT_GLOB);
    op = op->next;
    op->opts[0] = RegAsg;
    op->opts[1] = CopyProp;
+   op->opts[2] = ReverseCopyProp;
 
    return(base);
 }
