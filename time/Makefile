@@ -1,4 +1,4 @@
-include /home/grads/whaley/AT3.7/ATLAS3.7.4.0/Make.Linux_P4SSE2
+include /home/grads/whaley/AT3.7/ATLAS3.7.4.1/Make.Linux_P4SSE2
 #include /home/rwhaley/AT3.7/ATLAS3.7.3/Make.Linux_P4ESSE3
 #include /tmp/rwhaley/ATLAS3.7.3.0/Make.Linux_P4SSE2
 
@@ -9,7 +9,7 @@ kern=error
 cache=
 NN="N=80000"
 KFLAGS=
-topt=-X 1 1
+topt=-X 1 1 -Y 1 1
 lower=hello
 # upper=`echo $(lower) | tr '[a-z]' 'A-Z'`
 # upper=`cat tt.in`

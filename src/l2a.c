@@ -28,7 +28,7 @@ void KillAllAssln(struct assmln *base)
 
 static struct assmln *PrintAssln(char *form, ...)
 {
-   char ln[256];
+   char ln[4096];
    va_list argptr;
    va_start(argptr, form);
    vsprintf(ln, form, argptr);
@@ -1708,6 +1708,18 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                archiregs[-IREGBEG-op2],archdregs[-DREGBEG-op1]);
          break;
 #endif
+/*
+ * Only x86 and PowerPC have vector instructions
+ */
+   #if 1 && (defined(X86) || defined(PPC))
+      case VDLD:
+         #ifdef X86
+            ap->next = PrintAssln("\tmovapd\t%s, %s\n", GetDeref(op2),
+                                  archvdregs[-VDREGBEG-op1]);
+         #elif defined(PPC)
+         #endif
+         break;
+   #endif
 /*
  *  HERE HERE HERE:
  */

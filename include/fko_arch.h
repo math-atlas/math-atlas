@@ -52,9 +52,6 @@
    #define ArchConstAndIndex
 #endif
 
-#define IREGBEG   1
-#define FREGBEG  40
-#define DREGBEG  80
 /*
  * 1st ireg is always stack pointer.  The next NSIR iregs are registers that
  * can be used by the caller without saving, and the first such register is
@@ -63,6 +60,7 @@
  * The arch.regs arrays store the actual names of the registers;  In our
  * instructions, register i's name is stored in archiregs[i-1].
  */
+#define IREGBEG   1
 #ifdef SPARC
    #define NIR  31                      /* # of integer regs */
    #define TNIR 32
@@ -71,6 +69,8 @@
    #define NSFR 32
    #define NDR  32                      /* # of double regs */
    #define NSDR 32
+   #define FREGBEG  (IREGBEG+TNIR)
+   #define DREGBEG  (FREGBEG+NFR)
    #define ZEROREG 32
    #define IRETREG 10
    #define FRETREG FREGBEG
@@ -131,9 +131,15 @@
    #define TNDR  9
    #define NDR   8                      /* # of double regs */
    #define NSDR  8
+   #define NVFR  8
+   #define NVDR  8
+   #define FREGBEG  (IREGBEG+NIR)
+   #define DREGBEG  (FREGBEG+TNFR)
+   #define VFREGBEG (DREGBEG+TNDR)
+   #define VDREGBEG (VFREGBEG+NVFR)
    #define IRETREG 4
    #define FRETREG (TNFR+FREGBEG-1)
-   #define DRETREG (TNFR+DREGBEG-1)
+   #define DRETREG (TNDR+DREGBEG-1)
    #ifdef ARCH_DECLARE
       int icallersave[NIR] = {0, 1, 1, 1, 0, 0, 0, 0};
       int  icalleesave[NIR] = {0, 0, 0, 0, 1, 1, 1, 1};
@@ -150,6 +156,8 @@
       extern int iparareg[NIR], icalleesave[NIR], icallersave[NIR], 
                  fcalleesave[TNFR], fcallersave[TNFR];
    #endif
+   #define archvfregs archfregs
+   #define archvdregs archfregs
    #define archdregs archfregs
    #define dcallersave fcallersave
    #define dcalleesave fcalleesave
@@ -166,6 +174,12 @@
    #define NSFR  16 
    #define NDR   16                      /* # of double regs */
    #define NSDR  16 
+   #define NVDR  16
+   #define NVFR  16
+   #define FREGBEG  (IREGBEG+NIR)
+   #define DREGBEG  (FREGBEG+NFR)
+   #define VFREGBEG (DREGBEG+NDR)
+   #define VDREGBEG (VFREGBEG+NVFR)
    #define IRETREG 4
    #define FRETREG FREGBEG
    #define DRETREG DREGBEG
@@ -189,6 +203,8 @@
       extern int iparareg[NIR], icalleesave[NIR], icallersave[NIR], 
                  fcalleesave[NFR], fcallersave[NFR];
    #endif
+   #define archvdregs archfregs
+   #define archvfregs archfregs
    #define archdregs archfregs
    #define dcallersave fcallersave
    #define dcalleesave fcalleesave
@@ -203,9 +219,14 @@
    #define NSFR 18
    #define NDR  32
    #define NSDR 18
+   #define NVFR 32
+   #define NDFR 32
+   #define FREGBEG  (IREGBEG+TNIR)
+   #define DREGBEG  (FREGBEG+NFR)
    #define IRETREG 3
    #define FRETREG (1+FREGBEG)
    #define DRETREG (1+DREGBEG)
+   #define VFREGBEG (DREGBEG+NDR)
    #ifdef LINUX_PPC
       #define NSIR  11
       #ifdef ARCH_DECLARE
@@ -218,6 +239,11 @@
             {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", 
              "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", 
              "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31"};
+         char *archvfregs[NVFR] = 
+            {"v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", 
+             "v9", "v10", "v11", "v12", "v13", "v14", "v14", "v15",
+             "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23",
+             "v24", "v25", "v26", "v27", "v28", "v29", "v30", "v31"};
       #else
          extern char *archiregs[TNIR], *archfregs[NFR];
       #endif
@@ -255,6 +281,7 @@
                     fcalleesave[NFR], fcallersave[NFR];
       #endif
    #endif
+   #define archvfregs archvdregs
    #define archdregs archfregs
    #define dcallersave fcallersave
    #define dcalleesave fcalleesave
@@ -310,8 +337,17 @@
 #ifndef NFCC
    #define NFCC 1
 #endif
+#ifndef LASTREG
+   #ifdef VDREGBEG
+      #define LASTREG (VDREGBEG+NVDR)
+   #elif defined(VFREGBEG)
+      #define LASTREG (VFREGBEG+NVFR)
+   #else
+      #define LASTREG (DREGBEG+TNDR)
+   #endif
+#endif
 #ifndef ICC0
-   #define ICC0 (DREGBEG+TNDR)
+   #define ICC0 LASTREG
 #endif
 #ifndef FCC0
    #define FCC0 (ICC0+NICC+1)
@@ -330,6 +366,12 @@
 #endif
 #ifndef DREGEND
    #define DREGEND (DREGBEG + TNDR)
+#endif
+#if defined(VFREGBEG) && !defined(VFREGEND)
+   #define VFREGEND (VFREGBEG + NVFR)
+#endif
+#if defined(VDREGBEG) && !defined(VDREGEND)
+   #define VDREGEND (VDREGBEG + NVDR)
 #endif
 #ifndef ICCBEG
    #define ICCBEG ICC0

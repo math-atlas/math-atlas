@@ -136,6 +136,11 @@ enum inst
    FNEGD,                       /* [fr0], [fr1] : fr0 = -fr1 */
    FMOVD,                       /* fr0 = fr1 */
 /*
+ * Double precision vector instructions
+ * [memA] is a vector-aligned mem @ [mem] is any alignment
+ */
+   VDLD,                       /* [vr0], [memA]  : vr0 = mem */
+/*
  * Vector instructions, add to these later (double, scalar).
  */
    VFLD,

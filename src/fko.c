@@ -942,6 +942,8 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
 
    if (!INDEADU2D)
       CalcAllDeadVariables();
+   if (!CFLOOP)
+      FindLoops();
    AddBlockComments(bbbase);
    AddLoopComments();
 #if 0
@@ -985,6 +987,10 @@ void DumpOptsPerformed(FILE *fpout, int verbose)
 }
 
 struct optblkq *DefaultOptBlocks(void)
+/*
+ * Defaults to command-line flags of:
+ *     -L 1 0 4 gr 2 3 4 -G 2 10 3 bc uj ul -L 3 10 2 ra cp -G 4 10 2 ra cp
+ */
 {
    struct optblkq *base, *op;
 
@@ -1049,6 +1055,7 @@ int main(int nargs, char **args)
       assert(!GoToTown(IREGBEG+NIR-1, FKO_UR, optblks));
    }
    DumpOptsPerformed(stderr, 1);
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
 
    if (!(FKO_FLAG & IFF_READINTERM))
    {
@@ -1071,6 +1078,7 @@ int main(int nargs, char **args)
       }
 #endif
    }
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
       if (DO_LIL(FKO_FLAG))
       {
       if (!DO_ASS(FKO_FLAG))
@@ -1096,12 +1104,19 @@ int main(int nargs, char **args)
       }
    }
 /*   ShowFlow("dot.out", bbbase); */
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    if (DO_ASS(FKO_FLAG))
    {
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
       abase = lil2ass(bbbase);
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
       KillAllBasicBlocks(bbbase);
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
       dump_assembly(fpout, abase);
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
       KillAllAssln(abase);
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    }
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    return(0);
 }

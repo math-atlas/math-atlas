@@ -259,7 +259,7 @@ char *BV2VarNames(int iv)
 {
    short *vals;
    int n, i, tnreg, j=0;
-   static char ln[1024];
+   static char ln[4096];
 
    ln[0] = '\0';
    if (iv)

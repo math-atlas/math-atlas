@@ -32,6 +32,14 @@ short Reg2Int(char *regname)
       if (!strcmp(archfregs[i-FREGBEG], regname)) return(-i);
    for (i=DREGBEG; i < DREGEND; i++)
       if (!strcmp(archdregs[i-DREGBEG], regname)) return(-i);
+#ifdef VFREGBEG
+   for (i=VFREGBEG; i < VFREGEND; i++)
+      if (!strcmp(archvfregs[i-VFREGBEG], regname)) return(-i);
+#endif
+#ifdef VDREGBEG
+   for (i=VDREGBEG; i < VDREGEND; i++)
+      if (!strcmp(archvdregs[i-VDREGBEG], regname)) return(-i);
+#endif
    for (i=ICC0; i < NICC; i++)
       if (!strcmp(ICCREGS[i], regname)) return(-i);
    for (i=FCC0; i < NFCC; i++)
@@ -65,6 +73,14 @@ char *Int2Reg0(int i)
       sprintf(ln, "%s", FCCREGS[i-FCCBEG]);
    else if (i == PCREG)
       sprintf(ln, "%s", "PC");
+#ifdef VFREGBEG
+   else if (i >= VFREGBEG && i < VFREGEND)
+      sprintf(ln, "%s", archvfregs[i-VFREGBEG]);
+#endif
+#ifdef VDREGBEG
+   else if (i >= VDREGBEG && i < VDREGEND)
+      sprintf(ln, "%s", archvdregs[i-VDREGBEG]);
+#endif
    else
       ret = NULL;
    return(ret);
@@ -129,40 +145,69 @@ int Reg2Regstate(int k)
    static int iv=0;
    int i;
 
-   if (!iv) iv = NewBitVec(TNREG);
-   SetVecAll(iv, 0);
-   SetVecBit(iv, k-1, 1);
-   if (k >= FREGBEG && k < FREGEND)
-   {
-      #if defined(X86) || defined(PPC)
-         SetVecBit(iv, k-FREGBEG+DREGBEG-1, 1);
-      #elif defined(SPARC)
-         SetVecBit(iv, ((k-FREGBEG)>>1)+DREGBEG-1, 1);
-      #endif
-   }
-   else if (k >= DREGBEG && k < DREGEND)
-   {
-      #if defined(X86) || defined(PPC)
-         SetVecBit(iv, k-DREGBEG+FREGBEG-1, 1);
-      #elif defined(SPARC)
-         i = k - DREGBEG;
-         if (i < 16)
-         {
-            SetVecBit(iv, FREGBEG+i*2-1, 1);
-            SetVecBit(iv, FREGBEG+i*2, 1);
-         }
-      #endif
-   }
-   else if (k <= 0)
+//fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
+   if (k <= 0)
    {
       if (iv) KillBitVec(iv);
       iv = 0;
+   }
+   else
+   {
+      if (!iv) iv = NewBitVec(TNREG);
+      SetVecAll(iv, 0);
+      SetVecBit(iv, k-1, 1);
+      if (k >= FREGBEG && k < FREGEND)
+      {
+         #if defined(X86) || defined(PPC)
+            SetVecBit(iv, k-FREGBEG+DREGBEG-1, 1);
+            #ifdef X86
+               SetVecBit(iv, k-FREGBEG+VDREGBEG-1, 1);
+               SetVecBit(iv, k-FREGBEG+VFREGBEG-1, 1);
+            #endif
+         #elif defined(SPARC)
+            SetVecBit(iv, ((k-FREGBEG)>>1)+DREGBEG-1, 1);
+         #endif
+      }
+      else if (k >= DREGBEG && k < DREGEND)
+      {
+         #if defined(X86) || defined(PPC)
+            SetVecBit(iv, k-DREGBEG+FREGBEG-1, 1);
+            #ifdef X86
+               SetVecBit(iv, k-DREGBEG+VDREGBEG-1, 1);
+               SetVecBit(iv, k-DREGBEG+VFREGBEG-1, 1);
+            #endif
+         #elif defined(SPARC)
+            i = k - DREGBEG;
+            if (i < 16)
+            {
+               SetVecBit(iv, FREGBEG+i*2-1, 1);
+               SetVecBit(iv, FREGBEG+i*2, 1);
+            }
+         #endif
+      }
+   #ifdef X86
+      else if (k >= VFREGBEG && k < VFREGEND)
+      {
+fprintf(stderr, "k=%d, VFRB=%d, VFRE=%d\n", k, VFREGBEG, VFREGEND);
+         SetVecBit(iv, k-VFREGBEG+VDREGBEG-1, 1);
+         SetVecBit(iv, k-VFREGBEG+FREGBEG-1, 1);
+         SetVecBit(iv, k-VFREGBEG+DREGBEG-1, 1);
+      }
+      else if (k >= VDREGBEG && k < VDREGEND)
+      {
+fprintf(stderr, "k=%d, VDRB=%d, VDRE=%d\n", k, VDREGBEG, VDREGEND);
+         SetVecBit(iv, k-VDREGBEG+VFREGBEG-1, 1);
+         SetVecBit(iv, k-VDREGBEG+FREGBEG-1, 1);
+         SetVecBit(iv, k-VDREGBEG+DREGBEG-1, 1);
+      }
+   #endif
    }
 #if 0
    else if (!(k >= IREGBEG && k < IREGEND))
       fko_error(__LINE__, "Unknown register index %d, file=%s\n",
                   k, __FILE__);
 #endif
+// fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    return(iv);
 }
 
@@ -1263,24 +1308,29 @@ fprintf(stderr, "\n\n*** NIG = %d\n", N);
       DumpIG(fpIG, N, igs);
       fclose(fpIG);
    }
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    if (fpLIL)
    {
       PrintInst(fpLIL, bbbase);
       fclose(fpLIL);
       fpLIL = NULL;
    }
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    if (fpST)
    {
       PrintST(fpST);
       fclose(fpST);
       fpST = NULL;
    }
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
 #if 1
    for (i=0; i != N; i++)
       DoRegAsgTransforms(igs[i]);
 #endif
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    if (igs) free(igs);
    KillIGTable();
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    return(nret);
 }
 
