@@ -239,7 +239,7 @@ INSTQ *KillPointerUpdates(struct ptrinfo *pbase, int UR)
  *          on error.
  */
 {
-   struct ptrinfo *pi, *pbase;
+   struct ptrinfo *pi;
    ILIST *il;
    INSTQ *ipbase=NULL, *ip, *ipN;
    int reg;
@@ -267,12 +267,16 @@ INSTQ *KillPointerUpdates(struct ptrinfo *pbase, int UR)
 /*
  *    Assert we have code in required format
  */
-      ip = pi->ilist->ip;
+      ip = pi->ilist->inst;
       assert(ip->inst[0] == ST);
       if (pi->flag & PTRF_INC)
+      {
          assert(ip->prev->inst[0] == ADD);
+      }
       else
+      {
          assert(ip->prev->inst[0] == SUB);
+      }
       assert(ip->prev->prev->inst[0] == LD);
 /*
  *    Figure new post-update code
@@ -299,17 +303,76 @@ INSTQ *KillPointerUpdates(struct ptrinfo *pbase, int UR)
    return(ipbase);
 }
 
-void FindPointerLoads(BLIST *scope, struct ptrinfo *pbase, int UR)
+void UpdatePointerLoads(BLIST *scope, struct ptrinfo *pbase, int UR)
 /*
  * Finds all loads of of pointers in pbase, and adds UR*size to their deref
  */
 {
    BLIST *bl;
+   INSTQ *ip;
    struct ptrinfo *pi;
+   short *pst;
+   int i, n, inc;
+   short k;
+   if (!pbase || !scope)
+      return;
+   for (n=0,pi=pbase; pi; n++,pi=pi->next);
+   pst = malloc(sizeof(short)*n);
+   assert(pst);
+   for (i=0,pi=pbase; pi; i++,pi=pi->next)
+      pst[i] = pi->ptr;
+
    for (bl=scope; bl; bl = bl->next)
    {
+/*
+ *    Look for loads of pointers; since we have previously deleted all updates,
+ *    all remaining loads should be for reads.  All reads of pointers must be
+ *    either pointer arithmetic or dereferencing
+ */
+      for (ip=bl->blk->ainst1; ip; ip = ip->next)
+      {
+         if (ip->inst[0] == LD)
+         {
+            k = ip->inst[2];
+/*
+ *          Find if load is of a moving pointer
+ */
+            for (i=0; i != n && pst[i] != k; i++)
+            if (i == n) continue;
+/*
+ *          Now that we've got a moving pointer, determing unrolling increment
+ */
+            inc = UR * type2len(FLAG2TYPE(STflag[k-1]));
+            for (pi=pbase; i && pi->ptr != k; pi=pi->next,i--);
+            assert(pi);
+            if (!(pi->flag & PTRF_INC))
+               inc = -inc;
+/*
+ *          Find use of register we just loaded ptr to (since this step is done
+ *          after initial code generation, there is always 1 and only 1 use)
+ */
+            k = ip->inst[1];
+            for (ip=ip->next; ip; ip = ip->next)
+               if (k == ip->inst[1] || k == ip->inst[2] || k == ip->inst[3])
+                  break;
+            assert(ip);
+/*
+ *          If last argument is a constant, simply add UR*size to constant
+ */
+            if (ip->inst[3] > 0 && IS_CONST(STflag[ip->inst[3]-1]) && 
+                IS_INT(STflag[ip->inst[3]-1]))
+               ip->inst[3] = STiconstlookup(SToff[ip->inst[3]-1].i+inc);
+/*
+ *          Otherwise, increment the register before use
+ */
+            else
+               InsNewInst(bl->blk, NULL, ip, ADD, -k, -k, STiconstlookup(inc));
+         }
+      }
    }
+   free(pst);
 }
+
 INSTQ *FindCompilerFlag(BBLOCK *bp, short flag)
 {
    INSTQ *iret=NULL, *ip;
@@ -368,6 +431,8 @@ void KillCompflagInRange(BLIST *base, enum comp_flag start, enum comp_flag end)
  */
 {
    BLIST *bl;
+   INSTQ *ip;
+
    for (bl=base; bl; bl = bl->next)
    {
       for (ip=bl->blk->inst1; ip; ip = ip->next)
@@ -658,7 +723,7 @@ BLIST *CF2BlockList(BLIST *bl, short bvblks, BBLOCK *head)
    if (BitVecCheck(bvblks, head->bnum-1))
    {
       SetVecBit(bvblks, head->bnum-1, 0);
-      bl = AddBlockToList(head, bl);
+      bl = AddBlockToList(bl, head);
       if (head->usucc)
          bl = CF2BlockList(bl, bvblks, head->usucc);
       if (head->csucc)
@@ -707,8 +772,9 @@ int UnrollLoop(LOOPQ *lp, int unroll)
    BLIST **dupblks, *bl;
    ILIST *il;
    struct ptrinfo *pi;
-   int UsesIndex=1, UsesPtrs=1;
+   int i, UsesIndex=1, UsesPtrs=1;
    enum comp_flag kbeg, kend;
+   extern int FKO_BVTMP;
 
    KillLoopControl(lp);
    il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
@@ -743,7 +809,6 @@ int UnrollLoop(LOOPQ *lp, int unroll)
  *    i multiple times, test it multiple times, etc)
  */
       kend = (i != unroll-1) ? CF_LOOP_END : CF_LOOP_BODY;
-      else kend = CF_LOOP_END;
       KillCompflagInRange(dupblks[i-1], kbeg, kend);
       if (UsesIndex)
          UpdateUnrolledIndices(dupblks[i-1], i);
