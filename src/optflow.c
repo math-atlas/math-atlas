@@ -164,7 +164,7 @@ int DoUselessJumpElim(void)
          }
       }
    }
-   fprintf(stderr, "Eliminated %d useless jumps!\n", n);
+/*   fprintf(stderr, "Eliminated %d useless jumps!\n", n); */
    KillAllIlist(jumps);
    if (n) 
       NewBasicBlocks(bbbase);
@@ -291,8 +291,10 @@ int DoUselessLabelElim(int nkeep, short *keeps)
          }
          if (!jl)
          {
-fprintf(stderr, "Eliminating label '%s'\n", 
-        STname[bp->ainst1->inst[1]-1]);
+            #if IFKO_DEBUG_LEVEL > 1
+               fprintf(stderr, "Eliminating label '%s'\n", 
+                       STname[bp->ainst1->inst[1]-1]);
+            #endif
             DelInst(bp->ainst1);
             ndel++;
          }
@@ -321,7 +323,6 @@ fprintf(stderr, "Eliminating label '%s'\n",
  */
             if (nlab)
             {
-fprintf(stderr, "Eliminating label '%s'\n", STname[bp->ainst1->inst[1]-1]);
                for (jl=jumps; jl; jl = jl->next)
                {
                   if (GET_INST(jl->inst->inst[0]) == JMP)
@@ -342,7 +343,7 @@ fprintf(stderr, "Eliminating label '%s'\n", STname[bp->ainst1->inst[1]-1]);
  */
    if (ndel) 
       NewBasicBlocks(bbbase);
-   fprintf(stderr, "UselessLabelElim deleted %d labels!\n\n", ndel);
+/*   fprintf(stderr, "UselessLabelElim deleted %d labels!\n\n", ndel); */
    KillAllIlist(jumps);
    return(ndel);
 }

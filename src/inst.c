@@ -379,7 +379,9 @@ void WriteLILToBinFile(char *fname, BBLOCK *bbase)
       }
    }
    assert(fwrite(&n, sizeof(int), 1, fp) == 1);
-fprintf(stderr, "WROTE OUT %d INST\n", n);
+   #if IFKO_DEBUG_LEVEL > 1
+      fprintf(stderr, "WROTE OUT %d INST\n", n);
+   #endif
    fclose(fp);
 }
 
@@ -397,7 +399,9 @@ void ReadLILFromBinFile(char *fname)
    assert(fp);
    assert(!fseek(fp, -sizeof(int), SEEK_END));
    assert(fread(&n, sizeof(int), 1, fp) == 1);
-fprintf(stderr, "READING IN %d NEW INST\n", n);
+   #if IFKO_DEBUG_LEVEL > 1
+      fprintf(stderr, "READING IN %d NEW INST\n", n);
+   #endif
    rewind(fp);
    for (i=0; i < n; i++)
    {

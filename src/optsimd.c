@@ -220,7 +220,6 @@ int DoLoopSimdAnal(LOOPQ *lp)
    pbase = FindMovingPointers(lp->blocks);
    for (N=0,p=pbase; p; p = p->next)
    {
-fprintf(stderr, "moving ptr = %s\n", STname[p->ptr-1]);
       if (IS_FP(STflag[p->ptr-1]))
       {
          N++;
@@ -619,7 +618,6 @@ int SimdLoop(LOOPQ *lp)
                      }
                      else
                      {
-fprintf(stderr, "scoping %s (%d)\n", STname[op-1], op);
                         if (IS_DEREF(STflag[op-1]))
                         {
                            k = STpts2[op-1];
@@ -684,7 +682,6 @@ int VectorizeStage1(void)
 /*
  * Get code into standard form for analysis
  */
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    GenPrologueEpilogueStubs(bbbase, 0);
    NewBasicBlocks(bbbase);
    FindLoops();
@@ -693,17 +690,13 @@ fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
 /*
  * Create a bad LIL to perform vector loop analysis
  */
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    KillLoopControl(lp);
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    if (FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]))
    {
       fko_warn(__LINE__, "Index refs inside loop prevent vectorization!!\n");
       return(11);
    }
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    pi0 = FindMovingPointers(lp->blocks);
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    for (pi=pi0; pi; pi = pi->next)
    {
       if (pi->nupdate > 1)
@@ -726,9 +719,7 @@ fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
       free(ip);
    }
    CFUSETU2D = 0;
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    i = DoLoopSimdAnal(optloop);
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    if (i)
       return(i);
 /*

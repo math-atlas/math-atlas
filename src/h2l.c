@@ -221,9 +221,11 @@ void DoArrayStore(short ptr, short id)
 
    k = ptr-1;
    type = FLAG2TYPE(STflag[id-1]);
-   fprintf(stderr, "pnam=%s, pflag=%d, idname='%s', idflag=%d\n", 
-           STname[SToff[k].sa[0]-1], STflag[SToff[k].sa[0]-1], 
-           STname[id-1], STflag[id-1]);
+   #if IFKO_DEBUG_LEVEL > 1
+      fprintf(stderr, "pnam=%s, pflag=%d, idname='%s', idflag=%d\n", 
+              STname[SToff[k].sa[0]-1], STflag[SToff[k].sa[0]-1], 
+              STname[id-1], STflag[id-1]);
+   #endif
 
    lreg = LocalLoad(id);
    assert(FLAG2TYPE(STflag[SToff[k].sa[0]-1]) == type);
@@ -260,7 +262,6 @@ void DoArrayLoad(short id, short ptr)
    k = (ptr-1)<<2;
    type = FLAG2TYPE(STflag[id-1]);
    FixDeref(ptr);
-fprintf(stderr, "\n\nANAME=%s, TYPE=%d\n\n", STname[ptr-1] ? STname[ptr-1] : "NULL", type);
    switch(type)
    {
    case T_INT:
@@ -626,7 +627,6 @@ LOOPQ *DoLoop(short I, short start, short end, short inc,
    LOOPQ *lp;
    short ireg;
    char lnam[128];
-fprintf(stderr, "%s(%d) I=%d, start=%d, end=%d, inc=%d\n", __FILE__, __LINE__,I,start,end,inc);
 /*
  * If signs of loop parts are unknown, see if we can deduce them
  * Ignore markup and deduce if variable is compile-time constant
@@ -700,7 +700,6 @@ void FinishLoop(LOOPQ *lp)
    if (IS_CONST(flag)) iend = lp->end;
    else iend = -LocalLoad(lp->end);
    InsNewInst(NULL, NULL, NULL, CMP, -ICC0, -ireg, iend);
-fprintf(stderr, "\n\nflag=%d, %d\n\n",lp->flag, (lp->flag & L_NINC_BIT));
    InsNewInst(NULL, NULL, NULL, (lp->flag & L_NINC_BIT) ? JGT : JLT, 
               -PCREG, -ICC0, lp->body_label);
    InsNewInst(NULL, NULL, NULL, CMPFLAG, CF_LOOP_END, lp->loopnum, 0);

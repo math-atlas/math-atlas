@@ -185,10 +185,8 @@ BBLOCK *GetFallPath(BBLOCK *head, int loopblks, int inblks, int tails,
       return(NULL);
    if (BitVecCheck(inblks, head->bnum-1) || !BitVecCheck(loopblks,head->bnum-1))
       return(NULL);
-fprintf(stderr, "tails = %s\n", PrintVecList(tails, 1));
    for (bp = head; bp; bp = bp->down)
    {
-fprintf(stderr, "scoping blk=%d\n", bp->bnum);
 /*
  *    If we've already added something in the path, we've got an inner
  *    loop, which is presently not allowed.
@@ -348,7 +346,6 @@ struct ptrinfo *FindMovingPointers(BLIST *scope)
              (ip->prev->inst[0] == ADD || ip->prev->inst[0] == SUB))
          {
             k = FindLocalFromDT(ip->inst[1]);
-fprintf(stderr, "DT=%d, k=%d, pts=%d\n", ip->inst[1], k, STpts2[ip->inst[1]-1]);
             if (k)
             {
 /* ERROR : k is DT entry, not ST entry, need to find ST */
@@ -872,7 +869,6 @@ void AddLoopControl(LOOPQ *lp, INSTQ *ipinit, INSTQ *ipupdate, INSTQ *ippost,
    INSTQ *ip, *ipl;
    BLIST *bl;
 
-fprintf(stderr, "%s(%d), %d,%d,%d tails=%d\n", __FILE__, __LINE__, ipinit, ipupdate, iptest, lp->tails);
    assert(lp->tails);
    if (ipinit)
    {
@@ -902,7 +898,6 @@ fprintf(stderr, "%s(%d), %d,%d,%d tails=%d\n", __FILE__, __LINE__, ipinit, ipupd
       #endif
       for (ip = iptest; ip; ip = ip->next)
       {
-PrintThisInst(stderr, 0, ip);
          ipl = InsNewInst(NULL, ipl, NULL, ip->inst[0], ip->inst[1],
                           ip->inst[2], ip->inst[3]);
       }
@@ -960,7 +955,7 @@ void OptimizeLoopControl(LOOPQ *lp, /* Loop whose control should be opt */
    }
    else
    {
-      fprintf(stderr, "\nLoop good for SimpleLC!!!\n\n");
+/*      fprintf(stderr, "\nLoop good for SimpleLC!!!\n\n"); */
       SimpleLC(lp, unroll, &ipinit, &ipupdate, &iptest);
    }
    AddLoopControl(lp, lp->preheader ? ipinit : NULL, ipupdate, ippost, iptest);
@@ -1177,7 +1172,6 @@ void GenCleanupLoop(LOOPQ *lp)
    ivtails = BlockList2BitVec(lp->tails);
    ftheads = FindAllFallHeads(NULL, lp->blkvec, lp->header, ivtails, iv);
    ftheads = ReverseBlockList(ftheads);
-fprintf(stderr, "ftheads = %s\n", PrintBlockList(ftheads));
 /*
  * Add new cleanup loop (minus I init) at end of rout, one fall-thru path at
  * a time
@@ -1370,7 +1364,6 @@ PrintInst(fopen("err.tmp", "w"), bbbase);
  */
       SetVecBit(iv, lp->header->bnum-1, 1);
       dupblks[i-1] = CF2BlockList(NULL, iv, newCF);
-fprintf(stderr, "dupblks[%d] = %s\n", i-1, PrintBlockList(dupblks[i-1]));
 /*
  *    Kill the appropriate loop markup in the blocks (so we don't increment
  *    i multiple times, test it multiple times, etc)

@@ -95,18 +95,20 @@ void FindRegUsage(BBLOCK *bbase, int *ni0, int *iregs,
          }
       }
    }
-   fprintf(stderr, "\nUSED %d IREGS: ", ni);
-   for (op=0; op < TNIR; op++) 
-      if (iregs[op]) fprintf(stderr, "%s, ", archiregs[op]);
-   fprintf(stderr, "\n");
-   fprintf(stderr, "USED %d FREGS: ", nf);
-   for (op=0; op < TNFR; op++) 
-      if (fregs[op]) fprintf(stderr, "%s, ", archfregs[op]);
-   fprintf(stderr, "\n");
-   fprintf(stderr, "USED %d DREGS: ", nd);
-   for (op=0; op < TNDR; op++)
-      if (dregs[op]) fprintf(stderr, "%s, ", archdregs[op]);
-   fprintf(stderr, "\n\n");
+   #if IFKO_DEBUG_LEVEL > 1
+      fprintf(stderr, "\nUSED %d IREGS: ", ni);
+      for (op=0; op < TNIR; op++) 
+         if (iregs[op]) fprintf(stderr, "%s, ", archiregs[op]);
+      fprintf(stderr, "\n");
+      fprintf(stderr, "USED %d FREGS: ", nf);
+      for (op=0; op < TNFR; op++) 
+         if (fregs[op]) fprintf(stderr, "%s, ", archfregs[op]);
+      fprintf(stderr, "\n");
+      fprintf(stderr, "USED %d DREGS: ", nd);
+      for (op=0; op < TNDR; op++)
+         if (dregs[op]) fprintf(stderr, "%s, ", archdregs[op]);
+      fprintf(stderr, "\n\n");
+   #endif
 
    *ni0 = ni;
    *nf0 = nf;
@@ -139,7 +141,6 @@ int GetRegSaveList(int rstart, int nr, int *regs)
  */
 {
    int i, j;
-fprintf(stderr, "rstart=%d, nr=%d\n", rstart, nr);
    for (j=i=0; i < nr; i++)
    {
       if (regs[i])
@@ -167,8 +168,6 @@ int GetArchAlign(int nvd, int nvf, int nd, int nf, int nl, int ni)
       else if (nd || nl) align = 8;
       else if (nf || ni) align = 4;
    #endif
-fprintf(stderr, "nvd=%d,nvf=%d,nd=%d,nf=%d,nl=%d,ni=%d, align=%d\n",
-        nvd, nvf, nd, nf, nl, ni, align);
    return(align);
    #endif
 }
@@ -1273,7 +1272,6 @@ void FinalizeEpilogue(BBLOCK *bbase,
    BBLOCK *blk;
 
    i = STlabellookup("_IFKO_EPILOGUE");
-   fprintf(stderr, "i=%d, '%s'\n", i, STname[i-1]);
    blk = FindBlockWithLabel(bbase, i);
    assert(blk);
 /* 
@@ -1358,10 +1356,12 @@ int FindUsedParaRegs(BBLOCK *bp, int *ir)
    }
    while(ip && (ip->inst[0] != CMPFLAG || ip->inst[1] != CF_PARASAVE || 
                 ip->inst[2] != 2));
-fprintf(stderr, "\nUSED PARAREGS (%d):", ni);
-for (i=0; i < TNIR; i++)
-   if (ir[i]) fprintf(stderr, "%s, ", archiregs[i]);
-fprintf(stderr, "\n\n");
+   #if IFKO_DEBUG_LEVEL > 1
+      fprintf(stderr, "\nUSED PARAREGS (%d):", ni);
+      for (i=0; i < TNIR; i++)
+         if (ir[i]) fprintf(stderr, "%s, ", archiregs[i]);
+      fprintf(stderr, "\n\n");
+   #endif
    return(ni);
 }
 
@@ -1574,7 +1574,6 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
       irsav[i] = ir[i];
    k = RemoveNosaveregs(IREGBEG, TNIR, ir, icalleesave);
    nir = GetRegSaveList(IREGBEG, TNIR, ir);
-fprintf(stderr, "nosave=%d nisav = %d\n", k, nir);
    RemoveNosaveregs(FREGBEG, TNFR, fr, fcalleesave);
    nfr = GetRegSaveList(FREGBEG, TNFR, fr);
    RemoveNosaveregs(DREGBEG, TNDR, dr, dcalleesave);
@@ -1691,7 +1690,6 @@ fprintf(stderr, "tsize=%d, Loff=%d, Soff=%d lsize=%d\n", tsize, Loff, Soff, lsiz
             }
          }
          else if (icalleesave[rsav-1]) rsav = -rsav;
-fprintf(stderr, "\n\n** rsav=%d,%s**\n\n", rsav, Int2Reg(rsav <= 0 ? rsav : -rsav));
          if (rsav < 0)
          {
             LOAD1 = -rsav;
@@ -1736,7 +1734,6 @@ fprintf(stderr, "\n\n** rsav=%d,%s**\n\n", rsav, Int2Reg(rsav <= 0 ? rsav : -rsa
          rsav = -LOAD1;
    }
    PrintMajorComment(bbase, NULL, oldhead, "Save registers");
-   fprintf(stderr, "Local offset=%d\n", Loff);
    CorrectLocalOffsets(Loff);
    CorrectParamDerefs(ParaDerefQ, rsav ? rsav : -REG_SP, 
                       rsav ? Aoff : tsize+Aoff);
@@ -1781,7 +1778,6 @@ void CreatePrologue(BBLOCK *bbase, int rsav)
  * Put routine name label
  */
    prog = STlabellookup(rout_name);
-fprintf(stderr, "prog=%d!, rout_name=%s\n", prog, rout_name);
    STflag[prog-1] |= GLOB_BIT;
    InsNewInst(NULL, NULL, oldhead, LABEL, prog, 0, 0);
 

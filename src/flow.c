@@ -1006,14 +1006,9 @@ void FinalizeLoops()
  *    Find the tail(s) of the loop.  Loop tails are preds of the header
  *    which are in the loop.
  */
-      fprintf(stderr, "\n\nheader preds = %s\n",
-              PrintBlockList(lp->header->preds));
       phbv = BlockList2BitVec(lp->header->preds);
       BitVecComb(phbv, phbv, lp->blkvec, '&');
-      fprintf(stderr, "blkvec = %s\n", PrintVecList(lp->blkvec, 1));
       lp->tails = BitVec2BlockList(phbv);
-      fprintf(stderr, "tails = %s\n",
-              PrintBlockList(lp->tails));
 /*
  *    Find the post-tail(s) of the loop.  Loop post-tails are succ of
  *    tail that are outside the loop and have no non-tail preds
@@ -1041,15 +1036,12 @@ void FinalizeLoops()
             else bl->blk = bl->blk->csucc;
          }
       }
-      fprintf(stderr, "posttails = %s\n",
-              PrintBlockList(lp->posttails));
    }
 /*   prepostloops(); */
    maxdep = CalcLoopDepth();
    if (optloop)
    {
       assert(optloop->next);
-      fprintf(stderr, "maxdep=%d, optdep=%d\n", maxdep, optloop->next->depth);
       assert(optloop->next->depth == maxdep);
    }
    SortLoops(maxdep);

@@ -611,7 +611,6 @@ static void WriteMiscToFile(char *name)
       n = 0;
       assert(fwrite(&n, sizeof(short), 1, fp) == 1);
    }
-fprintf(stderr, "\n%s(%d)\n", __FILE__, __LINE__);
    if (LIhead)
    {
       for (n=0,lp=LIhead; lp; lp = lp->next) n++;
@@ -622,7 +621,7 @@ fprintf(stderr, "\n%s(%d)\n", __FILE__, __LINE__);
       WriteShortArrayToFile(fp, n, sp);
       for (n=0,lp=LIhead; lp; lp = lp->next)
       {
-         fprintf(stderr, "W id=%d, ptr=%d\n", lp->id, lp->con);
+/*         fprintf(stderr, "W id=%d, ptr=%d\n", lp->id, lp->con); */
          sp[n++] = lp->con;
       }
       WriteShortArrayToFile(fp, n, sp);
@@ -707,7 +706,7 @@ static void ReadMiscFromFile(char *name)
       s = ReadShortArrayFromFile(fp);
       for (i=1; i <= s[0]; i++)
       {
-         fprintf(stderr, "R id=%d, ptr=%d\n", sp[i], s[i]);
+/*         fprintf(stderr, "R id=%d, ptr=%d\n", sp[i], s[i]); */
          LIhead = NewLI(sp[i], s[i], LIhead);
       }
       free(sp);
@@ -1289,7 +1288,6 @@ int main(int nargs, char **args)
       assert(!GoToTown(IREGBEG+NIR-1, FKO_UR, optblks));
    }
    DumpOptsPerformed(stderr, 1);
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
 
    if (!(FKO_FLAG & IFF_READINTERM))
    {
@@ -1312,7 +1310,6 @@ fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
       }
 #endif
    }
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
       if (DO_LIL(FKO_FLAG))
       {
       if (!DO_ASS(FKO_FLAG))
@@ -1338,19 +1335,12 @@ fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
       }
    }
 /*   ShowFlow("dot.out", bbbase); */
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    if (DO_ASS(FKO_FLAG))
    {
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
       abase = lil2ass(bbbase);
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
       KillAllBasicBlocks(bbbase);
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
       dump_assembly(fpout, abase);
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
       KillAllAssln(abase);
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    }
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    return(0);
 }

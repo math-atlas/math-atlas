@@ -806,12 +806,10 @@ int CalcScopeIG(BLIST *scope)
    short *sp;
    int i, j;
 
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    if (!INDEADU2D)
       CalcAllDeadVariables();
    else if (!CFUSETU2D || !CFU2D || !INUSETU2D)
       CalcInsOuts(bbbase);
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
 
 /*
  * Set blkvec to reflect all blocks in scope, and calculate each block's IG
@@ -1005,7 +1003,6 @@ IGNODE **SortIG(int *N, int thresh)
         igarr[ncon++] = ig;
      }
    }
-fprintf(stderr, "NIG=%d, NCON=%d, NUNCON=%d\n", n, ncon, n-ncon);
    SortConstrainedIG(ncon, igarr);
    SortUnconstrainedIG(n-ncon, igarr+ncon);
    *N = n;
@@ -1049,7 +1046,6 @@ int DoIGRegAsg(int N, IGNODE **igs)
       ig->reg = AnyBitsSet(iv);
       if (ig->reg)
       {
- fprintf(stderr, "using reg=%s\n", Int2Reg(-ig->reg));
          ivused = Reg2Regstate(ig->reg);
          ig->reg--;
          BitVecComb(ig->liveregs, ig->liveregs, ivused, '|');
@@ -1256,8 +1252,10 @@ int DoRegAsgTransforms(IGNODE *ig)
          {
             ip = PrintComment(bl->blk, ip, NULL, "Inserted LD from %s\n",
                               STname[ig->var-1] ? STname[ig->var-1] : "NULL");
-fprintf(stderr, "ireg=%s getting LD ip=%d, nr=%d, nw=%d!\n\n", 
-        STname[ig->var-1], ip, ig->nread, ig->nwrite);
+            #if IFKO_DEBUG_LEVEL > 1
+               fprintf(stderr, "ireg=%s getting LD ip=%d, nr=%d, nw=%d!\n\n", 
+                       STname[ig->var-1], ip, ig->nread, ig->nwrite);
+            #endif
             ip = InsNewInst(bl->blk, ip, NULL, ld, -ig->reg, ig->deref, 0);
             if (ip->next) bl->ptr = ip->next;
             else
@@ -1346,43 +1344,33 @@ int DoScopeRegAsg(BLIST *scope, int thresh, int *tnig)
    extern FILE *fpIG, *fpLIL, *fpST;
    extern BBLOCK *bbbase;
 
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    *tnig = CalcScopeIG(scope);
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    igs = SortIG(&N, thresh);
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    nret = DoIGRegAsg(N, igs);
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
 CheckIG(N, igs);
-fprintf(stderr, "\n\n*** NIG = %d\n", N);
    if (fpIG)
    {
       DumpIG(fpIG, N, igs);
       fclose(fpIG);
    }
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    if (fpLIL)
    {
       PrintInst(fpLIL, bbbase);
       fclose(fpLIL);
       fpLIL = NULL;
    }
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    if (fpST)
    {
       PrintST(fpST);
       fclose(fpST);
       fpST = NULL;
    }
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
 #if 1
    for (i=0; i != N; i++)
       DoRegAsgTransforms(igs[i]);
 #endif
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    if (igs) free(igs);
    KillIGTable();
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    return(nret);
 }
 
@@ -1767,7 +1755,7 @@ fprintf(stderr, "\n\n");
    }
    iret = i = LoadStoreToMove(loop->blocks, n, vars, regs);
    free(regs);
-   fprintf(stderr, "Removed %d LD/ST using global register assignment!\n", i);
+/*fprintf(stderr, "Removed %d LD/ST using global register assignment!\n", i);*/
 /*
  * Insert appopriate LD in preheader, and ST in post-tails
  */
@@ -2248,6 +2236,6 @@ int DoCopyProp(BLIST *scope)
          while(ip);
       }
    }
-fprintf(stderr, "\nCopyProp CHANGE=%d\n", CHANGE);
+/*   fprintf(stderr, "\nCopyProp CHANGE=%d\n", CHANGE); */
    return(CHANGE);
 }
