@@ -1327,12 +1327,13 @@ int UnrollLoop(LOOPQ *lp, int unroll)
    ILIST *il;
    INSTQ *ippost=NULL, *ip, *ipn;
    struct ptrinfo *pi, *pi0;
-   int i, UsesIndex=1, UsesPtrs=1, URbase=0, UR;
+   int i, UsesIndex=1, UsesPtrs=1, URbase=0, UR, URmul;
    enum comp_flag kbeg, kend;
    extern int FKO_BVTMP;
    extern BBLOCK *bbbase;
 
-   UR = lp->vflag ? Type2Vlen(FLAG2TYPE(lp->vflag))*unroll : unroll;
+   URmul = Type2Vlen(FLAG2TYPE(lp->vflag));
+   UR = lp->vflag ? URmul*unroll : unroll;
    KillLoopControl(lp);
 PrintInst(fopen("err.tmp", "w"), bbbase);
    il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
@@ -1390,10 +1391,8 @@ fprintf(stderr, "dupblks[%d] = %s\n", i-1, PrintBlockList(dupblks[i-1]));
          }
 /*
  *       Find all lds of moving ptrs, and add unrolling factor to them
- * HERE HERE HERE
- * NOTE: need to make sure this uses sizeof(vector)!!!
  */
-         UpdatePointerLoads(dupblks[i-1], pi, i);
+         UpdatePointerLoads(dupblks[i-1], pi, i*URmul);
          KillAllPtrinfo(pi);
       }
 /*
@@ -1408,7 +1407,7 @@ fprintf(stderr, "dupblks[%d] = %s\n", i-1, PrintBlockList(dupblks[i-1]));
                             
    if (pi0)
    {
-      ippost = KillPointerUpdates(pi0, unroll);
+      ippost = KillPointerUpdates(pi0, UR);
       KillAllPtrinfo(pi0);
       assert(ippost);
    }
