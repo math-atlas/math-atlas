@@ -1034,7 +1034,6 @@ void Extern2Local(INSTQ *next)
                   InsNewInst(NULL, NULL, next, FSTD, SToff[paras[i]].sa[2],
                              -dreg, 0);
                   j += 2;
-                  j++;
                }
             }
             else j += 2;
