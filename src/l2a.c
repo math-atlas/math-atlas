@@ -72,11 +72,11 @@ static char *GetDeref(short id)
       else if (mul)
       {
          if (con) /* if (reg && mul && con) */
-            sprintf(ln, "%d(%s,%s,%s)", con, archiregs[-IREGBEG-ptr],
-                    archiregs[-IREGBEG-reg], SToff[mul-1]);
+            sprintf(ln, "%d(%s,%s,%d)", con, archiregs[-IREGBEG-ptr],
+                    archiregs[-IREGBEG-reg], mul);
          else
-            sprintf(ln, "(%s,%s,%s)", archiregs[-IREGBEG-ptr],
-                    archiregs[-IREGBEG-reg], SToff[mul-1]);
+            sprintf(ln, "(%s,%s,%d)", archiregs[-IREGBEG-ptr],
+                    archiregs[-IREGBEG-reg], mul);
       }
       else /* reg && !mul */
       {

@@ -145,6 +145,19 @@ fprintf(stderr, "DoMove %d %d (%s %s)\n", dest, src, STname[dest-1]?STname[dest-
    GetReg(-1);
 }
 
+short AddArrayDeref(short array, short index, int offset)
+/*
+ * offset is integer constant.  array,index are entries in the ST.
+ *    array[index+offset]
+ */
+{
+   int mul=4, flag;
+   flag = STflag[array-1];
+   if (IS_DOUBLE(flag) || IS_LONG(flag)) mul = 8;
+   else if (IS_CHAR(flag)) mul = 1;
+   assert(!IS_VEC(flag));
+   AddDerefEntry(array, index, mul, offset);
+}
 static void FixDeref(short ptr)
 /*
  * This routine takes a deref entry of type:
@@ -166,6 +179,10 @@ fprintf(stderr, "FixDeref: [%d, %d, %d, %d]\n", DT[k], DT[k+1], DT[k+2], DT[k+3]
  * Load beginning of array
  */
    DT[k] = -LocalLoad(DT[k]);
+/*
+ * Multiply constant by mul
+ */
+   if (DT[k+2]) DT[k+3] *= DT[k+2];
 /*
  * Load index register if needed
  */
@@ -195,6 +212,7 @@ fprintf(stderr, "FixDeref: [%d, %d, %d, %d]\n", DT[k], DT[k+1], DT[k+2], DT[k+3]
          }
       #endif
    }
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
 }
 
 void DoArrayStore(short ptr, short id)
@@ -231,11 +249,15 @@ void DoArrayStore(short ptr, short id)
 }
 
 void DoArrayLoad(short id, short ptr)
+/*
+ * id is ST index, ptr is DT index
+ */
 {
    short k, ireg=0, areg, type, ld;
 
    k = (ptr-1)<<2;
-   type = (!PTR_BIT) & FLAG2TYPE(STflag[DT[k]-1]);
+   type = FLAG2TYPE(STflag[id-1]);
+fprintf(stderr, "\n\nTYPE=%d\n\n", type);
    FixDeref(ptr);
    switch(type)
    {

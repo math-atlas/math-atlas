@@ -9,5 +9,6 @@ void HandlePtrArith(short dest, short src0, char op, short src1);
 void DoArith(short dest, short src0, char op, short src1);
 void DoReturn(short rret);
 void DoLabel(char *name);
+short AddArrayDeref(short array, short index, short offset);
 
 #endif

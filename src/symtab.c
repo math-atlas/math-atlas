@@ -16,8 +16,8 @@ int    LOCSIZE=0, LOCALIGN=0, NPARA=0;
  * Every pointer dereference gets an entry in the dereference table.
  * Right now, deref table consists of 4 shorts:
  * <ptr> <reg> <mul> <con>
- * all of which except mul are indexes into the symbol table.  Mul is simply
- * a short multiplier constant.
+ * all of which except mul & con are indexes into the symbol table.  Mul and
+ * con are simply short constants.
  * Addressing is: ptr+reg*mul+con
  * NOTE: this structure will likely expand.
  */

@@ -2,7 +2,7 @@
 #include "y.tab.h"
    extern int lnno;
 %}
-ICON	[-+]?[0-9]+
+ICON	[0-9]+
 HCON	"0x"[0-9,A-F]+
 FCON	{ICON}"."{ICON}[e,E]ICON
 DCON	{ICON}"."{ICON}([d,D]ICON)?
@@ -16,10 +16,10 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "(" | 
 ")" | 
 "!" |
+"+" | 
 "*" | 
 "/" |
 "%" | 
-"+" | 
 "<" | 
 ">" | 
 "&" | 

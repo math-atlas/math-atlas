@@ -20,6 +20,8 @@ irun : ibuild
 	./xitst3
 
 
+xitst6 : mitst6.o itst6.o
+	$(CC) $(CCFLAGS) -o $@ mitst6.o itst6.o
 xitst5 : mitst5.o itst5.o
 	$(CC) $(CCFLAGS) -o $@ mitst5.o itst5.o
 xitst4 : mitst4.o itst4.o
@@ -40,6 +42,12 @@ xftst2 : mftst2.o ftst2.o
 	$(CC) $(CCFLAGS) -o $@ mftst2.o ftst2.o
 xftst3 : mftst3.o ftst3.o
 	$(CC) $(CCFLAGS) -o $@ mftst3.o ftst3.o
+xftst4 : mftst4.o ftst4.o
+	$(CC) $(CCFLAGS) -o $@ mftst4.o ftst4.o
+xftst5 : mftst5.o ftst5.o
+	$(CC) $(CCFLAGS) -o $@ mftst5.o ftst5.o
+xftst6 : mftst6.o ftst6.o
+	$(CC) $(CCFLAGS) -o $@ mftst6.o ftst6.o
 build_comp:
 	cd ../bin ; $(MAKE) ifko
 

@@ -162,10 +162,10 @@ iconst : icexpr         {$$ = STiconstlookup($1);} ;
 ID : NAME               
    {if (!($$ = STstrlookup($1))) fko_error(__LINE__,"unknown ID '%s'", $1); }
    ;
-ptrderef : ID '[' icexpr ']' { $$ = AddDerefEntry($1, 0, 0, $3); }
-         | ID '[' ID ']'    { $$ = AddDerefEntry($1, $3, 0, 0); }
-         | ID '[' ID '+' icexpr ']' { $$ = AddDerefEntry($1, $3, 0, $5); }
-         | ID '[' ID '-' icexpr ']' { $$ = AddDerefEntry($1, $3, 0, -$5); }
+ptrderef : ID '[' ID '+' icexpr ']' { $$ = AddArrayDeref($1, $3, $5); }
+         | ID '[' ID '-' icexpr ']' { $$ = AddArrayDeref($1, $3, -$5); }
+         | ID '[' icexpr ']' { $$ = AddArrayDeref($1, 0, $3); }
+         | ID '[' ID ']'    { $$ = AddArrayDeref($1, $3, 0); }
          ;
 avar : ID               {$$ = $1;}
      | fconst           {$$ = $1;}
