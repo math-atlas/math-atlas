@@ -1152,7 +1152,7 @@ static short FindNameMatch(int n, short *pool, char *name)
 
 void UpdatePrefetchInfo()
 {
-   int n, i, j, k;
+   int n, i, j, k, N;
    short *sp;
 
    if (optloop && PFARR)
@@ -1174,7 +1174,7 @@ void UpdatePrefetchInfo()
          }
          optloop->pfdist = PFDST;
          optloop->pfflag = PFLVL;
-         n = PFDST[0];
+         N = n = PFDST[0];
       }
 /*
  *    If we've got default prefetch info for all arrays
@@ -1208,6 +1208,7 @@ void UpdatePrefetchInfo()
             optloop->pfflag[k] = PFLVL[i];
          }
          n = PFDST[0];
+         N = n - 1;
          free(PFDST);
          free(PFLVL);
       }
@@ -1227,7 +1228,7 @@ void UpdatePrefetchInfo()
             k++;
       if (k)
       {
-         if (n == k)
+         if (N == k)
          {
             free(optloop->pfarrs);
             free(optloop->pfflag);
