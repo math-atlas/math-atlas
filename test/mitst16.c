@@ -6,7 +6,7 @@
 main()
 {
    int sloop(int ibeg, int iend, int *ia);
-   int i, ibeg=2, iend=10, iret, iexp;
+   int i, ibeg=1, iend=10, iret, iexp;
    int ia[10] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
    iret = sloop(ibeg, iend, ia);
    for (iexp=0, i=ibeg; i < iend; i++) iexp += ia[i];

@@ -255,6 +255,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
                   op->opts[j] = atoi(sp) + MaxOpt;
                else
                {
+                  op->opts[j] = -1;
                   for (k=0; k < MaxOpt; k++)
                   {
                      if (!strcmp(optabbr[k], sp))
@@ -263,7 +264,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
                         break;
                      }
                   }
-                  if (k == MaxOpt)
+                  if (op->opts[j] == -1)
                      fko_error(__LINE__, "Unknown optimization '%s'", sp);
                }
 #if 0
@@ -677,6 +678,8 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope, int global)
          break;
       case CopyProp:
          nchanges += DoCopyProp(scope);
+         break;
+      case DoNothing:  /* dummy opt does nothing */
          break;
       default:
          fko_error(__LINE__, "Unknown optimization %d\n", ops[i]);

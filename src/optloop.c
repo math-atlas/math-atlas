@@ -1139,11 +1139,17 @@ void UnrollCleanup(LOOPQ *lp, int unroll)
  */
    if (!(lp->flag & (L_FORWARDLC_BIT | L_SIMPLELC_BIT)))
    {
-      il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
-      if (!AlreadySimpleLC(lp) && il)
-         lp->flag |= L_FORWARDLC_BIT;
+      if (AlreadySimpleLC(lp))
+         lp->flag |= (L_NSIMPLELC_BIT | L_SIMPLELC_BIT);
       else
-         lp->flag |= L_SIMPLELC_BIT;
+      {
+         il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
+         if (!AlreadySimpleLC(lp) && il)
+            lp->flag |= L_FORWARDLC_BIT;
+         else
+            lp->flag |= L_SIMPLELC_BIT;
+         if (il) KillIlist(il);
+      }
    }
    FORWARDLOOP = L_FORWARDLC_BIT & lp->flag;
 /*
@@ -1189,7 +1195,7 @@ void UnrollCleanup(LOOPQ *lp, int unroll)
    {
       InsNewInst(bp, NULL, ipnext, LD, -r0, SToff[lp->I-1].sa[2], 0);
       InsNewInst(bp, NULL, ipnext, SUBCC, -r0, -r0,
-                 STiconstlookup(-(SToff[lp->inc-1].i*unroll-1)));
+                 STiconstlookup(-(FKO_abs(SToff[lp->inc-1].i)*unroll-1)));
       InsNewInst(bp, NULL, ipnext, ST, SToff[lp->I-1].sa[2], -r0, 0);
    }
    InsNewInst(bp, NULL, ipnext, JNE, -PCREG, -ICC0, ilab);
