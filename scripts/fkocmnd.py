@@ -195,8 +195,8 @@ def GetOptVals(flags, pfarrs, pfsets):
          pfl.append(0)
    else :
       words = flags[j:].split();
-      lvl = int(words[1])
-      dis = int(words[2])
+      lvl = int(words[2])
+      dis = int(words[3])
       for arr in pfarrs:
          pfl.append(lvl)
          pfd.append(dis)
