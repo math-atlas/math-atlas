@@ -176,6 +176,8 @@ def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=64):
 #
 #  Get rid of default unrolling so we can add our own
 #
+   if blas.find("amax") != -1 :
+      URN = 32
    j = KF0.find("-U ")
    if j != -1:
       words = KF0[j:].split()
@@ -453,28 +455,28 @@ def ifko(routs, pres, N):
 
       if len(WT) : wt = 'Y'
       else : wt = 'N'
-      mfwt = idecmflist[i][2]
+      mfwt = max(mfsv,idecmflist[i][2])
 
       pfdX = pfd[0]
       if pfinst[0].find("none") != -1: pfIX = pfinst[0]
-      else : pfIX = r"{\tt " + pfinst[0] + "}"
+      else : pfIX = r"{\tt " + pfinst[0][2:] + "}"
       if npf == 2 :
          pfdY = pfd[1]
          if pfinst[1].find("none") != -1: pfIY = pfinst[1]
-         else : pfIY = r"{\tt " + pfinst[1] + "}"
+         else : pfIY = r"{\tt " + pfinst[1][2:] + "}"
       else :
          pfdY = 0
          pfIY = "N/A"
       if len(AE) : ae = AE[0]
       else : ae = 0
-      mfI  =  idecmflist[i][3]
-      mfpf = idecmflist[i][4]
-      mfur = idecmflist[i][5]
-      mfae = idecmflist[i][6]
+      mfI  = max(mfwt,idecmflist[i][3])
+      mfpf = max(mfI,idecmflist[i][4])
+      mfur = max(mfpf,idecmflist[i][5])
+      mfae = max(mfur,idecmflist[i][6])
 
-      print "%10s & %1.1s (%.2f) & %1.1s (%.2f) & %4.4s &%6d & %4.4s (%.2f) &%6d (%.2f) & %d (%.2f) & %d (%.2f)\\\\\\hline" % \
+      print "%10s & %1.1s (%.2f) & %1.1s (%.2f) & %s &%6d & %s (%.2f) &%6d (%.2f) & %d (%.2f) & %d (%.2f)\\\\\\hline" % \
             (r"{\tt " + blalist[i]+"}", sv, mfsv/mf0, wt, mfwt/mfsv, pfIX,pfdX, 
-             pfIY, mfI/mfwt, pfdY, mfpf/mfI, UR, mfur/mfpf, ae, mfae/mfur)
+             pfIY, mfI/mfsv, pfdY, mfpf/mfsv, UR, mfur/mfsv, ae, mfae/mfsv)
       i += 1
    i = 0
    print "\n"

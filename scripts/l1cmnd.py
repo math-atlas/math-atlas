@@ -6,7 +6,7 @@ WALLTIME = 1
 L1Tdir = '/tune/blas/level1/'
 
 def GetDefaultBlas():
-   return ['asum', 'axpy', 'dot', 'scal', 'iamax']
+   return ['copy', 'asum', 'axpy', 'dot', 'scal', 'iamax']
 
 def GetDefaultRefBlas(blas):
    n = len(blas)
