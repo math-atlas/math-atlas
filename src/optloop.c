@@ -2101,11 +2101,14 @@ void PrintLoopInfo()
    ILIST *il;
    BLIST *bl;
    INSTQ *ip;
+   short *sp;
    struct ptrinfo *pi, *pi0;
    FILE *fpout=stdout;
-   int SimpleLC=0, UR, N, Npf, i, j, k, vect;
-   int set, use;
+   int SimpleLC=0, UR, N, Npf, i, j, k, vect, ns;
+   int set, use, var;
+   char pre;
    extern FILE *fpLOOPINFO;
+   extern short STderef;
 
    if (fpLOOPINFO)
       fpout = fpLOOPINFO;
@@ -2196,7 +2199,72 @@ void PrintLoopInfo()
             fprintf(fpout, " sets=%d uses=%d\n", j, k);
          }
       }
+/*
+ *    sets + use - regs - ptrs = scalars in loop
+ */
+      var = BitVecComb(0, set, use, '|');
+/*
+ *    Sub off all registers
+ */
+      for (i=0; i < TNREG; i++)
+         SetVecBit(var, i, 0);
+/*
+ *    Sub off all moving ptrs
+ */
+      for (pi=pi0; pi; pi = pi->next)
+         SetVecBit(var, pi->ptr-1+TNREG, 0);
       KillAllPtrinfo(pi0);
+
+/*
+ *    Find all scalars used in loop
+ */
+      sp = BitVec2Array(var, 1-TNREG);
+      for (j=0, ns=sp[0], i=1; i <= ns; i++)
+      {
+         k = sp[i];
+         if (k == STderef)
+            continue;
+         if (IS_DEREF(STflag[k-1]))
+            k = STpts2[k-1];
+         assert(STname[k-1]);
+         if (!FindInShortList(j, sp+1, k))
+            sp[j++] = k;
+      }
+      ns = j;
+      fprintf(fpout, "   Scalars used in loop: %d\n", ns);
+      for (i=0; i < ns; i++)
+      {
+         k = sp[i]-1;
+         j = STflag[k];
+         j = FLAG2TYPE(j);
+         switch(j)
+         {
+         case T_FLOAT:
+         case T_VFLOAT:
+            pre = 's';
+            break;
+         case T_DOUBLE:
+         case T_VDOUBLE:
+            pre = 'd';
+            break;
+         case T_INT:
+            pre = 'i';
+            break;
+         default:
+            fko_error(__LINE__, "Unknown type %d, file %s", j, __FILE__);
+         }
+
+         fprintf(fpout, "      '%s': type=%c", STname[k], pre);
+         CountArrayAccess(lp->blocks, sp[i], &k, &j);
+         fprintf(fpout, " sets=%d uses=%d", j, k);
+         if (j == k)
+            j = -1;
+         else
+            j = 0;
+         fprintf(fpout, " accum=%d", j);
+         fprintf(fpout, "\n");
+      }
+      free(sp);
    }
    else
       fprintf(fpout, "OPTLOOP=0\n");
