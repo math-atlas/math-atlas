@@ -167,7 +167,7 @@ struct ptrinfo *FindMovingPointers(BLIST *scope)
    INSTQ *ip;
    short k, i, j;
    int flag;
-   for (bl=scope; bl; bl->next)
+   for (bl=scope; bl; bl = bl->next)
    {
       for (ip=bl->blk->ainstN; ip; ip = ip->prev)
       {
@@ -179,11 +179,14 @@ struct ptrinfo *FindMovingPointers(BLIST *scope)
          {
             k = ip->inst[1]-1;
             flag = STflag[k];
-            if (IS_PTR(flag))
+            if (IS_PTR(flag) && ip->prev && 
+                (ip->prev->inst[0] == ADD || ip->prev->inst[0] == SUB))
             {
+/*
+ *             Remove these restrictions later to allow things like
+ *             ptr0 += ptr1 or ptr0 = ptr0 + ptr1
+ */
                #if IFKO_DEBUG_LEVEL >= 1
-                  assert(ip->prev);
-                  assert(ip->prev->inst[0] == ADD || ip->prev->inst[0] == SUB);
                   assert(ip->prev->inst[1] == ip->inst[2]);
                #endif
                p = FindPtrinfo(pbase, k+1);
