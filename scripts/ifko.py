@@ -89,6 +89,24 @@ def ifko_pftype(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
             m0 = m1
    return KF0
 
+#
+# attempt to find best prefetch distance for given array
+#
+def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr)
+   st = "-P %s " % (arr)
+   j = KF0.find(st)
+   if j == -1:
+      j = KF0.find("-P all ")
+      assert(j != -1)
+      j += 7
+   else:
+      j += 4 + arr.len()
+   words = KF0[j:].split()
+   pflvl = int(words[0])
+   ipd = int(words[1])
+
+
+
 def ifko(l1bla, pre, N):
    (IFKOdir, fko) = fkocmnd.GetFKOinfo()
    (ATLdir, ARCH) = fkocmnd.FindAtlas(IFKOdir)
