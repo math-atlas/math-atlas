@@ -121,7 +121,7 @@ void Param2Local(INSTQ *next, short rsav, int fsize)
    }
    #ifdef X86_32
       ir = GetReg(T_INT);
-      for (i=0; i < NPARA; i++)
+      for (j=i=0; i < NPARA; i++)
       {
          flag = STflag[paras[i]];
          InsNewInst(NULL, next, LD, -ir,
