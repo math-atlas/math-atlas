@@ -41,14 +41,14 @@ ILIST *FindNextLoad(INSTQ *ipstart, short var, int blkvec, int ivseen)
  */
 {
    INSTQ *ip;
-   ILIST *il=NULL, *il2;
+   ILIST *il=NULL, *il2=NULL;
 
    if (ipstart)
    {
       SetVecBit(ivseen, ipstart->myblk->bnum-1, 1);
       for (ip=ipstart; ip; ip = ip->next)
       {
-         if (IS_LOAD(ip->inst[0]) && STpts2[ip->inst[1]] == var)
+         if (IS_LOAD(ip->inst[0]) && STpts2[ip->inst[2]-1] == var)
             return(NewIlist(ip, NULL));
       }
       assert(ipstart->myblk);
@@ -88,6 +88,7 @@ short FindReadUseType(INSTQ *ip, short var, int blkvec)
    ib = FindNextLoad(ip, var, blkvec, iv);
    for (il=ib; il; il = il->next)
    {
+      ip = il->inst;
       if (ip->next->inst[0] == FADD || ip->next->inst[0] == FADDD)
          j |= VS_ACC;
       else if (IS_STORE(ip->next->inst[0])&& STpts2[ip->next->inst[2]-1] == var)
@@ -210,6 +211,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
    pbase = FindMovingPointers(lp->blocks);
    for (N=0,p=pbase; p; p = p->next)
    {
+fprintf(stderr, "moving ptr = %s\n", STname[p->ptr-1]);
       if (IS_FP(STflag[p->ptr-1]))
       {
          N++;
@@ -234,10 +236,10 @@ int DoLoopSimdAnal(LOOPQ *lp)
 /*
  * Remove the moving arrays from scalar vals
  */
-   for (k=i=0; i < n; i++)
+   for (k=0,i=1; i <= n; i++)
    {
-      for (j=0; j < N && s[j] != sp[i]; j++);
-      if (j == N)
+      for (j=1; j <= N && s[j] != sp[i]; j++);
+      if (j > N)
          sp[k++] = sp[i];
    }
    n -= k;
@@ -361,6 +363,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
                s[i] |= VS_MUL;
             else
             {
+               fprintf(stderr, "j=%d, ACC=%d,MUL=%d\n", j, VS_ACC, VS_MUL);
                fko_warn(__LINE__, 
                         "Mixed use of var %d(%s) prevents vectorization!!\n\n",
                         sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
@@ -588,15 +591,30 @@ int SimdLoop(LOOPQ *lp)
                         {
                            nfr = AddToShortList(nfr, sregs, op);
                            k = FindInShortList(nfr, sregs, op);
-                           vregs[k] = GetReg(FLAG2TYPE(lp->vflag));
+                           vregs[k-1] = GetReg(FLAG2TYPE(lp->vflag));
                         }
                         ip->inst[j] = -vregs[k-1];
                      }
-                     else if (!FindInShortList(lp->varrs[0], lp->varrs+1, op))
+                     else
                      {
-                        k = FindInShortList(lp->vscal[0], lp->vscal+1, op);
-                        assert(k);
-                        ip->inst[j] = lp->vvscal[k-1];
+fprintf(stderr, "scoping %s (%d)\n", STname[op-1], op);
+                        if (IS_DEREF(STflag[op-1]))
+                        {
+                           k = STpts2[op-1];
+                           if (!FindInShortList(lp->varrs[0],lp->varrs+1,k))
+                           {
+                              k = FindInShortList(lp->vscal[0],lp->vscal+1,op);
+                              assert(k);
+                              ip->inst[j] = SToff[lp->vvscal[k-1]-1].sa[2];
+                              assert(ip->inst[j] > 0);
+                           }
+                        }
+                        else if (!FindInShortList(lp->varrs[0],lp->varrs+1,op))
+                        {
+                           k = FindInShortList(lp->vscal[0], lp->vscal+1, op);
+                           assert(k);
+                           ip->inst[j] = lp->vvscal[k-1];
+                        }
                      }
                   }
                   break;
@@ -631,7 +649,7 @@ int VectorizeStage1(void)
    LOOPQ *lp;
    INSTQ *ip, *ipn;
    struct ptrinfo *pi0, *pi;
-   int flag, k, i, n;
+   int flag, k, i, n, j;
    char ln[1024];
 
    if (!optloop)
@@ -696,7 +714,7 @@ int VectorizeStage1(void)
    optloop->vsflag = vsflag;
    lp->vflag = flag;
 /*
- * Create vector locals for all vector scalars in loop
+ * Create vector locals for all vector scalars in loop, and their derefs
  */
    k = LOCAL_BIT | FLAG2TYPE(flag);
    lp->vvscal = malloc(sizeof(short)*n);
@@ -706,7 +724,8 @@ int VectorizeStage1(void)
    for (i=0; i < n; i++)
    {
       sprintf(ln, "_V%d_%s", i-1, STname[sp[i]-1] ? STname[sp[i]-1] : "");
-      lp->vvscal[i] = STdef(ln, k, 0);
+      j = lp->vvscal[i] = STdef(ln, k, 0);
+      SToff[j-1].sa[2] = AddDerefEntry(-REG_SP, j, -j, 0, j);
    }
    SaveFKOState(1);
    return(0);
