@@ -184,7 +184,8 @@ char *instmnem[] =
  */
    "LD",
    "ST",
-   "OR",
+   "MOV",
+   "OR",       /* [OR-NEG] set CC for x86 */
    "AND",
    "ANDCC",
    "XOR",
@@ -202,7 +203,6 @@ char *instmnem[] =
    "UDIV",
    "CMPAND",
    "CMP",
-   "MOV",
    "NEG",
 /*   ABS, ; abs commented out because not widely supported */
 /*
@@ -322,16 +322,22 @@ char *instmnem[] =
 #define IS_BRANCH(i_) ((i_) >= FIRSTBRANCH && (i_) <= LASTBRANCH)
 #define IS_LOAD(i_)  ((i_) == LD || (i_) == FLD || (i_) == FLDD || \
                       (i_) == VFLD || (i_) == LDS)
+#define IS_MOVE(i_) ((i_) == MOV || (i_) == FMOV || (i_) == FMOVD || \
+                     (i_) == VFMOV)
 #define IS_STORE(i_)  ((i_) == ST || (i_) == FST || (i_) == FSTD || \
                        (i_) == VFST || (i_) == STS)
 #define IS_CMP(i_) ((i_) == CMP || (i_) == CMPAND || (i_) == CMPS || \
                     (i_) == FCMP || (i_) == FCMPD || (i_) == VFCMP || \
                     (i_) == CFTBFI || (i_) == CFTBDI || (i_) == FCMPWD)
+#define IS_IOPCC(i_) ((i_) == ANDCC || (i_) == SUBCC || (i_) == ANDCC)
+#define IS_IARITH(i_)
 
 INSTQ *NewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,
                short dest, short src1, short src2);
 INSTQ *InsNewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,
                   short dest, short src1, short src2);
+INSTQ *InsNewInstAfterLabel(BBLOCK *blk, enum inst ins,
+                            short dest, short src1, short src2);
 void InsInstInBlockList(BLIST *blist, int FIRST, enum inst ins,
                         short dest, short src1, short src2);
 INSTQ *DelInst(INSTQ *del);

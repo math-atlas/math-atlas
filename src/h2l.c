@@ -1,27 +1,6 @@
 #include "ifko.h"
 #include "fko_arch.h"
 
-static short type2len(int type)
-{
-   short len=4;
-   #ifdef ArchPtrIsLong
-      if (type == T_INT || type == T_DOUBLE) len = 8;
-   #else
-      if (type == T_DOUBLE) len = 8;
-   #endif
-   return(len);
-}
-static short type2shift(int type)
-{
-   short len=2;
-   #ifdef  ArchPtrIsLong
-      if (type == T_DOUBLE || type == T_INT) len = 3;
-   #else
-      if (type == T_DOUBLE) len = 3;
-   #endif
-   return(len);
-}
-
 static int LocalLoad(short id)
 /*
  * Loads the value stored in local id

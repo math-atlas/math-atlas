@@ -20,6 +20,27 @@ struct locinit *LIhead=NULL,       /* Locals to be init to constant vals */
    #define ISIZE 4
 #endif
 
+short type2len(int type)
+{
+   short len=4;
+   #ifdef ArchPtrIsLong
+      if (type == T_INT || type == T_DOUBLE) len = 8;
+   #else
+      if (type == T_DOUBLE) len = 8;
+   #endif
+   return(len);
+}
+short type2shift(int type)
+{
+   short len=2;
+   #ifdef  ArchPtrIsLong
+      if (type == T_DOUBLE || type == T_INT) len = 3;
+   #else
+      if (type == T_DOUBLE) len = 3;
+   #endif
+   return(len);
+}
+
 void FindRegUsage(BBLOCK *bbase, int *ni0, int *iregs, 
                   int *nf0, int *fregs, int *nd0, int *dregs)
 /*

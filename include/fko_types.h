@@ -22,6 +22,22 @@ struct instq
    ushort use, set, deads;
 };
 
+typedef struct ilist ILIST;
+struct ilist
+{
+   INSTQ *inst;
+   ILIST *next;
+};
+
+struct ptrinfo
+{
+   ILIST *ilist;          /* ptrs to nupdate store inst */
+   struct ptrinfo *next;
+   short ptr;
+   short flag;            /* see PTRF_* defined in fko_optloop.h */
+   ushort nupdate;        /* # of times updated */
+};
+
 struct idlist
 {
    char *name;
@@ -79,6 +95,7 @@ typedef struct loopq LOOPQ;
 struct loopq
 {
    int flag;
+   short ndup;        /* # of times body has been dupd (unroll & cleanup) */
    short depth;
    short I, beg, end, inc;
    short body_label;

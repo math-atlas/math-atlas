@@ -55,6 +55,28 @@ void KillAllLocinit(struct locinit *libase)
       libase = lp;
    }
 }
+ILIST *NewIlist(INSTQ *inst, ILIST *next)
+{
+   ILIST *ip;
+   ip = malloc(sizeof(ILIST));
+   assert(ip);
+   ip->inst = inst;
+   ip->next = next;
+   return(ip);
+}
+
+ILIST *KillIlist(ILIST *ip)
+{
+   ILIST *in;
+   if (ip)
+   {
+      in = ip->next;
+      free(ip);
+   }
+   else 
+      in = NULL;
+   return(in);
+}
 
 struct ptrinfo *NewPtrinfo(short ptr, short flag, struct ptrinfo *next)
 {

@@ -10,9 +10,11 @@ int BlockList2BitVec(BLIST *lp);
 BLIST *BitVec2BlockList(int iv);
 BLIST *FindInList(BLIST *lp, BBLOCK *blk);
 BBLOCK *FindBlockInList(BLIST *lp, BBLOCK *blk);
+BBLOCK *FindBlockInListByNumber(BLIST *lp, ushort bnum);
 BLIST *MergeBlockLists(BLIST *l1, BLIST *l2);
 void KillBlockList(BLIST *lp);
 BLIST *MergeBlockLists(BLIST *l1, BLIST *l2);
+BLIST *FindBlockListWithLabel(BLIST *list, int ilab);
 
 BBLOCK *NewBasicBlock(BBLOCK *up, BBLOCK *down);
 void KillAllBasicBlocks(BBLOCK *base);

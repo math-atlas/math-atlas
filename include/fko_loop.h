@@ -16,5 +16,6 @@
 #define L_NINC_BIT      0x20  /* Negative incremement */
 #define L_NSTART_BIT    0x40  /* Negative start */
 #define L_NEND_BIT      0x80  /* Negative end   */
+#define L_IREF_BIT      0x100 /* index is refed in body */
 
 #endif

@@ -366,5 +366,8 @@
 short GetReg(short type);
 void GenPrologueEpilogueStubs(BBLOCK *bbase);
 void FinalizePrologueEpilogue(BBLOCK *bbase);
+short type2len(int type);
+short type2shift(int type);
+
 
 #endif

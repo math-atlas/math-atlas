@@ -129,7 +129,27 @@ void IndividualizeDuplicatedBlockList(int ndup, BLIST *scope)
    KillAllLocinit(lbase);
 }
 
-void FindMovingPointers(BLIST *scope)
+ILIST *FindIndexRef(BLIST *scope, short I)
+/*
+ * Finds all LDs from I in given scope.
+ * This means all refs of I in code that is straight from h2l.
+ */
+{
+   BLIST *bl;
+   INSTQ *ip;
+   ILIST *ilbase=NULL;
+   for (bl=scope; bl; bl->next)
+   {
+      for (ip=bl->blk->ainstN; ip; ip = ip->prev)
+      {
+         if (ip->inst[0] == LD && ip->inst[2] == I)
+            ilbase = NewIlist(ip, ilbase);
+      }
+   }
+   return(ilbase);
+}
+
+struct ptrinfo *FindMovingPointers(BLIST *scope)
 /*
  * Finds pointers that are inc/decremented in scope
  * INFO: where it is inc/dec, #of times inc/dec, whether inc by constant or var
@@ -141,11 +161,11 @@ void FindMovingPointers(BLIST *scope)
    struct ptrinfo *pbase=NULL, *p;
    BLIST *bl;
    INSTQ *ip;
-   short k;
+   short k, i, j;
    int flag;
    for (bl=scope; bl; bl->next)
    {
-      for (ip=bl->blk->ainst1; ip != bl->blk->ainstN; ip = ip->next)
+      for (ip=bl->blk->ainstN; ip; ip = ip->prev)
       {
 /*
  *       Look for a store to a pointer, and then see how the pointer was
@@ -162,13 +182,179 @@ void FindMovingPointers(BLIST *scope)
                   assert(ip->prev->inst[0] == ADD || ip->prev->inst[0] == SUB);
                   assert(ip->prev->inst[1] == ip->inst[2]);
                #endif
-               if (ip->prev->inst[0] == ADD)
                p = FindPtrinfo(pbase, k+1);
                if (!p)
-                  pbase = p = NewPtrinfo(k+1, pflag, pbase);
+               {
+                  pbase = p = NewPtrinfo(k+1, 0, pbase);
+                  p->nupdate = 1;
+                  if (ip->prev->inst[0] == ADD)
+                     p->flag |= PTRF_INC;
+                  if (ip->inst[2] == ip->prev->inst[2])
+                  {
+                     j = ip->prev->inst[3];
+                     if (j > 0 && IS_CONST(STflag[j-1]))
+                     {
+                        p->flag |= PTRF_CONSTINC;
+                        if (SToff[j-1].i == type2len(FLAG2TYPE(flag)))
+                           p->flag |= PTRF_CONTIG;
+                     }
+                  }
+               }
+               else
+               {
+                  p->nupdate++;
+                  p->flag = 0;
+               }
             }
          }
       }
    }
    return(pbase);
+}
+
+INSTQ *FindCompilerFlag(BBLOCK *bp, short flag)
+{
+   INSTQ *iret=NULL, *ip;
+   for (ip=bp->inst1; ip; ip = ip->next)
+      if (ip->inst[0] == CMPFLAG && ip->inst[1] == flag)
+         break;
+   return(ip);
+}
+
+void KillLoopControl(LOOPQ *lp)
+/*
+ * This function deletes all the loop control information from loop lp
+ * (set, increment & test of index and goto top of loop body)
+ */
+{
+   INSTQ *ip;
+   BLIST *bl;
+
+   if (!lp) return;
+/*
+ * Delete index init that must be in preheader
+ */
+   ip = FindCompilerFlag(lp->preheader, CF_LOOP_INIT)
+   #if IFKO_DEBUG_LEVEL >= 1
+      assert(ip);
+   #endif
+   ip = ip->next;
+   while (ip && (ip->inst[0] != CMPFLAG || ip->inst[1] != CF_LOOP_BODY))
+      ip = DelInst(ip);
+   #if IFKO_DEBUG_LEVEL >= 1
+      assert(ip);
+   #endif
+/*
+ * Delete index update, test and branch that must be in all tails
+ */
+   for (bl=lp->tails; bl; bl = bl->next)
+   {
+      ip = FindCompilerFlag(bl->blk, CF_LOOP_UPDATE)
+      #if IFKO_DEBUG_LEVEL >= 1
+         assert(ip);
+      #endif
+      ip = ip->next;
+      while (ip && (ip->inst[0] != CMPFLAG || ip->inst[1] != CF_LOOP_END))
+      {
+         if (ip->inst[0] != CMPFLAG || ip->inst[1] != CF_LOOP_TEST)
+            ip = DelInst(ip);
+         else
+            ip = ip->next;
+      }
+      #if IFKO_DEBUG_LEVEL >= 1
+         assert(ip);
+      #endif
+   }
+}
+
+static void SimpleLC(short I, short I0, short N, short lab
+                     INSTQ **ipinit, **ipupdate, **iptest)
+/*
+ * Do simple N..0 loop.
+ * NOTE: later specialize to use loop reg on PPC
+ *       Assumes inc = 1
+ */
+{
+   short r0, r1;
+   r0 = GetReg(T_INT);
+   r1 = GetReg(T_INT);
+   if (IS_CONST(STflag[N-1]) && IS_CONST(STflag[I0-1]))
+   {
+      *ipinit = ip = NewInst(NULL, NULL, NULL, MOV, -r0, 
+                             STiconstlookup(SToff[N-1].i - SToff[I0-1].i), 0)
+   }
+   else
+   {
+      if (IS_CONST(STflag[I0-1]))
+      {
+         *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r0, N, 0)
+         ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, I0);
+      }
+      else if (IS_CONST(STflag[N-1]))
+      {
+         *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r1, I0, 0)
+         ip->next = NewInst(NULL, NULL, NULL, MOV, -r0, N, 0)
+         ip = ip->next;
+         ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, -r1);
+      }
+      else
+      {
+         *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r0, N, 0)
+         ip->next = NewInst(NULL, NULL, NULL, LD, -r1, I0, 0)
+         ip = ip->next;
+         ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, -r1);
+      }
+      ip = ip->next;
+   }
+   ip->next = NewInst(NULL, ip, NULL, SToff[I-1].sa[2], -r0, 0);
+   *ipupdate = ip = NewInst(NULL, NULL, NULL, LD, -r0, I, 0)
+   ip->next = NewInst(NULL, ip, NULL, SUBCC, -r0, -r0, inc);
+   *iptest = ip = NewInst(NULL, NULL, NULL, JNE, -PCREG, -ICC0, lab);
+   GetReg(-1);
+}
+
+void OptimizeLoopControl(LOOPQ *lp, int unroll)
+/*
+ * attempts to generate optimized loop control for the given loop
+ * NOTE: if blind unrolling has been applied, expect that loop counter
+ *       is incremented in duplicated bodies, and not in last dup, so
+ *       we would call this routine with unroll=1
+ */
+{
+   INSTQ *ipinit, *ipupdate, *iptest;
+   int I, beg, end, inc;
+   int CHANGE=0;
+
+   if (unroll < = 1) unroll = 1;
+/*
+ * If I is not referenced in loop, we can do simple N..0 iteration
+ */
+
+   I = 0;
+   if (!(lp->flag & L_IREF_BIT))
+   {
+      if (IS_CONST(STflag[lp->inc-1]))
+      {
+         if (SToff[lp->inc-1].i == 1)
+         {
+            I = lp->I;
+            beg = lp->beg;
+            end = lp->end;
+         }
+         else if (IS_CONST(STflag[lp->end-1]) && IS_CONST(STflag[lp->beg-1]))
+         {
+            beg = 0;
+            end = STiconstlookup((SToff[lp->end-1].i-SToff[lp->beg-1].i) / 
+                                 SToff[lp->inc-1].i);
+            I = lp->I;
+         }
+      }
+   }
+   if (I)
+   {
+      KillLoopControl(lp);
+      SimpleLC(I, beg, end, lp->body_label, &ipinit, &ipupdate, &iptest);
+      CHANGE = 1;
+   }
+   return(CHANGE);
 }
