@@ -4,7 +4,7 @@
 #include "fko_l2a.h"
 #include "fko_loop.h"
 
-FILE *fpST=NULL, *fpIG=NULL, *fpLIL=NULL, *fpOPT=NULL;
+FILE *fpST=NULL, *fpIG=NULL, *fpLIL=NULL, *fpOPT=NULL, *fpLOOPINFO=NULL;
 int FUNC_FLAG=0; 
 int DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0, DTx87=0, DTx87d=0;
 int FKO_FLAG;
@@ -27,6 +27,7 @@ void PrintUsageN(char *name)
    fprintf(stderr, 
            "  -I <LIL> <symtab> <misc> : start from intermediate files\n");
    fprintf(stderr, "  -c <LIL> <symtab> <misc> : generate files and quit\n");
+   fprintf(stderr, "  -i <file> : generate loop info file and quit\n");
    fprintf(stderr, "  -o <outfile> : assembly output file\n");
    fprintf(stderr, "  -R [d,n] <directory/name> : restore path & base name\n");
    fprintf(stderr, "  -K 0 : suppress comments\n");
@@ -271,6 +272,11 @@ struct optblkq *GetFlagsN(int nargs, char **args,
          case 'c':
             fpIG = fpST = fpLIL = fpOPT = (FILE*) 1;
             FKO_FLAG |= IFF_GENINTERM;
+            break;
+         case 'i':
+            fpLOOPINFO = fopen(args[i+1], "w");
+            assert(fpLOOPINFO);
+            i++;
             break;
          case 'I':
             fpIG = fpST = fpLIL = fpOPT = (FILE*) 1;
@@ -1267,8 +1273,10 @@ int main(int nargs, char **args)
       else
          DoStage2(0, 0);
    }
+   if (fpLOOPINFO)
+      PrintLoopInfo();
    if (FKO_FLAG & IFF_GENINTERM)
-     exit(0);
+      exit(0);
 /*
  * If we were unable to produce correct code, back off and save sp
  */

@@ -2051,3 +2051,139 @@ void AddPrefetch(LOOPQ *lp, int unroll)
    GetReg(-1);
 #endif
 }
+
+int NumberArrayWrites(BLIST *scope, int ptr)
+/*
+ * Finds number of writes to *ptr in scope, *ptr is float or double (not vec)
+ */
+{
+   BLIST *bl;
+   INSTQ *ip;
+   int nw=0, i;
+   enum inst inst;
+
+   i = STflag[ptr-1];
+   i = FLAG2TYPE(i);
+   if (IS_FLOAT(i))
+      inst = FST;
+   else
+   {
+      assert(IS_DOUBLE(i));
+      inst = FSTD;
+   }
+   if (i == T_FLOAT)
+   for (bl=scope; bl; bl = bl->next)
+      for (ip=bl->blk->ainst1; ip; ip = ip->next)
+         if (ip->inst[0] == inst && STpts2[ip->inst[1]-1] == ptr)
+            nw++;
+   return(nw);
+}
+
+void PrintLoopInfo()
+/*
+ * Figures out Loop info needed for info file, always starting from stage 2
+ */
+{
+   LOOPQ *lp;
+   ILIST *il;
+   BLIST *bl;
+   INSTQ *ip;
+   struct ptrinfo *pi, *pi0;
+   FILE *fpout=stdout;
+   int SimpleLC=0, UR, N, Npf, i, j, vect;
+   int set, use;
+   extern FILE *fpLOOPINFO;
+
+   if (fpLOOPINFO)
+      fpout = fpLOOPINFO;
+   RestoreFKOState(0);
+   DoStage2(0, 0);
+   if (optloop)
+   {
+      fprintf(fpout, "OPTLOOP=1\n");
+      UR = optloop->maxunroll;
+/*
+ *    Right now, UnrollLoop always succeeds or dies, so don't query if it
+ *    actually works or not
+ */
+#if 0
+      if (!UR)
+      {
+         UR = UnrollLoop(optloop, 2);
+         if (UR)
+           UR = 1;
+         RestoreFKOState(0);
+         DoStage2(0, 0);
+      }
+#endif
+      fprintf(fpout, "   MaxUnroll=%d\n", UR);
+      if (!UR || UR > 1)
+      {
+         RestoreFKOState(0);
+         vect = VectorizeStage1();
+         if (!vect)
+            vect = VectorizeStage3(0,0);
+         vect = !vect;
+         RestoreFKOState(0);
+         DoStage2(0, 0);
+      }
+      lp = optloop;
+      KillLoopControl(lp);
+      il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
+      if (il)
+      {
+         if (AlreadySimpleLC(lp))
+            SimpleLC = 1;
+         KillIlist(il);
+      }
+      else
+         SimpleLC = 1;
+      fprintf(fpout, "   LoopNormalForm=%d\n   Vectorizable=%d\n", 
+              SimpleLC, vect);
+/*
+ *    Find all vars set & used in loop
+ */
+      set = NewBitVec(32);
+      use = NewBitVec(32);
+      for (bl=lp->blocks; bl; bl = bl->next)
+      {
+         CalcInsOuts(bl->blk);
+         for (ip=bl->blk->ainst1; ip; ip = ip->next)
+         {
+            if (ip->set)
+               set = BitVecComb(set, set, ip->set, '|');
+            if (ip->use)
+               use = BitVecComb(use, use, ip->use, '|');
+         }
+      }
+      pi0 = FindMovingPointers(lp->blocks);
+      for (N=0,pi=pi0; pi; pi = pi->next)
+         if (IS_FP(STflag[pi->ptr-1]))
+            N++;
+      fprintf(fpout, "   Moving FP Pointers: %d\n", N);
+      for (pi=pi0; pi; pi = pi->next)
+      {
+         i = pi->ptr-1;
+         if (IS_FP(STflag[i]))
+         {
+            fprintf(fpout, "      '%s': type=%c", STname[i]?STname[i]:"NULL",
+                    IS_FLOAT(STflag[i]) ? 's' : 'd');
+            j = ((pi->flag | PTRF_CONTIG | PTRF_INC) == pi->flag);
+            if (lp->nopf)
+               if (FindInShortList(lp->nopf[0], lp->nopf+1, i+1))
+                  j = 0;
+            fprintf(fpout, ", prefetch=%d", j);
+            j = NumberArrayWrites(lp->blocks, i+1);
+            fprintf(fpout, ", sets=%d\n", j);
+         }
+      }
+      KillAllPtrinfo(pi0);
+   }
+   else
+      fprintf(fpout, "OPTLOOP=0\n");
+
+   if (fpout != stderr && fpout != stderr)
+      fclose(fpout);
+   if (fpLOOPINFO)
+      exit(0);
+}
