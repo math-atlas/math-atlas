@@ -677,7 +677,8 @@ void CalcDoms(BBLOCK *bbase)
  */
    for (bp=bbase->down; bp; bp = bp->down)
    {
-      bp->dom = NewBitVec(n);
+      if (!bp->dom)
+         bp->dom = NewBitVec(n);
       SetVecAll(bp->dom, 1);
    }
 
@@ -1002,6 +1003,7 @@ void FinalizeLoops()
    }
    SortLoops(maxdep);
    for (i=1, lp=loopq; lp; i++, lp = lp->next) lp->loopnum = i;
+   CFLOOP = 1;
 }
 
 void FindLoops()
@@ -1016,7 +1018,8 @@ void FindLoops()
       CFDOMU2D = 1;
    }
    CheckFlow(bbbase, __FILE__, __LINE__);
-   if (loopq) KillAllLoops();
+   if (!CFLOOP || loopq)
+      InvalidateLoopInfo();
 /*
  * Search for edges whose heads dominate their tails, i.e., find blocks
  * that are dominated by their successors

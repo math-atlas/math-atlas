@@ -575,9 +575,12 @@ void InvalidateLoopInfo(void)
       {
          if (loopq == optloop)
             loopq = loopq->next;
-         for (lp=loopq; lp->next && lp->next != optloop; lp = lp->next);
-         if (lp->next == optloop)
-            lp->next = optloop->next;
+         else
+         {
+            for (lp=loopq; lp->next && lp->next != optloop; lp = lp->next);
+            if (lp->next == optloop)
+               lp->next = optloop->next;
+         }
          optloop->next = NULL;
       }
 /*
@@ -608,7 +611,6 @@ void InvalidateLoopInfo(void)
       optloop = lp;
    }
    KillAllLoops();
-   loopq = NULL;
 }
 
 static void ReadMiscFromFile(char *name)
@@ -711,15 +713,34 @@ static void SaveFKOState(int isav)
    WriteMiscToFile(ln);
 }
 
-int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope, int global)
+int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
 /*
  * Performs the nopt optimization in the sequence given by ops, returning
  * 0 if no transformations applied, nonzero if some changes were made
  */
 {
+   BLIST *scope;
+   BBLOCK *bp;
    int i, j, k, nchanges=0;
    static short nlab=0, labs[4];
 
+/*
+ * Form scope based on global setting
+ */
+   if (!global)
+   {
+      if (!optloop)
+         return(0);
+/*
+ *    Recalculate all optloop info if it has changed due to previous opt
+ */
+      if (!CFLOOP)
+         FindLoops(); 
+      scope = optloop->blocks;
+   }
+   else
+      for (scope=NULL,bp=bbbase; bp; bp = bp->down)
+         scope = AddBlockToList(scope, bp);
 /*
  * NOTE: Need a way to eliminate _IFKO_EPILOGUE iff this is last optimization
  */

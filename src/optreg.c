@@ -747,10 +747,12 @@ int CalcScopeIG(BLIST *scope)
    short *sp;
    int i, j;
 
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    if (!INDEADU2D)
       CalcAllDeadVariables();
    else if (!CFUSETU2D || !CFU2D || !INUSETU2D)
       CalcInsOuts(bbbase);
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
 
 /*
  * Set blkvec to reflect all blocks in scope, and calculate each block's IG
@@ -1247,9 +1249,13 @@ int DoScopeRegAsg(BLIST *scope, int thresh, int *tnig)
    extern FILE *fpIG, *fpLIL, *fpST;
    extern BBLOCK *bbbase;
 
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    *tnig = CalcScopeIG(scope);
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    igs = SortIG(&N, thresh);
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    nret = DoIGRegAsg(N, igs);
+fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
 CheckIG(N, igs);
 fprintf(stderr, "\n\n*** NIG = %d\n", N);
    if (fpIG)
