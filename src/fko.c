@@ -7,10 +7,11 @@
 FILE *fpST=NULL, *fpIG=NULL, *fpLIL=NULL, *fpOPT=NULL;
 int FUNC_FLAG=0; 
 int DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0, DTx87=0, DTx87d=0;
-int FKO_FLAG, FKO_UNROLL=0;
+int FKO_FLAG;
 
 int noptrec=0;
 enum FKOOPT optrec[512];
+short optchng[512];
 
 void PrintUsage(char *name)
 {
@@ -211,7 +212,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             FKO_FLAG |= IFF_READINTERM;
             break;
          case 'U':
-            FKO_UNROLL = atoi(args[++i]);
+            FKO_UR = atoi(args[++i]);
             break;
          case 't':
             for(++i, j=0; args[i][j]; j++)
@@ -759,7 +760,7 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
       {
       case GlobRegAsg:
          assert(!global);
-         DoLoopGlobalRegAssignment(optloop);  
+         nchanges += DoLoopGlobalRegAssignment(optloop);  
          break;
       case RegAsg:
          nchanges += DoScopeRegAsg(scope, global ? 2:1, &j);
@@ -770,14 +771,18 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
       case DoNothing:  /* dummy opt does nothing */
          break;
       case UselessLabElim:
-         nchanges += UselessLabelElim(nlab, labs);
+         nchanges += DoUselessLabelElim(nlab, labs);
          break;
       case UselessJmpElim:
-         nchanges += UselessJumpElim();
+         nchanges += DoUselessJumpElim();
+         break;
+      case BranchChain:
+         nchanges += DoBranchChaining();
          break;
       default:
          fko_error(__LINE__, "Unknown optimization %d\n", ops[i]);
       }
+      optchng[noptrec] = nchanges;
       optrec[noptrec++] = global ? k+MaxOpt : k;
    }
    return(nchanges);
@@ -954,11 +959,15 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
 
 void DumpOptsPerformed(FILE *fpout, int verbose)
 {
-   int i, k;
+   int i, k, j;
    char ch;
    if (verbose)
    {
-      fprintf(fpout, "\n%d optimization phases performed:\n", noptrec);
+      j = FKO_UR > 1 ? 1 : 0;
+      fprintf(fpout, "\n%d optimization phases performed:\n", noptrec+j);
+      if (FKO_UR > 1)
+         fprintf(fpout, "%3d. %c %20.20s : %d\n", 1, 'L', "Loop Unroll",
+                 FKO_UR);
       for (i=0; i < noptrec; i++)
       {
          k = optrec[i];
@@ -969,7 +978,8 @@ void DumpOptsPerformed(FILE *fpout, int verbose)
          }
          else
             ch = 'L';
-         fprintf(fpout, "%3d. %c %s\n", i+1, ch, optmnem[k]);
+         fprintf(fpout, "%3d. %c %20.20s : %d\n", j+i+1, ch, optmnem[k],
+                 optchng[i]);
       }
    }
 }
@@ -984,10 +994,11 @@ struct optblkq *DefaultOptBlocks(void)
    op->opts[2] = MaxOpt+3;
    op->opts[3] = MaxOpt+4;
 
-   op->next = NewOptBlock(2, 10, 2, IOPT_GLOB);
+   op->next = NewOptBlock(2, 10, 3, IOPT_GLOB);
    op = op->next;
-   op->opts[0] = UselessJmpElim;
-   op->opts[1] = UselessLabElim;
+   op->opts[0] = BranchChain;
+   op->opts[1] = UselessJmpElim;
+   op->opts[2] = UselessLabElim;
 
    op->next = NewOptBlock(3, 10, 2, 0);
    op = op->next;
@@ -1031,11 +1042,11 @@ int main(int nargs, char **args)
    }
    if (FKO_FLAG & IFF_GENINTERM)
      exit(0);
-   if (GoToTown(0, FKO_UNROLL, optblks))
+   if (GoToTown(0, FKO_UR, optblks))
    {
       fprintf(stderr, "\n\nOut of registers for SAVESP, trying again!!\n");
       RestoreFKOState(0);
-      assert(!GoToTown(IREGBEG+NIR-1, FKO_UNROLL, optblks));
+      assert(!GoToTown(IREGBEG+NIR-1, FKO_UR, optblks));
    }
    DumpOptsPerformed(stderr, 1);
 

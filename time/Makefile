@@ -1,6 +1,6 @@
-#include /home/whalley-scratch/whaley/AT3.5/ATLAS3.6.0_0/Make.Linux_P4SSE2
+include /home/grads/whaley/AT3.7/ATLAS3.7.4.0/Make.Linux_P4SSE2
 #include /home/rwhaley/AT3.7/ATLAS3.7.3/Make.Linux_P4ESSE3
-include /tmp/rwhaley/ATLAS3.7.3.0/Make.Linux_P4SSE2
+#include /tmp/rwhaley/ATLAS3.7.3.0/Make.Linux_P4SSE2
 
 pre=d
 rout=dot
@@ -12,7 +12,7 @@ KFLAGS=
 topt=-X 1 1
 lower=hello
 # upper=`echo $(lower) | tr '[a-z]' 'A-Z'`
-upper=`cat tt.in`
+# upper=`cat tt.in`
 
 test:
 	echo $(upper)
@@ -31,14 +31,14 @@ l1time0 :
 	cd ../blas ; $(MAKE) $(pre)$(rout).s KFLAGS="$(KFLAGS)"
 	cp ../blas/$(pre)$(rout).s $(L1Tdir)/../$(URT)/fkorout.c
 	cd $(L1Tdir) ; make $(pre)$(rout)case urout=fkorout.c UCC=gcc \
-           UCCFLAGS="-x assembler-with-cpp" $(cache) $(NN) > fko.tmp 2>&1
+           UCCFLAGS="-x assembler-with-cpp" opt="$(cache)" $(NN) > fko.tmp 2>&1
 	cat $(L1Tdir)/fko.tmp
-	$(MAKE) l1test pre=$(pre) rout=$(rout) cache=$(cache) N=$(NN)
+	$(MAKE) l1test pre=$(pre) rout=$(rout) N=$(NN)
 	@echo "****\n\n"
 	fgrep -e 'time=' -e 'mflop=' $(L1Tdir)/fko.tmp > ifk2.tmp
 	fgrep -e 'time=' -e 'mflop=' $(L1Tdir)/fko.tmp
 
 l1test :
 	cd $(L1Tdir) ; make $(pre)$(rout)test urout=fkorout.c UCC=gcc \
-           UCCFLAGS="-x assembler-with-cpp" $(cache) $(NN) opt="$(topt)"
+           UCCFLAGS="-x assembler-with-cpp" $(NN) opt="$(topt)"
 ../blas/$(pre)$(rout).s :

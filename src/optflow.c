@@ -75,6 +75,7 @@ ILIST *FindAllJumps(BLIST *scope, int COND)
  *          look for unconditional
  * NOTE: Assumes blocks setup correctly, so it looks for jumps only as
  *       last active inst.
+ * NOTE: ignores RET statement.
  */
 {
    INSTQ *ip;
@@ -88,7 +89,7 @@ ILIST *FindAllJumps(BLIST *scope, int COND)
    {
       ip = bl->blk->ainstN;
       inst = GET_INST(ip->inst[0]);
-      if (inst == JMP || (COND && IS_BRANCH(inst)))
+      if (inst == JMP || (COND && IS_BRANCH(inst) && inst != RET))
          ilbase = NewIlist(ip, ilbase);
    }
    if (freeme)
@@ -103,6 +104,7 @@ ILIST *FindAllJumps_dirty(BLIST *scope, int COND)
  *          look for unconditional
  * NOTE: does not assume blocks setup correctly, so it looks through all
  *       instructions (rather than only last active inst)
+ * NOTE: ignores RET statement.
  */
 {
    INSTQ *ip;
@@ -117,7 +119,7 @@ ILIST *FindAllJumps_dirty(BLIST *scope, int COND)
       for (ip=bl->blk->ainst1; ip; ip = ip->next)
       {
          inst = GET_INST(ip->inst[0]);
-         if (inst == JMP || (COND && IS_BRANCH(inst)))
+         if (inst == JMP || (COND && IS_BRANCH(inst) && inst != RET))
             ilbase = NewIlist(ip, ilbase);
       }
    }
@@ -129,7 +131,7 @@ ILIST *FindAllJumps_dirty(BLIST *scope, int COND)
  * NOTE: make all funcs return int of # of changes, so we can see if
  *       the phase has done anything
  */
-int UselessJumpElim(void)
+int DoUselessJumpElim(void)
 /*
  * Given list of all jumps in code (jumps), removes those that unconditionally
  * jump to following block
@@ -169,21 +171,67 @@ int UselessJumpElim(void)
    return(n);
 }
 
-int BranchChaining(void)
+ILIST *FindChainDest(ILIST *jumps, ILIST *labs, INSTQ *jump)
+/*
+ * Given a JMP from jump, 
+ * RETURNS: final destination of jump chain
+ */
+{
+   ILIST *jl, *ll, *lret=NULL;
+   INSTQ *ip;
+   short k;
+/*
+ * Find label jump goes to
+ */
+   k = GET_INST(jump->inst[0]);
+   k = (k == JMP) ? jump->inst[2] : jump->inst[3];
+/*
+ * Find label we're jumping to, and see if following active inst is JMP
+ */
+   for (ll=labs; ll && ll->inst->inst[1] != k; ll = ll->next);
+   assert(ll);
+   for (ip=ll->inst->next; ip && !ACTIVE_INST(ip->inst[0]); ip = ip->next);
+   if (ip && ip->inst[0] == JMP)
+      lret = FindChainDest(jumps, labs, ip);
+   else 
+      lret = ll;
+   return(lret);
+}
+
+int DoBranchChaining(void)
 /*
  * Replaces jumps to unconditional jump(s) with jumps to final target
  */
 {
    int n=0;
    ILIST *jl, *jumps;
-   if (CFU2D)
-      jumps = FindAllJumps(NULL, 1);
-   else
-      jumps = FindAllJumps_dirty(NULL, 1);
+   ILIST *ll, *labs, *ldest;
+   short inst, k;
+   if (!CFU2D)
+      NewBasicBlocks(bbbase);
+   jumps = FindAllJumps(NULL, 1);
+   labs = FindAllLabels(NULL);
+   if (jumps)
+      assert(labs);
+/*
+ * Scope all jumps for possible start of chain
+ */
    for (jl=jumps; jl; jl = jl->next)
    {
+      ldest = FindChainDest(jumps, labs, jl->inst);
+      k = GET_INST(jl->inst->inst[0]);
+      k = (k == JMP) ? 2 : 3;
+/*
+ *    If final destination not already jumped to, change it
+ */
+      if (ldest->inst->inst[1] != jl->inst->inst[k])
+      {
+         jl->inst->inst[k] = ldest->inst->inst[1];
+         n++;
+      }
    }
    KillAllIlist(jumps);
+   KillAllIlist(labs);
    return(n);
 }
 
@@ -202,7 +250,7 @@ int DeadCodeElim(BBLOCK *base)
    }
 }
 
-int UselessLabelElim(int nkeep, short *keeps)
+int DoUselessLabelElim(int nkeep, short *keeps)
 /*
  * Gets rid of labels that are not in keeps array, which have one of:
  * (1) Not jumped to in program

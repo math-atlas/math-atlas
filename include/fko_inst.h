@@ -90,8 +90,8 @@ enum inst
 /*
  * Jump instructions
  */
-   JMP,                         /* NULL, cc#, LABEL */
-   JEQ, JNE, JLT, JLE, JGT, JGE,  /* NULL, cc#, LABEL */
+   JMP,                         /* PCREG, LABEL, 0 */
+   JEQ, JNE, JLT, JLE, JGT, JGE,  /* PCREG, cc#, LABEL */
    RET,                         /* NULL,NULL,NULL : return to caller */
    PREFR,                       /* [ptr] [ilvl], NULL */
    PREFW,                       /* [ptr] [ilvl], NULL */
