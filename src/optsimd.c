@@ -91,7 +91,6 @@ short FindReadUseType(INSTQ *ip, short var, int blkvec)
    return(j);
 }
 
-/* ERROR: recomputing loop info fucks up lp!! */
 int DoLoopSimdAnal(LOOPQ *lp)
 /*
  * Does some analysis on unoptimized code to determine how to vectorize loop
@@ -109,16 +108,10 @@ int DoLoopSimdAnal(LOOPQ *lp)
    ILIST *il, *ib;
    BLIST *bl;
    INSTQ *ip;
+   extern short STderef;
 
    if (!lp)
       return(1);
-/*
- * Get code into standard form for analysis
- */
-   GenPrologueEpilogueStubs(bbbase, 0);
-   NewBasicBlocks(bbbase);
-   FindLoops();
-   CheckFlow(bbbase,__FILE__,__LINE__);
 /*
  * Require one and only one post-tail to simplify analysis
  */
@@ -141,10 +134,11 @@ int DoLoopSimdAnal(LOOPQ *lp)
       iv = BitVecComb(iv, iv, bl->blk->defs, '|');
    }
 /*
- * Subtract off all registers
+ * Subtract off all registers, and ptr deref warning
  */
    for (i=0; i < TNREG; i++)
       SetVecBit(iv, i, 0);
+   SetVecBit(iv, STderef+TNREG-1, 0);
 /*
  * Allow only fp ops & index ops
  * HERE HERE HERE
@@ -628,6 +622,18 @@ int VectorizeStage1(void)
    int flag, k, i, n;
    char ln[1024];
 
+   if (!optloop)
+   {
+      fko_warn(__LINE__, "Cannot vectorize rout without loop!!\n");
+      return(15);
+   }
+/*
+ * Get code into standard form for analysis
+ */
+   GenPrologueEpilogueStubs(bbbase, 0);
+   NewBasicBlocks(bbbase);
+   FindLoops();
+   CheckFlow(bbbase,__FILE__,__LINE__);
    lp = optloop;
 /*
  * Create a bad LIL to perform vector loop analysis
@@ -635,8 +641,8 @@ int VectorizeStage1(void)
    KillLoopControl(lp);
    if (FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]))
    {
-      fko_error(__LINE__, "Index refs inside loop prevent vectorization!!\n");
-      return(10);
+      fko_warn(__LINE__, "Index refs inside loop prevent vectorization!!\n");
+      return(11);
    }
    pi0 = FindMovingPointers(lp->blocks);
    for (pi=pi0; pi; pi = pi->next)
@@ -644,13 +650,13 @@ int VectorizeStage1(void)
       if (pi->nupdate > 1)
       {
          fko_warn(__LINE__, "Multiple ptr updates prevent vectorization!!\n");
-         return(11);
+         return(12);
       }
       if (!(pi->flag & PTRF_CONTIG))
       {
          fko_warn(__LINE__, 
                   "Non-contiguous ptr updates prevent vectorization!!\n");
-         return(12);
+         return(13);
       }
    }
    ip = KillPointerUpdates(pi, IS_VDOUBLE(lp->vflag) ? 2 : 4);
@@ -660,6 +666,7 @@ int VectorizeStage1(void)
       ipn = ip->next;
       free(ip);
    }
+   CFUSETU2D = 0;
    i = DoLoopSimdAnal(optloop);
    if (i)
       return(i);

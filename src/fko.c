@@ -901,7 +901,7 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
       FindLoops();
    AddBlockComments(bbbase);
    AddLoopComments();
-#if 0
+#if 1
    AddSetUseComments(bbbase);   
    AddDeadComments(bbbase); 
 #endif
@@ -1005,17 +1005,23 @@ int main(int nargs, char **args)
       yyparse();
       fclose(fpin);
       SaveFKOState(0);
-/*
       if (FKO_FLAG & IFF_VECTORIZE)
-         assert(!VectorizeLIL());
- */
+      {
+         assert(!VectorizeStage1());
+         assert(!VectorizeStage3(0));
+      }
    }
    if (FKO_FLAG & IFF_GENINTERM)
      exit(0);
    if (GoToTown(0, FKO_UR, optblks))
    {
       fprintf(stderr, "\n\nOut of registers for SAVESP, trying again!!\n");
-      RestoreFKOState(0);
+      if (FKO_FLAG & IFF_VECTORIZE)
+      {
+         assert(!VectorizeStage3(IREGBEG+NIR-1));
+      }
+      else
+         RestoreFKOState(0);
       assert(!GoToTown(IREGBEG+NIR-1, FKO_UR, optblks));
    }
    DumpOptsPerformed(stderr, 1);
