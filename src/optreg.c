@@ -76,6 +76,37 @@ char *Int2Reg(int i)
    return(ret);
 }
 
+void SetAllTypeReg(int iv, int type)
+/*
+ * Modify regstate iv to set all registers of type type to 1, leaving the rest
+ * of the state unchanged
+ */
+{
+   int i, ibeg, iend;
+   switch(type)
+   {
+#ifdef X86_64
+   case T_SHORT:
+#endif
+   case T_INT:
+      ibeg = IREGBEG;
+      iend = IREGEND;
+      break;
+   case T_FLOAT:
+      ibeg = FREGBEG;
+      iend = FREGEND;
+      break;
+   case T_DOUBLE:
+      ibeg = DREGBEG;
+      iend = DREGEND;
+      break;
+   default:
+      fko_error(__LINE__, "unknown type %d, file=%s\n", type, __FILE__);
+   }
+   for (i=ibeg; i < iend; i++)
+      SetVecBit(iv, i-1, 1);
+}
+
 int Reg2Regstate(int k)
 /*
  * Given register k, set regstate so that all registers used by k are
@@ -206,7 +237,19 @@ IGNODE *NewIGNode(BBLOCK *blk, short var)
    new->conflicts = NewBitVec(TNREG);
    new->nread = new->nwrite = 0;
    new->var = var;
+   if (var)
+   {
+      if (IS_DEREF(STflag[var-1]))
+         new->deref = var;
+      else
+      {
+         new->deref = SToff[var-1].sa[2];
+         assert(new->deref > 0);
+      }
+   }
+   else new->deref = 0;
    new->ignum = AddIG2Table(new);
+   new->reg = 0;
    return(new);
 }
 
@@ -277,6 +320,8 @@ void CalcBlockIG(BBLOCK *bp)
       if (k >= TNREG)
       {
          node = NewIGNode(bp, k-TNREG+1);
+         node->blkbeg = AddBlockToList(node->blkbeg, bp);
+         node->blkend = AddBlockToList(node->blkend, bp);
          if (nn == igN)
             myIG = NewPtrTable(&igN, myIG, chunk);
          myIG[nn++] = node;
@@ -343,15 +388,24 @@ void CalcBlockIG(BBLOCK *bp)
 /*
  *          If dying range ends with a write, indicate it
  */
-            if (!BitVecCheck(ip->set, k))
+            if (BitVecCheck(ip->set, k+TNREG-1))
+            {
+               fprintf(stderr,
+                       "Inst dead on write, block=%d, inst='%s %s %s %s'!\n",
+                       bp->bnum, instmnem[ip->inst[0]], op2str(ip->inst[1]),
+                       op2str(ip->inst[2]), op2str(ip->inst[3]));
+               fprintf(stderr, "k=%d, STentry=%d\n", k, k+TNREG-1);
+               PrintInst(fopen("err.l", "w"), bbbase); exit(-1);
                myIG[j]->nwrite++;
+            }
 /*
  *          If var is dead, delete it from myIG and block's conout, and
  *          indicate that this is a block and instruction where range dies
  */
             SetVecBit(bp->conout, myIG[j]->ignum, 0);
             myIG[j] = NULL;
-            node->blkend = AddBlockToList(node->blkend, bp);
+/*            node->blkend = AddBlockToList(node->blkend, bp); */
+            assert(node->blkend->blk == bp);
             node->blkend->ptr = ip;
          }
 /*
@@ -392,8 +446,10 @@ void CalcBlockIG(BBLOCK *bp)
                SetVecBit(bp->conout, node->ignum, 1);
                node->liveregs = BitVecCopy(node->liveregs, liveregs);
                node->blkbeg = AddBlockToList(node->blkbeg, bp);
+               node->blkend = AddBlockToList(node->blkend, bp);
                node->blkbeg->ptr = ip;
                SetVecBit(bp->ignodes, node->ignum, 1);
+               node->nwrite++;
             }
          }
 /*
@@ -411,6 +467,7 @@ void CalcBlockIG(BBLOCK *bp)
       }
    }
    if (myIG) free(myIG);
+#if 0
 /*
  * Find ignodes that span this block
  */
@@ -424,6 +481,7 @@ void CalcBlockIG(BBLOCK *bp)
       #endif
       node->blkspan = AddBlockToList(node->blkspan, bp);
    }
+#endif
    KillBitVec(imask);
 }
 
@@ -431,11 +489,12 @@ void CombineLiveRanges(BLIST *scope, BBLOCK *pred, int pig,
                        BBLOCK *succ, int sig)
 /*
  * Merge successor IG (sig) into pred ig (pig); both blocks are known to
- * by in the register scope.
+ * be in the register scope.
  */
 {
    IGNODE *pnode, *snode, *node;
-   BLIST *bl;
+   BLIST *bl, *lp;
+   INSTQ *ip;
    short *vals;
    int i, n;
 
@@ -444,15 +503,67 @@ void CombineLiveRanges(BLIST *scope, BBLOCK *pred, int pig,
 
 fprintf(stderr, "Combine pig=%d, sig=%d\n", pig, sig);
    assert(pnode->var == snode->var);
-   if (snode->blkend)
+   assert(snode->blkend && snode->blkbeg);
+   assert(pnode->blkend && pnode->blkbeg);
+/*
+ * If a block is it's own successor, we must see which IG is really the pred
+ */
+   if (pred == succ)
    {
-      pnode->blkend = MergeBlockLists(pnode->blkend, snode->blkend);
-      snode->blkend = NULL;
-   }
-   if (snode->blkspan)
-   {
+      pnode->blkend = RemoveBlockFromList(pnode->blkend, pred);
+      snode->blkbeg = RemoveBlockFromList(snode->blkbeg, succ);
+      pnode->blkbeg = MergeBlockLists(pnode->blkbeg, snode->blkbeg);
+      pnode->blkend = MergeBlockLists(snode->blkend, pnode->blkend);
+      snode->blkbeg = snode->blkend = NULL;
       pnode->blkspan = MergeBlockLists(pnode->blkspan, snode->blkspan);
       snode->blkspan = NULL;
+   }
+   else
+   {
+/*
+ *    To update blkspan, merge lists.
+ */
+      if (snode->blkspan)
+      {
+         pnode->blkspan = MergeBlockLists(pnode->blkspan, snode->blkspan);
+         snode->blkspan = NULL;
+      }
+      if (!BitVecCheck(pnode->myblkvec, snode->blkbeg->blk->bnum-1))
+      {
+         pnode->blkspan = MergeBlockLists(pnode->blkspan, snode->blkbeg);
+         snode->blkbeg = NULL;
+      }
+/*
+ *    Merge end and beg lists, but pred is no longer an ending block, and
+ *    succ is no longer a beginning block
+ */
+      pnode->blkbeg = MergeBlockLists(pnode->blkbeg, snode->blkbeg);
+      pnode->blkend = MergeBlockLists(snode->blkend, pnode->blkend);
+      pnode->blkbeg = RemoveBlockFromList(pnode->blkbeg, succ);
+      pnode->blkend = RemoveBlockFromList(pnode->blkend, pred);
+      snode->blkbeg = snode->blkend = NULL;
+/*
+ *    If succ block is not ending block, it becomes a spanned block
+ */
+      if ( !FindBlockInList(pnode->blkend, succ) && 
+           !FindBlockInList(pnode->blkspan, succ) )
+         pnode->blkspan = AddBlockToList(pnode->blkspan, succ);
+   }
+/*
+ * The range ending in succ block may change due to new beginning in pred
+ */
+   bl = FindInList(pnode->blkend, succ);
+   if (bl)
+   {
+      i = pnode->var + TNREG-1;
+      for (ip=pnode->blkend->blk->ainst1; ip; ip = ip->next)
+      {
+         if (BitVecCheck(ip->deads, i))
+         {
+            bl->ptr = ip;
+            break;
+         }
+      }
    }
    if (snode->ldhoist)
    {
@@ -533,8 +644,9 @@ void CombineBlockIG(BLIST *scope, ushort scopeblks, BBLOCK *pred, BBLOCK *succ)
       free(pig);
    }
 /*
- * If pred in scope, but successor not, must push LR stores to succ
- * Find the next of the pushed stores
+ * If pred in scope, but successor not, and LR includes a store, must push LR
+ * stores to succ. Assign the next inst of the pushed stores to
+ * node->stpush->ptr.
  */
    else if (BitVecCheck(scopeblks, pred->bnum-1))
    {
@@ -542,14 +654,17 @@ void CombineBlockIG(BLIST *scope, ushort scopeblks, BBLOCK *pred, BBLOCK *succ)
       for (n=pig[0], i=1; i <= n; i++)
       {
          node = IG[pig[i]];
-         node->stpush = AddBlockToList(node->stpush, succ);
-         if (succ->ainst1)
+         if (node->nwrite)
          {
-            k = GET_INST(succ->ainst1->inst[0]);
-            node->stpush->ptr = (k == LABEL) ? 
-                                succ->ainst1->next : succ->ainst1;
+            node->stpush = AddBlockToList(node->stpush, succ);
+            if (succ->ainst1)
+            {
+               k = GET_INST(succ->ainst1->inst[0]);
+               node->stpush->ptr = (k == LABEL) ? 
+                                   succ->ainst1->next : succ->ainst1;
+            }
+            else node->stpush->ptr = NULL;
          }
-         else node->stpush->ptr = NULL;
       }
    }
 /*
@@ -577,7 +692,7 @@ void CombineBlockIG(BLIST *scope, ushort scopeblks, BBLOCK *pred, BBLOCK *succ)
 void CalcScopeIG(BLIST *scope)
 {
    static ushort blkvec=0;
-   BLIST *bl;
+   BLIST *bl, *lp;
    ushort iv;
    short *sp;
 
@@ -599,13 +714,446 @@ void CalcScopeIG(BLIST *scope)
       CombineBlockIG(scope, blkvec, bl->blk, bl->blk->usucc);
       if (bl->blk->csucc)
          CombineBlockIG(scope, blkvec, bl->blk, bl->blk->csucc);
+      for (lp=bl->blk->preds; lp; lp = lp->next)
+         if (!BitVecCheck(blkvec, lp->blk->bnum-1) &&
+             lp->blk != bl->blk->usucc && lp->blk != bl->blk->csucc)
+            CombineBlockIG(scope, blkvec, lp->blk, bl->blk);
    }
+}
+
+void SortUnconstrainedIG(int N, IGNODE **igarr)
+/*
+ * Given an N-length contiguous array if IGNODEs, sorts them by nref using
+ * a simple selection sort
+ */
+{
+   int i, j, nref, maxref, maxi;
+   IGNODE *maxptr;
+/*
+ * Perform simple selection sort
+ */
+   for (i=0; i < N-1; i++)
+   {
+      maxref = igarr[i]->nread + igarr[i]->nwrite;
+      maxi = i;
+      for (j=i+1; j < N; j++)
+      {
+         nref = igarr[j]->nread + igarr[j]->nwrite;
+         if (nref > maxref)
+         {
+            maxi = j;
+            maxref = nref;
+         }
+      }
+      if (maxi != i)
+      {
+         maxptr = igarr[maxi];
+         igarr[maxi] = igarr[i];
+         igarr[i] = maxptr;
+      }
+   }
+}
+void SortConstrainedIG(int N, IGNODE **igs)
+/*
+ * Right now, this routine just calls the unconstrained sort, but eventually
+ * it should be changed to optimize assignment.  For instance, when deciding
+ * between conflicting variables, if one variable's liverange (LR) spans the LR
+ * of multiple conflicting vars, you must compare against the sum of the refs
+ * of the spanned LRs.
+ */
+{
+   SortUnconstrainedIG(N, igs);
+}
+
+IGNODE **SortIG(int *N)
+/* 
+ * Sorts IGNODEs by # refs.
+ * RETURNS: N-length contiguous array of sorted IGNODEs
+ * This routine also ignores live ranges (LR) with too few references to
+ * be worth assigning.
+ */
+{
+   int n, ncon, i, j, nref, iv;
+   IGNODE *ig;
+   IGNODE **igarr;
+   extern int FKO_BVTMP;
+
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(TNREG);
+   iv = FKO_BVTMP;
+/*
+ * Find number of IG nodes used, allocate array to store, and copy to
+ * contiguous storage
+ */
+   for (n=i=0; i < NIG; i++)
+   {
+      if (IG[i] && IG[i]->nwrite + IG[i]->nread > 1)
+         n++;
+   }
+   if (n == 0)
+   {
+      *N = 0;
+      return(NULL);
+   }
+   igarr = malloc(n*sizeof(IGNODE *));
+   assert(igarr);
+   for (j=i=0; i < NIG; i++)
+      if (IG[i] && IG[i]->nwrite + IG[i]->nread > 1)
+         igarr[j++] = IG[i];
+/*
+ * Now, sort array into two sub arrays, with the contrained nodes in the first
+ * ncon elements of the array.  Constrained nodes are those nodes where the #
+ * of conflicts is greater than the number of available registers.  Therefore
+ * unconstrained nodes can use any register, so do reg asg on constrained nodes
+ * first
+ */
+   for (ncon=i=0; i != n; i++)
+   {
+     ig = igarr[i];
+     SetVecAll(iv, 0);
+     SetAllTypeReg(iv, FLAG2PTYPE(STflag[ig->var-1]));
+     BitVecComb(iv, iv, ig->liveregs, '-');
+/*
+ *   If # of regs available (j) is less than the number of conflicts, node is
+ *   constrained
+ */
+     j = CountBitsSet(iv);
+     if (j < CountBitsSet(ig->conflicts))
+     {
+        igarr[i] = igarr[ncon];
+        igarr[ncon++] = ig;
+     }
+   }
+fprintf(stderr, "NIG=%d, NCON=%d, NUNCON=%d\n", n, ncon, n-ncon);
+   SortConstrainedIG(ncon, igarr);
+   SortUnconstrainedIG(n-ncon, igarr+ncon);
+   *N = n;
+   return(igarr);
+}
+
+void DoIGRegAsg(int N, IGNODE **igs)
+/*
+ * Given an N-length array of sorted IGNODEs, perform register assignment
+ * Right now, use simple algorithm for assignment, improve later.
+ */
+{
+   int iv, i, j, n;
+   IGNODE *ig;
+   short *sp;
+   extern int FKO_BVTMP;
+
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(TNREG);
+   iv = FKO_BVTMP;
+
+   for (i=0; i < N; i++)
+   {
+      ig = igs[i];
+      SetVecAll(iv, 0);
+      SetAllTypeReg(iv, FLAG2PTYPE(STflag[ig->var-1]));
+      BitVecComb(iv, iv, ig->liveregs, '-');
+/*
+ *    If we have a register left, assign it
+ */
+      ig->reg = AnyBitsSet(iv);
+      if (ig->reg)
+      {
+         SetVecBit(ig->liveregs, ig->reg, 1);
+/*
+ *       Add assigned register to liveregs of conflicting IGNODEs
+ */
+         sp = BitVec2StaticArray(ig->conflicts);
+         if (sp)
+         {
+            for (j=0, n=sp[0]; j < n; j++)
+               SetVecBit(ig->liveregs, ig->reg, 1);
+         }
+      }
+      else
+         fprintf(stderr, "NO FREE REGISTER FOR LR %d!!!\n", ig->ignum);
+   }
+}
+
+int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
+/*
+ * Changes all uses of ig->var to ig->reg in block blk, between the indicated
+ * instructions (inclusive).  If either is NULL, we take instbeg/end.
+ */
+{
+   INSTQ *ip;
+   int CHANGE=0;
+
+   assert(INUSETU2D);
+   assert(ig && blk);
+   if (!instbeg)
+      instbeg = blk->ainst1;
+   if (!instend)
+      instend = blk->ainstN;
+   if (!instbeg || !ig->reg) return;
+   assert(instend);
+   do
+   {
+      ip = instbeg;
+/*
+ *    Change all uses of this ig->var to ig->reg
+ */
+      if (BitVecCheck(ip->use, ig->var+TNREG-1))
+      {
+         SetVecBit(ip->use, ig->var+TNREG-1, 0);
+         SetVecBit(ip->use, ig->reg-1, 0);
+         assert(ip->inst[2] == ig->deref || ip->inst[3] == ig->deref);
+         if (ip->inst[2] == ig->var)
+            ip->inst[2] = -ig->reg;
+         if (ip->inst[3] == ig->var)
+            ip->inst[3] = -ig->reg;
+         switch(GET_INST(ip->inst[0]))
+         {
+         case LD:
+            ip->inst[0] = MOV;
+            break;
+         case FLD:
+            ip->inst[0] = FMOV;
+            break;
+         case FLDD:
+            ip->inst[0] = FMOVD;
+            break;
+         case VFLD:
+            ip->inst[0] = VFMOV;
+            break;
+         default:
+            fprintf(stderr, "\n\nWARNING(%s,%d): inst %d being var2reged!!\n\n",
+                    __FILE__, __LINE__, ip->inst[0]);
+         }
+         CalcThisUseSet(ip);
+         CHANGE++;
+      }
+      instbeg = instbeg->next;
+   }
+   while(ip != instend);
+   if (CHANGE) 
+      INDEADU2D = CFUSETU2D = CFUSETU2D = 0;
+   return(CHANGE);
+}
+
+int DoRegAsgTransforms(IGNODE *ig)
+/*
+ * Given the fully qualified IG, perform all of the code transformations for
+ * register assignment: variable uses to register ref, variable sets become
+ * register moves, and hoist ld and/or push stores for blocks not in scope
+ */
+{
+   INSTQ *ip;
+   BLIST *bl, *lp;
+   enum inst mov, ld, st;
+   int i, CHANGE=0;
+
+#if IFKO_DEBUG_LEVEL >= 1
+   assert(ig->blkbeg);
+   assert(!ig->blkbeg->next);
+   assert(ig->blkend);
+   assert(!ig->blkend->next);
+#endif
+   i = STflag[ig->var-1];
+   switch(FLAG2PTYPE(i))
+   {
+   case T_INT:
+      mov = MOV;
+      ld  = LD;
+      st  = ST;
+      break;
+   case T_FLOAT:
+      mov = FMOV;
+      ld  = FLD;
+      st  = FST;
+      break;
+   case T_DOUBLE:
+      mov = FMOVD;
+      ld  = FLDD;
+      st  = FSTD;
+      break;
+   default:
+      fko_error(__LINE__, "Unknown type %d (flag=%d) in %s\n", FLAG2TYPE(i),
+                i, __FILE__);
+   }
+/*
+ * Handle initial set of ig->reg required for every blkbeg
+ */
+   for (bl=ig->blkbeg; bl; bl = bl->next)
+   {
+/*
+ *    If LR begins with a set, change it to a reg-reg move
+ *    NOTE: we have no memory-output instructions, so assert set is ST
+ */
+      #if IFKO_DEBUG_LEVEL >= 1
+         assert(bl->ptr);
+      #endif
+      ip = bl->ptr;
+      if (BitVecCheck(ip->set, ig->var+TNREG-1))
+      {
+         CHANGE++;
+         if (!IS_STORE(ip->inst[0]))
+         {
+            PrintThisInst(stderr, __LINE__, ip);
+            exit(-1);
+         }
+         ip->inst[0] = mov;
+         ip->inst[1] = ig->reg;
+         CalcThisUseSet(ip);
+      }
+/*
+ *    If LR does not begin with a set, we must add a load to ig->reg.
+ *    If one of this begblock's pred is in ldhoist, we add the load using
+ *    only the ldhoist, otherwise add it in this block.
+ */
+      for (lp=ig->ldhoist; lp && FindBlockInList(bl->blk->preds, lp->blk);
+           lp = lp->next)
+/*
+ *    If no ldhoist, add the load in this block.  If blkbeg->ptr not set, add
+ *    at beginning of block
+ */
+      if (lp)
+      {
+          if (bl->ptr)
+             bl->ptr = InsNewInst(bl->blk, NULL, bl->ptr, ld, -ig->reg,
+                                  ig->deref, 0);
+          else
+             bl->ptr = InsNewInst(bl->blk, NULL, bl->blk->ainst1, ld, -ig->reg,
+                                  ig->deref, 0);
+         CHANGE++;
+         CalcThisUseSet(bl->ptr);
+      }
+   }
+/*
+ * Hoist the ld to all extra-scope blocks that may need it
+ */
+   for (bl=ig->ldhoist; bl; bl = bl->next)
+   {
+      #if IFKO_DEBUG_LEVEL >= 1
+         assert(bl->ptr);
+      #endif
+      ip = InsNewInst(bl->blk, bl->ptr, NULL, ld, -ig->reg, ig->deref, 0);
+      CalcThisUseSet(ip);
+      CHANGE++;
+   }
+/*
+ * Push any needed store to extra-scope blocks that require it
+ */
+   for (bl=ig->stpush; bl; bl = bl->next)
+   {
+      #if IFKO_DEBUG_LEVEL >= 1
+         assert(bl->ptr);
+      #endif
+      ip = InsNewInst(bl->blk, NULL, bl->ptr, st, -ig->reg, ig->deref, 0);
+      CalcThisUseSet(ip);
+      CHANGE++;
+   }
+   if (CHANGE) 
+      INDEADU2D = CFUSETU2D = CFUSETU2D = 0;
+/*
+ * ================================================================
+ * Now we change all use of var in LR to access the ig->reg instead
+ * ================================================================
+ */
+   for (bl=ig->blkspan; bl; bl = bl->next)
+      CHANGE += VarUse2RegUse(ig, bl->blk, NULL, NULL);
+   for (bl=ig->blkend; bl; bl = bl->next)
+      CHANGE += VarUse2RegUse(ig, bl->blk, NULL, bl->ptr);
+   for (bl=ig->blkbeg; bl; bl = bl->next)
+   {
+      ip = bl->ptr;
+      if (ip) ip = ip->next;
+      CHANGE += VarUse2RegUse(ig, bl->blk, ip, NULL);
+   }
+   return(CHANGE);
 }
 
 int DoScopeRegAsg(BLIST *scope)
 {
+   IGNODE **igs;
+   int i, N;
+   extern FILE *fpIG, *fpLIL, *fpST;
+   void DumpIG(FILE *fpout, int N, IGNODE **igs);
+   extern BBLOCK *bbbase;
+
    CalcScopeIG(scope);
+   igs = SortIG(&N);
+   DoIGRegAsg(N, igs);
+fprintf(stderr, "\n\n*** NIG = %d\n", N);
+   if (fpIG)
+   {
+      DumpIG(fpIG, N, igs);
+      fclose(fpIG);
+   }
+   if (fpLIL)
+   {
+      PrintInst(fpLIL, bbbase);
+      fclose(fpLIL);
+      fpLIL = NULL;
+   }
+   if (fpST)
+   {
+      PrintST(fpST);
+      fclose(fpST);
+      fpST = NULL;
+   }
+#if 1
+   for (i=0; i != N; i++)
+      DoRegAsgTransforms(igs[i]);
+#endif
+   if (igs) free(igs);
    return(0);
+}
+
+
+static void PrintBlockWithNum(FILE *fpout, BLIST *bl)
+{
+   if (!bl)
+   {
+      fprintf(fpout, "NONE\n");
+      return;
+   }
+   fprintf(fpout, "%4d(%5d)", bl->blk->bnum, FindInstNum(bl->blk, bl->ptr));
+   for (bl=bl->next; bl; bl = bl->next)
+      fprintf(fpout, ", %4d(%5d)", bl->blk->bnum, 
+              FindInstNum(bl->blk, bl->ptr));
+   fprintf(fpout, "\n");
+}
+
+void DumpIG(FILE *fpout, int N, IGNODE **igs)
+/*
+ * Dumps IG information to file
+ */
+{
+   int i;
+   IGNODE *ig;
+   BLIST *bl;
+   fprintf(fpout, "Printing information for %d IGNODES:\n\n", N);
+   for (i=0; i < N; i++)
+   {
+      ig = igs[i];
+      if (!ig) continue;
+      fprintf(fpout, 
+         "*** IG# = %5d, VAR = %5d, REG = %5d, NREAD = %6d, NWRITE = %3d\n",
+              ig->ignum, ig->var, ig->reg, ig->nread, ig->nwrite);
+      fprintf(fpout, "    begblks : ");
+      PrintBlockWithNum(fpout, ig->blkbeg);
+      fprintf(fpout, "    spanblk : ");
+      if (!ig->blkspan)
+         fprintf(fpout, " NONE\n");
+      else
+      {
+         fprintf(fpout, " %5d", ig->blkspan->blk->bnum);
+         for (bl=ig->blkspan->next; bl; bl = bl->next)
+            fprintf(fpout, ", %5d", bl->blk->bnum);
+         fprintf(fpout, "\n");
+      }
+      fprintf(fpout, "    endblks : ");
+      PrintBlockWithNum(fpout, ig->blkend);
+      fprintf(fpout, "    ldhoist : ");
+      PrintBlockWithNum(fpout, ig->ldhoist);
+      fprintf(fpout, "    stpush  : ");
+      PrintBlockWithNum(fpout, ig->stpush);
+      fprintf(fpout, "    conflict: %s\n", PrintVecList(ig->conflicts, 0));
+      fprintf(fpout, "\n\n");
+   }
 }
 
 /*

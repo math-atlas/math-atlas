@@ -139,3 +139,165 @@ INSTQ *DelInst(INSTQ *del)
    }
    return(ip);
 }
+
+/*
+ * Following routines translate LIL to human-readable form
+ */
+static
+char *head0a="INUM INSTRUCT   DESTINATION       SOURCE 1       SOURCE 2      ",
+     *head1a="==== ======== =============== =============== ===============  ",
+     *head0b="      USES              SETS              DEADS\n",
+     *head1b="================= ================= =================\n\n",
+     *form=
+     "%4d %8.8s %4d,%10.10s %4d,%10.10s %4d,%10.10s  %17.17s %17.17s %17.17s\n";
+
+int FindInstNum(BBLOCK *blk, INSTQ *inst)
+/*
+ * RETURNS: instruction number, starting from 1, of the instruction ip
+ */
+{
+   BBLOCK *bp;
+   INSTQ *ip;
+   int i;
+   extern BBLOCK *bbbase;
+
+   for (i=1,bp=bbbase; bp != blk; bp = bp->down)
+      for (ip=bp->inst1; ip; ip = ip->next) i++;
+   for (ip=blk->inst1; ip != inst; ip = ip->next) i++;
+   return(i);
+}
+static char *BV2NumList(int iv)
+{
+   static char lns[3][32];
+   static int k=0;
+   char *sptr, *sp;
+   int i, j, n, tnreg;
+   short *v;
+
+   if (!iv) return("NOT SET");
+   v = BitVec2StaticArray(iv);
+   if (!v) return("0");
+   n = v[0];
+   if (!n) return("0");
+
+   tnreg = NumberArchRegs();
+   sptr = &lns[k][0];
+   if (++k == 3) k = 0;
+
+   j = v[1]+1;
+   if (j < tnreg) j = -j;
+   else j -= tnreg;
+   sp = sptr + sprintf(sptr, "%d", j);
+   for (i=2; i <= n; i++)
+   {
+      j = v[i];
+      if (j >= tnreg) j -= tnreg + 1;
+      else j = -j;
+      sp += sprintf(sp, ",%d", j);
+   }
+   return(sptr);
+}
+
+char *op2str(short op)
+/*
+ * Translates op to expanded mneumonic
+ */
+{
+   static int i=0;
+   int flag;
+   static char lns[3][10];
+   char *sptr;
+
+   if (!op)
+      return("");
+
+   sptr = &lns[i][0];
+   sptr[8] = '\0';
+   if (++i == 3) i = 0;
+
+   if (op < 0)
+      sprintf(sptr, "R(%7.7s)", Int2Reg(op));
+   else
+   {
+      flag = STflag[op-1];
+      if (IS_CONST(flag))
+      {
+         #ifdef X86_64
+            if (IS_INT(flag))
+               sprintf(sptr, "i(%7d)", SToff[op-1].i);
+            else if (IS_SHORT(flag))
+               sprintf(sptr, "l(%7d)", SToff[op-1].l);
+         #else
+            if (IS_INT(flag) || IS_SHORT(flag))
+               sprintf(sptr, "i(%7d)", SToff[op-1].i);
+         #endif
+         else if (IS_DOUBLE(flag))
+            sprintf(sptr, "d(%7e)", SToff[op-1].d);
+         else if (IS_FLOAT(flag))
+            sprintf(sptr, "f(%7e)", SToff[op-1].f);
+      }
+      else
+      {
+         if (IS_PTR(flag)) *sptr = 'P';
+         else if (IS_LOCAL(flag)) *sptr = 'L';
+         else if (IS_DEREF(flag))
+         {
+            if (SToff[op-1].sa[1] > 0)
+            {
+               op = SToff[op-1].sa[1];
+               *sptr = 'L';
+            }
+            else *sptr = 'D';
+         }
+         else *sptr = 'O';
+         sprintf(sptr+1, "(%6.6s)", STname[op-1] ? STname[op-1] : "NULL");
+      }
+   }
+   return(sptr);
+}
+
+void PrintThisInst(FILE *fpout, int i, INSTQ *ip)
+{
+   short inst, op1, op2, op3;
+
+   inst = GET_INST(ip->inst[0]);
+   op1 = ip->inst[1];
+   op2 = ip->inst[2];
+   op3 = ip->inst[3];
+   if (inst == COMMENT)
+   {
+      if (!DO_KILLCOMMENTS(FKO_FLAG))
+      {
+         fprintf(fpout, "%4d %8.8s %s\n", i, "COMMENT:", 
+                 op1 ? STname[op1-1] : "");
+      }
+   }
+   else
+   {
+      fprintf(fpout, form, i, instmnem[inst], op1, op2str(op1),
+              op2, op2str(op2), op3, op2str(op3),
+              BV2NumList(ip->use), BV2NumList(ip->set),
+              BV2NumList(ip->deads));
+   }
+}
+
+void PrintInst(FILE *fpout, BBLOCK *bbase)
+{
+   BBLOCK *bp;
+   INSTQ *ip;
+   int i=1;
+
+   fprintf(fpout, head0a);
+   fprintf(fpout, head0b);
+   fprintf(fpout, head1a);
+   fprintf(fpout, head1b);
+   for (bp=bbase; bp; bp = bp->down)
+   {
+      fprintf(fpout, "\n  ** BLOCK %d **\n", bp->bnum);
+      for (ip=bp->inst1; ip; ip = ip->next)
+      {
+         PrintThisInst(fpout, i, ip);
+         i++;
+      }
+   }
+}

@@ -1,5 +1,6 @@
 #ifndef FKO_INST_H
 #define FKO_INST_H
+
 enum comp_flag
 /*
  * enumerated type for compiler flag, so format is:
@@ -169,6 +170,149 @@ enum inst
    CVTSD,
    LAST_INST
 };
+
+#ifdef IFKO_DECLARE
+char *instmnem[] =
+{
+   "UNIMP",
+   "NOP",
+   "COMMENT",
+   "LABEL",
+   "CMPFLAG",
+/*
+ * integer ops of same size as ptrs
+ */
+   "LD",
+   "ST",
+   "OR",
+   "AND",
+   "ANDCC",
+   "XOR",
+   "NOT",
+   "SHL",
+   "SHLCC",
+   "SHR",
+   "SAR",
+   "ADD",
+   "SUB",
+   "SUBCC",
+   "MUL",
+   "UMUL",
+   "DIV",
+   "UDIV",
+   "CMPAND",
+   "CMP",
+   "MOV",
+   "NEG",
+/*   ABS, ; abs commented out because not widely supported */
+/*
+ * 32-bit integer (64-bit systems only)
+ */
+   "LDS",
+   "STS",
+   "ORS",
+   "XORS",
+   "NOTS",
+   "SHLS", "SHLCCS",
+   "SHRS", "SHRCCS",
+   "SARS",
+   "ADDS", "ADDCCS",
+   "SUBS", "SUBCCS",
+   "MULS",
+   "UMULS",
+   "DIVS",
+   "UDIVS",
+   "CMPS",
+   "MOVS",
+   "NEGS",
+   "ABSS",
+/*
+ * Jump instructions
+ */
+   "JMP",
+   "JEQ", "JNE", "JLT", "JLE", "JGT", "JGE",
+   "RET",
+   "PREFR",
+   "PREFW",
+/*
+ * The stream prefetch instructions have format:
+ * [ptr], [len], [ilvl:ist]
+ * where [ilvl:ist] is an 8-bit constant, where 4 most sig bits give cache
+ * level to fetch to (if leading bit is set, fetch is inclusive, else 
+ * exclusive).  The last 4 bits indicate which stream to fetch with.
+ * Therefore, up to 7 cache levels and 15 streams allowed.
+ */
+   "PREFRS",
+   "PREFWS",
+/*
+ * Floating point instructions, single precision
+ */
+   "FZERO",
+   "FLD",
+   "FST",
+   "FMAC",
+   "FMUL",
+   "FDIV",
+   "FADD",
+   "FSUB",
+   "FABS",
+   "FCMP",
+   "FNEG",
+   "FMOV",
+/*
+ * Floating point instructions, double precision
+ */
+   "FZEROD",
+   "FLDD",
+   "FSTD",
+   "FMACD",
+   "FMULD",
+   "FDIVD",
+   "FADDD",
+   "FSUBD",
+   "FABSD",
+   "FCMPD",
+   "FNEGD",
+   "FMOVD",
+/*
+ * Vector instructions, add to these later (double, scalar).
+ */
+   "VFLD",
+   "VFST",
+   "VFMOV",
+   "VFABS",
+   "VFMAC",
+   "VFMUL",
+   "VFDIV",
+   "VFADD",
+   "VFSUB",
+   "VFCMP",
+   "VSHUF",
+/*
+ * x86-only instructions
+ */
+   "FCMPW",
+   "FCMPWD",
+   "CVTBFI",
+   "CVTBDI",
+/*
+ * Type conversion instructions
+ */
+   "CVTIS",
+   "CVTSI",
+   "CVTFI",
+   "CVTIF",
+   "CVTDI",
+   "CVTID",
+   "CVTFS",
+   "CVTSF",
+   "CVTDS",
+   "CVTSD",
+   "LAST_INST"
+};
+#else
+   extern char *instmnem[];
+#endif
 
 #define FIRSTBRANCH JMP
 #define LASTBRANCH  RET

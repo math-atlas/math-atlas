@@ -1,6 +1,7 @@
 #ifndef FKO_VARS_H
    #define FKO_VARS_H
 
+void CalcThisUseSet(INSTQ *ip);
 void CalcInsOuts(BBLOCK *base);
 char *BV2VarNames(int iv);
 void AddSetUseComments(BBLOCK *base);

@@ -8,6 +8,7 @@ static BLIST *KillBlockListEntry(BLIST *lp);
 BLIST *RemoveBlockFromList(BLIST *list, BBLOCK *blk);
 int BlockList2BitVec(BLIST *lp);
 BLIST *BitVec2BlockList(int iv);
+BLIST *FindInList(BLIST *lp, BBLOCK *blk);
 BBLOCK *FindBlockInList(BLIST *lp, BBLOCK *blk);
 BLIST *MergeBlockLists(BLIST *l1, BLIST *l2);
 void KillBlockList(BLIST *lp);

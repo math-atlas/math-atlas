@@ -81,6 +81,12 @@ BLIST *BitVec2BlockList(int iv)
    return(lp);
 }
 
+BLIST *FindInList(BLIST *lp, BBLOCK *blk)
+{
+   for (; lp; lp = lp->next)
+      if (lp->blk == blk) return(lp);
+   return(NULL);
+}
 BBLOCK *FindBlockInList(BLIST *lp, BBLOCK *blk)
 {
    for (; lp; lp = lp->next)

@@ -530,3 +530,45 @@ short AddDerefEntry(short ptr, short reg, short mul, short con)
    SToff[i].sa[3] = con;
    return(i+1);
 }
+
+void PrintST(FILE *fpout)
+{
+   int flag;
+   short k;
+   char pre;
+   char *what;
+
+   fprintf(fpout, "\n                                  SYMBOL TABLE:\n");
+   fprintf(fpout, "                                                                 PTR,REG,MUL,CON\n");
+   fprintf(fpout, "INDEX  FLAG              NAME                     WHAT                    VALUE\n");
+   fprintf(fpout, "===== ===== ================================== ======= =========================\n\n");
+   for (k=0; k != N; k++)
+   {
+      flag = STflag[k];
+      fprintf(fpout, "%5d %5d %34.34s", k+1, flag, 
+              STname[k] ? STname[k] : "NULL");
+      pre = '?';
+      if (IS_DEREF(flag))
+         fprintf(fpout, "   DEREF %4d,%4d,%4d,%4d\n",
+                 SToff[k].sa[0],SToff[k].sa[1],SToff[k].sa[2],SToff[k].sa[3]);
+      else if (IS_LOCAL(flag) || IS_CONST(flag) || IS_PARA(flag))
+      {
+         if (IS_LOCAL(flag)) what = "LOCAL";
+         else if (IS_PARA(flag)) what = "PARAM";
+         else what = "CONST";
+
+         if (IS_INT(flag))
+            fprintf(fpout, " i%6.6s %25d\n", what, SToff[k].i);
+         else if (IS_FLOAT(flag))
+            fprintf(fpout, " f%6.6s %25.3f\n", what, SToff[k].f);
+         else if (IS_DOUBLE(flag))
+            fprintf(fpout, " d%6.6s %25.3lf\n", what, SToff[k].d);
+         else 
+            fprintf(fpout, " ?%6.6s UNKNOWN\n", what);
+      }
+      else if (IS_LABEL(flag))
+         fprintf(fpout, "   LABEL\n");
+      else
+         fprintf(fpout, " UNKNOWN UNKNOWN\n");
+   }
+}

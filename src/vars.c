@@ -35,35 +35,41 @@ void HandleUseSet(int iv, int iuse, int I)
    }
 }
 
+void CalcThisUseSet(INSTQ *ip)
+/*
+ * calculates use/set for given instruction
+ */
+{
+   short inst, except;
+   short op1, op2, op3;
+
+   inst = ip->inst[0];
+   except = inst >> 14;
+   inst &= 0x3FFF;
+
+   if (!ip->use) ip->use = NewBitVec(32);
+   else SetVecAll(ip->use, 0);
+   if (!ip->set) ip->set = NewBitVec(32);
+   else SetVecAll(ip->set, 0);
+
+   if (ACTIVE_INST(inst))
+   {
+      HandleUseSet(ip->set, ip->use, ip->inst[1]);
+      HandleUseSet(ip->use, ip->use, ip->inst[2]);
+      HandleUseSet(ip->use, ip->use, ip->inst[3]);
+      if (except == 1 || except == 3)
+         HandleUseSet(ip->set, ip->use, ip->inst[2]);
+      if (except == 2 || except == 3)
+         HandleUseSet(ip->set, ip->use, ip->inst[3]);
+   }
+}
 void CalcUseSet(BBLOCK *bp)
 {
    INSTQ *ip;
-   short inst, except;
    int flag;
-   short op1, op2, op3;
 
    for (ip=bp->inst1; ip; ip = ip->next)
-   {
-      inst = ip->inst[0];
-      except = inst >> 14;
-      inst &= 0x3FFF;
-
-      if (!ip->use) ip->use = NewBitVec(32);
-      else SetVecAll(ip->use, 0);
-      if (!ip->set) ip->set = NewBitVec(32);
-      else SetVecAll(ip->set, 0);
-
-      if (ACTIVE_INST(inst))
-      {
-         HandleUseSet(ip->set, ip->use, ip->inst[1]);
-         HandleUseSet(ip->use, ip->use, ip->inst[2]);
-         HandleUseSet(ip->use, ip->use, ip->inst[3]);
-         if (except == 1 || except == 3)
-            HandleUseSet(ip->set, ip->use, ip->inst[2]);
-         if (except == 2 || except == 3)
-            HandleUseSet(ip->set, ip->use, ip->inst[3]);
-      }
-   }
+      CalcThisUseSet(ip);
 }
 
 void CalcUsesDefs(BBLOCK *bp)

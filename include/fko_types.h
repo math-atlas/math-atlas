@@ -112,7 +112,9 @@ struct ignode
    ushort liveregs;             /* registers being used at this point */
    ushort conflicts;            /* IG conflicting with this one */
    short var;                   /* ST index of variable */
+   short deref;                 /* deref entry of var */
    short ignum;                 /* IG index of this node */
+   short reg;                   /* register assigned to this live range */
 };
 
 #if 0
