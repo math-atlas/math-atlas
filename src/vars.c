@@ -14,17 +14,6 @@ void HandleUseSet(int iv, int iuse, int I)
 /*
  *    derefs always use their index variables
  */
-#if 0
-      if (IS_LOCAL(flag))
-      {
-         i = SToff[I].sa[2];
-         if (SToff[i].sa[0] < 0)
-            SetVecBit(iuse, -SToff[i].sa[0]-1, 1);
-         if (SToff[i].sa[1] < 0)
-            SetVecBit(iuse, -SToff[i].sa[1]-1, 1);
-         SetVecBit(iv, I+tnreg, 1);
-      }
-#endif
       if (IS_DEREF(flag))
       {
          if (!tnreg) tnreg = NumberArchRegs();
@@ -59,6 +48,7 @@ void CalcUseSet(BBLOCK *bp)
 
       if (inst != COMMENT && inst != CMPFLAG)
       {
+
          HandleUseSet(ip->set, ip->use, ip->inst[1]);
          HandleUseSet(ip->use, ip->use, ip->inst[2]);
          HandleUseSet(ip->use, ip->use, ip->inst[3]);
@@ -142,7 +132,8 @@ char *BV2VarNames(int iv)
       vals = BitVec2Array(iv, 1);
       for (n=vals[0]+1, i=1; i != n; i++)
       {
-         if (vals[i] <= tnreg) vals[i] = -vals[i];
+         assert(vals[i]);
+         if (vals[i] < tnreg) vals[i] = -vals[i];
          else vals[i] -= tnreg;
          if (vals[i] < 0) 
             j += sprintf(ln+j, "%s,", Int2Reg(vals[i]));

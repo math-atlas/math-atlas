@@ -1375,6 +1375,26 @@ struct assmln *lil2ass(BBLOCK *bbase)
                 archfregs[-FREGBEG-op3]);
          #endif
          break;
+      case FZERO:
+         #ifdef X86
+            ap->next = PrintAssln("\txorps\t%s,%s\n", archfregs[-FREGBEG-op1],
+                                  archfregs[-FREGBEG-op1]);
+         #elif defined(SPARC)
+            ap->next = PrintAssln("\tfzeros\t%s\n", archfregs[-FREGBEG-op1]);
+         #elif defined(PPC)
+            fko_error(__LINE__, "FZERO not valid inst for PPC!\n");
+         #endif
+         break;
+      case FZEROD:
+         #ifdef X86
+            ap->next = PrintAssln("\txorpd\t%s,%s\n", archdregs[-DREGBEG-op1],
+                                  archdregs[-DREGBEG-op1]);
+         #elif defined(SPARC)
+            ap->next = PrintAssln("\tfzero\t%s\n", archdregs[-DREGBEG-op1]);
+         #elif defined(PPC)
+            fko_error(__LINE__, "FZERO not valid inst for PPC!\n");
+         #endif
+         break;
       case FADDD:
          #ifdef X86
 	    assert (op1 == op2);

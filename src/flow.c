@@ -142,6 +142,14 @@ void AddBlockComments(BBLOCK *bp)
    for (i=0; bp; bp = bp->down, i++)
    {
       PrintComment(bp, NULL, bp->inst1, "**************************");
+      PrintComment(bp, NULL, bp->inst1, "   uses = %s",
+                   BV2VarNames(bp->uses));
+      PrintComment(bp, NULL, bp->inst1, "   defs = %s",
+                   BV2VarNames(bp->defs));
+      PrintComment(bp, NULL, bp->inst1, "   outs = %s",
+                   BV2VarNames(bp->outs));
+      PrintComment(bp, NULL, bp->inst1, "   ins  = %s",
+                   BV2VarNames(bp->ins));
       PrintComment(bp, NULL, bp->inst1, "   label = %d (%s)", bp->ilab, 
                                bp->ilab ? STname[bp->ilab-1] : "NULL");
       PrintComment(bp, NULL, bp->inst1, "   doms = %s", bp->dom ?

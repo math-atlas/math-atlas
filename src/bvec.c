@@ -66,7 +66,6 @@ int *ExtendBitVec(int iv, int nwords)
    int j, k;
    int *v;
 
-fprintf(stderr, "Extending bit %d to %d words!!!\n", iv, nwords);
    v = bvecs[NewBitVec(nwords*32)-1];
    for (k=ni[--iv], j=0; j < k; j++) v[j] = bvecs[iv][j];
    for (ni[iv] = nwords; j < nwords; j++) v[j] = 0;
@@ -101,7 +100,7 @@ void SetVecBit(int iv, int ibit, int val)
 /*
  * If we are out of space, get new bit vec and trash the old
  */
-   if (i >= ni[iv]) ExtendBitVec(iv+1, i);
+   if (i >= ni[iv]) ExtendBitVec(iv+1, i+1);
    v = &bvecs[iv][i];
    ibit -= i << 5;
    if (!val) *v &= ~(1<<ibit);
@@ -277,7 +276,7 @@ short *BitVec2Array(int iv, int off)
    vals[0] = n;
    for (i=1; i <= n; i++)
       vals[i] = GetSetBitX(iv, i) + off;
-   #if IFKO_DEBUG_LEVEL > 0
+   #if IFKO_DEBUG_LEVEL > 0  && 0
       fprintf(stderr, "ivals = ");
       for (i=1; i <= n; i++)
          fprintf(stderr, "%d,", vals[i]);

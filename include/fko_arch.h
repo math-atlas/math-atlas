@@ -298,13 +298,13 @@
    #define ICC0 (DREGBEG+TNDR)
 #endif
 #ifndef FCC0
-   #define FCC0 (1+NICC)
+   #define FCC0 (ICC0+NICC+1)
 #endif
 #ifndef PCREG
-   #define PCREG (FCC0 + 1)
+   #define PCREG (FCC0 + NFCC)
 #endif
 #ifndef TNREG
-   #define TNREG (FCC0+NFCC+1)
+   #define TNREG (PCREG+1)
 #endif
 #ifndef IREGEND
    #define IREGEND (IREGBEG + TNIR)

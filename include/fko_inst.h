@@ -104,6 +104,7 @@ enum inst
 /*
  * Floating point instructions, single precision
  */
+   FZERO,                       /* [fr] : fr = 0.0 */
    FLD,                         /* [fr] [ptr] */
    FST,                         /* [ptr], [fr] */
    FMAC,                        /* fr0 += fr1 * fr2 */
@@ -118,6 +119,7 @@ enum inst
 /*
  * Floating point instructions, double precision
  */
+   FZEROD,                      /* [fr] : fr = 0.0 */
    FLDD,                        /* [fr] [ptr] */
    FSTD,                        /* [ptr], [fr] */
    FMACD,                       /* fr0 += fr1 * fr2 */

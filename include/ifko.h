@@ -14,6 +14,7 @@
 #include "fko_loop.h"
 #include "fko_flow.h"
 #include "fko_bvec.h"
+#include "fko_vars.h"
 
 #ifdef IFKO_DECLARE
    char rout_name[128];
