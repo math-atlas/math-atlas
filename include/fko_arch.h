@@ -12,8 +12,8 @@
 /*   #define FKO_ANSIC32 */
 /*   #define LINUX_X86_64 */
 /*   #define LINUX_X86_32 */
-   #define SOLARIS_SPARC 
-/*   #define OSX_PPC */
+/*   #define SOLARIS_SPARC */
+   #define OSX_PPC
 #endif
 
 #if defined(FKO_ANSIC32) || defined(FKO_ANSIC64)
@@ -212,8 +212,8 @@
    #else
       #define NSIR  10
       #ifdef ARCH_DECLARE
-         char *ICCREGS[NICC] = "cr0", "cr2", "cr3", "cr4"};
-         char *FCCREGS[NFCC] = "cr1", "cr5", "cr6", "cr7"};
+         char *ICCREGS[NICC] = {"cr0", "cr2", "cr3", "cr4"};
+         char *FCCREGS[NFCC] = {"cr1", "cr5", "cr6", "cr7"};
          int  icallersave[TNIR] = 
           {0, 1,1,1,1,1,1,1,1,1,1, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 1};
          int  icalleesave[TNIR] = 

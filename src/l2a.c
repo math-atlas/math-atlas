@@ -1004,7 +1004,7 @@ struct assmln *lil2ass(INSTQ *head)
                                   GetIregOrConst(op3));
          #elif defined(PPC)
             if (op3 > 0)
-               ap->next = PrintAssln("\tcmpwi\tcr%s,%s,%s\n", 
+               ap->next = PrintAssln("\tcmpwi\t%s,%s,%s\n", 
                                      ICCREGS[op1-ICC0],
                                      archiregs[-IREGBEG-op2],
                                      GetIregOrConst(op3));
@@ -1021,15 +1021,15 @@ struct assmln *lil2ass(INSTQ *head)
          break;
       case FCMP:
          #ifdef X86
-            ap->next = PrintAssln("\tcomiss\t%s,%s\n", GetDregOrDeref(op3),
-	                          archdregs[-DREGBEG-op2]);
+            ap->next = PrintAssln("\tcomiss\t%s,%s\n", GetFregOrDeref(op3),
+	                          archfregs[-FREGBEG-op2]);
          #elif defined(SPARC)
             ap->next = PrintAssln("\tfcmpes\t%s,%s\n", 
-	       archdregs[-DREGBEG-op2], archdregs[-DREGBEG-op3]);
+	       archfregs[-FREGBEG-op2], archfregs[-FREGBEG-op3]);
          #elif defined(PPC)
             ap->next = PrintAssln("\tfcmpo\t%s,%s,%s\n", 
-               FCCREGS[op1-FCC0], archdregs[-DREGBEG-op2],
-	       archdregs[-DREGBEG-op3]);
+               FCCREGS[op1-FCC0], archfregs[-FREGBEG-op2],
+	       archfregs[-FREGBEG-op3]);
          #endif
          break;
       case FCMPD:
@@ -1198,7 +1198,7 @@ struct assmln *lil2ass(INSTQ *head)
             if (op2 >= ICC0 && op2 <= ICC0+NICC) sptr = ICCREGS[op2-ICC0];
             else sptr = FCCREGS[op2-FCC0];
             k = sptr[2] - '0';
-            ap->next = PrintAssln("\tbf\t%d, %s\n", k*4+0, STname[op3-1]);
+            ap->next = PrintAssln("\tbt\t%d, %s\n", k*4+0, STname[op3-1]);
          #elif defined(FKO_ANSIC)
             ap->next = PrintAssln("   if (icc < 0) goto %s;\n",
                                   STname[op2-1]);

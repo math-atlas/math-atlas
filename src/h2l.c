@@ -706,7 +706,7 @@ void FinishLoop(struct loopq *lp)
    flag = STflag[lp->end-1];
    if (IS_CONST(flag)) iend = lp->end;
    else iend = -LocalLoad(lp->end);
-   InsNewInst(NULL, NULL, CMP, 0, -ireg, iend);
+   InsNewInst(NULL, NULL, CMP, ICC0, -ireg, iend);
    InsNewInst(NULL, NULL, JLT, 0, ICC0, lp->body_label);
    lp->iend = InsNewInst(NULL, NULL, CMPFLAG, CF_LOOP_END, lp->loopnum, 0);
    GetReg(-1);

@@ -1,6 +1,7 @@
 SHELL = /bin/tcsh
 CC = gcc
-CCFLAGS = -g -mcpu=ultrasparc
+#CCFLAGS = -g -mcpu=ultrasparc
+CCFLAGS = -g 
 IFKO = ../bin/ifko
 
 all : ibuild fbuild dbuild hbuild irun frun drun hrun
