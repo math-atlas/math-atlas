@@ -1085,6 +1085,7 @@ int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
 {
    INSTQ *ip, *ip1;
    int CHANGE=0;
+   short k;
 
    assert(INUSETU2D);
    assert(ig && blk);
@@ -1128,12 +1129,26 @@ int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
             ip->inst[0] = VDMOV;
             break;
          case VDLDS:
-            CalcThisUseSet(InsNewInst(NULL, NULL, ip, VDZERO, ip->inst[1],0,0));
+            #ifdef X86
+               k = ig->reg;
+               if (k >= DREGBEG && k < DREGEND)
+                  k = k - DREGBEG + VDREGBEG;
+               if (k != -ip->inst[1])
+                  CalcThisUseSet(InsNewInst(NULL, NULL, ip, VDZERO, 
+                                    ip->inst[1], 0, 0));
+            #endif
             ip->inst[0] = VDMOVS;
             ip->inst[2] = -ig->reg;
             break;
          case VFLDS:
-            CalcThisUseSet(InsNewInst(NULL, NULL, ip, VFZERO, ip->inst[1],0,0));
+            #ifdef X86
+               k = ig->reg;
+               if (k >= FREGBEG && k < FREGEND)
+                  k = k - FREGBEG + VFREGBEG;
+               if (k != -ip->inst[1])
+                  CalcThisUseSet(InsNewInst(NULL, NULL, ip, VFZERO, 
+                                    ip->inst[1], 0, 0));
+            #endif
             ip->inst[0] = VFMOVS;
             ip->inst[2] = -ig->reg;
             break;
