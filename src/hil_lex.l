@@ -4,14 +4,18 @@
 %}
 ICON	[0-9]+
 HCON	"0x"[0-9,A-F]+
-FCON	{ICON}"."{ICON}[e,E]ICON
-DCON	{ICON}"."{ICON}([d,D]ICON)?
 ID	[A-Za-z][A-Za-z0-9_]*
 ROUTNAM "ROUTINE"[ \t\v]+ID
 %%
 "//"[^\n]*\n    { strcpy(yylval.str, yytext+2); return(COMMENT); }
 [\t \v]		{}
 [\n]    {lnno++;}
+{ICON}"."{ICON}[e,E]{ICON} { sscanf(yytext, "%f", &yylval.fnum);  return(FCONST); }
+{ICON}"\."{ICON}([d,D]ICON)? { yylval.dnum = atof(yytext); 
+       fprintf(stderr, "returning DCON of %f\n", yylval.dnum);
+       return(DCONST); }
+{ICON}	{ yylval.inum = atoi(yytext); return(ICONST); }
+{HCON}    { sscanf(yytext, "%x", &yylval.inum);  return(ICONST); }
 "-" |
 "(" | 
 ")" | 
@@ -66,11 +70,5 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "PARAMS"   { return(PARAMS); }
 "ABS"      { return(ABST); }
 {ID}      { sprintf(yylval.str, "%s", yytext); return(NAME); }
-{ICON}	{ yylval.inum = atoi(yytext); return(ICONST); }
-{HCON}    { sscanf(yytext, "%x", &yylval.inum);  return(ICONST); }
-{FCON}    { sscanf(yytext, "%f", &yylval.fnum);  return(FCONST); }
-{DCON}    { yylval.dnum = atof(yytext); 
-fprintf(stderr, "returning DCON of %f\n", yylval.dnum);
-return(DCONST); }
 
 %%

@@ -192,7 +192,7 @@ short STfconstlookup(float f)
    sprintf(name, "_FPFC_%d", nfc);
    nfc++;
    val.f = f;
-   return(STnew(name, GLOB_BIT | CONST_BIT | T_DOUBLE, val));
+   return(STnew(name, GLOB_BIT | CONST_BIT | T_FLOAT, val));
 }
 
 
@@ -372,7 +372,7 @@ void CreateLocalDerefs(int isize)
  * isize is the size in bytes of an integer on the arch in question.
  */
 {
-   short k, off;
+   short k, off, h, i;
    int fl;
    int GetArchAlign(int nvd, int nvf, int nd, int nf, int nl, int ni);
 
@@ -384,7 +384,7 @@ void CreateLocalDerefs(int isize)
          switch(FLAG2PTYPE(fl))
          {
          case T_INT:
-            off = SToff[k].sa[1]*isize + ndloc*8 + nfloc*4 +
+            off = SToff[k].sa[1]*isize + ndloc*8 + 
                   nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4;
             break;
          case T_FLOAT:
@@ -392,7 +392,7 @@ void CreateLocalDerefs(int isize)
                off = SToff[k].sa[1]*FKO_SVLEN*4 + nvdloc*FKO_DVLEN*8;
             else
                off = SToff[k].sa[1]*4 + nvdloc*FKO_DVLEN*8 + 
-                     nvfloc*FKO_SVLEN*4 + ndloc*8 + niloc*8;
+                     nvfloc*FKO_SVLEN*4 + ndloc*8 + niloc*isize;
             break;
          case T_DOUBLE:
             if (IS_VEC(fl))
@@ -404,6 +404,22 @@ void CreateLocalDerefs(int isize)
             fprintf(stderr, "%d: Unknown type %d!\n", __LINE__, FLAG2PTYPE(fl));
             exit(-1);
          }
+#if 0
+/*
+ *       Adjust caller-frame deref to use reference in this frame
+ */
+         if (IS_PARA(fl)) 
+         {
+            h = (SToff[k].sa[2]-1)<<2;
+            SToff[k].sa[2] = AddDerefEntry(-REG_SP, 0, -1, off);
+            i = (SToff[k].sa[2]-1)<<2;
+            DT[h] = DT[i];
+            DT[h+1] = DT[i+1];
+            DT[h+2] = DT[i+2];
+            DT[h+3] = DT[i+3];
+         }
+         else
+#endif
          SToff[k].sa[2] = AddDerefEntry(-REG_SP, 0, -1, off);
          fprintf(stderr, "%s, DT#=%d\n", STname[k], SToff[k].sa[2]);
       }

@@ -1194,7 +1194,7 @@ struct assmln *lil2ass(INSTQ *head)
       case CVTDS:
       case CVTFS:
 /*
- * This short inst not defined, since they are not used in preamble
+ * These short inst not defined, since they are not used in preamble
  */
       case MULS:
       case UMULS:

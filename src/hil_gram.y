@@ -430,7 +430,11 @@ void ConstInit(short id, short con)
 {
    extern struct locinit *LIhead;
    if (FLAG2TYPE(STflag[id-1]) != FLAG2TYPE(STflag[con-1]))
+   {
+      fprintf(stderr, "id='%s', idtype=%d, contype=%d\n", STname[id-1],
+              FLAG2TYPE(STflag[id-1]), FLAG2TYPE(STflag[con-1]));
       fko_error(__LINE__, "Type mismatch in CONST_INIT\n");
+   }
    LIhead = NewLI(id, con, LIhead);
 }
 yyerror(char *msg)

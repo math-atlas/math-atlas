@@ -232,7 +232,7 @@ void FPConstStore(INSTQ *next, short id, short con, short reg)
          ip = (int*) &d;
          bitload(next, reg, 12, *ip);
          InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
-         bitload(next, reg, 13, ip[1]);
+         bitload(next, reg, 12, ip[1]);
          i = SToff[id-1].sa[2] - 1;
          i = DT[(i<<2)+3] + 4;
          InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), -reg, 0);
@@ -255,9 +255,24 @@ void FPConstStore(INSTQ *next, short id, short con, short reg)
       f = SToff[con-1].f;
       if (f == 0.0e0)
       {
-         InsNewInst(NULL, next, SUB, -reg, -reg, -reg);
+         InsNewInst(NULL, next, XOR, -reg, -reg, -reg);
          InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
       }
+      ip = (int*) &f;
+      #ifdef X86_32
+         InsNewInst(NULL, next, MOV, -reg, STiconstlookup(*ip), __LINE__);
+         InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+      #elif defined(X86_64)
+         assert(reg <= 8);
+         InsNewInst(NULL, next, MOVS, -reg, STiconstlookup(*ip), __LINE__);
+         InsNewInst(NULL, next, STS, SToff[id-1].sa[2], -reg, __LINE__);
+      #elif defined(SPARC)
+         bitload(next, reg, 12, *ip);
+         InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+      #elif defined(PPC)
+         bitload(next, reg, 16, *ip);
+         InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+      #endif
    }
 }
 

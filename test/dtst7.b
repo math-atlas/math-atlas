@@ -1,11 +1,11 @@
 ROUTINE dot;
    PARAMS :: N, X, Y;
    INT    :: N;
-   FLOAT_PTR :: X, Y;
+   DOUBLE_PTR :: X, Y;
 ROUT_LOCALS
    INT    :: i;
-   FLOAT :: x, y, ddot;
-   CONST_INIT :: ddot = 0.0e0;
+   DOUBLE :: x, y, ddot;
+   CONST_INIT :: ddot = 0.0;
 ROUT_BEGIN
    LOOP i = 0, N
       LIVE_SCALARS_IN  :: ddot;
