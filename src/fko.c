@@ -516,7 +516,7 @@ static void WriteStringArrayToFile(FILE *fp, short n, char **s)
 static char **ReadStringArrayFromFile(FILE *fp)
 {
    short n, i, j;
-   char **s;
+   char **s=NULL;
 
    assert(fread(&n, sizeof(short), 1, fp) == 1);
    if (n)
