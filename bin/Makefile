@@ -8,8 +8,8 @@ heads= $(HDIR)/fko_arch.h $(HDIR)/fko_inst.h $(HDIR)/fko_misc.h \
        $(HDIR)/fko_symtab.h $(HDIR)/ifko.h
 
 ifko : $(heads) ifko.o $(objs)
-	$(CC) $(CCFLAGS) -o $@ ifko.o $(objs) -lfl
-#	$(CC) $(CCFLAGS) -o $@ ifko.o $(objs) -ll
+	$(CC) $(CCFLAGS) -o $@ ifko.o $(objs) -ll
+#	$(CC) $(CCFLAGS) -o $@ ifko.o $(objs) -lfl
 
 xprintinst : ../include/ifko.h ../include/fko_inst.h ../src/printinst.c
 	$(CC) $(CCFLAGS) -I../include -o $@ ../src/printinst.c

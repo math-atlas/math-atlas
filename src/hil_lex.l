@@ -7,7 +7,7 @@ HCON	"0x"[0-9,A-F]+
 ID	[A-Za-z][A-Za-z0-9_]*
 ROUTNAM "ROUTINE"[ \t\v]+ID
 %%
-"//"[^\n]*\n    { lnno++; strcpy(yylval.str, yytext+2); return(COMMENT); }
+"//"[^\n]*\n    { lnno++; strcpy(yylval.str, yytext+2); return(TCOMMENT); }
 [\t \v]		{}
 [\n]    {lnno++;}
 {ICON}"."{ICON}[e,E]{ICON} { sscanf(yytext, "%f", &yylval.fnum);  return(FCONST); }
@@ -35,8 +35,8 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "="	{ return(yytext[0]); }
 "-="    { return(ME); }
 "+="    { return(PE); }
-"||"    { return(OR); }
-"&&"    { return(AND); }
+"||"    { return(TOR); }
+"&&"    { return(TAND); }
 "=="    { return(EQ); }
 "!="    { return(NE); }
 "<="    { return(LE); }

@@ -1,5 +1,8 @@
+/* #define RCW_DEBUG */
 %{
-/*   #define YYDEBUG 1   */
+   #ifdef RCW_DEBUG
+      #define YYDEBUG 1
+   #endif
    #include "ifko.h"
    #include "fko_h2l.h"
    #include "fko_arch.h"
@@ -8,6 +11,13 @@
    static short *aalign=NULL;
    static uchar *balign=NULL;
    static short maxunroll=0;
+
+   struct idlist *NewID(char *name);
+   static void UpdateLoop(struct loopq *lp);
+   void HandleLoopListMU(int which);
+   void para_list();
+   void declare_list(int flag);
+   void ConstInit(short id, short con);
 %}
 %union
 {
@@ -29,17 +39,17 @@
 %token <fnum> FCONST
 %token <dnum> DCONST
 %token <str> NAME
-%token <str> COMMENT
+%token <str> TCOMMENT
 %token <c> aop
 %right '=' PE
-%left OR
-%left AND
+%left TOR
+%left TAND
 %left EQ NE
 %left '<' '>' LE GE
 %left LSHIFT RSHIFT
 %left '+' '-'
 %left '*' '/' '%'
-%right UNMIN NOT
+%right UNMIN TNOT
 %left LSMU
 
 %type <inum> icexpr
@@ -65,7 +75,7 @@ line : stateflag
      ;
 stateflag: ROUT_NAME NAME 
          {
-            #ifdef YYDEBUG
+            #ifdef RCW_DEBUG
                yydebug = 1;
             #endif
             if (WhereAt != 0)
@@ -146,7 +156,7 @@ inititem :  ID '=' iconst { ConstInit($1, $3); }
          |  ID '=' dconst { ConstInit($1, $3); }
          ;
 
-comment : COMMENT { DoComment($1); }
+comment : TCOMMENT { DoComment($1); }
         ;
 statements : statements statement
            | statement
@@ -176,7 +186,7 @@ icexpr  : icexpr '+' icexpr             {$$ = $1 + $3;}
            if ($3 == 0) yyerror("modulo by zero");
            else $$ = $1 % $3;
         }
-        | NOT icexpr                      {$$ = ($2 == 0) ? 0 : 1;} 
+        | TNOT icexpr                      {$$ = ($2 == 0) ? 0 : 1;} 
         | '-' icexpr %prec UNMIN        {$$ = -$2;}
         | '(' icexpr ')' { $$ = $2; }
         | ICONST                        {$$ = $1;}
@@ -304,7 +314,6 @@ struct idlist *ReverseList(struct idlist *base0)
 static void UpdateLoop(struct loopq *lp)
 {
 fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
-/* InsNewInst(NULL, NULL, COMMENT, STstrconstlookup("start UpdateLoop"), 0, 0); */
    lp->maxunroll = maxunroll;
    lp->slivein  = LMA[0];
    lp->sliveout = LMA[1];
