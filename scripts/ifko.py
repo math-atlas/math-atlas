@@ -15,13 +15,13 @@ def ifko_writeNT(ATLdir, ARCH, KF0, fko, rout, pre, l1bla, N, wnt):
 #
    warrs = []
    fkocmnd.callfko(fko, KF0)
-   [t0,m0] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+   [t0,m0] = l1cmnd.time(ATLdir, ARCH, pre, l1bla, N, "fkorout.s", 
                          "gcc", "-x assembler-with-cpp", opt=opt)
    print "WNT none : %.2f" % (m0)
    for wa in wnt:
       KFN = KF0 + " -W " + wa
       fkocmnd.callfko(fko, KFN)
-      [tN,mN] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+      [tN,mN] = l1cmnd.time(ATLdir, ARCH, pre, l1bla, N, "fkorout.s", 
                             "gcc", "-x assembler-with-cpp", opt=opt)
       print "WNT %s : %2.f" % (wa, mN)
       if mN > m0:
@@ -135,10 +135,26 @@ def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr,
    if not pfdinc: pfdinc = LS
    print "\n   Finding PFD for %s in [%d:%d:%d]" % (arr, pfd0, pfdN, pfdinc)
    ipd = int(words[1])
-   pfd = pfd0
    mfM = 0.0
    pfdM = 0
    KF0 = KF0 + " -Ps b A 0 1"
+#
+#  Scope very short PFD
+#
+   if pfd0 >= LS and LS > 32:
+      pfd = 32
+      while pfd <= LS:
+         KFn = KF0 + " -P %s %d %d" % (arr, pflvl, pfd)
+         fkocmnd.callfko(fko, KFn)
+         [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                              "gcc", "-x assembler-with-cpp", opt=opt)
+         print "      %s : PFD = %d mflop = %.2f" % (arr, pfd, mf)
+         if mf > mfM*1.0001:
+            mfM = mf
+            pfdM = pfd
+         pfd += 8
+      
+   pfd = pfd0
    while pfd <= pfdN:
       KFn = KF0 + " -P %s %d %d" % (arr, pflvl, pfd)
       fkocmnd.callfko(fko, KFn)
@@ -452,6 +468,7 @@ def ifko(routs, pres, N):
       if vec: sv = "Y"
       else : sv = "N"
       mfsv = idecmflist[i][1]
+      mfsv = max(mf0, mfsv)
 
       if len(WT) : wt = 'Y'
       else : wt = 'N'
@@ -507,7 +524,6 @@ nargs = len(sys.argv)
 blas = "asum"
 pre  = "s"
 N = 80000
-N = 1024
 uopt =""
 if (nargs > 1):
    blas = sys.argv[1]

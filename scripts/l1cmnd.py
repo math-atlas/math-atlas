@@ -1,6 +1,7 @@
 import os
 import sys
 import re
+import gc
 
 WALLTIME = 1
 L1Tdir = '/tune/blas/level1/'
@@ -75,9 +76,11 @@ def time(ATLdir, ARCH, pre, blas, N, rout, cc=None, ccf=None, opt=""):
               cmnd, cmnd, cmnd)
    else :
       cmnds = 'cd %s/tune/blas/level1/%s ; %s ; %s' % (ATLdir, ARCH, cmnd, cmnd)
+   gc.disable()
    fo = os.popen(cmnds, 'r')
    lines = fo.readlines()
    err = fo.close()
+   gc.enable()
    if (err != None):
       print 'command died with: %d' % (err)
       print cmnd
