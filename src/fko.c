@@ -1247,7 +1247,7 @@ void UpdatePrefetchInfo()
                   j++;
                }
                optloop->pfarrs[0] = optloop->pfdist[0] = optloop->pfflag[0] =
-                                    n-k;
+                                    N-k;
             }
          }
       }
