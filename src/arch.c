@@ -276,7 +276,7 @@ void CreateSysLocals()
  */
 {
 #ifdef X86
-   extern int DTnzerod, DTabsd, DTnzero, DTabs;
+   extern int DTnzerod, DTabsd, DTnzero, DTabs, DTx87, DTx87d;
    if (DTnzerod == -1)
    {
       DTnzerod = STdef("_NEGZEROD", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
@@ -298,6 +298,18 @@ fprintf(stderr, "DTabsd = %d,%d\n", DTabsd, SToff[DTabsd-1].sa[2]);
       DTabs = STdef("_ABSVAL", VEC_BIT | T_FLOAT | LOCAL_BIT, 0);
       SToff[DTabs-1].sa[2] = AddDerefEntry(-REG_SP, DTabs, -DTabs, 0);
    }
+   #ifdef X86_32
+   if (DTx87 == -1)
+   {
+      DTx87 = STdef("_x87f", T_FLOAT | LOCAL_BIT, 0);
+      SToff[DTx87-1].sa[2] = AddDerefEntry(-REG_SP, DTx87, -DTx87, 0);
+   }
+   if (DTx87d == -1)
+   {
+      DTx87d = STdef("_x87d", T_DOUBLE | LOCAL_BIT, 0);
+      SToff[DTx87d-1].sa[2] = AddDerefEntry(-REG_SP, DTx87d, -DTx87d, 0);
+   }
+   #endif
 #else
 #endif
 }
@@ -386,6 +398,8 @@ void FPConstStore(INSTQ *next, short id, short con,
 #ifdef X86_64
    long *lp;
 #endif
+   extern short STderef;
+
    flag = STflag[id-1];
    if (IS_VEC(flag))
    {
@@ -414,14 +428,29 @@ void FPConstStore(INSTQ *next, short id, short con,
       {
          #ifdef X86_32
             ip = (int*) &d;
-            i = SToff[SToff[id-1].sa[2]-1].sa[3];
-            k = AddDerefEntry(-REG_SP, id, -id, i);
             InsNewInst(NULL, NULL, next, MOV, -reg, STiconstlookup(*ip), 0);
+            i = SToff[SToff[id-1].sa[2]-1].sa[3];
+            #if 0
+            k = AddDerefEntry(-REG_SP, id, -id, i);
             InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
-            InsNewInst(NULL, NULL, next, MOV, -reg, STiconstlookup(ip[1]),
-                       0);
+            InsNewInst(NULL, NULL, next, MOV, -reg, STiconstlookup(ip[1]), 0);
             InsNewInst(NULL, NULL, next, ST,
                        AddDerefEntry(-REG_SP, id, -id, i+4), -reg, 0);
+            #else
+            InsNewInst(NULL, NULL, next, VGR2VR16, -dreg, -reg, 
+                       STiconstlookup(0));
+            InsNewInst(NULL, NULL, next, SHR, -reg, -reg, STiconstlookup(16));
+            InsNewInst(NULL, NULL, next, VGR2VR16, -dreg, -reg, 
+                       STiconstlookup(1));
+            InsNewInst(NULL, NULL, next, MOV, -reg, STiconstlookup(ip[1]), 0);
+            InsNewInst(NULL, NULL, next, VGR2VR16, -dreg, -reg, 
+                       STiconstlookup(2));
+            InsNewInst(NULL, NULL, next, SHR, -reg, -reg, STiconstlookup(16));
+            InsNewInst(NULL, NULL, next, VGR2VR16, -dreg, -reg, 
+                       STiconstlookup(3));
+/*            InsNewInst(NULL, NULL, next, FSTD, k, -dreg, 0); */
+            InsNewInst(NULL, NULL, next, FSTD, SToff[id-1].sa[2], -dreg, 0);
+            #endif
          #elif defined(X86_64)
             lp = (long*) &d;
             InsNewInst(NULL, NULL, next, MOV, -reg, STlconstlookup(*lp), 0);
@@ -451,7 +480,7 @@ void FPConstStore(INSTQ *next, short id, short con,
             InsNewInst(NULL, NULL, next, ST,
                        AddDerefEntry(-REG_SP, id, -id, i+4), -reg, 0);
          #endif
-         #ifndef X86_64
+         #ifndef X86
             SignalSet(next, id, k, dreg);
          #endif
       }
@@ -462,6 +491,8 @@ void FPConstStore(INSTQ *next, short id, short con,
       f = SToff[con-1].f;
       if (f == 0.0e0)
       {
+         k = AddDerefEntry(-REG_SP, STderef, -STderef, 
+                           SToff[SToff[id-1].sa[2]-1].sa[3]);
          #ifndef PPC
             InsNewInst(NULL, NULL, next, FZERO, -freg, 0, 0);
             InsNewInst(NULL, NULL, next, FST, SToff[id-1].sa[2], -freg, 0);
@@ -473,19 +504,29 @@ void FPConstStore(INSTQ *next, short id, short con,
       else
       {
          ip = (int*) &f;
-         #ifdef X86_32
+         k = AddDerefEntry(-REG_SP, STderef, -STderef, 
+                           SToff[SToff[id-1].sa[2]-1].sa[3]);
+         #ifdef X86
             InsNewInst(NULL, NULL, next, MOV, -reg, STiconstlookup(*ip), 0);
-            InsNewInst(NULL, NULL, next, ST, SToff[id-1].sa[2], -reg, 0);
+            InsNewInst(NULL, NULL, next, VGR2VR16, -dreg, -reg, 
+                       STiconstlookup(0));
+            InsNewInst(NULL, NULL, next, SHR, -reg, -reg, STiconstlookup(16));
+            InsNewInst(NULL, NULL, next, VGR2VR16, -dreg, -reg, 
+                       STiconstlookup(1));
+            InsNewInst(NULL, NULL, next, FST, SToff[id-1].sa[2], -freg, 0);
          #elif defined(X86_64)
             assert(reg <= 8);
             InsNewInst(NULL, NULL, next, MOVS, -reg, STiconstlookup(*ip), 0);
-            InsNewInst(NULL, NULL, next, STS, SToff[id-1].sa[2], -reg, 0);
+            InsNewInst(NULL, NULL, next, STS, k, -reg, 0);
          #elif defined(SPARC)
             bitload(next, reg, 12, *ip);
-            InsNewInst(NULL, NULL, next, ST, SToff[id-1].sa[2], -reg, 0);
+            InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
          #elif defined(PPC)
             bitload(next, reg, 16, *ip);
-            InsNewInst(NULL, NULL, next, ST, SToff[id-1].sa[2], -reg, 0);
+            InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
+         #endif
+         #ifndef X86
+            SignalSet(next, id, k, freg);
          #endif
       }
    }
@@ -814,8 +855,16 @@ void Extern2Local(INSTQ *next)
          {
             k = AddDerefEntry(rsav, 0, 0, j*4);
             ParaDerefQ = NewLocinit(k, 0, ParaDerefQ);
-            InsNewInst(NULL, NULL, next, LD, -ir, k, 0);
-            InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+            if (FLAG2PTYPE(flag) == T_FLOAT)
+            {
+               InsNewInst(NULL, NULL, next, FLD, -freg, k, 0);
+               InsNewInst(NULL, NULL, next, FST, SToff[paras[i]].sa[2],-freg,0);
+            }
+            else
+            {
+               InsNewInst(NULL, NULL, next, LD, -ir, k, 0);
+               InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+            }
          }
          j++;
       }
@@ -1327,6 +1376,7 @@ fprintf(stderr, "tsize=%d, Loff=%d, Soff=%d lsize=%d\n", tsize, Loff, Soff, lsiz
                  -fr[i], 0);
    GetReg(-1);
    FinalizeEpilogue(bbase, tsize, Soff, SAVESP, nir, ir, nfr, fr, ndr, dr);
+   CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = 0;
 }
 
 void CreatePrologue(BBLOCK *bbase)

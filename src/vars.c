@@ -1,7 +1,7 @@
 #include "ifko.h"
 #include "fko_arch.h"
 
-static short STderef=0;
+short STderef=0;
 
 void HandleUseSet(int iv, int iuse, int I)
 {
@@ -88,8 +88,13 @@ void CalcThisUseSet(INSTQ *ip)
          HandleUseSet(ip->use, ip->use, Reg2Int("@rdx"));
          HandleUseSet(ip->use, ip->use, ip->inst[3]);
       }
-      if (arch_IsX86 && inst >= OR && inst <= NEG)
-         HandleUseSet(ip->set, ip->use, -ICC0);
+      if (arch_IsX86)
+      {
+         if (inst >= OR && inst <= NEG)
+            HandleUseSet(ip->set, ip->use, -ICC0);
+         else if (inst == VGR2VR16)
+            HandleUseSet(ip->use, ip->use, ip->inst[1]);
+      }
       else if (IS_IOPCC(inst))
          HandleUseSet(ip->set, ip->use, -ICC0);
    }
@@ -124,10 +129,13 @@ void CalcUsesDefs(BBLOCK *bp)
    else SetVecAll(bp->defs, 0);
    for (ip = bp->ainst1; ip; ip = ip->next)
    {
-      BitVecComb(vstmp, ip->use, bp->defs, '-');
-      BitVecComb(bp->uses, bp->uses, vstmp, '|');
-      BitVecComb(vstmp, ip->set, bp->uses, '-');
-      BitVecComb(bp->defs, bp->defs, vstmp, '|');
+      if (ACTIVE_INST(ip->inst[0]))
+      {
+         BitVecComb(vstmp, ip->use, bp->defs, '-');
+         BitVecComb(bp->uses, bp->uses, vstmp, '|');
+         BitVecComb(vstmp, ip->set, bp->uses, '-');
+         BitVecComb(bp->defs, bp->defs, vstmp, '|');
+      }
    }
 }
 

@@ -5,7 +5,8 @@
 #include "fko_loop.h"
 
 FILE *fpST=NULL, *fpIG=NULL, *fpLIL=NULL;
-int FUNC_FLAG=0, DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0;
+int FUNC_FLAG=0; 
+int DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0, DTx87=0, DTx87d=0;
 int FKO_FLAG;
 
 void PrintUsage(char *name)
@@ -129,7 +130,7 @@ int main(int nargs, char **args)
    FILE *fpin, *fpout, *fpl;
    char *fin;
    char ln[512];
-   int i, j, KeepOn;
+   int i, j, KeepOn, k;
    struct assmln *abase;
    BBLOCK *bp;
    extern FILE *yyin;
@@ -177,10 +178,8 @@ int main(int nargs, char **args)
  *    Do reg asg on whole function
  */
       j = DoScopeRegAsg(lbase, 2, &i);   
-      KeepOn = j != i;
-fprintf(stderr, "\n%s(%d): KeepOn = %d\n", __FILE__,__LINE__, KeepOn);
-      KeepOn = KeepOn && DoCopyProp(lbase); 
-fprintf(stderr, "\n%s(%d): KeepOn = %d\n", __FILE__,__LINE__, KeepOn);
+break;
+      KeepOn = DoCopyProp(lbase);
       if (KeepOn)
         fprintf(stderr, "\n\nREAPPLYING GLOBAL OPTIMIZATIONS!!\n\n");
    }

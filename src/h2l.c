@@ -537,6 +537,7 @@ void DoReturn(short rret)
 {
    int retreg, srcreg;
    int mov, ld, type;
+   extern int DTx87, DTx87d;
    if (rret)
    {
       type = FLAG2PTYPE(STflag[rret-1]);
@@ -553,12 +554,18 @@ void DoReturn(short rret)
          ld = FLD;
          rout_flag |= FRET_BIT;
          retreg = FRETREG;
+         #ifdef X86_32
+            DTx87 = -1;
+         #endif
          break;
       case T_DOUBLE:
          mov = FMOVD;
          ld = FLDD;
          rout_flag |= DRET_BIT;
          retreg = DRETREG;
+         #ifdef X86_32
+            DTx87d = -1;
+         #endif
          break;
       default:
          fprintf(stderr, "UNKNOWN TYPE %d on line %d of %s\n", 

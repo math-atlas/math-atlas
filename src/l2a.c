@@ -2,21 +2,6 @@
 #include "fko_arch.h"
 #include <stdarg.h>
 
-#define Mstr2(m) # m 
-#define Mstr(m) Mstr2(m)
-
-#define MyAssert(arg_) \
-{ \
-   if (!(arg_)) \
-   { \
-      fprintf(stderr, \
-              "\n\nassertion '%s' failed on line %d of %s, hanging:\n\n", \
-	      Mstr(arg_), __LINE__, __FILE__);\
-      while(1); \
-   } \
-}
-#undef assert
-#define assert MyAssert
 struct assmln *NewAssln(char *ln)
 {
    struct assmln *ap;
@@ -294,7 +279,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
       int SeenSave=0;
    #endif
    char ln[1024], *sptr;
-   extern int DTabsd, DTnzerod, DTabs, DTnzero;
+   extern int DTabsd, DTnzerod, DTabs, DTnzero, DTx87, DTx87d;
 
    ap = ahead = NewAssln(".text\n");
 
@@ -1617,8 +1602,19 @@ struct assmln *lil2ass(BBLOCK *bbase)
 	 {
             #ifdef X86
 	       sptr = archfregs[-FREGBEG-op1];
+/*
+ *             If we are moving to x87 register, must go through memory
+ */
 	       if (sptr[1] == 's' && sptr[2] == 't')
-	          fko_error(__LINE__, "WTF in %s!", __FILE__);
+               {
+                  assert(DTx87);
+                  ap->next = PrintAssln("\tmovss\t%s,%s\n",
+                                        archfregs[-FREGBEG-op2],
+                                        GetDeref(SToff[DTx87-1].sa[2]));
+                  ap = ap->next;
+                  ap->next = PrintAssln("\tfld\t%s\n",
+                                        GetDeref(SToff[DTx87-1].sa[2]));
+               }
 	       else
                   ap->next = PrintAssln("\tmovss\t%s,%s\n",
 	                                archfregs[-FREGBEG-op2], sptr);
@@ -1671,7 +1667,15 @@ struct assmln *lil2ass(BBLOCK *bbase)
             #ifdef X86
 	       sptr = archdregs[-DREGBEG-op1];
 	       if (sptr[1] == 's' && sptr[2] == 't')
-	          fko_error(__LINE__, "WTF in %s!", __FILE__);
+               {
+                  assert(DTx87d);
+                  ap->next = PrintAssln("\tmovsd\t%s,%s\n",
+                                        archdregs[-DREGBEG-op2],
+                                        GetDeref(SToff[DTx87d-1].sa[2]));
+                  ap = ap->next;
+                  ap->next = PrintAssln("\tfldl\t%s\n",
+                                        GetDeref(SToff[DTx87d-1].sa[2]));
+               }
 	       else
                   ap->next = PrintAssln("\tmovsd\t%s,%s\n",
 	                                archdregs[-DREGBEG-op2], sptr);
@@ -1698,6 +1702,12 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("/* %s */\n", op1 ? STname[op1-1] : "");
          #endif
          break;
+#ifdef X86
+      case VGR2VR16:
+         ap->next = PrintAssln("\tpinsrw\t%s,%s,%s\n", GetIregOrConst(op3),
+                               archiregs[-IREGBEG-op2],archdregs[-DREGBEG-op1]);
+         break;
+#endif
 /*
  *  HERE HERE HERE:
  */

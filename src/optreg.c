@@ -5,6 +5,17 @@ static IGNODE **IG=NULL;
 static int NIG=0, TNIG=0;
 void DumpIG(FILE *fpout, int N, IGNODE **igs);
 
+int ireg2type(int ireg)
+{
+   int iret = -1;
+   if (ireg >= IREGBEG && ireg < IREGEND)
+      iret = T_INT;
+   else if (ireg >= FREGBEG && ireg < FREGEND)
+      iret = T_FLOAT;
+   else if (ireg >= DREGBEG && ireg < DREGEND)
+      iret = T_DOUBLE;
+   return(iret);
+}
 short Reg2Int(char *regname)
 /*
  * Given a register of regname, returns integer number
@@ -1014,7 +1025,7 @@ int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
 /*
  *    Change all uses of this ig->var to ig->reg
  */
-      if (BitVecCheck(ip->use, ig->var+TNREG-1))
+      if (ACTIVE_INST(ip->inst[0]) && BitVecCheck(ip->use, ig->var+TNREG-1))
       {
          SetVecBit(ip->use, ig->var+TNREG-1, 0);
          SetVecBit(ip->use, ig->reg-1, 0);
@@ -1131,6 +1142,10 @@ int DoRegAsgTransforms(IGNODE *ig)
  */
          else
          {
+            ip = PrintComment(bl->blk, ip, NULL, "Inserted LD from %s\n",
+                              STname[ig->var-1] ? STname[ig->var-1] : "NULL");
+fprintf(stderr, "ireg=%s getting LD ip=%d, nr=%d, nw=%d!\n\n", 
+        STname[ig->var-1], ip, ig->nread, ig->nwrite);
             ip = InsNewInst(bl->blk, ip, NULL, ld, -ig->reg, ig->deref, 0);
             if (ip->next) bl->ptr = ip->next;
             else
@@ -2021,10 +2036,11 @@ INSTQ *CopyPropTrans(BLIST *scope, int scopeblks, BBLOCK *blk, INSTQ *ipret)
  *          transform is done.
  */
 {
-   short dest, src, mov;
    INSTQ *ip;
+   char *sp;
    int i, iv;
    int change;
+   short dest, src, mov;
    extern int FKO_BVTMP;
 
    dest = -ipret->inst[1];
@@ -2040,6 +2056,23 @@ INSTQ *CopyPropTrans(BLIST *scope, int scopeblks, BBLOCK *blk, INSTQ *ipret)
    if (!INDEADU2D)
       CalcAllDeadVariables();
    mov = ipret->inst[0];
+/*
+ * Do not do copy prop if src or dest is x87 reg
+ */
+   #ifdef X86_320000
+      sp = Int2Reg(-src);
+      if (sp[1] == 's' && sp[2] == 't')
+         return(NULL);
+      sp = Int2Reg(-dest);
+      if (sp[1] == 's' && sp[2] == 't')
+         return(NULL);
+   #endif
+/*
+ * Do not do copy prop if src and dest are not registers of the same type
+ */
+   if (ireg2type(src) != ireg2type(dest))
+      return(NULL);
+
    if (BitVecCheck(ipret->deads, src-1))
       change = CopyPropTrans0(0, scope, scopeblks, blk, ipret, mov, dest, src);
    else 

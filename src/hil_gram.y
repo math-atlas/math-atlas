@@ -11,6 +11,7 @@
    static short *aalign=NULL;
    static uchar *balign=NULL;
    static short maxunroll=0, writedd=1;
+   extern short STderef;
 
    struct idlist *NewID(char *name);
    static void UpdateLoop(struct loopq *lp);
@@ -83,6 +84,7 @@ stateflag: ROUT_NAME NAME
             WhereAt = 1;
             strcpy(rout_name, $2);
             STdef(rout_name, T_FUNC | GLOB_BIT, 0);
+            STderef = STderef = STdef("_NONLOCDEREF", PTR_BIT, 0);
          }
          | ROUT_LOCALS
          {
