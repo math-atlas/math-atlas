@@ -60,8 +60,8 @@
  * instructions, register i's name is stored in archiregs[i-1].
  */
 #ifdef SPARC
-   #define NIR  28                      /* # of integer regs */
-   #define TNIR 29
+   #define NIR  31                      /* # of integer regs */
+   #define TNIR 32
    #define NSIR 15                      /* # of scratch iregs */
    #define NFR  32                      /* # of float regs */
    #define NSFR 32
@@ -72,11 +72,19 @@
    #define FRETREG FREGBEG
    #define DRETREG DREGBEG
    #ifdef ARCH_DECLARE
+      char icallersave[TNIR] = 
+       {0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 1,1,1,1,1,1,1, 1,1,1,1,1,1,1, 0};
+      char icalleesave[TNIR] = 
+       {0, 1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0};
       char *archiregs[TNIR] = 
          {"@sp", "@l0", "@l1", "@l2", "@l3", "@l4", "@l5", "@l6", "@l7",
-          "@o0", "@o1", "@o2", "@o3", "@o4", "@o5", "@o7",
           "@i0", "@i1", "@i2", "@i3", "@i4", "@i5", "@i6", "@i7", 
-          "@g1", "@g2", "@g3", "@g4", "@g0"};
+          "@o0", "@o1", "@o2", "@o3", "@o4", "@o5", "@o7",
+          "@g1", "@g2", "@g3", "@g4", "g5", "g6", "g7", "@g0"};
+      char fcalleesave[NFR] = 
+       {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+      char fcallersave[NFR] = 
+       {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
       char *archfregs[NFR] = 
          {"@f0", "@f1", "@f2", "@f3", "@f4", "@f5", "@f6", "@f7", 
           "@f8", "@f9", "@f10", "@f11", "@f12", "@f13", "@f14", "@f15", 
@@ -92,6 +100,8 @@
    #else
       extern char *archiregs[TNIR], *archfregs[NFR], *archdregs[NDR];
    #endif
+   #define dcallersave fcallersave
+   #define dcalleesave fcalleesave
 #endif
 
 #ifdef X86_32
@@ -106,8 +116,12 @@
    #define FRETREG (NFR+FREGBEG)
    #define DRETREG (NFR+DREGBEG)
    #ifdef ARCH_DECLARE
+      char icallersave[NIR] = {0, 1, 1, 1, 0, 0, 0, 0};
+      char icalleesave[NIR] = {0, 0, 0, 0, 1, 1, 1, 1};
       char *archiregs[NIR] = 
       {"@esp", "@edx", "@ecx", "@eax", "@ebp", "@ebx", "@esi", "@edi"};
+      char fcallersave[TNFR] = {1,1,1,1,1,1,1,1, 1};
+      char fcalleesave[TNFR] = {0,0,0,0,0,0,0,0, 0};
       char *archfregs[TNFR] = 
       {"@xmm0", "@xmm1", "@xmm2", "@xmm3", "@xmm4", "@xmm5", "@xmm6", "@xmm7",
        "@st"};
@@ -115,6 +129,8 @@
       extern char *archiregs[NIR], *archfregs[TNFR];
    #endif
    #define archdregs archfregs
+   #define dcallersave fcallersave
+   #define dcalleesave fcalleesave
 #endif
 
 #ifdef X86_64
@@ -130,10 +146,14 @@
    #define DRETREG DREGBEG
    #ifdef ARCH_DECLARE
       char *archsregs[NSR] = 
-      {"@esp", "@edx", "@ecx", "@eax", "@ebp", "@ebx", "@esi", "@edi"};
+      {"@esp", "@edx", "@ecx", "@eax", "@esi", "@edi", "@ebp", "@ebx"};
+      char icallersave[NIR] = {0, 1,1,1,1,1,0,0, 1,1,1,1, 0,0,0,0};
+      char icalleesave[NIR] = {0, 0,0,0,0,0,1,1, 0,0,0,0, 1,1,1,1};
       char *archiregs[NIR] = 
-      {"@rsp", "@rdx", "@rcx", "@rax", "@rbp", "@rbx", "@rsi", "@rdi",
+      {"@rsp", "@rdx", "@rcx", "@rax", "@rsi", "@rdi", @rbp", "@rbx",
        "@r8", "@r9", "@r10", "@r11", "@r12", "@r13", "@r14", "@r15"};
+      char fcallersave[NFR] = {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
+      char fcalleesave[NFR] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
       char *archfregs[NFR] = 
       {"@xmm0", "@xmm1", "@xmm2", "@xmm3", "@xmm4", "@xmm5", "@xmm6", "@xmm7",
        "@xmm8", "@xmm9", "@xmm10", "@xmm11", "@xmm12", "@xmm13", "@xmm14", 
@@ -142,6 +162,8 @@
       extern char *archiregs[NIR], *archfregs[NFR], *archsregs[NSR];
    #endif
    #define archdregs archfregs
+   #define dcallersave fcallersave
+   #define dcalleesave fcalleesave
 #endif
 
 #ifdef PPC
@@ -157,11 +179,19 @@
    #ifdef LINUX_PPC
       #define NSIR  11
       #ifdef ARCH_DECLARE
+         char icallersave[TNIR] = 
+          {0, 1,1,1,1,1,1,1,1,1,1, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 1}
+         char icalleesave[TNIR] = 
+          {0, 0,0,0,0,0,0,0,0,0,0, 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, 0}
          char *archiregs[TNIR] = 
             {"1", "11", "3", "4", "5", "6", "7", "8", "9", "10", "12",
              "13", "14", "15", "16", "17", "18", "19", "20", "21",
              "22", "23", "24", "25", "26", "27", "28", "29", "30", 
              "31", "0"};
+         char fcallersave[NFR] =
+          {1,1,1,1,1,1,1,1,1,1,1,1,1,1 ,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+         char fcalleesave[NFR] =
+          {0,0,0,0,0,0,0,0,0,0,0,0,0,0 ,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
          char *archfregs[NFR] = 
             {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", 
              "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", 
@@ -187,6 +217,8 @@
       #endif
    #endif
    #define archdregs archfregs
+   #define dcallersave fcallersave
+   #define dcalleesave fcalleesave
 #endif
 #ifndef TNIR
    #define TNIR NIR
