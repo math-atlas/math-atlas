@@ -1030,3 +1030,23 @@ void AddLoopComments()
    }
 }
 
+void ShowFlow(char *fout, BBLOCK *base)
+{
+   FILE *fpout;
+   BBLOCK *bp;
+   if (fout) 
+      fpout = fopen(fout, "w");
+   else
+      fpout = stderr;
+   fprintf(fpout, "digraph G{\n   node [shape=box]\n");
+   for (bp=base; bp; bp = bp->down)
+   {
+      if (bp->csucc)
+         fprintf(fpout, "   block_%d -> block_%d\n", bp->bnum, bp->csucc->bnum);
+      if (bp->usucc)
+         fprintf(fpout, "   block_%d -> block_%d\n", bp->bnum, bp->usucc->bnum);
+   }
+   fprintf(fpout, "}\n");
+   if (fout)
+      fclose(fpout);
+}
