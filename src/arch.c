@@ -126,6 +126,7 @@ void Param2Local(INSTQ *next, short rsav, int fsize)
          flag = STflag[paras[i]];
          InsNewInst(NULL, next, LD, -ir,
                     AddDerefEntry(rsav, 0, 0, fsize+4+j*4), 0);
+/* HERE HERE HERE */
          InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, __LINE__);
          j++;
          if (IS_DOUBLE(flag))
@@ -142,7 +143,7 @@ void Param2Local(INSTQ *next, short rsav, int fsize)
       }
    #endif
    #ifdef SPARC
-      nam[0] = '@';
+      nam[0] = '@@';
       nam[1] = 'i';
       nam[3] = '\0';
       for (j=i=0; i < NPARA; i++)
@@ -192,7 +193,7 @@ fprintf(stderr, "STORE: %d, %d\n", SToff[paras[i]].sa[2], -ir);
                k = DT[k+3] + 4;
                k = AddDerefEntry(-REG_SP, 0, 0, k);
                InsNewInst(NULL, next, LD, -ir,
-                          AddDerefEntry(iName2Reg("@i6"), 0, 0, 68+j*4), 0);
+                          AddDerefEntry(iName2Reg("@@i6"), 0, 0, 68+j*4), 0);
                InsNewInst(NULL, next, ST, k, -ir, __LINE__);
                j++;
             }
@@ -206,7 +207,7 @@ fprintf(stderr, "STORE: %d, %d\n", SToff[paras[i]].sa[2], -ir);
                k = DT[k+3] + 4;
                k = AddDerefEntry(-REG_SP, 0, 0, k);
                InsNewInst(NULL, next, LD, -ir,
-                          AddDerefEntry(iName2Reg("@i6"), 0, 0, 68+j*4), 0);
+                          AddDerefEntry(iName2Reg("@@i6"), 0, 0, 68+j*4), 0);
                InsNewInst(NULL, next, ST, k, -ir, __LINE__);
                j++;
             }
@@ -372,4 +373,3 @@ fprintf(stderr, "tsize=%d, [%d, %d, %d]\n\n", tsize, STiconstlookup(tsize), STic
    GetReg(-1);
    CreateEpilogue(tsize, Soff, SAVESP, nir, ir, nfr, fr, ndr, dr);
 }
-

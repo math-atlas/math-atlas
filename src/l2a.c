@@ -2,6 +2,12 @@
 #include "fko_arch.h"
 #include <stdarg.h>
 
+#define MyAssert(arg_) \
+{ \
+   if (!(arg_)) while(1); \
+}
+#undef assert
+#define assert MyAssert
 struct assmln *NewAssln(char *ln)
 {
    struct assmln *ap;
@@ -51,11 +57,8 @@ static char *GetDeref(short id)
    #ifdef X86
       if (!reg)
       {
-fprintf(stderr, "regs[%d] = '%s'\n", -IREGBEG-ptr, archiregs[-IREGBEG-ptr]);
          if (con) sprintf(ln,"%d(%s)", con, archiregs[-IREGBEG-ptr]);
          else sprintf(ln, "(%s)", archiregs[-IREGBEG-ptr]);
-ln[8] = '\0';
-fprintf(stderr, "ln='%s', len=%d\n", ln, strlen(ln));
       }
       else if (mul)
       {
@@ -200,9 +203,11 @@ struct assmln *lil2ass(INSTQ *head)
             ap->next = PrintAssln("\tmovl\t%s,%s\n", archiregs[-IREGBEG-op2],
                                   GetDeref(op1));
 	    #elif 1
+	    if (op1 == 0)
+	       fprintf(stderr, "%d,%d,%d,%d; prevln = %s", 
+	               ip->inst[0], ip->inst[1], ip->inst[2], ip->inst[3], ap->ln);
 	    sprintf(ln, "\tmovl\t%s,%s\n", archiregs[-IREGBEG-op2], 
 	            GetDeref(op1));
-	    fprintf(stderr, "%d, '%s' %s", -IREGBEG-op2, archiregs[-IREGBEG-op2], ln);
             ap->next = NewAssln(ln);
 	    #else
 	       ap->next = NewAssln("");

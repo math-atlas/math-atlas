@@ -7,7 +7,7 @@ heads= $(HDIR)/fko_arch.h $(HDIR)/fko_inst.h $(HDIR)/fko_misc.h \
        $(HDIR)/fko_symtab.h $(HDIR)/ifko.h
 
 ifko : $(heads) ifko.o $(objs)
-	purify $(CC) $(CCFLAGS) -o $@ ifko.o $(objs) -ll
+	$(CC) $(CCFLAGS) -o $@ ifko.o $(objs) -ll
 
 xtst :  tst.c
 	$(CC) $(CCFLAGS) -o $@ tst.c
