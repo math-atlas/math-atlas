@@ -21,13 +21,15 @@ int GetArchAlign(int nvd, int nvf, int nd, int nf, int nl, int ni)
    #else
    int align = 0;
    if (nvd) align = FKO_DVLEN*8;
-   else if (nvd) align = FKO_SVLEN*4;
+   else if (nvf) align = FKO_SVLEN*4;
    #ifdef X86_32
       else if (nd || nf || nl || ni) align = 4;
    #else
       else if (nd || nl) align = 8;
       else if (nf || ni) align = 4;
    #endif
+fprintf(stderr, "nvd=%d,nvf=%d,nd=%d,nf=%d,nl=%d,ni=%d, align=%d\n",
+        nvd, nvf, nd, nf, nl, ni, align);
    return(align);
    #endif
 }
@@ -141,12 +143,12 @@ fprintf(stderr, "DTabsd = %d,%d\n", DTabsd, SToff[DTabsd-1].sa[2]);
    }
    if (DTnzero == -1)
    {
-      DTnzero = STdef("_NEGZERO", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
+      DTnzero = STdef("_NEGZERO", VEC_BIT | T_FLOAT | LOCAL_BIT, 0);
       SToff[DTnzero-1].sa[2] = AddDerefEntry(-REG_SP, 0, -DTnzero, 0);
    }
    if (DTabs == -1)
    {
-      DTabs = STdef("_ABSVAL", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
+      DTabs = STdef("_ABSVAL", VEC_BIT | T_FLOAT | LOCAL_BIT, 0);
       SToff[DTabs-1].sa[2] = AddDerefEntry(-REG_SP, 0, -DTabs, 0);
    }
 #else
@@ -521,9 +523,22 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
          InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+12),
                     -ir, __LINE__);
       }
+      if (DTnzero > 0)
+      {
+         PrintComment(NULL, next, "Writing -0 to memory for negation");
+         InsNewInst(NULL, next, MOV, -ir, STiconstlookup(0x80000000), 0);
+         InsNewInst(NULL, next, ST, SToff[DTnzero-1].sa[2], -ir, 0);
+         k = ((SToff[DTnzero-1].sa[2]-1)<<2) + 3;
+         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+4),
+                    -ir, __LINE__);
+         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+8),
+                    -ir, __LINE__);
+         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+12),
+                    -ir, __LINE__);
+      }
       if (DTabsd)
       {
-         PrintComment(NULL, next, "Writing ~(-0) to memory for abs");
+         PrintComment(NULL, next, "Writing ~(-0) to memory for absd");
          k = ((SToff[DTabsd-1].sa[2]-1)<<2) + 3;
          InsNewInst(NULL, next, XOR, -ir, -ir, -ir);
          InsNewInst(NULL, next, NOT, -ir, -ir, -ir);
@@ -535,6 +550,13 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                     -ir, __LINE__);
          InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+12),
                     -ir, __LINE__);
+      }
+      if (DTabs)
+      {
+         PrintComment(NULL, next, "Writing ~(-0) to memory for abss");
+         k = ((SToff[DTabs-1].sa[2]-1)<<2) + 3;
+         InsNewInst(NULL, next, MOV, -ir, STiconstlookup(0x7fffffff), 0);
+         InsNewInst(NULL, next, ST, SToff[DTabs-1].sa[2], -ir, __LINE__);
       }
       InsNewInst(NULL, next, COMMENT, STstrconstlookup("done archspec"), 0, 0);
    #endif

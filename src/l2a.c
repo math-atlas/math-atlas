@@ -1071,16 +1071,16 @@ struct assmln *lil2ass(INSTQ *head)
       case FABS:
          #ifdef X86
 	    assert(op1 == op2);
-	    assert(DTabsd);
-            ap->next = PrintAssln("\tandpd\t%s,%s\n", 
-                                  GetDregOrDeref(SToff[DTabsd-1].sa[2]),
-	                          archdregs[-DREGBEG-op1]);
+	    assert(DTabs);
+            ap->next = PrintAssln("\tandps\t%s,%s\n", 
+                                  GetDeref(SToff[DTabs-1].sa[2]),
+	                          archfregs[-FREGBEG-op1]);
          #elif defined(SPARC)
             ap->next = PrintAssln("\tfabss\t%s,%s\n", 
-	       archdregs[-DREGBEG-op2], archdregs[-DREGBEG-op1]);
+	       archfregs[-FREGBEG-op2], archfregs[-FREGBEG-op1]);
          #elif defined(PPC)
             ap->next = PrintAssln("\tfabs\t%s,%s\n", 
-	       archdregs[-DREGBEG-op1], archdregs[-DREGBEG-op2]);
+	       archdregs[-FREGBEG-op1], archdregs[-FREGBEG-op2]);
          #endif
          break;
       case FABSD:
@@ -1098,6 +1098,21 @@ struct assmln *lil2ass(INSTQ *head)
 	       archdregs[-DREGBEG-op1], archdregs[-DREGBEG-op2]);
          #endif
          break;
+      case FNEG:
+         #ifdef X86
+	    assert(op1 == op2);
+	    assert(DTnzero);
+            ap->next = PrintAssln("\txorps\t%s,%s\n", 
+                                  GetDeref(SToff[DTnzero-1].sa[2]),
+	                          archfregs[-FREGBEG-op1]);
+         #elif defined(SPARC)
+            ap->next = PrintAssln("\tfnegs\t%s,%s\n", 
+	       archfregs[-FREGBEG-op2], archfregs[-FREGBEG-op1]);
+         #elif defined(PPC)
+            ap->next = PrintAssln("\tfneg\t%s,%s\n", 
+	       archfregs[-FREGBEG-op1], archfregs[-FREGBEG-op2]);
+         #endif
+         break;
       case FNEGD:
          #ifdef X86
 	    assert(op1 == op2);
@@ -1106,10 +1121,10 @@ struct assmln *lil2ass(INSTQ *head)
                                   GetDeref(SToff[DTnzerod-1].sa[2]),
 	                          archdregs[-DREGBEG-op1]);
          #elif defined(SPARC)
-            ap->next = PrintAssln("\tfabsd\t%s,%s\n", 
+            ap->next = PrintAssln("\tfnegd\t%s,%s\n", 
 	       archdregs[-DREGBEG-op2], archdregs[-DREGBEG-op1]);
          #elif defined(PPC)
-            ap->next = PrintAssln("\tfabs\t%s,%s\n", 
+            ap->next = PrintAssln("\tfneg\t%s,%s\n", 
 	       archdregs[-DREGBEG-op1], archdregs[-DREGBEG-op2]);
          #endif
          break;
@@ -1182,7 +1197,6 @@ struct assmln *lil2ass(INSTQ *head)
  *  HERE HERE HERE:
  */
       case FCMP:
-      case FNEG:
       case FMOV:
       case JEQ:
       case JNE:

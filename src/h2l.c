@@ -500,7 +500,7 @@ void DoArith(short dest, short src0, char op, short src1)
          break;
       case T_FLOAT:
          inst = FNEG;
-	 DTnzerod = -1;
+	 DTnzero = -1;
          break;
       case T_DOUBLE:
          inst = FNEGD;
