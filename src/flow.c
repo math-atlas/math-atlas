@@ -715,8 +715,8 @@ LOOPQ *NewLoop(int flag)
    lp->depth = lp->I = lp->beg = lp->end = lp->inc = lp->body_label = 
                lp->end_label = 0;
    lp->loopnum = lp->maxunroll = lp->writedd = 0;
-   lp->slivein = lp->sliveout = lp->adeadin = lp->adeadout = lp->nopf =
-                 lp->aaligned = NULL;
+   lp->vslivein = lp->vsliveout = lp->vsflagin = lp->vsflagout = lp->vstmp = 
+                  lp->varrs = lp->nopf = lp->aaligned = NULL;
    lp->abalign = NULL;
    lp->preheader = lp->header = NULL;
    lp->blocks = NULL;
@@ -733,14 +733,18 @@ LOOPQ *KillLoop(LOOPQ *lp)
    if (lp)
    {
       ln = lp->next;
-      if (lp->slivein)
-         free(lp->slivein);
-      if (lp->sliveout)
-         free(lp->sliveout);
-      if (lp->adeadin)
-         free(lp->adeadin);
-      if (lp->adeadout)
-         free(lp->adeadout);
+      if (lp->vslivein)
+         free(lp->vslivein);
+      if (lp->vsliveout)
+         free(lp->vsliveout);
+      if (lp->vsflagin)
+         free(lp->vsflagin);
+      if (lp->vsflagout)
+         free(lp->vsflagout);
+      if (lp->vstmp)
+         free(lp->vstmp);
+      if (lp->varrs)
+         free(lp->varrs);
       if (lp->nopf)
          free(lp->nopf);
       if (lp->aaligned)

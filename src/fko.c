@@ -545,10 +545,12 @@ static void WriteMiscToFile(char *name)
       n = 1;
       assert(fwrite(&n, sizeof(short), 1, fp) == 1);
       assert(fwrite(optloop, sizeof(LOOPQ), 1, fp) == 1);
-      WriteShortArrayToFile(fp, optloop->slivein);
-      WriteShortArrayToFile(fp, optloop->sliveout);
-      WriteShortArrayToFile(fp, optloop->adeadin);
-      WriteShortArrayToFile(fp, optloop->adeadout);
+      WriteShortArrayToFile(fp, optloop->vslivein);
+      WriteShortArrayToFile(fp, optloop->vsliveout);
+      WriteShortArrayToFile(fp, optloop->vsflagin);
+      WriteShortArrayToFile(fp, optloop->vsflagout);
+      WriteShortArrayToFile(fp, optloop->vstmp);
+      WriteShortArrayToFile(fp, optloop->varrs);
       assert(!optloop->abalign);  /* fix this later */
    }
    else
@@ -597,15 +599,17 @@ void InvalidateLoopInfo(void)
       lp->end_label = optloop->end_label;
       lp->maxunroll = optloop->maxunroll;
       lp->writedd = optloop->writedd;
-      lp->slivein = optloop->slivein;
-      lp->sliveout = optloop->sliveout;
-      lp->adeadin = optloop->adeadin;
-      lp->adeadout = optloop->adeadout;
+      lp->vslivein = optloop->vslivein;
+      lp->vsliveout = optloop->vsliveout;
+      lp->vsflagin = optloop->vsflagin;
+      lp->vsflagout = optloop->vsflagout;
+      lp->vstmp = optloop->vstmp;
+      lp->varrs = optloop->varrs;
       lp->nopf = optloop->nopf;
       lp->aaligned = optloop->aaligned;
       lp->abalign = optloop->abalign;
-      optloop->slivein = optloop->sliveout = optloop->adeadin = 
-         optloop->adeadout = optloop->adeadout = optloop->nopf = 
+      optloop->vslivein = optloop->vsliveout = optloop->vsflagin = 
+         optloop->vsflagout = optloop->vstmp = optloop->varrs = optloop->nopf = 
          optloop->aaligned = NULL;
       optloop->abalign = NULL;
       KillLoop(optloop);
@@ -643,10 +647,12 @@ static void ReadMiscFromFile(char *name)
 /* 
  *    Read in loop-markup arrays
  */
-      optloop->slivein  = ReadShortArrayFromFile(fp);
-      optloop->sliveout = ReadShortArrayFromFile(fp);
-      optloop->adeadin  = ReadShortArrayFromFile(fp);
-      optloop->adeadout = ReadShortArrayFromFile(fp);
+      optloop->vslivein  = ReadShortArrayFromFile(fp);
+      optloop->vsliveout = ReadShortArrayFromFile(fp);
+      optloop->vsflagin  = ReadShortArrayFromFile(fp);
+      optloop->vsflagout = ReadShortArrayFromFile(fp);
+      optloop->vstmp  = ReadShortArrayFromFile(fp);
+      optloop->varrs = ReadShortArrayFromFile(fp);
       optloop->abalign = NULL;  /* handle this later */
       optloop->preheader = optloop->header = NULL;
       optloop->tails = optloop->posttails = NULL;

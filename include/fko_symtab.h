@@ -13,6 +13,7 @@
 #define IS_SHORT(flag_)  (((flag_) & 0x7) == T_SHORT)
 #define IS_FLOAT(flag_)  (((flag_) & 0x7) == T_FLOAT)
 #define IS_DOUBLE(flag_)  (((flag_) & 0x7) == T_DOUBLE)
+#define IS_FP(flag_)      (((flag_) & 0x7) & (T_DOUBLE | T_FLOAT))
 #define IS_CHAR(flag_)  (((flag_) & 0x7) == T_CHAR)
 #define IS_FUNC(flag_)  (((flag_) & 0x7) == T_FUNC)
 #define IS_LABEL(flag_)  (((flag_) & 0x7) == T_LABEL)

@@ -13,6 +13,7 @@ int BitVecCheck(int iv, int ibit);
 int BitVecCheckComb(int iv1, int iv2, char op);
 int CountBitsSet(int iv);
 char *PrintVecList(int iv, int ioff);
+int Array2BitVec(int n, short *sp, short off);
 short *BitVec2Array(int iv, int off);
 short *BitVec2StaticArray(int iv);
 void KillBitVec(int iv);

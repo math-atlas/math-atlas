@@ -312,6 +312,22 @@ char *PrintVecList(int iv, int ioff)
    return(ln);
 }
 
+int Array2BitVec(int n, short *sp, short off)
+/*
+ * Given array of shorts, creates a bitvec with bits set at pos sp[]+off
+ */
+{
+   static int iv=0;
+   int i;
+
+   if (!iv)
+      iv = NewBitVec(32);
+   else
+      SetVecAll(iv, 0);
+   for (i=0; i < n; i++)
+      SetVecBit(iv, sp[i]+off, 1);
+   return(iv);
+}
 short *BitVec2StaticArray(int iv)
 /*
  * Translates a bitvector to an array of shorts, where each element holds the
