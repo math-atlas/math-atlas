@@ -8,7 +8,7 @@ URT = DOT
 kern=error
 cache=
 NN="N=80000"
-KFLAGS= -V -G 1 1 DN
+KFLAGS= -V -G 1 1 ra
 opt =-X 1 -Y 1 -Fx 16 -Fy 16
 topt=-X 1 1 -Y 1 1 -Fx 16 -Fy 16
 lower=hello
