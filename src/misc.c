@@ -56,6 +56,27 @@ void KillAllLocinit(struct locinit *libase)
    }
 }
 
+struct ptrinfo *NewPtrinfo(short ptr, short flag, struct ptrinfo *next)
+{
+   struct ptrinfo *p
+   p = malloc(sizeof(struct ptrinfo *));
+   assert(p);
+   p->ilist = NULL;
+   p->next = next;
+   p->ptr = ptr;
+   p->flag = flag;
+   p->nupdate = 0;
+   return(p);
+}
+
+struct ptrinfo *FindPtrinfo(struct ptrinfo *base, short ptr)
+{
+   for (; base; base = base->next)
+      if (base->ptr == ptr)
+         break;
+   return(base);
+}
+
 int const2shift(int c)
 {
    int i;

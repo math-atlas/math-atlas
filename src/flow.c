@@ -87,6 +87,13 @@ BLIST *FindInList(BLIST *lp, BBLOCK *blk)
       if (lp->blk == blk) return(lp);
    return(NULL);
 }
+BBLOCK *FindBlockInListByNumber(BLIST *lp, ushort bnum)
+{
+   for (; lp; lp = lp->next)
+      if (lp->blk->bnum == bnum)
+         return(lp->blk);
+   return(NULL);
+}
 BBLOCK *FindBlockInList(BLIST *lp, BBLOCK *blk)
 {
    for (; lp; lp = lp->next)

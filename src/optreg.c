@@ -16,15 +16,15 @@ short Reg2Int(char *regname)
    if (regname[0] == 'S' && regname[1] == 'P' && regname[2] == '\0')
       return(-REG_SP);
    for (i=IREGBEG; i < IREGEND; i++)
-      if (!strcmp(archiregs[i-IREGBEG], regname)) return(-i-1);
+      if (!strcmp(archiregs[i-IREGBEG], regname)) return(-i);
    for (i=FREGBEG; i < FREGEND; i++)
-      if (!strcmp(archfregs[i-FREGBEG], regname)) return(-i-1);
+      if (!strcmp(archfregs[i-FREGBEG], regname)) return(-i);
    for (i=DREGBEG; i < DREGEND; i++)
-      if (!strcmp(archdregs[i-DREGBEG], regname)) return(-i-1);
+      if (!strcmp(archdregs[i-DREGBEG], regname)) return(-i);
    for (i=ICC0; i < NICC; i++)
-      if (!strcmp(ICCREGS[i], regname)) return(-i-1);
+      if (!strcmp(ICCREGS[i], regname)) return(-i);
    for (i=FCC0; i < NFCC; i++)
-      if (!strcmp(FCCREGS[i], regname)) return(-i-1);
+      if (!strcmp(FCCREGS[i], regname)) return(-i);
    return(0);
 }
 
@@ -504,7 +504,6 @@ void CombineLiveRanges(BLIST *scope, BBLOCK *pred, int pig,
    pnode = IG[pig];
    snode = IG[sig];
 
-fprintf(stderr, "Combine pig=%d, sig=%d\n", pig, sig);
    assert(pnode->var == snode->var);
    pnode->blkbeg  = MergeBlockLists(pnode->blkbeg, snode->blkbeg);
    pnode->blkend  = MergeBlockLists(snode->blkend, pnode->blkend);
@@ -747,7 +746,7 @@ int CalcScopeIG(BLIST *scope)
       SetVecBit(blkvec, bl->blk->bnum-1, 1);
       CalcBlockIG(bl->blk);
    }
-   DumpIG(stderr, NIG, IG);
+/*   DumpIG(stderr, NIG, IG); */
 /*
  * Try to combine live ranges across basic blocks
  */
@@ -1355,7 +1354,6 @@ int AsgGlobalLoopVars(LOOPQ *loop, short *iregs, short *fregs, short *dregs)
    FKO_BVTMP = iv = BitVecComb(FKO_BVTMP, loop->outs, loop->header->ins, '|');
    k = STstrlookup("_NONLOCDEREF");
    SetVecBit(iv, k+TNREG-1, 0);
-fprintf(stderr, "\nhost/push = %s\n\n", BV2VarNames(iv));
 
    sa = BitVec2Array(iv, 1);
    for (n=0, j=i=1; i <= sa[0]; i++) 
@@ -1369,7 +1367,6 @@ fprintf(stderr, "\nhost/push = %s\n\n", BV2VarNames(iv));
       {
          k = STflag[k-1-TNREG];
          k = FLAG2PTYPE(k);
-fprintf(stderr, "var I = %d\n", sa[i] - TNREG + 1);
          if (k == T_INT)
          {
             s = iregs;
@@ -1457,6 +1454,7 @@ void FindInitRegUsage(BLIST *bp, short *iregs, short *fregs, short *dregs)
       }
    }
    free(sp);
+#if 0
 fprintf(stderr, "\n%s(%d): reg usage:\n", __FILE__, __LINE__);
 fprintf(stderr, "   iregs =");
 for (i=0; i < IREGEND-IREGBEG; i++)
@@ -1468,6 +1466,7 @@ fprintf(stderr, "\n   dregs =");
 for (i=0; i < DREGEND-DREGBEG; i++)
    fprintf(stderr, " %d,", dregs[i]);
 fprintf(stderr, "\n\n");
+#endif
 }
 
 int LoadStoreToMove(BLIST *blocks, int n, short *vars, short *regs)
@@ -1574,6 +1573,7 @@ void DoLoopGlobalRegAssignment(LOOPQ *loop)
 
    FindInitRegUsage(loop->blocks, iregs, fregs, dregs);
    assert(!AsgGlobalLoopVars(loop, iregs, fregs, dregs));
+#if 0
 fprintf(stderr, "\n%s(%d): reg usage:\n", __FILE__, __LINE__);
 fprintf(stderr, "   iregs =");
 for (i=0; i < IREGEND-IREGBEG; i++)
@@ -1585,6 +1585,7 @@ fprintf(stderr, "\n   dregs =");
 for (i=0; i < DREGEND-DREGBEG; i++)
    fprintf(stderr, " %d,", dregs[i]);
 fprintf(stderr, "\n\n");
+#endif
 /*
  * Find total number of global assignments done, and allocate space to hold
  * mapping
@@ -1642,7 +1643,6 @@ fprintf(stderr, "\n\n");
    {
       if (iregs[i] > 0)
       {
-fprintf(stderr, "ihoisting/pushing %d, %s\n", iregs[i], STname[iregs[i]-1]);
          k = SToff[iregs[i]-1].sa[2];
          if (BitVecCheck(loop->header->ins, iregs[i]+TNREG-1))
             CalcThisUseSet(InsNewInst(loop->preheader, NULL, NULL, LD, 
@@ -1656,7 +1656,6 @@ fprintf(stderr, "ihoisting/pushing %d, %s\n", iregs[i], STname[iregs[i]-1]);
    {
       if (fregs[i] > 0)
       {
-fprintf(stderr, "fhoisting/pushing %d, %s\n", fregs[i], STname[fregs[i]-1]);
          k = SToff[fregs[i]-1].sa[2];
          if (BitVecCheck(loop->header->ins, fregs[i]+TNREG-1))
             CalcThisUseSet(InsNewInst(loop->preheader, loop->preheader->instN,
@@ -1670,7 +1669,6 @@ fprintf(stderr, "fhoisting/pushing %d, %s\n", fregs[i], STname[fregs[i]-1]);
    {
       if (dregs[i] > 0)
       {
-fprintf(stderr, "dhoisting/pushing %d, %s\n", dregs[i], STname[dregs[i]-1]);
          k = SToff[dregs[i]-1].sa[2];
          if (BitVecCheck(loop->header->ins, dregs[i]+TNREG-1))
             CalcThisUseSet(InsNewInst(loop->preheader, loop->preheader->instN,
@@ -1846,12 +1844,13 @@ int CopyPropTrans0(int SRCLIVE, BLIST *scope, int scopeblks, BBLOCK *blk,
    extern int FKO_BVTMP;
    extern BBLOCK *bbbase;
 
-if (SRCLIVE) return(0);
    bl = FindInList(scope, blk);
    if (bl->ptr)
       change = 1;
+#if 0
 fprintf(stderr, "blk=%d, SRCLIVE=%d, dest=%s", blk->bnum, SRCLIVE, Int2Reg(-dest));
 fprintf(stderr, ", src=%s\n", Int2Reg(-src));
+#endif
    ivdst = Reg2Regstate(src);
    ivdst = FKO_BVTMP = BitVecCopy(FKO_BVTMP, Reg2Regstate(dest));
    ivsrc = Reg2Regstate(src);
@@ -2045,7 +2044,6 @@ INSTQ *CopyPropTrans(BLIST *scope, int scopeblks, BBLOCK *blk, INSTQ *ipret)
       change = CopyPropTrans0(0, scope, scopeblks, blk, ipret, mov, dest, src);
    else 
       change = CopyPropTrans0(1, scope, scopeblks, blk, ipret, mov, dest, src);
-fprintf(stderr, "\n%s(%d): change=%d\n\n", __FILE__,__LINE__,change);
    if (change)
       ipret = DelInst(ipret);
    else
@@ -2088,5 +2086,6 @@ int DoCopyProp(BLIST *scope)
          while(ip);
       }
    }
+fprintf(stderr, "\nCopyProp CHANGE=%d\n", CHANGE);
    return(CHANGE);
 }

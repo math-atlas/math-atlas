@@ -42,6 +42,7 @@ void CalcThisUseSet(INSTQ *ip)
 {
    short inst, except;
    short op1, op2, op3;
+   extern int arch_IsX86, arch_IsX8664;
 
    inst = ip->inst[0];
    except = inst >> 14;
@@ -54,19 +55,38 @@ void CalcThisUseSet(INSTQ *ip)
 
    if (ACTIVE_INST(inst))
    {
-      HandleUseSet(ip->set, ip->use, ip->inst[1]);
-/*
- *    A XOR op with src1 == src2 does not really use the src
- */
-      if (inst != XOR && inst != XORS || ip->inst[2] != ip->inst[3])
+      if (!arch_IsX86 || (inst != DIV && inst != UDIV))
       {
-         HandleUseSet(ip->use, ip->use, ip->inst[2]);
+         HandleUseSet(ip->set, ip->use, ip->inst[1]);
+/*
+ *       A XOR op with src1 == src2 does not really use the src
+ */
+         if (inst != XOR && inst != XORS || ip->inst[2] != ip->inst[3])
+         {
+            HandleUseSet(ip->use, ip->use, ip->inst[2]);
+            HandleUseSet(ip->use, ip->use, ip->inst[3]);
+         }
+         if (except == 1 || except == 3)
+            HandleUseSet(ip->set, ip->use, ip->inst[2]);
+         if (except == 2 || except == 3)
+            HandleUseSet(ip->set, ip->use, ip->inst[3]);
+      }
+      else if (!arch_IsX8664)
+      {
+         HandleUseSet(ip->set, ip->use, Reg2Int("@eax"));
+         HandleUseSet(ip->set, ip->use, Reg2Int("@edx"));
+         HandleUseSet(ip->use, ip->use, Reg2Int("@eax"));
+         HandleUseSet(ip->use, ip->use, Reg2Int("@edx"));
          HandleUseSet(ip->use, ip->use, ip->inst[3]);
       }
-      if (except == 1 || except == 3)
-         HandleUseSet(ip->set, ip->use, ip->inst[2]);
-      if (except == 2 || except == 3)
-         HandleUseSet(ip->set, ip->use, ip->inst[3]);
+      else
+      {
+         HandleUseSet(ip->set, ip->use, Reg2Int("@rax"));
+         HandleUseSet(ip->set, ip->use, Reg2Int("@rdx"));
+         HandleUseSet(ip->use, ip->use, Reg2Int("@rax"));
+         HandleUseSet(ip->use, ip->use, Reg2Int("@rdx"));
+         HandleUseSet(ip->use, ip->use, ip->inst[3]);
+      }
    }
    #if IFKO_DEBUG_LEVEL >= 1
       assert(ip->use > 0 && ip->set > 0);

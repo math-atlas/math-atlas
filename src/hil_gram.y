@@ -232,7 +232,6 @@ dconst : dcexpr         {$$ = STdconstlookup($1);} ;
 iconst : icexpr         {$$ = STiconstlookup($1);} ;
 ID : NAME               
    {
-   fprintf(stderr, "strlookup %s -> %d\n", $1, STstrlookup($1));
    if (!($$ = STstrlookup($1))) fko_error(__LINE__,"unknown ID '%s'", $1); }
    ;
 avar : ID               {$$ = $1;}

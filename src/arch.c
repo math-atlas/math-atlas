@@ -1,6 +1,16 @@
 #include "ifko.h"
 #define ARCH_DECLARE
 #include "fko_arch.h"
+#ifdef X86
+   int arch_IsX86=1, arch_TwoOpAss=1;
+   #ifdef X86_64
+      int arch_IsX8664=1;
+   #else
+      int arch_IsX8664=0;
+   #endif
+#else
+   int arch_IsX86=0, archIsX8664=0, arch_TwoOpAss=0;
+#endif
 struct locinit *LIhead=NULL,       /* Locals to be init to constant vals */
                *ParaDerefQ=NULL;   /* Derefs created for parameters */
 
@@ -552,8 +562,10 @@ void Extern2Local(INSTQ *next)
       flag = STflag[i];
       if (IS_PARA(flag))
       {
-        fprintf(stderr, "para #%d - '%s', I=%d, flag=%d\n", SToff[i].sa[0], 
-                 STname[i]?STname[i]:"NULL", i, STflag[i]);
+        #if IFKO_DEBUG_LEVEL > 1
+           fprintf(stderr, "para #%d - '%s', I=%d, flag=%d\n", SToff[i].sa[0], 
+                    STname[i]?STname[i]:"NULL", i, STflag[i]);
+         #endif
          assert(SToff[i].sa[0] <= NPARA);
          paras[SToff[i].sa[0]-1] = i;
          j++;
@@ -1080,9 +1092,15 @@ void FinalizeEpilogue(BBLOCK *bbase,
    assert(blk);
 /* 
  * Find place to insert save statements
+ * NOTE: used to use CMPFLAG, but this gets moved around, so instead look
+ *       for RET inst
  */
    for (next=blk->inst1; next; next = next->next)
+#if 0
       if (next->inst[0] == CMPFLAG && next->inst[1] == CF_REGRESTORE) break;
+#else
+      if (next->inst[0] == RET) break;
+#endif
    assert(next);
 /*
 /*

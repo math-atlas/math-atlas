@@ -129,7 +129,7 @@ int main(int nargs, char **args)
    FILE *fpin, *fpout, *fpl;
    char *fin;
    char ln[512];
-   int i;
+   int i, j, KeepOn;
    struct assmln *abase;
    BBLOCK *bp;
    extern FILE *yyin;
@@ -143,36 +143,49 @@ int main(int nargs, char **args)
    yyparse();
    fclose(fpin);
    GenPrologueEpilogueStubs(bbbase);
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    NewBasicBlocks(bbbase);
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    FindLoops(); 
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    CheckFlow(bbbase, __FILE__, __LINE__);
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    CalcInsOuts(bbbase); 
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    CalcAllDeadVariables();
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
+/*
+ * Perform optimizations on special loop first
+ */
    if (optloop)
    {
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
       DoLoopGlobalRegAssignment(optloop);  
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
-      DoScopeRegAsg(optloop->blocks, 1, &i);   
+      do
+      {
+         j = DoScopeRegAsg(optloop->blocks, 1, &i);   
+         KeepOn = j != i;
+         KeepOn &= DoCopyProp(optloop->blocks); 
+         if (KeepOn)
+           fprintf(stderr, "\n\nREAPPLYING LOOP OPTIMIZATIONS!!\n\n");
+      }
+      while(KeepOn);
    }
 
    PrintInst(fopen("tmp.err", "w"), bbbase);
-#if 1
 /*
- * Do reg asg on whole function
+ * Perform global optimizations on whole function
  */
    for (lbase=NULL,bp=bbbase; bp; bp = bp->down)
       lbase = AddBlockToList(lbase, bp);
-   DoScopeRegAsg(lbase, 2, &i);   
-   DoCopyProp(lbase); 
+   do
+   {
+/*
+ *    Do reg asg on whole function
+ */
+      j = DoScopeRegAsg(lbase, 2, &i);   
+      KeepOn = j != i;
+fprintf(stderr, "\n%s(%d): KeepOn = %d\n", __FILE__,__LINE__, KeepOn);
+      KeepOn = KeepOn && DoCopyProp(lbase); 
+fprintf(stderr, "\n%s(%d): KeepOn = %d\n", __FILE__,__LINE__, KeepOn);
+      if (KeepOn)
+        fprintf(stderr, "\n\nREAPPLYING GLOBAL OPTIMIZATIONS!!\n\n");
+   }
+   while(KeepOn);
    KillBlockList(lbase);
-#endif
    INDEADU2D = CFUSETU2D = 0;
    if (!INDEADU2D)
       CalcAllDeadVariables();

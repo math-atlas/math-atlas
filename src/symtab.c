@@ -291,8 +291,10 @@ void NumberLocalsByType()
             else SToff[k].sa[1] = ndloc++;
             break;
          }
-         fprintf(stderr, "%c: %s gets slot %d\n", IS_PARA(fl) ? 'P' : 'L', 
-                 STname[k], SToff[k].sa[1]);
+         #if IFKO_DEBUG_LEVEL > 1
+            fprintf(stderr, "%c: %s gets slot %d\n", IS_PARA(fl) ? 'P' : 'L', 
+                    STname[k], SToff[k].sa[1]);
+         #endif
       }
    }
 }

@@ -136,8 +136,6 @@ void DoMove(short dest, short src)
    enum inst mov;
    sflag = STflag[src-1];
 
-fprintf(stderr, "DoMove %d %d (%s %s)\n", dest, src, STname[dest-1]?STname[dest-1] : "NULL", STname[src-1]?STname[src-1] : "NULL");
-
    if (IS_CONST(sflag))
    {
       type = FLAG2PTYPE(sflag);
@@ -196,7 +194,7 @@ static void FixDeref(short ptr)
 
    ptr--;
    type = FLAG2TYPE(STflag[SToff[ptr].sa[0]-1]);
-fprintf(stderr, "FixDeref: [%d, %d, %d, %d]\n", SToff[ptr].sa[0], SToff[ptr].sa[1], SToff[ptr].sa[2], SToff[ptr].sa[3]);
+/* fprintf(stderr, "FixDeref: [%d, %d, %d, %d]\n", SToff[ptr].sa[0], SToff[ptr].sa[1], SToff[ptr].sa[2], SToff[ptr].sa[3]); */
 /*
  * Load beginning of array
  */
@@ -235,7 +233,6 @@ fprintf(stderr, "FixDeref: [%d, %d, %d, %d]\n", SToff[ptr].sa[0], SToff[ptr].sa[
          }
       #endif
    }
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
 }
 
 void DoArrayStore(short ptr, short id)
