@@ -1066,7 +1066,7 @@ int DoIGRegAsg(int N, IGNODE **igs)
          iret++;
       }
       else
-         fprintf(stderr, "NO FREE REGISTER FOR LR %d!!!\n", ig->ignum);
+         fko_warn(__LINE__, "NO FREE REGISTER FOR LR %d!!!\n", ig->ignum);
    }
    return(iret);
 }

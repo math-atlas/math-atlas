@@ -11,8 +11,10 @@ def time(ATLdir, ARCH, pre, blas, N, rout, cc=None, ccf=None, opt=""):
    l1sec = re.compile(r"tim=(.*)\s.*$")
    l1sum = re.compile(r"N=(.*),\s.*time=(.*), mflop=(.*)\s.*$")
 
+   if (opt != ""):
+      opt = 'opt="' + opt + '"'
    if(cc != None):
-      opt = opt + 'UCC=' + cc + ' UCCFLAGS="' + ccf + '"'
+      opt = opt + ' UCC=' + cc + ' UCCFLAGS="' + ccf + '"'
 #   print "opt = '%s'" % opt
    cmnd = 'make %s%scase N=%d urout=%s %s' % (pre, blas, N, rout, opt)
 #   print "cmnd= '%s'" % cmnd
@@ -40,7 +42,8 @@ def time(ATLdir, ARCH, pre, blas, N, rout, cc=None, ccf=None, opt=""):
 #
 #  find mf from avg times
 #
-   assert(len(t) == 6)
+   if (len(t) > 6):
+      print '**** WARNING: time = ', t
    t.sort()
    mf = (mfavg * tavg) / t[2]
    return [t[2], mf]

@@ -26,6 +26,7 @@ void PrintUsageN(char *name)
    fprintf(stderr, "\nUSAGE: %s [flags]\n", name);
    fprintf(stderr, 
            "  -I <LIL> <symtab> <misc> : start from intermediate files\n");
+   fprintf(stderr, "  -v : verbose output\n");
    fprintf(stderr, "  -c <LIL> <symtab> <misc> : generate files and quit\n");
    fprintf(stderr, "  -i <file> : generate loop info file and quit\n");
    fprintf(stderr, "  -o <outfile> : assembly output file\n");
@@ -265,6 +266,9 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             else 
                rname = args[i+2];
             i += 2;
+            break;
+         case 'v':
+            FKO_FLAG |= IFF_VERBOSE;
             break;
          case 'V':
             FKO_FLAG |= IFF_VECTORIZE;
@@ -901,7 +905,7 @@ int DoOptBlock(BLIST *gscope, BLIST *lscope, struct optblkq *op)
             break;
          tnc += nc;
       }
-      if (nc)
+      if (nc && (FKO_FLAG & IFF_VERBOSE))
          fprintf(stderr, "On last (%d) iteration, still had %d changes!\n",
                  maxN, nc);
    }
@@ -1270,7 +1274,7 @@ int main(int nargs, char **args)
       yyparse();
       fclose(fpin);
       SaveFKOState(0);
-      if (FKO_FLAG & IFF_VECTORIZE)
+      if (!fpLOOPINFO && (FKO_FLAG & IFF_VECTORIZE))
       {
          assert(!VectorizeStage1());
          assert(!VectorizeStage3(0, 0));
@@ -1300,7 +1304,7 @@ int main(int nargs, char **args)
       }
       assert(!GoToTown(IREGBEG+NIR-1, FKO_UR, optblks));
    }
-   DumpOptsPerformed(stderr, 1);
+   DumpOptsPerformed(stderr, FKO_FLAG & IFF_VERBOSE);
 
    if (!(FKO_FLAG & IFF_READINTERM))
    {

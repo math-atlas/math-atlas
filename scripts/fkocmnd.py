@@ -5,7 +5,7 @@ import sys
 #
 def info(fko, routine):
    cmnd = fko + ' -i stdout ' + routine
-   print cmnd
+#   print cmnd
    fi = os.popen(cmnd, 'r')
    lines = fi.readlines()
    err = fi.close()
@@ -46,3 +46,12 @@ def info(fko, routine):
    else:
       maxunroll = lnf = vec = mfp = 0
    return(nc, LS, ol, maxunroll, lnf, vec, arrs, pref, sets)
+
+def callfko(fko, flag):
+   cmnd = fko + ' ' + flag
+#   print cmnd
+   fo = os.popen(cmnd, 'r')
+   err = fo.close()
+   if (err != None):
+      print "command '%s' died with: %d" % (cmnd, err)
+      sys.exit(err)

@@ -711,7 +711,6 @@ void FinishLoop(LOOPQ *lp)
 
 void DoGoto(char *name)
 {
-fprintf(stderr, "\n\nGOT GOTO %s\n\n", name);
    InsNewInst(NULL, NULL, NULL, JMP, -PCREG, STlabellookup(name), 0);
 }
 void DoLabel(char *name)

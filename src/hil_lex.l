@@ -12,7 +12,6 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 [\n]    {lnno++;}
 {ICON}"."{ICON}[e,E]{ICON} { sscanf(yytext, "%f", &yylval.fnum);  return(FCONST); }
 {ICON}"\."{ICON}([d,D]ICON)? { yylval.dnum = atof(yytext); 
-       fprintf(stderr, "returning DCON of %f\n", yylval.dnum);
        return(DCONST); }
 {ICON}	{ yylval.inum = atoi(yytext); return(ICONST); }
 {HCON}    { sscanf(yytext, "%x", &yylval.inum);  return(ICONST); }

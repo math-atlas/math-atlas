@@ -79,8 +79,8 @@ atlT  = []
 atlMF = []
 j = i = 0
 
-CALLREF=0
-CALLATL=0
+CALLREF=1
+CALLATL=1
 CALLFKO=1
 # print 'l1atl = ', l1atl
 opt = "-X 1 -Y 1 -Fx 16 -Fy 16"

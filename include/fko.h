@@ -74,6 +74,7 @@
 #define IFF_TAW          0x80 /* use use temporal vers for L1 write prefetch */
 #define IFF_3DNOWR       0x100 /* use 3DNow! for L1 read prefetch */
 #define IFF_3DNOWW       0x200 /* use 3DNow! for L1 write prefetch */
+#define IFF_VERBOSE      0x400 /* verbose output */
 
 #define DO_ASS(flg_) (!((flg_) & IFF_NOASS))
 #define DO_LIL(flg_) ((flg_) & IFF_LIL)

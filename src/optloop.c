@@ -2153,7 +2153,7 @@ void PrintLoopInfo()
       use = NewBitVec(32);
       for (bl=lp->blocks; bl; bl = bl->next)
       {
-         CalcInsOuts(bl->blk);
+         CalcUseSet(bl->blk);
          for (ip=bl->blk->ainst1; ip; ip = ip->next)
          {
             if (ip->set)

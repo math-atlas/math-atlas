@@ -245,10 +245,13 @@ void fko_warn(int errno, ...)
 {
    va_list argptr;
    char *form;
-   va_start(argptr, errno);
-   form = va_arg(argptr, char*);
-   fprintf(stderr, "WARNING: ");
-   vfprintf(stderr, form, argptr);
-   fprintf(stderr, "\n");
-   va_end(argptr);
+   if (FKO_FLAG & IFF_VERBOSE)
+   {
+      va_start(argptr, errno);
+      form = va_arg(argptr, char*);
+      fprintf(stderr, "WARNING: ");
+      vfprintf(stderr, form, argptr);
+      fprintf(stderr, "\n");
+      va_end(argptr);
+   }
 }
