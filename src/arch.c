@@ -140,16 +140,18 @@ void bitload(INSTQ *next, int reg, int nbits, int I)
  */
 {
    int i, j, k, b, r;
+   if (!I)
+   {
+      InsNewInst(NULL, next, XOR, -reg, -reg, -reg);
+      return;
+   }
    for (i=0; !(I & (1<<i)); i++);  /* find least sig bit non-zero bit */
    for (j=31; !(I & (1<<j)); j--); /* find most significant non-zero bit */
 /*
  * Can we do it with a simple move?
  */
    if (j < nbits)
-   {
-      if (!I) InsNewInst(NULL, next, XOR, -reg, -reg, __LINE__);
-      else InsNewInst(NULL, next, MOV, -reg, STiconstlookup(I), __LINE__);
-   }
+      InsNewInst(NULL, next, MOV, -reg, STiconstlookup(I), __LINE__);
 /*
  * Must load & shift
  */

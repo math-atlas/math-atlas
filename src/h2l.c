@@ -225,7 +225,8 @@ fprintf(stderr, "FixDeref: [%d, %d, %d, %d]\n", DT[k], DT[k+1], DT[k+2], DT[k+3]
       #ifndef ArchConstAndIndex
          if (DT[k+3])
          {
-            InsNewInst(NULL, NULL, AADD, DT[k+1], DT[k+1], DT[k+3]);
+            InsNewInst(NULL, NULL, AADD, DT[k+1], DT[k+1], 
+                       STiconstlookup(DT[k+3]));
             DT[k+3] = 0;
          }
       #endif
