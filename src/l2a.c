@@ -1210,7 +1210,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             if (-op2 >= ICC0 && -op2 < ICC0+NICC)
                ap->next = PrintAssln("\tjl\t%s\n", STname[op3-1]);
             else
-               ap->next = PrintAssln("\tja\t%s\n", STname[op3-1]);
+               ap->next = PrintAssln("\tjb\t%s\n", STname[op3-1]);
          #elif defined(SPARC)
             if (-op2 >= ICC0 && -op2 < ICC0+NICC)
                ap->next = PrintAssln("\tbl\t%s\n\tnop\n", STname[op3-1]);
