@@ -529,6 +529,12 @@ int SimdLoop(LOOPQ *lp)
 /*
  *       ADD-updated vars set v[0] = scalar, v[1:N] = 0
  */
+         if (VS_ACC & lp->vsflag[i])
+            PrintComment(lp->preheader, NULL, iph, 
+               "Init accumulator vector for %s", STname[lp->vscal[i+1]-1]);
+         else
+            PrintComment(lp->preheader, NULL, iph, 
+               "Init vector equiv of %s", STname[lp->vscal[i+1]-1]);
          InsNewInst(lp->preheader, NULL, iph, vsld, -r0,
                     SToff[lp->vscal[i+1]-1].sa[2], 0);
          if (!(VS_ACC & lp->vsflag[i]))
@@ -542,7 +548,9 @@ int SimdLoop(LOOPQ *lp)
       if (VS_LIVEOUT & lp->vsflag[i])
       {
          assert(lp->vsflag[i] & (VS_MUL | VS_EQ | VS_ABS) == 0);
-         iptp = InsNewInst(lp->posttails->blk, iptp, iptn, vld, -r0,
+         iptp = PrintComment(lp->posttails->blk, iptp, iptn,
+                  "Reduce accumulator vector for %s", STname[lp->vscal[i+1]-1]);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vld, -r0,
                            SToff[lp->vvscal[i]-1].sa[2], 0);
          if (vld == VDLD)
          {
