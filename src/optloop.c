@@ -348,6 +348,7 @@ struct ptrinfo *FindMovingPointers(BLIST *scope)
              (ip->prev->inst[0] == ADD || ip->prev->inst[0] == SUB))
          {
             k = FindLocalFromDT(ip->inst[1]);
+fprintf(stderr, "DT=%d, k=%d, pts=%d\n", ip->inst[1], k, STpts2[ip->inst[1]-1]);
             if (k)
             {
 /* ERROR : k is DT entry, not ST entry, need to find ST */

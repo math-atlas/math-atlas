@@ -33,7 +33,7 @@ static void GetNewSymtab(int chunk)
          nam[i] = STname[i];
          off[i].d = SToff[i].d;
          flg[i] = STflag[i];
-         STpts2[i] = pts2[i];
+         pts2[i] = STpts2[i];
       }
       free(STname);
       free(SToff);
@@ -569,7 +569,7 @@ short FindLocalFromDT(short dt)
       k = 0;
    if (k != i+1)
       fprintf(stderr, "STpts2=%d, lookup=%d\n", k, i+1);
-//   assert(k == i+1);
+   assert(k == i+1);
    return(k);
 }
 static char flag2pre(int flag)
