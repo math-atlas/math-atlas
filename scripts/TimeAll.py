@@ -89,12 +89,14 @@ fkoT  = []
 fkoMF = []
 j = i = 0
 
-ICC = 0
+ICC = 1
 CALLREF=1
 CALLATL=1
 CALLFKO=1
 PROFILE=1
-PFLAGS = "-xP -O3 -mp1 -static"
+#PFLAGS = "-xP -O3 -mp1 -static"
+#PFLAGS = "-xW -O3 -mp1 -static -Qoption,ld,-melf_i386 -Qoption,asm,--32"
+PFLAGS = "-xW -O3 -mp1 -static"
 
 # print 'l1atl = ', l1atl
 for blas in l1routs:

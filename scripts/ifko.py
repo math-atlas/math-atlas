@@ -113,6 +113,7 @@ def ifko_pftype(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
          if m1 > m0:
             KF0 = KF
             m0 = m1
+         j += 1
    return [m0,KF0]
 
 #
@@ -127,7 +128,7 @@ def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr,
       assert(j != -1)
       j += 7
    else:
-      j += 4 + arr.len()
+      j += 4 + len(arr)
    words = KF0[j:].split()
    pflvl = int(words[0])
    LS = info[1][pflvl];
@@ -221,7 +222,7 @@ def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=64):
    KF0 = KF0 + " -U %d" % URB
    return [mf0,KF0]
 
-def FindAE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=4):
+def FindAE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=6):
 #
 #  Time the default case
 #
@@ -261,18 +262,19 @@ def FindAE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=4):
                aeB = i
          if i < ur or ur%i :
             j = ((ur+i-1) / i)*i
-            KFLAG = KFN + " -U %d -AE %s %d" % (j, ac, i)
-            fkocmnd.callfko(fko, KFLAG)
-            [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
-                                 "gcc", "-x assembler-with-cpp", opt=opt)
-            print "      '%s' AE=%d, UR=%d, mflop= %.2f" % (ac, i, j, mf)
-            if mf > mfB:
-               mfB = mf
-               urB = j
-               aeB = i
+            if j != ur:
+               KFLAG = KFN + " -U %d -AE %s %d" % (j, ac, i)
+               fkocmnd.callfko(fko, KFLAG)
+               [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                                    "gcc", "-x assembler-with-cpp", opt=opt)
+               print "      '%s' AE=%d, UR=%d, mflop= %.2f" % (ac, i, j, mf)
+               if mf > mfB:
+                  mfB = mf
+                  urB = j
+                  aeB = i
 
             j = (ur / i) * i
-            if j :
+            if j  and j != ur:
                KFLAG = KFN + " -U %d -AE %s %d" % (j, ac, i)
                fkocmnd.callfko(fko, KFLAG)
                [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
@@ -285,10 +287,10 @@ def FindAE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=4):
          i += 1
 
       if mfB > mf0*1.001:
-         KFN = KFN + " -U %d -AE %s %d" % (j, ac, i)
+         KFN = KFN + " -U %d -AE %s %d" % (urB, ac, aeB)
          mf0 = mfB
 
-#   print "   mfB=%2.f, KFN=%s" % (mfB, KFN)
+   print "   AE=%d, UR=%d, mfB=%2.f, KFN=%s" % (aeB, urB, mfB, KFN)
    return[mfB, KFN]
 
 #

@@ -412,10 +412,21 @@
  * Setup cache info
  */
 #ifndef NCACHE
+   #ifdef X86_64
+      #define HAMMER
+   #endif
+   #define EFF
    #ifdef PIII
       #define NCACHE 2
       #ifdef ARCH_DECLARE
          short LINESIZE[NCACHE] = {32,32};
+      #else
+         extern short LINESIZE[NCACHE];
+      #endif
+   #elif defined(EFF)
+      #define NCACHE 2
+      #ifdef ARCH_DECLARE
+         short LINESIZE[NCACHE] = {256,256};
       #else
          extern short LINESIZE[NCACHE];
       #endif

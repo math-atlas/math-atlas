@@ -9,7 +9,7 @@ def GetFKOinfo():
    return(IFKOdir, fko)
 
 def FindAtlas(FKOdir):
-   file = os.path.join(FKOdir, 'time')
+   file = os.path.join(FKOdir, 'scripts')
    file = os.path.join(file, 'Makefile')
 
    fi = open(file, 'r')
