@@ -113,13 +113,13 @@ void CreateSysLocals()
 #ifdef x86
    extern int DTnzerod, DTabsd, DTnzero, DTabs;
    if (DTnzerod == -1)
-      DTnzerod = STdef("_NEGZEROD", VEC_BIT | T_DOUBLE, 0);
+      DTnzerod = STdef("_NEGZEROD", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
    if (DTabsd == -1)
-      DTabsd = STdef("_ABSVALD", VEC_BIT | T_DOUBLE, 0);
+      DTabsd = STdef("_ABSVALD", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
    if (DTnzero == -1)
-      DTnzero = STdef("_NEGZERO", VEC_BIT | T_DOUBLE, 0);
+      DTnzero = STdef("_NEGZERO", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
    if (DTabs == -1)
-      DTabs = STdef("_ABSVAL", VEC_BIT | T_DOUBLE, 0);
+      DTabs = STdef("_ABSVAL", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
 #else
 #endif
 }
@@ -197,6 +197,7 @@ void FPConst2Local(INSTQ *next, INSTQ *end, short rsave, short reg1)
    for (i=0, N=STlen(); i < N; i++)
    {
       flag = STflag[i];
+fprintf(stderr, "%s(%d): N=%d, i=%d, CO=%d, LO=%d\n",__FILE__,__LINE__,N,i,IS_CONST(flag),IS_LOCAL(flag));
       if (IS_CONST(flag) && IS_LOCAL(flag))
       {
          assert(IS_FLOAT(flag) || IS_DOUBLE(flag));
@@ -204,21 +205,27 @@ void FPConst2Local(INSTQ *next, INSTQ *end, short rsave, short reg1)
          FPUSE++;
       }
    }
+fprintf(stderr, "%s(%d): N=%d, i=%d\n",__FILE__,__LINE__,N,i);
 /*
  * Change FMOV[d] of fpconst to appopriate local load
  */
+fprintf(stderr, "FOUND000:\n");
    if (FPUSE)
    {
+fprintf(stderr, "FOUND00:\n");
       for (ip=next; ip != end; ip = ip->next)
       {
          if (ip->inst[0] == FMOV || ip->inst[0] == FMOVD)
          {
+fprintf(stderr, "FOUND0:\n");
             i = ip->inst[2];
             if (i > 0)
             {
+fprintf(stderr, "FOUND!\n");
                ip->inst[0] = (ip->inst[0] == FMOV) ? FLD : FLDD;
-               ip->inst[2] = FindLocalFPConst(i);
-               assert(ip->inst[2]);
+               i = FindLocalFPConst(i);
+               assert(i > 0);
+               ip->inst[2] = SToff[i-1].sa[2];
             }
          }
       }

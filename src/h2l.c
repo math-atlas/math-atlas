@@ -103,8 +103,7 @@ void DoFpConstLoad(short dest, short src)
    
 fprintf(stderr, "Handling fpconst!\n");
 /*
- * Reserve integer reg for @ ld (store in op3), as well as reg for actual
- * move.  Encode fp const load as special case of FMOV.
+ * Encode fp const load as special case of FMOV.
  */
    type = FLAG2TYPE(STflag[dest-1]);
    InsNewInst(NULL, NULL, type == T_FLOAT ? FMOV : FMOVD, 

@@ -18,12 +18,13 @@
 #define IS_LABEL(flag_)  (((flag_) & 0x7) == T_LABEL)
 #define FLAG2TYPE(flag_) ((flag_) & 0x7)
 
-#define PTR_BIT    0x10
-#define CONST_BIT  0x20
-#define GLOB_BIT   0x40
-#define PARA_BIT   0x80
-#define VEC_BIT    0x100
+#define PTR_BIT      0x10
+#define CONST_BIT    0x20
+#define GLOB_BIT     0x40
+#define PARA_BIT     0x80
+#define VEC_BIT      0x100
 #define UNSIGNED_BIT 0x200
+#define LOCAL_BIT    0x400
 
 #define IS_PTR(flag_)   ((flag_) & PTR_BIT)
 #define IS_CONST(flag_) ((flag_) & CONST_BIT)
@@ -31,7 +32,7 @@
 #define IS_PARA(flag_)  ((flag_) & PARA_BIT)
 #define IS_VEC(flag_)   ((flag_) & VEC_BIT)
 #define IS_UNSIGNED(flag_)   ((flag_) & UNSIGNED_BIT)
-#define IS_LOCAL(flag_) (!(IS_GLOB(flag_) | IS_CONST(flag_)))
+#define IS_LOCAL(flag_) ((flag_) & LOCAL_BIT)
 
 #define REG_SP   1
 
@@ -62,6 +63,5 @@ char *STi2str(short i);
 void CreateLocalDerefs(void);
 void AddStaticData(char *name, short align, short len, void *vbytarr);
 void KillStaticData(void);
-
 
 #endif

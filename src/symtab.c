@@ -271,7 +271,7 @@ void CreateFPLocals()
  * and takes const value from there.
  */
 {
-   short k, n=0;
+   short k, n=0, i;
    int fl;
    char ln[256];
    for (k=0; k < N; k++)
@@ -279,8 +279,9 @@ void CreateFPLocals()
       fl = STflag[k];
       if (IS_CONST(fl) && (IS_DOUBLE(fl) || IS_FLOAT(fl)))
       {
-         sprintf(ln, "_FPC_%d\n", n);
-         STdef(ln, (fl & (!GLOB_BIT)), k+1);
+         sprintf(ln, "_FPC_%d\n", n++);
+         i = STdef(ln, (fl & (!GLOB_BIT)) | LOCAL_BIT, k+1);
+fprintf(stderr, "STLOC[%d] = %d\n", IS_LOCAL(STflag[i-1]));
       }
    }
 }

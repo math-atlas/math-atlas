@@ -262,7 +262,7 @@ void declare_list(int flag)
    {
       while(idhead)
       {
-         STdef(idhead->name, flag, 0);
+         STdef(idhead->name, LOCAL_BIT | flag, 0);
          idhead = idhead->next;
       }
    }
