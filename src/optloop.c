@@ -1642,8 +1642,10 @@ void SchedInstInLoop1(LOOPQ *lp, ILIST *ilbase, int dist, int chunk)
 {
    BLIST *atake, *bl;
    INSTQ *ip, *ipp, *ipn, *ipf, *ipfn;
-   int N, skip, sk, i, j, k, npf;
+   int N, skip, sk, i, j, k, npf, ir, dt;
+   int bv;
    ILIST *il;
+   extern int FKO_BVTMP;
 
    for (npf=0, il=ilbase; il; il = il->next, npf++);
 /*
@@ -1664,6 +1666,47 @@ void SchedInstInLoop1(LOOPQ *lp, ILIST *ilbase, int dist, int chunk)
    i = dist ? 1 : 0;
    j = 0;
    sk = dist ? dist : skip;
+/*
+ * Find all regs used in this range
+ */
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
+   else SetVecAll(FKO_BVTMP, 0);
+   bv = FKO_BVTMP;
+   for (bl=atake; bl; bl = bl->next)
+   {
+      if (!INUSETU2D)
+         CalcUseSet(bl->blk); 
+      for (ip=bl->blk->ainst1; ip; ip = ip->next)
+      {
+         if (ip->set)
+            BitVecComb(bv, bv, ip->set, '|');
+         if (ip->use)
+            BitVecComb(bv, bv, ip->use, '|');
+      }
+   }
+/*
+ * Get reg that is not being used
+ */
+   do
+   {
+      ir = GetReg(T_INT);
+   }
+   while(BitVecCheckComb(bv, Reg2Regstate(ir), '&'));
+/*
+ * Update all pref inst with new inst, if necessary
+ */
+   if (ilbase->inst->inst[1] != -ir)
+   {
+      
+      for (il=ilbase; il; il = il->next)
+      {
+         il->inst->inst[1] = -ir;
+         SToff[il->inst->next->inst[2]-1].sa[0] = -ir;
+      }
+   }
+/*
+ * Insert the prefetch inst
+ */
    for (bl=atake; bl; bl = bl->next)
    {
       for (ip=bl->blk->ainst1; ip; ip = ip->next)
@@ -1707,6 +1750,7 @@ EOL:
             break;
       assert(ip);
    }
+   KillBlockList(atake);
 }
 
 void SchedInstInLoop(LOOPQ *lp, ILIST *ilbase)

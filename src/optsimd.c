@@ -684,6 +684,7 @@ int VectorizeStage1(void)
 /*
  * Get code into standard form for analysis
  */
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    GenPrologueEpilogueStubs(bbbase, 0);
    NewBasicBlocks(bbbase);
    FindLoops();
@@ -692,13 +693,17 @@ int VectorizeStage1(void)
 /*
  * Create a bad LIL to perform vector loop analysis
  */
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    KillLoopControl(lp);
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    if (FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]))
    {
       fko_warn(__LINE__, "Index refs inside loop prevent vectorization!!\n");
       return(11);
    }
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    pi0 = FindMovingPointers(lp->blocks);
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    for (pi=pi0; pi; pi = pi->next)
    {
       if (pi->nupdate > 1)
@@ -721,7 +726,9 @@ int VectorizeStage1(void)
       free(ip);
    }
    CFUSETU2D = 0;
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    i = DoLoopSimdAnal(optloop);
+fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    if (i)
       return(i);
 /*
@@ -734,11 +741,12 @@ int VectorizeStage1(void)
    optloop->varrs = optloop->vscal = optloop->vsflag = optloop->vsoflag = NULL;
    flag = lp->vflag;
    RestoreFKOState(0);
+   lp = optloop;
    optloop->varrs = varrs;
    optloop->vscal = vscal;
    optloop->vsflag = vsflag;
    optloop->vsoflag = vsoflag;
-   lp->vflag = flag;
+   optloop->vflag = flag;
 /*
  * Create vector locals for all vector scalars in loop, and their derefs
  */
