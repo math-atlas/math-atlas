@@ -96,6 +96,9 @@ void CalcInsOuts(BBLOCK *base)
    extern int FKO_BVTMP;
    extern BBLOCK *bbbase;
 
+   if (base == bbbase && !CFU2D)
+      base = NewBasicBlocks(base);
+
    if (!STderef) STderef = STdef("_DEREF", 0, 0);
    if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
    vstmp = FKO_BVTMP;
@@ -105,7 +108,8 @@ void CalcInsOuts(BBLOCK *base)
       if (!bp->ins) bp->ins = NewBitVec(32);
       else SetVecAll(bp->ins, 0);
       if (!bp->outs) bp->outs = NewBitVec(32);
-      CalcUsesDefs(bp);
+      if (!INUSETU2D)
+         CalcUsesDefs(bp);
    }
    do
    {
@@ -123,7 +127,10 @@ void CalcInsOuts(BBLOCK *base)
    }
    while(CHANGES);
    if (base == bbbase)
+   {
+      INUSETU2D = 1;
       CFUSETU2D = 1;
+   }
 }
 
 void CalcBlocksDeadVariables(BBLOCK *bp)
@@ -190,6 +197,7 @@ void CalcAllDeadVariables()
    if (!CFUSETU2D) CalcInsOuts(bbbase);
    for (bp=bbbase; bp; bp = bp->down)
       CalcBlocksDeadVariables(bp);
+   INDEADU2D = 1;
 }
 
 char *BV2VarNames(int iv)

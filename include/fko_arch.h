@@ -351,8 +351,5 @@
 
 short GetReg(short type);
 void FixFrame(BBLOCK *bbase);
-int NumberArchRegs();
-char *Int2Reg(int i);
-
 
 #endif

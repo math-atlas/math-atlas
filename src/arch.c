@@ -9,55 +9,6 @@ struct locinit *LIhead=NULL;
    #define ISIZE 4
 #endif
 
-char *Int2Reg(int i)
-/*
- * Translates integral encoding to machine-specific registers
- */
-{
-   static char ln[128];
-
-   assert (i < 0);
-   i = -i;
-   if (i >= IREGBEG && i < IREGEND)
-      sprintf(ln, "%s", archiregs[i-IREGBEG]);
-   else if (i >= FREGBEG && i < FREGEND)
-      sprintf(ln, "%s", archfregs[i-FREGBEG]);
-   else if (i >= DREGBEG && i < DREGEND)
-      sprintf(ln, "%s", archdregs[i-DREGBEG]);
-   else if (i >= ICCBEG && i < ICCEND)
-      sprintf(ln, "%s", ICCREGS[i-ICCBEG]);
-   else if (i >= FCCBEG && i < FCCEND)
-      sprintf(ln, "%s", FCCREGS[i-FCCBEG]);
-   else if (i == PCREG)
-      sprintf(ln, "%s", "PC");
-   else
-      fko_error(__LINE__, "Unknown register index %d, file=%s\n",
-                i, __FILE__);
-   return(ln);
-}
-
-short Reg2Int(char *regname)
-/*
- * Given a register of regname, returns integer number
- */
-{
-   int i;
-   if (regname[0] == 'P' && regname[1] == 'C' && regname[2] == '\0')
-      return(PCREG);
-   if (regname[0] == 'S' && regname[1] == 'P' && regname[2] == '\0')
-      return(REG_SP);
-   for (i=IREGBEG; i < IREGEND; i++)
-      if (!strcmp(archiregs[i], regname)) return(-i-1);
-   for (i=FREGBEG; i < FREGEND; i++)
-      if (!strcmp(archfregs[i], regname)) return(-i-1);
-   for (i=DREGBEG; i < DREGEND; i++)
-      if (!strcmp(archdregs[i], regname)) return(-i-1);
-   for (i=ICC0; i < NICC; i++)
-      if (!strcmp(ICCREGS[i], regname)) return(-i-1);
-   for (i=FCC0; i < NFCC; i++)
-      if (!strcmp(FCCREGS[i], regname)) return(-i-1);
-   return(0);
-}
 void FindRegUsage(BBLOCK *bbase, int *ni0, int *iregs, 
                   int *nf0, int *fregs, int *nd0, int *dregs)
 /*
@@ -1322,9 +1273,4 @@ void FixFrame(BBLOCK *bbase)
    #endif
    for (i=0; i < NIR; i++) savr[i] = i+2; 
    CreatePrologue(bbase, LOCALIGN, LOCSIZE, 0, ni, isav, nf, fsav, nd, dsav);
-}
-
-int NumberArchRegs()
-{
-   return(TNREG);
 }

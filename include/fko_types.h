@@ -63,8 +63,8 @@ struct bblock
    ushort dom;              /* dominators of this block */
    ushort uses, defs;       /* uses and defs for this block */
    ushort ins, outs;        /* live vars coming in and leaving block */
-   IGLIST *conin, *conout;  /* in/out conflicts list */
-   IGLIST *ignodes;         /* all of this block's ignodes */
+   struct iglist *conin, *conout;  /* in/out conflicts list */
+   struct iglist *ignodes;         /* all of this block's ignodes */
 };
 
 typedef struct blist BLIST;
@@ -101,6 +101,7 @@ struct ignode
    struct iglist *conflicts;    /* ignode's conflicting with this one */
    INSTQ *LRbeg, *LRend;        /* First and last inst of live range */
    int freq;                    /* # of uses of this live range */
+   ushort myblkreg;             /* blocks live range spans as bitvec */
    ushort regstate;             /* registers being used at this point */
    short var;                   /* ST index of variable */
 };

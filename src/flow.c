@@ -384,54 +384,6 @@ void FindPredSuccBlocks(BBLOCK *bbase)
    }
 }
 
-void CalcDoms(BBLOCK *bbase)
-/*
- * Calculates dominator information for all basic blocks
- */
-{
-   int n, CHANGE, old;
-   BBLOCK *bp;
-   BLIST *lp;
-   extern int FKO_BVTMP;
-
-   if (!bbase) return;
-/*
- * Number basic blocks, and set top block as only being dominated by itself
- */
-   n = NumberBasicBlocks(bbase);
-   bbase->dom = NewBitVec(n);
-   SetVecBit(bbase->dom, bbase->bnum-1, 1);
-   if (FKO_BVTMP) old = FKO_BVTMP;
-   else old = FKO_BVTMP = NewBitVec(n);
-/*
- * Init all other dom lists to all blocks
- */
-   for (bp=bbase->down; bp; bp = bp->down)
-   {
-      bp->dom = NewBitVec(n);
-      SetVecAll(bp->dom, 1);
-   }
-
-   do
-   {
-      CHANGE = 0;
-      for (bp=bbase->down; bp; bp = bp->down)
-      {
-         BitVecCopy(old, bp->dom);
-         if (bp->preds)
-         {
-            BitVecCopy(bp->dom, bp->preds->blk->dom);
-            for (lp=bp->preds->next; lp; lp = lp->next)
-               BitVecComb(bp->dom, bp->dom, lp->blk->dom, '&');
-         }
-         else SetVecAll(bp->dom, 0);
-         SetVecBit(bp->dom, bp->bnum-1, 1);
-         CHANGE |= BitVecComp(old, bp->dom);
-      }
-   }
-   while(CHANGE);
-}
-
 #if IFKO_DEBUG_LEVEL > 0
 void CheckFlow(BBLOCK *bbase, char *file, int line)
 {
@@ -594,6 +546,59 @@ BBLOCK *NewBasicBlocks(BBLOCK *base0)
    CheckFlow(base, __FILE__, __LINE__);
    CFU2D = 1;
    return(base);
+}
+
+void CalcDoms(BBLOCK *bbase)
+/*
+ * Calculates dominator information for all basic blocks
+ */
+{
+   int n, CHANGE, old;
+   BBLOCK *bp;
+   BLIST *lp;
+   extern int FKO_BVTMP;
+   extern BBLOCK *bbbase;
+
+   if (!bbase) return;
+   if (!CFU2D && bbase == bbbase)
+      bbase = NewBasicBlocks(bbase);
+/*
+ * Number basic blocks, and set top block as only being dominated by itself
+ */
+   n = NumberBasicBlocks(bbase);
+   bbase->dom = NewBitVec(n);
+   SetVecBit(bbase->dom, bbase->bnum-1, 1);
+   if (FKO_BVTMP) old = FKO_BVTMP;
+   else old = FKO_BVTMP = NewBitVec(n);
+/*
+ * Init all other dom lists to all blocks
+ */
+   for (bp=bbase->down; bp; bp = bp->down)
+   {
+      bp->dom = NewBitVec(n);
+      SetVecAll(bp->dom, 1);
+   }
+
+   do
+   {
+      CHANGE = 0;
+      for (bp=bbase->down; bp; bp = bp->down)
+      {
+         BitVecCopy(old, bp->dom);
+         if (bp->preds)
+         {
+            BitVecCopy(bp->dom, bp->preds->blk->dom);
+            for (lp=bp->preds->next; lp; lp = lp->next)
+               BitVecComb(bp->dom, bp->dom, lp->blk->dom, '&');
+         }
+         else SetVecAll(bp->dom, 0);
+         SetVecBit(bp->dom, bp->bnum-1, 1);
+         CHANGE |= BitVecComp(old, bp->dom);
+      }
+   }
+   while(CHANGE);
+   if (bbase == bbbase)
+      CFDOMU2D = 1;
 }
 
 LOOPQ *NewLoop(int flag)

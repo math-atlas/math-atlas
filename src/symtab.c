@@ -267,10 +267,6 @@ void NumberLocalsByType()
    for (k=0; k != N; k++)
    {
       fl = STflag[k];
-      if (!IS_LOCAL(fl) && !(IS_CONST(fl) || IS_GLOB(fl) || IS_PARA(fl)))
-      {
-         fprintf(stderr, "\nname='%s', flag=%d\n\n", STname[k] ? STname : NULL, fl);
-      }
       if ((IS_PARA(fl) || IS_LOCAL(fl)) && SToff[SToff[k].sa[2]-1].sa[0])
       {
          type = FLAG2PTYPE(fl);
