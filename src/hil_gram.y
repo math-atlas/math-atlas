@@ -41,8 +41,8 @@
  * Duplicate this for fcexpr
  */
 %}
-lines : lines line ';' | line ';'
-line : stateflag | paradec | typedec | statement
+lines : lines line ';' | line ';' ;
+line : stateflag | paradec | typedec | statement ;
 
         /* need to add GLOBALS section */
 stateflag: ROUT_NAME NAME 
@@ -50,9 +50,7 @@ stateflag: ROUT_NAME NAME
             if (WhereAt != 0)
                yyerror("Improper ROUTINE statement");
             WhereAt = 1;
-fprintf(stderr, "%d of %s\n", __LINE__, __FILE__);
             strcpy(rout_name, $2);
-fprintf(stderr, "%d of %s\n", __LINE__, __FILE__);
 fprintf(stderr, "grammer setting rout_name='%s'\n", rout_name);
             STdef(rout_name, T_FUNC | GLOB_BIT, 0);
          }
@@ -77,6 +75,7 @@ fprintf(stderr, "grammer setting rout_name='%s'\n", rout_name);
                yyerror("Improper ROUT_END statement");
             WhereAt = 4;
          }
+	 ;
 typedec : INT LST idlist              { declare_list(T_INT); }
         | UINT LST idlist              { declare_list(T_INT | UNSIGNED_BIT); }
         | FLOAT LST idlist           { declare_list(T_FLOAT); }
@@ -85,9 +84,12 @@ typedec : INT LST idlist              { declare_list(T_INT); }
         | INT_PTR LST idlist          { declare_list(T_INT    | PTR_BIT); }
         | FLOAT_PTR LST idlist        { declare_list(T_FLOAT  | PTR_BIT); }
         | DOUBLE_PTR LST idlist      { declare_list(T_DOUBLE | PTR_BIT); }
-paradec : PARAMS LST idlist          { para_list(); }
-idlist  : idlist ',' NAME            {NewID($3); }
-        | NAME                       {NewID($1); }
+	;
+paradec : PARAMS LST idlist          { para_list(); } 
+        ;
+idlist  : idlist ',' NAME            {NewID($3);}
+        | NAME                       {NewID($1);}
+	;
 
 statement : arith
           | ptrderef '=' ID       {DoArrayStore($1, $3);}
@@ -95,6 +97,7 @@ statement : arith
           | ID '=' ID             {DoMove($1, $3);}
           | RETURN avar           {DoReturn($2);}
           | NAME ':'              {DoLabel($1);}
+	  ;
 
 icexpr  : icexpr '+' icexpr             {$$ = $1 + $3;}
         | icexpr '-' icexpr             {$$ = $1 - $3;}
@@ -113,22 +116,25 @@ icexpr  : icexpr '+' icexpr             {$$ = $1 + $3;}
         | '-' icexpr %prec UNMIN        {$$ = -$2;}
         | '(' icexpr ')' { $$ = $2; }
         | ICONST                        {$$ = $1;}
+	;
 
-fconst : FCONST         {$$ = STfconstlookup($1);}
-dconst : DCONST         {$$ = STdconstlookup($1);}
-iconst : icexpr         {$$ = STiconstlookup($1);}
+fconst : FCONST         {$$ = STfconstlookup($1);} ;
+dconst : DCONST         {$$ = STdconstlookup($1);} ;
+iconst : icexpr         {$$ = STiconstlookup($1);} ;
 ID : NAME               
    {if (!($$ = STstrlookup($1))) fko_error(__LINE__,"unknown ID '%s'", $1); }
+   ;
 ptrderef : ID '[' iconst ']' { $$ = AddDerefEntry($1, 0, 0, $3); }
          | ID '[' ID ']'    { $$ = AddDerefEntry($1, $3, 0, 0); }
          | ID '[' ID '+' iconst ']' { $$ = AddDerefEntry($1, $3, 0, $5); }
          | ID '[' ID '-' icexpr ']' 
            { $$ = AddDerefEntry($1, $3, 0, STiconstlookup(-$5)); }
+         ;
 avar : ID               {$$ = $1;}
      | fconst           {$$ = $1;}
      | dconst           {$$ = $1;}
      | iconst           {$$ = $1;}
-
+     ;
 arith : ID '=' ID '+' avar {DoArith($1, $3, '+', $5); }
       | ID '=' ID '*' avar {DoArith($1, $3, '*', $5); }
       | ID '=' ID '-' avar {DoArith($1, $3, '-', $5); }
@@ -140,7 +146,7 @@ arith : ID '=' ID '+' avar {DoArith($1, $3, '+', $5); }
       | ID '=' ABST        {DoArith($1, $1, 'a', 0); }
       | ID '=' '-' avar    {DoArith($1, $4, 'n', 0); }
       | ID PE ID '*' avar  {DoArith($1, $3, 'm', $5); }
-
+      ;
 %%
 
 static struct idlist *idhead=NULL, *paras=NULL;

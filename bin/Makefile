@@ -10,14 +10,25 @@ heads= $(HDIR)/fko_arch.h $(HDIR)/fko_inst.h $(HDIR)/fko_misc.h \
 ifko : $(heads) ifko.o $(objs)
 	$(CC) $(CCFLAGS) -o $@ ifko.o $(objs) -ll
 
-xtst :  tst.o example.o
-	$(CC) $(CCFLAGS) -o $@ tst.o example.o
+xtst2 :  tst2.o fexample.o
+	$(CC) $(CCFLAGS) -o $@ tst2.o fexample.o
 tst.o : tst.c
 	$(CC) $(CCFLAGS) -c tst.c
+xtst :  tst.o example.o
+	$(CC) $(CCFLAGS) -o $@ tst.o example.o
+tst2.o : tst2.c
+	$(CC) $(CCFLAGS) -c tst2.c
 example.o : example.s
 	$(CC) $(CCFLAGS) -c example.s
 example.s : ifko example.b
 	./ifko example.b >! example.s
+fexample.o : fexample.s
+	$(CC) $(CCFLAGS) -c fexample.s
+fexample.s : ifko fexample.b
+	./ifko fexample.b >! fexample.s
+
+xprintinst : ../include/ifko.h ../include/fko_inst.h ../src/printinst.c
+	$(CC) $(CCFLAGS) -I../include -o $@ ../src/printinst.c
 
 #arch.o : $(heads) arch.c $(heads)
 #	$(CC) $(CCFLAGS) -c arch.c

@@ -297,6 +297,7 @@ void CreateLocalDerefs()
 {
    short k, off;
    int fl;
+   int GetArchAlign(int nvd, int nvf, int nd, int nf, int nl, int ni);
 
    for (k=0; k != N; k++)
    {
@@ -335,10 +336,13 @@ void CreateLocalDerefs()
          fprintf(stderr, "%s, DT#=%d\n", STname[k], SToff[k].sa[2]);
       }
    }
+   LOCALIGN = GetArchAlign(nvdloc, nvfloc, ndloc, nfloc, nlloc, niloc);
+/*
    if (nvdloc) LOCALIGN = FKO_DVLEN*8;
    else if (nvfloc) LOCALIGN = FKO_SVLEN*4;
    else if (ndloc || nlloc) LOCALIGN = 8;
    else if (nfloc || niloc) LOCALIGN = 4;
+*/
    LOCSIZE = nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4 + 
              ndloc*8 + nlloc*8 + nfloc*4 + niloc*4;
 }

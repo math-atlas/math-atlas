@@ -102,7 +102,6 @@ static char *GetDeref(short id)
    #endif
    return(ln);
 }
-
 static char *GetIregOrDeref(short id)
 /*
  * given an id, return string containing register name if less than zero,
@@ -165,6 +164,7 @@ struct assmln *lil2ass(INSTQ *head)
       int SeenSave=0;
    #endif
    char ln[1024];
+   extern int DTabsd, DTnzerod;
 
    ap = ahead = NewAssln(".text\n");
    do
@@ -676,7 +676,7 @@ struct assmln *lil2ass(INSTQ *head)
       case FNEGD:
          #ifdef X86
 	    assert(op1 == op2);
-	    assert(DTor);
+	    assert(DTnzerod);
             ap->next = PrintAssln("\txorpd\t%s,%s\n", GetDregOrDeref(DTnzerod),
 	                          archdregs[-DREGBEG-op1]);
          #elif defined(SPARC)
@@ -731,7 +731,6 @@ struct assmln *lil2ass(INSTQ *head)
       case JGE:
       case PREFR:
       case PREFW:
-      case RET:
       case PREFRS:
       case PREFWS:
       case FLD:

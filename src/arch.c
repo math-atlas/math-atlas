@@ -2,6 +2,24 @@
 #define ARCH_DECLARE
 #include "fko_arch.h"
 
+int GetArchAlign(int nvd, int nvf, int nd, int nf, int nl, int ni)
+/*
+ *  Returns required architectural alignment given the number of
+ *  vector double, vector float, double, float, long, and ints you
+ *  want to save (actually, these only need to be boolean).
+ */
+{
+   int align = 0;
+   if (nvd) align = FKO_DVLEN*8;
+   else if (nvd) align = FKO_SVLEN*4;
+   #ifdef X86_32
+      else if (nd || nf || nl || ni) align = 4;
+   #else
+      else if (nd || nl) align = 8;
+      else if (nf || ni) align = 4;
+   #endif
+   return(align);
+}
 short iName2Reg(char *rname)
 {
    short i;
@@ -112,7 +130,7 @@ void Param2Local(INSTQ *next, short rsav, int fsize)
  * any values required by system to frame.
  */
 {
-   extern int NPARA;
+   extern int NPARA, DTnzerod, DTnzero, DTabsd, DTabs;
    short i, j=0, flag, ir, k;
    int nbytes=0;
    short *paras;
@@ -310,6 +328,7 @@ void CreatePrologue(int align,  /* local-area required byte-alignment */
    int Soff, Loff;
    int SAVESP=0;  /* must we save SP to stack? */
 
+fprintf(stderr, "align=%d,lsize=%d,csize=%d\n", align, lsize, csize);
 /*
  * If we return values in a register, no need to save and restore it
  */
@@ -365,7 +384,9 @@ fprintf(stderr, "prog=%d!, rout_name=%s\n", prog, rout_name);
    if (ndr)
    {
       if ((Soff>>3)<<3 != Soff) Soff = 8 + ((Soff>>3)<<3);
-      if (maxalign < 8) maxalign = 8;
+      #ifndef x86_32
+         if (maxalign < 8) maxalign = 8;
+      #endif
    }
    if (maxalign > ASPALIGN)
    {
@@ -376,7 +397,7 @@ fprintf(stderr, "prog=%d!, rout_name=%s\n", prog, rout_name);
    if (Loff%align) Loff = (Loff/align)*align + align;
    tsize = Loff + lsize;
    if (tsize % ASPALIGN) tsize = (tsize/ASPALIGN)*ASPALIGN + ASPALIGN;
-fprintf(stderr, "tsize=%d, [%d, %d, %d]\n\n", tsize, STiconstlookup(tsize), STiconstlookup(tsize), STiconstlookup(tsize));
+fprintf(stderr, "tsize=%d, SAVESP=%d\n\n", tsize, SAVESP);
    if (SAVESP)
    {
       rsav = GetReg(T_INT);
@@ -387,7 +408,7 @@ fprintf(stderr, "tsize=%d, [%d, %d, %d]\n\n", tsize, STiconstlookup(tsize), STic
    if (SAVESP)
    {
       i = const2shift(maxalign);
-      assert(i >= 4);
+      assert(i >= 3);
       i = STiconstlookup(i);
       InsNewInst(NULL, oldhead, ASHR, -REG_SP, -REG_SP, i);
       InsNewInst(NULL, oldhead, ASHL, -REG_SP, -REG_SP, i);

@@ -22,6 +22,7 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "<" | 
 ">" | 
 "&" | 
+"," |
 ";" | 
 "="	{ return(yytext[0]); }
 "+="    { return(PE); }

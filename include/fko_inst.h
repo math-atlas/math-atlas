@@ -123,7 +123,8 @@ enum inst
    CVTFL,
    CVTLF,
    CVTDL,
-   CVTLD
+   CVTLD,
+   LAST_INST
 };
 
 INSTQ *NewInst(INSTQ *prev, INSTQ *next, enum inst ins,

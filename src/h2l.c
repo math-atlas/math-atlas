@@ -96,10 +96,21 @@ void DoConvert(short dest, short src)
    exit(-1);
 }
 
+void DoFpConstLoad(short dest, short src)
+{
+/* HERE HERE HERE */
+   fprintf(stderr, "FP constants not yet supported\n");
+   exit(-1);
+}
+
 void DoMove(short dest, short src)
 {
    short rsrc;
-   if (FLAG2TYPE(STflag[dest-1]) == FLAG2TYPE(STflag[src-1]))
+   int sflag;
+   sflag = STflag[src-1];
+   if (IS_CONST(sflag) && (IS_FLOAT(sflag) || IS_DOUBLE(sflag)))
+      DoFpConstLoad(dest, src);
+   if (FLAG2TYPE(STflag[dest-1]) == FLAG2TYPE(sflag))
    {
       rsrc = LocalLoad(src);
       LocalStore(dest, rsrc);
@@ -256,6 +267,7 @@ void DoArith(short dest, short src0, char op, short src1)
 {
    short rd, rs0, rs1, type;
    enum inst inst;
+   extern int DTnzerod, DTnzero, DTabs, DTabsd;
 
    if (IS_PTR(STflag[dest-1]))
    {

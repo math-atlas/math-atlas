@@ -1,10 +1,7 @@
 ROUTINE fsimple;
-PARAMS :: f1;
-DOUBLE :: f1;
-ROUT_LOCALS;
-DOUBLE f2;
+PARAMS :: f1, f2;
+DOUBLE :: f1, f2;
 ROUT_BEGIN;
-   f2 = 2.0;
    f1 = f1 + f2;
    RETURN f1;
 ROUT_END;

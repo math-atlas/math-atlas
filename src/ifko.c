@@ -3,14 +3,14 @@
 #include "fko_arch.h"
 #include "fko_l2a.h"
 
-int FUNC_FLAG=0;
+int FUNC_FLAG=0, DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0;
 int main(int nargs, char **args)
 {
    FILE *fpin;
    extern FILE *yyin;
-   extern int LOCALIGN, LOCSIZE, DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0;
    extern INSTQ *iqhead;
    struct assmln *abase;
+   extern int LOCALIGN, LOCSIZE; 
    int i, savr[64];
 
    for (i=0; i < NIR; i++) savr[i] = i+2;

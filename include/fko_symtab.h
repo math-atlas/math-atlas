@@ -55,9 +55,9 @@ short STstrlookup(char *str);
 void STsetoffi(short i, int off);
 void STsetflag(short i, int flag);
 void NumberLocalsByType(void);
-void CreateLocalDerefs(void);
 void CorrectLocalOffsets(int ldist);
 int STlen(void);
 char *STi2str(short i);
+void CreateLocalDerefs(void);
 
 #endif

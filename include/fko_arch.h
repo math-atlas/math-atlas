@@ -104,7 +104,7 @@
    #else
       extern char *archiregs[NIR], *archfregs[TNFR];
    #endif
-   #define archdregs archfgregs
+   #define archdregs archfregs
 #endif
 
 #ifdef PPC
