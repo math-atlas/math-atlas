@@ -908,13 +908,15 @@ void Extern2Local(INSTQ *next)
                if (USED)
                {
                   kk = SToff[SToff[paras[i]].sa[2]-1].sa[3];
-                  k = AddDerefEntry(-REG_SP, paras[i], -paras[i], k);
-                  InsNewInst(NULL, NULL, next, ST, k, -ir, 0);
+                  k = AddDerefEntry(-REG_SP, paras[i], -paras[i], kk);
+                  InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2],
+                             -ir, 0);
+
                   ii = AddDerefEntry(rsav, 0, 0, j*4);
                   ParaDerefQ = NewLocinit(ii, 0, ParaDerefQ);
                   InsNewInst(NULL, NULL, next, LD, -ir, ii, 0);
+
                   ii = AddDerefEntry(-REG_SP, paras[i], -paras[i], kk+4);
-                  ParaDerefQ = NewLocinit(ii, 0, ParaDerefQ);
                   InsNewInst(NULL, NULL, next, ST, ii, -ir, 0);
                   SignalSet(next, paras[i]+1, k, dreg);
                }
@@ -924,10 +926,16 @@ void Extern2Local(INSTQ *next)
             {
                if (USED)
                {
+                  strcpy(nam, archdregs[dreg-DREGBEG]);
+                  k = fName2Reg(nam);
                   ii = AddDerefEntry(rsav, 0, 0, j*4);
                   ParaDerefQ = NewLocinit(ii, 0, ParaDerefQ);
-                  InsNewInst(NULL, NULL, next, FLDD, -dreg, ii, 0);
-                  InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], 
+                  InsNewInst(NULL, NULL, next, FLD, -k, ii, 0);
+                  k++;
+                  ii = AddDerefEntry(rsav, 0, 0, j*4+4);
+                  ParaDerefQ = NewLocinit(ii, 0, ParaDerefQ);
+                  InsNewInst(NULL, NULL, next, FLD, -k, ii, 0);
+                  InsNewInst(NULL, NULL, next, FSTD, SToff[paras[i]].sa[2], 
                              -dreg, 0);
                }
                j += 2;

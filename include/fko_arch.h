@@ -12,8 +12,8 @@
 /*   #define FKO_ANSIC32 */
 /*   #define LINUX_X86_64 */
 /*   #define LINUX_X86_32 */
-/*   #define SOLARIS_SPARC */
-   #define OSX_PPC 
+   #define SOLARIS_SPARC 
+/*   #define OSX_PPC */
 #endif
 
 #if defined(FKO_ANSIC32) || defined(FKO_ANSIC64)
@@ -89,7 +89,7 @@
      {0, 1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0}; 
 #endif
       int iparareg[TNIR] = {0, 0,0,0,0,0,0,0,0, 1,1,1,1,1,1,1,1,
-                            0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0};
+                            0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0};
       char *archiregs[TNIR] = 
          {"@sp", "@l0", "@l1", "@l2", "@l3", "@l4", "@l5", "@l6", "@l7",
           "@i0", "@i1", "@i2", "@i3", "@i4", "@i5", "@i6", "@i7", 
@@ -114,7 +114,7 @@
    #else
       extern char *archiregs[TNIR], *archfregs[NFR], *archdregs[NDR];
       extern int iparareg[NIR], icalleesave[NIR], icallersave[NIR], 
-                 fcalleesave[TNFR], fcallersave[TNFR];
+                 fcalleesave[NFR], fcallersave[NFR];
    #endif
    #define dcallersave fcallersave
    #define dcalleesave fcalleesave
