@@ -1475,7 +1475,6 @@ void AddPrefetch(LOOPQ *lp, int unroll)
 /*
  * Find vars set in loop
  */
-#if 1
    if (!lp->sets) lp->sets = NewBitVec(TNREG+32);
    else SetVecAll(lp->sets, 0);
    for (bl=lp->blocks; bl; bl = bl->next)
@@ -1486,23 +1485,18 @@ void AddPrefetch(LOOPQ *lp, int unroll)
          if (ipp->set)
             BitVecComb(lp->sets, lp->sets, ipp->set, '|');
    }
-#endif
    ipp = PrintComment(bp, bp->ainst1, NULL, "START prefetching");
    for (i=1,n=lp->pfarrs[0]; i <= n; i++)
    {
       ptr = lp->pfarrs[i];
       flag = STflag[ptr-1];
-#if 1  /* sets/uses not yet figured */
       inst = BitVecCheck(lp->sets, lp->pfarrs[i]-1+TNREG) ? PREFW : PREFR;
-#else
-      inst = PREFR;
-#endif
       lvl = lp->pfflag[i] & 0x7;
 /*
  *    # of pref to issue is CEIL(unroll*sizeof(), LINESIZE)
  */
       npf = unroll > 1 ? unroll : 1;
-      npf *= type2len(flag);
+      npf *= type2len(FLAG2TYPE(flag));
       if (!IS_VEC(flag) && IS_VEC(lp->vflag))
          npf *= Type2Vlen(lp->vflag);
       npf = (npf + LINESIZE[lvl]-1) / LINESIZE[lvl];
@@ -1517,5 +1511,6 @@ void AddPrefetch(LOOPQ *lp, int unroll)
       }
    }
    ipp = PrintComment(bp, ipp, NULL, "DONE prefetching");
+   CFUSETU2D = INUSETU2D = INDEADU2D = 0;
    GetReg(-1);
 }
