@@ -90,12 +90,20 @@ j = i = 0
 CALLREF=1
 CALLATL=1
 CALLFKO=1
+PROFILE=1
+if PROFILE:
+   PROFCC="iccprof"
+   PROFF = "-xP -O3 -mp1 -static -w"
+else:
+   PROFCC=None
+   PROFF=None
+#PROFCC = 
 # print 'l1atl = ', l1atl
 for blas in l1routs:
    for pre in pres:
       if (CALLREF != 0):
          [time,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, l1refs[i], 
-                                 opt=opt)
+                                 opt=opt, cc=PROFCC, ccf=PROFF)
          assert(time > 0.0)
          print "REF %20.20s : time=%f, mflop=%f" % (pre+l1refs[i], time, mf)
          refT.append(time)

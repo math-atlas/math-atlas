@@ -63,17 +63,35 @@ def time(ATLdir, ARCH, pre, blas, N, rout, cc=None, ccf=None, opt=""):
 #
    l1sec = re.compile(r"tim=(.*)\s.*$")
    l1sum = re.compile(r"N=(.*),\s.*time=(.*), mflop=(.*)\s.*$")
+   PROFILE = 1
 
    if (opt != ""):
       opt = 'opt="' + opt + '"'
-   if(cc != None):
+   if cc != None and cc.find("iccprof") != -1: PROFILE = 1
+   else : PROFILE = 0
+      
+   if PROFILE:
+      popt = opt + ' UCC=icc UCCFLAGS="' + ccf + ' -prof_genx -prof_dir /tmp"'
+      pcmnd = 'cd %s/tune/blas/level1/%s ; make %s%scase N=%d urout=%s %s' % \
+             (ATLdir, ARCH, pre, blas, N, rout, popt)
+#      print "cmnd = '%s'" % (pcmnd)
+      fo = os.popen(pcmnd, 'r')
+      lines = fo.readlines()
+      err = fo.close()
+#      print lines
+      assert(err == None)
+      zopt = opt + ' UCC=icc UCCFLAGS="' + ccf + ' -prof_use -prof_dir /tmp"'
+   if PROFILE:
+      opt = zopt
+   elif cc != None :
       opt = opt + ' UCC=' + cc + ' UCCFLAGS="' + ccf + '"'
 #   print "opt = '%s'" % opt
    cmnd = 'make %s%scase N=%d urout=%s %s' % (pre, blas, N, rout, opt)
-#   print "cmnd= '%s'" % cmnd
    if WALLTIME and 0:
       cmnds = 'cd %s/tune/blas/level1/%s ; %s ; %s ; %s' % (ATLdir, ARCH, 
               cmnd, cmnd, cmnd)
+#   elif PROFILE and cc == None:
+#      cmnds = 'cd %s/tune/blas/level1/%s ; %s ' % (ATLdir, ARCH, cmnd)
    else :
       cmnds = 'cd %s/tune/blas/level1/%s ; %s ; %s' % (ATLdir, ARCH, cmnd, cmnd)
    gc.disable()
