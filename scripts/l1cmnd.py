@@ -2,6 +2,7 @@ import os
 import sys
 import re
 
+WALLTIME = 1
 L1Tdir = '/tune/blas/level1/'
 
 def GetDefaultBlas():
@@ -95,8 +96,10 @@ def time(ATLdir, ARCH, pre, blas, N, rout, cc=None, ccf=None, opt=""):
 #   if (len(t) > 6):
 #      print '**** WARNING: time = ', t
    t.sort()
-   mf = (mfavg * tavg) / t[2]
-   return [t[2], mf]
+   if WALLTIME: tim = t[0]
+   else : tim = t[2]
+   mf = (mfavg * tavg) / tim
+   return [tim, mf]
 
 def getucc(ATLdir, ARCH, rout, id, pre='d'):
    file = ATLdir + L1Tdir + rout.upper() + '/' + pre + 'cases.dsc'
