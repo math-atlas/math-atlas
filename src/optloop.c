@@ -622,6 +622,7 @@ static void ForwardLoop(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
       ip = ip->next;
       ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, 
                          STiconstlookup(unroll*SToff[lp->inc-1].i-1));
+      ip = ip->next;
       ip->next = NewInst(NULL, NULL, NULL, ST, SToff[lp->end-1].sa[2], -r0, 0);
    }
 
@@ -706,6 +707,12 @@ static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
             else
                ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, 
                                   STiconstlookup(SToff[I0].i-unroll+1));
+            ip = ip->next;
+         }
+         else if (unroll > 1)
+         {
+            ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, 
+                               STiconstlookup(unroll-1));
             ip = ip->next;
          }
       }
@@ -1284,21 +1291,11 @@ fprintf(stderr, "dupblks[%d] = %s\n", i-1, PrintBlockList(dupblks[i-1]));
  */
    CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = 0;
    RemoveLoopFromQ(optloop);
+   optloop->depth = 0;
    KillAllLoops();
    NewBasicBlocks(bbbase);
    CheckFlow(bbbase, __FILE__, __LINE__);
-{
-struct assmln *abase;
-FILE *fperr;
-struct assmln *lil2ass(BBLOCK *bbase);
-ShowFlow("dot.err", bbbase);
-AddBlockComments(bbbase);
-abase = lil2ass(bbbase);
-fperr = fopen("ass.err", "w");
-dump_assembly(fperr, abase);
-fclose(fperr);
-KillAllAssln(abase);
-}
+// ShowFlow("dot.err", bbbase);
    FindLoops();  /* need to setup optloop for this */
    CheckFlow(bbbase, __FILE__, __LINE__);
    return(0);
