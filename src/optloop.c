@@ -1243,7 +1243,8 @@ void UnrollCleanup(LOOPQ *lp, int unroll)
 /*
  * Generate the actual code to do loop cleanup
  */
-   GenCleanupLoop(lp);
+   if (lp->CU_label == 0)
+      GenCleanupLoop(lp);
 
    r0 = GetReg(T_INT);
    r1 = GetReg(T_INT);
@@ -1265,6 +1266,7 @@ void UnrollCleanup(LOOPQ *lp, int unroll)
       }
    }
    FORWARDLOOP = L_FORWARDLC_BIT & lp->flag;
+   unroll *= Type2Vlen(lp->vflag);
 /*
  * Require one and only one post-tail; later do transformation to ensure this
  * for loops where it is not natively true

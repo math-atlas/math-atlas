@@ -1,5 +1,14 @@
 #include "fko.h"
 
+int Type2Vlen(int type)
+{
+   if (type == T_VDOUBLE || type == T_DOUBLE)
+      return(2);
+   else if (type == T_VFLOAT || type == T_FLOAT)
+      return(4);
+   return(1);
+}
+
 ILIST *FindPrevStore(INSTQ *ipstart, short var, int blkvec, int ivseen)
 /*
  * Finds prev store of var starting with inst ipstart, stopping search if
@@ -242,7 +251,7 @@ fprintf(stderr, "moving ptr = %s\n", STname[p->ptr-1]);
       if (j > N)
          sp[k++] = sp[i];
    }
-   n -= k;
+   n = k;
    assert(n >= 0);
    lp->vscal = malloc(sizeof(short)*(n+1));
    assert(lp->vscal)
@@ -603,7 +612,7 @@ fprintf(stderr, "scoping %s (%d)\n", STname[op-1], op);
                            k = STpts2[op-1];
                            if (!FindInShortList(lp->varrs[0],lp->varrs+1,k))
                            {
-                              k = FindInShortList(lp->vscal[0],lp->vscal+1,op);
+                              k = FindInShortList(lp->vscal[0],lp->vscal+1,k);
                               assert(k);
                               ip->inst[j] = SToff[lp->vvscal[k-1]-1].sa[2];
                               assert(ip->inst[j] > 0);
@@ -689,7 +698,7 @@ int VectorizeStage1(void)
          return(13);
       }
    }
-   ip = KillPointerUpdates(pi, IS_VDOUBLE(lp->vflag) ? 2 : 4);
+   ip = KillPointerUpdates(pi, Type2Vlen(FLAG2TYPE(lp->vflag)));
    KillAllPtrinfo(pi);
    for (; ip; ip = ipn)
    {
@@ -731,7 +740,7 @@ int VectorizeStage1(void)
    return(0);
 }
 
-int VectorizeStage3(int savesp)
+int VectorizeStage3(int savesp, int SVSTATE)
 /*
  * Assuming Stage 1 vect done, create Stage 3, which includes vectorizing
  * the loop and generating cleanup (though jump to cleanup left to unroll)
@@ -750,6 +759,7 @@ int VectorizeStage3(int savesp)
    i = SimdLoop(optloop);
    if (i)
       return(i);
-   SaveFKOState(3);
+   if (SVSTATE)
+      SaveFKOState(3);
    return(0);
 }

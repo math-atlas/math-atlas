@@ -875,13 +875,9 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
    extern BBLOCK *bbbase;
    extern struct locinit *ParaDerefQ;
 
-   GenPrologueEpilogueStubs(bbbase, SAVESP);
-   NewBasicBlocks(bbbase);
-   FindLoops(); 
-   CheckFlow(bbbase, __FILE__, __LINE__);
    if (optloop)
    {
-      if (unroll > 1)
+      if (unroll > 1 || (FKO_FLAG & IFF_VECTORIZE))
          UnrollLoop(optloop, unroll);
       else
          OptimizeLoopControl(optloop, 1, 1, NULL);
@@ -974,6 +970,19 @@ struct optblkq *DefaultOptBlocks(void)
    return(base);
 }
 
+void DoStage2(int SAVESP, int SVSTATE)
+/*
+ * Assumes stage 0 has been achieved, writes files for stage 1
+ */
+{
+   GenPrologueEpilogueStubs(bbbase, SAVESP);
+   NewBasicBlocks(bbbase);
+   FindLoops(); 
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   if (SVSTATE)
+      SaveFKOState(2);
+}
+
 int main(int nargs, char **args)
 {
    FILE *fpin, *fpout, *fpl;
@@ -993,9 +1002,9 @@ int main(int nargs, char **args)
    if (FKO_FLAG & IFF_READINTERM)
    {
       if (FKO_FLAG & IFF_VECTORIZE)
-         RestoreFKOState(1);
+         RestoreFKOState(3);
       else
-         RestoreFKOState(0);
+         RestoreFKOState(2);
    }
    else
    {
@@ -1008,20 +1017,29 @@ int main(int nargs, char **args)
       if (FKO_FLAG & IFF_VECTORIZE)
       {
          assert(!VectorizeStage1());
-         assert(!VectorizeStage3(0));
+         assert(!VectorizeStage3(0, 0));
       }
+      else
+         DoStage2(0, 0);
    }
    if (FKO_FLAG & IFF_GENINTERM)
      exit(0);
+/*
+ * If we were unable to produce correct code, back off and save sp
+ */
    if (GoToTown(0, FKO_UR, optblks))
    {
       fprintf(stderr, "\n\nOut of registers for SAVESP, trying again!!\n");
       if (FKO_FLAG & IFF_VECTORIZE)
       {
-         assert(!VectorizeStage3(IREGBEG+NIR-1));
+         RestoreFKOState(1);
+         assert(!VectorizeStage3(IREGBEG+NIR-1, 0));
       }
       else
+      {
          RestoreFKOState(0);
+         DoStage2(IREGBEG+NIR-1, 0);
+      }
       assert(!GoToTown(IREGBEG+NIR-1, FKO_UR, optblks));
    }
    DumpOptsPerformed(stderr, 1);
