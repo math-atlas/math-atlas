@@ -990,16 +990,6 @@ void FinalizeLoops()
       }
       fprintf(stderr, "posttails = %s\n",
               PrintBlockList(lp->posttails));
-/*
- *    Find sets for loop
- */
-      iv = lp->sets = NewBitVec(32);
-      for (bl=lp->blocks; bl; bl = bl->next)
-      {
-         for (ip=bl->blk->ainst1; ip; ip = ip->next)
-            if (ACTIVE_INST(ip->inst[0]))
-               BitVecComb(iv, iv, ip->set);
-      }
    }
 /*   prepostloops(); */
    maxdep = CalcLoopDepth();

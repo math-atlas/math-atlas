@@ -1,4 +1,4 @@
-include /home/grads/whaley/AT3.7/ATLAS3.7.4.1/Make.Linux_P4SSE2
+include /home/grads/whaley/AT3.7/ATLAS3.7.6.0/Make.Linux_P4SSE2
 #include /home/rwhaley/AT3.7/ATLAS3.7.3/Make.Linux_P4ESSE3
 #include /tmp/rwhaley/ATLAS3.7.3.0/Make.Linux_P4SSE2
 

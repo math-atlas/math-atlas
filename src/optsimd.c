@@ -63,7 +63,32 @@ ILIST *FindNextLoad(INSTQ *ipstart, short var, int blkvec)
    return(il);
 }
 
-int DoInitLoopVecAnal(void)
+short FindReadUseType(INSTQ *ip, short var, int blkvec)
+/*
+ * Find first use of var, including 1st use of any var it is copied to,
+ * if a move is the first op
+ */
+{
+   short j=0;
+   ILIST *ib, *il;
+
+   ib = FindNextLoad(ip, var, blkvec);
+   for (il=ib; il; il = il->next)
+   {
+      if (ip->next->inst[0] == FADD || ip->next->inst[0] == FADDD)
+         j |= VS_ACC;
+      else if (IS_STORE(ip->next->inst[0])&& STpts2[ip->next->inst[2]-1] == var)
+      {
+         j |= FindReadUseType(ip->next, var, blkvec);
+         j |= FindReadUseType(ip->next, STpts2[ip->next->inst[1]-1], blkvec);
+      }
+      else
+         j |= VS_MUL;
+   }
+   KillIlist(ib);
+   return(j);
+}
+int DoInitLoopVecAnal(LOOPQ *lp)
 /*
  * Does some analysis on unoptimized code to determine how to vectorize loop
  * This will be later thrown away, and we will start again with either
@@ -78,6 +103,8 @@ int DoInitLoopVecAnal(void)
    int i, j, k, n, N;
    extern int FKO_BVTMP;
    ILIST *il, *ib;
+   if (!lp)
+      return(0);
 /*
  * Get code into standard form for analysis
  */
@@ -85,12 +112,10 @@ int DoInitLoopVecAnal(void)
    NewBasicBlocks(bbbase);
    FindLoops();
    CheckFlow(bbbase,__FILE__,__LINE__);
-   if (!optloop)
-      return(0);
 /*
  * Require one and only one post-tail to simplify analysis
  */
-   if (!optloop->posttail || optloop->posttail->next)
+   if (!lp->posttail || lp->posttail->next)
    {
       fko_warn(__LINE__, 
       "Must have one and only one posttail for simdification!\n\n");
@@ -114,7 +139,7 @@ int DoInitLoopVecAnal(void)
    for (i=0; i < TNREG; i++)
       SetVecBit(iv, i, 0);
 /*
- * Subtract off all non-fp vars
+ * Allow only fp ops & index ops
  */
    sp = BitVec2Array(iv, 1-TNREG);
    for (N=sp[0],n=0,i=1; i <= N; i++)
@@ -124,8 +149,8 @@ int DoInitLoopVecAnal(void)
 /*
  *    For non-fp var, if it's not the index var, give up
  */
-      else if (sp[i] != optloop->I && sp[i] != optloop->end && 
-               sp[i] != optloop->inc)
+      else if (sp[i] != lp->I && sp[i] != lp->end && 
+               sp[i] != lp->inc)
       {
          fko_warn(__LINE__, "Bailing on vect due to var %d,%s\n", sp[i]
                   STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
@@ -141,10 +166,30 @@ int DoInitLoopVecAnal(void)
       free(sp);
       return(0);
    }
+   else
+   {
+   /*
+    * Make sure all vars are of same type
+    */
+      j = FLAG2TYPE(sp[0]-1);
+      for (i=1; i < n; i++)
+      {
+         if (FLAG2TYPE(sp[i]-1) != j)
+         {
+             fko_warn(__LINE__, 
+                      "Mixed type %d(%s), %d(%s) prevents vectorization!!\n\n,
+                      j, STname[sp[0]-1] ? STname[sp[0]-1] : "NULL", 
+                      FLAG2TYPE(sp[i]-1), STname[sp[i]-1] ? STname[sp[i]-1] 
+                      : "NULL");
+             return(0);
+         }
+      }
+      lp->vflag = j;
+   }
 /*
  * Find arrays to vectorize
  */
-   pbase = FindMovingPointers(optloop->blocks);
+   pbase = FindMovingPointers(lp->blocks);
    for (N=0,p=pbase; p; p = p->next)
    {
       if (IS_FP(STflag[p->ptr-1]))
@@ -159,7 +204,7 @@ int DoInitLoopVecAnal(void)
       }
    }
 /*
- * Copy all moving pointers to optloop->varrs
+ * Copy all moving pointers to lp->varrs
  */
    s = malloc(sizeof(short)*(N+1));
    assert(s);
@@ -167,7 +212,7 @@ int DoInitLoopVecAnal(void)
    for (j=0,i=1,p=pbase; p; p = p->next)
       if (IS_FP(STflag[p->ptr-1]))
          s[i++] = p->ptr;
-   optloop->varrs = s;
+   lp->varrs = s;
 /*
  * Remove the moving arrays from scalar vals
  */
@@ -179,29 +224,54 @@ int DoInitLoopVecAnal(void)
    }
    n -= k;
    assert(n >= 0);
-   optloop->vscal = malloc(sizeof(short)*(n+1));
-   assert(optloop->vscal)
+   lp->vscal = malloc(sizeof(short)*(n+1));
+   assert(lp->vscal)
    if (n)
    {
-      optloop->vsflag = calloc(n, sizeof(short));
-      assert(optloop->vsflag);
+      lp->vsflag = calloc(n, sizeof(short));
+      assert(lp->vsflag);
    }
-   optloop->vscal[0] = n;
+   lp->vscal[0] = n;
    for (i=1; i <= n; i++)
-      optloop->vscal[i] = sp[i-1];
+      lp->vscal[i] = sp[i-1];
 
    free(sp);
-   sp = optloop->vscal+1;
+   sp = lp->vscal+1;
 /*
  * Sort scalar vals into livein,liveout, and tmp
  */
    if (n)
    {
 /*
+ *    Find fp scalars set inside loop
+ */
+      iv1 = Array2BitVec(n, sp, TNREG-1);
+      SetVecAll(iv, 0);
+      for (bl=lp->blocks; bl; bl = bl->next)
+      {
+         for (ip=bl->blk->ainst1; ip; ip = ip->next)
+            if (ACTIVE_INST(ip->inst[0]))
+               BitVecComb(iv, iv, ip->set, '|');
+      }
+      BitVecComb(iv, iv, iv1, '&');
+      s = BitVec2StaticArray(iv);
+      for (i=1; i <= s[0]; i++)
+      {
+         k = s[i] - TNREG + 1;
+         for (j=0; j < n; j++)
+         {
+            if (sp[j] == k)
+            {
+               lp->vsflag[j] |= VS_SET;
+               break;
+            }
+         }
+      }
+/*
  *    Find fp scalars live on loop input
  */
       iv1 = Array2BitVec(n, sp, TNREG-1);
-      BitVecComb(iv1, optloop->header->ins, '&');
+      BitVecComb(iv1, lp->header->ins, '&');
       s = BitVec2StaticArray(iv1);
       for (i=1; i <= s[0]; i++)
       {
@@ -210,7 +280,7 @@ int DoInitLoopVecAnal(void)
          {
             if (sp[j] == k)
             {
-               optloop->vsflag[j] |= VS_LIVEIN;
+               lp->vsflag[j] |= VS_LIVEIN;
                break;
             }
          }
@@ -227,12 +297,12 @@ int DoInitLoopVecAnal(void)
       {
          BitVecDup(iv1, bl->blk->outs, '=');
          if (bl->blk->usucc && 
-             !BitVecCheck(optloop->blkvec, bl->usucc->blk->bnum-1))
+             !BitVecCheck(lp->blkvec, bl->usucc->blk->bnum-1))
             BitVecComb(iv1, bl->blk->usucc->ins, '&');
          else
          {
             assert(bl->blk->csucc &&
-                   !BitVecCheck(optloop->blkvec, bl->csucc->blk->bnum-1));
+                   !BitVecCheck(lp->blkvec, bl->csucc->blk->bnum-1));
             BitVecComb(iv1, bl->blk->csucc->ins, '&');
          }
          BitVecComb(iv, iv1, '|');
@@ -247,15 +317,18 @@ int DoInitLoopVecAnal(void)
          {
             if (sp[j] == k)
             {
-               optloop->vsflag[j] |= VS_LIVEOUT;
+               lp->vsflag[j] |= VS_LIVEOUT;
                break;
             }
          }
       }
 /*
  *    Find out how to init livein and reduce liveout vars
+ *    NOTE: right now, we have an error, because we don't consider what happens
+ *          when the first op of a scalar is to copy it to another scalar,
+ *          in which case you must examine the use of both vars.
  */
-      s = optloop->vsflag;
+      s = lp->vsflag;
       for (i=0; i < n; i++)
       {
 /*
@@ -266,16 +339,7 @@ int DoInitLoopVecAnal(void)
  */
          if (s[i] & VS_LIVEIN)
          {
-            ib = FindNextLoad(optloop->header->ainst1, sp[i], optloop->blkvec);
-            j = 0;
-            for (il=ib; il; il = il->next)
-            {
-               if (ip->next->inst[0] == FADD || ip->next->inst[0] == FADDD)
-                  j |= VS_ACC;
-               else
-                  j |= VS_MUL;
-            }
-            KillIlist(ib);
+            j = FindReadUseType(lp->header->inst1, sp[i], lp->blkvec);
             if (j == VS_ACC)
                s[i] |= VS_ACC;
             else if (j == VS_MUL)
@@ -293,7 +357,7 @@ int DoInitLoopVecAnal(void)
  */
          else if (s[i] & VS_LIVEOUT)
          {
-            ib = FindPrevStore(optloop->posttail->inst1, sp[i],optloop->blkvec);
+            ib = FindPrevStore(lp->posttail->inst1, sp[i],lp->blkvec);
             j = 0;
             for (il=ib; il; il = il->next)
             {
@@ -314,6 +378,61 @@ int DoInitLoopVecAnal(void)
  * HERE HERE HERE
  * Now, need to scope optloop->varrs to make sure they are always operated on
  * by '=', '+' or '*'
+ * NOTE: might fix this by waiting until the actual simidification is done,
+ *       and simply backing up if it is not the case; otherwise, should 
+ *       probably keep info around, so we know how to make the transforms
+ *       when it is time
+ * NOTE: array vals always loaded to scalars by HIL, so if we determine
+ *       the operation performed on scalars, we will know the op being used
+ *       by the arrays.
+ *     
  */
    return(1);
+}
+
+void VecUnrollLoop(LOOPQ *lp, int unroll)
+{
+   enum inst sld, vld, sst, vst, smul, vmul, sadd, vadd, ssub, vsub, 
+             sabs, vabs, smov, vmov, szero, vzero;
+
+   if (!DoInitLoopVecAnal(lp))
+     exit(-1);
+   if (IS_FLOAT(lp->vflag))
+   {
+      sld   = FLD;
+      sst   = FST;
+      smul  = FMUL;
+      sadd  = FADD;
+      ssub  = FSUB;
+      sabs  = FABS;
+      smov  = FMOV;
+      szero = FZERO;
+      vld   = VFLD;
+      vst   = VFST;
+      vmul  = VFMUL;
+      vadd  = VFADD;
+      vsub  = VFSUB;
+      vabs  = VFABS;
+      vmov  = VFMOV;
+      vzero = VFZERO;
+   }
+   else
+   {
+      sld   = FLDD;
+      sst   = FSTD;
+      smul  = FMULD;
+      sadd  = FADDD;
+      ssub  = FSUBD;
+      sabs  = FABSD;
+      smov  = FMOVD;
+      szero = FZEROD;
+      vld   = VDLD;
+      vst   = VDST;
+      vmul  = VDMUL;
+      vadd  = VDADD;
+      vsub  = VDSUB;
+      vabs  = VDABS;
+      vmov  = VDMOV;
+      vzero = VDZERO;
+   }
 }

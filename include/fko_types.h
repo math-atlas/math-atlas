@@ -116,14 +116,17 @@ struct blist
    void *ptr;   /* used only for ignodes */
 };
 
-#define VS_LIVEIN  1
-#define VS_LIVEOUT 2
-#define VS_ACC     4
-#define VS_MUL     8
+#define VS_LIVEIN  1   /* live on loop entry */
+#define VS_LIVEOUT 2   /* live on loop exit */
+#define VS_SET     4   /* set inside loop */
+#define VS_ACC     8   /* updated with add */
+#define VS_MUL     16  /* updated with mul */
+#define VS_EQ      32  /* updated by assignment */
+#define VS_ABS     64  /* updated by absolutle value */
 typedef struct loopq LOOPQ;
 struct loopq
 {
-   int flag;
+   int flag, vflag;
    short ndup;        /* # of times body has been dupd (unroll & cleanup) */
    short depth;
    short I, beg, end, inc;
