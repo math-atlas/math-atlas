@@ -706,7 +706,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
          InsNewInst(NULL, NULL, next, ST, 
                     AddDerefEntry(-REG_SP, 0, 0, k+8), -ir, 0);
       }
-      InsNewInst(NULL NULL, next, COMMENT, STstrconstlookup("done archspec"), 
+      InsNewInst(NULL, NULL, next, COMMENT, STstrconstlookup("done archspec"), 
                  0, 0);
    #endif
    #ifdef X86_32
