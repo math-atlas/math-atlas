@@ -10,8 +10,8 @@
 #if !defined(LINUX_PPC) && !defined(OSX_PPC) && !defined(LINUX_X86_32) && \
     !defined(LINUX_X86_64) && !defined(SOLARIS_SPARC)
 /*   #define LINUX_X86_64 */
-   #define LINUX_X86_32
-/*   #define SOLARIS_SPARC */
+/*   #define LINUX_X86_32 */
+   #define SOLARIS_SPARC 
 /*   #define OSX_PPC */
 #endif
 
@@ -68,14 +68,22 @@
    #define NDR  32                      /* # of double regs */
    #define NSDR 32
    #define ZEROREG 32
-   #define IRETREG 17
+   #define IRETREG 10
    #define FRETREG FREGBEG
    #define DRETREG DREGBEG
    #ifdef ARCH_DECLARE
       int  icallersave[TNIR] = 
        {0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 1,1,1,1,1,1,1, 1,1,1,1,1,1,1, 0};
+/*
+ *    Note that we are using the SAVE statement, so the callee explicitly
+ *    saves nothing
+ */
       int  icalleesave[TNIR] = 
-       {0, 1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0};
+#if 1
+     {0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0}; 
+#else
+     {0, 1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0}; 
+#endif
       char *archiregs[TNIR] = 
          {"@sp", "@l0", "@l1", "@l2", "@l3", "@l4", "@l5", "@l6", "@l7",
           "@i0", "@i1", "@i2", "@i3", "@i4", "@i5", "@i6", "@i7", 

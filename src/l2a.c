@@ -202,7 +202,7 @@ static char *GetIregOrConst(short id)
          if (IS_INT(flag) || IS_SHORT(flag)) sprintf(ln, "$%d", SToff[id].i);
 /*         else if (IS_SHORT(flag)) sprintf(ln, "$%ld", SToff[id].l); */
       #else
-         if (IS_INT(flag) || IS_SHORT(flag)) sprintf(ln, "0x%x", SToff[id].i);
+         if (IS_INT(flag) || IS_SHORT(flag)) sprintf(ln, "%d", SToff[id].i);
 /*         else if (IS_SHORT(flag)) sprintf(ln, "%ld", SToff[id].l); */
       #endif
          else fko_error(__LINE__, "Integer constant expected!\n");
