@@ -10,6 +10,8 @@ int DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0, DTx87=0, DTx87d=0;
 int DTnzerods=0, DTabsds=0, DTnzeros=0, DTabss=0;
 int FKO_FLAG;
 int PFISKIP=0, PFINST=(-1), PFCHUNK=1;
+int NWNT=0;
+char **ARRWNT=NULL;
 static char fST[1024], fLIL[1024], fmisc[1024];
 static short *PFDST=NULL, *PFLVL=NULL;
 static char **PFARR=NULL;
@@ -40,6 +42,7 @@ void PrintUsageN(char *name)
    fprintf(stderr, "     o : dump opt sequence to <file>.opt\n");
    fprintf(stderr, "  -U <#> : Unroll main loop # of times\n");
    fprintf(stderr, "  -V     : Vectorize (SIMD) main loop\n");
+   fprintf(stderr, "  -W <name> : use cache write-through stores\n");
    fprintf(stderr, "  -P <all/name> <cache level> <dist(bytes)>\n");
    fprintf(stderr, 
 "  -Pa[r/w] [n,3,0] : non-temp, 3dnow, temp L1 (read/write) prefetch\n");
@@ -189,6 +192,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
    char *fin=NULL, *fout=NULL;
    struct optblkq *obq=NULL, *op;
    struct ptrinfo *pf, *pfb=NULL, *pf0, *pfK, *pfP;
+   struct idlist  *id, *idb=NULL, *idP, *idK;
    char *sp, *rpath=NULL, *rname=NULL;
    int i, j, k;
 
@@ -257,6 +261,12 @@ struct optblkq *GetFlagsN(int nargs, char **args,
                pfb = pf;
                i += 3;
             }
+            break;
+         case 'W':
+            id = malloc(sizeof(struct idlist));
+            id->name = args[++i];
+            id->next = idb;
+            idb = id;
             break;
          case 'R':
             if (args[i+1][0] == 'd')
@@ -401,6 +411,40 @@ ERR:
          }
       }
    }
+   if (idb)
+   {
+/*
+ *    Keep only last declaration for given array
+ */
+      for (id=idb; id; id = id->next)
+      {
+         for (idP=id,idK=id->next; idK; idK = idK->next)
+         {
+            if (!strcmp(id->name, idK->name))
+            {
+               idP->next = idK->next;
+               free(idK);
+               idK = idP;
+            }
+            idP = idK;
+         }
+      }
+/*
+ *    Count # of such arrays, then store them in ARRNT
+ */
+      for (id=idb,i=0; id; id = id->next, i++);
+      NWNT = i;
+      ARRWNT = malloc((i+1) * sizeof(char *));
+      assert(ARRWNT);
+      ARRWNT[i] = NULL;
+      for (id=idb,i=0; i < NWNT; i++, id=id->next)
+      {
+         j = strlen(id->name)+1;
+         ARRWNT[i] = malloc(sizeof(char)*j);
+         assert(ARRWNT[i]);
+         strcpy(ARRWNT[i], id->name);
+      }
+   }
    if (pfb)
    {
 /*
@@ -415,6 +459,7 @@ ERR:
                for (pfP=pf; pfP->next != pfK; pfP = pfP->next);
                pfP->next = pfK->next;
                free(pfK);
+               pfK = pfP;
             }
          }
       }
@@ -663,6 +708,7 @@ static void WriteMiscToFile(char *name)
       n = 0;
       assert(fwrite(&n, sizeof(short), 1, fp) == 1);
    }
+   WriteStringArrayToFile(fp, NWNT, ARRWNT);
    fclose(fp);
 }
 
@@ -743,6 +789,17 @@ static void ReadMiscFromFile(char *name)
       free(sp);
       free(s);
    }
+   if (NWNT && ARRWNT)
+   {
+      for (i=0; i < NWNT; i++)
+         if (ARRWNT[i])
+            free(ARRWNT[i]);
+      free(ARRWNT);
+   }
+   ARRWNT = ReadStringArrayFromFile(fp);
+   if (ARRWNT)
+      for (NWNT=0; ARRWNT[NWNT]; NWNT++);
+   else NWNT = 0;
    fclose(fp);
 }
 
@@ -1006,7 +1063,7 @@ int PerformOpt(int SAVESP)
 
 int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
 {
-   int i;
+   int i, j;
    extern BBLOCK *bbbase;
    extern struct locinit *ParaDerefQ;
 
@@ -1057,6 +1114,14 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
    assert(!PerformOpt(SAVESP));
 #endif
 
+   if (NWNT)
+   {
+      i = DoStoreNT(NULL);
+      for (j=0; j < NWNT; j++)
+         free(ARRWNT[j]);
+      free(ARRWNT);
+      NWNT = i;
+   }
    if (!INDEADU2D)
       CalcAllDeadVariables();
    if (!CFLOOP)
@@ -1104,6 +1169,11 @@ void DumpOptsPerformed(FILE *fpout, int verbose)
             ch = 'L';
          fprintf(fpout, "%3d. %c %20.20s : %d\n", j+i, ch, optmnem[k],
                  optchng[i]);
+      }
+      if (NWNT)
+      {
+         fprintf(fpout, "%3d. %c %20.20s : %d\n", j+i+1, 'G', 
+                 "Non-cached writes", NWNT);
       }
    }
 }

@@ -85,6 +85,21 @@ BLIST *FindInList(BLIST *lp, BBLOCK *blk)
       if (lp->blk == blk) return(lp);
    return(NULL);
 }
+
+BLIST *GetGlobalScope()
+{
+   BBLOCK *bp;
+   extern BBLOCK *bbbase;
+   BLIST *blb=NULL, *bl;
+   if (bbbase)
+   {
+      for (bp=bbbase; bp->down; bp = bp->down);
+      for (; bp; bp = bp->up)
+         blb = NewBlockList(bp, blb);
+   }
+   return(blb);
+}
+
 BBLOCK *FindBlockInListByNumber(BLIST *lp, ushort bnum)
 {
    for (; lp; lp = lp->next)

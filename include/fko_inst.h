@@ -146,6 +146,7 @@ enum inst
    VDLDS,                      /* [vr0], [mem]  :  vr0[0] = mem; vr0[1] = 0 */
    VDLDL,                      /* [vr], [mem]   : vr[0] = mem; vr[1] = vr[1] */
    VDLDH,                      /* [vr], [mem]   : vr[0] = vr[0]; vr[1] = mem */
+   VDSTNT,                     /* [memA], vr0    : mem = vr0 */
    VDST,                       /* [memA], vr0    : mem = vr0 */
    VDSTS,                      /* [mem], [vr0]  :  mem = vr[0] */
    VDMOV,                      /* [vr0], [vr1]   : vr0 = vr1 */
@@ -167,6 +168,7 @@ enum inst
    VFLDS,                      /* [vr0], [mem]  :  vr0[0] = mem; vr0[1] = 0 */
    VFLDL,                      /* [vr], [mem]   : vr[0] = mem; vr[1] = vr[1] */
    VFLDH,                      /* [vr], [mem]   : vr[0] = vr[0]; vr[1] = mem */
+   VFSTNT,                     /* [memA], vr0    : mem = vr0; no cache read */
    VFST,                       /* [memA], vr0    : mem = vr0 */
    VFSTS,                      /* [mem], [vr0]  :  mem = vr[0] */
    VFMOV,                      /* [vr0], [vr1]   : vr0 = vr1 */
@@ -314,6 +316,7 @@ char *instmnem[] =
    "VDLDS",
    "VDLDL",
    "VDLDH",
+   "VDSTNT",
    "VDST",
    "VDSTS",
    "VDMOV",
@@ -331,6 +334,7 @@ char *instmnem[] =
    "VFLDS",
    "VFLDL",
    "VFLDH",
+   "VFSTNT",
    "VFST",
    "VFSTS",
    "VFMOV",
@@ -382,7 +386,8 @@ char *instmnem[] =
                      (i_) == VFMOV || (i_) == VDMOV)
 #define IS_STORE(i_)  ((i_) == ST || (i_) == FST || (i_) == FSTD || \
                        (i_) == VFST || (i_) == VDST || (i_) == STS || \
-                       (i_) == VFSTS || (i_) == VDSTS)
+                       (i_) == VFSTS || (i_) == VDSTS || \
+                       (i_) == VFSTNT || (i_) == VDSTNT)
 #define IS_CMP(i_) ((i_) == CMP || (i_) == CMPAND || (i_) == CMPS || \
                     (i_) == FCMP || (i_) == FCMPD || (i_) == VFCMP || \
                     (i_) == VDCMP || \

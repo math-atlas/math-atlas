@@ -2052,31 +2052,44 @@ void AddPrefetch(LOOPQ *lp, int unroll)
 #endif
 }
 
-int NumberArrayWrites(BLIST *scope, int ptr)
+void CountArrayAccess(BLIST *scope, int ptr, int *nread, int *nwrite)
 /*
- * Finds number of writes to *ptr in scope, *ptr is float or double (not vec)
+ * Finds number of read/write to *ptr in scope, 
+ * *ptr is float or double (not vec)
+ * NOTE: assumes LD/ST only array access, may want to run DoEnforceLoadStore()
+ *       to make sure this is true
  */
 {
    BLIST *bl;
    INSTQ *ip;
-   int nw=0, i;
-   enum inst inst;
+   int nr=0, nw=0, i;
+   enum inst st, ld;
 
    i = STflag[ptr-1];
    i = FLAG2TYPE(i);
    if (IS_FLOAT(i))
-      inst = FST;
+   {
+      st = FST;
+      ld = FLD;
+   }
    else
    {
       assert(IS_DOUBLE(i));
-      inst = FSTD;
+      st = FSTD;
+      ld = FLDD;
    }
-   if (i == T_FLOAT)
    for (bl=scope; bl; bl = bl->next)
+   {
       for (ip=bl->blk->ainst1; ip; ip = ip->next)
-         if (ip->inst[0] == inst && STpts2[ip->inst[1]-1] == ptr)
+      {
+         if (ip->inst[0] == st && STpts2[ip->inst[1]-1] == ptr)
             nw++;
-   return(nw);
+         else if (ip->inst[0] == ld && STpts2[ip->inst[2]-1] == ptr)
+            nr++;
+      }
+   }
+   *nread = nr;
+   *nwrite = nw;
 }
 
 void PrintLoopInfo()
@@ -2090,7 +2103,7 @@ void PrintLoopInfo()
    INSTQ *ip;
    struct ptrinfo *pi, *pi0;
    FILE *fpout=stdout;
-   int SimpleLC=0, UR, N, Npf, i, j, vect;
+   int SimpleLC=0, UR, N, Npf, i, j, k, vect;
    int set, use;
    extern FILE *fpLOOPINFO;
 
@@ -2179,8 +2192,8 @@ void PrintLoopInfo()
                if (FindInShortList(lp->nopf[0], lp->nopf+1, i+1))
                   j = 0;
             fprintf(fpout, " prefetch=%d", j);
-            j = NumberArrayWrites(lp->blocks, i+1);
-            fprintf(fpout, " sets=%d\n", j);
+            CountArrayAccess(lp->blocks, i+1, &k, &j);
+            fprintf(fpout, " sets=%d uses=%d\n", j, k);
          }
       }
       KillAllPtrinfo(pi0);

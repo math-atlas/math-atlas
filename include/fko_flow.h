@@ -16,6 +16,7 @@ void KillBlockList(BLIST *lp);
 BLIST *ReverseBlockList(BLIST *list);
 BLIST *MergeBlockLists(BLIST *l1, BLIST *l2);
 BLIST *FindBlockListWithLabel(BLIST *list, int ilab);
+BLIST *GetGlobalScope();
 
 BBLOCK *NewBasicBlock(BBLOCK *up, BBLOCK *down);
 void KillAllBasicBlocks(BBLOCK *base);

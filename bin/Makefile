@@ -2,13 +2,13 @@ SHELL = /bin/tcsh
 CC = gcc
 CCFLAGS = -g
 objs = y.tab.o lex.yy.o h2l.o l2a.o inst.o symtab.o arch.o misc.o flow.o \
-       bvec.o vars.o optreg.o optflow.o optsimd.o optloop.o
+       bvec.o vars.o optreg.o optflow.o optsimd.o optloop.o optmisc.o
 HDIR = ../include
 heads= $(HDIR)/fko_arch.h $(HDIR)/fko_inst.h $(HDIR)/fko_misc.h \
        $(HDIR)/fko_types.h $(HDIR)/fko_h2l.h $(HDIR)/fko_l2a.h \
        $(HDIR)/fko_symtab.h $(HDIR)/fko.h $(HDIR)/fko_flow.h \
        $(HDIR)/fko_bvec.h $(HDIR)/fko_vars.h $(HDIR)/fko_optreg.h \
-       $(HDIR)/fko_loop.h $(HDIR)/fko_optsimd.h
+       $(HDIR)/fko_loop.h $(HDIR)/fko_optsimd.h $(HDIR)/fko_optmisc.h
 
 fko : $(heads) fko.o $(objs)
 	$(CC) $(CCFLAGS) -o $@ fko.o $(objs) -lfl
@@ -33,6 +33,8 @@ lex.yy.o : $(heads) y.tab.h lex.yy.c
 y.tab.o : $(heads) y.tab.h
 	$(CC) -I../include $(CCFLAGS) -c y.tab.c
 
+optmisc.o : $(heads) ../src/optmisc.c
+	$(CC) -I../include $(CCFLAGS) -c ../src/optmisc.c
 optflow.o : $(heads) ../src/optflow.c
 	$(CC) -I../include $(CCFLAGS) -c ../src/optflow.c
 optsimd.o : $(heads) ../src/optsimd.c

@@ -1782,6 +1782,10 @@ struct assmln *lil2ass(BBLOCK *bbase)
          ap->next = PrintAssln("\tmovhpd\t%s, %s\n", GetDeref(op2),
                                archvdregs[-VDREGBEG-op1]);
          break;
+      case VDSTNT:
+         ap->next = PrintAssln("\tmovntpd\t%s, %s\n", archvdregs[-VDREGBEG-op2],
+                               GetDeref(op1));
+         break;
       case VDST:
          ap->next = PrintAssln("\tmovapd\t%s, %s\n", archvdregs[-VDREGBEG-op2],
                                GetDeref(op1));
@@ -1931,6 +1935,10 @@ struct assmln *lil2ass(BBLOCK *bbase)
       case VFLDH:  /* NOTE: dest is also source */
          ap->next = PrintAssln("\tmovhps\t%s, %s\n", GetDeref(op2),
                                archvfregs[-VFREGBEG-op1]);
+         break;
+      case VFSTNT:
+         ap->next = PrintAssln("\tmovntps\t%s, %s\n", archvfregs[-VFREGBEG-op2],
+                               GetDeref(op1));
          break;
       case VFST:
          ap->next = PrintAssln("\tmovaps\t%s, %s\n", archvfregs[-VFREGBEG-op2],

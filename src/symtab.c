@@ -216,6 +216,19 @@ char *STi2str(short i)
    return(STname[i-1] ? STname[i-1] : "NULL");
 }
 
+short FindVarFromName(char *name)
+/*
+ * RETURNS: ST index of var with name
+ */
+{
+   int i;
+
+   for (i=0; i < N; i++)
+      if (STname[i] && IS_VAR(STflag[i]) && !strcmp(STname[i], name))
+         return(i+1);
+   return(0);
+}
+
 void STsetoffi(short i, int off)
 {
     SToff[i-1].i = off;
