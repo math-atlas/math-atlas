@@ -594,6 +594,10 @@ void ReadSTFromFile(char *fname)
 {
    int i, len;
    FILE *fp;
+   #ifdef X86
+      extern int DTnzerod, DTabsd, DTnzero, DTabs, DTx87, DTx87d;
+   #endif
+   extern short STderef;
 
    fp = fopen(fname, "rb");
    assert(fp);
@@ -613,6 +617,15 @@ void ReadSTFromFile(char *fname)
    assert(fread(&LOCALIGN, sizeof(int), 1, fp) == 1);
    assert(fread(&LOCSIZE, sizeof(int), 1, fp) == 1);
    assert(fread(&NPARA, sizeof(int), 1, fp) == 1);
+   #ifdef X86
+      assert(fread(&DTnzerod, sizeof(int), 1, fp) == 1);
+      assert(fread(&DTabsd, sizeof(int), 1, fp) == 1);
+      assert(fread(&DTx87d, sizeof(int), 1, fp) == 1);
+      assert(fread(&DTnzero, sizeof(int), 1, fp) == 1);
+      assert(fread(&DTabs, sizeof(int), 1, fp) == 1);
+      assert(fread(&DTx87, sizeof(int), 1, fp) == 1);
+   #endif
+   assert(fread(&STderef, sizeof(short), 1, fp) == 1);
    assert(fread(SToff, sizeof(union valoff), N, fp) == N);
    assert(fread(STflag, sizeof(int), N, fp) == N);
 /* 
@@ -638,6 +651,10 @@ void WriteSTToFile(char *fname)
 {
    int i, len;
    FILE *fp;
+   #ifdef X86
+      extern int DTnzerod, DTabsd, DTnzero, DTabs, DTx87, DTx87d;
+   #endif
+   extern short STderef;
 
    fp = fopen(fname, "wb");
    assert(fp);
@@ -651,6 +668,15 @@ void WriteSTToFile(char *fname)
    assert(fwrite(&LOCALIGN, sizeof(int), 1, fp) == 1);
    assert(fwrite(&LOCSIZE, sizeof(int), 1, fp) == 1);
    assert(fwrite(&NPARA, sizeof(int), 1, fp) == 1);
+   #ifdef X86
+      assert(fwrite(&DTnzerod, sizeof(int), 1, fp) == 1);
+      assert(fwrite(&DTabsd, sizeof(int), 1, fp) == 1);
+      assert(fwrite(&DTx87d, sizeof(int), 1, fp) == 1);
+      assert(fwrite(&DTnzero, sizeof(int), 1, fp) == 1);
+      assert(fwrite(&DTabs, sizeof(int), 1, fp) == 1);
+      assert(fwrite(&DTx87, sizeof(int), 1, fp) == 1);
+   #endif
+   assert(fwrite(&STderef, sizeof(short), 1, fp) == 1);
    assert(fwrite(SToff, sizeof(union valoff), N, fp) == N);
    assert(fwrite(STflag, sizeof(int), N, fp) == N);
 /* 

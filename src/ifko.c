@@ -125,7 +125,126 @@ void GetFlags(int nargs, char **args, char **FIN, FILE **FPIN, FILE **FPOUT)
    *FPOUT = fpout;
 }
 
-static void WriteBaseLIL()
+static void WriteShortArrayToFile(FILE *fp, short *sp)
+{
+   short n;
+   if (sp)
+   {
+      n = sp[0] + 1;
+      assert(fwrite(sp, sizeof(short), n, fp) == n);
+   }
+   else
+   {
+      n = 0;
+      assert(fwrite(&n, sizeof(short), 1, fp) == 1);
+   }
+}
+
+static short *ReadShortArrayFromFile(FILE *fp)
+/*
+ * Reads a short array of form <N> [<elt1>....<eltN>] into memory, and 
+ * returns allocated array pointer.  <N> is put in as 1st element of this
+ * N+1 element array
+ */
+{
+   short n;
+   short *sp=NULL;
+   assert(fread(&n, sizeof(short), 1, fp) == 1);
+   if (n > 0)
+   {
+      sp = malloc((n+1)*sizeof(short));
+      assert(sp);
+      sp[0] = n;
+      assert(fread(sp, sizeof(short), n, fp) == n);
+   }
+   return(sp);
+}
+
+static void WriteMiscToFile(char *name)
+{
+   FILE *fp;
+   short n;
+
+   fp = fopen(name, "wb");
+   assert(fp);
+   if (optloop)
+   {
+      n = 1;
+      assert(fwrite(&n, sizeof(short), 1, fp) == 1);
+      assert(fwrite(optloop, sizeof(LOOPQ), 1, fp) == 1);
+      WriteShortArrayToFile(fp, optloop->slivein);
+      WriteShortArrayToFile(fp, optloop->sliveout);
+      WriteShortArrayToFile(fp, optloop->adeadin);
+      WriteShortArrayToFile(fp, optloop->adeadout);
+      assert(!optloop->abalign);  /* fix this later */
+   }
+   else
+   {
+      n = 0;
+      assert(fwrite(&n, sizeof(short), 1, fp) == 1);
+   }
+   fclose(fp);
+}
+
+static void ReadMiscFromFile(char *name)
+{
+   int i;
+   short n;
+   FILE *fp;
+
+   if (optloop)
+      KillLoop(optloop);
+   KillAllLoops();
+   optloop = NewLoop(0);
+   fp = fopen(name, "rb");
+   assert(fp);
+   assert(fread(&n, sizeof(short), 1, fp) == 1);
+   if (n)
+   {
+      assert(fread(optloop, sizeof(LOOPQ), 1, fp) == 1);
+/* 
+ *    Read in loop-markup arrays
+ */
+      optloop->slivein  = ReadShortArrayFromFile(fp);
+      optloop->sliveout = ReadShortArrayFromFile(fp);
+      optloop->adeadin  = ReadShortArrayFromFile(fp);
+      optloop->adeadout = ReadShortArrayFromFile(fp);
+      optloop->abalign = NULL;  /* handle this later */
+      optloop->preheader = optloop->header = NULL;
+      optloop->tails = optloop->posttails = NULL;
+      if (optloop->blkvec)
+         optloop->blocks = BitVec2BlockList(optloop->blkvec);
+      else
+         optloop->blocks = NULL;
+      optloop->iglist = NULL;
+      optloop->next = NULL;
+   }
+   else 
+      optloop = NULL;
+   fclose(fp);
+}
+
+static void RestoreFKOState(int isav)
+{
+   char *fST = "/tmp/iFKO_ST.",
+        *fLIL = "/tmp/iFKO_LIL.",
+        *fmisc =  "/tmp/iFKO_misc.";
+   char ln[128];
+   extern BBLOCK *bbbase;
+
+   sprintf(ln, "%s%d", fST, isav);
+   ReadMiscFromFile(ln);
+   sprintf(ln, "%s%d", fLIL, isav);
+   ReadSTFromFile(ln);
+   sprintf(ln, "%s%d", fmisc, isav);
+   ReadLILFromBinFile(ln);
+/*
+ * All annotation must be done afresh
+ */
+   CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = 0;
+}
+
+static void SaveFKOState(int isav)
 /*
  * Writes out base LIL translation of routine so we can reread it in in order
  * to iteratively apply differing optimizations
@@ -134,63 +253,39 @@ static void WriteBaseLIL()
  * 2. ST: N, STname, SToff, STflag,
  *        niloc, nlloc, nfloc, ndloc, nvfloc, nvdloc, LOCALIGN, LOCSIZE, NPARA
  *    - WriteSTToFile, ReadSTFromFile in symtab.c
- * 3. Global vars: STderef
+ * 3. Global vars: STderef, DTnzerod, DTabsd, DTx87d, DTnzero, DTabs, DTx87
  * 4. optloop
+ * 5. Global vars: FKO_BVTMP, FKO_FLAG, 
+ *    CFU2D,CFDOMU2D CFUSETU2D, INUSETU2D, INDEADU2D
  * 5. ... not finished looking ...
  *
- * DONE: 2
+ * DONE: 1(inst.c), 2,3(symtab.c)
  */
 {
-   char *fST = "/tmp/iFKO_base.ST",
-        *fLIL = "/tmp/iFKO_base.LIL";
+   char *fST = "/tmp/iFKO_ST.",
+        *fLIL = "/tmp/iFKO_LIL.",
+        *fmisc =  "/tmp/iFKO_misc.";
+   char ln[128];
    extern BBLOCK *bbbase;
         
-   WriteSTToFile(fST);
-   ReadSTFromFile(fST);
-   WriteLILToBinFile(fLIL, bbbase);
-#if 1
-   ReadLILFromBinFile(fLIL);
-#endif
+   sprintf(ln, "%s%d", fST, isav);
+   WriteSTToFile(ln);
+   sprintf(ln, "%s%d", fLIL, isav);
+   WriteLILToBinFile(ln, bbbase);
+   sprintf(ln, "%s%d", fmisc, isav);
+   WriteMiscToFile(ln);
 }
 
-int main(int nargs, char **args)
-{
-   FILE *fpin, *fpout, *fpl;
-   char *fin;
-   char ln[512];
-   int i, j, KeepOn, k;
-   struct assmln *abase;
-   BBLOCK *bp;
-   extern FILE *yyin;
-   extern BBLOCK *bbbase;
-   BLIST *bl, *lbase;
-FILE *fptmp;
-
-   GetFlags(nargs, args, &fin, &fpin, &fpout);
-   yyin = fpin;
-   bp = bbbase = NewBasicBlock(NULL, NULL);
-   bp->inst1 = bp->instN = NULL;
-   yyparse();
-   fclose(fpin);
-   GenPrologueEpilogueStubs(bbbase);
-/* 
- * Perform starting point save here.  Need to save:
- * 1. LIL
- * 2. ST: N, STname, SToff, STflag,
- *        niloc, nlloc, nfloc, ndloc, nvfloc, nvdloc, LOCALIGN, LOCSIZE, NPARA
- *    - WriteSTToFile, ReadSTFromFile in symtab.c
- * 3. Global vars: STderef
- * 4. optloop
- * 5. ... not finished looking ...
+int PerformOpt(int SAVESP)
+/*
+ * Returns 0 on success, non-zero on failure
  */
-   PrintInst(fptmp=fopen("tmp.err0", "w"), bbbase); fclose(fptmp);
-   WriteBaseLIL();
-   PrintInst(fptmp=fopen("tmp.err1", "w"), bbbase); fclose(fptmp);
-   NewBasicBlocks(bbbase);
-   FindLoops(); 
-   CheckFlow(bbbase, __FILE__, __LINE__);
-   CalcInsOuts(bbbase); 
-   CalcAllDeadVariables();
+{
+   BLIST *bl, *lbase;
+   BBLOCK *bp;
+   int i, j, KeepOn, k;
+   extern BBLOCK *bbbase;
+
 /*
  * Perform optimizations on special loop first
  */
@@ -226,23 +321,57 @@ FILE *fptmp;
    while(KeepOn);
    KillBlockList(lbase);
    INDEADU2D = CFUSETU2D = 0;
+   return(0);
+}
+
+int GoToTown(int SAVESP)
+{
+   extern BBLOCK *bbbase;
+
+   GenPrologueEpilogueStubs(bbbase, SAVESP);
+   NewBasicBlocks(bbbase);
+   FindLoops(); 
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   CalcInsOuts(bbbase); 
+   CalcAllDeadVariables();
+
+   assert(!PerformOpt(SAVESP));
+
    if (!INDEADU2D)
       CalcAllDeadVariables();
-PrintInst(fptmp=fopen("tmp.LIL", "w"), bbbase);
-fclose(fptmp);
-
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    AddBlockComments(bbbase);
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    AddLoopComments();
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
 #if 1
    AddSetUseComments(bbbase);   
    AddDeadComments(bbbase); 
 #endif
-fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
-   FinalizePrologueEpilogue(bbbase);
+   if (FinalizePrologueEpilogue(bbbase))
+      return(1);
    CheckFlow(bbbase, __FILE__, __LINE__);
+   return(0);
+}
+
+int main(int nargs, char **args)
+{
+   FILE *fpin, *fpout, *fpl;
+   char *fin;
+   char ln[512];
+   struct assmln *abase;
+   BBLOCK *bp;
+   int i;
+   extern FILE *yyin;
+   extern BBLOCK *bbbase;
+
+   GetFlags(nargs, args, &fin, &fpin, &fpout);
+   yyin = fpin;
+   bp = bbbase = NewBasicBlock(NULL, NULL);
+   bp->inst1 = bp->instN = NULL;
+   yyparse();
+   fclose(fpin);
+   SaveFKOState(0);
+   if (GoToTown(0))
+      assert(!GoToTown(IREGBEG+NIR-1));
+
    if (fpLIL)
    {
       PrintInst(fpLIL, bbbase);

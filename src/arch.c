@@ -1,16 +1,5 @@
-#include "ifko.h"
 #define ARCH_DECLARE
-#include "fko_arch.h"
-#ifdef X86
-   int arch_IsX86=1, arch_TwoOpAss=1;
-   #ifdef X86_64
-      int arch_IsX8664=1;
-   #else
-      int arch_IsX8664=0;
-   #endif
-#else
-   int arch_IsX86=0, arch_IsX8664=0, arch_TwoOpAss=0;
-#endif
+#include "ifko.h"
 struct locinit *LIhead=NULL,       /* Locals to be init to constant vals */
                *ParaDerefQ=NULL;   /* Derefs created for parameters */
 
@@ -565,7 +554,7 @@ void InitLocalConst(INSTQ *next, short reg, short freg, short dreg)
    }
 }
 
-void Extern2Local(INSTQ *next)
+void Extern2Local(INSTQ *next, int rsav)
 /*
  * After stack frame fully qualified, inserts proper store instructions before
  * next in queue in order to save parameter/system/fp const values to local
@@ -580,7 +569,6 @@ void Extern2Local(INSTQ *next)
 {
    extern int NPARA, DTnzerod, DTnzero, DTabsd, DTabs;
    short ii, i, j=0, flag, ir, k, kk, reg1=0, freg, dreg;
-   const int rsav = 0;
    int USED;
    #ifdef X86_64
       int nof, ni, nd, dr, dreg1;
@@ -1429,7 +1417,7 @@ fprintf(stderr, "%s(%d) reg=%d\n", __FILE__, __LINE__, ipld->inst[1]);
    return(k);
 }
 
-void FinalizePrologueEpilogue(BBLOCK *bbase)
+int FinalizePrologueEpilogue(BBLOCK *bbase)
 /*
  * Calculates required frame size, corrects local and parameter offsets
  * appropriately, and then inserts instructions to save and restore
@@ -1570,8 +1558,11 @@ fprintf(stderr, "tsize=%d, Loff=%d, Soff=%d lsize=%d\n", tsize, Loff, Soff, lsiz
 #if 1
          rsav = GimmeRegSave(oldhead->myblk, irsav);
          if (!rsav)
+         {
             rsav = DammitGimmeRegSave(oldhead->myblk);
-         assert(rsav);
+            if (!rsav)
+               return(1);
+         }
 fprintf(stderr, "\n\n** rsav=%d,%s**\n\n", rsav, Int2Reg(rsav <= 0 ? rsav : -rsav));
          if (rsav < 0)
          {
@@ -1597,6 +1588,10 @@ fprintf(stderr, "\n\n** rsav=%d,%s**\n\n", rsav, Int2Reg(rsav <= 0 ? rsav : -rsa
    {
       PrintMajorComment(bbase, NULL, oldhead, "Adjust sp");
    }
+   assert(oldhead->next->inst[0] == SUB && oldhead->next->inst[1] == -REG_SP &&
+          oldhead->next->inst[2] == -REG_SP && oldhead->next->inst[3] ==
+          STiconstlookup(-935));
+   DelInst(oldhead->next);
    InsNewInst(NULL, NULL, oldhead, SUB, -REG_SP, -REG_SP,
               STiconstlookup(tsize)); 
    if (SAVESP >= 0)
@@ -1637,9 +1632,10 @@ fprintf(stderr, "\n\n** rsav=%d,%s**\n\n", rsav, Int2Reg(rsav <= 0 ? rsav : -rsa
    GetReg(-1);
    FinalizeEpilogue(bbase, tsize, Soff, SAVESP, nir, ir, nfr, fr, ndr, dr);
    CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = 0;
+   return(0);
 }
 
-void CreatePrologue(BBLOCK *bbase)
+void CreatePrologue(BBLOCK *bbase, int rsav)
 {
    short prog, k;
    int i;
@@ -1661,7 +1657,8 @@ fprintf(stderr, "prog=%d!, rout_name=%s\n", prog, rout_name);
    InsNewInst(NULL, NULL, oldhead, LABEL, prog, 0, 0);
 
    InsNewInst(NULL, NULL, oldhead, CMPFLAG, CF_REGSAVE, 0, 0);
-   Extern2Local(oldhead);
+   InsNewInst(NULL, NULL, oldhead, SUB, -REG_SP, -REG_SP, STiconstlookup(-935));
+   Extern2Local(oldhead, rsav ? -rsav : 0);
    InsNewInst(NULL, NULL, oldhead, COMMENT, 0, 0, 0);
    InsNewInst(NULL, NULL, oldhead, COMMENT, 
               STstrconstlookup("END OF FUNCTION PROLOGUE"), 0, 0);
@@ -1671,7 +1668,7 @@ void KillUnusedLocals()  /* HERE, HERE: move to symtab */
 {
 }
 
-void GenPrologueEpilogueStubs(BBLOCK *bbase)
+void GenPrologueEpilogueStubs(BBLOCK *bbase, int rsav)
 /*
  * Create partially qualified local and para derefs, and generate function
  * prologue/epilogue stubs
@@ -1688,7 +1685,7 @@ void GenPrologueEpilogueStubs(BBLOCK *bbase)
    #else
       UpdateLocalDerefs(4);
    #endif
-   CreatePrologue(bbase);
+   CreatePrologue(bbase, rsav);
    GetReg(-1);
    for (blk=bbase; blk->down; blk = blk->down);
 

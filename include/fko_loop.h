@@ -4,7 +4,7 @@
 #include "fko_types.h"
 
 #ifdef IFKO_DECLARE
-   struct loopq *loopq=NULL, *optloop;
+   struct loopq *loopq=NULL, *optloop=NULL;
 #else
    extern struct loopq *loopq, *optloop;
 #endif
