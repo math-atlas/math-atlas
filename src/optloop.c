@@ -773,7 +773,7 @@ static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
 /*
  * Loop already in SimpleLC form (i = N, 0, -1)
  */
-   if (lp->flag & L_SIMPLELC_BIT)
+   if (lp->flag & L_NSIMPLELC_BIT)
    {
       if (IS_CONST(STflag[I0-1]))
          *ipinit = ip = NewInst(NULL, NULL, NULL, MOV, -r0, 
@@ -930,6 +930,8 @@ void OptimizeLoopControl(LOOPQ *lp, /* Loop whose control should be opt */
       assert(IS_CONST(STflag[lp->inc-1]));
    if (NeedKilling)
       KillLoopControl(lp);
+   if (AlreadySimpleLC(lp))
+      lp->flag |= (L_NSIMPLELC_BIT | L_SIMPLELC_BIT);
 /*
  * if we've not yet determined what kind of loop control to use, do so
  */
@@ -1311,7 +1313,7 @@ PrintInst(fopen("err.tmp", "w"), bbbase);
    pi0 = FindMovingPointers(lp->blocks);
    if (!pi0)
       UsesPtrs = 0;
-//   UnrollCleanup(lp, unroll);
+   UnrollCleanup(lp, unroll);
 
    dupblks = malloc(sizeof(BLIST*)*unroll);
    assert(dupblks);

@@ -20,6 +20,7 @@
 #define L_MINC_BIT      0x200 /* END = BEG + INC*I for some non-zero I */
 #define L_FORWARDLC_BIT 0x400 /* use forward loop control */
 #define L_SIMPLELC_BIT  0x800 /* use simple loop control */
+#define L_NSIMPLELC_BIT 0x1000 /* loop already in SimpleLC format */
 
 #define PTRF_INC        0x1
 #define PTRF_CONTIG     0x2
