@@ -9,6 +9,100 @@ struct locinit *LIhead=NULL;
    #define ISIZE 4
 #endif
 
+void FindRegUsage(INSTQ *head, int *ni0, int *iregs, 
+                  int *nf0, int *fregs, int *nd0, int *dregs)
+/*
+ * Searches through all instructions to find registers that are used
+ */
+{
+   short op;
+   int nd, nf=0, ni=0;
+   INSTQ *ip=head;
+   const int iend = IREGBEG+TNIR, fend = FREGBEG+TNFR, dend = DREGBEG+TNDR;
+   for (nd=0; nd < TNIR; nd++) iregs[nd] = 0;
+   for (nd=0; nd < TNFR; nd++) fregs[nd] = 0;
+   for (nd=0; nd < TNDR; nd++) dregs[nd] = 0;
+   nd = 0;
+   do
+   {
+      op = -ip->inst[1];
+      if (op >= IREGBEG && op < iend)
+      {
+         if (!iregs[op-IREGBEG]++) ni++;
+      }
+      else if (op >= FREGBEG && op < fend)
+      {
+         if (!fregs[op-FREGBEG]++) nf++;
+      }
+      else if (op >= DREGBEG && op < dend)
+      {
+         if (!dregs[op-DREGBEG]++) nd++;
+      }
+      op = -ip->inst[2];
+      if (op >= IREGBEG && op < iend)
+      {
+         if (!iregs[op-IREGBEG]++) ni++;
+      }
+      else if (op >= FREGBEG && op < fend)
+      {
+         if (!fregs[op-FREGBEG]++) nf++;
+      }
+      else if (op >= DREGBEG && op < dend)
+      {
+         if (!dregs[op-DREGBEG]++) nd++;
+      }
+      op = -ip->inst[3];
+      if (op >= IREGBEG && op < iend)
+      {
+         if (!iregs[op-IREGBEG]++) ni++;
+      }
+      else if (op >= FREGBEG && op < fend)
+      {
+         if (!fregs[op-FREGBEG]++) nf++;
+      }
+      else if (op >= DREGBEG && op < dend)
+      {
+         if (!dregs[op-DREGBEG]++) nd++;
+      }
+      ip = ip->next;
+   }
+   while (ip != head);
+   fprintf(stderr, "\nUSED %d IREGS: ", ni);
+   for (op=0; op < TNIR; op++) 
+      if (iregs[op]) fprintf(stderr, "%s, ", archiregs[op]);
+   fprintf(stderr, "\n");
+   fprintf(stderr, "USED %d FREGS: ", nf);
+   for (op=0; op < TNFR; op++) 
+      if (fregs[op]) fprintf(stderr, "%s, ", archfregs[op]);
+   fprintf(stderr, "\n");
+   fprintf(stderr, "USED %d DREGS: ", nd);
+   for (op=0; op < TNDR; op++)
+      if (dregs[op]) fprintf(stderr, "%s, ", archdregs[op]);
+   fprintf(stderr, "\n\n");
+
+   *nf0 = nf;
+   *nd0 = nd;
+   *ni0 = ni;
+}
+
+/* HERE HERE HERE HERE */
+int RemoveNosaveregs(int nr, int *regs, int *saves)
+/*
+ * Zeros reg entry in regs that doesn't need to be saved
+ * RETURNS: number of registers removed
+ */
+{
+   int n=0, i;
+   for (i=0; i < nr; i++)
+   {
+      if (!saves[i])
+      {
+         regs[i] = 0;
+         n++;
+      }
+   }
+}
+
 int GetArchAlign(int nvd, int nvf, int nd, int nf, int nl, int ni)
 /*
  *  Returns required architectural alignment given the number of
@@ -981,15 +1075,17 @@ void FixFrame()
  */
 {
    extern int LOCALIGN, LOCSIZE;
-   int i, savr[64];
+   extern INSTQ *iqhead;
+   int i, ni, nf, nd, isav[TNIR], fsav[TNFR], dsav[TNDR], savr[64];
    CreateSysLocals();
    KillUnusedLocals();
    NumberLocalsByType();
+   FindRegUsage(iqhead, &ni, isav, &nf, fsav, &nd, dsav);
    #ifdef X86_64
       UpdateLocalDerefs(8);
    #else
       UpdateLocalDerefs(4);
    #endif
-   for (i=0; i < NIR; i++) savr[i] = i+2;
+   for (i=0; i < NIR; i++) savr[i] = i+2; 
    CreatePrologue(LOCALIGN, LOCSIZE, 0, NIR-1, savr, 0, NULL, 0, NULL);
 }

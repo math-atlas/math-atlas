@@ -72,18 +72,18 @@
    #define FRETREG FREGBEG
    #define DRETREG DREGBEG
    #ifdef ARCH_DECLARE
-      char icallersave[TNIR] = 
+      int  icallersave[TNIR] = 
        {0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 1,1,1,1,1,1,1, 1,1,1,1,1,1,1, 0};
-      char icalleesave[TNIR] = 
+      int  icalleesave[TNIR] = 
        {0, 1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0};
       char *archiregs[TNIR] = 
          {"@sp", "@l0", "@l1", "@l2", "@l3", "@l4", "@l5", "@l6", "@l7",
           "@i0", "@i1", "@i2", "@i3", "@i4", "@i5", "@i6", "@i7", 
           "@o0", "@o1", "@o2", "@o3", "@o4", "@o5", "@o7",
           "@g1", "@g2", "@g3", "@g4", "g5", "g6", "g7", "@g0"};
-      char fcalleesave[NFR] = 
+      int  fcalleesave[NFR] = 
        {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-      char fcallersave[NFR] = 
+      int  fcallersave[NFR] = 
        {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
       char *archfregs[NFR] = 
          {"@f0", "@f1", "@f2", "@f3", "@f4", "@f5", "@f6", "@f7", 
@@ -179,18 +179,18 @@
    #ifdef LINUX_PPC
       #define NSIR  11
       #ifdef ARCH_DECLARE
-         char icallersave[TNIR] = 
+         int  icallersave[TNIR] = 
           {0, 1,1,1,1,1,1,1,1,1,1, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 1}
-         char icalleesave[TNIR] = 
+         int  icalleesave[TNIR] = 
           {0, 0,0,0,0,0,0,0,0,0,0, 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, 0}
          char *archiregs[TNIR] = 
             {"1", "11", "3", "4", "5", "6", "7", "8", "9", "10", "12",
              "13", "14", "15", "16", "17", "18", "19", "20", "21",
              "22", "23", "24", "25", "26", "27", "28", "29", "30", 
              "31", "0"};
-         char fcallersave[NFR] =
+         int  fcallersave[NFR] =
           {1,1,1,1,1,1,1,1,1,1,1,1,1,1 ,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-         char fcalleesave[NFR] =
+         int  fcalleesave[NFR] =
           {0,0,0,0,0,0,0,0,0,0,0,0,0,0 ,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
          char *archfregs[NFR] = 
             {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", 
