@@ -72,6 +72,16 @@ def info(fko, routine):
       maxunroll = lnf = vec = mfp = 0
    return(nc, LS, ol, maxunroll, lnf, vec, arrs, pref, sets)
 
+def RemoveFilesFromFlags(blas, flags):
+   words = flags.split()
+   nf = ""
+   rout= blas + ".b"
+   for flag in words:
+      if flag.find("-o") == -1 and flag.find(rout) == -1 and \
+         flag.find("fkorout.s") == -1:
+         nf = nf + flag + " "
+   return nf
+
 def GetPFInfo(inf):
    na = len(inf[6])
    i=0

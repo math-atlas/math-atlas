@@ -1,5 +1,6 @@
 #! /usr/bin/python
 
+import sys
 import fkocmnd
 import l1cmnd
 
@@ -92,7 +93,8 @@ def ifko_pftype(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
 #
 # attempt to find best prefetch distance for given array
 #
-def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr)
+def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr):
+   print "\nFinding PFD for %s" % (arr)
    st = "-P %s " % (arr)
    j = KF0.find(st)
    if j == -1:
@@ -104,8 +106,41 @@ def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr)
    words = KF0[j:].split()
    pflvl = int(words[0])
    ipd = int(words[1])
+   LS = info[1][0];
+   pfd = LS
+#   mfs = []
+   mfM = 0.0
+   pfdM = 0
+   while pfd < 2048:
+      KFn = KF0 + " -P %s %d %d" % (arr, pflvl, pfd)
+      fkocmnd.callfko(fko, KFn)
+      [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                           "gcc", "-x assembler-with-cpp", opt=opt)
+#      mfs.append(mf)
+      print "   %s : PFD = %d mflop = %s" % (arr, pfd, mf)
+      if mf > mfM:
+         mfM = mf
+         pfdM = pfd
+      pfd += LS
+#   print "\nBEST PFD so far = %d (%.2f)" % (pfdM, mfM)
 
-
+#   pfd = pfdM - LS + 8
+#   pfN = pfd + LS
+#   print '\n'
+#   while (pfd <= pfN):
+#      KFn = KF0 + " -P %s %d %d" % (arr, pflvl, pfd)
+#      fkocmnd.callfko(fko, KFn)
+#      [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+#                           "gcc", "-x assembler-with-cpp", opt=opt)
+#      print "   %s : PFD = %d mflop = %s" % (arr, pfd, mf)
+#      if mf > mfM:
+#         mfM = mf
+#         pfdM = pfd
+#      pfd += 8
+   print "\nBEST prefetch distance = %d (%.2f)" % (pfdM, mfM)
+   if (pfdM != ipd):
+      KF0 = KF0 + " -P %s %d %d" % (arr, pflvl, pfdM)
+   return KF0
 
 def ifko(l1bla, pre, N):
    (IFKOdir, fko) = fkocmnd.GetFKOinfo()
@@ -120,6 +155,12 @@ def ifko(l1bla, pre, N):
    KFLAGS = KFLAGS + " -o " + str(outf) + " " + rout
    KFLAGS = ifko_pftype(ATLdir, ARCH, KFLAGS, ncache, fko, rout, pre, l1bla, N,
                         info, pfarrs, pfsets)
-   print "FLAGS so far =", KFLAGS
+   print "\nFLAGS so far =", fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS)
+#
+#  Find best PFD for each pfarr
+#
+   for arr in pfarrs:
+      KFLAGS = FindPFD(ATLdir, ARCH, KFLAGS, fko, rout, pre,l1bla, N, info, arr)
+   print "\nFLAGS so far =", fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS)
 
-ifko("axpy", "s", 80000)
+ifko(sys.argv[1], sys.argv[2], 80000)
