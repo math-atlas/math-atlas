@@ -194,9 +194,16 @@ def ifko0(l1bla, pre, N):
 #  Find best unroll
 #
    KFLAGS = FindUR(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N, info)
-   print "\n\n   BEST FLAGS FOUND =", \
-         fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS)
-   return(KFLAGS)
+#
+#  Find performance of best case
+#
+   fkocmnd.callfko(fko, KFLAGS)
+   [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                        "gcc", "-x assembler-with-cpp", opt=opt)
+   print "\n\n   BEST FLAGS FOUND (%f.2) = %s" % (mf,
+         fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS))
+   res = fkocmnd.GetOptVals(KFLAGS, pfarrs, pfsets)
+   return(res, KFLAGS, mf)
 
 def ifko(routs, pres, N):
    if routs.find("default") != -1:
@@ -214,10 +221,38 @@ def ifko(routs, pres, N):
       for word in words:
          prelist.append(word)
 
+   reslist = []
+   blalist = []
+   mflist = []
    for l1bla in routlist:
       for pre in prelist:
          print "\niFKO TUNING %s" % (pre + l1bla)
-         ifko0(l1bla, pre, N)
+         (res,flags,mf) = ifko0(l1bla, pre, N)
+         reslist.append(res)
+         blalist.append(pre + l1bla)
+         mflist.append(mf)
+   i = 0
+   n = len(reslist)
+   while i < n :
+      (vec, UR, npf, pfinst, pfd) = reslist[i]
+      if vec: sv = "Yes"
+      else : sv = "No"
+      pfdX = pfd[0]
+      pfIX = r"{\tt " + pfinst[0] + "}"
+      if npf == 2 :
+         pfdY = pfd[1]
+         pfIY = r"{\tt " + pfinst[1] + "}"
+      else :
+         pfdY = 0
+         pfIY = "NONE"
+      print "%10s &%3s &%4d &%5d &%17s &%5d &%17s\\\\\\hline" % \
+            (r"{\tt " + blalist[i]+"}", sv, UR, pfdX, pfIX, pfdY, pfIY)
+      i += 1
+   i = 0
+   print "\n"
+   while i < n :
+      print "%10s : %9.2f" % (blalist[i], mflist[i])
+      i += 1
 
 nargs = len(sys.argv)
 blas = "asum"
@@ -225,8 +260,8 @@ pre  = "s"
 N = 80000
 if (nargs > 1):
    blas = sys.argv[1]
-   if (narg > 2):
+   if (nargs > 2):
       pre = sys.argv[2]
-      if (narg > 3):
-         N = atoi(sys.argv[3])
+      if (nargs > 3):
+         N = int(sys.argv[3])
 ifko(blas, pre, N)

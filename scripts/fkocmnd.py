@@ -153,3 +153,75 @@ def GetStandardFlags(fko, rout, pre):
    KFLAG = VF + " -Ps b A 0 " + str(npf) + " -P all 0 " + str(LS*2) + " -U " \
            + str(UR)
    return KFLAG 
+
+#
+# Return relavant opt parameters by reading flag settings
+#
+def GetOptVals(flags, pfarrs, pfsets):
+   if flags.find("-V") == -1 : vec = 0
+   else : vec = 1
+
+   j = flags.find("-U ")
+   if j == -1: UR = 1
+   else:
+      words = flags[j:].split()
+      UR = int(words[1])
+
+   j = flags.rfind("-Par")
+   if j == -1:
+      pf0 = "prefetchnta"
+   else :
+      words = flags[j+4:].split()
+      if words[0][0] == '3':
+         pf0 = "prefetch"
+      elif words[0][0] == '0':
+         pf0 = "prefetcht0"
+
+   j = flags.find("-Paw")
+   if j == -1 :
+      paw = pf0
+   else :
+      words = flags[j+4:].split()
+      if words[0][0] == '3':
+         pfw = "prefetchw"
+      elif words[0][0] == '0':
+         pfw = "prefetcht0"
+
+   pfd = []
+   pfl = []
+   j = flags.find("-P all")
+   if j == -1 :
+      for arr in pfarrs:
+         pfd.append(0)
+         pfl.append(0)
+   else :
+      words = flags[j:].split();
+      lvl = int(words[1])
+      dis = int(words[2])
+      for arr in pfarrs:
+         pfl.append(lvl)
+         pfd.append(dis)
+
+   npf = len(pfarrs)
+   i = 0
+   while i < npf :
+      j = flags.find("-P %s" % (pfarrs[i]))
+      if j != -1:
+         words = flags[j:].split()
+         pfl[i] = int(words[2])
+         pfd[i] = int(words[3])
+      i += 1
+
+   i = 0
+   pfinst = []
+   while i < npf :
+      if pfl[i] > 0 :
+         pfinst.append("prefetcht%d" % (pfl[i]))
+      else :
+         if pfsets[i] :
+            pfinst.append(pfw)
+         else :
+            pfinst.append(pf0)
+      i += 1
+
+   return(vec, UR, npf, pfinst, pfd)
