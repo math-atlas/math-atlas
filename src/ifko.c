@@ -25,6 +25,9 @@ int main(int nargs, char **args)
    KillAllBasicBlocks(bbbase);
    bbbase = bp;
    FixFrame(bbbase);
+   SetBlockActiveInst(bbbase);
+   FindPredSuccBlocks(bbbase);
+   CalcDoms(bbbase);
    AddBlockComments(bbbase);
    abase = lil2ass(bbbase);
    KillAllBasicBlocks(bbbase);
