@@ -1,3 +1,4 @@
+SHELL = /bin/tcsh
 CC = gcc
 CCFLAGS = -g
 objs = y.tab.o lex.yy.o h2l.o l2a.o inst.o symtab.o arch.o misc.o
