@@ -180,6 +180,9 @@ enum inst
                       (i_) == VFLD)
 #define IS_STORE(i_)  ((i_) == ST || (i_) == FST || (i_) == FSTD || \
                        (i_) == VFST)
+#define IS_CMP(i_) ((i_) == CMP || (i_) == CMPAND || (i_) == CMPS || \
+                    (i_) == FCMP || (i_) == FCMPD || (i_) == VFCMP || \
+                    (i_) == CFTBFI || (i_) == CFTBDI || (i_) == FCMPWD)
 
 INSTQ *NewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,
                short dest, short src1, short src2);

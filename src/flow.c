@@ -105,6 +105,8 @@ BLIST *MergeBlockLists(BLIST *l1, BLIST *l2)
 {
    BLIST *p;
    int iv1, iv2;
+   extern int FKO_BVTMP;
+
    if (!l1) 
       return(l2);
    if (!l2)

@@ -4,6 +4,39 @@
 static IGNODE **IG=NULL;
 static int NIG=0, TNIG=0;
 
+char *Int2Reg(int i)
+/*
+ * Translates integral encoding to machine-specific registers
+ */
+{
+   static char ln[128];
+
+   assert (i < 0);
+   i = -i;
+   if (i >= IREGBEG && i < IREGEND)
+      sprintf(ln, "%s", archiregs[i-IREGBEG]);
+   else if (i >= FREGBEG && i < FREGEND)
+      sprintf(ln, "%s", archfregs[i-FREGBEG]);
+   else if (i >= DREGBEG && i < DREGEND)
+      sprintf(ln, "%s", archdregs[i-DREGBEG]);
+   else if (i >= ICCBEG && i < ICCEND)
+      sprintf(ln, "%s", ICCREGS[i-ICCBEG]);
+   else if (i >= FCCBEG && i < FCCEND)
+      sprintf(ln, "%s", FCCREGS[i-FCCBEG]);
+   else if (i == PCREG)
+      sprintf(ln, "%s", "PC");
+   else
+   {
+   fprintf(stderr, 
+      "I=[%d,%d); F=[%d,%d); D=[%d,%d); ICC=[%d,%d); FCC=[%d,%d); PC=%d\n",
+           IREGBEG, IREGEND,FREGBEG, FREGEND,DREGBEG, DREGEND,
+           ICCBEG, ICCEND, FCCBEG, FCCEND, PCREG);
+      fko_error(__LINE__, "Unknown register index %d, file=%s\n",
+                i, __FILE__);
+   }
+   return(ln);
+}
+
 void NewIGTable(int chunk)
 {
    int i, n;
@@ -80,7 +113,7 @@ IGNODE *NewIGNode(BBLOCK *blk, short var)
    if (blk)
    {
       new->myblkvec = NewBitVec(blk->bnum);
-      SetVecBit(node->myblkvec, blk->bnum-1, 1);
+      SetVecBit(new->myblkvec, blk->bnum-1, 1);
    }
    else
       new->myblkvec = 0;
@@ -295,39 +328,166 @@ void CalcBlockIG(BBLOCK *bp)
    }
 }
 
-void CombineBlockIG()
-
-char *Int2Reg(int i)
+void CombineLiveRanges(BLIST *scope, BBLOCK *pred, int pig,
+                       BBLOCK *succ, int sig)
 /*
- * Translates integral encoding to machine-specific registers
+ * Merge successor IG (sig) into pred ig (pig); both blocks are known to
+ * by in the register scope.
  */
 {
-   static char ln[128];
+   IGNODE *pnode, *snode, *node;
+   BLIST *bl;
+   short *vals;
+   int i, n;
 
-   assert (i < 0);
-   i = -i;
-   if (i >= IREGBEG && i < IREGEND)
-      sprintf(ln, "%s", archiregs[i-IREGBEG]);
-   else if (i >= FREGBEG && i < FREGEND)
-      sprintf(ln, "%s", archfregs[i-FREGBEG]);
-   else if (i >= DREGBEG && i < DREGEND)
-      sprintf(ln, "%s", archdregs[i-DREGBEG]);
-   else if (i >= ICCBEG && i < ICCEND)
-      sprintf(ln, "%s", ICCREGS[i-ICCBEG]);
-   else if (i >= FCCBEG && i < FCCEND)
-      sprintf(ln, "%s", FCCREGS[i-FCCBEG]);
-   else if (i == PCREG)
-      sprintf(ln, "%s", "PC");
-   else
+   pnode = IG[pig];
+   snode = IG[sig];
+
+   assert(pnode->var == snode->var);
+   if (snode->blkend)
+      pnode->blkend = MergeBlockLists(pnode->blkend, snode->blkend);
+   if (snode->blkspan)
+      pnode->blkspan = MergeBlockLists(pnode->blkspan, snode->blkspan);
+   if (snode->ldhoist)
+      pnode->ldhoist = MergeBlockLists(pnode->ldhoist, snode->ldhoist);
+   if (snode->stpush)
+      pnode->stpush = MergeBlockLists(pnode->stpush, snode->stpush);
+   pnode->nread += snode->nread;
+   pnode->nwrite += snode->nwrite;
+   BitVecComb(pnode->myblkvec, pnode->myblkvec, snode->myblkvec, '|');
+   BitVecComb(pnode->liveregs, pnode->liveregs, snode->liveregs, '|');
+   BitVecComb(pnode->conflicts, pnode->conflicts, snode->conflicts, '|');
+/*
+ * Change snode conflicts to pnode conflicts
+ */
+   vals = BitVec2StaticArray(snode->conflicts);
+   for (i=1, n=vals[0]; i <= n; i++)
    {
-   fprintf(stderr, 
-      "I=[%d,%d); F=[%d,%d); D=[%d,%d); ICC=[%d,%d); FCC=[%d,%d); PC=%d\n",
-           IREGBEG, IREGEND,FREGBEG, FREGEND,DREGBEG, DREGEND,
-           ICCBEG, ICCEND, FCCBEG, FCCEND, PCREG);
-      fko_error(__LINE__, "Unknown register index %d, file=%s\n",
-                i, __FILE__);
+      node = IG[vals[i]];
+      SetVecBit(node->conflicts, sig, 0);
+      SetVecBit(node->conflicts, pig, 1);
    }
-   return(ln);
+/*
+ * Update block-carried IG info
+ */
+   for (bl=scope; bl; bl = bl->next)
+   {
+      if (BitVecCheck(bl->blk->ignodes, sig))
+      {
+         SetVecBit(bl->blk->ignodes, sig, 0);
+         SetVecBit(bl->blk->ignodes, pig, 1);
+         if (BitVecCheck(bl->blk->conin, sig))
+         {
+            SetVecBit(bl->blk->conin, sig, 0);
+            SetVecBit(bl->blk->conin, pig, 1);
+         }
+         if (BitVecCheck(bl->blk->conout, sig))
+         {
+            SetVecBit(bl->blk->conout, sig, 0);
+            SetVecBit(bl->blk->conout, pig, 1);
+         }
+      }
+   }
+   KillIGNode(snode);
+}
+
+void CombineBlockIG(BLIST *scope, ushort scopeblks, BBLOCK *pred, BBLOCK *succ)
+/*
+ * Attempt to combine preds IG with succ
+ */
+{
+   IGNODE *node;
+   int i, j, n, nn;
+   short *sig, *pig;
+   short k, kk;
+/*
+ * If both blocks are in scope, attempt to combine their live ranges
+ */
+   if (BitVecCheck(scopeblks, succ->bnum-1) && 
+       BitVecCheck(scopeblks, pred->bnum-1) )
+   {
+      pig = BitVec2Array(pred->conout, 0);
+      sig = BitVec2StaticArray(succ->conin);
+      for (n=sig[0], i=1; i <= n; i++)
+      {
+         k = IG[sig[i]]->var;
+         for (nn=pig[0], j=1; j <= n; j++)
+         {
+            kk = pig[j];
+            if (k == IG[k]->var)
+               CombineLiveRanges(scope, pred, kk, succ, sig[j]);
+         }
+      }
+      free(pig);
+   }
+/*
+ * If pred in scope, but successor not, must push LR stores to succ
+ * Find the next of the pushed stores
+ */
+   else if (BitVecCheck(scopeblks, pred->bnum-1))
+   {
+      pig = BitVec2StaticArray(pred->conout);
+      for (n=pig[0], i=1; i <= n; i++)
+      {
+         node = IG[pig[i]];
+         node->stpush = AddBlockToList(node->stpush, succ);
+         if (succ->ainst1)
+         {
+            k = GET_INST(succ->ainst1->inst[0]);
+            node->stpush->ptr = (k == LABEL) ? 
+                                succ->ainst1->next : succ->ainst1;
+         }
+         else node->stpush->ptr = NULL;
+      }
+   }
+/*
+ * If succ in scope but pred not, pred becomes load hoist target
+ * Find the prev of the hoisted loads
+ */
+   else /* if (BitVecCheck(scopeblks, succ->bnum-1, 1)) */
+   {
+      sig = BitVec2StaticArray(succ->conin);
+      for (n=sig[0], i=1; i <= n; i++)
+      {
+         node = IG[sig[i]];
+         node->ldhoist = AddBlockToList(node->ldhoist, pred);
+         if (pred->ainstN)
+         {
+            k = GET_INST(pred->ainstN->inst[0]);
+            node->ldhoist->ptr = IS_BRANCH(k) ? pred->ainstN->prev : 
+                                                pred->ainstN;
+         }
+         else node->ldhoist->ptr = NULL;
+      }
+   }
+}
+
+void CalcScopeIG(BLIST *scope)
+{
+   static ushort blkvec=0;
+   BLIST *bl;
+   ushort iv;
+   short *sp;
+
+/*
+ * Set blkvec to reflect all blocks in scope, and calculate each block's IG
+ */
+   if (blkvec) SetVecAll(blkvec, 0);
+   else blkvec = NewBitVec(32);
+   for (bl=scope; bl; bl = bl->next)
+   {
+      SetVecBit(blkvec, bl->blk->bnum-1, 1);
+      CalcBlockIG(bl->blk);
+   }
+/*
+ * Try to combine live ranges across basic blocks
+ */
+   for (bl=scope; bl; bl = bl->next)
+   {
+      CombineBlockIG(scope, blkvec, bl->blk, bl->blk->usucc);
+      if (bl->blk->csucc)
+         CombineBlockIG(scope, blkvec, bl->blk, bl->blk->csucc);
+   }
 }
 
 short Reg2Int(char *regname)
