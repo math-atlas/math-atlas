@@ -864,14 +864,16 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
 
 void DumpOptsPerformed(FILE *fpout, int verbose)
 {
-   int i, k, j;
+   int i, k, j=1;
    char ch;
    if (verbose)
    {
-      j = FKO_UR > 1 ? 1 : 0;
       fprintf(fpout, "\n%d optimization phases performed:\n", noptrec+j);
+      if (DO_VECT(FKO_FLAG))
+         fprintf(fpout, "%3d. %c %20.20s\n", j++, 'L', 
+                 "Loop SIMD Vectorization");
       if (FKO_UR > 1)
-         fprintf(fpout, "%3d. %c %20.20s : %d\n", 1, 'L', "Loop Unroll",
+         fprintf(fpout, "%3d. %c %20.20s : %d\n", j++, 'L', "Loop Unroll",
                  FKO_UR);
       for (i=0; i < noptrec; i++)
       {
@@ -883,7 +885,7 @@ void DumpOptsPerformed(FILE *fpout, int verbose)
          }
          else
             ch = 'L';
-         fprintf(fpout, "%3d. %c %20.20s : %d\n", j+i+1, ch, optmnem[k],
+         fprintf(fpout, "%3d. %c %20.20s : %d\n", j+i, ch, optmnem[k],
                  optchng[i]);
       }
    }

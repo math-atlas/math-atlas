@@ -1,7 +1,7 @@
 SHELL=/bin/sh
 FKO = ../bin/fko
 #KFLAGS = -U 2
-KFLAGS = -V -G 1 1 DN
+KFLAGS = -U 2 -V
 #scal.s : scal.b
 #	../bin/fko $(KFLAG) -o scal.s scal.b
 clean :

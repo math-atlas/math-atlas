@@ -1,5 +1,5 @@
 #include /home/grads/whaley/AT3.7/ATLAS3.7.6.0/Make.Linux_P4SSE2
-include /home/rwhaley/AT3.7/ATLAS3.7.6.2/Make.Linux_P4ESSE3_2
+include /home/rwhaley/TEST/ATLAS3.7.8.2/Make.Linux_EfficeonSSE2
 #include /tmp/rwhaley/ATLAS3.7.3.0/Make.Linux_P4SSE2
 
 pre=d
@@ -8,7 +8,7 @@ URT = DOT
 kern=error
 cache=
 NN="N=80000"
-KFLAGS= -V -G 1 0 1 ra
+KFLAGS= -V -U 4
 opt =-X 1 -Y 1 -Fx 16 -Fy 16
 topt=-X 1 1 -Y 1 1 -Fx 16 -Fy 16
 lower=hello
