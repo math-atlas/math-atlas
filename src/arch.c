@@ -315,6 +315,7 @@ void Extern2Local(INSTQ *next, INSTQ *end, short rsav, int fsize)
    #endif
 
    if (!rsav) rsav = -REG_SP;
+fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
    if (NPARA)
    {
       InsNewInst(NULL, next, COMMENT, 0, 0, 0);
@@ -744,7 +745,7 @@ fprintf(stderr, "prog=%d!, rout_name=%s\n", prog, rout_name);
  */
    #ifdef SPARC
       Soff = 64;
-      Aoff = 4;
+      Aoff = 68;
       if (csize && csize < 6*4) csize = 6*4;
    #elif defined(X86_64)
       Soff = Aoff  = 8;
