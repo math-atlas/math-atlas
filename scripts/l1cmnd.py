@@ -14,6 +14,28 @@ def GetDefaultRefBlas():
 def GetDefaultPre():
    return ['s', 'd']
 
+def test(ATLdir, ARCH, pre, blas, N, rout, cc=None, ccf=None, opt=""):
+   if (opt != ""):
+      opt = 'opt="' + opt + '"'
+   if(cc != None):
+      opt = opt + ' UCC=' + cc + ' UCCFLAGS="' + ccf + '"'
+   cmnd = 'cd %s/tune/blas/level1/%s ; make %s%stest N=%d urout=%s %s' % \
+          (ATLdir, ARCH, pre, blas, N, rout, opt)
+   fo = os.popen(cmnd, 'r')
+   lines = fo.readlines()
+   err = fo.close()
+   if (err != None):
+      print 'command died with:'
+      print lines
+      print err
+      return err
+   for line in lines:
+      if line.find("ALL") != -1 and line.find("SANITY TESTS PASSED") != -1:
+         break
+   else:
+      return 1
+   return 0 
+
 def time(ATLdir, ARCH, pre, blas, N, rout, cc=None, ccf=None, opt=""):
 #
 #  Extract the original seconds & summation time & mflop

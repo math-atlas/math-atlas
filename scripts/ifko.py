@@ -5,6 +5,7 @@ import fkocmnd
 import l1cmnd
 
 opt = "-X 1 -Y 1 -Fx 16 -Fy 16"
+optT = "-X 1 1 -Y 1 1 -Fx 16 -Fy 16"
 #
 #  Given a set of flags, try differing pf inst for read & write arrays
 #
@@ -203,7 +204,9 @@ def ifko0(l1bla, pre, N):
    print "\n\n   BEST FLAGS FOUND (%f.2) = %s" % (mf,
          fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS))
    res = fkocmnd.GetOptVals(KFLAGS, pfarrs, pfsets)
-   return(res, KFLAGS, mf)
+   tst = l1cmnd.test(ATLdir, ARCH, pre, l1bla, N, "fkorout.s",
+                     cc="gcc", ccf="-x assembler-with-cpp", opt=optT)
+   return(res, KFLAGS, mf, tst)
 
 def ifko(routs, pres, N):
    if routs.find("default") != -1:
@@ -224,13 +227,15 @@ def ifko(routs, pres, N):
    reslist = []
    blalist = []
    mflist = []
+   tstlist = []
    for l1bla in routlist:
       for pre in prelist:
          print "\niFKO TUNING %s" % (pre + l1bla)
-         (res,flags,mf) = ifko0(l1bla, pre, N)
+         (res,flags,mf, tst) = ifko0(l1bla, pre, N)
          reslist.append(res)
          blalist.append(pre + l1bla)
          mflist.append(mf)
+         tstlist.append(tst)
    i = 0
    n = len(reslist)
    while i < n :
@@ -251,7 +256,9 @@ def ifko(routs, pres, N):
    i = 0
    print "\n"
    while i < n :
-      print "%10s : %9.2f" % (blalist[i], mflist[i])
+      if tstlist[i] : tst = "FAIL"
+      else : tst = "PASS"
+      print "%10s : %5.5s %9.2f" % (blalist[i], tst, mflist[i])
       i += 1
 
 nargs = len(sys.argv)
