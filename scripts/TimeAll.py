@@ -77,6 +77,8 @@ refT  = []
 refMF = []
 atlT  = []
 atlMF = []
+fkoT  = []
+fkoMF = []
 j = i = 0
 
 CALLREF=1
@@ -119,5 +121,50 @@ for blas in l1routs:
                                  "gcc", "-x assembler-with-cpp", opt=opt)
          print "FKO %20.20s : time=%f, mflop=%f" % (pre+blas+'.b', time, mf)
          print "                           flags =", KF0
+         fkoT.append(time)
+         fkoMF.append(mf)
+      j += 1
+   i += 1
+
+print r"OPERATION   & gcc+ref & icc+ref &gcc+atlas&icc+atlas& fko     &     ifko\\\hline\hline"
+form = "%12s& %7.0f &         & %7.0f &         & %7.0f &        \\\\\\hline"
+#form2= "%12s& %7.0f &         & %7.0f\\footnotemark[1] &         & %7.0f &        \\\\\\hline"
+form2= "%12s& %7.0f &         & %7.0f*&         & %7.0f &        \\\\\\hline"
+
+form3= "%12s& %7.2f &         & %7.2f &         & %7.2f &        \\\\\\hline"
+form4= "%12s& %7.2f &         & %7.2f*&         & %7.2f &        \\\\\\hline"
+#form4= "%12s& %7.2f &         & %7.2f\\footnotemark[1] &         & %7.2f &        \\\\\\hline"
+
+#fkoMF = [1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8, 9.9, 10.1];
+#atlMF = [1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8, 9.9, 10.1];
+#refMF = [1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8, 9.9, 10.1];
+print "\n\n"
+i = 0
+j = 0
+for blas in l1routs:
+   for pre in pres:
+      if (CCFat[j] == None or CCFat[j].find("assembler") == -1):
+         print form \
+         % ('{\\tt ' + pre + blas + '}', refMF[j], atlMF[j], fkoMF[j])
+      else:
+         print form2 \
+         % ('{\\tt ' + pre + blas + '}', refMF[j], atlMF[j], fkoMF[j])
+
+      j += 1
+   i += 1
+i = 0
+j = 0
+print "\n\n"
+for blas in l1routs:
+   for pre in pres:
+      if (CCFat[j] == None or CCFat[j].find("assembler") == -1):
+         print form3 \
+         % ('{\\tt ' + pre + blas + '}', 1.0, atlMF[j]/refMF[j], 
+            fkoMF[j]/refMF[j])
+      else:
+         print form4 \
+         % ('{\\tt ' + pre + blas + '}',  1.0, atlMF[j]/refMF[j], 
+            fkoMF[j]/refMF[j])
+
       j += 1
    i += 1
