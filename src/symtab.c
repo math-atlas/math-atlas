@@ -339,7 +339,7 @@ void NumberLocalsByType()
       {
          fprintf(stderr, "\nname='%s', flag=%d\n\n", STname[k] ? STname : NULL, fl);
       }
-      if (IS_PARA(fl) || IS_LOCAL(fl))
+      if ((IS_PARA(fl) || IS_LOCAL(fl)) && DT[(SToff[k].sa[2]-1)<<2])
       {
          type = FLAG2PTYPE(fl);
          switch(type)
@@ -379,10 +379,10 @@ void CreateLocalDerefs()
       if (IS_PARA(fl))
       {
          SToff[k].sa[0] = SToff[k].i;
-         SToff[k].sa[2] = AddDerefEntry(-REG_SP, 0, -k, 0);
+         SToff[k].sa[2] = AddDerefEntry(-REG_SP, 0, -k-1, 0);
       }
       else if (IS_LOCAL(fl))
-         SToff[k].sa[2] = AddDerefEntry(-REG_SP, 0, -k, 0);
+         SToff[k].sa[2] = AddDerefEntry(-REG_SP, 0, -k-1, 0);
    }
 }
 void UpdateLocalDerefs(int isize)
@@ -401,7 +401,7 @@ void UpdateLocalDerefs(int isize)
    for (k=0; k != N; k++)
    {
       fl = STflag[k];
-      if (IS_PARA(fl) || IS_LOCAL(fl))
+      if ((IS_PARA(fl) || IS_LOCAL(fl)) && DT[(SToff[k].sa[2]-1)<<2])
       {
 fprintf(stderr, "Updating local %s\n", STname[k]);
          switch(FLAG2PTYPE(fl))
@@ -458,12 +458,129 @@ void CorrectLocalOffsets(int ldist)
       if (DT[i] == -REG_SP && DT[i+1] == 0 && DT[i+2] < 0)
       {
 fprintf(stderr, "correcting local %s, (%d,%d,%d)\n", STname[-1-DT[i+2]],
-        DT[i+3], ldist, DT[i+3]+ldist);
+         DT[i+3], ldist, DT[i+3]+ldist);
          DT[i+2] = 1;
          DT[i+3] += ldist;
       }
    }
 }
+
+void MarkUnusedLocals()
+/*
+ * Looks at all derefences in entire program; if a local/param is never used,
+ * changes first DT entry (presently -REG_SP) to 0
+ * So, before this routine locals are marked by -REG_SP in base of DT, and
+ * < 0 in mul; after this routine it is < 0 in mul, but -REG_SP in base
+ * for used, and 0 in base for unused.
+ */
+{
+   INSTQ *ip;
+   short k, i;
+   extern INSTQ *iqhead;
+/*
+ * Start out by marking all locals as unused
+ */
+   for (i=Ndt<<2,k=0; k != i; k += 4)
+   {
+      if (DT[k] == -REG_SP && DT[k+2] < 0)
+      {
+         fprintf(stderr, "Initial mark of DT[%d]: %s\n", 
+                 (k>>2)+1, STname[-DT[k+2]-1]);
+         DT[k] = 0;
+      }
+   }
+   ip = iqhead;
+   do
+   {
+      switch(ip->inst[0])
+      {
+/*
+ *    These instructions have derefs as second operand only
+ */
+      case LD:
+      case LDS:
+      case FLD:
+      case FLDD:
+         k = (ip->inst[2]-1)<<2;
+         if (!DT[k] && DT[k+2] < 0)
+         {
+            fprintf(stderr, "Unmarking(%d) DT[%d]: %s\n", 
+                    ip->inst[0], k>>2,STname[-DT[k+2]-1]);
+            DT[k] = -REG_SP;
+         }
+         break;
+/*
+ *    These instructions have derefs as first operand only
+ */
+      case ST:
+      case STS:
+      case FST:
+      case FSTD:
+      case PREFR:
+      case PREFW:
+      case PREFWS:
+      case PREFRS:
+         k = (ip->inst[1]-1)<<2;
+         if (!DT[k] && DT[k+2] < 0)
+         {
+            fprintf(stderr, "Unmarking(%d) DT[%d]: %s\n", 
+                    ip->inst[0], k>>2,STname[-DT[k+2]-1]);
+            DT[k] = -REG_SP;
+         }
+         break;
+      default:  /* other insts to not take derefs, so no action necessary */
+         break;
+      }
+      ip = ip->next;
+   }
+   while(ip != iqhead);
+}
+
+#if 0
+void MarkUnusedParams(int np, int *paras)
+/*
+ * For parameters that are never loaded, replaces REG_SP in DT base with 0. 
+ * NOTE: essentially assumes that any parameter which is used is loaded from
+ *       it's beginning address (not, for instance, the 3rd byte only) at
+ *       least once.
+ */
+{
+   INSTQ *ip;
+   extern INSTQ *iqhead;
+   int i;
+   short k;
+
+/*
+ * temporarily change para deref base from %sp to 0, then change them back
+ * when/if we find reference to them in the code
+ */
+   for (i=0; i < np; i++)
+   {
+      k = (SToff[paras[i]].sa[2] - 1)<<2;
+      DT[k] = 0;
+   }
+   ip = iqhead;
+   do
+   {
+      k = ip->inst[0];
+/*
+ *    For loads, see if they are from a parameter
+ */
+      if (k == LD || k == LDS || k == FLD || k = FLDD)
+      {
+         for (i=0; i < np; i++)
+         {
+            k = SToff[paras[i]].sa[2];
+            if (ip->inst[2] == k)
+               DT[(k-1)<<2] = -REG_SP;
+         }
+      }
+      ip = ip->next;
+   }
+   while (ip != iqhead);
+}
+#endif
+
 int STlen(void)
 {
    return(N);

@@ -440,6 +440,7 @@ void Extern2Local(INSTQ *next, INSTQ *end, short rsav, int fsize)
 {
    extern int NPARA, DTnzerod, DTnzero, DTabsd, DTabs;
    short i, j=0, flag, ir, k, reg1=0;
+   int USED;
    #ifdef X86_64
       int nof, ni, nd, dr, dreg1;
       char *rpara[6] = {"@rdi", "@rsi", "@rdx", "@rcx", "@r8", "@r9"};
@@ -480,6 +481,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
          j++;
       }
    }
+/*   MarkUnusedParams(NPARA, paras); */
    #ifdef X86_64
       reg1 = GetReg(T_INT);
       fnam[0] = '@';
@@ -489,8 +491,13 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       fnam[5] = '\0';
       for (i=nof=nd=ni=0; i < NPARA; i++)
       {
-         PrintComment(NULL, next, "para %d, name=%s", i, 
-                      STname[paras[i]] ? STname[paras[i]] : "NULL");
+         USED = DT[(SToff[paras[i]].sa[2]-1)<<2];
+         if (USED)
+            PrintComment(NULL, next, "para %d, name=%s", i, 
+                         STname[paras[i]] ? STname[paras[i]] : "NULL");
+         else
+            PrintComment(NULL, next, "para %d, name=%s: UNUSED", i, 
+                         STname[paras[i]] ? STname[paras[i]] : "NULL");
          flag = STflag[paras[i]];
          if (IS_PTR(flag))
          {
@@ -498,11 +505,12 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
             else
             {
                ir = reg1;
-               InsNewInst(NULL, next, LD, -ir,
-                          AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
+               if (USED)
+                  InsNewInst(NULL, next, LD, -ir,
+                             AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
                nof++;
             }
-            InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+            if (USED)InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
             ni++;
          }
          else if (IS_INT(flag))
@@ -514,32 +522,23 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
             else
             {
                ir = reg1;
-               InsNewInst(NULL, next, LDS, -ir,
-                          AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
+               if (USED) InsNewInst(NULL, next, LDS, -ir,
+                                    AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
                nof++;
             }
 /*
  *          Convert to 64-bit value, no conversion required for unsigned
  */
-            if (!IS_UNSIGNED(flag))
+            if (USED && !IS_UNSIGNED(flag))
             {
                k = STiconstlookup(32);
                InsNewInst(NULL, next, SHL, -ir, -ir, k);
                InsNewInst(NULL, next, SAR, -ir, -ir, k);
             }
-#if 0
-            k = iName2Reg("@rax");
-            if (ir != k)
-            {
-               InsNewInst(NULL, next, MOV, -k, -ir, 0);
-               ir = k;
-            }
-            InsNewInst(NULL, next, CVTSI, -ir, -ir, 0);
-#endif
 /*
  *          Store 64-bit integer
  */
-            InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+            if (USED)InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
             ni++;
          }
          else if (IS_FLOAT(flag))
@@ -548,14 +547,18 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
             {
                fnam[4] = nd + '0';
                dr = fName2Reg(fnam);
-               InsNewInst(NULL, next, FST, SToff[paras[i]].sa[2], -dr, 0);
+               if (USED)
+                  InsNewInst(NULL, next, FST, SToff[paras[i]].sa[2], -dr, 0);
             }
             else
             {
                ir = reg1;
-               InsNewInst(NULL, next, LDS, -ir,
-                          AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
-               InsNewInst(NULL, next, STS, SToff[paras[i]].sa[2], -ir, 0);
+               if (USED)
+               {
+                  InsNewInst(NULL, next, LDS, -ir,
+                                    AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
+                  InsNewInst(NULL, next, STS, SToff[paras[i]].sa[2], -ir, 0);
+               }
                nof++;
             }
             nd++;
@@ -566,20 +569,25 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
             {
                fnam[4] = nd + '0';
                dr = dName2Reg(fnam);
-               InsNewInst(NULL, next, FSTD, SToff[paras[i]].sa[2], -dr, 0);
+               if (USED) 
+                  InsNewInst(NULL, next, FSTD, SToff[paras[i]].sa[2], -dr, 0);
             }
             else
             {
                ir = reg1;
-               InsNewInst(NULL, next, LD, -ir,
-                          AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
-               InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+               if (USED)
+               {
+                  InsNewInst(NULL, next, LD, -ir,
+                             AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
+                  InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+               }
                nof++;
             }
             nd++;
          }
       }
-      InsNewInst(NULL, next, COMMENT, STstrconstlookup("done paras"), 0, 0);
+      if (USED)
+         InsNewInst(NULL, next, COMMENT, STstrconstlookup("done paras"), 0, 0);
       ir = reg1;
       if (DTnzerod > 0)
       {
@@ -623,25 +631,37 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       reg1 = ir = GetReg(T_INT);
       for (j=i=0; i < NPARA; i++)
       {
-         PrintComment(NULL, next, "para %d, name=%s", i, 
-                      STname[paras[i]] ? STname[paras[i]] : "NULL");
+         USED = DT[(SToff[paras[i]].sa[2]-1)<<2];
+         if (USED)
+            PrintComment(NULL, next, "para %d, name=%s", i, 
+                         STname[paras[i]] ? STname[paras[i]] : "NULL");
+         else
+            PrintComment(NULL, next, "para %d, name=%s: UNUSED", i, 
+                         STname[paras[i]] ? STname[paras[i]] : "NULL");
          flag = STflag[paras[i]];
-         InsNewInst(NULL, next, LD, -ir,
-                    AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
-         InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, __LINE__);
-         j++;
-         if (!IS_PTR(flag) && IS_DOUBLE(flag))
+         if (USED)
          {
             InsNewInst(NULL, next, LD, -ir,
                        AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
-            k = SToff[paras[i]].sa[2] - 1;
-            k = DT[(k<<2)+3] + 4;
-            InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, k), 
-                       -ir, __LINE__);
+            InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, __LINE__);
+         }
+         j++;
+         if (!IS_PTR(flag) && IS_DOUBLE(flag))
+         {
+            if (USED)
+            {
+               InsNewInst(NULL, next, LD, -ir,
+                          AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
+               k = SToff[paras[i]].sa[2] - 1;
+               k = DT[(k<<2)+3] + 4;
+               InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, k), 
+                          -ir, __LINE__);
+            }
             j++;
          }
       }
-      InsNewInst(NULL, next, COMMENT, STstrconstlookup("done paras"), 0, 0);
+      if (USED)
+         InsNewInst(NULL, next, COMMENT, STstrconstlookup("done paras"), 0, 0);
       if (DTnzerod > 0)
       {
          PrintComment(NULL, next, "Writing -0 to memory for negation");
@@ -705,6 +725,13 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
       nam[3] = '\0';
       for (j=i=0; i < NPARA; i++)
       {
+         USED = DT[(SToff[paras[i]].sa[2]-1)<<2];
+         if (USED)
+            PrintComment(NULL, next, "para %d, name=%s", i, 
+                         STname[paras[i]] ? STname[paras[i]] : "NULL");
+         else
+            PrintComment(NULL, next, "para %d, name=%s: UNUSED", i, 
+                         STname[paras[i]] ? STname[paras[i]] : "NULL");
          flag = STflag[paras[i]];
          if (IS_PTR(flag) || IS_INT(flag) || IS_FLOAT(flag))
          {
@@ -712,10 +739,10 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
             {
                nam[2] = j + '0';
                ir = iName2Reg(nam);
-fprintf(stderr, "STORE: %d, %d\n", SToff[paras[i]].sa[2], -ir);
-               InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, __LINE__);
+               if (USED)
+                  InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
             }
-            else
+            else if (USED)
             {
                InsNewInst(NULL, next, LD, -ir,
                           AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
@@ -730,42 +757,54 @@ fprintf(stderr, "STORE: %d, %d\n", SToff[paras[i]].sa[2], -ir);
             {
                nam[2] = j + '0';
                ir = iName2Reg(nam);
-               InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, __LINE__);
                j++;
-               nam[2] = j + '0';
-               ir = iName2Reg(nam);
-               k = (SToff[paras[i]].sa[2]-1)<<2;
-               k = DT[k+3] + 4;
-               k = AddDerefEntry(-REG_SP, 0, 0, k);
-               InsNewInst(NULL, next, ST, k, -ir, __LINE__);
+               if (USED)
+               {
+                  InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+                  nam[2] = j + '0';
+                  ir = iName2Reg(nam);
+                  k = (SToff[paras[i]].sa[2]-1)<<2;
+                  k = DT[k+3] + 4;
+                  k = AddDerefEntry(-REG_SP, 0, 0, k);
+                  InsNewInst(NULL, next, ST, k, -ir, __LINE__);
+               }
                j++;
             }
             else if (j == 5)
             {
                nam[2] = j + '0';
                ir = iName2Reg(nam);
-               InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, __LINE__);
                j++;
-               k = (SToff[paras[i]].sa[2]-1)<<2;
-               k = DT[k+3] + 4;
-               k = AddDerefEntry(-REG_SP, 0, 0, k);
-               InsNewInst(NULL, next, LD, -ir,
-                          AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
-               InsNewInst(NULL, next, ST, k, -ir, __LINE__);
+               if (USED)
+               {
+                  InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+                  k = (SToff[paras[i]].sa[2]-1)<<2;
+                  k = DT[k+3] + 4;
+                  k = AddDerefEntry(-REG_SP, 0, 0, k);
+                  InsNewInst(NULL, next, LD, -ir,
+                             AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
+                  InsNewInst(NULL, next, ST, k, -ir, __LINE__);
+               }
                j++;
             }
             else
             {
-               InsNewInst(NULL, next, LD, -ir,
-                          AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
-               InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, __LINE__);
+               if (USED)
+               {
+                  InsNewInst(NULL, next, LD, -ir,
+                             AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
+                  InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+               }
                j++;
-               k = (SToff[paras[i]].sa[2]-1)<<2;
-               k = DT[k+3] + 4;
-               k = AddDerefEntry(-REG_SP, 0, 0, k);
-               InsNewInst(NULL, next, LD, -ir,
-                          AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
-               InsNewInst(NULL, next, ST, k, -ir, __LINE__);
+               if (USED)
+               {
+                  k = (SToff[paras[i]].sa[2]-1)<<2;
+                  k = DT[k+3] + 4;
+                  k = AddDerefEntry(-REG_SP, 0, 0, k);
+                  InsNewInst(NULL, next, LD, -ir,
+                             AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
+                  InsNewInst(NULL, next, ST, k, -ir, __LINE__);
+               }
                j++;
             }
          }
@@ -778,41 +817,53 @@ fprintf(stderr, "STORE: %d, %d\n", SToff[paras[i]].sa[2], -ir);
       fnam[2] = fnam[3] = '\0';
       for (fc=j=i=0; i < NPARA; i++)
       {
+         USED = DT[(SToff[paras[i]].sa[2]-1)<<2];
+         if (USED)
+            PrintComment(NULL, next, "para %d, name=%s", i, 
+                         STname[paras[i]] ? STname[paras[i]] : "NULL");
+         else
+            PrintComment(NULL, next, "para %d, name=%s: UNUSED", i, 
+                         STname[paras[i]] ? STname[paras[i]] : "NULL");
          flag = STflag[paras[i]];
          if (IS_PTR(flag) || IS_INT(flag))
          {
-            if (j < 8)
+            if (USED)
             {
-PrintComment(NULL, next, "Store para %s\n", STname[paras[i]]);
-               if (j < 7) nam[1] = j + '3';
-               else { nam[1] = '1'; nam[2] = '0'; }
-               ir = iName2Reg(nam);
-               InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir,__LINE__);
-            }
-            else
-            {
-               if (j == 8) ir = GetReg(T_INT);
-               InsNewInst(NULL, next, LD, -ir,
-                          AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
-               InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir,__LINE__);
+               if (j < 8)
+               {
+                  if (j < 7) nam[1] = j + '3';
+                  else { nam[1] = '1'; nam[2] = '0'; }
+                  ir = iName2Reg(nam);
+                  InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+               }
+               else
+               {
+                  if (j == 8) ir = GetReg(T_INT);
+                  InsNewInst(NULL, next, LD, -ir,
+                             AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
+                  InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+               }
             }
             j++;
          }
          else if (IS_FLOAT(flag))
          {
             if (j == 8) ir = GetReg(T_INT);
-            if (fc < 13)
+            if (USED)
             {
-               if (fc < 9) fnam[1] = '0' + fc + 1;
-               else { fnam[1] = '1'; fnam[2] = '0' + fc - 9; }
-               fr = fName2Reg(fnam);
-               InsNewInst(NULL, next, FST, SToff[paras[i]].sa[2],-fr,__LINE__);
-            }
-            else
-            {
-               InsNewInst(NULL, next, LD, -ir,
-                          AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
-               InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir,__LINE__);
+               if (fc < 13)
+               {
+                  if (fc < 9) fnam[1] = '0' + fc + 1;
+                  else { fnam[1] = '1'; fnam[2] = '0' + fc - 9; }
+                  fr = fName2Reg(fnam);
+                  InsNewInst(NULL, next, FST, SToff[paras[i]].sa[2], -fr, 0);
+               }
+               else
+               {
+                  InsNewInst(NULL, next, LD, -ir,
+                             AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
+                  InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+               }
             }
             fc++;
             j++;
@@ -821,28 +872,31 @@ PrintComment(NULL, next, "Store para %s\n", STname[paras[i]]);
          {
             assert(IS_DOUBLE(flag));
             if (j == 8 || j == 7) ir = GetReg(T_INT);
-            if (fc < 13)
+            if (USED)
             {
-               if (fc < 9) fnam[1] = '0' + fc + 1;
-               else { fnam[1] = '1'; fnam[2] = '0' + fc - 9; }
-fprintf(stderr, "Getting parameter %s from %s\n", STname[paras[i]], fnam);
-               fr = dName2Reg(fnam);
-               InsNewInst(NULL, next, FSTD,SToff[paras[i]].sa[2],-fr,__LINE__);
-               j += 2;
+               if (fc < 13)
+               {
+                  if (fc < 9) fnam[1] = '0' + fc + 1;
+                  else { fnam[1] = '1'; fnam[2] = '0' + fc - 9; }
+                  fr = dName2Reg(fnam);
+                  InsNewInst(NULL, next, FSTD,SToff[paras[i]].sa[2], -fr, 0);
+                  j += 2;
+               }
+               else
+               {
+                  InsNewInst(NULL, next, LD, -ir,
+                             AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
+                  InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+                  j++;
+                  InsNewInst(NULL, next, LD, -ir,
+                             AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
+                  k = (SToff[paras[i]].sa[2]-1)<<2;
+                  k = AddDerefEntry(-REG_SP, 0, 0, DT[k+3]+4);
+                  InsNewInst(NULL, next, ST, k, -ir, __LINE__);
+                  j++;
+               }
             }
-            else
-            {
-               InsNewInst(NULL, next, LD, -ir,
-                          AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
-               InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir,__LINE__);
-               j++;
-               InsNewInst(NULL, next, LD, -ir,
-                          AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
-               k = (SToff[paras[i]].sa[2]-1)<<2;
-               k = AddDerefEntry(-REG_SP, 0, 0, DT[k+3]+4);
-               InsNewInst(NULL, next, ST, k, -ir, __LINE__);
-               j++;
-            }
+            else j += 2;
             fc++;
          }
       }
@@ -1077,6 +1131,7 @@ void FixFrame()
    extern int LOCALIGN, LOCSIZE;
    extern INSTQ *iqhead;
    int i, ni, nf, nd, isav[TNIR], fsav[TNFR], dsav[TNDR], savr[64];
+   MarkUnusedLocals(); 
    CreateSysLocals();
    KillUnusedLocals();
    NumberLocalsByType();

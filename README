@@ -78,10 +78,9 @@ know where from the %sp the locals or parameters are located.
 The idea behind the complicated frame handling is that all machine-specific
 addressing is handled here.  Globals and parameters are moved to locals,
 so that we have only locals in the body of the routine.  Some of those
-locals can be pointers, so that's how you handle arrays.
-   NOTE: this is also where I plan to do int/long conversions for 64 bit
-         machines, so that integers and ptrs will be of same length in
-	 body of routine.
+locals can be pointers, so that's how you handle arrays.  Note that on
+64 bit machines, all scalar integers are converted to 64 bits at the 
+parameter boundary.
 
 For all machines, our local area looks like:
 
@@ -103,31 +102,44 @@ depending on the architecture (therefore, there may be padding between them).
     point, we could say "load the third local" but not where in memory it is.
     At this point, no differentiation between types.
     This number is stored in SToff[].i.
-(2) Upon encountering the ROUT_BEGIN keyword, the grammer makes these calls:
-       CreateSysLocals()
-       NumberLocalsByType();
+(2) Upon encountering the ROUT_BEGIN keyword, the grammer makes the call:
        CreateLocalDerefs();
-(3) CreateSysLocals() : arch.c
-    Adds implicit locals, such as those used to store global data
-    (eg., fp constants) or in operation such as fabs (bit mask with 
-    sign bit 0, all other bits 1).
-(4) NumberLocalsByType() : symtab.c
+
+(3) CreateLocalDerefs() : symtab.c
+    Creates placeholder deref entries for each local variable.  Actual
+    correct offsets will be figured as pretty much the last step before
+    lil-to-assembly conversion.  Each parameter/local gets a DT entry of
+       <REG_SP>, 0, -<STindex>, 0
+    Note: for paras, moves para # from SToff[].i to SToff[].sa[0].
+    The DT index is stored in SToff[].sa[2].
+
+(4) When we are ready to translate to assembler, we make the following calls:
+       MarkUnusedLocals();
+       CreateSysLocals();
+       NumberLocalsByType();
+       UpdateLocalDerefs();
+(5) MarkUnusedLocals() : symtab.c
+    Looks through entire program.  All locals and parameters that are not
+    used have their first DT entry changed from -REG_SP to 0.
+(6) CreateSysLocals() : arch.c
+    Adds implicit locals, such as those used in operation like fabs
+    (bit mask with sign bit 0, all other bits 1).
+(7) NumberLocalsByType() : symtab.c
     Searches symbol table (ST) for all locals and parameters (all parameters
     are written to the local portion of the stack frame in order to shield
-    machine differences, so they are implicit locals as well).  Each such data
-    gets a slot in the type-dependent section of the frame.  Now we can say
-    "load 3rd integer local", but not where it is (address is not fully
-    qualified).  We move the para/local number from SToff[].i to SToff[].sa[0].
-    The type-entry number is stored in SToff[].sa[1].
-(5) CreateLocalDerefs() : symtab.c
-    Given the output of NumberLocalsByType(), created deref table (DT) entries
-    for each local parameter.  The DT index is stored in SToff[].sa[2].
-    At this point, we fill in the <const> offset like the local address
-    started at %sp.  The <mul> entry of DT is set to -1 to indicate that
-    the address is still not fully formed.
-(6) After the entire file is parsed and translated to LIL, ifko.c calls
+    machine differences, so they are implicit locals as well) that are used
+    (eg, have non-zero 1st DT entry).  Each such data gets a slot in the
+    type-dependent section of the frame.  Now we can say "load 3rd integer
+    local", but not where it is (address is not fully qualified).  The
+    type-entry number is stored in SToff[].sa[1].
+(8) UpdateLocalDerefs() : symtab.c
+    Given the output of NumberLocalsByType(), updates deref table (DT) entries
+    for each local parameter.  At this point, we fill in the <const> offset
+    like the local address started at %sp.  The <mul> entry of DT is set to
+    -1 to indicate that the address is still not fully formed.
+(9) After the entire file is parsed and translated to LIL, ifko.c calls
     CreatePrologue(), which will fully qualify all stack data.
-(7) CreatePrologue() : arch.c
+(10)CreatePrologue() : arch.c
     Given a list of registers to save, and the locals to be used, creates
     the appropriate prologue and epilogue, respecting the architecture's ABI.
     With all this information, it can calculate the actual frame size,
@@ -137,18 +149,21 @@ depending on the architecture (therefore, there may be padding between them).
     after register assignment is done.
     Calls:
        CorrectLocalOffsets()
-       Param2Local()
+       Extern2Local()
        CreateEpilogue()
-(8) CorrectLocalOffsets() : symtab.c
+(11)CorrectLocalOffsets() : symtab.c
     Searches symbol tables for using %sp as <base> and <mul> as -1, and
     adds <ldist> the dist from %sp to local area, to them.  At this point,
     all locals are fully qualified.
-(9) Param2Local() : arch.c
+(12)Extern2Local() : arch.c
     After stack frame is fully qualified, inserts proper store instructions
     into prologue so that incoming parameters are saved to their local
-    positions.
-(10)CreateEpilogue() : arch.c
+    positions.  Calls
+       InitLocalConst
+(13)CreateEpilogue() : arch.c
     Restores registers and returns.
+(14)InitLocalConst : arch.c
+    Stores constant values to fp and integer constants.
 
 *******************************************************************************
 *                              SYSTEM LOCALS                                  *
@@ -173,4 +188,5 @@ We have corallary instructions (suffixed by S; eg., LD becomes LDS) which
 perform the same operation on 32-bit integers.  These instructions appear
 only in the function prologue and epilogue, where they translate the function
 parameters' 32 bit integers to 64 bit values.  Therefore, in the body of
-the function, all integers are 64 bit.
+the function, all scalar integers are 64 bit.  Integer arrays are converted
+to 64 bits with each LD/ST.
