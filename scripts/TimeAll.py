@@ -39,8 +39,10 @@ print "ATLdir='%s', ARCH='%s'" % (ATLdir, ARCH)
 # print "time=%f, mflop=%f" % (time,mflop)
 
 pres = ['s', 'd']
-l1routs = ['asum', 'axpy', 'dot', 'scal']
-l1refs  = ['asum_fabs1_x1.c', 'axpy1_x1y1.c', 'dot1_x1y1.c', 'scal1_x1.c']
+psiz = [4, 8]
+l1routs = ['asum', 'axpy', 'dot', 'scal', 'iamax']
+l1refs  = ['asum_fabs1_x1.c', 'axpy1_x1y1.c', 'dot1_x1y1.c', 'scal1_x1.c',
+           'iamax_abs1_x1.c']
 l1atl   = []
 CCatl   = []
 CCFat   = []
@@ -49,9 +51,13 @@ CCFat   = []
 # Find the cacheline size for default flag determination
 #
 bob = fkocmnd.info(fko, IFKOdir + "/blas/dasum.b")
+NC = bob[0]
 LS = bob[1][0]
+VECT = bob[5]
 print LS
-sys.exit(0)
+VS = ""
+KFLAG = "-P all 0 " + str(LS*2)
+
 N=80000
 
 #
@@ -72,17 +78,46 @@ refMF = []
 atlT  = []
 atlMF = []
 j = i = 0
-print 'l1atl = ', l1atl
+
+CALLREF=0
+CALLATL=0
+CALLFKO=1
+# print 'l1atl = ', l1atl
+opt = "-X 1 -Y 1 -Fx 16 -Fy 16"
 for blas in l1routs:
    for pre in pres:
-      [time,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, l1refs[i])
-      print "REF %20.20s : time=%f, mflop=%f" % (pre+l1refs[i], time, mf)
-      refT.append(time)
-      refMF.append(mf)
-      [time,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, l1atl[j], 
-                              CCatl[j], CCFat[j])
-      print "ATL %20.20s : time=%f, mflop=%f" % (pre+l1atl[j], time, mf)
-      atlT.append(time)
-      atlMF.append(mf)
+      if (CALLREF != 0):
+         [time,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, l1refs[i])
+         print "REF %20.20s : time=%f, mflop=%f" % (pre+l1refs[i], time, mf)
+         refT.append(time)
+         refMF.append(mf)
+
+      if (CALLATL != 0):
+         [time,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, l1atl[j], 
+                                 CCatl[j], CCFat[j])
+         print "ATL %20.20s : time=%f, mflop=%f" % (pre+l1atl[j], time, mf)
+         atlT.append(time)
+         atlMF.append(mf)
+
+      if (CALLFKO != 0):
+         rout = IFKOdir + '/blas/' + pre + blas + '.b'
+         outf = ATLdir + '/tune/blas/level1/' + blas.upper() + '/fkorout.s'
+         info = fkocmnd.info(fko, rout)
+         VEC = info[5]
+         if (VEC == 0):
+            UR = LS / psiz[j%2]
+            KFLAGS = KFLAG + " "
+         else:
+            KFLAGS = KFLAG + " -V"
+            UR = LS / 16
+         KF0    = KFLAGS + " -U " + str(UR)
+         KFLAGS = KF0 + ' -o ' + outf + ' ' + rout
+         if (os.path.exists(outf)):
+            os.remove(outf)
+         fkocmnd.callfko(fko, KFLAGS)
+         [time,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, 'fkorout.s',
+                                 "gcc", "-x assembler-with-cpp", opt=opt)
+         print "FKO %20.20s : time=%f, mflop=%f" % (pre+blas+'.b', time, mf)
+         print "                           flags =", KF0
       j += 1
    i += 1
