@@ -1774,7 +1774,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          op1 = -op1;
          op2 = -op2;
          if (op1 != op2)
-            sptr = "movlpd";
+            sptr = "movsd";
          else sptr = "movapd";
          ap->next = PrintAssln("\t%s\t%s, %s\n", sptr, 
                                archvdregs[-VDREGBEG-op2],
@@ -1996,10 +1996,25 @@ struct assmln *lil2ass(BBLOCK *bbase)
             }
          #endif
          break;
+      case PREFW:
+         #ifdef X86
+            i = SToff[op3-1].i;
+            if (i > 0)
+               ap->next = PrintAssln("\tprefetcht%d\t%s\n",i, GetDeref(op2));
+            else
+            {
+               if (FKO_FLAG & IFF_3DNOWW)
+                  ap->next = PrintAssln("\tprefetchw\t%s\n", GetDeref(op2));
+               else if (FKO_FLAG & IFF_TAW)
+                  ap->next = PrintAssln("\tprefetcht0\t%s\n", GetDeref(op2));
+               else
+                  ap->next = PrintAssln("\tprefetchnta\t%s\n", GetDeref(op2));
+            }
+         #endif
+         break;
 /*
  *  HERE HERE HERE:
  */
-      case PREFW:
       case PREFRS:
       case PREFWS:
       case CVTFI:

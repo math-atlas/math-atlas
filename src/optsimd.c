@@ -576,9 +576,8 @@ int SimdLoop(LOOPQ *lp)
       }
    }
    GetReg(-1);
-   if (j)
-      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, CMPFLAG, CF_VRED_END,
-                        0, 0);
+   iptp = InsNewInst(lp->posttails->blk, iptp, NULL, CMPFLAG, CF_VRED_END,
+                     0, 0);
 /*
  * Translate body of loop
  */
