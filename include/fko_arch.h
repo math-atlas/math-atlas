@@ -1,6 +1,12 @@
 #ifndef FKO_ARCH_H
 #define FKO_ARCH_H
 
+/* 
+ * for archiregs: 
+ * (1) first entry is always stack pointer
+ * (2) Second entry is scratch register that can be modified without saving
+ *     (for use in prologue)
+ */
 #if !defined(LINUX_PPC) && !defined(OSX_PPC) && !defined(LINUX_X86_32) && \
     !defined(LINUX_X86_64) && !defined(SOLARIS_SPARC)
 /*   #define LINUX_X86_32   */
