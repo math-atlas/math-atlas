@@ -18,6 +18,8 @@
 #define L_NEND_BIT      0x80  /* Negative end   */
 #define L_IREF_BIT      0x100 /* index is refed in body */
 #define L_MINC_BIT      0x200 /* END = BEG + INC*I for some non-zero I */
+#define L_FORWARDLC_BIT 0x400 /* use forward loop control */
+#define L_SIMPLELC_BIT  0x800 /* use simple loop control */
 
 #define PTRF_INC        0x1
 #define PTRF_CONTIG     0x2

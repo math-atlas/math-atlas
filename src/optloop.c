@@ -601,11 +601,29 @@ static void ForwardLoop(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
    r0 = GetReg(T_INT);
    r1 = GetReg(T_INT);
 
+   if (unroll > 1)
+   {
+      assert(IS_CONST(STflag[lp->inc-1]));
+      assert(SToff[lp->inc-1].i == 1);
+   }
    if (IS_CONST(STflag[lp->beg-1]))
       *ipinit = ip = NewInst(NULL, NULL, NULL, MOV, -r0, lp->beg, 0);
    else
       *ipinit=ip=NewInst(NULL, NULL, NULL, LD, -r0, SToff[lp->beg-1].sa[2], 0);
    ip->next = NewInst(NULL, NULL, NULL, ST, SToff[lp->I-1].sa[2], -r0, 0);
+/*
+ * If loop is unrolled,  and end is non-constant, subtract off UR-1 so we
+ * don't go extra distance
+ */
+   if (unroll > 1 && !IS_CONST(STflag[lp->end-1]))
+   {
+      ip = ip->next;
+      ip->next = NewInst(NULL, NULL, NULL, LD, -r0, SToff[lp->end-1].sa[2], 0);
+      ip = ip->next;
+      ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, 
+                         STiconstlookup(unroll*SToff[lp->inc-1].i-1));
+      ip->next = NewInst(NULL, NULL, NULL, ST, SToff[lp->end-1].sa[2], -r0, 0);
+   }
 
    *ipupdate = ip = NewInst(NULL, NULL, NULL, LD, -r0, SToff[lp->I-1].sa[2], 0);
    if (IS_CONST(STflag[lp->inc-1]))
@@ -627,7 +645,13 @@ static void ForwardLoop(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
 
    *iptest = ip = NewInst(NULL, NULL, NULL, LD, -r0, SToff[lp->I-1].sa[2], 0);
    if (IS_CONST(STflag[lp->end-1]))
-      ip->next = NewInst(NULL, NULL, NULL, CMP, -ICC0, -r0, lp->end);
+   {
+      if (unroll < 2)
+         ip->next = NewInst(NULL, NULL, NULL, CMP, -ICC0, -r0, lp->end);
+      else
+         ip->next = NewInst(NULL, NULL, NULL, CMP, -ICC0, -r0, 
+                            STiconstlookup(SToff[lp->end-1].i-unroll+1));
+   }
    else
    {
       ip->next = NewInst(NULL, NULL, NULL, LD, -r1, SToff[lp->end-1].sa[2], 0);
@@ -654,7 +678,7 @@ static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
 {
    INSTQ *ip;
    short r0, r1;
-   int I, I0, N, inc, Ioff;
+   int I, I0, N, inc, Ioff, i;
 
    I  = lp->I;
    I0 = lp->beg;
@@ -666,8 +690,10 @@ static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
    r1 = GetReg(T_INT);
 
    if (IS_CONST(STflag[N-1]) && IS_CONST(STflag[I0-1]))
-      *ipinit = ip = NewInst(NULL, NULL, NULL, MOV, -r0, 
-                             STiconstlookup(SToff[N-1].i - SToff[I0-1].i), 0);
+   {
+      i = SToff[N-1].i - SToff[I0-1].i - (unroll>1) ? unroll-1 : 0;
+      *ipinit = ip = NewInst(NULL, NULL, NULL, MOV, -r0, STiconstlookup(i), 0);
+   }
    else
    {
       if (IS_CONST(STflag[I0-1]))
@@ -675,14 +701,22 @@ static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
          *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r0, SToff[N-1].sa[2], 0);
          if (SToff[I0-1].i)
          {
-            ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, I0);
+            if (unroll < 2)
+               ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, I0);
+            else
+               ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, 
+                                  STiconstlookup(SToff[I0].i-unroll+1));
             ip = ip->next;
          }
       }
       else if (IS_CONST(STflag[N-1]))
       {
          *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r1, SToff[I0-1].sa[2],0);
-         ip->next = NewInst(NULL, NULL, NULL, MOV, -r0, N, 0);
+         if (unroll < 2)
+            ip->next = NewInst(NULL, NULL, NULL, MOV, -r0, N, 0);
+         else
+            ip->next = NewInst(NULL, NULL, NULL, MOV, -r0, 
+                               STiconstlookup(SToff[N-1].i-unroll+1), 0);
          ip = ip->next;
          ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, -r1);
          ip = ip->next;
@@ -694,6 +728,12 @@ static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
          ip = ip->next;
          ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, -r1);
          ip = ip->next;
+         if (unroll > 1)
+         {
+            ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, 
+                               STiconstlookup(unroll-1));
+            ip = ip->next;
+         }
       }
    }
    ip->next = NewInst(NULL, NULL, NULL, ST, Ioff, -r0, 0);
@@ -722,11 +762,14 @@ void AddLoopControl(LOOPQ *lp, INSTQ *ipinit, INSTQ *ipupdate, INSTQ *iptest)
 
 fprintf(stderr, "%s(%d), %d,%d,%d tails=%d\n", __FILE__, __LINE__, ipinit, ipupdate, iptest, lp->tails);
    assert(lp->tails);
-   ipl = FindCompilerFlag(lp->preheader, CF_LOOP_INIT);
-   for (ip = ipinit; ip; ip = ip->next)
-      ipl = InsNewInst(NULL, ipl, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
-                       ip->inst[3]);
+   if (ipinit)
+   {
+      ipl = FindCompilerFlag(lp->preheader, CF_LOOP_INIT);
+      for (ip = ipinit; ip; ip = ip->next)
+         ipl = InsNewInst(NULL, ipl, NULL, ip->inst[0], ip->inst[1], 
+                          ip->inst[2], ip->inst[3]);
 
+   }
    for (bl=lp->tails; bl; bl = bl->next)
    {
       ipl = FindCompilerFlag(bl->blk, CF_LOOP_UPDATE);
@@ -750,6 +793,11 @@ PrintThisInst(stderr, 0, ip);
    }
 }
 
+int AlreadySimpleLC(LOOPQ *lp)
+{
+   return( (IS_CONST(STflag[lp->inc-1]) && IS_CONST(STflag[lp->end-1])
+            && SToff[lp->inc-1].i == -1 && SToff[lp->end-1].i == 0) );
+}
 void OptimizeLoopControl(LOOPQ *lp, /* Loop whose control should be opt */
                          int unroll, /* unroll factor to apply */
                          int NeedKilling, /* 0 if LC already removed */
@@ -775,31 +823,35 @@ void OptimizeLoopControl(LOOPQ *lp, /* Loop whose control should be opt */
       assert(IS_CONST(STflag[lp->inc-1]));
    if (NeedKilling)
       KillLoopControl(lp);
-   i = (IS_CONST(STflag[lp->inc-1]) && IS_CONST(STflag[lp->end-1])
-        && SToff[lp->inc-1].i == -1 && SToff[lp->end-1].i == 0);
-   il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
-   if (!i && il)
+/*
+ * if we've not yet determined what kind of loop control to use, do so
+ */
+   if (!(lp->flag & (L_FORWARDLC_BIT | L_SIMPLELC_BIT)))
+   {
+      il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
+      if (!AlreadySimpleLC(lp) && il)
+        lp->flag |= L_FORWARDLC_BIT;
+      else lp->flag |= L_SIMPLELC_BIT;
+      if (il)
+         KillIlist(il);
+   }
+   if (lp->flag & L_FORWARDLC_BIT)
    {
       fprintf(stderr, "\nIndex refs in loop prevent SimpleLC!!!\n\n");
       ForwardLoop(lp, unroll, &ipinit, &ipupdate, &iptest);
    }
    else
    {
-      if (i)
-         fprintf(stderr, "\nLoop already in SimpleLC!!!\n\n");
-      else if (il)
-         fprintf(stderr, "\nNo index refs (%d) allowed SimpleLC!!!\n\n", il);
+      fprintf(stderr, "\nLoop good for SimpleLC!!!\n\n");
       SimpleLC(lp, unroll, &ipinit, &ipupdate, &iptest);
    }
-   if (il)
-      KillIlist(il);
    if (ippost)
    {
       for (ip=ippost; ip->next; ip = ip->next);
       ip->next = ipupdate;
       ipupdate = ippost;
    }
-   AddLoopControl(lp, ipinit, ipupdate, iptest);
+   AddLoopControl(lp, lp->preheader ? ipinit : NULL, ipupdate, iptest);
    KillAllInst(ipinit);
    KillAllInst(ipupdate);
    KillAllInst(iptest);
@@ -898,6 +950,233 @@ void UpdateUnrolledIndices(BLIST *scope, short I, int UR)
    UpdateIndexRef(scope, I, UR);
 }
 
+BBLOCK *FindFallHead(BBLOCK *head, int tails, int inblks)
+/*
+ * Given a header in scope, return NULL if already added to inblks, head if
+ * it is indeed the head of a previously unseen fall-thru path
+ */
+{
+   BBLOCK *bp;
+   if (!head)
+      return(NULL);
+   if (BitVecCheck(inblks, head->bnum-1))
+      return(NULL);
+/*
+ * Mark all fall-thru blocks in scope from head
+ */
+   for (bp=head; bp; bp = bp->down)
+   {
+      SetVecBit(inblks, bp->bnum-1, 1);
+/*
+ *    path complete if we hit a tail or if fall-thru not successor
+ */
+     if (BitVecCheck(tails, bp->bnum-1) ||
+         (bp->usucc != bp->down && bp->csucc != bp->down))
+        break;
+   }
+   return(head);
+}
+
+BLIST *FindAllFallHeads(BLIST *ftheads, int iscope, BBLOCK *head, int tails,
+                        int inblks)
+{
+   BBLOCK *bp;
+/*
+ * If we've added all blocks in scope, or head is already in, or head is not
+ * in scope, stop recursion
+ */
+   if (!head || !BitVecComp(iscope, inblks))
+      return(ftheads);
+   if (BitVecCheck(inblks, head->bnum-1) || !BitVecCheck(iscope, head->bnum-1))
+      return(ftheads);
+   
+   bp = FindFallHead(head, tails, inblks);
+   if (bp)
+      ftheads = AddBlockToList(ftheads, bp);
+   if (head->usucc && !BitVecCheck(inblks, head->usucc->bnum-1))
+      ftheads = FindAllFallHeads(ftheads, iscope, head->usucc, tails, inblks);
+   if (head->csucc && !BitVecCheck(inblks, head->csucc->bnum-1))
+      ftheads = FindAllFallHeads(ftheads, iscope, head->csucc, tails, inblks);
+   return(ftheads);
+}
+
+void UnrollCleanup(LOOPQ *lp, int unroll)
+/*
+ * Creates a cleanup loop for loop lp at end of program.
+ * Presently just reproduces entire loop without I initialization (assumed
+ * to be done before jmp).
+ * NOTE: assumes loop control has already been deleted.
+ */
+{
+   BLIST *ftheads, *bl, *dupblks;
+   BBLOCK *bp, *bp0, *bpN, *newCF;
+   INSTQ *ipnext;
+   LOOPQ *lpn;
+   ILIST *il;
+   char ln[512];
+   int FORWARDLOOP, iv, ivtails;
+   short ilab, ptlab, lblab;
+   short r0, r1;
+   extern BBLOCK *bbbase;
+   extern int FKO_BVTMP;
+
+   r0 = GetReg(T_INT);
+   r1 = GetReg(T_INT);
+/*
+ * If flag's loop control not set, compute it, then set boolean based on flag
+ */
+   if (!(lp->flag & (L_FORWARDLC_BIT | L_SIMPLELC_BIT)))
+   {
+      il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
+      if (!AlreadySimpleLC(lp) && il)
+         lp->flag |= L_FORWARDLC_BIT;
+      else
+         lp->flag |= L_SIMPLELC_BIT;
+   }
+   FORWARDLOOP = L_FORWARDLC_BIT & lp->flag;
+/*
+ * Beginning of cleanup code is original body label with CU_ prefixed
+ * post-tail cleanup-done lab is body label with CUDONE_ prefixed
+ */
+   sprintf(ln, "CU_%s", STname[lp->body_label-1]);
+   ilab = STlabellookup(ln);
+   sprintf(ln, "CUDONE_%s", STname[lp->body_label-1]);
+   ptlab = STlabellookup(ln);
+/*
+ * Require one and only one post-tail; later do transformation to ensure this
+ * for loops where it is not natively true
+ */
+   assert(lp->posttails && !lp->posttails->next);
+/*
+ * Put cleanup info before 1st non-label instruction in posttail
+ */
+   bp = lp->posttails->blk;
+   if (bp->ainst1 && bp->ainst1->inst[0] == LABEL)
+      ipnext = bp->ainst1->next;
+   else
+      ipnext = bp->ainst1;
+   if (FORWARDLOOP)
+   {
+/*
+ *    If we've used unrolled forward loop, restore N to original value
+ */
+      if (!IS_CONST(STflag[lp->end-1]))
+      {
+         InsNewInst(bp, NULL, ipnext, LD, -r1, SToff[lp->end-1].sa[2], 0);
+         InsNewInst(bp, NULL, ipnext, ADD, -r1, -r1, 
+                            STiconstlookup(unroll*SToff[lp->inc-1].i-1));
+         InsNewInst(bp, NULL, ipnext, ST, SToff[lp->end-1].sa[2], -r1, 0);
+      }
+      InsNewInst(bp, NULL, ipnext, LD, -r0, SToff[lp->I-1].sa[2], 0);
+      if (IS_CONST(STflag[lp->end-1]))
+         InsNewInst(bp, NULL, ipnext, CMP, -ICC0, -r0, lp->end);
+      else
+         InsNewInst(bp, NULL, ipnext, CMP, -ICC0, -r0, -r1);
+   }
+   else
+   {
+      InsNewInst(bp, NULL, ipnext, LD, -r0, SToff[lp->I-1].sa[2], 0);
+      InsNewInst(bp, NULL, ipnext, SUBCC, -r0, -r0,
+                 STiconstlookup(-(SToff[lp->inc-1].i*unroll-1)));
+      InsNewInst(bp, NULL, ipnext, ST, SToff[lp->I-1].sa[2], -r0, 0);
+   }
+   InsNewInst(bp, NULL, ipnext, JNE, -PCREG, -ICC0, ilab);
+/*
+ * Add label to jump back to when cleanup is done (screws up block, of course)
+ */
+   InsNewInst(bp, NULL, ipnext, LABEL, ptlab, 0, 0);
+/*
+ * Find last block, add present block after it
+ */
+   for (bp0=bbbase; bp0->down; bp0 = bp0->down);
+   bp = NewBasicBlock(bp0, NULL);
+   bp0->down = bp;
+   bp0 = bp;
+/*
+ * Start new block with a cleanup label, which is original loop body label
+ * with CU_ prefixed to it
+ */
+   InsNewInst(bp, NULL, NULL, LABEL, ilab, 0, 0);
+/*
+ * Update I to find remainder of loop to do
+ */
+#if 0
+   InsNewInst(bp, NULL, NULL, LD, -r0, SToff[lp->I-1].sa[2], 0);
+   assert(IS_CONST(STflag[lp->inc-1]));
+   InsNewInst(bp, NULL, NULL, FORWARDLOOP ? SUB : ADD, -r0, -r0,
+              STiconstlookup(SToff[lp->inc-1].i*unroll));
+   InsNewInst(bp, NULL, NULL, ST, SToff[lp->I-1].sa[2], -r0, 0);
+#endif
+/*
+ * Duplicate original loop body
+ */
+   SetVecBit(lp->blkvec, lp->header->bnum-1, 0);
+   FKO_BVTMP = iv = BitVecCopy(FKO_BVTMP, lp->blkvec);
+   newCF = DupCFScope(lp->blkvec, iv, 0, lp->header);
+   assert(newCF->ilab);
+/*
+ * Use CF to produce a block list of duped blocks
+ */
+   SetVecBit(lp->blkvec, lp->header->bnum-1, 1);
+   iv = BitVecCopy(iv, lp->blkvec);
+   dupblks = CF2BlockList(NULL, iv, newCF);
+
+/*
+ * Find all fall-thru path headers in loop; iv becomes blocks we have already
+ * added
+ */
+   SetVecAll(iv, 0);
+   ivtails = BlockList2BitVec(lp->tails);
+   ftheads = FindAllFallHeads(NULL, lp->blkvec, lp->header, ivtails, iv);
+/*
+ * Add new cleanup loop (minus I init) at end of rout, one fall-thru path at
+ * a time
+ */
+   for (bl=ftheads; bl; bl = bl->next)
+   {
+      for (bp=bl->blk; bp; bp = bp->down)
+      {
+         if (!BitVecCheck(lp->blkvec, bp->bnum-1))
+            break;
+         bp0->down = FindBlockInListByNumber(dupblks, bp->bnum);
+         bp0->down->up = bp0;
+         bp0 = bp0->down;
+         if (BitVecCheck(ivtails, bp->bnum-1))
+            break;
+      }
+      bp0->down = NULL;
+   }
+/*
+ * Form temporary new loop struct for cleanup loop
+ */
+   lpn = NewLoop(lp->flag);
+   lpn->I = lp->I;
+   lpn->beg = lp->beg;
+   lpn->end = lp->end;
+   lpn->inc = lp->inc;
+   bp = FindBlockInListByNumber(dupblks, lp->header->bnum);
+   assert(bp && bp->ilab);
+   lpn->body_label = bp->ilab;
+   for (bl=lp->tails; bl; bl = bl->next)
+   {
+      bp = FindBlockInListByNumber(dupblks, bl->blk->bnum);
+      assert(bp);
+      lpn->tails = AddBlockToList(lpn->tails, bp);
+   }
+   lp->blocks = dupblks;
+   OptimizeLoopControl(lpn, 1, 0, NULL);
+/*
+ * After all tails of cleanup loop, add jump back to posttail of unrolled loop
+ */
+   for (bl=lpn->tails; bl; bl = bl->next)
+   {
+      bp = NewBasicBlock(bl->blk, bl->blk->down);
+      bl->blk->down = bp;
+      InsNewInst(bp, NULL, NULL, JMP, -PCREG, ptlab, 0);
+   }
+   KillLoop(lpn);
+}
+
 int UnrollLoop(LOOPQ *lp, int unroll)
 {
    short iv;
@@ -912,6 +1191,7 @@ int UnrollLoop(LOOPQ *lp, int unroll)
    extern BBLOCK *bbbase;
 
    KillLoopControl(lp);
+   UnrollCleanup(lp, unroll);
    il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
    if (il) KillIlist(il);
    else UsesIndex = 0;

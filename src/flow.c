@@ -814,7 +814,7 @@ int CalcLoopDepth()
       for (lp=loopq->blocks; lp; lp = lp->next)
       {
          if (lp->blk != loop->header && lp->blk->loop)
-            dep = lp->blk->loop->depth++;
+            dep = ++(lp->blk->loop->depth);
          else if (lp->blk->loop) dep = lp->blk->loop->depth;
          else dep = 0;
          if (dep > maxdep) maxdep = dep;

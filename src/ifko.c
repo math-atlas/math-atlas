@@ -338,12 +338,12 @@ int GoToTown(int SAVESP)
    #if 0
       OptimizeLoopControl(optloop, 1, 1, NULL);
    #else
-      UnrollLoop(optloop, 2);
+      UnrollLoop(optloop, 3);
    #endif
    CalcInsOuts(bbbase); 
    CalcAllDeadVariables();
 
-   assert(!PerformOpt(SAVESP));
+//   assert(!PerformOpt(SAVESP));
 
    if (!INDEADU2D)
       CalcAllDeadVariables();
