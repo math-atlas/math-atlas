@@ -5,12 +5,15 @@ IFKO = ../bin/ifko
 
 all : ibuild fbuild irun frun
 
-fbuild : xftst0 xftst1 xftst2 xftst3
+fbuild : xftst0 xftst1 xftst2 xftst3 xftst4 xftst5 xftst6
 frun   : fbuild 
 	./xftst0
 	./xftst1
 	./xftst2
 	./xftst3
+	./xftst4
+	./xftst5
+	./xftst6
 
 ibuild : xitst0 xitst1 xitst2 xitst3 xitst4 xitst5 xitst6 xitst7 xitst8 xitst9
 irun : ibuild
@@ -60,6 +63,8 @@ xftst5 : mftst5.o ftst5.o
 	$(CC) $(CCFLAGS) -o $@ mftst5.o ftst5.o
 xftst6 : mftst6.o ftst6.o
 	$(CC) $(CCFLAGS) -o $@ mftst6.o ftst6.o
+xftst7 : mftst7.o ftst7.o
+	$(CC) $(CCFLAGS) -o $@ mftst7.o ftst7.o
 build_comp:
 	cd ../bin ; $(MAKE) ifko
 

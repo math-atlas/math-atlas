@@ -8,8 +8,8 @@ main()
    double err = 1.0E-15;
    exp = arr[i] + arr[i-1] + arr[i+1];
    dret = arr_tst(i, arr);
-   if (exp - dret <= err) fprintf(stdout, "4d: ARRAY INDEX & ADD PASSED\n");
-   else fprintf(stderr, "4d: ARRAY INDEX & ADD FAILED: got=%lf, expected=%lf\n",
+   if (exp - dret <= err) fprintf(stdout, "6d: ARRAY INDEX & ADD PASSED\n");
+   else fprintf(stderr, "6d: ARRAY INDEX & ADD FAILED: got=%lf, expected=%lf\n",
                 dret, exp);
    exit(exp-dret > err);
 }
