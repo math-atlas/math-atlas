@@ -234,6 +234,24 @@ int CountBitsSet(int iv)
    }
    return(n);
 }
+
+int AnyBitsSet(int iv)
+/*
+ * Returns : 1st bit set, 0 if none set
+ */
+{
+   int i, j, k, n;
+   n = ni[--iv];
+   for (j=0; j < n; j++)
+   {
+      k = bvecs[iv][j];
+      for (i=0; i < 32; i++)
+         if (k & (1<<i))
+            return(j*32+i+1);
+   }
+   return(0);
+}
+
 char *PrintVecList(int iv, int ioff)
 /*
  * RETURNS: ptr to string containing # of all set bits
@@ -257,6 +275,47 @@ char *PrintVecList(int iv, int ioff)
    }
    if (sptr != ln) sptr[-2] = '\0';
    return(ln);
+}
+
+short *BitVec2StaticArray(int iv)
+/*
+ * Translates a bitvector to an array of shorts, where each element holds the
+ * position of the set bit.  Position 0 is N, the length of the array
+ * (the number of bits set).
+ * RETURNS: (N+1) length short static array
+ */
+{
+   int i, j, n;
+   static int N=0;
+   static short *vals=NULL;
+
+   if (iv > 0)
+   {
+      n = CountBitsSet(iv);
+      if (n >= N)
+      {
+         if (vals) free(vals);
+         N = n+1;
+         vals = malloc(N*sizeof(short));
+         assert(vals);
+      }
+      vals[0] = n;
+      for (i=1; i <= n; i++)
+         vals[i] = GetSetBitX(iv, i);
+      #if IFKO_DEBUG_LEVEL > 0  && 0
+         fprintf(stderr, "ivals = ");
+         for (i=1; i <= n; i++)
+            fprintf(stderr, "%d,", vals[i]);
+         fprintf(stderr, "\n");
+      #endif
+   }
+   else
+   {
+      N = 0;
+      if (vals) free(vals);
+      vals = NULL;
+   }
+   return(vals);
 }
 
 short *BitVec2Array(int iv, int off)

@@ -1,5 +1,7 @@
 #include "ifko.h"
 
+static short STderef=0;
+
 void HandleUseSet(int iv, int iuse, int I)
 {
    int i, flag;
@@ -24,6 +26,11 @@ void HandleUseSet(int iv, int iuse, int I)
             SetVecBit(iuse, -SToff[i].sa[1]-1, 1);
          else if (SToff[i].sa[1])  /* local deref means use/set of local */
             SetVecBit(iv, SToff[I].sa[1]-1+tnreg, 1);
+/*
+ *       Indicate non-local deref in set/use
+ */
+         if (SToff[I].sa[1] <= 0)
+             SetVecBit(iv, tnreg+STderef-1, 1);
       }
    }
 }
@@ -46,9 +53,8 @@ void CalcUseSet(BBLOCK *bp)
       if (!ip->set) ip->set = NewBitVec(32);
       else SetVecAll(ip->set, 0);
 
-      if (inst != COMMENT && inst != CMPFLAG)
+      if (ACTIVE_INST(inst))
       {
-
          HandleUseSet(ip->set, ip->use, ip->inst[1]);
          HandleUseSet(ip->use, ip->use, ip->inst[2]);
          HandleUseSet(ip->use, ip->use, ip->inst[3]);
@@ -88,7 +94,9 @@ void CalcInsOuts(BBLOCK *base)
    BBLOCK *bp;
    int CHANGES, vstmp;
    extern int FKO_BVTMP;
+   extern BBLOCK *bbbase;
 
+   if (!STderef) STderef = STdef("_DEREF", 0, 0);
    if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
    vstmp = FKO_BVTMP;
 
@@ -114,6 +122,74 @@ void CalcInsOuts(BBLOCK *base)
       }
    }
    while(CHANGES);
+   if (base == bbbase)
+      CFUSETU2D = 1;
+}
+
+void CalcBlocksDeadVariables(BBLOCK *bp)
+{
+   BBLOCK *bb;
+   static ushort mask=0;
+   ushort seenwrite;
+   short inst;
+   INSTQ *ip;
+   extern int FKO_BVTMP;
+   extern BBLOCK *bbbase;
+
+   if (!mask)
+   {
+      if (!STderef) STderef = STdef("_DEREF", 0, 0);
+      mask = NewBitVec(32);
+      SetVecBit(mask, REG_SP-1, 1);
+      SetVecBit(mask, -1-Reg2Int("PC"), 1);
+      SetVecBit(mask, STderef-1+NumberArchRegs(), 1);
+   }
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
+   seenwrite = FKO_BVTMP;
+   if (!INUSETU2D) CalcUseSet(bp);
+   if (!CFUSETU2D)
+   {
+      assert(FindBlockByNumber(bbbase, bp->bnum) == bp);
+      CalcInsOuts(bbbase);
+   }
+/*
+ * Treat each referenced var known to be dead on leaving the block as having
+ * seen a range-killing write
+ */
+   BitVecComb(seenwrite, bp->uses, bp->defs, '|');
+   BitVecComb(seenwrite, seenwrite, bp->outs, '-');
+   for (ip=bp->ainstN; ip; ip = ip->prev)
+   {
+      if (ip->deads) SetVecAll(ip->deads, 0);
+      else ip->deads = NewBitVec(32);
+      inst = GET_INST(ip->inst[0]);
+      if (ACTIVE_INST(inst))
+      {
+/*
+ *       Any sets in this instruction are added to range-killing writes
+ */
+         BitVecComb(seenwrite, seenwrite, ip->set, '|');
+/*
+ *       Dead values occur when we have previously seen a range-killing write,
+ *       and we now see a last read
+ */
+         BitVecComb(ip->deads, seenwrite, ip->use, '&');
+         BitVecComb(ip->deads, ip->deads, mask, '-');
+/*
+ *       A last use negates a previous write (we are now in new range)
+ */
+         BitVecComb(seenwrite, seenwrite, ip->deads, '-');
+      }
+   }
+}
+
+void CalcAllDeadVariables()
+{
+   BBLOCK *bp;
+   extern BBLOCK *bbbase;
+   if (!CFUSETU2D) CalcInsOuts(bbbase);
+   for (bp=bbbase; bp; bp = bp->down)
+      CalcBlocksDeadVariables(bp);
 }
 
 char *BV2VarNames(int iv)
@@ -162,6 +238,23 @@ void AddSetUseComments(BBLOCK *base)
             PrintComment(bp, ip, NULL,"  uses=%s", BV2VarNames(ip->use));
             PrintComment(bp, ip, NULL,"  sets=%s", BV2VarNames(ip->set));
          }
+      }
+   }
+}
+
+void AddDeadComments(BBLOCK *base)
+{
+   BBLOCK *bp;
+   INSTQ *ip;
+   short inst;
+
+   for (bp=base; bp; bp = bp->down)
+   {
+      for (ip=bp->inst1; ip; ip = ip->next)
+      {
+         inst = ip->inst[0] & 0x3FFF;
+         if (inst != COMMENT && inst != CMPFLAG)
+            PrintComment(bp, ip, NULL,"  deads=%s", BV2VarNames(ip->deads));
       }
    }
 }

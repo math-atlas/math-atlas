@@ -19,7 +19,7 @@ struct instq
    struct bblock *myblk;
    INSTQ *prev, *next;
    short inst[4];
-   ushort use, set;
+   ushort use, set, deads;
 };
 
 struct idlist
@@ -63,6 +63,8 @@ struct bblock
    ushort dom;              /* dominators of this block */
    ushort uses, defs;       /* uses and defs for this block */
    ushort ins, outs;        /* live vars coming in and leaving block */
+   IGLIST *conin, *conout;  /* in/out conflicts list */
+   IGLIST *ignodes;         /* all of this block's ignodes */
 };
 
 typedef struct blist BLIST;
@@ -87,8 +89,26 @@ struct loopq
    uchar *abalign;    /* alignments of above arrays */
    BBLOCK *preheader, *header;
    BLIST *blocks;
+   BLIST *footers;
    ushort blkvec;
    struct loopq *next;
 };
 
+typedef struct ignode IGNODE;
+struct ignode
+{
+   BLIST *myblocks;             /* blocks live range spans */
+   struct iglist *conflicts;    /* ignode's conflicting with this one */
+   INSTQ *LRbeg, *LRend;        /* First and last inst of live range */
+   int freq;                    /* # of uses of this live range */
+   ushort regstate;             /* registers being used at this point */
+   short var;                   /* ST index of variable */
+};
+
+typedef struct iglist IGLIST;
+struct iglist
+{
+   IGNODE *ignode;
+   struct iglist *next;
+};
 #endif

@@ -170,7 +170,9 @@ enum inst
 #define FIRSTBRANCH JMP
 #define LASTBRANCH  RET
 
+#define GET_INST(inst_) ((inst_) & 0x3FFF)
 #define IS_BRANCH(i_) ((i_) >= FIRSTBRANCH && (i_) <= LASTBRANCH)
+#define ACTIVE_INST(i_) ((i_) != COMMENT && (i_) != CMPFLAG)
 
 INSTQ *NewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,
                short dest, short src1, short src2);

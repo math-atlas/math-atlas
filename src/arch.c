@@ -36,6 +36,28 @@ char *Int2Reg(int i)
    return(ln);
 }
 
+short Reg2Int(char *regname)
+/*
+ * Given a register of regname, returns integer number
+ */
+{
+   int i;
+   if (regname[0] == 'P' && regname[1] == 'C' && regname[2] == '\0')
+      return(PCREG);
+   if (regname[0] == 'S' && regname[1] == 'P' && regname[2] == '\0')
+      return(REG_SP);
+   for (i=IREGBEG; i < IREGEND; i++)
+      if (!strcmp(archiregs[i], regname)) return(-i-1);
+   for (i=FREGBEG; i < FREGEND; i++)
+      if (!strcmp(archfregs[i], regname)) return(-i-1);
+   for (i=DREGBEG; i < DREGEND; i++)
+      if (!strcmp(archdregs[i], regname)) return(-i-1);
+   for (i=ICC0; i < NICC; i++)
+      if (!strcmp(ICCREGS[i], regname)) return(-i-1);
+   for (i=FCC0; i < NFCC; i++)
+      if (!strcmp(FCCREGS[i], regname)) return(-i-1);
+   return(0);
+}
 void FindRegUsage(BBLOCK *bbase, int *ni0, int *iregs, 
                   int *nf0, int *fregs, int *nd0, int *dregs)
 /*

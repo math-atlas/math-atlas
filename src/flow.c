@@ -23,6 +23,37 @@ BLIST *AddBlockToList(BLIST *list, BBLOCK *blk)
    return(list);
 }
 
+static BLIST *KillBlockListEntry(BLIST *lp)
+{
+   BLIST *ln;
+   if (lp)
+   {
+      ln = lp->next;
+      free(lp);
+   }
+   else ln = NULL;
+   return(ln);
+}
+
+BLIST *RemoveBlockFromList(BLIST *list, BBLOCK *blk)
+/*
+ * Removes block blk from list list, if it exists
+ * RETURNS: (possibly new) list
+ */
+{
+   BLIST *lprev, *lp;
+   lp = list;
+   if (!list) return(NULL);
+   if (list->blk == blk) list = list->next;
+   else
+   {
+      for (lprev=list; lp && lp->blk != blk; lp = lp->next) lprev=lp;
+      if (lp) lprev->next = lp->next;
+   }
+   KillBlockListEntry(lp);
+   return(list);
+}
+
 int BlockList2BitVec(BLIST *lp)
 {
    static int iv=0;
@@ -83,7 +114,41 @@ BBLOCK *NewBasicBlock(BBLOCK *up, BBLOCK *down)
    bp->preds = NULL;
    bp->ins = bp->outs = bp->uses = bp->defs = bp->dom = 0;
    bp->loop = NULL;
+   bp->conin = bp->conout = NULL;
    return(bp);
+}
+
+BBLOCK *KillBlock(BBLOCK *base, BBLOCK *killme)
+/*
+ * Removes block killme from queue starting at base
+ * RETURNS: (possibly new) base
+ */
+{
+/* 
+ * Remove killme from block queue
+ */
+   if (killme->up) killme->up->down = killme->down;
+   else base = base->down;
+   if (killme->down) killme->down->up = killme->up;
+/*
+ * If this block usucc of killme->up, change it to killme->down
+ */
+   if (killme->up->usucc == killme)
+   {
+      assert(GET_INST(killme->ainstN->inst[0]) != JMP);
+      killme->up->usucc = killme->down;
+   }
+/*
+ * Remove this block from pred of any successor
+ */
+   if (killme->usucc)
+      RemoveBlockFromList(killme->usucc->preds, killme);
+   if (killme->csucc)
+      RemoveBlockFromList(killme->csucc->preds, killme);
+/*
+ * HERE HERE HERE
+ */
+   return(base);
 }
 
 void KillAllBasicBlocks(BBLOCK *base)
@@ -527,6 +592,7 @@ BBLOCK *NewBasicBlocks(BBLOCK *base0)
    FindPredSuccBlocks(base);
    bbbase = base;
    CheckFlow(base, __FILE__, __LINE__);
+   CFU2D = 1;
    return(base);
 }
 
@@ -743,6 +809,13 @@ void FinalizeLoops()
               (lp->preheader->csucc && lp->preheader->csucc != lp->header) )
             lp->preheader = NULL;
       }
+/*
+ *    Find the footer(s) of the loop.  Loop footers are preds of the header
+ *    which are in the loop.
+ */
+      phbv = BlockList2BitVec(lp->header->preds);
+      BitVecComb(phbv, phbv, lp->blkvec, '&');
+      lp->footers = BitVec2BlockList(phbv);
    }
    maxdep = CalcLoopDepth();
    if (optloop)
@@ -761,7 +834,11 @@ void FindLoops()
  */
 {
    BBLOCK *bp;
-   CalcDoms(bbbase);
+   if (!CFDOMU2D)
+   {
+      CalcDoms(bbbase);
+      CFDOMU2D = 1;
+   }
    CheckFlow(bbbase, __FILE__, __LINE__);
    if (loopq) KillAllLoops();
 /*
