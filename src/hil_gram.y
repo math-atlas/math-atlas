@@ -322,7 +322,7 @@ void HandleLoopListMU(int which)
    struct idlist *id;
    for (id=idhead,n=0; id; id=id->next) n++;
 
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
+fprintf(stderr, "%s(%d), which=%d\n", __FILE__, __LINE__, which);
    if (which == 100)
    {
       assert(!aalign && !balign);

@@ -42,11 +42,11 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "::"    { return(LST); }
 "LOOP_BODY" { return(LOOP_BODY); }
 "LOOP_END" { return(LOOP_END); }
-"LIVE_SCALARS_IN"  { yylval.inum = 0; return(LOOP_LIST_MU); }
-"LIVE_SCALARS_OUT" { yylval.inum = 1; return(LOOP_LIST_MU); }
-"DEAD_ARRAYS_IN"   { yylval.inum = 2; return(LOOP_LIST_MU); }
-"DEAD_ARRAYS_OUT"  { yylval.inum = 3; return(LOOP_LIST_MU); }
-"NO_PREFETCH"      { yylval.inum = 4; return(LOOP_LIST_MU); }
+"LIVE_SCALARS_IN"  { yylval.sh = 0; return(LOOP_LIST_MU); }
+"LIVE_SCALARS_OUT" { yylval.sh = 1; return(LOOP_LIST_MU); }
+"DEAD_ARRAYS_IN"   { yylval.sh = 2; return(LOOP_LIST_MU); }
+"DEAD_ARRAYS_OUT"  { yylval.sh = 3; return(LOOP_LIST_MU); }
+"NO_PREFETCH"      { yylval.sh = 4; return(LOOP_LIST_MU); }
 "MAX_UNROLL"       { return(MAX_UNROLL); }
 "LOOP"  { return(LOOP_BEGIN); }
 "DOUBLE" { return(DOUBLE); }
