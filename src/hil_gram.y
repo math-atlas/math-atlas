@@ -454,17 +454,6 @@ void declare_list(int flag)
    KillIDs();
 }
 
-struct locinit *NewLI(short id, short con, struct locinit *next)
-{
-   struct locinit *lp;
-   lp = malloc(sizeof(struct locinit));
-   assert(lp);
-   lp->id = id;
-   lp->con = con;
-   lp->next = next;
-   return(lp);
-}
-
 void ConstInit(short id, short con)
 {
    extern struct locinit *LIhead;

@@ -168,6 +168,27 @@ struct ptrinfo *FindPtrinfo(struct ptrinfo *base, short ptr)
    return(base);
 }
 
+struct locinit *NewLI(short id, short con, struct locinit *next)
+{
+   struct locinit *lp;
+   lp = malloc(sizeof(struct locinit));
+   assert(lp);
+   lp->id = id;
+   lp->con = con;
+   lp->next = next;
+   return(lp);
+}
+
+void KillAllLI(struct locinit *die)
+{
+   struct locinit *next;
+   while (die)
+   {
+      next = die->next;
+      free(die);
+      die = next;
+   }
+}
 int const2shift(int c)
 {
    int i;

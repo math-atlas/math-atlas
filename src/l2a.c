@@ -1753,7 +1753,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                GetDeref(op1));
          break;
       case VDSTS:
-         ap->next = PrintAssln("\tmovsd\t%s, %s\n", archvdregs[-VDREGBEG-op2],
+         ap->next = PrintAssln("\tmovlpd\t%s, %s\n", archvdregs[-VDREGBEG-op2],
                                GetDeref(op1));
          break;
       case VDMOV:
@@ -1830,6 +1830,22 @@ struct assmln *lil2ass(BBLOCK *bbase)
                         archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
 
                }
+            }
+/*
+ *          Can use pshufd if all ops come from source
+ */
+            else if (cp[0] > 1 && cp[1] > 1)
+            {
+               if (cp[0] == 2)
+                  j = 0x2;
+               else if (cp[0] = 3)
+                  j = 0xE;
+               if (cp[1] == 2)
+                  j |= 0x00;
+               else if (cp[1] == 3)
+                  j |= 0xE0;
+               ap->next = PrintAssln("\tpshufd\t$0x%x,%s,%s\n",
+                  j, archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
             }
             else
                fko_error(__LINE__, "No such shuffle inst, imap=%d,%d!\n",

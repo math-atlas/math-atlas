@@ -466,12 +466,15 @@ void MarkUnusedLocals(BBLOCK *bbase)
       }
    }
 /*
- * Mark all vector locals as used
+ * Mark all vector locals & their scalars as used
  */
    if (DO_VECT(FKO_FLAG) && optloop && optloop->vvscal)
    {
-      for(k=optloop->vscal[0],i=0; i < k; i++)
+      for(k=optloop->vscal[0],i=1; i <= k; i++)
+      {
          SToff[SToff[optloop->vvscal[i]-1].sa[2]-1].sa[0] = -REG_SP;
+         SToff[SToff[optloop->vscal[i]-1].sa[2]-1].sa[0] = -REG_SP;
+      }
    }
 }
 

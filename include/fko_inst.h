@@ -14,7 +14,8 @@ enum comp_flag
    CF_LOOP_BODY,
    CF_LOOP_UPDATE,
    CF_LOOP_TEST,
-   CF_LOOP_END
+   CF_LOOP_END,
+   CF_VRED_END
 };
 
 /*

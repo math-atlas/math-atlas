@@ -514,19 +514,11 @@ void GetFlags(int nargs, char **args, char **FIN, FILE **FPIN, FILE **FPOUT)
    *FPOUT = fpout;
 }
 
-static void WriteShortArrayToFile(FILE *fp, short *sp)
+static void WriteShortArrayToFile(FILE *fp, short n, short *sp)
 {
-   short n;
-   if (sp)
-   {
-      n = sp[0] + 1;
+   assert(fwrite(&n, sizeof(short), 1, fp) == 1);
+   if (n && sp)
       assert(fwrite(sp, sizeof(short), n, fp) == n);
-   }
-   else
-   {
-      n = 0;
-      assert(fwrite(&n, sizeof(short), 1, fp) == 1);
-   }
 }
 
 static short *ReadShortArrayFromFile(FILE *fp)
@@ -544,7 +536,7 @@ static short *ReadShortArrayFromFile(FILE *fp)
       sp = malloc((n+1)*sizeof(short));
       assert(sp);
       sp[0] = n;
-      assert(fread(sp, sizeof(short), n, fp) == n);
+      assert(fread(sp+1, sizeof(short), n, fp) == n);
    }
    return(sp);
 }
@@ -552,7 +544,10 @@ static short *ReadShortArrayFromFile(FILE *fp)
 static void WriteMiscToFile(char *name)
 {
    FILE *fp;
-   short n;
+   short *sp;
+   short i, n;
+   struct locinit *lp;
+   extern struct locinit *LIhead;
 
    fp = fopen(name, "wb");
    assert(fp);
@@ -561,10 +556,36 @@ static void WriteMiscToFile(char *name)
       n = 1;
       assert(fwrite(&n, sizeof(short), 1, fp) == 1);
       assert(fwrite(optloop, sizeof(LOOPQ), 1, fp) == 1);
-      WriteShortArrayToFile(fp, optloop->varrs);
-      WriteShortArrayToFile(fp, optloop->vscal);
-      WriteShortArrayToFile(fp, optloop->vsflag);
+      WriteShortArrayToFile(fp, optloop->varrs ? optloop->varrs[0] : 0, 
+                            optloop->varrs+1);
+      n = optloop->vscal ? optloop->vscal[0] : 0;
+      WriteShortArrayToFile(fp, n, optloop->vscal+1);
+      WriteShortArrayToFile(fp, n, optloop->vsflag+1);
+      WriteShortArrayToFile(fp, n, optloop->vvscal+1);
       assert(!optloop->abalign);  /* fix this later */
+   }
+   else
+   {
+      n = 0;
+      assert(fwrite(&n, sizeof(short), 1, fp) == 1);
+   }
+fprintf(stderr, "\n%s(%d)\n", __FILE__, __LINE__);
+   if (LIhead)
+   {
+      for (n=0,lp=LIhead; lp; lp = lp->next) n++;
+      sp = malloc(n*sizeof(short));
+      assert(sp);
+      for (n=0,lp=LIhead; lp; lp = lp->next)
+         sp[n++] = lp->id;
+fprintf(stderr, "\n%s(%d), n=%d\n", __FILE__, __LINE__, n);
+      WriteShortArrayToFile(fp, n, sp);
+      for (n=0,lp=LIhead; lp; lp = lp->next)
+      {
+         fprintf(stderr, "W id=%d, ptr=%d\n", lp->id, lp->con);
+         sp[n++] = lp->con;
+      }
+      WriteShortArrayToFile(fp, n, sp);
+      free(sp);
    }
    else
    {
@@ -580,6 +601,8 @@ static void ReadMiscFromFile(char *name)
    short n;
    FILE *fp;
    LOOPQ *lp;
+   short *sp, *s;
+   extern struct locinit *LIhead;
 
 #if 0
    if (optloop)
@@ -606,6 +629,7 @@ static void ReadMiscFromFile(char *name)
       optloop->varrs = ReadShortArrayFromFile(fp);
       optloop->vscal  = ReadShortArrayFromFile(fp);
       optloop->vsflag  = ReadShortArrayFromFile(fp);
+      optloop->vvscal  = ReadShortArrayFromFile(fp);
       optloop->abalign = NULL;  /* handle this later */
       optloop->preheader = optloop->header = NULL;
       optloop->tails = optloop->posttails = NULL;
@@ -617,6 +641,20 @@ static void ReadMiscFromFile(char *name)
    }
    else 
       optloop = NULL;
+   KillAllLI(LIhead);
+   LIhead = NULL;
+   sp = ReadShortArrayFromFile(fp);
+   if (sp)
+   {
+      s = ReadShortArrayFromFile(fp);
+      for (i=1; i <= s[0]; i++)
+      {
+         fprintf(stderr, "R id=%d, ptr=%d\n", sp[i], s[i]);
+         LIhead = NewLI(sp[i], s[i], LIhead);
+      }
+      free(sp);
+      free(s);
+   }
    fclose(fp);
 }
 

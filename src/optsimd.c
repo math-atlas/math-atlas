@@ -257,10 +257,10 @@ fprintf(stderr, "moving ptr = %s\n", STname[p->ptr-1]);
    assert(lp->vscal)
    if (n)
    {
-      lp->vsflag = calloc(n, sizeof(short));
+      lp->vsflag = calloc(n+1, sizeof(short));
       assert(lp->vsflag);
    }
-   lp->vscal[0] = n;
+   lp->vscal[0] = lp->vsflag[0] = n;
    for (i=1; i <= n; i++)
       lp->vscal[i] = sp[i-1];
 
@@ -291,7 +291,7 @@ fprintf(stderr, "moving ptr = %s\n", STname[p->ptr-1]);
          {
             if (sp[j] == k)
             {
-               lp->vsflag[j] |= VS_SET;
+               lp->vsflag[j+1] |= VS_SET;
                break;
             }
          }
@@ -309,7 +309,7 @@ fprintf(stderr, "moving ptr = %s\n", STname[p->ptr-1]);
          {
             if (sp[j] == k)
             {
-               lp->vsflag[j] |= VS_LIVEIN;
+               lp->vsflag[j+1] |= VS_LIVEIN;
                break;
             }
          }
@@ -346,7 +346,7 @@ fprintf(stderr, "moving ptr = %s\n", STname[p->ptr-1]);
          {
             if (sp[j] == k)
             {
-               lp->vsflag[j] |= VS_LIVEOUT;
+               lp->vsflag[j+1] |= VS_LIVEOUT;
                break;
             }
          }
@@ -354,7 +354,7 @@ fprintf(stderr, "moving ptr = %s\n", STname[p->ptr-1]);
 /*
  *    Find out how to init livein and reduce liveout vars
  */
-      s = lp->vsflag;
+      s = lp->vsflag+1;
       for (i=0; i < n; i++)
       {
 /*
@@ -488,7 +488,7 @@ int SimdLoop(LOOPQ *lp)
  */
 
    pi0 = FindMovingPointers(lp->blocks);
-   ippu = KillPointerUpdates(pi, vlen);
+   ippu = KillPointerUpdates(pi0, vlen);
 /* 
  * Find inst in preheader to insert scalar init before; want it inserted last
  * unless last instruction is a jump, in which case put it before the jump.
@@ -521,15 +521,16 @@ int SimdLoop(LOOPQ *lp)
  * Insert scalar-to-vector initialization in preheader for vars live on entry
  * and vector-to-scalar reduction in post-tail for vars live on exit
  */
+   j = 0;
    k = STiconstlookup(0);
-   for (i=0; i < n; i++)
+   for (n=lp->vscal[0],i=0; i < n; i++)
    {
-      if (VS_LIVEIN & lp->vsflag[i])
+      if (VS_LIVEIN & lp->vsflag[i+1])
       {
 /*
  *       ADD-updated vars set v[0] = scalar, v[1:N] = 0
  */
-         if (VS_ACC & lp->vsflag[i])
+         if (VS_ACC & lp->vsflag[i+1])
             PrintComment(lp->preheader, NULL, iph, 
                "Init accumulator vector for %s", STname[lp->vscal[i+1]-1]);
          else
@@ -537,21 +538,22 @@ int SimdLoop(LOOPQ *lp)
                "Init vector equiv of %s", STname[lp->vscal[i+1]-1]);
          InsNewInst(lp->preheader, NULL, iph, vsld, -r0,
                     SToff[lp->vscal[i+1]-1].sa[2], 0);
-         if (!(VS_ACC & lp->vsflag[i]))
+         if (!(VS_ACC & lp->vsflag[i+1]))
             InsNewInst(lp->preheader, NULL, iph, vshuf, -r0, -r0, k);
-         InsNewInst(lp->preheader, NULL, iph, vsst, 
-                    SToff[lp->vvscal[i]-1].sa[2], -r0, 0);
+         InsNewInst(lp->preheader, NULL, iph, vst, 
+                    SToff[lp->vvscal[i+1]-1].sa[2], -r0, 0);
       }
 /*
  *    Output vars are known to be updated only by ADD
  */
-      if (VS_LIVEOUT & lp->vsflag[i])
+      if (VS_LIVEOUT & lp->vsflag[i+1])
       {
-         assert(lp->vsflag[i] & (VS_MUL | VS_EQ | VS_ABS) == 0);
+         j++;
+         assert((lp->vsflag[i+1] & (VS_MUL | VS_EQ | VS_ABS)) == 0);
          iptp = PrintComment(lp->posttails->blk, iptp, iptn,
                   "Reduce accumulator vector for %s", STname[lp->vscal[i+1]-1]);
          iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vld, -r0,
-                           SToff[lp->vvscal[i]-1].sa[2], 0);
+                           SToff[lp->vvscal[i+1]-1].sa[2], 0);
          if (vld == VDLD)
          {
             iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1, -r0,
@@ -574,6 +576,9 @@ int SimdLoop(LOOPQ *lp)
       }
    }
    GetReg(-1);
+   if (j)
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, CMPFLAG, CF_VRED_END,
+                        0, 0);
 /*
  * Translate body of loop
  */
@@ -622,7 +627,7 @@ fprintf(stderr, "scoping %s (%d)\n", STname[op-1], op);
                            {
                               k = FindInShortList(lp->vscal[0],lp->vscal+1,k);
                               assert(k);
-                              ip->inst[j] = SToff[lp->vvscal[k-1]-1].sa[2];
+                              ip->inst[j] = SToff[lp->vvscal[k]-1].sa[2];
                               assert(ip->inst[j] > 0);
                            }
                         }
@@ -630,7 +635,7 @@ fprintf(stderr, "scoping %s (%d)\n", STname[op-1], op);
                         {
                            k = FindInShortList(lp->vscal[0], lp->vscal+1, op);
                            assert(k);
-                           ip->inst[j] = lp->vvscal[k-1];
+                           ip->inst[j] = lp->vvscal[k];
                         }
                      }
                   }
@@ -736,14 +741,14 @@ int VectorizeStage1(void)
  * Create vector locals for all vector scalars in loop, and their derefs
  */
    k = LOCAL_BIT | FLAG2TYPE(flag);
-   lp->vvscal = malloc(sizeof(short)*n);
-   assert(lp->vvscal)
-   n = vscal[0];
+   lp->vvscal = malloc(sizeof(short)*(n+1));
+   assert(lp->vvscal);
+   n = lp->vvscal[0] = vscal[0];
    sp = vscal + 1;
    for (i=0; i < n; i++)
    {
       sprintf(ln, "_V%d_%s", i-1, STname[sp[i]-1] ? STname[sp[i]-1] : "");
-      j = lp->vvscal[i] = STdef(ln, k, 0);
+      j = lp->vvscal[i+1] = STdef(ln, k, 0);
       SToff[j-1].sa[2] = AddDerefEntry(-REG_SP, j, -j, 0, j);
    }
    SaveFKOState(1);

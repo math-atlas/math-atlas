@@ -16,5 +16,7 @@ ILIST *NewIlist(INSTQ *inst, ILIST *next);
 void KillAllIlist(ILIST *ilist);
 struct ptrinfo *FindPtrinfo(struct ptrinfo *base, short ptr);
 struct ptrinfo *NewPtrinfo(short ptr, short flag, struct ptrinfo *next);
+struct locinit *NewLI(short id, short con, struct locinit *next);
+void KillAllLI(struct locinit *die);
 
 #endif
