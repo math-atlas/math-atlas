@@ -1,5 +1,19 @@
 #include "ifko.h"
 
+BBLOCK *DupBlock(BBLOCK *bold)
+{
+   BBLOCK *nb;
+   INSTQ *ip;
+
+   nb = NewBasicBlock(NULL, NULL);
+   nb->bnum = bold->bnum;
+   nb->ilab = bold->ilab;
+   for (ip=bold->inst1; ip; ip = ip->next)
+      InsNewInst(nb, NULL, NULL, ip->inst[0], ip->inst[1],
+                 ip->inst[2], ip->inst[3]);
+   return(nb);
+}
+
 BLIST *DupBlockList(BLIST *scope, int ivscope)
 /*
  * This function duplicates all block info for scope.  CF in duped code
@@ -16,13 +30,8 @@ BLIST *DupBlockList(BLIST *scope, int ivscope)
    for (bl=scope; bl; bl = bl->next)
    {
       ob = bl->blk;
-      nb = NewBasicBlock(NULL, NULL);
+      nb = DupBlock(ob);
       lbase = AddBlockToList(lbase, nb);
-      nb->bnum = ob->bnum;
-      nb->ilab = ob->ilab;
-      for (ip=ob->inst1; ip; ip = ip->next)
-         InsNewInst(nb, NULL, NULL, ip->inst[0], ip->inst[1],
-            ip->inst[2], ip->inst[3]);
    }
 /* 
  * Things that are filled in on second pass:
@@ -218,7 +227,89 @@ struct ptrinfo *FindMovingPointers(BLIST *scope)
    }
    return(pbase);
 }
+INSTQ *KillPointerUpdates(struct ptrinfo *pbase, int UR)
+/*
+ * This function kills all updates pointed to by pi, so they can be done
+ * at the bottom of the loop
+ * NOTE: requires that update is always performed, and that is performed
+ *       a known number of times (i.e., not once in path A, and twice in 
+ *       path B).  For now, just assume these are true.
+ *       Also assumes that no access of pointer is done after update!
+ * RETURNS: inst queue with update to add to end of loop if it worked, NULL
+ *          on error.
+ */
+{
+   struct ptrinfo *pi, *pbase;
+   ILIST *il;
+   INSTQ *ipbase=NULL, *ip, *ipN;
+   int reg;
+   short inc;
 
+/*   pbase = FindMovingPointers(scope); */
+/*
+ * For now, only unroll constant increments, and require that ptrs are
+ * incremented only once staticly (even two seperate paths will disqualify).
+ * Enforce these restrictions up-front.
+ */
+   for (pi=pbase; pi; pi = pi->next)
+   {
+      if (!(pi->flag & PTRF_CONSTINC) || pi->nupdate > 1)
+         return(NULL);
+   }
+/*
+ * If all moving pointers meet requirements, delete the updates, assuming
+ * same format expected by FindMovingPointers().  Also, build list of
+ * instructions to add to end of loop
+ */
+   reg = GetReg(T_INT);
+   for (pi=pbase; pi; pi = pi->next)
+   {
+/*
+ *    Assert we have code in required format
+ */
+      ip = pi->ilist->ip;
+      assert(ip->inst[0] == ST);
+      if (pi->flag & PTRF_INC)
+         assert(ip->prev->inst[0] == ADD);
+      else
+         assert(ip->prev->inst[0] == SUB);
+      assert(ip->prev->prev->inst[0] == LD);
+/*
+ *    Figure new post-update code
+ */
+      inc = type2len(FLAG2TYPE(STflag[pi->ptr-1]));
+      ipN = NewInst(NULL, NULL, NULL, LD, ip->prev->prev->inst[1], 
+                    ip->prev->prev->inst[2], 0);
+      if (!ipbase) ipbase = ipN;
+      ipN->next = NewInst(NULL, NULL, NULL, ip->prev->inst[0], 
+                          ip->prev->inst[1], ip->prev->inst[2], 
+                          STiconstlookup(inc*UR));
+      ipN = ipN->next;
+      ipN->next = NewInst(NULL, NULL, NULL, ST, ip->inst[1], ip->inst[2], 0);
+      ip = ip->prev->prev;
+/*
+ *    Delete inst and free deleted INSTQ* structs
+ */
+      ip = DelInst(ip);
+      ip = DelInst(ip);
+      ip = DelInst(ip);
+      KillAllIlist(pi->ilist);
+      pi->ilist = NULL;
+   }
+   return(ipbase);
+}
+
+void FindPointerLoads(BLIST *scope, struct ptrinfo *pbase, int UR)
+/*
+ * Finds all loads of of pointers in pbase, and adds UR*size to their deref
+ */
+{
+   BLIST *bl;
+   struct ptrinfo *pi;
+   for (bl=scope; bl; bl = bl->next)
+   {
+   }
+}
 INSTQ *FindCompilerFlag(BBLOCK *bp, short flag)
 {
    INSTQ *iret=NULL, *ip;
@@ -271,10 +362,31 @@ void KillLoopControl(LOOPQ *lp)
    }
 }
 
-static void ForwardLoop(LOOPQ *lp, INSTQ **ipinit, INSTQ **ipupdate,
+void KillCompflagInRange(BLIST *base, enum comp_flag start, enum comp_flag end)
+/*
+ * Removes compiler flags in range [start,end] from instructions in BLIST bl
+ */
+{
+   BLIST *bl;
+   for (bl=base; bl; bl = bl->next)
+   {
+      for (ip=bl->blk->inst1; ip; ip = ip->next)
+      {
+         if (ip->inst[0] == CMPFLAG && 
+             ip->inst[1] >= start && ip->inst[1] <= end)
+         {
+            ip = DelInst(ip);
+            ip = ip->prev;
+         }
+      }
+   }
+}
+
+static void ForwardLoop(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
                         INSTQ **iptest)
 /*
  * This loop only used when index value is referenced inside loop.
+ * NOTE: presently assumes constant lp->inc if unroll > 1
  */
 {
    short r0, r1;
@@ -291,7 +403,13 @@ static void ForwardLoop(LOOPQ *lp, INSTQ **ipinit, INSTQ **ipupdate,
 
    *ipupdate = ip = NewInst(NULL, NULL, NULL, LD, -r0, SToff[lp->I-1].sa[2], 0);
    if (IS_CONST(STflag[lp->inc-1]))
-      ip->next = NewInst(NULL, NULL, NULL, ADD, -r0, -r0, lp->inc);
+   {
+      if (unroll > 1)
+         ip->next = NewInst(NULL, NULL, NULL, ADD, -r0, -r0, 
+                            STiconstlookup(SToff[lp->inc-1].i*unroll));
+      else
+         ip->next = NewInst(NULL, NULL, NULL, ADD, -r0, -r0, lp->inc);
+   }
    else
    {
       ip->next = NewInst(NULL, NULL, NULL, LD, -r1, SToff[lp->inc-1].sa[2], 0);
@@ -320,7 +438,7 @@ static void ForwardLoop(LOOPQ *lp, INSTQ **ipinit, INSTQ **ipupdate,
 
 }
 
-static void SimpleLC(LOOPQ *lp, INSTQ **ipinit, INSTQ **ipupdate,
+static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
                      INSTQ **iptest)
 /*
  * Do simple N..0 loop.
@@ -374,10 +492,17 @@ static void SimpleLC(LOOPQ *lp, INSTQ **ipinit, INSTQ **ipupdate,
    }
    ip->next = NewInst(NULL, NULL, NULL, ST, Ioff, -r0, 0);
    *ipupdate = ip = NewInst(NULL, NULL, NULL, LD, -r0, Ioff, 0);
-   ip->next = NewInst(NULL, ip, NULL, SUBCC, -r0, -r0, inc);
+   if (unroll)
+      ip->next = NewInst(NULL, ip, NULL, SUBCC, -r0, -r0, 
+                         STiconstlookup(SToff[inc-1].i*unroll));
+   else
+      ip->next = NewInst(NULL, ip, NULL, SUBCC, -r0, -r0, inc);
    ip = ip->next;
    ip->next = NewInst(NULL, NULL, NULL, ST, Ioff, -r0, 0);
-   *iptest = ip = NewInst(NULL, NULL, NULL, JNE, -PCREG, -ICC0, lp->body_label);
+   if (unroll)
+      *iptest=ip=NewInst(NULL, NULL, NULL, JGT, -PCREG, -ICC0, lp->body_label);
+   else
+      *iptest=ip=NewInst(NULL, NULL, NULL, JNE, -PCREG, -ICC0, lp->body_label);
    GetReg(-1);
 }
 
@@ -411,7 +536,7 @@ void AddLoopControl(LOOPQ *lp, INSTQ *ipinit, INSTQ *ipupdate, INSTQ *iptest)
    }
 }
 
-int OptimizeLoopControl(LOOPQ *lp, int unroll)
+int OptimizeLoopControl(LOOPQ *lp, int unroll, int NeedKilling)
 /*
  * attempts to generate optimized loop control for the given loop
  * NOTE: if blind unrolling has been applied, expect that loop counter
@@ -420,20 +545,26 @@ int OptimizeLoopControl(LOOPQ *lp, int unroll)
  */
 {
    INSTQ *ipinit, *ipupdate, *iptest;
+   ILIST *il;
    int I, beg, end, inc, i;
    int CHANGE=0;
-   ILIST *il;
+   short ur;
 
-   if (unroll <= 1) unroll = 1;
-#if 1
-   KillLoopControl(lp);
+   if (unroll <= 1) unroll = 0;
+/*
+ * Avoid extra local creation by assuming constant increment for unrolled loops
+ */
+   if (unroll)
+      assert(IS_CONST(STflag[lp->inc-1]));
+   if (NeedKilling)
+      KillLoopControl(lp);
    i = (IS_CONST(STflag[lp->inc-1]) && IS_CONST(STflag[lp->end-1])
         && SToff[lp->inc-1].i == -1 && SToff[lp->end-1].i == 0);
    il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
    if (!i && il)
    {
       fprintf(stderr, "\nIndex refs in loop prevent SimpleLC!!!\n\n");
-      ForwardLoop(lp, &ipinit, &ipupdate, &iptest);
+      ForwardLoop(lp, unroll, &ipinit, &ipupdate, &iptest);
    }
    else
    {
@@ -441,7 +572,7 @@ int OptimizeLoopControl(LOOPQ *lp, int unroll)
          fprintf(stderr, "\nLoop already in SimpleLC!!!\n\n");
       else
          fprintf(stderr, "\nNo index refs in loop allow SimpleLC!!!\n\n");
-      SimpleLC(lp, &ipinit, &ipupdate, &iptest);
+      SimpleLC(lp, unroll, &ipinit, &ipupdate, &iptest);
    }
    if (il)
       KillIlist(il);
@@ -449,37 +580,181 @@ int OptimizeLoopControl(LOOPQ *lp, int unroll)
    KillAllInst(ipinit);
    KillAllInst(ipupdate);
    KillAllInst(iptest);
-#else
-/*
- * If I is not referenced in loop, we can do simple N..0 iteration
- */
+}
 
-   I = 0;
-   if (!(lp->flag & L_IREF_BIT))
+char *DupedLabelName(int dupnum, int ilab)
+/*
+ * Given a label and the dupnum, returns duped label name
+ */
+{
+   static char ln[256];
+   char *sp;
+   sp = STname[ilab-1];
+   if (!strncmp(sp, "_IFKOCD", 7) && isdigit(sp[7]))
    {
-      if (IS_CONST(STflag[lp->inc-1]))
+      sp += 7;
+      while (*sp && *sp != '_') sp++;
+      assert(*sp == '_' && sp[1]);
+      sp++;
+   }
+   sprintf(ln, "_IFKOCD%d_%s", dupnum, sp);
+   return(ln);
+}
+
+BBLOCK *DupCFScope(short ivscp0, /* original scope */
+                   short ivscp,  /* scope left to dupe */
+                   int dupnum,   /* number of duplication, starting at 1 */
+                   BBLOCK *head) /* block being duplicated */
+/*
+ * Duplicates CF starting at head.  Any block outside ivscp is not duplicated
+ * NOTE: actual head of loop should not be in ivscop0, even though we dup it
+ */
+{
+   BBLOCK *nhead, *bp;
+   char *sp;
+/*
+ * Duplicate new block, and remove it from scope to be duplicated
+ */
+   nhead = DupBlock(head);
+   SetVecBit(ivscp, head->bnum-1, 0);
+/*
+ * If this block has a label, individualize it by adding prefix
+ */
+   if (head->ilab)
+   {
+      assert(head->ainst1->inst[0] == LABEL && 
+             head->ainst1->inst[1] == head->ilab);
+      sp = DupedLabelName(dupnum, head->ilab);
+      nhead->ilab = STlabellookup(sp);
+   }
+/*
+ * If block ends with a jump to a block in duplicated scope, change the block
+ * target
+ */
+   if (IS_BRANCH(head->ainstN->inst[0]))
+   {
+      bp = head->csucc ? head->csucc : head->usucc;
+      if (BitVecCheck(ivscp0, bp->bnum-1))
       {
-         if (SToff[lp->inc-1].i == 1)
-         {
-            I = lp->I;
-            beg = lp->beg;
-            end = lp->end;
-         }
-         else if (IS_CONST(STflag[lp->end-1]) && IS_CONST(STflag[lp->beg-1]))
-         {
-            beg = 0;
-            end = STiconstlookup((SToff[lp->end-1].i-SToff[lp->beg-1].i) / 
-                                 SToff[lp->inc-1].i);
-            I = lp->I;
-         }
+         assert(bp->ilab);
+         sp = DupedLabelName(dupnum, bp->ilab);
+         nhead->ainstN->inst[3] = STlabellookup(sp);
       }
    }
-   if (I)
+   if (head->usucc && BitVecCheck(ivscp, head->usucc->bnum-1))
+      nhead->usucc = DupCFScope(ivscp0, ivscp, dupnum, head->usucc);
+   if (head->csucc && BitVecCheck(ivscp, head->csucc->bnum-1))
+      nhead->csucc = DupCFScope(ivscp0, ivscp, dupnum, head->csucc);
+   return(nhead);
+}
+
+BLIST *CF2BlockList(BLIST *bl, short bvblks, BBLOCK *head)
+/*
+ * Given a list of blocks in control-flow headed by head, create a list of
+ * Basic Blocks containing all blocks indicated in bvblks (zeroing bvblks)
+ * This routine works when [up,down] pointers are not set correctly.
+ */
+{
+   if (BitVecCheck(bvblks, head->bnum-1))
    {
-      KillLoopControl(lp);
-      SimpleLC(I, beg, end, lp->inc, lp->body_label, &ipinit, &ipupdate, &iptest);
-      CHANGE = 1;
+      SetVecBit(bvblks, head->bnum-1, 0);
+      bl = AddBlockToList(head, bl);
+      if (head->usucc)
+         bl = CF2BlockList(bl, bvblks, head->usucc);
+      if (head->csucc)
+         bl = CF2BlockList(bl, bvblks, head->csucc);
    }
-   return(CHANGE);
-#endif
+   return(bl);
+}
+
+void UpdateUnrolledIndices(BLIST *scope, int UR)
+/*
+ * Adds UR*sizeof to all index refs in scope
+ */
+{
+   assert(0);
+}
+
+void UpdateUnrolledPointers(BLIST *scope, int UR)
+/*
+ * Adds (UR*sizeof) to all moving pointers in scope
+ */
+{
+   struct ptrinfo *pi, *pbase;
+   ILIST *il;
+   short inc;
+
+   pbase = FindMovingPointers(scope);
+   for (pi=pbase; pi; pi = pi->next)
+   {
+/*
+ *    For now, only unroll contiguous refs
+ */
+      assert(pi->flag & PTRF_CONTIG);
+      inc = type2len(FLAG2TYPE(STflag[pi->ptr-1]));
+      if (!(pi->flag & PTRF_INC))
+         inc = -inc;
+      for (il=pi->ilist; il; il = il->next)
+      {
+      }
+   }
+}
+
+int UnrollLoop(LOOPQ *lp, int unroll)
+{
+   short iv;
+   BBLOCK *newCF;
+   BLIST **dupblks, *bl;
+   ILIST *il;
+   struct ptrinfo *pi;
+   int UsesIndex=1, UsesPtrs=1;
+   enum comp_flag kbeg, kend;
+
+   KillLoopControl(lp);
+   il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
+   if (il) KillIlist(il);
+   else UsesIndex = 0;
+   pi = FindMovingPointers(lp->blocks);
+   if (pi) KillAllPtrinfo(pi);
+   else UsesPtrs = 0;
+
+   dupblks = malloc(sizeof(BLIST*)*unroll);
+   assert(dupblks);
+/*
+ * Duplicate all of loop's CF
+ */
+   SetVecBit(lp->blkvec, lp->header->bnum-1, 0);
+   kbeg = CF_LOOP_INIT;
+   for (i=1; i < unroll; i++)
+   {
+/*
+ *    Duplicate original loop body for unroll i
+ */
+      FKO_BVTMP = iv = BitVecCopy(FKO_BVTMP, lp->blkvec);
+      newCF = DupCFScope(lp->blkvec, iv, i, lp->header);
+      iv = BitVecCopy(iv, lp->blkvec);
+/*
+ *    Use CF to produce a block list of duped blocks
+ */
+      SetVecBit(iv, lp->header->bnum-1, 1);
+      dupblks[i-1] = CF2BlockList(NULL, iv, newCF);
+/*
+ *    Kill the appropriate loop markup in the blocks (so we don't increment
+ *    i multiple times, test it multiple times, etc)
+ */
+      kend = (i != unroll-1) ? CF_LOOP_END : CF_LOOP_BODY;
+      else kend = CF_LOOP_END;
+      KillCompflagInRange(dupblks[i-1], kbeg, kend);
+      if (UsesIndex)
+         UpdateUnrolledIndices(dupblks[i-1], i);
+      if (UsesPtrs)
+         UpdateUnrolledPointers(dupblks[i-1], i);
+   }
+   SetVecBit(lp->blkvec, lp->header->bnum-1, 1);
+   KillCompflagInRange(lp->blocks, CF_LOOP_UPDATE, CF_LOOP_END);
+/*
+ *   might want to operate on all UR-1 lists at once, then just take the
+ *   bnum block from each list, add it in the CF, etc
+ */
+   return(0);
 }

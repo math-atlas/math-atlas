@@ -108,6 +108,18 @@ struct ptrinfo *NewPtrinfo(short ptr, short flag, struct ptrinfo *next)
    return(p);
 }
 
+void KillAllPtrinfo(struct ptrinfo *base)
+{
+   struct ptrinfo *pn;
+
+   while(base)
+   {
+      pn = base->next;
+      free(base);
+      base = pn;
+   }
+}
+
 struct ptrinfo *FindPtrinfo(struct ptrinfo *base, short ptr)
 {
    for (; base; base = base->next)
