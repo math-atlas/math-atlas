@@ -7,7 +7,7 @@ struct assmln *NewAssln(char *ln)
    struct assmln *ap;
    ap = malloc(sizeof(struct assmln));
    assert(ap);
-   ap->ln = malloc(strlen(ln));
+   ap->ln = malloc(strlen(ln)+1);
    assert(ap->ln);
    strcpy(ap->ln, ln);
    ap->next = NULL;

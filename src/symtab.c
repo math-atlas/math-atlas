@@ -322,6 +322,9 @@ void CreateLocalDerefs()
             else
                off = SToff[k].sa[1]*8 + nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4;
             break;
+         default:
+            fprintf(stderr, "%d: Unknown type %d!\n", __LINE__, FLAG2TYPE(fl));
+            exit(-1);
          }
       }
       SToff[k].sa[2] = AddDerefEntry(-REG_SP, 0, -1, off);
