@@ -63,8 +63,8 @@ struct bblock
    ushort dom;              /* dominators of this block */
    ushort uses, defs;       /* uses and defs for this block */
    ushort ins, outs;        /* live vars coming in and leaving block */
-   struct iglist *conin, *conout;  /* in/out conflicts list */
-   struct iglist *ignodes;         /* all of this block's ignodes */
+   ushort conin, conout;    /* IGnum conflicts in/out */
+   ushort ignodes;          /* all of this block's ignodes */
 };
 
 typedef struct blist BLIST;
@@ -104,20 +104,24 @@ struct ignode
    BLIST *blkbeg;               /* block(s) live range starts in */
    BLIST *blkend;               /* block(s) live range ends in */
    BLIST *blkspan;              /* block(s) live range completely spans */
-   struct iglist *conflicts;    /* ignode's conflicting with this one */
-   int freq;                    /* # of uses of this live range */
-   ushort myblkreg;             /* blocks live range includes as bitvec */
-   ushort regstate;             /* registers being used at this point */
+   BLIST *ldhoist;              /* list places to hoist the load to */
+   BLIST *stpush;               /* list places to push any store to */
+   int nread;                   /* # of reads of var in this live range */
+   int nwrite;                  /* # of writes of var in this live range */
+   ushort myblkvec;             /* blocks live range includes as bitvec */
+   ushort liveregs;             /* registers being used at this point */
+   ushort conflicts;            /* IG conflicting with this one */
    short var;                   /* ST index of variable */
-   short type;                  /* data type of liver range */
-   struct regscope *regscope;   /* register scope this ignode is for */
+   short ignum;                 /* IG index of this node */
 };
 
+#if 0
 typedef struct iglist IGLIST;
 struct iglist
 {
    IGNODE *ignode;
    struct iglist *next;
 };
+#endif
 
 #endif

@@ -4,6 +4,7 @@
 
 BLIST *NewBlockList(BBLOCK *blk, BLIST *next);
 void KillAllBlockList(BLIST *lp);
+BLIST *MergeBlockLists(BLIST *l1, BLIST *l2);
 BBLOCK *NewBasicBlock(BBLOCK *up, BBLOCK *down);
 void KillAllBasicBlocks(BBLOCK *base);
 BBLOCK *FindBasicBlocks(BBLOCK *base0);

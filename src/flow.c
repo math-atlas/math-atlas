@@ -19,8 +19,7 @@ BLIST *AddBlockToList(BLIST *list, BBLOCK *blk)
  * RETURNS: ptr to list (created if list is NULL, list otherwise).
  */
 {
-   if (list) list->next = NewBlockList(blk, list->next);
-   else list = NewBlockList(blk, NULL);
+   list = NewBlockList(blk, list);
    return(list);
 }
 
@@ -99,6 +98,33 @@ void KillBlockList(BLIST *lp)
    }
 }
 
+BLIST *MergeBlockLists(BLIST *l1, BLIST *l2)
+/*
+ * Adds list l2 to list l1, making sure not to duplicate entries
+ */
+{
+   BLIST *p;
+   int iv1, iv2;
+   if (!l1) 
+      return(l2);
+   if (!l2)
+      return(l1);
+   iv1 = BlockList2BitVec(l1);
+   iv1 = FKO_BVTMP = BitVecCopy(FKO_BVTMP, iv1);
+   iv2 = BlockList2BitVec(l2);
+   BitVecComb(iv1, iv2, iv1, '-');
+   for (p=l2; p; p = p->next)
+   {
+      if (BitVecCheck(iv1, p->blk->bnum-1))
+      {
+         l1 = AddBlockToList(l1, p->blk);
+         l1->ptr = p->ptr;
+      }
+   }
+   KillBlockList(l2);
+   return(l1);
+}
+
 BBLOCK *NewBasicBlock(BBLOCK *up, BBLOCK *down)
 /*
  * Allocates new basic block, returns allocated block
@@ -116,7 +142,7 @@ BBLOCK *NewBasicBlock(BBLOCK *up, BBLOCK *down)
    bp->preds = NULL;
    bp->ins = bp->outs = bp->uses = bp->defs = bp->dom = 0;
    bp->loop = NULL;
-   bp->conin = bp->conout = NULL;
+   bp->conin = bp->conout = 0;
    return(bp);
 }
 

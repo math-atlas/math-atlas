@@ -2,6 +2,38 @@
 #include "fko_loop.h"
 #include <stdarg.h>
 
+short *NewShortTable(int *n, short *old, int chunk)
+{
+   short *new;
+   int i, nn = *n, newN = *n + chunk;
+   new = malloc(sizeof(short)*newN);
+   assert(new);
+   for (i=0; i < nn; i++)
+      new[i] = old[i];
+   for (; i < newN; i++)
+      new[i] = -1;
+   if (old) free(old);
+   *n = newN;
+   return(new);
+}
+
+void *NewPtrTable(int *n, void *old0, int chunk)
+{
+   int **new;
+   int **old = old0;
+   int i, nn = *n, newN = *n + chunk;
+
+   new = malloc(sizeof(void*)*newN);
+   assert(new);
+   for (i=0; i < nn; i++)
+      new[i] = old[i];
+   for (; i < newN; i++)
+      new[i] = NULL;
+   if (old) free(old);
+   *n = newN;
+   return(new);
+}
+
 struct locinit *NewLocinit(short id, short con, struct locinit *next)
 {
    struct locinit *lp;

@@ -1,8 +1,301 @@
 #include <ifko.h>
 #include <fko_arch.h>
 
-static IGLIST *iglist=NULL;
-static IGLIST *igrprev, *igrpost, *igrout;
+static IGNODE **IG=NULL;
+static int NIG=0, TNIG=0;
+
+void NewIGTable(int chunk)
+{
+   int i, n;
+   IGNODE **new;
+   n = TNIG + chunk;
+   new = malloc(n*sizeof(IGNODE*));
+   assert(new);
+
+   for (i=0; i != TNIG; i++)
+      new[i] = IG[i];
+   for (; i != n; i++)
+      new[i] = NULL;
+   if (IG) free(IG);
+   TNIG = n;
+}
+
+void KillIGNode(IGNODE *ig)
+{
+   if (ig->blkbeg)
+      KillBlockList(ig->blkbeg);
+   if (ig->blkend)
+      KillBlockList(ig->blkend);
+   if (ig->blkspan)
+      KillBlockList(ig->blkspan);
+   if (ig->ldhoist)
+      KillBlockList(ig->ldhoist);
+   if (ig->stpush)
+      KillBlockList(ig->stpush);
+   if (ig->myblkvec)
+      KillBitVec(ig->myblkvec);
+   if (ig->liveregs)
+      KillBitVec(ig->liveregs);
+   if (ig->conflicts)
+      KillBitVec(ig->conflicts);
+   IG[ig->ignum] = NULL;
+   free(ig);
+}
+
+void KillIGTableEntries()
+{
+   int i;
+   for (i=0; i < NIG; i++)
+   {
+      KillIGNode(IG[i]);
+      IG[i] = NULL;
+   }
+   NIG = 0;
+}
+
+void KillIGTable()
+{
+   KillIGTableEntries();
+   free(IG);
+   IG = NULL;
+   TNIG = 0;
+}
+
+short AddIG2Table(IGNODE *node)
+{
+   if (NIG == TNIG)
+      NewIGTable(64);
+   IG[NIG] = node;
+   node->ignum = NIG;
+   return(NIG++);
+}
+
+IGNODE *NewIGNode(BBLOCK *blk, short var)
+{
+   IGNODE *new;
+   new = malloc(sizeof(IGNODE));
+   assert(new);
+   new->blkbeg = new->blkend = new->blkspan = new->ldhoist = new->stpush = 
+                 NULL;
+   if (blk)
+   {
+      new->myblkvec = NewBitVec(blk->bnum);
+      SetVecBit(node->myblkvec, blk->bnum-1, 1);
+   }
+   else
+      new->myblkvec = 0;
+   new->liveregs = new->conflicts = 0;
+   new->nread = new->nwrite = 0;
+   new->var = var;
+   new->ignum = AddIG2Table(new);
+   return(new);
+}
+
+ushort AllRegVec()
+{
+   static int iv=0;
+   int i;
+
+   if (!iv)
+   {
+      iv = NewBitVec(TNREG);
+      for (i=0; i < TNREG; i++)
+         SetVecBit(iv, i, 1);
+   }
+   return(iv);
+}
+
+void CalcBlockIG(BBLOCK *bp)
+{
+   int i, j, n, k, iv;
+   IGNODE *node;
+   INSTQ *ip;
+   int liveregs;
+   const int chunk = 32;
+   short *vals;
+   IGNODE **myIG;   /* array of this block's IGNODES */
+   int igN, nn=0;
+   extern int FKO_BVTMP;
+   extern BBLOCK *bbbase;
+
+   if (!CFUSETU2D)
+      CalcInsOuts(bbbase);
+   if (!INDEADU2D)
+      CalcAllDeadVariables();
+   if (FKO_BVTMP)
+   {
+      liveregs = FKO_BVTMP;
+      SetVecAll(liveregs, 0);
+   }
+   else FKO_BVTMP = liveregs = NewBitVec(TNREG);
+   if (!bp->ignodes) bp->ignodes = NewBitVec(TNREG+64);
+   else SetVecAll(bp->ignodes, 0);
+   if (!bp->conin) bp->conin = NewBitVec(TNREG+64);
+   else SetVecAll(bp->conin, 0);
+   if (!bp->conin) bp->conout = NewBitVec(TNREG+64);
+   else SetVecAll(bp->conout, 0);
+   vals = BitVec2StaticArray(bp->ins);
+/*
+ * Create ignode for all variables live on block entry, and add it
+ * blocks conin, conout, and ignodes
+ */
+   for (n=vals[0], i=1; i <= n; i++)
+   {
+      k = vals[i];
+      if (k >= TNREG)
+      {
+         node = NewIGNode(bp, k-TNREG+1);
+         if (nn == igN)
+            myIG = NewPtrTable(&igN, myIG, chunk);
+         myIG[nn++] = node;
+         SetVecBit(bp->conin, node->ignum, 1);
+         SetVecBit(bp->conout, node->ignum, 1);
+         SetVecBit(bp->ignodes, node->ignum, 1);
+      }
+/*
+ *    If a register is live on block entry, add it to liveregs
+ */
+      else
+      {
+         iv = Reg2Regstate(k+1);
+         BitVecComb(liveregs, liveregs, iv, '|');
+      }
+   }
+/*
+ * For all created IGNODEs, set it to conflict with all other conin,
+ * and init its livereg to conin's livereg
+ */
+   vals = BitVec2StaticArray(bp->ignodes);
+   for (n=vals[0], i=1; i <= n; i++)
+   {
+      k = vals[i];
+      node = IG[k];
+      node->conflicts = BitVecCopy(node->conflicts, bp->conin);
+      SetVecBit(node->conflicts, node->ignum, 0);
+      node->liveregs = BitVecCopy(node->liveregs, liveregs);
+   }
+   for (ip=bp->ainst1; ip; ip = ip->next)
+   {
+/*
+ *   If var is referenced as a use, update nread
+ */
+      vals = BitVec2StaticArray(ip->use);
+      for (n=vals[0], i=1; i <= n; i++)
+      {
+         k = vals[i];
+         if (k >= TNREG)
+         {
+            k += 1 - TNREG;
+            for (j=nn-1; j >= 0; j--)
+               if (myIG[j] && myIG[j]->var == k) break;
+            assert(j >= 0);
+            myIG[j]->nread++;
+         }
+      }
+/*
+ *    Handle deads
+ */
+      vals = BitVec2StaticArray(ip->deads);
+      for (n=vals[0], i=1; i <= n; i++)
+      {
+         k = vals[i];
+         if (k >= TNREG)  /* dead item is a var */
+         {
+/*
+ *          Find ignode associated with var
+ */
+            k += 1 - TNREG;
+            for (j=nn-1; j >= 0; j--)
+               if (myIG[j] && myIG[j]->var == k) break;
+            assert(j >= 0);
+/*
+ *          If dying range ends with a write, indicate it
+ */
+            if (!BitVecCheck(ip->set, k))
+               myIG[j]->nwrite++;
+/*
+ *          If var is dead, delete it from myIG and block's conout, and
+ *          indicate that this is a block and instruction where range dies
+ */
+            SetVecBit(bp->conout, myIG[j]->ignum, 0);
+            myIG[j] = NULL;
+            node->blkend = AddBlockToList(node->blkend, bp);
+            node->blkend->ptr = ip;
+         }
+/*
+ *       If it is a register that's dead, delete it from liveregs
+ */
+         else
+            SetVecBit(liveregs, k, 0);
+      }
+/* 
+ *    Handle sets
+ */
+      vals = BitVec2StaticArray(ip->set);
+      for (n=vals[0], i=1; i <= n; i++)
+      {
+         k = vals[i];
+         if (k >= TNREG) /* variable is being set */
+         {
+            k += 1 - TNREG;
+            for (j=nn-1; j >= 0; j--)
+               if (myIG[j] && myIG[j]->var == k) break;
+/*
+ *          If variable is set and not already live, then:
+ *             a. create new ignode for it
+ *             b. set a conflict between it and all other active ignodes
+ *             c. set ignode's liveregs to current liveregs
+ *             d. add it to blocks ignodes
+ */
+            if (j < 0)
+            {
+               node = NewIGNode(bp, k);
+               if (nn == igN)
+                  myIG = NewPtrTable(&igN, myIG, chunk);
+               myIG[nn++] = node;
+               for (j=0; j != nn; j++)
+                  if (myIG[j])
+                     SetVecBit(myIG[j]->conflicts, node->ignum, 1);
+               node->conflicts = BitVecCopy(node->conflicts, bp->conout);
+               SetVecBit(bp->conout, node->ignum, 1);
+               node->liveregs = BitVecCopy(node->liveregs, liveregs);
+               node->blkbeg = AddBlockToList(node->blkbeg, bp);
+               node->blkbeg->ptr = ip;
+               SetVecBit(bp->ignodes, node->ignum, 1);
+            }
+         }
+/*
+ *       If it's a register being set, add it to list of live regs as well
+ *       as to the regstate of all currently live ranges
+ */
+         else
+         {
+            k = vals[i] + 1;
+            iv = Reg2Regstate(k);
+            BitVecComb(liveregs, liveregs, iv, '|');
+            for (j=0; j != nn; j++)
+               if (myIG[j])
+                  BitVecComb(myIG[j]->liveregs, myIG[j]->liveregs, iv, '|');
+         }
+      }
+   }
+   free(myIG);
+/*
+ * Find ignodes that span this block
+ */
+   iv = BitVecComb(FKO_BVTMP, bp->conout, bp->conin, '&');
+   vals = BitVec2StaticArray(iv);
+   for (n=vals[0], i=1; i <= n; i++)
+   {
+      node = IG[vals[k]];
+      #if IFKO_DEBUG_LEVEL >= 1
+         assert(!(node->blkbeg || node->blkend));
+      #endif
+      node->blkspan = AddBlockToList(node->blkspan, bp);
+   }
+}
+
+void CombineBlockIG()
 
 char *Int2Reg(int i)
 /*
@@ -65,134 +358,6 @@ int NumberArchRegs()
    return(TNREG);
 }
 
-IGLIST *NewIGNodeList(IGNODE *ig, IGLIST *next)
-{
-   IGLIST *ip;
-   ip = malloc(sizeof(IGLIST));
-   ip->ignode = ig;
-   ip->next = next;
-   return(ip);
-}
-
-IGLIST *AddIGNodeToList(IGLIST *list, IGNODE *node)
-/* 
- * Adds a ignode to list (in first position)
- * RETURNS: ptr to list
- */
-{
-   list = NewIGNodeList(node, list);
-   return(list);
-}
-
-IGLIST *AddIGNodeToListCheck(IGLIST *list, IGNODE *node)
-/* 
- * Adds a ignode to list only if it is not already there
- * RETURNS: ptr to list
- */
-{
-   IGLIST *lp;
-   if (list)
-   {
-      for (lp=list; lp && lp->ignode != node; lp = lp->next);
-      if (!lp)
-         list = NewIGNodeList(node, list);
-   }
-   else list = NewIGNodeList(node, NULL);
-   return(list);
-}
-
-IGLIST *KillIGListEntry(IGLIST *lp)
-{
-   IGLIST *ln;
-   if (lp)
-   {
-      ln = lp->next;
-      free(lp);
-   }
-   else ln = NULL;
-   return(ln);
-}
-
-void KillAllIGList(IGLIST *lp)
-{
-   while (lp) lp = KillIGListEntry(lp);
-}
-
-IGLIST *RemoveIGNodeFromList(IGLIST *list, IGNODE *node)
-/*
- * Removes node from list if it exists
- * RETURNS: (possibly new) list
- */
-{
-   IGLIST *lprev, *lp;
-   if (!list) return(NULL);
-   if (list->ignode == node) list = list->next;
-   else
-   {
-      for (lprev=list; lp && lp->ignode != node; lp = lp->next) lprev=lp;
-      if (lp) lprev->next = lp->next;
-   }
-   KillIGListEntry(lp);
-   return(list);
-}
-
-IGNODE *NewIGNode(short var, BBLOCK *blk)
-{
-   IGNODE *ig;
-
-   ig = malloc(sizeof(IGNODE));
-   ig->myblkreg = NewBitVec(32);
-   if (blk)
-   {
-      ig->blkbeg = ig->blkend = NewBlockList(blk, NULL);
-      ig->blkspan = NULL;
-      SetVecBit(ig->myblkreg, blk->bnum-1, 1);
-   }
-   else ig->blkspan = ig->blkbeg = ig->blkend = NULL;
-   ig->conflicts = NULL;
-   ig->freq = 0;
-   ig->regstate = NewBitVec(32);
-   ig->var = var;
-   iglist = NewIGNodeList(ig, iglist);
-   ig->type = FLAG2PTYPE(STflag[var-1]);
-   return(ig);
-}
-
-void KillIGNode(IGNODE *kill)
-{
-   if (kill)
-   {
-      if (kill->blkbeg) KillBlockList(kill->blkbeg);
-      if (kill->blkend) KillBlockList(kill->blkbeg);
-      if (kill->blkspan) KillBlockList(kill->blkbeg);
-      if (kill->conflicts) KillAllIGList(kill->conflicts);
-      if (kill->regstate) KillBitVec(kill->regstate);
-      if (kill->myblkreg) KillBitVec(kill->myblkreg);
-      free(kill);
-   }
-}
-
-
-IGNODE *FindIGNodeByVar(IGLIST *list, short var)
-{
-   for (; list && list->ignode->var != var; list = list->next);
-   return(list ? list->ignode : NULL);
-}
-
-IGLIST *IGNodeConflictAll(IGLIST *list, IGNODE *node)
-/*
- * Creates a new list from list, containing all nodes except node
- * RETURNS: new list
- */
-{
-   IGLIST *new=NULL, *lp, *lo;
-
-   for (lo=list; lo; lo = lo->next)
-      if (lo->ignode != node)
-         new = AddIGNodeToList(new, lo->ignode);
-   return(new);
-}
-
 int Reg2Regstate(int k)
 /*
  * Given register k, set regstate so that all registers used by k are
@@ -236,225 +401,6 @@ int Reg2Regstate(int k)
    else fko_error(__LINE__, "Unknown register index %d, file=%s\n",
                   k, __FILE__);
    return(iv);
-}
-
-void UpdateIGListsRegstate(IGLIST *list, int iv, char op)
-{
-   for (; list; list = list->next)
-      BitVecComb(list->ignode->regstate, list->ignode->regstate, iv, op);
-}
-
-void KillAllBlockIG(BBLOCK *bp)
-{
-   for (; bp; bp = bp->down)
-   {
-      if (bp->conin) KillAllIGList(bp->conin);
-      if (bp->conout) KillAllIGList(bp->conout);
-      if (bp->ignodes) KillAllIGList(bp->ignodes);
-   }
-}
-
-void KillAllIG()
-{
-   IGLIST *lp;
-   BBLOCK *bp;
-   extern BBLOCK *bbbase;
-
-   for (bp=bbbase; bp; bp = bp->down)
-      KillAllBlockIG(bp);
-   for(lp=iglist; lp; lp = lp->next)
-      KillIGNode(lp->ignode);
-   KillAllIGList(iglist);
-   iglist = NULL;
-}
-
-void CalcBlockIG(BBLOCK *bp)
-/*
- * Calculates register interference graph for block bp
- */
-{
-   short *vals;
-   int i, n, k, iv;
-   IGNODE *node;
-   INSTQ *ip;
-   int blkstate;
-   extern int FKO_BVTMP;
-
-   if (FKO_BVTMP)
-   {
-      blkstate = FKO_BVTMP;
-      SetVecAll(blkstate, 0);
-   }
-   else FKO_BVTMP = blkstate = NewBitVec(TNREG);
-   vals = BitVec2StaticArray(bp->ins);
-   for (n=vals[0], i=1; i <= n; i++)
-   {
-      if (vals[i] >= TNREG)
-      {
-         node = NewIGNode(vals[i]-TNREG+1, bp);
-         bp->conin  = AddIGNodeToList(bp->conin,  node);
-         bp->conout = AddIGNodeToList(bp->conout, node);
-         bp->ignodes = AddIGNodeToList(bp->ignodes, node);
-         node->conflicts = IGNodeConflictAll(bp->conin, node);
-      }
-      else
-      {
-         k = vals[i] + 1;
-         iv = Reg2Regstate(k);
-         UpdateIGListsRegstate(bp->conin, iv, '|');
-         BitVecComb(blkstate, blkstate, iv, '|');
-      }
-   }
-   for (ip=bp->ainst1; ip; ip = ip->next)
-   {
-/*
- *    If var is referenced as a use, update the freq
- */
-      vals = BitVec2StaticArray(ip->use);
-      for (n=vals[0], i=1; i <= n; i++)
-      {
-         if (vals[i] >= TNREG)
-         {
-            k = vals[i] - TNREG + 1;
-            node = FindIGNodeByVar(bp->ignodes, k);
-            assert(node);
-            if (!node->blkbeg->ptr) node->blkbeg->ptr = ip;
-            node->blkend->ptr = ip;
-            node->freq++;
-         }
-      }
-/*
- *    If var is dead then delete it from conflict out of block
- *    If reg is dead remove it from blkstate
- */
-      vals = BitVec2StaticArray(ip->deads);
-      for (n=vals[0], i=1; i <= n; i++)
-      {
-         k = vals[i];
-         if (k >= TNREG)
-            bp->conout = RemoveIGNodeFromList(bp->conout, 
-                            FindIGNodeByVar(bp->conout, k-TNREG+1));
-         else SetVecBit(blkstate, k, 0);
-      }
-/*
- *    If reg/var is set
- */
-      vals = BitVec2StaticArray(ip->set);
-      for (n=vals[0], i=1; i <= n; i++)
-      {
-         k = vals[i];
-         if (k >= TNREG)
-         {
-            k = k - TNREG + 1;
-            node = FindIGNodeByVar(bp->ignodes, k);
-/*
- *          if var is set and not already live
- *             a. create an ignode for it
- *             b. Set a conflict between it and all nodes currently live
- *             c. add it to the current live ranges
-            else update frequency
- */
-            if (!node)
-            {
-               node = NewIGNode(vals[i]-TNREG+1, bp);
-               node->conflicts = IGNodeConflictAll(bp->conout, node);
-               node->regstate = BitVecCopy(node->regstate, blkstate);
-               bp->conout = AddIGNodeToList(bp->conout, node);
-            }
-            else node->freq++;
-         }
-/*
- *       If register is set, add it to list of live regs (blkstate),
- *       as well as to the regstate of all currently live ranges
- */
-         else
-         {
-            k = vals[i] + 1;
-            iv = Reg2Regstate(k);
-            UpdateIGListsRegstate(bp->conout, iv, '|');
-            BitVecComb(blkstate, blkstate, iv, '|');
-         }
-      }
-   }
-}
-
-IGNODE *CombineIGNodes(IGNODE *succ, IGNODE *pred)
-/*
- * Combines interference graph node of successor and predecessor block,
- * RETURNS: the combined IGNODE
- */
-{
-   IGNODE *ig;
-   IGLIST *igl;
-   BLIST *bl;
-   int i, j;
-   extern int FKO_BVTMP;
-
-   assert(succ->var == pred->var);
-   ig = NewIGNode(succ->var, NULL);
-   ig->blkbeg = pred->blkbeg;
-   ig->blkend = succ->blkend;
-   BitVecComb(ig->myblkreg, succ->myblkreg, pred->myblkreg, '|');
-   i = FKO_BVTMP = BitVecCopy(FKO_BVTMP, ig->myblkreg);
-   j = BlockList2BitVec(ig->blkbeg);
-   BitVecComb(i, i, j, '-');
-   j = BlockList2BitVec(ig->blkend);
-   BitVecComb(i, i, j, '-');
-   ig->blkspan = BitVec2BlockList(ig->myblkreg);
-   for (igl=succ->conflicts; igl; igl = igl->next)
-      ig->conflicts = AddIGNodeToList(ig->conflicts, igl->ignode);
-   for (igl=pred->conflicts; igl; igl = igl->next)
-      ig->conflicts = AddIGNodeToListCheck(ig->conflicts, igl->ignode);
-   ig->freq  = pred->freq + succ->freq;
-   ig->regstate = BitVecComb(0, pred->regstate, succ->regstate, '|');
-   ig->var = succ->var;
-   return(ig);
-}
-
-void CalcIG(BLIST *blist)
-/*
- * Calculates the interference graph for list of blocks given in blist
- * NOTE: live ranges are connected only between blocks in this list
- */
-{
-   BLIST *lp, *preds;
-   extern BBLOCK *bbbase;
-   IGLIST *in, *out, *inprev, *outprev;
-   IGNODE *ignew;
-   int blkvec;
-
-   if (!CFUSETU2D)
-      CalcInsOuts(bbbase);
-   if (!INDEADU2D)
-      CalcAllDeadVariables();
-   for (lp=blist; lp; lp = lp->next)
-      CalcBlockIG(lp->blk);
-/*
- * Create a block list so we can easily check whether to join live ranges
- */
-   blkvec = BlockList2BitVec(blist);
-   for (lp=blist; lp; lp = lp->next)
-   {
-      for (preds = lp->blk->preds; preds; preds = preds->next)
-      {
-         if (BitVecCheck(blkvec, preds->blk->bnum-1))
-         {
-            for (in = lp->blk->conin; in; in = in->next)
-            {
-               for (out=lp->blk->preds->blk->conout; out; out = out->next)
-               {
-                  if (in->ignode->var == out->ignode->var)
-                  {
-                     ignew = CombineIGNodes(in->ignode, out->ignode);
-                     KillIGNode(in->ignode);
-                     KillIGNode(out->ignode);
-                     in->ignode = out->ignode = ignew;
-                  }
-               }
-            }
-         }
-      }
-   }
 }
 
 /*

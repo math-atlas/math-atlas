@@ -10,5 +10,7 @@ int const2shift(int c);
 struct loopq *NewLoop(int flag);
 struct locinit *NewLocinit(short id, short con, struct locinit *next);
 void KillAllLocinit(struct locinit *libase);
+void *NewPtrTable(int *n, void *old, int chunk);
+short *NewShortTable(int *n, short *old, int chunk);
 
 #endif
