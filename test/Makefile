@@ -3,7 +3,7 @@ CC = gcc
 CCFLAGS = -g
 IFKO = ../bin/ifko
 
-all : irun frun
+all : ibuild fbuild irun frun
 
 fbuild : xftst0 xftst1 xftst2 xftst3
 frun   : fbuild 
@@ -12,7 +12,7 @@ frun   : fbuild
 	./xftst2
 	./xftst3
 
-ibuild : xitst0 xitst1 xitst2 xitst3 xitst4 xitst5 xitst6 
+ibuild : xitst0 xitst1 xitst2 xitst3 xitst4 xitst5 xitst6 xitst7 xitst8 xitst9
 irun : ibuild
 	./xitst0
 	./xitst1
@@ -21,8 +21,13 @@ irun : ibuild
 	./xitst4
 	./xitst5
 	./xitst6
+	./xitst7
+	./xitst8
+	./xitst9
 
 
+xitst9 : mitst9.o itst9.o
+	$(CC) $(CCFLAGS) -o $@ mitst9.o itst9.o
 xitst8 : mitst8.o itst8.o
 	$(CC) $(CCFLAGS) -o $@ mitst8.o itst8.o
 xitst7 : mitst7.o itst7.o
