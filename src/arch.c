@@ -282,19 +282,8 @@ void IConstStore(INSTQ *next, short id, short con, short reg)
  */
       #else
          bitload(next, reg, 16, SToff[con-1].i);
-         #if 0
-         i = SToff[con-1].i;
-         j = (i>>16);
-         if (j)
-         {
-            InsNewInst(NULL, next, MOV, -reg, STiconstlookup(j), __LINE__);
-            j = (i<<16)>>16;
-            InsNewInst(NULL, next, ADD, -reg, -reg, STiconstlookup(j));
-         }
-         else InsNewInst(NULL, next, MOV, -reg, con, __LINE__);
       #endif
       InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
-      #endif
    }
 }
 
@@ -460,11 +449,11 @@ fprintf(stderr, "STORE: %d, %d\n", SToff[paras[i]].sa[2], -ir);
                ir = iName2Reg(nam);
                InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, __LINE__);
                j++;
-               k = (SToff[paras[i]].sa[2])<<2;
+               k = (SToff[paras[i]].sa[2]-1)<<2;
                k = DT[k+3] + 4;
                k = AddDerefEntry(-REG_SP, 0, 0, k);
                InsNewInst(NULL, next, LD, -ir,
-                          AddDerefEntry(iName2Reg("@@i6"), 0, 0, 68+j*4), 0);
+                          AddDerefEntry(rsav, 0, 0, fsize+68+j*4), 0);
                InsNewInst(NULL, next, ST, k, -ir, __LINE__);
                j++;
             }
@@ -474,11 +463,11 @@ fprintf(stderr, "STORE: %d, %d\n", SToff[paras[i]].sa[2], -ir);
                           AddDerefEntry(rsav, 0, 0, fsize+68+j*4), 0);
                InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, __LINE__);
                j++;
-               k = (SToff[paras[i]].sa[2])<<2;
+               k = (SToff[paras[i]].sa[2]-1)<<2;
                k = DT[k+3] + 4;
                k = AddDerefEntry(-REG_SP, 0, 0, k);
                InsNewInst(NULL, next, LD, -ir,
-                          AddDerefEntry(iName2Reg("@@i6"), 0, 0, 68+j*4), 0);
+                          AddDerefEntry(rsav, 0, 0, fsize+68+j*4), 0);
                InsNewInst(NULL, next, ST, k, -ir, __LINE__);
                j++;
             }

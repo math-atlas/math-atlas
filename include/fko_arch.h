@@ -10,8 +10,8 @@
 #if !defined(LINUX_PPC) && !defined(OSX_PPC) && !defined(LINUX_X86_32) && \
     !defined(LINUX_X86_64) && !defined(SOLARIS_SPARC)
 /*   #define LINUX_X86_32   */
-/*   #define SOLARIS_SPARC */
-   #define OSX_PPC
+   #define SOLARIS_SPARC 
+/*   #define OSX_PPC */
 #endif
 
 #ifdef X86_64
