@@ -81,7 +81,7 @@ xdtst7 : mdtst7.o dtst7.o
 	$(CC) $(CCFLAGS) -o $@ mdtst7.o dtst7.o
 
 ibuild :xitst0 xitst1 xitst2 xitst3 xitst4 xitst5 xitst6 xitst7 xitst8 xitst9 \
-        xitst10
+        xitst10 xitst11
 irun:
 	./xitst0
 	./xitst1
@@ -94,6 +94,7 @@ irun:
 	./xitst8
 	./xitst9
 	./xitst10
+	./xitst11
 
 xitst0 : mitst0.o itst0.o
 	$(CC) $(CCFLAGS) -o $@ mitst0.o itst0.o
@@ -117,6 +118,8 @@ xitst9 : mitst9.o itst9.o
 	$(CC) $(CCFLAGS) -o $@ mitst9.o itst9.o
 xitst10 : mitst10.o itst10.o
 	$(CC) $(CCFLAGS) -o $@ mitst10.o itst10.o
+xitst11 : mitst11.o itst11.o
+	$(CC) $(CCFLAGS) -o $@ mitst11.o itst11.o
 
 
 mitst3.c : mitst0.c

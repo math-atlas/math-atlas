@@ -273,7 +273,7 @@ fprintf(stderr, "\n\nANAME=%s, TYPE=%d\n\n", STname[ptr-1] ? STname[ptr-1] : "NU
          InsNewInst(NULL, NULL, LDS, -areg, ptr, 0);
          if (!IS_UNSIGNED(STflag[id-1]))
          {
-            k = STiconstlookup(32);
+            k = STiconstlookup(31);
             InsNewInst(NULL, NULL, SHL, -areg, -areg, k);
             InsNewInst(NULL, NULL, SAR, -areg, -areg, k);
             LocalStore(id, areg);
@@ -359,6 +359,30 @@ void DoArith(short dest, short src0, char op, short src1)
       return;
    }
    type = FLAG2TYPE(STflag[dest-1]);
+/*
+ * x86 insts must handle integer division specially
+ */
+   #ifdef X86
+      if (op == '/' && IS_INT(type))
+      {
+         rd = iName2Reg("@eax");
+         rs0 = iName2Reg("@edx");
+         rs1 = iName2Reg("@ecx");
+         InsNewInst(NULL, NULL, LD, -rd, SToff[src0-1].sa[2], 0);
+         InsNewInst(NULL, NULL, MOV, -rs0, -rd, 0);
+         InsNewInst(NULL, NULL, SAR, -rs0, -rs0, STiconstlookup(31));
+         if (IS_CONST(STflag[src1-1]))
+            InsNewInst(NULL, NULL, MOV, -rs1, 
+                       STiconstlookup(SToff[src1-1].i), 0);
+         else
+            InsNewInst(NULL, NULL, LD, -rs1, SToff[src1-1].sa[2], 0);
+         InsNewInst(NULL, NULL, DIV, -rd, -rs0, -rs1);
+         fprintf(stderr, "DIV %d, %d, %d\n", -rd, -rs0, -rs1);
+         LocalStore(dest, rd);
+         GetReg(-1);
+         return;
+      }
+   #endif
    rd = rs0 = LocalLoad(src0);
    if (op != 'n' && op != 'a')
    {
