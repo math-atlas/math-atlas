@@ -1176,8 +1176,8 @@ void FinalizeEpilogue(BBLOCK *bbase,
    BBLOCK *blk;
 
    i = STlabellookup("_IFKO_EPILOGUE");
-   fprintf(stderr, "i=%d\n", i);
-   blk = FindBlockWithLabel(bbase, STlabellookup("_IFKO_EPILOGUE"));
+   fprintf(stderr, "i=%d, '%s'\n", i, STname[i-1]);
+   blk = FindBlockWithLabel(bbase, i);
    assert(blk);
 /* 
  * Find place to insert save statements

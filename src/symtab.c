@@ -22,6 +22,7 @@ static void GetNewSymtab(int chunk)
    assert(nam);
    off = malloc(n*sizeof(union valoff));
    flg = malloc(n*sizeof(int));
+   assert(off && flg);
    if (Nalloc > 0)
    {
       for (i=0; i < N; i++)
@@ -578,12 +579,31 @@ void PrintST(FILE *fpout)
    }
 }
 
-void ReadSTFromFile(FILE *fp)
+static void KillSTStrings()
 {
-   if (STname) free(STname);  /* this is inadequate to free all strings!! */
+   int i;
+   if (STname)
+   {
+      for (i=0; i < N; i++)
+         if (STname[i]) free(STname[i]);
+      free(STname);
+   }
+}
+
+void ReadSTFromFile(char *fname)
+{
+   int i, len;
+   FILE *fp;
+
+   fp = fopen(fname, "rb");
+   assert(fp);
+   KillSTStrings();
    if (SToff) free(SToff);
    if (STflag) free(STflag);
-   assert(fread(&N, sizeof(int), 1, fp) == 1);
+   Nalloc = N = 0;
+   assert(fread(&len, sizeof(int), 1, fp) == 1);
+   GetNewSymtab(((len+STCHUNK+1)/STCHUNK)*STCHUNK);
+   N = len;
    assert(fread(&niloc, sizeof(int), 1, fp) == 1);
    assert(fread(&nlloc, sizeof(int), 1, fp) == 1);
    assert(fread(&nfloc, sizeof(int), 1, fp) == 1);
@@ -598,9 +618,57 @@ void ReadSTFromFile(FILE *fp)
 /* 
  * Must read in all strings as N <len,string> pairs
  */
+   for (i=0; i < N; i++)
+   {
+      assert(fread(&len, sizeof(int), 1, fp) == 1);
+      if (len > 0)
+      {
+         STname[i] = malloc(sizeof(char)*(len+1));
+         assert(STname[i]);
+         assert(fread(STname[i], sizeof(char), len, fp) == len);
+         STname[i][len] = '\0';
+      }
+      else
+         STname[i] = NULL;
+   }
+   fclose(fp);
 }
 
-void WriteSTToFile(FILE *fp)
+void WriteSTToFile(char *fname)
 {
-}
+   int i, len;
+   FILE *fp;
 
+   fp = fopen(fname, "wb");
+   assert(fp);
+   assert(fwrite(&N, sizeof(int), 1, fp) == 1);
+   assert(fwrite(&niloc, sizeof(int), 1, fp) == 1);
+   assert(fwrite(&nlloc, sizeof(int), 1, fp) == 1);
+   assert(fwrite(&nfloc, sizeof(int), 1, fp) == 1);
+   assert(fwrite(&ndloc, sizeof(int), 1, fp) == 1);
+   assert(fwrite(&nvfloc, sizeof(int), 1, fp) == 1);
+   assert(fwrite(&nvdloc, sizeof(int), 1, fp) == 1);
+   assert(fwrite(&LOCALIGN, sizeof(int), 1, fp) == 1);
+   assert(fwrite(&LOCSIZE, sizeof(int), 1, fp) == 1);
+   assert(fwrite(&NPARA, sizeof(int), 1, fp) == 1);
+   assert(fwrite(SToff, sizeof(union valoff), N, fp) == N);
+   assert(fwrite(STflag, sizeof(int), N, fp) == N);
+/* 
+ * Must read in all strings as N <len,string> pairs
+ */
+   for (i=0; i < N; i++)
+   {
+      if (STname[i])
+      {
+         len = strlen(STname[i]);
+         assert(fwrite(&len, sizeof(int), 1, fp) == 1);
+         assert(fwrite(STname[i], sizeof(char), len, fp) == len);
+      }
+      else
+      {
+         len = 0;
+         assert(fwrite(&len, sizeof(int), 1, fp) == 1);
+      }
+   }
+   fclose(fp);
+}

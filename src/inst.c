@@ -356,3 +356,53 @@ void PrintInst(FILE *fpout, BBLOCK *bbase)
       }
    }
 }
+
+void WriteLILToBinFile(char *fname, BBLOCK *bbase)
+/*
+ * Write all inst to a binary file, with last entry being total number of
+ * instructions in program
+ */
+{
+   FILE *fp;
+   BBLOCK *bp;
+   INSTQ *ip;
+   int n=0;
+
+   fp = fopen(fname, "wb");
+   assert(fp);
+   for (bp = bbase; bp; bp = bp->down)
+   {
+      for (ip=bp->inst1; ip; ip = ip->next)
+      {
+         assert(fwrite(ip->inst, sizeof(short), 4, fp) == 4);
+         n++;
+      }
+   }
+   assert(fwrite(&n, sizeof(int), 1, fp) == 1);
+fprintf(stderr, "WROTE OUT %d INST\n", n);
+   fclose(fp);
+}
+
+void ReadLILFromBinFile(char *fname)
+{
+   FILE *fp;
+   int i, n;
+   short inst[4];
+   extern BBLOCK *bbbase;
+
+   KillAllBasicBlocks(bbbase);
+   bbbase = NewBasicBlock(NULL, NULL);
+
+   fp = fopen(fname, "rb");
+   assert(fp);
+   assert(!fseek(fp, -sizeof(int), SEEK_END));
+   assert(fread(&n, sizeof(int), 1, fp) == 1);
+fprintf(stderr, "READING IN %d NEW INST\n", n);
+   rewind(fp);
+   for (i=0; i < n; i++)
+   {
+      assert(fread(inst, sizeof(short), 4, fp) == 4);
+      InsNewInst(bbbase, NULL, NULL, inst[0], inst[1], inst[2], inst[3]);
+   }
+   fclose(fp);
+}

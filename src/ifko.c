@@ -125,6 +125,34 @@ void GetFlags(int nargs, char **args, char **FIN, FILE **FPIN, FILE **FPOUT)
    *FPOUT = fpout;
 }
 
+static void WriteBaseLIL()
+/*
+ * Writes out base LIL translation of routine so we can reread it in in order
+ * to iteratively apply differing optimizations
+ * Need to save:
+ * 1. LIL
+ * 2. ST: N, STname, SToff, STflag,
+ *        niloc, nlloc, nfloc, ndloc, nvfloc, nvdloc, LOCALIGN, LOCSIZE, NPARA
+ *    - WriteSTToFile, ReadSTFromFile in symtab.c
+ * 3. Global vars: STderef
+ * 4. optloop
+ * 5. ... not finished looking ...
+ *
+ * DONE: 2
+ */
+{
+   char *fST = "/tmp/iFKO_base.ST",
+        *fLIL = "/tmp/iFKO_base.LIL";
+   extern BBLOCK *bbbase;
+        
+   WriteSTToFile(fST);
+   ReadSTFromFile(fST);
+   WriteLILToBinFile(fLIL, bbbase);
+#if 1
+   ReadLILFromBinFile(fLIL);
+#endif
+}
+
 int main(int nargs, char **args)
 {
    FILE *fpin, *fpout, *fpl;
@@ -155,6 +183,9 @@ FILE *fptmp;
  * 4. optloop
  * 5. ... not finished looking ...
  */
+   PrintInst(fptmp=fopen("tmp.err0", "w"), bbbase); fclose(fptmp);
+   WriteBaseLIL();
+   PrintInst(fptmp=fopen("tmp.err1", "w"), bbbase); fclose(fptmp);
    NewBasicBlocks(bbbase);
    FindLoops(); 
    CheckFlow(bbbase, __FILE__, __LINE__);
@@ -177,8 +208,6 @@ FILE *fptmp;
       while(KeepOn);
    }
 
-   PrintInst(fptmp=fopen("tmp.err", "w"), bbbase);
-   fclose(fptmp);
 /*
  * Perform global optimizations on whole function
  */
