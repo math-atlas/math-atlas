@@ -1115,7 +1115,7 @@ void FinalizePrologueEpilogue(BBLOCK *bbase)
  */
 {
    INSTQ *ip, *oldhead;
-   int i, nir, nfr, ndr;
+   int k, i, nir, nfr, ndr;
    int ir[TNIR], fr[TNFR], dr[TNDR];
    int Aoff;  /* offset to arguments, from frame pointer */
    int Soff=0; /* system-dependant skip offset */
