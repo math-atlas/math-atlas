@@ -8,7 +8,7 @@ URT = DOT
 kern=error
 cache=
 NN="N=80000"
-KFLAG=
+KFLAGS=
 topt=-X 1 1
 lower=hello
 # upper=`echo $(lower) | tr '[a-z]' 'A-Z'`
@@ -24,11 +24,11 @@ timel1.o : timel1.c
 
 l1time :
 	$(MAKE) l1time0 rout=$(rout) URT=`echo $(rout) | tr 'a-z' 'A-Z'` \
-           kern=$(kern) cache="$(cache)" NN="$(NN)" KFLAG="$(KFLAG)" \
+           kern=$(kern) cache="$(cache)" NN="$(NN)" KFLAGS="$(KFLAGS)" \
            topt="$(topt)" pre=$(pre)
 l1time0 : 
 	- rm -f ../blas/$(pre)$(rout).s $(L1Tdir)/fko.tmp if2.tmp
-	cd ../blas ; $(MAKE) $(pre)$(rout).s KFLAG="$(KFLAG)"
+	cd ../blas ; $(MAKE) $(pre)$(rout).s KFLAGS="$(KFLAGS)"
 	cp ../blas/$(pre)$(rout).s $(L1Tdir)/../$(URT)/fkorout.c
 	cd $(L1Tdir) ; make $(pre)$(rout)case urout=fkorout.c UCC=gcc \
            UCCFLAGS="-x assembler-with-cpp" $(cache) $(NN) > fko.tmp 2>&1

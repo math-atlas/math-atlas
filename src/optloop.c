@@ -449,12 +449,12 @@ INSTQ *KillPointerUpdates(struct ptrinfo *pbase, int UR)
       inc = type2len(FLAG2TYPE(STflag[pi->ptr-1]));
       ipN = NewInst(NULL, NULL, NULL, LD, ip->prev->prev->inst[1], 
                     ip->prev->prev->inst[2], 0);
-      if (!ipbase) ipbase = ipN;
       ipN->next = NewInst(NULL, NULL, NULL, ip->prev->inst[0], 
                           ip->prev->inst[1], ip->prev->inst[2], 
                           STiconstlookup(inc*UR));
-      ipN = ipN->next;
-      ipN->next = NewInst(NULL, NULL, NULL, ST, ip->inst[1], ip->inst[2], 0);
+      ipN->next->next = NewInst(NULL, NULL, ipbase, ST, ip->inst[1],
+                                ip->inst[2], 0);
+      ipbase = ipN;
       ip = ip->prev->prev;
 /*
  *    Delete inst and free deleted INSTQ* structs
@@ -1284,7 +1284,7 @@ fprintf(stderr, "ftheads = %s\n", PrintBlockList(ftheads));
       assert(bp);
       lpn->tails = AddBlockToList(lpn->tails, bp);
    }
-   lp->blocks = dupblks;
+   lpn->blocks = dupblks;
    OptimizeLoopControl(lpn, 1, 0, NULL);
 /*
  * After all tails of cleanup loop, add jump back to posttail of unrolled loop
@@ -1306,7 +1306,7 @@ int UnrollLoop(LOOPQ *lp, int unroll)
    ILIST *il;
    INSTQ *ippost=NULL, *ip;
    struct ptrinfo *pi, *pi0;
-   int i, UsesIndex=1, UsesPtrs=1;
+   int i, UsesIndex=1, UsesPtrs=1, URbase=0;
    enum comp_flag kbeg, kend;
    extern int FKO_BVTMP;
    extern BBLOCK *bbbase;
@@ -1320,6 +1320,7 @@ PrintInst(fopen("err.tmp", "w"), bbbase);
    if (!pi0)
       UsesPtrs = 0;
    UnrollCleanup(lp, unroll);
+   URbase = (lp->flag & L_FORWARDLC_BIT) ? 0 : unroll-1;
 
    dupblks = malloc(sizeof(BLIST*)*unroll);
    assert(dupblks);
@@ -1373,8 +1374,12 @@ fprintf(stderr, "dupblks[%d] = %s\n", i-1, PrintBlockList(dupblks[i-1]));
  *    Update indices to add in unrolling factor
  */
       if (UsesIndex)
-         UpdateUnrolledIndices(dupblks[i-1], lp->I, i);
+         UpdateUnrolledIndices(dupblks[i-1], lp->I, (lp->flag & L_NINC_BIT) ?
+                               URbase-i : URbase+i);
    }
+   if (UsesIndex)
+      UpdateUnrolledIndices(lp->blocks, lp->I, URbase);
+                            
    if (pi0)
    {
       ippost = KillPointerUpdates(pi0, unroll);

@@ -74,7 +74,7 @@
 
 #define IOPT_GLOB 0x1
 
-#define FKO_abs(x_) ((x_) >= 0) ? (x_) : -(x_)
+#define FKO_abs(x_) (((x_) >= 0) ? (x_) : -(x_))
 /*
  * These are actually arch.c declarations for files that don't want to include
  * all of fko_arch.h

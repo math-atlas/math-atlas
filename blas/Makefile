@@ -1,6 +1,6 @@
 SHELL=/bin/sh
 FKO = ../bin/fko
-KFLAG=
+KFLAGS = -U 2
 #scal.s : scal.b
 #	../bin/fko $(KFLAG) -o scal.s scal.b
 clean :
@@ -11,4 +11,4 @@ build_comp:
 
 %.s : %.b
 	$(MAKE) build_comp
-	$(FKO) $(KFLAG) $< -o $@
+	$(FKO) $(KFLAGS) $< -o $@
