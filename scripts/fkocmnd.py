@@ -169,22 +169,22 @@ def GetOptVals(flags, pfarrs, pfsets):
 
    j = flags.rfind("-Par")
    if j == -1:
-      pf0 = "prefetchnta"
+      pf0 = "pfnta"
    else :
       words = flags[j+4:].split()
       if words[0][0] == '3':
-         pf0 = "prefetch"
+         pf0 = "pf"
       elif words[0][0] == '0':
-         pf0 = "prefetcht0"
+         pf0 = "pft0"
 
    j = flags.find("-Paw")
    pfw = pf0
    if j != -1 :
       words = flags[j+4:].split()
       if words[0][0] == '3':
-         pfw = "prefetchw"
+         pfw = "pfw"
       elif words[0][0] == '0':
-         pfw = "prefetcht0"
+         pfw = "pft0"
 
    pfd = []
    pfl = []
@@ -215,7 +215,10 @@ def GetOptVals(flags, pfarrs, pfsets):
    pfinst = []
    while i < npf :
       if pfl[i] > 0 :
-         pfinst.append("prefetcht%d" % (pfl[i]))
+         pfinst.append("t%d" % (pfl[i]))
+      elif pfl[i] == -1:
+         pfinst.append("none")
+         pfd[i] = 0
       else :
          if pfsets[i] :
             pfinst.append(pfw)

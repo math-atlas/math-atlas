@@ -256,13 +256,15 @@ def ifko(routs, pres, N):
       if vec: sv = "Yes"
       else : sv = "No"
       pfdX = pfd[0]
-      pfIX = r"{\tt " + pfinst[0] + "}"
+      if pfinst[0].find("none") != -1: pfIX = pfinst[0]
+      else : pfIX = r"{\tt " + pfinst[0] + "}"
       if npf == 2 :
          pfdY = pfd[1]
-         pfIY = r"{\tt " + pfinst[1] + "}"
+         if pfinst[1].find("none") != -1: pfIY = pfinst[1]
+         else : pfIY = r"{\tt " + pfinst[1] + "}"
       else :
          pfdY = 0
-         pfIY = "NONE"
+         pfIY = "N/A"
       print "%10s &%3s &%4d &%5d &%17s &%5d &%17s\\\\\\hline" % \
             (r"{\tt " + blalist[i]+"}", sv, UR, pfdX, pfIX, pfdY, pfIY)
       i += 1
