@@ -117,6 +117,7 @@
 #endif
 
 #ifdef X86_32
+   #define IMPLICITICC 1
    #define NIR 8
    #define NSIR 3
    #define NFR   8                      /* # of float regs */
@@ -146,6 +147,9 @@
 #endif
 
 #ifdef X86_64
+   #define IMPLICITICC 1
+   #define IMPLICITFCC 1
+   #define IMPLICITDCC 1
    #define NSR  8
    #define NIR 16
    #define NSIR 3
@@ -276,6 +280,24 @@
 #endif
 #ifndef TNDR
    #define TNDR NDR
+#endif
+#ifndef NICC
+   #define NICC 1
+#endif
+#ifndef NFCC
+   #define NFCC 1
+#endif
+#ifndef NDCC
+   #define NDCC 1
+#endif
+#ifndef ICC0
+   #define ICC0 1
+#endif
+#ifndef FCC0
+   #define FCC0 (1+NICC)
+#endif
+#ifndef DCC0
+   #define DCC0 (1+NFCC)
 #endif
 
 short GetReg(short type);

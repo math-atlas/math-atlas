@@ -997,6 +997,33 @@ struct assmln *lil2ass(INSTQ *head)
                                archsregs[-IREGBEG-op1]);
          break;
    #endif
+/*
+ * These are x86-only instructions to handle SSE-to-icc conversions
+ */
+   #ifdef X86
+      case FCMPW:  /* special cmp that overwrites an operand */
+         assert(op3 > 0);
+         k = GetIregOrConst(op3);
+         assert(k < 3);
+         ap->next = PrintAssln("\tcmpps\t$%d, %s, %s\n", k, 
+                       archfregs[-FREGBEG-op2], archfregs[-FREGBEG-op1]);
+         break;
+      case FCMPWD:  /* special cmp that overwrites an operand */
+         assert(op3 > 0);
+         k = GetIregOrConst(op3);
+         assert(k < 3);
+         ap->next = PrintAssln("\tcmppd\t$%d, %s, %s\n", k, 
+                       archdregs[-DREGBEG-op2], archdregs[-DREGBEG-op1]);
+         break;
+      case CVTBFI:
+         ap->next = PrintAssln("\tmovmskps\t%s, %s\n", archiregs[-IREGBEG-op1],
+                               archfregs[-FREGBEG-op2]);
+         break;
+      case CVTBDI:
+         ap->next = PrintAssln("\tmovmskpd\t%s, %s\n", archiregs[-IREGBEG-op1],
+                               archfregs[-DREGBEG-op2]);
+         break;
+   #endif
       case JMP:
          #ifdef X86
             ap->next = PrintAssln("\tjmp\t%s\n", STname[op1-1]);

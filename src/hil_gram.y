@@ -23,7 +23,7 @@
 
 %token ROUT_NAME ROUT_LOCALS ROUT_BEGIN ROUT_END CONST_INIT RETURN
 %token DOUBLE FLOAT INT UINT DOUBLE_PTR FLOAT_PTR INT_PTR UINT_PTR 
-%token PARAMS LST ABST ME LOOP_BEGIN LOOP_BODY LOOP_END MAX_UNROLL
+%token PARAMS LST ABST ME LOOP_BEGIN LOOP_BODY LOOP_END MAX_UNROLL IF
 %token <sh> LOOP_LIST_MU
 %token <inum> ICONST
 %token <fnum> FCONST
@@ -48,6 +48,7 @@
 %type <sh> ID avar const iconst fpconst fconst dconst ptrderef 
 %type <sh> loopsm loopsm2
 %type <lq> loop_beg
+%type <c> IFOP
 
 %%
 
@@ -158,6 +159,7 @@ statement : arith ';'
 	  | ID '=' const ';'	  {DoMove($1, $3);}
           | RETURN avar  ';'      {DoReturn($2);}
           | NAME ':'              {DoLabel($1);}
+          | ifstate ';'
 	  ;
 
 icexpr  : icexpr '+' icexpr             {$$ = $1 + $3;}
@@ -227,6 +229,26 @@ avar : ID               {$$ = $1;}
      | dconst           {$$ = $1;}
      | iconst           {$$ = $1;}
      ;
+                /* need to change to if (ID op avar) goto LABEL */
+        /* > < NE LE GE * +  / RSHIFT LSHIFT | & ^ */
+IFOP : '>'  {$$ = '>';}
+       '<'  {$$ = '<';}
+       NE   {$$ = '!';}
+       LE   {$$ = 'l';}
+       GE   {$$ = 'g';}
+       '-'  {$$ = '-';}
+       '+'  {$$ = '+';}
+       '*'  {$$ = '*';}
+       '/'  {$$ = '/';}
+       RSHIFT {$$ = 'R';}
+       LSHIFT {$$ = 'L';}
+       '|'    {$$ = '|';}
+       '&'    {$$ = '&';}
+       '^'    {$$ = '^';}
+       ;
+   
+ifstate : IF '(' ID IFOP avar ')' GOTO ID         {DoIf($4, $3, $5, $8);}
+        ;
 arith : ID '=' ID '+' avar {DoArith($1, $3, '+', $5); }
       | ID '=' ID '*' avar {DoArith($1, $3, '*', $5); }
       | ID '=' ID '-' avar {DoArith($1, $3, '-', $5); }

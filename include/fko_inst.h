@@ -36,18 +36,22 @@ enum inst
    LD,                          /* [r], [ptr], NULL */
    ST,                          /* [ptr], [r], NULL */
    OR,                          /* r0 = r1 | r/c */
+   AND,                         /* r0 = r1 & r/c */
+   ANDCC,                       /* r0 = r1 & r/c */
    XOR,                         /* r0 = r1 ^ r/c */
    NOT,                         /* r0 = ~r0 */
    SHL,                         /* r0 = r1 << r/c */
+   SHLCC,                       /* r0 = r1 << r/c */
    SHR,                         /* r0 = r1 >> r/c, set [cc] */
    SAR,                         /* r0 = r1 >> r/c */
    ADD,                         /* r0 = r1 + r/c */
    SUB,                         /* r0 = r1 - r/c */
+   SUBCC,                       /* r0 = r1 - r/c */
    MUL,                         /* r0 = r1 * r/c */
    UMUL,                        /* r0 = r1 * r/c, unsigned */
    DIV,                         /* r0 = r1 / r/c */
    UDIV,                      
-   CMP,                         /* NULL, r1, r2/c: set [cc] based on r1 - r2 */
+   CMP,                         /* cc#, r1, r2/c: set [cc] based on r1 - r2 */
    MOV,                         /* [r0], [r1/c] : r0 = r1 */
    NEG,                         /* [r0], [r1] : r0 = -r1 */
 /*   ABS, ; abs commented out because not widely supported */
@@ -68,15 +72,15 @@ enum inst
    UMULS,                       /* r0 = r1 * r/c, unsigned */
    DIVS,                        /* r0 = r1 / r/c */
    UDIVS,
-   CMPS,                        /* set [cc] based on r0 - r1 */
+   CMPS,                        /* set [cc](r0) based on r1 - r2 */
    MOVS,                        /* [r0], [r1] : r0 = r1 */
    NEGS,                        /* [r0], [r1] : r0 = -r1 */
    ABSS,
 /*
  * Jump instructions
  */
-   JMP,                         /* LABEL */
-   JEQ, JNE, JLT, JLE, JGT, JGE,
+   JMP,                         /* cc#, LABEL */
+   JEQ, JNE, JLT, JLE, JGT, JGE,  /* cc#, LABEL */
    PREFR,                       /* [ptr] [ilvl], NULL */
    PREFW,                       /* [ptr] [ilvl], NULL */
    RET,                         /* NULL,NULL,NULL : return to caller */
@@ -131,6 +135,13 @@ enum inst
    VFSUB,
    VFCMP,
    VSHUF,
+/*
+ * x86-only instructions
+ */
+   FCMPW,    /* freg0, freg1, iconst ; freg0 overwritten with T or F */
+   FCMPWD,   /* iconst -- 0 : ==;  1 : < ;  2 : <= */
+   CVTBFI,   /* ireg, freg    x86 only movmskps -> bit move (no conversion) */
+   CVTBDI,   /* ireg, dreg    x86 only movmskpd */
 /*
  * Type conversion instructions
  */

@@ -69,6 +69,8 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "ROUT_END" { return(ROUT_END); }
 "PARAMS"   { return(PARAMS); }
 "ABS"      { return(ABST); }
+"IF"       { return(IF); }
+"GOTO"     { return(GOTO); }
 {ID}      { sprintf(yylval.str, "%s", yytext); return(NAME); }
 
 %%

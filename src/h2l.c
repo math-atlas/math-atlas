@@ -695,3 +695,102 @@ void FinishLoop(struct loopq *lp)
    lp->iend = InsNewInst(NULL, NULL, CMPFLAG, CF_LOOP_END, lp->loopnum, 0);
    GetReg(-1);
 }
+
+void DoIf(char op, short id, short avar, short label)
+{
+   int flag;
+   short k, cmp;
+   assert(id > 0 && label > 0 && avar > 0);
+   id--;
+   label--;
+   avar--;
+   flag = STflag[avar];
+   type = FLAG2PTYPE(STflag[id]);
+   #ifdef X86
+      if (type != T_INT)
+      {
+         assert(type == T_FLOAT || type == T_DOUBLE);
+         ireg = GetReg(T_INT);
+         freg0 = LocalLoad(id);
+         freg1 = LocalLoad(avar);
+         switch(op)
+         {
+         case '>':
+            k = STiconstlookup(2);
+            br = JE;
+            break;
+         case 'l':  /* <= */
+            k = STiconstlookup(2);
+            br = JNE;
+            break;
+         case 'g':  /* >= */
+            k = STiconstlookup(1);
+            br = JE;
+            break;
+         case '<':
+            k = STiconstlookup(1);
+            br = JNE;
+            break;
+         case '=':
+            k = STiconstlookup(0);
+            br = JNE;
+            break;
+         case '!':
+            k = STiconstlookup(0);
+            br = JE;
+            break;
+         }
+         InsNewInst(NULL, NULL, (type == T_FLOAT) ? FCMPW:FCMPWD, 
+                    -freg0, -freg1, k);
+         InsNewInst(NULL, NULL, (type == T_FLOAT) ? CVTBFI:CVTBDI,
+                    -freg0, -ireg, 0);
+         InsNewInst(NULL, NULL, br, ICC0, label+1, 0);
+         return;
+      }
+   #endif
+   if (type == T_INT)
+   {
+      switch(op)
+      {
+      case '>':
+         br = JGT;
+         break;
+      case '<':
+         br = JLT;
+         break;
+      case '!':
+         br = JNE;
+         break;
+      case 'l':  /* <= */
+         br = JLE;
+         break;
+      case 'g':  /* >= */
+         br = JGE;
+         break;
+/*
+ *    These all involve opcc
+ */
+      case '-':
+         break;
+      case '+':
+         break;
+      case '*':
+         break;
+      case '/':
+         break;
+      case 'R':  /* >> */
+         break;
+      case 'L':  /* << */
+         break;
+      case '|':
+         break;
+      case '&':
+         break;
+      case '^':
+         break;
+      }
+   }
+   else if (type == T_FLOAT)
+   else if (type == T_DOUBLE)
+   else assert(0);
+}
