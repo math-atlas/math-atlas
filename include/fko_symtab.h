@@ -31,6 +31,7 @@
 #define IS_PARA(flag_)  ((flag_) & PARA_BIT)
 #define IS_VEC(flag_)   ((flag_) & VEC_BIT)
 #define IS_UNSIGNED(flag_)   ((flag_) & UNSIGNED_BIT)
+#define IS_LOCAL(flag_) (!(IS_GLOB(flag_) | IS_CONST(flag_)))
 
 #define REG_SP   1
 

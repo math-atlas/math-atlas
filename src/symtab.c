@@ -260,6 +260,17 @@ void STsetflag(short i, int flag)
     STflag[i-1] = flag;
 }
 
+void CreateGlobalLocals()
+/*
+ * iFKO copies all globals to locals before use.  This routine adds the
+ * locals with the name _LOC_<globname> for each global.  Values will
+ * be stored in these local locations after stack frame is fully qualified
+ * in the routine Glob2Local().
+ * NOTE: iFKO presently has no support for writing globals (they are used
+ *       only for fp constants).
+ */
+{
+}
 void NumberLocalsByType()
 /*
  * Searches symbol table for all locals and parameters, and assigns
