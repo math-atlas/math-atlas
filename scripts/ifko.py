@@ -356,7 +356,8 @@ def ifko0(l1bla, pre, N):
    i = 0
    wnt = []
    while i < n:
-      if fpsets[i] > 0 and fpuses[i] == 0:
+      if fpsets[i] > 0 :
+#      and fpuses[i] == 0:
          wnt.append(fparrs[i])
       i += 1
    if len(wnt) > 0:
@@ -365,26 +366,10 @@ def ifko0(l1bla, pre, N):
    mflist.append(mf)
    testlist.append("writeNT")
 #
-#  Don't try prefetching non-temporal arrays
-#
-   if len(wnt) > 0:
-      mat = FindMatchList(fparrs, wnt)
-      i = 0;
-      n = len(fparrs)
-      pfarrs = []
-      pfsets = []
-      while i < n:
-         if wnt.count(i) == 0:
-            pfarrs.append(fparrs[i])
-            pfsets.append(fpsets[i])
-         i += 1
-      print "\n   FLAGS so far =", fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS)
-   else :
-      pfarrs = fparrs
-      pfsets = fpsets
-#
 #  Find best pf type
 #
+   pfarrs = fparrs
+   pfsets = fpsets
    [mf,KFLAGS] = ifko_pftype(ATLdir, ARCH, KFLAGS, ncache, fko, rout, pre, 
                              l1bla, N, info, pfarrs, pfsets)
    mflist.append(mf)

@@ -7,7 +7,7 @@ WALLTIME = 1
 L1Tdir = '/tune/blas/level1/'
 
 def GetDefaultBlas():
-   return ['copy', 'asum', 'axpy', 'dot', 'scal', 'iamax']
+   return ['swap', 'copy', 'asum', 'axpy', 'dot', 'scal', 'iamax']
 
 def GetDefaultRefBlas(blas):
    n = len(blas)
@@ -23,9 +23,12 @@ def GetDefaultRefBlas(blas):
       elif bla.find('scal') != -1:
          refb.append("scal1_x1.c")
       elif bla.find('amax') != -1:
+#         refb.append("iamax_jmp_x1.c")
          refb.append("iamax_abs1_x1.c")
       elif bla.find("copy") != -1:
          refb.append("copy1_x1y1.c")
+      elif bla.find("swap") != -1:
+         refb.append("swap1_x1y1.c")
       else:
          print "Unknown BLAS : %s" % (bla)
          sys.exit(1)
@@ -72,7 +75,7 @@ def time(ATLdir, ARCH, pre, blas, N, rout, cc=None, ccf=None, opt=""):
       
    if PROFILE:
       popt = opt + ' UCC=icc UCCFLAGS="' + ccf + ' -prof_genx -prof_dir /tmp"'
-      pcmnd = 'cd %s/tune/blas/level1/%s ; make %s%scase N=%d urout=%s %s' % \
+      pcmnd = 'rm -f /tmp/*.dyn ; cd %s/tune/blas/level1/%s ; make %s%scase N=%d urout=%s %s' % \
              (ATLdir, ARCH, pre, blas, N, rout, popt)
 #      print "cmnd = '%s'" % (pcmnd)
       fo = os.popen(pcmnd, 'r')

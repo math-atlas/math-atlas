@@ -284,6 +284,6 @@ def GetOptVals(flags, pfarrs, pfsets, accs):
       ln = flags[j+4:]
       words = ln.split()
       WT.append(words[0])
-      j = ln.find(" -W ")
+      j = ln[j+4:].find(" -W ")
 
    return(vec, UR, npf, pfinst, pfd, aes, WT)

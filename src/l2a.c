@@ -1207,7 +1207,10 @@ struct assmln *lil2ass(BBLOCK *bbase)
          break;
       case JLT:
          #ifdef X86
-            ap->next = PrintAssln("\tjl\t%s\n", STname[op3-1]);
+            if (-op2 >= ICC0 && -op2 < ICC0+NICC)
+               ap->next = PrintAssln("\tjl\t%s\n", STname[op3-1]);
+            else
+               ap->next = PrintAssln("\tja\t%s\n", STname[op3-1]);
          #elif defined(SPARC)
             if (-op2 >= ICC0 && -op2 < ICC0+NICC)
                ap->next = PrintAssln("\tbl\t%s\n\tnop\n", STname[op3-1]);
@@ -1225,7 +1228,10 @@ struct assmln *lil2ass(BBLOCK *bbase)
          break;
       case JGT:
          #ifdef X86
-            ap->next = PrintAssln("\tjg\t%s\n", STname[op3-1]);
+            if (-op2 >= ICC0 && -op2 < ICC0+NICC)
+               ap->next = PrintAssln("\tjg\t%s\n", STname[op3-1]);
+            else
+               ap->next = PrintAssln("\tja\t%s\n", STname[op3-1]);
          #elif defined(SPARC)
             if (-op2 >= ICC0 && -op2 < ICC0+NICC)
                ap->next = PrintAssln("\tbg\t%s\n\tnop\n", STname[op3-1]);
@@ -1240,7 +1246,10 @@ struct assmln *lil2ass(BBLOCK *bbase)
          break;
       case JLE:
          #ifdef X86
-            ap->next = PrintAssln("\tjle\t%s\n", STname[op3-1]);
+            if (-op2 >= ICC0 && -op2 < ICC0+NICC)
+               ap->next = PrintAssln("\tjle\t%s\n", STname[op3-1]);
+            else
+               ap->next = PrintAssln("\tjna\t%s\n", STname[op3-1]);
          #elif defined(SPARC)
             if (-op2 >= ICC0 && -op2 < ICC0+NICC)
                ap->next = PrintAssln("\tble\t%s\n\tnop\n", STname[op3-1]);
@@ -1255,7 +1264,10 @@ struct assmln *lil2ass(BBLOCK *bbase)
          break;
       case JGE:
          #ifdef X86
-            ap->next = PrintAssln("\tjge\t%s\n", STname[op3-1]);
+            if (-op2 >= ICC0 && -op2 < ICC0+NICC)
+               ap->next = PrintAssln("\tjge\t%s\n", STname[op3-1]);
+            else
+               ap->next = PrintAssln("\tjae\t%s\n", STname[op3-1]);
          #elif defined(SPARC)
             if (-op2 >= ICC0 && -op2 < ICC0+NICC)
                ap->next = PrintAssln("\tbge\t%s\n\tnop\n", STname[op3-1]);

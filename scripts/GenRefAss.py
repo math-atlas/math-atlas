@@ -21,13 +21,13 @@ def GenAss(ATLdir, ARCH, OUTdir, pre, blas, N, rout, cc=None, ccf=None, opt=""):
    outf = ' -S -o ' + OUTdir + '/' + pre + blas + '.s'
    if PROFILE:
       popt = opt + ' UCC=icc UCCFLAGS="' + ccf + ' -prof_genx -prof_dir /tmp"'
-      pcmnd = 'cd %s/tune/blas/level1/%s ; make %s%scase N=%d urout=%s %s' % \
+      pcmnd = 'rm -f /tmp/*.dyn ; cd %s/tune/blas/level1/%s ; make %s%scase N=%d urout=%s %s' % \
              (ATLdir, ARCH, pre, blas, N, rout, popt)
 #      print "cmnd = '%s'" % (pcmnd)
       fo = os.popen(pcmnd, 'r')
       lines = fo.readlines()
       err = fo.close()
-#      print lines
+      if err : print lines
       assert(err == None)
       zopt = opt + ' UCC=icc UCCFLAGS="' + ccf + ' -prof_use -prof_dir /tmp ' \
              + outf + '"'

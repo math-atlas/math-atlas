@@ -765,7 +765,7 @@ void DoIf(char op, short id, short avar, char *labnam)
          break;
       }
    }
-#ifndef X86
+#ifndef X869999
    else
    {
       freg0 = LocalLoad(id);
@@ -797,7 +797,7 @@ void DoIf(char op, short id, short avar, char *labnam)
       InsNewInst(NULL, NULL, NULL, cmp, -FCC0, -freg0, -freg1);
       InsNewInst(NULL, NULL, NULL, br, -PCREG, -FCC0, label);
    }
-#else
+#elif 0
       else
       {
          assert(type == T_FLOAT || type == T_DOUBLE);
