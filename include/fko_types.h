@@ -28,6 +28,12 @@ struct assmln
    struct assmln *next;
 };
 
+struct locinit
+{
+   short id, con;
+   struct locinit *next;
+};
+
 struct sdata  /* Structure for static data */
 {
    char *name;           /* global variable name */

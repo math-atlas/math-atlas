@@ -86,6 +86,8 @@ static void LocalStore(short id, short sreg)
    case T_DOUBLE:
       inst = FSTD;
       break;
+   default:
+      fko_error(__LINE__, "Unknown type!\n");
    }
    InsNewInst(NULL, NULL, inst, SToff[id-1].sa[2], -sreg, 0);
 }
@@ -115,10 +117,18 @@ void DoMove(short dest, short src)
    short rsrc;
    int sflag;
    sflag = STflag[src-1];
+
 fprintf(stderr, "DoMove %d %d (%s %s)\n", dest, src, STname[dest-1]?STname[dest-1] : "NULL", STname[src-1]?STname[src-1] : "NULL");
-   if (IS_CONST(sflag) && (IS_FLOAT(sflag) || IS_DOUBLE(sflag)))
-      DoFpConstLoad(dest, src);
-   if (FLAG2TYPE(STflag[dest-1]) == FLAG2TYPE(sflag))
+
+   if (IS_CONST(sflag))
+   {
+      rsrc = GetReg(FLAG2TYPE(sflag));
+      InsNewInst(NULL, NULL, 
+                 IS_FLOAT(sflag) ? FMOV : (IS_DOUBLE(sflag) ? FMOVD : MOV),
+                 -rsrc, src, __LINE__);
+      LocalStore(dest, rsrc);
+   }
+   else if (FLAG2TYPE(STflag[dest-1]) == FLAG2TYPE(sflag))
    {
       rsrc = LocalLoad(src);
       LocalStore(dest, rsrc);

@@ -1,6 +1,7 @@
 #include "ifko.h"
 #define ARCH_DECLARE
 #include "fko_arch.h"
+struct locinit *LIhead=NULL;
 
 int GetArchAlign(int nvd, int nvf, int nd, int nf, int nl, int ni)
 /*
@@ -124,7 +125,7 @@ void CreateSysLocals()
 #endif
 }
 
-void FPConstStore(INSTQ *next, short rsav, short k, short reg)
+void FPConstStore(INSTQ *next, short rsav, short id, short con, short reg)
 {
    int flag;
    int *ip;
@@ -132,7 +133,7 @@ void FPConstStore(INSTQ *next, short rsav, short k, short reg)
    double d;
    short i;
    float f;
-   flag = STflag[k];
+   flag = STflag[id-1];
    if (IS_VEC(flag))
    {
       fprintf(stderr, "Vector constants not yet supported!\n");
@@ -140,95 +141,93 @@ void FPConstStore(INSTQ *next, short rsav, short k, short reg)
    }
    else if (IS_DOUBLE(flag))
    {
-      d = SToff[SToff[k].sa[0]].d;
+      d = SToff[con-1].d;
       if (d == 0.0)
       {
          InsNewInst(NULL, next, SUB, -reg, -reg, -reg);
-         InsNewInst(NULL, next, ST, SToff[k].sa[2], -reg, __LINE__);
-	 i = SToff[k].sa[2] - 1;
+         InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+	 i = SToff[id-1].sa[2] - 1;
 	 i = DT[(i<<2)+3] + 4;
          InsNewInst(NULL, next, ST, AddDerefEntry(rsav,0,0,i), -reg, __LINE__);
       }
-      #ifdef x86
-         ip = (int*) &(SToff[SToff[k].sa[0]].d);
+      #ifdef X86_32
+         ip = (int*) &d;
          InsNewInst(NULL, next, MOV, -reg, STiconstlookup(*ip), __LINE__);
-         InsNewInst(NULL, next, ST, SToff[k].sa[2], -reg, __LINE__);
+         InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
          InsNewInst(NULL, next, MOV, -reg, STiconstlookup(ip[1]), __LINE__);
-	 i = SToff[paras[k]].sa[2] - 1;
+	 i = SToff[id-1].sa[2] - 1;
 	 i = DT[(i<<2)+3] + 4;
          InsNewInst(NULL, next, ST, AddDerefEntry(rsav,0,0,i), -reg, __LINE__);
 /*
  *    Other archs must load operands 16 bits at a time
  */
       #else
-         sp = (short*) &(SToff[SToff[k].sa[0]].d);
+         sp = (short*) &d;
          i = STiconstlookup(16);
          InsNewInst(NULL, next, MOV, -reg, STiconstlookup(*sp), __LINE__);
-         InsNewInst(NULL, next, SHL, -reg, i, __LINE__);
+         InsNewInst(NULL, next, SHL, -reg, -reg, i);
          InsNewInst(NULL, next, ADD, -reg, -reg, STiconstlookup(sp[1]));
-         InsNewInst(NULL, next, SHL, -reg, i, __LINE__);
+         InsNewInst(NULL, next, SHL, -reg, -reg, i);
          InsNewInst(NULL, next, ADD, -reg, -reg, STiconstlookup(sp[2]));
-         InsNewInst(NULL, next, SHL, -reg, i, __LINE__);
+         InsNewInst(NULL, next, SHL, -reg, -reg, i);
          InsNewInst(NULL, next, ADD, -reg, -reg, STiconstlookup(sp[3]));
       #endif
    }
    else
    {
       assert(IS_FLOAT(flag));
-      f = SToff[SToff[k].sa[0]].f;
+      f = SToff[con-1].f;
       if (f == 0.0e0)
       {
          InsNewInst(NULL, next, SUB, -reg, -reg, -reg);
-         InsNewInst(NULL, next, ST, SToff[k].sa[2], -reg, __LINE__);
+         InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
       }
    }
 }
 
-void FPConst2Local(INSTQ *next, INSTQ *end, short rsave, short reg1)
-/*
- * Saves correct bit patterns to frame for fpconst locals, and then
- * look at all instructions between *next and *end.  Find any inst that
- * do FMOV[d] on fp const, and change them to local loads
- */
+void IConstStore(INSTQ *next, short rsav, short id, short con, short reg)
 {
-   short i, N, FPUSE=0;
-   int flag;
-   INSTQ *ip;
-   for (i=0, N=STlen(); i < N; i++)
+   int i, j;
+
+   if (IS_LONG(STflag[id-1]))
    {
-      flag = STflag[i];
-fprintf(stderr, "%s(%d): N=%d, i=%d, CO=%d, LO=%d\n",__FILE__,__LINE__,N,i,IS_CONST(flag),IS_LOCAL(flag));
-      if (IS_CONST(flag) && IS_LOCAL(flag))
-      {
-         assert(IS_FLOAT(flag) || IS_DOUBLE(flag));
-         FPConstStore(next, rsave, i, reg1);
-         FPUSE++;
-      }
+      fko_error(__LINE__, "long CONST_INIT not yet supported!\n");
    }
-fprintf(stderr, "%s(%d): N=%d, i=%d\n",__FILE__,__LINE__,N,i);
-/*
- * Change FMOV[d] of fpconst to appopriate local load
- */
-fprintf(stderr, "FOUND000:\n");
-   if (FPUSE)
+   else
    {
-fprintf(stderr, "FOUND00:\n");
-      for (ip=next; ip != end; ip = ip->next)
-      {
-         if (ip->inst[0] == FMOV || ip->inst[0] == FMOVD)
+      #ifdef X86_32
+         InsNewInst(NULL, next, MOV, -reg, con, __LINE__);
+/*
+ *    Must load constants 16 bits at a time
+ */
+      #else
+         i = SToff[con-1].i;
+         j = (i>>16);
+         if (j)
          {
-fprintf(stderr, "FOUND0:\n");
-            i = ip->inst[2];
-            if (i > 0)
-            {
-fprintf(stderr, "FOUND!\n");
-               ip->inst[0] = (ip->inst[0] == FMOV) ? FLD : FLDD;
-               i = FindLocalFPConst(i);
-               assert(i > 0);
-               ip->inst[2] = SToff[i-1].sa[2];
-            }
+            InsNewInst(NULL, next, MOV, -reg, STiconstlookup(j), __LINE__);
+            j = (i<<16)>>16;
+            InsNewInst(NULL, next, ADD, -reg, -reg, STiconstlookup(j));
          }
-      }
+         else InsNewInst(NULL, next, MOV, -reg, con, __LINE__);
+      #endif
+      InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+   }
+}
+
+void InitLocalConst(INSTQ *next, short rsav, short reg)
+{
+   struct locinit *lp;
+   int flag;
+   for (lp=LIhead; lp; lp = LIhead)
+   {
+      LIhead = lp->next;
+      flag = FLAG2TYPE(STflag[lp->id-1]);
+      if (IS_FLOAT(flag) || IS_DOUBLE(flag))
+         FPConstStore(next, rsav, lp->id, lp->con, reg);
+      else
+         IConstStore(next, rsav, lp->id, lp->con, reg);
+      free(lp);
    }
 }
 
@@ -387,10 +386,10 @@ fprintf(stderr, "STORE: %d, %d\n", SToff[paras[i]].sa[2], -ir);
       }
    #endif
 /*
- * Store floating point constants to stack frame
+ * Initialize constants
  */
    if (!reg1) reg1 = GetReg(T_INT);
-   FPConst2Local(next, end, rsav, reg1);
+   InitLocalConst(next, rsav, reg1);
 }
 
 void CreateEpilogue(int fsize,  /* frame size of returning func */

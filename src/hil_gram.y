@@ -13,7 +13,7 @@
    char c;
 }
 
-%token ROUT_NAME ROUT_LOCALS ROUT_BEGIN ROUT_END RETURN
+%token ROUT_NAME ROUT_LOCALS ROUT_BEGIN ROUT_END CONST_INIT RETURN
 %token DOUBLE FLOAT INT UINT DOUBLE_PTR FLOAT_PTR INT_PTR UINT_PTR 
 %token PARAMS LST ABST
 %token <inum> ICONST
@@ -34,7 +34,7 @@
 %type <inum> icexpr
 %type <fnum> fcexpr
 %type <dnum> dcexpr
-%type <sh> ID avar iconst fpconst fconst dconst ptrderef
+%type <sh> ID avar const iconst fpconst fconst dconst ptrderef
 
 %%
 
@@ -44,7 +44,7 @@
  */
 %}
 lines : lines line ';' | line ';' ;
-line : stateflag | paradec | typedec | statement ;
+line : stateflag | paradec | typedec | constinit | statement ;
 
         /* need to add GLOBALS section */
 stateflag: ROUT_NAME NAME 
@@ -66,7 +66,6 @@ fprintf(stderr, "grammer setting rout_name='%s'\n", rout_name);
          {
             if (WhereAt > 2)
                yyerror("Improper ROUT_BEGIN statement");
-            CreateFPLocals();
             CreateSysLocals();
             NumberLocalsByType();
             CreateLocalDerefs();
@@ -90,15 +89,24 @@ typedec : INT LST idlist              { declare_list(T_INT); }
 	;
 paradec : PARAMS LST idlist          { para_list(); } 
         ;
+constinit : CONST_INIT LST initlist
+        ;
 idlist  : idlist ',' NAME            {NewID($3);}
         | NAME                       {NewID($1);}
 	;
+initlist : inititem ',' inititem
+         | inititem
+         ;
+inititem :  ID '=' iconst { ConstInit($1, $3); }
+         |  ID '=' fconst { ConstInit($1, $3); }
+         |  ID '=' dconst { ConstInit($1, $3); }
+         ;
 
 statement : arith
           | ptrderef '=' ID       {DoArrayStore($1, $3);}
           | ID '=' ptrderef       {DoArrayLoad($1, $3);}
           | ID '=' ID             {DoMove($1, $3);}
-	  | ID '=' fpconst	  {DoMove($1, $3);}
+	  | ID '=' const	  {DoMove($1, $3);}
           | RETURN avar           {DoReturn($2);}
           | NAME ':'              {DoLabel($1);}
 	  ;
@@ -146,6 +154,9 @@ dcexpr  : dcexpr '+' dcexpr             {$$ = $1 + $3;}
         | DCONST                        {$$ = $1;}
 	;
 
+const   : fpconst	{$$ = $1; }
+        | iconst	{$$ = $1; }
+        ;
 fpconst : fconst	{$$ = $1; }
         | dconst	{$$ = $1; }
 	;
@@ -269,6 +280,24 @@ void declare_list(int flag)
    KillIDs();
 }
 
+struct locinit *NewLI(short id, short con, struct locinit *next)
+{
+   struct locinit *lp;
+   lp = malloc(sizeof(struct locinit));
+   assert(lp);
+   lp->id = id;
+   lp->con = con;
+   lp->next = next;
+   return(lp);
+}
+
+void ConstInit(short id, short con)
+{
+   extern struct locinit *LIhead;
+   if (FLAG2TYPE(STflag[id-1]) != FLAG2TYPE(STflag[con-1]))
+      fko_error(__LINE__, "Type mismatch in CONST_INIT\n");
+   LIhead = NewLI(id, con, LIhead);
+}
 yyerror(char *msg)
 {
    fprintf(stderr, "Line %d: %s\n", lnno, msg);

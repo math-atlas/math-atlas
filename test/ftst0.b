@@ -1,4 +1,7 @@
 ROUTINE fsimple;
+ROUT_LOCALS;
+   DOUBLE :: threept2;
+   CONST_INIT :: threept2 = 3.2;
 ROUT_BEGIN;
-   RETURN 3.2;
+   RETURN threept2;
 ROUT_END;

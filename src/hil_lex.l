@@ -44,6 +44,7 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "UINT_PTR" { return(UINT_PTR); }
 "ROUTINE" { return(ROUT_NAME); }
 "ROUT_LOCALS" { return(ROUT_LOCALS); }
+"CONST_INIT" { return(CONST_INIT); }
 "ROUT_BEGIN" { return(ROUT_BEGIN); }
 "RETURN"   { return(RETURN); }
 "ROUT_END" { return(ROUT_END); }

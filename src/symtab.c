@@ -8,7 +8,6 @@ short *DT;
 static int N=0, Nalloc=0, Ndt=0, Ndtalloc=0;
 static int niloc=0, nlloc=0, nfloc=0, ndloc=0, nvfloc=0, nvdloc=0;
 int    LOCSIZE=0, LOCALIGN=0, NPARA=0;
-struct sdata *SDhead=NULL;
 
 #define STCHUNK 256
 #define DTCHUNK 256
@@ -274,6 +273,7 @@ void CreateFPLocals()
    short k, n=0, i;
    int fl;
    char ln[256];
+
    for (k=0; k < N; k++)
    {
       fl = STflag[k];

@@ -5,11 +5,14 @@ IFKO = ../bin/ifko
 
 all : irun
 
-irun : xitst0 xitst1 xitst2
+irun : xitst0 xitst1 xitst2 xitst3
 	./xitst0
 	./xitst1
 	./xitst2
+	./xitst3
 
+xitst3 : mitst0.o itst3.o
+	$(CC) $(CCFLAGS) -o $@ mitst0.o itst3.o
 xitst2 : mitst2.o itst2.o
 	$(CC) $(CCFLAGS) -o $@ mitst2.o itst2.o
 xitst1 : mitst1.o itst1.o
