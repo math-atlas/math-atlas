@@ -233,11 +233,11 @@ static void RestoreFKOState(int isav)
    extern BBLOCK *bbbase;
 
    sprintf(ln, "%s%d", fST, isav);
-   ReadMiscFromFile(ln);
-   sprintf(ln, "%s%d", fLIL, isav);
    ReadSTFromFile(ln);
-   sprintf(ln, "%s%d", fmisc, isav);
+   sprintf(ln, "%s%d", fLIL, isav);
    ReadLILFromBinFile(ln);
+   sprintf(ln, "%s%d", fmisc, isav);
+   ReadMiscFromFile(ln);
 /*
  * All annotation must be done afresh
  */
@@ -329,6 +329,8 @@ int GoToTown(int SAVESP)
    extern BBLOCK *bbbase;
 
    GenPrologueEpilogueStubs(bbbase, SAVESP);
+   SaveFKOState(1);
+   RestoreFKOState(1);
    NewBasicBlocks(bbbase);
    FindLoops(); 
    CheckFlow(bbbase, __FILE__, __LINE__);
