@@ -178,9 +178,8 @@ def GetOptVals(flags, pfarrs, pfsets):
          pf0 = "prefetcht0"
 
    j = flags.find("-Paw")
-   if j == -1 :
-      paw = pf0
-   else :
+   pfw = pf0
+   if j != -1 :
       words = flags[j+4:].split()
       if words[0][0] == '3':
          pfw = "prefetchw"
