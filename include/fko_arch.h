@@ -414,7 +414,7 @@
 #ifndef NCACHE
    #define NCACHE 3
    #ifdef ARCH_DECLARE
-      short LINESIZE[NCACHE] = {32, 64, 128};
+      short LINESIZE[NCACHE] = {128, 128, 128};
    #else
       extern short LINESIZE[NCACHE];
    #endif

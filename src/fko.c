@@ -8,6 +8,7 @@ FILE *fpST=NULL, *fpIG=NULL, *fpLIL=NULL, *fpOPT=NULL;
 int FUNC_FLAG=0; 
 int DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0, DTx87=0, DTx87d=0;
 int FKO_FLAG;
+int PFISKIP=0, PFINST=(-1), PFCHUNK=1;
 static char fST[1024], fLIL[1024], fmisc[1024];
 static short *PFDST=NULL, *PFLVL=NULL;
 static char **PFARR=NULL;
@@ -39,6 +40,7 @@ void PrintUsageN(char *name)
    fprintf(stderr, "  -P <all/name> <cache level> <dist(bytes)>\n");
    fprintf(stderr, 
 "  -Pa[r/w] [n,3,0] : non-temp, 3dnow, temp L1 (read/write) prefetch\n");
+   fprintf(stderr, "   -Ps [b/a] [a,m,l,A] <iskip> <nclump>\n");
    fprintf(stderr, "  -PL <lvl> <linesize> : set cache linesize in bytes\n");
    fprintf(stderr, "  -[L,G] <blknum> <maxN> <nopt> <opt1> ... <optN>\n");
    fprintf(stderr, "     Loop or global optimization block\n");
@@ -236,6 +238,17 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             {
                j = atoi(args[++i]);
                LINESIZE[j] = atoi(args[++i]);
+            }
+            else if (args[i][2] == 's') /* scheduling change */
+            {
+               PFCHUNK = atoi(args[i+4]);
+               assert(PFCHUNK > 0);
+               if (args[i+1][0] == 'b')
+                  PFCHUNK = -PFCHUNK;
+               PFISKIP = atoi(args[i+3]);
+               assert(PFISKIP >= 0);
+               PFINST = args[i+2][0];
+               i += 4;
             }
             else
             {

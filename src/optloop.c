@@ -1582,7 +1582,7 @@ BLIST *FindAlwaysTakenBlocks(LOOPQ *lp)
    return(base);
 }
 
-void SchedInstInLoop0(LOOPQ *lp, ILIST *ilbase)
+void SchedPrefInLoop0(LOOPQ *lp, ILIST *ilbase)
 /*
  * Adds the inst in ilbase to loop, one ILIST chunk scheduled at a time.
  * This variant adds all instructions at beginning of header.
@@ -1606,12 +1606,33 @@ void SchedInstInLoop0(LOOPQ *lp, ILIST *ilbase)
       ilbase = KillIlist(ilbase);
    }
 }
+
+static int NumberOfThisInst(INSTQ *ip, short inst)
+{
+   int i;
+   for (i=0; ip; ip = ip->next)
+      if (ip->inst[0] == inst)
+         i++;
+   return(i);
+}
 static int NumberOfInst(INSTQ *ip)
 {
    int i;
    for (i=0; ip; ip = ip->next)
       if (ACTIVE_INST(ip->inst[0]) && ip->inst[0] != LABEL)
          i++;
+   return(i);
+}
+
+static int NumberOfThisInstInList(BLIST *bl, short inst)
+{
+   int i=0;
+
+   while(bl)
+   {
+      i += NumberOfThisInst(bl->blk->ainst1, inst);
+      bl = bl->next;
+   }
    return(i);
 }
 
@@ -1633,46 +1654,50 @@ static int FindSkip(int N, int npf, int chunk)
    return(N/npf);
 }
 
-void SchedInstInLoop1(LOOPQ *lp, ILIST *ilbase, int dist, int chunk)
-/*
- * Adds the inst in ilbase to loop, one ILIST chunk scheduled at a time.
- * This variant puts the first pref chunk at dist inst from the start of
- * the header, and then adds another chunk every NINST/(np/chunk)
- */
+static BLIST *GetSchedInfo(LOOPQ *lp, ILIST *ilbase, short inst, int *NPF, 
+                           int *NINST)
 {
-   BLIST *atake, *bl;
-   INSTQ *ip, *ipp, *ipn, *ipf, *ipfn;
-   int N, skip, sk, i, j, k, npf, ir, dt;
-   int bv;
+   BLIST *atake;
+   INSTQ *ip;
    ILIST *il;
-   extern int FKO_BVTMP;
+   int npf, N;
 
    for (npf=0, il=ilbase; il; il = il->next, npf++);
-/*
- * Find total number of always-taken instructions excluding loop update
- */
    atake = FindAlwaysTakenBlocks(lp);
-   N = NumberOfInstInList(atake);
+   if (inst < 0)
+      N = NumberOfInstInList(atake);
+   else
+      N = NumberOfThisInstInList(atake, inst);
    ip = FindCompilerFlag(lp->tails->blk, CF_LOOP_PTRUPDATE);
    if (!ip)
       ip = FindCompilerFlag(lp->tails->blk, CF_LOOP_UPDATE);
    assert(ip);
-   N -= NumberOfInst(ip);
-   N -= dist;
-   assert(N > 0);
-   skip = FindSkip(N, npf, chunk);
-   while (!skip)
-      skip = FindSkip(N, npf, ++chunk);
-   i = dist ? 1 : 0;
-   j = 0;
-   sk = dist ? dist : skip;
+   if (inst < 0)
+      N -= NumberOfInst(ip);
+   else
+      N -= NumberOfThisInst(ip, inst);
+   *NPF = npf;
+   *NINST = N;
+   return(atake);
+}
+
+int FindUnusedIRegInList(BLIST *scope, int ir)
+/*
+ * Finds integer register not set or used in scope.  Returns ir if it has
+ * not been used, and another, unused register, if it has
+ */
+{
+   BLIST *bl;
+   INSTQ *ip;
+   int bv;
+   extern int FKO_BVTMP;
 /*
  * Find all regs used in this range
  */
    if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
    else SetVecAll(FKO_BVTMP, 0);
    bv = FKO_BVTMP;
-   for (bl=atake; bl; bl = bl->next)
+   for (bl=scope; bl; bl = bl->next)
    {
       if (!INUSETU2D)
          CalcUseSet(bl->blk); 
@@ -1685,25 +1710,63 @@ void SchedInstInLoop1(LOOPQ *lp, ILIST *ilbase, int dist, int chunk)
       }
    }
 /*
- * Get reg that is not being used
+ * If previous register already used, get one that isn't
  */
-   do
-   {
+   if (!ir)
       ir = GetReg(T_INT);
-   }
-   while(BitVecCheckComb(bv, Reg2Regstate(ir), '&'));
+   while(BitVecCheckComb(bv, Reg2Regstate(ir), '&'))
+      ir = GetReg(T_INT);
+   return(ir);
+}
+
+static void ChangeRegInPF(int ir, ILIST *ilbase)
 /*
- * Update all pref inst with new inst, if necessary
+ * Update all pref inst with new reg, if necessary
  */
+{
+   ILIST *il;
+
    if (ilbase->inst->inst[1] != -ir)
    {
-      
       for (il=ilbase; il; il = il->next)
       {
          il->inst->inst[1] = -ir;
          SToff[il->inst->next->inst[2]-1].sa[0] = -ir;
       }
    }
+}
+
+void SchedPrefInLoop1(LOOPQ *lp, ILIST *ilbase, int dist, int chunk)
+/*
+ * Adds the inst in ilbase to loop, one ILIST chunk scheduled at a time.
+ * This variant puts the first pref chunk at dist inst from the start of
+ * the header, and then adds another chunk every NINST/(np/chunk)
+ */
+{
+   BLIST *atake, *bl;
+   INSTQ *ip, *ipp, *ipn, *ipf, *ipfn;
+   int N, skip, sk, i, j, k, npf, ir, ir0, dt;
+   int bv;
+   ILIST *il;
+   extern int FKO_BVTMP;
+
+   atake = GetSchedInfo(lp, ilbase, -1, &npf, &N);
+   ir0 = -ilbase->inst->inst[1];
+   ir = FindUnusedIRegInList(atake, ir0);
+
+   N -= dist;
+   assert(N > 0);
+   skip = FindSkip(N, npf, chunk);
+   while (!skip)
+      skip = FindSkip(N, npf, ++chunk);
+   i = dist ? 1 : 0;
+   j = 0;
+   sk = dist ? dist : skip;
+/*
+ * Update all pref inst with new inst, if necessary
+ */
+   if (ir0 != ir)
+      ChangeRegInPF(ir, ilbase);
 /*
  * Insert the prefetch inst
  */
@@ -1753,12 +1816,183 @@ EOL:
    KillBlockList(atake);
 }
 
-void SchedInstInLoop(LOOPQ *lp, ILIST *ilbase)
+INSTQ *FindNthInstInList(BLIST *scope, INSTQ *ip0, int inst, int N)
+/*
+ * Starting at ip0, find Nth occurance of instruction inst
+ */
 {
-   SchedInstInLoop1(lp, ilbase, 0, 1);
-//   SchedInstInLoop0(lp, ilbase);
+   int i;
+   BLIST *bln;
+   INSTQ *ip;
+
+   assert(ip0 && scope);
+   bln = FindInList(scope, ip0->myblk);
+   do
+   {
+      for (ip=ip0; ip; ip = ip->next)
+      {
+         if (ip->inst[0] == inst)
+            if (--N == 0)
+               return(ip);
+      }
+      bln = bln->next;
+      ip0 = bln->blk->inst1;
+   }
+   while(N);
+}
+
+void SchedPrefInLoop2(LOOPQ *lp, ILIST *ilbase, int iskip, int chunk,
+                      int BEFORE, short inst)
+/*
+ * Adds the inst in ilbase to loop, one ILIST chunk scheduled at a time.
+ * This variant puts the first pref chunk at the iskip'th occurance of
+ * inst, and then adds another chunk every NINST/(np/chunk)
+ */
+{
+   BLIST *atake, *bl;
+   INSTQ *ip, *ipp, *ipn, *ipf, *ipfn;
+   int N, skip, sk, i, j, k, npf, ir, ir0, dt;
+   int bv;
+   ILIST *il;
+
+   if (iskip < 0)
+   {
+     SchedPrefInLoop0(lp, ilbase);
+     return;
+   }
+   if (inst < 0)
+   {
+     SchedPrefInLoop1(lp, ilbase, iskip, chunk);
+     return;
+   }
+
+   atake = GetSchedInfo(lp, ilbase, inst, &npf, &N);
+/*
+ * Update all pref inst with new inst, if necessary
+ */
+   ir0 = -ilbase->inst->inst[1];
+   ir = FindUnusedIRegInList(atake, ir0);
+   if (ir0 != ir)
+      ChangeRegInPF(ir, ilbase);
+
+   N -= iskip;
+   iskip++;
+   assert(N > 0);
+   skip = FindSkip(N, npf, chunk);
+   while (!skip)
+      skip = FindSkip(N, npf, ++chunk);
+   sk = iskip;
+   ip = atake->blk->ainst1;
+   j = 0;
+   while(1)
+   {
+      ip = FindNthInstInList(atake, ip, inst, sk);
+      ipn = ipp = NULL;
+      if (BEFORE)
+         ipn = ip;
+      else
+         ipp = ip;
+      for (k=0; k < chunk; k++)
+      {
+         for (ipf=ilbase->inst; ipf; ipf = ipfn)
+         {
+            ipp = InsNewInst(ip->myblk, ipp, ipn, ipf->inst[0], 
+                             ipf->inst[1], ipf->inst[2], ipf->inst[3]);
+            ipn = NULL;
+            ipfn = ipf->next;
+            free(ipf);
+         }
+         ilbase = KillIlist(ilbase);
+         if (++j == npf) goto EOL2;
+      }
+      sk = skip;
+      if (ip->next)
+         ip = ip->next;
+      else
+      {
+         bl = FindInList(atake, ip->myblk);
+         ip = bl->blk->inst1;
+      }
+   }
+EOL2:
+/*
+ * Check that last inst added before EOL
+ */
+   assert(ip);
+   bl = FindInList(atake, ip->myblk);
+   if (bl->blk == lp->tails->blk)
+   {
+      for (; ip; ip = ip->next)
+         if (ip->inst[0] == CMPFLAG && ip->inst[1] == CF_LOOP_PTRUPDATE) 
+            break;
+      assert(ip);
+   }
+   KillBlockList(atake);
+}
+
+void SchedPrefInLoop(LOOPQ *lp, ILIST *ilbase)
+{
+   extern int PFISKIP, PFINST, PFCHUNK;
+   int BEFORE=0, DOUB=1, flag;
+   enum inst inst;
+   char ch;
+
+   if (PFCHUNK < 0)
+   {
+      BEFORE = 1;
+      PFCHUNK = -PFCHUNK;
+   }
+   ch = PFINST;
+   if (lp->vflag)
+   {
+      if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+         DOUB=0;
+   }
+   else
+   {
+      flag = STflag[lp->pfarrs[1]-1];
+      if (IS_FLOAT(flag));
+         DOUB=0;
+   }
+   switch(ch)
+   {
+   case 'a':
+      if (lp->vflag)
+      {
+         inst = DOUB ? VDADD : VFADD;
+      }
+      else
+      {
+         inst = DOUB ? FADD : FADDD;
+      }
+      break;
+   case 'm':
+      if (lp->vflag)
+      {
+         inst = DOUB ? VDMUL : VFMUL;
+      }
+      else
+      {
+         inst = DOUB ? FMUL : FMULD;
+      }
+      break;
+   case 'l':
+      if (lp->vflag)
+      {
+         inst = DOUB ? VDLD : VFLD;
+      }
+      else
+      {
+         inst = DOUB ? FLD : FLDD;
+      }
+      break;
+   default:
+      inst = -1;
+   }
+   SchedPrefInLoop2(lp, ilbase, PFISKIP, PFCHUNK, BEFORE, inst);
    CFUSETU2D = INUSETU2D = INDEADU2D = 0;
 }
+
 void AddPrefetch(LOOPQ *lp, int unroll)
 /*
  * Inserts prefetch inst as first active inst in loop header
@@ -1768,7 +2002,7 @@ void AddPrefetch(LOOPQ *lp, int unroll)
 #if 1
    ILIST *il;
    il = GetPrefetchInst(lp, unroll);
-   SchedInstInLoop(lp, il);
+   SchedPrefInLoop(lp, il);
 #else
    BBLOCK *bp;
    INSTQ *ipp;
