@@ -138,6 +138,7 @@ struct loopq
    short end_label;   /* target for break */
    short CU_label;    /* -1: cleanup not required; 0: not gened yet; */
    short PTCU_label;  /* post-tail cleanup jmpback label */
+   short NE_label;    /* no loop entry label */
    short loopnum;
    short maxunroll;
    short writedd;     /* write dependence distance */

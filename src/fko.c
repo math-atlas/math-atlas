@@ -10,7 +10,7 @@ int DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0, DTx87=0, DTx87d=0;
 int DTnzerods=0, DTabsds=0, DTnzeros=0, DTabss=0;
 int FKO_FLAG;
 int PFISKIP=0, PFINST=(-1), PFCHUNK=1;
-int NWNT=0;
+int NWNT=0, NAWNT=0;
 short *AEn=NULL;
 char **ARRWNT=NULL, **AES=NULL;
 static char fST[1024], fLIL[1024], fmisc[1024];
@@ -207,7 +207,7 @@ int KillDupPtrinfo(char **args, struct ptrinfo *pfb)
             free(pfK);
             pfK = pfP;
          }
-         pfP = pf;
+         pfP = pfK;
       }
    }
    return(n-nk);
@@ -482,7 +482,7 @@ ERR:
          }
       }
 /*
- *    Count # of such arrays, then store them in ARRNT
+ *    Count # of such arrays, then store them in ARRWNT
  */
       for (id=idb,i=0; id; id = id->next, i++);
       NWNT = i;
@@ -1219,11 +1219,13 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
 
    if (NWNT)
    {
-      i = DoStoreNT(NULL);
+      NAWNT = DoStoreNT(NULL);
+/*
       for (j=0; j < NWNT; j++)
          free(ARRWNT[j]);
       free(ARRWNT);
-      NWNT = i;
+      NWNT = 0;
+*/
    }
    INUSETU2D = INDEADU2D = CFUSETU2D = 0;
    if (!INDEADU2D)
@@ -1274,10 +1276,10 @@ void DumpOptsPerformed(FILE *fpout, int verbose)
          fprintf(fpout, "%3d. %c %20.20s : %d\n", j+i, ch, optmnem[k],
                  optchng[i]);
       }
-      if (NWNT)
+      if (NAWNT)
       {
          fprintf(fpout, "%3d. %c %20.20s : %d\n", j+i+1, 'G', 
-                 "Non-cached writes", NWNT);
+                 "Non-cached writes", NAWNT);
       }
    }
 }
@@ -1463,7 +1465,7 @@ void UpdateNamedLoopInfo()
          }
          else
          {
-            for (j=i=1; i <= n; i++)
+            for (j=i=1; i <= N; i++)
             {
                if (optloop->pfflag[i] != -1)
                {
@@ -1472,9 +1474,8 @@ void UpdateNamedLoopInfo()
                   optloop->pfflag[j] = optloop->pfflag[i];
                   j++;
                }
-               optloop->pfarrs[0] = optloop->pfdist[0] = optloop->pfflag[0] =
-                                    N-k;
             }
+            optloop->pfarrs[0] = optloop->pfdist[0] = optloop->pfflag[0] = j-1;
          }
       }
    }

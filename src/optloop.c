@@ -1,5 +1,7 @@
 #include "fko.h"
 
+static short OL_NEINC=0;
+
 int NonLocalDeref(short dt)
 {
    dt--;
@@ -778,7 +780,7 @@ static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
    {
       if (IS_CONST(STflag[I0-1]))
          *ipinit = ip = NewInst(NULL, NULL, NULL, MOV, -r0, 
-                                STiconstlookup(SToff[I0-1].i), 0);
+             STiconstlookup(SToff[I0-1].i), 0);
       else
          *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r0, SToff[I0-1].sa[2],0);
       inc = STiconstlookup(-SToff[inc-1].i);
@@ -816,37 +818,19 @@ static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
          ip = ip->next;
       }
    }
-   if (unroll > 1 && 0)
+   if (unroll < 2)
+      ip->next = NewInst(NULL, NULL, NULL, ST, Ioff, -r0, 0);
+   else
    {
-      ip->next = NewInst(NULL, NULL, NULL, SUBCC, -r0, -r0, 
-                         STiconstlookup(unroll-1));
-      ip = ip->next;
-   }
-   ip->next = NewInst(NULL, NULL, NULL, ST, Ioff, -r0, 0);
-   if (unroll > 1)
-   {
-      ip = ip->next;
-      ip->next = NewInst(NULL, NULL, NULL, CMP, -ICC0, -r0, 
-                         STiconstlookup(unroll));
-      ip = ip->next;
-      assert(lp->CU_label);
-      ip->next = NewInst(NULL, NULL, NULL, JGT, -PCREG, -ICC0, lp->CU_label);
-      ip = ip->next;
-      ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, 
-                         STiconstlookup(unroll-1));
+      SToff[OL_NEINC-1].i = unroll-1;
+      ip->next = NewInst(NULL, NULL, NULL, SUBCC, -r0, -r0, OL_NEINC);
       ip = ip->next;
       ip->next = NewInst(NULL, NULL, NULL, ST, Ioff, -r0, 0);
       ip = ip->next;
-#if 0
-/*
- *    Insert bogus label to artificially create new preheader that this
- *    branch just destroyed.  Useless label elim will kill label later,
- *    and if no hoisting has happened, blocks will be remerged
- */
+      ip->next = NewInst(NULL, NULL, NULL, JLE, -PCREG, -ICC0, lp->NE_label);
       ip = ip->next;
-      ip->next = NewInst(NULL, NULL, NULL, LABEL, 
-                         STlabellookup("FKO_BOGUS_LAB"), 0, 0);
-#endif
+      /* Keep preheader intact; this inst will be deleted by CP */
+      ip->next = NewInst(NULL, NULL, NULL, MOV, -REG_SP, -REG_SP, 0);
    }
    *ipupdate = ip = NewInst(NULL, NULL, NULL, LD, -r0, Ioff, 0);
    if (unroll)
@@ -1123,6 +1107,7 @@ void GenCleanupLoop(LOOPQ *lp)
    LOOPQ *lpn;
    char ln[512];
    int iv, ivtails;
+   short r0;
    extern BBLOCK *bbbase;
    extern int FKO_BVTMP;
 
@@ -1132,9 +1117,13 @@ void GenCleanupLoop(LOOPQ *lp)
    if (lp->CU_label == -1)
       return;
 /*
+ * There's special code for getting N right when unrolled loop was never
+ * traversed at all, and it gets _CUNE_ prefixed
  * Beginning of cleanup code is loop body label with _CU_ prefixed
  * post-tail cleanup-done lab is body label with _CUDONE_ prefixed
  */
+   sprintf(ln, "_CUNE_%s", STname[lp->body_label-1]);
+   lp->NE_label = STlabellookup(ln);
    sprintf(ln, "_CU_%s", STname[lp->body_label-1]);
    lp->CU_label = STlabellookup(ln);
    if (!lp->PTCU_label)
@@ -1149,6 +1138,19 @@ void GenCleanupLoop(LOOPQ *lp)
    bp = NewBasicBlock(bp0, NULL);
    bp0->down = bp;
    bp0 = bp;
+/*
+ * First block is for getting N right when unrolled loop never entered
+ */
+   r0 = GetReg(T_INT);
+   InsNewInst(bp, NULL, NULL, LABEL, lp->NE_label, 0, 0);
+   InsNewInst(bp, NULL, NULL, LD, -r0, SToff[lp->I-1].sa[2], 0);
+/*
+ * OL_NEINC will be changed to real unrolling when known 
+ */
+   OL_NEINC = STdef(NULL, CONST_BIT | T_INT, 1);
+   InsNewInst(bp, NULL, NULL, ADD, -r0, -r0, OL_NEINC);
+   InsNewInst(bp, NULL, NULL, ST, SToff[lp->I-1].sa[2], -r0, 0);
+   GetReg(-1);
 /*
  * Start new block with a cleanup label
  */

@@ -1263,6 +1263,7 @@ int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
          CHANGE++;
       }
       instbeg = instbeg->next;
+      if (!instbeg) break;
    }
    while(ip != instend);
    if (CHANGE) 
@@ -2161,11 +2162,12 @@ fprintf(stderr, ", src=%s\n", Int2Reg(-src));
             FoundIt |= SubRegUse(&ip->inst[3], -dest, -src);
 /*
  *          If we have a store, may be implicit use in memory address
- *          ip->inst[1] != -dest should never happen, just makes sure a store
- *          doesn't have the dest reg as a target (would screw up SubRegUse)
  */
-            if (IS_STORE(ip->inst[0]) && ip->inst[1] != -dest)
+            if (IS_STORE(ip->inst[0]) && 1)
+            {
+               assert(ip->inst[1] > 0);
                FoundIt |= SubRegUse(&ip->inst[1], -dest, -src);
+            }
             if (FoundIt)
             {
                BitVecComb(ip->use, ip->use, ivdst, '-');
@@ -2419,7 +2421,8 @@ int DoReverseCopyProp(BLIST *scope)
       {
          ipp = ip->prev;
          inst = ip->inst[0];
-         if (IS_MOVE(inst) && ip->inst[1] < 0 && ip->inst[2] < 0)
+         if (IS_MOVE(inst) && ip->inst[1] < 0 && ip->inst[2] < 0 &&
+             ireg2type(-ip->inst[1]) == ireg2type(-dest))
          {
 /*
  *          If src reg is dead on reg2reg move, possible reverseCP candidate
@@ -2427,6 +2430,7 @@ int DoReverseCopyProp(BLIST *scope)
  */
              src = -ip->inst[2];
              dest = -ip->inst[1];
+
              if (BitVecCheck(ip->deads, src-1) && src != dest &&
                  ireg2type(src) == ireg2type(dest) && src != REG_SP)
              {

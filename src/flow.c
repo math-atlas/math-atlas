@@ -854,6 +854,7 @@ void InvalidateLoopInfo(void)
       lp->aaligned = optloop->aaligned;
       lp->abalign = optloop->abalign;
       lp->CU_label = optloop->CU_label;
+      lp->NE_label = optloop->NE_label;
       lp->PTCU_label = optloop->PTCU_label;
       optloop->vsflag = optloop->vsoflag = optloop->vscal = optloop->varrs = 
          optloop->ae = optloop->ne = optloop->nopf = optloop->aaligned = NULL;
