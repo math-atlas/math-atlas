@@ -14,6 +14,6 @@ int CountBitsSet(int iv);
 char *PrintVecList(int iv, int ioff);
 short *BitVec2Array(int iv, int off);
 short *BitVec2StaticArray(int iv);
-
+void KillBitVec(int iv);
 
 #endif

@@ -4,12 +4,40 @@
 static IGNODE **IG=NULL;
 static int NIG=0, TNIG=0;
 
-char *Int2Reg(int i)
+short Reg2Int(char *regname)
+/*
+ * Given a register of regname, returns integer number
+ */
+{
+   int i;
+   if (regname[0] == 'P' && regname[1] == 'C' && regname[2] == '\0')
+      return(-PCREG);
+   if (regname[0] == 'S' && regname[1] == 'P' && regname[2] == '\0')
+      return(-REG_SP);
+   for (i=IREGBEG; i < IREGEND; i++)
+      if (!strcmp(archiregs[i-IREGBEG], regname)) return(-i-1);
+   for (i=FREGBEG; i < FREGEND; i++)
+      if (!strcmp(archfregs[i-FREGBEG], regname)) return(-i-1);
+   for (i=DREGBEG; i < DREGEND; i++)
+      if (!strcmp(archdregs[i-DREGBEG], regname)) return(-i-1);
+   for (i=ICC0; i < NICC; i++)
+      if (!strcmp(ICCREGS[i], regname)) return(-i-1);
+   for (i=FCC0; i < NFCC; i++)
+      if (!strcmp(FCCREGS[i], regname)) return(-i-1);
+   return(0);
+}
+
+int NumberArchRegs()
+{
+   return(TNREG);
+}
+char *Int2Reg0(int i)
 /*
  * Translates integral encoding to machine-specific registers
  */
 {
    static char ln[128];
+   char *ret=ln;
 
    assert (i < 0);
    i = -i;
@@ -26,6 +54,17 @@ char *Int2Reg(int i)
    else if (i == PCREG)
       sprintf(ln, "%s", "PC");
    else
+      ret = NULL;
+   return(ret);
+}
+char *Int2Reg(int i)
+/*
+ * Translates integral encoding to machine-specific registers
+ */
+{
+   char *ret;
+   ret = Int2Reg0(i);
+   if (!ret)
    {
    fprintf(stderr, 
       "I=[%d,%d); F=[%d,%d); D=[%d,%d); ICC=[%d,%d); FCC=[%d,%d); PC=%d\n",
@@ -34,7 +73,52 @@ char *Int2Reg(int i)
       fko_error(__LINE__, "Unknown register index %d, file=%s\n",
                 i, __FILE__);
    }
-   return(ln);
+   return(ret);
+}
+
+int Reg2Regstate(int k)
+/*
+ * Given register k, set regstate so that all registers used by k are
+ * represented (i.e., on some archs, float and double regs are aliased)
+ * RETURNS: bitvec with appropriate register numbers set
+ */
+{
+   static int iv=0;
+   int i;
+
+   if (!iv) iv = NewBitVec(TNREG);
+   SetVecAll(iv, 0);
+   SetVecBit(iv, k-1, 1);
+   if (k >= FREGBEG && k < FREGEND)
+   {
+      #if defined(X86) || defined(PPC)
+         SetVecBit(iv, k-FREGBEG+DREGBEG-1, 1);
+      #elif defined(SPARC)
+         SetVecBit(iv, ((k-FREGBEG)>>1)+DREGBEG-1, 1);
+      #endif
+   }
+   else if (k >= DREGBEG && k < DREGEND)
+   {
+      #if defined(X86) || defined(PPC)
+         SetVecBit(iv, k-DREGBEG+FREGBEG-1, 1);
+      #elif defined(SPARC)
+         i = k - DREGBEG;
+         if (i < 32)
+         {
+            SetVecBit(iv, FREGBEG+i, 1);
+            SetVecBit(iv, FREGBEG+i+1, 1);
+         }
+      #endif
+   }
+   else if (k <= 0)
+   {
+      if (iv) KillBitVec(iv);
+      iv = 0;
+   }
+   else if (!(k >= IREGBEG && k < IREGEND))
+      fko_error(__LINE__, "Unknown register index %d, file=%s\n",
+                  k, __FILE__);
+   return(iv);
 }
 
 void NewIGTable(int chunk)
@@ -50,6 +134,7 @@ void NewIGTable(int chunk)
    for (; i != n; i++)
       new[i] = NULL;
    if (IG) free(IG);
+   IG = new;
    TNIG = n;
 }
 
@@ -117,7 +202,8 @@ IGNODE *NewIGNode(BBLOCK *blk, short var)
    }
    else
       new->myblkvec = 0;
-   new->liveregs = new->conflicts = 0;
+   new->liveregs = NewBitVec(TNREG);
+   new->conflicts = NewBitVec(TNREG);
    new->nread = new->nwrite = 0;
    new->var = var;
    new->ignum = AddIG2Table(new);
@@ -146,8 +232,8 @@ void CalcBlockIG(BBLOCK *bp)
    int liveregs;
    const int chunk = 32;
    short *vals;
-   IGNODE **myIG;   /* array of this block's IGNODES */
-   int igN, nn=0;
+   IGNODE **myIG = NULL;   /* array of this block's IGNODES */
+   int imask, igN=0, nn=0;
    extern int FKO_BVTMP;
    extern BBLOCK *bbbase;
 
@@ -165,13 +251,26 @@ void CalcBlockIG(BBLOCK *bp)
    else SetVecAll(bp->ignodes, 0);
    if (!bp->conin) bp->conin = NewBitVec(TNREG+64);
    else SetVecAll(bp->conin, 0);
-   if (!bp->conin) bp->conout = NewBitVec(TNREG+64);
+   if (!bp->conout) bp->conout = NewBitVec(TNREG+64);
    else SetVecAll(bp->conout, 0);
-   vals = BitVec2StaticArray(bp->ins);
+/*
+ * Mask out unneeded regs from analysis
+ */
+   imask = NewBitVec(TNREG);
+   SetVecBit(imask, REG_SP-1, 1);
+   SetVecBit(imask, PCREG-1, 1);
+   for (k=ICCBEG; k < ICCEND; k++)
+      SetVecBit(imask, k-1, 1);
+   for (k=FCCBEG; k < FCCEND; k++)
+      SetVecBit(imask, k-1, 1);
+   #ifdef X86_32
+      SetVecBit(imask, -Reg2Int("@st")-1, 1);
+   #endif
 /*
  * Create ignode for all variables live on block entry, and add it
  * blocks conin, conout, and ignodes
  */
+   vals = BitVec2StaticArray(bp->ins);
    for (n=vals[0], i=1; i <= n; i++)
    {
       k = vals[i];
@@ -188,7 +287,7 @@ void CalcBlockIG(BBLOCK *bp)
 /*
  *    If a register is live on block entry, add it to liveregs
  */
-      else
+      else if (!BitVecCheck(imask, k))
       {
          iv = Reg2Regstate(k+1);
          BitVecComb(liveregs, liveregs, iv, '|');
@@ -301,10 +400,9 @@ void CalcBlockIG(BBLOCK *bp)
  *       If it's a register being set, add it to list of live regs as well
  *       as to the regstate of all currently live ranges
  */
-         else
+         else if (!BitVecCheck(imask, k))
          {
-            k = vals[i] + 1;
-            iv = Reg2Regstate(k);
+            iv = Reg2Regstate(k+1);
             BitVecComb(liveregs, liveregs, iv, '|');
             for (j=0; j != nn; j++)
                if (myIG[j])
@@ -312,7 +410,7 @@ void CalcBlockIG(BBLOCK *bp)
          }
       }
    }
-   free(myIG);
+   if (myIG) free(myIG);
 /*
  * Find ignodes that span this block
  */
@@ -326,6 +424,7 @@ void CalcBlockIG(BBLOCK *bp)
       #endif
       node->blkspan = AddBlockToList(node->blkspan, bp);
    }
+   KillBitVec(imask);
 }
 
 void CombineLiveRanges(BLIST *scope, BBLOCK *pred, int pig,
@@ -343,15 +442,28 @@ void CombineLiveRanges(BLIST *scope, BBLOCK *pred, int pig,
    pnode = IG[pig];
    snode = IG[sig];
 
+fprintf(stderr, "Combine pig=%d, sig=%d\n", pig, sig);
    assert(pnode->var == snode->var);
    if (snode->blkend)
+   {
       pnode->blkend = MergeBlockLists(pnode->blkend, snode->blkend);
+      snode->blkend = NULL;
+   }
    if (snode->blkspan)
+   {
       pnode->blkspan = MergeBlockLists(pnode->blkspan, snode->blkspan);
+      snode->blkspan = NULL;
+   }
    if (snode->ldhoist)
+   {
       pnode->ldhoist = MergeBlockLists(pnode->ldhoist, snode->ldhoist);
+      snode->ldhoist = NULL;
+   }
    if (snode->stpush)
+   {
       pnode->stpush = MergeBlockLists(pnode->stpush, snode->stpush);
+      snode->stpush = NULL;
+   }
    pnode->nread += snode->nread;
    pnode->nwrite += snode->nwrite;
    BitVecComb(pnode->myblkvec, pnode->myblkvec, snode->myblkvec, '|');
@@ -411,11 +523,11 @@ void CombineBlockIG(BLIST *scope, ushort scopeblks, BBLOCK *pred, BBLOCK *succ)
       for (n=sig[0], i=1; i <= n; i++)
       {
          k = IG[sig[i]]->var;
-         for (nn=pig[0], j=1; j <= n; j++)
+         for (nn=pig[0], j=1; j <= nn; j++)
          {
             kk = pig[j];
-            if (k == IG[k]->var)
-               CombineLiveRanges(scope, pred, kk, succ, sig[j]);
+            if (k == IG[kk]->var && sig[i] != pig[j])
+               CombineLiveRanges(scope, pred, kk, succ, sig[i]);
          }
       }
       free(pig);
@@ -490,77 +602,10 @@ void CalcScopeIG(BLIST *scope)
    }
 }
 
-short Reg2Int(char *regname)
-/*
- * Given a register of regname, returns integer number
- */
+int DoScopeRegAsg(BLIST *scope)
 {
-   int i;
-   if (regname[0] == 'P' && regname[1] == 'C' && regname[2] == '\0')
-      return(-PCREG);
-   if (regname[0] == 'S' && regname[1] == 'P' && regname[2] == '\0')
-      return(-REG_SP);
-   for (i=IREGBEG; i < IREGEND; i++)
-      if (!strcmp(archiregs[i], regname)) return(-i-1);
-   for (i=FREGBEG; i < FREGEND; i++)
-      if (!strcmp(archfregs[i], regname)) return(-i-1);
-   for (i=DREGBEG; i < DREGEND; i++)
-      if (!strcmp(archdregs[i], regname)) return(-i-1);
-   for (i=ICC0; i < NICC; i++)
-      if (!strcmp(ICCREGS[i], regname)) return(-i-1);
-   for (i=FCC0; i < NFCC; i++)
-      if (!strcmp(FCCREGS[i], regname)) return(-i-1);
+   CalcScopeIG(scope);
    return(0);
-}
-
-int NumberArchRegs()
-{
-   return(TNREG);
-}
-
-int Reg2Regstate(int k)
-/*
- * Given register k, set regstate so that all registers used by k are
- * represented (i.e., on some archs, float and double regs are aliased)
- * RETURNS: bitvec with appropriate register numbers set
- */
-
-{
-   static int iv=0;
-   int i;
-
-   if (!iv) iv = NewBitVec(TNREG);
-   SetVecAll(iv, 0);
-   SetVecBit(iv, k-1, 1);
-   if (k >= FREGBEG && k < FREGEND)
-   {
-      #if defined(X86) || defined(PPC)
-         SetVecBit(iv, k-FREGBEG+DREGBEG, 1);
-      #elif defined(SPARC)
-         SetVecBit(iv, ((k-FREGBEG)>>1)+DREGBEG, 1);
-      #endif
-   }
-   else if (k >= DREGBEG && k < DREGEND)
-   {
-      #if defined(X86) || defined(PPC)
-         SetVecBit(iv, k-DREGBEG+FREGBEG, 1);
-      #elif defined(SPARC)
-         i = k - DREGBEG;
-         if (i < 32)
-         {
-            SetVecBit(iv, FREGBEG+i, 1);
-            SetVecBit(iv, FREGBEG+i+1, 1);
-         }
-      #endif
-   }
-   else if (k <= 0)
-   {
-      if (iv) KillBitVec(iv);
-      iv = 0;
-   }
-   else fko_error(__LINE__, "Unknown register index %d, file=%s\n",
-                  k, __FILE__);
-   return(iv);
 }
 
 /*
@@ -941,5 +986,5 @@ fprintf(stderr, "dhoisting/pushing %d, %s\n", dregs[i], STname[dregs[i]-1]);
                 "DONE  global asg preheader load");
    PrintComment(loop->posttails->blk, NULL, loop->posttails->blk->inst1, 
                 "START global asg sunk stores");
-   CFU2D = CFUSETU2D = INUSETU2D = INDEADU2D = 0;
+   CFUSETU2D = INUSETU2D = INDEADU2D = 0;
 }

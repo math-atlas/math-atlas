@@ -100,7 +100,8 @@ void KillBlockList(BLIST *lp)
 
 BLIST *MergeBlockLists(BLIST *l1, BLIST *l2)
 /*
- * Adds list l2 to list l1, making sure not to duplicate entries
+ * Adds list l2 to list l1, making sure not to duplicate entries, and
+ * deallocates l2
  */
 {
    BLIST *p;

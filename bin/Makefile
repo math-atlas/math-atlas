@@ -15,6 +15,8 @@ ifko : $(heads) ifko.o $(objs)
 
 xprintinst : ../include/ifko.h ../include/fko_inst.h ../src/printinst.c
 	$(CC) $(CCFLAGS) -I../include -o $@ ../src/printinst.c
+xprintregs : $(heads) ../src/printregs.c
+	$(CC) $(CCFLAGS) -I../include -o $@ ../src/printregs.c
 
 #arch.o : $(heads) arch.c $(heads)
 #	$(CC) $(CCFLAGS) -c arch.c
