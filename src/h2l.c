@@ -707,7 +707,7 @@ void FinishLoop(struct loopq *lp)
    if (IS_CONST(flag)) iend = lp->end;
    else iend = -LocalLoad(lp->end);
    InsNewInst(NULL, NULL, CMP, 0, -ireg, iend);
-   InsNewInst(NULL, NULL, JLT, ICC0, 0, lp->body_label);
+   InsNewInst(NULL, NULL, JLT, 0, ICC0, lp->body_label);
    lp->iend = InsNewInst(NULL, NULL, CMPFLAG, CF_LOOP_END, lp->loopnum, 0);
    GetReg(-1);
 }
@@ -726,8 +726,9 @@ void DoIf(char op, short id, short avar, char *labnam)
 {
    int flag, type;
    short k, cmp, ireg, ireg1, freg0, freg1, br, label;
-   assert(id > 0 && label > 0 && avar > 0);
+
    label = STlabellookup(labnam);
+   assert(id > 0 && label > 0 && avar > 0);
    flag = STflag[avar-1];
    type = FLAG2PTYPE(STflag[id-1]);
 fprintf(stderr, "%s(%d): label=%s\n", __FILE__,__LINE__, STname[label-1]);

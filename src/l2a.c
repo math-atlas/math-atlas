@@ -683,7 +683,7 @@ struct assmln *lil2ass(INSTQ *head)
              sptr = "andl";
           #elif defined(SPARC)
              if (ip->inst[0] == AND) sptr = "and";
-             else sptr = "andcc"
+             else sptr = "andcc";
           #elif defined(PPC)
              if (ip->inst[0] == AND)
              {
@@ -769,7 +769,7 @@ struct assmln *lil2ass(INSTQ *head)
          break;
    #endif
       #ifndef X86
-      case SUB:
+      case SUBCC:
          #if defined(SPARC)
             ap->next = PrintAssln("\tsubcc\t%s, %s, %s\n", 
                                   archiregs[-IREGBEG-op2],
