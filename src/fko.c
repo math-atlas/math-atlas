@@ -661,7 +661,16 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope, int global)
  */
 {
    int i, j, k, nchanges=0;
+   static short nlab=0, labs[4];
 
+/*
+ * NOTE: Need a way to eliminate _IFKO_EPILOGUE iff this is last optimization
+ */
+   if (!nlab)
+   {
+      nlab = 1;
+      labs[0] = STlabellookup(rout_name);
+   }
    if (!scope)
       return(0);
    for (i=0; i < nopt; i++)
@@ -680,6 +689,9 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope, int global)
          nchanges += DoCopyProp(scope);
          break;
       case DoNothing:  /* dummy opt does nothing */
+         break;
+      case UselessLabElim:
+         nchanges += UselessLabelElim(nlab, labs);
          break;
       case UselessJmpElim:
          nchanges += UselessJumpElim();

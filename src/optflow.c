@@ -200,11 +200,99 @@ int DeadCodeElim(BBLOCK *base)
    }
 }
 
-int LabelFusion(BBLOCK *base)
+int UselessLabelElim(int nkeep, short *keeps)
 /*
- * Finds blocks consisting only of a label, and either moves that label down
- * to the successor block, or if the successor block already has a label,
- * replaces all jumps to the useless label with jumps to the successor label.
+ * Gets rid of labels that are not in keeps array, which have one of:
+ * (1) Not jumped to in program
+ * (2) Do not have executable statements between them and another label
  */
 {
+   ILIST *jl, *jumps;
+   BBLOCK *bp;
+   INSTQ *ip;
+   int i, ndel=0;
+   short k, lab, nlab;
+
+   if (!CFU2D)
+      NewBasicBlocks(bbbase);
+   jumps = FindAllJumps(NULL, 1);
+   for (bp=bbbase; bp; bp = bp->down)
+   {
+      if (bp->ainst1 && GET_INST(bp->ainst1->inst[0]) == LABEL)
+      {
+/*
+ *       Skip label if it is in keeps
+ */
+         lab = bp->ainst1->inst[1];
+         for (i=0; i < nkeep && keeps[i] != lab; i++);
+         if (i != nkeep)
+            continue;
+/*
+ *       Delete label if it is not jumped to
+ */
+         for (jl=jumps; jl; jl = jl->next)
+         {
+            if (GET_INST(jl->inst->inst[0]) == JMP)
+               k = jl->inst->inst[2];
+            else
+               k = jl->inst->inst[3];
+            if (k == lab)
+               break;
+         }
+         if (!jl)
+         {
+fprintf(stderr, "Eliminating label '%s'\n", 
+        STname[bp->ainst1->inst[1]-1]);
+            DelInst(bp->ainst1);
+            ndel++;
+         }
+/*
+ *       If label is jumped to, see if it can be fused with preceeding
+ *       or following label
+ */
+         else
+         {
+            nlab = 0;
+/*
+ *          Can merge this label with preceeding label if it is an empty block
+ */
+            if (bp->up && bp->up->ainstN && bp->up->ainstN->inst[0] == LABEL)
+               nlab = bp->up->ainstN->inst[1];
+
+/*
+ *          Can merge this label with following label if this block is empty
+ */
+            else if (bp->ainstN == bp->ainst1 && bp->down && 
+                     bp->down->ainst1->inst[0] == LABEL)
+               nlab = bp->down->ainst1->inst[1];
+/*
+ *          If we've found an alternate label, change all jumps to use it,
+ *          and then delete label
+ */
+            if (nlab)
+            {
+fprintf(stderr, "Eliminating label '%s'\n", STname[bp->ainst1->inst[1]-1]);
+               for (jl=jumps; jl; jl = jl->next)
+               {
+                  if (GET_INST(jl->inst->inst[0]) == JMP)
+                     k = 2;
+                  else
+                     k = 3;
+                  if (jl->inst->inst[k] == lab)
+                     jl->inst->inst[k] = nlab;
+               }
+               DelInst(bp->ainst1);
+               ndel++;
+            }
+         }
+      }
+   }
+/*
+ * Fix the basic block structure screwed up by deleting labels
+ */
+   if (ndel) 
+      NewBasicBlocks(bbbase);
+   fprintf(stderr, "UselessLabelElim deleted %d labels!\n\n", ndel);
+   KillAllIlist(jumps);
+   return(ndel);
 }
