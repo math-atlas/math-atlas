@@ -147,9 +147,11 @@ int Reg2Regstate(int k)
       if (iv) KillBitVec(iv);
       iv = 0;
    }
+#if 0
    else if (!(k >= IREGBEG && k < IREGEND))
       fko_error(__LINE__, "Unknown register index %d, file=%s\n",
                   k, __FILE__);
+#endif
    return(iv);
 }
 
@@ -1809,18 +1811,22 @@ int DeadCopyPropTrans(int scopeblks, BBLOCK *blk, INSTQ *ipstart,
  */
 {
    INSTQ *ip;
-   int DestLive, SrcLive, iv, FoundIt;
+   int DestLive, SrcLive, ivsrc, ivdst, FoundIt, i;
    int change=0;
+   extern int FKO_BVTMP;
 
    if (!INDEADU2D)
       CalcAllDeadVariables();
-   iv = Reg2Regstate(src);
+   ivdst = Reg2Regstate(src);
+   ivdst = FKO_BVTMP = BitVecCopy(FKO_BVTMP, Reg2Regstate(dest));
+   ivsrc = Reg2Regstate(src);
    for (ip=ipstart?ipstart->next:blk->ainst1; ip; ip = ip->next)
    {
 /*
  *    If src becomes live again, put move back, and stop copy prop
  */
-      if (BitVecCheckComb(ip->use, iv, '&')||BitVecCheckComb(ip->set, iv, '&'))
+      if (BitVecCheckComb(ip->use, ivsrc, '&') ||
+          BitVecCheckComb(ip->set, ivsrc, '&'))
          goto PUTMOVEBACK;
 /*
  *    If we have a set of dest, change it to a use of src, and keep going with
@@ -1828,15 +1834,15 @@ int DeadCopyPropTrans(int scopeblks, BBLOCK *blk, INSTQ *ipstart,
  */
       if (BitVecCheck(ip->set, dest-1))
       {
-         if (ip->inst[1] == dest)
+         if (ip->inst[1] == -dest)
 	 {
             ip->inst[1] = -src;
-            SetVecBit(ip->set, dest-1, 0);
-            SetVecBit(ip->set, src-1, 1);
+            BitVecComb(ip->set, ip->set, ivdst, '-');
+            BitVecComb(ip->set, ip->set, ivsrc, '|');
             if (BitVecCheck(ip->deads, dest-1))
             {
-               SetVecBit(ip->deads, dest-1, 0);
-               SetVecBit(ip->deads, src-1, 1);
+               BitVecComb(ip->deads, ip->deads, ivdst, '-');
+               BitVecComb(ip->deads, ip->deads, ivsrc, '|');
             }
             change++;
           }
@@ -1855,8 +1861,8 @@ int DeadCopyPropTrans(int scopeblks, BBLOCK *blk, INSTQ *ipstart,
 	    FoundIt |= SubRegUse(&ip->inst[3], -dest, -src);
 	    if (FoundIt)
 	    {
-               SetVecBit(ip->use, dest-1, 0);
-               SetVecBit(ip->use, src-1, 1);
+               BitVecComb(ip->use, ip->use, ivdst, '-');
+               BitVecComb(ip->use, ip->use, ivsrc, '|');
                change++;
 	    }
 	    else /* not found, is implicit use, put move back & stop */
@@ -1866,12 +1872,12 @@ int DeadCopyPropTrans(int scopeblks, BBLOCK *blk, INSTQ *ipstart,
 	    goto PUTMOVEBACK;
       }
 /*
- *    If dest is dead without being used, end copy prop
+ *    If dest is dead without updating itself, end copy prop
  */
       if (BitVecCheck(ip->deads, dest-1))
       {
-         SetVecBit(ip->deads, dest-1, 0);
-         SetVecBit(ip->deads, src-1, 1);
+         BitVecComb(ip->deads, ip->deads, ivdst, '-');
+         BitVecComb(ip->deads, ip->deads, ivsrc, '|');
          INDEADU2D = 0;
          return(change);
       }
@@ -1893,8 +1899,8 @@ int DeadCopyPropTrans(int scopeblks, BBLOCK *blk, INSTQ *ipstart,
          {
             if (BitVecCheck(blk->usucc->ins, dest-1))
             {
-               SetVecBit(blk->usucc->ins, dest-1, 0);
-               SetVecBit(blk->usucc->ins, src-1, 1);
+               BitVecComb(blk->usucc->ins, blk->usucc->ins, ivdst, '-');
+               BitVecComb(blk->usucc->ins, blk->usucc->ins, ivsrc, '|');
 	       if (change) INDEADU2D = 0;
                change += DeadCopyPropTrans(scopeblks, blk->usucc,
                                            blk->usucc->ainst1, mov, dest, src);
@@ -1923,8 +1929,8 @@ int DeadCopyPropTrans(int scopeblks, BBLOCK *blk, INSTQ *ipstart,
          {
             if (BitVecCheck(blk->csucc->ins, dest-1))
             {
-               SetVecBit(blk->csucc->ins, dest-1, 0);
-               SetVecBit(blk->csucc->ins, src-1, 1);
+               BitVecComb(blk->csucc->ins, blk->csucc->ins, ivdst, '-');
+               BitVecComb(blk->csucc->ins, blk->csucc->ins, ivsrc, '|');
 	       if (change) INDEADU2D = 0;
                change += DeadCopyPropTrans(scopeblks, blk->csucc,
                                            blk->csucc->ainst1, mov, dest, src);

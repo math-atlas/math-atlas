@@ -149,17 +149,23 @@ int BitVecCheckComb(int iv1, int iv2, char op)
       ExtendBitVec(iv1+1, n);
    }
    if (op == '|')
+   {
       for (i=0; i < n; i++)
          if (bvecs[iv1][i] | bvecs[iv2][i])
             return(1);
+   }
    else if (op == '-')
+   {
       for (i=0; i < n; i++) 
          if(bvecs[iv1][i] & ~bvecs[iv2][i])
             return(1);
+   }
    else /* op == '&' */
+   {
       for (i=0; i < n; i++) 
          if (bvecs[iv1][i] & bvecs[iv2][i])
             return(1);
+   }
    return(0);
 }
 
