@@ -51,13 +51,13 @@ static char *GetDeref(short id)
    #ifdef X86
       if (!reg)
       {
-         if (con) sprintf(ln,"%d(%s)", SToff[con-1].i, archiregs[-IREGBEG-ptr]);
+         if (con) sprintf(ln,"%d(%s)", con, archiregs[-IREGBEG-ptr]);
          else sprintf(ln, "(%s)", archiregs[-IREGBEG-ptr]);
       }
       else if (mul)
       {
          if (con) /* if (reg && mul && con) */
-            sprintf(ln, "%d(%s,%s,%s)", SToff[con-1].i, archiregs[-IREGBEG-ptr],
+            sprintf(ln, "%d(%s,%s,%s)", con, archiregs[-IREGBEG-ptr],
                     archiregs[-IREGBEG-reg], SToff[mul-1]);
          else
             sprintf(ln, "(%s,%s,%s)", archiregs[-IREGBEG-ptr],
@@ -66,7 +66,7 @@ static char *GetDeref(short id)
       else /* reg && !mul */
       {
          if (con) 
-            sprintf(ln, "%d(%s,%s)", SToff[con-1].i, archiregs[-IREGBEG-ptr],
+            sprintf(ln, "%d(%s,%s)", con, archiregs[-IREGBEG-ptr],
                     archiregs[-IREGBEG-reg]);
          else
             sprintf(ln, "(%s,%s)", archiregs[-IREGBEG-ptr],
@@ -87,7 +87,7 @@ static char *GetDeref(short id)
       if (con)
       {
          assert(!reg);
-         sprintf(ln, "%d(%s)", SToff[con-1], archiregs[-IREGBEG-ptr]);
+         sprintf(ln, "%d(%s)", con, archiregs[-IREGBEG-ptr]);
       }
       else if (reg) /*  && !con */
          sprintf(ln, "%s,%s", archiregs[-IREGBEG-ptr], archiregs[-IREGBEG-reg]);
@@ -126,8 +126,8 @@ static char *GetIregOrConst(short id)
       flag = STflag[id];
       assert( IS_CONST(flag));
       #ifdef X86
-         if (IS_INT(flag)) sprintf(ln, "$%d", SToff[id].i);
-         else if (IS_LONG(flag)) sprintf(ln, "$%ld", SToff[id].l);
+         if (IS_INT(flag) || IS_LONG(flag)) sprintf(ln, "$%d", SToff[id].i);
+/*         else if (IS_LONG(flag)) sprintf(ln, "$%ld", SToff[id].l); */
       #else
          if (IS_INT(flag) || IS_LONG(flag)) sprintf(ln, "%d", SToff[id].i);
 /*         else if (IS_LONG(flag)) sprintf(ln, "%ld", SToff[id].l); */
@@ -412,7 +412,7 @@ struct assmln *lil2ass(INSTQ *head)
 /*
  * HERE HERE: need to have phase zero out %edx before this instruction
  */
-            assert(op1 == -iName2Reg("%eax") && op2 == -iName2Reg("%edx"))
+            assert(op1 == -iName2Reg("%eax") && op2 == -iName2Reg("%edx"));
             ap->next = PrintAssln("\tidiv %s", GetIregOrDeref(op3));
          #elif defined(SPARC)
             ap->next = PrintAssln("\tsdiv\t%s,%s,%s\n", archiregs[-IREGBEG-op2],
@@ -430,7 +430,7 @@ struct assmln *lil2ass(INSTQ *head)
 /*
  * HERE HERE: need to have phase zero out %edx before this instruction
  */
-            assert(op1 == -iName2Reg("%eax") && op2 == -iName2Reg("%edx"))
+            assert(op1 == -iName2Reg("%eax") && op2 == -iName2Reg("%edx"));
             ap->next = PrintAssln("\tdiv %s", GetIregOrDeref(op3));
          #elif defined(SPARC)
             ap->next = PrintAssln("\tudiv\t%s,%s,%s\n", archiregs[-IREGBEG-op2],
@@ -501,7 +501,7 @@ struct assmln *lil2ass(INSTQ *head)
          break;
       case RET:
          #ifdef X86
-            ap->next = PrintAssln("\tret");
+            ap->next = PrintAssln("\tret\n");
          #elif defined(SPARC)
             ap->next = PrintAssln("\tret\n\trestore\n");
          #elif defined(PPC)

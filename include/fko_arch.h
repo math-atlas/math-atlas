@@ -3,12 +3,15 @@
 
 #if !defined(LINUX_PPC) && !defined(OSX_PPC) && !defined(LINUX_X86_32) && \
     !defined(LINUX_X86_64) && !defined(SOLARIS_SPARC)
-/*   #define LINUX_X86_32 */
-   #define SOLARIS_SPARC 
+   #define LINUX_X86_32 
+/*   #define SOLARIS_SPARC  */
 #endif
 
 #ifdef X86_64
    #define ADDR64
+#endif
+#if defined(LINUX_X86_32)
+   #define X86_32
 #endif
 #if defined(LINUX_PPC) || defined(OSX_PPC)
    #define PPC
@@ -96,7 +99,7 @@
       char *archfregs[NFR] = 
       {"@xmm0", "@xmm1", "@xmm2", "@xmm3", "@xmm4", "@xmm5", "@xmm6", "@xmm7"};
    #else
-      extern char **archiregs, **archfregs;
+      extern char *archiregs[NIR], *archfregs[NFR];
    #endif
    #define archdregs archfgregs
 #endif
