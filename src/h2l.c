@@ -472,8 +472,8 @@ void DoArith(short dest, short src0, char op, short src1)
    case 'm': /* dest += src0 * src1 */
       if (type == T_FLOAT || type == T_DOUBLE)
       {
-         rd = LocalLoad(dest);
          #ifdef ArchHasMAC
+            rd = LocalLoad(dest);
             if (type == T_FLOAT) inst = FMAC;
             else isnt = FMACD;
          #else
@@ -487,6 +487,8 @@ void DoArith(short dest, short src0, char op, short src1)
                InsNewInst(NULL, NULL, NULL, FMULD, -rs0, -rs0, -rs1);
                inst = FADDD;
             }
+            rs1 = rs0;
+            rs0 = rd = LocalLoad(dest);
          #endif
       }
       else yyerror("MAC available for floating point operands only!");
@@ -624,13 +626,17 @@ LOOPQ *DoLoop(short I, short start, short end, short inc,
    LOOPQ *lp;
    short ireg;
    char lnam[128];
-fprintf(stderr, "%s(%d) I=%d, start=%d, end=%d\n", __FILE__, __LINE__,I,start,end);
+fprintf(stderr, "%s(%d) I=%d, start=%d, end=%d, inc=%d\n", __FILE__, __LINE__,I,start,end,inc);
 /*
  * If signs of loop parts are unknown, see if we can deduce them
+ * Ignore markup and deduce if variable is compile-time constant
  */
-   if (!sst) sst = GetSignInfo(start);
-   if (!send) send = GetSignInfo(end);
-   if (!sinc) sinc = GetSignInfo(inc);
+   if (!sst || IS_CONST(STflag[start-1]))
+      sst = GetSignInfo(start);
+   if (!send || IS_CONST(STflag[end-1]))
+      send = GetSignInfo(end);
+   if (!sinc || IS_CONST(STflag[end-1]))
+      sinc = GetSignInfo(inc);
    if (sst)
    {
       if (sst == 2) flag |= L_PSTART_BIT;
@@ -694,7 +700,9 @@ void FinishLoop(LOOPQ *lp)
    if (IS_CONST(flag)) iend = lp->end;
    else iend = -LocalLoad(lp->end);
    InsNewInst(NULL, NULL, NULL, CMP, -ICC0, -ireg, iend);
-   InsNewInst(NULL, NULL, NULL, JLT, -PCREG, -ICC0, lp->body_label);
+fprintf(stderr, "\n\nflag=%d, %d\n\n",lp->flag, (lp->flag & L_NINC_BIT));
+   InsNewInst(NULL, NULL, NULL, (lp->flag & L_NINC_BIT) ? JGT : JLT, 
+              -PCREG, -ICC0, lp->body_label);
    InsNewInst(NULL, NULL, NULL, CMPFLAG, CF_LOOP_END, lp->loopnum, 0);
    sprintf(lnam, "_LOOP_END_%d", lp->loopnum);
    lp->end_label = STstrconstlookup(lnam);

@@ -770,8 +770,27 @@ static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
 
    r0 = GetReg(T_INT);
    r1 = GetReg(T_INT);
-
-   if (IS_CONST(STflag[N-1]) && IS_CONST(STflag[I0-1]))
+/*
+ * Loop already in SimpleLC form (i = N, 0, -1)
+ */
+   if (lp->flag & L_SIMPLELC_BIT)
+   {
+      if (IS_CONST(STflag[I0-1]))
+         *ipinit = ip = NewInst(NULL, NULL, NULL, MOV, -r0, 
+             STiconstlookup(SToff[I0-1].i - (unroll>1) ? unroll-1 : 0), 0);
+      else
+      {
+         *ipinit = ip = NewInst(NULL, NULL, NULL, LD, -r0, SToff[I0-1].sa[2],0);
+         if (unroll > 1)
+         {
+            ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, 
+                               STiconstlookup(unroll-1));
+            ip = ip->next;
+         }
+      }
+      inc = STiconstlookup(-SToff[inc-1].i);
+   }
+   else if (IS_CONST(STflag[N-1]) && IS_CONST(STflag[I0-1]))
    {
       i = SToff[N-1].i - SToff[I0-1].i - (unroll>1) ? unroll-1 : 0;
       *ipinit = ip = NewInst(NULL, NULL, NULL, MOV, -r0, STiconstlookup(i), 0);
@@ -1292,7 +1311,7 @@ PrintInst(fopen("err.tmp", "w"), bbbase);
    pi0 = FindMovingPointers(lp->blocks);
    if (!pi0)
       UsesPtrs = 0;
-   UnrollCleanup(lp, unroll);
+//   UnrollCleanup(lp, unroll);
 
    dupblks = malloc(sizeof(BLIST*)*unroll);
    assert(dupblks);

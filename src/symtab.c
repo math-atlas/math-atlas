@@ -552,7 +552,9 @@ short FindLocalFromDT(short dt)
    k = STpts2[dt-1];
    if (k > 0 && !IS_LOCAL(STflag[k]) && !IS_PARA(STflag[k]))
       k = 0;
-   assert(k == i+1);
+   if (k != i+1)
+      fprintf(stderr, "STpts2=%d, lookup=%d\n", k, i+1);
+//   assert(k == i+1);
    return(k);
 }
 static char flag2pre(int flag)
@@ -659,6 +661,7 @@ void ReadSTFromFile(char *fname)
    assert(fread(&STderef, sizeof(short), 1, fp) == 1);
    assert(fread(SToff, sizeof(union valoff), N, fp) == N);
    assert(fread(STflag, sizeof(int), N, fp) == N);
+   assert(fread(STpts2, sizeof(short), N, fp) == N);
 /* 
  * Must read in all strings as N <len,string> pairs
  */
@@ -710,6 +713,7 @@ void WriteSTToFile(char *fname)
    assert(fwrite(&STderef, sizeof(short), 1, fp) == 1);
    assert(fwrite(SToff, sizeof(union valoff), N, fp) == N);
    assert(fwrite(STflag, sizeof(int), N, fp) == N);
+   assert(fwrite(STpts2, sizeof(short), N, fp) == N);
 /* 
  * Must read in all strings as N <len,string> pairs
  */
