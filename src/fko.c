@@ -1289,27 +1289,29 @@ struct optblkq *DefaultOptBlocks(void)
 /*
  * Defaults to command-line flags of:
  *     -L 1 0 6 ls gr 2 3 4 5 -G 2 10 3 bc uj ul -L 3 10 5 ra cp rc u1 lu
- *     -G 4 10 3 ra cp rc
+ *     -G 4 10 3 ra cp rc -L 5 10 5 ra cp rc u1 lu
  */
 {
    struct optblkq *base, *op;
 
    if (DO_VECT(FKO_FLAG))
    {
-      op = base = NewOptBlock(1, 0, 4, 0);
+      op = base = NewOptBlock(1, 0, 5, 0);
       op->opts[0] = EnforceLoadStore;
       op->opts[1] = MaxOpt+2;
       op->opts[2] = MaxOpt+3;
       op->opts[3] = MaxOpt+4;
+      op->opts[4] = MaxOpt+5;
    }
    else
    {
-      op = base = NewOptBlock(1, 0, 5, 0);
+      op = base = NewOptBlock(1, 0, 6, 0);
       op->opts[0] = EnforceLoadStore;
       op->opts[1] = GlobRegAsg;
       op->opts[2] = MaxOpt+2;
       op->opts[3] = MaxOpt+3;
       op->opts[4] = MaxOpt+4;
+      op->opts[5] = MaxOpt+5;
    }
 
    op->next = NewOptBlock(2, 10, 3, IOPT_GLOB);
@@ -1327,6 +1329,14 @@ struct optblkq *DefaultOptBlocks(void)
    op->opts[4] = LastUseLoadRemoval;
 
    op->next = NewOptBlock(4, 10, 5, IOPT_GLOB);
+   op = op->next;
+   op->opts[0] = RegAsg;
+   op->opts[1] = CopyProp;
+   op->opts[2] = ReverseCopyProp;
+   op->opts[3] = RemoveOneUseLoads;
+   op->opts[4] = LastUseLoadRemoval;
+
+   op->next = NewOptBlock(5, 10, 5, 0);
    op = op->next;
    op->opts[0] = RegAsg;
    op->opts[1] = CopyProp;

@@ -325,6 +325,7 @@ def ifko0(l1bla, pre, N):
    KFLAGS = KFLAGS + " -o " + str(outf) + " " + rout
    mflist = []
    testlist = []
+
 #
 #  Find performance of default case
 #
@@ -367,16 +368,8 @@ def ifko0(l1bla, pre, N):
                                      l1bla, N, wnt)
    mflist.append(mf)
    testlist.append("writeNT")
-#
-#  Find best pf type
-#
    pfarrs = fparrs
    pfsets = fpsets
-   [mf,KFLAGS] = ifko_pftype(ATLdir, ARCH, KFLAGS, ncache, fko, rout, pre, 
-                             l1bla, N, info, pfarrs, pfsets)
-   mflist.append(mf)
-   testlist.append("pftype")
-   print "\n   FLAGS so far =", fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS)
 #
 #  Find best PFD for each pfarr
 #
@@ -386,6 +379,14 @@ def ifko0(l1bla, pre, N):
    mflist.append(mf)
    testlist.append("pfdist")
    KFLAGS = fkocmnd.RemoveRedundantPrefFlags(KFLAGS, pfarrs)
+#
+#  Find best pf type
+#
+   [mf,KFLAGS] = ifko_pftype(ATLdir, ARCH, KFLAGS, ncache, fko, rout, pre, 
+                             l1bla, N, info, pfarrs, pfsets)
+   mflist.append(mf)
+   testlist.append("pftype")
+   print "\n   FLAGS so far =", fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS)
 #
 #  Find best unroll
 #

@@ -35,6 +35,8 @@ def GenAss(ATLdir, ARCH, OUTdir, pre, blas, N, rout, cc=None, ccf=None, opt=""):
       opt = zopt
    elif cc != None :
       opt = opt + ' UCC=' + cc + ' UCCFLAGS="' + ccf + outf + '"'
+   else:
+      opt = opt + ' UCCFLAGS="' + outf + '"'
 #   print "opt = '%s'" % opt
    cmnd = 'make %s%scase N=%d urout=%s %s' % (pre, blas, N, rout, opt)
    cmnds = 'cd %s/tune/blas/level1/%s ; %s ' % (ATLdir, ARCH, cmnd)
