@@ -1179,6 +1179,7 @@ void DoStage2(int SAVESP, int SVSTATE)
 {
    struct ptrinfo *pi, *pi0;
    int i, n, k;
+   short *sp;
 
    GenPrologueEpilogueStubs(bbbase, SAVESP);
    NewBasicBlocks(bbbase);
@@ -1194,13 +1195,14 @@ void DoStage2(int SAVESP, int SVSTATE)
          KillLoopControl(optloop);
          pi0 = FindMovingPointers(optloop->blocks);
          for (n=0,pi=pi0; pi; pi=pi->next,n++);
-         optloop->varrs = malloc(sizeof(short)*(n+1));
-         assert(optloop->varrs);
-         optloop->varrs[0] = n;
+         sp = malloc(sizeof(short)*(n+1));
+         assert(sp);
+         sp[0] = n;
          for (i=1,pi=pi0; i <= n; i++,pi=pi->next)
-            optloop->varrs[i] = pi->ptr;
+            sp[i] = pi->ptr;
          KillAllPtrinfo(pi0);
          RestoreFKOState(0);
+         optloop->varrs = sp;
          GenPrologueEpilogueStubs(bbbase, SAVESP);
          NewBasicBlocks(bbbase);
          FindLoops(); 
