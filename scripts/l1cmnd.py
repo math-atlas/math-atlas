@@ -79,8 +79,8 @@ def time(ATLdir, ARCH, pre, blas, N, rout, cc=None, ccf=None, opt=""):
    lines = fo.readlines()
    err = fo.close()
    if (err != None):
-      print 'command died with:'
-      print err
+      print 'command died with: %d' % (err)
+      print cmnd
       return [-1.0, -1.0]
 #      sys.exit(err)
 

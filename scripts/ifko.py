@@ -203,7 +203,7 @@ def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=64):
    KF0 = KF0 + " -U %d" % URB
    return [mf0,KF0]
 
-def FindAE(ATLdir, ARCH, KF0, fko, rout, pre, l1bla, N, acc, maxlen=4):
+def FindAE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=4):
 #
 #  Time the default case
 #
@@ -270,7 +270,7 @@ def FindAE(ATLdir, ARCH, KF0, fko, rout, pre, l1bla, N, acc, maxlen=4):
             mf0 = mfB
          i += 1
 
-   print "   mfB=%2.f, KFN=%s" % (mfB, KFN)
+#   print "   mfB=%2.f, KFN=%s" % (mfB, KFN)
    return[mfB, KFN]
 
 #
@@ -405,7 +405,7 @@ def ifko0(l1bla, pre, N):
 #                        "gcc", "-x assembler-with-cpp", opt=opt)
    print "\n\n   BEST FLAGS FOUND (%.2f) = %s" % (mf,
          fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS))
-   res = fkocmnd.GetOptVals(KFLAGS, pfarrs, pfsets)
+   res = fkocmnd.GetOptVals(KFLAGS, pfarrs, pfsets, acc)
    tst = l1cmnd.test(ATLdir, ARCH, pre, l1bla, N, "fkorout.s",
                      cc="gcc", ccf="-x assembler-with-cpp", opt=optT)
    return(res, KFLAGS, mf, tst, testlist, mflist)

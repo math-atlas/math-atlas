@@ -35,7 +35,8 @@ def info(fko, routine):
    lines = fi.readlines()
    err = fi.close()
    if (err != None):
-      print 'command died with:', err
+      print 'command died with: %d' % (err)
+      print "cmnd='%s'" % (cmnd)
       sys.exit(err)
    nc = int(lines[0][8:])
    words = lines[1].split()
@@ -196,7 +197,7 @@ def GetStandardFlags(fko, rout, pre):
 #
 # Return relavant opt parameters by reading flag settings
 #
-def GetOptVals(flags, pfarrs, pfsets):
+def GetOptVals(flags, pfarrs, pfsets, accs):
    if flags.find("-V") == -1 : vec = 0
    else : vec = 1
 
@@ -264,5 +265,12 @@ def GetOptVals(flags, pfarrs, pfsets):
          else :
             pfinst.append(pf0)
       i += 1
+   aes = []
+   for acc in accs :
+      j = flags.find("-AE %s" % acc)
+      if j != -1 :
+         words = flags[j:].split()
+         aes.append(int(words[2]))
+      else : aes.append(0)
 
-   return(vec, UR, npf, pfinst, pfd)
+   return(vec, UR, npf, pfinst, pfd, aes)
