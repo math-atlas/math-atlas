@@ -534,7 +534,7 @@ short FindLocalFromDT(short dt)
    int i;
    for (i=0; i != N; i++)
    {
-      if (IS_LOCAL(STflag[i]))
+      if (IS_LOCAL(STflag[i]) || IS_PARA(STflag[i]))
       {
          if (SToff[i].sa[2] == dt)
             return(i+1);

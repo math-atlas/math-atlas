@@ -350,7 +350,7 @@ struct ptrinfo *FindMovingPointers(BLIST *scope)
             if (k)
             {
 /* ERROR : k is DT entry, not ST entry, need to find ST */
-               flag = STflag[k];
+               flag = STflag[k-1];
                if (IS_PTR(flag))
                {
 /*
@@ -360,10 +360,10 @@ struct ptrinfo *FindMovingPointers(BLIST *scope)
                   #if IFKO_DEBUG_LEVEL >= 1
                      assert(ip->prev->inst[1] == ip->inst[2]);
                   #endif
-                  p = FindPtrinfo(pbase, k+1);
+                  p = FindPtrinfo(pbase, k);
                   if (!p)
                   {
-                     pbase = p = NewPtrinfo(k+1, 0, pbase);
+                     pbase = p = NewPtrinfo(k, 0, pbase);
                      p->nupdate = 1;
                      if (ip->prev->inst[0] == ADD)
                         p->flag |= PTRF_INC;
@@ -1228,13 +1228,14 @@ int UnrollLoop(LOOPQ *lp, int unroll)
    extern BBLOCK *bbbase;
 
    KillLoopControl(lp);
-   UnrollCleanup(lp, unroll);
+PrintInst(fopen("err.tmp", "w"), bbbase);
    il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
    if (il) KillIlist(il);
    else UsesIndex = 0;
    pi = FindMovingPointers(lp->blocks);
    if (pi) KillAllPtrinfo(pi);
    else UsesPtrs = 0;
+   UnrollCleanup(lp, unroll);
 
    dupblks = malloc(sizeof(BLIST*)*unroll);
    assert(dupblks);

@@ -980,7 +980,7 @@ int main(int nargs, char **args)
          PrintInst(fpl, bbbase);
       }
    }
-   ShowFlow("dot.out", bbbase);
+/*   ShowFlow("dot.out", bbbase); */
    if (DO_ASS(FKO_FLAG))
    {
       abase = lil2ass(bbbase);
