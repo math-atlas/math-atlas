@@ -283,9 +283,10 @@ struct assmln *DumpData(void)
 }
 #endif
 
-struct assmln *lil2ass(INSTQ *head)
+struct assmln *lil2ass(BBLOCK *bbase)
 {
-   INSTQ *ip=head;
+   INSTQ *ip;
+   BBLOCK *bp;
    struct assmln *ahead=NULL, *ap;
    short op1, op2, op3, k;
    #ifdef SPARC
@@ -295,7 +296,10 @@ struct assmln *lil2ass(INSTQ *head)
    extern int DTabsd, DTnzerod, DTabs, DTnzero;
 
    ap = ahead = NewAssln(".text\n");
-   do
+
+   for (bp=bbase; bp; bp = bp->down)
+   {
+   for (ip=bp->inst1; ip; ip = ip->next)
    {
       op1 = ip->inst[1];
       op2 = ip->inst[2];
@@ -1635,10 +1639,9 @@ struct assmln *lil2ass(INSTQ *head)
                   ap->ln);
       }
 /*      fprintf(stderr, "%s", ap->ln); */
-      ip = ip->next;
       ap = ap->next;
    }
-   while(ip != head);
+   }
    return(ahead);
 }
 

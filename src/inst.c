@@ -1,13 +1,12 @@
 #include "ifko.h"
 
-INSTQ *iqhead=NULL;
-
-INSTQ *NewInst(INSTQ *prev, INSTQ *next, enum inst ins,
+INSTQ *NewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,
                short dest, short src1, short src2)
 {
    INSTQ *ip;
    ip = malloc(sizeof(INSTQ));
    assert(ip);
+   ip->myblk = myblk;
    ip->next = next;
    ip->prev = prev;
    ip->inst[0] = ins;
@@ -19,21 +18,15 @@ INSTQ *NewInst(INSTQ *prev, INSTQ *next, enum inst ins,
 
 void KillAllInst(INSTQ *base)
 {
-   INSTQ *bp, *next;
-   if (base)
+   INSTQ *next;
+   for(; base; base = next)
    {
-      bp = base;
-      do
-      {
-         next = bp->next;
-	 free(bp);
-	 bp = next;
-      }
-      while(bp != base);
+      next = base->next;
+      free(base);
    }
 }
 
-INSTQ *InsNewInst(INSTQ *prev, INSTQ *next, enum inst ins,
+INSTQ *InsNewInst(BBLOCK *blk, INSTQ *prev, INSTQ *next, enum inst ins,
                   short dest, short src1, short src2)
 /*
  * Insert an instruction in queue pointed at by iqhead.
@@ -43,30 +36,46 @@ INSTQ *InsNewInst(INSTQ *prev, INSTQ *next, enum inst ins,
  */
 {
    INSTQ *ip;
-   if (!iqhead || !(prev || next))
+   extern BBLOCK *bbbase;
+/*
+ * Adding to end of queue (which may not yet exist)
+ */
+   if (!blk)
    {
-      if (iqhead)
+      if (next && next->myblk) blk = next->myblk;
+      else if (prev && prev->myblk) blk = prev->myblk;
+      else blk = bbbase;
+   }
+   assert(blk);
+   if (!blk->inst1 || !(prev || next))
+   {
+      if (blk->inst1)  /* add to end of already existing queue */
       {
-         ip = NewInst(iqhead->prev, iqhead, ins, dest, src1, src2);
-         iqhead->prev = ip;
-         ip->prev->next = ip;
+         ip = NewInst(blk->inst1->myblk, blk->instN, NULL, ins, 
+                      dest, src1, src2);
+         blk->instN->next = ip;
+         blk->instN = ip;
       }
       else
-      {
-         ip = iqhead = NewInst(NULL, NULL, ins, dest, src1, src2);
-         iqhead->next = iqhead->prev = iqhead;
-      }
+         ip = blk->inst1 = blk->instN = NewInst(blk, NULL, NULL, 
+                                                ins, dest, src1, src2);
    }
+/*
+ * Adding after prev
+ */
    else if (prev)
    {
-      ip = prev->next = NewInst(prev, prev->next, ins, dest, src1, src2);
-      prev->next->next->prev = prev->next;
+      ip = prev->next = NewInst(blk->inst1->myblk, prev, prev->next, ins,
+                                dest, src1, src2);
+      if (ip->next) ip->next->prev = ip;
+      else blk->instN = ip;
    }
    else /* if (next) */
    {
-      ip = next->prev = NewInst(next->prev, next, ins, dest, src1, src2);
-      next->prev->prev->next = next->prev;
-      if (next == iqhead) iqhead = ip;
+      ip = next->prev = NewInst(blk->inst1->myblk, next->prev, next,
+                                ins, dest, src1, src2);
+      if (ip->prev) ip->prev->next = ip;
+      else blk->inst1 = ip;
    }
    return(ip);
 }
@@ -75,30 +84,29 @@ INSTQ *DelInst(INSTQ *del)
 /*
  * Deletes inst del from Q, keeping links cosher
  * RETURNS: next inst in queue
+ * NOTE: instruction must be in a basic block
  */
 {
    INSTQ *ip=NULL;
-   if (iqhead)
+   if (!del) return(NULL);
+   assert(del->myblk);
+   for (ip=del->myblk->inst1; ip && ip != del; ip = ip->next);
+   if (ip)
    {
-      ip = iqhead;
-      do
+      if (ip->prev) ip->prev->next = ip->next;
+      else
       {
-         if (ip == del) break;
-         ip = ip->next;
+         del->myblk->inst1 = del->myblk->inst1->next;
+         if (del->myblk->inst1) del->myblk->inst1->prev = NULL;
       }
-      while(ip != iqhead);
-      if (ip == del)
+      if (ip->next) ip->next->prev = ip->prev;
+      else
       {
-         ip = del->prev->next = del->next;
-         del->next->prev = del->prev;
-         if (del == iqhead)
-         {
-            if (iqhead->next = iqhead) iqhead=NULL;
-            else iqhead = iqhead->next;
-         }
-         free(del);
+         del->myblk->instN = del->myblk->instN->prev;
+         if (del->myblk->instN) del->myblk->instN->next = NULL;
       }
-      else ip = NULL;
+      ip = del->next;
+      free(del);
    }
    return(ip);
 }

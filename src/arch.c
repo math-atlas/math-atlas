@@ -9,7 +9,7 @@ struct locinit *LIhead=NULL;
    #define ISIZE 4
 #endif
 
-void FindRegUsage(INSTQ *head, int *ni0, int *iregs, 
+void FindRegUsage(BBLOCK *bbase, int *ni0, int *iregs, 
                   int *nf0, int *fregs, int *nd0, int *dregs)
 /*
  * Searches through all instructions to find registers that are used
@@ -17,56 +17,60 @@ void FindRegUsage(INSTQ *head, int *ni0, int *iregs,
 {
    short op;
    int nd, nf=0, ni=0;
-   INSTQ *ip=head;
+   BBLOCK *bp;
+   INSTQ *ip;
    const int iend = IREGBEG+TNIR, fend = FREGBEG+TNFR, dend = DREGBEG+TNDR;
+
    for (nd=0; nd < TNIR; nd++) iregs[nd] = 0;
    for (nd=0; nd < TNFR; nd++) fregs[nd] = 0;
    for (nd=0; nd < TNDR; nd++) dregs[nd] = 0;
    nd = 0;
-   do
+
+   for (bp=bbase; bp; bp = bp->down)
    {
-      op = -ip->inst[1];
-      if (op >= IREGBEG && op < iend)
+      for(ip=bp->inst1; ip; ip = ip->next)
       {
-         if (!iregs[op-IREGBEG]++) ni++;
+         op = -ip->inst[1];
+         if (op >= IREGBEG && op < iend)
+         {
+            if (!iregs[op-IREGBEG]++) ni++;
+         }
+         else if (op >= FREGBEG && op < fend)
+         {
+            if (!fregs[op-FREGBEG]++) nf++;
+         }
+         else if (op >= DREGBEG && op < dend)
+         {
+            if (!dregs[op-DREGBEG]++) nd++;
+         }
+         op = -ip->inst[2];
+         if (op >= IREGBEG && op < iend)
+         {
+            if (!iregs[op-IREGBEG]++) ni++;
+         }
+         else if (op >= FREGBEG && op < fend)
+         {
+            if (!fregs[op-FREGBEG]++) nf++;
+         }
+         else if (op >= DREGBEG && op < dend)
+         {
+            if (!dregs[op-DREGBEG]++) nd++;
+         }
+         op = -ip->inst[3];
+         if (op >= IREGBEG && op < iend)
+         {
+            if (!iregs[op-IREGBEG]++) ni++;
+         }
+         else if (op >= FREGBEG && op < fend)
+         {
+            if (!fregs[op-FREGBEG]++) nf++;
+         }
+         else if (op >= DREGBEG && op < dend)
+         {
+            if (!dregs[op-DREGBEG]++) nd++;
+         }
       }
-      else if (op >= FREGBEG && op < fend)
-      {
-         if (!fregs[op-FREGBEG]++) nf++;
-      }
-      else if (op >= DREGBEG && op < dend)
-      {
-         if (!dregs[op-DREGBEG]++) nd++;
-      }
-      op = -ip->inst[2];
-      if (op >= IREGBEG && op < iend)
-      {
-         if (!iregs[op-IREGBEG]++) ni++;
-      }
-      else if (op >= FREGBEG && op < fend)
-      {
-         if (!fregs[op-FREGBEG]++) nf++;
-      }
-      else if (op >= DREGBEG && op < dend)
-      {
-         if (!dregs[op-DREGBEG]++) nd++;
-      }
-      op = -ip->inst[3];
-      if (op >= IREGBEG && op < iend)
-      {
-         if (!iregs[op-IREGBEG]++) ni++;
-      }
-      else if (op >= FREGBEG && op < fend)
-      {
-         if (!fregs[op-FREGBEG]++) nf++;
-      }
-      else if (op >= DREGBEG && op < dend)
-      {
-         if (!dregs[op-DREGBEG]++) nd++;
-      }
-      ip = ip->next;
    }
-   while (ip != head);
    fprintf(stderr, "\nUSED %d IREGS: ", ni);
    for (op=0; op < TNIR; op++) 
       if (iregs[op]) fprintf(stderr, "%s, ", archiregs[op]);
@@ -273,7 +277,7 @@ void bitload(INSTQ *next, int reg, int nbits, int I)
    int i, j, k, b, r;
    if (!I)
    {
-      InsNewInst(NULL, next, XOR, -reg, -reg, -reg);
+      InsNewInst(NULL, NULL, next, XOR, -reg, -reg, -reg);
       return;
    }
    for (i=0; !(I & (1<<i)); i++);  /* find least sig bit non-zero bit */
@@ -282,7 +286,7 @@ void bitload(INSTQ *next, int reg, int nbits, int I)
  * Can we do it with a simple move?
  */
    if (j < nbits)
-      InsNewInst(NULL, next, MOV, -reg, STiconstlookup(I), __LINE__);
+      InsNewInst(NULL, NULL, next, MOV, -reg, STiconstlookup(I), 0);
 /*
  * Must load & shift
  */
@@ -293,18 +297,20 @@ void bitload(INSTQ *next, int reg, int nbits, int I)
       r = (j-i) % nbits; 
       if (!r) r = nbits;   /* size of first shift */
       b = I >> (j-r);
-      InsNewInst(NULL, next, MOV, -reg, STiconstlookup(b), __LINE__);
+      InsNewInst(NULL, NULL, next, MOV, -reg, STiconstlookup(b), 0);
       I ^= b << (j-r);
       j -= r;
       for (k; k; k--)
       {
          j -= nbits;
          b = I >> j;
-         InsNewInst(NULL, next, SHL, -reg, -reg, STiconstlookup(nbits));
-         InsNewInst(NULL, next, OR, -reg, -reg, STiconstlookup(b));
+         InsNewInst(NULL, NULL, next, SHL, -reg, -reg, 
+                    STiconstlookup(nbits));
+         InsNewInst(NULL, NULL, next, OR, -reg, -reg, STiconstlookup(b));
          I ^= b << j;
       }
-      if (i) InsNewInst(NULL, next, SHL, -reg, -reg, STiconstlookup(i));
+      if (i) InsNewInst(NULL, NULL, next, SHL, -reg, -reg,
+                        STiconstlookup(i));
    }
 }
 
@@ -330,50 +336,55 @@ void FPConstStore(INSTQ *next, short id, short con, short reg)
       d = SToff[con-1].d;
       if (d == 0.0)
       {
-         InsNewInst(NULL, next, XOR, -reg, -reg, -reg);
-         InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+         InsNewInst(NULL, NULL, next, XOR, -reg, -reg, -reg);
+         InsNewInst(NULL, NULL, next, ST, SToff[id-1].sa[2], -reg, 0);
          #ifndef X86_64
             i = SToff[id-1].sa[2] - 1;
             i = DT[(i<<2)+3] + 4;
-            InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), -reg, 0);
+            InsNewInst(NULL, NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i),
+                       -reg, 0);
          #endif
       }
       else
       {
          #ifdef X86_32
             ip = (int*) &d;
-            InsNewInst(NULL, next, MOV, -reg, STiconstlookup(*ip), __LINE__);
-            InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
-            InsNewInst(NULL, next, MOV, -reg, STiconstlookup(ip[1]), __LINE__);
+            InsNewInst(NULL, NULL, next, MOV, -reg, STiconstlookup(*ip), 0);
+            InsNewInst(NULL, NULL, next, ST, SToff[id-1].sa[2], -reg, 0);
+            InsNewInst(NULL, NULL, next, MOV, -reg, STiconstlookup(ip[1]),
+                       0);
             i = SToff[id-1].sa[2] - 1;
             i = DT[(i<<2)+3] + 4;
-            InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), -reg, 0);
+            InsNewInst(NULL, NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), 
+                       -reg, 0);
          #elif defined(X86_64)
             lp = (long*) &d;
-            InsNewInst(NULL, next, MOV, -reg, STlconstlookup(*lp), __LINE__);
-            InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+            InsNewInst(NULL, NULL, next, MOV, -reg, STlconstlookup(*lp), 0);
+            InsNewInst(NULL, NULL, next, ST, SToff[id-1].sa[2], -reg, 0);
 /*
  *       Sparc has 13-bit constants, use 12 to rule out sign prob
  */
          #elif defined(SPARC)
             ip = (int*) &d;
             bitload(next, reg, 12, *ip);
-            InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+            InsNewInst(NULL, NULL, next, ST, SToff[id-1].sa[2], -reg, 0);
             bitload(next, reg, 12, ip[1]);
             i = SToff[id-1].sa[2] - 1;
             i = DT[(i<<2)+3] + 4;
-            InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), -reg, 0);
+            InsNewInst(NULL, NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), 
+                       -reg, 0);
 /*
  *       PPC loads 16 bits at a time
  */
          #elif defined(PPC)
             ip = (int*) &d;
             bitload(next, reg, 16, *ip);
-            InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+            InsNewInst(NULL, NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
             bitload(next, reg, 16, ip[1]);
             i = SToff[id-1].sa[2] - 1;
             i = DT[(i<<2)+3] + 4;
-            InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), -reg, 0);
+            InsNewInst(NULL, NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), 
+                       -reg, 0);
          #endif
       }
    }
@@ -384,29 +395,29 @@ void FPConstStore(INSTQ *next, short id, short con, short reg)
       if (f == 0.0e0)
       {
          #ifdef X86_64
-            InsNewInst(NULL, next, XORS, -reg, -reg, -reg);
-            InsNewInst(NULL, next, STS, SToff[id-1].sa[2], -reg, __LINE__);
+            InsNewInst(NULL, NULL, next, XORS, -reg, -reg, -reg);
+            InsNewInst(NULL, NULL, next, STS, SToff[id-1].sa[2], -reg, 0);
          #else
-            InsNewInst(NULL, next, XOR, -reg, -reg, -reg);
-            InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+            InsNewInst(NULL, NULL, next, XOR, -reg, -reg, -reg);
+            InsNewInst(NULL, NULL, next, ST, SToff[id-1].sa[2], -reg, 0);
          #endif
       }
       else
       {
          ip = (int*) &f;
          #ifdef X86_32
-            InsNewInst(NULL, next, MOV, -reg, STiconstlookup(*ip), __LINE__);
-            InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+            InsNewInst(NULL, NULL, next, MOV, -reg, STiconstlookup(*ip), 0);
+            InsNewInst(NULL, NULL, next, ST, SToff[id-1].sa[2], -reg, 0);
          #elif defined(X86_64)
             assert(reg <= 8);
-            InsNewInst(NULL, next, MOVS, -reg, STiconstlookup(*ip), __LINE__);
-            InsNewInst(NULL, next, STS, SToff[id-1].sa[2], -reg, __LINE__);
+            InsNewInst(NULL, NULL, next, MOVS, -reg, STiconstlookup(*ip), 0);
+            InsNewInst(NULL, NULL, next, STS, SToff[id-1].sa[2], -reg, 0);
          #elif defined(SPARC)
             bitload(next, reg, 12, *ip);
-            InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+            InsNewInst(NULL, NULL, next, ST, SToff[id-1].sa[2], -reg, 0);
          #elif defined(PPC)
             bitload(next, reg, 16, *ip);
-            InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+            InsNewInst(NULL, NULL, next, ST, SToff[id-1].sa[2], -reg, 0);
          #endif
       }
    }
@@ -417,7 +428,7 @@ void IConstStore(INSTQ *next, short id, short con, short reg)
    int i, j;
 
    #ifdef X86_32
-      InsNewInst(NULL, next, MOV, -reg, con, __LINE__);
+      InsNewInst(NULL, NULL, next, MOV, -reg, con, __LINE__);
 /*
  * Sparc has 13-bit constants, use 12 to rule out sign prob
  */
@@ -429,17 +440,17 @@ void IConstStore(INSTQ *next, short id, short con, short reg)
    #else
       bitload(next, reg, 16, SToff[con-1].i);
    #endif
-   InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+   InsNewInst(NULL, NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
 }
 
 void InitLocalConst(INSTQ *next, short reg)
 {
    struct locinit *lp;
    int flag;
-   InsNewInst(NULL, next, COMMENT, 0, 0, 0);
-   InsNewInst(NULL, next, COMMENT, 
+   InsNewInst(NULL, NULL, next, COMMENT, 0, 0, 0);
+   InsNewInst(NULL, NULL, next, COMMENT, 
               STstrconstlookup("Initialize locals to constants"), 0, 0);
-   InsNewInst(NULL, next, COMMENT, 0, 0, 0);
+   InsNewInst(NULL, NULL, next, COMMENT, 0, 0, 0);
    for (lp=LIhead; lp; lp = LIhead)
    {
       LIhead = lp->next;
@@ -452,7 +463,7 @@ void InitLocalConst(INSTQ *next, short reg)
    }
 }
 
-void Extern2Local(INSTQ *next, INSTQ *end, short rsav, int fsize)
+void Extern2Local(INSTQ *next, short rsav, int fsize)
 /*
  * After stack frame fully qualified, inserts proper store instructions before
  * next in queue in order to save parameter/system/fp const values to local
@@ -487,10 +498,10 @@ void Extern2Local(INSTQ *next, INSTQ *end, short rsav, int fsize)
 fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
    if (NPARA)
    {
-      InsNewInst(NULL, next, COMMENT, 0, 0, 0);
-      InsNewInst(NULL, next, COMMENT, 
+      InsNewInst(NULL, NULL, next, COMMENT, 0, 0, 0);
+      InsNewInst(NULL, NULL, next, COMMENT, 
                  STstrconstlookup("Store parameters to local frame"), 0, 0);
-      InsNewInst(NULL, next, COMMENT, 0, 0, 0);
+      InsNewInst(NULL, NULL, next, COMMENT, 0, 0, 0);
       paras = malloc(NPARA * sizeof(short));
       assert(paras);
    }
@@ -564,11 +575,12 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
             {
                ir = reg1;
                if (USED)
-                  InsNewInst(NULL, next, LD, -ir,
+                  InsNewInst(NULL, NULL, next, LD, -ir,
                              AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
                nof++;
             }
-            if (USED)InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+            if (USED)
+               InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
             ni++;
          }
          else if (IS_INT(flag))
@@ -580,7 +592,7 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
             else
             {
                ir = reg1;
-               if (USED) InsNewInst(NULL, next, LDS, -ir,
+               if (USED) InsNewInst(NULL, NULL, next, LDS, -ir,
                                     AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
                nof++;
             }
@@ -590,13 +602,14 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
             if (USED && !IS_UNSIGNED(flag))
             {
                k = STiconstlookup(32);
-               InsNewInst(NULL, next, SHL, -ir, -ir, k);
-               InsNewInst(NULL, next, SAR, -ir, -ir, k);
+               InsNewInst(NULL, NULL, next, SHL, -ir, -ir, k);
+               InsNewInst(NULL, NULL, next, SAR, -ir, -ir, k);
             }
 /*
  *          Store 64-bit integer
  */
-            if (USED)InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+            if (USED)
+               InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
             ni++;
          }
          else if (IS_FLOAT(flag))
@@ -606,16 +619,18 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                fnam[4] = nd + '0';
                dr = fName2Reg(fnam);
                if (USED)
-                  InsNewInst(NULL, next, FST, SToff[paras[i]].sa[2], -dr, 0);
+                  InsNewInst(NULL, NULL, next, FST, SToff[paras[i]].sa[2], 
+                             -dr, 0);
             }
             else
             {
                ir = reg1;
                if (USED)
                {
-                  InsNewInst(NULL, next, LDS, -ir,
-                                    AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
-                  InsNewInst(NULL, next, STS, SToff[paras[i]].sa[2], -ir, 0);
+                  InsNewInst(NULL, NULL, next, LDS, -ir,
+                             AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
+                  InsNewInst(NULL, NULL, next, STS, SToff[paras[i]].sa[2],
+                             -ir, 0);
                }
                nof++;
             }
@@ -628,16 +643,18 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                fnam[4] = nd + '0';
                dr = dName2Reg(fnam);
                if (USED) 
-                  InsNewInst(NULL, next, FSTD, SToff[paras[i]].sa[2], -dr, 0);
+                  InsNewInst(NULL, NULL, next, FSTD, SToff[paras[i]].sa[2], 
+                             -dr, 0);
             }
             else
             {
                ir = reg1;
                if (USED)
                {
-                  InsNewInst(NULL, next, LD, -ir,
+                  InsNewInst(NULL, NULL, next, LD, -ir,
                              AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
-                  InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+                  InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2],
+                             -ir, 0);
                }
                nof++;
             }
@@ -645,45 +662,51 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
          }
       }
       if (USED)
-         InsNewInst(NULL, next, COMMENT, STstrconstlookup("done paras"), 0, 0);
+         InsNewInst(NULL, NULL, next, COMMENT, STstrconstlookup("done paras"),
+                    0, 0);
       ir = reg1;
       if (DTnzerod > 0)
       {
          PrintComment(NULL, next, "Writing -0 to memory for negation");
-         InsNewInst(NULL, next, MOV, -ir,STlconstlookup(0x8000000000000000),0);
+         InsNewInst(NULL, NULL, next, MOV, -ir,
+                    STlconstlookup(0x8000000000000000), 0);
          k = ((SToff[DTnzerod-1].sa[2]-1)<<2) + 3;
-         InsNewInst(NULL, next, ST, SToff[DTnzerod-1].sa[2], -ir, __LINE__);
-         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+8),
+         InsNewInst(NULL, NULL, next, ST, SToff[DTnzerod-1].sa[2], -ir, 0);
+         InsNewInst(NULL,NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+8),
                     -ir, __LINE__);
       }
       if (DTnzero > 0)
       {
          PrintComment(NULL, next, "Writing -0 to memory for negation");
-         InsNewInst(NULL, next, MOV, -ir,STlconstlookup(0x8000000080000000),0);
-         InsNewInst(NULL, next, ST, SToff[DTnzero-1].sa[2], -ir, 0);
+         InsNewInst(NULL, NULL, next, MOV, -ir,
+                    STlconstlookup(0x8000000080000000), 0);
+         InsNewInst(NULL, NULL, next, ST, SToff[DTnzero-1].sa[2], -ir, 0);
          k = ((SToff[DTnzero-1].sa[2]-1)<<2) + 3;
-         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+8),
-                    -ir, __LINE__);
+         InsNewInst(NULL, NULL, next, ST,
+                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+8), -ir, 0);
       }
       if (DTabsd)
       {
          PrintComment(NULL, next, "Writing ~(-0) to memory for absd");
-         InsNewInst(NULL, next, MOV, -ir,STlconstlookup(0x7FFFFFFFFFFFFFFF),0);
+         InsNewInst(NULL, NULL, next, MOV, -ir,
+                    STlconstlookup(0x7FFFFFFFFFFFFFFF), 0);
          k = ((SToff[DTabsd-1].sa[2]-1)<<2) + 3;
-         InsNewInst(NULL, next, ST, SToff[DTabsd-1].sa[2], -ir, __LINE__);
-         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+8),
-                    -ir, __LINE__);
+         InsNewInst(NULL, NULL, next, ST, SToff[DTabsd-1].sa[2], -ir, 0);
+         InsNewInst(NULL, NULL, next, ST,
+                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+8), -ir, 0);
       }
       if (DTabs)
       {
          PrintComment(NULL, next, "Writing ~(-0) to memory for abss");
          k = ((SToff[DTabs-1].sa[2]-1)<<2) + 3;
-         InsNewInst(NULL, next, MOV, -ir,STlconstlookup(0x7fffffff7fffffff),0);
-         InsNewInst(NULL, next, ST, SToff[DTabs-1].sa[2], -ir, __LINE__);
-         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+8),
-                    -ir, __LINE__);
+         InsNewInst(NULL, NULL, next, MOV, -ir,
+                    STlconstlookup(0x7fffffff7fffffff), 0);
+         InsNewInst(NULL, NULL, next, ST, SToff[DTabs-1].sa[2], -ir, 0);
+         InsNewInst(NULL, NULL, next, ST, 
+                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+8), -ir, 0);
       }
-      InsNewInst(NULL, next, COMMENT, STstrconstlookup("done archspec"), 0, 0);
+      InsNewInst(NULL NULL, next, COMMENT, STstrconstlookup("done archspec"), 
+                 0, 0);
    #endif
    #ifdef X86_32
       reg1 = ir = GetReg(T_INT);
@@ -699,83 +722,84 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
          flag = STflag[paras[i]];
          if (USED)
          {
-            InsNewInst(NULL, next, LD, -ir,
+            InsNewInst(NULL, NULL, next, LD, -ir,
                        AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
-            InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, __LINE__);
+            InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
          }
          j++;
          if (!IS_PTR(flag) && IS_DOUBLE(flag))
          {
             if (USED)
             {
-               InsNewInst(NULL, next, LD, -ir,
+               InsNewInst(NULL, NULL, next, LD, -ir,
                           AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
                k = SToff[paras[i]].sa[2] - 1;
                k = DT[(k<<2)+3] + 4;
-               InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, k), 
-                          -ir, __LINE__);
+               InsNewInst(NULL, NULL, next, ST,
+                          AddDerefEntry(-REG_SP, 0, 0, k), -ir, 0);
             }
             j++;
          }
       }
       if (USED)
-         InsNewInst(NULL, next, COMMENT, STstrconstlookup("done paras"), 0, 0);
+         InsNewInst(NULL, NULL, next, COMMENT, STstrconstlookup("done paras"),
+                    0, 0);
       if (DTnzerod > 0)
       {
          PrintComment(NULL, next, "Writing -0 to memory for negation");
          k = ((SToff[DTnzerod-1].sa[2]-1)<<2) + 3;
-         InsNewInst(NULL, next, XOR, -ir, -ir, -ir);
-         InsNewInst(NULL, next, ST, SToff[DTnzerod-1].sa[2], -ir, __LINE__);
-         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+8),
-                    -ir, __LINE__);
-         InsNewInst(NULL, next, MOV, -ir, STiconstlookup(0x80000000), 0);
-         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+4),
-                    -ir, __LINE__);
-         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+12),
-                    -ir, __LINE__);
+         InsNewInst(NULL, NULL, next, XOR, -ir, -ir, -ir);
+         InsNewInst(NULL, NULL, next, ST, SToff[DTnzerod-1].sa[2], -ir, 0);
+         InsNewInst(NULL, NULL, next, ST, 
+                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+8), -ir, 0);
+         InsNewInst(NULL, NULL, next, MOV, -ir, STiconstlookup(0x80000000), 0);
+         InsNewInst(NULL, NULL, next, ST,
+                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+4), -ir, 0);
+         InsNewInst(NULL, NULL, next, ST,
+                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+12), -ir, 0);
       }
       if (DTnzero > 0)
       {
          PrintComment(NULL, next, "Writing -0 to memory for negation");
-         InsNewInst(NULL, next, MOV, -ir, STiconstlookup(0x80000000), 0);
-         InsNewInst(NULL, next, ST, SToff[DTnzero-1].sa[2], -ir, 0);
+         InsNewInst(NULL, NULL, next, MOV, -ir, STiconstlookup(0x80000000), 0);
+         InsNewInst(NULL, NULL, next, ST, SToff[DTnzero-1].sa[2], -ir, 0);
          k = ((SToff[DTnzero-1].sa[2]-1)<<2) + 3;
-         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+4),
-                    -ir, __LINE__);
-         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+8),
-                    -ir, __LINE__);
-         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+12),
-                    -ir, __LINE__);
+         InsNewInst(NULL, NULL, next, ST,
+                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+4), -ir, 0);
+         InsNewInst(NULL, NULL, next, ST,
+                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+8), -ir, 0);
+         InsNewInst(NULL, NULL, next, ST, 
+                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+12), -ir, 0);
       }
       if (DTabsd)
       {
          PrintComment(NULL, next, "Writing ~(-0) to memory for absd");
          k = ((SToff[DTabsd-1].sa[2]-1)<<2) + 3;
-         InsNewInst(NULL, next, XOR, -ir, -ir, -ir);
-         InsNewInst(NULL, next, NOT, -ir, -ir, -ir);
-         InsNewInst(NULL, next, ST, SToff[DTabsd-1].sa[2], -ir, __LINE__);
-         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+8),
-                    -ir, __LINE__);
-         InsNewInst(NULL, next, MOV, -ir, STiconstlookup(0x7fffffff), 0);
-         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+4),
-                    -ir, __LINE__);
-         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+12),
-                    -ir, __LINE__);
+         InsNewInst(NULL, NULL, next, XOR, -ir, -ir, -ir);
+         InsNewInst(NULL, NULL, next, NOT, -ir, -ir, -ir);
+         InsNewInst(NULL, NULL, next, ST, SToff[DTabsd-1].sa[2], -ir, 0);
+         InsNewInst(NULL, NULL, next, ST,
+                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+8), -ir, 0);
+         InsNewInst(NULL, NULL, next, MOV, -ir, STiconstlookup(0x7fffffff), 0);
+         InsNewInst(NULL, NULL, next, ST,
+                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+4), -ir, 0);
+         InsNewInst(NULL, NULL, next, ST,
+                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+12), -ir, 0);
       }
       if (DTabs)
       {
          PrintComment(NULL, next, "Writing ~(-0) to memory for abss");
          k = ((SToff[DTabs-1].sa[2]-1)<<2) + 3;
-         InsNewInst(NULL, next, MOV, -ir, STiconstlookup(0x7fffffff), 0);
-         InsNewInst(NULL, next, ST, SToff[DTabs-1].sa[2], -ir, __LINE__);
-         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+4),
-                    -ir, __LINE__);
-         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+8),
-                    -ir, __LINE__);
-         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+12),
-                    -ir, __LINE__);
+         InsNewInst(NULL, NULL, next, MOV, -ir, STiconstlookup(0x7fffffff), 0);
+         InsNewInst(NULL, NULL, next, ST, SToff[DTabs-1].sa[2], -ir, 0);
+         InsNewInst(NULL, NULL, next, ST,
+                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+4), -ir, 0);
+         InsNewInst(NULL, NULL, next, ST,
+                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+8), -ir, 0);
+         InsNewInst(NULL, NULL, next, ST,
+                    AddDerefEntry(-REG_SP, 0, 0, DT[k]+12), -ir, 0);
       }
-      InsNewInst(NULL, next, COMMENT, STstrconstlookup("done archspec"), 0, 0);
+      InsNewInst(NULL, NULL, next, COMMENT, STstrconstlookup("done archspec"), 0, 0);
    #endif
    #ifdef SPARC
       nam[0] = '@';
@@ -798,13 +822,13 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                nam[2] = j + '0';
                ir = iName2Reg(nam);
                if (USED)
-                  InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+                  InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
             }
             else if (USED)
             {
-               InsNewInst(NULL, next, LD, -ir,
+               InsNewInst(NULL, NULL, next, LD, -ir,
                           AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
-               InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, __LINE__);
+               InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
             }
             j++;
          }
@@ -818,13 +842,13 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                j++;
                if (USED)
                {
-                  InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+                  InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
                   nam[2] = j + '0';
                   ir = iName2Reg(nam);
                   k = (SToff[paras[i]].sa[2]-1)<<2;
                   k = DT[k+3] + 4;
                   k = AddDerefEntry(-REG_SP, 0, 0, k);
-                  InsNewInst(NULL, next, ST, k, -ir, __LINE__);
+                  InsNewInst(NULL, NULL, next, ST, k, -ir, 0);
                }
                j++;
             }
@@ -835,13 +859,13 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                j++;
                if (USED)
                {
-                  InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+                  InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
                   k = (SToff[paras[i]].sa[2]-1)<<2;
                   k = DT[k+3] + 4;
                   k = AddDerefEntry(-REG_SP, 0, 0, k);
-                  InsNewInst(NULL, next, LD, -ir,
+                  InsNewInst(NULL, NULL, next, LD, -ir,
                              AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
-                  InsNewInst(NULL, next, ST, k, -ir, __LINE__);
+                  InsNewInst(NULL, NULL, next, ST, k, -ir, 0);
                }
                j++;
             }
@@ -849,9 +873,9 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
             {
                if (USED)
                {
-                  InsNewInst(NULL, next, LD, -ir,
+                  InsNewInst(NULL, NULL, next, LD, -ir,
                              AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
-                  InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+                  InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
                }
                j++;
                if (USED)
@@ -859,9 +883,9 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                   k = (SToff[paras[i]].sa[2]-1)<<2;
                   k = DT[k+3] + 4;
                   k = AddDerefEntry(-REG_SP, 0, 0, k);
-                  InsNewInst(NULL, next, LD, -ir,
+                  InsNewInst(NULL, NULL, next, LD, -ir,
                              AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
-                  InsNewInst(NULL, next, ST, k, -ir, __LINE__);
+                  InsNewInst(NULL, NULL, next, ST, k, -ir, 0);
                }
                j++;
             }
@@ -892,14 +916,14 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                   if (j < 7) nam[1] = j + '3';
                   else { nam[1] = '1'; nam[2] = '0'; }
                   ir = iName2Reg(nam);
-                  InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+                  InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
                }
                else
                {
                   if (j == 8) ir = GetReg(T_INT);
-                  InsNewInst(NULL, next, LD, -ir,
+                  InsNewInst(NULL, NULL, next, LD, -ir,
                              AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
-                  InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+                  InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
                }
             }
             j++;
@@ -914,13 +938,13 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                   if (fc < 9) fnam[1] = '0' + fc + 1;
                   else { fnam[1] = '1'; fnam[2] = '0' + fc - 9; }
                   fr = fName2Reg(fnam);
-                  InsNewInst(NULL, next, FST, SToff[paras[i]].sa[2], -fr, 0);
+                  InsNewInst(NULL, NULL, next, FST, SToff[paras[i]].sa[2], -fr, 0);
                }
                else
                {
-                  InsNewInst(NULL, next, LD, -ir,
+                  InsNewInst(NULL, NULL, next, LD, -ir,
                              AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
-                  InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+                  InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
                }
             }
             fc++;
@@ -937,20 +961,20 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                   if (fc < 9) fnam[1] = '0' + fc + 1;
                   else { fnam[1] = '1'; fnam[2] = '0' + fc - 9; }
                   fr = dName2Reg(fnam);
-                  InsNewInst(NULL, next, FSTD,SToff[paras[i]].sa[2], -fr, 0);
+                  InsNewInst(NULL, NULL, next, FSTD,SToff[paras[i]].sa[2], -fr, 0);
                   j += 2;
                }
                else
                {
-                  InsNewInst(NULL, next, LD, -ir,
+                  InsNewInst(NULL, NULL, next, LD, -ir,
                              AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
-                  InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+                  InsNewInst(NULL, NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
                   j++;
-                  InsNewInst(NULL, next, LD, -ir,
+                  InsNewInst(NULL, NULL, next, LD, -ir,
                              AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
                   k = (SToff[paras[i]].sa[2]-1)<<2;
                   k = AddDerefEntry(-REG_SP, 0, 0, DT[k+3]+4);
-                  InsNewInst(NULL, next, ST, k, -ir, __LINE__);
+                  InsNewInst(NULL, NULL, next, ST, k, -ir, 0);
                   j++;
                }
             }
@@ -966,7 +990,8 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
    InitLocalConst(next, reg1);
 }
 
-void CreateEpilogue(int fsize,  /* frame size of returning func */
+void CreateEpilogue(BBLOCK *blk,
+                    int fsize,  /* frame size of returning func */
                     int Soff,   /* start of reg save area in frame */
                     int savesp, /* offset we saved sp at */
                     int nir,    /* number of int regs saved */
@@ -978,33 +1003,37 @@ void CreateEpilogue(int fsize,  /* frame size of returning func */
                     )
 {
    int i;
+   for (; blk->down; blk = blk->down);
 
-   InsNewInst(NULL, NULL, LABEL, STstrconstlookup("IFKO_EPILOGUE"), 0, 0);
+   blk->down = NewBasicBlock(blk, NULL);
+   blk = blk->down;
+   InsNewInst(blk, NULL, NULL, LABEL, STstrconstlookup("IFKO_EPILOGUE"), 0, 0);
 /*
  * Restore registers
  */
    for (i=0; i < ndr; i++)
-      InsNewInst(NULL, NULL, FLDD, -dr[i],
+      InsNewInst(blk, NULL, NULL, FLDD, -dr[i],
                  AddDerefEntry(-REG_SP, 0, 0, Soff+i*8), 0);
    for (i=0; i < nir; i++)
-      InsNewInst(NULL, NULL, LD, -ir[i],
+      InsNewInst(blk, NULL, NULL, LD, -ir[i],
                  AddDerefEntry(-REG_SP, 0,0, Soff+ndr*8+i*ISIZE), 0);
    for (i=0; i < nfr; i++)
-      InsNewInst(NULL, NULL, FLD, -fr[i],
+      InsNewInst(blk, NULL, NULL, FLD, -fr[i],
                  AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+nir*ISIZE+i*4), 0);
 /*
  * Restore stack pointer and return
  */
    if (savesp >= 0)
-      InsNewInst(NULL, NULL, LD, -REG_SP, 
+      InsNewInst(blk, NULL, NULL, LD, -REG_SP, 
                  AddDerefEntry(-REG_SP, 0, 0, savesp), 0);
    else
-      InsNewInst(NULL, NULL, ADD, -REG_SP, -REG_SP, STiconstlookup(fsize));
-   InsNewInst(NULL, NULL, RET, 0, 0, 0);
+      InsNewInst(blk, NULL, NULL, ADD, -REG_SP, -REG_SP,STiconstlookup(fsize));
+   InsNewInst(blk, NULL, NULL, RET, 0, 0, 0);
    GetReg(-1);
 }
 
-void CreatePrologue(int align,  /* local-area required byte-alignment */
+void CreatePrologue(BBLOCK *bbase,
+                    int align,  /* local-area required byte-alignment */
                     int lsize,  /* size of all required locals */
                     int csize,  /* call parameter area size */
                     int nir,    /* number of int regs to save */
@@ -1019,14 +1048,15 @@ void CreatePrologue(int align,  /* local-area required byte-alignment */
    int i, maxalign=align, tsize, ssize=0;
    int Aoff;  /* offset to arguments, from frame pointer */
    int Soff=0; /* system-dependant skip offset */
-   INSTQ *ip, *oldhead, *oldtail;
-   extern INSTQ *iqhead;
    int Loff;   /* called routines frame size excluding locals */
    int SAVESP=(-1);  /* must we save SP to stack? */
+   INSTQ *ip, *oldhead, *oldtail;
+   BBLOCK *bp;
 
+   if (!bbase) return;
    #ifdef FKO_ANSIC
-      Extern2Local(oldhead, oldtail, rsav, rsav ? Aoff : Aoff+tsize);
-      CreateEpilogue(tsize, Soff, SAVESP, nir, ir, nfr, fr, ndr, dr);
+      Extern2Local(oldhead, rsav, rsav ? Aoff : Aoff+tsize);
+      CreateEpilogue(bbase, tsize, Soff, SAVESP, nir, ir, nfr, fr, ndr, dr);
       return;
    #endif
 fprintf(stderr, "align=%d,lsize=%d,csize=%d\n", align, lsize, csize);
@@ -1057,15 +1087,16 @@ fprintf(stderr, "align=%d,lsize=%d,csize=%d\n", align, lsize, csize);
    #else
       if (!align) align = 4;
    #endif
-   oldhead = iqhead;
-   oldtail = iqhead->prev;
+   oldhead = bbase->inst1;
+   for (bp=bbase; bp->down; bp = bp->down);
+   oldtail = bp->instN;
 /* 
  * Put routine name label
  */
    prog = STstrconstlookup(rout_name);
 fprintf(stderr, "prog=%d!, rout_name=%s\n", prog, rout_name);
    STflag[prog-1] |= GLOB_BIT;
-   InsNewInst(NULL, oldhead, LABEL, prog, 0, 0);
+   InsNewInst(NULL, NULL, oldhead, LABEL, prog, 0, 0);
 
 /*
  * For x86-64, save %rbp, if necessary, to the reserved location of 0(%rsp)
@@ -1075,7 +1106,7 @@ fprintf(stderr, "prog=%d!, rout_name=%s\n", prog, rout_name);
       for (i=0; i < nir && ir[i] != k; i++);
       if (i < nir)
       {
-         InsNewInst(NULL, oldhead, ST, 
+         InsNewInst(NULL, NULL, oldhead, ST, 
                     AddDerefEntry(-REG_SP, 0, 0, 0), -k, 0);
          for (nir--; i < nir; i++) ir[i] = ir[i+1];
       }
@@ -1130,74 +1161,75 @@ fprintf(stderr, "tsize=%d, Loff=%d, Soff=%d lsize=%d\n", tsize, Loff, Soff, lsiz
       if (tsize % ASPALIGN) tsize = (tsize/ASPALIGN)*ASPALIGN + ASPALIGN;
       if (SAVESP >= 0)
       {
-         InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
-         InsNewInst(NULL, oldhead, COMMENT, STstrconstlookup("To ensure greater alignment than sp, save old sp to stack and move sp"), 0, 0);
-         InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
+         InsNewInst(NULL, NULL, oldhead, COMMENT, 0, 0, 0);
+         InsNewInst(NULL, NULL, oldhead, COMMENT, STstrconstlookup("To ensure greater alignment than sp, save old sp to stack and move sp"), 0, 0);
+         InsNewInst(NULL, NULL, oldhead, COMMENT, 0, 0, 0);
          rsav = GetReg(T_INT);
          assert(rsav <= NSIR);
          rsav = -rsav;
-         InsNewInst(NULL, oldhead, MOV, rsav, -REG_SP, 0);
+         InsNewInst(NULL, NULL, oldhead, MOV, rsav, -REG_SP, 0);
       }
       else
    #endif
    {
-      InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
-      InsNewInst(NULL, oldhead, COMMENT, STstrconstlookup("Adjust sp"), 0, 0);
-      InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
+      InsNewInst(NULL, NULL, oldhead, COMMENT, 0, 0, 0);
+      InsNewInst(NULL, NULL, oldhead, COMMENT, STstrconstlookup("Adjust sp"), 0, 0);
+      InsNewInst(NULL, NULL, oldhead, COMMENT, 0, 0, 0);
    }
-   InsNewInst(NULL, oldhead, SUB, -REG_SP, -REG_SP, STiconstlookup(tsize));
+   InsNewInst(NULL, NULL, oldhead, SUB, -REG_SP, -REG_SP, STiconstlookup(tsize));
    if (SAVESP >= 0)
    {
       i = const2shift(maxalign);
       assert(i >= 3);
       i = STiconstlookup(i);
-      InsNewInst(NULL, oldhead, SHR, -REG_SP, -REG_SP, i);
-      InsNewInst(NULL, oldhead, SHL, -REG_SP, -REG_SP, i);
-      InsNewInst(NULL, oldhead, ST, AddDerefEntry(-REG_SP, 0, 0, SAVESP), 
+      InsNewInst(NULL, NULL, oldhead, SHR, -REG_SP, -REG_SP, i);
+      InsNewInst(NULL, NULL, oldhead, SHL, -REG_SP, -REG_SP, i);
+      InsNewInst(NULL, NULL, oldhead, ST, AddDerefEntry(-REG_SP, 0, 0, SAVESP), 
                  rsav, 0);
    }
 fprintf(stderr, "Local offset=%d\n", Loff);
    CorrectLocalOffsets(Loff);
-   InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
-   InsNewInst(NULL, oldhead, COMMENT, STstrconstlookup("Save registers"), 0, 0);
-   InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
+   InsNewInst(NULL, NULL, oldhead, COMMENT, 0, 0, 0);
+   InsNewInst(NULL, NULL, oldhead, COMMENT, STstrconstlookup("Save registers"), 0, 0);
+   InsNewInst(NULL, NULL, oldhead, COMMENT, 0, 0, 0);
 /*
  * Save registers
  */
    for (i=0; i < ndr; i++)
-      InsNewInst(NULL, oldhead, FSTD, 
+      InsNewInst(NULL, NULL, oldhead, FSTD, 
                  AddDerefEntry(-REG_SP, 0, 0, Soff+i*8), -dr[i], 0);
    for (i=0; i < nir; i++)
-      InsNewInst(NULL, oldhead, ST, 
+      InsNewInst(NULL, NULL, oldhead, ST, 
                  AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+i*ISIZE), -ir[i], 0);
    for (i=0; i < nfr; i++)
-      InsNewInst(NULL, oldhead, FST, 
+      InsNewInst(NULL, NULL, oldhead, FST, 
                  AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+nir*ISIZE+i*4), 
                  -fr[i], 0);
-   Extern2Local(oldhead, oldtail, rsav, rsav ? Aoff : Aoff+tsize);
+   Extern2Local(oldhead, rsav, rsav ? Aoff : Aoff+tsize);
    GetReg(-1);
-   InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
-   InsNewInst(NULL, oldhead, COMMENT, 
+   InsNewInst(NULL, NULL, oldhead, COMMENT, 0, 0, 0);
+   InsNewInst(NULL, NULL, oldhead, COMMENT, 
               STstrconstlookup("END OF FUNCTION PROLOGUE"), 0, 0);
-   InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
-   CreateEpilogue(tsize, Soff, SAVESP, nir, ir, nfr, fr, ndr, dr);
+   InsNewInst(NULL, NULL, oldhead, COMMENT, 0, 0, 0);
+   CreateEpilogue(bbase, tsize, Soff, SAVESP, nir, ir, nfr, fr, ndr, dr);
 }
 void KillUnusedLocals()  /* HERE, HERE: move to symtab */
 {
 }
-void FixFrame()
+
+void FixFrame(BBLOCK *bbase)
 /*
  * As final step before lil-to-assembly conversion, fix the frame info, and
  * generate function prologue and epilogue
  */
 {
    extern int LOCALIGN, LOCSIZE;
-   extern INSTQ *iqhead;
    int i, ni, nf, nd, isav[TNIR], fsav[TNFR], dsav[TNDR], savr[64];
-   MarkUnusedLocals(); 
+
+   MarkUnusedLocals(bbase); 
    CreateSysLocals();
    NumberLocalsByType();
-   FindRegUsage(iqhead, &ni, isav, &nf, fsav, &nd, dsav);
+   FindRegUsage(bbase, &ni, isav, &nf, fsav, &nd, dsav);
    RemoveNosaveregs(IREGBEG, TNIR, isav, icalleesave);
    ni = GetRegSaveList(IREGBEG, ni, isav);
    RemoveNosaveregs(FREGBEG, TNFR, fsav, fcalleesave);
@@ -1210,5 +1242,5 @@ void FixFrame()
       UpdateLocalDerefs(4);
    #endif
    for (i=0; i < NIR; i++) savr[i] = i+2; 
-   CreatePrologue(LOCALIGN, LOCSIZE, 0, ni, isav, nf, fsav, nd, dsav);
+   CreatePrologue(bbase, LOCALIGN, LOCSIZE, 0, ni, isav, nf, fsav, nd, dsav);
 }

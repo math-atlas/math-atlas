@@ -15,6 +15,7 @@ union valoff
 typedef struct instq INSTQ;
 struct instq
 {
+   struct bblock *myblk;
    INSTQ *prev, *next;
    short inst[4];
 };
@@ -58,6 +59,22 @@ struct loopq
    uchar *abalign;    /* alignments of above arrays */
    INSTQ *ibeg, *iend;
    struct loopq *next;
+};
+
+typedef struct bblock BBLOCK;
+struct bblock
+{
+   BBLOCK *up, *down;       /* links blocks in code order */
+   BBLOCK *usucc, *csucc;   /* (un)conditional successors */
+   INSTQ  *inst1, *instN;   /* ptr to this block's 1st and last inst */
+   struct blist *preds;     /* predecessors to this block */
+};
+
+typedef struct blist BLIST;
+struct blist
+{
+   BLIST *next;
+   BBLOCK *blk;
 };
 
 #endif

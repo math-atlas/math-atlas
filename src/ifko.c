@@ -9,24 +9,26 @@ int FUNC_FLAG=0, DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0;
 int main(int nargs, char **args)
 {
    FILE *fpin;
-   extern FILE *yyin;
-   extern INSTQ *iqhead;
    struct assmln *abase;
+   BBLOCK *bp;
+   extern FILE *yyin;
+   extern BBLOCK *bbbase;
 
    fpin = fopen(args[1], "r");
    assert(fpin);
    yyin = fpin;
+   bp = bbbase = NewBasicBlock(NULL, NULL);
+   bp->inst1 = bp->instN = NULL;
    yyparse();
    fclose(fpin);
-   FixFrame();
-   abase = lil2ass(iqhead);
+   bp = FindBasicBlocks(bbbase);
+   KillAllBasicBlocks(bbbase);
+   bbbase = bp;
+   FixFrame(bbbase);
+   AddBlockComments(bbbase);
+   abase = lil2ass(bbbase);
+   KillAllBasicBlocks(bbbase);
    dump_assembly(stdout, abase);
    KillAllAssln(abase);
-   #if 0
-      abase = DumpData();
-      dump_assembly(stdout, abase);
-      KillAllAssln(abase);
-   #endif
-   KillAllInst(iqhead);
    return(0);
 }

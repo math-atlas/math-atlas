@@ -10,6 +10,7 @@
 #include "fko_inst.h"
 #include "fko_misc.h"
 #include "fko_loop.h"
+#include "fko_flow.h"
 
 #ifdef IFKO_DECLARE
    char rout_name[128];

@@ -489,7 +489,7 @@ fprintf(stderr, "correcting local %s, (%d,%d,%d)\n", STname[-1-DT[i+2]],
    }
 }
 
-void MarkUnusedLocals()
+void MarkUnusedLocals(BBLOCK *bbase)
 /*
  * Looks at all derefences in entire program; if a local/param is never used,
  * changes first DT entry (presently -REG_SP) to 0
@@ -500,7 +500,7 @@ void MarkUnusedLocals()
 {
    INSTQ *ip;
    short k, i;
-   extern INSTQ *iqhead;
+   BBLOCK *bp;
 /*
  * Start out by marking all locals as unused
  */
@@ -513,97 +513,52 @@ void MarkUnusedLocals()
          DT[k] = 0;
       }
    }
-   ip = iqhead;
-   do
+   for (bp=bbase; bp; bp = bp->down)
    {
-      switch(ip->inst[0])
+      for (ip=bp->inst1; ip; ip = ip->next)
       {
-/*
- *    These instructions have derefs as second operand only
- */
-      case LD:
-      case LDS:
-      case FLD:
-      case FLDD:
-         k = (ip->inst[2]-1)<<2;
-         if (!DT[k] && DT[k+2] < 0)
+         switch(ip->inst[0])
          {
-            fprintf(stderr, "Unmarking(%d) DT[%d]: %s\n", 
-                    ip->inst[0], k>>2,STname[-DT[k+2]-1]);
-            DT[k] = -REG_SP;
-         }
-         break;
 /*
- *    These instructions have derefs as first operand only
+ *       These instructions have derefs as second operand only
  */
-      case ST:
-      case STS:
-      case FST:
-      case FSTD:
-      case PREFR:
-      case PREFW:
-      case PREFWS:
-      case PREFRS:
-         k = (ip->inst[1]-1)<<2;
-         if (!DT[k] && DT[k+2] < 0)
-         {
-            fprintf(stderr, "Unmarking(%d) DT[%d]: %s\n", 
-                    ip->inst[0], k>>2,STname[-DT[k+2]-1]);
-            DT[k] = -REG_SP;
-         }
-         break;
-      default:  /* other insts to not take derefs, so no action necessary */
-         break;
-      }
-      ip = ip->next;
-   }
-   while(ip != iqhead);
-}
-
-#if 0
-void MarkUnusedParams(int np, int *paras)
+         case LD:
+         case LDS:
+         case FLD:
+         case FLDD:
+            k = (ip->inst[2]-1)<<2;
+            if (!DT[k] && DT[k+2] < 0)
+            {
+               fprintf(stderr, "Unmarking(%d) DT[%d]: %s\n", 
+                       ip->inst[0], k>>2,STname[-DT[k+2]-1]);
+               DT[k] = -REG_SP;
+            }
+            break;
 /*
- * For parameters that are never loaded, replaces REG_SP in DT base with 0. 
- * NOTE: essentially assumes that any parameter which is used is loaded from
- *       it's beginning address (not, for instance, the 3rd byte only) at
- *       least once.
+ *       These instructions have derefs as first operand only
  */
-{
-   INSTQ *ip;
-   extern INSTQ *iqhead;
-   int i;
-   short k;
-
-/*
- * temporarily change para deref base from %sp to 0, then change them back
- * when/if we find reference to them in the code
- */
-   for (i=0; i < np; i++)
-   {
-      k = (SToff[paras[i]].sa[2] - 1)<<2;
-      DT[k] = 0;
-   }
-   ip = iqhead;
-   do
-   {
-      k = ip->inst[0];
-/*
- *    For loads, see if they are from a parameter
- */
-      if (k == LD || k == LDS || k == FLD || k = FLDD)
-      {
-         for (i=0; i < np; i++)
-         {
-            k = SToff[paras[i]].sa[2];
-            if (ip->inst[2] == k)
-               DT[(k-1)<<2] = -REG_SP;
+         case ST:
+         case STS:
+         case FST:
+         case FSTD:
+         case PREFR:
+         case PREFW:
+         case PREFWS:
+         case PREFRS:
+            k = (ip->inst[1]-1)<<2;
+            if (!DT[k] && DT[k+2] < 0)
+            {
+               fprintf(stderr, "Unmarking(%d) DT[%d]: %s\n", 
+                       ip->inst[0], k>>2,STname[-DT[k+2]-1]);
+               DT[k] = -REG_SP;
+            }
+            break;
+         default:  /* other insts to not take derefs, so no action necessary */
+            break;
          }
       }
-      ip = ip->next;
    }
-   while (ip != iqhead);
 }
-#endif
 
 int STlen(void)
 {

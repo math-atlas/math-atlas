@@ -49,7 +49,7 @@ static int LocalLoad(short id)
       default:
          fprintf(stderr, "type=%d!!\n\n", typ);
       }
-      InsNewInst(NULL, NULL, inst, -reg, id+1, 0);
+      InsNewInst(NULL, NULL, NULL, inst, -reg, id+1, 0);
       return(reg);
    }
    else if (IS_PTR(STflag[id]))
@@ -76,7 +76,7 @@ static int LocalLoad(short id)
          fprintf(stderr, "type=%d!!\n\n", typ);
       }
    }
-   InsNewInst(NULL, NULL, inst, -reg, SToff[id].sa[2], 0);
+   InsNewInst(NULL, NULL, NULL, inst, -reg, SToff[id].sa[2], 0);
    return(reg);
 }
 
@@ -98,7 +98,7 @@ static void LocalStore(short id, short sreg)
    default:
       fko_error(__LINE__, "Unknown type!\n");
    }
-   InsNewInst(NULL, NULL, inst, SToff[id-1].sa[2], -sreg, 0);
+   InsNewInst(NULL, NULL, NULL, inst, SToff[id-1].sa[2], -sreg, 0);
 }
 
 void DoConvert(short dest, short src)
@@ -117,7 +117,7 @@ fprintf(stderr, "Handling fpconst!\n");
  * Encode fp const load as special case of FMOV.
  */
    type = FLAG2TYPE(STflag[dest-1]);
-   InsNewInst(NULL, NULL, type == T_FLOAT ? FMOV : FMOVD, 
+   InsNewInst(NULL, NULL, NULL, type == T_FLOAT ? FMOV : FMOVD, 
               -GetReg(type), src, __LINE__);
 }
 
@@ -126,7 +126,7 @@ void DoComment(char *str)
    int i;
    for (i=0; str[i]; i++);
    if (str[--i] == '\n') str[i] = '\0';
-   InsNewInst(NULL, NULL, COMMENT, STstrconstlookup(str), 0, 0);
+   InsNewInst(NULL, NULL, NULL, COMMENT, STstrconstlookup(str), 0, 0);
 }
 
 void DoMove(short dest, short src)
@@ -143,7 +143,7 @@ fprintf(stderr, "DoMove %d %d (%s %s)\n", dest, src, STname[dest-1]?STname[dest-
       type = FLAG2PTYPE(sflag);
       rsrc = GetReg(type);
       if (IS_CONST(sflag) && (type == T_INT) && SToff[src-1].i == 0)
-         InsNewInst(NULL, NULL, XOR, -rsrc, -rsrc, -rsrc);
+         InsNewInst(NULL, NULL, NULL, XOR, -rsrc, -rsrc, -rsrc);
       else
       {
          if (type == T_INT) mov = MOV;
@@ -153,7 +153,7 @@ fprintf(stderr, "DoMove %d %d (%s %s)\n", dest, src, STname[dest-1]?STname[dest-
             assert(type == T_DOUBLE);
             mov = FMOVD;
          }
-         InsNewInst(NULL, NULL, mov, -rsrc, src, __LINE__);
+         InsNewInst(NULL, NULL, NULL, mov, -rsrc, src, __LINE__);
       }
       LocalStore(dest, rsrc);
    }
@@ -179,6 +179,7 @@ short AddArrayDeref(short array, short index, int offset)
    assert(!IS_VEC(flag));
    return(AddDerefEntry(array, index, mul, offset));
 }
+
 static void FixDeref(short ptr)
 /*
  * This routine takes a deref entry of type:
@@ -216,7 +217,7 @@ fprintf(stderr, "FixDeref: [%d, %d, %d, %d]\n", DT[k], DT[k+1], DT[k+2], DT[k+3]
  */
       if (!ArchHasLoadMul(DT[k+2]))
       {
-         InsNewInst(NULL, NULL, SHL, DT[k+1], DT[k+1], 
+         InsNewInst(NULL, NULL, NULL, SHL, DT[k+1], DT[k+1], 
                     STiconstlookup(type2shift(type)));
          DT[k+2] = 1;
       }
@@ -228,7 +229,7 @@ fprintf(stderr, "FixDeref: [%d, %d, %d, %d]\n", DT[k], DT[k+1], DT[k+2], DT[k+3]
       #ifndef ArchConstAndIndex
          if (DT[k+3])
          {
-            InsNewInst(NULL, NULL, ADD, DT[k+1], DT[k+1], 
+            InsNewInst(NULL, NULL, NULL, ADD, DT[k+1], DT[k+1], 
                        STiconstlookup(DT[k+3]));
             DT[k+3] = 0;
          }
@@ -255,16 +256,16 @@ void DoArrayStore(short ptr, short id)
    case T_INT:
       #ifdef X86_64
          assert(lreg < 8);
-         InsNewInst(NULL, NULL, STS, ptr, -lreg, 0);
+         InsNewInst(NULL, NULL, NULL, STS, ptr, -lreg, 0);
       #else
-         InsNewInst(NULL, NULL, ST, ptr, -lreg, 0);
+         InsNewInst(NULL, NULL, NULL, ST, ptr, -lreg, 0);
       #endif
       break;
    case T_FLOAT:
-      InsNewInst(NULL, NULL, FST, ptr, -lreg, 0);
+      InsNewInst(NULL, NULL, NULL, FST, ptr, -lreg, 0);
       break;
    case T_DOUBLE:
-      InsNewInst(NULL, NULL, FSTD, ptr, -lreg, 0);
+      InsNewInst(NULL, NULL, NULL, FSTD, ptr, -lreg, 0);
       break;
    default:
       fko_error(__LINE__, "Unknown type %d\n", type);
@@ -291,12 +292,12 @@ fprintf(stderr, "\n\nANAME=%s, TYPE=%d\n\n", STname[ptr-1] ? STname[ptr-1] : "NU
  */
       #ifdef X86_64
          areg = GetReg(T_SHORT);
-         InsNewInst(NULL, NULL, LDS, -areg, ptr, 0);
+         InsNewInst(NULL, NULL, NULL, LDS, -areg, ptr, 0);
          if (!IS_UNSIGNED(STflag[id-1]))
          {
             k = STiconstlookup(31);
-            InsNewInst(NULL, NULL, SHL, -areg, -areg, k);
-            InsNewInst(NULL, NULL, SAR, -areg, -areg, k);
+            InsNewInst(NULL, NULL, NULL, SHL, -areg, -areg, k);
+            InsNewInst(NULL, NULL, NULL, SAR, -areg, -areg, k);
             LocalStore(id, areg);
             GetReg(-1);
             return;
@@ -314,7 +315,7 @@ fprintf(stderr, "\n\nANAME=%s, TYPE=%d\n\n", STname[ptr-1] ? STname[ptr-1] : "NU
       fko_error(__LINE__, "Unknown type %d\n", type);
    }
    areg = GetReg(type);
-   InsNewInst(NULL, NULL, ld, -areg, ptr, 0);
+   InsNewInst(NULL, NULL, NULL, ld, -areg, ptr, 0);
    LocalStore(id, areg);
    GetReg(-1);
 }
@@ -357,13 +358,13 @@ void HandlePtrArith(short dest, short src0, char op, short src1)
       #ifdef X86_64
          if (IS_INT(dflag)) k = STiconstlookup(2);
          else k = STiconstlookup(type2shift(type));
-         InsNewInst(NULL, NULL, SHL, -rs1, -rs1, k);
+         InsNewInst(NULL, NULL, NULL, SHL, -rs1, -rs1, k);
       #else
-         InsNewInst(NULL, NULL, SHL, -rs1, -rs1, 
+         InsNewInst(NULL, NULL, NULL, SHL, -rs1, -rs1, 
                     STiconstlookup(type2shift(type)));
       #endif
    }
-   InsNewInst(NULL, NULL, op == '+' ? ADD : SUB, -rs0, -rs0, -rs1);
+   InsNewInst(NULL, NULL, NULL, op == '+' ? ADD : SUB, -rs0, -rs0, -rs1);
    LocalStore(dest, rs0);
    GetReg(-1);
 }
@@ -395,15 +396,15 @@ void DoArith(short dest, short src0, char op, short src1)
             rs0 = iName2Reg("@edx");
             rs1 = iName2Reg("@ecx");
          #endif
-         InsNewInst(NULL, NULL, LD, -rd, SToff[src0-1].sa[2], 0);
-         InsNewInst(NULL, NULL, MOV, -rs0, -rd, 0);
-         InsNewInst(NULL, NULL, SAR, -rs0, -rs0, STiconstlookup(31));
+         InsNewInst(NULL, NULL, NULL, LD, -rd, SToff[src0-1].sa[2], 0);
+         InsNewInst(NULL, NULL, NULL, MOV, -rs0, -rd, 0);
+         InsNewInst(NULL, NULL, NULL, SAR, -rs0, -rs0, STiconstlookup(31));
          if (IS_CONST(STflag[src1-1]))
-            InsNewInst(NULL, NULL, MOV, -rs1, 
+            InsNewInst(NULL, NULL, NULL, MOV, -rs1, 
                        STiconstlookup(SToff[src1-1].i), 0);
          else
-            InsNewInst(NULL, NULL, LD, -rs1, SToff[src1-1].sa[2], 0);
-         InsNewInst(NULL, NULL, DIV, -rd, -rs0, -rs1);
+            InsNewInst(NULL, NULL, NULL, LD, -rs1, SToff[src1-1].sa[2], 0);
+         InsNewInst(NULL, NULL, NULL, DIV, -rd, -rs0, -rs1);
          fprintf(stderr, "DIV %d, %d, %d\n", -rd, -rs0, -rs1);
          LocalStore(dest, rd);
          GetReg(-1);
@@ -501,12 +502,12 @@ void DoArith(short dest, short src0, char op, short src1)
          #else
             if (type == T_FLOAT)
             {
-               InsNewInst(NULL, NULL, FMUL, -rs0, -rs0, -rs1);
+               InsNewInst(NULL, NULL, NULL, FMUL, -rs0, -rs0, -rs1);
                inst = FADD;
             }
             else
             {
-               InsNewInst(NULL, NULL, FMULD, -rs0, -rs0, -rs1);
+               InsNewInst(NULL, NULL, NULL, FMULD, -rs0, -rs0, -rs1);
                inst = FADDD;
             }
          #endif
@@ -550,7 +551,7 @@ void DoArith(short dest, short src0, char op, short src1)
       }
       break;
    }
-   InsNewInst(NULL, NULL, inst, -rd, -rs0, -rs1);
+   InsNewInst(NULL, NULL, NULL, inst, -rd, -rs0, -rs1);
    LocalStore(dest, rs0);
    GetReg(-1);
 }
@@ -590,15 +591,15 @@ void DoReturn(short rret)
 #if 0
       if (IS_CONST(STflag[rret-1])) srcreg = -rret;
       else srcreg = LocalLoad(rret);
-      InsNewInst(NULL, NULL, mov, -retreg, -srcreg, 0);
+      InsNewInst(NULL, NULL, NULL, mov, -retreg, -srcreg, 0);
 #else
       if (IS_CONST(STflag[rret-1]))
-         InsNewInst(NULL, NULL, mov, -retreg, rret, 0);
+         InsNewInst(NULL, NULL, NULL, mov, -retreg, rret, 0);
       else 
-         InsNewInst(NULL, NULL, ld, -retreg, SToff[rret-1].sa[2], 0);
+         InsNewInst(NULL, NULL, NULL, ld, -retreg, SToff[rret-1].sa[2], 0);
 #endif
    }
-   InsNewInst(NULL, NULL, JMP, 0, STstrconstlookup("IFKO_EPILOGUE"), 0);
+   InsNewInst(NULL, NULL, NULL, JMP, 0, STstrconstlookup("IFKO_EPILOGUE"), 0);
    GetReg(-1);
 }
 
@@ -672,7 +673,7 @@ fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    lp->end = end;
    lp->inc = inc;
 
-   lp->ibeg = InsNewInst(NULL, NULL, CMPFLAG, CF_LOOP_INIT, lp->loopnum, 0);
+   lp->ibeg = InsNewInst(NULL, NULL, NULL, CMPFLAG, CF_LOOP_INIT, lp->loopnum, 0);
    flag = STflag[start-1];
    assert(!IS_PTR(flag));
    if (IS_CONST(flag)) DoMove(I, start);
@@ -682,10 +683,10 @@ fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
       LocalStore(I, ireg);
       GetReg(-1);
    }
-   InsNewInst(NULL, NULL, CMPFLAG, CF_LOOP_BODY, lp->loopnum, 0);
+   InsNewInst(NULL, NULL, NULL, CMPFLAG, CF_LOOP_BODY, lp->loopnum, 0);
    sprintf(lnam, "_LOOP_%d", lp->loopnum);
    lp->body_label = STstrconstlookup(lnam);
-   InsNewInst(NULL, NULL, LABEL, lp->body_label, lp->loopnum, 0);
+   InsNewInst(NULL, NULL, NULL, LABEL, lp->body_label, lp->loopnum, 0);
    return(lp);
 }
 
@@ -699,27 +700,27 @@ void FinishLoop(struct loopq *lp)
 /*
  * Update loop counter
  */
-   InsNewInst(NULL, NULL, CMPFLAG, CF_LOOP_UPDATE, lp->loopnum, 0);
+   InsNewInst(NULL, NULL, NULL, CMPFLAG, CF_LOOP_UPDATE, lp->loopnum, 0);
    DoArith(lp->I, lp->I, '+', lp->inc);
-   InsNewInst(NULL, NULL, CMPFLAG, CF_LOOP_TEST, lp->loopnum, 0);
+   InsNewInst(NULL, NULL, NULL, CMPFLAG, CF_LOOP_TEST, lp->loopnum, 0);
    ireg = LocalLoad(lp->I);
    flag = STflag[lp->end-1];
    if (IS_CONST(flag)) iend = lp->end;
    else iend = -LocalLoad(lp->end);
-   InsNewInst(NULL, NULL, CMP, ICC0, -ireg, iend);
-   InsNewInst(NULL, NULL, JLT, 0, ICC0, lp->body_label);
-   lp->iend = InsNewInst(NULL, NULL, CMPFLAG, CF_LOOP_END, lp->loopnum, 0);
+   InsNewInst(NULL, NULL, NULL, CMP, ICC0, -ireg, iend);
+   InsNewInst(NULL, NULL, NULL, JLT, 0, ICC0, lp->body_label);
+   lp->iend = InsNewInst(NULL, NULL, NULL, CMPFLAG, CF_LOOP_END, lp->loopnum, 0);
    GetReg(-1);
 }
 
 void DoGoto(char *name)
 {
 fprintf(stderr, "\n\nGOT GOTO %s\n\n", name);
-   InsNewInst(NULL, NULL, JMP, 0, STlabellookup(name), 0);
+   InsNewInst(NULL, NULL, NULL, JMP, 0, STlabellookup(name), 0);
 }
 void DoLabel(char *name)
 {
-   InsNewInst(NULL, NULL, LABEL, STlabellookup(name), 0, 0);
+   InsNewInst(NULL, NULL, NULL, LABEL, STlabellookup(name), 0, 0);
 }
 
 void DoIf(char op, short id, short avar, char *labnam)
@@ -738,36 +739,36 @@ fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
       ireg = LocalLoad(id);
       if (IS_CONST(flag)) ireg1 = -avar;
       else ireg1 = LocalLoad(avar);
-      if (op != '&') InsNewInst(NULL, NULL, CMP, ICC0, -ireg, -ireg1);
+      if (op != '&') InsNewInst(NULL, NULL, NULL, CMP, ICC0, -ireg, -ireg1);
       else
          #ifdef PPC
-            InsNewInst(NULL, NULL, ANDCC, -ireg, -ireg, -ireg1);
+            InsNewInst(NULL, NULL, NULL, ANDCC, -ireg, -ireg, -ireg1);
          #else
-            InsNewInst(NULL, NULL, CMPAND, -ireg, -ireg, -ireg1);
+            InsNewInst(NULL, NULL, NULL, CMPAND, -ireg, -ireg, -ireg1);
          #endif
       switch(op)
       {
       case '>':
-         InsNewInst(NULL, NULL, JGT, 0, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, JGT, 0, ICC0, label);
          break;
       case 'g':  /* >= */
-         InsNewInst(NULL, NULL, JGE, 0, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, JGE, 0, ICC0, label);
          break;
       case '<':
-         InsNewInst(NULL, NULL, JLT, 0, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, JLT, 0, ICC0, label);
          break;
       case 'l':  /* <= */
-         InsNewInst(NULL, NULL, JLE, 0, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, JLE, 0, ICC0, label);
          br = JLE;
          break;
       case '=':
-         InsNewInst(NULL, NULL, JEQ, 0, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, JEQ, 0, ICC0, label);
          break;
       case '!':
-         InsNewInst(NULL, NULL, JNE, 0, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, JNE, 0, ICC0, label);
          break;
       case '&':
-         InsNewInst(NULL, NULL, JEQ, 0, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, JEQ, 0, ICC0, label);
          break;
       }
    }
@@ -800,8 +801,8 @@ fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
       default:
          fko_error(__LINE__, "Illegal fp comparitor '%c'\n", op);
       }
-      InsNewInst(NULL, NULL, cmp, FCC0, -freg0, -freg1);
-      InsNewInst(NULL, NULL, br, 0, FCC0, label);
+      InsNewInst(NULL, NULL, NULL, cmp, FCC0, -freg0, -freg1);
+      InsNewInst(NULL, NULL, NULL, br, 0, FCC0, label);
    }
 #else
       else
@@ -837,12 +838,12 @@ fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
             br = JEQ;
             break;
          }
-         InsNewInst(NULL, NULL, (type == T_FLOAT) ? FCMPW:FCMPWD, 
+         InsNewInst(NULL, NULL, NULL, (type == T_FLOAT) ? FCMPW:FCMPWD, 
                     -freg0, -freg1, k);
-         InsNewInst(NULL, NULL, (type == T_FLOAT) ? CVTBFI:CVTBDI,
+         InsNewInst(NULL, NULL, NULL, (type == T_FLOAT) ? CVTBFI:CVTBDI,
                     -ireg, -freg0, 0);
-         InsNewInst(NULL, NULL, CMP, ICC0, -ireg, STiconstlookup(0));
-         InsNewInst(NULL, NULL, br, 0, ICC0, label);
+         InsNewInst(NULL, NULL, NULL, CMP, ICC0, -ireg, STiconstlookup(0));
+         InsNewInst(NULL, NULL, NULL, br, 0, ICC0, label);
       }
 #endif
 }

@@ -82,9 +82,9 @@ enum inst
  */
    JMP,                         /* NULL, cc#, LABEL */
    JEQ, JNE, JLT, JLE, JGT, JGE,  /* NULL, cc#, LABEL */
+   RET,                         /* NULL,NULL,NULL : return to caller */
    PREFR,                       /* [ptr] [ilvl], NULL */
    PREFW,                       /* [ptr] [ilvl], NULL */
-   RET,                         /* NULL,NULL,NULL : return to caller */
 /*
  * The stream prefetch instructions have format:
  * [ptr], [len], [ilvl:ist]
@@ -159,9 +159,14 @@ enum inst
    LAST_INST
 };
 
-INSTQ *NewInst(INSTQ *prev, INSTQ *next, enum inst ins,
+#define FIRSTBRANCH JMP
+#define LASTBRANCH  RET
+
+#define IS_BRANCH(i_) ((i_) >= FIRSTBRANCH && (i_) <= LASTBRANCH)
+
+INSTQ *NewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,
                short dest, short src1, short src2);
-INSTQ *InsNewInst(INSTQ *prev, INSTQ *next, enum inst ins,
+INSTQ *InsNewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,
                   short dest, short src1, short src2);
 INSTQ *DelInst(INSTQ *del);
 void KillAllInst(INSTQ *base);
