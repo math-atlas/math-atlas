@@ -127,8 +127,8 @@ void DoMove(short dest, short src)
 {
    short rsrc;
    int sflag, type;
-   sflag = STflag[src-1];
    enum inst mov;
+   sflag = STflag[src-1];
 
 fprintf(stderr, "DoMove %d %d (%s %s)\n", dest, src, STname[dest-1]?STname[dest-1] : "NULL", STname[src-1]?STname[src-1] : "NULL");
 

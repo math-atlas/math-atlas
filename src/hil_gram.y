@@ -116,8 +116,10 @@ loop_markup : LOOP_LIST_MU LST idlist { HandleLoopListMU($1); }
 loop_markups : loop_markups loop_markup ';'
              |
              ;
-loop_body : LOOP_BODY statements LOOP_END ; { DoComment("Done LOOP_BODY"); }
-loop : loop_beg loop_markups loop_body ;   { UpdateLoop($1); }
+loop_body : LOOP_BODY statements LOOP_END { DoComment("Done LOOP_BODY"); }
+          ;
+loop : loop_beg loop_markups loop_body    { UpdateLoop($1); }
+     ;
 
 typedec : INT LST idlist              { declare_list(T_INT); }
         | UINT LST idlist              { declare_list(T_INT | UNSIGNED_BIT); }
