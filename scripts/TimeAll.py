@@ -39,10 +39,38 @@ print "ATLdir='%s', ARCH='%s'" % (ATLdir, ARCH)
 pres = ['s', 'd']
 l1routs = ['asum', 'axpy', 'dot', 'scal']
 l1refs  = ['asum_fabs1_x1.c', 'axpy1_x1y1.c', 'dot1_x1y1.c', 'scal1_x1.c']
+l1atl   = []
+CCatl   = []
+CCFat   = []
+
+N=80000
 
 for blas in l1routs:
    for pre in pres:
       [id,rout,CC, CCF] = l1cmnd.res(ATLdir, ARCH, blas, pre)
-      print "%s%s_SUMM : ID=%d, rout=%s" % (pre, blas, id, rout)
-      if (CC != None):
-         print "   --> ucc='%s', ccflags='%s'" % (CC, CCF)
+      l1atl.append(rout)
+      CCatl.append(CC)
+      CCFat.append(CCF)
+#      print "%s%s_SUMM : ID=%d, rout=%s" % (pre, blas, id, rout)
+#      if (CC != None):
+#         print "   --> ucc='%s', ccflags='%s'" % (CC, CCF)
+
+refT  = []
+refMF = []
+atlT  = []
+atlMF = []
+j = i = 0
+print 'l1atl = ', l1atl
+for blas in l1routs:
+   for pre in pres:
+      [time,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, l1refs[i])
+      print "REF %20.20s : time=%f, mflop=%f" % (pre+l1refs[i], time, mf)
+      refT.append(time)
+      refMF.append(mf)
+      [time,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, l1atl[j], 
+                              CCatl[j], CCFat[j])
+      print "ATL %20.20s : time=%f, mflop=%f" % (pre+l1atl[j], time, mf)
+      atlT.append(time)
+      atlMF.append(mf)
+      j += 1
+   i += 1

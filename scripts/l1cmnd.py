@@ -4,14 +4,18 @@ import re
 
 L1Tdir = '/tune/blas/level1/'
 
-def time(ATLdir, ARCH, pre, blas, N, rout, opt=""):
+def time(ATLdir, ARCH, pre, blas, N, rout, cc=None, ccf=None, opt=""):
 #
 #  Extract the original seconds & summation time & mflop
 #
    l1sec = re.compile(r"tim=(.*)\s.*$")
    l1sum = re.compile(r"N=(.*),\s.*time=(.*), mflop=(.*)\s.*$")
 
+   if(cc != None):
+      opt = opt + 'UCC=' + cc + ' UCCFLAGS="' + ccf + '"'
+#   print "opt = '%s'" % opt
    cmnd = 'make %s%scase N=%d urout=%s %s' % (pre, blas, N, rout, opt)
+#   print "cmnd= '%s'" % cmnd
    cmnds = 'cd %s/tune/blas/level1/%s ; %s ; %s' % (ATLdir, ARCH, cmnd, cmnd)
    fo = os.popen(cmnds, 'r')
    lines = fo.readlines()
