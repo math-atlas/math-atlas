@@ -9,7 +9,8 @@ int FUNC_FLAG=0;
 int DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0, DTx87=0, DTx87d=0;
 int FKO_FLAG;
 static char fST[1024], fLIL[1024], fmisc[1024];
-static short *PFARR=NULL, *PFDST=NULL, *PFLVL=NULL;
+static short *PFDST=NULL, *PFLVL=NULL;
+static char **PFARR=NULL;
 
 int noptrec=0;
 enum FKOOPT optrec[512];
@@ -35,7 +36,10 @@ void PrintUsageN(char *name)
    fprintf(stderr, "     o : dump opt sequence to <file>.opt\n");
    fprintf(stderr, "  -U <#> : Unroll main loop # of times\n");
    fprintf(stderr, "  -V     : Vectorize (SIMD) main loop\n");
-   fprintf(stderr, "  -P <ST#> <cache level> <dist(bytes)>\n");
+   fprintf(stderr, "  -P <all/name> <cache level> <dist(bytes)>\n");
+   fprintf(stderr, 
+"  -Pa[r/w] [n,3,0] : non-temp, 3dnow, temp L1 (read/write) prefetch\n");
+   fprintf(stderr, "  -PL <lvl> <linesize> : set cache linesize in bytes\n");
    fprintf(stderr, "  -[L,G] <blknum> <maxN> <nopt> <opt1> ... <optN>\n");
    fprintf(stderr, "     Loop or global optimization block\n");
    fprintf(stderr, "     <blknum> : integer identifier > 0\n");
@@ -194,7 +198,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
       {
          switch(args[i][1])
          {
-         case 'P': /* prefetch  -P <STentry> <cache level> <bytesdist> */
+         case 'P': /* prefetch  -P <name> <cache level> <bytesdist> */
             if (args[i][2] == 'a') /* alternate prefetch selection */
             {
                if (args[i][3] == 'r')
@@ -235,7 +239,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             }
             else
             {
-               pf = NewPtrinfo(atoi(args[i+1]), atoi(args[i+3]), pfb);
+               pf = NewPtrinfo(i+1, atoi(args[i+3]), pfb);
                pf->nupdate = atoi(args[i+2]);
                pfb = pf;
                i += 3;
@@ -375,7 +379,7 @@ ERR:
    {
       for (i=0,pf0=NULL,pf=pfb; pf; pf = pf->next)
       {
-         if (pf->ptr <= 0)
+         if (!strcmp(args[pf->ptr], "all"))
          {
             if (!pf0) pf0 = pf;
          }
@@ -383,23 +387,30 @@ ERR:
             i++;
       }
       j = pf0 ? i+1 : i;
-      PFARR = malloc(sizeof(short)*(j+1));
+      PFARR = malloc(sizeof(char *)*(j+1));
       PFDST = malloc(sizeof(short)*(j+1));
       PFLVL = malloc(sizeof(short)*(j+1));
       assert(PFARR && PFDST && PFLVL);
-      PFARR[0] = PFDST[0] = PFLVL[0] = j;
+      PFARR[j] = NULL;
+      PFDST[0] = PFLVL[0] = j;
       if (pf0)
       {
          i = 2;
-         PFARR[1] = 0;
+         PFARR[0] = malloc(sizeof(char)*16);
+         assert(PFARR[0]);
+         strcpy(PFARR[0], "_default");
          PFDST[1] = pf0->flag;
          PFLVL[1] = pf0->nupdate;
       }
+      else 
+         i = 1;
       for (pf=pfb; pf; pf = pf->next)
       {
-         if (pf->ptr > 0)
+         if (strcmp(args[pf->ptr], "all"))
          {
-            PFARR[i] = pf->ptr;
+            PFARR[i-1] = malloc(sizeof(char)*(strlen(args[pf->ptr])+1));
+            assert(PFARR[i-1]);
+            strcpy(PFARR[i-1], args[pf->ptr]);
             PFDST[i] = pf->flag;
             PFLVL[i] = pf->nupdate;
             i++;
@@ -485,6 +496,45 @@ ERR:
    return(obq);
 }
 
+static void WriteStringArrayToFile(FILE *fp, short n, char **s)
+{
+   short i, j;
+
+   assert(fwrite(&n, sizeof(short), 1, fp) == 1);
+   if (n)
+   {
+      assert(s);
+      for (i=0; i < n; i++)
+      {
+         assert(s[i]);
+         j = strlen(s[i]);
+         assert(fwrite(&j, sizeof(short), 1, fp) == 1);
+         assert(fwrite(s[i], sizeof(char), j, fp) == j);
+      }
+   }
+}
+static char **ReadStringArrayFromFile(FILE *fp)
+{
+   short n, i, j;
+   char **s;
+
+   assert(fread(&n, sizeof(short), 1, fp) == 1);
+   if (n)
+   {
+      s = malloc((n+1)*sizeof(char*));
+      assert(s);
+      s[n] = NULL;
+      for (i=0; i < n; i++)
+      {
+         assert(fread(&j, sizeof(short), 1, fp) == 1);
+         s[i] = malloc(sizeof(char)*(j+1));
+         assert(s[i]);
+         assert(fread(s[i], sizeof(char), j, fp) == j);
+         s[i][j] = '\0';
+      }
+   }
+   return(s);
+}
 static void WriteShortArrayToFile(FILE *fp, short n, short *sp)
 {
    assert(fwrite(&n, sizeof(short), 1, fp) == 1);
@@ -537,8 +587,8 @@ static void WriteMiscToFile(char *name)
       WriteShortArrayToFile(fp, n, optloop->pfarrs+1);
       WriteShortArrayToFile(fp, n, optloop->pfdist+1);
       assert(!optloop->abalign);  /* fix this later */
-      n = PFARR ? PFARR[0] : 0;
-      WriteShortArrayToFile(fp, n, PFARR+1);
+      n = PFDST ? PFDST[0] : 0;
+      WriteStringArrayToFile(fp, n, PFARR);
       WriteShortArrayToFile(fp, n, PFLVL+1);
       WriteShortArrayToFile(fp, n, PFDST+1);
    }
@@ -618,12 +668,17 @@ static void ReadMiscFromFile(char *name)
          optloop->blocks = NULL;
       optloop->next = NULL;
       if (PFARR)
+      {
+         for (i=PFDST[0]-1; i >= 0; i--)
+            if (PFARR[i])
+               free(PFARR[i]);
          free(PFARR);
+      }
       if (PFLVL)
          free(PFLVL);
       if (PFDST)
          free(PFDST);
-      PFARR = ReadShortArrayFromFile(fp);
+      PFARR = ReadStringArrayFromFile(fp);
       PFLVL = ReadShortArrayFromFile(fp);
       PFDST = ReadShortArrayFromFile(fp);
    }
@@ -1034,22 +1089,43 @@ struct optblkq *DefaultOptBlocks(void)
    return(base);
 }
 
+static short FindNameMatch(int n, short *pool, char *name)
+/*
+ * Given pool of ST entries, returns ST entry with STname matching name
+ */
+{
+   int i;
+   char *p;
+   assert(name);
+   for (i=0; i < n; i++)
+   {
+      p = STname[pool[i]-1];
+      if (p && !strcmp(p, name))
+         return(pool[i]);
+   }
+   return(0);
+}
+
 void UpdatePrefetchInfo()
 {
    int n, i, k;
-/*
- * If we don't have a default distance, be sure arrays are moving in loop
- */
    if (optloop && PFARR)
    {
-      if (PFARR[1] > 0)
+/*
+ *    If we don't have a default distance, be sure arrays are moving in loop
+ */
+      if (PFARR[0][0] != '_')
       {
-         for (n=PFARR[0]+1, i=1; i <n; i++)
+         n = PFDST[0] + 1;
+         optloop->pfarrs = malloc(sizeof(short)*n);
+         assert(optloop->pfarrs);
+         optloop->pfarrs[0] = n-1;
+         for (i=1; i < n; i++)
          {
-            assert(FindInShortList(optloop->pfarrs[0], optloop->pfarrs+1,
-                                   PFARR[i]));
+            k = FindNameMatch(optloop->varrs[0],optloop->varrs+1,PFARR[i-1]);
+            assert(k);
+            optloop->pfarrs[i] = k;
          }
-         optloop->pfarrs = PFARR;
          optloop->pfdist = PFDST;
          optloop->pfflag = PFLVL;
       }
@@ -1075,19 +1151,24 @@ void UpdatePrefetchInfo()
 /*
  *       Override default for non-def arrays
  */
-         for (n=PFARR[0]+1,i=2; i < n; i++)
+         for (n=PFDST[0]+1,i=2; i < n; i++)
          {
-            k = FindInShortList(optloop->pfarrs[0], optloop->pfarrs+1, 
-                                PFARR[i]);
+            k = FindNameMatch(optloop->pfarrs[0],optloop->pfarrs+1,PFARR[i-1]);
+            assert(k);
+            k = FindInShortList(optloop->pfarrs[0], optloop->pfarrs+1, k);
             assert(k);
             optloop->pfdist[k] = PFDST[i];
             optloop->pfflag[k] = PFLVL[i];
          }
-         free(PFARR);
          free(PFDST);
          free(PFLVL);
       }
-      PFARR = PFDST = PFLVL = NULL;
+      for (n=PFDST[0],i=0; i < n; i++)
+         if (PFARR[i])
+            free(PFARR[i]);
+      free(PFARR);
+      PFARR = NULL;
+      PFDST = PFLVL = NULL;
    }
 }
 
