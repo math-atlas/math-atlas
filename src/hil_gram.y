@@ -371,6 +371,7 @@ void para_list()
    while(idhead)
    {
       STdef(idhead->name, 0, n-i);
+fprintf(stderr, "\n %d. %s\n", n-i, idhead->name);
       idhead = idhead->next;
       i++;
    }

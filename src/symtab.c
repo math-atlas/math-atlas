@@ -365,7 +365,6 @@ void CreateLocalDerefs()
       fl = STflag[k];
       if (IS_PARA(fl) || IS_LOCAL(fl))
       {
-         SToff[k].sa[0] = SToff[k].i;
          switch(FLAG2PTYPE(fl))
          {
          case T_INT:

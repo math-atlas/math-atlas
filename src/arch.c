@@ -283,7 +283,8 @@ void Extern2Local(INSTQ *next, INSTQ *end, short rsav, int fsize)
       flag = STflag[i];
       if (IS_PARA(flag))
       {
-fprintf(stderr, "para #%d - '%s'\n", SToff[i].sa[0], STname[i]?STname[i]:"NULL");
+        fprintf(stderr, "para #%d - '%s', I=%d, flag=%d\n", SToff[i].sa[0], 
+                 STname[i]?STname[i]:"NULL", i, STflag[i]);
          assert(SToff[i].sa[0] <= NPARA);
          paras[SToff[i].sa[0]-1] = i;
          j++;
@@ -335,7 +336,7 @@ fprintf(stderr, "para #%d - '%s'\n", SToff[i].sa[0], STname[i]?STname[i]:"NULL")
       InsNewInst(NULL, next, COMMENT, STstrconstlookup("done archspec"), 0, 0);
    #endif
    #ifdef SPARC
-      nam[0] = '@@';
+      nam[0] = '@';
       nam[1] = 'i';
       nam[3] = '\0';
       for (j=i=0; i < NPARA; i++)
