@@ -148,6 +148,7 @@ enum inst
    VDST,                       /* [memA], vr0    : mem = vr0 */
    VDSTS,                      /* [mem], [vr0]  :  mem = vr[0] */
    VDMOV,                      /* [vr0], [vr1]   : vr0 = vr1 */
+   VDMOVS,                     /* [vr0], [vr1]   : vr0[0] = vr1[0] */
    VDADD,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 + vr2 */
    VDSUB,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 - vr2 */
    VDMUL,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
@@ -168,6 +169,7 @@ enum inst
    VFST,                       /* [memA], vr0    : mem = vr0 */
    VFSTS,                      /* [mem], [vr0]  :  mem = vr[0] */
    VFMOV,                      /* [vr0], [vr1]   : vr0 = vr1 */
+   VFMOVS,                     /* [vr0], [vr1]   : vr0[0] = vr1[0] */
    VFADD,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 + vr2 */
    VFSUB,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 - vr2 */
    VFMUL,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
@@ -369,16 +371,20 @@ char *instmnem[] =
 #define ACTIVE_INST(i_) ((i_) != COMMENT && (i_) != CMPFLAG)
 #define IS_BRANCH(i_) ((i_) >= FIRSTBRANCH && (i_) <= LASTBRANCH)
 #define IS_LOAD(i_)  ((i_) == LD || (i_) == FLD || (i_) == FLDD || \
-                      (i_) == VFLD || (i_) == LDS)
+                      (i_) == VFLD || (i_) == VDLD || (i_) == LDS || \
+                      (i_) == VFLDS || (i_) == VDLDS || \
+                      (i_) == VFLDL || (i_) == VFLDH || \
+                      (i_) == VDLDL || (i_) == VDLDH)
 #define IS_MOVE(i_) ((i_) == MOV || (i_) == FMOV || (i_) == FMOVD || \
-                     (i_) == VFMOV)
+                     (i_) == VFMOV || (i_) == VDMOV)
 #define IS_STORE(i_)  ((i_) == ST || (i_) == FST || (i_) == FSTD || \
-                       (i_) == VFST || (i_) == STS)
+                       (i_) == VFST || (i_) == VDST || (i_) == STS || \
+                       (i_) == VFSTS || (i_) == VDSTS)
 #define IS_CMP(i_) ((i_) == CMP || (i_) == CMPAND || (i_) == CMPS || \
                     (i_) == FCMP || (i_) == FCMPD || (i_) == VFCMP || \
+                    (i_) == VDCMP || \
                     (i_) == CFTBFI || (i_) == CFTBDI || (i_) == FCMPWD)
 #define IS_IOPCC(i_) ((i_) == ANDCC || (i_) == SUBCC || (i_) == ANDCC)
-#define IS_IARITH(i_)
 
 INSTQ *NewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,
                short dest, short src1, short src2);

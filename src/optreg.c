@@ -1083,7 +1083,7 @@ int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
  * instructions (inclusive).  If either is NULL, we take instbeg/end.
  */
 {
-   INSTQ *ip;
+   INSTQ *ip, *ip1;
    int CHANGE=0;
 
    assert(INUSETU2D);
@@ -1123,6 +1123,19 @@ int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
             break;
          case VFLD:
             ip->inst[0] = VFMOV;
+            break;
+         case VDLD:
+            ip->inst[0] = VDMOV;
+            break;
+         case VDLDS:
+            CalcThisUseSet(InsNewInst(NULL, NULL, ip, VDZERO, ip->inst[1],0,0));
+            ip->inst[0] = VDMOVS;
+            ip->inst[2] = -ig->reg;
+            break;
+         case VFLDS:
+            CalcThisUseSet(InsNewInst(NULL, NULL, ip, VFZERO, ip->inst[1],0,0));
+            ip->inst[0] = VFMOVS;
+            ip->inst[2] = -ig->reg;
             break;
          default:
             fprintf(stderr, "\n\nWARNING(%s,%d): inst %d being var2reged!!\n\n",

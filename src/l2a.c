@@ -1760,6 +1760,26 @@ struct assmln *lil2ass(BBLOCK *bbase)
          ap->next = PrintAssln("\tmovapd\t%s, %s\n", archvdregs[-VDREGBEG-op2],
                                archvdregs[-VDREGBEG-op1]);
          break;
+      case VDMOVS:
+/*
+ *       Allow vector-to-fp regs for reg asg opt
+ */
+         assert (op1 < 0 && op2 < 0);
+         op1 = -op1;
+         op2 = -op2;
+         if (op1 >= DREGBEG && op1 < DREGEND)
+            op1 = op1 - DREGBEG + VDREGBEG;
+         if (op2 >= DREGBEG && op2 < DREGEND)
+            op2 = op2 - DREGBEG + VDREGBEG;
+         op1 = -op1;
+         op2 = -op2;
+         if (op1 != op2)
+            sptr = "movlpd";
+         else sptr = "movapd";
+         ap->next = PrintAssln("\t%s\t%s, %s\n", sptr, 
+                               archvdregs[-VDREGBEG-op2],
+                               archvdregs[-VDREGBEG-op1]);
+         break;
       case VDMUL:
          assert(op1 == op2);
          ap->next = PrintAssln("\tmulpd\t%s, %s\n", GetDregOrDeref(op3),
@@ -1884,6 +1904,10 @@ struct assmln *lil2ass(BBLOCK *bbase)
       case VFMOV:
          ap->next = PrintAssln("\tmovaps\t%s, %s\n", archvfregs[-VFREGBEG-op2],
                                archvfregs[-VFREGBEG-op1]);
+         break;
+      case VFMOVS:
+         ap->next = PrintAssln("\tmovss\t%s, %s\n", archvdregs[-VFREGBEG-op2],
+                               archvdregs[-VFREGBEG-op1]);
          break;
       case VFMUL:
          assert(op1 == op2);
