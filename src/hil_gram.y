@@ -66,6 +66,7 @@ fprintf(stderr, "grammer setting rout_name='%s'\n", rout_name);
          {
             if (WhereAt > 2)
                yyerror("Improper ROUT_BEGIN statement");
+            CreateSysLocals();
             NumberLocalsByType();
             CreateLocalDerefs();
             WhereAt = 3;

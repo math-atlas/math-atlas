@@ -237,6 +237,11 @@ short STstrconstlookup(char *str)
    return(ret);
 }
 
+char *STi2str(short i)
+{
+   return(STname[i-1]);
+}
+
 void STsetoffi(short i, int off)
 {
     SToff[i-1].i = off;

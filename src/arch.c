@@ -87,10 +87,29 @@ short GetReg(short type)
    #define ASIZE  4
 #endif
 
+void CreateSysLocals()
+/*
+ *  If required, creates any locals needed to support instructions
+ */
+{
+#ifdef x86
+   extern int DTnzerod, DTabsd, DTnzero, DTabs;
+   if (DTnzerod == -1)
+      DTnzerod = STdef("_NEGZEROD", VEC_BIT | T_DOUBLE, 0);
+   if (DTabsd == -1)
+      DTabsd = STdef("_ABSVALD", VEC_BIT | T_DOUBLE, 0);
+   if (DTnzero == -1)
+      DTnzero = STdef("_NEGZERO", VEC_BIT | T_DOUBLE, 0);
+   if (DTabs == -1)
+      DTabs = STdef("_ABSVAL", VEC_BIT | T_DOUBLE, 0);
+#endif
+}
+
 void Param2Local(INSTQ *next, short rsav, int fsize)
 /*
  * After stack frame fully qualified, inserts proper store instructions before
- * next in queue in order to save parameters to local frame.
+ * next in queue in order to save parameters to local frame.  Also writes
+ * any values required by system to frame.
  */
 {
    extern int NPARA;
@@ -139,6 +158,26 @@ void Param2Local(INSTQ *next, short rsav, int fsize)
             j++;
             assert(IS_DOUBLE(flag));
          }
+      }
+      if (DTnzerod > 0)
+      {
+         InsNewInst(NULL, next, MOV, -ir, STiconstlookup(0), 0);
+         InsNewInst(NULL, next, ST, SToff[DTnzerod].sa[2], -ir, __LINE__);
+         InsNewInst(NULL, next, MOV, -ir, STiconstlookup(-2147483648), 0);
+         k = (SToff[DTnzerod].sa[2])<<2;
+         k = DT[k+3] + 4;
+         k = AddDerefEntry(-REG_SP, 0, 0, k);
+         InsNewInst(NULL, next, ST, k, -ir, __LINE__);
+      }
+      if (DTabsd)
+      {
+         InsNewInst(NULL, next, MOV, -ir, STiconstlookup(-1), 0);
+         InsNewInst(NULL, next, ST, SToff[DTabsd].sa[2], -ir, __LINE__);
+         InsNewInst(NULL, next, MOV, -ir, STiconstlookup(2147483647), 0);
+         k = (SToff[DTabsd].sa[2])<<2;
+         k = DT[k+3] + 4;
+         k = AddDerefEntry(-REG_SP, 0, 0, k);
+         InsNewInst(NULL, next, ST, k, -ir, __LINE__);
       }
    #endif
    #ifdef SPARC

@@ -115,6 +115,19 @@ static char *GetIregOrDeref(short id)
       return(GetDeref(id));
 }
 
+static char *GetDregOrDeref(short id)
+/*
+ * given an id, return string containing register name if less than zero,
+ * or a properly formated deref entry if greater than zero
+ */
+{
+   if (id < 0)
+      return(archdregs[-DREGBEG-id]);
+   else if (id)
+      return(GetDeref(id));
+}
+
+
 static char *GetIregOrConst(short id)
 /*
  * Given a id, return string containing a register name if less than zero,
@@ -197,6 +210,23 @@ struct assmln *lil2ass(INSTQ *head)
                                      GetDeref(op2));
          #endif
          break;
+      case FLDD:
+         #ifdef X86
+            ap->next = PrintAssln("\tmovsd\t%s,%s\n", GetDeref(op2),
+                                  archdregs[-DREGBEG-op1]);
+         #elif defined(SPARC)
+            ap->next = PrintAssln("\tldd\t%s,%s\n", GetDeref(op2),
+                                  archdregs[-DREGBEG-op1]);
+         #elif defined(PPC)
+            k = (op2-1)<<2;
+            if (DT[k+1])
+               ap->next = PrintAssln("\tlfdx\t%s,%s\n", archdregs[-DREGBEG-op1],
+                                     GetDeref(op2));
+            else
+               ap->next = PrintAssln("\tlfd\t%s,%s\n", archdregs[-DREGBEG-op1], 
+                                     GetDeref(op2));
+         #endif
+         break;
       case ST:
          #ifdef X86
 	    #if 0
@@ -222,6 +252,23 @@ struct assmln *lil2ass(INSTQ *head)
                                      GetDeref(op2));
             else
                ap->next = PrintAssln("\tstw\t%s,%s\n", archiregs[-IREGBEG-op1], 
+                                     GetDeref(op2));
+         #endif
+         break;
+      case FSTD:
+         #ifdef X86
+            ap->next = PrintAssln("\tmovsd\t%s,%s\n", archdregs[-DREGBEG-op2],
+                                  GetDeref(op1));
+         #elif defined(SPARC)
+            ap->next = PrintAssln("\tstd\t%s,%s\n", archdregs[-DREGBEG-op2],
+                                  GetDeref(op1));
+         #elif defined(PPC)
+            k = (op2-1)<<2;
+            if (DT[k+1])
+               ap->next = PrintAssln("\tstfdx\t%s,%s\n",archdregs[-DREGBEG-op1],
+                                     GetDeref(op2));
+            else
+               ap->next = PrintAssln("\tstfd\t%s,%s\n", archdregs[-DREGBEG-op1],
                                      GetDeref(op2));
          #endif
          break;
@@ -525,6 +572,188 @@ struct assmln *lil2ass(INSTQ *head)
             ap->next = PrintAssln("\tblr");
          #endif
          break;
+
+      case FMACD:
+         #ifdef X86
+            ap->next = PrintAssln("\tUNIMP\n");
+	    fko_error(__LINE__, "FMACD found in x86 code!");
+         #elif defined(SPARC)
+            ap->next = PrintAssln("\tUNIMP\n");
+	    fko_error(__LINE__, "FMACD found in SPARC code!");
+         #elif defined(PPC)
+            ap->next = PrintAssln("\tfmadd\t%s,%s,%s,%s\n", 
+	       archdregs[-DREGBEG-op1], archdregs[-DREGBEG-op2],
+	       archdregs[-DREGBEG-op3], archdregs[-DREGBEG-op1]);
+         #endif
+         break;
+      case FMULD:
+         #ifdef X86
+	    assert (op1 == op2);
+            ap->next = PrintAssln("\tmulsd\t%s,%s\n", GetDregOrDeref(op3),
+	                          archdregs[-DREGBEG-op1]);
+         #elif defined(SPARC)
+            ap->next = PrintAssln("\tfmuld\t%s,%s,%s\n", 
+	       archdregs[-DREGBEG-op2], archdregs[-DREGBEG-op3],
+	       archdregs[-DREGBEG-op1]);
+         #elif defined(PPC)
+            ap->next = PrintAssln("\tfmul\t%s,%s,%s\n", 
+	       archdregs[-DREGBEG-op1], archdregs[-DREGBEG-op2],
+	       archdregs[-DREGBEG-op3]);
+         #endif
+         break;
+      case FDIVD:
+         #ifdef X86
+	    assert (op1 == op2);
+            ap->next = PrintAssln("\tdivsd\t%s,%s\n", GetDregOrDeref(op3),
+	                          archdregs[-DREGBEG-op1]);
+         #elif defined(SPARC)
+            ap->next = PrintAssln("\tfdivd\t%s,%s,%s\n", 
+	       archdregs[-DREGBEG-op2], archdregs[-DREGBEG-op3],
+	       archdregs[-DREGBEG-op1]);
+         #elif defined(PPC)
+            ap->next = PrintAssln("\tfdiv\t%s,%s,%s\n", 
+	       archdregs[-DREGBEG-op1], archdregs[-DREGBEG-op2],
+	       archdregs[-DREGBEG-op3]);
+         #endif
+         break;
+      case FADDD:
+         #ifdef X86
+	    assert (op1 == op2);
+            ap->next = PrintAssln("\taddsd\t%s,%s\n", GetDregOrDeref(op3),
+	                          archdregs[-DREGBEG-op1]);
+         #elif defined(SPARC)
+            ap->next = PrintAssln("\tfaddd\t%s,%s,%s\n", 
+	       archdregs[-DREGBEG-op2], archdregs[-DREGBEG-op3],
+	       archdregs[-DREGBEG-op1]);
+         #elif defined(PPC)
+            ap->next = PrintAssln("\tfadd\t%s,%s,%s\n", 
+	       archdregs[-DREGBEG-op1], archdregs[-DREGBEG-op2],
+	       archdregs[-DREGBEG-op3]);
+         #endif
+         break;
+      case FSUBD:
+         #ifdef X86
+	    assert (op1 == op2);
+            ap->next = PrintAssln("\tsubsd\t%s,%s\n", GetDregOrDeref(op3),
+	                          archdregs[-DREGBEG-op1]);
+         #elif defined(SPARC)
+            ap->next = PrintAssln("\tfsubd\t%s,%s,%s\n", 
+	       archdregs[-DREGBEG-op2], archdregs[-DREGBEG-op3],
+	       archdregs[-DREGBEG-op1]);
+         #elif defined(PPC)
+            ap->next = PrintAssln("\tfsub\t%s,%s,%s\n", 
+	       archdregs[-DREGBEG-op1], archdregs[-DREGBEG-op2],
+	       archdregs[-DREGBEG-op3]);
+         #endif
+         break;
+      case FCMPD:
+         #ifdef X86
+            ap->next = PrintAssln("\tcomisd\t%s,%s\n", GetDregOrDeref(op2),
+	                          archdregs[-DREGBEG-op1]);
+         #elif defined(SPARC)
+            ap->next = PrintAssln("\tfcmped\t%s,%s\n", 
+	       archdregs[-DREGBEG-op1], archdregs[-DREGBEG-op2]);
+         #elif defined(PPC)
+            ap->next = PrintAssln("\tfcmpo\t%s,%s,%s\n", 
+	       archdregs[-DREGBEG-op1], archdregs[-DREGBEG-op2],
+	       archdregs[-DREGBEG-op3]);
+         #endif
+         break;
+      case FABSD:
+         #ifdef X86
+	    assert(op1 == op2);
+	    assert(DTabsd);
+            ap->next = PrintAssln("\tandnpd\t%s,%s\n", GetDregOrDeref(DTabsd),
+	                          archdregs[-DREGBEG-op1]);
+         #elif defined(SPARC)
+            ap->next = PrintAssln("\tfabsd\t%s,%s\n", 
+	       archdregs[-DREGBEG-op2], archdregs[-DREGBEG-op1]);
+         #elif defined(PPC)
+            ap->next = PrintAssln("\tfabs\t%s,%s\n", 
+	       archdregs[-DREGBEG-op1], archdregs[-DREGBEG-op2]);
+         #endif
+         break;
+      case FNEGD:
+         #ifdef X86
+	    assert(op1 == op2);
+	    assert(DTor);
+            ap->next = PrintAssln("\txorpd\t%s,%s\n", GetDregOrDeref(DTnzerod),
+	                          archdregs[-DREGBEG-op1]);
+         #elif defined(SPARC)
+            ap->next = PrintAssln("\tfabsd\t%s,%s\n", 
+	       archdregs[-DREGBEG-op2], archdregs[-DREGBEG-op1]);
+         #elif defined(PPC)
+            ap->next = PrintAssln("\tfabs\t%s,%s\n", 
+	       archdregs[-DREGBEG-op1], archdregs[-DREGBEG-op2]);
+         #endif
+         break;
+      case CMPFLAG:
+         #ifdef X86
+	    ap->next = PrintAssln("# %s %s %s\n", STi2str(op1), 
+	                          STi2str(op2), STi2str(op3));
+         #elif defined(SPARC)
+	    ap->next = PrintAssln("! %s %s %s\n", STi2str(op1), 
+	                          STi2str(op2), STi2str(op3));
+         #elif defined(PPC)
+	       ap->next = PrintAssln("# %s %s %s\n", STi2str(op1), 
+	                             STi2str(op2), STi2str(op3));
+         #endif
+         break;
+/*
+ *  HERE HERE HERE: need special case for when moving to fp stack (for return)!
+ */
+      case FMOV:
+      case FMOVD:
+      case LDL:
+      case STL:
+      case SHLL:
+      case SHLCCL:
+      case SHRL:
+      case SHRCCL:
+      case SARL:
+      case ADDL:
+      case ADDCCL:
+      case SUBL:
+      case SUBCCL:
+      case MULL:
+      case UMULL:
+      case DIVL:
+      case UDIVL:
+      case CMPL:
+      case MOVL:
+      case NEGL:
+      case ABSL:
+      case JEQ:
+      case JNE:
+      case JLT:
+      case JLE:
+      case JGT:
+      case JGE:
+      case PREFR:
+      case PREFW:
+      case RET:
+      case PREFRS:
+      case PREFWS:
+      case FLD:
+      case FST:
+      case FMAC:
+      case FMUL:
+      case FDIV:
+      case FADD:
+      case FSUB:
+      case FABS:
+      case FCMP:
+      case FNEG:
+      case CVTIL:
+      case CVTLI:
+      case CVTFI:
+      case CVTIF:
+      case CVTDI:
+      case CVTID:
+      case CVTFL:
+      case CVTLF:
+      case CVTDL:
+      case CVTLD:
       default:
          ap->next = PrintAssln("ERROR:\t%d %d %d %d\n", 
                                ip->inst[0], op1, op2, op3);

@@ -83,6 +83,7 @@ enum inst
    FABS,                        /* [fr0], [fr1] : fr0 = abs(fr1) */
    FCMP,                        /* [fr0], [fr1] : set [cc] by (fr0 - fr1) */
    FNEG,                        /* [fr0], [fr1] : fr0 = -fr1 */
+   FMOV,                        /* fr0 = fr1 */
 /*
  * Floating point instructions, double precision
  */
@@ -96,6 +97,7 @@ enum inst
    FABSD,                       /* [fr0], [fr1] : fr0 = abs(fr1) */
    FCMPD,                       /* [fr0], [fr1] : set [cc] by (fr0 - fr1) */
    FNEGD,                       /* [fr0], [fr1] : fr0 = -fr1 */
+   FMOVD,                       /* fr0 = fr1 */
 /*
  * Vector instructions, add to these later (double, scalar).
  */

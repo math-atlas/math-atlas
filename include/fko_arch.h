@@ -87,19 +87,22 @@
    #define NIR 8
    #define NSIR 3
    #define NFR   8                      /* # of float regs */
+   #define TNFR  9
+   #define STFP -TNFR
    #define NSFR  8
    #define NDR   8                      /* # of double regs */
    #define NSDR  8
    #define IRETREG 4
-   #define FRETREG (1+FREGBEG)
-   #define DRETREG (1+DREGBEG)
+   #define FRETREG (TNFR+FREGBEG)
+   #define DRETREG (1+NFR)
    #ifdef ARCH_DECLARE
       char *archiregs[NIR] = 
       {"@esp", "@edx", "@ecx", "@eax", "@ebp", "@ebx", "@esi", "@edi"};
-      char *archfregs[NFR] = 
-      {"@xmm0", "@xmm1", "@xmm2", "@xmm3", "@xmm4", "@xmm5", "@xmm6", "@xmm7"};
+      char *archfregs[TNFR] = 
+      {"@xmm0", "@xmm1", "@xmm2", "@xmm3", "@xmm4", "@xmm5", "@xmm6", "@xmm7",
+       "@st"};
    #else
-      extern char *archiregs[NIR], *archfregs[NFR];
+      extern char *archiregs[NIR], *archfregs[TNFR];
    #endif
    #define archdregs archfgregs
 #endif

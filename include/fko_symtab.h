@@ -58,5 +58,6 @@ void NumberLocalsByType(void);
 void CreateLocalDerefs(void);
 void CorrectLocalOffsets(int ldist);
 int STlen(void);
+char *STi2str(short i);
 
 #endif

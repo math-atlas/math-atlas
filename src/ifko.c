@@ -8,7 +8,7 @@ int main(int nargs, char **args)
 {
    FILE *fpin;
    extern FILE *yyin;
-   extern int LOCALIGN, LOCSIZE;
+   extern int LOCALIGN, LOCSIZE, DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0;
    extern INSTQ *iqhead;
    struct assmln *abase;
    int i, savr[64];

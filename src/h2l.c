@@ -391,9 +391,11 @@ void DoArith(short dest, short src0, char op, short src1)
          break;
       case T_FLOAT:
          inst = FNEG;
+	 DTnzerod = -1;
          break;
       case T_DOUBLE:
          inst = FNEGD;
+	 DTnzerod = -1;
          break;
       }
       break;
@@ -410,9 +412,11 @@ void DoArith(short dest, short src0, char op, short src1)
 */
       case T_FLOAT:
          inst = FABS;
+	 DTabs = -1;
          break;
       case T_DOUBLE:
          inst = FABSD;
+	 DTabsd = -1;
          break;
       default:
          fko_error(__LINE__, "ABS available for floating point only!\n");
@@ -427,26 +431,30 @@ void DoArith(short dest, short src0, char op, short src1)
 void DoReturn(short rret)
 {
    int retreg, srcreg;
+   int mov;
    if (rret)
    {
       switch(FLAG2TYPE(STflag[rret-1]))
       {
       case T_INT:
+         mov = MOV;
          rout_flag |= IRET_BIT;
          retreg = IRETREG;
          break;
       case T_FLOAT:
+         mov = FMOV;
          rout_flag |= FRET_BIT;
          retreg = FRETREG;
          break;
       case T_DOUBLE:
+         mov = FMOVD;
          rout_flag |= DRET_BIT;
          retreg = DRETREG;
          break;
       }
       if (IS_CONST(STflag[rret-1])) srcreg = -rret;
       else srcreg = LocalLoad(rret);
-      InsNewInst(NULL, NULL, MOV, -retreg, -srcreg, 0);
+      InsNewInst(NULL, NULL, mov, -retreg, -srcreg, 0);
       InsNewInst(NULL, NULL, JMP, STstrconstlookup("IFKO_EPILOGUE"), 0, 0);
    }
    else InsNewInst(NULL, NULL, JMP, STstrconstlookup("IFKO_EPILOGUE"), 0, 0);
