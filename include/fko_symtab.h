@@ -63,7 +63,8 @@ void NumberLocalsByType(void);
 void CorrectLocalOffsets(int ldist);
 int STlen(void);
 char *STi2str(short i);
-void CreateLocalDerefs(int);
+void CreateLocalDerefs(void);
+void UpdateLocalDerefs(int);
 void AddStaticData(char *name, short align, short len, void *vbytarr);
 void KillStaticData(void);
 

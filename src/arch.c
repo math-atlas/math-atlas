@@ -129,13 +129,25 @@ void CreateSysLocals()
 #ifdef X86
    extern int DTnzerod, DTabsd, DTnzero, DTabs;
    if (DTnzerod == -1)
+   {
       DTnzerod = STdef("_NEGZEROD", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
+      SToff[DTnzerod-1].sa[2] = AddDerefEntry(-REG_SP, 0, -DTnzerod, -1);
+   }
    if (DTabsd == -1)
+   {
       DTabsd = STdef("_ABSVLD", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
+      SToff[DTabsd-1].sa[2] = AddDerefEntry(-REG_SP, 0, -DTabsd, -1);
+   }
    if (DTnzero == -1)
+   {
       DTnzero = STdef("_NEGZERO", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
+      SToff[DTnzero-1].sa[2] = AddDerefEntry(-REG_SP, 0, -DTnzero, -1);
+   }
    if (DTabs == -1)
+   {
       DTabs = STdef("_ABSVAL", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
+      SToff[DTabs-1].sa[2] = AddDerefEntry(-REG_SP, 0, -DTabs, -1);
+   }
 #else
 #endif
 }
@@ -886,4 +898,26 @@ fprintf(stderr, "Local offset=%d\n", Loff);
               STstrconstlookup("END OF FUNCTION PROLOGUE"), 0, 0);
    InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
    CreateEpilogue(tsize, Soff, SAVESP, nir, ir, nfr, fr, ndr, dr);
+}
+void KillUnusedLocals()  /* HERE, HERE: move to symtab */
+{
+}
+void FixFrame()
+/*
+ * As final step before lil-to-assembly conversion, fix the frame info, and
+ * generate function prologue and epilogue
+ */
+{
+   extern int LOCALIGN, LOCSIZE;
+   int i, savr[64];
+   CreateSysLocals();
+   KillUnusedLocals();
+   NumberLocalsByType();
+   #ifdef X86_64
+      UpdateLocalDerefs(8);
+   #else
+      UpdateLocalDerefs(4);
+   #endif
+   for (i=0; i < NIR; i++) savr[i] = i+2;
+   CreatePrologue(LOCALIGN, LOCSIZE, 0, NIR-1, savr, 0, NULL, 0, NULL);
 }

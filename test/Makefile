@@ -52,7 +52,7 @@ xftst6 : mftst6.o ftst6.o
 xftst7 : mftst7.o ftst7.o
 	$(CC) $(CCFLAGS) -o $@ mftst7.o ftst7.o
 
-dbuild :xdtst0 xdtst1 xdtst2 xdtst3 xdtst4 xdtst5 xdtst6 xdtst7
+dbuild :xdtst0 xdtst1 xdtst2 xdtst3 xdtst4 xdtst5 xdtst6 xdtst7 xdtst8
 drun:
 	./xdtst0
 	./xdtst1
@@ -62,6 +62,7 @@ drun:
 	./xdtst5
 	./xdtst6
 	./xdtst7
+	./xdtst8
 
 xdtst0 : mdtst0.o dtst0.o
 	$(CC) $(CCFLAGS) -o $@ mdtst0.o dtst0.o
@@ -79,6 +80,8 @@ xdtst6 : mdtst6.o dtst6.o
 	$(CC) $(CCFLAGS) -o $@ mdtst6.o dtst6.o
 xdtst7 : mdtst7.o dtst7.o
 	$(CC) $(CCFLAGS) -o $@ mdtst7.o dtst7.o
+xdtst8 : mdtst8.o dtst8.o
+	$(CC) $(CCFLAGS) -o $@ mdtst8.o dtst8.o
 
 ibuild :xitst0 xitst1 xitst2 xitst3 xitst4 xitst5 xitst6 xitst7 xitst8 xitst9 \
         xitst10 xitst11

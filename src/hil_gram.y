@@ -84,13 +84,8 @@ fprintf(stderr, "grammer setting rout_name='%s'\n", rout_name);
          {
             if (WhereAt > 2)
                yyerror("Improper ROUT_BEGIN statement");
-            CreateSysLocals();
-            NumberLocalsByType();
-            #ifdef X86_64
-               CreateLocalDerefs(8);
-            #else
-               CreateLocalDerefs(4);
-            #endif
+            
+            CreateLocalDerefs();
             WhereAt = 3;
          }
          | ROUT_END
@@ -240,7 +235,7 @@ arith : ID '=' ID '+' avar {DoArith($1, $3, '+', $5); }
       | ID '=' ID RSHIFT avar {DoArith($1, $3, '>', $5); }
       | ID '=' ID LSHIFT avar {DoArith($1, $3, '<', $5); }
       | ID PE avar         {DoArith($1, $1, '+', $3); }
-      | ID '=' ABST        {DoArith($1, $1, 'a', 0); }
+      | ID '=' ABST avar   {DoArith($1, $4, 'a', 0); }
       | ID '=' '-' ID      {DoArith($1, $4, 'n', 0); }
       | ID PE ID '*' avar  {DoArith($1, $3, 'm', $5); }
       ;

@@ -12,16 +12,13 @@ int main(int nargs, char **args)
    extern FILE *yyin;
    extern INSTQ *iqhead;
    struct assmln *abase;
-   extern int LOCALIGN, LOCSIZE; 
-   int i, savr[64];
 
-   for (i=0; i < NIR; i++) savr[i] = i+2;
    fpin = fopen(args[1], "r");
    assert(fpin);
    yyin = fpin;
    yyparse();
    fclose(fpin);
-   CreatePrologue(LOCALIGN, LOCSIZE, 0, NIR-1, savr, 0, NULL, 0, NULL);
+   FixFrame();
    abase = lil2ass(iqhead);
    dump_assembly(stdout, abase);
    KillAllAssln(abase);

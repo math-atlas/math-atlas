@@ -341,7 +341,6 @@ void NumberLocalsByType()
       }
       if (IS_PARA(fl) || IS_LOCAL(fl))
       {
-         SToff[k].sa[0] = SToff[k].i;
          type = FLAG2PTYPE(fl);
          switch(type)
          {
@@ -363,7 +362,30 @@ void NumberLocalsByType()
    }
 }
 
-void CreateLocalDerefs(int isize)
+void CreateLocalDerefs()
+/*
+ * This routine creates placeholder deref entries for each local variable.
+ * The correct offsets will be figured as essentially the last step before
+ * lil-to-assembly conversion. 
+ * For paras, moves para # to SToff[].sa[0].
+ */
+{
+   short k;
+   int fl, nl=0;
+   extern int NPARA;
+   for (k=0; k != N; k++)
+   {
+      fl = STflag[k];
+      if (IS_PARA(fl))
+      {
+         SToff[k].sa[0] = SToff[k].i;
+         SToff[k].sa[2] = AddDerefEntry(-REG_SP, 0, -k, 0);
+      }
+      else if (IS_LOCAL(fl))
+         SToff[k].sa[2] = AddDerefEntry(-REG_SP, 0, -k, 0);
+   }
+}
+void UpdateLocalDerefs(int isize)
 /*
  * Given numbered locals, creates derefs for local access, assuming local
  * area starts at the stack pointer.  Puts DT[i+2] = -1 to denote that
@@ -404,24 +426,9 @@ void CreateLocalDerefs(int isize)
             fprintf(stderr, "%d: Unknown type %d!\n", __LINE__, FLAG2PTYPE(fl));
             exit(-1);
          }
-#if 0
-/*
- *       Adjust caller-frame deref to use reference in this frame
- */
-         if (IS_PARA(fl)) 
-         {
-            h = (SToff[k].sa[2]-1)<<2;
-            SToff[k].sa[2] = AddDerefEntry(-REG_SP, 0, -1, off);
-            i = (SToff[k].sa[2]-1)<<2;
-            DT[h] = DT[i];
-            DT[h+1] = DT[i+1];
-            DT[h+2] = DT[i+2];
-            DT[h+3] = DT[i+3];
-         }
-         else
-#endif
-         SToff[k].sa[2] = AddDerefEntry(-REG_SP, 0, -1, off);
-         fprintf(stderr, "%s, DT#=%d\n", STname[k], SToff[k].sa[2]);
+         i = (SToff[k].sa[2]-1)<<2;
+         DT[i+3] = off;
+         fprintf(stderr, "%s,%d DT#=%d, off=%d\n", STname[k],k+1,SToff[k].sa[2],off);
       }
    }
    LOCALIGN = GetArchAlign(nvdloc, nvfloc, ndloc, nfloc, nlloc, niloc);
@@ -447,9 +454,9 @@ void CorrectLocalOffsets(int ldist)
    int i, k=(Ndt<<2);
    for (i=0; i != k; i += 4)
    {
-      if (DT[i] == -REG_SP && DT[i+1] == 0 && DT[i+2] == -1)
+      if (DT[i] == -REG_SP && DT[i+1] == 0 && DT[i+2] < 0)
       {
-         DT[i+2] = 0;
+         DT[i+2] = 1;
          DT[i+3] += ldist;
       }
    }

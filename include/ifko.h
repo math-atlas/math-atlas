@@ -29,4 +29,5 @@
  */
 int GetPtrType(void);
 
+#define IFKO_DEBUG_LEVEL 1
 #endif
