@@ -880,6 +880,7 @@ void SortLoops(short maxdepth)
    assert(!loopq);
    loopq = lbase;
 }
+
 void FinalizeLoops()
 {
    LOOPQ *lp;

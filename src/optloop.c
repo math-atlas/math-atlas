@@ -93,8 +93,8 @@ void IndividualizeDuplicatedBlockList(int ndup, BLIST *scope)
    {
       if (bl->blk->ilab)
       {
-         assert(bl->blk->inst1->inst[0] == LABEL && 
-                bl->blk->inst1->inst[1] == bl->blk->ilab);
+         assert(bl->blk->ainst1->inst[0] == LABEL && 
+                bl->blk->ainst1->inst[1] == bl->blk->ilab);
          sp = STname[bl->blk->ilab-1];
 /*
  *       Need to increase ndup, not add whole prefix
@@ -142,6 +142,116 @@ void IndividualizeDuplicatedBlockList(int ndup, BLIST *scope)
    KillAllLocinit(lbase);
 }
 
+BBLOCK *GetFallPath(BBLOCK *head, int loopblks, int inblks, int tails,
+                    int fallblks)
+/*
+ * Starting at head, finds the fall thru path, stopping when the fall-thru
+ * block is a loop tail (in tails) or succ is not fall-thru
+ * (a block we've already duped (inblks) is illegal).
+ * Whole path may then be duped right after last block in path.
+ * RETURNS: the block to add the path after
+ */
+{
+   BBLOCK *bp;
+
+   SetVecAll(fallblks, 0);
+   if (!head)
+      return(NULL);
+   if (BitVecCheck(inblks, head->bnum-1) || !BitVecCheck(loopblks,head->bnum-1))
+      return(NULL);
+fprintf(stderr, "tails = %s\n", PrintVecList(tails, 1));
+   for (bp = head; bp; bp = bp->down)
+   {
+fprintf(stderr, "scoping blk=%d\n", bp->bnum);
+/*
+ *    If we've already added something in the path, we've got an inner
+ *    loop, which is presently not allowed.
+ */
+      assert(!BitVecCheck(inblks, bp->bnum-1));
+/*
+ *    Add block to fall-thru path, and blocks that have been added
+ */
+      SetVecBit(fallblks, bp->bnum-1, 1);
+      SetVecBit(inblks, bp->bnum-1, 1);
+/*
+ *    Path complete if we've added tail of non-unrolled loop or if fall-thru
+ *    not a succ
+ */
+      if (BitVecCheck(tails, bp->bnum-1) ||
+          (bp->usucc != bp->down && bp->csucc != bp->down))
+         break;
+      
+   }
+   assert(bp);
+   return(bp);
+}
+
+void InsUnrolledCode(int unroll, BLIST **dupblks, BBLOCK *head,
+                     int loopblks, int inblks, int tails, int fallblks)
+{
+   BBLOCK *prev, *bpN, *bp0, bplast;
+   int i, k, n;
+   static int II=0;
+
+/*
+ * Return if head not in loop or if we've already handled it
+ */
+   if (!BitVecCheck(loopblks, head->bnum-1) || BitVecCheck(inblks,head->bnum-1))
+      return;
+/*
+ * Find fall-through path to duplicate
+ */
+   prev = GetFallPath(head, loopblks, inblks, tails, fallblks);
+   if (prev)
+   {
+/*
+ *    Count blocks in path
+ */
+      for (bp0=head,n=0; bp0 != prev->down; n++,bp0 = bp0->down);
+/*
+ *    Add unrolled paths in order, one-by-one, to loop
+ */
+      for (i=1; i < unroll; i++)
+      {
+/*
+ *       For each original block, find it's analogue in the unrolled block,
+ *       and add them in order below the final block in the path
+ */
+         for (k=0,bp0=head; k != n; k++,bp0 = bp0->down)
+         {
+            bpN = FindBlockInListByNumber(dupblks[i-1], bp0->bnum);
+            bpN->up = prev;
+            bpN->down = prev->down;
+            prev->down = bpN;
+            prev = bpN;
+         }
+      }
+   }
+/*
+ * Try to build paths based on successors
+ */
+   if (head->usucc)
+      InsUnrolledCode(unroll, dupblks, head->usucc, loopblks,
+                      inblks, tails, fallblks);
+   if (head->csucc)
+      InsUnrolledCode(unroll, dupblks, head->csucc, loopblks,
+                      inblks, tails, fallblks);
+}
+
+void InsertUnrolledCode(LOOPQ *lp, int unroll, BLIST **dupblks)
+{
+   int tails, fallblks, inblks;
+
+   tails = BlockList2BitVec(lp->tails);
+   fallblks = NewBitVec(32);
+   inblks = NewBitVec(32);
+   SetVecAll(inblks, 0);
+   InsUnrolledCode(unroll, dupblks, lp->header, lp->blkvec, 
+                   inblks, tails, fallblks);
+   KillBitVec(fallblks);
+   KillBitVec(inblks);
+}
+
 ILIST *FindIndexRef(BLIST *scope, short I)
 /*
  * Finds all LDs from I in given scope.
@@ -184,42 +294,46 @@ struct ptrinfo *FindMovingPointers(BLIST *scope)
  *       Look for a store to a pointer, and then see how the pointer was
  *       changed to cause the store
  */
-         if (ip->inst[0] == ST)
+         if (ip->inst[0] == ST && ip->prev && 
+             (ip->prev->inst[0] == ADD || ip->prev->inst[0] == SUB))
          {
-            k = ip->inst[1]-1;
-            flag = STflag[k];
-            if (IS_PTR(flag) && ip->prev && 
-                (ip->prev->inst[0] == ADD || ip->prev->inst[0] == SUB))
+            k = FindLocalFromDT(ip->inst[1]);
+            if (k)
             {
-/*
- *             Remove these restrictions later to allow things like
- *             ptr0 += ptr1 or ptr0 = ptr0 + ptr1
- */
-               #if IFKO_DEBUG_LEVEL >= 1
-                  assert(ip->prev->inst[1] == ip->inst[2]);
-               #endif
-               p = FindPtrinfo(pbase, k+1);
-               if (!p)
+/* ERROR : k is DT entry, not ST entry, need to find ST */
+               flag = STflag[k];
+               if (IS_PTR(flag))
                {
-                  pbase = p = NewPtrinfo(k+1, 0, pbase);
-                  p->nupdate = 1;
-                  if (ip->prev->inst[0] == ADD)
-                     p->flag |= PTRF_INC;
-                  if (ip->inst[2] == ip->prev->inst[2])
+/*
+ *                Remove these restrictions later to allow things like
+ *                ptr0 += ptr1 or ptr0 = ptr0 + ptr1
+ */
+                  #if IFKO_DEBUG_LEVEL >= 1
+                     assert(ip->prev->inst[1] == ip->inst[2]);
+                  #endif
+                  p = FindPtrinfo(pbase, k+1);
+                  if (!p)
                   {
-                     j = ip->prev->inst[3];
-                     if (j > 0 && IS_CONST(STflag[j-1]))
+                     pbase = p = NewPtrinfo(k+1, 0, pbase);
+                     p->nupdate = 1;
+                     if (ip->prev->inst[0] == ADD)
+                        p->flag |= PTRF_INC;
+                     if (ip->inst[2] == ip->prev->inst[2])
                      {
-                        p->flag |= PTRF_CONSTINC;
-                        if (SToff[j-1].i == type2len(FLAG2TYPE(flag)))
-                           p->flag |= PTRF_CONTIG;
+                        j = ip->prev->inst[3];
+                        if (j > 0 && IS_CONST(STflag[j-1]))
+                        {
+                           p->flag |= PTRF_CONSTINC;
+                           if (SToff[j-1].i == type2len(FLAG2TYPE(flag)))
+                              p->flag |= PTRF_CONTIG;
+                        }
                      }
                   }
-               }
-               else
-               {
-                  p->nupdate++;
-                  p->flag = 0;
+                  else
+                  {
+                     p->nupdate++;
+                     p->flag = 0;
+                  }
                }
             }
          }
@@ -227,6 +341,7 @@ struct ptrinfo *FindMovingPointers(BLIST *scope)
    }
    return(pbase);
 }
+
 INSTQ *KillPointerUpdates(struct ptrinfo *pbase, int UR)
 /*
  * This function kills all updates pointed to by pi, so they can be done
@@ -245,7 +360,6 @@ INSTQ *KillPointerUpdates(struct ptrinfo *pbase, int UR)
    int reg;
    short inc;
 
-/*   pbase = FindMovingPointers(scope); */
 /*
  * For now, only unroll constant increments, and require that ptrs are
  * incremented only once staticly (even two seperate paths will disqualify).
@@ -441,6 +555,7 @@ void KillCompflagInRange(BLIST *base, enum comp_flag start, enum comp_flag end)
              ip->inst[1] >= start && ip->inst[1] <= end)
          {
             ip = DelInst(ip);
+            if (!ip) break;
             ip = ip->prev;
          }
       }
@@ -572,10 +687,15 @@ static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
 }
 
 void AddLoopControl(LOOPQ *lp, INSTQ *ipinit, INSTQ *ipupdate, INSTQ *iptest)
+/*
+ * Assumes loop preheader and tails info up-to-date
+ */
 {
    INSTQ *ip, *ipl;
    BLIST *bl;
 
+fprintf(stderr, "%s(%d), %d,%d,%d tails=%d\n", __FILE__, __LINE__, ipinit, ipupdate, iptest, lp->tails);
+   assert(lp->tails);
    ipl = FindCompilerFlag(lp->preheader, CF_LOOP_INIT);
    for (ip = ipinit; ip; ip = ip->next)
       ipl = InsNewInst(NULL, ipl, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
@@ -596,8 +716,11 @@ void AddLoopControl(LOOPQ *lp, INSTQ *ipinit, INSTQ *ipupdate, INSTQ *iptest)
          assert(ipl);
       #endif
       for (ip = iptest; ip; ip = ip->next)
+      {
+PrintThisInst(stderr, 0, ip);
          ipl = InsNewInst(NULL, ipl, NULL, ip->inst[0], ip->inst[1],
                           ip->inst[2], ip->inst[3]);
+      }
    }
 }
 
@@ -638,8 +761,8 @@ void OptimizeLoopControl(LOOPQ *lp, /* Loop whose control should be opt */
    {
       if (i)
          fprintf(stderr, "\nLoop already in SimpleLC!!!\n\n");
-      else
-         fprintf(stderr, "\nNo index refs in loop allow SimpleLC!!!\n\n");
+      else if (il)
+         fprintf(stderr, "\nNo index refs (%d) allowed SimpleLC!!!\n\n", il);
       SimpleLC(lp, unroll, &ipinit, &ipupdate, &iptest);
    }
    if (il)
@@ -699,7 +822,7 @@ BBLOCK *DupCFScope(short ivscp0, /* original scope */
       assert(head->ainst1->inst[0] == LABEL && 
              head->ainst1->inst[1] == head->ilab);
       sp = DupedLabelName(dupnum, head->ilab);
-      nhead->ilab = STlabellookup(sp);
+      nhead->ainst1->inst[1] = nhead->ilab = STlabellookup(sp);
    }
 /*
  * If block ends with a jump to a block in duplicated scope, change the block
@@ -749,42 +872,19 @@ void UpdateUnrolledIndices(BLIST *scope, int UR)
    assert(0);
 }
 
-void UpdateUnrolledPointers(BLIST *scope, int UR)
-/*
- * Adds (UR*sizeof) to all moving pointers in scope
- */
-{
-   struct ptrinfo *pi, *pbase;
-   ILIST *il;
-   short inc;
-
-   pbase = FindMovingPointers(scope);
-   for (pi=pbase; pi; pi = pi->next)
-   {
-/*
- *    For now, only unroll contiguous refs
- */
-      assert(pi->flag & PTRF_CONTIG);
-      inc = type2len(FLAG2TYPE(STflag[pi->ptr-1]));
-      if (!(pi->flag & PTRF_INC))
-         inc = -inc;
-      for (il=pi->ilist; il; il = il->next)
-      {
-      }
-   }
-}
-
 int UnrollLoop(LOOPQ *lp, int unroll)
 {
    short iv;
    BBLOCK *newCF;
-   BLIST **dupblks, *bl;
+   BLIST **dupblks, *bl, *ntails=NULL;
    ILIST *il;
-   INSTQ *ippost;
+   INSTQ *ippost=NULL;
    struct ptrinfo *pi;
    int i, UsesIndex=1, UsesPtrs=1;
    enum comp_flag kbeg, kend;
    extern int FKO_BVTMP;
+   extern BBLOCK *bbbase;
+FILE *fpout;
 
    KillLoopControl(lp);
    il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
@@ -842,6 +942,7 @@ int UnrollLoop(LOOPQ *lp, int unroll)
  */
       if (UsesIndex)
          UpdateUnrolledIndices(dupblks[i-1], i);
+//      IndividualizeDuplicatedBlockList(i, dupblks[i-1]);
    }
    SetVecBit(lp->blkvec, lp->header->bnum-1, 1);
    KillCompflagInRange(lp->blocks, CF_LOOP_UPDATE, CF_LOOP_END);
@@ -849,13 +950,36 @@ int UnrollLoop(LOOPQ *lp, int unroll)
  * Put duplicated blocks into program at correct location; this means that
  * the blocks [up,down] links are correct, but CF is messed up
  */
-   
+   InsertUnrolledCode(lp, unroll, dupblks);
 /*
- * Fix CF by recomputing it and all loop stuff
+ * Fix the tails info for OptimizeLoopControl
  */
+   iv = BlockList2BitVec(lp->tails);
+   for (bl=dupblks[unroll-2]; bl; bl = bl->next)
+   {
+/*
+ *    If last unrolling blk is a former tail, add it to new tails
+ */
+      if (BitVecCheck(iv, bl->blk->bnum-1))
+         ntails = AddBlockToList(ntails, bl->blk);
+   }
+   KillBlockList(lp->tails);
+   lp->tails = ntails;
 /*
  * Put unrolled & optimized loop control back in loop
  */
-   OptimizeLoopControl(lp, unroll, NeedKilling, ippost);
+   OptimizeLoopControl(lp, unroll, 0, ippost);
+/*
+ * Fix CF by recomputing it and all loop stuff
+ */
+   CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = 0;
+   RemoveLoopFromQ(optloop);
+   KillAllLoops();
+   NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__, __LINE__);
+PrintInst(fpout=fopen("tmp.err", "w"), bbbase);
+fclose(fpout);
+   FindLoops();  /* need to setup optloop for this */
+   CheckFlow(bbbase, __FILE__, __LINE__);
    return(0);
 }

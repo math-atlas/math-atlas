@@ -525,6 +525,23 @@ short AddDerefEntry(short ptr, short reg, short mul, short con)
    return(i+1);
 }
 
+short FindLocalFromDT(short dt)
+/*
+ * given a DT entry, searches ST for any local that uses that dereference
+ * RETURNS: ST index of local using deref dt, or 0 if not found
+ */
+{
+   int i;
+   for (i=0; i != N; i++)
+   {
+      if (IS_LOCAL(STflag[i]))
+      {
+         if (SToff[i].sa[2] == dt)
+            return(i+1);
+      }
+   }
+   return(0);
+}
 static char flag2pre(int flag)
 {
    char pre='?';
