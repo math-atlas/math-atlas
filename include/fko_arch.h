@@ -408,6 +408,18 @@
    #endif
 #endif
 
+/* 
+ * Setup cache info
+ */
+#ifndef NCACHE
+   #define NCACHE 2
+   #ifdef ARCH_DECLARE
+      short LINESIZE[NCACHE] = {32, 64};
+   #else
+      extern short LINESIZE[NCACHE];
+   #endif
+#endif
+
 short GetReg(short type);
 void GenPrologueEpilogueStubs(BBLOCK *bbase, int rsav);
 int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav);

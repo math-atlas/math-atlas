@@ -894,6 +894,11 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
          else
             OptimizeLoopControl(optloop, 1, 1, NULL);
       }
+/*
+ *    Add any prefetch inst to header of loop
+ */
+      if (optloop->pfarrs)
+         AddPrefetch(optloop, unroll);
    }
    CalcInsOuts(bbbase); 
    CalcAllDeadVariables();
@@ -1000,7 +1005,7 @@ void DoStage2(int SAVESP, int SVSTATE)
  * Assumes stage 0 has been achieved, writes files for stage 1
  */
 {
-   struct locinit *pf, *pf0;
+   struct ptrinfo *pi, *pi0;
    int i, n, k;
 
    GenPrologueEpilogueStubs(bbbase, SAVESP);
@@ -1012,7 +1017,23 @@ void DoStage2(int SAVESP, int SVSTATE)
  */
    if (PFARR && optloop)
    {
-      assert(optloop->varrs);
+      if (!optloop->varrs)
+      {
+         KillLoopControl(optloop);
+         pi0 = FindMovingPointers(optloop->blocks);
+         for (n=0,pi=pi0; pi; pi=pi->next,n++);
+         optloop->varrs = malloc(sizeof(short)*(n+1));
+         assert(optloop->varrs);
+         optloop->varrs[0] = n;
+         for (i=1,pi=pi0; i <= n; i++,pi=pi->next)
+            optloop->varrs[i] = pi->ptr;
+         KillAllPtrinfo(pi0);
+         RestoreFKOState(0);
+         GenPrologueEpilogueStubs(bbbase, SAVESP);
+         NewBasicBlocks(bbbase);
+         FindLoops(); 
+         CheckFlow(bbbase, __FILE__, __LINE__);
+      }
 /*
  *    If we don't have a default distance, be sure arrays are moving in loop
  */

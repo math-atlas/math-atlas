@@ -94,8 +94,8 @@ enum inst
    JMP,                         /* PCREG, LABEL, 0 */
    JEQ, JNE, JLT, JLE, JGT, JGE,  /* PCREG, cc#, LABEL */
    RET,                         /* NULL,NULL,NULL : return to caller */
-   PREFR,                       /* [ptr] [ilvl], NULL */
-   PREFW,                       /* [ptr] [ilvl], NULL */
+   PREFR,                       /* NULL, [ptr] [ilvl] */
+   PREFW,                       /* NULL, [ptr] [ilvl] */
 /*
  * The stream prefetch instructions have format:
  * [ptr], [len], [ilvl:ist]

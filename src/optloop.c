@@ -1454,3 +1454,39 @@ fprintf(stderr, "dupblks[%d] = %s\n", i-1, PrintBlockList(dupblks[i-1]));
    CheckFlow(bbbase, __FILE__, __LINE__);
    return(0);
 }
+
+void AddPrefetch(LOOPQ *lp, int unroll)
+/*
+ * Inserts prefetch inst as first active inst in loop header
+ * NOTE: assumes called after loop unrolling, but before repeatable opt
+ */
+{
+   BBLOCK *bp;
+   INSTQ *ipp, *ipn;
+   short ir, ptr, lvl;
+   int i, j, n, npf;
+   enum inst inst;
+
+   bp = lp->header;
+   assert(bp->ilab == lp->body_label);
+   ir = GetReg(T_INT);
+   for (i=1,n=lp->pfarrs[0]; i <= n; i++)
+   {
+      ptr = lp->pfarrs[i];
+      inst = BitVecCheck(lp->sets, lp->pfarrs[i]) ? PREFW : PREFR;
+      lvl = lp->pfflag[i] & 0x7;
+/*
+ *    # of pref to issue is CEIL(unroll*sizeof(), LINESIZE)
+ */
+      npf = unroll > 1 ? unroll : 1;
+      npf *= type2len(lp->pfarrs[i]) * Type2Vlen(lp->vflag);
+      npf = (npf + LINESIZE[lvl]-1) / LINESIZE[lvl];
+      for (j=0; j < npf; j++)
+      {
+         InsNewInst(bp, bp->ainst1, NULL, LD, -ir, SToff[ptr-1].sa[2], 0);
+         InsNewInst(bp, bp->ainst1, NULL, inst, 0, AddDerefEntry(-ir, ptr, -ptr,
+                    lp->pfdist[i]+j*LINESIZE[j], ptr), STiconstlookup(lvl));
+      }
+   }
+   GetReg(-1);
+}
