@@ -736,7 +736,7 @@ void Extern2Local(INSTQ *next)
          k = SToff[SToff[DTabsd-1].sa[2]-1].sa[3];
          InsNewInst(NULL, NULL, next, ST, SToff[DTabsd-1].sa[2], -ir, 0);
          InsNewInst(NULL, NULL, next, ST,
-                    AddDerefEntry(-REG_SP, DTabs, -DTabs, k+8), -ir, 0);
+                    AddDerefEntry(-REG_SP, DTabsd, -DTabsd, k+8), -ir, 0);
       }
       if (DTabs)
       {
