@@ -34,6 +34,9 @@
 #define IS_UNSIGNED(flag_)   ((flag_) & UNSIGNED_BIT)
 #define IS_LOCAL(flag_) ((flag_) & LOCAL_BIT)
 
+#define FLAG2PTYPE(flag_) ( IS_PTR(flag_) ? GetPtrType() : ((flag_) & 0x7) )
+
+
 #define REG_SP   1
 
 #define FKO_DVLEN 2  /* this will later be a variable */

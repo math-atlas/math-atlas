@@ -3,6 +3,15 @@
 #include "fko_arch.h"
 struct locinit *LIhead=NULL;
 
+int GetPtrType(void)
+{
+   #ifdef ArchPtrIsLong
+      return(T_LONG);
+   #else
+      return(T_INT);
+   #endif
+}
+
 int GetArchAlign(int nvd, int nvf, int nd, int nf, int nl, int ni)
 /*
  *  Returns required architectural alignment given the number of
@@ -226,7 +235,7 @@ void InitLocalConst(INSTQ *next, short rsav, short reg)
    for (lp=LIhead; lp; lp = LIhead)
    {
       LIhead = lp->next;
-      flag = FLAG2TYPE(STflag[lp->id-1]);
+      flag = FLAG2PTYPE(STflag[lp->id-1]);
       if (IS_FLOAT(flag) || IS_DOUBLE(flag))
          FPConstStore(next, rsav, lp->id, lp->con, reg);
       else
@@ -284,12 +293,14 @@ fprintf(stderr, "para #%d\n", SToff[i].sa[0]);
       reg1 = ir = GetReg(T_INT);
       for (j=i=0; i < NPARA; i++)
       {
+         PrintComment(NULL, next, "para %d, name=%s", i, 
+                      STname[paras[i]] ? STname[paras[i]] : "NULL");
          flag = STflag[paras[i]];
          InsNewInst(NULL, next, LD, -ir,
                     AddDerefEntry(rsav, 0, 0, fsize+4+j*4), 0);
          InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, __LINE__);
          j++;
-         if (IS_DOUBLE(flag))
+         if (!IS_PTR(flag) && IS_DOUBLE(flag))
          {
             InsNewInst(NULL, next, LD, -ir,
                        AddDerefEntry(rsav, 0, 0, fsize+4+j*4), 0);
@@ -300,6 +311,7 @@ fprintf(stderr, "para #%d\n", SToff[i].sa[0]);
             j++;
          }
       }
+      InsNewInst(NULL, next, COMMENT, STstrconstlookup("done paras"), 0, 0);
       if (DTnzerod > 0)
       {
          InsNewInst(NULL, next, MOV, -ir, STiconstlookup(0), 0);
@@ -320,6 +332,7 @@ fprintf(stderr, "para #%d\n", SToff[i].sa[0]);
          k = AddDerefEntry(-REG_SP, 0, 0, k);
          InsNewInst(NULL, next, ST, k, -ir, __LINE__);
       }
+      InsNewInst(NULL, next, COMMENT, STstrconstlookup("done archspec"), 0, 0);
    #endif
    #ifdef SPARC
       nam[0] = '@@';

@@ -74,7 +74,8 @@ static int LocalLoad(short id)
 static void LocalStore(short id, short sreg)
 {
    short inst;
-   switch(FLAG2TYPE(STflag[id-1]))
+
+   switch(FLAG2PTYPE(STflag[id-1]))
    {
    case T_INT:
       inst = ST;
@@ -125,22 +126,32 @@ void DoComment(char *str)
 void DoMove(short dest, short src)
 {
    short rsrc;
-   int sflag;
+   int sflag, type;
    sflag = STflag[src-1];
+   enum inst mov;
 
 fprintf(stderr, "DoMove %d %d (%s %s)\n", dest, src, STname[dest-1]?STname[dest-1] : "NULL", STname[src-1]?STname[src-1] : "NULL");
 
    if (IS_CONST(sflag))
    {
-      rsrc = GetReg(FLAG2TYPE(sflag));
-      if (IS_CONST(sflag) && (IS_INT(sflag) || IS_LONG(sflag)) && 
+      type = FLAG2PTYPE(sflag);
+      rsrc = GetReg(type);
+      if (IS_CONST(sflag) && (type == T_INT || type == T_LONG) && 
           SToff[src-1].i == 0)
-         InsNewInst(NULL, NULL, IS_INT(sflag) ? SUB : SUBL, -rsrc, 
+         InsNewInst(NULL, NULL, type == T_INT ? SUB : SUBL, -rsrc, 
                     -rsrc, -rsrc);
       else
-         InsNewInst(NULL, NULL, 
-                    IS_FLOAT(sflag) ? FMOV : (IS_DOUBLE(sflag) ? FMOVD : MOV),
-                    -rsrc, src, __LINE__);
+      {
+         if (type == T_INT) mov = MOV;
+         else if (type == T_LONG) mov = MOVL;
+         else if (type == T_FLOAT) mov = FMOV;
+         else 
+         {
+            assert(type == T_DOUBLE);
+            mov = FMOVD;
+         }
+         InsNewInst(NULL, NULL, mov, -rsrc, src, __LINE__);
+      }
       LocalStore(dest, rsrc);
    }
    else if (FLAG2TYPE(STflag[dest-1]) == FLAG2TYPE(sflag))
@@ -507,14 +518,7 @@ void DoReturn(short rret)
    int mov, ld, type;
    if (rret)
    {
-      type = STflag[rret-1];
-      if (IS_PTR(type))
-         #if ArchPtrIsLong
-	    type = T_LONG;
-         #else 
-	    type = T_INT;
-	 #endif
-      else type = FLAG2TYPE(type);
+      type = FLAG2PTYPE(STflag[rret-1]);
       switch(type)
       {
       case T_LONG:
@@ -635,11 +639,7 @@ fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    lp->ibeg = InsNewInst(NULL, NULL, CMPFLAG, CF_LOOP_INIT, lp->loopnum, 0);
    flag = STflag[start-1];
    assert(!IS_PTR(flag));
-   if (IS_CONST(flag))
-   {
-fprintf(stderr, "DOING MOVE\n\n");
-      DoMove(I, start);
-   }
+   if (IS_CONST(flag)) DoMove(I, start);
    else
    {
       ireg = LocalLoad(start);
@@ -650,7 +650,6 @@ fprintf(stderr, "DOING MOVE\n\n");
    sprintf(lnam, "_LOOP_%d", lp->loopnum);
    lp->body_label = STstrconstlookup(lnam);
    InsNewInst(NULL, NULL, LABEL, lp->body_label, lp->loopnum, 0);
-   InsNewInst(NULL, NULL, COMMENT, STstrconstlookup("Done DoLoop"), 0, 0);
    return(lp);
 }
 

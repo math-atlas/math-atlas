@@ -10,6 +10,19 @@ int const2shift(int c)
    return(-1);
 }
 
+void PrintComment(INSTQ *prev, INSTQ *next, ...)
+{
+   va_list argptr;
+   char *form;
+   char ln[256];
+
+   va_start(argptr, next);
+   form = va_arg(argptr, char*);
+   vsprintf(ln, form, argptr);
+   va_end(argptr);
+   InsNewInst(prev, next, COMMENT, STstrconstlookup(ln), 0, 0);
+}
+
 void fko_error(int errno, ...)
 {
    va_list argptr;

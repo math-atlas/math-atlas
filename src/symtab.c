@@ -312,7 +312,7 @@ void NumberLocalsByType()
  */
 {
    short k;
-   int fl;
+   int fl, type;
 
    for (k=0; k != N; k++)
    {
@@ -324,7 +324,8 @@ void NumberLocalsByType()
       if (IS_PARA(fl) || IS_LOCAL(fl))
       {
          SToff[k].sa[0] = SToff[k].i;
-         switch(FLAG2TYPE(fl))
+         type = FLAG2PTYPE(fl);
+         switch(type)
          {
          case T_INT:
             SToff[k].sa[1] = niloc++;
@@ -365,7 +366,7 @@ void CreateLocalDerefs()
       if (IS_PARA(fl) || IS_LOCAL(fl))
       {
          SToff[k].sa[0] = SToff[k].i;
-         switch(FLAG2TYPE(fl))
+         switch(FLAG2PTYPE(fl))
          {
          case T_INT:
             off = SToff[k].sa[1]*4 + nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4 + 
@@ -389,7 +390,7 @@ void CreateLocalDerefs()
                off = SToff[k].sa[1]*8 + nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4;
             break;
          default:
-            fprintf(stderr, "%d: Unknown type %d!\n", __LINE__, FLAG2TYPE(fl));
+            fprintf(stderr, "%d: Unknown type %d!\n", __LINE__, FLAG2PTYPE(fl));
             exit(-1);
          }
          SToff[k].sa[2] = AddDerefEntry(-REG_SP, 0, -1, off);

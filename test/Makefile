@@ -5,7 +5,7 @@ IFKO = ../bin/ifko
 
 all : ibuild fbuild irun frun
 
-fbuild : xftst0 xftst1 xftst2 xftst3 xftst4 xftst5 xftst6
+fbuild : xftst0 xftst1 xftst2 xftst3 xftst4 xftst5 xftst6 xftst7
 frun   : fbuild 
 	./xftst0
 	./xftst1
@@ -14,6 +14,7 @@ frun   : fbuild
 	./xftst4
 	./xftst5
 	./xftst6
+	./xftst7
 
 ibuild : xitst0 xitst1 xitst2 xitst3 xitst4 xitst5 xitst6 xitst7 xitst8 xitst9
 irun : ibuild

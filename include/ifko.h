@@ -23,4 +23,10 @@
 #define FRET_BIT 0x2
 #define DRET_BIT 0x4
 
+/*
+ * These are actually arch.c declarations for files that don't want to include
+ * all of fko_arch.h
+ */
+int GetPtrType(void);
+
 #endif
