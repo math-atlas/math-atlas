@@ -2131,6 +2131,11 @@ void CountArrayAccess(BLIST *scope, int ptr, int *nread, int *nwrite)
       st = FST;
       ld = FLD;
    }
+   else if (IS_INT(i))
+   {
+      st = ST;
+      ld = LD;
+   }
    else
    {
       assert(IS_DOUBLE(i));
