@@ -35,6 +35,8 @@ enum inst
  */
    LD,                          /* [r], [ptr], NULL */
    ST,                          /* [ptr], [r], NULL */
+   OR,                          /* r0 = r1 | r/c */
+   XOR,                         /* r0 = r1 ^ r/c */
    SHL,                         /* r0 = r1 << r/c */
    SHR,                         /* r0 = r1 >> r/c, set [cc] */
    SAR,                         /* r0 = r1 >> r/c */

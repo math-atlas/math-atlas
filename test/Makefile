@@ -20,7 +20,8 @@ frun   : fbuild
 	./xftst6
 	./xftst7
 
-ibuild : xitst0 xitst1 xitst2 xitst3 xitst4 xitst5 xitst6 xitst7 xitst8 xitst9
+ibuild : xitst0 xitst1 xitst2 xitst3 xitst4 xitst5 xitst6 xitst7 xitst8 xitst9 \
+         xitst10
 irun : ibuild
 	./xitst0
 	./xitst1
@@ -32,11 +33,14 @@ irun : ibuild
 	./xitst7
 	./xitst8
 	./xitst9
+	./xitst10
 
 
 xhtst0 : mhtst0.o htst0.o
 	$(CC) $(CCFLAGS) -o $@ mhtst0.o htst0.o
 
+xitst10 : mitst10.o itst10.o
+	$(CC) $(CCFLAGS) -o $@ mitst10.o itst10.o
 xitst9 : mitst9.o itst9.o
 	$(CC) $(CCFLAGS) -o $@ mitst9.o itst9.o
 xitst8 : mitst8.o itst8.o

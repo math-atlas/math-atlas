@@ -134,6 +134,47 @@ void CreateSysLocals()
 #endif
 }
 
+void bitload(INSTQ *next, int reg, int nbits, int I)
+/*
+ * Given a 32 bit value I, load it nbits at a time
+ */
+{
+   int i, j, k, b, r;
+   for (i=0; !(I & (1<<i)); i++);  /* find least sig bit non-zero bit */
+   for (j=31; !(I & (1<<j)); j--); /* find most significant non-zero bit */
+/*
+ * Can we do it with a simple move?
+ */
+   if (j < nbits)
+   {
+      if (!I) InsNewInst(NULL, next, XOR, -reg, -reg, __LINE__);
+      else InsNewInst(NULL, next, MOV, -reg, STiconstlookup(I), __LINE__);
+   }
+/*
+ * Must load & shift
+ */
+   else
+   {
+      j++;
+      k = (j-i+nbits-1) / nbits - 1;  /* number of ors required */
+      r = (j-i) % nbits; 
+      if (!r) r = nbits;   /* size of first shift */
+      b = I >> (j-r);
+      InsNewInst(NULL, next, MOV, -reg, STiconstlookup(b), __LINE__);
+      I ^= b << (j-r);
+      j -= r;
+      for (k; k; k--)
+      {
+         j -= nbits;
+         b = I >> j;
+         InsNewInst(NULL, next, SHL, -reg, -reg, STiconstlookup(nbits));
+         InsNewInst(NULL, next, OR, -reg, -reg, STiconstlookup(b));
+         I ^= b << j;
+      }
+      if (i) InsNewInst(NULL, next, SHL, -reg, -reg, STiconstlookup(i));
+   }
+}
+
 void FPConstStore(INSTQ *next, short rsav, short id, short con, short reg)
 {
    int flag;
@@ -164,6 +205,17 @@ void FPConstStore(INSTQ *next, short rsav, short id, short con, short reg)
          InsNewInst(NULL, next, MOV, -reg, STiconstlookup(*ip), __LINE__);
          InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
          InsNewInst(NULL, next, MOV, -reg, STiconstlookup(ip[1]), __LINE__);
+	 i = SToff[id-1].sa[2] - 1;
+	 i = DT[(i<<2)+3] + 4;
+         InsNewInst(NULL, next, ST, AddDerefEntry(rsav,0,0,i), -reg, __LINE__);
+/*
+ *    Sparc has 13-bit constants, use 12 to rule out sign prob
+ */
+      #elif defined(SPARC)
+         ip = (int*) &d;
+         bitload(next, reg, 12, *ip);
+         InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+         bitload(next, reg, 13, ip[1]);
 	 i = SToff[id-1].sa[2] - 1;
 	 i = DT[(i<<2)+3] + 4;
          InsNewInst(NULL, next, ST, AddDerefEntry(rsav,0,0,i), -reg, __LINE__);
@@ -206,6 +258,11 @@ void IConstStore(INSTQ *next, short rsav, short id, short con, short reg)
    {
       #ifdef X86_32
          InsNewInst(NULL, next, MOV, -reg, con, __LINE__);
+/*
+ *    Sparc has 13-bit constants, use 12 to rule out sign prob
+ */
+      #elif defined(SPARC)
+         bitload(next, reg, 12, SToff[con-1].i);
 /*
  *    Must load constants 16 bits at a time
  */
@@ -370,7 +427,7 @@ fprintf(stderr, "STORE: %d, %d\n", SToff[paras[i]].sa[2], -ir);
                j++;
                nam[2] = j + '0';
                ir = iName2Reg(nam);
-               k = (SToff[paras[i]].sa[2])<<2;
+               k = (SToff[paras[i]].sa[2]-1)<<2;
                k = DT[k+3] + 4;
                k = AddDerefEntry(-REG_SP, 0, 0, k);
                InsNewInst(NULL, next, ST, k, -ir, __LINE__);

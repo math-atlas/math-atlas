@@ -441,6 +441,31 @@ struct assmln *lil2ass(INSTQ *head)
                                      archiregs[-IREGBEG-op3]);
          #endif
          break;
+      case XOR:
+      case OR :
+          if (ip->inst[0] == XOR) sptr = "xor";
+          else sptr = "or";
+         #ifdef X86
+            assert(op1 == op2);
+            ap->next = PrintAssln("\t%s\t%s, %s\n", sptr, GetIregOrConst(op3), 
+                                  archiregs[-IREGBEG-op1]);
+         #elif defined(SPARC)
+            ap->next = PrintAssln("\t%s\t%s, %s, %s\n", sptr,
+                                  archiregs[-IREGBEG-op2], GetIregOrConst(op3),
+                                  archiregs[-IREGBEG-op1]);
+         #elif defined(PPC)
+            if (op3 > 0)
+               ap->next = PrintAssln("\t%s\t%s, %s, %s\n", sptr,
+                                     archiregs[-IREGBEG-op1],
+                                     archiregs[-IREGBEG-op2], 
+                                     GetIregOrConst(op3));
+            else
+               ap->next = PrintAssln("\t%s\t%s, %s, %s\n", sptr,
+                                     archiregs[-IREGBEG-op1],
+                                     archiregs[-IREGBEG-op2],
+                                     archiregs[-IREGBEG-op3]);
+         #endif
+         break;
       case ADD:
          #ifdef X86
             assert(op1 == op2);

@@ -3,8 +3,8 @@
 
 #if !defined(LINUX_PPC) && !defined(OSX_PPC) && !defined(LINUX_X86_32) && \
     !defined(LINUX_X86_64) && !defined(SOLARIS_SPARC)
-   #define LINUX_X86_32 
-/*   #define SOLARIS_SPARC  */
+/*   #define LINUX_X86_32  */
+   #define SOLARIS_SPARC
 #endif
 
 #ifdef X86_64
@@ -58,8 +58,8 @@
    #define NSDR 32
    #define ZEROREG 32
    #define IRETREG 17
-   #define FRETREG (1 + FREGBEG)
-   #define DRETREG (1 + DREGBEG)
+   #define FRETREG FREGBEG
+   #define DRETREG DREGBEG
    #ifdef ARCH_DECLARE
       char *archiregs[TNIR] = 
          {"@sp", "@l0", "@l1", "@l2", "@l3", "@l4", "@l5", "@l6", "@l7",
