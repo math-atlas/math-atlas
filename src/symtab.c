@@ -239,7 +239,6 @@ void CreateFPLocals()
       {
          sprintf(ln, "_FPC_%d\n", n++);
          i = STdef(ln, (fl & (!GLOB_BIT)) | LOCAL_BIT, k+1);
-fprintf(stderr, "STLOC[%d] = %d\n", IS_LOCAL(STflag[i-1]));
       }
    }
 }
@@ -340,7 +339,7 @@ void UpdateLocalDerefs(int isize)
       fl = STflag[k];
       if ((IS_PARA(fl) || IS_LOCAL(fl)) && SToff[SToff[k].sa[2]-1].sa[0])
       {
-fprintf(stderr, "Updating local %s\n", STname[k]);
+/* fprintf(stderr, "Updating local %s\n", STname[k]); */
          switch(FLAG2PTYPE(fl))
          {
          case T_INT:
@@ -365,7 +364,6 @@ fprintf(stderr, "Updating local %s\n", STname[k]);
             exit(-1);
          }
          SToff[SToff[k].sa[2]-1].sa[3] = off;
-         fprintf(stderr, "%s,%d DT#=%d, off=%d\n", STname[k],k+1,SToff[k].sa[2],off);
       }
    }
    LOCALIGN = GetArchAlign(nvdloc, nvfloc, ndloc, nfloc, nlloc, niloc);
@@ -388,9 +386,6 @@ void CorrectLocalOffsets(int ldist)
       if (IS_DEREF(STflag[i]) && SToff[i].sa[0] == -REG_SP && 
           SToff[i].sa[1] > 0 && SToff[i].sa[2] < 0)
       {
-fprintf(stderr, "correcting local %d,%s, (%d,%d,%d)\n", i+1, 
-        STname[-1-SToff[i].sa[2]],
-        SToff[i].sa[3], ldist, SToff[i].sa[3]+ldist);
          SToff[i].sa[2] = 1;
          SToff[i].sa[3] += ldist;
       }
@@ -407,10 +402,9 @@ void CorrectParamDerefs(struct locinit *libase, int rsav, int fsize)
    struct locinit *lp;
    short k;
 
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    for (lp = libase; lp; lp = lp->next)
    {
-fprintf(stderr, "correcting para %d (%s)!\n", lp->id, STname[lp->id-1]);
+/* fprintf(stderr, "correcting para %d (%s)!\n", lp->id, STname[lp->id-1]); */
       k = lp->id-1;
       SToff[k].sa[0] = rsav;
       SToff[k].sa[2] = 1;
@@ -438,8 +432,6 @@ void MarkUnusedLocals(BBLOCK *bbase)
       if (IS_DEREF(STflag[k]) && SToff[k].sa[0] == -REG_SP &&
           SToff[k].sa[2] < 0)
       {
-         fprintf(stderr, "Initial mark of DT[%d]: %s\n", 
-                 k+1, STname[-SToff[k].sa[2]-1]);
          SToff[k].sa[0] = 0;
       }
    }
@@ -453,8 +445,6 @@ void MarkUnusedLocals(BBLOCK *bbase)
             if (i >= 0 && IS_DEREF(STflag[i]) && !SToff[i].sa[0] && 
                 SToff[i].sa[2] < 0)
             {
-               fprintf(stderr, "Unmarking(%d) DT[%d]: %s\n", 
-                       ip->inst[0], i, STname[-SToff[i].sa[2]-1]);
                SToff[i].sa[0] = -REG_SP;
             }
          }

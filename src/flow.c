@@ -316,7 +316,6 @@ BBLOCK *FindBasicBlocks(BBLOCK *base0)
             InsNewInst(bn, NULL, NULL, ip->inst[0], ip->inst[1],
                        ip->inst[2], ip->inst[3]);
             if (ip->inst[0] == LABEL) bn->ilab = ip->inst[1];
-            fprintf(stderr, "in=%d, LABEL=%d, ilab=%d op1=%d\n", ip->inst[0], LABEL, bn->ilab, ip->inst[1]);
          }
 /*
  *       Branches mark end of this block
@@ -350,7 +349,6 @@ BBLOCK *FindBlockWithLabel(BBLOCK *bp, int ilab)
    {
       do
       {
-fprintf(stderr, "looking for %d, block=%d, ilab=%d\n", ilab, bp->bnum, bp->ilab);
          if (bp->ilab == ilab) break;
          bp = bp->down;
       }

@@ -82,7 +82,6 @@ stateflag: ROUT_NAME NAME
                yyerror("Improper ROUTINE statement");
             WhereAt = 1;
             strcpy(rout_name, $2);
-fprintf(stderr, "grammer setting rout_name='%s'\n", rout_name);
             STdef(rout_name, T_FUNC | GLOB_BIT, 0);
          }
          | ROUT_LOCALS
@@ -314,7 +313,6 @@ struct idlist *ReverseList(struct idlist *base0)
 
 static void UpdateLoop(struct loopq *lp)
 {
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    lp->maxunroll = maxunroll;
    lp->writedd  = writedd;
    lp->slivein  = LMA[0];
@@ -328,7 +326,6 @@ fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    balign = NULL;
    maxunroll = writedd = 0;
    FinishLoop(lp);
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
 }
 
 HandleLoopIntMU(int which, int ival)
@@ -371,10 +368,8 @@ void HandleLoopListMU(int which)
    struct idlist *id;
    for (id=idhead,n=0; id; id=id->next) n++;
 
-fprintf(stderr, "%s(%d), which=%d\n", __FILE__, __LINE__, which);
    if (which == 100)
    {
-fprintf(stderr, "%s(%d), which=%d\n", __FILE__, __LINE__, which);
       assert(!aalign && !balign);
       n >>= 1;
       sp = malloc(sizeof(short)*(n+1));
@@ -395,7 +390,6 @@ fprintf(stderr, "%s(%d), which=%d\n", __FILE__, __LINE__, which);
    }
    else
    {
-fprintf(stderr, "%s(%d), which=%d\n", __FILE__, __LINE__, which);
       assert(!LMA[which]);
       sp = malloc(sizeof(short)*(n+1));
       assert(sp);
@@ -408,9 +402,7 @@ fprintf(stderr, "%s(%d), which=%d\n", __FILE__, __LINE__, which);
       }
       LMA[which] = sp - 1;
    }
-fprintf(stderr, "%s(%d), which=%d\n", __FILE__, __LINE__, which);
    KillIDs();
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
 }
 
 void para_list()
@@ -423,7 +415,6 @@ void para_list()
    while(idhead)
    {
       STdef(idhead->name, 0, n-i);
-fprintf(stderr, "\n %d. %s\n", n-i, idhead->name);
       idhead = idhead->next;
       i++;
    }
