@@ -913,7 +913,10 @@ BBLOCK *DupCFScope(short ivscp0, /* original scope */
       {
          assert(bp->ilab);
          sp = DupedLabelName(dupnum, bp->ilab);
-         nhead->ainstN->inst[3] = STlabellookup(sp);
+         if (head->ainstN->inst[0] == JMP)
+            nhead->ainstN->inst[2] = STlabellookup(sp);
+         else
+            nhead->ainstN->inst[3] = STlabellookup(sp);
       }
    }
    if (head->usucc && BitVecCheck(ivscp, head->usucc->bnum-1))
@@ -1128,6 +1131,8 @@ void UnrollCleanup(LOOPQ *lp, int unroll)
    SetVecAll(iv, 0);
    ivtails = BlockList2BitVec(lp->tails);
    ftheads = FindAllFallHeads(NULL, lp->blkvec, lp->header, ivtails, iv);
+   ftheads = ReverseBlockList(ftheads);
+fprintf(stderr, "ftheads = %s\n", PrintBlockList(ftheads));
 /*
  * Add new cleanup loop (minus I init) at end of rout, one fall-thru path at
  * a time
@@ -1219,6 +1224,7 @@ int UnrollLoop(LOOPQ *lp, int unroll)
  */
       SetVecBit(iv, lp->header->bnum-1, 1);
       dupblks[i-1] = CF2BlockList(NULL, iv, newCF);
+fprintf(stderr, "dupblks[%d] = %s\n", i-1, PrintBlockList(dupblks[i-1]));
 /*
  *    Kill the appropriate loop markup in the blocks (so we don't increment
  *    i multiple times, test it multiple times, etc)
@@ -1281,6 +1287,18 @@ int UnrollLoop(LOOPQ *lp, int unroll)
    KillAllLoops();
    NewBasicBlocks(bbbase);
    CheckFlow(bbbase, __FILE__, __LINE__);
+{
+struct assmln *abase;
+FILE *fperr;
+struct assmln *lil2ass(BBLOCK *bbase);
+ShowFlow("dot.err", bbbase);
+AddBlockComments(bbbase);
+abase = lil2ass(bbbase);
+fperr = fopen("ass.err", "w");
+dump_assembly(fperr, abase);
+fclose(fperr);
+KillAllAssln(abase);
+}
    FindLoops();  /* need to setup optloop for this */
    CheckFlow(bbbase, __FILE__, __LINE__);
    return(0);

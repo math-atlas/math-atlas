@@ -15,7 +15,7 @@ BLIST *NewBlockList(BBLOCK *blk, BLIST *next)
 
 BLIST *AddBlockToList(BLIST *list, BBLOCK *blk)
 /*
- * Adds a block to a blist (in second position).  
+ * Adds a block to a blist (in first position).  
  * RETURNS: ptr to list (created if list is NULL, list otherwise).
  */
 {
@@ -109,6 +109,18 @@ void KillBlockList(BLIST *lp)
       ln = lp->next;
       free(lp);
    }
+}
+
+BLIST *ReverseBlockList(BLIST *list)
+{
+   BLIST *ln=NULL, *bl;
+   for (bl=list; bl; bl = bl->next)
+   {
+      ln = AddBlockToList(ln, bl->blk);
+      ln->ptr = bl->ptr;
+   }
+   KillBlockList(list);
+   return(ln);
 }
 
 BLIST *MergeBlockLists(BLIST *l1, BLIST *l2)

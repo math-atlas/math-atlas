@@ -338,7 +338,7 @@ int GoToTown(int SAVESP)
    #if 0
       OptimizeLoopControl(optloop, 1, 1, NULL);
    #else
-      UnrollLoop(optloop, 3);
+      UnrollLoop(optloop, 2);
    #endif
    CalcInsOuts(bbbase); 
    CalcAllDeadVariables();
