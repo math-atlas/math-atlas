@@ -1571,6 +1571,14 @@ struct assmln *lil2ass(BBLOCK *bbase)
          case CF_LOOP_END:
             sptr = "LOOP END FLAG";
             break;
+         case CF_LOOP_PTRUPDATE:
+            sptr = "LOOP PTR UPDATE FLAG";
+            break;
+         case CF_VRED_END:
+            sptr = "VECTOR REDUCTION END";
+            break;
+         default:
+            sptr = "UNKNOWN COMPFLAG";
          }
          #ifdef X86
 	    ap->next = PrintAssln("# CMPFLAG %d %d %d; %s\n",

@@ -597,7 +597,7 @@ void UpdatePointerLoads(BLIST *scope, struct ptrinfo *pbase, int UR)
 
 INSTQ *FindCompilerFlag(BBLOCK *bp, short flag)
 {
-   INSTQ *iret=NULL, *ip;
+   INSTQ *ip;
    for (ip=bp->inst1; ip; ip = ip->next)
       if (ip->inst[0] == CMPFLAG && ip->inst[1] == flag)
          break;
@@ -632,6 +632,9 @@ void KillLoopControl(LOOPQ *lp)
  */
    for (bl=lp->tails; bl; bl = bl->next)
    {
+      ip = FindCompilerFlag(bl->blk, CF_LOOP_PTRUPDATE);
+      if (ip)
+         ip = DelInst(ip);
       ip = FindCompilerFlag(bl->blk, CF_LOOP_UPDATE);
       #if IFKO_DEBUG_LEVEL >= 1
          assert(ip);
@@ -885,6 +888,7 @@ fprintf(stderr, "%s(%d), %d,%d,%d tails=%d\n", __FILE__, __LINE__, ipinit, ipupd
       #if IFKO_DEBUG_LEVEL >= 1
          assert(ipl);
       #endif
+      InsNewInst(NULL, NULL, ipl, CMPFLAG, CF_LOOP_PTRUPDATE, 0, 0);
       for (ip = ippost; ip; ip = ip->next)
          InsNewInst(NULL, NULL, ipl, ip->inst[0], ip->inst[1],
                           ip->inst[2], ip->inst[3]);
@@ -1531,10 +1535,57 @@ ILIST *GetPrefetchInst(LOOPQ *lp, int unroll)
    return(ilbase);
 }
 
-void SchedInstInLoop(LOOPQ *lp, ILIST *ilbase)
+BLIST *FindAlwaysTakenBlocks(LOOPQ *lp)
 /*
- * Adds the inst in ilbase to loop, one ILIST chunk scheduled at a time,
- * inst inserted only in blocks that are traversed in every iteration
+ * Finds blocks that are always taken in the loop for use in spreading prefetch
+ * inst around.  This algorithm takes only the straight-line code from header
+ * and tail (one and only one of each of these in our loops), rather than
+ * finding all always-taken blocks.  Can upgrade later if we ever get rout
+ * that this doesn't capture all always-taken blocks (this works for all BLAS).
+ * RETURNS: BLIST of always-taken blocks, in loop order
+ */
+{
+   BLIST *base=NULL, *bl, *btail;
+   BBLOCK *bp;
+/*
+ * Take all straightline code from tail back to header
+ */
+   assert(lp->tails && !lp->tails->next);
+   bp = lp->tails->blk;
+   if (bp->usucc && bp->csucc)
+      base = NewBlockList(bp, base);
+   else
+      for (; bp && bp != lp->header && !bp->preds->next; bp = bp->preds->blk)
+         base = NewBlockList(bp, base);
+
+   if (lp->header != lp->tails->blk)
+   {
+      if (bp == lp->header)
+         base = NewBlockList(bp, base);
+/*
+ *    If we didn't make it all the way back to header, add blocks starting at
+ *    header to start of list
+ */
+      else
+      {
+         btail = base;
+         bp = lp->header;
+         bl = base = NewBlockList(bp, base);
+         if (!bp->csucc || !bp->usucc)
+         {
+            for(; bp && (!bp->csucc || !bp->usucc);
+                bp = bp->usucc ? bp->usucc : bp->csucc, bl = bl->next)
+               bl->next = NewBlockList(bp->usucc ? bp->usucc : bp->csucc, btail);
+         }
+      }
+   }
+   return(base);
+}
+
+void SchedInstInLoop0(LOOPQ *lp, ILIST *ilbase)
+/*
+ * Adds the inst in ilbase to loop, one ILIST chunk scheduled at a time.
+ * This variant adds all instructions at beginning of header.
  */
 {
    BBLOCK *bp;
@@ -1554,9 +1605,116 @@ void SchedInstInLoop(LOOPQ *lp, ILIST *ilbase)
       }
       ilbase = KillIlist(ilbase);
    }
-   CFUSETU2D = INUSETU2D = INDEADU2D = 0;
+}
+static int NumberOfInst(INSTQ *ip)
+{
+   int i;
+   for (i=0; ip; ip = ip->next)
+      if (ACTIVE_INST(ip->inst[0]) && ip->inst[0] != LABEL)
+         i++;
+   return(i);
 }
 
+static int NumberOfInstInList(BLIST *bl)
+{
+   int i=0;
+
+   while(bl)
+   {
+      i += NumberOfInst(bl->blk->ainst1);
+      bl = bl->next;
+   }
+   return(i);
+}
+
+static int FindSkip(int N, int npf, int chunk)
+{
+   npf = (npf+chunk-1)/chunk;
+   return(N/npf);
+}
+
+void SchedInstInLoop1(LOOPQ *lp, ILIST *ilbase, int dist, int chunk)
+/*
+ * Adds the inst in ilbase to loop, one ILIST chunk scheduled at a time.
+ * This variant puts the first pref chunk at dist inst from the start of
+ * the header, and then adds another chunk every NINST/(np/chunk)
+ */
+{
+   BLIST *atake, *bl;
+   INSTQ *ip, *ipp, *ipn, *ipf, *ipfn;
+   int N, skip, sk, i, j, k, npf;
+   ILIST *il;
+
+   for (npf=0, il=ilbase; il; il = il->next, npf++);
+/*
+ * Find total number of always-taken instructions excluding loop update
+ */
+   atake = FindAlwaysTakenBlocks(lp);
+   N = NumberOfInstInList(atake);
+   ip = FindCompilerFlag(lp->tails->blk, CF_LOOP_PTRUPDATE);
+   if (!ip)
+      ip = FindCompilerFlag(lp->tails->blk, CF_LOOP_UPDATE);
+   assert(ip);
+   N -= NumberOfInst(ip);
+   N -= dist;
+   assert(N > 0);
+   skip = FindSkip(N, npf, chunk);
+   while (!skip)
+      skip = FindSkip(N, npf, ++chunk);
+   i = dist ? 1 : 0;
+   j = 0;
+   sk = dist ? dist : skip;
+   for (bl=atake; bl; bl = bl->next)
+   {
+      for (ip=bl->blk->ainst1; ip; ip = ip->next)
+      {
+         if (i%sk == 0)
+         {
+            ipn = ipp = NULL;
+            if (ip->inst[0] == LABEL)
+               ipp = ip;
+            else
+               ipn = ip;
+            for (k=0; k < chunk; k++)
+            {
+               for (ipf=ilbase->inst; ipf; ipf = ipfn)
+               {
+                  ipp = InsNewInst(bl->blk, ipp, ipn, ipf->inst[0], 
+                                   ipf->inst[1], ipf->inst[2], ipf->inst[3]);
+                  ipn = NULL;
+                  ipfn = ipf->next;
+                  free(ipf);
+               }
+               ilbase = KillIlist(ilbase);
+               if (++j == npf) goto EOL;
+               sk = skip;
+            }
+            i++;
+         }
+         else if (ACTIVE_INST(ip->inst[0]) && ip->inst[0] != LABEL)
+            i++;
+      }
+   }
+EOL:
+/*
+ * Check that last inst added before EOL
+ */
+   assert(bl && ip);
+   if (bl->blk == lp->tails->blk)
+   {
+      for (; ip; ip = ip->next)
+         if (ip->inst[0] == CMPFLAG && ip->inst[1] == CF_LOOP_PTRUPDATE) 
+            break;
+      assert(ip);
+   }
+}
+
+void SchedInstInLoop(LOOPQ *lp, ILIST *ilbase)
+{
+   SchedInstInLoop1(lp, ilbase, 0, 1);
+//   SchedInstInLoop0(lp, ilbase);
+   CFUSETU2D = INUSETU2D = INDEADU2D = 0;
+}
 void AddPrefetch(LOOPQ *lp, int unroll)
 /*
  * Inserts prefetch inst as first active inst in loop header
