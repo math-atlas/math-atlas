@@ -703,12 +703,37 @@ int CheckIG(int N, IGNODE **igs)
    assert(nerr == 0);
    return(nerr);
 }
-void CalcScopeIG(BLIST *scope)
+
+int Scope2BV(BLIST *scope)
+{
+   static int iv=0;
+   BLIST *bl;
+
+   if (scope)
+   {
+      if (!iv)
+         iv = NewBitVec(32);
+      SetVecAll(iv, 0);
+      for (bl = scope; bl; bl = bl->next)
+         SetVecBit(iv, bl->blk->bnum-1, 1);
+   }
+   else if (iv)
+   {
+      KillBitVec(iv);
+      iv = 0;
+   }
+   return(iv);
+}
+
+int CalcScopeIG(BLIST *scope)
+/*
+ * RETURNS: total number of IG
+ */
 {
    static ushort blkvec=0;
    BLIST *bl, *lp;
-   ushort iv;
    short *sp;
+   int i, j;
 
 /*
  * Set blkvec to reflect all blocks in scope, and calculate each block's IG
@@ -735,6 +760,9 @@ void CalcScopeIG(BLIST *scope)
              lp->blk != bl->blk->usucc && lp->blk != bl->blk->csucc)
             CombineBlockIG(scope, blkvec, lp->blk, bl->blk);
    }
+   for (j=i=0; i < NIG; i++)
+      if (IG[i]) j++;
+   return(j);
 }
 
 void SortUnconstrainedIG(int N, IGNODE **igarr)
@@ -906,13 +934,15 @@ fprintf(stderr, "NIG=%d, NCON=%d, NUNCON=%d\n", n, ncon, n-ncon);
    return(igarr);
 }
 
-void DoIGRegAsg(int N, IGNODE **igs)
+int DoIGRegAsg(int N, IGNODE **igs)
 /*
  * Given an N-length array of sorted IGNODEs, perform register assignment
  * Right now, use simple algorithm for assignment, improve later.
+ * RETURNS: # of IG assigned.
  */
 {
    int i, j, n;
+   int iret = 0;
    IGNODE *ig, *ig2;
    short *sp;
    short iv, ivused;
@@ -951,10 +981,12 @@ void DoIGRegAsg(int N, IGNODE **igs)
             }
          }
          ig->reg++;
+         iret++;
       }
       else
          fprintf(stderr, "NO FREE REGISTER FOR LR %d!!!\n", ig->ignum);
    }
+   return(iret);
 }
 
 int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
@@ -1174,16 +1206,21 @@ int DoRegAsgTransforms(IGNODE *ig)
    return(CHANGE);
 }
 
-int DoScopeRegAsg(BLIST *scope, int thresh)
+int DoScopeRegAsg(BLIST *scope, int thresh, int *tnig)
+/*
+ * Performs interference graph-based register assignment on blocks listed in
+ * scope.  tnig is output para giving total number of IG we found.
+ * RETURNS: # of IG applied.
+ */
 {
    IGNODE **igs;
-   int i, N;
+   int i, N, nret;
    extern FILE *fpIG, *fpLIL, *fpST;
    extern BBLOCK *bbbase;
 
-   CalcScopeIG(scope);
+   *tnig = CalcScopeIG(scope);
    igs = SortIG(&N, thresh);
-   DoIGRegAsg(N, igs);
+   nret = DoIGRegAsg(N, igs);
 CheckIG(N, igs);
 fprintf(stderr, "\n\n*** NIG = %d\n", N);
    if (fpIG)
@@ -1209,7 +1246,7 @@ fprintf(stderr, "\n\n*** NIG = %d\n", N);
 #endif
    if (igs) free(igs);
    KillIGTable();
-   return(0);
+   return(nret);
 }
 
 
@@ -1645,4 +1682,253 @@ fprintf(stderr, "dhoisting/pushing %d, %s\n", dregs[i], STname[dregs[i]-1]);
    PrintComment(loop->posttails->blk, NULL, loop->posttails->blk->inst1, 
                 "START global asg sunk stores");
    CFUSETU2D = INUSETU2D = INDEADU2D = 0;
+}
+
+static INSTQ *FindReg2RegMove(BBLOCK *bp, INSTQ *start, INSTQ *end)
+/*
+ * Finds first register-to-register move in bp, between [start,end]
+ * if start == NULL, start at beginning of block, if end == NULL go to end
+ */
+{
+   INSTQ *ip;
+   enum inst inst;
+   if (!bp) return(NULL);
+   if (!start) start = bp->ainst1;
+   if (!start) return(NULL);
+   if (!end) end = bp->ainstN;
+   do
+   {
+      ip = start;
+      inst = GET_INST(ip->inst[0]);
+      if (IS_MOVE(inst) && ip->inst[1] < 0 && ip->inst[2] < 0)
+         return(ip);
+      start = start->next;
+   }
+   while(start && ip != end);
+   return(NULL);
+}
+
+void LiveCopyPropTrans(int scopeblks, BBLOCK *blk, INSTQ *ipret, 
+                       short mov, short dest, short src)
+/*
+ * Performs copy prop starting from ipret, where src reg is still live
+ */
+{
+   return(NULL);
+}
+void DeadCopyPropTrans(int scopeblks, BBLOCK *blk, INSTQ *ipret, 
+                       short mov, short dest, short src)
+/*
+ * Performs copy prop starting from ipret, where src reg is dead
+ * When src is dead, we can replace all use and set of dest with src, until
+ * dest is dead or src is live again.
+ */
+{
+   for (ip=ipret; ip; ip = ip->next)
+   {
+/*
+ *    If src becomes live again, put move back, and stop copy prop
+ */
+      if (BitVecCheck(ip->use, src-1) || BitVecCheck(ip->set, src-1))
+      {
+         ip = InsNewInst(blk, NULL, ip, mov, dest, src, 0);
+         CalcThisUseSet(ip);
+         return;
+      }
+/*
+ *    If we have a use of former dest, change it to a use of src
+ */
+      if (BitVecCheck(ip->use, dest-1))
+      {
+         SetVecBit(ip->use, dest-1, 0);
+         SetVecBit(ip->use, src-1, 1);
+         #if IFKO_DEBUG_LEVEL >= 1
+            assert(ip->inst[2] == -dest || ip->inst[3] == -dest);
+         #endif
+         if (ip->inst[2] == -dest)
+            ip->inst[2] = -src;
+         if (ip->inst[3] == -dest)
+            ip->inst[3] = -src;
+      }
+/*
+ *    If we have a set of dest, change it to a use of src, and keep going with
+ *    propogation if this dest updated itself
+ */
+      if (BitVecCheck(ip->set, dest-1))
+      {
+         #if IFKO_DEBUG_LEVEL >= 1
+            assert(ip->inst[1] == -dest);
+         #endif
+         ip->inst[1] = -src;
+         SetVecBit(ip->set, dest-1, 0);
+         SetVecBit(ip->set, src-1, 1);
+         if (BitVecCheck(ip->deads, dest-1))
+         {
+            SetVecBit(ip->deads, dest-1, 0);
+            SetVecBit(ip->deads, src-1, 1);
+         }
+      }
+/*
+ *    If dest is dead without being used, end copy prop
+ */
+      if (BitVecCheck(ip->deads, dest-1))
+      {
+         SetVecBit(ip->deads, dest-1, 0);
+         SetVecBit(ip->deads, src-1, 1);
+         return;
+      }
+   }
+/*
+ * If we are still doing copy prop after block is done, continue it in blocks
+ * that have dest live on entry
+ */
+   if (BitVecCheck(blk->outs, dest-1))
+   {
+      DestLive = SrcLive = 0;
+      if (blk->usucc)
+      {
+/*
+ *       If succ is in scope and does not have src live, continue copy prop
+ */
+         if (BitVecCheck(scopeblks, blk->bnum-1) ||
+             BitVecCheck(blk->usucc->ins, src-1))
+         {
+            if (BitVecCheck(blk->usucc->ins, dest-1))
+            {
+               SetVecBit(blk->usucc->ins, dest-1, 0))
+               SetVecBit(blk->usucc->ins, src-1, 1))
+               DeadCopyPropTrans(scopeblks, blk->usucc, blk->usucc->ainst1, 
+                                 mov, dest, src);
+            }
+            SrcLive = 1;
+         }
+/*
+ *       If succ block outside scope of transform, or has src live,
+ *       put mov back in and quit
+ */
+         else
+         {
+            ip = InsNewInst(blk, NULL, NULL, mov, dest, src, 0);
+            CalcThisUseSet(ip);
+            DestLive = 1;
+         }
+      }
+      if (blk->csucc)
+      {
+         if (BitVecCheck(scopeblks, blk->bnum-1))
+         {
+            DeadCopyPropTrans(scopeblks, blk->usucc, blk->usucc->ainst1, 
+                              mov, dest, src);
+            SrcLive = 1;
+         }
+/*
+ *       If succ block outside scope of transform, put mov back in
+ */
+         else
+         {
+            ip = InsNewInst(blk, NULL, NULL, mov, dest, src, 0);
+            CalcThisUseSet(ip);
+            DestLive = 1;
+         }
+      }
+      if (!DestLive)
+      {
+         SetVecBit(blk->outs, dest-1, 0))
+      }
+   }
+}
+
+INSTQ *CopyPropTrans(int scopeblks, BBLOCK *blk, INSTQ *ipret)
+/*
+ * Attempts to do copy prop in block blk starting at ipret
+ * RETURNS: instruction following ipret after transforms or NULL if no
+ *          transform is done.
+ */
+{
+   short dest, src, mov;
+   INSTQ *ip;
+
+   dest = -ipret->inst[1];
+   src = -ipret->inst[2];
+/*
+ * If it's a useless move, simply delete it
+ */
+   if (dest == src)
+   {
+      INDEADU2D = 0;
+      return(DelInst(ipret));
+   }
+/*
+ * If source is used in next statement, do not attempt copy prop
+ */
+   if (ipret->next)
+   {
+      if (BitVecCheck(ipret->next->set, src-1) || 
+          BitVecCheck(ipret->next->use, src-1))
+         return(NULL);
+   }
+   else
+   {
+      if (blk->usucc)
+      {
+         if (blk->csucc)
+         {
+            if ( (BitVecCheck(blk->usucc->ainst1->set, src-1) || 
+                  BitVecCheck(blk->usucc->ainst1->use, src-1)) &&
+                 (BitVecCheck(blk->csucc->ainst1->set, src-1) || 
+                  BitVecCheck(blk->csucc->ainst1->use, src-1)) )
+               return(NULL);
+         }
+         else if (BitVecCheck(blk->usucc->ainst1->set, src-1) || 
+                  BitVecCheck(blk->usucc->ainst1->use, src-1))
+            return(NULL);
+      }
+      else return(NULL);
+   }
+   mov = ipret->inst[0];
+   ipret = DelInst(ipret);
+   if (BitVecCheck(ipret->deads, src-1))
+      DeadCopyPropTrans(scopeblks, blk, mov, dest, src);
+   else LiveCopyPropTrans(scopeblks, blk, mov, dest, src);
+   return(ipret);
+}
+
+int DoCopyProp(BLIST *scope)
+/*
+ * Performs copy propogation on scope.
+ */
+{
+   int scopeblks, CHANGE=0;
+   INSTQ *ip=NULL, *next;
+   BLIST *bl, *epil=NULL;
+
+/*
+ * Remove end block from scope, so we don't screw up return register
+ */
+   scopeblks = Scope2BV(scope);
+   epil = FindBlockListWithLabel(scope, STlabellookup("_IFKO_EPILOGUE"));
+   if (epil)
+      SetVecBit(scopeblks, epil->blk->bnum-1, 0);
+   for (bl=scope; bl; bl = bl->next)
+   {
+      if (bl != epil)
+      {
+         do
+         {
+            ip = FindReg2RegMove(bl->blk, ip, NULL);
+            if (ip) 
+            {
+               next = CopyPropTrans(scopeblks, bl->blk, ip);
+               if (next)
+               {
+                  ip = next;
+                  CHANGE++;
+               }
+               else ip = ip->next;
+            }
+         }
+         while(ip);
+      }
+   }
+   return(CHANGE);
 }

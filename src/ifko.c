@@ -159,7 +159,7 @@ fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
       DoLoopGlobalRegAssignment(optloop); 
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
-      DoScopeRegAsg(optloop->blocks, 1);
+      DoScopeRegAsg(optloop->blocks, 1, &i);
    }
    PrintInst(fopen("tmp.err", "w"), bbbase);
 #if 1
@@ -168,7 +168,8 @@ fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
  */
    for (lbase=NULL,bp=bbbase; bp; bp = bp->down)
       lbase = AddBlockToList(lbase, bp);
-   DoScopeRegAsg(lbase, 3);
+   DoScopeRegAsg(lbase, 2, &i);
+   DoCopyProp(lbase);
    KillBlockList(lbase);
 #endif
 

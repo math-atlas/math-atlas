@@ -346,6 +346,18 @@ BBLOCK *FindBasicBlocks(BBLOCK *base0)
    return(bbase);
 }
 
+BLIST *FindBlockListWithLabel(BLIST *list, int ilab)
+/*
+ * Given a label's ST index, return BLIST entry containing it
+ */
+{
+   BLIST *bl;
+   for (bl=list; bl; bl = bl->next)
+      if (bl->blk->ilab == ilab) return(bl);
+      
+   return(NULL);
+}
+
 BBLOCK *FindBlockWithLabel(BBLOCK *bp, int ilab)
 /*
  * Given a label's ST index, return the block that starts with it
