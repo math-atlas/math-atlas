@@ -1584,14 +1584,14 @@ int LoadStoreToMove(BLIST *blocks, int n, short *vars, short *regs)
    return(changes);
 }
 
-void DoLoopGlobalRegAssignment(LOOPQ *loop)
+int DoLoopGlobalRegAssignment(LOOPQ *loop)
 /* 
  * This routine does global register assignment for all locals referenced
  * in the loop, and live on loop entry or exit
  */
 {
    short *sp;
-   int i, j, n;
+   int i, j, n, iret;
    short k;
    short iregs[NIR], fregs[NFR], dregs[NDR]; 
    short *vars, *regs;
@@ -1652,7 +1652,7 @@ fprintf(stderr, "\n\n");
          regs[j++] = -i - DREGBEG;
       }
    }
-   i = LoadStoreToMove(loop->blocks, n, vars, regs);
+   iret = i = LoadStoreToMove(loop->blocks, n, vars, regs);
    free(regs);
    fprintf(stderr, "Removed %d LD/ST using global register assignment!\n", i);
 /*
@@ -1708,6 +1708,7 @@ fprintf(stderr, "\n\n");
    PrintComment(loop->posttails->blk, NULL, loop->posttails->blk->inst1, 
                 "START global asg sunk stores");
    CFUSETU2D = INUSETU2D = INDEADU2D = 0;
+   return(iret);
 }
 
 static INSTQ *FindReg2RegMove(BBLOCK *bp, INSTQ *start, INSTQ *end)

@@ -4,10 +4,10 @@
 #include "fko_l2a.h"
 #include "fko_loop.h"
 
-FILE *fpST=NULL, *fpIG=NULL, *fpLIL=NULL;
+FILE *fpST=NULL, *fpIG=NULL, *fpLIL=NULL, *fpOPT=NULL;
 int FUNC_FLAG=0; 
 int DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0, DTx87=0, DTx87d=0;
-int FKO_FLAG;
+int FKO_FLAG, FKO_UNROLL=0;
 
 void PrintUsage(char *name)
 {
@@ -19,6 +19,353 @@ void PrintUsage(char *name)
    fprintf(stderr, "     I : dump interference graph info to <file>.IG\n");
    fprintf(stderr, "     L : dump LIL <file>.L\n");
    exit(-1);
+}
+void PrintUsageN(char *name)
+{
+   fprintf(stderr, "USAGE: %s [flags]\n", name);
+   fprintf(stderr, 
+           "  -I <LIL> <symtab> <misc> : start from intermediate files\n");
+   fprintf(stderr, "  -c <LIL> <symtab> <misc> : generate files and quit\n");
+   fprintf(stderr, "  -o <outfile> : assembly output file\n");
+   fprintf(stderr, "  -K 0 : suppress comments\n");
+   fprintf(stderr, "  -t [S,I,L,o] : generate temporary files:\n");
+   fprintf(stderr, "     S : dump symbol table to <file>.ST\n");
+   fprintf(stderr, "     I : dump interference graph info to <file>.IG\n");
+   fprintf(stderr, "     L : dump LIL <file>.L\n");
+   fprintf(stderr, "     o : dump opt sequence to <file>.opt\n");
+   fprintf(stderr, "  -U <#> : Unroll main loop # of times\n");
+   fprintf(stderr, "  -V     : Vectorize (SIMD) main loop\n");
+   fprintf(stderr, "  -[L,G] <blknum> <maxN> <nopt> <opt1> ... <optN>\n");
+   fprintf(stderr, "     Loop or global optimization block\n");
+   fprintf(stderr, "     <blknum> : integer identifier > 0\n");
+   fprintf(stderr, 
+"     <maxN>   : if maxN == 0, do opts only once, otherwise do them until\n");
+   fprintf(stderr, "                there are no changes, or maxN iterations have been performed\n");
+   fprintf(stderr, "     <nopt> : number of optimizations in this block\n");
+   fprintf(stderr, 
+           "     <opti> : Either alphabetic opt phase abbreviation, or\n");
+   fprintf(stderr, 
+           "              <blknum> of encapsulated opt block\n");
+   fprintf(stderr, "  -C <blknum> <blk1> <blk2> <blk3>\n");
+   fprintf(stderr, 
+          "     if <blk1> causes changes, <blk2> is performed, else <blk3>.\n");
+   fprintf(stderr, 
+           "     0 for <blk2> or <blk3> means do no action in this case.\n");
+   exit(-1);
+}
+
+struct optblkq *NewOptBlock(ushort bnum, ushort maxN, ushort nopt, ushort flag)
+{
+   struct optblkq *op;
+   op = calloc(1, sizeof(struct optblkq));
+   assert(op);
+   op->bnum = bnum;
+   op->maxN = maxN;
+   op->nopt = nopt;
+   op->flag = flag;
+   if (nopt > 0)
+   {
+      op->opts = calloc(nopt, sizeof(enum FKOOPT));
+      assert(op->opts);
+   }
+   return(op);
+}
+
+struct optblkq *FindOptBlockUsingNext(struct optblkq *head, ushort bnum)
+{
+   struct optblkq *op;
+   for (op=head; op && op->bnum != bnum; op = op->next);
+   return(op);
+}
+struct optblkq *FindOptBlockUsingDown(struct optblkq *head, ushort bnum)
+{
+   struct optblkq *op;
+   for (op=head; op && op->bnum != bnum; op = op->down);
+   return(op);
+}
+
+void KillAllOptBlocks(struct optblkq *head)
+{
+   if (head->next)
+      KillAllOptBlocks(head->next);
+   if (head->down)
+      KillAllOptBlocks(head->down);
+   if (head->ifblk)
+      KillAllOptBlocks(head->ifblk);
+   if (head->opts) free(head->opts);
+   free(head);
+}
+
+struct optblkq *SproutNode(struct optblkq *head, struct optblkq *seed)
+/*
+ * Changes opts list with numbers to pure opt + appropriate next, down
+ */
+{
+   struct optblkq *new, *op;
+   int n, nlist, i, j, k;
+/*
+ * Handle conditional blocks seperately
+ */
+   if (seed->ifblk)
+   {
+      new = NewOptBlock(seed->bnum, 0, 0, seed->flag);
+      new->ifblk = SproutNode(head, FindOptBlockUsingNext(head, seed->opts[0]));
+      new->down  = SproutNode(head, FindOptBlockUsingNext(head, seed->opts[1]));
+      new->next  = SproutNode(head, FindOptBlockUsingNext(head, seed->opts[2]));
+      return(new);
+   }
+/*
+ * Find if we've got an encapsulated opt block 
+ */
+   for (n=seed->nopt,i=0; i < n && seed->opts[i] < MaxOpt; i++);
+   if (i || !n)
+   {
+      new = NewOptBlock(seed->bnum, seed->maxN, i, seed->flag);
+      for (n=i,i=0; i < n; i++)
+         new->opts[i] = seed->opts[i];
+   }
+/*
+ * If first opt is a block
+ */
+   else
+   {
+      op = FindOptBlockUsingNext(head, seed->opts[0]-MaxOpt);
+      assert(op);
+      new = SproutNode(head, op);
+      n = 1;
+   }
+/*
+ * See if there are still optimizations to be applied
+ */
+   if (n != seed->nopt)
+   {
+      op = NewOptBlock(seed->bnum, 0, seed->nopt-n, seed->flag);
+      for (i=n; i < seed->nopt; i++)
+         op->opts[i-n] = seed->opts[i];
+      new->down = SproutNode(head, op);
+      if (!seed->maxN)
+      {
+         new->next = new->down;
+         new->down = NULL;
+      }
+      free(op->opts);
+      free(op);
+   }
+   return(new);
+}
+
+struct optblkq *OptBlockQtoTree(struct optblkq *head)
+/*
+ * Given a queue of unordered optblocks starting at head, and using only
+ * next ptrs, create appropriate tree using both next and down
+ * RETURNS: root of newly created tree
+ * NOTE: deletes sequential queue when done
+ */
+{
+   struct optblkq *root;
+
+   root = FindOptBlockUsingNext(head, 1);
+   assert(root);
+   root = SproutNode(head, root);
+   KillAllOptBlocks(head);
+   return(root);
+}
+
+struct optblkq *GetFlagsN(int nargs, char **args, 
+                          char **FIN, FILE **FPIN, FILE **FPOUT)
+{
+   char ln[256];
+   FILE *fpin, *fpout;
+   char *fin=NULL, *fout=NULL;
+   struct optblkq *obq=NULL, *op;
+   char *sp;
+   int i, j;
+
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+      {
+         if (fin) PrintUsage(args[0]);
+         else fin = args[i];
+      }
+      else
+      {
+         switch(args[i][1])
+         {
+         case 'V':
+            FKO_FLAG |= IFF_VECTORIZE;
+            break;
+         case 'c':
+            fpIG = fpST = fpLIL = fpOPT = (FILE*) 1;
+            FKO_FLAG |= IFF_GENINTERM;
+            break;
+         case 'I':
+            fpIG = fpST = fpLIL = fpOPT = (FILE*) 1;
+            FKO_FLAG |= IFF_READINTERM;
+            break;
+         case 'U':
+            FKO_UNROLL = atoi(args[++i]);
+            break;
+         case 't':
+            for(++i, j=0; args[i][j]; j++)
+            {
+               switch(args[i][j])
+               {
+               case 'I': /* IG */
+                  fpIG = (FILE *) 1;
+                  break;
+               case 'S': /* symbol table */
+                  fpST = (FILE *) 1;
+                  break;
+               case 'L': /* LIL */
+                  fpLIL = (FILE *) 1;
+                  break;
+               case 'o':
+                  fpOPT = (FILE *) 1;
+                  break;
+               default :
+                  fprintf(stderr, "Unknown temp label %c ignored!!\n\n",
+                          args[i][j]);
+               }
+            }
+            break;
+         case 'o':
+            fout = args[++i];
+            break;
+         case 'K':
+            j = atoi(args[++i]);
+            if (!j) FKO_FLAG |= IFF_KILLCOMMENTS;
+            break;
+         case 'L':
+         case 'G':
+            op = NewOptBlock(atoi(args[i+1]), atoi(args[i+2]), atoi(args[i+3]),
+                             args[i][1] == 'G' ? IOPT_GLOB : 0);
+            i += 3;
+            for (j=0; j < op->nopt; j++)
+            {
+               sp = args[++i];
+               switch(*sp)
+               {
+               case 'r':
+                  if (sp[1] == 'a' && sp[2] == '\0')
+                     op->opts[j] = RegAsg;
+                  else goto ERR;
+                  break;
+               case 'c':
+                  if (sp[1] == 'p' && sp[2] == '\0')
+                     op->opts[j] = CopyProp;
+                  else goto ERR;
+                  break;
+               case 'g':
+                  if (sp[1] == 'a' && sp[2] == '\0')
+                     op->opts[j] = GlobRegAsg;
+                  else goto ERR;
+                  break;
+               case '0':
+               case '1':
+               case '2':
+               case '3':
+               case '4':
+               case '5':
+               case '6':
+               case '7':
+               case '8':
+               case '9':
+                  op->opts[j] = atoi(sp) + MaxOpt;
+                  break;
+               default:
+ERR:
+                  fko_error(__LINE__, "Unknown optimization '%s'", sp);
+               }
+            }
+            op->next = obq;
+            obq = op;
+            break;
+         case 'C':
+            op = NewOptBlock(atoi(args[i+1]), 0, 3, 0);
+            op->ifblk = (void*) 1;
+            op->opts[0] = atoi(args[i+2]);
+            op->opts[1] = atoi(args[i+3]);
+            op->opts[2] = atoi(args[i+4]);
+            op->next = obq;
+            obq = op;
+            i += 4;
+            break;
+         default:
+            fprintf(stderr, "Unknown flag '%s'\n", args[i]);
+            PrintUsage(args[0]);
+         }
+      }
+   }
+   if (!fin) fpin = stdin;
+   else
+   {
+      fpin = fopen(fin, "r");
+      assert(fpin);
+   }
+   if (!fout)
+   {
+      fpout = stdout;
+      strcpy(ln, "ifko_temp.");
+      i = 10;
+   }
+   else
+   {
+      fpout = fopen(fout, "w");
+      assert(fpout);
+      for (i=0; fout[i]; i++);
+      if (i > 2 && fout[i-1] == 'l' && fout[i-2] == '.')
+         FKO_FLAG |= IFF_NOASS | IFF_LIL;
+      for (i=0; fout[i]; i++) ln[i] = fout[i];
+      for (i--; i > 0 && ln[i] != '.'; i--);
+      if (ln[i] != '.')
+      {
+         for (i=0; ln[i]; i++);
+         ln[i++] = '.';
+      }
+      else ln[++i] = '\0';
+
+   }
+   if (fpIG && !(FKO_FLAG & IFF_READINTERM))
+   {
+      ln[i] = 'I'; ln[i+1] = 'G'; ln[i+2] = '\0';
+      if (FKO_FLAG & IFF_READINTERM)
+         fpIG = fopen(ln, "r");
+      else
+         fpIG = fopen(ln, "w");
+      assert(fpIG);
+   }
+   if (fpST)
+   {
+      ln[i] = 'S'; ln[i+1] = 'T'; ln[i+2] = '\0';
+      if (FKO_FLAG & IFF_READINTERM)
+         fpST = fopen(ln, "r");
+      else
+         fpST = fopen(ln, "w");
+      assert(fpST);
+   }
+   if (fpLIL)
+   {
+      ln[i] = 'L'; ln[i+1] = '\0';
+      if (FKO_FLAG & IFF_READINTERM)
+         fpLIL = fopen(ln, "r");
+      else
+         fpLIL = fopen(ln, "w");
+      assert(fpLIL);
+   }
+   if (fpOPT)
+   {
+      ln[i] = 'o'; ln[i+1] = 'p'; ln[i+2] = 't'; ln[i+3] = '\0';
+      if (FKO_FLAG & IFF_READINTERM)
+         fpOPT = fopen(ln, "r");
+      else
+         fpOPT = fopen(ln, "w");
+      assert(fpOPT);
+   }
+   *FIN = fin;
+   *FPIN = fpin;
+   *FPOUT = fpout;
+   return(obq);
 }
 
 void GetFlags(int nargs, char **args, char **FIN, FILE **FPIN, FILE **FPOUT)
@@ -276,6 +623,81 @@ static void SaveFKOState(int isav)
    WriteMiscToFile(ln);
 }
 
+int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope, int global)
+/*
+ * Performs the nopt optimization in the sequence given by ops, returning
+ * 0 if no transformations applied, nonzero if some changes were made
+ */
+{
+   int i, j, nchanges=0;
+
+   for (i=0; i < nopt; i++)
+   {
+      switch(ops[i])
+      {
+      case GlobRegAsg:
+         assert(!global);
+         DoLoopGlobalRegAssignment(optloop);  
+         break;
+      case RegAsg:
+         nchanges += DoScopeRegAsg(scope, global ? 2:1, &j);
+         break;
+      case CopyProp:
+         nchanges += DoCopyProp(scope);
+         break;
+      default:
+         fko_error(__LINE__, "Unknown optimization %d\n", ops[i]);
+      }
+   }
+   return(nchanges);
+}
+
+int DoOptBlkWhileChanges(BLIST *scope, int global, struct optblkq *op)
+/*
+ * Returns: nchanges applied
+ */
+{
+   int i, nc, tnc=0;
+   int maxN;
+   struct optblkq *dp;
+/*
+ * if we have conditional optimization block, handle it
+ */
+   if (op->ifblk)
+   {
+      tnc = DoOptBlkWhileChanges(scope, global, op->ifblk);
+      if (tnc)
+      {
+         if (op->down)
+            tnc += DoOptBlkWhileChanges(scope, global, op->down);
+      }
+      else if (op->next)
+         tnc += DoOptBlkWhileChanges(scope, global, op->next);
+   }
+/*
+ * Otherwise, we have normal optblk
+ */
+   else
+   {
+      maxN = op->maxN;
+      for (i=0; i < maxN; i++)
+      {
+         nc = DoOptList(dp->nopt, dp->opts, scope, global);
+         for (dp=op; dp; dp = dp->down)
+            nc += DoOptBlkWhileChanges(scope, global, op);
+         if (!nc)
+            break;
+         tnc += nc;
+      }
+   }
+   if (!nc)
+      fprintf(stderr, "On last (%d) iteration, still had %d changes!\n",
+              maxN, nc);
+   if (op->next)
+      tnc += DoOptBlkWhileChanges(scope, global, op->next);
+   return(tnc);
+}
+
 int PerformOpt(int SAVESP)
 /*
  * Returns 0 on success, non-zero on failure
@@ -324,7 +746,7 @@ int PerformOpt(int SAVESP)
    return(0);
 }
 
-int GoToTown(int SAVESP)
+int GoToTown(int SAVESP, int unroll)
 {
    int i;
    extern BBLOCK *bbbase;
@@ -334,12 +756,13 @@ int GoToTown(int SAVESP)
    NewBasicBlocks(bbbase);
    FindLoops(); 
    CheckFlow(bbbase, __FILE__, __LINE__);
-   if (optloop && 1)
-   #if 0
-      OptimizeLoopControl(optloop, 1, 1, NULL);
-   #else
-      UnrollLoop(optloop, 3);
-   #endif
+   if (optloop)
+   {
+      if (unroll > 1)
+         UnrollLoop(optloop, unroll);
+      else
+         OptimizeLoopControl(optloop, 1, 1, NULL);
+   }
    CalcInsOuts(bbbase); 
    CalcAllDeadVariables();
 
@@ -362,51 +785,91 @@ int GoToTown(int SAVESP)
    return(0);
 }
 
+struct optblkq *DefaultOptBlocks(void)
+{
+   struct optblkq *base, *op;
+#if 0
+   op = base = NewOptBlock(1, 0, 2, 0);
+   op->opts[0] = GlobRegAsg;
+   op->opts[1] = MaxOpt+2;
+   op = base->next = NewOptBlock(2, 10, 2, 0);
+   op->opts[0] = RegAsg;
+   op->opts[1] = CopyProp;
+#else
+   op = base = NewOptBlock(1, 0, 3, 0);
+   op->opts[0] = GlobRegAsg;
+   op->opts[1] = MaxOpt+2;
+   op->opts[2] = MaxOpt+3;
+   op = base->next = NewOptBlock(2, 10, 2, 0);
+   op->opts[0] = RegAsg;
+   op->opts[1] = CopyProp;
+   op->next = NewOptBlock(3, 10, 2, IOPT_GLOB);
+   op = op->next;
+   op->opts[0] = RegAsg;
+   op->opts[1] = CopyProp;
+#endif
+   return(base);
+}
+
 int main(int nargs, char **args)
 {
    FILE *fpin, *fpout, *fpl;
    char *fin;
    char ln[512];
    struct assmln *abase;
+   struct optblkq *optblks;
    BBLOCK *bp;
    int i;
    extern FILE *yyin;
    extern BBLOCK *bbbase;
 
-   GetFlags(nargs, args, &fin, &fpin, &fpout);
-   yyin = fpin;
-   bp = bbbase = NewBasicBlock(NULL, NULL);
-   bp->inst1 = bp->instN = NULL;
-   yyparse();
-   fclose(fpin);
-   SaveFKOState(0);
-   if (GoToTown(0))
+   optblks = GetFlagsN(nargs, args, &fin, &fpin, &fpout);
+   if (!optblks)
+      optblks = DefaultOptBlocks();
+   optblks = OptBlockQtoTree(optblks);
+   if (FKO_FLAG & IFF_READINTERM)
+      RestoreFKOState(0);
+   else
+   {
+      yyin = fpin;
+      bp = bbbase = NewBasicBlock(NULL, NULL);
+      bp->inst1 = bp->instN = NULL;
+      yyparse();
+      fclose(fpin);
+      SaveFKOState(0);
+   }
+   if (FKO_FLAG & IFF_GENINTERM)
+     exit(0);
+   if (GoToTown(0, FKO_UNROLL))
    {
       fprintf(stderr, "\n\nOut of registers for SAVESP, trying again!!\n");
       RestoreFKOState(0);
-      assert(!GoToTown(IREGBEG+NIR-1));
+      assert(!GoToTown(IREGBEG+NIR-1, FKO_UNROLL));
    }
 
-   if (fpLIL)
+   if (!(FKO_FLAG & IFF_READINTERM))
    {
-      PrintInst(fpLIL, bbbase);
-      fclose(fpLIL);
-   }
-   if (fpST)
-   {
-      PrintST(fpST);
-      fclose(fpST);
-   }
+      if (fpLIL)
+      {
+         PrintInst(fpLIL, bbbase);
+         fclose(fpLIL);
+      }
+      if (fpST)
+      {
+         PrintST(fpST);
+         fclose(fpST);
+      }
 #if 0
-/* Sometime, rewrite IG to take global table, rather than sorted table */
-   if (fpIG)
-   {
-      PrintIG(fpIG);
-      fclose(fpIG);
-   }
+   /* Sometime, rewrite IG to take global table, rather than sorted table */
+      if (fpIG)
+      {
+         PrintIG(fpIG);
+         fclose(fpIG);
+      }
 #endif
-   if (DO_LIL(FKO_FLAG))
-   {
+   }
+      if (DO_LIL(FKO_FLAG))
+      {
       if (!DO_ASS(FKO_FLAG))
          PrintInst(fpout, bbbase);
       else
