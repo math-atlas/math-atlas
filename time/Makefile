@@ -26,7 +26,7 @@ l1time :
 	echo "****\n\n"
 	fgrep -e 'time=' -e 'mflop=' $(L1Tdir)/fko.tmp > ifk2.tmp
 	fgrep -e 'time=' -e 'mflop=' $(L1Tdir)/fko.tmp
-#	$(MAKE) l1test pre=$(pre) rout=$(rout) cache=$(cache) N=$(N)
+	$(MAKE) l1test pre=$(pre) rout=$(rout) cache=$(cache) N=$(N)
 
 l1test :
 	cd $(L1Tdir) ; make $(pre)$(rout)test urout=fkorout.c UCC=gcc \
