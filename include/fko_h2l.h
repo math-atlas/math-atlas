@@ -10,5 +10,8 @@ void DoArith(short dest, short src0, char op, short src1);
 void DoReturn(short rret);
 void DoLabel(char *name);
 short AddArrayDeref(short array, short index, short offset);
+struct loopq *DoLoop(short I, short start, short end, short inc,
+                     short sst, short send, short sinc);
+
 
 #endif

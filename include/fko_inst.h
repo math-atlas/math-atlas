@@ -17,6 +17,8 @@ enum inst
    COMMENT,                     /* <string>,NULL,NULL */
    LABEL,                       /* <labname>,NULL,NULL */
    CMPFLAG,                     /* flag,flag,flag compiler info */
+   LOOP_BEG,                    /* <lnum> */
+   LOOP_END,                    /* <lnum> */
 /*
  * 32-bit integer
  */

@@ -46,7 +46,7 @@ y.tab.h : ../src/hil_gram.y $(heads)
 	yacc -v -d ../src/hil_gram.y
 lex.yy.c : y.tab.h ../src/hil_lex.l
 	lex ../src/hil_lex.l
-lex.yy.o : $(heads) lex.yy.c
+lex.yy.o : $(heads) lex.yy.c y.tab.h
 	$(CC) -I../include $(CCFLAGS) -c lex.yy.c
 y.tab.o : $(heads) y.tab.c
 	$(CC) -I../include $(CCFLAGS) -c y.tab.c

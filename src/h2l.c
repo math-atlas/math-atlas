@@ -18,10 +18,12 @@ static short type2shift(int type)
    #define ASHL SHLL
    #define AADD ADDL
    #define ASUB SUBL
+   #define AINT T_LONG
 #else
    #define ASHL SHL
    #define AADD ADD
    #define ASUB SUB
+   #define AINT T_INT
 #endif
 
 static int LocalLoad(short id)
@@ -131,9 +133,14 @@ fprintf(stderr, "DoMove %d %d (%s %s)\n", dest, src, STname[dest-1]?STname[dest-
    if (IS_CONST(sflag))
    {
       rsrc = GetReg(FLAG2TYPE(sflag));
-      InsNewInst(NULL, NULL, 
-                 IS_FLOAT(sflag) ? FMOV : (IS_DOUBLE(sflag) ? FMOVD : MOV),
-                 -rsrc, src, __LINE__);
+      if (IS_CONST(sflag) && (IS_INT(sflag) || IS_LONG(sflag) && 
+          SToff[src-1].i == 0)
+         InsNewInst(NULL, NULL, IS_INT(sflag) ? SUB : SUBL, -rsrc, 
+                    -rsrc, -rsrc);
+      else
+         InsNewInst(NULL, NULL, 
+                    IS_FLOAT(sflag) ? FMOV : (IS_DOUBLE(sflag) ? FMOVD : MOV),
+                    -rsrc, src, __LINE__);
       LocalStore(dest, rsrc);
    }
    else if (FLAG2TYPE(STflag[dest-1]) == FLAG2TYPE(sflag))
@@ -553,4 +560,95 @@ void DoReturn(short rret)
 void DoLabel(char *name)
 {
    InsNewInst(NULL, NULL, LABEL, STdef(name, T_LABEL, 0), 0, 0);
+}
+
+static short GetSignInfo(short k)
+/*
+ * Calculates sign info for ST entry k
+ */
+{
+   int flag, i;
+   short kret=0;
+   flag = STflag[k-1];
+   if (IS_CONST(flag))
+   {
+      assert(IS_INT(flag));
+      i = SToff[k-1].i;
+      if (i > 0) kret = 2;
+      else if (i == 0) kret = 1;
+      else if (i < 0) kret = -2;
+      else kret = -1;
+   }
+   else if (IS_UNSIGNED(flag)) kret = 1;
+   return(kret);
+}
+
+struct loopq *DoLoop(short I, short start, short end, short inc,
+                     short sst, short send, short sinc)
+/*
+ * sst, send, sinc indicate sign of each parameter:
+ *    0 : unknown
+ *    1 : >= 0
+ *    2 : >  0
+ *   -1 : <= 0
+ *   -2 : <  0
+ */
+{
+   int flag=0;
+   struct loopq *lp;
+/*
+ * If signs of loop parts are unknown, see if we can deduce them
+ */
+   if (!sst) sst = GetSignInfo(start);
+   if (!send) send = GetSignInfo(end);
+   if (!sinc) sinc = GetSignInfo(inc);
+   if (sst)
+   {
+      if (sst == 2) flag |= L_PSTART_BIT;
+      else if (sst == 1) flag |= L_PSTART_BIT | L_ZSTART_BIT;
+      else if (sst == -1) flag |= L_NSTART_BIT | L_ZSTART_BIT;
+      else /* if (sst == -2) */ flag |= L_NSTART_BIT;
+   }
+   if (send)
+   {
+      if (send == 2) flag |= L_PEND_BIT;
+      else if (send == 1) flag |= L_PEND_BIT | L_ZEND_BIT;
+      else if (send == -1) flag |= L_NEND_BIT | L_ZEND_BIT;
+      else /* if (send == -2) */ flag |= L_NEND_BIT;
+   }
+   if (sinc)
+   {
+      if (sinc == 2) flag |= L_PINC_BIT;
+      else /* if (sinc == -2) */ flag |= L_NINC_BIT;
+   }
+   lp = NewLoop(flag);
+   lp->I = I;
+   lp->beg = start;
+   lp->end = end;
+   lp->ibeg = InsNewInst(NULL, NULL,  LOOP_BEG, lp->loopnum, 0, 0);
+   return(lp);
+}
+
+void ExpandLoops()
+/*
+ * This routine puts in actual LIL instructions for loop control
+ */
+HERE HERE : need to finish, or just put somewhere else.
+{
+   struct loopq *lp;
+   short ireg;
+   for (lp=loopq; lp; lp=lp->next)
+   {
+/*
+ *    Perform index initialization before loop
+ */
+      ireg = GetReg(AINT);
+      if (IS_CONST(STflag[lp->beg
+      if (!IS_PTR(STflag[lp->beg-1])) DoMove(lp->I, lp->beg);
+      else DoArrayLoad(lp->id, lp->beg);
+
+/*
+ *    Increment index, and branch on test after loop
+ */
+   }
 }

@@ -1,5 +1,7 @@
 #include "ifko.h"
+#include "fko_loop.h"
 #include <stdarg.h>
+
 int const2shift(int c)
 {
    int i;
@@ -7,6 +9,7 @@ int const2shift(int c)
       if ((c ^ (1<<i)) == 0) return(i);
    return(-1);
 }
+
 void fko_error(int errno, ...)
 {
    va_list argptr;
@@ -18,6 +21,7 @@ void fko_error(int errno, ...)
    fprintf(stderr, "\nExiting iFKO with error number %d\n", errno);
 /*   exit(errno); */
 }
+
 void fko_warn(int errno, ...)
 {
    va_list argptr;
@@ -28,4 +32,29 @@ void fko_warn(int errno, ...)
    vfprintf(stderr, form, argptr);
    fprintf(stderr, "\n");
    va_end(argptr);
+}
+
+
+struct loopq *NewLoop(int flag)
+{
+   struct loopq *lp, *l;
+   short lnum=0;
+
+   lp = malloc(sizeof(struct loopq));
+   assert(lp);
+   lp->flag = flag;
+   lp->slivein = lp->sliveout = lp->adeadin = lp->adeadout = lp->nopf =
+                 lp->aaligned = NULL;
+   lp->abalign = NULL;
+   lp->maxunroll = 0;
+   lp->next = NULL;
+   if (loopq)
+   {
+      lnum++;
+      for (l=loopq; l->next; lnum++, l = l->next);
+      l->next = lp;
+   }
+   else loopq = lp;
+   lp->loopnum = lnum;
+   return(lp);
 }

@@ -1,6 +1,8 @@
 #ifndef FKO_TYPES_H
 #define FKO_TYPES_H
 
+#define uchar unsigned char
+
 union valoff
 {
    int i;
@@ -41,6 +43,19 @@ struct sdata  /* Structure for static data */
    short align;          /* required memory alignment */
    unsigned char *vals;  /* values of data */
    struct sdata *next;
+};
+
+struct loopq
+{
+   int flag;
+   short I, beg, end;
+   short loopnum;
+   short maxunroll;
+   short *slivein, *sliveout, *adeadin, *adeadout, *nopf;
+   short *aaligned;   /* arrays that have known alignment */
+   uchar *abalign;    /* alignments of above arrays */
+   INSTQ *ibeg, *iend;
+   struct loopq *next;
 };
 
 #endif

@@ -2,6 +2,10 @@
    #include "ifko.h"
    #include "fko_h2l.h"
    int WhereAt=0, lnno=1;
+   static short *LMA[8] = {NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL};
+   static short *aalign=NULL;
+   static uchar *balign=NULL;
+   static short maxunroll=0;
 %}
 %union
 {
@@ -11,11 +15,14 @@
    double dnum;
    char str[512];
    char c;
+   struct loopq *lq;
 }
+
 
 %token ROUT_NAME ROUT_LOCALS ROUT_BEGIN ROUT_END CONST_INIT RETURN
 %token DOUBLE FLOAT INT UINT DOUBLE_PTR FLOAT_PTR INT_PTR UINT_PTR 
-%token PARAMS LST ABST
+%token PARAMS LST ABST ME LOOP_BEGIN LOOP_BODY LOOP_END MAX_UNROLL
+%token <sh> LOOP_LIST_MU
 %token <inum> ICONST
 %token <fnum> FCONST
 %token <dnum> DCONST
@@ -31,18 +38,28 @@
 %left '+' '-'
 %left '*' '/' '%'
 %right UNMIN NOT
+%left LSMU
 
 %type <inum> icexpr
 %type <fnum> fcexpr
 %type <dnum> dcexpr
-%type <sh> ID avar const iconst fpconst fconst dconst ptrderef
+%type <sh> ID avar const iconst fpconst fconst dconst ptrderef 
+%type <sh> loopsm loopsm2
+%type <lq> loop_beg
 
 %%
 
-lines : lines line ';' | line ';' | lines comment | comment ;
-line : stateflag | paradec | typedec | constinit | statement ;
-comment : COMMENT { DoComment($1); }
-        ;
+lines : lines line 
+      | line
+      ;
+lines : lines line ';' | line ';' ;
+line : stateflag
+     | paradec ';' 
+     | typedec ';'
+     | constinit ';'
+     | statement
+     | loop 
+     ;
 stateflag: ROUT_NAME NAME 
          {
             if (WhereAt != 0)
@@ -74,6 +91,30 @@ fprintf(stderr, "grammer setting rout_name='%s'\n", rout_name);
             WhereAt = 4;
          }
 	 ;
+loopsm2  : '{' '+' '}'     { $$ = 2; } 
+         | '{' '-' '}'     { $$ = -2; }
+         |                 { $$ = 0; }
+         ;
+loopsm   : '{' PE '}'  { $$ = 1; }
+         | '{' ME '}'  { $$ = -1; } 
+         | '{' '+' '}' { $$ = 2; } 
+         | '{' '-' '}' { $$ = -2; }
+         |             { $$ = 0; }
+         ;
+loop_beg :LOOP_BEGIN ID '=' avar loopsm ',' avar loopsm ',' avar loopsm2
+         { $$ = DoLoop($2, $4, $7, $10, $5, $8, $11); }
+         LOOP_BEGIN ID '=' avar loopsm ',' avar loopsm
+         { $$ = DoLoop($2, $4, $7, STiconstlookup(1), $5, $8, 2); }
+         ;
+loop_markup : LOOP_LIST_MU LST idlist ';' { HandleLoopListMU($1); }
+            | MAX_UNROLL   LST icexpr ';' { maxunroll = $3; }
+            ;
+loop_markups : loop_markups loop_markup ';'
+             |
+             ;
+loop_body : LOOP_BODY statements LOOP_END ; 
+loop : loop_beg loop_markups loop_body ;   { UpdateLoop($1); }
+
 typedec : INT LST idlist              { declare_list(T_INT); }
         | UINT LST idlist              { declare_list(T_INT | UNSIGNED_BIT); }
         | FLOAT LST idlist           { declare_list(T_FLOAT); }
@@ -98,12 +139,17 @@ inititem :  ID '=' iconst { ConstInit($1, $3); }
          |  ID '=' dconst { ConstInit($1, $3); }
          ;
 
-statement : arith
-          | ptrderef '=' ID       {DoArrayStore($1, $3);}
-          | ID '=' ptrderef       {DoArrayLoad($1, $3);}
-          | ID '=' ID             {DoMove($1, $3);}
-	  | ID '=' const	  {DoMove($1, $3);}
-          | RETURN avar           {DoReturn($2);}
+comment : COMMENT { DoComment($1); }
+        ;
+statements : statements statement
+           ;
+statement : arith ';'
+          | comment
+          | ptrderef '=' ID ';'   {DoArrayStore($1, $3);}
+          | ID '=' ptrderef ';'   {DoArrayLoad($1, $3);}
+          | ID '=' ID       ';'   {DoMove($1, $3);}
+	  | ID '=' const ';'	  {DoMove($1, $3);}
+          | RETURN avar  ';'      {DoReturn($2);}
           | NAME ':'              {DoLabel($1);}
 	  ;
 
@@ -156,17 +202,19 @@ const   : fpconst	{$$ = $1; }
 fpconst : fconst	{$$ = $1; }
         | dconst	{$$ = $1; }
 	;
+ptrderef : ID '[' icexpr ']' { $$ = AddArrayDeref($1, 0, $3); }
+         | ID '[' ID ']'    { $$ = AddArrayDeref($1, $3, 0); }
+         /*
+         | ID '[' ID '+' icexpr ']' { $$ = AddArrayDeref($1, $3, $5); }
+         | ID '[' ID '-' icexpr ']' { $$ = AddArrayDeref($1, $3, -$5); }
+         */
+         ;
 fconst : fcexpr         {$$ = STfconstlookup($1);} ;
 dconst : dcexpr         {$$ = STdconstlookup($1);} ;
 iconst : icexpr         {$$ = STiconstlookup($1);} ;
 ID : NAME               
    {if (!($$ = STstrlookup($1))) fko_error(__LINE__,"unknown ID '%s'", $1); }
    ;
-ptrderef : ID '[' ID '+' icexpr ']' { $$ = AddArrayDeref($1, $3, $5); }
-         | ID '[' ID '-' icexpr ']' { $$ = AddArrayDeref($1, $3, -$5); }
-         | ID '[' icexpr ']' { $$ = AddArrayDeref($1, 0, $3); }
-         | ID '[' ID ']'    { $$ = AddArrayDeref($1, $3, 0); }
-         ;
 avar : ID               {$$ = $1;}
      | fconst           {$$ = $1;}
      | dconst           {$$ = $1;}
@@ -181,7 +229,7 @@ arith : ID '=' ID '+' avar {DoArith($1, $3, '+', $5); }
       | ID '=' ID LSHIFT avar {DoArith($1, $3, '<', $5); }
       | ID PE avar         {DoArith($1, $1, '+', $3); }
       | ID '=' ABST        {DoArith($1, $1, 'a', 0); }
-      | ID '=' '-' avar    {DoArith($1, $4, 'n', 0); }
+      | ID '=' '-' ID      {DoArith($1, $4, 'n', 0); }
       | ID PE ID '*' avar  {DoArith($1, $3, 'm', $5); }
       ;
 %%
@@ -229,6 +277,78 @@ struct idlist *ReverseList(struct idlist *base0)
    return(base);
 }
 #endif
+
+static void UpdateLoop(struct loopq *lp)
+{
+   lp->maxunroll = maxunroll;
+   lp->slivein  = LMA[0];
+   lp->sliveout = LMA[1];
+   lp->adeadin  = LMA[2];
+   lp->adeadout = LMA[3];
+   lp->nopf     = LMA[4];
+   lp->aaligned = aalign;
+   lp->abalign  = balign;
+   lp->iend = InsNewInst(NULL, NULL, LOOP_END, lp->loopnum, 0, 0);
+   LMA[0] = LMA[1] = LMA[2] = LMA[3] = LMA[4] = aalign = NULL;
+   balign = NULL;
+   maxunroll = 0;
+}
+
+/* HERE HERE */
+void HandleLoopListMU(int which)
+/*
+ * Handles loop markup consisting of simple lists.  The markups are incoded
+ * by which:
+ *   0: Live_scalars_in
+ *   1: Live_scalars_out
+ *   2: Dead_arrays_in
+ *   3: Dead_arrays_in
+ *   4: No_prefetch
+ * 100: Array_aligned
+ */
+{
+   int i, n;
+   short *sp;
+   char *cp;
+   struct idlist *id;
+   for (id=idhead,n=0; id; id=id->next) n++;
+
+   if (which == 100)
+   {
+      assert(!aalign && !balign);
+      n >>= 1;
+      sp = malloc(sizeof(short)*(n+1));
+      cp = malloc(sizeof(uchar)*n);
+      assert(sp && cp);
+      *sp++ = n;
+      for (i=0,id=idhead; i != n; i++)
+      {
+         sp[i] = STstrlookup(id->name);
+         if (!sp[i])
+            fko_error(__LINE__, "Unknown ID: %s which=%d\n", id->name, which);
+         id = id->next;
+         cp[i] = atoi(id->name);
+         id = id->next;
+      }
+      aalign = sp - 1;
+      balign = cp;
+   }
+   else
+   {
+      assert(!LMA[which]);
+      sp = malloc(sizeof(short)*(n+1));
+      assert(sp);
+      *sp++ = n;
+      for (i=0,id=idhead; i != n; i++, id=id->next)
+      {
+         sp[i] = STstrlookup(id->name);
+         if (!sp[i])
+            fko_error(__LINE__, "Unknown ID: %s which=%d\n", id->name, which);
+      }
+      LMA[which] = sp - 1;
+   }
+   KillIDs();
+}
 
 void para_list()
 {

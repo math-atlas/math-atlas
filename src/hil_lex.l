@@ -27,7 +27,9 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 ";" | 
 "[" |
 "]" |
+":" |
 "="	{ return(yytext[0]); }
+"-="    { return(ME); }
 "+="    { return(PE); }
 "||"    { return(OR); }
 "&&"    { return(AND); }
@@ -37,6 +39,16 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 ">="    { return(GE); }
 "<<"    { return(LSHIFT); }
 ">>"    { return(RSHIFT); }
+"::"    { return(LST); }
+"LOOP_BODY" { return(LOOP_BODY); }
+"LOOP_END" { return(LOOP_END); }
+"LIVE_SCALARS_IN"  { yylval.inum = 0; return(LOOP_LIST_MU); }
+"LIVE_SCALARS_OUT" { yylval.inum = 1; return(LOOP_LIST_MU); }
+"DEAD_ARRAYS_IN"   { yylval.inum = 2; return(LOOP_LIST_MU); }
+"DEAD_ARRAYS_OUT"  { yylval.inum = 3; return(LOOP_LIST_MU); }
+"NO_PREFETCH"      { yylval.inum = 4; return(LOOP_LIST_MU); }
+"MAX_UNROLL"       { return(MAX_UNROLL); }
+"LOOP"  { return(LOOP_BEGIN); }
 "DOUBLE" { return(DOUBLE); }
 "FLOAT" { return(FLOAT); }
 "INT" { return(INT); }
@@ -61,5 +73,4 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 fprintf(stderr, "returning DCON of %f\n", yylval.dnum);
 return(DCONST); }
 
-"::"    { return(LST); }
 %%
