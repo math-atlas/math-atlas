@@ -329,8 +329,6 @@ int GoToTown(int SAVESP)
    extern BBLOCK *bbbase;
 
    GenPrologueEpilogueStubs(bbbase, SAVESP);
-   SaveFKOState(1);
-   RestoreFKOState(1);
    NewBasicBlocks(bbbase);
    FindLoops(); 
    CheckFlow(bbbase, __FILE__, __LINE__);
