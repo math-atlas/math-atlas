@@ -5,11 +5,13 @@ IFKO = ../bin/ifko
 
 all : ibuild fbuild dbuild hbuild irun frun drun hrun
 
-hbuild :xhtst0 xhtst1 xhtst2
+hbuild :xhtst0 xhtst1 xhtst2 xhtst3 xhtst4
 hrun:
 	./xhtst0
 	./xhtst1
 	./xhtst2
+	./xhtst3
+	./xhtst4
 
 xhtst0 : mhtst0.o htst0.o
 	$(CC) $(CCFLAGS) -o $@ mhtst0.o htst0.o
@@ -17,6 +19,10 @@ xhtst1 : mhtst1.o htst1.o
 	$(CC) $(CCFLAGS) -o $@ mhtst1.o htst1.o
 xhtst2 : mhtst2.o htst2.o
 	$(CC) $(CCFLAGS) -o $@ mhtst2.o htst2.o
+xhtst3 : mhtst3.o htst3.o
+	$(CC) $(CCFLAGS) -o $@ mhtst3.o htst3.o
+xhtst4 : mhtst4.o htst4.o
+	$(CC) $(CCFLAGS) -o $@ mhtst4.o htst4.o
 
 fbuild :xftst0 xftst1 xftst2 xftst3 xftst4 xftst5 xftst6 xftst7
 frun:
