@@ -44,8 +44,9 @@ void FindRegUsage(BBLOCK *bbase, int *ni0, int *iregs,
    BBLOCK *bp;
    INSTQ *ip;
    const int iend = IREGBEG+TNIR, fend = FREGBEG+TNFR, dend = DREGBEG+TNDR;
+   extern int USEALLIREG;
 
-   for (nd=0; nd < TNIR; nd++) iregs[nd] = 0;
+   for (nd=0; nd < TNIR; nd++) iregs[nd] = USEALLIREG;
    for (nd=0; nd < TNFR; nd++) fregs[nd] = 0;
    for (nd=0; nd < TNDR; nd++) dregs[nd] = 0;
    nd = 0;
@@ -1523,7 +1524,7 @@ static int DammitGimmeRegSave(BBLOCK *blk)
    ipld = ipend;
    do
    {
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
+/* fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__); */
 /*
  *    Find candidate integer load
  */
@@ -1531,11 +1532,13 @@ fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
          if (ipld->inst[0] == LD && 
              -ipld->inst[1] >= IREGBEG && -ipld->inst[1] < IREGEND)
             break;
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
+/* fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__); */
       if (ipld == ipstart)
          break;
+/*
 PrintThisInst(stderr, -1, ipld);
 fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
+ */
 /*
  *    Make sure there are no references of loaded register between the load
  *    and the end of the parameter area
@@ -1551,14 +1554,14 @@ fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
  */
       if (ip == ipend)
       {
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
+/* fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__); */
          for (ip=ipld->prev; ip != ipstart; ip = ip->prev)
             if (ip->use && ip->set && 
                 (BitVecCheck(ip->set, k) || BitVecCheck(ip->use, k)))
                break;
          KeepOn = ip != ipstart;
       }
-fprintf(stderr, "%s(%d) KeepOn = %d\n", __FILE__, __LINE__, KeepOn);
+/* fprintf(stderr, "%s(%d) KeepOn = %d\n", __FILE__, __LINE__, KeepOn); */
 if (KeepOn)
    fprintf(stderr, "Rejecting candidate %s\n", Int2Reg(ipld->inst[1]));
    }

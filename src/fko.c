@@ -16,6 +16,7 @@ char **ARRWNT=NULL, **AES=NULL;
 static char fST[1024], fLIL[1024], fmisc[1024];
 static short *PFDST=NULL, *PFLVL=NULL;
 static char **PFARR=NULL;
+int  USEALLIREG=0;
 
 int noptrec=0;
 enum FKOOPT optrec[512];
@@ -1607,18 +1608,37 @@ int main(int nargs, char **args)
  */
    if (GoToTown(0, FKO_UR, optblks))
    {
-      fprintf(stderr, "\n\nOut of registers for SAVESP, trying again!!\n");
+      fprintf(stderr, "\n\nOut of regs for SAVESP, forcing full save.\n");
+      USEALLIREG = 1;
       if (FKO_FLAG & IFF_VECTORIZE)
       {
          RestoreFKOState(1);
-         assert(!VectorizeStage3(IREGBEG+NIR-1, 0));
+         assert(!VectorizeStage3(0, 0));
       }
       else
       {
          RestoreFKOState(0);
-         DoStage2(IREGBEG+NIR-1, 0);
+         DoStage2(0, 0);
       }
-      assert(!GoToTown(IREGBEG+NIR-1, FKO_UR, optblks));
+      if (GoToTown(0, FKO_UR, optblks))
+      {
+         USEALLIREG = 0;
+         fprintf(stderr, 
+                 "\n\nOut of registers for SAVESP, reserving SAVESP!!\n");
+         if (FKO_FLAG & IFF_VECTORIZE)
+         {
+            RestoreFKOState(1);
+            assert(!VectorizeStage3(IREGBEG+NIR-1, 0));
+         }
+         else
+         {
+            RestoreFKOState(0);
+            DoStage2(IREGBEG+NIR-1, 0);
+         }
+         assert(!GoToTown(IREGBEG+NIR-1, FKO_UR, optblks));
+      }
+      else
+         USEALLIREG = 0;
    }
    DumpOptsPerformed(stderr, FKO_FLAG & IFF_VERBOSE);
 
