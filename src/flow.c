@@ -715,8 +715,7 @@ LOOPQ *NewLoop(int flag)
    lp->depth = lp->I = lp->beg = lp->end = lp->inc = lp->body_label = 
                lp->end_label = 0;
    lp->loopnum = lp->maxunroll = lp->writedd = 0;
-   lp->vslivein = lp->vsliveout = lp->vsflagin = lp->vsflagout = lp->vstmp = 
-                  lp->varrs = lp->nopf = lp->aaligned = NULL;
+   lp->vsflag = lp->vscal = lp->varrs = lp->nopf = lp->aaligned = NULL;
    lp->abalign = NULL;
    lp->preheader = lp->header = NULL;
    lp->blocks = NULL;
@@ -733,16 +732,10 @@ LOOPQ *KillLoop(LOOPQ *lp)
    if (lp)
    {
       ln = lp->next;
-      if (lp->vslivein)
-         free(lp->vslivein);
-      if (lp->vsliveout)
-         free(lp->vsliveout);
-      if (lp->vsflagin)
-         free(lp->vsflagin);
-      if (lp->vsflagout)
-         free(lp->vsflagout);
-      if (lp->vstmp)
-         free(lp->vstmp);
+      if (lp->vsflag)
+         free(lp->vsflag);
+      if (lp->vscal)
+         free(lp->vscal);
       if (lp->varrs)
          free(lp->varrs);
       if (lp->nopf)
@@ -924,6 +917,7 @@ void FinalizeLoops()
    int maxdep, i;
    int phbv, iv;
    BLIST *bl;
+   INSTQ *ip;
    extern int FKO_BVTMP;
 
    for (lp=loopq; lp; lp = lp->next)
@@ -996,6 +990,16 @@ void FinalizeLoops()
       }
       fprintf(stderr, "posttails = %s\n",
               PrintBlockList(lp->posttails));
+/*
+ *    Find sets for loop
+ */
+      iv = lp->sets = NewBitVec(32);
+      for (bl=lp->blocks; bl; bl = bl->next)
+      {
+         for (ip=bl->blk->ainst1; ip; ip = ip->next)
+            if (ACTIVE_INST(ip->inst[0]))
+               BitVecComb(iv, iv, ip->set);
+      }
    }
 /*   prepostloops(); */
    maxdep = CalcLoopDepth();

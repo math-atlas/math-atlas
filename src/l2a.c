@@ -1781,6 +1781,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
          ap->next = PrintAssln("\txorpd\t%s,%s\n", archvdregs[-VDREGBEG-op1],
                                archvdregs[-VDREGBEG-op1]);
          break;
+/*
+ * NOTE: can use PSHUFD for case where dest is output only
+ */
       case VDSHUF:
          cp = imap2cmap(SToff[op3-1].i);
          if (cp[0] == 0 && cp[1] == 2)

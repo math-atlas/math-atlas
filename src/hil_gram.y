@@ -317,10 +317,12 @@ static void UpdateLoop(struct loopq *lp)
 {
    lp->maxunroll = maxunroll;
    lp->writedd  = writedd;
+#if 0
    lp->vslivein  = LMA[0];
    lp->vsliveout = LMA[1];
    lp->vstmp = LMA[2];
    lp->varrs = LMA[3];
+#endif
    lp->nopf     = LMA[4];
    lp->aaligned = aalign;
    lp->abalign  = balign;
