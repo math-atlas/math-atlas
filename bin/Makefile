@@ -2,7 +2,7 @@ SHELL = /bin/tcsh
 CC = gcc
 CCFLAGS = -g
 objs = y.tab.o lex.yy.o h2l.o l2a.o inst.o symtab.o arch.o misc.o flow.o \
-       bvec.o vars.o optreg.o optloop.o
+       bvec.o vars.o optreg.o optflow.o optloop.o
 HDIR = ../include
 heads= $(HDIR)/fko_arch.h $(HDIR)/fko_inst.h $(HDIR)/fko_misc.h \
        $(HDIR)/fko_types.h $(HDIR)/fko_h2l.h $(HDIR)/fko_l2a.h \
@@ -33,6 +33,8 @@ lex.yy.o : $(heads) y.tab.h lex.yy.c
 y.tab.o : $(heads) y.tab.h
 	$(CC) -I../include $(CCFLAGS) -c y.tab.c
 
+optflow.o : $(heads) ../src/optflow.c
+	$(CC) -I../include $(CCFLAGS) -c ../src/optflow.c
 optloop.o : $(heads) ../src/optloop.c
 	$(CC) -I../include $(CCFLAGS) -c ../src/optloop.c
 optreg.o : $(heads) ../src/optreg.c

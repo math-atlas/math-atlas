@@ -681,6 +681,9 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope, int global)
          break;
       case DoNothing:  /* dummy opt does nothing */
          break;
+      case UselessJmpElim:
+         nchanges += UselessJumpElim();
+         break;
       default:
          fko_error(__LINE__, "Unknown optimization %d\n", ops[i]);
       }

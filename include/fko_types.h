@@ -14,13 +14,13 @@ union valoff
 };
 
 #ifdef IFKO_DECLARE
-   char *optmnem[] = {"IG Reg Asg", "Copy Prop", "LP Reg Asg", "Do Nothing", 
-                      "NONE"};
-   char *optabbr[] = {"ra", "cp", "gr", "DN", "00"};
+   char *optmnem[] = {"Do Nothing", "IG Reg Asg", "Copy Prop", "LP Reg Asg",
+                      "Useless Jump Elim", "NONE"};
+   char *optabbr[] = {"DN", "ra", "cp", "gr", "uj", "00"};
 #else
    extern char *optmnem[], *optabbr[];
 #endif
-enum FKOOPT {RegAsg, CopyProp, GlobRegAsg, DoNothing, MaxOpt};
+enum FKOOPT {DoNothing, RegAsg, CopyProp, GlobRegAsg, UselessJmpElim, MaxOpt};
 struct optblkq
 {
    enum FKOOPT *opts;    /* list of ordered opts to perform                  */

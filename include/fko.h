@@ -35,6 +35,8 @@
 #include "fko_bvec.h"
 #include "fko_vars.h"
 #include "fko_arch.h"
+#include "fko_optloop.h"
+#include "fko_optflow.h"
 
 #ifdef IFKO_DECLARE
    BBLOCK *bbbase=NULL;

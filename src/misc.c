@@ -89,6 +89,19 @@ ILIST *KillIlist(ILIST *ip)
    return(in);
 }
 
+ILIST *KillThisIlist(ILIST *ibase, ILIST *killme)
+{
+   ILIST *il;
+   if (killme == ibase)
+      ibase = KillIlist(killme);
+   else
+   {
+      for (il=ibase; il && il->next != killme; il = il->next);
+      assert(il);
+      il->next = KillIlist(il);
+   }
+   return(ibase);
+}
 void KillAllIlist(ILIST *ip)
 {
    while(ip)
