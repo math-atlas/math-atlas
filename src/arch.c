@@ -219,6 +219,10 @@ void InitLocalConst(INSTQ *next, short rsav, short reg)
 {
    struct locinit *lp;
    int flag;
+      InsNewInst(NULL, next, COMMENT, 0, 0, 0);
+      InsNewInst(NULL, next, COMMENT, 
+                 STstrconstlookup("Initialize constant locals"), 0, 0);
+      InsNewInst(NULL, next, COMMENT, 0, 0, 0);
    for (lp=LIhead; lp; lp = LIhead)
    {
       LIhead = lp->next;
@@ -254,6 +258,10 @@ void Extern2Local(INSTQ *next, INSTQ *end, short rsav, int fsize)
    else rsav = -REG_SP;
    if (NPARA)
    {
+      InsNewInst(NULL, next, COMMENT, 0, 0, 0);
+      InsNewInst(NULL, next, COMMENT, 
+                 STstrconstlookup("Store parameters to local frame"), 0, 0);
+      InsNewInst(NULL, next, COMMENT, 0, 0, 0);
       paras = malloc(NPARA * sizeof(short));
       assert(paras);
    }
@@ -521,9 +529,18 @@ fprintf(stderr, "prog=%d!, rout_name=%s\n", prog, rout_name);
 fprintf(stderr, "tsize=%d, SAVESP=%d\n\n", tsize, SAVESP);
    if (SAVESP)
    {
+      InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
+      InsNewInst(NULL, oldhead, COMMENT, STstrconstlookup("To ensure greater alignment than sp, save old sp to stack and move sp"), 0, 0);
+      InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
       rsav = GetReg(T_INT);
       assert(rsav <= NSIR);
       InsNewInst(NULL, oldhead, AMOV, -rsav, -REG_SP, 0);
+   }
+   else
+   {
+      InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
+      InsNewInst(NULL, oldhead, COMMENT, STstrconstlookup("Adjust sp"), 0, 0);
+      InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
    }
    InsNewInst(NULL, oldhead, ASUB, -REG_SP, -REG_SP, STiconstlookup(tsize));
    if (SAVESP)
@@ -538,6 +555,9 @@ fprintf(stderr, "tsize=%d, SAVESP=%d\n\n", tsize, SAVESP);
    }
 fprintf(stderr, "Local offset=%d\n", Loff);
    CorrectLocalOffsets(Loff);
+   InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
+   InsNewInst(NULL, oldhead, COMMENT, STstrconstlookup("Save registers"), 0, 0);
+   InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
 /*
  * Save registers
  */
@@ -552,5 +572,9 @@ fprintf(stderr, "Local offset=%d\n", Loff);
                  AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+nfr*4+i*4), -ir[i], 0);
    Extern2Local(oldhead, oldtail, rsav, tsize);
    GetReg(-1);
+   InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
+   InsNewInst(NULL, oldhead, COMMENT, 
+              STstrconstlookup("END OF FUNCTION PROLOGUE"), 0, 0);
+   InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
    CreateEpilogue(tsize, Soff, SAVESP, nir, ir, nfr, fr, ndr, dr);
 }

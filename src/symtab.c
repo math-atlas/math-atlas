@@ -236,13 +236,13 @@ short STstrconstlookup(char *str)
  * RETURNS: symtab index.
  */
 {
-   short ret;
-   ret = STstrlookup(str);
-   if (!ret)
+   short i;
+   for (i=0; i != N; i++)
    {
-      return(STdef(str, CONST_BIT | T_CHAR, 0));
+      if (STname[i] && IS_CONST(STflag[i]) && !strcmp(str, STname[i]))
+         return(i+1);
    }
-   return(ret);
+   return(STdef(str, CONST_BIT | T_CHAR, 0));
 }
 
 char *STi2str(short i)

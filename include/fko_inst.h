@@ -14,6 +14,7 @@ enum inst
 {
    UNIMP,                       /* NULL, NULL, NULL */
    NOP,                         /* NULL, NULL, NULL */
+   COMMENT,                     /* <string>,NULL,NULL */
    LABEL,                       /* <labname>,NULL,NULL */
    CMPFLAG,                     /* flag,flag,flag compiler info */
 /*

@@ -37,10 +37,10 @@ static int LocalLoad(short id)
    {
       #ifdef ArchPtrIsLong
          inst = LDL;
-         reg = GetReg(T_INT);
+         reg = GetReg(T_LONG);
       #else
          inst = LD;
-         reg = GetReg(T_LONG);
+         reg = GetReg(T_INT);
       #endif
    }
    else
@@ -112,6 +112,14 @@ fprintf(stderr, "Handling fpconst!\n");
               -GetReg(type), src, __LINE__);
 }
 
+void DoComment(char *str)
+{
+   int i;
+   for (i=0; str[i]; i++);
+   if (str[--i] == '\n') str[i] = '\0';
+   InsNewInst(NULL, NULL, COMMENT, STstrconstlookup(str), 0, 0);
+}
+
 void DoMove(short dest, short src)
 {
    short rsrc;
@@ -153,23 +161,24 @@ static void FixDeref(short ptr)
 
    k = (ptr-1)<<2;
    type = FLAG2TYPE(STflag[DT[k]-1]);
+fprintf(stderr, "FixDeref: [%d, %d, %d, %d]\n", DT[k], DT[k+1], DT[k+2], DT[k+3]);
 /*
  * Load beginning of array
  */
-   DT[k] = LocalLoad(DT[k]);
+   DT[k] = -LocalLoad(DT[k]);
 /*
  * Load index register if needed
  */
    if (DT[k+1])
    {
-      DT[k+1] = LocalLoad(DT[k+1]);
+      DT[k+1] = -LocalLoad(DT[k+1]);
 /*
  *    Some architectures cannot multiply the index register by some (or any)
  *    constants, and in this case generate an extra shift instruction
  */
       if (!ArchHasLoadMul(DT[k+2]))
       {
-         InsNewInst(NULL, NULL, ASHL, -DT[k+1], -DT[k+1], 
+         InsNewInst(NULL, NULL, ASHL, DT[k+1], DT[k+1], 
                     STiconstlookup(type2shift(type)));
          DT[k+2] = 1;
       }
@@ -181,7 +190,7 @@ static void FixDeref(short ptr)
       #ifndef ArchConstAndIndex
          if (DT[k+3])
          {
-            InsNewInst(NULL, NULL, AADD, -DT[k+1], -DT[k+1], DT[k+3]);
+            InsNewInst(NULL, NULL, AADD, DT[k+1], DT[k+1], DT[k+3]);
             DT[k+3] = 0;
          }
       #endif
@@ -194,25 +203,28 @@ void DoArrayStore(short ptr, short id)
    short inst, lreg, ireg=0, preg, k, type;
 
    type = FLAG2TYPE(STflag[id-1]);
-   assert(FLAG2TYPE(STflag[DT[k]-1]) == type);
+   fprintf(stderr, "idname='%s', idflag=%d\n", STname[id-1], STflag[id-1]);
 
    lreg = LocalLoad(id);
    k = (ptr-1)<<2;
+   assert(((!PTR_BIT) & FLAG2TYPE(STflag[DT[k]-1])) == type);
    FixDeref(ptr);
    switch(type)
    {
-   IS_INT:
+   case T_INT:
       inst = ST;
       break;
-   IS_LONG:
+   case T_LONG:
       inst = STL;
       break;
-   IS_FLOAT:
+   case T_FLOAT:
       inst = FST;
       break;
-   IS_DOUBLE:
+   case T_DOUBLE:
       inst = FSTD;
       break;
+   default:
+      fko_error(__LINE__, "Unknown type %d\n", type);
    }
    InsNewInst(NULL, NULL, inst, ptr, -lreg, 0);
    GetReg(-1);
@@ -223,22 +235,24 @@ void DoArrayLoad(short id, short ptr)
    short k, ireg=0, areg, type, ld;
 
    k = (ptr-1)<<2;
-   type = FLAG2TYPE(STflag[DT[k]-1]);
+   type = (!PTR_BIT) & FLAG2TYPE(STflag[DT[k]-1]);
    FixDeref(ptr);
    switch(type)
    {
-   IS_INT:
+   case T_INT:
       ld = LD;
       break;
-   IS_LONG:
+   case T_LONG:
       ld = LDL;
       break;
-   IS_FLOAT:
+   case T_FLOAT:
       ld = FLD;
       break;
-   IS_DOUBLE:
+   case T_DOUBLE:
       ld = FLDD;
       break;
+   default:
+      fko_error(__LINE__, "Unknown type %d\n", type);
    }
    areg = GetReg(type);
    InsNewInst(NULL, NULL, ld, -areg, ptr, 0);

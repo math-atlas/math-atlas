@@ -20,6 +20,8 @@ irun : ibuild
 	./xitst3
 
 
+xitst5 : mitst5.o itst5.o
+	$(CC) $(CCFLAGS) -o $@ mitst5.o itst5.o
 xitst4 : mitst4.o itst4.o
 	$(CC) $(CCFLAGS) -o $@ mitst4.o itst4.o
 xitst3 : mitst0.o itst3.o

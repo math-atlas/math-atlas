@@ -9,7 +9,7 @@ DCON	{ICON}"."{ICON}([d,D]ICON)?
 ID	[A-Za-z][A-Za-z0-9_]*
 ROUTNAM "ROUTINE"[ \t\v]+ID
 %%
-"//"[^\n]*\n    {} /* May want to pass comment to LIL later */
+"//"[^\n]*\n    { strcpy(yylval.str, yytext+2); return(COMMENT); }
 [\t \v]		{}
 [\n]    {lnno++;}
 "-" |
@@ -25,6 +25,8 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "&" | 
 "," |
 ";" | 
+"[" |
+"]" |
 "="	{ return(yytext[0]); }
 "+="    { return(PE); }
 "||"    { return(OR); }

@@ -925,6 +925,15 @@ fprintf(stderr, "regnam='%s'\n", archdregs[-DREGBEG-op1]);
             #endif
             }
 	 break;
+      case COMMENT:
+         #ifdef X86
+            ap->next = PrintAssln("#%s\n", op1 ? STname[op1-1] : "");
+         #elif defined(SPARC)
+            ap->next = PrintAssln("!%s\n", op1 ? STname[op1-1] : "");
+	 #elif defined(PPC)
+            ap->next = PrintAssln("#%s\n", op1 ? STname[op1-1] : "");
+         #endif
+         break;
 /*
  *  HERE HERE HERE: need special case for when moving to fp stack (for return)!
       DUMM

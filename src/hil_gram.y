@@ -9,7 +9,7 @@
    short sh;
    float  fnum;
    double dnum;
-   char str[256];
+   char str[512];
    char c;
 }
 
@@ -20,6 +20,7 @@
 %token <fnum> FCONST
 %token <dnum> DCONST
 %token <str> NAME
+%token <str> COMMENT
 %token <c> aop
 %right '=' PE
 %left OR
@@ -38,15 +39,10 @@
 
 %%
 
-%{
-/*
- * Duplicate this for fcexpr
- */
-%}
-lines : lines line ';' | line ';' ;
+lines : lines line ';' | line ';' | lines comment | comment ;
 line : stateflag | paradec | typedec | constinit | statement ;
-
-        /* need to add GLOBALS section */
+comment : COMMENT { DoComment($1); }
+        ;
 stateflag: ROUT_NAME NAME 
          {
             if (WhereAt != 0)
@@ -166,11 +162,10 @@ iconst : icexpr         {$$ = STiconstlookup($1);} ;
 ID : NAME               
    {if (!($$ = STstrlookup($1))) fko_error(__LINE__,"unknown ID '%s'", $1); }
    ;
-ptrderef : ID '[' iconst ']' { $$ = AddDerefEntry($1, 0, 0, $3); }
+ptrderef : ID '[' icexpr ']' { $$ = AddDerefEntry($1, 0, 0, $3); }
          | ID '[' ID ']'    { $$ = AddDerefEntry($1, $3, 0, 0); }
-         | ID '[' ID '+' iconst ']' { $$ = AddDerefEntry($1, $3, 0, $5); }
-         | ID '[' ID '-' icexpr ']' 
-           { $$ = AddDerefEntry($1, $3, 0, STiconstlookup(-$5)); }
+         | ID '[' ID '+' icexpr ']' { $$ = AddDerefEntry($1, $3, 0, $5); }
+         | ID '[' ID '-' icexpr ']' { $$ = AddDerefEntry($1, $3, 0, -$5); }
          ;
 avar : ID               {$$ = $1;}
      | fconst           {$$ = $1;}
