@@ -74,6 +74,7 @@
 #define DO_ASS(flg_) (!((flg_) & IFF_NOASS))
 #define DO_LIL(flg_) ((flg_) & IFF_LIL)
 #define DO_KILLCOMMENTS(flg_) ((flg_) & IFF_KILLCOMMENTS)
+#define DO_VECT(flg_) ((flg_) & IFF_VECTORIZE)
 
 #define IOPT_GLOB 0x1
 

@@ -877,10 +877,22 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
 
    if (optloop)
    {
-      if (unroll > 1 || (FKO_FLAG & IFF_VECTORIZE))
+      if (unroll > 1)
          UnrollLoop(optloop, unroll);
       else
-         OptimizeLoopControl(optloop, 1, 1, NULL);
+      {
+         if (FKO_FLAG & IFF_VECTORIZE)
+         {
+            UnrollCleanup(optloop, 1);
+            InvalidateLoopInfo();
+            NewBasicBlocks(bbbase);
+            CheckFlow(bbbase, __FILE__, __LINE__);
+            FindLoops();
+            CheckFlow(bbbase, __FILE__, __LINE__);
+         }
+         else
+            OptimizeLoopControl(optloop, 1, 1, NULL);
+      }
    }
    CalcInsOuts(bbbase); 
    CalcAllDeadVariables();
@@ -897,7 +909,7 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
       FindLoops();
    AddBlockComments(bbbase);
    AddLoopComments();
-#if 1
+#if 0
    AddSetUseComments(bbbase);   
    AddDeadComments(bbbase); 
 #endif

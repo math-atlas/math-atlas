@@ -584,7 +584,7 @@ int SimdLoop(LOOPQ *lp)
  */
                if (sinst[i] == inst)
                {
-                  ip->inst[0] = vfinsts[i];
+                  ip->inst[0] = vinst[i];
 /*
  *                Change scalar ops to vector ops
  */
@@ -638,11 +638,13 @@ fprintf(stderr, "scoping %s (%d)\n", STname[op-1], op);
  */
    OptimizeLoopControl(lp, vlen, 0, ippu);
    CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = CFLOOP = 0;
+#if 0
    InvalidateLoopInfo();
    NewBasicBlocks(bbbase);
    CheckFlow(bbbase, __FILE__, __LINE__);
    FindLoops();
    CheckFlow(bbbase, __FILE__, __LINE__);
+#endif
    return(0);
 }
 

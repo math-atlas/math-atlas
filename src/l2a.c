@@ -159,11 +159,11 @@ static char *GetDregOrDeref(short id)
    {
       #ifdef VDREGBEG
          if(-id >= VDREGBEG)
-            return(archvdregs[-DREGBEG-id]);
+            return(archvdregs[-VDREGBEG-id]);
       #endif
       #ifdef VFREGBEG
          if(-id >= VFREGBEG)
-            return(archvfregs[-FREGBEG-id]);
+            return(archvfregs[-VFREGBEG-id]);
       #endif
       if (-id >= DREGBEG)
          return(archdregs[-DREGBEG-id]);
@@ -1749,12 +1749,12 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                archvdregs[-VDREGBEG-op1]);
          break;
       case VDST:
-         ap->next = PrintAssln("\tmovapd\t%s, %s\n", archvdregs[-VDREGBEG-op1],
-                               GetDeref(op2));
+         ap->next = PrintAssln("\tmovapd\t%s, %s\n", archvdregs[-VDREGBEG-op2],
+                               GetDeref(op1));
          break;
       case VDSTS:
-         ap->next = PrintAssln("\tmovsd\t%s, %s\n", archvdregs[-VDREGBEG-op1],
-                               GetDeref(op2));
+         ap->next = PrintAssln("\tmovsd\t%s, %s\n", archvdregs[-VDREGBEG-op2],
+                               GetDeref(op1));
          break;
       case VDMOV:
          ap->next = PrintAssln("\tmovapd\t%s, %s\n", archvdregs[-VDREGBEG-op2],
@@ -1858,12 +1858,12 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                archvfregs[-VFREGBEG-op1]);
          break;
       case VFST:
-         ap->next = PrintAssln("\tmovaps\t%s, %s\n", archvfregs[-VFREGBEG-op1],
-                               GetDeref(op2));
+         ap->next = PrintAssln("\tmovaps\t%s, %s\n", archvfregs[-VFREGBEG-op2],
+                               GetDeref(op1));
          break;
       case VFSTS:
-         ap->next = PrintAssln("\tmovss\t%s, %s\n", archvfregs[-VFREGBEG-op1],
-                               GetDeref(op2));
+         ap->next = PrintAssln("\tmovss\t%s, %s\n", archvfregs[-VFREGBEG-op2],
+                               GetDeref(op1));
          break;
       case VFMOV:
          ap->next = PrintAssln("\tmovaps\t%s, %s\n", archvfregs[-VFREGBEG-op2],

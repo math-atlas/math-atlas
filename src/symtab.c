@@ -465,6 +465,14 @@ void MarkUnusedLocals(BBLOCK *bbase)
          }
       }
    }
+/*
+ * Mark all vector locals as used
+ */
+   if (DO_VECT(FKO_FLAG) && optloop && optloop->vvscal)
+   {
+      for(k=optloop->vscal[0],i=0; i < k; i++)
+         SToff[SToff[optloop->vvscal[i]-1].sa[2]-1].sa[0] = -REG_SP;
+   }
 }
 
 int STlen(void)

@@ -8,7 +8,7 @@ URT = DOT
 kern=error
 cache=
 NN="N=80000"
-KFLAGS=
+KFLAGS= -V -G 1 1 DN
 topt=-X 1 1 -Y 1 1
 lower=hello
 # upper=`echo $(lower) | tr '[a-z]' 'A-Z'`
