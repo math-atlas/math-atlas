@@ -187,7 +187,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
    FILE *fpin, *fpout;
    char *fin=NULL, *fout=NULL;
    struct optblkq *obq=NULL, *op;
-   struct ptrinfo *pf, *pfb=NULL, *pf0;
+   struct ptrinfo *pf, *pfb=NULL, *pf0, *pfK, *pfP;
    char *sp, *rpath=NULL, *rname=NULL;
    int i, j, k;
 
@@ -208,32 +208,29 @@ struct optblkq *GetFlagsN(int nargs, char **args,
                if (args[i][3] == 'r')
                {
                   i++;
+                  FKO_FLAG &= ~(IFF_3DNOWR | IFF_TAR);
                   if (args[i][0] == '3')
                     FKO_FLAG |= IFF_3DNOWR;
                   else if (args[i][0] == '0')
                     FKO_FLAG |= IFF_TAR;
-                  else if (args[i][0] == 'N' || args[i][0] == 'n')
-                     FKO_FLAG &= ~(IFF_3DNOWR | IFF_TAR);
                }
                else if (args[i][3] == 'w')
                {
                   i++;
+                  FKO_FLAG &= ~(IFF_3DNOWW | IFF_TAW);
                   if (args[i][0] == '3')
                     FKO_FLAG |= IFF_3DNOWW;
                   else if (args[i][0] == '0')
                     FKO_FLAG |= IFF_TAW;
-                  else if (args[i][0] == 'N' || args[i][0] == 'n')
-                     FKO_FLAG &= ~(IFF_3DNOWW | IFF_TAW);
                }
                else
                {
                   i++;
+                  FKO_FLAG &= ~(IFF_3DNOWW | IFF_TAW | IFF_3DNOWR | IFF_TAR);
                   if (args[i][0] == '3')
                     FKO_FLAG |= (IFF_3DNOWR | IFF_3DNOWW);
                   else if (args[i][0] == '0')
                     FKO_FLAG |= (IFF_TAW | IFF_TAR);
-                  else if (args[i][0] == 'N' || args[i][0] == 'n')
-                     FKO_FLAG &= ~(IFF_3DNOWW | IFF_TAW | IFF_3DNOWR | IFF_TAR);
                }
             }
             else if (args[i][2] == 'L') /* linesize specification*/
@@ -405,6 +402,24 @@ ERR:
    }
    if (pfb)
    {
+/*
+ *    Keep only last declaration for given array
+ */
+      for (pf=pfb; pf; pf = pf->next)
+      {
+         for (pfK=pf->next; pfK; pfK = pfK->next)
+         {
+            if (!strcmp(args[pf->ptr], args[pfK->ptr]))
+            {
+               for (pfP=pf; pfP->next != pfK; pfP = pfP->next);
+               pfP->next = pfK->next;
+               free(pfK);
+            }
+         }
+      }
+/*
+ *    Count number of <name> refs, and find any default ref
+ */
       for (i=0,pf0=NULL,pf=pfb; pf; pf = pf->next)
       {
          if (!strcmp(args[pf->ptr], "all"))
@@ -1137,7 +1152,9 @@ static short FindNameMatch(int n, short *pool, char *name)
 
 void UpdatePrefetchInfo()
 {
-   int n, i, k;
+   int n, i, j, k;
+   short *sp;
+
    if (optloop && PFARR)
    {
 /*
@@ -1200,6 +1217,39 @@ void UpdatePrefetchInfo()
       free(PFARR);
       PFARR = NULL;
       PFDST = PFLVL = NULL;
+/*
+ *    Remove any mention of pointers that we are told not to prefetch
+ *    (level == -1)
+ */
+      sp = optloop->pfflag+1;
+      for (k=i=0; i < n; i++)
+         if (sp[i] == -1)
+            k++;
+      if (k)
+      {
+         if (n == k)
+         {
+            free(optloop->pfarrs);
+            free(optloop->pfflag);
+            free(optloop->pfdist);
+            optloop->pfarrs = optloop->pfflag = optloop->pfdist = NULL;
+         }
+         else
+         {
+            for (j=i=1; i <= n; i++)
+            {
+               if (optloop->pfflag[i] != -1)
+               {
+                  optloop->pfarrs[j] = optloop->pfarrs[i];
+                  optloop->pfdist[j] = optloop->pfdist[i];
+                  optloop->pfflag[j] = optloop->pfflag[i];
+                  j++;
+               }
+               optloop->pfarrs[0] = optloop->pfdist[0] = optloop->pfflag[0] =
+                                    n-k;
+            }
+         }
+      }
    }
 }
 
