@@ -628,7 +628,7 @@ PrintComment(NULL, next, "Store para %s\n", STname[paras[i]]);
             if (fc < 13)
             {
                if (fc < 9) fnam[1] = '0' + fc + 1;
-               else { fnam[1] = '0'; fnam[2] = '0' + fc - 9; }
+               else { fnam[1] = '1'; fnam[2] = '0' + fc - 9; }
                fr = fName2Reg(fnam);
                InsNewInst(NULL, next, FST, SToff[paras[i]].sa[2],-fr,__LINE__);
             }

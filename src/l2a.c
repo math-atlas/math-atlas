@@ -955,8 +955,8 @@ struct assmln *lil2ass(INSTQ *head)
 	       archfregs[-FREGBEG-op1]);
          #elif defined(PPC)
             ap->next = PrintAssln("\tfmuls\t%s,%s,%s\n", 
-	       archdregs[-DREGBEG-op1], archdregs[-DREGBEG-op2],
-	       archdregs[-DREGBEG-op3]);
+	       archdregs[-FREGBEG-op1], archdregs[-FREGBEG-op2],
+	       archdregs[-FREGBEG-op3]);
          #endif
          break;
       case FDIVD:
