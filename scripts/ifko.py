@@ -17,7 +17,7 @@ def ifko_pftype(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
    [t0,m0] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
                          "gcc", "-x assembler-with-cpp", opt=opt)
    assert(t0 > 0.0)
-   print "base mf = %f.2" % m0
+   print "   base mf = %f.2" % m0
    KF = KF0
 #
 #  If there are output arrays, varying inst used for writes
@@ -37,7 +37,7 @@ def ifko_pftype(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
       [t1,m1] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
                             "gcc", "-x assembler-with-cpp", opt=opt)
       if (m1 > 0.0):
-         print "prefetchw speedup: %.3f !" %  (m1/m0)
+         print "   prefetchw speedup: %.3f !" %  (m1/m0)
 #
 #     Try temporal prefetch
 #
@@ -45,7 +45,7 @@ def ifko_pftype(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
       fkocmnd.callfko(fko, KF1)
       [t2,m2] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
                             "gcc", "-x assembler-with-cpp", opt=opt)
-      print "prefetchw speedup: %.3f !" %  (m2/m0)
+      print "   prefetchw speedup: %.3f !" %  (m2/m0)
 
       if m2 > m1:
          m1 = m2
@@ -66,7 +66,7 @@ def ifko_pftype(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
       fkocmnd.callfko(fko, KF)
       [t1,m1] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
                             "gcc", "-x assembler-with-cpp", opt=opt)
-      print "prefetchr speedup: %.3f !" %  (m1/m0)
+      print "   prefetchr speedup: %.3f !" %  (m1/m0)
       if m1 > m0:
          KF0 = KF
          m0 = m1
@@ -84,7 +84,7 @@ def ifko_pftype(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
          fkocmnd.callfko(fko, KF)
          [t1,m1] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
                                "gcc", "-x assembler-with-cpp", opt=opt)
-         print "lvl %d %s speedup: %.3f !" %  (j, arr, m1/m0)
+         print "   lvl %d %s speedup: %.3f !" %  (j, arr, m1/m0)
          if m1 > m0:
             KF0 = KF
             m0 = m1
@@ -108,7 +108,7 @@ def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr,
    LS = info[1][pflvl];
    if not pfd0: pfd0 = LS
    if not pfdinc: pfdinc = LS
-   print "\nFinding PFD for %s in [%d:%d:%d]" % (arr, pfd0, pfdN, pfdinc)
+   print "\n   Finding PFD for %s in [%d:%d:%d]" % (arr, pfd0, pfdN, pfdinc)
    ipd = int(words[1])
    pfd = pfd0
    mfM = 0.0
@@ -120,20 +120,20 @@ def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr,
       [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
                            "gcc", "-x assembler-with-cpp", opt=opt)
 #      mfs.append(mf)
-      print "   %s : PFD = %d mflop = %s" % (arr, pfd, mf)
+      print "      %s : PFD = %d mflop = %s" % (arr, pfd, mf)
       if mf > mfM:
          mfM = mf
          pfdM = pfd
       pfd += LS
 
-   print "\nBEST prefetch distance = %d (%.2f)" % (pfdM, mfM)
+   print "\n   BEST prefetch distance = %d (%.2f)" % (pfdM, mfM)
    if (pfdM != ipd):
       KF0 = KF0 + " -P %s %d %d" % (arr, pflvl, pfdM)
    return (KF0)
 
 def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=128):
 
-   print "Finding best unroll:"
+   print "   Finding best unroll:"
 #
 #  Get rid of default unrolling so we can add our own
 #
@@ -152,7 +152,7 @@ def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=128):
       fkocmnd.callfko(fko, KFn)
       [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
                            "gcc", "-x assembler-with-cpp", opt=opt)
-      print "   UR=%d, mflop=%.2f" % (UR, mf)
+      print "      UR=%d, mflop=%.2f" % (UR, mf)
 #
 #     Demand that higher unrollings get at least 1% better
       if (mf >= mf0*1.01):
@@ -163,7 +163,7 @@ def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=128):
    KF0 = KF0 + " -U %d" % URB
    return KF0
 
-def ifko(l1bla, pre, N):
+def ifko0(l1bla, pre, N):
    (IFKOdir, fko) = fkocmnd.GetFKOinfo()
    (ATLdir, ARCH) = fkocmnd.FindAtlas(IFKOdir)
    rout =  IFKOdir + '/blas/' + pre + l1bla + '.b'
@@ -174,9 +174,16 @@ def ifko(l1bla, pre, N):
    npf = len(pfarrs)
    KFLAGS = fkocmnd.GetStandardFlags(fko, rout, pre)
    KFLAGS = KFLAGS + " -o " + str(outf) + " " + rout
+#
+#  Eventually, want to try both -V and scalar, but for now, use -V whenever
+#  possible
+
+#
+#  Find best pf type
+#
    KFLAGS = ifko_pftype(ATLdir, ARCH, KFLAGS, ncache, fko, rout, pre, l1bla, N,
                         info, pfarrs, pfsets)
-   print "\nFLAGS so far =", fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS)
+   print "\n   FLAGS so far =", fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS)
 #
 #  Find best PFD for each pfarr
 #
@@ -187,6 +194,39 @@ def ifko(l1bla, pre, N):
 #  Find best unroll
 #
    KFLAGS = FindUR(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N, info)
-   print "\nFLAGS so far =", fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS)
+   print "\n\n   BEST FLAGS FOUND =", \
+         fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS)
+   return(KFLAGS)
 
-ifko(sys.argv[1], sys.argv[2], 80000)
+def ifko(routs, pres, N):
+   if routs.find("default") != -1:
+      routlist = l1cmnd.GetDefaultBlas()
+   else:
+      words = routs.split(",")
+      routlist = []
+      for word in words:
+          routlist.append(word)
+   if pres.find("default") != -1:
+      prelist = l1cmnd.GetDefaultPre()
+   else:
+      words = pres.split(",")
+      prelist = []
+      for word in words:
+         prelist.append(word)
+
+   for l1bla in routlist:
+      for pre in prelist:
+         print "\niFKO TUNING %s" % (pre + l1bla)
+         ifko0(l1bla, pre, N)
+
+nargs = len(sys.argv)
+blas = "asum"
+pre  = "s"
+N = 80000
+if (nargs > 1):
+   blas = sys.argv[1]
+   if (narg > 2):
+      pre = sys.argv[2]
+      if (narg > 3):
+         N = atoi(sys.argv[3])
+ifko(blas, pre, N)

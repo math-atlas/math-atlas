@@ -4,6 +4,16 @@ import re
 
 L1Tdir = '/tune/blas/level1/'
 
+def GetDefaultBlas():
+   return ['asum', 'axpy', 'dot', 'scal', 'iamax']
+
+def GetDefaultRefBlas():
+   return ['asum_fabs1_x1.c', 'axpy1_x1y1.c', 'dot1_x1y1.c', 'scal1_x1.c',
+           'iamax_abs1_x1.c']
+
+def GetDefaultPre():
+   return ['s', 'd']
+
 def time(ATLdir, ARCH, pre, blas, N, rout, cc=None, ccf=None, opt=""):
 #
 #  Extract the original seconds & summation time & mflop

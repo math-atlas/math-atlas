@@ -5,29 +5,6 @@ import re
 import l1cmnd
 import fkocmnd
 
-#def FindAtlas(FKOdir):
-#   file = os.path.join(FKOdir, 'time')
-#   file = os.path.join(file, 'Makefile')
-#
-#   fi = open(file, 'r')
-#   for line in fi.readlines():
-#      if (line.startswith('include')):
-#         j = line.find('Make.')
-#         assert(j != -1)
-#         ARCH = line[j+5:].strip()
-#         ATLdir = line[8:j-1].strip()
-#         break
-#   else:
-#      print "Can't find include line in %s" % path+Makefile
-#      sys.exit(-1);
-#   fi.close()
-#   return [ATLdir, ARCH]
-
-#pwd = os.getcwd()
-#j = pwd.rfind('iFKO')
-# IFKOdir = '/home/rwhaley/PROJ/iFKO'
-#IFKOdir = pwd[0:j+4]
-#fko = IFKOdir + '/bin/fko'
 (IFKOdir,fko) = fkocmnd.GetFKOinfo()
 
 
@@ -38,11 +15,9 @@ print "ATLdir='%s', ARCH='%s'" % (ATLdir, ARCH)
 # [time,mflop] = l1cmnd.l1time(ATLdir, ARCH, 'd', 'dot', 80000, 'dot1_x1y1.c')
 # print "time=%f, mflop=%f" % (time,mflop)
 
-pres = ['s', 'd']
-psiz = [4, 8]
-l1routs = ['asum', 'axpy', 'dot', 'scal', 'iamax']
-l1refs  = ['asum_fabs1_x1.c', 'axpy1_x1y1.c', 'dot1_x1y1.c', 'scal1_x1.c',
-           'iamax_abs1_x1.c']
+pres = l1cmnd.GetDefaultPre()
+l1routs = l1cmnd.GetDefaultBlas()
+l1refs  = l1cmnd.GetDefaultRefBlas()
 l1atl   = []
 CCatl   = []
 CCFat   = []
@@ -108,16 +83,6 @@ for blas in l1routs:
          outf = ATLdir + '/tune/blas/level1/' + blas.upper() + '/fkorout.s'
          KF0 = fkocmnd.GetStandardFlags(fko, rout, pre)
          KFLAGS = KF0 + ' -o ' + outf + " " + rout
-#         info = fkocmnd.info(fko, rout)
-#         VEC = info[5]
-#         if (VEC == 0):
-#            UR = LS / psiz[j%2]
-#            KFLAGS = KFLAG + " "
-#         else:
-#            KFLAGS = KFLAG + " -V"
-#            UR = LS / 16
-#         KF0    = KFLAGS + " -U " + str(UR)
-#         KFLAGS = KF0 + ' -o ' + outf + ' ' + rout
          if (os.path.exists(outf)):
             os.remove(outf)
          fkocmnd.callfko(fko, KFLAGS)
