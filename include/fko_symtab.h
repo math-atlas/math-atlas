@@ -20,7 +20,7 @@
 #define IS_CHAR(flag_)  (((flag_) & 0x7) == T_CHAR)
 #define IS_FUNC(flag_)  (((flag_) & 0x7) == T_FUNC)
 #define FLAG2TYPE(flag_) ((flag_) & 0x7)
-#define IS_VEC(flag_)  ((flag_) & (T_VFLOAT | T_VDOUBLE))
+#define IS_VEC(flag_)  (IS_VFLOAT(flag_) | IS_VDOUBLE(flag_))
 
 #define PTR_BIT      0x10
 #define CONST_BIT    0x20
@@ -35,7 +35,6 @@
 #define IS_CONST(flag_) ((flag_) & CONST_BIT)
 #define IS_GLOB(flag_)  ((flag_) & GLOB_BIT)
 #define IS_PARA(flag_)  ((flag_) & PARA_BIT)
-#define IS_VEC(flag_)   ((flag_) & VEC_BIT)
 #define IS_UNSIGNED(flag_)   ((flag_) & UNSIGNED_BIT)
 #define IS_LOCAL(flag_) ((flag_) & LOCAL_BIT)
 #define IS_DEREF(flag_) ((flag_) & DEREF_BIT)

@@ -8,7 +8,9 @@ int FindInShortList(int n, short *sp, short val)
  * RETURNS: index (starting from 1) of sp entry, or 0 if not found
  */
 {
-   for (i=0; i < n; i++
+   int i;
+
+   for (i=0; i < n; i++)
       if (sp[i] == val)
          return(i+1);
    return(0);

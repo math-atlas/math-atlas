@@ -8,7 +8,7 @@ FILE *fpST=NULL, *fpIG=NULL, *fpLIL=NULL, *fpOPT=NULL;
 int FUNC_FLAG=0; 
 int DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0, DTx87=0, DTx87d=0;
 int FKO_FLAG;
-static char *fST[1024], *fLIL[1024], fmisc[1024];
+static char fST[1024], fLIL[1024], fmisc[1024];
 
 int noptrec=0;
 enum FKOOPT optrec[512];
@@ -188,7 +188,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
    FILE *fpin, *fpout;
    char *fin=NULL, *fout=NULL;
    struct optblkq *obq=NULL, *op;
-   char *sp, *rpath=NULL, *rnam=NULL;
+   char *sp, *rpath=NULL, *rname=NULL;
    int i, j, k;
 
    for (i=1; i < nargs; i++)
@@ -206,7 +206,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             if (args[i+1][0] == 'd')
                rpath = args[i+2];
             else 
-               rfile = args[i+2];
+               rname = args[i+2];
             i += 2;
             break;
          case 'V':
@@ -334,11 +334,11 @@ ERR:
    }
    if (!rpath)
       rpath = "/tmp";
-   if (!rnam)
-      rnam = "FKO";
-   sprintf(fST, "%s/%s_ST.", rpath, rnam);
-   sprintf(fLIL, "%s/%s_LIL.", rpath, rnam);
-   sprintf(fmisc, "%s/%s_misc.", rpath, rnam);
+   if (!rname)
+      rname = "FKO";
+   sprintf(fST, "%s/%s_ST.", rpath, rname);
+   sprintf(fLIL, "%s/%s_LIL.", rpath, rname);
+   sprintf(fmisc, "%s/%s_misc.", rpath, rname);
    if (!fin) fpin = stdin;
    else
    {
@@ -1005,8 +1005,10 @@ int main(int nargs, char **args)
       yyparse();
       fclose(fpin);
       SaveFKOState(0);
+/*
       if (FKO_FLAG & IFF_VECTORIZE)
          assert(!VectorizeLIL());
+ */
    }
    if (FKO_FLAG & IFF_GENINTERM)
      exit(0);

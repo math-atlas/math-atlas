@@ -1430,9 +1430,13 @@ fprintf(stderr, "dupblks[%d] = %s\n", i-1, PrintBlockList(dupblks[i-1]));
  * Fix CF by recomputing it and all loop stuff
  */
    CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = 0;
+#if 0
    RemoveLoopFromQ(optloop);
    optloop->depth = 0;
    KillAllLoops();
+#else
+   InvalidateLoopInfo();
+#endif
    NewBasicBlocks(bbbase);
    CheckFlow(bbbase, __FILE__, __LINE__);
 // ShowFlow("dot.err", bbbase);
