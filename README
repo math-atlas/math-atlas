@@ -1,0 +1,146 @@
+*******************************************************************************
+*                               SYMBOL HANDLING                               *
+*******************************************************************************
+All symbols get an entry in the symbol table (ST).  Most functions doing ST
+ops are found in symtab.c.  The symtab actually consists of 3 large arrays:
+   char **STname;        /* symbol name */
+   int *STflag;          /* flags describing entry */
+   union valoff SToff;   /* value or offset, or something else :) */
+
+The valoff union handles most misc. duties.  Here's it's declaration, from
+fko_types.h:
+union valoff
+{
+   int i;
+   short sa[4];/* used for locals/params: sa[0] indicates para # */
+   float f;    /* sa[1] says you were ith local of your data type */
+   double d;   /* sa[2] gives entry in deref table               */
+};
+
+So, for the space of one double, we can use this structure to hold the
+value of a constant (SToff[].<i,f,d> for integer, float and double).
+The 4 shorts are used for keeping track of local and parameter info,
+as explained in the stack section.
+
+*******************************************************************************
+*                              MEMORY ADDRESSING                              *
+*******************************************************************************
+All memory addresses used in the function result in an entry in the dereference
+table (DT).  The DT is one big array of shorts, declared in symtab.h.  Each
+entry in the DT consists of 4 consecutive shorts, each encoding:
+   <base> <add> <mul> <const>
+Where, when fully qualified, <base> and <add> are registers and <mul> and
+<const> are constants.  This results in a address computation consisting of:
+   <base> + (<add>*<mul>) + <const>
+Not all machine can have all combinations.  The closest is the x86, where the
+only restrictions is that <mul> must be 1, 2, 4, or 8.  For all other machines,
+<mul> must be 1, and you can use only one of <const> and <add>.
+
+So, if you DT index is i, your <base> is found at DT[i*4].
+   <base> must be defined
+   <add>  of 0 indicates no add register
+   <mul>  of 0 or 1 indicates no mul
+   <const> of 0 is the same as no constant.
+
+Note that locals have memory addresses, where they are:
+   <base> =  %sp
+   <add>  =  0
+   <mul>  =  1
+   <const> = local frame offset
+
+*******************************************************************************
+*                              LIL ENCODING                                   *
+*******************************************************************************
+All of the suppored LIL instructions are shown in the enumerated type declared
+in fko_inst.h.  Each instruction is encoded as 4 shorts:
+   <inst> <dest> <src1> <src2>
+
+An entry of 0 means NULL (no such instruction, no src2, etc).  Positive 
+entries are usually DT indices (could possibly by ST entries for some
+inst, need to check).  Negative numbers indicate registers, as shown in
+fko_arch.h 
+
+In general, <dest> and <src> are expected to be registers or DT indices,
+while <src2> could also be a constant.
+
+
+*******************************************************************************
+*                              STACK FRAME HANDLING                           *
+*******************************************************************************
+One of the trickiest things is function prologue/epilogue handling.
+iFKO lays out stack frames according to the ABI of the machine in question,
+but some things are constant.  There is always a "locals" area, which is
+some ABI-specific distance form the stack pointer.  Until we have computed
+all frame statistics, we don't know what this distance is, so we do not
+know where from the %sp the locals or parameters are located.
+
+The idea behind the complicated frame handling is that all machine-specific
+addressing is handled here.  Globals and parameters are moved to locals,
+so that we have only locals in the body of the routine.  Some of those
+locals can be pointers, so that's how you handle arrays.
+
+For all machines, our local area looks like:
+
+
+        int    locals
+	float  locals
+	long   locals
+	double locals
+        vector float locals
+%sp+X   vector double locals
+....
+%sp
+
+Each of the type sections may be forced to a particular alignment, 
+depending on the architecture (therefore, there may be padding between them).
+
+(1) Locals and parameters are numbered during declaration.  At this
+    point, we could say "load the third local" but not where in memory it is.
+    At this point, no differentiation between types.
+    This number is stored in SToff[].i.
+(2) Upon encountering the ROUT_BEGIN keyword, the grammer makes these calls:
+       CreateSysLocals()
+       NumberLocalsByType();
+       CreateLocalDerefs();
+(3) CreateSysLocals() : symtab.c
+    Adds implicit locals, such as those used to store global data
+    (eg., fp constants) or in operation such as fabs (bit mask with 
+    sign bit 0, all other bits 1).
+(4) NumberLocalsByType() : symtab.c
+    Searches symbol table (ST) for all locals and parameters (all parameters
+    are written to the local portion of the stack frame in order to shield
+    machine differences, so they are implicit locals as well).  Each such data
+    gets a slot in the type-dependent section of the frame.  Now we can say
+    "load 3rd integer local", but not where it is (address is not fully
+    qualified).  We move the para/local number from SToff[].i to SToff[].sa[0].
+    The type-entry number is stored in SToff[].sa[1].
+(5) CreateLocalDerefs() : symtab.c
+    Given the output of NumberLocalsByType(), created deref table (DT) entries
+    for each local parameter.  The DT index is stored in SToff[].sa[2].
+    At this point, we fill in the <const> offset like the local address
+    started at %sp.  The <mul> entry of DT is set to -1 to indicate that
+    the address is still not fully fomred.
+(6) After the entire file is parsed and translated to LIL, ifko.c calls
+    CreatePrologue(), which will fully qualify all stack data.
+(7) CreatePrologue() : arch.c
+    Given a list of registers to save, and the locals to be used, creates
+    the appropriate prologue and epilogue, respecting the architecture's ABI.
+    With all this information, it can calculate the actual frame size,
+    where each local type area is, etc, and so we can fully qualify all
+    stack data.
+    NOTE: right now I simply save all registers.  NEED TO FIX LATER, probably
+    after register assignment is done.
+    Calls:
+       CorrectLocalOffsets()
+       Param2Local()
+       CreateEpilogue()
+(8) CorrectLocalOffsets() : symtab.c
+    Searches symbol tables for using %sp as <base> and <mul> as -1, and
+    adds <ldist> the dist from %sp to local area, to them.  At this point,
+    all locals are fully qualified.
+(9) Param2Local() : arch.c
+    After stack frame is fully qualified, inserts proper store instructions
+    into prologue so that incoming parameters are saved to their local
+    positions.
+(10)CreateEpilogue() : arch.c
+    Restores registers and returns.

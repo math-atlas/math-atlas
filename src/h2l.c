@@ -109,9 +109,9 @@ fprintf(stderr, "Handling fpconst!\n");
    type = FLAG2TYPE(STflag[dest-1]);
    InsNewInst(NULL, NULL, type == T_FLOAT ? FMOV : FMOVD, 
    #ifdef X86
-           GetReg(type), src, 0);
+           -GetReg(type), src, 0);
    #else
-           GetReg(type), src, GetReg(T_INT));
+           -GetReg(type), src, GetReg(T_INT));
    #endif
 /*
  * Allocate a static data entry

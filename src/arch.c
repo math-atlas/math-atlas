@@ -155,7 +155,7 @@ void Param2Local(INSTQ *next, short rsav, int fsize)
       {
 fprintf(stderr, "para #%d\n", SToff[i].sa[0]);
          assert(SToff[i].sa[0] <= NPARA);
-         paras[SToff[i].sa[0]] = i;
+         paras[SToff[i].sa[0]-1] = i;
          j++;
       }
    }

@@ -2,9 +2,18 @@
 #include "fko_arch.h"
 #include <stdarg.h>
 
+#define Mstr2(m) # m 
+#define Mstr(m) Mstr2(m)
+
 #define MyAssert(arg_) \
 { \
-   if (!(arg_)) while(1); \
+   if (!(arg_)) \
+   { \
+      fprintf(stderr, \
+              "\n\nassertion '%s' failed on line %d of %s, hanging:\n\n", \
+	      Mstr(arg_), __LINE__, __FILE__);\
+      while(1); \
+   } \
 }
 #undef assert
 #define assert MyAssert
@@ -872,6 +881,9 @@ struct assmln *lil2ass(INSTQ *head)
 	 {
 	    assert(IS_GLOB(STflag[op2-1]));
 	    #ifdef X86
+fprintf(stderr, "name  ='%s'\n", STname[op2-1]);
+fprintf(stderr, "regnam=dregs[%d] (%d-%d)\n", -DREGBEG-op1, -DREGBEG, op1);
+fprintf(stderr, "regnam='%s'\n", archdregs[-DREGBEG-op1]);
 	       ap->next = PrintAssln("\tmovlpd\t%s,%s\n", STname[op2-1],
 	                             archdregs[-DREGBEG-op1]);
 	    #elif defined(SPARC)
