@@ -460,7 +460,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tstd\t%s,%s\n", archdregs[-DREGBEG-op2],
                                   GetDeref(op1));
          #elif defined(PPC)
-            if (SToff[op1-1][1])
+            if (SToff[op1-1].sa[1])
                ap->next = PrintAssln("\tstfdx\t%s,%s\n",
                                      archdregs[-DREGBEG-op2], GetDeref(op1));
             else
@@ -479,7 +479,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tst\t%s,%s\n", archfregs[-FREGBEG-op2],
                                   GetDeref(op1));
          #elif defined(PPC)
-            if (SToff[op1-1][1])
+            if (SToff[op1-1].sa[1])
                ap->next = PrintAssln("\tstfsx\t%s,%s\n",
                                      archfregs[-FREGBEG-op2], GetDeref(op1));
             else
