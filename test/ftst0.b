@@ -1,0 +1,4 @@
+ROUTINE fsimple;
+ROUT_BEGIN;
+   RETURN 3.2;
+ROUT_END;
