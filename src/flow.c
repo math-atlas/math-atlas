@@ -510,7 +510,9 @@ void CheckFlow(BBLOCK *bbase, char *file, int line)
          fprintf(stderr, "Block %d, should be %d\n", bp->bnum, i+1);
          error = i+1;
       }
-      if (!(bp->inst1 || bp->instN))
+      if (!bp->inst1 && !bp->instN)
+         fprintf(stderr, "WARNING, block %d has no instructions!\n", bp->bnum);
+      else if (!(bp->inst1 || bp->instN))
       {
          fprintf(stderr, "Block %d, inst1=%d, instN=%d\n", bp->bnum,
                  bp->inst1, bp->instN);
@@ -533,8 +535,6 @@ void CheckFlow(BBLOCK *bbase, char *file, int line)
                  bp->csucc->bnum, bp->bnum);
          error = i+1;
       }
-      if (!bp->inst1 && !bp->instN)
-         fprintf(stderr, "WARNING, block %d has no instructions!\n", bp->bnum);
       if (bp->inst1)
       {
          for (ip=bp->inst1; ip && !ACTIVE_INST(ip->inst[0]); ip = ip->next);
@@ -628,8 +628,8 @@ void CheckFlow(BBLOCK *bbase, char *file, int line)
    }
    if (error)
    {
-      fprintf(stderr, "Error in CheckFlow called from line %d of %s\n",
-              line, file);
+      fprintf(stderr, "Error %d in CheckFlow called from line %d of %s\n",
+              error, line, file);
 /*      while(1); */
       exit(error);
    }

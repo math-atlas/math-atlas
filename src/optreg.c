@@ -2040,7 +2040,6 @@ static int SuccIsCopyPropTarg(BBLOCK *ob, /* origin block */
    int iret = 1;
    BLIST *bl;
 
-return(0);
    if (sb)
    {
 /*
@@ -2205,12 +2204,16 @@ fprintf(stderr, ", src=%s\n", Int2Reg(-src));
    }
 /*
  * If dest was still live on exit, see if cross-block prop is possible
+ * NOTE: if src is live on block entry, we can't do cross-blk CP, so
+ *       always say SRCLIVE=0 initially for succ blks
  */
    if ((blk->csucc || blk->usucc) && BitVecCheck(blk->outs, dest-1))
    {
       if (SuccIsCopyPropTarg(blk, blk->usucc, dest, src) &&
-          SuccIsCopyPropTarg(blk, blk->csucc, dest, src))
+          SuccIsCopyPropTarg(blk, blk->csucc, dest, src) && 1)
       {
+      if (mov == MOV)
+         j = 0;
          change++;
          if (blk->usucc && BitVecCheck(blk->usucc->ins, dest-1))
          {
@@ -2218,8 +2221,9 @@ fprintf(stderr, ", src=%s\n", Int2Reg(-src));
             if (!bl->ptr)
             {
                bl->ptr = (void*) 1;
-               change += CopyPropTrans0(SRCLIVE, scope, scopeblks, blk->usucc,
+               change += CopyPropTrans0(0, scope, scopeblks, blk->usucc,
                                         NULL, mov, dest, src);
+               bl->ptr = NULL;
                BitVecComb(blk->usucc->ins, blk->usucc->ins, ivdst, '-');
                BitVecComb(blk->usucc->ins, blk->usucc->ins, ivsrc, '|');
             }
@@ -2230,8 +2234,9 @@ fprintf(stderr, ", src=%s\n", Int2Reg(-src));
             if (!bl->ptr)
             {
                bl->ptr = (void*) 1;
-               change += CopyPropTrans0(SRCLIVE, scope, scopeblks, blk->csucc,
+               change += CopyPropTrans0(0, scope, scopeblks, blk->csucc,
                                         NULL, mov, dest, src);
+               bl->ptr = NULL;
                BitVecComb(blk->csucc->ins, blk->csucc->ins, ivdst, '-');
                BitVecComb(blk->csucc->ins, blk->csucc->ins, ivsrc, '|');
             }
@@ -2242,7 +2247,7 @@ fprintf(stderr, ", src=%s\n", Int2Reg(-src));
       }
       else
       {
-         if (IS_BRANCH(blk->ainstN->inst[0]))
+         if (blk->ainstN && IS_BRANCH(blk->ainstN->inst[0]))
             ip = blk->ainstN;
          else 
             ip = NULL;

@@ -1568,7 +1568,7 @@ if (KeepOn)
    while(KeepOn);
    if (ipld == ipstart)
       return(0);
-fprintf(stderr, "%s(%d) reg=%d\n", __FILE__, __LINE__, ipld->inst[1]);
+/* fprintf(stderr, "%s(%d) reg=%d\n", __FILE__, __LINE__, ipld->inst[1]); */
    RemoveInstFromQ(ipld);
    InsertInstBeforeQEntry(ipend, ipld);
    k = -ipld->inst[1];
