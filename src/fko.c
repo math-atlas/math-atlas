@@ -1,5 +1,5 @@
 #define IFKO_DECLARE
-#include "ifko.h"
+#include "fko.h"
 #include "fko_arch.h"
 #include "fko_l2a.h"
 #include "fko_loop.h"

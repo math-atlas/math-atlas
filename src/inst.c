@@ -1,4 +1,4 @@
-#include "ifko.h"
+#include "fko.h"
 
 INSTQ *NewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,
                short dest, short src1, short src2)

@@ -1,4 +1,4 @@
-#include "ifko.h"
+#include "fko.h"
 #include <stdlib.h>
 
 int main(int nargs, char **args)

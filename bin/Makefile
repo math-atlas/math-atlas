@@ -6,15 +6,15 @@ objs = y.tab.o lex.yy.o h2l.o l2a.o inst.o symtab.o arch.o misc.o flow.o \
 HDIR = ../include
 heads= $(HDIR)/fko_arch.h $(HDIR)/fko_inst.h $(HDIR)/fko_misc.h \
        $(HDIR)/fko_types.h $(HDIR)/fko_h2l.h $(HDIR)/fko_l2a.h \
-       $(HDIR)/fko_symtab.h $(HDIR)/ifko.h $(HDIR)/fko_flow.h \
+       $(HDIR)/fko_symtab.h $(HDIR)/fko.h $(HDIR)/fko_flow.h \
        $(HDIR)/fko_bvec.h $(HDIR)/fko_vars.h $(HDIR)/fko_optreg.h \
        $(HDIR)/fko_loop.h
 
-ifko : $(heads) ifko.o $(objs)
-	$(CC) $(CCFLAGS) -o $@ ifko.o $(objs) -lfl
-#	$(CC) $(CCFLAGS) -o $@ ifko.o $(objs) -ll
+fko : $(heads) fko.o $(objs)
+	$(CC) $(CCFLAGS) -o $@ fko.o $(objs) -lfl
+#	$(CC) $(CCFLAGS) -o $@ fko.o $(objs) -ll
 
-xprintinst : ../include/ifko.h ../include/fko_inst.h ../src/printinst.c
+xprintinst : ../include/fko.h ../include/fko_inst.h ../src/printinst.c
 	$(CC) $(CCFLAGS) -I../include -o $@ ../src/printinst.c
 xprintregs : $(heads) ../src/printregs.c
 	$(CC) $(CCFLAGS) -I../include -o $@ ../src/printregs.c
@@ -55,8 +55,8 @@ l2a.o : $(heads) ../src/l2a.c
 	$(CC) -I../include $(CCFLAGS) -c ../src/l2a.c
 h2l.o : $(heads) ../src/h2l.c
 	$(CC) -I../include $(CCFLAGS) -c ../src/h2l.c
-ifko.o : $(heads) ../src/ifko.c
-	$(CC) -I../include $(CCFLAGS) -c ../src/ifko.c
+fko.o : $(heads) ../src/fko.c
+	$(CC) -I../include $(CCFLAGS) -c ../src/fko.c
 
 clean :
-	- rm -f $(objs) y.tab.h y.tab.c lex.yy.c ifko.o y.output
+	- rm -f $(objs) y.tab.h y.tab.c lex.yy.c fko.o y.output

@@ -1,6 +1,6 @@
 #ifndef FKO_FLOW_H
 #define FKO_FLOW_H
-#include "ifko.h"
+#include "fko.h"
 
 BLIST *NewBlockList(BBLOCK *blk, BLIST *next);
 BLIST *AddBlockToList(BLIST *list, BBLOCK *blk);

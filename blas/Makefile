@@ -1,14 +1,14 @@
 SHELL=/bin/sh
-IFKO = ../bin/ifko
+FKO = ../bin/fko
 KFLAG=
 #scal.s : scal.b
-#	../bin/ifko $(KFLAG) -o scal.s scal.b
+#	../bin/fko $(KFLAG) -o scal.s scal.b
 clean :
 	rm -f *.s
 
 build_comp:
-	cd ../bin ; $(MAKE) ifko
+	cd ../bin ; $(MAKE) fko
 
 %.s : %.b
 	$(MAKE) build_comp
-	$(IFKO) $(KFLAG) $< -o $@
+	$(FKO) $(KFLAG) $< -o $@

@@ -1,4 +1,4 @@
-#include "ifko.h"
+#include "fko.h"
 #define ARCH_DECLARE
 #include "fko_arch.h"
 

@@ -1,5 +1,5 @@
 #define NO_STEXTERN
-#include "ifko.h"
+#include "fko.h"
 
 char **STname;
 union valoff *SToff;

@@ -3,7 +3,7 @@
    #ifdef RCW_DEBUG
       #define YYDEBUG 1
    #endif
-   #include "ifko.h"
+   #include "fko.h"
    #include "fko_h2l.h"
    #include "fko_arch.h"
    int WhereAt=0, lnno=1;

@@ -1,5 +1,5 @@
 #define ARCH_DECLARE
-#include "ifko.h"
+#include "fko.h"
 struct locinit *LIhead=NULL,       /* Locals to be init to constant vals */
                *ParaDerefQ=NULL;   /* Derefs created for parameters */
 

@@ -2,7 +2,7 @@
  * This file contains the routines necessary to manipulate the basic block
  * bit vectors
  */
-#include "ifko.h"
+#include "fko.h"
 #define CHUNKSIZE 64
 static int nvalloc=0,      /* # of slots allocated for bit vectors*/
            nvused=0,       /* # of slots presently in use */

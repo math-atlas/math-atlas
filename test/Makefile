@@ -1,7 +1,7 @@
 SHELL = /bin/tcsh
 CC = gcc
 CCFLAGS = -g
-IFKO = ../bin/ifko
+FKO = ../bin/fko
 
 all : ibuild fbuild dbuild hbuild irun frun drun hrun
 
@@ -165,12 +165,12 @@ mitst3.c : mitst0.c
 clean:
 	rm -f x* *.o *.s
 build_comp:
-	cd ../bin ; $(MAKE) ifko
+	cd ../bin ; $(MAKE) fko
 
 %.o : %.s
 	$(CC) $(CCFLAGS) -c -o $@ $<
 %.s : %.b
 	$(MAKE) build_comp
-	$(IFKO) $< > $@
+	$(FKO) $< > $@
 %.o : %.c
 	$(CC) $(CCFLAGS) -c -o $@ $<

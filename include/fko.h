@@ -1,5 +1,5 @@
-#ifndef IFKO_H
-#define IFKO_H
+#ifndef FKO_H
+#define FKO_H
 
 #include <stdio.h>
 #include <stdlib.h>

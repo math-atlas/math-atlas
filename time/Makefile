@@ -16,10 +16,10 @@ timel1.o : timel1.c
 
 l1time :
 	cp $(kern) $(L1Tdir)/../$(URT)/fkorout.c
-	- rm -f $(L1Tdir)/ifko.tmp if2.tmp
+	- rm -f $(L1Tdir)/fko.tmp if2.tmp
 	cd $(L1Tdir) ; make $(pre)$(rout)case urout=fkorout.c UCC=gcc \
-           UCCFLAGS="-x assembler-with-cpp" $(cache) $(N) > ifko.tmp 2>&1
-	cat $(L1Tdir)/ifko.tmp
+           UCCFLAGS="-x assembler-with-cpp" $(cache) $(N) > fko.tmp 2>&1
+	cat $(L1Tdir)/fko.tmp
 	echo "****\n\n"
-	fgrep -e 'time=' -e 'mflop=' $(L1Tdir)/ifko.tmp > ifk2.tmp
-	fgrep -e 'time=' -e 'mflop=' $(L1Tdir)/ifko.tmp
+	fgrep -e 'time=' -e 'mflop=' $(L1Tdir)/fko.tmp > ifk2.tmp
+	fgrep -e 'time=' -e 'mflop=' $(L1Tdir)/fko.tmp
