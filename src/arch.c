@@ -1405,8 +1405,6 @@ if (KeepOn)
    fprintf(stderr, "Rejecting candidate %s\n", Int2Reg(ipld->inst[1]));
    }
    while(KeepOn);
-   assert(ipld != ipstart);
-fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    if (ipld == ipstart)
       return(0);
 fprintf(stderr, "%s(%d) reg=%d\n", __FILE__, __LINE__, ipld->inst[1]);

@@ -370,7 +370,11 @@ int main(int nargs, char **args)
    fclose(fpin);
    SaveFKOState(0);
    if (GoToTown(0))
+   {
+      fprintf(stderr, "\n\nOut of registers for SAVESP, trying again!!\n");
+      RestoreFKOState(0);
       assert(!GoToTown(IREGBEG+NIR-1));
+   }
 
    if (fpLIL)
    {
