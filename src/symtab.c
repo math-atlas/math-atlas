@@ -521,6 +521,14 @@ short AddDerefEntry(short ptr, short reg, short mul, short con)
    return(i+1);
 }
 
+static char flag2pre(int flag)
+{
+   char pre='?';
+   if (IS_INT(flag)) pre = 'i';
+   else if (IS_DOUBLE(flag)) pre = 'd';
+   else if (IS_FLOAT(flag)) pre = 'f';
+   return(pre);
+}
 void PrintST(FILE *fpout)
 {
    int flag;
@@ -558,6 +566,11 @@ void PrintST(FILE *fpout)
       }
       else if (IS_LABEL(flag))
          fprintf(fpout, "   LABEL\n");
+      else if (IS_PTR(flag))
+      {
+         fprintf(fpout, "   %c PTR %4d,%4d,%4d,%4d", flag2pre(flag), 
+	         SToff[k].sa[0],SToff[k].sa[1],SToff[k].sa[2],SToff[k].sa[3]);
+      }
       else
          fprintf(fpout, " UNKNOWN UNKNOWN\n");
    }

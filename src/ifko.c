@@ -157,7 +157,7 @@ fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    {
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
 #if 0
-/*      DoLoopGlobalRegAssignment(optloop); */
+/*      DoLoopGlobalRegAssignment(optloop);   */
 #else
 fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
       DoScopeRegAsg(optloop->blocks);

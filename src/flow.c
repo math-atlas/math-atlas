@@ -251,6 +251,12 @@ void AddBlockComments(BBLOCK *bp)
    for (i=0; bp; bp = bp->down, i++)
    {
       PrintComment(bp, NULL, bp->inst1, "**************************");
+      PrintComment(bp, NULL, bp->inst1, "   conout = %s", 
+                   bp->conout ? PrintVecList(bp->conout, 0): "NULL");
+      PrintComment(bp, NULL, bp->inst1, "   conin  = %s", 
+                   bp->conin ? PrintVecList(bp->conin, 0): "NULL");
+      PrintComment(bp, NULL, bp->inst1, "   ignodes = %s", 
+                   bp->ignodes ? PrintVecList(bp->ignodes, 0): "NULL");
       PrintComment(bp, NULL, bp->inst1, "   uses = %s",
                    BV2VarNames(bp->uses));
       PrintComment(bp, NULL, bp->inst1, "   defs = %s",
