@@ -2096,6 +2096,12 @@ void PrintLoopInfo()
 
    if (fpLOOPINFO)
       fpout = fpLOOPINFO;
+
+   fprintf(fpout, "NCACHES=%d\n", NCACHE);
+   fprintf(fpout, "   LINESIZES :");
+   for (i=0; i < NCACHE; i++)
+      fprintf(fpout, " %d", LINESIZE[i]);
+   fprintf(fpout, "\n");
    RestoreFKOState(0);
    DoStage2(0, 0);
    if (optloop)
@@ -2172,9 +2178,9 @@ void PrintLoopInfo()
             if (lp->nopf)
                if (FindInShortList(lp->nopf[0], lp->nopf+1, i+1))
                   j = 0;
-            fprintf(fpout, ", prefetch=%d", j);
+            fprintf(fpout, " prefetch=%d", j);
             j = NumberArrayWrites(lp->blocks, i+1);
-            fprintf(fpout, ", sets=%d\n", j);
+            fprintf(fpout, " sets=%d\n", j);
          }
       }
       KillAllPtrinfo(pi0);

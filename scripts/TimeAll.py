@@ -3,6 +3,7 @@ import os
 import sys
 import re
 import l1cmnd
+import fkocmnd
 
 def FindAtlas(FKOdir):
    file = os.path.join(FKOdir, 'time')
@@ -27,6 +28,7 @@ pwd = os.getcwd()
 j = pwd.rfind('iFKO')
 # IFKOdir = '/home/rwhaley/PROJ/iFKO'
 IFKOdir = pwd[0:j+4]
+fko = IFKOdir + '/bin/fko'
 
 
 [ATLdir, ARCH] = FindAtlas(IFKOdir)
@@ -43,8 +45,18 @@ l1atl   = []
 CCatl   = []
 CCFat   = []
 
+#
+# Find the cacheline size for default flag determination
+#
+bob = fkocmnd.info(fko, IFKOdir + "/blas/dasum.b")
+LS = bob[1][0]
+print LS
+sys.exit(0)
 N=80000
 
+#
+# Find the kernel names and compiler flags used by ATLAS on this arch
+#
 for blas in l1routs:
    for pre in pres:
       [id,rout,CC, CCF] = l1cmnd.res(ATLdir, ARCH, blas, pre)

@@ -318,7 +318,6 @@ void CreateSysLocals()
          SToff[k].sa[2] = -DTabsd;
          SToff[k].sa[3] = DTabsd;
       }
-fprintf(stderr, "DTabsd = %d,%d\n", DTabsd, SToff[DTabsd-1].sa[2]);
    }
    if (DTnzero)
    {
@@ -388,7 +387,6 @@ fprintf(stderr, "DTabsd = %d,%d\n", DTabsd, SToff[DTabsd-1].sa[2]);
          SToff[k].sa[2] = -DTx87d;
          SToff[k].sa[3] = DTx87d;
       }
-fprintf(stderr, "\n\nDTx87d=[%d,%d]\n\n", DTx87d, SToff[DTx87d-1].sa[2]);
    }
    #endif
 #else
