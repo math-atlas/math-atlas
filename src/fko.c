@@ -499,8 +499,9 @@ ERR:
    }
    if (aeb)
    {
-      n = KillDupPtrinfo(args, pfb);
-      AES = PtrinfoToStrings(args, n, pfb);
+      n = KillDupPtrinfo(args, aeb);
+fprintf(stderr, "AEB, n=%d\n", n);
+      AES = PtrinfoToStrings(args, n, aeb);
       AEn = malloc(sizeof(short)*(n+1));
       AEn[0] = n;
       for (pf=aeb,i=1; i <= n; pf=pf->next,i++)
@@ -1536,7 +1537,7 @@ void AddOptSTEntries()
       {
          sp[i] = FindVarFromName(AES[i-1]);
          assert(sp[i]);
-         asp[i] = DeclareAE(DO_VECT(FKO_FLAG), AEn[i], sp[i]);
+         asp[i-1] = DeclareAE(DO_VECT(FKO_FLAG), AEn[i], sp[i]);
       }
       optloop->ae = sp;
       optloop->ne = AEn;

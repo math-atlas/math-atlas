@@ -2285,8 +2285,8 @@ void AddInstToPosttail(LOOPQ *lp, INSTQ *iadd, short type, short r0, short r1)
 /*
  *    NOTE: later change this to calc live reg & choose dead
  */
-      s0 = GetReg(type);
-      s1 = GetReg(type);
+      s0 = -GetReg(type);
+      s1 = -GetReg(type);
       if (!r1)
       {
          r1 = r0;
@@ -2309,6 +2309,7 @@ void AddInstToPosttail(LOOPQ *lp, INSTQ *iadd, short type, short r0, short r1)
    for (bl=lp->posttails; bl; bl = bl->next)
    {
       bp = bl->blk;
+      ip = iadd;
       if (bp->ilab)
          ipp = InsNewInst(bp, bp->ainst1, NULL, ip->inst[0], ip->inst[1], 
                           ip->inst[2], ip->inst[3]);
@@ -2380,14 +2381,12 @@ INSTQ *GetAEHeadTail(LOOPQ *lp, short ae, short ne, short *aes, int vec)
 /*
  * Zero shadow accumulators in loop header
  */
-   ip = ipb = NULL;
+   ibase->prev = ip = NewInst(NULL, NULL, NULL, COMMENT, 
+                      STstrconstlookup("Begin shadow accum init"), 0, 0);
    for (i=1; i <= ne; i++)
-   {
       ip = NewInst(NULL, ip, NULL, zero, aes[i], 0, 0);
-      if (!ipb)
-         ipb = ip;
-   }
-   ibase->prev = ipb;
+   ip = NewInst(NULL, ip, NULL, COMMENT, 
+                STstrconstlookup("End shadow accum init"), 0, 0);
 /* 
  * These are the registers that should be changed to a dead reg during insertion
  */
@@ -2404,7 +2403,9 @@ INSTQ *GetAEHeadTail(LOOPQ *lp, short ae, short ne, short *aes, int vec)
    if (1<<(j-1) == ne)
       j--;
 
-   ip = ibase;
+   ibase->next = NewInst(NULL, NULL, NULL, COMMENT, 
+                         STstrconstlookup("Begin accum reduce"), 0, 0);
+   ip = ibase->next;
    for (i=1; i <= ne; i <<= 1, j--)
    {
       for (k=0; k < j; k++)
@@ -2426,6 +2427,8 @@ INSTQ *GetAEHeadTail(LOOPQ *lp, short ae, short ne, short *aes, int vec)
          }
       }
    }
+   ip->next = NewInst(NULL, ip, NULL, COMMENT, 
+                      STstrconstlookup("End accum reduce"), 0, 0);
    aes[0] = ne-1;
    return(ibase);
 }
@@ -2482,14 +2485,16 @@ int DoAllAccumExpansion(LOOPQ *lp, int unroll, int vec)
    {
       if (unroll % lp->ae[i])
          fko_warn(__LINE__, "UNROLL=%d, but NACCEXP=%d!", unroll, lp->ae[i]);
-      ipb = GetAEHeadTail(lp, lp->ae[i], lp->aes[i][0], lp->aes[i], vec);
+      ipb = GetAEHeadTail(lp, lp->ae[i], lp->aes[i-1][0]+1, lp->aes[i-1], vec);
       AddInstToPrehead(lp, ipb->prev, ipb->inst[0], 0, 0);
       KillAllInst(ipb->prev);
       AddInstToPosttail(lp, ipb->next, ipb->inst[0],ipb->inst[1],ipb->inst[2]);
       KillAllInst(ipb->next);
-      nchanges += DoAccumExpansOnLoop(lp, ipb->inst[0], lp->ae[i], lp->aes[i]);
+      nchanges += DoAccumExpansOnLoop(lp, ipb->inst[0], lp->ae[i],lp->aes[i-1]);
       ipb->prev = ipb->next = NULL;
       KillThisInst(ipb);
    }
    CFUSETU2D = INDEADU2D = 0;
+   fprintf(stderr, "ACCEXP, nchanges=%d\n\n", nchanges);
+   return(nchanges);
 }
