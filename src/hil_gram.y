@@ -10,7 +10,7 @@
    static short *LMA[8] = {NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL};
    static short *aalign=NULL;
    static uchar *balign=NULL;
-   static short maxunroll=0;
+   static short maxunroll=0, writedd=1;
 
    struct idlist *NewID(char *name);
    static void UpdateLoop(struct loopq *lp);
@@ -34,7 +34,7 @@
 %token ROUT_NAME ROUT_LOCALS ROUT_BEGIN ROUT_END CONST_INIT RETURN
 %token DOUBLE FLOAT INT UINT DOUBLE_PTR FLOAT_PTR INT_PTR UINT_PTR 
 %token PARAMS LST ABST ME LOOP_BEGIN LOOP_BODY LOOP_END MAX_UNROLL IF GOTO
-%token <sh> LOOP_LIST_MU
+%token <sh> LOOP_LIST_MU LOOP_INT_MU
 %token <inum> ICONST
 %token <fnum> FCONST
 %token <dnum> DCONST
@@ -122,7 +122,8 @@ loop_beg : LOOP_BEGIN ID '=' avar loopsm ',' avar loopsm ',' avar loopsm2
          { $$ = DoLoop($2, $4, $7, STiconstlookup(1), $5, $8, 2); }
          ;
 loop_markup : LOOP_LIST_MU LST idlist { HandleLoopListMU($1); }
-            | MAX_UNROLL   LST icexpr { maxunroll = $3; }
+            | LOOP_INT_MU LST icexpr  { HandleLoopIntMU($1, $3); }
+ /*            | MAX_UNROLL   LST icexpr { maxunroll = $3; } */
             ;
 loop_markups : loop_markups loop_markup ';'
              |
@@ -315,6 +316,7 @@ static void UpdateLoop(struct loopq *lp)
 {
 fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    lp->maxunroll = maxunroll;
+   lp->writedd  = writedd;
    lp->slivein  = LMA[0];
    lp->sliveout = LMA[1];
    lp->adeadin  = LMA[2];
@@ -324,14 +326,36 @@ fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    lp->abalign  = balign;
    LMA[0] = LMA[1] = LMA[2] = LMA[3] = LMA[4] = aalign = NULL;
    balign = NULL;
-   maxunroll = 0;
+   maxunroll = writedd = 0;
    FinishLoop(lp);
 fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
 }
 
+HandleLoopIntMU(int which, int ival)
+/*
+ * Handles loop markup involving integer scalar values.  The markups are
+ * encoded by which:
+ *
+ * 0 : Max_unroll - maximum unrolling to try
+ * 1 : Write_dep_dist - loop unroll at which a loop-carried write dependence
+ *                      will be discovered (0 means there are none)
+ */
+{
+   switch(which)
+   {
+   case 0:
+      maxunroll = ival;
+      break;
+   case 1:
+      writedd = ival;
+      break;
+   default:
+      fko_error(__LINE__, "Unknown which=%d, file %s", which, __FILE__);
+   }
+}
 void HandleLoopListMU(int which)
 /*
- * Handles loop markup consisting of simple lists.  The markups are incoded
+ * Handles loop markup consisting of simple lists.  The markups are encoded
  * by which:
  *   0: Live_scalars_in
  *   1: Live_scalars_out

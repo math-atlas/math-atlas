@@ -48,20 +48,6 @@ struct sdata  /* Structure for static data */
    struct sdata *next;
 };
 
-struct loopq
-{
-   int flag;
-   short I, beg, end, inc;
-   short body_label;
-   short loopnum;
-   short maxunroll;
-   short *slivein, *sliveout, *adeadin, *adeadout, *nopf;
-   short *aaligned;   /* arrays that have known alignment */
-   uchar *abalign;    /* alignments of above arrays */
-   INSTQ *ibeg, *iend;
-   struct loopq *next;
-};
-
 typedef struct bblock BBLOCK;
 struct bblock
 {
@@ -71,6 +57,7 @@ struct bblock
    BBLOCK *usucc, *csucc;   /* (un)conditional successors */
    INSTQ  *inst1, *instN;   /* ptr to this block's 1st and last inst */
    INSTQ  *ainst1, *ainstN; /* ptr to block's 1st and last non-comment inst */
+   struct loopq *loop;      /* set for header of loop only */
    struct blist *preds;     /* predecessors to this block */
    ushort dom;              /* dominators of this block */
 };
@@ -80,6 +67,25 @@ struct blist
 {
    BLIST *next;
    BBLOCK *blk;
+};
+
+typedef struct loopq LOOPQ;
+struct loopq
+{
+   int flag;
+   short depth;
+   short I, beg, end, inc;
+   short body_label;
+   short loopnum;
+   short maxunroll;
+   short writedd;     /* write dependence distance */
+   short *slivein, *sliveout, *adeadin, *adeadout, *nopf;
+   short *aaligned;   /* arrays that have known alignment */
+   uchar *abalign;    /* alignments of above arrays */
+   BBLOCK *preheader, *header;
+   BLIST *blocks;
+   ushort blkvec;
+   struct loopq *next;
 };
 
 #endif

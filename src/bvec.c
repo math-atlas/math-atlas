@@ -146,7 +146,7 @@ int BitVecComp(int iv1, int iv2)
    return(0);
 }
 
-int BitVecCopy(int ivD, int ivS)
+int BitVecDup(int ivD, int ivS, char op)
 /*
  * Copies ivS to ivD, allocating ivD if necessary
  */
@@ -162,10 +162,57 @@ int BitVecCopy(int ivD, int ivS)
       n = ni[ivD];
       ExtendBitVec(ivS+1, n);
    }
-   for (i=0; i < n; i++) bvecs[ivD][i] = bvecs[ivS][i];
+   if (op == '~') for (i=0; i < n; i++) bvecs[ivD][i] = ~bvecs[ivS][i];
+   else for (i=0; i < n; i++) bvecs[ivD][i] = bvecs[ivS][i];
    return(ivD+1);
 }
 
+int BitVecCopy(int ivD, int ivS)
+{
+   return(BitVecDup(int ivD, int ivS, '='));
+}
+int BitVecInvert(int ivD, int ivS)
+{
+   return(BitVecDup(int ivD, int ivS, '~'));
+}
+
+int GetSetBitX(int iv, int I)
+/*
+ * RETURNS ith bit that is 1
+ */
+{
+   int j, n, v, k=0;
+
+   assert(I > 0);
+   n = ni[--iv];
+   for (j=0; j < n; j++)
+   {
+      v = bvecs[iv][j];
+      for (i=0; i < 31; i++)
+      {
+         if (k & (1<<i))
+         {
+            if (++k == I) return(j*32+i);
+         }
+      }
+   }
+   return(0);
+}
+int CountBitsSet(int iv)
+/*
+ * RETURNS: number of bits set in bitvec iv
+ */
+{
+   int i, j, k, m, n=0;
+   m = ni[--iv];
+   for (j=0; j < m; j++)
+   {
+      k = bvecs[iv][j];
+      for (i=0; i < 31; i++)
+         if (k & (1<<i)) n++;
+   }
+   return(n);
+}
 char *PrintVecList(int iv, int ioff)
 /*
  * RETURNS: ptr to string containing # of all set bits

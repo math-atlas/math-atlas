@@ -8,6 +8,10 @@ void SetVecBit(int iv, int ibit, int val);
 int BitVecComb(int ivD, int iv1, int iv2, char op);
 int BitVecComp(int iv1, int iv2);
 int BitVecCopy(int ivD, int ivS);
+int BitVecInvert(int ivD, int ivS);
 int BitVecCheck(int iv, int ibit);
+int CountBitsSet(int iv);
+char *PrintVecList(int iv, int ioff);
+
 
 #endif

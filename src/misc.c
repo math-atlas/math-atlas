@@ -46,28 +46,3 @@ void fko_warn(int errno, ...)
    fprintf(stderr, "\n");
    va_end(argptr);
 }
-
-
-struct loopq *NewLoop(int flag)
-{
-   struct loopq *lp, *l;
-   short lnum=0;
-
-   lp = malloc(sizeof(struct loopq));
-   assert(lp);
-   lp->flag = flag;
-   lp->slivein = lp->sliveout = lp->adeadin = lp->adeadout = lp->nopf =
-                 lp->aaligned = NULL;
-   lp->abalign = NULL;
-   lp->maxunroll = 0;
-   lp->next = NULL;
-   if (loopq)
-   {
-      lnum++;
-      for (l=loopq; l->next; lnum++, l = l->next);
-      l->next = lp;
-   }
-   else loopq = lp;
-   lp->loopnum = lnum;
-   return(lp);
-}

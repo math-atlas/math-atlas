@@ -624,8 +624,8 @@ static short GetSignInfo(short k)
    return(kret);
 }
 
-struct loopq *DoLoop(short I, short start, short end, short inc,
-                     short sst, short send, short sinc)
+LOOPQ *DoLoop(short I, short start, short end, short inc,
+              short sst, short send, short sinc)
 /*
  * sst, send, sinc indicate sign of each parameter:
  *    0 : unknown
@@ -636,7 +636,7 @@ struct loopq *DoLoop(short I, short start, short end, short inc,
  */
 {
    int flag=0;
-   struct loopq *lp;
+   LOOPQ *lp;
    short ireg;
    char lnam[128];
 fprintf(stderr, "%s(%d) I=%d, start=%d, end=%d\n", __FILE__, __LINE__,I,start,end);
@@ -666,14 +666,16 @@ fprintf(stderr, "%s(%d) I=%d, start=%d, end=%d\n", __FILE__, __LINE__,I,start,en
       else /* if (sinc == -2) */ flag |= L_NINC_BIT;
    }
 fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
-   lp = NewLoop(flag);
+   lp = optloop = NewLoop(flag);
 fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    lp->I = I;
    lp->beg = start;
    lp->end = end;
    lp->inc = inc;
 
-   lp->ibeg = InsNewInst(NULL, NULL, NULL, CMPFLAG, CF_LOOP_INIT, lp->loopnum, 0);
+   lp->header = NewBasicBlock(NULL, NULL);
+   lp->header->inst1 = InsNewInst(NULL, NULL, NULL, CMPFLAG, CF_LOOP_INIT,
+                                  lp->loopnum, 0);
    flag = STflag[start-1];
    assert(!IS_PTR(flag));
    if (IS_CONST(flag)) DoMove(I, start);
@@ -690,7 +692,7 @@ fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
    return(lp);
 }
 
-void FinishLoop(struct loopq *lp)
+void FinishLoop(LOOPQ *lp)
 /*
  * After loop_begin and loop_body written, writes loop_update and test
  */
@@ -709,7 +711,8 @@ void FinishLoop(struct loopq *lp)
    else iend = -LocalLoad(lp->end);
    InsNewInst(NULL, NULL, NULL, CMP, ICC0, -ireg, iend);
    InsNewInst(NULL, NULL, NULL, JLT, 0, ICC0, lp->body_label);
-   lp->iend = InsNewInst(NULL, NULL, NULL, CMPFLAG, CF_LOOP_END, lp->loopnum, 0);
+   lp->header->instN = InsNewInst(NULL, NULL, NULL, CMPFLAG, CF_LOOP_END,
+                                  lp->loopnum, 0);
    GetReg(-1);
 }
 

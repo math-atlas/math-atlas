@@ -12,6 +12,43 @@ BLIST *NewBlockList(BBLOCK *blk, BLIST *next)
    return(lp);
 }
 
+BLIST *AddBlockToList(BLIST *list, BBLOCK *blk)
+/*
+ * Adds a block to a blist (in second position).  
+ * RETURNS: ptr to list (created if list is NULL, list otherwise).
+ */
+{
+   if (list) list->next = NewBlockList(blk, list->next);
+   else list = NewBlockList(blk, NULL);
+   return(list);
+}
+
+int BlockList2BitVec(BLIST *lp)
+{
+   static int iv=0;
+
+   if (!iv) iv = NewBitVec(32);
+   SetVecAll(iv, 0);
+   for (; lp; lp = lp->next)
+      SetVecBit(iv, lp->blk->bnum-1, 1);
+   return(iv);
+}
+BLIST *BitVec2BlockList(int iv)
+/*
+ * Given a bitvec of block nums, return a BLIST of the appropriate blocks
+ */
+{
+   BBLOCK *bp;
+   BLIST *lp=NULL;
+
+   for (bp=bbbase; bp; bp = bp->down)
+   {
+      if (BitVecCheck(iv, bp->bnum-1))
+         lp = AddBlockToList(lp, bp);
+   }
+   return(lp);
+}
+
 BBLOCK *FindBlockInList(BLIST *lp, BBLOCK *blk)
 {
    for (; lp; lp = lp->next)
@@ -29,7 +66,6 @@ void KillBlockList(BLIST *lp)
    }
 }
 
-
 BBLOCK *NewBasicBlock(BBLOCK *up, BBLOCK *down)
 /*
  * Allocates new basic block, returns allocated block
@@ -46,6 +82,7 @@ BBLOCK *NewBasicBlock(BBLOCK *up, BBLOCK *down)
    bp->ainst1 = bp->ainstN = bp->inst1 = bp->instN = NULL;
    bp->preds = NULL;
    bp->dom = 0;
+   bp->loop = NULL;
    return(bp);
 }
 
@@ -87,8 +124,8 @@ void AddBlockComments(BBLOCK *bp)
       PrintComment(bp, NULL, bp->inst1, "**************************");
       PrintComment(bp, NULL, bp->inst1, "   label = %d (%s)", bp->ilab, 
                                bp->ilab ? STname[bp->ilab-1] : "NULL");
-      PrintComment(bp, NULL, bp->inst1, "   doms = %s",
-                   PrintVecList(bp->dom, 1));
+      PrintComment(bp, NULL, bp->inst1, "   doms = %s", bp->dom ?
+                   PrintVecList(bp->dom, 1) : "NOT SET");
       PrintComment(bp, NULL, bp->inst1, "   usucc=%d, csucc=%d",
                    bp->usucc ? bp->usucc->bnum : 0, 
                    bp->csucc ? bp->csucc->bnum : 0);
@@ -173,7 +210,6 @@ BBLOCK *FindBlockWithLabel(BBLOCK *bp, int ilab)
    {
       do
       {
-fprintf(stderr, "looking for %d, found %d\n", ilab, bp->ilab);
          if (bp->ilab == ilab) break;
          bp = bp->down;
       }
@@ -423,6 +459,7 @@ void CheckFlow(BBLOCK *bbase, char *file, int line)
       }
 /*
  *    May want to put in dominator sanity test?
+ *    --- Not right now, info only figured for loops anyway . . .
  */
    }
    if (error)
@@ -445,3 +482,285 @@ void KillUselessBlocks(BBLOCK *bbase)
 {
 
 }
+
+BBLOCK *NewBasicBlocks(BBLOCK *base0)
+/*
+ * Uses the instructions of old set of basic blocks to compute a new set;
+ * kills the old set.
+ */
+{
+   BBLOCK *base;
+   base = FindBasicBlocks(base0);
+   KillAllBasicBlocks(base0);
+   SetBlocksActiveInst(base);
+   FindPredSuccBlocks(base);
+   bbbase = base;
+   CheckFlow(base, __FILE__, __LINE__);
+   return(base);
+}
+
+LOOPQ *NewLoop(int flag)
+{
+   LOOPQ *lp, *l;
+   short lnum=0;
+
+   lp = malloc(sizeof(struct loopq));
+   assert(lp);
+   lp->flag = flag;
+   lp->slivein = lp->sliveout = lp->adeadin = lp->adeadout = lp->nopf =
+                 lp->aaligned = NULL;
+   lp->abalign = NULL;
+   lp->maxunroll = 0;
+   lp->next = NULL;
+   lp->depth = lp->loopnum = 0;
+   lp->preheader = lp->header = NULL;
+   lp->blocks = NULL;
+   return(lp);
+}
+LOOPQ *KillLoop(LOOPQ *lp)
+{
+   LOOPQ *ln=NULL;
+
+   if (lp)
+   {
+      ln = lp->next;
+      if (lp->slivein) free(lp->slivein);
+      if (lp->sliveout) free(lp->sliveout);
+      if (lp->adeadin) free(lp->adeadin);
+      if (lp->adeadout) free(lp->adeadout);
+      if (lp->nopf) free(lp->nopf);
+      if (lp->aaligned) free(lp->aaligned);
+      if (lp->blocks) KillBlockList(lp->blocks);
+      free(lp);
+   }
+   return(ln);
+}
+
+void KillAllLoops()
+{
+   while (loopq) loopq = KillLoop(loopq);
+}
+
+LOOPQ *InsNewLoop(LOOPQ *prev, LOOPQ *next, int flag)
+{
+   LOOPQ *lp, *loop;
+
+   loop = NewLoop(flag);
+   if (loopq)
+   {
+      if (prev)
+      {
+         for (lp=loopq; lp && lp != prev; lp = lp->next);
+         assert(lp);
+         loop->next = lp->next;
+         lp->next = loopq;
+      }
+      else
+      {
+         for (lp=loopq; lp && lp->next != next; lp = lp->next);
+         assert(lp);
+         loop->next = lp->next;
+         lp->next = loop;
+      }
+   }
+   else loopq = loop;
+   return(loop);
+}
+
+void InsertLoopBlock(short blkvec, BBLOCK *blk)
+{
+   BLIST *lp;
+   if (!BitVecCheck(blkvec, blk->bnum-1))
+   {
+      SetVecBit(blkvec, blk->bnum-1, 1);
+      for (lp=blk->preds; lp; lp = lp->next)
+         InsertLoopBlock(blkvec, lp->blk);
+   }
+}
+void FindBlocksInLoop(BBLOCK *head, BBLOCK *tail)
+/* 
+ * Finds all blocks in the loop with provided head and tail
+ */
+{
+   LOOPQ *loop;
+/*
+ * If head already head of loop, just add new blocks to existing loop
+ */
+   if (head->loop) loop = head->loop;
+/*
+ * Found new loop, allocate new loop struct
+ */
+   else
+   {
+      head->loop = loop = InsNewLoop(NULL, NULL, 0);
+      loop->header = head;
+      loop->blkvec = NewBitVec(32);
+      SetVecBit(loop->blkvec, head->bnum-1, 1);
+   }
+   InsertLoopBlock(loop->blkvec, tail);
+}
+
+int CalcLoopDepth()
+/*
+ * Calculates loop depth, assuming initialized to 1
+ * RETURNS: max loop depth
+ */
+{
+   LOOPQ *loop;
+   BLIST *lp;
+   short maxdep=0, dep;
+
+   for (loop=loopq; loop; loop = loop->next)
+   {
+      for (lp=loopq->blocks; lp; lp = lp->next)
+      {
+         if (lp->blk != loop->header && lp->blk->loop)
+            dep = lp->blk->loop->depth++;
+         else if (lp->blk->loop) dep = lp->blk->loop->depth;
+         else dep = 0;
+         if (dep > maxdep) maxdep = dep;
+      }
+   }
+   return(maxdep);
+}
+   
+void RemoveLoopFromQ(LOOPQ *loop)
+/*
+ * Removes loop from loopq
+ */
+{
+   LOOPQ *lp, *prev=NULL;
+
+   for (lp=loopq; lp && lp != loop; lp = lp->next) prev = lp;
+   assert(lp);
+   if (prev) prev->next = lp->next;
+   else loopq = loopq->next;
+}
+void SortLoops(short maxdepth)
+/*
+ * Sorts loops so in decreasing depth order, putting optloop first
+ */
+{
+   LOOPQ *lbase=NULL, *lp, *ln;
+   int i;
+
+   if (optloop)
+   {
+      RemoveLoopFromQ(optloop->next);
+      optloop->depth = optloop->next->depth;
+      optloop->preheader = optloop->next->preheader;
+      optloop->header = optloop->next->header;
+      optloop->blocks = optloop->next->blocks;
+      optloop->blkvec = optloop->next->blkvec;
+      KillLoop(optloop->next);
+      optloop->next = NULL;
+   }
+   for (i=1; i <= maxdepth; i++)
+   {
+      for (lp=loopq; lp; lp = ln)
+      {
+         ln = lp->next;
+         if (lp->depth == i)
+         {
+            RemoveLoopFromQ(lp);
+            lp->next = lbase;
+            lbase = lp;
+         }
+      }
+   }
+   if (optloop)
+   {
+      optloop->next = lbase;
+      lbase = optloop;
+   }
+   assert(!loopq);
+   loopq = lbase;
+}
+void FinalizeLoops()
+{
+   LOOPQ *lp;
+   int maxdep, i;
+   int phbv;
+   extern int FKO_BVTMP;
+
+   for (lp=loopq; lp; lp = lp->next)
+   {
+      lp->blocks = BitVec2BlockList(lp->blkvec);
+      lp->depth = 1;
+      lp->body_label = lp->header->ilab;
+      if (optloop && lp->body_label == optloop->body_label)
+         optloop->next = lp;         
+/*
+ *    See if we have a natural preheader
+ */
+      if (FKO_BVTMP) phbv = FKO_BVTMP;
+      else phbv = FKO_BVTMP = NewBitVec(32);
+      BitVecInvert(phbv, lp->blkvec);
+      i = BlockList2BitVec(lp->header->preds);
+      BitVecComb(phbv, phbv, i, '&');
+      if (CountBitsSet(phbv) == 1)
+      {  /* HERE HERE HERE HERE */
+         i = GetSetBitX(phbv, 1);  /* i now block number of preheader */
+         lp->preheader = FindBlockNumber(i+1);
+      }
+      
+   }
+   maxdep = CalcLoopDepth();
+   if (optloop)
+   {
+      assert(optloop->next);
+      fprintf(stderr, "maxdep=%d, optdep=%d\n", maxdep, optloop->next->depth);
+      assert(optloop->next->depth == maxdep);
+   }
+   SortLoops(maxdep);
+   for (i=1, lp=loopq; lp; i++, lp = lp->next) lp->loopnum = i;
+}
+
+void FindLoops()
+/*
+ * Finds loops, killing old list
+ */
+{
+   BBLOCK *bp;
+   CalcDoms(bbbase);
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   if (loopq) KillAllLoops();
+/*
+ * Search for edges whose heads dominate their tails, i.e., find blocks
+ * that are dominated by their successors
+ */
+   for (bp=bbbase; bp; bp = bp->down)
+   {
+      if (bp->usucc && BitVecCheck(bp->dom, bp->usucc->bnum-1))
+         FindBlocksInLoop(bp->usucc, bp);
+      if (bp->csucc && BitVecCheck(bp->dom, bp->csucc->bnum-1))
+         FindBlocksInLoop(bp->csucc, bp);
+   }
+   FinalizeLoops();
+}
+
+void AddLoopComments()
+/*
+ * Adds comments indicating start of loops
+ * NOTE: perform this right before assembly gen, as it will screw up assumption
+ *       about label being first statement of block
+ */
+{
+   LOOPQ *lp;
+   BBLOCK *bp;
+   for (lp=loopq; lp; lp = lp->next)
+   {
+      bp = lp->header;
+      PrintComment(bp, NULL, bp->inst1, "===============================");
+      PrintComment(bp, NULL, bp->inst1, "   blocks = %s",
+                   PrintVecList(lp->blkvec, 1));
+      PrintComment(bp, NULL, bp->inst1, "   header=%d, preheader=%d\n",
+                   lp->header ? lp->header->bnum : 0,
+                   lp->preheader ? lp->preheader->bnum : 0);
+      PrintComment(bp, NULL, bp->inst1, "   flag=%d, depth=%d",
+                   lp->flag, lp->depth);
+      PrintComment(bp, NULL, bp->inst1, "Begin loop %d", lp->loopnum);
+      PrintComment(bp, NULL, bp->inst1, "===============================");
+   }
+}
+

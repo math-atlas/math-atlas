@@ -4,9 +4,9 @@
 #include "fko_types.h"
 
 #ifdef IFKO_DECLARE
-   struct loopq *loopq=NULL;
+   struct loopq *loopq=NULL, *optloop;
 #else
-   extern struct loopq *loopq;
+   extern struct loopq *loopq, *optloop;
 #endif
 #define L_PINC_BIT      0x1   /* Positive incremement */
 #define L_PSTART_BIT    0x2   /* Positive start */

@@ -25,14 +25,11 @@ int main(int nargs, char **args)
    KillAllBasicBlocks(bbbase);
    bbbase = bp;
    FixFrame(bbbase);
-   bp = FindBasicBlocks(bbbase);
-   KillAllBasicBlocks(bbbase);
-   bbbase = bp;
-   SetBlocksActiveInst(bbbase);
-   FindPredSuccBlocks(bbbase);
-   CalcDoms(bbbase);
-   CheckFlow(bp, __FILE__, __LINE__);
+   NewBasicBlocks(bbbase);
+   FindLoops(); 
+   CheckFlow(bbbase, __FILE__, __LINE__);
    AddBlockComments(bbbase);
+   AddLoopComments();
    abase = lil2ass(bbbase);
    KillAllBasicBlocks(bbbase);
    dump_assembly(stdout, abase);

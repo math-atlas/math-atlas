@@ -9,6 +9,9 @@ void KillAllBasicBlocks(BBLOCK *base);
 BBLOCK *FindBasicBlocks(BBLOCK *base0);
 void AddBlockComments(BBLOCK *bp);
 void SetBlocksActiveInst(BBLOCK *bp);
+BBLOCK *NewBasicBlocks(BBLOCK *base0);
+BLIST *BitVec2BlockList(int iv);
+
 #if IFKO_DEBUG_LEVEL > 0
    void CheckFlow(BBLOCK *bbase, char *file, int line);
 #else
