@@ -317,6 +317,10 @@ void NumberLocalsByType()
    for (k=0; k != N; k++)
    {
       fl = STflag[k];
+      if (!IS_LOCAL(fl) && !(IS_CONST(fl) || IS_GLOB(fl) || IS_PARA(fl)))
+      {
+         fprintf(stderr, "\nname='%s', flag=%d\n\n", STname[k] ? STname : NULL, fl);
+      }
       if (IS_PARA(fl) || IS_LOCAL(fl))
       {
          SToff[k].sa[0] = SToff[k].i;
@@ -337,6 +341,8 @@ void NumberLocalsByType()
             else SToff[k].sa[1] = ndloc++;
             break;
          }
+         fprintf(stderr, "%c: %s gets slot %d\n", IS_PARA(fl) ? 'P' : 'L', 
+                 STname[k], SToff[k].sa[1]);
       }
    }
 }
@@ -356,7 +362,7 @@ void CreateLocalDerefs()
    for (k=0; k != N; k++)
    {
       fl = STflag[k];
-      if (IS_PARA(fl))
+      if (IS_PARA(fl) || IS_LOCAL(fl))
       {
          SToff[k].sa[0] = SToff[k].i;
          switch(FLAG2TYPE(fl))

@@ -11,7 +11,7 @@ frun   : fbuild
 	./xftst1
 	./xftst2
 
-ibuild : xitst0 xitst1 xtst2 xitst3
+ibuild : xitst0 xitst1 xitst2 xitst3
 irun : ibuild
 	./xitst0
 	./xitst1
