@@ -176,7 +176,6 @@ FILE *fptmp;
       lbase = AddBlockToList(lbase, bp);
    do
    {
-      CalcAllDeadVariables();
 /*
  *    Do reg asg on whole function
  */

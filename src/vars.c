@@ -149,7 +149,7 @@ void CalcInsOuts(BBLOCK *base)
    if (base == bbbase && !CFU2D)
       base = NewBasicBlocks(base);
 
-   if (!STderef) STderef = STdef("_NONLOCDEREF", PTR_BIT, 0);
+   if (!STderef) STderef = STdef("_NONLOCDEREF", PTR_BIT|DEREF_BIT, 0);
    if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
    vstmp = FKO_BVTMP;
 
@@ -195,7 +195,7 @@ void CalcBlocksDeadVariables(BBLOCK *bp)
 
    if (!mask)
    {
-      if (!STderef) STderef = STdef("_NONLOCDEREF", PTR_BIT, 0);
+      if (!STderef) STderef = STdef("_NONLOCDEREF", PTR_BIT|DEREF_BIT, 0);
       mask = NewBitVec(32);
       SetVecBit(mask, REG_SP-1, 1);
       SetVecBit(mask, -1-Reg2Int("PC"), 1);

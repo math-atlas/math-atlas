@@ -1952,7 +1952,8 @@ fprintf(stderr, ", src=%s\n", Int2Reg(-src));
                if (LIVEDONE)
                {
                   ip = ip->next;
-                  goto PUTMOVEBACK;
+                  INDEADU2D = 0;
+                  return(change);
                }
             }
             else /* not found, is implicit use, put move back & stop */

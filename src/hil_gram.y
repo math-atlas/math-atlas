@@ -84,7 +84,7 @@ stateflag: ROUT_NAME NAME
             WhereAt = 1;
             strcpy(rout_name, $2);
             STdef(rout_name, T_FUNC | GLOB_BIT, 0);
-            STderef = STderef = STdef("_NONLOCDEREF", PTR_BIT, 0);
+            STderef = STderef = STdef("_NONLOCDEREF", PTR_BIT|DEREF_BIT, 0);
          }
          | ROUT_LOCALS
          {

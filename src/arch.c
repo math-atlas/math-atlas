@@ -9,7 +9,7 @@
       int arch_IsX8664=0;
    #endif
 #else
-   int arch_IsX86=0, archIsX8664=0, arch_TwoOpAss=0;
+   int arch_IsX86=0, arch_IsX8664=0, arch_TwoOpAss=0;
 #endif
 struct locinit *LIhead=NULL,       /* Locals to be init to constant vals */
                *ParaDerefQ=NULL;   /* Derefs created for parameters */

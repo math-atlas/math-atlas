@@ -158,7 +158,7 @@ BBLOCK *NewBasicBlock(BBLOCK *up, BBLOCK *down)
    bp->preds = NULL;
    bp->ins = bp->outs = bp->uses = bp->defs = bp->dom = 0;
    bp->loop = NULL;
-   bp->conin = bp->conout = 0;
+   bp->ignodes = bp->conin = bp->conout = 0;
    return(bp);
 }
 

@@ -1141,9 +1141,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tje\t%s\n", STname[op3-1]);
          #elif defined(SPARC)
             if (-op1 >= ICC0 && -op1 < ICC0+NICC)
-               ap->next = PrintAssln("\tbe\t%s\n", STname[op3-1]);
+               ap->next = PrintAssln("\tbe\t%s\n\tnop\n", STname[op3-1]);
             else
-               ap->next = PrintAssln("\tfbe\t%s\n", STname[op3-1]);
+               ap->next = PrintAssln("\tfbe\t%s\n\tnop\n", STname[op3-1]);
          #elif defined(PPC)
             if (-op2 >= ICC0 && -op2 <= ICC0+NICC) sptr = ICCREGS[-ICC0-op2];
             else sptr = FCCREGS[-FCC0-op2];
@@ -1159,9 +1159,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tjne\t%s\n", STname[op3-1]);
          #elif defined(SPARC)
             if (-op2 >= ICC0 && -op2 < ICC0+NICC)
-               ap->next = PrintAssln("\tbne\t%s\n", STname[op3-1]);
+               ap->next = PrintAssln("\tbne\t%s\n\tnop\n", STname[op3-1]);
             else
-               ap->next = PrintAssln("\tfbne\t%s\n", STname[op3-1]);
+               ap->next = PrintAssln("\tfbne\t%s\n\tnop\n", STname[op3-1]);
          #elif defined(PPC)
             if (-op2 >= ICC0 && -op2 < ICC0+NICC) sptr = ICCREGS[-ICC0-op2];
             else sptr = FCCREGS[-FCC0-op2];
@@ -1177,9 +1177,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tjl\t%s\n", STname[op3-1]);
          #elif defined(SPARC)
             if (-op2 >= ICC0 && -op2 < ICC0+NICC)
-               ap->next = PrintAssln("\tbl\t%s\n", STname[op3-1]);
+               ap->next = PrintAssln("\tbl\t%s\n\tnop\n", STname[op3-1]);
             else
-               ap->next = PrintAssln("\tfbl\t%s\n", STname[op3-1]);
+               ap->next = PrintAssln("\tfbl\t%s\n\tnop\n", STname[op3-1]);
          #elif defined(PPC)
             if (-op2 >= ICC0 && -op2 < ICC0+NICC) sptr = ICCREGS[-ICC0-op2];
             else sptr = FCCREGS[-FCC0-op2];
@@ -1195,9 +1195,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tjg\t%s\n", STname[op3-1]);
          #elif defined(SPARC)
             if (-op2 >= ICC0 && -op2 < ICC0+NICC)
-               ap->next = PrintAssln("\tbg\t%s\n", STname[op3-1]);
+               ap->next = PrintAssln("\tbg\t%s\n\tnop\n", STname[op3-1]);
             else
-               ap->next = PrintAssln("\tfbg\t%s\n", STname[op3-1]);
+               ap->next = PrintAssln("\tfbg\t%s\n\tnop\n", STname[op3-1]);
          #elif defined(PPC)
             if (-op2 >= ICC0 && -op2 < ICC0+NICC) sptr = ICCREGS[-ICC0-op2];
             else sptr = FCCREGS[-FCC0-op2];
@@ -1210,9 +1210,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tjle\t%s\n", STname[op3-1]);
          #elif defined(SPARC)
             if (-op2 >= ICC0 && -op2 < ICC0+NICC)
-               ap->next = PrintAssln("\tble\t%s\n", STname[op3-1]);
+               ap->next = PrintAssln("\tble\t%s\n\tnop\n", STname[op3-1]);
             else
-               ap->next = PrintAssln("\tfble\t%s\n", STname[op3-1]);
+               ap->next = PrintAssln("\tfble\t%s\n\tnop\n", STname[op3-1]);
          #elif defined(PPC)
             if (-op2 >= ICC0 && -op2 < ICC0+NICC) sptr = ICCREGS[-ICC0-op2];
             else sptr = FCCREGS[-FCC0-op2];
@@ -1225,9 +1225,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tjge\t%s\n", STname[op3-1]);
          #elif defined(SPARC)
             if (-op2 >= ICC0 && -op2 < ICC0+NICC)
-               ap->next = PrintAssln("\tbge\t%s\n", STname[op3-1]);
+               ap->next = PrintAssln("\tbge\t%s\n\tnop\n", STname[op3-1]);
             else
-               ap->next = PrintAssln("\tfbge\t%s\n", STname[op3-1]);
+               ap->next = PrintAssln("\tfbge\t%s\n\tnop\n", STname[op3-1]);
          #elif defined(PPC)
             if (-op2 >= ICC0 && -op2 < ICC0+NICC) sptr = ICCREGS[-ICC0-op2];
             else sptr = FCCREGS[-FCC0-op2];
