@@ -154,7 +154,7 @@ struct loopq
    BLIST *blocks;     /* blocks in the loop */
    ushort blkvec;     /* bitvec equivalent of blocks */
    ushort outs;       /* reg/var live on loop exit */
-   ushort sets;       /* reg/var set in loop */
+   ushort sets;       /* reg/var set in loop; not kept up to date (scratch)! */
    struct loopq *next;
 };
 

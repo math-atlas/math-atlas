@@ -1456,12 +1456,118 @@ fprintf(stderr, "dupblks[%d] = %s\n", i-1, PrintBlockList(dupblks[i-1]));
    return(0);
 }
 
+ILIST *GetPrefetchInst(LOOPQ *lp, int unroll)
+{
+   BBLOCK *bp;
+   INSTQ *ipp;
+   BLIST *bl;
+   ILIST *il, *ilbase=NULL;
+   ILIST **ils;
+   short ir, ptr, lvl;
+   int i, j, n, npf, STc;
+   int flag;
+   enum inst inst;
+   char ln[1024];
+
+   bp = lp->header;
+   assert(bp->ilab == lp->body_label);
+   ir = GetReg(T_INT);
+/*
+ * Find vars set in loop
+ */
+   if (!lp->sets) lp->sets = NewBitVec(TNREG+32);
+   else SetVecAll(lp->sets, 0);
+   for (bl=lp->blocks; bl; bl = bl->next)
+   {
+      if (!INUSETU2D)
+         CalcUseSet(bl->blk); 
+      for (ipp=bl->blk->inst1; ipp; ipp = ipp->next)
+         if (ipp->set)
+            BitVecComb(lp->sets, lp->sets, ipp->set, '|');
+   }
+/*
+ * Get an ILIST for each array
+ */
+   n = lp->pfarrs[0];
+   ils = calloc(sizeof(ILIST*), n);
+   assert(ils);
+   for (i=1; i <= n; i++)
+   {
+      ptr = lp->pfarrs[i];
+      flag = STflag[ptr-1];
+      inst = BitVecCheck(lp->sets, lp->pfarrs[i]-1+TNREG) ? PREFW : PREFR;
+      lvl = lp->pfflag[i] & 0x7;
+/*
+ *    # of pref to issue is CEIL(unroll*sizeof(), LINESIZE)
+ */
+      npf = unroll > 1 ? unroll : 1;
+      npf *= type2len(FLAG2TYPE(flag));
+      if (!IS_VEC(flag) && IS_VEC(lp->vflag))
+         npf *= Type2Vlen(lp->vflag);
+      npf = (npf + LINESIZE[lvl]-1) / LINESIZE[lvl];
+      for (j=0; j < npf; j++)
+      {
+         ipp = NewInst(NULL, NULL, NULL, LD, -ir, SToff[ptr-1].sa[2], 0);
+         ipp->next = NewInst(NULL, ipp, NULL, inst, 0, 
+                  AddDerefEntry(-ir, 0, 0, lp->pfdist[i]+j*LINESIZE[lvl], ptr),
+                             STiconstlookup(lvl));
+         ils[i-1] = NewIlist(ipp, ils[i-1]);
+      }
+   }
+   GetReg(-1);
+/*
+ * Create master list of pref inst, ordering by taking one pref from
+ * each array in ascending order
+ */
+   for (j=0; j < npf; j++)
+   {
+      for (i=n-1; i >= 0; i--)
+      {
+         ilbase = NewIlist(ils[i]->inst, ilbase);
+         ils[i] = KillIlist(ils[i]);
+      }
+   }
+   free(ils);
+   return(ilbase);
+}
+
+void SchedInstInLoop(LOOPQ *lp, ILIST *ilbase)
+/*
+ * Adds the inst in ilbase to loop, one ILIST chunk scheduled at a time,
+ * inst inserted only in blocks that are traversed in every iteration
+ */
+{
+   BBLOCK *bp;
+   ILIST *il;
+   INSTQ *ipp, *ip, *ipn;
+
+   bp = lp->header;
+   ipp = bp->ainst1;
+   while(ilbase)
+   {
+      for (ip=ilbase->inst; ip; ip = ipn)
+      {
+         ipp = InsNewInst(bp, ipp, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
+                          ip->inst[3]);
+         ipn = ip->next;
+         free(ip);
+      }
+      ilbase = KillIlist(ilbase);
+   }
+   CFUSETU2D = INUSETU2D = INDEADU2D = 0;
+}
+
 void AddPrefetch(LOOPQ *lp, int unroll)
 /*
  * Inserts prefetch inst as first active inst in loop header
  * NOTE: assumes called after loop unrolling, but before repeatable opt
  */
 {
+#if 1
+   ILIST *il;
+   il = GetPrefetchInst(lp, unroll);
+   SchedInstInLoop(lp, il);
+#else
    BBLOCK *bp;
    INSTQ *ipp;
    BLIST *bl;
@@ -1514,4 +1620,5 @@ void AddPrefetch(LOOPQ *lp, int unroll)
    ipp = PrintComment(bp, ipp, NULL, "DONE prefetching");
    CFUSETU2D = INUSETU2D = INDEADU2D = 0;
    GetReg(-1);
+#endif
 }
