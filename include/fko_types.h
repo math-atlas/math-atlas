@@ -9,6 +9,7 @@ union valoff
    short sa[4];/* used for locals/params: sa[0] indicates para # */
    float f;    /* sa[1] says you were ith para of your data type */
    double d;   /* sa[2] gives entry in deref table               */
+   long l;
 };
 
 typedef struct instq INSTQ;

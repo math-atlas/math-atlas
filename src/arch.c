@@ -3,14 +3,11 @@
 #include "fko_arch.h"
 struct locinit *LIhead=NULL;
 
-int GetPtrType(void)
-{
-   #ifdef ArchPtrIsLong
-      return(T_LONG);
-   #else
-      return(T_INT);
-   #endif
-}
+#ifdef X86_64
+   #define ISIZE 8
+#else
+   #define ISIZE 4
+#endif
 
 int GetArchAlign(int nvd, int nvf, int nd, int nf, int nl, int ni)
 /*
@@ -90,6 +87,14 @@ short GetReg(short type)
       if (++ir > NIR)
          fko_error(__LINE__, "Out of integer registers on line %d", lnno);
    }
+#ifdef X86_64
+   else if (type == T_SHORT)
+   {
+      iret = IREGBEG + ir;
+      if (++ir > NSR)
+         fko_error(__LINE__, "Out of short registers on line %d", lnno);
+   }
+#endif
    else
    {
       assert(type == -1);
@@ -108,9 +113,9 @@ short GetReg(short type)
    #define ASPALIGN 8
 #elif defined(OSX_PPC)
    #define ASPALIGN 4
-#elif defined(x86_32)
+#elif defined(X86_32)
    #define ASPALIGN 4
-#elif defined(x86_64)
+#elif defined(X86_64)
    #define ASPALIGN 16
 #else
    #define ASPALIGN 4
@@ -121,7 +126,7 @@ void CreateSysLocals()
  *  If required, creates any locals needed to support instructions
  */
 {
-#ifdef x86
+#ifdef X86
    extern int DTnzerod, DTabsd, DTnzero, DTabs;
    if (DTnzerod == -1)
       DTnzerod = STdef("_NEGZEROD", VEC_BIT | T_DOUBLE | LOCAL_BIT, 0);
@@ -186,6 +191,9 @@ void FPConstStore(INSTQ *next, short id, short con, short reg)
    double d;
    short i;
    float f;
+#ifdef X86_64
+   long *lp;
+#endif
    flag = STflag[id-1];
    if (IS_VEC(flag))
    {
@@ -197,20 +205,26 @@ void FPConstStore(INSTQ *next, short id, short con, short reg)
       d = SToff[con-1].d;
       if (d == 0.0)
       {
-         InsNewInst(NULL, next, SUB, -reg, -reg, -reg);
+         InsNewInst(NULL, next, XOR, -reg, -reg, -reg);
          InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
-	 i = SToff[id-1].sa[2] - 1;
-	 i = DT[(i<<2)+3] + 4;
-         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), -reg, 0);
+         #ifndef X86_64
+            i = SToff[id-1].sa[2] - 1;
+            i = DT[(i<<2)+3] + 4;
+            InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), -reg, 0);
+         #endif
       }
       #ifdef X86_32
          ip = (int*) &d;
          InsNewInst(NULL, next, MOV, -reg, STiconstlookup(*ip), __LINE__);
          InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
          InsNewInst(NULL, next, MOV, -reg, STiconstlookup(ip[1]), __LINE__);
-	 i = SToff[id-1].sa[2] - 1;
-	 i = DT[(i<<2)+3] + 4;
+         i = SToff[id-1].sa[2] - 1;
+         i = DT[(i<<2)+3] + 4;
          InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), -reg, 0);
+      #elif defined(X86_64)
+         lp = (long*) &d;
+         InsNewInst(NULL, next, MOV, -reg, STlconstlookup(*lp), __LINE__);
+         InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
 /*
  *    Sparc has 13-bit constants, use 12 to rule out sign prob
  */
@@ -219,8 +233,8 @@ void FPConstStore(INSTQ *next, short id, short con, short reg)
          bitload(next, reg, 12, *ip);
          InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
          bitload(next, reg, 13, ip[1]);
-	 i = SToff[id-1].sa[2] - 1;
-	 i = DT[(i<<2)+3] + 4;
+         i = SToff[id-1].sa[2] - 1;
+         i = DT[(i<<2)+3] + 4;
          InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), -reg, 0);
 /*
  *    PPC loads 16 bits at a time
@@ -230,8 +244,8 @@ void FPConstStore(INSTQ *next, short id, short con, short reg)
          bitload(next, reg, 16, *ip);
          InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
          bitload(next, reg, 16, ip[1]);
-	 i = SToff[id-1].sa[2] - 1;
-	 i = DT[(i<<2)+3] + 4;
+         i = SToff[id-1].sa[2] - 1;
+         i = DT[(i<<2)+3] + 4;
          InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP,0,0,i), -reg, 0);
       #endif
    }
@@ -305,6 +319,7 @@ void Extern2Local(INSTQ *next, INSTQ *end, short rsav, int fsize)
    #ifdef X86_64
       int nof, ni, nd, dr, dreg1;
       char *rpara[6] = {"@rdi", "@rsi", "@rdx", "@rcx", "@r8", "@r9"};
+      char fnam[8];
    #endif
    int nbytes=0;
    short *paras;
@@ -363,11 +378,14 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                           AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
                nof++;
             }
-            InsNewInst(NULL, next, ST, -ir, SToff[paras[i]].sa[2], -ir, 0);
+            InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
             ni++;
          }
          else if (IS_INT(flag))
          {
+/*
+ *          Load 32 bit value
+ */
             if (ni < 6) ir = iName2Reg(rpara[ni]);
             else
             {
@@ -376,6 +394,16 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                           AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
                nof++;
             }
+/*
+ *          Convert to 64-bit value, no conversion required for unsigned
+ */
+            if (!IS_UNSIGNED(flag))
+            {
+               k = STiconstlookup(32);
+               InsNewInst(NULL, next, SHL, -ir, -ir, k);
+               InsNewInst(NULL, next, SAR, -ir, -ir, k);
+            }
+#if 0
             k = iName2Reg("@rax");
             if (ir != k)
             {
@@ -383,7 +411,11 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
                ir = k;
             }
             InsNewInst(NULL, next, CVTSI, -ir, -ir, 0);
-            InsNewInst(NULL, next, ST, -ir, SToff[paras[i]].sa[2], -ir, 0);
+#endif
+/*
+ *          Store 64-bit integer
+ */
+            InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
             ni++;
          }
          else if (IS_FLOAT(flag))
@@ -439,10 +471,10 @@ fprintf(stderr, "\nOFFSET=%d\n\n", fsize);
          {
             InsNewInst(NULL, next, LD, -ir,
                        AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
-	    k = SToff[paras[i]].sa[2] - 1;
-	    k = DT[(k<<2)+3] + 4;
+            k = SToff[paras[i]].sa[2] - 1;
+            k = DT[(k<<2)+3] + 4;
             InsNewInst(NULL, next, ST, AddDerefEntry(rsav, 0, 0, k), 
-	               -ir, __LINE__);
+                       -ir, __LINE__);
             j++;
          }
       }
@@ -651,12 +683,12 @@ void CreateEpilogue(int fsize,  /* frame size of returning func */
    for (i=0; i < ndr; i++)
       InsNewInst(NULL, NULL, FLDD, -dr[i],
                  AddDerefEntry(-REG_SP, 0, 0, Soff+i*8), 0);
-   for (i=0; i < nfr; i++)
-      InsNewInst(NULL, NULL, FLD, -fr[i],
-                 AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+i*4), 0);
    for (i=0; i < nir; i++)
       InsNewInst(NULL, NULL, LD, -ir[i],
-                 AddDerefEntry(-REG_SP, 0,0, Soff+ndr*8+nfr*4+i*4), 0);
+                 AddDerefEntry(-REG_SP, 0,0, Soff+ndr*8+i*ISIZE), 0);
+   for (i=0; i < nfr; i++)
+      InsNewInst(NULL, NULL, FLD, -fr[i],
+                 AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+nir*ISIZE+i*4), 0);
 /*
  * Restore stack pointer and return
  */
@@ -712,7 +744,7 @@ fprintf(stderr, "align=%d,lsize=%d,csize=%d\n", align, lsize, csize);
          for (ndr--; i < ndr; i++) dr[i] = dr[i+1];
    }
 
-   #ifdef x86_64
+   #ifdef X86_64
       if (!align) align = 16;
    #else
       if (!align) align = 4;
@@ -748,7 +780,8 @@ fprintf(stderr, "prog=%d!, rout_name=%s\n", prog, rout_name);
       Aoff = 68;
       if (csize && csize < 6*4) csize = 6*4;
    #elif defined(X86_64)
-      Soff = Aoff  = 8;
+      Soff = 8;
+      Aoff = 8;
    #elif defined(X86_32)
       Aoff  = 4;
    #elif defined(OSX_PPC)
@@ -763,6 +796,7 @@ fprintf(stderr, "prog=%d!, rout_name=%s\n", prog, rout_name);
       Loff = Soff + 8*(nir+ndr) + 4*nfr;
       tsize = Loff + lsize;
       if (tsize % ASPALIGN) tsize = (tsize/ASPALIGN)*ASPALIGN + ASPALIGN;
+fprintf(stderr, "tsize=%d, Loff=%d, Soff=%d lsize=%d\n", tsize, Loff, Soff, lsize);
    #else
 /*
  *    We assume sp already 4-byte aligned but may need to make 8-byte aligned
@@ -771,7 +805,7 @@ fprintf(stderr, "prog=%d!, rout_name=%s\n", prog, rout_name);
       if (ndr)
       {
          if ((Soff>>3)<<3 != Soff) Soff = 8 + ((Soff>>3)<<3);
-         #ifndef x86_32
+         #ifndef X86_32
             if (maxalign < 8) maxalign = 8;
          #endif
       }
@@ -823,12 +857,13 @@ fprintf(stderr, "Local offset=%d\n", Loff);
    for (i=0; i < ndr; i++)
       InsNewInst(NULL, oldhead, FSTD, 
                  AddDerefEntry(-REG_SP, 0, 0, Soff+i*8), -dr[i], 0);
-   for (i=0; i < nfr; i++)
-      InsNewInst(NULL, oldhead, FST, 
-                 AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+i*4), -fr[i], 0);
    for (i=0; i < nir; i++)
       InsNewInst(NULL, oldhead, ST, 
-                 AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+nfr*4+i*4), -ir[i], 0);
+                 AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+i*ISIZE), -ir[i], 0);
+   for (i=0; i < nfr; i++)
+      InsNewInst(NULL, oldhead, FST, 
+                 AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+nir*ISIZE+i*4), 
+                 -fr[i], 0);
    Extern2Local(oldhead, oldtail, rsav, rsav ? Aoff : Aoff+tsize);
    GetReg(-1);
    InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);

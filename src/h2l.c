@@ -151,17 +151,10 @@ short AddArrayDeref(short array, short index, int offset)
  *    array[index+offset]
  */
 {
-   #ifdef X86_64
-      int mul=8, flag;
-      flag = STflag[array-1];
-         if (IS_FLOAT(flag)) mul = 4;
-      else if (IS_CHAR(flag)) mul = 1;
-   #else
-      int mul=4, flag;
-      flag = STflag[array-1];
-         if (IS_DOUBLE(flag)) mul = 8;
-      else if (IS_CHAR(flag)) mul = 1;
-   #endif
+   int mul=4, flag;
+   flag = STflag[array-1];
+   if (IS_DOUBLE(flag)) mul = 8;
+   else if (IS_CHAR(flag)) mul = 1;
    assert(!IS_VEC(flag));
    return(AddDerefEntry(array, index, mul, offset));
 }
@@ -226,7 +219,7 @@ fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
 void DoArrayStore(short ptr, short id)
 {
    INSTQ *ip;
-   short inst, lreg, ireg=0, preg, k, type;
+   short lreg, ireg=0, preg, k, type;
 
    type = FLAG2TYPE(STflag[id-1]);
    fprintf(stderr, "idname='%s', idflag=%d\n", STname[id-1], STflag[id-1]);
@@ -238,18 +231,22 @@ void DoArrayStore(short ptr, short id)
    switch(type)
    {
    case T_INT:
-      inst = ST;
+      #ifdef X86_64
+         assert(lreg < 8);
+         InsNewInst(NULL, NULL, STS, ptr, -lreg, 0);
+      #else
+         InsNewInst(NULL, NULL, ST, ptr, -lreg, 0);
+      #endif
       break;
    case T_FLOAT:
-      inst = FST;
+      InsNewInst(NULL, NULL, FST, ptr, -lreg, 0);
       break;
    case T_DOUBLE:
-      inst = FSTD;
+      InsNewInst(NULL, NULL, FSTD, ptr, -lreg, 0);
       break;
    default:
       fko_error(__LINE__, "Unknown type %d\n", type);
    }
-   InsNewInst(NULL, NULL, inst, ptr, -lreg, 0);
    GetReg(-1);
 }
 
@@ -262,11 +259,27 @@ void DoArrayLoad(short id, short ptr)
 
    k = (ptr-1)<<2;
    type = FLAG2TYPE(STflag[id-1]);
-fprintf(stderr, "\n\nANAME=%s, TYPE=%d\n\n", STname[ptr-1] ? STname[ptr-1] : "NULL", type);
    FixDeref(ptr);
+fprintf(stderr, "\n\nANAME=%s, TYPE=%d\n\n", STname[ptr-1] ? STname[ptr-1] : "NULL", type);
    switch(type)
    {
    case T_INT:
+/*
+ *    Special case for integer arrays, which are still 32-bits on x86-64
+ */
+      #ifdef X86_64
+         areg = GetReg(T_SHORT);
+         InsNewInst(NULL, NULL, LDS, -areg, ptr, 0);
+         if (!IS_UNSIGNED(STflag[id-1]))
+         {
+            k = STiconstlookup(32);
+            InsNewInst(NULL, NULL, SHL, -areg, -areg, k);
+            InsNewInst(NULL, NULL, SAR, -areg, -areg, k);
+            LocalStore(id, areg);
+            GetReg(-1);
+            return;
+         }
+      #endif
       ld = LD;
       break;
    case T_FLOAT:
@@ -289,14 +302,15 @@ void HandlePtrArith(short dest, short src0, char op, short src1)
  * Ptr arithmetic must be of form <ptr> = <ptr> [+,-] <int/const>
  */
 {
-   short rd, rs0, rs1, flag, type;
+   short rd, rs0, rs1, flag, type, dflag, k;
 
    if (op != '+' && op != '-')
       yyerror("pointers may take only + and - operators");
    if (!IS_PTR(STflag[src0-1]))
       yyerror("Expecting <ptr> = <ptr> + <int>");
 
-   type = FLAG2TYPE(STflag[dest-1]);
+   dflag = STflag[dest-1];
+   type = FLAG2TYPE(dflag);
    rs0 = LocalLoad(src0);
    flag = STflag[src1-1];
 
@@ -304,15 +318,28 @@ void HandlePtrArith(short dest, short src0, char op, short src1)
    if (IS_CONST(flag))
    {
       if (IS_INT(flag))
+      #ifdef X86_64
+      {
+         if (IS_INT(dflag)) rs1 = -STiconstlookup(SToff[src1-1].i*4);
+         else rs1 = -STiconstlookup(SToff[src1-1].i*type2len(type));
+      }
+      #else
          rs1 = -STiconstlookup(SToff[src1-1].i*type2len(type));
+      #endif
       else
          yyerror("Pointers may only be incremented by integers");
    }
    else
    {
       rs1 = LocalLoad(src1);
-      InsNewInst(NULL, NULL, SHL, -rs1, -rs1, 
-                 STiconstlookup(type2shift(type)));
+      #ifdef X86_64
+         if (IS_INT(dflag)) k = STiconstlookup(2);
+         else k = STiconstlookup(type2shift(type));
+         InsNewInst(NULL, NULL, SHL, -rs1, -rs1, k);
+      #else
+         InsNewInst(NULL, NULL, SHL, -rs1, -rs1, 
+                    STiconstlookup(type2shift(type)));
+      #endif
    }
    InsNewInst(NULL, NULL, op == '+' ? ADD : SUB, -rs0, -rs0, -rs1);
    LocalStore(dest, rs0);

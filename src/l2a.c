@@ -195,11 +195,14 @@ static char *GetIregOrConst(short id)
       id--;
       flag = STflag[id];
       assert( IS_CONST(flag));
-      #ifdef X86
+      #ifdef X86_64
+         if (IS_INT(flag)) sprintf(ln, "$%d", SToff[id].i);
+         else if (IS_SHORT(flag)) sprintf(ln, "$%ld", SToff[id].l);
+      #elif defined(X86)
          if (IS_INT(flag) || IS_SHORT(flag)) sprintf(ln, "$%d", SToff[id].i);
 /*         else if (IS_SHORT(flag)) sprintf(ln, "$%ld", SToff[id].l); */
       #else
-         if (IS_INT(flag) || IS_SHORT(flag)) sprintf(ln, "%d", SToff[id].i);
+         if (IS_INT(flag) || IS_SHORT(flag)) sprintf(ln, "0x%x", SToff[id].i);
 /*         else if (IS_SHORT(flag)) sprintf(ln, "%ld", SToff[id].l); */
       #endif
          else fko_error(__LINE__, "Integer constant expected!\n");
@@ -862,10 +865,10 @@ struct assmln *lil2ass(INSTQ *head)
          break;
    #ifdef X86_64
       case CVTSI:
-         i = -iName2Reg("%rax")
-         assert(op1 == i && op2 == i);
-         ap->next = PrintAssln("cltq\n");
-/*         ap->next = PrintAssln("cdqe\n"); */
+         k = -iName2Reg("@rax");
+         assert(op1 == k && op2 == k);
+         ap->next = PrintAssln("\tcltq\n");
+/*         ap->next = PrintAssln("\tcdqe\n"); */
          break;
       case CVTIS:
          ap->next = PrintAssln("movl\t%s,%s\n", archiregs[-IREGBEG-op2],

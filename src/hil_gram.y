@@ -271,7 +271,7 @@ void KillIDs(void)
       if (idhead->name) free(idhead->name);
       next = idhead->next;
       free(idhead);
-      idhead = idhead->next;
+      idhead = next;
    }
 }
 
@@ -330,6 +330,7 @@ void HandleLoopListMU(int which)
 fprintf(stderr, "%s(%d), which=%d\n", __FILE__, __LINE__, which);
    if (which == 100)
    {
+fprintf(stderr, "%s(%d), which=%d\n", __FILE__, __LINE__, which);
       assert(!aalign && !balign);
       n >>= 1;
       sp = malloc(sizeof(short)*(n+1));
@@ -350,6 +351,7 @@ fprintf(stderr, "%s(%d), which=%d\n", __FILE__, __LINE__, which);
    }
    else
    {
+fprintf(stderr, "%s(%d), which=%d\n", __FILE__, __LINE__, which);
       assert(!LMA[which]);
       sp = malloc(sizeof(short)*(n+1));
       assert(sp);
@@ -362,6 +364,7 @@ fprintf(stderr, "%s(%d), which=%d\n", __FILE__, __LINE__, which);
       }
       LMA[which] = sp - 1;
    }
+fprintf(stderr, "%s(%d), which=%d\n", __FILE__, __LINE__, which);
    KillIDs();
 fprintf(stderr, "%s(%d)\n", __FILE__, __LINE__);
 }

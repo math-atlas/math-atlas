@@ -196,6 +196,24 @@ short STfconstlookup(float f)
 }
 
 
+short STlconstlookup(long ic)
+/*
+ * Searches for long constant ic in symbol table, allocating new entry if not
+ * already there. 
+ * RETURNS: symtab index.
+ */
+{
+   short i;
+   union valoff val;
+   for (i=0; i != N; i++)
+   {
+      if (SToff[i].l == ic && IS_CONST(STflag[i]) && IS_INT(STflag[i]))
+         return(i+1);
+   }
+   val.l = ic;
+   return(STnew(NULL, CONST_BIT | T_SHORT, val));
+}
+
 short STiconstlookup(int ic)
 /*
  * Searches for int constant ic in symbol table, allocating new entry if not
