@@ -283,7 +283,7 @@ void Extern2Local(INSTQ *next, INSTQ *end, short rsav, int fsize)
       flag = STflag[i];
       if (IS_PARA(flag))
       {
-fprintf(stderr, "para #%d\n", SToff[i].sa[0]);
+fprintf(stderr, "para #%d - '%s'\n", SToff[i].sa[0], STname[i]?STname[i]:"NULL");
          assert(SToff[i].sa[0] <= NPARA);
          paras[SToff[i].sa[0]-1] = i;
          j++;
