@@ -17,5 +17,5 @@ main()
    if (diff <= tol) fprintf(stdout, "7s: SDOT PASSED\n");
    else fprintf(stderr, "7s: SDOT FAILED: got=%f, expected=%f, diff=%f\n",
                 dret, dexp, diff);
-   exit(!(dret <= dexp));
+   exit(!(diff <= tol));
 }

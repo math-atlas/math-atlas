@@ -629,7 +629,7 @@ struct assmln *lil2ass(INSTQ *head)
    #ifdef X86_64
       case XORS:
       case ORS:
-         if (ip->inst[0] == XOR) sptr = "xorl";
+         if (ip->inst[0] == XORS) sptr = "xorl";
          else sptr = "orl";
          assert(op1 == op2);
          ap->next = PrintAssln("\t%s\t%s, %s\n", sptr, GetSregOrConst(op3), 
@@ -1021,7 +1021,7 @@ struct assmln *lil2ass(INSTQ *head)
          break;
       case FCMP:
          #ifdef X86
-            ap->next = PrintAssln("\tcomiss\t%s,%s\n", GetFregOrDeref(op3),
+            ap->next = PrintAssln("\tcomiss\t%s,%s\n", GetDregOrDeref(op3),
 	                          archfregs[-FREGBEG-op2]);
          #elif defined(SPARC)
             ap->next = PrintAssln("\tfcmpes\t%s,%s\n", 

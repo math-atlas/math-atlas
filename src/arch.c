@@ -383,8 +383,13 @@ void FPConstStore(INSTQ *next, short id, short con, short reg)
       f = SToff[con-1].f;
       if (f == 0.0e0)
       {
-         InsNewInst(NULL, next, XOR, -reg, -reg, -reg);
-         InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+         #ifdef X86_64
+            InsNewInst(NULL, next, XORS, -reg, -reg, -reg);
+            InsNewInst(NULL, next, STS, SToff[id-1].sa[2], -reg, __LINE__);
+         #else
+            InsNewInst(NULL, next, XOR, -reg, -reg, -reg);
+            InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
+         #endif
       }
       else
       {
