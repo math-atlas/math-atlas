@@ -348,12 +348,13 @@ void NumberLocalsByType()
    }
 }
 
-void CreateLocalDerefs()
+void CreateLocalDerefs(int isize)
 /*
  * Given numbered locals, creates derefs for local access, assuming local
  * area starts at the stack pointer.  Puts DT[i+2] = -1 to denote that
  * the address is not yet fully formed (since local area will almost
  * always be offset from stack pointer).
+ * isize is the size in bytes of an integer on the arch in question.
  */
 {
    short k, off;
@@ -368,19 +369,15 @@ void CreateLocalDerefs()
          switch(FLAG2PTYPE(fl))
          {
          case T_INT:
-            off = SToff[k].sa[1]*4 + nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4 + 
-                  ndloc*8 + nlloc*8 + nfloc*4;
-            break;
-         case T_LONG:
-            off = SToff[k].sa[1]*8 + nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4 + 
-                  ndloc*8;
+            off = SToff[k].sa[1]*isize + ndloc*8 + nfloc*4 +
+                  nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4;
             break;
          case T_FLOAT:
             if (IS_VEC(fl))
                off = SToff[k].sa[1]*FKO_SVLEN*4 + nvdloc*FKO_DVLEN*8;
             else
                off = SToff[k].sa[1]*4 + nvdloc*FKO_DVLEN*8 + 
-                     nvfloc*FKO_SVLEN*4 + ndloc*8 + nlloc*8;
+                     nvfloc*FKO_SVLEN*4 + ndloc*8 + niloc*8;
             break;
          case T_DOUBLE:
             if (IS_VEC(fl))
@@ -404,7 +401,7 @@ void CreateLocalDerefs()
    else if (nfloc || niloc) LOCALIGN = 4;
 */
    LOCSIZE = nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4 + 
-             ndloc*8 + nlloc*8 + nfloc*4 + niloc*4;
+             ndloc*8 + niloc*isize + nfloc*4;
 }
 
 void CorrectLocalOffsets(int ldist)

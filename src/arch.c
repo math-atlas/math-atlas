@@ -19,6 +19,9 @@ int GetArchAlign(int nvd, int nvf, int nd, int nf, int nl, int ni)
  *  want to save (actually, these only need to be boolean).
  */
 {
+   #ifdef X86_64
+      return(16);
+   #else
    int align = 0;
    if (nvd) align = FKO_DVLEN*8;
    else if (nvd) align = FKO_SVLEN*4;
@@ -29,18 +32,19 @@ int GetArchAlign(int nvd, int nvf, int nd, int nf, int nl, int ni)
       else if (nf || ni) align = 4;
    #endif
    return(align);
+   #endif
 }
 short dName2Reg(char *rname)
 {
    short i;
-   for (i=0; i < TNIR; i++)
+   for (i=0; i < TNDR; i++)
      if (!strcmp(rname, archdregs[i])) return(i+DREGBEG);
    return(0);
 }
 short fName2Reg(char *rname)
 {
    short i;
-   for (i=0; i < TNIR; i++)
+   for (i=0; i < TNFR; i++)
      if (!strcmp(rname, archfregs[i])) return(i+FREGBEG);
    return(0);
 }
@@ -106,6 +110,8 @@ short GetReg(short type)
    #define ASPALIGN 4
 #elif defined(x86_32)
    #define ASPALIGN 4
+#elif defined(x86_64)
+   #define ASPALIGN 16
 #else
    #define ASPALIGN 4
 #endif
@@ -264,37 +270,30 @@ void IConstStore(INSTQ *next, short id, short con, short reg)
 {
    int i, j;
 
-   if (IS_LONG(STflag[id-1]))
-   {
-      fko_error(__LINE__, "long CONST_INIT not yet supported!\n");
-   }
-   else
-   {
-      #ifdef X86_32
-         InsNewInst(NULL, next, MOV, -reg, con, __LINE__);
+   #ifdef X86_32
+      InsNewInst(NULL, next, MOV, -reg, con, __LINE__);
 /*
- *    Sparc has 13-bit constants, use 12 to rule out sign prob
+ * Sparc has 13-bit constants, use 12 to rule out sign prob
  */
-      #elif defined(SPARC)
-         bitload(next, reg, 12, SToff[con-1].i);
+   #elif defined(SPARC)
+      bitload(next, reg, 12, SToff[con-1].i);
 /*
- *    Must load constants 16 bits at a time
+ * Must load constants 16 bits at a time
  */
-      #else
-         bitload(next, reg, 16, SToff[con-1].i);
-      #endif
-      InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
-   }
+   #else
+      bitload(next, reg, 16, SToff[con-1].i);
+   #endif
+   InsNewInst(NULL, next, ST, SToff[id-1].sa[2], -reg, __LINE__);
 }
 
 void InitLocalConst(INSTQ *next, short reg)
 {
    struct locinit *lp;
    int flag;
-      InsNewInst(NULL, next, COMMENT, 0, 0, 0);
-      InsNewInst(NULL, next, COMMENT, 
-                 STstrconstlookup("Initialize constant locals"), 0, 0);
-      InsNewInst(NULL, next, COMMENT, 0, 0, 0);
+   InsNewInst(NULL, next, COMMENT, 0, 0, 0);
+   InsNewInst(NULL, next, COMMENT, 
+              STstrconstlookup("Initialize constant locals"), 0, 0);
+   InsNewInst(NULL, next, COMMENT, 0, 0, 0);
    for (lp=LIhead; lp; lp = LIhead)
    {
       LIhead = lp->next;
@@ -322,6 +321,10 @@ void Extern2Local(INSTQ *next, INSTQ *end, short rsav, int fsize)
 {
    extern int NPARA, DTnzerod, DTnzero, DTabsd, DTabs;
    short i, j=0, flag, ir, k, reg1=0;
+   #ifdef X86_64
+      int nof, ni, nd, dr, dreg1;
+      char *rpara[6] = {"@rdi", "@rsi", "@rdx", "@rcx", "@r8", "@r9"};
+   #endif
    int nbytes=0;
    short *paras;
    char nam[8];
@@ -330,8 +333,7 @@ void Extern2Local(INSTQ *next, INSTQ *end, short rsav, int fsize)
       int fc, fr=0;
    #endif
 
-   if (rsav) fsize = 0;
-   else rsav = -REG_SP;
+   if (!rsav) rsav = -REG_SP;
    if (NPARA)
    {
       InsNewInst(NULL, next, COMMENT, 0, 0, 0);
@@ -357,6 +359,89 @@ void Extern2Local(INSTQ *next, INSTQ *end, short rsav, int fsize)
          j++;
       }
    }
+   #ifdef X86_64
+      reg1 = GetReg(T_INT);
+      fnam[0] = '@';
+      fnam[1] = 'x';
+      fnam[2] = 'm';
+      fnam[3] = 'm';
+      fnam[5] = '\0';
+      for (i=nof=nd=ni=0; i < NPARA; i++)
+      {
+         PrintComment(NULL, next, "para %d, name=%s", i, 
+                      STname[paras[i]] ? STname[paras[i]] : "NULL");
+         flag = STflag[paras[i]];
+         if (IS_PTR(flag))
+         {
+            if (ni < 6) ir = iName2Reg(rpara[ni]);
+            else
+            {
+               ir = reg1;
+               InsNewInst(NULL, next, LD, -ir,
+                          AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
+               nof++;
+            }
+            InsNewInst(NULL, next, ST, -ir, SToff[paras[i]].sa[2], -ir, 0);
+            ni++;
+         }
+         else if (IS_INT(flag))
+         {
+            if (ni < 6) ir = iName2Reg(rpara[ni]);
+            else
+            {
+               ir = reg1;
+               InsNewInst(NULL, next, LDS, -ir,
+                          AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
+               nof++;
+            }
+            k = iName2Reg("@rax");
+            if (ir != k)
+            {
+               InsNewInst(NULL, next, MOV, -k, -ir, 0);
+               ir = k;
+            }
+            InsNewInst(NULL, next, CVTSI, -ir, -ir, 0);
+            InsNewInst(NULL, next, ST, -ir, SToff[paras[i]].sa[2], -ir, 0);
+            ni++;
+         }
+         else if (IS_FLOAT(flag))
+         {
+            if (nd < 8)
+            {
+               fnam[4] = nd + '0';
+               dr = fName2Reg(fnam);
+               InsNewInst(NULL, next, FST, SToff[paras[i]].sa[2], -dr, 0);
+            }
+            else
+            {
+               ir = reg1;
+               InsNewInst(NULL, next, LDS, -ir,
+                          AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
+               InsNewInst(NULL, next, STS, SToff[paras[i]].sa[2], -ir, 0);
+               nof++;
+            }
+            nd++;
+         }
+         else
+         {
+            if (nd < 8)
+            {
+               fnam[4] = nd + '0';
+               dr = dName2Reg(fnam);
+               InsNewInst(NULL, next, FSTD, SToff[paras[i]].sa[2], -dr, 0);
+            }
+            else
+            {
+               ir = reg1;
+               InsNewInst(NULL, next, LD, -ir,
+                          AddDerefEntry(rsav, 0, 0, fsize+nof*8), 0);
+               InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, 0);
+               nof++;
+            }
+            nd++;
+         }
+      }
+   #endif
    #ifdef X86_32
       reg1 = ir = GetReg(T_INT);
       for (j=i=0; i < NPARA; i++)
@@ -365,13 +450,13 @@ void Extern2Local(INSTQ *next, INSTQ *end, short rsav, int fsize)
                       STname[paras[i]] ? STname[paras[i]] : "NULL");
          flag = STflag[paras[i]];
          InsNewInst(NULL, next, LD, -ir,
-                    AddDerefEntry(rsav, 0, 0, fsize+4+j*4), 0);
+                    AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
          InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, __LINE__);
          j++;
          if (!IS_PTR(flag) && IS_DOUBLE(flag))
          {
             InsNewInst(NULL, next, LD, -ir,
-                       AddDerefEntry(rsav, 0, 0, fsize+4+j*4), 0);
+                       AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
 	    k = SToff[paras[i]].sa[2] - 1;
 	    k = DT[(k<<2)+3] + 4;
             InsNewInst(NULL, next, ST, AddDerefEntry(rsav, 0, 0, k), 
@@ -382,23 +467,30 @@ void Extern2Local(INSTQ *next, INSTQ *end, short rsav, int fsize)
       InsNewInst(NULL, next, COMMENT, STstrconstlookup("done paras"), 0, 0);
       if (DTnzerod > 0)
       {
-         InsNewInst(NULL, next, MOV, -ir, STiconstlookup(0), 0);
+         k = ((SToff[DTnzerod].sa[2]-1)<<2) + 3;
+         InsNewInst(NULL, next, XOR, -ir, -ir, -ir);
          InsNewInst(NULL, next, ST, SToff[DTnzerod].sa[2], -ir, __LINE__);
-         InsNewInst(NULL, next, MOV, -ir, STiconstlookup(-2147483648), 0);
-         k = (SToff[DTnzerod].sa[2])<<2;
-         k = DT[k+3] + 4;
-         k = AddDerefEntry(-REG_SP, 0, 0, k);
-         InsNewInst(NULL, next, ST, k, -ir, __LINE__);
+         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+8),
+                    -ir, __LINE__);
+         InsNewInst(NULL, next, MOV, -ir, STiconstlookup(0x80000000), 0);
+         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+4),
+                    -ir, __LINE__);
+         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+12),
+                    -ir, __LINE__);
       }
       if (DTabsd)
       {
-         InsNewInst(NULL, next, MOV, -ir, STiconstlookup(-1), 0);
+         k = ((SToff[DTabsd].sa[2]-1)<<2) + 3;
+         InsNewInst(NULL, next, XOR, -ir, -ir, -ir);
+         InsNewInst(NULL, next, NOT, -ir, -ir, -ir);
          InsNewInst(NULL, next, ST, SToff[DTabsd].sa[2], -ir, __LINE__);
-         InsNewInst(NULL, next, MOV, -ir, STiconstlookup(2147483647), 0);
-         k = (SToff[DTabsd].sa[2])<<2;
-         k = DT[k+3] + 4;
-         k = AddDerefEntry(-REG_SP, 0, 0, k);
-         InsNewInst(NULL, next, ST, k, -ir, __LINE__);
+         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+8),
+                    -ir, __LINE__);
+         InsNewInst(NULL, next, MOV, -ir, STiconstlookup(0x7fffffff), 0);
+         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+4),
+                    -ir, __LINE__);
+         InsNewInst(NULL, next, ST, AddDerefEntry(-REG_SP, 0, 0, DT[k]+12),
+                    -ir, __LINE__);
       }
       InsNewInst(NULL, next, COMMENT, STstrconstlookup("done archspec"), 0, 0);
    #endif
@@ -421,7 +513,7 @@ fprintf(stderr, "STORE: %d, %d\n", SToff[paras[i]].sa[2], -ir);
             else
             {
                InsNewInst(NULL, next, LD, -ir,
-                          AddDerefEntry(rsav, 0, 0, fsize+68+j*4), 0);
+                          AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
                InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, __LINE__);
             }
             j++;
@@ -453,21 +545,21 @@ fprintf(stderr, "STORE: %d, %d\n", SToff[paras[i]].sa[2], -ir);
                k = DT[k+3] + 4;
                k = AddDerefEntry(-REG_SP, 0, 0, k);
                InsNewInst(NULL, next, LD, -ir,
-                          AddDerefEntry(rsav, 0, 0, fsize+68+j*4), 0);
+                          AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
                InsNewInst(NULL, next, ST, k, -ir, __LINE__);
                j++;
             }
             else
             {
                InsNewInst(NULL, next, LD, -ir,
-                          AddDerefEntry(rsav, 0, 0, fsize+68+j*4), 0);
+                          AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
                InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir, __LINE__);
                j++;
                k = (SToff[paras[i]].sa[2]-1)<<2;
                k = DT[k+3] + 4;
                k = AddDerefEntry(-REG_SP, 0, 0, k);
                InsNewInst(NULL, next, LD, -ir,
-                          AddDerefEntry(rsav, 0, 0, fsize+68+j*4), 0);
+                          AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
                InsNewInst(NULL, next, ST, k, -ir, __LINE__);
                j++;
             }
@@ -496,7 +588,7 @@ PrintComment(NULL, next, "Store para %s\n", STname[paras[i]]);
             {
                if (j == 8) ir = GetReg(T_INT);
                InsNewInst(NULL, next, LD, -ir,
-                          AddDerefEntry(rsav, 0, 0, fsize+24+j*4), 0);
+                          AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
                InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir,__LINE__);
             }
             j++;
@@ -514,7 +606,7 @@ PrintComment(NULL, next, "Store para %s\n", STname[paras[i]]);
             else
             {
                InsNewInst(NULL, next, LD, -ir,
-                          AddDerefEntry(rsav, 0, 0, fsize+24+j*4), 0);
+                          AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
                InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir,__LINE__);
             }
             fc++;
@@ -536,11 +628,11 @@ fprintf(stderr, "Getting parameter %s from %s\n", STname[paras[i]], fnam);
             else
             {
                InsNewInst(NULL, next, LD, -ir,
-                          AddDerefEntry(rsav, 0, 0, fsize+24+j*4), 0);
+                          AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
                InsNewInst(NULL, next, ST, SToff[paras[i]].sa[2], -ir,__LINE__);
                j++;
                InsNewInst(NULL, next, LD, -ir,
-                          AddDerefEntry(rsav, 0, 0, fsize+24+j*4), 0);
+                          AddDerefEntry(rsav, 0, 0, fsize+j*4), 0);
                k = (SToff[paras[i]].sa[2]-1)<<2;
                k = AddDerefEntry(-REG_SP, 0, 0, DT[k+3]+4);
                InsNewInst(NULL, next, ST, k, -ir, __LINE__);
@@ -607,10 +699,12 @@ void CreatePrologue(int align,  /* local-area required byte-alignment */
                     )
 {
    short prog, rsav=0, k;
-   int i, maxalign=align, Aoff, tsize, ssize=0;
+   int i, k, maxalign=align, tsize, ssize=0;
+   int Aoff;  /* offset to arguments, from frame pointer */
+   int Soff=0; /* system-dependant skip offset */
    INSTQ *ip, *oldhead, *oldtail;
    extern INSTQ *iqhead;
-   int Soff, Loff;
+   int Loff;   /* called routines frame size excluding locals */
    int SAVESP=0;  /* must we save SP to stack? */
 
 fprintf(stderr, "align=%d,lsize=%d,csize=%d\n", align, lsize, csize);
@@ -636,7 +730,11 @@ fprintf(stderr, "align=%d,lsize=%d,csize=%d\n", align, lsize, csize);
          for (ndr--; i < ndr; i++) dr[i] = dr[i+1];
    }
 
-   if (!align) align = 4;
+   #ifdef x86_64
+      if (!align) align = 16;
+   #else
+      if (!align) align = 4;
+   #endif
    oldhead = iqhead;
    oldtail = iqhead->prev;
 /* 
@@ -648,13 +746,29 @@ fprintf(stderr, "prog=%d!, rout_name=%s\n", prog, rout_name);
    InsNewInst(NULL, oldhead, LABEL, prog, 0, 0);
 
 /*
+ * For x86-64, save %rbp, if necessary, to the reserved location of 0(%rsp)
+ */
+   #ifdef X86_64
+      k = iName2Reg("%rbp");
+      for (i=0; i < nir && ir[i] != k; i++);
+      if (i < nir)
+      {
+         InsNewInst(NULL, oldhead, ST, 
+                    AddDerefEntry(-REG_SP, 0, 0, 0), -k, 0);
+         for (nir--; i < nir; i++) ir[i] = ir[i+1];
+      }
+   #endif
+/*
  * Figure stack frame, ensuring all parts have correct alignment
  */
    #ifdef SPARC
-      Aoff = 68;
+      Soff = 64;
+      Aoff = 4;
       if (csize && csize < 6*4) csize = 6*4;
+   #elif defined(X86_64)
+      Soff = Aoff  = 8;
    #elif defined(X86_32)
-      Aoff  = 0;
+      Aoff  = 4;
    #elif defined(OSX_PPC)
       if (csize < 32) csize = 32;
       Aoff = 24;
@@ -662,39 +776,44 @@ fprintf(stderr, "prog=%d!, rout_name=%s\n", prog, rout_name);
       Aoff = 8;
    #endif
 /*   tsize = Aoff + csize + ssize + lsize; */
-   Soff = Aoff + csize;
+   Soff += csize;
+   #ifdef X86-64
+      Loff = Soff + 8*(nir+ndr) + 4*nfr;
+      tsize = Loff + lsize;
+      if (tsize % ASPALIGN) tsize = (tsize/ASPALIGN)*ASPALIGN + ASPALIGN;
+   #else
 /*
- * We assume sp already 4-byte aligned but may need to make 8-byte aligned
- * if demanded by save 
+ *    We assume sp already 4-byte aligned but may need to make 8-byte aligned
+ *    if demanded by save 
  */
-   if (ndr)
-   {
-      if ((Soff>>3)<<3 != Soff) Soff = 8 + ((Soff>>3)<<3);
-      #ifndef x86_32
-         if (maxalign < 8) maxalign = 8;
-      #endif
-   }
-   if (maxalign > ASPALIGN)
-   {
-      Loff = Soff + 8*ndr + 4*nfr + 4*nir + ASIZE;
-      SAVESP = Loff-ASIZE;
-   }
-   else Loff = Soff + 8*ndr + 4*nfr + 4*nir;
-   if (Loff%align) Loff = (Loff/align)*align + align;
-   tsize = Loff + lsize;
-   if (tsize % ASPALIGN) tsize = (tsize/ASPALIGN)*ASPALIGN + ASPALIGN;
-fprintf(stderr, "tsize=%d, SAVESP=%d\n\n", tsize, SAVESP);
-   if (SAVESP)
-   {
-      InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
-      InsNewInst(NULL, oldhead, COMMENT, STstrconstlookup("To ensure greater alignment than sp, save old sp to stack and move sp"), 0, 0);
-      InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
-      rsav = GetReg(T_INT);
-      assert(rsav <= NSIR);
-      rsav = -rsav;
-      InsNewInst(NULL, oldhead, AMOV, rsav, -REG_SP, 0);
-   }
-   else
+      if (ndr)
+      {
+         if ((Soff>>3)<<3 != Soff) Soff = 8 + ((Soff>>3)<<3);
+         #ifndef x86_32
+            if (maxalign < 8) maxalign = 8;
+         #endif
+      }
+      if (maxalign > ASPALIGN)
+      {
+         Loff = Soff + 8*ndr + 4*nfr + 4*nir + ASIZE;
+         SAVESP = Loff-ASIZE;
+      }
+      else Loff = Soff + 8*ndr + 4*nfr + 4*nir;
+      if (Loff%align) Loff = (Loff/align)*align + align;
+      tsize = Loff + lsize;
+      if (tsize % ASPALIGN) tsize = (tsize/ASPALIGN)*ASPALIGN + ASPALIGN;
+      if (SAVESP)
+      {
+         InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
+         InsNewInst(NULL, oldhead, COMMENT, STstrconstlookup("To ensure greater alignment than sp, save old sp to stack and move sp"), 0, 0);
+         InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
+         rsav = GetReg(T_INT);
+         assert(rsav <= NSIR);
+         rsav = -rsav;
+         InsNewInst(NULL, oldhead, AMOV, rsav, -REG_SP, 0);
+      }
+      else
+   #endif
    {
       InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
       InsNewInst(NULL, oldhead, COMMENT, STstrconstlookup("Adjust sp"), 0, 0);
@@ -728,7 +847,7 @@ fprintf(stderr, "Local offset=%d\n", Loff);
    for (i=0; i < nir; i++)
       InsNewInst(NULL, oldhead, ST, 
                  AddDerefEntry(-REG_SP, 0, 0, Soff+ndr*8+nfr*4+i*4), -ir[i], 0);
-   Extern2Local(oldhead, oldtail, rsav, tsize);
+   Extern2Local(oldhead, oldtail, rsav, rsav ? Aoff : Aoff+tsize);
    GetReg(-1);
    InsNewInst(NULL, oldhead, COMMENT, 0, 0, 0);
    InsNewInst(NULL, oldhead, COMMENT, 

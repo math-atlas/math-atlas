@@ -31,12 +31,13 @@ enum inst
    LABEL,                       /* <labname>,NULL,NULL */
    CMPFLAG,                     /* flag,flag,flag compiler info */
 /*
- * 32-bit integer
+ * integer ops of same size as ptrs
  */
    LD,                          /* [r], [ptr], NULL */
    ST,                          /* [ptr], [r], NULL */
    OR,                          /* r0 = r1 | r/c */
    XOR,                         /* r0 = r1 ^ r/c */
+   NOT,                         /* r0 = ~r0 */
    SHL,                         /* r0 = r1 << r/c */
    SHR,                         /* r0 = r1 >> r/c, set [cc] */
    SAR,                         /* r0 = r1 >> r/c */
@@ -51,23 +52,26 @@ enum inst
    NEG,                         /* [r0], [r1] : r0 = -r1 */
 /*   ABS, ; abs commented out because not widely supported */
 /*
- * 64-bit integer
+ * 32-bit integer (64-bit systems only)
  */
-   LDL,                         /* [r], [ptr], NULL */
-   STL,                         /* [ptr], [r], NULL */
-   SHLL, SHLCCL,                /* r0 = r1 << r/c */
-   SHRL, SHRCCL,                /* r0 = r1 >> r/c, set [cc] */
-   SARL,                        /* r0 = r1 >> r/c */
-   ADDL, ADDCCL,                /* r0 = r1 + r/c */
-   SUBL, SUBCCL,                /* r0 = r1 - r/c */
-   MULL,                        /* r0 = r1 * r/c */
-   UMULL,                       /* r0 = r1 * r/c, unsigned */
-   DIVL,                        /* r0 = r1 / r/c */
-   UDIVL,
-   CMPL,                        /* set [cc] based on r0 - r1 */
-   MOVL,                        /* [r0], [r1] : r0 = r1 */
-   NEGL,                        /* [r0], [r1] : r0 = -r1 */
-   ABSL,
+   LDS,                         /* [r], [ptr], NULL */
+   STS,                         /* [ptr], [r], NULL */
+   ORS,                         /* r0 = r1 | r/c */
+   XORS,                        /* r0 = r1 ^ r/c */
+   NOTS,                        /* r0 = ~r0 */
+   SHLS, SHLCCS,                /* r0 = r1 << r/c */
+   SHRS, SHRCCS,                /* r0 = r1 >> r/c, set [cc] */
+   SARS,                        /* r0 = r1 >> r/c */
+   ADDS, ADDCCS,                /* r0 = r1 + r/c */
+   SUBS, SUBCCS,                /* r0 = r1 - r/c */
+   MULS,                        /* r0 = r1 * r/c */
+   UMULS,                       /* r0 = r1 * r/c, unsigned */
+   DIVS,                        /* r0 = r1 / r/c */
+   UDIVS,
+   CMPS,                        /* set [cc] based on r0 - r1 */
+   MOVS,                        /* [r0], [r1] : r0 = r1 */
+   NEGS,                        /* [r0], [r1] : r0 = -r1 */
+   ABSS,
 /*
  * Jump instructions
  */

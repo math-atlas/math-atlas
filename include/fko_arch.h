@@ -9,8 +9,8 @@
  */
 #if !defined(LINUX_PPC) && !defined(OSX_PPC) && !defined(LINUX_X86_32) && \
     !defined(LINUX_X86_64) && !defined(SOLARIS_SPARC)
-/*   #define LINUX_X86_32   */
-   #define SOLARIS_SPARC 
+   #define LINUX_X86_32 
+/*   #define SOLARIS_SPARC  */
 /*   #define OSX_PPC */
 #endif
 
@@ -99,14 +99,42 @@
    #define NDR   8                      /* # of double regs */
    #define NSDR  8
    #define IRETREG 4
-   #define FRETREG (NFR+FREGBEG)
-   #define DRETREG (NFR+DREGBEG)
+   #define FRETREG FREGBEG
+   #define DRETREG DREGBEG
    #ifdef ARCH_DECLARE
       char *archiregs[NIR] = 
       {"@esp", "@edx", "@ecx", "@eax", "@ebp", "@ebx", "@esi", "@edi"};
       char *archfregs[TNFR] = 
       {"@xmm0", "@xmm1", "@xmm2", "@xmm3", "@xmm4", "@xmm5", "@xmm6", "@xmm7",
        "@st"};
+   #else
+      extern char *archiregs[NIR], *archfregs[TNFR];
+   #endif
+   #define archdregs archfregs
+#endif
+
+#ifdef X86_64
+   #define NSR  8
+   #define NIR 16
+   #define NSIR 3
+   #define NFR   16                      /* # of float regs */
+   #define TNFR  16
+   #define NSFR  16 
+   #define NDR   16                      /* # of double regs */
+   #define NSDR  16 
+   #define IRETREG 4
+   #define FRETREG (NFR+FREGBEG)
+   #define DRETREG (NFR+DREGBEG)
+   #ifdef ARCH_DECLARE
+      char *archsregs[NSR] = 
+      {"@esp", "@edx", "@ecx", "@eax", "@ebp", "@ebx", "@esi", "@edi"};
+      char *archiregs[NIR] = 
+      {"@rsp", "@rdx", "@rcx", "@rax", "@rbp", "@rbx", "@rsi", "@rdi",
+       "@r8", "@r9", "@r10", "@r11", "@r12", "@r13", "@r14", "@r15"};
+      char *archfregs[TNFR] = 
+      {"@xmm0", "@xmm1", "@xmm2", "@xmm3", "@xmm4", "@xmm5", "@xmm6", "@xmm7",
+       "@xmm8", "@xmm9", "@xmm10", "@xmm11", "@xmm12", "@xmm13", "@xmm14", 
+       "@xmm15"};
    #else
       extern char *archiregs[NIR], *archfregs[TNFR];
    #endif

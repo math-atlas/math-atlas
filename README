@@ -85,15 +85,13 @@ locals can be pointers, so that's how you handle arrays.
 
 For all machines, our local area looks like:
 
-        int    locals                 --
-	float  locals                  |
-	long   locals                  |  Local
+	float  locals                 --
+	int    locals                  |  Local
 	double locals                  |  Area
         vector float locals            |
 %sp+Y+X vector double locals    (Loff)--
-        int regs     (nir)            --
         float regs   (nfr)             | Register Save
-        long regs    (nlr)             | Area
+        int regs     (nir)            --
 %sp+Y   double regs  (ndr)      (Soff)--
 ....
 %sp
@@ -109,7 +107,7 @@ depending on the architecture (therefore, there may be padding between them).
        CreateSysLocals()
        NumberLocalsByType();
        CreateLocalDerefs();
-(3) CreateSysLocals() : symtab.c
+(3) CreateSysLocals() : arch.c
     Adds implicit locals, such as those used to store global data
     (eg., fp constants) or in operation such as fabs (bit mask with 
     sign bit 0, all other bits 1).
@@ -151,3 +149,28 @@ depending on the architecture (therefore, there may be padding between them).
     positions.
 (10)CreateEpilogue() : arch.c
     Restores registers and returns.
+
+*******************************************************************************
+*                              SYSTEM LOCALS                                  *
+*******************************************************************************
+On x86, we need to save some integer values to memory in order to perform
+some instructions.  The flags controlling these are:
+DTnzero[d] : flag for single [double] precision fp negation.  Saves to memory
+             a value with only the sign bit (of a fp const) set.
+DTabs[d]   : flag for single [double] precision fp absolute value.  Saves 
+             !(-0.0) to memory (all bits except sign bit set).
+These flags are declared in ifko.c.  h2l sets them if they are needed,
+CreateSysLocals allocates the local space to store them, Extern2Local generates
+the code to fill in the required values to the stack frame, and l2a.c then
+uses the stack frame locals to perform the operation.
+
+*******************************************************************************
+*                              x86-64 SUPPORT                                 *
+*******************************************************************************
+x86-64 is the only machine we presently support 64 bit pointers on.  The
+trick we use is that all integer operations are also defined as 64 bits.
+We have corallary instructions (suffixed by S; eg., LD becomes LDS) which
+perform the same operation on 32-bit integers.  These instructions appear
+only in the function prologue and epilogue, where they translate the function
+parameters' 32 bit integers to 64 bit values.  Therefore, in the body of
+the function, all integers are 64 bit.

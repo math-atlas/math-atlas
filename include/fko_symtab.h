@@ -2,7 +2,7 @@
 #define FKO_SYMTAB_H
 
 #define T_INT        0
-#define T_LONG       1
+#define T_SHORT      1
 #define T_FLOAT      2
 #define T_DOUBLE     3
 #define T_CHAR       4
@@ -10,7 +10,7 @@
 #define T_LABEL      6
 
 #define IS_INT(flag_)  (((flag_) & 0x7) == T_INT)
-#define IS_LONG(flag_)  (((flag_) & 0x7) == T_LONG)
+#define IS_SHORT(flag_)  (((flag_) & 0x7) == T_SHORT)
 #define IS_FLOAT(flag_)  (((flag_) & 0x7) == T_FLOAT)
 #define IS_DOUBLE(flag_)  (((flag_) & 0x7) == T_DOUBLE)
 #define IS_CHAR(flag_)  (((flag_) & 0x7) == T_CHAR)
@@ -34,7 +34,7 @@
 #define IS_UNSIGNED(flag_)   ((flag_) & UNSIGNED_BIT)
 #define IS_LOCAL(flag_) ((flag_) & LOCAL_BIT)
 
-#define FLAG2PTYPE(flag_) ( IS_PTR(flag_) ? GetPtrType() : ((flag_) & 0x7) )
+#define FLAG2PTYPE(flag_) ( IS_PTR(flag_) ? T_INT : ((flag_) & 0x7) )
 
 
 #define REG_SP   1
