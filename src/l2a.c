@@ -281,13 +281,16 @@ struct assmln *lil2ass(BBLOCK *bbase)
 {
    INSTQ *ip;
    BBLOCK *bp;
+   uchar *cp;
    struct assmln *ahead=NULL, *ap;
    short inst, op1, op2, op3, k;
    #ifdef SPARC
       int SeenSave=0;
    #endif
+   int i;
    char ln[1024], *sptr;
    extern int DTabsd, DTnzerod, DTabs, DTnzero, DTx87, DTx87d;
+   /* End of declaration */
 
    ap = ahead = NewAssln(".text\n");
 
@@ -1725,7 +1728,15 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                archvdregs[-VDREGBEG-op1]);
          break;
       case VDLDS:
-         ap->next = PrintAssln("\tmovps\t%s, %s\n", GetDeref(op2),
+         ap->next = PrintAssln("\tmovpd\t%s, %s\n", GetDeref(op2),
+                               archvdregs[-VDREGBEG-op1]);
+         break;
+      case VDLDL:  /* NOTE: dest is also source */
+         ap->next = PrintAssln("\tmovlpd\t%s, %s\n", GetDeref(op2),
+                               archvdregs[-VDREGBEG-op1]);
+         break;
+      case VDLDH:  /* NOTE: dest is also source */
+         ap->next = PrintAssln("\tmovhpd\t%s, %s\n", GetDeref(op2),
                                archvdregs[-VDREGBEG-op1]);
          break;
       case VDST:
@@ -1740,9 +1751,14 @@ struct assmln *lil2ass(BBLOCK *bbase)
          ap->next = PrintAssln("\tmovapd\t%s, %s\n", archvdregs[-VDREGBEG-op2],
                                archvdregs[-VDREGBEG-op1]);
          break;
-      case VDADD:
+      case VDMUL:
          assert(op1 == op2);
          ap->next = PrintAssln("\tmulpd\t%s, %s\n", GetDregOrDeref(op3),
+                               archvdregs[-VDREGBEG-op1]);
+         break;
+      case VDADD:
+         assert(op1 == op2);
+         ap->next = PrintAssln("\taddpd\t%s, %s\n", GetDregOrDeref(op3),
                                archvdregs[-VDREGBEG-op1]);
          break;
       case VDABS:
@@ -1751,6 +1767,12 @@ struct assmln *lil2ass(BBLOCK *bbase)
          ap->next = PrintAssln("\tandpd\t%s,%s\n",
                                GetDeref(SToff[DTabsd-1].sa[2]),
 	                       archvdregs[-VDREGBEG-op1]);
+         break;
+      case VDZERO:
+         ap->next = PrintAssLn("\txorpd\t%s,%s\n", archvdregs[-VDREGBEG-op1],
+                               archvdregs[-VDREGBEG-op1]);
+         break;
+      case VDSHUF:  /* tough, leave for last */
    #endif
 /*
  * Only x86 and PowerPC have single prec vector instructions
