@@ -93,8 +93,8 @@ def ifko_pftype(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
 #
 # attempt to find best prefetch distance for given array
 #
-def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr):
-   print "\nFinding PFD for %s" % (arr)
+def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr,
+            pfd0=0, pfdN=2048, pfdinc=0):
    st = "-P %s " % (arr)
    j = KF0.find(st)
    if j == -1:
@@ -105,13 +105,16 @@ def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr):
       j += 4 + arr.len()
    words = KF0[j:].split()
    pflvl = int(words[0])
+   LS = info[1][pflvl];
+   if not pfd0: pfd0 = LS
+   if not pfdinc: pfdinc = LS
+   print "\nFinding PFD for %s in [%d:%d:%d]" % (arr, pfd0, pfdN, pfdinc)
    ipd = int(words[1])
-   LS = info[1][0];
-   pfd = LS
-#   mfs = []
+   pfd = pfd0
    mfM = 0.0
    pfdM = 0
-   while pfd < 2048:
+   KF0 = KF0 + " -Ps b A 0 1"
+   while pfd <= pfdN:
       KFn = KF0 + " -P %s %d %d" % (arr, pflvl, pfd)
       fkocmnd.callfko(fko, KFn)
       [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
@@ -122,24 +125,42 @@ def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr):
          mfM = mf
          pfdM = pfd
       pfd += LS
-#   print "\nBEST PFD so far = %d (%.2f)" % (pfdM, mfM)
 
-#   pfd = pfdM - LS + 8
-#   pfN = pfd + LS
-#   print '\n'
-#   while (pfd <= pfN):
-#      KFn = KF0 + " -P %s %d %d" % (arr, pflvl, pfd)
-#      fkocmnd.callfko(fko, KFn)
-#      [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
-#                           "gcc", "-x assembler-with-cpp", opt=opt)
-#      print "   %s : PFD = %d mflop = %s" % (arr, pfd, mf)
-#      if mf > mfM:
-#         mfM = mf
-#         pfdM = pfd
-#      pfd += 8
    print "\nBEST prefetch distance = %d (%.2f)" % (pfdM, mfM)
    if (pfdM != ipd):
       KF0 = KF0 + " -P %s %d %d" % (arr, pflvl, pfdM)
+   return (KF0)
+
+def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=128):
+
+   print "Finding best unroll:"
+#
+#  Get rid of default unrolling so we can add our own
+#
+   j = KF0.find("-U ")
+   if j != -1:
+      words = KF0[j:].split()
+      if (j != 0): KF0 = KF0[0:j]
+      else : KF0 = ""
+      for word in words[2:]:
+         KF0 = KF0 + " "  + word
+   UR = UR0
+   mf0 = 0
+   URB = 1
+   while UR <= URN:
+      KFn = KF0 + " -U %d" % (UR)
+      fkocmnd.callfko(fko, KFn)
+      [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                           "gcc", "-x assembler-with-cpp", opt=opt)
+      print "   UR=%d, mflop=%.2f" % (UR, mf)
+#
+#     Demand that higher unrollings get at least 1% better
+      if (mf >= mf0*1.01):
+         URB = UR
+         mf0 = mf
+      UR *= 2
+
+   KF0 = KF0 + " -U %d" % URB
    return KF0
 
 def ifko(l1bla, pre, N):
@@ -161,6 +182,11 @@ def ifko(l1bla, pre, N):
 #
    for arr in pfarrs:
       KFLAGS = FindPFD(ATLdir, ARCH, KFLAGS, fko, rout, pre,l1bla, N, info, arr)
+   KFLAGS = fkocmnd.RemoveRedundantPrefFlags(KFLAGS, pfarrs)
+#
+#  Find best unroll
+#
+   KFLAGS = FindUR(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N, info)
    print "\nFLAGS so far =", fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS)
 
 ifko(sys.argv[1], sys.argv[2], 80000)

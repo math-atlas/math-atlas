@@ -82,6 +82,30 @@ def RemoveFilesFromFlags(blas, flags):
          nf = nf + flag + " "
    return nf
 
+def RemoveRedundantPrefFlags(flags, pfarrs):
+#
+#  If we've got a -P all spec, make sure some array not given explicitly
+#
+   j = flags.find("-P all")
+   if j != -1:
+      for arr in pfarrs:
+         if flags.find("-P %s" % arr) == -1:
+            break
+      else:
+         words = flags[j:].split()
+         if j != 0: flags = flags[0:j-1]
+         else: flags = ""
+         for word in words[4:]:
+            flags = flags + " " + word
+#
+#  Remove repetitive scheduling commands
+#
+#   j = flags.find("-Ps ")
+#   if (j != -1):
+#      i = flags[j+3:].find("-Ps ")
+#      if (i != -1)
+#         words = flags[j:].split()
+   return flags
 def GetPFInfo(inf):
    na = len(inf[6])
    i=0
