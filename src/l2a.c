@@ -190,9 +190,16 @@ static char *GetSregOrConst(short id)
       assert(id != 0);
       id--;
       flag = STflag[id];
-      assert(IS_CONST(flag));
-      if (IS_INT(flag) || IS_SHORT(flag)) sprintf(ln, "$%d", SToff[id].i);
-      else fko_error(__LINE__, "Integer constant expected!\n");
+      if (IS_CONST(flag))
+      {
+         if (IS_INT(flag) || IS_SHORT(flag)) sprintf(ln, "$%d", SToff[id].i);
+         else fko_error(__LINE__, "Integer constant expected!\n");
+      }
+      else
+      {
+        assert(IS_DEREF(flag));
+        return(GetSregOrDeref(id+1));
+      }
    }
    return(ln);
 }
@@ -213,18 +220,23 @@ static char *GetIregOrConst(short id)
       assert(id != 0);
       id--;
       flag = STflag[id];
-      assert( IS_CONST(flag));
-      #ifdef X86_64
-         if (IS_INT(flag)) sprintf(ln, "$%d", SToff[id].i);
-         else if (IS_SHORT(flag)) sprintf(ln, "$0x%lx", SToff[id].l);
-      #elif defined(X86)
-         if (IS_INT(flag) || IS_SHORT(flag)) sprintf(ln, "$%d", SToff[id].i);
-/*         else if (IS_SHORT(flag)) sprintf(ln, "$%ld", SToff[id].l); */
-      #else
-         if (IS_INT(flag) || IS_SHORT(flag)) sprintf(ln, "%d", SToff[id].i);
-/*         else if (IS_SHORT(flag)) sprintf(ln, "%ld", SToff[id].l); */
-      #endif
-         else fko_error(__LINE__, "Integer constant expected!\n");
+      if (IS_CONST(flag))
+      {
+         #ifdef X86_64
+            if (IS_INT(flag)) sprintf(ln, "$%d", SToff[id].i);
+            else if (IS_SHORT(flag)) sprintf(ln, "$0x%lx", SToff[id].l);
+         #elif defined(X86)
+            if (IS_INT(flag) || IS_SHORT(flag)) sprintf(ln, "$%d", SToff[id].i);
+         #else
+            if (IS_INT(flag) || IS_SHORT(flag)) sprintf(ln, "%d", SToff[id].i);
+         #endif
+            else fko_error(__LINE__, "Integer constant expected!\n");
+      }
+      else
+      {
+        assert(IS_DEREF(flag));
+        return(GetIregOrDeref(id+1));
+      }
    }
    return(ln);
 }
