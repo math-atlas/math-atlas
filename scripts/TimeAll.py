@@ -47,6 +47,7 @@ if (nargs > 1):
          if nargs > 4:
             uopt = sys.argv[4]
 l1refs  = l1cmnd.GetDefaultRefBlas(l1routs)
+l1cblas = l1cmnd.GetDefaultCblasBlas(l1routs)
 
 opt = "-X 1 -Y 1 -Fx 16 -Fy 16 " + uopt
  
@@ -79,6 +80,8 @@ for blas in l1routs:
 #      if (CC != None):
 #         print "   --> ucc='%s', ccflags='%s'" % (CC, CCF)
 
+blaT  = []
+blaMF = []
 refT  = []
 refMF = []
 proT  = []
@@ -89,11 +92,12 @@ fkoT  = []
 fkoMF = []
 j = i = 0
 
-ICC = 1
+ICC = 0
 CALLREF=1
 CALLATL=1
 CALLFKO=1
-PROFILE=1
+CALLBLA=1
+PROFILE=0
 #PFLAGS = "-xP -O3 -mp1 -static"
 #PFLAGS = "-xW -O3 -mp1 -static -Qoption,ld,-melf_i386 -Qoption,asm,--32"
 PFLAGS = "-xW -O3 -mp1 -static"
@@ -101,6 +105,14 @@ PFLAGS = "-xW -O3 -mp1 -static"
 # print 'l1atl = ', l1atl
 for blas in l1routs:
    for pre in pres:
+      if (CALLBLA != 0):
+         [time,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, l1cblas[i], 
+                                 opt=opt)
+         assert(time > 0.0)
+         print "CBL %20.20s : time=%f, mflop=%f" % (pre+l1cblas[i], time, mf)
+         blaT.append(time)
+         blaMF.append(mf)
+
       if (CALLREF != 0):
          [time,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, l1refs[i], opt=opt)
          assert(time > 0.0)
@@ -142,9 +154,9 @@ for blas in l1routs:
       j += 1
    i += 1
 
-print r"OPERATION   & gcc+ref & icc+ref & icc+prof & gcc+atlas&icc+atlas& fko     &     ifko\\\hline\hline"
-form = "%12s& %5.0f & %5.0f & %5.0f & %5.0f & %5.0f & %5.0f &      \\\\\\hline"
-form2= "%12s& %5.0f & %5.0f & %5.0f & %5.0f*& %5.0f*& %5.0f &      \\\\\\hline"
+print r"OPERATION   & gcc+ref & icc+ref & icc+prof & gcc+atlas&icc+atlas& cblas & fko     &     ifko\\\hline\hline"
+form = "%12s& %5.0f & %5.0f & %5.0f & %5.0f & %5.0f & %5.0f & %5.0f &      \\\\\\hline"
+form2= "%12s& %5.0f & %5.0f & %5.0f & %5.0f*& %5.0f*& %5.0f & %5.0f &      \\\\\\hline"
 
 #fkoMF = [1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8, 9.9, 10.1];
 #atlMF = [1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8, 9.9, 10.1];
@@ -155,7 +167,9 @@ j = 0
 for blas in l1routs:
    for pre in pres:
       iccmf = 0.0 ; gccmf = 0.0; profmf = 0.0; atlg = 0.0; atli = 0.0
-      fkomf = 0.0
+      fkomf = 0.0 ; blamf = 0.0
+      if CALLBLA:
+         blamf = blaMF[j]
       if CALLREF:
          if ICC:
             iccmf = refMF[j]
@@ -170,10 +184,10 @@ for blas in l1routs:
          fkomf = fkoMF[j]
       if (CCFat[j] == None or CCFat[j].find("assembler") == -1):
          print form % ('{\\tt ' + pre + blas + '}', 
-                       gccmf, iccmf, profmf, atlg, atli, fkomf)
+                       gccmf, iccmf, profmf, atlg, atli, blamf, fkomf)
       else:
          print form2 % ('{\\tt ' + pre + blas + '}', 
-                        gccmf, iccmf, profmf, atlg, atli, fkomf)
+                        gccmf, iccmf, profmf, atlg, atli, blamf, fkomf)
 
       j += 1
    i += 1

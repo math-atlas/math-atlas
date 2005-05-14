@@ -35,6 +35,32 @@ def GetDefaultRefBlas(blas):
 
    return refb
 
+def GetDefaultCblasBlas(blas):
+   n = len(blas)
+   assert(n)
+   refb = []
+   for bla in blas:
+      if bla.find('asum') != -1:
+         refb.append("asum_blas.c")
+      elif bla.find('axpy') != -1:
+         refb.append("axpy_blas.c")
+      elif bla.find('dot') != -1:
+         refb.append("dot_blas.c")
+      elif bla.find('scal') != -1:
+         refb.append("scal_blas.c")
+      elif bla.find('amax') != -1:
+#         refb.append("iamax_blas.c")
+         refb.append("iamax_blas.c")
+      elif bla.find("copy") != -1:
+         refb.append("copy_blas.c")
+      elif bla.find("swap") != -1:
+         refb.append("swap_blas.c")
+      else:
+         print "Unknown BLAS : %s" % (bla)
+         sys.exit(1)
+
+   return refb
+
 def GetDefaultPre():
    return ['s', 'd']
 
