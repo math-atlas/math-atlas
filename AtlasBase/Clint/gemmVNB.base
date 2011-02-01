@@ -1,0 +1,2682 @@
+@extract -b @(topd)/gen.inc what=crsetup
+@ROUT mm_old2new
+@extract -b @(topd)/gen.inc what=cw @(cw08)
+#include "atlas_vnbcase.h"
+
+void GetInstLogLine(FILE *fp, int *muladd, int *pfA, int *lat, int *nb, 
+                    int *mu, int *nu, int *ku, int *ForceFetch,
+                    int *ifetch, int *nfetch, double *mflop)
+{
+   assert(fscanf(fp, " %d %d %d %d %d %d %d %d %d %d %lf\n",
+                 muladd, lat, pfA, nb, mu, nu, ku, ForceFetch, 
+                 ifetch, nfetch, mflop) == 11);
+}
+
+void GetInstLogFile(char *nam, int *muladd, int *pfA, int *lat, 
+                    int *nb, int *mu, int *nu, int *ku, int *ForceFetch,
+                    int *ifetch, int *nfetch, double *mflop)
+{
+   char ln[128];
+   FILE *fp;
+
+   fp = fopen(nam, "r");
+   if (fp == NULL) fprintf(stderr, "file %s not found!!\n\n", nam);
+   assert(fp);
+   fgets(ln, 128, fp);
+   GetInstLogLine(fp, muladd, pfA, lat, nb, mu, nu, ku, ForceFetch, 
+                  ifetch, nfetch, mflop);
+   fclose(fp);
+}
+
+void PrintUsage(char *exe, int i, char *arg)
+{
+   fprintf(stderr, "Error at argument %d, '%s'!\n", i, arg);
+   fprintf(stderr, "USAGE: %s [-i infile] [-o outfile]\n");
+   exit(i);
+}
+
+GetFlags(int nargs, char **args, char *infile, char *outfile)
+{
+   int i;
+
+   infile[0] = outfile[0] = '\0';
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+      switch(args[i][1])
+      {
+      case 'o':
+         strcpy(outfile, args[++i]);
+         break;
+      case 'i':
+         strcpy(infile, args[++i]);
+         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   if (infile[0] == '\0')
+      strcpy(infile, "res/dgMMRES");
+   if (outfile[0] == '\0')
+      strcpy(outfile, "res/dvgMMRES");
+}
+main(int nargs, char **args)
+/*
+ * Reads in old-style gemm kernel file, spits out new-style
+ */
+{
+   char infile[1024], outfile[1024];
+   double mflop;
+   FILE *fpout;
+   int muladd, pfA, lat, nb, mu, nu, ku, FF, IF, NF;
+
+   GetFlags(nargs, args, infile, outfile);
+   GetInstLogFile(infile, &muladd, &pfA, &lat, &nb, &mu, &nu, &ku, &FF,
+                  &IF, &NF, &mflop);
+   fpout = fopen(outfile, "w");
+   assert(fpout);
+   fprintf(fpout, "MULADD=%d LAT=%d PREF=%d NB=%d MU=%d NU=%d",
+           muladd, lat, pfA, nb, mu, nu);
+   if (ku == nb)
+       fprintf(fpout, " KU=1 KBMIN=1 KBMAX=512 KUISKB=1 LDISKB=1 \\\n");
+   else 
+      fprintf(fpout, " KU=%d \\\n", ku);
+   fprintf(fpout, "FFTCH=%d IFTCH=%d NFTCH=%d LDBOT=%d\n", FF, IF, NF,
+           (pfA & 512) ? 1 : 0);
+   fclose(fpout);
+   exit(0);
+}
+@ROUT atlas_vnbcase.h ReadVNBCase
+@extract -b @(topd)/gen.inc what=cw @(cw08)
+#include "atlas_enum.h"
+#include "stdlib.h"
+#include "stdio.h"
+#include "string.h"
+#include "assert.h"
+
+#define NASMD 7
+enum ASMDIA
+   {ASM_None=0, gas_x86_32, gas_x86_64, gas_sparc, gas_ppc, gas_parisc,
+    gas_mips};
+static char *ASMNAM[NASMD] =
+    {"",     "GAS_x8632", "GAS_x8664", "GAS_SPARC", "GAS_PPC", "GAS_PARISC",
+     "GAS_MIPS"};
+
+typedef struct MMNode MMNODE;
+struct MMNode
+{
+   double mflop; /* perf using mbB, nbB, kbB */
+   int ID, mu, nu, ku, kbmin, kbmax, ldbot, sse, x87, ldIsKB, ldab, betan1;
+   int aouter;
+   int lat, muladd, pref, clean, fftch, iftch, nftch; /* used for gened codes */
+   int kuIsKB;                /* KU is set to KB at compile time */
+   int rtm, rtn, rtk;         /* are M, N or K run-time variables */
+   int mbB, nbB, kbB;  /* best blocking dims found by search */
+   enum ATLAS_TRANS TA, TB;
+   int asmbits;   /* bitfield indicating which assembly(ies) is required */
+   char *rout, *auth, *comp, *flag;
+   MMNODE *next;
+};
+
+static void PrintMMLine(FILE *fpout, MMNODE *mmp)
+{
+   int i;
+   char ta, tb;
+
+   if (!mmp) return;
+   if (!mmp->rout)
+      mmp->ID = 0;
+   if (mmp->TA == AtlasConjTrans) ta = 'C';
+   else if (mmp->TA == AtlasTrans) ta = 'T';
+   else ta = 'N';
+   if (mmp->TB == AtlasConjTrans) tb = 'C';
+   else if (mmp->TB == AtlasTrans) tb = 'T';
+   else tb = 'N';
+   fprintf(fpout, "ID=%d ROUT='%s' AUTH='%s' TA='%c', TB='%c' \\\n   ", 
+           mmp->ID, mmp->rout? mmp->rout : "generated", mmp->auth, ta, tb);
+@multidef immitems
+SSE X87 BETAN1 AOUTER LDBOT RTM RTN RTK LDAB
+MULADD LAT PREF FFTCH NFTCH IFTCH CLEAN
+KBMIN KBMAX MU NU KU
+@endmultidef
+   i = 0;
+@whiledef immitems
+   i += fprintf(fpout, "@(immitems)=%d ", mmp->@low@(immitems));
+   if (i > 70)
+   {
+      fprintf(fpout, "\\\n   ");
+      i = 0;
+   }
+@endwhile
+@multidef fld ldIsKB kuIsKB
+@whiledef it  LDISKB KUISKB
+   i += fprintf(fpout, "@(it)=%d ", mmp->@(fld));
+   if (i > 70)
+   {
+      fprintf(fpout, "\\\n   ");
+      i = 0;
+   }
+   @undef fld
+@endwhile
+   if (i)
+      fprintf(fpout, "\\\n");
+   if (mmp->asmbits)
+   {
+      for (i=0; !(mmp->asmbits & (1<<i)); i++);
+      fprintf(fpout, "   ASM=%s", ASMNAM[i]);
+      for (i++; i < NASMD; i++)
+         if (mmp->asmbits & (1<<i))
+            fprintf(fpout, ",%s", ASMNAM[i]);
+      fprintf(fpout, " \\\n");
+   }
+   if (mmp->comp)
+      fprintf(fpout, "   COMP='%s' FLAGS='%s' \\\n", mmp->comp, mmp->flag);
+   fprintf(fpout, "   MBB=%d NBB=%d KBB=%d MFLOP=%.2f\n",
+           mmp->mbB, mmp->nbB, mmp->kbB, mmp->mflop);
+}
+
+static void PrintMMNodes(FILE *fpout, MMNODE *bp)
+{
+   while (bp)
+   {
+      PrintMMLine(fpout, bp);
+      bp = bp->next;
+   }
+}
+
+static MMNODE *GetMMNode(void)
+{
+   MMNODE *p;
+   p = calloc(1, sizeof(MMNODE));
+   assert(p);
+   p->TA = AtlasTrans;
+   p->TB = AtlasNoTrans;
+   p->ldbot = 1;
+   p->rtm = p->rtn = 1;
+   return(p);
+}
+
+static char *DupString(char *str)
+{
+   int i,n;
+   char *s;
+
+   n = strlen(str)+1;
+   s = malloc(sizeof(char)*n);
+   assert(s);
+   for (i=0; i <= n; i++)
+      s[i] = str[i];
+   return(s);
+}
+
+static MMNODE *CloneMMNode(MMNODE *dup)
+{
+   MMNODE *p;
+   p = malloc(sizeof(MMNODE));
+   assert(p);
+   memcpy(p, dup, sizeof(MMNODE));
+   if (dup->rout)
+      p->rout = DupString(dup->rout);
+   if (dup->auth)
+      p->auth = DupString(dup->auth);
+   if (dup->comp)
+      p->comp = DupString(dup->comp);
+   if (dup->flag)
+      p->flag = DupString(dup->flag);
+   return(p);
+}
+
+static MMNODE *KillMMNode(MMNODE *die)
+{
+   MMNODE *p=NULL;
+   if (die)
+   {
+      p = die->next;
+      if (die->rout)
+         free(die->rout);
+      if (die->auth)
+         free(die->auth);
+      if (die->comp)
+         free(die->comp);
+      if (die->flag)
+         free(die->flag);
+      free(die);
+   }
+   return(p);
+}
+
+static void KillAllMMNodes(MMNODE *die)
+{
+   while (die)
+      die = KillMMNode(die);
+}
+
+static char *GetSingleQuoteString(char *str)
+{
+   char *sp;
+   int i, n;
+
+   assert(str[0] == '\'');
+   for (i=1; str[i] && str[i] != '\''; i++);
+   assert(str[i]);
+   sp = malloc(i*sizeof(char));
+   for (n=i,i=1; i < n; i++)
+      sp[i-1] = str[i];
+   sp[n-1] = '\0';
+   return(sp);
+}
+
+static int asmNames2bitfield(char *str)
+/*
+ * Takes str containing an assembly name list.  The list is ended by the first
+ * white space or end of string.  List items are seperated by ',', and there
+ * can be no whitespace in list.
+ * RETURNS: bitfield with bits set corresponding to assemblies, 0 on error.
+ */
+{
+   char asmname[64];
+   int i, KeepOn, bits=0;
+
+   do
+   {
+      for (i=0; !iswspace(str[i]) && str[i] != ',' && str[i] && i < 64; i++)
+         asmname[i] = str[i];
+      asmname[i] = '\0';
+      KeepOn = str[i] == ',';
+      str += i+1;
+      if (i >= 64)
+         return(0);  /* no asm name > 63 in length */
+      for (i=0; i < NASMD; i++)
+      {
+         if (!strcmp(ASMNAM[i], asmname))
+         {
+            bits |= (1<<i);
+            break;
+         }
+      }
+   }
+   while(KeepOn);
+   return(bits);
+}
+
+static MMNODE *ParseMMLine(char *ln)
+/*
+ * Given a line from matmul index file (with multiple lines pasted together
+ * into one line (ln), return a structure describing that line.
+ */
+{
+   MMNODE *p;
+   char *sp;
+   char ch;
+
+   p = GetMMNode();
+
+   sp = strstr(ln, "ID=");
+   if (sp)
+      p->ID = atoi(sp+3);
+   else
+     p->ID = 0;
+
+   sp = strstr(ln, "MU=");
+   assert(sp);
+   p->mu = atoi(sp+3);
+
+   sp = strstr(ln, "NU=");
+   assert(sp);
+   p->nu = atoi(sp+3);
+
+   sp = strstr(ln, "KU=");
+   assert(sp);
+   p->ku = atoi(sp+3);
+
+   sp = strstr(ln, "KBMIN=");
+   if (!sp) p->kbmin = p->ku;
+   else p->kbmin = atoi(sp+6);
+
+   sp = strstr(ln, "KBMAX=");
+   if (!sp) p->kbmax = p->kbmin;
+   else p->kbmax = atoi(sp+6);
+
+@multidef it RTM RTN RTK LDAB
+@whiledef it SSE X87 BETAN1 AOUTER LDBOT MULADD LAT PREF FFTCH CLEAN
+   sp = strstr(ln, "@(it)=");
+   if (sp) p->@low@(it) = atoi(sp+@len@(it)+1);
+
+@endwhile
+
+@multidef fld kuIsKB ldIsKB
+@whiledef key KUISKB LDISKB
+   sp = strstr(ln, "@(key)=");
+   if (sp) p->@(fld) = atoi(sp+@len@(key)+1);
+   else p->@(fld) = 1;
+   @undef fld
+@endwhile
+
+   sp = strstr(ln, "ASM=");
+   if (sp)
+      p->asmbits = asmNames2bitfield(sp+4);
+
+   sp = strstr(ln, "TA='");
+   if (sp)
+   {
+      ch = tolower(sp[4]);
+      if (ch == 'n')
+         p->TA = AtlasNoTrans;
+      else if (ch == 'c')
+         p->TA = AtlasConjTrans;
+      else if (ch == 't')
+         p->TA = AtlasTrans;
+      else
+         assert(0);
+   }
+   sp = strstr(ln, "TB='");
+   if (sp)
+   {
+      ch = tolower(sp[4]);
+      if (ch == 'n')
+         p->TA = AtlasNoTrans;
+      else if (ch == 'c')
+         p->TA = AtlasConjTrans;
+      else if (ch == 't')
+         p->TA = AtlasTrans;
+      else
+         assert(0);
+   }
+   sp = strstr(ln, "MFLOP=");
+   if (sp) p->mflop = atof(sp+6);
+
+
+   sp = strstr(ln, "ROUT='");
+   if (sp)
+      p->rout = GetSingleQuoteString(sp+5);
+   else
+      p->rout = NULL;
+
+   sp = strstr(ln, "AUTH='");
+   if (!sp)
+      p->auth = GetSingleQuoteString("'R. Clint Whaley'");
+   else
+      p->auth = GetSingleQuoteString(sp+5);
+
+   sp = strstr(ln, "COMP='");
+   if (sp)
+      p->comp = GetSingleQuoteString(sp+5);
+
+   sp = strstr(ln, "FLAGS='");
+   if (sp)
+      p->flag = GetSingleQuoteString(sp+6);
+
+   sp = strstr(ln, "MBB=");
+   if (sp) p->mbB = atoi(sp+4);
+   sp = strstr(ln, "NBB=");
+   if (sp) p->nbB = atoi(sp+4);
+   sp = strstr(ln, "KBB=");
+   if (sp) p->kbB = atoi(sp+4);
+
+   sp = strstr(ln, "NFTCH=");
+   if (sp) p->nftch = atoi(sp+6);
+   else p->nftch = 2;
+   sp = strstr(ln, "IFTCH=");
+   if (sp) p->iftch = atoi(sp+6);
+   else p->iftch = p->mu + p->nu;
+
+   return(p);
+}
+
+static char *GetLongerString(char *shrt, int newlen)
+/*
+ * Allocates new string of size newlen, copies shrt into it, and frees shrt.
+ */
+{
+   char *sp;
+
+   sp = malloc(sizeof(char)*newlen);
+   assert(sp);
+   if (shrt)
+   {
+      strcpy(sp, shrt);
+      free(shrt);
+   }
+   else if (newlen >= 0)
+      sp[0] = '\0';
+   return(sp);
+}
+
+static char *GetOneLine(FILE *fpin)
+/*
+ * RETURNS: string of one line from stream fpin,  NULL if stream exhausted.
+ */
+{
+   const int inc=256;
+   static int len=0;
+   static char *ln, *sp;
+   int i, j, KeepOn;
+
+   if (!len)
+   {
+      ln = malloc(inc*sizeof(char));
+      assert(ln);
+      len = inc;
+   }
+   if (!fgets(ln, len, fpin))
+      return(NULL);
+   
+   for (i=0; ln[i]; i++);  /* find end of string */
+   if (!i) return(ln);
+   while (ln[i-1] != '\n')    /* if last char not \n, read rest of line */
+   {
+      len += inc;
+      ln = GetLongerString(ln, len);
+      if (!fgets(ln+i, inc, fpin));
+         return(ln);
+      for (; ln[i]; i++);  /* find end of string */
+   }
+   return(ln);
+}
+
+static char *GetJoinedLines(FILE *fpin)
+/*
+ * Gets lines from file fpin; if last non-whitespace char is '\', joins lines
+ * RETURNS: line from file including joining, NULL if fpin exhausted 
+ */
+{
+   char *ln, *sp;
+   static char *join=NULL;
+   static int jlen=0;
+   int i, j, k;
+
+   sp = ln = GetOneLine(fpin);
+   if (!sp)
+      return(NULL);
+   j = 0;   /* current length of join string */
+   if (ln)
+   {
+      for (i=0; ln[i]; i++);  /* find end of string */
+      if (!i) return(NULL);
+      for (i--; isspace(ln[i]) && i > 0; i--);  /* find last non-wspace char */
+      while (ln[i] == '\\')
+      {
+         if (jlen < j+i+2)
+         {
+            jlen = j+i+i+2;
+            join = GetLongerString(join, jlen);
+         }
+         for (k=0; k < i; k++)
+            join[j+k] = ln[k];
+         j += k;
+         join[j++] = ' ';
+         join[j] = '\0';
+         ln = GetOneLine(fpin);   /* get new line that should be joined */
+         assert(ln);              /* can't end file with continue */
+         for (i=0; ln[i]; i++);   /* find end of new line */
+         for (i--; isspace(ln[i]) && i > 0; i--); /* find last non-wspc char */
+         sp = join;
+      }
+      if (sp == join)
+      {
+         if (jlen < j+i+2)
+         {
+            jlen = j+i+i+2;
+            join = GetLongerString(join, jlen);
+         }
+         for (k=0; k <= i; k++)
+            join[j+k] = ln[k];
+         j += k;
+         join[j] = '\n';
+         join[j+1] = '\0';
+         sp = join;
+      }
+   }
+   return(sp);
+}
+
+static void WriteMMFile(char *file, MMNODE *mmq)
+{
+   FILE *fpout;
+
+   if (!strcmp(file, "stdout"))
+      fpout = stdout;
+   else if (!strcmp(file, "stderr"))
+      fpout = stderr;
+   else
+      fpout = fopen(file, "w");
+   assert(fpout);
+   PrintMMNodes(fpout, mmq);
+   fclose(fpout);
+}
+
+static MMNODE *ReadMMFile(char *file)
+/*
+ * Reads in ATLAS variable NB index file, and returns a list of all the
+ * kernels defined there.
+ */
+{
+   MMNODE *mmq=NULL, *p;
+   FILE *fpin;
+   char *ln, *sp;
+   int i, j, KeepOn, len;
+
+   if (!strcmp(file, "stdin"))
+      fpin = stderr;
+   else 
+      fpin = fopen(file, "r");
+   if (!fpin)
+      return(NULL);
+   mmq = p = GetMMNode();
+   while (ln = GetJoinedLines(fpin))
+   {
+      if (ln[0] != '#')
+      {
+         p->next = ParseMMLine(ln);
+         p = p->next;
+      }
+   }
+   fclose(fpin);
+   return(KillMMNode(mmq));
+}
+
+static MMNODE *delBadArchKernels(MMNODE *bp)
+/*
+ * Weeds out kernels that require SSE/assembly that we haven't got or that
+ */
+{
+   int asmb=0, die;
+   MMNODE *p, *prev;
+@multidef sh          1         2        3        4          5        6
+@whiledef asm GAS_x8632 GAS_x8664 GAS_SPARC GAS_PPC GAS_PARISC GAS_MIPS
+   #ifdef ATL_@(asm)
+      asmb |= (1<<@(sh));
+   #endif
+   @undef sh
+@endwhile
+
+   prev = p = bp;
+   while (p)
+   {
+      die = (p->asmbits) ? !(asmb & p->asmbits) : 0;
+      #ifndef ATL_SSE3
+         if (p->sse)
+         {
+            die |= (p->sse >= 3);
+            #ifndef ATL_SSE2
+               die |= (p->sse >= 2);
+            #endif
+            #ifndef ATL_SSE1
+               die |= (p->sse >= 1);
+            #endif
+         }
+      #endif
+      if (die) 
+      {
+         if (p == bp) 
+            bp = p = KillMMNode(p);
+         else 
+            prev->next = p = KillMMNode(p);
+      }
+      else
+      {
+         prev = p;
+         p = p->next;
+      }
+   }
+   return(bp);
+}
+MMNODE *NukeSlowCases(MMNODE *bp)
+/*
+ * Delete nodes that aren't within 5% of prior KB in performance.
+ */
+{
+   MMNODE *prev, *p;
+
+   if (!bp) 
+      return(NULL);
+   prev = bp;
+   p = bp->next;
+   while (p)
+   {
+       if (p->mflop*1.05 < prev->mflop)
+          p = prev->next = KillMMNode(p);
+       else
+       {
+          prev = p;
+          p = p->next;
+       }
+   }
+   return(bp);
+}
+
+@ROUT emit_vKB
+@extract -b @(topd)/gen.inc what=cw @(cw08)
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#include <assert.h>
+@ROUT vnbmmsearch emit_vKB
+#include "atlas_vnbcase.h"
+#include "atlas_fopen.h"
+#define Mmax(x_,y_) ((x_) >= (y_)) ? (x_) : (y_)
+#define Mmin(x_,y_) ((x_) <= (y_)) ? (x_) : (y_)
+
+int *getInitKBList(int L1Size)
+{
+   int *NBs;
+   int i, j, n;
+   for (i=16; i*i <= L1Size; i += 4);
+   j = 3*(i-4);  /* max KB is 4 times max NB size */
+   n = ((j+4)>>2);
+   NBs = malloc(n*sizeof(int));
+   for (i=0; 4*(i+1) <= j; i++)
+       NBs[i] = (i+1)*4;
+   NBs[i] = 0;
+@beginskip
+   NBs = malloc(29*sizeof(int));
+   assert(NBs);
+   NBs[0] = 4; NBs[1] = 8; NBs[2] = 12; NBs[3] = 16; NBs[4] = 24; 
+   NBs[5] = 28; NBs[6] = 32; NBs[7] = 36; NBs[8] = 40; NBs[9] = 44; 
+   NBs[10] = 48; NBs[11] = 52;  NBs[12] = 56; NBs[13] = 60; NBs[14] = 64; 
+   NBs[15] = 72; NBs[16] = 80; NBs[17] = 88; NBs[18] = 96; NBs[19] = 112; 
+   NBs[20] = 128; NBs[21] = 144; NBs[22] = 160; NBs[23] = 180;  NBs[24] = 200;
+   NBs[25] = 220; NBs[26] = 240; NBs[27] = 260; NBs[28] = 0;
+@endskip
+
+   return(NBs);
+}
+
+#if defined(PentiumCPS) && !defined(WALL)
+   #define WALL
+#endif
+double GetResFromFile(char *fnam)
+{
+   double mflop=0.0, mflops[3];
+   FILE *fpin;
+   int i, j;
+   char ln[1024];
+
+   fpin = fopen(fnam, "r");
+   if (!fpin)
+   {
+      fprintf(stderr, "\nUnable to open file '%s' for reading!\n\n", fnam);
+      return(-2.0);
+      exit(-1);
+   }
+   assert(fpin);
+   for (i=0; i < 3; i++)
+   {
+      if (fscanf(fpin, " %lf", mflops+i) != 1)
+      {
+         fprintf(stderr, "\nError reading file %s\n\n", fnam);
+         sprintf(ln, "rm %s", fnam);
+         system(ln);
+         return(-2.0);
+      }
+      #ifdef WALL
+         if (mflops[i] > mflop) mflop = mflops[i];
+      #else
+         for (j=0; j < i; j++)
+         {
+            if (mflop[i] < mflops[j])
+            {
+               mflop = mflops[i];
+               mflops[i] = mflops[j];
+               mflops[j] = mflop;
+            }
+         }
+      #endif
+   }
+   fclose(fpin);
+   #if defined(WALL)
+      return(mflop);
+   #else
+      return(mflops[1]);
+   #endif
+   return(mflop);
+}
+
+double gmmcase0(int RETIME, char pre, int muladd, 
+                int mb, int nb, int kb, int mu, int nu,
+                int ku, int pfA, int lat, int JIK, 
+                int rtM,     /* M is a run-time variable */
+                int rtN,     /* N is a run-time variable */
+                int rtK,     /* K is a run-time variable */
+                int clean,   /* generate all cleanup cases */
+                int beta)
+{
+   char fnam[128], ln[2048];
+   const char *LO = JIK ? "JIK": "IJK";
+   const int ldc=0;  /* fc.c will set to MB for timing */
+   char *be;
+
+   if (beta == 0)
+      be = "b0";
+   else if (beta == 1)
+      be = "b1";
+   else if (beta == -1)
+      be = "bn1";
+   else 
+      be = "bX";
+/*   dvmmJIKTNMBxNBxKB_muxnuxku_ldc_rtMxrtNxrtK_pfA_CleanUp_a1_bX */
+   sprintf(fnam, "res/%cvmm%s%c%c%dx%dx%d_%dx%dx%d_%dx%dx%dx%d_%d_%d_a1_%s",
+           pre, LO, 'T', 'N', mb, nb, kb, mu, nu, ku, ldc, rtM, rtN, rtK, pfA, 
+           clean, be);
+   if (!FileExists(fnam) || RETIME)
+   {
+      if (pre == 's' || pre == 'd')
+         sprintf(ln, "make mmcase pre=%c loopO=%s ta=%c tb=%c mb=%d nb=%d kb=%d M=%d N=%d K=%d lda=%d ldb=%d ldc=%d mu=%d nu=%d ku=%d alpha=%d beta=%d muladd=%d lat=%d cleanup=%d pfA=%d casnam=\"%s\" moves=\"-DMoveC -DMoveA\"\n",
+                 pre, LO, 'T', 'N', rtM?0:mb, rtN?0:nb, rtK?0:kb, mb, nb, kb,
+                 kb, kb, ldc, mu, nu, ku, 1, beta, muladd, lat, clean, pfA,
+                 fnam);
+      fprintf(stdout, "%s", ln);
+      if (system(ln));
+         return(-2.0);
+   }
+   return(GetResFromFile(fnam));
+}
+
+double gmmcase(int RETIME, char pre, int mb, int nb, int kb, int beta, 
+               MMNODE *umm)
+{
+      
+   return(gmmcase0(RETIME, pre, umm->muladd, mb, nb, kb, umm->mu, umm->nu, 
+                   umm->kuIsKB ? kb : umm->ku, umm->pref, umm->lat, 
+                   !umm->aouter, umm->rtm, umm->rtn, umm->rtk,
+                   umm->clean, beta));
+}
+
+double ummcase(int RETIME, char pre, int mb, int nb, int kb, int beta, 
+               MMNODE *umm)
+{
+   char fnam[128], ln[2048];
+   const char *LO = umm->aouter ? "IJK": "JIK";
+   const int ldc=mb;  /* presently required by fc.c to do MoveC */
+   char *be;
+   int i, j;
+   char ch;
+
+   if (beta == 0)
+      be = "b0";
+   else if (beta == 1)
+      be = "b1";
+   else if (beta == -1)
+      be = "bn1";
+   else 
+      be = "bX";
+/*   dvmm%d_TNMBxNBxKB_muxnuxku_ldc_rtMxrtNxrtK_a1_bX */
+   sprintf(fnam, "res/%cvmm%d_%c%c%dx%dx%d_%dx%dx%d_%d_%dx%dx%d_a1_%s",
+           pre, umm->ID, 'T', 'N', mb, nb, kb, umm->mu, umm->nu, umm->ku, ldc, 
+           umm->rtm, umm->rtn, umm->rtk, be);
+   if (RETIME || !FileExists(fnam))
+   {
+      if (pre == 'c' || pre == 'z')
+         i = sprintf(ln, "make cmmucase mmrout=CASES/%s csC=2 ", umm->rout);
+      else i = sprintf(ln, "make mmucase mmrout=CASES/%s ", umm->rout);
+      if (umm->comp)
+      {
+         ch = (pre == 'c' || pre == 's') ? 'S' : 'D';
+         i += sprintf(ln+i, "%cMC=\"%s\" %cMCFLAGS=\"%s\" ",
+                      ch, umm->comp, ch, umm->flag);
+      }
+      i += sprintf(ln+i, "moves=\"-DMoveA -DMoveC\" ");
+      i += sprintf(ln+i, "casnam=%s ", fnam);
+      i += sprintf(ln+i, "pre=%c M=%d N=%d K=%d mb=%d nb=%d kb=%d ",
+                   pre, mb, nb, kb, 
+                   umm->rtm?0:mb, umm->rtn?0:nb, umm->rtk?0:kb);
+      i += sprintf(ln+i, "mu=%d nu=%d ku=%d lda=%d ldb=%d ldc=%d\n",
+                   umm->mu, umm->nu, umm->ku, kb, kb, ldc);
+      fprintf(stdout, "%s", ln);
+      if (system(ln))
+         return(-2.0);
+   }
+   return(GetResFromFile(fnam));
+}
+
+double mmcase(int RETIME, char pre, int mb, int nb, int kb, int beta, 
+              MMNODE *umm)
+{
+/*
+   fprintf(stdout, "\n\nTIMING: ID=%d, rout='%s'\n", umm->ID, 
+           umm->rout?umm->rout : "generated code");
+*/
+   if (umm->rout && umm->ID)
+      return(ummcase(RETIME, pre, mb, nb, kb, beta, umm));
+   else
+      return(gmmcase(RETIME, pre, mb, nb, kb, beta, umm));
+}
+
+int gmmtstcaseFail(char pre, int mb, int nb, int kb, int beta, MMNODE *umm)
+{
+   char ln[1024];
+   int i, lda, ldb, ldc, pref;
+   char ch;
+
+   ldc = mb*2+4;
+   if (umm->ldIsKB)
+      lda = ldb = kb;
+   else if (umm->ldab)
+      lda = ldb = kb+8;
+   else
+   {
+      lda = kb+4;
+      ldb = kb+8;
+   }
+   pref = umm->pref;
+   if (umm->ldbot)
+      pref |= 512;
+
+   i = sprintf(ln, "make mmtstcase pre=%c muladd=%d lat=%d M=%d N=%d K=%d ",
+               pre, umm->muladd, umm->lat, mb, nb, kb);
+   i += sprintf(ln, "mb=%d nb=%d kb=%d lda=%d ldb=%d ldc=%d", 
+                umm->rtm?0:mb, umm->rtn?0:nb, umm->rtk?0:kb, lda, ldb, ldc);
+   i += sprintf(ln, "pref=%d ff=%d nf=%d if=%d", 
+                pref, umm->fftch, umm->nftch, umm->iftch);
+   if (umm->comp)
+   {
+      ch = (pre == 'c' || pre == 's') ? 'S' : 'D';
+      i += sprintf(ln+i, "%cMC=\"%s\" %cMCFLAGS=\"%s\" ",
+                   ch, umm->comp, ch, umm->flag);
+   }
+   i += sprintf(ln+i, "lda=%d ldb=%d ldc=%d\n", lda, ldb, ldc);
+   return(system(ln));
+}
+
+int ummtstcaseFail(char pre, int mb, int nb, int kb, int beta, MMNODE *umm)
+/*
+ * RETURNS: 0 on success, non-zero on failure
+ */
+{
+   char ln[1024];
+   int i, lda, ldb, ldc;
+   char ch;
+
+   ldc = mb*2+4;
+   if (umm->ldIsKB)
+      lda = ldb = kb;
+   else if (umm->ldab)
+      lda = ldb = kb+8;
+   else
+   {
+      lda = kb+4;
+      ldb = kb+8;
+   }
+   if (pre == 'c' || pre == 'z')
+      i = sprintf(ln, "make cmmutstcase mmrout=CASES/%s csC=2 ", umm->rout);
+   else
+      i = sprintf(ln, "make mmutstcase mmrout=CASES/%s ", umm->rout);
+   if (umm->comp)
+   {
+      ch = (pre == 'c' || pre == 's') ? 'S' : 'D';
+      i += sprintf(ln+i, "%cMC=\"%s\" %cMCFLAGS=\"%s\" ",
+                   ch, umm->comp, ch, umm->flag);
+   }
+   i += sprintf(ln+i, "pre=%c M=%d N=%d K=%d mb=%d nb=%d kb=%d ",
+                pre, mb, nb, kb, umm->rtm?0:mb, umm->rtn?0:nb, umm->rtk?0:kb);
+   i += sprintf(ln+i, "lda=%d ldb=%d ldc=%d\n", lda, ldb, ldc);
+   fprintf(stdout, "%s", ln);
+   return(system(ln));
+}
+
+int mmtstcaseFail(char pre, int mb, int nb, int kb, int beta, MMNODE *umm)
+{
+
+   if (umm->rout && umm->ID)
+      return(ummtstcaseFail(pre, mb, nb, kb, beta, umm));
+   else
+      return(gmmtstcaseFail(pre, mb, nb, kb, beta, umm));
+}
+
+static MMNODE *delFailingArchKernels(char pre, MMNODE *bp)
+/*
+ * Weeds out kernels that don't pass simple test
+ */
+{
+   int die, M, N, K;
+   MMNODE *p, *prev;
+
+   prev = p = bp;
+   while (p)
+   {
+      M = 3*p->mu;
+      N = 5*p->nu;
+      K = (p->kbmax < 128) ? p->kbmax : (128/p->ku)*p->ku;
+      die = mmtstcaseFail(pre, M, N, K, 1, p);
+      if (!die)
+         die = mmtstcaseFail(pre, M, N, K, 0, p);
+      if (!die)
+         die = mmtstcaseFail(pre, M, N, K, 2, p);
+      if (!die && p->betan1)
+         die = mmtstcaseFail(pre, M, N, K, -1, p);
+      if (die) 
+      {
+         fprintf(stderr, "Weeding out bad kernel %d,'%s'!\n", p->ID,
+                 p->rout ? p->rout : "No name for kernel");
+         if (p == bp) 
+            bp = p = KillMMNode(p);
+         else 
+            prev->next = p = KillMMNode(p);
+      }
+      else
+      {
+         prev = p;
+         p = p->next;
+      }
+   }
+   return(bp);
+}
+
+@ROUT vnbmmsearch
+int GetGoodNBs(int L1elts, int kb, MMNODE *mm, int *blocking)
+/*
+ * Given kb and # of elts in cache we block for, compute the blocking for
+ * mb and nb in two ways: 
+ * (1) Keep 4 blks of rank-K update in cache, so outer blk reused
+ *    L1elts >= 2*mb*nb + 2*mb*kb + kb*nb, assume mb=nb for:
+ *    L1elts >= 2*nb*nb + 3*nb*kb -> 
+ * (2) Keeping only the inner matrix in cache:
+ *     If (JIK) : L1elts >= mb*kb + 2*(mu*nu + nu*kb)
+ *     else     : L1elts >= nb*kb + 2*(mu*nu + mu*kb)
+ */
+{
+   int i, mb, nb, mu, nu;
+
+   mu = mm->mu;  nu = mm->nu;
+   for (i=4; 2*i*i+3*kb*i <= L1elts; i += 4);
+   i -= 4;
+   blocking[0] = (i > mu) ? (i/mu)*mu : mu;
+   blocking[1] = (i > nu) ? (i/nu)*nu : nu;
+   if (!mm->aouter) /* try containing all of A in cache */
+   {
+      mb = (L1elts - ((mu*nu + nu*kb)<<1)) / kb;
+      nb = Mmax(mb,kb);
+   }
+   else /* try containing all of B in cache */
+   {
+      nb = (L1elts - ((mu*nu + mu*kb)<<1)) / kb;
+      mb = Mmax(nb,kb);
+   }
+   blocking[2] = (mb > mu) ? (mb/mu)*mu : mu;
+   blocking[3] = (nb > nu) ? (nb/nu)*nu : nu;
+   return(2);
+}
+
+MMNODE *FindGoodRoutForKB(char pre, MMNODE *mmq, int KB, int L1elts)
+/*
+ * Given a list of nodes, find best performer for KB=kb, assuming there are
+ * L1elts elements in the cache we are blocking for
+ */
+{
+   MMNODE *mmp, *mmbest=NULL;
+   int kb, i, mbB, nbB, kbB, n;
+   const int beta=1;
+   int blockings[8];
+   double mf, mfB=0.0;
+
+   for (mmp=mmq; mmp; mmp = mmp->next)
+   {
+      if (mmp->kbmin > KB || (mmp->kbmax && mmp->kbmax < KB))
+         continue;   /* skip cases that can't handle this KB at all */
+      kb = ((KB+mmp->ku-1)/mmp->ku)*mmp->ku;
+      i = KB >> 2;       /* 25% of KB */
+      i = Mmin(i, 16);   /* max dist from KB that is tolerated */
+      if (kb-KB >= i) 
+         continue;       /* Don't use if kernel's KB is not close to target */
+
+      n = GetGoodNBs(L1elts, kb, mmp, blockings);
+      for (i=0; i < n; i++)
+      {
+         mf = mmcase(0, pre, blockings[2*i], blockings[2*i+1], kb, beta, mmp);
+         if (mf > mfB)
+         {
+            mfB = mf;
+            mmbest = mmp;
+            mbB = blockings[2*i];
+            nbB = blockings[2*i+1];
+            kbB = kb;
+         }
+      }
+   }
+   assert(mmbest);
+   mmbest = CloneMMNode(mmbest);
+   mmbest->mflop = mfB;
+   mmbest->mbB = mbB;
+   mmbest->nbB = nbB;
+   mmbest->kbB = kbB;
+   return(mmbest);
+}
+
+int TimeKernels(int pre, MMNODE *mmq)
+/*
+ * RETURNS: 0 if no changes made, 1 if changes made
+ */
+{
+   MMNODE *mmp;
+   int CHANGE = 0;
+
+   for (mmp=mmq; mmp; mmp = mmp->next)
+   {
+      if (mmp->mflop <= 0)
+      {
+         mmp->mflop = mmcase(0, pre, mmp->mbB, mmp->nbB, mmp->kbB, 1.0, mmp);
+         assert(mmp->mflop > 0.0);
+         CHANGE = 1;
+      }
+   }
+   return(CHANGE);
+}
+
+void PrintUsage(char *exe, int ierr, char *arg)
+{
+   fprintf(stderr, "ERROR in arg %d ('%s')!\n", ierr, arg?arg:"");
+   fprintf(stderr, "USAGE: -C <cache size in bytes> -p <pre>\n");
+   exit(ierr?ierr:-1);
+}
+
+void GetFlags(int nargs, char **args, char *pre, int *L1Elts)
+{
+    int i;
+    FILE *fp;
+
+   *L1Elts = 0;
+   *pre = 'd';
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+      switch(args[i][1])
+      {
+      case 'p':
+         *pre = args[++i][0];
+         break;
+      case 'C':
+         *L1Elts = atoi(args[++i]);
+         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   if (*L1Elts == 0)
+   {
+      fp = fopen("res/L1CacheSize", "r");
+      if (!fp)
+      {
+         system("make res/L1CacheSize");
+         fp = fopen("res/L1CacheSize", "r");
+      }
+      assert(fp);
+      assert(fscanf(fp, "%d", L1Elts) == 1);
+      *L1Elts *= 1024;
+      fclose(fp);
+   }
+   switch (*pre)
+   {
+   case 'd':
+   case 'z':
+   	*L1Elts /= sizeof(double);
+        break;
+   case 's':
+   case 'c':
+   	*L1Elts /= sizeof(float);
+        break;
+   default:
+      fprintf(stderr, "Unknown prefix '%c'!\n", *pre);
+      exit(-2);
+   }
+}
+
+main(int nargs, char **args)
+{
+   char ln[128];
+   double mfB=0;
+   MMNODE *mmq, *mm, *mmK, *mmB;
+   int *KBs;
+   int i, L1Elts;
+   char pre;
+
+   GetFlags(nargs, args, &pre, &L1Elts);
+   sprintf(ln, "res/%cvMMRES", pre);
+   mmq = ReadMMFile(ln);
+   if (mmq)  /* <pre>vMMRES already exists, make sure timings valid and quit */
+   {
+      if (TimeKernels(pre, mmq))
+         WriteMMFile(ln, mmq);
+      exit(0);
+   }
+   sprintf(ln, "%ccases.vnb", pre);
+   mmq = ReadMMFile(ln);
+   assert(mmq);
+   printf("\nUnwinnowed kernels:\n");
+   PrintMMNodes(stdout, mmq);
+/*
+ * Delete any kernels that have flags indicating they won't work, or that
+ * will not pass the kernel test for this architecture
+ */
+   mmq = delBadArchKernels(mmq);
+   mmq = delFailingArchKernels(pre, mmq);
+/*
+ * Add in generated case
+ */
+   mm = mmq;
+   sprintf(ln, "res/%cvgMMRES", pre);
+   mmq = ReadMMFile(ln);
+   assert(mmq && !mmq->next);
+   mmq->next = mm;
+
+   printf("\nWinnowed kernels:\n");
+   PrintMMNodes(stdout, mmq);
+/*
+ * Find the best performing routine for each blocking factor
+ */
+   KBs = getInitKBList(L1Elts);
+   mm = mmK = GetMMNode();
+   for (i=0; KBs[i]; i++)
+   {
+      mm->next = FindGoodRoutForKB(pre, mmq, KBs[i], L1Elts);
+      mm = mm->next;
+      fprintf(stdout, "\nBEST %d is %s: mb=%d, nb=%d, kb=%d, mflop=%.2f\n",
+              KBs[i], mm->rout ? mm->rout : "generated", 
+              mm->mbB, mm->nbB, mm->kbB, mm->mflop);
+      if (mm->mflop > mfB)
+      {
+         mmB = mm;
+         mfB = mm->mflop;
+      }
+   }
+   mm->next = NULL;
+   mmK = KillMMNode(mmK);
+   KillAllMMNodes(mmq);   /* we've got best performers, so kill initial list */
+   fprintf(stdout, 
+      "\n\nBEST '%c' performer is '%s' with %.2fMFLOP (mb=%d, nb=%d, kb=%d)\n",
+           pre, mmB->rout ? mmB->rout : "generated", mmB->mflop,
+           mmB->mbB, mmB->nbB, mmB->kbB);
+   mmK = NukeSlowCases(mmK);  /* get rid of slow cases */
+   sprintf(ln, "res/%cvMMRES", pre);
+   WriteMMFile(ln, mmK);
+   exit(0);
+}
+@ROUT dcases.vnb scases.vnb
+#
+# In this file, any line beginning with a '#' is ignored, but the # must be in
+# column 0.  All multiple whitespace is reduced to one space (i.e. used only
+# to distinguish where words begin/end).  Lines may be extended by putting '\' 
+# as the *last* character of line.  
+#
+# The file has the following format:
+# ROUT='routine name' AUTH='author names' COMP='compiler name' FLAGS='flags'
+# ID=<id> MU=<mu> NU=<nu> KU=<ku> KBMIN=<#> KBMAX=<#> BETAN1=[0,1]
+# TA='[t,n,c]' TB='[t,n,c]' SSE=[0,1,2,3], 
+# MFLOP=<#> mbB=<#> nbB=<#> kbB=<#>, AOUTER=[0,1]
+# X87=[0,1] LDBOT=[0,1], RTKU=[0,1], RTMN=[0,1] ldKB=[0,1], ldab=[0,1]
+# ASM=[asmlist], eg., asmlist is "GAS_x8664,GAS_x8632" or "GAS_SPARC"
+# ASM defaults to no assembly dialect required.
+#
+# All routines are assumed to handle any runtime value of M (N) that is a
+# multiple of MU (NU).  Routines are assumed to require K to be fixed using
+# the KB cpp macro, and can take any
+# Some of the less obvious keywords:
+# LDBOT: set to 1 if you add C to A*B only after doing product (less error).
+# RTKU : KU is a runtime, rather than compile time constraint
+# RTMN : MU & NU are runtime not compile-time constrants
+# ldKB : lda = ldb = KB assumed by kernel
+# ldab : if set, lda must equal ldb, but they need not be equal to KB
+# AOUTER: M is not/is outer loop of kernel
+# BETAN1: kernel does not/does have special case for BETA=-1
+#
+# For most [0,1] choices, 0 means 'No', or 'False', 1 means opposite.
+# 
+# ID, ROUT, AUTH, MU, NU, KU, are mandatory, and if COMP is given, so is FLAGS.
+# Defaults: TA='t', TB='n', SSE=0, X87=0, LDBOT=1, RTKU=0, AOUTER=0,
+#           KBMAX=KU, KBMIN=KU, BETAN1=0, RTMN=1
+#
+@ROUT scases.vnb
+ID=1  ROUT='ATL_smm4x4x128_av.c' AUTH='R. Clint Whaley' MU=4 NU=4 KU=4 \
+      LDKB=1 LDBOT=1 KBMIN=4 KBMAX=128 ASM=GAS_PPC \
+      COMP='gcc' FLAGS='-x assembler-with-cpp'
+ID=2  ROUT='ATL_smm4x4x16_av.c' AUTH='R. Clint Whaley' MU=4 NU=4 KU=16 \
+      LDKB=1 LDBOT=0 KBMIN=16 KBMAX=2048 ASM=GAS_SPARC \
+      COMP='gcc' FLAGS='-x assembler-with-cpp'
+ID=10 ROUT='ATL_smm4x4x16_US.c' AUTH='R. Clint Whaley' MU=4 NU=4 KU=16 \
+      LDKB=1 LDBOT=0 KBMIN=16 KBMAX=2048 ASM=GAS_SPARC \
+      COMP='gcc' FLAGS='-x assembler-with-cpp'
+ID=11 ROUT='ATL_smm4x4x2_US.c' AUTH='R. Clint Whaley' MU=4 NU=4 KU=2 \
+      LDKB=1 LDBOT=0 KBMIN=2 KBMAX=2048 ASM=GAS_SPARC \
+      COMP='gcc' FLAGS='-x assembler-with-cpp'
+ID=12 ROUT='ATL_smm4x4x72_US.c' AUTH='R. Clint Whaley' MU=4 NU=4 KU=72 \
+      LDKB=1 LDBOT=0 KBMIN=72 KBMAX=72 ASM=GAS_SPARC \
+      COMP='gcc' FLAGS='-x assembler-with-cpp'
+ID=20 ROUT='ATL_smm4x4xURx_mips.c' AUTH='R. Clint Whaley' MU=4 NU=4 KU=1 \
+      LDKB=0 LDBOT=0 KBMIN=1 KBMAX=2048 ASM=GAS_MIPS \
+      COMP='gcc' FLAGS='-x assembler-with-cpp'
+ID=50 ROUT='ATL_smm10x1x120_sse.c' AUTH='R. Clint Whaley' MU=10 NU=1 KU=4 \
+      LDKB=1 LDBOT=1 KBMIN=4 KBMAX=128 SSE=3 ASM=GAS_x8664 \
+      COMP='gcc' FLAGS='-x assembler-with-cpp -m64'
+#  This routine presently has restrictino that MB <= 84
+#ID=51 ROUT='ATL_smm14x1x84_sseCU.c' AUTH='R. Clint Whaley' MU=14 NU=1 KU=4 \
+#      LDKB=1 LDBOT=0 SSE=1 ASM=GAS_x8664 \
+#      COMP='gcc' FLAGS='-m64 -x assembler-with-cpp'
+ID=52 ROUT='ATL_smm4x1x60_4_sse2.c' AUTH='R. Clint Whaley' MU=4 NU=1 KU=60 \
+      LDKB=1 LDBOT=0 KBMIN=60 KBMAX=60 SSE=2 ASM=GAS_x8632 \
+      COMP='gcc' FLAGS='-x assembler-with-cpp'
+ID=53 ROUT='ATL_smm6x1x120_sse.c' AUTH='R. Clint Whaley' MU=6 NU=1 KU=120 \
+      LDKB=1 LDBOT=0 KBMIN=120 KBMAX=120 SSE=1 ASM=GAS_x8664,GAS_x8632 \
+      COMP='gcc' FLAGS='-x assembler-with-cpp'
+ID=54 ROUT='ATL_smm6x1x80_sse.c' AUTH='R. Clint Whaley' MU=6 NU=1 KU=4 \
+      LDKB=1 LDBOT=0 KBMIN=4 KBMAX=80 SSE=1 ASM=GAS_x8664,GAS_x8632 \
+      COMP='gcc' FLAGS='-x assembler-with-cpp'
+@ROUT dcases.vnb
+ID=1  ROUT='ATL_dmm6x1x72_sse2.c' AUTH='R. Clint Whaley' MU=6 NU=1 KU=2 \
+      LDKB=1 LDBOT=0 KBMIN=2 KBMAX=80 SSE=2 ASM=GAS_x8664,GAS_x8632 \
+      COMP='gcc' FLAGS='-x assembler-with-cpp'
+ID=2  ROUT='ATL_dmm6x1x60_sse2_32.c' AUTH='R. Clint Whaley' \
+      MU=6 NU=1 KU=60 LDKB=1 LDBOT=0 SSE=2 ASM=GAS_x8664 \
+      COMP='gcc' FLAGS='-m64 -x assembler-with-cpp'
+# This routine actually has restriction MB <= 14 at moment
+#ID=3  ROUT='ATL_dmm14x1x56_sse2pABC_MN.c' AUTH='R. Clint Whaley' \
+#      MU=14 NU=1 KU=56 KLDKB=1 BMAX=56 LDBOT=0 SSE=2 ASM=GAS_x8664 \
+#      COMP='gcc' FLAGS='-m64 -x assembler-with-cpp'
+ID=4  ROUT='ATL_dmm1x14x56_sse2pABC.c' AUTH='R. Clint Whaley' \
+      MU=1 NU=14 KU=56 LDKB=1 LDBOT=0 SSE=2 ASM=GAS_x8664 \
+      COMP='gcc' FLAGS='-m64 -x assembler-with-cpp'
+ID=5  ROUT='ATL_dmm4x1x44_4_sse2.c' AUTH='R. Clint Whaley' \
+      MU=4 NU=1, KU=44 SSE=2 ASM=GAS_x8632 \
+      COMP='gcc' FLAGS='-m32 -x assembler-with-cpp'
+ID=6  ROUT='ATL_dmm4x1x90_x87.c' AUTH='R. Clint Whaley' \
+      MU=4 NU=1 KU=1 KBMAX=90 X87=1 ASM=GAS_x8664,GAS_x8632 \
+      COMP='gcc' FLAGS='-x assembler-with-cpp'
+ID=7  ROUT='ATL_dmm8x1x120_sse2.c' AUTH='R. Clint Whaley' \
+      MU=8 NU=1 KU=1 KBMAX=512 ASM=GAS_x8664 BETAN1=1 \
+      COMP='gcc' FLAGS='-m64 -x assembler-with-cpp'
+ID=70 ROUT='ATL_dmm4x4x80_ppc.c' AUTH='R. Clint Whaley' TA='T', TB='N' \
+      MU=4 NU=4 KU=1 KBMIN=1 KBMAX=80 ASM=GAS_PPC BETAN1=0 LDBOT=0 \
+      LDAB=0 LDISKB=1 RTN=1 RTM=1 RTK=0 \
+      COMP='gcc' FLAGS='-x assembler-with-cpp'
+ID=80 ROUT='ATL_dmm4x4x16r8_US.c' AUTH='R. Clint Whaley' TA='T', TB='N' \
+      MU=4 NU=4 KU=24 KBMIN=24 KBMAX=512 ASM=GAS_SPARC BETAN1=0 \
+      LDAB=0 RTK=1 RTN=1 RTM=1 LDBOT=0 LDISKB=1 LDAB=1 \
+      COMP='gcc' FLAGS='-mcpu=ultrasparc -x assembler-with-cpp' 
+ID=81 ROUT='ATL_dmm4x4x2_US.c' AUTH='R. Clint Whaley' TA='T', TB='N' \
+      MU=4 NU=4 KU=2 KBMIN=2 KBMAX=512 ASM=GAS_SPARC BETAN1=0 \
+      LDAB=0 RTK=1 RTN=1 RTM=1 LDBOT=0 LDISKB=1 \
+      COMP='gcc' FLAGS='-mcpu=ultrasparc -x assembler-with-cpp' 
+ID=90 ROUT='ATL_mm8x8x2.c' AUTH='R. Clint Whaley' TA='T', TB='N' \
+      KU=2 NU=8 MU=8 KBMAX=512 KBMIN=1 LDAB=0 RTK=1 RTN=1 RTM=1 LDBOT=0 
+#
+#     RCW: just included the x86 files.  Add other later.
+#
+@ROUT ATL_getKClean
+int ATL_getKClean(
+   ATL_CINT M, ATL_CINT N, ATL_CINT K,   /* dim of matrix */
+   int mb, int nb, int kb,               /* blk factors for main gemm */
+   int *mu, int *nu,                     /* M,N unrolling used by K-cleanup */
+   NBMM0 *mmb0, NBMM0 *mmb1, NBMM0 mmbX) /* func ptrs for K-cleanup gemm */
+/*
+ * RETURNS: KB required for K cleanup
+ */
+{
+/* 
+ * This file is generated, and it looks like:
+ * assume gemms sorted in increasing size of KB.
+ */
+  ATL_CINT MM=(M+mb-1)/mb,  NN=(N+nb-1)/nb;
+  ATL_INT kr;
+  int kbF;
+
+   kr = K - (K/kb)*kb;
+   if (!kr)
+      return(0);
+/*
+ * We can use another gemm for K-cleanup if its KB is close to our Kr,
+ * and its MU (NU) evenly divides our mb (nb) 
+ */
+//! for(i=0; i < ngemms; i++):
+   if ( (ATL_KBi >= kr) && ((mb/ATL_MUi)*ATL_MUi == mb) && 
+        ((nb/ATL_NUi)*ATL_NUi == nb) )
+   {
+      *mmb0 = ATL_gemm_b0_0; 
+      *mmb1 = ATL_gemm_b1_0; 
+      *mmbX = ATL_gemm_bX_0; 
+      *mu  = ATL_MUi;
+      *nu  = ATL_NUi;
+      *kbF = ATL_KBi;
+   }
+//! end for over gemms
+/* 
+ * Use general code that takes any M,N,K; eventually this will be best of
+ * generated code and provided kernel, but will start with simple 3-loop
+ */
+   else
+   {
+      *mmb0 = ATL_gemm_b0_gen;
+      *mmb1 = ATL_gemm_b1_gen;
+      *mmbX = ATL_gemm_bX_gen;
+      *mu  = *nu = 1;
+   }
+   return(kbF);
+}
+@ROUT atlas_gemms.h
+/*
+ * atlas_gemms.h is a generated header file on all ATLAS block-major gemms
+ * that have been generated.  For each such gemm, it defines (0 <= i < ngemms):
+ * ATL_MBi, ATL_NBi, ATL_KBi, ATL_MFLOPi, ATL_MUi, ATL_NUi, ATL_KUi,
+ * ATL_gemm_b[0,1,X]_i
+ * Have it also define these macros below for finding which gemm to use.
+ * May want to have routines instead (to avoid code bloat); will have to see.
+ * In addition, it also defines macros with the i above replaced with x
+ * for largest value.  Also define ATL_gemm_b[0,1,X]_g for code that takes
+ * any K-loop
+ */
+@ROUT ATL_mat2blkT
+#include "atlas_misc.h"
+#include "atlas_lvl3.h"
+#include "atlas_prefetch.h"
+
+#define ATL_mat2blkT Mjoin(Mjoin(PATL,mat2blkT),NM)
+#define ATL_rpan2blkT Mjoin(Mjoin(PATL,rpan2blkT),NM)
+#define ATL_row2blkT_MK Mjoin(Mjoin(PATL,row2blkT_MK),NM)
+
+void ATL_row2blkT_MK
+   (ATL_CINT M, ATL_CINT K, ATL_CINT Nv, const TYPE *A, ATL_CINT lda, 
+    TYPE *V, ATL_CINT ldv, const TYPE alpha0)
+/*
+ * This routine transposes an MxK block of A into an ldvxNv area in V.
+ * V is padded with zeros in any (ldv-K) or (Nv-M) gap
+ */
+{
+   ATL_CINT n = K >> 1, lda2 = lda+lda;
+   ATL_INT i, j;
+   TYPE *v=V;
+   const TYPE *pA0 = A, *pA1 = A + lda;
+   const register TYPE alpha=alpha0;
+
+   for (j=n; j; j--)
+   {
+      for (i=0; i != M; i++, v += ldv)
+      {
+         *v = ATL_MulByALPHA(pA0[i]);
+         v[1] = ATL_MulByALPHA(pA1[i]);
+      }
+      V += 2;
+      v = V;
+      pA0 += lda2;
+      pA1 += lda2;
+   }
+   if ((n<<1) != K) 
+      for (i=0; i != M; i++, v += ldv) *v = ATL_MulByALPHA(pA0[i]);
+   V -= n+n;
+   if (ldv > K) /* pad any gap with zeros */
+   {
+      v = V;
+      for (j=0; j < M; j++, v += ldv)
+         for (i=K; i < ldv; i++)
+            v[i] = ATL_rzero;
+   }
+   if (Nv > M) /* pad any gap with zeros */
+   {
+      V += ldv*M;
+      for (j=M; j < Nv; j++, V += ldv)
+         for (i=0; i < ldv; i++)
+            V[i] = ATL_rzero;
+   }
+}
+
+void ATL_rpan2blkT(
+   ATL_CINT K,          /* # of cols in panel */
+   ATL_CINT mb,         /* # of rows in panel */
+   ATL_CINT kb,         /* K blking factor (leading dim of copied blocks) */
+   ATL_CINT kbF,        /* leading dim of final block, if not kb */
+   ATL_CINT Nv,         /* # of cols in copied blk (>= mb) */
+   const TYPE *A,       /* ptr to row-panel to copy */
+   ATL_CINT lda,        /* leading dim of A */
+   TYPE *V,             /* output array of size >= Nv * ((K/kb)*kb+kb0) */
+   const SCALAR alpha)  /* V = trans(blkmajor(alpha*A)) */
+/*
+ * A is input, and is a row-panel of size mbxK,
+ * V is output, size >= Nv * ((K/kb)*kb + kbF), where Nv >= mb, kbF<= kb
+ * V puts mbxkb blocks of A into kbxmb block-major storage, where any gap
+ * between (Nv-mb) or (((K/kb)*kb + kbF)-K) is zeroed
+ */
+{
+   ATL_CINT incA = lda*kb, incV = Nv*kb, KK = (K/kb)*kb;
+   ATL_INT k;
+
+   for (k=0; k != KK; k += kb, A += incA, V += incV)
+      ATL_row2blkT_MK(mb, kb, Nv, A, lda, V, kb, alpha);
+   if (kbF)
+      ATL_row2blkT_MK(mb, K-KK, Nv, A, lda, V, kbF, alpha);
+}
+
+void ATL_mat2blkT(
+   ATL_CINT M,          /* # of rows in matrix */
+   ATL_CINT K,          /* # of columns in matrix */
+   ATL_CINT mb,         /* blocking factor along dim M */
+   ATL_CINT kb,         /* # of rows (leading dim) in block major storage */
+   ATL_CINT kbF,        /* leading dim (#rows) in last blk-major in row panel */
+   const TYPE *A,       /* input matrix */
+   ATL_CINT lda,        /* leading dim of A, lda >= M */
+   TYPE *V,         /* output, size >= ((K/kb)*kb+kbF)*((N+nb-1)/nb)*nb */
+   const SCALAR alpha)  /* V = blkmajor(alpha*A) */
+/*
+ * V puts mbxkb blocks of A into kbxmb block-major storage, where any gap 
+ * ((M+nb-1)/nb)*nb - M and (K/kb)*kb+kbF - K are zeroed.
+ */
+{
+   ATL_CINT KK = (K/kb)*kb, MM = (M/mb)*mb, panlen=((K+kb-1)/kb)*kb;
+   ATL_INT i, k, kk, mm, klda;
+
+/*
+ * Copy from matrix one column-panel at a time, causing us to stride V by
+ * the full panel length
+ */
+   for (klda=k=0; k != KK; k += kb, klda += lda)
+   {
+       for (i=0; i != MM; i += mb)
+          ATL_row2blkT_MK(mb, kb, mb, A+i+klda, lda, V+i*panlen, kb, alpha);
+       if (M != MM)
+          ATL_row2blkT_MK(M-MM, kb, mb, A+MM+klda, lda, V+MM*panlen, kb, alpha);
+   }
+/*
+ * Copy remaining partial column-panel, if it exists
+ */
+   if (KK != K)
+   {
+       V += mb*KK;
+       for (i=0; i != MM; i += mb)
+          ATL_row2blkT_MK(mb, kbF, mb, A+i+klda, lda, V+i*panlen, kbF, alpha);
+       if (M != MM)
+          ATL_row2blkT_MK(M-MM, kbF,mb, A+MM+klda, lda, V+MM*panlen, kbF,alpha);
+   }
+}
+
+@ROUT ATL_mat2blk
+#include "atlas_misc.h"
+#include "atlas_lvl3.h"
+#include "atlas_prefetch.h"
+
+void Mjoin(Mjoin(PATL,mat2blk),NM)(
+   ATL_CINT K,             /* # of rows in A */
+   ATL_CINT N,             /* # of cols in A */
+   ATL_CINT kb,         /* row blocking factor (leading dim of blk-major) */
+   ATL_CINT nb,         /* col blocking factor (#cols of blk-major) */
+   ATL_INT kbF,         /* leading dim of partial final blk, 0 if none */
+   const TYPE *A,       /* KxN matrix to be copied to blk-major storage */
+   ATL_CINT lda,        /* leading dim of A, lda >= K */
+   TYPE *V,             /* output, size >= ((K+kb-1)/kb)*kb*((N+nb-1)/nb)*nb */
+   const SCALAR alpha)  /* V = blkmajor(alpha*A) */
+/*
+ * Any gap ((K/kb)*kb+kbF)-K or (((N+nb-1)/nb)*nb)-N is zeroed.
+ */
+{
+   register ATL_CINT kbnb=kb*nb, NN = ((N+nb-1)/nb)*nb, Kk = (K/kb)*kb;
+   ATL_CINT kk = K-Kk;
+   register ATL_INT i, j, ib, k;
+   register TYPE *v;
+   TYPE *V0 = V;
+
+   if (!kbF) 
+      kbF = kb;  /* if kbF not special, it is normal kb */
+   for (j=0; j < N; j++, A += lda, V += kb)
+   {
+      for (v=V,ib=0; ib != Kk; ib += kb, v += kbnb)
+         for (k=0; k < kb; k++)
+            v[k] = ATL_MulByALPHA(A[k+ib]);
+      if (kk)
+      {
+         v = V0 + Kk*nb + j*kbF;
+         for (k=0; k < kk; k++)
+            v[k] = ATL_MulByALPHA(A[k+Kk]);
+         for (; k < kbF; k++)
+            v[k] = ATL_rzero;
+      }
+   }
+/* 
+ * Zero any remaining columns in V
+ */
+   for (; j < NN; j++, V += kb)
+   {
+      for (v=V,ib=0; ib < Kk; ib += kb, v += kbnb)
+         for (i=0; i < kb; i++)
+            v[i] = ATL_rzero;
+      if (kk)
+      {
+         v = V0 + Kk*nb + j*kbF;
+         for (k=0; k < kbF; k++)
+            v[k] = ATL_rzero;
+      }
+   }
+}
+@ROUT emit_vKB
+void emit_makefile(char pre, char *dir, MMNODE *mmq)
+{
+   MMNODE *p;
+   FILE *fpout;
+   char ln[2048];
+   const char PRE = toupper(pre);
+
+   sprintf(ln, "%s/%cMake.vKB", dir, pre);
+   fpout = fopen(ln, "w");
+   assert(fpout);
+
+   fprintf(fpout, "include ../Make.inc\n\n");
+
+   fprintf(fpout, "obj = ");
+   for (p=mmq; p; p = p->next)
+   {
+   @whiledef be b0 b1 bX
+      fprintf(fpout, "\\\n      ATL_%cvKBmm%d_@(be).o ", pre, p->kbB);
+   @endwhile
+      if (p->betan1)
+         fprintf(fpout, "\\\n      ATL_%cvKBmm%d_bn1.o ", pre, p->kbB);
+   }
+   fprintf(fpout, "\n\n");
+
+   fprintf(fpout, "all : lib\nlib : %clib\n%clib : %clib.grd\n", pre, pre, pre);
+   fprintf(fpout, "%clib.grd : $(obj)\n", pre);
+   fprintf(fpout, "\t$(ARCHIVER) $(ARFLAGS) $(ATLASlib) $(obj)\n");
+   fprintf(fpout, "\t$(RANLIB) $(ATLASlib)\n");
+   fprintf(fpout, "\ttouch %clib.grd\n", pre);
+
+   for (p=mmq; p; p = p->next)
+   {
+   @whiledef be 0 1 X
+      fprintf(fpout, "ATL_%cvKBmm%d_b@(be).o : ATL_%cvKBmm%d.c\n", 
+              pre, p->kbB, pre, p->kbB);
+      if (p->comp)
+      {
+         if (!strcmp(p->comp, "gcc"))
+            fprintf(fpout, "\t$(GOODGCC) $(CDEFS) -DBETA@(be) ");
+         else
+            fprintf(fpout, "\t%s $(CDEFS) -DBETA@(be) ", p->comp);
+      }
+      else
+         fprintf(fpout, "\t$(%cMC) $(CDEFS) -DBETA@(be) ", PRE);
+      if (pre == 's')
+         fprintf(fpout, "-DSREAL ");
+      else if (pre == 'd')
+         fprintf(fpout, "-DDREAL ");
+      else if (pre == 'c')
+         fprintf(fpout, "-SCPLX ");
+      else if (pre == 'z')
+         fprintf(fpout, "-DCPLX ");
+      if (p->flag)
+         fprintf(fpout, "%s -c ", p->flag);
+      else 
+         fprintf(fpout, "$(%cMCFLAGS) -c ", PRE);
+      fprintf(fpout, "-o ATL_%cvKBmm%d_b@(be).o ", pre, p->kbB);
+      fprintf(fpout, "ATL_%cvKBmm%d.c\n", pre, p->kbB);
+   @endwhile
+      if (p->betan1)
+      {
+      @whiledef be n1
+         fprintf(fpout, "ATL_%cvKBmm%d_b@(be).o : ATL_%cvKBmm%d.c\n", 
+                 pre, p->kbB, pre, p->kbB);
+         if (p->comp)
+         {
+            if (!strcmp(p->comp, "gcc"))
+               fprintf(fpout, "\t$(GOODGCC) $(CDEFS) -DBETA@up@(be) ");
+            else
+               fprintf(fpout, "\t%s $(CDEFS) -DBETA@up@(be) ", p->comp);
+         }
+         else
+            fprintf(fpout, "\t$(%cMC) $(CDEFS) -DBETA@up@(be) ", PRE);
+         if (pre == 's')
+            fprintf(fpout, "-DSREAL ");
+         else if (pre == 'd')
+            fprintf(fpout, "-DDREAL ");
+         else if (pre == 'c')
+            fprintf(fpout, "-DSCPLX ");
+         else if (pre == 'z')
+            fprintf(fpout, "-DDCPLX ");
+         if (p->flag)
+            fprintf(fpout, "%s -c ", p->flag);
+         else 
+            fprintf(fpout, "$(%cMCFLAGS) -c ", PRE);
+         fprintf(fpout, "-o ATL_%cvKBmm%d_b@(be).o ", pre, p->kbB);
+         fprintf(fpout, "ATL_%cvKBmm%d.c\n", pre, p->kbB);
+      @endwhile
+      }
+      fprintf(fpout, "\n");
+   }  /* end loop over kernels */
+}
+
+void emit_KBmms(char pre, char *dir, MMNODE *mmq)
+{
+   char ln[2048], ln2[2048];
+   MMNODE *p;
+   FILE *fpout;
+   int i, nbeta=4, kb;
+   char *sbe[4] = {"b0", "b1", "bn1", "bX"};
+   char *SBE[4] = {"0", "1", "N1", "X"};
+   int be[4] = {0, 1, -1, 2};
+   for (p=mmq; p; p = p->next)
+   {
+      sprintf(ln, "%s/ATL_%cvKBmm%d.c", dir, pre, p->kbB);
+      fpout = fopen(ln, "w");
+      assert(fpout);
+      if (p->ID > 0)  /* user-provided code */
+      {
+         for (i=0; i < nbeta; i++)
+         {
+            if (i==0)
+               fprintf(fpout, "#ifdef BETA%s\n", SBE[i]);
+            else
+               fprintf(fpout, "#elif defined(BETA%s)\n", SBE[i]);
+            fprintf(fpout, "   #define ATL_USERMM ATL_%cvKBmm%d_%s\n", 
+                    pre, p->kbB, sbe[i]);
+         }
+         fprintf(fpout, "#endif\n\n");
+         fprintf(fpout, "#define KB %d\n", p->rtk?0:p->kbB);
+         fprintf(fpout, "#define MB %d\n#define NB %d\n",
+                 p->rtm ? 0 : p->mbB, p->rtn ? 0 : p->nbB);
+         fclose(fpout);
+         sprintf(ln2, "cat CASES/%s >> %s\n", p->rout, ln);
+         assert(!system(ln2));
+      }
+      else           /* generated code */
+      {
+         for (i=0; i < nbeta; i++)
+         {
+            if (i == 2 && !p->betan1) i++;
+            if (!i)
+               fprintf(fpout, "#ifdef BETA%s\n", SBE[i]);
+            else
+               fprintf(fpout, "#elif defined(BETA%s)\n", SBE[i]);
+            fprintf(fpout, 
+               "#define ATL_%c%s%dx%dx%dTN%dx%dx%d_a1_%s ATL_%cvKBmm%d_%s\n\n",
+                    pre, p->aouter ? "IJK" : "JIK", p->rtm ? 0 : p->mbB, 
+                    p->rtn ? 0 : p->nbB, p->rtk ? 0 : p->kbB,
+                    p->ldIsKB ? p->kbB : 0, p->ldIsKB ? p->kbB : 0, 0, sbe[i],
+                    pre, p->kbB, sbe[i]);
+            fclose(fpout);
+@skip            assert(gmmcase(1, pre, p->mbB, p->nbB, p->kbB, be[i], p) > 0.0);
+            assert(!gmmtstcaseFail(pre, p->mbB, p->nbB, p->kbB, be[i], p));
+            sprintf(ln2, "cat %cmm.c >> %s", pre, ln);
+            assert(!system(ln2));
+            fpout = fopen(ln, "a");
+            assert(fpout);
+         }
+         fprintf(fpout, "#endif /* end if defined(BETA%s) */\n", SBE[nbeta-1]);
+         fclose(fpout);
+      }
+   }
+}
+
+void emit_builddirfiles(char pre, char *dir, MMNODE *mmq)
+{
+   MMNODE *p, *bp, *prev;
+/*
+ * Get rid of any repeated KBmm that doesn't require recompilation for KB
+ */
+   bp = mmq;
+   for (bp=mmq; bp; bp = bp->next)
+   {
+      prev = bp;
+      p = bp->next;
+      while(p)
+      {
+         if (p->ID == bp->ID && p->rtk)
+            p = prev->next = KillMMNode(p);
+         else
+         {
+            prev = p;
+            p = p->next;
+         }
+      }
+   }
+   emit_makefile(pre, dir, mmq);
+   emit_KBmms(pre, dir, mmq);
+}
+
+void emit_gemms_h(char pre, char *dir, MMNODE *mmq)
+{
+   FILE *fpout;
+   int i, N, j, PROTO;
+   MMNODE *p, *bp;
+   char *be[4] = {"b0", "b1", "bn1", "bX"};
+   char ln[1024];
+
+   assert(mmq);
+   sprintf(ln, "%s/atlas_%cvkbmms.h", dir, pre);
+fprintf(stderr, "dir='%s'\n", dir);
+   fpout = fopen(ln, "w");
+   assert(fpout);
+   for (N=0,p=mmq; p; p = p->next) N++;
+   fprintf(fpout, "#ifndef atlas_%cvkbmms_h\n   #define atlas_%cvkbmms_h\n\n", 
+           pre, pre);
+/*
+ * Find out if any routs are repeats
+ */
+   for (bp=mmq; bp; bp = bp->next)
+   {
+      if (bp->rtk)  /* only same .o if we don't have to recompile foreach KB */
+      {
+         for (p=mmq; p != bp; p = p->next)
+         {
+            if (p->ID == bp->ID)
+            {
+               @whiledef be b0 b1 bn1 bX
+               fprintf(fpout, 
+                       "#define ATL_%cvKBmm%d_@(be) ATL_%cvKBmm%d_@(be)\n",
+                       pre, bp->kbB, pre, p->kbB);
+               @endwhile
+               break;
+            }
+         }
+      }
+   }
+/*
+ * Prototype all used functions
+ */
+   for (bp=mmq; bp; bp = bp->next)
+   {
+      PROTO = 1;                /* by default, real func, need prototype */
+      if (bp->rtk)              /* make sure real func, not just #define */
+      {
+         for (p=mmq; p != bp; p = p->next)
+         {
+            if (p->ID == bp->ID)        /* same ID & runtime K means #define */
+            {
+                PROTO = 0;
+                break;
+            }
+         }
+      }
+      if (PROTO)
+      {
+         for (i=0; i < 4; i++)
+         {
+            if (strstr(be[i], "bn1") && !bp->betan1)
+               continue;
+            fprintf(fpout, "void ATL_%cvKBmm%d_%s\n", pre, bp->kbB, be[i]);
+            fprintf(fpout, 
+            "   (const int M, const int N, const int K, const TYPE alpha,\n");
+            fprintf(fpout, 
+            "   const TYPE *A, const int lda, const TYPE *B, const int ldb,\n");
+            fprintf(fpout, 
+               "   const TYPE beta, TYPE *C, const int ldc);\n");
+
+         }
+      }
+   }
+/*
+ * function ptr typedef
+ */
+   fprintf(fpout, 
+      "typedef void (*KBMM0)(const int, const int, const int, const TYPE,\n");
+   fprintf(fpout, 
+   "                      const TYPE *, const int, const TYPE *, const int,\n");
+   fprintf(fpout, "                      const TYPE, TYPE *, const int);\n");
+
+/*
+ * Find largest KB supported
+ */
+   fprintf(fpout, "\n");
+   for (bp=mmq,p=mmq->next; p; p = p->next)
+      if (p->kbB > bp->kbB)
+         bp = p;
+   fprintf(fpout, "#define ATL_vMAX_KB %d\n", bp->kbB);
+/*
+ * Find best node for everyday use
+ */
+   fprintf(fpout, "\n");
+   bp = mmq;
+   for (i=0,p=mmq->next; p; p = p->next, i++)
+   {
+      if (p->mflop > bp->mflop)
+      {
+         j = i;
+         bp = p;
+      }
+   }
+@whiledef be b0 b1 bX
+   fprintf(fpout, "#define ATL_%cvKBmm_@(be) ATL_%cvKBmm%d_@(be)\n", 
+           pre, pre, bp->kbB);
+@endwhile
+   if (bp->betan1)
+      fprintf(fpout, "#define ATL_%cvKBmm_n1 ATL_%cvKBmm%d_n1\n", 
+              pre, pre, bp->kbB);
+   else
+      fprintf(fpout, "#define ATL_%cvKBmm_n1 ATL_%cvKBmm%d_X\n", 
+              pre, pre, bp->kbB);
+@multidef ivar mbB nbB kbB mu nu
+@whiledef iarr MB  NB  KB  MU NU
+   fprintf(fpout, "#define ATL_v@(iarr) %d\n", bp->@(ivar));
+   @undef ivar
+@endwhile
+   fprintf(fpout, "#define ATL_vKU %d\n", bp->rtk ? bp->ku:0);
+   fprintf(fpout, "\n");
+   fprintf(fpout, "\n\n#endif\n");
+   fclose(fpout);  /* finished with ATL_<pre>vgemms.h */
+
+   sprintf(ln, "%s/atlas_%cvkbmms_nbs.h", dir, pre);
+   fpout = fopen(ln, "w");
+   assert(fpout);
+   fprintf(fpout, 
+           "#ifndef atlas_%cvkbmms_nbs_h\n   #define atlas_%cvkbmms_nbs_h\n\n", 
+           pre, pre);
+   fprintf(fpout, "#define ATL_%cvKBmmBest_I %d\n", pre, j);
+   fprintf(fpout, "#define ATL_NVKBMMS %d\n", N);
+@skip   fprintf(fpout, "static int ATL_vKBs[ATL_NVKBMMS] =\n   {%d", mmq->kbB);
+@skip   for (p=mmq->next; p; p = p->next)
+@skip      fprintf(fpout, ",%d", p->kbB);
+@skip   fprintf(fpout, "};\n");
+
+@multidef ivar mbB nbB kbB mu nu
+@whiledef iarr MB  NB  KB  MU NU
+   fprintf(fpout, "static int ATL_v@(iarr)s[ATL_NVKBMMS] =\n   {%d", 
+           mmq->@(ivar));
+   for (p=mmq->next; p; p = p->next)
+      fprintf(fpout, ",%d", p->@(ivar));
+   fprintf(fpout, "};\n");
+
+   @undef ivar
+@endwhile
+   fprintf(fpout, "static int ATL_vKUs[ATL_NVKBMMS] =\n   {%d", 
+           mmq->rtk ? mmq->ku:0);
+   for (p=mmq->next; p; p = p->next)
+      fprintf(fpout, ",%d", p->rtk ? p->ku:0);
+   fprintf(fpout, "};\n");
+
+   fprintf(fpout, "static int ATL_vAInner[ATL_NVKBMMS] =\n   {%d", 
+           !mmq->aouter);
+   for (p=mmq->next; p; p = p->next)
+      fprintf(fpout, ",%d", !p->aouter);
+   fprintf(fpout, "};\n");
+
+@whiledef be b0 b1 bX
+   fprintf(fpout, 
+   "static KBMM0 ATL_mmvfunc_@(be)[ATL_NVKBMMS] =\n   {ATL_%cvKBmm%d_@(be)",
+           pre, mmq->kbB);
+   for (p=mmq->next; p; p = p->next)
+      fprintf(fpout, ",ATL_%cvKBmm%d_@(be)", pre, p->kbB);
+   fprintf(fpout, "};\n");
+@endwhile
+   for (p=mmq; p && !p->betan1; p = p->next);
+   if (p)  /* at least one chosen func had special BETA=-1 case */
+   {
+@whiledef be bn1
+      fprintf(fpout, 
+      "static KBMM0 ATL_mmvfunc_@(be)[ATL_NVKBMMS] =\n   {ATL_%cvKBmm%d_%s",
+              pre, mmq->kbB, mmq->betan1 ? "bn1" : "bX");
+      for (p=mmq->next; p; p = p->next)
+         fprintf(fpout, ",ATL_%cvKBmm%d_%s", pre, p->kbB, 
+                 p->betan1 ? "bn1" : "bX");
+      fprintf(fpout, "};\n");
+@endwhile
+   }
+   else
+      fprintf(fpout, "#define ATL_mmvfunc_bn1 ATL_mmvfunc_bX\n");
+
+   fprintf(fpout, "static double ATL_mmvmflop[ATL_NVKBMMS] =\n   {%.2f",
+           mmq->mflop);
+   for (p=mmq->next; p; p = p->next)
+      fprintf(fpout, ",%.2f", p->mflop);
+   fprintf(fpout, "};\n");
+
+   fprintf(fpout, "\n#endif  /* end ifdef ATL_vgemms_h */\n");
+   fclose(fpout);
+}
+
+void PrintUsage(char *exe, char *bad)
+{
+   fprintf(stderr, "UNABLE TO PARSE '%s'\n", bad);
+   fprintf(stderr, "USAGE: %s ARGS, where ARGS can be:\n", exe);
+   fprintf(stderr, "   [-p <pre>] : type prefix (def 'd')\n");
+   fprintf(stderr, 
+           "   [-h <dir>] : path to generate header files into\n");
+   fprintf(stderr, "   [-d <dir>] : path to generate KBmm files into\n", exe);
+   fprintf(stderr, 
+           "   [-m <mmfile>] : input file describing best matmul kernels\n");
+   exit(-1);
+}
+
+MMNODE *GetFlags(int nargs, char **args, char *pre, char **dir, char **hdir)
+{
+   int i;
+   char *mmfile=NULL;
+   char ln[64];
+
+   *dir = *hdir = NULL;
+   *pre = 'd';
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], args[i]);
+      switch(args[i][1])
+      {
+      case 'm':
+         if (++i >= nargs)
+            PrintUsage(args[0], "Missing argument to -m");
+         mmfile = args[i];
+         break;
+      case 'p':
+         if (++i >= nargs)
+            PrintUsage(args[0], "Missing argument to -p");
+         *pre = args[i][0];
+         break;
+      case 'd':
+         if (++i >= nargs)
+            PrintUsage(args[0], "Missing argument to -d");
+         *dir = args[i];
+         break;
+      case 'h':
+         if (++i >= nargs)
+            PrintUsage(args[0], "Missing argument to -h");
+         *hdir = args[i];
+         break;
+      default:
+         PrintUsage(args[0], args[i]);
+      }
+   }
+   if (!mmfile)
+   {
+      sprintf(ln, "res/%cvMMRES", *pre);
+      mmfile = ln;
+   }
+
+   return(ReadMMFile(mmfile));
+}
+
+main(int nargs, char **args)
+{
+   MMNODE *mmq;
+   int i;
+   char *dir, *hdir;
+   char pre;
+
+   mmq = GetFlags(nargs, args, &pre, &dir, &hdir);
+   assert(mmq);
+   if (hdir)
+      emit_gemms_h(pre, hdir, mmq);
+   if (dir)
+      emit_builddirfiles(pre, dir, mmq);
+   exit(0);
+}
+@ROUT ATL_vgemms.h
+/*
+ * Generated file of all gemms found
+ */
+#define ATL_NVKBMMS 16
+static int ATL_vKBs[ATL_NVKBMMS] = {...};
+static int ATL_vNBs[ATL_NVKBMMS] ={}; 
+static int ATL_vMBs[ATL_NVKBMMS] = {...};
+static int ATL_vMUs[ATL_NVKBMMS] = {...};
+static int ATL_vNUs[ATL_NVKBMMS] = {...};
+static int ATL_vKUs[ATL_NVKBMMS] = {...};  /* = 0 if KU must equal KB */
+static NBMM0 ATL_mmvfunc_bX[ATL_NVKBMMS] = {....};
+static NBMM0 ATL_mmvfunc_b1[ATL_NVKBMMS] = {....};
+static NBMM0 ATL_mmvfunc_b0[ATL_NVKBMMS] = {....};
+static NBMM0 ATL_mmvfunc_bn[ATL_NVKBMMS] = {....};
+static double ATL_mmvmflop[ATL_NVKBMMS] = {....};
+@ROUT ATL_AdjustMBNB ATL_GetMMBlockings
+#include "atlas_misc.h"
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),sysinfo.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),vkbmms.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),vkbmms_nbs.h))
+void Mjoin(PATL,AdjustMBNB)(ATL_CINT M, ATL_CINT N, ATL_CINT K, int typsize, 
+                            int AIN, int mu, int nu, int *mb0, int *nb0, int kb)
+/*
+ * This routine adjusts mb & nb for cases where M (N) is < or close to MB (nb)
+ * NOTE: this routine assumes KB is fixed.
+ * On entry *mb0 (*nb0) has best blocking factor, and on exit it should have
+ * the blocking factor adjusted so that it matches M (N).
+ */
+{
+   const int csize = ATL_L1elts * typsize;
+   int tsize;
+   const int nuinc = (nu >= 4) ? nu : ( (nu != 3) ? 4 : 3 );
+   const int muinc = (mu >= 4) ? mu : ( (mu != 3) ? 4 : 3 );
+   int nb = *nb0, mb = *mb0;
+
+   if ((N > nb+nuinc && M > mb+muinc) || (N == nb && M == mb))
+      return;  /* no adjust necessary w/o degenerate dims */
+/*
+ * Since we can't adjust kb, simply set blks when both dims are degenerate
+ */
+   if (N <= nb && M <= mb)
+   {
+      *nb0 = ((N+nu-1)/nu)*nu;
+      *mb0 = ((M+mu-1)/mu)*mu;
+      return;
+   }
+
+/*
+ * At this point, we know that both dim not degenerate, and that
+ * either N < nb+nuinc or M < mb+muinc and mb != M and nb != N
+ * First, handle cases where one dimension is degenerate (adjust deg dim)
+ * NOTE: if we keep only one matrix in the cache, we can't adjust since
+ *       KB is invariant and changing the other dimension won't fix things
+ */
+   if (N < nb)
+   {
+      tsize = mb*nb + kb*(mb+nb);
+      *nb0 = nb = ((N+nu-1)/nu)*nu;
+      if (tsize <= ATL_L1elts)  /* all 3 matrices kept in cache */
+      {
+         mb = (tsize-nb*kb) / (nb+kb);
+         mb = (mb <= M) ? mb : M;
+         mb = (mb/mu)*mu;
+         if (mb > *mb0)
+            *mb0 = mb;
+         else 
+            mb = *mb0;
+      }
+   }
+   else if (M < mb)
+   {
+      tsize = mb*nb + kb*(mb+nb);
+      *mb0 = mb = ((M+mu-1)/mu)*mu;
+      if (tsize <= ATL_L1elts)
+      {
+         nb = (tsize - kb*mb) / (kb+mb);
+         nb = (nb <= N) ? nb : N;
+         nb = (nb/nu)*nu;
+         if (nb > *nb0)
+            *nb0 = nb;
+         else
+            nb = *nb0;
+      }
+   }
+/*
+ * See if we can avoid extra calls by small nb/mb expansion
+ */
+   if (N <= nb+nuinc)
+   {
+      tsize = mb*nb + kb*(mb+nb);
+      nb = ((N/nu)*nu == N) ? N : ((N+nu-1)/nu)*nu;
+      if (tsize <= ATL_L1elts)
+      {
+         mb = (tsize-nb*kb) / (nb+kb);
+         mb = (mb/mu)*mu;
+         if (mb > 4)
+         {
+            *mb0 = mb;
+            *nb0 = nb;
+         }
+      }
+/*
+ *    If B not cache-contained, always OK to make larger; otherwise, make
+ *    sure that new working set still fits in L1
+ */
+      else if (AIN || (kb*nb + 2*(mu*kb+mu*nu) <= ATL_L1elts))
+         *nb0 = nb;
+      nb = *nb0;
+      if (M <= mb+muinc)
+         goto ADJM;
+   }
+   else if (M <= mb+muinc)
+   {
+ADJM:
+      tsize = mb*nb + kb*(mb+nb);
+      mb = ((M/mu)*mu == M) ? M : ((M+mu-1)/mu)*mu;
+      if (tsize <= ATL_L1elts)
+      {
+         nb = (tsize - kb*mb) / (kb+mb);
+         nb = (nb/nu)*nu;
+         if (nb > 4)
+         {
+            *mb0 = mb;
+            *nb0 = nb;
+         }
+      }
+/*
+ *    If A not-cache contained, always OK to make larger; otherwise, make
+ *    sure that new working set still fits in L1
+ */
+      else if (!AIN || (kb*mb + 2*(nu*kb+mu*nu) <= ATL_L1elts))
+         *mb0 = mb;
+   }
+}
+@ROUT ATL_GetRankKBlocks
+#include "atlas_misc.h"
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),vkbmms.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),vkbmms_nbs.h))
+@ROUT ATL_GetRankKBlocks ATL_GetMMBlockings
+int Mjoin(PATL,GetRankKBlocks)(ATL_CINT M, ATL_CINT N, ATL_CINT K, int typsize,
+                               int *mb0, int *nb0, int *kb0, int *mu0, int *nu0,
+                               KBMM0 *NBmm_b0, KBMM0 *NBmm_b1, KBMM0 *NBmm_bn, 
+                               KBMM0 *NBmm_bX)
+{
+   int i, mb, nb, kb, kbo, mu, nu, ku, tsize;
+
+   for (i=0; i < ATL_NVKBMMS; i++)
+   {
+      kbo = kb = ATL_vKBs[i];
+      ku = ATL_vKUs[i];
+      if (kb >= K || kb >= K+ku)
+      {
+         if (ku) 
+            kb = ((K+ku-1)/ku)*ku;
+//         if (K >= kb-8)
+         {
+            *NBmm_b0 = ATL_mmvfunc_b0[i];
+            *NBmm_b1 = ATL_mmvfunc_b1[i];
+            *NBmm_bX = ATL_mmvfunc_bX[i];
+            *NBmm_bn = ATL_mmvfunc_bn1[i];
+            *mb0 = ATL_vMBs[i];
+            *nb0 = ATL_vNBs[i];
+            *kb0 = kb;
+            *mu0 = ATL_vMUs[i];
+            *nu0 = ATL_vNUs[i];
+            Mjoin(PATL,AdjustMBNB)(M, N, K, typsize, ATL_vAInner[i], 
+                                   *mu0, *nu0, mb0, nb0, kb);
+            return(i);
+         }
+      }
+   }
+   return(-1);
+}
+@beginskip
+/*
+ * We can use another gemm for K-cleanup if its KB is close to our Kr,
+ * and its MU (NU) evenly divides our mb (nb) 
+ */
+//! for(i=0; i < ngemms; i++):
+   if (ATL_KBi >= K && K >= ATL_KBi-8)
+   {
+      *mmb0 = ATL_gemm_b0_i; 
+      *mmb1 = ATL_gemm_b1_i; 
+      *mmbX = ATL_gemm_bX_i; 
+      *mu = ATL_MUi;
+      *nu = ATL_NUi;
+      *mb = (M >= ATL_MBi) ? ATL_MBi : ((M+ATL_MUi-1)/ATL_MUi)*ATL_MUi;
+      *nb = (N >= ATL_NBi) ? ATL_NBi : ((N+ATL_NUi-1)/ATL_NUi)*ATL_NUi;
+      *kb = ATL_KBi;
+   }
+//! end for over gemms
+/* 
+ * Use general code that takes any M,N,K; eventually this will be best of
+ * generated code and provided kernel, but will start with simple 3-loop
+ */
+   else
+   {
+      *mmb0 = ATL_gemm_b0_gen;
+      *mmb1 = ATL_gemm_b1_gen;
+      *mmbX = ATL_gemm_bX_gen;
+      *mb = (M >= ATL_MBg) ? ATL_MBg : ((M+ATL_MUg-1)/ATL_MUg)*ATL_MUg;
+      *nb = (N >= ATL_NBg) ? ATL_NBg : ((N+ATL_NUg-1)/ATL_NUg)*ATL_NUg;
+      k = (K*typsize+ATL_Cachelen-1);
+      k = ATL_MulByCachelen(ATL_DivByCachelen(k));
+      *kb = k/typsiz;
+      *mu = ATL_MUg;
+      *nu = ATL_NUg;
+   }
+}
+@endskip
+@ROUT ATL_GetMMBlockings
+#define IBEST Mjoin(PATL,vKBmmBest_I)
+
+static int ATL_FindKCleanupRout(int mb, int nb, int kr)
+/*
+ * Finds K-cleanup routine that can cleanup both M & N loop
+ */
+{
+   int i;
+   for (i=0; i < ATL_NVKBMMS; i++)
+@skip      if ( ATL_vKBs[i] >= kr && !(mb%ATL_vMUs[i] | nb%ATL_vNUs[i]) )
+      if (ATL_vKBs[i] >= kr)
+         break;
+   ATL_assert(i < ATL_NVKBMMS);
+   return(i);
+}
+
+int Mjoin(PATL,GetGemmRkBlocks)
+   (ATL_CINT M, ATL_CINT N, ATL_CINT K, int typsize,
+   /* the following are params for best kernel */
+    int *mbB, int *nbB, int *kbB, int *muB, int *nuB,
+    KBMM0 *NBmm_b0, KBMM0 *NBmm_b1, KBMM0 *NBmm_bn, KBMM0 *NBmm_bX,
+   /* the following are params for the K%kbB kernel */
+    int *mbF, int *nbF, int *kbF, int *muF, int *nuF,
+    KBMM0 *KBmm_b0, KBMM0 *KBmm_b1, KBMM0 *KBmm_bn, KBMM0 *KBmm_bX
+    )
+{
+   ATL_INT i, Kk, nKb, nKbb;
+   int kb, kr, krB, ib, ipKB, ipKBb;
+   double mfB, mf;
+
+   if (K <= ATL_vMAX_KB)
+   {
+      ib = Mjoin(PATL,GetRankKBlocks)(M, N, K, typsize, mbB, nbB, kbB, muB, nuB,
+                                      NBmm_b0, NBmm_b1, NBmm_bn, NBmm_bX);
+      *mbF = *mbB;
+      *nbF = *nbB;
+      *kbF = *kbB;
+      *muF = *muB;
+      *nuF = *nuB;
+      *KBmm_b0 = *NBmm_b0;
+      *KBmm_b1 = *NBmm_b1;
+      *KBmm_bn = *NBmm_bn;
+      *KBmm_bX = *NBmm_bX;
+      return(ib);
+   }
+/*
+ * Find most efficient K-loop code for this dimension
+ */
+   mfB = 0.0;
+   ipKBb = ib = IBEST;
+   for (i=0; i < ATL_NVKBMMS; i++)
+   {
+      kb = ATL_vKBs[i];
+      nKb = K/kb;
+      if (!nKb) continue;
+      kr  = K-nKb*kb;
+      if (kr)
+      {
+         mf = (ATL_mmvmflop[i]*nKb);
+         ipKB = ATL_FindKCleanupRout(ATL_vMBs[i], ATL_vNBs[i], kr);
+         mf += ATL_mmvmflop[ipKB];
+         mf /= (nKb+1.0);
+      }
+      else
+         mf = ATL_mmvmflop[i];
+      if (mf > mfB)
+      {
+         ib = i;
+         mfB = mf;
+         ipKBb = ipKB;
+         krB = kr;
+         nKbb = nKb;
+      }
+   }
+   *mbB = ATL_vMBs[ib];
+   *nbB = ATL_vNBs[ib];
+   *kbB = ATL_vKBs[ib];
+   *muB = ATL_vMUs[ib];
+   *nuB = ATL_vNUs[ib];
+   Mjoin(PATL,AdjustMBNB)(M, N, K, sizeof(TYPE), ATL_vAInner[i], *muB, *nuB, 
+                          mbB, nbB, *kbB);
+   *NBmm_b0 = ATL_mmvfunc_b0[ib];
+   *NBmm_b1 = ATL_mmvfunc_b1[ib];
+   *NBmm_bn = ATL_mmvfunc_bn1[ib];
+   *NBmm_bX = ATL_mmvfunc_bX[ib];
+
+   if (krB)
+      ipKB = ATL_FindKCleanupRout(*mbB, *nbB, krB);
+   else 
+      ipKB = ib;
+   *mbF = ATL_vMBs[ipKB];
+   *nbF = ATL_vNBs[ipKB];
+   *kbF = ATL_vKBs[ipKB];
+   *muF = ATL_vMUs[ipKB];
+   *nuF = ATL_vNUs[ipKB];
+   Mjoin(PATL,AdjustMBNB)(M, N, K, sizeof(TYPE), ATL_vAInner[i], *muF, *nuF, 
+                          mbF, nbF, *kbF);
+   *KBmm_b0 = ATL_mmvfunc_b0[ipKB];
+   *KBmm_b1 = ATL_mmvfunc_b1[ipKB];
+   *KBmm_bn = ATL_mmvfunc_bn1[ipKB];
+   *KBmm_bX = ATL_mmvfunc_bX[ipKB];
+   return(ib);
+}
+@ROUT ATL_rankK
+#include "atlas_misc.h"
+#include "atlas_lvl3.h"
+
+@whiledef al 1 X
+void Mjoin(PATL,row2blkT_MK_a@(al))
+   (ATL_CINT, ATL_CINT, ATL_CINT, const TYPE *, ATL_CINT, 
+    TYPE*, ATL_CINT, const TYPE);
+void Mjoin(PATL,mat2blk_a@(al))
+   (ATL_CINT, ATL_CINT, ATL_CINT, ATL_CINT, ATL_INT, const TYPE*,
+    ATL_CINT, TYPE*, const SCALAR);
+@endwhile
+
+void Mjoin(PATL,vrankK_NM)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+                           ATL_CINT M, ATL_CINT N, ATL_CINT K, 
+                           const SCALAR alpha, const TYPE *A, ATL_CINT lda, 
+                           const TYPE *B, ATL_CINT ldb, const SCALAR beta, 
+                           TYPE *C, ATL_CINT ldc0, int mb, int nb, int kb, 
+                           int mu, int nu, TYPE *pA, TYPE *pB, TYPE *pC0, 
+                           NBMM0 NBmm_b0, NBMM0 NBmm_bX)
+/*
+ * Does rank-K update on kbxmb (kbxnb) blocks of A (b), assuming:
+ * (1) K <= kb
+ * (2) sizeof(pA) >= M*kb, sizeof(pB) >= kb*nb
+ */
+{
+   ATL_INT j, i, Mm, nc, mm, nn, ldc=ldc0;
+   NBMM0 NBmm = NBmm_bX;
+   TYPE *pC = NULL;
+   SCALAR bet=beta;
+   int mr, nr;
+   void (*row2blkT)(ATL_CINT, ATL_CINT, ATL_CINT, const TYPE *, ATL_CINT, 
+                    TYPE*, ATL_CINT, const TYPE);
+   void (*mat2blk)(ATL_CINT, ATL_CINT, ATL_CINT, ATL_CINT, ATL_INT, const TYPE*,
+                   ATL_CINT, TYPE*, const SCALAR);
+
+   row2blkT = (SCALAR_IS_ONE(alpha)) ? 
+              Mjoin(PATL,row2blkT_MK_a1) : Mjoin(PATL,row2blkT_MK_aX);
+   mat2blk =  (SCALAR_IS_ONE(alpha)) ? 
+              Mjoin(PATL,mat2blk_a1) : Mjoin(PATL,mat2blk_aX);
+   Mm = (M/mb) * mb;   /* number of full blocks along M */
+/*
+ * Peel first N-iteration so we copy A as we go
+ */
+   mr = M - Mm;
+   nr = N - (N/nb)*nb;
+   nn = Mmin(N, nb);
+
+   if (TB == AtlasNoTrans)
+      mat2blk(K, nn, kb, nb, 0, B, ldb, pB, alpha);
+   else 
+      row2blkT(nn, K, nb, B, ldb, pB, kb, alpha);
+   if (N < nb)
+   {
+      nn = ((nn+nu-1)/nu)*nu;
+      if (nn != N)
+      {
+         pC = pC0;
+         ldc = mb;
+         NBmm = NBmm_b0;
+         bet = ATL_rzero;
+      }
+   }   
+   for (i=0; i != Mm; i += mb)
+   {
+      if (TA == AtlasNoTrans)
+         Mjoin(PATL,row2blkT_MK_a1)(mb, K, mb, A+i, lda, pA+i*kb, kb, ATL_rone);
+      else
+         Mjoin(PATL,mat2blk_a1)(K, mb, kb, mb, 0, A+i*lda, lda, 
+                                pA+i*kb, ATL_rone);
+      NBmm(mb, nn, kb, ATL_rone, pA+i*kb, kb, pB, kb, bet, pC?pC:C+i, ldc);
+      if (pC)
+         Mjoin(PATL,geadd)(mb, nr, ATL_rone, pC, mb, beta, C+i, ldc0);
+   }
+   if (mr)
+   {
+      mm = ((mr+mu-1)/mu)*mu;
+      if (mm != mr)
+      {
+         pC = pC0;
+         ldc = mm;
+         NBmm = NBmm_b0;
+         bet = ATL_rzero;
+      }
+      if (TA == AtlasNoTrans)
+         Mjoin(PATL,row2blkT_MK_a1)(mr, K, mb, A+Mm, lda, pA+Mm*kb, kb, 
+                                    ATL_rone);
+      else
+         Mjoin(PATL,mat2blk_a1)(K, mr, kb, mb, 0, A+Mm*lda, lda, pA+Mm*kb,
+                                ATL_rone);
+      NBmm(mm, nn, kb, ATL_rone, pA+Mm*kb, kb, pB, kb, bet, pC?pC:C+Mm, ldc);
+      if (pC)
+         Mjoin(PATL,geadd)(mr, (nn == nb) ? nn:nr, ATL_rone, pC, ldc, beta, 
+                           C+Mm, ldc0);
+   }
+   nc = nb;
+   for (j=nb; j < N; j += nb)
+   {
+      pC = NULL; ldc = ldc0; NBmm = NBmm_bX; bet = beta;
+      if (N-j < nb)
+      {
+         nc = (N-j);
+         nn = ((nc+nu-1)/nu)*nu;
+         if (nn != nc)
+         {
+            pC = pC0;
+            ldc = mb;
+            NBmm = NBmm_b0;
+            bet = ATL_rzero;
+         }
+      }
+      if (TB == AtlasNoTrans)
+         mat2blk(K, nc, kb, nb, 0, B+j*ldb, ldb, pB, alpha);
+      else 
+         row2blkT(nc, K, nb, B+j, ldb, pB, kb, alpha);
+      for (i=0; i != Mm; i += mb)
+      {
+         NBmm(mb, nn, kb, ATL_rone, pA+i*kb, kb, pB, kb, bet, 
+              pC?pC:C+i+j*ldc, ldc);
+         if (pC)
+            Mjoin(PATL,geadd)(mb, (nn == nb) ? nn:nr, ATL_rone, pC, ldc, beta, 
+                              C+i+j*ldc0, ldc0);
+      }
+      if (mr)
+      {
+         if (mm != mr)
+         {
+            pC = pC0;
+            ldc = mm;
+            NBmm = NBmm_b0;
+            bet = ATL_rzero;
+         }
+         NBmm(mm, nn, kb, ATL_rone, pA+Mm*kb, kb, pB, kb, bet, 
+              pC?pC:C+Mm+j*ldc, ldc);
+         if (pC)
+            Mjoin(PATL,geadd)(mr, (nn == nb) ? nn:nr, ATL_rone, pC, ldc, beta, 
+                              C+Mm+j*ldc0, ldc0);
+      }
+   }
+}
+
+int Mjoin(PATL,vrankK)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+                       ATL_CINT M, ATL_CINT N, ATL_CINT K, const SCALAR alpha,
+                       const TYPE *A, ATL_CINT lda, const TYPE *B, 
+                       ATL_CINT ldb, const SCALAR beta, TYPE *C, ATL_CINT ldc)
+{
+   ATL_INT j, i, MM, NN, KK, Mm, nc;
+   void *vp=NULL;
+   TYPE *pA, *pB, *pC=NULL;
+   int mb0, nb0, kb0, mb, nb, kb, mr, nr, mu, nu, mm, nn;
+   NBMM0 NBmm_b0, NBmm_b1, NBmm_bX, NBmm_bn, NBmm_b0_, NBmm_b1_, NBmm_bX_;
+
+   Mjoin(PATL,GetRankKBlocks)(M, N, K, sizeof(TYPE), &mb, &nb, &kb, 
+                              &mu, &nu, &NBmm_b0, &NBmm_b1, &NBmm_bn, &NBmm_bX);
+   if (SCALAR_IS_NONE(beta))
+      NBmm_bX = NBmm_bn;
+   else if (SCALAR_IS_ONE(beta))
+      NBmm_bX = NBmm_b1;
+   else if (SCALAR_IS_ZERO(beta))
+      NBmm_bX = NBmm_b0;
+   MM = ((M+mb-1)/mb) * mb;
+   NN = ((N+nb-1)/nb) * nb;
+   Mm = (M/mb) * mb;
+   if ((M/mu)*mu != M || (N/nu)*nu != N)
+   { 
+      pC = (void*) 1;
+      i = ((MM+nb)*kb + mb*nb)*sizeof(TYPE) + ATL_Cachelen;
+   }
+   else i = (MM+nb)*kb*sizeof(TYPE);
+   if (i <= ATL_MaxMalloc || MM <= nb+nb)
+      vp = malloc(i + ATL_Cachelen + ATL_Cachelen);
+   if (!vp)  /* recur until we can allocate the space */
+   {
+      i = ((M>>1)/mb)*mb;
+      if (i < nb+nb)
+         return(1);
+      j = Mjoin(PATL,vrankK)(TA, TB, i, N, K, alpha, A, lda, B, ldb, 
+                             beta, C, ldc);
+      if (!j)
+         ATL_assert(!Mjoin(PATL,vrankK)(TA, TB, M-i, N, K, alpha, A+i, lda, 
+                                        B, ldb, beta, C+i, ldc));
+      return(j);
+   }
+   pB = ATL_AlignPtr(vp);
+   pA = pB + kb*nb;       
+   pA = ATL_AlignPtr(pA);
+   if (pC)
+   {
+      pC = pA + MM*kb;
+      pC = ATL_AlignPtr(pC);
+   }
+   Mjoin(PATL,vrankK_NM)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc,
+                         mb, nb, kb, mu, nu, pA, pB, pC, NBmm_b0, NBmm_bX);
+@beginskip
+/*
+ * Peel first N-iteration so we copy A as we go
+ */
+   mr = M - Mm;
+   nr = N - (N/nb)*nb;
+   nn = Mmin(N, nb);
+
+   if (TB == AtlasNoTrans)
+      Mjoin(PATL,mat2blk_a1)(K, nn, kb, nb, 0, B, ldb, pB, alpha);
+   else 
+      Mjoin(PATL,row2blkT_MK_a1)(nn, K, nb, B, ldb, pB, kb, alpha);
+   if (N < nb)
+      nn = ((nn+nu-1)/nu)*nu;
+      
+   for (i=0; i != Mm; i += mb)
+   {
+      if (TA == AtlasNoTrans)
+         Mjoin(PATL,row2blkT_MK_aX)(mb, K, mb, A+i, lda, pA+i*kb, kb, alpha);
+      else
+         Mjoin(PATL,mat2blk_aX)(K, mb, kb, mb, 0, A+i*lda, lda, pA+i*kb, alpha);
+      NBmm_bX(mb, nn, kb, ATL_rone, pA+i*kb, kb, pB, kb, beta, C+i, ldc);
+   }
+   if (mr)
+   {
+      mm = ((mr+mu-1)/mu)*mu;
+      if (TA == AtlasNoTrans)
+         Mjoin(PATL,row2blkT_MK_aX)(mr, K, mb, A+Mm, lda, pA+Mm*kb, kb, alpha);
+      else
+         Mjoin(PATL,mat2blk_aX)(K, mr, kb, mb, 0, A+Mm*lda,lda,pA+Mm*kb,alpha);
+      NBmm_bX(mm, nn, kb, ATL_rone, pA+Mm*kb, kb, pB, kb, beta, C+Mm, ldc);
+   }
+   nc = nb;
+   for (j=nb; j < N; j += nb)
+   {
+      if (N-j < nb)
+      {
+         nc = (N-j);
+         nn = ((nc+nu-1)/nu)*nu;
+      }
+      if (TB == AtlasNoTrans)
+         Mjoin(PATL,mat2blk_a1)(K, nc, kb, nb, 0, B+j*ldb, ldb, pB, alpha);
+      else 
+         Mjoin(PATL,row2blkT_MK_a1)(nc, K, nb, B+j, ldb, pB, kb, alpha);
+      for (i=0; i != Mm; i += mb)
+         NBmm_bX(mb, nn, kb, ATL_rone, pA+i*kb, kb, pB, kb, beta, 
+                 C+i+j*ldc, ldc);
+      if (mr)
+         NBmm_bX(mm, nn, kb, ATL_rone, pA+Mm*kb, kb, pB, kb, beta, 
+                 C+Mm+j*ldc, ldc);
+   }
+@endskip
+   free(vp);
+   return(0);
+}
+
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),vkbmms.h))
+int Mjoin(PATL,gemm_rK)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+                        ATL_CINT M, ATL_CINT N, ATL_CINT K, const SCALAR alpha,
+                        const TYPE *A, ATL_CINT lda, const TYPE *B, 
+                        ATL_CINT ldb, const SCALAR beta, TYPE *C, ATL_CINT ldc)
+{
+   int kb, kr, mb, nb, mu, nu, mbF, nbF, kbF, muF, nuF, Csz=0, CszF=0;
+   ATL_INT Kk, i, j, k, incA, incB, nKb;
+   TYPE *pB, *pA, *pC;
+   NBMM0 NBmm_b0, NBmm_b1, NBmm_bn, NBmm_bX;
+   NBMM0 KBmm_b0, KBmm_b1, KBmm_bn, KBmm_bX;
+   NBMM0 NBmmX, pKBmm;
+   void *vp;
+
+   if (K <= ATL_vMAX_KB && 0)
+      return(Mjoin(PATL,vrankK)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
+                                beta, C, ldc));
+#if 1
+   Mjoin(PATL,GetGemmRkBlocks)(M, N, K, sizeof(TYPE), &mb, &nb, &kb, &mu, &nu,
+                               &NBmm_b0, &NBmm_b1, &NBmm_bn, &NBmm_bX,
+                               &mbF, &nbF, &kbF, &muF, &nuF, 
+                               &KBmm_b0, &KBmm_b1, &KBmm_bn, &KBmm_bX);
+   nKb = K / kb;
+   kr = K - nKb * kb;
+   i = kb*nb + ((M+mb-1)/mb)*mb*kb;  /* size needed for NBmm */
+   if ((N/nb)*nb != N || (M/mb)*mb != M)
+     Csz = mb*nb;
+   i += Csz;
+   if (kr)
+   {
+      j = kbF*nbF + ((M+mbF-1)/mbF)*mbF*kbF;  /* size needed for KBmm */
+      if ((N/nbF)*nbF != N || (M/mbF)*mbF != M)
+        CszF = mbF*nbF;
+      j += CszF;
+      if (j > i)
+         i = j;
+      if (nKb || SCALAR_IS_ONE(beta))
+         pKBmm = KBmm_b1;
+      else if (SCALAR_IS_NONE(beta))
+         pKBmm = KBmm_bn;
+      else if (SCALAR_IS_ZERO(beta))
+         pKBmm = KBmm_b0;
+      else
+         pKBmm = KBmm_bX;
+   }
+   vp = malloc(i*sizeof(TYPE) + ATL_Cachelen + ATL_Cachelen + ATL_Cachelen);
+   ATL_assert(vp);
+   if (nKb)
+   {
+      if (SCALAR_IS_NONE(beta))
+         NBmmX = NBmm_bn;
+      else if (SCALAR_IS_ONE(beta))
+         NBmmX = NBmm_b1;
+      else if (SCALAR_IS_ZERO(beta))
+         NBmmX = NBmm_b0;
+      else
+         NBmmX = NBmm_bX;
+
+      if (Csz)
+      {
+         pC = ATL_AlignPtr(vp);
+         pB = pC + Csz;
+         pB = ATL_AlignPtr(pB);
+      }
+      else 
+         pB = ATL_AlignPtr(vp);
+      pA = pB + kb*nb;
+      pA = ATL_AlignPtr(pA);
+      Mjoin(PATL,vrankK_NM)(TA, TB, M, N, kb, alpha, A, lda, B, ldb, 
+                           beta, C, ldc, mb, nb, kb, mu, nu, pA, pB, pC,
+                           NBmm_b0, NBmmX);
+      incA = (TA == AtlasNoTrans) ? kb*lda : kb;
+      incB = (TB == AtlasNoTrans) ? kb : kb*ldb;
+      A += incA; B += incB;
+      for (k=1; k < nKb; k++, A += incA, B+= incB)
+         Mjoin(PATL,vrankK_NM)(TA, TB, M, N, kb, alpha, A, lda, B, ldb, 
+                               ATL_rone, C, ldc, mb, nb, kb, mu, nu, 
+                               pA, pB, NULL, NBmm_b0, NBmm_b1);
+   }
+   if (kr)
+   {
+      if (CszF)
+      {
+         pC = ATL_AlignPtr(vp);
+         pB = pC + CszF;
+         pB = ATL_AlignPtr(pB);
+      }
+      else
+         pB = ATL_AlignPtr(vp);
+      pA = pB + kbF*nbF;
+      pA = ATL_AlignPtr(pA);
+      Mjoin(PATL,vrankK_NM)(TA, TB, M, N, kr, alpha, A, lda, B, ldb, 
+                            beta, C, ldc, mbF, nbF, kbF, muF, nuF, pA, pB, pC,
+                            KBmm_b0, pKBmm);
+   }
+   free(vp);
+#else
+   TYPE bet=beta;
+   Kk = (K / ATL_vKB)*ATL_vKB;
+   kr = K - Kk;
+   incA = (TA == AtlasNoTrans) ? ATL_vKB*lda : ATL_vKB;
+   incB = (TB == AtlasNoTrans) ? ATL_vKB : ATL_vKB*ldb;
+   for (k=0; k < Kk; k += ATL_vKB)
+   {
+      ATL_assert(!Mjoin(PATL,vrankK)(TA, TB, M, N, ATL_vKB, alpha, A, lda, 
+                                     B, ldb, bet, C, ldc));
+      A += incA;
+      B += incB;
+      bet = 1.0;
+   }
+   if (kr)
+      ATL_assert(!Mjoin(PATL,vrankK)(TA, TB, M, N, kr, alpha, A, lda, 
+                                     B, ldb, bet, C, ldc));
+#endif
+   return(0);
+}
+@ROUT ATL_vmmJIK
+int Mjoin(PATL,vmmJIK)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+                        ATL_CINT M, ATL_CINT N, ATL_CINT K, const scalar alpha,
+                        const TYPE *A, ATL_CINT lda, const TYPE *B, 
+                        ATL_CINT ldb, const SCALAR beta, TYPE *C, const int ldc)
+{
+    ATL_GetMMBlocks(M, N, K, &mb, &nb, &kb);   
+    if (kb >= K)
+       return(Mjoin(PATL,vrankK)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
+                                 beta, C, ldc));
+}

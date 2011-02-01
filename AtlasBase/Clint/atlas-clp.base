@@ -1,0 +1,684 @@
+@ifdef ! incd
+   @define incd @/home/rwhaley/Base/ATLAS@
+@endifdef
+@ifdef @type
+   @extract -b @(incd)/cblas.inc type=@(@type) inc=type
+@endifdef
+@extract -b @(topd)/gen.inc what=crsetup
+@ROUT clapack_trtri
+@extract -b @(topd)/gen.inc what=cw @(sw01)
+@ROUT clapack_gesv clapack_getri clapack_getrf clapack_getrs clapack_posv @\
+      clapack_potri clapack_lauum clapack_potrf clapack_potrs 
+   @extract -b @(topd)/gen.inc what=cw @(cw99)
+@ROUT clapack_geqrf clapack_geqlf clapack_gerqf clapack_gelqf clapack_lamch
+   @extract -b @(topd)/cw.inc lang=C -def cwdate 2009
+@ROUT clapack_gels clapack_ilaenv
+   @extract -b @(topd)/cw.inc lang=C -def cwdate 2010
+@ROUT clapack_trtri clapack_gesv clapack_getri clapack_getrf clapack_getrs @\
+      clapack_posv clapack_potri clapack_lauum clapack_potrf clapack_potrs @\
+      clapack_geqrf clapack_geqlf clapack_gelqf clapack_gerqf clapack_gels @\
+      clapack_ilaenv
+#define @up@(@type)
+#include "atlas_misc.h"
+#ifdef ATL_USEPTHREADS
+   #include "atlas_ptalias_lapack.h"
+#endif
+#include "atlas_lapack.h"
+#include "clapack.h"
+
+@ROUT clapack_ilaenv
+int clapack_ilaenv(enum ATL_ISPEC ISPEC, enum ATL_LAROUT ROUT,
+                   unsigned int OPTS, int N1, int N2, int N3, int N4)
+{
+   int ATL_ilaenv(enum ATL_ISPEC ISPEC, enum ATL_LAROUT ROUT, unsigned int OPTS,
+                  int N1, int N2, int N3, int N4);
+   return(ATL_ilaenv(ISPEC, ROUT, OPTS, N1, N2, N3, N4));
+}
+@ROUT clapack_lamch
+   @extract -b @(topd)/cw.inc lang=c -def cwdate 2009
+#define @up@(@type)
+#include "clapack.h"
+#include "atlas_@(pre)lamch.h"
+
+@(type) clapack_@(pre)lamch(char what)
+{
+   switch(what)
+   {
+@multidef nm
+   EPSILON BASE PRECISION MANTDIG MINEXP MAXEXP UNDERTHRESH OVERTHRESH
+   SAFMIN ROUND
+@endmultidef
+@whiledef le e b p n m l u o s r
+   case '@(le)':
+   case '@up@(le)':
+      return(ATL_@(pre)la@up@(nm));
+   @undef nm
+@endwhile
+   default:
+      return(0.0);
+   }
+   return(0.0);
+}
+@ROUT clapack_gesv
+int clapack_@(pre)gesv(const enum CBLAS_ORDER Order, const int N, const int NRHS, 
+                  @(type) *A, const int lda, int *ipiv, 
+                  @(type) *B, const int ldb)
+/*
+ * clapack_@(pre)gesv computes the solution to a system of linear equations
+ *   A * X = B,
+ * where A is an N-by-N matrix and X and B are N-by-NRHS matrices.
+ * The LU factorization used to factor A is dependent on the Order parameter,
+ * as detailed in the leading comments of clapack_@(pre)getrf.
+ * The factored form of A is then used solve the system of equations A * X = B.
+ * A is overwritten with the appropriate LU factorization, and B, which
+ * contains B on input, is overwritten with the solution X on output.
+ */
+{
+   int ierr = 0;
+
+   if (Order != CblasRowMajor && Order != CblasColMajor)
+   {
+      ierr = -1;
+      cblas_xerbla(1, "clapack_@(pre)gesv", 
+                   "Order must be %d or %d, but is set to %d.\n",
+                   CblasRowMajor, CblasColMajor, Order);
+   }
+   if (N < 0)
+   {
+      ierr = -2;
+      cblas_xerbla(2, "clapack_@(pre)gesv", 
+                   "N cannot be less than zero 0,; is set to %d.\n", N);
+   }
+   if (NRHS < 0)
+   {
+      ierr = -3;
+      cblas_xerbla(3, "clapack_@(pre)gesv", 
+                   "NRHS cannot be less than zero 0,; is set to %d.\n", NRHS);
+   }
+   if (lda < N || lda < 1)
+   {
+      ierr = -5;
+      cblas_xerbla(5, "clapack_@(pre)gesv", 
+                   "lda must be >= MAX(N,1): lda=%d N=%d\n", lda, N);
+   }
+   if (ldb < N || ldb < 1)
+   {
+      ierr = -8;
+      cblas_xerbla(8, "clapack_@(pre)gesv", 
+                   "ldb must be >= MAX(N,1): ldb=%d N=%d\n", ldb, N);
+
+   }
+   if (!ierr) ierr = ATL_@(pre)getrf(Order, N, N, A, lda, ipiv);
+   if (!ierr) ATL_@(pre)getrs(Order, CblasNoTrans, N, NRHS, A, lda, ipiv, B, ldb);
+   return(ierr);
+}
+@ROUT clapack_getri
+int clapack_@(pre)getri(const enum CBLAS_ORDER Order, const int N, @(type) *A, 
+                   const int lda, const int *ipiv)
+{
+   int ierr=0, lwrk;
+   int Mjoin(PATL,GetNB)();
+   void *vp;
+
+   lwrk = Mjoin(PATL,GetNB)();
+   if (lwrk <= N) lwrk *= N;
+   else lwrk = N*N;
+   vp = malloc(ATL_Cachelen + ATL_MulBySize(lwrk));
+   if (vp)
+   {
+      ierr = ATL_getri(Order, N, A, lda, ipiv, ATL_AlignPtr(vp), &lwrk);
+      free(vp);
+   }
+   else
+   {
+      cblas_xerbla(7, "clapack_@(pre)getri", 
+                   "Cannot allocate workspace of %d\n", lwrk);
+      return(-7);
+   }
+   return(ierr);
+}
+@ROUT clapack_getrf
+int clapack_@(pre)getrf(const enum CBLAS_ORDER Order, const int M, const int N,
+                   @(type) *A, const int lda, int *ipiv)
+/*
+ * Computes one of two LU factorizations based on the setting of the Order
+ * parameter, as follows:
+ * ----------------------------------------------------------------------------
+ *                       Order == CblasColMajor
+ * Column-major factorization of form
+ *   A = P * L * U
+ * where P is a row-permutation matrix, L is lower triangular with unit
+ * diagonal elements (lower trapazoidal if M > N), and U is upper triangular 
+ * (upper trapazoidal if M < N).
+ *
+ * ----------------------------------------------------------------------------
+ *                       Order == CblasRowMajor
+ * Row-major factorization of form
+ *   A = P * L * U
+ * where P is a column-permutation matrix, L is lower triangular (lower
+ * trapazoidal if M > N), and U is upper triangular with unit diagonals (upper
+ * trapazoidal if M < N).
+ *
+ * ============================================================================
+ * Let IERR be the return value of the function:  
+ *    If IERR == 0, successful exit.
+ *    If (IERR < 0) the -IERR argument had an illegal value
+ *    If (IERR > 0 && Order == CblasColMajor)
+ *       U(i-1,i-1) is exactly zero.  The factorization has been completed,
+ *       but the factor U is exactly singular, and division by zero will
+ *       occur if it is used to solve a system of equations.
+ *    If (IERR > 0 && Order == CblasRowMajor)
+ *       L(i-1,i-1) is exactly zero.  The factorization has been completed,
+ *       but the factor L is exactly singular, and division by zero will
+ *       occur if it is used to solve a system of equations.
+ */
+{
+   int ierr=0;
+   if (Order != CblasRowMajor && Order != CblasColMajor)
+   {
+      ierr = -1;
+      cblas_xerbla(1, "clapack_@(pre)getrf", 
+                   "Order must be %d or %d, but is set to %d\n",
+                   CblasRowMajor, CblasColMajor, Order);
+   }
+   if (M < 0)
+   {
+      ierr = -2;
+      cblas_xerbla(2, "clapack_@(pre)getrf", 
+                   "M cannot be less than zero 0,; is set to %d.\n", M);
+   }
+   if (N < 0)
+   {
+      ierr = -3;
+      cblas_xerbla(3, "clapack_@(pre)getrf", 
+                   "N cannot be less than zero 0,; is set to %d.\n", N);
+   }
+   if (Order == CblasColMajor)
+   {
+      if (lda < M || lda < 1)
+      {
+         ierr = -6;
+         cblas_xerbla(6, "clapack_@(pre)getrf", 
+                      "lda must be >= MAX(M,1): lda=%d M=%d\n", lda, M);
+      }
+   }
+   else
+   {
+      if (lda < N || lda < 1)
+      {
+         ierr = -6;
+         cblas_xerbla(6, "clapack_@(pre)getrf", 
+                      "lda must be >= MAX(N,1): lda=%d N=%d\n", lda, N);
+      }
+   }
+   if (!ierr) ierr = ATL_getrf(Order, M, N, A, lda, ipiv);
+   return(ierr);
+}
+
+@ROUT clapack_getrs
+int clapack_@(pre)getrs
+   (const enum CBLAS_ORDER Order, const enum CBLAS_TRANSPOSE Trans,
+    const int N, const int NRHS, const @(type) *A, const int lda,
+    const int *ipiv, @(type) *B, const int ldb)
+{
+   int ierr=0;
+   if (Order != CblasRowMajor && Order != CblasColMajor)
+   {
+      ierr = -1;
+      cblas_xerbla(1, "clapack_@(pre)getrs", 
+                   "Order must be %d or %d, but is set to %d\n",
+                   CblasRowMajor, CblasColMajor, Order);
+   }
+   if (Trans != CblasNoTrans && Trans != CblasTrans && Trans != CblasConjTrans)
+   {
+      ierr = -2;
+      cblas_xerbla(2, "clapack_@(pre)getrs", 
+                   "Trans must be %d, %d, or %d, but is set to %d\n",
+                   CblasNoTrans, CblasTrans, CblasConjTrans);
+   }
+   if (N < 0)
+   {
+      ierr = -3;
+      cblas_xerbla(3, "clapack_@(pre)getrs", 
+                   "N cannot be less than zero 0,; is set to %d.\n", N);
+   }
+   if (NRHS < 0)
+   {
+      ierr = -4;
+      cblas_xerbla(4, "clapack_@(pre)getrs", 
+                   "NRHS cannot be less than zero 0,; is set to %d.\n", NRHS);
+   }
+   if (lda < N || lda < 1)
+   {
+      ierr = -6;
+      cblas_xerbla(6, "clapack_@(pre)getrs", 
+                   "lda must be >= MAX(N,1): lda=%d N=%d\n", lda, N);
+   }
+   if (ldb < N || ldb < 1)
+   {
+      ierr = -9;
+      cblas_xerbla(9, "clapack_@(pre)getrs", 
+                   "ldb must be >= MAX(N,1): lda=%d N=%d\n", lda, N);
+   }
+   if (!ierr) ATL_@(pre)getrs(Order, Trans, N, NRHS, A, lda, ipiv, B, ldb);
+   return(ierr);
+}
+@ROUT clapack_posv
+@define rt @clapack_@(pre)posv@
+int clapack_@(pre)posv(const enum ATLAS_ORDER Order, const enum ATLAS_UPLO Uplo,
+                  const int N, const int NRHS, @(type) *A, const int lda,
+                  @(type) *B, const int ldb)
+{
+   int ierr = 0;
+
+   if (Order != CblasRowMajor && Order != CblasColMajor)
+   {
+      ierr = -1;
+      cblas_xerbla(1, "@(rt)", 
+                   "Order must be %d or %d, but is set to %d\n",
+                   CblasRowMajor, CblasColMajor, Order);
+   }
+   if (Uplo != CblasUpper && Uplo != CblasLower)
+   {
+      ierr = -2;
+      cblas_xerbla(2, "@(rt)", 
+                   "Uplo must be %d or %d, but is set to %d\n",
+                   CblasUpper, CblasLower, Uplo);
+   }
+   if (N < 0)
+   {
+      ierr = -3;
+      cblas_xerbla(3, "@(rt)",
+                   "N cannot be less than zero 0,; is set to %d.\n", N);
+   }
+   if (NRHS < 0)
+   {
+      ierr = -4;
+      cblas_xerbla(4, "@(rt)", 
+                   "NRHS cannot be less than zero 0,; is set to %d.\n", NRHS);
+   }
+   if (lda < N || lda < 1)
+   {
+      ierr = -6;
+      cblas_xerbla(6, "@(rt)",
+                   "lda must be >= MAX(N,1): lda=%d N=%d\n", lda, N);
+   }
+   if (ldb < N || ldb < 1)
+   {
+      ierr = -8;
+      cblas_xerbla(8, "@(rt)",
+                   "ldb must be >= MAX(N,1): ldb=%d N=%d\n", ldb, N);
+   }
+   if (!ierr) ierr = ATL_@(pre)potrf(Order, Uplo, N, A, lda);
+   if (!ierr) ATL_@(pre)potrs(Order, Uplo, N, NRHS, A, lda, B, ldb);
+   return(ierr);
+}
+@ROUT clapack_potri
+@define rt @potri@
+@ROUT clapack_lauum
+@define rt @lauum@
+@ROUT clapack_potrf
+@define rt @potrf@
+@ROUT clapack_lauum clapack_potrf clapack_potri
+int clapack_@(pre)@(rt)(const enum ATLAS_ORDER Order, const enum ATLAS_UPLO Uplo,
+                   const int N, @(type) *A, const int lda)
+{
+   int ierr=0;
+   if (Order != CblasRowMajor && Order != CblasColMajor)
+   {
+      ierr = -1;
+      cblas_xerbla(1, "clapack_@(pre)@(rt)", 
+                   "Order must be %d or %d, but is set to %d\n",
+                   CblasRowMajor, CblasColMajor, Order);
+   }
+   if (Uplo != CblasUpper && Uplo != CblasLower)
+   {
+      ierr = -2;
+      cblas_xerbla(2, "clapack_@(pre)@(rt)", 
+                   "Uplo must be %d or %d, but is set to %d\n",
+                   CblasUpper, CblasLower, Uplo);
+   }
+   if (N < 0)
+   {
+      ierr = -3;
+      cblas_xerbla(3, "clapack_@(pre)@(rt)",
+                   "N cannot be less than zero 0,; is set to %d.\n", N);
+   }
+   if (lda < N || lda < 1)
+   {
+      ierr = -5;
+      cblas_xerbla(5, "clapack_@(pre)@(rt)",
+                   "lda must be >= MAX(N,1): lda=%d N=%d\n", lda, N);
+   }
+@ROUT clapack_potri
+   if (!ierr) ierr = ATL_@(pre)trtri(Order, Uplo, CblasNonUnit, N, A, lda);
+   if (!ierr) ATL_@(pre)lauum(Order, Uplo, N, A, lda);
+@ROUT clapack_lauum
+   if (!ierr) ATL_@(pre)@(rt)(Order, Uplo, N, A, lda);
+@ROUT clapack_potrf
+   if (!ierr) ierr = ATL_@(pre)@(rt)(Order, Uplo, N, A, lda);
+@ROUT clapack_lauum clapack_potrf clapack_potri
+   return(ierr);
+}
+@ROUT clapack_potrs
+@define rt @clapack_@(pre)potrs@
+int clapack_@(pre)potrs(const enum CBLAS_ORDER Order, const enum CBLAS_UPLO Uplo,
+                   const int N, const int NRHS, const @(type) *A, const int lda,
+                   @(type) *B, const int ldb)
+{
+   int ierr=0;
+   if (Order != CblasRowMajor && Order != CblasColMajor)
+   {
+      ierr = -1;
+      cblas_xerbla(1, "@(rt)", 
+                   "Order must be %d or %d, but is set to %d\n",
+                   CblasRowMajor, CblasColMajor, Order);
+   }
+   if (Uplo != CblasUpper && Uplo != CblasLower)
+   {
+      ierr = -2;
+      cblas_xerbla(2, "@(rt)", 
+                   "Uplo must be %d or %d, but is set to %d\n",
+                   CblasUpper, CblasLower, Uplo);
+   }
+   if (N < 0)
+   {
+      ierr = -3;
+      cblas_xerbla(3, "@(rt)",
+                   "N cannot be less than zero 0,; is set to %d.\n", N);
+   }
+   if (NRHS < 0)
+   {
+      ierr = -4;
+      cblas_xerbla(4, "clapack_@(pre)getrs", 
+                   "NRHS cannot be less than zero 0,; is set to %d.\n", NRHS);
+   }
+   if (lda < N || lda < 1)
+   {
+      ierr = -6;
+      cblas_xerbla(6, "@(rt)",
+                   "lda must be >= MAX(N,1): lda=%d N=%d\n", lda, N);
+   }
+   if (ldb < N || ldb < 1)
+   {
+      ierr = -8;
+      cblas_xerbla(8, "@(rt)",
+                   "ldb must be >= MAX(N,1): ldb=%d N=%d\n", ldb, N);
+   }
+   if (!ierr) ATL_@(pre)potrs(Order, Uplo, N, NRHS, A, lda, B, ldb);
+   return(ierr);
+}
+@ROUT clapack_trtri
+@define rt @clapack_@(pre)trtri@
+int clapack_@(pre)trtri(const enum ATLAS_ORDER Order, const enum ATLAS_UPLO Uplo,
+                   const enum ATLAS_DIAG Diag, const int N, 
+                   @(type) *A, const int lda)
+{
+   int ierr;
+   if (Order != CblasRowMajor && Order != CblasColMajor)
+   {
+      ierr = -1;
+      cblas_xerbla(1, "@(rt)", 
+                   "Order must be %d or %d, but is set to %d\n",
+                   CblasRowMajor, CblasColMajor, Order);
+   }
+   if (Uplo != CblasUpper && Uplo != CblasLower)
+   {
+      ierr = -2;
+      cblas_xerbla(2, "@(rt)", 
+                   "Uplo must be %d or %d, but is set to %d\n",
+                   CblasUpper, CblasLower, Uplo);
+   }
+   if (Diag != CblasUnit && Diag != CblasNonUnit)
+   {
+      ierr = -3;
+      cblas_xerbla(3, "@(rt)", 
+                   "Diag must be %d or %d, but is set to %d\n",
+                   CblasNonUnit, CblasUnit, Diag);
+   }
+   if (N < 0)
+   {
+      ierr = -4;
+      cblas_xerbla(4, "@(rt)",
+                   "N cannot be less than zero 0,; is set to %d.\n", N);
+   }
+   if (lda < N || lda < 1)
+   {
+      ierr = -6;
+      cblas_xerbla(6, "@(rt)",
+                   "lda must be >= MAX(N,1): lda=%d N=%d\n", lda, N);
+   }
+   if (ierr) ierr = ATL_@(pre)trtri(Order, Uplo, Diag, N, A, lda);
+   return(ierr);
+}
+@ROUT clapack_gels
+@TYPE SCPLX DCPLX
+#define mytrans CblasConjTrans
+@TYPE SREAL DREAL
+#define mytrans CblasTrans
+@TYPE !
+int clapack_@(pre)gels(const enum CBLAS_ORDER Order, 
+                  const enum CBLAS_TRANSPOSE TA,
+                  ATL_CINT M, ATL_CINT N, ATL_CINT NRHS, 
+                  @(type) *A, ATL_CINT lda, @(type) *B, const int ldb)
+/*
+ *  GELS solves overdetermined or underdetermined linear systems
+ *  involving an M-by-N matrix A, or its conjugate-transpose, using a QR
+ *  or LQ factorization of A.  It is assumed that A has full rank.
+ */
+{
+   int ierr = 0;
+
+   if (Order != CblasRowMajor && Order != CblasColMajor)
+   {
+      ierr = -1;
+      cblas_xerbla(1, "clapack_@(pre)gesv", 
+                   "Order must be %d or %d, but is set to %d.\n",
+                   CblasRowMajor, CblasColMajor, Order);
+   }
+   if (TA != AtlasNoTrans && TA != mytrans)
+   {
+      ierr = -2;
+      cblas_xerbla(2, "clapack_@(pre)gesv", 
+                   "Trans must be %d or %d, but is set to %d.\n",
+                   CblasNoTrans, mytrans, TA);
+   }
+   if (M < 0)
+   {
+      ierr = -3;
+      cblas_xerbla(3, "clapack_@(pre)gesv", 
+                   "M cannot be less than zero 0,; is set to %d.\n", N);
+   }
+   if (N < 0)
+   {
+      ierr = -4;
+      cblas_xerbla(4, "clapack_@(pre)gesv", 
+                   "N cannot be less than zero 0,; is set to %d.\n", N);
+   }
+   if (NRHS < 0)
+   {
+      ierr = -5;
+      cblas_xerbla(5, "clapack_@(pre)gesv", 
+                   "NRHS cannot be less than zero 0,; is set to %d.\n", NRHS);
+   }
+   if (lda < M || lda < 1)
+   {
+      ierr = -7;
+      cblas_xerbla(7, "clapack_@(pre)gesv", 
+                   "lda must be >= MAX(M,1): lda=%d M=%d\n", lda, M);
+   }
+   if (ldb < Mmax(M,N) || ldb < 1)
+   {
+      ierr = -9;
+      cblas_xerbla(9, "clapack_@(pre)gesv", 
+                   "ldb must be >= MAX(M,N,1): ldb=%d M=%d N=%d\n", ldb, M, N);
+
+   }
+   if (Order == CblasColMajor)
+      ierr = ATL_@(pre)gels(TA, M, N, NRHS, A, lda, B, ldb, NULL, 0);
+   else  /* row-major array */
+   {
+      enum CBLAS_TRANSPOSE TAr = (TA == AtlasNoTrans) ? mytrans : CblasNoTrans;
+@TYPE SCPLX DCPLX
+      TYPE *a=A+1;
+      ATL_CINT lda2 = lda+lda;
+      ATL_INT j;
+/*
+ *    Complex takes only the conjugate tranpose, so conjugate entries before
+ *    calling with reversed transpose setting
+ */
+      for (j=0; j < N; j++, a += lda2)
+         Mjoin(PATLU,scal)(N, ATL_rnone, a, 2);
+@TYPE !
+      ierr = ATL_@(pre)gels(TAr, N, M, NRHS, A, lda, B, ldb, NULL, 0);
+   }
+   return(ierr);
+}
+#undef mytrans
+@ROUT clapack_geqrf
+   @define qr @qr@
+   @define lq @lq@
+@ROUT clapack_geqlf
+   @define qr @ql@
+   @define lq @rq@
+@ROUT clapack_gelqf
+   @define qr @lq@
+   @define lq @qr@
+@ROUT clapack_gerqf
+   @define qr @rq@
+   @define lq @ql@
+@ROUT clapack_geqrf clapack_geqlf clapack_gelqf clapack_gerqf
+
+int clapack_@(pre)ge@(qr)f
+   (const enum CBLAS_ORDER Order, ATL_CINT M, ATL_CINT N,
+    @(type) *A, ATL_CINT lda, @(type) *TAU)
+{
+   int ierr=0;
+   if (Order != CblasRowMajor && Order != CblasColMajor)
+   {
+      ierr = -1;
+      cblas_xerbla(1, "clapack_@(pre)ge@(qr)f", 
+                   "Order must be %d or %d, but is set to %d\n",
+                   CblasRowMajor, CblasColMajor, Order);
+   }
+   if (M < 0)
+   {
+      ierr = -2;
+      cblas_xerbla(2, "clapack_@(pre)ge@(qr)f", 
+                   "M cannot be less than zero 0,; is set to %d.\n", M);
+   }
+   if (N < 0)
+   {
+      ierr = -3;
+      cblas_xerbla(3, "clapack_@(pre)ge@(qr)f", 
+                   "N cannot be less than zero 0,; is set to %d.\n", N);
+   }
+   if (Order == CblasColMajor)
+   {
+      if (lda < M || lda < 1)
+      {
+         ierr = -5;
+         cblas_xerbla(5, "clapack_@(pre)ge@(qr)f", 
+                      "lda must be >= MAX(M,1): lda=%d M=%d\n", lda, M);
+      }
+   }
+   else
+   {
+      if (lda < N || lda < 1)
+      {
+         ierr = -5;
+         cblas_xerbla(5, "clapack_@(pre)ge@(qr)f", 
+                      "lda must be >= MAX(N,1): lda=%d N=%d\n", lda, N);
+      }
+   }
+   if (ierr)
+      return(ierr);
+   if (Order == CblasColMajor)
+      return(ATL_@(pre)ge@(qr)f(M, N, A, lda, TAU, NULL, 0));
+   else
+      return(ATL_@(pre)ge@(lq)f(N, M, A, lda, TAU, NULL, 0));
+}
+@ROUT clapack.h
+#ifndef CLAPACK_H
+
+#define CLAPACK_H
+#include "cblas.h"
+
+#ifndef ATL_INT
+   #define ATL_INT int
+#endif
+#ifndef ATL_CINT
+   #define ATL_CINT const ATL_INT
+#endif
+#ifndef ATLAS_ORDER
+   #define ATLAS_ORDER CBLAS_ORDER
+#endif
+#ifndef ATLAS_UPLO
+   #define ATLAS_UPLO CBLAS_UPLO 
+#endif
+#ifndef ATLAS_DIAG
+   #define ATLAS_DIAG CBLAS_DIAG
+#endif
+@multidef type void void double float
+@whiledef pre z c d s
+int clapack_@(pre)gesv(const enum CBLAS_ORDER Order, const int N, const int NRHS, 
+                  @(type) *A, const int lda, int *ipiv, 
+                  @(type) *B, const int ldb);
+int clapack_@(pre)getrf(const enum CBLAS_ORDER Order, const int M, const int N,
+                   @(type) *A, const int lda, int *ipiv);
+int clapack_@(pre)getrs
+   (const enum CBLAS_ORDER Order, const enum CBLAS_TRANSPOSE Trans,
+    const int N, const int NRHS, const @(type) *A, const int lda,
+    const int *ipiv, @(type) *B, const int ldb);
+int clapack_@(pre)getri(const enum CBLAS_ORDER Order, const int N, @(type) *A, 
+                   const int lda, const int *ipiv);
+int clapack_@(pre)posv(const enum ATLAS_ORDER Order, const enum ATLAS_UPLO Uplo,
+                  const int N, const int NRHS, @(type) *A, const int lda,
+                  @(type) *B, const int ldb);
+int clapack_@(pre)potrf(const enum ATLAS_ORDER Order, const enum ATLAS_UPLO Uplo,
+                   const int N, @(type) *A, const int lda);
+int clapack_@(pre)potrs(const enum CBLAS_ORDER Order, const enum CBLAS_UPLO Uplo,
+                   const int N, const int NRHS, const @(type) *A, const int lda,
+                   @(type) *B, const int ldb);
+int clapack_@(pre)potri(const enum ATLAS_ORDER Order, const enum ATLAS_UPLO Uplo,
+                   const int N, @(type) *A, const int lda);
+int clapack_@(pre)lauum(const enum ATLAS_ORDER Order, const enum ATLAS_UPLO Uplo,
+                   const int N, @(type) *A, const int lda);
+int clapack_@(pre)trtri(const enum ATLAS_ORDER Order,const enum ATLAS_UPLO Uplo,
+                   const enum ATLAS_DIAG Diag, const int N, @(type) *A, 
+                   const int lda);
+int clapack_@(pre)gels(const enum CBLAS_ORDER Order, 
+                  const enum CBLAS_TRANSPOSE TA,
+                  ATL_CINT M, ATL_CINT N, ATL_CINT NRHS, @(type) *A, 
+                  ATL_CINT lda, @(type) *B, const int ldb);
+   @whiledef rt qr rq ql lq
+int clapack_@(pre)ge@(rt)f(const enum CBLAS_ORDER Order, ATL_CINT M, ATL_CINT N,
+                   @(type) *A, ATL_CINT lda, @(type) *TAU);
+   @endwhile
+
+   @undef type
+@endwhile
+#endif
+@ROUT Make.ext
+basd = /home/rwhaley/Base/ATLAS
+basf = $(basd)/atlas-clp.base
+ext = extract3.0 -b $(basf) -langC -lnlen79 -llwarn2
+
+@declare "fil = " y y
+   @whiledef pr z c d s
+      @whiledef rt posv potrf potrs gesv getrf getrs trtri
+         clapack_@(pr)@(rt).c
+      @endwhile
+   @endwhile
+@enddeclare
+
+all : $(fil)
+
+@multidef typ DCPLX SCPLX DREAL SREAL
+@whiledef pr z c d s
+   @whiledef rt posv potrf potrs gesv getrf getrs trtri
+clapack_@(pr)@(rt).c : $(basf)
+	$(ext) -o $@ rout=clapack_@(rt) type=@(typ)
+   @endwhile
+   @undef typ
+@endwhile

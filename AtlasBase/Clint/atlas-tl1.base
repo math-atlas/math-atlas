@@ -1,0 +1,5849 @@
+@SKIP Tune codes for Level 1
+@ROUT atlas_prefetch.h
+#ifndef ATLAS_PREFETCH_H
+#define ATLAS_PREFETCH_H
+@beginskip
+#define ATL_pfl1R(mem) \
+   __asm__ __volatile__ ("prefetch %0,2" : : "m" (*((char *)(mem))))
+
+#if defined(__alpha__) && !defined(NOPREFETCH)
+#define prefetch(x) asm volatile("ldt $f31, %0" : :"m"(x))
+#elif defined(__hppa) && !defined(NOPREFETCH) && 0
+#define prefetch(x) _asm("fldd",x,"%fr0")
+#else
+#define prefetch(x) 
+#endif
+@endskip
+/*
+ * Altivec prefetch model not well utilized by SSE-like prefetch, so have
+ * special commands for it.
+ */
+#if defined(ATL_AltiVec)
+   #include "atlas_altivec.h"
+#endif
+/*
+ *
+ * ATL_pfl1R(mem)  : fetch location mem to L1, with intent to read *only*
+ * ATL_pfl1W(mem)  : fetch location mem to L1, with intent to read/write
+ * ATL_pfl1WO(mem) : fetch location mem to L1, with intent to write ONLY
+ */
+
+#if defined(ATL_3DNow)
+   #ifdef __GNUC__
+      #define ATL_pfl1R(mem) \
+         __asm__ __volatile__ ("prefetch %0" : : "m" (*((char *)(mem))))
+      #define ATL_pfl1W(mem) \
+         __asm__ __volatile__ ("prefetchw %0" : : "m" (*((char *)(mem))))
+      #define ATL_pfl1WO ATL_pfl1W
+      #define ATL_GOT_L1PREFETCH
+      #ifdef ATL_SSE1
+         #define ATL_pfl2R(mem) \
+            __asm__ __volatile__ ("prefetcht1 %0" : : "m" (*((char *)(mem))))
+         #define ATL_pfl2W(mem) \
+            __asm__ __volatile__ ("prefetcht1 %0" : : "m" (*((char *)(mem))))
+         #define ATL_pfl2WO ATL_pfl2W
+         #define ATL_GOT_L2PREFETCH
+      #endif
+   #endif
+#elif defined(ATL_SSE1) || defined (ATL_SSE2) /* SSE prefetch is available */
+   #ifdef __GNUC__
+      #define ATL_pfl1R(mem) \
+         __asm__ __volatile__ ("prefetchnta %0" : : "m" (*((char *)(mem))))
+      #define ATL_pfl1W(mem) \
+         __asm__ __volatile__ ("prefetchnta %0" : : "m" (*((char *)(mem))))
+      #define ATL_pfl1WO ATL_pfl1W
+      #define ATL_GOT_L1PREFETCH
+
+      #define ATL_pfl2R(mem) \
+         __asm__ __volatile__ ("prefetcht1 %0" : : "m" (*((char *)(mem))))
+      #define ATL_pfl2W(mem) \
+         __asm__ __volatile__ ("prefetcht1 %0" : : "m" (*((char *)(mem))))
+      #define ATL_pfl2WO ATL_pfl2W
+      #define ATL_GOT_L2PREFETCH
+   #endif
+#elif defined(__SUNPRO_C) && defined(__sparc) /* && __SUNPRO_CC > 0x600 */
+   #include <sun_prefetch.h>
+   #define ATL_pfl1R(mem) sparc_prefetch_read_many((void*)(mem))
+   #define ATL_pfl1W(mem) sparc_prefetch_write_many((void*)(mem))
+   #define ATL_GOT_L1PREFETCH
+   #define ATL_pfl2R(mem) sparc_prefetch_read_many((void*)(mem))
+   #define ATL_pfl2W(mem) sparc_prefetch_write_many((void*)(mem))
+   #define ATL_GOT_L2PREFETCH
+#elif defined(ATL_ARCH_21264)
+   #ifdef __GNUC__
+      #define ATL_pfl1R(mem) \
+         __asm__ __volatile__ ("ldt $f31, %0" : : "m" (*((char *)(mem))))
+      #define ATL_pfl1W(mem) \
+         __asm__ __volatile__ ("lds $f31, %0" : : "m" (*((char *)(mem))))
+      #define ATL_pfl1WO(mem) \
+         __asm__ __volatile__ ("wh64 %0" : : "m" (*((char *)(mem))))
+      #define ATL_GOT_L1PREFETCH
+   #elif defined(__DECC)
+      #include "c_asm.h"
+      #define ATL_pfl1R(mem) asm ("ldt %f31,(%a0) ;", mem)
+      #define ATL_pfl1W(mem) asm ("lds %f31,(%a0) ;", mem)
+      #define ATL_pfl1WO(mem) asm ("wh64 (%a0) ;", mem)
+      #define ATL_GOT_L1PREFETCH
+   #endif
+/*
+ * Note: SunUS5/10 seems to get no benefit from prefetch, so don't enable
+ */
+#elif defined(ATL_ARCH_USIV) || defined(ATL_ARCH_SunUSIII) || \
+      defined(ATL_ARCH_SunUSII) || defined(ATL_ARCH_SunUSI) || \
+      defined(ATL_ARCH_SunUST2)
+   #ifdef __GNUC__
+      #define ATL_pfl1R(mem) \
+         __asm__ __volatile__ ("prefetch %0,0" : : "m" (*((char *)(mem))))
+      #define ATL_pfl1W(mem) \
+         __asm__ __volatile__ ("prefetch %0,2" : : "m" (*((char *)(mem))))
+      #define ATL_GOT_L1PREFETCH
+      #define ATL_pfl2R(mem) \
+         __asm__ __volatile__ ("prefetch %0,3" : : "m" (*((char *)(mem))))
+      #define ATL_pfl2W(mem) \
+         __asm__ __volatile__ ("prefetch %0,2" : : "m" (*((char *)(mem))))
+      #define ATL_GOT_L2PREFETCH
+   #endif
+/*
+ * Gives gigantic slowdown on POWER4, so don't enable there, just use gcc
+ * builtin
+ */
+#elif defined(ATL_GAS_PPC) && !defined(ATL_ARCH_POWER4)
+@beginskip
+#elif defined(ATL_ARCH_PPCG5) || defined(ATL_ARCH_PPCG5) || \
+      defined(ATL_ARCH_POWER5)
+@endskip
+   #if defined(__GNUC__) || defined(__IBM_GCC_ASM)
+      #define ATL_pfl1R(mem) \
+         __asm__ __volatile__ ("dcbt  0, %0, 0" : : "r" ((mem)))
+      #define ATL_pfl1W(mem) \
+         __asm__ __volatile__ ("dcbtst  0, %0" : : "r" ((mem)))
+      #define ATL_pfST(mem) \
+         __asm__ __volatile__ ("dcbt  0, %0, 1" : : "r" ((mem)))
+      #define ATL_pfl1STi(mem, str) \
+        __asm__ __volatile__ ("rlwinm %0, %0, 0, 0, 24\n\t" \
+                              "ori %0, %0, 96+%2\n\t" \
+                              "dcbt 0, %0, 8"  \
+                              : "=r" (mem) \
+                              : "0" (mem), "i" (str))
+
+      #define ATL_GOT_L1PREFETCH
+      #define ATL_L1LS 128
+   #endif
+#elif defined(ATL_ARCH_IA64Itan) || defined(ATL_ARCH_IA64Itan2)
+/*
+ * Have to use nt2, 'cause fpu ignored L1.
+ * NOTE: just let icc to prefetch, keep inst here for reference
+ */
+   #if defined(__ECC) && 0
+      #include "ia64intrin.h"
+      #define ATL_pfl1R(mem) __lfetch(2, (mem))
+      #define ATL_pfl1W(mem)  __lfetch_excl(2, (mem))
+      #define ATL_GOT_L1PREFETCH
+   #elif defined(__GNUC__) && !defined(__ECC)
+      #define ATL_pfl1R(mem) \
+         __asm__ ("    lfetch.nt2  [%0]": : "r"((void *)(mem)))
+@skip         __asm__ ("    lfetch  [%0]": : "r"((void *)(mem)))
+      #define ATL_pfl1W(mem) \
+@skip         __asm__ ("    lfetch.excl.nt2     [%0]": : "r"((void *)(mem)))
+         __asm__ ("    lfetch.excl     [%0]": : "r"((void *)(mem)))
+      #define ATL_GOT_L1PREFETCH
+   #endif
+#elif defined(ATL_ARCH_HPPA20) && defined(__GNUC__)
+      #define ATL_pfl1R(mem) \
+         __asm__ __volatile__ ("ldw %0, %%r0" : : "m" (*((char *)(mem))))
+      #define ATL_pfl1W(mem) \
+         __asm__ __volatile__ ("ldd %0, %%r0" : : "m" (*((char *)(mem))))
+      #define ATL_GOT_L1PREFETCH
+#elif defined(ATL_AltiVec) && !defined(ATL_pfl1R)
+   #ifndef ATL_NoFakePF
+      /* 33619968 is ATL_GetCtrl(0, 1, 2), or fetch 1 32-byte block */
+      #define ATL_pfl1R(mem) ATL_pfavR(mem, 33619968, 3)
+      #define ATL_pfl1W(mem) ATL_pfavW(mem, 33619968, 2)
+      #define ATL_GOT_L1PREFETCH
+   #endif
+#elif defined(ATL_ARCH_MIPSICE9) && (defined(__GNUC__) || defined(__PATHCC__))
+   #define ATL_pfl1R(mem) \
+      __asm__ __volatile__ ("pref 6,%0" : : "m" (*((char *)(mem))))
+   #define ATL_pfl1W(mem) \
+      __asm__ __volatile__ ("pref 7,%0" : : "m" (*((char *)(mem))))
+   #define ATL_GOT_L1PREFETCH
+   #define ATL_L1LS 32
+   #define ATL_L2LS 64
+#elif defined(__GNUC__)  /* last ditch, use gcc predefined func */
+   #define ATL_pfl1R(mem) __builtin_prefetch(mem, 0, 3)
+   #define ATL_pfl1W(mem) __builtin_prefetch(mem, 1, 3)
+   #define ATL_GOT_L1PREFETCH
+#endif
+#if defined(ATL_pfl1W) && !defined(ATL_pfl1WO)
+   #define ATL_pfl1WO ATL_pfl1W
+#endif
+
+#ifdef ATL_NOL1PREFETCH
+   #ifdef ATL_GOT_L1PREFETCH
+      #undef ATL_pfl1R
+      #undef ATL_pfl1W
+      #undef ATL_pfl1WO
+      #undef ATL_GOT_L1PREFETCH
+   #endif
+#endif
+#ifdef ATL_NOL2PREFETCH
+   #ifdef ATL_GOT_L2PREFETCH
+      #undef ATL_pfl2R
+      #undef ATL_pfl2W
+      #undef ATL_pfl2WO
+      #undef ATL_GOT_L2PREFETCH
+   #endif
+#endif
+#ifndef ATL_GOT_L1PREFETCH  /* dummy calls cpp takes out of code */
+   #define ATL_pfl1R(mem)
+   #define ATL_pfl1W(mem)
+   #define ATL_pfl1WO(mem)
+#endif
+#ifndef ATL_GOT_L2PREFETCH  /* dummy calls cpp takes out of code */
+   #define ATL_pfl2R(mem)
+   #define ATL_pfl2W(mem)
+#endif
+
+/*
+ * Define Cache line sizes for L1 and L2
+ */
+#ifndef ATL_L1LS
+   #define ATL_L1LS 64
+#endif
+#ifndef ATL_L2LS
+   #define ATL_L2LS ATL_L1LS
+#endif
+
+#endif
+@ROUT atlas_altivec.h
+#ifndef ATLAS_ALTIVEC_H
+   #define ATLAS_ALTIVEC_H
+
+#ifdef ATL_AltiVec
+/*
+ * Always use gcc rather than apple's altivec, since apple is no longer
+ * supporting PowerPCs
+ */
+   #ifndef ATL_AVgcc
+      #define ATL_AVgcc
+   #endif
+   #ifdef ATL_AVgcc
+      #include <altivec.h>
+
+      #define VECTOR_INIT(v0_,v1_,v2_,v3_) (vector float) {v0_,v1_,v2_,v3_}
+      #define VECTOR_INITI(v0_,v1_,v2_,v3_) (vector int) {v0_,v1_,v2_,v3_}
+   #else
+      #define VECTOR_INIT(v0_,v1_,v2_,v3_) (vector float)(v0_,v1_,v2_,v3_)
+      #define VECTOR_INITI(v0_,v1_,v2_,v3_) (vector int)(v0_,v1_,v2_,v3_)
+      #define VECTOR_INITL(v0_,v1_,v2_,v3_) (vector long)(v0_,v1_,v2_,v3_)
+   #endif
+   #define ATL_GetCtrl(stride, count, size) \
+      (int)((stride) | ((count)<<16) | ((size)<<24))
+   #define ATL_pfavR(ptr, cwrd, stream) \
+      vec_dst((vector float *)(ptr), (cwrd), (stream))
+   #define ATL_pfavW(ptr, cwrd, stream) \
+      vec_dstst((vector float *)(ptr), (cwrd), (stream))
+#else
+   #define ATL_GetCtrl(stride, count, size)
+   #define ATL_pfavR(ptr, cwrd, stream)
+   #define ATL_pfavW(ptr, cwrd, stream)
+#endif
+
+#endif
+@ROUT rotsrch
+   @define rt @rot@
+@ROUT axpbysrch
+   @define rt @axpby@
+@ROUT axpysrch
+   @define rt @axpy@
+@ROUT cpscsrch
+   @define rt @cpsc@
+@ROUT asumsrch
+   @define rt @asum@
+@ROUT nrm2srch
+   @define rt @nrm2@
+@ROUT setsrch
+   @define rt @set@
+@ROUT dotsrch
+   @define rt @dot@
+@ROUT scalsrch
+   @define rt @scal@
+@ROUT copysrch
+   @define rt @copy@
+@ROUT swapsrch
+   @define rt @swap@
+@ROUT iamaxsrch
+   @define rt @iamax@
+@ROUT axpysrch iamaxsrch copysrch scalsrch dotsrch nrm2srch asumsrch setsrch @\
+      axpbysrch cpscsrch swapsrch setsrch rotsrch
+#include "atlas_misc.h"
+#include <assert.h>
+#include <string.h>
+#include <ctype.h>
+
+@ROUT dotsrch
+int CONJ=0; /* elegant global variable to shoehorn in conjugation support */
+
+@ROUT axpysrch iamaxsrch copysrch scalsrch dotsrch nrm2srch asumsrch setsrch @\
+      axpbysrch cpscsrch swapsrch setsrch rotsrch
+#define AlphaX 2
+typedef struct FileNode FILENODE;
+struct FileNode
+{
+   int ID, incX, incY, alpha, beta;
+   char *rout, *auth, *cc, *ccflags;
+   FILENODE *next;
+};
+typedef struct PerfNode PERFNODE;
+struct PerfNode
+{
+   int incX, incY, alpha, beta;
+   double mf;
+   FILENODE *myroot;
+   PERFNODE *next;
+};
+
+typedef struct QNode QNODE;
+struct QNode
+{
+   FILENODE *fptr;
+   PERFNODE *perf;
+   QNODE *next;
+};
+
+void KillAllFN(FILENODE *fp)
+{
+   FILENODE *fn;
+   while(fp)
+   {
+      fn = fp->next;
+      if (fp->rout) free(fp->rout);
+      if (fp->auth) free(fp->auth);
+      if (fp->cc) free(fp->cc);
+      if (fp->ccflags) free(fp->ccflags);
+      free(fp);
+      fp = fn;
+   }
+}
+
+void PrintFN(FILENODE *fp)
+{
+   fprintf(stdout, "  ID  incX  incY  alpha  beta  ROUT\n");
+   fprintf(stdout, "====  ====  ====  =====  ====  =============\n");
+   while(fp)
+   {
+      fprintf(stdout, "%4d  %4d  %4d  %4d  %4d  %s\n", 
+              fp->ID, fp->incX, fp->incY, fp->alpha, fp->beta, fp->rout);
+      fp = fp ->next;
+   }
+   fprintf(stdout, "\n");
+}
+
+FILENODE *AllocFN(int ID, int incX, int incY, int alpha, int beta,
+                  char *rout, char *auth, char *cc, char *ccflags)
+{
+   FILENODE *fp;
+   int i;
+
+   fp = malloc(sizeof(FILENODE));
+   assert(fp);
+
+   fp->ID = ID;
+   fp->incX = incX;
+   fp->incY = incY;
+   fp->alpha = alpha;
+   fp->beta  = beta;
+   if (rout)
+   {
+      i = strlen(rout)+1;
+      fp->rout = malloc(i*sizeof(char));
+      assert(fp->rout);
+      strcpy(fp->rout, rout);
+   }
+   else fp->rout = NULL;
+
+   if (auth)
+   {
+      i = strlen(auth)+1;
+      fp->auth = malloc(i*sizeof(char));
+      assert(fp->auth);
+      strcpy(fp->auth, auth);
+   }
+   else fp->auth = NULL;
+
+   if (cc)
+   {
+      i = strlen(cc)+1;
+      fp->cc = malloc(i*sizeof(char));
+      assert(fp->cc);
+      strcpy(fp->cc, cc);
+   }
+   else fp->cc = NULL;
+   if (ccflags)
+   {
+      i = strlen(ccflags)+1;
+      fp->ccflags = malloc(i*sizeof(char));
+      assert(fp->ccflags);
+      strcpy(fp->ccflags, ccflags);
+   }
+   else fp->ccflags = NULL;
+
+   fp->next = NULL;
+   return(fp);
+}
+
+QNODE *AllocQN(FILENODE *fp)
+{
+   QNODE *qp;
+   qp = malloc(sizeof(QNODE));
+   assert(qp);
+   qp->fptr = fp;
+   qp->perf = NULL;
+   qp->next = NULL;
+   return(qp);
+}
+
+PERFNODE *AllocPN(int incX, int incY, int alpha, double mf, FILENODE *fp)
+{
+   PERFNODE *pp;
+   pp = malloc(sizeof(PERFNODE));
+   assert(pp);
+   pp->incX = incX;
+   pp->incY = incY;
+   pp->mf = mf;
+   pp->myroot = fp;
+   pp->next = NULL;
+   return(pp);
+}
+
+int LineIsCont(char *ln)
+{
+   int i, iret=0;
+   for(i=0; ln[i]; i++);
+   if (i)
+   {
+      for(i--; isspace(ln[i]); i--);
+      if (ln[i] == '\\') iret = 1;
+   }
+   return(iret);
+}
+
+void FixFlags(char *ln)
+{
+   int i, iret=0;
+   for(i=0; ln[i]; i++);
+   if (i)
+   {
+      for(i--; isspace(ln[i]); i--) ln[i] = '\0';
+   }
+}
+
+FILENODE *ReadFile(char pre)
+{
+   FILE *fpin;
+   FILENODE *fbase, *fn, *fp=NULL;
+   char ln[512], rout[256], auth[256], cc[256], ccflags[256];
+   char *pcc, *pccflags;
+   int i, n, ID, alpha, beta, incX, incY;
+
+   sprintf(ln, "%c@(rt).dsc", pre);
+@ROUT dotsrch `   if (CONJ) sprintf(ln, "%c@(rt)c.dsc", pre);`
+   fpin = fopen(ln, "r");
+   assert(fpin);
+   assert(fgets(ln, 512, fpin) != NULL);
+   sscanf(ln, " %d", &n);
+   for (i=0; i < n; i++)
+   {
+      assert(fgets(ln, 512, fpin) != NULL);
+@ROUT iamaxsrch nrm2srch asumsrch
+      assert(sscanf(ln, " %d %d %s \"%[^\"]", &ID, &incX, rout, auth) == 4);
+      incY = 0;
+      alpha = beta = AlphaX;
+@ROUT nrm2srch asumsrch
+      if ( (pre == 'c' || pre == 'z') && incX == 1 ) continue;
+@ROUT scalsrch setsrch
+      assert(sscanf(ln, " %d %d %d %s \"%[^\"]", &ID, &alpha, &incX,
+                    rout, auth) == 5);
+      incY = 0;
+@ROUT scalsrch
+      if ( (pre == 'c' || pre == 'z') && incX == 1 &&
+           (alpha == 1 || alpha == -1 || alpha == 0) ) continue;
+@ROUT copysrch swapsrch dotsrch
+      assert(sscanf(ln, " %d %d %d %s \"%[^\"]", &ID, &incX, &incY, rout, auth)
+             == 5);
+      alpha = beta = AlphaX;
+@ROUT copysrch swapsrch
+      if ( (pre == 'c' || pre == 'z') && incX == 1 && incY == 1 ) continue;
+@ROUT axpbysrch rotsrch
+      assert(sscanf(ln, " %d %d %d %d %d %s \"%[^\"]",
+                    &ID, &alpha, &beta, &incX, &incY, rout, auth) == 7);
+@ROUT axpysrch cpscsrch
+      assert(sscanf(ln, " %d %d %d %d %s \"%[^\"]", &ID, &alpha, &incX, &incY, 
+                    rout, auth) == 6);
+      if ( (pre == 'c' || pre == 'z') && incX == 1 && incY == 1 &&
+           (alpha == 1 || alpha == -1 || alpha == 0) ) continue;
+@ROUT setsrch
+      if (alpha != 0) alpha = AlphaX;
+@ROUT axpysrch scalsrch axpbysrch cpscsrch rotsrch
+      if (pre == 's' || pre == 'd')
+      {
+         if (alpha != -1 && alpha != 1) alpha = AlphaX;
+      }
+      else if (alpha != -1 && alpha != 1 && alpha != 0) alpha = AlphaX;
+@ROUT axpbysrch rotsrch
+      if (pre == 's' || pre == 'd')
+      {
+         if (beta != -1 && beta != 1) beta = AlphaX;
+      }
+      else if (beta != -1 && beta != 1 && beta != 0) beta = AlphaX;
+@ROUT rotsrch
+      if (alpha == 1 && beta == 0) continue;
+@ROUT axpysrch scalsrch cpscsrch setsrch
+      beta = AlphaX;
+@ROUT axpysrch iamaxsrch copysrch scalsrch axpbysrch swapsrch dotsrch @\
+      nrm2srch asumsrch cpscsrch setsrch rotsrch
+      if  (LineIsCont(ln))
+      {
+         assert(fgets(cc, 256, fpin) != NULL);
+         assert(fgets(ccflags, 512, fpin) != NULL);
+         FixFlags(cc);
+         FixFlags(ccflags);
+         pcc = cc; 
+         pccflags = ccflags;
+      }
+      else pcc = pccflags = NULL;
+      fn = AllocFN(ID, incX, incY, alpha, beta, rout, auth, pcc, pccflags);
+      if (fp) fp->next = fn;
+      else fbase = fn;
+      fp = fn;
+   }
+   PrintFN(fbase);
+   return(fbase);
+}
+
+double GetMflop0(char pre, int ID, char *rout, int incX, int incY,
+                 int alpha, int beta, char *cc, char *ccflags)
+{
+   double dalp=2.0;
+   FILE *fpin;
+   char ln[1024], fnam[128];
+   double t0, t1=0.0;
+   int i, N;
+
+   N = 5000;
+@ROUT iamaxsrch scalsrch nrm2srch asumsrch setsrch
+@skip   N = 1000000 / Mabs(incX);
+@ROUT axpysrch copysrch axpbysrch swapsrch dotsrch cpscsrch rotsrch
+@skip   N = 2000000 / (Mabs(incX)+Mabs(incY));
+@ROUT axpysrch iamaxsrch copysrch scalsrch axpbysrch swapsrch dotsrch @\
+      nrm2srch asumsrch cpscsrch setsrch rotsrch
+   sprintf(fnam, "res/%c@up@(rt)%d_a%db%dx%dy%d", pre, ID, alpha, beta,
+           incX, incY);
+@ROUT dotsrch
+   if (CONJ)
+      sprintf(fnam, "res/%c@up@(rt)c%d_a%db%dx%dy%d", pre, ID, alpha, beta,
+              incX, incY);
+@ROUT axpysrch iamaxsrch copysrch scalsrch axpbysrch swapsrch dotsrch @\
+      nrm2srch asumsrch cpscsrch setsrch rotsrch
+   fpin = fopen(fnam, "r");
+   if (fpin == NULL)
+   {
+      i = sprintf(ln, "make %c@(rt)case N=%d urout=%s fout=\"-f %s\" ",
+                  pre, N, rout, fnam);
+@ROUT dotsrch
+      if (CONJ)
+         i = sprintf(ln, "make %c@(rt)ccase N=%d urout=%s fout=\"-f %s\" ",
+                     pre, N, rout, fnam);
+@ROUT axpysrch iamaxsrch copysrch scalsrch axpbysrch swapsrch dotsrch @\
+      nrm2srch asumsrch cpscsrch setsrch rotsrch
+      if (cc) i += sprintf(ln+i, "%cUCC=\"%s\" ", pre, cc);
+      if (ccflags) i += sprintf(ln+i, "%cUCCFLAGS=\"%s\" ", pre, ccflags);
+      i += sprintf(ln+i, "opt=\"");
+      if (incX != 1) i += sprintf(ln+i, "-X %d ", incX);
+@ROUT axpysrch copysrch axpbysrch swapsrch dotsrch cpscsrch rotsrch
+      if (incY != 1) i += sprintf(ln+i, "-Y %d ", incY);
+@ROUT setsrch
+      if (alpha == 0)
+      {
+         if (pre == 'd' || pre == 's') i += sprintf(ln+i, "-a 0.0");
+         else i += sprintf(ln+i, "-a 0.0 0.0");
+      }
+@ROUT axpysrch scalsrch axpbysrch cpscsrch rotsrch
+      if (pre == 'd' || pre == 's')
+      {
+         if (alpha == 1) i += sprintf(ln+i, "-a 1.0");
+         else if (alpha == -1) i += sprintf(ln+i, "-a -1.0 ");
+@ROUT rotsrch `         else if (alpha == 0) i += sprintf(ln+i, "-a 0.0 ");`
+      }
+      else
+      {
+         if (alpha == 1) i += sprintf(ln+i, "-a 1.0 0.0 ");
+         else if (alpha == -1) i += sprintf(ln+i, "-a -1.0 0.0 ");
+@ROUT rotsrch
+         else if (alpha == 0) i += sprintf(ln+i, "-a 0.0 0.0 ");
+@ROUT axpysrch scalsrch axpbysrch cpscsrch
+         else if (alpha == 0) i += sprintf(ln+i, "-a 0.8 0.0 ");
+@ROUT axpysrch scalsrch axpbysrch cpscsrch rotsrch
+      }
+@ROUT axpbysrch rotsrch
+      if (pre == 'd' || pre == 's')
+      {
+         if (beta  == 1) i += sprintf(ln+i, "-b 1.0");
+         else if (beta == -1) i += sprintf(ln+i, "-b -1.0 ");
+      }
+      else
+      {
+         if (beta == 1) i += sprintf(ln+i, "-b 1.0 0.0 ");
+         else if (beta == -1) i += sprintf(ln+i, "-b -1.0 0.0 ");
+@ROUT axpbysrch `         else if (beta == 0) i += sprintf(ln+i, "-b 0.9 0.0 ");`
+@ROUT rotsrch `         else if (beta == 0) i += sprintf(ln+i, "-b 0.0 0.0 ");`
+      }
+@ROUT iamaxsrch axpysrch copysrch scalsrch axpbysrch swapsrch dotsrch @\
+      nrm2srch asumsrch cpscsrch setsrch rotsrch
+      i += sprintf(ln+i, "\"\n");
+      fprintf(stdout, "TIM: %s", ln);
+      if (system(ln) != 0) return(-1.0);
+      fpin = fopen(fnam, "r");
+      assert(fpin);
+   }
+   assert(fgets(ln, 512, fpin) != NULL);
+   assert(sscanf(ln, " %lf", &t0) == 1);
+   return(t0);
+}
+
+double GetMflop1(char pre, QNODE *qp, int incX, int incY, int alpha, int beta)
+{
+   PERFNODE *pp;
+   double mf;
+
+@skip   assert(incX != 0 && incY != 0);
+   if (qp->fptr->incX != incX && qp->fptr->incX != 0) return(-1.0);
+   if (qp->fptr->incY != incY && qp->fptr->incY != 0) return(-1.0);
+   if (qp->fptr->alpha != alpha && qp->fptr->alpha != AlphaX) return(-1.0);
+   if (qp->fptr->beta != beta && qp->fptr->beta != AlphaX) return(-1.0);
+   for(pp=qp->perf; pp; pp = pp->next)
+      if (pp->incX == incX && pp->incY == incY && pp->alpha == alpha) break;
+   if (pp) return(pp->mf);
+   mf = GetMflop0(pre, qp->fptr->ID, qp->fptr->rout, incX, incY, alpha, beta,
+                  qp->fptr->cc, qp->fptr->ccflags);
+   if (mf < 0.0) return(-1.0);
+   pp = AllocPN(incX, incY, alpha, mf, qp->fptr);
+   pp->next = qp->perf;
+   qp->perf = pp;
+   return(pp->mf);
+}
+
+double GetMflop(char pre, QNODE *qp, int incX, int incY, int alpha, int beta)
+/*
+ * inc == 0, tests three possible values, and gives back combined score
+ */
+{
+   int ix[3], iy[3], nx=1, ny=1, i, j, k;
+   double t1, t0=0.0;
+
+@ROUT iamaxsrch scalsrch nrm2srch asumsrch cpscsrch setsrch
+   if (incX == 0)
+   {
+      nx = 3;
+      ix[0] = 1;
+      ix[1] = 3;
+      ix[2] = 2;
+   }
+   else ix[0] = incX;
+   iy[0] = incY;
+@ROUT axpysrch copysrch axpbysrch swapsrch dotsrch cpscsrch rotsrch
+   if (incX == 0)
+   {
+      nx = 3;
+      ix[0] = 1;
+      ix[1] = -3;
+      ix[2] = 2;
+   }
+   else ix[0] = incX;
+   if (incY == 0)
+   {
+      ny = 3;
+      iy[0] = 1;
+      iy[1] = -2;
+      iy[2] = 5;
+   }
+   else iy[0] = incY;
+   if (incX == 0 && incY == 0) nx = ny = 2;  /* tsts too long otherwise */
+@ROUT iamaxsrch axpysrch copysrch scalsrch axpbysrch swapsrch dotsrch @\
+      nrm2srch asumsrch cpscsrch setsrch rotsrch
+   for (k=i=0; i < nx; i++)
+   {
+      for (j=0; j < ny; j++, k++)
+      {
+         t1 = GetMflop1(pre, qp, ix[i], iy[j], alpha, beta);
+         if (t1 < 0.0) return(-1.0);
+         t0 += t1;
+         if (i==0 && j==0) t0 *= 3.0; /* give inc = 1 case more weight */
+      }
+   }
+   return(t0 / (nx*ny+2));
+}
+
+void PrintTable(int n, int *ix, int *iy, int *ia, int *ib, FILENODE **bp)
+{
+   int i;
+   fprintf(stdout, "   incX  incY  alpha  beta    ID  ROUTINE\n");
+   fprintf(stdout, "   ====  ====  =====  ====  ====  ==================\n");
+   for (i=0; i < n; i++)
+   {
+      if (bp[i])
+         fprintf(stdout, "   %4d  %4d  %5d  %4d  %4d  %s\n",
+                 ix[i], iy[i], ia[i], ib[i], bp[i]->ID, bp[i]->rout);
+      else
+         fprintf(stdout, "   %4d  %4d  %5d  %4d  %4d  %s\n",
+                 ix[i], iy[i], ia[i], ib[i], -1, "UNKNOWN");
+   }
+   fprintf(stdout, "\n");
+}
+
+int GetCombos(FILENODE *fptr, int *ix, int *iy, int *ia, int *ib, FILENODE **bp)
+/* 
+ * finds all combos of incX, incY, alpha and beta returns # of unique combos
+ */
+{
+   FILENODE *fp, *pp;
+   int i=1, j;
+
+   if (!fptr) return(0);
+/*
+ * Always include general case
+ */
+   *ix = 0;
+   *iy = 0;
+   *ia = AlphaX;
+   *ib = AlphaX;
+   *bp = NULL;
+   for (fp=fptr; fp; fp = fp->next)
+   {
+      for (j=0; j < i; j++)
+         if (fp->incX == ix[j] && fp->incY == iy[j] && fp->alpha == ia[j] &&
+             fp->beta == ib[j]) break;
+      if (j == i) /* not already there */
+      {
+         ix[i] = fp->incX;
+         iy[i] = fp->incY;
+         ia[i] = fp->alpha;
+         ib[i] = fp->beta;
+         bp[i++] = NULL;
+      }
+   }
+   PrintFN(fptr);
+   PrintTable(i, ix, iy, ia, ib, bp);
+   return(i);
+}
+
+QNODE *MakeQ(FILENODE *fbase)
+{
+   QNODE *qbase, *qp;
+   FILENODE *fp;
+
+   if (!fbase) return(NULL);
+   qp = qbase = AllocQN(fbase);
+   for (fp=fbase->next; fp; fp = fp->next)
+   {
+      qp->next = AllocQN(fp);
+      qp = qp->next;
+   }
+   return(qbase);
+}
+
+void BruteTime(char pre, int n, FILENODE *fbase, int *ix, int *iy,
+               int *ia, int *ib, FILENODE **bp)
+/*
+ * finds best rout for each combo; gave up on elegance and just BFed it
+ */
+{
+   int i;
+   QNODE *qbase, *qp;
+   double mf, mfmax=0.0;
+
+   qbase = MakeQ(fbase);
+   for (i=0; i < n; i++)
+   {
+      mfmax = 0.0;
+      bp[i] = NULL;
+      for (qp=qbase; qp; qp = qp->next)
+      {
+         mf = GetMflop(pre, qp, ix[i], iy[i], ia[i], ib[i]);
+         if (mf > mfmax)
+         {
+            mfmax = mf;
+            bp[i] = qp->fptr;
+         }
+      }
+   }
+}
+
+FILENODE *FindGen(int n, int *ix, int *iy, int *ia, int *ib, FILENODE **bp)
+/*
+ * finds node with incX=0, incY=0, alpha=X, beta=X
+ */
+{
+   int i;
+   for (i=0; i < n; i++)
+      if (ix[i] == 0 && iy[i] == 0 && ia[i] == AlphaX && ib[i] == AlphaX)
+         return(bp[i]);
+   return(NULL);
+}
+
+int KillSpecCases(int n, int *ix, int *iy, int *ia, int *ib, FILENODE **bp)
+/*
+ * Kills all special cases that are actually handled by general case
+ */
+{
+   FILENODE *gp;
+   int i, j;
+   gp = FindGen(n, ix, iy, ia, ib, bp);
+   if (gp == NULL)
+   {
+      fprintf(stderr, "NO GENERAL CASE SURVIVED!!  ABORTING!!\n");
+      exit(-1);
+   }
+   for (i=0; i < n; i++)
+   {
+      if (bp[i] == gp)
+      {
+@ROUT iamaxsrch nrm2srch asumsrch
+         if (ix[i] != 0) bp[i] = NULL;
+@ROUT copysrch swapsrch dotsrch
+         if (ix[i] != 0 || iy[i] != 0) bp[i] = NULL;
+@ROUT scalsrch setsrch
+         if (ix[i] != 0 || ia[i] != AlphaX) bp[i] = NULL;
+@ROUT axpysrch cpscsrch
+         if (ix[i] != 0 || iy[i] != 0 || ia[i] != AlphaX) bp[i] = NULL;
+@ROUT axpbysrch rotsrch
+         if (ix[i] != 0 || iy[i] != 0 || ia[i] != AlphaX || ib[i] != AlphaX)
+            bp[i] = NULL;
+@ROUT iamaxsrch axpysrch copysrch scalsrch axpbysrch swapsrch dotsrch @\
+      nrm2srch asumsrch cpscsrch setsrch rotsrch
+      }
+   }
+/*
+ * eliminate entries that are NULL
+ */
+   for (j=i=0; i < n; i++)
+   {
+      if (bp[i] != NULL)
+      {
+         ix[j] = ix[i];
+         iy[j] = iy[i];
+         ia[j] = ia[i];
+         ib[j] = ib[i];
+         bp[j] = bp[i];
+         j++;
+      }
+   }
+   return(j);
+}
+
+void SwapCases(int i, int j, int *ix, int *iy, int *ia, int *ib, FILENODE **bp)
+{
+   int itmp;
+   FILENODE *ftmp;
+   if (i != j)
+   {
+      ftmp = bp[i];
+      bp[i] = bp[j];
+      bp[j] = ftmp;
+      itmp = ix[i];
+      ix[i] = ix[j];
+      ix[j] = itmp;
+      itmp = iy[i];
+      iy[i] = iy[j];
+      iy[j] = itmp;
+      itmp = ia[i];
+      ia[i] = ia[j];
+      ia[j] = itmp;
+      itmp = ib[i];
+      ib[i] = ib[j];
+      ib[j] = itmp;
+   }
+}
+
+void SortCases(int n, int *ix, int *iy, int *ia, int *ib, FILENODE **bp)
+/*
+ * sorts (BFI sort) cases so they are in this order: 
+ * incX=1, incY=1, alpha=X, beta=X case first
+ * other specific incX & incY cases next
+ * specific incY, general incX cases next
+ * specific incX, general incY cases next
+ * general case last 
+ */
+{
+/* 
+ * put specific incX and incY cases first
+ */
+   int i, j, itmp;
+   FILENODE *ftmp;
+   for (i=0; i < n; i++)
+   {
+@ROUT iamaxsrch scalsrch nrm2srch asumsrch setsrch
+      if (ix[i] != 0) continue;  /* don't stop until we find gen case */
+      for (j=i+1; j < n; j++) /* search for other spec cases */
+         if (ix[j] != 0) break;  /* found another case */
+      if (j >= n) break; /* no more cases */
+      SwapCases(i, j, ix, iy, ia, ib, bp);
+@ROUT axpysrch copysrch axpbysrch swapsrch dotsrch cpscsrch rotsrch
+      if (ix[i] != 0 && iy[i] != 0) continue;
+      for (j=i+1; j < n; j++) /* search for other spec cases */
+         if (ix[j] != 0 && iy[j] != 0) break;  /* found another case */
+      if (j >= n) break; /* no more cases */
+      SwapCases(i, j, ix, iy, ia, ib, bp);
+@ROUT iamaxsrch axpysrch copysrch scalsrch axpbysrch swapsrch dotsrch @\
+      nrm2srch asumsrch cpscsrch setsrch rotsrch
+   }
+@ROUT axpysrch scalsrch axpbysrch cpscsrch setsrch rotsrch
+/*
+ * Put incX=1, incY=1, alpha=X, beta=X case first, if it exists
+ */
+   for (j=0; j < i; j++)
+   {
+@ROUT scalsrch setsrch `      if (ix[j] == 1 && ia[i] == AlphaX)`
+@ROUT axpysrch cpscsrch `      if (ix[j] == 1 && iy[j] == 1 && ia[i] == AlphaX)`
+@ROUT axpbysrch rotsrch `      if (ix[j] == 1 && iy[j] == 1 && ia[i] == AlphaX && ib[i] == AlphaX)`
+      {
+         SwapCases(0, j, ix, iy, ia, ib, bp);
+         break;
+      }
+   }
+@ROUT axpysrch copysrch axpbysrch swapsrch dotsrch cpscsrch rotsrch
+/*
+ * Put specific incY next
+ */
+   for (i=0; i < n; i++)  /* find first non-spec case */
+      if (ix[i] == 0 || iy[i] == 0) break;
+   for (; i < n; i++)
+   {
+      if (iy[i] != 0) continue;
+      for (j=i+1; j < n; j++) /* find other spec incY cases */
+         if (iy[j] != 0) break;
+      if (j >= n) break; /* no more spec incY cases */
+      SwapCases(i, j, ix, iy, ia, ib, bp);
+   }
+/*
+ * Put specific incX next
+ */
+   for (i=0; i < n; i++)  /* find first non-spec case */
+      if (ix[i] == 0 || iy[i] == 0) break;
+   for (; i < n; i++) if (iy[i] == 0) break; /* find first gen incY */
+   for (; i < n; i++)
+   {
+      if (ix[i] != 0) continue;
+      for (j=i+1; j < n; j++) /* find other spec incX cases */
+         if (ix[j] != 0) break;
+      if (j >= n) break; /* no more spec incX cases */
+      SwapCases(i, j, ix, iy, ia, ib, bp);
+   }
+@ROUT iamaxsrch axpysrch copysrch scalsrch axpbysrch swapsrch dotsrch @\
+      nrm2srch asumsrch cpscsrch setsrch rotsrch
+/*
+ * General case will now have been forced to last by previous sorts
+ */
+}
+
+FILENODE *KillFN(FILENODE *fbase, FILENODE *fk)
+/*
+ * Finds fk in Q, and removes it
+ */
+{
+   FILENODE *fp, *pr=NULL;
+   if (fk == fbase)
+   {
+      fp = fbase->next;
+      fbase->next = NULL;
+      KillAllFN(fbase);
+      fbase = fp;
+   }
+   else
+   {
+      for (fp=fbase; fp != fk && fp; fp = fp->next) pr = fp;
+      assert(fp && pr);
+      pr->next = fp->next;
+      fp->next = NULL;
+      KillAllFN(fp);
+   }
+   return(fbase);
+}
+
+FILENODE *TstFile(char pre, FILENODE *fbase, int *N)
+{
+   FILENODE *fp, *fn;
+   char ln[2048];
+   int i, k=0;
+
+   for (fp=fbase; fp; fp = fn)
+   {
+      fn = fp->next;
+      i = sprintf(ln, "make %c@(rt)test urout=%s opt=\"", pre, fp->rout);
+@ROUT dotsrch
+      if (CONJ)
+         i = sprintf(ln, "make %c@(rt)ctest urout=%s opt=\"", pre, fp->rout);
+@ROUT iamaxsrch axpysrch copysrch scalsrch axpbysrch swapsrch dotsrch @\
+      nrm2srch asumsrch cpscsrch setsrch rotsrch
+      if (fp->incX == 0) i += sprintf(ln+i, " -X 4 1 -1 2 -3");
+@ROUT axpysrch copysrch axpbysrch swapsrch dotsrch cpscsrch rotsrch
+      if (fp->incY == 0) i += sprintf(ln+i, " -Y 4 1 -1 3 -2");
+@ROUT setsrch
+      if (fp->alpha == 0)
+      {
+         if (pre == 'c' && pre == 'z') i += sprintf(ln+i, " -a 1 0.0 0.0");
+         else i += sprintf(ln+i, " -a 1 0.0");
+      }
+@ROUT axpysrch scalsrch axpbysrch cpscsrch rotsrch
+      if (pre == 'c' && pre == 'z') /* complex alphas */
+      {
+         if (fp->alpha == 0) /* imag = 0 */
+            i += sprintf(ln+i, " -a 3 1.0 0.0 -1.0 0.0 0.9 0.0");
+         else if (fp->alpha ==  1) i += sprintf(ln+i, " -a 1 1.0 0.0");
+         else if (fp->alpha == -1) i += sprintf(ln+i, " -a 1 -1.0 0.0");
+      }
+      else if (fp->alpha ==  1) i += sprintf(ln+i, " -a 1 1.0");
+      else if (fp->alpha == -1) i += sprintf(ln+i, " -a 1 -1.0");
+@ROUT axpbysrch rotsrch
+      if (pre == 'c' && pre == 'z') /* complex betas */
+      {
+         if (fp->beta == 0) /* imag = 0 */
+            i += sprintf(ln+i, " -b 3 1.0 0.0 -1.0 0.0 0.8 0.0");
+         else if (fp->beta ==  1) i += sprintf(ln+i, " -b 1 1.0 0.0");
+         else if (fp->beta == -1) i += sprintf(ln+i, " -b 1 -1.0 0.0");
+      }
+      else if (fp->beta ==  1) i += sprintf(ln+i, " -b 1 1.0");
+      else if (fp->beta == -1) i += sprintf(ln+i, " -b 1 -1.0");
+@ROUT iamaxsrch axpysrch copysrch scalsrch axpbysrch swapsrch dotsrch @\
+      nrm2srch asumsrch cpscsrch setsrch rotsrch
+      i += sprintf(ln+i, "\" ");
+      if (fp->cc) i += sprintf(ln+i, "%cUCC=\"%s\" ", pre, fp->cc);
+      if (fp->ccflags) i += sprintf(ln+i, "%cUCCFLAGS=\"%s\" ",pre,fp->ccflags);
+      sprintf(ln+i, "\n");
+      fprintf(stderr, "TST: %s", ln);
+      #if 1
+         if (system(ln)) fbase = KillFN(fbase, fp);
+         else k++;
+      #else
+         k++;
+      #endif
+   }
+   *N = k;
+   return(fbase);
+}
+
+int NumOfAlpha(int alpha, int n, int *ia)
+/*
+ * returns number of occurences of alpha in ia
+ */
+{
+   int i, j;
+   for (i=j=0; i < n; i++) if (ia[i] == alpha) j++;
+   return(j);
+}
+
+char *GetNam(char pre, int alpha, int beta, int incX, int incY)
+{
+   static char nam[128];
+   char sx, sy, ca, cb;
+   char *rout="@(rt)";
+
+@ROUT dotsrch `   if (CONJ) rout = "dotc";`
+   if (alpha == 1) ca = '1';
+   else if (alpha == -1) ca = 'n';
+   else if (alpha == 0 && (pre=='c' || pre=='z')) ca = 'r';
+   else ca = 'X';
+   if (beta == 1) cb = '1';
+   else if (beta == -1) cb = 'n';
+   else if (beta == 0 && (pre=='c' || pre=='z')) cb = 'r';
+   else cb = 'X';
+   if (incX < 0) { sx = 'n'; incX = -incX; }
+   else sx = 'p';
+   if (incY < 0) { sy = 'n'; incY = -incY; }
+   else sy = 'p';
+   sprintf(nam, "ATL_%c%s_x%c%dy%c%da%cb%c", 
+           pre, rout, sx, incX, sy, incY, ca, cb);
+   return(nam);
+}
+
+@ROUT axpbysrch rotsrch
+int HaveScalCase(int scal, int n, int *is)
+{
+   int i;
+   for (i=0; i < n; i++) 
+      if (is[i] == scal) return(i+1);
+   return(0);
+}
+int HaveABcase(int alpha, int beta, int n, int *ia, int *ib)
+{
+   int i;
+
+   for (i=0; i < n; i++)
+      if (alpha == ia[i] && beta == ib[i]) return(i+1);
+   return(0);
+}
+
+void GenIncCases(char pre, char *spc, char *ifp, FILE *fpout, int alpha,
+                 int beta, int n, int *ix, int *iy, int *ia, int *ib)
+{ 
+   int i;
+   for (i=0; i < n; i++)
+   {
+      if (ia[i] == alpha && ib[i] == beta)
+      {
+         if (ix[i] != 0 && iy[i] != 0)
+            fprintf(fpout, "%s%sif (incx == %d && incy == %d)\n%s{\n",
+                    spc, ifp, ix[i], iy[i], spc);
+         else if (ix[i] == 0 && iy[i])
+            fprintf(fpout, "%s%sif (incy == %d)\n%s{\n", spc, ifp, iy[i], spc);
+         else if (iy[i] == 0 && ix[i])
+            fprintf(fpout, "%s%sif (incx == %d)\n%s{\n", spc, ifp, ix[i], spc);
+         else if (!ifp[0]) /* only general case */
+         {
+            fprintf(fpout, "%s%s(N, alpha, X, incx, beta, Y, incy);\n", spc,
+                    GetNam(pre, alpha, beta, 0, 0));
+            fprintf(fpout, "%sreturn;\n", spc);
+            return;
+         }
+         else fprintf(fpout, "%selse\n%s{\n", spc, spc);
+         fprintf(fpout, "%s   %s(N, alpha, X, incx, beta, Y, incy);\n", spc,
+                 GetNam(pre, alpha, beta, ix[i], iy[i]));
+         fprintf(fpout, "%s   return;\n%s}\n", spc, spc);
+      }
+      ifp = "else ";
+   }
+}
+
+@ROUT axpbysrch
+void GenRealIf(char pre, char *spc, FILE *fpout,
+               int n, int *ix, int *iy, int *ia, int *ib)
+{
+   char *ifp="";
+   fprintf(fpout, "%sif (beta == ATL_rone)\n%s{\n", spc, spc);
+   fprintf(fpout, "%s   ATL_%caxpy(N, alpha, X, incx, Y, incy);\n", spc, pre);
+   fprintf(fpout, "%s   return;\n%s}\n", spc, spc);
+   fprintf(fpout, "%selse if (beta == ATL_rzero)\n%s{\n", spc, spc);
+   fprintf(fpout, "%s   ATL_%ccpsc(N, alpha, X, incx, Y, incy);\n", spc, pre);
+   fprintf(fpout, "%s   return;\n%s}\n", spc, spc);
+   fprintf(fpout, "%selse if (alpha == ATL_rzero)\n%s{\n", spc, spc);
+   fprintf(fpout, "%s   ATL_%cscal(N, beta, Y, incy);\n", spc, pre);
+   fprintf(fpout, "%s   return;\n%s}\n", spc, spc);
+   if ( HaveScalCase(1, n, ia) )
+   {
+      fprintf(fpout, "%selse if (alpha == ATL_rone)\n%s{\n", spc, spc);
+      spc -= 3;
+      if (HaveABcase(1, -1, n, ia, ib))
+      {
+         fprintf(fpout, "%sif (beta == ATL_rnone)\n%s{\n", spc, spc);
+         GenIncCases(pre, spc-3, "", fpout, 1, -1, n, ix, iy, ia, ib);
+         fprintf(fpout, "%s}\n", spc);
+      }
+      if (HaveABcase(1, AlphaX, n, ia, ib))
+      {
+         GenIncCases(pre, spc, "", fpout, 1, AlphaX, n, ix, iy, ia, ib);
+      }
+      spc += 3;
+      fprintf(fpout, "%s}\n", spc);
+   }
+   if ( HaveScalCase(-1, n, ia) )
+   {
+      fprintf(fpout, "%selse if (alpha == ATL_rnone)\n%s{\n", spc, spc);
+      spc -= 3;
+      if (HaveABcase(-1, -1, n, ia, ib))
+      {
+         fprintf(fpout, "%sif (beta == ATL_rnone)\n%s{\n", spc, spc);
+         GenIncCases(pre, spc-3, "", fpout, -1, -1, n, ix, iy, ia, ib);
+         fprintf(fpout, "%s}\n", spc);
+      }
+      if (HaveABcase(-1, AlphaX, n, ia, ib))
+      {
+         GenIncCases(pre, spc, "", fpout, -1, AlphaX, n, ix, iy, ia, ib);
+      }
+      spc += 3;
+      fprintf(fpout, "%s}\n", spc);
+   }
+   if ( HaveABcase(AlphaX, -1, n, ia, ib) )
+   {
+      fprintf(fpout, "%sif (beta == ATL_rnone)\n%s{\n", spc, spc);
+      GenIncCases(pre, spc-3, "", fpout, AlphaX, -1, n, ix, iy, ia, ib);
+      fprintf(fpout, "%s}\n", spc);
+   }
+}
+void GenCplxIf(char pre, char *spc, FILE *fpout,
+               int n, int *ix, int *iy, int *ia, int *ib)
+{ /* HERE HERE HERE */
+   fprintf(fpout, "%sif (ibeta == ATL_rzero) /* real beta */\n%s{\n",
+           spc, spc);
+   fprintf(fpout, "%s   if (rbeta == ATL_rone)\n%s   {\n", spc, spc);
+   fprintf(fpout, "%s      ATL_%caxpy(N, alpha, X, incx, Y, incy);\n",
+           spc, pre);
+   fprintf(fpout, "%s      return;\n%s   }\n", spc, spc);
+   fprintf(fpout, "%s   else if (rbeta == ATL_rzero)\n%s   {\n", spc, spc);
+   fprintf(fpout, "%s      ATL_%ccpsc(N, alpha, X, incx, Y, incy);\n",
+           spc, pre);
+   fprintf(fpout, "%s      return;\n%s   }\n", spc, spc);
+   fprintf(fpout, 
+      "%s   else if (ialpha == ATL_rzero) /* both scalars real */\n%s   {\n",
+           spc, spc);
+   fprintf(fpout, "%s      if (incX == 1 && incY == 1)\n%s      {\n", spc, spc);
+   fprintf(fpout, 
+           "%s         Mjoin(PATLU,axpby)(N+N, ralpha, X, 1, rbeta, Y, 1);\n",
+           spc);
+   fprintf(fpout, "%s         return;\n%s      }\n", spc, spc);
+   if ( HaveABcase(0, 0, n, ia, ib) )
+   {
+      fprintf(fpout, "%s      else\n%s      {\n", spc, spc);
+      GenIncCases(pre, spc-9, "", fpout, 0, 0, n, ix, iy, ia, ib);
+      fprintf(fpout, "%s      }\n", spc);
+   }
+
+   if ( HaveABcase(AlphaX, 0, n, ia, ib) )
+   {
+      fprintf(fpout, "%s   }\n%s   else /* cplx alpha, real beta cases\n",
+              spc, spc);
+      GenIncCases(pre, spc-6, "", fpout, AlphaX, 0, n, ix, iy, ia, ib);
+   }
+   fprintf(fpout, "%s   }\n", spc);
+   fprintf(fpout, 
+   "%s}\n%selse if (ialpha == ATL_rzero) /* real alpha, cplx beta */\n%s{\n",
+           spc, spc, spc);
+   fprintf(fpout, "%s   if (ralpha == ATL_rzero)\n%s   {\n", spc, spc);
+   fprintf(fpout, "%s      ATL_%cscal(N, beta, Y, incy);\n", spc, pre);
+   fprintf(fpout, "%s      return;\n%s   }\n", spc, spc);
+
+   if ( HaveABcase(1, AlphaX, n, ia, ib) )
+   {
+      fprintf(fpout, "%s   else if (ralpha == ATL_rone)\n%s   {\n", spc, spc);
+      GenIncCases(pre, spc-6, "", fpout, 1, AlphaX, n, ix, iy, ia, ib);
+      fprintf(fpout, "%s   }\n", spc);
+   }
+   if ( HaveABcase(-1, AlphaX, n, ia, ib) )
+   {
+      fprintf(fpout, "%s   else if (ralpha == ATL_rnone)\n%s   {\n", spc, spc);
+      GenIncCases(pre, spc-6, "", fpout, -1, AlphaX, n, ix, iy, ia, ib);
+      fprintf(fpout, "%s   }\n", spc);
+   }
+   if ( HaveABcase(0, AlphaX, n, ia, ib) )
+   {
+      fprintf(fpout, "%s   else\n%s   {\n", spc, spc);
+      GenIncCases(pre, spc-6, "", fpout, 0, AlphaX, n, ix, iy, ia, ib);
+      fprintf(fpout, "%s   }\n", spc);
+   }
+   fprintf(fpout, "%s}\n", spc);
+}
+void GenAlpBetCase(char pre, char *spc, FILE *fpout,
+                   int n, int *ix, int *iy, int *ia, int *ib)
+{
+   if (pre == 'c' || pre == 'z') GenCplxIf(pre, spc, fpout, n, ix, iy, ia, ib);
+   else GenRealIf(pre, spc, fpout, n, ix, iy, ia, ib);
+}
+@ROUT rotsrch
+void GenAlpBetCase(char pre, char *spc, FILE *fpout,
+                   int n, int *ix, int *iy, int *ia, int *ib)
+{
+   int i;
+   for (i=0; i < n; i++) /* find specific alpha AND beta */
+   {
+      if (ia[i] != AlphaX && ib[i] != AlphaX)
+      {
+         fprintf(fpout, "%sif ( ", spc);
+         if (ia[i] == 1) fprintf(fpout, "alpha == ATL_rone");
+         else if (ia[i] == 0) fprintf(fpout, "alpha == ATL_rzero");
+         else if (ia[i] == -1) fprintf(fpout, "alpha == ATL_rnone");
+         if (ib[i] == 1) fprintf(fpout, " && beta == ATL_rone");
+         else if (ib[i] == 0) fprintf(fpout, " && beta == ATL_rzero");
+         else if (ib[i] == -1) fprintf(fpout, " && beta == ATL_rnone");
+         if (ix[i]) fprintf(fpout, " && incx == %d", ix[i]);
+         if (iy[i]) fprintf(fpout, " && incy == %d", iy[i]);
+         fprintf(fpout, " )\n%s{\n", spc);
+         fprintf(fpout, "%s   %s(N, X, incx, Y, incy, alpha, beta);\n",
+                 spc, GetNam(pre, ia[i], ib[i], ix[i], iy[i]));
+         fprintf(fpout, "%s   return;\n%s}\n", spc, spc);
+      }
+   }
+   for (i=0; i < n; i++) /* find specific alpha, general beta */
+   {
+      if (ia[i] != AlphaX && ib[i] == AlphaX)
+      {
+         fprintf(fpout, "%sif ( ", spc);
+         if (ia[i] == 1) fprintf(fpout, "alpha == ATL_rone");
+         else if (ia[i] == 0) fprintf(fpout, "alpha == ATL_rzero");
+         else if (ia[i] == -1) fprintf(fpout, "alpha == ATL_rnone");
+         if (ix[i]) fprintf(fpout, " && incx == %d", ix[i]);
+         if (iy[i]) fprintf(fpout, " && incy == %d", iy[i]);
+         fprintf(fpout, " )\n%s{\n", spc);
+         fprintf(fpout, "%s   %s(N, X, incx, Y, incy, alpha, beta);\n",
+                 spc, GetNam(pre, ia[i], ib[i], ix[i], iy[i]));
+         fprintf(fpout, "%s   return;\n%s}\n", spc, spc);
+      }
+   }
+   for (i=0; i < n; i++) /* find specific beta, general alpha */
+   {
+      if (ia[i] == AlphaX && ib[i] != AlphaX)
+      {
+         fprintf(fpout, "%sif ( ", spc);
+         if (ib[i] == 1) fprintf(fpout, "beta == ATL_rone");
+         else if (ib[i] == 0) fprintf(fpout, "beta == ATL_rzero");
+         else if (ib[i] == -1) fprintf(fpout, "beta == ATL_rnone");
+         if (ix[i]) fprintf(fpout, " && incx == %d", ix[i]);
+         if (iy[i]) fprintf(fpout, " && incy == %d", iy[i]);
+         fprintf(fpout, " )\n%s{\n", spc);
+         fprintf(fpout, "%s   %s(N, X, incx, Y, incy, alpha, beta);\n",
+                 spc, GetNam(pre, ia[i], ib[i], ix[i], iy[i]));
+         fprintf(fpout, "%s   return;\n%s}\n", spc, spc);
+      }
+   }
+}
+@ROUT axpbysrch
+@ROUT scalsrch setsrch
+@define args @N, alpha, X, incx@
+@ROUT axpysrch cpscsrch
+@define args @N, alpha, X, incx, Y, incy@
+@ROUT axpysrch scalsrch cpscsrch setsrch
+void GenAlphCase(char pre, char *spc, FILE *fpout, int alpha, 
+                 int n, int *ix, int *iy, int *ia, int *ib)
+{
+   int na, i;
+
+   na = NumOfAlpha(alpha, n, ia);
+   if (!na) return;
+
+   if (alpha ==  1)
+      fprintf(fpout, "%sif ( SCALAR_IS_ONE(alpha) )\n   {\n", spc);
+   if (alpha == -1)
+      fprintf(fpout, "%sif ( SCALAR_IS_NONE(alpha) )\n   {\n", spc);
+   else if (alpha == 0 && (pre=='c' || pre =='z') )
+      fprintf(fpout, "%sif (alpha[1] == ATL_rzero)\n   {\n", spc);
+   for (i=0; i < n; i++)
+   {
+      if (ia[i] == alpha)
+      {
+         if (ix[i] && iy[i])
+            fprintf(fpout, "%s   if (incx == %d && incy == %d)\n      {\n",
+                    spc, ix[i], iy[i]);
+         else if (iy[i])
+            fprintf(fpout, "%s   if (incy == %d)\n      {\n", spc, iy[i]);
+         else if (ix[i])
+            fprintf(fpout, "%s   if (incx == %d)\n      {\n", spc, ix[i]);
+         fprintf(fpout, "%s      %s(@(args));\n",
+                 spc, GetNam(pre, alpha, ib[i], ix[i], iy[i]));
+         fprintf(fpout, "%s      return;\n", spc);
+         if (ix[i] || iy[i]) fprintf(fpout, "%s   }\n", spc);
+      }
+   }
+   fprintf(fpout, "%s}\n", spc);
+}
+@undef args
+
+@ROUT axpysrch copysrch swapsrch dotsrch cpscsrch axpbysrch rotsrch
+void MangleIncs(FILE *fpout, char *spc, char pre)
+/*
+ * makes incs positive if possible, if one must be negative, make sure
+ * it is not stride 1; if both are stride 1, or neither,
+ * make incY positive over incX
+ * NOTE: incX and incY will therefore never both be neg,
+ *       incY will be negative only if incX = -1
+ */
+{
+   char *cspc = spc + 3;
+
+   assert(spc[0] == ' ' && spc[1] == ' ' && spc[2] == ' ');
+   fprintf(fpout, "/*\n");
+   fprintf(fpout, " *%s Manipulate incX and inxY such that:\n", cspc);
+   fprintf(fpout, " *%s -  Both are positive\n", cspc);
+   fprintf(fpout, 
+   " *%s -  else if incX or incY has abs()=1, make it positive\n", cspc);
+   fprintf(fpout, 
+   " *%s -  if both abs(inc) are 1, or if neither, make incY positive\n", cspc);
+   fprintf(fpout, " */\n");
+   fprintf(fpout, 
+      "%sif (incX >= 0 && incY >= 0) goto L1;\n", spc);
+   fprintf(fpout, 
+      "%selse if (incY < 0)\n", spc);
+   fprintf(fpout, 
+      "%s{\n", spc);
+   fprintf(fpout, 
+      "%s   if (incX < 0) /* make both positive */\n", spc);
+   fprintf(fpout, 
+      "%s   {\n", spc);
+   fprintf(fpout, 
+      "%s      incx = -incX;\n", spc);
+   fprintf(fpout, 
+      "%s      incy = -incY;\n", spc);
+   fprintf(fpout, 
+      "%s      X += ((N-1)SHIFT)*incX;\n", spc);
+   fprintf(fpout, 
+      "%s      Y += ((N-1)SHIFT)*incY;\n", spc);
+   fprintf(fpout, 
+      "%s   }\n", spc);
+   fprintf(fpout, 
+      "%s   else if (incX != 1 || incY == -1)\n", spc);
+   fprintf(fpout, 
+      "%s   {\n", spc);
+   fprintf(fpout, 
+      "%s      incy = -incY;\n", spc);
+   fprintf(fpout, 
+      "%s      Y += ((N-1)SHIFT)*incY;\n", spc);
+   fprintf(fpout, 
+      "%s      incx = -incX;\n", spc);
+   fprintf(fpout, 
+      "%s      X += ((N-1)SHIFT)*incX;\n", spc);
+   fprintf(fpout, 
+      "%s   }\n", spc);
+   fprintf(fpout, 
+      "%s}\n", spc);
+   fprintf(fpout, 
+      "%selse if (incX == -1 && incY != 1)\n", spc);
+   fprintf(fpout, 
+      "%s{\n", spc);
+   fprintf(fpout, 
+      "%s   incx = 1;\n", spc);
+   fprintf(fpout, 
+      "%s   X -= ((N-1)SHIFT);\n", spc);
+   fprintf(fpout, 
+      "%s   incy = -incY;\n", spc);
+   fprintf(fpout, 
+      "%s   Y += ((N-1)SHIFT)*incY;\n", spc);
+   fprintf(fpout, 
+      "%s}\n", spc);
+@ROUT dotsrch
+   if (pre == 'c' || pre == 'z')
+      fprintf(fpout, 
+         "%selse if (!incX || !incY) return;\n", spc);
+   else
+      fprintf(fpout, 
+         "%selse if (!incX || !incY) return(ATL_rzero);\n", spc);
+@ROUT axpysrch copysrch swapsrch cpscsrch axpbysrch rotsrch
+   fprintf(fpout, 
+      "%selse if (!incX || !incY) return;\n", spc);
+@ROUT axpysrch copysrch swapsrch dotsrch cpscsrch axpbysrch rotsrch
+   fprintf(fpout, "L1:\n");
+}
+@ROUT iamaxsrch scalsrch nrm2srch asumsrch setsrch
+void MangleIncs(FILE *fpout, char *spc, char pre)
+/*
+ * Makes sure incX is positive
+ */
+{
+   assert(spc[0] == ' ' && spc[1] == ' ' && spc[2] == ' ');
+   fprintf(fpout, "%sif (incX > 0) incx = incX;\n", spc);
+   fprintf(fpout, "%selse if (incX < 0)\n%s{\n", spc, spc);
+   fprintf(fpout, "%s   X += ((N-1)SHIFT) * incX;\n", spc);
+   fprintf(fpout, "%s   incx = -incX;\n", spc);
+@ROUT scalsrch setsrch  `   fprintf(fpout, "%s}\n%selse return;\n", spc, spc);`
+@ROUT nrm2srch asumsrch `   fprintf(fpout, "%s}\n%selse return(ATL_rzero);\n", spc, spc);`
+@ROUT iamaxsrch `   fprintf(fpout, "%s}\n%selse return(0);\n", spc, spc);`
+}
+
+@ROUT iamaxsrch axpysrch copysrch scalsrch swapsrch dotsrch nrm2srch asumsrch @\
+      cpscsrch setsrch axpbysrch rotsrch
+void GenMakefile(char pre, int n, int *ix, int *iy, int *ia, int *ib, 
+                 FILENODE **bp)
+{
+   char *cc, *ccflags, *nam, *typ="";
+   char ln[32];
+   char *rout = "@(rt)";
+   int i;
+   FILE *fpout;
+
+@ROUT dotsrch `   if (CONJ) rout="@(rt)c";`
+   sprintf(ln, "GEN/Make_%c%s", pre, rout);
+   fpout = fopen(ln, "w");
+   assert(fpout);
+   if (pre == 's') typ="SREAL";
+   else if (pre == 'd') typ="DREAL";
+@ROUT iamaxsrch axpysrch copysrch scalsrch swapsrch nrm2srch asumsrch @\
+      cpscsrch setsrch axpbysrch rotsrch
+   else if (pre == 'c') typ="SCPLX";
+   else if (pre == 'z') typ="DCPLX";
+@ROUT dotsrch
+   else if (pre == 'c')
+   {
+      if (CONJ) typ="SCPLX -DConj_";
+      else typ="SCPLX";
+   }
+   else if (pre == 'z')
+   {
+      if (CONJ) typ="DCPLX -DConj_";
+      else typ="DCPLX";
+   }
+@ROUT iamaxsrch axpysrch copysrch scalsrch swapsrch dotsrch nrm2srch @\
+      asumsrch cpscsrch setsrch axpbysrch rotsrch
+
+   fprintf(fpout, "include Make.inc\n\n");
+
+   fprintf(fpout, "obj = ATL_%c%s.o", pre, rout);
+   for (i=0; i < n; i++)
+      fprintf(fpout, " %s.o", GetNam(pre, ia[i], ib[i], ix[i], iy[i]));
+   fprintf(fpout, "\n\n");
+
+   fprintf(fpout, "all : lib\n%clib : lib\nlib : %c%s.grd\n\n", pre, pre, rout);
+
+   fprintf(fpout, "%c%s.grd : $(obj)\n", pre, rout);
+   fprintf(fpout, "\t$(ARCHIVER) $(ARFLAGS) $(ATLASlib) $(obj)\n");
+   fprintf(fpout, "\t$(RANLIB) $(ATLASlib)\n");
+   fprintf(fpout, "\ttouch %c%s.grd\n", pre, rout);
+   fprintf(fpout, "\n");
+
+   sprintf(ln, "ATL_%c%s", pre, rout);
+   fprintf(fpout, "%s.o : %s.c\n", ln, ln);
+   fprintf(fpout, "\t$(ICC) $(ICCFLAGS) -D%s -o $@ -c %s.c\n", typ, ln);
+   for (i=0; i < n; i++)
+   {
+      nam = GetNam(pre, ia[i], ib[i], ix[i], iy[i]);
+      cc = bp[i]->cc;
+      ccflags = bp[i]->ccflags;
+      if (!cc) cc = (pre == 's' || pre == 'c') ? "$(SKC)" : "$(DKC)";
+      if (!ccflags) 
+         ccflags = (pre == 's' || pre == 'c') ? "$(SKCFLAGS)":"$(DKCFLAGS)";
+      fprintf(fpout, "%s.o : %s.c\n", nam, nam);
+      fprintf(fpout, "\t%s %s $(CDEFS) -D%s -o $@ -c %s.c\n",
+              cc, ccflags, typ, nam);
+   }
+   fclose(fpout);
+}
+
+void GenMainRout(char pre, int n, int *ix, int *iy, int *ia, int *ib, 
+                 FILENODE **bp)
+{
+   int i, j, NeedElse=0;
+   FILENODE *gp;
+   FILE *fpout;
+   char *els="else if", *ifs ="if";
+   char *spcs="                  ";
+   char *spc = spcs+18;
+   char ln[64];
+@ROUT scalsrch setsrch
+   char *dargs="const int, const SCALAR, TYPE*, const int";
+   char *args="N, alpha, X, incx";
+@ROUT iamaxsrch nrm2srch asumsrch
+   char *dargs="const int, const TYPE*, const int";
+   char *args="N, X, incx";
+@ROUT rotsrch
+   char *dargs="const int, TYPE*, const int, TYPE*, const int, const TYPE, const TYPE";
+   char *args="N, X, incx, Y, incy, alpha, beta";
+@ROUT axpbysrch
+   char *dargs="const int, const SCALAR, const TYPE*, const int, const SCALAR, TYPE*, const int";
+   char *args="N, alpha, X, incx, beta, Y, incy";
+@ROUT axpysrch cpscsrch
+   char *dargs=
+      "const int, const SCALAR, const TYPE*, const int, TYPE*, const int";
+   char *args="N, alpha, X, incx, Y, incy";
+@ROUT dotsrch
+   char *dargs="const int, const TYPE*, const int, const TYPE*, const int";
+@ROUT copysrch swapsrch
+   char *dargs="const int, const TYPE*, const int, TYPE*, const int";
+@ROUT copysrch swapsrch dotsrch
+   char *args="N, X, incx, Y, incy";
+@ROUT dotsrch
+   char *cargs="N, X, incx, Y, incy, dotc";
+   if (pre == 'c' || pre == 'z') args = cargs;
+@ROUT iamaxsrch axpysrch copysrch scalsrch swapsrch dotsrch nrm2srch @\
+      asumsrch cpscsrch setsrch axpbysrch rotsrch
+
+   sprintf(ln, "GEN/ATL_%c@(rt).c", pre);
+@ROUT dotsrch `   if (CONJ) sprintf(ln, "GEN/ATL_%c@(rt)c.c", pre);`
+   fpout = fopen(ln, "w");
+   assert(fpout);
+   fprintf(fpout, "#include \"atlas_misc.h\"\n\n");
+   gp = FindGen(n, ix, iy, ia, ib, bp);
+   assert(gp);
+/*
+ * prototype all routines
+ */
+   for (i=0; i < n; i++)
+   {
+@ROUT dotsrch
+      if (pre == 'd' || pre == 's')
+         fprintf(fpout, "TYPE %s\n   (%s);\n", 
+                 GetNam(pre, ia[i], ib[i], ix[i], iy[i]), dargs);
+      else
+         fprintf(fpout, "void %s\n   (%s, TYPE*);\n", 
+                 GetNam(pre, ia[i], ib[i], ix[i], iy[i]), dargs);
+@ROUT nrm2srch asumsrch
+      fprintf(fpout, "TYPE %s(const int, const TYPE*, const int);\n",
+              GetNam(pre, ia[i], ib[i], ix[i], iy[i]));
+@ROUT iamaxsrch
+      fprintf(fpout, "int %s(const int, const TYPE*, const int);\n",
+              GetNam(pre, ia[i], ib[i], ix[i], iy[i]));
+@ROUT copysrch axpysrch scalsrch swapsrch cpscsrch setsrch axpbysrch rotsrch
+      fprintf(fpout, "void %s\n   (%s);\n", 
+              GetNam(pre, ia[i], ib[i], ix[i], iy[i]), dargs);
+@ROUT iamaxsrch axpysrch copysrch scalsrch dotsrch swapsrch nrm2srch @\
+      asumsrch cpscsrch setsrch axpbysrch rotsrch
+   }
+
+@ROUT axpbysrch
+   fprintf(fpout, "void ATL_%caxpy(const int, const SCALAR, const TYPE*, const int, TYPE*, const int);\n", pre);
+   fprintf(fpout, "void ATL_%ccpsc(const int, const SCALAR, const TYPE*, const int, TYPE*, const int);\n", pre);
+   fprintf(fpout, 
+      "void ATL_%cscal(const int, const SCALAR, TYPE*, const int);\n", pre);
+@ROUT scalsrch
+   fprintf(fpout, 
+           "void ATL_%cset(const int, const SCALAR, TYPE*, const int);\n",
+           pre);
+@ROUT cpscsrch
+   fprintf(fpout, "void ATL_%czero(const int, TYPE*, const int);\n", pre);
+   fprintf(fpout, 
+      "void ATL_%ccopy(const int, const TYPE*, const int, TYPE*, const int);\n",
+           pre);
+@ROUT axpysrch copysrch scalsrch swapsrch nrm2srch asumsrch cpscsrch @\
+      axpbysrch rotsrch
+   if (pre == 'c' || pre == 'z')
+@ROUT nrm2srch asumsrch
+      fprintf(fpout, 
+              "TYPE Mjoin(PATLU,@(rt))(const int, const TYPE*, const int);\n");
+@ROUT scalsrch setsrch
+      fprintf(fpout, "void Mjoin(PATLU,@(rt))\n   (const int, const TYPE, TYPE*, const int);\n");
+@ROUT rotsrch
+      fprintf(fpout, "void Mjoin(PATLU,@(rt))\n   (const int, TYPE*, const int, TYPE*, const int, const TYPE, const TYPE);\n");
+@ROUT axpbysrch
+      fprintf(fpout, "void Mjoin(PATLU,@(rt))\n   (const int, const TYPE, const TYPE*, const int, const TYPE, TYPE*, const int);\n");
+@ROUT axpysrch cpscsrch
+      fprintf(fpout, "void Mjoin(PATLU,@(rt))\n   (const int, const TYPE, const TYPE*, const int, TYPE*, const int);\n");
+@ROUT copysrch swapsrch
+      fprintf(fpout, "void Mjoin(PATLU,@(rt))\n   (%s);\n", dargs);
+@ROUT iamaxsrch axpysrch copysrch scalsrch swapsrch dotsrch nrm2srch @\
+      asumsrch cpscsrch axpbysrch rotsrch
+
+@ROUT scalsrch setsrch
+   fprintf(fpout, "\nvoid ATL_%c@(rt)(const int N, const SCALAR alpha, TYPE *X, const int incX)\n{\n", pre);
+@ROUT nrm2srch asumsrch
+   if (pre == 's' || pre == 'd') fprintf(fpout, "\nTYPE ATL_%c@(rt)", pre);
+   else if (pre == 'c') fprintf(fpout, "\nTYPE ATL_sc@(rt)");
+   else fprintf(fpout, "\nTYPE ATL_dz@(rt)");
+   fprintf(fpout, "(const int N, const TYPE *X, const int incX)\n{\n");
+@ROUT iamaxsrch
+   fprintf(fpout, "\nint ATL_i%camax(const int N, const TYPE *X, const int incX)\n{\n", pre);
+@ROUT iamaxsrch scalsrch nrm2srch asumsrch setsrch
+   fprintf(fpout, "   int incx;\n\n");
+   fprintf(fpout, "   if (N > 0)\n   {\n");
+@ROUT dotsrch
+   if (pre == 'c' || pre == 'z')
+   {
+      if (CONJ)
+         fprintf(fpout, 
+"\nvoid ATL_%c@(rt)c_sub(const int N, const TYPE *X, const int incX,\n", pre);
+      else
+         fprintf(fpout, 
+"\nvoid ATL_%c@(rt)u_sub(const int N, const TYPE *X, const int incX,\n", pre);
+      fprintf(fpout, 
+         "                   const TYPE *Y, const int incY, TYPE *dotc)\n{\n");
+   }
+   else
+   {
+      fprintf(fpout, 
+      "\nTYPE ATL_%c@(rt)(const int N, const TYPE *X, const int incX,\n", pre);
+      fprintf(fpout, "              const TYPE *Y, const int incY)\n{\n");
+   }
+@ROUT copysrch swapsrch
+   fprintf(fpout, 
+      "\nvoid ATL_%c@(rt)(const int N, const TYPE *X, const int incX,\n", pre);
+   fprintf(fpout, "               TYPE *Y, const int incY)\n{\n");
+@ROUT copysrch swapsrch dotsrch
+   fprintf(fpout, "   int incx=incX, incy=incY;\n\n");
+   fprintf(fpout, "   if (N > 0)\n   {\n");
+@ROUT rotsrch
+   if (pre == 'z') fprintf(fpout, "void ATL_zdrot");
+   else if (pre == 'c') fprintf(fpout, "void ATL_csrot");
+   else  fprintf(fpout, "void ATL_%crot", pre);
+   fprintf(fpout, 
+           "(const int N, TYPE *X, const int incX, TYPE *Y, const int incY,\n");
+   fprintf(fpout, "              const TYPE alpha, const TYPE beta)\n{\n");
+   fprintf(fpout, "   int incx=incX, incy=incY;\n");
+   fprintf(fpout, "\n   if ((N > 0) && ((alpha != ATL_rone) || (beta != ATL_rzero)) )\n   {\n");
+@ROUT axpbysrch
+   fprintf(fpout, "\nvoid ATL_%c@(rt)(const int N, const SCALAR alpha, const TYPE *X, const int incX,\n", pre);
+   fprintf(fpout, 
+      "               const SCALAR beta, TYPE *Y, const int incY)\n{\n");
+   fprintf(fpout, "   int incx=incX, incy=incY;\n");
+   if (pre == 'c' || pre == 'z')
+      fprintf(fpout, "   const TYPE ralpha=(*alpha), ialpha=alpha[1], rbeta=(*beta), ibeta=beta[1];\n");
+   fprintf(fpout, "\n   if (N > 0)\n   {\n");
+@ROUT axpysrch cpscsrch
+   fprintf(fpout, "\nvoid ATL_%c@(rt)(const int N, const SCALAR alpha, const TYPE *X, const int incX,\n", pre);
+   fprintf(fpout, "               TYPE *Y, const int incY)\n{\n");
+   fprintf(fpout, "   int incx=incX, incy=incY;\n\n");
+@ROUT cpscsrch
+   fprintf(fpout, 
+   "   if (N > 0 && !SCALAR_IS_ZERO(alpha) && !SCALAR_IS_ONE(alpha))\n   {\n");
+@ROUT axpysrch
+   fprintf(fpout, "   if (!SCALAR_IS_ZERO(alpha) && N > 0)\n   {\n");
+@ROUT iamaxsrch axpysrch copysrch scalsrch swapsrch dotsrch nrm2srch @\
+      asumsrch cpscsrch setsrch axpbysrch rotsrch
+   spc -= 6;
+   MangleIncs(fpout, spc, pre);
+@ROUT axpbysrch rotsrch
+   GenAlpBetCase(pre, spc, fpout, n, ix, iy, ia, ib);
+@ROUT axpysrch copysrch scalsrch swapsrch nrm2srch asumsrch cpscsrch setsrch @\
+      rotsrch
+   if (pre == 'c' || pre == 'z')
+   {
+      fprintf(fpout,
+@ROUT nrm2srch asumsrch
+         "%sif (incx==1) return(Mjoin(PATLU,@(rt))(N<<1, X, 1));\n", spc);
+@ROUT setsrch
+         "%sif (incx==1 && alpha[1] == *alpha)\n", spc);
+@ROUT scalsrch
+         "%sif (incx==1 && alpha[1] == ATL_rzero)\n", spc);
+@ROUT axpysrch cpscsrch
+         "%sif (incx==1 && incy==1 && alpha[1] == ATL_rzero)\n", spc);
+@ROUT copysrch swapsrch rotsrch
+         "%sif (incx==1 && incy==1)\n", spc);
+@ROUT axpysrch copysrch scalsrch swapsrch cpscsrch setsrch rotsrch
+      fprintf(fpout,
+         "%s{\n", spc);
+      fprintf(fpout,
+@ROUT copysrch swapsrch
+         "%s   Mjoin(PATLU,@(rt))(N+N, X, 1, Y, 1);\n", spc);
+@ROUT scalsrch setsrch
+         "%s   Mjoin(PATLU,@(rt))(N+N, *alpha, X, 1);\n", spc);
+@ROUT axpysrch cpscsrch
+         "%s   Mjoin(PATLU,@(rt))(N+N, *alpha, X, 1, Y, 1);\n", spc);
+@ROUT rotsrch
+         "%s   Mjoin(PATLU,@(rt))(N+N, X, 1, Y, 1, alpha, beta);\n", spc);
+@ROUT axpysrch copysrch scalsrch swapsrch cpscsrch setsrch rotsrch
+      fprintf(fpout,
+         "%s   return;\n", spc);
+      fprintf(fpout,
+         "%s}\n", spc);
+@ROUT axpysrch copysrch scalsrch swapsrch nrm2srch asumsrch cpscsrch setsrch @\
+      rotsrch
+   }
+@ROUT axpysrch scalsrch cpscsrch setsrch
+/*
+ * Handle all special alpha cases
+ */
+@SKIP RCW04/10/09: illegal for scal (NaN propogation)
+@ROUT scalsrch00
+   fprintf(fpout, "%sif ( SCALAR_IS_ZERO(alpha) )\n", spc);
+   fprintf(fpout, "%s{\n", spc);
+   if (pre == 'c' || pre == 'z')
+   {
+      fprintf(fpout, "%s   TYPE zero[2] = {ATL_rzero, ATL_rzero};\n", spc);
+      fprintf(fpout, "%s   Mjoin(PATL,set)(N, zero, X, incx);\n", spc);
+   }
+   else fprintf(fpout, "%s   Mjoin(PATL,set)(N, ATL_rzero, X, incx);\n", spc);
+   fprintf(fpout, "%s   return;\n", spc);
+   fprintf(fpout, "%s}\n", spc);
+@ROUT setsrch
+   GenAlphCase(pre, spc, fpout, 0, n, ix, iy, ia, ib);
+@ROUT axpysrch scalsrch cpscsrch
+   GenAlphCase(pre, spc, fpout, 1, n, ix, iy, ia, ib);
+   GenAlphCase(pre, spc, fpout, -1, n, ix, iy, ia, ib);
+   if (pre == 'c' || pre == 'z')
+      GenAlphCase(pre, spc, fpout, 0, n, ix, iy, ia, ib);
+@ROUT axpysrch copysrch swapsrch dotsrch cpscsrch axpbysrch rotsrch
+/*
+ * Handle general alpha & beta, specific incs
+ */
+   fprintf(fpout, "\n");
+   for (i=0; i < n-1; i++)
+   {
+@ROUT axpysrch cpscsrch `      if (ia[i] != AlphaX) continue;`
+@ROUT axpbysrch rotsrch `      if (ia[i] != AlphaX || ib[i] != AlphaX) continue;`
+      if (ix[i] && iy[i]) 
+         fprintf(fpout, "%s%s (incx == %d && incy == %d)\n",
+                 spc, ifs, ix[i], iy[i]);
+      else if (iy[i]) fprintf(fpout, "%s%s (incy == %d)\n", spc, ifs, iy[i]);
+      else if (ix[i]) fprintf(fpout, "%s%s (incx == %d)\n", spc, ifs, ix[i]);
+@ROUT dotsrch
+      if (pre == 'd' || pre == 's')
+         fprintf(fpout, "%s   return(%s(%s));\n", spc,
+                 GetNam(pre, ia[i], ib[i], ix[i], iy[i]), args);
+      else
+         fprintf(fpout, "%s   %s(%s);\n", spc,
+                 GetNam(pre, ia[i], ib[i], ix[i], iy[i]), args);
+@ROUT axpysrch copysrch swapsrch cpscsrch axpbysrch rotsrch
+      fprintf(fpout, "%s   %s(%s);\n", spc,
+              GetNam(pre, ia[i], ib[i], ix[i], iy[i]), args);
+@ROUT axpysrch copysrch swapsrch dotsrch cpscsrch axpbysrch rotsrch
+      ifs = els;
+      NeedElse = 1;
+   }
+@ROUT iamaxsrch scalsrch nrm2srch asumsrch setsrch
+/*
+ * Handle specific incX
+ */
+   for (i=0; i < n-1; i++)
+   {
+@ROUT scalsrch setsrch `      if (ia[i] != AlphaX) continue;`
+      fprintf(fpout, "%s%s (incx == %d)\n", spc, ifs, ix[i]);
+@ROUT scalsrch setsrch `      fprintf(fpout, "%s   %s(%s);\n", spc,`
+@ROUT iamaxsrch nrm2srch asumsrch `      fprintf(fpout, "%s   return(%s(%s));\n", spc,`
+              GetNam(pre, ia[i], ib[i], ix[i], iy[i]), args);
+      ifs = els;
+      NeedElse = 1;
+   }
+@ROUT iamaxsrch axpysrch copysrch scalsrch swapsrch dotsrch nrm2srch @\
+      asumsrch cpscsrch setsrch axpbysrch rotsrch
+
+   if (NeedElse)
+   {
+      fprintf(fpout, "%selse\n", spc);
+      spc -= 3;
+   }
+@ROUT iamaxsrch nrm2srch asumsrch
+   fprintf(fpout, "%sreturn(%s(N, X, incx));\n", spc,
+           GetNam(pre, AlphaX, AlphaX, 0, 0));
+@ROUT dotsrch
+   if (pre == 's' || pre == 'd')
+      fprintf(fpout, "%sreturn(%s(%s));\n", spc,
+              GetNam(pre, AlphaX, AlphaX, 0, 0), args);
+   else
+@ROUT copysrch axpysrch scalsrch swapsrch dotsrch cpscsrch setsrch @\
+      axpbysrch rotsrch
+   fprintf(fpout, "%s%s(%s);\n", spc,
+           GetNam(pre, AlphaX, AlphaX, 0, 0), args);
+@ROUT iamaxsrch axpysrch copysrch scalsrch dotsrch swapsrch nrm2srch @\
+      asumsrch cpscsrch setsrch axpbysrch rotsrch
+   fprintf(fpout, "   }\n");
+@ROUT iamaxsrch
+   fprintf(fpout, "   return(0);\n");
+@ROUT nrm2srch asumsrch
+   fprintf(fpout, "   return(ATL_rzero);\n");
+@ROUT dotsrch
+   if (pre == 'd' || pre == 's') fprintf(fpout, "   else return(ATL_rzero);\n");
+   else fprintf(fpout, "   else dotc[0] = dotc[1] = ATL_rzero;\n");
+@ROUT cpscsrch
+   fprintf(fpout, 
+   "   else if ( SCALAR_IS_ONE(alpha) ) ATL_%ccopy(N, X, incX, Y, incY);\n",
+           pre);
+   fprintf(fpout, 
+           "   else if ( SCALAR_IS_ZERO(alpha) ) ATL_%czero(N, Y, incY);\n",
+           pre);
+@ROUT iamaxsrch axpysrch copysrch scalsrch dotsrch swapsrch nrm2srch @\
+      asumsrch cpscsrch setsrch axpbysrch rotsrch
+   fprintf(fpout, "}\n");
+@ROUT setsrch
+   fprintf(fpout, 
+           "\nvoid ATL_%czero(const int N, TYPE *X, const int incX)\n{\n", pre);
+   if (pre == 'c' || pre == 'z')
+   {
+      fprintf(fpout, "   TYPE zero[2] = {ATL_rzero, ATL_rzero};\n");
+      fprintf(fpout, "   ATL_%cset(N, zero, X, incX);\n", pre);
+   }
+   else fprintf(fpout, "   ATL_%cset(N, ATL_rzero, X, incX);\n", pre);
+   fprintf(fpout, "}\n");
+@ROUT iamaxsrch axpysrch copysrch scalsrch dotsrch swapsrch nrm2srch @\
+      asumsrch cpscsrch setsrch axpbysrch rotsrch
+   fclose(fpout);
+}
+
+void DumpFile(char *fnam, FILE *fpout)
+{
+   FILE *fpin;
+   char ln[512];
+   sprintf(ln, "@up@(rt)/%s", fnam);
+   fpin = fopen(ln, "r");
+   assert(fpin);
+   while(fgets(ln, 512, fpin)) fputs(ln, fpout);
+   fclose(fpin);
+}
+
+void GenFiles(char pre, int n, int *ix, int *iy, int *ia, int *ib, 
+              FILENODE **bp)
+/*
+ * Generates all needed files
+ */
+{
+   int i;
+   char *nam, *typ;
+   char ln[128];
+   FILE *fpout;
+
+   GenMainRout(pre, n, ix, iy, ia, ib, bp);
+   GenMakefile(pre, n, ix, iy, ia, ib, bp);
+   for (i=0; i < n; i++)
+   {
+      nam = GetNam(pre, ia[i], ib[i], ix[i], iy[i]);
+      sprintf(ln, "GEN/%s.c", nam);
+      fpout = fopen(ln, "w");
+      assert(fpout);
+      fprintf(fpout, "#define ATL_U@up@(rt) %s\n\n", nam);
+      DumpFile(bp[i]->rout, fpout);
+      fclose(fpout);
+   }
+}
+
+void CreateSumm(char pre, int n, int *ix, int *iy, int *ia, int *ib,
+                FILENODE **bp)
+/*
+ * Creates summary file of form:
+<ncases>
+<ID> <alpha> <beta> <incX> <incY> <rout> <auth>
+ */
+{
+   int i;
+   char ln[64];
+   FILE *fpout;
+
+   sprintf(ln, "res/%c@up@(rt)_SUMM", pre);
+@ROUT dotsrch `   if (CONJ) sprintf(ln, "res/%c@up@(rt)C_SUMM", pre);`
+   fpout = fopen(ln, "w");
+   assert(fpout);
+
+   fprintf(fpout, "%d\n", n);
+   for (i=0; i < n; i++)
+   {
+      fprintf(fpout, "%3d %3d %3d %3d %3d %s \"%s\"\n", 
+              bp[i]->ID, ia[i], ib[i], ix[i], iy[i], bp[i]->rout, bp[i]->auth);
+   }
+
+   fclose(fpout);
+}
+
+void AssBest(FILENODE *fbase, int n, int *id, FILENODE **bp)
+/*
+ * Associates best file pointers with filenodes based on ID
+ */
+{
+   int i, ID;
+   FILENODE *fp;
+
+   for (i=0; i < n; i++)
+   {
+      ID = id[i];
+      for (fp=fbase; fp; fp = fp->next) if (fp->ID == ID) break;
+      assert(fp);
+      bp[i] = fp;
+   }
+}
+
+FILENODE *GetSumm(char pre, int *N, int **IX, int **IY, int **IA,  int **IB,
+                  FILENODE ***BP)
+{
+   FILENODE *fbase, **bp;
+   int i, n, *ix, *iy, *ia, *ib, *id;
+   char ln[512];
+   FILE *fpin;
+
+   *N = 0;
+   sprintf(ln, "res/%c@up@(rt)_SUMM", pre);
+@ROUT dotsrch `   if (CONJ) sprintf(ln, "res/%c@up@(rt)C_SUMM", pre);`
+   fpin = fopen(ln, "r");
+   if (fpin == NULL) return(NULL);
+   fbase = ReadFile(pre);
+
+   assert( fgets(ln, 512, fpin) != NULL );
+   sscanf(ln, " %d", &n);
+   assert(n > 0);
+
+   ix = malloc(5*n*sizeof(int));
+   assert(ix);
+   iy = ix + n;
+   ia = iy + n;
+   ib = ia + n;
+   id = ib + n;
+   bp = malloc(n*sizeof(FILENODE*));
+   assert(bp);
+
+   for (i=0; i < n; i++)
+   {
+      assert( fgets(ln, 512, fpin) != NULL );
+      assert(sscanf(ln, " %d %d %d %d %d", id+i, ia+i, ib+i, ix+i, iy+i) == 5);
+      bp[i] = NULL;
+   }
+   fclose(fpin);
+   AssBest(fbase, n, id, bp);
+   
+   *N = n;
+   *IX = ix;
+   *IY = iy;
+   *IA = ia;
+   *IB = ib;
+   *BP = bp;
+   return(fbase);
+}
+
+void DoIt(char pre)
+{
+   FILENODE *fbase, **bp;
+   int n;
+   int *ix, *iy, *ia, *ib;
+
+   fbase = ReadFile(pre);
+   fbase = TstFile(pre, fbase, &n);  /* get rid of nodes that don't work */
+   ix = malloc(4*n*sizeof(int));
+   assert(ix);
+   bp = malloc(n*sizeof(FILENODE*));
+   assert(bp);
+   iy = ix + n;
+   ia = iy + n;
+   ib = ia + n;
+   n = GetCombos(fbase, ix, iy, ia, ib, bp);
+   BruteTime(pre, n, fbase, ix, iy, ia, ib, bp);
+   n = KillSpecCases(n, ix, iy, ia, ib, bp);
+   fprintf(stdout, "%d:\n", __LINE__);
+   PrintTable(n, ix, iy, ia, ib, bp);
+   SortCases(n, ix, iy, ia, ib, bp);
+   fprintf(stdout, "%d:\n", __LINE__);
+   PrintTable(n, ix, iy, ia, ib, bp);
+   CreateSumm(pre, n, ix, iy, ia, ib, bp);
+   KillAllFN(fbase);
+   free(bp);
+   free(ix);
+}
+
+void GoToTown(char pre)
+{
+   FILENODE *fptr, **bp;
+   int n, *ix, *iy, *ia, *ib;
+
+   fptr = GetSumm(pre, &n, &ix, &iy, &ia, &ib, &bp);
+   if (!fptr)
+   {
+      DoIt(pre);
+      fptr = GetSumm(pre, &n, &ix, &iy, &ia, &ib, &bp);
+      assert(fptr);
+   }
+   fprintf(stdout, "%d:\n", __LINE__);
+   PrintTable(n, ix, iy, ia, ib, bp);
+   GenFiles(pre, n, ix, iy, ia, ib, bp);
+
+   KillAllFN(fptr);
+   free(bp);
+   free(ix);
+}
+
+void PrintUsage(char *nam)
+{
+   fprintf(stderr, "\nUSAGE: %s -p <pre>\n\n", nam);
+   exit(-1);
+}
+
+char GetFlags(int nargs, char **args)
+{
+   char ch;
+   if (nargs < 2) return('d');
+   if (args[1][0] == '-')
+   {
+      if (nargs < 3) PrintUsage(args[0]);
+      ch = args[2][0];
+   }
+   else ch = args[1][0];
+
+   switch(ch)
+   {
+   case 's':
+   case 'd':
+   case 'c':
+   case 'z':
+       break;
+   case 'S':
+      ch = 's';
+      break;
+   case 'D':
+      ch = 'd';
+      break;
+   case 'C':
+@ROUT dotsrch `   CONJ=1;`
+      ch = 'c';
+      break;
+   case 'Z':
+@ROUT dotsrch `   CONJ=1;`
+      ch = 'z';
+      break;
+   default:
+      PrintUsage(args[0]);
+   }
+   return(ch);
+}
+main(int nargs, char **args)
+{
+   char pre;
+   pre = GetFlags(nargs, args);
+   GoToTown(pre);
+   exit(0);
+}
+@ROUT iamaxsrch0
+#include "atlas_misc.h"
+#include <assert.h>
+#include <string.h>
+
+typedef struct PerfNode PERFNODE;
+struct PerfNode
+{
+   double mf;
+   int incX;
+   PERFNODE *next;
+};
+
+typedef struct RoutNode ROUTNODE;
+struct RoutNode
+{
+   int ID, incX;
+   double mf;
+   char *rout, *auth, *cc, *flags;
+   PERFNODE *pp;
+   ROUTNODE *next;
+};
+
+ROUTNODE *fixrn=NULL, *genrn=NULL;
+
+void PrintPQ(PERFNODE *root)
+{
+   PERFNODE *pp;
+   for (pp=root; pp; pp = pp->next)
+      fprintf(stdout, " -> %d %e", pp->incX, pp->mf);
+}
+void PrintQ(char *lab, ROUTNODE *root)
+{
+   char *cc, *cflg;
+   ROUTNODE *rp;
+   int i;
+
+   if (lab) fprintf(stdout, "%s QUEUE:\n", lab);
+   for (i=0,rp=root; rp; i++,rp = rp->next)
+   {
+      if (rp->cc) { cc = rp->cc; cflg = rp->flags; }
+      else cflg = cc = "";
+      fprintf(stdout, "%d: ID=%d, inc=%d rt=%s au=%s cc=%s flag=%s",
+                      i, rp->ID, rp->incX, rp->rout, rp->auth, cc, cflg);
+      PrintPQ(rp->pp);
+      fprintf(stdout, "\n\n");
+   }
+}
+ROUTNODE *GetRN(int ID, int incX, char *rout, char *auth, char *cc, char *flag)
+{
+   ROUTNODE *rn;
+
+   rn = malloc(sizeof(ROUTNODE));
+   assert(rn);
+   rn->ID = ID;
+   rn->incX = incX;
+   rn->mf = -1.0;
+
+   rn->rout = malloc(strlen(rout)+1);
+   assert(rn->rout);
+   strcpy(rn->rout, rout);
+   rn->auth = malloc(strlen(auth)+1);
+   assert(rn->auth);
+   strcpy(rn->auth, auth);
+   if (cc)
+   {
+      rn->cc = malloc(strlen(cc)+1);
+      assert(rn->cc);
+      strcpy(rn->cc, cc);
+      rn->flags = malloc(strlen(flag)+1);
+      assert(rn->flags);
+      strcpy(rn->flags, flag);
+   }
+   else rn->flags = rn->cc = NULL;
+   rn->pp = NULL;
+   rn ->next = NULL;
+   return(rn);
+}
+
+void KillAllPN(PERFNODE *pp)
+{
+   PERFNODE *pn;
+   while(pp)
+   {
+      pn = pp->next;
+      free(pp);
+      pp = pn;
+   }
+}
+
+void KillRN(ROUTNODE *rn)
+{
+   free(rn->rout);
+   free(rn->auth);
+   KillAllPN(rn->pp);
+   if (rn->cc) free(rn->cc);
+   if (rn->flags) free(rn->flags);
+   free(rn);
+}
+
+int LineIsCont(char *ln)
+{
+   int i, iret=0;
+   for(i=0; ln[i]; i++);
+   if (i)
+   {
+      for(i--; isspace(ln[i]); i--);
+      if (ln[i] == '\\') iret = 1;
+   }
+   return(iret);
+}
+
+/*
+input file format:
+<# of routs>
+<ID#> <incX> <routname> <author> [\]
+
+ID# is integer (>0) that user makes unique (avoid renaming prob)
+incX : 0 - any incX is supported, >0 only incX of that value is supported
+       negative is not allowed
+If \, next two lines give C compiler and flags, respectively
+*/
+ROUTNODE *BuildQ(char *infile)
+{
+   char ln[512], rout[128], auth[128], cc[128];
+   ROUTNODE *rn, *pr=NULL, *root;
+   FILE *fp;
+   int i, n, id, incX;
+
+   fp = fopen(infile, "r");
+   assert(fp);
+   fgets(ln, 256, fp);
+   sscanf(ln, " %d", &n);
+   for (i=0; i < n; i++)
+   {
+      assert( fgets(ln, 256, fp) != NULL );
+      assert(sscanf(ln, " %d %d %s \"%[^\"]", &id, &incX, rout, auth) == 4);
+      if (LineIsCont(ln))
+      {
+         assert( fgets(ln, 128, fp) != NULL );
+         strcpy(cc, ln);
+         assert( fgets(ln, 512, fp) != NULL );
+         rn = GetRN(id, incX, rout, auth, cc, ln);
+      }
+      else rn = GetRN(id, incX, rout, auth, NULL, NULL);
+      if (pr) pr->next = rn;
+      else root = rn;
+      pr = rn;
+   }
+   fclose(fp);
+   return(root);
+}
+
+ROUTNODE *RemoveFromQ(ROUTNODE *root, ROUTNODE *me)
+{
+   ROUTNODE *rn, *rp;
+   for (rp=rn=root; rn != me; rn=rn->next) rp = rn;
+   if (rn == root) root = root->next;
+   else rp->next = rn->next;
+   rn->next = NULL;
+   return(root);
+}
+
+void KillQ(ROUTNODE *root)
+{
+   ROUTNODE *rn;
+   while(root)
+   {
+      rn = root->next;
+      KillRN(root);
+      root = rn;
+   }
+}
+
+ROUTNODE *AddToQ(ROUTNODE *root, ROUTNODE *me)
+{
+   ROUTNODE *rp;
+   if (root == NULL) root = me;
+   else
+   {
+      for (rp=root; rp->next; rp = rp->next);
+      rp->next = me;
+   }
+   return(root);
+}
+
+void SortQ(ROUTNODE *root)
+/*
+ * Sorts queue into general and fixed catagories
+ */
+{
+   ROUTNODE *rp, *rn;
+   for (rp = root; rp; rp = rn)
+   {
+      rn = rp->next;
+      root = RemoveFromQ(root, rp);
+      if (rp->incX == 0) genrn = AddToQ(genrn, rp);
+      else fixrn = AddToQ(fixrn, rp);
+   }
+}
+
+ROUTNODE *TestRouts(char pre, ROUTNODE *root)
+/*
+ * Removes routs which do not pass tester; only tests those routines with
+ * tim <= 0.0 (it is assumed that timed routs have already been tested)
+ */
+{
+   ROUTNODE *rp, *rn;
+   char ln[512];
+   for (rp=root; rp; rp = rn)
+   {
+      rn = rp->next;
+      if (rp->mf <= 0.0)
+      {
+         sprintf(ln, "make %ciamaxtest urout=%s incX=%d\n", 
+                 pre, rp->rout, rp->incX);
+         if (system(ln))
+         {
+            root = RemoveFromQ(root, rp);
+            KillRN(rp);
+         }
+      }
+   }
+   return(root);
+}
+
+double GetTime(char pre, char *rout, int ID, int incX, char *cc, char *cflags)
+{
+   double t0, t1=0.0;
+   int i, nrep=3;
+   FILE *fp;
+   char fnam[128], ln[512];
+
+   sprintf(fnam, "res/%cIAMAX%d_%d.tim", pre, ID, incX);
+   fp = fopen(fnam, "r");
+   if (fp == NULL)
+   {
+      if (!cc) sprintf(ln, "make %ciamaxcase urout=%s incX=%d IDNUM=%d fout=\"-f %s\"\n",
+                       pre, rout, incX, ID, fnam);
+      else sprintf(ln, "make %ciamaxcase urout=%s incX=%d IDNUM=%d fout=\"-f %s\" %cUCC=%s %cUCCFLACS=\"%s\"\n",
+                   pre, rout, incX, ID, fnam, pre, cc, pre, cflags);
+      assert(system(ln) == 0);
+      fp = fopen(fnam, "r");
+      if (fp == NULL) fprintf(stderr, "Cannot open file '%s'!!\n", fnam);
+      assert(fp);
+   }
+   for (i=0; i < nrep; i++)
+   {
+      assert(fscanf(fp, " %le", &t0) == 1);
+      t1 += t0;
+   }
+   fclose(fp);
+   return(t1/nrep);
+}
+
+void TimeQ(char pre, ROUTNODE *root)
+{
+   PERFNODE *pp;
+   ROUTNODE *rp;
+   for (rp=root; rp; rp = rp->next)
+   {
+      if (rp->incX == 0)
+      {
+         for (pp=rp->pp; pp; pp = pp->next)
+         {
+            if (pp->mf < 0.0)
+               pp->mf = GetTime(pre, rp->rout, rp->ID, pp->incX,
+                                  rp->cc, rp->flags);
+         }
+      }
+      else
+      {
+         if (rp->mf < 0.0)
+            rp->mf = GetTime(pre, rp->rout, rp->ID, rp->incX,
+                               rp->cc, rp->flags);
+      }
+   }
+}
+
+void InvalidateTimeQ(char pre, ROUTNODE *root, char *cc, char *flg)
+/*
+ * Once a compiler and flag setting is chosen, makes it so we retest
+ * and time everything with different flags
+ */
+{
+   ROUTNODE *rp;
+   PERFNODE *pp;
+   char *ccp, *flp;
+   int bad, icc=0, ifl=0;
+
+   if (cc) icc = strlen(cc);
+   if (flg) ifl = strlen(flg);
+   for (rp=root; rp; rp = rp->next)
+   {
+      if (cc)
+      {
+         if (rp->cc == NULL) bad = 1;
+         else
+         {
+            bad = strcmp(cc, rp->cc);
+            if (!bad) bad = strcmp(flg, rp->flags);
+         }
+      }
+      else if (rp->cc) bad = 1;
+      else bad = 0;
+      if (bad)  /* invalidate timings with old flags, and use new ones */
+      {
+         if (cc)
+         {
+            ccp = malloc(icc*sizeof(char));
+            flp = malloc(ifl*sizeof(char));
+            assert(ccp && flp);
+         }
+         else ccp = flp = NULL;
+         if (rp->cc) { free(rp->cc); free(rp->flags); }
+         rp->cc = ccp; rp->flags = flp;
+
+         rp->ID = -(rp->ID);
+         if (rp->pp) for (pp=rp->pp; pp; pp = pp->next) pp->mf = -1.0;
+         else rp->mf = -1.0;
+      }
+   }
+}
+
+ROUTNODE *FindIncXNode(ROUTNODE *root, int incX)
+/*
+ * Returns first node in Q with incX of incX
+ */
+{
+   ROUTNODE *rn;
+   for (rn=root; rn; rn=rn->next)
+      if (rn->incX == incX) return(rn);
+   return(NULL);
+}
+ROUTNODE *ReduceFixed(ROUTNODE *root)
+/*
+ * Removes all but fastest fixed routine of given incX
+ */
+{
+   ROUTNODE *rp, *rc, *root2=NULL;
+   for (rp=root; rp; rp = root)
+   {
+      root = RemoveFromQ(root, rp);
+      rc = FindIncXNode(root, rp->incX);
+      while(rc)
+      {
+         root = RemoveFromQ(root, rc);
+         if (rc->mf >= rp->mf) KillRN(rc);
+         else
+         {
+            KillRN(rp);
+            rp = rc;
+         }
+         rc = FindIncXNode(root, rp->incX);
+      }
+      root2 = AddToQ(root2, rp);
+   }
+   return(root2);
+}
+
+int GetQDepth(ROUTNODE *root)
+/*
+ * returns number of nodes in queue pointed to by root
+ */
+{
+   int i;
+   ROUTNODE *rn;
+
+   for (i=0, rn=root; rn; i++, rn = rn->next);
+   return(i);
+}
+
+int *GetIncList(ROUTNODE *root)
+/*
+ * returns list of incXs
+ */
+{
+   int i, n, *ip;
+   ROUTNODE *rp;
+   n = GetQDepth(root);
+   ip = malloc(n*sizeof(int));
+   assert(ip);
+   for (rp=root, i=0; rp; i++, rp = rp->next) ip[i] = rp->incX;
+   return(ip);
+}
+
+PERFNODE *CreatePerfQ(ROUTNODE *root)
+{
+   ROUTNODE *rp;
+   PERFNODE *proot=NULL, *pp=NULL, *p0;
+   if (root)
+   {
+      proot = pp = malloc(sizeof(PERFNODE)); assert(pp);
+      pp->incX = 1;  /* always time incX=1, even if no fixed */
+      pp->mf = -1.0;
+      for (rp=root; rp; rp = rp->next)
+      {
+         for (p0=proot; p0 != pp; p0 = p0->next)
+            if (p0->incX == rp->incX) break;
+         if (p0->incX != rp->incX)  /* ignore repeated incX */
+         {
+            pp->next = malloc(sizeof(PERFNODE)); assert(pp->next);
+            pp = pp->next;
+            pp->incX = rp->incX;
+            pp->mf = -1.0;
+         }
+      }
+      pp->next = NULL;
+   }
+   return(proot);
+}
+
+void KillAllPR(PERFNODE *root)
+{
+   PERFNODE *pp;
+   while(root)
+   {
+      pp = root->next;
+      free(root);
+      root = pp;
+   }
+}
+
+int NumPN(PERFNODE *pp)
+{
+   int i;
+   for (i=0; pp; pp = pp->next, i++);
+   return(i);
+}
+
+void CreatPerfQs(ROUTNODE *root, ROUTNODE *fixed)
+{
+   ROUTNODE *rp;
+   for (rp=root; rp; rp = rp->next)
+      if (rp->pp == NULL) rp->pp = CreatePerfQ(fixed);
+}
+PERFNODE *FindIncXPN(PERFNODE *proot, int incX)
+{
+   PERFNODE *pp;
+   for (pp=proot; pp; pp = pp->next)
+      if (pp->incX == incX) return(pp);
+   return(NULL);
+}
+
+PERFNODE *GetBestGen(ROUTNODE *root, int incX)
+{
+   ROUTNODE *rp;
+   PERFNODE *pmin=NULL, *pp;
+
+   for (rp=root; rp; rp = rp->next)
+   {
+      pp = FindIncXPN(rp->pp, incX);
+      if (pmin == NULL) pmin = pp;
+      else if (pmin->mf > pp->mf) pmin = pp;
+   }
+   return(pmin);
+}
+
+ROUTNODE *FindBestRN(ROUTNODE *root, int incX)
+/*
+ * Finds node with best time for incX of incX
+ */
+{
+   ROUTNODE *rp, *bp=NULL;
+   PERFNODE *pp;
+   double dmin=500000000.0;
+   for (rp = root; rp; rp=rp->next)
+   {
+      if (rp->pp)
+      {
+         pp = FindIncXPN(rp->pp, incX);
+         if (pp)
+         {
+            if (dmin > pp->mf)
+            {
+               bp = rp;
+               dmin = rp->mf;
+            }
+         }
+      }
+      else if (rp->incX == incX && dmin > rp->mf)
+      {
+         bp = rp;
+         dmin = rp->mf;
+      }
+   }
+   return(bp);
+}
+
+ROUTNODE *ReduceFixed2(ROUTNODE *fixed, ROUTNODE *gen)
+/*
+ * Get rid of fixed cases that don't beat all general cases
+ */
+{
+   ROUTNODE *fp, *fn;
+   PERFNODE *pp;
+   for (fp=fixed; fp; fp = fn)
+   {
+      fn = fp->next;
+      pp = GetBestGen(gen, fp->incX);
+      if (pp->mf <= fp->mf)
+      {
+         fixed = RemoveFromQ(fixed, fp);
+         KillRN(fp);
+      }
+   }
+   return(fixed);
+}
+
+void SortTable(int n, int *tab)
+{
+   int i, j, imin;
+   for(i=0; i < n-1; i++)
+   {
+      imin = i;
+      for (j=i+1; j < n; j++) if (tab[j] < tab[imin]) imin = j;
+      j = tab[i];
+      tab[i] = tab[imin];
+      tab[imin] = j;
+   }
+}
+
+int *GetFixedTable(ROUTNODE *fixed, ROUTNODE *gen, int *N)
+{
+   int *inctab, i, n;
+   PERFNODE *pp;
+
+   *N = n = NumPN(gen->pp);
+   inctab = malloc(n * sizeof(int));
+   assert(inctab);
+   for (i=0, pp=gen->pp; i < n; i++, pp = pp->next) inctab[i] = pp->incX;
+   SortTable(n, inctab);
+   return(inctab);
+}
+
+ROUTNODE **GetRPTab(ROUTNODE *fixrp, ROUTNODE *genrp, int n, int *ftab)
+{
+   ROUTNODE *rp, **rptab;
+   int i;
+
+   rptab = malloc(n*sizeof(ROUTNODE*));
+   assert(rptab);
+   for (i=0; i < n; i++)
+   {
+      rp = FindBestRN(fixrp, ftab[i]);
+      if (!rp)
+      {
+         rp = FindBestRN(genrp, ftab[i]);
+         assert(rp);
+      }
+      rptab[i] = GetRN(rp->ID, ftab[i], rp->rout, rp->auth,
+                       rp->cc, rp->flags);
+      rptab[i]->mf = rp->mf;
+   }
+   return(rptab);
+}
+
+int InTable(int n, int *ftab, int k)
+/*
+ * returns index (starting from 1) in tab of number k; 0 if not there
+ */
+{
+   int iret=0, i;
+   for (i=0; i < n; i++) if (ftab[i] == k) break;
+   if (i < n) iret = i+1;
+   return(iret);
+}
+int *Get2Gen(int n, int *ftab)
+/*
+ * Given sorted table of fixed incX's, find two smallest not covered
+ */
+{
+   static int incs[2];
+   int i, j;
+
+   if (!InTable(n, ftab, 1)) incs[0] = incs[1] = 1;
+   else
+   {
+      for (i=2,j=0; j < 2; i++) if (!InTable(n, ftab, i)) incs[j++] = i;
+   }
+   return(incs);
+}
+
+void KillTable(int n, ROUTNODE **tab)
+{
+   int i;
+   for (i=0; i < n; i++) KillRN(tab[i]);
+   free(tab);
+}
+
+ROUTNODE *FindBestGen(char pre, ROUTNODE *root, int incX0, int incX1)
+{
+   ROUTNODE *rp, *bp=NULL;
+   double t0, t1, dmin=5000000.0;
+
+   for (rp=root; rp; rp = rp->next)
+   {
+      t0 = GetTime(pre, rp->rout, rp->ID, incX0, rp->cc, rp->flags);
+      t1 = GetTime(pre, rp->rout, rp->ID, incX1, rp->cc, rp->flags);
+      t0 = (t0 + t1) / 2.0;
+      if (t0 < dmin) { dmin = t0; bp = rp; }
+   }
+   rp = GetRN(bp->ID, bp->incX, bp->rout, bp->auth, bp->cc, bp->flags);
+   rp->mf = dmin;
+   return(rp);
+}
+
+int KillGenFromTable(int n, int *ftab, ROUTNODE **rptab, ROUTNODE *bgen)
+/*
+ * if best generated case is one of fixed cases, no need for special if
+ */
+{
+   int i, j;
+   for (j=i=0; i < n; i++)
+   {
+      if (rptab[i]->ID == bgen->ID)
+      {
+         ftab[i] = 0;
+         j++;
+      }
+   }
+   return(n-j);
+}
+
+void DumpFile(char *fnam, FILE *fpout)
+{
+   FILE *fpin;
+   char ln[512];
+   sprintf(ln, "IAMAX/%s", fnam);
+   fpin = fopen(ln, "r");
+   assert(fpin);
+   while(fgets(ln, 512, fpin)) fputs(ln, fpout);
+   fclose(fpin);
+}
+void DumpFiles(FILE *fpout, ROUTNODE *gen, int N, int *inctab, ROUTNODE **rptab)
+{
+   int i;
+
+   fprintf(fpout, "#define ATL_UIAMAX ATL_IAMAX_X\n");
+   DumpFile(gen->rout, fpout);
+   fprintf(fpout, "#undef  ATL_UIAMAX\n\n");
+   for (i=0; i < N; i++)
+   {
+      if (inctab[i] > 0)
+      {
+         fprintf(fpout, "#define ATL_UIAMAX ATL_IAMAX_%d\n", inctab[i]);
+         DumpFile(rptab[i]->rout, fpout);
+         fprintf(fpout, "#undef  ATL_UIAMAX\n\n");
+      }
+   }
+}
+
+void DumpIf(FILE *fpout, int N, int *inctab)
+{
+   char *elseif="if";
+   int i;
+
+   for(i=0; i < N; i++)
+   {
+      if (inctab[i] > 0)
+      {
+         fprintf(fpout,"   %s (incX == %d) return(ATL_IAMAX_%d(N, X, incX));\n",
+                 elseif, inctab[i], inctab[i]);
+         elseif = "else if";
+      }
+   }
+   fprintf(fpout, "   else return(ATL_IAMAX_X(N, X, incX));\n");
+}
+
+void DumpCase(FILE *fpout, int N, int *inctab)
+{
+   int i;
+
+   fprintf(fpout, "   switch(incX)\n   {\n");
+   for(i=0; i < N; i++)
+   {
+      if (inctab[i] > 0)
+      {
+         fprintf(fpout, 
+         "   case %d:\n      return(ATL_IAMAX_%d(N, X, incX));\n      break;\n",
+                 inctab[i], inctab[i]);
+      }
+   }
+   fprintf(fpout, "   default:\n      return(ATL_IAMAX_X(N, X, incX));\n");
+   fprintf(fpout, "   }\n");
+}
+
+void GenMake(char pre, char *cc, char *ccflags)
+{
+   FILE *fp;
+   char *typ;
+
+   if (pre == 'd') typ = "-DDREAL";
+   else if (pre == 's') typ = "-DSREAL";
+   else if (pre == 'c') typ = "-DSCPLX";
+   else if (pre == 'z') typ = "-DDCPLX";
+
+   fp = fopen("Make.iamax", "w");
+   assert(fp);
+   fprintf(fp, "include Make.inc\n\n");
+   if (cc) fprintf(fp, "UCC=%s\nUCFLAGS = %s $(CDEFS)\n\n", cc, ccflags);
+   else fprintf(fp, "UCC = $(CC)\nUCFLAGS = $(CCFLAGS)\n\n");
+   fprintf(fp, "ATL_i%camax.o : ATL_i%camax.c\n", pre, pre);
+   fprintf(fp, "\t$(UCC) $(CCFLAGS) %s -c ATL_i%camax.c\n", typ, pre);
+}
+
+void Create_iamax(char pre, ROUTNODE *bgen, int N, int n, 
+                  int *inctab, ROUTNODE **rptab)
+{
+   FILE *fp;
+
+   GenMake(pre, bgen->cc, bgen->flags);
+   fp = fopen("ATL_iamax.c", "w");
+   assert(fp);
+   DumpFiles(fp, bgen, N, inctab, rptab);
+   
+   fprintf(fp, 
+   "\n\nint ATL_i%camax(const int N, const TYPE *X, const int incX)\n{\n", pre);
+   if (n < 1) fprintf(fp, "   ATL_IAMAX_X(N, X, incX);\n");
+   else if (n < 3) DumpIf(fp, N, inctab);
+   else DumpCase(fp, N, inctab);
+   fprintf(fp, "}\n");
+}
+
+/*
+<best general>
+<# of fixed incX>
+<inc1>
+<inc#>
+Each line is of form:
+<incX> <ID> <rout> <auth> [\]
+[cc]
+[ccflags]
+*/
+void PutSummLine(ROUTNODE *rp, int incX, FILE *fpout)
+{
+   if (rp->cc)
+   {
+      fprintf(fpout, "%3d %4d %s \"%s\" \\\n", incX, rp->ID, 
+              rp->rout, rp->auth);
+      fprintf(fpout, "%s\n", rp->cc);
+      fprintf(fpout, "\"%s\"\n", rp->flags);
+   }
+   else fprintf(fpout, "%3d %4d %s \"%s\"\n", incX, rp->ID, rp->rout, rp->auth);
+}
+void CreateSumm(char pre, ROUTNODE *bg, int n, int nn, int *fixtab, 
+                ROUTNODE **rptab)
+{
+   FILE *fp;
+   char ln[128];
+   int i;
+
+   sprintf(ln, "res/%cIAMAX.SUM", pre);
+   fp = fopen(ln, "w");
+   assert(fp);
+   PutSummLine(bg, 0, fp);
+   fprintf(fp, "%d\n", nn);
+   for (i=0; i < n; i++)
+   {
+      if (fixtab[i] > 0) PutSummLine(rptab[i], fixtab[i], fp);
+   }
+   fclose(fp);
+}
+
+ROUTNODE *GetSummLine(FILE *fpin)
+{
+   int id, incX;
+   char rout[256], auth[256], cc[256], ln[512];
+   ROUTNODE *rn;
+
+   assert( fgets(ln, 512, fpin) != NULL );
+   assert(sscanf(ln, " %d %d %s \"%[^\"]", &incX, &id, rout, auth) == 4);
+   if (LineIsCont(ln))
+   {
+      assert( fgets(ln, 256, fpin) != NULL );
+      strcpy(cc, ln);
+      assert( fgets(ln, 512, fpin) != NULL );
+      rn = GetRN(id, incX, rout, auth, cc, ln);
+   }
+   else rn = GetRN(id, incX, rout, auth, NULL, NULL);
+   return(rn);
+}
+
+ROUTNODE **ReadSumm(char pre, ROUTNODE **BG, int *N, int **fixtab)
+{
+   char ln[128];
+   int i, n, *ftab;
+   FILE *fp;
+   ROUTNODE **rptab;
+
+   sprintf(ln, "res/%cIAMAX.SUM", pre);
+   fp = fopen(ln, "r");
+   if (!fp) return(NULL);
+   *BG = GetSummLine(fp);
+   assert( fgets(ln, 128, fp) != NULL );
+   sscanf(ln, " %d", N);
+   n = *N;
+   *fixtab = ftab = malloc(n*sizeof(int));
+   rptab = malloc(n * sizeof(ROUTNODE*));
+   assert(ftab);
+   assert(rptab);
+   for (i=0; i < n; i++)
+   {
+      rptab[i] = GetSummLine(fp);
+      ftab[i] = rptab[i]->incX;
+   }
+   fclose(fp);
+   return(rptab);
+}
+
+void UseInc1Flags(char pre)
+/*
+ * finds best incX=1 case, and enforces use of its flags forall codes;
+ * assumes all routines have been tested and timed with native flags
+ */
+{
+   char *cc, *flag;
+   ROUTNODE *bg, *bf;
+   PERFNODE *bp;
+/*
+ * Find best incX=1 case, and use it's flags
+ */
+   bf = FindBestRN(fixrn, 1);
+   bg = FindBestRN(genrn, 1); assert(bg);
+   bp = FindIncXPN(bg->pp, 1);
+   if (!bf) { cc = bg->cc; flag = bg->flags; }
+   else if (bp->mf <= bf->mf)  { cc = bg->cc; flag = bg->flags; }
+   else { cc = bf->cc; flag = bf->flags; }
+/*
+ * Invalidate testing/timing done with differing flags, and retest & time
+ */
+   InvalidateTimeQ(pre, genrn, cc, flag);
+   InvalidateTimeQ(pre, fixrn, cc, flag);
+   genrn = TestRouts(pre, genrn);
+   fixrn = TestRouts(pre, fixrn);
+   assert(genrn);  /* must keep general case around */
+   TimeQ(pre, fixrn);
+   TimeQ(pre, genrn);
+}
+
+void FindBest(char pre)
+{
+   ROUTNODE *rp, **rptab, *bgen;
+   int nn, n, *fixtab, *incs;
+   char ln[128];
+
+   sprintf(ln, "IAMAX/%c@(rt).dsc", pre);
+   rp = BuildQ(ln);
+   rp = TestRouts(pre, rp); /* get rid of routs that don't work */
+   SortQ(rp);
+   if (!genrn)
+   {
+      fprintf(stderr, "ERROR no general incX kernel available!!\n");
+      exit(-1);
+   }
+   CreatPerfQs(genrn, fixrn);
+   TimeQ(pre, fixrn);
+   TimeQ(pre, genrn);
+   UseInc1Flags(pre);
+PrintQ("fixrn", fixrn);
+PrintQ("genrn", genrn);
+   fixrn = ReduceFixed(fixrn);
+   fixrn  = ReduceFixed2(fixrn, genrn);
+   fixtab = GetFixedTable(fixrn, genrn, &n);
+   rptab  = GetRPTab(fixrn, genrn, n, fixtab); /* best case, sorted by fixtab */
+   incs = Get2Gen(n, fixtab);
+   bgen = FindBestGen(pre, genrn, incs[0], incs[1]); assert(bgen);
+   nn = KillGenFromTable(n, fixtab, rptab, bgen);
+   CreateSumm(pre, bgen, n, nn, fixtab, rptab);
+
+   KillQ(fixrn);
+   KillQ(genrn);
+   free(fixtab);
+   KillTable(n, rptab);
+}
+
+ROUTNODE *Tab2Q(int N, ROUTNODE **rptab)
+{
+   ROUTNODE *root=NULL, *rp, *tp;
+   int i;
+
+   if (N > 0)
+   {
+      tp = rptab[0];
+      rp = root = GetRN(tp->ID, tp->incX, tp->rout, tp->auth, 
+                        tp->cc, tp->flags);
+      for (i=1; i < N; i++)
+      {
+         tp = rptab[i];
+         rp->next = GetRN(tp->ID, tp->incX, tp->rout, tp->auth, 
+                          tp->cc, tp->flags);
+         rp = rp->next;
+      }
+   }
+   return(root);
+}
+void GoToTown(char pre)
+{
+   ROUTNODE **rptab, *bg, *rp;
+   int i, n, *inctab;
+   
+   rptab = ReadSumm(pre, &bg, &n, &inctab);
+   if (rptab == NULL)
+   {
+      FindBest(pre);
+      rptab = ReadSumm(pre, &bg, &n, &inctab);
+      assert(rptab);
+   }
+   else /* need to test, and make sure selected routines work */
+   {
+      rp = Tab2Q(n, rptab);
+      TestRouts(pre, rp);
+      i = GetQDepth(rp);
+      KillQ(rp);
+      bg = TestRouts(pre, bg);
+      if ( (n != i) || (bg == NULL) )
+      {
+         KillTable(n, rptab);
+         FindBest(pre);
+         rptab = ReadSumm(pre, &bg, &n, &inctab);
+         assert(rptab);
+      }
+   }
+   Create_iamax(pre, bg, n, n, inctab, rptab);
+   KillTable(n, rptab);
+}
+
+main(int nargs, char **args)
+{
+   char pre='d';
+   if (nargs > 1) pre = *args[1];
+   GoToTown(pre);
+   exit(0);
+}
+
+@ROUT iamaxtest
+#include "atlas_misc.h"
+#include <assert.h>
+
+int FAx=0, MAx=0, FAy=0, MAy=0;
+@extract -b @(topd)/FAmalloc.inc
+
+#define dumb_seed(iseed_) srand(iseed_)
+#ifndef RAND_MAX  /* rather dangerous non-ansi workaround */
+   #define RAND_MAX ((unsigned long)(1<<30))
+#endif
+#define dumb_rand() ( 0.5 - ((double)rand())/((double)RAND_MAX) )
+#ifndef TEST_IAMAX
+   #define TEST_IAMAX ATL_IAMAX
+#endif
+int TEST_IAMAX(const int N, const TYPE *X, const int incX);
+
+#ifdef TREAL
+static int GOOD_IAMAX(const int N, const TYPE *X, const int incX)
+{
+   register TYPE t0, xmax=0.0;
+   int i, imax=0;
+
+   assert(incX > 0);
+   for (i=0; i < N; i++)
+   {
+      t0 = *X;
+      X += incX;
+      if (t0 < ATL_rzero) t0 = -t0;
+      if (t0 > xmax) { xmax = t0; imax = i; }
+   }
+   return(imax);
+}
+
+static TYPE *GetVec(int N, int incX, int imax)
+/*
+ * Allocates, and generates vec with amax in position imax, if imax < 0,
+ * have random max
+ */
+{
+   TYPE *X, t0;
+   int i, n;
+
+   n = 1 + (N-1)*incX;
+   X = FA_malloc(ATL_MulBySize(n), FAx, MAx);
+   assert(X);
+   if (incX != 1)  /* pad with value that will trigger max */
+      for (i=0; i < n; i++) X[i] = 524288.0;
+   for (i=0; i < N; i++) X[i*incX] = dumb_rand();
+   if (imax >= 0) /* find maxval, and swap into imax */
+   {
+      i = GOOD_IAMAX(N, X, incX);
+      t0 = X[i*incX]; t0 += 0.1*t0;
+      X[i*incX] = X[imax*incX];
+      X[imax*incX] = t0;
+   }
+   return(X);
+}
+
+#else
+
+static int GOOD_IAMAX(const int N, const TYPE *X, const int incX)
+{
+   register TYPE xr, xi, xmax=0.0;
+   int i, imax=0;
+   const int incx = incX<<1;
+
+   assert(incX > 0);
+   for (i=0; i < N; i++)
+   {
+      xr = *X;
+      xi = X[1];
+      X += incx;
+      if (xr < ATL_rzero) xr = -xr;
+      if (xi < ATL_rzero) xi = -xi;
+      xr += xi;
+      if (xr > xmax) { xmax = xr; imax = i; }
+   }
+   return(imax);
+}
+
+static TYPE *GetVec(int N, int incx, int imax)
+/*
+ * Allocates, and generates vec with amax in position imax, if imax < 0,
+ * have random max
+ */
+{
+   TYPE *X, t0, t1;
+   int i, n;
+   const int incX = incx*2;
+
+   n = 1 + (N-1)*incx;
+   X = FA_malloc(ATL_MulBySize(n), FAx, MAx);
+   assert(X);
+   if (incx != 1)  /* pad with value that will trigger max */
+      for (n *= 2, i=0; i < n; i++) X[i] = 524288.0;
+   for (i=0; i < N; i++)
+   {
+      X[i*incX] = dumb_rand();
+      X[i*incX+1] = dumb_rand();
+   }
+   if (imax >= 0) /* find maxval, and swap into imax */
+   {
+      imax *= 2;
+      i = GOOD_IAMAX(N, X, incx) * 2;
+      t0 = X[i*incx]; t0 += 0.1*t0;
+      t1 = X[i*incx+1];
+      X[i*incx] = X[imax*incx];
+      X[i*incx+1] = X[imax*incx+1];
+      X[imax*incx] = t0;
+      X[imax*incx+1] = t1;
+   }
+   return(X);
+}
+#endif
+
+void PrintError(int line, int icor, int itst, const TYPE *X, int incX)
+{
+   #ifdef TREAL
+      fprintf(stderr, 
+              "   IAMAX ERROR %d: correct=%d (%f), computed=%d (%f)\n", 
+              line, icor, X[icor], itst, X[itst]);
+   #else
+      icor *= 2; itst *= 2;
+      fprintf(stderr, 
+              "   IAMAX ERROR %d: correct=%d (%f,%f), computed=%d (%f,%f)\n", 
+              line, icor/2, X[icor*incX], X[icor*incX+1], itst/2, 
+              X[itst*incX], X[itst*incX+1]);
+   #endif
+}
+
+int TestVec(int N, const TYPE *X, int incX)
+{
+   int icor, itst;
+   icor = GOOD_IAMAX(N, X, incX);
+   itst = TEST_IAMAX(N, X, incX);
+   if (icor == itst) return(0);
+   else PrintError(__LINE__, icor, itst, X, incX);
+   return(1);
+}
+
+int TestTie(int N, int incX, int imax, int itie)
+/*
+ * Puts max in location imax, and a tie in location itie: imax < itie
+ * should probably have a tie in cplx that is not exact same, but not for now
+ */
+{
+   TYPE *X;
+   int i;
+   assert(imax < itie && itie < N && imax >= 0);
+   X = GetVec(N, incX, imax);
+   #ifdef TREAL
+      X[itie*incX] = X[imax*incX];
+   #else
+      X[2*itie*incX] = X[2*imax*incX];
+      X[2*itie*incX+1] = X[2*imax*incX+1];
+   #endif
+   i = TEST_IAMAX(N, X, incX);
+   if (i != imax) PrintError(__LINE__, imax, i, X, incX);
+   FA_free(X, FAx, MAx);
+   if (i == imax) return(0);
+   else return(1);
+}
+
+int TestTies(int N, int incX)
+{
+   int ierr=0;
+   if (N < 8) N = 8;
+
+   ierr += TestTie(N, incX, N-2, N-1);
+   ierr += TestTie(N, incX, 1, 2);
+   ierr += TestTie(N, incX, N/2, N/2+3);
+   ierr += TestTie(N, incX, 3, N/2);
+   return(ierr);
+}
+
+int RunTest(int N, int incX, int imax, int flag)
+{
+   TYPE *X, t0;
+   int i;
+
+   X = GetVec(N, incX, imax);
+   if (imax < 0) imax = GOOD_IAMAX(N, X, incX);
+   if (flag == -1)  /* make max entry negative */
+   { /* for cplx, leave imag alone */
+      t0 = X[incX*imax SHIFT];
+      if (t0 > ATL_rzero) X[incX*imax SHIFT] = -t0;
+   }
+   else if (flag == 1)   /* make max entry positive */
+   { /* for cplx, leave imag alone */
+      t0 = X[incX*imax SHIFT];
+      if (t0 < ATL_rzero) X[incX*imax SHIFT] = -t0;
+   }
+   i = TEST_IAMAX(N, X, incX);
+   if (i != imax) PrintError(__LINE__, imax, i, X, incX);
+   FA_free(X, FAx, MAx);
+
+   if (i == imax) return(0);
+   else return(1);
+}
+
+int RunTests(int N, int incX, int nrand)
+{
+   int i, ierr=0;
+   int n = Mmax(N, 8);
+
+/*
+ * To catch common unrolling mistakes, put max in first and last 8 positions
+ */
+   fprintf(stdout, "\nTesting leading and trailing placement :\n");
+   ierr += RunTest(n, incX, 0, -1);
+   ierr += RunTest(n, incX, 1,  1);
+   ierr += RunTest(n, incX, 2, -1);
+   ierr += RunTest(n, incX, 3,  1);
+   ierr += RunTest(n, incX, 4, -1);
+   ierr += RunTest(n, incX, 5, -1);
+   ierr += RunTest(n, incX, 6,  1);
+   ierr += RunTest(n, incX, 7, -1);
+
+   ierr += RunTest(n, incX, n-1,  1);
+   ierr += RunTest(n, incX, n-2, -1);
+   ierr += RunTest(n, incX, n-3,  1);
+   ierr += RunTest(n, incX, n-4, -1);
+   ierr += RunTest(n, incX, n-5,  1);
+   ierr += RunTest(n, incX, n-6,  1);
+   ierr += RunTest(n, incX, n-7, -1);
+   ierr += RunTest(n, incX, n-8,  1);
+
+   fprintf(stdout, "Testing ties:\n");
+   ierr += TestTies(n, incX);
+   fprintf(stdout, "Testing random:\n");
+   for (i=0; i < nrand; i++) ierr += RunTest(N, incX, -1,  0);
+   fprintf(stdout, "Done testing.\n");
+
+   return(ierr);
+}
+
+int RunAllTests(int nN, int *Ns, int nX, int *incXs, int nrand)
+{
+   int in, ix, ierr=0;
+
+   for (in=0; in < nN; in++)
+   {
+      for (ix=0; ix < nX; ix++)
+      {
+         ierr += RunTests(Ns[in], incXs[ix], nrand);
+      }
+   }
+   return(ierr);
+}
+
+void PrintUsage(char *nam)
+{
+   fprintf(stderr, 
+      "USAGE: %s -N # n1 ... n# -n <n> -X # x1 ... x# -R <nrand>\n", nam);
+   exit(-1);
+}
+
+void GetFlags(int nargs, char **args, int *nN, int **Ns, int *nX, int **incXs,
+              int *nrand)
+{
+   int i, j, k;
+
+   *nrand = 10;
+   *nX = *nN = -1;
+
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-') PrintUsage(args[0]);
+      if (i == nargs-1) PrintUsage(args[0]);
+      switch(args[i][1])
+      {
+      case 'F':
+         j = args[i][2] != 'y';
+         k = atoi(args[++i]);
+         if (j)
+         {
+            if (k < 0)
+               MAx = -k;
+            else
+               FAx = k;
+         }
+         else
+         {
+            if (k < 0)
+               MAy = -k;
+            else
+               FAy = k;
+         }
+         break;
+      case 'a':
+      case 'b':
+      case 'Y':
+         k = atoi(args[++i]);
+         if (k > nargs-i) PrintUsage(args[0]);
+         i += k SHIFT;
+         break;
+      case 'R':
+         *nrand = atoi(args[++i]);
+         break;
+      case 'X':
+         *nX = atoi(args[++i]);
+         if (*nX > nargs-i) PrintUsage(args[0]);
+         *incXs = malloc((*nX)*sizeof(int));
+         assert(*incXs);
+         for (j=0; j < *nX; j++) 
+         {
+            k = atoi(args[++i]);
+            (*incXs)[j] = Mabs(k);
+         }
+         break;
+      case 'N':
+         *nN = atoi(args[++i]);
+         if (*nN > nargs-i) PrintUsage(args[0]);
+         *Ns = malloc((*nN)*sizeof(int));
+         assert(*Ns);
+         for (j=0; j < *nN; j++) (*Ns)[j] = atoi(args[++i]);
+         break;
+      case 'x':
+         *nX = 1;
+         *incXs = malloc(sizeof(int));
+         assert(*incXs);
+         **incXs = atoi(args[++i]);
+         break;
+      case 'n':
+         *nN = 1;
+         *Ns = malloc(sizeof(int));
+         assert(*Ns);
+         **Ns = atoi(args[++i]);
+         break;
+      default:
+         PrintUsage(args[0]);
+      }
+   }
+   if (*nN < 0)
+   {
+      *nN = 1;
+      *Ns = malloc(sizeof(int));
+      assert(*Ns);
+      **Ns = 777;
+   }
+   if (*nX < 0)
+   {
+      *nX = 1;
+      *incXs = malloc(sizeof(int));
+      assert(*incXs);
+      **incXs = 1;
+   }
+   if (FAx < sizeof(TYPE))
+      FAx = sizeof(TYPE);
+   if (FAy < sizeof(TYPE))
+      FAy = sizeof(TYPE);
+}
+
+main(int nargs, char **args)
+{
+   int nN, *Ns, nX, *incXs, nrand, ierr;
+   GetFlags(nargs, args, &nN, &Ns, &nX, &incXs, &nrand);
+   ierr = RunAllTests(nN, Ns, nX, incXs, nrand);
+   free(incXs);
+   free(Ns);
+   if (ierr) fprintf(stdout, "%d TESTS FAILED!!!\n", ierr);
+   else fprintf(stdout, "ALL SANITY TESTS PASSED.\n");
+   exit(ierr);
+}
+@ROUT settime
+   @define rt @set@
+@ROUT dottime
+   @define rt @dot@
+@ROUT asumtime
+   @define rt @asum@
+@ROUT nrm2time
+   @define rt @nrm2@
+@ROUT swaptime
+   @define rt @swap@
+@ROUT iamaxtime
+   @define rt @iamax@
+@ROUT cpsctime
+   @define rt @cpsc@
+@ROUT rottime
+   @define rt @rot@
+@ROUT axpbytime
+   @define rt @axpby@
+@ROUT axpytime
+   @define rt @axpy@
+@ROUT copytime
+   @define rt @copy@
+@ROUT scaltime
+   @define rt @scal@
+@ROUT iamaxtime axpytime copytime scaltime swaptime dottime nrm2time @\
+      asumtime cpsctime settime axpbytime rottime
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+
+int FAx=0, MAx=0, FAy=0, MAy=0;
+@extract -b @(topd)/FAmalloc.inc
+
+#define dumb_seed(iseed_) srand(iseed_)
+#ifndef RAND_MAX  /* rather dangerous non-ansi workaround */
+   #define RAND_MAX ((unsigned long)(1<<30))
+#endif
+#define dumb_rand() ( 0.5 - ((double)rand())/((double)RAND_MAX) )
+
+#if defined(WALL) || defined(PentiumCPS)
+   #ifndef WALL
+      #define WALL
+   #endif
+   #define time00 ATL_walltime
+#else
+   #define time00 ATL_cputime
+#endif
+double time00();
+
+#define Mjoin(pre, nam) my_join(pre, nam)
+#define my_join(pre, nam) pre ## nam
+#define Mstr2(m) # m
+#define Mstr(m) Mstr2(m)
+#define Mmin(x, y) ( (x) > (y) ? (y) : (x) )
+#define Mmax(x, y) ( (x) < (y) ? (y) : (x) )
+#define Mabs(x) ( (x) >= 0.0 ? (x) : -(x) )
+
+#ifdef sREAL
+   #define SREAL
+#elif defined(dREAL)
+   #define DREAL
+#elif defined(sCPLX)
+   #define SCPLX
+#elif defined(dCPLX)
+   #define DCPLX
+#endif
+
+#if defined (SREAL)
+   #define TYPE float
+   #define SCALAR float
+   #define PRE s
+#elif defined (DREAL)
+   #define TYPE double
+   #define SCALAR double
+   #define PRE d
+#elif defined (SCPLX)
+   #define TYPE float
+   #define SCALAR float*
+   #define PRE c
+#elif defined (DCPLX)
+   #define TYPE double
+   #define SCALAR double*
+   #define PRE z
+#endif
+
+#if defined(SREAL) || defined(DREAL)
+   #define TREAL
+   #define SHIFT
+   #define ATL_sizeof sizeof(TYPE)
+#elif defined(SCPLX) || defined(DCPLX) 
+   #define TCPLX
+   #define ATL_sizeof (2*sizeof(TYPE))
+   #define SHIFT <<1
+#endif
+
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),sysinfo.h))
+@ROUT rottime
+#ifndef TEST_@up@(rt)
+   void ATL_ROT(const int, TYPE *, const int, TYPE *, const int,
+                const TYPE, const TYPE);
+   #ifdef TREAL
+      #define TEST_@up@(rt)(N_, alpha_, X_, ix_, beta_, Y_, iy_) \
+         ATL_@up@(rt)(N_, X_, ix_, Y_, iy_, alpha_, beta_)
+   #else
+      #define TEST_@up@(rt)(N_, alpha_, X_, ix_, beta_, Y_, iy_) \
+         ATL_@up@(rt)(N_, X_, ix_, Y_, iy_, *(alpha_), *(beta_))
+   #endif
+#endif
+@ROUT iamaxtime axpytime copytime scaltime swaptime dottime nrm2time @\
+      asumtime cpsctime settime axpbytime
+#ifndef TEST_@up@(rt)
+   #define TEST_@up@(rt) ATL_@up@(rt)
+#endif
+@ROUT iamaxtime axpytime copytime scaltime swaptime dottime nrm2time @\
+      asumtime cpsctime settime axpbytime rottime
+
+@ROUT dottime
+double DoOneTiming(int N, int nkflop, int cachesize, int incX, int incY)
+/*
+ * This method of timing can be used when we have a cycle-accurate timer
+ * available so we don't need to call routine multiple times to get above
+ * clock resolution.
+ */
+{
+   #ifdef TREAL
+      TYPE TEST_DOT(const int N, const TYPE *X, const int incX,
+                    TYPE *Y, const int incY);
+      TYPE dot=0.0;
+   #else
+      void TEST_DOT(const int N, const TYPE *X, const int incX,
+                    TYPE *Y, const int incY, TYPE *dotc);
+      TYPE dot[2];
+   #endif
+   TYPE *X, *Y;
+   double *W, dtmp, t0, t1;
+   int Ny, Nx, i, n;
+   const int FLBYADDR = (nkflop < 0);
+
+   
+   Nx = (incX >= 0) ? incX : -incX;
+   Nx = 1 + (N-1)*Nx;
+   X = FA_malloc(ATL_sizeof*Nx, FAx, MAx);
+   assert(X);
+   Ny = (incY >= 0) ? incY : -incY;
+   Ny = 1 + (N-1)*Ny;
+   Y = FA_malloc(ATL_sizeof*Ny, FAy, MAy);
+   assert(Y);
+   dumb_seed(i<<2);
+   for (i=0; i < N; i++)
+   {
+      X[i*incX] = dumb_rand();
+      Y[i*incY] = dumb_rand();
+   }
+      
+   if (FLBYADDR)
+   {
+      #if ATL_LINEFLUSH
+         ATL_flushCacheByAddr(Nx*ATL_sizeof, X);
+         ATL_flushCacheByAddr(Ny*ATL_sizeof, Y);
+      #else
+         fprintf(stderr, "No flush by address!!\n");
+         exit(-1);
+      #endif
+   }
+   else if (cachesize)
+   {
+      dtmp = ATL_flushcache(cachesize);
+      dtmp += ATL_flushcache(-1);
+   }
+   t0 = time00();
+   #ifdef TREAL
+      dot = TEST_DOT(N, X, incX, Y, incY);
+   #else
+      TEST_DOT(N, X, incX, Y, incY, dot);
+   #endif
+   t1 = time00();
+
+   FA_free(X, FAx, MAx);
+   FA_free(Y, FAy, MAy);
+   return(t1-t0);
+}
+   @define targs @incX, incY@
+double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
+{
+   #ifdef TREAL
+      TYPE TEST_DOT(const int N, const TYPE *X, const int incX,
+                    TYPE *Y, const int incY);
+      TYPE dot=0.0;
+   #else
+      void TEST_DOT(const int N, const TYPE *X, const int incX,
+                    TYPE *Y, const int incY, TYPE *dotc);
+      TYPE dot[2];
+   #endif
+@ROUT copytime swaptime
+   @define targs @incX, incY@
+double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
+{
+   void TEST_@up@(rt)(const int N, const TYPE *X, const int incX,
+                  TYPE *Y, const int incY);
+@ROUT axpbytime rottime
+   @define targs @alpha, beta, incX, incY@
+double DoTiming(int N, int nkflop, int cachesize, SCALAR alpha, SCALAR beta,
+                int incX, int incY)
+{
+@ROUT axpbytime
+   void TEST_@up@(rt)(const int N, const SCALAR alpha, const TYPE *X, 
+                  const int incX, const SCALAR beta, TYPE *Y, const int incY);
+@ROUT axpytime cpsctime
+   @define targs @alpha, incX, incY@
+double DoTiming(int N, int nkflop, int cachesize, SCALAR alpha,
+                int incX, int incY)
+{
+   void TEST_@up@(rt)(const int N, const SCALAR alpha, const TYPE *X, 
+                  const int incX, TYPE *Y, const int incY);
+@ROUT axpytime copytime swaptime dottime cpsctime axpbytime rottime
+   int nrep, i, n, nvec, NN, ix=0, iy=0, ii, jj;
+   const int incx=Mabs(incX)SHIFT, incy=Mabs(incY)SHIFT;
+   TYPE *X, *Y, *x, *y, *stX;
+   double t0, t1;
+
+   #ifdef TREAL
+      nrep = (nkflop*1000) / (N*2);
+   #else
+      nrep = (nkflop*1000) / (N*8);
+@ROUT dottime `      dot[0] = dot[1] = 0.0;`
+   #endif
+   if (nrep < 1) nrep = 1;
+   i = cachesize / ATL_sizeof;
+   nvec = (i + 2*N) / N;
+   if (nvec < 2) nvec = 2;
+   if (nvec/2) nvec++;
+   NN = (nvec/2) * N;
+   if (incx > 4) ii = (incx + 3)/4;
+   else ii = incx;
+   if (incy > 4) jj = (incy + 3)/4;
+   else jj = incy;
+   NN *= (ii + jj);
+   ii = N*(incx+incy);
+   if (NN / ii) NN += ii - (NN % ii);
+   x = X = FA_malloc(ATL_sizeof*NN, FAx, MAx);
+   assert(X);
+   stX = X + NN;
+   dumb_seed(NN);
+   for (i=0, n=NN; i < n; i++) X[i] = dumb_rand();
+   if (incX < 0) ix = (N-1) * incx;
+   if (incY < 0) iy = (N-1) * incy;
+   ii = N * incx;
+   jj = N * incy;
+   t0 = time00();
+   for (i=nrep; i; i--)
+   {
+      y = x + ii;
+@ROUT dottime
+      #ifdef TREAL
+         dot += TEST_@up@(rt)(N, x+ix, incX, y+iy, incY);
+      #else
+         TEST_@up@(rt)(N, x+ix, incX, y+iy, incY, dot);
+      #endif
+@ROUT copytime swaptime
+      TEST_@up@(rt)(N, x+ix, incX, y+iy, incY);
+@ROUT axpytime cpsctime
+      TEST_@up@(rt)(N, alpha, x+ix, incX, y+iy, incY);
+@ROUT axpbytime rottime
+      TEST_@up@(rt)(N, alpha, x+ix, incX, beta, y+iy, incY);
+@ROUT axpytime copytime swaptime dottime cpsctime axpbytime rottime
+      x = y + jj;
+      if (x == stX) x = X;
+   }
+   t1 = time00() - t0;
+   FA_free(X, FAx, MAx);
+   return(t1/nrep);
+}
+@ROUT scaltime
+#ifdef TCPLX
+static void cplxinvert(TYPE *X, TYPE *Y)
+/*
+ * Y(:) = 1 / X(:)
+ * Invert complex scalar held in X, and write answer to Y.
+ * X & Y can be same space
+ */
+{
+   int i;
+   const TYPE one=1.0, none=(-1.0);
+   register TYPE rtmp, itmp, t0;
+
+   rtmp = *X;
+   itmp = X[1];
+   if (Mabs(itmp) <= Mabs(rtmp))
+   {
+      t0 = itmp / rtmp;
+      *Y = rtmp = one / (rtmp + itmp*t0);
+      Y[1] = -rtmp * t0;
+   }
+   else
+   {
+      t0 = rtmp / itmp;
+      Y[1] = rtmp = none / (itmp + rtmp*t0);
+      *Y = -t0 * rtmp;
+   }
+}
+#endif
+@ROUT scaltime settime
+   @define targs @alpha, incX@
+double DoTiming(int N, int nkflop, int cachesize, SCALAR alpha, int incX)
+{
+   void TEST_@up@(rt)(const int N, const SCALAR alpha, TYPE *X, const int incX);
+   int nrep, i, n, nvec, NN, ix=0, ii;
+   const int incx=Mabs(incX)SHIFT;
+   TYPE *X, *x, *stX;
+   double t0, t1;
+
+@ROUT scaltime
+   #ifdef TCPLX
+      double ialpha[2], *alp=alpha;
+      if (alpha[1] == 0.0)
+      {
+         ialpha[1] = 0.0;
+         if (*alpha == 0.0 || *alpha == 1.0)
+            *ialpha = *alpha;
+         else
+            *ialpha =  1.0 / *alpha;
+      }
+      else
+         cplxinvert(alpha, ialpha);
+   #else
+      double ialpha, alp=alpha;
+      if (alpha == 0.0 || alpha == 1.0)
+         ialpha = alpha;
+      else 
+         ialpha =  1.0 / alpha;
+   #endif
+@ROUT scaltime settime
+   #ifdef TREAL
+      nrep = (nkflop*1000) / (N*2);
+   #else
+      nrep = (nkflop*1000) / (N*8);
+   #endif
+   if (nrep < 1) nrep = 1;
+   i = cachesize / ATL_sizeof;
+   nvec = (i + N) / N;
+   if (nvec < 2) nvec = 2;
+   NN = nvec * N;
+
+   if (incx > 4) ii = (incx + 3)/4;
+   else ii = incx;
+   NN *= ii;
+   ii = N*incx;
+   if (NN / ii) NN += ii - (NN % ii);
+
+   #ifdef TREAL
+      x = X = FA_malloc(ATL_sizeof*NN, FAx, MAx);
+   #else
+      x = X = FA_malloc((ATL_sizeof>>1)*NN, FAx, MAx);
+   #endif
+   assert(X);
+   stX = X + NN;
+   dumb_seed(NN);
+   for (i=0, n=NN; i < n; i++) X[i] = dumb_rand();
+   if (incX < 0) ix = (N-1) * incx;
+   ii = N * incx;
+   t0 = time00();
+   for (i=nrep; i; i--)
+   {
+      TEST_@up@(rt)(N, alpha, x+ix, incX);
+      x += ii;
+@ROUT settime
+      if (x == stX) x = X;
+@ROUT scaltime
+      if (x == stX)
+      {
+         x = X;
+         if (alpha == alp)
+           alpha = ialpha;
+         else alpha = alp;
+      }
+@ROUT scaltime settime
+   }
+   t1 = time00() - t0;
+   FA_free(X, FAx, MAx);
+   return(t1/nrep);
+}
+@ROUT iamaxtime
+   @define acc @j@
+@ROUT nrm2time asumtime
+   @define acc @tmp@
+@ROUT iamaxtime nrm2time asumtime
+   @define targs @incX@
+double DoTiming(int N, int nkflop, int cachesize, int incX)
+{
+@ROUT nrm2time asumtime
+   TYPE TEST_@up@(rt)(const int N, const TYPE *X, const int incX);
+@ROUT iamaxtime
+   int TEST_@up@(rt)(const int N, const TYPE *X, const int incX);
+@ROUT iamaxtime nrm2time asumtime
+   const int incx = Mabs(incX)SHIFT;
+   int i, j, ii, n, NN, nrep, nvec, ix;
+   TYPE *X, *stX, *x;
+@ROUT nrm2time asumtime `   TYPE tmp;`
+   double t0, t1;
+
+   assert(incX > 0);
+   nrep = (nkflop * 1000) / (N*2);
+   if (nrep < 1) nrep = 1;
+   i = cachesize / (ATL_sizeof);
+   if (N < i) nvec = (i + 2*N) / N;
+   else nvec = 2;
+   NN = nvec * N;
+
+   if (incx > 4) ii = (incx + 3)/4;
+   else ii = incx;
+   NN *= ii;
+   ii = N*incx;
+   if (NN / ii) NN += ii - (NN % ii);
+
+   #ifdef TREAL
+      x = X = FA_malloc(ATL_sizeof*NN, FAx, MAx);
+   #else
+      x = X = FA_malloc((ATL_sizeof>>1)*NN, FAx, MAx);
+   #endif
+   assert(X);
+   stX = X + NN;
+   dumb_seed(NN);
+   for (n=NN, i=0; i < n; i++) X[i] = dumb_rand();
+   ix = (N SHIFT) * incX;
+
+   t0 = time00();
+   for (@(acc)=0,i=nrep; i; i--)
+   {
+      @(acc) += TEST_@up@(rt)(N, x, incX);
+      x += ix;
+      if (x == stX) x = X;
+   }
+   t1 = time00() - t0;
+   FA_free(X, FAx, MAx);
+   return(t1/nrep);
+}
+
+@ROUT scaltime settime
+void GetTimes(int nrep, double *tims, int N, int nkflop, int cachesize,
+              SCALAR alpha, int incX)
+@ROUT iamaxtime nrm2time asumtime
+void GetTimes(int nrep, double *tims, int N, int nkflop, int cachesize,
+              int incX)
+@ROUT copytime swaptime dottime
+void GetTimes(int nrep, double *tims, int N, int nkflop, int cachesize,
+              int incX, int incY)
+@ROUT axpbytime rottime
+void GetTimes(int nrep, double *tims, int N, int nkflop, int cachesize,
+              SCALAR alpha, SCALAR beta, int incX, int incY)
+@ROUT axpytime cpsctime
+void GetTimes(int nrep, double *tims, int N, int nkflop, int cachesize,
+              SCALAR alpha, int incX, int incY)
+@ROUT iamaxtime axpytime copytime scaltime swaptime dottime nrm2time @\
+      asumtime cpsctime settime axpbytime rottime
+/*
+ * Gets nrep times
+ */
+{
+   int i;
+   for (i=0; i < nrep; i++)
+   {
+@ROUT dottime
+      if (nkflop <= 0)
+         tims[i] = DoOneTiming(N, nkflop, cachesize, @(targs));
+      else
+@ROUT iamaxtime axpytime copytime scaltime swaptime dottime nrm2time @\
+      asumtime cpsctime settime axpbytime rottime
+      tims[i] = DoTiming(N, nkflop, cachesize, @(targs));
+      fprintf(stdout, "      N=%d, tim=%e\n", N, tims[i]);
+   }
+}
+
+void PutClosestFirst(int nrep, double *tims, double t0)
+/*
+ * examines all nrep entries, and puts one closest to t0 first
+ */
+{
+   int i, im=0;
+   double diff, dm=100000000.0;
+   for (i=0; i < nrep; i++)
+   {
+      diff = tims[i] - t0;
+      diff = Mabs(diff);
+      if (diff < dm)
+      {
+         dm = diff;
+         im = i;
+      }
+   }
+   if (im)
+   {
+      diff = tims[0];
+      tims[0] = tims[im];
+      tims[im] = diff;
+   }
+}
+
+void CrunchTims(int nrep, double *tims)
+/*
+ * orders times from closest to furthest
+ */
+{
+   int i, j, im=0, in=0;
+   double df, dfm=1000000.0;
+
+   if (nrep < 3) return;
+/*
+ * Find two closest timings, take them as basis
+ */
+   for (i=0; i < nrep; i++)
+   {
+       for (j=0; j < nrep; j++)
+       {
+          if (i != j)
+          {
+             df = tims[i] - tims[j];
+             df = Mabs(df);
+             if (df < dfm)
+             {
+                im = i; in = j;
+                dfm = df;
+             }
+          }
+       }
+   }
+   df = tims[0];
+   tims[0] = tims[im];
+   tims[im] = df;
+   df = tims[1];
+   tims[1] = tims[in];
+   tims[in] = df;
+   df = (tims[0] + tims[1]) / 2.0;
+   for (i=2; i < nrep; i++)
+   {
+      PutClosestFirst(nrep-i, tims+i, df);
+      df = (i*df + tims[i]) / (i+1.0);
+   }
+}
+
+int ApplyIntolerance(int nrep, double *tims, double TOL)
+/*
+ * Takes list ordered by closeness, and throws out outliers
+ */
+{
+   int i, j=nrep;
+   double t0, t1;
+
+   t0 = tims[0];
+   assert(t0 > 0.0);
+   for (i=1; i < nrep; i++)
+   {
+      t1 = tims[i] - t0;
+      t1 = Mabs(t1);
+      if (t1 > t0*TOL) return(i);
+   }
+   return(nrep);
+}
+
+void SortTimes(int n, double *times)
+/*
+ * Simple selection sort, 
+ * RETURNS: times sorted from least to greatest
+ */
+{
+   int i, j;
+   double t0;
+   for (i=0; i < n; i++)
+   {
+      t0 = times[i];
+      for (j=i+1; j < n; j++)
+      {
+         if (t0 > times[j])
+         {
+            times[i] = times[j];
+            times[j] = t0;
+            t0 = times[i];
+         }
+      }
+   }
+}
+@ROUT copytime swaptime dottime
+double GetAvgMf(int N, int nkflop, int cachesize, char *fout, 
+                int incX, int incY, int nrep, double TOL)
+@ROUT axpbytime rottime
+double GetAvgMf(int N, int nkflop, int cachesize, char *fout, SCALAR alpha,
+                SCALAR beta, int incX, int incY, int nrep, double TOL)
+@ROUT axpytime cpsctime
+double GetAvgMf(int N, int nkflop, int cachesize, char *fout, 
+                 SCALAR alpha, int incX, int incY, int nrep, double TOL)
+@ROUT scaltime settime
+double GetAvgMf(int N, int nkflop, int cachesize, char *fout, 
+                SCALAR alpha, int incX, int nrep, double TOL)
+@ROUT iamaxtime nrm2time asumtime
+double GetAvgMf(int N, int nkflop, int cachesize, char *fout, int incX,
+                 int nrep, double TOL)
+@ROUT axpytime iamaxtime copytime scaltime swaptime dottime nrm2time @\
+      asumtime cpsctime settime axpbytime rottime
+/*
+ * Gets nrep timings within TOL of each other.
+ */
+{
+   double t0;
+@ROUT rottime
+   #ifdef TREAL
+      double mf = (6.0*N)/1000000.0;
+   #else
+      double mf = (16.0*N)/1000000.0;
+   #endif
+@ROUT axpbytime
+   #ifdef TREAL
+      double mf = (3.0*N)/1000000.0;
+   #else
+      double mf = (14.0*N)/1000000.0;
+   #endif
+@ROUT copytime swaptime settime
+   double mf = (N SHIFT)/1000000.0;
+@ROUT scaltime cpsctime
+   #ifdef TREAL
+      double mf = N/1000000.0;
+   #else
+      double mf = (6.0*N)/1000000.0;
+   #endif
+@ROUT axpytime iamaxtime dottime nrm2time nrm2time asumtime
+   #ifdef TREAL
+      double mf = (2.0*N)/1000000.0;
+   #else
+@ROUT dottime axpytime  `      double mf = (8.0*N)/1000000.0;`
+@ROUT iamaxtime nrm2time asumtime `      double mf = (4.0*N)/1000000.0;`
+   #endif
+@ROUT iamaxtime axpytime copytime scaltime swaptime dottime nrm2time @\
+      asumtime cpsctime settime axpbytime rottime
+   double *tims;
+   int n, i, j, k;
+   FILE *fpout=NULL;
+
+   tims = malloc(sizeof(double)*nrep);
+   assert(tims);
+   GetTimes(nrep, tims, N, nkflop, cachesize, @(targs));
+   SortTimes(nrep, tims);
+/*
+ * Take smallest time if we are using walltime, median value if CPUtime
+ */
+   #ifdef WALL
+      t0 = tims[0];
+   #else
+      t0 = tims[nrep/2];
+   #endif
+
+@beginskip
+   k = i = n = 0;
+   do
+   {
+      if (i++ > 4)
+      {
+         if (k == 0) /* try again from scratch */
+         {
+            n = 0;
+            k = 1;
+         }
+         else
+         {
+            fprintf(stderr, 
+                    "\n\nCANNOT GET TIMINGS IN TOLERANCE, EXITING!!\n\n");
+            exit(4*k+i);
+         }
+      }
+      GetTimes(nrep-n, tims+n, N, nkflop, cachesize, @(targs));
+      CrunchTims(nrep, tims);  /* group times that are close */
+      n = ApplyIntolerance(nrep, tims, TOL);
+   }
+   while (n != nrep);
+   for (t0=0.0, i=0; i < nrep; i++) t0 += tims[i];
+   t0 /= nrep;
+@endskip
+   mf /= t0;
+   fprintf(stdout, "   N=%d, time=%e, mflop=%f\n", N, t0, mf);
+   if (fout)
+   {
+      fpout = fopen(fout, "w");
+      assert(fpout);
+      fprintf(fpout, "%lf\n", mf);
+      fclose(fpout);
+   }
+   return(mf);
+}
+
+@ROUT copytime swaptime dottime
+void DoTimings(int nN, int *Ns, int nkflop, int cachesize, char *fout, 
+               int incX, int incY)
+@ROUT axpbytime rottime
+void DoTimings(int nN, int *Ns, int nkflop, int cachesize, char *fout, 
+               SCALAR alpha, SCALAR beta, int incX, int incY)
+@ROUT axpytime cpsctime
+void DoTimings(int nN, int *Ns, int nkflop, int cachesize, char *fout, 
+               SCALAR alpha, int incX, int incY)
+@ROUT scaltime settime
+void DoTimings(int nN, int *Ns, int nkflop, int cachesize, char *fout, 
+               SCALAR alpha, int incX)
+@ROUT iamaxtime nrm2time asumtime
+void DoTimings(int nN, int *Ns, int nkflop, int cachesize, char *fout, int incX)
+@ROUT iamaxtime axpytime copytime scaltime swaptime dottime nrm2time @\
+      asumtime cpsctime settime axpbytime rottime
+{
+
+   int i;
+   double t0;
+   for (i=0; i < nN; i++)
+   {
+      t0 = GetAvgMf(Ns[i], nkflop, cachesize, fout, @(targs), 3, 0.1);
+@ROUT iamaxtime scaltime nrm2time asumtime settime
+      fprintf(stdout, "N=%d, incX=%d, mflop = %f\n", Ns[i], incX, t0);
+@ROUT axpbytime rottime
+      #ifdef TREAL
+         fprintf(stdout, 
+                 "N=%d, alpha=%f, beta=%f, incX=%d, incY=%d, mflop = %f\n",
+                 Ns[i], alpha, beta, incX, incY, t0);
+      #else
+         fprintf(stdout, 
+            "N=%d, alpha=(%f,%f), beta=(%f,%f), incX=%d, incY=%d, mflop = %f\n",
+                 Ns[i], alpha[0], alpha[1], beta[0], beta[1], incX, incY, t0);
+      #endif
+@ROUT axpytime copytime swaptime dottime cpsctime
+      fprintf(stdout, "N=%d, incX=%d, incY=%d, mflop = %f\n",
+              Ns[i], incX, incY, t0);
+@ROUT iamaxtime axpytime copytime scaltime swaptime dottime nrm2time @\
+      asumtime cpsctime settime axpbytime rottime
+   }
+}
+
+void PrintUsage(char *nam)
+{
+@ROUT copytime swaptime dottime
+   fprintf(stderr, "USAGE: %s -n <N> -N <#> N1 ... N# <-F kflops> -C <cacheflush> -f <fout> -X <incX> -Y <incY>\n", nam);
+@ROUT scaltime settime
+   fprintf(stderr, "USAGE: %s -n <N> -N <#> N1 ... N# <-F kflops> -C <cacheflush> -f <fout> -a <alpha> -X <incX>\n", nam);
+@ROUT axpbytime rottime
+   fprintf(stderr, "USAGE: %s -n <N> -N <#> N1 ... N# <-F kflops> -C <cacheflush> -f <fout> -a <alpha> -b <beta> -X <incX> -Y <incY>\n", nam);
+@ROUT axpytime cpsctime
+   fprintf(stderr, "USAGE: %s -n <N> -N <#> N1 ... N# <-F kflops> -C <cacheflush> -f <fout> -a <alpha> -X <incX> -Y <incY>\n", nam);
+@ROUT iamaxtime nrm2time asumtime
+   fprintf(stderr, "USAGE: %s -n <N> -N <#> N1 ... N# <-F kflops> -C <cacheflush> -f <fout> -X <incX>\n", nam);
+@ROUT iamaxtime axpytime copytime scaltime swaptime dottime nrm2time @\
+      asumtime cpsctime settime axpbytime rottime
+   exit(-1);
+}
+
+@ROUT copytime swaptime dottime
+void GetFlags(int nargs, char **args, int *nN, int **Ns, int *nkflops,
+              int *cachesize, char **fnam, int *incX, int *incY)
+@ROUT scaltime settime
+void GetFlags(int nargs, char **args, int *nN, int **Ns, int *nkflops,
+              int *cachesize, char **fnam, int *incX, TYPE *alpha)
+@ROUT axpbytime rottime
+void GetFlags(int nargs, char **args, int *nN, int **Ns, int *nkflops,
+              int *cachesize, char **fnam, int *incX, int *incY,
+              TYPE *alpha, TYPE *beta)
+@ROUT axpytime cpsctime
+void GetFlags(int nargs, char **args, int *nN, int **Ns, int *nkflops,
+              int *cachesize, char **fnam, int *incX, int *incY, TYPE *alpha)
+@ROUT iamaxtime nrm2time asumtime
+void GetFlags(int nargs, char **args, int *nN, int **Ns, int *nkflops,
+              int *cachesize, char **fnam, int *incX)
+@ROUT iamaxtime axpytime copytime scaltime swaptime dottime nrm2time @\
+      asumtime cpsctime settime axpbytime rottime
+{
+   int i, j, k;
+
+@ROUT axpytime copytime swaptime dottime cpsctime axpbytime rottime
+   *incY = 1;
+@ROUT axpytime scaltime cpsctime settime axpbytime rottime
+   *alpha = 1.1;
+   #ifdef TCPLX
+      alpha[1] = 0.9;
+   #endif
+@ROUT axpbytime rottime
+   *beta = 0.8;
+   #ifdef TCPLX
+      beta[1] = 1.2;
+   #endif
+@ROUT iamaxtime axpytime copytime scaltime swaptime dottime nrm2time @\
+      asumtime cpsctime settime axpbytime rottime
+   *nN = -1;
+   *nkflops = ATL_nkflop / 10;
+   *cachesize = 4*L2SIZE;
+   *fnam = NULL;
+   *incX = 1;
+
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-') PrintUsage(args[0]);
+      if (i == nargs-1) PrintUsage(args[0]);
+      switch(args[i][1])
+      {
+@ROUT axpytime copytime scaltime swaptime dottime nrm2time @\
+      asumtime cpsctime settime
+      case 'b':
+@ROUT iamaxtime copytime swaptime dottime nrm2time asumtime 
+      case 'a':
+@ROUT iamaxtime axpytime copytime scaltime swaptime dottime nrm2time @\
+      asumtime cpsctime settime
+         i += 1 SHIFT;
+         break;
+@ROUT iamaxtime scaltime nrm2time asumtime settime
+      case 'Y':
+         i++;
+         break;
+@ROUT axpytime scaltime cpsctime settime axpbytime rottime
+      case 'a':
+         #ifdef TREAL
+            *alpha = atof(args[++i]);
+         #else
+            *alpha = atof(args[++i]);
+            alpha[1] = atof(args[++i]);
+         #endif
+         break;
+@ROUT axpbytime rottime
+      case 'b':
+         #ifdef TREAL
+            *beta = atof(args[++i]);
+         #else
+            *beta = atof(args[++i]);
+            beta[1] = atof(args[++i]);
+         #endif
+         break;
+@ROUT axpytime copytime swaptime dottime cpsctime axpbytime rottime
+      case 'Y':
+         *incY = atoi(args[++i]);
+         break;
+@ROUT iamaxtime axpytime copytime scaltime swaptime dottime nrm2time @\
+      asumtime cpsctime settime axpbytime rottime
+      case 'X':
+         *incX = atoi(args[++i]);
+         break;
+      case 'C':
+         *cachesize = atoi(args[++i]);
+         break;
+      case 'f':
+         *fnam = args[++i];
+         break;
+      case 'F':
+         if (args[i][2] == 'y' || args[i][2] == 'x')
+         {
+            j = args[i][2] != 'y';
+            k = atoi(args[++i]);
+            if (j)
+            {
+               if (k < 0)
+                  MAx = -k;
+               else
+                  FAx = k;
+            }
+            else
+            {
+               if (k < 0)
+                  MAy = -k;
+               else
+                  FAy = k;
+            }
+         }
+         else
+            *nkflops = atoi(args[++i]);
+         break;
+      case 'N':
+         *nN = atoi(args[++i]);
+         if (*nN > nargs-i) PrintUsage(args[0]);
+         *Ns = malloc((*nN)*sizeof(int));
+         assert(*Ns);
+         for (j=0; j < *nN; j++) (*Ns)[j] = atoi(args[++i]);
+         break;
+      case 'n':
+         *nN = 1;
+         *Ns = malloc(sizeof(int));
+         assert(*Ns);
+         **Ns = atoi(args[++i]);
+         break;
+      default:
+         PrintUsage(args[0]);
+      }
+   }
+   if (*nN < 0)
+   {
+      *nN = 1;
+      *Ns = malloc(sizeof(int));
+      assert(*Ns);
+      **Ns = 777;
+   }
+   if (FAx < sizeof(TYPE))
+      FAx = sizeof(TYPE);
+   if (FAy < sizeof(TYPE))
+      FAy = sizeof(TYPE);
+@ROUT iamaxtime scaltime nrm2time asumtime settime 
+   FAy = FAx;
+   MAy = MAx;
+@ROUT iamaxtime axpytime copytime scaltime swaptime dottime nrm2time @\
+      asumtime cpsctime settime axpbytime rottime
+}
+
+@ROUT copytime swaptime dottime
+main(int nargs, char **args)
+{
+   char *fout;
+   int nN, nkflops, cachesize, incX, incY;
+   int *Ns;
+   GetFlags(nargs, args, &nN, &Ns, &nkflops, &cachesize, &fout, &incX, &incY);
+   DoTimings(nN, Ns, nkflops, cachesize, fout, incX, incY);
+   free(Ns);
+   exit(0);
+}
+@ROUT axpytime scaltime cpsctime settime axpbytime rottime
+main(int nargs, char **args)
+{
+   char *fout;
+   int nN, nkflops, cachesize, incX, incY;
+   int *Ns;
+   #ifdef TREAL
+      TYPE alpha, *al=&alpha, beta, *be=&beta;
+   #else
+      TYPE alpha[2], *al=alpha, beta[2], *be=beta;
+   #endif
+@ROUT scaltime settime
+   GetFlags(nargs, args, &nN, &Ns, &nkflops, &cachesize, &fout,
+            &incX, al);
+@ROUT axpbytime rottime
+   GetFlags(nargs, args, &nN, &Ns, &nkflops, &cachesize, &fout,
+            &incX, &incY, al, be);
+@ROUT axpytime cpsctime
+   GetFlags(nargs, args, &nN, &Ns, &nkflops, &cachesize, &fout,
+            &incX, &incY, al);
+@ROUT axpytime scaltime cpsctime settime axpbytime rottime
+   DoTimings(nN, Ns, nkflops, cachesize, fout, @(targs));
+   free(Ns);
+   exit(0);
+}
+@ROUT iamaxtime nrm2time asumtime
+main(int nargs, char **args)
+{
+   int nN, nkflops, cachesize, incX;
+   int *Ns;
+   char *fout;
+   GetFlags(nargs, args, &nN, &Ns, &nkflops, &cachesize, &fout, &incX);
+   DoTimings(nN, Ns, nkflops, cachesize, fout, incX);
+   free(Ns);
+   exit(0);
+}
+@ROUT settest settst
+   @define rt @set@
+@ROUT dottest
+   @define rt @dot@
+@ROUT swaptest
+   @define rt @swap@
+@ROUT scaltest
+   @define rt @scal@
+@ROUT copytest
+   @define rt @copy@
+@ROUT nrm2test
+   @define rt @nrm2@
+@ROUT asumtest
+   @define rt @asum@
+@ROUT rottest
+   @define rt @rot@
+@ROUT axpbytest axpbytst
+   @define rt @axpby@
+@ROUT axpytest
+   @define rt @axpy@
+@ROUT cpsctest
+   @define rt @cpsc@
+@ROUT axpytest copytest scaltest swaptest dottest nrm2test asumtest cpsctest @\
+      settest axpbytest axpbytst settst rottest
+#include "atlas_misc.h"
+#include <assert.h>
+@ROUT nrm2test 
+#include <math.h>
+#include <float.h>
+@ROUT rottest
+#include "atlas_tst.h"
+
+int FAx=0, MAx=0, FAy=0, MAy=0;
+@extract -b @(topd)/FAmalloc.inc
+@ROUT axpytest copytest scaltest swaptest dottest nrm2test asumtest cpsctest @\
+      settest axpbytest axpbytst settst
+
+int FAx=0, MAx=0, FAy=0, MAy=0;
+@extract -b @(topd)/FAmalloc.inc
+
+#define dumb_seed(iseed_) srand(iseed_)
+#ifndef RAND_MAX  /* rather dangerous non-ansi workaround */
+   #define RAND_MAX ((unsigned long)(1<<30))
+#endif
+#define dumb_rand() ( 0.5 - ((double)rand())/((double)RAND_MAX) )
+@ROUT axpbytst settst
+#ifdef TEST_F77
+   ___main(){} __main(){} MAIN__(){} _MAIN_(){}
+#include "atlas_f77blas.h"
+@ROUT axpbytst
+static void TEST_@up@(rt)
+   (const int N, const SCALAR alpha, const TYPE *X, const int incX,
+    const SCALAR beta, TYPE *Y, const int incY)
+{
+
+   #ifdef ATL_FunkyInts
+      const F77_INTEGER F77N=N, F77incX=incX, F77incY=incY;
+   #else
+      const int F77N=N, F77incX=incX, F77incY=incY;
+   #endif
+   #ifdef TREAL
+      F77@(rt)(&F77N, &alpha, X, &F77incX, &beta, Y, &F77incY);
+   #else
+      F77@(rt)(&F77N, alpha, X, &F77incX, beta, Y, &F77incY);
+   #endif
+}
+@ROUT settst
+static void TEST_SET(const int N, const SCALAR alpha, TYPE *X, const int incX)
+{
+   #ifdef ATL_FunkyInts
+      const F77_INTEGER F77N=N, F77incX=incX;
+   #else
+      const int F77N=N, F77incX=incX;
+   #endif
+   #ifdef TREAL
+      F77set(&F77N, &alpha, X, &F77incX);
+   #else
+      F77set(&F77N, alpha, X, &F77incX);
+   #endif
+}
+@ROUT settst axpbytst
+#else
+   #include "cblas.h"
+   #define TEST_@up@(rt) Mjoin(Mjoin(catlas_,PRE),@(rt))
+#endif
+@ROUT rottest
+#ifndef TEST_@up@(rt)
+void ATL_ROT(const int, TYPE *, const int, TYPE *, const int,
+             const TYPE, const TYPE);
+   #define TEST_@up@(rt)(N_, alpha_, X_, ix_, beta_, Y_, iy_) \
+      ATL_ROT(N_, X_, ix_, Y_, iy_, alpha_, beta_)
+#endif
+@ROUT axpytest copytest scaltest swaptest dottest nrm2test asumtest cpsctest @\
+      settest axpbytest
+#ifndef TEST_@up@(rt)
+   #define TEST_@up@(rt) ATL_U@up@(rt)
+#endif
+@ROUT dottest
+#ifdef TREAL
+   TYPE TEST_@up@(rt)(const int, const TYPE*, const int, const TYPE*, const int);
+#else
+   TYPE TEST_@up@(rt)(const int, const TYPE*, const int, const TYPE*, const int, SCALAR);
+#endif
+@ROUT asumtest nrm2test
+TYPE TEST_@up@(rt)(const int, const TYPE *, const int incX);
+@ROUT scaltest settest
+void TEST_@up@(rt)(const int, const SCALAR, TYPE *, const int incX);
+@ROUT swaptest copytest
+void TEST_@up@(rt)(const int N, const TYPE *X, const int incX,
+               TYPE *Y, const int incY);
+@ROUT axpbytest
+void TEST_@up@(rt)(const int N, const SCALAR al, const TYPE *X, const int incX,
+                const SCALAR be, TYPE *Y, const int incY);
+@ROUT axpytest cpsctest
+void TEST_@up@(rt)(const int N, const SCALAR al, const TYPE *X, const int incX,
+               TYPE *Y, const int incY);
+@ROUT axpytest copytest scaltest swaptest dottest nrm2test asumtest cpsctest @\
+      settest axpbytest axpbytst settst rottest
+
+#ifdef TREAL
+@ROUT dottest
+TYPE good_dot(const int N, const TYPE *X, const int incX,
+              TYPE *Y, const int incY)
+{
+   int i;
+   TYPE dot=ATL_rzero;
+   for (i=0; i < N; i++, Y += incY, X += incX) dot += *X * *Y;
+   return(dot);
+}
+@ROUT rottest
+
+static void good_rot0(const int N, TYPE *X, const int incX, 
+                      TYPE *Y, const int incY, const TYPE c, const TYPE s)
+
+{
+   int i;
+   TYPE tmp;
+
+   for (i=N; i; i--, Y += incY, X += incX)
+   {
+      tmp = c * *X + s * *Y;
+      *Y = c * *Y - s * *X;
+      *X = tmp;
+   }
+}
+void good_rot(const int N, const TYPE alpha, TYPE *X, const int incX,
+              const TYPE beta, TYPE *Y, const int incY)
+{
+   good_rot0(N, X, incX, Y, incY, alpha, beta);
+}
+
+@ROUT axpbytest axpbytst
+void good_axpby(const int N, const SCALAR alpha, const TYPE *X, const int incX,
+                const SCALAR beta, TYPE *Y, const int incY)
+{
+   int i;
+   for (i=0; i < N; i++, Y += incY, X += incX) *Y = alpha * *X + beta * *Y;
+}
+@ROUT axpytest
+void good_axpy(const int N, const SCALAR alpha, const TYPE *X, const int incX,
+               TYPE *Y, const int incY)
+{
+   int i;
+   if (alpha == ATL_rzero) return;
+   for (i=0; i < N; i++, Y += incY, X += incX) *Y += alpha * *X;
+}
+@ROUT cpsctest
+void good_cpsc(const int N, const SCALAR alpha, const TYPE *X, const int incX,
+               TYPE *Y, const int incY)
+{
+   int i;
+   if (alpha == ATL_rzero)
+      for (i=0; i < N; i++, Y += incY) *Y = ATL_rzero;
+   for (i=0; i < N; i++, Y += incY, X += incX) *Y = alpha * *X;
+}
+@ROUT settest settst
+void good_set(const int N, const SCALAR alpha, TYPE *X, const int incX)
+{
+   int i;
+   for (i=N; i; i--, X += incX) *X = alpha;
+}
+@ROUT scaltest
+void good_scal(const int N, const SCALAR alpha, TYPE *X, const int incX)
+{
+   int i;
+   if (alpha == ATL_rzero)
+      for (i=0; i < N; i++, X += incX) *X = ATL_rzero;
+   else
+      for (i=0; i < N; i++, X += incX) *X *= alpha;
+}
+@ROUT nrm2test
+TYPE good_nrm2(const int N, const TYPE *X, const int incX)
+{
+   int i; 
+   TYPE t0, ax, ssq=ATL_rone, scal=ATL_rzero;
+
+   for (i=N; i; i--, X += incX)
+   {
+      ax = *X;
+      if (ax != ATL_rzero)
+      {
+         ax = Mabs(ax);
+         if (scal < ax)
+         {
+            t0 = scal / ax;
+            t0 *= t0;
+            ssq = ATL_rone + ssq * t0;
+            scal = ax;
+         }
+         else
+         {
+            t0 = ax / scal;
+            ssq += t0*t0;
+         }
+      }
+   }
+   return(scal * sqrt(ssq));
+}
+@ROUT asumtest
+TYPE good_asum(const int N, const TYPE *X, const int incX)
+{
+   int i;
+   TYPE asum=ATL_rzero;
+   for (i=0; i < N; i++, X += incX) asum += Mabs(*X);
+   return(asum);
+}
+@ROUT axpytest copytest scaltest swaptest cpsctest settest axpbytest @\
+      axpbytst settst
+int checkY(int N, TYPE *Yg, int incYg, TYPE *Yc, int incYc)
+{
+   int i, iret=0;
+@ROUT axpytest axpbytest axpbytst scaltest
+   TYPE eps, diff;
+   TYPE Mjoin(PATL, epsilon)(void);
+   eps = Mjoin(PATL,epsilon)();
+@ROUT axpytest copytest scaltest swaptest cpsctest settest axpbytest @\
+      axpbytst settst
+
+   for (i=0; i < N; i++, Yg += incYg, Yc += incYc)
+   {
+@ROUT axpytest axpbytest axpbytst scaltest
+      diff = *Yg - *Yc;
+      diff = Mabs(diff);
+@ROUT scaltest
+      if (diff > 2*eps)
+@ROUT axpytest
+      if (diff > 3*eps)
+@ROUT axpbytest axpbytst
+      if (diff > 4*eps)
+@ROUT copytest scaltest swaptest cpsctest settest settst
+      if (*Yg != *Yc)
+@ROUT axpytest copytest scaltest swaptest cpsctest settest axpbytest @\
+      axpbytst settst
+      {
+         iret = i;
+         fprintf(stderr, "ERROR: Y[%d], correct=%f, computed=%f\n", 
+                 i, *Yg, *Yc);
+      }
+@ROUT axpytest copytest scaltest swaptest cpsctest settest axpbytest @\
+      axpbytst settst
+   }
+   return(iret);
+}
+@ROUT axpytest copytest scaltest swaptest nrm2test asumtest cpsctest settest @\
+      axpbytest axpbytst settst rottest
+int CheckPad(int npad, TYPE padval, int N, TYPE *Y, int incY)
+{
+   int i, iret=0;
+
+   incY = Mabs(incY);
+   for (i=0; i < npad; i++)
+   {
+      if (Y[i] != padval)
+      {
+         iret = i;
+         fprintf(stderr, "OVERWRITE %f IN PREPAD %d before beginning of Y!!\n",
+                 Y[i], npad-i);
+      }
+   }
+   Y += npad;
+   if (incY != 1)
+   {
+      for (i=0; i < N*incY; i++)
+      {
+         if (i%incY)
+         {
+            if (Y[i] != padval)
+            {
+               iret = i;
+               fprintf(stderr, "INTERNAL OVERWRITE %f AT POSITION %d!!\n", 
+                       Y[i], i);
+            }
+         }
+      }
+   }
+   Y += 1 + (N-1)*incY;
+   for (i=0; i < npad; i++)
+   {
+      if (Y[i] != padval)
+      {
+         iret = i;
+         fprintf(stderr, "OVERWRITE %f IN POSTPAD %d past end of Y!!\n", 
+                 Y[i], i+1);
+      }
+   }
+   return(iret);
+}
+@ROUT axpytest copytest scaltest swaptest dottest nrm2test asumtest cpsctest @\
+      settest axpbytest axpbytst settst rottest
+#else
+@ROUT rottest
+static void good_rot0
+   (const int N, TYPE *X, const int incx, TYPE *Y, const int incy,
+    const TYPE c0, const TYPE s0)
+{
+   const register TYPE c = c0, s = s0;
+   register TYPE rx, ix, ry, iy;
+   const int incX = incx<<1, incY = incy<<1;
+   int i;
+
+   if (N > 0)
+   {
+      for (i=N; i; i--, X += incX, Y += incY)  /* maybe compiler unrolls */
+      {
+         rx = *X;  ix = X[1];
+         ry = *Y;  iy = Y[1];
+         *X   = c * rx + s * ry;
+         X[1] = c * ix + s * iy;
+         *Y   = c * ry - s * rx;
+         Y[1] = c * iy - s * ix;
+      }
+   }
+}
+
+void good_rot(const int N, const TYPE alpha, TYPE *X, const int incX,
+              const TYPE beta, TYPE *Y, const int incY)
+{
+   good_rot0(N, X, incX, Y, incY, alpha, beta);
+}
+@ROUT dottest
+void good_dot(const int N, const TYPE *X, const int incX,
+              TYPE *Y, const int incY, SCALAR dot)
+{
+   int i;
+   const int incx=incX+incX, incy=incY+incY;
+   register TYPE rx, ry, ix, iy, rdot=ATL_rzero, idot=ATL_rzero;
+   for (i=0; i < N; i++, Y += incy, X += incx)
+   {
+      #ifndef Conj_
+         rx = *X; ix = X[1];
+      #else
+         rx = *X; ix = -X[1];
+      #endif
+      ry = *Y; iy = Y[1];
+      rdot += rx * ry - ix * iy;
+      idot += rx * iy + ix * ry;
+   }
+   dot[0] = rdot;
+   dot[1] = idot;
+}
+@ROUT axpbytest axpbytst
+void good_axpby(const int N, const SCALAR alpha, const TYPE *X, const int incx,
+                const SCALAR beta, TYPE *Y, const int incy)
+{
+   int i;
+   const int incX=incx+incx, incY=incy+incy;
+   const register TYPE ra=(*alpha), ia=alpha[1], rb=(*beta), ib=beta[1];
+   register TYPE rx, ix, ry, iy;
+
+   for (i=0; i < N; i++, Y += incY, X += incX)
+   {
+      rx = *X; ix = X[1];
+      ry = *Y; iy = Y[1];
+      *Y   = rx * ra - ix * ia + rb * ry - ib * iy;
+      Y[1] = rx * ia + ix * ra + rb * iy + ib * ry;
+   }
+}
+@ROUT axpytest
+void good_axpy(const int N, const SCALAR alpha, const TYPE *X, const int incx,
+               TYPE *Y, const int incy)
+{
+   int i;
+   const int incX=incx+incx, incY=incy+incy;
+   const register TYPE ra=*alpha, ia=alpha[1];
+   register TYPE rx, ix;
+
+   if ( SCALAR_IS_ZERO(alpha) ) return;
+   for (i=0; i < N; i++, Y += incY, X += incX)
+   {
+      rx = *X; ix = X[1];
+      *Y   += rx * ra - ix * ia;
+      Y[1] += rx * ia + ix * ra;
+   }
+}
+@ROUT cpsctest
+void good_cpsc(const int N, const SCALAR alpha, const TYPE *X, const int incx,
+               TYPE *Y, const int incy)
+{
+   int i;
+   const int incX=incx+incx, incY=incy+incy;
+   const register TYPE ra=*alpha, ia=alpha[1];
+   register TYPE rx, ix;
+
+   if ( !SCALAR_IS_ZERO(alpha) )
+   {
+      for (i=0; i < N; i++, Y += incY, X += incX)
+      {
+         rx = *X; ix = X[1];
+         *Y   = rx * ra - ix * ia;
+         Y[1] = rx * ia + ix * ra;
+      }
+   }
+   else
+   {
+      for (i=0; i < N; i++, Y += incY) *Y = Y[1] = ATL_rzero;
+   }
+}
+@ROUT settest settst
+void good_set(const int N, const SCALAR alpha, TYPE *X, const int incx)
+{
+   int i;
+   const int incX=incx+incx;
+   const register TYPE ra=*alpha, ia=alpha[1];
+   for (i=N; i; i--, X += incX)
+   {
+      *X = ra;
+      X[1] = ia;
+   }
+}
+@ROUT scaltest
+void good_scal(const int N, const SCALAR alpha, TYPE *X, const int incx)
+{
+   int i;
+   const int incX=incx+incx;
+   const register TYPE ra=*alpha, ia=alpha[1];
+   register TYPE rx, ix;
+
+   if ( SCALAR_IS_ZERO(alpha) )
+   {
+      for (i=0; i < N; i++, X += incX) *X = X[1] = ATL_rzero;
+   }
+   else
+   {
+      for (i=0; i < N; i++, X += incX)
+      {
+         rx = *X; ix = X[1];
+         *X   = rx * ra - ix * ia;
+         X[1] = rx * ia + ix * ra;
+      }
+   }
+}
+@ROUT asumtest
+TYPE good_asum(const int N, const TYPE *X, const int incx)
+{
+   int i;
+   const int incX=incx+incx;
+   register TYPE rx, ix, t0=ATL_rzero;
+
+   for (i=0; i < N; i++, X += incX)
+   {
+      rx = Mabs(*X); ix = Mabs(X[1]);
+      t0 += rx + ix;
+   }
+   return(t0);
+}
+@ROUT nrm2test
+TYPE good_nrm2(const int N, const TYPE *X, const int incX)
+{
+   int i, j;
+   const int incx=incX+incX;
+   TYPE ax, t0, ssq=ATL_rone, scal=ATL_rzero;
+
+   for (i=0; i < N; i++, X += incx)
+   {
+      for (j=0; j < 2; j++)
+      {
+         ax = X[j];
+         if (ax != ATL_rzero)
+         {
+            ax = Mabs(ax);
+            if (scal < ax)
+            {
+               t0 = scal / ax;
+               t0 *= t0;
+               scal = ax;
+               ssq = ATL_rone + ssq * t0;
+            }
+            else
+            {
+               t0 = ax / scal;
+               ssq += t0*t0;
+            }
+         }
+      }
+   }
+   return(scal * sqrt(ssq));
+}
+@ROUT axpytest copytest scaltest swaptest cpsctest settest axpbytest @\
+      axpbytst settst
+int checkY(int N, TYPE *Yg, int incYg, TYPE *Yc, int incYc)
+{
+   int i, iret=0;
+@ROUT axpytest scaltest cpsctest axpbytest axpbytst
+   TYPE rdiff, idiff, eps, maxerr;
+   TYPE Mjoin(PATL, epsilon)(void);
+   eps = Mjoin(PATL,epsilon)();
+@ROUT scaltest cpsctest
+   maxerr = 6*eps;
+@ROUT axpbytest axpbytst
+   maxerr = 9*eps;
+@ROUT axpytest
+   maxerr = 8*eps;
+@ROUT axpytest copytest scaltest swaptest cpsctest settest axpbytest @\
+      axpbytst settst
+   incYg *= 2; incYc *= 2;
+   for (i=0; i < N; i++, Yg += incYg, Yc += incYc)
+   {
+@ROUT axpytest scaltest cpsctest axpbytest axpbytst
+      rdiff = *Yg - *Yc;
+      idiff = Yg[1] - Yc[1];
+      rdiff = Mabs(rdiff);
+      idiff = Mabs(idiff);
+      if (rdiff > maxerr) 
+@ROUT copytest swaptest settest settst
+      if (*Yg != *Yc)
+@ROUT axpytest copytest scaltest swaptest cpsctest settest axpbytest @\
+      axpbytst settst
+      {
+         iret = i;
+         fprintf(stderr, "ERROR: Y[%d], real, correct=%e, computed=%e\n", 
+                 i, *Yg, *Yc);
+      }
+@ROUT copytest swaptest settst settest  `      if (Yg[1] != Yc[1])`
+@ROUT scaltest axpytest cpsctest axpbytst axpbytest `      if (idiff > maxerr)`
+      {
+         iret = i;
+         fprintf(stderr, "ERROR: Y[%d], imag, correct=%e, computed=%e\n", 
+                 i, Yg[1], Yc[1]);
+      }
+   }
+   return(iret);
+}
+@ROUT axpytest copytest scaltest swaptest asumtest nrm2test cpsctest settest @\
+      axpbytest axpbytst settst rottest
+int CheckPad(int npad, TYPE padval, int N, TYPE *Y, int incY)
+{
+   int i, n, iret=0;
+
+   incY = Mabs(incY);
+   npad *= 2;
+   for (i=0; i < npad; i++)
+   {
+      if (Y[i] != padval)
+      {
+         iret = i;
+         fprintf(stderr, "OVERWRITE %f IN PREPAD %d before beginning of Y!!\n",
+                 Y[i], npad-i);
+      }
+   }
+   Y += npad;
+   if (incY != 1)
+   {
+      for (i=0; i < N*incY; i++)
+      {
+         if (i%incY)
+         {
+            if (Y[2*i] != padval)
+            {
+               iret = i;
+               fprintf(stderr, "INTERNAL REAL OVERWRITE %f AT POSITION %d!!\n", 
+                       Y[2*i], i);
+            }
+            if (Y[2*i+1] != padval)
+            {
+               iret = i+1;
+               fprintf(stderr, "INTERNAL IMAG OVERWRITE %f AT POSITION %d!!\n", 
+                       Y[2*i+1], i);
+            }
+         }
+      }
+   }
+   Y += 2 + 2*(N-1)*incY;
+   for (i=0; i < npad; i++)
+   {
+      if (Y[i] != padval)
+      {
+         iret = i;
+         fprintf(stderr, "OVERWRITE %f IN POSTPAD %d past end of Y!!\n", 
+                 Y[i], i+1);
+      }
+   }
+   return(iret);
+}
+@ROUT axpytest copytest scaltest swaptest dottest asumtest nrm2test cpsctest @\
+      settest axpbytest axpbytst settst rottest
+#endif
+
+@ROUT rottest
+static TYPE my_infnrm(const int N, const TYPE *X, const int incX)
+{
+   int i, incx = incX SHIFT;
+   TYPE max=ATL_rzero, tmp;
+   for (i=N; i; i--, X += incx)
+   {
+      #ifdef TREAL
+         tmp = Mabs(*X);
+      #else
+         tmp = Mabs(*X) + Mabs(X[1]);
+      #endif
+      if (tmp > max) max = tmp;
+   }
+   return(max);
+}
+
+int checkXY(int N, TYPE *Xg, int incXg, TYPE *Xc, int incXc,
+            TYPE *Yg, int incYg, TYPE *Yc, int incYc,
+            TYPE normX, TYPE normY)
+{
+   TYPE *diff;
+   TYPE normDX, normDY, resid;
+   TYPE eps, THRESH=50.0;
+   TYPE Mjoin(PATL, epsilon)(void);
+   int iret=0;
+
+   eps = Mjoin(PATL,epsilon)();
+   diff = malloc(sizeof(TYPE)*(N SHIFT));
+   assert(diff);
+
+   Mjoin(PATL,vdiff)(N, Xc, incXc, Xg, incXg, diff, 1);
+   normDX = my_infnrm(N, diff, 1);
+   Mjoin(PATL,vdiff)(N, Yc, incYc, Yg, incYg, diff, 1);
+   normDY = my_infnrm(N, diff, 1);
+
+   resid = Mmax(normDX, normDY) / 
+           (eps * Mmax(normX, ATL_rone) * Mmax(normY, ATL_rone) * N);
+   if (resid > THRESH || resid != resid)
+   {
+      fprintf(stderr, 
+              "ROT resid=%e (normX=%e, normY=%e, normDX=%e, normDY=%e)!!!\n",
+              resid, normX, normY, normDX, normDY);
+      iret = -1;
+   }
+   free(diff);
+   return(iret);
+}
+static int CheckXY(int npad, TYPE padvalX, TYPE padvalY, 
+                   int N, TYPE *Xg, TYPE *Yg, TYPE normX, TYPE normY,
+                   TYPE *Xt, int incXt, TYPE *Yt, int incYt)
+/*
+ * Xg & Yg are known to be inc=1, with no padding
+ */
+{
+   TYPE *xt = Xt + (npad SHIFT), *yt = Yt + (npad SHIFT);
+   int i0, i1, i2;
+   if (incXt < 0) xt -= ((N-1)SHIFT)*incXt;
+   if (incYt < 0) yt -= ((N-1)SHIFT)*incYt;
+   i0 = checkXY(N, Xg, 1, xt, incXt, Yg, 1, yt, incYt, normX, normY);
+   i1 = CheckPad(npad, padvalX, N, Xt, incXt);
+   i2 = CheckPad(npad, padvalY, N, Yt, incYt);
+   if (i0 || i1 || i2) return(1);
+   return(0);
+}
+
+@ROUT swaptest
+static int CheckXY(int npad, TYPE padvalX, TYPE padvalY, 
+                   int N, TYPE *Xg, TYPE *Yg, 
+                   TYPE *Xt, int incXt, TYPE *Yt, int incYt)
+/*
+ * Xg & Yg are known to be inc=1, with no padding
+ */
+{
+   int i0, i1, i2, i3;
+   TYPE *xt = Xt + (npad SHIFT), *yt = Yt + (npad SHIFT);
+
+   if (incXt < 0) xt -= ((N-1)SHIFT)*incXt;
+   if (incYt < 0) yt -= ((N-1)SHIFT)*incYt;
+   i0 = checkY(N, Xg, 1, yt, incYt);
+   i1 = CheckPad(npad, padvalX, N, Xt, incXt);
+   i2 = checkY(N, Yg, 1, xt, incXt);
+   i3 = CheckPad(npad, padvalY, N, Yt, incYt);
+   if (i0 || i1 || i2 || i3) return(1);
+   return(0);
+}
+@ROUT copytest
+static int CheckY(int npad, TYPE padval, int N, TYPE *Yg, int incYg,
+                  TYPE *Yt, int incYt)
+{
+   int i0, i1;
+   TYPE *yg=Yg, *yt = Yt + (npad SHIFT);
+
+   if (incYg < 0) yg -= ((N-1)SHIFT)*incYg;
+   if (incYt < 0) yt -= ((N-1)SHIFT)*incYt;
+   i0 = checkY(N, yg, incYg, yt, incYt);
+   i1 = CheckPad(npad, padval, N, Yt, incYt);
+   if (!i0 && !i1) return(0);
+   return(1);
+}
+@ROUT axpytest scaltest cpsctest settest axpbytest axpbytst settst
+static int CheckY(int npad, TYPE padval, int N, TYPE *Yg, int incYg,
+                  TYPE *Yt, int incYt)
+{
+   int i0, i1;
+   incYg = Mabs(incYg);
+   incYt = Mabs(incYt);
+   i0 = checkY(N, Yg+(npad SHIFT), incYg, Yt+(npad SHIFT), incYt);
+   i1 = CheckPad(npad, padval, N, Yt, incYt);
+   if (!i0 && !i1) return(0);
+   return(1);
+}
+@ROUT axpytest copytest scaltest swaptest dottest asumtest nrm2test cpsctest @\
+      settest axpbytest axpbytst settst rottest
+static void vecset(int N, TYPE alpha, TYPE *X)
+{
+   int i;
+   #ifdef TCPLX
+      N *= 2;
+   #endif
+   for (i=0; i < N; i++) X[i] = alpha;
+}
+
+static TYPE *getvec(int npad, TYPE padval, int N, int incX, int FA, int MA)
+{
+   TYPE *X, *x;
+   int i, n;
+
+   if (N <= 0) return(NULL);
+   incX = Mabs(incX);
+   n = 2*npad + 1+(N-1)*incX;
+   X = FA_malloc(ATL_sizeof*n, FA, MA);
+   assert(X);
+   vecset(n, padval, X);
+   #ifdef TCPLX
+      npad *= 2;
+      incX *= 2;
+   #endif
+   x = X + npad;
+   for (i=0; i < N; i++, x += incX)
+   {
+      #ifdef TREAL
+         *x = dumb_rand();
+      #else
+         *x   = dumb_rand();
+         x[1] = dumb_rand();
+      #endif
+   }
+   return(X);
+}
+
+static void copyvec(int N, const TYPE *X, int incX, TYPE *Y, int incY)
+{
+   int i;
+   #ifdef TREAL
+      for (i=0; i < N; i++, X += incX, Y += incY) *Y = *X;
+   #else
+      incX *= 2; incY *= 2;
+      for (i=0; i < N; i++, X += incX, Y += incY) { *Y = *X; Y[1] = X[1]; }
+   #endif
+}
+
+static TYPE *dupvec(int npad, int N, TYPE *X, int incX, int FA, int MA)
+{
+   int i, n;
+   TYPE *y;
+
+   incX = Mabs(incX);
+   n = 1+(N-1)*incX + 2*npad;
+   y = FA_malloc(ATL_sizeof*n, FA, MA);
+   assert(y);
+   #ifdef TCPLX
+      n *= 2;
+   #endif
+   for (i=0; i < n; i++) y[i] = X[i];
+   return(y);
+}
+
+static TYPE *gen_dupvec(int N, TYPE padval, int npadX, TYPE *X, int incX,
+                        int npadY, int incY, int FA, int MA)
+{
+   int i, n;
+   TYPE *y, *yy, *xx=X+(npadX SHIFT);
+
+   y = getvec(npadY, padval, N, incY, FA, MA);
+   yy = y + (npadY SHIFT);
+   if (incY < 1) yy -= ((N-1)SHIFT) * incY;
+   if (incX < 1) xx -= ((N-1)SHIFT) * incX;
+   copyvec(N, xx, incX, yy, incY);
+   return(y);
+}
+
+@ROUT nrm2test
+void vecsetX(int N, TYPE alpha, TYPE *X, int incX)
+{
+   int i;
+#ifdef TREAL
+   for (i=N; i; i--, X += incX) *X = alpha;
+#else
+   incX *= 2;
+   for (i=N; i; i--, X += incX) *X = X[1] = alpha;
+#endif
+}
+#if defined(SREAL) || defined(SCPLX)
+   #define ATL_MAXNUM FLT_MAX
+   #define ATL_MINNUM FLT_MIN
+#else
+   #define ATL_MAXNUM DBL_MAX
+   #define ATL_MINNUM DBL_MIN
+#endif
+int DoStressTest(int N, int incX, int iflag)
+/*
+ * iflag = 0: normal test
+ *       = 1: overflow test
+ *       = 2: underflow test
+ */
+{
+   int DoTest(int, int);
+   int iret=0;
+   const TYPE padval=(-2271.0);
+   TYPE *X, *x, eps, diff, maxdiff;
+   volatile TYPE tt[2];
+   TYPE ansG, ansT, t0, t1;
+   TYPE Mjoin(PATL, epsilon)(void);
+
+   if (iflag == 0) return(DoTest(N, incX));
+   eps = Mjoin(PATL,epsilon)();
+
+   x = X = getvec(0, padval, N, incX, FAx, MAx);
+   if (incX < 1) x -= ((N-1)SHIFT) * incX;
+
+   if (iflag == 1)
+   {
+      t1 = ((N+1) SHIFT);
+      t0 = ATL_MAXNUM / t1;
+      t1 = (N SHIFT);
+      ansG = sqrt(t1)*t0;
+   }
+   else
+   {
+      t0 = ATL_MINNUM;
+      t1 = (N SHIFT);
+      t1 = sqrt(t1);
+      ansG = t0 * t1;
+   }
+   vecsetX(N, t0, x, incX);
+   ansT = TEST_@up@(rt)(N, x, incX);
+   tt[0] = ansG;
+   tt[1] = ansT;
+   ansG = tt[0];  /* force to precision */
+   ansT = tt[1];
+   if (ansG >= ansT) diff = ansG - ansT;
+   else diff = ansT - ansG;
+   if (diff / ((2 SHIFT)*N*eps) > 10.0*t0) /* lame-ass norm */
+   {
+      if (iflag == 1)
+      {
+         fprintf(stderr, 
+         "OVERFLOW GUARD ERROR: N=%d, correct=%le, computed=%le, diff=%le!!\n",
+                 N, ansG, ansT, diff);
+      }
+      else
+      {
+         fprintf(stderr, 
+         "UNDERFLOW GUARD ERROR: N=%d, correct=%e, computed=%e, diff=%e!!\n",
+                 N, ansG, ansT, diff);
+      }
+      iret = 1;
+   }
+   FA_free(X, FAx, MAx);
+   return(iret);
+}
+@ROUT asumtest nrm2test
+int DoTest(int N, int incX)
+{
+   int iret=0;
+   const TYPE padval=(-2271.0);
+   TYPE *X, *x, eps, diff, maxdiff;
+   TYPE ansG, ansT;
+   TYPE Mjoin(PATL, epsilon)(void);
+   eps = Mjoin(PATL,epsilon)();
+@ROUT nrm2test
+   maxdiff = 5.0*(2 SHIFT)*N*eps;
+@ROUT asumtest
+   maxdiff = (2 SHIFT)*N*eps;
+@ROUT asumtest nrm2test
+
+   x = X = getvec(0, padval, N, incX, FAx, MAx);
+   if (incX < 0) x -= ((N-1)SHIFT) * incX;
+
+   ansT = TEST_@up@(rt)(N, x, incX);
+   ansG = good_@(rt)(N, x, incX);
+@ROUT asumtest `   maxdiff *= 0.5 * ansG;`
+   diff = ansG - ansT;
+   diff = Mabs(diff);
+   if (diff > maxdiff || ansT != ansT)
+   {
+      fprintf(stderr, 
+              "   @(rt) ERROR: N=%d, correct=%e, computed=%e, diff=%e!!\n",
+              N, ansG, ansT, diff);
+      iret = 1;
+   }
+
+   FA_free(X, FAx, MAx);
+   return(iret);
+}
+@ROUT dottest
+int DoTest(int N, int incX, int incY)
+{
+   int iret=0;
+   const int npad=Mmax(4*Mabs(incY), 16);
+   const TYPE padval=(-2271.0);
+   TYPE *Y, *X, *x, *y, eps, diff;
+   #ifdef TREAL
+      TYPE dotG, dotT;
+   #else
+      TYPE dotG[2], dotT[2];
+   #endif
+   TYPE Mjoin(PATL, epsilon)(void);
+   eps = Mjoin(PATL,epsilon)();
+
+   x = X = getvec(0, padval, N, incX, FAx, MAx);
+   y = Y = getvec(0, padval, N, incY, FAy, MAy);
+   if (incX < 1) x -= ((N-1)SHIFT) * incX;
+   if (incY < 1) y -= ((N-1)SHIFT) * incY;
+
+   #ifdef TREAL
+      dotT = TEST_DOT(N, x, incX, y, incY);
+      dotG = good_dot(N, x, incX, y, incY);
+      diff = dotG - dotT;
+      diff = Mabs(diff);
+      if (diff > 2*N*eps || dotT != dotT)
+      {                     /* diff could 4*N*eps, but isn't in practice */
+         fprintf(stderr, 
+                 "   DOT ERROR: N=%d, correct=%e, computed=%e, diff=%e!!\n",
+                 N, dotG, dotT, diff);
+         iret = 1;
+      }
+   #else
+      good_dot(N, x, incX, y, incY, dotG);
+      TEST_DOT(N, x, incX, y, incY, dotT);
+      diff = dotG[0] - dotT[0];
+      diff = Mabs(diff);
+      if (diff > 4*N*eps)
+      {
+         fprintf(stderr, 
+                 "   RDOT ERROR: N=%d, correct=%e, computed=%e, diff=%e!!\n",
+                 N, dotG[0], dotT[0], diff);
+         iret = 1;
+      }
+      diff = dotG[1] - dotT[1];
+      diff = Mabs(diff);
+      if (diff > 4*N*eps)
+      {
+         fprintf(stderr, 
+                 "   IDOT ERROR: N=%d, correct=%e, computed=%e, diff=%e!!\n",
+                 N, dotG[1], dotT[1], diff);
+         iret = 1;
+      }
+   #endif
+
+   FA_free(X, FAx, MAx);
+   FA_free(Y, FAy, MAy);
+   return(iret);
+}
+@ROUT swaptest
+int DoTest(int N, int incX, int incY)
+{
+   int iret;
+   const int npad=Mmax(4*Mmax(Mabs(incY), Mabs(incX)), 16);
+   const TYPE padvalX=(-2271.0), padvalY=(-3389.0);
+   TYPE *Xg, *Yg, *Xt, *Yt, *x, *y;
+
+   Xg = getvec(0, padvalX, N, 1, FAx, MAx);
+   Yg = getvec(0, padvalY, N, 1, FAy, MAy);
+   Xt = gen_dupvec(N, padvalX, 0, Xg, 1, npad, incX, FAx, MAx);
+   Yt = gen_dupvec(N, padvalY, 0, Yg, 1, npad, incY, FAy, MAy);
+
+   x = Xt + (npad SHIFT);
+   y = Yt + (npad SHIFT);
+   if (incX < 1) x -= ((N-1)SHIFT) * incX;
+   if (incY < 1) y -= ((N-1)SHIFT) * incY;
+   TEST_SWAP(N, x, incX, y, incY);
+   iret = CheckXY(npad, padvalX, padvalY, N, Xg, Yg, Xt, incX, Yt, incY);
+   FA_free(Xg, FAx, MAx);
+   FA_free(Yg, FAy, MAy);
+   FA_free(Xt, FAx, MAx);
+   FA_free(Yt, FAy, MAy);
+   return(iret);
+} 
+@ROUT copytest
+int DoTest(int N, int incX, int incY)
+{
+   int iret;
+   const int npad=Mmax(4*Mabs(incY), 16);
+   const TYPE padval=(-2271.0);
+   TYPE *Y, *X, *x, *y;
+
+   X = getvec(0, padval, N, incX, FAx, MAx);  /* no padding for read-only X */
+   Y = getvec(npad, padval, N, incY, FAx, MAx);
+
+   x = X;
+   y = Y + (npad SHIFT);
+   if (incX < 1) x -= ((N-1)SHIFT) * incX;
+   if (incY < 1) y -= ((N-1)SHIFT) * incY;
+   TEST_COPY(N, x, incX, y, incY);
+   iret = CheckY(npad, padval, N, X, incX, Y, incY);
+   FA_free(X, FAx, MAx);
+   FA_free(Y, FAy, MAy);
+   return(iret);
+}
+@ROUT scaltest settest settst
+int DoTest(int N, TYPE *alpha0, int incY)
+{
+   int iret;
+   const int npad=Mmax(4*Mabs(incY), 16);
+   const TYPE padval=(-2271.0);
+   TYPE *Yg, *Yt, *y;
+   #ifdef TREAL
+      TYPE alpha = *alpha0;
+   #else
+      TYPE *alpha = alpha0;
+   #endif
+
+   Yg = getvec(npad, padval, N, incY, FAy, MAy);
+   Yt = dupvec(npad, N, Yg, incY, FAy, MAy);
+
+   y = Yg + (npad SHIFT);
+   if (incY < 1) y -= ((N-1)SHIFT) * incY;
+   good_@(rt)(N, alpha, y, incY);
+   y = Yt + (npad SHIFT);
+   if (incY < 1) y -= ((N-1)SHIFT) * incY;
+@ROUT settst
+   TEST_@up@(rt)(N, alpha, Yt+(npad SHIFT), incY);
+@ROUT scaltest settest
+   TEST_@up@(rt)(N, alpha, y, incY);
+@ROUT scaltest settest settst
+   iret = CheckY(npad, padval, N, Yg, incY, Yt, incY);
+   FA_free(Yg, FAx, MAx);
+   FA_free(Yt, FAy, MAy);
+   return(iret);
+}
+@ROUT rottest
+int DoTest(int N, TYPE *alpha0, TYPE *beta0, int incX, int incY)
+{
+   int iret;
+   const int npad=Mmax(4*Mmax(Mabs(incY), Mabs(incX)), 16);
+   const TYPE padvalX=(-2271.0), padvalY=(-3389.0);
+   TYPE *Xg, *Yg, *Xt, *Yt, *x, *y;
+   TYPE normX, normY;
+   TYPE alpha=(*alpha0), beta=(*beta0);
+
+   Xg = getvec(0, padvalX, N, 1, FAx, MAx);
+   Yg = getvec(0, padvalY, N, 1, FAx, MAx);
+   Xt = gen_dupvec(N, padvalX, 0, Xg, 1, npad, incX, FAx, MAx);
+   Yt = gen_dupvec(N, padvalY, 0, Yg, 1, npad, incY, FAy, MAy);
+
+   normX = my_infnrm(N, Xg, 1);
+   normY = my_infnrm(N, Yg, 1);
+   good_rot(N, alpha, Xg, 1, beta, Yg, 1);
+
+   x = Xt + (npad SHIFT);
+   y = Yt + (npad SHIFT);
+   if (incX < 1) x -= ((N-1)SHIFT) * incX;
+   if (incY < 1) y -= ((N-1)SHIFT) * incY;
+   TEST_ROT(N, alpha, x, incX, beta, y, incY);
+
+   iret = CheckXY(npad, padvalX, padvalY, N, Xg, Yg, normX, normY,
+                  Xt, incX, Yt, incY);
+   FA_free(Xg, FAx, MAx);
+   FA_free(Yg, FAy, MAy);
+   FA_free(Xt, FAx, MAx);
+   FA_free(Yt, FAy, MAy);
+   return(iret);
+}
+@ROUT axpbytest axpbytst
+int DoTest(int N, TYPE *alpha0, TYPE *beta0, int incX, int incY)
+@ROUT axpytest cpsctest
+int DoTest(int N, TYPE *alpha0, int incX, int incY)
+@ROUT axpytest cpsctest axpbytest axpbytst
+{
+   int iret;
+   const int npad=Mmax(4*Mabs(incY), 16);
+   const TYPE padval=(-2271.0);
+   TYPE *Yg, *Yt, *X, *x, *y;
+@ROUT axpytest cpsctest
+   @define bet @@
+   #ifdef TREAL
+      TYPE alpha = *alpha0;
+   #else
+      TYPE *alpha = alpha0;
+   #endif
+@ROUT axpbytest axpbytst
+   @define bet @, beta@
+   #ifdef TREAL
+      TYPE alpha = *alpha0, beta = *beta0;
+   #else
+      TYPE *alpha = alpha0, *beta = beta0;
+   #endif
+@ROUT axpytest cpsctest axpbytest axpbytst
+
+   Yg = getvec(npad, padval, N, incY, FAy, MAy);
+   Yt = dupvec(npad, N, Yg, incY, FAy, MAy);
+   X  = getvec(0, padval, N, incX, FAx, MAx);  /* no padding for read-only X */
+
+   x = X;
+   y = Yg + (npad SHIFT);
+   if (incX < 1) x -= ((N-1)SHIFT) * incX;
+   if (incY < 1) y -= ((N-1)SHIFT) * incY;
+   good_@(rt)(N, alpha, x, incX@(bet), y, incY);
+   y = Yt + (npad SHIFT);
+   if (incY < 1) y -= ((N-1)SHIFT) * incY;
+@ROUT axpbytst
+   TEST_@up@(rt)(N, alpha, X, incX@(bet), Yt+(npad SHIFT), incY);
+@ROUT axpytest cpsctest axpbytest
+   TEST_@up@(rt)(N, alpha, x, incX@(bet), y, incY);
+@ROUT axpytest cpsctest axpbytest axpbytst
+   iret = CheckY(npad, padval, N, Yg, incY, Yt, incY);
+   FA_free(X, FAx, MAx);
+   FA_free(Yg, FAy, MAy);
+   FA_free(Yt, FAy, MAy);
+   return(iret);
+}
+@undef bet
+
+@ROUT copytest swaptest dottest asumtest nrm2test
+int DoAllTests(int nN, int *Ns, int nX, int *Xs, int nY, int *Ys)
+@ROUT axpbytest axpbytst rottest
+int DoAllTests(int nN, int *Ns, int nX, int *Xs, int nY, int *Ys, 
+               int nalpha, TYPE *alp, int nbeta, TYPE *bet)
+@ROUT axpytest scaltest cpsctest settest settst
+int DoAllTests(int nN, int *Ns, int nX, int *Xs, int nY, int *Ys, 
+               int nalpha, TYPE *alp)
+@ROUT axpytest copytest scaltest swaptest dottest asumtest nrm2test cpsctest @\
+      settest axpbytest axpbytst settst rottest
+{
+   int in, ix, iy, ia, ib, iret=0, i=0, j, k;
+   char *passfail;
+
+@ROUT nrm2test
+   char *t1="  ITST  STRESS         N  incX    TEST";
+   char *t2="======  ======  ========  ====  ======";
+   char *stresses[3] = {"NORMAL", "OVER  ", "UNDER "};
+@ROUT asumtest
+   char *t1="  ITST         N  incX    TEST";
+   char *t2="======  ========  ====  ======";
+@ROUT copytest swaptest dottest
+   char *t1="  ITST         N  incX  incY    TEST";
+   char *t2="======  ========  ====  ====  ======";
+@ROUT axpbytest axpbytst rottest
+#ifdef TREAL
+   char *t1="  ITST         N     alpha      beta  incX  incY    TEST";
+   char *t2="======  ========  ========  ========  ====  ====  ======";
+#else
+   char *t1 =
+   "  ITST         N    ralpha   ialpha     rbeta    ibeta  incX  incY    TEST";
+   char *t2 =
+   "======  ========  ======== ========  ======== ========  ====  ====  ======";
+#endif
+@ROUT axpytest scaltest cpsctest settest settst
+#ifdef TREAL
+   char *t1="  ITST         N     alpha  incX  incY    TEST";
+   char *t2="======  ========  ========  ====  ====  ======";
+#else
+   char *t1="  ITST         N    ralpha   ialpha  incX  incY    TEST";
+   char *t2="======  ========  ======== ========  ====  ====  ======";
+#endif
+@ROUT axpytest copytest scaltest swaptest dottest asumtest nrm2test cpsctest @\
+      settest axpbytest axpbytst settst rottest
+   fprintf(stdout, "%s\n", t1);
+   fprintf(stdout, "%s\n", t2);
+   for (in=0; in < nN; in++)
+   {
+      for (ix=0; ix < nX; ix++)
+      {
+@ROUT asumtest
+         j = DoTest(Ns[in], Xs[ix]);
+         iret += j;
+         if (j == 0) passfail = "PASSED";
+         else passfail = "FAILED";
+         fprintf(stdout, "%6d %9d %5d %s\n",
+                 i, Ns[in], Xs[ix], passfail);
+         i++;
+@ROUT nrm2test
+         for (k=0; k < 3; k++)
+         {
+            j = DoStressTest(Ns[in], Xs[ix], k);
+            iret += j;
+            if (j == 0) passfail = "PASSED";
+            else passfail = "FAILED";
+            fprintf(stdout, "%6d  %6s  %9d %5d %s\n",
+                    i, stresses[k], Ns[in], Xs[ix], passfail);
+            i++;
+         }
+@ROUT scaltest settest settst
+         for (ia=0; ia < nalpha; ia++)
+         {
+            j = DoTest(Ns[in], alp+(ia SHIFT), Xs[ix]);
+            iret += j;
+            if (j == 0) passfail = "PASSED";
+            else passfail = "FAILED";
+            #ifdef TREAL
+               fprintf(stdout, "%6d %9d %9.2f %5d %5d  %s\n",
+                       i, Ns[in], alp[ia], Xs[ix], 0, passfail);
+            #else
+               fprintf(stdout, "%6d %9d  %8.2f %8.2f %5d %5d  %s\n", 
+                       i, Ns[in], alp[2*ia], alp[2*ia+1], Xs[ix], 0, passfail);
+            #endif
+            i++;
+         }
+@ROUT copytest axpytest swaptest dottest cpsctest axpbytest axpbytst rottest
+         for (iy=0; iy < nY; iy++)
+         {
+@ROUT copytest swaptest dottest
+            j = DoTest(Ns[in], Xs[ix], Ys[iy]);
+            iret += j;
+            if (j == 0) passfail = "PASSED";
+            else passfail = "FAILED";
+            fprintf(stdout, "%6d %9d %5d %5d  %s\n",
+                    i, Ns[in], Xs[ix], Ys[iy], passfail);
+            i++;
+@ROUT axpytest cpsctest axpbytest axpbytst rottest
+            for (ia=0; ia < nalpha; ia++)
+            {
+@ROUT axpbytest axpbytst rottest
+               for (ib=0; ib < nbeta; ib++)
+               {
+                  j = DoTest(Ns[in], alp+(ia SHIFT), bet+(ib SHIFT), 
+                             Xs[ix], Ys[iy]);
+                  iret += j;
+                  if (j == 0) passfail = "PASSED";
+                  else passfail = "FAILED";
+                  #ifdef TREAL
+                     fprintf(stdout, "%6d %9d %9.2f %9.2f %5d %5d  %s\n", i,
+                            Ns[in], alp[ia], bet[ib], Xs[ix], Ys[iy], passfail);
+                  #else
+                     fprintf(stdout, 
+                             "%6d %9d  %8.2f %8.2f  %8.2f %8.2f %5d %5d  %s\n", 
+                             i, Ns[in], alp[2*ia], alp[2*ia+1],  
+                             bet[2*ib], bet[2*ib+1], Xs[ix], Ys[iy], passfail);
+                  #endif
+                  i++;
+               }
+@ROUT axpytest cpsctest
+               j = DoTest(Ns[in], alp+(ia SHIFT), Xs[ix], Ys[iy]);
+               iret += j;
+               if (j == 0) passfail = "PASSED";
+               else passfail = "FAILED";
+               #ifdef TREAL
+                  fprintf(stdout, "%6d %9d %9.2f %5d %5d  %s\n",
+                          i, Ns[in], alp[ia], Xs[ix], Ys[iy], passfail);
+               #else
+                  fprintf(stdout, "%6d %9d  %8.2f %8.2f %5d %5d  %s\n", 
+                          i, Ns[in], alp[2*ia], alp[2*ia+1], 
+                          Xs[ix], Ys[iy], passfail);
+               #endif
+               i++;
+@ROUT axpytest cpsctest axpbytest axpbytst rottest
+            }
+@ROUT axpytest copytest swaptest dottest cpsctest axpbytest axpbytst rottest
+         }
+@ROUT axpytest copytest scaltest swaptest dottest asumtest nrm2test cpsctest @\
+      settest axpbytest axpbytst settst rottest
+      }
+   }
+   if (iret == 0) fprintf(stdout, "ALL @up@(rt) SANITY TESTS PASSED.\n\n");
+   else fprintf(stdout, "%d of %d @up@(rt) TESTS FAILED!!\n\n", iret, i);
+   return(iret);
+}
+
+void PrintUsage(char *nam)
+{
+   fprintf(stderr, 
+@ROUT copytest swaptest dottest
+           "USAGE: %s -N # n1 ... n# -n <n> -X # x1 ... x# -Y # y1 ... y#\n",
+           nam);
+@ROUT scaltest settest settst
+      "USAGE: %s -N # n1 ... n# -n <n> -X # x1 ... x# -a # alpha1 ... alpha#\n",
+           nam);
+@ROUT asumtest nrm2test
+      "USAGE: %s -N # n1 ... n# -n <n> -X # x1 ... x# \n", nam);
+@ROUT axpbytest axpbytst rottest
+      "USAGE: %s -N # n1 ... n# -n <n> -X # x1 ... x# -Y # y1 ... y# -a # alpha1 ... alpha# -b # beta1 ... beta#\n", nam);
+@ROUT axpytest cpsctest
+      "USAGE: %s -N # n1 ... n# -n <n> -X # x1 ... x# -Y # y1 ... y# -a # alpha1 ... alpha#\n", nam);
+@ROUT axpytest copytest scaltest swaptest dottest asumtest nrm2test cpsctest @\
+      settest axpbytest axpbytst settst rottest
+   exit(-1);
+}
+
+@ROUT copytest swaptest dottest asumtest nrm2test
+void GetFlags(int nargs, char **args, int *nN, int **Ns, int *nX, int **incXs,
+              int *nY, int **incYs)
+@ROUT axpbytest axpbytst rottest
+void GetFlags(int nargs, char **args, int *nN, int **Ns, int *nX, int **incXs,
+              int *nY, int **incYs, int *nal, TYPE **alphas, 
+              int *nbe, TYPE **betas)
+@ROUT axpytest scaltest cpsctest settest settst
+void GetFlags(int nargs, char **args, int *nN, int **Ns, int *nX, int **incXs,
+              int *nY, int **incYs, int *nal, TYPE **alphas)
+@ROUT axpytest copytest scaltest swaptest dottest asumtest nrm2test cpsctest @\
+      settest axpbytest axpbytst settst rottest
+{
+   int i, j, k, ig;
+
+@ROUT axpbytst axpbytest rottest `   *nal = *nbe = -1;`
+@ROUT settst settest scaltest axpytest cpsctest `   *nal = -1;`
+   *nY = *nX = *nN = -1;
+
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-') PrintUsage(args[0]);
+      if (i == nargs-1) PrintUsage(args[0]);
+      switch(args[i][1])
+      {
+@ROUT axpytest copytest scaltest swaptest dottest asumtest nrm2test cpsctest @\
+      settest axpbytest axpbytst settst rottest
+      case 'F':
+         j = args[i][2] != 'y';
+         k = atoi(args[++i]);
+         if (j)
+         {
+            if (k < 0)
+               MAx = -k;
+            else
+               FAx = k;
+         }
+         else
+         {
+            if (k < 0)
+               MAy = -k;
+            else
+               FAy = k;
+         }
+         break;
+@ROUT axpytest scaltest cpsctest settest axpbytest axpbytst settst rottest
+      case 'a':
+         *nal = atoi(args[++i]);
+         if (*nal > nargs-i) PrintUsage(args[0]);
+         *alphas = malloc(ATL_MulBySize(*nal));
+         assert(*alphas);
+         for (j=0; j < *nal SHIFT; j++) (*alphas)[j] = atof(args[++i]);
+         break;
+@ROUT axpytest copytest scaltest swaptest dottest asumtest nrm2test cpsctest @\
+      settest settst
+      case 'b':
+@ROUT copytest swaptest dottest asumtest nrm2test amaxtest!!
+      case 'a':
+@ROUT axpytest copytest scaltest swaptest dottest asumtest nrm2test cpsctest @\
+      settest settst
+         ig = atoi(args[++i]);
+         if (ig > nargs-i) PrintUsage(args[0]);
+         i += ig SHIFT;
+         break;
+@ROUT axpbytest axpbytst rottest
+      case 'b':
+         *nbe = atoi(args[++i]);
+         if (*nbe > nargs-i) PrintUsage(args[0]);
+         *betas = malloc(ATL_MulBySize(*nbe));
+         assert(*betas);
+         for (j=0; j < *nbe SHIFT; j++) (*betas)[j] = atof(args[++i]);
+         break;
+@ROUT axpytest copytest scaltest swaptest dottest asumtest nrm2test cpsctest @\
+      settest axpbytest axpbytst settst rottest
+      case 'Y':
+         *nY = atoi(args[++i]);
+         if (*nY > nargs-i) PrintUsage(args[0]);
+         *incYs = malloc((*nY)*sizeof(int));
+         assert(*incYs);
+         for (j=0; j < *nY; j++) (*incYs)[j] = atoi(args[++i]);
+         break;
+      case 'X':
+         *nX = atoi(args[++i]);
+         if (*nX > nargs-i) PrintUsage(args[0]);
+         *incXs = malloc((*nX)*sizeof(int));
+         assert(*incXs);
+         for (j=0; j < *nX; j++) (*incXs)[j] = atoi(args[++i]);
+         break;
+      case 'N':
+         *nN = atoi(args[++i]);
+         if (*nN > nargs-i) PrintUsage(args[0]);
+         *Ns = malloc((*nN)*sizeof(int));
+         assert(*Ns);
+         for (j=0; j < *nN; j++) (*Ns)[j] = atoi(args[++i]);
+         break;
+      case 'y':
+         *nY = 1;
+         *incYs = malloc(sizeof(int));
+         assert(*incYs);
+         **incYs = atoi(args[++i]);
+         break;
+      case 'x':
+         *nX = 1;
+         *incXs = malloc(sizeof(int));
+         assert(*incXs);
+         **incXs = atoi(args[++i]);
+         break;
+      case 'n':
+         *nN = 1;
+         *Ns = malloc(sizeof(int));
+         assert(*Ns);
+         **Ns = atoi(args[++i]);
+         break;
+      default:
+         PrintUsage(args[0]);
+      }
+   }
+   if (*nN < 0)
+   {
+@ROUT axpytest copytest scaltest swaptest dottest asumtest nrm2test cpsctest @\
+      settest axpbytest rottest
+      *nN = 4;
+      *Ns = malloc((*nN)*sizeof(int));
+      assert(*Ns);
+      **Ns = 777;
+      (*Ns)[1] = 1;
+      (*Ns)[2] = 3;
+      (*Ns)[3] = 7;
+@ROUT axpbytst settst
+      *nN = 33;
+      *Ns = malloc((*nN)*sizeof(int));
+      assert(*Ns);
+      **Ns = 777;
+      for (i=1; i <= 32; i++) (*Ns)[i] = i;
+@ROUT axpytest copytest scaltest swaptest dottest asumtest nrm2test cpsctest @\
+      settest axpbytest axpbytst settst rottest
+   }
+   if (*nX < 0)
+   {
+@ROUT axpytest copytest scaltest swaptest dottest asumtest nrm2test cpsctest @\
+      settest axpbytest rottest
+      *nX = 1;
+      *incXs = malloc((*nX)*sizeof(int));
+      assert(*incXs);
+      **incXs = 1;
+@ROUT axpbytst settst
+      *nX = 4;
+      *incXs = malloc((*nX)*sizeof(int));
+      **incXs = 1;
+      (*incXs)[1] = 2;
+      (*incXs)[2] = -3;
+      (*incXs)[3] = 4;
+@ROUT axpytest copytest scaltest swaptest dottest asumtest nrm2test cpsctest @\
+      settest axpbytest axpbytst settst rottest
+   }
+   if (*nY < 0)
+   {
+@ROUT axpytest copytest scaltest swaptest dottest asumtest nrm2test cpsctest @\
+      settest axpbytest rottest
+      *nY = 1;
+      *incYs = malloc((*nY)*sizeof(int));
+      assert(*incYs);
+      **incYs = 1;
+@ROUT axpbytst settst
+      *nY = 4;
+      *incYs = malloc((*nY)*sizeof(int));
+      assert(*incYs);
+      **incYs = 1;
+      (*incYs)[1] = 2;
+      (*incYs)[2] = -2;
+      (*incYs)[3] = 3;
+@ROUT axpytest copytest scaltest swaptest dottest asumtest nrm2test cpsctest @\
+      settest axpbytest axpbytst settst rottest
+   }
+@ROUT axpytest scaltest cpsctest settest axpbytest axpbytst settst rottest
+   if (*nal < 1)
+   {
+      #ifdef TREAL
+         *nal = 3;
+         *alphas = malloc(ATL_MulBySize(3));
+         assert(*alphas);
+         (*alphas)[0] = 1.0;
+         (*alphas)[1] = -1.0;
+         (*alphas)[2] = 0.9;
+      #else
+         *nal = 4;
+         *alphas = malloc(ATL_MulBySize(4));
+         assert(*alphas);
+         (*alphas)[0] = 1.0;
+         (*alphas)[1] = 0.0;
+         (*alphas)[2] = -1.0;
+         (*alphas)[3] = 0.0;
+         (*alphas)[4] = 1.3; 
+         (*alphas)[5] = 0.0; 
+         (*alphas)[6] = 0.9; 
+         (*alphas)[7] = 1.1; 
+      #endif
+   }
+@ROUT axpbytest axpbytst rottest
+   if (*nbe < 1)
+   {
+      #ifdef TREAL
+         *nbe = 3;
+         *betas = malloc(ATL_MulBySize(3));
+         assert(*betas);
+         (*betas)[0] = 1.0;
+         (*betas)[1] = -1.0;
+         (*betas)[2] = 0.8;
+      #else
+         *nbe = 4;
+         *betas = malloc(ATL_MulBySize(4));
+         assert(*betas);
+         (*betas)[0] = 1.0;
+         (*betas)[1] = 0.0;
+         (*betas)[2] = -1.0;
+         (*betas)[3] = 0.0;
+         (*betas)[4] = 1.2; 
+         (*betas)[5] = 0.0; 
+         (*betas)[6] = 1.1; 
+         (*betas)[7] = 0.8; 
+      #endif
+   }
+@ROUT axpytest copytest scaltest swaptest dottest asumtest nrm2test cpsctest @\
+      settest axpbytest axpbytst settst rottest
+   if (FAx < sizeof(TYPE))
+      FAx = sizeof(TYPE);
+   if (FAy < sizeof(TYPE))
+      FAy = sizeof(TYPE);
+@ROUT scaltest asumtest nrm2test settest settst
+   FAy = FAx;
+   MAy = MAx;
+@ROUT axpytest copytest scaltest swaptest dottest asumtest nrm2test cpsctest @\
+      settest axpbytest axpbytst settst rottest
+}
+
+main(int nargs, char **args)
+{
+   int nN, nX, nY, nal, nbe;
+   int *Ns, *incXs, *incYs;
+   TYPE *alphas=NULL, *betas=NULL;
+   int ierr;
+@ROUT copytest swaptest dottest asumtest nrm2test
+   GetFlags(nargs, args, &nN, &Ns, &nX, &incXs, &nY, &incYs);
+   ierr = DoAllTests(nN, Ns, nX, incXs, nY, incYs);
+@ROUT axpbytest axpbytst rottest
+   GetFlags(nargs, args, &nN, &Ns, &nX, &incXs, &nY, &incYs, 
+            &nal, &alphas, &nbe, &betas);
+   ierr = DoAllTests(nN, Ns, nX, incXs, nY, incYs, nal, alphas, nbe, betas);
+   if (alphas) free(alphas);
+   if (betas) free(betas);
+@ROUT axpytest scaltest cpsctest settest settst
+   GetFlags(nargs, args, &nN, &Ns, &nX, &incXs, &nY, &incYs, &nal, &alphas);
+   ierr = DoAllTests(nN, Ns, nX, incXs, nY, incYs, nal, alphas);
+   if (alphas) free(alphas);
+@ROUT axpytest copytest scaltest swaptest dottest asumtest nrm2test cpsctest @\
+      settest axpbytest axpbytst settst rottest
+   free(incXs);
+   free(incYs);
+   exit(ierr);
+}

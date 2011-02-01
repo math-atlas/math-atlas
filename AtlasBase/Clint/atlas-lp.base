@@ -1,0 +1,4141 @@
+@ifdef ! incd
+   @define incd @/home/rwhaley/Base/ATLAS@
+@endifdef
+@extract -b @(topd)/gen.inc what=crsetup
+@ROUT atlas_ptalias_lapack.h
+#if defined(ATL_USEPTHREADS) && !defined(ATLAS_PTALIAS_LAPACK_H) 
+   #define  ATLAS_PTALIAS_LAPACK_H
+@whiledef pre z c d s
+   @multidef rt getrf getrfC
+   @whiledef rt geqrf gerqf geqlf gelqf geqrr gerqr geqlr gelqr gels
+   #define ATL_@(pre)@(rt) ATL_@(pre)t@(rt)
+   @endwhile
+@endwhile
+   #define ATL_ilaenv ATL_itlaenv
+#endif
+@ROUT ATL_getriR
+@extract -b @(topd)/gen.inc what=cw @(cw01)
+#include "atlas_lapack.h"
+#include "atlas_lvl3.h"
+
+static void trcpzeroU(const int M, const int N, TYPE *U, const int ldu,
+                      TYPE *C, const int ldc)
+/*
+ * Copies an upper row-major array from U, zeroing U, U is unit, so
+ * diagonal is not copied
+ */
+{
+   const int ldu2 = ldu SHIFT, ldc2 = ldc SHIFT, N2 = N SHIFT;
+   int i, j;
+
+   for (i=0; i != M; i++)
+   {
+      for (j=(i+1)SHIFT; j < N2; j++)
+      {
+         C[j] = U[j];
+         U[j] = ATL_rzero;
+      }
+      C += ldc2;
+      U += ldu2;
+   }
+}
+int ATL_getriR(const int N, TYPE *A, const int lda, const int *ipiv, 
+               TYPE *wrk, const int lwrk)
+{
+   int jb, nb, I, ndown, iret;
+   const int lda2 = lda SHIFT;
+   #ifdef TREAL
+      const TYPE one=ATL_rone, none=ATL_rnone;
+   #else
+      const TYPE one[2]={ATL_rone,ATL_rzero}, none[2]={ATL_rnone, ATL_rzero};
+   #endif
+
+   iret = ATL_trtri(CblasRowMajor, CblasLower, CblasNonUnit, N, A, lda);
+   if (!iret && N > 1)
+   {
+/*
+ *    Find largest NB we can use with our provided workspace
+ */
+    jb = lwrk / N;
+    if (jb >= NB) nb = ATL_MulByNB(ATL_DivByNB(jb));
+    else if (jb >= ATL_mmMU) nb = (jb/ATL_mmMU)*ATL_mmMU;
+    else nb = jb;
+    if (!nb) return(-6);  /* need at least 1 row of workspace */
+/*
+ *    Only first iteration will have partial block, unroll it
+ */
+      jb = N - (N/nb)*nb;
+      if (!jb) jb = nb;
+      I = N - jb;
+      A += lda2*I;
+      trcpzeroU(jb, jb, A+(I SHIFT), lda, wrk, jb);
+      cblas_trsm(CblasRowMajor, CblasLeft, CblasUpper, CblasNoTrans, CblasUnit,
+                 jb, N, one, wrk, jb, A, lda);
+      if (I)
+      {
+         do
+         {
+            I -= nb;
+            A -= nb*lda2;
+            ndown = N-I;
+            trcpzeroU(nb, ndown, A+(I SHIFT), lda, wrk, ndown);
+            cblas_gemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, nb, N,
+                       ndown-nb, none, wrk+(nb SHIFT), ndown, A+nb*lda2, lda,
+                       one, A, lda);
+            cblas_trsm(CblasRowMajor, CblasLeft, CblasUpper, CblasNoTrans, 
+                       CblasUnit, nb, N, one, wrk, ndown, A, lda);
+         }
+         while(I);
+      }
+/*
+ *    Apply row interchanges
+ */
+      for (I=N-2; I >= 0; I--)
+      {
+         jb = ipiv[I];
+         if (jb != I) cblas_swap(N, A+I*lda2, 1, A+jb*lda2, 1);
+      }
+   }
+   return(iret);
+}
+@ROUT ATL_getriC
+@extract -b @(topd)/gen.inc what=cw @(cw01)
+#include "atlas_lapack.h"
+#include "atlas_lvl3.h"
+
+static void trcpzeroL(const int M, const int N, TYPE *L, const int ldl, 
+                      TYPE *C, const int ldc)
+/*
+ * Copies lower triangle from L, replacing with zeros
+ */
+{
+   const int M2 = M SHIFT, ldl2 = ldl SHIFT, ldc2 = ldc SHIFT;
+   int i, j;
+
+   for (j=0; j != N; j++)
+   {
+      for (i=((j+1)SHIFT); i < M2; i++)
+      {
+         C[i] = L[i];
+         L[i] = ATL_rzero;
+      }
+      C += ldc2;
+      L += ldl2;
+   }
+}
+
+int ATL_getriC(const int N, TYPE *A, const int lda, const int *ipiv, 
+               TYPE *wrk, const int lwrk)
+{
+   const int lda2 = lda SHIFT;
+   int J, jb, nb, nright, iret;
+   TYPE *A0 = A;
+   #ifdef TREAL
+      const TYPE one=ATL_rone, none=ATL_rnone;
+   #else
+      const TYPE one[2]={ATL_rone,ATL_rzero}, none[2]={ATL_rnone, ATL_rzero};
+   #endif
+
+   iret = ATL_trtri(CblasColMajor, CblasUpper, CblasNonUnit, N, A, lda);
+   if (!iret && N > 1)
+   {
+/*
+ *    Find largest NB we can use with our provided workspace
+ */
+      jb = lwrk / N;
+      if (jb >= NB) nb = ATL_MulByNB(ATL_DivByNB(jb));
+      else if (jb >= ATL_mmNU) nb = (jb/ATL_mmNU)*ATL_mmNU;
+      else nb = jb;
+      if (!nb) return(-6);  /* need at least 1 col of workspace */
+/*
+ *    Only first iteration will have partial block, unroll it
+ */
+      jb = N - (N/nb)*nb;
+      if (!jb) jb = nb;
+      J = N - jb;
+      A += lda2*J;
+      trcpzeroL(jb, jb, A+(J SHIFT), lda, wrk, jb);
+      cblas_trsm(CblasColMajor, CblasRight, CblasLower, CblasNoTrans, CblasUnit,
+                 N, jb, one, wrk, jb, A, lda);
+      if (J)
+      {
+         do
+         {
+            J -= nb;
+            A -= nb*lda2;
+            nright = N-J;
+            trcpzeroL(nright, nb, A+(J SHIFT), lda, wrk, nright);
+            cblas_gemm(CblasColMajor, CblasNoTrans, CblasNoTrans, N, nb,
+                       nright-nb, none, A+nb*lda2, lda, wrk+(nb SHIFT), nright, 
+                       one, A, lda);
+            cblas_trsm(CblasColMajor, CblasRight, CblasLower, CblasNoTrans, 
+                       CblasUnit, N, nb, one, wrk, nright, A, lda);
+         }
+         while(J);
+      }
+/*
+ *    Apply column interchanges
+ */
+      for (J=N-2; J >= 0; J--)
+      {
+         jb = ipiv[J];
+         if (jb != J) cblas_swap(N, A+J*lda2, 1, A+jb*lda2, 1);
+      }
+   }                
+   return(iret);
+}
+@ROUT ATL_getri
+@extract -b @(topd)/gen.inc what=cw @(cw01)
+#include "atlas_lapack.h"
+#include "atlas_lvl3.h"
+int ATL_getri(const enum CBLAS_ORDER Order, const int N, TYPE *A, const int lda,
+              const int *ipiv, TYPE *wrk, int *lwrk)
+{
+   int ierr=0;
+   if (*lwrk != -1)
+   {
+      if (Order == AtlasRowMajor)
+         ierr = ATL_getriR(N, A, lda, ipiv, wrk, *lwrk);
+      else ierr = ATL_getriC(N, A, lda, ipiv, wrk, *lwrk);
+   }
+   else *lwrk = ATL_MulByNB(N);
+   return(ierr);
+}
+@ROUT ATL_lauumL ATL_lauumU
+@extract -b @(topd)/gen.inc what=cw @(cw01)
+#include "atlas_lapack.h"
+#ifdef TREAL
+   #define my_syrk cblas_syrk
+   #define my_trans CblasTrans
+#else
+   #define my_syrk cblas_herk
+   #define my_trans CblasConjTrans
+#endif
+
+#ifdef RowMajor_
+   #define MyOrder CblasRowMajor
+   #define ATL_lauumU Mjoin(PATL,lauumRU)
+   #define ATL_lauumL Mjoin(PATL,lauumRL)
+#else
+   #define MyOrder CblasColMajor
+   #define ATL_lauumU Mjoin(PATL,lauumCU)
+   #define ATL_lauumL Mjoin(PATL,lauumCL)
+#endif
+
+@ROUT ATL_lauumL
+void ATL_lauumL(const int N, TYPE *A, const int lda)
+{
+   int Nleft, Nright;
+   #ifdef TREAL
+      const TYPE one=ATL_rone;
+   #else
+      const TYPE one[2]={ATL_rone, ATL_rzero};
+   #endif
+   TYPE *G, *U0=A, *U1;
+
+   if (N > 1)
+   {
+      Nleft = N >> 1;
+      #ifdef NB
+         if (Nleft > NB) Nleft = ATL_MulByNB(ATL_DivByNB(Nleft));
+      #endif
+      Nright = N - Nleft;
+      #ifdef RowMajor_
+         G = A + Nleft*(lda SHIFT);
+         U1 = G + (Nleft SHIFT);
+      #else
+         G = A + (Nleft SHIFT);
+         U1 = G + Nleft*(lda SHIFT);
+      #endif
+      ATL_lauumL(Nleft, U0, lda);
+      my_syrk(MyOrder, CblasLower, my_trans, Nleft, Nright, ATL_rone,
+              G, lda, ATL_rone, U0, lda);
+      cblas_trmm(MyOrder, CblasLeft, CblasLower, my_trans, CblasNonUnit,
+                 Nright, Nleft, one, U1, lda, G, lda);
+      ATL_lauumL(Nright, U1, lda);
+   }
+   else *A = *A * *A;
+}
+@ROUT ATL_lauumU
+void ATL_lauumU(const int N, TYPE *A, const int lda)
+{
+   int Nleft, Nright;
+   #ifdef TREAL
+      const TYPE one=ATL_rone;
+   #else
+      const TYPE one[2]={ATL_rone, ATL_rzero};
+   #endif
+   TYPE *G, *U0=A, *U1;
+
+   if (N > 1)
+   {
+      Nleft = N >> 1;
+      #ifdef NB
+         if (Nleft > NB) Nleft = ATL_MulByNB(ATL_DivByNB(Nleft));
+      #endif
+      Nright = N - Nleft;
+      #ifdef RowMajor_
+         G  = A + (Nleft SHIFT);
+         U1 = G + Nleft*(lda SHIFT);
+      #else
+         G  = A + Nleft*(lda SHIFT);
+         U1 = G + (Nleft SHIFT);
+      #endif
+      ATL_lauumU(Nleft, U0, lda);
+      my_syrk(MyOrder, CblasUpper, CblasNoTrans, Nleft, Nright, ATL_rone,
+              G, lda, ATL_rone, U0, lda);
+      cblas_trmm(MyOrder, CblasRight, CblasUpper, my_trans, CblasNonUnit,
+                 Nleft, Nright, one, U1, lda, G, lda);
+      ATL_lauumU(Nright, U1, lda);
+   }
+   else *A = *A * *A;
+}
+@ROUT ATL_lauum
+@extract -b @(topd)/gen.inc what=cw @(cw01)
+#include "atlas_lapack.h"
+void ATL_lauum(const enum ATLAS_ORDER Order, const enum ATLAS_UPLO Uplo,
+               const int N, TYPE *A, const int lda)
+{
+   if (N > 0)
+   {
+      if (Order == AtlasColMajor)
+      {
+         if (Uplo == AtlasUpper) ATL_lauumCU(N, A, lda);
+         else ATL_lauumCL(N, A, lda);
+      }
+      else
+      {
+         if (Uplo == AtlasUpper) ATL_lauumRU(N, A, lda);
+         else ATL_lauumRL(N, A, lda);
+      }
+   }
+}
+@ROUT ATL_potrf
+@extract -b @(topd)/gen.inc what=cw @(cw99)
+#include "atlas_lapack.h"
+
+int ATL_potrf(const enum ATLAS_ORDER Order, const enum ATLAS_UPLO Uplo,
+              const int N, TYPE *A, const int lda)
+{
+   int ierr=0;
+   if (N)
+   {
+      if (Order == AtlasColMajor)
+      {
+         if (Uplo == AtlasUpper) ierr = ATL_potrfU(N, A, lda);
+         else ierr = ATL_potrfL(N, A, lda);
+      }
+      else
+      {
+      #ifdef TREAL
+         if (Uplo == AtlasUpper) ierr = ATL_potrfL(N, A, lda);
+         else ierr = ATL_potrfU(N, A, lda);
+      #else
+         if (Uplo == AtlasUpper) ierr = Mjoin(PATL,potrfRU)(N, A, lda);
+         else ierr = Mjoin(PATL,potrfRL)(N, A, lda);
+@beginskip
+         if (Uplo == AtlasUpper)
+         {
+             for (ierr=0; ierr < N-1; ierr++)
+                Mjoin(PATLU,scal)(N-1-ierr, ATL_rnone, A+3+ierr*((lda+1)<<1),2);
+             ierr = ATL_potrfL(N, A, lda);
+         }
+         else
+         {
+             for (ierr=1; ierr < N; ierr++)
+                Mjoin(PATLU,scal)(ierr, ATL_rnone, A+1+ierr*(lda<<1), 2);
+            ierr = ATL_potrfU(N, A, lda);
+         }
+@endskip
+      #endif
+      }
+   }
+   return(ierr);
+}
+@ROUT ATL_potrfRL ATL_potrfRU
+@extract -b @(topd)/gen.inc what=cw @(cw03)
+/*
+ * HERK actually uses real gemm, so use real blocking factors
+ */
+#ifdef SCPLX
+   #define CMM_H
+   #include "smm.h"
+#elif defined(DCPLX)
+   #define ZMM_H
+   #include "zmm.h"
+#endif
+#include "atlas_misc.h"
+#include "atlas_lvl3.h"
+#include "atlas_level3.h"
+#include "atlas_level1.h"
+#include "atlas_lapack.h"
+#include <math.h>
+
+@ROUT ATL_potrfRU
+#define ATL_potrfRU Mjoin(PATL,potrfRU)
+int ATL_potrfRU(const int N, TYPE *A, const int lda)
+{
+   TYPE *An, *Ac;
+   int Nleft, Nright, ierr;
+   static const TYPE ONE[2] = {ATL_rone, ATL_rzero};
+   const int lda2=lda+lda;
+
+   if (N > 1)
+   {
+      Nleft = N >> 1;
+      #ifdef NB
+         if (Nleft > NB<<1) Nleft = ATL_MulByNB(ATL_DivByNB(Nleft));
+      #endif
+      Nright = N - Nleft;
+      ierr = ATL_potrfRU(Nleft, A, lda);
+      if (!ierr)
+      {
+         Ac = A + Nleft + Nleft;
+         An = Ac + Nleft*lda2 ;
+         cblas_trsm(CblasRowMajor, CblasLeft, CblasUpper, AtlasConjTrans,
+                    CblasNonUnit, Nleft, Nright, ONE, A, lda, Ac, lda);
+         cblas_herk(CblasRowMajor, CblasUpper, AtlasConjTrans, Nright, Nleft,
+                    ATL_rnone, Ac, lda, ATL_rone, An, lda);
+         ierr = ATL_potrfRU(Nright, An, lda);
+         if (ierr) return(ierr+Nleft);
+      }
+      else return(ierr);
+   }
+   else if (N == 1)
+   {
+      if (*A > ATL_rzero)
+      {
+         *A = sqrt(*A);
+         A[1] = ATL_rzero;
+      }
+      else return(1);
+   }
+   return(0);
+}
+@ROUT ATL_potrfRL
+#define ATL_potrfRL Mjoin(PATL,potrfRL)
+int ATL_potrfRL(const int N, TYPE *A, const int lda)
+{
+   TYPE *An, *Ar;
+   int Nleft, Nright, ierr;
+   static const TYPE ONE[2] = {ATL_rone, ATL_rzero};
+   const int lda2=lda+lda;
+
+   if (N > 1)
+   {
+      Nleft = N >> 1;
+      #ifdef NB
+         if (Nleft > NB<<1) Nleft = ATL_MulByNB(ATL_DivByNB(Nleft));
+      #endif
+      Nright = N - Nleft;
+      ierr = ATL_potrfRL(Nleft, A, lda);
+      if (!ierr)
+      {
+         Ar = A + Nleft * lda2;
+         An = Ar + Nleft+Nleft;
+         cblas_trsm(CblasRowMajor, CblasRight, CblasLower, CblasConjTrans,
+                    CblasNonUnit, Nright, Nleft, ONE, A, lda, Ar, lda);
+         cblas_herk(CblasRowMajor, CblasLower, CblasNoTrans, Nright, Nleft,
+                    ATL_rnone, Ar, lda, ATL_rone, An, lda);
+         ierr = ATL_potrfRL(Nright, An, lda);
+         if (ierr) return(ierr+Nleft);
+      }
+      else return(ierr);
+   }
+   else if (N == 1)
+   {
+      if (*A > ATL_rzero)
+      {
+         *A = sqrt(*A);
+         A[1] = ATL_rzero;
+      }
+      else return(1);
+   }
+   return(0);
+}
+@ROUT ATL_potrfL ATL_potrfU
+/*
+ * HERK actually uses real gemm, so use real blocking factors
+ */
+#ifdef SCPLX
+   #define CMM_H
+   #include "smm.h"
+#elif defined(DCPLX)
+   #define ZMM_H
+   #include "zmm.h"
+#endif
+#include "atlas_misc.h"
+#include "atlas_lvl3.h"
+#include "atlas_level3.h"
+#include "atlas_level1.h"
+#include "atlas_lapack.h"
+#include <math.h>
+
+#ifdef TCPLX
+   #define llt_syrk cblas_herk
+   #define llt_trans AtlasConjTrans
+   #define llt_dot  Mjoin(Mjoin(cblas_,UPR),dot)
+   #define llt_scal Mjoin(Mjoin(cblas_,UPR),scal)
+   #define llt_rscal Mjoin(Mjoin(cblas_,UPR),scal)
+#else
+   #define llt_syrk cblas_syrk
+   #define llt_trans AtlasTrans
+   #define lda2 lda
+#endif
+@ROUT ATL_potrfU
+@extract -b @(topd)/gen.inc what=cw @(cw99)
+#ifdef TCPLX
+static int ATL_potrf2(const int N, TYPE *A, const int lda)
+{
+   int j, k;
+   static const TYPE one[2] = {ATL_rone, ATL_rzero};
+   static const TYPE none[2] = {ATL_rnone, ATL_rzero};
+   const int lda2 = lda<<1;
+   TYPE Ajj, *Ac=A, *An=A+lda2;
+
+   for (k=j=0; j != N; j++, k += 2)
+   {
+      Ajj = Ac[k] - llt_dot(k, Ac, 1, Ac, 1);
+      Ac[k+1] = ATL_rzero;
+      if (Ajj > ATL_rzero)
+      {
+         Ac[k] = Ajj = sqrt(Ajj);
+         if (j != N-1)
+         {
+            llt_scal(j, ATL_rnone, Ac+1, 2);
+            cblas_gemv(CblasColMajor, CblasTrans, j, N-j-1, none,
+                       An, lda, Ac, 1, one, An+k, lda);
+            llt_scal(j, ATL_rnone, Ac+1, 2);
+            llt_rscal(N-j-1, ATL_rone/Ajj, An+k, lda);
+            Ac = An;
+            An += lda2;
+         }
+      }
+      else
+      {
+         Ac[k] = Ajj;
+         return(j+1);
+      }
+   }
+   return(0);
+}
+#else  /* real version */
+static int ATL_potrf2(const int N, TYPE *A, const int lda)
+{
+   int j;
+   TYPE Ajj, *Ac=A, *An=A+lda;
+
+   for (j=0; j != N; j++)
+   {
+      Ajj = Ac[j] - cblas_dot(j, Ac, 1, Ac, 1);
+      if (Ajj > ATL_rzero)
+      {
+         Ac[j] = Ajj = sqrt(Ajj);
+         if (j != N-1)
+         {
+            cblas_gemv(CblasColMajor, CblasTrans, j, N-j-1, ATL_rnone,
+                       An, lda, Ac, 1, ATL_rone, An+j, lda);
+            cblas_scal(N-j-1, ATL_rone/Ajj, An+j, lda);
+            Ac = An;
+            An += lda;
+         }
+      }
+      else
+      {
+         Ac[j] = Ajj;
+         return(j+1);
+      }
+   }
+   return(0);
+}
+#endif
+
+static int ATL_potrfU_4(TYPE *A, const int lda)
+{
+   TYPE *pA1=A+lda, *pA2=pA1+lda, *pA3=pA2+lda;
+   TYPE L11 = *A, L21 = *pA1, L31 = *pA2, L41 = *pA3;
+   TYPE L22 = pA1[1], L32 = pA2[1], L42 = pA3[1];
+   TYPE L33 = pA2[2], L43 = pA3[2];
+   TYPE L44 = pA3[3];
+   int iret=0;
+
+   if (L11 > ATL_rzero)
+   {
+      *A = L11 = sqrt(L11);
+      L11 = ATL_rone / L11;
+      L21 *= L11;
+      L31 *= L11;
+      L41 *= L11;
+      *pA1 = L21; *pA2 = L31; *pA3 = L41;
+      L22 -= L21*L21;
+      if (L22 > ATL_rzero)
+      {
+         pA1[1] = L22 = sqrt(L22);
+         L22 = ATL_rone / L22;
+         L32 = (L32 - L31*L21) * L22;
+         L42 = (L42 - L41*L21) * L22;
+         L33 -= L31*L31 + L32*L32;
+         pA2[1] = L32; pA3[1] = L42;
+         if (L33 > ATL_rzero)
+         {
+            pA2[2] = L33 = sqrt(L33);
+            L43 = (L43 - L41*L31 - L42*L32) / L33;
+            L44 -= L41*L41 + L42*L42 + L43*L43;
+            pA3[2] = L43;
+            if (L44 > ATL_rzero)
+            {
+               pA3[3] = sqrt(L44);
+               return(0);
+            }
+            else iret=4;
+         }
+         else iret=3;
+      }
+      else iret=2;
+   }
+   else iret=1;
+   return(iret);
+}
+static int ATL_potrfU_3(TYPE *A, const int lda)
+{
+   TYPE *pA1=A+lda, *pA2=pA1+lda;
+   register TYPE L11 = *A, L21 = *pA1, L31 = *pA2;
+   register TYPE L22=pA1[1], L32=pA2[1];
+   register TYPE L33=pA2[2];
+   int iret=0;
+
+   if (L11 > ATL_rzero)
+   {
+      *A = L11 = sqrt(L11);
+      L11 = ATL_rone / L11;
+      L21 *= L11;
+      L31 *= L11;
+      *pA1 = L21; *pA2 = L31;
+      L22 -= L21*L21;
+      if (L22 > ATL_rzero)
+      {
+         L22 = sqrt(L22);
+         L32 = (L32 - L31*L21) / L22;
+         L33 -= L31*L31 + L32*L32;
+         pA1[1] = L22; pA2[1] = L32;
+         if (L33 > ATL_rzero)
+         {
+            pA2[2] = sqrt(L33);
+            return(0);
+         }
+         else iret=3;
+      }
+      else iret=2;
+   }
+   else iret=1;
+   return(iret);
+}
+
+static int ATL_potrfU_2(TYPE *A, const int lda)
+{
+   TYPE *pA1 = A+lda;
+   register TYPE L11=*A, L21=*pA1, L22 = pA1[1];
+
+   if (L11 > ATL_rzero)
+   {
+      *A = L11 = sqrt(L11);
+      *pA1 = L21 = L21 / L11;
+      L22 -= L21*L21;
+      if (L22 > ATL_rzero)
+      {
+         pA1[1] = sqrt(L22);
+         return(0);
+      }
+      else return(2);
+   }
+   else return(1);
+}
+
+int ATL_potrfU(const int N, TYPE *A, const int lda)
+{
+   TYPE *An, *Ac;
+   int Nleft, Nright, ierr;
+   #ifdef TREAL
+      #define ONE ATL_rone
+   #else
+      static const TYPE ONE[2] = {ATL_rone, ATL_rzero}; 
+      const int lda2=lda<<1;
+   #endif
+
+@skip   if (N > NB)
+   #ifdef TREAL
+      if (N > 4)
+   #else
+      if (N > 1)
+   #endif
+   {
+      Nleft = N >> 1;
+      #ifdef NB
+         if (Nleft > NB<<1) Nleft = ATL_MulByNB(ATL_DivByNB(Nleft));
+      #endif
+      Nright = N - Nleft;
+      ierr = ATL_potrfU(Nleft, A, lda);
+      if (!ierr)
+      {
+         Ac = A + lda2 * Nleft;
+         An = Ac + (Nleft SHIFT);
+         cblas_trsm(CblasColMajor, CblasLeft, CblasUpper, llt_trans,
+                    CblasNonUnit, Nleft, Nright, ONE, A, lda, Ac, lda);
+         llt_syrk(CblasColMajor, CblasUpper, llt_trans, Nright, Nleft,
+                  ATL_rnone, Ac, lda, ATL_rone, An, lda);
+         ierr = ATL_potrfU(Nright, An, lda);
+         if (ierr) return(ierr+Nleft);
+      }
+      else return(ierr);
+   }
+@skip   else if (N) return(ATL_potrf2(N, A, lda));
+   #ifdef TREAL
+      else if (N==4) return(ATL_potrfU_4(A, lda));
+      else if (N==3) return(ATL_potrfU_3(A, lda));
+      else if (N==2) return(ATL_potrfU_2(A, lda));
+      else if (N==1)
+      {
+         if (*A > ATL_rzero) *A = sqrt(*A);
+         else return(1);
+      }
+   #else
+      else if (N == 1)
+      {
+         if (*A > ATL_rzero)
+         {
+            *A = sqrt(*A);
+            A[1] = ATL_rzero;
+         }
+         else return(1);
+      }
+   #endif
+   return(0);
+}
+@ROUT ATL_potrfL
+@extract -b @(topd)/gen.inc what=cw @(cw99)
+static int ATL_potrf2(const int N, TYPE *A, const int lda)
+{
+#ifdef TREAL
+    TYPE Ajj, *Ac=A;
+    const int N_1 = N-1;
+    int j;
+
+    for (j=0; j != N_1; j++, Ac += lda)
+    {
+       Ajj = Ac[j] - cblas_dot(j, A+j, lda, A+j, lda);
+
+       if (Ajj > ATL_rzero)
+       {
+          Ac[j] = Ajj = sqrt(Ajj);
+          cblas_gemv(CblasColMajor, CblasNoTrans, N-j-1, j, ATL_rnone, 
+                     A+j+1, lda, A+j, lda, ATL_rone, Ac+j+1, 1);
+          cblas_scal(N-j-1, ATL_rone/Ajj, Ac+j+1, 1);
+       }
+       else
+       {
+          Ac[j] = Ajj;
+          return(j+1);
+       }
+    }
+    Ajj = Ac[j] - cblas_dot(j, A+j, lda, A+j, lda);
+    if (Ajj > ATL_rzero) Ac[j] = Ajj = sqrt(Ajj);
+    else
+    {
+       Ac[j] = Ajj;
+       return(N);
+    }
+#else
+    TYPE Ajj, *Ac=A;
+    TYPE one[2] = {ATL_rone, ATL_rzero};
+    TYPE none[2] = {ATL_rnone, ATL_rzero};
+    const int N_1 = N-1, lda2 = lda<<1;
+    int j, j2;
+
+    for (j2=j=0; j != N_1; j++, j2 += 2, Ac += lda2)
+    {
+       Ajj = Ac[j2];
+       cblas_dotc_sub(j, A+j2, lda, A+j2, lda, Ac+j2);
+       Ajj -= Ac[j2];
+
+       if (Ajj > ATL_rzero)
+       {
+          Ac[j2] = Ajj = sqrt(Ajj);
+          llt_scal(j, ATL_rnone, A+j2+1, lda2);
+          cblas_gemv(CblasColMajor, CblasNoTrans, N-j-1, j, none, 
+                     A+j2+2, lda, A+j2, lda, one, Ac+j2+2, 1);
+          llt_scal(j, ATL_rnone, A+j2+1, lda2);
+          llt_scal((N-j-1)<<1, ATL_rone/Ajj, Ac+j2+2, 1);
+       }
+       else
+       {
+          Ac[j2] = Ajj;
+          return(j+1);
+       }
+    }
+    Ajj = Ac[j2];
+    cblas_dotc_sub(j, A+j2, lda, A+j2, lda, Ac+j2);
+    Ajj -= Ac[j2];
+    if (Ajj > ATL_rzero) Ac[j2] = sqrt(Ajj);
+    else
+    {
+       Ac[j2] = Ajj;
+       return(N);
+    }
+#endif
+   return(0);
+}
+
+static int ATL_potrfL_4(TYPE *A, const int lda)
+{
+   TYPE *pA1=A+lda+1, *pA2=pA1+lda+1, *pA3=pA2+lda+1;
+   TYPE L11=*A, L21=A[1], L31 = A[2], L41 = A[3];
+   TYPE L22=*pA1, L32=pA1[1], L42 = pA1[2];
+   TYPE L33=*pA2, L43 = pA2[1];
+   TYPE L44=*pA3;
+   int iret=0;
+
+   if (L11 > ATL_rzero)
+   {
+      *A = L11 = sqrt(L11);
+      L11 = ATL_rone / L11;
+      L21 *= L11;
+      L31 *= L11;
+      L41 *= L11;
+      A[1] = L21; A[2] = L31; A[3] = L41;
+      L22 -= L21*L21;
+      if (L22 > ATL_rzero)
+      {
+         *pA1 = L22 = sqrt(L22);
+         L22 = ATL_rone / L22;
+         L32 = (L32 - L31*L21) * L22;
+         L42 = (L42 - L41*L21) * L22;
+         L33 -= L31*L31 + L32*L32;
+         pA1[1] = L32; pA1[2] = L42;
+         if (L33 > ATL_rzero)
+         {
+            *pA2 = L33 = sqrt(L33);
+            L43 = (L43 - L41*L31 - L42*L32) / L33;
+            L44 -= L41*L41 + L42*L42 + L43*L43;
+            pA2[1] = L43;
+            if (L44 > ATL_rzero)
+            {
+               *pA3 = sqrt(L44);
+               return(0);
+            }
+            else iret=4;
+         }
+         else iret=3;
+      }
+      else iret=2;
+   }
+   else iret=1;
+   return(iret);
+}
+static int ATL_potrfL_3(TYPE *A, const int lda)
+{
+   TYPE *pA1=A+lda+1, *pA2=pA1+lda+1;
+   register TYPE L11=*A, L21=A[1], L31 = A[2];
+   register TYPE L22=*pA1, L32=pA1[1];
+   register TYPE L33=*pA2;
+   int iret=0;
+
+   if (L11 > ATL_rzero)
+   {
+      *A = L11 = sqrt(L11);
+      L11 = ATL_rone / L11;
+      L21 *= L11;
+      L31 *= L11;
+      A[1] = L21; A[2] = L31;
+      L22 -= L21*L21;
+      if (L22 > ATL_rzero)
+      {
+         L22 = sqrt(L22);
+         L32 = (L32 - L31*L21) / L22;
+         L33 -= L31*L31 + L32*L32;
+         *pA1 = L22; pA1[1] = L32;
+         if (L33 > ATL_rzero)
+         {
+            *pA2 = sqrt(L33);
+            return(0);
+         }
+         else iret=3;
+      }
+      else iret=2;
+   }
+   else iret=1;
+   return(iret);
+}
+
+static int ATL_potrfL_2(TYPE *A, const int lda)
+{
+   register TYPE L11=*A, L21=A[1], L22 = A[lda+1];
+
+   if (L11 > ATL_rzero)
+   {
+      *A = L11 = sqrt(L11);
+      A[1] = L21 = L21 / L11;
+      L22 -= L21*L21;
+      if (L22 > ATL_rzero)
+      {
+         A[lda+1] = sqrt(L22);
+         return(0);
+      }
+      else return(2);
+   }
+   else return(1);
+}
+
+int ATL_potrfL(const int N, TYPE *A, const int lda)
+{
+   TYPE *An, *Ar;
+   int Nleft, Nright, ierr;
+   #ifdef TREAL
+      #define lda2 lda
+      #define ONE ATL_rone
+   #else
+      static const TYPE ONE[2] = {ATL_rone, ATL_rzero}; 
+      const int lda2=lda<<1;
+   #endif
+
+@skip   if (N > NB)
+#ifdef TREAL
+   if (N > 4)
+#else
+   if (N > 1)
+#endif
+   {
+      Nleft = N >> 1;
+      #ifdef NB
+         if (Nleft > NB<<1) Nleft = ATL_MulByNB(ATL_DivByNB(Nleft));
+      #endif
+      Nright = N - Nleft;
+      ierr = ATL_potrfL(Nleft, A, lda);
+      if (!ierr)
+      {
+         Ar = A + (Nleft SHIFT);
+         An = Ar + lda2 * Nleft;
+         cblas_trsm(CblasColMajor, CblasRight, CblasLower, llt_trans,
+                    CblasNonUnit, Nright, Nleft, ONE, A, lda, Ar, lda);
+         llt_syrk(CblasColMajor, CblasLower, CblasNoTrans, Nright, Nleft,
+                  ATL_rnone, Ar, lda, ATL_rone, An, lda);
+         ierr = ATL_potrfL(Nright, An, lda);
+         if (ierr) return(ierr+Nleft);
+      }
+      else return(ierr);
+   }
+   #ifdef TREAL
+      else if (N==4) return(ATL_potrfL_4(A, lda));
+      else if (N==3) return(ATL_potrfL_3(A, lda));
+      else if (N==2) return(ATL_potrfL_2(A, lda));
+      else if (N==1)
+      {
+         if (*A > ATL_rzero) *A = sqrt(*A);
+         else return(1);
+      }
+   #else
+      else if (N == 1)
+      {
+         if (*A > ATL_rzero)
+         {
+            *A = sqrt(*A);
+            A[1] = ATL_rzero;
+         }
+         else return(1);
+      }
+   #endif
+   return(0);
+}
+@ROUT ATL_potrs
+@extract -b @(topd)/gen.inc what=cw @(cw99)
+#include "atlas_lapack.h"
+
+#ifdef TCPLX
+   #define MyTrans CblasConjTrans
+#else
+   #define MyTrans CblasTrans
+#endif
+
+void ATL_potrs(const enum CBLAS_ORDER Order, const enum CBLAS_UPLO Uplo,
+               const int N, const int NRHS, const TYPE *A, const int lda,
+               TYPE *B, const int ldb)
+{
+   #ifdef TCPLX
+      int j;
+      const int ldb2 = ldb+ldb;
+      const TYPE one[2] = {ATL_rone, ATL_rzero};
+   #else
+      #define one ATL_rone
+   #endif
+
+   if (!N || !NRHS) return;
+   if (Order == CblasColMajor)
+   {
+/*
+ *    Solve X = inv(U) * inv(U') * B
+ */
+      if (Uplo == AtlasUpper)
+      {
+         cblas_trsm(Order, CblasLeft, CblasUpper, MyTrans, CblasNonUnit, 
+                    N, NRHS, one, A, lda, B, ldb);
+         cblas_trsm(Order, CblasLeft, CblasUpper, CblasNoTrans, CblasNonUnit, 
+                    N, NRHS, one, A, lda, B, ldb);
+      }
+/*
+ *    Solve X = inv(L') * inv(L) * B
+ */
+      else
+      {
+         cblas_trsm(Order, CblasLeft, CblasLower, CblasNoTrans, CblasNonUnit,
+                    N, NRHS, one, A, lda, B, ldb);
+         cblas_trsm(Order, CblasLeft, CblasLower, MyTrans, CblasNonUnit, 
+                    N, NRHS, one, A, lda, B, ldb);
+      }
+   }
+/*
+ * For row-major, remember we have x' and b', so we must transpose usual
+ * equations
+ */
+   else
+   {
+      #ifdef TCPLX
+         for (j=0; j < NRHS; j++)
+            Mjoin(PATLU,scal)(N, -1.0, B+j*ldb2+1, 2);
+      #endif
+/*
+ *    solve x^T = b^T * inv(U) * inv(U^T)
+ *    conj( x^H = b^H * inv(U) * inv(U^H) )  (complex)
+ */
+      if (Uplo == CblasUpper)
+      {
+         cblas_trsm(Order, CblasRight, CblasUpper, CblasNoTrans, CblasNonUnit,
+                    NRHS, N, one, A, lda, B, ldb);
+         cblas_trsm(Order, CblasRight, CblasUpper, MyTrans, CblasNonUnit,
+                    NRHS, N, one, A, lda, B, ldb);
+      }
+/*
+ *    solve x^T = b^T * inv(L^T) * inv(L)
+ *    conj( x^H = b^H * inv(L^H) * inv(L) )  (complex)
+ */
+      else
+      {
+         cblas_trsm(Order, CblasRight, CblasLower, MyTrans, CblasNonUnit,
+                    NRHS, N, one, A, lda, B, ldb);
+         cblas_trsm(Order, CblasRight, CblasLower, CblasNoTrans, CblasNonUnit,
+                    NRHS, N, one, A, lda, B, ldb);
+      }
+      #ifdef TCPLX
+         for (j=0; j < NRHS; j++)
+            Mjoin(PATLU,scal)(N, -1.0, B+j*ldb2+1, 2);
+      #endif
+   }
+}
+@ROUT ATL_laswp
+@extract -b @(topd)/gen.inc what=cw @(cw99)
+#include "atlas_lapack.h"
+
+void ATL_laswp(const int N, TYPE *A, const int lda0, const int K1, 
+               const int K2, const int *piv, const int inci)
+{
+   #ifdef TCPLX
+      const int lda = lda0<<1;
+   #else
+      #define lda lda0
+   #endif
+   const int n = K2 - K1;
+   int nb = N >> 5;
+   const int mr = N - (nb<<5);
+   const int incA = lda << 5;
+   const int *ipiv;
+   int i, ip, i1, i2, KeepOn;
+   register int h;
+   TYPE *a0, *a1;
+   #ifdef TCPLX
+      register TYPE r0, r1;
+   #else
+      register TYPE r;
+   #endif
+
+   if (K2 < K1) return;
+   if (inci < 0)
+   {
+      piv -= (K2-1) * inci;
+      i1 = K2-1;
+      i2 = K1;
+   }
+   else
+   {
+      piv += K1*inci;
+      i1 = K1;
+      i2 = K2-1;
+   }
+
+   if (nb)
+   {
+      do
+      {
+         ipiv = piv;
+         i = i1;
+         do
+         {
+            ip = *ipiv; ipiv += inci;
+            if (ip != i)
+            {
+               a0 = A + (i SHIFT); 
+               a1 = A + (ip SHIFT);
+               for (h=32; h; h--)
+               {
+                  #ifdef TCPLX
+                     r0 = *a0;
+                     r1 = a0[1];
+                     *a0 = *a1;
+                     a0[1] = a1[1];
+                     *a1 = r0;
+                     a1[1] = r1;
+                  #else
+                     r = *a0;
+                     *a0 = *a1;
+                     *a1 = r;
+                  #endif
+                  a0 += lda;
+                  a1 += lda;
+               }
+            }
+            if (inci > 0) KeepOn = (++i <= i2);
+            else KeepOn = (--i >= i2);
+         }
+         while(KeepOn);
+         A += incA;
+      }
+      while(--nb);
+   }
+   if (mr)
+   {
+      ipiv = piv;
+      i = i1;
+      do
+      {
+         ip = *ipiv; ipiv += inci;
+         if (ip != i)
+         {
+            a0 = A + (i SHIFT); 
+            a1 = A + (ip SHIFT);
+            for (h=mr; h; h--)
+            {
+               #ifdef TCPLX
+                  r0 = *a0;
+                  r1 = a0[1];
+                  *a0 = *a1;
+                  a0[1] = a1[1];
+                  *a1 = r0;
+                  a1[1] = r1;
+               #else
+                  r = *a0;
+                  *a0 = *a1;
+                  *a1 = r;
+               #endif
+               a0 += lda;
+               a1 += lda;
+            }
+         }
+         if (inci > 0) KeepOn = (++i <= i2);
+         else KeepOn = (--i >= i2);
+      }
+      while(KeepOn);
+   }
+}
+@ROUT ATL_getrfC ATL_getrfR
+@extract -b @(topd)/gen.inc what=cw @(cw99)
+#include "atlas_misc.h"
+#include "atlas_lvl3.h"
+#include "atlas_level3.h"
+#include "atlas_level1.h"
+#include "atlas_lapack.h"
+#include "atlas_lamch.h"
+@skip #include "atlas_ptalias_lapack.h"
+
+@beginskip
+#if (ATL_mmMU > ATL_mmNU)
+   #define ATL_luMmin ATL_mmMU
+#else
+   #define ATL_luMmin ATL_mmNU
+#endif
+@endskip
+#ifdef TREAL
+   #define ATL_luMmin 2
+#else
+   #define ATL_luMmin 1
+#endif
+
+#ifdef TCPLX
+   #define ATL_CplxInv(in, out) Mjoin(PATL,cplxinvert)(1, in, 1, out, 1);
+#endif
+
+@ROUT ATL_getrfR
+int ATL_getrfR(const int M, const int N, TYPE *A, const int lda, int *ipiv)
+/*
+ * Row-major factorization of form 
+ *   A = L * U * P
+ * where P is a column-permutation matrix, L is lower triangular (lower
+ * trapazoidal if M > N), and U is upper triangular with unit diagonals (upper
+ * trapazoidal if M < N).  This is the recursive Level 3 BLAS version.
+ */
+{
+   const int MN = Mmin(M, N);
+   int Nup, Ndown, i, k, ierr=0;
+   #ifdef TCPLX
+      const TYPE one[2] = {ATL_rone, ATL_rzero}; 
+      const TYPE none[2] = {ATL_rnone, ATL_rzero};
+      TYPE inv[2], tmp[2];
+   #else
+      #define one ATL_rone
+      #define none ATL_rnone
+      TYPE tmp;
+   #endif
+   TYPE *Ar, *Ac, *An;
+
+   if (MN > 1)
+   {
+      Nup = MN >> 1;
+      #ifdef NB
+         if (Nup > NB) Nup = ATL_MulByNB(ATL_DivByNB(Nup));
+      #endif
+      Ndown = M - Nup;
+      i = ATL_getrfR(Nup, N, A, lda, ipiv);
+      if (i) if (!ierr) ierr = i;
+      Ar = A + (Nup * lda SHIFT);
+      Ac = A + (Nup SHIFT);
+      An = Ar + (Nup SHIFT);
+
+      ATL_laswp(Ndown, Ar, lda, 0, Nup, ipiv, 1);  /* apply pivots */
+      cblas_trsm(CblasRowMajor, CblasRight, CblasUpper, CblasNoTrans, 
+                 CblasUnit, Ndown, Nup, one, A, lda, Ar, lda);
+      cblas_gemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, Ndown, N-Nup, Nup,
+                 none, Ar, lda, Ac, lda, one, An, lda);
+      
+      i = ATL_getrfR(Ndown, N-Nup, An, lda, ipiv+Nup);
+      if (i) if (!ierr) ierr = Nup + i;
+      for (i=Nup; i != MN; i++) ipiv[i] += Nup;
+      ATL_laswp(Nup, A, lda, Nup, MN, ipiv, 1);  /* apply pivots */
+   }
+   else if (MN == 1)
+   {
+      *ipiv = i = cblas_iamax(N, A, 1);
+      #ifdef TREAL
+         tmp = A[i];
+         if (tmp != ATL_rzero)
+         {
+            if (Mabs(tmp) >= ATL_laSAFMIN)
+               cblas_scal(N, ATL_rone/tmp, A, 1);
+            else
+            {
+               for (k=0; k < N; k++)
+                  A[k] /= tmp;
+            }
+            A[i] = *A;
+            *A = tmp;
+         }
+         else ierr = 1;
+      #else
+         i <<= 1;
+         tmp[0] = A[i];
+         tmp[1] = A[i+1];
+         if (tmp[0] != ATL_rzero || tmp[1] != ATL_rzero)
+         {
+            if (ATL_lapy2(tmp[0], tmp[1]) >= ATL_laSAFMIN)
+            {
+               ATL_CplxInv(tmp, inv);
+               cblas_scal(N, inv, A, 1);
+            }
+            else
+               Mjoin(PATL,cplxdivide)(N, tmp, A, 1, A, 1);
+            A[i] = *A;
+            A[i+1] = A[1];
+            *A = tmp[0];
+            A[1] = tmp[1];
+         }
+         else ierr = 1;
+      #endif
+   }
+   return(ierr);
+}
+@ROUT ATL_getrfC
+#ifdef TREAL
+
+static int LU2(const int M, TYPE *A, const int lda, int *ipiv)
+/*
+ * factors 2 cols of LU, applies all updated to 2nd call during ininitial
+ * iamax to save time
+ */
+{
+   int ip, iret=0;
+   TYPE *A1 = A + lda;
+   register TYPE t0, t1, scal0, scal1, amax=ATL_rzero;
+   int i, imax=(-1);
+
+   *ipiv = ip = cblas_iamax(M, A, 1);
+   t0 = A[ip];
+   if (t0 != ATL_rzero)
+   {
+      if (Mabs(t0) >= ATL_laSAFMIN)
+      {
+         t1 = A1[ip];
+         A[ip] = *A; A1[ip] = *A1;
+         *A = t0; *A1 = t1;
+         scal0 = ATL_rone / t0; scal1 = -t1;
+         for (i=1; i != M; i++)
+         {
+            t0 = A[i]; t1 = A1[i];
+            t0 *= scal0;
+            t1 += t0 * scal1;
+            A[i] = t0; A1[i] = t1;
+            if (t1 < ATL_rzero) t1 = -t1;
+            if (t1 > amax) { amax = t1; imax = i; }
+         }
+      }
+      else  /* can't safely invert pivot, so must actually divide */
+      {
+         t1 = A1[ip];
+         A[ip] = *A; A1[ip] = *A1;
+         *A = t0; *A1 = t1;
+         scal0 = t0; scal1 = -t1;
+         for (i=1; i != M; i++)
+         {
+            t0 = A[i]; t1 = A1[i];
+            t0 /= scal0;
+            t1 += t0 * scal1;
+            A[i] = t0; A1[i] = t1;
+            if (t1 < ATL_rzero) t1 = -t1;
+            if (t1 > amax) { amax = t1; imax = i; }
+         }
+      }
+      if (amax != ATL_rzero)
+      {
+         ipiv[1] = imax;
+         t0 = A[imax]; t1 = A1[imax];
+         A[imax] = A[1]; A1[imax] = A1[1]; 
+         A[1] = t0; A1[1] = t1;
+         if (Mabs(t1) >= ATL_laSAFMIN)
+            cblas_scal(M-2, ATL_rone/t1, A1+2, 1);
+         else
+            for (i=2; i < M; i++)
+               A1[i] /= t1;
+      }
+      else
+      {
+         if (imax != -1) ipiv[1] = imax;
+         else ipiv[1] = 1;
+         iret = 2;
+      }
+   }
+   else
+   {
+      imax = 1 + cblas_iamax(M-1, A1+1, 1);
+      amax = A1[imax];
+      iret=1;
+      if (amax != ATL_rzero)
+      {
+         ipiv[1] = imax;
+         t0 = A[imax]; t1 = A1[imax];
+         A[imax] = A[1]; A1[imax] = A1[1]; 
+         A[1] = t0; A1[1] = t1;
+         if (Mabs(t1) >= ATL_laSAFMIN)
+            cblas_scal(M-2, ATL_rone/t1, A1+2, 1);
+         else
+            for (i=2; i < M; i++)
+               A1[i] /= t1;
+      }
+      else
+      {
+         if (imax != -1) ipiv[1] = imax;
+         else ipiv[1] = 1;
+      }
+   }
+   return(iret);
+}
+#define MySwap(N_, A_, lda_, ip_) \
+{ \
+   TYPE t0_, t1_, t2_, t3_; \
+   TYPE *A0_=(A_), *A1_, *A2_, *A3_; \
+   int ip0_ = (ip_); \
+   switch(N_) \
+   { \
+   case 4: \
+      A1_ = A0_ + (lda_); A2_ = A1_ + (lda_); A3_ = A2_ + (lda_); \
+      t0_ = *A0_; t1_ = *A1_; t2_ = *A2_; t3_ = *A3_; \
+      *A0_ = A0_[ip0_]; *A1_ = A1_[ip0_]; *A2_ = A2_[ip0_]; *A3_ = A3_[ip0_]; \
+      A0_[ip0_] = t0_; A1_[ip0_] = t1_; A2_[ip0_] = t2_; A3_[ip0_] = t3_; \
+      break; \
+   case 3: \
+      A1_ = A0_ + (lda_); A2_ = A1_ + (lda_); \
+      t0_ = *A0_; t1_ = *A1_; t2_ = *A2_; \
+      *A0_ = A0_[ip0_]; *A1_ = A1_[ip0_]; *A2_ = A2_[ip0_]; \
+      A0_[ip0_] = t0_; A1_[ip0_] = t1_; A2_[ip0_] = t2_; \
+      break; \
+   case 2: \
+      A1_ = A0_ + (lda_); \
+      t0_ = *A0_; t1_ = *A1_; \
+      *A0_ = A0_[ip0_]; *A1_ = A1_[ip0_]; \
+      A0_[ip0_] = t0_; A1_[ip0_] = t1_; \
+      break; \
+   case 1: \
+      t0_ = *A0_; \
+      *A0_ = A0_[ip0_]; \
+      A0_[ip0_] = t0_; \
+      break; \
+   default: \
+      cblas_swap(N_, A0_, lda_, A0_+ip0_, lda_); \
+   } \
+}
+
+static int L2LU(const int M, const int N, TYPE *A, const int lda, int *ipiv)
+/*
+ * Level 2 based left-looking LU
+ */
+{
+   TYPE *Ac=A;
+   TYPE t0;
+   const int MN=Mmin(M,N), MN_1=MN-1;
+   int ip, j, jn, iret=0;
+
+   if (N == 2) return(LU2(M, A, lda, ipiv));
+   for (j=0, jn=1; j != MN; j=jn++)
+   {
+      ipiv[j] = ip = j + cblas_iamax(M-j, Ac+j, 1);
+      t0 = Ac[ip];
+      if (t0 != ATL_rzero)
+      {
+         MySwap(N, A+j, lda, ip-j);
+         cblas_scal(M-jn, ATL_rone/t0, Ac+jn, 1);
+         if (j != MN_1)
+         {
+            Ac += lda;
+            cblas_trsv(CblasColMajor, CblasLower, CblasNoTrans, CblasUnit, jn,
+                       A, lda, Ac, 1);
+            cblas_gemv(CblasColMajor, CblasNoTrans, M-jn, jn, ATL_rnone,
+                       A+jn, lda, Ac, 1, ATL_rone, Ac+jn, 1);
+         }
+      }
+      else if (!iret) iret = jn;
+   }
+   return(iret);
+}
+
+#else
+
+static int L2LU(const int M, const int N, TYPE *A, const int lda, int *ipiv)
+/*
+ * Complex Level 2 based left-looking LU
+ */
+{
+   TYPE *Ac=A;
+   TYPE t0, tmp[2];
+   const TYPE one[2] = {ATL_rone, ATL_rzero}, none[2] = {ATL_rnone, ATL_rzero};
+   const int MN=Mmin(M,N), MN_1=MN-1, lda2=lda+lda;
+   int ip, ip2, j, j2, jn, jn2, iret=0;
+
+   for (j=0, j2=0, jn=1, jn2=2; j != MN; j=jn++, j2 += 2, jn2 += 2)
+   {
+      ipiv[j] = ip = j + cblas_iamax(M-j, Ac+j2, 1);
+      ip2 = ip + ip;
+      if (Ac[ip2] != ATL_rzero || Ac[ip2+1] != ATL_rzero)
+      {
+         Mjoin(PATL,cplxinvert)(1, Ac+ip2, 1, tmp, 1);
+         cblas_swap(N, A+j2, lda, A+ip2, lda);
+         cblas_scal(M-jn, tmp, Ac+jn2, 1);
+         if (j != MN_1)
+         {
+            Ac += lda2;
+            cblas_trsv(CblasColMajor, CblasLower, CblasNoTrans, CblasUnit, jn,
+                       A, lda, Ac, 1);
+            cblas_gemv(CblasColMajor, CblasNoTrans, M-jn, jn, none,
+                       A+jn2, lda, Ac, 1, one, Ac+jn2, 1);
+         }
+      }
+      else if (!iret) iret = jn;
+   }
+   return(iret);
+}
+#endif
+
+int ATL_getrfC(const int M, const int N, TYPE *A, const int lda, int *ipiv)
+/*
+ * Column-major factorization of form 
+ *   A = P * L * U
+ * where P is a row-permutation matrix, L is lower triangular with unit diagonal
+ * elements (lower trapazoidal if M > N), and U is upper triangular (upper
+ * trapazoidal if M < N).  This is the recursive Level 3 BLAS version.
+ */
+{
+   const int MN = Mmin(M, N);
+   int Nleft, Nright, k, i, ierr=0;
+   #ifdef TCPLX
+      const TYPE one[2] = {ATL_rone, ATL_rzero}; 
+      const TYPE none[2] = {ATL_rnone, ATL_rzero};
+      TYPE inv[2], tmp[2];
+   #else
+      #define one ATL_rone
+      #define none ATL_rnone
+      TYPE tmp;
+   #endif
+   TYPE *Ac, *An;
+
+@skip   if (MN > 1)
+   if (MN > ATL_luMmin)
+   {
+      Nleft = MN >> 1;
+      #ifdef NB
+         if (Nleft > NB) Nleft = ATL_MulByNB(ATL_DivByNB(Nleft));
+      #endif
+      Nright = N - Nleft;
+      i = ATL_getrfC(M, Nleft, A, lda, ipiv);  /* factor left to L & U */
+      if (i) if (!ierr) ierr = i;
+/*
+ *    Update trailing submatrix
+ */
+      Ac = A + (Nleft * lda SHIFT);
+      An = Ac + (Nleft SHIFT);
+      ATL_laswp(Nright, Ac, lda, 0, Nleft, ipiv, 1);
+      cblas_trsm(CblasColMajor, CblasLeft, CblasLower, CblasNoTrans, CblasUnit,
+                 Nleft, Nright, one, A, lda, Ac, lda);
+      cblas_gemm(CblasColMajor, CblasNoTrans, CblasNoTrans, M-Nleft, Nright, 
+                 Nleft, none, A+(Nleft SHIFT), lda, Ac, lda, one, An, lda);
+      i = ATL_getrfC(M-Nleft, Nright, An, lda, ipiv+Nleft);
+      if (i) if (!ierr) ierr = i + Nleft;
+      for (i=Nleft; i != MN; i++) ipiv[i] += Nleft;
+      ATL_laswp(Nleft, A, lda, Nleft, MN, ipiv, 1);
+   }
+#ifdef TREAL
+   else if (MN == 2)
+   {
+      Nleft = 2;
+      Nright = N - 2;
+      ierr = LU2(M, A, lda, ipiv);
+      if (!Nright) return(ierr);
+/*
+ *    OK, we're now in case M=2, N > 2, Nleft = 2, Nright = N-2
+ */
+      Ac = A + ((lda+lda)SHIFT);
+      ATL_laswp(Nright, Ac, lda, 0, 2, ipiv, 1);
+      cblas_trsm(CblasColMajor, CblasLeft, CblasLower, CblasNoTrans, CblasUnit,
+                 Nleft, Nright, one, A, lda, Ac, lda);
+   }
+#endif
+   else if (MN == 1)
+   {
+      *ipiv = i = cblas_iamax(M, A, 1);  /* find pivot */
+      #ifdef TREAL
+         tmp = A[i];
+         if (tmp != ATL_rzero)
+         {
+            if (Mabs(tmp) > ATL_laSAFMIN)
+               cblas_scal(M, ATL_rone/tmp, A, 1);
+            else
+               for (k=0; k < N; k++)
+                  A[k] /= tmp;
+            A[i] = *A;
+            *A = tmp;
+         }
+         else ierr = 1;
+      #else
+         i <<= 1;
+         tmp[0] = A[i];
+         tmp[1] = A[i+1];
+         if (tmp[0] != ATL_rzero || tmp[1] != ATL_rzero)
+         {
+            if (ATL_lapy2(tmp[0], tmp[1]) >= ATL_laSAFMIN)
+            {
+               ATL_CplxInv(tmp, inv);
+               cblas_scal(M, inv, A, 1);
+            }
+            else
+               Mjoin(PATL,cplxdivide)(M, tmp, A, 1, A, 1);
+            A[i] = *A;
+            A[i+1] = A[1];
+            *A = tmp[0];
+            A[1] = tmp[1];
+         }
+         else ierr = 1;
+      #endif
+   }
+   return(ierr);
+}
+
+@ROUT ATL_getrf
+@extract -b @(topd)/gen.inc what=cw @(cw99)
+#include "atlas_misc.h"
+#include "atlas_lapack.h"
+@skip #include "atlas_ptalias_lapack.h"
+
+int ATL_getrf(const enum CBLAS_ORDER Order, const int M, const int N, 
+              TYPE *A, const int lda, int *ipiv)
+{
+   if (Order == CblasColMajor) return(ATL_getrfC(M, N, A, lda, ipiv));
+   else return(ATL_getrfR(M, N, A, lda, ipiv));
+}
+@ROUT ATL_getrs
+@extract -b @(topd)/gen.inc what=cw @(cw99)
+#include "atlas_misc.h"
+#include "atlas_lapack.h"
+
+void ATL_getrs(const enum CBLAS_ORDER Order, const enum CBLAS_TRANSPOSE Trans,
+               const int N, const int NRHS, const TYPE *A, const int lda, 
+               const int *ipiv, TYPE *B, const int ldb)
+/*
+ * OK, this pivoting crap is tricky.  The trick is, when we pivot columns
+ * of the matrix, this effects X but not B, and when we pivot rows, this
+ * effects B, but not X.  So, must never attempt to apply a Pr 
+ * (row permutation matrix) to X or a Pc to B.
+ */
+{
+   enum CBLAS_DIAG Lunit, Uunit;
+   #ifdef TREAL
+      #define one ATL_rone
+   #else
+      const TYPE one[2] = {ATL_rone, ATL_rzero};
+   #endif
+
+   if (!N || !NRHS) return;
+
+   if (Order == CblasColMajor)
+   {
+/*
+ *    A*X = B.  Since we have pivoted A by Pr (PA=LU), we pivot B by Pr, 
+ *    **and this does not effect X at all**, so we solve
+ *    X = inv(U)*inv(L)*(Pr * B)
+ */
+      if (Trans == CblasNoTrans)
+      {
+         ATL_laswp(NRHS, B, ldb, 0, N, ipiv, 1);
+         cblas_trsm(Order, CblasLeft, CblasLower, CblasNoTrans, CblasUnit,
+                    N, NRHS, one, A, lda, B, ldb);
+         cblas_trsm(Order, CblasLeft, CblasUpper, CblasNoTrans, CblasNonUnit,
+                    N, NRHS, one, A, lda, B, ldb);
+      }
+/*
+ *    trans(L*U = PA)  ==>  U' L' = A' P, so P is Pc, and does not effect B,
+ *    U' L' Pc X = B  ==> Pc X = inv(L') * inv(U') * B, but we want
+ *    X, not Pc X, so we apply inv(Pc) after doing these steps.
+ */
+      else
+      {
+         cblas_trsm(Order, CblasLeft, CblasUpper, Trans, CblasNonUnit, 
+                    N, NRHS, one, A, lda, B, ldb);
+         cblas_trsm(Order, CblasLeft, CblasLower, Trans, CblasUnit,
+                    N, NRHS, one, A, lda, B, ldb);
+         ATL_laswp(NRHS, B, ldb, 0, N, ipiv, -1);
+      }
+   }
+/*
+ * For row-major arrays, we actually have X^T and B^T, so must tranpose
+ * both sides of equation, so what we are solving is:  X' * A' = B'
+ */
+   else
+   {
+/*
+ *    A = LU*inv(Pc), X' * (LU*inv(Pc))' = B'  ==>  X' * inv(Pc) * U' * L' = B'
+ *    X' * inv(Pc) = U' * L' * B', so apply inv(Pc) after solves.
+ */
+      if (Trans == CblasNoTrans)
+      {
+         cblas_trsm(Order, CblasRight, CblasLower, CblasTrans, CblasNonUnit,
+                    NRHS, N, one, A, lda, B, ldb);
+         cblas_trsm(Order, CblasRight, CblasUpper, CblasTrans, CblasUnit,
+                    NRHS, N, one, A, lda, B, ldb);
+         ATL_laswp(NRHS, B, ldb, 0, N, ipiv, -1);
+      }
+/*
+ *    A' = (LU*inv(Pc))', but Pc is on rows of non-trans matrix, so:
+ *    X' * (inv(Pr)*L*U) = B'
+ *    X' = (Pr * B') * inv(U) * inv(L)
+ *    NOTE: this case is untested
+ */
+      else
+      {
+         ATL_laswp(NRHS, B, ldb, 0, N, ipiv, 1);
+         cblas_trsm(Order, CblasRight, CblasUpper, CblasNoTrans, CblasUnit,
+                    NRHS, N, one, A, lda, B, ldb);
+         cblas_trsm(Order, CblasRight, CblasLower, CblasNoTrans, CblasNonUnit,
+                    NRHS, N, one, A, lda, B, ldb);
+      }
+   }
+}
+@ROUT ATL_trtriCL ATL_trtriCU ATL_trtriRL ATL_trtriRU
+@extract -b @(topd)/gen.inc what=cw @(ps01)
+#include "atlas_lapack.h"
+#include "atlas_lvl3.h"
+
+#define REAL_RECURSE_LIMIT 4
+
+#ifdef TREAL
+
+#define SAFE_INVERT(A_) *(A_) = ATL_rone / *(A_);
+#define TRI_MUL(A_, B_) \
+{ \
+     *(B_) = (*(A_)) * (*(B_)); \
+}
+#define TRI_NEG(A_) \
+{ \
+     *(A_) = - *(A_); \
+}
+#else
+
+@beginskip
+This function is in error, will needlessly produce wrong answer 1/2 the time.
+#define SAFE_INVERT(A_, tmp_, i_) \
+{ \
+     tmp_ = (A_)[0]*(A_)[0]+(A_)[1]*(A_)[1]; \
+     if (tmp_ == ATL_rzero) return(i_); \
+     (A_)[0]=(A_)[0]/tmp; \
+     (A_)[1]=-(A_)[1]/tmp; \
+}
+@endskip
+#define SAFE_INVERT(A_) Mjoin(PATL,cplxinvert)(1, A_, 1, A_, 1);
+#define TRI_MUL(A_, B_) \
+{ \
+    (B_)[0] = ((A_)[0])*((B_)[0])-((A_)[1])*((B_)[1]); \
+    (B_)[1] = ((A_)[1])*((B_)[0])+((A_)[0])*((B_)[1]); \
+}
+#define TRI_NEG(A_) \
+{ \
+     (A_)[0] = - (A_)[0]; \
+     (A_)[1] = - (A_)[1]; \
+}
+#endif
+
+@ROUT ATL_trtriCU
+static int ATL_trtriCU_4(const enum ATLAS_DIAG Diag, TYPE *A, const int lda)
+{
+    TYPE *pA0=A, *pA1=A+lda, *pA2=A+2*lda, *pA3=A+3*lda;
+    TYPE A01=pA1[0], A02=pA2[0], A03=pA3[0];
+    TYPE             A12=pA2[1], A13=pA3[1];
+    TYPE                         A23=pA3[2];
+    TYPE tmp;
+
+    if (Diag == AtlasNonUnit)   
+    {
+       SAFE_INVERT(pA0);
+       SAFE_INVERT(pA1+1);	
+       SAFE_INVERT(pA2+2);
+       SAFE_INVERT(pA3+3);
+
+       pA1[0] = -A01*pA1[1]*pA0[0];
+       pA2[1] = -A12*pA2[2]*pA1[1];
+       pA3[2] = -A23*pA3[3]*pA2[2];
+
+       pA2[0] = -(A01*pA2[1]+A02*pA2[2])*pA0[0];
+       pA3[1] = -(A12*pA3[2]+A13*pA3[3])*pA1[1];
+
+       pA3[0] = -(A01*pA3[1]+A02*pA3[2]+A03*pA3[3])*pA0[0];       
+    }
+    else
+    {
+       pA1[0] = -A01;
+       pA2[1] = -A12;
+       pA3[2] = -A23;
+
+       pA2[0] = -(A01*pA2[1]+A02);
+       pA3[1] = -(A12*pA3[2]+A13);
+
+       pA3[0] = -(A01*pA3[1]+A02*pA3[2]+A03);
+    }
+    return(0);  
+}
+
+
+static int ATL_trtriCU_3(const enum ATLAS_DIAG Diag, TYPE *A, const int lda)
+{
+    TYPE *pA0=A, *pA1=A+lda, *pA2=A+2*lda;
+    TYPE A01=pA1[0], A02=pA2[0];
+    TYPE             A12=pA2[1];
+
+    TYPE *B01 = pA1;
+    TYPE *B02 = pA2;
+    TYPE *B12 = pA2+1;
+
+    TYPE tmp;
+
+    if (Diag == AtlasNonUnit)   
+    {
+       SAFE_INVERT(pA0);
+       SAFE_INVERT(pA1+1);	
+       SAFE_INVERT(pA2+2);
+       *B01 = -A01*pA1[1]*pA0[0];
+       *B12 = -A12*pA2[2]*pA1[1];
+       *B02 = -(A01*(*B12)+A02*pA2[2])*pA0[0];
+    }
+    else
+    {
+       *B01 = -A01;
+       *B12 = -A12;
+       *B02 = -(A01*(*B12)+A02);
+    }
+    return(0);  
+}
+
+@ROUT ATL_trtriRU
+static int ATL_trtriRU_4(const enum ATLAS_DIAG Diag, TYPE *A, const int lda)
+{
+    TYPE *pA0=A, *pA1=A+lda, *pA2=A+2*lda, *pA3=A+3*lda;
+    TYPE A01=pA0[1], A02=pA0[2], A03=pA0[3];
+    TYPE             A12=pA1[2], A13=pA1[3];
+    TYPE                         A23=pA2[3];
+    TYPE tmp;
+
+    if (Diag == AtlasNonUnit)   
+    {
+       SAFE_INVERT(pA0);
+       SAFE_INVERT(pA1+1);	
+       SAFE_INVERT(pA2+2);
+       SAFE_INVERT(pA3+3);
+
+       pA0[1] = -A01*pA1[1]*pA0[0];
+       pA1[2] = -A12*pA2[2]*pA1[1];
+       pA2[3] = -A23*pA3[3]*pA2[2];
+
+       pA0[2] = -(A01*pA1[2]+A02*pA2[2])*pA0[0];
+       pA1[3] = -(A12*pA2[3]+A13*pA3[3])*pA1[1];
+
+       pA0[3] = -(A01*pA1[3]+A02*pA2[3]+A03*pA3[3])*pA0[0];       
+    }
+    else
+    {
+       pA0[1] = -A01;
+       pA1[2] = -A12;
+       pA2[3] = -A23;
+
+       pA0[2] = -(A01*pA1[2]+A02);
+       pA1[3] = -(A12*pA2[3]+A13);
+
+       pA0[3] = -(A01*pA1[3]+A02*pA2[3]+A03);
+    }
+    return(0);  
+}
+
+
+static int ATL_trtriRU_3(const enum ATLAS_DIAG Diag, TYPE *A, const int lda)
+{
+
+    TYPE *pA0=A, *pA1=A+lda, *pA2=A+2*lda;
+    TYPE A01=pA0[1], A02=pA0[2];
+    TYPE             A12=pA1[2];
+
+    TYPE *B01 = pA0+1;
+    TYPE *B02 = pA0+2;
+    TYPE *B12 = pA1+2;
+
+    TYPE tmp;
+
+    if (Diag == AtlasNonUnit)   
+    {
+       SAFE_INVERT(pA0);
+       SAFE_INVERT(pA1+1);	
+       SAFE_INVERT(pA2+2);
+       *B01 = -A01*pA1[1]*pA0[0];
+       *B12 = -A12*pA2[2]*pA1[1];
+       *B02 = -(A01*(*B12)+A02*pA2[2])*pA0[0];
+    }
+    else
+    {
+       *B01 = -A01;
+       *B12 = -A12;
+       *B02 = -(A01*(*B12)+A02);
+    }
+    return(0);  
+}
+
+@ROUT ATL_trtriCU
+int ATL_trtriCU(const enum ATLAS_DIAG Diag, const int N, TYPE *A, const int lda)
+{
+  int ierr = 0;
+
+   TYPE *Age, *Atr;
+   TYPE tmp;
+   int Nleft, Nright;
+   #ifdef TREAL
+      #define one ATL_rone
+      #define mone -ATL_rone
+      #define none ATL_rnone
+   #else
+      static const TYPE one[2] = {ATL_rone, ATL_rzero};
+      static const TYPE mone[2] = {-ATL_rone, ATL_rzero};
+      static const TYPE none[2] = {ATL_rnone, ATL_rzero};
+   #endif
+
+#ifdef TREAL
+   if (N > REAL_RECURSE_LIMIT)
+#else
+   if (N > 1)
+#endif
+   {
+      Nleft = N >> 1;
+      #ifdef NB
+         if (Nleft > NB) Nleft = ATL_MulByNB(ATL_DivByNB(Nleft));
+      #endif
+      Nright = N - Nleft;
+
+      Age = A + ((Nleft * lda) SHIFT);
+      Atr = A + (Nleft * (lda+1) SHIFT);
+
+      cblas_trsm(AtlasColMajor, AtlasRight, AtlasUpper, AtlasNoTrans, Diag, 
+                  Nleft, Nright, one, Atr, lda, Age, lda);
+
+      cblas_trsm(AtlasColMajor, AtlasLeft, AtlasUpper, AtlasNoTrans, Diag, 
+                  Nleft, Nright, mone, A, lda, Age, lda);
+
+      ierr = ATL_trtriCU(Diag, Nleft, A, lda);
+      if (ierr!=0) return(ierr);
+      ierr = ATL_trtriCU(Diag, Nright, Atr, lda);
+      if (ierr!=0) return(ierr+Nleft);
+   }
+   else
+   {
+#ifdef TREAL
+     if (N==4) return(ATL_trtriCU_4(Diag,A,lda));
+     else if (N==3) return(ATL_trtriCU_3(Diag,A,lda));
+     else
+     { 
+       if ( N == 2)
+       {
+         if (Diag == AtlasNonUnit)   
+         {
+            SAFE_INVERT(A);
+            SAFE_INVERT(A+((lda+1) SHIFT));
+            TRI_MUL(A,A+((lda) SHIFT));
+            TRI_MUL(A+((lda+1) SHIFT),A+((lda) SHIFT));
+         }
+         TRI_NEG(A+((lda) SHIFT));      
+       }
+       else
+#endif
+       {
+         if (Diag == AtlasNonUnit) SAFE_INVERT(A);
+       }
+#ifdef TREAL
+     }
+#endif
+   }
+
+   return(ierr);
+
+}
+
+@ROUT ATL_trtriRU
+int ATL_trtriRU(const enum ATLAS_DIAG Diag, const int N, TYPE *A, const int lda)
+{
+  int ierr = 0;
+
+   TYPE *Age, *Atr;
+   TYPE tmp;
+   int Nleft, Nright;
+   #ifdef TREAL
+      #define one ATL_rone
+      #define mone -ATL_rone
+      #define none ATL_rnone
+   #else
+      static const TYPE one[2] = {ATL_rone, ATL_rzero};
+      static const TYPE mone[2] = {-ATL_rone, ATL_rzero};
+      static const TYPE none[2] = {ATL_rnone, ATL_rzero};
+   #endif
+
+#ifdef TREAL
+   if (N > REAL_RECURSE_LIMIT)
+#else
+   if (N > 1)
+#endif
+   {
+      Nleft = N >> 1;
+      #ifdef NB
+         if (Nleft > NB) Nleft = ATL_MulByNB(ATL_DivByNB(Nleft));
+      #endif
+      Nright = N - Nleft;
+
+      Age = A + (Nleft SHIFT);
+      Atr = A + (Nleft * (lda+1) SHIFT);
+
+      cblas_trsm(AtlasRowMajor, AtlasRight, AtlasUpper, AtlasNoTrans, Diag, 
+                  Nleft, Nright, one, Atr, lda, Age, lda);
+
+      cblas_trsm(AtlasRowMajor, AtlasLeft, AtlasUpper, AtlasNoTrans, Diag, 
+                  Nleft, Nright, mone, A, lda, Age, lda);
+
+      ierr = ATL_trtriRU(Diag, Nleft, A, lda);
+      if (ierr!=0) return(ierr);
+      ierr = ATL_trtriRU(Diag, Nright, Atr, lda);
+      if (ierr!=0) return(ierr+Nleft);
+   }
+   else
+   {
+#ifdef TREAL
+     if (N==4) return(ATL_trtriRU_4(Diag,A,lda));
+     else if (N==3) return(ATL_trtriRU_3(Diag,A,lda));
+     else
+       if ( N == 2)
+       {
+         if (Diag == AtlasNonUnit)   
+         {
+            SAFE_INVERT(A);
+            SAFE_INVERT(A+((lda+1) SHIFT));
+            TRI_MUL(A,A+(1 SHIFT));
+            TRI_MUL(A+((lda+1) SHIFT),A+(1 SHIFT));
+         }
+         TRI_NEG(A+(1 SHIFT));
+      
+       }
+       else
+#endif
+     {
+       if (Diag == AtlasNonUnit) SAFE_INVERT(A);
+     }
+   }
+
+   return(ierr);
+
+}
+
+@ROUT ATL_trtriCL
+static int ATL_trtriCL_4(const enum ATLAS_DIAG Diag, TYPE *A, const int lda)
+{
+    TYPE *pA0=A, *pA1=A+lda, *pA2=A+2*lda, *pA3=A+3*lda;
+    TYPE A10=pA0[1];
+    TYPE A20=pA0[2], A21=pA1[2];
+    TYPE A30=pA0[3], A31=pA1[3], A32=pA2[3];
+
+    TYPE *B10 = pA0+1;
+    TYPE *B20 = pA0+2;
+    TYPE *B30 = pA0+3;
+    TYPE *B21 = pA1+2;
+    TYPE *B31 = pA1+3;
+    TYPE *B32 = pA2+3;
+
+    TYPE tmp;
+
+    if (Diag == AtlasNonUnit)   
+    {
+       SAFE_INVERT(pA0);
+       SAFE_INVERT(pA1+1);	
+       SAFE_INVERT(pA2+2);
+       SAFE_INVERT(pA3+3);
+       *B10 = -A10*pA0[0]*pA1[1];
+       *B21 = -A21*pA1[1]*pA2[2];
+       *B32 = -A32*pA2[2]*pA3[3];
+       *B20 = -(A20*pA0[0]+A21*(*B10))*pA2[2];
+       *B31 = -(A31*pA1[1]+A32*(*B21))*pA3[3];
+       *B30 = -(A30*pA0[0]+A31*(*B10)+A32*(*B20))*pA3[3];
+	
+    }
+    else
+    {
+       *B10 = -A10;
+       *B21 = -A21;
+       *B32 = -A32;
+       *B20 = -(A20+A21*(*B10));
+       *B31 = -(A31+A32*(*B21));
+       *B30 = -(A30+A31*(*B10)+A32*(*B20));
+
+    }
+    return(0);  
+}
+
+static int ATL_trtriCL_3(const enum ATLAS_DIAG Diag, TYPE *A, const int lda)
+{
+    TYPE *pA0=A, *pA1=A+lda, *pA2=A+2*lda;
+    TYPE A10=pA0[1];
+    TYPE A20=pA0[2], A21=pA1[2];
+
+    TYPE *B10 = pA0+1;
+    TYPE *B20 = pA0+2;
+    TYPE *B21 = pA1+2;
+
+    TYPE tmp;
+
+    if (Diag == AtlasNonUnit)   
+    {
+       SAFE_INVERT(pA0);
+       SAFE_INVERT(pA1+1);	
+       SAFE_INVERT(pA2+2);
+       *B10 = -A10*pA0[0]*pA1[1];
+       *B21 = -A21*pA1[1]*pA2[2];
+       *B20 = -(A20*pA0[0]+A21*(*B10))*pA2[2];
+    }
+    else
+    {
+       *B10 = -A10;
+       *B21 = -A21;
+       *B20 = -(A20+A21*(*B10));
+    }
+    return(0);  
+}
+
+int ATL_trtriCL(const enum ATLAS_DIAG Diag, const int N, TYPE *A, const int lda)
+{
+  int ierr = 0;
+
+   TYPE *Age, *Atr;
+   TYPE tmp;
+   int Nleft, Nright;
+   #ifdef TREAL
+      #define one ATL_rone
+      #define mone -ATL_rone
+      #define none ATL_rnone
+   #else
+      static const TYPE one[2] = {ATL_rone, ATL_rzero};
+      static const TYPE mone[2] = {-ATL_rone, ATL_rzero};
+      static const TYPE none[2] = {ATL_rnone, ATL_rzero};
+   #endif
+
+#ifdef TREAL
+   if (N > REAL_RECURSE_LIMIT)
+#else
+   if (N > 1)
+#endif
+   {
+      Nleft = N >> 1;
+      #ifdef NB
+         if (Nleft > NB) Nleft = ATL_MulByNB(ATL_DivByNB(Nleft));
+      #endif
+      Nright = N - Nleft;
+
+      Age = A + (Nleft SHIFT);
+      Atr = A + (Nleft * (lda+1) SHIFT);
+
+      cblas_trsm(AtlasColMajor, AtlasRight, AtlasLower, AtlasNoTrans, Diag, 
+                 Nright, Nleft, one, A, lda, Age, lda);
+
+      cblas_trsm(AtlasColMajor, AtlasLeft, AtlasLower, AtlasNoTrans, Diag, 
+                 Nright, Nleft, mone, Atr, lda, Age, lda);
+
+      ierr = ATL_trtriCL(Diag, Nleft, A, lda);
+      if (ierr!=0) return(ierr);
+      ierr = ATL_trtriCL(Diag, Nright, Atr, lda);
+      if (ierr!=0) return(ierr+Nleft);
+
+   }
+   else
+   {
+#ifdef TREAL
+     if (N==4) return(ATL_trtriCL_4(Diag,A,lda));
+     if (N==3) return(ATL_trtriCL_3(Diag,A,lda));
+     else
+
+     if ( N == 2)
+     {
+       if (Diag == AtlasNonUnit)   
+       {
+          SAFE_INVERT(A);
+          SAFE_INVERT(A+((lda+1) SHIFT));
+          TRI_MUL(A,A+(1 SHIFT));
+          TRI_MUL(A+((lda+1) SHIFT),A+(1 SHIFT));
+       }
+       TRI_NEG(A+(1 SHIFT));
+      
+     }
+     else
+#endif
+     if (Diag == AtlasNonUnit) SAFE_INVERT(A);
+   }
+
+  return(ierr);
+
+}
+
+@ROUT ATL_trtriRL
+static int ATL_trtriRL_4(const enum ATLAS_DIAG Diag, TYPE *A, const int lda)
+{
+    TYPE *pA0=A, *pA1=A+lda, *pA2=A+2*lda, *pA3=A+3*lda;
+    TYPE A10=pA1[0];
+    TYPE A20=pA2[0], A21=pA2[1];
+    TYPE A30=pA3[0], A31=pA3[1], A32=pA3[2];
+
+    TYPE *B10 = pA1;
+    TYPE *B20 = pA2;
+    TYPE *B30 = pA3;
+    TYPE *B21 = pA2+1;
+    TYPE *B31 = pA3+1;
+    TYPE *B32 = pA3+2;
+
+    TYPE tmp;
+
+    if (Diag == AtlasNonUnit)   
+    {
+       SAFE_INVERT(pA0);
+       SAFE_INVERT(pA1+1);	
+       SAFE_INVERT(pA2+2);
+       SAFE_INVERT(pA3+3);
+       *B10 = -A10*pA0[0]*pA1[1];
+       *B21 = -A21*pA1[1]*pA2[2];
+       *B32 = -A32*pA2[2]*pA3[3];
+       *B20 = -(A20*pA0[0]+A21*(*B10))*pA2[2];
+       *B31 = -(A31*pA1[1]+A32*(*B21))*pA3[3];
+       *B30 = -(A30*pA0[0]+A31*(*B10)+A32*(*B20))*pA3[3];
+	
+    }
+    else
+    {
+       *B10 = -A10;
+       *B21 = -A21;
+       *B32 = -A32;
+       *B20 = -(A20+A21*(*B10));
+       *B31 = -(A31+A32*(*B21));
+       *B30 = -(A30+A31*(*B10)+A32*(*B20));
+
+    }
+    return(0);  
+}
+
+static int ATL_trtriRL_3(const enum ATLAS_DIAG Diag, TYPE *A, const int lda)
+{
+    TYPE *pA0=A, *pA1=A+lda, *pA2=A+2*lda;
+    TYPE A10=pA1[0];
+    TYPE A20=pA2[0], A21=pA2[1];
+
+    TYPE *B10 = pA1;
+    TYPE *B20 = pA2;
+    TYPE *B21 = pA2+1;
+
+    TYPE tmp;
+
+    if (Diag == AtlasNonUnit)   
+    {
+       SAFE_INVERT(pA0);
+       SAFE_INVERT(pA1+1);	
+       SAFE_INVERT(pA2+2);
+       *B10 = -A10*pA0[0]*pA1[1];
+       *B21 = -A21*pA1[1]*pA2[2];
+       *B20 = -(A20*pA0[0]+A21*(*B10))*pA2[2];
+    }
+    else
+    {
+       *B10 = -A10;
+       *B21 = -A21;
+       *B20 = -(A20+A21*(*B10));
+    }
+    return(0);  
+}
+
+int ATL_trtriRL(const enum ATLAS_DIAG Diag, const int N, TYPE *A, const int lda)
+{
+  int ierr = 0;
+
+   TYPE *Age, *Atr;
+   TYPE tmp;
+   int Nleft, Nright;
+   #ifdef TREAL
+      #define one ATL_rone
+      #define mone -ATL_rone
+      #define none ATL_rnone
+   #else
+      static const TYPE one[2] = {ATL_rone, ATL_rzero};
+      static const TYPE mone[2] = {-ATL_rone, ATL_rzero};
+      static const TYPE none[2] = {ATL_rnone, ATL_rzero};
+   #endif
+
+#ifdef TREAL
+   if (N > REAL_RECURSE_LIMIT)
+#else
+   if (N > 1)
+#endif
+   {
+      Nleft = N >> 1;
+      #ifdef NB
+         if (Nleft > NB) Nleft = ATL_MulByNB(ATL_DivByNB(Nleft));
+      #endif
+      Nright = N - Nleft;
+
+      Age = A + ((Nleft*lda) SHIFT);
+      Atr = A + (Nleft * (lda+1) SHIFT);
+
+      cblas_trsm(AtlasRowMajor, AtlasRight, AtlasLower, AtlasNoTrans, Diag, 
+                 Nright, Nleft, one, A, lda, Age, lda);
+
+      cblas_trsm(AtlasRowMajor, AtlasLeft, AtlasLower, AtlasNoTrans, Diag, 
+                 Nright, Nleft, mone, Atr, lda, Age, lda);
+
+      ierr = ATL_trtriRL(Diag, Nleft, A, lda);
+      if (ierr!=0) return(ierr);
+      ierr = ATL_trtriRL(Diag, Nright, Atr, lda);
+      if (ierr!=0) return(ierr+Nleft);
+
+   }
+   else
+   {
+#ifdef TREAL
+     if (N==4) return(ATL_trtriRL_4(Diag,A,lda));
+     if (N==3) return(ATL_trtriRL_3(Diag,A,lda));
+     if ( N == 2)
+     {
+         if (Diag == AtlasNonUnit)   
+         {
+            SAFE_INVERT(A);
+            SAFE_INVERT(A+((lda+1) SHIFT));
+            TRI_MUL(A,A+((lda) SHIFT));
+            TRI_MUL(A+((lda+1) SHIFT),A+((lda) SHIFT));
+         }
+         TRI_NEG(A+((lda) SHIFT));      
+      }
+      else
+#endif
+     if (Diag == AtlasNonUnit) SAFE_INVERT(A);
+   }
+   return(ierr);
+}
+@ROUT ATL_trtri
+@extract -b @(topd)/gen.inc what=cw @(ps01)
+#include "atlas_lapack.h"
+#include "atlas_lvl3.h"
+
+int ATL_trtri(const enum ATLAS_ORDER Order, const enum ATLAS_UPLO Uplo,
+	      const enum ATLAS_DIAG Diag, const int N, TYPE *A, const int lda)
+{
+   const int ldap1 = (lda+1)SHIFT;
+   int i;
+
+   if (N > 0)
+   {
+/*
+ *    Check for singularity if nonunit
+ */
+      if (Diag == AtlasNonUnit)
+      {
+         for (i=0; i != N; i++, A += ldap1)
+         {
+            #ifdef TREAL
+               if (*A == ATL_rzero) return(i+1);
+            #else
+               if (*A == ATL_rzero && A[1] == ATL_rzero) return(i+1);
+            #endif
+         }
+         A -= N*ldap1;
+      }
+      if (Uplo == AtlasUpper)
+      {
+         if (Order == AtlasColMajor) return(ATL_trtriCU(Diag, N, A, lda));
+         else return(ATL_trtriRU(Diag, N, A, lda));
+      }
+      else
+      {
+         if (Order == AtlasColMajor) return(ATL_trtriCL(Diag, N, A, lda));
+         else return(ATL_trtriRL(Diag, N, A, lda));
+      }
+   }
+   return(0);
+}
+@ROUT ATL_ilaenv
+#if !defined(ATL_USEPTHREADS) || (defined(ATL_NCPU) && ATL_NCPU > 1)
+#include "atlas_lapack.h"
+@whiledef pre z c d s
+
+#ifdef ATL_USEPTHREADS
+   @whiledef rt geqrf gerqf geqlf gelqf
+   #include "atlas_@(pre)tGetNB_@(rt).h"
+   #ifdef ATL_@(pre)tGetNB_@(rt)
+      #define ATL_@(pre)GetNB_@(rt) ATL_@(pre)tGetNB_@(rt)
+   #endif
+   @endwhile
+   #ifndef ATL_ilaenv
+      #define ATL_ilaenv ATL_itlaenv
+   #endif
+#else
+   @whiledef rt geqrf gerqf geqlf gelqf
+   #include "atlas_@(pre)GetNB_@(rt).h"
+   @endwhile
+#endif
+/*
+ * See if any QR rout has been tuned, and if so, set it to default QR tune
+ */
+   @whiledef rt gelqf gerqf geqlf geqrf
+#if defined(ATL_@(pre)GetNB_@(rt)) && !defined(ATL_@(pre)GetNB_QR)
+   #define ATL_@(pre)GetNB_QR ATL_@(pre)GetNB_@(rt)
+#endif
+   @endwhile
+/*
+ * Setup individual QR tunes if they haven't been indiviually tuned
+ */
+   @whiledef rt gelqf gerqf geqlf geqrf
+#ifndef ATL_@(pre)GetNB_@(rt)
+   #ifdef ATL_@(pre)GetNB_QR
+      #define ATL_@(pre)GetNB_@(rt) ATL_@(pre)GetNB_QR
+   #else
+      #define ATL_@(pre)GetNB_@(rt)(n_, nb_) (nb_) = 0;
+   #endif
+#endif
+   @endwhile
+@endwhile
+
+static int ATL_IEEECHK(int DOALL, float zero, float one)
+/*
+ * Direct translation of LAPACK/SRC/IEEECK into C
+ * RETURN: 0 if arithmetic produces wrong answer, else 1
+ */
+{
+   float nan1, nan2, nan3, nan4, nan5, nan6, neginf, negzro, newzro, posinf;
+
+   posinf = one / zero;
+   if (posinf <= one)
+      return(0);
+   neginf = -one / zero;
+   if (neginf >= zero)
+      return(0);
+   negzro = one / (neginf+one);
+   if (negzro != zero)
+      return(0);
+   neginf = one / negzro;
+   if (neginf >= zero)
+      return(0);
+   newzro = negzro + zero;
+   if (newzro != zero)
+      return(0);
+   posinf = one / newzro;
+   if (posinf <= one)
+      return(0);
+   neginf = neginf*posinf;
+   if (neginf >= zero) 
+      return(0);
+   posinf = posinf*posinf;
+   if (posinf <= one)
+      return(0);
+/*
+ * Check NaN if all checks should be done
+ */
+   if (DOALL)
+   {
+      nan1 = posinf + neginf;
+      nan2 = posinf / neginf;
+      nan3 = posinf / posinf;
+      nan4 = posinf * zero;
+      nan5 = neginf * negzro;
+      nan6 = nan5 * 0.0;
+      if (nan1 == nan1)
+         return(0);
+      if (nan2 == nan2)
+         return(0);
+      if (nan3 == nan3)
+         return(0);
+      if (nan4 == nan4)
+         return(0);
+      if (nan5 == nan5)
+         return(0);
+      if (nan6 == nan6)
+         return(0);
+   }
+   return(1);
+}
+
+static int ilg2Floor(unsigned int val)
+{
+   int i;
+
+   for (i=30; i >= 0; i--)
+      if ( ((1<<i) | val) == val)
+         return(i);
+   return(0);
+}
+
+int ATL_ilaenv(enum ATL_ISPEC ISPEC, enum ATL_LAROUT ROUT, unsigned int OPTS,
+               int N1, int N2, int N3, int N4)
+/*
+ *  NOTE: the following comments only slightly modified from the original
+ *        LAPACK/SRC/ilaenv.f
+ *  Purpose
+ *  =======
+ *
+ *  ILAENV is called from the LAPACK routines to choose problem-dependent
+ *  parameters for the local environment.  See ISPEC for a description of
+ *  the parameters.
+ *
+ *  This version is tuned only for those cases where the option is satisfied
+ *  by a invocation of an optimized CPP macro provided by tuned header files;
+ *  otherwise, it can almost certainly be further tuned by the user.
+ *
+ *  ILAENV returns an INTEGER
+ *  if ILAENV >= 0: ILAENV returns the value of the parameter specified by ISPEC
+ *  if ILAENV < 0:  if ILAENV = -k, the k-th argument had an illegal value.
+ *
+ *  Arguments
+ *  =========
+ *
+ *  ISPEC   (input) enum ATL_ISPEC (defined in atlas_lapack.h)
+ *          Specifies the parameter to be returned as the value of
+ *          ILAENV.
+ *     LAIS_MSQRXOVER=8:
+ *     LAIS_OPT_NB=1   : the optimal blocksize; if this value is 1, 
+                         an unblocked algorithm will give the best performance.
+ *     LAIS_MIN_NB=2   : the minimum block size for which the block routine
+ *                       should be used; if the usable block size is less than
+ *                       this value, an unblocked routine should be used.
+ *     LAIS_NBXOVER=3  : the crossover point (in a block routine, for N less
+ *                       than this value, an unblocked routine should be used)
+ *                       i.e. LAIS_MIN_NB is for NB, but this is for the
+ *                       unconstrained dimension (or MIN of them).
+ *     LAIS_NEIGSHFT=4 : the number of shifts, used in the nonsymmetric
+ *                       eigenvalue routines (DEPRECATED)
+ *     LAIS_MINCSZ=5   : the minimum column dimension for blocking to be used;
+ *                       rectangular blocks must have dimension at least k by m,
+ *                       where k is given by ILAENV(2,...) and m by ILAENV(5,..)
+ *     LAIS_SVDXOVER=6 : the crossover point for the SVD (when reducing an MxN
+ *                       matrix to bidiagonal form, if max(M,N)/min(M,N) exceeds
+ *                       this value, a QR factorization is used first to reduce
+ *                       the matrix to a triangular form.)
+ *     LAIS_NPROC=7    : the number of processors
+ *     LAIS_MSQRXOVER=8: the crossover point for the multishift QR method
+ *                       for nonsymmetric eigenvalue problems (DEPRECATED)
+ *     LAIS_MAXDCSPSZ=9: maximum size of the subproblems at the bottom of the
+ *                       computation tree in the divide-and-conquer algorithm
+ *                       (used by xGELSD and xGESDD)
+ *     LAIS_NTNAN=10   : ieee NaN arithmetic can be trusted not to trap
+ *     LAIS_NTINF=11   : infinity arithmetic can be trusted not to trap
+ *          12 <= ISPEC <= 16:
+ *               xHSEQR or one of its subroutines,
+ *               see IPARMQ for detailed explanation
+ *
+ *  ROUT    (input) enum ATL_LAROUT
+ *          Enumerated type indicating the  LAPACK routine query is about
+ *
+ *  OPTS    (input) integer
+ *          Bitmap of all options to routine, as indicated from ATL_LAFLG
+ *          enum (defined in atlas_lapack.h), inlucing the data type/precision.
+ *          Options are: 
+ *          LAUpper=1, LALower=2, LARight=4, LALeft=8, LAUnit=16, LANonunit=32,
+ *          LASreal=(1<<28), LADreal=(1<<29), LAScplx=(1<<30), LADcplx=(1<<31).
+ *         
+ *  N1      (input) INTEGER
+ *  N2      (input) INTEGER
+ *  N3      (input) INTEGER
+ *  N4      (input) INTEGER
+ *          Problem dimensions for the LAPACK routine ROUT; these may not all
+ *          be required.
+ *
+ *  Further Details
+ *  ===============
+ *
+ *  The following conventions have been used when calling ILAENV from the
+ *  LAPACK routines:
+ *  1)  OPTS is a concatenation of all of the options to the LAPACK ROUT 
+ *      even if they are not used in determining
+ *      the value of the parameter specified by ISPEC.
+ *  2)  The problem dimensions N1, N2, N3, N4 are specified in the order
+ *      that they appear in the argument list for NAME.  N1 is used
+ *      first, N2 second, and so on, and unused problem dimensions are
+ *      passed a value of -1.
+ *  3)  The parameter value returned by ILAENV is checked for validity in
+ *      the calling subroutine.  For example, ILAENV is used to retrieve
+ *      the optimal blocksize for STRTRI as follows:
+ *
+ *      NB = ILAENV( 1, 'STRTRI', UPLO // DIAG, N, -1, -1, -1 )
+ *      IF( NB.LE.1 ) NB = MAX( 1, N )
+ *
+ *  =====================================================================
+ */
+{
+   int nb, mindim, ns, nh;
+
+   switch(ISPEC)
+   {
+   case LAIS_OPT_NB:
+      nb = 0;
+      if (N2 == -1)
+         mindim = N1;
+      else
+      {
+         mindim = Mmin(N1, N2);
+         if (N3 > 0)
+         {
+            mindim = Mmin(mindim, N3);
+            if (N4 > 0)
+               mindim = Mmin(mindim, N4);
+         }
+      }
+/*
+ *    Present code treates ORMQR like GEQRF, even though ORMQR might want
+ *    larger NB w/o QR2 dragging it down.  This is just to save install time.
+ */
+      if (ROUT & (LAgeqrf | LAormqr))
+      {
+@multidef else    else@^ else@^ else@^
+@define else @@
+@multidef pre c     z     s     d
+@whiledef lat Scplx Dcplx Sreal Dreal
+         @(else)if (OPTS & LA@(lat))
+         {
+            if (OPTS & LARight)  /* R/L on right */
+            {
+               if (OPTS & LALower) /* QL */
+               {
+                  ATL_@(pre)GetNB_geqlf(mindim, nb);
+               }
+               else                /* QR */
+               {
+                  ATL_@(pre)GetNB_geqrf(mindim, nb);
+               }
+            }
+            else if (OPTS & LALower) /* LQ */
+            {
+               ATL_@(pre)GetNB_gelqf(mindim, nb);
+            }
+            else /* RQ */
+            {
+               ATL_@(pre)GetNB_gerqf(mindim, nb);
+            }
+         }
+   @undef pre
+   @undef else
+@endwhile
+/*
+ *       For ORMQR, do not except really small nb, since it doesn't have
+ *       cost of QR2 dragging it down
+ */
+         if (ROUT & LAormqr)
+         {
+            if (OPTS & LADreal)
+               ns = ATL_dGetNB();
+            else if (OPTS & LASreal)
+               ns = ATL_sGetNB();
+            else if (OPTS & LAScplx)
+               ns = ATL_cGetNB();
+            else
+               ns = ATL_zGetNB();
+            if (nb < ns)
+               nb = 0;
+         }
+      }
+@beginskip
+      if (ROUT & (LAgeqrf | LAgeqlf | LAgerqf | LAgelqf))
+      {
+         if (OPTS & LADreal)
+         {
+            switch(ROUT)
+            {
+   @whiledef rt gelqf gerqf geqlf geqrf
+            case LA@(rt):
+               ATL_dGetNB_@(rt)(mindim, nb);
+               break;
+   @endwhile
+            }
+         }
+         else if (OPTS & LASreal)
+         {
+            switch(ROUT)
+            {
+   @whiledef rt gelqf gerqf geqlf geqrf
+            case LA@(rt):
+               ATL_sGetNB_@(rt)(mindim, nb);
+               break;
+   @endwhile
+            }
+         }
+         else if (OPTS & LADcplx)
+         {
+            switch(ROUT)
+            {
+   @whiledef rt gelqf gerqf geqlf geqrf
+            case LA@(rt):
+               ATL_zGetNB_@(rt)(mindim, nb);
+               break;
+   @endwhile
+            }
+         }
+         else /* if (OPTS & LAScplx) */
+         {
+            switch(ROUT)
+            {
+   @whiledef rt gelqf gerqf geqlf geqrf
+            case LA@(rt):
+               ATL_cGetNB_@(rt)(mindim, nb);
+               break;
+   @endwhile
+            }
+         }
+      }
+@endskip
+/*
+ *    If we know nothing else, tell routine to use ATLAS's GEMM blocking factor,
+ *    unless it is an unknown routine, in which case LAPACK returns NB=1
+ */
+      if (!nb)
+      {
+@skip         if (ROUT == LAunknown)
+@skip            nb = 1;
+         if (OPTS & LADreal)
+            nb = ATL_dGetNB();
+         else if (OPTS & LASreal)
+            nb = ATL_sGetNB();
+         else if (OPTS & LADcplx)
+            nb = ATL_zGetNB();
+         else
+            nb = ATL_cGetNB();
+         if (mindim < 8)
+            nb = 1;
+         else if (nb < (mindim>>1))
+            nb = (mindim>>1);
+/*
+ *       Routines that do extra flops based on NB need to constrain NB
+ */
+         if ((LAgeqrf | LAormqr | LAgehrd | LAgebrd | 
+              LAsytrd | LAhetrd | LArorgen | LAcungen) & ROUT)
+         {
+            if (OPTS & LADreal)
+            {
+               if (nb > 64)
+                 nb = 60;
+            }
+            else if (OPTS & LASreal)
+            {
+               if (nb > 80)
+                  nb = 80;
+            }
+            else
+            {
+               if (nb > 64)
+                  nb = 40;
+            }
+         }
+      }
+      else if (ROUT & LAstebz)
+         nb = 1;
+      return(nb);
+   case LAIS_MIN_NB:  /* changed from LAPACK to require 4 rather than 2 cols */
+      nb = 4;    /* most GEMMs need at least one MU/NU of 4 */
+      if (ROUT & LAsytrf)
+         nb = 8;
+      return(nb);
+   case LAIS_NBXOVER:  /* unchanged from LAPACK */
+      nb = 0;
+      if (ROUT & (LAgeqrf | LAormqr | LAgehrd | LAgebrd))
+         nb = 128;
+      else if (ROUT & (LAsytrd | LAhetrd))
+         nb = 32;
+      else if (ROUT & (LArorgen | LAcungen))
+         nb = 128;
+      return(nb);
+   case LAIS_NEIGSHFT:  /* unchanged from LAPACK */
+      return(6);
+   case LAIS_MINCSZ:   /* unchanged from LAPACK, says not used */
+      return(2);
+   case LAIS_SVDXOVER: /* unchanged from LAPACK */
+      return((int)(Mmin(N1,N2)*1.6e0));
+   case LAIS_NPROC:
+      #ifdef ATL_NPROC
+         return(ATL_NPROC);
+      #else
+         return(1);
+      #endif
+   case LAIS_MSQRXOVER:  /* unchanged from LAPACK */
+      return(8);
+   case LAIS_MAXDCSPSZ:  /* unchanged from LAPACK */
+      return(25);
+/*
+ * These following two commands are swapped in lapack3.1.1, fixed here 
+ */
+   case LAIS_NTNAN:     /* unchanged from LAPACK, except for fix */
+      return(ATL_IEEECHK(1, 0.0, 1.0));
+   case LAIS_NTINF:     /* unchanged from LAPACK, except for fix */
+      return(ATL_IEEECHK(0, 0.0, 1.0));
+/*
+ * Cases 12-13 come from IPARMQ; unchanged from lapack :
+ *   ILAENV = IPARMQ( ISPEC, NAME, OPTS, N1, N2, N3, N4 )
+ *   -> N=N1, ILO=N2, IHI=N3, LWORK=N4
+ */
+   case 13:  /* INWIN */
+   case 15:  /* ISHFTS */
+   case 16:  /* IACC22 */
+      nh = N3 - N2 + 1;
+      ns = 2;
+      if (nh >= 6000)
+         ns = 256;
+      else if (nh >= 3000)
+         ns = 128;
+      else if (nh >= 590)
+        ns = 64;
+      else if (nh >= 150)
+      {
+/*       ns = nh / ((int)( log(nh)/log(2.0) )); */
+         ns = nh / ilg2Floor(nh);
+         ns = (10 >= ns) ? 10 : ns;
+/*
+ *       NS must always be even and >= 2 for all nh, but this is only nh
+ *       where that is not known by assignment, so ensure it here
+ */
+         ns = (ns>>1)<<1;
+         ns = (ns >= 2) ? ns : 2;
+/*
+         ns = ns - ns%2;          
+         ns = (ns >= 2) ? ns : 2; 
+ */
+      }
+      else if (nh >= 60)
+         ns = 10;
+      else if (nh >= 30)
+         ns = 4;
+      if (ISPEC == 16)
+#if 1
+         return((ns >= 14) ? 2 : 0);
+#else
+      {
+         nh = 0;
+         if (ns >= 14)   /* NOTE: IPARMQ's KACMIN=14 */
+            nh = 1;
+         if (ns >= 14)   /* NOTE IPARMQ's K22MIN=14 */
+            nh = 2;
+         return(nh);
+      }
+      else if (ISPEC == 13)
+         return( (nh <= 500) ? ns : ((3*ns)>>1) );
+#endif
+      return(ns);
+      break;
+   case 12:  /* INMIN */
+      return(75);
+   case 14:  /* INIBL */
+      return(14);
+   default:
+      exit(ISPEC);
+   }
+   return(0);
+}
+
+#endif  /* end protection compiling threaded ilaenv on serial machine */
+@ROUT atlas_lapack.h
+@extract -b @(topd)/gen.inc what=cw @(cw99)
+#ifndef ATLAS_LAPACK_H
+   #define ATLAS_LAPACK_H
+
+#include "atlas_misc.h"
+#include "cblas.h"
+#include "atlas_ptalias_lapack.h"
+
+/*
+ * Enumerated type for LAPACK's matrix types:
+ *   G : general rectangular matrix
+ *   L : Lower triangular
+ *   U : Upper triangular
+ *   H : Upper hessenburg
+ *   B : symmetric band matrix wt lower bandwidth KL & upper BW KU
+ *       and wt only the lower half stored
+ *   Q : symmetric band matrix wt lower bandwidth KL & upper BW KU
+ *       and wt only the upper half stored
+ *   Z : band matrix wt lower bandwidth KL & upper BW KU
+ */
+enum ATL_LAMATTYPE
+   {LAMATG=0, LAMATL=1, LAMATU=2, LAMATH=3, LAMATB=4, LAMATQ=5, LAMATZ=6};
+/*
+ * Define LAPACK flag arguments as powers of two so we can | them together
+ * for calls to ILAENV
+ */
+enum ATL_LAFLG
+   {LAUpper=1, LALower=2, LARight=4, LALeft=8, LAUnit=16, LANonunit=32,
+    LASreal=(1<<27), LADreal=(1<<28), LAScplx=(1<<29), LADcplx=(1<<30)};
+/*
+ * We can overload QR names to one by filling in LAFLG, giving Side for
+ * the trapezoidal matrix, and type of triangle:
+ *    LAormqr + LARight+LAUpper --> ORMQR
+ *    LAormqr + LARight+LALower --> ORMQL
+ *    LAormqr + LALeft +LAUpper --> ORMRQ
+ *    LAormqr + LALeft +LALower --> ORMLQ
+ *    LAgeqrf + LARight+LAUpper --> GEQRF
+ *    LAgeqrf + LARight+LALower --> GEQLF
+ *    LAgeqrf + LALeft +LAUpper --> GERQF
+ *    LAgeqrf + LALeft +LALower --> GELQF
+ */
+enum ATL_LAROUT 
+   {LAunknown=0, LAgetrf=1, LAgeqrf=(1<<1),  /* handles ge[qr,rq,lq,ql]f */
+    LAormqr=(1<<2),   /* handles all [[d,s]orm,[c,z]unm][qr,ql,rq,lq] */
+    LArorgen=(1<<3), /* general [D,S]OR* routine needing constrained NB */
+    LAcungen=(1<<4), /* general [Z,C]UN* routine needing constrained NB */
+   @skip LAgelqf=(1<<2), LAgerqf=(1<<3), LAgeqlf=(1<<4), '
+    LAgehrd=(1<<5), LAgebrd=(1<<6), LAgetri=(1<<7), 
+    LApotrf=(1<<8), LAsytrf=(1<<9), LAsytrd=(1<<10), LAhetrf=(1<<11), 
+    LAhetrd=(1<<12), LAhegst=(1<<13), LAhbgst=(1<<14), LAhpgst=(1<<15), 
+    LAspgst=(1<<16), LAsbgst=(1<<17), LAsygst=(1<<18), LAstebz=(1<<19),
+    LAgbtrf=(1<<20), LApbtrf=(1<21), LAtrtri=(1<<22), LAlauum=(1<<23)
+    };
+
+enum ATL_ISPEC  
+   {LAIS_OPT_NB=1, LAIS_MIN_NB=2, LAIS_NBXOVER=3, LAIS_NEIGSHFT=4,
+    LAIS_MINCSZ=5, LAIS_SVDXOVER=6, LAIS_NPROC=7, LAIS_MSQRXOVER=8,
+    LAIS_MAXDCSPSZ=9, LAIS_NTNAN=10, LAIS_NTINF=11};
+/* 
+ * Comments from lapack's ILAENV
+*  ISPEC   (input) INTEGER
+*          Specifies the parameter to be returned as the value of
+*          ILAENV.
+*          = 1: the optimal blocksize; if this value is 1, an unblocked
+*               algorithm will give the best performance.
+*          = 2: the minimum block size for which the block routine
+*               should be used; if the usable block size is less than
+*               this value, an unblocked routine should be used.
+*          = 3: the crossover point (in a block routine, for N less
+*               than this value, an unblocked routine should be used)
+*          = 4: the number of shifts, used in the nonsymmetric
+*               eigenvalue routines (DEPRECATED)
+*          = 5: the minimum column dimension for blocking to be used;
+*               rectangular blocks must have dimension at least k by m,
+*               where k is given by ILAENV(2,...) and m by ILAENV(5,...)
+*          = 6: the crossover point for the SVD (when reducing an m by n
+*               matrix to bidiagonal form, if max(m,n)/min(m,n) exceeds
+*               this value, a QR factorization is used first to reduce
+*               the matrix to a triangular form.)
+*          = 7: the number of processors
+*          = 8: the crossover point for the multishift QR method
+*               for nonsymmetric eigenvalue problems (DEPRECATED)
+*          = 9: maximum size of the subproblems at the bottom of the
+*               computation tree in the divide-and-conquer algorithm
+*               (used by xGELSD and xGESDD)
+*          =10: ieee NaN arithmetic can be trusted not to trap
+*          =11: infinity arithmetic can be trusted not to trap
+*          12 <= ISPEC <= 16:
+*               xHSEQR or one of its subroutines,
+*               see IPARMQ for detailed explanation
+*/
+
+enum ATL_LADIRECT
+   {LAForward=1, LABackward=2 };
+enum ATL_LASTOREV
+   {LARowStore=1, LAColumnStore=2 };
+
+#ifdef PATL
+
+#include "atlas_cblastypealias.h"
+/*
+ * predefined type macro names
+ */
+@multidef rt
+   laswp getrf getrs getrfC getrfR getf2 potrf potrs potrfL potrfU
+   trtri trtriCU trtriCL trtriRU trtriRL
+   lauum lauumCU lauumCL lauumRU lauumRL
+   getri getriC getriR
+   tgeqr2 tgerq2 tgeql2 tgelq2 tgetf2
+   geqr2 geqrf geqrr
+   gerq2 gerqf gerqr
+   geql2 geqlf geqlr
+   gelq2 gelqf gelqr 
+   ormqr ormrq ormql ormlq
+   larfb larf larfg larft ladiv larft_block
+   lapy2 lapy3 lacgv larfp printMat gels trtrs
+@endmultidef
+@whiledef rt
+#define ATL_@12l@(rt) Mjoin(PATL,@(rt))
+@endwhile
+#define ATL_lamch        Mjoin(Mjoin(ATL_,UPR),lamch)
+
+#endif
+
+@skip int ATL_IEEECHK(int DOALL, float zero, float one);
+int clapack_ilaenv(enum ATL_ISPEC ISPEC, enum ATL_LAROUT ROUT, 
+                   unsigned int OPTS, int N1, int N2, int N3, int N4);
+int ATL_ilaenv(enum ATL_ISPEC ISPEC, enum ATL_LAROUT ROUT, unsigned int OPTS,
+               int N1, int N2, int N3, int N4);
+@multidef typ double float double float
+@whiledef pre z c d s
+   @addkeys ptyp=@(pre)
+int ATL_@(pre)getri(const enum CBLAS_ORDER Order, const int N, @(typ) *A, const int lda,
+               const int *ipiv, @(typ) *wrk, int *lwrk);
+int ATL_@(pre)getriR(const int N, @(typ) *A, const int lda, const int *ipiv, 
+                @(typ) *wrk, const int lwrk);
+int ATL_@(pre)getriC(const int N, @(typ) *A, const int lda, const int *ipiv, 
+                @(typ) *wrk, const int lwrk);
+void ATL_@(pre)lauum(const enum CBLAS_ORDER Order, const enum CBLAS_UPLO Uplo,
+                const int N, @(typ) *A, const int lda);
+int ATL_@(pre)potrf(const enum CBLAS_ORDER Order, const enum CBLAS_UPLO Uplo,
+               const int N, @(typ) *A, const int lda);
+void ATL_@(pre)potrs(const enum CBLAS_ORDER Order, const enum CBLAS_UPLO Uplo,
+                const int N, const int NRHS, const @(typ) *A, const int lda,
+                @(typ) *B, const int ldb);
+int ATL_@(pre)getrf(const enum CBLAS_ORDER Order, const int M, const int N, 
+               @(typ) *A, const int lda, int *ipiv);
+#ifdef ATL_USEPTHREADS
+   int ATL_@(pre)tgetf2(ATL_CINT M, ATL_CINT N, @(typ) *A, ATL_CINT lda, 
+                   int *ipiv);
+#endif
+int ATL_@(pre)getf2(ATL_CINT M, ATL_CINT N, @(typ) *A, ATL_CINT lda, int *ipiv);
+void ATL_@(pre)getrs(const enum CBLAS_ORDER Order, const enum CBLAS_TRANSPOSE Trans,
+                const int N, const int NRHS, const @(typ) *A, const int lda, 
+                const int *ipiv, @(typ) *B, const int ldb);
+void ATL_@(pre)laswp(const int N, @(typ) *A, const int lda0, const int K1, 
+               const int K2, const int *ipiv, const int inci);
+int ATL_@(pre)getrfC(const int M, const int N, @(typ) *A, const int lda, 
+                int *ipiv);
+int ATL_@(pre)getrfR(const int M, const int N, @(typ) *A, const int lda, 
+                int *ipiv);
+void ATL_@(pre)lauumRU(const int N, @(typ) *A, const int lda);
+void ATL_@(pre)lauumRL(const int N, @(typ) *A, const int lda);
+void ATL_@(pre)lauumCU(const int N, @(typ) *A, const int lda);
+void ATL_@(pre)lauumCL(const int N, @(typ) *A, const int lda);
+@whiledef rt qr rq ql lq
+#ifdef ATL_USEPTHREADS
+int ATL_@(pre)tge@(rt)2(ATL_CINT M, ATL_CINT N, @(typ) *A, ATL_CINT LDA, 
+                @(typ) *TAU, @(typ) *WORK, @(typ) *ws_T, ATL_INT LDT,
+                @(typ) *WORKM, ATL_CINT buildT);
+#endif
+int ATL_@(pre)ge@(rt)2(ATL_CINT M, ATL_CINT N, @(typ) *A, ATL_CINT LDA, 
+               @(typ) *TAU, @(typ) *WORK);
+int ATL_@(pre)ge@(rt)f(ATL_CINT M, ATL_CINT N, @(typ) *A, ATL_CINT LDA, 
+               @(typ) *TAU, @(typ) *WORK, ATL_CINT LWORK);
+int ATL_@(pre)ge@(rt)r(ATL_CINT M, ATL_CINT N, @(typ) *A, ATL_CINT LDA, 
+               @(typ)  *TAU, @(typ) *ws_QR2, @(typ) *ws_T, ATL_CINT LDT,
+               @(typ) *WORKM, const int buildT);
+int ATL_@(pre)orm@(rt)
+   (const enum CBLAS_SIDE SIDE, const enum CBLAS_TRANSPOSE TRANS,
+    ATL_CINT M, ATL_CINT N, ATL_CINT K, @(typ) *A, ATL_CINT LDA,
+    const @(typ) *TAU, @(typ) *C, ATL_CINT LDC, @(typ) *WORK, ATL_CINT LWORK);
+int ATL_@(pre)gels
+   (const enum ATLAS_TRANS TA, ATL_CINT M, ATL_CINT N, ATL_CINT NRHS, 
+    @(typ) *A, ATL_CINT lda, @(typ) *B, ATL_CINT ldb, 
+    @(typ) *work, ATL_CINT lwork);
+int ATL_@(pre)trtrs
+   (const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS TA, 
+    const enum ATLAS_DIAG Diag, ATL_CINT N, ATL_CINT NRHS, 
+    const @(typ) *A, ATL_CINT lda, @(typ) *B, ATL_CINT ldb);
+@endwhile
+void ATL_@(pre)larfb(const enum CBLAS_SIDE SIDE, const enum CBLAS_TRANSPOSE TRANS,
+                const enum ATL_LADIRECT  DIRECT, const enum ATL_LASTOREV STOREV,
+                ATL_CINT M, ATL_CINT N, ATL_CINT K, const @(typ) *V, 
+                ATL_CINT LDV, const @(typ) *T, ATL_CINT LDT, @(typ) *C, 
+                ATL_CINT LDC, @(typ) *WORK, int LDWORK);
+void ATL_@(pre)larfg(ATL_CINT N, @(typ) *ALPHA, @(typ) *X, ATL_CINT INCX, 
+                @(typ) *TAU);
+void ATL_@(pre)larfp(ATL_CINT N, @(typ) *ALPHA, @(typ) *X, ATL_CINT INCX, 
+                @(typ) *TAU);
+void ATL_@(pre)larft_block
+   (const enum ATL_LADIRECT DIRECT, const enum ATL_LASTOREV STOREV, 
+    ATL_CINT N, ATL_CINT K, ATL_CINT left, ATL_CINT right, @(typ) *V, 
+    ATL_CINT LDV, @(typ) *T, ATL_CINT LDT);
+void ATL_@(pre)larft
+   (const enum ATL_LADIRECT DIRECT, const enum ATL_LASTOREV STOREV, 
+    ATL_CINT N, ATL_CINT K, @(typ) *V, ATL_CINT LDV, const @(typ) *TAU, 
+                @(typ) *T, ATL_CINT LDT);
+void ATL_@(pre)printMat
+   (char *mat, const int M, const int N, @(typ) *A, const int lda0);
+@(typ)  ATL_@(pre)lapy2(@(typ) X, @(typ) Y);
+@ptyp d s
+void ATL_@(pre)larf(const enum CBLAS_SIDE SIDE, ATL_CINT M, ATL_CINT N, 
+               const @(typ) *V, ATL_CINT INCV, const @(typ) TAU, @(typ) *C, 
+               ATL_CINT LDC, @(typ) *WORK);
+@(typ) ATL_@(pre)lamch(char);
+@ptyp z c
+int ATL_@(pre)potrfRU(const int N, @(typ) *A, const int lda);
+int ATL_@(pre)potrfRL(const int N, @(typ) *A, const int lda);
+void ATL_@(pre)ladiv(const @(typ) *X, const @(typ) *Y, @(typ)  *Z);
+void  ATL_@(pre)lacgv(ATL_CINT N, @(typ) *X, ATL_CINT INCX);
+@(typ) ATL_@(pre)lapy3(const @(typ) X, const @(typ) Y, const @(typ) Z);
+void ATL_@(pre)larf(const enum CBLAS_SIDE  SIDE, ATL_CINT M, ATL_CINT N,
+               const @(typ) *V, ATL_CINT INCV, const @(typ) *TAU, 
+               @(typ) *C, ATL_CINT LDC, @(typ) *WORK);
+@ptyp !
+int ATL_@(pre)potrfU(const int N, @(typ) *A, const int lda);
+int ATL_@(pre)potrfL(const int N, @(typ) *A, const int lda);
+int ATL_@(pre)trtri(const enum CBLAS_ORDER Order, const enum CBLAS_UPLO Uplo,
+               const enum CBLAS_DIAG Diag, const int N, 
+               @(typ) *A, const int lda);
+int ATL_@(pre)trtriRU(const enum CBLAS_DIAG Diag, const int N, @(typ) *A, 
+                 const int lda);
+int ATL_@(pre)trtriRL(const enum CBLAS_DIAG Diag, const int N, @(typ) *A, 
+                 const int lda);
+int ATL_@(pre)trtriCU(const enum CBLAS_DIAG Diag, const int N, @(typ) *A, 
+                 const int lda);
+int ATL_@(pre)trtriCL(const enum CBLAS_DIAG Diag, const int N, @(typ) *A, 
+                 const int lda);
+
+   @undef typ
+   @killkeys ptyp
+@endwhile
+#endif
+@ROUT emit_lamch
+#include <stdio.h>
+#include <stdlib.h>
+#include <float.h>
+#include <assert.h>
+#include <math.h>
+#include <string.h>
+
+@multidef typ double float
+@multidef pf DBL FLT
+@whiledef pre d s
+int @(pre)ComputeRound(void)
+/*
+ * Blind translation of netlib LAPACK LAMCH's rounding computation
+ * RETURNS: 1 if numbers are correctly rounded, 0 if they are truncated
+ */
+{
+   volatile @(typ) a, b, c, f;
+   int rnd=0;
+   b = a = 1.0;
+   do
+   {
+      a *= 2.0;
+      c = a + b;
+      c = c - a;
+   }
+   while (c == 1.0);
+   b = 0.5*FLT_RADIX;
+   c = .01*(-FLT_RADIX);
+   f = b + c;
+   c = f + a;
+   rnd = (c == a);
+
+   c = 0.01*(FLT_RADIX);
+   f = b + c;
+   c = f + a;
+   if (rnd && c == a)
+      rnd = 0;
+   return(rnd);
+}
+
+@(typ) @(pre)ComputeSafmin(void)
+/*
+ * BFI translation of netlib LAPACK LAMCH's safmin calc, adapted to use float.h
+ * RETURNS: LAMCH's safmin
+ */
+{
+   volatile @(typ) small;
+   small = 1.0/(pow(FLT_RADIX, @(pf)_MAX_EXP-2)*(4.0-2.0*@(pf)_EPSILON));
+   if (small >= @(pf)_MIN)
+      return(small*(1.0+0.5*@(pf)_EPSILON));
+   return(@(pf)_MIN);
+}
+
+void emit_@(pre)lamch(char *path)
+{
+   FILE *fpout;
+   char *name;
+   volatile @(typ) f, under, over;
+   int len = 16, bad;
+
+   if (path)
+   {
+      len += strlen(path);
+      name = malloc(len);
+      assert(name);
+      sprintf(name, "%s/atlas_@(pre)lamch.h", path);
+      fpout = fopen(name, "w");
+      assert(fpout);
+      free(name);
+   }
+   else
+      fpout = stdout;
+   fprintf(fpout, "/* generated by %s */\n\n", __FILE__);
+   fprintf(fpout, "#ifndef ATLAS_@up@(pre)LAMCH_H\n");
+   fprintf(fpout, "   #define ATLAS_@up@(pre)LAMCH_H\n\n");
+
+   fprintf(fpout, "#define ATL_@(pre)laMANTDIG     %d\n", @(pf)_MANT_DIG);
+   fprintf(fpout, "#define ATL_@(pre)laMINEXP      %d\n", @(pf)_MIN_EXP);
+   fprintf(fpout, "#define ATL_@(pre)laMAXEXP      %d\n", @(pf)_MAX_EXP);
+   fprintf(fpout, "#define ATL_@(pre)laBASE        %d\n", FLT_RADIX);
+   f = 0.5;
+   f *= @(pf)_EPSILON;
+   fprintf(fpout, "#define ATL_@(pre)laEPSILON     %60.53e\n", f);
+   f = 0.5 * FLT_RADIX;
+   f *= @(pf)_EPSILON;
+   fprintf(fpout, "#define ATL_@(pre)laPRECISION   %60.53e\n", f);
+   fprintf(fpout, "#define ATL_@(pre)laUNDERTHRESH %60.53e\n", @(pf)_MIN);
+   under = @(pf)_MIN;
+   f = pow(FLT_RADIX, @(pf)_MAX_EXP-2)*(4.0-2.0*@(pf)_EPSILON);
+   fprintf(fpout, "#define ATL_@(pre)laOVERTHRESH  %60.53e\n", f);
+   over = f;
+   fprintf(fpout, "#define ATL_@(pre)laSAFMIN      %60.53e\n", 
+           @(pre)ComputeSafmin());
+   fprintf(fpout, "#define ATL_@(pre)laROUND       %d\n", @(pre)ComputeRound());
+/*
+ * Blind translation of LAPACK's _LABAD test
+ */
+   f = 2000.0;
+   bad = (log10(over) > f);
+   fprintf(fpout, "#define ATL_@(pre)laBAD %d\n", bad);
+   if (bad)
+   {
+      fprintf(fpout, "#define ATL_@(pre)labadUNDERTHRESH %60.53e\n", 
+              sqrt(under));
+      fprintf(fpout, "#define ATL_@(pre)labadOVERTHRESH  %60.53e\n", 
+              sqrt(over));
+   }
+   else
+   {
+      fprintf(fpout, 
+              "#define ATL_@(pre)labadUNDERTHRESH ATL_@(pre)laUNDERTHRESH\n");
+      fprintf(fpout, 
+              "#define ATL_@(pre)labadOVERTHRESH ATL_@(pre)laOVERTHRESH\n");
+   }
+
+   fprintf(fpout, "\n#endif\n");
+   fclose(fpout);
+}
+
+   @undef pf
+   @undef typ
+@endwhile
+int main (int nargs, char **args)
+{
+   char *path = "res/";
+   if (nargs > 1)
+      path = args[1];
+   emit_dlamch(path);
+   emit_slamch(path);
+   return(0);
+}
+@ROUT atlas_lamch.h
+#ifndef ATLAS_LAMCH_H
+   #define ATLAS_LAMCH_H
+#if defined(SREAL) || defined(SCPLX)
+   #include "atlas_slamch.h"
+   #ifndef ATLAS_LAMCH_TYPE_ALIAS
+      #define ATLAS_LAMCH_TYPE_ALIAS
+@multidef nm 
+   EPSILON BASE PRECISION MANTDIG MINEXP MAXEXP UNDERTHRESH OVERTHRESH
+   SAFMIN ROUND
+@endmultidef
+@whiledef nm
+      #define ATL_la@14l@(nm) ATL_sla@(nm)
+@endwhile
+      #define ATL_labadUNDERTHRESH ATL_slaUNDERTHRESH
+      #define ATL_labadOVERTHRESH ATL_slaOVERTHRESH
+   #endif 
+#else
+   #include "atlas_dlamch.h"
+   #ifndef ATLAS_LAMCH_TYPE_ALIAS
+      #define ATLAS_LAMCH_TYPE_ALIAS
+@multidef nm 
+   EPSILON BASE PRECISION MANTDIG MINEXP MAXEXP UNDERTHRESH OVERTHRESH
+   SAFMIN ROUND
+@endmultidef
+@whiledef nm
+      #define ATL_la@14l@(nm) ATL_dla@(nm)
+@endwhile
+      #define ATL_labadUNDERTHRESH ATL_dlaUNDERTHRESH
+      #define ATL_labadOVERTHRESH ATL_dlaOVERTHRESH
+   #endif 
+#endif
+
+#endif
+@ROUT ATL_lamch
+#include "atlas_lapack.h"
+#include "atlas_lamch.h"
+
+#ifdef TREAL
+TYPE ATL_lamch(char what)
+{
+   switch(what)
+   {
+@multidef nm 
+   EPSILON BASE PRECISION MANTDIG MINEXP MAXEXP UNDERTHRESH OVERTHRESH
+   SAFMIN ROUND
+@endmultidef
+@whiledef le e b p n m l u o s r 
+   case '@(le)':
+   case '@up@(le)':
+      return(Mjoin(PATL,la@up@(nm)));
+   @undef nm
+@endwhile
+   default:
+      return(0.0);
+   }
+   return(0.0);
+}
+#endif
+@ROUT ATL_unmqr ATL_unmlq
+#define myTrans AtlasConjTrans
+#ifdef SCPLX
+   #define MYOPT LAScplx
+#else
+   #define MYOPT LADcplx
+#endif
+    
+   @define rt @unm@
+   @define ilart @LAcungen@
+@ROUT ATL_unmqr
+   @define qr @qr@
+@ROUT ATL_unmlq
+   @define qr @lq@
+@ROUT ATL_ormqr ATL_ormlq
+#ifdef SCPLX
+   #define MYOPT LASreal
+#else
+   #define MYOPT LADreal
+#endif
+#define myTrans AtlasTrans
+   @define rt @orm@
+   @define ilart @LArorgen@
+@ROUT ATL_ormqr
+   @define qr @qr@
+@ROUT ATL_ormlq
+   @define qr @lq@
+@ROUT ATL_ormqr ATL_ormlq ATL_unmqr ATL_unmlq
+int ATL_@(rt)@(qr)(const enum ATLAS_SIDE Side, const enum ATLAS_TRANS TQ,
+              ATL_CINT M, ATL_CINT N, ATL_CINT K, const TYPE *A, ATL_CINT lda,
+              TYPE *TAU, TYPE *C, ATL_CINT ldc, TYPE *work, ATL_CINT ldw)
+{
+   ATL_CINT NQ = (Side == AtlasLeft) ? M : N, NW = (Side == AtlasLeft) ? N : M;
+   int opts = MYOPT;
+
+   if (M < 1 || N < 1 || K < 1)
+   {
+      *work = 0.0;
+      return(0);
+   }
+   opts += (Side == AtlasLeft) ? LALeft : LARight;
+//   opts += (TQ == AtlasNoTrans) ? LANoTrans : LATrans;
+   nb = ATL_ilaenv(LAIS_OPT_NB, @(ilart), opts, M, N, K, -1);
+}
+@ROUT ATL_lascl
+#include "atlas_misc.h"
+#include "atlas_lapack.h"
+#include "atlas_lamch.h"
+
+int Mjoin(PATL,lascl)
+(
+   const enum ATL_LAMATTYPE mtyp, /* matrix type */
+   ATL_CINT KL,                   /* lower bandwidth for banded mat types */
+   ATL_CINT KU,                   /* upper bandwidth for banded mat types */
+   const TYPE den0,               /* denominator of scaling fraction */
+   const TYPE num0,               /* numerator of scaling fraction */
+   ATL_CINT M,                    /* matrix rows for non-band matrices */
+   ATL_CINT N,                    /* matrix cols for non-band matrices */
+   TYPE *A,                       /* matrix to safely scale by fraction */
+   ATL_CINT lda
+)
+/*
+ * Safely scales the matrix A by the fraction (num0/den0)
+ * This routine tested to produce same ansers as _lascl for overflow, underflow,
+ * and normal fractions for all matrix types except banded (not implemented)
+ */
+{
+   TYPE bignum, num, den, anum, aden, aden0, anum0, mul, mul2;
+   #ifdef TCPLX
+      TYPE cmul[2] = {ATL_rzero, ATL_rzero};
+      TYPE cmul2[2] = {ATL_rzero, ATL_rzero};
+      ATL_CINT lda2 = lda+lda;
+   #else
+      #define cmul mul
+      #define cmul2 mul2
+      #define lda2 lda
+   #endif
+   ATL_INT i, j, k1, k2, MN;
+
+   if (den0 == 0.0 || den0 != den0)  /* illegal to have 0 or NaN denom */
+      return(-4);
+   if (num0 != num0)                 /* NaN not allowed for numerator */
+      return(-5);
+   switch (mtyp)
+   {
+   case LAMATG:
+   case LAMATL:
+   case LAMATU:
+   case LAMATH:
+      if (!N || !M)
+         return(0);
+      if (M < 0)
+         return(-6);
+      if (N < 0)
+         return(-7);
+      if (lda < M)
+         return(-9);
+      break;
+   case LAMATB:  /* ATLAS does not provide any banded lapack routs */
+   case LAMATQ:  /* so I've got no way to debug these cases */
+   case LAMATZ:  /* so just don't try */
+      ATL_assert(0);
+#if 0
+   case LAMATB:
+      if (!N || !KL)
+         return(0);
+      if (N < 0)
+         return(-7);
+      if (KL < 0)
+         return(-2);
+      break;
+   case LAMATQ:
+      if (!N || !KU)
+         return(0);
+      if (N < 0)
+         return(-7);
+      if (KU < 0)
+         return(-3);
+      break;
+   case LAMATZ:
+      if (M < 0)
+         return(-6);
+      if (N < 0)
+         return(-7);
+      if (KL < 0)
+         return(-2);
+      if (KU < 0)
+         return(-3);
+      break;
+#endif
+   default:
+      return(-1);
+   }
+
+   bignum = ATL_rone / ATL_laSAFMIN;
+   den = den0 * ATL_laSAFMIN;
+/*
+ * If multiplying by smallest invertable # doesn't change denom, it is
+ * is infinity or NaN, and error check ruled out NaN
+ */
+   if (den == den0)
+      mul = num0 / den0;
+/*
+ * If not denom not infinity, keep checking for safe scaling
+ */
+   else
+   {
+      num = num0 / bignum;  /* should be tiny number */
+      anum = Mabs(num);
+      aden = Mabs(den);
+      anum0 = Mabs(num0);
+      aden0 = Mabs(den0);
+/*
+ *    If multiplying by smallest invertable # doesn't change numerator,
+ *    it is NaN or infinity, and NaN ruled out by error check, just
+ *    scale everything by infinity (LAPACK does this, so so do I)
+ */
+      if (num == num0)
+          mul = num0;
+/*
+ *    If the denom scaled as small as is safe is still larger than than
+ *    a non-zero numerator, we cannot safely compute num / den (underflow), 
+ *    and so must apply them in special way: we first scale A by smallest
+ *    invertable number, and then scale A by num0 / (den0*ATL_laSAFMIN).
+ *    
+ */
+      else if (aden > anum0 && num0 != ATL_rzero)
+      {
+         mul = ATL_laSAFMIN;
+         mul2 = num0 / den;
+         goto DOUBLE_SCALE;
+      }
+/*
+ *    If numerator scaled as small as is safe is still larger than denominator
+ *    then we cannot safely compute num/den due to overflow, so must apply
+ *    separately
+ */
+      else if (anum > aden0)
+      {
+         mul = bignum;
+         mul2 = num * bignum;
+         goto DOUBLE_SCALE;
+      }
+      else
+         mul = num0 / den0;
+   }
+/*
+ * If we reach here, just need to scale matrix by mul and we are done!
+ */
+   #ifdef TCPLX
+      cmul[0] = mul;
+   #endif
+   switch (mtyp)
+   {
+   case LAMATG:
+      Mjoin(PATLU,gescal)(M SHIFT, N, mul, A, lda SHIFT);
+      break;
+   case LAMATL:
+      Mjoin(PATL,trscal)(AtlasLower, M, N, cmul, A, lda);
+      break;
+   case LAMATU:
+      Mjoin(PATL,trscal)(AtlasUpper, M, N, cmul, A, lda);
+      break;
+   case LAMATH:  /* Upper hessenburg matrix */
+/* 
+ *    I'm lazy, so just scale hessenburg as triangle, then do vector scale
+ *    on subdiagonal (take extra TLB misses for subdiagonal scale)
+ */
+      Mjoin(PATL,trscal)(AtlasUpper, M, N, cmul, A, lda);
+      MN = (M > N) ? N : M-1;
+      Mjoin(PATL,scal)(MN, cmul, A+(1 SHIFT), lda+1);
+      break;
+#if 0
+   case LAMATB:  /* symmetric band mat wt only lower KL entries stored */
+      k1 = KL+1;
+      for (j=0; j < N; j++, A += lda)
+      {
+         k2 = N-j+1;
+         k2 = (k2 < k1) ? k2 : k1;
+         Mjoin(PATL,scal)(k2, cmul, A, 1);
+      }
+      break;
+   case LAMATQ:  /* symmetric band mat wt only upper KU entries stored */
+      k2 = KU + 1;  /* number of diagonals */
+      for (A+=lda, j=1; j < N; j++, A += lda)
+      {
+         k1 = k2 - j;
+         Mjoin(PATL,scal)(k2-k1, cmul, A+(k1 SHIFT), 1);
+      }
+      break;
+   case LAMATZ:  /* band mat wt KL lower bandwidth and KU upper */
+      k1 = kl + ku + 1;  /* number of diagonals */
+      for (j=0; j < N; j++, A += lda)  /* loop over matrix order */
+      {
+      }
+#endif
+   }
+   return(0);
+/*
+ * This code scales matrix by mul first, and then by mul2, and is used
+ * when num0/den0 cannot be formed without over-/under-flow.
+ * I call _SCAL so that complex/real are the same.  Two calls to SCAL
+ * transforms register reuse into cache reuse (assuming one col can fit
+ * in the cache), but I don't want to have to write all the cases in full
+ * loops for both precisions, especially since these cases are extremely
+ * rare.  Even when it happens, this should be much faster than what
+ * lapack does, which is stream entire matrix through twice (only getting
+ * cache reuse when entire MxN matrix fits in cache)
+ */
+DOUBLE_SCALE:
+   #ifdef TCPLX
+      cmul[0] = mul;
+      cmul2[0] = mul2;
+   #endif
+   switch (mtyp)
+   {
+   case LAMATG:
+      for (j=0; j < N; j++, A += lda2)
+      {
+         Mjoin(PATL,scal)(M, cmul, A, 1);
+         Mjoin(PATL,scal)(M, cmul2, A, 1);
+      }
+      break;
+   case LAMATL:
+      MN = Mmin(M,N);
+      for (j=0; j < MN; j++, A += lda2)
+      {
+         Mjoin(PATL,scal)(M-j, cmul, A+(j SHIFT), 1);
+         Mjoin(PATL,scal)(M-j, cmul2, A+(j SHIFT), 1);
+      }
+      break;
+   case LAMATU:
+   case LAMATH:
+      MN = Mmin(M,N);
+      for (j=0; j < MN; j++, A += lda2)
+      {
+         Mjoin(PATL,scal)(j+1, cmul, A, 1);
+         Mjoin(PATL,scal)(j+1, cmul2, A, 1);
+      }
+      for (j=MN; j < N; j++, A += lda2)
+      {
+         Mjoin(PATL,scal)(M, cmul, A, 1);
+         Mjoin(PATL,scal)(M, cmul2, A, 1);
+      }
+      if (mtyp == LAMATH)  /* need to handle extra subdiagonal */
+      {
+         MN = (M > N) ? N : M-1;
+         A -= (N * lda - 1)SHIFT;
+         Mjoin(PATL,scal)(MN, cmul, A, lda+1);
+         Mjoin(PATL,scal)(MN, cmul2, A, lda+1);
+      }
+      break;
+   }
+   return(0);
+}
+#ifndef TCPLX
+   #undef cmul
+   #undef cmul2
+   #undef lda2
+#endif
+@beginskip
+/*
+ * quick & dirty f77 interface for testing
+ */
+void Mjoin(Mjoin(atl_,PRE),lascl_)
+(
+   const enum ATL_LAMATTYPE *mtyp, /* matrix type */
+   ATL_CINT *KL,                   /* lower bandwidth for banded mat types */
+   ATL_CINT *KU,                   /* upper bandwidth for banded mat types */
+   const TYPE *den,               /* denominator of scaling fraction */
+   const TYPE *num,               /* numerator of scaling fraction */
+   ATL_CINT *M,                    /* matrix rows for non-band matrices */
+   ATL_CINT *N,                    /* matrix cols for non-band matrices */
+   TYPE *A,                       /* matrix to safely scale by fraction */
+   ATL_CINT *lda,
+   ATL_INT *info 
+)
+{
+   *info = Mjoin(PATL,lascl)(*mtyp, *KL, *KU, *den, *num, *M, *N, A, *lda);
+}
+@endskip
+@ROUT ATL_trtrs
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2010
+#include "atlas_lapack.h"
+#include "atlas_lamch.h"
+int Mjoin(PATL,trtrs)
+   (const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS TA, 
+    const enum ATLAS_DIAG Diag, ATL_CINT N, ATL_CINT NRHS, 
+    const TYPE *A, ATL_CINT lda, TYPE *B, ATL_CINT ldb)
+/*
+ * Checks for singularity, and then solves system:
+ *   A * X = B or A^T * X = B
+ * where A is a triangular matrix (as indicated by Uplo).
+ * RETURNS :
+ *   0 : successful exit
+ *  <0 : argument #(-return) had illegal value (start counting from 1)
+ *  >0 : diag elt # (1st elt 1) was zero, so A is singular
+ */
+{
+   #ifdef TCPLX
+      TYPE one[2] = {ATL_rone, ATL_rzero};
+      ATL_CINT N2=N+N;
+   #else
+      #define one ATL_rone
+   #endif
+   ATL_CINT ldap1 = (lda+1)SHIFT;
+   ATL_INT i;
+/*
+ * Zero on diagonal means singular triangular matrix
+ */
+   if (Diag != AtlasUnit)
+   {
+      #ifdef TCPLX
+         for (i=0; i < N2; i += 2, A += ldap1)
+            if (SCALAR_IS_ZERO(A))
+               return((i>>1)+1);
+      #else
+         for (i=0; i < N; i++, A += ldap1)
+            if (*A == ATL_rzero)
+               return(i+1);
+      #endif
+      A -= ldap1*N;
+   }
+   cblas_trsm(CblasColMajor, AtlasLeft, Uplo, TA, Diag, N, NRHS, one, 
+              A, lda, B, ldb);
+   return(0);
+}
+@ROUT ATL_gels
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2010
+#include "atlas_lapack.h"
+#include "atlas_lamch.h"
+
+#ifdef TCPLX
+   #define mytrans AtlasConjTrans
+#else
+   #define mytrans AtlasTrans
+#endif
+int Mjoin(PATL,gels)
+   (const enum ATLAS_TRANS TA, ATL_CINT M, ATL_CINT N, ATL_CINT NRHS, 
+    TYPE *A, ATL_CINT lda, TYPE *B, ATL_CINT ldb, TYPE *work, ATL_CINT lwork)
+/*
+ *  GELS solves overdetermined or underdetermined linear systems
+ *  involving an M-by-N matrix A, or its conjugate-transpose, using a QR
+ *  or LQ factorization of A.  It is assumed that A has full rank.
+ *
+ *  This is a straight translation from LAPACK 3.2.1; the only performance
+ *  improvements come from using ATLAS's improved QR (and slighly ORMQR)
+ *  implementations.
+ *
+ *  The following options are provided:
+ *
+ *  1. If TRANS = 'N' and m >= n:  find the least squares solution of
+ *     an overdetermined system, i.e., solve the least squares problem
+ *                  minimize || B - A*X ||.
+ *
+ *  2. If TRANS = 'N' and m < n:  find the minimum norm solution of
+ *     an underdetermined system A * X = B.
+ *
+ *  3. If TRANS = 'C/T' and m >= n:  find the minimum norm solution of
+ *     an undetermined system A**H * X = B.
+ *
+ *  4. If TRANS = 'C/T' and m < n:  find the least squares solution of
+ *     an overdetermined system, i.e., solve the least squares problem
+ *                  minimize || B - A**H * X ||.
+ *
+ *  Several right hand side vectors b and solution vectors x can be
+ *  handled in a single call; they are stored as the contiguously in the
+ *  M-by-NRHS right hand side matrix B and the N-by-NRHS solution
+ *  matrix X.
+ *
+ *  TRANS   (input) CHARACTER*1
+ *          = 'N': the linear system involves A;
+ *          = 'C': the linear system involves A**H (complex only).
+ *          = 'T': the linear system involves A**T (real only).
+ *
+ *  M       (input) INTEGER
+ *          The number of rows of the matrix A.  M >= 0.
+ *
+ *  N       (input) INTEGER
+ *          The number of columns of the matrix A.  N >= 0.
+ *
+ *  NRHS    (input) INTEGER
+ *          The number of right hand sides, i.e., the number of
+ *          columns of the matrices B and X. NRHS >= 0.
+ *
+ *  A       (input/output) COMPLEX*16 array, dimension (LDA,N)
+ *          On entry, the M-by-N matrix A.
+ *            if M >= N, A is overwritten by details of its QR
+ *                       factorization as returned by GEQRF;
+ *            if M <  N, A is overwritten by details of its LQ
+ *                       factorization as returned by GELQF.
+ *  LDA     (input) INTEGER
+ *          The leading dimension of the array A.  LDA >= max(1,M).
+ *
+ *  B       (input/output) COMPLEX*16 array, dimension (LDB,NRHS)
+ *          On entry, the matrix B of right hand side vectors, stored
+ *          columnwise; B is M-by-NRHS if TRANS = 'N', or N-by-NRHS
+ *          if TRANS = 'C/T'.
+ *          On exit, if INFO = 0, B is overwritten by the solution
+ *          vectors, stored columnwise:
+ *          if TRANS = 'N' and m >= n, rows 1 to n of B contain the least
+ *          squares solution vectors; the residual sum of squares for the
+ *          solution in each column is given by the sum of squares of the
+ *          modulus of elements N+1 to M in that column;
+ *          if TRANS = 'N' and m < n, rows 1 to N of B contain the
+ *          minimum norm solution vectors;
+ *          if TRANS = 'C' and m >= n, rows 1 to M of B contain the
+ *          minimum norm solution vectors;
+ *          if TRANS = 'C' and m < n, rows 1 to M of B contain the
+ *          least squares solution vectors; the residual sum of squares
+ *          for the solution in each column is given by the sum of
+ *          squares of the modulus of elements M+1 to N in that column.
+ *
+ *  LDB     (input) INTEGER
+ *          The leading dimension of the array B. LDB >= MAX(1,M,N).
+ *
+ * RETURNS:
+ *          = 0:  successful exit
+ *          < 0:  if INFO = -i, the i-th argument had an illegal value
+ *          > 0:  if INFO =  i, the i-th diagonal element of the
+ *                triangular factor of A is zero, so that A does not have
+ *                full rank; the least squares solution could not be
+ *                computed.
+ */
+{
+   TYPE *TAU;
+   #ifdef TCPLX
+      const enum ATLAS_TRANS RTRAN = (TA == AtlasNoTrans) ? 
+                                     AtlasConjTrans : AtlasNoTrans;
+      const TYPE one[3] = {ATL_rone, ATL_rzero, ATL_rzero}, *zero=one+1;
+      TYPE wsq[4];
+   #else
+      const enum ATLAS_TRANS RTRAN = (TA == AtlasNoTrans) ? 
+                                     AtlasTrans : AtlasNoTrans;
+      #define one ATL_rone
+      #define zero ATL_rzero
+      TYPE wsq[2];
+   #endif
+   TYPE *free0=NULL;
+   TYPE anrm, bnrm;
+   ATL_INT scalN, wlen;
+   ATL_CINT MN = Mmin(M,N);
+   int iascal=0, ibscal=0, ierr;
+/*
+ * Quick return for degenerate cases
+ */
+   if (!NRHS || !(M | N))
+      return(0);
+   else if (!M || !N)
+   {
+      Mjoin(PATL,geset)(Mmax(M,N), NRHS, zero, zero, B, ldb);
+      return(0);
+   }
+/*
+ * If no workspace given, routines will simply allocate their own, we need TAU
+ */
+   if (lwork == 0 || lwork < -1)
+   {
+      free0 = TAU = malloc(MN*ATL_sizeof);
+      ATL_assert(TAU);
+      work = NULL;
+      wlen = 0;
+   }
+/*
+ * If the user is providing workspace, or doing a workspace query, we must
+ * compute the required workspace
+ */
+   else
+   {
+      wlen = MN;    /* space needed for TAU */
+      if (M >= N)
+      {
+         ATL_assert(!Mjoin(PATL,geqrf)(M, N, A, lda, NULL, wsq, -1));
+         ATL_assert(!Mjoin(PATL,ormqr)(AtlasLeft, RTRAN, M, NRHS, N, A, lda,
+                                   NULL, B, ldb, wsq+(1 SHIFT), -1));
+      }
+      else 
+      {
+         ATL_assert(!Mjoin(PATL,gelqf)(M, N, A, lda, NULL, wsq, -1));
+         ATL_assert(!Mjoin(PATL,ormqr)(AtlasLeft, RTRAN, N, NRHS, M, A, lda,
+                                   NULL, B, ldb, wsq+(1 SHIFT), -1));
+      }
+      if (wsq[1 SHIFT] > wsq[0])
+         wsq[0] = wsq[1 SHIFT];
+      wlen += wsq[0];
+/*
+ *    If this was a workspace query, return optimal workspace in *work
+ */
+      if (lwork == -1)
+      {
+         *work = wlen;
+         return(0);
+      }
+/*
+ *    Otherwise, take action if user's workspace is inadequate
+ */
+     if (lwork < wlen)
+     {
+        if (lwork >= wlen-MN) /* users space is work, we alloc TAU */
+        {
+           free0 = TAU = malloc(MN*ATL_sizeof);
+           wlen -= MN;
+           ATL_assert(TAU);
+           work = work;
+        }
+        else if (lwork < MN) /* can't even use workspace for TAU */
+        {
+           free0 = TAU = malloc(MN*ATL_sizeof);
+           ATL_assert(TAU);
+           work = NULL;
+           wlen = 0;
+        }
+        else  /* user's workspace becomes TAU; let worker routs alloc work */
+        {
+           TAU = work;
+           work = NULL;
+           wlen = lwork;
+        }
+     }
+     else  /* user provided adequate workspace for everything */
+     {
+        wlen = lwork - MN;
+        TAU = work;
+        work += MN SHIFT;
+     }
+   }
+// TPSD is (TA != AtlasNoTrans)
+/*
+ * ===============================================================
+ * Scale if max elt in A is outside safe range, return if nrm is 0
+ * ===============================================================
+ */
+   anrm = Mjoin(PATL,gemaxnrm)(M, N, A, lda);
+/*
+ * If it is below it, scale matrix norm up to smallest safe number
+ */
+   if (anrm > ATL_rzero && anrm < ATL_labadUNDERTHRESH)
+   {
+      Mjoin(PATL,lascl)(LAMATG, 0, 0, anrm, ATL_labadUNDERTHRESH, M, N, A, lda);
+      iascal = 1;
+   }
+/*
+ * If matrix norm huge, scale it down by largest safe number
+ */
+   else if (anrm > ATL_labadOVERTHRESH)
+   {
+      Mjoin(PATL,lascl)(LAMATG, 0, 0, anrm, ATL_labadOVERTHRESH, M, N, A, lda);
+      iascal = 2;
+   }
+/*
+ * If norm is 0, entire matrix is 0, return zero solution
+ */
+   else if (anrm == ATL_rzero)
+   {
+      Mjoin(PATL,geset)(Mmax(M,N), NRHS, zero, zero, B, ldb);
+      if (free0)
+         free(free0);
+      return(0);
+   }
+/*
+ * ===============================================================
+ * Scale if max elt in B is outside safe range, return if nrm is 0
+ * ===============================================================
+ */
+   scalN = (TA != AtlasNoTrans) ? N : M;
+   bnrm = Mjoin(PATL,gemaxnrm)(scalN, NRHS, B, ldb);
+/*
+ * If it is below it, scale matrix norm up to smallest safe number
+ */
+   if (bnrm > ATL_rzero && bnrm < ATL_labadUNDERTHRESH)
+   {
+      Mjoin(PATL,lascl)(LAMATG, 0, 0, bnrm, ATL_labadUNDERTHRESH, 
+                        scalN, NRHS, B, ldb);
+      ibscal = 1;
+   }
+/*
+ * If matrix norm huge, scale it down by largest safe number
+ */
+   else if (bnrm > ATL_labadOVERTHRESH)
+   {
+      Mjoin(PATL,lascl)(LAMATG, 0, 0, bnrm, ATL_labadOVERTHRESH, 
+                        scalN, NRHS, B, ldb);
+      ibscal = 2;
+   }
+   if (M >= N)  /* overdetermined system */
+   {
+/*
+ *    Compute QR factorization of A
+ */
+      ATL_assert(!Mjoin(PATL,geqrf)(M, N, A, lda, TAU, work, wlen));
+/*
+ *    Least-squares problem min || A * X - B ||
+ */
+      if (TA == AtlasNoTrans)
+      {
+         ATL_assert(!Mjoin(PATL,ormqr)(AtlasLeft, RTRAN, M, NRHS, N, A, lda, 
+                                       TAU, B, ldb, work, wlen));
+         ierr = Mjoin(PATL,trtrs)(AtlasUpper, AtlasNoTrans, AtlasNonUnit,
+                                  N, NRHS, A, lda, B, ldb);
+         if (ierr)
+         {
+            if (free0)
+               free(free0);
+           return(ierr);
+         }
+         scalN = N;
+      }
+/*
+ *    Overdetermined system of equations A' * X = B
+ */
+      else  /* transposed case */
+      {
+         ierr = Mjoin(PATL,trtrs)(AtlasUpper, TA, AtlasNonUnit,
+                                  N, NRHS, A, lda, B, ldb);
+         if (ierr)
+         {
+            if (free0)
+               free(free0);
+            return(ierr);
+         }
+         Mjoin(PATL,gezero)(M-N, NRHS, B+(N SHIFT), ldb);
+          ATL_assert(!Mjoin(PATL,ormqr)(AtlasLeft, AtlasNoTrans, M, NRHS, N,
+                                        A, lda, TAU, B, ldb, work, wlen));
+         scalN = M;
+      }
+   }
+/*
+ * Compute LQ factorization of A 
+ */
+   else    /* M < N */
+   {
+      ATL_assert(!Mjoin(PATL,gelqf)(M, N, A, lda, TAU, work, wlen));
+/*
+ *    Underdetermined system of equations A * X = B
+ */
+      if (TA == AtlasNoTrans)
+      {
+/*
+ *       B(1:M,1:NRHS) = inv(L) * B(1:M,1:NRHS)
+ */
+         ierr = Mjoin(PATL,trtrs)(AtlasLower, AtlasNoTrans, AtlasNonUnit,
+                                  M, NRHS, A, lda, B, ldb);
+         if (ierr)
+         {
+            if (free0)
+               free(free0);
+            return(ierr);
+         }
+         Mjoin(PATL,gezero)(N-M, NRHS, B+(M SHIFT), ldb);
+         ATL_assert(!Mjoin(PATL,ormlq)(AtlasLeft, RTRAN, N, NRHS, M, A, lda,
+                                       TAU, B, ldb, work, wlen));
+         scalN = N;
+      }
+/*
+ *    Overdetermined system min || A' * X - B ||
+ */
+      else
+      {
+         ATL_assert(!Mjoin(PATL,ormlq)(AtlasLeft, AtlasNoTrans, N, NRHS, M, 
+                                       A, lda, TAU, B, ldb, work, wlen));
+/*
+ *       B(1:M,1:NRHS) := inv(L') * B(1:M,1:NRHS)
+ */
+         ierr = Mjoin(PATL,trtrs)(AtlasLower, mytrans, AtlasNonUnit,
+                                  M, NRHS, A, lda, B, ldb);
+         if (ierr)
+         {
+            if (free0)
+               free(free0);
+            return(ierr);
+         }
+         scalN = M;
+      }
+   }
+/*
+ * Undo scaling
+ */
+   if (iascal == 1)
+      Mjoin(PATL,lascl)(LAMATG, 0, 0, anrm, ATL_labadUNDERTHRESH, 
+                        scalN, NRHS, B, ldb);
+   else if (iascal == 2)
+      Mjoin(PATL,lascl)(LAMATG, 0, 0, anrm, ATL_labadOVERTHRESH, 
+                        scalN, NRHS, B, ldb);
+   if (ibscal == 1)
+      Mjoin(PATL,lascl)(LAMATG, 0, 0, ATL_labadUNDERTHRESH, bnrm,
+                        scalN, NRHS, B, ldb);
+   else if (ibscal == 2)
+      Mjoin(PATL,lascl)(LAMATG, 0, 0, ATL_labadOVERTHRESH, bnrm,
+                        scalN, NRHS, B, ldb);
+   if (free0)
+      free(free0);
+   return(0);
+}
+#undef mytrans
+@ROUT ATL_getf2
+#include "atlas_lapack.h"
+#include "atlas_level2.h"
+#include "atlas_lamch.h"
+
+#ifdef TCPLX
+   #define my_ger2 Mjoin(PATL,ger2u)
+#else
+   #define my_ger2 Mjoin(PATL,ger2)
+#endif
+static int LU1(ATL_CINT M, ATL_CINT N, ATL_CINT j, TYPE *A, ATL_CINT lda, 
+               int *ipiv)
+/*
+ * Performs an LU factorization on jth column.  N is the full width of
+ * column panel, A is ptr to beginning of panel.
+ * RETURNS: 0 on success, non-zero if no non-zero pivot exists
+ */
+{
+   #ifdef TCPLX
+      ATL_CINT lda2 = lda+lda;
+      TYPE invs[2];
+      const TYPE none[2] = {ATL_rnone, ATL_rzero};
+   #else 
+      #define lda2 lda
+      #define none ATL_rnone
+   #endif
+   TYPE *Ac = A + j*lda2;  /* active column */
+   TYPE pivval=Ac[j];
+   ATL_INT ip;
+
+   ipiv[j] = ip = j + cblas_iamax(M-j, Ac+(j SHIFT), 1);
+   #ifdef TCPLX
+      pivval = Mabs(Ac[ip+ip]) + Mabs(Ac[ip+ip+1]);
+   #else
+      pivval = Ac[ip];
+   #endif
+   if (pivval != ATL_rzero);
+   {
+      if (ip != j)
+         cblas_swap(N, A+(j SHIFT), lda, A+(ip SHIFT), lda);
+      #ifdef TCPLX
+         if (pivval >= ATL_laSAFMIN)
+         {
+            TYPE invs[2];
+            Mjoin(PATL,cplxinvert)(1, Ac+j+j, 1, invs, 1);
+            cblas_scal(M-j-1, invs, Ac+j+j+2, 1);
+         }
+         else
+            Mjoin(PATL,cplxdivide)(M-j-1, Ac+j+j, Ac+j+j+2, 1, Ac+j+j+2, 1);
+      #else
+         if (Mabs(pivval) >= ATL_laSAFMIN)
+            cblas_scal(M-j-1, ATL_rone/pivval, Ac+j+1, 1);
+         else
+         {
+            ATL_INT i;
+            for (i=j+1; i < M; i++)
+               Ac[j] /= pivval;
+         }
+      #endif
+      return(0);
+   }
+   return(1);
+}
+
+@beginskip
+int Mjoin(PATL,getf2_r2)
+   (ATL_CINT M, ATL_CINT N, TYPE *A0, ATL_CINT lda, int *ipiv)
+{
+#ifdef TCPLX
+   const TYPE none[2] = {ATL_rnone, ATL_rzero};
+   TYPE alpha[2];
+   ATL_CINT lda2 = lda+lda, LDA2 = lda2+lda2;
+   ATL_CINT MN = Mmin(M,N), N2 = (MN>>1)<<1;
+   for (j=0; j < N2; j += 2, Ac += LDA2)
+   {
+      if (LU1(M, N, j, A0, lda, ipiv))  /* factor column j */
+         iret = j;
+   }
+/*
+ *     Update column j+1
+ */
+       alpha[0] = -Ac[lda2+j+j];
+       alpha[1] = -Ac[lda2+j+j+1];
+       Mjoin(PATL,axpy)(M-j-1, alpha, Ac+j+j+2, 1, Ac+lda2+j+j+2, 1);
+#else
+   TYPE *A = A0;
+   ATL_CINT LDA2 = lda+lda, MN = Mmin(M,N), N2 = (MN>>1)<<1;
+   ATL_CINT incA = lda+lda+2;
+   ATL_INT j;
+
+   for (j=0; j < N2; j += 2, A += incA)
+   {
+      if (LU1(M, N, j, A0, lda, ipiv))  /* factor column j */
+         iret = j;
+/*
+ *    Update column j+1 and then factor column j+1
+ */
+      Mjoin(PATL,axpy)(M-j-1, -A[lda], A+1, 1, Ac+lda+1, 1);
+      if (LU1(M, N, j+1, A0, lda, ipiv))
+         iret = j+1;
+/*
+ *    Compute 2-wide row-panel of U; L is unit triangular:
+ *    |1   0| |x0| = |b0|  ==> x0 = b0 (no change for A(j,j+1:N))
+ *    |L21 1| |x1|   |b1|  ==> L21*x0 + x1 = b1 ==> x1 = b1 - L21*b0
+ *    So, set alpha = -L21, x = b0, y = x1, and can figure with axpy!
+ */
+      Mjoin(PATL,axpy)(N-j-2, -A[1], A+LDA2, lda, A+LDA2+1, lda);
+/*
+ *    Update trailing matrix with rank-2 update 
+ */
+      my_ger2(M-j-2, N-j-2, none, A+2, 1, A+LDA2, lda,
+              none, A+lda+2, 1, A+LDA2+1, lda, A+incA, lda);
+   }
+   if (N-N2)
+      if (LU1(M, N, j, A0, lda, ipiv))  /* factor last column */
+         iret = j;
+   return(iret);
+}
+#ifndef TCPLX
+   #undef alpha
+#endif
+@endskip
+#ifdef TCPLX
+   #define my_ger Mjoin(PATL,geru)
+#else
+   #define my_ger Mjoin(PATL,ger)
+#endif
+int Mjoin(PATL,getf2)(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT lda, int *ipiv)
+{
+   ATL_CINT MN = Mmin(M,N);
+   ATL_INT ip;
+   TYPE *Ac = A;
+   ATL_INT j, iret=0;
+   #ifdef TCPLX
+      ATL_CINT lda2 = lda+lda;
+      TYPE invs[2];
+      const TYPE none[2] = {ATL_rnone, ATL_rzero};
+   #else 
+      #define lda2 lda
+      #define none ATL_rnone
+   #endif
+
+   if (M < 1 || N < 1)
+      return(0);
+
+   for (j=0; j < MN; j++, Ac += lda2)
+   {
+      if (LU1(M, N, j, A, lda, ipiv))
+         iret = j;
+@beginskip
+      ipiv[j] = ip = j + cblas_iamax(M-j, Ac+(j SHIFT), 1);
+   #ifdef TCPLX
+      invs[0] = Ac[ip+ip]; invs[1] = Ac[ip+ip+1];
+      if (invs[0] != ATL_rzero || invs[1] != ATL_rzero)
+   #else
+      if (Ac[ip] != ATL_rzero)
+   #endif
+      {
+         if (ip != j)
+            cblas_swap(N, A+(j SHIFT), lda, A+(ip SHIFT), lda);
+         #ifdef TCPLX
+            Mjoin(PATL,cplxinvert)(1, invs, 1, invs, 1);
+            cblas_scal(M-j-1, invs, Ac+j+j+2, 1);
+         #else
+            cblas_scal(M-j-1, ATL_rone/Ac[j], Ac+j+1, 1);
+         #endif
+      }
+      else /* pivot is zero, we have a singular matrix! */
+         iret = j;
+@endskip
+
+      my_ger(M-j-1, N-j-1, none, Ac+((j+1)SHIFT), 1, Ac+((j+lda)SHIFT), lda, 
+             Ac+((lda+j+1)SHIFT), lda);
+   }
+   return(iret);
+}

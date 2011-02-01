@@ -1,0 +1,2737 @@
+@ifdef ! topd
+   @define topd @/home/whaley/atlas3.9/AtlasBase@
+@endifdef
+@ROUT ! ATL_dmm4x2x128_sse2_UNAL
+@extract -b @(topd)/gen.inc what=crsetup
+@extract -b @(topd)/gen.inc @(cw08) what=cw
+#include "atlas_asm.h"
+@ROUT ATL_dmm4x2x128_sse2
+/*
+ * This computational kernel was created using a code fragment demonstrating a
+ * Core2Duo-friendly 2-D x86 register block sent to me by Yevgen Voronenko 
+ * of the CMU/SPIRAL group as a template.  Here is original the code fragment
+ * that Yevgen sent me:
+ *      movapd    (%rdi), %xmm9                
+ *      movapd    %xmm9, %xmm6                                  
+ *      movapd    48(%rdi), %xmm8                               
+ *      mulpd     %xmm8, %xmm6                                  
+ *      addpd     %xmm6, %xmm5                                  
+ *      movapd    16(%rdi), %xmm10                              
+ *      movapd    %xmm10, %xmm7                                 
+ *      mulpd     %xmm8, %xmm7                                  
+ *      addpd     %xmm7, %xmm4                                  
+ *      movapd    32(%rdi), %xmm12                              
+ *      mulpd     %xmm12, %xmm8                                 
+ *      addpd     %xmm8, %xmm3                                  
+ *      movapd    64(%rdi), %xmm11                              
+ *      mulpd     %xmm11, %xmm9                                 
+ *      mulpd     %xmm11, %xmm10                                
+ *      mulpd     %xmm11, %xmm12                                
+ *      addpd     %xmm9, %xmm2                                  
+ *      addpd     %xmm10, %xmm1                                 
+ *      addpd     %xmm12, %xmm0                                 
+ */
+
+
+#if !defined(ATL_GAS_x8664)
+   #error "This kernel requires x86-64 assembly!"
+#endif
+
+#if !defined(KB) || (KB == 0)
+   #error "KB must be a compile-time constant!"
+#endif
+#if KB > 128
+   #error "KB can at most be 128!"
+#endif
+
+#ifdef DCPLX
+   #define CMUL(arg_) 2*arg_
+#else
+   #define CMUL(arg_) arg_
+#endif
+/*
+ *Integer register usage shown by these defines
+ */
+#define pA0     %rcx
+#define lda     %rbx
+#define lda3    %rbp
+#define pfA     %rdi
+#define pB0     %rax
+#define ldb     %rsi
+#define pfB     %rdx
+#define incAn   %r8
+#define incCn   %r9
+#define pC0     %r10
+#define MM      %r11
+#define NN      %r12
+#define MM0     %r13
+#define ldc     %r14
+
+#define rA0 	%xmm0
+#define rA1 	%xmm1
+#define rA2 	%xmm2
+#define rA3 	%xmm3
+#define rB0 	%xmm4
+#define ra0 	%xmm5
+#define ra1 	%xmm6
+#define ra2 	%xmm7
+#define rC00 	%xmm8
+#define rC10 	%xmm9
+#define rC20 	%xmm10
+#define rC30 	%xmm11
+#define rC01 	%xmm12
+#define rC11 	%xmm13
+#define rC21 	%xmm14
+#define rC31 	%xmm15
+
+/*
+ * Save some inst space by using short version of instructions
+ */
+#define movapd movaps
+#define movupd movups
+#define movlpd movlps
+#define movhpd movhps
+
+@beginskip
+#define ATL_Kiter_b0(off_) \
+   movapd off_(pA0), rC00 ; \
+   movapd off_(pB0), rB0 ; \
+   movapd rC00, rC01 ; \
+   mulpd  rB0, rC00 ; \
+   movapd off_(pA0,lda), rC10 ; \
+   movapd rC10, rC11 ; \
+   mulpd  rB0, rC10 ; \
+   movapd off_(pA0,lda,2), rC20 ; \
+   movapd rC20, rC21 ; \
+   mulpd  rB0, rC20 ; \
+   movapd off_(pA0,lda3), rC30 ; \
+   movapd rC30, rC31 ; \
+   mulpd  rB0, rC30 ; \
+   movapd off_(pB0,ldb), rB0 ; \
+   mulpd  rB0, rC01 ; \
+   mulpd  rB0, rC11 ; \
+   mulpd  rB0, rC21 ; \
+   mulpd  rB0, rC31 ;
+
+#define ATL_Kiter(off_) \
+   movapd off_(pA0), rA0 ; \
+   movapd off_(pB0), rB0 ; \
+   movapd rA0, ra0 ; \
+   mulpd  rB0, rA0 ; \
+   addpd  rA0, rC00 ; \
+   movapd off_(pA0,lda), rA1 ; \
+   movapd rA1, ra1 ; \
+   mulpd  rB0, rA1 ; \
+   addpd  rA1, rC10 ; \
+   movapd off_(pA0,lda,2), rA2 ; \
+   movapd rA2, ra2 ; \
+   mulpd  rB0, rA2 ; \
+   addpd  rA2, rC20 ; \
+   movapd off_(pA0,lda3), rA3 ; \
+   mulpd  rA3, rB0 ; \
+   addpd  rB0, rC30 ; \
+   movapd off_(pB0,ldb), rB0 ; \
+   mulpd  rB0, ra0 ; \
+   mulpd  rB0, ra1 ; \
+   mulpd  rB0, ra2 ; \
+   mulpd  rB0, rA3 ; \
+   addpd  ra0, rC01 ; \
+   addpd  ra1, rC11 ; \
+   addpd  ra2, rC21 ; \
+   addpd  rA3, rC31 ; 
+
+/*
+ * The last K iteration must load C, if BETA != 0
+ */
+#ifdef BETA0
+   #define ATL_KiterL_b0 ATL_Kiter_b0
+   #define ATL_KiterL ATL_Kiter
+#elif !defined(DCPLX)
+   #define ATL_KiterL_b0(off_) \
+      movapd off_(pA0), rC00 ; \
+      movapd off_(pB0), rB0 ; \
+      movapd rC00, rC01 ; \
+      mulpd  rB0, rC00 ; \
+      movapd off_(pA0,lda), rC10 ; \
+      movapd rC10, rC11 ; \
+      mulpd  rB0, rC10 ; \
+      movapd off_(pA0,lda,2), rC20 ; \
+      movapd rC20, rC21 ; \
+      mulpd  rB0, rC20 ; \
+      movapd off_(pA0,lda3), rC30 ; \
+      movapd rC30, rC31 ; \
+      mulpd  rB0, rC30 ; \
+      movapd off_(pB0,ldb), rB0 ; \
+      mulpd  rB0, rC01 ; \
+      MOVCPD (pC0), rA0 ; \
+      mulpd  rB0, rC11 ; \
+      MOVCPD 16(pC0), rA1 ; \
+      mulpd  rB0, rC21 ; \
+      MOVCPD (pC0,ldc), rA2 ; \
+      mulpd  rB0, rC31 ; \
+      MOVCPD 16(pC0,ldc), rA3 ; 
+
+   #define ATL_KiterL(off_) \
+      movapd off_(pA0), rA0 ; \
+      movapd off_(pB0), rB0 ; \
+      movapd rA0, ra0 ; \
+      mulpd  rB0, rA0 ; \
+      addpd  rA0, rC00 ; \
+      movapd off_(pA0,lda), rA1 ; \
+      movapd rA1, ra1 ; \
+      mulpd  rB0, rA1 ; \
+      addpd  rA1, rC10 ; \
+      movapd off_(pA0,lda,2), rA2 ; \
+      movapd rA2, ra2 ; \
+      mulpd  rB0, rA2 ; \
+      addpd  rA2, rC20 ; \
+      movapd off_(pA0,lda3), rA3 ; \
+      mulpd  rA3, rB0 ; \
+      addpd  rB0, rC30 ; \
+      movapd off_(pB0,ldb), rB0 ; \
+      mulpd  rB0, ra0 ; \
+      addpd  ra0, rC01 ; \
+      MOVCPD (pC0), rA0 ; \
+      mulpd  rB0, ra1 ; \
+      addpd  ra1, rC11 ; \
+      MOVCPD 16(pC0), rA1 ; \
+      mulpd  rB0, ra2 ; \
+      addpd  ra2, rC21 ; \
+      MOVCPD (pC0,ldc), rA2 ; \
+      mulpd  rB0, rA3 ; \
+      addpd  rA3, rC31 ;  \
+      MOVCPD 16(pC0,ldc), rA3 ; 
+#else
+   #define ATL_KiterL_b0(off_) \
+      movapd off_(pA0), rC00 ; \
+      movapd off_(pB0), rB0 ; \
+      movapd rC00, rC01 ; \
+      mulpd  rB0, rC00 ; \
+      movapd off_(pA0,lda), rC10 ; \
+      movapd rC10, rC11 ; \
+      mulpd  rB0, rC10 ; \
+      movapd off_(pA0,lda,2), rC20 ; \
+      movapd rC20, rC21 ; \
+      mulpd  rB0, rC20 ; \
+      movapd off_(pA0,lda3), rC30 ; \
+      movapd rC30, rC31 ; \
+      mulpd  rB0, rC30 ; \
+      movapd off_(pB0,ldb), rB0 ; \
+      mulpd  rB0, rC01 ; \
+      movlpd (pC0), rA0 ; \
+      movhpd 16(pC0), rA0 ; \
+      mulpd  rB0, rC11 ; \
+      movlpd 32(pC0), rA1 ; \
+      movhpd 48(pC0), rA1 ; \
+      mulpd  rB0, rC21 ; \
+      movlpd (pC0,ldc), rA2 ; \
+      movhpd 16(pC0,ldc), rA2 ; \
+      mulpd  rB0, rC31 ; \
+      movlpd 32(pC0,ldc), rA3 ; \
+      movhpd 48(pC0,ldc), rA3 ; 
+
+   #define ATL_KiterL(off_) \
+      movapd off_(pA0), rA0 ; \
+      movapd off_(pB0), rB0 ; \
+      movapd rA0, ra0 ; \
+      mulpd  rB0, rA0 ; \
+      addpd  rA0, rC00 ; \
+      movapd off_(pA0,lda), rA1 ; \
+      movapd rA1, ra1 ; \
+      mulpd  rB0, rA1 ; \
+      addpd  rA1, rC10 ; \
+      movapd off_(pA0,lda,2), rA2 ; \
+      movapd rA2, ra2 ; \
+      mulpd  rB0, rA2 ; \
+      addpd  rA2, rC20 ; \
+      movapd off_(pA0,lda3), rA3 ; \
+      mulpd  rA3, rB0 ; \
+      addpd  rB0, rC30 ; \
+      movapd off_(pB0,ldb), rB0 ; \
+      mulpd  rB0, ra0 ; \
+      addpd  ra0, rC01 ; \
+      movlpd (pC0), rA0 ; \
+      movhpd 16(pC0), rA0 ; \
+      mulpd  rB0, ra1 ; \
+      addpd  ra1, rC11 ; \
+      movlpd 32(pC0), rA1 ; \
+      movhpd 48(pC0), rA1 ; \
+      mulpd  rB0, ra2 ; \
+      addpd  ra2, rC21 ; \
+      movlpd (pC0,ldc), rA2 ; \
+      movhpd 16(pC0,ldc), rA2 ; \
+      mulpd  rB0, rA3 ; \
+      addpd  rA3, rC31 ;  \
+      movlpd 32(pC0,ldc), rA3 ; \
+      movhpd 48(pC0,ldc), rA3 ; 
+
+#endif
+@endskip
+/*
+                      %rdi/4       %rsi/8       %rdx/12          %xmm0/16
+ void ATL_USERMM(const int M, const int N, const int K, const TYPE alpha,
+                       %rcx/24         %r8/28         %r9/32           8/36
+                 const TYPE *A, const int lda, const TYPE *B, const int ldb,
+                        %xmm1/40    16/48          24/52
+                 const TYPE beta, TYPE *C, const int ldc)
+*/
+#define MOVCPD movapd
+        .text
+.global ATL_asmdecor(ATL_USERMM)
+ALIGN16
+ATL_asmdecor(ATL_USERMM):
+/*
+ *      Save callee-saved iregs
+ */
+        movq    %rbp, -8(%rsp)
+        movq    %rbx, -16(%rsp)
+        movq    %r12, -24(%rsp)
+        movq    %r13, -32(%rsp)
+        movq    %r14, -40(%rsp)
+                                        prefetcht0 (pA0)
+/*        movq    %r15, -48(%rsp) */
+
+/*
+ *      Setup input parameters
+ */
+   #ifdef BETAX
+      #define BETAOFF -56
+        unpcklpd        %xmm1, %xmm1
+        movapd  %xmm1, BETAOFF(%rsp)
+   #endif
+        movq    %rdi, MM0
+        movq    %rsi, NN
+        movq    %r8, lda
+                                        prefetcht0      (pA0,lda)
+        movq    %r9, pB0
+                                        prefetcht0      (pB0)
+        movslq  8(%rsp), ldb
+                                        prefetcht0      (pA0,lda,2)
+        movq    16(%rsp), pC0
+        movslq  24(%rsp), incCn
+	movq	incCn, ldc
+                                        prefetcht0      KB*8(pA0,lda,2)
+/*
+ *      incCn = (2*ldc-M)*sizeof
+ */
+	shl	$1, incCn
+        sub     MM0, incCn
+#ifdef DCPLX
+        shl     $4, incCn
+        shl	$4, ldc
+#else
+        shl     $3, incCn
+        shl	$3, ldc
+#endif
+/*
+ *      pA0 += 128; pB0 += 128
+ */
+        sub     $-128, pA0
+        sub     $-128, pB0
+                                        prefetcht0      -64(pB0)
+/*
+ *      lda = lda*sizeof;  lda3 = lda*3
+ */
+        shl     $3, lda
+                                                prefetcht0      (pB0)
+        lea     (lda,lda,2), lda3
+/*
+ *      ldb = ldb*sizeof
+ */
+        shl     $3, ldb
+                                                prefetcht0      64(pB0)
+/*
+ *      pfA = A + lda*M ; incAn = lda*M
+ */
+        movq    lda, pfA
+                                                prefetcht0      128(pB0)
+        imulq   MM0, pfA
+        movq    pfA, incAn
+        lea     -128(pA0, pfA), pfA
+        movq    MM0, MM
+        lea     -128(pB0,ldb,2), pfB
+#ifndef DCPLX
+        test    $15, ldc
+        jnz UMNLOOP
+        test    $15, pC0
+        jnz     UMNLOOP
+#endif
+@ROUT ATL_dmm4x2x128_sse2 ATL_dmm4x2x128_sse2_UNAL
+@ifdef ! MNLOOP
+   @define MNLOOP @MNLOOP@
+@endifdef
+ALIGN16
+@(MNLOOP):
+/* MLOOP: */
+/* KLOOP begin */
+#if KB == 2
+        movapd -128(pA0), rC00 
+        movapd -128(pB0), rB0 
+        movapd rC00, rC01 
+        mulpd  rB0, rC00 
+        movapd -128(pA0,lda), rC10 
+        movapd rC10, rC11 
+        mulpd  rB0, rC10 
+        movapd -128(pA0,lda,2), rC20 
+        movapd rC20, rC21 
+        mulpd  rB0, rC20 
+        movapd -128(pA0,lda3), rC30 
+        movapd rC30, rC31 
+        mulpd  rB0, rC30 
+        movapd -128(pB0,ldb), rB0 
+        mulpd  rB0, rC01 
+        #ifndef BETA0
+           #ifdef DCPLX
+              movsd  (pC0), rA0 
+              movhpd 16(pC0), rA0 
+           #else
+              MOVCPD (pC0), rA0 
+           #endif
+        #endif
+        mulpd  rB0, rC11 
+        #ifndef BETA0
+           #ifdef DCPLX
+              movsd  32(pC0), rA1 
+              movhpd 48(pC0), rA1 
+           #else
+              MOVCPD 16(pC0), rA1 
+           #endif
+        #endif
+        mulpd  rB0, rC21 
+        #ifndef BETA0
+           #ifdef DCPLX
+              movsd  (pC0,ldc), rA2 
+              movhpd 16(pC0,ldc), rA2 
+           #else
+              MOVCPD (pC0,ldc), rA2 
+           #endif
+        #endif
+        mulpd  rB0, rC31 
+        #ifndef BETA0
+           #ifdef DCPLX
+              movsd  32(pC0,ldc), rA3 
+              movhpd 48(pC0,ldc), rA3
+           #else
+              MOVCPD 16(pC0,ldc), rA3
+           #endif
+        #endif
+#else
+        movapd -128(pA0), rC00 ; \
+        movapd -128(pB0), rB0 ; \
+        movapd rC00, rC01 ; \
+        mulpd  rB0, rC00 ; \
+        movapd -128(pA0,lda), rC10 ; \
+        movapd rC10, rC11 ; \
+        mulpd  rB0, rC10 ; \
+        movapd -128(pA0,lda,2), rC20 ; \
+        movapd rC20, rC21 ; \
+        mulpd  rB0, rC20 ; \
+        movapd -128(pA0,lda3), rC30 ; \
+        movapd rC30, rC31 ; \
+        mulpd  rB0, rC30 ; \
+        movapd -128(pB0,ldb), ra0 ; \
+        mulpd  ra0, rC01 ; \
+        mulpd  ra0, rC11 ; \
+           movapd 16-128(pB0), rB0 ; \
+        mulpd  ra0, rC21 ; \
+        mulpd  ra0, rC31 ;
+#endif
+        prefetcht0      (pfB)
+        add     $64, pfB
+@define i @4@
+@define j @-112@
+@iwhile i < 128
+   #if KB > @(i)
+      movapd @(j)(pA0), rA0 
+      movapd rA0, ra0 
+      mulpd  rB0, rA0 
+      addpd  rA0, rC00 
+      movapd @(j)(pA0,lda), rA1 
+      movapd rA1, ra1 
+      mulpd  rB0, rA1 
+      addpd  rA1, rC10 
+      movapd @(j)(pA0,lda,2), rA2 
+      movapd rA2, ra2 
+      mulpd  rB0, rA2 
+      addpd  rA2, rC20 
+      movapd @(j)(pA0,lda3), rA3 
+      mulpd  rA3, rB0 
+      addpd  rB0, rC30 
+      movapd @(j)(pB0,ldb), rB0 
+      mulpd  rB0, ra0 
+      mulpd  rB0, ra1 
+      mulpd  rB0, ra2 
+      mulpd  rB0, rA3 
+         movapd 16+@(j)(pB0), rB0 
+      addpd  ra0, rC01 
+      addpd  ra1, rC11 
+      addpd  ra2, rC21 
+      addpd  rA3, rC31 
+   #elif KB == @(i)
+      movapd @(j)(pA0), rA0 
+      movapd @(j)(pB0), rB0 
+      movapd rA0, ra0 
+      mulpd  rB0, rA0 
+      addpd  rA0, rC00 
+      movapd @(j)(pA0,lda), rA1 
+      movapd rA1, ra1 
+      mulpd  rB0, rA1 
+      addpd  rA1, rC10 
+      movapd @(j)(pA0,lda,2), rA2 
+      movapd rA2, ra2 
+      mulpd  rB0, rA2 
+      addpd  rA2, rC20 
+      movapd @(j)(pA0,lda3), rA3 
+      mulpd  rA3, rB0 
+      addpd  rB0, rC30 
+      movapd @(j)(pB0,ldb), rB0 
+      mulpd  rB0, ra0 
+      addpd  ra0, rC01 
+      #ifndef BETA0
+         #ifdef DCPLX
+            movsd  (pC0), rA0
+            movhpd 16(pC0), rA0
+         #else
+            MOVCPD (pC0), rA0 
+         #endif
+      #endif
+      mulpd  rB0, ra1 
+      addpd  ra1, rC11 
+      #ifndef BETA0
+         #ifdef DCPLX
+            movsd  32(pC0), rA1
+            movhpd 48(pC0), rA1
+         #else
+            MOVCPD 16(pC0), rA1 
+         #endif
+      #endif
+      mulpd  rB0, ra2 
+      addpd  ra2, rC21 
+      #ifndef BETA0
+         #ifdef DCPLX
+            movsd  (pC0,ldc), rA2
+            movhpd 16(pC0,ldc), rA2
+         #else
+            MOVCPD (pC0,ldc), rA2 
+         #endif
+      #endif
+      mulpd  rB0, rA3 
+      addpd  rA3, rC31 
+      #ifndef BETA0
+         #ifdef DCPLX
+            movsd  32(pC0,ldc), rA3
+            movhpd 48(pC0,ldc), rA3
+         #else
+            MOVCPD 16(pC0,ldc), rA3
+         #endif
+      #endif
+   #endif
+   @iexp i 2 @(i) +
+   @iexp j 16 @(j) +
+@endiwhile
+@undef i
+@undef j
+/* KLOOP end */
+        haddpd	rC10, rC00
+#ifdef BETAX
+        movapd  BETAOFF(%rsp), rB0
+        mulpd   rB0, rA0
+#endif
+#ifndef BETA0
+        addpd   rA0, rC00
+#endif
+#ifdef DCPLX
+	movlpd	rC00, (pC0)
+	movhpd	rC00, 16(pC0)
+#else
+	MOVCPD	rC00, (pC0)
+#endif
+        haddpd	rC30, rC20
+#ifdef BETAX
+        mulpd   rB0, rA1
+#endif
+#ifndef BETA0
+        addpd   rA1, rC20
+#endif
+#ifdef DCPLX
+	movlpd	rC20, 32(pC0)
+	movhpd	rC20, 48(pC0)
+#else
+	MOVCPD	rC20, 16(pC0)
+#endif
+        haddpd	rC11, rC01
+#ifdef BETAX
+        mulpd   rB0, rA2
+#endif
+#ifndef BETA0
+        addpd   rA2, rC01
+#endif
+#ifdef DCPLX
+	movlpd	rC01, (pC0,ldc)
+	movhpd	rC01, 16(pC0,ldc)
+#else
+	MOVCPD	rC01, (pC0,ldc)
+#endif
+        haddpd	rC31, rC21
+#ifdef BETAX
+        mulpd   rB0, rA3
+#endif
+#ifndef BETA0
+        addpd   rA3, rC21
+#endif
+#ifdef DCPLX
+	movlpd	rC21, 32(pC0,ldc)
+	movhpd	rC21, 48(pC0,ldc)
+#else
+	MOVCPD	rC21, 16(pC0,ldc)
+#endif
+
+        add     $4*CMUL(8), pC0
+          prefetcht1      (pfA)
+          add     $64, pfA
+
+        lea     0(pA0,lda,4), pA0
+        sub     $4, MM
+        jnz     @(MNLOOP)
+
+        movq    MM0, MM
+        sub     incAn, pA0
+        add     incCn, pC0
+	lea	(pB0, ldb, 2), pB0
+        sub     $2, NN
+        jnz     @(MNLOOP)
+
+/* DONE: */
+        movq    -8(%rsp), %rbp
+        movq    -16(%rsp), %rbx
+        movq    -24(%rsp), %r12
+        movq    -32(%rsp), %r13
+        movq    -40(%rsp), %r14
+/*        movq    -48(%rsp), %r15  */
+        ret
+@ROUT ATL_dmm4x2x128_sse2 
+/*
+ * Same code as above, but assuming C is not aligned
+ */
+#ifndef DCPLX
+   #undef  MOVCPD
+   #define MOVCPD movupd
+   @extract -b @(topd)/kernel/ClintWhaley/clint_sse.base rout=ATL_dmm4x2x128_sse2_UNAL -def MNLOOP "UMNLOOP"
+#endif   /* end of repeated loops for unaligned C for real precision */
+@ROUT ATL_dmm3x3x128_sse2
+#include "atlas_asm.h"
+#ifndef ATL_GAS_x8664
+   #error "This kernel requires x86-64 assembly!"
+#endif
+#if !defined(MB)
+   #define MB 0
+#endif
+#if !defined(NB)
+   #define NB 0
+#endif
+#if !defined(KB)
+   #define KB 0
+#endif
+#if KB == 0
+   #error "KB must be compile time constant!"
+#endif
+/*
+ *Register usage
+ */
+#define pA0     %rcx
+#define lda     %rbx
+#define pfA     %rdi
+#define pB0     %rax
+#define ldb     %rsi
+#define pfB     %rdx
+#define incAn   %r8
+#define incCn   %r9
+#define pC0     %rbp
+#define MM      %r11
+#define NN      %r12
+#define MM0     %r13
+#define ldc     %r14
+#define lda3    %r15
+
+#define rA0     %xmm0
+#define rA1     %xmm1
+#define rA2     %xmm2
+#define rB0     %xmm3
+#define ra0     %xmm4
+#define ra1     %xmm5
+#define ra2     %xmm6
+#define rC00    %xmm7
+#define rC10    %xmm8
+#define rC20    %xmm9
+#define rC01    %xmm10
+#define rC11    %xmm11
+#define rC21    %xmm12
+#define rC02    %xmm13
+#define rC12    %xmm14
+#define rC22    %xmm15
+
+/*
+ * Save some inst space by using short version of instructions
+ */
+#define movapd movaps
+#define movupd movups
+#define movlpd movlps
+#define movhpd movhps
+#ifdef DCPLX
+   #define CMUL(arg_) 2*arg_
+#else
+   #define CMUL(arg_) arg_
+#endif
+
+/*
+                      %rdi/4       %rsi/8       %rdx/12          %xmm0/16
+ void ATL_USERMM(const int M, const int N, const int K, const TYPE alpha,
+                       %rcx/24         %r8/28         %r9/32           8/36
+                 const TYPE *A, const int lda, const TYPE *B, const int ldb,
+                        %xmm1/40    16/48          24/52
+                 const TYPE beta, TYPE *C, const int ldc)
+*/
+        .text
+.global ATL_asmdecor(ATL_USERMM)
+ALIGN16
+ATL_asmdecor(ATL_USERMM):
+/*
+ *      Save callee-saved iregs
+ */
+        movq    %rbp, -8(%rsp)
+        movq    %rbx, -16(%rsp)
+        movq    %r12, -24(%rsp)
+        movq    %r13, -32(%rsp)
+        movq    %r14, -40(%rsp)
+        movq    %r15, -48(%rsp)
+                                        prefetcht0 (pA0)
+
+/*
+ *      Setup input parameters
+ */
+   #ifdef BETAX
+      #define BETAOFF -72
+        unpcklpd        %xmm1, %xmm1
+        movapd  %xmm1, BETAOFF(%rsp)
+   #endif
+        movq    %rdi, MM0
+        movq    %rsi, NN
+        movq    %r8, lda
+                                        prefetcht0      (pA0,lda)
+        movq    %r9, pB0
+                                        prefetcht0      (pB0)
+        movslq  8(%rsp), ldb
+                                        prefetcht0      (pA0,lda,2)
+        movq    16(%rsp), pC0
+        movslq  24(%rsp), incCn
+	movq	incCn, ldc
+                                        prefetcht0      KB*8(pA0,lda,2)
+/*
+ *      incCn = (3*ldc-M)*sizeof
+ */
+        lea     (incCn, incCn,2), incCn
+        sub     MM0, incCn
+#ifdef DCPLX
+        shl     $4, incCn
+        shl	$4, ldc
+#else
+        shl     $3, incCn
+        shl	$3, ldc
+#endif
+/*
+ *      pA0 += 128; pB0 += 128
+ */
+        sub     $-128, pA0
+        sub     $-128, pB0
+                                        prefetcht0      -64(pB0)
+/*
+ *      lda = lda*sizeof;  lda3 = lda*3
+ */
+        shl     $3, lda
+                                                prefetcht0      (pB0)
+        lea     (lda, lda,2), lda3
+/*
+ *      ldb = ldb*sizeof
+ */
+        shl     $3, ldb
+                                                prefetcht0      64(pB0)
+/*
+ *      pfA = A + lda*M ; incAn = lda*M
+ */
+        movq    lda, pfA
+                                                prefetcht0      128(pB0)
+        imulq   MM0, pfA
+        movq    pfA, incAn
+        lea     -128(pA0, pfA), pfA
+        movq    MM0, MM
+        lea     -128(pB0,ldb,2), pfB
+ALIGN16
+MNLOOP:
+/* MLOOP: */
+/* KLOOP begin */
+   #if KB == 2   /* last iteration loads C in rA0-rA3 */
+      movapd -128(pA0), rC00
+      movapd -128(pB0), rB0 
+      movapd rC00, rC01
+      mulpd  rB0, rC00
+      movapd -128(pA0, lda), rC10
+      movapd rC10, rC11
+      mulpd  rB0, rC10
+      movapd -128(pA0, lda,2), rC20
+      movapd rC20, rC21
+      mulpd  rB0, rC20
+      movapd -128(pB0, ldb), rB0
+      movapd rC01, rC02
+      mulpd  rB0, rC01
+      movapd rC11, rC12
+      #ifndef BETA0
+         #ifdef DCPLX                              /* ra0 = C10 C00 */
+            movsd  (pC0), ra0
+            movhpd 16(pC0), ra0
+         #else
+            movupd (pC0), ra0
+         #endif
+      #endif
+      mulpd  rB0, rC11
+      movapd rC21, rC22
+      #ifndef BETA0
+         movsd  CMUL(16)(pC0), ra1              
+         movhpd CMUL(16)(pC0,ldc), ra1          /* ra1 = C21, C20 */
+      #endif
+      mulpd  rB0, rC21
+      movapd -128(pB0, ldb,2), rB0
+      #ifndef BETA0
+         #ifdef DCPLX                              /* ra2 = C11, C01 */
+            movsd  (pC0,ldc), ra2
+            movhpd 16(pC0,ldc), ra2
+         #else
+            movupd (pC0,ldc), ra2
+         #endif
+      #endif
+
+      mulpd  rB0, rC02
+      #ifndef BETA0
+         #ifdef DCPLX                              /* rA0 = C12, C02 */
+            movsd  (pC0,ldc,2), rA0
+            movhpd 16(pC0,ldc,2), rA0
+         #else
+            movupd (pC0,ldc,2), rA0
+         #endif
+      #endif
+      mulpd  rB0, rC12
+      #ifndef BETA0
+         movsd  CMUL(16)(pC0,ldc,2), rA1        /* rA1 = 0, C22 */
+      #endif
+      mulpd  rB0, rC22
+   #else
+      movapd -128(pA0), rC00
+      movapd -128(pB0), rB0 
+      movapd rC00, rC01
+      mulpd  rB0, rC00
+      movapd -128(pA0, lda), rC10
+      movapd rC10, rC11
+      mulpd  rB0, rC10
+      movapd -128(pA0, lda,2), rC20
+      movapd rC20, rC21
+      mulpd  rB0, rC20
+      movapd -128(pB0, ldb), rB0
+      movapd rC01, rC02
+      mulpd  rB0, rC01
+      movapd rC11, rC12
+      mulpd  rB0, rC11
+      movapd rC21, rC22
+      mulpd  rB0, rC21
+      movapd -128(pB0, ldb,2), ra0
+      mulpd  ra0, rC02
+         movapd 16-128(pB0), rB0
+      mulpd  ra0, rC12
+      mulpd  ra0, rC22
+#endif
+@define i @4@
+@define j @-112@
+@iwhile i < 128
+   #if KB == @(i)   /* last iteration loads C in A/a regs */
+/*
+ * Last K iteration loads ra[0-2] & rA[0,1] such that:
+ *                               ra0  = C10  C00
+ *                               ra1  = C21  C20
+ *                               ra2  = C11  C01
+ *                               rA0  = C12, C02
+ *                               rA1  = XXX, C22
+ */
+      movapd @(j)(pA0), rA0 
+      movapd rA0, ra0
+      mulpd  rB0, rA0
+      addpd  rA0, rC00
+      movapd @(j)(pA0, lda), rA1
+      movapd rA1, ra1
+      mulpd  rB0, rA1
+      addpd  rA1, rC10
+      movapd @(j)(pA0, lda,2), rA2
+      mulpd  rA2, rB0
+      addpd  rB0, rC20
+      movapd @(j)(pB0, ldb), rB0
+      movapd ra0, rA0
+      mulpd  rB0, ra0
+      addpd  ra0, rC01
+      movapd ra1, rA1
+      mulpd  rB0, ra1
+      addpd  ra1, rC11
+      mulpd  rA2, rB0
+      addpd  rB0, rC21
+      movapd @(j)(pB0, ldb,2), rB0
+      mulpd rB0, rA0
+      mulpd rB0, rA1
+      mulpd rB0, rA2
+      addpd rA0, rC02
+      addpd rA1, rC12
+      addpd rA2, rC22
+   #elif KB > @(i)
+      movapd @(j)(pA0), rA0 
+      movapd @(j)(pB0), rB0 
+      movapd rA0, ra0
+      mulpd  rB0, rA0
+      addpd  rA0, rC00
+      movapd @(j)(pA0, lda), rA1
+      movapd rA1, ra1
+      mulpd  rB0, rA1
+      addpd  rA1, rC10
+      movapd @(j)(pA0, lda,2), rA2
+      mulpd  rA2, rB0
+      addpd  rB0, rC20
+      movapd @(j)(pB0, ldb), rB0
+      movapd ra0, rA0
+      mulpd  rB0, ra0
+      addpd  ra0, rC01
+      movapd ra1, rA1
+      mulpd  rB0, ra1
+      addpd  ra1, rC11
+      mulpd  rA2, rB0
+      addpd  rB0, rC21
+      movapd @(j)(pB0, ldb,2), rB0
+      mulpd rB0, rA0
+      mulpd rB0, rA1
+      mulpd rB0, rA2
+      addpd rA0, rC02
+         movapd @(j)+16(pB0), rB0 
+      addpd rA1, rC12
+      addpd rA2, rC22
+#endif
+   @iexp i 2 @(i) +
+   @iexp j 16 @(j) +
+@endiwhile
+@undef i
+@undef j
+/* KLOOP end */
+/*
+ * Last K iteration loads ra[0-2] & rA[0,1] such that:
+ *                               ra0  = C10  C00
+ *                               ra1  = C21  C20
+ *                               ra2  = C11  C01
+ *                               rA0  = C12, C02
+ *                               rA1  =   0, C22
+ */
+        haddpd  rC10, rC00    /* rC00 = C10, C00 */
+        #ifndef BETA0
+           addpd   ra0, rC00
+        #endif
+        #ifdef DCPLX
+           movlpd  rC00, (pC0)
+           movhpd  rC00, 16(pC0)
+        #else
+           movupd  rC00, (pC0)
+        #endif
+        haddpd  rC21, rC20    /* rC20 = C21, C20 */
+        #ifndef BETA0
+           addpd   ra1, rC20
+        #endif
+           movlpd  rC20, CMUL(16)(pC0)
+           movhpd  rC20, CMUL(16)(pC0,ldc)
+        haddpd  rC11, rC01    /* rC01 = C11, C01 */
+        #ifndef BETA0
+           addpd   ra2, rC01
+        #endif
+        #ifdef DCPLX
+           movlpd  rC01, (pC0,ldc)
+           movhpd  rC01, 16(pC0,ldc)
+        #else
+           movupd  rC01, (pC0,ldc)
+        #endif
+        haddpd  rC12, rC02    /* rC02 = C12, C02 */
+        #ifndef BETA0
+           addpd   rA0, rC02
+        #endif
+        #ifdef DCPLX
+           movlpd  rC02, (pC0,ldc,2)
+           movhpd  rC02, 16(pC0,ldc,2)
+        #else
+           movupd  rC02, (pC0,ldc,2)
+        #endif
+        haddpd  rC22, rC22    /* rC22 = C22, C22 */
+        #ifndef BETA0
+           addpd   rA1, rC22 
+        #endif
+           movlpd  rC22, CMUL(16)(pC0,ldc,2)
+/*
+ *      pC0 += 3*sizeof, pA0 += 3*lda 
+ */
+        add     $3*CMUL(8), pC0
+        prefetcht1      (pfA)
+        add     $64, pfA
+        lea     (pA0, lda3), pA0
+        sub     $3, MM
+        jnz     MNLOOP
+
+        mov     MM0, MM
+        sub     incAn, pA0
+        add     incCn, pC0
+        lea     (pB0, ldb, 2), pB0
+        add     ldb, pB0
+        sub     $3, NN
+        jnz     MNLOOP
+/* DONE */
+        movq    -8(%rsp), %rbp
+        movq    -16(%rsp), %rbx
+        movq    -24(%rsp), %r12
+        movq    -32(%rsp), %r13
+        movq    -40(%rsp), %r14
+        movq    -48(%rsp), %r15
+        ret
+
+@ROUT ATL_dmm8x1x120_L1pf
+/*
+ * This routine hastily adapted to the 3rd gen Opteron from the Core2 kernel,
+ * ATL_dmm8x1x120.c.  Main difference is the prefetch strategy, which fetches
+ * to the L1 on the Opt3rdGen, and the handling of loads, where MOVUPD
+ * is preferred over MOVLPD/MOVHPD pair.  We also turn on unaligned mem 
+ * MULPD/ADDPD.  This all makes the kernal about 8% faster, and allows us
+ * to use a smaller block factor (for better application performance).
+ * This kernel does not do well for complex.
+ */
+#ifndef ATL_GAS_x8664
+   #error "This kernel requires x86-64 assembly!"
+#endif
+#if !defined(MB)
+   #define MB 0
+#endif
+#if !defined(NB)
+   #define NB 0
+#endif
+#if !defined(KB)
+   #define KB 0
+#endif
+#if KB == 0
+   #error "KB must be compile time constant!"
+#endif
+/*
+ *Register usage
+ */
+#define pA0     %rcx
+#define lda     %rbx
+#define lda3    %rbp
+#define lda5    %rdx
+#define lda7    %rdi
+#define pB0     %rax
+#define pC0     %rsi
+#define ldb     %r8
+#define ldc     %r9
+#define pfA     %r10
+#define MM      %r11
+#define NN      %r12
+#define incAn   %r13
+#define incCn   %r14
+#define pfB     %r15
+
+#define rA0     %xmm0
+#define rB0     %xmm1
+#define rC00    %xmm2
+#define rC01    %xmm3
+#define rC02    %xmm4
+#define rC03    %xmm5
+#define rC04    %xmm6
+#define rC05    %xmm7
+#define rC06    %xmm8
+#define rC07    %xmm9
+#define rC0     %xmm10
+#define rC2     %xmm11
+#define rC4     %xmm12
+#define rC6     %xmm13
+#define rb0     %xmm14
+#define BETA    %xmm15
+
+/*
+ * Prefetch defines
+ */
+#if 1
+   #define pref2(mem) prefetcht0        mem
+   #define prefB(mem) prefetcht0        mem
+   #define prefC(mem) prefetchw         mem
+#else
+   #define pref2(mem)
+   #define prefB(mem)
+   #define prefC(mem)
+#endif
+
+#define PFAINC -64
+#define PFBINC -64
+
+#ifdef DCPLX
+   #define CMUL(arg_) 2*arg_
+#else
+   #define CMUL(arg_) arg_
+#endif
+
+#define ATL_Kiter(off_) \
+	movapd	off_(pB0), rB0 ; \
+	movapd	off_(pA0), rA0 ; \
+	mulpd	rB0,rA0 ; \
+	addpd	rA0,rC00 ; \
+	movapd	off_(pA0,lda), rA0 ; \
+	mulpd	rB0,rA0 ; \
+	addpd	rA0,rC01 ; \
+	movapd	off_(pA0,lda,2), rA0 ; \
+	mulpd	rB0,rA0 ; \
+	addpd	rA0,rC02 ; \
+	movapd	off_(pA0,lda3), rA0 ; \
+	mulpd	rB0,rA0 ; \
+	addpd	rA0,rC03 ; \
+	movapd	off_(pA0,lda,4), rA0 ; \
+	mulpd	rB0,rA0 ; \
+	addpd	rA0,rC04 ; \
+	movapd	off_(pA0,lda5), rA0 ; \
+	mulpd	rB0,rA0 ; \
+	addpd	rA0,rC05 ; \
+	movapd	off_(pA0,lda3,2), rA0 ; \
+	mulpd	rB0,rA0 ; \
+	addpd	rA0,rC06 ; \
+	mulpd	off_(pA0,lda7), rB0 ; \
+	addpd	rB0,rC07 ; \
+
+/*
+                      %rdi/4       %rsi/8       %rdx/12          %xmm0/16
+ void ATL_USERMM(const int M, const int N, const int K, const TYPE alpha,
+                       %rcx/24         %r8/28         %r9/32           8/36
+                 const TYPE *A, const int lda, const TYPE *B, const int ldb,
+                        %xmm1/40    16/48          24/52
+                 const TYPE beta, TYPE *C, const int ldc)
+*/
+        .text
+.global ATL_asmdecor(ATL_USERMM)
+ALIGN64
+ATL_asmdecor(ATL_USERMM):
+/* 
+ *      Enable use of unaligned memory addpd/mulpd instructions
+ */
+        stmxcsr -4(%rsp)
+        orl     $131072, -4(%rsp)
+        ldmxcsr -4(%rsp)
+
+/*
+ *      Save callee-saved iregs
+ */
+        movq    %rbp, -8(%rsp)
+        movq    %rbx, -16(%rsp)
+        movq    %r12, -24(%rsp)
+        movq    %r13, -32(%rsp)
+        movq    %r14, -40(%rsp)
+        movq    %r15, -48(%rsp)
+        #define MMOFF -56
+#ifdef BETAX
+        pshufd  $0x44, %xmm1, BETA
+/*        pshufd  $0b01000100, %xmm1, BETA */
+#endif
+/*
+ *      Setup input parameters
+ */
+        movq    %rdi, MM
+        movq    %rsi, NN
+        movq    %r9, pB0
+        movq    %r8, lda
+        movslq  8(%rsp), ldb
+        movq    16(%rsp), pC0
+        movslq  24(%rsp), incCn
+/*
+ *      ldx *= sizeof; lda3 = 3*lda, lda5=5*lda, lda7=7*lda
+ */
+#ifndef DCPLX
+        movq    incCn, ldc
+#endif
+        shl     $3, lda
+        shl     $3, ldb
+        lea     (lda,lda,2), lda3
+        lea     (lda,lda,4), lda5
+        lea     (lda3,lda,4), lda7
+/*
+ *      pA3 += 128, pB0 += 128
+ */
+        sub     $-128, pA0
+        sub     $-128, pB0
+/*
+ *      incAn = lda*M*sizeof, pfB = ldb*N*sizeof
+ */
+        movq    lda, incAn
+        imulq   MM, incAn
+        lea     (pA0,incAn,2), pfA
+        movq    ldb, pfB
+        imulq   NN, pfB
+        lea     (pB0,pfB,2), pfB
+/*
+ *      incCn = (ldc - M)*sizeof
+ */
+        sub     MM, incCn
+        movq    MM, MMOFF(%rsp)
+#ifdef DCPLX
+        shl     $4, incCn
+#else
+        shl     $3, incCn
+#endif
+ALIGN32
+UNLOOP:
+UMLOOP:
+/*
+ *      For complex, get C loaded to rCx regs; for real, put BETA in here, and
+ *      we will use unaligned mulpd at end of loop, or unaligned addpd for BETA=1
+ */
+        #ifndef BETA0
+           #ifdef DCPLX
+              movsd    (pC0), rC0
+              movsd    CMUL(16)(pC0), rC2
+              movsd    CMUL(32)(pC0), rC4
+              movsd    CMUL(48)(pC0), rC6
+              movhpd    CMUL(8)(pC0), rC0
+              movhpd    CMUL(24)(pC0), rC2
+              movhpd    CMUL(40)(pC0), rC4
+              movhpd    CMUL(56)(pC0), rC6
+           #elif defined(BETAX)
+              movapd    BETA, rC0
+              movapd    BETA, rC2
+              movapd    BETA, rC4
+              movapd    BETA, rC6
+           #endif
+        #endif
+/*KLOOP: */
+	movapd	-128(pB0), rB0
+                                        pref2((pfA))
+                                        add     $PFAINC, pfA
+	movapd	-128(pA0), rC00
+	mulpd	rB0,rC00
+	movapd	-128(pA0,lda), rC01
+	mulpd	rB0,rC01
+	movapd	-128(pA0,lda,2), rC02
+	mulpd	rB0,rC02
+	movapd	-128(pA0,lda3), rC03
+	mulpd	rB0,rC03
+	movapd	-128(pA0,lda,4), rC04
+	mulpd	rB0,rC04
+	movapd	-128(pA0,lda5), rC05
+	mulpd	rB0,rC05
+	movapd	-128(pA0,lda3,2), rC06
+	mulpd	rB0,rC06
+	movapd	-128(pA0,lda7), rC07
+	mulpd	rB0,rC07
+
+@define i @2@
+@define j @-112@
+@iwhile i < 128
+   #if KB > @(i)
+	ATL_Kiter(@(j))
+   #endif
+   @iexp i 2 @(i) +
+   @iexp j 16 @(j) +
+@endiwhile
+@undef i
+@undef j
+/* KLOOP end */
+
+/*       jne KLOOP */
+/*
+ *      pC[0-8] = rC[0-8]
+ */
+
+        #ifdef BETAX
+           #ifdef DCPLX
+              mulpd BETA, rC0
+           #else
+              mulpd (pC0), rC0
+           #endif
+       #endif
+        haddpd  rC01,rC00
+                                prefB((pfB))
+                                add     $PFBINC, pfB
+                                lea     (pA0,lda,8), pA0
+        #if defined(BETA1) && !defined(DCPLX)
+           addpd   (pC0), rC00
+        #elif !defined(BETA0)
+           addpd   rC0, rC00
+        #endif
+        movlpd  rC00, (pC0)
+        movhpd  rC00, CMUL(8)(pC0)
+
+        #ifdef BETAX
+           #ifdef DCPLX
+              mulpd BETA, rC2
+           #else
+              mulpd 16(pC0), rC2
+           #endif
+       #endif
+        haddpd  rC03,rC02
+        #if defined(BETA1) && !defined(DCPLX)
+           addpd   16(pC0), rC02
+        #elif !defined(BETA0)
+           addpd   rC2, rC02
+        #endif
+        movlpd  rC02, CMUL(16)(pC0)
+        movhpd  rC02, CMUL(24)(pC0)
+
+        #ifdef BETAX
+           #ifdef DCPLX
+              mulpd BETA, rC4
+           #else
+              mulpd 32(pC0), rC4
+           #endif
+       #endif
+        haddpd  rC05,rC04
+        #if defined(BETA1) && !defined(DCPLX)
+           addpd   32(pC0), rC04
+        #elif !defined(BETA0)
+           addpd   rC4, rC04
+        #endif
+        movlpd  rC04, CMUL(32)(pC0)
+        movhpd  rC04, CMUL(40)(pC0)
+
+        #ifdef BETAX
+           #ifdef DCPLX
+              mulpd BETA, rC6
+           #else
+              mulpd 48(pC0), rC6
+           #endif
+       #endif
+        haddpd  rC07,rC06
+        #if defined(BETA1) && !defined(DCPLX)
+           addpd   48(pC0), rC06
+        #elif !defined(BETA0)
+           addpd   rC6, rC06
+        #endif
+        movlpd  rC06, CMUL(48)(pC0)
+        movhpd  rC06, CMUL(56)(pC0)
+
+        add     $8*CMUL(8), pC0
+        sub     $8, MM
+        jnz     UMLOOP
+
+        movq    MMOFF(%rsp), MM
+        sub     incAn, pA0
+        add     incCn, pC0
+        add     ldb, pB0
+        sub     $1, NN
+
+        jnz     UNLOOP
+
+#UDONE:
+        movq    -8(%rsp), %rbp
+        movq    -16(%rsp), %rbx
+        movq    -24(%rsp), %r12
+        movq    -32(%rsp), %r13
+        movq    -40(%rsp), %r14
+        movq    -48(%rsp), %r15
+        ret
+@ROUT ATL_dmm2x2x2_sse2
+#include "atlas_asm.h"
+#if !defined(ATL_GAS_x8664) && !defined(ATL_GAS_x8632)
+   #error "This kernel requires x86 assembly!"
+#endif
+
+#ifdef DCPLX
+   #define CMUL(arg_) 2*arg_
+   #define CSH 4
+#else
+   #define CMUL(arg_) arg_
+   #define CSH 3
+#endif
+#ifdef ATL_GAS_x8632
+   #define movq movl
+   #define addq addl
+   #define subq subl
+   #define shrq shrl
+   #define testq testl
+   #define rsp  esp
+   #ifdef BETAX
+      #define BETAOFF 0
+      #define BETASZ 16
+   #else
+      #define BETASZ 0
+   #endif
+   #define FSIZE 16*4+BETASZ
+   #define KOFF    FSIZE-4
+   #define ldcOFF  KOFF-4
+   #define iAmOFF  ldcOFF-4
+   #define PFAOFF  iAmOFF-4
+   #define PFBOFF  PFAOFF-4
+   #define IOFF    PFBOFF-4
+   #define MOFF    IOFF-4
+   #define iAnOFF  MOFF-4
+   #define iBnOFF  iAnOFF-4
+   #define iCnOFF  iBnOFF-4
+   #define JOFF    iCnOFF-4
+#endif
+/*
+ *Integer register usage shown by these defines
+ */
+#ifdef ATL_GAS_x8632
+   #define pA0     %ecx
+   #define pA1     %eax
+   #define pB0     %ebx
+   #define pB1     %edi
+   #define pC0     %esi
+   #define itmp    %edx
+   #define KK      %ebp
+   
+   #define incAm   iAmOFF(%esp)
+   #define incAn   iAnOFF(%esp)
+   #define incBn   iBnOFF(%esp)
+   #define incCn   iCnOFF(%esp)
+   #define MM      IOFF(%esp)
+   #define NN      JOFF(%esp)
+   #define MM0     MOFF(%esp)
+   #define PFA     PFAOFF(%esp)
+   #define PFB     PFBOFF(%esp)
+   #define ldc     ldcOFF(%esp)
+   #define KK0     KOFF(%esp)
+#else
+   #define pA0     %rcx
+   #define pA1     %rbx
+   #define pB0     %rbp
+   #define pB1     %rax
+   #define pC0     %rdi
+   #define KK      %rdx
+   #define PFB     %rsi
+   #define PFA     %r8
+   #define ldc     %r9
+   #define KK0     %r10
+   #define incAm   %r11
+   #define incAn   %r12
+   #define incBn   %r13
+   #define MM      %r14
+   #define NN      %r15
+   #define incCn   iCOFF(%rsp)
+   #define MM0     iIOFF(%rsp)
+   #define itmp    ldc
+#endif
+#define rA0     %xmm0
+#define rA1     %xmm1
+#define ra0     %xmm2
+#define rB0     %xmm3
+#define rC00    %xmm4
+#define rC10    %xmm5
+#define rC01    %xmm6
+#define rC11    %xmm7
+#ifdef ATL_GAS_x8664
+   #define BETA %xmm8
+   #define rC0  %xmm9
+   #define rC1 %xmm10
+#endif
+/*
+ * Define some macros for instruction selection
+ *    VZERO: xorpd, xorps, pxor
+ *    MOVAB: movapd,movaps or movupd/movups
+ */
+#define VZERO(reg_) xorps reg_, reg_
+#define MOVAB  movaps
+#define MOVAPD movaps
+#define MOVUPD movups
+#define PFAINC -64
+#define PFBINC 32
+#if 1
+   #define pref2(mem) prefetcht1        mem
+   #define prefB(mem) prefetcht0        mem
+   #define prefC(mem) prefetcht0        mem
+#else
+   #define pref2(mem)
+   #define prefB(mem)
+   #define prefC(mem)
+#endif
+/*
+                      %rdi/4       %rsi/8       %rdx/12          %xmm0/16
+ void ATL_USERMM(const int M, const int N, const int K, const TYPE alpha,
+                       %rcx/24         %r8/28         %r9/32           8/36
+                 const TYPE *A, const int lda, const TYPE *B, const int ldb,
+                        %xmm1/40    16/48          24/52
+                 const TYPE beta, TYPE *C, const int ldc)
+*/
+        .text
+.global ATL_asmdecor(ATL_USERMM)
+ALIGN16
+ATL_asmdecor(ATL_USERMM):
+/*
+ *      Save callee-saved iregs
+ */
+#ifdef ATL_GAS_x8632
+        movl    %esp, %eax              /* save original stack ptr */
+        sub     $FSIZE, %esp            /* allocate stack space */
+        andw    $0xFFF0, %sp            /* SP now 16-byte aligned */
+        movl    %ebp, BETASZ(%esp)
+        movl    %ebx, BETASZ+4(%esp)
+        movl    %esi, BETASZ+8(%esp)
+        movl    %edi, BETASZ+12(%esp)
+        movl    %eax, BETASZ+16(%esp)   /* original SP saved to new stack */
+#else
+        movq    %rbp, -8(%rsp)
+        movq    %rbx, -16(%rsp)
+        movq    %r12, -24(%rsp)
+        movq    %r13, -32(%rsp)
+        movq    %r14, -40(%rsp)
+        movq    %r15, -48(%rsp)
+   #define iCOFF -56
+   #define iIOFF -64
+#endif
+        
+/*
+ *      Setup input parameters
+ *      For x8632 %eax has old stack ptr; eax is pA1, so set this up late
+ */
+#ifdef ATL_GAS_x8632
+        movl    4(%eax), itmp
+        movl    itmp, MM0
+        movl    8(%eax), itmp
+        movl    itmp, NN
+        movl    12(%eax), KK            /* load K */
+        movl    24(%eax), pA0
+        movl    32(%eax), pB0
+        movl    36(%eax), itmp          /* itmp = ldb */
+        lea     (pB0, itmp, 8), pB1      /* pB1 = pB0 + ldb*sizeof */
+        shl     $4, itmp                /* itmp = 2*sizeof*ldb */
+        movl    itmp, incBn             /* incBn = 2*sizeof*ldb */
+        add     pB0, itmp
+        movl    itmp, PFB
+#ifdef BETAX
+        movsd   40(%eax), rB0           /* load beta */
+        unpcklpd rB0, rB0               /* rB0 = {beta, beta} */
+        MOVAPD  rB0, BETAOFF(%esp)      /* store BETA to BETAOFF */
+#endif
+        movl    48(%eax), pC0
+        movl    52(%eax), itmp          /* itmp = ldc */
+        shl     $CSH, itmp              /* itmp = ldc*sizeof */
+        movl    itmp, ldcOFF(%esp)      /* ldc = ldc*sizeof */
+        shr     $CSH-1, itmp            /* itmp = 2*ldc */
+        sub     MM0, itmp               /* itmp = 2*ldc - M */
+        shl     $CSH, itmp              /* itmp = (2*ldc-M)*sizeof */
+        movl    itmp, incCn             /* incCn = (2*ldc-M)*sizeof */
+        movl    28(%eax), itmp          /* itmp = lda */
+        lea     (pA0, itmp,8), pA1      /* just overwrote old SP in EAX */
+        shl     $4, itmp                /* itmp = 2*sizeof*lda */
+        movl    itmp, incAm             /* incAm = 2*sizeof*lda */
+
+/*
+ *      pfA = A + 2*lda*M; incAn = lda*M
+ */
+        movl    MM0, itmp       /* itmp = M */
+        imull   incAm, itmp     /* itmp = 2*lda*M */
+@skip        add     pA0, itmp       /* itmp = 2*lda*M + pA0 */
+        lea     PFAINC(pA0, itmp), itmp /* pfA = pA0 + 2*lda*M - PFAINC */
+        movl    itmp, PFA       /* pfA = 2*lda*M + pA0 - PFAINC */
+        sub     pA0, itmp       /* itmp = 2*lda*M - PFAINC*/
+        sub     $PFAINC, itmp   /* itmp = 2*lda*M */
+        shr     $1, itmp        /* itmp = lda*M */
+        movl    itmp, incAn     /* incAn = lda*M */
+#else
+/*
+ *      Get parameters moves to correct registers
+ */
+        movq    %rdi, MM
+        movq    %rsi, NN
+        movq    %r8, pA1                /* pA1 = lda */
+        movq    %r9, pB0                /* pB0 = B */
+        movslq  8(%rsp), pB1            /* pB1 = ldb */
+        unpcklpd        %xmm1, %xmm1    /* xmm1 = {beta, beta} */
+        MOVAPD  %xmm1, BETA
+        movq    16(%rsp), pC0           /* pC0 = C */
+        movslq  24(%rsp), ldc           /* ldc = ldc */
+/*
+ *      ===================================================
+ *      Compute rest of needed variables using these inputs
+ *      ===================================================
+ */
+        shl     $3, pB1                 /* pB1 = ldb*sizeof */
+        lea     (pB1, pB1), incBn       /* incBn = 2*ldb*sizeof */
+        add     pB0, pB1                /* pB1 = pB0 + ldb*sizeof */
+        lea     (ldc,ldc), PFA          /* PFA = 2*ldc */
+        sub     MM, PFA                 /* PFA = 2*ldc - M */
+        shl     $CSH, PFA               /* PFA = (2*ldc-M)*sizeof */
+        movq    PFA, incCn              /* incCn = (2*ldc-M)*sizeof */
+        shl     $CSH, ldc                 /* ldc *= sizeof */
+        shl     $3, pA1                 /* pA1 = lda * sizeof */
+        lea     (pA1, pA1), incAm       /* incAm = 2*lda*sizeof */
+        mov     MM, PFA                 /* PFA = M */
+        imulq   pA1, PFA                /* PFA = M * lda*sizeof */
+        movq    PFA, incAn              /* incAn = M*lda*sizeof */
+        lea     PFAINC(pA0,PFA,2),PFA   /* PFA = pA0+2*M*lda*sizeof - PFAINC */
+        add     pA0, pA1                /* pA1 = pA0 + lda*sizeof */
+        mov     pB0, PFB                /* PBF = pB0 */
+        add     incBn, PFB              /* PFB = pB0 + 2*ldb*sizeof */
+        movq    MM, MM0                 /* MM0 = MM */
+#endif
+        sub     $2, KK          /* must stop K it early to drain advance load */
+        jz      K_IS_2
+/*
+ *      Have pA/B point to end of column, so we can run loop backwards
+ */
+        lea     (pA0, KK, 8), pA0       /* pA0 += K */
+        lea     (pB0, KK, 8), pB0       /* pB0 += K */
+        lea     (pA1, KK, 8), pA1       /* pA1 += K */
+        lea     (pB1, KK, 8), pB1       /* pB1 += K */
+        neg     KK                      /* KK = -K */
+        add     $2, KK
+        jz      K_IS_4
+        movq    KK, KK0
+#ifdef ATL_GAS_x8632
+        movl    MM0, itmp
+        movl    itmp, MM
+#else
+        movq    MM, MM0
+#endif
+#ifndef DCPLX
+        test    $15, pC0
+        jnz     UNALIGNED_C
+        testq   $15, ldc
+        jnz     UNALIGNED_C
+
+@beginproc sse2sum
+#ifndef ATL_SSE3
+        MOVAPD          rC00, rA0       /* rA0  = c00a c00b */
+        MOVAPD          rC01, rB0       /* rB0  = c01a c01b */
+        unpcklpd        rC10, rC00      /* rC00 = c00a c10a */
+        unpcklpd        rC11, rC01      /* rC01 = c01a c11a */
+        unpckhpd        rC10, rA0       /* rA0  = c00b c10b */
+        unpckhpd        rC11, rB0       /* rB0  = c01b c11b */
+        addpd           rA0, rC00       /* rC00 = c00ab c10ab */
+        addpd           rB0, rC01       /* rC01 = c01ab c11ab */
+#endif
+@endproc
+ALIGN16
+@beginproc LOOPS mnloop kloop movC
+@(mnloop):
+/*
+ *      Peel 1st iteration of K to avoid need to zero rCxx
+ */
+        MOVAB   -16(pB0,KK,8), rA0
+        MOVAB   -16(pA0,KK,8), rC00
+        MOVAPD  rC00, rC01
+        mulpd   rA0, rC00
+        #ifdef ATL_GAS_x8632
+           movq    PFB, itmp
+        #else
+           #ifndef BETA0
+              #ifdef DCPLX
+                 movsd (pC0), rC0
+                 movhpd 16(pC0), rC0
+              #else
+                 @(movC)  (pC0), rC0
+              #endif
+           #else
+               prefB((PFB))
+           #endif
+        #endif
+        MOVAB   -16(pA1,KK,8), rC10
+        MOVAPD  rC10, rC11
+        mulpd   rA0, rC10
+        #ifdef ATL_GAS_x8632
+           prefB((itmp))
+        #else
+           #ifndef BETA0
+              #ifdef DCPLX
+                 movsd (pC0,ldc), rC1
+                 movhpd 16(pC0,ldc), rC1
+              #else
+                 @(movC)  (pC0,ldc), rC1
+              #endif
+           #else
+               add      $PFBINC, PFB
+           #endif
+        #endif
+        MOVAB   -16(pB1,KK,8), rA0
+        mulpd   rA0, rC01
+           MOVAB   (pB0,KK,8), rB0
+        mulpd   rA0, rC11
+        #if !defined(ATL_GAS_x8632) && !defined(BETA0)
+               prefB((PFB))
+        #endif
+ALIGN16
+@(kloop):
+        MOVAB   (pA0,KK,8), rA0
+        MOVAPD  rA0, ra0
+        mulpd   rB0, rA0
+        addpd   rA0, rC00
+        MOVAB   (pA1,KK,8), rA1
+        mulpd   rA1, rB0
+        addpd   rB0, rC10
+        MOVAB   (pB1,KK,8), rB0
+        mulpd   rB0, ra0
+        mulpd   rB0, rA1
+           MOVAB   16(pB0,KK,8), rB0
+           add  $2, KK
+        addpd   ra0, rC01
+        addpd   rA1, rC11
+        jnz     @(kloop)
+/*
+ *      Peel last iteration to stop forward fetch of B
+ */
+        MOVAB   (pA0), rA0
+        #ifdef ATL_GAS_x8632
+           add     $PFBINC, itmp
+        #elif defined(BETAX)
+           mulpd BETA, rC0
+        #endif
+        MOVAPD  rA0, ra0
+        mulpd   rB0, rA0
+        #ifdef ATL_GAS_x8632
+           movl    itmp, PFB
+        #else
+           pref2((PFA))
+        #endif
+        addpd   rA0, rC00
+        MOVAB   (pA1), rA1
+        mulpd   rA1, rB0
+        #ifdef ATL_GAS_x8632
+           movq    PFA, itmp
+        #elif defined(BETAX)
+           mulpd  BETA, rC1
+        #endif
+        addpd   rB0, rC10
+        MOVAB   (pB1), rB0
+        mulpd   rB0, ra0
+        #ifdef ATL_GAS_x8632
+           prefetcht1      (itmp)
+        #elif !defined(BETA0)
+           add  $PFBINC, PFB
+        #endif
+        mulpd   rB0, rA1
+        #ifdef ATL_GAS_x8632
+           add     $PFAINC, itmp
+        #else
+           add     $PFAINC, PFA
+        #endif
+        addpd   ra0, rC01
+        #ifdef ATL_GAS_x8632
+           movl    itmp, PFA
+        #endif
+        addpd   rA1, rC11
+
+@callproc sse2sum
+#ifdef ATL_GAS_x8632
+        movl    ldcOFF(%esp), itmp
+@mif movC ! "MOVAPD
+   #ifdef DCPLX
+        #ifdef ATL_SSE3
+           haddpd  rC10, rC00
+        #endif
+        #ifndef BETA0
+           #ifdef BETAX
+              movapd BETAOFF(%esp), rB0
+           #endif
+           movsd (pC0), rA0
+           movhpd 16(pC0), rA0
+           #ifdef BETAX
+              mulpd  rB0, rA0
+           #endif
+           addpd  rA0, rC00
+        #endif
+        #ifdef ATL_SSE3
+           haddpd  rC11, rC01
+        #endif
+        #ifndef BETA0
+           movsd (pC0,itmp), rA1
+           movhpd 16(pC0,itmp), rA1
+           #ifdef BETAX
+              mulpd  rB0, rA1
+           #endif
+           addpd  rA1, rC01
+        #endif
+   #else
+@endmif
+        #ifdef ATL_SSE3
+           haddpd  rC10, rC00
+        #endif
+        #ifdef BETAX
+           MOVAPD BETAOFF(%esp), rB0
+           @(movC) (pC0), rA0
+           mulpd  rB0, rA0
+           addpd  rA0, rC00
+        #endif
+        #ifdef BETA1
+        @mif movC = "MOVAPD
+           addpd  (pC0), rC00
+        @endmif
+        @mif movC ! "MOVAPD
+           @(movC) (pC0), rA0
+           addpd   rA0, rC00
+        @endmif
+        #endif
+        #ifdef ATL_SSE3
+           haddpd  rC11, rC01
+        #endif
+        #ifdef BETAX
+           @(movC) (pC0,itmp), rA1
+           mulpd  rB0, rA1
+           addpd  rA1, rC01
+        #endif
+        #ifdef BETA1
+        @mif movC ! "MOVAPD
+           @(movC) (pC0, itmp), rA1
+           addpd  rA1, rC01
+        @endmif
+        @mif movC = "MOVAPD
+           addpd  (pC0,itmp), rC01
+        @endmif
+        #endif
+@mif movC ! "MOVAPD
+   #endif
+@endmif
+#else
+        #ifdef ATL_SSE3
+           haddpd  rC10, rC00
+        #endif
+        #ifndef BETA0
+           addpd  rC0, rC00
+        #endif
+        #ifdef ATL_SSE3
+           haddpd  rC11, rC01
+        #endif
+        #ifndef BETA0
+           addpd  rC1, rC01
+        #endif
+#endif
+        add     $2*CMUL(8), pC0
+        addq    incAm, pA0    /* pA0 += lda*sizeof*2 */
+        addq    incAm, pA1    /* pA1 += lda*sizeof*2 */
+        subq    $2, MM
+        movq    KK0, KK
+   #ifdef DCPLX
+        movlpd  rC00, -32(pC0)
+        movhpd  rC00, -16(pC0)
+        movlpd  rC01, -32(pC0,itmp)
+        movhpd  rC01, -16(pC0,itmp)
+   #else
+        @(movC)  rC00, -2*CMUL(8)(pC0)
+        @(movC)  rC01, -2*CMUL(8)(pC0,itmp)
+   #endif
+        jnz     @(mnloop)
+
+#ifdef ATL_GAS_x8632
+        movl    MM0, itmp
+        movl    itmp, MM
+#else
+        movq    MM0, MM
+#endif
+        movq    KK0, KK
+        subq    incAn, pA0
+        subq    incAn, pA1
+        addq    incCn, pC0
+        addq    incBn, pB0
+        addq    incBn, pB1
+        subq    $2, NN
+        jnz     @(mnloop)
+@endproc
+@callproc LOOPS MNLOOP KLOOP MOVAPD
+@beginproc DONE
+#ifdef ATL_GAS_x8632
+        movl    BETASZ(%esp), %ebp
+        movl    BETASZ+4(%esp), %ebx
+        movl    BETASZ+8(%esp), %esi
+        movl    BETASZ+12(%esp), %edi
+        movl    BETASZ+16(%esp), %esp    /* restore saved original SP */
+#else
+        movq    -8(%rsp), %rbp
+        movq    -16(%rsp), %rbx
+        movq    -24(%rsp), %r12
+        movq    -32(%rsp), %r13
+        movq    -40(%rsp), %r14
+        movq    -48(%rsp), %r15
+#endif
+        ret
+@endproc DONE
+@callproc DONE
+#endif  /* end of ifndef DCPLX -- CPLX must use unaligned loads to C */
+ALIGN16
+/*
+ * Code specialized for when C or ldc is not aligned to 16-byte boundary, so
+ * we must use unaligned loads.  This is a big cost on Core2 systems
+ */
+@callproc LOOPS UNALIGNED_C UKLOOP MOVUPD
+@callproc DONE
+/*
+ * Code specialized for K == 2; pA0 & pAB pt to start of arrays
+ * Assume C unaligned so we don't have to write this cleanup case twice.
+ * This assumption costs you major perf. if you care about this case
+ * (since load/store of C dominant cost when K=2).  This code is more for
+ * correctness than perf. as presently written.
+ */
+K_IS_2:
+#ifdef ATL_GAS_x8632
+        movq    ldc, itmp
+#endif
+        movq    MM0, KK          /* KK is now M-loop counter */
+ALIGN16
+MNLOOP_K2:
+   #ifdef BETA0
+        MOVAB   (pB0), rA0
+        MOVAB   (pA0), rC00
+        MOVAPD  rC00, rC01
+        mulpd   rA0, rC00
+        MOVAB   (pA1), rC10
+        MOVAPD  rC10, rC11
+        mulpd   rA0, rC10
+        MOVAB   (pB1), rA0
+        mulpd   rA0, rC01
+        mulpd   rA0, rC11
+   #else
+        movsd   (pC0), rC00
+        movsd   CMUL(8)(pC0), rC10
+        movsd   (pC0,itmp), rC01
+        movsd   CMUL(8)(pC0,itmp), rC11
+        #ifdef BETAX
+           #ifdef ATL_GAS_x8632
+              MOVAPD BETAOFF(%esp), rA1
+              mulpd  rA1, rC00
+              mulpd  rA1, rC10
+              mulpd  rA1, rC01
+              mulpd  rA1, rC11
+           #else
+              mulpd  BETA, rC00
+              mulpd  BETA, rC10
+              mulpd  BETA, rC01
+              mulpd  BETA, rC11
+           #endif
+        #endif
+        MOVAB   (pA0), rA0
+        MOVAB   (pB0), rB0
+        MOVAPD  rA0, ra0
+        mulpd   rB0, rA0
+        addpd   rA0, rC00
+        MOVAB   (pA1), rA1
+        mulpd   rA1, rB0
+        addpd   rB0, rC10
+        MOVAB   (pB1), rB0
+        mulpd   rB0, ra0
+        mulpd   rB0, rA1
+        addpd   ra0, rC01
+        addpd   rA1, rC11
+   #endif
+           add     $2*CMUL(8), pC0
+@callproc sse2sum
+        #ifdef ATL_SSE3
+           haddpd  rC10, rC00
+        #endif
+           addq  incAm, pA0
+        #ifdef ATL_SSE3
+           haddpd  rC11, rC01
+        #endif
+           addq  incAm, pA1
+           sub   $2, KK
+   #ifdef DCPLX
+        movlpd  rC00, -32(pC0)
+        movhpd  rC00, -16(pC0)
+        movlpd  rC01, -32(pC0,itmp)
+        movhpd  rC01, -16(pC0,itmp)
+   #else
+        MOVUPD  rC00, -2*8(pC0)
+        MOVUPD  rC01, -2*8(pC0,itmp)
+   #endif
+        jnz MNLOOP_K2                   /* end of M-loop */
+
+        subq    incAn, pA0
+        subq    incAn, pA1
+        addq    incCn, pC0
+        addq    incBn, pB0
+        addq    incBn, pB1
+        subq    $2, NN
+        mov     MM0, KK
+        jnz     MNLOOP_K2
+@callproc DONE
+/*
+ * Code specialized for K == 4; pA0 & pAB pt to start of arrays + 16
+ * Assume C unaligned so we don't have to write this cleanup case twice.
+ * This assumption costs you major perf. if you care about this case
+ * (since load/store of C dominant cost when K=4).  This code is more for
+ * correctness than perf. as presently written.
+ */
+K_IS_4:
+#ifdef ATL_GAS_x8632
+        movq    ldc, itmp
+#endif
+        movq    MM0, KK          /* KK is now M-loop counter */
+ALIGN16
+MNLOOP_K4:
+   #ifdef BETA0
+        MOVAB   -16(pB0), rA0
+        MOVAB   -16(pA0), rC00
+        MOVAPD  rC00, rC01
+        mulpd   rA0, rC00
+        MOVAB   -16(pA1), rC10
+        MOVAPD  rC10, rC11
+        mulpd   rA0, rC10
+        MOVAB   -16(pB1), rA0
+        mulpd   rA0, rC01
+        MOVAB   (pB0), rB0
+        mulpd   rA0, rC11
+   #else
+        movsd   (pC0), rC00
+        movsd   CMUL(8)(pC0), rC10
+        movsd   (pC0,itmp), rC01
+        movsd   CMUL(8)(pC0,itmp), rC11
+        #ifdef BETAX
+           #ifdef ATL_GAS_x8632
+              MOVAPD BETAOFF(%esp), rA1
+              mulpd  rA1, rC00
+              mulpd  rA1, rC10
+              mulpd  rA1, rC01
+              mulpd  rA1, rC11
+           #else
+              mulpd  BETA, rC00
+              mulpd  BETA, rC10
+              mulpd  BETA, rC01
+              mulpd  BETA, rC11
+           #endif
+        #endif
+        MOVAB   -16(pA0), rA0
+        MOVAB   -16(pB0), rB0
+        MOVAPD  rA0, ra0
+        mulpd   rB0, rA0
+        addpd   rA0, rC00
+        MOVAB   -16(pA1), rA1
+        mulpd   rA1, rB0
+        addpd   rB0, rC10
+        MOVAB   -16(pB1), rB0
+        mulpd   rB0, ra0
+        mulpd   rB0, rA1
+        MOVAB   (pB0), rB0
+        addpd   ra0, rC01
+        addpd   rA1, rC11
+   #endif
+        MOVAB   (pA0), rA0
+        MOVAPD  rA0, ra0
+        mulpd   rB0, rA0
+        addpd   rA0, rC00
+        MOVAB   (pA1), rA1
+        mulpd   rA1, rB0
+        addpd   rB0, rC10
+        MOVAB   (pB1), rB0
+        mulpd   rB0, ra0
+        mulpd   rB0, rA1
+        addpd   ra0, rC01
+        addpd   rA1, rC11
+           add     $2*CMUL(8), pC0
+@callproc sse2sum
+        #ifdef ATL_SSE3
+           haddpd  rC10, rC00
+        #endif
+           addq  incAm, pA0
+        #ifdef ATL_SSE3
+           haddpd  rC11, rC01
+        #endif
+           addq  incAm, pA1
+           sub   $2, KK
+   #ifdef DCPLX
+        movlpd  rC00, -32(pC0)
+        movhpd  rC00, -16(pC0)
+        movlpd  rC01, -32(pC0,itmp)
+        movhpd  rC01, -16(pC0,itmp)
+   #else
+        MOVUPD  rC00, -2*CMUL(8)(pC0)
+        MOVUPD  rC01, -2*CMUL(8)(pC0,itmp)
+   #endif
+        jnz MNLOOP_K4                   /* end of M-loop */
+
+        subq    incAn, pA0
+        subq    incAn, pA1
+        addq    incCn, pC0
+        addq    incBn, pB0
+        addq    incBn, pB1
+        subq    $2, NN
+        movq    MM0, KK
+        jnz     MNLOOP_K4
+@callproc DONE
+@ROUT ATL_dmm2x2x128_sse2
+   @define Kmax @128@
+   @define TSH @3@
+   @define Kmul @2@
+@ROUT ATL_smm2x2x256_sse
+   @define Kmax @256@
+   @define TSH @2@
+   @define Kmul @4@
+@ROUT ATL_dmm2x2x128_sse2 ATL_smm2x2x256_sse
+#include "atlas_asm.h"
+#if !defined(ATL_GAS_x8664) && !defined(ATL_GAS_x8632)
+   #error "This kernel requires x86 assembly!"
+#endif
+
+#if !defined(KB) || (KB == 0)
+   #error "KB must be a compile-time constant!"
+#endif
+#if KB > @(Kmax)
+   #error "KB can at most be @(Kmax)!"
+#endif
+#if (KB/@(Kmul))*@(Kmul) != KB
+   #error "KB must be a multiple of @(Kmul)
+#endif
+
+@ROUT ATL_smm2x2x256_sse
+#ifdef SCPLX
+   #define CMUL(arg_) 2*arg_
+   #define CSH 3
+#else
+   #define CMUL(arg_) arg_
+   #define CSH 2
+#endif
+@ROUT ATL_dmm2x2x128_sse2 
+#ifdef DCPLX
+   #define CMUL(arg_) 2*arg_
+   #define CSH 4
+#else
+   #define CMUL(arg_) arg_
+   #define CSH 3
+#endif
+@ROUT ATL_dmm2x2x128_sse2 ATL_smm2x2x256_sse
+#ifdef ATL_GAS_x8632
+   #define movq movl
+   #define addq addl
+   #define subq subl
+   #define shrq shrl
+   #define testq testl
+   #define rsp  esp
+   #ifdef BETAX
+      #define BETAOFF 0
+      #define BETASZ 16
+   #else
+      #define BETASZ 0
+   #endif
+   #define FSIZE 12*4+BETASZ
+   #define PFAOFF  FSIZE-4
+   #define PFBOFF  PFAOFF-4
+   #define IOFF    PFBOFF-4
+   #define MOFF    IOFF-4
+   #define iAnOFF  MOFF-4
+   #define iCnOFF  iAnOFF-4
+   #define JOFF    iCnOFF-4
+#endif
+/*
+ *Integer register usage shown by these defines
+ */
+#ifdef ATL_GAS_x8632
+   #define pA0     %ecx
+   #define lda     %eax
+   #define pB0     %ebx
+   #define ldb     %edi
+   #define pC0     %esi
+   #define itmp    %edx
+   #define ldc     %ebp
+   
+@skip   #define incAm   iAmOFF(%esp)  /* not needed, just use lda*2 */
+   #define incAn   iAnOFF(%esp)
+@skip   #define incBn   iBnOFF(%esp)  /* not needed, just use ldb*2 */
+   #define incCn   iCnOFF(%esp)
+   #define MM      IOFF(%esp)
+   #define NN      JOFF(%esp)
+   #define MM0     MOFF(%esp)
+   #define pfA     PFAOFF(%esp)
+   #define pfB     PFBOFF(%esp)
+   #define BETA    BETAOFF(%esp)
+#else
+   #define pA0     %rcx
+   #define lda     %rbx
+   #define pB0     %rbp
+   #define ldb     %rax
+   #define pC0     %rdi
+   #define pfA     %rdx
+   #define pfB     %rsi
+   #define incCn   %r8
+   #define ldc     %r9
+   #define MM0     %r10
+   #define incAn   %r11
+   #define MM      %r12
+   #define NN      %r13
+   #define itmp    ldc
+@skip   #define incAm   %r14
+@skip   #define incBn   %r15
+#endif
+#define rA0     %xmm0
+#define rA1     %xmm1
+#define ra0     %xmm2
+#define rB0     %xmm3
+#define rC00    %xmm4
+#define rC10    %xmm5
+#define rC01    %xmm6
+#define rC11    %xmm7
+#ifdef ATL_GAS_x8664
+   #define BETA %xmm8
+@skip   #define rC0  %xmm9
+@skip   #define rC1 %xmm10
+#endif
+/*
+ * Define some macros for instruction selection
+ *    VZERO: xorpd, xorps, pxor
+ *    MOVAB: movapd,movaps or movupd/movups
+ */
+#define VZERO(reg_) xorps reg_, reg_
+#define MOVAB  movaps
+#define MOVAPD movaps
+#define MOVUPD movups
+#define PFAINC -64
+#define PFBINC 32
+#define movlpd movlps
+#define movhpd movhps
+#if 1
+   #define pref2(mem) prefetcht1        mem
+   #define prefB(mem) prefetcht0        mem
+   #define prefC(mem) prefetcht0        mem
+#else
+   #define pref2(mem)
+   #define prefB(mem)
+   #define prefC(mem)
+#endif
+@ROUT ATL_dmm2x2x128_sse2
+/*
+                      %rdi/4       %rsi/8       %rdx/12          %xmm0/16
+ void ATL_USERMM(const int M, const int N, const int K, const TYPE alpha,
+                       %rcx/24         %r8/28         %r9/32           8/36
+                 const TYPE *A, const int lda, const TYPE *B, const int ldb,
+                        %xmm1/40    16/48          24/52
+                 const TYPE beta, TYPE *C, const int ldc)
+*/
+@ROUT ATL_smm2x2x256_sse
+/*
+                      %rdi/4       %rsi/8       %rdx/12          %xmm0/16
+ void ATL_AUSERMM(const int M, const int N, const int K, const TYPE alpha,
+                       %rcx/20         %r8/24         %r9/28           8/32
+                 const TYPE *A, const int lda, const TYPE *B, const int ldb,
+                        %xmm1/36    16/40          24/44
+                 const TYPE beta, TYPE *C, const int ldc)
+*/
+@ROUT ATL_dmm2x2x128_sse2 ATL_smm2x2x256_sse
+        .text
+.global ATL_asmdecor(ATL_USERMM)
+ALIGN16
+ATL_asmdecor(ATL_USERMM):
+/*
+ *      Save callee-saved iregs
+ */
+#ifdef ATL_GAS_x8632
+        movl    %esp, %eax              /* save original stack ptr */
+        sub     $FSIZE, %esp            /* allocate stack space */
+        andw    $0xFFF0, %sp            /* SP now 16-byte aligned */
+        movl    %ebp, BETASZ(%esp)
+        movl    %ebx, BETASZ+4(%esp)
+        movl    %esi, BETASZ+8(%esp)
+        movl    %edi, BETASZ+12(%esp)
+        movl    %eax, BETASZ+16(%esp)   /* original SP saved to new stack */
+#else
+        movq    %rbp, -8(%rsp)
+        movq    %rbx, -16(%rsp)
+        movq    %r12, -24(%rsp)
+        movq    %r13, -32(%rsp)
+@skip        movq    %r14, -40(%rsp)
+@skip        movq    %r15, -48(%rsp)
+#endif
+        
+/*
+ *      Setup input parameters
+ *      For x8632 %eax has old stack ptr; eax is lda, so set this up late
+ */
+#ifdef ATL_GAS_x8632
+        movl    4(%eax), itmp
+        movl    itmp, MM0
+        movl    itmp, MM
+        movl    8(%eax), itmp
+        movl    itmp, NN
+@ROUT ATL_smm2x2x256_sse
+        movl    20(%eax), pA0
+        movl    28(%eax), pB0
+        movl    32(%eax), ldb           /* ldb = ldb */
+@ROUT ATL_dmm2x2x128_sse2
+        movl    24(%eax), pA0
+        movl    32(%eax), pB0
+        movl    36(%eax), ldb           /* ldb = ldb */
+@ROUT ATL_dmm2x2x128_sse2 ATL_smm2x2x256_sse
+        shl     $@(TSH), ldb                 /* ldb = ldb*sizeof */
+        lea     (pB0, ldb, 2), itmp     /* itmp = pB0 + 2*ldb*sizeof */
+        movl    itmp, pfB               /* pfB = pB0 + 2*ldb*sizeof */
+#ifdef BETAX
+@ROUT ATL_dmm2x2x128_sse2
+        movsd   40(%eax), rB0           /* load beta */
+        unpcklpd rB0, rB0               /* rB0 = {beta, beta} */
+        MOVAPD  rB0, BETAOFF(%esp)      /* store BETA to BETAOFF */
+#endif
+        movl    48(%eax), pC0
+        movl    52(%eax), ldc           /* ldc = ldc */
+@ROUT ATL_smm2x2x256_sse
+        movss   36(%eax), rB0           /* load beta */
+        shufps  $0, rB0, rB0            /* rB0 = beta,beta,beta,beta */
+        movaps  rB0, BETAOFF(%esp)      /* store BETA to stack */
+#endif
+        movl    40(%eax), pC0
+        movl    44(%eax), ldc           /* ldc = ldc */
+@ROUT ATL_dmm2x2x128_sse2 ATL_smm2x2x256_sse
+        lea     (ldc,ldc), itmp         /* itmp = 2*ldc */
+        shl     $CSH, ldc               /* ldc = ldc*sizeof */
+        sub     MM0, itmp               /* itmp = 2*ldc - M */
+        shl     $CSH, itmp              /* itmp = (2*ldc-M)*sizeof */
+        movl    itmp, incCn             /* incCn = (2*ldc-M)*sizeof */
+@ROUT ATL_dmm2x2x128_sse2 `        movl    28(%eax), lda           /* lda = lda; overwrote old SP in EAX */`
+@ROUT ATL_smm2x2x256_sse `        movl    24(%eax), lda           /* lda = lda; overwrote old SP in EAX */`
+        shl     $@(TSH), lda                 /* lda = lda*sizeof */
+/*
+ *      pfA = A + 2*lda*M; incAn = lda*M
+ */
+        lea     (lda,lda), itmp         /* itmp = 2*lda*sizeof */
+        imull   MM0, itmp               /* itmp = 2*lda*M*sizeof */
+        lea     PFAINC(pA0, itmp), itmp /* pfA = pA0 + 2*lda*M - PFAINC */
+        movl    itmp, pfA               /* pfA = 2*lda*M + pA0 - PFAINC */
+        sub     pA0, itmp               /* itmp = 2*lda*M - PFAINC*/
+        sub     $PFAINC, itmp           /* itmp = 2*lda*M */
+        shr     $1, itmp                /* itmp = lda*M */
+        movl    itmp, incAn             /* incAn = lda*M */
+        movl    MM0, itmp
+        movl    itmp, MM
+#else
+/*
+ *      Get parameters moves to correct registers
+ */
+        movq    %rdi, MM
+        movq    %rsi, NN
+        movq    %r8, lda                /* lda = lda */
+        movq    %r9, pB0                /* pB0 = B */
+        movslq  8(%rsp), ldb            /* ldb = ldb */
+@ROUT ATL_dmm2x2x128_sse2 `        unpcklpd        %xmm1, %xmm1    /* xmm1 = beta, beta */`
+@ROUT ATL_smm2x2x256_sse `        shufps  $0, %xmm1, %xmm1            /* rB0 = beta,beta,beta,beta */`
+        MOVAPD  %xmm1, BETA             /* BETA = beta, beta */
+        movq    16(%rsp), pC0           /* pC0 = C */
+        movslq  24(%rsp), ldc           /* ldc = ldc */
+/*
+ *      ===================================================
+ *      Compute rest of needed variables using these inputs
+ *      ===================================================
+ */
+        shl     $@(TSH), ldb                 /* ldb = ldb*sizeof */
+        lea     (ldc,ldc), incCn        /* incCn = 2*ldc */
+        sub     MM, incCn               /* incCn = 2*ldc - M */
+        shl     $CSH, incCn             /* incCn = (2*ldc-M)*sizeof */
+        shl     $CSH, ldc               /* ldc *= sizeof */
+        shl     $@(TSH), lda                 /* lda = lda * sizeof */
+        mov     MM, incAn               /* incAn = M */
+        imulq   lda, incAn              /* incAn = M * lda*sizeof */
+        lea     PFAINC(pA0,incAn,2),pfA /* pfA = pA0+2*M*lda*sizeof - PFAINC */
+        lea     (pB0, ldb, 2),pfB       /* pfB = pB0 + 2*ldb*sizeof */
+        mov     MM, MM0                 /* MM0 = MM */
+#endif
+/*
+ *      Advance A & B by 128 so we can use byte indexing as long as possible
+ */
+        sub     $-128, pA0              /* pA0 += 128 */
+        sub     $-128, pB0              /* pB0 += 128 */
+@ROUT ATL_dmm2x2x128_sse2
+/*
+ * ======================================================================
+ * This set of loops assumes aligned C & ldc; CPLX code takes every other
+ * elt of C, and thus can't use aligned C access in any case
+ * ======================================================================
+ */
+#ifndef DCPLX
+        test    $15, pC0
+        jnz     UNALIGNED_C
+        testq   $15, ldc
+        jnz     UNALIGNED_C
+
+@beginproc sse2sum
+#ifndef ATL_SSE3
+/*
+ * After loop pC00 is in rA0, and pC01 is in ra0, so use pB0 & rA1 here
+ */
+        MOVAPD          rC00, rA1       /* rA1  = c00a c00b */
+        MOVAPD          rC01, rB0       /* rB0  = c01a c01b */
+        unpcklpd        rC10, rC00      /* rC00 = c00a c10a */
+        unpcklpd        rC11, rC01      /* rC01 = c01a c11a */
+        unpckhpd        rC10, rA1       /* rA1  = c00b c10b */
+        unpckhpd        rC11, rB0       /* rB0  = c01b c11b */
+        addpd           rA1, rC00       /* rC00 = c00ab c10ab */
+        addpd           rB0, rC01       /* rC01 = c01ab c11ab */
+#endif
+@endproc
+ALIGN16
+@beginproc LOOPS mnloop movC
+@(mnloop):
+/*
+ *      Peel 1st iteration of K to avoid need to zero rCxx
+ */
+        MOVAB   -128(pB0), rA0
+        MOVAB   -128(pA0), rC00
+        MOVAPD  rC00, rC01
+        mulpd   rA0, rC00
+        #ifdef ATL_GAS_x8632
+           movq    pfB, itmp
+        #else
+           prefB((pfB))
+        #endif
+        MOVAB   -128(pA0,lda), rC10
+        MOVAPD  rC10, rC11
+        mulpd   rA0, rC10
+        #ifdef ATL_GAS_x8632
+           prefB((itmp))
+        #else
+           add      $PFBINC, pfB
+        #endif
+        MOVAB   -128(pB0,ldb), rA0
+        mulpd   rA0, rC01
+        #if KB > 2
+           MOVAB   -112(pB0), rB0
+        #endif
+        mulpd   rA0, rC11
+        #if KB == 2
+           #ifdef DCPLX
+              movsd  (pC0), rA0
+              movhpd 16(pC0), rA0
+              movsd  (pC0,ldc), ra0
+              movhpd 16(pC0,ldc), ra0
+           #else
+              @(movC) (pC0), rA0
+              @(movC) (pC0,ldc), ra0
+           #endif
+        #endif
+        #ifdef ATL_GAS_x8632
+           add  $PFBINC, pfB
+        #endif
+
+@define i @4@
+@define j @-112@
+@iwhile i < 128
+   #if KB > @(i)
+        MOVAB   @(j)(pA0), rA0
+        MOVAPD  rA0, ra0
+        mulpd   rB0, rA0
+        addpd   rA0, rC00
+        MOVAB   @(j)(pA0,lda), rA1
+        mulpd   rA1, rB0
+        addpd   rB0, rC10
+        MOVAB   @(j)(pB0,ldb), rB0
+        mulpd   rB0, ra0
+        mulpd   rB0, rA1
+           MOVAB   @(j)+16(pB0), rB0
+        addpd   ra0, rC01
+        addpd   rA1, rC11
+   #elif KB == @(i)
+        MOVAB   @(j)(pA0), rA0
+        MOVAPD  rA0, ra0
+        mulpd   rB0, rA0
+        addpd   rA0, rC00
+        MOVAB   @(j)(pA0,lda), rA1
+        mulpd   rA1, rB0
+        addpd   rB0, rC10
+        MOVAB   @(j)(pB0,ldb), rB0
+        mulpd   rB0, ra0
+        #ifndef BETA0
+           #ifdef DCPLX
+              movsd  (pC0), rA0
+           #else
+              @(movC) (pC0), rA0
+           #endif
+        #endif
+        mulpd   rB0, rA1
+        #if !defined(BETA0) && defined(DCPLX)
+           movhpd 16(pC0), rA0
+        #endif
+        addpd   ra0, rC01
+        #ifndef BETA0
+           #ifdef DCPLX
+              movsd (pC0,ldc), ra0
+           #else
+              @(movC) (pC0,ldc), ra0
+           #endif
+        #endif
+        addpd   rA1, rC11
+        #if !defined(BETA0) && defined(DCPLX)
+           movhpd 16(pC0,ldc), ra0
+        #endif
+   #endif
+   @iexp i 2 @(i) +
+   @iexp j 16 @(j) +
+@endiwhile
+@undef i
+@undef j
+
+        #ifdef ATL_GAS_x8632
+           movl    pfA, itmp
+        #else
+           pref2((pfA))
+        #endif
+/* 
+ * After loop pC00 is in rA0, and pC01 is in ra0
+ */
+@callproc sse2sum
+        #ifdef ATL_SSE3
+           haddpd  rC10, rC00
+        #endif
+        #ifdef ATL_GAS_x8632
+           pref2((itmp))
+        #else
+           add  $PFAINC, pfA
+        #endif
+        #ifdef BETAX
+           #ifdef ATL_GAS_x8632
+              movapd       BETAOFF(%esp), rB0
+              mulpd        rB0, rA0
+           #else
+              mulpd    BETA, rA0
+           #endif
+        #endif
+        #ifndef BETA0
+           addpd  rA0, rC00
+        #endif
+        #ifdef ATL_SSE3
+           haddpd  rC11, rC01
+        #endif
+        #ifdef ATL_GAS_x8632
+           add     $PFAINC, itmp
+        #endif
+        #ifdef BETAX
+           #ifdef ATL_GAS_x8632
+              mulpd        rB0, ra0
+           #else
+              mulpd    BETA, ra0
+           #endif
+        #endif
+        #ifndef BETA0
+           addpd  ra0, rC01
+        #endif
+        #ifdef ATL_GAS_x8632
+           movl    itmp, pfA
+        #endif
+
+        add     $2*CMUL(8), pC0
+        lea     (pA0, lda, 2), pA0
+        subq    $2, MM
+        #ifdef ATL_GAS_x8632
+           movl    ldc, itmp
+        #endif
+   #ifdef DCPLX
+        movlpd  rC00, -32(pC0)
+        movhpd  rC00, -16(pC0)
+        movlpd  rC01, -32(pC0,itmp)
+        movhpd  rC01, -16(pC0,itmp)
+   #else
+        @(movC)  rC00, -2*CMUL(8)(pC0)
+        @(movC)  rC01, -2*CMUL(8)(pC0,itmp)
+   #endif
+        jnz     @(mnloop)
+
+        subq    incAn, pA0
+        addq    incCn, pC0
+        lea     (pB0, ldb, 2), pB0
+        subq    $2, NN
+#ifdef ATL_GAS_x8632
+        movl    MM0, itmp
+        movl    itmp, MM
+#else
+        movq    MM0, MM
+#endif
+        jnz     @(mnloop)
+@endproc
+@callproc LOOPS MNLOOP MOVAPD
+@ROUT ATL_dmm2x2x128_sse2 ATL_smm2x2x256_sse
+@beginproc DONE
+#ifdef ATL_GAS_x8632
+        movl    BETASZ(%esp), %ebp
+        movl    BETASZ+4(%esp), %ebx
+        movl    BETASZ+8(%esp), %esi
+        movl    BETASZ+12(%esp), %edi
+        movl    BETASZ+16(%esp), %esp    /* restore saved original SP */
+#else
+        movq    -8(%rsp), %rbp
+        movq    -16(%rsp), %rbx
+        movq    -24(%rsp), %r12
+        movq    -32(%rsp), %r13
+@skip        movq    -40(%rsp), %r14
+@skip        movq    -48(%rsp), %r15
+#endif
+        ret
+@endproc DONE
+@ROUT ATL_dmm2x2x128_sse2
+@callproc DONE
+#endif  /* end of ifndef DCPLX -- CPLX must use unaligned loads to C */
+ALIGN16
+/*
+ * Code specialized for when C or ldc is not aligned to 16-byte boundary, so
+ * we must use unaligned loads.  This is a big cost on Core2 systems
+ */
+@callproc LOOPS UNALIGNED_C MOVUPD
+@callproc DONE
+@ROUT ATL_smm2x2x256_sse
+MNLOOP:
+/*
+ * Peel first iteration of K to avoid need to zero rCxx
+ */
+   movaps       -128(pB0), rA0
+   movaps       -128(pA0), rC00
+   movaps       rC00, rC01
+   mulps        rA0, rC00
+   #ifdef ATL_GAS_x8632
+      movl      pfB, itmp
+   #else
+      prefB((pfB))
+   #endif
+   movaps       -128(pA0,lda), rC10
+   movaps       rC10, rC11
+   mulps        rA0, rC10
+   #ifdef ATL_GAS_x8632
+      prefB((itmp))
+   #else
+      add       $PFBINC, pfB
+   #endif
+   movaps       -128(pB0,ldb), rA0
+   mulps        rA0, rC01
+   #if KB > 4
+      movaps    -112(pB0), rB0
+   #endif
+   mulps        rA0, rC11
+   #ifdef ATL_GAS_x8632
+      addl      $PFBINC, pfB
+   #endif
+   #if KB == 4
+      #ifdef SCPLX
+         movss  8(pC0), rA0             /* rA0 = c10 XXX XXX XXX */
+         movhps (pC0), rA0              /* rA0 = c10 XXX c00 XXX */
+         shufps $0xE2, rA0, rA0         /* rA0 = c00 c10 XXX XXX */
+         movss  8(pC0,ldc), rA1         /* rA1 = c11 XXX XXX XXX */
+         movhps (pC0,ldc), rA1          /* rA1 = c11 XXX c01 XXX */
+         shufps $0x24, rA1, rA0         /* rA0 = c00 c10 c01 c11 */
+      #else
+         movlps (pC0), rA0
+         movhps (pC0,ldc), rA0
+      #endif
+   #endif
+@define i @8@
+@define j @-112@
+@iwhile i < 256
+   #if KB > @(i)
+      movaps    @(j)(pA0), rA0
+      movaps    rA0, ra0
+      mulps     rB0, rA0
+      addps     rA0, rC00
+      movaps    @(j)(pA0,lda), rA1
+      mulps     rA1, rB0
+      addps     rB0, rC10
+      movaps    @(j)(pB0,ldb), rB0
+      mulps     rB0, ra0
+      mulps     rB0, rA1
+         movaps @(j)+16(pB0), rB0
+      addps      ra0, rC01
+      addps      rA1, rC11
+   #elif KB == @(i)
+      movaps    @(j)(pA0), rA0
+      movaps    rA0, ra0
+      mulps     rB0, rA0
+      addps     rA0, rC00
+      movaps    @(j)(pA0,lda), rA1
+      mulps     rA1, rB0
+      addps     rB0, rC10
+      movaps    @(j)(pB0,ldb), rB0
+      mulps     rB0, ra0
+      #ifndef BETA0
+         #ifdef SCPLX
+            movsd  8(pC0), rA0             /* rA0 = c10 XXX XXX XXX */
+            movhps (pC0), rA0              /* rA0 = c10 XXX c00 XXX */
+            shufps $0xE2, rA0, rA0         /* rA0 = c00 c10 XXX XXX */
+         #else
+            movlps (pC0), rA0
+         #endif
+      #endif
+      mulps     rB0, rA1
+      addps      ra0, rC01
+      #ifndef BETA0
+         #ifdef SCPLX
+            movsd  8(pC0,ldc), rB0         /* rB0 = c11 XXX XXX XXX */
+            movhps (pC0,ldc), rB0          /* rB0 = c11 XXX c01 XXX */
+            shufps $0x24, rB0, rA0         /* rA0 = c00 c11 c01 c11 */
+         #else
+            movhps (pC0,ldc), rA0
+         #endif
+      #endif
+      addps      rA1, rC11
+   #endif
+   @iexp i 4 @(i) +
+   @iexp j 16 @(j) +
+@endiwhile
+@undef i
+@undef j
+#ifndef ATL_SSE3
+   #error "This kernel presently requires SSE3!"
+                                /* rC00 = c00a    c00b    c00c    c00d    */
+                                /* rC10 = c10a    c10b    c10c    c10d    */
+                                /* rC01 = c01a    c01b    c01c    c01d    */
+                                /* rC11 = c11a    c11b    c11c    c11d    */
+   movaps       rC00, rB0       /* rB0  = c00a    c00b    c00c    c00d    */
+   movlhps      rC10, rC00      /* rC00 = c00a    c00b    c10a    c10b    */
+   shufps $0xBE, rC10, rB0      /* rB0  = c00c    c00d    c10c    c10d    */
+   addps        rB0, rC00       /* rC00 = c00ac   c00bd   c10ac   c10bd   */
+
+   movaps       rC01, rA1       /* rA1  = c01a    c01b    c01c    c01d    */
+   movlhps      rC11, rC01      /* rC01 = c01a    c01b    c11a    c11b    */
+   shufps $0xBE, rC11, rA1      /* rA1  = c01c    c01d    c11c    c11d    */
+   addps        rA1, rC01       /* rC01 = c01ac   c01bd   c11ac   c11bd   */
+
+   movaps       rC00, rB0       /* rB0  = c00ac   c00bd   c10ac   c10bd   */
+   unpcklps     rC01, rC00      /* rC00 = c00ac   c01ac   c00bd   c01bd   */
+   movaps       rC00, rC10      /* rC10 = c00ac   c01ac   c00bd   c01bd   */
+   unpckhps     rB0, rC01       /* rC01 = c11ac   c10ac   c11bd   c10bd   */
+   movaps       rC01, rC11      /* rC11 = c11ac   c10ac   c11bd   c10bd   */
+#else
+                                /* rC00 = c00a    c00b    c00c    c00d    */
+                                /* rC10 = c10a    c10b    c10c    c10d    */
+                                /* rC01 = c01a    c01b    c01c    c01d    */
+                                /* rC11 = c11a    c11b    c11c    c11d    */
+   #ifdef ATL_GAS_x8632
+      movl pfA, itmp
+   #endif
+   haddps       rC10, rC00      /* rC00 = c00ab   c00cd   c01ab   c01cd   */
+   #ifdef ATL_GAS_x8632
+      pref2((itmp))
+   #else
+      pref2((pfA))
+   #endif
+   haddps       rC11, rC01      /* rC01 = c10ab   c10cd   c11ab   c11cd   */
+      addq      $PFAINC, pfA
+   haddps       rC01, rC00      /* rC00 = c00abcd c01abcd  c10abcd c11abcd*/
+#endif
+   #ifndef BETA0
+      #ifdef BETAX
+         mulps  BETA, rA0
+      #endif
+      addps     rA0, rC00
+   #endif
+   add  $2*CMUL(4), pC0
+   lea  (pA0, lda, 2), pA0
+   subq $2, MM
+   #ifdef SCPLX
+      movhlps rC00, rC01
+      movss  rC00, -16(pC0)
+      psrldq    $4, rC00
+      movss  rC01, -16(pC0,ldc)
+      psrldq    $4, rC01
+      movss  rC00, -8(pC0)
+      movss  rC01, -8(pC0,ldc)
+   #else
+      movlpd rC00, -8(pC0)
+      movhpd rC00, -8(pC0,ldc)
+   #endif
+   jnz  MNLOOP
+
+   subq incAn, pA0
+   addq incCn, pC0
+   lea  (pB0, ldb, 2), pB0
+   subq $2, NN
+   #ifdef ATL_GAS_x8632
+      movl    MM0, itmp
+      movl    itmp, MM
+   #else
+      movq   MM0, MM
+   #endif
+   jnz MNLOOP
+@callproc DONE
+@ROUT !

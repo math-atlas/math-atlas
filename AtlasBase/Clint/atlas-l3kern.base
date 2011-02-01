@@ -1,0 +1,4877 @@
+@ifdef ! incd
+   @define incd @/home/rwhaley/Base/ATLAS@
+@endifdef
+@extract -b @(topd)/gen.inc what=crsetup
+@ROUT ! ATL_trsmKR
+@extract -b @(topd)/gen.inc what=cw
+@ROUT ATL_trsmKR
+@extract -b @(topd)/gen.inc what=cw @(aw00)
+@ROUT !
+#include "atlas_kern3.h"
+
+@ROUT ATL_sycopyL
+#ifdef TREAL
+
+Mjoin(void Mjoin(PATL,sycopyL),NM)
+   (const int N, const SCALAR alpha0, const TYPE *A, const int lda, TYPE *C)
+/*
+ * Copies a symmetric matrix stored in Lower format to a dense matrix
+ */
+{
+   int i, j;
+   const register TYPE alpha=alpha0;
+   const TYPE *Ar, *Ac = A;
+   TYPE *rC, *cC=C;
+
+   if (N > 1)
+   {
+      for (j=0; j != N; j++)
+      {
+         Ar = A + j;
+         for (i=0; i <= j; i++, Ar += lda) C[i] = ATL_MulByALPHA(*Ar);
+         for (i=j+1; i < N; i++) C[i] = ATL_MulByALPHA(Ac[i]);
+         C += N;
+         Ac += lda;
+      }
+   }
+   else if (N == 1) *C = ATL_MulByALPHA(*A);
+}
+
+#else
+
+#ifdef Herm_
+   void Mjoin(PATL,hecopyL)
+#else
+   void Mjoin(PATL,sycopyL)
+#endif
+   (const int N, const TYPE *A, const int lda, TYPE *C)
+{
+   int j2, i;
+   const int N2 = N<<1, lda2=lda<<1;
+   #define ldc2 N2
+   const TYPE *a;
+   #ifdef Herm_
+      const TYPE zero=0.0;
+   #endif
+   TYPE *c;
+
+   for (j2=0; j2 != N2; j2 += 2)
+   {
+      a = A + j2;
+      for (i=0; i != j2; i += 2)
+      {
+         C[i] = *a;
+         #ifdef Herm_
+            C[i+1] = -a[1];
+         #else
+            C[i+1] = a[1];
+         #endif
+         a += lda2;
+      }
+      C[j2] = *a;
+      #ifdef Herm_
+         C[j2+1] = zero;
+      #else
+         C[j2+1] = a[1];
+      #endif
+      if (j2 != N2)
+      {
+         for (i=j2+2; i != N2; i += 2)
+         {
+            a += 2;
+            C[i] = *a;
+            C[i+1] = a[1];
+         }
+      }
+      C += ldc2;
+   }
+}
+
+#endif
+@ROUT ATL_sycopyU
+#ifdef TREAL
+
+void Mjoin(Mjoin(PATL,sycopyU),NM)
+   (const int N, const SCALAR alpha0, const TYPE *A, const int lda, TYPE *C)
+/*
+ * Copies a symmetric matrix stored in Upper format to a dense matrix
+ */
+{
+   int i, j;
+   const register TYPE alpha=alpha0;
+   const TYPE *Ar, *Ac = A;
+   TYPE *rC, *cC=C;
+
+   if (N > 1)
+   {
+      for (j=0; j != N; j++)
+      {
+         for (i=0; i <= j; i++) C[i] = ATL_MulByALPHA(Ac[i]);
+         Ar = Ac + j + lda;
+         for (i=j+1; i < N; i++, Ar += lda) C[i] = ATL_MulByALPHA(*Ar);
+         C += N;
+         Ac += lda;
+      }
+   }
+   else if (N == 1) *C = ATL_MulByALPHA(*A);
+}
+
+#else
+
+#ifdef Herm_
+void Mjoin(PATL,hecopyU)
+#else
+void Mjoin(PATL,sycopyU)
+#endif
+   (const int N, const TYPE *A, const int lda, TYPE *C)
+/*
+ * Copies a symmetric matrix stored in Upper format to a dense matrix
+ */
+{
+   int i, j2;
+   const int N2=N<<1, lda2=lda<<1;
+   const TYPE *a;
+   #define ldc2 N2;
+   #ifdef Herm_
+      const TYPE zero=0.0;
+   #endif
+
+   for (j2=0; j2 != N2; j2 += 2)
+   {
+      a = A;
+      for (i=0; i != j2; i++) C[i] = *a++;
+      C[j2] = *a;
+      #ifdef Herm_
+         C[j2+1] = zero;
+      #else
+         C[j2+1] = a[1];
+      #endif
+      if (j2 != N2)
+      {
+         for (i=j2+2; i != N2; i += 2)
+         {
+            a += lda2;
+            C[i] = *a;
+            #ifdef Herm_
+               C[i+1] = -a[1];
+            #else
+               C[i+1] = a[1];
+            #endif
+         }
+      }
+      A += lda2;
+      C += ldc2;
+   }
+}
+
+#endif
+@ROUT ATL_hemmL
+void Mjoin(Mjoin(PATL,hecopy),UploNM)
+   (const int N, const TYPE *A, const int lda, TYPE *C);
+
+void Mjoin(Mjoin(PATL,hemmL),UploNM)
+   (const int M, const int N, const void *alpha, const void *A, const int lda,
+    const void *B, const int ldb, const void *beta, void *C, const int ldc)
+{
+   TYPE *a;
+   void *va;
+
+   if (N > HEMM_Xover)
+   {
+      va = malloc(ATL_Cachelen + (ATL_MulBySize(M)*M));
+      ATL_assert(va);
+      a = ATL_AlignPtr(va);
+      Mjoin(Mjoin(PATL,hecopy),UploNM)(M, A, lda, a);
+      CgemmNN(M, N, M, alpha, a, M, B, ldb, beta, C, ldc);
+      free(va);
+   }
+   else Mjoin(PATL,refhemm)(AtlasLeft, Uplo_, M, N, alpha, A, lda, B, ldb,
+                            beta, C, ldc);
+}
+@ROUT ATL_symmL
+void Mjoin(Mjoin(PATL,symmL),UploNM)
+   (const int M, const int N, const void *valpha, const void *A, const int lda,
+    const void *B, const int ldb, const void *vbeta, void *C, const int ldc)
+{
+   #ifdef TREAL
+      const SCALAR alpha=*( (const SCALAR *)valpha );
+      const SCALAR beta =*( (const SCALAR *)vbeta  );
+      const SCALAR one=1.0;
+   #else
+      #define alpha valpha
+      #define beta vbeta
+   #endif
+   TYPE *a;
+   void *va;
+
+   if (N > SYMM_Xover)
+   {
+      va = malloc(ATL_Cachelen + (ATL_MulBySize(M)*M));
+      ATL_assert(va);
+      a = ATL_AlignPtr(va);
+      #ifdef TREAL
+         if ( SCALAR_IS_ONE(alpha) )
+            Mjoin(Mjoin(Mjoin(PATL,sycopy),UploNM),_a1)(M, alpha, A, lda, a);
+         else Mjoin(Mjoin(Mjoin(PATL,sycopy),UploNM),_aX)(M, alpha, A, lda, a);
+         CgemmTN(M, N, M, one, a, M, B, ldb, beta, C, ldc);
+      #else
+         Mjoin(Mjoin(PATL,sycopy),UploNM)(M, A, lda, a);
+         CgemmTN(M, N, M, valpha, a, M, B, ldb, vbeta, C, ldc);
+      #endif
+      free(va);
+   }
+   else Mjoin(PATL,refsymm)(AtlasLeft, Uplo_, M, N, alpha, A, lda, B, ldb,
+                            beta, C, ldc);
+}
+@ROUT ATL_hemmR
+void Mjoin(Mjoin(PATL,hemmR),UploNM)
+   (const int M, const int N, const void *alpha, const void *A, const int lda, 
+    const void *B, const int ldb, const void *beta, void *C, const int ldc)
+{
+   void *va;
+   TYPE *a;
+
+   if (M > HEMM_Xover)
+   {
+      va = malloc(ATL_Cachelen + (ATL_MulBySize(N)*N));
+      ATL_assert(va);
+      a = ATL_AlignPtr(va);
+      Mjoin(Mjoin(PATL,hecopy),UploNM)(N, A, lda, a);
+      CgemmNN(M, N, N, alpha, B, ldb, a, N, beta, C, ldc);
+      free(va);
+   }
+   else Mjoin(PATL,refhemm)(AtlasRight, Uplo_, M, N, alpha, A, lda, B, ldb,
+                            beta, C, ldc);
+}
+@ROUT ATL_symmR
+void Mjoin(Mjoin(PATL,symmR),UploNM)
+   (const int M, const int N, const void *valpha, const void *A, const int lda, 
+    const void *B, const int ldb, const void *vbeta, void *C, const int ldc)
+{
+   #ifdef TREAL
+      const SCALAR alpha=*( (const SCALAR *)valpha );
+      const SCALAR beta =*( (const SCALAR *)vbeta  );
+      const SCALAR one=1.0;
+   #else
+      #define alpha valpha
+      #define beta  vbeta
+   #endif
+   void *va;
+   TYPE *a;
+
+   if (M > SYMM_Xover)
+   {
+      va = malloc(ATL_Cachelen + ATL_MulBySize(N)*N);
+      ATL_assert(va);
+      a = ATL_AlignPtr(va);
+      #ifdef TREAL
+         if ( SCALAR_IS_ONE(alpha) )
+            Mjoin(Mjoin(Mjoin(PATL,sycopy),UploNM),_a1)(N, alpha, A, lda, a);
+         else Mjoin(Mjoin(Mjoin(PATL,sycopy),UploNM),_aX)(N, alpha, A, lda, a);
+         CgemmNN(M, N, N, one, B, ldb, a, N, beta, C, ldc);
+      #else
+         Mjoin(Mjoin(PATL,sycopy),UploNM)(N, A, lda, a);
+         CgemmNN(M, N, N, valpha, B, ldb, a, N, vbeta, C, ldc);
+      #endif
+      free(va);
+   }
+   else Mjoin(PATL,refsymm)(AtlasRight, Uplo_, M, N, alpha, A, lda, B, ldb,
+                            beta, C, ldc);
+}
+@ROUT ATL_trcopyU2L
+#ifdef TREAL
+
+#ifdef SDREAL
+   #ifdef UnitDiag_
+   void Mjoin(ATL_sdtrcopyU2L_U),NM)
+   #else
+   void Mjoin(PATL_sdtrcopyU2L_N,NM)
+   #endif
+   (const int N, const double alpha0, const float *A, const int lda, double *C)
+#else
+   #ifdef UnitDiag_
+   void Mjoin(Mjoin(PATL,trcopyU2L_U),NM)
+   #else
+   void Mjoin(Mjoin(PATL,trcopyU2L_N),NM)
+   #endif
+      (const int N, const SCALAR alpha0, const TYPE *A, const int lda, TYPE *C)
+#endif
+/*
+ * Takes an Upper matrix, transposes it, and copies it to a dense matrix with
+ * zeroes above the diagonal (i.e., lower form)
+ */
+{
+   int i, j;
+   const int ldap1 = lda+1;
+   const register TYPE alpha=alpha0;
+   const TYPE *Ac = A, *Ar;
+   TYPE *rC, *cC=C;
+
+   if (N > 1)
+   {
+      for (j=0; j != N; j++)
+      {
+         for (i=0; i != j; i++) C[i] = 0.0;
+         #ifdef UnitDiag_
+            C[j] = alpha;
+         #else
+            C[j] = ATL_MulByALPHA(*Ac);
+         #endif
+         Ar = Ac + lda;
+         for (i=j+1; i < N; i++, Ar += lda) C[i] = ATL_MulByALPHA(*Ar);
+         C += N;
+         Ac += ldap1;
+      }
+   }
+   else if (N == 1)
+   {
+      #ifdef UnitDiag_
+         *C = alpha;
+      #else
+         *C = ATL_MulByALPHA(*A);
+      #endif
+   }
+}
+
+#else
+
+#ifdef SDCPLX
+#ifdef UnitDiag_
+   #ifdef ConjTrans_
+      void ATL_cztrcopyU2Lc_U
+   #else
+      void ATL_cztrcopyU2L_U
+   #endif
+#else
+   #ifdef ConjTrans_
+      void ATL_cztrcopyU2Lc_N
+   #else
+      void ATL_cztrcopyU2L_N
+   #endif
+#endif
+   (const int N, const float *A, const int lda, TYPE *C)
+#else
+#ifdef UnitDiag_
+   #ifdef ConjTrans_
+      void Mjoin(PATL,trcopyU2Lc_U)
+   #else
+      void Mjoin(PATL,trcopyU2L_U)
+   #endif
+#else
+   #ifdef ConjTrans_
+      void Mjoin(PATL,trcopyU2Lc_N)
+   #else
+      void Mjoin(PATL,trcopyU2L_N)
+   #endif
+#endif
+   (const int N, const TYPE *A, const int lda, TYPE *C)
+#endif
+/*
+ * Takes an Upper matrix, transposes it, and copies it to a dense matrix with
+ * zeroes above the diagonal (i.e., lower form)
+ */
+{
+   int i, j2;
+   const int lda2=lda<<1, N2=N<<1, ldap1=lda2+2;
+   #define ldc N2
+   const TYPE *a;
+   #ifdef UnitDiag_
+      const TYPE one=1.0, zero=0.0;
+   #else
+      const TYPE zero=0.0;
+   #endif
+
+   for (j2=0; j2 != N2; j2 += 2)
+   {
+      for (i=0; i != j2; i += 2) C[i] = C[i+1] = zero;
+      #ifdef UnitDiag_
+         C[j2] = one;
+         C[j2+1] = zero;
+      #else
+         C[j2] = *A;
+         #ifdef ConjTrans_
+            C[j2+1] = -A[1];
+         #else
+            C[j2+1] = A[1];
+         #endif
+      #endif
+      a = A + lda2;
+      if (j2 != N2)
+      {
+         for (i=j2+2; i != N2; i += 2)
+         {
+            C[i] = *a;
+            #ifdef ConjTrans_
+               C[i+1] = -a[1];
+            #else
+               C[i+1] = a[1];
+            #endif
+            a += lda2;
+         }
+      }
+      A += ldap1;
+      C += ldc;
+   }
+}
+
+#endif
+
+@ROUT ATL_trcopyU2U
+#ifdef TREAL
+
+#ifdef SDREAL
+   #ifdef UnitDiag_
+   void Mjoin(Mjoin(ATL_sdtrcopyU2U_U,NM)
+   #else
+   void Mjoin(Mjoin(ATL_sdtrcopyU2U_N,NM)
+   #endif
+   (const int N, const double alpha0, const float *A, const int lda, double *C)
+#else
+   #ifdef UnitDiag_
+   void Mjoin(Mjoin(PATL,trcopyU2U_U),NM)
+   #else
+   void Mjoin(Mjoin(PATL,trcopyU2U_N),NM)
+   #endif
+   (const int N, const SCALAR alpha0, const TYPE *A, const int lda, TYPE *C)
+#endif
+/*
+ * Copies an Upper matrix to a dense matrix with zeros below the diagonal
+ */
+{
+   int i, j;
+   const register TYPE alpha=alpha0;
+   const TYPE *Ac = A;
+
+   if (N > 1)
+   {
+      for (j=0; j != N; j++)
+      {
+         for (i=0; i != j; i++) C[i] = ATL_MulByALPHA(Ac[i]);
+         #ifdef UnitDiag_
+            C[j] = alpha;
+         #else
+            C[j] = ATL_MulByALPHA(Ac[j]);
+         #endif
+         for (i=j+1; i < N; i++) C[i] = 0.0;
+         C += N;
+         Ac += lda;
+      }
+   }
+   else if (N == 1)
+   {
+      #ifdef UnitDiag_
+         *C = alpha;
+      #else
+         *C = ATL_MulByALPHA(*A);
+      #endif
+   }
+}
+
+#else
+
+#ifdef SDCPLX
+   #ifdef UnitDiag_
+      #ifdef ConjTrans_
+         void ATL_cztrcopyU2Uc_U
+      #else
+         void ATL_cztrcopyU2U_U
+      #endif
+   #else
+      #ifdef ConjTrans_
+         void ATL_cztrcopyU2Uc_N
+      #else
+         void ATL_cztrcopyU2U_N
+      #endif
+   #endif
+      (const int N, const float *A, const int lda, double *C)
+#else
+   #ifdef UnitDiag_
+      #ifdef ConjTrans_
+         void Mjoin(PATL,trcopyU2Uc_U)
+      #else
+         void Mjoin(PATL,trcopyU2U_U)
+      #endif
+   #else
+      #ifdef ConjTrans_
+         void Mjoin(PATL,trcopyU2Uc_N)
+      #else
+         void Mjoin(PATL,trcopyU2U_N)
+      #endif
+   #endif
+      (const int N, const TYPE *A, const int lda, TYPE *C)
+#endif
+/*
+ * Copies an Upper matrix to a dense matrix with zeros below the diagonal
+ */
+{
+   int i, j2;
+   const int ldc2=N<<1, lda2=lda<<1;
+   #define N2 ldc2
+   #ifdef UnitDiag_
+      const TYPE one=1.0, zero=0.0;
+   #else
+      const TYPE zero=0.0;
+   #endif
+
+   for (j2=0; j2 != N2; j2 += 2)
+   {
+      for (i=0; i != j2; i += 2)
+      {
+         C[i] = A[i];
+         #ifdef ConjTrans_
+            C[i+1] = -A[i+1];
+         #else
+            C[i+1] = A[i+1];
+         #endif
+      }
+      #ifdef UnitDiag_
+         C[j2] = one;
+         C[j2+1] = zero;
+      #else
+         C[j2] = A[j2];
+         #ifdef ConjTrans_
+            C[j2+1] = -A[j2+1];
+         #else
+            C[j2+1] = A[j2+1];
+         #endif
+      #endif
+      if (j2 != N2) for (i=j2+2; i != N2; i += 2) C[i] = C[i+1] = zero;
+      C += ldc2;
+      A += lda2;
+   }
+}
+
+#endif
+@ROUT ATL_trcopyL2L
+#ifdef TREAL
+
+#ifdef SDREAL
+   #ifdef UnitDiag_
+   void Mjoin(ATL_sdtrcopyL2L_U,NM)
+   #else
+   void Mjoin(ATL_sdtrcopyL2L_N,NM)
+   #endif
+   (const int N, const double alpha0, const float *A, const int lda, double *C)
+#else
+   #ifdef UnitDiag_
+   void Mjoin(Mjoin(PATL,trcopyL2L_U),NM)
+   #else
+   void Mjoin(Mjoin(PATL,trcopyL2L_N),NM)
+   #endif
+   (const int N, const SCALAR alpha0, const TYPE *A, const int lda, TYPE *C)
+#endif
+/*
+ * Copies a Lower matrix to a dense matrix with zeros above the diagonal
+ */
+{
+   int i, j;
+   const register TYPE alpha=alpha0;
+   const TYPE *Ac = A;
+   TYPE *rC, *cC=C;
+
+   if (N > 1)
+   {
+      for (j=0; j != N; j++)
+      {
+         for (i=0; i != j; i++) C[i] = 0.0;
+         #ifdef UnitDiag_
+            C[j] = alpha;
+         #else
+            C[j] = ATL_MulByALPHA(Ac[j]);
+         #endif
+         for (i=j+1; i < N; i++) C[i] = ATL_MulByALPHA(Ac[i]);
+         C += N;
+         Ac += lda;
+      }
+   }
+   else if (N == 1)
+   {
+      #ifdef UnitDiag_
+         *C = alpha;
+      #else
+         *C = ATL_MulByALPHA(*A);
+      #endif
+   }
+}
+
+#else
+
+#ifdef SDCPLX
+   #ifdef UnitDiag_
+      #ifdef ConjTrans_
+         void Mjoin(PATL,trcopyL2Lc_U)
+      #else
+         void Mjoin(PATL,trcopyL2L_U)
+      #endif
+   #else
+      #ifdef ConjTrans_
+         void Mjoin(PATL,trcopyL2Lc_N)
+      #else
+         void Mjoin(PATL,trcopyL2L_N)
+      #endif
+   #endif
+   (const int N, const float *A, const int lda, double *C)
+#else
+   #ifdef UnitDiag_
+      #ifdef ConjTrans_
+         void Mjoin(PATL,trcopyL2Lc_U)
+      #else
+         void Mjoin(PATL,trcopyL2L_U)
+      #endif
+   #else
+      #ifdef ConjTrans_
+         void Mjoin(PATL,trcopyL2Lc_N)
+      #else
+         void Mjoin(PATL,trcopyL2L_N)
+      #endif
+   #endif
+   (const int N, const TYPE *A, const int lda, TYPE *C)
+#endif
+/*
+ * Copies a Lower matrix to a dense matrix with zeros above the diagonal
+ */
+{
+   int i, j2;
+   const int N2=N<<1, lda2=lda<<1;
+   #define ldc N2
+   #ifdef UnitDiag_
+      const TYPE one=1.0, zero=0.0;
+   #else
+      const TYPE zero=0.0;
+   #endif
+
+   for (j2=0; j2 != N2; j2 += 2)
+   {
+      for (i=0; i != j2; i += 2) C[i] = C[i+1] = zero;
+      #ifdef UnitDiag_
+         C[j2] = one;
+         C[j2+1] = zero;
+      #else
+         C[j2] = A[j2];
+         #ifdef ConjTrans_
+            C[j2+1] = -A[j2+1];
+         #else
+            C[j2+1] = A[j2+1];
+         #endif
+      #endif
+      if (j2 != N2)
+      {
+         for (i=j2+2; i != N2; i += 2)
+         {
+            C[i] = A[i];
+            #ifdef ConjTrans_
+               C[i+1] = -A[i+1];
+            #else
+               C[i+1] = A[i+1];
+            #endif
+         }
+      }
+      C += ldc;
+      A += lda2;
+   }
+}
+
+#endif
+@ROUT ATL_trcopyL2U
+#ifdef TREAL
+
+#ifdef SDREAL
+   #ifdef UnitDiag_
+      void Mjoin(ATL_sdtrcopyL2U_U,NM)
+   #else
+      void Mjoin(ATL_sdtrcopyL2U_N,NM)
+   #endif
+   (const int N, const double alpha0, const float *A, const int lda, double *C)
+#else
+   #ifdef UnitDiag_
+      void Mjoin(Mjoin(PATL,trcopyL2U_U),NM)
+   #else
+      void Mjoin(Mjoin(PATL,trcopyL2U_N),NM)
+   #endif
+   (const int N, const SCALAR alpha0, const TYPE *A, const int lda, TYPE *C)
+#endif
+/*
+ * Takes a Lower matrix, transposes it, and copies it to a dense matrix with
+ * zeros below the diagonal (i.e., upper form)
+ */
+{
+   int i, j;
+   const register TYPE alpha=alpha0;
+   const TYPE *Ar;
+
+   if (N > 1)
+   {
+      for (j=0; j != N; j++)
+      {
+         Ar = A + j;
+         for (i=0; i != j; i++, Ar += lda) C[i] = ATL_MulByALPHA(*Ar);
+         #ifdef UnitDiag_
+            C[j] = alpha;
+         #else
+            C[j] = ATL_MulByALPHA(*Ar);
+         #endif
+         for (i=j+1; i < N; i++) C[i] = 0.0;
+         C += N;
+      }
+   }
+   else if (N == 1)
+   {
+      #ifdef UnitDiag_
+         *C = alpha;
+      #else
+         *C = ATL_MulByALPHA(*A);
+      #endif
+   }
+}
+
+#else
+
+#ifdef SDCPLX
+   #ifdef UnitDiag_
+      #ifdef ConjTrans_
+         void ATL_cztrcopyL2Uc_U
+      #else
+         void ATL_cztrcopyL2U_U
+      #endif
+   #else
+      #ifdef ConjTrans_
+         void ATL_cztrcopyL2Uc_N
+      #else
+         void ATL_cztrcopyL2U_N
+      #endif
+   #endif
+   (const int N, const float *A, const int lda, double *C)
+#else
+   #ifdef UnitDiag_
+      #ifdef ConjTrans_
+         void Mjoin(PATL,trcopyL2Uc_U)
+      #else
+         void Mjoin(PATL,trcopyL2U_U)
+      #endif
+   #else
+      #ifdef ConjTrans_
+         void Mjoin(PATL,trcopyL2Uc_N)
+      #else
+         void Mjoin(PATL,trcopyL2U_N)
+      #endif
+   #endif
+   (const int N, const TYPE *A, const int lda, TYPE *C)
+#endif
+/*
+ * Takes a Lower matrix, transposes it, and copies it to a dense matrix with
+ * zeros below the diagonal (i.e., upper form)
+ */
+{
+   int i, j2;
+   const int N2=N<<1, lda2=lda<<1;
+   #define ldc N2
+   const TYPE *a;
+   const TYPE zero = 0.0;
+   #ifdef UnitDiag_
+      const TYPE one = 1.0;
+   #endif
+
+   for (j2=0; j2 != N2; j2 += 2)
+   {
+      a = A;
+      for (i=0; i != j2; i += 2)
+      {
+         C[i] = *a;
+         #ifdef ConjTrans_
+            C[i+1] = -a[1];
+         #else
+            C[i+1] = a[1];
+         #endif
+         a += lda2;
+      }
+      #ifdef UnitDiag_
+         C[j2] = one;
+         C[j2+1] = zero;
+      #else
+         C[i] = *a;
+         #ifdef ConjTrans_
+            C[i+1] = -a[1];
+         #else
+            C[i+1] = a[1];
+         #endif
+      #endif
+      if (j2 != N2) for (i=j2+2; i != N2; i += 2) C[i] = C[i+1] = zero;
+      A += 2;
+      C += ldc;
+   }
+}
+
+#endif
+@ROUT ATL_trmmL ATL_trmmR
+#ifdef Upper_
+   #ifdef Transpose_
+      #ifdef UnitDiag_
+         #define ATLP UTU
+@ROUT ATL_TRMML `         #define ATL_trcopy Mjoin(PATL,trcopyU2U_U)`
+@ROUT ATL_TRMMR `         #define ATL_trcopy Mjoin(PATL,trcopyU2L_U)`
+      #else
+         #define ATLP UTN
+@ROUT ATL_TRMML `         #define ATL_trcopy Mjoin(PATL,trcopyU2U_N)`
+@ROUT ATL_TRMMR `         #define ATL_trcopy Mjoin(PATL,trcopyU2L_N)`
+      #endif
+   #elif defined(ConjTrans_)
+      #ifdef UnitDiag_
+         #define ATLP UCU
+@ROUT ATL_TRMML `         #define ATL_trcopy Mjoin(PATL,trcopyU2Uc_U)`
+@ROUT ATL_TRMMR `         #define ATL_trcopy Mjoin(PATL,trcopyU2Lc_U)`
+      #else
+         #define ATLP UCN
+@ROUT ATL_TRMML `         #define ATL_trcopy Mjoin(PATL,trcopyU2Uc_N)`
+@ROUT ATL_TRMMR `         #define ATL_trcopy Mjoin(PATL,trcopyU2Lc_N)`
+      #endif
+   #else
+      #ifdef UnitDiag_
+@ROUT ATL_TRMML `         #define ATL_trcopy Mjoin(PATL,trcopyU2L_U)`
+@ROUT ATL_TRMMR `         #define ATL_trcopy Mjoin(PATL,trcopyU2U_U)`
+         #define ATLP UNU
+      #else
+@ROUT ATL_TRMML `         #define ATL_trcopy Mjoin(PATL,trcopyU2L_N)`
+@ROUT ATL_TRMMR `         #define ATL_trcopy Mjoin(PATL,trcopyU2U_N)`
+         #define ATLP UNN
+      #endif
+   #endif
+#else
+   #ifdef Transpose_
+      #ifdef UnitDiag_
+@ROUT ATL_TRMML `         #define ATL_trcopy Mjoin(PATL,trcopyL2L_U)`
+@ROUT ATL_TRMMR `         #define ATL_trcopy Mjoin(PATL,trcopyL2U_U)`
+         #define ATLP LTU
+      #else
+@ROUT ATL_TRMML `         #define ATL_trcopy Mjoin(PATL,trcopyL2L_N)`
+@ROUT ATL_TRMMR `         #define ATL_trcopy Mjoin(PATL,trcopyL2U_N)`
+         #define ATLP LTN
+      #endif
+   #elif defined(ConjTrans_)
+      #ifdef UnitDiag_
+@ROUT ATL_TRMML `         #define ATL_trcopy Mjoin(PATL,trcopyL2Lc_U)`
+@ROUT ATL_TRMMR `         #define ATL_trcopy Mjoin(PATL,trcopyL2Uc_U)`
+         #define ATLP LCU
+      #else
+@ROUT ATL_TRMML `         #define ATL_trcopy Mjoin(PATL,trcopyL2Lc_N)`
+@ROUT ATL_TRMMR `         #define ATL_trcopy Mjoin(PATL,trcopyL2Uc_N)`
+         #define ATLP LCN
+      #endif
+   #else
+      #ifdef UnitDiag_
+@ROUT ATL_TRMML `         #define ATL_trcopy Mjoin(PATL,trcopyL2U_U)`
+@ROUT ATL_TRMMR `         #define ATL_trcopy Mjoin(PATL,trcopyL2L_U)`
+         #define ATLP LNU
+      #else
+@ROUT ATL_TRMML `         #define ATL_trcopy Mjoin(PATL,trcopyL2U_N)`
+@ROUT ATL_TRMMR `         #define ATL_trcopy Mjoin(PATL,trcopyL2L_N)`
+         #define ATLP LNN
+      #endif
+   #endif
+#endif
+
+@ROUT ATL_trmmL
+void Mjoin(Mjoin(PATL,trmmL),ATLP)
+   (const int M, const int N, const void *valpha, const void *A, const int lda,
+    void *C, const int ldc)
+{
+   #ifdef TREAL
+      const SCALAR alpha=*( (const SCALAR *)valpha );
+      const SCALAR one=1.0, zero=0.0;
+   #else
+      const TYPE zero[2]={0.0,0.0};
+      #define alpha valpha
+   #endif
+   void *va;
+   TYPE *a;
+
+   if (N > TRMM_Xover)
+   {
+      va = malloc(ATL_Cachelen + ATL_MulBySize(M)*M);
+      ATL_assert(va);
+      a = ATL_AlignPtr(va);
+      #ifdef TREAL
+         if ( SCALAR_IS_ONE(alpha) ) Mjoin(ATL_trcopy,_a1)(M, alpha, A, lda, a);
+         else Mjoin(ATL_trcopy,_aX)(M, alpha, A, lda, a);
+         CAgemmTN(M, N, M, one, a, M, C, ldc, zero, C, ldc);
+      #else
+         ATL_trcopy(M, A, lda, a);
+         CAgemmTN(M, N, M, valpha, a, M, C, ldc, zero, C, ldc);
+      #endif
+      free(va);
+   }
+   else Mjoin(PATL,reftrmm)(AtlasLeft, Uplo_, Trans_, Unit_, M, N, alpha, 
+                            A, lda, C, ldc);
+}
+@ROUT ATL_trmmR
+void Mjoin(Mjoin(PATL,trmmR),ATLP)
+   (const int M, const int N, const void *valpha, const void *A, const int lda,
+    void *C, const int ldc)
+{
+   #ifdef TREAL
+      const SCALAR alpha=*( (const SCALAR *)valpha );
+      const SCALAR one=1.0, zero=0.0;
+   #else
+      #define alpha valpha
+      const TYPE zero[2]={0.0,0.0};
+   #endif
+   TYPE *a;
+   void *va;
+
+   if (M > TRMM_Xover)
+   {
+      va = malloc(ATL_Cachelen + ATL_MulBySize(N)*N);
+      ATL_assert(va);
+      a = ATL_AlignPtr(va);
+      #ifdef TREAL
+         if ( SCALAR_IS_ONE(alpha) ) Mjoin(ATL_trcopy,_a1)(N, alpha, A, lda, a);
+         else Mjoin(ATL_trcopy,_aX)(N, alpha, A, lda, a);
+         CAgemmNN(M, N, N, one, C, ldc, a, N, zero, C, ldc);
+      #else
+         ATL_trcopy(N, A, lda, a);
+         CAgemmNN(M, N, N, valpha, C, ldc, a, N, zero, C, ldc);
+      #endif
+      free(va);
+   }
+   else Mjoin(PATL,reftrmm)(AtlasRight, Uplo_, Trans_, Unit_, M, N, alpha, 
+                            A, lda, C, ldc);
+}
+@ROUT ATL_trmv_scal
+#ifdef TCPLX
+
+#ifdef Upper_
+
+#ifdef UnitDiag_
+   #define ATL_trmv Mjoin(PATL,Mjoin(trmv_scalUNU,NM))
+#else
+   #define ATL_trmv Mjoin(PATL,Mjoin(trmv_scalUNN,NM))
+#endif
+
+void ATL_trmv(const int N, const SCALAR alpha, const TYPE *A, const int lda, 
+              TYPE *X)
+{
+   int i, j;
+   const int lda2=(lda<<1), n=(N>>1)<<1;
+   const TYPE zero=0.0;
+   TYPE *x;
+   const TYPE *Ad=A, *a;
+   register TYPE xr, xi, yr0, yi0, yr1, yi1, Ar0, Ai0, Ar1, Ai1;
+
+   for (i=0; i != n; i += 2)
+   {
+/*      yr0 = *x; yi0 = x[1];  yr1=x[2];  xi1 = x[3]; */
+      yr0 = yi0 = yr1 = yi1 = zero;
+   /*
+    * Handle diagonal part 
+    */
+      x = X;
+      xr = *x;
+      xi = x[1];
+      x += 2;
+      #ifdef Unitdiag_
+         yr0 += xr;
+         yi0 += xi;
+      #else
+         Ar0 = *Ad;
+         Ai0 = Ad[1];
+         yr0 += Ar0 * xr;
+         yi0 += Ai0 * xr;
+         yr0 -= Ai0 * xi;
+         yi0 += Ar0 * xi;
+      #endif
+      Ad += lda2;
+
+      xr = *x;
+      xi = x[1];
+      x += 2;
+      Ar0 = *Ad;
+      Ai0 = Ad[1];
+      yr0 += Ar0 * xr;
+      yi0 += Ai0 * xr;
+      #ifdef UnitDiag_
+         yr1 += xr;
+      #else
+         Ar1 = Ad[2];
+         Ai1 = Ad[3];
+         yr1 += Ar1 * xr;
+         yi1 += Ai1 * xr;
+      #endif
+      a = Ad + lda2;
+      Ad = a + 4;
+
+      yr0 -= Ai0 * xi;
+      yi0 += Ar0 * xi;
+      #ifdef UnitDiag_
+         yi1 += xi;
+      #else
+         yr1 -= Ai1 * xi;
+         yi1 += Ar1 * xi;
+      #endif
+
+   /*
+    * Handle rectangular part
+    */
+      for (j=i+2; j < N; j++)
+      {
+         xr = *x;  
+         xi = x[1];
+         Ar0 = *a;
+         Ai0 = a[1];
+         Ar1 = a[2];
+         Ai1 = a[3];
+         yr0 += Ar0 * xr;
+         yi0 += Ai0 * xr;
+         x += 2;
+         yr1 += Ar1 * xr;
+         yi1 += Ai1 * xr;
+         yr0 -= Ai0 * xi;
+         yi0 += Ar0 * xi;
+         a += lda2;
+         yr1 -= Ai1 * xi;
+         yi1 += Ar1 * xi;
+      }
+      #ifdef ALPHAN1
+         *X = -yr0;
+         X[1] = -yi0;
+         X[2] = -yr1;
+         X[3] = -yi1;
+      #else
+         xr = *alpha;
+         xi = alpha[1];
+         Ar0 = xr * yr0;
+         Ai0 = xi * yr0;
+         Ar1 = xr * yr1;
+         Ai1 = xi * yr1;
+         Ar0 -= xi * yi0;
+         Ai0 += xr * yi0;
+         Ar1 -= xi * yi1;
+         Ai1 += xr * yi1;
+         *X = Ar0;
+         X[1] = Ai0;
+         X[2] = Ar1;
+         X[3] = Ai1;
+      #endif
+      X += 4;
+   }
+   if (N-n)
+   {
+      if (!n) a = A;
+      #ifdef UnitDiag_
+         #ifdef ALPHAN1
+            *X = -(*X);
+            X[1] = -X[1];
+         #else
+            xr = *X;
+            xi = X[1];
+            Ar0 = *alpha;
+            Ai0 = alpha[1];
+            yr0 = xr * Ar0;
+            yi0 = xi * Ar0;
+            yr0 -= xi * Ai0;
+            yi0 += xr * Ai0;
+            *X = yr0;
+            X[1] = yi0;
+         #endif
+      #else
+         xr = *X;
+         xi = X[1];
+         Ar0 = *Ad;
+         Ai0 = Ad[1];
+         yr0 = xr * Ar0;
+         yi0 = xi * Ar0;
+         yr0 -= xi * Ai0;
+         yi0 += xr * Ai0;
+         #ifdef ALPHAN1
+            *X = -yr0;
+            X[1] = -yi0;
+         #else
+            xr = *alpha;
+            xi = alpha[1];
+            Ar0 = xr * yr0;
+            Ai0 = xi * yr0;
+            Ar0 -= xi * yi0;
+            Ai0 += xr * yi0;
+            *X = Ar0;
+            X[1] = Ai0;
+         #endif
+      #endif
+   }
+}
+
+#else  /* Lower triangular matrix */
+
+#ifdef UnitDiag_
+   #define ATL_trmv Mjoin(PATL,Mjoin(trmv_scalLNU,NM))
+#else
+   #define ATL_trmv Mjoin(PATL,Mjoin(trmv_scalLNN,NM))
+#endif
+
+void ATL_trmv(const int N, const SCALAR alpha, const TYPE *A, const int lda, 
+              TYPE *X)
+{
+   int i, j;
+   const int n = (N>>1)<<1, lda2=lda<<1;
+   #ifdef UnitDiag_
+      #define ii i
+   #else
+      int ii;
+   #endif
+   const TYPE *a;
+   TYPE *y, *x;
+   register TYPE yr0, yi0, yr1, yi1, xr, xi;
+   register TYPE ar0, ai0, ar1, ai1;
+
+   if (n)
+   {
+      i = (N - 2)<<1;
+      A += i;
+      y = X + i;
+      for (i=N-2; i >= 0; i -= 2)
+      {
+         #ifndef UnitDiag_
+            ii = i + 1;
+         #endif
+         a = A;
+         x = X;
+         yr0 = yi0 = yr1 = yi1 = 0.0;
+         for (j=0; j != ii; j++)
+         {
+            ar0 = *a;
+            xr = *x;
+            xi = x[1];
+            yr0 += ar0 * xr;
+            ar1 = a[2];
+            yi0 += ar0 * xi;
+            ai0 = a[1];
+            yr1 += ar1 * xr;
+            ai1 = a[3];
+            yi1 += ar1 * xi;
+            a += lda2;
+            yr0 -= ai0 * xi;
+            x += 2;
+            yi0 += ai0 * xr;
+            yr1 -= ai1 * xi;
+            yi1 += ai1 * xr;
+         }
+         xr = *x;
+         xi = x[1];
+         #ifdef UnitDiag_
+            yr0 += xr;
+            ar1 = a[2];
+            yi0 += xi;
+            ai1 = a[3];
+            yr1 += ar1 * xr;
+            a += lda2;
+            yi1 += ar1 * xi;
+            yr1 -= ai1 * xi;
+            xi = x[3];
+            yi1 += ai1 * xr;
+            xr = x[2];
+            yr1 += xr;
+            yi1 += xi;
+         #else
+            ar1 = a[2];
+            yr1 += ar1 * xr;
+            ai1 = a[3];
+            yi1 += ar1 * xi;
+            yr1 -= ai1 * xi;
+            yi1 += ai1 * xr;
+         #endif
+         #ifdef ALPHAN1
+            *y   = -yr0;
+            y[1] = -yi0;
+            y[2] = -yr1;
+            y[3] = -yi1;
+         #else
+            xr = *alpha;
+            ar0 = xr * yr0;
+            xi = alpha[1];
+            ai0 = xr * yi0;
+            ar0 -= xi * yi0;
+            ai0 += xi * yr0;
+            ar1 = xr * yr1;
+            ai1 = xr * yi1;
+            ar1 -= xi * yi1;
+            ai1 += xi * yr1;
+            *y = ar0;
+            y[1] = ai0;
+            y[2] = ar1;
+            y[3] = ai1;
+         #endif
+         A -= 4;
+         y -= 4;
+      }
+   }
+   if (N-n)
+   {
+      xr = *X;
+      xi = X[1];
+      #ifdef UnitDiag_
+         #ifdef ALPHAN1
+            *X = -xr;
+            X[1] = -xi;
+         #endif
+      #else
+         if (n) A += 2;
+         ar0 = *A;
+         yr0 = ar0 * xr;
+         ai0 = A[1];
+         yi0 = ar0 * xi;
+         yr0 -= ai0 * xi;
+         yi0 += ai0 * xr;
+         #ifndef ALPHAN1
+            xr = *alpha;
+            xi = alpha[1];
+            ar0 = xr * yr0;
+            ai0 = xr * yi0;
+            ar0 -= xi * yi0;
+            ai0 += xi * yr0;
+            *X = ar0;
+            X[1] = ai0;
+         #endif
+      #endif
+   }
+}
+
+#endif
+
+#endif
+@ROUT ATL_trinvert_recur
+#ifdef TREAL
+#ifdef Upper_
+static void SmallCase(const int N, TYPE *A, const int lda)
+{
+   TYPE u11, u12, u13, u14, u22, u23, u24, u33, u34, u44;
+   #ifdef UnitDiag_
+      switch(N)
+      {
+      case 2:
+         A[lda] = -A[lda];
+         break;
+      case 3:
+         u12 = A[lda];
+         u13 = A[(lda<<1)]; u23 = A[(lda<<1)+1];
+
+         u23 = -u23;
+         u13 = -(u12*u23 + u13);
+         u12 = -u12;
+
+         A[lda] = u12;
+         A[(lda<<1)] = u13; A[(lda<<1)+1] = u23;
+         break;
+      case 4:
+         u12 = A[lda];
+         u13 = A[(lda<<1)]; u23 = A[(lda<<1)+1];
+         u14 = A[(lda*3)]; u24 = A[(lda*3)+1]; u34 = A[(lda*3)+2];
+
+         u34 = -u34;
+         u24 = -(u23 * u34 + u24);
+         u23 = -u23;
+         u14 = -(u12 * u24 + u13 * u34 + u14);
+         u13 = -(u12 * u23 + u13);
+         u12 = -u12;
+
+         A[lda] = u12;
+         A[(lda<<1)] = u13; A[(lda<<1)+1] = u23;
+         A[(lda*3)] = u14; A[(lda*3)+1] = u24; A[(lda*3)+2] = u34;
+         break;
+      default:
+      }
+   #else
+      switch(N)
+      {
+      case 1:
+         *A = ATL_rone / *A;
+         break;
+      case 2:
+         u11 = *A = ATL_rone / *A;
+         u22 = A[lda+1] = ATL_rone / A[lda+1];
+         A[lda] = -A[lda] * u22 * u11;
+         break;
+      case 3:
+         u11 = *A = ATL_rone / *A;
+         u22 = A[lda+1] = ATL_rone / A[lda+1];
+         u33 = A[(lda+1)<<1] = ATL_rone / A[(lda+1)<<1];
+         u12 = A[lda];
+         u13 = A[(lda<<1)]; u23 = A[(lda<<1)+1];
+
+         u23 = -u23 * u33 * u22;
+         u13 = (u12*u23 + u13 * u33) * -u11;
+         u12 = -u12 * u22 * u11;
+
+         A[lda] = u12;
+         A[(lda<<1)] = u13; A[(lda<<1)+1] = u23;
+         break;
+      case 4:
+         u11 = *A = ATL_rone / *A;
+         u22 = A[lda+1] = ATL_rone / A[lda+1];
+         u33 = A[(lda+1)<<1] = ATL_rone / A[(lda+1)<<1];
+         u44 = A[(lda+1)*3] = ATL_rone / A[(lda+1)*3];
+         u12 = A[lda];
+         u13 = A[(lda<<1)]; u23 = A[(lda<<1)+1];
+         u14 = A[(lda*3)]; u24 = A[(lda*3)+1]; u34 = A[(lda*3)+2];
+
+         u34 = -u34 * u44 * u33;
+         u24 = (u23 * u34 + u24 * u44) * -u22;
+         u23 = -u23 * u33 * u22;
+         u14 = (u12 * u24 + u13 * u34 + u14 * u44) * -u11;
+         u13 = (u12 * u23 + u13 * u33) * -u11;
+         u12 = -u12 * u22 * u11;
+
+         A[lda] = u12;
+         A[(lda<<1)] = u13; A[(lda<<1)+1] = u23;
+         A[(lda*3)] = u14; A[(lda*3)+1] = u24; A[(lda*3)+2] = u34;
+         break;
+      default:
+      }
+   #endif
+}
+#else
+static void SmallCase(const int N, TYPE *A, const int lda)
+{
+   TYPE a11, a21, a31, a41, a22, a32, a42, a33, a43, a44;
+   #ifdef UnitDiag_
+      switch(N)
+      {
+      case 2:
+         A[1] = -A[1];
+         break;
+      case 3:
+         a21 = A[1]; a31 = A[2];
+         a32 = A[lda+2];
+         a21 = -a21;
+         a31 = -a31 - a32*a21;
+         a32 = -a32;
+         A[1] = a21; A[2] = a31;
+         A[lda+2] = a32;
+         break;
+      case 4:
+         a21 = A[1]; a31 = A[2]; a41 = A[3];
+         a32 = A[lda+2]; a42 = A[lda+3];
+         a43 = A[(lda<<1)+3];
+         a21 = -a21;
+         a31 = -a31 - a32*a21;
+         a41 = -a41 - a42*a21 - a43 * a31;
+         a32 = -a32;
+         a42 = -a42 - a43*a32;
+         a43 = -a43;
+         A[1] = a21; A[2] = a31; A[3] = a41;
+         A[lda+2] = a32; A[lda+3] = a42;
+         A[(lda<<1)+3] = a43;
+         break;
+      default:
+      }
+   #else
+      switch(N)
+      {
+      case 1:
+         *A = ATL_rone / *A;
+         break;
+      case 2:
+         *A = a11 = ATL_rone / *A;
+         a22 = ATL_rone / A[lda+1];
+         A[1] = -A[1] * a11 * a22;
+         A[lda+1] = a22;
+         break;
+      case 3:
+         *A = a11 = ATL_rone / *A;
+         A[lda+1] = a22 = ATL_rone / A[lda+1];
+         A[(lda+1)<<1] = a33 = ATL_rone / A[(lda+1)<<1];
+         a21 = A[1]; a31 = A[2];
+         a32 = A[lda+2];
+
+         a21 = -a21 * a11 * a22;
+         a31 = (a31*a11 + a32*a21) * -a33;
+         a32 = -a32 * a22 * a33;
+
+         A[1] = a21; A[2] = a31;
+         A[lda+2] = a32;
+         break;
+      case 4:
+         *A = a11 = ATL_rone / *A;
+         A[lda+1] = a22 = ATL_rone / A[lda+1];
+         A[(lda+1)<<1] = a33 = ATL_rone / A[(lda+1)<<1];
+         A[(lda+1)*3] = a44 = ATL_rone / A[(lda+1)*3];
+         a21 = A[1]; a31 = A[2]; a41 = A[3];
+         a32 = A[lda+2]; a42 = A[lda+3];
+         a43 = A[(lda<<1)+3];
+
+         a21 = -a21*a11*a22;
+         a31 = (a31*a11 + a32*a21) * -a33;
+         a41 = (a41*a11 + a42*a21 + a43*a31) * -a44;
+         a32 = -a32*a22*a33;
+         a42 = (a42*a22 + a43*a32) * -a44;
+         a43 = -a43*a33*a44;
+
+         A[1] = a21; A[2] = a31; A[3] = a41;
+         A[lda+2] = a32; A[lda+3] = a42;
+         A[(lda<<1)+3] = a43;
+         break;
+      default:
+      }
+   #endif
+}
+#endif
+#endif
+
+static void ATL_trinvert(const int N, TYPE *A, const int lda, TYPE *wrk)
+{
+   const int Nleft = (N>>1), Nright = N - Nleft;
+   TYPE *Ac;
+   #ifdef TREAL
+      #define one ATL_rone
+      #define zero ATL_rzero
+      #define none ATL_rnone
+   #else
+      static const TYPE one[2] = {ATL_rone, ATL_rzero};
+      static const TYPE none[2] = {ATL_rnone, ATL_rzero};
+      static const TYPE zero[2] = {ATL_rzero, ATL_rzero};
+   #endif
+
+   if (!N) return;
+#ifdef TREAL
+   if (N > 4)
+#else
+   if (N != 1)
+#endif
+   {
+      #ifdef Upper_
+         Ac = A + (lda*Nleft SHIFT);
+         ATL_trinvert(Nleft, A, lda, wrk);
+         ATL_trinvert(Nright, Ac+(Nleft SHIFT), lda, wrk);
+         CgemmNN(Nleft, Nright, Nleft, one, A, lda, Ac, lda, zero, wrk, Nleft);
+         CgemmNN(Nleft, Nright, Nright, none, wrk, Nleft, Ac+(Nleft SHIFT), lda,
+                 zero, Ac, lda);
+      #else
+         Ac = A + ((Nleft + Nleft*lda)SHIFT);
+         ATL_trinvert(Nleft, A, lda, wrk);
+         ATL_trinvert(Nright, Ac, lda, wrk);
+         CgemmNN(Nright, Nleft, Nright, one, Ac, lda, A+(Nleft SHIFT), lda, 
+                 zero, wrk, Nright);
+         CgemmNN(Nright, Nleft, Nleft, none, wrk, Nright, A, lda,  
+                 zero, A+(Nleft SHIFT), lda);
+      #endif
+   }
+   #ifdef TREAL
+      else SmallCase(N, A, lda);
+   #else
+      #ifndef UnitDiag_
+         else Mjoin(PATL,cplxinvert)(1, A, 1, A, 1);
+      #endif
+   #endif
+}
+@ROUT ATL_trinvert_recur
+
+#ifdef Upper_
+   #ifdef UnitDiag_
+      #define ATL_trinvert0 Mjoin(PATL,trinvertUU)
+   #else
+      #define ATL_trinvert0 Mjoin(PATL,trinvertUN)
+   #endif
+#else
+   #ifdef UnitDiag_
+      #define ATL_trinvert0 Mjoin(PATL,trinvertLU)
+   #else
+      #define ATL_trinvert0 Mjoin(PATL,trinvertLN)
+   #endif
+#endif
+void ATL_trinvert0(const int N, TYPE *A, const int lda)
+{
+   int n = ((N+1)>>1);
+   void *vp;
+   TYPE *wrk;
+
+   n *= n;
+   vp = malloc(ATL_Cachelen+ATL_MulBySize(n));
+   ATL_assert(vp);
+   wrk = ATL_AlignPtr(vp);
+   ATL_trinvert(N, A, lda, wrk);
+   free(vp);
+}
+@ROUT ATL_trinvert
+#ifdef TREAL
+
+#ifdef Upper_
+
+#define ATL_trmv_scal Mjoin(ATL_dtrmv_scalUN,UnitNM)
+static void ATL_trmv_scal(const int N, const SCALAR alpha0, const TYPE *A,
+                          const int lda, TYPE *X)
+/*
+ * X <- alpha * A * X
+ */
+{
+   int i, j;
+   const int n = (N>>2)<<2;
+   const int incAd = (lda+1)<<2;
+   register TYPE y0, y1, y2, y3, x0;
+   const register TYPE alpha=alpha0;
+   const TYPE *Ad=A, *Ac;
+   TYPE *x, *stX = X + N;
+
+   for (i=0; i != n; i += 4)
+   {
+      Ac = Ad;
+      Ad += incAd;
+
+      x0 = *X;
+      #ifdef UnitDiag_
+         y0 = x0;
+      #else
+         y0 = *Ac * x0;
+      #endif
+      Ac += lda;
+
+      x0 = X[1];
+      #ifdef UnitDiag_
+         y1 = x0;
+      #else
+         y1 = Ac[1] * x0;
+      #endif
+      y0 += *Ac * x0;
+      Ac += lda;
+
+      x0 = X[2];
+      #ifdef UnitDiag_
+         y2 = x0;
+      #else
+         y2 = Ac[2] * x0;
+      #endif
+      y1 += Ac[1] * x0;
+      y0 += *Ac * x0;
+      Ac += lda;
+
+      x0 = X[3];
+      #ifdef UnitDiag_
+         y3 = x0;
+      #else
+         y3 = Ac[3] * x0;
+      #endif
+      y2 += Ac[2] * x0;
+      y1 += Ac[1] * x0;
+      y0 += *Ac * x0;
+      Ac += lda;
+   
+      x = X + 4;
+      if (x != stX)
+      {
+         do
+         {
+            x0 = *x++;
+            y0 += *Ac * x0;
+            y1 += Ac[1] * x0;
+            y2 += Ac[2] * x0;
+            y3 += Ac[3] * x0;
+            Ac += lda;
+         }
+         while (x != stX);
+      }
+      y0 *= alpha;
+      y1 *= alpha;
+      y2 *= alpha;
+      y3 *= alpha;
+      *X = y0;
+      X[1] = y1;
+      X[2] = y2;
+      X[3] = y3;
+      X += 4;
+   }
+   i = N - n;
+   switch(N-n)  /* ixi trmv */
+   {
+   case 1:
+      #ifdef UnitDiag_
+         *X *= alpha;
+      #else
+         *X *= alpha * *Ad;
+      #endif
+      break;
+   case 2:
+      #ifdef UnitDiag_
+         *X = alpha * (*X + Ad[lda] * X[1]);
+         X[1] *= alpha;
+      #else
+         *X = alpha * (*Ad * *X + Ad[lda] * X[1]);
+         X[1] = alpha * (Ad[lda+1] * X[1]);
+      #endif
+      break;
+   case 3:
+         i = lda << 1;
+      #ifdef UnitDiag_
+         *X = alpha * (*X + Ad[lda] * X[1] + Ad[i] * X[2]);
+         X[1] = alpha * (X[1] + Ad[i+1] * X[2]);
+         X[2] *= alpha;
+      #else
+         *X = alpha * (*Ad * *X + Ad[lda] * X[1] + Ad[i] * X[2]);
+         X[1] = alpha * (Ad[lda+1] * X[1] + Ad[i+1] * X[2]);
+         X[2] *= alpha * Ad[i+2];
+      #endif
+      break;
+   default:;
+   }
+}
+
+void Mjoin(Mjoin(PATL,trinvertU),UnitNM)(const int N, TYPE *A, const int lda)
+{
+   int j;
+   register int i;
+   const int ione=1;
+   #ifdef UnitDiag_
+      #define DIAG "U"
+      #define Ajj -1.0
+   #else
+      #define DIAG "N"
+      TYPE Ajj;
+      const int ldap1 = lda + 1;
+      TYPE one=1.0;
+   #endif
+   TYPE *Ac=A;
+
+   if (N > 0)
+   {
+      for (j=0; j != N; j++)
+      {
+         #ifndef UnitDiag_
+            Ajj = one / Ac[j];
+            Ac[j] = Ajj;
+            Ajj = -Ajj;
+         #endif
+         #ifdef OldDtrmv
+            dtrmv_("U", "N", DIAG, &j, A, &lda, Ac, &ione);
+            for (i=0; i != j; i++) Ac[i] *= Ajj;
+         #else
+            ATL_trmv_scal(j, Ajj, A, lda, Ac);
+         #endif
+         Ac += lda;
+      }
+   }
+}
+
+#else
+
+#define ATL_trmv_scal Mjoin(ATL_dtrmv_scalLN,UnitNM)
+static void ATL_trmv_scal(const int N, const SCALAR alpha0, const TYPE *A,
+                          const int lda, TYPE *X)
+{
+   int i;
+   const int n = (N>>2)<<2;
+   TYPE *x = X, *stX = X+N-4;
+   const TYPE *Ac, *a=A;
+   const register TYPE alpha=alpha0;
+   register TYPE y0, y1, y2, y3, x0;
+   if (n)
+   {
+      A += N-4;
+      for (i=0; i != n; i += 4)
+      {
+         Ac = A;
+         y0 = y1 = y2 = y3 = 0.0;
+         if (X != stX)
+         {
+            do
+            {
+               x0 = *X;
+               y0 += *Ac * x0;
+               y1 += Ac[1] * x0;
+               y2 += Ac[2] * x0;
+               y3 += Ac[3] * x0;
+               Ac += lda;
+            }
+            while(++X != stX);
+         }
+         x0 = *X;
+         #ifdef UnitDiag_
+            y0 += x0;
+         #else
+            y0 += *Ac * x0;
+         #endif
+         y1 += Ac[1] * x0;
+         y2 += Ac[2] * x0;
+         y3 += Ac[3] * x0;
+         x0 = X[1];
+         Ac += lda;
+
+         y0 *= alpha;
+         #ifdef UnitDiag_
+            y1 += x0;
+         #else
+            y1 += Ac[1] * x0;
+         #endif
+         y2 += Ac[2] * x0;
+         y3 += Ac[3] * x0;
+         x0 = X[2];
+         Ac += lda;
+         
+         y1 *= alpha;
+         #ifdef UnitDiag_
+            y2 += x0;
+         #else
+            y2 += Ac[2] * x0;
+         #endif
+         y3 += Ac[3] * x0;
+         Ac += lda;
+
+         y2 *= alpha;
+         #ifdef UnitDiag_
+            y3 += X[3];
+         #else
+            y3 += Ac[3] * X[3];
+         #endif
+         y3 *= alpha;
+
+         *stX = y0;
+         stX[1] = y1;
+         stX[2] = y2;
+         stX[3] = y3;
+         stX -= 4;
+         X = x;
+         A -= 4;
+      }
+      A += N-n;
+   }
+   A = a;
+   switch(N-n)
+   {
+   case 1:
+      #ifdef UnitDiag_
+         *x *= alpha;
+      #else
+         *x *= alpha * *A;
+      #endif
+      break;
+   case 2:
+      #ifdef UnitDiag_
+	 x[1] = alpha * (*x * A[1] + x[1]);
+         *x *= alpha;
+      #else
+	 x[1] = alpha * (*x * A[1] + x[1] * A[lda+1]);
+         *x *= alpha * *A;
+      #endif
+      break;
+   case 3:
+      Ac = A + lda;
+      #ifdef UnitDiag_
+         x[2] = alpha * (*x * A[2] + x[1] * Ac[2] + x[2]);
+	 x[1] = alpha * (*x * A[1] + x[1]);
+         *x *= alpha;
+      #else
+         x[2] = alpha * (*x * A[2] + x[1] * Ac[2] + x[2] * Ac[lda+2]);
+	 x[1] = alpha * (*x * A[1] + x[1] * Ac[1]);
+         *x *= alpha * *A;
+      #endif
+      break;
+   }
+}
+#ifndef NoUse
+void Mjoin(Mjoin(PATL,trinvertL),UnitNM)(const int N, TYPE *A, const int lda)
+{
+   int j;
+   register int i;
+   const int ione=1;
+   const int ldap1=lda+1;
+   #ifdef UnitDiag_
+      #define DIAG "U"
+      #define Ajj -1.0
+   #else
+      #define DIAG "N"
+      register TYPE Ajj;
+      TYPE one=1.0;
+   #endif
+   TYPE *Ad = A + (N-1)*ldap1;
+
+   for (j=0; j != N; j++)
+   {
+      #ifndef UnitDiag_
+         Ajj = one / *Ad;
+         *Ad = Ajj;
+         Ajj = -Ajj;
+      #endif
+      #ifndef OldDtrmv
+         ATL_trmv_scal(j, Ajj, Ad+ldap1, lda, Ad+1);
+      #else
+         dtrmv_("L", "N", DIAG, &j, Ad+ldap1, &lda, Ad+1, &ione);
+         #ifdef UnitDiag_
+            for (i=1; i <= j; i++) Ad[i] = -Ad[i];
+         #else
+            for (i=1; i <= j; i++) Ad[i] *= Ajj;
+         #endif
+      #endif
+      Ad -= ldap1;
+   }
+}
+#endif
+
+#endif
+
+#else /* complex code */
+
+#ifdef Upper_
+
+void Mjoin(Mjoin(PATL,trinvertU),UnitNM)(const int N, TYPE *A, const int lda)
+{
+   int j;
+   register int i;
+   const int ione=1, lda2=lda<<1;
+   #ifdef UnitDiag_
+      #define DIAG "U"
+      const TYPE Ajj[2] = {-1.0, 0.0};
+   #else
+      #define DIAG "N"
+      const int ldap1 = lda2+2;
+      TYPE Ajj[2], *Ad=A;
+   #endif
+   TYPE *Ac=A;
+   TYPE rtmp, itmp, t0;
+
+   if (N > 0)
+   {
+      #ifndef UnitDiag_
+         Mjoin(PATL,cplxinvert)(N, A, lda+1, A, lda+1);/* invert diag entries */
+      #endif
+      for (j=0; j != N; j++)
+      {
+         #ifndef UnitDiag_
+            *Ajj = -(*Ad);
+            Ajj[1] = -Ad[1];
+         #endif
+         #if 0 
+            Mjoin(PRE,trmv_)("U", "N", DIAG, &j, A, &lda, Ac, &ione);
+            Mjoin(PRE,scal_)(&j, Ajj, Ac, &ione);
+         #else
+            #ifdef UnitDiag_
+               Mjoin(PATL,trmv_scalUNU_an1)(j, Ajj, A, lda, Ac);
+            #else
+               Mjoin(PATL,trmv_scalUNN_aX)(j, Ajj, A, lda, Ac);
+            #endif
+         #endif
+         #ifndef UnitDiag_
+            Ad += ldap1;
+         #endif
+         Ac += lda2;
+      }
+   }
+}
+
+#else
+
+void Mjoin(Mjoin(PATL,trinvertL),UnitNM)(const int N, TYPE *A, const int lda)
+{
+   int j;
+   register int i;
+   const int ione=1;
+   const int ldap1=(lda<<1)+2;
+   #ifdef UnitDiag_
+      #define DIAG "U"
+      const TYPE Ajj[2] = {-1.0, 0.0};
+   #else
+      #define DIAG "N"
+      TYPE Ajj[2];
+   #endif
+   TYPE *Ad = A + (N-1)*ldap1;
+
+   #ifndef UnitDiag_
+      Mjoin(PATL,cplxinvert)(N, A, lda+1, A, lda+1);  /* invert diag entries */
+   #endif
+   for (j=0; j != N; j++)
+   {
+      #ifndef UnitDiag_
+         *Ajj = -(*Ad);
+         Ajj[1] = -Ad[1];
+      #endif
+      #if 1
+         #ifdef UnitDiag_
+            Mjoin(PATL,trmv_scalLNU_an1)(j, Ajj, Ad+ldap1, lda, Ad+2);
+         #else
+            Mjoin(PATL,trmv_scalLNN_aX)(j, Ajj, Ad+ldap1, lda, Ad+2);
+         #endif
+      #else
+         Mjoin(PRE,trmv_)("L", "N", DIAG, &j, Ad+ldap1, &lda, Ad+2, &ione);
+         Mjoin(PRE,scal_)(&j, Ajj, Ad+2, &ione);
+      #endif
+      Ad -= ldap1;
+   }
+}
+
+#endif
+
+#endif
+@ROUT ATL_trsmKR
+
+void Mjoin(Mjoin(Mjoin(Mjoin(Mjoin(PATL,trsmK),SideNM),UploNM),N),UnitNM)
+   (const int M, const int N, const SCALAR alpha, const TYPE *A, const int lda,
+    TYPE *B, const int ldb)
+/*
+ * This source file is multiply compiled to create the following routines:
+ * ATL_trsmKRUNU : trsm Side='Right', Uplo='Upper', Trans='N', Unit='Unit'
+ * ATL_trsmKRUNN : trsm Side='Right', Uplo='Upper', Trans='N', Unit='NonUnit'
+ * ATL_trsmKRLNU : trsm Side='Right', Uplo='Lower', Trans='N', Unit='Unit'
+ * ATL_trsmKRLNN : trsm Side='Right', Uplo='Lower', Trans='N', Unit='NonUnit'
+ *
+ * The transpose cases are handled by a higher level routine that copies A
+ */
+{
+#ifdef Left_
+ 
+#define nA        M  /* size of A */
+#define incA    lda  /* dot product algorithm */
+ 
+#define n1B      nA  /* 1st dim of rhs: length of each rhs */
+#define inc1B     1  /* Offset between two successive rhs entries  */
+#define n2B       N  /* 2nd dim of rhs: Number of rhs to loop over */
+#define inc2B   ldb  /* Offset between two successive rhs */
+ 
+#define Minc1B(i_, inc_) ((i_))
+ 
+#else
+ 
+#define nA        N
+#define incA      1
+ 
+#define n1B      nA  /* 1st dim of rhs: length of each rhs */
+#define inc1B   ldb  /* Offset between two successive rhs entries  */
+#define n2B       M  /* 2nd dim of rhs: Number of rhs to loop over */
+#define inc2B     1  /* Offset between two successive rhs */
+ 
+#define Minc1B(i_, inc_) ((i_)*(inc_))
+ 
+#endif
+ 
+   register TYPE x0, x1, x2, x3, x4, x5, x6, x7, a0;
+ 
+   #ifndef UnitDiag_
+      const TYPE one=1.0;
+      void *vp;
+      TYPE *diag;
+   #endif
+ 
+   TYPE *X0=B, *X1=B+inc2B, *X2=X1+inc2B, *X3=X2+inc2B, *X4=X3+inc2B;
+   TYPE *X5=X4+inc2B, *X6=X5+inc2B, *X7=X6+inc2B;
+ 
+   const TYPE *a;
+ 
+   int inc, m, n2Bs = (n2B>>3)<<3;
+   register int k, kA, k1B, k1B_, k2B;
+ 
+ 
+#ifdef Left_
+   #ifdef Upper_
+      const int ldap1 = lda + 1;
+      const TYPE * Ad;
+   #endif
+#else
+   #ifdef Lower_
+      const int ldap1 = lda + 1;
+      const TYPE * Ad;
+   #endif
+#endif
+ 
+/*
+ * If non-unit, precompute inverse of diagonal entries
+ */
+   #ifndef UnitDiag_
+      vp = malloc(ATL_Cachelen+ATL_MulBySize(nA));
+      ATL_assert(vp);
+      diag = ATL_AlignPtr(vp);
+      a = A;
+      inc = lda + 1;
+      for (kA=0; kA != nA; kA++)
+      {
+         diag[kA] = one / *a;
+         a += inc;
+      }
+   #endif
+ 
+   inc = inc2B << 3;                    /* rhs loop increment */
+ 
+   for (k2B=0; k2B != n2Bs; k2B += 8)  /* Loop over the 2nd dim of rhs  */
+   {
+                                       /* Loop over A and B */
+#ifdef Left_
+   #ifdef Upper_
+      Ad = A + nA*lda + nA-1;          /*    D  Ad  */
+                                       /*    x  D   */
+      for (kA=nA-1, k1B=(nA-1)*inc1B; kA >= 0;  kA--, k1B-=inc1B)
+   #else
+      for (kA=0,    k1B=0;            kA != nA; kA++, k1B+=inc1B)
+   #endif
+#else
+   #ifdef Lower_
+      Ad = A + (nA-1)*lda + nA;        /*    D  x   */
+                                       /*    Ad D   */
+ 
+      for (kA=nA-1, k1B=(nA-1)*inc1B; kA >= 0;  kA--, k1B-=inc1B)
+   #else
+      for (kA=0,    k1B=0;            kA != nA; kA++, k1B+=inc1B)
+   #endif
+#endif
+      {
+         x0 = X0[k1B];
+         x0 *=  alpha;
+         x1 = X1[k1B];
+         x1 *=  alpha;
+         x2 = X2[k1B];
+         x2 *=  alpha;
+ 
+#ifdef Left_
+         #ifdef Upper_
+            a = Ad;
+            Ad -= ldap1;
+         #else
+            a = A + kA;
+         #endif
+#else
+         #ifdef Lower_
+            a = Ad;
+            Ad -= ldap1;
+         #else
+            a = A + kA * lda;
+         #endif
+#endif
+ 
+         x3 = X3[k1B];
+         x3 *=  alpha;
+         x4 = X4[k1B];
+         x4 *=  alpha;
+         x5 = X5[k1B];
+         x5 *=  alpha;
+         x6 = X6[k1B];
+         x6 *=  alpha;
+         x7 = X7[k1B];
+         x7 *=  alpha;
+ 
+#ifdef Left_
+      #ifdef Upper_
+         for (k=kA+1, k1B_=k1B+inc1B; k != nA; k++, k1B_+=inc1B)
+      #else
+         for (k=0,    k1B_=0;         k != kA; k++, k1B_+=inc1B)
+      #endif
+#else
+      #ifdef Lower_
+         for (k=kA+1, k1B_=k1B+inc1B; k != nA; k++, k1B_+=inc1B)
+      #else
+         for (k=0,    k1B_=0;         k != kA; k++, k1B_+=inc1B)
+      #endif
+#endif
+         {
+            a0 = *a;
+            x0 -= a0 * X0[k1B_];
+            x1 -= a0 * X1[k1B_];
+            a += incA;
+            x2 -= a0 * X2[k1B_];
+            x3 -= a0 * X3[k1B_];
+            x4 -= a0 * X4[k1B_];
+            x5 -= a0 * X5[k1B_];
+            x6 -= a0 * X6[k1B_];
+            x7 -= a0 * X7[k1B_];
+         }
+         #ifndef UnitDiag_
+            a0 = diag[kA];
+            x0 *= a0;
+            x1 *= a0;
+            x2 *= a0;
+            x3 *= a0;
+            x4 *= a0;
+            x5 *= a0;
+            x6 *= a0;
+            x7 *= a0;
+         #endif
+         X0[k1B] = x0;
+         X1[k1B] = x1;
+         X2[k1B] = x2;
+         X3[k1B] = x3;
+         X4[k1B] = x4;
+         X5[k1B] = x5;
+         X6[k1B] = x6;
+         X7[k1B] = x7;
+      }
+      X0 += inc;
+      X1 += inc;
+      X2 += inc;
+      X3 += inc;
+      X4 += inc;
+      X5 += inc;
+      X6 += inc;
+      X7 += inc;
+   }
+ 
+   if ( (n2Bs=n2B-n2Bs) )                     /* clean-up rhs */
+   {
+      inc = incA << 3;
+ 
+      B = X0;
+ 
+      for (k2B=0; k2B != n2Bs; k2B++)   /* Loop over the 2nd dim of rhs  */
+      {
+#ifdef Left_
+   #ifdef Upper_
+         Ad = A + nA*lda + nA-1;          /*    D  Ad  */
+                                          /*    x  D   */
+         for (kA=nA-1, k1B=(nA-1)*inc1B; kA >= 0;  kA--, k1B-=inc1B)
+   #else
+         for (kA=0,    k1B=0;            kA != nA; kA++, k1B+=inc1B)
+   #endif
+#else
+   #ifdef Lower_
+         Ad = A + (nA-1)*lda + nA;        /*    D  x   */
+                                          /*    Ad D   */
+ 
+         for (kA=nA-1, k1B=(nA-1)*inc1B; kA >= 0;  kA--, k1B-=inc1B)
+   #else
+         for (kA=0,    k1B=0;            kA != nA; kA++, k1B+=inc1B)
+   #endif
+#endif
+         {
+#ifdef Left_
+         #ifdef Upper_
+            X0 = (TYPE*) Ad;
+            Ad -= ldap1;
+         #else
+            X0 = (TYPE*) A+kA;
+         #endif
+#else
+         #ifdef Lower_
+            X0 = (TYPE*) Ad;
+            Ad -= ldap1;
+         #else
+            X0 = (TYPE*) A+kA*lda;
+         #endif
+#endif
+            X1 = X0+incA;
+            X2 = X1+incA;
+            X3 = X2+incA;
+            X4 = X3+incA;
+            X5 = X4+incA;
+            X6 = X5+incA;
+            X7 = X6+incA;
+ 
+            x0 = B[k1B];
+            x0 *= alpha;
+            x1 = x2 = x3 = x4 = x5 = x6 = x7 = ATL_rzero;
+ 
+#ifdef Left_
+         #ifdef Upper_
+            k = kA + 1;
+            m = nA - k;
+            m = (m >> 3)<<3;
+            for (m += k, k1B_=k1B+inc1B; k != m; k += 8, k1B_+=Minc1B(8,inc1B))
+         #else
+            m = (kA >> 3)<<3;
+            for (k=0, k1B_=0; k != m; k += 8,  k1B_+=Minc1B(8,inc1B))
+         #endif
+#else
+         #ifdef Lower_
+            k = kA + 1;
+            m = nA - k;
+            m = (m >> 3)<<3;
+            for (m += k, k1B_=k1B+inc1B; k != m; k += 8, k1B_+=Minc1B(8,inc1B))
+         #else
+            m = (kA >> 3)<<3;
+            for (k=0, k1B_=0; k != m; k += 8,  k1B_+=Minc1B(8,inc1B))
+         #endif
+#endif
+            {
+               x0 -= *X0 * B[k1B_];
+               X0 += inc;
+               x1 -= *X1 * B[k1B_+Minc1B(1,inc1B)];
+               X1 += inc;
+               x2 -= *X2 * B[k1B_+Minc1B(2,inc1B)];
+               X2 += inc;
+               x3 -= *X3 * B[k1B_+Minc1B(3,inc1B)];
+               X3 += inc;
+               x4 -= *X4 * B[k1B_+Minc1B(4,inc1B)];
+               X4 += inc;
+               x5 -= *X5 * B[k1B_+Minc1B(5,inc1B)];
+               X5 += inc;
+               x6 -= *X6 * B[k1B_+Minc1B(6,inc1B)];
+               X6 += inc;
+               x7 -= *X7 * B[k1B_+Minc1B(7,inc1B)];
+               X7 += inc;
+            }
+ 
+            k1B_ = Minc1B(m,inc1B);
+#ifdef Left_
+         #if Upper_
+            switch(nA-m)
+         #else
+            switch(kA-m)
+         #endif
+#else
+         #if Lower_
+            switch(nA-m)
+         #else
+            switch(kA-m)
+         #endif
+#endif
+            {
+            case 1:
+               x0 -= *X0 * B[k1B_];
+               break;
+            case 2:
+               x0 -= *X0 * B[k1B_];
+               x1 -= *X1 * B[k1B_+Minc1B(1,inc1B)];
+               break;
+            case 3:
+               x0 -= *X0 * B[k1B_];
+               x1 -= *X1 * B[k1B_+Minc1B(1,inc1B)];
+               x2 -= *X2 * B[k1B_+Minc1B(2,inc1B)];
+               break;
+            case 4:
+               x0 -= *X0 * B[k1B_];
+               x1 -= *X1 * B[k1B_+Minc1B(1,inc1B)];
+               x2 -= *X2 * B[k1B_+Minc1B(2,inc1B)];
+               x3 -= *X3 * B[k1B_+Minc1B(3,inc1B)];
+               break;
+            case 5:
+               x0 -= *X0 * B[k1B_];
+               x1 -= *X1 * B[k1B_+Minc1B(1,inc1B)];
+               x2 -= *X2 * B[k1B_+Minc1B(2,inc1B)];
+               x3 -= *X3 * B[k1B_+Minc1B(3,inc1B)];
+               x4 -= *X4 * B[k1B_+Minc1B(4,inc1B)];
+               break;
+            case 6:
+               x0 -= *X0 * B[k1B_];
+               x1 -= *X1 * B[k1B_+Minc1B(1,inc1B)];
+               x2 -= *X2 * B[k1B_+Minc1B(2,inc1B)];
+               x3 -= *X3 * B[k1B_+Minc1B(3,inc1B)];
+               x4 -= *X4 * B[k1B_+Minc1B(4,inc1B)];
+               x5 -= *X5 * B[k1B_+Minc1B(5,inc1B)];
+               break;
+            case 7:
+               x0 -= *X0 * B[k1B_];
+               x1 -= *X1 * B[k1B_+Minc1B(1,inc1B)];
+               x2 -= *X2 * B[k1B_+Minc1B(2,inc1B)];
+               x3 -= *X3 * B[k1B_+Minc1B(3,inc1B)];
+               x4 -= *X4 * B[k1B_+Minc1B(4,inc1B)];
+               x5 -= *X5 * B[k1B_+Minc1B(5,inc1B)];
+               x6 -= *X6 * B[k1B_+Minc1B(6,inc1B)];
+               break;
+            default:;
+            }
+ 
+            x0 += x1;
+            x2 += x3;
+            x4 += x5;
+            x6 += x7;
+ 
+            x0 += x2;
+            x4 += x6;
+            x0 += x4;
+            #ifndef UnitDiag_
+               x0 *= diag[kA];
+            #endif
+            B[k1B] = x0;
+         }
+ 
+         B += inc2B;
+ 
+      }
+   }
+   #ifndef UnitDiag_
+      free(vp);
+   #endif
+} 
+
+@ROUT ATL_trsmKL
+
+void Mjoin(Mjoin(Mjoin(Mjoin(Mjoin(PATL,trsmK),SideNM),UploNM),N),UnitNM)
+   (const int M, const int N, const SCALAR alpha, const TYPE *A, const int lda,
+    TYPE *B, const int ldb)
+/*
+ * This source file is multiply compiled to create the following routines:
+ * ATL_trsmKLUNU : trsm Side='Left', Uplo='Upper', Trans='N', Unit='Unit'
+ * ATL_trsmKLUNN : trsm Side='Left', Uplo='Upper', Trans='N', Unit='NonUnit'
+ * ATL_trsmKLLNU : trsm Side='Left', Uplo='Lower', Trans='N', Unit='Unit'
+ * ATL_trsmKLLNN : trsm Side='Left', Uplo='Lower', Trans='N', Unit='NonUnit'
+ *
+ * The transpose cases are handled by a higher level routine that copies A
+ */
+{
+   int inc, m, n = (N>>3)<<3;
+   register int k, i, j;
+   TYPE *X0=B, *X1=B+ldb, *X2=X1+ldb, *X3=X2+ldb, *X4=X3+ldb; 
+   TYPE *X5=X4+ldb, *X6=X5+ldb, *X7=X6+ldb;
+   register TYPE x0, x1, x2, x3, x4, x5, x6, x7, a0;
+   const TYPE *a;
+   #ifdef Upper_
+      const int ldap1 = lda + 1;
+      const TYPE *Ad;
+   #endif
+   #ifndef UnitDiag_
+      const TYPE one=1.0;
+      void *vp;
+      TYPE *diag;
+   #endif
+/*
+ * If non-unit, precompute inverse of diagonal entries
+ */
+   #ifndef UnitDiag_
+      vp = malloc(ATL_Cachelen+ATL_MulBySize(M));
+      ATL_assert(vp);
+      diag = ATL_AlignPtr(vp);
+      a = A;
+      inc = lda + 1;
+      for (i=0; i != M; i++)
+      {
+         diag[i] = one / *a;
+         a += inc;
+      }
+   #endif
+
+   inc = ldb << 3;
+   for (j=0; j != n; j += 8)
+   {
+   #ifdef Upper_
+      Ad = A + M*lda+M-1;
+      for (i=M-1; i >= 0; i--)
+   #else
+      for (i=0; i != M; i++)
+   #endif
+      {
+         x0 = X0[i];
+         x0 *=  alpha;
+         x1 = X1[i];
+         x1 *=  alpha;
+         x2 = X2[i];
+         x2 *=  alpha;
+         #ifdef Upper_
+            a = Ad;
+            Ad -= ldap1;
+         #else
+            a = A + i;
+         #endif
+         x3 = X3[i];
+         x3 *=  alpha;
+         x4 = X4[i];
+         x4 *=  alpha;
+         x5 = X5[i];
+         x5 *=  alpha;
+         x6 = X6[i];
+         x6 *=  alpha;
+         x7 = X7[i];
+         x7 *=  alpha;
+      #ifdef Upper_
+         for (k=i+1; k != M; k++)
+      #else
+         for (k=0; k != i; k++)
+      #endif
+         {
+            a0 = *a;
+            x0 -= a0 * X0[k];
+            x1 -= a0 * X1[k];
+            a += lda;
+            x2 -= a0 * X2[k];
+            x3 -= a0 * X3[k];
+            x4 -= a0 * X4[k];
+            x5 -= a0 * X5[k];
+            x6 -= a0 * X6[k];
+            x7 -= a0 * X7[k];
+         }
+         #ifndef UnitDiag_
+            a0 = diag[i];
+            x0 *= a0;
+            x1 *= a0;
+            x2 *= a0;
+            x3 *= a0;
+            x4 *= a0;
+            x5 *= a0;
+            x6 *= a0;
+            x7 *= a0;
+         #endif
+         X0[i] = x0;
+         X1[i] = x1;
+         X2[i] = x2;
+         X4[i] = x4;
+         X3[i] = x3;
+         X5[i] = x5;
+         X6[i] = x6;
+         X7[i] = x7;
+      }
+      X0 += inc;
+      X1 += inc;
+      X2 += inc;
+      X3 += inc;
+      X4 += inc;
+      X5 += inc;
+      X6 += inc;
+      X7 += inc;
+   }
+   if ( n=N-n )
+   {
+      inc = lda << 3;
+      B = X0;
+
+      for (j=0; j != n; j++)  /* N-loop cleanup */
+      {
+      #ifdef Upper_
+         Ad = A + M*lda+M-1;
+         for (i=M-1; i >= 0; i--)
+      #else
+         for (i=0; i != M; i++)
+      #endif
+         {
+         #ifdef Upper_
+            X0 = (TYPE*) Ad;
+            Ad -= ldap1;
+         #else
+            X0 = (TYPE*) A+i;
+         #endif
+            X1 = X0 + lda;
+            X2 = X1+lda; 
+            X3 = X2+lda;
+            X4 = X3+lda; 
+            X5 = X4+lda; 
+            X6 = X5+lda; 
+            X7 = X6+lda;
+            x0 = B[i];
+            x0 *=  alpha;
+            x1 = x2 = x3 = x4 = x5 = x6 = x7 = 0.0;
+         #ifdef Upper_
+            k = i + 1;
+            m = M - k;
+            m = (m >> 3)<<3;
+            for (m += k; k != m; k += 8)
+         #else
+            m = (i >> 3)<<3;
+            for (k=0; k != m; k += 8)
+         #endif
+            {
+               x0 -= *X0 * B[k];
+               X0 += inc;
+               x1 -= *X1 * B[k+1];
+               X1 += inc;
+               x2 -= *X2 * B[k+2];
+               X2 += inc;
+               x3 -= *X3 * B[k+3];
+               X3 += inc;
+               x4 -= *X4 * B[k+4];
+               X4 += inc;
+               x5 -= *X5 * B[k+5];
+               X5 += inc;
+               x6 -= *X6 * B[k+6];
+               X6 += inc;
+               x7 -= *X7 * B[k+7];
+               X7 += inc;
+            }
+         #if Upper_
+            switch(M-m)
+         #else
+            switch(i-m)
+         #endif
+            {
+            case 1:
+               x0 -= *X0 * B[m];
+               break;
+            case 2:
+               x0 -= *X0 * B[m];
+               x1 -= *X1 * B[m+1];
+               break;
+            case 3:
+               x0 -= *X0 * B[m];
+               x1 -= *X1 * B[m+1];
+               x2 -= *X2 * B[m+2];
+               break;
+            case 4:
+               x0 -= *X0 * B[m];
+               x1 -= *X1 * B[m+1];
+               x2 -= *X2 * B[m+2];
+               x3 -= *X3 * B[m+3];
+               break;
+            case 5:
+               x0 -= *X0 * B[m];
+               x1 -= *X1 * B[m+1];
+               x2 -= *X2 * B[m+2];
+               x3 -= *X3 * B[m+3];
+               x4 -= *X4 * B[m+4];
+               break;
+            case 6:
+               x0 -= *X0 * B[m];
+               x1 -= *X1 * B[m+1];
+               x2 -= *X2 * B[m+2];
+               x3 -= *X3 * B[m+3];
+               x4 -= *X4 * B[m+4];
+               x5 -= *X5 * B[m+5];
+               break;
+            case 7:
+               x0 -= *X0 * B[m];
+               x1 -= *X1 * B[m+1];
+               x2 -= *X2 * B[m+2];
+               x3 -= *X3 * B[m+3];
+               x4 -= *X4 * B[m+4];
+               x5 -= *X5 * B[m+5];
+               x6 -= *X6 * B[m+6];
+               break;
+            default:;
+            }
+            x0 += x1;
+            x2 += x3;
+            x4 += x5;
+            x6 += x7;
+
+            x0 += x2;
+            x4 += x6;
+            x0 += x4;
+            #ifndef UnitDiag_
+               x0 *= diag[i];
+            #endif
+            B[i] = x0;
+         }
+         B += ldb;
+      }
+   }
+   #ifndef UnitDiag_
+      free(vp);
+   #endif
+}
+@ROUT ATL_CtrsmK
+#include "atlas_prefetch.h"
+@beginskip
+#ifdef TREAL
+static void trsmLU_2(const int N, const TYPE *A, TYPE *B, const int ldb)
+{
+   int j;
+   const TYPE a11=(*A), a12=A[2];
+   const TYPE           a22=A[3];
+   TYPE x1, x2, p0;
+   TYPE *bn=B+ldb;
+
+   p0 = B[1];
+   for (j=N-1; j; j--) /* stop 1 iteration early to stop register prefetch */
+   {
+      x2 = p0; x1 = *B;
+      x2 *= a22;                p0 = bn[1];
+      x1 = (x1 - a12*x2) * a11;
+      *B = x1; B[1] = x2;
+      B = bn;
+      bn += ldb;
+   }
+   x2 = p0; x1 = *B;
+   x2 *= a22;
+   x1 = (x1 - a12*x2) * a11;
+   *B = x1; B[1] = x2;
+}
+static void trsmLU_3(const int N, const TYPE *A, TYPE *B, const int ldb)
+{
+   int j;
+   const TYPE a11=(*A), a12=A[3], a13=A[6];
+   const TYPE           a22=A[4], a23=A[7];
+   const TYPE                     a33=A[8];
+   TYPE x1, x2, x3, p0;
+   TYPE *bn=B+ldb;
+
+   p0 = B[2];
+   for (j=N-1; j; j--) /* stop 1 iteration early to stop register prefetch */
+   {
+      x3 = p0; x2 = B[1]; x1 = *B;
+      x3 *= a33;
+      x2 = (x2 - a23*x3) * a22;             p0 = bn[2];
+      x1 = (x1 - a12*x2 - a13*x3) * a11;
+      *B = x1; B[1] = x2; B[2] = x3;
+      B = bn;
+      bn += ldb;
+   }
+   x3 = p0; x2 = B[1]; x1 = *B;
+   x3 *= a33;
+   x2 = (x2 - a23*x3) * a22;
+   x1 = (x1 - a12*x2 - a13*x3) * a11;
+   *B = x1; B[1] = x2; B[2] = x3;
+}
+static void trsmLU_4(const int N, const TYPE *A, TYPE *B, const int ldb)
+{
+   const TYPE a11=(*A), a12=A[ 4], a13=A[ 8], a14 = A[12];
+   const TYPE           a22=A[ 5], a23=A[ 9], a24 = A[13];
+   const TYPE                      a33=A[10], a34 = A[14];
+   const TYPE                                 a44 = A[15];
+   TYPE x1, x2, x3, x4, p0;
+   TYPE *bn=B+ldb;
+   int j;
+   const int pfd = ldb<<3;
+
+   p0 = B[3];
+   for (j=N-1; j; j--) /* stop 1 iteration early to stop register prefetch */
+   {
+      x4 = p0; x3 = B[2];
+      x2 = B[1]; x1 = *B;
+      x4 *= a44;
+      x3 = (x3 - a34*x4) * a33;                      p0 = bn[3];
+      x2 = (x2 - a23*x3 - a24*x4) * a22;             ATL_pfl1W(bn+pfd);
+      x1 = (x1 - a12*x2 - a13*x3 - a14*x4) * a11;
+      *B = x1; B[1] = x2; B[2] = x3; B[3] = x4;
+      B = bn;
+      bn += ldb;
+   }
+   x4 = p0; x3 = B[2];
+   x2 = B[1]; x1 = *B;
+   x4 *= a44;
+   x3 = (x3 - a34*x4) * a33;
+   x2 = (x2 - a23*x3 - a24*x4) * a22;
+   x1 = (x1 - a12*x2 - a13*x3 - a14*x4) * a11;
+   *B = x1; B[1] = x2; B[2] = x3; B[3] = x4;
+}
+
+static void trsmLU_8(const int N, const TYPE *A, TYPE *B, const int ldb)
+{
+   const TYPE a11=(*A),  a12=A[ 8], a13=A[16], a14 = A[24],
+              a15=A[32], a16=A[40], a17=A[48], a18 = A[56];
+   const TYPE            a22=A[ 9], a23=A[17], a24 = A[25],
+              a25=A[33], a26=A[41], a27=A[49], a28 = A[57];
+   const TYPE                       a33=A[18], a34 = A[26],
+              a35=A[34], a36=A[42], a37=A[50], a38 = A[58];
+   const TYPE                                  a44 = A[27],
+              a45=A[35], a46=A[43], a47=A[51], a48 = A[59];
+   const TYPE a55=A[36], a56=A[44], a57=A[52], a58 = A[60];
+   const TYPE            a66=A[45], a67=A[53], a68 = A[61];
+   const TYPE                       a77=A[54], a78 = A[62];
+   const TYPE                                  a88 = A[63];
+   TYPE x1, x2, x3, x4, x5, x6, x7, x8, p0;
+   TYPE *bn=B+ldb;
+   int j;
+   const int pfd = ldb<<3;
+
+   p0 = B[3];
+   for (j=N-1; j; j--) /* stop 1 iteration early to stop register prefetch */
+   {
+      x4 = p0;   x8 = B[7];
+      x3 = B[2]; x7 = B[6];
+      x2 = B[1]; x6 = B[5];
+      x1 = *B;   x5 = B[4];
+      x8 *= a88;                               p0 = bn[3];
+      x7 = (x7 - a78*x8) * a77;
+      x6 = (x6 - a68*x8 - a67*x7) * a66;
+      x5 = (x5 - a58*x8 - a57*x7 - a56*x6) * a55;
+      x4 = (x4 - a48*x8 - a47*x7 - a46*x6 - a45*x5) * a44;
+      x3 = (x3 - a38*x8 - a37*x7 - a36*x6 - a35*x5 - a34*x4) * a33;
+      x2 = (x2 - a28*x8 - a27*x7 - a26*x6 - a25*x5 - a24*x4 - a23*x3) * a22;
+      x1 = (x1 - a18*x8 - a17*x7 - a16*x6 - a15*x5 - a14*x4 - a13*x3 - a12*x2) 
+           * a11;
+      *B   = x1; B[1] = x2; B[2] = x3; B[3] = x4;
+      B[4] = x5; B[5] = x6; B[6] = x7; B[7] = x8;
+      B = bn;
+      bn += ldb;
+   }
+   x4 = p0;   x8 = B[7];
+   x3 = B[2]; x7 = B[6];
+   x2 = B[1]; x6 = B[5];
+   x1 = *B;   x5 = B[4];
+   x8 *= a88;
+   x7 = (x7 - a78*x8) * a77;
+   x6 = (x6 - a68*x8 - a67*x7) * a66;
+   x5 = (x5 - a58*x8 - a57*x7 - a56*x6) * a55;
+   x4 = (x4 - a48*x8 - a47*x7 - a46*x6 - a45*x5) * a44;
+   x3 = (x3 - a38*x8 - a37*x7 - a36*x6 - a35*x5 - a34*x4) * a33;
+   x2 = (x2 - a28*x8 - a27*x7 - a26*x6 - a25*x5 - a24*x4 - a23*x3) * a22;
+   x1 = (x1 - a18*x8 - a17*x7 - a16*x6 - a15*x5 - a14*x4 - a13*x3 - a12*x2) 
+        * a11;
+   *B   = x1; B[1] = x2; B[2] = x3; B[3] = x4;
+   B[4] = x5; B[5] = x6; B[6] = x7; B[7] = x8;
+}
+static void trsmcpUN
+   (enum ATLAS_DIAG Diag, const int N, const TYPE alpha, 
+    const TYPE *A, const int lda, TYPE *C)
+/*
+ * copies Upper, NoTranspose matrix to Upper, NoTrans matrix, applying 1/alpha
+ */
+{
+   const TYPE ialpha = (alpha == ATL_rone) ? ATL_rone : ATL_rone / alpha;
+   const int lda2=lda+lda, lda3=lda2+lda, lda4=(lda<<2);
+   int j;
+
+   switch(N)
+   {
+   case 4:
+      if (Diag == AtlasUnit) *C = C[5] = C[10] = C[15] = alpha;
+      else
+      {
+         *C    = alpha / *A;
+         C[ 5] = alpha / A[lda+1];
+         C[10] = alpha / A[lda2+2];
+         C[15] = alpha / A[lda3+3];
+      }
+
+      C[ 4] = A[lda  ] * ialpha;
+
+      C[ 8] = A[lda2  ] * ialpha;
+      C[ 9] = A[lda2+1] * ialpha;
+
+      C[12] = A[lda3  ] * ialpha;
+      C[13] = A[lda3+1] * ialpha;
+      C[14] = A[lda3+2] * ialpha;
+      break;
+   case 3:
+      if (Diag == AtlasUnit) *C = C[4] = C[8] = alpha;
+      else
+      {
+         *C    = alpha / *A;
+         C[4] = alpha / A[lda+1];
+         C[8] = alpha / A[lda2+2];
+      }
+      C[3] = A[lda  ] * ialpha;
+
+      C[6] = A[lda2  ] * ialpha;
+      C[7] = A[lda2+1] * ialpha;
+      break;
+   case 2:
+      if (Diag == AtlasUnit) *C = C[3] = alpha;
+      else { *C = alpha / *A; C[3] = alpha / A[lda+1]; }
+
+      C[2] = A[lda  ] * ialpha;
+      break;
+   default:
+      if (Diag == AtlasUnit) Mjoin(PATL,set)(N, alpha, C, N+1);
+      else for (j=0; j != N; j++) C[j*(N+1)] = alpha / A[j*(lda+1)];
+      for (j=1; j != N; j++) Mjoin(PATL,cpsc)(j, ialpha, A+j*lda, 1, C+j*N, 1);
+   }
+}
+
+static enum ATLAS_DIAG trsmcopy
+   (enum ATLAS_UPLO Uplo, enum ATLAS_TRANS Trans, enum ATLAS_DIAG Diag,
+    const int N, const TYPE alpha, const TYPE *A, const int lda, TYPE *C)
+{
+   const enum ATLAS_DIAG diag = (Diag ==AtlasUnit && alpha == ATL_rone) ?
+                                 AtlasUnit : AtlasNonUnit;
+   trsmcpUN(Diag, N, alpha, A, lda, C);
+   return(diag);
+}
+
+static void trsmLL_4(const int N, const TYPE *A, TYPE *B, const int ldb){}
+static void trsmLL_3(const int N, const TYPE *A, TYPE *B, const int ldb){}
+static void trsmLL_2(const int N, const TYPE *A, TYPE *B, const int ldb){}
+#else
+@endskip
+#ifdef Left_
+static void trsmLU_2(const int N, const TYPE *A, TYPE *B, const int ldb)
+/*
+ * 'Left, 'Upper', with 1 col prefetch, written with all dependencies shown,
+ * so that compiler can optimize.
+ * A is known to be 2x2, with 1/alpha already applied, diagonals already
+ * inverted
+ */
+{
+   const TYPE ar11=*A, ai11=A[1], ar12=A[4], ai12=A[5];
+   const TYPE ar22=A[6], ai22=A[7];
+   TYPE xr1, xi1, xr2, xi2;
+   TYPE t0, p0;
+   const int ldb2=ldb+ldb;
+   TYPE *bn=B+ldb2;
+   const int pfd=ldb2+ldb2;
+   int j;
+
+   p0 = B[2];
+   for (j=N-1; j; j--) /* stop 1 iteration early to stop prefetch */
+   {
+      xr2 = p0  ; xi2 = B[3];
+      xr1 = *B  ; xi1 = B[1];
+
+      t0 = xr2;
+      xr2 = ar22*xr2 - ai22*xi2;
+      xi2 = ar22*xi2 + ai22*t0;     p0 = bn[2];
+
+      xr1 -= ar12*xr2 - ai12*xi2;
+      xi1 -= ar12*xi2 + ai12*xr2;   ATL_pfl1W(bn+pfd);
+      t0 = xr1;
+      xr1 = ar11*xr1 - ai11*xi1;
+      xi1 = ar11*xi1 + ai11*t0;
+
+      *B   = xr1; B[1] = xi1;
+      B[2] = xr2; B[3] = xi2;
+      B = bn;
+      bn += ldb2;
+   }
+   xr2 = p0  ; xi2 = B[3];
+   xr1 = *B  ; xi1 = B[1];
+
+   t0 = xr2;
+   xr2 = ar22*xr2 - ai22*xi2;
+   xi2 = ar22*xi2 + ai22*t0;
+
+   xr1 -= ar12*xr2 - ai12*xi2;
+   xi1 -= ar12*xi2 + ai12*xr2;
+   t0 = xr1;
+   xr1 = ar11*xr1 - ai11*xi1;
+   xi1 = ar11*xi1 + ai11*t0;
+
+   *B   = xr1; B[1] = xi1;
+   B[2] = xr2; B[3] = xi2;
+}
+static void trsmLU_3(const int N, const TYPE *A, TYPE *B, const int ldb)
+/*
+ * 'Left, 'Upper', with 1 col prefetch, written with all dependencies shown,
+ * so that compiler can optimize.
+ * A is known to be 3x3, with 1/alpha already applied, diagonals already
+ * inverted
+ */
+{
+   const TYPE ar11=*A, ai11=A[1], ar12=A[6], ai12=A[7], ar13=A[12], ai13=A[13];
+   const TYPE ar22=A[ 8], ai22=A[ 9], ar23=A[14], ai23=A[15];
+   const TYPE ar33=A[16], ai33=A[17];
+   TYPE xr1, xi1, xr2, xi2, xr3, xi3;
+   TYPE t0, p0;
+   const int ldb2=ldb+ldb;
+   TYPE *bn=B+ldb2;
+   const int pfd=ldb2+ldb2;
+   int j;
+
+   p0 = B[4];
+   for (j=N-1; j; j--)
+   {
+      xr3 = p0  ; xi3 = B[5];
+      xr1 = *B  ; xi1 = B[1];
+      xr2 = B[2]; xi2 = B[3];
+
+      t0 = xr3;
+      xr3 = ar33*xr3 - ai33*xi3;
+      xi3 = ar33*xi3 + ai33*t0;
+
+      xr2 -= ar23*xr3 - ai23*xi3;     p0 = bn[4];
+      xi2 -= ar23*xi3 + ai23*xr3;
+      t0 = xr2;
+      xr2 = ar22*xr2 - ai22*xi2;
+      xi2 = ar22*xi2 + ai22*t0;
+
+      xr1 -= ar13*xr3 - ai13*xi3;     ATL_pfl1W(bn+pfd);
+      xi1 -= ar13*xi3 + ai13*xr3;     ATL_pfl1W(bn+pfd+4);
+      xr1 -= ar12*xr2 - ai12*xi2;
+      xi1 -= ar12*xi2 + ai12*xr2;
+      t0 = xr1;
+      xr1 = ar11*xr1 - ai11*xi1;
+      xi1 = ar11*xi1 + ai11*t0;
+
+      *B   = xr1; B[1] = xi1;
+      B[2] = xr2; B[3] = xi2;
+      B[4] = xr3; B[5] = xi3;
+      B = bn;
+      bn += ldb2;
+   }
+   xr3 = p0  ; xi3 = B[5];
+   xr1 = *B  ; xi1 = B[1];
+   xr2 = B[2]; xi2 = B[3];
+
+   t0 = xr3;
+   xr3 = ar33*xr3 - ai33*xi3;
+   xi3 = ar33*xi3 + ai33*t0;
+
+   xr2 -= ar23*xr3 - ai23*xi3;
+   xi2 -= ar23*xi3 + ai23*xr3;
+   t0 = xr2;
+   xr2 = ar22*xr2 - ai22*xi2;
+   xi2 = ar22*xi2 + ai22*t0;
+
+   xr1 -= ar13*xr3 - ai13*xi3;
+   xi1 -= ar13*xi3 + ai13*xr3;
+   xr1 -= ar12*xr2 - ai12*xi2;
+   xi1 -= ar12*xi2 + ai12*xr2;
+   t0 = xr1;
+   xr1 = ar11*xr1 - ai11*xi1;
+   xi1 = ar11*xi1 + ai11*t0;
+
+   *B   = xr1; B[1] = xi1;
+   B[2] = xr2; B[3] = xi2;
+   B[4] = xr3; B[5] = xi3;
+}
+static void trsmLU_4(const int N, const TYPE *A, TYPE *B, const int ldb)
+/*
+ * 'Left, 'Upper', with 1 col prefetch, written with all dependencies shown,
+ * so that compiler can optimize.
+ * A is known to be 4x4, with 1/alpha already applied, diagonals already
+ * inverted
+ */
+{
+   const TYPE ar11=*A, ai11=A[1], ar12=A[8], ai12=A[9], ar13=A[16], ai13=A[17],
+              ar14=A[24], ai14=A[25];
+   const TYPE ar22=A[10], ai22=A[11], ar23=A[18], ai23=A[19], 
+              ar24=A[26], ai24=A[27];
+   const TYPE ar33=A[20], ai33=A[21], ar34=A[28], ai34=A[29];
+   const TYPE ar44=A[30], ai44=A[31];
+   TYPE xr1, xi1, xr2, xi2, xr3, xi3, xr4, xi4;
+   TYPE t0, p0;
+   const int ldb2=ldb+ldb;
+   TYPE *bn=B+ldb2;
+   const int pfd = ldb2+ldb2;
+   int j;
+
+   p0 = B[6];
+   for (j=N-1; j; j--)
+   {
+      xr4 = p0  ; xi4 = B[7];
+      xr1 = *B; xi1 = B[1];
+      xr3 = B[4]; xi3 = B[5];
+      xr2 = B[2]; xi2 = B[3];
+
+      t0 = xr4;
+      xr4 = ar44*xr4 - ai44*xi4;
+      xi4 = ar44*xi4 + ai44*t0;
+
+      xr3 -= ar34*xr4 - ai34*xi4;
+      xi3 -= ar34*xi4 + ai34*xr4;
+      t0 = xr3;
+      xr3 = ar33*xr3 - ai33*xi3;
+      xi3 = ar33*xi3 + ai33*t0;
+
+      xr2 -= ar24*xr4 - ai24*xi4;     p0 = bn[6];
+      xi2 -= ar24*xi4 + ai24*xr4;
+      xr2 -= ar23*xr3 - ai23*xi3;
+      xi2 -= ar23*xi3 + ai23*xr3;
+      t0 = xr2;
+      xr2 = ar22*xr2 - ai22*xi2;      ATL_pfl1W(bn+pfd);
+      xi2 = ar22*xi2 + ai22*t0;       ATL_pfl1W(bn+pfd+4);
+
+      xr1 -= ar14*xr4 - ai14*xi4;
+      xi1 -= ar14*xi4 + ai14*xr4;
+      xr1 -= ar13*xr3 - ai13*xi3;
+      xi1 -= ar13*xi3 + ai13*xr3;
+      xr1 -= ar12*xr2 - ai12*xi2;
+      xi1 -= ar12*xi2 + ai12*xr2;
+      t0 = xr1;
+      xr1 = ar11*xr1 - ai11*xi1;
+      xi1 = ar11*xi1 + ai11*t0;
+
+      *B   = xr1; B[1] = xi1;
+      B[2] = xr2; B[3] = xi2;
+      B[4] = xr3; B[5] = xi3;
+      B[6] = xr4; B[7] = xi4;
+      B = bn;
+      bn += ldb2;
+   }
+   xr4 = p0  ; xi4 = B[7];
+   xr1 = *B; xi1 = B[1];
+   xr3 = B[4]; xi3 = B[5];
+   xr2 = B[2]; xi2 = B[3];
+
+   t0 = xr4;
+   xr4 = ar44*xr4 - ai44*xi4;
+   xi4 = ar44*xi4 + ai44*t0;
+
+   xr3 -= ar34*xr4 - ai34*xi4;
+   xi3 -= ar34*xi4 + ai34*xr4;
+   t0 = xr3;
+   xr3 = ar33*xr3 - ai33*xi3;
+   xi3 = ar33*xi3 + ai33*t0;
+
+   xr2 -= ar24*xr4 - ai24*xi4;
+   xi2 -= ar24*xi4 + ai24*xr4;
+   xr2 -= ar23*xr3 - ai23*xi3;
+   xi2 -= ar23*xi3 + ai23*xr3;
+   t0 = xr2;
+   xr2 = ar22*xr2 - ai22*xi2;
+   xi2 = ar22*xi2 + ai22*t0;
+
+   xr1 -= ar14*xr4 - ai14*xi4;
+   xi1 -= ar14*xi4 + ai14*xr4;
+   xr1 -= ar13*xr3 - ai13*xi3;
+   xi1 -= ar13*xi3 + ai13*xr3;
+   xr1 -= ar12*xr2 - ai12*xi2;
+   xi1 -= ar12*xi2 + ai12*xr2;
+   t0 = xr1;
+   xr1 = ar11*xr1 - ai11*xi1;
+   xi1 = ar11*xi1 + ai11*t0;
+
+   *B   = xr1; B[1] = xi1;
+   B[2] = xr2; B[3] = xi2;
+   B[4] = xr3; B[5] = xi3;
+   B[6] = xr4; B[7] = xi4;
+}
+static void trsmLL_2(const int N, const TYPE *A, TYPE *B, const int ldb)
+/*
+ * 'Left', 'Lower', with 1 column prefetch, written with all dependencies
+ * shown, so that the compiler can optimize.
+ * A is known to be 2x2, with 1/alpha already applied, diagonals already
+ * inverted
+ */
+{
+   const TYPE ar11=*A, ai11=A[1], ar21=A[2], ai21=A[3];
+   const TYPE ar22=A[6], ai22=A[7];
+   const int ldb2 = ldb+ldb;
+   TYPE xr1, xi1, xr2, xi2;
+   TYPE t0, p0;
+   TYPE *pBn=B+ldb2;
+   const int pfd=ldb2+ldb2;
+   int j;
+
+   p0 = *B;
+   for (j=N-1; j; j--)
+   {
+      xr1 = p0; xi1 = B[1];
+      xr2 = B[2]; xi2 = B[3];
+
+      t0 = xr1;
+      xr1 = ar11 * xr1 - ai11 * xi1;
+      xi1 = ar11 * xi1 + ai11 * t0;     p0 = *pBn;
+
+      xr2 -= ar21*xr1 - ai21*xi1;
+      xi2 -= ar21*xi1 + ai21*xr1;       ATL_pfl1W(pBn+pfd);
+      t0 = xr2;
+      xr2 = ar22*xr2 - ai22*xi2;
+      xi2 = ar22*xi2 + ai22*t0;
+
+      *B   = xr1; B[1] = xi1;
+      B[2] = xr2; B[3] = xi2;
+      B = pBn;
+      pBn += ldb2;
+   }
+   xr1 = p0; xi1 = B[1];
+   xr2 = B[2]; xi2 = B[3];
+
+   t0 = xr1;
+   xr1 = ar11 * xr1 - ai11 * xi1;
+   xi1 = ar11 * xi1 + ai11 * t0;
+
+   xr2 -= ar21*xr1 - ai21*xi1;
+   xi2 -= ar21*xi1 + ai21*xr1;
+   t0 = xr2;
+   xr2 = ar22*xr2 - ai22*xi2;
+   xi2 = ar22*xi2 + ai22*t0;
+
+   *B   = xr1; B[1] = xi1;
+   B[2] = xr2; B[3] = xi2;
+}
+static void trsmLL_3(const int N, const TYPE *A, TYPE *B, const int ldb)
+/*
+ * 'Left', 'Lower', with 1 column prefetch, written with all dependencies
+ * shown, so that the compiler can optimize.
+ * A is known to be 3x3, with 1/alpha already applied, diagonals already
+ * inverted
+ */
+{
+   const TYPE ar11=*A, ai11=A[1], ar21=A[2], ai21=A[3], ar31=A[4], ai31=A[5];
+   const TYPE ar22=A[ 8], ai22=A[ 9], ar32=A[10], ai32=A[11];
+   const TYPE ar33=A[16], ai33=A[17];
+   const int ldb2 = ldb+ldb;
+   TYPE xr1, xi1, xr2, xi2, xr3, xi3;
+   TYPE t0, p0;
+   TYPE *pBn=B+ldb2;
+   const int pfd=ldb2+ldb2;
+   int j;
+
+   p0 = *B;
+   for (j=N-1; j; j--)
+   {
+      xr1 = p0; xi1 = B[1];
+      xr3 = B[4]; xi3 = B[5];
+      xr2 = B[2]; xi2 = B[3];
+
+      t0 = xr1;
+      xr1 = ar11 * xr1 - ai11 * xi1;
+      xi1 = ar11 * xi1 + ai11 * t0;
+
+      xr2 -= ar21*xr1 - ai21*xi1;
+      xi2 -= ar21*xi1 + ai21*xr1;
+      t0 = xr2;
+      xr2 = ar22*xr2 - ai22*xi2;
+      xi2 = ar22*xi2 + ai22*t0;     p0 = *pBn;
+
+      xr3 -= ar31*xr1 - ai31*xi1;
+      xi3 -= ar31*xi1 + ai31*xr1;
+      xr3 -= ar32*xr2 - ai32*xi2;      ATL_pfl1W(pBn+pfd);
+      xi3 -= ar32*xi2 + ai32*xr2;      ATL_pfl1W(pBn+pfd+4);
+      t0 = xr3;
+      xr3 = ar33*xr3 - ai33*xi3;
+      xi3 = ar33*xi3 + ai33*t0;
+
+      *B   = xr1; B[1] = xi1;
+      B[2] = xr2; B[3] = xi2;
+      B[4] = xr3; B[5] = xi3;
+      B = pBn;
+      pBn += ldb2;
+   }
+   xr1 = p0; xi1 = B[1];
+   xr3 = B[4]; xi3 = B[5];
+   xr2 = B[2]; xi2 = B[3];
+
+   t0 = xr1;
+   xr1 = ar11 * xr1 - ai11 * xi1;
+   xi1 = ar11 * xi1 + ai11 * t0;
+
+   xr2 -= ar21*xr1 - ai21*xi1;
+   xi2 -= ar21*xi1 + ai21*xr1;
+   t0 = xr2;
+   xr2 = ar22*xr2 - ai22*xi2;
+   xi2 = ar22*xi2 + ai22*t0;
+
+   xr3 -= ar31*xr1 - ai31*xi1;
+   xi3 -= ar31*xi1 + ai31*xr1;
+   xr3 -= ar32*xr2 - ai32*xi2;
+   xi3 -= ar32*xi2 + ai32*xr2;
+   t0 = xr3;
+   xr3 = ar33*xr3 - ai33*xi3;
+   xi3 = ar33*xi3 + ai33*t0;
+
+   *B   = xr1; B[1] = xi1;
+   B[2] = xr2; B[3] = xi2;
+   B[4] = xr3; B[5] = xi3;
+}
+static void trsmLL_4(const int N, const TYPE *A, TYPE *B, const int ldb)
+/*
+ * 'Left', 'Lower', with 1 column prefetch, written with all dependencies
+ * shown, so that the compiler can optimize.
+ * A is known to be 4x4, with 1/alpha already applied, diagonals already
+ * inverted
+ */
+{
+   const TYPE ar11=*A, ai11=A[1], ar21=A[2], ai21=A[3], ar31=A[4], ai31=A[5],
+              ar41=A[6], ai41=A[7];
+   const TYPE ar22=A[10], ai22=A[11], ar32=A[12], ai32=A[13],
+              ar42=A[14], ai42=A[15];
+   const TYPE ar33=A[20], ai33=A[21], ar43=A[22], ai43=A[23];
+   const TYPE ar44=A[30], ai44=A[31];
+   const int ldb2 = ldb+ldb;
+   TYPE xr1, xi1, xr2, xi2, xr3, xi3, xr4, xi4; 
+   TYPE t0, p0;
+   TYPE *pBn=B+ldb2;
+   const int pfd = ldb2+ldb2;
+   int j;
+
+   p0 = *B;
+   for (j=N-1; j; j--)
+   {
+      xr1 = p0; xi1 = B[1];
+      xr3 = B[4]; xi3 = B[5];
+      xr2 = B[2]; xi2 = B[3];
+      xr4 = B[6]; xi4 = B[7];
+
+      t0 = xr1;
+      xr1 = ar11 * xr1 - ai11 * xi1;
+      xi1 = ar11 * xi1 + ai11 * t0;
+
+      xr2 -= ar21*xr1 - ai21*xi1;
+      xi2 -= ar21*xi1 + ai21*xr1;
+      t0 = xr2;
+      xr2 = ar22*xr2 - ai22*xi2;
+      xi2 = ar22*xi2 + ai22*t0;
+
+      xr3 -= ar31*xr1 - ai31*xi1;
+      xi3 -= ar31*xi1 + ai31*xr1;
+      xr3 -= ar32*xr2 - ai32*xi2;     p0 = *pBn;
+      xi3 -= ar32*xi2 + ai32*xr2;
+      t0 = xr3;
+      xr3 = ar33*xr3 - ai33*xi3;
+      xi3 = ar33*xi3 + ai33*t0;
+
+      xr4 -= ar41*xr1 - ai41*xi1;     ATL_pfl1W(pBn+pfd);
+      xi4 -= ar41*xi1 + ai41*xr1;     ATL_pfl1W(pBn+pfd+4);
+      xr4 -= ar42*xr2 - ai42*xi2;
+      xi4 -= ar42*xi2 + ai42*xr2;
+      xr4 -= ar43*xr3 - ai43*xi3;
+      xi4 -= ar43*xi3 + ai43*xr3;
+      t0 = xr4;
+      xr4 = ar44*xr4 - ai44*xi4;
+      xi4 = ar44*xi4 + ai44*t0;
+      *B   = xr1; B[1] = xi1;
+      B[2] = xr2; B[3] = xi2;
+      B[4] = xr3; B[5] = xi3;
+      B[6] = xr4; B[7] = xi4;
+      B = pBn;
+      pBn += ldb2;
+   }
+   xr1 = p0; xi1 = B[1];
+   xr3 = B[4]; xi3 = B[5];
+   xr2 = B[2]; xi2 = B[3];
+   xr4 = B[6]; xi4 = B[7];
+
+   t0 = xr1;
+   xr1 = ar11 * xr1 - ai11 * xi1;
+   xi1 = ar11 * xi1 + ai11 * t0;
+
+   xr2 -= ar21*xr1 - ai21*xi1;
+   xi2 -= ar21*xi1 + ai21*xr1;
+   t0 = xr2;
+   xr2 = ar22*xr2 - ai22*xi2;
+   xi2 = ar22*xi2 + ai22*t0;
+
+   xr3 -= ar31*xr1 - ai31*xi1;
+   xi3 -= ar31*xi1 + ai31*xr1;
+   xr3 -= ar32*xr2 - ai32*xi2;
+   xi3 -= ar32*xi2 + ai32*xr2;
+   t0 = xr3;
+   xr3 = ar33*xr3 - ai33*xi3;
+   xi3 = ar33*xi3 + ai33*t0;
+
+   xr4 -= ar41*xr1 - ai41*xi1;
+   xi4 -= ar41*xi1 + ai41*xr1;
+   xr4 -= ar42*xr2 - ai42*xi2;
+   xi4 -= ar42*xi2 + ai42*xr2;
+   xr4 -= ar43*xr3 - ai43*xi3;
+   xi4 -= ar43*xi3 + ai43*xr3;
+   t0 = xr4;
+   xr4 = ar44*xr4 - ai44*xi4;
+   xi4 = ar44*xi4 + ai44*t0;
+   *B   = xr1; B[1] = xi1;
+   B[2] = xr2; B[3] = xi2;
+   B[4] = xr3; B[5] = xi3;
+   B[6] = xr4; B[7] = xi4;
+}
+#endif
+
+#ifdef Right_
+static void trsmRU_2(const int M, const TYPE *A, TYPE *B, const int ldb)
+/*
+ * 'Right', 'Upper', written with all dependencies shown, so that the 
+ * compiler can optimize.  A is known to be 2x2, with 1/alpha already applied,
+ * diagonals already inverted.
+ */
+{
+   const TYPE ar11=*A, ai11=A[1], ar12=A[4], ai12=A[5];
+   const TYPE ar22=A[6], ai22=A[7];
+   const int ldb2 = ldb+ldb;
+   TYPE xr1, xi1, xr2, xi2, t0; 
+   TYPE *pB0=B, *pB1 = B+ldb2;
+   int i;
+   #define PFD 8
+
+   for (i=M; i; i--)
+   {
+      xr1 = *pB0; xr2 = *pB1;
+      xi1 = pB0[1]; xi2 = pB1[1];
+/*
+ *    real sequence:
+ *    x1 *= a11;
+ *    x2 = (x2 - x1*a12) * a22;
+ */
+      t0 = xr1;
+      xr1 = xr1*ar11 - xi1*ai11;
+      xi1 = t0 *ai11 + xi1*ar11;
+
+      xr2 -= xr1*ar12 - xi1*ai12;
+      xi2 -= xr1*ai12 + xi1*ar12;     ATL_pfl1W(pB0+PFD);
+      t0 = xr2;                       ATL_pfl1W(pB1+PFD);
+      xr2 = xr2*ar22 - xi2*ai22;
+      xi2 = t0 *ai22 + xi2*ar22;
+
+      *pB0 = xr1; pB0[1] = xi1; pB0 += 2;
+      *pB1 = xr2; pB1[1] = xi2; pB1 += 2;
+   }
+   #undef PFD
+}
+
+static void trsmRU_3(const int M, const TYPE *A, TYPE *B, const int ldb)
+/*
+ * 'Right', 'Upper', written with all dependencies shown, so that the 
+ * compiler can optimize.  A is known to be 3x3, with 1/alpha already applied,
+ * diagonals already inverted.
+ */
+{
+   const TYPE ar11=*A, ai11=A[1], ar12=A[6], ai12=A[7], ar13=A[12], ai13=A[13];
+   const TYPE ar22=A[ 8], ai22=A[ 9], ar23=A[14], ai23=A[15];
+   const TYPE ar33=A[16], ai33=A[17];
+   const int ldb2 = ldb+ldb;
+   TYPE xr1, xi1, xr2, xi2, xr3, xi3, t0; 
+   TYPE *pB0=B, *pB1 = B+ldb2, *pB2=pB1+ldb2;
+   int i;
+   #define PFD 8
+
+   for (i=M; i; i--)
+   {
+      xr1 = *pB0; xr2 = *pB1; xr3 = *pB2;
+      xi1 = pB0[1]; xi2 = pB1[1]; xi3 = pB2[1];
+/*
+ *    real sequence:
+ *    x1 *= a11;
+ *    x2 = (x2 - x1*a12) * a22;
+ *    x3 = (x3 - x1*a13 - x2*a23) * a33;
+ */
+      t0 = xr1;
+      xr1 = xr1*ar11 - xi1*ai11;
+      xi1 = t0 *ai11 + xi1*ar11;
+
+      xr2 -= xr1*ar12 - xi1*ai12;
+      xi2 -= xr1*ai12 + xi1*ar12;
+      t0 = xr2;
+      xr2 = xr2*ar22 - xi2*ai22;     ATL_pfl1W(pB0+PFD);
+      xi2 = t0 *ai22 + xi2*ar22;     ATL_pfl1W(pB1+PFD);
+
+      xr3 -= xr1*ar13 - xi1*ai13;
+      xi3 -= xr1*ai13 + xi1*ar13;
+      xr3 -= xr2*ar23 - xi2*ai23;
+      xi3 -= xr2*ai23 + xi2*ar23;     ATL_pfl1W(pB2+PFD);
+      t0 = xr3;
+      xr3 = xr3*ar33 - xi3*ai33;
+      xi3 = t0 *ai33 + xi3*ar33;
+
+      *pB0 = xr1; pB0[1] = xi1; pB0 += 2;
+      *pB1 = xr2; pB1[1] = xi2; pB1 += 2;
+      *pB2 = xr3; pB2[1] = xi3; pB2 += 2;
+   }
+   #undef PFD
+}
+
+static void trsmRU_4(const int M, const TYPE *A, TYPE *B, const int ldb)
+/*
+ * 'Right', 'Upper', written with all dependencies shown, so that the 
+ * compiler can optimize.  A is known to be 4x4, with 1/alpha already applied,
+ * diagonals already inverted.
+ */
+{
+   const TYPE ar11=*A, ai11=A[1], ar12=A[8], ai12=A[9], ar13=A[16], ai13=A[17],
+              ar14=A[24], ai14=A[25];
+   const TYPE ar22=A[10], ai22=A[11], ar23=A[18], ai23=A[19], 
+              ar24=A[26], ai24=A[27];
+   const TYPE ar33=A[20], ai33=A[21], ar34=A[28], ai34=A[29];
+   const TYPE ar44=A[30], ai44=A[31];
+   const int ldb2 = ldb+ldb;
+   TYPE xr1, xi1, xr2, xi2, xr3, xi3, xr4, xi4, t0; 
+   TYPE *pB0=B, *pB1 = B+ldb2, *pB2=pB1+ldb2, *pB3=pB2+ldb2;
+   int i;
+   #define PFD 8
+
+   for (i=M; i; i--)
+   {
+      xr1 = *pB0; xr2 = *pB1; xr3 = *pB2; xr4 = *pB3;
+      xi1 = pB0[1]; xi2 = pB1[1]; xi3 = pB2[1]; xi4 = pB3[1];
+/*
+ *    real sequence:
+ *    x1 *= a11;
+ *    x2 = (x2 - x1*a12) * a22;
+ *    x3 = (x3 - x1*a13 - x2*a23) * a33;
+ *    x4 = (x4 - x1*a14 - x2*a24 - x3*a34) * a44;
+ */
+      t0 = xr1;
+      xr1 = xr1*ar11 - xi1*ai11;
+      xi1 = t0 *ai11 + xi1*ar11;
+
+      xr2 -= xr1*ar12 - xi1*ai12;
+      xi2 -= xr1*ai12 + xi1*ar12;
+      t0 = xr2;
+      xr2 = xr2*ar22 - xi2*ai22;
+      xi2 = t0 *ai22 + xi2*ar22;
+
+      xr3 -= xr1*ar13 - xi1*ai13;
+      xi3 -= xr1*ai13 + xi1*ar13;
+      xr3 -= xr2*ar23 - xi2*ai23;     ATL_pfl1W(pB0+PFD);
+      xi3 -= xr2*ai23 + xi2*ar23;     ATL_pfl1W(pB1+PFD);
+      t0 = xr3;
+      xr3 = xr3*ar33 - xi3*ai33;
+      xi3 = t0 *ai33 + xi3*ar33;
+
+      xr4 -= xr1*ar14 - xi1*ai14;
+      xi4 -= xr1*ai14 + xi1*ar14;
+      xr4 -= xr2*ar24 - xi2*ai24;
+      xi4 -= xr2*ai24 + xi2*ar24;
+      xr4 -= xr3*ar34 - xi3*ai34;     ATL_pfl1W(pB2+PFD);
+      xi4 -= xr3*ai34 + xi3*ar34;     ATL_pfl1W(pB3+PFD);
+      t0 = xr4;
+      xr4 = xr4*ar44 - xi4*ai44;
+      xi4 = t0 *ai44 + xi4*ar44;
+
+      *pB0 = xr1; pB0[1] = xi1; pB0 += 2;
+      *pB1 = xr2; pB1[1] = xi2; pB1 += 2;
+      *pB2 = xr3; pB2[1] = xi3; pB2 += 2;
+      *pB3 = xr4; pB3[1] = xi4; pB3 += 2;
+   }
+   #undef PFD
+}
+
+static void trsmRL_2(const int M, const TYPE *A, TYPE *B, const int ldb)
+/*
+ * 'Right', 'Lower', written with all dependencies shown, so that the 
+ * compiler can optimize.  A is known to be 2x2, with 1/alpha already applied,
+ * diagonals already inverted.
+ */
+{
+   const TYPE ar11=*A, ai11=A[1], ar21=A[2], ai21=A[3];
+   const TYPE ar22=A[6], ai22=A[7];
+   const int ldb2 = ldb+ldb;
+   TYPE *pB0=B, *pB1 = B+ldb2;
+   TYPE xr1, xi1, xr2, xi2, t0;
+   int i;
+   #define PFD 8
+
+   for (i=M; i; i--)
+   {
+      xr2 = *pB1; xr1 = *pB0;
+      xi2 = pB1[1]; xi1 = pB0[1];
+/* 
+ *    REAL SEQUENCE :
+ *
+ *    x2 *= a22;
+ *    x1 = (x1 - x2*a21) * a11;
+ */
+      t0 = xr2;
+      xr2 = xr2*ar22 - xi2*ai22;
+      xi2 = t0 *ai22 + xi2*ar22;
+
+      xr1 -= xr2*ar21 - xi2*ai21; ATL_pfl1W(pB1+PFD);
+      xi1 -= xr2*ai21 + xi2*ar21; ATL_pfl1W(pB0+PFD);
+      t0 = xr1;
+      xr1 = xr1*ar11 - xi1*ai11;
+      xi1 = t0 *ai11 + xi1*ar11;
+      *pB1 = xr2; pB1[1] = xi2; pB1 += 2;
+      *pB0 = xr1; pB0[1] = xi1; pB0 += 2;
+   }
+   #undef PFD
+}
+static void trsmRL_3(const int M, const TYPE *A, TYPE *B, const int ldb)
+/*
+ * 'Right', 'Lower', written with all dependencies shown, so that the 
+ * compiler can optimize.  A is known to be 3x3, with 1/alpha already applied,
+ * diagonals already inverted.
+ */
+{
+   const TYPE ar11=*A, ai11=A[1], ar21=A[2], ai21=A[3], ar31=A[4], ai31=A[5];
+   const TYPE ar22=A[ 8], ai22=A[ 9], ar32=A[10], ai32=A[11];
+   const TYPE ar33=A[16], ai33=A[17];
+   const int ldb2 = ldb+ldb;
+   TYPE xr1, xi1, xr2, xi2, xr3, xi3, t0;
+   TYPE *pB0=B, *pB1 = B+ldb2, *pB2=pB1+ldb2;
+   int i;
+   #define PFD 8
+
+   for (i=M; i; i--)
+   {
+      xr3 = *pB2; xr2 = *pB1; xr1 = *pB0;
+      xi3 = pB2[1]; xi2 = pB1[1]; xi1 = pB0[1];
+/* 
+ *    REAL SEQUENCE :
+ *
+ *    x3 *= a33;
+ *    x2 = (x2 - x3*a32) * a22;
+ *    x1 = (x1 - x3*a31 - x2*a21) * a11;
+ */
+      t0 = xr3;
+      xr3 = ar33*xr3 - ai33*xi3;
+      xi3 = ar33*xi3 + ai33*t0;
+
+      xr2 -= xr3*ar32 - xi3*ai32;
+      xi2 -= xr3*ai32 + xi3*ar32;
+      t0 = xr2;
+      xr2 = xr2*ar22 - xi2*ai22; ATL_pfl1W(pB2+PFD);
+      xi2 = t0 *ai22 + xi2*ar22; ATL_pfl1W(pB1+PFD);
+
+      xr1 -= xr3*ar31 - xi3*ai31;
+      xi1 -= xr3*ai31 + xi3*ar31;
+      xr1 -= xr2*ar21 - xi2*ai21;
+      xi1 -= xr2*ai21 + xi2*ar21; /* ATL_pfl1W(pB0+PFD); */
+      t0 = xr1;
+      xr1 = xr1*ar11 - xi1*ai11;
+      xi1 = t0 *ai11 + xi1*ar11;
+      *pB2 = xr3; pB2[1] = xi3; pB2 += 2;
+      *pB1 = xr2; pB1[1] = xi2; pB1 += 2;
+      *pB0 = xr1; pB0[1] = xi1; pB0 += 2;
+   }
+   #undef PFD
+}
+
+static void trsmRL_4(const int M, const TYPE *A, TYPE *B, const int ldb)
+/*
+ * 'Right', 'Lower', written with all dependencies shown, so that the 
+ * compiler can optimize.  A is known to be 4x4, with 1/alpha already applied,
+ * diagonals already inverted.
+ */
+{
+   const TYPE ar11=*A, ai11=A[1], ar21=A[2], ai21=A[3], ar31=A[4], ai31=A[5],
+              ar41=A[6], ai41=A[7];
+   const TYPE ar22=A[10], ai22=A[11], ar32=A[12], ai32=A[13],
+              ar42=A[14], ai42=A[15];
+   const TYPE ar33=A[20], ai33=A[21], ar43=A[22], ai43=A[23];
+   const TYPE ar44=A[30], ai44=A[31];
+   const int ldb2 = ldb+ldb;
+   TYPE xr1, xi1, xr2, xi2, xr3, xi3, xr4, xi4, t0; 
+   TYPE *pB0=B, *pB1 = B+ldb2, *pB2=pB1+ldb2, *pB3=pB2+ldb2;
+   int i;
+   #define PFD 8
+
+   for (i=M; i; i--)
+   {
+      xr4 = *pB3; xr3 = *pB2; xr2 = *pB1; xr1 = *pB0;
+      xi4 = pB3[1]; xi3 = pB2[1]; xi2 = pB1[1]; xi1 = pB0[1];
+
+/* 
+ *    REAL SEQUENCE :
+ *
+ *    x4 *= a11;
+ *    x3 = (x3 - x4*a43) * a33;
+ *    x2 = (x2 - x4*a42 - x3*a32) * a22;
+ *    x1 = (x1 - x4*a41 - x3*a31 - x2*a21) * a11;
+ */
+      t0 = xr4;
+      xr4 = ar44*xr4 - ai44*xi4;
+      xi4 = ar44*xi4 + ai44*t0;
+
+      xr3 -= xr4*ar43 - xi4*ai43;
+      xi3 -= xr4*ai43 + xi4*ar43;
+      t0 = xr3;
+      xr3 = ar33*xr3 - ai33*xi3;
+      xi3 = ar33*xi3 + ai33*t0;
+
+      xr2 -= xr4*ar42 - xi4*ai42;
+      xi2 -= xr4*ai42 + xi4*ar42; ATL_pfl1W(pB3+PFD);
+      xr2 -= xr3*ar32 - xi3*ai32; ATL_pfl1W(pB2+PFD);
+      xi2 -= xr3*ai32 + xi3*ar32;
+      t0 = xr2;
+      xr2 = xr2*ar22 - xi2*ai22;
+      xi2 = t0 *ai22 + xi2*ar22;
+
+      xr1 -= xr4*ar41 - xi4*ai41;
+      xi1 -= xr4*ai41 + xi4*ar41;
+      xr1 -= xr3*ar31 - xi3*ai31;
+      xi1 -= xr3*ai31 + xi3*ar31;
+      xr1 -= xr2*ar21 - xi2*ai21; ATL_pfl1W(pB1+PFD);
+      xi1 -= xr2*ai21 + xi2*ar21; ATL_pfl1W(pB0+PFD);
+      t0 = xr1;
+      xr1 = xr1*ar11 - xi1*ai11;
+      xi1 = t0 *ai11 + xi1*ar11;
+      *pB3 = xr4; pB3[1] = xi4; pB3 += 2;
+      *pB2 = xr3; pB2[1] = xi3; pB2 += 2;
+      *pB1 = xr2; pB1[1] = xi2; pB1 += 2;
+      *pB0 = xr1; pB0[1] = xi1; pB0 += 2;
+   }
+   #undef PFD
+}
+#endif
+
+static void trsmcpUN
+   (const int N, const TYPE *alpha, const TYPE *A, const int lda, TYPE *C)
+/*
+ * copies Upper, NoTranspose matrix to Upper, NoTrans matrix, applying 1/alpha
+ */
+{
+   const int lda2 = lda+lda, N2 = N+N;
+   const TYPE *a=A+lda2; 
+   TYPE *c=C+N2;
+   TYPE tmp[2];
+   int j;
+
+   tmp[0] = *alpha; tmp[1] = alpha[1];
+   Mjoin(PATL,cplxinvert)(1, tmp, 1, tmp, 1); /* safe cplx inversion */
+/*
+ * copy non-diagonal portion of matrix, scaled by 1/alpha
+ */
+   for (j=1; j < N; j++)
+   {
+      Mjoin(PATL,cpsc)(j, tmp, a, 1, c, 1);
+      a += lda2;
+      c += N2;
+   }
+}
+
+static void trsmcpUT
+   (const enum ATLAS_TRANS Trans, const int N, const TYPE *alpha,
+    const TYPE *A, const int lda, TYPE *C)
+/*
+ * copies Upper, Transpose matrix to Lower, NoTrans matrix, applying 1/alpha
+ */
+{
+   const int lda2 = lda+lda;
+   const TYPE *a=A+lda2;
+   TYPE *c=C+2;
+   TYPE tmp[2];
+   int j;
+   void (*move)(const int N, const SCALAR alpha, const TYPE *X, const int incX,
+                TYPE *Y, const int incY);
+
+   if (Trans == AtlasConjTrans) move = Mjoin(PATL,moveConj);
+   else move = Mjoin(PATL,cpsc);
+
+   tmp[0] = *alpha; tmp[1] = alpha[1];
+   Mjoin(PATL,cplxinvert)(1, tmp, 1, tmp, 1); /* safe cplx inversion */
+/*
+ * copy non-diagonal portion of matrix, scaled by 1/alpha
+ */
+   for (j=1; j < N; j++)
+   {
+      move(j, tmp, a, 1, c, N);
+      a += lda2;
+      c += 2;
+   }
+}
+
+static void trsmcpLT(const enum ATLAS_TRANS Trans, const int N,
+                     const TYPE *alpha, const TYPE *A, const int lda, TYPE *C)
+/*
+ * copies Lower, Trans matrix to Upper, Notrans matrix, applies 1/alpha
+ */
+{
+   const int lda2 = lda+lda+2, N2 = N+N+2;
+   const TYPE *a=A+2; 
+   TYPE *c=C+N+N;
+   TYPE tmp[2];
+   int j;
+   void (*move)(const int N, const SCALAR alpha, const TYPE *X, const int incX,
+                TYPE *Y, const int incY);
+
+   if (Trans == AtlasConjTrans) move = Mjoin(PATL,moveConj);
+   else move = Mjoin(PATL,cpsc);
+
+   tmp[0] = *alpha; tmp[1] = alpha[1];
+   Mjoin(PATL,cplxinvert)(1, tmp, 1, tmp, 1); /* safe cplx inversion */
+/*
+ * copy non-diagonal portion of matrix, scaled by 1/alpha
+ */
+   for (j=0; j != N; j++)
+   {
+      move(N-j-1, tmp, a, 1, c, N);
+      a += lda2;
+      c += N2;
+   }
+}
+static void trsmcpLN(const int N, const TYPE *alpha, const TYPE *A,
+                     const int lda, TYPE *C)
+/*
+ * copies Lower, NoTrans matrix to Lower, Notrans matrix, applies 1/alpha
+ */
+{
+   const int lda2 = lda+lda+2, N2 = N+N+2;
+   const TYPE *a=A+2; 
+   TYPE *c=C+2;
+   TYPE tmp[2];
+   int j;
+
+   tmp[0] = *alpha; tmp[1] = alpha[1];
+   Mjoin(PATL,cplxinvert)(1, tmp, 1, tmp, 1); /* safe cplx inversion */
+/*
+ * copy non-diagonal portion of matrix, scaled by 1/alpha
+ */
+   for (j=0; j != N; j++)
+   {
+      Mjoin(PATL,cpsc)(N-j-1, tmp, a, 1, c, 1);
+      a += lda2;
+      c += N2;
+   }
+}
+
+static enum ATLAS_DIAG trsmcopy
+   (enum ATLAS_UPLO Uplo, enum ATLAS_TRANS Trans, enum ATLAS_DIAG Diag,
+    const int N, const TYPE *alpha, const TYPE *A, const int lda, TYPE *C)
+{
+   enum ATLAS_DIAG diag=AtlasNonUnit;
+   if (Uplo == AtlasLower)
+   {
+      if (Trans == AtlasNoTrans) trsmcpLN(N, alpha, A, lda, C);
+      else trsmcpLT(Trans, N, alpha, A, lda, C);
+   }
+   else
+   {
+      if (Trans == AtlasNoTrans) trsmcpUN(N, alpha, A, lda, C);
+      else trsmcpUT(Trans, N, alpha, A, lda, C);
+   }
+/* 
+ * Handle main diagonal of matrix
+ */
+   if (Diag == AtlasUnit) 
+   {
+      if (*alpha == ATL_rone && alpha[1] == ATL_rzero) diag = AtlasUnit;
+      Mjoin(PATLU,set)(N, *alpha, C, N+N+2);
+      Mjoin(PATLU,set)(N, alpha[1], C+1, N+N+2);
+   }
+   else
+   {
+      if (Trans != AtlasConjTrans) Mjoin(PATL,copy)(N, A, lda+1, C, N+1);
+      else Mjoin(PATL,copyConj)(N, A, lda+1, C, N+1);
+      Mjoin(PATL,cplxinvert)(N, C, N+1, C, N+1); /* safe cplx inversion */
+      Mjoin(PATL,scal)(N, alpha, C, N+1);
+   }
+   return(diag);
+}
+@skip #endif
+
+/*
+ * In unbelievably beautiful kludge from the depths of hell, reuse the
+ * 'Left' code for 'Right' by swapping M & N, and renaming routs; if you
+ * must be ill, please don't get it on the code . . .
+ */
+#ifdef Right_
+   #define trsmLU_4 trsmRU_4
+   #define trsmLU_3 trsmRU_3
+   #define trsmLU_2 trsmRU_2
+   #define trsmLL_4 trsmRL_4
+   #define trsmLL_3 trsmRL_3
+   #define trsmLL_2 trsmRL_2
+void Mjoin(PATL,CtrsmKR)
+   (enum ATLAS_UPLO Uplo, enum ATLAS_TRANS Trans, enum ATLAS_DIAG Diag,
+    const int N, const int M, const SCALAR alpha, const TYPE *A, const int lda,
+    TYPE *B, const int ldb)
+#else
+void Mjoin(PATL,CtrsmKL)
+   (enum ATLAS_UPLO Uplo, enum ATLAS_TRANS Trans, enum ATLAS_DIAG Diag,
+    const int M, const int N, const SCALAR alpha, const TYPE *A, const int lda,
+    TYPE *B, const int ldb)
+#endif
+{
+@skip   #ifdef TREAL
+@skip      int j;
+@skip      TYPE t0;
+@skip   #else
+   TYPE tmp[2], ra, ia;
+@skip   #endif
+   void *vp;
+   TYPE *a;
+
+   if (N > 0)
+   {
+      if (M > 1)
+      {
+         vp = malloc(ATL_Cachelen + ATL_MulBySize(M)*M);
+         ATL_assert(vp);
+         a = ATL_AlignPtr(vp);
+@skip Mjoin(PATL,set)(M*M, -9.0, a, 1);
+         Diag = trsmcopy(Uplo, Trans, Diag, M, alpha, A, lda, a);
+@skip Mjoin(PATL,geprint)("A", M, M, A, lda);
+@skip Mjoin(PATL,geprint)("a", M, M, a, M);
+         if (Trans != AtlasNoTrans)
+         {
+            if (Uplo == AtlasLower) Uplo = AtlasUpper;
+            else Uplo = AtlasLower;
+         }
+         switch(M)
+         {
+         case 2:
+            if (Uplo == AtlasLower) trsmLL_2(N, a, B, ldb);
+            else trsmLU_2(N, a, B, ldb);
+            break;
+         case 3:
+            if (Uplo == AtlasLower) trsmLL_3(N, a, B, ldb);
+            else trsmLU_3(N, a, B, ldb);
+            break;
+         case 4:
+            if (Uplo == AtlasLower) trsmLL_4(N, a, B, ldb);
+            else trsmLU_4(N, a, B, ldb);
+            break;
+@beginskip
+         #ifdef TREAL
+         case 8:
+            trsmLU_8(N, a, B, ldb);
+            break;
+         #endif
+@endskip
+         default: /* this crap should never be used */
+@beginskip
+            #ifdef TREAL
+               for (j=0; j != M; j++) a[j*(M+1)] = ATL_rone / a[j*(M+1)];
+               Mjoin(PATL,reftrsm)(AtlasLeft, Uplo, AtlasNoTrans, Diag, M, N,
+                                   ATL_rone, a, M, B, ldb);
+            #else
+@endskip
+               tmp[0] = ATL_rone; tmp[1] = ATL_rzero;
+               Mjoin(PATL,cplxinvert)(M, a, M+1, a, M+1);
+               Mjoin(PATL,reftrsm)(AtlasLeft, Uplo, AtlasNoTrans, Diag, M, N,
+                                   tmp, a, M, B, ldb);
+@skip            #endif
+         }
+         free(vp);
+      }
+      else if (M == 1)
+      {
+         if (Diag == AtlasUnit) 
+         #ifdef Right_
+            Mjoin(PATL,scal)(N, alpha, B, 1);
+         #else
+            Mjoin(PATL,scal)(N, alpha, B, ldb);
+         #endif
+@beginskip
+         #ifdef TREAL
+            else
+            {
+               t0 = alpha / *A;
+               Mjoin(PATL,scal)(N, t0, B, ldb);
+            }
+         #else
+@endskip
+         else
+         {
+            tmp[0] = A[0];
+            if (Trans != AtlasConjTrans) tmp[1] = A[1];
+            else tmp[1] = -A[1];
+            Mjoin(PATL,cplxinvert)(1, tmp, 1, tmp, 1); /* safe cplx invers */
+            ra = tmp[0]; ia = tmp[1];
+            tmp[0] = *alpha * ra - alpha[1] * ia;
+            tmp[1] = *alpha * ia + alpha[1] * ra;
+            #ifdef Right_
+               Mjoin(PATL,scal)(N, tmp, B, 1);
+            #else
+               Mjoin(PATL,scal)(N, tmp, B, ldb);
+            #endif
+         }
+@skip         #endif
+      }
+   }
+}
+#ifdef Right_
+   #undef  trsmLU_4
+   #undef  trsmLU_3
+   #undef  trsmLU_2
+   #undef  trsmLL_4
+   #undef  trsmLL_3
+   #undef  trsmLL_2
+#endif
+@ROUT ATL_TRSML ATL_TRSMR
+#ifdef Upper_
+   #ifdef Transpose_
+      #ifdef UnitDiag_
+         #define ATLP  UTU
+         #define ATLPt LNU
+         #define ATL_trcopy Mjoin(PATL,trcopyU2L_U)
+         #define ATL_invert Mjoin(PATL,trinvertLU)
+      #else
+         #define ATLP  UTN
+         #define ATLPt LNN
+         #define ATL_trcopy Mjoin(PATL,trcopyU2L_N)
+         #define ATL_invert Mjoin(PATL,trinvertLN)
+      #endif
+   #elif ConjTrans_
+      #ifdef UnitDiag_
+         #define ATLP  UCU
+         #define ATLPt LNU
+         #define ATL_trcopy Mjoin(PATL,trcopyU2Lc_U)
+         #define ATL_invert Mjoin(PATL,trinvertLU)
+      #else
+         #define ATLP  UCN
+         #define ATLPt LNN
+         #define ATL_trcopy Mjoin(PATL,trcopyU2Lc_N)
+         #define ATL_invert Mjoin(PATL,trinvertLN)
+      #endif
+   #else
+      #ifdef UnitDiag_
+         #define ATL_trcopy Mjoin(PATL,trcopyU2U_U)
+         #define ATL_invert Mjoin(PATL,trinvertUU)
+         #define ATLP UNU
+      #else
+         #define ATL_trcopy Mjoin(PATL,trcopyU2U_N)
+         #define ATL_invert Mjoin(PATL,trinvertUN)
+         #define ATLP UNN
+      #endif
+   #endif
+#else
+   #ifdef Transpose_
+      #ifdef UnitDiag_
+         #define ATL_trcopy Mjoin(PATL,trcopyL2U_U)
+         #define ATL_invert Mjoin(PATL,trinvertUU)
+         #define ATLP  LTU
+         #define ATLPt UNU
+      #else
+         #define ATL_trcopy Mjoin(PATL,trcopyL2U_N)
+         #define ATL_invert Mjoin(PATL,trinvertUN)
+         #define ATLP  LTN
+         #define ATLPt UNN
+      #endif
+   #elif defined(ConjTrans_)
+      #ifdef UnitDiag_
+         #define ATL_trcopy Mjoin(PATL,trcopyL2Uc_U)
+         #define ATL_invert Mjoin(PATL,trinvertUU)
+         #define ATLP  LCU
+         #define ATLPt UNU
+      #else
+         #define ATL_trcopy Mjoin(PATL,trcopyL2Uc_N)
+         #define ATL_invert Mjoin(PATL,trinvertUN)
+         #define ATLP  LCN
+         #define ATLPt UNN
+      #endif
+   #else
+      #ifdef UnitDiag_
+         #define ATL_trcopy Mjoin(PATL,trcopyL2L_U)
+         #define ATL_invert Mjoin(PATL,trinvertLU)
+         #define ATLP LNU
+      #else
+         #define ATL_trcopy Mjoin(PATL,trcopyL2L_N)
+         #define ATL_invert Mjoin(PATL,trinvertLN)
+         #define ATLP LNN
+      #endif
+   #endif
+#endif
+@ROUT ATL_trsmL ATL_trsmR
+
+#ifdef TREAL
+void Mjoin(ATL_trcopy,_a1)
+   (const int N, const SCALAR alpha0, const TYPE *A, const int lda, TYPE *C);
+#else
+void ATL_trcopy (const int N, const TYPE *A, const int lda, TYPE *C);
+#endif
+
+@ROUT ATL_trsmL
+#ifdef BIG_TRSM
+   void Mjoin(ATL_,big_trsm)
+#elif defined(SMALL_TRSM)
+   void Mjoin(ATL_,small_trsm)
+#else
+   void Mjoin(Mjoin(PATL,trsmL),ATLP)
+#endif
+   (const int M, const int N, const void *valpha, const void *A, const int lda,
+    void *C, const int ldc)
+{
+   const TYPE *alpha = valpha;
+#ifdef TREAL
+   #if defined(Transpose_) || defined(ConjTrans_)
+      if ( N > (M<<2) )
+      {
+         void *va;
+	 TYPE *a;
+
+         va = malloc(ATL_Cachelen + (ATL_MulBySize(M*M)));
+         ATL_assert(va);
+         a = ATL_AlignPtr(va);
+         #ifdef TREAL
+            Mjoin(ATL_trcopy,_a1)(M, ATL_rone, A, lda, a);
+         #else
+            ATL_trcopy(M, A, lda, a);
+         #endif
+         Mjoin(Mjoin(PATL,trsmKL),ATLPt)(M, N, *alpha, a, M, C, ldc);
+         free(va);
+      }
+      else Mjoin(PATL,reftrsm)(AtlasLeft, Uplo_, Trans_, Unit_, M, N, *alpha, 
+                               A, lda, C, ldc);
+   #else
+      Mjoin(Mjoin(PATL,trsmKL),ATLP)(M, N, *alpha, A, lda, C, ldc);
+   #endif
+#else
+   if (N > (M<<2) && M <= 4)
+      Mjoin(PATL,CtrsmKL)(Uplo_, Trans_, Unit_, M, N, valpha, A, lda, C, ldc);
+   else
+      Mjoin(PATL,reftrsm)(AtlasLeft, Uplo_, Trans_, Unit_, M, N, valpha, 
+                          A, lda, C, ldc);
+
+@beginskip
+   if (M > 4)
+   {
+      Mjoin(PATL,reftrsm)(AtlasLeft, Uplo_, Trans_, Unit_, M, N, valpha, 
+                          A, lda, C, ldc);
+   }
+/*
+ * For M == 1 case, just scale forUnitDiag, otherwise just scale
+ * B by inverse of diagonal entry times alpha
+ */
+   else if (M == 1)
+   {
+      #ifdef UnitDiag_
+         if ( !SCALAR_IS_ONE(alpha) ) Mjoin(PATL,scal)(N, alpha, C, ldc);
+      #else
+         TYPE aa[2];
+	 const TYPE *pA=A;
+         const register TYPE ralp=(*alpha), ialp=alpha[1];
+         register TYPE ra, ia;
+
+         aa[0] = *pA; 
+         #ifdef ConjTrans_
+            aa[1] = -pA[1];
+         #else
+            aa[1] = pA[1];
+         #endif
+         Mjoin(PATL,cplxinvert)(1, aa, 1, aa, 1);  /* safe complex inversion */
+         ra = aa[0]; ia = aa[1];
+         aa[0] = ralp * ra - ialp * ia;
+         aa[1] = ralp * ia + ialp * ra;
+         Mjoin(PATL,scal)(N, aa, C, ldc);
+      #endif
+   }
+@endskip
+#endif
+}
+@ROUT ATL_trsmR
+void Mjoin(Mjoin(PATL,trsmR),ATLP)
+   (const int M, const int N, const void *valpha, const void *A, const int lda,
+    void *C, const int ldc)
+{
+   const TYPE *alpha=valpha;
+#ifdef TREAL
+   #if defined(Transpose_) || defined(ConjTrans_)
+      if ( M > (N<<2) )
+      {
+         void *va;
+	 TYPE *a;
+
+         va = malloc(ATL_Cachelen + (ATL_MulBySize(N*N)));
+         ATL_assert(va);
+         a = ATL_AlignPtr(va);
+         #ifdef TREAL
+            Mjoin(ATL_trcopy,_a1)(N, ATL_rone, A, lda, a);
+         #else
+            ATL_trcopy(N, A, lda, a);
+         #endif
+         Mjoin(Mjoin(PATL,trsmKR),ATLPt)(M, N, *alpha, a, N, C, ldc);
+         free(va);
+      }
+      else Mjoin(PATL,reftrsm)(AtlasRight, Uplo_, Trans_, Unit_, M, N, *alpha, 
+                               A, lda, C, ldc);
+   #else
+      Mjoin(Mjoin(PATL,trsmKR),ATLP)(M, N, *alpha, A, lda, C, ldc);
+   #endif
+#else
+   if (M > (N<<2) && N <= 4)
+      Mjoin(PATL,CtrsmKR)(Uplo_, Trans_, Unit_, M, N, valpha, A, lda, C, ldc);
+   else 
+      Mjoin(PATL,reftrsm)(AtlasRight, Uplo_, Trans_, Unit_, M, N, alpha,
+                          A, lda, C, ldc);
+@beginskip
+   if (N > 1)
+   {
+      Mjoin(PATL,reftrsm)(AtlasRight, Uplo_, Trans_, Unit_, M, N, alpha, 
+                          A, lda, C, ldc);
+   }
+/*
+ * For N == 1 case, apply alpha only for UnitDiag, otherwise just scale
+ * B by inverse of diagonal entry * alpha
+ */
+   else if (N == 1)
+   {
+      #ifdef UnitDiag_
+         if ( !SCALAR_IS_ONE(alpha) ) Mjoin(PATL,scal)(M, alpha, C, 1);
+      #else
+         TYPE aa[2];
+	 const TYPE *pA=A;
+         const register TYPE ralp=(*alpha), ialp=alpha[1];
+         register TYPE ra, ia;
+
+         aa[0] = *pA; 
+         #ifdef ConjTrans_
+            aa[1] = -pA[1];
+         #else
+            aa[1] = pA[1];
+         #endif
+         Mjoin(PATL,cplxinvert)(1, aa, 1, aa, 1);  /* safe complex inversion */
+         ra = aa[0]; ia = aa[1];
+         aa[0] = ralp * ra - ialp * ia;
+         aa[1] = ralp * ia + ialp * ra;
+         Mjoin(PATL,scal)(M, aa, C, 1);
+      #endif
+   }
+@endskip
+#endif
+}
+@ROUT ATL_trsmL0
+#if !defined(BIG_TRSM) && !defined(SMALL_TRSM)
+   #include Mstr( Mjoin(Mjoin(atlas_,PRE),trsmXover.h) )
+   #ifndef TRSM_LUNN_Xover
+      #define TRSM_LUNN_Xover (M<<3)
+   #endif
+   #ifndef TRSM_LUTN_Xover
+      #define TRSM_LUTN_Xover (M<<3)
+   #endif
+   #ifndef TRSM_LLNN_Xover
+      #define TRSM_LLNN_Xover (M<<3)
+   #endif
+   #ifndef TRSM_LLTN_Xover
+      #define TRSM_LLTN_Xover (M<<3)
+   #endif
+#endif
+
+#ifdef TREAL
+   #ifndef BIG_TRSM
+
+      #ifdef Transpose_
+void Mjoin(Mjoin(PATL,trsmKL),ATLPt)
+   (const int M, const int N, const SCALAR alpha, const TYPE *A, const int lda,
+    TYPE *B, const int ldb);
+      #else
+void Mjoin(Mjoin(PATL,trsmKL),ATLP)
+   (const int M, const int N, const SCALAR alpha, const TYPE *A, const int lda,
+    TYPE *B, const int ldb);
+   #endif
+@ROUT ATL_trsmL0
+
+#endif
+
+#endif
+#endif
+
+#ifdef BIG_TRSM
+void Mjoin(ATL_,big_trsm)
+#elif defined(SMALL_TRSM)
+void Mjoin(ATL_,small_trsm)
+#else
+void Mjoin(Mjoin(PATL,trsmL),ATLP)
+#endif
+   (const int M, const int N, const void *valpha, const void *A, const int lda,
+    void *C, const int ldc)
+{
+   #ifdef TREAL
+      const SCALAR alpha=*( (const SCALAR *)valpha );
+      const SCALAR one=1.0, zero=0.0;
+   #else
+      #define alpha valpha
+      const TYPE zero[2]={0.0,0.0};
+   #endif
+   void *va;
+   TYPE *a;
+
+#ifdef TREAL
+#ifndef BIG_TRSM
+#ifndef SMALL_TRSM
+   #ifdef Upper_
+      #ifdef Transpose_
+         if (N < TRSM_LUTN_Xover)
+      #else
+         if (N < TRSM_LUNN_Xover)
+      #endif
+   #else
+      #ifdef Transpose_
+         if (N < TRSM_LLTN_Xover)
+      #else
+         if (N < TRSM_LLNN_Xover)
+      #endif
+   #endif
+#endif
+   {
+      #if defined(Transpose_) || defined(ConjTrans_)
+         va = malloc(ATL_Cachelen + (ATL_MulBySize(M*M)));
+         ATL_assert(va);
+         a = ATL_AlignPtr(va);
+         #ifdef TREAL
+            Mjoin(ATL_trcopy,_a1)(M, one, A, lda, a);
+         #else
+            ATL_trcopy(M, A, lda, a);
+         #endif
+         Mjoin(Mjoin(PATL,trsm0L),ATLPt)(M, N, alpha, a, M, C, ldc);
+         free(va);
+      #else
+         Mjoin(Mjoin(PATL,trsm0L),ATLP)(M, N, alpha, A, lda, C, ldc);
+      #endif
+      return;
+   }
+#endif
+#else
+   if (N <= TRSM_Xover)
+   {
+      Mjoin(PATL,reftrsm)(AtlasLeft, Uplo_, Trans_, Unit_, M, N, alpha, 
+                            A, lda, C, ldc);
+      return;
+   }
+#endif
+   va = malloc(ATL_Cachelen + (ATL_MulBySize(M*M)));
+   ATL_assert(va);
+   a = ATL_AlignPtr(va);
+   #ifdef TREAL
+      Mjoin(ATL_trcopy,_a1)(M, one, A, lda, a);
+   #else
+      ATL_trcopy(M, A, lda, a);
+   #endif
+   ATL_invert(M, a, M);
+   CAgemmNN(M, N, M, alpha, a, M, C, ldc, zero, C, ldc);
+   free(va);
+}
+@ROUT ATL_trsmR0
+void Mjoin(Mjoin(PATL,trsmR),ATLP)
+   (const int M, const int N, const void *valpha, const void *A, const int lda,
+    void *C, const int ldc)
+{
+   #ifdef TREAL
+      const SCALAR alpha=*( (const SCALAR *)valpha );
+      const SCALAR one=1.0, zero=0.0;
+   #else
+      #define alpha valpha
+      const TYPE zero[2]={0.0,0.0};
+   #endif
+   void *va;
+   TYPE *a;
+
+   if (M > TRSM_Xover)
+   {
+      va = malloc(ATL_Cachelen + ATL_MulBySize(N)*N);
+      ATL_assert(va);
+      a = ATL_AlignPtr(va);
+      #ifdef TREAL
+         Mjoin(ATL_trcopy,_a1)(N, one, A, lda, a);
+      #else
+         ATL_trcopy(N, A, lda, a);
+      #endif
+      ATL_invert(N, a, N);
+      CAgemmNN(M, N, N, alpha, C, ldc, a, N, zero, C, ldc);
+      free(va);
+   }
+   else Mjoin(PATL,reftrsm)(AtlasRight, Uplo_, Trans_, Unit_, M, N, alpha, 
+                            A, lda, C, ldc);
+}
+@ROUT ATL_trputL
+#ifdef TREAL
+
+void Mjoin(Mjoin(PATL,trputL),BNM)
+   (const int N, const TYPE *v, const SCALAR beta0, TYPE *A, const int lda)
+/*
+ * Writes the lower part of an NxN workspace v to the lower part of the array A
+ */
+{
+   register int i, j;
+   const register SCALAR beta=beta0;
+
+   for (j=0; j != N; j++)
+   {
+      for (i=j; i != N; i++) 
+         #if defined(BETA1)
+            A[i] += v[i];
+         #elif defined(BETA0)
+            A[i] = v[i];
+         #else
+            A[i] = beta*A[i] + v[i];
+         #endif
+      v += N;
+      A += lda;
+   }
+}
+
+#else
+
+#ifdef Herm_
+   void Mjoin(Mjoin(PATL,heputL),BNM)
+#else
+   void Mjoin(Mjoin(PATL,trputL),BNM)
+#endif
+   (const int N, const TYPE *v, const SCALAR beta0, TYPE *A, const int lda)
+/*
+ * Writes the lower part of an NxN workspace v to the lower part of the array A
+ */
+{
+   int i, j2;
+   const int N2=N<<1, lda2=lda<<1;
+   #ifdef Herm_
+      const TYPE zero=0.0;
+   #endif
+   #ifdef BETAXI0
+      const register TYPE rbeta=*beta0;
+   #elif defined(BETAX)
+      register TYPE ra, ia;
+      const register TYPE rbeta=*beta0, ibeta=beta0[1];
+   #endif
+   for (j2=0; j2 != N2; j2 += 2)
+   {
+      #ifdef BETA1
+         A[j2] += v[j2];
+         #ifdef Herm_
+            A[j2+1] = zero;
+         #else
+            A[j2+1] += v[j2+1];
+         #endif
+         if (N2 != j2) for (i=j2+2; i != N2; i++) A[i] += v[i];
+      #elif defined(BETA0)
+         A[j2] = v[j2];
+         #ifdef Herm_
+            A[j2+1] = zero;
+         #else
+            A[j2+1] = v[j2+1];
+         #endif
+         if (N2 != j2) for (i=j2+2; i != N2; i++) A[i] = v[i];
+      #elif defined(BETAN1) || defined(BETAXI0)
+         A[j2] = ATL_MulByBETA(A[j2]) + v[j2];
+         #ifdef Herm_
+            A[j2+1] = zero;
+         #else
+            A[j2+1] = ATL_MulByBETA(A[j2+1]) + v[j2+1];
+         #endif
+         if (N2 != j2) 
+            for (i=j2+2; i != N2; i++) A[i] = ATL_MulByBETA(A[i]) + v[i];
+      #else
+         for (i=j2; i != N2; i += 2)
+         {
+            ra = A[i];
+            ia = A[i+1];
+            A[i] = ra*rbeta - ia*ibeta + v[i];
+            A[i+1] = ra*ibeta + ia*rbeta + v[i+1];
+         }
+      #endif
+      v += N2;
+      A += lda2;
+   }
+}
+
+#endif
+@ROUT ATL_trputU
+#ifdef TREAL
+
+void Mjoin(Mjoin(PATL,trputU),BNM)
+   (const int N, const TYPE *v, const SCALAR beta0, TYPE *A, const int lda)
+/*
+ * Writes the upper part of an NxN workspace v to the upper part of the array A
+ */
+{
+   register int i, j;
+   const register SCALAR beta=beta0;
+
+   for (j=0; j != N; j++)
+   {
+      for (i=0; i <= j; i++) 
+         #if defined(BETA1)
+            A[i] += v[i];
+         #elif defined(BETA0)
+            A[i] = v[i];
+         #else
+            A[i] = beta*A[i] + v[i];
+         #endif
+      v += N;
+      A += lda;
+   }
+}
+
+#else
+
+#ifdef Herm_
+   void Mjoin(Mjoin(PATL,heputU),BNM)
+#else
+   void Mjoin(Mjoin(PATL,trputU),BNM)
+#endif
+   (const int N, const TYPE *v, const SCALAR beta0, TYPE *A, const int lda)
+/*
+ * Writes the upper part of an NxN workspace v to the upper part of the array A
+ */
+{
+   int i, j2;
+   const int N2=N<<1, lda2=lda<<1;
+   #ifdef Herm_
+      const TYPE zero=0.0;
+   #endif
+   #ifdef BETAXI0
+      const register TYPE rbeta=*beta0;
+   #elif defined(BETAX)
+      register TYPE ra, ia;
+      const register TYPE rbeta=*beta0, ibeta=beta0[1];
+   #endif
+
+   for (j2=0; j2 != N2; j2 += 2)
+   {
+      #ifdef BETA1
+         for (i=0; i != j2; i++) A[i] += v[i];
+         A[j2] += v[j2];
+         #ifdef Herm_
+            A[j2+1] = zero;
+         #else
+            A[j2+1] += v[j2+1];
+         #endif
+      #elif defined(BETA0)
+         for (i=0; i != j2; i++) A[i] = v[i];
+         A[j2] = v[j2];
+         #ifdef Herm_
+            A[j2+1] = zero;
+         #else
+            A[j2+1] = v[j2+1];
+         #endif
+      #elif defined(BETAN1) || defined(BETAXI0)
+         for (i=0; i != j2; i++) A[i] = ATL_MulByBETA(A[i]) + v[i];
+         A[j2] = ATL_MulByBETA(A[j2]) + v[j2];
+         #ifdef Herm_
+            A[j2+1] = zero;
+         #else
+            A[j2+1] = ATL_MulByBETA(A[j2+1]) + v[j2+1];
+         #endif
+      #else
+/*
+ *       Last iteration unrolled to get around compiler error on IA64
+ */
+         for (i=0; i != j2; i += 2)
+         {
+            ra = A[i];
+            ia = A[i+1];
+            A[i] = ra*rbeta - ia*ibeta + v[i];
+            A[i+1] = ra*ibeta + ia*rbeta + v[i+1];
+         }
+         #ifdef Herm_
+            #error "Hermitian matrix must have real BETA"
+         #else
+            ra = A[j2];
+            ia = A[j2+1];
+            A[j2] = ra*rbeta - ia*ibeta + v[j2];
+            A[j2+1] = ra*ibeta + ia*rbeta + v[j2+1];
+         #endif
+      #endif
+      v += N2;
+      A += lda2;
+   }
+}
+
+#endif
+@ROUT ATL_herk_N
+#define her_put Mjoin(Mjoin(PATL,heput),UploNM)
+void Mjoin(Mjoin(Mjoin(PATL,herk),UploNM),N)
+   (const int N, const int K, const void *valpha, const void *A, const int lda, 
+    const void *vbeta, void *C, const int ldc)
+{
+   void *vc;
+   TYPE *c;
+   TYPE alpha[2];
+   const TYPE beta = *( (const TYPE *)vbeta  );
+   const TYPE zero[2] = {0.0, 0.0};
+
+   alpha[0] = *( (const TYPE *)valpha );
+   if (K > HERK_Xover)
+   {
+      alpha[1] = 0.0;
+      vc = malloc(ATL_Cachelen+ATL_MulBySize(N)*N);
+      ATL_assert(vc);
+      c = ATL_AlignPtr(vc);
+      CgemmNC(N, N, K, alpha, A, lda, A, lda, zero, c, N);
+      if ( beta == 1.0 ) Mjoin(her_put,_b1)(N, c, vbeta, C, ldc);
+      else if ( beta == 0.0 ) Mjoin(her_put,_b0)(N, c, vbeta, C, ldc);
+      else Mjoin(her_put,_bXi0)(N, c, vbeta, C, ldc);
+      free(vc);
+   }
+   else Mjoin(PATL,refherk)(Uplo_, AtlasNoTrans, N, K, *alpha, A, lda, 
+                            beta, C, ldc);
+}
+@ROUT ATL_herk_T
+#define her_put Mjoin(Mjoin(PATL,heput),UploNM)
+void Mjoin(Mjoin(Mjoin(PATL,herk),UploNM),C)
+   (const int N, const int K, const void *valpha, const void *A, const int lda, 
+    const void *vbeta, void *C, const int ldc)
+{
+   void *vc;
+   TYPE *c;
+   TYPE alpha[2];
+   const TYPE beta =*( (const TYPE *)vbeta  );
+   const TYPE zero[2]={0.0, 0.0};
+
+   alpha[0] = *( (const TYPE *)valpha );
+   if (K > HERK_Xover)
+   {
+      alpha[1] = 0.0;
+      vc = malloc(ATL_Cachelen+ATL_MulBySize(N)*N);
+      ATL_assert(vc);
+      c = ATL_AlignPtr(vc);
+      CgemmCN(N, N, K, alpha, A, lda, A, lda, zero, c, N);
+      if (beta == 1.0) Mjoin(her_put,_b1)(N, c, vbeta, C, ldc);
+      else if (beta == 0.0) Mjoin(her_put,_b0)(N, c, vbeta, C, ldc);
+      else Mjoin(her_put,_bXi0)(N, c, vbeta, C, ldc);
+      free(vc);
+   }
+   else Mjoin(PATL,refherk)(Uplo_, AtlasTrans, N, K, *alpha, A, lda, 
+                            beta, C, ldc);
+}
+@ROUT ATL_syrk_N
+#define syr_put Mjoin(Mjoin(PATL,trput),UploNM)
+void Mjoin(Mjoin(Mjoin(PATL,syrk),UploNM),N)
+      (const int N, const int K, const void *valpha, const void *A,
+       const int lda, const void *vbeta, void *C, const int ldc)
+{
+   void *vc;
+   TYPE *c;
+   #ifdef TREAL
+      const SCALAR alpha=*( (const SCALAR *)valpha );
+      const SCALAR beta =*( (const SCALAR *)vbeta  );
+      const SCALAR one=1.0, zero=0.0;
+   #else
+      #define alpha valpha
+      const TYPE *beta=vbeta;
+      const TYPE one[2]={1.0,0.0}, zero[2]={0.0,0.0};
+   #endif
+
+   if (K > SYRK_Xover)
+   {
+      vc = malloc(ATL_Cachelen+ATL_MulBySize(N)*N);
+      ATL_assert(vc);
+      c = ATL_AlignPtr(vc);
+      CgemmNT(N, N, K, alpha, A, lda, A, lda, zero, c, N);
+      if ( SCALAR_IS_ONE(beta) ) Mjoin(syr_put,_b1)(N, c, beta, C, ldc);
+      else if ( SCALAR_IS_ZERO(beta) ) Mjoin(syr_put,_b0)(N, c, beta, C, ldc);
+      #ifdef TCPLX
+         else if ( SCALAR_IS_NONE(beta) ) 
+              Mjoin(syr_put,_bn1)(N, c, beta, C, ldc);
+         else if (beta[1] == *zero) Mjoin(syr_put,_bXi0)(N, c, beta, C, ldc);
+      #endif
+      else Mjoin(syr_put,_bX)(N, c, beta, C, ldc);
+      free(vc);
+   }
+   else Mjoin(PATL,refsyrk)(Uplo_, AtlasNoTrans, N, K, alpha, A, lda, 
+                            beta, C, ldc);
+}
+@ROUT ATL_syrk_T
+#define syr_put Mjoin(Mjoin(PATL,trput),UploNM)
+void Mjoin(Mjoin(Mjoin(PATL,syrk),UploNM),T)
+   (const int N, const int K, const void *valpha, const void *A, const int lda, 
+    const void *vbeta, void *C, const int ldc)
+{
+   void *vc;
+   TYPE *c;
+   #ifdef TREAL
+      const SCALAR alpha=*( (const SCALAR *)valpha );
+      const SCALAR beta =*( (const SCALAR *)vbeta  );
+      const SCALAR one=1.0, zero=0.0;
+   #else
+      #define alpha valpha
+      const TYPE *beta=vbeta;
+      const TYPE one[2]={1.0,0.0}, zero[2]={0.0,0.0};
+   #endif
+
+   if (K > SYRK_Xover)
+   {
+      vc = malloc(ATL_Cachelen+ATL_MulBySize(N)*N);
+      ATL_assert(vc);
+      c = ATL_AlignPtr(vc);
+      CgemmTN(N, N, K, alpha, A, lda, A, lda, zero, c, N);
+      if ( SCALAR_IS_ONE(beta) ) Mjoin(syr_put,_b1)(N, c, beta, C, ldc);
+      else if ( SCALAR_IS_ZERO(beta) ) Mjoin(syr_put,_b0)(N, c, beta, C, ldc);
+      #ifdef TCPLX
+         else if ( SCALAR_IS_NONE(beta) )
+            Mjoin(syr_put,_bn1)(N, c, beta, C, ldc);
+         else if (beta[1] == *zero) Mjoin(syr_put,_bXi0)(N, c, beta, C, ldc);
+      #endif
+      else Mjoin(syr_put,_bX)(N, c, beta, C, ldc);
+      free(vc);
+   }
+   else Mjoin(PATL,refsyrk)(Uplo_, AtlasTrans, N, K, alpha, A, lda, 
+                            beta, C, ldc);
+}
+@ROUT ATL_syr2k_putL ATL_syr2k_putU
+#ifdef Herm_
+   #define MPi -
+#else
+   #define MPi +
+#endif
+@ROUT ATL_syr2k_putL
+#ifdef TREAL
+
+void Mjoin(Mjoin(PATL,syr2k_putL),BNM)
+   (const int N, const TYPE *D, const SCALAR beta0, TYPE *A, const int lda)
+
+/*
+ * Takes D with property (D + D') = (D + D')', and writes it to
+ * lower part of symmetric matrix A
+ */
+{
+   register int i, j;
+   const TYPE *Dc=D, *Dr;
+   TYPE *Ac=A;
+   const register SCALAR beta=beta0;
+
+   for (j=0; j != N; j++)
+   {
+      for (Dr=Dc+j, i=j; i != N; i++, Dr += N)
+         #if defined(BETA1)
+            Ac[i] += Dc[i] + *Dr;
+         #elif defined (BETA0)
+            Ac[i] =  Dc[i] + *Dr;
+         #else
+            Ac[i] = Ac[i]*beta + Dc[i] + *Dr;
+         #endif
+      Ac += lda;
+      Dc += N;
+   }
+}
+
+#else
+
+/*
+ * Workaround for icc errors on IA64Itan2
+ */
+#ifdef ATL_IntelIccBugs
+#pragma optimize("", off)
+#endif
+#ifdef Herm_
+   void Mjoin(Mjoin(PATL,her2k_putL),BNM)
+#else
+   void Mjoin(Mjoin(PATL,syr2k_putL),BNM)
+#endif
+   (const int N, const TYPE *D, const SCALAR beta0, TYPE *A, const int lda)
+
+/*
+ * Takes D with property (D + D') = (D + D')', and writes it to
+ * lower part of symmetric matrix A
+ */
+{
+   register int i, j2;
+   const int N2=N<<1, lda2=lda<<1;
+   #define ldD2 N2
+   #ifdef Herm_
+      const TYPE zero=0.0;
+   #endif
+   const TYPE *Dc=D, *Dr;
+   #ifdef BETAXI0
+      const register TYPE rbeta=*beta0;
+   #elif defined(BETAX)
+      register TYPE ra, ia;
+      const register TYPE rbeta=*beta0, ibeta=beta0[1];
+   #endif
+
+   for (j2=0; j2 != N2; j2 += 2)
+   {
+      Dr = Dc + j2 + ldD2;
+      #ifdef BETA1
+         A[j2] += Dc[j2] + Dc[j2];
+         #ifdef Herm_
+            A[j2+1] = zero;
+         #else
+            A[j2+1] += Dc[j2+1] + Dc[j2+1];
+         #endif
+         if (N2 != j2)
+         {
+            for (i=j2+2; i != N2; i += 2, Dr += ldD2)
+            {
+               A[i] += Dc[i] + *Dr;
+               A[i+1] += Dc[i+1] MPi Dr[1];
+            }
+         }
+      #elif defined(BETA0)
+         A[j2] = Dc[j2] + Dc[j2];
+         #ifdef Herm_
+            A[j2+1] = zero;
+         #else
+            A[j2+1] = Dc[j2+1] + Dc[j2+1];
+         #endif
+         if (N2 != j2)
+         {
+            for (i=j2+2; i != N2; i += 2, Dr += ldD2)
+            {
+               A[i] = Dc[i] + *Dr;
+               A[i+1] = Dc[i+1] MPi Dr[1];
+            }
+         }
+      #elif defined(BETAN1) || defined(BETAXI0)
+         A[j2] = ATL_MulByBETA(A[j2]) + Dc[j2] + Dc[j2];
+         #ifdef Herm_
+            A[j2+1] = zero;
+         #else
+            A[j2+1] = ATL_MulByBETA(A[j2+1]) + Dc[j2+1] + Dc[j2+1];
+         #endif
+         if (N2 != j2)
+         {
+            for (i=j2+2; i != N2; i += 2, Dr += ldD2) 
+            {
+               A[i] = ATL_MulByBETA(A[i]) + Dc[i] + *Dr;
+               A[i+1] = ATL_MulByBETA(A[i+1]) + Dc[i+1] MPi Dr[1];
+            }
+         }
+      #else
+         ra = A[j2];
+         ia = A[j2+1];
+         A[j2] = ra*rbeta - ia*ibeta + Dc[j2] + Dc[j2];
+         A[j2+1] = rbeta*ia + ibeta*ra + Dc[j2+1] + Dc[j2+1];
+         if (j2 != N2)
+         {
+            for (i=j2+2; i != N2; i += 2, Dr += ldD2) 
+            {
+               ra = A[i];
+               ia = A[i+1];
+               A[i] = ra*rbeta - ia*ibeta + Dc[i] + *Dr;
+               A[i+1] = rbeta*ia + ibeta*ra + Dc[i+1] + Dr[1];
+            }
+         }
+      #endif
+      A += lda2;
+      Dc += ldD2;
+   }
+}
+
+#endif
+@ROUT ATL_syr2k_putU
+#ifdef TREAL
+void Mjoin(Mjoin(PATL,syr2k_putU),BNM)
+   (const int N, const TYPE *D, const SCALAR beta0, TYPE *A, const int lda)
+
+/*
+ * Takes D with property (D + D') = (D + D')', and writes it to
+ * upper part of symetric matrix A
+ */
+{
+   register int i, j;
+   const int ldap1 = lda+1;
+   const TYPE *Dc=D, *Dr;
+   TYPE *Ad=A, *Ar;
+   const register SCALAR beta=beta0;
+
+   for (j=0; j != N; j++)
+   {
+      for (Dr=Dc+j, Ar=Ad, i=j; i != N; i++, Dr += N, Ar += lda)
+         #if defined(BETA1)
+            *Ar += Dc[i] + *Dr;
+         #elif defined (BETA0)
+            *Ar =  Dc[i] + *Dr;
+         #else
+            *Ar = *Ar*beta + Dc[i] + *Dr;
+         #endif
+      Ad += ldap1;
+      Dc += N;
+   }
+}
+
+#else
+
+/*
+ * Workaround for icc errors on IA64Itan2
+ */
+#ifdef ATL_IntelIccBugs
+#pragma optimize("", off)
+#endif
+#ifdef Herm_
+   void Mjoin(Mjoin(PATL,her2k_putU),BNM)
+#else
+   void Mjoin(Mjoin(PATL,syr2k_putU),BNM)
+#endif
+   (const int N, const TYPE *D, const SCALAR beta0, TYPE *A, const int lda)
+
+/*
+ * Takes D with property (D + D') = (D + D')', and writes it to
+ * upper part of symetric matrix A
+ */
+{
+   register int i, j2;
+   const int N2=N<<1, lda2=lda<<1;
+   #define ldD2 N2
+   #ifdef Herm_
+      const TYPE zero=0.0;
+   #endif
+   const TYPE *Dc=D, *Dr;
+   #ifdef BETAXI0
+      const register TYPE rbeta=*beta0;
+   #elif defined(BETAX)
+      register TYPE ra, ia;
+      const register TYPE rbeta=*beta0, ibeta=beta0[1];
+   #endif
+
+   for (j2=0; j2 != N2; j2 += 2)
+   {
+      Dr = D + j2;
+      #ifdef BETA1
+         for (i=0; i != j2; i += 2, Dr += ldD2)
+         {
+            A[i] += Dc[i] + *Dr;
+            A[i+1] += Dc[i+1] MPi Dr[1];
+         }
+         A[j2] += Dc[j2] + Dc[j2];
+         #ifdef Herm_
+            A[j2+1] = zero;
+         #else
+            A[j2+1] += Dc[j2+1] + Dc[j2+1];
+         #endif
+      #elif defined(BETA0)
+         for (i=0; i != j2; i += 2, Dr += ldD2)
+         {
+            A[i] = Dc[i] + *Dr;
+            A[i+1] = Dc[i+1] MPi Dr[1];
+         }
+         A[j2] = Dc[j2] + Dc[j2];
+         #ifdef Herm_
+            A[j2+1] = zero;
+         #else
+            A[j2+1] = Dc[j2+1] + Dc[j2+1];
+         #endif
+      #elif defined(BETAN1) || defined(BETAXI0)
+         for (i=0; i != j2; i += 2, Dr += ldD2) 
+         {
+            A[i] = ATL_MulByBETA(A[i]) + Dc[i] + *Dr;
+            A[i+1] = ATL_MulByBETA(A[i+1]) + Dc[i+1] MPi Dr[1];
+         }
+         A[j2] = ATL_MulByBETA(A[j2]) + Dc[j2] + Dc[j2];
+         #ifdef Herm_
+            A[j2+1] = zero;
+         #else
+            A[j2+1] = ATL_MulByBETA(A[j2+1]) + Dc[j2+1] + Dc[j2+1];
+         #endif
+      #else
+         for (i=0; i != j2; i += 2, Dr += ldD2) 
+         {
+            ra = A[i]; ia = A[i+1];
+            A[i] = ra*rbeta - ia*ibeta + Dc[i] + *Dr;
+            A[i+1] = rbeta*ia + ibeta*ra + Dc[i+1] + Dr[1];
+         }
+         #ifdef Herm_
+            A[j2] = A[j2]*rbeta + 2.0*Dc[j2];
+            A[j2+1] = ATL_rzero;
+         #else
+            ra = A[j2]; ia = A[j2+1];
+            A[j2] = ra*rbeta - ia*ibeta + 2.0*Dc[j2];
+            A[j2+1] = rbeta*ia + ibeta*ra + 2.0*Dc[j2+1];
+         #endif
+      #endif
+      A += lda2;
+      Dc += ldD2;
+   }
+}
+
+#endif
+@ROUT ATL_syr2k_putL ATL_syr2k_putU
+#undef MPi
+@ROUT ATL_her2k
+#ifdef Upper_
+   #define her2k_put Mjoin(PATL,her2k_putU)
+   #ifdef Transpose_
+      int Mjoin(PATL,her2kUC)
+   #else
+      int Mjoin(PATL,her2kUN)
+   #endif
+#else
+   #define her2k_put Mjoin(PATL,her2k_putL)
+   #ifdef Transpose_
+      int Mjoin(PATL,her2kLC)
+   #else
+      int Mjoin(PATL,her2kLN)
+   #endif
+#endif
+   (const int N, const int K, const void *valpha, const void *A, const int lda, 
+    const void *B, const int ldb, const void *vbeta, void *C, const int ldc)
+{
+   int i;
+   void *vc=NULL;
+   TYPE *c;
+   const TYPE beta =*( (const TYPE *)vbeta  );
+   const TYPE zero[2]={0.0, 0.0};
+
+   i = ATL_MulBySize(N)*N;
+   if (i <= ATL_MaxMalloc) vc = malloc(ATL_Cachelen+i);
+   if (vc == NULL) return(1);
+   c = ATL_AlignPtr(vc);
+   #ifdef Transpose_
+      CgemmCN(N, N, K, valpha, A, lda, B, ldb, zero, c, N);
+   #else
+      CgemmNC(N, N, K, valpha, A, lda, B, ldb, zero, c, N);
+   #endif
+   if ( beta == 1.0 ) Mjoin(her2k_put,_b1)(N, c, vbeta, C, ldc);
+   else if ( beta == 0.0 ) Mjoin(her2k_put,_b0)(N, c, vbeta, C, ldc);
+   else Mjoin(her2k_put,_bXi0)(N, c, vbeta, C, ldc);
+   free(vc);
+   return(0);
+}
+@ROUT ATL_syr2k_N
+#ifdef Upper_
+   #define syr2k_put Mjoin(PATL,syr2k_putU)
+   int Mjoin(PATL,syr2kUN)
+#else
+   #define syr2k_put Mjoin(PATL,syr2k_putL)
+   int Mjoin(PATL,syr2kLN)
+#endif
+   (const int N, const int K, const void *valpha, const void *A, const int lda, 
+    const void *B, const int ldb, const void *vbeta, void *C, const int ldc)
+{
+   int i;
+   void *vc=NULL;
+   TYPE *c;
+   #ifdef TREAL
+      const SCALAR alpha=*( (const SCALAR *)valpha );
+      const SCALAR beta =*( (const SCALAR *)vbeta  );
+      const SCALAR one=1.0, zero=0.0;
+   #else
+      #define alpha valpha
+      const TYPE *beta=vbeta;
+      const TYPE one[2]={1.0,0.0}, zero[2]={0.0,0.0};
+   #endif
+
+   i = ATL_MulBySize(N)*N;
+   if (i <= ATL_MaxMalloc) vc = malloc(ATL_Cachelen+i);
+   if (vc == NULL) return(1);
+   c = ATL_AlignPtr(vc);
+   CgemmNT(N, N, K, alpha, A, lda, B, ldb, zero, c, N);
+   if ( SCALAR_IS_ONE(beta) ) Mjoin(syr2k_put,_b1)(N, c, beta, C, ldc);
+   else if ( SCALAR_IS_ZERO(beta) ) Mjoin(syr2k_put,_b0)(N, c, beta, C, ldc);
+   #ifdef TCPLX
+      else if (SCALAR_IS_NONE(beta)) Mjoin(syr2k_put,_bn1)(N, c, beta, C, ldc);
+      else if (beta[1] == *zero) Mjoin(syr2k_put,_bXi0)(N, c, beta, C, ldc);
+   #endif
+   else Mjoin(syr2k_put,_bX)(N, c, beta, C, ldc);
+   free(vc);
+   return(0);
+}
+@ROUT ATL_syr2k_T
+#ifdef Upper_
+   #define syr2k_put Mjoin(PATL,syr2k_putU)
+   int Mjoin(PATL,syr2kUT)
+#else
+   #define syr2k_put Mjoin(PATL,syr2k_putL)
+   int Mjoin(PATL,syr2kLT)
+#endif
+   (const int N, const int K, const void *valpha, const void *A, const int lda, 
+    const void *B, const int ldb, const void *vbeta, void *C, const int ldc)
+{
+   int i;
+   void *vc=NULL;
+   TYPE *c;
+   #ifdef TREAL
+      const SCALAR alpha=*( (const SCALAR *)valpha );
+      const SCALAR beta =*( (const SCALAR *)vbeta  );
+      const SCALAR one=1.0, zero=0.0;
+   #else
+      #define alpha valpha
+      const TYPE *beta=vbeta;
+      const TYPE one[2]={1.0,0.0}, zero[2]={0.0,0.0};
+   #endif
+
+   i = ATL_MulBySize(N)*N;
+   if (i <= ATL_MaxMalloc) vc = malloc(ATL_Cachelen+i);
+   if (vc == NULL) return(1);
+   c = ATL_AlignPtr(vc);
+   CgemmTN(N, N, K, alpha, A, lda, B, ldb, zero, c, N);
+   if ( SCALAR_IS_ONE(beta) ) Mjoin(syr2k_put,_b1)(N, c, beta, C, ldc);
+   else if ( SCALAR_IS_ZERO(beta) ) Mjoin(syr2k_put,_b0)(N, c, beta, C, ldc);
+   #ifdef TCPLX
+      else if (SCALAR_IS_NONE(beta)) Mjoin(syr2k_put,_bn1)(N, c, beta, C, ldc);
+      else if (beta[1] == *zero) Mjoin(syr2k_put,_bXi0)(N, c, beta, C, ldc);
+   #endif
+   else Mjoin(syr2k_put,_bX)(N, c, beta, C, ldc);
+   free(vc);
+   return(0);
+}

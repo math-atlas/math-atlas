@@ -1,0 +1,89 @@
+void Mjoin(PATL,refkger)
+   (ATL_CINT M, ATL_CINT N, SCALAR alpha, TYPE *X, ATL_CINT incX, TYPE *Y,
+    ATL_CINT incY, TYPE *A, ATL_CINT lda)
+/*
+ * A = alpha*x*y' + A
+ */
+{
+   void *vp=NULL;
+   TYPE *x=X, *xx;
+   ATL_INT incx=incX;
+   ATL_CINT M8=(M>>3), mr = M-(M8<<3), incA8 = lda - (M8<<3);
+   register TYPE y0;
+
+   if (M < 1 || N < 1 || SCALAR_IS_ZERO(alpha))
+      return;
+   if (incX != 1 || !SCALAR_IS_ONE(alpha))
+   {
+      if (N < 4)
+      {
+         Mjoin(PATL,refger)(M, N, alpha, X, incX, Y, incY, A, lda);
+	 return;
+      }
+      vp = malloc(ATL_MulBySize(M) + ATL_Cachelen);
+      if (!vp)
+      {
+         Mjoin(PATL,refger)(M, N, alpha, X, incX, Y, incY, A, lda);
+	 return;
+      }
+      x = ATL_AlignPtr(vp);
+      incx = 1;
+      Mjoin(PATL,cpsc)(M, alpha, X, incX, x, 1);
+   }
+   xx = x;
+   #ifdef TCPLX
+      for (j=N; j; j--, A += incA4)
+      {
+         x = xx;
+         y0 = *Y;
+         Y += incY;
+         ATL_pfl2R(Y);
+         for (i=M4; i; i--, A += 8, x += 8)
+	 {
+	    A[0] += x[0]*y[0] - x[1]*y[1];
+	    A[1] += x[0]*y[1] + x[1]*y[0];
+	 }
+      }
+   #else
+      for (j=N; j; j--, A += incA8)
+      {
+         x = xx;
+         y0 = *Y;
+         Y += incY;
+         ATL_pfl2R(Y);
+         for (i=M8; i; i--, A += 8, x += 8)
+         {
+            ATL_pfl1W(PFADIST+A);
+            ATL_pfl1R(PFXDIST+x);
+            *A   += x[0]*y0;
+            A[1] += x[1]*y0;
+            A[2] += x[2]*y0;
+            A[3] += x[3]*y0;
+            A[4] += x[4]*y0;
+            A[5] += x[5]*y0;
+            A[6] += x[6]*y0;
+            A[7] += x[7]*y0;
+        }
+        switch(mr)
+        {
+        case 7:
+           A[6] += x[6]*y0;
+        case 6:
+           A[5] += x[5]*y0;
+        case 5:
+           A[4] += x[4]*y0;
+        case 4:
+           A[3] += x[3]*y0;
+        case 3:
+           A[2] += x[2]*y0;
+        case 2:
+           A[1] += x[1]*y0;
+        case 1:
+           *A   += x[0]*y0;
+        default:;
+        }
+   #endif
+   }
+   if (vp)
+      free(vp);
+}

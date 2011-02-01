@@ -1,0 +1,1722 @@
+@ROUT ATL_mvtCopyColumnPanel
+/*
+void ATL_mvtCopyColumnPanel
+             rdi              rsi                   rdx                   rcx
+   (ATL_CINT nbuff, ATL_CINT nwblks, volatile int *command, volatile int *reply,
+                       r8                          r9
+    volatile CNTTYPE *ncopied, volatile CNTTYPE *ncomputed, 
+       8(%rsp)   16(%rsp)       24(%rsp)      32(%rsp)      40(%rsp)
+    TYPE **pX0, TYPE **pX, const TYPE *A, ATL_CINT lda, const TYPE *X,
+        48(%rsp)   56(%rsp)
+    TYPE *buff0, TYPE *buff)
+*/
+@ROUT ATL_dtmvkern
+#include "atlas_asm.h"
+/* 
+ * Integer registers
+ */
+#define pcomm   %r14
+#define ncomp   %r12
+#define pncpy   %r15
+#define pncmp   %rdx
+#define nbuff   %edi   /* # of 8x22 buffers allocated */
+#define nblk    %r13   /* # of 8-row blks in column */
+#define JJ      %rax
+#define r256    %r10
+#define pA      %r9
+#define ppX     %r8   /* array of ptrs to X that matches the blks of A */
+#define pY      %r11
+#define ibuff   %ebp  /* which buffer are we on */
+#define ibuff64 %rbp
+#define rtmp    %rsi
+#define rtmp2   %rcx
+#define bitfld  %bx   /* rbx:16 bitfield, meanings: */
+                      /* bit0 set = reload all regs, else don't */
+@skip                      /* bit1 set : reload x regs only, else don't */
+@skip                      /* --> bit 0 implies bit1, so both are redundant */
+/*
+ * Floating-point vector registers
+ */
+#define rA0     %xmm0
+#define rY0     %xmm1
+#define rY2     %xmm2
+#define rY4     %xmm3
+#define rY6     %xmm4
+#define rX0     %xmm5
+#define rX2     %xmm6
+#define rX4     %xmm7
+#define rX6     %xmm8
+#define rX8     %xmm9
+#define rX10    %xmm10
+#define rX12    %xmm11
+#define rX14    %xmm12
+#define rX16    %xmm13
+#define rX18    %xmm14
+#define rX20    %xmm15
+
+#define POFF  0                 /* 48-length space for callee-saved iregs */
+#define IOFF  POFF+48           /* 76-length space for restoring iregs */
+#define FSIZE (((IOFF+76+15)/16)*16)
+   /* total frame size; must be mult of 16 */
+
+#define NBLKOFF      IOFF    
+#define BUFINCOFF    8+IOFF
+#define PAOFF0       16+IOFF
+#define PXOFF        24+IOFF
+#define PYOFF0       32+IOFF
+#define PNCMPOFF     40+IOFF
+#define PYOFF        48+IOFF
+#define PAOFF        56+IOFF
+#define TMPOFF       64+IOFF
+#define NBUFOFF      72+IOFF   /* 32-bit loc */
+
+
+
+#define xorpd xorps
+#define movapd movaps
+
+/*
+ * void ATL_tmvkern
+ *              rdi              rsi         rdx          %rcx         %r8
+ *   (ATL_CINT nbuff, ATL_CINT nblksM, int *command, int *ncopied, int *ncomp,
+ *                        %r9      8(%rsp)     16(%rsp)
+ *                   double *A, double **ppX, double *Y)
+ */
+        .text
+.global ATL_asmdecor(pthread_yield)
+.global ATL_asmdecor(ATL_dtmvkern)
+ATL_asmdecor(ATL_dtmvkern):
+
+   sub $FSIZE, %rsp
+/*
+ * Save callee-saved regs
+ */
+   movq %r15, POFF(%rsp)
+   movq %r14, POFF+8(%rsp)
+   movq %r13, POFF+16(%rsp)
+   movq %r12, POFF+24(%rsp)
+   movq %rbx, POFF+32(%rsp)
+   movq %rbp, POFF+40(%rsp)
+/* 
+ * Get registers sorted out
+ */
+   mov %rsi, nblk
+   mov %rdx, pcomm
+   mov %rcx, pncpy
+   mov (%r8), ncomp             /* ncomp = *ncomputed */
+   mov %r8, pncmp
+   movq FSIZE+8(%rsp), ppX
+   movq FSIZE+16(%rsp), pY
+   sub $-128, pA                /* so we can index wt 1 signed byte */
+
+
+/*
+ * Save const-value registers to stack for easy restore after call to 
+ * pthread_yield()
+ */
+   movl nbuff, NBUFOFF(%rsp)
+   movq nblk, NBLKOFF(%rsp)
+   movq pA, PAOFF0(%rsp)
+   movq ppX, PXOFF(%rsp)
+   movq pY, PYOFF0(%rsp)
+   movq pncmp, PNCMPOFF(%rsp)
+/*
+ * Store 22*8*sizeof to BUFINCOFF, when ibuff == nbuff, will reset to buff
+ */
+   movq $8*8*22, BUFINCOFF(%rsp)
+   xor ibuff64, ibuff64
+
+   mov $1, bitfld             /* indicate we must load X */
+/*
+ * This loop will continue until we are told to sleep via the pcomm variable
+ */
+   WORKLOOP:
+      cmp (pncpy), ncomp        /* if (*ncopied == ncomp) */
+      jz NEWPANEL_YIELD         /*    goto NEWPANEL_YIELD */
+
+      PANELLOOP:  /* loop-top for incrementing through a 22-wide col panel */
+         bt $0,bitfld              /* sets carry flag if we must load regs */
+         jc INTERCOL_YIELD         /* if no regs set, ensure we have blks */
+         cmp (pncpy), ncomp         /* if (*ncopied == ncomp) */
+         jz INTERCOL_YIELD         /*    goto INTERCOL_YIELD */
+         REGS_RELOADED:            /* jmp to here once regs are reloaded */
+
+         movq (pncpy), JJ    /* JJ = *ncopied */
+         sub  ncomp, JJ      /* JJ = *ncopied - ncomputed */
+         cmp  JJ, nblk       /* like nblk - JJ */
+         cmovl nblk, JJ      /* JJ = Mmin(nblk, JJ) */
+         mov $11*8*8, rtmp
+         xor rtmp2, rtmp2    /* rtmp2 = 0 */
+         movl NBUFOFF(%rsp), nbuff
+         JJLOOP:
+/*
+ *          First half of Columns 0&1
+ */
+            movapd (pY), rY0
+            movapd -128(pA), rA0
+            mulpd  rX0, rA0
+            addpd  rA0, rY0
+            movapd 16(pY), rY2
+            movapd -112(pA), rA0
+            mulpd  rX0, rA0
+            addpd  rA0, rY2
+            movapd 32(pY), rY4
+            movapd -96(pA), rA0
+            mulpd  rX0, rA0
+            addpd  rA0, rY4
+            movapd 48(pY), rY6
+            movapd -80(pA), rA0
+            mulpd  rX0, rA0
+            addpd  rA0, rY6
+            shufpd $1, rX0, rX0            /* rX0 = {X0, X1} */
+/*
+ *          First half of Columns 2&3
+ */
+            movapd -64(pA), rA0
+            mulpd  rX2, rA0
+            addpd  rA0, rY0
+            movapd -48(pA), rA0
+            mulpd  rX2, rA0
+            addpd  rA0, rY2
+            movapd -32(pA), rA0
+            mulpd  rX2, rA0
+            addpd  rA0, rY4
+            movapd -16(pA), rA0
+            mulpd  rX2, rA0
+            addpd  rA0, rY6
+            shufpd $1, rX2, rX2            /* rX2 = {X2, X3} */
+/*
+ *          First half of Columns 4&5
+ */
+            movapd (pA), rA0
+            mulpd  rX4, rA0
+            addpd  rA0, rY0
+            movapd 16(pA), rA0
+            mulpd  rX4, rA0
+            addpd  rA0, rY2
+            movapd 32(pA), rA0
+            mulpd  rX4, rA0
+            addpd  rA0, rY4
+            movapd 48(pA), rA0
+            mulpd  rX4, rA0
+            addpd  rA0, rY6
+            shufpd $1, rX4, rX4            /* rX4 = {X4, X5} */
+/*
+ *          First half of Columns 6&7
+ */
+            movapd 64(pA), rA0
+            mulpd  rX6, rA0
+            addpd  rA0, rY0
+            movapd 80(pA), rA0
+            mulpd  rX6, rA0
+            addpd  rA0, rY2
+            movapd 96(pA), rA0
+            mulpd  rX6, rA0
+            addpd  rA0, rY4
+            movapd 112(pA), rA0
+            mulpd  rX6, rA0
+            addpd  rA0, rY6
+            shufpd $1, rX6, rX6            /* rX6 = {X6, X7} */
+/*
+ *          First half of Columns 8&9
+ */
+            movapd -128(pA,r256), rA0
+            mulpd  rX8, rA0
+            addpd  rA0, rY0
+            movapd -112(pA,r256), rA0
+            mulpd  rX8, rA0
+            addpd  rA0, rY2
+            movapd -96(pA,r256), rA0
+            mulpd  rX8, rA0
+            addpd  rA0, rY4
+            movapd -80(pA,r256), rA0
+            mulpd  rX8, rA0
+            addpd  rA0, rY6
+            shufpd $1, rX8, rX8            /* rX8 = {X8, X9} */
+/*
+ *          First half of Columns 10&11
+ */
+            movapd -64(pA,r256), rA0
+            mulpd  rX10, rA0
+            addpd  rA0, rY0
+            movapd -48(pA,r256), rA0
+            mulpd  rX10, rA0
+            addpd  rA0, rY2
+            movapd -32(pA,r256), rA0
+            mulpd  rX10, rA0
+            addpd  rA0, rY4
+            movapd -16(pA,r256), rA0
+            mulpd  rX10, rA0
+            addpd  rA0, rY6
+            shufpd $1, rX10, rX10          /* rX10 = {X10, X11} */
+/*
+ *          First half of Columns 12&13
+ */
+            movapd (pA,r256), rA0
+            mulpd  rX12, rA0
+            addpd  rA0, rY0
+            movapd 16(pA,r256), rA0
+            mulpd  rX12, rA0
+            addpd  rA0, rY2
+            movapd 32(pA,r256), rA0
+            mulpd  rX12, rA0
+            addpd  rA0, rY4
+            movapd 48(pA,r256), rA0
+            mulpd  rX12, rA0
+            addpd  rA0, rY6
+            shufpd $1, rX12, rX12            /* rX12 = {X12, X13} */
+/*
+ *          First half of Columns 14&15
+ */
+            movapd 64(pA,r256), rA0
+            mulpd  rX14, rA0
+            addpd  rA0, rY0
+            movapd 80(pA,r256), rA0
+            mulpd  rX14, rA0
+            addpd  rA0, rY2
+            movapd 96(pA,r256), rA0
+            mulpd  rX14, rA0
+            addpd  rA0, rY4
+            movapd 112(pA,r256), rA0
+            mulpd  rX14, rA0
+            addpd  rA0, rY6
+            shufpd $1, rX14, rX14            /* rX14 = {X14, X15} */
+/*
+ *          First half of Columns 16&17
+ */
+            movapd -128(pA,r256,2), rA0
+            mulpd  rX16, rA0
+            addpd  rA0, rY0
+            movapd -112(pA,r256,2), rA0
+            mulpd  rX16, rA0
+            addpd  rA0, rY2
+            movapd -96(pA,r256,2), rA0
+            mulpd  rX16, rA0
+            addpd  rA0, rY4
+            movapd -80(pA,r256,2), rA0
+            mulpd  rX16, rA0
+            addpd  rA0, rY6
+            shufpd $1, rX16, rX16            /* rX16 = {X16, X17} */
+/*
+ *          First half of Columns 18&19
+ */
+            movapd -64(pA,r256,2), rA0
+            mulpd  rX18, rA0
+            addpd  rA0, rY0
+            movapd -48(pA,r256,2), rA0
+            mulpd  rX18, rA0
+            addpd  rA0, rY2
+            movapd -32(pA,r256,2), rA0
+            mulpd  rX18, rA0
+            addpd  rA0, rY4
+            movapd -16(pA,r256,2), rA0
+            mulpd  rX18, rA0
+            addpd  rA0, rY6
+            shufpd $1, rX18, rX18            /* rX18 = {X18, X19} */
+/*
+ *          First half of Columns 20&21
+ */
+            movapd (pA,r256,2), rA0
+            mulpd  rX20, rA0
+            addpd  rA0, rY0
+            movapd 16(pA,r256,2), rA0
+            mulpd  rX20, rA0
+            addpd  rA0, rY2
+            movapd 32(pA,r256,2), rA0
+            mulpd  rX20, rA0
+            addpd  rA0, rY4
+            movapd 48(pA,r256,2), rA0
+            mulpd  rX20, rA0
+            addpd  rA0, rY6
+            shufpd $1, rX20, rX20            /* rX20 = {X20, X21} */
+/*
+ *          X is swapped, increment A ptr and do other half
+ */
+@skip            lea 192(pA,r256,2), pA   /* pA += 11*8*8 = 704 */
+            add rtmp, pA             /* pA += 11*8*8 = 704 */
+
+/*
+ *          Second half of Columns 0&1
+ */
+            movapd -128(pA), rA0
+            mulpd  rX0, rA0
+            addpd  rA0, rY0
+            movapd -112(pA), rA0
+            mulpd  rX0, rA0
+            addpd  rA0, rY2
+            movapd -96(pA), rA0
+            mulpd  rX0, rA0
+            addpd  rA0, rY4
+            movapd -80(pA), rA0
+            mulpd  rX0, rA0
+            addpd  rA0, rY6
+            shufpd $1, rX0, rX0            /* rX0 = {X0, X1} */
+/*
+ *          Second half of Columns 2&3
+ */
+            movapd -64(pA), rA0
+            mulpd  rX2, rA0
+            addpd  rA0, rY0
+            movapd -48(pA), rA0
+            mulpd  rX2, rA0
+            addpd  rA0, rY2
+            movapd -32(pA), rA0
+            mulpd  rX2, rA0
+            addpd  rA0, rY4
+            movapd -16(pA), rA0
+            mulpd  rX2, rA0
+            addpd  rA0, rY6
+            shufpd $1, rX2, rX2            /* rX2 = {X2, X3} */
+/*
+ *          Second half of Columns 4&5
+ */
+            movapd (pA), rA0
+            mulpd  rX4, rA0
+            addpd  rA0, rY0
+            movapd 16(pA), rA0
+            mulpd  rX4, rA0
+            addpd  rA0, rY2
+            movapd 32(pA), rA0
+            mulpd  rX4, rA0
+            addpd  rA0, rY4
+            movapd 48(pA), rA0
+            mulpd  rX4, rA0
+            addpd  rA0, rY6
+            shufpd $1, rX4, rX4            /* rX4 = {X4, X5} */
+/*
+ *          Second half of Columns 6&7
+ */
+            movapd 64(pA), rA0
+            mulpd  rX6, rA0
+            addpd  rA0, rY0
+            movapd 80(pA), rA0
+            mulpd  rX6, rA0
+            addpd  rA0, rY2
+            movapd 96(pA), rA0
+            mulpd  rX6, rA0
+            addpd  rA0, rY4
+            movapd 112(pA), rA0
+            mulpd  rX6, rA0
+            addpd  rA0, rY6
+            shufpd $1, rX6, rX6            /* rX6 = {X6, X7} */
+/*
+ *          Second half of Columns 8&9
+ */
+            movapd -128(pA,r256), rA0
+            mulpd  rX8, rA0
+            addpd  rA0, rY0
+            movapd -112(pA,r256), rA0
+            mulpd  rX8, rA0
+            addpd  rA0, rY2
+            movapd -96(pA,r256), rA0
+            mulpd  rX8, rA0
+            addpd  rA0, rY4
+            movapd -80(pA,r256), rA0
+            mulpd  rX8, rA0
+            addpd  rA0, rY6
+            shufpd $1, rX8, rX8            /* rX8 = {X8, X9} */
+/*
+ *          Second half of Columns 10&11
+ */
+            movapd -64(pA,r256), rA0
+            mulpd  rX10, rA0
+            addpd  rA0, rY0
+            movapd -48(pA,r256), rA0
+            mulpd  rX10, rA0
+            addpd  rA0, rY2
+            movapd -32(pA,r256), rA0
+            mulpd  rX10, rA0
+            addpd  rA0, rY4
+            movapd -16(pA,r256), rA0
+            mulpd  rX10, rA0
+            addpd  rA0, rY6
+            shufpd $1, rX10, rX10          /* rX10 = {X10, X11} */
+/*
+ *          Second half of Columns 12&13
+ */
+            movapd (pA,r256), rA0
+            mulpd  rX12, rA0
+            addpd  rA0, rY0
+            movapd 16(pA,r256), rA0
+            mulpd  rX12, rA0
+            addpd  rA0, rY2
+            movapd 32(pA,r256), rA0
+            mulpd  rX12, rA0
+            addpd  rA0, rY4
+            movapd 48(pA,r256), rA0
+            mulpd  rX12, rA0
+            addpd  rA0, rY6
+            shufpd $1, rX12, rX12            /* rX12 = {X12, X13} */
+/*
+ *          Second half of Columns 14&15
+ */
+            movapd 64(pA,r256), rA0
+            mulpd  rX14, rA0
+            addpd  rA0, rY0
+            movapd 80(pA,r256), rA0
+            mulpd  rX14, rA0
+            addpd  rA0, rY2
+            movapd 96(pA,r256), rA0
+            mulpd  rX14, rA0
+            addpd  rA0, rY4
+            movapd 112(pA,r256), rA0
+            mulpd  rX14, rA0
+            addpd  rA0, rY6
+            shufpd $1, rX14, rX14            /* rX14 = {X14, X15} */
+/*
+ *          Second half of Columns 16&17
+ */
+            movapd -128(pA,r256,2), rA0
+            mulpd  rX16, rA0
+            addpd  rA0, rY0
+            movapd -112(pA,r256,2), rA0
+            mulpd  rX16, rA0
+            addpd  rA0, rY2
+            movapd -96(pA,r256,2), rA0
+            mulpd  rX16, rA0
+            addpd  rA0, rY4
+            movapd -80(pA,r256,2), rA0
+            mulpd  rX16, rA0
+            addpd  rA0, rY6
+            shufpd $1, rX16, rX16            /* rX16 = {X16, X17} */
+/*
+ *          Second half of Columns 18&19
+ */
+            movapd -64(pA,r256,2), rA0
+            mulpd  rX18, rA0
+            addpd  rA0, rY0
+            movapd -48(pA,r256,2), rA0
+            mulpd  rX18, rA0
+            addpd  rA0, rY2
+            movapd -32(pA,r256,2), rA0
+            mulpd  rX18, rA0
+            addpd  rA0, rY4
+            movapd -16(pA,r256,2), rA0
+            mulpd  rX18, rA0
+            addpd  rA0, rY6
+            shufpd $1, rX18, rX18            /* rX18 = {X18, X19} */
+/*
+ *          Second half of Columns 20&21; store Y
+ */
+            movapd (pA,r256,2), rA0
+            mulpd  rX20, rA0
+            addpd  rA0, rY0
+            movapd  rY0, (pY)
+            movapd 16(pA,r256,2), rA0
+            mulpd  rX20, rA0
+            addpd  rA0, rY2
+            movapd  rY2, 16(pY)
+            movapd 32(pA,r256,2), rA0
+            mulpd  rX20, rA0
+            addpd  rA0, rY4
+            movapd  rY4, 32(pY)
+            movapd 48(pA,r256,2), rA0
+            mulpd  rX20, rA0
+            addpd  rA0, rY6
+            movapd  rY6, 48(pY)
+            shufpd $1, rX20, rX20            /* rX20 = {X20, X21} */
+            add $1, ncomp
+            movq ncomp, (pncmp)              /* *ncomputed++ */
+            add rtmp, pA                     /* pA += 11*8*8 = 704 */
+            sub $1, nblk
+            add $1, ibuff
+            cmp nbuff, ibuff
+            cmove rtmp2, ibuff64            /* if (ibuff == nbuff) ibuff=0 */
+            cmove PAOFF0(%rsp), pA          /* if (ibuff == nbuff) pA=pA0 */
+            add $8*8, pY
+         sub $1, JJ
+         jnz JJLOOP
+      cmp $0, nblk
+      jnz PANELLOOP
+      mov $1, bitfld                    /* indicate we must load X */
+      movq PYOFF0(%rsp), pY             /* pY = pY0 */
+      movq NBLKOFF(%rsp), nblk          /* nblk = nblk0 */
+   jmp WORKLOOP     /* infinite loop exited via *command = 1 at top-of-loop */
+/*
+ * Restore registers and return
+ */
+DONE:
+   movq POFF(%rsp), %r15
+   movq POFF+8(%rsp), %r14
+   movq POFF+16(%rsp), %r13
+   movq POFF+24(%rsp), %r12
+   movq POFF+32(%rsp), %rbx
+   movq POFF+40(%rsp), %rbp
+   add $FSIZE, %rsp
+   ret
+/*
+ * This loop waits for either command=0 to signal return, or 
+ *  ncopied > ncomp to start new column panel.
+ */
+NEWPANEL_YIELD:
+   movq pA, PAOFF(%rsp)
+   movq pY, PYOFF(%rsp)       /* save current Y ptr */
+   mov $1, bitfld             /* indicate we must reload regs post-call */
+NPYIELDLOOP:
+   cmp ncomp, (pncpy)         /* like *ncopied - ncomputed */
+   jnz INTERCOL_YIELD_MINBLKS /* if (ncopied != ncomputed) exit */
+   testl $1, (pcomm)          /* like $1 & *pcomm */
+   jz DONE                    /* if (*command == 0) return */
+   call ATL_asmdecor(pthread_yield) /* yield to await new command/panel */
+jmp NPYIELDLOOP
+/*
+ * Equivalent of while(ncomp >= *ncopied)
+ * Once this is done, drop through to next loop, which lets copier get ahead
+ * if we have enough blocks and buffers.
+ */
+INTERCOL_YIELD:
+   movq pA, PAOFF(%rsp)
+   movq pY, PYOFF(%rsp)       /* save current Y ptr */
+ICYIELDLOOP:
+   cmp  (pncpy), ncomp  /* src=*pncopy, dest=ncomp */
+   jne  INTERCOL_YIELD_MINBLKS
+   mov $1, bitfld                    /* flag we must reload regs post-call */
+   call ATL_asmdecor(pthread_yield)  /* yield to await new command/panel */
+jmp ICYIELDLOOP
+
+/*
+ * This section of code first computes rtmp = ncomp+Mmin(Min(nblks,4),nbuff),
+ * which is the minimum # we require *ncopied to be before proceeding
+ */
+INTERCOL_YIELD_MINBLKS:
+   movslq NBUFOFF(%rsp), JJ  /* JJ = nbuff */
+   mov $4, rtmp              /* rtmp = 4 */
+   cmp JJ, rtmp              /* src=nbuff, dest=rtmp */
+   cmovg JJ, rtmp            /* rtmp = Mmin(nbuff, 4) */
+   cmp nblk, rtmp            /* src=nblk, dest=rtmp */
+   cmovg nblk, rtmp          /* rtmp = Mmin(nblk, Mmin(nbuff-1,4)) */
+   add ncomp, rtmp           /* rtmp = ncomputed + Mmin(nblk, Mmin(nbuff,4)) */
+/*
+ * This loop is equivalent to:
+ *    while (*ncopied - ncomp < Mmin(nblk, Mmin(nbuff,4)))
+ *       pthread_yield();
+ *    ---> (while *ncopied - ncomp - Mmin(nblk, Mmin(nbuff,4)) < 0)
+ * We know (*ncopied-ncomp > 0) because we finished INTERCOL_YIELD
+ */
+INTERCOL_YIELD2:
+   cmp (pncpy), rtmp    /* src=ncopied, dest=ncomp+Mmin(nblk, Mmin(nbuff,4)) */
+   jle START_PANEL      /* if (nopied < ncomp+Mmin()) goto panel */
+
+   mov $1, bitfld                     /* flag we must reload regs post-call */
+   movq rtmp, TMPOFF(%rsp)           /* save Mmin calc */
+   call ATL_asmdecor(pthread_yield)  /* yield to await new command/panel */
+   movq TMPOFF(%rsp), rtmp           /* restore Mmin calc */
+jmp INTERCOL_YIELD2
+/*
+ * Upon return from pthread_yield, must reload all caller-saved regs
+ * Do not need to restore following 10 registers:
+ *    bitfld, nblk, pcomm, ncomp, pncpy, ibuff (callee-saved registers)
+ *    nbuff, JJ, rtmp, rtmp2 (never live when calling yield)
+ * Must restore following 4 constant registers 
+ *   pncmp, r256, pA, ppX
+ * Must restore non-constant pY, which is saved before each yield loop.
+ */
+START_PANEL:
+   bt $0, bitfld
+   jnc REGS_RELOADED
+   xor bitfld, bitfld
+   movq PXOFF(%rsp), ppX
+   movq PAOFF(%rsp), pA
+   mov  $64, r256           /* r256 = 64 */
+   movq PYOFF(%rsp), pY     /* pY = pY */
+   shl  $2, r256            /* r256 = 4*64 = 256 */
+   movq PNCMPOFF(%rsp), pncmp
+/*
+ * Must restore all X regs (rA0 & rY[0-6] not live for yield)
+ */
+   movslq ibuff, JJ
+   movq (ppX,JJ,8), JJ
+   add $112, JJ
+   movapd -112(JJ), rX0      /* rX0 = {X1, X0} */
+   movapd -96(JJ), rX2
+   movapd -80(JJ), rX4
+   movapd -64(JJ), rX6
+   movapd -48(JJ), rX8
+   movapd -32(JJ), rX10
+   movapd -16(JJ), rX12
+   movapd (JJ), rX14
+   movapd 16(JJ), rX16
+   movapd 32(JJ), rX18
+   movapd 48(JJ), rX20
+   jmp REGS_RELOADED
+@ROUT ATL_tgemvN
+#define _GNU_SOURCE            /* discovered by Chad to get CPU_SET macros */
+#include "atlas_pthreads.h"
+#include "atlas_misc.h"
+#include "atlas_lvl2.h"
+#include "atlas_level1.h"
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),sysinfo.h))
+// #define DEBUG 1
+#define CNTTYPE size_t
+
+#define REP_ASLEEP      0
+#define REP_AWAKE       1
+#define REP_QUIT       -1
+
+#define TBUFFLEN ATL_MulBySize(ATL_L1elts)   /* len in bytes of full buffer */
+// #define TBUFFLEN 1048576
+#define IBUFFLEN (ATL_MulBySize(8)*22)       /* indiv bufflen mul of 16 */
+
+/*
+ * These global values define the input problem
+ */
+static SCALAR alphaG; 
+@skip static SCALAR betaG;
+static const TYPE *AG;
+static TYPE *XG, *YG;
+static ATL_INT MG, NG=0, ldaG, incYG, incXG;
+static ATL_INT JG=0;   /* cols that have been taken */
+/*
+ * These global values all used to manage workers
+ */
+static int ATL_LIBINIT=0, NWORKERSDONE=0, NWACTIVE=0;
+static int NTHR=0, WORKERSQUIT=0, NBUFF=0;
+/*
+ * General thread declarations
+ */
+static int *ATL_tranks=NULL;
+static ATL_INT *NYs=NULL;
+static void **tYs=NULL;
+static pthread_t *workers=NULL;
+/*
+ * This lock protects NWORKERSDONE for final shutdown of library 
+ */
+static pthread_mutex_t donelock=PTHREAD_MUTEX_INITIALIZER;
+/* 
+ * tasklock protects: JG; other input global vars read only in parallel section
+ * It is used with the condition variable taskcond
+ */
+static pthread_mutex_t tasklock=PTHREAD_MUTEX_INITIALIZER;
+/*
+ * initlock used only to protect initial lib startup (ATL_LIBINIT)
+ */
+static pthread_mutex_t initlock=PTHREAD_MUTEX_INITIALIZER;
+/*
+ * comblock protects combindex, which is used to mediate who can write
+ * to the output Y
+ */
+static pthread_mutex_t comblock=PTHREAD_MUTEX_INITIALIZER;
+/*
+ * taskcond is what workers sleep on while awaiting work
+ * mastcond is what the original process waits on until all workers have
+ * finished their tasks (WDONE == NTHR)
+ */
+static pthread_cond_t taskcond, mastcond;
+
+@beginskip
+static mvn_tasks_t *mvntasks;   /* gemvN work queue */
+static mvn_comb_t combindex;    /* controlling struct for write of Y */
+
+@endskip
+#define ATL_MAXTHREADS 256
+
+/*
+ * Need 7 scalars for copy/comp communication:
+ *   ncopied, ncomputed, command, reply, rank, mutex, condvar
+ */
+#define NCOMMSCALARS 7
+
+static inline void CopyGroupOfA(const TYPE *A, ATL_CINT lda, TYPE *b)
+/*
+ * Copies an 8x22 block into access-major format for computational kernel
+ */
+{
+   const TYPE *A0 = A, *A1 = A+lda;
+   TYPE *c = b + 8*11;
+   ATL_CINT lda2 = lda+lda;
+   ATL_INT j;
+
+   for (j=0; j < 11; j++, A0 += lda2, A1 += lda2, b += 8, c += 8)
+   {
+      b[0] = A0[0];
+      c[0] = A1[0];
+      b[1] = A1[1];
+      c[1] = A0[1];
+
+      b[2] = A0[2];
+      c[2] = A1[2];
+      b[3] = A1[3];
+      c[3] = A0[3];
+
+      b[4] = A0[4];
+      c[4] = A1[4];
+      b[5] = A1[5];
+      c[5] = A0[5];
+
+      b[6] = A0[6];
+      c[6] = A1[6];
+      b[7] = A1[7];
+      c[7] = A0[7];
+   }
+}
+
+static void CopyPartialGroupOfA
+   (ATL_CINT mr, const TYPE *A, ATL_CINT lda, TYPE *b)
+/*
+ * Copies an mrx22 block into access-major format for computational kernel,
+ * assuming buffer has been prezeroed (so only A parts must be copied
+ */
+{
+   const TYPE *A0 = A, *A1 = A+lda;
+   TYPE *c = b + 8*11;
+   ATL_CINT lda2 = lda+lda;
+   ATL_INT j;
+   if (mr < 1) 
+     return;
+
+#if 1
+   switch(mr)
+   {
+   case 1:
+      for (j=0; j < 11; j++, A0 += lda2, A1 += lda2, b += 8, c += 8)
+      {
+         b[0] = A0[0];
+         c[0] = A1[0];
+         b[1] = b[2] = b[3] = b[4] = b[5] = b[6] = b[7] =
+         c[1] = c[2] = c[3] = c[4] = c[5] = c[6] = c[7] = ATL_rzero;
+      }
+      break;
+   case 2:
+      for (j=0; j < 11; j++, A0 += lda2, A1 += lda2, b += 8, c += 8)
+      {
+         b[0] = A0[0];
+         c[0] = A1[0];
+         b[1] = A1[1];
+         c[1] = A0[1];
+         b[2] = b[3] = b[4] = b[5] = b[6] = b[7] =
+         c[2] = c[3] = c[4] = c[5] = c[6] = c[7] = ATL_rzero;
+      }
+      break;
+   case 3:
+      for (j=0; j < 11; j++, A0 += lda2, A1 += lda2, b += 8, c += 8)
+      {
+         b[0] = A0[0];
+         c[0] = A1[0];
+         b[1] = A1[1];
+         c[1] = A0[1];
+         b[2] = A0[2];
+         c[2] = A1[2];
+         b[3] = b[4] = b[5] = b[6] = b[7] =
+         c[3] = c[4] = c[5] = c[6] = c[7] = ATL_rzero;
+      }
+      break;
+   case 4: 
+      for (j=0; j < 11; j++, A0 += lda2, A1 += lda2, b += 8, c += 8)
+      {
+         b[0] = A0[0];
+         c[0] = A1[0];
+         b[1] = A1[1];
+         c[1] = A0[1];
+         b[2] = A0[2];
+         c[2] = A1[2];
+         b[3] = A1[3];
+         c[3] = A0[3];
+         b[4] = b[5] = b[6] = b[7] = 
+         c[4] = c[5] = c[6] = c[7] = ATL_rzero;
+      }
+      break;
+   case 5:
+      for (j=0; j < 11; j++, A0 += lda2, A1 += lda2, b += 8, c += 8)
+      {
+         b[0] = A0[0];
+         c[0] = A1[0];
+         b[1] = A1[1];
+         c[1] = A0[1];
+         b[2] = A0[2];
+         c[2] = A1[2];
+         b[3] = A1[3];
+         c[3] = A0[3];
+         b[4] = A0[4];
+         c[4] = A1[4];
+         b[5] = b[6] = b[7] = c[5] = c[6] = c[7] = ATL_rzero;
+      }
+      break;
+   case 6:
+      for (j=0; j < 11; j++, A0 += lda2, A1 += lda2, b += 8, c += 8)
+      {
+         b[0] = A0[0];
+         c[0] = A1[0];
+         b[1] = A1[1];
+         c[1] = A0[1];
+         b[2] = A0[2];
+         c[2] = A1[2];
+         b[3] = A1[3];
+         c[3] = A0[3];
+         b[4] = A0[4];
+         c[4] = A1[4];
+         b[5] = A1[5];
+         c[5] = A0[5];
+         b[6] = b[7] = c[6] = c[7] = ATL_rzero;
+      }
+      break;
+   case 7:
+      for (j=0; j < 11; j++, A0 += lda2, A1 += lda2, b += 8, c += 8)
+      {
+         b[0] = A0[0];
+         c[0] = A1[0];
+         b[1] = A1[1];
+         c[1] = A0[1];
+         b[2] = A0[2];
+         c[2] = A1[2];
+         b[3] = A1[3];
+         c[3] = A0[3];
+         b[4] = A0[4];
+         c[4] = A1[4];
+         b[5] = A1[5];
+         c[5] = A0[5];
+         b[6] = A0[6];
+         c[6] = A1[6];
+         b[7] = c[7] = ATL_rzero;
+      }
+      break;
+   default:
+      ATL_assert(mr > 0 && mr < 8);
+   }
+#else
+   for (j=0; j < 11; j++, A0 += lda2, A1 += lda2, b += 8, c += 8)
+   {
+      b[0] = A0[0];
+      c[0] = A1[0];
+      if (mr > 1)
+      {
+         b[1] = A1[1];
+         c[1] = A0[1];
+         if (mr > 2)
+         {
+            b[2] = A0[2];
+            c[2] = A1[2];
+            if (mr > 3)
+            {
+               b[3] = A0[3];
+               c[3] = A1[3];
+               if (mr > 4)
+               {
+                  b[4] = A0[4];
+                  c[4] = A1[4];
+                  if (mr > 5)
+                  {
+                     b[5] = A1[5];
+                     c[5] = A0[5];
+                     if (mr > 6)
+                     {
+                        b[6] = A0[6];
+                        c[6] = A1[6];
+                     }
+                  }
+               }
+            }
+         }
+      }
+   }
+#endif
+}
+@beginskip
+static void GetXReady(void)
+{
+   TYPE *x, *p;
+   ATL_INT i;
+   if (incXG != 1 || !ATL_DataIsMinAligned(XG) || !SCALAR_IS_ONE(alphaG))
+   {
+      x = malloc(ATL_MulBySize(NG));
+      ATL_assert(x);
+      Mjoin(PATL,cpsc)(NG, alphaG, XG, incXG, x, 1);
+      XG = (const TYPE *) x;
+      incXG = 1;
+   }
+   READYX = 1;
+}
+@endskip
+
+static void CopyColumnPanel
+(
+   ATL_CINT nbuff,              /* # of buffers allocated */
+   ATL_CINT nwblks,             /* # of whole blocks to copy */
+   volatile int *command,       /* command ptr for computational thread */
+   volatile int *reply,         /* ptr for comp thr to respond */
+   volatile CNTTYPE *ncopied,   /* counter for # of groups copied */
+   volatile CNTTYPE *ncomputed, /* counter for # of groups computed */
+   TYPE **pX0,                  /* start of pX array */
+   TYPE **pX,                   /* tell comp thr what part of X to use */
+   const TYPE *A,               /* source matrix */
+   ATL_CINT lda,                /* leading dimenstion of A */
+   const TYPE *X,               /* 22-len X to mul by this col panel */
+   TYPE *buff0,                 /* start of buffer space */
+   TYPE *buff                   /* current buffer ptr */
+)
+{
+   ATL_INT k;
+   CNTTYPE ncopy = *ncopied;
+   TYPE **lastX = (pX0+nbuff);
+
+   for (k=0; k < nwblks; k++, A += 8)
+   {
+/*
+ *    Can't continue copying if we are out of buffer space; will need to
+ *    wait on computational thread
+ */
+      while (ncopy - *ncomputed >= nbuff)
+         pthread_yield();
+      *pX = (TYPE*) X;
+      CopyGroupOfA(A, lda, buff);
+      *ncopied = ++ncopy;
+      if (++pX != lastX)
+         buff += 8*22;
+      else
+      {
+         pX = pX0;
+         buff = buff0;
+      }
+   }
+}
+
+@beginskip
+static void CopySomeWork
+(
+   int rank, 
+   volatile int *command,       /* command ptr for computational thread */
+   volatile int *reply,         /* ptr for comp thr to respond */
+   volatile CNTTYPE *ncopied,   /* counter for # of groups copied */
+   volatile CNTTYPE *ncomputed, /* counter for # of groups computed */
+   pthread_cond_t *compcond,    /* computational thread wakeup cond var */
+   TYPE **pX,                   /* tell comp thr what part of X to use */
+   TYPE *work
+)
+/*
+ * NOTE: only computational thread writes to ncomputed, only copy thread
+ *       (this one) writes to ncopied
+ */
+{
+   const TYPE one = ATL_rone;
+   TYPE beta=ATL_rzero;
+   const TYPE *A, *X;
+   const TYPE const *lastb = work + (NBUFF-1)*8*22;
+   TYPE *Y, *b=work, **pX0=pX;
+   ATL_INT i, n;
+   ATL_CINT Md8 = (MG >> 3), mr = MG - (Md8<<3);
+   int buffnum=0, iret=0, ncopy;
+
+   ncopy = *ncopied;
+/*
+ * Get my private copy of Y if present one too small
+ */
+   if (MG > NYs[rank])
+   {
+      if (tYs[rank])
+         free(tYs[rank]);
+      tYs[rank] = Y = calloc(MG, ATL_sizeof);
+      NYs[rank] = MG;
+   }
+   else 
+   {
+      Y = tYs[rank];
+      Mjoin(PATL,zero)(MG, Y, 1);
+   }
+/*
+ * Wake up worker thread if he is asleep
+ */
+   if (*command == 0 || *reply == REP_ASLEEP)
+   {
+//      pthread_cond_signal(compcond);
+      *command = 1;
+   }
+
+   while (JG < NG)
+   {
+/* 
+ *    Grab at most 22 columns to do
+ */
+      ATL_assert(!pthread_mutex_lock(&tasklock));
+      n = NG - JG;
+      n = (n >= 22) ? 22 : n;
+      A = AG + JG*(ldaG SHIFT);
+      X = XG + (JG SHIFT);
+      JG += n;
+      ATL_assert(!pthread_mutex_unlock(&tasklock));
+/*
+ *    Copy 8x22 block and tell worker thread it's available
+ */
+      if (n == 22)
+      {
+         CopyColumnPanel(NBUFF, Md8, command, reply, ncopied, ncomputed, 
+                         pX0, pX0+buffnum, A, ldaG, X, work, work+buffnum*8*22);
+         ncopy += Md8;
+         buffnum = (buffnum+Md8) % NBUFF;
+         A += Md8<<3;
+         if (mr)
+         {
+            while (ncopy - *ncomputed >= NBUFF)
+               pthread_yield();
+            pX0[buffnum] = (TYPE*)X;   /* tell comp thr what part of X to use */
+            #if 1
+               Mjoin(PATL,zero)(8*22, work+buffnum*8*22, 1);
+               CopyPartialGroupOfA(mr, A, ldaG, work+buffnum*8*22);
+            #else
+               Mjoin(PATL,gecopy)(mr, 22, A, ldaG, work+buffnum*8*22, 8);
+            #endif
+            *ncopied = ++ncopy;
+            if (++buffnum == NBUFF)
+               buffnum = 0;
+         }              /* end if M remainder */
+      }                 /* end if we have a full 22-col block */
+      else              /* if (n < 22) exit loop to handle N%22 cleanup */
+         break;
+      beta = one;
+   }  /* end while (IG < NG) loop */
+/*
+ * Make sure computational thread is awake before putting it back to sleep
+ */
+   if (*command != 0)
+   {
+      while (*reply == REP_ASLEEP)
+         pthread_yield();
+   }
+
+   #ifdef DEBUG
+      fprintf(stderr, "%d CPT: WAITING FOR COMPUTE THREAD TO SLEEP\n", rank);
+   #endif
+   *command = 0;        /* tell worker to sleep */
+   while (*reply != REP_ASLEEP); /* ensure comp thr asleep before continuing */
+/*
+ * If I am last guy, do any necessary N%22 cleanup
+ */
+   if (n && n != 22)
+      Mjoin(PATL,gemv)(AtlasNoTrans, MG, n, one, A, ldaG, X, 1, beta, Y, 1);
+/*
+ * Write my piece of Y back to original
+ */
+   #ifdef DEBUG
+      fprintf(stderr, "%d CPT: WAITING FOR COMBLOCK\n", rank);
+   #endif
+   ATL_assert(!pthread_mutex_lock(&comblock));
+   Mjoin(PATL,axpy)(MG, one, Y, 1, YG, 1);
+   ATL_assert(!pthread_mutex_unlock(&comblock));
+   #ifdef DEBUG
+      fprintf(stderr, "%d CPT: DONE CopySomeWork\n", rank);
+   #endif
+}
+@endskip
+
+static void comp_tmvkern
+(
+   ATL_CINT nbuff,              /* # of buffers */
+   ATL_CINT nblkM,              /* # of blocks of M */
+   volatile int *command,       /* return when this becomes 0 & work done */
+   volatile CNTTYPE *ncopied,   /* ctr for copied segments */
+   volatile CNTTYPE *ncomputed, /* counter of jobs completed */
+   const TYPE *A,               /* nbuff*22*8 length array of formated A */
+   volatile TYPE **pX,          /* array of X ptrs */
+   TYPE *Y                      /* nblkM*8-length output vector */
+)
+{
+   CNTTYPE ncomp;
+   ATL_INT i, j, k, n, ii;
+   const TYPE const *lastA = A + (nbuff-1)*8*22, *A0=A;
+   const TYPE *x=NULL, *X, *An;
+   TYPE *y;
+   volatile TYPE **pX0 = pX;
+
+   ncomp = *ncomputed;
+   do
+   {
+/*
+ *    While he doesn't copy more, wait; Since we are at the end of one
+ *    group of columns, he can indicate no more work by setting command=0
+ */
+      if (*ncopied == ncomp)
+      {
+         while (*ncopied == ncomp)
+         {
+            if (*command == 0)
+               return;
+            pthread_yield();
+         }
+      }
+/* 
+ *    Don't start processing col-panel until copier is well ahead
+ */
+//      while (*ncopied-ncomp < (NBUFF>>1) && *command)
+//         pthread_yield();
+      X = x = (const TYPE*) *pX;
+      y = Y;
+      i = nblkM;
+      do
+      {
+/*
+ *       Can't do work until he copies more than I've already computed
+ *       command cannot be 0 here, since we are working on our assigned cols
+ *       Try to have at least 4 col-blks to get more reuse out of X
+ */
+         if (*ncopied == ncomp)
+         {
+            int kk;
+            n = *ncopied - ncomp;
+            kk = Mmin(4,nbuff);
+            while (n < Mmin(4,kk))
+            {
+               pthread_yield();
+               n = *ncopied - ncomp;
+            }
+            if (x != *pX)
+               X = x = (const TYPE*) *pX;
+         }
+/*
+ *       Do n 8x22 formatted chunks
+ */
+         n = *ncopied - ncomp;
+         n = (i >= n) ? n : i;
+         for (k=0; k < n; k++, i--, y += 8)
+         {
+            pX++;
+            #ifdef DEBUG
+               fprintf(stderr, "CMT: A=%p, x=%p\n", A, x);
+            #endif
+            if (A != lastA)
+               An = A + 8*22;
+            else
+            {
+               An = A0;
+               pX = pX0;
+            }
+            x = X;
+            for (j=0; j < 22; j += 2)
+            {
+               for (ii=0; ii < 8; ii += 2, A += 2)
+               {
+                  y[ii] += A[0]*x[j];
+                  y[ii+1] += A[1]*x[j+1];
+               }
+            }
+            for (j=0; j < 22; j += 2)
+            {
+               for (ii=0; ii < 8; ii += 2, A += 2)
+               {
+                  y[ii] += A[0]*x[j+1];
+                  y[ii+1] += A[1]*x[j];
+               }
+            }
+            *ncomputed = ++ncomp;
+            A = An;
+         }  /* end k-loop over n chunks */
+      }
+      while (i);
+   }
+   while(1);
+}
+#define comp_tmvkern Mjoin(PATL,tmvkern)  /* call assembly kern instead */
+
+static void *comp_func(void *vbuff)
+/*
+ * This thread is run on same proc as paired copier_func, and calls the kernel
+ * on data copied by the copier;  The kernel returns when the command tells
+ * us to sleep
+ */
+{
+   double *dp;
+   TYPE *W = vbuff, *Y;
+   volatile CNTTYPE *ncopied, *ncomp;
+   volatile int *command, *reply, *prank;
+   volatile TYPE **pX;
+   pthread_mutex_t dummylock=PTHREAD_MUTEX_INITIALIZER;
+   pthread_mutex_t **plock;
+   pthread_cond_t **pcond;
+   pthread_mutex_t *replock;
+   pthread_cond_t *cond;
+   int rank;
+   ATL_INT nblksM;
+
+   dp = W + NBUFF*8*22;    /* Y pts to end of buffspace; beg of comm space */
+   pX      = (volatile TYPE**) dp; dp += NBUFF;
+   ncopied = (CNTTYPE*) dp;
+   ncomp   = (CNTTYPE*) (++dp);
+   command = (int*) (++dp);
+   reply   = (int*) (++dp);
+   prank   = (int*) (++dp);
+   plock   = (pthread_mutex_t**)(++dp);
+   pcond   = (pthread_cond_t**)(++dp);
+
+   cond = (pthread_cond_t*) *pcond;
+   replock = (pthread_mutex_t*) *plock;
+   rank = *prank;
+   #ifdef DEBUG
+      fprintf(stderr, "%d: computational thread (CMT) alive!\n", rank);
+   #endif
+   Y = tYs[rank];
+   do
+   {
+      if (*command == 0)  /* I've been told to go to sleep */
+      {
+         ATL_assert(!pthread_mutex_lock(replock));
+         *reply = REP_ASLEEP;  /* tell copier I'm sleeping */
+         while (*command == 0)
+            ATL_assert(!pthread_cond_wait(cond, replock));
+         ATL_assert(!pthread_mutex_unlock(replock));
+         *reply = REP_AWAKE;
+         Y = tYs[rank];
+         if (WORKERSQUIT)
+            break;
+      }
+      nblksM = MG>>3;
+      if (MG - (nblksM<<3))
+         nblksM++;
+/*
+ *    Call GEMVN kernel optimized for copied format; the routine will
+ *    return when *command is anything other than 1
+ */
+      comp_tmvkern(NBUFF, nblksM, command, ncopied, ncomp, W, pX, Y);
+      #ifdef DEBUG
+         fprintf(stderr, "%d CMT: DONE KERN CALL, Y=%f\n", rank, *Y);
+      #endif
+   }
+   while (!WORKERSQUIT);
+   *reply = REP_QUIT;  /* tell copier I have quit */
+   #ifdef DEBUG
+      fprintf(stderr, "%d CMT: DONE EXECUTION\n", rank);
+   #endif
+}
+
+
+static void *copier_func(void *vrank)
+{
+   pthread_t compthr;
+   pthread_attr_t attr;
+   pthread_cond_t condvar;
+   pthread_mutex_t replock=PTHREAD_MUTEX_INITIALIZER;
+   cpu_set_t cpuset;
+   const int rank = *((int*)vrank);
+   void *vp=NULL;
+   double *dp;
+   TYPE *W, *Y;
+   const TYPE *X, *A;
+   TYPE **pX;
+   volatile CNTTYPE *ncopied, *ncomputed;
+   volatile int *command, *reply, *prank;
+   pthread_cond_t **cond;
+   pthread_mutex_t **plock;
+   int DIDWORK=0;
+   ATL_INT n, buffnum=0, M8=0, Md8=0, mr=0;
+   CNTTYPE ncopy;
+   #ifdef DEBUG
+      fprintf(stderr, "%d: copier thread (CPT) alive!\n", rank);
+   #endif
+/*
+ * Allocate W: aligned to cacheline, and sizeof(L1); we will copy into
+ * this array in access-major order!
+ */
+   vp = malloc(TBUFFLEN+ATL_Cachelen);
+   ATL_assert(vp);
+   W = ATL_AlignPtr(vp);
+   dp = W + NBUFF*8*22;
+   pX      = (TYPE**) dp; dp += NBUFF;
+   ncopied   = (CNTTYPE*) dp;
+   ncomputed = (CNTTYPE*) (++dp);
+   command   = (int*) (++dp);
+   reply     = (int*) (++dp);
+   prank     = (int*) (++dp);
+   plock     = (pthread_mutex_t**)(++dp);
+   cond      = (pthread_cond_t**)(++dp);
+   *plock = &replock;
+   *cond = &condvar;
+   ATL_assert(!pthread_cond_init(&condvar, NULL));
+   ncopy = *ncopied = *ncomputed = 0;
+   *command = 0;
+   *reply = REP_AWAKE;
+   *prank = rank;
+/*
+ * Spawn the computational thread to my own processor, and await him going
+ * to sleep
+ */
+   ATL_assert(!pthread_attr_init(&attr));
+   ATL_assert(!pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED));
+   ATL_assert(!pthread_attr_setscope(&attr, PTHREAD_SCOPE_SYSTEM));
+   CPU_ZERO(&cpuset); CPU_SET(rank%ATL_NTHREADS, &cpuset);
+   ATL_assert(!pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), 
+                                           &cpuset));
+   ATL_assert(!pthread_create(&compthr, &attr, comp_func, W));
+   ATL_assert(!pthread_attr_destroy(&attr));
+   while (*reply != REP_ASLEEP)
+      pthread_yield();
+/*
+ * Wait for task queue setup & then tell system that I'm awake
+ */
+   ATL_assert(!pthread_mutex_lock(&tasklock));
+   NWACTIVE++;
+   ATL_assert(!pthread_mutex_unlock(&tasklock));
+/*
+ * Get Y big enough for present problem
+ */
+   Md8 = MG>>3;
+   M8 = Md8<<3;
+   mr = MG - M8;
+   n = (mr) ? M8+8 : M8;
+   tYs[rank] = Y = calloc(n, ATL_sizeof);
+   NYs[rank] = n;
+/*
+ * Continue doing tasks until told to quit
+ */
+   do
+   {
+/*
+ *    Get lock, and remove my column panel from work queue
+ */
+      ATL_assert(!pthread_mutex_lock(&tasklock));
+      n = NG - JG;
+      if (n)  /* is there work left? */
+      {
+         DIDWORK = 1;
+         n = (n >= 22) ? 22 : n;
+         A = AG + JG*(ldaG SHIFT);
+         X = XG + (JG SHIFT);
+         JG += n;
+      }
+      ATL_assert(!pthread_mutex_unlock(&tasklock));
+
+      if (n)   /* I have work to do */
+      {
+/*
+ *       Perform the copy, or do the N%22 GEMV myself for cleanup
+ */
+         if (n == 22)      /* I have a full panel to do */
+         {
+/*
+ *          If computational thread asleep, wake him up
+ */
+            if (*command == 0)
+            {
+               ATL_assert(!pthread_mutex_lock(&replock));
+               ATL_assert(*reply == REP_ASLEEP);
+               *command = 1;
+               pthread_cond_signal(&condvar);
+               ATL_assert(!pthread_mutex_unlock(&replock));
+               while (*reply == REP_ASLEEP)  /* RCW: remove after debugging */
+                  pthread_yield();
+            }
+            CopyColumnPanel(NBUFF, Md8, command, reply, ncopied, ncomputed,
+                            pX, pX+buffnum, A, ldaG, X, W, W+buffnum*8*22);
+            buffnum += Md8;
+            if (buffnum >= NBUFF)
+               buffnum = buffnum - (buffnum/NBUFF)*NBUFF;
+            ncopy += Md8;
+            A += M8;
+/*
+ *          If I've got a partial row block (mr < 8) copy it to full format
+ */
+            if (mr)
+            {
+               while (ncopy - *ncomputed >= NBUFF)  /* await buff space */
+                  pthread_yield();
+               pX[buffnum] = (TYPE*)X;   /* give comp thr correct X ptr */
+               CopyPartialGroupOfA(mr, A, ldaG, W+buffnum*8*22);
+               *ncopied = ++ncopy;
+               if (++buffnum == NBUFF)
+                  buffnum = 0;
+            }
+         }
+         else              /* I've got the cleanup panel */
+         {
+            *command = 0;
+            while (*reply != REP_ASLEEP)  /* wait for comp thr to finish */
+               pthread_yield();
+            Mjoin(PATL,gemv)(AtlasNoTrans, MG, n, ATL_rone, A, ldaG, X, 1, 
+                             ATL_rone, Y, 1);
+         }
+      }
+/*
+ *    If I've got no work, need to go to sleep after waiting for computational
+ *    partner to finish
+ */
+      else
+      {
+         if (*command != 0)  /* If I did last piece, partner already asleep */
+         {
+            *command = 0;
+            while (*reply != REP_ASLEEP)  /* wait for comp thr to finish */
+               pthread_yield();
+         }
+/*
+ *       If I did any work, need to write my local Y to global Y before
+ *       sleeping
+ */
+         if (DIDWORK)
+         {
+            ATL_assert(!pthread_mutex_lock(&comblock));
+            Mjoin(PATL,axpy)(MG, ATL_rone, Y, 1, YG, 1);
+            ATL_assert(!pthread_mutex_unlock(&comblock));
+            DIDWORK=0;
+         }
+/*
+ *       Decriment active worker thread count, and go to sleep
+ */
+         ATL_assert(!pthread_mutex_lock(&tasklock));
+         if (--NWACTIVE == 0)
+            ATL_assert(!pthread_cond_signal(&mastcond));
+         while (JG == NG && !WORKERSQUIT)
+            ATL_assert(!pthread_cond_wait(&taskcond, &tasklock));
+         NWACTIVE++;
+         buffnum = 0;
+         Md8 = MG >> 3;
+         M8 = Md8<<3;
+         mr = MG - M8;
+         ATL_assert(!pthread_mutex_unlock(&tasklock));
+         if (WORKERSQUIT)
+            break;
+/*
+ *       If present Y is too small, get a new one, else zero this one
+ */
+         n = (mr) ? M8+8 : M8;
+         if (n > NYs[rank])
+         {
+            if (tYs[rank])
+               free(tYs[rank]);
+            tYs[rank] = Y = calloc(n, ATL_sizeof);
+            NYs[rank] = n;
+         }
+         else 
+         {
+            Y = tYs[rank];
+            Mjoin(PATL,zero)(n, Y, 1);
+         }
+/*
+ *       Computational thread still asleep, so it is safe to reset
+ *       common message passing area to default values
+ */
+         ncopy = *ncopied = *ncomputed = 0;
+      }         /* end no work to be done else */
+   }
+   while (1);
+/*
+ * If computational thread is asleep, wake him up to quit
+ */ 
+   #ifdef DEBUG
+      fprintf(stderr, "%d CPT: awaiting CMT sleep reply, JG=%d, NG=%d\n", 
+              rank, JG, NG);
+   #endif
+   if (*reply == REP_ASLEEP)
+   {
+      ATL_assert(!pthread_mutex_lock(&replock));
+      *command = 1;
+      pthread_cond_signal(&condvar);
+      ATL_assert(!pthread_mutex_unlock(&replock));
+      while (*reply == REP_ASLEEP)  /* RCW: remove after debugging */
+         pthread_yield();
+   }
+/*
+ * Wait for computational thread to quit before quitting myself
+ */
+   while (*reply != -1)
+      pthread_yield();
+   #ifdef DEBUG
+      fprintf(stderr, "%d CPT: DONE awaiting CMT sleep reply, JG=%d, NG=%d\n", 
+              rank, JG, NG);
+   #endif
+   free(vp);
+   ATL_assert(!pthread_mutex_lock(&donelock));
+   NWORKERSDONE++;
+   ATL_assert(!pthread_mutex_unlock(&donelock));
+}
+
+static void *spawning_func(void *ignored)
+{
+   pthread_attr_t attr;
+   cpu_set_t cpuset;
+   int i;
+   ATL_tranks = malloc(sizeof(int)*NTHR);
+   ATL_assert(ATL_tranks);
+   ATL_tranks[0] = 0;
+   for (i=1; i < NTHR; i++)
+   {
+      ATL_tranks[i] = i;
+      ATL_assert(!pthread_attr_init(&attr));
+      ATL_assert(!pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED));
+      ATL_assert(!pthread_attr_setscope(&attr, PTHREAD_SCOPE_SYSTEM));
+      CPU_ZERO(&cpuset); CPU_SET(i%ATL_NTHREADS, &cpuset);
+      ATL_assert(!pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), 
+                                              &cpuset));
+      ATL_assert(!pthread_create(workers+i, &attr, copier_func, ATL_tranks+i));
+      ATL_assert(!pthread_attr_destroy(&attr));
+   }
+   copier_func(ATL_tranks);
+}
+
+static void libexit(void)
+{
+   int i;
+/*
+ * Wake up all workers & tell them to quit, and wait til they do
+ */
+fprintf(stderr, "libexit %d: NWORKERSDONE=%d\n", __LINE__, NWORKERSDONE);
+   WORKERSQUIT = 1;
+   ATL_assert(!pthread_cond_broadcast(&taskcond));
+   ATL_assert(!pthread_mutex_lock(&donelock))
+   while (NWORKERSDONE < NTHR)
+   {
+      ATL_assert(!pthread_mutex_unlock(&donelock))
+      pthread_yield();
+      ATL_assert(!pthread_mutex_lock(&donelock))
+   }
+   ATL_assert(!pthread_mutex_unlock(&donelock))
+   ATL_assert(!pthread_cond_destroy(&taskcond));
+   ATL_assert(!pthread_cond_destroy(&mastcond));
+   ATL_assert(!pthread_mutex_destroy(&donelock));
+   ATL_assert(!pthread_mutex_destroy(&tasklock));
+   ATL_assert(!pthread_mutex_destroy(&comblock));
+   free(ATL_tranks);
+   ATL_tranks = NULL;
+   free(workers);
+   workers = NULL;
+   for (i=0; i < NTHR; i++)
+      if (tYs[i])
+         free(tYs[i]);
+   free(tYs);
+   tYs = NULL;
+   free(NYs);
+   NYs = NULL;
+   MG = NG = JG = 0;
+   ATL_LIBINIT = NWORKERSDONE = NTHR = WORKERSQUIT = NBUFF = 
+                 NWACTIVE = 0;
+}
+
+static void libinit(void)
+{
+   char *sp;
+   pthread_attr_t attr;
+   cpu_set_t cpuset;
+   int i;
+
+   JG = NG = MG = 0;
+   AG = NULL;
+/*
+ * Initialize condition variables
+ */
+   ATL_assert(!pthread_cond_init(&taskcond, NULL));
+   ATL_assert(!pthread_cond_init(&mastcond, NULL));
+/*
+ * Figure out number of threads to use
+ */
+   sp = getenv("OMP_NUM_THREADS");
+   if (!sp)
+      NTHR = ATL_NTHREADS;
+   else
+   {
+      NTHR = atoi(sp);
+      if (NTHR > ATL_MAXTHREADS || NTHR < 1)
+         NTHR = ATL_NTHREADS;
+   }
+   workers = calloc(NTHR, sizeof(pthread_t));
+   NYs = calloc(NTHR, sizeof(ATL_INT));
+   tYs = calloc(NTHR, sizeof(void*));
+   ATL_assert(workers && NYs && tYs);
+@skip   combindex.Ib = calloc(2*NTHR, sizeof(ATL_INT));
+@skip   combindex.Ie = combindex.Ib + Nthr;
+@skip   NBUFF = 1*(ATL_L1elts - (OFFMAX+ATL_sizeof-1)/ATL_sizeof) / (1*(22*8+1)); 
+@skip   NBUFF = 1;   // RCW : HERE HERE DEBUG
+   NBUFF = (TBUFFLEN - 8*NCOMMSCALARS) / (IBUFFLEN+8);
+   if (NBUFF < 1)
+      NBUFF = 1;
+   printf("NTHR=%d, NBUFF=%d, BUFSIZE=%d+%d=%d\n", NTHR, NBUFF, 
+          NBUFF*22*8*ATL_sizeof, 8*(NCOMMSCALARS+NBUFF), 
+          NBUFF*22*8*ATL_sizeof+8*(NCOMMSCALARS+NBUFF));
+/*
+ * We don't check return vals/join, so make detached; spawn to other procs
+ */
+   ATL_assert(!pthread_attr_init(&attr));
+   ATL_assert(!pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED));
+   ATL_assert(!pthread_attr_setscope(&attr, PTHREAD_SCOPE_SYSTEM));
+/*
+ * Start spawning thread on processor 0 only; he will spawn the rest of threads
+ */
+   CPU_ZERO(&cpuset);
+   CPU_SET(0, &cpuset);
+   ATL_assert(!pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpuset));
+   ATL_assert(!pthread_create(workers, &attr, spawning_func, NULL));
+   ATL_assert(!pthread_attr_destroy(&attr)); 
+/*
+ * Enroll libexit for when execution is stopped
+ */
+   ATL_assert(!atexit(libexit));
+}
+
+int Mjoin(PATL,tgemvN)
+   (ATL_CINT M, ATL_CINT N, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
+    const TYPE *X, ATL_CINT incX, const SCALAR beta, TYPE *Y, ATL_CINT incY)
+{
+   const TYPE one=ATL_rone;
+/*
+ * Get tasklock so newly spawned copiers will not start loop until
+ * after the work queue has been set up
+ */
+   ATL_assert(!pthread_mutex_lock(&tasklock));
+   if (!ATL_LIBINIT)
+   {
+      ATL_assert(!pthread_mutex_lock(&initlock));
+      if (!ATL_LIBINIT)
+      {
+         libinit();
+         ATL_LIBINIT=1;
+      }
+      ATL_assert(!pthread_mutex_unlock(&initlock));
+   }
+   #ifdef DEBUG
+      fprintf(stderr, "%d of %s\n", __LINE__, __FILE__);
+   #endif
+/*
+ * Setup task queue
+ */
+   WORKERSQUIT = 0;
+   if (incX != 1 || !SCALAR_IS_ONE(alpha) || !ATL_DataIsMinAligned(XG))
+   {
+      XG = malloc(ATL_MulBySize(N));
+      ATL_assert(XG);
+      Mjoin(PATL,cpsc)(N, alpha, X, incX, XG, 1);
+   }
+   else
+      XG = (TYPE*) X;
+   incXG = 1;
+   if (incY != 1)
+   {
+      YG = calloc(M, ATL_sizeof);
+      ATL_assert(YG);
+   }
+   else
+   {
+      YG = Y;
+      if (!SCALAR_IS_ONE(beta))
+         Mjoin(PATL,scal)(M, beta, Y, 1);
+   }
+   incYG = 1;
+   alphaG = alpha;
+@skip   betaG = beta;
+   AG = A;
+   MG = M;
+   NG = N;
+   ldaG = lda;
+   JG = 0;
+/*
+ * Wake up workers & wait for workers to complete job and go back to sleep
+ */
+   ATL_assert(!pthread_cond_broadcast(&taskcond));
+   #ifdef DEBUG
+      fprintf(stderr, "MASTER: waiting on mascond, JG=%d, N=%d, NWA=%d\n",
+              JG, N, NWACTIVE);
+   #endif
+   while (JG < N || NWACTIVE)
+      ATL_assert(!pthread_cond_wait(&mastcond, &tasklock));
+   #ifdef DEBUG
+      fprintf(stderr, "MASTER: waiting on mascond DONE, JG=%d, N=%d, NWA=%d\n",
+              JG, N, NWACTIVE);
+   #endif
+   JG = NG = 0;
+/*
+ * Copy back out to strided Y if necessary
+ */
+   if (YG != Y)
+   {
+      Mjoin(PATL,axpby)(M, one, YG, 1, beta, Y, incY);
+      free(YG);
+   }
+   ATL_assert(!pthread_mutex_unlock(&tasklock));
+   if (XG != X)
+      free(XG);
+   #ifdef DEBUG
+      fprintf(stderr, "MASTER: RETURNING FROM GEMM!\n\n");
+   #endif
+}

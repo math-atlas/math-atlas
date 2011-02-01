@@ -1,0 +1,805 @@
+@ifdef ! incd
+   @define incd @/home/rwhaley/Base/CInt@
+@endifdef
+@extract -b @(incd)/cblas.inc inc=type type=@(@type)
+@extract -b @(topd)/gen.inc what=crsetup
+@extract -b @(topd)/gen.inc what=cw @(cw99)
+#include "atlas_misc.h"
+#ifdef @(usept)
+   #include "atlas_ptalias3.h"
+#endif
+#include "cblas.h"
+
+@ROUT cblas_errprn
+#include <stdarg.h>
+int cblas_errprn(int ierr, int info, char *form, ...)
+{
+   va_list argptr;
+
+   va_start(argptr, form);
+#ifdef GCCWIN
+   vprintf(form, argptr);
+#else
+   vfprintf(stderr, form, argptr);
+#endif
+   va_end(argptr);
+   return(Mmin(ierr,info));
+}
+@ROUT clapack_ilaenv
+#include "atlas_lapack.h"
+
+#ifdef ATL_USEPTHREADS
+   #define ATL_ilaenv ATL_itlaenv
+#endif
+int clapack_ilaenv(enum ATL_ISPEC ISPEC, enum ATL_LAROUT ROUT, 
+                   unsigned int OPTS, int N1, int N2, int N3, int N4)
+{
+   int ATL_ilaenv(enum ATL_ISPEC ISPEC, enum ATL_LAROUT ROUT, unsigned int OPTS,
+                  int N1, int N2, int N3, int N4);
+   return(ATL_ilaenv(ISPEC, ROUT, OPTS, N1, N2, N3, N4));
+}
+@ROUT cblas_xerbla
+#include <stdarg.h>
+void cblas_xerbla(int p, char *rout, char *form, ...)
+{
+   va_list argptr;
+
+   va_start(argptr, form);
+#ifdef GCCWIN
+   if (p) printf("Parameter %d to routine %s was incorrect\n", p, rout);
+   vprintf(form, argptr);
+#else
+   if (p)
+      fprintf(stderr, "Parameter %d to routine %s was incorrect\n", p, rout);
+   vfprintf(stderr, form, argptr);
+#endif
+   va_end(argptr);
+   exit(-1);
+}
+@ROUT xerbla
+int CBLAS_CallFromC=0;
+#include <ctype.h>
+#define XerblaStrLen 6
+#define XerblaStrLen1 7
+#ifdef F77_Char
+void F77_xerbla(F77_Char F77_srname, void *vinfo)
+#else
+void F77_xerbla(char *srname, void *vinfo)
+#endif
+{
+#ifdef F77_Char
+   char *srname;
+#endif
+   char rout[XerblaStrLen1];
+#ifdef F77_Integer
+   F77_Integer *info=vinfo;
+#else
+   int *info=vinfo;
+#endif
+   extern int CBLAS_CallFromC;
+
+#ifdef F77_Char
+   srname = F2C_STR(F77_srname, XerblaStrLen);
+#endif
+   if (CBLAS_CallFromC)
+   {
+      for(i=0; i != XerblaStrLen; i++) rout[i] = tolower(srname[i]);
+      rout[XerBlaStrLen] = '\0';
+      fprintf(stderr, "Parameter %d to routine cblas_%s was incorrect\n",
+              *info+1, rout);
+   }
+   else
+   {
+      fprintf(stderr, "Parameter %d to routine %s was incorrect\n",
+              *info, srname);
+   }
+}
+@ROUT GEMM
+@beginskip
+void ATL_@(pre)gemm(const enum CBLAS_TRANSPOSE TA, const enum CBLAS_TRANSPOSE TB, 
+               const int M, const int N, const int K, 
+               const @(stya) alpha, const @(typa) *A, const int lda,
+               const @(typa) *B, const int ldb, const @(stya) beta, 
+               @(typa) *C, const int ldc);
+@endskip
+#include "atlas_level1.h"
+#include "atlas_level2.h"
+#include "atlas_level3.h"
+
+void cblas_@(pre)gemm(const enum CBLAS_ORDER Order, 
+                 const enum CBLAS_TRANSPOSE TA, const enum CBLAS_TRANSPOSE TB, 
+                 const int M, const int N, const int K, 
+                 const @(styp) alpha, const @(type) *A, const int lda,
+                 const @(type) *B, const int ldb, const @(styp) beta, 
+                 @(type) *C, const int ldc)
+{
+   int info=2000;
+@TYPE SCPLX DCPLX 
+   const @(utyp) *bet = beta;
+@TYPE !
+
+#ifndef NoCblasErrorChecks
+   if (M < 0) info = cblas_errprn(4, info, 
+                     "M cannot be less than zero 0,; is set to %d.", M);
+   if (N < 0) info = cblas_errprn(5, info, 
+                     "N cannot be less than zero 0,; is set to %d.", N);
+   if (K < 0) info = cblas_errprn(6, info, 
+                     "K cannot be less than zero 0,; is set to %d.", K);
+
+   if (Order == CblasRowMajor)
+   {
+      if (TA == CblasNoTrans)
+      {
+         if ( (lda < K) || (lda < 1) ) 
+            info = cblas_errprn(9, info, "lda must be >= MAX(K,1): lda=%d K=%d",
+                                lda, K);
+      }
+      else
+      {
+         if (TA != CblasConjTrans && TA != CblasTrans) 
+            info = cblas_errprn(2, info, 
+                                "TransA must be %d, %d or %d, but is set to %d",
+                                CblasNoTrans, CblasTrans, CblasConjTrans, TA);
+         if ( (lda < M) || (lda < 1) )
+            info = cblas_errprn(9, info, "lda must be >= MAX(M,1): lda=%d M=%d",
+                                lda, M);
+      }
+      if (TB == CblasNoTrans)
+      {
+         if ( (ldb < N) || (ldb < 1) )
+            info = cblas_errprn(11, info,"ldb must be >= MAX(N,1): ldb=%d N=%d",
+                                ldb, N);
+      }
+      else
+      {
+         if (TB != CblasConjTrans && TB != CblasTrans)
+            info = cblas_errprn(3, info, 
+                                "TransB must be %d, %d or %d, but is set to %d",
+                                CblasNoTrans, CblasTrans, CblasConjTrans, TB);
+         if ( (ldb < K) || (ldb < 1) )
+            info = cblas_errprn(11, info,"ldb must be >= MAX(K,1): ldb=%d K=%d",
+                                ldb, K);
+      }
+      if ( (ldc < N) || (ldc < 1) )
+         info = cblas_errprn(14, info,"ldc must be >= MAX(N,1): ldc=%d N=%d",
+                             ldc, N);
+   }
+   else if (Order == CblasColMajor)
+   {
+      if (TA == CblasNoTrans)
+      {
+         if ( (lda < M) || (lda < 1) )
+            info = cblas_errprn(9, info, "lda must be >= MAX(M,1): lda=%d M=%d",
+                                lda, M);
+      }
+      else
+      {
+         if (TA != CblasConjTrans && TA != CblasTrans)
+            info = cblas_errprn(2, info, 
+                                "TransA must be %d, %d or %d, but is set to %d",
+                                CblasNoTrans, CblasTrans, CblasConjTrans, TA);
+         if ( (lda < K) || (lda < 1) )
+            info = cblas_errprn(9, info, "lda must be >= MAX(K,1): lda=%d K=%d",
+                                lda, K);
+      }
+      if (TB == CblasNoTrans)
+      {
+         if ( (ldb < K) || (ldb < 1) )
+            info = cblas_errprn(11,info, "ldb must be >= MAX(K,1): ldb=%d K=%d",
+                                ldb, K);
+      }
+      else
+      {
+         if (TB != CblasConjTrans && TB != CblasTrans)
+            info = cblas_errprn(3, info, 
+                                "TransB must be %d, %d or %d, but is set to %d",
+                                CblasNoTrans, CblasTrans, CblasConjTrans, TB);
+         if ( (ldb < N) || (ldb < 1) )
+            info = cblas_errprn(11,info, "ldb must be >= MAX(K,1): ldb=%d K=%d",
+                                ldb, K);
+      }
+      if ( (ldc < M) || (ldc < 1) )
+         info = cblas_errprn(14, info,"ldc must be >= MAX(M,1): ldc=%d M=%d",
+                             ldc, M);
+   }
+   else
+      info = cblas_errprn(1, info, "Order must be %d or %d, but is set to %d",
+                          CblasRowMajor, CblasColMajor, Order);
+   if (info != 2000)
+   {
+      cblas_xerbla(info, "cblas_@(pre)gemm", "");
+      return;
+   }
+#endif
+/*
+ * Call SYRK when that's what the user is actually asking for; just handle
+ * beta=0, because beta=X requires we copy C and then subtract to preserve
+ * asymmetry
+ */
+@TYPE SCPLX DCPLX 
+   if (A == B && M == N && TA != TB && lda == ldb && *bet == 0.0 &&
+       bet[1] == 0.0 && TA != CblasConjTrans && TB != CblasConjTrans)
+@TYPE SREAL DREAL 
+   if (A == B && M == N && TA != TB && lda == ldb && beta == 0.0)
+@TYPE !
+   {
+      ATL_@(pre)syrk(CblasUpper, (Order == CblasColMajor) ? TA : TB, N, K, 
+                alpha, A, lda, beta, C, ldc);
+      ATL_@(pre)syreflect(CblasUpper, N, C, ldc);
+      return;
+   }
+   if (Order == CblasColMajor)
+      ATL_@(pre)gemm(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+   else
+      ATL_@(pre)gemm(TB, TA, N, M, K, alpha, B, ldb, A, lda, beta, C, ldc);
+}
+@ROUT HEMM
+   @define rout @hemm@
+@ROUT SYMM
+   @define rout @symm@
+@ROUT HEMM SYMM
+void ATL_@(pre)@(rout)(const enum CBLAS_SIDE Side,
+               const enum CBLAS_UPLO Uplo, const int M, const int N,
+               const @(stya) alpha, const @(typa) *A, const int lda,
+               const @(typa) *B, const int ldb, const @(stya) beta,
+               @(typa) *C, const int ldc);
+
+void cblas_@(pre)@(rout)(const enum CBLAS_ORDER Order, const enum CBLAS_SIDE Side,
+                 const enum CBLAS_UPLO Uplo, const int M, const int N,
+                 const @(styp) alpha, const @(type) *A, const int lda,
+                 const @(type) *B, const int ldb, const @(styp) beta,
+                 @(type) *C, const int ldc)
+{
+   enum CBLAS_SIDE side;
+   enum CBLAS_UPLO uplo;
+   int info=2000;
+
+#ifndef NoCblasErrorChecks
+   if (Order == CblasColMajor)
+   {
+      if (Side == CblasLeft)
+      {
+         if ( (lda < M) || (lda < 1) ) 
+            info = cblas_errprn(8, info, "lda must be >= MAX(M,1): lda=%d M=%d",
+                                lda, M);
+      }
+      else if (Side == CblasRight)
+      {
+         if ( (lda < N) || (lda < 1) )
+            info = cblas_errprn(8, info, "lda must be >= MAX(N,1): lda=%d N=%d",
+                                lda, N);
+      }
+      else info = cblas_errprn(2, info, 
+                               "SIDE must be %d or %d, but is set to %d",
+                               CblasRight, CblasLeft, Side);
+      if ( (ldb < M) || (ldb < 1) )
+         info = cblas_errprn(10, info, "ldb must be >= MAX(M,1): ldb=%d M=%d",
+                             ldb, M);
+      if ( (ldc < M) || (ldc < 1) )
+         info = cblas_errprn(13, info,"ldc must be >= MAX(M,1): ldc=%d M=%d",
+                             ldc, M);
+   }
+   else if (Order == CblasRowMajor)
+   {
+      if (Side == CblasLeft)
+      {
+         if ( (lda < M) || (lda < 1) )
+            info = cblas_errprn(8, info, "lda must be >= MAX(M,1): lda=%d M=%d",
+                                lda, M);
+      }
+      else if (Side == CblasRight)
+      {
+         if ( (lda < N) || (lda < 1) ) 
+            info = cblas_errprn(8, info, "lda must be >= MAX(N,1): lda=%d N=%d",
+                                lda, N);
+      }
+      else info = cblas_errprn(2, info, 
+                               "SIDE must be %d or %d, but is set to %d",
+                               CblasRight, CblasLeft, Side);
+      if ( (ldb < N) || (ldb < 1) )
+         info = cblas_errprn(10, info, "ldb must be >= MAX(N,1): ldb=%d N=%d",
+                             ldb, N);
+      if ( (ldc < N) || (ldc < 1) )
+         info = cblas_errprn(13, info,"ldc must be >= MAX(N,1): ldc=%d N=%d",
+                             ldc, N);
+   }
+   else info = cblas_errprn(1, info, "Order must be %d or %d, but is set to %d",
+                            CblasRowMajor, CblasColMajor, Order);
+
+   if (Uplo != CblasUpper && Uplo != CblasLower)
+      info = cblas_errprn(3, info, "UPLO must be %d or %d, but is set to %d",
+                               CblasUpper, CblasLower, Uplo);
+
+   if (M < 0) info = cblas_errprn(4, info, 
+                     "M cannot be less than zero; it is set to %d.", M);
+   if (N < 0) info = cblas_errprn(5, info, 
+                     "N cannot be less than zero; it is set to %d.", N);
+
+   if (info != 2000)
+   {
+      cblas_xerbla(info, "cblas_@(pre)@(rout)", "");
+      return;
+   }
+#endif
+   
+   if (Order == CblasColMajor)
+      ATL_@(pre)@(rout)(Side, Uplo, M, N, alpha, A, lda, B, ldb, beta, C, ldc);
+   else
+   {
+      if (Side == CblasLeft) side = CblasRight;
+      else side = CblasLeft;
+      if (Uplo == CblasUpper) uplo = CblasLower;
+      else uplo = CblasUpper;
+      ATL_@(pre)@(rout)(side, uplo, N, M, alpha, A, lda, B, ldb, beta, C, ldc);
+   }
+}
+@ROUT SYRK
+   @define rt @syrk@
+   @define scal @@(styp)@
+   @define scala @@(stya)@
+@ROUT HERK
+   @define rt @herk@
+   @define scal  @@(utyp)@
+   @define scala @@(utyp)@
+@ROUT SYRK HERK
+void ATL_@(pre)@(rt)(const enum CBLAS_UPLO Uplo,
+               const enum CBLAS_TRANSPOSE Trans, const int N, const int K, 
+               const @(scala) alpha, const @(typa) *A, const int lda,
+               const @(scala) beta, @(typa) *C, const int ldc);
+
+void cblas_@(pre)@(rt)(const enum CBLAS_ORDER Order, const enum CBLAS_UPLO Uplo,
+                 const enum CBLAS_TRANSPOSE Trans, const int N, const int K, 
+                 const @(scal) alpha, const @(type) *A, const int lda,
+                 const @(scal) beta, @(type) *C, const int ldc)
+{
+   enum CBLAS_UPLO uplo;
+   enum CBLAS_TRANSPOSE trans;
+
+#ifndef NoCblasErrorChecks
+   int info = 2000;
+   if (Uplo != CblasUpper && Uplo != CblasLower)
+      info = cblas_errprn(2, info, "UPLO must be %d or %d, but is set to %d",
+                               CblasUpper, CblasLower, Uplo);
+   if (N < 0) info = cblas_errprn(4, info, 
+                     "N cannot be less than zero; it is set to %d.", N);
+   if (K < 0) info = cblas_errprn(5, info, 
+                     "K cannot be less than zero; it is set to %d.", K);
+
+   if (Order == CblasColMajor)
+   {
+      if (Trans == AtlasNoTrans)
+      {
+         if ( (lda < N) || (lda < 1) )
+            info = cblas_errprn(8, info, "lda must be >= MAX(N,1): lda=%d N=%d",
+                                lda, N);
+      }
+      else
+      {
+@ROUT HERK
+         if (Trans != AtlasConjTrans)
+            info = cblas_errprn(3, info, 
+                                "Trans must be %d or %d, but is set to %d",
+                                CblasNoTrans, CblasConjTrans, Trans);
+@ROUT SYRK
+@TYPE SCPLX DCPLX `         if (Trans != AtlasTrans)`
+@TYPE SREAL DREAL `         if (Trans != AtlasTrans && Trans != AtlasConjTrans)`
+            info = cblas_errprn(3, info, 
+                                "Trans must be %d, %d or %d, but is set to %d",
+                                CblasNoTrans, CblasTrans, CblasConjTrans,Trans);
+@ROUT HERK SYRK
+         if ( (lda < K) || (lda < 1) )
+            info = cblas_errprn(8, info, "lda must be >= MAX(K,1): lda=%d K=%d",
+                                lda, K);
+      }
+   }
+   else if (Order == CblasRowMajor)
+   {
+      if (Trans == AtlasNoTrans)
+      {
+         if ( (lda < K) || (lda < 1) )
+            info = cblas_errprn(8, info, "lda must be >= MAX(K,1): lda=%d K=%d",
+                                lda, K);
+      }
+      else
+      {
+@ROUT HERK
+         if (Trans != AtlasConjTrans)
+            info = cblas_errprn(3, info, 
+                                "Trans must be %d or %d, but is set to %d",
+                                CblasNoTrans, CblasConjTrans, Trans);
+@ROUT SYRK
+@TYPE SCPLX DCPLX `         if (Trans != AtlasTrans)`
+@TYPE SREAL DREAL `         if (Trans != AtlasTrans && Trans != AtlasConjTrans)`
+            info = cblas_errprn(3, info, 
+                                "Trans must be %d, %d or %d, but is set to %d",
+                                CblasNoTrans, CblasTrans, CblasConjTrans,Trans);
+@ROUT HERK SYRK
+         if ( (lda < N) || (lda < 1) )
+            info = cblas_errprn(8, info, "lda must be >= MAX(N,1): lda=%d N=%d",
+                                lda, N);
+      }
+   }
+   else info = cblas_errprn(1, info, "Order must be %d or %d, but is set to %d",
+                            CblasRowMajor, CblasColMajor, Order);
+   if ( (ldc < N) || (ldc < 1) )
+      info = cblas_errprn(11, info, "ldc must be >= MAX(N,1): ldc=%d N=%d",
+                          ldc, N);
+   if (info != 2000)
+   {
+      cblas_xerbla(info, "cblas_@(pre)@(rt)", "");
+      return;
+   }
+#endif
+   if (Order == CblasColMajor)
+      ATL_@(pre)@(rt)(Uplo, Trans, N, K, alpha, A, lda, beta, C, ldc);
+   else
+   {
+      if (Uplo == CblasUpper) uplo = CblasLower;
+      else uplo = CblasUpper;
+@ROUT HERK `      if (Trans == CblasNoTrans) trans = CblasConjTrans;`
+@ROUT SYRK `      if (Trans == CblasNoTrans) trans = CblasTrans;`
+      else trans = CblasNoTrans;
+      ATL_@(pre)@(rt)(uplo, trans, N, K, alpha, A, lda, beta, C, ldc);
+   }
+}
+@ROUT SYR2K
+   @define rt @syr2k@
+   @define scala @@(stya)@
+   @define scal  @@(styp)@
+   @define al @alpha@
+@ROUT HER2K
+   @define rt @her2k@
+   @define scala @@(utyp)@
+   @define scal  @@(utyp)@
+   @define al @calpha@
+@ROUT SYR2K HER2K
+void ATL_@(pre)@(rt)(const enum CBLAS_UPLO Uplo,
+                const enum CBLAS_TRANSPOSE Trans, const int N, const int K, 
+                const @(stya) alpha, const @(typa) *A, const int lda,
+                const @(typa) *B, const int ldb, const @(scala) beta,
+                @(typa) *C, const int ldc);
+
+void cblas_@(pre)@(rt)(const enum CBLAS_ORDER Order, const enum CBLAS_UPLO Uplo,
+                  const enum CBLAS_TRANSPOSE Trans, const int N, const int K, 
+                  const @(styp) alpha, const @(type) *A, const int lda,
+                  const @(type) *B, const int ldb, const @(scal) beta,
+                  @(type) *C, const int ldc)
+{
+   enum CBLAS_UPLO uplo;
+   enum CBLAS_TRANSPOSE trans;
+@skip @ROUT HER2K `   const @(utyp) *ra=alpha, calpha[2] = {*ra, -ra[1]};`
+@ROUT HER2K 
+   const @(utyp) *ra=alpha;
+   @(utyp) calpha[2];
+@ROUT SYR2K HER2K
+
+#ifndef NoCblasErrorChecks
+   int info = 2000;
+   if (Uplo != CblasUpper && Uplo != CblasLower)
+      info = cblas_errprn(2, info, "UPLO must be %d or %d, but is set to %d",
+                               CblasUpper, CblasLower, Uplo);
+   if (N < 0) info = cblas_errprn(4, info, 
+                     "N cannot be less than zero; it is set to %d.", N);
+   if (K < 0) info = cblas_errprn(5, info, 
+                     "K cannot be less than zero; it is set to %d.", K);
+   if (Order == CblasColMajor)
+   {
+      if (Trans == AtlasNoTrans)
+      {
+         if ( (lda < N) || (lda < 1) )
+            info = cblas_errprn(8, info, "lda must be >= MAX(N,1): lda=%d N=%d",
+                                lda, N);
+         if ( (ldb < N) || (ldb < 1) )
+            info = cblas_errprn(10, info,"ldb must be >= MAX(N,1): ldb=%d N=%d",
+                                ldb, N);
+      }
+      else
+      {
+@ROUT HER2K
+         if (Trans != AtlasConjTrans)
+            info = cblas_errprn(3, info, 
+                                "Trans must be %d or %d, but is set to %d",
+                                CblasNoTrans, CblasConjTrans, Trans);
+@ROUT SYR2K
+@TYPE SCPLX DCPLX `         if (Trans != AtlasTrans)`
+@TYPE SREAL DREAL `         if (Trans != AtlasTrans && Trans != AtlasConjTrans)`
+            info = cblas_errprn(3, info, 
+                                "Trans must be %d or %d, but is set to %d",
+                                CblasNoTrans, CblasTrans, Trans);
+@ROUT HER2K SYR2K
+         if ( (lda < K) || (lda < 1) )
+            info = cblas_errprn(8, info, "lda must be >= MAX(K,1): lda=%d K=%d",
+                                lda, K);
+         if ( (ldb < K) || (ldb < 1) )
+            info = cblas_errprn(10, info,"ldb must be >= MAX(K,1): ldb=%d K=%d",
+                                ldb, K);
+      }
+   }
+   else if (Order == CblasRowMajor)
+   {
+      if (Trans == AtlasNoTrans)
+      {
+         if ( (lda < K) || (lda < 1) )
+            info = cblas_errprn(8, info, "lda must be >= MAX(K,1): lda=%d K=%d",
+                                lda, K);
+         if ( (ldb < K) || (ldb < 1) )
+            info = cblas_errprn(10, info,"ldb must be >= MAX(K,1): ldb=%d K=%d",
+                                ldb, K);
+      }
+      else
+      {
+@ROUT HER2K
+         if (Trans != AtlasConjTrans)
+            info = cblas_errprn(3, info, 
+                                "Trans must be %d or %d, but is set to %d",
+                                CblasNoTrans, CblasConjTrans, Trans);
+@ROUT SYR2K
+@TYPE SCPLX DCPLX `         if (Trans != AtlasTrans)`
+@TYPE SREAL DREAL `         if (Trans != AtlasTrans && Trans != AtlasConjTrans)`
+            info = cblas_errprn(3, info, 
+                                "Trans must be %d or %d, but is set to %d",
+                                CblasNoTrans, CblasTrans, Trans);
+@ROUT HER2K SYR2K
+         if ( (lda < N) || (lda < 1) )
+            info = cblas_errprn(8, info, "lda must be >= MAX(N,1): lda=%d N=%d",
+                                lda, N);
+         if ( (ldb < N) || (ldb < 1) )
+            info = cblas_errprn(10, info,"ldb must be >= MAX(N,1): ldb=%d N=%d",
+                                ldb, N);
+      }
+   }
+   else info = cblas_errprn(1, info, "Order must be %d or %d, but is set to %d",
+                            CblasRowMajor, CblasColMajor, Order);
+
+   if ( (ldc < N) || (ldc < 1) )
+      info = cblas_errprn(13, info, "ldc must be >= MAX(N,1): ldc=%d N=%d",
+                          ldc, N);
+   if (info != 2000)
+   {
+      cblas_xerbla(info, "cblas_@(pre)@(rt)", "");
+      return;
+   }
+#endif
+
+@ROUT HER2K
+   calpha[0] = *ra;
+   calpha[1] = -ra[1];
+@ROUT HER2K SYR2K
+   if (Order == CblasColMajor)
+      ATL_@(pre)@(rt)(Uplo, Trans, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+   else
+   {
+      if (Uplo == CblasUpper) uplo = CblasLower;
+      else uplo = CblasUpper;
+@ROUT HER2K `      if (Trans == CblasNoTrans) trans = CblasConjTrans;`
+@ROUT SYR2K `      if (Trans == CblasNoTrans) trans = CblasTrans;`
+      else trans = CblasNoTrans;
+      ATL_@(pre)@(rt)(uplo, trans, N, K, @(al), A, lda, B, ldb, beta, C, ldc);
+   }
+}
+@ROUT TRSM
+   @define rt @trsm@
+@ROUT TRMM
+   @define rt @trmm@
+@ROUT TRSM TRMM
+void ATL_@(pre)@(rt)(const enum CBLAS_SIDE Side,
+               const enum CBLAS_UPLO Uplo, const enum CBLAS_TRANSPOSE TA,
+               const enum CBLAS_DIAG Diag, const int M, const int N,
+               const @(stya) alpha, const @(typa) *A, const int lda,
+               @(typa) *B, const int ldb);
+
+void cblas_@(pre)@(rt)(const enum CBLAS_ORDER Order, const enum CBLAS_SIDE Side,
+                 const enum CBLAS_UPLO Uplo, const enum CBLAS_TRANSPOSE TA,
+                 const enum CBLAS_DIAG Diag, const int M, const int N,
+                 const @(styp) alpha, const @(type) *A, const int lda,
+                 @(type) *B, const int ldb)
+{
+   enum CBLAS_SIDE side;
+   enum CBLAS_UPLO uplo;
+   int info=2000;
+
+#ifndef NoCblasErrorChecks
+   if (Order == CblasColMajor)
+   {
+      if (Side == CblasLeft)
+      {
+         if ( (lda < M) || (lda < 1) ) 
+            info = cblas_errprn(10, info,"lda must be >= MAX(M,1): lda=%d M=%d",
+                                lda, M);
+      }
+      else if (Side == CblasRight)
+      {
+         if ( (lda < N) || (lda < 1) )
+            info = cblas_errprn(10, info,"lda must be >= MAX(N,1): lda=%d N=%d",
+                                lda, N);
+      }
+      else info = cblas_errprn(2, info, 
+                               "SIDE must be %d or %d, but is set to %d",
+                               CblasRight, CblasLeft, Side);
+      if ( (ldb < M) || (ldb < 1) )
+         info = cblas_errprn(12, info, "ldb must be >= MAX(M,1): ldb=%d M=%d",
+                             ldb, M);
+   }
+   else if (Order == CblasRowMajor)
+   {
+      if (Side == CblasLeft)
+      {
+         if ( (lda < M) || (lda < 1) ) 
+            info = cblas_errprn(10, info,"lda must be >= MAX(M,1): lda=%d M=%d",
+                                lda, M);
+      }
+      else if (Side == CblasRight)
+      {
+         if ( (lda < N) || (lda < 1) )
+            info = cblas_errprn(10, info,"lda must be >= MAX(N,1): lda=%d N=%d",
+                                lda, N);
+      }
+      else info = cblas_errprn(2, info, 
+                               "SIDE must be %d or %d, but is set to %d",
+                               CblasRight, CblasLeft, Side);
+      if ( (ldb < N) || (ldb < 1) )
+         info = cblas_errprn(12, info, "ldb must be >= MAX(N,1): ldb=%d N=%d",
+                             ldb, N);
+   }
+   else
+      info = cblas_errprn(1, info, "Order must be %d or %d, but is set to %d",
+                          CblasRowMajor, CblasColMajor, Order);
+
+   if (Uplo != CblasUpper && Uplo != CblasLower)
+      info = cblas_errprn(3, info, "UPLO must be %d or %d, but is set to %d",
+                          CblasUpper, CblasLower, Uplo);
+
+   if (TA != AtlasNoTrans && TA != AtlasTrans && TA != AtlasConjTrans)
+      info = cblas_errprn(4, info, 
+                          "TransA must be %d, %d or %d, but is set to %d",
+                          CblasNoTrans, CblasTrans, CblasConjTrans, TA);
+
+   if (Diag != CblasUnit && Diag != CblasNonUnit)
+      info = cblas_errprn(5, info, "UPLO must be %d or %d, but is set to %d",
+                          CblasUnit, CblasNonUnit, Diag);
+
+   if (M < 0) info = cblas_errprn(6, info, 
+                     "M cannot be less than zero; it is set to %d.", M);
+   if (N < 0) info = cblas_errprn(7, info, 
+                     "N cannot be less than zero; it is set to %d.", N);
+
+
+   if (info != 2000)
+   {
+      cblas_xerbla(info, "cblas_@(pre)@(rt)", "");
+      return;
+   }
+#endif
+
+   if (Order == CblasColMajor)
+      ATL_@(pre)@(rt)(Side, Uplo, TA, Diag, M, N, alpha, A, lda, B, ldb);
+   else
+   {
+      if (Side == CblasLeft) side = CblasRight;
+      else side = CblasLeft;
+      if (Uplo == CblasUpper) uplo = CblasLower;
+      else uplo = CblasUpper;
+      ATL_@(pre)@(rt)(side, uplo, TA, Diag, N, M, alpha, A, lda, B, ldb);
+   }
+}
+@ROUT GEMV
+void cblas_@(pre)gemv(const enum CBLAS_ORDER order,
+                 const enum CBLAS_TRANSPOSE TransA, const int M, const int N,
+                 const @(styp)alpha, const @(type) *A, const int lda,
+                 const @(type) *X, const int incX, const @(styp)beta,
+                 @(type) *Y, const int incY)
+{
+   char TA;
+#ifdef F77_Char
+   F77_Char F77_TA;
+#else
+   #define F77_TA &TA   
+#endif
+#ifdef F77_Integer
+   F77_Integer F77_M=M, F77_N=N, F77_lda=lda, F77_incX=incX, F77_incY=incY;
+#else
+   #define F77_M M
+   #define F77_N N
+   #define F77_lda lda
+@TYPE ! SCPLX DCPLX `   #define F77_incX incX`
+@TYPE   SCPLX DCPLX `   #define F77_incX incx`
+   #define F77_incY incY
+#endif
+@TYPE SCPLX DCPLX
+   int n, i, incx=incX;
+   const @(utyp) *xx=X;
+   @(utyp) *x=(@(utyp) *)X, *y=Y+sizeof(@(utyp)), *st;
+@TYPE !
+   extern int CBLAS_CallFromC;
+
+   CBLAS_CallFromC = 1;
+   if (order == CblasColMajor)
+   {
+      if (TransA == CblasNoTrans) TA = 'N';
+      else if (TransA == CblasTrans) TA = 'T';
+      else if (TransA == CblasConjTrans) TA = 'C';
+      else cblas_xerbla(2, "cblas_@(pre)gemv",
+                        "Illegal TransA setting, %d\n", TransA);
+      #ifdef F77_Char
+         F77_TA = C2F_CHAR(&TA);
+      #endif
+      F77_@(pre)gemv(F77_TA, &F77_N, &F77_M, @(sadd)alpha, A, &F77_lda, X, &F77_incX, 
+                @(sadd)beta, Y, &F77_incY);
+   }
+   else if (order == CblasRowMajor)
+   {
+      if (TransA == CblasNoTrans) TA = 'T';
+      else if (TransA == CblasTrans) TA = 'N';
+@TYPE SREAL DREAL
+      else if (TransA == CblasConjTrans) TA = 'N';
+@TYPE SCPLX DCPLX
+      else if (TransA == CblasConjTrans)
+      {
+         TA = 'N';
+         if (M > 0)
+         {
+            n = M << 1;
+            x = malloc(n*sizeof(@(utyp)));
+            st = x + n;
+            i = incX << 1;
+            do
+            {
+               *x = *xx;
+               x[1] = -xx[1];
+               x += 2;
+               xx += i;
+            }
+            while (x != st);
+            x -= n;
+            #ifdef F77_Integer
+               F77_incX = 1;
+            #else
+               incx = 1;
+            #endif
+            if (N > 0)
+            {
+               i = incY << 1;
+               n = incY * N;
+               st = y + n;
+               do
+               {
+                  *y = -(*y);
+                  y += i;
+               }
+               while (y != st);
+               y -= n;
+            }
+         }
+         else x = (@(utyp) *) X;
+      }
+@TYPE !
+      else cblas_xerbla(2, "cblas_@(pre)gemv",
+                        "Illegal TransA setting, %d\n", TransA);
+      #ifdef F77_Char
+         F77_TA = C2F_CHAR(&TA);
+      #endif
+@TYPE SREAL DREAL
+      F77_@(pre)gemv(F77_TA, &F77_M, &F77_N, @(sadd)alpha, A, &F77_lda, X,
+                &F77_incX, @(sadd)beta, Y, &F77_incY);
+@TYPE DCPLX SCPLX
+      F77_@(pre)gemv(F77_TA, &F77_M, &F77_N, @(sadd)alpha, A, &F77_lda, x,
+                &F77_incX, @(sadd)beta, Y, &F77_incY);
+      if (TransA == CblasConjTrans)
+      {
+         if (x != X) free(x);
+         if (N > 0)
+         {
+            do
+            {
+               *y = -(*y);
+               y += i;
+            }
+            while (y != st);
+         }
+      }
+@TYPE !
+   }
+   else cblas_xerbla(1, "cblas_@(pre)gemv",
+                     "Illegal Order setting, %d\n", order);
+   CBLAS_CallFromC = 0;
+}

@@ -1,0 +1,886 @@
+@ROUT dmvtcases.idx smvtcases.idx zmvtcases.idx cmvtcases.idx
+#
+# In this file, any line beginning with a '#' is ignored, but the # must be in
+# column 0.  All multiple whitespace is reduced to one space (i.e. used only
+# to distinguish where words begin/end).  Lines may be extended by putting '\'
+# as the *last* character of line.
+#
+# The file has the following format:
+# ROUT='routine name' AUTH='author names' COMP='compiler name' FLAGS='flags'
+# ID=<id> NU=<nu> MU=<mu> minY=<#> minX=<#> alignX=<#> alignY=<#> alignA=<#>,
+# SSE=[0,1,2,3] X87=[0,1] PREF[a,x,y]=[DIST,INSTDIST, INST] LDAMUL=<#>
+# ALLALIGNXY=[0,1] GEMMBASED=[0,1] CONJDEF=[0,1] FNU=[0,1]
+# ASM=[asmlist], eg., asmlist is "GAS_x8664,GAS_x8632" or "GAS_SPARC"
+# ASM defaults to no assembly dialect required.
+# If NU/MU is negative, then the routine can only handle multiples of NU/MU.
+#
+# Some less-obvious keywords:
+# LDAMUL    : Kernel will only work if lda is a multiple of # (in bytes)
+# PFTUNEx   : Kernel uses pref_x(mem) macro for each op=x (A,y,x).  prefetch
+#             inst can be varied wt this macro, as can fetch distance.
+#             If set to INSTDIST, tune both distance and instruction type;
+#             If set to INST, tune instruction type only
+#             If set to DIST, tune distance only
+# FNU       : if set, kernel can only handle N where N%NU == 0
+@ROUT dmvtcases.idx smvtcases.idx
+ID=1 TA='T' MU=16 NU=1 AUTH='R. Clint Whaley' ROUT='ATL_gemvT_dot.c'
+@ROUT dmvtcases.idx
+ID=2 TA='T' MU=2 NU=8 ALIGNX2A=1 alignY=16 minN=8 LDAMUL=16 \
+     AUTH='R. Clint Whaley' ROUT='ATL_dgemvT_2x8_sse3.c'
+@ROUT smvtcases.idx
+ID=2 TA='T' MU=8 NU=4 ALIGNX2A=1 alignY=16 LDAMUL=16 \
+     AUTH='R. Clint Whaley' ROUT='ATL_sgemvT_8x4_sse.c'
+@ROUT dmvtcases.idx
+ID=3 TA='T' NU=8 MU=6 AUTH='IBM', ROUT='ATL_gemvT_8xv3_vsx.c' \
+     COMP='gcc' FLAGS='-O3 -mvsx'
+@ROUT smvtcases.idx
+ID=3 TA='T' NU=8 MU=12 AUTH='IBM', ROUT='ATL_gemvT_8xv3_vsx.c' \
+     COMP='gcc' FLAGS='-O3 -mvsx'
+@ROUT cmvtcases.idx zmvtcases.idx
+ID=1 TA='T' MU=16 NU=1 AUTH='R. Clint Whaley', ROUT='ATL_cgemvT_dot.c'
+@ROUT cmvtcases.idx
+ID=2 TA='T' MU=8 NU=4 alignA=8 ALIGNX2A=1 alignY=16 LDAMUL=16 SSE=3 FNU=1 \
+     minM=9 minN=4 PFTUNABLE=1 ASM="GAS_x8664" \
+     AUTH='R. Clint Whaley' ROUT='ATL_cgemvT_8x4_sse3.c' \
+     COMP='gcc' CFLAGS='-x assembler-with-cpp'
+@rout ATL_gemvT_dot ATL_cgemvT_dot
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2010
+#include "atlas_misc.h"
+#include "atlas_level1.h"
+
+void ATL_UGEMV(ATL_CINT M, ATL_CINT N, const TYPE *A, ATL_CINT lda,
+               const TYPE *X, TYPE *Y)
+/*
+ *  y = [0,1]*y + A*x, A is MxN, storing the transpose of the matrix
+ */
+@rout ATL_gemvT_dot
+{
+   TYPE y0;
+   ATL_INT j;
+
+   for (j=0; j < N; j++, A += lda)
+   {
+      y0 = Mjoin(PATL,dot)(M, A, 1, X, 1);
+      #ifdef BETA0
+         *Y++ = y0;
+      #else
+         *Y++ += y0;
+      #endif
+   }
+}
+@rout ATL_cgemvT_dot
+{
+   TYPE ry, iy;
+   ATL_CINT lda2 = lda+lda;
+   ATL_INT j;
+
+   for (j=0; j < N; j++, A += lda2, Y += 2)
+   {
+      #ifdef BETA0
+         Mjoin(PATL,dotu_sub)(M, A, 1, X, 1, Y);
+      #else
+         ry = *Y; iy = Y[1];
+         Mjoin(PATL,dotu_sub)(M, A, 1, X, 1, Y);
+         *Y += ry;
+         Y[1] += iy;
+      #endif
+   }
+}
+@ROUT ATL_dgemvT_2x8_sse3
+#include <xmmintrin.h>
+#include "atlas_misc.h"
+#define _my_hadd_pd(dst, src) \
+   __asm__ __volatile__ ("haddpd %2, %0" : "=x"(dst) : "0" (dst), "x"(src))
+
+void ATL_UGEMV(ATL_CINT M, ATL_CINT N, const TYPE *A, ATL_CINT lda1,
+               const TYPE *X, TYPE *Y)
+{/* BEGIN GEMV: nMU=1, MU=2, NU=8 */
+   ATL_INT i, j;
+   ATL_CINT MAp = ((((size_t)A)&0xF) || M==1) ? 1 : 2;
+   ATL_CINT MA = M - MAp;
+   #define A0 A
+   const TYPE *A1=A0+lda1, *A2=A1+lda1, *A3=A2+lda1, *A4=A3+lda1, *A5=A4+lda1, *A6=A5+lda1, *A7=A6+lda1;
+   ATL_CINT M2=((((((MA) >> 1)) << 1)))+MAp, N8=(((((N) >> 3)) << 3)), lda8=(((lda1) << 3));
+   __m128d x0, x1, y0, y1, y2, y3, y4, y5, y6, y7, a0_0, a0_1, a0_2, a0_3, a0_4, a0_5, a0_6, a0_7;
+   if (!M || !N) return;
+
+   for (j=0; j < N8; j += 8, A0 += lda8, A1 += lda8, A2 += lda8, A3 += lda8, A4 += lda8, A5 += lda8, A6 += lda8, A7 += lda8)
+   {/* BEGIN N-LOOP UR=8 */
+      if (MAp != 1)
+      {/* peel to zero Y */
+         i=0;
+         x0 = _mm_load_pd(X+i+0);
+         y0 = _mm_load_pd(A0+i);
+         y0 = _mm_mul_pd(y0, x0);
+         y1 = _mm_load_pd(A1+i);
+         y1 = _mm_mul_pd(y1, x0);
+         y2 = _mm_load_pd(A2+i);
+         y2 = _mm_mul_pd(y2, x0);
+         y3 = _mm_load_pd(A3+i);
+         y3 = _mm_mul_pd(y3, x0);
+         y4 = _mm_load_pd(A4+i);
+         y4 = _mm_mul_pd(y4, x0);
+         y5 = _mm_load_pd(A5+i);
+         y5 = _mm_mul_pd(y5, x0);
+         y6 = _mm_load_pd(A6+i);
+         y6 = _mm_mul_pd(y6, x0);
+         y7 = _mm_load_pd(A7+i);
+         y7 = _mm_mul_pd(y7, x0);
+      } /* end zero Y peel */
+      else /* if (MAp == 1)*/
+      {/* peel to force X/A alignment, zero Y */
+         i=0;
+         x0 = _mm_load_sd(X+i+0);
+         y0 = _mm_load_sd(A0+i);
+         y0 = _mm_mul_sd(y0, x0);
+         y1 = _mm_load_sd(A1+i);
+         y1 = _mm_mul_sd(y1, x0);
+         y2 = _mm_load_sd(A2+i);
+         y2 = _mm_mul_sd(y2, x0);
+         y3 = _mm_load_sd(A3+i);
+         y3 = _mm_mul_sd(y3, x0);
+         y4 = _mm_load_sd(A4+i);
+         y4 = _mm_mul_sd(y4, x0);
+         y5 = _mm_load_sd(A5+i);
+         y5 = _mm_mul_sd(y5, x0);
+         y6 = _mm_load_sd(A6+i);
+         y6 = _mm_mul_sd(y6, x0);
+         y7 = _mm_load_sd(A7+i);
+         y7 = _mm_mul_sd(y7, x0);
+      } /* end force-align/zeroY peel */
+
+      for (i=MAp; i < M2; i += 2)
+      {/* ----- BEGIN M-LOOP BODY ----- */
+         /* --- BEGIN MUxNU UNROLL 0 --- */
+         x0 = _mm_load_pd(X+i+0);
+         a0_0 = _mm_load_pd(A0+i);
+         a0_0 = _mm_mul_pd(a0_0, x0);
+         y0 = _mm_add_pd(y0, a0_0);
+
+         a0_1 = _mm_load_pd(A1+i);
+         a0_1 = _mm_mul_pd(a0_1, x0);
+         y1 = _mm_add_pd(y1, a0_1);
+
+         a0_2 = _mm_load_pd(A2+i);
+         a0_2 = _mm_mul_pd(a0_2, x0);
+         y2 = _mm_add_pd(y2, a0_2);
+
+         a0_3 = _mm_load_pd(A3+i);
+         a0_3 = _mm_mul_pd(a0_3, x0);
+         y3 = _mm_add_pd(y3, a0_3);
+
+         a0_4 = _mm_load_pd(A4+i);
+         a0_4 = _mm_mul_pd(a0_4, x0);
+         y4 = _mm_add_pd(y4, a0_4);
+
+         a0_5 = _mm_load_pd(A5+i);
+         a0_5 = _mm_mul_pd(a0_5, x0);
+         y5 = _mm_add_pd(y5, a0_5);
+
+         a0_6 = _mm_load_pd(A6+i);
+         a0_6 = _mm_mul_pd(a0_6, x0);
+         y6 = _mm_add_pd(y6, a0_6);
+
+         a0_7 = _mm_load_pd(A7+i);
+         a0_7 = _mm_mul_pd(a0_7, x0);
+         y7 = _mm_add_pd(y7, a0_7);
+
+         /* --- END MUxNU UNROLL 0 --- */
+      }/* ----- END M-LOOP BODY ----- */
+      if (M != M2)
+      {/* ----- BEGIN SCALAR M CLEANUP ----- */
+         x0 = _mm_load_sd(X+i+0);
+         a0_0 = _mm_load_sd(A0+i);
+         a0_0 = _mm_mul_sd(a0_0, x0);
+         y0 = _mm_add_sd(y0, a0_0);
+
+         a0_1 = _mm_load_sd(A1+i);
+         a0_1 = _mm_mul_sd(a0_1, x0);
+         y1 = _mm_add_sd(y1, a0_1);
+
+         a0_2 = _mm_load_sd(A2+i);
+         a0_2 = _mm_mul_sd(a0_2, x0);
+         y2 = _mm_add_sd(y2, a0_2);
+
+         a0_3 = _mm_load_sd(A3+i);
+         a0_3 = _mm_mul_sd(a0_3, x0);
+         y3 = _mm_add_sd(y3, a0_3);
+
+         a0_4 = _mm_load_sd(A4+i);
+         a0_4 = _mm_mul_sd(a0_4, x0);
+         y4 = _mm_add_sd(y4, a0_4);
+
+         a0_5 = _mm_load_sd(A5+i);
+         a0_5 = _mm_mul_sd(a0_5, x0);
+         y5 = _mm_add_sd(y5, a0_5);
+
+         a0_6 = _mm_load_sd(A6+i);
+         a0_6 = _mm_mul_sd(a0_6, x0);
+         y6 = _mm_add_sd(y6, a0_6);
+
+         a0_7 = _mm_load_sd(A7+i);
+         a0_7 = _mm_mul_sd(a0_7, x0);
+         y7 = _mm_add_sd(y7, a0_7);
+
+      }/* ----- END SCALAR M CLEANUP ----- */
+      _my_hadd_pd(y0, y1);
+      #ifndef BETA0
+         a0_0 = _mm_load_pd(Y+j+0);
+         y0 = _mm_add_pd(y0, a0_0);
+      #endif
+      _mm_store_pd(Y+j+0, y0);
+      _my_hadd_pd(y2, y3);
+      #ifndef BETA0
+         a0_1 = _mm_load_pd(Y+j+2);
+         y2 = _mm_add_pd(y2, a0_1);
+      #endif
+      _mm_store_pd(Y+j+2, y2);
+      _my_hadd_pd(y4, y5);
+      #ifndef BETA0
+         a0_2 = _mm_load_pd(Y+j+4);
+         y4 = _mm_add_pd(y4, a0_2);
+      #endif
+      _mm_store_pd(Y+j+4, y4);
+      _my_hadd_pd(y6, y7);
+      #ifndef BETA0
+         a0_3 = _mm_load_pd(Y+j+6);
+         y6 = _mm_add_pd(y6, a0_3);
+      #endif
+      _mm_store_pd(Y+j+6, y6);
+   }/* END N-LOOP UR=8 */
+
+   for (j=N8; j < N; j++, A0 += lda1)
+   {/* BEGIN N-LOOP UR=1 */
+      if (MAp != 1)
+      {/* peel to zero Y */
+         i=0;
+         x0 = _mm_load_pd(X+i+0);
+         y0 = _mm_load_pd(A0+i);
+         y0 = _mm_mul_pd(y0, x0);
+      } /* end zero Y peel */
+      else /* if (MAp == 1)*/
+      {/* peel to force X/A alignment, zero Y */
+         i=0;
+         x0 = _mm_load_sd(X+i+0);
+         y0 = _mm_load_sd(A0+i);
+         y0 = _mm_mul_sd(y0, x0);
+      } /* end force-align/zeroY peel */
+
+      for (i=MAp; i < M2; i += 2)
+      {/* ----- BEGIN M-LOOP BODY ----- */
+         /* --- BEGIN MUxNU UNROLL 0 --- */
+         x0 = _mm_load_pd(X+i+0);
+         a0_0 = _mm_load_pd(A0+i);
+         a0_0 = _mm_mul_pd(a0_0, x0);
+         y0 = _mm_add_pd(y0, a0_0);
+
+         /* --- END MUxNU UNROLL 0 --- */
+      }/* ----- END M-LOOP BODY ----- */
+      if (M != M2)
+      {/* ----- BEGIN SCALAR M CLEANUP ----- */
+         x0 = _mm_load_sd(X+i+0);
+         a0_0 = _mm_load_sd(A0+i);
+         a0_0 = _mm_mul_sd(a0_0, x0);
+         y0 = _mm_add_sd(y0, a0_0);
+
+      }/* ----- END SCALAR M CLEANUP ----- */
+      _my_hadd_pd(y0, y0);
+      #ifndef BETA0
+         a0_0 = _mm_load_sd(Y+j+0);
+         y0 = _mm_add_sd(y0, a0_0);
+      #endif
+      _mm_store_sd(Y+j+0, y0);
+   }/* END N-LOOP UR=1 */
+}/* END GEMV: nMU=1, MU=2, NU=8 */
+#ifdef MA
+   #undef MA
+#endif
+#ifdef MAp
+   #undef MAp
+#endif
+#ifdef A0
+   #undef A0
+#endif
+@ROUT ATL_sgemvT_8x4_sse
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2010
+
+#include <xmmintrin.h>
+#include <stdio.h>
+#include "atlas_misc.h"
+#define _my_hadd_ps(dst, src) \
+   __asm__ __volatile__ ("haddps %2, %0" : "=x"(dst) : "0" (dst), "x"(src))
+
+
+void ATL_UGEMV(ATL_CINT M, ATL_CINT N, const TYPE *A, ATL_CINT lda1,
+               const TYPE *X, TYPE *Y)
+{/* BEGIN GEMVN: nMU=1, MU=8, NU=4 */
+   ATL_INT i, j;
+   ATL_CINT MAp = (M > 11) ?
+       ( (((((size_t)A)+15)>>4)<<4) - ((size_t)A) )/sizeof(TYPE) : M;
+   ATL_CINT MA=M-MAp;
+   ATL_CINT M8=((MA/8)*8)+MAp, N4=((N/4)*4), lda2=lda1+lda1, lda3=lda2+lda1, lda4=lda3+lda1;
+   __m128 y0, y1, y2, y3, x0, x4; 
+   __m128 a0_0, a4_0, a0_1, a4_1, a0_2, a4_2, a0_3, a4_3;
+
+   for (j=0; j < N4; j += 4, A += lda4, Y += 4)
+   {/* BEGIN N-LOOP UR=4 */
+      if (MAp)
+      {
+         i=0;
+         x0 = _mm_load_ss(X+i);
+         y0 =_mm_load_ss(A+i);
+         y0 = _mm_mul_ss(y0, x0);
+         y1 =_mm_load_ss(A+i+lda1);
+         y1 = _mm_mul_ss(y1, x0);
+         y2 =_mm_load_ss(A+i+lda2);
+         y2 = _mm_mul_ss(y2, x0);
+         y3 =_mm_load_ss(A+i+lda3);
+         y3 = _mm_mul_ss(y3, x0);
+         for (i=1; i < MAp; i++)
+         {/* peel to force X/A alignment */
+            x0 = _mm_load_ss(X+i);
+            a0_0 =_mm_load_ss(A+i);
+            a0_0 = _mm_mul_ss(a0_0, x0);
+            y0 = _mm_add_ss(y0, a0_0);
+            a0_1 =_mm_load_ss(A+i+lda1);
+            a0_1 = _mm_mul_ss(a0_1, x0);
+            y1 = _mm_add_ss(y1, a0_1);
+            a0_2 =_mm_load_ss(A+i+lda2);
+            a0_2 = _mm_mul_ss(a0_2, x0);
+            y2 = _mm_add_ss(y2, a0_2);
+            a0_3 =_mm_load_ss(A+i+lda3);
+            a0_3 = _mm_mul_ss(a0_3, x0);
+            y3 = _mm_add_ss(y3, a0_3);
+         } /* end force-align peel */
+      }
+      else
+      {
+         y0 = _mm_xor_ps(y0, y0);
+         y1 = _mm_xor_ps(y1, y1);
+         y2 = _mm_xor_ps(y2, y2);
+         y3 = _mm_xor_ps(y3, y3);
+      }
+      for (i=MAp; i < M8; i += 8)
+      {/* ----- BEGIN M-LOOP BODY ----- */
+         x0 = _mm_load_ps(X+i);
+         a0_0 =_mm_load_ps(A+i);
+         a0_0 = _mm_mul_ps(a0_0, x0);
+         y0 = _mm_add_ps(y0, a0_0);
+         a0_1 =_mm_load_ps(A+lda1+i);
+         a0_1 = _mm_mul_ps(a0_1, x0);
+         y1 = _mm_add_ps(y1, a0_1);
+         a0_2 =_mm_load_ps(A+lda2+i);
+         a0_2 = _mm_mul_ps(a0_2, x0);
+         y2 = _mm_add_ps(y2, a0_2);
+         a0_3 =_mm_load_ps(A+lda3+i);
+         a0_3 = _mm_mul_ps(a0_3, x0);
+         y3 = _mm_add_ps(y3, a0_3);
+
+         x4 = _mm_load_ps(X+i+4);
+         a4_0 =_mm_load_ps(A+i+4);
+         a4_0 = _mm_mul_ps(a4_0, x4);
+         y0 = _mm_add_ps(y0, a4_0);
+         a4_1 =_mm_load_ps(A+lda1+i+4);
+         a4_1 = _mm_mul_ps(a4_1, x4);
+         y1 = _mm_add_ps(y1, a4_1);
+         a4_2 =_mm_load_ps(A+lda2+i+4);
+         a4_2 = _mm_mul_ps(a4_2, x4);
+         y2 = _mm_add_ps(y2, a4_2);
+         a4_3 =_mm_load_ps(A+lda3+i+4);
+         a4_3 = _mm_mul_ps(a4_3, x4);
+         y3 = _mm_add_ps(y3, a4_3);
+      }/* ----- END M-LOOP BODY ----- */
+      for (i=M8; i < M; i++)
+      {/* ----- BEGIN SCALAR M CLEANUP ----- */
+         x0 = _mm_load_ss(X+i);
+         a0_0 =_mm_load_ss(A+i);
+         a0_0 = _mm_mul_ss(a0_0, x0);
+         y0 = _mm_add_ss(y0, a0_0);
+         a0_1 =_mm_load_ss(A+i+lda1);
+         a0_1 = _mm_mul_ss(a0_1, x0);
+         y1 = _mm_add_ss(y1, a0_1);
+         a0_2 =_mm_load_ss(A+i+lda2);
+         a0_2 = _mm_mul_ss(a0_2, x0);
+         y2 = _mm_add_ss(y2, a0_2);
+         a0_3 =_mm_load_ss(A+i+lda3);
+         a0_3 = _mm_mul_ss(a0_3, x0);
+         y3 = _mm_add_ss(y3, a0_3);
+      }/* ----- END SCALAR M CLEANUP ----- */
+                            /* y3 = {y3d, y3c, y3b, y3a} */
+                            /* y2 = {y2d, y2c, y2b, y2a} */
+                            /* y1 = {y1d, y1c, y1b, y1a} */
+                            /* y0 = {y0d, y0c, y0b, y0a} */
+      _my_hadd_ps(y0, y1);  /* y0 = {y1d+y1c, y1b+y1a, y0d+y0c, y0b+y0a} */
+      _my_hadd_ps(y2, y3);  /* y2 = {y3d+y3c, y3b+y3a, y2d+y2c, y2b+y2a} */
+      _my_hadd_ps(y0, y2);  /* y0 = {y3abcd, y2abcd, y1abcd, y0abcd} */
+      #ifndef BETA0
+         a0_0 = _mm_load_ps(Y);
+         y0 = _mm_add_ps(y0, a0_0);
+      #endif
+      _mm_store_ps(Y, y0);
+   }/* END N-LOOP UR=4 */
+
+   for (j=N4; j < N; j++, A += lda1, Y++)
+   {/* BEGIN N-LOOP UR=1 */
+      y0 = _mm_xor_ps(y0, y0);
+      y1 = _mm_xor_ps(y1, y1);
+      for (i=0; i < MAp; i++)
+      {/* peel to force X/A alignment */
+         x0 = _mm_load_ss(X+i);
+         a0_0 =_mm_load_ss(A+i);
+         a0_0 = _mm_mul_ss(a0_0, x0);
+         y0 = _mm_add_ss(y0, a0_0);
+      } /* end force-align peel */
+
+      for (i=MAp; i < M8; i += 8)
+      {/* ----- BEGIN M-LOOP BODY ----- */
+         x0 = _mm_load_ps(X+i);
+         a0_0 =_mm_load_ps(A+i);
+         a0_0 = _mm_mul_ps(a0_0, x0);
+         y0 = _mm_add_ps(y0, a0_0);
+         x4 = _mm_load_ps(X+i+4);
+         a4_0 =_mm_load_ps(A+i+4);
+         a4_0 = _mm_mul_ps(a4_0, x4);
+         y1 = _mm_add_ps(y1, a4_0);
+      }/* ----- END M-LOOP BODY ----- */
+      for (i=M8; i < M; i++)
+      {/* ----- BEGIN SCALAR M CLEANUP ----- */
+         x0 = _mm_load_ss(X+i);
+         a0_0 =_mm_load_ss(A+i);
+         a0_0 = _mm_mul_ss(a0_0, x0);
+         y0 = _mm_add_ss(y0, a0_0);
+      }/* ----- END SCALAR M CLEANUP ----- */
+                            /* y1 = {y0h, y0g, y0f, y0e} */
+                            /* y0 = {y0d, y0c, y0b, y0a} */
+      y0 = _mm_add_ps(y0, y1);
+      _my_hadd_ps(y0, y0);
+      _my_hadd_ps(y0, y0);
+      #ifndef BETA0
+         a0_0 = _mm_load_ss(Y);
+         y0 = _mm_add_ss(y0, a0_0);
+      #endif
+      _mm_store_ss(Y, y0);
+   }/* END N-LOOP UR=1 */
+}/* END GER: nMU=1, MU=8, NU=4 */
+#ifdef MA
+   #undef MA
+#endif
+#ifdef MAp
+   #undef MAp
+#endif
+@ROUT ATL_cgemvT_8x4_sse3
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2010
+#include "atlas_asm.h"
+/*
+ * This file does a 1x4 unrolled mvt_sse with these params:
+ *    CL=8, ORDER=clmajor
+ */
+#ifndef ATL_GAS_x8664
+   #error "This kernel requires x86-64 assembly!"
+#endif
+/*
+ * Integer register assignment
+ */
+#define M       %rdi
+#define N       %rsi
+#define pA0     %rdx
+#define lda     %rax
+#define pX      %r8
+#define pY      %r9
+#define II      %rbx
+#define pX0     %r11
+#define Mr      %rcx
+#define incAXm  %r10
+#define incII   %r15
+#define incAn   %r14
+#define lda3    %r12
+#define Ma      %r13
+/*
+ * SSE register assignment
+ */
+#define rA0     %xmm0
+#define rX0     %xmm1
+#define rx0     %xmm2
+#define rt0     %xmm3
+#define rY0r    %xmm4
+#define rY0i    %xmm5
+#define rY1r    %xmm6
+#define rY1i    %xmm7
+#define rY2r    %xmm8
+#define rY2i    %xmm9
+#define rY3r    %xmm10
+#define rY3i    %xmm11
+#define NONEPONEOFF -72
+#define NONEPONE %xmm15
+/*
+ * macros
+ */
+#ifndef MOVA
+   #define MOVA movaps
+#endif
+#define movapd movaps
+#define movupd movups
+#define xorpd xorps
+#define addpd addps
+#define mulpd mulps
+#define addsd addss
+#define mulsd mulss
+#define movsd movss
+#define haddpd haddps
+/*
+ * Define macros controlling prefetch
+ */
+#ifndef PFDIST
+   #define PFDIST 256
+#endif
+#ifndef PFADIST
+   #define PFADIST PFDIST
+#endif
+#ifndef PFYDIST
+   #define PFYDIST 64
+#endif
+#ifndef PFXDIST
+   #define PFXDIST 64
+#endif
+#ifndef PFIY
+   #ifdef ATL_3DNow
+      #define PFIY prefetchw
+   #else
+      #define PFIY prefetchnta
+   #endif
+#endif
+#ifndef PFIX
+   #define PFIX prefetcht0
+#endif
+#ifndef PFIA
+   #define PFIA prefetchnta
+#endif
+#if PFADIST == 0                /* flag for no prefetch */
+   #define prefA(mem)
+#else
+   #define prefA(mem) PFIA mem
+#endif
+#if PFYDIST == 0                /* flag for no prefetch */
+   #define prefY(mem)
+#else
+   #define prefY(mem) PFIY mem
+#endif
+#if PFXDIST == 0                /* flag for no prefetch */
+   #define prefX(mem)
+#else
+   #define prefX(mem) PFIX mem
+#endif
+/*
+ *                      %rdi        %rsi           %rdx          %rcx
+ * void ATL_UGEMV(ATL_CINT M, ATL_CINT N, const TYPE *A, ATL_CINT lda,
+ *                          %r8      %r9
+ *                const TYPE *X, TYPE *Y)
+ */
+.text
+.text
+.global ATL_asmdecor(ATL_UGEMV)
+ALIGN64
+ATL_asmdecor(ATL_UGEMV):
+
+/*
+ * Save callee-saved iregs
+ */
+   movq %rbp, -8(%rsp)
+   movq %rbx, -16(%rsp)
+   movq %r12, -24(%rsp)
+   movq %r13, -32(%rsp)
+   movq %r14, -40(%rsp)
+   movq %r15, -48(%rsp)
+/*
+ * Compute M = (M/MU)*MU, Mr = M - (M/MU)*MU
+ * NOTE: Mr is %rcx reg, so we can use jcx to go to cleanup loop
+ */
+   mov  %rcx, lda       /* move lda to assigned register, rax */
+   mov  $1, Mr          /* setup assignment to peel */
+   xor  Ma, Ma          /* default to no peel */
+   test $0xF, pA0       /* 0 if 16-byte aligned */
+   cmovnz Mr, Ma        /* if nonzero, say need 1 iteration peel */
+   sub  Ma, M
+   mov  M, Mr           /* Mr = M */
+   shr $3, M            /* M = M / MU */
+   shl $3, M            /* M = (M/MU)*MU */
+   sub M, Mr            /* Mr = M - (M/MU)*MU */
+/*
+ * Construct ponenone = {-1.0,1.0,-1.0,1.0}
+ */
+   finit
+   fld1                                 /* ST =  1.0 */
+   fldz                                 /* ST =  0.0 1.0 */
+   fsub %st(1), %st                     /* ST = -1.0 1.0 */
+   fsts NONEPONEOFF+4(%rsp)
+   fstps NONEPONEOFF+12(%rsp)           /* ST = 1.0 */
+   fsts NONEPONEOFF(%rsp)
+   fstps NONEPONEOFF+8(%rsp)            /* ST=NULL, mem=-1,1,-1,1*/
+   movapd NONEPONEOFF(%rsp), NONEPONE
+/*
+ * Setup constants
+ */
+   mov lda, incAn       /* incAn = lda */
+   sub M, incAn         /* incAn = lda - (M/MU)*MU */
+   sub Ma, incAn
+   sub Mr, incAn        /* incAn = lda - M */
+   shl $3, incAn        /* incAn = (lda-M)*sizeof */
+   shl $3, lda          /* lda *= sizeof */
+   sub $-128, pA0       /* code compaction by using signed 1-byte offsets */
+   sub $-128, pX        /* code compaction by using signed 1-byte offsets */
+   mov pX, pX0          /* save for restore after M loops */
+   mov $-64, incAXm     /* code comp: use reg rather than constant */
+   lea (lda, lda,2), lda3       /* lda3 = 3*lda */
+   lea (incAn, lda3), incAn     /* incAn = (4*lda-M)*sizeof */
+   mov $8*1, incII      /* code comp: use reg rather than constant */
+   mov M, II
+   ALIGN32
+   LOOPN:
+      xorpd rY0r, rY0r
+      xorpd rY0i, rY0i
+      xorpd rY1r, rY1r
+      xorpd rY1i, rY1i
+      xorpd rY2r, rY2r
+      xorpd rY2i, rY2i
+      xorpd rY3r, rY3r
+      xorpd rY3i, rY3i
+/*
+ *    If no peeled iteration, start M-loop, else do peeled iteration
+ */
+      bt $0, Ma
+      jnc LOOPM
+         xorps rA0, rA0
+         xorps rX0, rX0
+         xorps rx0, rx0
+         movlps -128(pX), rX0           /* rX0 = {0, 0, Xi, Xr} */
+         pshufd $0xB1, rX0, rx0     /* rx0 = {0, 0, Xr, Xi} */
+         movlps -128(pA0), rA0          /* rA0 = {0, 0, Ai, Ar} */
+         movaps rA0, rt0                /* rt0 = {0, 0, Ai, Ar} */
+         mulps rx0, rA0                 /* rA0 = {0, 0, Xr*Ai, Xi*Ar} */
+         addps rA0, rY0i
+         mulps rX0, rt0                 /* rt0 = {0, 0, Xi*Ai, Xr*Ar} */
+         addps rt0, rY0r
+         movlps -128(pA0,lda), rA0        /* rA0 = {0, 0, Ai, Ar} */
+         movaps rA0, rt0                /* rt0 = {0, 0, Ai, Ar} */
+         mulps rx0, rA0                 /* rA0 = {0, 0, Xr*Ai, Xi*Ar} */
+         addps rA0, rY1i
+         mulps rX0, rt0                 /* rt0 = {0, 0, Xi*Ai, Xr*Ar} */
+         addps rt0, rY1r
+         movlps -128(pA0,lda,2), rA0        /* rA0 = {0, 0, Ai, Ar} */
+         movaps rA0, rt0                /* rt0 = {0, 0, Ai, Ar} */
+         mulps rx0, rA0                 /* rA0 = {0, 0, Xr*Ai, Xi*Ar} */
+         addps rA0, rY2i
+         mulps rX0, rt0                 /* rt0 = {0, 0, Xi*Ai, Xr*Ar} */
+         addps rt0, rY2r
+         movlps -128(pA0,lda3), rA0        /* rA0 = {0, 0, Ai, Ar} */
+         movaps rA0, rt0                /* rt0 = {0, 0, Ai, Ar} */
+         mulps rx0, rA0                 /* rA0 = {0, 0, Xr*Ai, Xi*Ar} */
+         addps rA0, rY3i
+         mulps rX0, rt0                 /* rt0 = {0, 0, Xi*Ai, Xr*Ar} */
+         addps rt0, rY3r
+         add $8, pX
+         add $8, pA0
+
+      LOOPM:
+         movapd 0-128(pX), rX0              /* rX0 = Xi,    Xr */
+         pshufd $0xB1, rX0, rx0                 /* rx0 = Xr,    Xi */
+         MOVA   0-128(pA0), rA0             /* rA0 = Ai,    Ar */
+         movapd rA0, rt0                        /* rt0 = Ai,    Ar */
+         mulpd rx0, rA0                         /* rA0 = Ai*Xr, Ar*Xi */
+         addpd rA0, rY0i
+         prefA(PFADIST+0(pA0))
+         mulpd rX0, rt0                         /* rt0 = Ai*Xi, Ar*Xr */
+         addpd rt0, rY0r
+
+         MOVA   0-128(pA0,lda), rA0           /* rA0 = Ai,    Ar */ 
+         movapd rA0, rt0                        /* rt0 = Ai,    Ar */
+         mulpd rx0, rA0                         /* rA0 = Ai*Xr, Ar*Xi */
+         addpd rA0, rY1i
+         prefA(PFADIST+0(pA0,lda))
+         mulpd rX0, rt0                         /* rt0 = Ai*Xi, Ar*Xr */
+         addpd rt0, rY1r
+         MOVA   0-128(pA0,lda,2), rA0           /* rA0 = Ai,    Ar */ 
+         movapd rA0, rt0                        /* rt0 = Ai,    Ar */
+         mulpd rx0, rA0                         /* rA0 = Ai*Xr, Ar*Xi */
+         addpd rA0, rY2i
+         prefA(PFADIST+0(pA0,lda,2))
+         mulpd rX0, rt0                         /* rt0 = Ai*Xi, Ar*Xr */
+         addpd rt0, rY2r
+         MOVA   0-128(pA0,lda3), rA0           /* rA0 = Ai,    Ar */ 
+         movapd rA0, rt0                        /* rt0 = Ai,    Ar */
+         mulpd rx0, rA0                         /* rA0 = Ai*Xr, Ar*Xi */
+         addpd rA0, rY3i
+         prefA(PFADIST+0(pA0,lda3))
+         mulpd rX0, rt0                         /* rt0 = Ai*Xi, Ar*Xr */
+         addpd rt0, rY3r
+
+         movapd 16-128(pX), rX0              /* rX0 = Xi,    Xr */
+         pshufd $0xB1, rX0, rx0                 /* rx0 = Xr,    Xi */
+         MOVA   16-128(pA0), rA0             /* rA0 = Ai,    Ar */
+         movapd rA0, rt0                        /* rt0 = Ai,    Ar */
+         mulpd rx0, rA0                         /* rA0 = Ai*Xr, Ar*Xi */
+         addpd rA0, rY0i
+         mulpd rX0, rt0                         /* rt0 = Ai*Xi, Ar*Xr */
+         addpd rt0, rY0r
+
+         MOVA   16-128(pA0,lda), rA0           /* rA0 = Ai,    Ar */ 
+         movapd rA0, rt0                        /* rt0 = Ai,    Ar */
+         mulpd rx0, rA0                         /* rA0 = Ai*Xr, Ar*Xi */
+         addpd rA0, rY1i
+         mulpd rX0, rt0                         /* rt0 = Ai*Xi, Ar*Xr */
+         addpd rt0, rY1r
+         MOVA   16-128(pA0,lda,2), rA0           /* rA0 = Ai,    Ar */ 
+         movapd rA0, rt0                        /* rt0 = Ai,    Ar */
+         mulpd rx0, rA0                         /* rA0 = Ai*Xr, Ar*Xi */
+         addpd rA0, rY2i
+         mulpd rX0, rt0                         /* rt0 = Ai*Xi, Ar*Xr */
+         addpd rt0, rY2r
+         MOVA   16-128(pA0,lda3), rA0           /* rA0 = Ai,    Ar */ 
+         movapd rA0, rt0                        /* rt0 = Ai,    Ar */
+         mulpd rx0, rA0                         /* rA0 = Ai*Xr, Ar*Xi */
+         addpd rA0, rY3i
+         mulpd rX0, rt0                         /* rt0 = Ai*Xi, Ar*Xr */
+         addpd rt0, rY3r
+
+         movapd 32-128(pX), rX0              /* rX0 = Xi,    Xr */
+         pshufd $0xB1, rX0, rx0                 /* rx0 = Xr,    Xi */
+         MOVA   32-128(pA0), rA0             /* rA0 = Ai,    Ar */
+         movapd rA0, rt0                        /* rt0 = Ai,    Ar */
+         mulpd rx0, rA0                         /* rA0 = Ai*Xr, Ar*Xi */
+         addpd rA0, rY0i
+         mulpd rX0, rt0                         /* rt0 = Ai*Xi, Ar*Xr */
+         addpd rt0, rY0r
+
+         MOVA   32-128(pA0,lda), rA0           /* rA0 = Ai,    Ar */ 
+         movapd rA0, rt0                        /* rt0 = Ai,    Ar */
+         mulpd rx0, rA0                         /* rA0 = Ai*Xr, Ar*Xi */
+         addpd rA0, rY1i
+         mulpd rX0, rt0                         /* rt0 = Ai*Xi, Ar*Xr */
+         addpd rt0, rY1r
+         MOVA   32-128(pA0,lda,2), rA0           /* rA0 = Ai,    Ar */ 
+         movapd rA0, rt0                        /* rt0 = Ai,    Ar */
+         mulpd rx0, rA0                         /* rA0 = Ai*Xr, Ar*Xi */
+         addpd rA0, rY2i
+         mulpd rX0, rt0                         /* rt0 = Ai*Xi, Ar*Xr */
+         addpd rt0, rY2r
+         MOVA   32-128(pA0,lda3), rA0           /* rA0 = Ai,    Ar */ 
+         movapd rA0, rt0                        /* rt0 = Ai,    Ar */
+         mulpd rx0, rA0                         /* rA0 = Ai*Xr, Ar*Xi */
+         addpd rA0, rY3i
+         mulpd rX0, rt0                         /* rt0 = Ai*Xi, Ar*Xr */
+         addpd rt0, rY3r
+
+         movapd 48-128(pX), rX0              /* rX0 = Xi,    Xr */
+         pshufd $0xB1, rX0, rx0                 /* rx0 = Xr,    Xi */
+         MOVA   48-128(pA0), rA0             /* rA0 = Ai,    Ar */
+         movapd rA0, rt0                        /* rt0 = Ai,    Ar */
+         mulpd rx0, rA0                         /* rA0 = Ai*Xr, Ar*Xi */
+         addpd rA0, rY0i
+         mulpd rX0, rt0                         /* rt0 = Ai*Xi, Ar*Xr */
+         addpd rt0, rY0r
+
+         MOVA   48-128(pA0,lda), rA0           /* rA0 = Ai,    Ar */ 
+         movapd rA0, rt0                        /* rt0 = Ai,    Ar */
+         mulpd rx0, rA0                         /* rA0 = Ai*Xr, Ar*Xi */
+         addpd rA0, rY1i
+         mulpd rX0, rt0                         /* rt0 = Ai*Xi, Ar*Xr */
+         addpd rt0, rY1r
+         MOVA   48-128(pA0,lda,2), rA0           /* rA0 = Ai,    Ar */ 
+         movapd rA0, rt0                        /* rt0 = Ai,    Ar */
+         mulpd rx0, rA0                         /* rA0 = Ai*Xr, Ar*Xi */
+         addpd rA0, rY2i
+         mulpd rX0, rt0                         /* rt0 = Ai*Xi, Ar*Xr */
+         addpd rt0, rY2r
+         MOVA   48-128(pA0,lda3), rA0           /* rA0 = Ai,    Ar */ 
+         movapd rA0, rt0                        /* rt0 = Ai,    Ar */
+         mulpd rx0, rA0                         /* rA0 = Ai*Xr, Ar*Xi */
+         addpd rA0, rY3i
+         mulpd rX0, rt0                         /* rt0 = Ai*Xi, Ar*Xr */
+         addpd rt0, rY3r
+
+         sub incAXm, pX
+         sub incAXm, pA0
+      sub incII, II
+      jnz LOOPM
+
+      #ifdef ATL_OS_OSX     /* workaround retarded OS X assembly */
+         cmp $0, Mr
+         jz  MCLEANED
+      #else
+         jecxz MCLEANED        /* skip cleanup loop if Mr == 0 */
+      #endif
+
+      mov Mr, II
+      xorps rA0, rA0
+      xorps rX0, rX0
+      xorps rx0, rx0
+      LOOPMCU:
+         movlps -128(pX), rX0           /* rX0 = {0, 0, Xi, Xr} */
+         pshufd $0xB1, rX0, rx0     /* rx0 = {0, 0, Xr, Xi} */
+         movlps -128(pA0), rA0          /* rA0 = {0, 0, Ai, Ar} */
+         movaps rA0, rt0                /* rt0 = {0, 0, Ai, Ar} */
+         mulps rx0, rA0                 /* rA0 = {0, 0, Xr*Ai, Xi*Ar} */
+         addps rA0, rY0i
+         mulps rX0, rt0                 /* rt0 = {0, 0, Xi*Ai, Xr*Ar} */
+         addps rt0, rY0r
+         movlps -128(pA0,lda), rA0        /* rA0 = {0, 0, Ai, Ar} */
+         movaps rA0, rt0                /* rt0 = {0, 0, Ai, Ar} */
+         mulps rx0, rA0                 /* rA0 = {0, 0, Xr*Ai, Xi*Ar} */
+         addps rA0, rY1i
+         mulps rX0, rt0                 /* rt0 = {0, 0, Xi*Ai, Xr*Ar} */
+         addps rt0, rY1r
+         movlps -128(pA0,lda,2), rA0        /* rA0 = {0, 0, Ai, Ar} */
+         movaps rA0, rt0                /* rt0 = {0, 0, Ai, Ar} */
+         mulps rx0, rA0                 /* rA0 = {0, 0, Xr*Ai, Xi*Ar} */
+         addps rA0, rY2i
+         mulps rX0, rt0                 /* rt0 = {0, 0, Xi*Ai, Xr*Ar} */
+         addps rt0, rY2r
+         movlps -128(pA0,lda3), rA0        /* rA0 = {0, 0, Ai, Ar} */
+         movaps rA0, rt0                /* rt0 = {0, 0, Ai, Ar} */
+         mulps rx0, rA0                 /* rA0 = {0, 0, Xr*Ai, Xi*Ar} */
+         addps rA0, rY3i
+         mulps rX0, rt0                 /* rt0 = {0, 0, Xi*Ai, Xr*Ar} */
+         addps rt0, rY3r
+         add $8, pX
+         add $8, pA0
+      dec II
+      jnz LOOPMCU
+
+MCLEANED:
+                                /* rYr0 = {-rY0d, rY0c, -rY0b, rY0a} */
+                                /* rYi0 = { iY0d, iY0c,  iY0b, iY0a} */
+      mulps NONEPONE, rY0r   /* rYr = {rY0d,  rY0c,    rY0b,   rY0a} */
+      mulps NONEPONE, rY1r   /* rYr = {rY1d,  rY1c,    rY1b,   rY1a} */
+      haddps rY0i, rY0r   /* rYr = {iY0cd  ,iY0ab,  rY0cd,  rY0ab} */
+      haddps rY1i, rY1r   /* rYr = {iY1cd  ,iY1ab,  rY1cd,  rY1ab} */
+      haddps rY1r, rY0r   /* rYr = {iY1abcd,rY1abcd,iY0abcd,rY0abcd} */
+      #ifndef BETA0
+         addpd 0(pY), rY0r
+      #endif
+      movaps rY0r, 0(pY)
+      mulps NONEPONE, rY2r   /* rYr = {rY0d,  rY0c,    rY0b,   rY0a} */
+      mulps NONEPONE, rY3r   /* rYr = {rY1d,  rY1c,    rY1b,   rY1a} */
+      haddps rY2i, rY2r   /* rYr = {iY0cd  ,iY0ab,  rY0cd,  rY0ab} */
+      haddps rY3i, rY3r   /* rYr = {iY1cd  ,iY1ab,  rY1cd,  rY1ab} */
+      haddps rY3r, rY2r   /* rYr = {iY1abcd,rY1abcd,iY0abcd,rY0abcd} */
+      #ifndef BETA0
+         addpd 16(pY), rY2r
+      #endif
+      movaps rY2r, 16(pY)
+      prefY(4*8+PFYDIST(pY))
+      add $4*8, pY
+      add incAn, pA0
+      mov pX0, pX
+      mov M, II
+   sub $4, N
+   jnz LOOPN
+/*
+ * EPILOGUE: restore registers and return
+ */
+   movq -8(%rsp), %rbp
+   movq -16(%rsp), %rbx
+   movq -24(%rsp), %r12
+   movq -32(%rsp), %r13
+   movq -40(%rsp), %r14
+   movq -48(%rsp), %r15
+   ret

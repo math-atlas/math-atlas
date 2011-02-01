@@ -1,0 +1,506 @@
+@extract -b @(topd)/gen.inc what=crsetup
+@ROUT ATL_row2blkT
+@extract -b @(topd)/gen.inc what=cw
+#include "atlas_misc.h"
+#include "atlas_prefetch.h"
+
+static void ATL_UROW2BLKT_NB
+   (const int M, const int N, const TYPE *A, const int lda, TYPE *V,
+    const TYPE alpha0)
+/*
+ * copy where M & N are NB, compiler should be able to completely unroll
+ */
+{
+   const int lda2 = lda<<1;
+   int i, j;
+   TYPE *v=V;
+   const TYPE *pA0 = A, *pA1 = A + lda;
+   const register TYPE alpha=alpha0;
+   #ifdef ATL_AltiVec
+      static int cwrd=0;
+      if (cwrd) goto L1;
+      i = 1; /* one block unless NB is too big */
+      j = ATL_MulBySize(NB)>>4;
+      while (j > 32) { j >>= 1; i <<= 1; }
+      if (j == 32) j = 0;
+      cwrd = ATL_GetCtrl(j<<4, i, j);
+L1:
+      ATL_pfavR(pA0, cwrd, 2);
+      ATL_pfavR(pA1, cwrd, 3);
+   #endif
+
+#if (NB/2)*2 != NB  /* ATLAS should ensure NB is divisable by two */
+   assert((NB/2)*2 == NB);
+#endif
+   for (j=NB; j; j -= 2)
+   {
+      #ifdef ATL_AltiVec
+         ATL_pfavR(pA0+lda2, cwrd, 0);
+         ATL_pfavR(pA1+lda2, cwrd, 1);
+      #endif
+      for (i=0; i != NB; i++, v += NB)
+      {
+         *v = ATL_MulByALPHA(pA0[i]);
+         v[1] = ATL_MulByALPHA(pA1[i]);
+      }
+      V += 2;
+      v = V;
+      pA0 += lda2;
+      pA1 += lda2;
+   }
+}
+
+static void ATL_UROW2BLKT_KB
+   (const int M, const int N, const TYPE *A, const int lda, TYPE *V,
+    const TYPE alpha0)
+{
+   const int n = N >> 1, lda2 = lda<<1;
+   int i, j;
+   TYPE *v=V;
+   const TYPE *pA0 = A, *pA1 = A + lda;
+   const register TYPE alpha=alpha0;
+
+   for (j=n; j; j--)
+   {
+      for (i=0; i != M; i++, v += N)
+      {
+         *v = ATL_MulByALPHA(pA0[i]);
+         v[1] = ATL_MulByALPHA(pA1[i]);
+      }
+      V += 2;
+      v = V;
+      pA0 += lda2;
+      pA1 += lda2;
+   }
+   if ((n<<1) != N) 
+      for (i=0; i != M; i++, v += N) *v = ATL_MulByALPHA(pA0[i]);
+}
+
+void ATL_UROW2BLKT(const int N, const int nb, const TYPE *A, const int lda, 
+                  TYPE *V, const SCALAR alpha)
+/*
+ * A is a nbxN matrix, v is a N*nb length vector.
+ * v receives trans(A) in block major order.
+ */
+{
+   const int Nb = N/NB, incA = lda*NB;
+   const int incV = nb*NB;
+   int k;
+
+   if (nb == NB)
+      for (k=0; k != Nb; k++, A += incA, V += incV)
+         ATL_UROW2BLKT_NB(Nb, NB, A, lda, V, alpha);
+
+   else
+      for (k=0; k != Nb; k++, A += incA, V += incV)
+         ATL_UROW2BLKT_KB(nb, NB, A, lda, V, alpha);
+   if (k = N - NB*Nb)
+      ATL_UROW2BLKT_KB(nb, k, A, lda, V, alpha);
+}
+void ATL_UROW2BLKT2(const int M, const int N, const TYPE *A, const int lda, 
+                   TYPE *V, const SCALAR alpha)
+{
+   const int Mb = NB*M, Nb = N/NB;
+   const int mr = M - NB*Mb, nr = N - NB*Nb;
+   const int incV = NB*N, incA = NB*lda - M + mr;
+   const int incVV = NB*mr;
+   int i, j;
+   TYPE *v=V, *vv = V+Mb*incV;
+
+   for (j=Nb; j; j--)
+   {
+      for (i=Mb; i; i--, A += NB, v += incV)
+         ATL_UROW2BLKT_NB(NB, NB, A, lda, v, alpha);
+      if (mr) 
+      {
+         ATL_UROW2BLKT_KB(mr, NB, A, lda, vv, alpha);
+         vv += incVV;
+      }
+      A += incA;
+      V += NB*NB;
+      v = V;
+   }
+   if (nr)
+   {
+      for (i=Mb; i; i--, A += NB, v += incV)
+         ATL_UROW2BLKT_KB(NB, nr, A, lda, v, alpha);
+      if (mr) ATL_UROW2BLKT_KB(mr, nr, A, lda, vv, alpha);
+   }
+}
+@ROUT ATL_crow2blkT
+static void ATL_UROW2BLKT_NB(const int M, const int N, const TYPE *A, const int lda,
+                        TYPE *vr, TYPE *vi, const SCALAR alpha)
+{
+   const int incA = lda<<2, incv = 2 - NB*NB;
+   const TYPE *pA0 = A, *pA1 = A + (lda<<1);
+   int i, j;
+   #ifdef ALPHAXI0
+      #ifdef Conj_
+         const register TYPE ralpha = *alpha, calpha = -ralpha;
+      #else
+         const register TYPE ralpha = *alpha;
+      #endif
+   #elif defined(ALPHAX)
+      const register TYPE ralpha = *alpha, ialpha = alpha[1];
+      register TYPE ra, ia;
+   #endif
+
+   #if ((NB/2)*2 != NB)  /* ATLAS should ensure NB divisible by 2 */
+      ATL_assert((NB/2)*2 == NB);
+   #endif
+   for (j=(NB>>1); j; j --, pA0 += incA, pA1 += incA, vr += incv, vi += incv)
+   {
+      for (i=0; i != NB2; i += 2, vr += NB, vi += NB)
+      {
+         scalcp(pA0+i, vr, vi);
+         scalcp(pA1+i, vr+1, vi+1);
+      }
+   }
+}
+
+static void ATL_UROW2BLKT_KB(const int M, const int N, const TYPE *A, const int lda,
+                        TYPE *vr, TYPE *vi, const SCALAR alpha)
+{
+   const int M2 = M<<1, lda2 = lda<<1, incv = 1 - M*N;
+   int i, j;
+   #ifdef ALPHAXI0
+      #ifdef Conj_
+         const register TYPE ralpha = *alpha, calpha = -ralpha;
+      #else
+         const register TYPE ralpha = *alpha;
+      #endif
+   #elif defined(ALPHAX)
+      const register TYPE ralpha = *alpha, ialpha = alpha[1];
+      register TYPE ra, ia;
+   #endif
+
+   for (j=N; j; j--, A += lda2, vr += incv, vi += incv)
+   {
+      for (i=0; i != M2; i += 2, vr += N, vi += N) scalcp(A+i, vr, vi);
+   }
+}
+
+
+void ATL_UROW2BLKT(const int N, const int nb, const TYPE *A, const int lda,
+              TYPE *v, const SCALAR alpha)
+{
+   const int nNb = N/NB, incA = (NB*lda)<<1;
+   const int incv = NB*nb, incV = incv<<1;
+   int k;
+
+   if (nb == NB)
+      for (k=nNb; k; k--, A += incA, v += 2*NB*NB)
+         ATL_UROW2BLKT_NB(NB, NB, A, lda, v+NB*NB, v, alpha);
+   else
+      for (k=nNb; k; k--, A += incA, v += incV)
+         ATL_UROW2BLKT_KB(nb, NB, A, lda, v+incv, v, alpha);
+   if ( k = N-NB*nNb )
+      ATL_UROW2BLKT_KB(nb, k, A, lda, v+k*nb, v, alpha);
+}
+
+void ATL_UROW2BLKT2(const int M, const int N, const TYPE *A, const int lda,
+               TYPE *V, const SCALAR alpha)
+{
+   const int nNb = N/NB, nMb = M/NB;
+   const int mr = M - nMb*NB, nr = N - NB*nNb;
+   const int incA = (NB*lda - M + mr)<<1;
+   const int incV = (NB*N)<<1, incvv = NB*mr, incVV=incvv<<1;
+   TYPE *v = V, *vv = V + nMb * incV;
+   int i, j;
+
+   for (j=nNb; j; j--)
+   {
+      for (i=nMb; i; i--, A += NB2, v += incV)
+         ATL_UROW2BLKT_NB(NB, NB, A, lda, v+NB*NB, v, alpha);
+      if (mr)
+      {
+         ATL_UROW2BLKT_KB(mr, NB, A, lda, vv+incvv, vv, alpha);
+         vv += incVV;
+      }
+      A += incA;
+      V += 2*NB*NB;
+      v = V;
+   }
+   if (nr)
+   {
+      j = NB*nr;
+      for (i=nMb; i; i--, A += NB2, v += incV)
+         ATL_UROW2BLKT_KB(NB, nr, A, lda, v+j, v, alpha);
+      if (mr) ATL_UROW2BLKT_KB(mr, nr, A, lda, vv+mr*nr, vv, alpha);
+   }
+}
+@ROUT ATL_ccol2blk
+void ATL_UCOL2BLK(const int M, const int N, const TYPE *A,
+		  const int lda, TYPE *V, const SCALAR alpha)
+{
+    const int nMb = M/NB; /* Number of full blocks along M-dim. */
+    const int ib = M - NB*nMb; /* Remainder along M. */
+    const int incA = (lda - M)<<1; /* Mul by 2 because column is complex. */
+    const int incv = NB*N;
+    const int incV = (incv<<1) - NB;
+    int i, ii, j;
+    TYPE *rp = V+NB*N, *ip = V, *prp, *pip;
+#ifdef ALPHAXI0
+#ifdef Conj_
+    const register TYPE ralpha = *alpha, calpha = -ralpha;
+#else
+    const register TYPE ralpha = *alpha;
+#endif
+#elif defined(ALPHAX)
+    const register TYPE ralpha = *alpha, ialpha = alpha[1];
+    register TYPE ra, ia;
+#endif
+    
+    pip = V + (M-ib)*(N<<1); /* First position after all full blocks and
+			      N-remainder blocks. */
+    prp = pip + ib*N; /* First pos after prp. */
+    
+    /* Iterate over all columns. */
+    for (j=N; j; j--, V += NB, A += incA)
+    {
+	ip = V;
+	rp = V + incv;
+	/* Copy a column vector of size nMB*NB. */
+	for (ii=nMb; ii; ii--, rp += incV, ip += incV)
+	{
+	    /* Copy, scale and split NB complex values from A to
+	       where rp (real part) and ip (imag part) points. */
+	    for (i=NB; i; i--, A += 2, rp++, ip++) scalcp(A, rp, ip);
+	}
+	/* Copy the remaining part of the column vector. */
+	for (i=ib; i; i--, A += 2, prp++, pip++) scalcp(A, prp, pip);
+    }
+}
+
+/*
+void col2blk2(const int M, const int N, const TYPE *A, const int lda, TYPE *V, 
+              const TYPE *alpha)
+{
+   int j;
+   const int nNb = N/NB, jb = N - NB*nNb;
+   const int incA = (lda*NB)<<1, incV = (M*NB)<<1;
+
+   for (j=nNb; j; j--)
+   {
+      col2blk(M, NB, A, lda, V, alpha);
+      A += incA;
+      V += incV;
+   }
+   if (jb) col2blk(M, jb, A, lda, V, alpha);
+}
+*/
+@ROUT ATL_col2blk
+@extract -b @(topd)/gen.inc what=cw
+
+#include "atlas_misc.h"
+#include "atlas_prefetch.h"
+
+void ATL_UCOL2BLK
+    (const int M, const int N, const TYPE *A, const int lda, TYPE *V, 
+     const SCALAR alpha0)
+{
+    const int Mb = M/NB, m = NB*Mb, mr = M-m;
+    const int Nb = N/NB, n = NB*Nb, nr = N-n; 
+    const int nb2 = NB >> 1;
+    const int incA = (lda<<1) - m;
+@skip   const int incV  = ( Mb ? (NB<<1) - Mb*NB*NB : (mr<<1) );
+    const int incV  = ( Mb ? (NB<<1) - Mb*NB*NB : 0 );
+    const int incVv = ( Mb ? (Mb-1)*NB*NB + NB*mr : NB*mr );
+    const int incV0 = NB*nr;
+    const int incV1 = ( Mb ? (NB<<1) - incV0*Mb : (mr<<1) );
+    int ib, jb, i, j;
+    const TYPE *pA0 = A, *pA1 = A + lda;
+    TYPE *v0 = V, *vv=V + NB*m;
+    const register TYPE alpha=alpha0;
+#ifdef ATL_AltiVec
+    static int cwrd=0;
+    if (cwrd) goto L1;
+    i = 1; /* one block unless NB is too big */
+    j = ATL_MulBySize(NB)>>4;
+    while (j > 32) { j >>= 1; i <<= 1; }
+    if (j == 32) j = 0;
+    cwrd = ATL_GetCtrl(j<<4, i, j);
+    L1:
+#endif
+
+#if ((NB/2)*2 != NB)  /* ATLAS should ensure NB divisible by 2 */
+    ATL_assert((NB/2)*2 == NB);
+#endif
+    /* Copy Nb (number of full blocks along N dimension) rows of
+       blocks. */
+    for (jb=Nb; jb; jb--, v0 += incVv)
+    {
+	vv = v0 + NB*m;
+	/* Iterate NB/2 times to cover one whole column of blocks. */
+	for (j=nb2; j; j--, v0 += incV, pA0 += incA, pA1 += incA)
+	{
+	    /* Read two columns of consecutive memory and write
+	       them in block format. */
+	    for (ib=Mb; ib; ib--, pA0 += NB, pA1 += NB, v0 += NB*NB)
+	    {
+#ifdef ATL_AltiVec
+		ATL_pfavR(pA0+NB, cwrd, 0);
+		ATL_pfavR(pA1+NB, cwrd, 1);
+#endif
+		for (i=0; i != NB; i++)  /* easy loop to unroll */
+		{
+		    v0[i] = ATL_MulByALPHA(pA0[i]);
+		    v0[NB+i] = ATL_MulByALPHA(pA1[i]);
+		}
+	    }
+	    /* This copies two columns of the last, smaller block. */
+	    if (mr)
+	    {
+		for (i=0; i != mr; i++)
+		{
+		    vv[i] = ATL_MulByALPHA(pA0[i]);
+		    vv[mr+i] = ATL_MulByALPHA(pA1[i]);
+		}
+		vv += mr << 1;
+	    }
+	}
+    }
+    /* Do the exact same thing as above for the remaing column of
+       blocks with smaller size along N-dimension */
+    if (nr)
+    {
+	v0 = V + Nb * NB * M;
+	vv = v0 + nr*m;
+	for (j=jb=(nr>>1); j; j--, pA0 += incA, pA1 += incA, v0 += incV1)
+	{
+	    for (ib=Mb; ib; ib--, pA0 += NB, pA1 += NB, v0 += incV0)
+	    {
+		for (i=0; i != NB; i++)  /* easy loop to unroll */
+		{
+		    v0[i] = ATL_MulByALPHA(pA0[i]);
+		    v0[i+NB] = ATL_MulByALPHA(pA1[i]);
+		}
+	    }
+	    if (mr)
+	    {
+		for (i=0; i != mr; i++)
+		{
+		    vv[i] = ATL_MulByALPHA(pA0[i]);
+		    vv[i+mr] = ATL_MulByALPHA(pA1[i]);
+		}
+		vv += mr << 1;
+	    }
+	}
+	if ((jb<<1) != nr)
+	{
+	    for (ib=Mb; ib; ib--, pA0 += NB, v0 += incV0)
+	    {
+		for (i=0; i != NB; i++) v0[i] = ATL_MulByALPHA(pA0[i]);
+	    }
+	    if (mr) for (i=0; i != mr; i++) vv[i] = ATL_MulByALPHA(pA0[i]);
+	}
+    }
+}
+/*
+  void Mjoin(Mjoin(PATL,col2blk2),NM)
+  (const int M, const int N, const TYPE *A, const int lda, 
+  TYPE *V, const SCALAR alpha)
+  {
+  Mjoin(Mjoin(PATL,col2blk),NM)(M, N, A, lda, V, alpha);
+  }
+*/
+@ROUT col_stub row_stub
+#include "atlas_misc.h"
+
+#ifdef Conj_
+   #if defined(ALPHA1)
+      #define scalcp(A_, rp_, ip_) \
+      { \
+         *(rp_) = *(A_); \
+         *(ip_) = -((A_)[1]); \
+      }
+   #elif defined(ALPHAN1)
+      #define scalcp(A_, rp_, ip_) \
+      { \
+         *(rp_) = -(*(A_)); \
+         *(ip_) = (A_)[1]; \
+      }
+   #elif defined(ALPHAXI0)
+      #define scalcp(A_, rp_, ip_) \
+      { \
+         *(rp_) = ralpha * *(A_); \
+         *(ip_) = calpha * (A_)[1]; \
+      }
+   #elif defined(ALPHAX)
+      #define scalcp(A_, rp_, ip_) \
+      { \
+         ra = *(A_); ia = (A_)[1]; \
+         *(rp_) = ralpha * ra + ialpha * ia; \
+         *(ip_) = ialpha * ra - ralpha * ia; \
+      }
+   #endif
+#else
+   #if defined(ALPHA1)
+      #define scalcp(A_, rp_, ip_) \
+      { \
+         *(rp_) = *(A_); \
+         *(ip_) = (A_)[1]; \
+      }
+   #elif defined(ALPHAN1)
+      #define scalcp(A_, rp_, ip_) \
+      { \
+         *(rp_) = -(*(A_)); \
+         *(ip_) = -((A_)[1]); \
+      }
+   #elif defined(ALPHAXI0)
+      #define scalcp(A_, rp_, ip_) \
+      { \
+         *(rp_) = ralpha * *(A_); \
+         *(ip_) = ralpha * (A_)[1]; \
+      }
+   #elif defined(ALPHAX)
+      #define scalcp(A_, rp_, ip_) \
+      { \
+         ra = *(A_); ia = (A_)[1]; \
+         *(rp_) = ralpha * ra - ialpha * ia; \
+         *(ip_) = ialpha * ra + ralpha * ia; \
+      }
+   #endif
+#endif
+
+@ROUT col_stub
+#ifdef TREAL
+
+#ifdef Conj_
+#define ATL_UCOL2BLK Mjoin(Mjoin(PATL,col2blkConj),NM)
+#define ATL_UCOL2BLK2 Mjoin(Mjoin(PATL,col2blkConj2),NM)
+#else
+#define ATL_UCOL2BLK Mjoin(Mjoin(PATL,col2blk),NM)
+#define ATL_UCOL2BLK2 Mjoin(Mjoin(PATL,col2blk2),NM)
+#endif
+
+#else
+
+#define ATL_UCOL2BLK Mjoin(Mjoin(PATL,col2blk),NM)
+
+#endif
+
+@ROUT row_stub
+
+#ifdef TREAL
+
+#define ATL_UROW2BLKT_NB Mjoin(Mjoin(PATL,row2blkT_NB),NM)
+#define ATL_UROW2BLKT_KB Mjoin(Mjoin(PATL,row2blkT_KB),NM)
+#define ATL_UROW2BLKT Mjoin(Mjoin(PATL,row2blkT),NM)
+#define ATL_UROW2BLKT2 Mjoin(Mjoin(PATL,row2blkT2),NM)
+
+#else
+
+#ifdef Conj_
+
+#define ATL_UROW2BLKT Mjoin(Mjoin(PATL,row2blkC),NM)
+#define ATL_UROW2BLKT2 Mjoin(Mjoin(PATL,row2blkC2),NM)
+
+#else
+
+#define ATL_UROW2BLKT Mjoin(Mjoin(PATL,row2blkT),NM)
+#define ATL_UROW2BLKT2 Mjoin(Mjoin(PATL,row2blkT2),NM)
+
+#endif
+
+@ROUT !

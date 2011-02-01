@@ -1,0 +1,672 @@
+@extract -b @(topd)/gen.inc what=crsetup
+@ROUT coltest coltime
+#include "atlas_misc.h"
+#include "atlas_memcopy.h"
+#include <assert.h>
+
+#ifndef TEST_COL2BLK_A1
+#define TEST_COL2BLK_A1 Mjoin(Mjoin(PATL,col2blk),_a1)
+#endif
+
+#ifndef TEST_COL2BLK_AX
+#define TEST_COL2BLK_AX Mjoin(Mjoin(PATL,col2blk),_aX)
+#endif
+
+#ifndef TEST_COL2BLK_AXI0
+#define TEST_COL2BLK_AXI0 Mjoin(Mjoin(PATL,col2blk),_aXi0)
+#endif
+
+#ifndef TEST_COL2BLKCONJ_A1
+#define TEST_COL2BLKCONJ_A1 Mjoin(Mjoin(PATL,col2blk),Conj_a1)
+#endif
+
+#ifndef TEST_COL2BLKCONJ_AX
+#define TEST_COL2BLKCONJ_AX Mjoin(Mjoin(PATL,col2blk),Conj_aX)
+#endif
+
+#ifndef TEST_COL2BLKCONJ_AXI0
+#define TEST_COL2BLKCONJ_AXI0 Mjoin(Mjoin(PATL,col2blk),Conj_aXi0)
+#endif
+
+/* LD is leading dimension.
+ * This returns a *real* matrix, so specify 2*M and 2*LD for complex.
+ */
+void getmatrix(TYPE * A, int M, int N, int LD, TYPE padval)
+{
+    int i,j;
+    
+    for (j=0; j<N; j++)
+    {
+	for (i=0; i<M; i++)
+	{
+	    A[i+j*LD]=i+j*N;
+	}
+	for (i=M; i<LD; i++)
+	{
+	    A[i+j*LD]=padval;
+	}
+
+    }
+}
+
+void invoke_test(int M, int N, TYPE *A, int LD, TYPE * V, SCALAR alpha,
+		 int conj)
+{
+#ifdef TREAL
+    if (alpha == 1.0)
+    {
+	TEST_COL2BLK_A1(M, N, A, LD, V, alpha);
+    }
+    else
+    {
+	TEST_COL2BLK_AX(M, N, A, LD, V, alpha);
+    }
+#else
+    if (alpha[1] == 0.0)
+    {
+	if (alpha[0] == 1.0)
+	{
+	    if (conj)
+		TEST_COL2BLKCONJ_A1(M, N, A, LD, V, alpha);
+	    else
+		TEST_COL2BLK_A1(M, N, A, LD, V, alpha);
+	}
+	else
+	{
+	    if (conj)
+		TEST_COL2BLKCONJ_AXI0(M, N, A, LD, V, alpha);
+	    else
+		TEST_COL2BLK_AXI0(M, N, A, LD, V, alpha);
+	}
+    }
+    else
+    {
+	if (conj)
+	    TEST_COL2BLKCONJ_AX(M, N, A, LD, V, alpha);
+	else
+	    TEST_COL2BLK_AX(M, N, A, LD, V, alpha);
+    }
+    
+#endif   
+}
+
+@ROUT coltest
+
+#ifdef TCPLX
+int scaltest(const TYPE * A, TYPE rp, TYPE ip, const SCALAR alpha, int conj)
+{
+    TYPE r = A[0], i = A[1];
+    TYPE ralpha = alpha[0], ialpha = alpha[1];
+    TYPE or, oi;
+    if (conj)
+    {
+	or = ralpha * r + ialpha * i;
+	oi = ialpha * r - ralpha * i;
+    }
+    else
+    {
+	or = ralpha * r - ialpha * i;
+	oi = ialpha * r + ralpha * i;
+    }
+    
+    return ( ((or==rp) && (oi==ip)) );
+    
+}
+
+int verify_ccol2blk(const int M, const int N, const TYPE *A,
+		    const int lda, TYPE *V, const SCALAR alpha,
+		    int conj)
+{
+    const int nMb = M/NB; /* Number of full blocks along M-dim. */
+    const int ib = M - NB*nMb; /* Remainder along M. */
+    const int incA = (lda - M)<<1; /* Mul by 2 because column is complex. */
+    const int incv = NB*N;
+    const int incV = (incv<<1) - NB;
+    int max_errors_to_print = 10;
+    int i, ii, j;
+    int ai, aj;
+    int iret = 0;
+    
+    const TYPE * Aorig = A;
+    TYPE *rp = V+NB*N, *ip = V, *prp, *pip;
+    
+    pip = V + (M-ib)*(N<<1); /* First position after all full blocks and
+				N-remainder blocks. */
+    prp = pip + ib*N; /* First pos after prp. */
+    
+    /* Iterate over all columns. */
+    for (j=N; j; j--, V += NB, A += incA)
+    {
+	ip = V;
+	rp = V + incv;
+	/* Copy a column vector of size nMB*NB. */
+	for (ii=nMb; ii; ii--, rp += incV, ip += incV)
+	{
+	    /* Copy, scale and split NB complex values from A to
+	       where rp (real part) and ip (imag part) points. */
+	    for (i=NB; i; i--, A += 2, rp++, ip++)
+	    {
+		if (scaltest(A, *rp, *ip, alpha, conj) == 0)
+		{
+		    aj = (A-Aorig)/lda;
+		    ai = (A-Aorig)-lda*aj;
+		    fprintf(stderr, "ERROR at %d,%d copied val was (%f,%f) and not (%f,%f) !!\n",ai,aj,*rp,*ip,A[0],A[1]);
+		    iret = 1;
+		    if ((--max_errors_to_print)==0) return(1);
+		}
+	    }
+	}
+	/* Copy the remaining part of the column vector. */
+	for (i=ib; i; i--, A += 2, prp++, pip++)
+	{
+	    if (scaltest(A, *prp, *pip, alpha, conj) == 0)
+	    {
+		aj = (A-Aorig)/lda;
+		ai = (A-Aorig)-lda*aj;
+		fprintf(stderr, "ERROR at %d,%d copied val was (%f,%f) and not (%f,%f) !!\n",ai,aj,*prp,*pip,A[0],A[1]);
+		iret = 1;
+		if ((--max_errors_to_print)==0) return(1);
+	    }
+	}
+    }
+    return(iret);
+}
+
+/*
+  void verify_ccol2blk2(const int M, const int N, const TYPE *A,
+  const int lda, TYPE *V, 
+  const TYPE *alpha)
+  {
+  int j;
+  const int nNb = N/NB, jb = N - NB*nNb;
+  const int incA = (lda*NB)<<1, incV = (M*NB)<<1;
+  
+  for (j=nNb; j; j--)
+  {
+  col2blk(M, NB, A, lda, V, alpha);
+  A += incA;
+  V += incV;
+  }
+  if (jb) col2blk(M, jb, A, lda, V, alpha);
+  }
+*/
+#endif
+
+/* LD is leading dimension. */
+int DoTest(int M, int N, int LD, TYPE *alpha0, int conj)
+{
+    int iret;
+    const TYPE padval=(-2271.0);
+    TYPE *A0, *V0, *A, *V;
+#ifdef TREAL
+    TYPE alpha = *alpha0;
+    
+    int max_errors_to_print = 10;
+    const int m_full_blocks = M/NB;    
+    const int n_full_blocks = N/NB;
+    const int rem_m = M-NB*m_full_blocks;
+    const int rem_n = N-NB*n_full_blocks;
+    int this_m, this_n, m_off, n_off;
+    TYPE mustbe;
+    int ind, im, in, ibm, ibn;
+#else
+    TYPE *alpha = alpha0;
+#endif
+    
+    printf("HEJ %i %i %i %i %f %f\n",M,N,LD,conj,alpha,padval);
+    
+    A0 = malloc( ATL_sizeof*LD*N + 512);
+    assert(A0);
+    A = ATL_AlignPtr(A0);
+    
+    V0 = malloc( ATL_sizeof*M*N + 512);
+    assert(V0);
+    V = ATL_AlignPtr(V0);
+    
+    getmatrix(A, (M SHIFT), N, (LD SHIFT), padval);
+    
+    invoke_test(M, N, A, LD, V, alpha, conj);
+    
+#ifdef TREAL
+
+    /* Verify result.
+       The loop structure runs through the copied memory in the order
+       that the memory is laid out, through the increasing index "ind".
+       The two outermost loops interates over all the blocks, the last
+       iteration of each loop being a smaller block size, possibly
+       zero.
+       m_off and n_off are use to keep track of where the currently
+       examined block is placed in the original matrix.
+    */
+    ind=0;
+    n_off=0;
+    iret = 0; /* Passes by default. */
+    for (ibn=0; ibn < n_full_blocks+1; ibn++)
+    {		
+	if (ibn == n_full_blocks)
+	{
+	    this_n=rem_n;
+	}
+	else
+	{
+	    this_n=NB;
+	}	    
+	m_off=0;	    
+	for (ibm=0; ibm < m_full_blocks+1; ibm++)		
+	{
+	    if (ibm == m_full_blocks)
+	    {
+		this_m=rem_m;
+	    }
+	    else
+	    {
+		this_m=NB;
+	    }
+	    for (in=0; in <this_n; in++)		
+	    {
+		for (im=0; im <this_m; im++)
+		{
+		    mustbe = alpha*(m_off+im+N*(in+n_off));
+		    if (V[ind] != mustbe)
+		    {
+			fprintf(stderr, "ERROR at %d,%d copied val was %f and not %f!!\n",m_off+im,in+n_off,V[ind],mustbe);
+			iret = 1;
+			if ((--max_errors_to_print)==0)
+			{
+			    free(V0);
+			    free(A0);
+			    
+			    return(iret);
+			}
+		    }		    			   
+		    ind++;
+		}
+	    }
+	    m_off+=this_m;
+	}    
+	n_off+=this_n;
+    }
+
+#else
+
+    /* Verify result. */
+    iret = verify_ccol2blk(M, N, A, LD, V, alpha, conj);
+    
+#endif   
+
+    free(V0);
+    free(A0);
+    
+    return(iret);
+}
+
+/* LD is must be added to M to give the real lading dimension. */
+int DoAllTests(int cachesize, int mflop,
+	       int M0, int MN, int MINC,
+	       int N0, int NN, int NINC,
+	       int LDgap0, int LDgapN, int LDgapINC,
+	       int nalpha, TYPE *alphas,
+	       int nconj, int *conjs)
+{
+    int im, in, ild, ia, ic, iret=0, i=0, j;
+    char *passfail;
+    
+#ifdef TREAL
+    char *t1="  ITST      M      N     LD     alpha   TEST";
+    char *t2="======  =====  =====  =====  ========  =====";
+#else
+    char *t1="  ITST      M      N     LD    ralpha    ialpha  CONJ   TEST";
+    char *t2="======  =====  =====  =====  ========  ========  ====  =====";
+    
+#endif
+    fprintf(stdout, "  COL2BLK TESTING NB = %i\n",NB);
+    fprintf(stdout, "%s\n", t1);
+    fprintf(stdout, "%s\n", t2);
+    
+    for (im=M0; im <= MN; im+=MINC)
+    {
+	for (in=N0; in <= NN; in+=NINC)
+	{
+	    for (ild=LDgap0; ild <= LDgapN; ild+=LDgapINC)
+	    {
+		for (ia=0; ia < nalpha; ia++)
+		{
+		    for (ic=0; ic < nconj; ic++)
+		    {
+			printf("DOTE %i %i %i %i\n",nalpha,nconj,ic);
+
+
+			j = DoTest(im, in, im+ild, alphas+(ia SHIFT),
+				   conjs[ic]);
+			iret += j;
+			if (j == 0) passfail = "PASSED";
+			else passfail = "FAILED";
+#ifdef TREAL
+			fprintf(stdout, "%6d %6d %6d %6d %9.2f %s\n",
+				i, im, in, ild+im, alphas[ia], passfail);
+#else
+			fprintf(stdout, "%6d %6d %6d %6d %9.2f %9.2f %3d %s\n",
+				i, im, in, ild+im, alphas[2*ia], alphas[2*ia+1],
+				conjs[ic], passfail);
+#endif
+			i++;
+		    }
+		}
+	    }
+	}
+    }
+    if (iret == 0) 
+    {
+	fprintf(stdout, "ALL COL2BLK SANITY TESTS PASSED.\n\n");
+    }
+    else 
+    {
+	fprintf(stdout, "%d of %d AXPY TESTS FAILED!!\n\n", iret, i);
+    }
+    return(iret);
+}
+
+void PrintUsage(char *nam)
+{
+    fprintf(stderr, "USAGE: Not implemented yet\n", nam);
+    exit(-1);
+}
+
+@ROUT coltime
+/* LD is leading dimension. */
+void DoTest(int cachesize, int mflop, int M, int N, int LD, TYPE *alpha0,
+	      int conj, double *speed, int *nreps)
+{
+    /*int l2ret;*/
+    const TYPE padval=(-2271.0);
+    TYPE *A0, *V0, *A, *V;
+#ifdef TREAL
+    TYPE alpha = *alpha0;
+    const int mflop_per_call = M*N;
+#else
+    TYPE *alpha = alpha0;
+    const int mflop_per_call = 2*M*N;
+#endif
+
+    int i;
+    double t0 = 0.0, t1 = 0.0;
+
+    /* printf("HEJ %i %i %i %i %i %f %f\n",cachesize, mflop, M,N,LD,alpha,padval); */
+    *nreps = mflop/mflop_per_call+1;
+
+    A0 = malloc( ATL_sizeof*LD*N + 512);
+    assert(A0);
+    A = ATL_AlignPtr(A0);
+
+    V0 = malloc( ATL_sizeof*M*N + 512);
+    assert(V0);
+    V = ATL_AlignPtr(V0);
+
+    getmatrix(A, (M SHIFT), N, (LD SHIFT), padval);
+
+    /* Allocate cache flushing space. */
+    /* l2ret = ATL_flushcache( cachesize ); */
+
+    for (i=0; i<*nreps; i++)
+    {
+	/* Flush cache */
+	/* l2ret = ATL_flushcache( 0 ); */
+
+	t0=time00();
+
+	invoke_test(M, N, A, LD, V, alpha, conj);
+
+	t1 += time00()-t0;
+    }       
+
+    /* Dealloc cache space. */
+    /* l2ret = ATL_flushcache( -1 ); */
+    free(V0);
+    free(A0);
+    
+    *speed = 1.0*((*nreps)*mflop_per_call)/t1/1000000.0;
+}
+
+/* LD is must be added to M to give the real lading dimension. */
+int DoAllTests(int cachesize, int mflop,
+	       int M0, int MN, int MINC,
+	       int N0, int NN, int NINC,
+	       int LDgap0, int LDgapN, int LDgapINC,
+	       int nalpha, TYPE *alphas,
+	       int nconj, int *conjs)
+{
+    int im, in, ild, ia, ic, i=0;
+    double speed;
+    int nreps;
+    
+#ifdef TREAL
+    char *t1="  ITST  NREPS      M      N     LD     alpha   MMEMMOV";
+    char *t2="======  =====  =====  =====  =====  ========  ========";
+#else
+    char *t1="  ITST  NREPS      M      N     LD    ralpha    ialpha  conj   MMEMMOV";
+    char *t2="======  =====  =====  =====  =====  ========  ========  ====  ========";
+#endif
+    fprintf(stdout, "  COL2BLK TIMING NB = %i\n",NB);
+    fprintf(stdout, "%s\n", t1);
+    fprintf(stdout, "%s\n", t2);
+    
+    for (im=M0; im <= MN; im+=MINC)
+    {
+	for (in=N0; in <= NN; in+=NINC)
+	{
+	    for (ild=LDgap0; ild <= LDgapN; ild+=LDgapINC)
+	    {
+		for (ia=0; ia < nalpha; ia++)
+		{
+		    for (ic=0; ic < nconj; ic++)
+		    {
+			DoTest(cachesize, mflop, im, in, im+ild,
+			       alphas+(ia SHIFT), conjs[ic], &speed, &nreps);
+#ifdef TREAL
+			fprintf(stdout, "%6d %6d %6d %6d %6d %9.2f %9.2f\n",
+				i, nreps, im, in, ild+im, alphas[ia], speed);
+#else
+			fprintf(stdout, "%6d %6d %6d %6d %6d %9.2f %9.2f %3d %9.2f\n",
+				i, nreps, im, in, ild+im, alphas[2*ia], alphas[2*ia+1], conjs[ic], speed);
+			
+#endif
+			i++;
+		    }
+		}
+	    }
+	}
+    }
+
+    return(0);
+}
+
+void PrintUsage(char *nam)
+{
+    fprintf(stderr, "USAGE: Not implemented yet\n", nam);
+    exit(-1);
+}
+
+@ROUT coltest coltime
+void GetFlags
+(
+   int nargs, char *args[], int *cachesize, int *mflop,
+   int *M0, int *MN, int *MINC, int *N0, int *NN, int *NINC,
+   int *LDgap0, int *LDgapN, int *LDgapINC, int *nalpha, TYPE **alphas,
+   int *nconj, int **conjs
+)
+{
+   int                        i = 1, j;
+/*
+ * Set up defaults
+ */
+   *mflop    = 0;                /* smallest number of flops possible */
+                                            /* Default bandwidth is 1 */
+#ifdef L2SIZE
+   *cachesize = L2SIZE;             /* Size of largest cache to flush */
+#else
+   *cachesize = 4*1024*1024;
+#endif
+
+   *N0 = *M0 = *LDgap0 = -1;
+   *nalpha = -1;
+   *nconj  = -1;
+
+   fprintf(stdout, "\n\n");
+   for (i=0; i < nargs; i++) fprintf(stdout, "%s ", args[i]);
+   fprintf(stdout, "\n\n");
+   for( i = 1; i < nargs; )
+   {
+      if( args[i][0] != '-' ) PrintUsage( args[0] );
+
+      switch( args[i++][1] )
+      {
+         case 'h':
+            PrintUsage( args[0] );
+            break;
+         case 'F':
+            if( args[i] == NULL ) PrintUsage( args[0] );
+            *mflop = atoi( args[i++] );
+            if( *mflop < 0      ) PrintUsage( args[0] );
+            break;
+         case 'C':
+            if( args[i] == NULL ) PrintUsage( args[0] );
+	    *cachesize = 1024*atoi(args[i++]);
+            break;
+         case 'M':
+            if( args[i] == NULL ) PrintUsage( args[0] );
+            *M0 = atoi( args[i++] );
+            if( *M0 < 0         ) PrintUsage( args[0] );
+            if( args[i] == NULL ) PrintUsage( args[0] );
+            *MN = atoi( args[i++] );
+            if( *MN < 0         ) PrintUsage( args[0] );
+            if( args[i] == NULL ) PrintUsage( args[0] );
+            *MINC = atoi( args[i++] );
+            if( *MINC <= 0      ) PrintUsage( args[0] );
+            break;
+         case 'm':
+	     if( args[i] == NULL )
+	     {
+	     }
+	     else
+	     {
+		 *M0 = *MN = atoi( args[i++] ); *MINC = 1;
+		 if( *M0 <= 0        ) PrintUsage( args[0] );
+	     }
+            break;
+         case 'N':
+            if( args[i] == NULL ) PrintUsage( args[0] );
+            *N0 = atoi( args[i++] );
+            if( *N0 < 0         ) PrintUsage( args[0] );
+            if( args[i] == NULL ) PrintUsage( args[0] );
+            *NN = atoi( args[i++] );
+            if( *NN < 0         ) PrintUsage( args[0] );
+            if( args[i] == NULL ) PrintUsage( args[0] );
+            *NINC = atoi( args[i++] );
+            if( *NINC <= 0      ) PrintUsage( args[0] );
+            break;
+         case 'n':
+            if( args[i] == NULL ) PrintUsage( args[0] );
+            *N0 = *NN = atoi( args[i++] ); *NINC = 1;
+            if( *N0 < 0         ) PrintUsage( args[0] );
+            break;
+         case 'L':
+            if( args[i] == NULL ) PrintUsage( args[0] );
+            *LDgap0 = atoi( args[i++] );
+            if( *LDgap0 < 0         ) PrintUsage( args[0] );
+            if( args[i] == NULL ) PrintUsage( args[0] );
+            *LDgapN = atoi( args[i++] );
+            if( *LDgapN < 0         ) PrintUsage( args[0] );
+            if( args[i] == NULL ) PrintUsage( args[0] );
+            *LDgapINC = atoi( args[i++] );
+            if( *LDgapINC <= 0      ) PrintUsage( args[0] );
+            break;
+         case 'l':
+            if( args[i] == NULL ) PrintUsage( args[0] );
+            *LDgap0 = *LDgapN = atoi( args[i++] ); *LDgapINC = 1;
+            if( *LDgap0 < 0         ) PrintUsage( args[0] );
+            break;
+         case 'a':
+            if( args[i] == NULL ) PrintUsage( args[0] );
+            *nalpha = atoi( args[i++] );
+            if( *nalpha <= 0    ) PrintUsage( args[0] );
+            *alphas = (TYPE *)malloc( ATL_MulBySize( *nalpha ) );
+            assert( *alphas );
+            for( j = 0; j < (*nalpha SHIFT); j++ )
+            {
+               if( args[i] == NULL ) PrintUsage( args[0] );
+               (*alphas)[j] = (TYPE)atof( args[i++] );
+            }
+            break;
+#ifdef TCPLX
+         case 'c':
+            if( args[i] == NULL ) PrintUsage( args[0] );
+            *nconj = atoi( args[i++] );
+            if( *nconj <= 0    ) PrintUsage( args[0] );
+            *conjs = (TYPE *)malloc( ATL_MulBySize( *nconj ) );
+            assert( *conjs );
+            for( j = 0; j < (*nconj); j++ )
+            {
+               if( args[i] == NULL ) PrintUsage( args[0] );
+               (*conjs)[j] = (TYPE)atoi( args[i++] );
+            }
+            break;
+#endif
+         default:
+            PrintUsage( args[0] );
+            break;
+      }
+   }
+/*
+ * Finish setting up defaults if the user has not selected
+ */
+   if( *M0 == -1 )  { *M0  = 1000; *MN  = 1000; *MINC  = 1; }
+   if( *N0 == -1 )  { *N0  = 1000; *NN  = 1000; *NINC  = 1; }
+   if( *LDgap0 == -1 ) { *LDgap0 = 0;    *LDgapN = 0;    *LDgapINC = 1; }
+
+   if( *nalpha == -1 )
+   {
+      *nalpha = 1;
+      *alphas = (TYPE *)malloc( ATL_MulBySize( 1 ) );
+      assert( *alphas );
+      (*alphas)[0] = ATL_rone;
+#ifdef TCPLX
+      (*alphas)[1] = ATL_rzero;
+#endif
+   }
+   if( *nconj == -1 )
+   {
+      *nconj = 1;
+      *conjs = (int *)malloc( sizeof(int) );
+      assert( *conjs );
+      conjs[0] = 0;
+   }   
+}
+
+int main( int nargs, char **args )
+{
+   int    cachesize, mflop, M0, MN, MINC, N0, NN, 
+          NINC, LDgap0, LDgapN, LDgapINC, nalpha, nconj, ierr;
+   
+   TYPE *alphas;
+   int * conjs;
+
+   GetFlags(nargs, args, &cachesize, &mflop, &M0, &MN, &MINC,
+	    &N0, &NN, &NINC, &LDgap0, &LDgapN, &LDgapINC,
+	    &nalpha, &alphas, &nconj, &conjs);
+
+   ierr = DoAllTests(cachesize, mflop, M0, MN, MINC, N0, NN, NINC,
+		     LDgap0, LDgapN, LDgapINC,
+		     nalpha, alphas, nconj, conjs);
+
+   if ( alphas ) free( alphas );
+   if ( conjs ) free( conjs );
+
+
+   exit( ierr );
+}
+
+@ROUT colsrch
+@ROUT rowtest
+@ROUT rowtime
+@ROUT rowsrch
+@ROUT !

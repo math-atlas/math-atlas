@@ -1,0 +1,258 @@
+@ROUT test_count
+#include "atlas_threads.h"
+#include "atlas_misc.h"
+#include "assert.h"
+
+static volatile char *checkin;
+
+void PrintUsage(char *name)
+{
+   fprintf(stderr, "USAGE: %s [-r <reps>] [-c <cnt>]\n", name);
+   exit(-1);
+}
+
+int GetFlags(int nargs, char **args, int *nreps)
+{
+   int i, cnt=16384;
+
+   *nreps = 20;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0]);
+      switch(args[i][1])
+      {
+      case 'r':
+         if (++i == nargs)
+            PrintUsage(args[0]);
+         *nreps = atoi(args[i]);
+         break;
+      case 'c':
+         if (++i == nargs)
+            PrintUsage(args[0]);
+         cnt = atoi(args[i]);
+         break;
+      default:
+         PrintUsage(args[0]);
+      }
+   }
+   return(cnt);
+}
+
+void TestDoWork(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   int i;
+   do
+   {
+      i = ATL_DecAtomicCount(vp);
+      if (i < 1) 
+         break;
+      checkin[i-1]++;
+   }
+   while(1);
+}
+
+int main(int nargs, char **args)
+{
+   int cnt, nreps, i, k;
+   void *vp;
+   if (nargs > 1)
+      cnt = atoi(args[0]);
+   cnt = GetFlags(nargs, args, &nreps);
+
+   checkin = malloc(cnt*sizeof(char));
+   assert(checkin);
+   for (i=0; i < nreps; i++)
+   {
+      vp = ATL_SetAtomicCount(cnt);
+      for (k=0; k < cnt; k++)
+         checkin[k] = 0;
+      ATL_thread_launch(vp, 0, NULL, TestDoWork, NULL);
+      for (k=0; k < cnt; k++)
+         assert(checkin[k] == 1);
+      ATL_FreeAtomicCount(vp);
+   }
+   printf("TEST PASSED\n");
+   return(0);
+}
+@ROUT tune_count
+#include "atlas_threads.h"
+#include "atlas_misc.h"
+
+static volatile int count=0;
+static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+static void *acnt;
+
+int ATL_DecAtomicCount_ser(void)
+{
+   int iret=0;
+   if (count)
+   {
+      iret = count;
+      count--;
+   }
+   return(iret);
+}
+
+int ATL_DecAtomicCount_mut(void)
+{
+   int iret=0;
+   if (count)
+   {
+      pthread_mutex_lock(&mutex);
+      if (count)
+      {
+         iret = count;
+         count--;
+      }
+      pthread_mutex_unlock(&mutex);
+   }
+   return(iret);
+}
+
+void TuneDoWork_ser(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   while (ATL_DecAtomicCount_ser());
+}
+
+void TuneDoWork_mut(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   while (ATL_DecAtomicCount_mut());
+}
+
+void TuneDoWork(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   while (ATL_DecAtomicCount(acnt));
+}
+
+int main(int nargs, char **args)
+{
+   double t0, tmut, tdec, tser; 
+   int nreps=1000000;
+
+   if (nargs > 1)
+      nreps = atoi(args[1]);
+   
+   printf("FINDING SPEED OF COUNTER CHANGING USING %d REPS & %d PROC\n",
+          nreps, ATL_NTHREADS);
+   
+   acnt = ATL_SetAtomicCount(nreps);
+   t0 = ATL_walltime();
+//   ATL_thread_launch(NULL, 0, NULL, TuneDoWork, NULL);
+   TuneDoWork(NULL, NULL);
+   tdec = ATL_walltime() - t0;
+   printf("   dec time = %e\n", tdec);
+   ATL_FreeAtomicCount(acnt);
+   acnt = NULL;
+
+   count = nreps;
+   t0 = ATL_walltime();
+//   ATL_thread_launch(NULL, 0, NULL, TuneDoWork_mut, NULL);
+   TuneDoWork_mut(NULL, NULL);
+   tmut = ATL_walltime() - t0;
+   printf("   mut time = %e\n", tmut);
+
+   count = nreps;
+   t0 = ATL_walltime();
+//   ATL_thread_launch(NULL, 0, NULL, TuneDoWork_mut, NULL);
+   TuneDoWork_ser(NULL, NULL);
+   tser = ATL_walltime() - t0;
+   printf("   ser time = %e\n", tser);
+
+   printf("\n   MICROSECONDS PER CALL: SER=%.2f DEC=%.2f, MUT=%.2f\n", 
+          tser*1000000.0, tdec*1000000.0, tmut*1000000.0);
+   #ifdef PentiumCPS
+      t0 = 1000000.0*PentiumCPS;
+      printf("   CYCLES: SER=%e, DEC=%e, MUT=%e\n", 
+             t0*(tser/nreps), t0*(tdec/nreps), t0*(tmut/nreps));
+   #endif
+   printf("DEC TIME SPEEDUP OVER MUTEX   = %.2f\n", tmut / tdec);
+   printf("SERIAL SPEEDUP OVER DEC = %.2f\n", tdec / tser);
+   return(0);
+}
+@ROUT tune_spawn
+#include "atlas_threads.h"
+#include "atlas_misc.h"
+
+void ATL_tllin
+   (void *opstruct, int opstructstride, void *OpStructIsInit, void *DoWork, 
+    void *CombineOpStructs);
+void ATL_tllg2
+   (void *opstruct, int opstructstride, void *OpStructIsInit, void *DoWork, 
+    void *CombineOpStructs);
+typedef struct
+{
+   volatile int *donearr;   /* starts all zero */
+   int rank, nthr;
+} ATL_TUNE_T;
+
+int TuneIsInit(void *vp) { return(1); }  /* all structs init when tuning */
+
+void TuneDoWork(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+/* 
+ * Use volatile array to check in, and then quit (cache-speed barrier)
+ */
+{
+   ATL_TUNE_T *tp = vp;
+   const int nthr = tp->nthr;
+   int i;
+
+   tp->donearr[tp->rank] = 1;
+   for (i=0; i < nthr; i++)
+      while(!tp->donearr[i]);
+}
+
+int main(int nargs, char **args)
+{
+   int i, k, nreps = 200, opstride;
+   double t0, tlin, tlg2;
+   ATL_TUNE_T ta[ATL_NTHREADS];
+   volatile int done[ATL_NTHREADS];
+
+   if (nargs > 1)
+      nreps = atoi(args[1]);
+
+   for (i=0; i < ATL_NTHREADS; i++)
+   {
+      ta[i].donearr = done;
+      ta[i].rank = i;
+      ta[i].nthr = ATL_NTHREADS;
+   }
+   opstride = (int) ( ((char*)(ta+1)) - (char*)(ta) );
+
+   printf("FINDING SPEED OF CREATE/BARRIER/JOIN USING %d REPITITIONS:\n", 
+          nreps);
+   t0 = ATL_walltime();
+   for (k=0; k < nreps; k++)
+   {
+      for (i=0; i < ATL_NTHREADS; i++)
+         done[i] = 0;
+      ATL_tllg2(ta, opstride, TuneIsInit, TuneDoWork, NULL);
+   }
+   tlg2 = ATL_walltime() - t0;
+   printf("   lg2 time = %e\n", (float)tlg2);
+
+
+   opstride = (int)(((char*)(ta+1))-((char*)ta));
+   t0 = ATL_walltime();
+   for (k=0; k < nreps; k++)
+   {
+      for (i=0; i < ATL_NTHREADS; i++)
+         done[i] = 0;
+      ATL_tllin(ta, opstride, TuneIsInit, TuneDoWork, NULL);
+   }
+   tlin = ATL_walltime() - t0;
+   printf("   lin time = %e\n", (float)tlin);
+
+   printf("LINEAR is %.2f%% of LOG2 SPEED.\n", (tlin/tlg2)*100.0);
+   return(0);
+}
+@ROUT tune_aff
+/*
+ * Eventually, should figure out if setting affinity helps or hurts performance.
+ * Will probably want to prove L3 & L2 seperately!
+ */
+int main(int nargs, char **args)
+{
+   return(0);
+}

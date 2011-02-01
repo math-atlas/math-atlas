@@ -1,0 +1,2227 @@
+@ifdef ! incd
+   @define incd @/home/rwhaley/Base/ATLAS@
+@endifdef
+@extract -b @(topd)/gen.inc what=crsetup
+@ROUT ATL_mm4x4x2_1_pref 
+   @define M @MB@
+   @define N @NB@
+@ROUT ATL_mm4x4x2_1_prefCU
+   @define M @M@
+   @define N @N@
+@ROUT ATL_mm4x4x2_1_pref ATL_mm4x4x2_1_prefCU
+@extract -b @(topd)/gen.inc what=cw @(cw00)
+#include "atlas_misc.h"
+
+@ROUT ATL_mm4x4x2_1_prefCU
+#if KB == 1
+
+@extract -b @(incd)/atlas-kmm.base rout=ATL_myger
+
+void ATL_USERMM
+   (const int M, const int N, const int K, const TYPE alpha, const TYPE *A, const int lda, const TYPE *B, const int ldb, const TYPE beta, TYPE *C, const int ldc)
+{
+   ATL_myger(M, N, A, B, beta, C, ldc);
+}
+
+#else
+
+#if ( KB != ((KB/2)*2) )
+   #define ODDKB
+#endif
+@ROUT ATL_mm4x4x2_1_pref ATL_mm4x4x2_1_prefCU
+void ATL_USERMM
+   (const int M, const int N, const int K, const TYPE alpha, const TYPE *A, const int lda, const TYPE *B, const int ldb, const TYPE beta, TYPE *C, const int ldc)
+/*
+ * matmul with muladd=1, TA=T, TB=N, mu=4, nu=4, ku=2, prefetching A and B
+ */
+{
+   const TYPE *stM = A + KB*@(M);
+   const TYPE *stN = B + KB*@(N);
+   const int incAn = -KB*@(M);
+   const int incBm = -KB;
+   #define incAm KB3
+   #define incBn KB4
+   #ifdef TREAL
+      #define incCm 4
+      const int incCn = (((ldc) << 2)) - @(M);
+   #else
+      #define incCm 8
+      const int incCn = (((ldc) << 3)) - (@(M)+@(M));
+   #endif
+   TYPE *pC0=C, *pC1=pC0+(ldc SHIFT), *pC2=pC1+(ldc SHIFT),*pC3=pC2+(ldc SHIFT);
+   TYPE *bp = (TYPE *) &beta;
+   const TYPE *pA0=A;
+   const TYPE *pB0=B;
+   register int k;
+   register TYPE rA0, rA1, rA2, rA3, ra0, ra1, ra2, ra3;
+   register TYPE rB0, rB1, rB2, rB3, rb0, rb1, rb2, rb3;
+   register TYPE rC0_0, rC1_0, rC2_0, rC3_0, rC0_1, rC1_1, rC2_1, rC3_1, 
+                 rC0_2, rC1_2, rC2_2, rC3_2, rC0_3, rC1_3, rC2_3, rC3_3;
+
+   do /* N-loop */
+   {
+      do /* M-loop */
+      {
+         #ifdef BETA0
+            rC0_0 = rC1_0 = rC2_0 = rC3_0 =
+            rC0_1 = rC1_1 = rC2_1 = rC3_1 =
+            rC0_2 = rC1_2 = rC2_2 = rC3_2 =
+            rC0_3 = rC1_3 = rC2_3 = rC3_3 = ATL_rzero;
+         #else
+            #ifdef TREAL
+               rC0_0 = *pC0; rC1_0 = pC0[1]; rC2_0 = pC0[2]; rC3_0 = pC0[3];
+               rC0_1 = *pC1; rC1_1 = pC1[1]; rC2_1 = pC1[2]; rC3_1 = pC1[3];
+               rC0_2 = *pC2; rC1_2 = pC2[1]; rC2_2 = pC2[2]; rC3_2 = pC2[3];
+               rC0_3 = *pC3; rC1_3 = pC3[1]; rC2_3 = pC3[2]; rC3_3 = pC3[3];
+            #else
+               rC0_0 = *pC0; rC1_0 = pC0[2]; rC2_0 = pC0[4]; rC3_0 = pC0[6];
+               rC0_1 = *pC1; rC1_1 = pC1[2]; rC2_1 = pC1[4]; rC3_1 = pC1[6];
+               rC0_2 = *pC2; rC1_2 = pC2[2]; rC2_2 = pC2[4]; rC3_2 = pC2[6];
+               rC0_3 = *pC3; rC1_3 = pC3[2]; rC2_3 = pC3[4]; rC3_3 = pC3[6];
+            #endif
+            #ifdef BETAX
+               rA0 = *bp;
+               rC0_0 *= rA0; rC1_0 *= rA0; rC2_0 *= rA0; rC3_0 *= rA0;
+               rC0_1 *= rA0; rC1_1 *= rA0; rC2_1 *= rA0; rC3_1 *= rA0;
+               rC0_2 *= rA0; rC1_2 *= rA0; rC2_2 *= rA0; rC3_2 *= rA0;
+               rC0_3 *= rA0; rC1_3 *= rA0; rC2_3 *= rA0; rC3_3 *= rA0;
+            #endif
+         #endif
+         rA0 = *pA0; rA1 = pA0[KB]; rA2 = pA0[KB2]; rA3 = pA0[KB3]; pA0++;
+         rB0 = *pB0; rB1 = pB0[KB]; rB2 = pB0[KB2]; rB3 = pB0[KB3]; pB0++;
+         rb0 = *pB0; rb1 = pB0[KB]; rb2 = pB0[KB2]; rb3 = pB0[KB3]; pB0++;
+         for (k=(KB>>1)-1; k; k --) /* easy loop to unroll */
+         {
+            rC0_0 += rA0 * rB0;
+            rC1_0 += rA1 * rB0; ra0 = *pA0;
+            rC2_0 += rA2 * rB0;
+            rC3_0 += rA3 * rB0; rB0 = *pB0;
+            rC0_1 += rA0 * rB1;
+            rC1_1 += rA1 * rB1; ra1 = pA0[KB];
+            rC2_1 += rA2 * rB1;
+            rC3_1 += rA3 * rB1; rB1 = pB0[KB];
+            rC0_2 += rA0 * rB2;
+            rC1_2 += rA1 * rB2; ra2 = pA0[KB2];
+            rC2_2 += rA2 * rB2;
+            rC3_2 += rA3 * rB2; rB2 = pB0[KB2];
+            rC0_3 += rA0 * rB3;
+            rC1_3 += rA1 * rB3; ra3 = pA0[KB3];
+            rC2_3 += rA2 * rB3; pA0++;
+            rC3_3 += rA3 * rB3; rB3 = pB0[KB3];
+
+            rC0_0 += ra0 * rb0; pB0++;
+            rC1_0 += ra1 * rb0; rA0 = *pA0;
+            rC2_0 += ra2 * rb0;
+            rC3_0 += ra3 * rb0; rb0 = *pB0;
+            rC0_1 += ra0 * rb1;
+            rC1_1 += ra1 * rb1; rA1 = pA0[KB];
+            rC2_1 += ra2 * rb1;
+            rC3_1 += ra3 * rb1; rb1 = pB0[KB];
+            rC0_2 += ra0 * rb2;
+            rC1_2 += ra1 * rb2; rA2 = pA0[KB2];
+            rC2_2 += ra2 * rb2;
+            rC3_2 += ra3 * rb2; rb2 = pB0[KB2];
+            rC0_3 += ra0 * rb3;
+            rC1_3 += ra1 * rb3; rA3 = pA0[KB3];
+            rC2_3 += ra2 * rb3; pA0++;
+            rC3_3 += ra3 * rb3; rb3 = pB0[KB3]; pB0++;
+         }
+         rC0_0 += rA0 * rB0; 
+         rC1_0 += rA1 * rB0; ra0 = *pA0;
+         rC2_0 += rA2 * rB0;
+         rC3_0 += rA3 * rB0; ra1 = pA0[KB];
+         rC0_1 += rA0 * rB1;
+         rC1_1 += rA1 * rB1; ra2 = pA0[KB2];
+         rC2_1 += rA2 * rB1;
+         rC3_1 += rA3 * rB1; ra3 = pA0[KB3]; pA0++;
+         rC0_2 += rA0 * rB2;
+         rC1_2 += rA1 * rB2;
+         rC2_2 += rA2 * rB2;
+         rC3_2 += rA3 * rB2;
+         rC0_3 += rA0 * rB3;
+         rC1_3 += rA1 * rB3;
+         rC2_3 += rA2 * rB3;
+         rC3_3 += rA3 * rB3;
+
+         rC0_0 += ra0 * rb0;
+         rC1_0 += ra1 * rb0;
+         rC2_0 += ra2 * rb0;
+         rC3_0 += ra3 * rb0;
+         rC0_1 += ra0 * rb1;
+         rC1_1 += ra1 * rb1;
+         rC2_1 += ra2 * rb1;
+         rC3_1 += ra3 * rb1;
+         rC0_2 += ra0 * rb2;
+         rC1_2 += ra1 * rb2;
+         rC2_2 += ra2 * rb2;
+         rC3_2 += ra3 * rb2;
+         rC0_3 += ra0 * rb3;
+         rC1_3 += ra1 * rb3;
+         rC2_3 += ra2 * rb3;
+         rC3_3 += ra3 * rb3;
+@ROUT ATL_mm4x4x2_1_prefCU
+         #ifdef ODDKB
+            rA0 = *pA0; rA1 = pA0[KB]; rA2 = pA0[KB2]; rA3 = pA0[KB3]; pA0++;
+            rB0 = *pB0; rB1 = pB0[KB]; rB2 = pB0[KB2]; rB3 = pB0[KB3]; pB0++;
+            rC0_0 += rA0 * rB0; 
+            rC1_0 += rA1 * rB0;
+            rC2_0 += rA2 * rB0;
+            rC3_0 += rA3 * rB0;
+            rC0_1 += rA0 * rB1;
+            rC1_1 += rA1 * rB1;
+            rC2_1 += rA2 * rB1;
+            rC3_1 += rA3 * rB1;
+            rC0_2 += rA0 * rB2;
+            rC1_2 += rA1 * rB2;
+            rC2_2 += rA2 * rB2;
+            rC3_2 += rA3 * rB2;
+            rC0_3 += rA0 * rB3;
+            rC1_3 += rA1 * rB3;
+            rC2_3 += rA2 * rB3;
+            rC3_3 += rA3 * rB3;
+         #endif
+@ROUT ATL_mm4x4x2_1_pref ATL_mm4x4x2_1_prefCU
+         #ifdef TREAL
+            *pC0 = rC0_0; pC0[1] = rC1_0; pC0[2] = rC2_0; pC0[3] = rC3_0;
+            *pC1 = rC0_1; pC1[1] = rC1_1; pC1[2] = rC2_1; pC1[3] = rC3_1;
+            *pC2 = rC0_2; pC2[1] = rC1_2; pC2[2] = rC2_2; pC2[3] = rC3_2;
+            *pC3 = rC0_3; pC3[1] = rC1_3; pC3[2] = rC2_3; pC3[3] = rC3_3;
+         #else
+            *pC0 = rC0_0; pC0[2] = rC1_0; pC0[4] = rC2_0; pC0[6] = rC3_0;
+            *pC1 = rC0_1; pC1[2] = rC1_1; pC1[4] = rC2_1; pC1[6] = rC3_1;
+            *pC2 = rC0_2; pC2[2] = rC1_2; pC2[4] = rC2_2; pC2[6] = rC3_2;
+            *pC3 = rC0_3; pC3[2] = rC1_3; pC3[4] = rC2_3; pC3[6] = rC3_3;
+         #endif
+         pC0 += incCm;
+         pC1 += incCm;
+         pC2 += incCm;
+         pC3 += incCm;
+         pA0 += incAm;
+         pB0 += incBm;
+      }
+      while(pA0 != stM);
+      pC0 += incCn;
+      pC1 += incCn;
+      pC2 += incCn;
+      pC3 += incCn;
+      pA0 += incAn;
+      pB0 += incBn;
+   }
+   while(pB0 != stN);
+}
+#ifdef incAm
+   #undef incAm
+#endif
+#ifdef incBn
+   #undef incBn
+#endif
+#ifdef incCm
+   #undef incCm
+#endif
+@ROUT ATL_mm4x4x2_1_prefCU
+
+#ifdef ODDKB
+   #undef ODDKB
+#endif
+#endif
+@ROUT ATL_myger
+static void ATL_myger(const int M, const int N, const TYPE *X, const TYPE *Y,
+                      const TYPE beta, TYPE *C, const int ldc)
+{
+   const TYPE *stY = Y + N;
+   #ifdef TCPLX
+      const int ldc2 = ldc<<1;
+      #define incC 2
+   #else
+      #define ldc2 ldc
+      #define incC 1
+   #endif
+   do
+   {
+      #ifdef BETAX
+         Mjoin(PATLU,axpby)(M, *Y++, X, 1, beta, C, incC);
+      #else
+         Mjoin(PATLU,axpy)(M, *Y++, X, 1, C, incC);
+      #endif
+      C += ldc2;
+   }
+   while (Y != stY);
+}
+#undef incC
+#ifdef ldc2
+   #undef ldc2
+#endif
+@ROUT ATL_mm4x4x2US
+@extract -b @(topd)/gen.inc what=cw -def cdate 1999 -def author "The Australian National University"
+
+/************************************************************************/
+/*	Level 3 BLAS - UltraSPARC-tuned Matrix-Matrix multiply       	*/
+/************************************************************************/
+
+/* this file contains a LI ATLAS dgemm() implementation 
+ * with code optimized for the UltraSPARC I & II architectures. 
+ * It should be compiled with gcc 2.8.1 or later:
+ *	gcc -mcpu=ultrasparc -O -fomit-frame-pointer -mtune=ultrasparc ...
+ * to preserve the pipelining of operations.
+ *
+ * authors:
+ *	Viet Nguyen (Feb 1999):	dgemm() and matrix multiply routines
+ *	Peter Strazdins (1998, Aug 2000): support routines and packaging
+ * from the Department of Computer Science, Australian National University
+ *
+ * Copyright (C) 1998-2000 The Australian National University 
+ *
+ * Modified by Clint Whaley on Oct 2000 to add precision independence,
+ * and use of ATLAS infrastructure.
+ */
+
+#include "atlas_misc.h"
+
+#if !defined(KB) || (KB == 1) || (KB == 0)
+
+@extract -b @(incd)/atlas-kmm.base rout=ATL_myger
+
+#endif
+static inline void __InnerLoop_(int K, const TYPE *A, int CIncA, 
+				const TYPE *B, int RIncB, const TYPE beta, TYPE *C, int LDC);
+
+/***************** main driver routines *******************************/
+
+void ATL_USERMM(int m, int n, int k,
+		 const TYPE alpha, const TYPE *A, const int LdA,
+		 const TYPE *B, const int LdB, const TYPE beta,
+		 TYPE *C, const int LdC
+		)	    
+{
+  int i, j, msize, ki;
+   const int incA=LdA<<2, incB=LdB<<2, incC=(LdC<<2)SHIFT;
+
+   #if !defined(KB) || (KB == 1) || (KB == 0)
+      if (k == 1)
+      {
+         ATL_myger(m, n, A, B, beta, C, LdC);
+         return;
+      }
+   #endif
+  while (m>0) {				/* while : partition level */
+    const TYPE *a, *b; TYPE *c;
+    c = C; b = B;
+    msize = m;
+    for (i=-n; i<0; i+=4) {
+      TYPE *cx;
+      cx = c; a = A;
+      for (j=-msize; j<0; j+=4) {
+	__InnerLoop_(k, a, LdA, b, LdB, beta, cx, (LdC SHIFT));
+	a += incA; cx += 4 SHIFT;
+      } /* for j */      
+      b += incB; c += incC;
+    } /* for i */
+    A += msize*LdA; C += msize SHIFT;
+    m -= msize;
+  } /* while m>0 */
+} 
+
+static inline void __InnerLoop_(int K, const TYPE *A, int CIncA, 
+				const TYPE *B, int RIncB, TYPE beta, 
+                                TYPE *C, int LDC)
+/*
+ * Post: C^T = B^T * A^T
+ * Pre:  C^T is row major, LDC is RIncC
+ *       RIncA (CIncA) is row(column) inc of A^T.
+ *	 Similar for RIncB, CIncB.
+ *       K > 1
+ */
+{
+  register TYPE c00, c01, c02, c03, c10, c11, c12, c13;
+  register TYPE c20, c21, c22, c23, c30, c31, c32, c33;
+  register TYPE a0, a1, a2, a3, a0a, a1a, a2a, a3a;
+  register TYPE b0, b1, b2, b3;
+  register TYPE t0, t1, t2, t3;
+  const register TYPE *A0, *A2, *B0, *B2;
+
+#ifdef BETA0
+c00 = c01 = c02 = c03 = c10 = c11 = c12 = c13 = c20 = c21 = c22 = c23 = c30 = c31 = c32 = c33 = 0.0;
+C += 3*LDC;
+A0 = A; A2 = A0 + (CIncA<<1);
+B0 = B; B2 = B0 + (RIncB<<1);
+#else
+  c00 = *C; c01 = C[1 SHIFT];		A0 = A;
+  c02 = C[2 SHIFT]; c03 = C[3 SHIFT];		C += LDC;
+  c10 = *C; c11 = C[1 SHIFT];		A2 = A0 + (CIncA<<1);
+  c12 = C[2 SHIFT]; c13 = C[3 SHIFT];		C += LDC;
+  c20 = *C; c21 = C[1 SHIFT];		B0 = B;
+  c22 = C[2 SHIFT]; c23 = C[3 SHIFT];		C += LDC;
+  c30 = *C; c31 = C[1 SHIFT];		B2 = B0 + (RIncB<<1);
+  c32 = C[2 SHIFT]; c33 = C[3 SHIFT];		
+#ifdef BETAX
+   a0 = beta;
+   c00 *= a0;
+   c10 *= a0;
+   c20 *= a0;
+   c30 *= a0;
+   c01 *= a0;
+   c11 *= a0;
+   c21 *= a0;
+   c31 *= a0;
+   c02 *= a0;
+   c12 *= a0;
+   c22 *= a0;
+   c32 *= a0;
+   c03 *= a0;
+   c13 *= a0;
+   c23 *= a0;
+   c33 *= a0;
+#endif
+#endif
+
+  a0 = *A0; a1 = *(A0+CIncA);		A0++;
+  b0 = *B0; b1 = *(B0+RIncB);		B0++;
+  a2 = *A2; a3 = *(A2+CIncA);		A2++;
+  b2 = *B2; b3 = *(B2+RIncB);    	B2++;
+
+  a0a = *A0;						t0 = b0*a0;
+  a1a = *(A0+CIncA);			A0++;	t1 = b0*a1;
+  a2a = *A2;						t2 = b0*a2;
+  a3a = *(A2+CIncA);			A2++;
+
+  for (K=-K+3; K<0; K+=2) {
+
+    t3 = b0*a3;
+			b0 = *B0;
+							c00 += t0;
+    t0 = b1*a0;
+							c01 += t1;
+    t1 = b1*a1;
+							c02 += t2;
+    t2 = b1*a2;
+							c03 += t3;
+    t3 = b1*a3;
+			b1 = *(B0+RIncB);
+							c10 += t0;
+    t0 = b2*a0;
+					B0++;
+							c11 += t1;
+    t1 = b2*a1;
+							c12 += t2;
+    t2 = b2*a2;
+							c13 += t3;
+    t3 = b2*a3;
+			b2 = *B2;    
+							c20 += t0;
+    t0 = b3*a0;
+			a0 = *A0;
+							c21 += t1;
+    t1 = b3*a1;
+
+							c22 += t2;
+    t2 = b3*a2;
+			a1 = *(A0+CIncA);
+							c23 += t3;
+    t3 = b3*a3;
+			b3 = *(B2+RIncB);
+							c30 += t0;
+    t0 = b0*a0a;
+					A0++;
+							c31 += t1;
+    t1 = b0*a1a;
+			a2 = *A2;
+							c32 += t2;
+    t2 = b0*a2a;
+					B2++;
+							c33 += t3;
+    t3 = b0*a3a;
+			a3 = *(A2+CIncA);
+							c00 += t0;
+    t0 = b1*a0a;
+					A2++;
+							c01 += t1;
+    t1 = b1*a1a;
+			b0 = *B0;
+							c02 += t2;
+    t2 = b1*a2a;
+							c03 += t3;
+    t3 = b1*a3a;
+			b1 = *(B0+RIncB);
+							c10 += t0;
+    t0 = b2*a0a;
+					B0++;
+							c11 += t1;
+    t1 = b2*a1a;
+							c12 += t2;
+    t2 = b2*a2a;
+							c13 += t3;
+    t3 = b2*a3a;
+			b2 = *B2;
+							c20 += t0;
+    t0 = b3*a0a;
+			a0a = *A0;
+							c21 += t1;
+    t1 = b3*a1a;
+			a1a = *(A0+CIncA);
+							c22 += t2;
+    t2 = b3*a2a;
+			a2a = *A2;
+					A0++;
+							c23 += t3;
+    t3 = b3*a3a;
+			b3 = *(B2+RIncB);
+							c30 += t0;
+    t0 = b0*a0;
+			a3a = *(A2+CIncA);
+					B2++;
+							c31 += t1;
+    t1 = b0*a1;
+
+					A2++;
+							c32 += t2;
+    t2 = b0*a2;
+
+							c33 += t3;
+
+  } /* for */
+
+    t3 = b0*a3;
+			b0 = *B0;
+							c00 += t0;
+    t0 = b1*a0;
+							c01 += t1;
+    t1 = b1*a1;
+							c02 += t2;
+    t2 = b1*a2;
+							c03 += t3;
+    t3 = b1*a3;
+			b1 = *(B0+RIncB);
+							c10 += t0;
+    t0 = b2*a0;
+					B0++;
+							c11 += t1;
+    t1 = b2*a1;
+							c12 += t2;
+    t2 = b2*a2;
+							c13 += t3;
+
+  if (K) {
+  
+    t3 = b2*a3;
+			b2 = *B2;    
+							c20 += t0;
+    t0 = b3*a0;
+							c21 += t1;
+    t1 = b3*a1;
+
+							c22 += t2;
+    t2 = b3*a2;
+							c23 += t3;
+    t3 = b3*a3;
+			b3 = *(B2+RIncB);
+							c30 += t0;
+    t0 = b0*a0a;
+							c31 += t1;
+    t1 = b0*a1a;
+					B2++;
+							c32 += t2;
+    t2 = b0*a2a;
+					C -= LDC;
+							c33 += t3;
+    t3 = b0*a3a;
+					C -= LDC;
+							c00 += t0;
+    t0 = b1*a0a;
+					C -= LDC;
+							c01 += t1;
+    t1 = b1*a1a;
+							c02 += t2;
+    t2 = b1*a2a;
+			*C = c00;
+							c03 += t3;
+    t3 = b1*a3a;
+			C[1 SHIFT] = c01;
+							c10 += t0;
+    t0 = b2*a0a;
+			C[2 SHIFT] = c02;
+							c11 += t1;
+    t1 = b2*a1a;
+			C[3 SHIFT] = c03;
+					C += LDC;
+							c12 += t2;
+    t2 = b2*a2a;
+			*C = c10;
+							c13 += t3;
+    t3 = b2*a3a;
+			C[1 SHIFT] = c11;
+							c20 += t0;
+    t0 = b3*a0a;
+			C[2 SHIFT] = c12;
+							c21 += t1;
+    t1 = b3*a1a;
+			C[3 SHIFT] = c13;
+					C += LDC;
+							c22 += t2;
+    t2 = b3*a2a;
+			*C = c20;
+							c23 += t3;
+    t3 = b3*a3a;
+			C[1 SHIFT] = c21;
+							c30 += t0;
+			C[2 SHIFT] = c22;
+							c31 += t1;
+			C[3 SHIFT] = c23;
+					C += LDC;
+							c32 += t2;
+			*C = c30;
+							c33 += t3;
+			C[1 SHIFT] = c31;
+			C[2 SHIFT] = c32;
+			C[3 SHIFT] = c33;
+  } else {
+
+    t3 = b2*a3;
+			b2 = *B2;    
+							c20 += t0;
+    t0 = b3*a0;
+			a0 = *A0;
+							c21 += t1;
+    t1 = b3*a1;
+
+							c22 += t2;
+    t2 = b3*a2;
+			a1 = *(A0+CIncA);
+							c23 += t3;
+    t3 = b3*a3;
+			b3 = *(B2+RIncB);
+							c30 += t0;
+    t0 = b0*a0a;
+					A0++;
+							c31 += t1;
+    t1 = b0*a1a;
+			a2 = *A2;
+							c32 += t2;
+    t2 = b0*a2a;
+					B2++;
+							c33 += t3;
+    t3 = b0*a3a;
+			a3 = *(A2+CIncA);
+							c00 += t0;
+    t0 = b1*a0a;
+					A2++;
+							c01 += t1;
+    t1 = b1*a1a;
+			b0 = *B0;
+							c02 += t2;
+    t2 = b1*a2a;
+							c03 += t3;
+    t3 = b1*a3a;
+			b1 = *(B0+RIncB);
+							c10 += t0;
+    t0 = b2*a0a;
+					B0++;
+							c11 += t1;
+    t1 = b2*a1a;
+							c12 += t2;
+    t2 = b2*a2a;
+							c13 += t3;
+    t3 = b2*a3a;
+			b2 = *B2;
+							c20 += t0;
+    t0 = b3*a0a;
+							c21 += t1;
+    t1 = b3*a1a;
+							c22 += t2;
+    t2 = b3*a2a;
+							c23 += t3;
+    t3 = b3*a3a;
+			b3 = *(B2+RIncB);
+							c30 += t0;
+    t0 = b0*a0;
+					B2++;
+							c31 += t1;
+    t1 = b0*a1;
+
+							c32 += t2;
+    t2 = b0*a2;
+
+							c33 += t3;
+    t3 = b0*a3;
+					C -= LDC;
+							c00 += t0;
+    t0 = b1*a0;
+					C -= LDC;
+							c01 += t1;
+    t1 = b1*a1;
+					C -= LDC;
+							c02 += t2;
+    t2 = b1*a2;
+			*C = c00;
+							c03 += t3;
+    t3 = b1*a3;
+			C[1 SHIFT] = c01;
+							c10 += t0;
+    t0 = b2*a0;
+			C[2 SHIFT] = c02;
+							c11 += t1;
+    t1 = b2*a1;
+			C[3 SHIFT] = c03;
+					C += LDC;
+							c12 += t2;
+    t2 = b2*a2;
+			*C = c10;
+							c13 += t3;
+    t3 = b2*a3;
+			C[1 SHIFT] = c11;
+							c20 += t0;
+    t0 = b3*a0;
+			C[2 SHIFT] = c12;
+							c21 += t1;
+    t1 = b3*a1;
+			C[3 SHIFT] = c13;
+					C += LDC;
+							c22 += t2;
+    t2 = b3*a2;
+			*C = c20;
+							c23 += t3;
+    t3 = b3*a3;
+			C[1 SHIFT] = c21;
+							c30 += t0;
+			C[2 SHIFT] = c22;
+							c31 += t1;
+			C[3 SHIFT] = c23;
+					C += LDC;
+							c32 += t2;
+			*C = c30;
+							c33 += t3;
+			C[1 SHIFT] = c31;
+			C[2 SHIFT] = c32;
+			C[3 SHIFT] = c33;
+
+  } /* if (k) */
+} /* __InnerLoop_() */
+@ROUT ATL_mm4x4x2US_NB
+@extract -b @(topd)/gen.inc what=cw @(cw00) -def contrib "Viet Nguyen and Peter Strazdins"
+
+/*
+ * NOTE: This is a direct adaption of Viet Nguyen's and Peter Strazdin's
+ *       ATL_mm4x4x2US.c code for fixed NB.  I'm not sure who should hold
+ *       the copyright in such a case; essentially, I did the typing, but it 
+ *       completely uses their design for the inner kernel.
+ */
+#include <atlas_misc.h>
+
+#if (NB != MB || NB != KB || NB != (NB/4)*4)
+   #error NB must equal MB and KB, and be a multiple of 4
+#endif
+void ATL_USERMM
+   (const int M, const int N, const int K, const TYPE alpha, const TYPE *A, const int lda, const TYPE *B, const int ldb, const TYPE beta, TYPE *C, const int ldc)
+/*
+ * matmul with TA=T, TB=N, lda = ldb = MB = KB = NB, ldc=0, mu=4, nu=4, ku=2
+ * and register prefetch along A
+ */
+{
+   const TYPE *stM = A + NBNB;
+   const TYPE *stN = B + NBNB;
+   const int incAm = NB3, incAn = -NBNB;
+   const int incBm = 1-NB;
+   #define incBn NB4
+   #ifdef TREAL
+      #define incCm 4
+   #else
+      #define incCm 8
+   #endif
+   const int incCn = ((((ldc) << 2)) - NB)SHIFT;
+   TYPE *pC0=C, *pC1=pC0+(ldc SHIFT), *pC2=pC1+(ldc SHIFT),*pC3=pC2+(ldc SHIFT);
+   const TYPE *pA0=A;
+   const TYPE *pB0=B;
+   TYPE *bp = (TYPE *) &beta;
+   const int Kstart = (NB>>1)-1;
+   register int k;
+   register TYPE m0, m1, m2, m3;
+   register TYPE rA0, rA1, rA2, rA3;
+   register TYPE ra0, ra1, ra2, ra3;
+   register TYPE rB0, rB1, rB2, rB3;
+   register TYPE rC0_0, rC1_0, rC2_0, rC3_0, rC0_1, rC1_1, rC2_1, rC3_1, rC0_2, rC1_2, rC2_2, rC3_2, rC0_3, rC1_3, rC2_3, rC3_3;
+
+   do /* N-loop */
+   {
+      do /* M-loop */
+      {
+         #ifdef BETA0
+	    rC0_0 = rC1_0 = rC2_0 = rC3_0 =
+	    rC0_1 = rC1_1 = rC2_1 = rC3_1 =
+	    rC0_2 = rC1_2 = rC2_2 = rC3_2 =
+	    rC0_3 = rC1_3 = rC2_3 = rC3_3 = ATL_rzero;
+         #else
+	    #ifdef TREAL
+               rC0_0 = *pC0; rC0_1 = *pC1; rC0_2 = *pC2; rC0_3 = *pC3;
+               rC1_0 = pC0[1]; rC1_1 = pC1[1]; rC1_2 = pC2[1]; rC1_3 = pC3[1];
+               rC2_0 = pC0[2]; rC2_1 = pC1[2]; rC2_2 = pC2[2]; rC2_3 = pC3[2];
+               rC3_0 = pC0[3]; rC3_1 = pC1[3]; rC3_2 = pC2[3]; rC3_3 = pC3[3];
+	    #else
+               rC0_0 = *pC0; rC0_1 = *pC1; rC0_2 = *pC2; rC0_3 = *pC3;
+               rC1_0 = pC0[2]; rC1_1 = pC1[2]; rC1_2 = pC2[2]; rC1_3 = pC3[2];
+               rC2_0 = pC0[4]; rC2_1 = pC1[4]; rC2_2 = pC2[4]; rC2_3 = pC3[4];
+               rC3_0 = pC0[6]; rC3_1 = pC1[6]; rC3_2 = pC2[6]; rC3_3 = pC3[6];
+	    #endif
+            #ifdef BETAX
+               /*
+                * use *bp instead of beta to avoid having compiler put beta in
+                * a register, and thus register starving the loop
+                */
+               ra0 = *bp;
+               rC0_0 *= ra0;
+               rC0_1 *= ra0;
+               rC0_2 *= ra0;
+               rC0_3 *= ra0;
+               rC1_0 *= ra0;
+               rC1_1 *= ra0;
+               rC1_2 *= ra0;
+               rC1_3 *= ra0;
+               rC2_0 *= ra0;
+               rC2_1 *= ra0;
+               rC2_2 *= ra0;
+               rC2_3 *= ra0;
+               rC3_0 *= ra0;
+               rC3_1 *= ra0;
+               rC3_2 *= ra0;
+               rC3_3 *= ra0;
+            #endif
+         #endif
+
+	 rA0 = *pA0; rA1 = pA0[NB];
+	 rB0 = *pB0; rB1 = pB0[NB];
+         rA2 = pA0[NB2]; rA3 = pA0[NB3]; pA0++;
+         rB2 = pB0[NB2]; rB3 = pB0[NB3]; pB0++;
+
+	 ra0 = *pA0;       m0 = rA0 * rB0;
+	 ra1 = pA0[NB];      m1 = rA1 * rB0;
+	 ra2 = pA0[NB2];      m2 = rA2 * rB0;
+	 ra3 = pA0[NB3];     pA0++;
+         for (k=Kstart; k; k--) /* easy loop to unroll */
+         {
+	    m3 = rA3 * rB0;
+	    rB0 = *pB0;
+            rC0_0 += m0;
+	    m0 = rA0 * rB1;
+            rC1_0 += m1;
+	    m1 = rA1 * rB1;
+            rC2_0 += m2;
+	    m2 = rA2 * rB1;
+            rC3_0 += m3;
+	    m3 = rA3 * rB1;
+	    rB1 = pB0[NB];
+            rC0_1 += m0;
+	    m0 = rA0 * rB2;
+            rC1_1 += m1;
+	    m1 = rA1 * rB2;
+            rC2_1 += m2;
+	    m2 = rA2 * rB2;
+            rC3_1 += m3;
+	    m3 = rA3 * rB2;
+	    rB2 = pB0[NB2];
+            rC0_2 += m0;
+	    m0 = rA0 * rB3;
+	    rA0 = *pA0;
+            rC1_2 += m1;
+	    m1 = rA1 * rB3;
+            rC2_2 += m2;
+	    m2 = rA2 * rB3;
+	    rA1 = pA0[NB];
+            rC3_2 += m3;
+	    m3 = rA3 * rB3;
+	    rB3 = pB0[NB3]; pB0++;
+            rC0_3 += m0;
+	    m0 = ra0 * rB0;
+            rC1_3 += m1;
+	    m1 = ra1 * rB0;
+	    rA2 = pA0[NB2];
+            rC2_3 += m2;
+	    m2 = ra2 * rB0;
+            rC3_3 += m3;
+	    m3 = ra3 * rB0;
+	    rA3 = pA0[NB3]; pA0++;
+
+            rC0_0 += m0;
+	    m0 = ra0 * rB1;
+            rC1_0 += m1;
+	    m1 = ra1 * rB1;
+	    rB0 = *pB0;
+            rC2_0 += m2;
+	    m2 = ra2 * rB1;
+            rC3_0 += m3;
+	    m3 = ra3 * rB1;
+	    rB1 = pB0[NB];
+            rC0_1 += m0;
+	    m0 = ra0 * rB2;
+            rC1_1 += m1;
+	    m1 = ra1 * rB2;
+            rC2_1 += m2;
+	    m2 = ra2 * rB2;
+            rC3_1 += m3;
+	    m3 = ra3 * rB2;
+	    rB2 = pB0[NB2];
+            rC0_2 += m0;
+	    m0 = ra0 * rB3;
+	    ra0 = *pA0;
+            rC1_2 += m1;
+	    m1 = ra1 * rB3;
+	    ra1 = pA0[NB];
+            rC2_2 += m2;
+	    m2 = ra2 * rB3;
+	    ra2 = pA0[NB2];
+            rC3_2 += m3;
+	    m3 = ra3 * rB3;
+	    rB3 = pB0[NB3];
+            rC0_3 += m0;
+	    m0 = rA0 * rB0;
+	    ra3 = pA0[NB3];
+	    pB0++;
+            rC1_3 += m1;
+	    m1 = rA1 * rB0;
+	    pA0++;
+            rC2_3 += m2;
+	    m2 = rA2 * rB0;
+            rC3_3 += m3;
+         }
+
+	 m3 = rA3 * rB0;
+	 rB0 = *pB0;
+	 rC0_0 += m0;
+	 m0 = rA0 * rB1;
+	 rC1_0 += m1;
+	 m1 = rA1 * rB1;
+	 rC2_0 += m2;
+	 m2 = rA2 * rB1;
+	 rC3_0 += m3;
+	 m3 = rA3 * rB1;
+	 rB1 = pB0[NB];
+	 rC0_1 += m0;
+	 m0 = rA0 * rB2;
+	 rC1_1 += m1;
+	 m1 = rA1 * rB2; pA0 += incAm;
+	 rC2_1 += m2;
+	 m2 = rA2 * rB2;
+	 rC3_1 += m3;
+	 m3 = rA3 * rB2;
+	 rB2 = pB0[NB2];
+	 rC0_2 += m0;
+	 m0 = rA0 * rB3;
+	 rC1_2 += m1;
+	 m1 = rA1 * rB3;
+	 rC2_2 += m2;
+	 m2 = rA2 * rB3;
+	 rC3_2 += m3;
+	 m3 = rA3 * rB3;
+	 rB3 = pB0[NB3];
+	 rC0_3 += m0;
+	 m0 = ra0 * rB0;
+	 rC1_3 += m1; pB0 += incBm;
+	 m1 = ra1 * rB0;
+	 rC2_3 += m2;
+	 m2 = ra2 * rB0;
+	 rC3_3 += m3;
+	 m3 = ra3 * rB0;
+	 rC0_0 += m0;
+	 m0 = ra0 * rB1;
+	 rC1_0 += m1;
+	 m1 = ra1 * rB1;
+	 rC2_0 += m2;
+	 m2 = ra2 * rB1;
+         *pC0 = rC0_0;
+	 rC3_0 += m3;
+	 m3 = ra3 * rB1;
+         pC0[1 SHIFT] = rC1_0;
+	 rC0_1 += m0;
+	 m0 = ra0 * rB2;
+         pC0[2 SHIFT] = rC2_0;
+	 rC1_1 += m1;
+	 m1 = ra1 * rB2;
+         pC0[3 SHIFT] = rC3_0; pC0 += incCm;
+	 rC2_1 += m2;
+	 m2 = ra2 * rB2;
+         *pC1 = rC0_1;
+	 rC3_1 += m3;
+	 m3 = ra3 * rB2;
+         pC1[1 SHIFT] = rC1_1;
+	 rC0_2 += m0;
+	 m0 = ra0 * rB3;
+         pC1[2 SHIFT] = rC2_1;
+	 rC1_2 += m1;
+	 m1 = ra1 * rB3;
+         pC1[3 SHIFT] = rC3_1; pC1 += incCm;
+	 rC2_2 += m2;
+	 m2 = ra2 * rB3;
+         *pC2 = rC0_2;
+	 rC3_2 += m3;
+	 m3 = ra3 * rB3;
+         pC2[1 SHIFT] = rC1_2;
+	 rC0_3 += m0;
+         pC2[2 SHIFT] = rC2_2;
+	 rC1_3 += m1;
+         pC2[3 SHIFT] = rC3_2; pC2 += incCm;
+	 rC2_3 += m2;
+         *pC3 = rC0_3;
+	 rC3_3 += m3;
+         pC3[1 SHIFT] = rC1_3;
+         pC3[2 SHIFT] = rC2_3;
+         pC3[3 SHIFT] = rC3_3;
+         pC3 += incCm;
+      }
+      while(pA0 != stM);
+      pC0 += incCn;
+      pC1 += incCn;
+      pC2 += incCn;
+      pC3 += incCn;
+      pA0 += incAn;
+      pB0 += incBn;
+   }
+   while(pB0 != stN);
+}
+
+#undef incBn
+#undef incCm
+@ROUT ATL_mm1x1x1_0
+static void ATL_mm1x1x1
+   (const int M, const int N, const int K, const TYPE alpha,
+    const TYPE *A, const int lda, const TYPE *B, const int ldb,
+    const TYPE beta, TYPE *C, const int ldc)
+/*
+ * matmul with TA=T, TB=N, MB=0, NB=0, KB=0, 
+ * lda=0, ldb=0, ldc=0, mu=1, nu=1, ku=1
+ */
+{
+   #define Mb M
+   #define Nb N
+   #define Kb K
+   const TYPE *stM = A + (lda*Mb);
+   const TYPE *stN = B + (ldb*Nb);
+   const int incAm = ((lda) - Kb), incAn = -(Mb*lda);
+   const int incBm = -(Kb), incBn = (ldb);
+   #ifdef TREAL
+      #define incCm 1
+      const int incCn = (ldc) - (Mb);
+   #else
+      #define incCm 2
+      const int incCn = (ldc - Mb)<<1;
+   #endif
+   TYPE *pC0=C;
+   const TYPE *pA0=A;
+   const TYPE *pB0=B;
+   register int k;
+   register TYPE rA0;
+   register TYPE rB0;
+   register TYPE rC0_0;
+   do /* N-loop */
+   {
+      do /* M-loop */
+      {
+         #ifdef BETA0
+            rC0_0 = ATL_rzero;
+         #elif defined(BETA1)
+            rC0_0 = *pC0;
+         #else
+            rC0_0 = *pC0 * beta;
+         #endif
+         for (k=K; k; k--) /* easy loop to unroll */
+         {
+            rA0 = *pA0++;
+            rB0 = *pB0++;
+            rC0_0 += rA0 * rB0;
+         }
+         *pC0 = rC0_0;
+         pC0 += incCm;
+         pA0 += incAm;
+         pB0 += incBm;
+      }
+      while(pA0 != stM);
+      pC0 += incCn;
+      pA0 += incAn;
+      pB0 += incBn;
+   }
+   while(pB0 != stN);
+}
+#ifdef incCm
+   #undef incCm
+#endif
+#ifdef Mb
+   #undef Mb
+#endif
+#ifdef Nb
+   #undef Nb
+#endif
+#ifdef Kb
+   #undef Kb
+#endif
+
+@ROUT ATL_mm4x1x1_0
+static void ATL_mm4x1x1
+   (const int M, const int N, const int K, const TYPE alpha, const TYPE *A, const int lda, const TYPE *B, const int ldb, const TYPE beta, TYPE *C, const int ldc)
+/*
+ * matmul with TA=T, TB=N, MB=0, NB=0, KB=0, 
+ * lda=0, ldb=0, ldc=0, mu=4, nu=1, ku=1
+ */
+{
+   const int Mb = (M>>2)<<2;
+   #define Nb N
+   #define Kb K
+   const int Kloop = K - 2;
+   const TYPE *ca=A, *cb=B;
+   TYPE *cc=C;
+   const TYPE *stM = A + (lda*Mb);
+   const TYPE *stN = B + (ldb*Nb);
+   #define incAk 1
+   const int incAm = ((((lda) << 2)) - Kb), incAn = -(Mb*lda);
+   #define incBk 1
+   const int incBm = -(Kb), incBn = (ldb);
+   #define incAk0 incAk
+   #define incBk0 incBk
+   #ifdef TREAL
+      #define incCm 4
+      const int incCn = (ldc) - (Mb);
+   #else
+      #define incCm 8
+      const int incCn = (ldc - Mb)<<1;
+   #endif
+   TYPE *pC0=C;
+   const TYPE *pA0=A, *pA1=pA0+(lda), *pA2=pA1+(lda), *pA3=pA2+(lda);
+   const TYPE *pB0=B;
+   register int k;
+   register TYPE rA0, rA1, rA2, rA3;
+   register TYPE rB0;
+   register TYPE m0, m1, m2, m3;
+   register TYPE rC0_0, rC1_0, rC2_0, rC3_0;
+   if (K < 3)
+   {
+      ATL_mm1x1x1(M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+      return;
+   }
+   if (pA0 != stM)
+   {
+      do /* N-loop */
+      {
+         do /* M-loop */
+         {
+            #ifdef BETA0
+               rC0_0 = rC1_0 = rC2_0 = rC3_0 = ATL_rzero;
+            #else
+               #ifdef TREAL
+                  rC0_0 = *pC0; rC1_0 = pC0[1]; rC2_0 = pC0[2]; rC3_0 = pC0[3];
+               #else
+                  rC0_0 = *pC0; rC1_0 = pC0[2]; rC2_0 = pC0[4]; rC3_0 = pC0[6];
+               #endif
+               #ifdef BETAX
+                  rA3 = beta;
+                  rC0_0 *= rA3; rC1_0 *= rA3; rC2_0 *= rA3; rC3_0 *= rA3;
+               #endif
+            #endif
+/*
+ *          Start pipeline
+ */
+            rA0 = *pA0;
+            rB0 = *pB0;
+            rA1 = *pA1;
+            rA2 = *pA2;
+            rA3 = *pA3;
+            m0 = rA0 * rB0;
+            m1 = rA1 * rB0;
+            m2 = rA2 * rB0;
+            m3 = rA3 * rB0;
+            rA0 = pA0[1];
+            rB0 = pB0[1];
+            rA1 = pA1[1];
+            rA2 = pA2[1];
+            rA3 = pA3[1];
+
+            pA0 += (incAk0);
+            pA1 += (incAk0);
+            pA2 += (incAk0);
+            pA3 += (incAk0);
+            pB0 += (incBk0);
+            for (k=Kloop; k; k--) /* easy loop to unroll */
+            {
+               rC0_0 += m0;
+               m0 = rA0 * rB0;
+               rC1_0 += m1;
+               m1 = rA1 * rB0;
+               rC2_0 += m2;
+               m2 = rA2 * rB0;
+               rC3_0 += m3;
+               m3 = rA3 * rB0;
+               rA0 = pA0[1];
+               rB0 = pB0[1];
+               rA1 = pA1[1];
+               rA2 = pA2[1];
+               rA3 = pA3[1];
+               pA0 += incAk;
+               pA1 += incAk;
+               pA2 += incAk;
+               pA3 += incAk;
+               pB0 += incBk;
+            }
+/*
+ *          Drain pipe on last iteration of K-loop
+ */
+            rC0_0 += m0;
+            m0 = rA0 * rB0;
+            rC1_0 += m1;
+            m1 = rA1 * rB0;
+            rC2_0 += m2;
+            m2 = rA2 * rB0;
+            rC3_0 += m3;
+            m3 = rA3 * rB0;
+            rC0_0 += m0;
+            rC1_0 += m1;
+            rC2_0 += m2;
+            rC3_0 += m3;
+            pA0 += incAk0;
+            pA1 += incAk0;
+            pA2 += incAk0;
+            pA3 += incAk0;
+            pB0 += incBk0;
+            #ifdef TREAL
+               *pC0 = rC0_0; pC0[1] = rC1_0; pC0[2] = rC2_0; pC0[3] = rC3_0;
+            #else
+               *pC0 = rC0_0; pC0[2] = rC1_0; pC0[4] = rC2_0; pC0[6] = rC3_0;
+            #endif
+            pC0 += incCm;
+            pA0 += incAm;
+            pA1 += incAm;
+            pA2 += incAm;
+            pA3 += incAm;
+            pB0 += incBm;
+         }
+         while(pA0 != stM);
+         pC0 += incCn;
+         pA0 += incAn;
+         pA1 += incAn;
+         pA2 += incAn;
+         pA3 += incAn;
+         pB0 += incBn;
+      }
+      while(pB0 != stN);
+   }
+   if (k=M-Mb)
+      ATL_mm1x1x1(k, N, K, alpha, ca + (Mb*lda), lda, cb, ldb, beta, 
+                  cc + (Mb SHIFT), ldc);
+}
+#ifdef incAk
+   #undef incAk
+#endif
+#ifdef incBk
+   #undef incBk
+#endif
+#ifdef incCm
+   #undef incCm
+#endif
+#ifdef incCn
+   #undef incCn
+#endif
+#ifdef incCk
+   #undef incCk
+#endif
+#ifdef Mb
+   #undef Mb
+#endif
+#ifdef Nb
+   #undef Nb
+#endif
+#ifdef Kb
+   #undef Kb
+#endif
+
+@ROUT ATL_mm1x4x1_0
+static void ATL_mm1x4x1
+   (const int M, const int N, const int K, const TYPE alpha, const TYPE *A, const int lda, const TYPE *B, const int ldb, const TYPE beta, TYPE *C, const int ldc)
+/*
+ * matmul with TA=T, TB=N, MB=0, NB=0, KB=0, 
+ * lda=0, ldb=0, ldc=0, mu=1, nu=4, ku=1
+ */
+{
+   #define Mb M
+   const int Nb = (N>>2)<<2;
+   #define Kb K
+   const int Kloop = K - 2;
+   const TYPE *ca=A, *cb=B;
+   TYPE *cc=C;
+   const TYPE *stM = A + (lda*Mb);
+   const TYPE *stN = B + (ldb*Nb);
+   #define incAk 1
+   const int incAm = ((lda) - Kb), incAn = -(Mb*lda);
+   #define incBk 1
+   const int incBm = -(Kb), incBn = (((ldb) << 2));
+   #define incAk0 incAk
+   #define incBk0 incBk
+   #ifdef TREAL
+      #define incCm 1
+      #define ldc2 ldc
+      const int incCn = (((ldc) << 2)) - (Mb);
+   #else
+      #define incCm 2
+      const int incCn = ((((ldc) << 2)) - (Mb))<<1, ldc2=ldc<<1;
+   #endif
+   TYPE *pC0=C, *pC1=pC0+(ldc2), *pC2=pC1+(ldc2), *pC3=pC2+(ldc2);
+   const TYPE *pA0=A;
+   const TYPE *pB0=B, *pB1=pB0+(ldb), *pB2=pB1+(ldb), *pB3=pB2+(ldb);
+   register int k;
+   register TYPE rA0;
+   register TYPE rB0, rB1, rB2, rB3;
+   register TYPE m0, m1, m2, m3;
+   register TYPE rC0_0, rC0_1, rC0_2, rC0_3;
+   if (K < 3)
+   {
+      ATL_mm1x1x1(M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+      return;
+   }
+   if (pB0 != stN)
+   {
+      do /* N-loop */
+      {
+         do /* M-loop */
+         {
+            #ifdef BETA0
+               rC0_0 = rC0_1 = rC0_2 = rC0_3 = ATL_rzero;
+            #else
+               rC0_0 = *pC0; rC0_1 = *pC1; rC0_2 = *pC2; rC0_3 = *pC3;
+               #ifdef BETAX
+                  rB3 = beta;
+                  rC0_0 *= rB3; rC0_1 *= rB3; rC0_2 *= rB3; rC0_3 *= rB3;
+               #endif
+            #endif
+/*
+ *          Start pipeline
+ */
+            rA0 = *pA0;
+            rB0 = *pB0;
+            rB1 = *pB1;
+            rB2 = *pB2;
+            rB3 = *pB3;
+            m0 = rA0 * rB0;
+            m1 = rA0 * rB1;
+            m2 = rA0 * rB2;
+            m3 = rA0 * rB3;
+            rA0 = pA0[1];
+            rB0 = pB0[1];
+            rB1 = pB1[1];
+            rB2 = pB2[1];
+            rB3 = pB3[1];
+
+            pA0 += (incAk0);
+            pB0 += (incBk0);
+            pB1 += (incBk0);
+            pB2 += (incBk0);
+            pB3 += (incBk0);
+            for (k=Kloop; k; k--) /* easy loop to unroll */
+            {
+               rC0_0 += m0;
+               m0 = rA0 * rB0;
+               rC0_1 += m1;
+               m1 = rA0 * rB1;
+               rC0_2 += m2;
+               m2 = rA0 * rB2;
+               rC0_3 += m3;
+               m3 = rA0 * rB3;
+               rA0 = pA0[1];
+               rB0 = pB0[1];
+               rB1 = pB1[1];
+               rB2 = pB2[1];
+               rB3 = pB3[1];
+               pA0 += incAk;
+               pB0 += incBk;
+               pB1 += incBk;
+               pB2 += incBk;
+               pB3 += incBk;
+            }
+/*
+ *          Drain pipe on last iteration of K-loop
+ */
+            rC0_0 += m0;
+            m0 = rA0 * rB0;
+            rC0_1 += m1;
+            m1 = rA0 * rB1;
+            rC0_2 += m2;
+            m2 = rA0 * rB2;
+            rC0_3 += m3;
+            m3 = rA0 * rB3;
+            rC0_0 += m0;
+            rC0_1 += m1;
+            rC0_2 += m2;
+            rC0_3 += m3;
+            pA0 += incAk0;
+            pB0 += incBk0;
+            pB1 += incBk0;
+            pB2 += incBk0;
+            pB3 += incBk0;
+            *pC0 = rC0_0;
+            *pC1 = rC0_1;
+            *pC2 = rC0_2;
+            *pC3 = rC0_3;
+            pC0 += incCm;
+            pC1 += incCm;
+            pC2 += incCm;
+            pC3 += incCm;
+            pA0 += incAm;
+            pB0 += incBm;
+            pB1 += incBm;
+            pB2 += incBm;
+            pB3 += incBm;
+         }
+         while(pA0 != stM);
+         pC0 += incCn;
+         pC1 += incCn;
+         pC2 += incCn;
+         pC3 += incCn;
+         pA0 += incAn;
+         pB0 += incBn;
+         pB1 += incBn;
+         pB2 += incBn;
+         pB3 += incBn;
+      }
+      while(pB0 != stN);
+   }
+   if (k=N-Nb)
+      ATL_mm1x1x1(M, k, K, alpha, ca, lda, cb + (Nb*ldb), ldb, beta, 
+                  cc + (Nb*ldc2), ldc);
+}
+#ifdef ldc2
+   #undef ldc2
+#endif
+#ifdef incAm
+   #undef incAm
+#endif
+#ifdef incAn
+   #undef incAn
+#endif
+#ifdef incAk
+   #undef incAk
+#endif
+#ifdef incBm
+   #undef incBm
+#endif
+#ifdef incBn
+   #undef incBn
+#endif
+#ifdef incBk
+   #undef incBk
+#endif
+#ifdef incCm
+   #undef incCm
+#endif
+#ifdef incCn
+   #undef incCn
+#endif
+#ifdef incCk
+   #undef incCk
+#endif
+#ifdef Mb
+   #undef Mb
+#endif
+#ifdef Nb
+   #undef Nb
+#endif
+#ifdef Kb
+   #undef Kb
+#endif
+
+@ROUT ATL_mm4x4x2US_MN
+@extract -b @(topd)/gen.inc what=cw @(cw00) -def contrib "Viet Nguyen and Peter Strazdins"
+
+/*
+ * NOTE: This is a direct adaption of Viet Nguyen's and Peter Strazdin's
+ *       ATL_mm4x4x2US.c code for fixed NB.  I'm not sure who should hold
+ *       the copyright in such a case; essentially, I did the typing, but it 
+ *       completely uses their design for the inner kernel.  This file handles
+ *       M or N loop cleanup of arbitrary dimension.
+ */
+#include <atlas_misc.h>
+
+#if !defined(KB) || KB == 0 || (KB/2)*2 != KB
+   #error KB must be nonzero multiple of 2
+#endif
+#if !defined(NB) || NB == 0
+   #define CLEANING_N
+#elif ( (NB/4)*4 != NB )
+   #error NB must be multiple of 4
+#endif
+
+#if !defined(MB) || MB == 0
+   #define CLEANING_M
+#elif ( (MB/4)*4 != MB )
+   #error MB must be multiple of 4
+#endif
+
+#if defined(CLEANING_M) && defined(CLEANING_N)
+   #error One of MB and NB must be defined
+#endif
+
+#if defined(CLEANING_M) || defined(CLEANING_N)
+   @extract -b @(incd)/atlas-kmm.base rout=ATL_mm1x1x1_0
+#endif
+
+#ifdef CLEANING_M
+   @extract -b @(incd)/atlas-kmm.base rout=ATL_mm1x4x1_0
+#endif
+
+#ifdef CLEANING_N
+   @extract -b @(incd)/atlas-kmm.base rout=ATL_mm4x1x1_0
+#endif
+
+void ATL_USERMM
+   (const int M, const int N, const int K, const TYPE alpha, const TYPE *A, const int lda, const TYPE *B, const int ldb, const TYPE beta, TYPE *C, const int ldc)
+/*
+ * matmul with TA=T, TB=N, lda = ldb = MB = KB = KB, ldc=0, mu=4, nu=4, ku=2
+ * and register prefetch along A
+ */
+{
+   const int Mb = (M>>2)<<2;
+   const int Nb = (N>>2)<<2;
+   const TYPE *ca=A, *cb=B;
+   TYPE *cc=C;
+   const TYPE *stM = A + lda*Mb;
+   const TYPE *stN = B + ldb*Nb;
+   const int incAm = (lda<<2) - KB, incAn = -(Mb*lda);
+   const int incBm = 1-KB, incBn = (ldb<<2);
+   #ifdef TREAL
+      #define incCm 4
+      const int incCn = ((((ldc) << 2)) - Mb);
+      #define ldc2 ldc
+   #else
+      #define incCm 8
+      const int incCn = ((((ldc) << 2)) - Mb)<<1, ldc2=ldc<<1;
+   #endif
+   TYPE *pC0=C, *pC1=pC0+(ldc2), *pC2=pC1+(ldc2),*pC3=pC2+(ldc2);
+   const TYPE *pA0=A;
+   const TYPE *pB0=B;
+   TYPE *bp = (TYPE *) &beta;
+   const int Kstart = (KB>>1)-1;
+   register int k;
+   register TYPE m0, m1, m2, m3;
+   register TYPE rA0, rA1, rA2, rA3;
+   register TYPE ra0, ra1, ra2, ra3;
+   register TYPE rB0, rB1, rB2, rB3;
+   register TYPE rC0_0, rC1_0, rC2_0, rC3_0, rC0_1, rC1_1, rC2_1, rC3_1,
+                 rC0_2, rC1_2, rC2_2, rC3_2, rC0_3, rC1_3, rC2_3, rC3_3;
+
+   if (pA0 != stM && pB0 != stN)
+   {
+   do /* N-loop */
+   {
+      do /* M-loop */
+      {
+         #ifdef BETA0
+	    rC0_0 = rC1_0 = rC2_0 = rC3_0 =
+	    rC0_1 = rC1_1 = rC2_1 = rC3_1 =
+	    rC0_2 = rC1_2 = rC2_2 = rC3_2 =
+	    rC0_3 = rC1_3 = rC2_3 = rC3_3 = ATL_rzero;
+         #else
+	    #ifdef TREAL
+               rC0_0 = *pC0; rC0_1 = *pC1; rC0_2 = *pC2; rC0_3 = *pC3;
+               rC1_0 = pC0[1]; rC1_1 = pC1[1]; rC1_2 = pC2[1]; rC1_3 = pC3[1];
+               rC2_0 = pC0[2]; rC2_1 = pC1[2]; rC2_2 = pC2[2]; rC2_3 = pC3[2];
+               rC3_0 = pC0[3]; rC3_1 = pC1[3]; rC3_2 = pC2[3]; rC3_3 = pC3[3];
+	    #else
+               rC0_0 = *pC0; rC0_1 = *pC1; rC0_2 = *pC2; rC0_3 = *pC3;
+               rC1_0 = pC0[2]; rC1_1 = pC1[2]; rC1_2 = pC2[2]; rC1_3 = pC3[2];
+               rC2_0 = pC0[4]; rC2_1 = pC1[4]; rC2_2 = pC2[4]; rC2_3 = pC3[4];
+               rC3_0 = pC0[6]; rC3_1 = pC1[6]; rC3_2 = pC2[6]; rC3_3 = pC3[6];
+	    #endif
+            #ifdef BETAX
+               /*
+                * use *bp instead of beta to avoid having compiler put beta in
+                * a register, and thus register starving the loop
+                */
+               ra0 = *bp;
+               rC0_0 *= ra0; rC0_1 *= ra0; rC0_2 *= ra0; rC0_3 *= ra0;
+               rC1_0 *= ra0; rC1_1 *= ra0; rC1_2 *= ra0; rC1_3 *= ra0;
+               rC2_0 *= ra0; rC2_1 *= ra0; rC2_2 *= ra0; rC2_3 *= ra0;
+               rC3_0 *= ra0; rC3_1 *= ra0; rC3_2 *= ra0; rC3_3 *= ra0;
+            #endif
+         #endif
+
+	 rA0 = *pA0; rA1 = pA0[KB];
+	 rB0 = *pB0; rB1 = pB0[KB];
+         rA2 = pA0[KB2]; rA3 = pA0[KB3]; pA0++;
+         rB2 = pB0[KB2]; rB3 = pB0[KB3]; pB0++;
+
+	 ra0 = *pA0;       m0 = rA0 * rB0;
+	 ra1 = pA0[KB];      m1 = rA1 * rB0;
+	 ra2 = pA0[KB2];      m2 = rA2 * rB0;
+	 ra3 = pA0[KB3];     pA0++;
+         for (k=Kstart; k; k--) /* easy loop to unroll */
+         {
+	    m3 = rA3 * rB0;
+	    rB0 = *pB0;
+            rC0_0 += m0;
+	    m0 = rA0 * rB1;
+            rC1_0 += m1;
+	    m1 = rA1 * rB1;
+            rC2_0 += m2;
+	    m2 = rA2 * rB1;
+            rC3_0 += m3;
+	    m3 = rA3 * rB1;
+	    rB1 = pB0[KB];
+            rC0_1 += m0;
+	    m0 = rA0 * rB2;
+            rC1_1 += m1;
+	    m1 = rA1 * rB2;
+            rC2_1 += m2;
+	    m2 = rA2 * rB2;
+            rC3_1 += m3;
+	    m3 = rA3 * rB2;
+	    rB2 = pB0[KB2];
+            rC0_2 += m0;
+	    m0 = rA0 * rB3;
+	    rA0 = *pA0;
+            rC1_2 += m1;
+	    m1 = rA1 * rB3;
+            rC2_2 += m2;
+	    m2 = rA2 * rB3;
+	    rA1 = pA0[KB];
+            rC3_2 += m3;
+	    m3 = rA3 * rB3;
+	    rB3 = pB0[KB3]; pB0++;
+            rC0_3 += m0;
+	    m0 = ra0 * rB0;
+            rC1_3 += m1;
+	    m1 = ra1 * rB0;
+	    rA2 = pA0[KB2];
+            rC2_3 += m2;
+	    m2 = ra2 * rB0;
+            rC3_3 += m3;
+	    m3 = ra3 * rB0;
+	    rA3 = pA0[KB3]; pA0++;
+
+            rC0_0 += m0;
+	    m0 = ra0 * rB1;
+            rC1_0 += m1;
+	    m1 = ra1 * rB1;
+	    rB0 = *pB0;
+            rC2_0 += m2;
+	    m2 = ra2 * rB1;
+            rC3_0 += m3;
+	    m3 = ra3 * rB1;
+	    rB1 = pB0[KB];
+            rC0_1 += m0;
+	    m0 = ra0 * rB2;
+            rC1_1 += m1;
+	    m1 = ra1 * rB2;
+            rC2_1 += m2;
+	    m2 = ra2 * rB2;
+            rC3_1 += m3;
+	    m3 = ra3 * rB2;
+	    rB2 = pB0[KB2];
+            rC0_2 += m0;
+	    m0 = ra0 * rB3;
+	    ra0 = *pA0;
+            rC1_2 += m1;
+	    m1 = ra1 * rB3;
+	    ra1 = pA0[KB];
+            rC2_2 += m2;
+	    m2 = ra2 * rB3;
+	    ra2 = pA0[KB2];
+            rC3_2 += m3;
+	    m3 = ra3 * rB3;
+	    rB3 = pB0[KB3];
+            rC0_3 += m0;
+	    m0 = rA0 * rB0;
+	    ra3 = pA0[KB3];
+	    pB0++;
+            rC1_3 += m1;
+	    m1 = rA1 * rB0;
+	    pA0++;
+            rC2_3 += m2;
+	    m2 = rA2 * rB0;
+            rC3_3 += m3;
+         }
+
+	 m3 = rA3 * rB0;
+	 rB0 = *pB0;
+	 rC0_0 += m0;
+	 m0 = rA0 * rB1;
+	 rC1_0 += m1;
+	 m1 = rA1 * rB1;
+	 rC2_0 += m2;
+	 m2 = rA2 * rB1;
+	 rC3_0 += m3;
+	 m3 = rA3 * rB1;
+	 rB1 = pB0[KB];
+	 rC0_1 += m0;
+	 m0 = rA0 * rB2;
+	 rC1_1 += m1;
+	 m1 = rA1 * rB2; pA0 += incAm;
+	 rC2_1 += m2;
+	 m2 = rA2 * rB2;
+	 rC3_1 += m3;
+	 m3 = rA3 * rB2;
+	 rB2 = pB0[KB2];
+	 rC0_2 += m0;
+	 m0 = rA0 * rB3;
+	 rC1_2 += m1;
+	 m1 = rA1 * rB3;
+	 rC2_2 += m2;
+	 m2 = rA2 * rB3;
+	 rC3_2 += m3;
+	 m3 = rA3 * rB3;
+	 rB3 = pB0[KB3];
+	 rC0_3 += m0;
+	 m0 = ra0 * rB0;
+	 rC1_3 += m1; pB0 += incBm;
+	 m1 = ra1 * rB0;
+	 rC2_3 += m2;
+	 m2 = ra2 * rB0;
+	 rC3_3 += m3;
+	 m3 = ra3 * rB0;
+	 rC0_0 += m0;
+	 m0 = ra0 * rB1;
+	 rC1_0 += m1;
+	 m1 = ra1 * rB1;
+	 rC2_0 += m2;
+	 m2 = ra2 * rB1;
+         *pC0 = rC0_0;
+	 rC3_0 += m3;
+	 m3 = ra3 * rB1;
+         pC0[1 SHIFT] = rC1_0;
+	 rC0_1 += m0;
+	 m0 = ra0 * rB2;
+         pC0[2 SHIFT] = rC2_0;
+	 rC1_1 += m1;
+	 m1 = ra1 * rB2;
+         pC0[3 SHIFT] = rC3_0; pC0 += incCm;
+	 rC2_1 += m2;
+	 m2 = ra2 * rB2;
+         *pC1 = rC0_1;
+	 rC3_1 += m3;
+	 m3 = ra3 * rB2;
+         pC1[1 SHIFT] = rC1_1;
+	 rC0_2 += m0;
+	 m0 = ra0 * rB3;
+         pC1[2 SHIFT] = rC2_1;
+	 rC1_2 += m1;
+	 m1 = ra1 * rB3;
+         pC1[3 SHIFT] = rC3_1; pC1 += incCm;
+	 rC2_2 += m2;
+	 m2 = ra2 * rB3;
+         *pC2 = rC0_2;
+	 rC3_2 += m3;
+	 m3 = ra3 * rB3;
+         pC2[1 SHIFT] = rC1_2;
+	 rC0_3 += m0;
+         pC2[2 SHIFT] = rC2_2;
+	 rC1_3 += m1;
+         pC2[3 SHIFT] = rC3_2; pC2 += incCm;
+	 rC2_3 += m2;
+         *pC3 = rC0_3;
+	 rC3_3 += m3;
+         pC3[1 SHIFT] = rC1_3;
+         pC3[2 SHIFT] = rC2_3;
+         pC3[3 SHIFT] = rC3_3;
+         pC3 += incCm;
+      }
+      while(pA0 != stM);
+      pC0 += incCn;
+      pC1 += incCn;
+      pC2 += incCn;
+      pC3 += incCn;
+      pA0 += incAn;
+      pB0 += incBn;
+   }
+   while(pB0 != stN);
+   }
+   #ifdef CLEANING_N
+      if (N == Nb) return;
+      ATL_mm4x1x1(M, N-Nb, K, alpha, ca, lda, cb + (Nb*ldb), ldb,
+                  beta, cc + Nb*ldc2, ldc);
+   #elif defined(CLEANING_M)
+      if (M == Mb) return;
+      ATL_mm1x4x1(M-Mb, N, K, alpha, ca + (Mb*lda), lda, cb, ldb,
+                  beta, cc + (Mb SHIFT), ldc);
+   #endif
+}
+
+#undef incCm
+#ifdef ldc2
+   #undef ldc2
+#endif
+@ROUT scases.0 ccases.0
+<ID> <flag> <mb> <nb> <kb> <muladd> <lat> <mu> <nu> <ku> <rout> "<Contributer>"
+6
+  1 480 4 4  1 1 1 4 4  2 ATL_mm4x4x2US.c        "V. Nguyen & P. Strazdins"
+  2   8 4 4  2 1 1 4 4  2 ATL_mm4x4x2_1_pref.c   "R. Clint Whaley"
+  3 208 4 4  1 1 1 4 4  2 ATL_mm4x4x2_1_prefCU.c "R. Clint Whaley"
+  5 192 4 4  8 0 4 4 4  8 ATL_mm4x4x8_bpfabc.c   "R. Clint Whaley"
+  6 192 4 3  8 0 4 4 3  8 ATL_mm4x3x8p.c         "R. Clint Whaley" 
+  7   8 4 3  2 0 4 4 3  2 ATL_mm4x3x2p.c         "R. Clint Whaley" 
+@ROUT dcases.0 zcases.0
+<ID> <flag> <mb> <nb> <kb> <muladd> <lat> <mu> <nu> <ku> <rout> "<Contributer>"
+6
+  1 480 4 4  1 1 1 4 4  2 ATL_mm4x4x2US.c        "V. Nguyen & P. Strazdins"
+  2   8 4 4  2 1 1 4 4  2 ATL_mm4x4x2_1_pref.c   "R. Clint Whaley"
+  3 208 4 4  1 1 1 4 4  2 ATL_mm4x4x2_1_prefCU.c "R. Clint Whaley"
+@skip  4 192 2 1 -40 0 4 2 1 40 ATL_mm2x1x40pf.c       "R. Clint Whaley"
+  5 192 4 4  8 0 4 4 4  8 ATL_mm4x4x8_bpfabc.c   "R. Clint Whaley"
+  6 192 4 3  8 0 4 4 3  8 ATL_mm4x3x8p.c         "R. Clint Whaley" 
+  7   8 4 3  2 0 4 4 3  2 ATL_mm4x3x2p.c         "R. Clint Whaley" 
+@ROUT dcases.3DN zcases.3DN
+<flag> <mb> <nb> <kb> <muladd> <lat> <mu> <nu> <ku> <rout> "<Contributer>"
+0
+@ROUT scases.3DN ccases.3DN
+<ID> <flag> <mb> <nb> <kb> <muladd> <lat> <mu> <nu> <ku> <rout> "<Contributer>"
+@ROUT ccases.3DN
+52
+@ROUT scases.3DN
+53
+@ROUT scases.3DN ccases.3DN
+100  8    2    2 -100 1 1 2 2 16 ATL_smm_3dnow_100.c    "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+101 16    0    2 -100 1 1 2 2 16 ATL_smm_3dnow_100M.c   "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+102 16    2    0 -100 1 1 2 2 16 ATL_smm_3dnow_100N.c   "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+@define ib @98@
+@define i  @103@
+@iwhile ib > 0
+@3r@(i) 16    2    2  -@2l@(ib) 1 1 2 2 16 ATL_smm_3dnow_K.c      "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+   @iexp ib 2 @(ib) -
+   @iexp i 1 @(i) +
+@endiwhile
+152  0 -90  -90 -90 0 1 6 1 90 ATL_smm_3dnow_90.c  "Tim Mattox & Hank Dietz"
+@ROUT scases.3DN
+@ROUT scases.SSE ccases.SSE
+<ID> <flag> <mb> <nb> <kb> <muladd> <lat> <mu> <nu> <ku> <rout> "<Contributer>"
+24
+200   8   4   1    4 1 1 4  1 4 ATL_gemm_SSE.c       "Camm Maguire" \
+gcc
+-fomit-frame-pointer -O
+201 208   1   1    4 1 1 1  1 4 ATL_gemm_SSE.c       "Camm Maguire" \
+gcc
+-fomit-frame-pointer -O
+202   8   4   1  -56 1 1 4  1 56 ATL_smm_sse1_56.c   "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+203   8   4   1  -60 1 1 4  1 56 ATL_smm_sse1_60.c   "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+204   8   4   1  -64 1 1 4  1 56 ATL_smm_sse1_64.c   "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+205  16   0   2  -56 1 1 4  1 56 ATL_smm_sse1_56M.c  "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+206  16   2   0  -56 1 1 4  1 56 ATL_smm_sse1_56N.c  "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+207  16   0   2  -60 1 1 4  1 60 ATL_smm_sse1_60M.c  "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+208  16   2   0  -60 1 1 4  1 60 ATL_smm_sse1_60N.c  "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+209  16   0   2  -64 1 1 4  1 64 ATL_smm_sse1_64M.c  "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+210  16   2   0  -64 1 1 4  1 64 ATL_smm_sse1_64N.c  "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+211  16   4   1    4 1 1 4  1  4 ATL_smm_sse1_K.c "P. Soendergaard & C. Maguire" \
+gcc
+-fomit-frame-pointer -O
+212   8   4   1 -112 1 1 4  1 16 ATL_smm_sse2_112.c  "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+213  16   0   1 -112 1 1 4  1 16 ATL_smm_sse2_112M.c "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+214  16   4   0 -112 1 1 4  1 16 ATL_smm_sse2_112N.c "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+215  16   4   1    4 1 1 4  1  4 ATL_smm_sse2_112N.c "P. Soendergaard & C. Maguire" \
+gcc
+-fomit-frame-pointer -O
+216   8   6   1 -60 0 1 6  1 60 ATL_smm6x1x60_sse.c "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+217   8  14   1 -84 0 1 14  1 84 ATL_smm14x1x84_sse.c "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+218 208  14   1   4 0 1 14  1 84 ATL_smm14x1x84_sseCU.c "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+219 128 6 1 -120 1 1 6 1 120  ATL_smm6x1x120_sse.c "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+220 192   6   1   4 0 1 6  1 80 ATL_smm6x1x80_sse.c    "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+221 192  10   1   4 0 1 10 1 120 ATL_smm10x1x120_sse.c  "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+222 192   4   1   4 0 1  4 1 256 ATL_smm4x1x256_sse.c   "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+223 224   2   2   4 0 1  2 2   4 ATL_smm2x2x256_sse.c  "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+@ROUT dcases.SSE zcases.SSE
+<ID> <flag> <mb> <nb> <kb> <muladd> <lat> <mu> <nu> <ku> <rout> "<Contributer>"
+41
+200   8   4   1   4 1 1 4  1  4 ATL_gemm_SSE.c          "Camm Maguire" \
+gcc
+-fomit-frame-pointer -O
+201 208   1   1   4 1 1 1  1  4 ATL_gemm_SSE.c          "Camm Maguire" \
+gcc
+-fomit-frame-pointer -O
+202   8 -80 -80 -80 0 3 1  4  8 ATL_dmm_sse2_80.c       "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+203  80   0 -80 -80 0 3 1  4  8 ATL_dmm_sse2_80M.c      "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+204 144 -80   0 -80 0 3 1  4  8 ATL_dmm_sse2_80N.c      "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+205  16   4   1   4 1 1 1  4  4 ATL_dmm_sse2_K.c "P. Soendergaard & C. Maguire" \
+gcc
+-fomit-frame-pointer -O
+206  16   4   1  -2 1 1 1  4  2 ATL_dmm_sse2_K.c        "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+207  16   4   1  -6 1 1 1  4  2 ATL_dmm_sse2_K.c        "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+208  16   4   1 -10 1 1 1  4  8 ATL_dmm_sse2_K.c        "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+209  16   4   1 -14 1 1 1  4  8 ATL_dmm_sse2_K.c        "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+210  16   4   1 -18 1 1 1  4  8 ATL_dmm_sse2_K.c        "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+211  16   4   1 -22 1 1 1  4  8 ATL_dmm_sse2_K.c        "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+212  16   4   1 -26 1 1 1  4  8 ATL_dmm_sse2_K.c        "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+213  16   4   1 -30 1 1 1  4  8 ATL_dmm_sse2_K.c        "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+214  16   4   1 -34 1 1 1  4  8 ATL_dmm_sse2_K.c        "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+215  16   4   1 -38 1 1 1  4  8 ATL_dmm_sse2_K.c        "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+216  16   4   1 -42 1 1 1  4  8 ATL_dmm_sse2_K.c        "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+217  16   4   1 -46 1 1 1  4  8 ATL_dmm_sse2_K.c        "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+218  16   4   1 -50 1 1 1  4  8 ATL_dmm_sse2_K.c        "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+219  16   4   1 -54 1 1 1  4  8 ATL_dmm_sse2_K.c        "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+220  16   4   1 -58 1 1 1  4  8 ATL_dmm_sse2_K.c        "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+221  16   4   1 -62 1 1 1  4  8 ATL_dmm_sse2_K.c        "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+222  16   4   1 -66 1 1 1  4  8 ATL_dmm_sse2_K.c        "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+223  16   4   1 -70 1 1 1  4  8 ATL_dmm_sse2_K.c        "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+224  16   4   1 -74 1 1 1  4  8 ATL_dmm_sse2_K.c        "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+225  16   4   1 -78 1 1 1  4  8 ATL_dmm_sse2_K.c        "Peter Soendergaard" \
+gcc
+-fomit-frame-pointer -O
+228 192   6   1   2 0 1 6  1 72 ATL_dmm6x1x72_sse2.c    "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+229 208 14 1 -56 1 1 14 1 56 ATL_dmm14x1x56_sse2pABC_MN.c "R. Clint Whaley" \
+gcc
+-m64 -x assembler-with-cpp
+230  16 -56 -56  1 1 1 28 1 2 ATL_dmm14x1x56_sse2pABC_K.c "R. Clint Whaley" \
+gcc
+-m64 -x assembler-with-cpp
+231   8 -56 -56 -56 1 1 14 1 56 ATL_dmm14x1x56_sse2pABC.c "R. Clint Whaley" \
+gcc
+-m64 -x assembler-with-cpp
+232 128   6   1 -60 1 1  6 1 60 ATL_dmm6x1x60_sse2_32.c   "R. Clint Whaley" \
+gcc
+-m32 -x assembler-with-cpp
+233  80   1   6 -72 0 1 1  6 72 ATL_dmm1x6x72_sse2.c      "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+234  16   6   1 2 0 1 6  1 72 ATL_dmm6x1x72_sse2_K.c      "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+235 208 1 14 -56 1 1 1 14 56 ATL_dmm1x14x56_sse2pABC.c    "R. Clint Whaley" \
+gcc
+-m64 -x assembler-with-cpp
+236 192   6   1 -72 0 1 6  1 72 ATL_dmm6x1x72_sse2.c      "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+237 128   6   1 -60 1 1  6 1 60 ATL_dmm6x1x60_sse2_32.c   "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+238 192   4   1 -44 0 4  4 1 44 ATL_dmm4x1x44_4_sse2.c    "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+239 736 8 0 2 0 1 8 1 2 ATL_dmm8x1x120_L1pf.c "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp -m64
+241 224 4 2 2 0 1 4 2 2 ATL_dmm4x2x128_sse2.c "Whaley & Voronenko" \
+gcc
+-x assembler-with-cpp -m64
+242 480 2 2 2 0 1 2 2 2 ATL_dmm2x2x2_sse2.c   "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+243 224 2 2 2 0 1 2 2 2 ATL_dmm2x2x128_sse2.c "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+@beginskip
+240 224 6 0 2 0 1 6 1 2 ATL_dmm6x1x128_sse2.c "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp -m64
+@endskip
+@ROUT scases.flg ccases.flg
+<ID> <flag> <mb> <nb> <kb> <muladd> <lat> <mu> <nu> <ku> <rout> "<Contributer>"
+@ROUT scases.flg
+22
+@ROUT ccases.flg
+20
+@ROUT scases.flg ccases.flg
+@beginskip
+300 480 4 4 1 1 1 4 4 2 ATL_mm4x4x2US.c "V. Nguyen & P. Strazdins" \
+gcc
+-mcpu=ultrasparc -mtune=ultrasparc -O -fomit-frame-pointer
+301  16 0 4 2 1 1 4 4 2 ATL_mm4x4x2US_MN.c "V. Nguyen & P. Strazdins" \
+gcc
+-mcpu=ultrasparc -mtune=ultrasparc -O -fomit-frame-pointer
+302  16 4 0 2 1 1 4 4 2 ATL_mm4x4x2US_MN.c "V. Nguyen & P. Strazdins" \
+gcc
+-mcpu=ultrasparc -mtune=ultrasparc -O -fomit-frame-pointer
+303 192 4 4 2 0 4 4 4 2 ATL_mm4x4x2rp.c     "R. Clint Whaley" \
+gcc
+-mcpu=ultrasparc -mtune=ultrasparc -fomit-frame-pointer -O
+@endskip
+304 192 4 3 8 0 4 4 3 8 ATL_mm4x3x8p.c     "R. Clint Whaley" \
+gcc
+-mcpu=ultrasparc -mtune=ultrasparc -fomit-frame-pointer -O
+306 192 4 4 8 0 4 4 4 8 ATL_mm4x4x8p.c     "R. Clint Whaley" \
+gcc
+-O -fomit-frame-pointer -fno-schedule-insns -fno-schedule-insns2
+307 192 4 4 16 1 0 4 4 16 ATL_smm4x4x16_av.c  "R. Clint Whaley"
+@skip cc
+@skip -fomit-frame-pointer -O -traditional-cpp -fschedule-insns -fschedule-insns2 -faltivec
+308 192 4 4  4 1 0 4 4  4 ATL_smm4x4x4_av.c  "R. Clint Whaley"
+@skip cc
+@skip -fomit-frame-pointer -O -traditional-cpp -fschedule-insns -fschedule-insns2 -faltivec
+309  16 0 0  4 1 0 4 4  4 ATL_smmMNCU_av.c  "R. Clint Whaley"
+@skip cc
+@skip -fomit-frame-pointer -O -traditional-cpp -fschedule-insns -fschedule-insns2 -faltivec
+310   8 6 8 8 1 1 6 8 8 ATL_mm6x8x8_1p.c       "R. Clint Whaley" \
+gcc
+-fomit-frame-pointer -O2 -fno-schedule-insns -fno-schedule-insns2
+311 496 0 0 0 1 1 6 8 8 ATL_mm6x8x8_1p.c       "R. Clint Whaley" \
+gcc
+-fomit-frame-pointer -O2 -fno-schedule-insns -fno-schedule-insns2
+@skip 312   8 -30   0 -30 0 4 30 1 30 ATL_dmm_julian_gas_30.c "Julian Ruhe & P. Soendergaard" \
+@skip gcc
+@skip -fomit-frame-pointer -O1 -fno-schedule-insns -fno-schedule-insns2
+317 448 4 4 2 0 4 4 4 2 ATL_smm4x4x2_US.c "R. Clint Whaley" \
+gcc
+-mcpu=ultrasparc -x assembler-with-cpp
+319 128 6 0 1 0 1 6 1 60 ATL_smm6x1x60_x87.c "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+320   8 120 120 120 1 1 8 8 2 ATL_mm8x8x2.c  "R. Clint Whaley" \
+gcc
+-fomit-frame-pointer -O2 -fno-schedule-insns -fno-schedule-insns2 -fno-expensive-optimizations -falign-loops=64
+321 480 8 8 2 1 1 8 8 2 ATL_mm8x8x2.c  "R. Clint Whaley" \
+gcc
+-fomit-frame-pointer -O2 -fno-schedule-insns -fno-schedule-insns2 -fno-expensive-optimizations -falign-loops=64
+322 448 4 4 16 1 1 4 4 16 ATL_smm4x4x16_US.c "R. Clint Whaley" \
+gcc
+-mcpu=ultrasparc -x assembler-with-cpp
+323 192 4 4 -72 1 1 4 4 72 ATL_smm4x4x72_US.c "R. Clint Whaley" \
+gcc
+-mcpu=ultrasparc -x assembler-with-cpp
+324 192 4 4 16 1 1 4 4 16 ATL_smm4x4x16_hppa.c "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+@skip
+@skip These repeats are for gcc 4's prefered flags; still slower than gcc 3!
+@skip
+325   8 6 8 8 1 1 6 8 8 ATL_mm6x8x8_1p.c       "R. Clint Whaley" \
+gcc
+-fomit-frame-pointer -O2 -fno-tree-loop-optimize
+326 496 0 0 0 1 1 6 8 8 ATL_mm6x8x8_1p.c       "R. Clint Whaley" \
+gcc
+-fomit-frame-pointer -O2 -fno-tree-loop-optimize
+327   8 120 120 120 1 1 8 8 2 ATL_mm8x8x2.c  "R. Clint Whaley" \
+gcc
+-fomit-frame-pointer -O2 -fno-tree-loop-optimize
+328 480 8 8 2 1 1 8 8 2 ATL_mm8x8x2.c  "R. Clint Whaley" \
+gcc
+-fomit-frame-pointer -O2 -fno-tree-loop-optimize
+@ROUT scases.flg
+329 192 4 4 4 1 16 4 4 4 ATL_smm4x4x128_av.c "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+330 200 92 92 92 1 16 92 92 92 ATL_smm4x4x128_av.c "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+@ROUT scases.flg ccases.flg
+331 192 4 4 1 1 1 4 4 1 ATL_smm4x4xURx_mips.c  "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp -mips4
+332 192 8 2 4 1 0 8 2 4 ATL_smm8x2x4_av.c  "IBM" 
+@ROUT dcases.flg zcases.flg
+<ID> <flag> <mb> <nb> <kb> <muladd> <lat> <mu> <nu> <ku> <rout> "<Contributer>"
+@ROUT dcases.flg
+31
+@ROUT zcases.flg
+30
+@ROUT dcases.flg zcases.flg
+@beginskip
+300 480    4    4    1 1 1 4 4 2 ATL_mm4x4x2US.c "V. Nguyen & P. Strazdins" \
+gcc
+-mcpu=ultrasparc -O -fomit-frame-pointer -mtune=ultrasparc -fno-schedule-insns -fno-schedule-insns2
+301   8    4    4    2 1 1 4 4 2 ATL_mm4x4x2US_NB.c "V. Nguyen & P. Strazdins" \
+gcc
+-mcpu=ultrasparc -O -fomit-frame-pointer -mtune=ultrasparc -fno-schedule-insns -fno-schedule-insns2
+302   8  -80  -80  -80 1 1 4 4 2 ATL_mm4x4x2US_NB.c "V. Nguyen & P. Strazdins" \
+gcc
+-mcpu=ultrasparc -O -fomit-frame-pointer -mtune=ultrasparc -fno-schedule-insns -fno-schedule-insns2
+303   8 -120 -120 -120 1 1 4 4 2 ATL_mm4x4x2US_NB.c "V. Nguyen & P. Strazdins" \
+gcc
+-mcpu=ultrasparc -O -fomit-frame-pointer -mtune=ultrasparc -fno-schedule-insns -fno-schedule-insns2
+304  16 0 4 2 1 1 4 4 2 ATL_mm4x4x2US_MN.c "V. Nguyen & P. Strazdins" \
+gcc
+-mcpu=ultrasparc -O -fomit-frame-pointer -mtune=ultrasparc -fno-schedule-insns -fno-schedule-insns2
+305  16 4 0 2 1 1 4 4 2 ATL_mm4x4x2US_MN.c "V. Nguyen & P. Strazdins" \
+gcc
+-mcpu=ultrasparc -O -fomit-frame-pointer -mtune=ultrasparc
+@endskip
+306 192 4 3 8 0 4 4 3 8 ATL_mm4x3x8p.c     "R. Clint Whaley" \
+gcc
+-mcpu=ultrasparc -mtune=ultrasparc -fomit-frame-pointer -O -fno-schedule-insns -fno-schedule-insns2
+308 192 4 4 8 0 4 4 4 8 ATL_mm4x4x8p.c     "R. Clint Whaley" \
+gcc
+-O -fno-schedule-insns -fno-schedule-insns2 -fomit-frame-pointer
+309 192 4 4 -56 1 0 4 4 56 ATL_mm4x4x56_av.c  "R. Clint Whaley"
+@skip cc
+@skip -fomit-frame-pointer -O -traditional-cpp -fschedule-insns -faltivec
+310 192 4 4 8 1 0 4 4 8   ATL_mm4x4x8_av.c    "R. Clint Whaley"
+@skip cc
+@skip -fomit-frame-pointer -O -traditional-cpp -fschedule-insns -faltivec
+311 192 4 4 4 1 0 4 4 4   ATL_mm4x4x4_av.c    "R. Clint Whaley"
+@skip cc
+@skip -fomit-frame-pointer -O -traditional-cpp -fschedule-insns -faltivec
+312 496 4 4 2 1 0 4 4 2   ATL_mm4x4x4_av.c    "R. Clint Whaley"
+@skip cc
+@skip -fomit-frame-pointer -O -traditional-cpp -fschedule-insns -faltivec
+313   8 6 8 8 1 1 6 8 8 ATL_mm6x8x8_1p.c       "R. Clint Whaley" \
+gcc
+-fomit-frame-pointer -O2 -fno-schedule-insns -fno-schedule-insns2
+314 496 0 0 0 1 1 6 8 8 ATL_mm6x8x8_1p.c       "R. Clint Whaley" \
+gcc
+-fomit-frame-pointer -O2 -fno-schedule-insns -fno-schedule-insns2
+@ROUT dcases.flg0000
+315   8 -30 -30 -30 0 4 30 30 30 ATL_objdummy.c "Julian Ruhe" \
+./xccobj
+--name julian2
+@ROUT dcases.flg
+316   8 -30   0 -30 0 4 30 1 30 ATL_dmm_julian_gas_30.c "Julian Ruhe & P. Soendergaard" \
+gcc
+-fomit-frame-pointer -O1 -fno-schedule-insns -fno-schedule-insns2
+@ROUT dcases.flg zcases.flg
+317 192 4 1 -40 0 4 2 1 40 ATL_dmm2x1x40_5pABC.c  "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+318 480 4 4 2 1 1 4 4 2    ATL_dmm4x4x2pf_av.c    "R. Clint Whaley" \
+/usr/bin/gcc
+-x assembler-with-cpp -maltivec -mabi=altivec
+319 128 6 0 1 0 1 6 1 30 ATL_dmm6x1x30_x87.c "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+320   8 120 120 120 1 1 8 8 2 ATL_mm8x8x2.c  "R. Clint Whaley" \
+gcc
+-fomit-frame-pointer -O2 -fno-schedule-insns -fno-schedule-insns2 -fno-expensive-optimizations -falign-loops=64
+321 480 8 8 2 1 1 8 8 2 ATL_mm8x8x2.c  "R. Clint Whaley" \
+gcc
+-fomit-frame-pointer -O2 -fno-schedule-insns -fno-schedule-insns2 -fno-expensive-optimizations -falign-loops=64
+322 448 4 4 8 1 1 4 4 8 ATL_dmm4x4x8_US.c "R. Clint Whaley" \
+gcc
+-mcpu=ultrasparc -x assembler-with-cpp
+@ROUT dcases.flg
+323 8 -168 -168 -168 1 1 4 4 8 ATL_dmm4x4x16r8_US.c "R. Clint Whaley" \
+gcc
+-mcpu=ultrasparc -x assembler-with-cpp
+@ROUT zcases.flg
+323 8 -120 -120 -120 1 1 4 4 8 ATL_dmm4x4x16r8_US.c "R. Clint Whaley" \
+gcc
+-mcpu=ultrasparc -x assembler-with-cpp
+@ROUT dcases.flg zcases.flg
+324 448 4 4 8 1 1 4 4 8 ATL_dmm4x4x2_US.c "R. Clint Whaley" \
+gcc
+-mcpu=ultrasparc -x assembler-with-cpp
+325 192 4 4 16 1 1 4 4 16 ATL_dmm4x4x16_hppa.c "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+326 192 4 4 1 1 16 4 4 32 ATL_dmm4x4x32_ppc.c "R. Clint Whaley" \
+gcc
+-mcpu=970 -x assembler-with-cpp
+327 224 4 0 1 0 1 4 1 60 ATL_dmm4x1x90_x87.c "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+328 224 8 0 2 0 1 4 1 2 ATL_dmm8x1x120_sse2.c "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp
+@skip
+@skip These repeats are for gcc 4's prefered flags; still slower than gcc 3!
+@skip
+329   8 6 8 8 1 1 6 8 8 ATL_mm6x8x8_1p.c       "R. Clint Whaley" \
+gcc
+-fomit-frame-pointer -O2 -fno-tree-loop-optimize
+330 496 0 0 0 1 1 6 8 8 ATL_mm6x8x8_1p.c       "R. Clint Whaley" \
+gcc
+-fomit-frame-pointer -O2 -fno-tree-loop-optimize
+331   8 120 120 120 1 1 8 8 2 ATL_mm8x8x2.c  "R. Clint Whaley" \
+gcc
+-fomit-frame-pointer -O2 -fno-tree-loop-optimize
+332 480 8 8 2 1 1 8 8 2 ATL_mm8x8x2.c  "R. Clint Whaley" \
+gcc
+-fomit-frame-pointer -O2 -fno-tree-loop-optimize
+333 192 4 4 2 1 1 4 4 2 ATL_dmm4x4xUR2_mips.c  "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp -mips4
+334 480 4 4 2 1 1 4 4 2 ATL_dmm4x4x2_mips.c  "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp -mips4
+335 192 4 4 3 1 1 4 4 3 ATL_dmm4x4xUR3_mips.c  "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp -mips4
+336 192 4 4 1 1 1 4 4 1 ATL_dmm4x4xURx_mips.c  "R. Clint Whaley" \
+gcc
+-x assembler-with-cpp -mips4
+337 192 4 4 1 1 16 4 4 1 ATL_dmm4x4x80_ppc.c "Whaley & Castaldo" \
+gcc
+-x assembler-with-cpp
+338 192 8 4 2 1 0 8 4 2  ATL_dmm8x4x2_vsx.c  "IBM" \
+gcc
+-O3 -mvsx
+
+# NB = 80 and NB = 120 are to force UltraSparc to try NB > L1 Cache,
+# needed for optimal performance on Ultra2 and Ultra4, respectively
+@ROUT !

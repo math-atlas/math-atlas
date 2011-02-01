@@ -1,0 +1,3544 @@
+@skip
+@skip Comments of the ATLAS reference BLAS implementation              AP00
+@skip
+@skip Last modification : 03/26/00
+@skip
+@skip      C      V                      D                             V12345678
+@skip
+@rout rotg
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname)  constructs a Givens plane rotation. Given the scalars a
+ * and b, this routine computes the following quantities:
+ *
+@type real dble
+ *    sigma = sgn(a) if |a| > |b|, sgn(b) otherwise;
+ *    r     = sigma * sqrt( a^2 + b^2 );
+ *    c     = a / r if r <> 0, 1 otherwise;
+ *    s     = b / r if r <> 0, 0 otherwise.
+ *
+ * The numbers c, s and r then satisfy the matrix equation:
+ *
+ *    [ c  s ] [ a ]    [ r ]
+ *    [ -s c ] [ b ] =  [ 0 ].
+ *
+ * The introduction of  sigma  is not essential  to the computation of a
+ * Givens rotation matrix, but it permits later stable reconstruction of
+ * c and s from just one stored number.  For  this purpose, this routine
+ * also computes 
+ *
+ *         s        if |a| > |b|,
+ *    z =  1 / c    if |b| >= |a| and c <> 0,
+ *         1        if c = 0. 
+ *
+ * This subroutine returns r overwriting a, and z overwriting b, as well
+ * as returning c and s. If one later wishes to reconstruct c and s from
+ * z, it can be done as follows:
+ *
+ *    if  z  = 1,    set c = 0             and s = 1,
+ *    if |z| < 1,    set c = sqrt(1 - z^2) and s = z,
+ *    if |z| > 1,    set c = 1 / z         and s = sqrt(1 - c^2).
+@type cplx zplx
+ * if |a| = 0, then c = 0, s = 1, and r = b; 
+ * and otherwise:
+ *    norm = sqrt( |a|^2 + |b|^2 );
+ *    c    = |a| / norm;
+ *    s    = a * conjg( b ) / ( |a| * norm );
+ *    r    = a / ( |a| * norm );
+@type real dble cplx zplx
+ *
+ * See ``Basic Linear Algebra Subprograms for Fortran Usage'' by C. Law-
+ * son, R. Hanson, D. Kincaid and F. Krogh, ACM Transactions on Mathema-
+ * tical Software, 1979, 5(3) pp 308-323, for further information.
+ *
+@extract @(ARGUMENTS)
+ *
+ * A       (input/output)                @(sca_in_out_comm)
+ *         On entry, A specifies the scalar a. On exit, A is overwritten
+ *         by the scalar r defined above.
+ *
+@type real dble
+ * B       (input/output)                @(sca_in_out_comm)
+ *         On entry, B specifies the scalar b. On exit, B is overwritten
+ *         by the scalar z defined above.
+@type cplx zplx
+ * B       (input)                       @(sca_in_comm)
+ *         On entry, B  specifies the scalar b. Unchanged on exit.
+@type real dble cplx zplx
+ *
+ * C       (output)                      @(rca_out_comm)
+@type real dble
+ *         On exit, C  specifies the scalar c defined above.
+@type cplx zplx
+ *         On exit, C  specifies the real scalar c defined above.
+@type real dble cplx zplx
+ *
+ * S       (output)                      @(sca_out_comm)
+ *         On exit, S  specifies the scalar s defined above.
+ *
+@extract @(LINE)
+ */
+@rout rotmg
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname)  constructs the modified-Givens plane rotation. The in-
+ * put scalars d1, d2, x1 and y1 define a 2-vector [a1 a2]' such that
+ *
+ *    [ a1 ]   [ d1^{1/2}  0      ] [ x1 ]
+ *    [ a2 ] = [   0     d2^{1/2} ] [ y1 ].
+ *
+ * This subroutine determines the modified Givens rotation matrix H that
+ * transforms y1 and thus a2 to zero. A representation of this matrix is
+ * stored in the output array PARAM.
+ *
+ * See ``Basic Linear Algebra Subprograms for Fortran Usage'' by C. Law-
+ * son, R. Hanson, D. Kincaid and F. Krogh, ACM Transactions on Mathema-
+ * tical Software, 1979, 5(3) pp 308-323, for further information.
+ *
+@extract @(ARGUMENTS)
+ *
+ * D1      (input/output)                @(sca_in_out_comm)
+ *         On entry, D1 specifies the scalar d1.
+ *
+ * D2      (input/output)                @(sca_in_out_comm)
+ *         On entry, D2 specifies the scalar d2.
+ *
+ * X1      (input/output)                @(sca_in_out_comm)
+ *         On entry, X1 specifies the scalar x1.
+ *
+ * Y1      (input)                       @(sca_in_comm)
+ *         On entry, Y1 specifies the scalar y1. Unchanged on exit.
+ *
+ * PARAM   (output)                      @(arr_out_comm)
+ *         On entry, PARAM is an array of dimension at least 5. On exit,
+ *         the entries of this array have the following meaning:
+ *
+ *         if PARAM[ 0 ] = 1,
+ *            h_12 = 1, h_21 = -1, PARAM[ 1 ] = h_11, PARAM[ 4 ] = h_22,
+ *            and the other entries of PARAM are left unchanged; 
+ *         else if PARAM[ 0 ] = 0,
+ *            h_11 = 1, h_22 =  1, PARAM[ 2 ] = h_21, PARAM[ 3 ] = h_12,
+ *            and the other entries of PARAM are left unchanged; 
+ *         else if PARAM[ 0 ] = -1, (case of re-scaling)
+ *            PARAM( 2 ) = h_11, PARAM[ 2 ] = h_21,
+ *            PARAM( 4 ) = h_12, PARAM[ 4 ] = h_22;
+ *         else if PARAM[ 0 ] = -2,
+ *            H = I, and the other entries of PARAM are left unchanged;
+ *         end if
+ *
+@extract @(LINE)
+ */
+@rout nrm2
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname) returns the 2-norm of an n-vector x.
+ *
+@extract @(ARGUMENTS)
+ *
+ * N       (input)                       const int
+ *         On entry, N specifies the length of the vector x. N  must  be
+ *         at least zero. Unchanged on exit.
+ *
+ * X       (input)                       @(arr_in_comm)
+ *         On entry,  X  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCX ) ) * @(size_comm),
+ *         that contains the vector x. Unchanged on exit.
+ *
+ * INCX    (input)                       const int
+ *         On entry, INCX specifies the increment for the elements of X.
+ *         INCX must not be zero. Unchanged on exit.
+ *
+@extract @(LINE)
+ */
+@rout asum
+/*
+@extract @(PURPOSE)
+ *
+ * @13l@(rname)  returns the sum of absolute values of the entries of a
+ * vector x.
+ *
+@extract @(ARGUMENTS)
+ *
+ * N       (input)                       const int
+ *         On entry, N specifies the length of the vector x. N  must  be
+ *         at least zero. Unchanged on exit.
+ *
+ * X       (input)                       @(arr_in_comm)
+ *         On entry,  X  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCX ) ) * @(size_comm),
+ *         that contains the vector x. Unchanged on exit.
+ *
+ * INCX    (input)                       const int
+ *         On entry, INCX specifies the increment for the elements of X.
+ *         INCX must not be zero. Unchanged on exit.
+ *
+@extract @(LINE) 
+ */
+@rout amax
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname)  returns the index in an n-vector x of the first element
+ * having maximum absolute value.
+ *
+@extract @(ARGUMENTS)
+ *
+ * N       (input)                       const int
+ *         On entry, N specifies the length of the vector x. N  must  be
+ *         at least zero. Unchanged on exit.
+ *
+ * X       (input)                       @(arr_in_comm)
+ *         On entry,  X  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCX ) ) * @(size_comm),
+ *         that contains the vector x. Unchanged on exit.
+ *
+ * INCX    (input)                       const int
+ *         On entry, INCX specifies the increment for the elements of X.
+ *         INCX must not be zero. Unchanged on exit.
+ *
+@extract @(LINE)
+ */
+@rout scal
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname) performs the following operation:
+ *
+ *    x := alpha * x,
+ *
+@type real dble cplx zplx
+ * where alpha is a scalar and x is an n-vector.
+@type chex zhex
+ * where alpha is a real scalar and x is an n-vector.
+@type real dble cplx zplx chex zhex
+ *
+@extract @(ARGUMENTS)
+ *
+ * N       (input)                       const int
+ *         On entry, N specifies the length of the vector x. N  must  be
+ *         at least zero. Unchanged on exit.
+ *
+@type real dble cplx zplx
+ * ALPHA   (input)                       @(sca_in_comm)
+ *         On entry, ALPHA specifies the scalar alpha.   When  ALPHA  is
+ *         supplied as zero, then the entries of the incremented array X
+ *         need not be set on input. Unchanged on exit.
+@type chex zhex
+ * ALPHA   (input)                       @(rca_in_comm)
+ *         On entry, ALPHA specifies the real scalar alpha.  When  ALPHA
+ *         is supplied as zero,  then the entries of the incremented ar-
+ *         ray X need not be set on input. Unchanged on exit.
+@type real dble cplx zplx chex zhex
+ *
+ * X       (input/output)                @(arr_in_out_comm)
+ *         On entry,  X  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCX ) ) * @(size_comm),
+ *         that contains the vector x.  On exit,  the entries of the in-
+ *         cremented array X are mutiplied by alpha.
+ *
+ * INCX    (input)                       const int
+ *         On entry, INCX specifies the increment for the elements of X.
+ *         INCX must not be zero. Unchanged on exit.
+ *
+@extract @(LINE)
+ */
+@rout axpy
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname) performs the following operation:
+ *
+ *    y := y + alpha * x,
+ *
+ * where alpha is a scalar and x and y are two n-vectors. 
+ *
+@extract @(ARGUMENTS)
+ *
+ * N       (input)                       const int
+ *         On entry, N specifies the length of the vector x. N  must  be
+ *         at least zero. Unchanged on exit.
+ *
+ * ALPHA   (input)                       @(sca_in_comm)
+ *         On entry, ALPHA specifies the scalar alpha.   When  ALPHA  is
+ *         supplied as zero, then the entries of the incremented array X
+ *         need not be set on input. Unchanged on exit.
+ *
+ * X       (input)                       @(arr_in_comm)
+ *         On entry,  X  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCX ) ) * @(size_comm),
+ *         that contains the vector x. Unchanged on exit.
+ *
+ * INCX    (input)                       const int
+ *         On entry, INCX specifies the increment for the elements of X.
+ *         INCX must not be zero. Unchanged on exit.
+ *
+ * Y       (input/output)                @(arr_in_out_comm)
+ *         On entry,  Y  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCY ) ) * @(size_comm),
+ *         that contains the vector y.  On exit,  the entries of the in-
+ *         cremented array  Y are updated with the scaled entries of the
+ *         incremented array  X.
+ *
+ * INCY    (input)                       const int
+ *         On entry, INCY specifies the increment for the elements of Y.
+ *         INCY must not be zero. Unchanged on exit.
+ *
+@extract @(LINE)
+ */
+@rout copy
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname) copies the entries of an n-vector x into an n-vector y.
+ *
+@extract @(ARGUMENTS)
+ *
+ * N       (input)                       const int
+ *         On entry, N specifies the length of the vector x. N  must  be
+ *         at least zero. Unchanged on exit.
+ *
+ * X       (input)                       @(arr_in_comm)
+ *         On entry,  X  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCX ) ) * @(size_comm),
+ *         that contains the vector x. Unchanged on exit.
+ *
+ * INCX    (input)                       const int
+ *         On entry, INCX specifies the increment for the elements of X.
+ *         INCX must not be zero. Unchanged on exit.
+ *
+ * Y       (input/output)                @(arr_in_out_comm)
+ *         On entry,  Y  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCY ) ) * @(size_comm),
+ *         that contains the vector y.  On exit,  the entries of the in-
+ *         cremented array  X are  copied into the entries of the incre-
+ *         mented array  Y.
+ *
+ * INCY    (input)                       const int
+ *         On entry, INCY specifies the increment for the elements of Y.
+ *         INCY must not be zero. Unchanged on exit.
+ *
+@extract @(LINE)
+ */
+@rout swap
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname) swaps the entries of two n-vectors x and y.
+ *
+@extract @(ARGUMENTS)
+ *
+ * N       (input)                       const int
+ *         On entry, N specifies the length of the vector x. N  must  be
+ *         at least zero. Unchanged on exit.
+ *
+ * X       (input/output)                @(arr_in_out_comm)
+ *         On entry,  X  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCX ) ) * @(size_comm),
+ *         that contains the vector x.  On exit,  the entries of the in-
+ *         cremented array  X are swapped with the entries of the incre-
+ *         mented array  Y.
+ *
+ * INCX    (input)                       const int
+ *         On entry, INCX specifies the increment for the elements of X.
+ *         INCX must not be zero. Unchanged on exit.
+ *
+ * Y       (input/output)                @(arr_in_out_comm)
+ *         On entry,  Y  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCY ) ) * @(size_comm),
+ *         that contains the vector y.  On exit,  the entries of the in-
+ *         cremented array  Y are swapped with the entries of the incre-
+ *         mented array  X.
+ *
+ * INCY    (input)                       const int
+ *         On entry, INCY specifies the increment for the elements of Y.
+ *         INCY must not be zero. Unchanged on exit.
+ *
+@extract @(LINE)
+ */
+@rout rot
+/*
+@extract @(PURPOSE)
+ *
+ * @12l@(rname) applies a  plane  rotation to the two n-vectors x and y.
+ * This routine computes:
+ *
+ *    [ x_i ]   [ c  s ] [ x_i ]
+ *    [ y_i ] = [ -s c ] [ y_i ]    for all i = 1 .. n.
+ *
+ * If n <= 0 or if c = 1 and s = 0, this subroutine returns immediately.
+ *
+@extract @(ARGUMENTS)
+ *
+ * N       (input)                       const int
+ *         On entry, N specifies the length of the vector x. N  must  be
+ *         at least zero. Unchanged on exit.
+ *
+ * X       (input/output)                @(arr_in_out_comm)
+ *         On entry,  X  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCX ) ) * @(size_comm),
+ *         that contains the vector x.  On exit,  the entries of the in-
+ *         cremented array  X are rotated with the entries of the incre-
+ *         mented array  Y.
+ *
+ * INCX    (input)                       const int
+ *         On entry, INCX specifies the increment for the elements of X.
+ *         INCX must not be zero. Unchanged on exit.
+ *
+ * Y       (input/output)                @(arr_in_out_comm)
+ *         On entry,  Y  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCY ) ) * @(size_comm),
+ *         that contains the vector y.  On exit,  the entries of the in-
+ *         cremented array  Y are rotated with the entries of the incre-
+ *         mented array  X.
+ *
+ * INCY    (input)                       const int
+ *         On entry, INCY specifies the increment for the elements of Y.
+ *         INCY must not be zero. Unchanged on exit.
+ *
+ * C       (input)                       @(rca_in_comm)
+@type real dble
+ *         On entry, C specifies the scalar c definiting the plane rota-
+ *         tion. Unchanged on exit.
+@type cplx zplx
+ *         On entry, C  specifies the real scalar c definiting the plane
+ *         rotation. Unchanged on exit.
+@type real dble cplx zplx
+ *
+ * S       (input)                       @(sca_in_comm)
+ *         On entry, S specifies the scalar s definiting the plane rota-
+ *         tion. Unchanged on exit.
+ *
+@extract @(LINE)
+ */
+@rout rotm
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname) applies the modified-Givens rotation  H  stored in PARAM
+ * to the two n-vectors x and y as follows:
+ *
+ *    [ x_i ]   [ h_11 h_12 ] [ x_i ]
+ *    [ y_i ] = [ h_21 h_22 ] [ y_i ]    for all i = 1 .. n.
+ *
+ * If n <= 0 or if H is the identity matrix, this subroutine returns im-
+ * mediately.
+ *
+ * See ``Basic Linear Algebra Subprograms for Fortran Usage'' by C. Law-
+ * son, R. Hanson, D. Kincaid and F. Krogh, ACM Transactions on Mathema-
+ * tical Software, 1979, 5(3) pp 308-323, for further information.
+ *
+@extract @(ARGUMENTS)
+ *
+ * N       (input)                       const int
+ *         On entry, N specifies the length of the vector x. N  must  be
+ *         at least zero. Unchanged on exit.
+ *
+ * X       (input/output)                @(arr_in_out_comm)
+ *         On entry,  X  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCX ) ) * @(size_comm),
+ *         that contains the vector x.  On exit,  the entries of the in-
+ *         cremented array  X are rotated with the entries of the incre-
+ *         mented array  Y.
+ *
+ * INCX    (input)                       const int
+ *         On entry, INCX specifies the increment for the elements of X.
+ *         INCX must not be zero. Unchanged on exit.
+ *
+ * Y       (input/output)                @(arr_in_out_comm)
+ *         On entry,  Y  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCY ) ) * @(size_comm),
+ *         that contains the vector y.  On exit,  the entries of the in-
+ *         cremented array  Y are rotated with the entries of the incre-
+ *         mented array  X.
+ *
+ * INCY    (input)                       const int
+ *         On entry, INCY specifies the increment for the elements of Y.
+ *         INCY must not be zero. Unchanged on exit.
+ *
+ * PARAM   (input)                       @(arr_in_comm)
+ *         On entry, PARAM is an array of dimension at least 5 that con-
+ *         tains the matrix  H  as encoded by the routine ATL__refrotmg.
+ *         Unchanged on exit.
+ *
+@extract @(LINE)
+ */
+@rout dot
+/*
+@extract @(PURPOSE)
+ *
+@type real dble
+ * @(rname) returns the dot product x^T * y of two n-vectors x and y.
+@type cplx zplx
+ * @(rname) returns the dot product  x^T * y  of two n-vectors x
+ * and y.
+@type chex zhex
+ * @(rname) returns the dot product  x^H * y  of two n-vectors x
+ * and y.
+@type real dble cplx zplx chex zhex
+ *
+@extract @(ARGUMENTS)
+ *
+ * N       (input)                       const int
+ *         On entry, N specifies the length of the vector x. N  must  be
+ *         at least zero. Unchanged on exit.
+ *
+ * X       (input)                       @(arr_in_comm)
+ *         On entry,  X  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCX ) ) * @(size_comm),
+ *         that contains the vector x. Unchanged on exit.
+ *
+ * INCX    (input)                       const int
+ *         On entry, INCX specifies the increment for the elements of X.
+ *         INCX must not be zero. Unchanged on exit.
+ *
+ * Y       (input)                       @(arr_in_comm)
+ *         On entry,  Y  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCY ) ) * @(size_comm),
+ *         that contains the vector y. Unchanged on exit.
+ *
+ * INCY    (input)                       const int
+ *         On entry, INCY specifies the increment for the elements of Y.
+ *         INCY must not be zero. Unchanged on exit.
+ *
+@extract @(LINE)
+ */
+@rout dsdot
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname)  returns the dot product x^T * y of two n-vectors x and
+ * y.  The result is internally computed using double precision arithme-
+ * tic.
+ *
+@extract @(ARGUMENTS)
+ *
+ * N       (input)                       const int
+ *         On entry, N specifies the length of the vector x. N  must  be
+ *         at least zero. Unchanged on exit.
+ *
+ * X       (input)                       @(arr_in_comm)
+ *         On entry,  X  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCX ) ) * @(size_comm),
+ *         that contains the vector x. Unchanged on exit.
+ *
+ * INCX    (input)                       const int
+ *         On entry, INCX specifies the increment for the elements of X.
+ *         INCX must not be zero. Unchanged on exit.
+ *
+ * Y       (input)                       @(arr_in_comm)
+ *         On entry,  Y  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCY ) ) * @(size_comm),
+ *         that contains the vector y. Unchanged on exit.
+ *
+ * INCY    (input)                       const int
+ *         On entry, INCY specifies the increment for the elements of Y.
+ *         INCY must not be zero. Unchanged on exit.
+ *
+@extract @(LINE)
+ */
+@rout sdsdot
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname) returns the dot product b + x^T * y of two n-vectors x
+ * and  y.  The  result  is internally  computed  using double precision
+ * arithmetic and casted to a single precision scalar  just before being
+ * returned.
+ *
+@extract @(ARGUMENTS)
+ *
+ * N       (input)                       const int
+ *         On entry, N specifies the length of the vector x. N  must  be
+ *         at least zero. Unchanged on exit.
+ *
+ * B       (input)                       @(sca_in_comm)
+ *         On entry, B specifies the scalar b. Unchanged on exit.
+ *
+ * X       (input)                       @(arr_in_comm)
+ *         On entry,  X  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCX ) ) * @(size_comm),
+ *         that contains the vector x. Unchanged on exit.
+ *
+ * INCX    (input)                       const int
+ *         On entry, INCX specifies the increment for the elements of X.
+ *         INCX must not be zero. Unchanged on exit.
+ *
+ * Y       (input)                       @(arr_in_comm)
+ *         On entry,  Y  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCY ) ) * @(size_comm),
+ *         that contains the vector y. Unchanged on exit.
+ *
+ * INCY    (input)                       const int
+ *         On entry, INCY specifies the increment for the elements of Y.
+ *         INCY must not be zero. Unchanged on exit.
+ *
+@extract @(LINE)
+ */
+@rout gemv gpmv gbmv
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname) performs one of the matrix-vector operations
+ *
+ *    y := alpha * op( A ) * x + beta * y,
+ *
+ * where op( X ) is one of
+ *
+@type real dble
+ *    op( X ) = X   or   op( X ) = X'.
+@type cplx zplx
+ *    op( X ) = X   or   op( X ) = conjg( X  )   or
+ *
+ *    op( X ) = X'  or   op( X ) = conjg( X' ).
+@type real dble cplx zplx
+ *
+@rout gbmv
+ * where  alpha and beta are scalars, x and y are vectors and op( A ) is
+ * an m by n band matrix, with kl sub-diagonals and ku super-diagonals.
+@rout gpmv
+ * where alpha and beta are scalars, x and y are n-element vectors and A
+ * is an m by n general matrix, supplied in packed form.
+@rout gemv
+ * where  alpha and beta are scalars, x and y are vectors and op( A ) is
+ * an m by n matrix.
+@rout gbmv gpmv gemv
+ *
+@extract @(ARGUMENTS)
+ *
+@rout gpmv
+ * UPLO    (input)                       const enum ATLAS_UPLO
+ *         On entry, UPLO  specifies whether the array A contains an up-
+ *         per or lower packed submatrix as follows:
+ *
+ *             UPLO = AtlasUpper   A is an upper-packed submatrix,
+ *
+ *             UPLO = AtlasLower   A is a  lower-packed submatrix.
+ *
+ *         Unchanged on exit.
+ *
+@rout gbmv gpmv gemv
+@extract @(TRANS_COMMENT)
+ *
+@type real dble
+ *            TRANS = AtlasNoTrans    y := alpha*A *x + beta*y,
+ *
+ *            TRANS = AtlasConj       y := alpha*A *x + beta*y,
+ *
+ *            TRANS = AtlasTrans      y := alpha*A'*x + beta*y,
+ *
+ *            TRANS = AtlasConjTrans  y := alpha*A'*x + beta*y.
+@type cplx zplx
+ *            TRANS = AtlasNoTrans    y := alpha*A *x + beta*y,
+ *
+ *            TRANS = AtlasConj       y := alpha*conjg( A  )*x + beta*y,
+ *
+ *            TRANS = AtlasTrans      y := alpha*A'*x + beta*y,
+ *
+ *            TRANS = AtlasConjTrans  y := alpha*conjg( A' )*x + beta*y.
+@type real dble cplx zplx
+ *
+ *         Unchanged on exit.
+ *
+ * M       (input)                       const int
+ *         On entry,  M  specifies  the number of rows of  the matrix  A
+ *         when TRANS = AtlasNoTrans or TRANS = AtlasConj,  and the num-
+ *         ber of columns of the matrix  A otherwise. M must be at least
+ *         zero. Unchanged on exit.
+ *
+ * N       (input)                       const int
+ *         On entry, N  specifies  the number of columns of the matrix A
+ *         when TRANS = AtlasNoTrans or TRANS = AtlasConj,  and the num-
+ *         ber of rows of the matrix A otherwise. N must be at least ze-
+ *         ro. Unchanged on exit.
+@rout gbmv
+ *
+ * KL      (input)                       const int
+ *         On entry, KL specifies the number of sub-diagonals of the ma-
+ *         trix A. KL must satisfy 0 <= KL. Unchanged on exit.
+ * 
+ * KU      (input)                       const int
+ *         On entry, KU specifies the number of  super-diagonals of  the
+ *         matrix A. KU must satisfy  0 <= KU. Unchanged on exit.
+@rout gbmv gpmv gemv
+ *
+ * ALPHA   (input)                       @(sca_in_comm)
+ *         On entry, ALPHA specifies the scalar alpha.   When  ALPHA  is
+ *         supplied as zero then  A and X  need not be set on input. Un-
+ *         changed on exit.
+ *
+@rout gbmv
+ * A       (input)                       @(arr_in_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than   LDA * ka * @(size_comm),  where  ka is  n  when
+ *         TRANS = AtlasNotrans or TRANS = AtlasConj, and  m  otherwise.
+ *         Before entry, the  leading ( kl + ku + 1 ) by ka  part of the
+ *         array  A  must contain the matrix of  coefficients,  supplied
+ *         column by column,  with the leading diagonal of the matrix in
+ *         row ku of the array, the first super-diagonal starting at po-
+ *         sition 1 in row ku-1,  the first sub-diagonal starting at po-
+ *         sition 0 in row ku+1, and so on. Elements in the array A that
+ *         do not correspond to elements in the band matrix (such as the
+ *         top left ku by ku triangle) are not referenced.  Unchanged on
+ *         exit.
+ *
+ *         The  following  program segment will transfer a real band ma-
+ *         trix from conventional full matrix storage to band storage:
+ *
+ *            for( j = 0; j < n; j++ )
+ *            { 
+ *               k  = ku - j; i1 = ( m > j + kl + 1 ? j + kl + 1 : m );
+ *               for( i = ( k < 0 ? -k : 0 ); i < i1; i++ )
+ *               {
+@type real dble
+ *                  a[k+i+j*LDA] = matrix( i, j );
+@type cplx zplx
+ *                  a[((k+i+j*LDA)<<1)+0] = real( matrix( i, j ) );
+ *                  a[((k+i+j*LDA)<<1)+1] = imag( matrix( i, j ) );
+@type real dble cplx zplx
+ *               }
+ *            }
+ *
+ * LDA     (input)                       const int
+ *         On entry, LDA  specifies the leading dimension of A as decla-
+ *         red  in  the  calling (sub) program.  LDA  must  be  at least
+ *         ( kl + ku + 1 ). Unchanged on exit.
+@rout gpmv
+ * A       (input)                       @(arr_in_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than  ( LDA * ka - sum(1 .. ka-1, k) ) * @(size_comm),
+ *         where ka is n when TRANS = AtlasNotrans or TRANS = AtlasConj,
+ *         and m otherwise. Before entry with UPLO = AtlasUpper, the ar-
+ *         ray  A  must contain the entries of the matrix packed sequen-
+ *         tially, column by column, so that A[0] contains a(0,0),  A[1]
+ *         and A[2] contain a(1,0) and  a(2,0),  A[LDA]  and  A[2*LDA+1]
+ *         contain  a(0,1) and a(0,2) respectively and so on. Before en-
+ *         try with UPLO = AtlasLower, the array A  must contain the en-
+ *         tries of the matrix packed sequentially, column by column, so
+ *         that A[ 0 ] contains a(0,0), A[ 1 ] and A[ 2 ] contain a(1,0)
+ *         and a(2,0), A[LDA] and A[2*LDA-1] contain  a(1,1) and  a(2,2)
+ *         respectively, and so on. Unchanged on exit.
+ *
+ * LDA     (input)                       const int
+ *         On entry, LDA  specifies the length of the first column of A.
+ *         LDA  must be  at least MAX( 1, m ) when  TRANS = AtlasNotrans
+ *         or TRANS = AtlasConj, and MAX( 1, n ) otherwise. Unchanged on
+ *         exit.
+@rout gemv
+ * A       (input)                       @(arr_in_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than   LDA * ka * @(size_comm), where  ka  is  n  when
+ *         TRANS = AtlasNotrans or TRANS = AtlasConj, and  m  otherwise.
+ *         Before entry, when TRANS = AtlasNotrans or TRANS = AtlasConj,
+ *         the leading m by n part of the array  A  must contain the ma-
+ *         trix coefficients,  and otherwise the leading n by m  part of
+ *         the array A  must contain the matrix coefficients.  Unchanged
+ *         on exit.
+ *
+ * LDA     (input)                       const int
+ *         On entry, LDA  specifies the leading dimension of A as decla-
+ *         red  in  the  calling  (sub) program.  LDA  must be  at least
+ *         MAX( 1, m )  when  TRANS = AtlasNotrans or TRANS = AtlasConj,
+ *         and MAX( 1, n ) otherwise. Unchanged on exit.
+@rout gbmv gpmv gemv
+ *
+ * X       (input)                       @(arr_in_comm)
+ *         On entry,  X  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCX ) ) * @(size_comm),
+ *         that contains the vector x. Unchanged on exit.
+ *
+ * INCX    (input)                       const int
+ *         On entry, INCX specifies the increment for the elements of X.
+ *         INCX must not be zero. Unchanged on exit.
+ *
+ * BETA    (input)                       @(sca_in_comm)
+ *         On entry,  BETA  specifies the scalar  beta.   When  BETA  is
+ *         supplied as zero then Y  need not be set on input.  Unchanged
+ *         on exit. 
+ *
+ * Y       (input/output)                @(arr_in_out_comm)
+ *         On entry,  Y  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( m - 1 ) * abs( INCY ) ) * @(size_comm),
+ *         that contains the vector y.  Before entry with BETA non-zero,
+ *         the incremented array  Y  must contain the vector y. On exit,
+ *         Y is overwritten by the updated vector y.
+ *
+ * INCY    (input)                       const int
+ *         On entry, INCY specifies the increment for the elements of Y.
+ *         INCY must not be zero. Unchanged on exit.
+ *
+@extract @(LINE)
+ */
+@rout gbmvN
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgbmvN( ... ) <=> ATL_@(pre)refgbmv( AtlasNoTrans, ... ) 
+ *
+ * See ATL_@(pre)refgbmv for details.
+ *
+@extract @(LINE)
+ */
+@rout gbmvC
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgbmvC( ... ) <=> ATL_@(pre)refgbmv( AtlasConj, ... ) 
+ *
+ * See ATL_@(pre)refgbmv for details.
+ *
+@extract @(LINE)
+ */
+@rout gbmvT
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgbmvT( ... ) <=> ATL_@(pre)refgbmv( AtlasTrans, ... ) 
+ *
+ * See ATL_@(pre)refgbmv for details.
+ *
+@extract @(LINE)
+ */
+@rout gbmvH
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgbmvH( ... ) <=> ATL_@(pre)refgbmv( AtlasConjTrans, ... ) 
+ *
+ * See ATL_@(pre)refgbmv for details.
+ *
+@extract @(LINE)
+ */
+@rout gpmvLN
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgpmvLN( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)refgpmv( AtlasLower, AtlasNoTrans, ... )
+ *
+ * See ATL_@(pre)refgpmv for details.
+ *
+@extract @(LINE)
+ */
+@rout gpmvLC
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgpmvLC( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)refgpmv( AtlasLower, AtlasConj, ... )
+ *
+ * See ATL_@(pre)refgpmv for details.
+ *
+@extract @(LINE)
+ */
+@rout gpmvLT
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgpmvLT( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)refgpmv( AtlasLower, AtlasTrans, ... )
+ *
+ * See ATL_@(pre)refgpmv for details.
+ *
+@extract @(LINE)
+ */
+@rout gpmvLH
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgpmvLH( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)refgpmv( AtlasLower, AtlasConjTrans, ... )
+ *
+ * See ATL_@(pre)refgpmv for details.
+ *
+@extract @(LINE)
+ */
+@rout gpmvUN
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgpmvLN( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)refgpmv( AtlasUpper, AtlasNoTrans, ... )
+ *
+ * See ATL_@(pre)refgpmv for details.
+ *
+@extract @(LINE)
+ */
+@rout gpmvUC
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgpmvLC( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)refgpmv( AtlasUpper, AtlasConj, ... )
+ *
+ * See ATL_@(pre)refgpmv for details.
+ *
+@extract @(LINE)
+ */
+@rout gpmvUT
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgpmvLT( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)refgpmv( AtlasUpper, AtlasTrans, ... )
+ *
+ * See ATL_@(pre)refgpmv for details.
+ *
+@extract @(LINE)
+ */
+@rout gpmvUH
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgpmvLH( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)refgpmv( AtlasUpper, AtlasConjTrans, ... )
+ *
+ * See ATL_@(pre)refgpmv for details.
+ *
+@extract @(LINE)
+ */
+@rout gemvN
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgemvN( ... ) <=> ATL_@(pre)refgemv( AtlasNoTrans, ... ) 
+ *
+ * See ATL_@(pre)refgemv for details.
+ *
+@extract @(LINE)
+ */
+@rout gemvC
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgemvC( ... ) <=> ATL_@(pre)refgemv( AtlasConj, ... ) 
+ *
+ * See ATL_@(pre)refgemv for details.
+ *
+@extract @(LINE)
+ */
+@rout gemvT
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgemvT( ... ) <=> ATL_@(pre)refgemv( AtlasTrans, ... ) 
+ *
+ * See ATL_@(pre)refgemv for details.
+ *
+@extract @(LINE)
+ */
+@rout gemvH
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgemvH( ... ) <=> ATL_@(pre)refgemv( AtlasConjTrans, ... ) 
+ *
+ * See ATL_@(pre)refgemv for details.
+ *
+@extract @(LINE)
+ */
+@rout symv sbmv spmv
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname) performs the matrix-vector operation
+ *
+ *    y := alpha * A * x + beta * y,
+ *
+@rout symv
+ * where alpha and beta are scalars, x and y are n-element vectors and A
+ * is an n by n @(syhe_comm) matrix.
+@rout sbmv
+ * where alpha and beta are scalars, x and y are n-element vectors and A
+ * is an n by n @(syhe_comm) band matrix, with k super-diagonals.
+@rout spmv
+ * where alpha and beta are scalars, x and y are n-element vectors and A
+ * is an n by n @(syhe_comm) matrix, supplied in packed form.
+@rout symv sbmv spmv
+ *
+@extract @(ARGUMENTS)
+ *
+@rout symv
+@extract @(UPLO_SY_COMMENT) "A"
+@rout sbmv
+@extract @(UPLO_SB_COMMENT) "A"
+@rout spmv
+@extract @(UPLO_SP_COMMENT) "A"
+@rout symv sbmv spmv
+ *
+ * N       (input)                       const int
+ *         On entry, N specifies the order of the matrix A. N must be at
+ *         least zero. Unchanged on exit.
+@rout sbmv
+ *
+ * K       (input)                       const int
+ *         On entry, K  specifies  the number of  super-diagonals of the
+ *         matrix A. K must satisfy 0 <= K. Unchanged on exit. 
+@rout symv sbmv spmv
+ *
+ * ALPHA   (input)                       @(sca_in_comm)
+ *         On entry, ALPHA specifies the scalar alpha.   When  ALPHA  is
+ *         supplied as zero then  A and X  need not be set on input. Un-
+ *         changed on exit.
+ *
+@rout symv
+ * A       (input)                       @(arr_in_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than   LDA * n * @(size_comm).   Before   entry   with
+ *         UPLO = AtlasUpper, the leading  n by n  upper triangular part
+ *         of the array  A must contain the upper triangular part of the
+ *         @(syhe_comm) matrix  and  the strictly  lower triangular part of
+ *         A is not referenced. Before entry with UPLO = AtlasLower, the
+ *         leading  n by n  lower  triangular part of the array  A  must
+ *         contain the lower triangular part of the @(syhe_comm) matrix and
+ *         the  strictly upper triangular part of  A  is not referenced.
+ *         Unchanged on exit.
+@type chex zhex
+ *         Note that the  imaginary parts  of the local entries  corres-
+ *         ponding to the diagonal elements of A need not be set and as-
+ *         sumed to be zero.
+@type real dble cplx zplx chex zhex
+ *
+ * LDA     (input)                       const int
+ *         On entry, LDA  specifies the leading dimension of A as decla-
+ *         red  in  the  calling  (sub) program.  LDA  must be  at least
+ *         MAX( 1, n ). Unchanged on exit.
+@rout sbmv
+ * A       (input)                       @(arr_in_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than   LDA * n * @(size_comm).    Before  entry   with
+ *         UPLO = AtlasUpper, the leading ( k + 1 ) by n part of the ar-
+ *         ray  A  must  contain  the  upper triangular band part of the
+ *         @(syhe_comm) matrix, supplied column by column, with the leading
+ *         diagonal  of the matrix in row  k of the array, the first su-
+ *         per-diagonal starting  at position 1 in row k-1,  and  so on.
+ *         The top left k by k triangle of the array  A  is not referen-
+ *         ced. Unchanged on exit.
+ *         The  following program segment will transfer the upper trian-
+ *         gular part  of a @(syhe_comm) band matrix from conventional full
+ *         matrix storage to band storage:
+ *
+ *            for( j = 0; j < n; j++ )
+ *            {
+ *               m  = k - j;
+ *               for( i = ( m < 0 ? -m : 0 ); i < j; i++ )
+ *               {
+@type real dble
+ *                  a[m+i+j*LDA] = matrix( i, j );
+@type cplx zplx chex zhex
+ *                  a[((m+i+j*LDA)<<1)+0] = real( matrix( i, j ) );
+ *                  a[((m+i+j*LDA)<<1)+1] = imag( matrix( i, j ) );
+@type real dble cplx zplx chex zhex
+ *               }
+ *            }
+ *
+ *         Before entry with UPLO = AtlasLower, the leading ( k + 1 ) by
+ *         n part of  the array A must contain the lower triangular band
+ *         part of the @(syhe_comm) matrix, supplied column by column, with
+ *         the leading diagonal of the matrix in row 0 of the array, the
+ *         first sub-diagonal starting at position  0  in row  1, and so
+ *         on.  The bottom right  k by k  triangle of the array A is not
+ *         referenced. Unchanged on exit.
+ *         The  following program segment will transfer the lower trian-
+ *         gular part  of a @(syhe_comm) band matrix from conventional full
+ *         matrix storage to band storage:
+ *
+ *            for( j = 0; j < n; j++ )
+ *            {
+ *               i1 = ( n > j + k + 1 ? j + k + 1 : n );
+ *               for( i = j; i < i1; i++ )
+ *               {
+@type real dble
+ *                  a[i-j+j*LDA] = matrix( i, j );
+@type cplx zplx chex zhex
+ *                  a[((i-j+j*LDA)<<1)+0] = real( matrix( i, j ) );
+ *                  a[((i-j+j*LDA)<<1)+1] = imag( matrix( i, j ) );
+@type real dble cplx zplx chex zhex
+ *               }
+ *            }
+ *
+@type chex zhex
+ *         Note that the  imaginary parts  of the local entries  corres-
+ *         ponding to the diagonal elements of A need not be set and as-
+ *         sumed to be zero. Unchanged on exit.
+@type real dble cplx zplx chex zhex
+ *
+ * LDA     (input)                       const int
+ *         On entry, LDA  specifies the leading dimension of A as decla-
+ *         red  in  the  calling (sub) program.  LDA  must  be  at least
+ *         k + 1. Unchanged on exit.
+@rout spmv
+ * A       (input)                       @(arr_in_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than   (( n*(n+1) ) / 2) * @(size_comm).  Before entry
+ *         with UPLO = AtlasUpper, the array  A  must contain  the upper
+ *         triangular  part of the @(syhe_comm) matrix packed sequentially,
+ *         column by column, so that A[ 0 ] contains a(0,0), A[ 1 ]  and
+ *         A[ 2 ] contain a(0,1) and a(1,1) respectively, and so on.
+ *         Before entry with UPLO = AtlasLower, the array A must contain
+ *         the lower triangular  part of the @(syhe_comm) matrix packed se-
+ *         quentially, column by column, so that A[ 0 ] contains a(0,0),
+ *         A[ 1 ] and A[ 2 ] contain a(1,0) and a(2,0) respectively, and
+ *         so on. Unchanged on exit.
+@type chex zhex
+ *         Note that the  imaginary parts  of the local entries  corres-
+ *         ponding to the diagonal elements of A need not be set and as-
+ *         sumed to be zero. Unchanged on exit.
+@type real dble cplx zplx chex zhex
+@rout symv sbmv spmv
+ *
+ * X       (input)                       @(arr_in_comm)
+ *         On entry,  X  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCX ) ) * @(size_comm),
+ *         that contains the vector x. Unchanged on exit.
+ *
+ * INCX    (input)                       const int
+ *         On entry, INCX specifies the increment for the elements of X.
+ *         INCX must not be zero. Unchanged on exit.
+ *
+ * BETA    (input)                       @(sca_in_comm)
+ *         On entry,  BETA  specifies the scalar  beta.   When  BETA  is
+ *         supplied as zero then Y  need not be set on input.  Unchanged
+ *         on exit.
+ *
+ * Y       (input/output)                @(arr_in_out_comm)
+ *         On entry,  Y  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCY ) ) * @(size_comm),
+ *         that contains the vector y.  Before entry with BETA non-zero,
+ *         the incremented array  Y  must contain the vector y. On exit,
+ *         Y is overwritten by the updated vector y.
+ *
+ * INCY    (input)                       const int
+ *         On entry, INCY specifies the increment for the elements of Y.
+ *         INCY must not be zero. Unchanged on exit.
+ *
+@extract @(LINE)
+ */
+@rout sbmvL
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@(sbhb)mvL( ... ) 
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(sbhb)mv( AtlasLower, ... )
+ *
+ * See ATL_@(pre)ref@(sbhb)mv for details.
+ *
+@extract @(LINE)
+ */
+@rout sbmvU
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@(sbhb)mvU( ... ) 
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(sbhb)mv( AtlasUpper, ... )
+ *
+ * See ATL_@(pre)ref@(sbhb)mv for details.
+ *
+@extract @(LINE)
+ */
+@rout spmvL
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@(sphp)mvL( ... ) 
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(sphp)mv( AtlasLower, ... )
+ *
+ * See ATL_@(pre)ref@(sphp)mv for details.
+ *
+@extract @(LINE)
+ */
+@rout spmvU
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@(sphp)mvU( ... ) 
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(sphp)mv( AtlasUpper, ... )
+ *
+ * See ATL_@(pre)ref@(sphp)mv for details.
+ *
+@extract @(LINE)
+ */
+@rout symvL
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@(syhe)mvL( ... ) 
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(syhe)mv( AtlasLower, ... )
+ *
+ * See ATL_@(pre)ref@(syhe)mv for details.
+ *
+@extract @(LINE)
+ */
+@rout symvU
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@(syhe)mvU( ... ) 
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(syhe)mv( AtlasUpper, ... )
+ *
+ * See ATL_@(pre)ref@(syhe)mv for details.
+ *
+@extract @(LINE)
+ */
+@rout trmv tbmv tpmv
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname) performs one of the matrix-vector operations
+ *
+@type real dble
+ *    x := A * x,   or   x := A'*x,
+@type cplx zplx
+ *    x := A * x,   or   x := conjg( A  ) * x,   or
+ *
+ *    x := A'* x,   or   x := conjg( A' ) * x,
+@type real dble cplx zplx
+ *
+@rout trmv
+ * where x is an n-element vector and  A is an n by n unit, or non-unit,
+ * upper or lower triangular matrix.
+@rout tbmv
+ * where x is an n-element vector and  A is an n by n unit, or non-unit,
+ * upper or lower triangular band matrix, with ( k + 1 ) diagonals.
+@rout tpmv
+ * where x is an n-element vector and  A is an n by n unit, or non-unit,
+ * upper or lower triangular matrix, supplied in packed form.
+@rout trmv tbmv tpmv
+ *
+@extract @(ARGUMENTS)
+ *
+@extract @(UPLO_TR_COMMENT) "A"
+ *
+@extract @(TRANS_COMMENT)
+ *
+@type real dble
+ *            TRANS = AtlasNoTrans     x := A *x,
+ *
+ *            TRANS = AtlasConj        x := A *x,
+ *
+ *            TRANS = AtlasTrans       x := A'*x,
+ *
+ *            TRANS = AtlasConjTrans   x := A'*x.
+@type cplx zplx
+ *            TRANS = AtlasNoTrans     x := A *x,
+ *
+ *            TRANS = AtlasConj        x := conjg( A ) * x,
+ *
+ *            TRANS = AtlasTrans       x := A'*x,
+ *
+ *            TRANS = AtlasConjTrans   x := conjg( A' )*x.
+@type real dble cplx zplx
+ *
+ *         Unchanged on exit.
+ *
+@extract @(DIAG_COMMENT) "A"
+ *
+ * N       (input)                       const int
+ *         On entry, N specifies the order of the matrix A. N must be at
+ *         least zero. Unchanged on exit.
+ *
+@rout tbmv
+ * K       (input)                       const int
+ *         On entry, with UPLO = AtlasUpper,  K  specifies the number of
+ *         super-diagonals of the matrix A.  With  UPLO = AtlasLower,  K
+ *         specifies the number of sub-diagonals of the matrix A. K must
+ *         satisfy  0 <= K. Unchanged on exit.
+ *
+@rout trmv
+ * A       (input)                       @(arr_in_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than   LDA * n * @(size_comm).   Before   entry   with
+ *         UPLO = AtlasUpper, the leading  n by n  upper triangular part
+ *         of the array  A must contain the upper triangular  matrix and
+ *         the strictly lower triangular part of  A  is  not referenced.
+ *         Before entry with UPLO = AtlasLower, the leading n by n lower
+ *         triangular  part of the array A must contain the lower trian-
+ *         gular matrix  and the strictly upper triangular part  of A is
+ *         not referenced. Unchanged on exit.
+ *
+ *         Note that when  DIAG = AtlasUnit,  the diagonal elements of A
+ *         are not referenced  either,  but are assumed to be unity.
+ *
+ * LDA     (input)                       const int
+ *         On entry, LDA  specifies the leading dimension of A as decla-
+ *         red  in  the  calling  (sub) program.  LDA  must be  at least
+ *         MAX( 1, n ). Unchanged on exit.
+@rout tbmv
+ * A       (input)                       @(arr_in_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than   LDA * n * @(size_comm).   Before   entry   with
+ *         UPLO = AtlasUpper, the leading (k + 1) by n part of the array
+ *         A  must  contain the upper triangular band part of the matrix
+ *         of coefficients, supplied column  by column, with the leading
+ *         diagonal  of the matrix in row k of the  array, the first su-
+ *         per-diagonal starting at position 1 in row  k-1,  and  so on.
+ *         The top left k by k triangle of the array  A  is not referen-
+ *         ced.  The  following  program segment  will transfer an upper
+ *         triangular band matrix from conventional full  matrix storage
+ *         to band storage:
+ *
+ *            for( j = 0; j < n; j++ )
+ *            {
+ *               m  = k - j;
+ *               for( i = ( m < 0 ? -m : 0 ); i < j; i++ )
+ *               {
+@type real dble
+ *                  a[m+i+j*LDA] = matrix( i, j );
+@type cplx zplx
+ *                  a[((m+i+j*LDA)<<1)+0] = real( matrix( i, j ) );
+ *                  a[((m+i+j*LDA)<<1)+1] = imag( matrix( i, j ) );
+@type real dble cplx zplx
+ *               }
+ *            }
+ *
+ *         Before entry with UPLO = AtlasLower, the leading (k + 1) by n
+ *         part of the array  A  must contain the lower triangular  band
+ *         part  of  the  matrix of coefficients, supplied column by co-
+ *         lumn, with the leading diagonal of the matrix in row 0 of the
+ *         array,  the  first sub-diagonal starting at position 0 in row
+ *         1, and so on. The bottom right k by k triangle of the array A
+ *         is not referenced.  The following program segment will trans-
+ *         fer a lower  real triangular  band  matrix from  conventional
+ *         full matrix storage to band storage:
+ *
+ *            for( j = 0; j < n; j++ )
+ *            {
+ *               i1 = ( n > j + k + 1 ? j + k + 1 : n );
+ *               for( i = j; i < i1; i++ )
+ *               {
+@type real dble
+ *                  a[i-j+j*LDA] = matrix( i, j );
+@type cplx zplx
+ *                  a[((i-j+j*LDA)<<1)+0] = real( matrix( i, j ) );
+ *                  a[((i-j+j*LDA)<<1)+1] = imag( matrix( i, j ) );
+@type real dble cplx zplx
+ *               }
+ *            }
+ *
+ *         Note that when DIAG = AtlasUnit  the elements of the array  A
+ *         corresponding to the diagonal elements of the matrix are  not
+ *         referenced, but are assumed to be unity. Unchanged on exit.
+ *
+ * LDA     (input)                       const int
+ *         On entry, LDA  specifies the leading dimension of A as decla-
+ *         red  in  the  calling (sub) program.  LDA  must  be  at least
+ *         k + 1. Unchanged on exit.
+@rout tpmv
+ * A       (input)                       @(arr_in_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than   (( n*(n+1) ) / 2) * @(size_comm).  Before entry
+ *         with UPLO = AtlasUpper, the array  A  must  contain the upper
+ *         triangular matrix packed sequentially, column by  column,  so
+ *         that A[ 0 ] contains a(0,0), A[ 1 ] and A[ 2 ] contain a(0,1)
+ *         and  a(1,1)  respectively,  and  so  on.  Before  entry  with 
+ *         UPLO = AtlasLower, the array  A  must contain the  lower tri-
+ *         angular matrix packed sequentially, column by column, so that
+ *         A[ 0 ] contains a(0,0), A[ 1 ] and A[ 2 ] contain a(1,0)  and
+ *         a( 2, 0 ) respectively, and so on.
+ *
+ *         Note that when  DIAG = AtlasUnit,  the diagonal elements of A
+ *         are not referenced,  but are  assumed to be unity.  Unchanged
+ *         on exit.
+@rout trmv tbmv tpmv
+ *
+ * X       (input/output)                @(arr_in_out_comm)
+ *         On entry,  X  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCX ) ) * @(size_comm),
+ *         that contains the vector x.  On exit,  X  is overwritten with
+ *         the tranformed vector x.
+ *
+ * INCX    (input)                       const int
+ *         On entry, INCX specifies the increment for the elements of X.
+ *         INCX must not be zero. Unchanged on exit.
+ *
+@extract @(LINE)
+ */
+@rout trsv tbsv tpsv
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname) solves one of the systems of equations
+ *
+@type real dble
+ *    A * x = b,   or   A' * x = b,
+@type cplx zplx
+ *    A * x = b,   or   conjg( A  ) * x = b,   or
+ *
+ *    A'* x = b,   or   conjg( A' ) * x = b,
+@type real dble cplx zplx
+ *
+@rout trsv
+ * where b and x are n-element vectors and  A is an n by n unit, or non-
+ * unit, upper or lower triangular matrix.
+@rout tbsv
+ * where b and x are n-element vectors and  A is an n by n unit, or non-
+ * unit, upper or lower triangular band matrix, with (k+1) diagonals.
+@rout tpsv
+ * where b and x are n-element vectors and  A is an n by n unit, or non-
+ * unit, upper or lower triangular matrix, supplied in packed form.
+@rout trsv tbsv tpsv
+ *
+ * No test for  singularity  or  near-singularity  is included  in  this
+ * routine. Such tests must be performed before calling this routine.
+ *
+@extract @(ARGUMENTS)
+ *
+@extract @(UPLO_TR_COMMENT) "A"
+ *
+ * TRANS   (input)                       const enum ATLAS_TRANS
+ *         On entry,  TRANS specifies the equations to be solved as fol-
+ *         lows:
+ *
+@type real dble
+ *            TRANS = AtlasNoTrans     A  * x = b,
+ *
+ *            TRANS = AtlasConj        A  * x = b,
+ *
+ *            TRANS = AtlasTrans       A' * x = b,
+ *
+ *            TRANS = AtlasTrans       A' * x = b.
+@type cplx zplx
+ *            TRANS = AtlasNoTrans     A  * x = b,
+ *
+ *            TRANS = AtlasConj        conjg( A  ) * x = b,
+ *
+ *            TRANS = AtlasTrans       A' * x = b,
+ *
+ *            TRANS = AtlasConjTrans   conjg( A' ) * x = b.
+@type real dble cplx zplx
+ *
+ *         Unchanged on exit.
+ *
+@extract @(DIAG_COMMENT) "A"
+ *                                                                              
+ * N       (input)                       const int
+ *         On entry, N specifies the order of the matrix A. N must be at
+ *         least zero. Unchanged on exit.
+ *
+@rout tbsv
+ * K       (input)                       const int
+ *         On entry  with UPLO = AtlasUpper,  K  specifies the number of
+ *         super-diagonals of the matrix A.  With  UPLO = AtlasLower,  K
+ *         specifies the number of sub-diagonals of the matrix A. K must
+ *         satisfy  0 <= K. Unchanged on exit.
+ *
+@rout trsv
+ * A       (input)                       @(arr_in_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than   LDA * n * @(size_comm).   Before   entry   with
+ *         UPLO = AtlasUpper, the leading  n by n  upper triangular part
+ *         of the array  A must contain the upper triangular  matrix and
+ *         the strictly lower triangular part of  A  is  not referenced.
+ *         Before entry with UPLO = AtlasLower, the leading n by n lower
+ *         triangular  part of the array A must contain the lower trian-
+ *         gular matrix  and the strictly upper triangular part  of A is
+ *         not referenced. Unchanged on exit.
+ *
+ *         Note that when  DIAG = AtlasUnit,  the diagonal elements of A
+ *         are not referenced  either,  but are assumed to be unity.
+ *
+ * LDA     (input)                       const int
+ *         On entry, LDA  specifies the leading dimension of A as decla-
+ *         red  in  the  calling  (sub) program.  LDA  must be  at least
+ *         MAX( 1, n ). Unchanged on exit.
+@rout tbsv
+ * A       (input)                       @(arr_in_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than   LDA * n * @(size_comm).   Before   entry   with
+ *         UPLO = AtlasUpper, the leading (k + 1) by n part of the array
+ *         A  must  contain the upper triangular band part of the matrix
+ *         of coefficients, supplied column  by column, with the leading
+ *         diagonal  of the matrix in row k of the  array, the first su-
+ *         per-diagonal starting at position 1 in row  k-1,  and  so on.
+ *         The top left k by k triangle of the array  A  is not referen-
+ *         ced.  The  following  program segment  will transfer an upper
+ *         triangular band matrix from conventional full  matrix storage
+ *         to band storage:
+ *
+ *            for( j = 0; j < n; j++ )
+ *            {
+ *               m  = k - j;
+ *               for( i = ( m < 0 ? -m : 0 ); i < j; i++ )
+ *               {
+@type real dble
+ *                  a[m+i+j*LDA] = matrix( i, j );
+@type cplx zplx
+ *                  a[((m+i+j*LDA)<<1)+0] = real( matrix( i, j ) );
+ *                  a[((m+i+j*LDA)<<1)+1] = imag( matrix( i, j ) );
+@type real dble cplx zplx
+ *               }
+ *            }
+ *
+ *         Before entry with UPLO = AtlasLower, the leading (k + 1) by n
+ *         part of the array  A  must contain the lower triangular  band
+ *         part  of  the  matrix of coefficients, supplied column by co-
+ *         lumn, with the leading diagonal of the matrix in row 0 of the
+ *         array,  the  first sub-diagonal starting at position 0 in row
+ *         1, and so on. The bottom right k by k triangle of the array A
+ *         is not referenced.  The following program segment will trans-
+ *         fer a lower  real triangular  band  matrix from  conventional
+ *         full matrix storage to band storage:
+ *
+ *            for( j = 0; j < n; j++ )
+ *            {
+ *               i1 = ( n > j + k + 1 ? j + k + 1 : n );
+ *               for( i = j; i < i1; i++ )
+ *               {
+@type real dble
+ *                  a[i-j+j*LDA] = matrix( i, j );
+@type cplx zplx
+ *                  a[((i-j+j*LDA)<<1)+0] = real( matrix( i, j ) );
+ *                  a[((i-j+j*LDA)<<1)+1] = imag( matrix( i, j ) );
+@type real dble cplx zplx
+ *               }
+ *            }
+ *
+ *         Note that when DIAG = AtlasUnit  the elements of the array  A
+ *         corresponding to the diagonal elements of the matrix are  not
+ *         referenced, but are assumed to be unity. Unchanged on exit.
+ *
+ * LDA     (input)                       const int
+ *         On entry, LDA  specifies the leading dimension of A as decla-
+ *         red  in  the  calling (sub) program.  LDA  must  be  at least
+ *         k + 1. Unchanged on exit.
+@rout tpsv
+ * A       (input)                       @(arr_in_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than   (( n*(n+1) ) / 2) * @(size_comm).  Before entry
+ *         with UPLO = AtlasUpper, the array  A  must  contain the upper
+ *         triangular matrix packed sequentially, column by  column,  so
+ *         that A[ 0 ] contains a(0,0), A[ 1 ] and A[ 2 ] contain a(0,1)
+ *         and  a(1,1)  respectively,  and  so  on.  Before  entry  with
+ *         UPLO = AtlasLower, the array  A  must contain the  lower tri-
+ *         angular matrix packed sequentially, column by column, so that
+ *         A[ 0 ] contains a(0,0), A[ 1 ] and A[ 2 ] contain a(1,0)  and
+ *         a( 2, 0 ) respectively, and so on.
+ *
+ *         Note that when  DIAG = AtlasUnit,  the diagonal elements of A
+ *         are not referenced,  but are  assumed to be unity.  Unchanged
+ *         on exit.
+@rout trsv tbsv tpsv
+ *
+ * X       (input/output)                @(arr_in_out_comm)
+ *         On entry,  X  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCX ) ) * @(size_comm),
+ *         that contains the vector x. Before entry, the incremented ar-
+ *         ray X must contain the n element right-hand side vector b. On
+ *         exit, X is overwritten with the solution vector x.
+ *
+ * INCX    (input)                       const int
+ *         On entry, INCX specifies the increment for the elements of X.
+ *         INCX must not be zero. Unchanged on exit.
+ *
+@extract @(LINE)
+ */
+@rout tbmvLNN tbsvLNN tpmvLNN tpsvLNN trmvLNN trsvLNN
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@4l@(@rout)LNN( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@4l@(@rout)( AtlasLower, AtlasNoTrans, AtlasNonUnit, ... )
+ *
+ * See ATL_@(pre)ref@4l@(@rout) for details.
+ *
+@extract @(LINE)
+ */
+@rout tbmvLNU tbsvLNU tpmvLNU tpsvLNU trmvLNU trsvLNU
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@4l@(@rout)LNU( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@4l@(@rout)( AtlasLower, AtlasNoTrans, AtlasUnit, ... )
+ *
+ * See ATL_@(pre)ref@4l@(@rout) for details.
+ *
+@extract @(LINE)
+ */
+@rout tbmvLCN tbsvLCN tpmvLCN tpsvLCN trmvLCN trsvLCN
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@4l@(@rout)LCN( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@4l@(@rout)( AtlasLower, AtlasConj, AtlasNonUnit, ... )
+ *
+ * See ATL_@(pre)ref@4l@(@rout) for details.
+ *
+@extract @(LINE)
+ */
+@rout tbmvLCU tbsvLCU tpmvLCU tpsvLCU trmvLCU trsvLCU
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@4l@(@rout)LCU( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@4l@(@rout)( AtlasLower, AtlasConj, AtlasUnit, ... )
+ *
+ * See ATL_@(pre)ref@4l@(@rout) for details.
+ *
+@extract @(LINE)
+ */
+@rout tbmvLTN tbsvLTN tpmvLTN tpsvLTN trmvLTN trsvLTN
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@4l@(@rout)LTN( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@4l@(@rout)( AtlasLower, AtlasTrans, AtlasNonUnit, ... )
+ *
+ * See ATL_@(pre)ref@4l@(@rout) for details.
+ *
+@extract @(LINE)
+ */
+@rout tbmvLTU tbsvLTU tpmvLTU tpsvLTU trmvLTU trsvLTU
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@4l@(@rout)LTU( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@4l@(@rout)( AtlasLower, AtlasTrans, AtlasUnit, ... )
+ *
+ * See ATL_@(pre)ref@4l@(@rout) for details.
+ *
+@extract @(LINE)
+ */
+@rout tbmvLHN tbsvLHN tpmvLHN tpsvLHN trmvLHN trsvLHN
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@4l@(@rout)LHN( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@4l@(@rout)( AtlasLower, AtlasConjTrans, AtlasNonUnit, ... )
+ *
+ * See ATL_@(pre)ref@4l@(@rout) for details.
+ *
+@extract @(LINE)
+ */
+@rout tbmvLHU tbsvLHU tpmvLHU tpsvLHU trmvLHU trsvLHU
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@4l@(@rout)LHU( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@4l@(@rout)( AtlasLower, AtlasConjTrans, AtlasUnit, ... )
+ *
+ * See ATL_@(pre)ref@4l@(@rout) for details.
+ *
+@extract @(LINE)
+ */
+@rout tbmvUNN tbsvUNN tpmvUNN tpsvUNN trmvUNN trsvUNN
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@4l@(@rout)UNN( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@4l@(@rout)( AtlasUpper, AtlasNoTrans, AtlasNonUnit, ... )
+ *
+ * See ATL_@(pre)ref@4l@(@rout) for details.
+ *
+@extract @(LINE)
+ */
+@rout tbmvUNU tbsvUNU tpmvUNU tpsvUNU trmvUNU trsvUNU
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@4l@(@rout)UNU( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@4l@(@rout)( AtlasUpper, AtlasNoTrans, AtlasUnit, ... )
+ *
+ * See ATL_@(pre)ref@4l@(@rout) for details.
+ *
+@extract @(LINE)
+ */
+@rout tbmvUCN tbsvUCN tpmvUCN tpsvUCN trmvUCN trsvUCN
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@4l@(@rout)UCN( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@4l@(@rout)( AtlasUpper, AtlasConj, AtlasNonUnit, ... )
+ *
+ * See ATL_@(pre)ref@4l@(@rout) for details.
+ *
+@extract @(LINE)
+ */
+@rout tbmvUCU tbsvUCU tpmvUCU tpsvUCU trmvUCU trsvUCU
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@4l@(@rout)UCU( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@4l@(@rout)( AtlasUpper, AtlasConj, AtlasUnit, ... )
+ *
+ * See ATL_@(pre)ref@4l@(@rout) for details.
+ *
+@extract @(LINE)
+ */
+@rout tbmvUTN tbsvUTN tpmvUTN tpsvUTN trmvUTN trsvUTN
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@4l@(@rout)UTN( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@4l@(@rout)( AtlasUpper, AtlasTrans, AtlasNonUnit, ... )
+ *
+ * See ATL_@(pre)ref@4l@(@rout) for details.
+ *
+@extract @(LINE)
+ */
+@rout tbmvUTU tbsvUTU tpmvUTU tpsvUTU trmvUTU trsvUTU
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@4l@(@rout)UTU( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@4l@(@rout)( AtlasUpper, AtlasTrans, AtlasUnit, ... )
+ *
+ * See ATL_@(pre)ref@4l@(@rout) for details.
+ *
+@extract @(LINE)
+ */
+@rout tbmvUHN tbsvUHN tpmvUHN tpsvUHN trmvUHN trsvUHN
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@4l@(@rout)UHN( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@4l@(@rout)( AtlasUpper, AtlasConjTrans, AtlasNonUnit, ... )
+ *
+ * See ATL_@(pre)ref@4l@(@rout) for details.
+ *
+@extract @(LINE)
+ */
+@rout tbmvUHU tbsvUHU tpmvUHU tpsvUHU trmvUHU trsvUHU
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@4l@(@rout)UHU( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@4l@(@rout)( AtlasUpper, AtlasConjTrans, AtlasUnit, ... )
+ *
+ * See ATL_@(pre)ref@4l@(@rout) for details.
+ *
+@extract @(LINE)
+ */
+@rout gpr ger
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname) performs the rank 1 operation
+ *
+@type real dble cplx zplx
+ *    A := alpha * x * y' + A,
+@type chex zhex
+ *    A := alpha * x * conjg( y' ) + A,
+@type real dble cplx zplx chex zhex
+ *
+@rout gpr
+ * where alpha is a scalar,  x is an m-element vector, y is an n-element
+ * vector and A is an m by n packed matrix.
+@rout ger
+ * where alpha is a scalar,  x is an m-element vector, y is an n-element
+ * vector and A is an m by n matrix.
+@rout gpr ger
+ *
+@extract @(ARGUMENTS)
+ *
+@rout gpr
+ * UPLO    (input)                       const enum ATLAS_UPLO
+ *         On entry, UPLO  specifies whether the array A contains an up-
+ *         per or lower packed submatrix as follows:
+ *
+ *             UPLO = AtlasUpper   A is an upper-packed submatrix,
+ *
+ *             UPLO = AtlasLower   A is a  lower-packed submatrix.
+ *
+ *         Unchanged on exit.
+ *
+@rout gpr ger
+ * M       (input)                       const int
+ *         On entry,  M  specifies the number of rows of  the matrix  A.
+ *         M must be at least zero. Unchanged on exit.
+ *
+ * N       (input)                       const int
+ *         On entry, N  specifies the number of columns of the matrix A.
+ *         N  must be at least zero. Unchanged on exit.
+ *
+ * ALPHA   (input)                       @(sca_in_comm)
+ *         On entry, ALPHA specifies the scalar alpha.   When  ALPHA  is
+ *         supplied as zero then the arrays X and Y need not be set on 
+ *         input. Unchanged on exit.
+ *
+ * X       (input)                       @(arr_in_comm)
+ *         On entry,  X  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( m - 1 ) * abs( INCX ) ) * @(size_comm),
+ *         that contains the vector x. Unchanged on exit.
+ *
+ * INCX    (input)                       const int
+ *         On entry, INCX specifies the increment for the elements of X.
+ *         INCX must not be zero. Unchanged on exit.
+ *
+ * Y       (input)                       @(arr_in_comm)
+ *         On entry,  Y  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCY ) ) * @(size_comm),
+ *         that contains the vector y. Unchanged on exit.
+ *
+ * INCY    (input)                       const int
+ *         On entry, INCY specifies the increment for the elements of Y.
+ *         INCY must not be zero. Unchanged on exit.
+ *
+@rout gpr
+ * A       (input/output)                @(arr_in_out_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than  ( LDA * n - sum( 1 .. n-1, k ) ) * @(size_comm).
+ *         Before entry with UPLO = AtlasUpper, the array A must contain
+ *         the entries of the matrix packed sequentially,  column by co-
+ *         lumn, so that A[0] contains a(0,0),  A[1]  and  A[2]  contain
+ *         a(1,0) and a(2,0), A[LDA] and A[2*LDA+1]  contain  a(0,1) and
+ *         a(0,2) respectively. Before entry with UPLO = AtlasLower, the
+ *         array A must contain the entries of the matrix packed sequen-
+ *         tially, column by column, so that A[0] contains a(0,0),  A[1]
+ *         and  A[2]  contain  a(1,0) and a(2,0),  A[LDA] and A[2*LDA-1]
+ *         contain  a(1,1) and a(2,2) respectively, and so on.  On exit,
+ *         A is overwritten by the updated matrix.
+ *
+ * LDA     (input)                       const int
+ *         On entry, LDA  specifies the length of the first column of A.
+ *         LDA  must be  at least MAX( 1, m ) when  TRANS = AtlasNotrans
+ *         or TRANS = AtlasConj, and MAX( 1, n ) otherwise. Unchanged on
+ *         exit.
+@rout ger
+ * A       (input/output)                @(arr_in_out_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than   LDA * n * @(size_comm).  Before entry, the lea-
+ *         ding  m by n  part of the array  A  must  contain the  matrix
+ *         coefficients.  On exit,  A  is overwritten by the updated ma-
+ *         trix.
+ *
+ * LDA     (input)                       const int
+ *         On entry, LDA  specifies the first dimension of A as declared
+ *         in the calling (sub) program. LDA must be at least  max(1,m).
+ *         Unchanged on exit.
+@rout gpr ger
+ *
+@extract @(LINE)
+ */
+@rout syr spr
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname) performs the @(syhe_comm) rank 1 operation
+ *
+@type real dble cplx zplx
+ *    A := alpha * x * x' + A,
+@type chex zhex
+ *    A := alpha* x * conjg( x' ) + A,
+@type real dble cplx zplx chex zhex
+ *
+@rout syr
+@type real dble cplx zplx
+ * where  alpha is a scalar, x is an n-element vector and A is an n by n
+ * @(syhe_comm) matrix.
+@type chex zhex
+ * where  alpha is a real scalar, x is an n-element vector and A is an n
+ * by n @(syhe_comm) matrix.
+@type real dble cplx zplx chex zhex
+@rout spr
+@type real dble cplx zplx
+ * where  alpha is a scalar, x is an n-element vector and A is an n by n
+ * @(syhe_comm) matrix, supplied in packed form.
+@type chex zhex
+ * where  alpha is a real scalar, x is an n-element vector and A is an n
+ * by n @(syhe_comm) matrix, supplied in packed form.
+@type real dble cplx zplx chex zhex
+@rout syr spr
+ *
+@extract @(ARGUMENTS)
+ *
+@rout syr
+@extract @(UPLO_SY_COMMENT) "A"
+@rout spr
+@extract @(UPLO_SP_COMMENT) "A"
+@rout syr spr
+ *
+ * N       (input)                       const int
+ *         On entry, N specifies the order of the matrix A. N must be at
+ *         least zero. Unchanged on exit.
+ *
+@type real dble cplx zplx
+ * ALPHA   (input)                       @(sca_in_comm)
+ *         On entry, ALPHA specifies the scalar alpha.   When  ALPHA  is
+ *         supplied as  zero then  the array X need not be set on input.
+ *         Unchanged on exit.
+@type chex zhex
+ * ALPHA   (input)                       @(rca_in_comm)
+ *         On entry, ALPHA specifies the real scalar alpha.  When  ALPHA
+ *         is supplied as  zero then  the array X need not be set on in-
+ *         put. Unchanged on exit.
+@type real dble cplx zplx chex zhex
+ *
+ * X       (input)                       @(arr_in_comm)
+ *         On entry,  X  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCX ) ) * @(size_comm),
+ *         that contains the vector x. Unchanged on exit.
+ *
+ * INCX    (input)                       const int
+ *         On entry, INCX specifies the increment for the elements of X.
+ *         INCX must not be zero. Unchanged on exit.
+ *
+@rout syr
+ * A       (input/output)                @(arr_in_out_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than   LDA * n * @(size_comm).   Before   entry   with
+ *         UPLO = AtlasUpper, the leading n by n  upper  triangular part
+ *         of the array A must contain the upper triangular  part of the
+ *         @(syhe_comm) matrix  and the strictly lower triangular part of A
+ *         is not referenced.  On exit, the upper triangular part of the
+ *         array  A  is overwritten  by the upper triangular part of the
+ *         updated matrix.  With UPLO = AtlasLower, the  leading  n by n
+ *         lower triangular part of the array  A  must contain the lower
+ *         triangular part of the @(syhe_comm)  matrix and the strictly up-
+ *         per triangular part of A is not referenced.
+@type chex zhex
+ *         Note that  the  imaginary parts of the diagonal elements need
+ *         not be set, they are assumed to be zero, and on exit they are
+ *         set to zero. 
+@type real dble cplx zplx chex zhex
+ *
+ * LDA     (input)                       const int
+ *         On entry, LDA  specifies the leading dimension of A as decla-
+ *         red  in  the  calling  (sub) program.  LDA  must be  at least
+ *         MAX( 1, n ). Unchanged on exit.
+@rout spr
+ * A       (input/output)                @(arr_in_out_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than   (( n*(n+1) ) / 2) * @(size_comm). Before  entry
+ *         with UPLO = AtlasUpper, the array  A  must  contain the upper
+ *         triangular part of the @(syhe_comm) matrix packed  sequentially,
+ *         column  by  column,  so that A[0] contains a(0,0), A[ 1 ] and
+ *         A[ 2 ] contain a(0,1) and a(1,1) respectively, and  so on. On
+ *         exit, the array A is overwritten by the upper triangular part
+ *         of the updated matrix.  Before entry with  UPLO = AtlasLower,
+ *         the  array  A  must contain  the lower triangular part of the
+ *         @(syhe_comm) matrix  packed sequentially, column by  column,  so
+ *         that A[ 0 ] contains a(0,0), A[ 1 ] and A[ 2 ] contain a(1,0)
+ *         and a(2,0) respectively, and so on. On exit, the array  A  is
+ *         overwritten by  the  lower triangular part of the updated ma-
+ *         trix.
+@type chex zhex
+ *         Note that the imaginary parts of the  diagonal elements  need
+ *         not be set, they are assumed to be zero, and on exit they are
+ *         set to zero.
+@type real dble cplx zplx chex zhex
+@rout syr spr
+ *
+@extract @(LINE)
+ */
+@rout sprL
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@(sphp)rL( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(sphp)r( AtlasLower, ... )
+ *
+ * See ATL_@(pre)ref@(sphp)r for details.
+ *
+@extract @(LINE)
+ */
+@rout sprU
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@(sphp)rU( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(sphp)r( AtlasUpper, ... )
+ *
+ * See ATL_@(pre)ref@(sphp)r for details.
+ *
+@extract @(LINE)
+ */
+@rout syrL
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@(syhe)rL( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(syhe)r( AtlasLower, ... )
+ *
+ * See ATL_@(pre)ref@(syhe)r for details.
+ *
+@extract @(LINE)
+ */
+@rout syrU
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@(syhe)rU( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(syhe)r( AtlasUpper, ... )
+ *
+ * See ATL_@(pre)ref@(syhe)r for details.
+ *
+@extract @(LINE)
+ */
+@rout syr2 spr2
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname) performs the @(syhe_comm) rank 2 operation
+ *
+@type real dble cplx zplx
+ *    A := alpha * x * y' + alpha * y * x' + A,
+@type chex zhex
+ *    A := alpha * x * conjg( y' ) + y * conjg( alpha * x' ) + A,
+@type real dble cplx zplx chex zhex
+ *
+@rout syr2
+ * where  alpha is a scalar, x and y are n-element vectors and A is an n
+ * by n @(syhe_comm) matrix.
+@rout spr2
+ * where  alpha is a scalar, x and y are n-element vectors and A is an n
+ * by n @(syhe_comm) matrix, supplied in packed form.
+@rout syr2 spr2
+ *
+@extract @(ARGUMENTS)
+ *
+@rout syr2
+@extract @(UPLO_SY_COMMENT) "A"
+@rout spr2
+@extract @(UPLO_SP_COMMENT) "A"
+@rout syr2 spr2
+ *
+ * N       (input)                       const int
+ *         On entry, N specifies the order of the matrix A. N must be at
+ *         least zero. Unchanged on exit.
+ *
+ * ALPHA   (input)                       @(sca_in_comm)
+ *         On entry, ALPHA specifies the scalar alpha.   When  ALPHA  is
+ *         supplied as  zero then  the arrays X and Y need not be set on 
+ *         input. Unchanged on exit.
+ *
+ * X       (input)                       @(arr_in_comm)
+ *         On entry,  X  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCX ) ) * @(size_comm),
+ *         that contains the vector x. Unchanged on exit.
+ *
+ * INCX    (input)                       const int
+ *         On entry, INCX specifies the increment for the elements of X.
+ *         INCX must not be zero. Unchanged on exit.
+ *
+ * Y       (input)                       @(arr_in_comm)
+ *         On entry,  Y  points to the  first entry to be accessed of an
+ *         incremented array of size equal to or greater than
+ *            ( 1 + ( n - 1 ) * abs( INCY ) ) * @(size_comm),
+ *         that contains the vector y. Unchanged on exit.
+ *
+ * INCY    (input)                       const int
+ *         On entry, INCY specifies the increment for the elements of Y.
+ *         INCY must not be zero. Unchanged on exit.
+ *
+@rout syr2
+ * A       (input/output)                @(arr_in_out_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than   LDA * n * @(size_comm).   Before   entry   with
+ *         UPLO = AtlasUpper, the leading n by n  upper  triangular part
+ *         of the array A must contain the upper triangular  part of the
+ *         @(syhe_comm) matrix  and the strictly lower triangular part of A
+ *         is not referenced.  On exit, the upper triangular part of the
+ *         array  A  is overwritten  by the upper triangular part of the
+ *         updated matrix.  With UPLO = AtlasLower, the  leading  n by n
+ *         lower triangular part of the array  A  must contain the lower
+ *         triangular part of the @(syhe_comm)  matrix and the strictly up-
+ *         per triangular part of A is not referenced.
+@type chex zhex
+ *         Note that  the  imaginary parts of the diagonal elements need
+ *         not be set, they are assumed to be zero, and on exit they are
+ *         set to zero.
+@type real dble cplx zplx chex zhex
+ *
+ * LDA     (input)                       const int
+ *         On entry, LDA  specifies the leading dimension of A as decla-
+ *         red  in  the  calling  (sub) program.  LDA  must be  at least
+ *         MAX( 1, n ). Unchanged on exit.
+@rout spr2
+ * A       (input/output)                @(arr_in_out_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than   (( n*(n+1) ) / 2) * @(size_comm). Before  entry
+ *         with UPLO = AtlasUpper, the array  A  must  contain the upper
+ *         triangular part of the @(syhe_comm) matrix packed  sequentially,
+ *         column  by  column,  so that A[0] contains a(0,0), A[ 1 ] and
+ *         A[ 2 ] contain a(0,1) and a(1,1) respectively, and  so on. On
+ *         exit, the array A is overwritten by the upper triangular part
+ *         of the updated matrix.  Before entry with  UPLO = AtlasLower,
+ *         the  array  A  must contain  the lower triangular part of the 
+ *         @(syhe_comm) matrix  packed sequentially, column by  column,  so
+ *         that A[ 0 ] contains a(0,0), A[ 1 ] and A[ 2 ] contain a(1,0)
+ *         and a(2,0) respectively, and so on. On exit, the array  A  is
+ *         overwritten by  the  lower triangular part of the updated ma-
+ *         trix.
+@type chex zhex
+ *         Note that the imaginary parts of the  diagonal elements  need
+ *         not be set, they are assumed to be zero, and on exit they are
+ *         set to zero.
+@type real dble cplx zplx chex zhex
+@rout syr2 spr2
+ *
+@extract @(LINE)
+ */
+@rout spr2L
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@(sphp)r2L( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(sphp)r2( AtlasLower, ... )
+ *
+ * See ATL_@(pre)ref@(sphp)r2 for details.
+ *
+@extract @(LINE)
+ */
+@rout spr2U
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@(sphp)r2U( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(sphp)r2( AtlasUpper, ... )
+ *
+ * See ATL_@(pre)ref@(sphp)r2 for details.
+ *
+@extract @(LINE)
+ */
+@rout syr2L
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@(syhe)r2L( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(syhe)r2( AtlasLower, ... )
+ *
+ * See ATL_@(pre)ref@(syhe)r2 for details.
+ *
+@extract @(LINE)
+ */
+@rout syr2U
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@(syhe)r2U( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(syhe)r2( AtlasUpper, ... )
+ *
+ * See ATL_@(pre)ref@(syhe)r2 for details.
+ *
+@extract @(LINE)
+ */
+@rout gemm
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname)  performs one of the matrix-matrix operations
+ *
+ *    C := alpha * op( A ) * op( B ) + beta * C,
+ *
+ * where op( X ) is one of
+ *
+@type real dble
+ *    op( X ) = X   or   op( X ) = X'.
+@type cplx zplx
+ *    op( X ) = X   or   op( X ) = X'   or   op( X ) = conjg( X' ).
+@type real dble cplx zplx
+ *
+ * Alpha and beta are scalars, and A, B and C are matrices, with op( A )
+ * an m by k matrix,  op( B )  a  k by n matrix and  C an m by n matrix.
+ *
+@extract @(ARGUMENTS)
+ *
+@extract @(TRANSX_COMMENT) "A"
+ *
+@extract @(TRANSX_COMMENT) "B"
+ *
+ * M       (input)                       const int
+ *         On entry,  M  specifies  the  number  of rows  of the  matrix
+ *         op( A )  and  of the  matrix  C.  M  must  be at least  zero.
+ *         Unchanged on exit.
+ *
+ * N       (input)                       const int
+ *         On entry,  N  specifies  the number  of columns of the matrix
+ *         op( B )  and the number of columns of the matrix C. N must be
+ *         at least zero. Unchanged on exit.
+ *
+ * K       (input)                       const int
+ *         On entry,  K  specifies  the  number of columns of the matrix
+ *         op( A ) and the number of rows  of the matrix op( B ). K must
+ *         be at least  zero. Unchanged on exit.
+ *
+ * ALPHA   (input)                       @(sca_in_comm)
+ *         On entry, ALPHA specifies the scalar alpha.   When  ALPHA  is
+ *         supplied  as  zero  then the elements of the matrices A and B
+ *         need not be set on input. Unchanged on exit.
+ *
+ * A       (input)                       @(arr_in_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than   LDA * ka * @(size_comm),   where  ka  is k when
+ *         TRANSA = AtlasNoTrans, and is m otherwise. Before  entry with
+ *         TRANSA = AtlasNoTrans, the leading m by k part of the array A
+ *         must contain the matrix  A, otherwise the leading k by m part
+ *         of the array A must contain the matrix A. Unchanged on exit.
+ *
+ * LDA     (input)                       const int
+ *         On entry, LDA  specifies the leading dimension of A as decla-
+ *         red  in  the  calling  (sub) program.  LDA  must be  at least
+ *         MAX( 1, m ) when TRANS = AtlasNotrans, and MAX( 1, k ) other-
+ *         wise. Unchanged on exit. 
+ *
+ * B       (input)                       @(arr_in_comm)
+ *         On entry,  B  points  to an array of size equal to or greater
+ *         than   LDB * kb * @(size_comm),   where  kb  is n when
+ *         TRANSB = AtlasNoTrans, and is k otherwise. Before  entry with
+ *         TRANSB = AtlasNoTrans, the leading k by n part of the array B
+ *         must contain the matrix  B, otherwise the leading n by k part
+ *         of the array B must contain the matrix B. Unchanged on exit.
+ *
+ * LDB     (input)                       const int
+ *         On entry, LDB  specifies the leading dimension of A as decla-
+ *         red  in  the  calling  (sub) program.  LDB  must be  at least
+ *         MAX( 1, k )  when  TRANS = AtlasNotrans or TRANS = AtlasConj,
+ *         and MAX( 1, n ) otherwise. Unchanged on exit. 
+ *
+ * BETA    (input)                       @(sca_in_comm)
+ *         On entry,  BETA  specifies the scalar  beta.   When  BETA  is
+ *         supplied  as  zero  then  the  elements of the matrix C  need
+ *         not be set on input. Unchanged on exit.
+ *
+ * C       (input/output)                @(arr_in_out_comm)
+ *         On entry,  C  points  to an array of size equal to or greater
+ *         than   LDC * n * @(size_comm). Before  entry, the lea-
+ *         ding  m by n  part of the array C must contain the matrix  C,
+ *         except when beta is zero, in which case C need not be  set on
+ *         entry. On exit, the array C is overwritten by the  m by n ma-
+ *         trix ( alpha*op( A )*op( B ) + beta*C ).
+ *
+ * LDC     (input)                       const int
+ *         On entry, LDC  specifies the leading dimension of A as decla-
+ *         red  in  the  calling  (sub) program.  LDC  must be  at least
+ *         MAX( 1, m ). Unchanged on exit.
+ *
+@extract @(LINE)
+ */
+@rout gemmNN
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgemmNN( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)refgemm( AtlasNoTrans, AtlasNoTrans, ... )
+ *
+ * See ATL_@(pre)refgemm for details.
+ *
+@extract @(LINE)
+ */
+@rout gemmNT
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgemmNT( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)refgemm( AtlasNoTrans, AtlasTrans, ... )
+ *
+ * See ATL_@(pre)refgemm for details.
+ *
+@extract @(LINE)
+ */
+@rout gemmNC
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgemmNC( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)refgemm( AtlasNoTrans, AtlasConjTrans, ... )
+ *
+ * See ATL_@(pre)refgemm for details.
+ *
+@extract @(LINE)
+ */
+@rout gemmTN
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgemmTN( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)refgemm( AtlasTrans, AtlasNoTrans, ... )
+ *
+ * See ATL_@(pre)refgemm for details.
+ *
+@extract @(LINE)
+ */
+@rout gemmTT
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgemmTT( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)refgemm( AtlasTrans, AtlasTrans, ... )
+ *
+ * See ATL_@(pre)refgemm for details.
+ *
+@extract @(LINE)
+ */
+@rout gemmTC
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgemmTC( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)refgemm( AtlasTrans, AtlasConjTrans, ... )
+ *
+ * See ATL_@(pre)refgemm for details.
+ *
+@extract @(LINE)
+ */
+@rout gemmCN
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgemmCN( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)refgemm( AtlasConjTrans, AtlasNoTrans, ... )
+ *
+ * See ATL_@(pre)refgemm for details.
+ *
+@extract @(LINE)
+ */
+@rout gemmCT
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgemmCT( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)refgemm( AtlasConjTrans, AtlasTrans, ... )
+ *
+ * See ATL_@(pre)refgemm for details.
+ *
+@extract @(LINE)
+ */
+@rout gemmCC
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)refgemmCC( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)refgemm( AtlasConjTrans, AtlasConjTrans, ... )
+ *
+ * See ATL_@(pre)refgemm for details.
+ *
+@extract @(LINE)
+ */
+@rout symm
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname)  performs one of the matrix-matrix operations
+ *
+ *    C := alpha * A * B + beta * C,
+ *
+ * or
+ *
+ *    C := alpha * B * A + beta * C,
+ *
+ * where alpha and beta are scalars,  A is a @(syhe_comm) matrix and B and
+ * C are m by n matrices.
+ *
+@extract @(ARGUMENTS)
+ *
+ * SIDE    (input)                       const enum ATLAS_SIDE
+ *         On entry,  SIDE  specifies  whether the  @(syhe_comm)  matrix  A 
+ *         appears  on  the left or right in the operation as follows:
+ *
+ *            SIDE = AtlasLeft     C := alpha * A * B + beta * C,
+ *
+ *            SIDE = AtlasRight    C := alpha * B * A + beta * C.
+ *
+ *         Unchanged on exit.
+ *
+@extract @(UPLO_SY_COMMENT) "A"
+ *
+ * M       (input)                       const int
+ *         On entry,  M  specifies  the number  of rows of the matrix C.
+ *         M  must be at least zero. Unchanged on exit.
+ *
+ * N       (input)                       const int
+ *         On entry, N  specifies the number of columns of the matrix C.
+ *         N must be at least zero. Unchanged on exit.
+ *
+ * ALPHA   (input)                       @(sca_in_comm)
+ *         On entry, ALPHA specifies the scalar alpha.   When  ALPHA  is
+ *         supplied  as  zero  then the elements of the matrices A and B
+ *         need not be set on input.
+ *
+ * A       (input)                       @(arr_in_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than   LDA * ka * @(size_comm),  where ka  is  m  when
+ *         SIDE = AtlasLeft   and is  n  otherwise.  Before  entry  with
+ *         SIDE = AtlasLeft, the  m by m  part of the  array A must con-
+ *         tain the @(syhe_comm) matrix, such that when  UPLO = AtlasUpper,
+ *         the leading m by m upper triangular part of the array A  must
+ *         contain the upper triangular part of the @(syhe_comm) matrix and
+ *         the  strictly lower triangular part of  A  is not referenced,
+ *         and when  UPLO = AtlasLower, the  leading m by m lower trian-
+ *         gular part of the array A must contain the  lower  triangular
+ *         part of the @(syhe_comm) matrix and the  strictly upper triangu-
+ *         lar part of  A  is not referenced.
+ *         Before  entry  with  SIDE = AtlasRight,  the  n by n  part of
+ *         the  array  A  must contain the  @(syhe_comm) matrix,  such that
+ *         when  UPLO = AtlasUpper, the  leading n by n upper triangular
+ *         part of the array  A  must  contain the upper triangular part
+ *         of the  @(syhe_comm) matrix  and the  strictly  lower triangular
+ *         part of  A  is not  referenced,  and when  UPLO = AtlasLower,
+ *         the leading  n by n  lower  triangular part  of the  array  A
+ *         must  contain  the  lower  triangular part  of the  @(syhe_comm)
+ *         matrix and the  strictly  upper triangular part of  A  is not
+@type real dble cplx zplx
+ *         referenced. Unchanged on exit.
+@type chex zhex
+ *         referenced.
+ *         Note that the imaginary parts of the local entries correspon-
+ *         ding to the diagonal  elements of A need not be set and assu-
+ *         med to be zero. Unchanged on exit.
+@type real dble cplx zplx chex zhex
+ *
+ * LDA     (input)                       const int
+ *         On entry, LDA  specifies the leading dimension of A as decla-
+ *         red  in  the  calling  (sub) program.  LDA  must be  at least
+ *         MAX( 1, m ) when SIDE = AtlasLeft, and MAX( 1, n ) otherwise.
+ *         Unchanged on exit. 
+ *
+ * B       (input)                       @(arr_in_comm)
+ *         On entry,  B  points  to an array of size equal to or greater
+ *         than   LDB * n * @(size_comm).  Before entry, the lea-
+ *         ding m by n  part of the array  B  must contain the matrix B.
+ *         Unchanged on exit.
+ *
+ * LDB     (input)                       const int
+ *         On entry, LDB  specifies the leading dimension of B as decla-
+ *         red  in  the  calling  (sub) program.  LDB  must be  at least
+ *         MAX( 1, m ). wise. Unchanged on exit. 
+ *
+ * BETA    (input)                       @(sca_in_comm)
+ *         On entry,  BETA  specifies the scalar  beta.   When  BETA  is
+ *         supplied  as  zero  then  the  elements of the matrix C  need
+ *         not be set on input. Unchanged on exit.
+ *
+ * C       (input/output)                @(arr_in_out_comm)
+ *         On entry,  C  points  to an array of size equal to or greater
+ *         than   LDC * n * @(size_comm).  Before entry, the lea-
+ *         ding m by n part of the array  C  must contain the matrix  C,
+ *         except when beta is zero,  in which case C need not be set on
+ *         entry.  On exit, the array C is overwritten by the m by n up-
+ *         dated matrix.
+ *
+ * LDC     (input)                       const int
+ *         On entry, LDC  specifies the leading dimension of A as decla-
+ *         red  in  the  calling  (sub) program.  LDC  must be  at least
+ *         MAX( 1, m ). Unchanged on exit.
+ *
+@extract @(LINE)
+ */
+@rout symmLL
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@(syhe)mmLL( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(syhe)mm( AtlasLeft, AtlasLower, ... )
+ *
+ * See ATL_@(pre)ref@(syhe)mm for details.
+ *
+@extract @(LINE)
+ */
+@rout symmLU
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@(syhe)mmLU( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(syhe)mm( AtlasLeft, AtlasUpper, ... )
+ *
+ * See ATL_@(pre)ref@(syhe)mm for details.
+ *
+@extract @(LINE)
+ */
+@rout symmRL
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@(syhe)mmRL( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(syhe)mm( AtlasRight, AtlasLower, ... )
+ *
+ * See ATL_@(pre)ref@(syhe)mm for details.
+ *
+@extract @(LINE)
+ */
+@rout symmRU
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@(syhe)mmRU( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(syhe)mm( AtlasRight, AtlasUpper, ... )
+ *
+ * See ATL_@(pre)ref@(syhe)mm for details.
+ *
+@extract @(LINE)
+ */
+@rout syrk
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname)  performs one of the @(syhe_comm) rank k operations
+ *
+@type real dble cplx zplx
+ *    C := alpha * A * A' + beta * C,
+@type chex zhex
+ *    C := alpha * A * conjg( A' ) + beta * C,
+@type real dble cplx zplx chex zhex
+ *
+ * or
+ *
+@type real dble cplx zplx
+ *    C := alpha * A' * A + beta * C,
+@type chex zhex
+ *    C := alpha * conjg( A' ) * A + beta * C,
+@type real dble cplx zplx chex zhex
+ *
+@type real dble cplx zplx
+ * where alpha and beta are scalars, C is an n by n @(syhe_comm) matrix and
+ * A is an  n by k  matrix in the first case and a  k by n matrix in the
+ * second case.
+@type chex zhex
+ * where alpha and beta are  real  scalars, C is an n by n @(syhe_comm) ma-
+ * trix and  A is an n by k matrix in the first case and a k by n matrix
+ * in the second case.
+@type real dble cplx zplx chex zhex
+ *
+@extract @(ARGUMENTS)
+ *
+@extract @(UPLO_SY_COMMENT) "C"
+ *
+@extract @(TRANS_COMMENT)
+ *
+@type real dble
+ *            TRANS = AtlasNoTrans    C := alpha * A * A' + beta * C,
+ *
+ *            TRANS = AtlasTrans      C := alpha * A' * A + beta * C,
+ *
+ *            TRANS = AtlasConjTrans  C := alpha * A' * A + beta * C.
+@type cplx zplx
+ *            TRANS = AtlasNoTrans    C := alpha * A * A' + beta * C,
+ *
+ *            TRANS = AtlasTrans      C := alpha * A' * A + beta * C.
+@type chex zhex
+ *            TRANS = AtlasNoTrans    C := alpha * A*conjg( A )' + 
+ *                                         beta * C,
+ *
+ *            TRANS = AtlasConjTrans  C := alpha * conjg( A )'*A + 
+ *                                         beta * C.
+@type real dble cplx zplx chex zhex
+ *
+ *         Unchanged on exit.
+ *
+ * N       (input)                       const int
+ *         On entry, N specifies the order of the matrix C. N must be at
+ *         least zero. Unchanged on exit.
+ *
+ * K       (input)                       const int
+ *         On entry, with TRANS = AtlasNoTrans,  K  specifies the number
+ *         of columns of the matrix  A,  and otherwise,  K specifies the
+ *         number of rows of the  matrix A. K must be at least zero. Un-
+ *         changed on exit.
+ *
+@type real dble cplx zplx
+ * ALPHA   (input)                       @(sca_in_comm)
+ *         On entry, ALPHA specifies the scalar alpha.   When  ALPHA  is
+ *         supplied as zero  then  the  entries of the matrix A need not
+ *         be set on input. Unchanged on exit.
+@type chex zhex
+ * ALPHA   (input)                       @(rca_in_comm)
+ *         On entry, ALPHA specifies the real scalar alpha.  When  ALPHA
+ *         is supplied as zero  then  the  entries of the matrix  A need
+ *         not be set on input. Unchanged on exit.
+@type real dble cplx zplx chex zhex
+ *
+ * A       (input)                       @(arr_in_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than   LDA * ka * @(size_comm),   where  ka  is k when
+ *         TRANS = AtlasNoTrans, and is  n otherwise. Before entry  with
+ *         TRANS = AtlasNoTrans, the  leading n by k part of the array A
+ *         must contain the matrix A,  otherwise the leading k by n part
+ *         of the array A must contain the matrix A. Unchanged  on exit.
+ *
+ * LDA     (input)                       const int
+ *         On entry, LDA  specifies the leading dimension of A as decla-
+ *         red  in  the  calling  (sub) program.  LDA  must be  at least
+ *         MAX( 1, n ) when TRANS = AtlasNoTrans, and MAX( 1, k ) other-
+ *         wise. Unchanged on exit. 
+ *
+@type real dble cplx zplx
+ * BETA    (input)                       @(sca_in_comm)
+ *         On entry,  BETA  specifies the scalar  beta.   When  BETA  is
+@type chex zhex
+ * BETA    (input)                       @(rca_in_comm)
+ *         On entry,  BETA  specifies the real scalar beta. When BETA is
+@type real dble cplx zplx chex zhex
+ *         supplied as zero  then  the  entries of the matrix C need not
+ *         be set on input. Unchanged on exit.
+ *
+ * C       (input/output)                @(arr_in_out_comm)
+ *         On entry,  C  points  to an array of size equal to or greater
+ *         than   LDC * n * @(size_comm),   Before   entry   with
+ *         UPLO = AtlasUpper,  the  leading n by n upper triangular part
+ *         of the array C must contain the upper  triangular part of the
+ *         @(syhe_comm) matrix  and the strictly lower triangular part of C
+ *         is not referenced.  On exit, the upper triangular part of the
+ *         array  C  is  overwritten by the upper triangular part of the
+ *         updated  matrix.  Before  entry  with UPLO = AtlasLower,  the
+ *         leading n by n lower triangular part of the array C must con-
+ *         tain the lower  triangular  part  of the @(syhe_comm) matrix and
+ *         the strictly upper triangular part of C is not referenced. On
+ *         exit, the lower triangular part of the array C is overwritten
+ *         by the lower triangular part of the updated matrix.
+@type chex zhex
+ *         Note  that  the imaginary parts of the diagonal elements of C
+ *         need not  be  set,  they are assumed to be zero,  and on exit
+ *         they are set to zero.
+@type real dble cplx zplx chex zhex
+ *
+ * LDC     (input)                       const int
+ *         On entry, LDC  specifies the leading dimension of A as decla-
+ *         red  in  the  calling  (sub) program.  LDC  must be  at least
+ *         MAX( 1, n ). Unchanged on exit.
+ *
+@extract @(LINE)
+ */
+@rout syrkLN
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@(syhe)rkLN( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(syhe)rk( AtlasLower, AtlasNoTrans, ... )
+ *
+ * See ATL_@(pre)ref@(syhe)rk for details.
+ *
+@extract @(LINE)
+ */
+@rout syrkLT
+/*
+@extract @(PURPOSE)
+ *
+@type real dble cplx zplx
+ * ATL_@(pre)ref@(syhe)rkLT( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(syhe)rk( AtlasLower, AtlasTrans, ... )
+@type chex zhex
+ * ATL_@(pre)ref@(syhe)rkLC( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(syhe)rk( AtlasLower, AtlasConjTrans, ... )
+@type real dble cplx zplx chex zhex
+ *
+ * See ATL_@(pre)ref@(syhe)rk for details.
+ *
+@extract @(LINE)
+ */
+@rout syrkUN
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@(syhe)rkUN( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(syhe)rk( AtlasUpper, AtlasNoTrans, ... )
+ *
+ * See ATL_@(pre)ref@(syhe)rk for details.
+ *
+@extract @(LINE)
+ */
+@rout syrkUT
+/*
+@extract @(PURPOSE)
+ *
+@type real dble cplx zplx
+ * ATL_@(pre)ref@(syhe)rkUT( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(syhe)rk( AtlasUpper, AtlasTrans, ... )
+@type chex zhex
+ * ATL_@(pre)ref@(syhe)rkUC( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(syhe)rk( AtlasUpper, AtlasConjTrans, ... )
+@type real dble cplx zplx chex zhex
+ *
+ * See ATL_@(pre)ref@(syhe)rk for details.
+ *
+@extract @(LINE)
+ */
+@rout syr2k
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname)  performs one of the @(syhe_comm) rank 2k operations
+ *
+@type real dble cplx zplx
+ *    C := alpha * A * B' + alpha * B * A' + beta * C,
+@type chex zhex
+ *    C := alpha * A * conjg( B )' + B * conjg( alpha * A )' + beta * C,
+@type real dble cplx zplx chex zhex
+ *
+ * or
+ *
+@type real dble cplx zplx
+ *    C := alpha * A' * B + alpha * B' * A + beta * C,
+@type chex zhex
+ *    C := alpha * conjg( A' ) * B + conjg( alpha * B' ) * A + beta * C,
+@type real dble cplx zplx chex zhex
+ *
+@type real dble cplx zplx
+ * where alpha and beta are scalars, C is an n by n @(syhe_comm) matrix and
+ * A and B are n by k matrices in the first case and k by n  matrices in
+ * the second case.
+@type chex zhex
+ * where  alpha  and  beta are scalars with  beta  real,  C is an n by n
+ * @(syhe_comm) matrix and  A  and  B are n by k matrices in the first case
+ * and k by n matrices in the second case.
+@type real dble cplx zplx chex zhex
+ *
+@extract @(ARGUMENTS)
+ *
+@extract @(UPLO_SY_COMMENT) "C"
+ *
+@extract @(TRANS_COMMENT)
+ *
+@type real dble
+ *            TRANS = AtlasNoTrans    C := alpha*A*B' + alpha*B*A' +
+ *                                         beta*C,
+ *
+ *            TRANS = AtlasTrans      C := alpha*B'*A + alpha*A'*B +
+ *                                         beta*C,
+ *
+ *            TRANS = AtlasConjTrans  C := alpha*B'*A + alpha*A'*B + 
+ *                                         beta*C.
+@type cplx zplx
+ *            TRANS = AtlasNoTrans    C := alpha*A*B' + alpha*B*A' +
+ *                                         beta*C,
+ *
+ *            TRANS = AtlasTrans      C := alpha*B'*A + alpha*A'*B +
+ *                                         beta*C.
+@type chex zhex
+ *            TRANS = AtlasNoTrans
+ *            C := alpha * A * conjg( B' ) + B * conjg( alpha * A' ) +
+ *                 beta * C,
+ *
+ *            TRANS = AtlasConjTrans
+ *            C := alpha * conjg( A' ) * B + conjg( alpha * B' ) * A +
+ *                 beta * C.
+@type real dble cplx zplx chex zhex
+ *
+ *         Unchanged on exit.
+ *
+ * N       (input)                       const int
+ *         On entry, N specifies the order of the matrix C. N must be at
+ *         least zero. Unchanged on exit.
+ *
+ * K       (input)                       const int
+ *         On entry, with TRANS = AtlasNoTrans,  K  specifies the number
+ *         of columns of the matrices A and B, and otherwise K specifies
+ *         the  number  of  rows of the matrices  A and B.  K must be at
+ *         least zero. Unchanged on exit.
+ *
+ * ALPHA   (input)                       @(sca_in_comm)
+ *         On entry, ALPHA specifies the scalar alpha.   When  ALPHA  is
+ *         supplied  as  zero  then  the entries of the matrices A and B
+ *         need not be set on input. Unchanged on exit.
+ *
+ * A       (input)                       @(arr_in_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than   LDA * ka * @(size_comm),   where  ka  is k when
+ *         TRANS = AtlasNoTrans, and is  n otherwise. Before entry  with
+ *         TRANS = AtlasNoTrans, the  leading n by k part of the array A
+ *         must contain the matrix A,  otherwise the leading k by n part
+ *         of the array A must contain the matrix A. Unchanged  on exit.
+ *
+ * LDA     (input)                       const int
+ *         On entry, LDA  specifies the leading dimension of A as decla-
+ *         red  in  the  calling  (sub) program.  LDA  must be  at least
+ *         MAX( 1, n ) when TRANS = AtlasNoTrans, and MAX( 1, k ) other-
+ *         wise. Unchanged on exit. 
+ *
+ * B       (input)                       @(arr_in_comm)
+ *         On entry,  B  points  to an array of size equal to or greater
+ *         than   LDB * kb * @(size_comm),   where  kb  is k when
+ *         TRANS = AtlasNoTrans, and is  n otherwise. Before entry  with
+ *         TRANS = AtlasNoTrans, the  leading n by k part of the array B
+ *         must contain the matrix B,  otherwise the leading k by n part
+ *         of the array B must contain the matrix B. Unchanged  on exit.
+ *
+ * LDB     (input)                       const int
+ *         On entry, LDB  specifies the leading dimension of B as decla-
+ *         red  in  the  calling  (sub) program.  LDB  must be  at least
+ *         MAX( 1, n ) when TRANS = AtlasNoTrans, and MAX( 1, k ) other-
+ *         wise. Unchanged on exit. 
+ *
+@type real dble cplx zplx
+ * BETA    (input)                       @(sca_in_comm)
+ *         On entry,  BETA  specifies the scalar  beta.   When  BETA  is
+@type chex zhex
+ * BETA    (input)                       @(rca_in_comm)
+ *         On entry,  BETA  specifies the real scalar beta. When BETA is
+@type real dble cplx zplx chex zhex
+ *         supplied as zero  then  the  entries of the matrix C need not
+ *         be set on input. Unchanged on exit.
+ *
+ * C       (input/output)                @(arr_in_out_comm)
+ *         On entry,  C  points  to an array of size equal to or greater
+ *         than   LDC * n * @(size_comm),   Before   entry   with
+ *         UPLO = AtlasUpper,  the  leading n by n upper triangular part
+ *         of the array C must contain the upper  triangular part of the
+ *         @(syhe_comm) matrix  and the strictly lower triangular part of C
+ *         is not referenced.  On exit, the upper triangular part of the
+ *         array  C  is  overwritten by the upper triangular part of the
+ *         updated  matrix.  Before  entry  with UPLO = AtlasLower,  the
+ *         leading n by n lower triangular part of the array C must con-
+ *         tain the lower  triangular  part  of the @(syhe_comm) matrix and
+ *         the strictly upper triangular part of C is not referenced. On
+ *         exit, the lower triangular part of the array C is overwritten
+ *         by the lower triangular part of the updated matrix.
+@type chex zhex
+ *         Note  that  the imaginary parts of the diagonal elements of C
+ *         need not  be  set,  they are assumed to be zero,  and on exit
+ *         they are set to zero.
+@type real dble cplx zplx chex zhex
+ *
+ * LDC     (input)                       const int
+ *         On entry, LDC  specifies the leading dimension of A as decla-
+ *         red  in  the  calling  (sub) program.  LDC  must be  at least
+ *         MAX( 1, n ). Unchanged on exit.
+ *
+@extract @(LINE)
+ */
+@rout syr2kLN
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@(syhe)r2kLN( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(syhe)r2k( AtlasLower, AtlasNoTrans, ... )
+ *
+ * See ATL_@(pre)ref@(syhe)r2k for details.
+ *
+@extract @(LINE)
+ */
+@rout syr2kLT
+/*
+@extract @(PURPOSE)
+ *
+@type real dble cplx zplx
+ * ATL_@(pre)ref@(syhe)r2kLT( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(syhe)r2k( AtlasLower, AtlasTrans, ... )
+@type chex zhex
+ * ATL_@(pre)ref@(syhe)r2kLC( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(syhe)r2k( AtlasLower, AtlasConjTrans, ... )
+@type real dble cplx zplx chex zhex
+ *
+ * See ATL_@(pre)ref@(syhe)r2k for details.
+ *
+@extract @(LINE)
+ */
+@rout syr2kUN
+/*
+@extract @(PURPOSE)
+ *
+ * ATL_@(pre)ref@(syhe)r2kUN( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(syhe)r2k( AtlasUpper, AtlasNoTrans, ... )
+ *
+ * See ATL_@(pre)ref@(syhe)r2k for details.
+ *
+@extract @(LINE)
+ */
+@rout syr2kUT
+/*
+@extract @(PURPOSE)
+ *
+@type real dble cplx zplx
+ * ATL_@(pre)ref@(syhe)r2kUT( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(syhe)r2k( AtlasUpper, AtlasTrans, ... )
+@type chex zhex
+ * ATL_@(pre)ref@(syhe)r2kUC( ... )
+ *
+ * <=>
+ *
+ * ATL_@(pre)ref@(syhe)r2k( AtlasUpper, AtlasConjTrans, ... )
+@type real dble cplx zplx chex zhex
+ *
+ * See ATL_@(pre)ref@(syhe)r2k for details.
+ *
+@extract @(LINE)
+ */
+@rout trmm
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname)  performs one of the matrix-matrix operations
+ *
+ *    B := alpha * op( A ) * B,   or    B := alpha * B * op( A ),
+ *
+ * where alpha is a scalar, B is an m by n matrix, A is a unit,  or non-
+ * unit, upper or lower triangular matrix and op( X ) is one of 
+ *
+@type real dble 
+ *    op( X ) = X   or   op( X ) = X'.
+@type cplx zplx
+ *    op( X ) = X   or   op( X ) = X'   or   op( X ) = conjg( X' ).
+@type real dble cplx zplx
+ *
+@extract @(ARGUMENTS)
+ *
+ * SIDE    (input)                       const enum ATLAS_SIDE
+ *         On entry,  SIDE  specifies whether  op( A ) multiplies B from
+ *         the left or right as follows:
+ *
+ *            SIDE = AtlasLeft   B := alpha * op( A )* B,
+ *
+ *            SIDE = AtlasRight  B := alpha * B * op( A ).
+ *
+ *         Unchanged on exit.
+ *
+@extract @(UPLO_TR_COMMENT) "A"
+ *
+@extract @(TRANSX_COMMENT) "A"
+ *
+@extract @(DIAG_COMMENT) "A"
+ *
+ * M       (input)                       const int
+ *         On entry,  M  specifies the number of rows of  the  matrix B.
+ *         M  must be at least zero. Unchanged on exit.
+ *
+ * N       (input)                       const int
+ *         On entry, N  specifies the number of columns of the matrix B.
+ *         N  must be at least zero. Unchanged on exit.
+ *
+ * ALPHA   (input)                       @(sca_in_comm)
+ *         On entry,  ALPHA  specifies  the scalar  alpha. When ALPHA is
+ *         supplied as zero then the elements of the matrix B need   not
+ *         be set on input. Unchanged on exit.
+ *
+ * A       (input)                       @(arr_in_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than   LDA * k * @(size_comm),   where  k  is  m  when
+ *         SIDE = AtlasLeft  and  is  n  otherwise.  Before  entry  with
+ *         UPLO = AtlasUpper,  the  leading k by k upper triangular part
+ *         of the array  A  must contain the upper triangular matrix and
+ *         the  strictly lower triangular part of  A  is not referenced.
+ *         Before entry with UPLO = AtlasLower, the leading k by k lower
+ *         triangular part of the array  A must contain the lower trian-
+ *         gular  matrix and the strictly upper triangular part of  A is
+ *         not referenced.
+ *         Note  that when  DIAG = AtlasUnit,   the diagonal elements of
+ *         A  are  not referenced either,  but are assumed to be  unity.
+ *         Unchanged on exit.
+ *
+ * LDA     (input)                       const int
+ *         On entry, LDA  specifies the leading dimension of A as decla-
+ *         red  in  the  calling  (sub) program.  LDA  must be  at least
+ *         MAX( 1, m ) when SIDE = AtlasLeft, and MAX( 1, n ) otherwise.
+ *         Unchanged on exit. 
+ *
+ * B       (input/output)                @(arr_in_out_comm)
+ *         On entry,  B  points  to an array of size equal to or greater
+ *         than   LDB * n * @(size_comm).  Before entry, the lea-
+ *         ding  m by n  part of the array B must contain the matrix  B,
+ *         except when beta is zero,  in which case B need not be set on
+ *         entry.  On exit, the array B is overwritten by the m by n up-
+ *         dated matrix.
+ *
+ * LDB     (input)                       const int
+ *         On entry, LDB  specifies the leading dimension of B as decla-
+ *         red  in  the  calling  (sub) program.  LDB  must be  at least
+ *         MAX( 1, m ). Unchanged on exit. 
+ *
+@extract @(LINE)
+ */
+@rout trsm
+/*
+@extract @(PURPOSE)
+ *
+ * @(rname)  solves one of the matrix equations
+ *
+ *    op( A ) * X = alpha * B,   or  X * op( A ) = alpha * B,
+ *
+ * where alpha is a scalar, X and B are m by n matrices, A is a unit, or
+ * non-unit, upper or lower triangular matrix and op( A ) is one of
+ *
+@type real dble
+ *    op( A ) = A   or   op( A ) = A'.
+@type cplx zplx
+ *    op( A ) = A   or   op( A ) = A'   or   op( A ) = conjg( A' ).
+@type real dble cplx zplx
+ *
+ * The matrix X is overwritten on B.
+ *
+@extract @(ARGUMENTS)
+ *
+ * SIDE    (input)                       const enum ATLAS_SIDE
+ *         On entry, SIDE  specifies whether op( A ) appears on the left
+ *         or right of X as follows:
+ *
+ *            SIDE = AtlasLeft    op( A ) * X = alpha * B,
+ *
+ *            SIDE = AtlasRight   X * op( A ) = alpha * B.
+ *
+ *         Unchanged on exit.
+ *
+@extract @(UPLO_TR_COMMENT) "A"
+ *
+@extract @(TRANSX_COMMENT) "A"
+ *
+@extract @(DIAG_COMMENT) "A"
+ *
+ * M       (input)                       const int
+ *         On entry,  M  specifies the number of rows of  the  matrix B.
+ *         M  must be at least zero. Unchanged on exit.
+ *
+ * N       (input)                       const int
+ *         On entry, N  specifies the number of columns of the matrix B.
+ *         N  must be at least zero. Unchanged on exit.
+ *
+ * ALPHA   (input)                       @(sca_in_comm)
+ *         On entry,  ALPHA  specifies  the scalar  alpha. When ALPHA is
+ *         supplied as zero then the elements of the matrix B need   not
+ *         be set on input. Unchanged on exit.
+ *
+ * A       (input)                       @(arr_in_comm)
+ *         On entry,  A  points  to an array of size equal to or greater
+ *         than   LDA * k * @(size_comm),   where  k  is  m  when
+ *         SIDE = AtlasLeft  and  is  n  otherwise.  Before  entry  with
+ *         UPLO = AtlasUpper,  the  leading k by k upper triangular part
+ *         of the array  A  must contain the upper triangular matrix and
+ *         the  strictly lower triangular part of  A  is not referenced.
+ *         Before entry with UPLO = AtlasLower, the leading k by k lower
+ *         triangular part of the array  A must contain the lower trian-
+ *         gular  matrix and the strictly upper triangular part of  A is
+ *         not referenced.
+ *         Note  that when  DIAG = AtlasUnit,   the diagonal elements of
+ *         A  are  not referenced either,  but are assumed to be  unity.
+ *         Unchanged on exit.
+ *
+ * LDA     (input)                       const int
+ *         On entry, LDA  specifies the leading dimension of A as decla-
+ *         red  in  the  calling  (sub) program.  LDA  must be  at least
+ *         MAX( 1, m ) when SIDE = AtlasLeft, and MAX( 1, n ) otherwise.
+ *         Unchanged on exit. 
+ *
+ * B       (input/output)                @(arr_in_out_comm)
+ *         On entry,  B  points  to an array of size equal to or greater
+ *         than   LDB * n * @(size_comm).  Before entry, the lea-
+ *         ding  m by n  part of the array B must contain the matrix  B,
+ *         except when beta is zero,  in which case B need not be set on
+ *         entry.  On exit, the array B is overwritten by the m by n so-
+ *         lution matrix.
+ *
+ * LDB     (input)                       const int
+ *         On entry, LDB  specifies the leading dimension of B as decla-
+ *         red  in  the  calling  (sub) program.  LDB  must be  at least
+ *         MAX( 1, m ). Unchanged on exit. 
+ *
+@extract @(LINE)
+ */
+@rout trmmLLNN trmmLLNU trmmLLTN trmmLLTU trmmLLCN trmmLLCU
+/*
+@extract @(PURPOSE)
+ *
+@rout trmmLLNN
+ * ATL_@(pre)reftrmmLLNN( ... )
+@rout trmmLLNU
+ * ATL_@(pre)reftrmmLLNU( ... )
+@rout trmmLLTN
+ * ATL_@(pre)reftrmmLLTN( ... )
+@rout trmmLLTU
+ * ATL_@(pre)reftrmmLLTU( ... )
+@rout trmmLLCN
+ * ATL_@(pre)reftrmmLLCN( ... )
+@rout trmmLLCU
+ * ATL_@(pre)reftrmmLLCU( ... )
+@rout trmmLLNN trmmLLNU trmmLLTN trmmLLTU trmmLLCN trmmLLCU
+ *
+ * <=>
+ *
+ * ATL_@(pre)reftrmm
+@rout trmmLLNN
+ * ( AtlasLeft, AtlasLower, AtlasNoTrans, AtlasNonUnit, ... )
+@rout trmmLLNU
+ * ( AtlasLeft, AtlasLower, AtlasNoTrans, AtlasUnit, ... )
+@rout trmmLLTN
+ * ( AtlasLeft, AtlasLower, AtlasTrans, AtlasNonUnit, ... )
+@rout trmmLLTU
+ * ( AtlasLeft, AtlasLower, AtlasTrans, AtlasUnit, ... )
+@rout trmmLLCN
+ * ( AtlasLeft, AtlasLower, AtlasConjTrans, AtlasNonUnit, ... )
+@rout trmmLLCU
+ * ( AtlasLeft, AtlasLower, AtlasConjTrans, AtlasUnit, ... )
+@rout trmmLLNN trmmLLNU trmmLLTN trmmLLTU trmmLLCN trmmLLCU
+ *
+ * See ATL_@(pre)reftrmm for details.
+ *
+@extract @(LINE)
+ */
+@rout trmmLUNN trmmLUNU trmmLUTN trmmLUTU trmmLUCN trmmLUCU
+/*
+@extract @(PURPOSE)
+ *
+@rout trmmLUNN
+ * ATL_@(pre)reftrmmLUNN( ... )
+@rout trmmLUNU
+ * ATL_@(pre)reftrmmLUNU( ... )
+@rout trmmLUTN
+ * ATL_@(pre)reftrmmLUTN( ... )
+@rout trmmLUTU
+ * ATL_@(pre)reftrmmLUTU( ... )
+@rout trmmLUCN
+ * ATL_@(pre)reftrmmLUCN( ... )
+@rout trmmLUCU
+ * ATL_@(pre)reftrmmLUCU( ... )
+@rout trmmLUNN trmmLUNU trmmLUTN trmmLUTU trmmLUCN trmmLUCU
+ *
+ * <=>
+ *
+ * ATL_@(pre)reftrmm
+@rout trmmLUNN
+ * ( AtlasLeft, AtlasUpper, AtlasNoTrans, AtlasNonUnit, ... )
+@rout trmmLUNU
+ * ( AtlasLeft, AtlasUpper, AtlasNoTrans, AtlasUnit, ... )
+@rout trmmLUTN
+ * ( AtlasLeft, AtlasUpper, AtlasTrans, AtlasNonUnit, ... )
+@rout trmmLUTU
+ * ( AtlasLeft, AtlasUpper, AtlasTrans, AtlasUnit, ... )
+@rout trmmLUCN
+ * ( AtlasLeft, AtlasUpper, AtlasConjTrans, AtlasNonUnit, ... )
+@rout trmmLUCU
+ * ( AtlasLeft, AtlasUpper, AtlasConjTrans, AtlasUnit, ... )
+@rout trmmLUNN trmmLUNU trmmLUTN trmmLUTU trmmLUCN trmmLUCU
+ *
+ * See ATL_@(pre)reftrmm for details.
+ *
+@extract @(LINE)
+ */
+@rout trmmRLNN trmmRLNU trmmRLTN trmmRLTU trmmRLCN trmmRLCU
+/*
+@extract @(PURPOSE)
+ *
+@rout trmmRLNN
+ * ATL_@(pre)reftrmmRLNN( ... )
+@rout trmmRLNU
+ * ATL_@(pre)reftrmmRLNU( ... )
+@rout trmmRLTN
+ * ATL_@(pre)reftrmmRLTN( ... )
+@rout trmmRLTU
+ * ATL_@(pre)reftrmmRLTU( ... )
+@rout trmmRLCN
+ * ATL_@(pre)reftrmmRLCN( ... )
+@rout trmmRLCU
+ * ATL_@(pre)reftrmmRLCU( ... )
+@rout trmmRLNN trmmRLNU trmmRLTN trmmRLTU trmmRLCN trmmRLCU
+ *
+ * <=>
+ *
+ * ATL_@(pre)reftrmm
+@rout trmmRLNN
+ * ( AtlasRight, AtlasLower, AtlasNoTrans, AtlasNonUnit, ... )
+@rout trmmRLNU
+ * ( AtlasRight, AtlasLower, AtlasNoTrans, AtlasUnit, ... )
+@rout trmmRLTN
+ * ( AtlasRight, AtlasLower, AtlasTrans, AtlasNonUnit, ... )
+@rout trmmRLTU
+ * ( AtlasRight, AtlasLower, AtlasTrans, AtlasUnit, ... )
+@rout trmmRLCN
+ * ( AtlasRight, AtlasLower, AtlasConjTrans, AtlasNonUnit, ... )
+@rout trmmRLCU
+ * ( AtlasRight, AtlasLower, AtlasConjTrans, AtlasUnit, ... )
+@rout trmmRLNN trmmRLNU trmmRLTN trmmRLTU trmmRLCN trmmRLCU
+ *
+ * See ATL_@(pre)reftrmm for details.
+ *
+@extract @(LINE)
+ */
+@rout trmmRUNN trmmRUNU trmmRUTN trmmRUTU trmmRUCN trmmRUCU
+/*
+@extract @(PURPOSE)
+ *
+@rout trmmRUNN
+ * ATL_@(pre)reftrmmRUNN( ... )
+@rout trmmRUNU
+ * ATL_@(pre)reftrmmRUNU( ... )
+@rout trmmRUTN
+ * ATL_@(pre)reftrmmRUTN( ... )
+@rout trmmRUTU
+ * ATL_@(pre)reftrmmRUTU( ... )
+@rout trmmRUCN
+ * ATL_@(pre)reftrmmRUCN( ... )
+@rout trmmRUCU
+ * ATL_@(pre)reftrmmRUCU( ... )
+@rout trmmRUNN trmmRUNU trmmRUTN trmmRUTU trmmRUCN trmmRUCU
+ *
+ * <=>
+ *
+ * ATL_@(pre)reftrmm
+@rout trmmRUNN
+ * ( AtlasRight, AtlasUpper, AtlasNoTrans, AtlasNonUnit, ... )
+@rout trmmRUNU
+ * ( AtlasRight, AtlasUpper, AtlasNoTrans, AtlasUnit, ... )
+@rout trmmRUTN
+ * ( AtlasRight, AtlasUpper, AtlasTrans, AtlasNonUnit, ... )
+@rout trmmRUTU
+ * ( AtlasRight, AtlasUpper, AtlasTrans, AtlasUnit, ... )
+@rout trmmRUCN
+ * ( AtlasRight, AtlasUpper, AtlasConjTrans, AtlasNonUnit, ... )
+@rout trmmRUCU
+ * ( AtlasRight, AtlasUpper, AtlasConjTrans, AtlasUnit, ... )
+@rout trmmRUNN trmmRUNU trmmRUTN trmmRUTU trmmRUCN trmmRUCU
+ *
+ * See ATL_@(pre)reftrmm for details.
+ *
+@extract @(LINE)
+ */
+@rout trsmLLNN trsmLLNU trsmLLTN trsmLLTU trsmLLCN trsmLLCU
+/*
+@extract @(PURPOSE)
+ *
+@rout trsmLLNN
+ * ATL_@(pre)reftrsmLLNN( ... )
+@rout trsmLLNU
+ * ATL_@(pre)reftrsmLLNU( ... )
+@rout trsmLLTN
+ * ATL_@(pre)reftrsmLLTN( ... )
+@rout trsmLLTU
+ * ATL_@(pre)reftrsmLLTU( ... )
+@rout trsmLLCN
+ * ATL_@(pre)reftrsmLLCN( ... )
+@rout trsmLLCU
+ * ATL_@(pre)reftrsmLLCU( ... )
+@rout trsmLLNN trsmLLNU trsmLLTN trsmLLTU trsmLLCN trsmLLCU
+ *
+ * <=>
+ *
+ * ATL_@(pre)reftrsm
+@rout trsmLLNN
+ * ( AtlasLeft, AtlasLower, AtlasNoTrans, AtlasNonUnit, ... )
+@rout trsmLLNU
+ * ( AtlasLeft, AtlasLower, AtlasNoTrans, AtlasUnit, ... )
+@rout trsmLLTN
+ * ( AtlasLeft, AtlasLower, AtlasTrans, AtlasNonUnit, ... )
+@rout trsmLLTU
+ * ( AtlasLeft, AtlasLower, AtlasTrans, AtlasUnit, ... )
+@rout trsmLLCN
+ * ( AtlasLeft, AtlasLower, AtlasConjTrans, AtlasNonUnit, ... )
+@rout trsmLLCU
+ * ( AtlasLeft, AtlasLower, AtlasConjTrans, AtlasUnit, ... )
+@rout trsmLLNN trsmLLNU trsmLLTN trsmLLTU trsmLLCN trsmLLCU
+ *
+ * See ATL_@(pre)reftrsm for details.
+ *
+@extract @(LINE)
+ */
+@rout trsmLUNN trsmLUNU trsmLUTN trsmLUTU trsmLUCN trsmLUCU
+/*
+@extract @(PURPOSE)
+ *
+@rout trsmLUNN
+ * ATL_@(pre)reftrsmLUNN( ... )
+@rout trsmLUNU
+ * ATL_@(pre)reftrsmLUNU( ... )
+@rout trsmLUTN
+ * ATL_@(pre)reftrsmLUTN( ... )
+@rout trsmLUTU
+ * ATL_@(pre)reftrsmLUTU( ... )
+@rout trsmLUCN
+ * ATL_@(pre)reftrsmLUCN( ... )
+@rout trsmLUCU
+ * ATL_@(pre)reftrsmLUCU( ... )
+@rout trsmLUNN trsmLUNU trsmLUTN trsmLUTU trsmLUCN trsmLUCU
+ *
+ * <=>
+ *
+ * ATL_@(pre)reftrsm
+@rout trsmLUNN
+ * ( AtlasLeft, AtlasUpper, AtlasNoTrans, AtlasNonUnit, ... )
+@rout trsmLUNU
+ * ( AtlasLeft, AtlasUpper, AtlasNoTrans, AtlasUnit, ... )
+@rout trsmLUTN
+ * ( AtlasLeft, AtlasUpper, AtlasTrans, AtlasNonUnit, ... )
+@rout trsmLUTU
+ * ( AtlasLeft, AtlasUpper, AtlasTrans, AtlasUnit, ... )
+@rout trsmLUCN
+ * ( AtlasLeft, AtlasUpper, AtlasConjTrans, AtlasNonUnit, ... )
+@rout trsmLUCU
+ * ( AtlasLeft, AtlasUpper, AtlasConjTrans, AtlasUnit, ... )
+@rout trsmLUNN trsmLUNU trsmLUTN trsmLUTU trsmLUCN trsmLUCU
+ *
+ * See ATL_@(pre)reftrsm for details.
+ *
+@extract @(LINE)
+ */
+@rout trsmRLNN trsmRLNU trsmRLTN trsmRLTU trsmRLCN trsmRLCU
+/*
+@extract @(PURPOSE)
+ *
+@rout trsmRLNN
+ * ATL_@(pre)reftrsmRLNN( ... )
+@rout trsmRLNU
+ * ATL_@(pre)reftrsmRLNU( ... )
+@rout trsmRLTN
+ * ATL_@(pre)reftrsmRLTN( ... )
+@rout trsmRLTU
+ * ATL_@(pre)reftrsmRLTU( ... )
+@rout trsmRLCN
+ * ATL_@(pre)reftrsmRLCN( ... )
+@rout trsmRLCU
+ * ATL_@(pre)reftrsmRLCU( ... )
+@rout trsmRLNN trsmRLNU trsmRLTN trsmRLTU trsmRLCN trsmRLCU
+ *
+ * <=>
+ *
+ * ATL_@(pre)reftrsm
+@rout trsmRLNN
+ * ( AtlasRight, AtlasLower, AtlasNoTrans, AtlasNonUnit, ... )
+@rout trsmRLNU
+ * ( AtlasRight, AtlasLower, AtlasNoTrans, AtlasUnit, ... )
+@rout trsmRLTN
+ * ( AtlasRight, AtlasLower, AtlasTrans, AtlasNonUnit, ... )
+@rout trsmRLTU
+ * ( AtlasRight, AtlasLower, AtlasTrans, AtlasUnit, ... )
+@rout trsmRLCN
+ * ( AtlasRight, AtlasLower, AtlasConjTrans, AtlasNonUnit, ... )
+@rout trsmRLCU
+ * ( AtlasRight, AtlasLower, AtlasConjTrans, AtlasUnit, ... )
+@rout trsmRLNN trsmRLNU trsmRLTN trsmRLTU trsmRLCN trsmRLCU
+ *
+ * See ATL_@(pre)reftrsm for details.
+ *
+@extract @(LINE)
+ */
+@rout trsmRUNN trsmRUNU trsmRUTN trsmRUTU trsmRUCN trsmRUCU
+/*
+@extract @(PURPOSE)
+ *
+@rout trsmRUNN
+ * ATL_@(pre)reftrsmRUNN( ... )
+@rout trsmRUNU
+ * ATL_@(pre)reftrsmRUNU( ... )
+@rout trsmRUTN
+ * ATL_@(pre)reftrsmRUTN( ... )
+@rout trsmRUTU
+ * ATL_@(pre)reftrsmRUTU( ... )
+@rout trsmRUCN
+ * ATL_@(pre)reftrsmRUCN( ... )
+@rout trsmRUCU
+ * ATL_@(pre)reftrsmRUCU( ... )
+@rout trsmRUNN trsmRUNU trsmRUTN trsmRUTU trsmRUCN trsmRUCU
+ *
+ * <=>
+ *
+ * ATL_@(pre)reftrsm
+@rout trsmRUNN
+ * ( AtlasRight, AtlasUpper, AtlasNoTrans, AtlasNonUnit, ... )
+@rout trsmRUNU
+ * ( AtlasRight, AtlasUpper, AtlasNoTrans, AtlasUnit, ... )
+@rout trsmRUTN
+ * ( AtlasRight, AtlasUpper, AtlasTrans, AtlasNonUnit, ... )
+@rout trsmRUTU
+ * ( AtlasRight, AtlasUpper, AtlasTrans, AtlasUnit, ... )
+@rout trsmRUCN
+ * ( AtlasRight, AtlasUpper, AtlasConjTrans, AtlasNonUnit, ... )
+@rout trsmRUCU
+ * ( AtlasRight, AtlasUpper, AtlasConjTrans, AtlasUnit, ... )
+@rout trsmRUNN trsmRUNU trsmRUTN trsmRUTU trsmRUCN trsmRUCU
+ *
+ * See ATL_@(pre)reftrsm for details.
+ *
+@extract @(LINE)
+ */
+@rout !

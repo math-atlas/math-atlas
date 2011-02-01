@@ -1,0 +1,1407 @@
+@ifdef ! incd
+   @define incd @/home/rwhaley/Base/ATLAS@
+@endifdef
+@extract -b @(topd)/gen.inc what=crsetup
+@extract -b @(topd)/gen.inc what=cw @(cw99)
+
+@ROUT atlas_level1.h
+/*
+ * Prototypes ATLAS Level 1 functions not defined in atlas_aux.h
+ */
+#ifndef ATLAS_LEVEL1_H
+#define ATLAS_LEVEL1_H
+
+/*
+ * Many level one blas routines actually taken care of by atlas auxiliary
+ */
+#include "atlas_aux.h"
+
+float ATL_sdsdot(const int N, const float alpha, const float *X, 
+                 const int incX, const float *Y, const int incY);
+double ATL_dsdot(const int N, const float *X, const int incX, 
+                 const float *Y, const int incY);
+/*
+ * Routines with all four types
+ */
+@multidef styp double@^* float@^* double@^ float@^
+@multidef typ double float double float
+@whiledef pre z c d s
+void ATL_@(pre)swap(const int N, @(typ) *X, const int incX, 
+               @(typ) *Y, const int incY);
+int ATL_i@(pre)amax(const int N, const @(typ) *X, const int incX);
+
+   @undef typ
+   @undef styp
+@endwhile
+/*
+ * Routines with real types
+ */
+@multidef typ double float
+@whiledef pre d s
+void ATL_@(pre)rotg(@(typ) *a, @(typ) *b, @(typ) *c, @(typ) *s);
+void ATL_@(pre)rotmg(@(typ) *d1, @(typ) *d2, @(typ) *b1, const @(typ) b2, @(typ) *P);
+void ATL_@(pre)rot(const int N, @(typ) *X, const int incX, 
+              @(typ) *Y, const int incY, const @(typ) c, const @(typ) s);
+void ATL_@(pre)rotm(const int N, @(typ) *X, const int incX, 
+               @(typ) *Y, const int incY, const @(typ) *P);
+@(typ) ATL_@(pre)dot(const int N, const @(typ) *X, const int incX, 
+                     const @(typ) *Y, const int incY);
+void ATL_@(pre)ssq(const int N, const @(typ) *X, const int incX, 
+              @(typ) *scal0, @(typ) *ssq0);
+@(typ) ATL_@(pre)nrm2(const int N, const @(typ) *X, const int incX);
+@(typ) ATL_@(pre)asum(const int N, const @(typ) *X, const int incX);
+
+   @undef typ
+@endwhile
+/*
+ * Routines with complex types
+ */
+@multidef typ double float
+@multidef upr d s
+@whiledef pre z c
+void ATL_@(pre)@(upr)rot(const int N, @(typ) *X, const int incX, 
+               @(typ) *Y, const int incY, const @(typ) c, const @(typ) s);
+void ATL_@(pre)rotg(@(typ) *a, const @(typ) *b, @(typ) *c, @(typ) *s);
+void ATL_@(pre)dotu_sub(const int N, const @(typ) *X, const int incX, 
+                   const @(typ) *Y, const int incY, @(typ) *dot);
+void ATL_@(pre)dotc_sub(const int N, const @(typ) *X, const int incX, 
+                   const @(typ) *Y, const int incY, @(typ) *dot);
+void ATL_@(pre)ssq(const int N, const @(typ) *X, const int incX, 
+              @(typ) *scal0, @(typ) *ssq0);
+@(typ) ATL_@(upr)@(pre)nrm2(const int N, const @(typ) *X, const int incX);
+@(typ) ATL_@(upr)@(pre)asum(const int N, const @(typ) *X, const int incX);
+
+   @undef upr
+   @undef typ
+@endwhile
+
+#define ATL_casum ATL_scasum
+#define ATL_zasum ATL_dzasum
+#define ATL_cnrm2 ATL_scnrm2
+#define ATL_znrm2 ATL_dznrm2
+
+#endif
+@ROUT ATL_ROTG
+#include "atlas_misc.h"
+#include "atlas_level1.h"
+#include <math.h>
+
+#ifdef TREAL
+void Mjoin(PATL,rotg)
+(
+   TYPE *a,    /* INPUT : first rotational elimination parameter */
+               /* OUTPUT: r (see below) */
+   TYPE *b,    /* INPUT: second rotational elimination parameter */
+               /* OUTPUT: z (see below) */
+   TYPE *c,    /* OUTPUT: cosine */
+   TYPE *s     /* OUTPUT: sine */
+)
+/*
+ *   | c  s|*|a| = |r|
+ *   |-s  c| |b|   |0|
+ * This routine returns:
+ *    r = sigma * sqrt(a^2 + b^2), where 
+ *      sigma = sign(a) if abs(a) > abs(b)
+ *      sigma = sign(b) if abs(a) <= abs(b)
+ *    r is returned in *a
+ *
+ *    z = s     if (abs(a) > abs(b))
+ *    z = 1/c   if (abs(a) <= abs(b) && c != 0 && r != 0)
+ *    z = 1     if (abs(a) <= abs(b) && c == 0 && r != 0)
+ *    z = 0     if (r == 0)
+ *    z is returned in *b
+ *
+ *    c : cosign of the angle of (Givens) rotation
+ *    c = a/r   if (r != 0)
+ *    c = 1     if (r == 0)
+ *
+ *    s : sine of the angle of (Givens) rotation
+ *    s = b/r   if (r != 0)
+ *    s = 0     if (r == 0)
+ *    FURTHER DETAILS:
+ *       http://publib.boulder.ibm.com/infocenter/clresctr/vxrx/index.jsp?topic=/com.ibm.cluster.essl43.guideref.doc/am501_hsrotg.html
+ *
+ */
+{
+   TYPE roe, scal, r, z, aa, ab, t0, t1;
+
+   aa = Mabs(*a);
+   ab = Mabs(*b);
+   if (aa > ab) roe = *a;
+   else roe = *b;
+   scal = aa + ab;
+   if (scal != ATL_rzero)
+   {
+      t0 = aa / scal; t1 = ab / scal;
+      r = scal * sqrt(t0*t0 + t1*t1);
+      if (roe < ATL_rzero) r = -r;
+      *c = *a / r;
+      *s = *b / r;
+      if (aa > ab) z = *s;
+      else if (*c != ATL_rzero) z = ATL_rone / *c;
+      else z = ATL_rone;
+      *a = r;
+      *b = z;
+   }
+   else
+   {
+      *c = ATL_rone;
+      *s = *a = *b = ATL_rzero;
+   }
+}
+#else
+#define Msafnrm2(x_, nrm2_) \
+{ \
+   register TYPE w_ = Mabs(*(x_)), z_=Mabs((x_)[1]); \
+   if (w_ < z_) { (nrm2_) = w_; w_ = z_; z_ = (nrm2_); } \
+   if (z_ != ATL_rzero) \
+   { \
+      z_ /= w_; \
+      (nrm2_) = w_ * sqrt(ATL_rone + (z_*z_)); \
+   } \
+   else (nrm2_) = w_; \
+}
+
+void Mjoin(PATL,rotg)(TYPE *a, const TYPE *b, TYPE *c, TYPE *s)
+{
+   TYPE absA, absB, scal, norm, ra, ia, rb, ib;
+
+   Msafnrm2(a, absA);
+   if (absA != ATL_rzero)
+   {
+      Msafnrm2(b, absB);
+      scal = absA + absB;
+      ra = *a / scal; ia = a[1] / scal;
+      rb = *b / scal; ib = b[1] / scal;
+      norm = scal * sqrt( ra*ra+ia*ia + rb*rb+ib*ib );
+      ra = *a / absA;
+      ia = a[1] / absA;
+      rb = *b; ib = b[1];
+
+      *c = absA / norm;
+      *s = (ra * rb + ia * ib) / norm;
+      s[1] = (ia * rb - ra * ib) / norm;
+      *a = ra * norm;
+      a[1] = ia * norm;
+   }
+   else
+   {
+      *s = ATL_rone;
+      *c = s[1] = ATL_rzero;
+      *a = *b; a[1] = b[1];
+   }
+}
+#endif
+@ROUT ATL_rotmg
+#include "atlas_misc.h"
+#include "atlas_level1.h"
+
+void Mjoin(PATL,rotmg)(TYPE *D1, TYPE *D2, TYPE *X1, const TYPE y1, TYPE *P)
+{
+   TYPE flag = *P;
+   TYPE d1=(*D1), d2=(*D2), x1=(*X1);
+   TYPE h11, h21, h12, h22, tmp, u, p1, p2, q1, q2;
+   static const TYPE gam=ATL_typify(4096.0); 
+   static const TYPE gamsq = ATL_typify(4096.0) * ATL_typify(4096.0);
+   static const TYPE rgam = ATL_rone / ATL_typify(4096.0);
+   static const TYPE rgamsq = ATL_rone / 
+                              (ATL_typify(4096.0) * ATL_typify(4096.0));
+
+   if (d1 < ATL_rzero)
+   {
+      *P = ATL_rnone;
+      *D1 = *D2 = *X1 = P[1] = P[2] = P[3] = P[4] = ATL_rzero;
+      return;
+   }
+
+   p2 = d2 * y1;
+   if (p2 == ATL_rzero)
+   {
+      *P = -2.0;
+      return;
+   }
+
+   p1 = d1 * x1;
+   q2 = p2 * y1;
+   q1 = p1 * x1;
+   if (Mabs(q1) > Mabs(q2))
+   {
+      h21 = -y1 / x1;
+      h12 = p2 / p1;
+      u = ATL_rone - h12 * h21;
+      if (u <= ATL_rzero)
+      {
+         *P = ATL_rnone;
+         *D1 = *D2 = *X1 = P[1] = P[2] = P[3] = P[4] = ATL_rzero;
+         return;
+      }
+      flag = ATL_rzero;
+      d1 = d1 / u;
+      d2 = d2 / u;
+      x1 = x1 * u;  
+   }
+   else
+   {
+      if (q2 < ATL_rzero)
+      {
+         *P = ATL_rnone;
+         *D1 = *D2 = *X1 = P[1] = P[2] = P[3] = P[4] = ATL_rzero;
+         return;
+      }
+      flag = ATL_rone;
+      h11 = p1 / p2;
+      h22 = x1 / y1;
+      u = ATL_rone + h11 * h22;
+      tmp = d2 / u;
+      d2 = d1 / u;
+      d1 = tmp;
+      x1 = y1 * u;
+   }
+
+   if (d1 <= rgamsq)
+   {
+      if (d1 != ATL_rzero)
+      {
+         if (flag == ATL_rzero) { flag = ATL_rnone; h11 = h22 = ATL_rone; }
+         else if (flag > ATL_rzero) { flag = h21 = ATL_rnone; h12 = ATL_rone; }
+         do
+         {
+            d1 *= gamsq;
+            x1 *= rgam;
+            h11 *= rgam;
+            h12 *= rgam;
+         }
+         while (d1 <= gamsq);
+      }
+   }
+   else if (d1 >= gamsq)
+   {
+      if (flag == ATL_rzero) { flag = ATL_rnone; h11 = h22 = ATL_rone; }
+      else if (flag > ATL_rzero) { flag = h21 = ATL_rnone; h12 = ATL_rone; }
+      do
+      {
+         d1 *= rgamsq;
+         x1 *= gam;
+         h11 *= gam;
+         h12 *= gam;
+      }
+      while (d1 >= gamsq);
+   }
+
+   tmp = Mabs(d2);
+   if (tmp <= rgamsq)
+   {
+      if (d2 != ATL_rzero)
+      {
+         if (flag == ATL_rzero) { flag = ATL_rnone; h11 = h22 = ATL_rone; }
+         else if (flag > ATL_rzero) { flag = h21 = ATL_rnone; h12 = ATL_rone; }
+         if (d2 > ATL_rzero)
+         {
+            do
+            {
+               d2 *= gamsq;
+               h21 *= rgam;
+               h22 *= rgam;
+            }
+            while(d2 <= rgamsq);
+         }
+         else /* d2 < ATL_rzero */
+         {
+            tmp = -rgamsq;
+            do
+            {
+               d2 *= gamsq;
+               h21 *= rgam;
+               h22 *= rgam;
+            }
+            while(d2 >= tmp);
+         }
+      }
+   }
+   else if (tmp >= gamsq)
+   {
+      if (flag == ATL_rzero) { flag = ATL_rnone; h11 = h22 = ATL_rone; }
+      else if (flag > ATL_rzero) { flag = h21 = ATL_rnone; h12 = ATL_rone; }
+      if (d2 > ATL_rzero)
+      {
+         do
+         {
+            d2 *= rgamsq;
+            h21 *= gam;
+            h22 *= gam;
+         }
+         while(d2 >= gamsq);
+      }
+      else /* d2 < ATL_rzero */
+      {
+         tmp = -gamsq;
+         do
+         {
+            d2 *= rgamsq;
+            h21 *= gam;
+            h22 *= gam;
+         }
+         while(d2 <= tmp);
+      }
+   }
+   *D1 = d1;
+   *D2 = d2;
+   *X1 = x1;
+   *P = flag;
+   if (flag == ATL_rnone) { P[1] = h11; P[2] = h21; P[3] = h12; P[4] = h22; }
+   else if (flag == ATL_rzero) { P[2] = h21; P[3] = h12; }
+   else if (flag == ATL_rone) { P[1] = h11; P[4] = h22; }
+}
+@ROUT ATL_rot
+#include "atlas_misc.h"
+#include "atlas_level1.h"
+
+#ifdef TREAL
+
+void Mjoin(PATL,rot)(const int N, TYPE *X, const int incX, 
+                     TYPE *Y, const int incY, const TYPE c, const TYPE s)
+{
+   int i;
+   TYPE tmp;
+
+   if (c != ATL_rone || s != ATL_rzero)
+   {
+      if (incX == 1 && incY == 1)
+      {
+         for (i=0; i != N; i++)
+         {
+            tmp = c * X[i] + s * Y[i];
+            Y[i] = c * Y[i] - s * X[i];
+            X[i] = tmp;
+         }
+      }
+      else
+      {
+         for (i=N; i; i--, Y += incY, X += incX)
+         {
+            tmp = c * *X + s * *Y;
+            *Y = c * *Y - s * *X;
+            *X = tmp;
+         }
+      }
+   }
+}
+
+#else /* complex routine */
+void Mjoin(Mjoin(PATL,UPR),rot)
+   (const int N, TYPE *X, const int incx, TYPE *Y, const int incy, 
+    const TYPE c0, const TYPE s0)
+{
+   const register TYPE c = c0, s = s0;
+   register TYPE rx, ix, ry, iy;
+   const int incX = incx<<1, incY = incy<<1;
+   int i;
+
+   if (N > 0)
+   {
+      if (incx == 1 && incy == 1)
+      {
+         for (i=N; i; i--, X += 2, Y += 2)  /* maybe compiler unrolls */
+         {
+            rx = *X;  ix = X[1];
+            ry = *Y;  iy = Y[1];
+            *X   = c * rx + s * ry;
+            X[1] = c * ix + s * iy;
+            *Y   = c * ry - s * rx;
+            Y[1] = c * iy - s * ix;
+         }
+      }
+      else
+      {
+         for (i=N; i; i--, X += incX, Y += incY)  /* maybe compiler unrolls */
+         {
+            rx = *X;  ix = X[1];
+            ry = *Y;  iy = Y[1];
+            *X   = c * rx + s * ry;
+            X[1] = c * ix + s * iy;
+            *Y   = c * ry - s * rx;
+            Y[1] = c * iy - s * ix;
+         }
+      }
+   }
+}
+#endif
+@ROUT ATL_rotm
+#include "atlas_misc.h"
+#include "atlas_level1.h"
+
+void Mjoin(PATL,rotm)(const int N, TYPE *X, const int incX, 
+                      TYPE *Y, const int incY, const TYPE *P)
+{
+   int i;
+   const TYPE flag = *P;
+   TYPE h11, h21, h12, h22, w, z;
+
+   if (N <= 0 || flag == -2.0) return;
+   if (flag == ATL_rnone)
+   {
+      h11=P[1]; h21=P[2]; h12=P[3]; h22=P[4];
+      if (incX == 1 && incY == 1)
+      {
+         for (i=N; i; i--)
+         {
+            w = *X;
+            z = *Y;
+            *X++ = w * h11 + z * h12;
+            *Y++ = w * h21 + z * h22;
+         }
+      }
+      else
+      {
+         for (i=N; i; i--)
+         {
+            w = *X;
+            z = *Y;
+            *X = w * h11 + z * h12;
+            *Y = w * h21 + z * h22;
+            X += incX;
+            Y += incY;
+         }
+      }
+   }
+   else if (flag == ATL_rzero)
+   {
+      h21=P[2]; 
+      h12=P[3];
+      if (incX == 1 && incY == 1)
+      {
+         for (i=N; i; i--)
+         {
+            w = *X;
+            z = *Y;
+            *X++ = w + z * h12;
+            *Y++ = w * h21 + z;
+         }
+      }
+      else
+      {
+         for (i=N; i; i--)
+         {
+            w = *X;
+            z = *Y;
+            *X = w + z * h12;
+            *Y = w * h21 + z;
+            X += incX;
+            Y += incY;
+         }
+      }
+   }
+   else if (flag == ATL_rone)
+   {
+      h11=P[1];
+      h22=P[4];
+      if (incX == 1 && incY == 1)
+      {
+         for (i=N; i; i--)
+         {
+            w = *X;
+            z = *Y;
+            *X++ = w * h11 + z;
+            *Y++ = z * h22 - w;
+         }
+      }
+      else
+      {
+         for (i=N; i; i--)
+         {
+            w = *X;
+            z = *Y;
+            *X = w * h11 + z;
+            *Y = z * h22 - w;
+            X += incX;
+            Y += incY;
+         }
+      }
+   }
+}
+@ROUT ATL_swap
+#include "atlas_misc.h"
+#include "atlas_level1.h"
+
+void Mjoin(PATL,swap)(const int N, TYPE *X, const int incX, 
+                      TYPE *Y, const int incY)
+{
+   int i;
+   TYPE tmp;
+#ifdef TREAL
+   if (incX == 1 && incY == 1)
+   {
+      for (i=N; i; i--)
+      {
+         tmp = *X;
+         *X++ = *Y;
+         *Y++ = tmp;
+      }
+   }
+   else
+   {
+      for (i=N; i; i--, X += incX, Y += incY)
+      {
+         tmp = *X;
+         *X = *Y;
+         *Y = tmp;
+      }
+   }
+#else
+   const int incx = incX<<1, incy = incY<<1;
+   if (incX == 1 && incY == 1) Mjoin(PATLU,swap)(N<<1, X, 1, Y, 1);
+   else
+   {
+      for (i=N; i; i--, X += incx, Y += incy)
+      {
+         tmp = *X;
+         *X = *Y;
+         *Y = tmp;
+         tmp = X[1];
+         X[1] = Y[1];
+         Y[1] = tmp;
+      }
+   }
+#endif
+}
+@ROUT ATL_sdsdot
+#include "atlas_misc.h"
+#include "atlas_level1.h"
+
+float ATL_sdsdot(const int N, const float alpha, const float *X, 
+                 const int incX, const float *Y, const int incY)
+{
+   int i;
+   double dot = alpha;
+   for (i=N; i; i--, X += incX, Y += incY) dot += (double)(*X) * (double) (*Y);
+   return(dot);
+}
+@ROUT ATL_dsdot
+#include "atlas_misc.h"
+#include "atlas_level1.h"
+
+double ATL_dsdot(const int N, const float *X, const int incX, 
+                 const float *Y, const int incY)
+{
+   int i;
+   double dot = 0.0;
+   for (i=N; i; i--, X += incX, Y += incY) dot += (double)(*X) * (double) (*Y);
+   return(dot);
+}
+@ROUT ATL_dot
+#include "atlas_misc.h"
+#include "atlas_level1.h"
+
+TYPE Mjoin(PATL,dot)(const int N, const TYPE *X, const int incX, 
+                     const TYPE *Y, const int incY)
+{
+   int i;
+   TYPE dot = ATL_rzero;
+
+   if (incX == 1 && incY == 1) for (i=0; i != N; i++) dot += X[i] * Y[i];
+   else for (i=N; i; i--, X += incX, Y += incY) dot += *X * *Y;
+   return(dot);
+}
+@ROUT ATL_dotu_opt
+#include "atlas_misc.h"
+#include "atlas_level1.h"
+void Mjoin(PATL,dotu_sub)(const int N, const TYPE *x, const int incX, 
+                          const TYPE *y, const int incY, TYPE *dot)
+{
+   const int n8 = ((N-1) >> 3)<<3;
+   const int nr = ( n8 ? N-n8-1 : N );
+   const int incx = incX<<1, incy=incY<<1;
+   const TYPE *stX = x + ((n8+1)<<1);
+   register TYPE rx, ix, ry, iy, m0, m1, rd=ATL_rzero, id=ATL_rzero;
+
+   if (!N)
+   {
+      *dot = dot[1] = ATL_rzero;
+      return;
+   }
+   if (incX == 1 && incY == 1)
+   {
+      if (n8)
+      {
+         rx = *x; ry = *y;
+         ix = x[1]; iy = y[1];
+         x += 2; y += 2;
+         m0 = rx * ry;
+         m1 = rx * iy;
+         do
+         {
+            rx = *x;
+            rd += m0;
+            m0 = ix * iy;
+            iy = y[1];
+            id += m1;
+            m1 = ix * ry;
+            ry = *y;
+            rd -= m0;
+            m0 = rx * ry;
+            ix = x[1];
+            id += m1;
+            m1 = rx * iy;
+
+            rx = x[2];
+            rd += m0;
+            m0 = ix * iy;
+            iy = y[3];
+            id += m1;
+            m1 = ix * ry;
+            ry = y[2];
+            rd -= m0;
+            m0 = rx * ry;
+            ix = x[3];
+            id += m1;
+            m1 = rx * iy;
+
+            rx = x[4];
+            rd += m0;
+            m0 = ix * iy;
+            iy = y[5];
+            id += m1;
+            m1 = ix * ry;
+            ry = y[4];
+            rd -= m0;
+            m0 = rx * ry;
+            ix = x[5];
+            id += m1;
+            m1 = rx * iy;
+
+            rx = x[6];
+            rd += m0;
+            m0 = ix * iy;
+            iy = y[7];
+            id += m1;
+            m1 = ix * ry;
+            ry = y[6];
+            rd -= m0;
+            m0 = rx * ry;
+            ix = x[7];
+            id += m1;
+            m1 = rx * iy;
+
+            rx = x[8];
+            rd += m0;
+            m0 = ix * iy;
+            iy = y[9];
+            id += m1;
+            m1 = ix * ry;
+            ry = y[8];
+            rd -= m0;
+            m0 = rx * ry;
+            ix = x[9];
+            id += m1;
+            m1 = rx * iy;
+
+            rx = x[10];
+            rd += m0;
+            m0 = ix * iy;
+            iy = y[11];
+            id += m1;
+            m1 = ix * ry;
+            ry = y[10];
+            rd -= m0;
+            m0 = rx * ry;
+            ix = x[11];
+            id += m1;
+            m1 = rx * iy;
+
+            rx = x[12];
+            rd += m0;
+            m0 = ix * iy;
+            iy = y[13];
+            id += m1;
+            m1 = ix * ry;
+            ry = y[12];
+            rd -= m0;
+            m0 = rx * ry;
+            ix = x[13];
+            id += m1;
+            m1 = rx * iy;
+
+            rx = x[14];
+            rd += m0;
+            m0 = ix * iy;
+            iy = y[15];
+            id += m1;
+            m1 = ix * ry;
+            ry = y[14];
+            rd -= m0;
+            m0 = rx * ry;
+            ix = x[15];
+            id += m1;
+            m1 = rx * iy;
+
+            y += 16;
+            x += 16;
+         }
+         while (x != stX);
+         rd += m0;
+         m0 = ix * iy;
+         id += m1;
+         m1 = ix * ry;
+         rd -= m0;
+         id += m1;
+      }
+      if (nr)
+      {
+         stX = x + (nr<<1);
+         rx = *x; ry = *y;
+         ix = x[1]; iy = y[1];
+         x += 2; y += 2;
+         m0 = rx * ry;
+         m1 = rx * iy;
+         if (nr != 1)
+         {
+            do
+            {
+               rx = *x;
+               rd += m0;
+               m0 = ix * iy;
+               iy = y[1];
+               id += m1;
+               m1 = ix * ry;
+               ry = *y;
+               y += 2;
+               rd -= m0;
+               m0 = rx * ry;
+               ix = x[1];
+               id += m1;
+               x += 2;
+               m1 = rx * iy;
+            }
+            while (x != stX);
+         }
+         rd += m0;
+         m0 = ix * iy;
+         id += m1;
+         m1 = ix * ry;
+         rd -= m0;
+         id += m1;
+      }
+   }
+   else
+   {
+      stX = x + N*incx;
+      rx = *x; ry = *y;
+      ix = x[1]; iy = y[1];
+      x += incx; y += incy;
+      m0 = rx * ry;
+      m1 = rx * iy;
+      if (N != 1)
+      {
+         do
+         {
+            rx = *x;
+            rd += m0;
+            m0 = ix * iy;
+            iy = y[1];
+            id += m1;
+            m1 = ix * ry;
+            ry = *y;
+            y += incy;
+            rd -= m0;
+            m0 = rx * ry;
+            ix = x[1];
+            id += m1;
+            x += incx;
+            m1 = rx * iy;
+         }
+         while (x != stX);
+      }
+      rd += m0;
+      m0 = ix * iy;
+      id += m1;
+      m1 = ix * ry;
+      rd -= m0;
+      id += m1;
+   }
+   *dot = rd;
+   dot[1] = id;
+}
+@ROUT ATL_dotu
+   @define po @u@
+@ROUT ATL_dotc
+   @define po @c@
+@ROUT ATL_dotu ATL_dotc
+#include "atlas_misc.h"
+#include "atlas_level1.h"
+
+void Mjoin(PATL,dot@(po)_sub)(const int N, const TYPE *X, const int incX, 
+                          const TYPE *Y, const int incY, TYPE *dot)
+{
+   int i;
+   const int incx = incX<<1, incy = incY<<1;
+   TYPE rdot = ATL_rzero, idot = ATL_rzero, rx, ix, ry, iy;
+
+   if (incX == 1 && incY == 1)
+   {
+      for (i=N; i; i--, X += 2, Y += 2)
+      {
+         rx = *X;
+         ix = X[1];
+         ry = *Y;
+         iy = Y[1];
+@ROUT ATL_dotu
+         rdot += rx * ry - ix * iy;  
+         idot += ix * ry + rx * iy;
+@ROUT ATL_dotc
+         rdot += rx * ry + ix * iy;  
+         idot += rx * iy - ix * ry;
+@ROUT ATL_dotu ATL_dotc
+      }
+   }
+   else
+   {
+      for (i=N; i; i--, X += incx, Y += incy)
+      {
+         rx = *X;
+         ix = X[1];
+         ry = *Y;
+         iy = Y[1];
+@ROUT ATL_dotu
+         rdot += rx * ry - ix * iy;  
+         idot += ix * ry + rx * iy;
+@ROUT ATL_dotc
+         rdot += rx * ry + ix * iy;  
+         idot += rx * iy - ix * ry;
+@ROUT ATL_dotu ATL_dotc
+      }
+   }
+   *dot = rdot;
+   dot[1] = idot;
+}
+@ROUT ATL_nrm2
+#include "atlas_misc.h"
+#include "atlas_level1.h"
+#include <math.h>
+
+void Mjoin(PATL,ssq)(const int N, const TYPE *X, const int incX,
+                     TYPE *scal0, TYPE *ssq0)
+{
+#ifdef TREAL
+   int i;
+   TYPE t0, ssq=(*ssq0), ax, scal=(*scal0);
+
+   if (N < 1 || incX < 1) return;
+   for (i=N; i; i--, X += incX)
+   {
+      ax = *X;
+      if (ax != ATL_rzero)
+      {
+         ax = Mabs(ax);
+         if (scal < ax)
+         {
+            t0 = scal / ax;
+            t0 *= t0;
+            ssq = ATL_rone + ssq * t0;
+            scal = ax;
+         }
+         else
+         {
+            t0 = ax / scal;
+            ssq += t0*t0;
+         }
+      }
+   }
+   *scal0 = scal;
+   *ssq0 = ssq;
+#else
+   int i;
+   const int incx = incX<<1;
+   TYPE t0, ax, ssq=(*ssq0), scal=(*scal0);
+
+   if (N < 1 || incX < 1) return;
+   else if (incX == 1) Mjoin(PATLU,ssq)(N<<1, X, 1, scal0, ssq0);
+   else
+   {
+      for (i=N; i; i--, X += incx)
+      {
+         ax = *X;
+         if (ax != ATL_rzero)
+         {
+            ax = Mabs(ax);
+            if (scal < ax)
+            {
+               t0 = scal / ax;
+               t0 *= t0;
+               scal = ax;
+               ssq = ATL_rone + ssq * t0;
+            }
+            else
+            {
+               t0 = ax / scal;
+               ssq += t0*t0;
+            }
+         }
+         ax = X[1];
+         if (ax != ATL_rzero)
+         {
+            ax = Mabs(ax);
+            if (scal < ax)
+            {
+               t0 = scal / ax;
+               t0 *= t0;
+               scal = ax;
+               ssq = ATL_rone + ssq * t0;
+            }
+            else
+            {
+               t0 = ax / scal;
+               ssq += t0*t0;
+            }
+         }
+      }
+      *scal0 = scal;
+      *ssq0 = ssq;
+   }
+#endif
+}
+
+#ifdef TREAL
+TYPE Mjoin(PATL,nrm2)
+#else
+TYPE Mjoin(Mjoin(Mjoin(ATL_,UPR),PRE),nrm2)
+#endif
+   (const int N, const TYPE *X, const int incX)
+{
+   TYPE ssq=ATL_rone, scal=ATL_rzero;
+   if (N < 1 || incX < 1) return(ATL_rzero);
+   #ifdef TREAL
+      else if (N == 1) return(Mabs(*X));
+   #endif
+   Mjoin(PATL,ssq)(N, X, incX, &scal, &ssq);
+   return(scal * sqrt(ssq));
+}
+@ROUT ATL_nrm2_old
+#include "atlas_misc.h"
+#include "atlas_level1.h"
+#include <math.h>
+
+#ifdef TREAL
+TYPE Mjoin(PATL,nrm2)
+#else
+TYPE Mjoin(Mjoin(Mjoin(ATL_,UPR),PRE),nrm2)
+#endif
+   (const int N, const TYPE *X, const int incX)
+{
+#ifdef TREAL
+   int i;
+   TYPE t0, ssq, ax, scal=ATL_rzero;
+
+   if (N < 1 || incX < 1) return(ATL_rzero);
+   else if (N == 1) return(Mabs(*X));
+   else
+   {
+      for (i=N; i; i--, X += incX)
+      {
+         ax = *X;
+         if (ax != ATL_rzero)
+         {
+            ax = Mabs(ax);
+            if (scal < ax)
+            {
+               t0 = scal / ax;
+               t0 *= t0;
+               ssq = ATL_rone + ssq * t0;
+               scal = ax;
+            }
+            else
+            {
+               t0 = ax / scal;
+               ssq += t0*t0;
+            }
+         }
+      }
+   }
+   t0 = scal * sqrt(ssq);
+   return(t0);
+#else
+   int i;
+   const int incx = incX<<1;
+   TYPE t0, ax, ssq=ATL_rone, scal=ATL_rzero;
+   TYPE Mjoin(PATLU,nrm2)(const int N, const TYPE *X, const int incx);
+
+   if (N < 1 || incX < 1) return(ATL_rzero);
+   else if (incX == 1) return(Mjoin(PATLU,nrm2)(N<<1, X, 1));
+   else
+   {
+      for (i=N; i; i--, X += incx)
+      {
+         ax = *X;
+         if (ax != ATL_rzero)
+         {
+            ax = Mabs(ax);
+            if (scal < ax)
+            {
+               t0 = scal / ax;
+               t0 *= t0;
+               scal = ax;
+               ssq = ATL_rone + ssq * t0;
+            }
+            else
+            {
+               t0 = ax / scal;
+               ssq += t0*t0;
+            }
+         }
+         ax = X[1];
+         if (ax != ATL_rzero)
+         {
+            ax = Mabs(ax);
+            if (scal < ax)
+            {
+               t0 = scal / ax;
+               t0 *= t0;
+               scal = ax;
+               ssq = ATL_rone + ssq * t0;
+            }
+            else
+            {
+               t0 = ax / scal;
+               ssq += t0*t0;
+            }
+         }
+      }
+   }
+   t0 = scal * sqrt(ssq);
+   return(t0);
+#endif
+}
+@ROUT ATL_asum
+#include "atlas_misc.h"
+#include "atlas_level1.h"
+
+#ifdef TREAL
+TYPE Mjoin(PATL,asum)
+#else
+TYPE Mjoin(Mjoin(Mjoin(ATL_,UPR),PRE),asum)
+#endif
+   (const int N, const TYPE *X, const int incX)
+{
+#ifdef TREAL
+   int i;
+   TYPE sum=0.0;
+   if (incX == 1) for (i=N; i; i--, X++) sum += Mabs(*X);
+   else for (i=N; i; i--, X += incX) sum += Mabs(*X);
+   return(sum);
+#else
+   int i;
+   const int incx = incX<<1;
+   TYPE sum =0.0;
+   TYPE Mjoin(PATLU,asum)(const int N, const TYPE *X, const int incX);
+
+   if (incX == 1) sum = Mjoin(PATLU,asum)(N<<1, X, 1);
+   else
+   {
+      for (i=N; i; i--, X += incx) 
+      {
+         sum += Mabs(*X);
+         sum += Mabs(X[1]);
+      }
+   }
+   return(sum);
+#endif
+}
+@ROUT ATL_iamax
+#include "atlas_misc.h"
+#include "atlas_level1.h"
+
+#ifdef TREAL
+static int iamax_1(const int N, const TYPE *X, const int incX)
+{
+   const int n = (N >> 2)<<2;
+   const int nr = N - n;
+   const TYPE *x=X, *stX = X + n, *xmax;
+   register TYPE pmax=0.0, nmax=0.0, x0, x1, x2, x3;
+
+   if (N < 2) return(0);
+   if (n)
+   {
+      x0 = *x;
+      x1 = x[1];
+      x2 = x[2];
+      x3 = x[3];
+      x += 4;
+      xmax = x;
+      if (n != 4)
+      {
+         do
+         {
+            if (x0 <= pmax && x0 >= nmax) goto L10;
+            if (x0 > pmax)
+            {
+               nmax = -x0;
+               pmax =  x0;
+               xmax = x;
+            }
+            else /* if (x0 < nmax) */
+            {
+               pmax = -x0;
+               nmax =  x0;
+               xmax = x;
+            }
+L10 :        x0 = *x;
+            if (x1 <= pmax && x1 >= nmax) goto L20;
+            if (x1 > pmax)
+            {
+               nmax = -x1;
+               pmax =  x1;
+               xmax = x+1;
+            }
+            else /* if (x1 < nmax) */
+            {
+               pmax = -x1;
+               nmax =  x1;
+               xmax = x+1;
+            }
+L20 :        x1 = x[1];
+            if (x2 <= pmax && x2 >= nmax) goto L30;
+            if (x2 > pmax)
+            {
+               nmax = -x2;
+               pmax =  x2;
+               xmax = x+2;
+            }
+            else /* if (x2 < nmax) */
+            {
+               pmax = -x2;
+               nmax =  x2;
+               xmax = x+2;
+            }
+L30 :        x2 = x[2];
+            if (x3 <= pmax && x3 >= nmax) goto L40;
+            if (x3 > pmax)
+            {
+               nmax = -x3;
+               pmax =  x3;
+               xmax = x+3;
+            }
+            else /* if (x3 < nmax) */
+            {
+               pmax = -x3;
+               nmax =  x3;
+               xmax = x+3;
+            }
+L40 :        x3 = x[3];
+            x += 4;
+         }
+         while (x != stX);
+      }
+      if (x0 <= pmax && x0 >= nmax) goto L15;
+      if (x0 > pmax)
+      {
+         nmax = -x0;
+         pmax =  x0;
+         xmax = x;
+      }
+      else /* if (x0 < nmax) */
+      {
+         pmax = -x0;
+         nmax =  x0;
+         xmax = x;
+      }
+L15 :
+      if (x1 <= pmax && x1 >= nmax) goto L25;
+      if (x1 > pmax)
+      {
+         nmax = -x1;
+         pmax =  x1;
+         xmax = x+1;
+      }
+      else /* if (x1 < nmax) */
+      {
+         pmax = -x1;
+         nmax =  x1;
+         xmax = x+1;
+      }
+L25 :
+      if (x2 <= pmax && x2 >= nmax) goto L35;
+      if (x2 > pmax)
+      {
+         nmax = -x2;
+         pmax =  x2;
+         xmax = x+2;
+      }
+      else /* if (x2 < nmax) */
+      {
+         pmax = -x2;
+         nmax =  x2;
+         xmax = x+2;
+      }
+L35 :
+      if (x3 <= pmax && x3 >= nmax) goto L45;
+      if (x3 > pmax)
+      {
+         nmax = -x3;
+         pmax =  x3;
+         xmax = x+3;
+      }
+      else /* if (x3 < nmax) */
+      {
+         pmax = -x3;
+         nmax =  x3;
+         xmax = x+3;
+      }
+L45 :
+      xmax -= 4;
+   }
+   else xmax = X+1;
+   if (nr)
+   {
+      stX = x + nr;
+      do
+      {
+         x0 = *x++;
+         if (x0 <= pmax && x0 >= nmax) continue;
+         if (x0 > pmax)
+         {
+            nmax = -x0;
+            pmax =  x0;
+            xmax = x-1;
+         }
+         else /* if (x0 < nmax) */
+         {
+            pmax = -x0;
+            nmax =  x0;
+            xmax = x-1;
+         }
+      }
+      while (x != stX);
+   }
+   if (pmax == 0.0 || nmax == 0.0) return(0);
+   return(xmax-X);
+}
+#endif
+
+int Mjoin(Mjoin(ATL_i,PRE),amax)(const int N, const TYPE *X, const int incX)
+{
+#ifdef TREAL
+   int i, imax=N;
+   register TYPE pmax=0.0, nmax=0.0, x0;
+
+   if (incX == 1) return(iamax_1(N, X, 1));
+   if (N < 2) return(0);
+   for(i=N; i; i--, X += incX)
+   {
+      x0 = *X;
+      if (x0 <= pmax && x0 >= nmax) continue;
+      if (x0 > pmax)
+      {
+         nmax = -x0;
+         pmax =  x0;
+         imax = i;
+      }
+      else   /* if (x0 < nmax) */
+      {
+         nmax =  x0;
+         pmax = -x0;
+         imax = i;
+      }
+   }
+#else
+   int i, imax=N;
+   const int incx = incX<<1;
+   register TYPE pmax=0, nmax=0, x0, x1, tmp;
+   if (N > 1)
+   {
+      if (incX == 1)
+      {
+         for(i=N; i; i--, X += 2)
+         {
+            x0 = *X;
+            tmp = X[1];
+            x1 = x0 - tmp;
+            x0 += tmp;
+
+            if (x0 >= x1)
+            {
+               if (x0 <= pmax && x1 >= nmax) continue;
+               if (x0 > pmax) { pmax = x0; nmax = -x0; }
+               else { pmax = -x1; nmax = x1; }
+            }
+            else
+            {
+               if (x1 <= pmax && x0 >= nmax) continue;
+               if (x1 > pmax) { pmax = x1; nmax = -x1; }
+               else { pmax = -x0; nmax = x0; }
+            }
+            imax = i;
+         }
+      }
+      else
+      {
+         for(i=N; i; i--, X += incx)
+         {
+            x0 = *X;
+            tmp = X[1];
+            x1 = x0 - tmp;
+            x0 += tmp;
+
+            if (x0 >= x1)
+            {
+               if (x0 <= pmax && x1 >= nmax) continue;
+               if (x0 > pmax) { pmax = x0; nmax = -x0; }
+               else { pmax = -x1; nmax = x1; }
+            }
+            else
+            {
+               if (x1 <= pmax && x0 >= nmax) continue;
+               if (x1 > pmax) { pmax = x1; nmax = -x1; }
+               else { pmax = -x0; nmax = x0; }
+            }
+            imax = i;
+         }
+      }
+   }
+
+@beginskip
+   int i, imax=N;
+   const int incx = incX<<1;
+   register TYPE max=0.0, x0, x1;
+
+   if (N < 2) return(0);
+   for(i=N; i; i--, X += incx)
+   {
+      x0 = *X;
+      x0 = Mabs(x0);
+      x1 = X[1];
+      x1 = Mabs(x1);
+      x0 += x1;
+      if (x0 <= max) continue;
+      else
+      {
+         max = x0;
+         imax = i;
+      }
+   }
+@endskip
+#endif
+   return(N-imax);
+}
+@ROUT l1blastst
+#include "atlas_misc.h"
+#include "atlas_tst.h"
+#include "atlas_level1.h"
+#include <string.h>
+
+#define THRESH 50.0
+static TYPE eps;
+enum LVL1_ROUT {ROTG, ROTMG, ROT, ROTM, SWAP, SCAL, COPY ,AXPY, DOT,
+                DOTU, DOTC, NRM2, ASUM, IAMAX, ALLROUTS};
+
+trusted_dot(N_, X_, incX_, Y_, incY_, dot_) \
+   (dot_) = Mjoin(PATL,f77dot)(N_, X_, incX_, Y_, incY_);
+test_dot(N_, X_, incX_, Y_, incY_, dot_) \
+   (dot_) = Mjoin(PATL,dot)(N_, X_, incX_, Y_, incY_);
+
+trusted_dotu(N_, X_, incX_, Y_, incY_, dot_) \
+   Mjoin(PATL,f77dotu)(N_, X_, incX_, Y_, incY_, &(dot_));
+test_dotu(N_, X_, incX_, Y_, incY_, dot_) \
+   Mjoin(PATL,dotu)(N_, X_, incX_, Y_, incY_, &(dot_));
+
+TYPE dottst(const int N, const int incX, const int incY)
+{
+}

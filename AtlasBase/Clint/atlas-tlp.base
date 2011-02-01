@@ -1,0 +1,5856 @@
+@ifdef ! incd
+   @define incd @/home/rwhaley/Base/ATLAS@
+@endifdef
+@extract -b @(topd)/gen.inc what=crsetup
+@ROUT slvtst
+@extract -b @(topd)/gen.inc what=cw @(cw00)
+@ROUT lanbsrch
+@extract -b @(topd)/gen.inc what=cw @(cw09)
+@ROUT ilaenvF.c lanbtst
+@extract -b @(topd)/gen.inc what=cw @(cw08)
+@ROUT lanbtst slvtst lanbsrch
+#include "atlas_misc.h"
+#include "atlas_lapack.h"
+@ROUT lanbtst slvtst lanbsrch
+@skip #include "atlas_ptalias_lapack.h"
+@ROUT lanbtst lanbsrch
+#ifdef ATL_ilaenv
+   #undef ATL_ilaenv
+#endif
+@ROUT lanbtst slvtst lanbsrch
+#include "cblas.h"
+#include "atlas_cblastypealias.h"
+#include "atlas_tst.h"
+#include "atlas_level1.h"
+@ROUT lanbsrch
+#include "atlas_lvl3.h"
+@ROUT lanbtst lanbsrch
+#include <string.h>
+#include <ctype.h>
+@ROUT lanbtst slvtst lanbsrch
+#ifdef GCCWIN
+   ___main(){} __main(){} MAIN__(){} _MAIN_(){}
+#endif
+
+#define CBP Mjoin(cblas_,PRE)
+
+
+double time00();
+
+@ROUT lanbtst lanbsrch
+#define CAN_NB 32
+#include "C_lapack.h"
+
+static int Uplo_LA2ATL(int i)
+{
+   return( (i & LAUpper) ? AtlasUpper : AtlasLower);
+}
+static int Side_LA2ATL(int i)
+{
+   return( (i & LARight) ? AtlasRight : AtlasLeft);
+}
+
+@define rt @potrf@
+#ifdef TimeF77
+   #define test_@(rt)(Uplo_, N_, A_, lda_) \
+      ATL_assert(Mjoin(PATL,f77@(rt))(Uplo_LA2ATL(Uplo_), N_, A_, lda_) == 0)
+#elif defined(TimeC)
+   #include "clapack.h"
+   #define Cpotrf Mjoin(Mjoin(clapack_,PRE),@(rt))
+   #define test_@(rt)(Uplo_, N_, A_, lda_) \
+      ATL_assert(C@(rt)(AtlasColMajor, Uplo_LA2ATL(Uplo_), N_, A_, lda_) == 0)
+#else
+   #define test_@(rt)(Uplo_, N_, A_, lda_) \
+      ATL_assert(ATL_@(rt)(AtlasColMajor, Uplo_LA2ATL(Uplo_), N_, A_, lda_)==0)
+#endif
+@undef rt
+#ifdef TimeF77
+   #define test_getrf(Major_, M_, N_, A_, lda_, ipiv_) \
+      ATL_assert(Mjoin(PATL,f77getrf)(Major_, M_, N_, A_, lda_, ipiv_) == 0)
+#elif defined(TimeC)
+   #include "clapack.h"
+   #define Cgetrf Mjoin(Mjoin(clapack_,PRE),getrf)
+   #define test_getrf(Major_, M_, N_, A_, lda_, ipiv_) \
+      ATL_assert(Cgetrf(Major_, M_, N_, A_, lda_, ipiv_) == 0)
+#else
+   #define test_getrf(Major_, M_, N_, A_, lda_, ipiv_) \
+      ATL_assert(ATL_getrf(Major_, M_, N_, A_, lda_, ipiv_) == 0)
+#endif
+#ifndef TimeF77
+   #include "atlas_lapack.h"
+#endif
+@whiledef rt geqrf geqlf gerqf gelqf
+#ifdef TimeF77
+   #define test_@(rt)(Major_, M_, N_, A_, lda_, tau_, wrk_, lw_) \
+   ATL_assert(!Mjoin(PATL,f77@(rt))(Major_, M_, N_, A_, lda_, tau_, wrk_, lw_))
+#elif defined(TimeC)
+   #define test_@(rt)(Major_, M_, N_, A_, lda_, tau_, wrk_, lw_) \
+      ATL_assert(!ATL_@(rt)(M_, N_, A_, lda_, tau_, wrk_, lw_))
+#else
+   #include "clapack.h"
+   #define test_@(rt)(Major_, M_, N_, A_, lda_, tau_, wrk_, lw_) \
+      ATL_assert(!ATL_@(rt)(M_, N_, A_, lda_, tau_, wrk_, lw_))
+@skip      Mjoin(Mjoin(C_,PRE),@(rt)_wrk)(M_, N_, A_, lda_, tau_, wrk_, lw_)
+#endif
+@endwhile
+
+
+@ROUT slvtst
+#ifdef TimeF77
+   #define test_posv(Ord_, Uplo_, N_, NRHS_, A_, lda_, B_, ldb_) \
+    ATL_assert(Mjoin(PATL,f77posv)(Uplo_, N_, NRHS_, A_, lda_, B_, ldb_) == 0)
+   #define test_gesv(Ord_, N_, NRHS_, A_, lda_, ipiv_, B_, ldb_) \
+    ATL_assert(Mjoin(PATL,f77gesv)(N_, NRHS_, A_, lda_, ipiv_, B_, ldb_) == 0)
+   #define test_gels(Ord_, TA_, M_, N_, NRHS_, A_, lda_, B_, ldb_) \
+      ATL_assert(Mjoin(PATL,f77gels)(TA_, M_, N_, NRHS_, A_, lda_, B_, ldb_)==0)
+#else
+   #include "clapack.h"
+   #ifdef ATL_FULL_LAPACK
+      #include "C_lapack.h"
+   #endif
+   #define Cgesv Mjoin(Mjoin(clapack_,PRE),gesv)
+   #define Cposv Mjoin(Mjoin(clapack_,PRE),posv)
+   #define Cgels Mjoin(Mjoin(clapack_,PRE),gels)
+//   #define Cgels Mjoin(PATL,gels)
+   #define test_posv(Ord_, Uplo_, N_, NRHS_, A_, lda_, B_, ldb_) \
+   { \
+      int ii; \
+      ii = Cposv(Ord_, Uplo_, N_, NRHS_, A_, lda_, B_, ldb_); \
+      if (ii) fprintf(stderr, "posv returns %d!!\n", ii); \
+      fflush(stderr); \
+   }
+   #define test_gesv(Ord_, N_, NRHS_, A_, lda_, ipiv_, B_, ldb_) \
+      ATL_assert(Cgesv(Ord_, N_, NRHS_, A_, lda_, ipiv_, B_, ldb_) == 0)
+   #define test_gels(Ord_, TA_, M_, N_, NRHS_, A_, lda_, B_, ldb_) \
+       ATL_assert(!Cgels(Ord_,TA_, M_, N_, NRHS_, A_, lda_, B_, ldb_));
+#endif
+
+void PrintUsage(char *nam)
+{
+   fprintf(stderr, "USAGE: %s -n <n> -N <N0 NN incN> -r <nrhs> -R <R0 RN, incR> -T <thresh> -F <mflop> -a <lagap> -b <ldbgap> -C <cache size> -O <norders> <ord1> ... <ordN> -U <nuplos> <uplo1> ... <uploN>\n", nam);
+   fprintf(stderr, "   uplos can be 'u'/'l' for LLt, 'q' for QR, else LU\n");
+   exit(-1);
+}
+
+void GetFlags(int nargs, char **args, int *N0, int *NN, int *incN, 
+              int *R0, int *RN, int *incR, int *ldagap, int *ldbgap,
+              double *thresh, int *nord, enum CBLAS_ORDER **Ord, 
+              int *nuplo, int **Uplo, int *CS, int *MFLOP, int *QR)
+{
+   int i, j;
+   char ch;
+
+   *QR = 0;
+   *N0 = 100; *NN = 1000; *incN = 100;
+   *R0 = *RN = *incR = 1;
+   *ldagap = *ldbgap = 0;
+   *nord = *nuplo = 0;
+   *Ord = NULL;
+   *Uplo = NULL;
+   *thresh = 100.0;
+   #ifdef L2SIZE
+      *CS = L2SIZE;
+   #else
+      *CS = 4*1024*1024;
+   #endif
+   *MFLOP = 0;
+
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-') PrintUsage(args[0]);
+      switch(args[i][1])
+      {
+      case 'Q':
+         *QR = atoi(args[++i]);
+         break;
+      case 'T':
+         *thresh = atof(args[++i]);
+         break;
+      case 'C':
+         *CS = 1024*atoi(args[++i]);
+         break;
+      case 'a':
+         *ldagap = atoi(args[++i]);
+         break;
+      case 'b':
+         *ldbgap = atoi(args[++i]);
+         break;
+      case 'n':
+         *N0 = *NN = *incN = atoi(args[++i]);
+         break;
+      case 'r':
+         *R0 = *RN = *incR = atoi(args[++i]);
+         break;
+      case 'R':
+         *R0 = atoi(args[++i]);
+         *RN = atoi(args[++i]);
+         *incR = atoi(args[++i]);
+         break;
+      case 'N':
+         *N0 = atoi(args[++i]);
+         *NN = atoi(args[++i]);
+         *incN = atoi(args[++i]);
+         break;
+      case 'F':
+         fprintf(stderr, "This tester cannot time with multiple calls!!\n");
+         exit(-1);
+         *MFLOP = atoi(args[++i]);
+         break;
+      case 'O':
+         *nord  = atoi(args[++i]);
+         if (*nord  <= 0) PrintUsage(args[0]);
+         *Ord  = malloc(*nord  * sizeof(enum ATLAS_ORDER));
+         ATL_assert(*Ord);
+         for (j=0; j != *nord; j++)
+         {
+            if (args[i] == NULL) PrintUsage(args[0]);
+            ch = *args[++i];
+            if (ch == 'c' || ch == 'C') (*Ord)[j] = AtlasColMajor;
+            else if (ch == 'r' || ch == 'R') (*Ord)[j] = AtlasRowMajor;
+            else PrintUsage(args[0]);
+         }
+         break;
+      case 'U':
+         *nuplo = atoi(args[++i]);
+         if (*nuplo <= 0) PrintUsage(args[0]);
+         *Uplo = malloc(*nuplo * sizeof(int));
+         ATL_assert(*Uplo);
+         for (j=0; j != *nuplo; j++)
+         {
+            if (args[i] == NULL) PrintUsage(args[0]);
+            ch = *args[++i];
+            if (ch == 'u' || ch == 'U') (*Uplo)[j] = AtlasUpper;
+            else if (ch == 'l' || ch == 'L') (*Uplo)[j] = AtlasLower;
+            else if (ch == 'q' || ch == 'Q') (*Uplo)[j] = 1;
+            else (*Uplo)[j] = 0;
+         }
+         break;
+      default:
+         PrintUsage(args[0]);
+      }
+   }
+   if (*nuplo == 0)
+   {
+     *nuplo = 1;
+      *Uplo = malloc(sizeof(int));
+      ATL_assert(*Uplo);
+      **Uplo = 0;
+   }
+   if (*nord == 0)
+   {
+      *nord = 1;
+      *Ord = malloc(sizeof(enum CBLAS_ORDER));
+      ATL_assert(*Ord);
+      **Ord = AtlasColMajor;
+   }
+}
+
+@ROUT GetMats slvtst lanbtst lanbsrch
+TYPE *GetGE(int M, int N, int lda)
+{
+   TYPE *A;
+   A = malloc(ATL_MulBySize(lda)*N);
+   if (A) Mjoin(PATL,gegen)(M, N, A, lda, M*N+lda);
+   return(A);
+}
+
+static void CrapUpTri
+   (enum CBLAS_ORDER Order, enum CBLAS_UPLO Uplo, int N, TYPE *A, int lda)
+/*
+ * Puts crap on opposite triangle to Uplo, so as to ensure error on use
+ */
+{
+   const int lda2=(lda SHIFT), ldap1=((lda+1)SHIFT);
+   int j;
+
+   if (Order == CblasRowMajor)
+   {
+      if (Uplo == CblasLower) Uplo = CblasUpper;
+      else Uplo = CblasLower;
+   }
+   if (Uplo == CblasLower)
+   {
+      A += lda2;
+      for (j=1; j < N; j++, A += lda2)
+         Mjoin(PATLU,set)(j SHIFT, -50000000.0, A, 1);
+   }
+   else
+   {
+      for (j=0; j < N; j++, A += ldap1)
+         Mjoin(PATLU,set)((N-j-1)SHIFT, -5500000.0, A+(1 SHIFT), 1);
+   }
+}
+
+static TYPE *DupMat(enum ATLAS_ORDER Order, int M, int N, TYPE *A, int lda, 
+                    int ldc)
+/*
+ * returns a duplicate of the A matrix, with new leading dimension
+ */
+{
+   int i, j, M2;
+   const int ldc2 = (ldc SHIFT), lda2 = (lda SHIFT);
+   TYPE *C;
+   if (Order == CblasRowMajor)
+   {
+      i = M;
+      M = N; 
+      N = i;
+   }
+   M2 = M SHIFT;
+   ATL_assert(ldc >= M);
+   C = malloc(ATL_MulBySize(ldc)*N);
+   ATL_assert(C);
+   for (j=0; j != N; j++)
+   {
+      for (i=0; i != M2; i++) C[i] = A[i];
+      C += ldc2; 
+      A += lda2;
+   }
+   return(C-N*ldc2);
+}
+
+#include <math.h>
+static void PosDefGen
+   (enum CBLAS_ORDER Order, enum CBLAS_UPLO Uplo, int N, TYPE *A, int lda)
+/*
+ * Generates a reasonably conditioned positive definite matrix
+ */
+{
+   TYPE *aa, *L;
+   TYPE val, bias, sign;
+   int j;
+   const int lda2=(lda SHIFT), ldap1=((lda+1)SHIFT);
+
+   Mjoin(PATL,gegen)(N, N, A, lda, N*N+lda);
+   if (Order == CblasRowMajor)
+   {
+      if (Uplo == CblasLower) Uplo = CblasUpper;
+      else Uplo = CblasLower;
+   }
+/*
+ * It should be enough to make diagonal non-zero, but small numbers are very
+ * ill-conditioned, and therefore may not be solvable in practice.  Therefore,
+ * scale the diagonal by log(N).
+ */
+   bias = log(N);
+   bias = (bias < 1.0) ? 1.0 : bias;
+   for (aa=A,j=0; j < N; j++, aa += ldap1)
+   {
+      val = *aa;
+      sign = (val < 0.0) ? -1.0 : 1.0;
+      val = (val < 0.0) ? -val : val;
+      val = (val+bias)*sign;
+      *aa = val;
+   }
+/*
+ * For imaginary numbers, force zero imaginary component on diagonal
+ */
+   #ifdef TCPLX
+      Mjoin(Mjoin(ATL_,UPR),set)(N, 0.0, A+1, ldap1);
+   #endif
+/*
+ * Zero non-active portion of matrix
+ */
+   if (Uplo == CblasLower)
+   {
+      for (j=0, aa=A; j < N; j++, aa += lda2)
+         Mjoin(PATL,zero)(j, aa, 1);
+   }
+   else
+   {
+      for (j=0, aa=A+(1 SHIFT); j < N; j++, aa += ldap1)
+         Mjoin(PATL,zero)(N-j-1, aa, 1);
+   }
+/*
+ * Force A = L * L', where L is Lower or Upper as requested, to make pos def
+ */
+   L = DupMat(CblasColMajor, N, N, A, lda, N);
+   #ifdef TCPLX
+      Mjoin(CBP,herk)(CblasColMajor, Uplo, CblasNoTrans, N, N, ATL_rone, L, N, 
+                      ATL_rzero, A, lda);
+   #else
+      Mjoin(CBP,syrk)(CblasColMajor, Uplo, CblasNoTrans, N, N, ATL_rone, L, N, 
+                      ATL_rzero, A, lda);
+#endif
+   free(L);
+/*
+ * Make sure non-triangular elements are bad for error detection
+ */
+   CrapUpTri(CblasColMajor, Uplo, N, A, lda);
+}
+
+static void MakeHEDiagDom
+   (enum CBLAS_ORDER Order, enum CBLAS_UPLO Uplo, int N, TYPE *A, int lda)
+/*
+ * Makes hermitian matrix diagonally dominant
+ */
+{
+   int j;
+   const int lda2=(lda SHIFT), ldap1=((lda+1)SHIFT);
+
+   if (Order == CblasRowMajor)
+   {
+      if (Uplo == CblasLower) Uplo = CblasUpper;
+      else Uplo = CblasLower;
+   }
+   if (Uplo == CblasLower)
+   {
+      for (j=0; j < N; j++, A += ldap1)
+      {
+         #ifdef TREAL
+            *A = 1.0 + cblas_asum(N-j, A, 1);
+            *A += cblas_asum(j, A-lda*j, lda);
+         #elif defined(SCPLX)
+            *A = 1.0 + cblas_scasum(N-j, A, 1);
+            *A += cblas_scasum(j, A-lda2*j, lda);
+         #else
+            *A = 1.0 + cblas_dzasum(N-j, A, 1);
+            *A += cblas_dzasum(j, A-lda2*j, lda);
+         #endif
+         #ifdef TCPLX
+            A[1] = ATL_rzero;
+         #endif
+      }
+   }
+   else /* Upper */
+   {
+      for (j=0; j < N; j++, A += ldap1)
+      {
+         #ifdef TREAL
+            *A = 1.0 + cblas_asum(N-j, A, lda);
+            *A += cblas_asum(j, A-j, 1);
+         #else
+            #ifdef SCPLX
+               *A = 1.0 + cblas_scasum(N-j, A, lda);
+               *A += cblas_scasum(j, A-j*2, 1);
+            #else
+               *A = 1.0 + cblas_dzasum(N-j, A, lda);
+               *A += cblas_dzasum(j, A-j*2, 1);
+            #endif
+            A[1] = ATL_rzero;
+         #endif
+      }
+   }
+}
+
+static void hegen
+   (enum CBLAS_ORDER Order, enum CBLAS_UPLO Uplo, int N, TYPE *A, int lda)
+{
+#ifdef POSDEFGEN
+   PosDefGen(Order, Uplo, N, A, lda);
+#else
+   MakeHEDiagDom(Order, Uplo, N, A, lda);
+   CrapUpTri(Order, Uplo, N, A, lda);
+#endif
+}
+
+static TYPE *GetHE(enum CBLAS_ORDER Order, enum CBLAS_UPLO Uplo, int N, int lda)
+/*
+ * Gets symm/hemm matrix, and puts a bunch of crap in other side to make
+ * sure factorization doesn't use it, and makes pos def by making it
+ * diag dominant
+ */
+{
+   TYPE *A;
+
+   A = GetGE(N, N, lda);
+   if (!A) return(NULL);
+   hegen(Order, Uplo, N, A, lda);
+   return(A);
+}
+@ROUT GetMats
+
+static void ReflectMat
+   (enum CBLAS_ORDER Order, enum CBLAS_UPLO Uplo, int N, TYPE *A, int lda)
+/*
+ * Takes a symmetric matrix, and makes it general by reflecting across diagonal
+ */
+{
+   const int lda2 = (lda SHIFT);
+   int j;
+
+   if (Order == CblasRowMajor)
+   {
+      if (Uplo == CblasUpper) Uplo = CblasLower;
+      else Uplo = CblasUpper;
+   }
+   if (Uplo == CblasUpper)
+   {
+      for (j=0; j < N; j++) cblas_copy(j, A+j*lda2, 1, A+(j SHIFT), lda);
+   }
+   else /* lower matrix */
+   {
+      for (j=0; j < N; j++) cblas_copy(j, A+(j SHIFT), lda,  A+j*lda2, 1);
+   }
+}
+static void ReflectHE
+   (enum CBLAS_ORDER Order, enum CBLAS_UPLO Uplo, int N, TYPE *A, int lda)
+/*
+ * Reflects matrix, makes it hermitian
+ */
+{
+   #ifdef TREAL
+      ReflectMat(Order, Uplo, N, A, lda);
+   #else
+   const int lda2 = (lda SHIFT);
+   int j;
+
+   if (Order == CblasRowMajor)
+   {
+      if (Uplo == CblasUpper) Uplo = CblasLower;
+      else Uplo = CblasUpper;
+   }
+   if (Uplo == CblasUpper)
+   {
+      for (j=0; j < N; j++)
+      {
+         cblas_copy(j, A+j*lda2, 1, A+(j SHIFT), lda);
+@beginskip
+         if (Order == CblasRowMajor)
+            Mjoin(PATLU,scal)(j, ATL_rnone, A+j*lda2+1, 2);
+         else
+@endskip
+         Mjoin(PATLU,scal)(j, ATL_rnone, A+(j SHIFT)+1, lda*2);
+      }
+   }
+   else /* lower matrix */
+   {
+      for (j=0; j < N; j++)
+      {
+         cblas_copy(j, A+(j SHIFT), lda,  A+j*lda2, 1);
+@beginskip
+         if (Order == CblasRowMajor)
+             Mjoin(PATLU,scal)(j, ATL_rnone, A+(j SHIFT)+1, lda*2);
+         else
+@endskip
+         Mjoin(PATLU,scal)(j, ATL_rnone, A+j*lda2+1, 2);
+      }
+   }
+   Mjoin(PATLU,zero)(N, A+1, (lda+1)SHIFT);
+   #endif
+}
+@ROUT slvtst
+
+static TYPE diffnrm(const int N, const TYPE *X1, const TYPE *X2)
+{
+   TYPE t0, t1, max=0.0;
+   int i;
+
+   for (i=0; i < N; i++) /* compute ||x-xc|| */
+   {
+      #ifdef TREAL
+         t0 = X1[i] - X2[i];
+         t0 = Mabs(t0);
+         if (t0 > max) max = t0;
+      #else
+         t0 = X1[2*i] - X2[2*i]; t1 = X1[2*i+1] - X2[2*i+1];
+         t0 = Mabs(t0); t1 = Mabs(t1);
+         t0 += t1;
+         if (t0 > max) max = t0;
+      #endif
+   }
+   return(max);
+}
+
+static TYPE slvtst(int N, int NRHS, TYPE nrmA, TYPE *XC, int ldxc,
+                   TYPE *X, int ldx, double thresh)
+/*
+ * Figures ||x - xc|| / (N*eps*||A||*||xc||), where xc is known correct
+ * answer, and x is computed result
+ */
+{
+   TYPE eps, nrmD, nrmX, t0, max=0.0;
+   int j;
+
+   eps = Mjoin(PATL,epsilon)();
+   for (j=0; j < NRHS; j++)
+   {
+      nrmX = Mjoin(PATL,infnrm)(N, XC, 1);
+      nrmD = diffnrm(N, XC, X);
+      t0 = nrmD / (N*eps*nrmA*nrmX);
+      if (t0 > thresh) fprintf(stderr, "RHS=%d, nrm=%f\n", j+1,t0);
+      if (t0 > max) max = t0;
+      XC += ldxc SHIFT;
+      X  += ldx SHIFT;
+   }
+   return(max);
+}
+
+static TYPE geslvtst(enum CBLAS_ORDER Order, int N, int NRHS, TYPE nrmA, 
+                     TYPE *XC, int ldxc, TYPE *X, int ldx, double thresh)
+/*
+ * Figures ||x - xc|| / (N*eps*||A||*||xc||), where xc is known correct
+ * answer, and x is computed result
+ */
+{
+   return(slvtst(N, NRHS, nrmA, XC, ldxc, X, ldx, thresh));
+}
+
+static TYPE syslvtst(enum CBLAS_ORDER Order, enum CBLAS_UPLO Uplo, 
+                     int N, int NRHS, TYPE *A, int lda, TYPE *XC, int ldxc,
+                     TYPE *X, int ldx, double thresh)
+/*
+ * Figures ||x - xc|| / (N*eps*||A||*||xc||), where xc is known correct
+ * answer, and x is computed result
+ */
+{
+   TYPE nrmA, nrmX, t0, max=0.0;
+   TYPE *xc=XC, *x=X;
+
+   if (Order == CblasRowMajor)
+   {
+      if (Uplo == CblasUpper) Uplo = CblasLower;
+      else Uplo = CblasUpper;
+   }
+   #ifdef TREAL
+      nrmA = Mjoin(PATL,synrm)(Uplo, N, A, lda);
+   #else
+      nrmA = Mjoin(PATL,henrm)(Uplo, N, A, lda);
+   #endif
+   return(slvtst(N, NRHS, nrmA, XC, ldxc, X, ldx, thresh));
+}
+
+static int posvtst(enum CBLAS_ORDER Order, enum CBLAS_UPLO Uplo,
+                   int N, int NRHS, int lda, int ldb,
+                   int CS, double thresh)
+{
+   TYPE *A, *X, *B, *F, nrm;
+   double t0, t1, mflop;
+   int ierr=0;
+   char cord='C', cuplo='U';
+   #ifdef TCPLX
+      const TYPE one[2]={ATL_rone, ATL_rzero};
+      const TYPE zero[2]={ATL_rzero, ATL_rzero};
+   #endif
+
+   if (Order == CblasRowMajor) cord = 'R';
+   if (Uplo == CblasLower) cuplo = 'L';
+/*
+ * Generate A and X, and figure B with matmul
+ */
+   A = GetHE(Order, Uplo, N, lda);
+   X = GetGE(N, NRHS, ldb);
+   B = GetGE(N, NRHS, ldb);
+   ATL_assert(A && X && B);
+/*
+ *    For ColMajor, we do b = A * x, but for row we have b' and x', so we
+ *    trans both sides of equation, and do b' = x' * A' = x' * A instead
+ */
+   #ifdef TREAL
+      if (Order == CblasColMajor)
+         Mjoin(CBP,symm)(Order, CblasLeft, Uplo, N, NRHS, ATL_rone, A, lda, 
+                         X, ldb, ATL_rzero, B, ldb);
+      else
+         Mjoin(CBP,symm)(Order, CblasRight, Uplo, NRHS, N, ATL_rone, A, lda,
+                         X, ldb, ATL_rzero, B, ldb);
+   #else
+      if (Order == CblasColMajor)
+         Mjoin(CBP,hemm)(Order, CblasLeft, Uplo, N, NRHS, one, A, lda, X, ldb, 
+                         zero, B, ldb);
+@beginskip
+      else
+      {
+         Mjoin(CBP,hemm)(Order, CblasRight, Uplo, NRHS, N, one, A, lda, X, ldb,
+                         zero, B, ldb);
+      }
+@endskip
+/*
+ *    For RowMajor, we need x' & b', so we get b' = x' * A'.  In order to
+ *    get A', we conjugate it.  Afterwords, put it back to A for factor.
+ */
+      else
+      {
+         if (Uplo == AtlasUpper)
+            for (ierr=0; ierr < N-1; ierr++)
+               Mjoin(PATLU,scal)(N-1-ierr, ATL_rnone, A+3+ierr*((lda+1)<<1),2);
+         else
+            for (ierr=1; ierr < N; ierr++)
+               Mjoin(PATLU,scal)(ierr, ATL_rnone, A+1+ierr*(lda<<1), 2);
+         Mjoin(CBP,hemm)(Order, CblasRight, Uplo, NRHS, N, one, A, lda, X, ldb, 
+                         zero, B, ldb);
+         if (Uplo == AtlasUpper)
+            for (ierr=0; ierr < N-1; ierr++)
+               Mjoin(PATLU,scal)(N-1-ierr, ATL_rnone, A+3+ierr*((lda+1)<<1),2);
+         else
+            for (ierr=1; ierr < N; ierr++)
+               Mjoin(PATLU,scal)(ierr, ATL_rnone, A+1+ierr*(lda<<1), 2);
+         ierr = 0;
+      }
+   #endif
+
+   CS = ATL_DivBySize(CS);
+   F = GetGE(CS, 1, CS); /* flush cache */
+   if (F) free(F);
+
+   t0 = time00();
+   test_posv(Order, Uplo, N, NRHS, A, lda, B, ldb);
+   t1 = time00() - t0;
+   mflop = N;
+   if (F == NULL || t1 <= 0.0) t1 = mflop = -1.0;
+#ifdef TREAL
+   else mflop = ( ((1.0*N)*N*N) + (3.0*NRHS)*N*N) / (t1*3000000.0);
+#else
+   else mflop = ( (4.0/3.0)*(mflop*mflop*mflop) + 3.0 * (mflop*mflop)
+                  + NRHS*mflop*(4*mflop+2) ) / (t1*1000000.0);
+#endif
+
+   nrm = syslvtst(Order, Uplo, N, NRHS, A, lda, X, ldb, B, ldb, thresh);
+   if (nrm > thresh) ierr=1;
+
+   fprintf(stdout, "  %c     %c %7d %7d %7d %7d %10.3f %9.2f  %e\n",
+           cord, cuplo, N, NRHS, lda, ldb, t1, mflop, nrm);
+   free(A);
+   free(X);
+   free(B);
+   return(ierr);
+}
+
+@beginskip
+@whiledef rt gels posv gesv
+   @addkeys SLV=@(rt)
+@SLV posv
+double getMflops(int Uplo)
+{
+   double flops = (flops*flops*flops) / 3000000.0;
+   if (Uplo == AtlasUpper || Uplo == AtlasLower)
+      return(flops);
+   else if (Uplo == 1)
+      return(4.0*flops);
+   return(2.0*flops);
+}
+double @(rt)time(int CacheSize, int MFLOP, enum ATLAS_UPLO Uplo, 
+                int N, int lda)
+{
+   char *Ups, *Ord;
+   double mflop, flops, t0, tim=0.0;
+   int i, imem;
+   unsigned long long nreps;
+   const int incA = lda*(N+1);
+   TYPE *a, A;
+
+@SLV POSV `   flops = getMflops(Uplo) * 1000000.0;`
+@SLV GESV `   flops = getMflops(0) * 1000000.0;`
+@SLV GELS `   flops = getMflops(1) * 1000000.0;`
+   nreps = flops;
+   nreps = (MFLOP*1000000 + nreps-1) / nreps;
+   if (nreps < 1)
+      return(0.0);
+   imem = ATL_DivBySize(CacheSize) ATL_PTCACHEMUL;
+   imem = (imem + 2*N*N+N-1) / (N*N+N);
+   if (imem < nreps) imem = nreps;
+   a = A = malloc(imem * ATL_MulBySize(incA));
+   if (!A)
+   {
+      fprintf(stderr, "   WARNING: not enough mem to run timing N=%d!\n", N);
+      return(0.0);
+   }
+@SLV GESV
+/*
+ * We'll possibly reuse ipiv in cache, but this shouldn't change timing much
+ * if any 
+ */
+   ipiv = malloc(N*sizeof(int));
+   if (!ipiv)
+   {
+      free(A);
+      fprintf(stderr, "   WARNING: not enough imem to run timing N=%d!\n", N);
+      return(0.0);
+   }
+@SLV !
+   for (i=0; i < imem; i++)
+   {
+@SLV GESV GELS
+      Mjoin(PATL,gegen(N, N+1, A, lda, N*N+lda);
+@SLV POSV
+      Mjoin(PATL,PosDefGen(, N+1, A, lda, N*N+lda);
+@SLV !
+   }
+}
+@endwhile
+@endskip
+static int gelstst(enum CBLAS_ORDER Order, int N, int NRHS, int lda, int ldb,
+                   int CS, double thresh)
+{
+   TYPE *A, *X, *B, *F, nrm;
+   #ifdef TREAL
+      const TYPE one=ATL_rone, zero=ATL_rzero;
+   #else
+      const TYPE one[2]={ATL_rone, ATL_rzero};
+      const TYPE zero[2]={ATL_rzero, ATL_rzero};
+   #endif
+   double t0, t1, mflop;
+   char cord='C';
+   int ierr=0;
+
+/*
+ * This is really only a guestimate on the flop count
+ */
+   mflop = N;
+   #ifdef TREAL
+      mflop = ((4.0/3.0)*mflop*mflop*mflop) + NRHS*mflop*mflop;
+   #else
+      mflop = ((16.0/3.0)*mflop*mflop*mflop) + NRHS*mflop*(4.0*mflop+2);
+   #endif
+   if (Order == CblasRowMajor) cord = 'R';
+/*
+ * Generate A and X, and figure B with matmul
+ */
+   A = GetGE(N, N, lda);
+   nrm = Mjoin(PATL,genrm1)(N, N, A, lda);
+   X = GetGE(N, NRHS, ldb);
+   B = GetGE(N, NRHS, ldb);
+   ATL_assert(A && X && B);
+   if (Order == CblasColMajor)
+      Mjoin(CBP,gemm)(Order, CblasNoTrans, CblasNoTrans, N, NRHS, N, one, 
+                      A, lda, X, ldb, zero, B, ldb);
+   else
+      Mjoin(CBP,gemm)(Order, CblasNoTrans, CblasTrans, NRHS, N, N, one, 
+                      X, ldb, A, lda, zero, B, ldb);
+
+   CS = ATL_DivBySize(CS);
+   F = GetGE(CS, 1, CS); /* flush cache */
+   if (F) free(F);
+
+   t0 = time00();
+   test_gels(Order, AtlasNoTrans, N, N, NRHS, A, lda, B, ldb);
+   t1 = time00() - t0;
+   if (F == NULL || t1 <= 0.0) t1 = mflop = -1.0;
+   else mflop = mflop / (t1*1000000.0);
+
+   nrm = geslvtst(Order, N, NRHS, nrm, X, ldb, B, ldb, thresh);
+   if (nrm > thresh) ierr=1;
+
+   fprintf(stdout, "  %c     %c %7d %7d %7d %7d %10.3f %9.2f  %e\n",
+           cord, 'Q', N, NRHS, lda, ldb, t1, mflop, nrm);
+   free(A);
+   free(X);
+   free(B);
+   return(ierr);
+}
+
+static int gesvtst(enum CBLAS_ORDER Order, int N, int NRHS, int lda, int ldb,
+                   int CS, double thresh)
+{
+   TYPE *A, *X, *B, *F, nrm;
+   #ifdef TREAL
+      const TYPE one=ATL_rone, zero=ATL_rzero;
+   #else
+      const TYPE one[2]={ATL_rone, ATL_rzero};
+      const TYPE zero[2]={ATL_rzero, ATL_rzero};
+   #endif
+   double t0, t1, mflop;
+   char cord='C';
+   int ierr=0;
+   int *ipiv;
+
+   mflop = N;
+   #ifdef TREAL
+      mflop = ((2.0/3.0)*mflop*mflop*mflop) + mflop*mflop*(NRHS+0.5);
+   #else
+      mflop = ((8.0/3.0)*mflop*mflop*mflop) - (mflop*mflop) 
+            + NRHS*mflop*(4.0*mflop+2);
+   #endif
+   if (Order == CblasRowMajor) cord = 'R';
+/*
+ * Generate A and X, and figure B with matmul
+ */
+   A = GetGE(N, N, lda);
+   nrm = Mjoin(PATL,genrm1)(N, N, A, lda);
+   X = GetGE(N, NRHS, ldb);
+   B = GetGE(N, NRHS, ldb);
+   ipiv = malloc(N*sizeof(int));
+   ATL_assert(A && X && B && ipiv);
+   if (Order == CblasColMajor)
+      Mjoin(CBP,gemm)(Order, CblasNoTrans, CblasNoTrans, N, NRHS, N, one, 
+                      A, lda, X, ldb, zero, B, ldb);
+   else
+      Mjoin(CBP,gemm)(Order, CblasNoTrans, CblasTrans, NRHS, N, N, one, 
+                      X, ldb, A, lda, zero, B, ldb);
+
+   CS = ATL_DivBySize(CS);
+   F = GetGE(CS, 1, CS); /* flush cache */
+   if (F) free(F);
+
+   t0 = time00();
+   test_gesv(Order, N, NRHS, A, lda, ipiv, B, ldb);
+   t1 = time00() - t0;
+   if (F == NULL || t1 <= 0.0) t1 = mflop = -1.0;
+   else mflop = mflop / (t1*1000000.0);
+
+   nrm = geslvtst(Order, N, NRHS, nrm, X, ldb, B, ldb, thresh);
+   if (nrm > thresh) ierr=1;
+
+   fprintf(stdout, "  %c     %c %7d %7d %7d %7d %10.3f %9.2f  %e\n",
+           cord, 'G', N, NRHS, lda, ldb, t1, mflop, nrm);
+   free(ipiv);
+   free(A);
+   free(X);
+   free(B);
+   return(ierr);
+}
+
+static int DoAllTests(int N0, int NN, int incN, int R0, int RN, int incR, 
+                      int ldagap, int ldbgap, double thresh, 
+                      int nord, enum CBLAS_ORDER *Orders, 
+                      int nuplo, int *Uplos, int CS, int MFLOP,
+                      int QR)
+{
+   int i=0, ierr=0, n, r, lda, ldb, io, iu;
+
+   fprintf(stdout, "ORD  UPLO       N    NRHS     lda     ldb       TIME     MFLOP        RESID\n");
+   fprintf(stdout, "===  ====  ======  ======  ======  ======  =========  ========  ===========\n\n");
+
+   for (n=N0; n <= NN; n += incN)
+   {
+      lda = n + ldagap;
+      ldb = n + ldbgap;
+      for (r=R0; r <= RN; r += incR)
+      {
+         for (io=0; io < nord; io++)
+         {
+            for (iu=0; iu < nuplo; iu++, i++)
+            {
+               if (Uplos[iu] == 0)
+                  ierr += gesvtst(Orders[io], n, r, lda, ldb, CS, thresh);
+               else if (Uplos[iu] == 1)
+                  ierr += gelstst(Orders[io], n, r, lda, ldb, CS, thresh);
+               else
+                  ierr += posvtst(Orders[io], Uplos[iu], n, r, lda, ldb, 
+                                  CS, thresh);
+            }
+         }
+      }
+   }
+   if (ierr == 0) fprintf(stdout, "\n%d TESTS RUN, ALL PASSED.\n\n", i);
+   else fprintf(stdout, "\n%d TESTS RUN, %d FAILED!!\n\n", i, ierr);
+   return(ierr);
+}
+main(int nargs, char **args)
+{
+   int ierr, N0, NN, incN, R0, RN, incR, ldagap, ldbgap, nord, nuplo;
+   int CS, MFLOP, QR;
+   enum CBLAS_ORDER *Order;
+   int *Uplo;
+   double thresh;
+   GetFlags(nargs, args, &N0, &NN, &incN, &R0, &RN, &incR, &ldagap, &ldbgap,
+            &thresh, &nord, &Order, &nuplo, &Uplo, &CS, &MFLOP, &QR);
+   ierr = DoAllTests(N0, NN, incN, R0, RN, incR, ldagap, ldbgap, thresh, 
+                     nord, Order, nuplo, Uplo, CS, MFLOP, QR);
+   if (Order) free(Order);
+   if (Uplo) free(Uplo);
+   exit(ierr);
+}
+@ROUT uumtst
+@extract -b @(topd)/gen.inc what=cw @(cw01)
+   @define rt @lauum@
+   @define rs @uum@
+@ROUT llttst
+@extract -b @(topd)/gen.inc what=cw @(cw99)
+   @define rt @potrf@
+   @define rs @llt@
+@ROUT llttst uumtst
+
+#include "atlas_misc.h"
+#include "atlas_lapack.h"
+#include "cblas.h"
+#include "atlas_cblastypealias.h"
+#include "atlas_tst.h"
+#include "atlas_level1.h"
+#ifdef GCCWIN
+   ___main(){} __main(){} MAIN__(){} _MAIN_(){}
+#endif
+
+
+double time00();
+
+@ROUT uumtst
+#ifdef TimeF77
+static void test_lauum(const enum ATLAS_ORDER Order, const enum ATLAS_UPLO Uplo,
+                       const int N, TYPE *A, const int lda)
+{
+   if (Order == AtlasRowMajor) Mjoin(PATL,tstsqtran)(N, A, lda);
+   ATL_assert(Mjoin(PATL,f77lauum)(Uplo, N, A, lda) == 0)
+   if (Order == AtlasRowMajor) Mjoin(PATL,tstsqtran)(N, A, lda);
+}
+#elif defined(TimeC)
+   #include "clapack.h"
+   #define Clauum Mjoin(Mjoin(clapack_,PRE),lauum)
+   #define test_@(rt)(Maj_, Uplo_, N_, A_, lda_) \
+      ATL_assert(C@(rt)(Maj_, Uplo_, N_, A_, lda_) == 0)
+#else
+   #define test_@(rt)(Maj_, Uplo_, N_, A_, lda_) \
+      ATL_@(rt)(Maj_, Uplo_, N_, A_, lda_)
+#endif
+
+static void ATL_L2GE(const enum CBLAS_ORDER, const int, const TYPE*, 
+                     const int, TYPE*, const int);
+
+static void ATL_U2GE
+   (const enum CBLAS_ORDER Order, const int N, const TYPE *U, const int ldu,
+    TYPE *C, const int ldc)
+{
+   int j;
+
+   if (Order == CblasRowMajor) ATL_L2GE(CblasColMajor, N, U, ldu, C, ldc);
+   else
+   {
+      for (j=0; j < N; j++)
+      {
+         cblas_copy(j+1, U+j*(ldu SHIFT), 1, C+j*(N SHIFT), 1);
+         if (j != N-1) Mjoin(PATL,zero)(N-j-1, C+((1+j*(N+1))SHIFT), 1);
+      }
+   }
+}
+
+static void ATL_L2GE
+   (const enum CBLAS_ORDER Order, const int N, const TYPE *L, const int ldl,
+    TYPE *C, const int ldc)
+{
+   int j;
+   if (Order == CblasRowMajor) ATL_U2GE(CblasColMajor, N, L, ldl, C, ldc);
+   else
+   {
+      for (j=0; j < N; j++)
+      {
+         if (j > 1) Mjoin(PATL,zero)(j-1, C+j*(N SHIFT), 1);
+         cblas_copy(N-j, L+j*((ldl+1)SHIFT), 1, C+j*((N+1)SHIFT), 1);
+      }
+   }
+}
+
+static TYPE *ATL_LtmulL
+   (const enum CBLAS_ORDER Order, const int N, const TYPE *L, const int ldl)
+{
+   TYPE *C;
+   #ifdef TREAL
+      const TYPE one=ATL_rone, zero=ATL_rzero;
+   #else
+      const TYPE one[2] = {ATL_rone,ATL_rzero}, zero[2] = {ATL_rzero,ATL_rzero};
+   #endif
+   C = malloc(N*ATL_MulBySize(N));
+   ATL_assert(C);
+   ATL_L2GE(Order, N, L, ldl, C, N);
+   cblas_trmm(Order, CblasLeft, CblasLower, CblasConjTrans, CblasNonUnit,
+              N, N, one, L, ldl, C, N);
+   return(C);
+}
+
+static TYPE *ATL_UmulUt
+   (const enum CBLAS_ORDER Order, const int N, const TYPE *U, const int ldu)
+{
+   TYPE *C;
+   #ifdef TREAL
+      const TYPE one=ATL_rone, zero=ATL_rzero;
+   #else
+      const TYPE one[2] = {ATL_rone,ATL_rzero}, zero[2] = {ATL_rzero,ATL_rzero};
+   #endif
+   C = malloc(N*ATL_MulBySize(N));
+   ATL_assert(C);
+   ATL_U2GE(Order, N, U, ldu, C, N);
+   cblas_trmm(Order, CblasRight, CblasUpper, CblasConjTrans, CblasNonUnit,
+              N, N, one, U, ldu, C, N);
+   return(C);
+}
+@ROUT llttst
+#ifdef TimeF77
+   #define test_@(rt)(Uplo_, N_, A_, lda_) \
+      ATL_assert(Mjoin(PATL,f77@(rt))(Uplo_, N_, A_, lda_) == 0)
+#elif defined(TimeC)
+   #include "clapack.h"
+   #define Cpotrf Mjoin(Mjoin(clapack_,PRE),@(rt))
+   #define test_@(rt)(Uplo_, N_, A_, lda_) \
+      ATL_assert(C@(rt)(AtlasColMajor, Uplo_, N_, A_, lda_) == 0)
+#else
+   #define test_@(rt)(Uplo_, N_, A_, lda_) \
+      ATL_assert(ATL_@(rt)(AtlasColMajor, Uplo_, N_, A_, lda_) == 0)
+#endif
+
+@beginskip
+static 
+void ATL_trzero(enum ATLAS_ORDER order, enum ATLAS_UPLO uplo, 
+                int diag, const int N, TYPE *C, const int ldc1)
+{
+   const int ldc = ldc1 SHIFT;
+   if (order == AtlasRowMajor)
+      uplo = uplo == AtlasUpper ? AtlasLower : AtlasUpper;
+   if (diag)
+      Mjoin(PATL,zero)(N, C, ldc1+1);
+   if (uplo == AtlasUpper)
+   {
+      for (j=1; j < N; j++)
+         Mjoin(PATL,zero)(j, C+j*ldc, 1);
+   }
+   else
+   {
+      for (j=0; j < N-1; j++)
+         Mjoin(PATL,zero)(N-j-1, C+(j*((ldc1+1)+1)SHIFT), 1);
+   }
+}
+@endskip
+
+static TYPE *ATL_LmulLt(const int N, const TYPE *L, const int ldl)
+/*
+ * A = L * L^H
+ */
+{
+   const int incA = 1 SHIFT, incL = (ldl+1) SHIFT;
+   TYPE *A;
+   int i, j; 
+   #ifdef TCPLX
+      int i1, i2;
+      TYPE tmp;
+   #endif
+
+   A = malloc(N*ATL_MulBySize(N));
+   ATL_assert(A);
+   for (j=0; j < N; j++)
+   {
+      for (i=j; i < N; i++)
+      {
+      #ifdef TREAL
+         A[i+j*N] = L[i+j*ldl] * L[j+j*ldl] +
+                    Mjoin(PATL,dot)(j, L+i, ldl, L+j, ldl);
+      #else
+         tmp = L[(j+j*ldl)<<1];
+         i1 = (i + j * N)<<1;
+         i2 = (i + j * ldl)<<1;
+         Mjoin(PATL,dotc_sub)(j, L+(j<<1), ldl, L+(i<<1), ldl, A+i1);
+         A[i1] += L[i2] * tmp;
+         if (i != j) A[i1+1] += tmp * L[i2+1];
+      #endif
+      }
+   }
+   return(A);
+}
+static TYPE *ATL_UtmulU(const int N, const TYPE *U, const int ldu)
+{
+   TYPE *A;
+   int i, j;
+   #ifdef TCPLX
+      const int ldu2 = ldu<<1;
+      int i1, i2;
+      TYPE tmp;
+   #endif
+
+   A = malloc(N*ATL_MulBySize(N));
+   ATL_assert(A);
+   for (j=0; j < N; j++)
+   {
+   #ifdef TREAL
+      for (i=0; i <= j; i++) 
+         A[i+j*N] = Mjoin(PATL,dot)(i+1, U+i*ldu, 1, U+ldu*j, 1);
+   #else
+      for (i=0; i <= j; i++) 
+      {
+         i1 = (i+j*N)<<1;
+         i2 = (i+j*ldu)<<1;
+         tmp = U[(i+i*ldu)<<1];
+         Mjoin(PATL,dotc_sub)(i, U+i*ldu2, 1, U+j*ldu2, 1, A+i1);
+         if (i != j)
+         {
+            A[i1] += U[i2] * tmp;
+            A[i1+1] += U[i2+1] * tmp;
+         }
+         else
+         {
+            A[i1] += tmp * tmp;
+            A[i1+1] += ATL_rzero;
+         }
+      }
+   #endif
+   }
+   return(A);
+}
+@ROUT llttst uumtst
+#if 0
+#define PADVAL ATL_typify(-973200000.0)
+#else
+#define PADVAL ATL_rzero
+#endif
+
+static void ATL_checkpad(enum ATLAS_UPLO Uplo, int N, TYPE *A, int lda)
+{
+   const int lda2 = lda SHIFT, N2 = N SHIFT;
+   int i, j, k;
+   TYPE *a;
+
+@beginskip
+   #ifdef TCPLX  /* see if imag part of diagonal is untouched */
+      a = A + 1;
+      for (j=0; j < N; j++)
+      {
+         if (*a != PADVAL)
+            fprintf(stderr, "   OVERWRITE at diagonal %d of %f!!!\n", j+1, *a);
+         a += (lda+1)<<1;
+      }
+   #endif
+@endskip
+   a = A;
+   if (Uplo == AtlasUpper)
+   {
+      for (j=0; j < N; j++)
+      {
+         for (i=(j+1) SHIFT; i < N2; i++)
+         {
+            if (a[i] != PADVAL)
+            #ifdef TREAL
+               fprintf(stderr, "   OVERWRITE at A(%d,%d) of %f!!!\n", 
+                       i+1, j+1, a[i]);
+            #else /* possibly generates 2 warning per element */
+               if (i % 2)
+                  fprintf(stderr, "   OVERWRITE at A(%d,%d) of (%f,%f)!!!\n", 
+                          i/2, j, a[i-1], a[i]);
+               else
+                  fprintf(stderr, "   OVERWRITE at A(%d,%d) of (%f,%f)!!!\n", 
+                          i/2, j, a[i], a[i+1]);
+            #endif
+         }
+         a += lda2;
+      }
+   }
+   else
+   {
+      for (j=0; j < N; j++)
+      {
+         k = j SHIFT;
+         for (i=0; i < k; i++)
+         {
+            if (a[i] != PADVAL)
+            #ifdef TREAL
+               fprintf(stderr, "   OVERWRITE at A(%d,%d) of %f!!!\n", 
+                       i, j, a[i]);
+            #else /* possibly generates 2 warning per element */
+               if (i % 2)
+                  fprintf(stderr, "   OVERWRITE at A(%d,%d) of (%f,%f)!!!\n", 
+                          i/2, j, a[i-1], a[i]);
+               else
+                  fprintf(stderr, "   OVERWRITE at A(%d,%d) of (%f,%f)!!!\n", 
+                          i/2, j, a[i], a[i+1]);
+            #endif
+         }
+         a += lda2;
+      }
+   }
+}
+
+#ifdef TREAL
+static TYPE lltnrm1(enum ATLAS_UPLO Uplo, int N, TYPE *A, int lda)
+{
+   int i, j;
+   TYPE tmp, nrm=0.0;
+   
+   if (Uplo == AtlasUpper)
+   {
+      for (j=0; j < N; j++)
+      {
+         tmp = Mjoin(PATL,asum)(j, A+j*lda, 1);
+         tmp += Mjoin(PATL,asum)(N-j, A+j*lda+j, lda);
+         if (tmp > nrm) nrm = tmp;
+      }
+   }
+   else
+   {
+      for (i=0; i < N; i++)
+      {
+         tmp = Mjoin(PATL,asum)(i, A+i, lda);
+         tmp += Mjoin(PATL,asum)(N-i, A+i*lda+i, 1);
+         if (tmp > nrm) nrm = tmp;
+      }
+   }
+   return(nrm);
+}
+#else
+static TYPE lltnrm1(enum ATLAS_UPLO Uplo, int N, TYPE *A, int lda)
+{
+   const int lda2 = lda<<1;
+   int i, j;
+   TYPE tmp, nrm=0.0;
+   
+   if (Uplo == AtlasUpper)
+   {
+      for (j=0; j < N; j++)
+      {
+         tmp = A[(j*(lda+1))<<1];
+         if (tmp < ATL_rzero) tmp = -tmp;
+         tmp += Mjoin(PATL,asum)(j, A+j*lda2, 1);
+         tmp += Mjoin(PATL,asum)(N-j-1, A+(((j+1)*lda+j)<<1), lda);
+         if (tmp > nrm) nrm = tmp;
+      }
+   }
+   else
+   {
+      for (i=0; i < N; i++)
+      {
+         tmp = A[(i*(lda+1))<<1];
+         if (tmp < ATL_rzero) tmp = -tmp;
+         tmp += Mjoin(PATL,asum)(i, A+(i<<1), lda);
+         tmp += Mjoin(PATL,asum)(N-i-1, A+((i*lda+i+1)<<1), 1);
+         if (tmp > nrm) nrm = tmp;
+      }
+   }
+   return(nrm);
+}
+#endif
+
+static void lltgen(enum ATLAS_UPLO Uplo, int N, TYPE *A, int lda, int seed)
+{
+   const int lda2 = lda SHIFT;
+   int j;
+   TYPE t0, t1;
+   #ifdef TREAL
+      const TYPE padval = PADVAL;
+   #else
+      const TYPE padval[2] = {PADVAL, PADVAL};
+   #endif
+
+   Mjoin(PATL,gegen)(N, N, A, lda, seed);
+   if (Uplo == AtlasUpper)
+   {
+      for (j=0; j < N; j++) 
+         Mjoin(PATL,set)(N-j-1, padval, A+((j*lda+j+1)SHIFT), 1);
+   }
+   else
+   {
+      for (j=0; j < N; j++) Mjoin(PATL,set)(j, padval, A+j*lda2, 1);
+   }
+   #ifdef TCPLX   /* imag part of diag should be assumed to be zero */
+       Mjoin(Mjoin(ATL_,UPR),set)(N, *padval, A+1, (lda+1)<<1);
+   #endif
+/*
+ * Make diagonally dominant, and positive diagonal
+ */
+   t1 = lltnrm1(Uplo, N, A, lda);
+   for (j=0; j < N; j++)
+   {
+      t0 = A[(j+j*lda)SHIFT]*5.3;
+      if (t0 < ATL_rzero) t0 = -t0;
+      A[(j+j*lda)SHIFT] = t0 + t1;
+   }
+}
+
+void lltdiff(const enum ATLAS_UPLO Uplo, const int N, 
+             const TYPE *A, const int lda, TYPE *C, const int ldc)
+/*
+ * C <- C - A, A & C symmetric (real) or hermition (complex)
+ */
+{
+   int j;
+#ifdef TREAL
+   if (Uplo == AtlasUpper)
+   {
+      for (j=0; j < N; j++)
+         Mjoin(PATL,axpy)(j+1, ATL_rnone, A+j*lda, 1, C+j*ldc, 1);
+   }
+   else
+   {
+      for (j=0; j < N; j++)
+         Mjoin(PATL,axpy)(N-j, ATL_rnone, A+j*(lda+1), 1, C+j*(ldc+1), 1);
+   }
+#else
+   const int lda2 = lda<<1, ldc2 = ldc<<1;
+   const TYPE none[2] = {ATL_rnone, ATL_rzero};
+
+   Mjoin(Mjoin(ATL_,UPR),axpy)(N, ATL_rnone, A, (lda+1)<<1, C, (ldc+1)<<1);
+   if (Uplo == AtlasUpper)
+   {
+      for (j=0; j < N; j++)
+         Mjoin(PATL,axpy)(j, none, A+j*lda2, 1, C+j*ldc2, 1);
+   }
+   else
+   {
+      for (j=0; j < N; j++)
+         Mjoin(PATL,axpy)(N-j-1, none, A+((j*(lda+1)+1)<<1), 1, 
+                          C+((j*(ldc+1)+1)<<1), 1);
+   }
+#endif
+}
+
+@ROUT uumtst
+static TYPE uumtest(enum ATLAS_ORDER Order, enum ATLAS_UPLO Uplo,
+                    int CacheSize, int N, int lda, double *tim)
+{
+   TYPE *A, *Ag, *LmLt;
+   double t0, t1;
+   TYPE normA, eps, resid;
+   enum ATLAS_UPLO MyUplo = Uplo;
+
+   if (Order == CblasRowMajor)
+   {
+      if (Uplo == CblasUpper) MyUplo = CblasLower;
+      else MyUplo = CblasUpper;
+   }
+   eps = Mjoin(PATL,epsilon)();
+   A = malloc(ATL_MulBySize(lda)*N + ATL_MulBySize(N)*N);
+   if (A == NULL) return(-1);
+   Ag = A + lda*(N SHIFT);
+   t0 = ATL_flushcache(CacheSize);
+   lltgen(MyUplo, N, A, lda, N*1029+lda);
+   lltgen(MyUplo, N, Ag, N, N*1029+lda);
+   normA = lltnrm1(MyUplo, N, A, lda);
+   #ifdef DEBUG
+      Mjoin(PATL,geprint)("A", N, N, A, lda);
+      Mjoin(PATL,geprint)("Ag", N, N, Ag, N);
+   #endif
+
+   t0 = ATL_flushcache(-1);
+
+   t0 = time00();
+   test_lauum(Order, Uplo, N, A, lda);
+   t1 = time00() - t0;
+   *tim = t1;
+
+   t0 = ATL_flushcache(0);
+
+   ATL_checkpad(MyUplo, N, A, lda);
+   if (Uplo == CblasUpper) LmLt = ATL_UmulUt(Order, N, Ag, N);
+   else LmLt = ATL_LtmulL(Order, N, Ag, N);
+   #ifdef DEBUG
+      Mjoin(PATL,geprint)("A", N, N, A, lda);
+      Mjoin(PATL,geprint)("Ag", N, N, LmLt, N);
+   #endif
+   lltdiff(MyUplo, N, A, lda, LmLt, N);
+   #ifdef DEBUG
+      Mjoin(PATL,geprint)("A-L*Lt", N, N, LmLt, N);
+   #endif
+   resid = lltnrm1(MyUplo, N, LmLt, N) / (normA * eps * N);
+   if (resid > 10.0 || resid != resid) 
+      fprintf(stderr, "normA=%e, eps=%e, num=%e\n", normA, eps, resid);
+
+   free(LmLt);
+   free(A);
+
+   return(resid);
+}
+@ROUT llttst
+static TYPE llttest(enum ATLAS_UPLO Uplo, int CacheSize, int N, int lda,
+                    double *tim)
+{
+   TYPE *A, *LmLt;
+@skip   const int FlushSize = CacheSize / sizeof(double);
+   int i;
+@skip   double *flush;
+   double t0, t1;
+   TYPE normA, eps, resid;
+
+   eps = Mjoin(PATL,epsilon)();
+   A = malloc(ATL_MulBySize(lda)*N);
+   if (A == NULL) return(-1);
+@skip   flush = malloc(FlushSize*sizeof(double));
+   t0 = ATL_flushcache(CacheSize);
+   lltgen(Uplo, N, A, lda, N*1029+lda);
+   normA = lltnrm1(Uplo, N, A, lda);
+   #ifdef DEBUG
+      Mjoin(PATL,geprint)("A0", N, N, A, lda);
+   #endif
+
+   t0 = ATL_flushcache(-1);
+@beginskip
+   if (flush)
+   {
+      ATL_dset(FlushSize, ATL_rzero, flush, 1);
+      for (i=0; i < FlushSize; i++) if (flush[i] != 0.0) exit(-1);
+   }
+@endskip
+
+   t0 = time00();
+   test_potrf(Uplo, N, A, lda);
+   t1 = time00() - t0;
+   *tim = t1;
+
+   t0 = ATL_flushcache(0);
+@skip   if (flush) free(flush);
+@skip   else *tim = 0.0;
+
+   #ifdef DEBUG
+      Mjoin(PATL,geprint)("L", N, N, A, lda);
+   #endif
+   ATL_checkpad(Uplo, N, A, lda);
+   if (Uplo == AtlasUpper) LmLt = ATL_UtmulU(N, A, lda);
+   else LmLt = ATL_LmulLt(N, A, lda);
+   #ifdef DEBUG
+      Mjoin(PATL,geprint)("L*Lt", N, N, LmLt, N);
+   #endif
+   lltgen(Uplo, N, A, lda, N*1029+lda);  /* regen A over LLt */
+   lltdiff(Uplo, N, A, lda, LmLt, N);
+   #ifdef DEBUG
+      Mjoin(PATL,geprint)("A-L*Lt", N, N, LmLt, N);
+   #endif
+   resid = lltnrm1(Uplo, N, LmLt, N);
+   #ifdef DEBUG
+      if (resid/(normA*eps*N) > 10.0) 
+         fprintf(stderr, "normA=%e, eps=%e, num=%e\n", normA, eps, resid);
+   #endif
+   resid /= (normA * eps * N);
+
+   free(LmLt);
+   free(A);
+
+   return(resid);
+}
+@ROUT llttst uumtst
+
+@ROUT uumtst
+int RunCase(int CacheSize, TYPE thresh, int MFLOP, enum ATLAS_ORDER Order,
+            enum ATLAS_UPLO Uplo, int N, int lda)
+   @define ea @Order, @
+@ROUT llttst
+int RunCase(int CacheSize, TYPE thresh, int MFLOP, enum ATLAS_UPLO Uplo, 
+            int N, int lda)
+   @define ea @@
+@ROUT llttst uumtst
+{
+   char *Ups, *Ord;
+   TYPE resid = 0.0;
+   double mflop, mflops, t0, tim=0.0;
+   int nreps=1, passed, i, imem;
+   const int incA = lda*N;
+   TYPE *a, *A;
+   
+   mflops = N;
+@ROUT uumtst
+   mflops = (mflops*mflops*mflops) / 4.0;
+   #ifdef TCPLX
+      mflops *= 4.0;
+   #endif
+@ROUT llttst
+   #ifdef TREAL
+      mflops = (mflops*mflops*mflops) / 3.0 + (mflops*mflops) / 2.0;
+   #else
+      mflops = (4.0/3.0)*(mflops*mflops*mflops) + 3.0 * (mflops*mflops);
+   #endif
+@ROUT llttst uumtst
+   mflops /= 1000000.0;
+
+   if (thresh > ATL_rzero) resid = 
+      @(rs)test(@(ea)Uplo, CacheSize, N, lda, &tim);
+   else resid = -1.0;
+
+   if (MFLOP > mflops || thresh <= ATL_rzero) /* need to time repetitively */
+   {
+      nreps = (mflops * 1000000);
+      nreps = (MFLOP*1000000 + nreps-1) / nreps;
+      if (nreps < 1) nreps = 1;
+      imem = ATL_DivBySize(CacheSize) ATL_PTCACHEMUL;
+      imem = (imem + 2*N*N-1) / (N*N);
+      if (imem < nreps) imem = nreps;
+      a = A = malloc(imem * ATL_MulBySize(incA));
+      if (A != NULL)
+      {
+         for (i=0; i < imem; i++) lltgen(Uplo, N, A+i*incA, lda, N*1029+lda);
+         t0 = time00();
+         for (i=nreps; i; i--, a += incA)
+            test_@(rt)(@(ea)Uplo, N, a, lda);
+         tim = time00() - t0;
+         tim /= nreps;
+         free(A);
+      }
+      else fprintf(stderr, "   WARNING: not enough mem to run timings!\n");
+   }
+
+   if (tim > 0.0) mflop = mflops / tim;
+   else mflop = 0.0;
+   if (Uplo == AtlasUpper) Ups = "Upper";
+   else Ups = "Lower";
+@ROUT uumtst
+   if (Order == CblasColMajor) Ord = "Col";
+   else Ord = "Row";
+   fprintf(stdout, "%5d  %3s  %5s %6d %6d  %12.5f  %12.3f  %12e\n",
+           nreps, Ord, Ups, N, lda, tim, mflop, resid);
+@ROUT llttst
+   fprintf(stdout, "%5d  %5s %6d %6d  %12.5f  %12.3f  %12e\n",
+           nreps, Ups, N, lda, tim, mflop, resid);
+@ROUT llttst uumtst
+   if (resid > thresh || resid != resid) passed = 0;
+   else if (resid < 0.0) passed = -1;
+   else passed = 1;
+   return(passed);
+}
+
+@ROUT
+@ROUT uumtst
+void RunCases(const int CacheSize, const TYPE thresh, const int MFLOP, 
+              const int ldagap, const int norder, const enum ATLAS_UPLO *Ords,
+              const int nuplo, const enum ATLAS_UPLO *Uplos,
+              const int N0, const int NN, const int incN)
+{
+   int i, lda, n, iup, io, np=0, nc=0, ns=0;
+@ROUT llttst 
+void RunCases(const int CacheSize, const TYPE thresh, const int MFLOP, 
+              const int ldagap, const int nuplo, const enum ATLAS_UPLO *Uplos,
+              const int N0, const int NN, const int incN)
+{
+   int i, lda, n, iup, np=0, nc=0, ns=0;
+@ROUT llttst uumtst
+
+@ROUT uumtst
+   fprintf(stdout,
+"NREPS  ORD   UPLO      N    lda          TIME        MFLOPS         RESID\n");
+   fprintf(stdout,
+"=====  ===  =====  =====  =====  ============  ============  ============\n");
+@ROUT llttst
+   fprintf(stdout,
+      "NREPS   UPLO      N    lda          TIME        MFLOPS         RESID\n");
+   fprintf(stdout,
+      "=====  =====  =====  =====  ============  ============  ============\n");
+@ROUT llttst uumtst
+   for (n=N0; n <= NN; n += incN)
+   {
+      if (ldagap >= 0) lda = ldagap + n;
+      else lda = NN;
+@ROUT uumtst
+      for (io=0; io < norder; io++)
+      {
+      @beginindent 3 3
+@ROUT llttst uumtst
+      for (iup=0; iup < nuplo; iup++)
+      {
+@ROUT llttst
+         i = RunCase(CacheSize, thresh, MFLOP, Uplos[iup], n, lda);
+@ROUT uumtst
+         i = RunCase(CacheSize, thresh, MFLOP, Ords[io], Uplos[iup], n, lda);
+@ROUT llttst uumtst
+         if (i > 0) np++;
+         else if (i < 0) ns++;
+         nc++;
+      }
+@ROUT uumtst
+      @endindent
+      }
+@ROUT llttst uumtst
+   }
+   if (thresh > ATL_rzero)
+      fprintf(stdout, "\n%d cases: %d passed, %d skipped, %d failed\n", 
+              nc, np, ns, nc-np-ns);
+}
+
+void PrintUsage(char *nam)
+{
+   fprintf(stderr, "USAGE: %s -n <n> -N <N0 NN incN> -T <thresh> -F <mflop> -l <lagap> -C <cache size> -U <nuplos> <uplo1> ... <uploN>\n", nam);
+   exit(-1);
+}
+
+@ROUT uumtst
+void GetFlags(int nargs, char **args, int *MFLOP, int *CacheSize, TYPE *thresh,
+              int *ldagap, int *norders, enum ATLAS_UPLO **Order, 
+              int *nuplo, enum ATLAS_UPLO **Uplo, 
+              int *N0, int *NN, int *incN)
+@ROUT llttst
+void GetFlags(int nargs, char **args, int *MFLOP, int *CacheSize, TYPE *thresh,
+              int *ldagap, int *nuplo, enum ATLAS_UPLO **Uplo, 
+              int *N0, int *NN, int *incN)
+@ROUT llttst uumtst
+{
+   int i, j, n;
+   char ch;
+
+@ROUT uumtst `   *norders = -1;`
+   *MFLOP = 0;
+   #ifdef L2SIZE
+      *CacheSize = L2SIZE;
+   #else
+      *CacheSize = 4*1024*1024;
+   #endif
+   *thresh = 100.0;
+   *N0 = *NN = *incN = -1;
+   *ldagap = 0;
+   *nuplo = -1;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-') PrintUsage(args[0]);
+      switch(args[i][1])
+      {
+@ROUT uumtst
+      case 'O':
+         *norders = n = atoi(args[++i]);
+         if (n < 1) PrintUsage(args[0]);
+         *Order = malloc(n * sizeof(enum ATLAS_ORDER));
+         ATL_assert(*Order);
+         for (j=0; j != n; j++)
+         {
+            ch = *args[++i];
+            if (ch == 'R' || ch == 'r') (*Order)[j] = AtlasRowMajor;
+            else if (ch == 'C' || ch == 'c') (*Order)[j] = AtlasColMajor;
+            else PrintUsage(args[0]);
+         }
+         break;
+@ROUT llttst uumtst
+      case 'T':
+         *thresh = atof(args[++i]);
+         break;
+      case 'C':
+         *CacheSize = 1024*atoi(args[++i]);
+         break;
+      case 'l':
+         *ldagap = atoi(args[++i]);
+         break;
+      case 'n':
+         *N0 = *NN = *incN = atoi(args[++i]);
+         break;
+      case 'N':
+         *N0 = atoi(args[++i]);
+         *NN = atoi(args[++i]);
+         *incN = atoi(args[++i]);
+         break;
+      case 'F':
+         *MFLOP = atoi(args[++i]);
+         break;
+      case 'U':
+         *nuplo = atoi(args[++i]);
+         if (*nuplo <= 0) PrintUsage(args[0]);
+         *Uplo = malloc(*nuplo * sizeof(enum ATLAS_UPLO));
+         ATL_assert(*Uplo);
+         for (j=0; j != *nuplo; j++)
+         {
+            if (args[i] == NULL) PrintUsage(args[0]);
+            ch = *args[++i];
+            if (ch == 'u' || ch == 'U') (*Uplo)[j] = AtlasUpper;
+            else if (ch == 'l' || ch == 'L') (*Uplo)[j] = AtlasLower;
+            else PrintUsage(args[0]);
+         }
+         break;
+      default:
+         PrintUsage(args[0]);
+      }
+   }
+@ROUT uumtst
+   if (*norders == -1)
+   {
+      *norders = 1;
+      *Order = malloc(sizeof(enum ATLAS_ORDER));
+      **Order = AtlasColMajor;
+   }
+@ROUT llttst uumtst
+   if (*N0 == -1)
+   {
+      *N0 = 100;
+      *NN = 1000;
+      *incN = 100;
+   }
+   if (*nuplo == -1)
+   {
+      *nuplo = 1;
+      *Uplo = malloc(sizeof(enum ATLAS_UPLO));
+      ATL_assert(*Uplo);
+      **Uplo = AtlasLower;
+   }
+}
+
+main(int nargs, char **args)
+{
+   int MFLOP, CacheSize, ldagap, nuplo, N0, NN, incN;
+   TYPE thresh;
+   enum ATLAS_UPLO *Uplos;
+@ROUT llttst
+   GetFlags(nargs, args, &MFLOP, &CacheSize, &thresh, &ldagap, &nuplo, &Uplos, 
+            &N0, &NN, &incN);
+   RunCases(CacheSize, thresh, MFLOP, ldagap, nuplo, Uplos, N0, NN, incN);
+@ROUT uumtst
+   enum ATLAS_UPLO *Orders;
+   int norders;
+   GetFlags(nargs, args, &MFLOP, &CacheSize, &thresh, &ldagap,
+            &norders, &Orders, &nuplo, &Uplos, &N0, &NN, &incN);
+   RunCases(CacheSize, thresh, MFLOP, ldagap, norders, Orders, nuplo, Uplos,
+            N0, NN, incN);
+@ROUT llttst uumtst
+   exit(0);
+}
+@ROUT lutst
+@extract -b @(topd)/gen.inc what=cw @(cw99)
+
+#include "atlas_misc.h"
+#include "atlas_lapack.h"
+@skip #include "atlas_ptalias_lapack.h"
+#include "cblas.h"
+#include "atlas_cblastypealias.h"
+#include "atlas_tst.h"
+#ifdef GCCWIN
+   ___main(){} __main(){} MAIN__(){} _MAIN_(){}
+#endif
+
+double time00();
+@ROUT lutst
+#ifdef TimeF77
+   #define test_getrf(Major_, M_, N_, A_, lda_, ipiv_) \
+      ATL_assert(Mjoin(PATL,f77getrf)(Major_, M_, N_, A_, lda_, ipiv_) == 0)
+#elif defined(TimeC)
+   #include "clapack.h"
+   #define Cgetrf Mjoin(Mjoin(clapack_,PRE),getrf)
+   #define test_getrf(Major_, M_, N_, A_, lda_, ipiv_) \
+      ATL_assert(Cgetrf(Major_, M_, N_, A_, lda_, ipiv_) == 0)
+#else
+   #define test_getrf(Major_, M_, N_, A_, lda_, ipiv_) \
+      ATL_assert(ATL_getrf(Major_, M_, N_, A_, lda_, ipiv_) == 0)
+#endif
+
+static TYPE *ATL_LmulUR(const int M, const int N, const TYPE *LU, const int ldl)
+{
+   const int lda = ldl SHIFT, ldc = N SHIFT, MN = Mmin(M,N);
+   int i, j, m;
+   TYPE *C, *c;
+   #ifdef TREAL
+      const TYPE ONE=ATL_rone;
+   #else
+      const TYPE ONE[2] = {ATL_rone, ATL_rzero};
+   #endif
+
+   C = c = malloc(M*ATL_MulBySize(N));
+   ATL_assert(c);
+   if (M >= N)
+   {
+      for (i=0; i != N; i++, LU += lda, C += ldc)
+      {
+         Mjoin(PATL,copy)(i+1, LU, 1, C, 1);
+         Mjoin(PATL,zero)(N-i-1, C+((i+1)SHIFT), 1);
+      }
+      for(; i != M; i++, LU += lda, C += ldc) Mjoin(PATL,copy)(N, LU, 1, C, 1);
+      LU -= lda * M;
+      C -= ldc * M;
+      cblas_trmm(CblasRowMajor, CblasRight, CblasUpper, CblasNoTrans, CblasUnit,
+                 M, N, ONE, LU, ldl, C, N);
+   }
+   else /* N > M */
+   {
+      for (i=0; i != M; i++, C += ldc, LU += lda)
+      {
+         Mjoin(PATL,zero)(i, C, 1);
+         C[i SHIFT] = ATL_rone;
+         #ifdef TCPLX
+            C[(i SHIFT)+1] = ATL_rzero;
+         #endif
+         Mjoin(PATL,copy)(N-i-1, LU+((i+1)SHIFT), 1, C+((i+1)SHIFT), 1);
+      }
+      LU -= lda * M;
+      C -= ldc * M;
+      cblas_trmm(CblasRowMajor, CblasLeft, CblasLower, CblasNoTrans, 
+                 CblasNonUnit, M, N, ONE, LU, ldl, C, N);
+   }
+   return(C);
+}
+
+static TYPE *ATL_LmulUC(const int M, const int N, const TYPE *LU, const int ldl)
+{
+   const int lda = ldl SHIFT, MN = Mmin(M,N);
+   int i, j, m;
+   TYPE *C, *c;
+   #ifdef TREAL
+      const TYPE ONE=ATL_rone;
+   #else
+      const TYPE ONE[2] = {ATL_rone, ATL_rzero};
+   #endif
+
+   C = c = malloc(M*ATL_MulBySize(N));
+   ATL_assert(c);
+   if (M >= N)
+   {
+      for (j=0; j < MN; j++)
+      {
+         m = j SHIFT;
+         for (i=0; i < m; i++) c[i] = ATL_rzero;
+         #ifdef TCPLX
+            c[i++] = ATL_rone;
+            c[i++] = ATL_rzero;
+         #else
+            c[i++] = ATL_rone;
+         #endif
+         for (m=M SHIFT; i < m; i++) c[i] = LU[i];
+         c += m;
+         LU += lda;
+      }
+      LU -= MN * lda;
+      for (m=M SHIFT; j < N; j++, c += m) Mjoin(PATL,zero)(M, c, 1);
+      cblas_trmm(CblasColMajor, CblasRight, CblasUpper, CblasNoTrans, 
+                 CblasNonUnit, M, N, ONE, LU, ldl, C, M);
+   }
+   else /* M < N */
+   {
+      for (j=0; j < M; j++)
+      {
+         m = (j+1) SHIFT;
+         for (i=0; i < m; i++) c[i] = LU[i];
+         for (m=M SHIFT; i < m; i++) c[i] = ATL_rzero;
+         c += m;
+         LU += lda;
+      }
+      Mjoin(PATL,gecopy)(M, N-M, LU, ldl, c, M);
+      LU -= M * lda;
+      cblas_trmm(CblasColMajor, CblasLeft, CblasLower, CblasNoTrans, 
+                 CblasUnit, M, N, ONE, LU, ldl, C, M);
+   }
+   return(C);
+}
+
+int findnpvt(const int N, const int *ipiv)
+{
+   int i, n=0;
+   for (i=0; i != N; i++) if (ipiv[i] != i) n++;
+   return(n);
+}
+
+static TYPE lutestR(int CacheSize, int M, int N, int lda, int *npiv,
+                    double *tim)
+{
+   TYPE *A, *LmU;
+   int *ipiv;
+   const int MN = Mmin(M,N);
+@skip   const int FlushSize = CacheSize / sizeof(double);
+   int i;
+@skip   double *flush;
+   double t0, t1;
+   TYPE normA, eps, resid;
+
+   eps = Mjoin(PATL,epsilon)();
+   A = malloc(ATL_MulBySize(lda)*M);
+   if (A == NULL) return(-1);
+   ipiv = malloc( MN * sizeof(int) );
+   if (ipiv == NULL)
+   {
+      free(A);
+      return(-1);
+   }
+   t0 = ATL_flushcache(CacheSize);
+@skip   flush = malloc(FlushSize*sizeof(double));
+
+   Mjoin(PATL,gegen)(N, M, A, lda, M*N+lda);
+   #ifdef DEBUG
+      Mjoin(PATL,geprint)("A0", N, M, A, lda);
+   #endif
+   normA = Mjoin(PATL,genrm1)(N, M, A, lda); /* actually infnrm, but OK */
+
+   t0 = ATL_flushcache(-1);
+@beginskip
+   if (flush)
+   {
+      ATL_dset(FlushSize, 0.0, flush, 1);
+      for (i=0; i < FlushSize; i++) if (flush[i] != 0.0) exit(-1);
+   }
+@endskip
+
+   t0 = time00();
+   test_getrf(CblasRowMajor, M, N, A, lda, ipiv);
+   t1 = time00() - t0;
+   *tim = t1;
+
+   t0 = ATL_flushcache(0);
+@skip   if (flush) free(flush);
+@skip   else *tim = 0.0;
+
+   #ifdef DEBUG
+      Mjoin(PATL,geprint)("LU", N, M, A, lda);
+   #endif
+   LmU = ATL_LmulUR(M, N, A, lda);  /* LmU contains L * U */
+   #ifdef DEBUG
+      Mjoin(PATL,geprint)("L*U", N, M, LmU, N);
+   #endif
+   Mjoin(PATL,gegen)(N, M, A, lda, M*N+lda);  /* regenerate A, overwriting LU */
+   ATL_laswp(M, A, lda, 0, MN, ipiv, 1);  /* apply swaps to A */
+   resid = Mjoin(PATL,gediffnrm1)(N, M, A, lda, LmU, N);
+   resid /= (normA * eps * Mmin(M,N));
+   *npiv = findnpvt(MN, ipiv);
+
+   free(LmU);
+   free(A);
+   free(ipiv);
+
+   return(resid);
+}
+
+static TYPE lutestC(int CacheSize, int M, int N, int lda, int *npiv,
+                    double *tim)
+{
+   TYPE *A, *LmU;
+   int *ipiv;
+   const int MN = Mmin(M,N);
+@skip   const int FlushSize = CacheSize / sizeof(double);
+   int i;
+@skip   double *flush;
+   double t0, t1;
+   TYPE normA, eps, resid;
+
+   eps = Mjoin(PATL,epsilon)();
+   A = malloc(ATL_MulBySize(lda)*N);
+   if (A == NULL) return(-1);
+   ipiv = malloc( MN * sizeof(int) );
+   if (ipiv == NULL)
+   {
+      free(A);
+      return(-1);
+   }
+@skip   flush = malloc(FlushSize*sizeof(double));
+   t0 = ATL_flushcache(CacheSize);
+
+   Mjoin(PATL,gegen)(M, N, A, lda, M*N+lda);
+   normA = Mjoin(PATL,genrm1)(M, N, A, lda);
+
+   t0 = ATL_flushcache(-1);
+@beginskip
+   if (flush)
+   {
+      ATL_dset(FlushSize, 0.0, flush, 1);
+      for (i=0; i < FlushSize; i++) if (flush[i] != 0.0) exit(-1);
+   }
+@endskip
+
+   t0 = time00();
+   test_getrf(CblasColMajor, M, N, A, lda, ipiv);
+   t1 = time00() - t0;
+   *tim = t1;
+
+   t0 = ATL_flushcache(0);
+@skip   if (flush) free(flush);
+@skip   else *tim = 0.0;
+
+   LmU = ATL_LmulUC(M, N, A, lda);  /* LmU contains L * U */
+   Mjoin(PATL,gegen)(M, N, A, lda, M*N+lda);  /* regenerate A, overwriting LU */
+   ATL_laswp(N, A, lda, 0, MN, ipiv, 1);  /* apply swaps to A */
+   resid = Mjoin(PATL,gediffnrm1)(M, N, A, lda, LmU, M);
+   resid /= (normA * eps * Mmin(M,N));
+   *npiv = findnpvt(MN, ipiv);
+
+   free(LmU);
+   free(A);
+   free(ipiv);
+
+   return(resid);
+}
+
+int RunCase(int CacheSize, TYPE thresh, int MFLOP, enum ATLAS_ORDER Order, 
+            int M, int N, int lda)
+{
+   char *cord = (Order == AtlasColMajor ? "Col" : "Row");
+   const double maxMN = Mmax(M,N), minMN = Mmin(M,N);
+   unsigned long nreps=0;
+   int npiv=(-1), *ipiv;
+   const int incA = (Order == AtlasColMajor ? N*lda : M*lda);
+   double mflops, mflop, resid, tim=(-1.0), t0;
+   TYPE *A, *a;
+   int i;
+
+   #ifdef TREAL
+      mflops = maxMN * minMN * minMN - ((minMN*minMN*minMN) / 3.0) -
+               (minMN*minMN) / 2.0;
+   #else
+      mflops = (maxMN * minMN * minMN - ((minMN*minMN*minMN) / 3.0) +
+                (maxMN*minMN) / 2.0)*4.0 - 3.0 * minMN*minMN;
+   #endif
+   mflops /= 1000000.0;
+
+   if (thresh > ATL_rzero)
+   {
+      if (Order == AtlasColMajor)
+         resid = lutestC(CacheSize, M, N, lda, &npiv, &tim);
+      else resid = lutestR(CacheSize, M, N, lda, &npiv, &tim);
+   }
+   else resid = -1.0;
+   if (MFLOP > mflops || thresh <= ATL_rzero) /* need to time repetitively */
+   {
+      nreps = (mflops*1000000);
+      nreps = (MFLOP*1000000 + nreps-1) / nreps;
+      if (nreps < 1) nreps = 1;
+      i = ATL_DivBySize(2*CacheSize) ATL_PTCACHEMUL;
+      i = (i + M*N) / (M*N);
+      if (i < nreps) i = nreps;  /* don't reuse mem or no pivoting */
+      a = A = malloc(i * ATL_MulBySize(incA));
+      if (A != NULL)
+      {
+         ipiv = malloc(Mmin(M,N)*sizeof(int));  /* what the hell - reuse ipiv */
+         if (ipiv)
+         {
+            Mjoin(PATL,gegen)(i*incA, 1, A, i*incA, incA+M+3012);
+            t0 = time00();
+            for (i=nreps; i; i--, a += incA)
+               test_getrf(Order, M, N, a, lda, ipiv);
+            tim = time00() - t0;
+            tim /= nreps;
+            if (npiv == 0) npiv = findnpvt(Mmin(M,N), ipiv);
+            free(ipiv);
+         }
+         else fprintf(stderr, "   WARNING: not enough mem to run timings!\n");
+         free(A);
+      }
+      else fprintf(stderr, "   WARNING: not enough mem to run timings!\n");
+   }
+   if (tim > 0.0) mflop = mflops / tim;
+   else mflop = 0.0;
+   fprintf(stdout, "%5d  %3s   %6d %6d %6d %6d %9.3f %9.3f %9.3e\n",
+           nreps, cord, M, N, lda, npiv, tim, mflop, resid);
+   return(resid <= thresh);
+}
+
+void RunCases(int CacheSize, TYPE thresh, int MFLOP, int norder,
+              enum ATLAS_ORDER *Orders, int LdaIsM, int MisN, int NisM, 
+              int M0, int MN, int incM, int N0, int NN, int incN)
+{
+   int i, j, m, n, io, lda, np=0, nc=0;
+
+   fprintf(stdout, 
+"NREPS  Major      M      N    lda  NPVTS      TIME     MFLOP     RESID\n");
+   fprintf(stdout, 
+"=====  =====  =====  =====  =====  =====  ========  ========  ========\n");
+
+
+   for (j = N0; j <= NN; j += incN)
+   {
+      n = j;
+      for (i = M0; i <= MN; i += incM)
+      {
+         for (io=0; io < norder; io++)
+         {
+            lda = -1;
+            if (MisN)
+            {
+               m = n;
+               if (!LdaIsM) lda = NN;
+            }
+            else if (NisM)
+            {
+               m = n = i;
+               if (!LdaIsM) lda = MN;
+            }
+            else
+            {
+               m = i; 
+               n = j;
+               if (!LdaIsM) 
+               {
+                  if (Orders[io] == AtlasRowMajor) lda = NN;
+                  else lda = MN;
+               }
+            }
+            if (lda == -1)
+            {
+               if (Orders[io] == AtlasRowMajor) lda = n;
+               else lda = m;
+            }
+            if (RunCase(CacheSize, thresh, MFLOP, Orders[io], m, n, lda)) np++;
+            nc++;
+         }
+      }
+   }
+   if (thresh > ATL_rzero)
+      fprintf(stdout, "\n%d cases ran, %d cases passed\n\n", nc, np);
+}
+
+void PrintUsage(char *nam)
+{
+   fprintf(stderr, "USAGE: %s -m <m> -n <n> -M <M0 MN incM> -N <N0 NN incN> -T <thresh> -F <mflop> -l <LdaIsM> -C <cache size> -O <norder> <o1> ... <oN>\n", nam);
+   exit(-1);
+}
+
+void GetFlags(int nargs, char **args, int *MFLOP, int *CacheSize, TYPE *thresh,
+              int *norders, enum ATLAS_ORDER **Order, int *LdaIsM, int *MisN,
+              int *NisM, int *M0, int *MN, int *incM,
+              int *N0, int *NN, int *incN)
+{
+   char ch;
+   int i, j, n;
+
+   *MFLOP = 0;
+   #ifdef L2SIZE
+      *CacheSize = L2SIZE;
+   #else
+      *CacheSize = 4*1024*1024;
+   #endif
+   *thresh = 100.0;
+   *LdaIsM = 1;
+   *MisN = *NisM = 0;
+   *M0 = *MN = *incM = -1;
+   *N0 = *NN = *incN = -1;
+   *norders = -1;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-') PrintUsage(args[0]);
+      switch(args[i][1])
+      {
+      case 'O':
+         *norders = n = atoi(args[++i]);
+         if (n < 1) PrintUsage(args[0]);
+         *Order = malloc(n * sizeof(enum ATLAS_ORDER));
+         ATL_assert(*Order);
+         for (j=0; j != n; j++)
+         {
+            ch = *args[++i];
+            if (ch == 'R' || ch == 'r') (*Order)[j] = AtlasRowMajor;
+            else if (ch == 'C' || ch == 'c') (*Order)[j] = AtlasColMajor;
+            else PrintUsage(args[0]);
+         }
+         break;
+      case 'T':
+         *thresh = atof(args[++i]);
+         break;
+      case 'C':
+         *CacheSize = 1024*atoi(args[++i]);
+         break;
+      case 'l':
+         *LdaIsM = atoi(args[++i]);
+         break;
+      case 'm':
+         *M0 = *MN = *incM = atoi(args[++i]);
+         break;
+      case 'n':
+         *N0 = *NN = *incN = atoi(args[++i]);
+         break;
+      case 'M':
+         *M0 = atoi(args[++i]);
+         *MN = atoi(args[++i]);
+         *incM = atoi(args[++i]);
+         break;
+      case 'N':
+         *N0 = atoi(args[++i]);
+         *NN = atoi(args[++i]);
+         *incN = atoi(args[++i]);
+         break;
+      case 'F':
+         *MFLOP = atoi(args[++i]);
+         break;
+      default:
+         PrintUsage(args[0]);
+      }
+   }
+   if (*norders == -1)
+   {
+      *norders = 1;
+      *Order = malloc(sizeof(enum ATLAS_ORDER));
+      **Order = AtlasColMajor;
+   }
+   if (*N0 == -1)
+   {
+      if (*M0 > 0) *N0 = *NN = *incN = *NisM = 1;
+      else
+      {
+         *N0 = 100;
+         *NN = 1000;
+         *incN = 100;
+      }
+   }
+   if (*M0 == -1) *M0 = *MN = *incM = *MisN = 1;
+}
+
+main(int nargs, char **args)
+{
+   int MFLOP, CacheSize, LdaIsM, MisN, NisM, M0, MN, incM, N0, NN, incN;
+   int norders;
+   enum ATLAS_ORDER *Orders;
+   TYPE thresh;
+
+   GetFlags(nargs, args, &MFLOP, &CacheSize, &thresh, &norders, &Orders, 
+            &LdaIsM, &MisN, &NisM, &M0, &MN, &incM, &N0, &NN, &incN);
+   RunCases(CacheSize, thresh, MFLOP, norders, Orders, LdaIsM, MisN, NisM, 
+            M0, MN, incM, N0, NN, incN);
+   free(Orders);
+   exit(0);
+}
+@ROUT trtritst
+@extract -b @(topd)/gen.inc what=cw @(pw01)
+
+#include "atlas_misc.h"
+#include "atlas_lapack.h"
+#include "cblas.h"
+#include "atlas_cblastypealias.h"
+#include "atlas_tst.h"
+#include "atlas_level1.h"
+#include "atlas_aux.h"
+ 
+#ifdef GCCWIN
+   ___main(){} __main(){} MAIN__(){} _MAIN_(){}
+#endif
+
+double time00();
+
+#if 1
+#define PADVAL ATL_typify(-973200000.0)
+#else
+#define PADVAL ATL_rzero
+#endif
+
+#ifdef TimeF77
+   #define test_trtri(Order_, Uplo_, Diag_, N_, A_, lda_) \
+      ATL_assert(Mjoin(PATL,f77trtri)(Uplo_, Diag_, N_, A_, lda_) == 0)
+#elif defined(TimeC)
+   #include "clapack.h"
+   #define Ctrtri Mjoin(Mjoin(clapack_,PRE),trtri)
+   #define test_trtri(Order_, Uplo_, Diag_, N_, A_, lda_) \
+      ATL_assert(Ctrtri(Order_, Uplo_, Diag_, N_, A_, lda_) == 0)
+#else
+   #define test_trtri(Order_, Uplo_, Diag_, N_, A_, lda_) \
+      ATL_assert(ATL_trtri(Order_, Uplo_, Diag_, N_, A_, lda_) == 0)
+#endif
+
+static void ATL_checkpad(enum ATLAS_ORDER Order,
+                         enum ATLAS_UPLO Uplo,
+                         enum ATLAS_DIAG Diag,
+			 int N, TYPE *A, int lda)
+{
+   const int lda2 = lda SHIFT, N2 = N SHIFT;
+   int i, j, k, skipdiag;
+   TYPE *a;
+   enum ATLAS_UPLO use_uplo;
+
+   a = A;
+
+   if (Order==AtlasColMajor)
+     use_uplo=Uplo;
+   else
+   {
+     if (Uplo==AtlasUpper)
+        use_uplo=AtlasLower;
+     else
+        use_uplo=AtlasUpper;
+   }
+
+   /* Determines if the diagonal should be checked for overwrites */
+   if (Diag == AtlasNonUnit)
+     skipdiag = 1;
+   else
+     skipdiag = 0;
+
+   if (use_uplo == AtlasUpper)
+   {
+      for (j=0; j < N; j++)
+      {
+         for (i=(j+skipdiag) SHIFT; i < N2; i++)
+         {
+            if (a[i] != PADVAL)
+	    {
+            #ifdef TREAL
+               fprintf(stderr, "   OVERWRITE at A(%d,%d) of %f!!!\n",
+                       i+1, j+1, a[i]);
+            #else /* possibly generates 2 warning per element */
+               if (i % 2)
+               {
+                  fprintf(stderr, "   OVERWRITE at A(%d,%d) of (%f,%f)!!!\n",
+                          i/2, j, a[i-1], a[i]);
+               }
+               else
+               {
+                  fprintf(stderr, "   OVERWRITE at A(%d,%d) of (%f,%f)!!!\n",
+                          i/2, j, a[i], a[i+1]);
+               }            
+            #endif
+            }
+         }
+         a += lda2;
+      }
+   }
+   else
+   {
+      for (j=0; j < N; j++)
+      {
+         k = (j+1-skipdiag) SHIFT;
+         for (i=0; i < k; i++)
+         {
+            if (a[i] != PADVAL)
+            {
+            #ifdef TREAL
+               fprintf(stderr, "   OVERWRITE at A(%d,%d) of %f!!!\n",
+                       i, j, a[i]);
+            #else /* possibly generates 2 warning per element */
+               if (i % 2)
+               {
+                  fprintf(stderr, "   OVERWRITE at A(%d,%d) of (%f,%f)!!!\n",
+                          i/2, j, a[i-1], a[i]);
+               }
+               else
+               {
+                  fprintf(stderr, "   OVERWRITE at A(%d,%d) of (%f,%f)!!!\n",
+                          i/2, j, a[i], a[i+1]);
+               }
+            #endif
+            }
+         }
+         a += lda2;
+      }
+   }
+}
+
+/* Calculates 1-nrm of triangolar matrix. If Diag=AtlasUnit then the
+   diagonal will be excluded from the calculation. */
+static TYPE trinrm1(enum ATLAS_ORDER Order,
+                    enum ATLAS_UPLO Uplo,
+                    enum ATLAS_DIAG Diag,
+		    int N, TYPE *A, int lda)
+{
+   const int lda2 = lda SHIFT;
+   int j, skipdiag;
+   TYPE max=0.0, t0;
+   enum ATLAS_UPLO use_uplo;
+
+   if (Order==AtlasColMajor)
+     use_uplo=Uplo;
+   else
+   {
+     if (Uplo==AtlasUpper)
+        use_uplo=AtlasLower;
+     else
+        use_uplo=AtlasUpper;
+   }
+
+   if (Diag == AtlasNonUnit)
+     skipdiag = 0;
+   else
+     skipdiag = 1;
+
+   if (use_uplo == AtlasUpper)
+     {
+       for (j=0; j < N; j++)
+	 {
+	   t0 = Mjoin(PATL,asum)(j+1-skipdiag, A, 1);
+	   if (t0 > max) max = t0;
+	   A += lda2;
+	 }
+     }
+   else
+     {
+       for (j=0; j < N; j++)
+	 {
+	   t0 = Mjoin(PATL,asum)(N-j-skipdiag, A+((j+skipdiag)SHIFT), 1);
+	   if (t0 > max) max = t0;
+	   A += lda2;
+	 }
+     }
+
+   return(max);
+}
+
+void trddom
+(
+   const enum ATLAS_UPLO      UPLO,
+   const enum ATLAS_UPLO      Diag,
+   const int                  N,
+   TYPE                       * A,
+   const int                  LDA
+)
+{
+/*
+ * Scale strictly lower (resp. upper) part of triangular matrix by 1 / N
+ * to make it diagonally dominant.
+ */
+   int                        i, iaij, j, jaj, lda2 = ( LDA SHIFT ),
+                              ldap12 = (( LDA + 1 ) SHIFT);
+   TYPE                       alpha;
+   TYPE                       smallest;
+
+ 
+   if( N <= 0 ) return;
+ 
+   /* 0.9 is a safety factor for making sure it is really
+      diagonally dominant. */
+   alpha = ATL_rone * 0.9 / (TYPE)(N);
+
+   /* Find smallest element on the diagonal */
+	
+   if (Diag == AtlasNonUnit)
+   {
+#ifdef TCPLX
+        smallest=Mmin(Mabs(A[0]),Mabs(A[1]));	
+#else
+        smallest=Mabs(A[0]);		
+#endif
+	for (i=1;i<N;i++)
+	{
+#ifdef TCPLX
+           smallest=Mmin(smallest,Mmin(Mabs(A[i*ldap12]),Mabs(A[1+i*ldap12])));	
+#else
+           smallest=Mmin(smallest,Mabs(A[i*ldap12]));
+#endif
+	}
+      alpha *= smallest;
+   }
+
+   if( UPLO == AtlasUpper )
+   {
+      for( j = 0, jaj = 0; j < N; j++, jaj += lda2 )
+      {
+         for( i = 0, iaij = jaj; i < j; i++, iaij += (1 SHIFT) )
+         {
+            A[iaij  ] *= alpha;
+#ifdef TCPLX
+            A[iaij+1] *= alpha;
+#endif
+         }
+      }
+   }
+   else
+   {
+      for( j = N-1, jaj = (N-1)*ldap12; j >= 0; j--, jaj -= ldap12 )
+      {
+         for( i = j+1, iaij = jaj+(1 SHIFT); i < N; i++, iaij += (1 SHIFT) )
+         {
+            A[iaij  ] *= alpha;
+#ifdef TCPLX
+            A[iaij+1] *= alpha;
+#endif
+         }
+      }
+   }
+}
+
+
+static void trigen(enum ATLAS_ORDER Order,
+                   enum ATLAS_UPLO Uplo,
+                   enum ATLAS_DIAG Diag,
+		   int N, TYPE *A, int lda, const TYPE padval, int seed)
+{
+   const int lda2 = lda SHIFT;
+   int j, skipdiag;
+   enum ATLAS_UPLO use_uplo;
+
+   if (Order==AtlasColMajor)
+     use_uplo=Uplo;
+   else
+   {
+     if (Uplo==AtlasUpper)
+        use_uplo=AtlasLower;
+     else
+        use_uplo=AtlasUpper;
+   }
+
+   if (Diag == AtlasNonUnit)
+     skipdiag = 1;
+   else
+     skipdiag = 0;
+
+
+   /* Fill the full matrix with random values. */ 
+   Mjoin(PATL,gegen)(N, N, A, lda, seed);
+
+   /* Fill the untouched part with paddings. */
+   if (use_uplo == AtlasUpper)
+   {
+      for (j=0; j < N; j++)
+         Mjoin(PATLU,set)((N-j-skipdiag)SHIFT, padval, A+((j*lda+j+skipdiag)SHIFT), 1);
+   }
+   else
+   {
+      for (j=0; j < N; j++)
+	Mjoin(PATLU,set)((j+1-skipdiag)SHIFT, padval, A+j*lda2, 1);
+   }
+
+   /* Make it diagonally dominant */
+   trddom(use_uplo,Diag,N,A,lda);
+
+   /* Introduce singularity error */
+   /*   A[(5+5*lda) SHIFT] = 0.0;
+   #ifdef TCPLX
+      A[((5+5*lda) SHIFT)+1] = 0.0;
+   #endif
+   */
+}
+
+
+static TYPE trtritest(enum ATLAS_ORDER Order, enum ATLAS_UPLO Uplo,
+                      enum ATLAS_DIAG Diag, int CacheSize, int N, int lda,
+		      double *tim)
+{
+   TYPE *A, *Acompare;
+   int i;
+   double t0, t1;
+   TYPE normA, eps, resid;
+   /*int ierr;*/
+
+   #ifdef TCPLX
+      const TYPE one[2]={ATL_rone, ATL_rzero};
+   #else
+      const TYPE one = ATL_rone;	
+   #endif
+
+
+   eps = Mjoin(PATL,epsilon)();
+   A = malloc(ATL_MulBySize(lda)*N);
+   Acompare = malloc(ATL_MulBySize(lda)*N);
+   if (A == NULL) return(-1);
+   if (Acompare == NULL) return(-1);
+   t0 = ATL_flushcache(CacheSize);
+
+   /* create random, diagonally dominant matrix with magic value at
+      unused places. Last number is just the random seed. */
+   trigen(Order, Uplo, Diag, N, A, lda, PADVAL, N*1029+lda);
+
+   /* Create backup to calculate residual. This one has to be used
+      as a full matrix, so it has zero fills and correct diagonal. */
+   trigen(Order, Uplo, Diag, N, Acompare, lda, ATL_rzero, N*1029+lda);
+   if (Diag==AtlasUnit)
+     for (i=0; i < N; i++)
+       Acompare[(i*(lda+1)) SHIFT] = ATL_rone;
+
+
+   normA = trinrm1(Order,Uplo, Diag, N, A, lda);
+#ifdef DEBUG
+   Mjoin(PATL,geprint)("A0", N, N, A, lda);
+#endif
+   
+   t0 = ATL_flushcache(-1);
+
+   /* Calculate and time a solution */
+   t0 = time00();
+   test_trtri(Order, Uplo, Diag, N, A, lda);
+   t1 = time00() - t0;
+   *tim = t1;
+
+/*   if (ierr != 0)
+   {
+     fprintf(stderr, "Return values != 0 : %d \n",ierr);	
+     return(9999.9999);
+   }*/
+
+
+   t0 = ATL_flushcache(0);
+
+   /* Instroduce a padding error. */
+   /* A[(5+5*lda)SHIFT]=114.0; */
+
+#ifdef DEBUG
+   Mjoin(PATL,geprint)("L", N, N, A, lda);
+#endif
+   ATL_checkpad(Order, Uplo, Diag, N, A, lda);
+
+   /* Calculate A^{-1}*A */ 
+   cblas_trmm(Order,CblasLeft,Uplo,AtlasNoTrans,Diag,
+		    N,N,one,A,lda,Acompare,lda);
+
+#ifdef DEBUG
+     Mjoin(PATL,geprint)("A^{-1}*A", N, N, Acompare, N);
+#endif
+   
+   /* Subtract diagonal */
+   for (i=0; i < N; i++)
+     Acompare[i*((lda+1) SHIFT)] -= ATL_rone;
+
+/*   
+   resid = trinrm1(Order, Uplo,AtlasNonUnit,N,Acompare,lda);
+   fprintf(stderr, "normA=%e, eps=%e, num=%e\n", normA, eps, resid);	
+*/
+
+   resid = Mjoin(PATL,genrm1)(N, N, Acompare, lda);
+   
+
+#ifdef DEBUG
+   if (resid/(normA*eps*N) > 10.0)
+     fprintf(stderr, "normA=%e, eps=%e, num=%e\n", normA, eps, resid);
+#endif
+   resid /= (normA * eps * N);
+
+   free(Acompare);
+   free(A);
+
+   return(resid);
+}
+
+int RunCase(int CacheSize, TYPE thresh, int MFLOP,
+            enum ATLAS_ORDER Order, enum ATLAS_UPLO Uplo,
+            enum ATLAS_DIAG Diag, int N, int lda)
+{
+   char *Ors;
+   char *Ups;
+   char *Diags;
+   TYPE resid = 0.0;
+   double mflop, mflops, t0, tim=0.0;
+   int nreps=1, passed, i, imem;
+   const int incA = lda*N;
+   TYPE *a, *A;
+
+   mflops = N;
+#ifdef TREAL
+   mflops = 1.0/3.0 * mflops*mflops*mflops;
+#else
+   mflops = 4.0/3.0 * mflops*mflops*mflops - 2.0*mflops*mflops;
+#endif
+   mflops /= 1000000.0;
+
+   if (thresh > ATL_rzero) resid = trtritest(Order, Uplo, Diag, CacheSize, N, lda, &tim);
+   else resid = -1.0;
+
+   if (MFLOP > mflops || thresh <= ATL_rzero) /* need to time repetitively */
+   {
+      nreps = (mflops * 1000000);
+      nreps = (MFLOP*1000000 + nreps-1) / nreps;
+      if (nreps < 1) nreps = 1;
+      imem = ATL_DivBySize(CacheSize) ATL_PTCACHEMUL;
+      imem = (imem + 2*N*N-1) / (N*N);
+      if (imem < nreps) imem = nreps;
+      a = A = malloc(imem * ATL_MulBySize(incA));
+      if (A != NULL)
+      {
+         for (i=0; i < imem; i++) trigen(Order, Uplo, Diag, N, A+i*incA, lda,
+					 PADVAL, N*1029+lda);
+         t0 = time00();
+         for (i=nreps; i; i--, a += incA) test_trtri(Order, Uplo, Diag, N, a, lda);
+         tim = time00() - t0;
+         tim /= nreps;
+         free(A);
+      }
+      else fprintf(stderr, "   WARNING: not enough mem to run timings!\n");
+   }
+
+   if (tim > 0.0) mflop = mflops / tim;
+   else mflop = 0.0;
+   if (Order == AtlasColMajor) Ors = "Col ";
+   else Ors = "Row ";
+   if (Uplo == AtlasUpper) Ups = "Upper";
+   else Ups = "Lower";
+   if (Diag == AtlasNonUnit) Diags = "NonUn";
+   else Diags = "Unit ";
+   fprintf(stdout, "%5d  %4s %5s %5s %6d %6d  %12.5f  %12.3f  %12e\n",
+           nreps, Ors, Ups, Diags, N, lda, tim, mflop, resid);
+   if (resid > thresh || resid != resid) passed = 0;
+   else if (resid < 0.0) passed = -1;
+   else passed = 1;
+   return(passed);
+}
+
+void RunCases(const int CacheSize, const TYPE thresh, const int MFLOP,
+              const int ldagap,
+              const int norder, const enum ATLAS_ORDER *Orders,
+              const int nuplo, const enum ATLAS_UPLO *Uplos,
+	      const int ndiag, const enum ATLAS_DIAG *Diags,
+              const int N0, const int NN, const int incN)
+{
+   int i, lda, n, ior, iup, idiag, np=0, nc=0, ns=0;
+
+   fprintf(stdout,
+      "NREPS   Ord. UPLO DIAG       N    lda          TIME        MFLOPS         RESID\n");
+   fprintf(stdout,
+      "=====  ==== =====  ===== =====  =====  ============  ============  ============\n");
+   for (n=N0; n <= NN; n += incN)
+   {
+     if (ldagap >= 0) lda = ldagap + n;
+     else lda = NN;
+     for (ior=0; ior < norder; ior++)
+     {
+       for (iup=0; iup < nuplo; iup++)
+       {
+         for (idiag=0; idiag < ndiag; idiag++)
+         { 
+	   i = RunCase(CacheSize, thresh, MFLOP, Orders[ior], Uplos[iup], Diags[idiag], n, lda);
+	   if (i > 0)
+	     np++;
+	   else if (i < 0)
+	     ns++;
+	   nc++;
+         }
+       }
+     }
+   }
+   if (thresh > ATL_rzero)
+      fprintf(stdout, "\n%d cases: %d passed, %d skipped, %d failed\n",
+              nc, np, ns, nc-np-ns);
+}
+
+void PrintUsage(char *nam)
+{
+   fprintf(stderr, "USAGE: %s -n <n> -N <N0 NN incN> -T <thresh> -F <mflop> -l <lagap> -C <cache size> -O <norders> <order1> ... <orderN> -U <nuplos> <uplo1> ... <uploN> -D <ndiags> <diag1> <diag2> ...\n", nam);
+   exit(-1);
+}
+
+void GetFlags(int nargs, char **args, int *MFLOP, int *CacheSize, TYPE *thresh,
+              int *ldagap, 
+              int *norder, enum ATLAS_ORDER **Order,	
+              int *nuplo, enum ATLAS_UPLO **Uplo,
+	      int *ndiag, enum ATLAS_DIAG **Diag,
+              int *N0, int *NN, int *incN)
+{
+   int i, j;
+   char ch;
+
+   *MFLOP = 0;
+#ifdef L2SIZE
+   *CacheSize = L2SIZE;
+#else
+   *CacheSize = 4*1024*1024;
+#endif
+   *thresh = 100.0;
+   *N0 = *NN = *incN = -1;
+   *ldagap = 0;
+   *nuplo = -1;
+   *ndiag = -1;
+   *norder = -1;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-') PrintUsage(args[0]);
+      switch(args[i][1])
+      {
+      case 'T':
+         *thresh = atof(args[++i]);
+         break;
+      case 'C':
+         *CacheSize = 1024*atoi(args[++i]);
+         break;
+      case 'l':
+         *ldagap = atoi(args[++i]);
+         break;
+      case 'n':
+         *N0 = *NN = *incN = atoi(args[++i]);
+         break;
+      case 'N':
+         *N0 = atoi(args[++i]);
+         *NN = atoi(args[++i]);
+         *incN = atoi(args[++i]);
+         break;
+      case 'F':
+         *MFLOP = atoi(args[++i]);
+         break;
+      case 'O':
+         *norder =  atoi(args[++i]);
+         if (*norder <= 0) PrintUsage(args[0]);
+         *Order = malloc(*norder * sizeof(enum ATLAS_ORDER));
+         ATL_assert(*Order);
+         for (j=0; j != *norder; j++)
+         {
+            ch = *args[++i];
+            if (ch == 'R' || ch == 'r') (*Order)[j] = AtlasRowMajor;
+            else if (ch == 'C' || ch == 'c') (*Order)[j] = AtlasColMajor;
+            else PrintUsage(args[0]);
+         }
+         break;
+      case 'U':
+         *nuplo = atoi(args[++i]);
+         if (*nuplo <= 0) PrintUsage(args[0]);
+         *Uplo = malloc(*nuplo * sizeof(enum ATLAS_UPLO));
+         ATL_assert(*Uplo);
+         for (j=0; j != *nuplo; j++)
+         {
+            if (args[i] == NULL) PrintUsage(args[0]);
+            ch = *args[++i];
+            if (ch == 'u' || ch == 'U') (*Uplo)[j] = AtlasUpper;
+            else if (ch == 'l' || ch == 'L') (*Uplo)[j] = AtlasLower;
+            else PrintUsage(args[0]);
+         }
+         break;
+      case 'D':
+         *ndiag = atoi(args[++i]);
+         if (*ndiag <= 0) PrintUsage(args[0]);
+         *Diag = malloc(*ndiag * sizeof(enum ATLAS_DIAG));
+         ATL_assert(*Diag);
+         for (j=0; j != *ndiag; j++)
+         {
+            if (args[i] == NULL) PrintUsage(args[0]);
+            ch = *args[++i];
+            if (ch == 'n' || ch == 'N') (*Diag)[j] = AtlasNonUnit;
+            else if (ch == 'u' || ch == 'U') (*Diag)[j] = AtlasUnit;
+            else PrintUsage(args[0]);
+         }
+         break;
+      default:
+         PrintUsage(args[0]);
+      }
+   }
+   if (*N0 == -1)
+   {
+      *N0 = 100;
+      *NN = 1000;
+      *incN = 100;
+   }
+   if (*norder == -1)
+   {
+      *norder = 1;
+      *Order = malloc(sizeof(enum ATLAS_ORDER));
+      ATL_assert(*Order);
+      **Order = AtlasColMajor;
+   }
+   if (*nuplo == -1)
+   {
+      *nuplo = 1;
+      *Uplo = malloc(sizeof(enum ATLAS_UPLO));
+      ATL_assert(*Uplo);
+      **Uplo = AtlasLower;
+   }
+   if (*ndiag == -1)
+   {
+      *ndiag = 1;
+      *Diag = malloc(sizeof(enum ATLAS_DIAG));
+      ATL_assert(*Diag);
+      **Diag = AtlasNonUnit;
+   }
+}
+
+int main(int nargs, char **args)
+{
+  int MFLOP;     /* Number of mlops to minimum do in each test */
+  int CacheSize; 
+  int ldagap;
+  int norder;    /* Number of data lyouts to test */
+  int nuplo;     /* Number of upper and lower matrices to test */
+  int ndiag;     /* -- diagonals -- */
+  int N0;        /* Beginning blocksize */
+  int NN;        /* Ending blocksize */
+  int incN;      /* Blocksize stride */
+  
+  TYPE thresh;
+
+  /* GetFlags will allocate an enum-array where each position indicates
+     which type of matrix is to be used: AtlasUpper or AtlasLower */
+  enum ATLAS_UPLO *Uplos;
+  /* Same deal with Diags: Indicate if diagonal is one or not: AtlasNonUnit
+     or AtlasUnit */
+  enum ATLAS_DIAG *Diags;
+  enum ATLAS_ORDER *Orders;
+
+  GetFlags(nargs, args, &MFLOP, &CacheSize, &thresh, &ldagap, &norder,
+           &Orders,&nuplo, &Uplos,&ndiag, &Diags, &N0, &NN, &incN);
+  RunCases(CacheSize, thresh, MFLOP, ldagap, norder, Orders,
+           nuplo, Uplos, ndiag, Diags, N0, NN, incN);
+  exit(0);
+}
+@ROUT invtst invtrsm
+@extract -b @(topd)/gen.inc what=cw @(cw01)
+
+#include "atlas_misc.h"
+#include "atlas_lapack.h"
+#include "cblas.h"
+#include "atlas_cblastypealias.h"
+#include "atlas_tst.h"
+
+#ifdef TimeC
+   #include "clapack.h"
+   #define CLP Mjoin(clapack_,PRE)
+#endif
+#ifdef GCCWIN
+   ___main(){} __main(){} MAIN__(){} _MAIN_(){}
+#endif
+#define CBP Mjoin(cblas_,PRE)
+
+double time00();
+
+enum TEST_UPLO {TestGE=0, TestUpper=121, TestLower=122};
+
+static void geinv
+   (const enum CBLAS_ORDER Order, const int N, TYPE *A, const int lda)
+{
+   int *ipiv;
+   TYPE *wrk;
+   int lwrk;
+
+   ipiv = malloc(sizeof(int)*N);
+   ATL_assert(ipiv);
+   #ifdef TimeF77
+      lwrk = N * Mjoin(PATL,GetNB)();
+      wrk = malloc(ATL_MulBySize(lwrk));
+      if (Order == AtlasRowMajor) Mjoin(PATL,tstsqtran)(N, A, lda);
+      ATL_assert(Mjoin(PATL,f77getrf)(AtlasColMajor, N, N, A, lda, ipiv) == 0);
+      ATL_assert(Mjoin(PATL,f77getri)
+         (AtlasColMajor, N, A, lda, ipiv, wrk, &lwrk) == 0);
+      if (Order == AtlasRowMajor) Mjoin(PATL,tstsqtran)(N, A, lda);
+      free(wrk);
+   #elif defined(TimeC)
+      ATL_assert(Mjoin(CLP,getrf)(Order, N, N, A, lda, ipiv) == 0);
+      ATL_assert(Mjoin(CLP,getri)(Order, N, A, lda, ipiv) == 0);
+  #else
+      lwrk = N * Mjoin(PATL,GetNB)();
+      wrk = malloc(ATL_MulBySize(lwrk));
+      ATL_assert(Mjoin(PATL,getrf)(Order, N, N, A, lda, ipiv) == 0);
+      ATL_assert(Mjoin(PATL,getri)(Order, N, A, lda, ipiv, wrk, &lwrk) == 0);
+      free(wrk);
+   #endif
+   free(ipiv);
+}
+
+static void tsthetran(const int N, TYPE *A, const int lda)
+{
+   int i;
+   const int lda2=lda SHIFT;
+   Mjoin(PATL,tstsqtran)(N, A, lda);
+#ifdef TCPLX
+   for (i=0; i < N; i++) Mjoin(PATLU,scal)(N, ATL_rnone, A+1+i*lda2, 2);
+#endif
+}
+static void poinv(const enum CBLAS_ORDER Order, const enum CBLAS_UPLO Uplo,
+                  const int N, TYPE *A, const int lda)
+{
+   #ifdef TimeF77
+      if (Order == AtlasRowMajor) tsthetran(N, A, lda);
+      ATL_assert(Mjoin(PATL,f77potrf)(Uplo, N, A, lda) == 0);
+      ATL_assert(Mjoin(PATL,f77trtri)(Uplo, CblasNonUnit, N, A, lda) == 0);
+      ATL_assert(Mjoin(PATL,f77lauum)(Uplo, N, A, lda) == 0);
+      if (Order == AtlasRowMajor) tsthetran(N, A, lda);
+   #elif defined(TimeC)
+      ATL_assert(Mjoin(CLP,potrf)(Order, Uplo, N, A, lda) == 0);
+      ATL_assert(Mjoin(CLP,trtri)(Order, Uplo, CblasNonUnit, N, A, lda) == 0);
+      ATL_assert(Mjoin(CLP,lauum)(Order, Uplo, N, A, lda) == 0);
+   #else
+      ATL_assert(Mjoin(PATL,potrf)(Order, Uplo, N, A, lda) == 0);
+      ATL_assert(Mjoin(PATL,trtri)(Order, Uplo, CblasNonUnit, N, A, lda) == 0);
+      Mjoin(PATL,lauum)(Order, Uplo, N, A, lda);
+   #endif
+}
+
+static void test_inv(const enum CBLAS_ORDER Order, const enum TEST_UPLO Uplo,
+                     const int N, TYPE *A, const int lda)
+{
+   if (Uplo == TestGE) geinv(Order, N, A, lda);
+   else poinv(Order, (enum CBLAS_ORDER) Uplo, N, A, lda);
+}
+
+@extract -b @(basd)/atlas-tlp.base rout=GetMats
+
+static TYPE *GetMat(enum CBLAS_ORDER Order, enum TEST_UPLO Uplo, int N, int lda)
+{
+   if (Uplo == TestGE) return(GetGE(N, N, lda));
+   return(GetHE(Order, Uplo, N, lda));
+}
+
+static TYPE geresid(enum CBLAS_ORDER Order, int N, TYPE *A, int lda, 
+                    TYPE *AI, int ldi)
+/* 
+ * returns ||A - AI|| / (N * eps * ||A|| * ||AI||);
+ * for row-major, we are not using 1-norm, since we are adding rows instead
+ * of cols, but it should be an equally good norm, so don't worry about it.
+ */
+{
+   TYPE numer, denom, eps;
+   const int ldcp1 = (N+1)SHIFT;
+   TYPE *C;
+   int i;
+
+   #ifdef TREAL
+      TYPE one = ATL_rone, zero = ATL_rzero;
+   #else
+      TYPE one[2] = {ATL_rone, ATL_rzero}, zero[2] = {ATL_rzero, ATL_rzero};
+   #endif
+   
+   eps = Mjoin(PATL,epsilon)();
+   C = malloc(N*ATL_MulBySize(N));
+   ATL_assert(C);
+   cblas_gemm(Order, CblasNoTrans, CblasNoTrans, N, N, N, one, A, lda, 
+              AI, ldi, zero, C, N);                /* C now has A*inv(A) */
+   for (i=0; i != N; i++) C[i*ldcp1] -= ATL_rone;  /* C now has A*inv(A)-I */
+   numer = Mjoin(PATL,genrm1)(N, N, C, N);
+   denom = Mjoin(PATL,genrm1)(N, N, A, lda) *
+           Mjoin(PATL,genrm1)(N, N, AI, ldi) * N * eps;
+   free(C);
+   return(numer/denom);
+}
+
+static TYPE poresid(enum CBLAS_ORDER Order, enum CBLAS_UPLO Uplo,
+                    int N, TYPE *A, int lda, TYPE *AI, int ldi)
+/* 
+ * returns ||A - AI|| / (N * eps * ||A|| * ||AI||);
+ */
+{
+   enum CBLAS_UPLO uplo=Uplo;
+   TYPE numer, denom, eps;
+   const int ldcp1 = (N+1)SHIFT;
+   int i;
+   #ifdef TREAL
+      TYPE one = ATL_rone, zero = ATL_rzero;
+   #else
+      TYPE one[2] = {ATL_rone, ATL_rzero}, zero[2] = {ATL_rzero, ATL_rzero};
+   #endif
+   TYPE *C, *B;
+   
+   C = malloc(N*ATL_MulBySize(N));
+   ATL_assert(C);
+   B = DupMat(Order, N, N, AI, ldi, N);
+   ReflectHE(Order, Uplo, N, B, N);
+   #ifdef TREAL
+      cblas_symm(Order, CblasRight, Uplo, N, N, one, A, lda, B, N, zero, C, N);
+   #else
+      cblas_hemm(Order, CblasRight, Uplo, N, N, one, A, lda, B, N, zero, C, N);
+   #endif
+   free(B);
+   eps = Mjoin(PATL,epsilon)();
+   if (Order == CblasRowMajor)
+      uplo = (Uplo == CblasUpper) ? CblasLower : CblasUpper;
+@beginskip
+   {
+      if (Uplo == CblasUpper)
+      {
+         uplo = CblasLower;
+         #ifdef TCPLX
+            for (i=0; i < N-1; i++)
+            {
+               Mjoin(PATLU,scal)(N-1-i, ATL_rnone, A+3+i*((lda+1)<<1), 2);
+               Mjoin(PATLU,scal)(N-1-i, ATL_rnone, AI+3+i*((ldi+1)<<1), 2);
+            }
+         #endif
+      }
+      else
+      {
+         uplo = CblasUpper;
+         #ifdef TCPLX
+            for (i=1; i < N; i++)
+            {
+               Mjoin(PATLU,scal)(i, ATL_rnone, A+1+i*(lda<<1), 2);
+               Mjoin(PATLU,scal)(i, ATL_rnone, AI+1+i*(ldi<<1), 2);
+            }
+         #endif
+      }
+   }
+@endskip
+   for (i=0; i != N; i++) C[i*ldcp1] -= ATL_rone;  /* C now has A*inv(A)-I */
+   numer = Mjoin(PATL,genrm1)(N, N, C, N);
+   #ifdef TREAL
+      denom = Mjoin(PATL,synrm)(uplo, N, A, lda) *
+              Mjoin(PATL,synrm)(uplo, N, AI, ldi) * N * eps;
+   #else
+      denom = Mjoin(PATL,henrm)(uplo, N, A, lda) *
+              Mjoin(PATL,henrm)(uplo, N, AI, ldi) * N * eps;
+   #endif
+   free(C);
+   return(numer/denom);
+}
+
+static TYPE GetResid(enum CBLAS_ORDER Order, enum TEST_UPLO Uplo,
+                     int N, TYPE *A, int lda, TYPE *AI, int ldi)
+{
+   TYPE ret;
+   if (Uplo == TestGE) ret = geresid(Order, N, A, lda, AI, ldi);
+   else ret = poresid(Order, Uplo, N, A, lda, AI, ldi);
+   return(ret);
+}
+
+static double RunTest
+   (enum CBLAS_ORDER Order, enum TEST_UPLO Uplo, int N, int lda, 
+    int CacheSize, TYPE *res)
+{
+   TYPE *A, *AI, *C;
+   int ierr;
+   double t0, t1;
+
+   A  = GetMat(Order, Uplo, N, lda);
+   #ifdef DEBUG
+      Mjoin(PATL,geprint)("A0", N, N, A, lda);
+   #endif
+   AI = DupMat(Order, N, N, A, lda, lda);
+   t0 = ATL_flushcache(CacheSize);
+
+   t0 = ATL_flushcache(-1);
+   t0 = time00();
+   test_inv(Order, Uplo, N, AI, lda); /* AI should now have inverse(A) */
+   t1 = time00() - t0;
+   t0 = ATL_flushcache(0);
+   #ifdef DEBUG
+      Mjoin(PATL,geprint)("A ", N, N, A, lda);
+      Mjoin(PATL,geprint)("AI", N, N, AI, lda);
+   #endif
+
+   *res = GetResid(Order, Uplo, N, A, lda, AI, lda);
+   free(AI);
+   free(A);
+   return(t1);
+}
+
+static double RunTiming
+   (enum CBLAS_ORDER Order, enum TEST_UPLO Uplo, int N, int lda, 
+    int CacheSize, int nreps)
+{
+   TYPE *A, *a;
+   const int incA = N*lda;
+   int i, k;
+   double t0, t1=0.0;
+
+   if (nreps < 1) nreps = 1;
+   i = ATL_DivBySize(2*CacheSize) ATL_PTCACHEMUL;
+   k = i = (i + N*N-1) / (N*N);
+   if (nreps > i) k = i = nreps;
+   a = A = malloc(i * ATL_MulBySize(incA));
+   if (A)
+   {
+      if (Uplo == TestGE) 
+         for (i=0; i < k; i++) Mjoin(PATL,gegen)(N, N, A+i*incA, lda, N+lda);
+      else for (i=0; i < k; i++) hegen(Order, Uplo, N, A+i*incA, lda);
+      
+      t0 = time00();
+      for (i=nreps; i; i--, a += incA) test_inv(Order, Uplo, N, a, lda);
+      t1 = time00() - t0;
+      free(A);
+   }
+   else fprintf(stderr, "   WARNING: not enough mem to run timings!\n");
+   return(t1/nreps);
+}
+
+@ROUT invtrsm
+int ATL_trsmtstNB;
+int BestStop(enum CBLAS_ORDER Order, enum TEST_UPLO Uplo, int CacheSize,
+             int MFLOP, int N, int lda, int b0, int bN, int incb)
+{
+   int b;
+@ROUT invtst
+static int RunCase
+   (enum CBLAS_ORDER Order, enum TEST_UPLO Uplo, int N, int lda,
+    int CacheSize, int MFLOP, double thresh)
+{
+@ROUT invtst invtrsm
+   double mflops, mflop, t0, mfb=0.0;
+   TYPE resid;
+   int nreps, iret=(-1);
+   char *cuplo, *cord;
+
+   if (Order == CblasRowMajor) cord = "Row";
+   else cord = "Col";
+   if (Uplo == TestGE)
+   {
+      cuplo = "   GE";
+      #ifdef TREAL 
+         mflops = ((2.0*N)*N*N)/3.0 - (0.5*N)*N;    /* LU flops */
+         mflops += (1.0*N)*N*N;                     /* getri flops */
+      #else
+         mflops = ((8.0*N)*N*N)/3.0 - (1.0*N)*N;    /* LU flops */
+         mflops += (4.0*N)*N*N;                     /* getri flops */
+      #endif
+   }
+   else
+   {
+      if (Uplo == TestUpper) cuplo = "Upper";
+      else cuplo = "Lower";
+      mflops = N;
+   #ifdef TREAL 
+      mflops = (mflops*mflops*mflops) / 3.0 + 0.5*(mflops*mflops); /* LLt */
+      mflops += (0.25*N)*N*N;                     /* lauum flops */
+   #else
+      mflops = (4.0/3.0)*(mflops*mflops*mflops) + 3.0 * (mflops*mflops);
+      mflops += (1.0*N)*N*N;                     /* lauum flops */
+   #endif
+   }
+   #ifdef TREAL
+      mflops += ((1.0*N)*N*N)/3.0;               /* trtri flops */
+   #else
+      mflops += ((4.0*N)*N*N)/3.0 - (2.0*N)*N;   /* trtri flops */
+   #endif 
+   mflops /= 1000000.0;
+   if (mflops < 1.0) nreps = 1;
+   else nreps = mflops;
+/*
+ * The line below replaces this line:
+   nreps = MFLOP / nreps;
+ * they are the same, since we ensure nreps >= 1 in above statement, but
+ * on the SGI, the original causes an error, must be a compiler error of
+ * some sort -- RCW.
+ */
+   nreps = MFLOP / Mmax(1,nreps);
+@ROUT invtrsm
+   fprintf(stdout, "nreps = %d\n", nreps);
+   fprintf(stdout, "\n STOP  ORDER   UPLO      N    LDA      TIME     MFLOP\n");
+   fprintf(stdout, "=====  =====  =====  =====  =====  ========  ========\n\n");
+
+   for (b=b0; b <= bN; b += incb)
+   {
+      ATL_trsmtstNB = b;
+      t0 = RunTiming(Order, Uplo, N, lda, CacheSize, nreps);
+      if (t0 > 0.0) mflop = mflops / t0;
+      else mflop = -1.0;
+      if (mflop >= mfb)
+      {
+         iret = b;
+         mfb = mflop;
+      }
+      fprintf(stdout, "%5d    %3s %6s %6d %6d %9.3f %9.2f\n", 
+              b, cord, cuplo, N, lda, t0, mflop);
+   }
+   return(iret);
+}
+@ROUT invtst
+   if (thresh >= ATL_rzero) /* perform residual check */
+   {
+      t0 = RunTest(Order, Uplo, N, lda, CacheSize, &resid);
+      if (resid <= thresh) iret=1;
+      else iret=0;
+   }
+   else resid = -1.0;
+   if (nreps > 0 || thresh < 0.0) 
+      t0 = RunTiming(Order, Uplo, N, lda, CacheSize, nreps);
+   if (t0 > 0.0) mflop = mflops / t0;
+   else mflop = -1.0;
+   fprintf(stdout, "%5d    %3s %6s %6d %6d %9.3f %9.2f  %e\n", 
+           nreps, cord, cuplo, N, lda, t0, mflop, resid);
+   return(iret);
+}
+
+void RunCases(int CacheSize, TYPE thresh, int MFLOP, int ldagap, int norder,
+              enum ATLAS_ORDER *Orders, int nuplo, enum ATLAS_UPLO *Uplos,
+              int N0, int NN, int incN)
+{
+   int i, lda, n, io, iu, ns=0, np=0, nc=0;
+
+   fprintf(stdout, 
+"\nNREPS  ORDER   UPLO      N    LDA      TIME     MFLOP         RESID\n");
+   fprintf(stdout, 
+  "=====  =====  =====  =====  =====  ========  ========  ============\n\n");
+
+   for (n=N0; n <= NN; n += incN)
+   {
+      if (ldagap >= 0) lda = ldagap+n;
+      else lda = NN;
+      for (io=0; io < norder; io++)
+      {
+         for (iu=0; iu < nuplo; iu++)
+         {
+            i = RunCase(Orders[io], Uplos[iu], n, lda, CacheSize, MFLOP, 
+                        thresh);
+            if (i > 0) np++;
+            else if (i < 0) ns++;
+            nc++;
+         }
+      }
+   }
+   if (thresh >= ATL_rzero)
+      fprintf(stdout, "\n%d cases: %d passed, %d skipped, %d failed\n",
+              nc, np, ns, nc-np-ns);
+}
+
+@ROUT invtrsm
+void PrintUsage(char *nam)
+{
+   fprintf(stderr, "\nUSAGE: %s -n <n> -B <NB0 BN incB> -F <mflop> -l <lda> -C <cache size> -O <R/C> -U <U,L,G>\n", nam);
+   exit(-1);
+}
+void GetFlags(int nargs, char **args, int *MFLOP, int *CacheSize, int *lda,
+              enum ATLAS_ORDER *Ord, enum TEST_UPLO *Uplo, int *N,
+              int *N0, int *NN, int *incN)
+{
+   int i;
+   char ch;
+   *MFLOP = 0;
+   #ifdef L2SIZE
+      *CacheSize = L2SIZE;
+   #else
+      *CacheSize = 4*1024*1024;
+   #endif
+   *N0 = *NN = *incN = -1;
+   #if defined(DREAL) || defined(SCPLX)
+      *N = 1013;
+      *lda = 1021;
+   #elif defined(SREAL)
+      *N = 1409;
+      *lda = 1423;
+   #else
+      *N = 821;
+      *lda = 823;
+   #endif
+   *Uplo = CblasUpper;
+   *Ord = CblasColMajor;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-') PrintUsage(args[0]);
+      switch(args[i][1])
+      {
+      case 'C':
+         *CacheSize = 1024*atoi(args[++i]);
+         break;
+      case 'l':
+         *lda = atoi(args[++i]);
+         break;
+      case 'n':
+         *N = atoi(args[++i]);
+         break;
+      case 'B':
+         *N0 = atoi(args[++i]);
+         *NN = atoi(args[++i]);
+         *incN = atoi(args[++i]);
+         break;
+      case 'F':
+         *MFLOP = atoi(args[++i]);
+         break;
+      case 'O':
+         ch = *args[++i];
+         if (ch == 'c' || ch == 'C') *Ord = AtlasColMajor; 
+         else if (ch == 'r' || ch == 'R') *Ord = AtlasRowMajor;
+         else PrintUsage(args[0]);
+         break;
+      case 'U':
+         ch = *args[++i];
+         if (ch == 'u' || ch == 'U') *Uplo = AtlasUpper;
+         else if (ch == 'l' || ch == 'L') *Uplo = AtlasLower;
+         else *Uplo = TestGE;
+         break;
+      default:
+         PrintUsage(args[0]);
+      }
+   }
+   if (*N0 == -1)
+   {
+      *N0 = 1;
+      *NN = Mjoin(PATL,GetNB)();
+      *incN = 1;
+   }
+   if (*lda < *N)
+      *lda = *N;
+}
+
+int main(int nargs, char **args)
+{
+   int nb, N, MFLOP, CacheSize, lda, N0, NN, incN;
+   enum ATLAS_ORDER Ord;
+   enum TEST_UPLO Uplo;
+   FILE *fpout=NULL;
+
+   GetFlags(nargs, args, &MFLOP, &CacheSize, &lda, &Ord, &Uplo, &N,
+            &N0, &NN, &incN);
+   nb = BestStop(Ord, Uplo, CacheSize, MFLOP, N, lda, N0, NN, incN);
+   fprintf(stdout, "\nBest TRSM_NB = %d\n\n", nb);
+   #ifdef SREAL
+      fpout = fopen("res/sTRSM_NB", "w");
+   #elif defined(DREAL)
+      fpout = fopen("res/dTRSM_NB", "w");
+   #elif defined(SCPLX)
+      fpout = fopen("res/cTRSM_NB", "w");
+   #elif defined(DCPLX)
+      fpout = fopen("res/zTRSM_NB", "w");
+   #endif
+   if (fpout)
+   {
+      fprintf(fpout, "%d\n", nb);
+      fclose(fpout);
+   }
+   exit(fpout == NULL);
+}
+@ROUT invtst
+void PrintUsage(char *nam)
+{
+   fprintf(stderr, "\nUSAGE: %s -n <n> -N <N0 NN incN> -T <thresh> -F <mflop> -l <ldagap> -C <cache size> -U <nuplos> <uplo1> ... <uploN> -O <norder> ...\n", nam);
+   exit(-1);
+}
+
+void GetFlags(int nargs, char **args, int *MFLOP, int *CacheSize, TYPE *thresh,
+              int *ldagap, int *nord, enum ATLAS_ORDER **Ord,
+              int *nuplo, enum TEST_UPLO **Uplo, int *N0, int *NN, int *incN)
+{
+   int i, j, n;
+   char ch;
+
+   *MFLOP = 0;
+   #ifdef L2SIZE
+      *CacheSize = L2SIZE;
+   #else
+      *CacheSize = 4*1024*1024;
+   #endif
+   *thresh = 100.0;
+   *N0 = *NN = *incN = -1;
+   *ldagap = 0;
+   *nord = *nuplo = -1;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-') PrintUsage(args[0]);
+      switch(args[i][1])
+      {
+      case 'T':
+         *thresh = atof(args[++i]);
+         break;
+      case 'C':
+         *CacheSize = 1024*atoi(args[++i]);
+         break;
+      case 'l':
+         *ldagap = atoi(args[++i]);
+         break;
+      case 'n':
+         *N0 = *NN = *incN = atoi(args[++i]);
+         break;
+      case 'N':
+         *N0 = atoi(args[++i]);
+         *NN = atoi(args[++i]);
+         *incN = atoi(args[++i]);
+         break;
+      case 'F':
+         *MFLOP = atoi(args[++i]);
+         break;
+      case 'O':
+         *nord  = atoi(args[++i]);
+         if (*nord  <= 0) PrintUsage(args[0]);
+         *Ord  = malloc(*nord  * sizeof(enum ATLAS_ORDER));
+         ATL_assert(*Ord);
+         for (j=0; j != *nord; j++)
+         {
+            if (args[i] == NULL) PrintUsage(args[0]);
+            ch = *args[++i];
+            if (ch == 'c' || ch == 'C') (*Ord)[j] = AtlasColMajor; 
+            else if (ch == 'r' || ch == 'R') (*Ord)[j] = AtlasRowMajor;
+            else PrintUsage(args[0]);
+         }
+         break;
+      case 'U':
+         *nuplo = atoi(args[++i]);
+         if (*nuplo <= 0) PrintUsage(args[0]);
+         *Uplo = malloc(*nuplo * sizeof(enum TEST_UPLO));
+         ATL_assert(*Uplo);
+         for (j=0; j != *nuplo; j++)
+         {
+            if (args[i] == NULL) PrintUsage(args[0]);
+            ch = *args[++i];
+            if (ch == 'u' || ch == 'U') (*Uplo)[j] = AtlasUpper;
+            else if (ch == 'l' || ch == 'L') (*Uplo)[j] = AtlasLower;
+            else (*Uplo)[j] = TestGE;
+         }
+         break;
+      default:
+         PrintUsage(args[0]);
+      }
+   }
+   if (*N0 == -1)
+   {
+      *N0 = 100;
+      *NN = 1000;
+      *incN = 100;
+   }
+   if (*nord  == -1)
+   {
+      *nord  = 1;
+      *Ord  = malloc(sizeof(enum ATLAS_ORDER));
+      ATL_assert(*Ord);
+      **Ord = AtlasColMajor;
+   }
+   if (*nuplo == -1)
+   {
+      *nuplo = 1;
+      *Uplo = malloc(sizeof(enum TEST_UPLO));
+      ATL_assert(*Uplo);
+      **Uplo = TestGE;
+   }
+}
+
+main(int nargs, char **args)
+{
+   int MFLOP, CacheSize, ldagap, nord, nuplo, N0, NN, incN;
+   enum TEST_UPLO *Uplo;
+   enum ATLAS_ORDER *Ord;
+   TYPE thresh;
+   GetFlags(nargs, args, &MFLOP, &CacheSize, &thresh, &ldagap, &nord, &Ord,
+            &nuplo, &Uplo, &N0, &NN, &incN);
+   RunCases(CacheSize, thresh, MFLOP, ldagap, nord, Ord, nuplo, 
+            (enum ATLAS_UPLO*) Uplo, N0, NN, incN);
+   exit(0);
+}
+@ROUT atlas_trsmNB.h
+#ifndef ATLAS_TRSMNB_H
+#define ATLAS_TRSMNB_H
+
+#ifndef TRSM_NB
+   #ifdef TREAL
+      #ifdef ATL_ARCH_ATHLON
+         #ifdef DREAL
+            #define TRSM_NB NB
+         #else
+            #define TRSM_NB (NB/4)
+         #endif
+      #elif defined(ATL_ARCH_HAMMER64) || defined(ATL_ARCH_HAMMER32)
+         #ifdef DREAL
+            #define TRSM_NB (NB/3)
+         #else
+            #define TRSM_NB (NB/2)
+         #endif
+      #else
+         #define TRSM_NB NB
+      #endif
+/*
+ *    For larger NB than 8, the intel compiler screws up the TRSM kernel,
+ *    so force 8 as our largest stopping factor.  This is OK performance-
+ *    wise, since all non-x86 archs benefit from not using the x86-specific
+ *    kernel too much anyway (that's why we mandate 8 for all non-x86 archs)
+ *    NOTE: I'm afraid the ATL_GAS_x86* probes might succeed on some
+ *          IA64 due to emulation, and that's why they are explicit
+ */
+      #if defined(ATL_IntelIccBugs) || defined(ATL_ARCH_IA64Itan2) || \
+          defined(ATL_ARCH_IA64Itan2) || \
+          (!defined(ATL_GAS_x8632) && !defined(ATL_GAS_x8664))
+         #undef TRSM_NB
+         #define TRSM_NB 8
+      #endif
+   #else
+      #define TRSM_NB 4
+   #endif
+#endif
+
+#endif
+@ROUT ATL_trsm
+@extract -b @(topd)/gen.inc what=cw @(aw04)
+
+/*
+ * Include files
+ */
+#include "atlas_rblas3.h"
+#include "atlas_kernel3.h"
+#include "atlas_lvl3.h"
+
+extern int ATL_trsmtstNB;
+#ifdef TRSM_NB
+   #undef TRSM_NB
+#endif
+#define TRSM_NB ATL_trsmtstNB
+
+void Mjoin( PATL, trsm )
+(
+   const enum ATLAS_SIDE      SIDE,
+   const enum ATLAS_UPLO      UPLO,
+   const enum ATLAS_TRANS     TRANS,
+   const enum ATLAS_DIAG      DIAG,
+   const int                  M,
+   const int                  N,
+   const SCALAR               ALPHA,
+   const TYPE                 * A,
+   const int                  LDA,
+   TYPE                       * B,
+   const int                  LDB
+)
+{
+/*
+ * Purpose
+ * =======
+ *
+ * Mjoin( PATL, trsm )  solves one of the matrix equations
+ *
+ *    op( A ) * X = alpha * B,   or  X * op( A ) = alpha * B,
+ *
+ * where alpha is a scalar, X and B are m by n matrices, A is a unit, or
+ * non-unit, upper or lower triangular matrix and op( A ) is one of
+ *
+ *    op( A ) = A   or   op( A ) = A'   or   op( A ) = conjg( A' ).
+ *
+ * The matrix X is overwritten on B.
+ *
+ * This is a  recursive  version of the  algorithm.  For a more detailed
+ * description of  the arguments of this function, see the reference im-
+ * plementation in the  ATLAS/src/blas/reference directory.
+ *
+ * ---------------------------------------------------------------------
+ */
+/*
+ * .. Local Variables ..
+ */
+#ifdef TREAL
+   TYPE                       alpha0 = (TYPE)(ALPHA);
+   const TYPE                 negone = ATL_rnone, one = ATL_rone;
+#else
+   TYPE                       negone[2] = { ATL_rnone, ATL_rzero },
+                              one   [2] = { ATL_rone,  ATL_rzero };
+#endif
+   TYPE                       * alpha;
+   RC3_FUN_TRSM_T             ATL_rtrsm;
+   RC3_TRSM_T                 type;
+/* ..
+ * .. Executable Statements ..
+ *
+ */
+   if( ( M == 0 ) || ( N == 0 ) ) return;
+
+   if( SCALAR_IS_ZERO( ALPHA ) )
+   { Mjoin( PATL, gescal )( M, N, ALPHA, B, LDB ); return; }
+
+#ifdef TREAL
+   type.size   = sizeof( TYPE );    type.one = (void *)(&one);
+   type.negone = (void *)(&negone); alpha    = &alpha0;
+#else
+   type.size   = sizeof( TYPE[2] ); type.one = (void *)one;
+   type.negone = (void *)negone;    alpha    = (TYPE *)(ALPHA);
+#endif
+
+   if( SIDE == AtlasLeft )
+   {
+      if( TRANS == AtlasNoTrans )
+      {
+         type.Tgemm = Mjoin( PATL, gemmNN_RB );
+         if( UPLO == AtlasUpper )
+         {
+            ATL_rtrsm = ATL_rtrsmLUN;
+            if( DIAG == AtlasNonUnit ) type.Ttrsm = Mjoin( PATL, trsmLUNN );
+            else                       type.Ttrsm = Mjoin( PATL, trsmLUNU );
+         }
+         else
+         {
+            ATL_rtrsm = ATL_rtrsmLLN;
+            if( DIAG == AtlasNonUnit ) type.Ttrsm = Mjoin( PATL, trsmLLNN );
+            else                       type.Ttrsm = Mjoin( PATL, trsmLLNU );
+         }
+      }
+#ifdef TREAL
+      else
+#else
+      else if( TRANS == AtlasTrans )
+#endif
+      {
+         type.Tgemm = Mjoin( PATL, gemmTN_RB );
+         if( UPLO == AtlasUpper)
+         {
+            ATL_rtrsm = ATL_rtrsmLUT;
+            if( DIAG == AtlasNonUnit ) type.Ttrsm = Mjoin( PATL, trsmLUTN );
+            else                       type.Ttrsm = Mjoin( PATL, trsmLUTU );
+         }
+         else
+         {
+            ATL_rtrsm = ATL_rtrsmLLT;
+            if( DIAG == AtlasNonUnit ) type.Ttrsm = Mjoin( PATL, trsmLLTN );
+            else                       type.Ttrsm = Mjoin( PATL, trsmLLTU );
+         }
+      }
+#ifdef TCPLX
+      else
+      {
+         type.Tgemm = Mjoin( PATL, gemmCN_RB );
+         if( UPLO == AtlasUpper )
+         {
+            ATL_rtrsm = ATL_rtrsmLUC;
+            if( DIAG == AtlasNonUnit ) type.Ttrsm = Mjoin( PATL, trsmLUCN );
+            else                       type.Ttrsm = Mjoin( PATL, trsmLUCU );
+         }
+         else
+         {
+            ATL_rtrsm = ATL_rtrsmLLC;
+            if( DIAG == AtlasNonUnit ) type.Ttrsm = Mjoin( PATL, trsmLLCN );
+            else                       type.Ttrsm = Mjoin( PATL, trsmLLCU );
+         }
+      }
+#endif
+   }
+   else
+   {
+      if( TRANS == AtlasNoTrans )
+      {
+         type.Tgemm = Mjoin( PATL, gemmNN_RB );
+         if( UPLO == AtlasUpper )
+         {
+            ATL_rtrsm = ATL_rtrsmRUN;
+            if( DIAG == AtlasNonUnit ) type.Ttrsm = Mjoin( PATL, trsmRUNN );
+            else                       type.Ttrsm = Mjoin( PATL, trsmRUNU );
+         }
+         else
+         {
+            ATL_rtrsm = ATL_rtrsmRLN;
+            if( DIAG == AtlasNonUnit ) type.Ttrsm = Mjoin( PATL, trsmRLNN );
+            else                       type.Ttrsm = Mjoin( PATL, trsmRLNU );
+         }
+      }
+#ifdef TREAL
+      else
+#else
+      else if( TRANS == AtlasTrans )
+#endif
+      {
+         type.Tgemm = Mjoin( PATL, gemmNT_RB );
+         if( UPLO == AtlasUpper )
+         {
+            ATL_rtrsm = ATL_rtrsmRUT;
+            if( DIAG == AtlasNonUnit ) type.Ttrsm = Mjoin( PATL, trsmRUTN );
+            else                       type.Ttrsm = Mjoin( PATL, trsmRUTU );
+         }
+         else
+         {
+            ATL_rtrsm = ATL_rtrsmRLT;
+            if( DIAG == AtlasNonUnit ) type.Ttrsm = Mjoin( PATL, trsmRLTN );
+            else                       type.Ttrsm = Mjoin( PATL, trsmRLTU );
+         }
+      }
+#ifdef TCPLX
+      else
+      {
+         type.Tgemm = Mjoin( PATL, gemmNC_RB );
+         if( UPLO == AtlasUpper )
+         {
+            ATL_rtrsm = ATL_rtrsmRUC;
+            if( DIAG == AtlasNonUnit ) type.Ttrsm = Mjoin( PATL, trsmRUCN );
+            else                       type.Ttrsm = Mjoin( PATL, trsmRUCU );
+         }
+         else
+         {
+            ATL_rtrsm = ATL_rtrsmRLC;
+            if( DIAG == AtlasNonUnit ) type.Ttrsm = Mjoin( PATL, trsmRLCN );
+            else                       type.Ttrsm = Mjoin( PATL, trsmRLCU );
+         }
+      }
+#endif
+   }
+
+   ATL_rtrsm( &type, M, N, (void *)(alpha), (void *)(A), LDA, (void *)(B),
+              LDB, TRSM_NB );
+/*
+ * End of Mjoin( PATL, trsm )
+ */
+}
+@ROUT gen_trsmnb
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+
+main(int nargs, char **args)
+{
+   FILE *fpin, *fpout;
+   int stops, stopd;
+   fpin = fopen("res/sTRSM_NB", "r");
+   assert(fpin);
+   assert(fscanf(fpin, "%d", &stops) == 1);
+   fclose(fpin);
+   fpin = fopen("res/dTRSM_NB", "r");
+   assert(fpin);
+   assert(fscanf(fpin, "%d", &stopd) == 1);
+   fclose(fpin);
+   fpout = fopen("res/atlas_trsmNB.h", "w");
+   assert(fpout);
+   fprintf(fpout, "#ifndef ATLAS_TRSMNB_H\n   #define ATLAS_TRSMNB_H\n\n");
+   fprintf(fpout, "   #ifdef SREAL\n      #define TRSM_NB %d\n", stops);
+   fprintf(fpout, "   #elif defined(DREAL)\n      #define TRSM_NB %d\n", stopd);
+   fprintf(fpout, "   #else\n      #define TRSM_NB 4\n");
+   fprintf(fpout, "   #endif\n\n#endif\n");
+   fclose(fpout);
+   exit(0);
+}
+@ROUT ilaenvF.c lanbtst lanbsrch
+static int ONB=0;       /* optimal NB to return in ILAENV */
+#if defined(ATL_USEPTHREADS) && defined(ATL_USE_ATL_ILAENV) &&  \
+    defined(ATL_USER_ILAENV)
+   #define ATL_ilaenv ATL_itlaenv
+#endif
+/*
+ * These are ISPEC values, which control what question is being asked ILAENV
+ */
+#define LA_OPT_NB 1     /* best NB if workspace allows */
+#define LA_MIN_NB 2     /* minimal nb that will give speedup */
+#define LA_NBXOVER 3    /* when N < this, use unblocked code */
+
+#if defined(Add_) || defined(Add__)
+   #define ILAENV ilaenv_
+#elif defined(NoChange)
+   #define ILAENV ilaenv
+#elif !defined(UpCase)  /* no #define necessary for this UpCase! */
+   #error "Unknown name decoration!"
+#endif
+
+#ifndef ATL_USER_ILAENV /* ignore this ILAENV if user provides */
+#ifdef ATL_USE_ATL_ILAENV
+   #include "atlas_lapack.h"
+#endif
+F77_INTEGER ILAENV
+#ifdef StringStructVal
+   (F77_INTEGER *ISPEC, F77_CHAR NAME, F77_CHAR OPTS, 
+#elif defined(StringStructPtr)
+   (F77_INTEGER *ISPEC, F77_CHAR *NAME, F77_CHAR *OPTS, 
+#elif defined(StringSunStyle)
+   (F77_INTEGER *ISPEC, char *NAME, char *OPTS, 
+#else
+    #error "No supported string handling for this architecture!"
+#endif
+    F77_INTEGER *N1, F77_INTEGER *N2, F77_INTEGER *N3, F77_INTEGER *N4
+#if defined(StringSunStyle)
+    , F77_INTEGER namelen, F77_INTEGER optslen
+#endif
+   )
+{
+   char *name, *opts, *fname, *fopts;
+   int ispec, n1, n2, n3, n4;
+#ifndef StringSunStyle
+   int namelen, optslen;
+#endif
+   int nb, i;
+#ifdef ATL_USE_ATL_ILAENV
+   int irout, iopt;
+#endif
+
+/*
+ * Translate F77 inputs into C; strings upcased for ease of comparison
+ */
+#ifdef StringStructVal
+   namelen = NAME.len;
+   fname = NAME.cp;
+   optslen = OPTS.len;
+   fopts = OPTS.cp;
+#elif defined(StringStructPtr)
+   namelen = NAME->len;
+   fname = NAME->cp;
+   optslen = OPTS->len;
+   fopts = OPTS->cp;
+#elif defined(StringSunStyle)
+   fname = NAME;
+   fopts = OPTS;
+#endif
+   name = malloc(sizeof(char)*(namelen+1));
+   opts = malloc(sizeof(char)*(optslen+1));
+   ATL_assert(name && opts);
+   for (i=0; i < namelen; i++)
+      name[i] = toupper(fname[i]);
+   name[i] = '\0';
+   for (i=0; i < optslen; i++)
+      opts[i] = toupper(fopts[i]);
+   opts[i] = '\0';
+   ispec = *ISPEC; n1 = *N1; n2 = *N2; n3 = *N3; n4 = *N4;
+/*
+ * Should ask for min blk factor only when workspace inadequate, which
+ * should never occur since we malloc the space
+ */
+   ATL_assert(ispec != LA_MIN_NB);
+   if (ispec == 3)                      /* ask for 8 cols before blocking */
+      return((F77_INTEGER) 8);
+   if (ispec != LA_OPT_NB)              /* only query left in tuning calls */
+   {
+      fprintf(stderr, "unexpected ISPEC : %d\n", ispec);
+      exit(-1);
+   }
+   ATL_assert(ispec == LA_OPT_NB);
+
+/*
+ * If we use ATLAS's tuned ATL_ilaenv, just report selected NB in ONB
+ */
+#ifdef ATL_USE_ATL_ILAENV
+   irout = -1;
+   iopt = 0;
+   @define else @@
+   if (!strcmp(name+1, "ORMQR"))
+      irout = LArorgen;
+   @whiledef rt potrf getrf
+   else if (!strcmp(name+1, "@up@(rt)"))
+      irout = LA@(rt);
+      @undef else
+      @define else @else @
+   @endwhile
+   @multidef op LARight+LALower LALeft+LAUpper LALeft+LALower LARight+LAUpper
+   @whiledef rt geqlf gerqf gelqf geqrf
+   else if (!strcmp(name+1, "@up@(rt)"))
+   {
+      irout = LAgeqrf;
+      iopt += @(op);
+   }
+      @undef op
+   @endwhile
+   ATL_assert(irout != -1)
+   switch (*name)
+   {
+   case 'D':
+      iopt += LADreal;
+      break;
+   case 'S':
+      iopt += LASreal;
+      break;
+   case 'Z':
+      iopt += LADcplx;
+      break;
+   case 'C':
+      iopt += LAScplx;
+      break;
+   default :
+      ATL_assert(0 == 1);
+   }
+   ONB = ATL_ilaenv(ispec, irout, iopt, n1, n2, n3, n4);
+#else
+/*
+ * NOTE: need to scope what DORMQR should return!
+ */
+   if ( strcmp(name+1, "GEQRF") &&       /* QR, M >= N */
+        strcmp(name+1, "GELQF") &&       /* LQ  */
+        strcmp(name+1, "GERQF") &&       /* RQ  */
+        strcmp(name+1, "GEQLF") &&       /* QL  */
+        strcmp(name+1, "ORMQR") &&       /* QR/LQ wrk rout */
+        strcmp(name+1, "GETRF") &&       /* LU */
+        strcmp(name+1, "POTRF") )        /* Cholesky */
+   {
+      fprintf(stderr, "Unexpected name request = '%s'!\n", name);
+      exit(-2);
+   }
+#endif
+   return(ONB);
+}
+/*
+ * same as before, but overriding the C interface to ilaenv
+ */
+int clapack_ilaenv(enum ATL_ISPEC ispec, enum ATL_LAROUT rout,
+                   unsigned int opts, int N1, int N2, int N3, int N4)
+{
+   if (ispec == 3)
+      return(8);                     /* ask for 8 cols before blocking */
+   ATL_assert(ispec == LA_OPT_NB);   /* only query left in tuning calls */
+   #ifdef ATL_USE_ATL_ILAENV
+      ONB = ATL_ilaenv(ispec, rout, opts, N1, N2, N3, N4);
+   #endif
+   return(ONB);
+}
+/*
+ * Override ATL_ilaenv & threaded version as well
+ */
+#ifndef ATL_USE_ATL_ILAENV
+int ATL_ilaenv(enum ATL_ISPEC ispec, enum ATL_LAROUT rout,
+               unsigned int opts, int N1, int N2, int N3, int N4)
+{
+   return(clapack_ilaenv(ispec, rout, opts, N1, N2, N3, N4));
+}
+int ATL_itlaenv(enum ATL_ISPEC ispec, enum ATL_LAROUT rout,
+                unsigned int opts, int N1, int N2, int N3, int N4)
+{
+   return(clapack_ilaenv(ispec, rout, opts, N1, N2, N3, N4));
+}
+#endif
+#endif   /* end #ifndef ATL_USER_ILAENV */
+@skip enum TESTROUT {TR_LU, TR_LLt, TR_QR};
+@skip #define AtlasUploQR 5000
+@skip #define AtlasUploGE 5001
+
+static FILE *my_fopen(char *name, char *acc)
+{
+   if (!name) 
+      return(*acc == 'r' ? stdin : stdout);
+   if (!strncmp(name, "stderr", 6))
+      return(stderr);
+   if (!strncmp(name, "stdout", 6))
+      return(stdout);
+   if (!strncmp(name, "stdin", 5))
+      return(stdin);
+   return(fopen(name, acc));
+}
+
+static void my_fclose(FILE *fp)
+{
+   if (fp && fp != stderr && fp != stdout && fp != stdin)
+      fclose(fp);
+}
+
+@ROUT lanbtst qrtstGF lanbsrch
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", 
+              ierr, flag ? flag : "Not enough arguments");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+
+   fprintf(stderr, "USAGE: %s [flags]:\n", name);
+@ROUT lanbtst lanbsrch
+   fprintf(stderr, "   -R <#> <rout1> ... <rout#>\n");
+   fprintf(stderr, "      routs: getrf, potrf, geqrf\n");
+   fprintf(stderr, "   -F <mflop> : force <mflops> of timed computation\n");
+@ROUT lanbsrch
+   fprintf(stderr, "   -r m/n # : restrict given dimension to #\n");
+   fprintf(stderr, "   -N # : largest problem to tune for is #\n");
+   fprintf(stderr, "   -# <#> : repeat each timing # times\n");
+   fprintf(stderr, 
+           "   -s # : stop repeating timing when # seconds are exceeded\n");
+@ROUT qrtstGF
+   fprintf(stderr, "      routs: geqrf, geqlf, gerqf, gelqf\n");
+   fprintf(stderr, "   -T <thresh> : set residual error threshold\n");
+@ROUT lanbtst qrtstGF
+   fprintf(stderr, "   -# <#> : repeat each timing # times\n");
+   fprintf(stderr, "   -n <#> <N1> ... <N#>\n");
+   fprintf(stderr, "   -N <Nstart> <Nend> <Ninc>\n");
+   fprintf(stderr, "   -m <#> <M1> ... <M#>\n");
+   fprintf(stderr, "   -M <Mstart> <Mend> <Minc>\n");
+@ROUT lanbtst qrtstGF lanbsrch
+   fprintf(stderr, "   -a <ldagap> : lda = M + <ldagap> foreach M\n");
+   fprintf(stderr, "   -f <flushKB> : flush at least this mem in LRU timers\n");
+@ROUT lanbtst lanbsrch qrtstGF
+   fprintf(stderr, "   -S <#> <side1> ... <side#>\n");
+   fprintf(stderr, "   -U <nuplo> <up1> ... <upN> : Vals: [u,l,q,g]\n");
+@ROUT lanbtst
+   fprintf(stderr, "   -#t # N1 reps1 ... Nt reps_t: for N >= Nx repeat each timing repsx times\n");
+   fprintf(stderr, "   -NB <NBstart> <NBend> <NBinc>\n");
+   fprintf(stderr, "   -nb <#> <NB1> ... <NB#>\n");
+   fprintf(stderr, "   -nbmin <#> <N1> <minNB1> ... <N#> <minNB#>\n");
+   fprintf(stderr, "      for N >= Nx, minimum NB should be <minNBx>\n");
+   fprintf(stderr, "   -nbmax <#> <N1> <maxNB1> ... <N#> <maxNB#>\n");
+   fprintf(stderr, "      for N <= Nx, maximum NB should be <maxNBx>\n");
+   fprintf(stderr, 
+           "    -%% <min%%> <minNB> <max%%> <maxNB> : set bounds on NB\n");
+   fprintf(stderr, "       nb1=MIN(minNB, min%%*N), nbN=MIN(maxNB,max%%)\n");
+@ROUT lanbtst lanbsrch
+   fprintf(stderr, 
+           "   -o[f,c,b] <file>: output nb selection as F77/C/both file\n");
+@ROUT lanbtst lanbsrch qrtstGF
+   exit(ierr ? ierr : -1);
+}
+
+int *GetIntList1(int ival)
+/*
+ * returns integer array with iarr[0] = 1, iarr[1] = ival
+ */
+{
+   int *iarr;
+   iarr = malloc(2*sizeof(int));
+   ATL_assert(iarr);
+   iarr[0] = 1;
+   iarr[1] = ival;
+   return(iarr);
+}
+
+int *GetIntList2(int ival1, int ival2)
+/*
+ * returns integer array with iarr[0] = 1, iarr[1] = ival1, ival[2] = ival2
+ */
+{
+   int *iarr;
+   iarr = malloc(3*sizeof(int));
+   ATL_assert(iarr);
+   iarr[0] = 1;
+   iarr[1] = ival1;
+   iarr[2] = ival2;
+   return(iarr);
+}
+
+int *GetIntList(int nargs, char **args, int i, int nmul)
+/*
+ * Gets a list of integers, whose length is given by atoi(args[i])*nmul
+ * list is this length+1, since 0'th location gets atoi(args[i])
+ */
+{
+   int n, *iarr, k;
+
+   if (++i >= nargs)
+      PrintUsage(args[0], i, NULL);
+   n = atoi(args[i]) * nmul;
+   ATL_assert(n > 0);
+   iarr = malloc(sizeof(int)*(n+1));
+   ATL_assert(iarr);
+   
+   iarr[0] = n / nmul;
+   for (k=0; k < n; k++)
+   {
+      if (++i >= nargs)
+         PrintUsage(args[0], i, NULL);
+      iarr[k+1] = atoi(args[i]);
+   }
+   return(iarr);
+}
+
+int *RoutNames2IntList(int nargs, char **args, int i)
+{
+   int n, *iarr, k;
+
+   if (++i >= nargs)
+      PrintUsage(args[0], i, NULL);
+   n = atoi(args[i]);
+   ATL_assert(n > 0);
+   iarr = malloc(sizeof(int)*(n+1));
+   ATL_assert(iarr);
+   
+   iarr[0] = n;
+   for (k=0; k < n; k++)
+   {
+      if (++i >= nargs)
+         PrintUsage(args[0], i, NULL);
+      if (!strcmp(args[i], "getrf") || !strcmp(args[i], "GETRF"))
+         iarr[k+1] = LAgetrf;
+      else if (!strcmp(args[i], "potrf") || !strcmp(args[i], "POTRF"))
+         iarr[k+1] = LApotrf;
+      else if (!strcmp(args[i], "geqrf") || !strcmp(args[i], "GEQRF"))
+         iarr[k+1] = LAgeqrf;
+      else if (!strcmp(args[i], "geqlf") || !strcmp(args[i], "GEQLF"))
+         iarr[k+1] = LAgeqrf;
+      else if (!strcmp(args[i], "gerqf") || !strcmp(args[i], "GERQF"))
+         iarr[k+1] = LAgeqrf;
+      else if (!strcmp(args[i], "gelqf") || !strcmp(args[i], "GELQF"))
+         iarr[k+1] = LAgeqrf;
+      else
+         PrintUsage(args[0], i, args[i]);
+   }
+   return(iarr);
+}
+
+int *IntRange2IntList(int N0, int NN, int incN)
+{
+   int i, n;
+   int *iarr;
+
+   for (i=N0, n=0; i <= NN; i += incN) n++;
+   iarr = malloc(sizeof(int)*(n+1));
+   ATL_assert(iarr);
+   iarr[0] = n;
+   for (i=N0, n=1 ; i <= NN; i += incN, n++)
+      iarr[n] = i;
+   return(iarr);
+}
+
+@ROUT lanbsrch
+#include "atlas_mmparse.h"
+int GetGoodNForFlopRate(int rout, double nsec, int restM, int restN)
+/*
+ * Reads speed of kernel code, and computes the problem size that can be
+ * completed in nsec seconds
+ */
+{
+   ATL_mmnode_t *mmp;
+   double floprate, time;
+   int m, n, k;
+   char pre;
+   double GetFlopCount(enum ATL_LAROUT rout, enum ATL_LAFLG flags, 
+                       int M, int N, int KL, int KU, int nb);
+
+   #ifdef SCPLX
+      pre = 'c';
+   #elif defined (DCPLX)
+      pre = 'z';
+   #elif defined(SREAL)
+      pre = 's';
+   #else
+      pre = 'd';
+   #endif
+   #ifdef ATL_USEPTHREADS
+      k = ((4000+NB-1)/NB)*NB;
+   #else
+      k = ((2000+NB-1)/NB)*NB;
+   #endif
+   mmp = ReadMMFileWithPath(pre, "../blas/gemm/res", "MMRES.sum");
+   if (!mmp)
+     return(k);
+   if (mmp->next)
+      floprate = mmp->next->mflop[0];
+   else 
+      floprate = mmp->mflop[0];
+   KillAllMMNodes(mmp);
+   #ifdef ATL_USEPTHREADS
+      floprate *= ATL_NCPU;
+   #endif
+   if (floprate < 100)  /* nonsensical result */
+      return(k);
+   k = (600/NB)*NB;
+   do
+   {
+       k += NB;
+       m = (restM) ? restM : k;
+       n = (restN) ? restN : k;
+       time = GetFlopCount(rout, 0, m, n, 0, 0, NB) / (floprate*1000000.0);
+   }
+   while (time < nsec);
+   k -= NB;
+/*
+ * Don't let K be too huge, or extremely tiny regardless of computation
+ */
+   if (restM || restN)
+   {
+      if (k > 50000)
+         k = 50000;
+   }
+   else if (k > 10000)
+      k = 10000;
+   if (k < 500)
+      k = 500;
+   return(k);
+}
+@ROUT qrtstGF
+void GetFlags(int nargs, char **args, int *flsizeKB, TYPE *thresh,
+              int **nreps, int *ldagap, int **Ms, int **Ns, 
+              int **UPLOs, int **SDs)
+@ROUT lanbsrch
+void GetFlags(int nargs, char **args, int *nreps, int *flsizeKB, int *mflop, 
+              int *secs, int *rout, int *ldagap, int *maxN, 
+              int **UPLOs, int **SDs, int *F77out, char **outnam, 
+              int *restM, int *restN)
+@ROUT lanbtst
+int *GetFlags(int nargs, char **args, int **nreps, int *flsizeKB, int *mflop, 
+              int **ROUTs, int *ldagap, int **Ns, int **Ms, int **UPLOs, 
+              int **SDs, int *F77out, char **outnam, int *minNB, 
+              double *minPerc, int *maxNB, double *maxPerc, 
+              int **NBminbnd, int **NBmaxbnd)
+/*
+ * RETURNS: array of NBs, with NB[0] holding number of NBs to do
+ */
+@ROUT lanbtst qrtstGF lanbsrch
+{
+   int *NBs=NULL, *ns=NULL, *ms=NULL, *ups=NULL, *sds=NULL, *ip;
+   int i, k, n;
+
+@ROUT lanbtst `   *ROUTs = NULL;`
+   *ldagap = 0;
+   *flsizeKB = L2SIZE/1024;
+@ROUT lanbsrch
+   #ifdef ATL_USEPTHREADS
+      *maxN = ((4000+NB-1)/NB)*NB;
+   #else
+      *maxN = ((2000+NB-1)/NB)*NB;
+   #endif
+   *maxN = 0;
+   *rout = LAgeqrf;
+   *nreps = 3;
+   *secs = 5;
+   *restN = *restM = 0;
+@ROUT lanbtst qrtstGF
+   *nreps = NULL;
+@ROUT lanbtst lanbsrch
+   *F77out = 0;
+   *outnam = NULL;
+   *mflop = 0;
+@ROUT lanbtst
+   *minNB = *maxNB = 0;
+   *minPerc = *maxPerc = 0.0;
+   *NBminbnd = *NBmaxbnd = NULL;
+@ROUT qrtstGF
+    *thresh = 100.0;
+@ROUT lanbtst qrtstGF lanbsrch
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+      switch(args[i][1])
+      {
+@ROUT lanbsrch
+      case 'R':        /* -R # <rout1> ... <routN#>  */
+         NBs = RoutNames2IntList(nargs, args, i);
+         i += NBs[0] + 1;
+         *rout = NBs[1];
+         break;
+      case 'r' : /* one dimension is restricted */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         if (args[i-1][0] == 'm' || args[i-1][0] == 'M')
+            *restM = atoi(args[i]);
+         else 
+            *restN = atoi(args[i]);
+         break;
+      case 'N':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         *maxN = atoi(args[i]);
+         break;
+@ROUT lanbtst
+      case '%':   /* -% <min%> <minNB> <max%> <maxNB> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         *minPerc = atof(args[i-3]) / 100.0;
+         *minNB = atoi(args[i-2]);
+         *maxPerc = atof(args[i-1]) / 100.0;
+         *maxNB = atoi(args[i]);
+         break;
+@ROUT lanbtst lanbsrch
+      case 'o':   /* -o[f,c,b] <file> */
+         *F77out = (args[i][2] == 'f' || args[i][2] == 'F');
+         if (args[i][2] == 'f' || args[i][2] == 'F')
+            *F77out = 1;
+         else if (args[i][2] == 'c' || args[i][2] == 'C')
+            *F77out = 0;
+         else 
+            *F77out = 2;
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         *outnam = args[i];
+         break;
+@ROUT qrtstGF
+      case 'T':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         *thresh = atof(args[i]);
+         break;
+@ROUT lanbtst qrtstGF
+      case 'n':         /* -n  or -nb */
+@ROUT lanbtst
+         if (args[i][2] == 'b')         /* -nb <nNB> <NB1> ... <NBn> */
+         {
+            if (args[i][3] == 'm') /* setting min/max NB */
+            {
+               ip = GetIntList(nargs, args, i, 2);
+               if (args[i][4] == 'a')
+                  *NBmaxbnd = ip;
+               else 
+                  *NBminbnd = ip;
+               i += ip[0]+ip[0]+1;
+            }
+            else
+            {
+               NBs = GetIntList(nargs, args, i, 1);
+               i += NBs[0] + 1;
+            }
+         }
+         else                           /* -n # <N1> ... <N#>*/
+         {
+            ns = GetIntList(nargs, args, i, 1);
+            i += ns[0] + 1;
+         }
+@ROUT qrtstGF
+         ns = GetIntList(nargs, args, i, 1);
+         i += ns[0] + 1;
+@ROUT lanbtst qrtstGF
+         break;
+      case 'm':         /* -m # <M1> ... <M#> */
+         ms = GetIntList(nargs, args, i, 1);
+         i += ms[0] + 1;
+         break;
+      case 'N':         /* -N or -NB */
+      case 'M':                         /* -M <Mstart> <Mend> <Minc>\n"); */
+         if (i+3 >= nargs)
+            PrintUsage(args[0], i, NULL);
+         ip = IntRange2IntList(atoi(args[i+1]),atoi(args[i+2]),atoi(args[i+3]));
+         if (args[i][0] == 'M')
+            ms = ip;
+         else if (args[i][2] == 'B')    /* -NB <NBstart> <NBend> <NBinc> */
+            NBs = ip;
+         else                           /* -N <Nstart> <Nend> <Ninc>\n"); */
+            ns = ip;
+         i += 3;
+         break;
+@ROUT lanbtst
+      case 'R':        /* -R # <rout1> ... <routN#>  */
+         *ROUTs = RoutNames2IntList(nargs, args, i);
+         i += (*ROUTs)[0] + 1;
+         break;
+@ROUT lanbtst qrtstGF
+      case '#':                         /* set nreps */
+         if (args[i][2] == 't')         /* -#t N1 reps1 ... Nt repst */
+         {
+            *nreps = GetIntList(nargs, args, i, 2);
+            i += ((*nreps)[0] << 1) + 1;
+         }
+         else                           /* -# <reps> */
+         {
+            if (++i >= nargs)
+               PrintUsage(args[0], i, NULL);
+            *nreps = GetIntList2(0, atoi(args[i]));
+         }
+         break;
+@ROUT lanbtst qrtstGF lanbsrch
+      case 'f':                         /* -f <flushKB> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         *flsizeKB = atoi(args[i]);
+         break;
+@ROUT lanbsrch
+      case 's':                         /* -s <secs> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         *secs = atoi(args[i]);
+         break;
+@ROUT lanbtst lanbsrch
+      case 'F':                         /* -F <mflop> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         *mflop = atoi(args[i]);
+         break;
+@ROUT lanbtst lanbsrch qrtstGF
+      case 'U':                         /* -U <nup> <u1> ... <uN>;[u,l,q,g] */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         n = atoi(args[i]);
+         ATL_assert(n > 0);
+         ups = malloc(sizeof(int)*(n+1));
+         ups[0] = n;
+         for (k=0; k < n; k++)
+         {
+            if (++i >= nargs)
+               PrintUsage(args[0], i, NULL);
+            switch(args[i][0])
+            {
+            case 'U':
+            case 'u':
+               ups[k+1] = LAUpper;
+               break;
+            case 'l':
+            case 'L':
+            default:
+               ups[k+1] = LALower;
+               break;
+            }
+         }
+         break;
+      case 'S':                         /* -S <#> <side1> ... <sideN> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         n = atoi(args[i]);
+         ATL_assert(n > 0);
+         sds = malloc(sizeof(int)*(n+1));
+         sds[0] = n;
+         for (k=0; k < n; k++)
+         {
+            if (++i >= nargs)
+               PrintUsage(args[0], i, NULL);
+            switch(args[i][0])
+            {
+            case 'L':
+            case 'l':
+               sds[k+1] = LALeft;
+               break;
+            default:
+               sds[k+1] = LARight;
+               break;
+            }
+         }
+         break;
+@ROUT lanbtst qrtstGF lanbsrch
+      case 'a':                         /* -a <ldagap> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         *ldagap = atoi(args[i]);
+         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+/*
+ * Take default values
+ */
+@ROUT lanbtst
+   if (!(*ROUTs))
+      *ROUTs = GetIntList1(LAgeqrf);
+@ROUT lanbtst qrtstGF
+   if (!(*nreps))
+      *nreps = GetIntList2(0, 1);
+   if (!ns)
+      ns = GetIntList1(1000);
+   if (!ms)
+      ms = GetIntList1(0);
+@ROUT lanbsrch
+   if (*outnam == NULL)
+   {
+      *F77out = 0;
+      *outnam = "lanbsrch_out";
+   }
+   if (!(*maxN))
+   {
+      *maxN = GetGoodNForFlopRate(*rout, 3.00, *restM, *restN);
+      fprintf(stderr, "maxN = %d\n", *maxN);
+   }
+@ROUT lanbtst
+   if (!NBs)
+      NBs = IntRange2IntList(4, 128, 4);
+@ROUT lanbtst lanbsrch qrtstGF
+   if (!ups)
+      ups = GetIntList1(LAUpper);
+   if (!sds)
+      sds = GetIntList1(LARight);
+@ROUT lanbtst qrtstGF
+
+   *Ns = ns;
+   *Ms = ms;
+@ROUT lanbtst lanbsrch qrtstGF
+   *UPLOs = ups;
+   *SDs = sds;
+@ROUT lanbtst
+   return(NBs);
+@ROUT lanbtst qrtstGF lanbsrch
+}
+
+double GetFlopCount(enum ATL_LAROUT rout, enum ATL_LAFLG flags, 
+                    int M, int N, int KL, int KU, int nb)
+/*
+ * These numbers copied from LAPACK timer routines TIMING/[EIG,LIN]/dopla[2].f
+ */
+{
+    double m=(M?M:N), n=N, kl=KL, ku=ku, mn;
+    double adds=0.0, muls=0.0;
+    
+    if (rout & LAgetrf)
+    {
+       mn = (m >= n) ? n : m;   /* mn = MIN(M,N) */
+       adds = mn * ( m*n-(m+n)*(mn+1.0)/2.0 + (mn+1.0)*(2.0*mn+1.0)/6.0 );
+       muls = adds + mn * ( m-(mn+1.0)/2.0 );
+    }
+    else if (rout & LAgeqrf)
+    {
+       if (flags & LARight)  /* LAgeqrf || LAgeqlf */
+       {
+          if (M >= N)
+          {
+             muls = n*( ((23.0/6.0)+m+(n/2.0)) + n*(m-(n/3.0)) );
+             adds = n*( (5.0/6.0) + n*((1.0/2.0) + (m-(n/3.0))) );
+          }
+          else
+          {
+             muls = m*( ((23.0/6.0) + 2.0*n - (m/2.0)) + m*(n-(m/3.0)) );
+             adds = m*( (5.0/6.0) + n - (m/2.0) + m*(n-(m/3.0)) );
+          }
+       }
+       else  /* LAgerqf || LAgelqf */
+       {
+          if (M >= N)
+          {
+             muls = n*( ((29.0/6.0) + m + n/2.0) + n*(m-n/3.0) );
+             adds = n*( (5.0/6.0) + m + n*(-0.5 + (m - n/3.0)) );
+          }
+          else
+          {
+             muls = m*( ((29.0/6.0) + 2.0*n - 0.5*m) +m*(n - m/3.0) );
+             adds = m*( (5.0/6.0) + 0.5*m + m*(n - m/3.0) );
+          }
+       }
+    }
+    else if (rout & LApotrf)
+    {
+       muls = m*( (1.0/3.0) + m*((1.0/2.0) + (m/6.0)) );
+       adds = (1.0/6.0)*m*(-1.0+m*m);
+    }
+    #if defined (SCPLX) || defined(DCPLX)
+       return(2.0*adds + 6.0*muls);
+    #else
+       return(adds+muls);
+    #endif
+}
+
+@ROUT lanbtst `static int Flags2Bitmap(int Rout, int Upper, int Side);`
+
+double Time2Flops(int rout, int UPLO, int M, int N, double time)
+{
+   double mflop;
+   mflop = GetFlopCount(rout, UPLO, M, N, 0, 0, CAN_NB);
+   if (mflop > 0)
+      mflop /= time*1e6;  /* translate flops & time to MFLOPS */
+   return(mflop);
+}
+@ROUT lanbtst lanbsrch
+
+@beginskip    /* this is now done in src/auxil/ATL_flushCacheByAddr.c & atlas_aux.h */
+typedef struct flStruct FLSTRUCT;
+struct flStruct
+{
+   void *p;
+   int length;
+   FLSTRUCT *next;
+};
+
+FLSTRUCT *GetFlushStruct(void *p, int length, FLSTRUCT *next)
+{
+   FLSTRUCT *fp;
+
+   fp = malloc(sizeof(FLSTRUCT));
+   fp->p = p;
+   fp->length = length;
+   fp->next = next;
+
+   return(fp);
+}
+
+void KillAllFlushStructs(FLSTRUCT *p)
+{
+   FLSTRUCT *kill;
+   while (p)
+   {
+      kill = p;
+      p = p->next;
+      free(kill);
+   }
+}
+
+#if defined(ATL_ARCH_PPCG5) || defined(ATL_ARCH_PPCG4) || defined(ATL_GAS_PPC)
+   #define flCacheLn(mem)__asm__ __volatile__ \
+      ("dcbf 0, %0" :: "r"((void *)(mem)))
+#elif defined(ATL_ARCH_IA64Itan) || defined(ATL_ARCH_IA64Itan2)
+   #define flCacheLn(mem)__asm__ __volatile__ \
+      ("fc %0" :: "r"((void *)(mem)))
+#elif defined(ATL_SSE1)
+   #define flCacheLn(mem)__asm__ __volatile__ \
+      ("clflush %0" :: "m" (*((char *)(mem))))
+#else
+   #define flCacheLn(mem) \
+   { \
+      fprintf(stderr, "Cannot do cache-line flushing, %d of %s!\n",  \
+              __LINE__, __FILE__); \
+      exit(-1); \
+   }
+#endif
+
+void FlushAreasByCL(FLSTRUCT *fp)
+{
+   int i, n;
+   char *cp;
+   while (fp)
+   {
+      cp = fp->p;
+      n = fp->length;
+      for (i=0; i < n; i += 16)
+@skip         ATL_flushCacheLine(cp+i);
+         flCacheLn(cp+i);
+      fp = fp->next;
+   }
+}
+@endskip
+
+@multidef flg LARight+LAUpper LARight+LALower LALeft+LAUpper LALeft+LALower Uplo 0
+@multidef rtT LAgeqrf LAgeqrf LAgeqrf LAgeqrf LApotrf LAgetrf
+@whiledef rt QR QL RQ LQ LLT LU
+   @addkeys FACT=@(rt)
+double GetTimeWithReps_@(rt)
+   (int mflopF, int lda, int M, int N, int nb, int Uplo, int Side, int flsizeKB)
+{
+   double mflop, t0, t1, drep;
+@FACT QL RQ LQ QR `   TYPE dtmp, dtmp1;`
+   char *wrksets;       /* working sets for kernel calls */
+#ifdef TCPLX
+   const int lda2 = lda+lda;
+#else
+   const int lda2 = lda;
+#endif
+   int setsz, setszT;   /* work set size in memory, and amnt of it touched */
+   int nrep;            /* # of reps required to force mflopF flops */
+   int nset;            /* # of working sets allocated */
+@FACT QL RQ LQ QR `   int wlen;            /* length of QR's workspace */`
+   int i;
+@FACT LLT
+   setsz=lda*N*ATL_sizeof;   /* matrix is entire working set of LLt */
+   setszT=N*N*ATL_sizeof;    /* only touch N*N portion */
+@FACT LU
+/*
+ * Keep setsz a multiple of TYPE size for alignment reasons.  LU only accesses
+ * M*N of matrix and all of IPIV.
+ */
+   setsz = lda*N*ATL_sizeof + 
+           ((M*sizeof(int)+ATL_sizeof-1)/ATL_sizeof)*ATL_sizeof;
+   setszT = M*N*ATL_sizeof + M*sizeof(int);
+@FACT QL RQ LQ QR 
+/*
+ * Figure out how much workspace is required, and allocate it
+ */
+   test_ge@low@(rt)f(CblasColMajor, M, N, &dtmp1, lda, &dtmp1, &dtmp, -1);
+@beginskip
+   if (Side == CblasRight)
+      { test_geqrf(CblasColMajor, M, N, &dtmp1, lda, &dtmp1, &dtmp, -1); }
+   else
+      { test_gelqf(CblasColMajor, M, N, &dtmp1, lda, &dtmp1, &dtmp, -1); }
+@endskip
+   wlen = dtmp;
+/*
+ * QR accesses matrix, Min(M,N)-length tau & workspace, but for flush purposes
+ * be conservative and say it only accesses A
+ */
+   setsz = (lda*N + wlen + Mmin(M,N)) * ATL_sizeof;
+   setszT = M*N*ATL_sizeof;
+
+@FACT QL RQ LQ QR LU LLT
+   mflop = GetFlopCount(@(rtT), @(flg), M, N, 0, 0, CAN_NB);
+/*
+ * Cannot reuse matrices (bogus to factor an already factored matrix), so we 
+ * must take as our total memspace MAX(nrep,nset)*setsz
+ */
+   ATL_assert(mflop > 0.0);
+   drep = (mflopF*1.0e6) / mflop;
+   nrep = (int)(drep+0.999999);
+/*
+ * If cacheline flush doesn't work, then we must use this method
+ */
+   #if ATL_LINEFLUSH
+      if (nrep < 2)
+         return(-1.0);                                /* do wt normal timer */
+   #else
+      nrep = (nrep >= 1) ? nrep : 1;
+   #endif
+      
+@FACT QL RQ LQ QR LU LLT
+   nset = (flsizeKB*1024+setszT-1)/setszT;
+   if (nset < nrep)
+      nset = nrep;
+   wrksets = malloc(nset * setsz);
+   ATL_assert(wrksets);
+
+   for (i=0; i < nset; i++)
+@FACT QL RQ LQ QR LU
+      Mjoin(PATL,gegen)(M, N, (TYPE*)(wrksets+i*setsz), lda, M*N+lda);
+@FACT LLT
+      PosDefGen(CblasColMajor, Uplo_LA2ATL(Uplo), N, 
+                (TYPE*)(wrksets+i*setsz), lda);
+@FACT !
+
+   t0 = time00();
+   for (i=0; i < nrep; i++)
+   {
+@FACT LLT
+      test_potrf(Uplo, N, (TYPE*)(wrksets+i*setsz), lda);
+@FACT LU
+      test_getrf(CblasColMajor, M, N, (TYPE*)(wrksets+i*setsz), lda, 
+                 (int*)(wrksets+i*setsz+lda*N*ATL_sizeof));
+@FACT QL RQ LQ QR
+      test_ge@low@(rt)f(CblasColMajor, M, N, (TYPE*)(wrksets+i*setsz), lda, 
+                 (TYPE*)(wrksets+i*setsz+(N*lda+wlen)*ATL_sizeof),
+                 (TYPE*)(wrksets+i*setsz+N*lda*ATL_sizeof), wlen);
+@FACT !
+   }
+   t1 = time00();
+   free(wrksets);
+
+   return((t1-t0)/((double)nrep));
+}
+
+   @killkeys FACT
+   @undef rtT
+   @undef flg
+@endwhile
+
+double GetTime(int rout, int mflopF, int lda, int M, int N, int nb, int Uplo, 
+               int Side, int flsizeKB)
+{
+#if ATL_LINEFLUSH
+   FLSTRUCT *flp;
+#endif
+   TYPE *A, *wrk=NULL, dtmp, dtmp1, *tau=NULL;
+   int *ipiv=NULL, itmp, wlen;
+   double t0, t1;
+/*
+ * Call routs that force particular flop count if requested; they return -1.0
+ * if one invocation will suffice to force mflopF, in which case do the timing
+ * in this routine, which is simpler & doesn't require LRU & as much workspace
+ * If we don't have the ability to do cacheline flushing, must use LRU rout!
+ */
+#if ATL_LINEFLUSH
+   if (mflopF > 0)
+   {
+#endif
+      if (rout == LApotrf)
+         t1 = GetTimeWithReps_LLT(mflopF, lda, M, N, nb, Uplo, Side, flsizeKB);
+      else if (rout == LAgeqrf)
+      {
+         if (Side == LARight)
+         {
+            if (Uplo == LAUpper)
+               t1 = GetTimeWithReps_QR(mflopF, lda, M, N, nb, Uplo, Side, 
+                                       flsizeKB);
+            else
+               t1 = GetTimeWithReps_QL(mflopF, lda, M, N, nb, Uplo, Side, 
+                                       flsizeKB);
+         }
+         else if (Uplo == LAUpper)
+            t1 = GetTimeWithReps_RQ(mflopF, lda, M, N, nb, Uplo, Side, 
+                                    flsizeKB);
+         else
+            t1 = GetTimeWithReps_LQ(mflopF, lda, M, N, nb, Uplo, Side, 
+                                    flsizeKB);
+      }
+@beginskip
+@whiledef rt qr ql rq lq
+      else if (rout == LAge@(rt)f)
+         t1 = GetTimeWithReps_@up@(rt)(mflopF, lda, M, N, nb, Uplo, Side, flsizeKB);
+@endwhile
+@endskip
+      else
+         t1 = GetTimeWithReps_LU(mflopF, lda, M, N, nb, Uplo, Side, flsizeKB);
+#if ATL_LINEFLUSH == 0
+      return(t1);
+#else
+      if (t1 >= 0.0)
+         return(t1);
+   }
+#endif
+#if ATL_LINEFLUSH != 0
+/*
+ * Generate operands
+ */
+   A = GetGE(M, N, lda);
+   flp = ATL_GetFlushStruct(A, N*lda*ATL_sizeof, NULL);
+   if (rout == LApotrf)
+      PosDefGen(CblasColMajor, Uplo_LA2ATL(Uplo), N, A, lda);
+@skip   else if (rout == LAgeqrf || rout == LAgelqf)
+   else if (rout & LAgeqrf)
+   {                            /* QR must allocate workspace */
+      if (Side == LARight)
+      {
+         if (Uplo == LAUpper)
+         {
+            test_geqrf(CblasColMajor, M, N, A, lda, &dtmp1, &dtmp, -1);
+         }
+         else
+         {
+            test_geqlf(CblasColMajor, M, N, A, lda, &dtmp1, &dtmp, -1);
+         }
+      }
+      else if (Uplo == LAUpper)
+      {
+         test_gerqf(CblasColMajor, M, N, A, lda, &dtmp1, &dtmp, -1);
+      }
+      else
+      {
+         test_gelqf(CblasColMajor, M, N, A, lda, &dtmp1, &dtmp, -1);
+      }
+      wlen = dtmp;
+      wrk = calloc(wlen, ATL_sizeof);
+      ATL_assert(wrk);
+      flp = ATL_GetFlushStruct(wrk, wlen*ATL_sizeof, flp);
+      itmp = (M >= N) ? M : N;
+      tau = calloc(itmp, ATL_sizeof);
+      flp = ATL_GetFlushStruct(tau, itmp*ATL_sizeof, flp);
+   }
+   else 
+   {
+      ipiv = calloc(M, sizeof(int));
+      ATL_assert(ipiv);
+      flp = ATL_GetFlushStruct(ipiv, M*sizeof(int), flp);
+   }
+/*
+ * Flush cache, and do timing
+ */
+   ATL_FlushAreasByCL(flp);
+   if (rout == LApotrf)
+   {
+      t0 = time00();
+      test_potrf(Uplo, N, A, lda);
+      t1 = time00();
+   }
+   else if (rout == LAgeqrf)
+   {
+      if (Side == LARight)
+      {
+         if (Uplo == LAUpper)
+         {
+            t0 = time00();
+            test_geqrf(CblasColMajor, M, N, A, lda, tau, wrk, wlen);
+            t1 = time00();
+         }
+         else
+         {
+            t0 = time00();
+            test_geqlf(CblasColMajor, M, N, A, lda, tau, wrk, wlen);
+            t1 = time00();
+         }
+      }
+      else if (Uplo == LAUpper)
+      {
+         t0 = time00();
+         test_gerqf(CblasColMajor, M, N, A, lda, tau, wrk, wlen);
+         t1 = time00();
+      }
+      else
+      {
+         t0 = time00();
+         test_gelqf(CblasColMajor, M, N, A, lda, tau, wrk, wlen);
+         t1 = time00();
+      }
+   }
+@beginskip
+@whiledef rt qr ql rq lq
+   else if (rout == LAge@(rt)f)
+   {
+      t0 = time00();
+      test_ge@(rt)f(CblasColMajor, M, N, A, lda, tau, wrk, wlen);
+      t1 = time00();
+   }
+@endwhile
+@endskip
+   else
+   {
+      t0 = time00();
+      test_getrf(CblasColMajor, M, N, A, lda, ipiv);
+      t1 = time00();
+   }
+   if (tau)
+      free(tau);
+   if (wrk)
+      free(wrk);
+   if (ipiv)
+      free(ipiv);
+   free(A);
+   ATL_KillAllFlushStructs(flp);
+   return(t1 - t0);
+#endif
+}
+
+static char Uplo2Char(enum ATL_LAROUT rout, enum ATL_LAFLG flags)
+{
+   switch (rout)
+   {
+   case LAgeqrf:
+      if (flags & LARight)
+         return('Q');
+      return( (flags & LAUpper) ? 'R' : 'L');
+   case LApotrf:
+      return( (flags & LAUpper) ? 'U' : 'L' );
+   default:
+      return('G');
+   }
+}
+
+static char Side2Char(enum ATL_LAROUT rout, enum ATL_LAFLG i)
+{
+   if (rout == LAgeqrf)
+   {
+      if (i & LARight) return( (i & LAUpper) ? 'R' : 'L');
+      else return('Q');
+   }
+   return( (i & LARight) ? 'R' : 'L');
+}
+
+static int Flags2Bitmap(int Rout, int Upper, int Side)
+{
+   return((Rout<<8)|Upper|Side);
+@beginskip
+   int iret=0;
+   if (Upper == AtlasUpper)
+      iret |= LAUpper;
+   else if (Upper == AtlasLower)
+      iret |= LALower;
+   if (Side == AtlasRight)
+      iret |= LARight;
+   else if (Side == AtlasLeft)
+      iret |= LALeft;
+   if (Rout)
+      iret |= (Rout << 8);
+   return(iret);
+@endskip
+}
+enum FLGSEL {FSUplo, FSSide, FSRout};
+
+char *Bitmap2Char(enum FLGSEL wch, int flags)
+{
+   int rout;
+
+   switch(wch)
+   {
+   case FSUplo:
+      if (flags & LAUpper)
+         return("UPPER");
+      else if (flags & LALower)
+         return("LOWER");
+      else
+         return("GEREC");
+   case FSSide:
+      if (flags & LARight)
+         return("RIGHT");
+      else if (flags & LALeft)
+         return("LEFT");
+      else
+         return("N/A");
+   case FSRout:
+      rout = flags >> 8;
+      if (rout & LApotrf)
+         return("POTRF");
+      else if (rout & LAgetrf)
+         return("GETRF");
+      else if (rout & LAgeqrf)
+      {
+         if (flags & LARight)
+         {
+            if (flags & LALower)
+               return("GEQLF");
+            else
+               return("GEQRF");
+         }
+         else if (flags & LAUpper)
+            return("GERQF");
+         else
+            return("GELQF");
+      }
+   }
+   return("UNKNOWN");
+}
+
+char *NameExcludingPath(char *path)
+{
+   char *sp=path;
+   int i;
+   for (i=0; path[i]; i++)
+      if (path[i] == '/')
+         sp = path+i+1;
+   return(sp);
+}
+
+int UseN(int N, int *Ms, int *Ns)
+/*
+ * RETURNS: 0 if all Ns are same value, 1 else
+ */
+{
+   int i;
+   for (i=0; i < N-1 && Ns[i] == Ns[i+1]; i++);
+   return(Ns[i] != Ns[i+1]);
+}
+@beginskip
+void WriteF77File(char *outnam, int N, int *flgs, int *ms, int *ns, int *nbs)
+{
+   char *ln, *sp;
+   FILE *nbout;
+   char *els="";
+   int i, nhalf;
+   #ifdef SREAL
+      char pre='S';
+   #elif defined(DREAL)
+      char pre='S';
+   #elif defined(SCPLX)
+      char pre='S';
+   #elif defined(DCPLX)
+      char pre='S';
+   #endif
+
+   ln = malloc(strlen(outnam)+3);
+   ATL_assert(ln);
+   sprintf(ln, "%s.f", outnam);
+   nbout = my_fopen(ln, "w");
+@beginskip
+   if (flgs[0] & LAgetrf)
+      sprintf(ln, "GNB_%cGETRF", pre);
+   else if (flgs[0] & LApotrf)
+      sprintf(ln, "GNB_%cPOTRF_%c", pre, *Bitmap2Char(FSUplo, flgs[0]));
+   else if (flgs[0] & LAgeqrf)
+   {
+      if (flgs[0] & LARight)
+         sprintf(ln, "GNB_%cGEQRF", pre);
+      else
+         sprintf(ln, "GNB_%cGELQF", pre);
+   }
+@endskip
+   sp = NameExcludingPath(outnam);
+   for (i=0; ln[i]; i++) 
+      ln[i] = toupper(sp[i]);
+   ln[i] = '\0';
+   fprintf(nbout, "       INTEGER FUNCTION %s(N)\n", ln);
+   fprintf(nbout, "*\n*      NB selection for %s: Side='%s', Uplo='%s'\n*\n",
+           Bitmap2Char(FSRout, flgs[0]), Bitmap2Char(FSSide, flgs[0]),
+           Bitmap2Char(FSUplo, flgs[0]));
+   fprintf(nbout, "       INTEGER N, NB\n");
+   for (i=0; i < N-1; i++)
+   {
+      nhalf = (ns[i+1] - ns[i])>>1;
+      fprintf(nbout, "       %sIF(N < %d) THEN\n           NB = %d\n",
+              els, ns[i]+nhalf, nbs[i]);
+      els = "ELSE ";
+   }
+   fprintf(nbout, "       ELSE\n          NB = %d\n       ENDIF\n", nbs[N-1]);
+   fprintf(nbout, "       %s = NB\n       RETURN\n       END\n", ln);
+   my_fclose(nbout);
+}
+@endskip
+
+void WriteCFile(char *outnam, int N, int *flgs, int *ms, int *ns, int *nbs,
+                int nc, int *NBc, int *Xover)
+{
+   int i, nhalf, ONM, n, nn;
+   char *els="", *ln, *nameNoPath;
+   FILE *nbout;
+
+@skip PrintIntArr("NBc", nc, NBc);
+@skip PrintIntArr("Xover", nc, Xover);
+   ln = malloc(strlen(outnam)+3);
+   ATL_assert(ln);
+   sprintf(ln, "%s.h", outnam);
+   nbout = my_fopen(ln, "w");
+   nameNoPath = NameExcludingPath(outnam);
+   fprintf(nbout, "#ifndef %s\n\n", nameNoPath);
+   fprintf(nbout, "/*\n * NB selection for %s: Side='%s', Uplo='%s'\n",
+           Bitmap2Char(FSRout, flgs[0]), Bitmap2Char(FSSide, flgs[0]),
+           Bitmap2Char(FSUplo, flgs[0]));
+   fprintf(nbout, " * M : %d", ms[0]);
+   for (i=1; i < N; i++)
+      fprintf(nbout, ",%d", ms[i]);
+   fprintf(nbout, "\n * N : %d", ns[0]);
+   for (i=1; i < N; i++)
+      fprintf(nbout, ",%d", ns[i]);
+   fprintf(nbout, "\n * NB : %d", nbs[0]);
+   for (i=1; i < N; i++)
+      fprintf(nbout, ",%d", nbs[i]);
+   fprintf(nbout, "\n */\n");
+
+   fprintf(nbout, "#define %s(n_, nb_) \\\n", nameNoPath);
+   if (nc && NBc && Xover)      /* if we've got compressed arrays, */
+   {                            /* just use predefined crossover points */
+      if (nc == 1)
+         fprintf(nbout, "   (nb_) = %d\n", NBc[0]);
+      else
+      {
+         fprintf(nbout, "{ \\\n");
+         fprintf(nbout, "   if ((n_) < %d) (nb_) = %d; \\\n", Xover[0], NBc[0]);
+         for (i=1; i < nc-1; i++)
+            fprintf(nbout, "   else if ((n_) < %d) (nb_) = %d; \\\n",
+                    Xover[i], NBc[i]);
+         fprintf(nbout, "   else (nb_) = %d; \\\n", NBc[nc-1]);
+         fprintf(nbout, "}\n\n");
+      }
+   }
+   else
+   {
+      for (i=0; i < N-1 && ns[i] == ns[i+1]; i++);
+      ONM = (ns[i] == ns[i+1]);  /* all N the same, base choice on M */
+      if (ONM) fprintf(nbout, "{ /* n_ of this func is M of matrix! */ \\\n");
+      else fprintf(nbout, "{ \\\n");
+      for (i=0; i < N-1; i++)
+      {
+         if (!ONM) { n = ns[i]; nn = ns[i+1]; }
+         else { n = ms[i]; nn = ms[i+1]; }
+         nhalf = (nn - n)>>1;
+         fprintf(nbout, "   %sif ((n_) < %d) (nb_) = %d; \\\n", 
+                 els, n+nhalf, nbs[i]);
+         els = "else ";
+      }
+      fprintf(nbout, "   else (nb_) = %d; \\\n", nbs[i]);
+      fprintf(nbout, "}\n\n");
+   }
+   fprintf(nbout, "\n#endif    /* end ifndef %s */\n", nameNoPath);
+   my_fclose(nbout);
+}
+
+void PrintIntArr(char *name, int N, int *iarr)
+{
+   int i;
+   if (N > 0)
+   {
+      fprintf(stdout, "%s = %d", name, iarr[0]);
+      for (i=1; i < N; i++) 
+         fprintf(stdout, ", %d", iarr[i]);
+      fprintf(stdout, "\n");
+   }
+   else
+      fprintf(stderr, "%s has no entries!\n", name);
+}
+int *CompressDecisionTree(int N, int *Ns, int *NBs)
+/*
+ * Takes raw arrays from timing, and removes any duplicate NBs, and returns
+ * N & NB arrays that can be directly printed
+ */
+{
+   int *ns, *nbs, n, i, gap;
+   ATL_assert(N > 1);
+   ns = malloc((N+N+1)*sizeof(int));
+   ATL_assert(ns);
+   ns++;
+   nbs = ns + N;
+
+   for (i=0; i < N-1; i++) /* Translate Ns into boundary checks */
+   {
+      gap = (Ns[i+1] - Ns[i])>>1;
+      ns[i] = Ns[i] + gap;
+      nbs[i] = NBs[i];
+   }
+   ns[i] = 0;
+   nbs[i] = NBs[i];
+@beginskip
+   PrintIntArr("Ns", N, Ns);
+   PrintIntArr("Xover0", N, ns);
+   PrintIntArr("nbs0", N, nbs);
+@endskip
+   n = 0; 
+   i = 1;
+   while (i < N)   /* remove redundant NBs */
+   {
+      while (i < N && nbs[n] == NBs[i])
+      {
+         ns[n] = ns[i];
+         i++;
+      }
+      if (i < N)
+      {
+         nbs[++n] = NBs[i];
+         ns[n] = ns[i++];
+      }
+   }
+   n++;
+@skip   PrintIntArr("Xover", n, ns);
+@skip   PrintIntArr("nbs", n, nbs);
+/*
+ * Copy nbs into location ns+n, rather than ns+N
+ */
+   for (i=0; i < n; i++)
+      ns[n+i] = nbs[i];
+@skip   PrintIntArr("XoverF", n, ns);
+@skip   PrintIntArr("nbsF", n, ns+n);
+   ns--;
+   *ns = n;
+   return(ns);
+}
+
+void WriteNbFile(int F77out, char *outnam, int N, int *flgs, int *ms, int *ns, 
+                 int *nbs)
+{
+   int i;
+   int *ip;
+   for (i=0; i < N; i++)
+      fprintf(stdout, "%s: Side='%s', Uplo='%s', M=%d, N=%d, bestNB=%d\n", 
+              Bitmap2Char(FSRout, flgs[i]), Bitmap2Char(FSSide, flgs[i]),
+              Bitmap2Char(FSUplo, flgs[i]), ms[i], ns[i], nbs[i]);
+              
+   if (UseN(N, ms, ns))
+      ip = CompressDecisionTree(N, ns, nbs);
+   else
+      ip = CompressDecisionTree(N, ms, nbs);
+@beginskip
+   if (F77out)
+   {
+      WriteF77File(outnam, N, flgs, ms, ns, nbs);
+      if (F77out > 1)
+         WriteCFile(outnam, N, flgs, ms, ns, nbs);
+   }
+   else
+@endskip
+   WriteCFile(outnam, N, flgs, ms, ns, nbs, ip[0], ip+1+ip[0], ip+1);
+}
+
+int GetMyReps(int N, int *nreps)
+/*
+ * Finds the correct nreps for this N
+ */
+{
+   int n, i;
+
+   n = *nreps++;
+   for (i=n+n-2; i>=0; i -= 2)
+   {
+      if (N >= nreps[i])
+         return(nreps[i+1]);
+   }
+   return(nreps[1]);
+}
+
+@ROUT lanbtst
+int GetNBMinBnd(int N, int *NBminbnd)
+{
+   int i, n;
+   if (!NBminbnd)
+      return(1);
+   n = *NBminbnd++;
+   for (i=n+n-2; i >= 0; i -= 2)
+   {
+      if (N >= NBminbnd[i])
+         return(NBminbnd[i+1]);
+   }
+   return(1);
+}
+
+int GetNBMaxBnd(int N, int *NBmaxbnd)
+{
+   int i, n;
+
+   if (!NBmaxbnd)
+      return(1<<30);
+   n = *NBmaxbnd++;
+   n += n;
+   for (i=0; i < n; i += 2)
+   {
+      if (N <= NBmaxbnd[i])
+         return(NBmaxbnd[i+1]);
+   }
+   return(1<<30);
+}
+
+void GoToTown(int *nreps, int flsizeKB, int mflopF, int ldagap,  int rout,
+              int *Ns, int *Ms, int *NBs, int *UPLOs, int *SDs, 
+              int F77out, char *outnam, int minNB, double minPerc, 
+              int maxNB, double maxPerc, int *NBminbnd, int *NBmaxbnd)
+{
+   FILE *fpout=stdout;
+   double time, mflop, mfB, mfnb, nbB;
+   int *nbs, *flgs, *ms, *ns;
+   int itst=0, lda, n, m, u, s, b, r, M, kk, nb0, nrep, minNBbnd, maxNBbnd;
+   extern int ONB;
+
+   fprintf(fpout, "***     TUNING FOR %10s ***\n", 
+           Bitmap2Char(FSRout, (rout<<8)+UPLOs[1]+SDs[1]));
+   fprintf(fpout, "*********************************\n");
+   fprintf(fpout, "TST     REP  UP  SD       M       N     LDA   NB            TIME         MFLOP\n");
+   fprintf(fpout, "======  ===  ==  ==  ======  ======  ======  ===  =============  =============\n");
+
+   if (outnam)
+   {
+      n = Ns[0]*Ms[0]*UPLOs[0]*SDs[0];
+      flgs = malloc(4*n*sizeof(int));
+      ATL_assert(flgs);
+      nbs = flgs+n;
+      ns = nbs+n;
+      ms = ns+n;
+      kk = 0;
+   }
+   for (n=1; n <= Ns[0]; n++)
+   {
+      for (m=1; m <= Ms[0]; m++)
+      {
+         M = (Ms[m]) ? Ms[m]:Ns[n];
+         for (u=1; u <= UPLOs[0]; u++)
+         {
+            for (s=1; s <= SDs[0]; s++)
+            {
+               mfnb = 0.0;
+               for (b=1; b <= NBs[0]; b++)
+               {
+/*
+ *                Skip this blocking factor if it violates max/min bound for
+ *                this problem size
+ */
+                  nb0 = Mmin(Ns[n], M);
+                  if (NBs[b] < GetNBMinBnd(nb0, NBminbnd) ||
+                      NBs[b] > GetNBMaxBnd(nb0, NBmaxbnd))
+                     continue;
+/*
+ *                Skip this blocking factor if it is less than minNB or %
+ */
+                  if (minPerc > 0.0)
+                  {
+                     nb0 = Ns[n]*minPerc;
+                     if (minNB && minNB < nb0)
+                        nb0 = minNB;
+                     if (NBs[b] < nb0)
+                        continue;
+                  }
+/*
+ *                Skip this blocking factor if it exceeds maxNB
+ */
+                  if (maxPerc > 0.0)
+                  {
+                     nb0 = Ns[n]*maxPerc;
+                     if (maxNB && maxNB < nb0)
+                        nb0 = maxNB;
+                     if (NBs[b] > nb0)
+                        continue;
+                  }
+                  mfB = 0.0;
+                  lda = ldagap + M;
+                  nrep = GetMyReps(Mmin(M,Ns[n]), nreps);
+                  for (r=1; r <= nrep; r++)
+                  {
+                     ONB = NBs[b];
+                     time = GetTime(rout, mflopF, lda, M, Ns[n], NBs[b], 
+                                    UPLOs[u], SDs[s], flsizeKB);
+                     mflop = Time2Flops(rout, UPLOs[u], M, Ns[n], time);
+                     fprintf(fpout, 
+                             "%6d %4d   %c   %c %7d %7d %7d %4d  %13e %14.2f\n",
+                              itst++, r, Uplo2Char(rout, UPLOs[u]+SDs[s]), 
+                              Side2Char(rout, SDs[s]+UPLOs[u]), 
+                              M, Ns[n], lda, ONB, time, mflop);
+                     if (mflop > mfB)
+                        mfB = mflop;
+                  }                             /* end of reps loop */
+                  if (outnam && mfB > mfnb)
+                  {
+                     mfnb = mfB;
+                     nbs[kk] = NBs[b];
+                  }
+               }                                /* end of NB loop */
+               if (outnam)
+               {
+                  ms[kk] = M;
+                  ns[kk] = Ns[n];
+                  flgs[kk] = Flags2Bitmap(rout, UPLOs[u], SDs[s]);
+                  kk++;
+               }
+            }                                   /* end of Side loop */
+         }                                      /* end of Uplo loop */
+      }                                         /* end of M loop */
+   }                                            /* end of N loop */
+   if (outnam)
+   {
+      WriteNbFile(F77out, outnam, kk, flgs, ms, ns, nbs);
+      free(flgs);
+   }
+}
+
+int main(int nargs, char **args)
+{
+   double minPerc, maxPerc;
+   int *NBs, *Ns, *Ms, *UPLOs, *SDs, *ROUTs, *nreps, *NBminbnd, *NBmaxbnd;
+   int flsizeKB, mflop, ldagap, F77out, minNB, maxNB, r;
+   char *outnam;
+
+   NBs = GetFlags(nargs, args, &nreps, &flsizeKB, &mflop, &ROUTs, &ldagap, 
+                  &Ns, &Ms, &UPLOs, &SDs, &F77out, &outnam, &minNB, &minPerc, 
+                  &maxNB, &maxPerc, &NBminbnd, &NBmaxbnd);
+   for (r=1; r <= ROUTs[0]; r++)
+   {
+      GoToTown(nreps, flsizeKB, mflop, ldagap, ROUTs[r], Ns, Ms, NBs, UPLOs, 
+               SDs, F77out, outnam, minNB, minPerc, maxNB, maxPerc, 
+               NBminbnd, NBmaxbnd);
+   }
+   return(0);
+}
+@ROUT lanbsrch
+
+double GetMultSampleTimes
+(
+   int verb,                    /* 0 : no output, else print mflop on line */
+   int retavg,                  /* 0: return min time, else return average */
+   int nsample,                 /* # of times to repeat timing */
+   int nsecs,                   /* max # secs to spend repeating */
+   int flshszKB,                /* KB to flush */
+   int mflopF,                  /* mflops to force in one timing*/
+   int rout,                    /* routine to time */
+   int uplo,
+   int side, 
+   int M, int N, int lda,       /* prob dims */
+   int nb                       /* nb to use */
+)
+/*
+ * Returns the minimum of NSAMP timing samples, where NSAMP is either nsample,
+ * or nsecs seconds of execution, whichever happens first.
+ */
+{
+   double t0, t1, time, mintime, avgtime;
+   int i;
+   extern int ONB;
+
+   ONB = nb;
+   avgtime = mintime = 0.0;
+   t0 = time00();
+   for (i=0; i < nsample; i++)
+   {
+      time = GetTime(rout, mflopF, lda, M, N, nb, uplo, side, flshszKB);
+      if (verb)
+         printf("%.2f ", Time2Flops(rout, uplo, M, N, time));
+      avgtime += time;
+      if (mintime)
+         mintime = (mintime <= time) ? mintime : time;
+      else
+         mintime = time;
+      t1 = time00() - t0;
+      if (nsecs && t1 > nsecs) break;
+   }
+   return(retavg ? avgtime/i : mintime);
+}
+
+int findNB
+(
+   int rout,                    /* routine to time */
+   int nreps,                   /* # of times to repeat timing */
+   int nsecs,                   /* max # secs to spend repeating */
+   int flshszKB,                /* KB to flush */
+   int mflopF,                  /* mflops to force in one timing*/
+   int uplo, int side,
+   int M, int N, int lda,       /* prob dims */
+   int minNB, int maxNB,        /* smallest & largest NB to try */
+   double *tLeft,               /* % time minNB took for this problem size */
+   double *tRight               /* time maxNB took for this problem size */
+)
+/*
+ * tLeft is the time minNB took for this problem size as a percentage of
+ * the minimum time (1.02 would be 2% slower); tRight same for maxNB
+ * used to determine if the blocking factors are really different
+ */
+{
+   int i, nbB, n, mul1, mul2, nbL, nbR, TINYCASE;
+   double time, timeL, timeR, mintime, lasttime;
+
+   timeL = timeR = 0.0;
+   printf("   FINDING NB FOR M=%d, N=%d, LDA=%d:\n", M, N, lda);
+/*
+ * Try all multiples of NB between min & max NB
+ */
+   TINYCASE = Mmin(M,N) < 2*NB;
+   i = (minNB/NB)*NB;  /* smallest mul of NB >= floor(min,NB) */
+   if (i < 1) 
+      i = NB;
+   nbB = Mmin(M,N)/2;
+   if (!nbB)
+      nbB = 1;
+   if (nbB > i)
+      nbB = i;
+   else 
+      i = nbB;
+   printf("      nb=%d: ", i);
+   mintime = GetMultSampleTimes(1, 0, nreps, nsecs, flshszKB, mflopF, rout,
+                                uplo, side, M, N, lda, i);
+   printf("--> %.2f MFLOP.\n", Time2Flops(rout, uplo, M, N, mintime));
+   n = Mmin(N,M)>>1;
+   n = Mmin(maxNB, n);
+   n = (n/NB)*NB;
+   for (i += NB; i <= n; i += NB)
+   {
+      printf("      nb=%d: ", i);
+      time = GetMultSampleTimes(1, 0, nreps, nsecs, flshszKB, mflopF, rout,
+                                uplo, side, M, N, lda, i);
+      printf("--> %.2f MFLOP.\n", Time2Flops(rout, uplo, M, N, time));
+      if (i == minNB)
+        timeL = time;
+      if (i == maxNB)
+         timeR = time;
+      if (mintime*1.05 < time) break;  /* quit once we see big perf loss */
+/* 
+ *    Force larger NB to be significantly faster before we use it
+ */
+      if (time < mintime)
+      {
+         if (i < nbB || time*1.01 < mintime)
+         {
+            mintime = time;
+            nbB = i;
+         }
+      }
+   }
+
+   if (nbB <= 3*NB)  /* don't bother to refine for very large NB */
+   {
+      printf("\n      NB refinement search:\n");
+/*
+ *    Try all multiples of lcm(MU,NU) the NBs on either side of the best found
+ *    NB.  If lcm is large, and nbB is small, also try all modulo 4 cases.  
+ *    Require non-multiples of NB to be noticiably better than multiples
+ */
+      mul1 = ATL_lcm(ATL_mmMU, ATL_mmNU);
+      n = Mmin(M,N);
+      mul2 = (nbB >= 2*NB || n > 1000) ? 8 : 4;  /* granularity of refinement */
+      mul2 = (nbB >= 3*NB) ? 12 : mul2; /* make more granular for huge NB */
+      while (mul1 < mul2)
+         mul1 *= 2;
+      if (mul1 > 6 && nbB <= NB && n <= 1000)
+         mul2 = 4;   /* now, mul2 is a second thing to try beyond mul1 */
+      else 
+         mul2 = 0;
+      n = Mmin(nbB,N);
+      if (mul2)
+         n = nbB + NB - mul2;
+      else
+         n = nbB + NB - mul1;
+      if (n > N/2)
+         n = N/2;
+      if (n > M/2)
+         n = M/2;
+      i = nbB - NB + mul1;
+      if (i < 1) i = 1;
+      printf("      *** i=%d, nbB=%d, NB=%d, mul1=%d, mul2=%d ***\n", 
+             i, nbB, NB, mul1, mul2);
+      if (TINYCASE)
+      {
+         i = 1;
+         n = Mmin(M,N)/2;
+         mul1 = 1;
+         mul2 = 0;
+      }
+      for (; i <= n; i++)
+      {
+         if (i == nbB) continue;  /* already timed */
+         if (mul2)
+         {
+            if (i%mul2 && i%mul1) continue;
+         }
+         else if (i%mul1) continue;
+
+         printf("      nb=%d: ", i);
+         time = GetMultSampleTimes(1, 0, nreps, nsecs, flshszKB, mflopF, rout,
+                                   uplo, side, M, N, lda, i);
+         printf(" --> %.2f MFLOP.\n", Time2Flops(rout, uplo, M, N, time));
+         if (i == minNB)
+           timeL = time;
+         if (i == maxNB)
+            timeR = time;
+         if (time*1.02 < mintime)  /* non-mul-NB must be much better */
+         {
+            mintime = time;
+            nbB = i;
+         }
+      }
+   }
+   if (timeL == 0.0)
+   {
+      printf("      nb=%d: ", minNB);
+      timeL = GetMultSampleTimes(1, 0, nreps, nsecs, flshszKB, mflopF, rout,
+                                 uplo, side, M, N, lda, minNB);
+      printf(" --> %.2f MFLOP.\n", Time2Flops(rout, uplo, M, N, timeL));
+      if (timeL < mintime)
+      {
+         mintime = timeL;
+         nbB = minNB;
+      }
+   }
+   if (timeR == 0.0)
+   {
+      printf("      nb=%d: ", maxNB);
+      timeR = GetMultSampleTimes(1, 0, nreps, nsecs, flshszKB, mflopF, rout,
+                                 uplo, side, M, N, lda, maxNB);
+      printf(" --> %.2f MFLOP.\n", Time2Flops(rout, uplo, M, N, timeR));
+      if (timeR < mintime)
+      {
+         mintime = timeR;
+         nbB = maxNB;
+      }
+   }
+   *tLeft  = timeL / mintime;
+   *tRight = timeR / mintime;
+   printf("   FOR M=%d, N=%d, LDA=%d, BEST NB=%d\n\n", M, N, lda, nbB);
+   return(nbB);
+}
+
+int *FindAllNBs
+(
+   int rout,                    /* routine to time */
+   int nreps,                   /* # of times to repeat timing */
+   int nsecs,                   /* max # secs to spend repeating */
+   int flshszKB,                /* KB to flush */
+   int mflopF,                  /* mflops to force in one timing*/
+   int uplo,
+   int side,
+   int restM,
+   int restN,
+   int ldagap,
+   int iL,                      /* index in nnb to find left case */
+   int iR,                      /* index in nnb to find right case */
+   int *nnb                     /* array of all N/NB combos found so far */
+)
+/*
+ * Recursively searches the dimension space for good NBs given two known
+ * boundary points
+ */
+{
+   int m, n, k, lda, i, iM;
+   int *tp;
+   double Lperc, Rperc;
+
+   k = (nnb[iR] + nnb[iL])>>1;
+   k = (k/NB)*NB;          /* keep N a mul of NB to avoid cleanup affects */
+   if (k-nnb[iL] < NB || nnb[iR]-k < NB)
+      return(nnb);   /* don't get finer grained than NB in search */
+   m = (restM) ? restM : k;
+   n = (restN) ? restN : k;
+   lda = m + ldagap;
+/*
+ * If nnb is too short, get roughly a double-length array and continue
+ */
+   i = nnb[1];
+   if (i+2 > nnb[0])
+   {
+      tp = malloc(sizeof(int)*(i+i));
+      ATL_assert(tp);
+      memcpy(tp, nnb, (i)*sizeof(int));
+      free(nnb);
+      nnb = tp;
+      tp[0] = i+i;
+   }
+/*
+ * Find best NB for a problem midway between left and right N's
+ */
+   iM = i;
+   nnb[iM] = k;
+   nnb[iM+1] = findNB(rout, nreps, nsecs, flshszKB, mflopF, uplo, side, 
+                      m, n, lda, nnb[iL+1], nnb[iR+1], &Lperc, &Rperc);
+   nnb[1] = i + 2;
+   printf("   M=%d, N=%d, lda=%d, NB=%d\n", m, n, lda, nnb[iM+1]);
+
+/*
+ * If middle NB greater than left NB, and loss of using different NB is more
+ * than 2%, must search space between
+ */
+   if (nnb[iM+1] > nnb[iL+1] && Lperc > 1.02)
+      nnb = FindAllNBs(rout, nreps, nsecs, flshszKB, mflopF, uplo, side,
+                       restM, restN, ldagap, iL, iM, nnb);
+/*
+ * If middle NB less than right NB, and loss of using different NB is more
+ * than 2%, must search space between
+ */
+   if (nnb[iM+1] < nnb[iR+1] && Rperc > 1.02)
+      nnb = FindAllNBs(rout, nreps, nsecs, flshszKB, mflopF, uplo, side,
+                       restM, restN, ldagap, iM, iR, nnb);
+   return(nnb);
+}
+
+int *FindNBByN
+(
+   int rout,                    /* routine to time */
+   int nreps,                   /* # of times to repeat timing */
+   int nsecs,                   /* max # secs to spend repeating */
+   int flshszKB,                /* KB to flush */
+   int mflopF,                  /* mflops to force in one timing*/
+   int side,
+   int uplo,
+   int maxN,                    /* largest dimension to try */
+   int restM,                   /* 0 : vary M wt tuning dim, else fixed size */
+   int restN,                   /* 0 : vary N wt tuning dim, else fixed size */
+   int ldagap                   /* lda = ldagap+M */
+)
+/*
+ * RETURNS: integer array nnb: nnb[0] holds the array length, nnb[1] holds
+ *          the number of used entries.  For all other entries, even entries
+ *          hold a unique N, and the next entry (odd) is the best NB to use
+ *          The Ns are not sorted (will be in recursive order)
+ */
+{
+   int *nnb;
+   int m, n, lda;
+   double t0, tN, percL, percR;
+/*
+ * Find best NB for minimum problem (dimension 4)
+ */
+   nnb = malloc(sizeof(int)*4000);
+   nnb[2] = 25;
+   m = (restM) ? restM : 25;
+   n = (restN) ? restN : 25;
+   lda = m + ldagap;
+   nnb[3] = findNB(rout, nreps, nsecs, flshszKB, mflopF, uplo, side, 
+                   m, n, lda, 1, 12, &percL, &percR);
+/*
+ * Find best NB for maximum size problem
+ */
+   nnb[4] = maxN;
+   m = (restM) ? restM : maxN;
+   n = (restN) ? restN : maxN;
+   lda = m + ldagap;
+   nnb[5] = findNB(rout, nreps, nsecs, flshszKB, mflopF, uplo, side, m, n, lda, 
+                   nnb[3], 10*NB, &percL, &percR);
+
+   nnb[0] = 4000;   /* length of array in pos 0 */
+   nnb[1] = 6;      /* number of entries used so far in pos 1 */
+   nnb = FindAllNBs(rout, nreps, nsecs, flshszKB, mflopF, uplo, side, 
+                    restM, restN, ldagap, 2, 4, nnb);
+   return(nnb);
+}
+
+void SortNNB(int *nnb)
+/*
+ * Sorts the array nnb on length (N, even entries).  nnb has the form:
+ * nnb[0] holds the array length, nnb[1] holds the number of used entries.  
+ * For all other entries, even entries hold a unique N, and the next entry 
+ * (odd) is the best NB to use.
+ */
+{
+   int i, j, n, nmin, imin;
+
+   n = nnb[1];
+   for (i=2; i < n-2; i += 2)  /* simple selection sort on N */
+   {
+      imin = i;
+      nmin = nnb[i];
+      for (j=i+2; j < n; j += 2)
+      {
+         if (nnb[j] < nmin)
+         {
+            nmin = nnb[j];
+            imin = j;
+         }
+      }
+      if (imin != i)
+      {
+         nnb[imin] = nnb[i];
+         j = nnb[imin+1];
+         nnb[imin+1] = nnb[i+1];
+         nnb[i] = nmin;
+         nnb[i+1] = j;
+      }
+   }
+}
+
+void PrintNNB(int *nnb)
+{
+   int i, n;
+
+   printf("         N     NB\n");
+   printf("==========  =====\n");
+   n = nnb[1];
+   for (i=2; i < n; i += 2)
+      printf("%10d %5d\n", nnb[i], nnb[i+1]);
+}
+
+int TransNNB(int rout, int restM, int restN, int side, int uplo, int *nnb, 
+             int **FLAGs, int **Ms, int **Ns, int **NBs)
+/*
+ * Translates lanbsrch's nnb array into lanbtst's style in order to call
+ * common WriteNBFile
+ */
+{
+   int n, nn, i, j, iflag;
+   int *ms, *ns, *nbs, *flags;
+   nn = nnb[1];
+   n = (nn - 2)>>1;
+   ms = malloc(sizeof(int)*n);
+   ATL_assert(ms);
+   ns = malloc(sizeof(int)*n);
+   ATL_assert(ns);
+   ns = malloc(sizeof(int)*n);
+   ATL_assert(ns);
+   nbs = malloc(sizeof(int)*n);
+   ATL_assert(nbs);
+   flags = malloc(sizeof(int)*n);
+   ATL_assert(flags);
+
+   iflag = Flags2Bitmap(rout, uplo, side);
+   for (j=0, i=2; i < nn; j++, i += 2)
+   {
+      ms[j] = (restM) ? restM : nnb[i];
+      ns[j] = (restN) ? restN : nnb[i];
+      nbs[j] = nnb[i+1];
+      flags[j] = iflag;
+   }
+
+   *Ms = ms;
+   *Ns = ns;
+   *NBs = nbs;
+   *FLAGs = flags;
+   return(n);
+}
+
+int main(int nargs, char **args)
+/*
+ * lanbsrch is a specialization of lanbtst which tries to find good LAPACK
+ * blocking factors much faster.  It does this by assuming good NBs rise
+ * monotonicly with N (this is not strictly true, but shouldn't cost us
+ * too much performance when wrong; lack of monotonic increase probably
+ * down to particular problems sizes and cleanup), and by using recursive
+ * halving to quickly search the space
+ */
+{
+   int nsample, flsizeKB, mflopF, rout, ldagap, maxN, F77out, restM, restN;
+   int nsecs, n;
+   int *UPLOs, *SIDEs;
+   int *nnb, *Ms, *Ns, *NBs, *flags;
+   char *outnam;
+
+   GetFlags(nargs, args, &nsample, &flsizeKB, &mflopF, &nsecs, &rout, &ldagap,
+            &maxN, &UPLOs, &SIDEs, &F77out, &outnam, &restM, &restN);
+   nnb = FindNBByN(rout, nsample, nsecs, flsizeKB, mflopF, SIDEs[1],
+                   UPLOs[1], maxN, restM, restN, ldagap);
+   SortNNB(nnb);
+   PrintNNB(nnb);
+   n = TransNNB(rout, restM, restN, SIDEs[1], UPLOs[1], nnb, 
+                &flags, &Ms, &Ns, &NBs);
+   free(nnb);
+   WriteNbFile(F77out, outnam, n, flags, Ms, Ns, NBs);
+   free(Ms);
+   free(Ns);
+   free(NBs);
+   free(flags);
+   return(0);
+}

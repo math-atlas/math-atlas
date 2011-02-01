@@ -1,0 +1,261 @@
+include Make.inc
+mySRCdir = $(SRCdir)/src/auxil
+@skip ENVdir = $(SRCdir)/src/lapack
+
+ptobj = ATL_ptflushcache.o
+@declare "obj = " y n
+   ATL_flushcache.o
+   ATL_flushCacheByAddr.o
+   ATL_cputime.o ATL_walltime.o
+   ATL_xerbla.o ATL_lcm.o ATL_buildinfo.o
+   @whiledef pre z c d s
+      @multidef rout trsetU trsetL geset gemaxnrm
+      @multidef rout syApAt syApAt_NB geApBt_NB sqtrans geswapT
+      @multidef rout axpby trcollapse gecollapse
+@SKIP axpy axpy_x1_y1 copy scal set zero move /* now done by l1 tune */
+      @whiledef rout tradd trscal gescal geadd gezero gecopy gemove gemoveT syreflect
+         ATL_@(pre)@(rout).o
+      @endwhile
+   @endwhile
+   @whiledef pre z c
+      @multidef rout heApAc heApAc_NB geApBc_NB
+      @multidef rout hescal axpyConj_x1_y1 cplxinvert cplxdivide hereflect
+      @whiledef rout scalConj copyConj moveConj axpyConj axpbyConj gemoveC
+         ATL_@(pre)@(rout).o
+      @endwhile
+      @whiledef al a0 a1 aX aXi0
+         @whiledef rout gemove
+               ATL_@(pre)@(rout)_@(al).o
+         @endwhile
+      @endwhile
+      @whiledef be b0 b1 bX bXi0
+         @whiledef al a0 a1 aX aXi0
+            @whiledef rout geadd axpby axpbyConj
+               ATL_@(pre)@(rout)_@(al)_@(be).o
+            @endwhile
+         @endwhile
+         @whiledef rout gescal
+            ATL_@(pre)@(rout)_@(be).o
+         @endwhile
+      @endwhile
+   @endwhile
+   @whiledef pre d s
+      @whiledef al a0 a1 aX
+         @whiledef rout gemove
+               ATL_@(pre)@(rout)_@(al).o
+         @endwhile
+      @endwhile
+      @whiledef be b0 b1 bX
+         @whiledef al a0 a1 aX
+            @whiledef rout geadd axpby
+               ATL_@(pre)@(rout)_@(al)_@(be).o
+            @endwhile
+         @endwhile
+         @whiledef rout gescal
+            ATL_@(pre)@(rout)_@(be).o
+         @endwhile
+      @endwhile
+   @endwhile
+@enddeclare
+
+all : lib
+dlib : lib
+slib : lib
+zlib : lib
+clib : lib
+
+ptlib : ptlib.grd
+
+lib : lib.grd
+
+lib.grd0 : $(obj)
+	$(ARCHIVER) $(ARFLAGS) $(ATLASlib) $(obj)
+	$(RANLIB) $(ATLASlib)
+	touch lib.grd0
+
+lib.grd : lib.grd0
+	cd $(L1Bdir) ; $(MAKE) lib
+	touch lib.grd
+
+ptlib.grd : $(ptobj)
+	$(ARCHIVER) $(ARFLAGS) $(ATLASlib) $(ptobj)
+	$(RANLIB) $(ATLASlib)
+	touch ptlib.grd
+
+clean :
+	rm -f $(obj) lib.grd
+
+@beginskip
+@define ptdef @@
+@define ptdef @-DATL_USE_THREADS@
+@define pt @@
+@whiledef pt t
+   @declare "@(pt)envdep = " y n
+      $(INCSdir)/atlas_lapack.h
+      @whiledef pre z c d s
+         @whiledef rt gelqf geqlf geqrf gerqf
+            $(INCAdir)/atlas_@(pre)@(pt)GetNB_@(rt).h
+         @endwhile
+      @endwhile
+   @enddeclare
+ATL_i@(pt)laenv.o : $(@(pt)envdep) $(ENVdir)/ATL_ilaenv.c
+	$(DKC) $(DKCFLAGS) $(CDEFS) -c -o ATL_i@(pt)laenv.o @(ptdef) \
+               $(ENVdir)/ATL_ilaenv.c
+   @undef ptdef
+@endwhile
+
+@endskip
+$(ATLFWAIT) :
+	cd $(BINdir) ; $(MAKE) xatlas_waitfile
+$(INCAdir)/atlas_type.h : $(ATLFWAIT)
+	cd $(SYSdir) ; $(MAKE) $(INCAdir)/atlas_type.h
+	$(ATLFWAIT) -f $(INCAdir)/atlas_type.h
+@whiledef pre z c d s
+@(pre)INCdep = $(INCAdir)/atlas_@(pre)sysinfo.h $(INCAdir)/atlas_type.h 
+$(INCAdir)/atlas_@(pre)sysinfo.h : $(ATLFWAIT)
+	cd $(SYSdir) ; $(MAKE) $(INCAdir)/atlas_@(pre)sysinfo.h
+	$(ATLFWAIT) -f $(INCAdir)/atlas_@(pre)sysinfo.h
+@endwhile
+
+@whiledef rout walltime cputime
+ATL_@(rout).o : $(SYSdir)/ATL_@(rout).o
+	cp $(SYSdir)/ATL_@(rout).o ATL_@(rout).o
+$(SYSdir)/ATL_@(rout).o: $(SYSdir)/ATL_@(rout).c
+	cd $(SYSdir) ; $(MAKE) ATL_@(rout).o
+$(SYSdir)/ATL_@(rout).c:
+	cd $(SYSdir) ; $(MAKE) ATL_@(rout).o
+@endwhile
+
+$(INCAdir)/atlas_pthreads.h :
+	cd $(SYSdir) ; $(MAKE) findNT
+	$(ATLFWAIT) -f $(INCAdir)/atlas_pthreads.h
+@whiledef rout ptflushcache
+ATL_@(rout).o : $(INCAdir)/atlas_type.h $(INCAdir)/atlas_pthreads.h \
+                $(mySRCdir)/ATL_@(rout).c
+	$(ICC) $(NM) $@ $(OJ) $(ICCFLAGS) $(mySRCdir)/ATL_@(rout).c
+@endwhile
+@whiledef rout xerbla lcm flushcache flushCacheByAddr
+ATL_@(rout).o : $(INCSdir)/atlas_misc.h $(INCAdir)/atlas_type.h \
+                $(mySRCdir)/ATL_@(rout).c
+	$(ICC) $(NM) $@ $(OJ) $(ICCFLAGS) $(mySRCdir)/ATL_@(rout).c
+@endwhile
+$(INCAdir)/atlas_buildinfo.h :
+	cd $(SYSdir) ; $(MAKE) xemit_buildinfo
+	cd $(SYSdir) ; ./xemit_buildinfo $(INCAdir)/atlas_buildinfo.h
+ATL_buildinfo.o : $(INCAdir)/atlas_buildinfo.h $(INCAdir)/atlas_cacheedge.h
+	$(ICC) -o $@ -c $(ICCFLAGS) $(mySRCdir)/ATL_buildinfo.c
+#
+# Routines coming in all four types
+#
+@multidef typ DCPLX SCPLX DREAL SREAL
+@multidef UPR D S D S
+@whiledef pre z c d s
+   @define KC @$(@(UPR)KC)@
+   @define KF @$(CDEFS) $(@(UPR)KCFLAGS)@
+   @multidef rout trsetU trsetL geset gemaxnrm
+   @multidef rout syApAt syApAt_NB geApBt_NB sqtrans geswapT
+   @multidef rout zero set scal copy move axpy axpby trcollapse gecollapse
+   @whiledef rout tradd trscal gescal geadd gezero gecopy gemove gemoveT syreflect
+ATL_@(pre)@(rout).o : $(@(pre)INCdep) $(mySRCdir)/ATL_@(rout).c
+	@(KC) $(NM) $@ $(OJ) @(KF) -D@(typ) $(mySRCdir)/ATL_@(rout).c
+   @endwhile
+
+#
+#  Routines with both alpha & beta dependencies
+#
+   @whiledef be 0 1 X Xi0
+      @whiledef al 0 1 X Xi0
+         @whiledef rout geadd axpby
+ATL_@(pre)@(rout)_a@(al)_b@(be).o : $(@(pre)INCdep) $(mySRCdir)/kernel/ATL_@(rout).c
+	@(KC) $(NM) $@ $(OJ) @(KF) -D@(typ) -DALPHA@up@(al) \
+              -DBETA@up@(be) $(mySRCdir)/kernel/ATL_@(rout).c
+         @endwhile
+      @endwhile
+   @endwhile
+
+#
+#  Routines with beta dependencies only
+#
+   @whiledef be 0 1 X Xi0
+      @whiledef rout gescal
+ATL_@(pre)@(rout)_b@(be).o : $(@(pre)INCdep) $(mySRCdir)/kernel/ATL_@(rout).c
+	@(KC) $(NM) $@ $(OJ) @(KF) -D@(typ) -DBETA@up@(be) \
+              $(mySRCdir)/kernel/ATL_@(rout).c
+      @endwhile
+@endwhile
+
+#
+#  Routines with alpha dependencies only
+#
+   @whiledef al 0 1 X Xi0
+      @whiledef rout gemove
+ATL_@(pre)@(rout)_a@(al).o : $(@(pre)INCdep) $(mySRCdir)/kernel/ATL_@(rout).c
+	@(KC) $(NM) $@ $(OJ) @(KF) -D@(typ) -DALPHA@up@(al) \
+              $(mySRCdir)/kernel/ATL_@(rout).c
+      @endwhile
+   @endwhile
+   @undef typ
+   @undef KF
+   @undef KC
+   @undef UPR
+@endwhile
+#
+# routines coming in real types only
+#
+@whiledef pre d s
+   @whiledef rout axpy_x1_y1
+ATL_@(pre)@(rout).o : $(@(pre)INCdep) $(mySRCdir)/kernel/ATL_@(rout).c
+	$(@up@(pre)KC) $(NM) $@ $(OJ) $(CDEFS) $(@up@(pre)KCFLAGS) \
+           -D@up@(pre)REAL $(mySRCdir)/kernel/ATL_@(rout).c
+   @endwhile
+@endwhile
+#
+# routines coming only in complex types
+#
+@multidef UPR D S
+@multidef typ DCPLX SCPLX
+@whiledef pre z c
+   @define KC      @$(@(UPR)KC)@
+   @define KCFLAGS @$(CDEFS) $(@(UPR)KCFLAGS)@
+   @multidef fil  syApAt syApAt_NB geApBt_NB
+   @whiledef rout heApAc heApAc_NB geApBc_NB
+ATL_@(pre)@(rout).o : $(@(pre)INCdep) $(mySRCdir)/ATL_@(fil).c
+	@(KC) $(NM) $@ $(OJ) @(KCFLAGS) -DConj_ -D@(typ) \
+              $(mySRCdir)/ATL_@(fil).c
+      @undef fil
+   @endwhile
+   @whiledef rout cplxdivide cplxinvert hescal hereflect
+ATL_@(pre)@(rout).o : $(@(pre)INCdep) $(mySRCdir)/ATL_@(rout).c
+	@(KC) $(NM) $@ $(OJ) @(KCFLAGS) -D@(typ) $(mySRCdir)/ATL_@(rout).c
+   @endwhile
+   @whiledef rout axpy_x1_y1
+ATL_@(pre)@(rout).o : $(@(pre)INCdep) $(mySRCdir)/kernel/ATL_c@(rout).c
+	@(KC) $(NM) $@ $(OJ) @(KCFLAGS) -D@(typ) $(mySRCdir)/kernel/ATL_c@(rout).c
+   @endwhile
+ATL_@(pre)axpyConj_x1_y1.o : $(@(pre)INCdep) $(mySRCdir)/kernel/ATL_caxpy_x1_y1.c
+	@(KC) $(NM) $@ $(OJ) @(KCFLAGS) -DConj_ -D@(typ) \
+              $(mySRCdir)/kernel/ATL_caxpy_x1_y1.c
+   @whiledef rout scal copy move axpy axpby
+ATL_@(pre)@(rout)Conj.o : $(@(pre)INCdep) $(mySRCdir)/ATL_@(rout).c
+	@(KC) $(NM) $@ $(OJ) @(KCFLAGS) -DConj_ -D@(typ) $(mySRCdir)/ATL_@(rout).c
+   @endwhile
+ATL_@(pre)gemoveC.o : $(@(pre)INCdep) $(mySRCdir)/ATL_gemoveT.c
+	@(KC) $(NM) $@ $(OJ) @(KCFLAGS) -DConj_ -D@(typ) $(mySRCdir)/ATL_gemoveT.c
+#
+#  Routines with both alpha & beta dependencies
+#
+   @whiledef be 0 1 X Xi0
+      @whiledef al 0 1 X Xi0
+         @whiledef rout axpby
+ATL_@(pre)@(rout)Conj_a@(al)_b@(be).o : $(@(pre)INCdep) $(mySRCdir)/kernel/ATL_@(rout).c
+	@(KC) $(NM) $@ $(OJ) @(KCFLAGS) -D@(typ) -DALPHA@up@(al) \
+              -DBETA@up@(be) -DConj_ $(mySRCdir)/kernel/ATL_@(rout).c
+         @endwhile
+      @endwhile
+   @endwhile
+
+   @undef typ
+   @undef UPR
+   @undef KC
+   @undef KCFLAGS
+@endwhile

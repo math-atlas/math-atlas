@@ -1,0 +1,2241 @@
+@extract -addkeys -b @(BASEdir)include/atlas.inc lan=C type=none
+@skip
+@skip ATLAS / multithreaded BLAS implementation                     AP00
+@skip
+@skip Last modification : 11/31/00
+@skip Mod by RCW on July 24, 2007 to assert all pthread calls return zero
+@skip (not doing so screwed up users debugging when running out of stackspace).
+@skip
+@define PTM_INCLUDE @-addkeys -b @(srcdir)/atlptmblas.base rout=ptm_inc@
+@skip
+@skip
+@rout ptm_inc
+@extract @(INCLUDE)
+#include "atlas_ptmisc.h"
+@skip
+@skip
+@rout ATL_1dsplit
+@define rname @ATL_1dsplit@
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+
+DIM_1DSPLIT_T @(rname)
+(
+   const unsigned int         NT,
+   const int                  N,
+   const int                  NB,
+   unsigned int               * NT1,
+   unsigned int               * NT2,
+   int                        * N1,
+   int                        * N2,
+   double                     * RATIO
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   double                     n, nt;
+   DIM_1DSPLIT_T              split = Atlas1dNoSplit;
+   unsigned int               nt1, nt2, ntm1;
+   int                        n1, n2, nblks, nbm1;
+@extract @(EXECUTABLE_STATEMENT)
+   nblks = ( N + ( nbm1 = NB - 1 ) ) / NB;
+   if( ( nblks < 2 ) || ( NT < 2 ) ) return( split );
+ 
+   n1 = ( ( ( ( N + ( ntm1 = NT - 1 ) ) / NT ) + nbm1 ) / NB ) * NB;
+   n1 = Mmin( n1, N );
+   n1 = Mmax( n1, 1 );
+   n2 = N - n1;
+ 
+   n  = (double)(N);
+   nt = (double)(NT);
+ 
+   nt1 = (int)floor( ( (double)(n1) / n ) * nt + 0.5 );
+   nt2 = NT - ( nt1 = Mmin( nt1, ntm1 ) );
+ 
+   *N1    = n1;
+   *N2    = n2;
+   *NT1   = nt1;
+   *NT2   = nt2;
+   *RATIO = ( (double)(n1) / (double)(nt1) ) - ( (double)(n2) / (double)(nt2) );
+   *RATIO = Mabs( *RATIO ) / ( n / nt );
+ 
+   return( Atlas1dSplit );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_tzsplit
+@define rname @ATL_tzsplit@
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+
+DIM_TZSPLIT_T @(rname)
+(
+   const enum ATLAS_UPLO      UPLO,
+   const unsigned int         NT,
+   const int                  M,
+   const int                  N,
+   const int                  K,
+   const int                  NB,
+   unsigned int               * NT1,
+   unsigned int               * NT2,
+   int                        * MNK1,
+   int                        * MNK2
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   int                        mnks[8], nts[8];
+   double                     gacol=0.0, garow=0.0, k, k2, m, mnk1, mnk2,
+                              n, nt, nt1, nt2, p, r, rcol=0.0, rrow=0.0,
+                              s, tmnk1, tmnk2, work;
+   DIM_TZSPLIT_T              split = AtlasTzNoSplit;
+   int                        kblks, mblks, nblks, nbm1, ntm1;
+@extract @(EXECUTABLE_STATEMENT)
+   nbm1  = NB - 1;
+   mblks = (M+nbm1) / NB; nblks = (N+nbm1) / NB; kblks = (K+nbm1) / NB;
+   r     = (double)(mblks + kblks) * (double)(kblks + nblks);
+ 
+   if( ( r < 4.0 ) || ( NT < 2 ) ) return( split );
+ 
+   m     = (double)(M);   n     = (double)(N);   k     = (double)(K);
+   k2    = k * k;         nt    = (double)(NT);  ntm1  = NT - 1;
+   work  = 2.0 * ( ( k + m ) * n + ( k * m ) ) + k2;
+ 
+   if( ( M > 0 ) || ( K > 0 ) )                       /* Column split */
+   {
+      s     = k + m;
+      p     = k * m;
+      gacol = ( 2.0 * nt * n * s  - work ) / ( nt * s );
+ 
+      if( ( N > 1 ) && ( gacol >= 0.0 ) )
+      {                                                    /* split N */
+         mnk1   = ( ( N - (int)(gacol / 2.0) + nbm1 ) / NB ) * NB;
+         mnk1   = Mmin( mnk1, N );
+         mnk1   = Mmax( mnk1, 1 );
+         mnk2   = N - mnk1;
+ 
+         tmnk1  = (double)(mnk1);
+         tmnk2  = (double)(mnk2);
+ 
+         nt1    = (int)floor( ( ( 2 * s * tmnk1 ) / work ) * nt + 0.5 );
+         nt2    = NT - ( nt1 = Mmin( nt1, ntm1 ) );
+ 
+         rcol   = ( ( 2.0 *   s * tmnk1            ) / (double)(nt1) ) -
+                  ( ( 2.0 * ( s * tmnk2 + p ) + k2 ) / (double)(nt2) );
+ 
+         if( UPLO == AtlasLower )
+         {
+            mnks[0] = mnk1; mnks[1] = mnk2;
+            nts [0] = nt1;  nts [1] = nt2;
+         }
+         else
+         {
+            mnks[0] = mnk2; mnks[1] = mnk1;
+            nts [0] = nt2;  nts [1] = nt1;
+         }
+      }
+      else
+      {                                                    /* split K */
+         mnk1   = ( ( (int)(s * ( 1.0 - sqrt( 1.0 + ( gacol / s ) ) )) +
+                    nbm1 ) / NB ) * NB;
+         mnk1   = Mmin( mnk1, K );
+         mnk1   = Mmax( mnk1, 1 );
+         mnk2   = K - mnk1;
+ 
+         tmnk1  = (double)(mnk1);
+         tmnk2  = (double)(mnk2);
+ 
+         r      = work - ( tmnk2 * ( tmnk2 + ( 2.0 * m ) ) );
+         nt1    = (int)floor( ( r / work ) * nt + 0.5 );
+         nt2    = NT - ( nt1 = Mmin( nt1, ntm1 ) );
+ 
+         rcol   = 2.0 * ( s * n + tmnk1 * ( m + tmnk2 ) ) + 
+                  ( tmnk1 * tmnk1 );
+         rcol  /= (double)(nt1);
+         rcol  -= ( tmnk2 * ( 2.0 * m + tmnk2 ) ) / (double)(nt2);
+ 
+         if( UPLO == AtlasLower )
+         {
+            mnks[2] = mnk1; mnks[3] = mnk2;
+            nts [2] = nt1;  nts [3] = nt2;
+         }
+         else
+         {
+            mnks[2] = mnk2; mnks[3] = mnk1;
+            nts [2] = nt2;  nts [3] = nt1;
+         }
+      }
+   }
+                                                         /* Row split */
+   if( ( N > 0 ) || ( K > 0 ) )
+   {
+      s     = k + n;
+      p     = k * n;
+      garow = ( 2.0 * nt * m * s - work ) / ( nt * s );
+ 
+      if( ( M > 1 ) && ( garow >= 0.0 ) )
+      {                                                    /* split M */
+         mnk1   = ( ( M - (int)(garow / 2.0) + nbm1 ) / NB ) * NB;
+         mnk1   = Mmin( mnk1, M );
+         mnk1   = Mmax( mnk1, 1 );
+         mnk2   = M - mnk1;
+ 
+         tmnk1  = (double)(mnk1);
+         tmnk2  = (double)(mnk2);
+ 
+         nt1    = (int)floor( ( ( 2 * s * tmnk1 ) / work ) * nt + 0.5 );
+         nt2    = NT - ( nt1 = Mmin( nt1, ntm1 ) );
+ 
+         rrow   = ( ( 2.0 *   s * tmnk1            ) / (double)(nt1) ) -
+                  ( ( 2.0 * ( s * tmnk2 + p ) + k2 ) / (double)(nt2) );
+ 
+         if( UPLO == AtlasUpper )
+         {
+            mnks[4] = mnk1; mnks[5] = mnk2;
+            nts [4] = nt1;  nts [5] = nt2;
+         }
+         else
+         {
+            mnks[4] = mnk2; mnks[5] = mnk1;
+            nts [4] = nt2;  nts [5] = nt1;
+         }
+      }
+      else
+      {                                                    /* split K */
+         mnk1   = ( ( (int)(s * ( 1.0 - sqrt( 1.0 + ( garow / s ) ) )) +
+                      nbm1 ) / NB ) * NB;
+         mnk1   = Mmin( mnk1, K );
+         mnk1   = Mmax( mnk1, 1 );
+         mnk2   = K - mnk1;
+ 
+         tmnk1  = (double)(mnk1);
+         tmnk2  = (double)(mnk2);
+ 
+         r      = work - ( tmnk2 * ( tmnk2 + ( 2.0 * n ) ) );
+         nt1    = (int)floor( ( r / work ) * nt + 0.5 );
+         nt2    = NT - ( nt1 = Mmin( nt1, ntm1 ) );
+ 
+         rrow   = 2.0 * ( s * m + tmnk1 * ( n + tmnk2 ) ) +
+                  ( tmnk1 * tmnk1 );
+         rrow  /= (double)(nt1);
+         rrow  -= ( tmnk2 * ( 2.0 * n + tmnk2 ) ) / (double)(nt2);
+ 
+         if( UPLO == AtlasUpper )
+         {
+            mnks[6] = mnk1; mnks[7] = mnk2;
+            nts [6] = nt1;  nts [7] = nt2;
+         }
+         else
+         {
+            mnks[6] = mnk2; mnks[7] = mnk1;
+            nts [6] = nt2;  nts [7] = nt1;
+         }
+      }
+   }
+ 
+   if( ( ( M > 0 ) || ( K > 0 ) ) && ( ( K > 0 ) || ( N > 0 ) ) )
+   {
+      if( Mabs( rcol ) <= Mabs( rrow ) )              /* Column split */
+      {
+         if( ( N > 1 ) && ( gacol >= 0.0 ) )
+         {
+            split = AtlasTzSplitNcol;
+            *NT1  = nts [0]; *NT2  = nts [1];
+            *MNK1 = mnks[0]; *MNK2 = mnks[1];
+         }
+         else
+         {
+            split = AtlasTzSplitKcol;
+            *NT1  = nts [2]; *NT2  = nts [3];
+            *MNK1 = mnks[2]; *MNK2 = mnks[3];
+         }
+      }
+      else
+      {
+         if( ( M > 1 ) && ( garow >= 0.0 ) )
+         {
+            split = AtlasTzSplitMrow;
+            *NT1  = nts [4]; *NT2  = nts [5];
+            *MNK1 = mnks[4]; *MNK2 = mnks[5];
+         }
+         else
+         {
+            split = AtlasTzSplitKrow;
+            *NT1  = nts [6]; *NT2  = nts [7];
+            *MNK1 = mnks[6]; *MNK2 = mnks[7];
+         }
+      }
+   }
+   else if( ( M > 0 ) || ( K > 0 ) )
+   {
+      if( ( N > 1 ) && ( gacol >= 0.0 ) )
+      {
+         split = AtlasTzSplitNcol;
+         *NT1  = nts [0]; *NT2  = nts [1];
+         *MNK1 = mnks[0]; *MNK2 = mnks[1];
+      }
+      else
+      {
+         split = AtlasTzSplitKcol;
+         *NT1  = nts [2]; *NT2  = nts [3];
+         *MNK1 = mnks[2]; *MNK2 = mnks[3];
+      }
+   }
+   else if( ( N > 0 ) || ( K > 0 ) )
+   {
+      if( ( M > 1 ) && ( garow >= 0.0 ) )
+      {
+         split = AtlasTzSplitMrow;
+         *NT1  = nts [4]; *NT2  = nts [5];
+         *MNK1 = mnks[4]; *MNK2 = mnks[5];
+      }
+      else
+      {
+         split = AtlasTzSplitKrow;
+         *NT1  = nts [6]; *NT2  = nts [7];
+         *MNK1 = mnks[6]; *MNK2 = mnks[7];
+      }
+   }
+   else
+   {
+      split = AtlasTzNoSplit;
+   }
+ 
+   return( split );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_init_node
+@define rname @ATL_init_node@
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+
+PT_TREE_T @(rname)
+(
+   unsigned int               NODE,
+   PT_TREE_T                  LEFT,
+   PT_TREE_T                  RIGHT,
+   PT_DATA_T                  DATA,
+   PT_FUN_VAL_T               * VAL,
+   PT_FUN_T                   FUN,
+   PT_FUN_ARG_T               ARG
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  t = NULL;
+@extract @(EXECUTABLE_STATEMENT)
+   t = (PT_TREE_T)malloc( sizeof( PT_NODE_T ) ); ATL_assert( t != NULL );
+
+   ATL_assert(!pthread_mutex_init( &(t->mutex), NULL ));
+   ATL_assert(!pthread_cond_init ( &(t->cond),  NULL ));
+   t->left  = LEFT; t->right = RIGHT; t->node = NODE; t->count = 0;
+   t->data  = DATA; t->val   = VAL;   t->fun  = FUN;  t->arg   = ARG;
+
+   return( t );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_traverse_tree
+@define rname @ATL_traverse_tree@
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+
+void @(rname)
+(
+   PT_TREE_T                  ROOT
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(EXECUTABLE_STATEMENT)
+   if( ROOT )
+   {
+      @(rname)( ROOT->left  );
+      @(rname)( ROOT->right );
+      if( ROOT->fun ) *(ROOT->val) = ROOT->fun( ROOT->arg );
+   }
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_apply_tree
+@define rname @ATL_apply_tree@
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+
+void @(rname)
+(
+   PT_TREE_T                  ROOT,
+   PT_APPLY_FUN_T             FUN
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(EXECUTABLE_STATEMENT)
+   if( ROOT )
+   {
+      @(rname)( ROOT->left,  FUN );
+      @(rname)( ROOT->right, FUN );
+      if( FUN ) FUN( ROOT );
+   }
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_thread_init
+@define rname @ATL_thread_init@
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+
+void @(rname)
+(
+   pthread_attr_t             * ATTR
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(EXECUTABLE_STATEMENT)
+   ATL_assert(!pthread_attr_init(ATTR));
+#ifdef IBM_PT_ERROR
+   ATL_assert(!pthread_attr_setdetachstate( ATTR, PTHREAD_CREATE_UNDETACHED ));
+#else
+   ATL_assert(!pthread_attr_setdetachstate( ATTR, PTHREAD_CREATE_JOINABLE   ));
+#endif
+   pthread_attr_setscope(ATTR, PTHREAD_SCOPE_SYSTEM); /* no chk, OK to fail */
+@extract @(END_OF_ROUTINE)
+@undef rname
+
+@beginskip
+// #define AFFINITY_1
+void ATL_thread_init_pa(pthread_attr_t *attr, int p)
+/*
+ * Initializes attribute to ATLAS default, and sets its processor affinity for
+ * processor p only.  Written by R. Clint Whaley.
+ */
+{
+   unsigned long cpuset;
+   ATL_assert(!pthread_attr_init(attr));
+#ifdef IBM_PT_ERROR
+   ATL_assert(!pthread_attr_setdetachstate(attr, PTHREAD_CREATE_UNDETACHED));
+#else
+   ATL_assert(!pthread_attr_setdetachstate(attr, PTHREAD_CREATE_JOINABLE));
+#endif
+   pthread_attr_setscope(attr, PTHREAD_SCOPE_SYSTEM); /* no chk, OK to fail */
+#ifdef AFFINITY_1
+   cpuset = (1<<p);
+   ATL_assert(!pthread_attr_setaffinity_np(attr, sizeof(cpuset), &cpuset));
+#endif
+}
+@endskip
+@skip
+@skip
+@rout ATL_thread_free
+@define rname @ATL_thread_free@
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+
+void @(rname)
+(
+   pthread_attr_t             * ATTR
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(EXECUTABLE_STATEMENT)
+   ATL_assert(!pthread_attr_destroy( ATTR ));
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_thread_tree
+@define rname @ATL_thread_tree@
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+
+void @(rname)
+(
+   PT_TREE_T                  ROOT,
+   pthread_attr_t             * ATTR
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(EXECUTABLE_STATEMENT)
+   if( ROOT )
+   {
+      if( ROOT->fun )
+      {
+         ATL_assert(!pthread_create( &(ROOT->pid), ATTR, ROOT->fun, ROOT ));
+      }
+      @(rname)( ROOT->left,  ATTR );
+      @(rname)( ROOT->right, ATTR );
+   }
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_wait_tree
+@define rname @ATL_wait_tree@
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+
+void @(rname)
+(
+   PT_TREE_T                  ROOT
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(EXECUTABLE_STATEMENT)
+   if( ROOT->left  )
+   {
+      ATL_assert(!pthread_mutex_lock  ( &(ROOT->left->mutex) ));
+      while( ROOT->left->count < 1 )
+      {
+         ATL_assert(!pthread_cond_wait(&(ROOT->left->cond),
+                                       &(ROOT->left->mutex)));
+      }
+      ATL_assert(!pthread_mutex_unlock( &(ROOT->left->mutex) ));
+   }
+ 
+   if( ROOT->right )
+   {
+      ATL_assert(!pthread_mutex_lock(&(ROOT->right->mutex)));
+      while( ROOT->right->count < 1 )
+      {
+         ATL_assert(!pthread_cond_wait(&(ROOT->right->cond),
+                                       &(ROOT->right->mutex)));
+      }
+      ATL_assert(!pthread_mutex_unlock( &(ROOT->right->mutex) ));
+   }
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_signal_tree
+@define rname @ATL_signal_tree@
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+
+void @(rname)
+(
+   PT_TREE_T                  ROOT
+)
+{ 
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(EXECUTABLE_STATEMENT)
+   ATL_assert(!pthread_mutex_lock  ( &(ROOT->mutex) )); ROOT->count++;
+   ATL_assert(!pthread_cond_signal ( &(ROOT->cond)  ));
+   ATL_assert(!pthread_mutex_unlock( &(ROOT->mutex) ));
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_join_tree
+@define rname @ATL_join_tree@
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+
+void @(rname)
+(
+   PT_TREE_T                  ROOT
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(EXECUTABLE_STATEMENT)
+   if( ROOT )
+   {
+      @(rname)( ROOT->left  );
+      @(rname)( ROOT->right );
+      if( ROOT->fun ) { ATL_assert(!pthread_join( ROOT->pid, ROOT->val )); }
+   }
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_free_node
+@define rname @ATL_free_node@
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+
+void @(rname)
+(
+   PT_TREE_T                  ROOT
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(EXECUTABLE_STATEMENT)
+   if( ROOT->data ) free( ROOT->data );
+   if( ROOT->arg  ) free( ROOT->arg  );
+   if( ROOT       ) free( ROOT       );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_print_node_id
+@define rname @ATL_print_node_id@
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+
+void @(rname)
+(
+   PT_TREE_T                  ROOT
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(EXECUTABLE_STATEMENT)
+   fprintf( stdout, "%d ", ROOT->node ); fflush ( stdout );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_free_tree
+@define rname @ATL_free_tree@
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+
+void @(rname)
+(
+   PT_TREE_T                  ROOT
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(EXECUTABLE_STATEMENT)
+   ATL_apply_tree( ROOT, ATL_free_node );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_create_tree
+@define rname @ATL_create_tree@
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+
+PT_TREE_T @(rname)
+(
+   unsigned int               * PART,
+   const int                  IPART,
+   const int                  PSIZE
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(EXECUTABLE_STATEMENT)
+   if( IPART >= PSIZE ) return( NULL );
+
+   return( ATL_init_node( PART[IPART], 
+                          @(rname)( PART, (IPART << 1)+1, PSIZE ),
+                          @(rname)( PART, (IPART << 1)+2, PSIZE ),
+                          NULL, NULL, NULL, NULL ) );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_Sgeadd
+@define rname @ATL_Sgeadd@
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+ 
+PT_TREE_T @(rname)
+(
+   const PT_MISC_TYPE_T       * PTYPE,
+   const unsigned int         NODE,
+   const unsigned int         THREADS,
+   pthread_attr_t             * ATTR,
+   const int                  NB,
+   const int                  M,
+   const int                  N,
+   const void                 * ALPHA,
+   const void                 * A,
+   const int                  LDA,
+   const void                 * BETA,
+   void                       * C,
+   const int                  LDC
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  left, right, tree = NULL;
+   PT_GEADD_ARGS_T            * a_add = NULL;
+   double                     rm, rn;
+   DIM_1DSPLIT_T              splitM, splitN;
+   size_t                     size;
+   int                        split, m1, m2, n1, n2;
+   unsigned int               next = (NODE << 1), ntm1, ntm2, ntn1, ntn2;
+@extract @(EXECUTABLE_STATEMENT)
+   if( THREADS < 1 ) return( tree );
+
+   size   = PTYPE->size;
+   splitM = ATL_1dsplit( THREADS, M, NB, &ntm1, &ntm2, &m1, &m2, &rm );
+   splitN = ATL_1dsplit( THREADS, N, NB, &ntn1, &ntn2, &n1, &n2, &rn );
+
+   if( ( splitM == Atlas1dSplit ) && ( splitN == Atlas1dSplit ) )
+   { split = ( rm < rn ? SPLIT_M : SPLIT_N ); }
+   else if( splitM == Atlas1dSplit ) { split = SPLIT_M; }
+   else if( splitN == Atlas1dSplit ) { split = SPLIT_N; }
+   else                              { split = NOSPLIT; }
+
+   if(      split == SPLIT_N )
+   {
+      left  = ATL_Sgeadd( PTYPE, next+1, ntn1, ATTR, NB, M, n1, ALPHA,
+                          A, LDA, BETA, C, LDC );
+      right = ATL_Sgeadd( PTYPE, next+2, ntn2, ATTR, NB, M, n2, ALPHA,
+                          Mvptm( A, n1*LDA, size ), LDA, BETA,
+                          Mvptm( C, n1*LDC, size ), LDC );
+      tree  = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+   }
+   else if( split == SPLIT_M )
+   {
+      left  = ATL_Sgeadd( PTYPE, next+1, ntm1, ATTR, NB, m1, N, ALPHA,
+                          A, LDA, BETA, C, LDC );
+      right = ATL_Sgeadd( PTYPE, next+2, ntm2, ATTR, NB, m2, N, ALPHA, 
+                          Mvptm( A, m1, size ), LDA, BETA,
+                          Mvptm( C, m1, size ), LDC );
+      tree  = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+   }
+   else
+   {
+      a_add = (PT_GEADD_ARGS_T *)malloc( sizeof( PT_GEADD_ARGS_T ) );
+      ATL_assert( a_add != NULL );
+      a_add->m  = M;     a_add->n = N;
+      a_add->al = ALPHA; a_add->a = A; a_add->la = LDA;
+      a_add->be = BETA;  a_add->c = C; a_add->lc = LDC;
+      tree = ATL_init_node( NODE, NULL, NULL, NULL, NULL, PTYPE->fun,
+                            (void *)(a_add) );
+   }
+ 
+   return( tree );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_ptgeadd
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+
+@define rname @Mjoin( PATL, ptgeadd0 )@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  root = (PT_TREE_T)(ARGS);
+   PT_GEADD_ARGS_T            * arg;
+@extract @(EXECUTABLE_STATEMENT)
+   ATL_wait_tree( root );
+   arg = (PT_GEADD_ARGS_T *)(root->arg);
+
+#define  _PT_M         (arg->m)
+#define  _PT_N         (arg->n)
+
+#ifdef TREAL
+#define  _PT_ALPHA     (SCALAR)(*((TYPE *)(arg->al)))
+#define  _PT_BETA      (SCALAR)(*((TYPE *)(arg->be)))
+#else
+#define  _PT_ALPHA     (SCALAR)(arg->al)
+#define  _PT_BETA      (SCALAR)(arg->be)
+#endif
+
+#define  _PT_A         ((TYPE *)(arg->a))
+#define  _PT_LDA       (arg->la)
+#define  _PT_C         ((TYPE *)(arg->c))
+#define  _PT_LDC       (arg->lc)
+
+   Mjoin( PATL, geadd )( _PT_M, _PT_N, _PT_ALPHA, _PT_A, _PT_LDA,
+                         _PT_BETA, _PT_C, _PT_LDC );
+   ATL_signal_tree( root );
+ 
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+@define rname @Mjoin( PATL, ptgeadd )@
+void @(rname)
+(
+   const int                  M,
+   const int                  N,
+   const SCALAR               ALPHA,
+   const TYPE                 * A,
+   const int                  LDA,
+   const SCALAR               BETA,
+   TYPE                       * C,
+   const int                  LDC
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   pthread_attr_t             attr;
+   PT_TREE_T                  root = NULL;
+#ifdef TREAL
+   TYPE                       alpha0 = (TYPE)(ALPHA),
+                              beta0  = (TYPE)(BETA);
+#endif
+   void                       * alpha, * beta;
+@extract @(EXECUTABLE_STATEMENT)
+   if( ( M <= 0 ) || ( N <= 0 ) ||
+       ( SCALAR_IS_ZERO( ALPHA ) && SCALAR_IS_ONE( BETA ) ) ) return;
+
+#ifdef TREAL
+   alpha = (void *)(&alpha0); beta = (void *)(&beta0);
+#else
+   alpha = (void *)(ALPHA);   beta = (void *)(BETA);
+#endif
+   ATL_thread_init( &attr );
+   root = Mjoin( PATL, ptgeadd_nt )( ATL_NTHREADS, &attr, M, N, alpha,
+                                     (void *)(A), LDA, beta, (void *)(C),
+                                     LDC );
+   ATL_join_tree  ( root );
+   ATL_free_tree  ( root );
+   ATL_thread_free( &attr );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+ 
+@define rname @Mjoin( PATL, ptgeadd_nt )@
+PT_TREE_T @(rname)
+(
+   const unsigned int         THREADS,
+   pthread_attr_t             * ATTR,
+   const int                  M,
+   const int                  N,
+   const void                 * ALPHA,
+   const void                 * A,
+   const int                  LDA,
+   const void                 * BETA,
+   void                       * C,
+   const int                  LDC
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  root = NULL;
+   PT_MISC_TYPE_T             type;
+#ifdef TREAL
+   TYPE                       alpha,    beta;
+#else
+   TYPE                       alpha[2], beta[2];
+#endif
+   double                     tblks;
+   unsigned int               nthreads;
+   int                        nb, nbm1;
+@extract @(EXECUTABLE_STATEMENT)
+#ifdef TREAL
+   alpha    = *((TYPE *)(ALPHA));   beta     = *((TYPE *)(BETA));
+#else
+   alpha[0] = ((TYPE *)(ALPHA))[0]; alpha[1] = ((TYPE *)(ALPHA))[1];
+   beta [0] = ((TYPE *)(BETA ))[0]; beta [1] = ((TYPE *)(BETA ))[1];
+#endif
+/*
+ * Make sure we don't thread this for the time being
+ */
+   if( THREADS >= 1 )
+   {
+      Mjoin( PATL, geadd )( M, N, alpha, (TYPE *)(A), LDA, beta,
+                            (TYPE *)(C), LDC );
+      return( root );
+   }
+
+   nbm1  = ( nb = Mjoin( PATL, GetNB )() ) - 1;
+   tblks = (double)( (M+nbm1) / nb ) * (double)( (N+nbm1) / nb );
+ 
+   if( ( tblks <= (double)(ATL_XOVER_MI_DEFAULT) ) || ( THREADS <= 1 ) )
+   {
+      Mjoin( PATL, geadd )( M, N, alpha, (TYPE *)(A), LDA, beta,
+                            (TYPE *)(C), LDC );
+      return( root );
+   }
+ 
+   if( tblks >= (double)(THREADS) ) { nthreads = THREADS; }
+   else    { nthreads = (unsigned int)floor( tblks + 0.5 ); }
+#ifdef TREAL
+   type.size = sizeof( TYPE    ); type.fun = Mjoin( PATL, ptgeadd0 );
+#else
+   type.size = sizeof( TYPE[2] ); type.fun = Mjoin( PATL, ptgeadd0 );
+#endif
+   root = ATL_Sgeadd( &type, 0, nthreads, ATTR, nb, M, N, ALPHA, A, LDA,
+                      BETA, C, LDC );
+   ATL_thread_tree( root, ATTR );
+
+   return( root );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_Sgescal
+@define rname @ATL_Sgescal@
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+ 
+PT_TREE_T @(rname)
+(
+   const PT_MISC_TYPE_T       * PTYPE,
+   const unsigned int         NODE,
+   const unsigned int         THREADS,
+   pthread_attr_t             * ATTR,
+   const int                  NB,
+   const int                  M,
+   const int                  N,
+   const void                 * ALPHA,
+   void                       * A,
+   const int                  LDA
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  left, right, tree = NULL;
+   PT_GESCAL_ARGS_T           * a_scal = NULL;
+   double                     rm, rn;
+   DIM_1DSPLIT_T              splitM, splitN;
+   size_t                     size;
+   int                        split, m1, m2, n1, n2;
+   unsigned int               next = (NODE << 1), ntm1, ntm2, ntn1, ntn2;
+@extract @(EXECUTABLE_STATEMENT)
+   if( THREADS < 1 ) return( tree );
+ 
+   size   = PTYPE->size;
+   splitM = ATL_1dsplit( THREADS, M, NB, &ntm1, &ntm2, &m1, &m2, &rm );
+   splitN = ATL_1dsplit( THREADS, N, NB, &ntn1, &ntn2, &n1, &n2, &rn );
+ 
+   if( ( splitM == Atlas1dSplit ) && ( splitN == Atlas1dSplit ) )
+   { split = ( rm < rn ? SPLIT_M : SPLIT_N ); }
+   else if( splitM == Atlas1dSplit ) { split = SPLIT_M; }
+   else if( splitN == Atlas1dSplit ) { split = SPLIT_N; }
+   else                              { split = NOSPLIT; }
+ 
+   if(      split == SPLIT_N )
+   {
+      left  = ATL_Sgescal( PTYPE, next+1, ntn1, ATTR, NB, M, n1, ALPHA,
+                           A, LDA );
+      right = ATL_Sgescal( PTYPE, next+2, ntn2, ATTR, NB, M, n2, ALPHA,
+                           Mvptm( A, n1*LDA, size ), LDA );
+      tree  = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+   }
+   else if( split == SPLIT_M )
+   {
+      left  = ATL_Sgescal( PTYPE, next+1, ntm1, ATTR, NB, m1, N, ALPHA,
+                           A, LDA );
+      right = ATL_Sgescal( PTYPE, next+2, ntm2, ATTR, NB, m2, N, ALPHA, 
+                           Mvptm( A, m1, size ), LDA );
+      tree  = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+   }
+   else
+   {
+      a_scal = (PT_GESCAL_ARGS_T *)malloc( sizeof( PT_GESCAL_ARGS_T ) );
+      ATL_assert( a_scal != NULL );
+      a_scal->m  = M;     a_scal->n = N;
+      a_scal->al = ALPHA; a_scal->a = A; a_scal->la = LDA;
+      tree = ATL_init_node( NODE, NULL, NULL, NULL, NULL, PTYPE->fun,
+                            (void *)(a_scal) );
+   }
+
+   return( tree );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_ptgescal
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+
+@define rname @Mjoin( PATL, ptgescal0 )@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  root = (PT_TREE_T)(ARGS);
+   PT_GESCAL_ARGS_T           * arg;
+@extract @(EXECUTABLE_STATEMENT)
+   ATL_wait_tree( root );
+   arg = (PT_GESCAL_ARGS_T *)(root->arg);
+
+#define  _PT_M         (arg->m)
+#define  _PT_N         (arg->n)
+ 
+#ifdef TREAL
+#define  _PT_ALPHA     (SCALAR)(*((TYPE *)(arg->al)))
+#else
+#define  _PT_ALPHA     (SCALAR)(arg->al)
+#endif
+ 
+#define  _PT_A         ((TYPE *)(arg->a))
+#define  _PT_LDA       (arg->la)
+
+   Mjoin( PATL, gescal )( _PT_M, _PT_N, _PT_ALPHA, _PT_A, _PT_LDA );
+   ATL_signal_tree( root );
+ 
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+@define rname @Mjoin( PATL, ptgescal )@
+void @(rname)
+(
+   const int                  M,
+   const int                  N,
+   const SCALAR               ALPHA,
+   TYPE                       * A,
+   const int                  LDA
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   pthread_attr_t             attr;
+   PT_TREE_T                  root = NULL;
+#ifdef TREAL
+   TYPE                       alpha0 = (TYPE)(ALPHA);
+#endif
+   void                       * alpha;
+@extract @(EXECUTABLE_STATEMENT)
+   if( ( M == 0 ) || ( N == 0 ) || ( SCALAR_IS_ONE( ALPHA ) ) ) return;
+
+#ifdef TREAL
+   alpha = (void *)(&alpha0);
+#else
+   alpha = (void *)(ALPHA);
+#endif
+   ATL_thread_init( &attr );
+   root = Mjoin( PATL, ptgescal_nt )( ATL_NTHREADS, &attr, M, N, alpha,
+                                      (void *)(A), LDA );
+   ATL_join_tree  ( root );
+   ATL_free_tree  ( root );
+   ATL_thread_free( &attr );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+@define rname @Mjoin( PATL, ptgescal_nt )@
+PT_TREE_T @(rname)
+(
+   const unsigned int         THREADS,
+   pthread_attr_t             * ATTR,
+   const int                  M,
+   const int                  N,
+   const void                 * ALPHA,
+   void                       * A,
+   const int                  LDA
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  root = NULL;
+   PT_MISC_TYPE_T             type;
+#ifdef TREAL
+   TYPE                       alpha;
+#else
+   TYPE                       alpha[2];
+#endif
+   double                     tblks;
+   unsigned int               nthreads;
+   int                        nb, nbm1;
+@extract @(EXECUTABLE_STATEMENT)
+#ifdef TREAL
+   alpha    = *((TYPE *)(ALPHA));
+#else
+   alpha[0] = ((TYPE *)(ALPHA))[0]; alpha[1] = ((TYPE *)(ALPHA))[1];
+#endif
+/*
+ * Make sure we don't thread this for the time being
+ */
+   if( THREADS >= 1 )
+   { Mjoin( PATL, gescal )( M, N, alpha, (TYPE *)(A), LDA ); return( root ); }
+
+   nbm1  = ( nb = Mjoin( PATL, GetNB )() ) - 1;
+   tblks = (double)( (M+nbm1) / nb ) * (double)( (N+nbm1) / nb );
+/*
+ * When one or more dimension is less than nb, do not thread.
+ */
+   if( ( M <= nb ) || ( N <= nb ) || ( THREADS <= 1 ) || 
+       ( tblks <= (double)(ATL_XOVER_MI_DEFAULT) ) )
+   { Mjoin( PATL, gescal )( M, N, alpha, (TYPE *)(A), LDA ); return( root ); }
+
+   if( tblks >= (double)(THREADS) ) { nthreads = THREADS; }
+   else    { nthreads = (unsigned int)floor( tblks + 0.5 ); }
+#ifdef TREAL
+   type.size = sizeof( TYPE    ); type.fun = Mjoin( PATL, ptgescal0 );
+#else
+   type.size = sizeof( TYPE[2] ); type.fun = Mjoin( PATL, ptgescal0 );
+#endif
+   root = ATL_Sgescal( &type, 0, nthreads, ATTR, nb, M, N, ALPHA, A, LDA );
+   ATL_thread_tree( root, ATTR );
+
+   return( root );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_Sgezero
+@define rname @ATL_Sgezero@
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+ 
+PT_TREE_T @(rname)
+(
+   const PT_MISC_TYPE_T       * PTYPE,
+   const unsigned int         NODE,
+   const unsigned int         THREADS,
+   pthread_attr_t             * ATTR,
+   const int                  NB,
+   const int                  M,
+   const int                  N,
+   void                       * A,
+   const int                  LDA
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  left, right, tree = NULL;
+   PT_GEZERO_ARGS_T           * a_zero = NULL;
+   double                     rm, rn;
+   DIM_1DSPLIT_T              splitM, splitN;
+   size_t                     size;
+   int                        split, m1, m2, n1, n2;
+   unsigned int               next = (NODE << 1), ntm1, ntm2, ntn1, ntn2;
+@extract @(EXECUTABLE_STATEMENT)
+   if( THREADS < 1 ) return( tree );
+
+   size   = PTYPE->size;
+   splitM = ATL_1dsplit( THREADS, M, NB, &ntm1, &ntm2, &m1, &m2, &rm );
+   splitN = ATL_1dsplit( THREADS, N, NB, &ntn1, &ntn2, &n1, &n2, &rn );
+ 
+   if( ( splitM == Atlas1dSplit ) && ( splitN == Atlas1dSplit ) )
+   { split = ( rm < rn ? SPLIT_M : SPLIT_N ); }
+   else if( splitM == Atlas1dSplit ) { split = SPLIT_M; }
+   else if( splitN == Atlas1dSplit ) { split = SPLIT_N; }
+   else                              { split = NOSPLIT; }
+ 
+   if(      split == SPLIT_N )
+   {
+      left  = ATL_Sgezero( PTYPE, next+1, ntn1, ATTR, NB, M, n1,
+                           A, LDA );
+      right = ATL_Sgezero( PTYPE, next+2, ntn2, ATTR, NB, M, n2,
+                           Mvptm( A, n1*LDA, size ), LDA );
+      tree  = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+   }
+   else if( split == SPLIT_M )
+   {
+      left  = ATL_Sgezero( PTYPE, next+1, ntm1, ATTR, NB, m1, N,
+                           A, LDA );
+      right = ATL_Sgezero( PTYPE, next+2, ntm2, ATTR, NB, m2, N,
+                           Mvptm( A, m1, size ), LDA );
+      tree  = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+   }
+   else
+   {
+      a_zero = (PT_GEZERO_ARGS_T *)malloc( sizeof( PT_GEZERO_ARGS_T ) );
+      ATL_assert( a_zero != NULL );
+      a_zero->m = M; a_zero->n = N; a_zero->a = A; a_zero->la = LDA;
+      tree = ATL_init_node( NODE, NULL, NULL, NULL, NULL, PTYPE->fun,
+                            (void *)(a_zero) );
+   }
+
+   return( tree );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_ptgezero
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+
+@define rname @Mjoin( PATL, ptgezero0 )@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  root = (PT_TREE_T)(ARGS);
+   PT_GEZERO_ARGS_T           * arg;
+@extract @(EXECUTABLE_STATEMENT)
+   ATL_wait_tree( root );
+   arg = (PT_GEZERO_ARGS_T *)(root->arg);
+
+#define  _PT_M         (arg->m)
+#define  _PT_N         (arg->n)
+#define  _PT_A         ((TYPE *)(arg->a))
+#define  _PT_LDA       (arg->la)
+
+   Mjoin( PATL, gezero )( _PT_M, _PT_N, _PT_A, _PT_LDA );
+   ATL_signal_tree( root );
+ 
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+@define rname @Mjoin( PATL, ptgezero )@
+void @(rname)
+(
+   const int                  M,
+   const int                  N,
+   TYPE                       * A,
+   const int                  LDA
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   pthread_attr_t             attr;
+   PT_TREE_T                  root = NULL;
+@extract @(EXECUTABLE_STATEMENT)
+   if( ( M <= 0 ) || ( N <= 0 ) ) return;
+
+   ATL_thread_init( &attr );
+   root = Mjoin( PATL, ptgezero_nt )( ATL_NTHREADS, &attr, M, N, A, LDA );
+   ATL_join_tree  ( root );
+   ATL_free_tree  ( root );
+   ATL_thread_free( &attr );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+ 
+@define rname @Mjoin( PATL, ptgezero_nt )@
+PT_TREE_T @(rname)
+(
+   const unsigned int         THREADS,
+   pthread_attr_t             * ATTR,
+   const int                  M,
+   const int                  N,
+   void                       * A,
+   const int                  LDA
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_MISC_TYPE_T             type;
+   PT_TREE_T                  root = NULL;
+   double                     tblks;
+   unsigned int               nthreads;
+   int                        nb, nbm1;
+@extract @(EXECUTABLE_STATEMENT)
+/*
+ * Make sure we don't thread this for the time being
+ */
+   if( THREADS >= 1 )
+   { Mjoin( PATL, gezero )( M, N, (TYPE *)(A), LDA ); return( root ); }
+ 
+   nbm1  = ( nb = Mjoin( PATL, GetNB )() ) - 1;
+   tblks = (double)( (M+nbm1) / nb ) * (double)( (N+nbm1) / nb );
+/*
+ * When one or more dimension is less than nb, do not thread.
+ */
+   if( ( M <= nb ) || ( N <= nb ) || ( THREADS <= 1 ) || 
+       ( tblks <= (double)(ATL_XOVER_MI_DEFAULT) ) )
+   { Mjoin( PATL, gezero )( M, N, (TYPE *)(A), LDA ); return( root ); }
+ 
+   if( tblks >= (double)(THREADS) ) { nthreads = THREADS; }
+   else    { nthreads = (unsigned int)floor( tblks + 0.5 ); }
+#ifdef TREAL
+   type.size = sizeof( TYPE    ); type.fun = Mjoin( PATL, ptgezero0 );
+#else
+   type.size = sizeof( TYPE[2] ); type.fun = Mjoin( PATL, ptgezero0 );
+#endif
+   root = ATL_Sgezero( &type, 0, nthreads, ATTR, nb, M, N, A, LDA );
+   ATL_thread_tree( root, ATTR );
+
+   return( root );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_Stzscal
+@define rname @ATL_Stzscal@
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+ 
+PT_TREE_T @(rname)
+(
+   const PT_MISC_TYPE_T       * PTYPE,
+   const unsigned int         NODE,
+   const unsigned int         THREADS,
+   pthread_attr_t             * ATTR,
+   const int                  NB,
+   const enum ATLAS_UPLO      UPLO,
+   const int                  M,
+   const int                  N,
+   const int                  K,
+   const void                 * ALPHA,
+   void                       * A,
+   const int                  LDA
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  left, right, tree = NULL;
+   PT_TZSCAL_ARGS_T           * a_scal = NULL;
+   size_t                     size;
+   DIM_TZSPLIT_T              split = AtlasTzNoSplit;
+   unsigned int               next = (NODE << 1), nt1, nt2;
+   int                        mnk1, mnk2;
+@extract @(EXECUTABLE_STATEMENT)
+   if( THREADS < 1 ) return( tree );
+
+   size  = PTYPE->size;
+   split = ATL_tzsplit( UPLO, THREADS, M, N, K, NB, &nt1, &nt2,
+                        &mnk1, &mnk2 );
+
+   if(      split == AtlasTzSplitMrow )
+   {
+      if( UPLO == AtlasLower )
+      {
+         left  = ATL_Stzscal( PTYPE, next+1, nt1, ATTR, NB, UPLO, mnk1, N, K,
+                              ALPHA, A, LDA );
+         right = ATL_Sgescal( PTYPE, next+2, nt2, ATTR, NB, mnk2, N+K, ALPHA, 
+                              Mvptm( A, K + mnk1, size ), LDA );
+      }
+      else
+      {
+         left  = ATL_Sgescal( PTYPE, next+1, nt1, ATTR, NB, mnk1, N+K, ALPHA, 
+                              A, LDA );
+         right = ATL_Stzscal( PTYPE, next+2, nt2, ATTR, NB, UPLO, mnk2, N, K,
+                              ALPHA, Mvptm( A, mnk1, size ), LDA );
+      }
+      tree = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+   }
+   else if( split == AtlasTzSplitKrow )
+   {
+      if( UPLO == AtlasLower )
+      {
+         left  = ATL_Stzscal( PTYPE, next+1, nt1, ATTR, NB, UPLO, 0, N,
+                              mnk1, ALPHA, A, LDA );
+         right = ATL_Stzscal( PTYPE, next+2, nt2, ATTR, NB, UPLO, M, N+mnk1,
+                              mnk2, ALPHA, Mvptm( A, mnk1, size ), LDA );
+      }
+      else
+      {
+         left  = ATL_Stzscal( PTYPE, next+1, nt1, ATTR, NB, UPLO, M, N+mnk2,
+                              mnk1, ALPHA, A, LDA );
+         right = ATL_Stzscal( PTYPE, next+2, nt2, ATTR, NB, UPLO, 0, N,
+                              mnk2, ALPHA, Mvptm( A, (M + mnk1) + mnk1 * LDA,
+                              size ), LDA );
+      }
+      tree = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+   }
+   else if( split == AtlasTzSplitKcol )
+   {
+      if( UPLO == AtlasLower )
+      {
+         left  = ATL_Stzscal( PTYPE, next+1, nt1, ATTR, NB, UPLO, M+mnk2, N,
+                              mnk1, ALPHA, A, LDA );
+         right = ATL_Stzscal( PTYPE, next+2, nt2, ATTR, NB, UPLO, M,      0,
+                              mnk2, ALPHA, Mvptm( A, mnk1 + (N + mnk1) * LDA,
+                              size ), LDA );
+      }
+      else
+      {
+         left  = ATL_Stzscal( PTYPE, next+1, nt1, ATTR, NB, UPLO, M,      0,
+                              mnk1, ALPHA, A, LDA );
+         right = ATL_Stzscal( PTYPE, next+2, nt2, ATTR, NB, UPLO, M+mnk1, N,
+                              mnk2, ALPHA, Mvptm( A, mnk1 * LDA, size ), LDA );
+      }
+      tree = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+   }
+   else if( split == AtlasTzSplitNcol )
+   {
+      if( UPLO == AtlasLower )
+      {
+         left  = ATL_Sgescal( PTYPE, next+1, nt1, ATTR, NB, M+K, mnk1, ALPHA, 
+                              A, LDA );
+         right = ATL_Stzscal( PTYPE, next+2, nt2, ATTR, NB, UPLO, M, mnk2, K,
+                              ALPHA, Mvptm( A, mnk1*LDA, size ),
+                              LDA );
+      }
+      else
+      {
+         left  = ATL_Stzscal( PTYPE, next+1, nt1, ATTR, NB, UPLO, M, mnk1, K,
+                              ALPHA, A, LDA );
+         right = ATL_Sgescal( PTYPE, next+2, nt2, ATTR, NB, M+K, mnk2, ALPHA, 
+                              Mvptm( A, (K + mnk1) * LDA, size ),
+                              LDA );
+      }
+      tree = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+   }
+   else
+   {
+      a_scal = (PT_TZSCAL_ARGS_T *)malloc( sizeof( PT_TZSCAL_ARGS_T ) );
+      ATL_assert( a_scal != NULL );
+      a_scal->up = UPLO;   a_scal->m = M; a_scal->n = N;    a_scal->k = K;
+      a_scal->al = ALPHA;  a_scal->a = A; a_scal->la = LDA;
+      tree = ATL_init_node( NODE, NULL, NULL, NULL, NULL, PTYPE->fun,
+                            (void *)(a_scal) );
+   }
+ 
+   return( tree );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_pttrscal
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+
+@define rname @Mjoin( PATL, pttzscal0 )@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  root = (PT_TREE_T)(ARGS);
+   PT_TZSCAL_ARGS_T           * arg;
+   int                        k, lda, m, n;
+@extract @(EXECUTABLE_STATEMENT)
+   ATL_wait_tree( root );
+   arg = (PT_TZSCAL_ARGS_T *)(root->arg);
+
+#ifdef TREAL
+#define  _PT_ALPHA     (SCALAR)(*((TYPE *)(arg->al)))
+#else
+#define  _PT_ALPHA     (SCALAR)(arg->al)
+#endif
+ 
+#define  _PT_A         ((TYPE *)(arg->a))
+
+   k   = arg->k; lda = arg->la;
+   m   = arg->m; n   = arg->n;
+
+   if( arg->up == AtlasLower )
+   {
+      Mjoin( PATL, gescal )( m + k, n, _PT_ALPHA, _PT_A, lda );
+      Mjoin( PATL, trscal )( AtlasLower, m + k, k, _PT_ALPHA,
+                             _PT_A + ((n * lda) SHIFT), lda );
+   }
+   else
+   {
+      Mjoin( PATL, gescal )( m, n + k, _PT_ALPHA, _PT_A, lda );
+      Mjoin( PATL, trscal )( AtlasUpper, k, n + k, _PT_ALPHA,
+                             _PT_A + (m SHIFT), lda );
+   }
+   ATL_signal_tree( root );
+ 
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+@define rname @Mjoin( PATL, pttrscal )@
+void @(rname)
+(
+   const enum ATLAS_UPLO      UPLO,
+   const int                  M,
+   const int                  N,
+   const SCALAR               ALPHA,
+   TYPE                       * A,
+   const int                  LDA
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   pthread_attr_t             attr;
+   PT_TREE_T                  root = NULL;
+#ifdef TREAL
+   TYPE                       alpha0 = (TYPE)(ALPHA);
+#endif
+   void                       * alpha;
+@extract @(EXECUTABLE_STATEMENT)
+   if( ( M <= 0 ) || ( N <= 0 ) || SCALAR_IS_ONE( ALPHA ) ) return;
+
+#ifdef TREAL
+   alpha = (void *)(&alpha0);
+#else
+   alpha = (void *)(ALPHA);
+#endif
+   ATL_thread_init( &attr );
+   root = Mjoin( PATL, pttrscal_nt )( ATL_NTHREADS, &attr, UPLO, M, N,
+                                      alpha, (void *)(A), LDA );
+   ATL_join_tree  ( root );
+   ATL_free_tree  ( root );
+   ATL_thread_free( &attr );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+@define rname @Mjoin( PATL, pttrscal_nt )@
+PT_TREE_T @(rname)
+(
+   const unsigned int         THREADS,
+   pthread_attr_t             * ATTR,
+   const enum ATLAS_UPLO      UPLO,
+   const int                  M,
+   const int                  N,
+   const void                 * ALPHA,
+   void                       * A,
+   const int                  LDA
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  root = NULL;
+   PT_MISC_TYPE_T             type;
+#ifdef TREAL
+   TYPE                       alpha;
+#else
+   TYPE                       alpha[2];
+#endif
+   double                     tblks, tmnblks;
+   unsigned int               nthreads;
+   int                        mn, nb, nbm1;
+@extract @(EXECUTABLE_STATEMENT)
+#ifdef TREAL
+   alpha    = *((TYPE *)(ALPHA));
+#else
+   alpha[0] = ((TYPE *)(ALPHA))[0]; alpha[1] = ((TYPE *)(ALPHA))[1];
+#endif
+/*
+ * Make sure we don't thread this for the time being
+ */
+   if( THREADS >= 1 )
+   {
+      Mjoin( PATL, trscal )( UPLO, M, N, alpha, (TYPE *)(A), LDA );
+      return( root );
+   }
+ 
+   nbm1    = ( nb = Mjoin( PATL, GetNB )() ) - 1;
+   mn      = Mmin( M, N );
+   tmnblks = (double)( (mn+nbm1) / nb );
+   tblks   = tmnblks * tmnblks; 
+
+   if( UPLO == AtlasLower )
+   { tblks += (double)( (N+nbm1) / nb ) * (double)( (M-mn+nbm1) / nb ); }
+   else
+   { tblks += (double)( (M+nbm1) / nb ) * (double)( (N-mn+nbm1) / nb ); }
+ 
+   if( ( tblks <= (double)(ATL_XOVER_MI_DEFAULT) ) || ( THREADS <= 1 ) )
+   {
+      Mjoin( PATL, trscal )( UPLO, M, N, alpha, (TYPE *)(A), LDA );
+      return( root );
+   }
+
+   if( tblks >= (double)(THREADS) ) { nthreads = ATL_NTHREADS; }
+   else        { nthreads = (unsigned int)floor( tblks + 0.5 ); }
+#ifdef TREAL
+   type.size = sizeof( TYPE );    type.fun = Mjoin( PATL, pttzscal0 );
+#else
+   type.size = sizeof( TYPE[2] ); type.fun = Mjoin( PATL, pttzscal0 );
+#endif
+ 
+   if( UPLO == AtlasLower )
+   {
+      root = ATL_Stzscal( &type, 0, nthreads, ATTR, nb, UPLO, M - mn, 0,
+                          mn, ALPHA, A, LDA );
+   }
+   else
+   {
+      root = ATL_Stzscal( &type, 0, nthreads, ATTR, nb, UPLO, 0, N - mn,
+                          mn, ALPHA, A, LDA );
+   }
+   ATL_thread_tree( root, ATTR );
+
+   return( root );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_pthescal
+@extract @(VER_ATLAS_SRC)
+@extract @(PTM_INCLUDE)
+
+@define rname @Mjoin( PATL, pthescal0 )@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  root = (PT_TREE_T)(ARGS);
+   PT_TZSCAL_ARGS_T           * arg;
+   int                        k, lda, m, n;
+@extract @(EXECUTABLE_STATEMENT)
+   ATL_wait_tree( root );
+   arg = (PT_TZSCAL_ARGS_T *)(root->arg);
+
+#define  _PT_ALPHA     (SCALAR)(arg->al)
+#define  _PT_ALPHA_R   *((TYPE *)(arg->al))
+#define  _PT_A         ((TYPE *)(arg->a))
+ 
+   k = arg->k; lda = arg->la; m = arg->m; n = arg->n;
+ 
+   if( arg->up == AtlasLower )
+   {
+      Mjoin( PATL, gescal )( m + k, n, _PT_ALPHA, _PT_A, lda );
+      Mjoin( PATL, hescal )( AtlasLower, m + k, k, _PT_ALPHA_R,
+                             _PT_A + ((n * lda) SHIFT), lda );
+   }
+   else
+   {
+      Mjoin( PATL, gescal )( m, n + k, _PT_ALPHA, _PT_A, lda );
+      Mjoin( PATL, hescal )( AtlasUpper, k, n + k, _PT_ALPHA_R,
+                             _PT_A + (m SHIFT), lda );
+   }
+   ATL_signal_tree( root );
+ 
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+@define rname @Mjoin( PATL, pthescal )@
+void @(rname)
+(
+   const enum ATLAS_UPLO      UPLO,
+   const int                  M,
+   const int                  N,
+   const TYPE                 ALPHA,
+   TYPE                       * A,
+   const int                  LDA
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   pthread_attr_t             attr;
+   PT_TREE_T                  root = NULL;
+   TYPE                       alpha[2];
+@extract @(EXECUTABLE_STATEMENT)
+   if( ( M <= 0 ) || ( N <= 0 ) ) return;
+
+   alpha[0] = ALPHA; alpha[1] = ATL_rzero;
+
+   ATL_thread_init( &attr );
+   root = Mjoin( PATL, pthescal_nt )( ATL_NTHREADS, &attr, UPLO, M, N,
+                                      (void *)(alpha), (void *)(A), LDA );
+   ATL_join_tree  ( root );
+   ATL_free_tree  ( root );
+   ATL_thread_free( &attr );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+@define rname @Mjoin( PATL, pthescal_nt )@
+PT_TREE_T @(rname)
+(
+   const unsigned int         THREADS,
+   pthread_attr_t             * ATTR,
+   const enum ATLAS_UPLO      UPLO,
+   const int                  M,
+   const int                  N,
+   const void                 * ALPHA,
+   void                       * A,
+   const int                  LDA
+)
+{
+@extract @(ATLAS_PTM_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  root = NULL;
+   PT_MISC_TYPE_T             type;
+   double                     tblks, tmnblks;
+   unsigned int               nthreads;
+   int                        mn, nb, nbm1;
+@extract @(EXECUTABLE_STATEMENT)
+/*
+ * Make sure we don't thread this for the time being
+ */
+   if( THREADS >= 1 )
+   {
+      Mjoin( PATL, hescal )( UPLO, M, N, ((TYPE *)(ALPHA))[0],
+                             (TYPE *)(A), LDA );
+      return( root );
+   }
+ 
+   nbm1    = ( nb = Mjoin( PATL, GetNB )() ) - 1;
+   mn      = Mmin( M, N );
+   tmnblks = (double)( (mn+nbm1) / nb );
+   tblks   = tmnblks * tmnblks;
+ 
+   if( UPLO == AtlasLower )
+   { tblks += (double)( (N+nbm1) / nb ) * (double)( (M-mn+nbm1) / nb ); }
+   else
+   { tblks += (double)( (M+nbm1) / nb ) * (double)( (N-mn+nbm1) / nb ); }
+ 
+   if( ( tblks <= (double)(ATL_XOVER_MI_DEFAULT) ) || ( THREADS <= 1 ) )
+   {
+      Mjoin( PATL, hescal )( UPLO, M, N, ((TYPE *)(ALPHA))[0],
+                             (TYPE *)(A), LDA );
+      return( root );
+   }
+ 
+   if( tblks >= (double)(THREADS) ) { nthreads = THREADS; }
+   else    { nthreads = (unsigned int)floor( tblks + 0.5 ); }
+
+   type.size = sizeof( TYPE[2] ); type.fun = Mjoin( PATL, pthescal0 );
+ 
+   if( UPLO == AtlasLower )
+   {
+      root = ATL_Stzscal( &type, 0, nthreads, ATTR, nb, AtlasLower,
+                          M - mn, 0, mn, ALPHA, A, LDA );
+   }
+   else
+   {
+      root = ATL_Stzscal( &type, 0, nthreads, ATTR, nb, AtlasUpper,
+                          0, N - mn, mn, ALPHA, A, LDA );
+   }
+   ATL_thread_tree( root, ATTR );
+
+   return( root ); 
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout atlas_ptmisc.h
+@define rname @atlas_ptmisc.h@
+@extract @(VER_ATLAS_SRC)
+#ifndef ATLAS_PTMISC_H
+#define ATLAS_PTMISC_H
+/*
+ * =====================================================================
+ * Include Files
+ * =====================================================================
+ */
+#include <math.h>
+#include <pthread.h>
+
+#include "atlas_misc.h" 
+#include "atlas_pthreads.h" 
+/*
+ * =====================================================================
+ * #define macro constants
+ * =====================================================================
+ *
+ * ATL_XOVER_MI_DEFAULT is the  smallest  number of  NB-by-NB blocks for
+ * which threading is enabled, where  NB  is  the  value returned by the
+ * ATLAS function Mjoin( PATL, GetNB ).
+ */
+#ifdef TREAL
+#define   ATL_XOVER_MI_DEFAULT      8     /* number of NB x NB blocks */
+#else
+#define   ATL_XOVER_MI_DEFAULT      4
+#endif
+
+#define   NOSPLIT                   0              /* For convenience */
+#define   SPLIT_M                   1
+#define   SPLIT_N                   2
+#define   SPLIT_K                   3
+
+/*
+ * =====================================================================
+ * macro functions
+ * =====================================================================
+ */
+#define    Mptm(  a_, i_, siz_ ) ( ( (char*)(a_) + ( (i_) * (siz_) ) ) )
+#define    Mvptm( a_, i_, siz_ ) ( (void *)(Mptm( (a_), (i_), (siz_) )))
+/*
+ * =====================================================================
+ * typedef definitions
+ * =====================================================================
+ *
+ * Definition of the Binary (recursive) task tree: Each node of the tree
+ * mainly consist a node number,  a reference counter  to enforce depen-
+ * dencies, a argument structure and a function to be applied.
+ */
+typedef           void *                 PT_DATA_T;
+typedef           void *                 PT_FUN_VAL_T;
+typedef           void *                 PT_FUN_ARG_T;
+typedef           PT_FUN_VAL_T           (*PT_FUN_T) ( PT_FUN_ARG_T );
+
+typedef           struct PT_node_T
+{
+   pthread_t          pid;
+   pthread_mutex_t    mutex;
+   pthread_cond_t     cond;
+   struct PT_node_T   * left;
+   struct PT_node_T   * right;
+   PT_DATA_T          data;
+   PT_FUN_VAL_T       * val;
+   PT_FUN_T           fun;
+   PT_FUN_ARG_T       arg;
+   unsigned int       node;
+   unsigned int       count;
+} PT_NODE_T;
+ 
+typedef           PT_NODE_T *            PT_TREE_T;
+typedef           void                   (*PT_APPLY_FUN_T)( PT_TREE_T );
+
+enum              DIM_1DSPLIT_E
+{
+   Atlas1dSplit     = 100,
+   Atlas1dNoSplit   = 199
+};
+
+enum              DIM_TZSPLIT_E
+{
+   AtlasTzSplitMrow = 200,
+   AtlasTzSplitKrow = 201,
+   AtlasTzSplitKcol = 202,
+   AtlasTzSplitNcol = 203,
+   AtlasTzNoSplit   = 299
+};
+
+typedef           enum DIM_1DSPLIT_E     DIM_1DSPLIT_T;
+typedef           enum DIM_TZSPLIT_E     DIM_TZSPLIT_T;
+
+/*
+ * Type definitions  for some auxiliaries that have been  multi-threaded
+ * as well.
+ */
+typedef struct
+{
+   size_t                     size;
+   PT_FUN_T                   fun;
+} PT_MISC_TYPE_T;
+
+typedef struct
+{
+   const void                 * al, * be;
+   const void                 * a;
+   void                       * c;
+   int                        la, lc, m, n;
+} PT_GEADD_ARGS_T;
+
+typedef struct
+{
+   void                       * a;
+   int                        la, m, n;
+} PT_GEZERO_ARGS_T;
+ 
+typedef struct
+{
+   const void                 * al;
+   void                       * a;
+   int                        la, m, n;
+} PT_GESCAL_ARGS_T;
+ 
+typedef struct
+{
+   enum ATLAS_UPLO            up;
+   const void                 * al;
+   void                       * a;
+   int                        k, la, m, n;
+} PT_TZSCAL_ARGS_T;
+
+@beginskip
+/*
+ * These ATL_*_t types from RCW for new log2(p) launch & recursive distribution
+ */
+typedef struct ATL_LaunchStruct ATL_LAUNCHSTRUCT_t;
+struct ATL_LaunchStruct
+{
+   int opstructstride;                  /* size of operation-spec struct */
+   pthread_t rank2thr[ATL_NTHREADS];    /* index by rank to get thread handle */
+   pthread_attr_t attr[ATL_NTHREADS];   /* thread attributes */
+   char *opstruct;
+   int (*OpStructIsInit)(void*);        /* Query to see if struct is valid */
+   void (*CombineOpStructs)(void*, void*);  /* combine function */
+   void (*DoWork)(ATL_LAUNCHSTRUCT_t*, void*);
+};
+
+typedef struct
+{
+   int rank;
+   ATL_LAUNCHSTRUCT_t *ls;
+} ATL_LAUNCHSTRUCT2_t;
+
+#ifdef TYPE
+typedef struct ATL_PTMMNode ATL_PTMMNODE_t;
+struct ATL_PTMMNode
+{
+   ATL_PTMMNODE_t *Cinfp[ATL_NTHREADS];
+   void (*gemmK)(const int, const int, const int, const SCALAR, const TYPE *,
+                 const int, const TYPE*, const int,
+                 const SCALAR, TYPE*, const int);
+   TYPE *A, *B;
+   TYPE *C, *Cw;
+   SCALAR alpha;
+   SCALAR beta;
+   ATL_INT ldcw, M, N, K, lda, ldb, ldc;
+   int rank, nCw;
+};
+#endif
+@endskip
+ 
+/*
+ * =====================================================================
+ * Function prototypes
+ * =====================================================================
+ */
+int               ATL_sGetNB           ( void );
+int               ATL_dGetNB           ( void );
+int               ATL_cGetNB           ( void );
+int               ATL_zGetNB           ( void );
+
+DIM_1DSPLIT_T     ATL_1dsplit
+(
+   const unsigned int,
+   const int,
+   const int,
+   unsigned int *,
+   unsigned int *,
+   int *,
+   int *,
+   double *
+);
+
+DIM_TZSPLIT_T     ATL_tzsplit
+(
+   const enum ATLAS_UPLO,
+   const unsigned int,
+   const int,
+   const int,
+   const int,
+   const int,
+   unsigned int *,
+   unsigned int *,
+   int *,
+   int *
+);
+/*
+ * Task tree management
+ */
+PT_TREE_T         ATL_init_node
+(  unsigned int,      PT_TREE_T,         PT_TREE_T,         PT_DATA_T,
+   PT_FUN_VAL_T *,    PT_FUN_T,          PT_FUN_ARG_T );
+ 
+void              ATL_traverse_tree    ( PT_TREE_T );
+void              ATL_apply_tree       ( PT_TREE_T,         PT_APPLY_FUN_T );
+void              ATL_free_tree        ( PT_TREE_T );
+void              ATL_free_node        ( PT_TREE_T );
+void              ATL_print_node_id    ( PT_TREE_T );
+  
+void              ATL_thread_init_pa   (pthread_attr_t *, int);
+void              ATL_thread_init      ( pthread_attr_t * );
+void              ATL_thread_free      ( pthread_attr_t * );
+void              ATL_wait_tree        ( PT_TREE_T );
+void              ATL_signal_tree      ( PT_TREE_T );
+void              ATL_thread_tree      ( PT_TREE_T,         pthread_attr_t * );
+void              ATL_join_tree        ( PT_TREE_T );
+ 
+PT_TREE_T         ATL_create_tree
+(  unsigned int *,    const int,         const int );
+/*
+ * Typeless auxiliary functions
+ */
+PT_TREE_T         ATL_Sgeadd
+(  const PT_MISC_TYPE_T *,               const unsigned int,
+   const unsigned int,                   pthread_attr_t *,  const int,
+   const int,         const int,         const void *,      const void *,
+   const int,         const void *,      void *,            const int );
+PT_TREE_T         ATL_Sgescal
+(  const PT_MISC_TYPE_T *,               const unsigned int,
+   const unsigned int,                   pthread_attr_t *,  const int,
+   const int,         const int,         const void *,      void *,
+   const int );
+PT_TREE_T         ATL_Sgezero
+(  const PT_MISC_TYPE_T *,               const unsigned int,
+   const unsigned int,                   pthread_attr_t *,  const int,
+   const int,         const int,         void *,            const int );
+PT_TREE_T         ATL_Stzscal
+(  const PT_MISC_TYPE_T *,               const unsigned int,
+   const unsigned int,                   pthread_attr_t *,  const int,
+   const enum ATLAS_UPLO,                const int,         const int,
+   const int,         const void *,      void *,            const int );
+/*
+ * Single precision real auxiliary functions
+ */
+PT_FUN_ARG_T      ATL_sptgeadd0        ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      ATL_sptgescal0       ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      ATL_sptgezero0       ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      ATL_spttzscal0       ( PT_FUN_ARG_T );
+
+PT_TREE_T         ATL_sptgeadd_nt
+(  const unsigned int,                   pthread_attr_t *,  const int,
+   const int,         const void *,      const void *,      const int,
+   const void *,      void *,            const int );
+PT_TREE_T         ATL_sptgescal_nt
+(  const unsigned int,                   pthread_attr_t *,  const int,
+   const int,         const void *,      void *,            const int );
+PT_TREE_T         ATL_sptgezero_nt
+(  const unsigned int,                   pthread_attr_t *,  const int,
+   const int,         void *,            const int );
+PT_TREE_T         ATL_spttrscal_nt
+(  const unsigned int,                   pthread_attr_t *,
+   const enum ATLAS_UPLO,                const int,       const int,
+   const void *,      void *,            const int );
+
+void              ATL_sptgeadd
+(  const int,       const int,       const float,     const float *,
+   const int,       const float,     float *,         const int );
+void              ATL_sptgescal
+(  const int,       const int,       const float,     float *,
+   const int );
+void              ATL_sptgezero
+(  const int,       const int,       float *,         const int );
+void              ATL_spttrscal
+(  const enum ATLAS_UPLO,            const int,       const int,
+   const float,     float *,         const int );
+
+/*
+ * Double precision real auxiliary functions
+ */
+PT_FUN_ARG_T      ATL_dptgeadd0        ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      ATL_dptgescal0       ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      ATL_dptgezero0       ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      ATL_dpttzscal0       ( PT_FUN_ARG_T );
+
+PT_TREE_T         ATL_dptgeadd_nt
+(  const unsigned int,                   pthread_attr_t *,  const int,
+   const int,         const void *,      const void *,      const int,
+   const void *,      void *,            const int );
+PT_TREE_T         ATL_dptgescal_nt
+(  const unsigned int,                   pthread_attr_t *,  const int,
+   const int,         const void *,      void *,            const int );
+PT_TREE_T         ATL_dptgezero_nt
+(  const unsigned int,                   pthread_attr_t *,  const int,
+   const int,         void *,            const int );
+PT_TREE_T         ATL_dpttrscal_nt
+(  const unsigned int,                   pthread_attr_t *,
+   const enum ATLAS_UPLO,                const int,       const int,
+   const void *,      void *,            const int );
+
+void              ATL_dptgeadd
+(  const int,       const int,       const double,    const double *,
+   const int,       const double,    double *,        const int );
+void              ATL_dptgescal
+(  const int,       const int,       const double,    double *,
+   const int );
+void              ATL_dptgezero
+(  const int,       const int,       double *,        const int );
+void              ATL_dpttrscal
+(  const enum ATLAS_UPLO,            const int,       const int,
+   const double,    double *,        const int );
+/*
+ * Single precision complex auxiliary functions
+ */
+PT_FUN_ARG_T      ATL_cptgeadd0        ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      ATL_cptgescal0       ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      ATL_cptgezero0       ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      ATL_cpthescal0       ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      ATL_cpttzscal0       ( PT_FUN_ARG_T );
+
+PT_TREE_T         ATL_cptgeadd_nt
+(  const unsigned int,                   pthread_attr_t *,  const int,
+   const int,         const void *,      const void *,      const int,
+   const void *,      void *,            const int );
+PT_TREE_T         ATL_cptgescal_nt
+(  const unsigned int,                   pthread_attr_t *,  const int,
+   const int,         const void *,      void *,            const int );
+PT_TREE_T         ATL_cptgezero_nt
+(  const unsigned int,                   pthread_attr_t *,  const int,
+   const int,         void *,            const int );
+PT_TREE_T         ATL_cpttrscal_nt
+(  const unsigned int,                   pthread_attr_t *,
+   const enum ATLAS_UPLO,                const int,       const int,
+   const void *,      void *,            const int );
+PT_TREE_T         ATL_cpthescal_nt
+(  const unsigned int,                   pthread_attr_t *,
+   const enum ATLAS_UPLO,                const int,       const int,
+   const void *,      void *,            const int );
+
+void              ATL_cptgeadd
+(  const int,       const int,       const float  *,  const float *, 
+   const int,       const float *,   float *,         const int );
+void              ATL_cptgezero
+(  const int,       const int,       float *,         const int );
+void              ATL_cptgescal
+(  const int,       const int,       const float  *,  float  *,
+   const int );
+void              ATL_cpttrscal
+(  const enum ATLAS_UPLO,            const int,       const int,
+   const float  *,  float  *,        const int );
+void              ATL_cpthescal
+(  const enum ATLAS_UPLO,            const int,       const int,
+   const float,     float  *,        const int );
+/*
+ * Double precision complex auxiliary functions
+ */
+PT_FUN_ARG_T      ATL_zptgeadd0        ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      ATL_zptgescal0       ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      ATL_zptgezero0       ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      ATL_zpthescal0       ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      ATL_zpttzscal0       ( PT_FUN_ARG_T );
+
+PT_TREE_T         ATL_zptgeadd_nt
+(  const unsigned int,                   pthread_attr_t *,  const int,
+   const int,         const void *,      const void *,      const int,
+   const void *,      void *,            const int );
+PT_TREE_T         ATL_zptgescal_nt
+(  const unsigned int,                   pthread_attr_t *,  const int,
+   const int,         const void *,      void *,            const int );
+PT_TREE_T         ATL_zptgezero_nt
+(  const unsigned int,                   pthread_attr_t *,  const int,
+   const int,         void *,            const int );
+PT_TREE_T         ATL_zpttrscal_nt
+(  const unsigned int,                   pthread_attr_t *,
+   const enum ATLAS_UPLO,                const int,       const int,
+   const void *,      void *,            const int );
+PT_TREE_T         ATL_zpthescal_nt
+(  const unsigned int,                   pthread_attr_t *,
+   const enum ATLAS_UPLO,                const int,       const int,
+   const void *,      void *,            const int );
+
+void              ATL_zptgeadd
+(  const int,       const int,       const double *,  const double *,
+   const int,       const double *,  double *,        const int );
+void              ATL_zptgezero
+(  const int,       const int,       double *,        const int );
+void              ATL_zptgescal
+(  const int,       const int,       const double *,  double *,
+   const int );
+void              ATL_zpttrscal
+(  const enum ATLAS_UPLO,            const int,       const int,
+   const double *,  double *,        const int );
+void              ATL_zpthescal
+(  const enum ATLAS_UPLO,            const int,       const int,
+   const double,    double *,        const int );
+
+#endif
+/*
+ * End of @(rname)
+ */
+@undef rname
+@skip
+@skip
+@rout Make.miptblas
+@extract @(VER_ATLAS_MAK)
+#
+include Make.inc
+mySRCdir = $(SRCdir)/src/pthreads/misc
+#
+########################################################################
+#
+INCMdep   = \
+   $(INCAdir)/atlas_pthreads.h     $(INCSdir)/atlas_aux.h      \
+   $(INCSdir)/atlas_enum.h      $(INCSdir)/atlas_misc.h     \
+   $(INCSdir)/atlas_rblas3.h    $(INCSdir)/atlas_level3.h   \
+   $(INCSdir)/atlas_ptmisc.h
+#
+## Object files ########################################################
+#
+ATL_alvlmobj = \
+@declare "   " y y
+   @multidef rout_
+      1dsplit        tzsplit        init_node     traverse_tree 
+      apply_tree     thread_init    thread_free   thread_tree
+      wait_tree      signal_tree    join_tree     free_node
+      print_node_id  free_tree      create_tree
+      Sgeadd_pt         Sgescal_pt        Sgezero_pt       Stzscal_pt
+   @endmultidef
+   @whiledef rout_
+      ATL_@(rout_).o
+   @endwhile
+@enddeclare
+#
+@whiledef pre_ z c d s
+   @addkeys ptyp_=@(pre_)
+ATL_@(pre_)lvlmobj = \
+   @declare "   " y y
+      @ptyp_ s d
+         @multidef rout_
+            trscal gezero gescal geadd
+         @endmultidef
+      @ptyp_ c z
+         @multidef rout_
+            hescal trscal gezero gescal geadd
+         @endmultidef
+      @ptyp_ !
+      @whiledef rout_
+         ATL_@(pre_)pt@(rout_).o
+      @endwhile
+   @enddeclare
+   @killkeys ptyp_
+#
+@endwhile
+## Targets #############################################################
+#
+all   : lib
+#
+lvlm  : lib
+#
+lib   : alib slib dlib clib zlib
+#
+@whiledef pre_ z c d s a
+@(pre_)lvlm : @(pre_)lib
+@endwhile
+#
+@whiledef pre_ z c d s a
+@(pre_)lib  : @(pre_)lib.grd
+@endwhile
+#
+@whiledef pre_ z c d s a
+@(pre_)lib.grd  : $(ATL_@(pre_)lvlmobj)
+	@(arch) @(archflgs) @(ptxlib) $(ATL_@(pre_)lvlmobj)
+	@(ranlib) @(ptxlib)
+	touch @(pre_)lib.grd
+#
+@endwhile
+########################################################################
+#
+@SKIP
+@skip  Change by RCW to get around case-insensitive windows archiver
+@SKIP
+@whiledef rout_ Sgeadd         Sgescal        Sgezero       Stzscal
+   @define rpre_ @ATL_@(rout_)@
+   @define rsrc_ @$(mySRCdir)/@(rpre_).c@
+   @define robj_ @ATL_@(rout_)_pt.o@
+@28l@(robj_) : @(rsrc_) $(INCMdep)
+@(CCptcomp) @(rsrc_)
+   @undef rpre_
+   @undef rsrc_
+   @undef robj_
+@endwhile
+@multidef rout_
+   1dsplit        tzsplit        init_node     traverse_tree 
+   apply_tree     thread_init    thread_free   thread_tree
+   wait_tree      signal_tree    join_tree     free_node
+   print_node_id  free_tree      create_tree
+@skip   Sgeadd         Sgescal        Sgezero       Stzscal
+@endmultidef
+@whiledef rout_
+   @define rpre_ @ATL_@(rout_)@
+   @define rsrc_ @$(mySRCdir)/@(rpre_).c@
+   @define robj_ @ATL_@(rout_).o@
+@28l@(robj_) : @(rsrc_) $(INCMdep)
+@(CCptcomp) @(rsrc_)
+   @undef rpre_
+   @undef rsrc_
+   @undef robj_
+@endwhile
+#
+@multidef upr_ d s d s
+@whiledef pre_ z c d s
+   @addkeys ptyp_=@(pre_)
+   @ptyp_ s d
+      @multidef rout_
+         trscal gezero gescal geadd
+      @endmultidef
+      @define cdefs @-D@up@(upr_)REAL@
+   @ptyp_ c z
+      @multidef rout_
+         hescal trscal gezero gescal geadd
+      @endmultidef
+      @define cdefs @-D@up@(upr_)CPLX@
+   @ptyp_ !
+   @whiledef rout_
+      @define rpre_ @ATL_pt@(rout_)@
+      @define rsrc_ @$(mySRCdir)/@(rpre_).c@
+      @define robj_ @ATL_@(pre_)pt@(rout_).o@
+@28l@(robj_) : @(rsrc_) $(INCMdep)
+@(CCptcomp) @(cdefs) @(rsrc_)
+      @undef rpre_
+      @undef rsrc_
+      @undef robj_
+   @endwhile
+   @undef cdefs
+   @killkeys ptyp_
+   @undef upr_
+#
+@endwhile
+########################################################################
+#
+@whiledef pre_ z c d s
+@(pre_)clean           :
+	rm -f $(ATL_@(pre_)lvlmobj) $(ATL_alvlmobj) @(pre_)*.grd a*.grd
+#
+@endwhile
+#
+clean            :
+	rm -f *.o *.grd
+#
+########################################################################
+@skip
+@skip
+@rout !
+@skip
+@skip
+@undef PTM_INCLUDE
+@skip
+@skip

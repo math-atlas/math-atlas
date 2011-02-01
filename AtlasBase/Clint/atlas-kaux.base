@@ -1,0 +1,1377 @@
+@ifdef ! incd
+   @define incd @/home/rwhaley/Base/ATLAS@
+@endifdef
+@ROUT ATL_gemove ATL_geadd ATL_gescal ATL_caxpy_x1_y1 ATL_axpy_x1_y1 @\
+      ATL_axpby
+@extract -b @(topd)/gen.inc what=crsetup
+@extract -b @(topd)/cw.inc lang=C -def cwdate 1999 -def cwdate 2009
+@skip @extract -b @(topd)/gen.inc what=cw @(cw99)
+#include "atlas_misc.h"
+
+@ROUT ATL_gemove
+void Mjoin(PATL,Mjoin(gemove,NM))
+   (ATL_CINT M0, ATL_CINT N, const SCALAR alpha0, 
+    const TYPE *A, ATL_CINT lda, TYPE *C, ATL_CINT ldc)
+/*
+ * C <- alpha * A
+ */
+{
+#ifdef ALPHA0
+   Mjoin(PATL,gezero)(M0, N, C, ldc);
+#elif defined(ALPHA1)
+   Mjoin(PATL,gecopy)(M0, N, A, lda, C, ldc);
+#elif defined(TREAL) || defined(ALPHAXI0)
+   ATL_INT i, j;
+   ATL_CINT n = N>>1;
+   #ifdef TREAL
+      #define M   M0
+      const register TYPE alpha = alpha0;
+      ATL_CINT incA = lda<<1, incC = ldc<<1;
+   #else
+      const register TYPE ralpha = *alpha0;
+      ATL_CINT M = M0<<1, incA = lda<<2, incC = ldc<<2;
+   #endif
+   const TYPE *A0 = A, *A1 = A+(lda SHIFT);
+   TYPE *C0 = C, *C1 = C+(ldc SHIFT);
+
+   for (j=n; j; j--, A0 += incA, A1 += incA, C0 += incC, C1 += incC)
+   {
+      for (i=0; i != M; i++)
+      {
+         C0[i] = ATL_MulByALPHA(A0[i]);
+         C1[i] = ATL_MulByALPHA(A1[i]);
+      }
+   }
+   if (N != (n<<1)) for (i=0; i != M; i++) C0[i] = ATL_MulByALPHA(A0[i]);
+
+#elif defined(TCPLX)
+   ATL_CINT incA = (lda-M0)<<1, incC = (ldc-M0)<<1;
+   ATL_INT i, j;
+   const register TYPE ralpha = *alpha0, ialpha = alpha0[1];
+   register TYPE rtmp, itmp;
+
+   for (j=N; j; j--, A += incA, C += incC)
+   {
+      for(i=M0; i; i--, A += 2, C += 2)
+      {
+         rtmp = *A;  itmp = A[1];
+         *C = rtmp * ralpha - itmp * ialpha;
+         C[1] = rtmp * ialpha + itmp * ralpha;
+      }
+   }
+#endif
+}
+@ROUT ATL_geadd
+#ifdef ALPHA0
+
+void Mjoin(Mjoin(Mjoin(PATL,geadd),NM),BNM)
+   (ATL_CINT M, ATL_CINT N, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
+    const SCALAR beta, TYPE *C, ATL_CINT ldc)
+/*
+ * C <- alpha*A + beta*C
+ */
+{
+   Mjoin(PATL,Mjoin(gescal,BNM))(M, N, beta, C, ldc);
+}
+
+#elif defined(BETA0)
+
+void Mjoin(Mjoin(Mjoin(PATL,geadd),NM),BNM)
+   (ATL_CINT M, ATL_CINT N, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
+    const SCALAR beta, TYPE *C, ATL_CINT ldc)
+/*
+ * C <- alpha*A + beta*C
+ */
+{
+   Mjoin(PATL,Mjoin(gemove,NM))(M, N, alpha, A, lda, C, ldc);
+}
+
+#else
+
+#ifdef TREAL
+void Mjoin(Mjoin(Mjoin(PATL,geadd),NM),BNM)
+   (ATL_CINT M, ATL_CINT N, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
+    const SCALAR beta, TYPE *C, ATL_CINT ldc)
+/*
+ * C <- alpha*A + beta*C
+ */
+{
+   ATL_CINT n = N >> 1, incA = lda << 1, incC = ldc << 1;
+   const TYPE *a0 = A, *a1 = A + lda;
+   register ATL_INT i, j;
+   TYPE *c0 = C, *c1 = C + ldc;
+
+   for (j=n; j; j--, c0 += incC, c1 += incC, a0 += incA, a1 += incA)
+   {
+      for (i=0; i != M; i++)
+      {
+         #ifdef BETA0
+            #if defined(ALPHA1)
+               c0[i] = a0[i];
+               c1[i] = a1[i];
+            #else
+               c0[i] = alpha*a0[i];
+               c1[i] = alpha*a1[i];
+            #endif
+         #elif defined(BETA1)
+            #if defined(ALPHA1)
+               c0[i] += a0[i];
+               c1[i] += a1[i];
+            #else
+               c0[i] += alpha*a0[i];
+               c1[i] += alpha*a1[i];
+            #endif
+         #else
+            #if defined(ALPHA1)
+               c0[i] = beta*c0[i] + a0[i];
+               c1[i] = beta*c1[i] + a1[i];
+            #else
+               c0[i] = beta*c0[i] + alpha*a0[i];
+               c1[i] = beta*c1[i] + alpha*a1[i];
+            #endif
+         #endif
+      }
+@beginskip
+      a0 += incA;
+      a1 += incA;
+      c0 += incC;
+      c1 += incC;
+@endskip
+   }
+   if (N-(n<<1))
+   {
+      for (i=0; i != M; i++)
+      {
+         #ifdef BETA0
+            #if defined(ALPHA1)
+               c0[i] = a0[i];
+            #else
+               c0[i] = alpha*a0[i];
+            #endif
+         #elif defined(BETA1)
+            #if defined(ALPHA1)
+               c0[i] += a0[i];
+            #else
+               c0[i] += alpha*a0[i];
+            #endif
+         #else
+            #if defined(ALPHA1)
+               c0[i] = beta*c0[i] + a0[i];
+            #else
+               c0[i] = beta*c0[i] + alpha*a0[i];
+            #endif
+         #endif
+      }
+   }
+}
+@multidef  AL X 1 0
+@whiledef cAL Xi0 1 0
+   @multidef  BE X   1 0
+   @whiledef cBE Xi0 1 0
+#elif (defined(ALPHA@up@(cAL)) && defined(BETA@up@(cBE)))
+void Mjoin(PATL,geadd_a@(cAL)_b@(cBE))
+   (ATL_CINT M, ATL_CINT N, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
+    const SCALAR beta, TYPE *C, ATL_CINT ldc)
+{
+   Mjoin(Mjoin(ATL_,UPR),geadd_a@(AL)_b@(BE))(M<<1, N, *alpha, A, lda<<1, *beta, C, ldc<<1);
+}
+      @undef BE
+   @endwhile
+   @undef AL
+@endwhile
+#else
+void Mjoin(Mjoin(Mjoin(PATL,geadd),NM),BNM)
+   (ATL_CINT M, ATL_CINT N, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
+    const SCALAR beta, TYPE *C, ATL_CINT ldc)
+/*
+ * C <- alpha*A + beta*C
+ */
+{
+   ATL_CINT incA = (lda-M)<<1, incC = (ldc-M)<<1;
+   register ATL_INT j, i;
+   const register TYPE ralpha = *alpha, ialpha = alpha[1];
+   const register TYPE rbeta = *beta, ibeta = beta[1];
+   register TYPE cr, ci, ar, ai, t0;
+
+   for (j=N; j; j--, A += incA, C += incC)
+   {
+      for (i=M; i; i--, A += 2, C += 2)
+      {
+         t0 = cr = *C;
+         ci = C[1];
+         #ifdef BETAXI0
+            cr *= rbeta;
+            ci *= rbeta;
+         #else
+            cr = cr * rbeta - ci * ibeta;
+            ci = t0 * ibeta + ci * rbeta;
+         #endif
+
+         t0 = ar = *A;
+         ai = A[1];
+         #ifdef ALPHAXI0
+            ar *= ralpha;
+            ai *= ralpha;
+         #else
+            ar = ar * ralpha - ai * ialpha;
+            ai = t0 * ialpha + ai * ralpha;
+         #endif
+
+         cr += ar;
+         ci += ai;
+         *C = cr;
+         C[1] = ci;
+      }
+   }
+}
+#endif
+
+#endif
+@ROUT ATL_gescal
+
+void Mjoin(Mjoin(PATL,gescal),BNM)
+   (ATL_CINT M, ATL_CINT N, const SCALAR beta0, TYPE *C, ATL_CINT ldc)
+/*
+ * C <- beta * C
+ */
+{
+#ifdef BETA0
+   Mjoin(PATL,gezero)(M, N, C, ldc);
+#elif defined (TREAL)
+
+   ATL_CINT incC = (ldc << 1), incC2 = incC - M, incC3 = ldc - M;
+   TYPE *C0 = C, *C1 = C0 + ldc;
+   TYPE *stM = C0 + M, *stN = C0 + ldc*N;
+   register TYPE beta=beta0;
+
+   if ( (((M >> 2) << 2) == M) && (((N >> 1) << 1) == N) )
+   {
+      do
+      {
+         do
+         {
+            #if defined(BETAN1)
+               *C0 = -(*C0);
+               *C1 = -(*C1);
+               C0[1] = -C0[1];
+               C1[1] = -C1[1];
+               C0[2] = -C0[2];
+               C1[2] = -C1[2];
+               C0[3] = -C0[3];
+               C1[3] = -C1[3];
+            #else
+               *C0 *= beta;
+               *C1 *= beta;
+               C0[1] *= beta;
+               C1[1] *= beta;
+               C0[2] *= beta;
+               C1[2] *= beta;
+               C0[3] *= beta;
+               C1[3] *= beta;
+            #endif
+            C0 += 4;
+            C1 += 4;
+         }
+         while(C0 != stM);
+         stM += incC;
+         C0 += incC2;
+         C1 += incC2;
+      }
+      while(C0 != stN);
+   }
+   else
+   {
+      do
+      {
+         #if defined(BETAN1)
+            do *C0 = -(*C0); while(++C0 != stM);
+         #else
+            do *C0 *= beta; while(++C0 != stM);
+         #endif
+         stM += ldc;
+         C0 += incC3;
+      }
+      while (C0 != stN);
+   }
+
+#elif defined(TCPLX)
+
+#if defined(BETAXI0)
+   Mjoin(ATL_,Mjoin(UPR,gescal_bX))(M<<1, N, *beta0, C, ldc<<1);
+#else
+   ATL_CINT incC=(ldc<<2)-(M<<1), n=N>>1;
+   const register TYPE rbeta = *beta0, ibeta = beta0[1];
+   TYPE *C0=C, *C1 = C + (ldc<<1);
+   register TYPE r0, r1, i0, i1, ar0, ai0, ar1, ai1;
+   register ATL_INT j, i;
+
+   for (j=n; j; j--, C0 += incC, C1 += incC)
+   {
+      for (i=M; i; i--, C0 += 2, C1 += 2)
+      {
+         r0 = *C0;
+         r1 = *C1;
+         i0 = C0[1];
+         i1 = C1[1];
+
+         ar0 = r0 * rbeta;
+         ar1 = r1 * rbeta;
+         ai0 = i0 * rbeta;
+         ai1 = i1 * rbeta;
+
+         i0 *= ibeta;
+         r0 *= ibeta;
+         i1 *= ibeta;
+         r1 *= ibeta;
+
+         ar0 -= i0;
+         ai0 += r0;
+         ar1 -= i1;
+         ai1 += r1;
+         *C0 = ar0;
+         C0[1] = ai0;
+         *C1 = ar1;
+         C1[1] = ai1;
+      }
+   }
+   if (N-(n<<1))
+   {
+      for (i=M; i; i--, C0 += 2)
+      {
+         r0 = *C0;
+         i0 = C0[1];
+         ar0 = r0 * rbeta;
+         ai0 = i0 * rbeta;
+         i0 *= ibeta;
+         r0 *= ibeta;
+         *C0 = ar0 - i0;
+         C0[1] = ai0 + r0;
+      }
+   }
+#endif
+#endif
+}
+@ROUT ATL_caxpy_x1_y1
+
+static void axpy_lt8(ATL_CINT N, const SCALAR alpha, const TYPE *x, TYPE *y)
+/*
+ * For cleanup, see if we can get compiler to do the work, use constant loops
+ */
+{
+   ATL_INT i;
+   const register TYPE ralpha = *alpha, ialpha = alpha[1];
+   register TYPE xr, xi;
+
+   switch(N)
+   {
+   case 1:
+      xr = *x; xi = x[1];
+      #ifndef Conj_
+         *y   += ralpha * xr - ialpha * xi;
+         y[1] += ialpha * xr + ralpha * xi;
+      #else
+         *y   += ralpha * xr + ialpha * xi;
+         y[1] += ialpha * xr - ralpha * xi;
+      #endif
+      break;
+   case 2:
+      for (i=0; i != 2; i++, x += 2, y += 2)
+      {
+         xr = *x; xi = x[1];
+         #ifndef Conj_
+            *y   += ralpha * xr - ialpha * xi;
+            y[1] += ialpha * xr + ralpha * xi;
+         #else
+            *y   += ralpha * xr + ialpha * xi;
+            y[1] += ialpha * xr - ralpha * xi;
+         #endif
+      }
+      break;
+   case 3:
+      for (i=0; i != 3; i++, x += 2, y += 2)
+      {
+         xr = *x; xi = x[1];
+         #ifndef Conj_
+            *y   += ralpha * xr - ialpha * xi;
+            y[1] += ialpha * xr + ralpha * xi;
+         #else
+            *y   += ralpha * xr + ialpha * xi;
+            y[1] += ialpha * xr - ralpha * xi;
+         #endif
+      }
+      break;
+   case 4:
+      for (i=0; i != 4; i++, x += 2, y += 2)
+      {
+         xr = *x; xi = x[1];
+         #ifndef Conj_
+            *y   += ralpha * xr - ialpha * xi;
+            y[1] += ialpha * xr + ralpha * xi;
+         #else
+            *y   += ralpha * xr + ialpha * xi;
+            y[1] += ialpha * xr - ralpha * xi;
+         #endif
+      }
+      break;
+   case 5:
+      for (i=0; i != 5; i++, x += 2, y += 2)
+      {
+         xr = *x; xi = x[1];
+         #ifndef Conj_
+            *y   += ralpha * xr - ialpha * xi;
+            y[1] += ialpha * xr + ralpha * xi;
+         #else
+            *y   += ralpha * xr + ialpha * xi;
+            y[1] += ialpha * xr - ralpha * xi;
+         #endif
+      }
+      break;
+   case 6:
+      for (i=0; i != 6; i++, x += 2, y += 2)
+      {
+         xr = *x; xi = x[1];
+         #ifndef Conj_
+            *y   += ralpha * xr - ialpha * xi;
+            y[1] += ialpha * xr + ralpha * xi;
+         #else
+            *y   += ralpha * xr + ialpha * xi;
+            y[1] += ialpha * xr - ralpha * xi;
+         #endif
+      }
+      break;
+   case 7:
+      for (i=0; i != 7; i++, x += 2, y += 2)
+      {
+         xr = *x; xi = x[1];
+         #ifndef Conj_
+            *y   += ralpha * xr - ialpha * xi;
+            y[1] += ialpha * xr + ralpha * xi;
+         #else
+            *y   += ralpha * xr + ialpha * xi;
+            y[1] += ialpha * xr - ralpha * xi;
+         #endif
+      }
+      break;
+   default:;
+   }
+}
+#if defined (ATL_MULADD) && ATL_mmnreg >= 26
+#ifdef Conj_
+   #define PEQ -=
+   #define MEQ +=
+#else
+   #define PEQ +=
+   #define MEQ -=
+#endif
+static void axpy_8(ATL_CINT N, const SCALAR alpha, const TYPE *x, TYPE *y)
+{
+   ATL_CINT n4 = N >> 2, N2 = (n4>>1)<<1, nr = n4 - N2, nn4 = n4<<1;
+   TYPE *u = y+nn4, *v = u+nn4, *z = v+nn4;
+   const TYPE *X1 = x + nn4, *X2 = X1 + nn4, *X3 = X2 + nn4;
+   const TYPE *stX = x + ((N2-2)<<1);
+   const register TYPE ralpha = *alpha, ialpha = alpha[1];
+   register TYPE yr0, yi0, yr1, yi1;
+   register TYPE ur0, ui0, ur1, ui1;
+   register TYPE vr0, vi0, vr1, vi1;
+   register TYPE zr0, zi0, zr1, zi1;
+   register TYPE xr0, xi0, xr1, xi1;
+   register TYPE xr2, xi2, xr3, xi3;
+
+   if (N2)
+   {
+      yr0 = *y; ur0 = *u; vr0 = *v; zr0 = *z;
+      yi0 = y[1]; ui0 = u[1]; vi0 = v[1]; zi0 = z[1];
+      xr0 = *x; xr1 = *X1; xr2 = *X2; xr3 = *X3;
+
+      yr0 += xr0 * ralpha; xi0 = x[1];
+      ur0 += xr1 * ralpha; xi1 = X1[1];
+      vr0 += xr2 * ralpha; xi2 = X2[1];
+      zr0 += xr3 * ralpha; xi3 = X3[1];
+
+      yi0 += xr0 * ialpha; yr1 = y[2];
+      ui0 += xr1 * ialpha; ur1 = u[2];
+      vi0 += xr2 * ialpha; vr1 = v[2];
+      zi0 += xr3 * ialpha; zr1 = z[2];
+
+      yr0 MEQ xi0 * ialpha; yi1 = y[3];
+      ur0 MEQ xi1 * ialpha; ui1 = u[3];
+      vr0 MEQ xi2 * ialpha; vi1 = v[3];
+      zr0 MEQ xi3 * ialpha; zi1 = z[3];
+
+      yi0 PEQ xi0 * ralpha; xr0 = x[2];
+      ui0 PEQ xi1 * ralpha; xr1 = X1[2];
+      vi0 PEQ xi2 * ralpha; xr2 = X2[2];
+      zi0 PEQ xi3 * ralpha; xr3 = X3[2];
+
+      if (N2 != 2)
+      {
+         do
+         {
+            *y = yr0; yr1 += xr0 * ralpha; xi0 = x[3]; x += 4;
+            *u = ur0; ur1 += xr1 * ralpha; xi1 = X1[3]; X1 += 4;
+            *v = vr0; vr1 += xr2 * ralpha; xi2 = X2[3]; X2 += 4;
+            *z = zr0; zr1 += xr3 * ralpha; xi3 = X3[3]; X3 += 4;
+   
+            y[1] = yi0; yi1 += xr0 * ialpha; yr0 = y[4];
+            u[1] = ui0; ui1 += xr1 * ialpha; ur0 = u[4];
+            v[1] = vi0; vi1 += xr2 * ialpha; vr0 = v[4];
+            z[1] = zi0; zi1 += xr3 * ialpha; zr0 = z[4];
+   
+            yr1 MEQ xi0 * ialpha; yi0 = y[5];
+            ur1 MEQ xi1 * ialpha; ui0 = u[5];
+            vr1 MEQ xi2 * ialpha; vi0 = v[5];
+            zr1 MEQ xi3 * ialpha; zi0 = z[5];
+   
+            yi1 PEQ xi0 * ralpha; xr0 = *x;
+            ui1 PEQ xi1 * ralpha; xr1 = *X1;
+            vi1 PEQ xi2 * ralpha; xr2 = *X2;
+            zi1 PEQ xi3 * ralpha; xr3 = *X3;
+   
+            y[2] = yr1; yr0 += xr0 * ralpha; xi0 = x[1];
+            u[2] = ur1; ur0 += xr1 * ralpha; xi1 = X1[1];
+            v[2] = vr1; vr0 += xr2 * ralpha; xi2 = X2[1];
+            z[2] = zr1; zr0 += xr3 * ralpha; xi3 = X3[1];
+   
+            y[3] = yi1; yi0 += xr0 * ialpha; yr1 = y[6];
+            u[3] = ui1; ui0 += xr1 * ialpha; ur1 = u[6];
+            v[3] = vi1; vi0 += xr2 * ialpha; vr1 = v[6];
+            z[3] = zi1; zi0 += xr3 * ialpha; zr1 = z[6];
+   
+            yr0 MEQ xi0 * ialpha; yi1 = y[7];
+            ur0 MEQ xi1 * ialpha; ui1 = u[7]; y += 4;
+            vr0 MEQ xi2 * ialpha; vi1 = v[7];
+            zr0 MEQ xi3 * ialpha; zi1 = z[7]; u += 4;
+   
+            yi0 PEQ xi0 * ralpha; xr0 = x[2]; v += 4;
+            ui0 PEQ xi1 * ralpha; xr1 = X1[2];
+            vi0 PEQ xi2 * ralpha; xr2 = X2[2]; z += 4;
+            zi0 PEQ xi3 * ralpha; xr3 = X3[2];
+         }
+         while (x != stX);
+      }
+      if (!nr) /* finish off this iteratation only */
+      {
+            *y = yr0; yr1 += xr0 * ralpha; xi0 = x[3];
+            *u = ur0; ur1 += xr1 * ralpha; xi1 = X1[3];
+            *v = vr0; vr1 += xr2 * ralpha; xi2 = X2[3];
+            *z = zr0; zr1 += xr3 * ralpha; xi3 = X3[3]; X3 += 4;
+   
+            y[1] = yi0; yi1 += xr0 * ialpha;
+            u[1] = ui0; ui1 += xr1 * ialpha;
+            v[1] = vi0; vi1 += xr2 * ialpha;
+            z[1] = zi0; zi1 += xr3 * ialpha;
+   
+            yr1 MEQ xi0 * ialpha;
+            ur1 MEQ xi1 * ialpha;
+            vr1 MEQ xi2 * ialpha;
+            zr1 MEQ xi3 * ialpha;
+   
+            yi1 PEQ xi0 * ralpha;
+            ui1 PEQ xi1 * ralpha;
+            vi1 PEQ xi2 * ralpha;
+            zi1 PEQ xi3 * ralpha;
+
+            y[2] = yr1;
+            u[2] = ur1;
+            v[2] = vr1;
+            z[2] = zr1;
+
+            y[3] = yi1;
+            u[3] = ui1;
+            v[3] = vi1;
+            z[3] = zi1; z += 4;
+      }
+      else     /* one iteration to do besides finishing off one from loop */
+      {
+            *y = yr0; yr1 += xr0 * ralpha; xi0 = x[3]; x += 4;
+            *u = ur0; ur1 += xr1 * ralpha; xi1 = X1[3]; X1 += 4;
+            *v = vr0; vr1 += xr2 * ralpha; xi2 = X2[3]; X2 += 4;
+            *z = zr0; zr1 += xr3 * ralpha; xi3 = X3[3]; X3 += 4;
+   
+            y[1] = yi0; yi1 += xr0 * ialpha; yr0 = y[4];
+            u[1] = ui0; ui1 += xr1 * ialpha; ur0 = u[4];
+            v[1] = vi0; vi1 += xr2 * ialpha; vr0 = v[4];
+            z[1] = zi0; zi1 += xr3 * ialpha; zr0 = z[4];
+   
+            yr1 MEQ xi0 * ialpha; yi0 = y[5];
+            ur1 MEQ xi1 * ialpha; ui0 = u[5];
+            vr1 MEQ xi2 * ialpha; vi0 = v[5];
+            zr1 MEQ xi3 * ialpha; zi0 = z[5];
+   
+            yi1 PEQ xi0 * ralpha; xr0 = *x;
+            ui1 PEQ xi1 * ralpha; xr1 = *X1;
+            vi1 PEQ xi2 * ralpha; xr2 = *X2;
+            zi1 PEQ xi3 * ralpha; xr3 = *X3;
+   
+            y[2] = yr1; yr0 += xr0 * ralpha; xi0 = x[1];
+            u[2] = ur1; ur0 += xr1 * ralpha; xi1 = X1[1];
+            v[2] = vr1; vr0 += xr2 * ralpha; xi2 = X2[1];
+            z[2] = zr1; zr0 += xr3 * ralpha; xi3 = X3[1]; X3 += 2;
+   
+            y[3] = yi1; yi0 += xr0 * ialpha;
+            u[3] = ui1; ui0 += xr1 * ialpha;
+            v[3] = vi1; vi0 += xr2 * ialpha;
+            z[3] = zi1; zi0 += xr3 * ialpha;
+   
+            yr0 MEQ xi0 * ialpha; y += 4;
+            ur0 MEQ xi1 * ialpha; u += 4;
+            vr0 MEQ xi2 * ialpha; v += 4;
+            zr0 MEQ xi3 * ialpha; z += 4;
+   
+            yi0 PEQ xi0 * ralpha;
+            ui0 PEQ xi1 * ralpha;
+            vi0 PEQ xi2 * ralpha;
+            zi0 PEQ xi3 * ralpha;
+
+            *y = yr0;
+            *u = ur0;
+            *v = vr0;
+            *z = zr0;
+
+            y[1] = yi0;
+            u[1] = ui0;
+            v[1] = vi0;
+            z[1] = zi0; z += 2;
+      }
+      if (N-(n4<<2)) axpy_lt8(N-(n4<<2), alpha, X3, z);
+   }
+   else axpy_lt8(N, alpha, x, y);
+}
+   #undef PEQ
+   #undef MEQ
+#elif defined(ATL_NOMULADD) && ATL_mmnreg >= 26
+static void axpy_8(ATL_CINT N, const SCALAR alpha, const TYPE *x, TYPE *y)
+/*
+ * 8 register prefetch on X & Y, with 4 cycle multiply & 4 cycle add,
+ * unrolled by 16 to ensure multiple cacheline usage for both singe & double
+ */
+{
+   const register TYPE ralpha = *alpha, ialpha = alpha[1];
+   register TYPE xr0, xi0, xr1, xi1, xxr0, xxi0, xxr1, xxi1;
+   register TYPE yr0, yi0, yr1, yi1, yyr0, yyi0, yyr1, yyi1;
+   register TYPE m0, m1, m2, m3, a0, a1, a2, a3;
+   const TYPE *stX = x + (N<<1) - 16;
+
+   ATL_assert( (N == (N>>3)<<3) && N );
+
+   xr0  = *x;   xxr0 = x[8];
+   xi0  = x[1]; xxi0 = x[9];
+   xr1  = x[2]; xxr1 = x[10];
+   xi1  = x[3]; xxi1 = x[11];
+
+   yr0  = *y;   yyr0 = y[8];
+   yi0  = y[1]; yyi0 = y[9];
+   yr1  = y[2]; yyr1 = y[10];
+   yi1  = y[3]; yyi1 = y[11];
+
+   m0 = ralpha * xr0;
+   m1 = ralpha * xxr0;
+   m2 = ialpha * xr0; xr0  = x[4];
+   m3 = ialpha *xxr0; xxr0 = x[12];
+
+   a0 = yr0  + m0; m0 = ialpha *  xi0; yr0  = y[4];
+   a1 = yyr0 + m1; m1 = ialpha * xxi0; yyr0 = y[12];
+   a2 = yi0  + m2; m2 = ralpha *  xi0;  xi0  = x[5]; yi0  = y[5];
+   a3 = yyi0 + m3; m3 = ralpha * xxi0; xxi0 = x[13]; yyi0 = y[13];
+
+   #ifndef Conj_
+      a0 -= m0; m0 = ralpha * xr1;
+      a1 -= m1; m1 = ralpha * xxr1;
+      a2 += m2; m2 = ialpha *  xr1; xr1  = x[6];
+      a3 += m3; m3 = ialpha * xxr1; xxr1 = x[14];
+   #else
+      a0 += m0; m0 = ralpha * xr1;
+      a1 += m1; m1 = ralpha * xxr1;
+      a2 -= m2; m2 = ialpha *  xr1; xr1  = x[6];
+      a3 -= m3; m3 = ialpha * xxr1; xxr1 = x[14];
+   #endif
+   if (N != 8)
+   {
+      do
+      {
+         *y   = a0; a0 =  yr1 + m0; m0 = ialpha *  xi1;  yr1 = y[6];
+         y[8] = a1; a1 = yyr1 + m1; m1 = ialpha * xxi1; yyr1 = y[14];
+         y[1] = a2; a2 =  yi1 + m2; m2 = ralpha *  xi1;  xi1 = x[7]; 
+                    yi1  = y[7];
+         y[9] = a3; a3 = yyi1 + m3; m3 = ralpha * xxi1; xxi1 = x[15];
+                    yyi1 = y[15]; x += 16;
+         #ifndef Conj_
+            a0 -= m0; m0 = ralpha *  xr0;
+            a1 -= m1; m1 = ralpha * xxr0;
+            a2 += m2; m2 = ialpha *  xr0; xr0 = *x;
+            a3 += m3; m3 = ialpha * xxr0; xxr0 = x[8];
+         #else
+            a0 += m0; m0 = ralpha *  xr0;
+            a1 += m1; m1 = ralpha * xxr0;
+            a2 -= m2; m2 = ialpha *  xr0; xr0 = *x;
+            a3 -= m3; m3 = ialpha * xxr0; xxr0 = x[8];
+         #endif
+         y[ 2] = a0; a0 =  yr0 + m0; m0 = ialpha *  xi0; yr0  = y[16];
+         y[10] = a1; a1 = yyr0 + m1; m1 = ialpha * xxi0; yyr0 = y[24];
+         y[ 3] = a2; a2 = yi0  + m2; m2 = ralpha *  xi0; xi0  = x[1]; 
+                     yi0  = y[17];
+         y[11] = a3; a3 = yyi0 + m3; m3 = ralpha * xxi0; xxi0 = x[9];
+                     yyi0 = y[25];
+
+         #ifndef Conj_
+            a0 -= m0; m0 = ralpha *  xr1;
+            a1 -= m1; m1 = ralpha * xxr1;
+            a2 += m2; m2 = ialpha *  xr1; xr1  = x[2];
+            a3 += m3; m3 = ialpha * xxr1; xxr1 = x[10];
+         #else
+            a0 += m0; m0 = ralpha *  xr1;
+            a1 += m1; m1 = ralpha * xxr1;
+            a2 -= m2; m2 = ialpha *  xr1; xr1  = x[2];
+            a3 -= m3; m3 = ialpha * xxr1; xxr1 = x[10];
+         #endif
+         y[ 4] = a0; a0 =  yr1 + m0; m0 = ialpha *  xi1; yr1  = y[18];
+         y[12] = a1; a1 = yyr1 + m1; m1 = ialpha * xxi1; yyr1 = y[26];
+         y[ 5] = a2; a2 = yi1  + m2; m2 = ralpha *  xi1; xi1  = x[3]; 
+                     yi1  = y[19];
+         y[13] = a3; a3 = yyi1 + m3; m3 = ralpha * xxi1; xxi1 = x[11];
+                     yyi1 = y[27];
+         #ifndef Conj_
+            a0 -= m0; m0 = ralpha *  xr0;
+            a1 -= m1; m1 = ralpha * xxr0;
+            a2 += m2; m2 = ialpha *  xr0; xr0 = x[4];
+            a3 += m3; m3 = ialpha * xxr0; xxr0 = x[12];
+         #else
+            a0 += m0; m0 = ralpha *  xr0;
+            a1 += m1; m1 = ralpha * xxr0;
+            a2 -= m2; m2 = ialpha *  xr0; xr0 = x[4];
+            a3 -= m3; m3 = ialpha * xxr0; xxr0 = x[12];
+         #endif
+         y[ 6] = a0; a0 =  yr0 + m0; m0 = ialpha *  xi0; yr0  = y[20];
+         y[14] = a1; a1 = yyr0 + m1; m1 = ialpha * xxi0; yyr0 = y[28];
+         y[ 7] = a2; a2 = yi0  + m2; m2 = ralpha *  xi0; xi0  = x[5]; 
+                     yi0  = y[21];
+         y[15] = a3; a3 = yyi0 + m3; m3 = ralpha * xxi0; xxi0 = x[13];
+                     yyi0 = y[29];
+         y += 16;
+         #ifndef Conj_
+            a0 -= m0; m0 = ralpha *  xr1;
+            a1 -= m1; m1 = ralpha * xxr1;
+            a2 += m2; m2 = ialpha *  xr1; xr1  = x[6];
+            a3 += m3; m3 = ialpha * xxr1; xxr1 = x[14];
+         #else
+            a0 += m0; m0 = ralpha *  xr1;
+            a1 += m1; m1 = ralpha * xxr1;
+            a2 -= m2; m2 = ialpha *  xr1; xr1  = x[6];
+            a3 -= m3; m3 = ialpha * xxr1; xxr1 = x[14];
+         #endif
+      }
+      while (x != stX);
+   }
+/*
+ * Drain pipe, store last 8 elts of Y
+ */
+   *y   = a0; a0 =  yr1 + m0; m0 = ialpha *  xi1;  yr1 = y[6];
+   y[8] = a1; a1 = yyr1 + m1; m1 = ialpha * xxi1; yyr1 = y[14];
+   y[1] = a2; a2 =  yi1 + m2; m2 = ralpha *  xi1;  xi1 = x[7]; yi1  = y[7];
+   y[9] = a3; a3 = yyi1 + m3; m3 = ralpha * xxi1; xxi1 = x[15]; yyi1 = y[15];
+   #ifndef Conj_
+      a0 -= m0; m0 = ralpha *  xr0;
+      a1 -= m1; m1 = ralpha * xxr0;
+      a2 += m2; m2 = ialpha *  xr0;
+      a3 += m3; m3 = ialpha * xxr0;
+   #else
+      a0 += m0; m0 = ralpha *  xr0;
+      a1 += m1; m1 = ralpha * xxr0;
+      a2 -= m2; m2 = ialpha *  xr0;
+      a3 -= m3; m3 = ialpha * xxr0;
+   #endif
+   y[ 2] = a0; a0 =  yr0 + m0; m0 = ialpha *  xi0;
+   y[10] = a1; a1 = yyr0 + m1; m1 = ialpha * xxi0;
+   y[ 3] = a2; a2 = yi0  + m2; m2 = ralpha *  xi0;
+   y[11] = a3; a3 = yyi0 + m3; m3 = ralpha * xxi0;
+
+   #ifndef Conj_
+      a0 -= m0; m0 = ralpha *  xr1;
+      a1 -= m1; m1 = ralpha * xxr1;
+      a2 += m2; m2 = ialpha *  xr1;
+      a3 += m3; m3 = ialpha * xxr1;
+   #else
+      a0 += m0; m0 = ralpha *  xr1;
+      a1 += m1; m1 = ralpha * xxr1;
+      a2 -= m2; m2 = ialpha *  xr1;
+      a3 -= m3; m3 = ialpha * xxr1;
+   #endif
+   y[ 4] = a0; a0 =  yr1 + m0; m0 = ialpha *  xi1;
+   y[12] = a1; a1 = yyr1 + m1; m1 = ialpha * xxi1;
+   y[ 5] = a2; a2 = yi1  + m2; m2 = ralpha *  xi1;
+   y[13] = a3; a3 = yyi1 + m3; m3 = ralpha * xxi1;
+   #ifndef Conj_
+      a0 -= m0;
+      a1 -= m1;
+      a2 += m2;
+      a3 += m3;
+   #else
+      a0 += m0;
+      a1 += m1;
+      a2 -= m2;
+      a3 -= m3;
+   #endif
+   y[ 6] = a0;
+   y[14] = a1;
+   y[ 7] = a2;
+   y[15] = a3;
+}
+#endif
+
+#ifdef Conj_
+void Mjoin(PATL,axpyConj_x1_y1)
+/*
+ * y <- alpha * Conj(x) + y
+ */
+#else
+void Mjoin(PATL,axpy_x1_y1)
+/*
+ * y <- alpha * x + y
+ */
+#endif
+   (ATL_CINT N, const SCALAR alpha, const TYPE *X, ATL_CINT incX, 
+    TYPE *Y, ATL_CINT incY)
+{
+#if defined(ATL_NOMULADD) && ATL_mmnreg >= 26
+   ATL_CINT n8 = (N>>3)<<3, nr = N - n8;
+
+   if (n8)
+   {
+      axpy_8(n8, alpha, X, Y);
+      X += n8<<1;
+      Y += n8<<1;
+   }
+   if (nr) axpy_lt8(nr, alpha, X, Y);
+#elif defined (ATL_MULADD) && ATL_mmnreg >= 26
+   axpy_8(N, alpha, X, Y);
+#endif
+@beginskip
+   const int inb =
+             ATL_DivBySize(((size_t)y)) - ((ATL_DivBySize(((size_t)y))>>3)<<3);
+   int n8, nr;
+
+   if (inb < N)
+   {
+      n8 = ((N - inb)>>3)<<3;
+      nr = N - inb - n8;
+      if (inb)
+      {
+         axpy_lt8(inb, alpha, X, Y);
+         X += inb<<1; Y += inb<<1;
+      }
+      if (n8)
+      {
+         axpy_8(n8, alpha, x, y);
+         x += n8<<1; y += n8<<1;
+      }
+      if (nr) axpy_lt8(nr, alpha, x, y);
+   }
+   else axpy_lt16(N, alpha, x, y);
+@endskip
+}
+@ROUT ATL_axpy_x1_y1
+
+#if (defined(ATL_MULADD) && ATL_mmnreg >= 29) || \
+    (defined(ATL_NOMULADD) && ATL_mmnreg >= 25)
+static void axpy_lt16(ATL_CINT N, const SCALAR alpha, const TYPE *x, TYPE *y)
+{
+   const register TYPE alp = alpha;
+   ATL_INT i;
+   switch(N)
+   {
+   case 1:
+      *y += alp * *x;
+      break;
+   case 2:
+      *y += alp * *x;
+      y[1] += alp * x[1];
+      break;
+   case 3:
+      *y += alp * *x;
+      y[1] += alp * x[1];
+      y[2] += alp * x[2];
+      break;
+   case 4:
+      *y += alp * *x;
+      y[1] += alp * x[1];
+      y[2] += alp * x[2];
+      y[3] += alp * x[3];
+      break;
+   case 5:
+      *y += alp * *x;
+      y[1] += alp * x[1];
+      y[2] += alp * x[2];
+      y[3] += alp * x[3];
+      y[4] += alp * x[4];
+      break;
+   case 6:
+      *y += alp * *x;
+      y[1] += alp * x[1];
+      y[2] += alp * x[2];
+      y[3] += alp * x[3];
+      y[4] += alp * x[4];
+      y[5] += alp * x[5];
+      break;
+   case 7:
+      *y += alp * *x;
+      y[1] += alp * x[1];
+      y[2] += alp * x[2];
+      y[3] += alp * x[3];
+      y[4] += alp * x[4];
+      y[5] += alp * x[5];
+      y[6] += alp * x[6];
+      break;
+   case 8:
+      *y += alp * *x;
+      y[1] += alp * x[1];
+      y[2] += alp * x[2];
+      y[3] += alp * x[3];
+      y[4] += alp * x[4];
+      y[5] += alp * x[5];
+      y[6] += alp * x[6];
+      y[7] += alp * x[7];
+      break;
+   case 9:
+      *y += alp * *x;
+      y[1] += alp * x[1];
+      y[2] += alp * x[2];
+      y[3] += alp * x[3];
+      y[4] += alp * x[4];
+      y[5] += alp * x[5];
+      y[6] += alp * x[6];
+      y[7] += alp * x[7];
+      y[8] += alp * x[8];
+      break;
+   case 10:
+      *y += alp * *x;
+      y[1] += alp * x[1];
+      y[2] += alp * x[2];
+      y[3] += alp * x[3];
+      y[4] += alp * x[4];
+      y[5] += alp * x[5];
+      y[6] += alp * x[6];
+      y[7] += alp * x[7];
+      y[8] += alp * x[8];
+      y[9] += alp * x[9];
+      break;
+   case 11:
+      *y += alp * *x;
+      y[1] += alp * x[1];
+      y[2] += alp * x[2];
+      y[3] += alp * x[3];
+      y[4] += alp * x[4];
+      y[5] += alp * x[5];
+      y[6] += alp * x[6];
+      y[7] += alp * x[7];
+      y[8] += alp * x[8];
+      y[9] += alp * x[9];
+      y[10] += alp * x[10];
+      break;
+   case 12:
+      *y += alp * *x;
+      y[1] += alp * x[1];
+      y[2] += alp * x[2];
+      y[3] += alp * x[3];
+      y[4] += alp * x[4];
+      y[5] += alp * x[5];
+      y[6] += alp * x[6];
+      y[7] += alp * x[7];
+      y[8] += alp * x[8];
+      y[9] += alp * x[9];
+      y[10] += alp * x[10];
+      y[11] += alp * x[11];
+      break;
+   case 13:
+      *y += alp * *x;
+      y[1] += alp * x[1];
+      y[2] += alp * x[2];
+      y[3] += alp * x[3];
+      y[4] += alp * x[4];
+      y[5] += alp * x[5];
+      y[6] += alp * x[6];
+      y[7] += alp * x[7];
+      y[8] += alp * x[8];
+      y[9] += alp * x[9];
+      y[10] += alp * x[10];
+      y[11] += alp * x[11];
+      y[12] += alp * x[12];
+      break;
+   case 14:
+      *y += alp * *x;
+      y[1] += alp * x[1];
+      y[2] += alp * x[2];
+      y[3] += alp * x[3];
+      y[4] += alp * x[4];
+      y[5] += alp * x[5];
+      y[6] += alp * x[6];
+      y[7] += alp * x[7];
+      y[8] += alp * x[8];
+      y[9] += alp * x[9];
+      y[10] += alp * x[10];
+      y[11] += alp * x[11];
+      y[12] += alp * x[12];
+      y[13] += alp * x[13];
+      break;
+   case 15:
+      *y += alp * *x;
+      y[1] += alp * x[1];
+      y[2] += alp * x[2];
+      y[3] += alp * x[3];
+      y[4] += alp * x[4];
+      y[5] += alp * x[5];
+      y[6] += alp * x[6];
+      y[7] += alp * x[7];
+      y[8] += alp * x[8];
+      y[9] += alp * x[9];
+      y[10] += alp * x[10];
+      y[11] += alp * x[11];
+      y[12] += alp * x[12];
+      y[13] += alp * x[13];
+      y[14] += alp * x[14];
+      break;
+   default:
+      for (i=(N>>4); i; i--, y += 16, x += 16)
+      {
+         *y += alp * *x;
+         y[1] += alp * x[1];
+         y[2] += alp * x[2];
+         y[3] += alp * x[3];
+         y[4] += alp * x[4];
+         y[5] += alp * x[5];
+         y[6] += alp * x[6];
+         y[7] += alp * x[7];
+         y[8] += alp * x[8];
+         y[9] += alp * x[9];
+         y[10] += alp * x[10];
+         y[11] += alp * x[11];
+         y[12] += alp * x[12];
+         y[13] += alp * x[13];
+         y[14] += alp * x[14];
+         y[15] += alp * x[15];
+      }
+      for(i=N-((N>>4)<<4); i; i--, y++, x++) *y += alp * *x;
+   case 0:;
+   }
+}
+#endif
+
+#if defined(ATL_MULADD) && ATL_mmnreg >= 29
+static void axpy_16(ATL_CINT N, const SCALAR alpha, const TYPE *x, TYPE *y)
+/*
+ * 4 register prefetch on X (assumed to be in L1), 16 register prefetch on
+ * Y (L2 or main), with 8-cycle muladd.  Unrolled by 16 to ensure multiple
+ * cacheline usage for both single and double.
+ */
+{
+   ATL_CINT N16 = (N>>4)<<4;
+   ATL_INT i, j;
+   const TYPE *stX = x + N16 - 32;
+   const register TYPE alp = alpha;
+   register TYPE m0, m1, m2, m3, m4, m5, m6, m7;
+   register TYPE x0, x1, xx0, xx1;
+   register TYPE y0, y1, y2, y3, y4, y5, y6, y7;
+   register TYPE yy0, yy1, yy2, yy3, yy4, yy5, yy6, yy7;
+
+   if (N16 > 16)
+   {
+      x0 = *x; xx0 = x[8]; 
+      x1 = x[1]; xx1 = x[9];
+      y0 = *y;   yy0 = y[8];
+      y1 = y[1]; yy1 = y[9];
+      y2 = y[2]; yy2 = y[10];
+      y3 = y[3]; yy3 = y[11];
+      y4 = y[4]; yy4 = y[12];
+      y5 = y[5]; yy5 = y[13];
+      y6 = y[6]; yy6 = y[14];
+      y7 = y[7]; yy7 = y[15];
+      m0 = y0  + alp * x0;   x0 = x[2];  y0  = y[16];
+      m1 = yy0 + alp * xx0; xx0 = x[10]; yy0 = y[24];
+      m2 = y1  + alp * x1;   x1 = x[3];  y1  = y[17];
+      m3 = yy1 + alp * xx1; xx1 = x[11]; yy1 = y[25];
+      m4 = y2  + alp * x0;   x0 = x[4];  y2  = y[18];
+      m5 = yy2 + alp * xx0; xx0 = x[12]; yy2 = y[26];
+      m6 = y3  + alp * x1;   x1 = x[5];  y3  = y[19];
+      m7 = yy3 + alp * xx1; xx1 = x[13]; yy3 = y[27];
+      if (N16 != 32)
+      {
+         do
+         {
+            *y    = m0; m0 =  y4 + alp *  x0;  x0 = x[ 6];  y4 = y[20];
+            y[ 8] = m1; m1 = yy4 + alp * xx0; xx0 = x[14]; yy4 = y[28];
+            y[ 1] = m2; m2 =  y5 + alp *  x1;  x1 = x[ 7];  y5 = y[21];
+            y[ 9] = m3; m3 = yy5 + alp * xx1; xx1 = x[15]; yy5 = y[29]; x += 16;
+            y[ 2] = m4; m4 =  y6 + alp *  x0;  x0 = *x;     y6 = y[22];
+            y[10] = m5; m5 = yy6 + alp * xx0; xx0 = x[ 8]; yy6 = y[30];
+            y[ 3] = m6; m6 =  y7 + alp *  x1;  x1 = x[ 1];  y7 = y[23];
+            y[11] = m7; m7 = yy7 + alp * xx1; xx1 = x[ 9]; yy7 = y[31];
+   
+            y[ 4] = m0; m0 = y0  + alp * x0;   x0 = x[2];  y0  = y[32];
+            y[12] = m1; m1 = yy0 + alp * xx0; xx0 = x[10]; yy0 = y[40];
+            y[ 5] = m2; m2 = y1  + alp * x1;   x1 = x[3];  y1  = y[33];
+            y[13] = m3; m3 = yy1 + alp * xx1; xx1 = x[11]; yy1 = y[41];
+            y[ 6] = m4; m4 = y2  + alp * x0;   x0 = x[4];  y2  = y[34];
+            y[14] = m5; m5 = yy2 + alp * xx0; xx0 = x[12]; yy2 = y[42];
+            y[ 7] = m6; m6 = y3  + alp * x1;   x1 = x[5];  y3  = y[35];
+            y[15] = m7; m7 = yy3 + alp * xx1; xx1 = x[13]; yy3 = y[43];
+            y += 16;
+         }
+         while (x != stX);
+      }
+      *y    = m0; m0 =  y4 + alp *  x0;  x0 = x[ 6];  y4 = y[20];
+      y[ 8] = m1; m1 = yy4 + alp * xx0; xx0 = x[14]; yy4 = y[28];
+      y[ 1] = m2; m2 =  y5 + alp *  x1;  x1 = x[ 7];  y5 = y[21];
+      y[ 9] = m3; m3 = yy5 + alp * xx1; xx1 = x[15]; yy5 = y[29]; x += 16;
+      y[ 2] = m4; m4 =  y6 + alp *  x0;  x0 = *x;     y6 = y[22];
+      y[10] = m5; m5 = yy6 + alp * xx0; xx0 = x[ 8]; yy6 = y[30];
+      y[ 3] = m6; m6 =  y7 + alp *  x1;  x1 = x[ 1];  y7 = y[23];
+      y[11] = m7; m7 = yy7 + alp * xx1; xx1 = x[ 9]; yy7 = y[31];
+
+      y[ 4] = m0; m0 = y0  + alp * x0;   x0 = x[2];
+      y[12] = m1; m1 = yy0 + alp * xx0; xx0 = x[10];
+      y[ 5] = m2; m2 = y1  + alp * x1;   x1 = x[3];
+      y[13] = m3; m3 = yy1 + alp * xx1; xx1 = x[11];
+      y[ 6] = m4; m4 = y2  + alp * x0;   x0 = x[4];
+      y[14] = m5; m5 = yy2 + alp * xx0; xx0 = x[12];
+      y[ 7] = m6; m6 = y3  + alp * x1;   x1 = x[5];
+      y[15] = m7; m7 = yy3 + alp * xx1; xx1 = x[13];
+      y += 16;
+
+      *y    = m0; m0 =  y4 + alp *  x0;  x0 = x[ 6];
+      y[ 8] = m1; m1 = yy4 + alp * xx0; xx0 = x[14];
+      y[ 1] = m2; m2 =  y5 + alp *  x1;  x1 = x[ 7];
+      y[ 9] = m3; m3 = yy5 + alp * xx1; xx1 = x[15]; x += 16;
+      y[ 2] = m4; m4 =  y6 + alp *  x0;
+      y[10] = m5; m5 = yy6 + alp * xx0;
+      y[ 3] = m6; m6 =  y7 + alp *  x1;
+      y[11] = m7; m7 = yy7 + alp * xx1;
+
+      y[ 4] = m0;
+      y[12] = m1;
+      y[ 5] = m2;
+      y[13] = m3;
+      y[ 6] = m4;
+      y[14] = m5;
+      y[ 7] = m6;
+      y[15] = m7;
+      y += 16;
+      axpy_lt16(N-N16, alpha, x, y);
+   }
+   else axpy_lt16(N, alpha, x, y);
+}
+#elif defined(ATL_NOMULADD) && ATL_mmnreg >= 25
+static void axpy_16(ATL_CINT N, const SCALAR alpha, const TYPE *x, TYPE *y)
+/*
+ * 8 register prefetch on X & Y, with 4 cycle multiply & 4 cycle add,
+ * unrolled by 16 to ensure multiple cacheline usage for both singe & double
+ */
+{
+   const register TYPE alp = alpha;
+   register TYPE x0, x1, x2, x3, xx0, xx1, xx2, xx3;
+   register TYPE y0, y1, y2, y3, yy0, yy1, yy2, yy3;
+   register TYPE m0, m1, m2, m3, a0, a1, a2, a3;
+   const TYPE *stX = x + N;
+
+   ATL_assert( ((N>>4)<<4) == N  && N);
+   x0 = *x;    xx0 = x[8];
+   x1 = x[1];  xx1 = x[9];
+   x2 = x[2];  xx2 = x[10];
+   x3 = x[3];  xx3 = x[11];
+   y0 = *y;    yy0 = y[8];
+   y1 = y[1];  yy1 = y[9];
+   y2 = y[2];  yy2 = y[10];
+   y3 = y[3];  yy3 = y[11];
+
+   m0 = alp * x0;  x0 = x[4];
+   m1 = alp * xx0; xx0 = x[12];
+   m2 = alp * x1;  x1 = x[5];
+   m3 = alp * xx1; xx1 = x[13];
+
+   a0 = y0 + m0;  m0 = alp * x2;  y0 = y[4];   x2 = x[6];
+   a1 = yy0 + m1; m1 = alp * xx2; yy0 = y[12]; xx2 = x[14];
+   a2 = y1 + m2;  m2 = alp * x3;  y1 = y[5];   x3 = x[7];
+   a3 = yy1 + m3; m3 = alp * xx3; yy1 = y[13]; xx3 = x[15];
+   x += 16;
+   if (N != 16)
+   {
+      do
+      {
+         *y    = a0; a0 =  y2 + m0;  y2 = y[ 6]; m0 = alp *  x0;  x0 = *x;
+         y[ 8] = a1; a1 = yy2 + m1; yy2 = y[14]; m1 = alp * xx0; xx0 = x[ 8];
+         y[ 1] = a2; a2 =  y3 + m2;  y3 = y[7];  m2 = alp *  x1;  x1 = x[ 1];
+         y[ 9] = a3; a3 = yy3 + m3; yy3 = y[15]; m3 = alp * xx1; xx1 = x[ 9];
+         y[ 2] = a0; a0 =  y0 + m0;  y0 = y[16]; m0 = alp *  x2;  x2 = x[ 2];
+         y[10] = a1; a1 = yy0 + m1; yy0 = y[24]; m1 = alp * xx2; xx2 = x[10];
+         y[ 3] = a2; a2 =  y1 + m2;  y1 = y[17]; m2 = alp *  x3;  x3 = x[ 3];
+         y[11] = a3; a3 = yy1 + m3; yy1 = y[25]; m3 = alp * xx3; xx3 = x[11];
+
+         y[ 4] = a0; a0 =  y2 + m0;  y2 = y[18]; m0 = alp *  x0;  x0 = x[ 4];
+         y[12] = a1; a1 = yy2 + m1; yy2 = y[26]; m1 = alp * xx0; xx0 = x[12];
+         y[ 5] = a2; a2 =  y3 + m2;  y3 = y[19]; m2 = alp *  x1;  x1 = x[ 5];
+         y[13] = a3; a3 = yy3 + m3; yy3 = y[27]; m3 = alp * xx1; xx1 = x[13];
+         y[ 6] = a0; a0 =  y0 + m0;  y0 = y[20]; m0 = alp *  x2;  x2 = x[ 6];
+         y[14] = a1; a1 = yy0 + m1; yy0 = y[28]; m1 = alp * xx2; xx2 = x[14];
+         y[ 7] = a2; a2 =  y1 + m2;  y1 = y[21]; m2 = alp *  x3;  x3 = x[ 7];
+         y[15] = a3; a3 = yy1 + m3; yy1 = y[29]; m3 = alp * xx3; xx3 = x[15];
+         x += 16;
+         y += 16;
+      }
+      while (x != stX);
+   }
+/*
+ * Drain pipes
+ */
+   *y    = a0; a0 =  y2 + m0;  y2 = y[ 6]; m0 = alp *  x0;
+   y[ 8] = a1; a1 = yy2 + m1; yy2 = y[14]; m1 = alp * xx0;
+   y[ 1] = a2; a2 =  y3 + m2;  y3 = y[7];  m2 = alp *  x1;
+   y[ 9] = a3; a3 = yy3 + m3; yy3 = y[15]; m3 = alp * xx1;
+
+   y[ 2] = a0; a0 =  y0 + m0;              m0 = alp *  x2;
+   y[10] = a1; a1 = yy0 + m1;              m1 = alp * xx2;
+   y[ 3] = a2; a2 =  y1 + m2;              m2 = alp *  x3;
+   y[11] = a3; a3 = yy1 + m3;              m3 = alp * xx3;
+
+   y[ 4] = a0; a0 =  y2 + m0;
+   y[12] = a1; a1 = yy2 + m1;
+   y[ 5] = a2; a2 =  y3 + m2;
+   y[13] = a3; a3 = yy3 + m3;
+
+   y[ 6] = a0;
+   y[14] = a1;
+   y[ 7] = a2;
+   y[15] = a3;
+}
+
+#endif
+void Mjoin(PATL,axpy_x1_y1)(ATL_CINT N, const SCALAR alpha, const TYPE *x,
+                            ATL_CINT incX, TYPE *y, ATL_CINT incY)
+/*
+ * y <- alpha * x + y
+ */
+{
+#if defined(ATL_MULADD) && ATL_mmnreg >= 29
+   axpy_16(N, alpha, x, y);
+#elif defined(ATL_NOMULADD) && (ATL_mmnreg >= 25)
+   const int inb = 
+             ATL_DivBySize(((size_t)y)) - ((ATL_DivBySize(((size_t)y))>>4)<<4);
+   ATL_INT n16, nr;
+
+   if (inb < N)
+   {
+      n16 = ((N - inb)>>4)<<4;
+      nr = N - inb - n16;
+      if (inb)
+      {
+         axpy_lt16(inb, alpha, x, y);
+         x += inb; y += inb;
+      }
+      if (n16)
+      {
+         axpy_16(n16, alpha, x, y);
+         x += n16; y += n16;
+      }
+      if (nr) axpy_lt16(nr, alpha, x, y);
+   }
+   else axpy_lt16(N, alpha, x, y);
+#else
+#endif
+}
+@ROUT ATL_axpby
+#ifdef Conj_
+void Mjoin(Mjoin(Mjoin(PATL,axpbyConj),NM),BNM)
+/*
+ * y = beta * y + alpha * conj(x)
+ */
+#else
+void Mjoin(Mjoin(Mjoin(PATL,axpby),NM),BNM)
+/*
+ * y = beta*y + alpha*x
+ */
+#endif
+   (ATL_CINT N, const SCALAR alpha, const TYPE *X, ATL_CINT incX, 
+    const SCALAR beta, TYPE *Y, ATL_CINT incY)
+{
+   #ifdef ALPHA0
+      #if defined(BETA0)
+         Mjoin(PATL,zero)(N, Y, incY);
+      #elif defined(BETA1)
+         #ifndef Conj_
+            return;
+         #else
+            Mjoin(PATLU,scal)(N<<1, ATL_rnone, Y, incY<<1);
+         #endif
+      #else
+         #ifndef Conj_
+            Mjoin(PATL,scal)(N, beta, Y, incY);
+         #else
+            Mjoin(PATL,scalConj)(N, beta, Y, incY);
+         #endif
+      #endif
+   #elif defined(BETA0)
+      #ifdef ALPHA1
+         #ifndef Conj_
+            Mjoin(PATL,copy)(N, X, incX, Y, incY);
+         #else
+            Mjoin(PATL,copyConj)(N, X, incX, Y, incY);
+         #endif
+      #else
+         #ifndef Conj_
+            Mjoin(PATL,cpsc)(N, alpha, X, incX, Y, incY);
+         #else
+            Mjoin(PATL,moveConj)(N, alpha, X, incX, Y, incY);
+         #endif
+      #endif
+   #elif defined(BETA1)
+      #ifndef Conj_
+         Mjoin(PATL,axpy)(N, alpha, X, incX, Y, incY);
+      #else
+         Mjoin(PATL,axpyConj)(N, alpha, X, incX, Y, incY);
+      #endif
+   #elif defined(TREAL)
+      int i;
+      if (incX == 1 && incY == 1)
+         for (i=0; i != N; i++) 
+            Y[i] = ATL_MulByBETA(Y[i]) + ATL_MulByALPHA(X[i]);
+      else
+         for (i=N; i; i--, X += incX, Y += incY)
+            *Y = ATL_MulByBETA(*Y) + ATL_MulByALPHA(*X);
+   #else
+      ATL_CINT incx = incX<<1, incy = incY<<1;
+      ATL_INT i;
+      const register TYPE ralpha = *alpha, ialpha = alpha[1];
+      const register TYPE rbeta = *beta, ibeta = beta[1];
+      register TYPE rx, ix, ry, iy, t0;
+      for (i=N; i; i--, X += incx, Y += incy)
+      {
+         rx = *X;
+         #ifndef Conj_
+            ix = X[1];
+         #else
+            ix = -X[1];
+         #endif
+         ry = *Y;
+         iy = Y[1];
+
+         #ifndef ALPHA1
+            #ifdef ALPHAXI0
+               rx *= ralpha;
+               ix *= ralpha;
+            #else
+               t0 = rx;
+               rx = rx * ralpha - ix * ialpha;
+               ix = t0 * ialpha + ix * ralpha;
+            #endif
+         #endif
+         #ifdef BETAXI0
+            ry *= rbeta;
+            iy *= rbeta;
+         #else
+            t0 = ry;
+            ry = ry * rbeta - iy * ibeta;
+            iy = t0 * ibeta + iy * rbeta;
+         #endif
+
+         *Y = ry + rx;
+         Y[1] = iy + ix;
+      }
+   #endif
+}

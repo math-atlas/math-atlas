@@ -1,0 +1,476 @@
+@ifdef ! incd
+   @define incd @/home/rwhaley/Base/ATLAS@
+@endifdef
+@WHICH example
+@extract -b @(topd)/gen.inc what=crsetup
+@ROUT ATLU_usergemm
+@extract -b @(topd)/gen.inc what=cw @(cw00)
+#include "atlas_misc.h"
+#include "atlas_lvl3.h"
+
+int Mjoin(PATU,usergemm)
+   (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+    const int M, const int N, const int K, const SCALAR alpha,
+    const TYPE *A, const int lda, const TYPE *B, const int ldb,
+    const SCALAR beta, TYPE *C, const int ldc)
+{
+   int ierr;
+
+   if (N >= M)
+   {
+      if ( ierr = Mjoin(PATL,mmJIK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                    beta, C, ldc) )
+         ierr = Mjoin(PATL,mmIJK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                  beta, C, ldc);
+   }
+   else
+   {
+      if ( ierr = Mjoin(PATL,mmIJK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                    beta, C, ldc) )
+         ierr = Mjoin(PATL,mmJIK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                  beta, C, ldc);
+   }
+   return (ierr);
+}
+@ROUT Makefile
+include Make.inc
+
+@whiledef pre z c d s
+@(pre)obj = ATLU_@(pre)usergemm.o
+@endwhile
+
+@whiledef pre z c d s
+@(pre)usermm : @(pre)lib.grd
+@(pre)lib.grd : $(@(pre)obj)
+	$(ARCHIVER) $(ARFLAGS) $(ATLASlib) $(@(pre)obj)
+	$(RANLIB) $(ATLASlib)
+	touch @(pre)lib.grd
+@(pre)clean :
+	rm -f $(@(pre)obj) @(pre)lib.grd
+
+@endwhile
+
+@multidef typ DCPLX SCPLX DREAL SREAL
+@whiledef pre z c d s
+ATLU_@(pre)usergemm.o : ../ATLU_usergemm.c
+	$(ICC) $(ICCFLAGS) $(UMMDEFS) $(OJ) $(NM) $@ -D@(typ) ../ATLU_usergemm.c
+   @undef typ
+@endwhile
+@ROUT !
+@WHICH goto
+@skip @define ctts @nn nt nc nr tn tt tc tr cn ct cc cr rn rt rc rr@
+@define ctts @nn nt nc tn tt tc cn ct cc@
+@ROUT ATLU_usergemm
+#include "atlas_misc.h"
+#include <sys/mman.h>
+
+@skip #ifdef TREAL
+#ifdef EV6
+   #ifdef ATL_OS_OSF1
+      #define BUFFER_SIZE (16<<20)
+      #define ALIGN_SIZE 0x7fffff     /* 8MB Align */
+   #else
+      #define BUFFER_SIZE (8<<20)
+      #define ALIGN_SIZE 0x3fffff     /* 4MB Align */
+   #endif
+#else
+   #define BUFFER_SIZE (1<<20)
+   #define ALIGN_SIZE  0x3ffff     /* 256kB Align */
+#endif
+@beginskip
+#else
+   #define BUFFER_SIZE (16<<20) /* To allocate buffer memory  */
+   #define ALIGN_SIZE 0x7fffff /* Align to 8MB */
+#endif
+@endskip
+#ifdef TREAL
+@whiledef ta n t
+   @whiledef tb n t
+   int Mjoin(PATU,gotogemm_@(ta)@(tb))
+      (const int, const int, const int, const SCALAR, const TYPE *, const int, 
+       const TYPE *, const int, TYPE *, const int, TYPE *);
+   @endwhile
+@endwhile
+#else
+@whiledef ta n t c
+   @whiledef tb n t c
+   int Mjoin(PATU,gotogemm_@(ta)@(tb))
+      (const int, const int, const int, const SCALAR, const TYPE *, const int, 
+       const TYPE *, const int, TYPE *, const int, TYPE *);
+   @endwhile
+@endwhile
+#endif
+
+int Mjoin(PATU,usergemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+                          const int M, const int N, const int K,
+                          const SCALAR alpha, const TYPE *A, const int lda0,
+                          const TYPE *B, const int ldb0, const SCALAR beta,
+                          TYPE *C, const int ldc0)
+{
+   TYPE *buffer, *a_buf;
+   #ifdef TREAL
+      #define lda lda0
+      #define ldb ldb0
+      #define ldc ldc0
+   #else
+      const int lda = lda0<<1, ldb = ldb0<<1, ldc = ldc0<<1;
+   #endif
+/*
+ * NOTE: this function pointer is critical.  If you call goto's assembly
+ * matmul directly, you get seg fault for complex on the EV6, but it works
+ * fine as long as you use a function pointer.  -- RCW
+ */
+   int (*gemm_xx)
+      (const int, const int, const int, const SCALAR, const TYPE *, const int, 
+       const TYPE *, const int, TYPE *, const int, TYPE *);
+
+   if ( !SCALAR_IS_ONE(beta) ) Mjoin(PATL,gescal)(M, N, beta, C, ldc0);
+   #ifdef ATL_OS_OSF1
+      buffer = (TYPE *) mmap(0, BUFFER_SIZE, PROT_READ | PROT_WRITE,
+                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+   #else
+      buffer = (TYPE *) malloc(BUFFER_SIZE);
+   #endif
+   if (!buffer) return(-1);
+
+   a_buf = (TYPE *)(((size_t)buffer + ALIGN_SIZE) & ~ALIGN_SIZE);
+   
+   if (TA == AtlasNoTrans)
+   {
+      if (TB == AtlasNoTrans) gemm_xx = Mjoin(PATU,gotogemm_nn);
+      #ifdef TCPLX
+         else if (TB == AtlasConjTrans) gemm_xx = Mjoin(PATU,gotogemm_nc);
+      #endif
+      else gemm_xx = Mjoin(PATU,gotogemm_nt);
+     
+   }
+   #ifdef TCPLX
+      else if (TA == AtlasConjTrans)
+      {
+         if (TB == AtlasNoTrans) gemm_xx = Mjoin(PATU,gotogemm_cn);
+         else if (TB == AtlasConjTrans) gemm_xx = Mjoin(PATU,gotogemm_cc);
+         else gemm_xx = Mjoin(PATU,gotogemm_ct);
+      }
+   #endif
+   else
+   {
+      if (TB == AtlasNoTrans) gemm_xx = Mjoin(PATU,gotogemm_tn);
+      #ifdef TCPLX
+         else if (TB == AtlasConjTrans) gemm_xx = Mjoin(PATU,gotogemm_tc);
+      #endif
+      else gemm_xx = Mjoin(PATU,gotogemm_tt);
+   }
+   gemm_xx(M, N, K, alpha, A, lda, B, ldb, C, ldc, a_buf);
+   #ifdef ATL_OS_OSF1
+      munmap((void*)buffer, BUFFER_SIZE);
+   #else
+      free(buffer);
+   #endif
+   return(0);
+}
+@ROUT Makefile
+include Make.inc
+
+@whiledef pre d s
+   @declare "@(pre)obj = " y y
+      ATLU_@(pre)usergemm.o
+      @whiledef tt nn nt tn tt
+         ATL_@(pre)gotogemm_@(tt).o
+      @endwhile
+   @enddeclare
+
+@endwhile
+@whiledef pre z c
+   @declare "@(pre)obj = " y y
+      ATLU_@(pre)usergemm.o
+      @whiledef tt @(ctts)
+         ATL_@(pre)gotogemm_@(tt).o
+      @endwhile
+   @enddeclare
+
+@endwhile
+
+@whiledef pre z c d s
+@(pre)usermm : @(pre)lib
+@(pre)lib : @(pre)lib.grd
+@(pre)lib.grd : $(@(pre)obj)
+	$(ARCHIVER) $(ARFLAGS) $(ATLASlib) $(@(pre)obj)
+	$(RANLIB) $(ATLASlib)
+	touch @(pre)lib.grd
+@(pre)clean :
+	rm -f $(@(pre)obj) @(pre)lib.grd
+
+@endwhile
+clean : dclean sclean zclean cclean
+
+@whiledef pre d s
+ATLU_@(pre)usergemm.o : ../ATLU_usergemm.c
+	$(ICC) $(ICCFLAGS) $(UMMDEFS) $(OJ) $(NM) $@ -D@up@(pre)REAL ../ATLU_usergemm.c
+   @whiledef tt nn nt tn tt
+ATL_@(pre)gotogemm_@(tt).o : ../gemm_k.S ../gemm_EV5_k.S ../gemm_EV6_k.S
+	$(ICC) $(ICCFLAGS) $(UMMDEFS) -D@up@(tt) -D@up@(pre)REAL -I../ \
+              -E ../gemm_k.S > temp.s
+	$(ICC) $(ICCFLAGS) -c -o $@ temp.s
+	rm -f temp.s
+   @endwhile
+@endwhile
+@multidef typ DCPLX SCPLX
+@whiledef pre z c
+ATLU_@(pre)usergemm.o : ../ATLU_usergemm.c
+	$(ICC) $(ICCFLAGS) $(UMMDEFS) $(OJ) $(NM) $@ -D@(typ) ../ATLU_usergemm.c
+   @whiledef tt @(ctts)
+ATL_@(pre)gotogemm_@(tt).o : ../zgemm_k.S
+	$(ICC) $(ICCFLAGS) $(UMMDEFS) -D@up@(tt) -D@(typ) -I../ \
+              -E ../zgemm_k.S > temp.s
+	$(ICC) $(ICCFLAGS) -c -o $@ temp.s
+	rm -f temp.s
+   @endwhile
+   @undef typ
+@endwhile
+@ROUT common.h
+    /*        Fast GEMM routine for Alpha 21164/21264      */
+    /*         on  Linux, Digital UNIX                     */
+    /*        by Kazushige Goto <goto@statabo.rim.or.jp>   */
+/* 
+ * Modified by R. Clint Whaley (rwhaley@cs.utk.edu) on 03/24/00
+ * for inclusion in ATLAS.
+ * CHANGES:
+ *   (1) Added support for ATLAS's data type macros
+ *   (2) Changed routine name macros to match ATLAS's naming scheme
+ *       and got rid of unused naming macros
+ *   (3) Got rid of unused prototypes
+@skip *   (4) Changed macro WH64 to get around bug in Tru64 (OSF1 V5.0)'s cpp.
+ * To see all changes, the author's original tarfile is in :
+ *    libgemm-20000228.tar.bz
+ */
+
+#ifndef COMMON_H
+#define COMMON_H
+
+#define ZERO 0.0000
+#define ONE  1.0000
+
+#if defined(DREAL) || defined(DCPLX)
+   #ifndef DGEMM
+      #define DGEMM
+   #endif
+#elif defined(SREAL) || defined(SCPLX)
+   #ifdef DGEMM
+      #undef DGEMM
+   #endif
+#endif
+
+#ifdef DGEMM
+
+@whiledef tt nn nt tn tt
+#define GEMM_@up@(tt) ATLU_dgotogemm_@(tt)
+@endwhile
+
+@whiledef tt @(ctts)
+#define ZGEMM_@up@(tt) ATLU_zgotogemm_@(tt)
+@endwhile
+
+#define FLOAT	double
+
+#define SIZE	8
+#define LD	ldt
+#define ST	stt
+#define SXADDQ	s8addq
+#define MUL	mult
+#define ADD	addt
+#define SUB	subt
+
+#define GEMM_PARAM_T  dgemm_param_t
+#define ZGEMM_PARAM_T zgemm_param_t
+#define GEMM_THREAD   dgemm_thread
+#define ZGEMM_THREAD  zgemm_thread
+
+#else
+
+@whiledef tt nn nt tn tt
+#define GEMM_@up@(tt) ATLU_sgotogemm_@(tt)
+@endwhile
+
+@whiledef tt @(ctts)
+#define ZGEMM_@up@(tt) ATLU_cgotogemm_@(tt)
+@endwhile
+
+#define FLOAT	float
+
+#define SIZE	4
+#define LD	lds
+#define ST	sts
+#define SXADDQ	s4addq
+#define MUL	muls
+#define ADD	adds
+#define SUB	subs
+
+#define GEMM_PARAM_T  sgemm_param_t
+#define ZGEMM_PARAM_T cgemm_param_t
+#define GEMM_THREAD   sgemm_thread
+#define ZGEMM_THREAD  cgemm_thread
+
+#endif
+
+#if 0
+#ifdef linux
+#define WH64(a)		.long (0x18<<26 | 0x1f << 21 | (a)<<16 | 0xf800)
+#else
+#define WH64(a)		wh64	($##a)
+#endif
+#else
+#define WH64(a)		lds	$f31, 0($##a)
+#endif
+@beginskip
+/* following added by RCW to get around bug in Tru64's cpp compiler */
+#define WH64_3		lds	$f31, 0($3)
+#define WH64_4		lds	$f31, 0($4)
+#define WH64_5		lds	$f31, 0($5)
+@endskip
+
+/* for x >= 0, split the address x into x_h and x_l
+   such that
+        x = x_h * 65536 + x_l
+   where x_l in [-32768, 32767] that is [-(1<<15), (1<<15)-1]
+   the formula acturally used is
+        x + (1<<15) = ( x_h<<16 ) + ( x_l + (1<<15) )
+*/
+#define Address_H(x) (((x)+(1<<15))>>16)
+#define Address_L(x) ((x)-((Address_H(x))<<16))
+
+#ifndef ASSEMBLER
+
+#define MIN(a,b)   (a>b? b:a)
+#define MAX(a,b)   (a<b? b:a)
+
+void xerbla_(char *, int *info, long);
+
+@whiledef tt nn nt tn tt
+int GEMM_@up@(tt)(int, int, int, FLOAT, FLOAT *, int, FLOAT* ,
+	      int, FLOAT *, int, FLOAT *);
+@endwhile
+
+@whiledef tt @(ctts)
+int ZGEMM_@up@(tt)(int m, int n, int k, FLOAT *alpha, FLOAT *a,
+             int lda, FLOAT *b, int ldb, FLOAT *c, int ldc, FLOAT *buffer);
+@endwhile
+
+/* the info number used to differentiate abnormal exit from Goto's code */
+#define INFO_NUM   99
+#endif
+
+#endif
+@ROUT README
+This directory contains the Compaq EV5 and EV6 GEMM developed by
+Kazushige Goto (goto@statabo.rim.or.jp).  All routines in it are
+copyright Kazushige Goto unless noted otherwise at the top of file.
+
+These routines are distributed by Mr. Goto under the terms of the LGPL,
+as explained in COPYING.LIB.  They are used by ATLAS with Mr. Goto's
+permission.  They are included in ATLAS, which uses a BSD-style license,
+without making all of ATLAS use LGPL license, via LGPL's clause 7.
+This clause is:
+
+>  7. You may place library facilities that are a work based on the
+>Library side-by-side in a single library together with other library
+>facilities not covered by this License, and distribute such a combined
+>library, provided that the separate distribution of the work based on
+>the Library and of the other library facilities is otherwise
+>permitted, and provided that you do these two things:
+>
+>    a) Accompany the combined library with a copy of the same work
+>    based on the Library, uncombined with any other library
+>    facilities.  This must be distributed under the terms of the
+>    Sections above.
+>
+>    b) Give prominent notice with the combined library of the fact
+>    that part of it is a work based on the Library, and explaining
+>    where to find the accompanying uncombined form of the same work.
+
+For part (a), please note the compressed tarfile, libgemm-20000228.tar.bz2,
+which is the author's original tarfile downloaded from:
+   ftp://www.netstat.ne.jp/pub/Linux/Linux-Alpha-JP/BLAS
+
+For part (b), ATLAS's config program prints this information during 
+installation on those platforms where the goto GEMM is used by ATLAS.
+It is also mentioned in ATLAS/doc/AtlasCredits.txt, and this file.
+User's have the option of building the library without using the Goto GEMM.
+
+R. Clint Whaley wrote an ATLAS-style Makefile, and modified the
+include file common.h (as noted in common.h) in order to adapt
+the Goto GEMM to ATLAS usage.
+
+The author's original README follows (note that the file descriptions
+and build information are no longer accurate due to the ATLAS adaptation;
+for the unmodified version of the author's code described below, 
+see libgemm-20000228.tar.bz2.
+
+*******************************************************************************
+*                Original README from libgemm-20000228.tar.bz2                *
+*******************************************************************************
+
+	GEMM compatible routine for EV5(21164) and EV6(21264).
+
+					2000/02/18
+					by Kazushige Goto
+						<goto@statabo.rim.or.jp>
+
+Explanation of containing files.
+
+COPYING.LIB     : GPL2 licence
+Makefile 
+README          : This file.
+common.h	: common header file.
+gemm_k.S	: main sgemm/dgemm assembler routine. 
+ gemm_EV5_k.S
+ gemm_EV6_k.S
+zgemm_k.S	: main cgemm/zgemm assembler routine. 
+gemm.c		: Front-end sgemm/dgemm routine.
+zgemm.c		: Front-end cgemm/zgemm routine.
+gemm_beta.S	: "multiply for beta" routine.
+zgemm_beta.S	: "multiply for beta" routine(complex).
+PERFORMANCE.EV?	: Performance Data
+bmcommon.h	: Common Header File for benchmark program.
+bm.c, bmz.c	: benchmark program.  "make check"
+param.c paramz.c: sanity cheking routine
+gemmf.c,zgemmf.c: Check routine
+
+** Discriptions **
+
+This package includes optimized gemm(sgemm, dgemm, cgemm, zgemm)
+compatible routine for 21164/21264.  If you use my routine, you can
+get 90% performance of 21264's theoretical value. 
+
+** Usage **
+
+It's entirely comatible with dgemm.f, sgemm.f, cgemm.f, zgemmf. Please
+type "make". My object file name is "libgemm.a".  So you must remove
+original *gemm.f and link libgemm.a, instead.
+
+
+** Benchmarking **
+
+Please type "make check" to run benchmark program.  This calculates
+matrix multipling speed(single/double and real/complex).  If you want
+to test other condition(i.e. size, leading size, SMP, EV5 CPU), you
+may check "Makefile".
+
+
+** Distributions  **
+
+Based on LGPL(This has been changed before).
+
+If you have any suggestions, comments or questions, please let me know.
+
+
+Special thanks to 
+
+Naohiko Shimizu <nshimizu@et.u-tokai.ac.jp>
+               for advising prefetch strategy.
+
+MAENO Toshinori <tmaeno@hpcl.titech.ac.jp>
+               for advising internal block copy method.
+
+                                               goto@statabo.rim.or.jp
+@ROUT !
+@WHICH !

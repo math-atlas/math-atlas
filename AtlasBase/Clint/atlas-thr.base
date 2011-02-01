@@ -1,0 +1,5606 @@
+@rout atlas_threads.h
+#ifndef ATLAS_THREADS_H
+   #define ATLAS_THREADS_H
+
+#ifndef ATL_PTMAXMALLOC
+   #ifndef ATL_PTMAXMALLOC_MB
+      #define ATL_PTMAXMALLOC_MB 128
+   #endif
+   #define ATL_PTMAXMALLOC (((size_t)(ATL_PTMAXMALLOC_MB)<<20)>>ATL_NTHRPOW2)
+#endif
+#ifdef ATL_OS_WinNT
+   #define ATL_WINTHREADS
+#endif
+@beginskip
+/*
+ * The following defaults should be probed for, not defined
+ * NOTE: OS X & FreeBSD lack the ability to set processor affinity.
+ */
+#ifdef ATL_OS_WinNT
+   #define ATL_WINTHREADS
+#elif !defined(ATL_PAFF_LAUNCH) && !defined(ATL_PAFF_SELF)
+   #if defined(ATL_OS_Linux)
+      #define ATL_PAFF_LAUNCH
+      #define ATL_PAFF_SETAFFNP
+   #elif defined(ATL_OS_HPUX)
+      #define ATL_PAFF_LAUNCH
+      #define ATL_PAFF_SETPROCNP
+/*
+ *  UltraSPARC T2 gets much better || perf w/o affinity;  need to test USIV
+ */
+   #elif defined(ATL_OS_SunOS) && !defined(ATL_ARCH_UST2)
+      #define ATL_PAFF_SELF
+      #define ATL_PAFF_PBIND
+   #elif defined(ATL_OS_IRIX)
+      #define ATL_PAFF_SELF
+      #define ATL_PAFF_RUNON
+   #elif defined(ATL_OS_AIX)
+      #define ATL_PAFF_SELF
+      #define ATL_PAFF_BINDP
+   #endif
+   #ifndef ATL_RANK_IS_PROCESSORID
+      #define ATL_RANK_IS_PROCESSORID 1
+   #endif
+#endif
+@endskip
+#include "atlas_pthreads.h" /* gened file defs ATL_NTHREADS & ATL_NTHRPOW2 */
+#ifdef ATL_WINTHREADS
+   #include <windows.h>
+   typedef struct
+   {
+      void *vp;      /* ptr to extra info */
+      HANDLE thrH;   /* handle to thread */
+      int rank;      /* my rank */
+   } ATL_thread_t;
+@beginskip
+   #include <windef.h>
+   #include <winnt.h>
+   typedef struct
+   {
+      DWORD thrID;
+      HANDLE thrH;
+   } ATL_thread_t;
+   #define ATL_thread_t HANDLE
+@endskip
+   #ifndef CREATE_SUSPENDED
+      #define CREATE_SUSPENDED 0x00000004
+   #endif
+   #ifndef WAIT_FAILED
+      #define WAIT_FAILED (~0)
+   #endif
+#else
+   #include <pthread.h>
+   typedef struct
+   {
+      pthread_t thrH;/* handle of thread */
+      void *vp;      /* ptr to extra info */
+      int rank;      /* my rank */
+      #ifdef ATL_PAFF_SELF
+         int paff_set;  /* have I set my process affinity yet? */
+      #endif
+   } ATL_thread_t;
+@skip   #define ATL_thread_t pthread_t
+#endif
+
+typedef struct ATL_LaunchStruct ATL_LAUNCHSTRUCT_t;
+struct ATL_LaunchStruct
+{
+   ATL_thread_t *rank2thr;              /* index by rank to get thread handle */
+   char *opstruct;
+   int (*OpStructIsInit)(void*);        /* Query to see if struct is valid */
+   void (*CombineOpStructs)(void*, void*);  /* combine function */
+   void (*DoWork)(ATL_LAUNCHSTRUCT_t*, void*);
+   int opstructstride;                  /* size of operation-spec struct */
+};
+
+
+/* Sets up ATL_LAUNCHSTRUCT_t var and ATL_thread_t array & starts threads*/
+void ATL_thread_launch(void *opstruct, int opstructstride, void *OpStructIsInit,
+                       void *DoWork, void *CombineOpStructs);
+/*  Starts a thread running, and sets its affinity to proc if possible */
+int ATL_thread_start(ATL_thread_t *thr, int proc, void *(*rout)(void*), void*);
+int ATL_thread_join(ATL_thread_t*); /* waits on completion of thread */
+void ATL_thread_exit(void*);        /* exits currently executing thread */
+void *ATL_log2tlaunch(void *vp);    /* min spanning tree launch */
+void *ATL_lin0tlaunch(void *vp);    /* 0 linear launches all threads */
+
+void *ATL_SetAtomicCount(int cnt);  /* allocates acnt, sets acnt=cnt */
+int   ATL_DecAtomicCount(void *vp); /* returns acnt-- (not --acnt!) */
+int   ATL_GetAtomicCount(void *vp); /* returns acnt */
+#define ATL_FreeAtomicCount(mem_) free(mem_)
+
+#define MindxT(A_,i_) ((void*)( ((char*)(A_)) + ((size_t)i_) ))
+#endif   /* end of #ifdef protecting include file from redundant inclusion */
+
+#define ATL_tlaunch ATL_log2tlaunch   /* may want linear launch later */
+@ROUT atlas_tlevel3.h
+#ifndef ATLAS_TLEVEL3_H
+   #define  ATLAS_TLEVEL3_H
+/*
+ * ========================================
+ * Threaded routines in all four precisions
+ * ========================================
+ */
+@multidef styp double@^*  float@^* double@^ float@^
+@multidef typ double float double float
+@whiledef pre z c d s
+int ATL_@(pre)threadMM(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, 
+                  size_t M, size_t N, size_t K);
+void ATL_@(pre)tgemm
+   (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, ATL_CINT M, 
+    ATL_CINT N, ATL_CINT K, const @(styp)alpha, const @(typ) *A, ATL_CINT lda, 
+    const @(typ) *B, ATL_CINT ldb, const @(styp)beta, @(typ) *C, ATL_CINT ldc);
+void ATL_@(pre)tsymm
+   (const enum ATLAS_SIDE Side, const enum ATLAS_UPLO Uplo,
+    ATL_CINT M, ATL_CINT N, const @(styp)alpha, const @(typ) *A, ATL_CINT lda,
+    const @(typ) *B, ATL_CINT ldb, const @(styp)beta, @(typ) *C, ATL_CINT ldc);
+   @whiledef rt trmm trsm
+void ATL_@(pre)t@(rt)
+   (const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
+    const enum ATLAS_TRANS TA, const enum ATLAS_DIAG diag, 
+    ATL_CINT M, ATL_CINT N, const @(styp)alpha, const @(typ) *A, ATL_CINT lda, 
+    @(typ) *B, ATL_CINT ldb);
+   @endwhile
+void ATL_@(pre)tsyr2k
+   (const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans,
+    ATL_CINT N, ATL_CINT K, const @(styp)alpha, const @(typ) *A, ATL_CINT lda,
+    const @(typ) *B, ATL_CINT ldb, const @(styp)beta, @(typ) *C, ATL_CINT ldc);
+void ATL_@(pre)tsyrk
+   (const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans, ATL_CINT N,
+    ATL_CINT K, const @(styp)alpha, const @(typ) *A, ATL_CINT lda,
+    const @(styp)beta, @(typ) *C, ATL_CINT ldc);
+   @undef typ
+   @undef styp
+@endwhile
+
+/*
+ * =======================================================
+ * Threaded routines appearing only for complex precisions
+ * =======================================================
+ */
+@multidef sty2 double@^ float@^
+@multidef styp double@^*  float@^*
+@multidef typ double float
+@whiledef pre z c
+void ATL_@(pre)themm
+   (const enum ATLAS_SIDE Side, const enum ATLAS_UPLO Uplo,
+    ATL_CINT M, ATL_CINT N, const @(styp)alpha, const @(typ) *A, ATL_CINT lda,
+    const @(typ) *B, ATL_CINT ldb, const @(styp)beta, @(typ) *C, ATL_CINT ldc);
+void ATL_@(pre)ther2k
+   (const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans,
+    ATL_CINT N, ATL_CINT K, const @(styp)alpha, const @(typ) *A, ATL_CINT lda,
+    const @(typ) *B, ATL_CINT ldb, const @(sty2)beta, @(typ) *C, ATL_CINT ldc);
+void ATL_@(pre)therk
+   (const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans, ATL_CINT N,
+    ATL_CINT K, const @(sty2)alpha, const @(typ) *A, ATL_CINT lda,
+    const @(sty2)beta, @(typ) *C, ATL_CINT ldc);
+   @undef typ
+   @undef styp
+   @undef sty2
+@endwhile
+#endif
+@ROUT atlas_tlvl3.h
+#ifndef atlas_tlvl3_H
+   #define atlas_tlvl3_H
+
+#include "atlas_threads.h"
+#ifdef TYPE
+   #include "atlas_lvl3.h"
+#endif
+#ifndef ATL_XOVER_L3
+   #ifdef TREAL
+      #define ATL_XOVER_L3 2   /* number of NBxNB blocks */
+   #else
+      #define ATL_XOVER_L3 1
+   #endif
+#endif
+
+#ifndef ATL_TGEMM_XOVER
+   #define ATL_TGEMM_XOVER ATL_XOVER_L3
+#endif
+#ifndef ATL_TGEMM_ADDP
+   #define ATL_TGEMM_ADDP 1
+#endif
+/*
+ * Number of blocks per proc for GEMM to divide M only
+ */
+#ifndef ATL_TMMMINMBLKS
+   #define ATL_TMMMINMBLKS 4
+#endif
+#ifndef ATL_TGEMM_THRESH_MF
+   #define ATL_TGEMM_THRESH_MF  ((((2.0*(ATL_TGEMM_XOVER))*MB)*NB)*KB)
+#endif
+/*
+ * This is the minimal number of flops each thread requires once THRESH
+ * is exceeded
+ */
+#ifndef ATL_TGEMM_PERTHR_MF
+   #define ATL_TGEMM_PERTHR_MF  ((((2.0*ATL_TGEMM_ADDP)*MB)*NB)*KB)
+#endif
+/*
+ * For debugging, can define ATL_SERIAL_COMBINE, and then it any required
+ * workspaces of C will be allocated before beginning parallel operations,
+ * and all required combined will happen after parallel operations are
+ * done.
+ */
+// #define ATL_SERIAL_COMBINE
+#ifdef ATL_SERIAL_COMBINE
+typedef struct ATL_CombNode ATL_combnode_t;
+struct ATL_CombNode
+{
+   ATL_INT M, N, ldw, ldd;
+   void *W, *D;                 /* Work and Destination */
+   ATL_combnode_t *next;
+};
+#endif
+/*
+ * The array Cinfp holds C partitioning information.  This array holds a
+ * list of pointers to nodes whose data I have not been able to combine
+ * with my native C partition.  The first nCw entries contain the pointers
+ * to the MMNODE of allocated C workspaces that I have not been able to
+ * combine.  If my node has C in workspace, I am the first entry in this array.
+ * Sometimes, a child thread has been combined with me that owned a piece of
+ * the original C.  These values do not need to be combined (they were written
+ * to the original C), but we need to combine the range of "owned" workspaces
+ * so that we know when it is legal for a parent node to add into the space.
+ * The final nCp entries of Cinfp entries of Cinfp hold these original pieces
+ * that need to be combined to create larger owned partitions (starting from 
+ * the end of the array).  If the C ptr is NULL, that means that entry has
+ * been subsumed into a new entry.
+ */
+typedef struct ATL_TMMNode ATL_TMMNODE_t;
+struct ATL_TMMNode
+{
+   ATL_TMMNODE_t *Cinfp[ATL_NTHREADS];
+   void (*gemmK)(ATL_CINT, ATL_CINT, ATL_CINT, const void*, const void *,
+                 ATL_CINT, const void*, ATL_CINT, const void*, void*, ATL_CINT);
+   const void *A, *B;
+   void *C, *Cw;
+   void *alpha, *beta;
+   void *zero, *one;
+   ATL_INT ldcw, M, N, K, lda, ldb, ldc;
+   int mb, nb, kb;
+   int eltsz, eltsh; /* element size, and shift (eg. log_2(eltsz)) */
+   int rank;         /* the rank of my thread ([0,P-1]) */
+   int nCw;          /* # of workspace entries in 1st nCw elts of Cinfp array */
+   int nCp;          /* # of orig. C pieces last nCp elts of Cinfp */
+   int ownC;         /* do I own my piece of C, or only wrkspace? */
+};
+
+/*
+ * This data structure is used when we split K for SYRK
+ */
+typedef struct ATL_SyrkK ATL_TSYRK_K_t;
+struct ATL_SyrkK
+{
+   ATL_TSYRK_K_t *Cinfp[ATL_NTHREADS];
+@beginskip
+   void (*gemmT)(ATL_CINT, ATL_CINT, ATL_CINT, const void*, const void *,
+                 ATL_CINT, const void*, ATL_CINT, const void*, void*, ATL_CINT);
+@endskip
+   void (*gemmT)(const enum ATLAS_TRANS, const enum ATLAS_TRANS,
+                  ATL_CINT, ATL_CINT, ATL_CINT, const void *,
+                  const void *, ATL_CINT, const void *, ATL_CINT,
+                  const void *, void *, ATL_CINT);
+   void (*tvsyrk)(const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CINT,
+                  ATL_CINT, const void*, const void*, ATL_CINT, const void*,
+                  void*, ATL_CINT);
+   const void *A;
+   void *C, *Cw;
+   ATL_LAUNCHSTRUCT_t *lp;
+   const void *alpha, *beta;
+   const void *zero, *one;
+   ATL_INT ldcw, N, K, nb, lda, ldc;
+   int eltsh, rank, nCw;
+   enum ATLAS_UPLO Uplo;
+   enum ATLAS_TRANS Trans, TB;
+};
+/*
+ * This data structure used when we divide N only, and NTHREAD is a power of 2
+ */
+typedef struct 
+{
+   void (*gemmK)(ATL_CINT, ATL_CINT, ATL_CINT, const void*, const void *,
+                 ATL_CINT, const void*, ATL_CINT, const void*, void*, ATL_CINT);
+   void (*tvsyrk)(const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CINT,
+                  ATL_CINT, const void*, const void*, ATL_CINT, const void*,
+                  void*, ATL_CINT);
+   void *T;             /* Triangular matrix to do SYRK into*/
+   void *C;             /* rect matrix to do GEMM into */
+   const void *A0;      /* input matrix for syrk, */
+   const void *A;       /* 1st input matrix for GEMM */
+   const void *B;       /* 2nd input matrix for GEMM */
+   const void *alpha, *beta;
+   ATL_INT M;           /* size of SYRK and 1st dim of GEMM */
+   ATL_INT N;           /* size of 2nd dim of N */
+   ATL_INT K;           /* K of original problem */
+   ATL_INT lda, ldc;
+   int nb, eltsh;       /* shift to do equivalant of *sizeof */
+   enum ATLAS_UPLO Uplo;
+   enum ATLAS_TRANS TA, TB;
+} ATL_TSYRK_M_t;
+
+@beginskip
+#if ATL_NTHREADS == (1<<ATL_NTHRPOW2)
+typedef struct
+{
+   void (*gemmK)(ATL_CINT, ATL_CINT, ATL_CINT, const void*, const void *,
+                 ATL_CINT, const void*, ATL_CINT, const void*, void*, ATL_CINT);
+   void (*tvsyrk)(const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CINT,
+                  ATL_CINT, const void*, const void*, ATL_CINT, const void*,
+                  void*, ATL_CINT);
+   const void *A0;  /* input matrix, split only along N */
+   const void *A1;  /* A of 2nd triangular matrix (C), or B of gemm */
+   void *T;         /* 1st triangular matrix */
+   void *C;         /* if (T), 2nd triangular mat, else rect matrix */
+   const void *alpha, *beta;
+   ATL_INT M;      /* if (T) order of 1st triang mat, else 1st dim of C */
+   ATL_INT N;      /* if (T) order of 2nd triang mat, else 2nd dim of C */
+   ATL_INT K;      /* size of K dim (2nd dim of A, first of A^T) */
+   ATL_INT lda, ldc;
+   int nb, eltsh;  /* shift to do equivalant of *sizeof */
+   enum ATLAS_UPLO Uplo;
+   enum ATLAS_TRANS TA, TB;
+} ATL_TSYRK_N_t;
+/*
+ * sets ATL_TSYRK_N_t sy_[i] = sy[j]
+ */
+#define McpSYN(sy_, i_, j_) \
+@skip   memcpy((sy_)+(i_), (sy_)+(j_), sizeof(ATL_TSYRK_N_t));
+{ \
+   (sy_)[(i_)].gemmK  = (sy_)[(j_)].gemmK; \
+   (sy_)[(i_)].tvsyrk = (sy_)[(j_)].tvsyrk; \
+   (sy_)[(i_)].numthr = (sy_)[(j_)].numthr; \
+   (sy_)[(i_)].A0     = (sy_)[(j_)].A0; \
+   (sy_)[(i_)].A1     = (sy_)[(j_)].A1; \
+   (sy_)[(i_)].T      = (sy_)[(j_)].T; \
+   (sy_)[(i_)].C      = (sy_)[(j_)].C; \
+   (sy_)[(i_)].alpha  = (sy_)[(j_)].alpha; \
+   (sy_)[(i_)].beta   = (sy_)[(j_)].beta; \
+   (sy_)[(i_)].M      = (sy_)[(j_)].M; \
+   (sy_)[(i_)].N      = (sy_)[(j_)].N; \
+   (sy_)[(i_)].K      = (sy_)[(j_)].K; \
+   (sy_)[(i_)].nb     = (sy_)[(j_)].nb; \
+   (sy_)[(i_)].lda    = (sy_)[(j_)].lda; \
+   (sy_)[(i_)].ldc    = (sy_)[(j_)].ldc; \
+   (sy_)[(i_)].eltsh  = (sy_)[(j_)].eltsh; \
+   (sy_)[(i_)].Uplo   = (sy_)[(j_)].Uplo; \
+   (sy_)[(i_)].TA     = (sy_)[(j_)].TA; \
+   (sy_)[(i_)].TB     = (sy_)[(j_)].TB; \
+}
+#endif
+@endskip
+
+typedef struct
+{
+   const void *A, *alpha;
+   void *B;
+@skip   void (*trsmK)(ATL_TTRSM_t*);
+   ATL_INT M, N, lda, ldb;
+@skip   int eltsh;                   /* shift for element size */
+   enum ATLAS_SIDE side;
+   enum ATLAS_UPLO uplo;
+   enum ATLAS_TRANS TA;
+   enum ATLAS_DIAG  diag;
+} ATL_TTRSM_t;
+
+typedef struct
+{
+   const void *A, *B, *alpha, *beta;
+   void *C;
+   ATL_INT M, N, lda, ldb, ldc, nb;
+   enum ATLAS_SIDE side;
+   enum ATLAS_UPLO uplo;
+} ATL_TSYMM_t;
+typedef struct
+{
+   const void *alpha, *alpha2, *beta, *one, *zero;
+   void (*tvgemm)(const enum ATLAS_TRANS, const enum ATLAS_TRANS,
+                  ATL_CINT, ATL_CINT, ATL_CINT, const void *,
+                  const void *, ATL_CINT, const void *, ATL_CINT,
+                  const void *, void *, ATL_CINT);
+   void (*tvApAt)(const enum ATLAS_UPLO, ATL_CINT, const void *, ATL_CINT, 
+                  const void *, void *, ATL_CINT);
+
+   ATL_INT K, lda, ldb, ldc;
+   int nb, eltsh;
+   enum ATLAS_UPLO Uplo;
+   enum ATLAS_TRANS trans, TA, TB,  /* trans for syr2k, TA,TB are for GEMM */
+                    TA2, TB2;       /* transpose of TA,TB */
+} ATL_SYR2K_t;
+
+@beginskip
+typedef struct
+{
+   const void *alpha, *beta, *one, *zero;
+   void (*tvgemm)(const enum ATLAS_TRANS, const enum ATLAS_TRANS,
+                  ATL_CINT, ATL_CINT, ATL_CINT, const void *,
+                  const void *, ATL_CINT, const void *, ATL_CINT,
+                  const void *, void *, ATL_CINT);
+   void (*tvsyrk)(const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CINT,
+                  ATL_CINT, const void*, const void*, ATL_CINT, const void*,
+                  void*, ATL_CINT);
+   const void *A, *B;
+   void *C;
+   ATL_INT T, M, N, K, nb, ia, ja, ib, jb, ic, jc, eltsh, lda, ldc;
+   enum ATLAS_UPLO Uplo;
+   enum ATLAS_TRANS Trans;
+} ATL_TSYRK_t;
+@endskip
+/*
+ * =============================================================================
+ * Function prototypes
+ * =============================================================================
+ */
+void ATL_EnforceNonPwr2LO(ATL_TMMNODE_t *ptmms, const int P);
+int Mjoin(PATL,threadMM)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, 
+                         size_t M, size_t N, size_t K);
+@skip int Mjoin(PATL,tNumGemmThreads)(ATL_CINT M, ATL_CINT N, ATL_CINT K);
+void ATL_tvsyr2k_rec(ATL_SYR2K_t *syp, ATL_CINT Nblks, ATL_CINT nr, 
+                     const void *A, const void *B, void *C);
+#ifdef TYPE
+void Mjoin(PATL,tsyrk)
+   (const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans, ATL_CINT N,
+    ATL_CINT K, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
+    const SCALAR beta, TYPE *C, ATL_CINT ldc);
+#ifdef TCPLX
+void Mjoin(PATL,therk)
+   (const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans, ATL_CINT N,
+    ATL_CINT K, const TYPE alpha, const TYPE *A, ATL_CINT lda,
+    const TYPE beta, TYPE *C, ATL_CINT ldc);
+#endif
+void Mjoin(PATL,tsymm)
+   (const enum ATLAS_SIDE Side, const enum ATLAS_UPLO Uplo, 
+    ATL_CINT M, ATL_CINT N, const SCALAR alpha, const TYPE *A, ATL_CINT lda, 
+    const TYPE *B, ATL_CINT ldb, const SCALAR beta, TYPE *C, ATL_CINT ldc);
+#ifdef TCPLX
+void Mjoin(PATL,themm)
+   (const enum ATLAS_SIDE Side, const enum ATLAS_UPLO Uplo, 
+    ATL_CINT M, ATL_CINT N, const SCALAR alpha, const TYPE *A, ATL_CINT lda, 
+    const TYPE *B, ATL_CINT ldb, const SCALAR beta, TYPE *C, ATL_CINT ldc);
+#endif
+void Mjoin(PATL,tsyr2k)
+   (const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans,
+    ATL_CINT N, ATL_CINT K, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
+    const TYPE *B, ATL_CINT ldb, const SCALAR beta, TYPE *C, ATL_CINT ldc);
+void Mjoin(PATL,tsyr2k)
+   (const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans,
+    ATL_CINT N, ATL_CINT K, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
+    const TYPE *B, ATL_CINT ldb, const SCALAR beta, TYPE *C, ATL_CINT ldc);
+#ifdef TCPLX
+void Mjoin(PATL,ther2k)
+   (const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans,
+    ATL_CINT N, ATL_CINT K, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
+    const TYPE *B, ATL_CINT ldb, const TYPE beta, TYPE *C, ATL_CINT ldc);
+#endif
+
+void Mjoin(PATL,ttrsm)(const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo, 
+                       const enum ATLAS_TRANS TA, const enum ATLAS_DIAG diag,
+                       ATL_CINT M, ATL_CINT N, const SCALAR alpha,
+                       const TYPE *A, ATL_CINT lda, TYPE *B, ATL_CINT ldb);
+void Mjoin(PATL,ttrmm)(const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo, 
+                       const enum ATLAS_TRANS TA, const enum ATLAS_DIAG diag,
+                       ATL_CINT M, ATL_CINT N, const SCALAR alpha,
+                       const TYPE *A, ATL_CINT lda, TYPE *B, ATL_CINT ldb);
+void Mjoin(PATL,tgemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+                       ATL_CINT M, ATL_CINT N, ATL_CINT K, const SCALAR alpha,
+                       const TYPE *A, ATL_CINT lda, const TYPE *B, ATL_CINT ldb,
+                       const SCALAR beta, TYPE *C, ATL_CINT ldc);
+void Mjoin(PATL,tvgemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+                        ATL_CINT M, ATL_CINT N, ATL_CINT K, const void *alpha,
+                        const void *A, ATL_CINT lda, const void *B,ATL_CINT ldb,
+                        const void *beta, void *C, ATL_CINT ldc);
+@whiledef ds M N K rec
+int Mjoin(PATL,tgemm_@(ds))
+   (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, 
+    ATL_CINT M, ATL_CINT N, ATL_CINT K, const SCALAR alpha,
+    const TYPE *A, ATL_CINT lda, const TYPE *B, ATL_CINT ldb,
+    const SCALAR beta, TYPE *C, ATL_CINT ldc);
+@endwhile
+@whiledef TA T N C
+   @whiledef TB T N C
+@mif TA = "C
+#ifdef TCPLX
+@endmif
+@mif TB = "C
+   @mif TA ! "C
+#ifdef TCPLX
+   @endmif
+@endmif
+void Mjoin(PATL,tgemm@(TA)@(TB))
+   (ATL_CINT M, ATL_CINT N, ATL_CINT K, const SCALAR alpha,
+    const TYPE *A, ATL_CINT lda, const TYPE *B, ATL_CINT ldb,
+    const SCALAR beta, TYPE *C, ATL_CINT ldc);
+void Mjoin(PATL,tsvgemm@(TA)@(TB))
+   (ATL_CINT M, ATL_CINT N, ATL_CINT K, const void* alpha,
+    const void *A, ATL_CINT lda, const void *B, ATL_CINT ldb,
+    const void *beta, void *C, ATL_CINT ldc);
+@mif TA = "C
+#endif  /* end ifdef TCPLX */
+@endmif
+@mif TB = "C
+   @mif TA ! "C
+#endif  /* end ifdef TCPLX */
+   @endmif
+@endmif
+   @endwhile
+@endwhile
+#endif  /* end ifdef TYPE */
+
+#endif
+@ROUT ATL_set_ucnt
+/*
+ * This routines provide the basis of ATLAS's fast and almost-contention-free
+ * partitioning algorithm.  Before spawning the threads, the problem is
+ * divided into n partitions, and the master thread allocates an unordered
+ * counter wt call to ATL_set_ucnt(n).  
+ * After threading is complete, the space is freed by ATL_free_ucnt(void*vp);
+ * Now, threads call ATL_get_ucnt(void *vp), which returns 0 if all partitions
+ * have been handled; a number between 1 & n says that that partition of the
+ * problem remains to be done.
+ * We can then use an assembly command like XCHG to determine if a given
+ * set is available for use.
+ * To ease the amount of cache coherence message, each thread gets his
+ * own region in each space, which looks like:
+ * <p> <n1> <rk1 off> ... <nP> <rkP off> <rk1 region>...<rkP region>
+ * beginning of space aligned to CL, all regions start on CL boundary.  Each
+ * region is n/p long, with any remainders stuck in the first n%P regions.
+ * Each thread will pass his rank in and therefore will do the majority of
+ * writing on his own region (avoiding ping-ponging lines thru cache).  
+ * Only once all his sets are exhausted will he search other thread's sets
+ * (thus starting ping-pong).
+ * All we need to implement is something like XCHG, which everybody has:
+ * SPARC: LDSTUB: ld/store unsigned byte loads value from memory, rights 0xff
+ *                to byte atomically 
+ *           http://developers.sun.com/solaris/articles/atomic_sparc/
+ * x86  : XCHG
+ * PPC  : lwarx/stwcx, see: http://www.ibm.com/developerworks/library/pa-atom/
+ * MIPS : ll/sc (load linked store conditional); I think similar to PPC
+ *
+ * In some systems, we can actually using a simple counter:
+ *  SPARC: cas (compare & swap), v9 only
+ *   x86 : CMPXCHG
+ *   PPC : lwarx/stwcx
+ *   MIPS: ll/sc
+ *
+ * So, can use cntr for all harware we now about, so can implement an assembly
+ *    int GetAtomicCount(void *vp)
+ * In systems wt cntr support, simply use directly, quitting when count is 0
+ * or negative.  For systems that can only handle a boolean (like XCHG/LDSTUB),
+ * store the boolean immediately after the counter.  This file will be tested
+ * in assembly for compile & use, and we set a Make.inc macro to point at
+ * something like: GetAtomicCount_[ppc,sparc,x86,mips,mutex].o, all of
+ * which appear in the ATLAS/src/threads directory.
+ */
+void *ATL_set_ucnt(int nsets, int nranks)
+{
+}
+void ATL_free_ucnt(void *vp)
+{
+}
+int ATL_get_ucnt(void *vp, int rank)
+/* 
+ * RETURNS: 0 if all sets taken, else a number between 1...nsets
+{
+}
+@ROUT ATL_SetAtomicCount
+#include "atlas_misc.h"
+
+void *ATL_SetAtomicCount(int cnt)
+{
+   int *ip;
+
+   ip = malloc(260); /* make false sharing unlikely by */
+   ATL_assert(ip);   /* putting a 128 byte guard on */
+   ip[32] = cnt;     /* both sides of counter */
+   return((void*)ip);
+}
+@beginskip
+void ATL_FreeAtomicCount(void *vp)
+{
+   free(vp);   /* could just do #define ATL_FreeAtomicCount free */
+}
+@endskip
+@ROUT ATL_GetAtomicCount
+int ATL_GetAtomicCount(void *vp)
+{
+   volatile *ip = vp;
+   return(ip[32]);
+}
+@ROUT ATL_ResetAtomicCount_ia32 ATL_ResetAtomicCount_amd64
+/*
+ * eax                       rdi         rsi
+ * int ATL_ResetAtomicCount(void *vp, int cnt)
+ * Sets vp's acnt=cnt.
+ * RETURNS: acnt before the reset
+ */
+.text
+.global ATL_asmdecor(ATL_ResetAtomicCount)
+ATL_asmdecor(ATL_ResetAtomicCount):
+@ROUT ATL_ResetAtomicCount_ia32
+   @define mm @%edx@
+   @define ct @%ecx@
+   movl 4(%esp), @(mm)
+   movl 8(%esp), @(ct)
+@ROUT ATL_ResetAtomicCount_amd64
+   @define mm @%rdi@
+   @define ct @%esi@
+@ROUT ATL_ResetAtomicCount_ia32 ATL_ResetAtomicCount_amd64
+   sub $-128, @(mm)            /* skip false sharing guard zone */
+   ATOMIC_LOOP:
+      movl (@(mm)), %eax       /* read acnt from memory */
+      lock                    /* make cmpxchg atomic */
+      cmpxchg @(ct), (@(mm))   /* put cnt in mem if mem still == acnt in eax */
+      je DONE                 /* ZF set if cmpxchg wrote to mem */
+   jmp ATOMIC_LOOP            /* ZF=0 means cmpxch failed, try again */
+DONE:
+   ret
+@ROUT ATL_DecAtomicCount_amd64 ATL_DecAtomicCount_ia32
+#include "atlas_asm.h"
+/* eax                      %rdi/4  */
+/* int ATL_DecAtomicCount(void *vp) */
+.text
+.global ATL_asmdecor(ATL_DecAtomicCount)
+ATL_asmdecor(ATL_DecAtomicCount):
+@ROUT ATL_DecAtomicCount_ia32
+   movl 4(%esp), %edx
+   @define mm @%edx@
+@ROUT ATL_DecAtomicCount_amd64 
+   @define mm @%rdi@
+@ROUT ATL_DecAtomicCount_amd64 ATL_DecAtomicCount_ia32
+   sub $-128, @(mm)            /* skip false sharing guard zone */
+   ATOMIC_LOOP:
+      movl (@(mm)), %eax       /* read cnt from memory */
+      movl %eax, %ecx         /* ecx = cnt */
+      subl $1, %ecx           /* ecx = cnt-1 */
+      jl ZERO_RET             /* return 0 if count already below 1 */
+      lock                    /* make cmpxchg atomic */
+      cmpxchg %ecx, (@(mm))    /* put cnt-1 in mem if mem still == cnt in eax */
+      je DONE                 /* ZF set if cmpxchg wrote to mem */
+   jmp ATOMIC_LOOP            /* ZF=0 means cmpxch failed, try again */
+
+ZERO_RET:
+@ROUT ATL_DecAtomicCount_amd64 `   xor %rax, %rax`
+@ROUT ATL_DecAtomicCount_ia32  `   xor %eax, %eax`
+@skip   movl %eax, (@(mm))  /* safety to ensure no roll from neg back to pos */
+DONE:
+   ret
+@ROUT ATL_thread_launch
+#include "atlas_misc.h"
+#include "atlas_threads.h"
+
+/*
+ * These redefinitions allow us to try various launch structures
+ */
+#ifdef ATL_TUNE_LIN
+   #ifdef ATL_tlaunch
+      #undef ATL_tlaunch
+   #endif
+   #define ATL_tlaunch ATL_lin0tlaunch
+   #define ATL_thread_launch ATL_tllin
+#elif defined(ATL_TUNE_LG2)
+   #ifdef ATL_tlaunch
+      #undef ATL_tlaunch
+   #endif
+   #define ATL_tlaunch ATL_log2tlaunch
+   #define ATL_thread_launch ATL_tllg2
+#endif
+void ATL_thread_launch(void *opstruct, int opstructstride, void *OpStructIsInit,
+                       void *DoWork, void *CombineOpStructs)
+{
+   ATL_thread_t tp[ATL_NTHREADS];
+   ATL_LAUNCHSTRUCT_t ls;
+   int i;
+
+   ls.opstruct = opstruct;
+   ls.opstructstride = opstructstride;
+   ls.CombineOpStructs = CombineOpStructs;
+   ls.OpStructIsInit = OpStructIsInit;
+   ls.DoWork = DoWork;
+   ls.rank2thr = tp;
+
+   for (i=0; i < ATL_NTHREADS; i++)
+   {
+      tp[i].vp = &ls;
+      tp[i].rank = i;
+   }
+   ATL_thread_start(tp, 0, ATL_tlaunch, tp);
+   ATL_thread_join(tp);
+
+}
+@ROUT ATL_thread_start
+#include "atlas_taffinity.h"  /* include this file first! */
+#include "atlas_misc.h"
+#include "atlas_threads.h"
+#define ATL_THREAD_AFFINITY_1 1  /* temporary -- will need to probe for this */
+int ATL_thread_start(ATL_thread_t *thr, int proc, 
+                     void *(*rout)(void*), void *arg)
+/*
+ * Creates a thread that will run only on processor proc.
+ * RETURNS: 0 on success, non-zero on error
+ * NOTE: present implementation dies on error, so 0 is always returned.
+ */
+{
+#ifdef ATL_WINTHREADS
+   DWORD thrID;
+
+   thr->rank = proc;
+   thr->thrH = CreateThread(NULL, 0, rout, arg, CREATE_SUSPENDED, &thrID);
+   ATL_assert(thr->thrH);
+   ATL_assert(SetThreadAffinityMask(thr->thrH, (1<<proc)));
+   ATL_assert(ResumeThread(thr->thrH) == 1);
+#else
+   pthread_attr_t attr;
+   #ifdef ATL_PAFF_SETAFFNP
+      cpu_set_t cpuset;
+   #endif
+
+   #ifdef ATL_PAFF_SELF
+      thr->paff_set = 0;  /* affinity must be set by created thread */
+   #endif
+   thr->rank = proc;
+   ATL_assert(!pthread_attr_init(&attr));
+   #ifdef IBM_PT_ERROR
+      ATL_assert(!pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_UNDETACHED));
+   #else
+      ATL_assert(!pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE));
+   #endif
+   pthread_attr_setscope(&attr, PTHREAD_SCOPE_SYSTEM); /* no chk, OK to fail */
+   #ifdef ATL_PAFF_SETAFFNP
+      CPU_ZERO(&cpuset);
+      #ifdef ATL_RANK_IS_PROCESSORID
+         CPU_SET(proc, &cpuset);
+      #else
+         CPU_SET(ATL_rank2processorid[proc], &cpuset);
+      #endif
+      ATL_assert(!pthread_attr_setaffinity_np(&attr, sizeof(cpuset), &cpuset));
+   #elif defined(ATL_PAFF_SETPROCNP)
+      #ifdef ATL_RANK_IS_PROCESSORID
+         ATL_assert(!pthread_attr_setprocessor_np(&attr, (pthread_spu_t)proc, 
+                                                  PTHREAD_BIND_FORCED_NP)); 
+      #else
+         ATL_assert(!pthread_attr_setprocessor_np(&attr, (pthread_spu_t) 
+                                                  ATL_rank2processorid[proc], 
+                                                  PTHREAD_BIND_FORCED_NP)); 
+      #endif
+   #endif
+   ATL_assert(!pthread_create(&thr->thrH, &attr, rout, arg));
+   ATL_assert(!pthread_attr_destroy(&attr));
+#endif
+   return(0);
+}
+@ROUT ATL_thread_join
+#include "atlas_misc.h"
+#include "atlas_threads.h"
+int ATL_thread_join(ATL_thread_t *thr)   /* waits on completion of thread */
+{
+#ifdef ATL_WINTHREADS
+   ATL_assert(WaitForSingleObject(thr->thrH, INFINITE) != WAIT_FAILED);
+   ATL_assert(CloseHandle(thr->thrH));
+#else
+   ATL_assert(!pthread_join(thr->thrH, NULL));
+#endif
+   return(0);
+}
+@ROUT ATL_thread_exit
+#include "atlas_misc.h"
+#include "atlas_threads.h"
+void ATL_thread_exit(void *retval)
+{
+#ifdef ATL_WINTHREADS
+   ExitThread((DWORD)(retval));
+#else
+   pthread_exit(retval);
+#endif
+}
+@ROUT ATL_log2tlaunch ATL_lin0tlaunch
+#include "atlas_taffinity.h"  /* include this file first! */
+#include "atlas_misc.h"
+#include "atlas_threads.h"
+
+#ifdef ATL_PAFF_SELF
+static int ATL_setmyaffinity(ATL_thread_t *me)
+/*
+ * Attempts to sets the affinity of an already-running thread.  The 
+ * aff_set flag is set to true whether we succeed or not (no point in
+ * trying multiple times).
+ * RETURNS: 0 on success, non-zero error code on error
+ */
+{
+   #ifdef ATL_RANK_IS_PROCESSORID
+      const int bindID = me->rank;
+   #else
+      const int bindID = ATL_rank2processorid[(me->rank) % ATL_NUMID];
+   #endif
+   me->paff_set = 1;
+#ifdef ATL_PAFF_PLPA
+   plpa_cpu_set_t cpuset;
+   PLPA_CPU_ZERO(&cpuset);
+   PLPA_CPU_SET(bindID, &cpuset);
+   return(plpa_sched_setaffinity((pid_t)0, sizeof(cpuset), &cpuset));
+#elif defined(ATL_PAFF_PBIND)
+   return(processor_bind(P_LWPID, P_MYID, bindID, NULL));
+#elif defined(ATL_PAFF_SCHED)
+   cpu_set_t cpuset;
+   CPU_ZERO(&cpuset);
+   CPU_SET(bindID, &cpuset);
+   return(sched_setaffinity(0, sizeof(cpuset), &cpuset);
+#elif defined (ATL_PAFF_RUNON)
+   return(pthread_setrunon_np(bindID));
+#elif defined(ATL_PAFF_BINDP)
+   return(bindprocessor(BINDTHREAD, thread_self(), bindID));
+#endif
+   return(0);
+}
+#endif
+@ROUT ATL_lin0tlaunch
+void *ATL_tDoWorkWrap(void *vp)
+{
+   ATL_thread_t *tp = vp;
+   ATL_LAUNCHSTRUCT_t *lp = tp->vp;
+   lp->DoWork(lp, lp->opstruct+lp->opstructstride*tp->rank);
+   return(NULL);
+}
+
+void *ATL_lin0tlaunch(void *vp)
+{
+   ATL_thread_t *tp = vp;
+   ATL_LAUNCHSTRUCT_t *lp;
+   int i;
+
+/*
+ * Set my affinity if I haven't already
+ */
+   #ifdef ATL_PAFF_SELF
+      if (!tp->paff_set)
+          ATL_setmyaffinity(tp);
+   #endif
+/*
+ * Spawn DoWork to all nodes
+ */
+   lp = tp->vp;
+   for (i=1; i < ATL_NTHREADS; i++)
+   {
+      if (!lp->OpStructIsInit || 
+          lp->OpStructIsInit(lp->opstruct+i*lp->opstructstride))
+         ATL_thread_start(tp+i, i, ATL_tDoWorkWrap, tp+i);
+   }
+/*
+ * Thread 0 must also do the operation
+ */
+   lp->DoWork(lp, lp->opstruct);
+/*
+ * Await completion of each task, and do combine (linear!) if requested
+ */
+   for (i=1; i < ATL_NTHREADS; i++)
+   {
+      if (!lp->OpStructIsInit || 
+          lp->OpStructIsInit(lp->opstruct+i*lp->opstructstride))
+      {
+         ATL_thread_join(tp+i);
+         if (lp->CombineOpStructs)  /* do combine if necessary */
+            lp->CombineOpStructs(lp->opstruct,
+                                 lp->opstruct+lp->opstructstride*i);
+      }
+   }
+   return(NULL);
+}
+@ROUT ATL_log2tlaunch
+void *ATL_log2tlaunch(void *vp)
+{
+   ATL_thread_t *tp = vp, *btp;
+   ATL_LAUNCHSTRUCT_t *lp;
+   int i, iam, abit, mask, src, dest;
+
+   iam = tp->rank;
+/*
+ * Set my affinity if I haven't already
+ */
+   #ifdef ATL_PAFF_SELF
+      if (!tp->paff_set)
+          ATL_setmyaffinity(tp);
+   #endif
+   btp = tp - iam;
+   lp = tp->vp;
+   mask = (1<<ATL_NTHRPOW2) - 1;   /* no threads are in at beginning */
+/*
+ * Take log_2(NTHR) steps to do log_2 launch 
+ */
+   for (i=ATL_NTHRPOW2-1; i >= 0; i--)
+   {
+      abit = (1<<i);
+      mask ^= abit;   /* double the # of threads participating */
+      if (!(iam & mask))
+      {
+         if (!(iam & abit))
+         {
+            dest = iam ^ abit;
+            if ( dest < ATL_NTHREADS && (!lp->OpStructIsInit ||
+                 lp->OpStructIsInit(lp->opstruct+dest*lp->opstructstride)) )
+               ATL_thread_start(btp+dest, dest, ATL_log2tlaunch, btp+dest);
+         }
+      }
+   }
+   lp->DoWork(lp, lp->opstruct+lp->opstructstride*iam);   /* do the operation */
+/*
+ * Join tree back up, combining results as required
+ */
+   mask = 0;
+   for (i=0; i < ATL_NTHRPOW2; i++)
+   {
+      if (!(iam & mask))
+      {
+         abit = (1<<i);
+         if (!(iam & abit))
+         {
+            src = iam ^ abit;
+            if ( src < ATL_NTHREADS && (!lp->OpStructIsInit ||
+                 lp->OpStructIsInit(lp->opstruct+lp->opstructstride*src)) )
+            {
+               ATL_thread_join(btp+src);
+               if (lp->CombineOpStructs)
+                  lp->CombineOpStructs(lp->opstruct+lp->opstructstride*iam, 
+                                       lp->opstruct+lp->opstructstride*src);
+            }
+         }
+         else
+            ATL_thread_exit(NULL);
+      }
+      mask |= abit;
+   }
+   return(NULL);
+}
+@ROUT ATL_Xtgemm
+#include "atlas_misc.h"
+#define ATL_LAUNCHORDER         /* we want static ATL_launchorder array */
+#include "atlas_threads.h"
+#include "atlas_tlvl3.h"
+/* 
+ * =========================================================================
+ * This file contains support routines for TGEMM that are not type-dependent
+ * =========================================================================
+ */
+@ROUT ATL_thrdecompMM ATL_Xtgemm
+int ATL_thrdecompMM_rMN
+   (ATL_TMMNODE_t *ptmms, const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+    ATL_CINT Mblks, const int mr, ATL_CINT Nblks, const int nr, ATL_CINT Kblks,
+    const int kr, const void *A, ATL_INT lda, const void *B, const ATL_INT ldb,
+    const void *C, ATL_CINT ldc, const int P, const int indx, const int COPYC)
+/*
+ * This routine recursively splits the M & N dimensions over P processors
+ */
+{
+   int pR, pL, rL, rR, np, eltsh;
+   ATL_INT nblksL, nblksR, j;
+   size_t i;
+   double d;
+
+/*
+ * Choose to split either M or N.  Want M < N always, so require
+ * N to be twice as big before splitting (or be out of M blocks)
+ */
+   if (P > 1 && Nblks > 1 && (Mblks < 2 || Nblks >= Mblks+Mblks))
+   {
+      eltsh = ptmms[indx].eltsh;
+      pR = P>>1;    /* on right, take P/2 threads */
+      pL = P - pR;  /* on left, take remaining threads */
+      d = (pR == pL) ? 0.5 : ((double)pL)/((double)P);    /* percent on left */
+      #ifdef DEBUG
+         fprintf(stderr, "Cut N\n");
+      #endif
+      nblksL = (d * Nblks);
+      nblksR = Nblks - nblksL;
+      if (nblksR < nblksL)
+      {
+         rL = 0;
+         rR = nr;
+      }
+      else
+      {
+         rL = nr;
+         rR = 0;
+      }
+      i = (nblksL*ptmms[indx].nb+rL) << eltsh;
+      np = ATL_thrdecompMM_rMN(ptmms, TA, TB, Mblks, mr, nblksL, rL, Kblks, kr, 
+                               A, lda, B, ldb, C, ldc, pL, indx, COPYC);
+      np += ATL_thrdecompMM_rMN(ptmms, TA, TB, Mblks, mr, nblksR, rR, Kblks, kr,
+                                A,  lda, (TB == AtlasNoTrans) ? 
+                                MindxT(B,i*ldb) : MindxT(B,i), ldb, 
+                                MindxT(C,i*ldc), ldc, pR, indx+pL, COPYC);
+      return(np);
+   }
+/*
+ * If we have failed to split N, split M if possible
+ */
+   if (P > 1 && Mblks > 1)
+   {
+      eltsh = ptmms[indx].eltsh;
+      pR = P>>1;    /* on right, take P/2 threads */
+      pL = P - pR;  /* on left, take remaining threads */
+      d = (pR == pL) ? 0.5 : ((double)pL)/((double)P);    /* percent on left */
+      #ifdef DEBUG
+         fprintf(stderr, "Cut M\n");
+      #endif
+      nblksL = (d * Mblks);
+      nblksR = Mblks - nblksL;
+      if (nblksR < nblksL)
+      {
+         rL = 0;
+         rR = mr;
+      }
+      else
+      {
+         rL = mr;
+         rR = 0;
+      }
+      i = (nblksL*ptmms[indx].mb+rL) << eltsh;
+      np = ATL_thrdecompMM_rMN(ptmms, TA, TB, nblksL, rL, Nblks, nr, Kblks, kr, 
+                               A, lda, B, ldb, C, ldc, pL, indx, COPYC);
+      np += ATL_thrdecompMM_rMN(ptmms, TA, TB, nblksR, rR, Nblks, nr, Kblks, kr,
+                                (TA==AtlasNoTrans)?MindxT(A,i):MindxT(A,i*lda), 
+                                lda, B, ldb, MindxT(C,i), ldc, pR, indx+pL, 
+                                COPYC);
+      return(np);
+   }
+/*
+ * If no desirable splitting possible, stop recursion
+ */
+   ptmms[indx].A = A;
+   ptmms[indx].B = B;
+   ptmms[indx].C = (void*)C;
+   ptmms[indx].lda = lda;
+   ptmms[indx].ldb = ldb;
+   ptmms[indx].ldc = ldc;
+   ptmms[indx].M = ptmms[indx].mb*Mblks + mr;
+   ptmms[indx].N = ptmms[indx].nb*Nblks + nr;
+   ptmms[indx].K = ptmms[indx].kb*Kblks + kr;
+   ptmms[indx].ldcw = ptmms[indx].nCw = 0;
+   ptmms[indx].nCp = ptmms[indx].ownC = 1;
+   ptmms[indx].Cinfp[ATL_NTHREADS-1] = ptmms+indx;
+   ptmms[indx].Cw = NULL;
+   #ifdef DEBUG
+      fprintf(stderr, "%d: M=%d, N=%d, K=%d, ownC=%d, nCp=%d, nCw=%d\n",
+              indx, ptmms[indx].M, ptmms[indx].N, ptmms[indx].K, 
+              ptmms[indx].ownC, ptmms[indx].nCp, ptmms[indx].nCw);
+   #endif
+   return(1);
+}
+
+int ATL_thrdecompMM_rMNK
+   (ATL_TMMNODE_t *ptmms, const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+    ATL_CINT Mblks, const int mr, ATL_CINT Nblks, const int nr, ATL_CINT Kblks,
+    const int kr, const void *A, ATL_INT lda, const void *B, const ATL_INT ldb,
+    const void *C, ATL_CINT ldc, const int P, const int indx, const int COPYC)
+/*
+ * This routine decomposes the GEMM over P processors by splitting any of
+ * the dimensions.  We only call this routine when K is very large or
+ * M and N are very small (and thus splitting K, with its associated
+ * extra workspace and flops, makes sense).
+ */
+{
+   int pR, pL, rL, rR, np, eltsh;
+   ATL_INT nblksL, nblksR, j;
+   size_t i;
+   double d;
+
+   eltsh = ptmms[indx].eltsh;
+#ifdef DEBUG
+   ATL_assert(P > 0);
+#endif
+   if (P <= 1 || (Mblks <= 1 && Nblks <= 1 && Kblks <= 1))
+      goto STOP_REC;
+   pR = P>>1;    /* on right, take P/2 threads */
+   pL = P - pR;  /* on left, take remaining threads */
+   d = (pR == pL) ? 0.5 : ((double)pL)/((double)P);    /* percent on left */
+/*
+ * Do not consider cutting K unless we have some K blocks, and we have either
+ * already done so, or if we are sure that we are within our workspace limit
+ */
+   if (Kblks > 1 && (COPYC || 
+       ((Mblks*ptmms[indx].mb+mr) * ((Nblks*ptmms[indx].nb+nr)<<eltsh)
+        < ATL_PTMAXMALLOC)))
+   {
+/*
+ *    Before splitting K, ask that we are out of M and N blocks, or that
+ *    our K is 4 times M and twice N
+ */
+      if ( (Mblks < 2 && Nblks < 2) ||
+           (Kblks > (Mblks<<2) && Kblks > (Nblks+Nblks)) )
+      {
+         #ifdef DEBUG
+            fprintf(stderr, "Cut K\n");
+         #endif
+         nblksL = (d * Kblks);
+         nblksR = Kblks - nblksL;
+         if (nblksR < nblksL)
+         {
+            rL = 0;
+            rR = kr;
+         }
+         else
+         {
+            rL = kr;
+            rR = 0;
+         }
+         i = (nblksL*ptmms[indx].kb + rL)<<eltsh;
+         np = ATL_thrdecompMM_rMNK(ptmms, TA, TB, Mblks, mr, Nblks, nr, 
+                                   nblksL, rL, A, lda, B, ldb, C, ldc, pL, 
+                                   indx, COPYC);
+         np += ATL_thrdecompMM_rMNK(ptmms, TA, TB, Mblks, mr, Nblks, nr, 
+                                    nblksR, rR, (TA==AtlasNoTrans)?
+                                    MindxT(A,lda*i):MindxT(A,i), lda, 
+                                    (TB == AtlasNoTrans)?MindxT(B,i):
+                                    MindxT(B,i*ldb), ldb, C, ldc, pR, 
+                                    indx+pL, 1);
+         return(np);
+      }
+   }
+/*
+ * Now choose to split either M or N.  Want M < N always, so require
+ * N to be twice as big before splitting
+ */
+   if (Nblks > 1 && (Mblks < 2 || Nblks >= Mblks+Mblks))
+   {
+      #ifdef DEBUG
+         fprintf(stderr, "Cut N\n");
+      #endif
+      nblksL = (d * Nblks);
+      nblksR = Nblks - nblksL;
+      if (nblksR < nblksL)
+      {
+         rL = 0;
+         rR = nr;
+      }
+      else
+      {
+         rL = nr;
+         rR = 0;
+      }
+      i = (nblksL*ptmms[indx].nb+rL) << eltsh;
+      np = ATL_thrdecompMM_rMNK(ptmms, TA, TB, Mblks, mr, nblksL, rL, Kblks, kr,
+                                A, lda, B, ldb, C, ldc, pL, indx, COPYC);
+      np += ATL_thrdecompMM_rMNK(ptmms, TA, TB, Mblks, mr, nblksR, rR, 
+                                 Kblks, kr, A,  lda, (TB == AtlasNoTrans) ? 
+                                 MindxT(B,i*ldb) : MindxT(B,i), ldb, 
+                                 MindxT(C,i*ldc), ldc, pR, indx+pL, COPYC);
+      return(np);
+   }
+/*
+ * If we have failed to split N or K, split M if possible
+ */
+   if (Mblks > 1)
+   {
+      #ifdef DEBUG
+         fprintf(stderr, "Cut M\n");
+      #endif
+      nblksL = (d * Mblks);
+      nblksR = Mblks - nblksL;
+      if (nblksR < nblksL)
+      {
+         rL = 0;
+         rR = mr;
+      }
+      else
+      {
+         rL = mr;
+         rR = 0;
+      }
+      i = (nblksL*ptmms[indx].mb+rL) << eltsh;
+      np = ATL_thrdecompMM_rMNK(ptmms, TA, TB, nblksL, rL, Nblks, nr, Kblks, kr,
+                                A, lda, B, ldb, C, ldc, pL, indx, COPYC);
+      np += ATL_thrdecompMM_rMNK(ptmms, TA, TB, nblksR, rR, Nblks, nr, 
+                                 Kblks, kr,
+                                 (TA==AtlasNoTrans)?MindxT(A,i):MindxT(A,i*lda),
+                                 lda, B, ldb, MindxT(C,i), ldc, pR, indx+pL, 
+                                 COPYC);
+      return(np);
+   }
+/*
+ * If no desirable splitting possible, stop recursion
+ */
+STOP_REC:
+   ptmms[indx].A = A;
+   ptmms[indx].B = B;
+   ptmms[indx].C = (void*)C;
+   ptmms[indx].lda = lda;
+   ptmms[indx].ldb = ldb;
+   ptmms[indx].ldc = ldc;
+   ptmms[indx].M = ptmms[indx].mb*Mblks + mr;
+   ptmms[indx].N = ptmms[indx].nb*Nblks + nr;
+   ptmms[indx].K = ptmms[indx].kb*Kblks + kr;
+   if (COPYC)
+   {
+      ptmms[indx].nCw = 1;
+      ptmms[indx].nCp = ptmms[indx].ownC = 0;
+      ptmms[indx].Cinfp[0] = ptmms+indx;
+/*
+ *    Make ldcw a multiple of 4 that is not a power of 2
+ */
+      i = ((ptmms[indx].M + 3)>>2)<<2;
+      if (!(i & (i-1)))
+         i += 4;
+      ptmms[indx].ldcw = i;
+   }
+   else
+   {
+      ptmms[indx].ldcw = ptmms[indx].nCw = 0;
+      ptmms[indx].nCp = ptmms[indx].ownC = 1;
+      ptmms[indx].Cinfp[ATL_NTHREADS-1] = ptmms+indx;
+   }
+   ptmms[indx].Cw = NULL;
+   #ifdef DEBUG
+      fprintf(stderr, "%d: M=%d, N=%d, K=%d, ownC=%d, nCp=%d, nCw=%d\n",
+              indx, ptmms[indx].M, ptmms[indx].N, ptmms[indx].K, 
+              ptmms[indx].ownC, ptmms[indx].nCp, ptmms[indx].nCw);
+   #endif
+   return(1);
+
+}
+@beginskip
+int ATL_thrdecompMM_rec
+   (ATL_TMMNODE_t *ptmms, const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+    ATL_CINT Mblks, const int mr, ATL_CINT Nblks, const int nr, ATL_CINT Kblks,
+    const int kr, const void *A, ATL_INT lda, const void *B, const ATL_INT ldb,
+    const void *C, ATL_CINT ldc, const int P, const int indx, const int COPYC)
+{
+   int pR, pL, rL, rR, np, eltsh;
+   ATL_INT nblksL, nblksR, j;
+   size_t i;
+   double d;
+
+#ifdef DEBUG
+   ATL_assert(P > 0);
+#endif
+/*
+ * End recursion if we are down to 1 processor, or if we are out of blocks
+ */
+   if ( P <= 1 || (Mblks <= 1 && Nblks <= 1 && Kblks <= 2) )
+   {
+      ptmms[indx].A = A;
+      ptmms[indx].B = B;
+      ptmms[indx].C = (void*)C;
+      ptmms[indx].lda = lda;
+      ptmms[indx].ldb = ldb;
+      ptmms[indx].ldc = ldc;
+      ptmms[indx].M = ptmms[indx].mb*Mblks + mr;
+      ptmms[indx].N = ptmms[indx].nb*Nblks + nr;
+      ptmms[indx].K = ptmms[indx].kb*Kblks + kr;
+      if (COPYC)
+      {
+         ptmms[indx].nCw = 1;
+         ptmms[indx].nCp = ptmms[indx].ownC = 0;
+         ptmms[indx].Cinfp[0] = ptmms+indx;
+/*
+ *       Make ldcw a multiple of 4 that is not a power of 2
+ */
+         i = ((ptmms[indx].M + 3)>>2)<<2;
+         if (!(i & (i-1)))
+            i += 4;
+@beginskip
+         for (j=0; j < sizeof(ATL_INT)*8-1; j++)
+         {
+            if (!((1<<j)^i))
+            {
+               i += 4;
+               break;
+            }
+         }
+@endskip
+         ptmms[indx].ldcw = i;
+      }
+      else
+      {
+         ptmms[indx].ldcw = ptmms[indx].nCw = 0;
+         ptmms[indx].nCp = ptmms[indx].ownC = 1;
+         ptmms[indx].Cinfp[ATL_NTHREADS-1] = ptmms+indx;
+      }
+      ptmms[indx].Cw = NULL;
+#ifdef DEBUG
+fprintf(stderr, "%d: M=%d, N=%d, K=%d, ownC=%d, nCp=%d, nCw=%d\n",
+        indx, ptmms[indx].M, ptmms[indx].N, ptmms[indx].K, 
+        ptmms[indx].ownC, ptmms[indx].nCp, ptmms[indx].nCw);
+#endif
+      return(1);
+   }
+
+   pR = P>>1;    /* on right, take P/2 threads */
+   pL = P - pR;  /* on left, take remaining threads */
+   d = (pR == pL) ? 0.5 : ((double)pL)/((double)P);    /* percent on left */
+
+/*
+ * Only cut K if it dominates M & N (here we say K must be 4 time larger)
+ * and M&N are small enough that we can afford to malloc C 
+ * (here we say C workspace must be 16MB or less) 
+ */
+   if ( ( ((Mblks < 2) && Nblks < 2) ||
+          (((Kblks>>2) > Mblks) && ((Kblks>>2) > Nblks)) )
+       && (Mblks*((Nblks*ptmms[indx].mb*(ptmms[indx].nb<<ptmms[indx].eltsh)
+           +1023)>>10) <= 16*1024))
+   {
+#ifdef DEBUG
+   fprintf(stderr, "Cut K\n");
+#endif
+      nblksL = (d * Kblks);
+      nblksR = Kblks - nblksL;
+      if (nblksR < nblksL)
+      {
+         rL = 0;
+         rR = kr;
+      }
+      else
+      {
+         rL = kr;
+         rR = 0;
+      }
+      i = (nblksL*ptmms[indx].kb + rL)<<eltsh;
+      np = ATL_thrdecompMM_rec(ptmms, TA, TB, Mblks, mr, Nblks, nr, nblksL, rL,
+                               A, lda, B, ldb, C, ldc, pL, indx, COPYC);
+      np += ATL_thrdecompMM_rec(ptmms, TA, TB, Mblks, mr, Nblks, nr, nblksR, rR,
+                                (TA==AtlasNoTrans)?MindxT(A,lda*i):MindxT(A,i), 
+                                lda, 
+                               (TB == AtlasNoTrans)?MindxT(B,i):MindxT(B,i*ldb),
+                               ldb, C, ldc, pR, indx+pL, 1);
+      return(np);
+   }
+   else if (Mblks >= Nblks)  /* split M */
+   {
+#ifdef DEBUG
+   fprintf(stderr, "Cut M\n");
+#endif
+      nblksL = (d * Mblks);
+      nblksR = Mblks - nblksL;
+      if (nblksR < nblksL)
+      {
+         rL = 0;
+         rR = mr;
+      }
+      else
+      {
+         rL = mr;
+         rR = 0;
+      }
+      i = (nblksL*ptmms[indx].mb+rL) << eltsh;
+      np = ATL_thrdecompMM_rec(ptmms, TA, TB, nblksL, rL, Nblks, nr, Kblks, kr, 
+                               A, lda, B, ldb, C, ldc, pL, indx, COPYC);
+      np += ATL_thrdecompMM_rec(ptmms, TA, TB, nblksR, rR, Nblks, nr, Kblks, kr,
+                                (TA==AtlasNoTrans)?MindxT(A,i):MindxT(A,i*lda), 
+                                lda, B, ldb, MindxT(C,i), ldc, pR, indx+pL, 
+                                COPYC);
+      return(np);
+   }
+   else /* split N */
+   {
+#ifdef DEBUG
+   fprintf(stderr, "Cut N\n");
+#endif
+      nblksL = (d * Nblks);
+      nblksR = Nblks - nblksL;
+      if (nblksR < nblksL)
+      {
+         rL = 0;
+         rR = nr;
+      }
+      else
+      {
+         rL = nr;
+         rR = 0;
+      }
+      i = (nblksL*ptmms[indx].nb+rL) << eltsh;
+      np = ATL_thrdecompMM_rec(ptmms, TA, TB, Mblks, mr, nblksL, rL, Kblks, kr, 
+                               A, lda, B, ldb, C, ldc, pL, indx, COPYC);
+      np += ATL_thrdecompMM_rec(ptmms, TA, TB, Mblks, mr, nblksR, rR, Kblks, kr,
+                                A,  lda, (TB == AtlasNoTrans) ? 
+                                MindxT(B,i*ldb) : MindxT(B,i), ldb, 
+                                MindxT(C,i*ldc), ldc, pR, indx+pL, COPYC);
+      return(np);
+   }
+}
+@endskip
+
+int ATL_thrdecompMM_M
+   (ATL_TMMNODE_t *ptmms, const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+    ATL_CINT Mblks, const int mr, ATL_CINT Nblks, const int nr, ATL_CINT Kblks,
+    const int kr, const void *A, ATL_INT lda, const void *B, const ATL_INT ldb,
+    const void *C, ATL_CINT ldc, const int P, const int indx, const int COPYC)
+{
+   int j, i, m, p;
+   const char *a=A, *c=C;
+   const int eltsh = ptmms[0].eltsh, mb = ptmms[0].mb, n = ptmms[0].nb*Nblks+nr,
+             k = ptmms[0].kb*Kblks+kr, minblks = Mblks / P, 
+             extrablks = Mblks - minblks*P;
+
+   for (p=i=0; i < P; i++)
+   {
+      m = minblks * mb;
+      if (i < extrablks)
+         m = (minblks + 1)*mb;
+      else if (i == extrablks)
+         m = minblks*mb + mr;
+      else
+         m = minblks*mb;
+     if (m)
+        p++;
+         
+      j = ATL_launchorder[i];  /* use log2-launch order */
+      ptmms[j].A = a;
+      ptmms[j].B = B;
+      ptmms[j].C = (void*)c;
+      ptmms[j].lda = lda;
+      ptmms[j].ldb = ldb;
+      ptmms[j].ldc = ldc;
+      ptmms[j].M = m;
+      ptmms[j].N = n;
+      ptmms[j].K = (m) ? k : 0;
+      ptmms[j].ownC = 1;
+      ptmms[j].nCp = ptmms[j].nCw = 0;
+      ptmms[j].Cw = NULL;
+      ptmms[j].ldcw = 0;
+      m <<= eltsh;
+      a = (TA == AtlasNoTrans) ? MindxT(a,m) : MindxT(a,m*lda);
+      c = MindxT(c,m);
+   }
+   return(p);
+}
+
+int ATL_thrdecompMM_N
+   (ATL_TMMNODE_t *ptmms, const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+    ATL_CINT Mblks, const int mr, ATL_CINT Nblks, const int nr, ATL_CINT Kblks,
+    const int kr, const void *A, ATL_INT lda, const void *B, const ATL_INT ldb,
+    const void *C, ATL_CINT ldc, const int P, const int indx, const int COPYC)
+{
+   int j, i, n, p;
+   const char *b=B, *c=C;
+   const int eltsh = ptmms[0].eltsh, nb = ptmms[0].nb, m = ptmms[0].mb*Mblks+mr,
+             k = ptmms[0].kb*Kblks+kr, minblks = Nblks / P, 
+             extrablks = Nblks - minblks*P;
+
+   for (p=i=0; i < P; i++)
+   {
+      n = minblks * nb;
+      if (i < extrablks)
+         n = (minblks + 1)*nb;
+      else if (i == extrablks)
+         n = minblks*nb + nr;
+      else
+         n = minblks*nb;
+      if (n)
+         p++;
+         
+      j = ATL_launchorder[i];  /* use log2-launch order */
+      ptmms[j].A = A;
+      ptmms[j].B = b;
+      ptmms[j].C = (void*)c;
+      ptmms[j].lda = lda;
+      ptmms[j].ldb = ldb;
+      ptmms[j].ldc = ldc;
+      ptmms[j].M = m;
+      ptmms[j].N = n;
+      ptmms[j].K = (n) ? k : 0;
+      ptmms[j].ownC = 1;
+      ptmms[j].nCp = ptmms[j].nCw = 0;
+      ptmms[j].Cw = NULL;
+      ptmms[j].ldcw = 0;
+      n <<= eltsh;
+      b = (TB == AtlasNoTrans) ? MindxT(b,n*ldb) : MindxT(b,n);
+      c = MindxT(c,n*ldc);
+   }
+   return(p);
+}
+int ATL_thrdecompMM_K
+   (ATL_TMMNODE_t *ptmms, const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+    ATL_CINT Mblks, const int mr, ATL_CINT Nblks, const int nr, ATL_CINT Kblks,
+    const int kr, const void *A, ATL_INT lda, const void *B, const ATL_INT ldb,
+    const void *C, ATL_CINT ldc, const int P, const int indx, const int COPYC)
+{
+   int j, i, k, p, ldw;
+   const char *a=A, *b=B;
+   const int eltsh = ptmms[0].eltsh, kb = ptmms[0].kb, m = ptmms[0].mb*Mblks+mr,
+             n = ptmms[0].nb*Nblks+nr, minblks = Kblks / P, 
+             extrablks = Kblks - minblks*P;
+
+   for (p=i=0; i < P; i++)
+   {
+      k = minblks * kb;
+      if (i < extrablks)
+         k = (minblks + 1)*kb;
+      else if (i == extrablks)
+         k = minblks*kb + kr;
+      else
+         k = minblks*kb;
+      if (n)
+         p++;
+         
+      j = ATL_launchorder[i];  /* use log2-launch order */
+      ptmms[j].A = a;
+      ptmms[j].B = b;
+      ptmms[j].C = (void*)C;
+      ptmms[j].lda = lda;
+      ptmms[j].ldb = ldb;
+      ptmms[j].ldc = ldc;
+      ptmms[j].M = m;
+      ptmms[j].N = n;
+      ptmms[j].K = k;
+      if (i)
+      {
+         ptmms[j].nCw = 1;
+         ptmms[j].nCp = ptmms[j].ownC = 0;
+         ldw = ((m + 3)>>2)<<2;  /* make ldw mul of 4 */
+         if (!(i & (i-1)))
+            ldw += 4;            /* make sure ldw not power of 2 */
+         ptmms[j].ldcw = ldw;
+         ptmms[j].Cinfp[0] = ptmms+j;
+      }
+      else
+      {
+         ptmms[j].ldcw = 0;
+         ptmms[j].nCp = ptmms[j].ownC = 1;
+         ptmms[j].nCw = 0;
+         ptmms[j].Cinfp[ATL_NTHREADS-1] = ptmms+j;
+      }
+      ptmms[j].Cw = NULL;
+      k <<= eltsh;
+      a = (TA == AtlasNoTrans) ? MindxT(a,lda*k) : MindxT(a,k);
+      b = (TB == AtlasNoTrans) ? MindxT(b,k) : MindxT(b,k*ldb);
+   }
+   return(p);
+}
+
+void ATL_EnforceNonPwr2LO(ATL_TMMNODE_t *ptmms, const int P)
+/*
+ * If threads aren't a power of 2, then the recursive decomposition will
+ * fill in the ptmms array in a different order than the log2 spawn.
+ * As long as P >= NTHREADS, all entries are filled in, so the worst that
+ * happens is that thread 3 does the work that we expect to be done by 4.
+ * However, if P < NTHREADS, then threads that launch starts won't have
+ * work, so we must make sure that the 1st P elts in launchorder have
+ * work to do.
+ */
+{
+   int i, j, k, kk, h;
+
+   if (P >= ATL_NTHREADS)
+      return;
+   for (i=0; i < P; i++)
+   {
+      j = ATL_launchorder[i];
+      if (!ptmms[j].K)  /* we have found an empty required entry! */
+      {
+/*
+ *      Search for a filled in entry that will not be used in launch
+ */
+        for (kk=ATL_NTHREADS-1; kk >= P; kk--)
+        {
+           k = ATL_launchorder[kk];
+           if (ptmms[k].K)  /* found a non-empty entry */
+           {
+              ptmms[j].A = ptmms[k].A;
+              ptmms[j].B = ptmms[k].B;
+              ptmms[j].C = ptmms[k].C;
+              ptmms[j].lda = ptmms[k].lda;
+              ptmms[j].ldb = ptmms[k].ldb;
+              ptmms[j].ldc = ptmms[k].ldc;
+              ptmms[j].M = ptmms[k].M;
+              ptmms[j].N = ptmms[k].N;
+              ptmms[j].K = ptmms[k].K;
+              ptmms[j].ownC = ptmms[k].ownC;
+              ptmms[j].nCp = ptmms[k].nCp;
+              ptmms[j].nCw = ptmms[k].nCw;
+              ptmms[j].Cw = ptmms[k].Cw;
+              ptmms[j].ldcw = ptmms[k].ldcw;
+              for (h=0; h < ptmms[j].nCw; h++)
+                 ptmms[j].Cinfp[h] = (ptmms[k].Cinfp[h] != ptmms+k) ?
+                                     ptmms[k].Cinfp[h] : ptmms+j;
+              for (h=ATL_NTHREADS-1; h >= ATL_NTHREADS-ptmms[j].nCp; h--)
+                 ptmms[j].Cinfp[h] = (ptmms[k].Cinfp[h] != ptmms+k) ?
+                                     ptmms[k].Cinfp[h] : ptmms+j;
+              ptmms[k].K = 0;                /* entry k now empty */
+              break;
+           }
+        }
+        ATL_assert(kk >= P);
+      }
+   }
+}
+
+int ATL_thrdecompMM
+   (ATL_TMMNODE_t *ptmms, const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+    ATL_CINT M, ATL_CINT N, ATL_CINT K, const void *A, ATL_INT lda, 
+    const void *B, const ATL_INT ldb, const void *C, ATL_CINT ldc, const int P,
+    int *DivideK)
+{
+   int np, i;
+   ATL_CINT Mblks = M/ptmms[0].mb, mr = M-Mblks*ptmms[0].mb;
+   ATL_CINT Nblks = N/ptmms[0].nb, nr = N-Nblks*ptmms[0].nb;
+   ATL_CINT Kblks = K/ptmms[0].kb, kr = K-Kblks*ptmms[0].kb;
+   ATL_CINT mnblks = ((Nblks) ? Nblks : 1) * ((Mblks) ? Mblks : 1);
+
+  *DivideK = 0;
+/*
+ * First, consider cutting K, which we only do if the number of Kblks
+ * dominates the number of blocks we can find in cutting both M & N,
+ */
+@skip   if (mnblks < P || Kblks > P*mnblks)
+   if ((mnblks < P && Kblks > mnblks) || Kblks > P*mnblks)
+   {
+      np = ATL_thrdecompMM_rMNK(ptmms, TA, TB, Mblks, mr, Nblks, nr, Kblks, kr,
+                                A, lda, B, ldb, C, ldc, P, 0, 0);
+      for (i=0; i < np; i++)
+      {
+         if (ptmms[i].K > 0 && ptmms[i].K < K)
+         {
+            *DivideK = 1;
+            break;
+         }
+      }
+      if (np < ATL_NTHREADS)
+         ATL_EnforceNonPwr2LO(ptmms, np);
+      return(np);
+   }
+/*
+ * Divide only the M-dimension to cut down on JIK workspace & improve CE
+ * efficiency if we have enough M blocks to make it worthwhile;
+ * We ask that we can give each thread at least 4 blocks, and that
+ * the N diminsion doesn't dominate
+ */
+   if ((Mblks >= (P<<2) && Nblks < P*Mblks))
+      return(ATL_thrdecompMM_M(ptmms, TA, TB, Mblks, mr, Nblks, nr, Kblks, kr,
+                               A, lda, B, ldb, C, ldc, P, 0, 0));
+/*
+ * If none of these special cases are triggered, recursively divide up C
+ */
+   np = ATL_thrdecompMM_rMN(ptmms, TA, TB, Mblks, mr, Nblks, nr, Kblks, kr, 
+                            A, lda, B, ldb, C, ldc, P, 0, 0);
+   if (np < ATL_NTHREADS)
+      ATL_EnforceNonPwr2LO(ptmms, np);
+   return(np);
+}
+@beginskip
+int ATL_thrdecompMM
+   (ATL_TMMNODE_t *ptmms, const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+    ATL_CINT Mblks, const int mr, ATL_CINT Nblks, const int nr, ATL_CINT Kblks,
+    const int kr, const void *A, ATL_INT lda, const void *B, const ATL_INT ldb,
+    const void *C, ATL_CINT ldc, const int P, const int indx, const int COPYC)
+{
+#if ATL_NTHREADS != (1<<ATL_NTHRPOW2)
+   int np;
+#endif
+/*
+ * Divide only the M-dimension to cut down on JIK workspace & improve CE
+ * efficiency if we have enough M blocks to make it worthwile
+ */
+   if ((Mblks >> ATL_NTHRPOW2) >= ATL_TMMMINMBLKS)
+      return(ATL_thrdecompMM_M(ptmms, TA, TB, Mblks, mr, Nblks, nr, Kblks,
+                               kr, A, lda, B, ldb, C, ldc, P, indx, COPYC));
+   else
+#if ATL_NTHREADS == (1<<ATL_NTHRPOW2)
+      return(ATL_thrdecompMM_rec(ptmms, TA, TB, Mblks, mr, Nblks, nr, Kblks,
+                                 kr, A, lda, B, ldb, C, ldc, P, indx, COPYC));
+#else
+   {
+      np = ATL_thrdecompMM_rec(ptmms, TA, TB, Mblks, mr, Nblks, nr, Kblks,
+                               kr, A, lda, B, ldb, C, ldc, P, indx, COPYC);
+      if (np < ATL_NTHREADS)
+         ATL_EnforceNonPwr2LO(ptmms, np);
+      return(np);
+   }
+#endif
+}
+@endskip
+
+@ROUT ATL_StructIsInitMM ATL_Xtgemm
+int ATL_StructIsInitMM(void *vp)
+{
+   return(((ATL_TMMNODE_t*)vp)->K);
+}
+
+@ROUT ATL_DoWorkMM ATL_Xtgemm
+void ATL_DoWorkMM(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+/*
+ * Current implementation doesn't need lp, but if we had an error queue or
+ * something similar we would need it, so keep it around
+ */
+{
+   ATL_TMMNODE_t *mmp = vp;
+/*
+ * Allocate space if needed, do operation
+ */
+   if (mmp->nCw)
+   {
+/*
+ *    If malloc fails, we'll do the operation during the combine
+ */
+      #ifdef ATL_SERIAL_COMBINE
+         ATL_assert(mmp->Cw);
+      #else
+         mmp->Cw = malloc(((mmp->ldcw)<<mmp->eltsh)*mmp->N+ATL_Cachelen);
+      #endif
+      if (mmp->Cw)
+      {
+         mmp->gemmK(mmp->M, mmp->N, mmp->K, mmp->alpha, mmp->A, mmp->lda,
+                    mmp->B, mmp->ldb, mmp->zero, 
+                    ATL_AlignPtr(mmp->Cw), mmp->ldcw);
+      }
+#ifdef DEBUG
+      else
+         fprintf(stderr, "%d: unable to allocate C(%dx%d)!!\n", 
+                 mmp->rank, mmp->M, mmp->N);
+#endif
+   }
+   else  /* do GEMM directly into original C; no possibility of failure! */
+      mmp->gemmK(mmp->M, mmp->N, mmp->K, mmp->alpha, mmp->A, mmp->lda,
+                 mmp->B, mmp->ldb, mmp->beta, mmp->C, mmp->ldc);
+}
+@ROUT ATL_tNumGemmThreads
+#include "atlas_misc.h"
+#include "atlas_tlvl3.h"
+
+/* 
+ * ====================================================================
+ * This function will eventually be generated, but for now just written
+ * ====================================================================
+ */
+int Mjoin(PATL,tNumGemmThreads)(ATL_CINT M, ATL_CINT N, ATL_CINT K)
+/*
+ * RETURNS : estimate of how many threads will be used to run the problem,
+ *           assuming we will actually do threading (i.e. THRESH is exceeded)
+ *           0 is returned if this number is 1 or less.
+ */
+{
+@beginskip
+   int np;
+   ATL_TMMNODE_t mms[ATL_NTHREADS];
+   #ifdef TCPLX
+      TYPE ONE[2] = {1.0, 0.0};
+   #else
+      TYPE ONE=ATL_rone;
+   #endif
+   void Mjoin(PATL,InitTMMNodes)
+      (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, const TYPE *alpha,
+       const TYPE *beta, const TYPE *one, const TYPE *zero, 
+       ATL_thread_t *btp, ATL_TMMNODE_t *ptmms);
+
+   np = Mjoin(PATL,threadMM)(AtlasNoTrans, AtlasNoTrans, M, N, K);
+   if (np > 1)
+   {
+      Mjoin(PATL,InitTMMNodes)(AtlasNoTrans, AtlasNoTrans, SADD ONE, SADD ONE, 
+                               SADD ONE, SADD ONE, NULL, mms);
+      if (np == 1)  /* use recursive distribution */
+         np = ATL_thrdecompMM_rec(mms, AtlasNoTrans, AtlasNoTrans, 
+                                  M/MB, M%MB, N/NB, N%NB, K/KB, K%KB, 
+                                  NULL, M, NULL, K, NULL, M, 
+                                  ATL_NTHREADS, 0, 0);
+      else
+         np = ATL_thrdecompMM_M(mms, AtlasNoTrans, AtlasNoTrans, 
+                                M/MB, M%MB, N/NB, N%NB, K/KB, K%KB, 
+                                NULL, M, NULL, K, NULL, M, ATL_NTHREADS, 0, 0);
+      np = (np < 2) ? 0 : np;
+   }
+   return(np);
+@endskip
+   double flops;
+   int np;
+   if (M < 8 || N < 8 || K < 8)
+      return(0);
+   flops = ((2.0*M)*N)*K;
+   np = flops / ATL_TGEMM_PERTHR_MF;
+   np = (np <= 1) ? 0 : np;
+   return(np >= ATL_NTHREADS ? ATL_NTHREADS : np);
+}
+
+int Mjoin(PATL,GemmWillThread)(ATL_CINT M, ATL_CINT N, ATL_CINT K)
+/*
+ * Returns: 0 if threshold FLOPS not achieved, rough # of threads used else
+ */
+{
+   if (((2.0*M)*N)*K < ATL_TGEMM_THRESH_MF)
+      return(0);
+   return(Mjoin(PATL,tNumGemmThreads)(M,N,K));
+}
+@ROUT ATL_tgemm ATL_tgemm_rec ATL_tgemm_M ATL_tgemm_N ATL_tgemm_K ATL_tgemm_p
+#include "atlas_misc.h"
+#include "atlas_threads.h"
+#include "atlas_tlvl3.h"
+/*
+ * prototype the typeless tGEMM helper routines
+ */
+void ATL_DoWorkMM(ATL_LAUNCHSTRUCT_t *lp, void *vp);
+int ATL_StructIsInitMM(void *vp);
+@ROUT ATL_tgemm_rec ATL_tgemm_M ATL_tgemm_N ATL_tgemm_K
+@whiledef rt  ATL_thrdecompMM_M ATL_thrdecompMM_N ATL_thrdecompMM_K
+int @(rt)
+   (ATL_TMMNODE_t *ptmms, const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+    ATL_CINT Mblks, const int mr, ATL_CINT Nblks, const int nr, ATL_CINT Kblks,
+    const int kr, const void *A, ATL_INT lda, const void *B, const ATL_INT ldb,
+    const void *C, ATL_CINT ldc, const int P, const int indx, const int COPYC);
+@endwhile
+@ROUT ATL_tgemm ATL_tgemm_p
+int ATL_thrdecompMM
+   (ATL_TMMNODE_t *ptmms, const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+    ATL_CINT M, ATL_CINT N, ATL_CINT K, const void *A, ATL_INT lda, 
+    const void *B, const ATL_INT ldb, const void *C, ATL_CINT ldc, const int P,
+    int *DivideK);
+
+@ROUT ATL_tgemm
+@multidef tta AtlasTrans AtlasNoTrans AtlasConjTrans
+@whiledef TA T N C
+   @multidef ttb AtlasTrans AtlasNoTrans AtlasConjTrans
+   @whiledef TB T N C
+@mif TA = "C
+#ifdef TCPLX
+@endmif
+@mif TB = "C
+   @mif TA ! "C
+#ifdef TCPLX
+   @endmif
+@endmif
+void Mjoin(PATL,tsvgemm@(TA)@(TB))
+   (ATL_CINT M, ATL_CINT N, ATL_CINT K, const void* alpha,
+    const void *A, ATL_CINT lda, const void *B, ATL_CINT ldb, 
+    const void *beta, void *C, ATL_CINT ldc)
+{
+#ifdef FindingCE
+void Mjoin(PATL,FindCE_mm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+                           const int M, const int N, const int K, 
+                           const SCALAR alpha, const TYPE *A, const int lda, 
+                           const TYPE *B, const int ldb, const SCALAR beta, 
+                           TYPE *C, const int ldc);
+   Mjoin(PATL,FindCE_mm)(@(tta), @(ttb), M, N, K, 
+                         SVVAL((TYPE*)alpha), A, lda, B, ldb,
+                         SVVAL((TYPE*)beta), C, ldc);
+#else
+   Mjoin(PATL,tgemm@(TA)@(TB))(M, N, K, SVVAL((TYPE*)alpha), A, lda, B, ldb,
+                       SVVAL((TYPE*)beta), C, ldc);
+#endif
+}
+@mif TA = "C
+#endif  /* end ifdef TCPLX */
+@endmif
+@mif TB = "C
+   @mif TA ! "C
+#endif  /* end ifdef TCPLX */
+   @endmif
+@endmif
+      @undef ttb
+   @endwhile
+   @undef tta
+@endwhile
+@ROUT ATL_tgemm_p
+   @define ds @p@
+@ROUT ATL_tgemm_M
+   @define ds @M@
+@ROUT ATL_tgemm_N
+   @define ds @rMN@
+@ROUT ATL_tgemm_K
+   @define ds @K@
+@ROUT ATL_tgemm_rec ATL_tgemm_M ATL_tgemm_N ATL_tgemm_K ATL_tgemm_p
+void Mjoin(PATL,InitTMMNodes)
+   (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, const TYPE *alpha, 
+    const TYPE *beta, const TYPE *one, const TYPE *zero, 
+    ATL_thread_t *btp, ATL_TMMNODE_t *ptmms);
+@ROUT ATL_tgemm
+
+#ifdef ATL_SERIAL_COMBINE
+static ATL_combnode_t *ATL_NewCombnode
+   (ATL_INT M, ATL_INT N, TYPE *W, ATL_INT ldw, TYPE *D, ATL_INT ldd,
+    ATL_combnode_t *next)
+{
+   ATL_combnode_t *np;
+   np = malloc(sizeof(ATL_combnode_t));
+   ATL_assert(np);
+   np->M = M;
+   np->N = N;
+   np->W = W;
+   np->ldw = ldw;
+   np->D = D;
+   np->ldd = ldd;
+   np->next = next;
+   return(np);
+}
+#endif
+
+void Mjoin(PATL,InitTMMNodes)
+   (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, const TYPE *alpha, 
+    const TYPE *beta, const TYPE *one, const TYPE *zero, 
+    ATL_thread_t *btp, ATL_TMMNODE_t *ptmms)
+{
+   int i;
+   void (*gemmK)(ATL_CINT, ATL_CINT, ATL_CINT, const void*, const void *,
+                 ATL_CINT, const void*, ATL_CINT, const void*, void*, ATL_CINT);
+
+   if (TA == AtlasNoTrans)
+   {
+#ifdef TCPLX
+      if (TB == AtlasConjTrans)
+         gemmK = Mjoin(PATL,tsvgemmNC);
+      else
+#endif
+      gemmK = (TB == AtlasNoTrans)?Mjoin(PATL,tsvgemmNN):Mjoin(PATL,tsvgemmNT);
+   }
+#ifdef TCPLX
+   else if (TA == AtlasConjTrans)
+   {
+      if (TB == AtlasNoTrans)
+         gemmK = Mjoin(PATL,tsvgemmCN);
+      else if (TB == AtlasConjTrans)
+         gemmK = Mjoin(PATL,tsvgemmCC);
+      else
+         gemmK = Mjoin(PATL,tsvgemmCT);
+   }
+#endif
+   else
+   {
+#ifdef TCPLX
+      if (TB == AtlasConjTrans)
+         gemmK = Mjoin(PATL,tsvgemmTC);
+      else
+#endif
+      gemmK = (TB == AtlasNoTrans)?Mjoin(PATL,tsvgemmTN):Mjoin(PATL,tsvgemmTT);
+   }
+   for (i=0; i < ATL_NTHREADS; i++)
+   {
+      ptmms[i].mb = MB;
+      ptmms[i].nb = NB;
+      ptmms[i].kb = KB;
+      ptmms[i].gemmK = gemmK;
+      ptmms[i].eltsz = ATL_sizeof;
+      ptmms[i].eltsh = Mjoin(PATL,shift);
+      ptmms[i].K = 0;
+      ptmms[i].nCp = ptmms[i].nCw = 0;
+      ptmms[i].ownC = 0;
+      ptmms[i].rank = i;
+      ptmms[i].alpha = (void*) alpha;
+      ptmms[i].beta  = (void*) beta;
+      ptmms[i].one = (void*) one;
+      ptmms[i].zero  = (void*) zero;
+      ptmms[i].Cinfp[0] = ptmms+i;
+   }
+}
+
+@ROUT ATL_tgemm_rec ATL_tgemm_K ATL_tgemm_p
+void Mjoin(PATL,HandleNewCp)(ATL_TMMNODE_t *me, ATL_TMMNODE_t *him);
+int Mjoin(PATL,CombineCw)(ATL_TMMNODE_t *me, ATL_TMMNODE_t *him);
+@ROUT ATL_tgemm
+int Mjoin(PATL,CombineCw)(ATL_TMMNODE_t *me, ATL_TMMNODE_t *him)
+/*
+ * This routine combines the data in him->Cw into my->Cw (or my->C), if poss.
+ * If his workspace is bigger than mine, I combine instead into his workspace,
+ * and then set my pointer to his workspace.  The buffer that has been subsumed
+ * is freed after the combine.
+ * NOTE: This routine assumes him is *not* an owner of C (i.e. he wrote to
+ *       workspace, not to the original C)!
+ * RETURNS: 0 if we are able to do the combine, non-zero if buffers are
+ *          cannot be combined.
+ */
+{
+   ATL_TMMNODE_t *myCp;
+   TYPE *w;
+   size_t meB, meE, himB, himE, I, J;   /* begin,end of C range */
+   #ifdef TREAL
+      const TYPE ONE = 1.0;
+   #else
+      const TYPE ONE[2] = {1.0, 0.0};
+   #endif
+   const int eltsh = me->eltsh;
+
+   ATL_assert(!him->ownC);
+/*
+ * Find starting/ending points of our C partitions
+ */
+   himB = (size_t)him->C; 
+   himE = himB + ((him->N*(him->ldc) + him->M)<<eltsh);
+   meB  = (size_t) me->C; 
+   meE  = meB + ((me->N*(me->ldc) + me->M)<<eltsh);
+/*
+ * If I own my piece of the original C, then I can combine any C that is
+ * a proper subset of mine; 
+ */
+   if (me->ownC)
+   {
+      ATL_assert(!him->ownC);  /* should never be true in this routine */
+/*
+ *    If his wrkspc is not a subset of mine, I can't combine it into the
+ *    piece of C originally owned by me
+ */
+      if (himB < meB || himE > meE)
+         return(1);       /* can't combine non subset of my C */
+      else if (him->Cw)  /* his malloc succeeded */
+      {
+         Mjoin(PATL,geadd)(him->M, him->N, ONE, ATL_AlignPtr(him->Cw), 
+                           him->ldcw, ONE, (TYPE*)him->C, him->ldc);
+         free(him->Cw);
+      }
+      else if (him->nCw)  /* must do GEMM since he couldn't malloc */
+         him->gemmK(him->M, him->N, him->K, him->alpha, him->A, him->lda,
+                    him->B, him->ldb, SADD ONE, him->C, him->ldc);
+      return(0);        /* successful combine */
+   }
+/*
+ * *************************************************************************
+ * Otherwise, I don't own C, so must combine work into my or his buffer when
+ * possible, and return failure when not
+ * *************************************************************************
+ */
+/*
+ * If my workspace is a superset of his, use my workspace as the target buffer
+ * if I was able to allocate it
+ */
+   if (meB <= himB && meE >= himE && me->Cw)
+   {
+/*
+ *    Determine where our overlap is
+ */
+      I = (himB - meB)>>eltsh;                    /* gap in elements */
+      J = I / him->ldc;                           /* column coord */
+      I -= J*him->ldc;                            /* row coord */
+      if (I+him->M >= me->M || J+him->N >= me->N) /* no intersec after all! */
+         return(1);                               /* so cannot combine */
+      w = ATL_AlignPtr(me->Cw);
+      w += J*me->ldcw + I;
+      if (him->Cw)  /* if he succeeded in malloc, combine his op with mine */
+      {
+         Mjoin(PATL,geadd)(him->M, him->N, ONE, ATL_AlignPtr(him->Cw), 
+                           him->ldcw, ONE, w, me->ldcw);
+         free(him->Cw);
+      }
+      else          /* must do GEMM since he didn't */
+         him->gemmK(him->M, him->N, him->K, him->alpha, him->A, him->lda,
+                    him->B, him->ldb, SADD ONE, w, me->ldcw);
+      return(0);        /* successful combine */
+   }
+/*
+ * else if his workspace is a superset of mine, use his as target buffer if
+ * he was able to allocate it
+ */
+   else if (himB <= meB && himE >= meE && him->Cw)
+   {
+/*
+ *    Determine where our overlap is
+ */
+      I = (meB - himB)>>eltsh;                    /* gap in elements */
+      J = I / me->ldc;                            /* col coordinate */
+      I -= J*me->ldc;                             /* row coordinate */
+      if (I+me->M >= him->M || J+me->N >= him->N) /* no intersec after all! */
+         return(1);                               /* so cannot combine */
+      w = ATL_AlignPtr(him->Cw);
+      w += J*him->ldcw + I;
+      if (me->Cw)  /* if I succeeded in malloc, combine my op with his */
+      {
+         Mjoin(PATL,geadd)(me->M, me->N, ONE, ATL_AlignPtr(me->Cw), 
+                           me->ldcw, ONE, w, him->ldcw);
+         free(me->Cw);
+      }
+      else          /* must do my GEMM into his workspace since I couldn't */
+         him->gemmK(me->M, me->N, me->K, me->alpha, me->A, me->lda,
+                    me->B, me->ldb, SADD ONE, w, him->ldcw);
+      me->C = him->C;
+      me->Cw = him->Cw;
+      me->ldcw = him->ldcw;
+      me->M = him->M;
+      me->N = him->N;
+      return(0);        /* successful combine */
+   }
+   return(1);           /* unsuccessful combine */
+}
+
+void Mjoin(PATL,HandleNewCp)(ATL_TMMNODE_t *me, ATL_TMMNODE_t *him)
+/*
+ * Handles joining a Cp to my list of C partitions
+ */
+{
+  size_t himB, himE, meB, meE, B, E, I, J;
+  ATL_TMMNODE_t *tp;
+  ATL_INT ldc;
+  int i, j;
+  const int eltsh = me->eltsh;
+/*
+ * Find the extent of his C partition
+ */
+   himB = (size_t)him->C; 
+   himE = himB + ((him->N*(him->ldc) + him->M)<<eltsh);
+   ldc = him->ldc;
+/*
+ * First, see if this partition can be joined to one I already own
+ */
+   for (i=0; i < me->nCp; i++)
+   {
+      tp = me->Cinfp[ATL_NTHREADS-1-i];
+      if (tp)
+      {
+         meB  = (size_t) tp->C; 
+         meE  = meB + ((tp->N*(tp->ldc) + tp->M)<<eltsh);
+         if (meB <= himB)  /* my partition has the base pointer */
+         {
+            I = (himB - meB)>>eltsh;    /* gap between our C's in elements */
+            J = I / ldc;                /* column coord */
+            I -= J*ldc;                 /* row coord */
+/*
+ *          If we have same row (col) coord and he starts at col (row) that 
+ *          I stop at, join column (row) panel
+ */
+            if (!I && J == tp->N)
+               tp->N += him->N;
+            else if (!J && I == tp->M)
+               tp->M += him->M;
+            else
+               continue;                /* if unjoinable, go next candidate */
+            break;   /* partitions joined, quit */
+         }
+         else              /* his partition has the base pointer */
+         {
+            I = (meB - himB)>>eltsh;    /* gap between our C's in elements */
+            J = I / ldc;                /* column coord */
+            I -= J*ldc;                 /* row coord */
+/*
+ *          If we have same row (col) coord and I start at col (row) that 
+ *          he stops at, join column (row) space
+ */
+            if (!I && J == him->N)
+               tp->N += him->N;
+            else if (!J && I == tp->M)
+               tp->M += him->M;
+            else
+               continue;                /* if unjoinable, go next candidate */
+            tp->C = him->C;
+            break;   /* partitions joined, quit */
+         }
+      }
+   }
+/*
+ * If I can't join his partition to any of mine, add his to list
+ */
+   if (i == me->nCp)
+   {
+      (me->nCp)++;
+      me->Cinfp[ATL_NTHREADS-(me->nCp)] = him;
+      tp = him;
+   }
+/*
+ * Either new partition is in tp, or an expanded partition is.  In either
+ * case, see if any of my workspaces can be combined into this new 
+ * (or newly expanded) area I own.
+ */
+   if (i < me->nCp)
+   {
+      for (i=0; i < me->nCw; i++)
+      {
+         if (!Mjoin(PATL,CombineCw)(tp, me->Cinfp[i]))
+         {
+            for (j=i+1; j < me->nCw; j++)
+               me->Cinfp[j-1] = me->Cinfp[j];
+            (me->nCw)--;
+         }
+      }
+   }
+}
+
+@ROUT ATL_tgemm_rec ATL_tgemm_K ATL_tgemm_p
+void Mjoin(PATL,CombineStructsMM)(void *vme, void *vhim);
+@ROUT ATL_tgemm
+void Mjoin(PATL,CombineStructsMM)(void *vme, void *vhim)
+{
+   ATL_TMMNODE_t *mme = vme, *mhim = vhim, *tp;
+   int i, j;
+   #ifdef ATL_SERIAL_COMBINE  /* do nothing if combining serially */
+      return;
+   #endif
+
+/*
+ * First, for all of the partitions of the original C that he owns, either
+ * join them with mine, or add them to my list of owned partitions
+ */
+   for (i=0; i < mhim->nCp; i++)
+      Mjoin(PATL,HandleNewCp)(mme, mhim->Cinfp[ATL_NTHREADS-1-i]);
+/*
+ * For all of his workspaces, find out where to combine them into
+ */
+   for (i=0; i < mhim->nCw; i++)
+   {
+/*
+ *    Look through my partitions of original C for combine partner
+ */
+      for (j=0; j < mme->nCp; j++)
+         if (!Mjoin(PATL,CombineCw)(mme->Cinfp[ATL_NTHREADS-1-j], 
+                                    mhim->Cinfp[i]))
+            break;
+/*
+ *    If I can't combine his data directly into C, see if it can be
+ *    combined with any of my workspaces
+ */
+      if (j == mme->nCp)
+      {
+         for (j=0; j < mme->nCw; j++)
+            if (!Mjoin(PATL,CombineCw)(mme->Cinfp[j], mhim->Cinfp[i]))
+               break;
+/*
+ *       If I can't combine his data into any partition or workspace, add his
+ *       node to my list of workspaces to be combined later
+ */
+         if (j == mme->nCw)
+         {
+            mme->Cinfp[j] = mhim->Cinfp[i];
+            mme->nCw = j + 1;
+         }
+      }
+   }
+}
+
+@ROUT ATL_tgemm
+void Mjoin(PATL,tgemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+@ROUT ATL_tgemm_rec
+int Mjoin(PATL,tgemm_rec)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+@ROUT ATL_tgemm_M ATL_tgemm_N ATL_tgemm_K ATL_tgemm_p
+int Mjoin(PATL,tgemm_@(ds))(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+@ROUT ATL_tgemm ATL_tgemm_rec ATL_tgemm_M ATL_tgemm_N ATL_tgemm_K ATL_tgemm_p
+                       ATL_CINT M, ATL_CINT N, ATL_CINT K, const SCALAR alpha, 
+                       const TYPE *A, ATL_CINT lda, const TYPE *B, ATL_CINT ldb,
+                       const SCALAR beta, TYPE *C, ATL_CINT ldc)
+{
+   #ifdef ATL_SERIAL_COMBINE
+      ATL_combnode_t *combb=NULL, *combp;
+   #endif
+   ATL_thread_t tp[ATL_NTHREADS];
+   ATL_LAUNCHSTRUCT_t ls;
+   ATL_TMMNODE_t mms[ATL_NTHREADS];
+   int i, np, DividedK=0;
+   #ifdef TREAL
+      TYPE ONE=ATL_rone, ZERO=ATL_rzero;
+   #else
+      TYPE ONE[2] = {ATL_rone, ATL_rzero}, ZERO[2] = {ATL_rzero, ATL_rzero};
+   #endif
+@ROUT ATL_tgemm_p `   extern int ATL_FINDP;`
+
+   if (M < 1 || N < 1)
+      return;
+   if (K < 1 || SCALAR_IS_ZERO(alpha))
+   {
+      if (!SCALAR_IS_ONE(beta))
+         Mjoin(PATL,gescal)(M, N, beta, C, ldc);
+      return;
+   }
+@ROUT ATL_tgemm
+/*
+ * See how many processors are optimal for this problem
+ */
+   np = Mjoin(PATL,threadMM)(TA, TB, M, N, K);
+   if (np > 1)
+   {
+      Mjoin(PATL,InitTMMNodes)(TA, TB, SADD alpha, SADD beta, SADD ONE, 
+                               SADD ZERO, tp, mms);
+      np = ATL_thrdecompMM(mms, TA, TB, M, N, K, A, lda, B, ldb, C, ldc, 
+                           np, &DividedK);
+   }
+@ROUT ATL_tgemm_p
+   Mjoin(PATL,InitTMMNodes)(TA, TB, SADD alpha, SADD beta, SADD ONE, 
+                            SADD ZERO, tp, mms);
+   np = ATL_thrdecompMM(mms, TA, TB, M, N, K, A, lda, B, ldb, C, ldc, 
+                        ATL_FINDP, &DividedK);
+   if (np < ATL_FINDP)
+      return(0);
+@ROUT ATL_tgemm_rec
+   Mjoin(PATL,InitTMMNodes)(TA, TB, SADD alpha, SADD beta, SADD ONE, 
+                            SADD ZERO, tp, mms);
+   np = ATL_thrdecompMM_rMNK(mms, TA, TB, M/MB, M%MB, N/NB, N%NB, K/KB, K%KB,
+                             A, lda, B, ldb, C, ldc, ATL_NTHREADS, 0, 0);
+   #if ATL_NTHREADS != (1<<ATL_NTHRPOW2)
+      if (np < ATL_NTHREADS)
+         ATL_EnforceNonPwr2LO(mms, np);
+   #endif
+@ROUT ATL_tgemm_M ATL_tgemm_N ATL_tgemm_K
+   Mjoin(PATL,InitTMMNodes)(TA, TB, SADD alpha, SADD beta, SADD ONE, 
+                            SADD ZERO, tp, mms);
+   np = ATL_thrdecompMM_@(ds)(mms, TA, TB, M/MB, M%MB, N/NB, N%NB, K/KB, K%KB,
+                          A, lda, B, ldb, C, ldc, ATL_NTHREADS, 0, 0);
+@ROUT ATL_tgemm ATL_tgemm_rec ATL_tgemm_M ATL_tgemm_N ATL_tgemm_K ATL_tgemm_p
+#ifdef DEBUG
+fprintf(stderr, "np=%d\n\n", np);
+#endif
+   if (np < 2)
+   {
+      Mjoin(PATL,gemm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+@ROUT ATL_tgemm_rec ATL_tgemm_M ATL_tgemm_N ATL_tgemm_K ATL_tgemm_p `      return(1);`
+@ROUT ATL_tgemm `      return;`
+   }
+/*
+ * If we are debugging, set up serial combine queue
+ */
+   #ifdef ATL_SERIAL_COMBINE
+      for (i=0; i < ATL_NTHREADS; i++)
+      {
+         if (mms[i].K)   /* if this struct being used */
+         {
+            if (!mms[i].ownC)   /* I need a workspace for C */
+            {
+               mms[i].Cw = calloc(mms[i].ldcw * mms[i].N, ATL_sizeof);
+               ATL_assert(mms[i].Cw);
+               combb = ATL_NewCombnode(mms[i].M, mms[i].N, mms[i].Cw, 
+                                       mms[i].ldcw, mms[i].C, mms[i].ldc,
+                                       combb);
+            }
+         }
+      }
+   #endif
+
+   ls.opstruct = (char*) mms;
+   ls.opstructstride = (int) ( ((char*)(mms+1)) - (char*)mms );
+   ls.OpStructIsInit = ATL_StructIsInitMM;
+@ROUT ATL_tgemm_M ATL_tgemm_N
+   ls.CombineOpStructs = NULL;
+@ROUT ATL_tgemm ATL_tgemm_rec ATL_tgemm_K ATL_tgemm_p
+   ls.CombineOpStructs = DividedK ? Mjoin(PATL,CombineStructsMM) : NULL;
+@ROUT ATL_tgemm ATL_tgemm_rec ATL_tgemm_M ATL_tgemm_N ATL_tgemm_K ATL_tgemm_p
+   ls.DoWork = ATL_DoWorkMM;
+   ls.rank2thr = tp;
+   for (i=0; i < ATL_NTHREADS; i++)
+   {
+      tp[i].vp = &ls;
+      tp[i].rank = i;
+   }
+   ATL_thread_start(tp, 0, ATL_log2tlaunch, tp);
+   ATL_thread_join(tp);
+/*
+ * If we are debugging, serially combine all workspaces back to original C
+ */
+   #ifdef ATL_SERIAL_COMBINE
+      while(combb)
+      {
+         Mjoin(PATL,geadd)(combb->M, combb->N, ONE, combb->W, combb->ldw,
+                           ONE, combb->D, combb->ldd);
+         free(combb->W);
+         combp = combb;
+         combb = combb->next;
+         free(combp);
+      }
+   #endif
+@ROUT ATL_tgemm_rec ATL_tgemm_M ATL_tgemm_N ATL_tgemm_K ATL_tgemm_p `   return(np);`
+}
+@ROUT ATL_tgemm
+
+void Mjoin(PATL,tvgemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+                        ATL_CINT M, ATL_CINT N, ATL_CINT K, const void *alpha,
+                        const void *A, ATL_CINT lda, const void *B,ATL_CINT ldb,
+                        const void *beta, void *C, ATL_CINT ldc)
+/* 
+ * This void wrapper for tgemm is used in some typeless structures
+ */
+{
+   Mjoin(PATL,tgemm)(TA, TB, M, N, K, SVVAL((const TYPE*)alpha), A, lda,
+                     B, ldb, SVVAL((const TYPE*)beta), C, ldc);
+}
+@ROUT ATL_tsymm
+   @define rt @symm@
+   @define trans @AtlasTrans@
+@ROUT ATL_themm
+   @define rt @hemm@
+   @define trans @AtlasConjTrans@
+@ROUT ATL_themm ATL_tsymm
+#include "atlas_misc.h"
+#define ATL_LAUNCHORDER         /* we want static ATL_launchorder array */
+#include "atlas_threads.h"
+#include "atlas_tlvl3.h"
+int Mjoin(PATL,StructIsInit@up@(rt))(void *vp)
+{
+   return(((ATL_TSYMM_t*)vp)->M);
+}
+
+void Mjoin(PATL,DoWork@up@(rt))(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   ATL_TSYMM_t *sp=vp;
+   Mjoin(PATL,@(rt))(sp->side, sp->uplo, sp->M, sp->N, SVVAL((TYPE*)sp->alpha),
+                     sp->A, sp->lda, sp->B, sp->ldb, SVVAL((TYPE*)sp->beta),
+                     sp->C, sp->ldc);
+}
+
+static void ATL_@(rt)L_rec
+   (ATL_TSYMM_t *syp, ATL_CINT Mblks, ATL_CINT mr, ATL_CINT Nblks, ATL_CINT nr,
+    const TYPE *A, const TYPE *B, TYPE *C)
+{
+   const TYPE *A10, *A01, *B10;
+   TYPE *C10;
+   const int nb = syp->nb;
+   ATL_INT nbR, nbL, rR, rL, nL, nR;
+   #ifdef TCPLX
+      TYPE ONE[2] = {ATL_rone,ATL_rzero};
+   #else
+      TYPE ONE = ATL_rone;
+   #endif
+
+   nbR = Mblks>>1;
+   nbL = Mblks - nbR;
+/*
+ * Stop recursion once we are no longer getting parallelism
+ */
+@skip   if (nbR*Nblks < ATL_TGEMM_XOVER)
+   if (Mjoin(PATL,threadMM)(AtlasNoTrans, AtlasNoTrans, 
+                            nbR*nb, Nblks*nb+nr, nbR*nb) < 2)
+   {
+      Mjoin(PATL,@(rt))(syp->side, syp->uplo, Mblks*nb+mr, syp->N, 
+                       SVVAL((TYPE*)syp->alpha), A, syp->lda, B, syp->ldb,
+                       SVVAL((TYPE*)syp->beta), C, syp->ldc);
+      return;
+   }
+   rL = (nbR == nbL) ? mr : 0;
+   rR = mr - rL;
+   nL = nbL*nb + rL;
+   nR = nbR*nb + rR;
+   B10 = B + (nL SHIFT);
+   C10 = C + (nL SHIFT);
+   ATL_@(rt)L_rec(syp, nbL, rL, Nblks, nr, A, B, C);
+   ATL_@(rt)L_rec(syp, nbR, rR, Nblks, nr, A+(syp->lda+1)*(nL SHIFT), B10, C10);
+   if (syp->uplo == AtlasLower)
+   {
+      A10 = A + (nL SHIFT);
+      Mjoin(PATL,tgemm)(@(trans), AtlasNoTrans, nL, syp->N, nR, 
+                        SVVAL((TYPE*)syp->alpha), A10, syp->lda, B10, syp->ldb, 
+                        ONE, C, syp->ldc);
+      Mjoin(PATL,tgemm)(AtlasNoTrans, AtlasNoTrans, nR, syp->N, nL, 
+                        SVVAL((TYPE*)syp->alpha), A10, syp->lda, B, syp->ldb, 
+                        ONE, C10, syp->ldc);
+   }
+   else
+   {
+      A01 = A + nL*(syp->lda SHIFT);
+      Mjoin(PATL,tgemm)(AtlasNoTrans, AtlasNoTrans, nL, syp->N, nR, 
+                        SVVAL((TYPE*)syp->alpha), A01, syp->lda, B10, syp->ldb, 
+                        ONE, C, syp->ldc);
+      Mjoin(PATL,tgemm)(@(trans), AtlasNoTrans, nR, syp->N, nL, 
+                        SVVAL((TYPE*)syp->alpha), A01, syp->lda, B, syp->ldb, 
+                        ONE, C10, syp->ldc);
+   }
+}
+static void ATL_@(rt)R_rec
+   (ATL_TSYMM_t *syp, ATL_CINT Mblks, ATL_CINT mr, ATL_CINT Nblks, ATL_CINT nr,
+    const TYPE *A, const TYPE *B, TYPE *C)
+{
+   const TYPE *A10, *A01, *B01;
+   TYPE *C01;
+   const int nb = syp->nb;
+   ATL_INT nbR, nbL, rR, rL, nL, nR;
+   #ifdef TCPLX
+      TYPE ONE[2] = {ATL_rone,ATL_rzero};
+   #else
+      TYPE ONE = ATL_rone;
+   #endif
+
+   nbR = Nblks>>1;
+   nbL = Nblks - nbR;
+/*
+ * Stop recursion once we are no longer getting parallelism
+ */
+@skip   if (nbR*Mblks < ATL_TGEMM_XOVER)
+   if (Mjoin(PATL,threadMM)(AtlasNoTrans, AtlasNoTrans, 
+                            Mblks*nb+mr, nbR*nb, nbR*nb) < 2)
+   {
+      Mjoin(PATL,@(rt))(syp->side, syp->uplo, syp->M, Nblks*nb+nr,
+                       SVVAL((TYPE*)syp->alpha), A, syp->lda, B, syp->ldb,
+                       SVVAL((TYPE*)syp->beta), C, syp->ldc);
+      return;
+   }
+   rL = (nbR == nbL) ? nr : 0;
+   rR = nr - rL;
+   nL = nbL*nb + rL;
+   nR = nbR*nb + rR;
+   B01 = B + (nL*syp->ldb SHIFT);
+   C01 = C + (nL*syp->ldc SHIFT);
+   ATL_@(rt)L_rec(syp, Mblks, mr, nbL, rL, A, B, C);
+   ATL_@(rt)L_rec(syp, Mblks, mr, nbR, rR, A+(syp->lda+1)*(nL SHIFT), B01, C01);
+   if (syp->uplo == AtlasLower)
+   {
+      A10 = A + (nL SHIFT);
+      Mjoin(PATL,tgemm)(AtlasNoTrans, AtlasNoTrans, syp->M, nL, nR, 
+                        SVVAL((TYPE*)syp->alpha), B01, syp->ldb, A10, syp->lda, 
+                        ONE, C, syp->ldc);
+      Mjoin(PATL,tgemm)(AtlasNoTrans, @(trans), syp->M, nR, nL, 
+                        SVVAL((TYPE*)syp->alpha), B, syp->ldb, A10, syp->lda, 
+                        ONE, C01, syp->ldc);
+   }
+   else
+   {
+      A01 = A + (syp->lda SHIFT);
+      Mjoin(PATL,tgemm)(AtlasNoTrans, @(trans), syp->M, nL, nR, 
+                        SVVAL((TYPE*)syp->alpha), B01, syp->ldb, A01, syp->lda, 
+                        ONE, C, syp->ldc);
+      Mjoin(PATL,tgemm)(AtlasNoTrans, AtlasNoTrans, syp->M, nR, nL, 
+                        SVVAL((TYPE*)syp->alpha), B, syp->ldb, A01, syp->lda, 
+                        ONE, C01, syp->ldc);
+   }
+}
+
+static void ATL_t@(rt)_SYsplit
+   (const enum ATLAS_SIDE Side, const enum ATLAS_UPLO Uplo, 
+    ATL_CINT M, ATL_CINT N, const SCALAR alpha, const TYPE *A, ATL_CINT lda, 
+    const TYPE *B, ATL_CINT ldb, const SCALAR beta, TYPE *C, ATL_CINT ldc,
+    ATL_CINT nb)
+/*
+ * This routine is specialized for the case where we cannnot split the
+ * B matrix, and must instead split the symmetric matrix (A).  It calls
+ * a recursive GEMM-based BLAS, that gets its parallel performance from
+ * calling threaded GEMM.
+ */
+{
+   ATL_TSYMM_t ss;
+   ss.side = Side;
+   ss.uplo = Uplo;
+   ss.M = M;
+   ss.N = N;
+   ss.nb = nb;
+   ss.alpha = SADD alpha;
+   ss.beta  = SADD beta;
+   ss.lda = lda;
+   ss.ldb = ldb;
+   ss.ldc = ldc;
+   if (Side == AtlasLeft)
+      ATL_@(rt)L_rec(&ss, M/nb, M%nb, N/nb, N%nb, A, B, C);
+   else
+      ATL_@(rt)R_rec(&ss, M/nb, M%nb, N/nb, N%nb, A, B, C);
+
+}
+
+/*
+ * The XOVER is the min # of blocks required to do parallel operation
+ */
+#ifndef ATL_TSYMM_XOVER
+   #ifdef ATL_TGEMM_XOVER
+      #define ATL_TSYMM_XOVER ATL_TGEMM_XOVER
+   #else
+      #define ATL_TSYMM_XOVER 4  /* want 4 blocks for parallel execution */
+   #endif
+#endif
+/*
+ * Once you have achieved enough blocks to do computation, minimum number
+ * of blocks to give each processor
+ */
+#ifndef ATL_TSYMM_ADDP
+   #ifdef ATL_TGEMM_ADDP 
+      #define ATL_TSYMM_ADDP  ATL_TGEMM_ADDP 
+   #else
+      #define ATL_TSYMM_ADDP  1  /* want 1 blocks to add proc to workers */
+   #endif
+#endif
+void Mjoin(PATL,t@(rt))
+   (const enum ATLAS_SIDE Side, const enum ATLAS_UPLO Uplo, 
+    ATL_CINT M, ATL_CINT N, const SCALAR alpha, const TYPE *A, ATL_CINT lda, 
+    const TYPE *B, ATL_CINT ldb, const SCALAR beta, TYPE *C, ATL_CINT ldc)
+{
+   ATL_INT n, nblks, tblks, nr, minblks, extrablks, p, i, j;
+   ATL_thread_t tp[ATL_NTHREADS];
+   ATL_TSYMM_t symms[ATL_NTHREADS];
+   ATL_LAUNCHSTRUCT_t ls;
+   const TYPE *b;
+   TYPE *c;
+   static int nb=0;
+
+   if (M < 1 || N < 1)
+      return;
+   if (SCALAR_IS_ZERO(alpha))
+   {
+      if (!SCALAR_IS_ONE(beta))
+         Mjoin(PATL,gescal)(M, N, beta, C, ldc);
+      return;
+   }
+   if (!nb) nb = Mjoin(PATL,GetNB());
+   if (Side == AtlasLeft)
+   {
+      nblks = N / nb;
+      nr = N - nblks*nb;
+      tblks = ((double)(M*N)) / ( (double)nb * nb );
+      p = (nblks+ATL_TSYMM_ADDP-1)/ATL_TSYMM_ADDP;
+      if (p < ATL_NTHREADS)  /* N not big enough to give blk to each proc */
+      {
+/*
+ *       If I can't split N, and M is the dominant cost, use recursion to
+ *       decompose symmetric matrix; parallelism will come from TGEMM calls
+ */
+         if (M > (N<<(ATL_NTHRPOW2+2)))
+         {
+            ATL_t@(rt)_SYsplit(Side, Uplo, M, N, alpha, A, lda, B, ldb, 
+                              beta, C, ldc, nb);
+            return;
+         }
+      }
+      else
+         p = ATL_NTHREADS;
+      if (p < 2)
+         goto SERIAL;
+/*
+ *    Distribute N over the processors
+ */
+      b = B;
+      c = C;
+      minblks = nblks / p;
+      extrablks = nblks - minblks*p;
+      for (i=0; i < p; i++)
+      {
+         if (i < extrablks)
+            n = (minblks+1)*nb;
+         else if (i == extrablks)
+            n = minblks*nb + nr;
+         else
+            n = minblks*nb;
+         j = ATL_launchorder[i];
+         symms[j].A = A;
+         symms[j].B = b;
+         symms[j].alpha = SADD alpha;
+         symms[j].beta = SADD beta;
+         symms[j].C = c;
+         symms[j].M = M;
+         symms[j].N = n;
+         symms[j].lda = lda;
+         symms[j].ldb = ldb;
+         symms[j].ldc = ldc;
+         symms[j].side = Side;
+         symms[j].uplo = Uplo;
+         b = MindxT(b, ATL_MulBySize((size_t)ldb)*n);
+         c = MindxT(c, ATL_MulBySize((size_t)ldc)*n);
+      }
+      for (; i < ATL_NTHREADS; i++)  /* flag rest of struct as uninitialized */
+         symms[ATL_launchorder[i]].M = 0;
+   }
+   else  /* Side == AtlasRight */
+   {
+      nblks = M / nb;
+      nr = M - nblks*nb;
+      tblks = ((double)(M*N)) / ( (double)nb * nb );
+      p = (nblks+ATL_TSYMM_ADDP-1)/ATL_TSYMM_ADDP;
+      if (p < ATL_NTHREADS)  /* N not big enough to give blk to each proc */
+      {
+/*
+ *       If I can't split M, and N is the dominant cost, use recursion to
+ *       decompose symmetric matrix; parallelism will come from TGEMM calls
+ */
+         if (N > (M<<(ATL_NTHRPOW2+2)))
+         {
+            ATL_t@(rt)_SYsplit(Side, Uplo, M, N, alpha, A, lda, B, ldb, 
+                              beta, C, ldc, nb);
+            return;
+         }
+      }
+      else
+         p = ATL_NTHREADS;
+      if (p < 2)
+         goto SERIAL;
+/*
+ *    Distribute M over the processors
+ */
+      b = B;
+      c = C;
+      minblks = nblks / p;
+      extrablks = nblks - minblks*p;
+      for (i=0; i < p; i++)
+      {
+         if (i < extrablks)
+            n = (minblks+1)*nb;
+         else if (i == extrablks)
+            n = minblks*nb + nr;
+         else
+            n = minblks*nb;
+         j = ATL_launchorder[i];
+         symms[j].A = A;
+         symms[j].B = b;
+         symms[j].alpha = SADD alpha;
+         symms[j].beta = SADD beta;
+         symms[j].C = c;
+         symms[j].M = n;
+         symms[j].N = N;
+         symms[j].lda = lda;
+         symms[j].ldb = ldb;
+         symms[j].ldc = ldc;
+         symms[j].side = Side;
+         symms[j].uplo = Uplo;
+         b = MindxT(b, ATL_MulBySize((size_t)n));
+         c = MindxT(c, ATL_MulBySize((size_t)n));
+      }
+      for (; i < ATL_NTHREADS; i++)  /* flag rest of struct as uninitialized */
+         symms[ATL_launchorder[i]].M = 0;
+   }
+   if (p < 2)
+   {
+SERIAL:
+      Mjoin(PATL,@(rt))(Side, Uplo, M, N, alpha, A, lda, B, ldb, beta, C, ldc);
+      return;
+   }
+   ls.opstruct = (char*) symms;
+   ls.opstructstride = (int) ( ((char*)(symms+1)) - (char*)(symms) );
+   ls.CombineOpStructs = NULL;
+   ls.OpStructIsInit = Mjoin(PATL,StructIsInit@up@(rt));
+   ls.DoWork = Mjoin(PATL,DoWork@up@(rt));
+   ls.rank2thr = tp;
+   for (i=0; i < ATL_NTHREADS; i++)
+   {
+      tp[i].vp = &ls;
+      tp[i].rank = i;
+   }
+   ATL_thread_start(tp, 0, ATL_tlaunch, tp);
+   ATL_thread_join(tp);
+}
+
+@ROUT ATL_ttrmm
+   @define rt @trmm@
+@ROUT ATL_ttrsm
+   @define rt @trsm@
+@ROUT ATL_ttrsm ATL_ttrmm
+#include "atlas_misc.h"
+#define ATL_LAUNCHORDER         /* we want static ATL_launchorder array */
+#include "atlas_threads.h"
+#include "atlas_tlvl3.h"
+int Mjoin(PATL,StructIsInit@up@(rt))(void *vp)
+{
+   return(((ATL_TTRSM_t*)vp)->B != NULL);
+}
+
+@beginskip
+void Mjoin(PATL,tvtrsm)(ATL_TTRSM_t *tp)
+{
+   Mjoin(PATL,trsm)(tp->side, tp->uplo, tp->TA, tp->diag, tp->M, tp->N,
+                    SVVAL((TYPE*)tp->alpha), tp->A, tp->lda, tp->B, tp->ldb);
+}
+@endskip
+
+void Mjoin(PATL,DoWork@up@(rt))(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   ATL_TTRSM_t *tp=vp;
+   Mjoin(PATL,@(rt))(tp->side, tp->uplo, tp->TA, tp->diag, tp->M, tp->N,
+                    SVVAL((TYPE*)tp->alpha), tp->A, tp->lda, tp->B, tp->ldb);
+}
+
+#ifndef ATL_TTRSM_XOVER
+   #define ATL_TTRSM_XOVER 4   /* want 4 total blocks before adding proc */
+#endif
+void Mjoin(PATL,t@(rt))(const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo, 
+                       const enum ATLAS_TRANS TA, const enum ATLAS_DIAG diag,
+                       ATL_CINT M, ATL_CINT N, const SCALAR alpha,
+                       const TYPE *A, ATL_CINT lda, TYPE *B, ATL_CINT ldb)
+{
+   ATL_thread_t tp[ATL_NTHREADS];
+   ATL_TTRSM_t trsms[ATL_NTHREADS];
+   ATL_LAUNCHSTRUCT_t ls;
+   TYPE *b;
+   ATL_INT n, nblks, minblks;
+   double tblks;
+   int nr, p, i, j, extrablks;
+   static int nb=0;
+
+   if (M < 1 || N < 1)
+      return;
+   if (SCALAR_IS_ZERO(alpha))
+   {
+      Mjoin(PATL,gezero)(M, N, B, ldb);
+      return;
+   }
+/*
+ * Distribute RHS over the processors
+ */
+   if (!nb) nb = Mjoin(PATL,GetNB)();
+   if (side == AtlasLeft)
+   {
+      nblks = N/nb;
+      nr = N - nblks*nb;
+      tblks = ((double)(M*N)) / ( (double)nb * nb );
+      p = (tblks+ATL_TTRSM_XOVER-1)/ATL_TTRSM_XOVER;
+      p = Mmin(p, ATL_NTHREADS);
+      p = p ? p : 1;
+
+      b = B;
+      minblks = nblks / p;
+      extrablks = nblks - minblks*p;
+      for (i=0; i < p; i++)
+      {
+         if (i < extrablks)
+            n = (minblks+1)*nb;
+         else if (i == extrablks)
+            n = minblks*nb + nr;
+         else 
+            n = minblks*nb;
+         j = ATL_launchorder[i];
+@skip         trsms[j].eltsh = Mjoin(PATL,shift);
+@skip         trsms[j].trsmK = Mjoin(PATL,tvtrsm);
+         trsms[j].A = A;
+         trsms[j].M = M;
+         trsms[j].N = n;
+         trsms[j].lda = lda;
+         trsms[j].ldb = ldb;
+         trsms[j].B = b;
+         trsms[j].alpha = SADD alpha;
+         trsms[j].side = side;
+         trsms[j].uplo = uplo;
+         trsms[j].TA   = TA;
+         trsms[j].diag = diag;
+         n *= (ldb << Mjoin(PATL,shift));
+         b = MindxT(b, n);
+      }
+      for (; i < ATL_NTHREADS; i++)  /* flag rest of struct as uninitialized */
+         trsms[ATL_launchorder[i]].B = NULL;  
+   }
+   else /* Side == AtlasRight */
+   {
+      nblks = M/nb;
+      nr = M - nblks*nb;
+      tblks = (N/nb)*nblks;
+      p = (tblks+ATL_TTRSM_XOVER-1)/ATL_TTRSM_XOVER;
+      p = Mmin(p, ATL_NTHREADS);
+      p = p ? p : 1;
+
+      b = B;
+      minblks = nblks / p;
+      extrablks = nblks - minblks*p;
+      for (i=0; i < p; i++)
+      {
+         if (i < extrablks)
+            n = (minblks+1)*nb;
+         else if (i == extrablks)
+            n = minblks*nb + nr;
+         else 
+            n = minblks*nb;
+         j = ATL_launchorder[i];
+@skip         trsms[j].eltsh = Mjoin(PATL,shift);
+@skip         trsms[j].trsmK = Mjoin(PATL,tvtrsm);
+         trsms[j].A = A;
+         trsms[j].M = n;
+         trsms[j].N = N;
+         trsms[j].lda = lda;
+         trsms[j].ldb = ldb;
+         trsms[j].B = b;
+         trsms[j].alpha = SADD alpha;
+         trsms[j].side = side;
+         trsms[j].uplo = uplo;
+         trsms[j].TA   = TA;
+         trsms[j].diag = diag;
+         n <<= Mjoin(PATL,shift);
+         b = MindxT(b, n);
+      }
+   }
+   if (p < 2)
+   {
+      Mjoin(PATL,@(rt))(side, uplo, TA, diag, M, N, alpha, A, lda, B, ldb);
+      return;
+   }
+   for (; i < ATL_NTHREADS; i++)  /* flag rest of struct as uninitialized */
+      trsms[ATL_launchorder[i]].B = NULL;  
+   ls.opstruct = (char*) trsms;
+   ls.opstructstride = (int) ( ((char*)(trsms+1)) - (char*)(trsms) );
+   ls.CombineOpStructs = NULL;
+   ls.OpStructIsInit = Mjoin(PATL,StructIsInit@up@(rt));
+   ls.DoWork = Mjoin(PATL,DoWork@up@(rt));
+   ls.rank2thr = tp;
+   for (i=0; i < ATL_NTHREADS; i++)
+   {
+      tp[i].vp = &ls;
+      tp[i].rank = i;
+   }
+   ATL_thread_start(tp, 0, ATL_tlaunch, tp);
+   ATL_thread_join(tp);
+}
+@ROUT ATL_Xtsyr2k
+#include "atlas_misc.h"
+#include "atlas_threads.h"
+#include "atlas_tlvl3.h"
+                  
+static int ATL_tsyr2kK(ATL_SYR2K_t *syp, ATL_CINT N, ATL_CINT K, 
+                       const void *A, const void *B, void *C)
+/*
+ * Attempts to allocate workspace W, then do:
+ *   (1) W = alpha*A*B' or alpha*A'B (GEMM)
+ *   (2) C <- beta*C + W + W'
+ * RETURNS: 0 on success, nonzero if unable to allocate memory
+ */
+{
+   void *v, *W;
+   ATL_INT ldw;
+   int i;
+   size_t sz;
+   const int eltsh = syp->eltsh;
+
+/*
+ * Make ldw a multiple of 4 that is not a power of 2
+ */
+   ldw = ((N+3)>>2)<<2;
+   if (!(ldw&(ldw-1)))
+      ldw += 4;
+@beginskip
+   for (i=0; i <= sizeof(ldw)*8; i++)
+   {
+      if (!(ldw^(1<<i)))
+      {
+         ldw += 4;
+         break;
+      }
+   }
+@endskip
+   sz = (ldw*N)<<eltsh;
+   if (sz <= ATL_NTHREADS*ATL_PTMAXMALLOC)
+      v = malloc(sz + ATL_Cachelen);
+   if (!v)
+      return(1);  /* signal we can't get memory */
+
+   W = ATL_AlignPtr(v);
+   syp->tvgemm(syp->TA, syp->TB, N, N, K, syp->alpha, A, syp->lda, B, syp->ldb,
+               syp->zero, W, ldw);
+   syp->tvApAt(syp->Uplo, N, W, ldw, syp->beta, C, syp->ldc);
+   free(v);
+   return(0);
+}
+
+void ATL_tvsyr2k_rec
+   (ATL_SYR2K_t *syp, ATL_CINT Nblks, ATL_CINT nr, const void *A, 
+    const void *B, void *C)
+/*
+ * Do SYR2K/HER2K, either by mallocing space and calling GEMM, or recuring
+ * until C is small enough that space can be allocated.  Gets its parallelism
+ * from the calls to parallel GEMM
+ */
+{
+   const int nb = syp->nb, eltsh = syp->eltsh;
+   ATL_INT nL, nR, nbL, nbR, rL, rR;
+   void *gc, *sc;   /* ptr to C to update with gemm & 2nd syr2k call, resp */
+   void *A1, *B1;   /* ptr to 2nd block of a/b resp */
+/*
+ * Attempt to halt recursion by allocating workspace, and calling GEMM
+ */
+   if (!ATL_tsyr2kK(syp, Nblks*nb+nr, syp->K, A, B, C))
+      return;
+   ATL_assert(Nblks>1 || (Nblks==1 && nr));  /* must have something to split */
+/*
+ * Must recur in order to make problem small enough to allocate C workspace
+ */
+   nbR = Nblks>>1;
+   nbL = Nblks - nbR;
+   rL = (nL == nR) ? nr : 0;
+   rR = nr - rL;
+   nL = nbL*nb + rL;
+   nR = nbR*nb + rR;
+   sc = MindxT(C, (((size_t)nL*(syp->ldc+1))<<eltsh));
+   if (syp->trans == AtlasNoTrans)
+   {
+      A1 = MindxT(A, ((size_t)nL<<eltsh));
+      B1 = MindxT(B, ((size_t)nL<<eltsh));
+   }
+   else  /* index like transpose */
+   {
+      A1 = MindxT(A, (((size_t)nL*syp->lda)<<eltsh));
+      B1 = MindxT(B, (((size_t)nL*syp->ldb)<<eltsh));
+   }
+
+   ATL_tvsyr2k_rec(syp, nbL, rL, A, B, C);
+   if (syp->Uplo == AtlasUpper)
+   {
+      gc = MindxT(C, (((size_t)nL*syp->ldc)<<eltsh));
+      syp->tvgemm(syp->TA, syp->TB, nL, nR, syp->K, syp->alpha, A, syp->lda, 
+                  B1, syp->ldb, syp->beta, gc, syp->ldc);
+      syp->tvgemm(syp->TA, syp->TB, nL, nR, syp->K, syp->alpha2, B, syp->ldb, 
+                  A1, syp->lda, syp->one, gc, syp->ldc);
+   }
+   else
+   {
+      gc = MindxT(C, ((size_t)nL<<eltsh));
+      syp->tvgemm(syp->TA, syp->TB, nR, nL, syp->K, syp->alpha, A1, syp->lda, 
+                  B, syp->ldb, syp->beta, gc, syp->ldc);
+      syp->tvgemm(syp->TA, syp->TB, nR, nL, syp->K, syp->alpha2, B1, syp->ldb, 
+                  A, syp->lda, syp->one, gc, syp->ldc);
+   }
+   ATL_tvsyr2k_rec(syp, nbR, rR, A1, B1, sc);
+
+}
+
+@ROUT ATL_tsyr2k
+   @define rt @syr2k@
+   @define ApA @syApAt@
+   @define trans @AtlasTrans@
+@ROUT ATL_ther2k
+   @define rt @her2k@
+   @define ApA @heApAc@
+   @define trans @AtlasConjTrans@
+@ROUT ATL_tsyr2k ATL_ther2k
+#include "atlas_misc.h"
+#include "atlas_threads.h"
+#include "atlas_tlvl3.h"
+
+void Mjoin(PATL,tv@(ApA))(const enum ATLAS_UPLO Uplo, ATL_CINT N, const void *A,
+                          ATL_CINT lda, const void *beta, void *C, ATL_CINT ldc)
+{
+   Mjoin(PATL,@(ApA))(Uplo, N, A, lda, SVVAL((const TYPE*)beta), C, ldc);
+}
+
+void Mjoin(PATL,t@(rt))
+   (const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans,
+    ATL_CINT N, ATL_CINT K, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
+@ROUT ATL_tsyr2k
+    const TYPE *B, ATL_CINT ldb, const SCALAR beta, TYPE *C, ATL_CINT ldc)
+@ROUT ATL_ther2k
+    const TYPE *B, ATL_CINT ldb, const TYPE beta0, TYPE *C, ATL_CINT ldc)
+@ROUT ATL_tsyr2k ATL_ther2k
+{
+   ATL_SYR2K_t sy;
+   #ifdef TREAL
+      const TYPE ONE = ATL_rone, ZERO = ATL_rzero;
+   #else
+      const TYPE ONE[2]={ATL_rone, ATL_rzero}, ZERO[2]={ATL_rzero,ATL_rzero};
+@ROUT ATL_ther2k 
+      const TYPE alpha2[2]={*alpha,(alpha[1]!=ATL_rzero)?-alpha[1]:ATL_rzero};
+      const TYPE beta[2] = {beta0, ATL_rzero};
+@ROUT ATL_tsyr2k ATL_ther2k
+   #endif
+
+   if (N < 1)
+      return;
+   if (SCALAR_IS_ZERO(alpha) || K < 1)
+   {
+@ROUT ATL_ther2k 
+      if (beta0 != ATL_rone)
+         Mjoin(PATL,hescal)(Uplo, N, N, beta0, C, ldc);
+@ROUT ATL_tsyr2k 
+      if (!SCALAR_IS_ONE(beta))
+         Mjoin(PATL,trscal)(Uplo, N, N, beta, C, ldc);
+@ROUT ATL_tsyr2k ATL_ther2k
+      return;
+   }
+@ROUT ATL_tsyr2k
+   sy.alpha2 = sy.alpha = SADD alpha;
+   sy.beta  = SADD beta;
+@ROUT ATL_ther2k
+   sy.alpha = SADD alpha;
+   sy.alpha2 = alpha2;
+   sy.beta  = beta;
+@ROUT ATL_tsyr2k ATL_ther2k
+   sy.one = SADD ONE;
+   sy.zero = SADD ZERO;
+   sy.tvgemm = Mjoin(PATL,tvgemm);
+   sy.tvApAt = Mjoin(PATL,tv@(ApA));
+   sy.K = K;
+   sy.lda = lda;
+   sy.ldb = ldb;
+   sy.ldc = ldc;
+   sy.eltsh = Mjoin(PATL,shift);
+   sy.Uplo = Uplo;
+   sy.trans = Trans;
+   if (Trans == AtlasNoTrans)
+   {
+      sy.TA = AtlasNoTrans;
+      sy.TB = @(trans);
+      sy.TA2 = @(trans);
+      sy.TB2 = AtlasNoTrans;
+   }
+   else
+   {
+      sy.TA = @(trans);
+      sy.TB = AtlasNoTrans;
+      sy.TA2 = AtlasNoTrans;
+      sy.TB2 = @(trans);
+   }
+   sy.nb = Mjoin(PATL,GetNB)();
+   ATL_tvsyr2k_rec(&sy, N/sy.nb, N%sy.nb, A, B, C);
+}
+
+@beginskip
+/*
+ * NOTE: want to put these primitives in src/auxil, then I write higher
+ *       level drivers that call them on blocks
+ */
+#ifdef TREAL
+void Mjoin(PATL,putAAt_L)
+   (ATL_CINT N, const TYPE beta, const TYPE *A, ATL_CINT lda, 
+    TYPE *L, ATL_CINT ldl)
+/*
+ * L <- A+At, L lower triangular
+ */
+{
+   TYPE *Ar, *Ac=A;
+   ATL_INT i, j;
+
+   for (j=0; j < N; j++)
+   {
+      for (Ar=A+j,i=j; i < M; i++, Ar += lda)
+      #ifdef BETA0
+         Cc[i] = Ac[i] + *Ar;
+      #elif defined(BETA1)
+         Cc[i] += Ac[i] + *Ar;
+      #else
+         Cc[i] = beta*C[i] + Ac[i] + *Ar;
+      #endif
+      Ac += lda;
+   }
+}
+void Mjoin(PATL,putABt_L)
+   (ATL_CINT M, ATL_CINT N, const TYPE beta, const TYPE *A, ATL_CINT lda, 
+    const TYPE *B, ATL_CINT ldb, TYPE *C, ATL_CINT ldc)
+/*
+ * C <- beta*C + A + B'
+ */
+{
+   TYPE *Br;
+   for (j=0; j < N; j++)
+   {
+      for (Br=B,i=0; i < M; i++, Br += ldb)
+      #ifdef BETA0
+         Cc[i] = A[i] + *Br;
+      #elif defined(BETA1)
+         Cc[i] += A[i] + *Br;
+      #else
+         Cc[i] = beta*C[i] + A[i] + *Br;
+      #endif
+      C += ldc;
+      A += lda;
+      B++;
+   }
+}
+#else
+#endif
+
+void Mjoin(PATL,vsyr2k_putL)(ATL_CINT N, const void *beta0, const void *A, 
+                             ATL_CINT lda, void *C, ATL_CINT ldc)
+/* 
+ * Takes A with property (A + A') = (A + A')', 
+ *    C <- beta*C + A + A'
+ * NOTE: This kernel is unblocked for initial try, which could cause TLB 
+ *        disaster.  Need to write blocked version, and perhaps thread.
+ */
+{
+   const TYPE *Ac = A, *Ar;
+   const TYPE beta = *((const TYPE*)beta0);
+   TYPE *Cc = C;
+   ATL_CINT i, j;
+
+   if (beta == ATL_rzero)
+   {
+      for (j=0; j != N; j++, Ac += lda, Cc += ldc)
+      {
+         for (Ar=Ac+j, i=j; i != N; i++, Ar += lda)
+            Cc[i] = Ac[i] + *Ar;
+      }
+   }
+   else if (beta == ATL_rone)
+   {
+      for (j=0; j != N; j++, Ac += lda, Cc += ldc)
+      {
+         for (Ar=Ac+j, i=j; i != N; i++, Ar += lda)
+            Cc[i] += Ac[i] + *Ar;
+      }
+   }
+   else
+   {
+      for (j=0; j != N; j++, Ac += lda, Cc += ldc)
+      {
+         for (Ar=Ac+j, i=j; i != N; i++, Ar += lda)
+            Cc[i] = beta*Cc[i] + Ac[i] + *Ar;
+      }
+   }
+}
+@endskip
+@ROUT ATL_Xtsyrk
+#include "atlas_misc.h"
+#define ATL_LAUNCHORDER
+#include "atlas_threads.h"
+#include "atlas_tlvl3.h"
+#include "math.h"
+/*
+ * Recursive decompositon on trapazoidal-shaped matrix ($C$ after splitting)
+ */
+#ifndef ATL_MINL3THRFLOPS
+   #ifdef ATL_TGEMM_ADDP
+      #define ATL_MINL3THRFLOPS \
+         (((2.0*ATL_TGEMM_ADDP)*ATL_TGEMM_ADDP)*ATL_TGEMM_ADDP)
+   #else
+      #define ATL_MINL3THRFLOPS (((2.0*MB)*NB)*KB)
+   #endif
+#endif
+@beginskip
+int ATL_tsyrkdecomp_tr
+   (ATL_TSYRK_t *psyrk, const int P, ATL_CINT Tblks, ATL_CINT tr, 
+    ATL_CINT Mblks, ATL_CINT mr, ATL_CINT Nblks, ATL_CINT nr, ATL_CINT K,
+    ATL_CINT ia, ATL_CINT ja, ATL_CINT ib, ATL_CINT jb, 
+    ATL_CINT ic, ATL_CINT jc)
+{
+   double flops;
+   double percL;  /* % of calculation to do on left size */
+   int pL, pR; 
+   ATL_INT i, nL, nR, rL, rR;
+   const int nb = psyrk->nb;
+  
+   pR = (P>>1);
+   pL = P - pR;
+@skip pL=1; pR=P-1;   /* HERE HERE HERE: debug */
+   percL = (pL == pR) ? 0.5 : ((double)pL)/((double)P);
+   
+/*
+ * If problem is triangular, divide up problem so LEFT does SYRK+GEMM, and
+ * RIGHT does SYRK only; this means nL = T(1-sqrt(percentL))
+ */
+   if (!Mblks && !Nblks)
+   {
+@skip      nL = 0.5 + ((pL == pR) ? 0.29289322*Tblks : 2.0*percL*Tblks*(1.0-0.5*sqrt(2)));
+      nL = (0.58578664*Tblks)*percL;
+      nR = Tblks - nL;
+      flops = nR*nb;
+      flops *= flops;
+      flops *= K;
+      if (P < 2 || !nL || !nR || flops < ATL_MINL3THRFLOPS)
+      {
+         psyrk->T = Tblks*nb + tr;
+fprintf(stderr, "FLOPS=%.2f\n", (1.0*psyrk->T)*psyrk->T);
+         psyrk->M = psyrk->N = 0;
+         psyrk->ia = ia;
+         psyrk->ja = ja;
+         psyrk->ib = ib;
+         psyrk->jb = jb;
+         psyrk->ic = ic;
+         psyrk->jc = jc;
+         return(1);
+      }
+      rL = (nL > nR) ? 0 : tr;
+      rR = tr - rL;
+fprintf(stderr, "%d of %s\n", __LINE__, __FILE__);
+      i = ATL_tsyrkdecomp_tr(psyrk, pL, nL, rL, nR, rR, nL, rL, K, 
+                             ia, ja, ib, jb, ic, jc);
+      i += ATL_tsyrkdecomp_tr(psyrk+pL, pR, nR, rR, 0, 0, 0, 0, K,
+                              ia+nL*nb+rL, ja, ib, jb+nL*nb+rL, 
+                              ic+nL*nb+rL, jc+nL*nb+rL);
+      return(i);
+   }
+/*
+ * Only divide M if all the SYRK flops can be done in LEFT's work.
+ * Divides gemm's M asymmetrically to match the SYRK flops
+ */
+   if (Mblks>=Nblks)
+   {
+      if (Tblks)
+         ATL_assert(Nblks == Tblks && nr == tr);
+      nL = 0.5*percL*(Mblks+Mblks-Tblks);
+      if (nL < 1) nL = 1;
+      nR = Mblks - nL;
+      flops = 2.0*nR*nb*Nblks*nb*K;
+      if (P < 2 || !nL || flops < ATL_MINL3THRFLOPS)
+      {
+         psyrk->T = Tblks*nb + tr;
+         psyrk->M = Mblks*nb + mr;
+         psyrk->N = Nblks*nb + nr;
+fprintf(stderr, "T=%d, M-%d, N=%d, FLOPS=%.2f\n", psyrk->T, psyrk->M, psyrk->N,
+        (1.0*psyrk->T)*psyrk->T + (2.0*psyrk->M)*psyrk->N);
+         psyrk->ia = ia;
+         psyrk->ja = ja;
+         psyrk->ib = ib;
+         psyrk->jb = jb;
+         psyrk->ic = ic;
+         psyrk->jc = jc;
+         return(1);
+      }
+fprintf(stderr, "%d of %s\n", __LINE__, __FILE__);
+      rL = (!Tblks && nL <= nR) ? mr : 0;
+      rR = mr - rL;
+      i = ATL_tsyrkdecomp_tr(psyrk, pL, Tblks, tr, nL, rL, Nblks, nr, K,
+                             ia, ja, ib, jb, ic, jc);
+      i += ATL_tsyrkdecomp_tr(psyrk+pL, pR, 0, 0, nR, rR, Nblks, nr, K,
+                              ia+(nL+Tblks)*nb+rL+tr, ja, ib, jb, 
+                              ic+(nL+Tblks)*nb+rL+tr, jc);
+      return(i);
+   }
+/*
+ * As a last choice, cut both GEMM and SYRK (N & T) together
+ * Must be done asymmetrically to balance differently sized gemms
+ */
+   if (Nblks && Tblks && nr == tr) /* divide N & T*/
+   {
+      nL = 2.0*percL*(Nblks+Mblks-
+         sqrt((0.5*Nblks*Nblks)+((double)Nblks)*Mblks+((double) Mblks)*Mblks));
+      if (nL < 1) nL = 1;
+      nR = Nblks - nL;
+      flops = nR * nb;
+      flops = flops*flops + (2.0*Mblks)*(nb*flops);
+      flops *= K;
+      if (P < 2 || !nL || !nR || flops < ATL_MINL3THRFLOPS)
+      {
+         psyrk->T = Tblks*nb + tr;
+         psyrk->M = Mblks*nb + mr;
+         psyrk->N = Nblks*nb + nr;
+fprintf(stderr, "bT=%d, M-%d, N=%d, FLOPS=%.2f\n", psyrk->T, psyrk->M, psyrk->N,
+        (1.0*psyrk->T)*psyrk->T + (2.0*psyrk->M)*psyrk->N);
+         psyrk->ia = ia;
+         psyrk->ja = ja;
+         psyrk->ib = ib;
+         psyrk->jb = jb;
+         psyrk->ic = ic;
+         psyrk->jc = jc;
+         return(1);
+      }
+fprintf(stderr, "%d of %s\n", __LINE__, __FILE__);
+      i = ATL_tsyrkdecomp_tr(psyrk, pL, nL, 0, Mblks+nR, tr, nL, 0, K,
+                             ia, ja, ib, jb, ic, jc);
+      i += ATL_tsyrkdecomp_tr(psyrk+pL, pR, nR, tr, Mblks, mr, nR, tr, K,
+                              ia+nL*nb, ja, ib, jb+nL*nb, ic+nL*nb, jc+nL*nb);
+      return(i);
+   }
+   else  /* dividing a GEMM on N-dimension only */
+   {
+      ATL_assert(!Tblks && !tr && Nblks >= Mblks);
+      nL = percL*Nblks + 0.5;
+      nR = Nblks - nL;
+      flops = ((2.0*nR*nb)*Mblks)*nb*K;
+      if (P < 2 || !nL || !nR || flops < ATL_MINL3THRFLOPS)
+      {
+         psyrk->T = Tblks*nb + tr;
+         psyrk->M = Mblks*nb + mr;
+         psyrk->N = Nblks*nb + nr;
+fprintf(stderr, "bT=%d, M-%d, N=%d, FLOPS=%.2f\n", psyrk->T, psyrk->M, psyrk->N,
+        (1.0*psyrk->T)*psyrk->T + (2.0*psyrk->M)*psyrk->N);
+         psyrk->ia = ia;
+         psyrk->ja = ja;
+         psyrk->ib = ib;
+         psyrk->jb = jb;
+         psyrk->ic = ic;
+         psyrk->jc = jc;
+         return(1);
+      }
+fprintf(stderr, "%d of %s\n", __LINE__, __FILE__);
+      rL = (nL > nR) ? 0 : nr;
+      rR = nr - rL;
+      i = ATL_tsyrkdecomp_tr(psyrk, pL, 0, 0, Mblks, mr, nL, rL, K, 
+                             ia, ja, ib, jb, ic, jc);
+      i += ATL_tsyrkdecomp_tr(psyrk+pL, pR, 0, 0, Mblks, mr, nR, rR, K,
+                              ia, ja, ib, jb+nL*nb+rL, ic, jc+nL*nb+rL);
+      return(i);
+   }
+}
+
+#include <string.h>
+void SortSYRKByFlopCount(int P, ATL_TSYRK_t *syp)
+{
+   ATL_TSYRK_t stmp;
+   int i, j, ib, jj;
+   double mf0, mf;
+
+   for (i=0; i < P-1; i++)
+   {
+      ib = ATL_launchorder[i];
+      if (syp[ib].ia < 0)
+         continue;
+      mf0 = ((double)syp[ib].T)*syp[ib].T + (2.0*syp[ib].M)*syp[ib].N;
+      for (j=i+1; j < P; j++)
+      {
+         jj = ATL_launchorder[j];
+         if (syp[jj].ia < 0)
+            continue;
+         mf = ((double)syp[jj].T)*syp[jj].T + (2.0*syp[jj].M)*syp[jj].N;
+         if (mf > mf0)
+         {
+            mf0 = mf;
+            ib = jj;
+         }
+      }
+      jj = ATL_launchorder[i];
+      if (ib != jj)
+      {
+         memcpy(&stmp, syp+ib, sizeof(ATL_TSYRK_t));
+         memcpy(syp+ib, syp+jj, sizeof(ATL_TSYRK_t));
+         memcpy(syp+jj, &stmp, sizeof(ATL_TSYRK_t));
+      }
+   }
+}
+int ATL_StructIsInitSYRK(void *vp)
+{
+   return( ((ATL_TSYRK_t*)vp)->ia >= 0 );
+}
+
+void ATL_DoWorkSYRK(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   ATL_TSYRK_t *syp = vp;
+   const int lda = syp->lda, ldc = syp->ldc, eltsh = syp->eltsh;
+
+   if (syp->T)
+      syp->tvsyrk(syp->Uplo, syp->Trans, syp->T, syp->K, syp->alpha, 
+                  syp->A+((syp->ia+syp->ja*lda)<<eltsh), lda, syp->beta,
+                  syp->C+((syp->ic+syp->jc*ldc)<<eltsh), ldc);
+   if (syp->M && syp->N)
+      syp->tvgemm(AtlasNoTrans, AtlasTrans, syp->M, syp->N, syp->K, syp->alpha,
+                  syp->A+((syp->ia+syp->T+syp->ja*lda)<<eltsh), lda,
+                  syp->A+((syp->jb+syp->ib*lda)<<eltsh), lda, syp->beta,
+                  syp->C+((syp->ic+syp->T+syp->jc*ldc)<<eltsh), ldc);
+}
+@endskip
+@beginskip
+#ifndef ATL_DoMMParallel
+   #ifndef ATL_TGEMM_MINFLOPS
+      #define ATL_TGEMM_MINFLOPS 512000.0
+   #endif
+   #define ATL_DoMMParallel(M_, N_, K_) \
+      (((((double)(M_))*(N_))*(K_)) >= ATL_TGEMM_MINFLOPS)
+#endif
+
+int ATL_tsyrkdecomp_MM(ATL_TSYRK_N_t *psy, ATL_CINT nthr)
+/*
+ * This routine splits a gemm coming from SYRK until nthr is exhausted
+ */
+{
+   int lo[ATL_NTHREADS];
+   ATL_CINT M=psy->M, N=psy->N, K=psy->K, nb=psy->nb;
+   ATL_INT m, nblks, nr, minblks, extrablks;
+   const int eltsh=psy->eltsh, amul=(psy->TA == AtlasNoTrans) ? 1 : psy->lda;
+   const int bmul = (psy->TB == AtlasNoTrans) ? 1 : psy->lda;
+   int i, j, k, nt, np;
+   const void *a;
+   void *c;
+
+   if (nthr == 1 || !psy->numthr(M, N, K))
+      return(1);
+   nt = nthr >> 1;
+/*
+ * If M is large enough, cut it for entire GEMM distribution in order to
+ * optimize ATLAS's common JIK pattern
+ */
+   if (M >= nb*nthr*ATL_TMMMINMBLKS)
+   {
+/*
+ *    Determine launchorder on this subset of processors
+ */
+      lo[0] = 0;
+      for (i=0; (1<<i)^nthr; i++);
+      lo[0] = 0;
+      k=1;
+      for (i--; i >= 0; i--)
+      {
+         for (j=0; j < k; j++)
+            lo[k+j] = lo[j] + (1<<i);
+         k += k;
+      }
+/*
+ *    Find how many blocks we've got
+ */
+      nblks = M / nb;
+      nr = M - nblks*nb;
+      minblks = nblks / nthr;
+      extrablks = nblks - minblks*nthr;
+/*
+ *    Get everyone a copy of entire data structure & assign subpieces
+ */
+      c = psy->C;
+      a = psy->A0;
+      for (i=0; i < nthr; i++)
+      {
+         j = lo[i];
+         if (i) { McpSYN(psy, j, 0); }
+         if (i < extrablks)
+            m = (minblks+1)*nb;
+         else if (i == extrablks)
+            m = minblks*nb + nr;
+         else
+            m = minblks*nb;
+         psy[j].M = m;
+         psy[j].C = c;
+         psy[j].A0 = a;
+         m <<= eltsh;
+         a = MindxT(a,m*amul);
+         c = MindxT(c,m);
+      }
+      return(nthr);
+   }
+   else if (M >= N) /* split M */
+   {
+      McpSYN(psy, nt, 0);
+      m = M>>1;
+      psy[nt].M = m;
+      psy->M = m = M - m;
+      m <<= eltsh;
+      psy[nt].A0 = MindxT(psy->A0,m*amul);
+      psy[nt].C = MindxT(psy->C,m);
+      np = ATL_tsyrkdecomp_MM(psy, nt);
+      np += ATL_tsyrkdecomp_MM(psy+nt, nt);
+      return(np);
+   }
+   else        /* split N */
+   {
+      McpSYN(psy, nt, 0);
+      m = N>>1;
+      psy[nt].N = m;
+      psy->N = m = N-m;
+      m <<= eltsh;
+      psy[nt].C = MindxT(psy->C,m*psy->ldc);
+      psy[nt].A1 = MindxT(psy->A1,m*amul);
+      np = ATL_tsyrkdecomp_MM(psy, nt);
+      np += ATL_tsyrkdecomp_MM(psy+nt, nt);
+      return(np);
+   }
+}
+
+int ATL_IsInitSYRK_N(void *vp)
+{
+   return( ((ATL_TSYRK_N_t*)vp)->K );
+}
+
+int ATL_tsyrkdecomp_N(ATL_TSYRK_N_t *psy, ATL_CINT nthr)
+{
+   void *vp;
+   ATL_INT nL, nR, iL, iR;
+   int nt, p;
+   const int ISUPPER = (psy->Uplo == AtlasUpper), 
+             ISNOTRANS = (psy->TA == AtlasNoTrans);
+
+   if (nthr == 1)
+      return(1);
+   nt = nthr >> 1;  /* nthr is power of two, so both sides get nt threads */
+/*
+ * Copy present psy struct into new one, and then modify both as required
+ */
+   if (psy->C)   /* we are splitting two SYRKs */
+   {
+      if (!psy->numthr(psy->N, psy->N, psy->K))
+         return(1);
+      McpSYN(psy, nt, 0);   /* psy[nt] = psy[0] */
+      psy[nt].T = psy->C;
+      psy[nt].A0 = psy[nt].A1;
+      psy[nt].C = psy->C = NULL;
+      psy[nt].M = psy->N;
+      psy->N = psy[nt].N = 0;
+      p = ATL_tsyrkdecomp_N(psy, nt);
+      p += ATL_tsyrkdecomp_N(psy+nt, nt);
+      return(p);
+   }
+   else         /* we are splitting one SYRK into 2 SYRKS and one GEMM */
+   {
+      if (!psy->numthr(psy->M, (psy->M)>>1, psy->K))
+         return(1);
+      McpSYN(psy, nt, 0);   /* psy[nt] = psy[0] */
+      nL = (psy->M)>>1;
+      nR = psy->M - nL;
+      iL = nL << psy->eltsh;
+      iR = nR << psy->eltsh;
+/*
+ *    Give psy[0] both SYRKs to do, and continue splitting
+ */
+      psy->C = MindxT(psy->T, iL*(psy->ldc+1));
+      psy->A1 = (ISNOTRANS) ? MindxT(psy->A0, iL) : MindxT(psy->A0,iL*psy->lda);
+      psy->M = nL;
+      psy->N = nR;
+      p = ATL_tsyrkdecomp_N(psy, nt);
+/*
+ *    Give psy[nt] a GEMM to do, and call routine to split GEMMs
+ */
+      psy[nt].C = (ISUPPER) ? MindxT(psy[nt].T,iL*psy[nt].ldc) : 
+                              MindxT(psy[nt].T,iL);
+      psy[nt].T = NULL;
+      if (ISUPPER)
+      {
+         psy[nt].M = nL;
+         psy[nt].N = nR;
+         psy[nt].A1 = (ISNOTRANS) ? 
+            MindxT(psy[nt].A0,iL) : MindxT(psy[nt].A0,iL*psy[nt].lda);
+      }
+      else
+      {
+         psy[nt].M = nR;
+         psy[nt].N = nL;
+         if (ISNOTRANS)
+         {
+            psy[nt].A1 = psy[nt].A0;
+            psy[nt].A0 = MindxT(psy[nt].A0,iL);
+         }
+         else  /* A is Transposed */
+         {
+            psy[nt].A1 = psy[nt].A0;
+            psy[nt].A0 = MindxT(psy[nt].A0,iL*psy[nt].lda);
+         }
+      }
+      p += ATL_tsyrkdecomp_MM(psy+nt, nt);
+      return(p);
+   }
+}
+
+void ATL_DoWorkSYRK_N(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   ATL_TSYRK_N_t *syp=vp;
+   if (syp->T)  /* doing SYRKs */
+   {
+      syp->tvsyrk(syp->Uplo, syp->TA, syp->M, syp->K, syp->alpha, 
+                  syp->A0, syp->lda, syp->beta, syp->T, syp->ldc);
+      if (syp->C)
+         syp->tvsyrk(syp->Uplo, syp->TA, syp->N, syp->K, syp->alpha, 
+                     syp->A1, syp->lda, syp->beta, syp->C, syp->ldc);
+   }
+   else /* doing GEMM */
+      syp->gemmK(syp->M, syp->N, syp->K, syp->alpha, syp->A0, syp->lda, 
+                 syp->A1, syp->lda, syp->beta, syp->C, syp->ldc);
+}
+@endskip
+
+int ATL_tsyrkdecomp_K
+   (ATL_TSYRK_K_t *psyrk, 
+    void (*syrkK)(const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CINT,
+                  ATL_CINT, const void*, const void*, ATL_CINT, const void*,
+                  void*, ATL_CINT),
+    int np, const int eltsh, const int nb, const void *zero, const void *one,
+    const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans, 
+    ATL_CINT N, ATL_CINT Kblks, const int kr, 
+    const void *alpha, const void *A, ATL_CINT lda,
+    const void *beta, void *C, ATL_CINT ldc)
+{
+@skip   ATL_CINT minblks = Kblks / ATL_NTHREADS, 
+@skip            extrablks = Kblks - minblks*ATL_NTHREADS;
+   ATL_INT minblks, extrablks, j, k, ldcw;
+   int i, lo;
+
+/*
+ * Note that this routine is essentially for large K, so we don't consider
+ * any K smaller than NB for a processor
+ */
+   minblks = Kblks / np;
+   if (minblks)
+      extrablks = Kblks - minblks*np;
+   else
+   {
+      np = Kblks;
+      minblks = 1;
+      extrablks = 0;
+   }
+/*
+ * Find a good ldcw: multiple of 4 that is not a power of two
+ */
+   ldcw = ((N+3)>>2)<<2;   /* multiple of 4 */
+   if (!(ldcw&(ldcw-1)))
+      ldcw += 4;
+@beginskip
+   for (i=0; i < sizeof(ldcw)*8; i++)
+   {
+      if (!((1<<i)^ldcw))  /* if it is a power of two this is eventually 0 */
+      {
+         ldcw += 4;
+         break;
+      }
+   }
+@endskip
+   if ((ldcw<<eltsh)*N > ATL_PTMAXMALLOC)
+      return(0);
+   for (i=0; i < np; i++)
+   {
+      if (i < extrablks)
+         k = (minblks + 1)*nb;
+      else if (i == extrablks)
+         k = minblks*nb + kr;
+      else
+         k = minblks * nb;
+      j = N;
+      lo = ATL_launchorder[i];   /* use log2-launch order */
+      psyrk[lo].alpha = alpha;
+      psyrk[lo].beta  = beta ;
+      psyrk[lo].one   = one  ;
+      psyrk[lo].zero  = zero ;
+      psyrk[lo].Uplo = Uplo;
+      psyrk[lo].Trans = Trans;
+      psyrk[lo].N = N;
+      psyrk[lo].K = k;
+      psyrk[lo].A = A;
+      psyrk[lo].C = C;
+      psyrk[lo].lda = lda;
+      psyrk[lo].ldc = ldc;
+      psyrk[lo].eltsh = eltsh;
+      if (!i)
+         psyrk[lo].nCw = psyrk[lo].ldcw = 0;
+      else
+      {
+         psyrk[lo].nCw = 1;
+         psyrk[lo].ldcw = ldcw;
+      }
+      psyrk[lo].Cw = NULL;
+      psyrk[lo].Cinfp[0] = psyrk + lo;
+      psyrk[lo].tvsyrk = syrkK;
+      k = (Trans == AtlasNoTrans) ? lda * k : k;
+      k <<= eltsh;
+      A = MindxT(A,k);
+   }
+   for (; i < ATL_NTHREADS; i++)
+      psyrk[ATL_launchorder[i]].N = 0;
+   return(np);
+}
+
+void ATL_tsyrk_K(ATL_TSYRK_K_t *syp, int np, ATL_CINT N, ATL_CINT K, 
+                 const void *A, void *C)
+{
+   const int nb = syp->nb;
+
+   np = (Mmin(N,K) < 8) ? 1 :
+        ATL_tsyrkdecomp_K(syp, syp->tvsyrk, np, syp->eltsh, nb, syp->zero,
+                          syp->one, syp->Uplo, syp->Trans, N, K/nb, K%nb, 
+                          syp->alpha, A, syp->lda, syp->beta, C, syp->ldc);
+   if (np < 2)
+   {
+      syp->tvsyrk(syp->Uplo, syp->Trans, N, K, syp->alpha, A, syp->lda, 
+                  syp->beta, C, syp->ldc);
+      return;
+   }
+   ATL_thread_start(syp->lp->rank2thr, 0, ATL_tlaunch, syp->lp->rank2thr);
+   ATL_thread_join(syp->lp->rank2thr);
+}
+
+void ATL_tsyrk_K_rec(ATL_TSYRK_K_t *syp, int np, ATL_CINT Nblks, ATL_CINT nr, 
+                     ATL_CINT K, const void *A0, void *C00)
+/*
+ * This routine recurs on N until we can allocate the full NxN workspace,
+ * at which point it stops the recursion and distributes K for parallel
+ * operation
+ */
+{
+   const enum ATLAS_TRANS TA = syp->Trans;
+   ATL_CINT lda = syp->lda, ldc = syp->ldc, eltsh = syp->eltsh;
+   ATL_CINT nb = syp->nb, N = Nblks*nb+nr;
+   ATL_INT sz, nblksL, nblksR, nrL, nrR, nL, nR;
+   const void *A1;
+   void *C10, *C01, *C11;
+/*
+ * Stop recursion & call threaded SYRK if we can allocate workspace for all of C
+ */
+   sz = (N * N) << eltsh;
+/*
+ * Quit recurring if we can allocate space for C workspace and we can
+ * no longer usefully split Nblks, or we can usefully split K
+ */
+   if (sz <= ATL_PTMAXMALLOC && (nb*ATL_NTHREADS < K || Nblks < ATL_NTHREADS))
+   {
+      ATL_tsyrk_K(syp, np, Nblks*nb+nr, K, A0, C00);
+      return;
+   }
+   nblksL = (Nblks+1)>>1;
+   nblksR = Nblks - nblksL;
+   if (nblksL >= nblksR)
+   {
+      nrL = nr;
+      nrR = 0;
+   }
+   else
+   {
+      nrL = 0;
+      nrR = nr;
+   }
+
+   nL = nblksL * nb + nrL;
+   nR = nblksR * nb + nrR;
+   if (syp->Uplo == AtlasUpper) 
+   {
+      sz = nL<<eltsh;
+      C01 = MindxT(C00,sz*ldc);
+      A1 = (TA == AtlasNoTrans) ? MindxT(A0,sz) : MindxT(A0,sz*lda);
+      C11 = MindxT(C01,sz);
+      ATL_tsyrk_K_rec(syp, np, nblksL, nrL, K, A0, C00);
+      syp->gemmT(syp->Trans, syp->TB, nL, nR, K, syp->alpha, A0, lda, A1, lda, 
+                 syp->beta, C01, ldc);
+      ATL_tsyrk_K_rec(syp, np, nblksR, nrR, K, A1, C11);
+   }
+   else /* Lower triangular matrix */
+   {
+      sz = nL<<eltsh;
+      C10 = MindxT(C00,sz);
+      A1 = (TA == AtlasNoTrans) ? MindxT(A0,sz) : MindxT(A0,sz*lda);
+      sz += (ldc*nL)<<eltsh;
+      C11 = MindxT(C00,sz);
+      ATL_tsyrk_K_rec(syp, np, nblksL, nrL, K, A0, C00);
+      syp->gemmT(syp->Trans, syp->TB, nR, nL, K, syp->alpha, A1, lda, A0, lda, 
+                 syp->beta, C10, ldc);
+      ATL_tsyrk_K_rec(syp, np, nblksR, nrR, K, A1, C11);
+   }
+}
+
+void ATL_DoWorkSYRK_K(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   ATL_TSYRK_K_t *syp = vp;
+/*
+ * Allocate space if needed, and then do SYRK into it
+ */
+   if (syp->nCw)
+   {
+      syp->Cw = malloc((syp->ldcw << syp->eltsh)*syp->N+ATL_Cachelen);
+      if (syp->Cw)
+         syp->tvsyrk(syp->Uplo, syp->Trans, syp->N, syp->K, syp->alpha, syp->A,
+                     syp->lda, syp->zero, ATL_AlignPtr(syp->Cw), syp->ldcw);
+   }
+   else /* do SYRK directly into original C: no poss of failure */
+      syp->tvsyrk(syp->Uplo, syp->Trans, syp->N, syp->K, syp->alpha, 
+                  syp->A, syp->lda, syp->beta, syp->C, syp->ldc);
+}
+
+int ATL_IsInitSYRK_K(void *vp)
+{
+   return( ((ATL_TSYRK_K_t*)vp)->N );
+}
+
+@ROUT tsttr
+#include <stdio.h>
+#include <stdlib.h>
+#ifndef ATL_MU
+   #define ATL_MU 4
+#endif
+#ifndef ATL_NTHREADS
+   #define ATL_NTHREADS 8
+#endif
+#ifndef NB
+   #define NB 56
+#endif
+#define ATL_INT int
+#define ATL_CINT int
+#define ATL_MINL3THRFLOPS (2.0*NB*NB*NB)
+#define ATL_TGEMM_PERTHR_MF (2.0*NB*NB*NB)
+@ROUT ATL_Xtsyrk tsttr
+int ATL_tsyrkdecomp_tr1D(int P, ATL_CINT N, ATL_CINT K, 
+                         ATL_CINT nb, ATL_CINT mu, double minmf, ATL_INT *Ms)
+/*
+ * Partitions triangular matrix from SYRK into roughly equal flop count
+ * regions, with the first such region being strictly triangular, and the
+ * rest trapazoidal row-panels.
+ * Ms : must be of length P at least, on output contains the correct size
+ *      matrix to give to each processor.
+ * RETURNS: number of processors used
+ */
+{
+   double Pflops, myflops, tflops, pinv;
+   const int incM = (nb >= 60) ? ((24+mu-1)/mu)*mu : 
+                    ((nb < 16) ? nb : ((16+mu-1)/mu)*mu);
+   ATL_INT n, m, j;
+   int k, p;
+
+   for (k=0; k < P; k++)
+      Ms[k] = 0;
+   tflops = (((double)N)*N)*K;
+   while (P && (Pflops = tflops/((double)P)) < minmf) P--;
+   if (P < 2)
+      return(0);
+
+   tflops /= K;
+/*
+ * For each processor, find m that balances the flop count
+ */
+   for (n=p=0; p < P; p++)
+   {
+      Pflops = tflops / (P-p);
+      if (tflops*K < minmf)
+      {
+         if (p < 2)
+            return(0);
+         Ms[p-1] += N - n;
+         return(p);
+      }
+/*
+ *    Finds the largest m that is a multiple of nb that generates <= Pflops
+ */
+      m = nb;  /* number of rows in row-panel */
+      k = 1;   /* number of blocks in m */
+      do
+      {
+         myflops = m;
+         myflops *= myflops + n + n;
+         if (myflops == Pflops)
+            break;
+         else if (myflops > Pflops)
+         {
+            m -= nb;
+            k--;
+            myflops = m;
+            myflops *= myflops + n + n;
+            break;
+         }
+         m += nb;
+         k++;
+      }
+      while (1);
+/*
+ *    If we are below target flop count, see how to adjust
+ */
+      if (myflops < Pflops)
+      {
+         j = (k < 4) ? incM : mu;  /* for small M, don't tolerate cleanup */
+         while ((((double)m)*((((double)m)+n)+n)) < Pflops) m += j;
+         myflops = (((double)m)*((((double)m)+n)+n));
+      }
+      j = N - n;
+      if (m >= j)
+      {
+         if (j < incM)
+         {
+            if (p < 1)
+               return(0);
+            Ms[p-1] += j;
+            return(p);
+         }
+         Ms[p] = j;
+         return(p+1);
+      }
+      else if (p == P-1)
+         m = N - n;
+      n += m;
+      Ms[p] = m;
+      tflops -= myflops;
+   }
+   return(p);
+}
+@ROUT tsttr
+int main(int nargs, char **args)
+{
+   int N=1000, K=1000;
+   int i, p, n;
+   ATL_INT Ms[ATL_NTHREADS];
+   double myflops, tflops;
+   if (nargs > 1)
+      N = atoi(args[1]);
+   if (nargs > 2)
+      K = atoi(args[2]);
+   p = ATL_tsyrkdecomp_tr1D(ATL_NTHREADS, N, K, NB, ATL_MU, 
+                            ATL_TGEMM_PERTHR_MF, Ms);
+   printf("\n\nN=%d, K=%d:\n", N, K);
+   if (p < 1)
+      printf("   Unable to distribute!\n");
+   else
+   {
+      tflops = (((double)N)*N)*K;
+      printf("   P       M       N       FLOPS\n");
+      printf("====  ======  ======  ==========\n\n");
+      n = 0;
+      for (i=0; i < p; i++)
+      {
+         myflops = (((double)Ms[i])*(Ms[i]+n+n))*K;
+         printf("%4d %7d %7d %.0f (%.2f)\n", i, Ms[i], N, 
+                myflops, myflops/tflops);
+                
+         n += Ms[i];
+      }
+      printf("Total M = %d\n\n", n);
+   }
+   return(0);
+}
+@ROUT ATL_Xtsyrk
+int ATL_IsInitSYRK_M(void *vp)
+{
+   return( ((ATL_TSYRK_M_t*)vp)->K );
+}
+
+int ATL_tsyrkdecomp_M
+(
+   ATL_TSYRK_M_t *syp,          /* output: parallel decomposition structs */
+   const enum ATLAS_UPLO Uplo,
+   const enum ATLAS_TRANS TA,
+   ATL_CINT N, ATL_CINT K,      /* original problem size */
+   const void *alpha,
+   const void *A,
+   ATL_CINT lda,
+   const void *beta,
+   void *C,
+   ATL_CINT ldc,
+   ATL_CINT nb,                 /* MB of GEMM kernel */
+   const int mu,                /* reg blking factor along M of MM kernel */
+   const int eltsh,
+   const enum ATLAS_TRANS TB,   /* Dual of TA (Conj for herk, trans for syrk) */
+   double minmf,
+   void (*gemmK)(ATL_CINT, ATL_CINT, ATL_CINT, const void*, const void *,
+                 ATL_CINT, const void*, ATL_CINT, const void*, void*, ATL_CINT),
+   void (*tvsyrk)(const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CINT,
+                  ATL_CINT, const void*, const void*, ATL_CINT, const void*,
+                  void*, ATL_CINT)
+)
+{
+   ATL_INT Ms[ATL_NTHREADS];
+   int k, j, p;
+   ATL_CINT incA = lda << eltsh, incC = (ldc+1) << eltsh;
+   ATL_INT n, m, JJ;
+   const int ISNOTRANS = (TA == AtlasNoTrans);
+
+   p = ATL_tsyrkdecomp_tr1D(ATL_NTHREADS, N, K, nb, mu, minmf, Ms);
+   if (p < 2)
+      return(0);
+   if (Uplo == AtlasLower)
+   { 
+      n = 0;
+      for (k=0; k < p; k++)
+      {
+         j = ATL_launchorder[k];
+         m = Ms[k];
+         syp[j].gemmK = gemmK;
+         syp[j].tvsyrk = tvsyrk;
+         syp[j].alpha = alpha;
+         syp[j].beta  = beta ;
+         syp[j].K = K;
+         syp[j].lda = lda;
+         syp[j].ldc = ldc;
+         syp[j].nb = nb;
+         syp[j].eltsh = eltsh;
+         syp[j].Uplo = Uplo;
+         syp[j].TA = TA;
+         syp[j].TB = TB;
+         syp[j].M = m;
+         syp[j].N = n;
+         syp[j].T = MindxT(C,((size_t)n*incC));
+         syp[j].C = (n > 0) ? MindxT(C,((size_t)n<<eltsh)) : NULL;
+         syp[j].A0 = (ISNOTRANS) ? MindxT(A,((size_t)n<<eltsh)) 
+                                 : MindxT((size_t)A,n*incA);
+         syp[j].A = syp[j].A0;
+         syp[j].B = A;
+         n += m;
+      }
+   }
+   else  /* Uplo == AtlasUpper */
+   {
+      n = 0;
+      for (k=0; k < p; k++)
+      {
+         j = ATL_launchorder[k];
+         m = Ms[k];
+         syp[j].gemmK = gemmK;
+         syp[j].tvsyrk = tvsyrk;
+         syp[j].alpha = alpha;
+         syp[j].beta  = beta ;
+         syp[j].K = K;
+         syp[j].lda = lda;
+         syp[j].ldc = ldc;
+         syp[j].nb = nb;
+         syp[j].eltsh = eltsh;
+         syp[j].Uplo = Uplo;
+         syp[j].TA = TA;
+         syp[j].TB = TB;
+         syp[j].M = m;
+         syp[j].N = n;
+         JJ = N - n - m;
+         syp[j].T = MindxT(C,((size_t)JJ*incC));
+         syp[j].C = (n > 0) ? MindxT(C,((size_t)JJ*incC+m*(ldc<<eltsh))) : NULL;
+         if (ISNOTRANS)
+         {
+            syp[j].A = syp[j].A0 = MindxT(A,((size_t)JJ<<eltsh));
+            syp[j].B = MindxT(syp[j].A0, ((size_t)m<<eltsh)); 
+         }
+         else
+         {
+            syp[j].A = syp[j].A0 = MindxT(A,((size_t)JJ*incA));
+            syp[j].B = MindxT(syp[j].A0, ((size_t)m*incA)); 
+         }
+         n += m;
+      }
+   }
+   for (k=p; k < ATL_NTHREADS; k++)
+      syp[ATL_launchorder[k]].K = 0;
+   return(p);
+}
+
+void ATL_DoWorkSYRK_M(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   ATL_TSYRK_M_t *syp=vp;
+
+   syp->tvsyrk(syp->Uplo, syp->TA, syp->M, syp->K, syp->alpha, 
+               syp->A0, syp->lda, syp->beta, syp->T, syp->ldc);
+   if (syp->C)
+      syp->gemmK(syp->M, syp->N, syp->K, syp->alpha, syp->A, syp->lda,
+                 syp->B, syp->lda, syp->beta, syp->C, syp->ldc);
+}
+
+@ROUT ATL_tsyrk
+   @define TAC @T@
+   @define TRANS @AtlasTrans@
+   @define sadd @SADD@
+   @define rt @syrk@
+   @define styp @SCALAR@
+@ROUT ATL_therk
+   @define TAC @C@
+   @define TRANS @AtlasConjTrans@
+   @define sadd @&@
+   @define rt @herk@
+   @define styp @TYPE@
+@ROUT ATL_tsyrk ATL_therk
+#include "atlas_misc.h"
+#include "atlas_threads.h"
+#include "atlas_tlvl3.h"
+
+/*
+ * Prototype functions in ATL_Xtsyrk
+ */
+int ATL_IsInitSYRK_M(void *vp);
+void ATL_DoWorkSYRK_M(ATL_LAUNCHSTRUCT_t *lp, void *vp);
+int ATL_tsyrkdecomp_M
+   (ATL_TSYRK_M_t *syp, const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS TA,
+    ATL_CINT N, ATL_CINT K, const void *alpha, const void *A, ATL_CINT lda,
+    const void *beta, void *C, ATL_CINT ldc, ATL_CINT nb, const int mu,
+    const int eltsh, const enum ATLAS_TRANS TB, double minmf,
+    void (*gemmK)(ATL_CINT, ATL_CINT, ATL_CINT, const void*, const void *,
+                  ATL_CINT,const void*, ATL_CINT, const void*, void*, ATL_CINT),
+    void (*tvsyrk)(const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CINT,
+                   ATL_CINT, const void*, const void*, ATL_CINT, const void*,
+                   void*, ATL_CINT));
+@beginskip
+int ATL_tsyrkdecomp_N(ATL_TSYRK_N_t *psy, ATL_CINT nthr);
+int ATL_IsInitSYRK_N(void *vp);
+void ATL_DoWorkSYRK_N(ATL_LAUNCHSTRUCT_t *lp, void *vp);
+@endskip
+int ATL_tsyrkdecomp_K
+   (ATL_TSYRK_K_t *psyrk, 
+    void (*syrkK)(const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CINT,
+                  ATL_CINT, const void*, const void*, ATL_CINT, const void*,
+                  void*, ATL_CINT),
+    const int eltsh, const int nb, const void *zero, const void *one,
+    const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans, 
+    ATL_CINT N, ATL_CINT Kblks, const int kr, 
+    const void *alpha, const void *A, ATL_CINT lda,
+    const void *beta, void *C, ATL_CINT ldc);
+void ATL_tsyrk_K_rec(ATL_TSYRK_K_t *syp, int np, ATL_CINT Nblks, ATL_CINT nr, 
+                     ATL_CINT K, const void *A, void *C);
+void ATL_DoWorkSYRK_K(ATL_LAUNCHSTRUCT_t *lp, void *vp);
+int ATL_IsInitSYRK_K(void *vp);
+@beginskip
+int ATL_tsyrkdecomp_tr
+   (ATL_TSYRK_t *psyrk, const int P, ATL_CINT Tblks, ATL_CINT tr, 
+    ATL_CINT Mblks, ATL_CINT mr, ATL_CINT Nblks, ATL_CINT nr, ATL_CINT K,
+    ATL_CINT ia, ATL_CINT ja, ATL_CINT ib, ATL_CINT jb, 
+    ATL_CINT ic, ATL_CINT jc);
+int ATL_StructIsInitSYRK(void *vp);
+void ATL_DoWorkSYRK(ATL_LAUNCHSTRUCT_t *lp, void *vp);
+void SortSYRKByFlopCount(int P, ATL_TSYRK_t *syp);
+@endskip
+
+void Mjoin(PATL,tv@(rt))
+   (const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans, 
+    ATL_CINT N, ATL_CINT K, const void *alpha, const void *A, ATL_CINT lda, 
+    const void *beta, void *C, ATL_CINT ldc)
+{
+@ROUT ATL_tsyrk
+   Mjoin(PATL,@(rt))(Uplo, Trans, N, K, SVVAL((TYPE*)alpha), A, lda, 
+                   SVVAL((TYPE*)beta), C, ldc);
+@ROUT ATL_therk
+   Mjoin(PATL,@(rt))(Uplo, Trans, N, K, *((TYPE*)alpha), A, lda, 
+                   *((TYPE*)beta), C, ldc);
+@ROUT ATL_tsyrk ATL_therk
+}
+
+@beginskip
+static void ATL_init@up@(rt)_t
+   (const int P, ATL_TSYRK_t *syp, const void *alpha, const void *beta, 
+    const void *one, const void *zero, enum ATLAS_UPLO Uplo, 
+    enum ATLAS_TRANS Trans, ATL_CINT K, const void *A, ATL_CINT lda, 
+    void *C, ATL_CINT ldc)
+{
+   int i, nb;
+   nb = Mjoin(PATL,GetNB)();
+
+   for (i=0; i < P; i++)
+   {
+      syp[i].alpha = alpha;
+      syp[i].beta  = beta ;
+      syp[i].one   = one  ;
+      syp[i].zero  = zero ;
+      syp[i].Uplo = Uplo;
+      syp[i].Trans = Trans;
+      syp[i].A = A;
+      syp[i].lda = lda;
+      syp[i].ldc = ldc;
+      syp[i].K = K;
+      syp[i].C = C;
+      syp[i].tvgemm = Mjoin(PATL,tvgemm);
+      syp[i].tvsyrk = Mjoin(PATL,tv@(rt));
+      syp[i].eltsh = Mjoin(PATL,shift);
+      syp[i].ia = -1;  /* flag that this entry is not being used */
+      syp[i].nb = nb;
+   }
+}
+@endskip
+
+static int CombineCw(ATL_TSYRK_K_t *me, ATL_TSYRK_K_t *him)
+/*
+ * This routine combines the data in him->Cw into my->Cw, if possible.
+ * If his workspace is bigger than mine, I combine instead into his workspace,
+ * and then set my pointer to his workspace.  The buffer that has been subsumed
+ * is freed after the combine.
+ * RETURNS: 0 if we are able to do the combine, non-zero if buffers are
+ *          cannot be combined.
+ */
+{
+   TYPE *w;
+   size_t meB, meE, himB, himE, I, J;   /* begin,end of C range */
+   #ifdef TREAL
+      const TYPE ONE = 1.0;
+   #else
+      const TYPE ONE[2] = {1.0, 0.0};
+   #endif
+
+/*
+ * If I'm the master (owner of original C), then I can always do combine
+ * into the original C
+ */
+   if (me->nCw == 0)
+   {
+      if (him->Cw)  /* his malloc succeeded */
+      {
+         Mjoin(PATL,tradd)(him->Uplo, him->N, ATL_AlignPtr(him->Cw),
+                           him->ldcw, ONE, (TYPE*)him->C, him->ldc);
+         free(him->Cw);
+      }
+      else if (him->nCw)  /* must do GEMM since he couldn't malloc */
+         him->tvsyrk(him->Uplo, him->Trans, him->N, him->K, him->alpha, 
+                     him->A, him->lda, him->one, him->C, him->ldc);
+      return(0);        /* successful combine */
+   }
+/*
+ * *************************************************************************
+ * Otherwise, I don't own C, so must combine work into my or his buffer when
+ * possible, and return failure when not
+ * *************************************************************************
+ */
+   meB  = (size_t) me->C; 
+   meE  = meB + (((me->N*(me->ldc + 1)))<<(me->eltsh));
+   himB = (size_t)him->C; 
+   himE = himB + (((him->N*(him->ldc + 1)))<<(me->eltsh));
+/*
+ * If my workspace is a superset of his, use my workspace as the target buffer
+ * if I was able to allocate it
+ */
+   if (meB <= himB && meE >= himE && me->Cw)
+   {
+/*
+ *    Determine where our overlap is
+ */
+      I = (himB - meB)>>(him->eltsh);           /* gap in elts */
+      J = I / him->ldc;                         /* col coord */
+      I -= J*him->ldc;                          /* row coord */
+      ATL_assert(I == J);
+      w = ATL_AlignPtr(me->Cw);
+      w += J*me->ldcw + I;
+      if (him->Cw)  /* if he succeeded in malloc, combine his op with mine */
+      {
+         Mjoin(PATL,tradd)(him->Uplo, him->N, ATL_AlignPtr(him->Cw),
+                           him->ldcw, ONE, w, him->ldcw);
+         free(him->Cw);
+      }
+      else          /* must do SYRK since he didn't */
+         him->tvsyrk(him->Uplo, him->Trans, him->N, him->K, him->alpha, 
+                     him->A, him->lda, him->one, w, me->ldcw);
+      return(0);        /* successful combine */
+   }
+/*
+ * else if his workspace is a superset of mine, use his as target buffer if
+ * he was able to allocate it
+ */
+   else if (himB <= meB && himE >= meE && him->Cw)
+   {
+/*
+ *    Determine where our overlap is
+ */
+      I = (meB - himB)>>(him->eltsh);           /* gap in elements */
+      J = I / him->ldc;                         /* column coord */
+      I -= J*him->ldc;                          /* row coord */
+      ATL_assert(I == J);
+      w = ATL_AlignPtr(him->Cw);
+      w += J*him->ldcw + I;
+      if (me->Cw)  /* if I succeeded in malloc, combine my op with his */
+      {
+         Mjoin(PATL,tradd)(me->Uplo, me->N, ATL_AlignPtr(me->Cw),
+                           me->ldcw, ONE, w, him->ldcw);
+         free(me->Cw);
+      }
+      else          /* must do my SYRK into his workspace since I couldn't */
+         him->tvsyrk(me->Uplo, me->Trans, me->N, me->K, me->alpha, 
+                     me->A, me->lda, me->one, w, him->ldcw);
+      me->C = him->C;
+      me->Cw = him->Cw;
+      me->ldcw = him->ldcw;
+      me->N = him->N;
+      me->K = him->K;
+      return(0);        /* successful combine */
+   }
+   return(1);           /* unsuccessful combine */
+}
+
+void Mjoin(PATL,CombineStructs@up@(rt))(void *vme, void *vhim)
+/*
+ * This routine written like GEMM, so that SYRK can have been split
+ * with N, even though present code only splits K (so everyone is writing
+ * to entire C).  I may want the extra functionality later, so programmed
+ * it using GEMM as model.
+ * NOTE: this version actually wouldn't work if we split both N & K for
+ *       all cases; I later had to redesign the GEMM combine to account
+ *       for the fact that you have to sum up the pieces of the original C
+ *       you own, instead of always modifying C when you own only  a piece
+ *       of it.  This problem only shows up on systems with non-power-of-2
+ *       # of processors, where the launch recursive distribution doesn't
+ *       match the recursive launch/combine procedure.  Will need to rewrite
+ *       based on present GEMM combine if I ever go to true recursive
+ *       distribution on both N & K.
+ */
+{
+   #ifdef TREAL
+      TYPE ONE = ATL_rone;
+   #else
+      TYPE ONE[2] = {ATL_rone, ATL_rzero};
+   #endif
+   ATL_TSYRK_K_t *me = vme, *him = vhim, *himcp, *mycp;
+   int i, j;
+
+/*
+ * Need to combine only if joining thread has C in workspace
+ */
+   if (him->nCw)
+   {
+/*
+ *    For all his workspaces, find out where to combine them into
+ */
+      for (i=0; i < him->nCw; i++)
+      {
+/*
+ *       If I can't combine his data into my primary workspace, see if it
+ *       can be combined with any of my other workspaces
+ */
+         if (CombineCw(me, him->Cinfp[i]))
+         {
+            for (j=1; j < me->nCw; j++)
+               if (!CombineCw(me->Cinfp[j], him->Cinfp[i]))
+                  break;
+/*
+ *          If I can't combine his data into any existing auxiliary space,
+ *          add his node to my list of workspaces to be combined later
+ */
+            if (j == me->nCw)
+            {
+               me->Cinfp[j] = him->Cinfp[i];
+               me->nCw = j + 1;
+            }
+         }
+      }
+   }
+}
+
+void Mjoin(PATL,t@(rt)_K_rec)
+   (const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans,
+    ATL_CINT N, ATL_CINT K, const SCALAR alpha, const TYPE *A, ATL_CINT lda, 
+    const SCALAR beta, TYPE *C, ATL_CINT ldc, ATL_CINT nb)
+/*
+ * This typed wrapper routine sets up type-specific data structures, and
+ * calls the appropriate typeless recursive routine in order to recursively
+ * cut N until workspace can be allocated, and then the K-dimension will be
+ * threaded.  During the recursion, parallel performance is achieved by
+ * calling the threaded GEMM.
+ */
+{
+   ATL_CINT Nblks = N/nb, nr = N - nb*Nblks;
+   ATL_TSYRK_K_t syp[ATL_NTHREADS];
+   ATL_LAUNCHSTRUCT_t ls;
+   ATL_thread_t tp[ATL_NTHREADS];
+   #ifdef TCPLX
+      TYPE ZERO[2] = {ATL_rzero, ATL_rzero}, ONE[2] = {ATL_rone, ATL_rzero};
+   #else
+      TYPE ZERO=ATL_rzero, ONE=ATL_rone;
+   #endif
+   int i;
+
+   ls.opstructstride = (int) ( ((char*)(syp+1)) - (char*)syp );
+   ls.OpStructIsInit = ATL_IsInitSYRK_K;
+   ls.DoWork = ATL_DoWorkSYRK_K;
+   ls.CombineOpStructs = Mjoin(PATL,CombineStructs@up@(rt));
+   ls.rank2thr = tp;
+   for (i=0; i < ATL_NTHREADS; i++)
+   {
+      tp[i].vp = &ls;
+      tp[i].rank = i;
+   }
+   syp[0].lp = &ls;
+   syp[0].Uplo = Uplo;
+   syp[0].Trans = Trans;
+@ROUT ATL_therk `   syp[0].TB = (Trans == AtlasNoTrans) ? AtlasConjTrans : AtlasNoTrans;`
+@ROUT ATL_tsyrk `   syp[0].TB = (Trans == AtlasNoTrans) ? AtlasTrans : AtlasNoTrans;`
+   syp[0].K = K;
+   syp[0].alpha = SADD alpha;
+   syp[0].beta = SADD beta;
+   syp[0].zero = SADD ZERO;
+   syp[0].one  = SADD ONE;
+   syp[0].lda = lda;
+   syp[0].ldc = ldc;
+   syp[0].gemmT = Mjoin(PATL,tvgemm);
+@skip   syp[0].gemmT = (Trans == AtlasNoTrans) ? 
+@skip      Mjoin(PATL,tsvgemmN@(TAC)) : Mjoin(PATL,tsvgemm@(TAC)N);
+   syp[0].tvsyrk = Mjoin(PATL,tv@(rt));
+   syp[0].eltsh = Mjoin(PATL,shift);
+   syp[0].nb = nb;
+   ls.opstruct = (char*) syp;
+   ATL_tsyrk_K_rec(syp, Mjoin(PATL,threadMM)(Trans, syp[0].TB, N>>1, N>>1, K), 
+                   Nblks, nr, K, A, C);
+}
+
+static int ATL_t@(rt)_M
+   (const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS TA, ATL_CINT N,
+    ATL_CINT K, const void *alpha, const TYPE *A, ATL_CINT lda,
+    const void *beta, TYPE *C, ATL_CINT ldc)
+{
+   ATL_thread_t tp[ATL_NTHREADS];
+   ATL_LAUNCHSTRUCT_t ls;
+   ATL_TSYRK_M_t syp[ATL_NTHREADS];
+   int i, p;
+   p = ATL_tsyrkdecomp_M(syp, Uplo, TA, N, K, alpha, A, lda, beta, C, ldc,
+                         MB, ATL_mmMU, Mjoin(PATL,shift), 
+                         (TA == AtlasNoTrans) ? @(TRANS) : AtlasNoTrans,
+                         ATL_TGEMM_PERTHR_MF, (TA == AtlasNoTrans) ? 
+                         Mjoin(PATL,tsvgemmN@(TAC)):Mjoin(PATL,tsvgemm@(TAC)N),
+                         Mjoin(PATL,tv@(rt)));
+   if (p < 2)
+      return(0);
+   ls.opstruct = (char*) syp;
+   ls.opstructstride = (int) ( ((char*)(syp+1)) - (char*)syp );
+   ls.OpStructIsInit = ATL_IsInitSYRK_M;
+   ls.DoWork = ATL_DoWorkSYRK_M;
+   ls.CombineOpStructs = NULL;
+   ls.rank2thr = tp;
+   for (i=0; i < ATL_NTHREADS; i++)
+   {
+      tp[i].vp = &ls;
+      tp[i].rank = i;
+   }
+   ATL_thread_start(tp, 0, ATL_tlaunch, tp);
+   ATL_thread_join(tp);
+   return(p);
+}
+
+@beginskip
+#if ATL_NTHREADS == (1<<ATL_NTHRPOW2)
+static int ATL_t@(rt)_N
+   (const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans, ATL_CINT N,
+    ATL_CINT K, const void *alpha, const TYPE *A, ATL_CINT lda,
+    const void *beta, TYPE *C, ATL_CINT ldc)
+{
+   ATL_thread_t tp[ATL_NTHREADS];
+   ATL_LAUNCHSTRUCT_t ls;
+   ATL_TSYRK_N_t psy[ATL_NTHREADS];
+   int i, p;
+
+   psy[0].gemmK = (Trans == AtlasNoTrans) ? 
+      Mjoin(PATL,tsvgemmN@(TAC)) : Mjoin(PATL,tsvgemm@(TAC)N);
+   psy[0].tvsyrk = Mjoin(PATL,tv@(rt));   
+   psy[0].numthr = Mjoin(PATL,tNumGemmThreads);
+   psy[0].A0 = A;
+   psy[0].A1 = NULL;
+   psy[0].T = C;
+   psy[0].C = NULL;
+   psy[0].alpha = alpha;
+   psy[0].beta  = beta;
+   psy[0].M = N;
+   psy[0].N = 0;
+   psy[0].K = K;
+   psy[0].lda = lda;
+   psy[0].ldc = ldc;
+   psy[0].nb = Mjoin(PATL,GetNB)();
+   psy[0].eltsh = Mjoin(PATL,shift);
+   psy[0].Uplo = Uplo;
+   psy[0].TA = Trans;
+   psy[0].TB = (Trans == AtlasNoTrans) ? @(TRANS) : AtlasNoTrans;
+   for (i=1; i < ATL_NTHREADS; i++)
+      psy[i].K = 0;
+   p = ATL_tsyrkdecomp_N(psy, ATL_NTHREADS);
+   if (p < 2)
+      return(0);
+   ls.opstruct = (char*) psy;
+   ls.opstructstride = (int) ( ((char*)(psy+1)) - (char*)psy );
+   ls.OpStructIsInit = ATL_IsInitSYRK_N;
+   ls.DoWork = ATL_DoWorkSYRK_N;
+   ls.CombineOpStructs = NULL;
+   ls.rank2thr = tp;
+   for (i=0; i < ATL_NTHREADS; i++)
+   {
+      tp[i].vp = &ls;
+      tp[i].rank = i;
+   }
+   ATL_thread_start(tp, 0, ATL_tlaunch, tp);
+   ATL_thread_join(tp);
+   return(p);
+}
+#endif
+@endskip
+
+void Mjoin(PATL,t@(rt))
+   (const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans, ATL_CINT N,
+@rout ATL_therk
+    ATL_CINT K, const @(styp) alpha0, const TYPE *A, ATL_CINT lda,
+    const @(styp) beta0, TYPE *C, ATL_CINT ldc)
+@ROUT ATL_tsyrk
+    ATL_CINT K, const @(styp) alpha, const TYPE *A, ATL_CINT lda,
+    const @(styp) beta, TYPE *C, ATL_CINT ldc)
+@ROUT ATL_tsyrk ATL_therk
+{
+@beginskip
+   ATL_thread_t tp[ATL_NTHREADS];
+   ATL_LAUNCHSTRUCT_t ls;
+   ATL_TSYRK_t syrks[ATL_NTHREADS];
+   ATL_TSYRK_K_t psyrks[ATL_NTHREADS];
+@endskip
+   #ifdef TREAL
+      const TYPE ONE = ATL_rone, ZERO = ATL_rzero;
+   #else
+      const TYPE ONE[2]={ATL_rone, ATL_rzero}, ZERO[2]={ATL_rzero, ATL_rzero};
+@ROUT ATL_therk `      const TYPE alpha[2]={alpha0, ATL_rzero}, beta[2]={beta0, ATL_rzero};`
+   #endif
+   size_t nblksN;
+   int i, np, nb;
+   void Mjoin(PATL,pt@(rt))
+      (const enum ATLAS_UPLO Uplo, const enum ATLAS_TRANS Trans, ATL_CINT N,
+       ATL_CINT K, const @(styp) alpha, const TYPE *A, ATL_CINT lda,
+       const @(styp) beta, TYPE *C, ATL_CINT ldc);
+
+   if (Mjoin(PATL,threadMM)(Trans, 
+                            (Trans == AtlasNoTrans) ? AtlasTrans:AtlasNoTrans,
+                            N, N>>1, K) < 2)
+      goto DOSERIAL;
+   if (N < 1)
+      return;
+@ROUT ATL_therk `   if (alpha0 == ATL_rzero || K < 1)`
+@ROUT ATL_tsyrk `   if (SCALAR_IS_ZERO(alpha) || K < 1)`
+   {
+@ROUT ATL_therk
+      if (beta0 != ATL_rone)
+         Mjoin(PATL,hescal)(Uplo, N, N, beta0, C, ldc);
+@ROUT ATL_tsyrk
+      if (!SCALAR_IS_ONE(beta))
+         Mjoin(PATL,trscal)(Uplo, N, N, beta, C, ldc);
+@ROUT ATL_tsyrk ATL_therk
+      return;
+   }
+
+   nb = MB;
+   if (K > (N<<ATL_NTHRPOW2) && (((size_t)N)*N*sizeof(TYPE) <= ATL_PTMAXMALLOC))
+   {
+      Mjoin(PATL,t@(rt)_K_rec)(Uplo, Trans, N, K, alpha, A, lda, beta, 
+                               C, ldc, nb);
+@ROUT ATL_therk `      Mjoin(PATLU,zero)(N, C+1, lda+lda+2);  /* zero imag on diag */`
+      return;
+   }
+@beginskip
+#if 0 && ATL_NTHREADS == (1<<ATL_NTHRPOW2)
+   np = ATL_t@(rt)_N(Uplo, Trans, N, K, SADD alpha, A, lda, 
+                     SADD beta, C, ldc);
+#endif
+@endskip
+   np = ATL_t@(rt)_M(Uplo, Trans, N, K, SADD alpha, A, lda, 
+                     SADD beta, C, ldc);
+   if (np < 2)
+   {
+DOSERIAL:
+@ROUT ATL_tsyrk `      Mjoin(PATL,@(rt))(Uplo, Trans, N, K, alpha, A, lda, beta, C, ldc);`
+@ROUT ATL_therk `      Mjoin(PATL,@(rt))(Uplo, Trans, N, K, alpha0, A, lda, beta0, C, ldc);`
+      return;
+   }
+}
+@beginskip
+/*
+ *  Can only use special N-only decomposition of #proc is a power of two
+ */
+#if ATL_NTHREADS == (1<<ATL_NTHRPOW2)
+
+/*
+ * Distribute N unless K dominates N, or N is degenerate 
+ */
+   nblksN = N/nb;
+   nblksN = nblksN*nblksN - nblksN;
+   if ( ((K+K)/N < N && nblksN >= ATL_NTHREADS+ATL_NTHREADS) || 
+        (((size_t)N)*N*sizeof(TYPE) > ATL_PTMAXMALLOC) )
+   if ( (N > (nb<<(ATLNTHRPOW2+1))) || N > K ||
+        (((size_t)N)*N*sizeof(TYPE) > ATL_PTMAXMALLOC) ||
+        ((K>>ATL_NTHRPOW2) < nb && N >= (nb<<ATL_NTHRPOW2-1)) ||
+        (N >= K && N > (nb<<(ATL_NTHRPOW2+1))) )
+    {
+       if (ATL_t@(rt)_N(Uplo, Trans, N, K, SADD alpha, A, lda, 
+                        SADD beta, C, ldc))
+          return;
+    }
+#endif
+@endskip
+@beginskip
+   np = ATL_tsyrkdecomp_K(psyrks, 
+      Mjoin(PATL,tv@(rt)), Mjoin(PATL,shift), nb, SADD ZERO, SADD ONE, 
+      Uplo, Trans, N, K/nb, K%nb, SADD alpha, A, lda, SADD beta, C, ldc);
+   if (np < 2)
+      goto DOSERIAL;
+   ls.opstruct = (char*) psyrks;
+   ls.opstructstride = (int) ( ((char*)(psyrks+1)) - (char*)psyrks );
+   ls.OpStructIsInit = ATL_IsInitSYRK_K;
+   ls.DoWork = ATL_DoWorkSYRK_K;
+   ls.CombineOpStructs = Mjoin(PATL,CombineStructs@up@(rt));
+   ls.rank2thr = tp;
+   for (i=0; i < ATL_NTHREADS; i++)
+   {
+      tp[i].vp = &ls;
+      tp[i].rank = i;
+   }
+   ATL_thread_start(tp, 0, ATL_tlaunch, tp);
+   ATL_thread_join(tp);
+   return;
+@ROUT ATL_therk `   Mjoin(PATLU,zero)(N, C+1, lda+lda+2);  /* zero imag on diag */`
+   return;
+
+   if (Uplo == AtlasLower && Trans == AtlasNoTrans)
+   {
+      ATL_init@up@(rt)_t(ATL_NTHREADS, syrks, @(sadd) alpha, @(sadd) beta, 
+                        SADD ONE, SADD ZERO, Uplo, Trans, K, A, lda, C, ldc);
+      nb = syrks[0].nb;
+      np = ATL_tsyrkdecomp_tr(syrks, ATL_NTHREADS, N/nb, N%nb, 0, 0, 0, 0, K, 
+                              0, 0, 0, 0, 0, 0);
+      if (np < 2 || Mmin(N,K) < 8)
+      {
+         Mjoin(PATL,@(rt))(Uplo, Trans, N, K, alpha, A, lda, beta, C, ldc);
+         return;
+      }
+      ls.opstruct = (char*) syrks;
+      ls.opstructstride = (int) ( ((char*)(syrks+1)) - (char*)syrks );
+      ls.OpStructIsInit = ATL_StructIsInitSYRK;
+      ls.DoWork = ATL_DoWorkSYRK;
+      ls.CombineOpStructs = NULL;
+      ls.rank2thr = tp;
+      for (i=0; i < ATL_NTHREADS; i++)
+      {
+         tp[i].vp = &ls;
+         tp[i].rank = i;
+      }
+      ATL_thread_start(tp, 0, ATL_tlaunch, tp);
+      ATL_thread_join(tp);
+   }
+   else
+   {
+      SortSYRKByFlopCount(np, syrks);
+      ls.opstruct = (char*) syrks;
+      ls.opstructstride = (int) ( ((char*)(syrks+1)) - (char*)syrks );
+      ls.OpStructIsInit = ATL_StructIsInitSYRK;
+      ls.DoWork = ATL_DoWorkSYRK;
+      ls.CombineOpStructs = NULL;
+      ls.rank2thr = tp;
+      for (i=0; i < ATL_NTHREADS; i++)
+      {
+         tp[i].vp = &ls;
+         tp[i].rank = i;
+      }
+      ATL_thread_start(tp, 0, ATL_tlaunch, tp);
+      ATL_thread_join(tp);
+   }
+}
+@endskip
+@ROUT atlas_tlvl2.h
+#ifndef ATLAS_TLVL2_H
+   #define ATLAS_TLVL2_H
+
+#include "atlas_threads.h"
+#ifdef TYPE
+   #include "atlas_lvl2.h"
+#endif
+ 
+#endif          /* end of ifndef ATLAS_TLVL2_H */
+@ROUT atlas_tlapack.h
+#ifndef ATLAS_TLAPACK_H
+   #define ATLAS_TLAPACK_H
+
+#define ATL_LAUNCHORDER         /* we want static ATL_launchorder array */
+#include "atlas_threads.h"
+#include "atlas_lapack.h"
+
+typedef struct
+{
+   ATL_INT M;       /* matrix rows to distribute across processors */
+   ATL_INT N;       /* matrix columns */
+   volatile ATL_INT *maxindx;  /* this array starts wt all values -1 */
+   volatile ATL_INT *stage;    /* this ptr starts wt all values -1 */
+   void *A;
+   ATL_INT lda;
+   int *ipiv;
+   int rank, p, info;
+   void *works;    /* ptr to array of ptrs */
+} ATL_TGETF2_M_t;
+
+#endif                  /* end of ifndef ATLAS_TLAPACK_H */
+@ROUT ATL_tgetf2
+#include "atlas_tlapack.h"
+#include "atlas_level2.h"
+
+void Mjoin(PATL,DoWorkGETF2_nowrk)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   ATL_TGETF2_M_t *lup=vp;
+   int *ipiv = lup->ipiv;
+   ATL_CINT M=lup->M, N=lup->N, lda=lup->lda, MN = Mmin(M,N);
+   const int p = lup->p, rank = lup->rank;
+   ATL_CINT mp = M/p, mr = M - mp*p;
+   ATL_INT m, locpiv, globpiv, k, j, i;
+   #ifdef TCPLX
+      ATL_CINT lda2 = lda+lda;
+   #else 
+      #define lda2 lda
+      #define none ATL_rnone
+   #endif
+   TYPE *A, *Ac, *a, *v;
+   TYPE pivval, apv, apv2;
+   #ifdef TCPLX
+      const TYPE none[2] = {ATL_rnone, ATL_rzero};
+   #endif
+   volatile ATL_INT *maxindx=lup->maxindx, *stage=lup->stage;
+   void (*my_ger)(const int M, const int N, const SCALAR alpha, 
+                  const TYPE *X, const int incX, 
+                  const TYPE *Y, const int incY, TYPE *A, const int lda);
+
+   #ifdef TCPLX
+      my_ger = Mjoin(PATL,geru);
+   #else
+      my_ger = Mjoin(PATL,ger);
+   #endif
+   m = (rank) ? mp : mp+mr;
+   Ac = A = lup->A;
+   a = (rank) ? A + ((m*rank + mr)SHIFT) : A;
+   for (j=0; j < MN; j++, Ac += lda2, a += lda2)
+   {
+      locpiv = cblas_iamax(m, a, 1);
+/*
+ *    Combine local pivot into global
+ */
+      if (!rank)
+      {
+         globpiv = j+locpiv;
+         #ifdef TCPLX
+            apv = Mabs(Ac[globpiv+globpiv]) + Mabs(Ac[globpiv+globpiv+1]);
+         #else
+            apv = Mabs(Ac[globpiv]);
+         #endif
+         for (i=1; i < p; i++)
+         {
+            while(stage[i] < j);
+            k = maxindx[i];
+            apv2 = Mabs(Ac[k SHIFT]);
+            #ifdef TCPLX
+               apv2 += Mabs(Ac[k+k+1]);
+            #endif
+            if (apv < apv2)
+            {
+               apv = apv2;
+               globpiv = k;
+            }
+            maxindx[i] = -1;
+         }
+         ipiv[j] = globpiv;
+         if (globpiv != j)
+            cblas_swap(N, A+(j SHIFT), lda, A+(globpiv SHIFT), lda);
+         stage[0] = j;
+         m--;                                           /* just finished */
+         #ifdef TCPLX
+            a += 2;                                     /* one row */
+         #else
+            a++;                                        /* one row */
+         #endif
+      }
+      else /* all threads except 0 write their results, and await 0 */
+      {
+         maxindx[rank] = locpiv+rank*mp+mr;
+         stage[rank] = j;
+         while (stage[0] < j);
+      }
+      #ifdef TCPLX
+         if (Ac[j+j] != ATL_rzero || Ac[j+j+1] != ATL_rzero)
+         {
+            TYPE inv[2];
+            Mjoin(PATL,cplxinvert)(1, Ac+j+j, 1, inv, 1);
+            cblas_scal(m, inv, a, 1);
+         }
+      #else
+         pivval = Ac[j];
+         if (pivval != ATL_rzero)
+            cblas_scal(m, ATL_rone/pivval, a, 1);
+      #endif
+      else /* pivot is zero, we have a singular matrix! */
+         lup->info = j;   /* all threads have same info */
+
+      #ifdef TCPLX
+         my_ger(m, N-j-1, none, a, 1, Ac+((j+lda)<<1), lda, a+lda2, lda);
+         my_ger = Mjoin(PATL,geru_L2);
+      #else
+         my_ger(m, N-j-1, ATL_rnone, a, 1, Ac+j+lda, lda, a+lda, lda);
+         my_ger = Mjoin(PATL,ger_L2);
+      #endif
+   }
+}
+
+void Mjoin(PATL,DoWorkGETF2)(ATL_LAUNCHSTRUCT_t *lp, void *vp0)
+{
+   ATL_TGETF2_M_t *lup=vp0;
+   int *ipiv = lup->ipiv;
+   ATL_CINT M=lup->M, N=lup->N, lda=lup->lda, MN = Mmin(M,N);
+   const int p = lup->p, rank = lup->rank;
+   int pivrank;
+   ATL_CINT mp = M/p, mr = M - mp*p;
+   ATL_INT m, locpiv, globpiv, k, j, i, ldw, ldw0, ldw1;
+   void *vp;
+   TYPE *a, *W, *Wc, *w, **WRKS=lup->works, *v;
+   TYPE pivval, apv, apv2, pv2;
+   volatile ATL_INT *maxindx=lup->maxindx, *stage=lup->stage;
+   #ifdef TCPLX
+      const TYPE none[2] = {ATL_rnone, ATL_rzero};
+   #endif
+
+   m = (rank) ? mp : mp+mr;
+   a = (rank) ? (((TYPE*)lup->A)+((mp*rank + mr)SHIFT)) : lup->A;
+/*
+ * Make ldw's a multiple of 16 bytes that is not a power of 2; 0's ldw 
+ * is larger by mr than all other ldws (ldw1)
+ */
+#if defined(DREAL) || defined(SCPLX)
+   ldw0 = ((mp+mr+1)>>1)<<1;
+   ldw1 = ((mp+1)>>1)<<1;
+   if (!(ldw0 & (ldw0-1)))
+      ldw0 += 2;
+   if (!(ldw1 & (ldw1-1)))
+      ldw1 += 2;
+#elif defined(SREAL)
+   ldw0 = ((mp+mr+3)>>2)<<2;
+   ldw1 = ((mp+3)>>2)<<2;
+   if (!(ldw0 & (ldw0-1)))
+      ldw0 += 4;
+   if (!(ldw1 & (ldw1-1)))
+      ldw1 += 4;
+#else
+   ldw0 = mp+mr;
+   ldw1 = mp;
+   if (!(ldw0 & (ldw0-1)))
+      ldw0++;
+   if (!(ldw1 & (ldw1-1)))
+      ldw1++;
+#endif
+   ldw = (rank) ? ldw1 : ldw0;
+   vp = malloc(ATL_MulBySize(ldw)*N+ATL_Cachelen);
+/*
+ * If anyone fails to allocate the space, free any allocated spaces and
+ * call the no-copy version
+ */
+   j = (vp != NULL);
+   if (!rank)
+   {
+      for (i=1; i < p; i++)
+      {
+         while (stage[i] != -2);
+         j &= maxindx[i];
+         maxindx[i] = -1;
+      }
+      *maxindx = j;
+      stage[0] = -2;
+   }
+   else
+   {
+      maxindx[rank] = j;
+      stage[rank] = -2;
+      while (stage[0] != -2);
+   }
+   if (*maxindx == 0)
+   {
+      if (vp)
+         free(vp);
+      Mjoin(PATL,DoWorkGETF2_nowrk)(lp, vp0);
+      return;
+   }
+   ATL_assert(vp);
+   WRKS[rank] = w = W = ATL_AlignPtr(vp);
+   Mjoin(PATL,gecopy)(m, N, a, lda, W, ldw);
+   for (j=0; j < MN; j++, w += (ldw SHIFT))
+   {
+      locpiv = cblas_iamax(m, w, 1);
+/*
+ *    Combine local pivot into global
+ */
+      if (!rank)
+      {
+         globpiv = j+locpiv;
+         pivrank = 0;
+         apv = Mabs(w[locpiv SHIFT]);
+         #ifdef TCPLX
+            apv += Mabs(w[locpiv+locpiv+1]);
+         #endif
+         for (i=1; i < p; i++)
+         {
+            while(stage[i] < j);
+            k = maxindx[i];
+            apv2 = WRKS[i][(j*ldw1+k)SHIFT];
+            apv2 = Mabs(apv2);
+            #ifdef TCPLX
+               apv2 += Mabs(WRKS[i][((j*ldw1+k)<<1)+1]);
+            #endif
+            if (apv < apv2)
+            {
+               apv = apv2;
+               globpiv = k;
+               pivrank = i;
+            }
+            maxindx[i] = -1;
+         }
+         if (pivrank)
+         {
+            ipiv[j] = mr+pivrank*mp+globpiv;
+            cblas_swap(N, W+(j SHIFT), ldw, 
+                       WRKS[pivrank]+(globpiv SHIFT), ldw1);
+         }
+         else
+         {
+            ipiv[j] = globpiv;
+            if (globpiv != j)
+               cblas_swap(N, W+(j SHIFT), ldw, W+(globpiv SHIFT), ldw);
+         }
+         stage[0] = j;
+         m--;                                           /* just finished */
+         #ifdef TCPLX
+            w += 2;                                     /* one row */
+         #else
+            w++;                                        /* one row */
+         #endif
+      }
+      else /* all threads except 0 write their results, and await 0 */
+      {
+         maxindx[rank] = locpiv;
+         stage[rank] = j;
+         while (stage[0] < j);
+      }
+      #ifdef TCPLX
+         v = &WRKS[0][(j*ldw0+j)SHIFT];
+         if (*v != ATL_rzero || v[1] != ATL_rzero)
+         {
+            TYPE inv[2];
+            Mjoin(PATL,cplxinvert)(1, v, 1, inv, 1);
+            cblas_scal(m, inv, w, 1);
+         }
+      #else
+         pivval = WRKS[0][j*ldw0+j];
+         if (pivval != ATL_rzero)
+            cblas_scal(m, ATL_rone/pivval, w, 1);
+      #endif
+      else /* pivot is zero, we have a singular matrix! */
+         lup->info = j;   /* all threads have same info */
+
+      #ifdef TCPLX
+         Mjoin(PATL,geru_L2)(m, N-j-1, none, w, 1, 
+                             WRKS[0]+((j*(ldw0+1)+ldw0)SHIFT), ldw0, 
+                             w+ldw+ldw, ldw);
+      #else
+         Mjoin(PATL,ger_L2)(m, N-j-1, ATL_rnone, w, 1, WRKS[0]+j*(ldw0+1)+ldw0,
+                            ldw0, w+ldw, ldw);
+      #endif
+   }
+   stage[rank] = MN;  /* let core 0 know we are done */
+/*
+ * Copy answer back out of workspace and then free workspace
+ */
+   Mjoin(PATL,gecopy)(rank?mp:mp+mr, N, W, ldw, a, lda);
+/*
+ * Core 0 waits for all other cores to finish before he frees his work:
+ * all non-zero cores access 0's workspace, but 0 does not access others' work
+ * after iamax barrier
+ */
+   if (!rank)
+   {
+      for (i=1; i < p; i++)
+         while(stage[i] != MN);
+   }
+   free(vp);
+}
+
+int Mjoin(PATL,StructIsInitGETF2)(void *vp)
+{
+   return(((ATL_TGETF2_M_t*)vp)->M);
+}
+
+@multidef trt Mjoin(PATL,DoWorkGETF2) Mjoin(PATL,DoWorkGETF2_nowrk)
+@define pf @@
+@whiledef pf _nocp
+int Mjoin(PATL,tgetf2@(pf))(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT lda, int *ipiv)
+{
+   ATL_thread_t tp[ATL_NTHREADS];
+   ATL_TGETF2_M_t lu2s[ATL_NTHREADS];
+   ATL_LAUNCHSTRUCT_t ls;
+   ATL_INT maxindx[ATL_NTHREADS], stage[ATL_NTHREADS];
+   TYPE *works[ATL_NTHREADS];
+
+   ATL_CINT MN = Mmin(M,N);
+   ATL_INT p = ATL_NTHREADS, m, mr, i, j;
+
+   if (M < 1 || N < 1)
+      return(0);
+   m = M / ATL_NTHREADS;
+   mr = M - m*ATL_NTHREADS;
+/*
+ * This logic is necessary since tgetf2 assumes only one processor owns entire
+ * logical block.  Can remove if we rewrite tgetf2 to allow the diagonal to
+ * span multiple processors
+ */
+   if (m+mr < N)
+   {
+      p = M / N;
+      if (p)
+         m = M / p;
+   }
+   if (p < 2)   /* not enough rows, call serial algorithm */
+      return(Mjoin(PATL,getf2)(M, N, A, lda, ipiv));
+   for (i=0; i < p; i++)
+   {
+      stage[i] = maxindx[i] = -1;
+      j = ATL_launchorder[i];
+      lu2s[j].M = M;
+      lu2s[j].N = N;
+      lu2s[j].A = A;
+      lu2s[j].lda = lda;
+      lu2s[j].ipiv = ipiv;  /* only thread 0 will write ipiv */
+      lu2s[j].info = 0;
+      lu2s[j].maxindx = maxindx;
+      lu2s[j].stage = stage;
+      lu2s[j].p = p;
+      lu2s[j].rank = i;
+      lu2s[j].works = works;
+   }
+   for (; i < ATL_NTHREADS; i++)
+      lu2s[ATL_launchorder[i]].M = 0;
+   ls.opstruct = (char*) lu2s;
+   ls.opstructstride = (int) ( ((char*)(lu2s+1)) - (char*)(lu2s) );
+   ls.CombineOpStructs = NULL;
+   ls.OpStructIsInit = Mjoin(PATL,StructIsInitGETF2);
+@skip   ls.DoWork = Mjoin(PATL,DoWorkGETF2);
+   ls.DoWork = @(trt);
+   ls.rank2thr = tp;
+   for (i=0; i < ATL_NTHREADS; i++)
+   {
+      tp[i].vp = &ls;
+      tp[i].rank = i;
+   }
+   ATL_thread_start(tp, 0, ATL_tlaunch, tp);
+   ATL_thread_join(tp);
+   return(lu2s[0].info);
+}
+   @undef trt
+@endwhile
+#ifndef TCPLX
+   #undef lda2
+#endif
+@ROUT ATL_ger_L2
+#include "atlas_misc.h"
+#include "atlas_lvl2.h"
+#include "atlas_lvl3.h"
+// #include "atlas_r1.h"
+
+
+void Mjoin(PATL,ger1k)
+   (ATL_CINT M, ATL_CINT N, const SCALAR alpha,
+    const TYPE *X, ATL_CINT incX, const TYPE *Y,
+     ATL_CINT incY1, TYPE *A, ATL_CINT lda1);
+
+#ifdef TREAL
+   #define ATL_ger Mjoin(PATL,ger_L2)
+   #define ATL_ger1 Mjoin(PATL,ger1k)
+#else
+   #ifdef Conj_
+      #define ATL_ger Mjoin(PATL,gerc)
+   #else
+      #define ATL_ger Mjoin(PATL,geru)
+      #define ATL_ger1 Mjoin(PATL,ger1u_a1_x1_yX)
+   #endif
+#endif
+void ATL_ger(const int M, const int N, const SCALAR alpha,
+             const TYPE *X, const int incX, const TYPE *Y, const int incY,
+             TYPE *A, const int lda)
+{
+   int imb, mb, mb0, m=M, i;
+   int incy=incY;
+   #ifdef TREAL
+      #define one ATL_rone
+   #else
+      static TYPE one[2] = {ATL_rone, ATL_rzero};
+   #endif
+   void *vx=NULL;
+   size_t Aa, Ax;
+   TYPE *x, *y = (TYPE*) Y;
+   void (*getX)(const int N, const SCALAR alpha, const TYPE *X,
+                const int incX, TYPE *Y, const int incY);
+   #ifdef Conj_
+      void (*ATL_ger1)(const int M, const int N, const SCALAR alpha,
+                       const TYPE *X, const int incX, const TYPE *Y,
+                       const int incY, TYPE *A, const int lda);
+      ATL_ger1 = Mjoin(PATL,ger1c_a1_x1_yX);
+   #endif
+
+   if ( !M || !N || SCALAR_IS_ZERO(alpha) ) return;
+   if (lda&1)
+   {
+//    fprintf(stderr, "WARNING: not using L2-tuned GER kernel!\n");
+      Mjoin(PATL,ger)(M, N, alpha, X, incX, Y, incY, A, lda);
+      return;
+   }
+  
+//   fprintf(stderr, "in %s! M=%i, N=%i, lda=%i, alpha=%f, A[64]=%i.\n", 
+//   __FILE__, M, N, lda, alpha, (int) (((long unsigned int) A) & 63));
+//   fflush(stderr);
+
+   imb = mb = M;
+
+   Aa = (size_t) A;
+   Ax = (size_t) X;
+   if (Aa%16 != Ax%16 || incX != 1 || !SCALAR_IS_ONE(alpha))
+   {
+/*
+ *    Apply alpha to Y if X has stride 1 & Y is MUCH smaller
+ *    The LAPACK barfs if you  switch which vector alpha is applied to,
+ *    since it tests tiny matrices, so make it apply to X when they are
+ *    close to even
+ */
+      if (incX == 1 && N < (M>>4) && Aa%16 == Ax%16)
+      {
+         vx = malloc(ATL_Cachelen + ATL_MulBySize(N));
+         ATL_assert(vx);
+         y = ATL_AlignPtr(vx);
+         #ifdef Conj_
+            Mjoin(PATL,moveConj)(N, alpha, Y, incY, y, 1);
+            ATL_ger1 = Mjoin(PATL,ger1u_a1_x1_yX);
+         #else
+            Mjoin(PATL,cpsc)(N, alpha, Y, incY, y, 1);
+         #endif
+         incy = 1;
+         getX = NULL;
+      }
+      else
+      {
+         i = Mmax(imb,mb);
+         i = Mmin(i,M);
+         vx = malloc(2*ATL_Cachelen + ATL_MulBySize(i));
+         ATL_assert(vx);
+         Ax = (size_t) vx;
+         for (i=Aa%16; Ax%16 != i; Ax++);
+         x = (TYPE*) Ax;
+         getX = Mjoin(PATL,cpsc);
+      }
+   }
+   else getX = NULL;
+
+   if (imb) mb0 = Mmin(imb,m);
+   else mb0 = Mmin(mb,m);
+   do
+   {
+      if (getX) getX(mb0, alpha, X, incX, x, 1);
+      else x = (TYPE*) X;
+      ATL_ger1(mb0, N, one, x, 1, y, incy, A, lda);
+      A += mb0 SHIFT;
+      X += mb0*incX SHIFT;
+      m -= mb0;
+      mb0 = Mmin(m,mb);
+   }
+   while(m);
+   if (vx) free(vx);
+}
+@ROUT ATL_gerk
+#include <xmmintrin.h>
+#include "atlas_misc.h"
+#include <stdio.h>
+
+void Mjoin(PATL,ger1k)
+   (ATL_CINT M, ATL_CINT N, const SCALAR alpha,
+    const TYPE *X, ATL_CINT incX, const TYPE *Y,
+    ATL_CINT incY1, TYPE *A, ATL_CINT lda1)
+{/* BEGIN GER: nMU=1, MU=8, NU=4 */
+   ATL_INT i, j;
+// ATL_CINT MAp = ( (((((size_t)A)+15)>>4)<<4) - (((((size_t)A))>>4)<<4) )/sizeof(TYPE);
+   ATL_CINT MAp = ( ((size_t)A)&(15) ) / sizeof(TYPE);
+   ATL_CINT MA=M-MAp;
+   ATL_CINT M8=((MA/8)*8)+MAp, M2=((MA>>1)<<1)+MAp, N4=((N/4)*4), lda2=lda1+lda1, incY2=incY1+incY1, lda3=lda2+lda1, incY3=incY2+incY1, lda4=lda3+lda1, incY4=incY3+incY1;
+   __m128d x0, x1, x2, x3, x4, x5, x6, x7, y0, y1, y2, y3, a0_0, m0_0, a1_0, m1_0, a2_0, m2_0, a3_0, m3_0, a4_0, m4_0, a5_0, m5_0, a6_0, m6_0, a7_0, m7_0, a0_1, m0_1, a1_1, m1_1, a2_1, m2_1, a3_1, m3_1, a4_1, m4_1, a5_1, m5_1, a6_1, m6_1, a7_1, m7_1, a0_2, m0_2, a1_2, m1_2, a2_2, m2_2, a3_2, m3_2, a4_2, m4_2, a5_2, m5_2, a6_2, m6_2, a7_2, m7_2, a0_3, m0_3, a1_3, m1_3, a2_3, m2_3, a3_3, m3_3, a4_3, m4_3, a5_3, m5_3, a6_3, m6_3, a7_3, m7_3;
+
+   for (j=0; j < N4; j += 4, A += lda4, Y += incY4)
+   {/* BEGIN N-LOOP UR=4 */
+      y0 = _mm_load1_pd(Y);
+      y1 = _mm_load1_pd(Y+incY1);
+      y2 = _mm_load1_pd(Y+incY2);
+      y3 = _mm_load1_pd(Y+incY3);
+      if (MAp)
+      {/* peel to force X/A alignment */
+         i=0;                                /* bug fix. */
+         x0 = _mm_load_sd(X+i+0);
+         a0_0 = _mm_load_sd(A+i+0);
+         m0_0 = _mm_mul_sd(x0, y0);
+         a0_0 = _mm_add_sd(a0_0, m0_0);
+         _mm_store_sd(A+i+0, a0_0);
+         a0_1 = _mm_load_sd(A+i+0+lda1);
+         m0_1 = _mm_mul_sd(x0, y1);
+         a0_1 = _mm_add_sd(a0_1, m0_1);
+         _mm_store_sd(A+i+0+lda1, a0_1);
+         a0_2 = _mm_load_sd(A+i+0+lda2);
+         m0_2 = _mm_mul_sd(x0, y2);
+         a0_2 = _mm_add_sd(a0_2, m0_2);
+         _mm_store_sd(A+i+0+lda2, a0_2);
+         a0_3 = _mm_load_sd(A+i+0+lda3);
+         m0_3 = _mm_mul_sd(x0, y3);
+         a0_3 = _mm_add_sd(a0_3, m0_3);
+         _mm_store_sd(A+i+0+lda3, a0_3);
+      } /* end force-align peel */
+
+      for (i=MAp; i < M8; i += 8)
+      {/* ----- BEGIN M-LOOP BODY ----- */
+         /* --- BEGIN MUxNU UNROLL 0 --- */
+         x0 = _mm_load_pd(X+i+0);
+         a0_0 = _mm_load_pd(A+i+0);
+         m0_0 = _mm_mul_pd(x0, y0);
+         a0_0 = _mm_add_pd(a0_0, m0_0);
+         _mm_store_pd(A+i+0, a0_0);
+         x2 = _mm_load_pd(X+i+2);
+         a2_0 = _mm_load_pd(A+i+2);
+         m2_0 = _mm_mul_pd(x2, y0);
+         a2_0 = _mm_add_pd(a2_0, m2_0);
+         _mm_store_pd(A+i+2, a2_0);
+         x4 = _mm_load_pd(X+i+4);
+         a4_0 = _mm_load_pd(A+i+4);
+         m4_0 = _mm_mul_pd(x4, y0);
+         a4_0 = _mm_add_pd(a4_0, m4_0);
+         _mm_store_pd(A+i+4, a4_0);
+         x6 = _mm_load_pd(X+i+6);
+         a6_0 = _mm_load_pd(A+i+6);
+         m6_0 = _mm_mul_pd(x6, y0);
+         a6_0 = _mm_add_pd(a6_0, m6_0);
+         _mm_store_pd(A+i+6, a6_0);
+         a0_1 = _mm_load_pd(A+i+0+lda1);
+         m0_1 = _mm_mul_pd(x0, y1);
+         a0_1 = _mm_add_pd(a0_1, m0_1);
+         _mm_store_pd(A+i+0+lda1, a0_1);
+         a2_1 = _mm_load_pd(A+i+2+lda1);
+         m2_1 = _mm_mul_pd(x2, y1);
+         a2_1 = _mm_add_pd(a2_1, m2_1);
+         _mm_store_pd(A+i+2+lda1, a2_1);
+         a4_1 = _mm_load_pd(A+i+4+lda1);
+         m4_1 = _mm_mul_pd(x4, y1);
+         a4_1 = _mm_add_pd(a4_1, m4_1);
+         _mm_store_pd(A+i+4+lda1, a4_1);
+         a6_1 = _mm_load_pd(A+i+6+lda1);
+         m6_1 = _mm_mul_pd(x6, y1);
+         a6_1 = _mm_add_pd(a6_1, m6_1);
+         _mm_store_pd(A+i+6+lda1, a6_1);
+         a0_2 = _mm_load_pd(A+i+0+lda2);
+         m0_2 = _mm_mul_pd(x0, y2);
+         a0_2 = _mm_add_pd(a0_2, m0_2);
+         _mm_store_pd(A+i+0+lda2, a0_2);
+         a2_2 = _mm_load_pd(A+i+2+lda2);
+         m2_2 = _mm_mul_pd(x2, y2);
+         a2_2 = _mm_add_pd(a2_2, m2_2);
+         _mm_store_pd(A+i+2+lda2, a2_2);
+         a4_2 = _mm_load_pd(A+i+4+lda2);
+         m4_2 = _mm_mul_pd(x4, y2);
+         a4_2 = _mm_add_pd(a4_2, m4_2);
+         _mm_store_pd(A+i+4+lda2, a4_2);
+         a6_2 = _mm_load_pd(A+i+6+lda2);
+         m6_2 = _mm_mul_pd(x6, y2);
+         a6_2 = _mm_add_pd(a6_2, m6_2);
+         _mm_store_pd(A+i+6+lda2, a6_2);
+         a0_3 = _mm_load_pd(A+i+0+lda3);
+         m0_3 = _mm_mul_pd(x0, y3);
+         a0_3 = _mm_add_pd(a0_3, m0_3);
+         _mm_store_pd(A+i+0+lda3, a0_3);
+         a2_3 = _mm_load_pd(A+i+2+lda3);
+         m2_3 = _mm_mul_pd(x2, y3);
+         a2_3 = _mm_add_pd(a2_3, m2_3);
+         _mm_store_pd(A+i+2+lda3, a2_3);
+         a4_3 = _mm_load_pd(A+i+4+lda3);
+         m4_3 = _mm_mul_pd(x4, y3);
+         a4_3 = _mm_add_pd(a4_3, m4_3);
+         _mm_store_pd(A+i+4+lda3, a4_3);
+         a6_3 = _mm_load_pd(A+i+6+lda3);
+         m6_3 = _mm_mul_pd(x6, y3);
+         a6_3 = _mm_add_pd(a6_3, m6_3);
+         _mm_store_pd(A+i+6+lda3, a6_3);
+         /* --- END MUxNU UNROLL 0 --- */
+      }/* ----- END M-LOOP BODY ----- */
+      if (M != M8)
+      {/* ----- BEGIN VECTOR UNROLL M CLEANUP ----- */
+
+         for (i=M8; i < M2; i += 2)
+         {/* ----- BEGIN M-LOOP BODY ----- */
+            /* --- BEGIN MUxNU UNROLL 0 --- */
+            x0 = _mm_load_pd(X+i+0);
+            a0_0 = _mm_load_pd(A+i+0);
+            m0_0 = _mm_mul_pd(x0, y0);
+            a0_0 = _mm_add_pd(a0_0, m0_0);
+            _mm_store_pd(A+i+0, a0_0);
+            a0_1 = _mm_load_pd(A+i+0+lda1);
+            m0_1 = _mm_mul_pd(x0, y1);
+            a0_1 = _mm_add_pd(a0_1, m0_1);
+            _mm_store_pd(A+i+0+lda1, a0_1);
+            a0_2 = _mm_load_pd(A+i+0+lda2);
+            m0_2 = _mm_mul_pd(x0, y2);
+            a0_2 = _mm_add_pd(a0_2, m0_2);
+            _mm_store_pd(A+i+0+lda2, a0_2);
+            a0_3 = _mm_load_pd(A+i+0+lda3);
+            m0_3 = _mm_mul_pd(x0, y3);
+            a0_3 = _mm_add_pd(a0_3, m0_3);
+            _mm_store_pd(A+i+0+lda3, a0_3);
+            /* --- END MUxNU UNROLL 0 --- */
+         }/* ----- END M-LOOP BODY ----- */
+         if (M != M2)
+         {/* ----- BEGIN SCALAR M CLEANUP ----- */
+            x0 = _mm_load_sd(X+i+0);
+            a0_0 = _mm_load_sd(A+i+0);
+            m0_0 = _mm_mul_sd(x0, y0);
+            a0_0 = _mm_add_sd(a0_0, m0_0);
+            _mm_store_sd(A+i+0, a0_0);
+            a0_1 = _mm_load_sd(A+i+0+lda1);
+            m0_1 = _mm_mul_sd(x0, y1);
+            a0_1 = _mm_add_sd(a0_1, m0_1);
+            _mm_store_sd(A+i+0+lda1, a0_1);
+            a0_2 = _mm_load_sd(A+i+0+lda2);
+            m0_2 = _mm_mul_sd(x0, y2);
+            a0_2 = _mm_add_sd(a0_2, m0_2);
+            _mm_store_sd(A+i+0+lda2, a0_2);
+            a0_3 = _mm_load_sd(A+i+0+lda3);
+            m0_3 = _mm_mul_sd(x0, y3);
+            a0_3 = _mm_add_sd(a0_3, m0_3);
+            _mm_store_sd(A+i+0+lda3, a0_3);
+         }/* ----- END SCALAR M CLEANUP ----- */
+      }/* ----- END VECTOR UNROLL M CLEANUP ----- */
+   }/* END N-LOOP UR=4 */
+
+   for (j=N4; j < N; j += 1, A += lda1, Y += incY1)
+   {/* BEGIN N-LOOP UR=1 */
+      y0 = _mm_load1_pd(Y);
+      if (MAp)
+      {/* peel to force X/A alignment */
+         i=0;                                /* bug fix. */
+         x0 = _mm_load_sd(X+i+0);
+         a0_0 = _mm_load_sd(A+i+0);
+         m0_0 = _mm_mul_sd(x0, y0);
+         a0_0 = _mm_add_sd(a0_0, m0_0);
+         _mm_store_sd(A+i+0, a0_0);
+      } /* end force-align peel */
+
+      for (i=MAp; i < M8; i += 8)
+      {/* ----- BEGIN M-LOOP BODY ----- */
+         /* --- BEGIN MUxNU UNROLL 0 --- */
+         x0 = _mm_load_pd(X+i+0);
+         a0_0 = _mm_load_pd(A+i+0);
+         m0_0 = _mm_mul_pd(x0, y0);
+         a0_0 = _mm_add_pd(a0_0, m0_0);
+         _mm_store_pd(A+i+0, a0_0);
+         x2 = _mm_load_pd(X+i+2);
+         a2_0 = _mm_load_pd(A+i+2);
+         m2_0 = _mm_mul_pd(x2, y0);
+         a2_0 = _mm_add_pd(a2_0, m2_0);
+         _mm_store_pd(A+i+2, a2_0);
+         x4 = _mm_load_pd(X+i+4);
+         a4_0 = _mm_load_pd(A+i+4);
+         m4_0 = _mm_mul_pd(x4, y0);
+         a4_0 = _mm_add_pd(a4_0, m4_0);
+         _mm_store_pd(A+i+4, a4_0);
+         x6 = _mm_load_pd(X+i+6);
+         a6_0 = _mm_load_pd(A+i+6);
+         m6_0 = _mm_mul_pd(x6, y0);
+         a6_0 = _mm_add_pd(a6_0, m6_0);
+         _mm_store_pd(A+i+6, a6_0);
+         /* --- END MUxNU UNROLL 0 --- */
+      }/* ----- END M-LOOP BODY ----- */
+      if (M != M8)
+      {/* ----- BEGIN VECTOR UNROLL M CLEANUP ----- */
+
+         for (i=M8; i < M2; i += 2)
+         {/* ----- BEGIN M-LOOP BODY ----- */
+            /* --- BEGIN MUxNU UNROLL 0 --- */
+            x0 = _mm_load_pd(X+i+0);
+            a0_0 = _mm_load_pd(A+i+0);
+            m0_0 = _mm_mul_pd(x0, y0);
+            a0_0 = _mm_add_pd(a0_0, m0_0);
+            _mm_store_pd(A+i+0, a0_0);
+            /* --- END MUxNU UNROLL 0 --- */
+         }/* ----- END M-LOOP BODY ----- */
+         if (M != M2)
+         {/* ----- BEGIN SCALAR M CLEANUP ----- */
+            x0 = _mm_load_sd(X+i+0);
+            a0_0 = _mm_load_sd(A+i+0);
+            m0_0 = _mm_mul_sd(x0, y0);
+            a0_0 = _mm_add_sd(a0_0, m0_0);
+            _mm_store_sd(A+i+0, a0_0);
+         }/* ----- END SCALAR M CLEANUP ----- */
+      }/* ----- END VECTOR UNROLL M CLEANUP ----- */
+   }/* END N-LOOP UR=1 */
+}/* END GER: nMU=1, MU=8, NU=4 */
+#ifdef MA
+   #undef MA
+#endif
+#ifdef MAp
+   #undef MAp
+#endif
+@ROUT ATL_threadMM
+#include "atlas_misc.h"
+#include "atlas_threads.h"
+#include "atlas_tlvl3.h"
+#include Mstr(Mjoin(atlas_,Mjoin(Mjoin(Mjoin(PRE,tXover_),ATL_NCPU),p.h)))
+
+#ifdef DEBUG
+#define T2c(ta_) ((ta_) == AtlasNoTrans) ? 'N' : 'T'
+#endif
+#ifndef ATL_TXOVER_H
+int Mjoin(PATL,threadMM)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+                         size_t M, size_t N, size_t K)
+/*
+ * This dummy routine used when crossover is not tuned 
+ */
+{
+#if 0
+   size_t minD, maxD;
+
+   minD = Mmin(M,N);
+   minD = Mmin(minD,K);
+   maxD = Mmax(M,N);
+   maxD = Mmax(maxD,K);
+   if (M >= (NB<<(ATL_NTHRPOW2+2)))
+      return(2);
+   else if (minD >= 8 && maxD >= 2*NB)
+      return(1);
+   return(0);
+#else
+   return(Mjoin(PATL,GemmWillThread)(M, N, K));
+#endif
+}
+#else
+int Mjoin(PATL,threadMM)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+                         size_t M, size_t N, size_t K)
+/*
+ * RETURNS: number of threads matmul should use to paralellize the problem
+ */
+{
+   size_t i, j, smp2, bip2, xo, xom, D;
+   const int *xop;
+   int k;
+   if (M < 256 && N < 256 && K < 256)   /* small matrix */
+   {
+/*
+ *    For really small problems, table lookups too expensive, so do a quick
+ *    return
+ */
+      j = Mmax(M,N);
+      i = Mmin(M,N);
+      i = Mmin(i,K);
+      if (j <= NB+NB || i < NB)
+         return(1);    /* quick return */
+/*
+ *    Make choice based on most restricted dimension
+ */
+      if (M < N && M < K)   /* M most restricted dim */
+         goto SMALLM;
+      else if (K < M && K < N)  /* K most restricted dim */
+         goto SMALLK;
+      else if (M == N && M == K)
+         goto SQUARE;
+      else  /* N is most restricted dim */
+         goto SMALLN;
+   }
+/*
+ * The following three shapes model recursive factorizations where
+ * two dimensions are cut during the recursion, and a third remains large
+ */
+   else if (N <= 256 && K <= 256)  /* recursive shape that doesn't cut M */
+   {                               /* LU uses this shape */
+      i = Mmin(N, K);
+      j = Mmax(N, K);
+      if (i >= NB)
+         i = (i+j)>>1;
+      else if (i >= 8)
+         i = (i+i+i+j)>>2;  /* 3/4 MIN, 1/4 MAX */
+      for (bip2=1; bip2 < i; bip2 <<= 1);
+      smp2 = (bip2 == i) ? bip2 : (bip2>>1);
+      i = (bip2-i < i-smp2 && i > 16) ? bip2 : smp2;
+      for (j=0; j < 9; j++)
+         if (i & (1<<j)) break;
+      D = M;
+      if (TA == AtlasNoTrans)
+         xop = (TB == AtlasNoTrans) ? ATL_tmmNN_SnkLm_XO : ATL_tmmNT_SnkLm_XO;
+      else
+         xop = (TB == AtlasNoTrans) ? ATL_tmmTN_SnkLm_XO : ATL_tmmTT_SnkLm_XO;
+      #ifdef DEBUG
+         printf("sNKlM_%c%c, M=%d, N=%d, K=%d rD=%d, D=%d\n", 
+                T2c(TA), T2c(TB), M, N, K, j, D);
+      #endif
+   }
+   else if (M <= 256 && N <= 256)  /* recursive shape that doesn't cut K */
+   {                               /* QR uses, maybe in LARFT? */
+      i = Mmin(M, N);
+      j = Mmax(M, N);
+      if (i >= NB)
+         i = (i+j)>>1;
+      else if (i >= 8)
+         i = (i+i+i+j)>>2;  /* 3/4 MIN, 1/4 MAX */
+      for (bip2=1; bip2 < i; bip2 <<= 1);
+      smp2 = (bip2 == i) ? bip2 : (bip2>>1);
+      i = (bip2-i < i-smp2 && i > 16) ? bip2 : smp2;
+      for (j=0; j < 9; j++)
+         if (i & (1<<j)) break;
+      D = K;
+      if (TA == AtlasNoTrans)
+         xop = (TB == AtlasNoTrans) ? ATL_tmmNN_SmnLk_XO : ATL_tmmNT_SmnLk_XO;
+      else
+         xop = (TB == AtlasNoTrans) ? ATL_tmmTN_SmnLk_XO : ATL_tmmTT_SmnLk_XO;
+      #ifdef DEBUG
+         printf("sMNlK_%c%c, M=%d, N=%d, K=%d, rD=%d, D=%d\n", 
+                T2c(TA), T2c(TB), M, N, K, j, D);
+      #endif
+   }
+   else if (M <= 256 && K <= 256) /* recursive shape that doesn't cut N */
+   {                              /* UNCONFIRMED: QR variant uses */
+      i = Mmin(M, K);
+      j = Mmax(M, K);
+      if (i >= NB)
+         i = (i+j)>>1;
+      else if (i >= 8)
+         i = (i+i+i+j)>>2;  /* 3/4 MIN, 1/4 MAX */
+      for (bip2=1; bip2 < i; bip2 <<= 1);
+      smp2 = (bip2 == i) ? bip2 : (bip2>>1);
+      for (j=0; j < 9; j++)
+         if (i & (1<<j)) break;
+      D = N;
+      if (TA == AtlasNoTrans)
+         xop = (TB == AtlasNoTrans) ? ATL_tmmNN_SmkLn_XO : ATL_tmmNT_SmkLn_XO;
+      else
+         xop = (TB == AtlasNoTrans) ? ATL_tmmTN_SmkLn_XO : ATL_tmmTT_SmkLn_XO;
+      #ifdef DEBUG
+         printf("sNlMK_%c%c, M=%d, N=%d, K=%d, rD=%d, D=%d\n", 
+                T2c(TA), T2c(TB), M, N, K, j, D);
+      #endif
+   }
+/*
+ * The three following shapes model static blocking, where two dimensions
+ * are full, and the third is blocked
+ */
+   else if (K <= 256)           /* K dim small, as in right-looking LU/QR */
+   {
+SMALLK:
+      D = Mmin(M,N);
+      if (D >= NB+NB)
+         D = (M+N)>>1;
+      i = K;
+      for (bip2=1; bip2 < i; bip2 <<= 1);
+      smp2 = (bip2 == i) ? bip2 : (bip2>>1);
+      i = (bip2-i < i-smp2 && i > 16) ? bip2 : smp2;
+      for (j=0; j < 9; j++)
+         if (i & (1<<j)) break;
+      if (TA == AtlasNoTrans)
+         xop = (TB == AtlasNoTrans) ? ATL_tmmNN_SkLmn_XO : ATL_tmmNT_SkLmn_XO;
+      else
+         xop = (TB == AtlasNoTrans) ? ATL_tmmTN_SkLmn_XO : ATL_tmmTT_SkLmn_XO;
+      #ifdef DEBUG
+         printf("sKlMN_%c%c, M=%d, N=%d, K=%d, rD=%d, D=%d\n", 
+                 T2c(TA), T2c(TB), M, N, K, j, D);
+      #endif
+   }
+   else if (M <= 256)          /* M dim small */
+   {
+SMALLM:
+      D = Mmin(N,K);
+      if (D >= NB+NB)
+         D = (N+K)>>1;
+      i = M;
+      for (bip2=1; bip2 < i; bip2 <<= 1);
+      smp2 = (bip2 == i) ? bip2 : (bip2>>1);
+      i = (bip2-i < i-smp2 && i > 16) ? bip2 : smp2;
+      for (j=0; j < 9; j++)
+         if (i & (1<<j)) break;
+      if (TA == AtlasNoTrans)
+         xop = (TB == AtlasNoTrans) ? ATL_tmmNN_SmLnk_XO : ATL_tmmNT_SmLnk_XO;
+      else
+         xop = (TB == AtlasNoTrans) ? ATL_tmmTN_SmLnk_XO : ATL_tmmTT_SmLnk_XO;
+      #ifdef DEBUG
+         printf("sMlNK_%c%c, M=%d, N=%d, K=%d, rD=%d, D=%d\n", 
+                T2c(TA), T2c(TB), M, N, K, j, D);
+      #endif
+   }
+   else if (N <= 256)          /* N dim small */
+   {                           /* QR uses this */
+SMALLN:
+      D = Mmin(M,K);
+      if (D >= NB+NB)
+         D = (M+K)>>1;
+      i = N;
+      for (bip2=1; bip2 < i; bip2 <<= 1);
+      smp2 = (bip2 == i) ? bip2 : (bip2>>1);
+      i = (bip2-i < i-smp2 && i > 16) ? bip2 : smp2;
+      for (j=0; j < 9; j++)
+         if (i & (1<<j)) break;
+      if (TA == AtlasNoTrans)
+         xop = (TB == AtlasNoTrans) ? ATL_tmmNN_SnLmk_XO : ATL_tmmNT_SnLmk_XO;
+      else
+         xop = (TB == AtlasNoTrans) ? ATL_tmmTN_SnLmk_XO : ATL_tmmTT_SnLmk_XO;
+      #ifdef DEBUG
+         printf("sNlMK_%c%c, M=%d, N=%d, K=%d, rD=%d, D=%d\n", 
+                T2c(TA), T2c(TB), M, N, K, j, D);
+      #endif
+   }
+   else                        /* all dim > 256, call it square */
+   {
+SQUARE:   /* near-square shape, N <= 256 if jumped here */
+      D = (M+N+K+1)/3;
+      j = 0;
+      if (TA == AtlasNoTrans)
+         xop = (TB == AtlasNoTrans) ? ATL_tmmNN_SQmnk_XO : ATL_tmmNT_SQmnk_XO;
+      else
+         xop = (TB == AtlasNoTrans) ? ATL_tmmTN_SQmnk_XO : ATL_tmmTT_SQmnk_XO;
+      #ifdef DEBUG
+         printf("SQ_%c%c, M=%d, N=%d, K=%d, D=%d\n", 
+                T2c(TA), T2c(TB), M, N, K, D);
+      #endif
+   }
+
+   xop += j*ATL_PDIM;
+   for (k=ATL_PDIM-1; k >= 0; k--)
+      if (xop[k] && D >= xop[k])
+         return((k == ATL_PDIM-1) ? ATL_NTHREADS : (2<<k));
+   return(1);
+}
+#endif

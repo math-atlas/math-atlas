@@ -1,0 +1,1446 @@
+@ROUT smvcases.idx dmvcases.idx cmvcases.idx zmvcases.idx
+#
+# In this file, any line beginning with a '#' is ignored, but the # must be in
+# column 0.  All multiple whitespace is reduced to one space (i.e. used only
+# to distinguish where words begin/end).  Lines may be extended by putting '\'
+# as the *last* character of line.
+#
+# The file has the following format:
+# ROUT='routine name' AUTH='author names' COMP='compiler name' FLAGS='flags'
+# ID=<id> YU=<yu> XU=<xu> minY=<#> minX=<#> alignX=<#> alignY=<#> alignA=<#>,
+# TA='[t,n,c]' TB='[t,n,c]' SSE=[0,1,2,3] X87=[0,1] 
+# LDTOP=[0,1] ALLALIGNXY=[0,1] AXPYBASED=[0,1] GEMMBASED=[0,1] CONJDEF=[0,1]
+# ASM=[asmlist], eg., asmlist is "GAS_x8664,GAS_x8632" or "GAS_SPARC"
+# ASM defaults to no assembly dialect required.
+# If YU/XU is negative, then the routine can only handle multiples of YU/XU.
+#
+# Assuming N is the length of X, and M is the length of Y, all routines
+# are assumed to handle any runtime value of M >= minY, N >= minX.
+# They must respect the compile-time macros BETA0, BETA1, & BETAX.
+# Some less-obvious keywords:
+# LDTOP     : set to 1 if load Y at top of MV loop (more error)
+# CONJDEF   : Defining Conj_ will cause A to be conjugated before use
+#             if 0, then can only be used for TA setting
+# ALLALIGNXY: Create k copies of X and Y, where k is the number of times
+#             the native alignment goes into the required alignment.  So,
+#             if ALIGNX=16, and we are doing single precision, X will be
+#             passed as float *X[4], and X[0] will be 16-byte aligned,
+#             X[1]: 4-byte aligned, X[2]: 8-byte aligned, X[3]: 12 byte aligned
+#             if ALIGN[X/Y] == native length, then this flag has no effect on
+#             that vector.
+# AXPYBASED : Routine employs the outer-product matvec (mainly for NoTrans)
+# GEMMBASED : Kernel calls GEMM to do matvec
+# PFTUNEx   : Kernel uses pref_x(mem) macro for each op=x (A,y,x).  prefetch
+#             inst can be varied wt this macro, as can fetch distance.
+#
+@ROUT mmread
+#ifndef ATLAS_MMPARSE_H
+   #define ATLAS_MMPARSE_H
+
+#include "atlas_genparse.h"
+#include "atlas_enum.h"
+
+#define MMF_LDCTOP      0  /* 1: load C before K-loop, 0: ld after */
+#define MMF_X87         1  /* 1: requires the Intel x87 unit */
+#define MMF_MRUNTIME    2  /* 1: M dim is run-time variable */
+#define MMF_NRUNTIME    3  /* 1: M dim is run-time variable */
+#define MMF_KRUNTIME    4  /* 1: M dim is run-time variable */
+#define MMF_KUISKB      5  /* 1: KU == KB */
+#define MMF_LDISKB      6  /* 1: lda=ldb=KB */
+#define MMF_BETAN1      7  /* 1: kernel has special support for BETA = -1 */
+#define MMF_LDAB        8  /* 1: lda = ldb */
+#define MMF_AOUTER      9  /* 1: MNK loop order, 0: NMK loop order */
+
+#define MMF_DEFAULT ( (1<<MMF_LDISKB) | (1<<MMF_LDAB) )
+#ifndef  FLAG_IS_SET
+   #define FLAG_IS_SET(field_, bit_) ( (field_) & (1<<(bit_)) )
+#endif
+
+typedef struct MMNode ATL_mmnode_t;
+struct MMNode
+{
+   double mflop[8];     /* 1st entry perf using mbB, nbB, kbB */
+   int ID, mu, nu, ku;  /* ID, and unrolling on each loop */
+   int kbmin, kbmax;    /* min/max KB this kernel can handle */
+   int SSE;             /* 0: no SSE, 1: SSE1 req, 2: SSE2 req, etc */
+   int lat, muladd, pref, clean, fftch, iftch, nftch; /* used for gened codes */
+   int mbB, nbB, kbB;  /* best blocking dims found by search */
+   enum ATLAS_TRANS TA, TB;
+   int asmbits;   /* bitfield indicating which assembly(ies) is required */
+   char *rout, *auth, *comp, *cflags;
+   char *str;                   /* tmp string used in generation */
+   char *genstr;                /* system(genstr) will generate gened kernel */
+   int flag;
+   ATL_mmnode_t *next;
+};
+
+@ROUT r1read
+#ifndef ATLAS_R1PARSE_H
+   #define ATLAS_R1PARSE_H
+
+#include "atlas_genparse.h"
+
+
+#define R1F_INCACHE     0  /* consider kernel for in-cache gemv */
+#define R1F_OUTCACHE    1  /* consider kernel for out-of-cache gemv */
+#define R1F_ALLALIGNXY  2  /* X&Y are copied into all legal alignments */
+#define R1F_ALGLDA      3  /* X&A have same (mis)align, LDA mult of 16 bytes */
+#define R1F_SINGLE      4  /* single precision */
+#define R1F_CPLX        5  /* complex arithmetic */
+#define R1F_APTRS       6  /* use ptrs rather than lda for column indexing */
+#define R1F_X87         7  /* requires the Intel x87 unit */
+#define R1F_FYU         8  /* N must be a multiple of YU */
+#define R1F_NFLAGS      9
+char *R1F_exp[R1F_NFLAGS] = 
+{
+"Consider kernel for in-cache use only",
+"Consider kernel for out-of-cache use only",
+"X&Y are copied into all legal alignments",
+"X&A have same (mis)align, LDA mult of 16 bytes",
+"Data uses single precision",
+"Data is of complex type",
+"use ptrs rather than lda for column indexing",
+"Kernel requires the x87 unit for correct operation",
+"N must be a multiple of YU"
+};
+
+#define R1F_DEFAULT ((1<<R1F_INCACHE) | (1<<R1F_OUTCACHE))
+typedef struct R1NODE ATL_r1node_t;
+struct R1NODE
+{
+   double mflop[8];
+   ATL_r1node_t *next;
+   char *rout, *auth, *comp, *cflags;
+   char *str;                   /* tmp string used in generation */
+   char *genstr;                /* system(genstr) will generate gened kernel */
+   int alignA, alignX, alignY;  /* required alignments */
+   int ldamul;                  /* lda must be a multiple of ldamul */
+   int ID, YU, XU;              /* unrolling for Y & X vectors */
+   int NXU;                     /* # of repetitions of XU */
+   int minY, minX;              /* min veclen to call the rout with */
+   int SSE;                     /* 0: no SSE, 1: SSE1 req, 2: SSE2 req, etc */
+   int asmbits;                 /* valid assemblies in this file */
+   int CacheElts;               /* # of cache elts to assume for blocking */
+   int flag;
+};
+
+@ROUT mvread
+#ifndef ATLAS_MVPARSE_H
+   #define ATLAS_MVPARSE_H
+
+#include "atlas_genparse.h"
+
+#define MVF_INCACHE     0  /* consider kernel for in-cache gemv */
+#define MVF_OUTCACHE    1  /* consider kernel for out-of-cache gemv */
+#define MVF_ALLALIGNXY  2  /* X&Y are copied into all legal alignments */
+#define MVF_AXPYBASED   3  /* 0:ddot based, 1: axpy-based */
+#define MVF_GEMMBASED   4  /* gemm-based */
+#define MVF_LDYTOP      5  /* 0: load Y value after dot product */
+#define MVF_CONJDEF     6  /* 1: conj(A) if Conj_ is defined */
+#define MVF_X87         7  /* requires the Intel x87 unit */
+#define MVF_FYU         8  /* Length of Y must be a multiple of YU */
+
+#define MVF_DEFAULT ((1<<MVF_INCACHE) | (1<<MVF_OUTCACHE))
+typedef struct MVNODE ATL_mvnode_t;
+struct MVNODE
+{
+   double mflop;
+   ATL_mvnode_t *next;
+   char *rout, *auth, *comp, *cflags;
+   char *str;                   /* tmp string used in generation */
+   char *genstr;                /* system(genstr) will generate gened kernel */
+   int alignA, alignX, alignY;  /* required alignments */
+   int ID, YU, XU;              /* unrolling for Y & X vectors */
+   int minY, minX;              /* min veclen to call the rout with */
+   int SSE;                     /* 0: no SSE, 1: SSE1 req, 2: SSE2 req, etc */
+   int asmbits;                 /* valid assemblies in this file */
+   enum ATLAS_TRANS TA;
+};
+
+@ROUT genparse
+#ifndef ATLAS_GENPARSE_H
+   #define ATLAS_GENPARSE_H
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#include <string.h>
+@extract -b @(basd)/atlconf.base rout=asmconf.h
+
+#define SET_FLAG(bits_, flg_, val_) \
+{\
+   if (val_) (bits_) |= (1<<(flg_)); \
+   else (bits_) &= ~(1<<(flg_)); \
+}
+#define FLAG_IS_SET(field_, bit_) ( (field_) & (1<<(bit_)) )
+
+static int GetL1CacheElts(char pre)
+{
+   FILE *L1f;
+   int L1Size, i;
+
+   L1f = fopen("res/L1CacheSize", "r");
+   if (!L1f)
+   {
+      assert(system("make res/L1CacheSize\n") == 0);
+      L1f = fopen("res/L1CacheSize", "r");
+   }
+   assert(L1f);
+   fscanf(L1f, "%d", &L1Size);
+   fclose(L1f);
+   assert(L1Size > 0);
+   if (pre == 'c' || pre == 'd')
+      i = 1024/8;
+   else if (pre == 's')
+      i = 1024/4;
+   else if (pre == 'z')
+      i = 1024/16;
+   else
+      assert(0);
+   return(i*L1Size);
+}
+static char *DupString(char *str)
+{
+   int i,n;
+   char *s;
+
+   n = strlen(str)+1;
+   s = malloc(sizeof(char)*n);
+   assert(s);
+   for (i=0; i <= n; i++)
+      s[i] = str[i];
+   return(s);
+}
+
+static char *GetSingleQuoteString(char *str)
+{
+   char *sp;
+   int i, n;
+
+   assert(str[0] == '\'');
+   for (i=1; str[i] && str[i] != '\''; i++);
+   assert(str[i]);
+   sp = malloc(i*sizeof(char));
+   for (n=i,i=1; i < n; i++)
+      sp[i-1] = str[i];
+   sp[n-1] = '\0';
+   return(sp);
+}
+
+static int asmNames2bitfield(char *str)
+/*
+ * Takes str containing an assembly name list.  The list is ended by the first
+ * white space or end of string.  List items are seperated by ',', and there
+ * can be no whitespace in list.
+ * RETURNS: bitfield with bits set corresponding to assemblies, 0 on error.
+ */
+{
+   char asmname[64];
+   int i, KeepOn, bits=0;
+
+   do
+   {
+      for (i=0; !iswspace(str[i]) && str[i] != ',' && str[i] && i < 64; i++)
+         asmname[i] = str[i];
+      asmname[i] = '\0';
+      KeepOn = str[i] == ',';
+      str += i+1;
+      if (i >= 64)
+         return(0);  /* no asm name > 63 in length */
+      for (i=0; i < NASMD; i++)
+      {
+         if (!strcmp(ASMNAM[i], asmname))
+         {
+            bits |= (1<<i);
+            break;
+         }
+      }
+   }
+   while(KeepOn);
+   return(bits);
+}
+
+static int GetDoubleArr(char *str, int N, double *d)
+/*
+ * Reads in a list with form "%le,%le...,%le"; N-length d recieves doubles.
+ * RETURNS: the number of doubles found, or N, whichever is less
+ */
+{
+   int i=1;
+   assert(sscanf(str, "%le", d) == 1);
+   while (i < N)
+   {
+      str = strstr(str, ",");
+      if (!str)
+         break;
+      str++;
+      assert(sscanf(str, "%le", d+i) == 1);
+      i++;
+   }
+   return(i);
+}
+
+static char *GetLongerString(char *shrt, int newlen)
+/*
+ * Allocates new string of size newlen, copies shrt into it, and frees shrt.
+ */
+{
+   char *sp;
+
+   sp = malloc(sizeof(char)*newlen);
+   assert(sp);
+   if (shrt)
+   {
+      strcpy(sp, shrt);
+      free(shrt);
+   }
+   else if (newlen >= 0)
+      sp[0] = '\0';
+   return(sp);
+}
+
+static char *GetOneLine(FILE *fpin)
+/*
+ * RETURNS: string of one line from stream fpin,  NULL if stream exhausted.
+ */
+{
+   const int inc=256;
+   static int len=0;
+   static char *ln, *sp;
+   int i, j, KeepOn;
+
+   if (!len)
+   {
+      ln = malloc(inc*sizeof(char));
+      assert(ln);
+      len = inc;
+   }
+   if (!fgets(ln, len, fpin))
+      return(NULL);
+
+   for (i=0; ln[i]; i++);  /* find end of string */
+   if (!i) return(ln);
+   while (ln[i-1] != '\n')    /* if last char not \n, read rest of line */
+   {
+      len += inc;
+      ln = GetLongerString(ln, len);
+      if (!fgets(ln+i, inc, fpin));
+         return(ln);
+       for (; ln[i]; i++);  /* find end of string */
+   }
+   return(ln);
+}
+
+static char *GetJoinedLines(FILE *fpin)
+/*
+ * Gets lines from file fpin; if last non-whitespace char is '\', joins lines
+ * RETURNS: line from file including joining, NULL if fpin exhausted
+ */
+{
+   char *ln, *sp;
+   static char *join=NULL;
+   static int jlen=0;
+   int i, j, k;
+
+   sp = ln = GetOneLine(fpin);
+   if (!sp)
+      return(NULL);
+   j = 0;   /* current length of join string */
+   if (ln)
+   {
+      for (i=0; ln[i]; i++);  /* find end of string */
+      if (!i) return(NULL);
+      for (i--; isspace(ln[i]) && i > 0; i--);  /* find last non-wspace char */
+      while (ln[i] == '\\')
+      {
+         if (jlen < j+i+2)
+         {
+            jlen = j+i+i+2;
+            join = GetLongerString(join, jlen);
+         }
+         for (k=0; k < i; k++)
+            join[j+k] = ln[k];
+         j += k;
+         join[j++] = ' ';
+         join[j] = '\0';
+         ln = GetOneLine(fpin);   /* get new line that should be joined */
+         assert(ln);              /* can't end file with continue */
+         for (i=0; ln[i]; i++);   /* find end of new line */
+         for (i--; isspace(ln[i]) && i > 0; i--); /* find last non-wspc char */
+         sp = join;
+      }
+      if (sp == join)
+      {
+         if (jlen < j+i+2)
+         {
+            jlen = j+i+i+2;
+            join = GetLongerString(join, jlen);
+         }
+         for (k=0; k <= i; k++)
+            join[j+k] = ln[k];
+         j += k;
+         join[j] = '\n';
+         join[j+1] = '\0';
+         sp = join;
+      }
+   }
+   return(sp);
+}
+
+#endif /* end atlas_genparse.h guard */
+@ROUT mmread
+   @define rt @mm@
+@ROUT mvread
+   @define rt @mv@
+@ROUT r1read
+   @define rt @r1@
+@ROUT r1read mvread mmread
+static ATL_@(rt)node_t *Get@up@(rt)Node(void)
+{
+   ATL_@(rt)node_t *p;
+   p = calloc(1, sizeof(ATL_@(rt)node_t));
+   assert(p);
+@ROUT mvread `   p->TA = AtlasNoTrans;`
+@ROUT mmread `   p->TA = AtlasTrans; p->TB = AtlasNoTrans;`
+   p->flag = @up@(rt)F_DEFAULT;
+}
+
+static ATL_@(rt)node_t *Clone@up@(rt)Node(ATL_@(rt)node_t *dup)
+{
+   ATL_@(rt)node_t *p;
+   p = malloc(sizeof(ATL_@(rt)node_t));
+   assert(p);
+   memcpy(p, dup, sizeof(ATL_@(rt)node_t));
+   if (dup->rout)
+      p->rout = DupString(dup->rout);
+   if (dup->auth)
+      p->auth = DupString(dup->auth);
+   if (dup->comp)
+      p->comp = DupString(dup->comp);
+   if (dup->cflags)
+      p->cflags = DupString(dup->cflags);
+   if (dup->str)
+      p->str = DupString(dup->str);
+   if (dup->genstr)
+      p->genstr = DupString(dup->genstr);
+   return(p);
+}
+
+static ATL_@(rt)node_t *Kill@up@(rt)Node(ATL_@(rt)node_t *die)
+{
+   ATL_@(rt)node_t *p=NULL;
+   if (die)
+   {
+      p = die->next;
+      if (die->rout)
+         free(die->rout);
+      if (die->auth)
+         free(die->auth);
+      if (die->comp)
+         free(die->comp);
+      if (die->cflags)
+         free(die->cflags);
+      if (die->str)
+         free(die->str);
+      if (die->genstr)
+         free(die->genstr);
+      free(die);
+   }
+   return(p);
+}
+
+static void KillAll@up@(rt)Nodes(ATL_@(rt)node_t *die)
+{
+   while (die)
+      die = Kill@up@(rt)Node(die);
+}
+
+static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
+/*
+ * Given a line from a @(rt) index file (with multiple lines pasted together
+ * into one line (ln), return a structure describing that line.
+ */
+{
+   ATL_@(rt)node_t *p;
+   char *sp;
+   int itmp;
+   char ch;
+
+   p = Get@up@(rt)Node();
+
+@ROUT mmread `@multidef jj ID SSE`
+@ROUT mvread r1read `@multidef jj ID XU YU minY minX alignX alignY alignA SSE CacheElts`
+@whiledef jj
+   sp = strstr(ln, "@(jj)=");
+   if (sp)
+      p->@(jj) = atoi(sp+@len@(jj)+1);
+   else
+      p->@(jj) = 0;
+
+@endwhile
+@ROUT mmread
+@multidef fl 
+   X87 LDCTOP MRUNTIME NRUNTIME KRUNTIME KUISKB LDISKB MMF_BETAN1 LDAB AOUTER
+@endmultidef
+
+@ROUT mvread
+@multidef fl X87 LDYTOP ALLALIGNXY AXPYBASED GEMMBASED CONJDEF FYU
+@ROUT r1read
+@multidef fl X87 ALLALIGNXY FYU
+@ROUT r1read mvread
+@whiledef fl
+   sp = strstr(ln, "@(fl)=");
+   if (sp)
+   {
+      if (atoi(sp+@len@(fl)+1))
+         p->flag |= (1<<@up@(rt)F_@(fl));
+      else
+         p->flag &= ~(1<<@up@(rt)F_@(fl));
+   }
+@endwhile
+
+   sp = strstr(ln, "MFLOP=");
+   if (sp)
+      GetDoubleArr(sp+6, 8, p->mflop);
+
+   sp = strstr(ln, "ASM=");
+   if (sp)
+      p->asmbits = asmNames2bitfield(sp+4);
+
+
+@ROUT mvread mmread
+@multidef TA TA TB
+@ROUT mvread
+@multidef TA TA 
+@ROUT mvread mmread
+@whiledef TA
+   sp = strstr(ln, "@(TA)='");
+   if (sp)
+   {
+      ch = tolower(sp[4]);
+      if (ch == 'n')
+         p->@(TA) = AtlasNoTrans;
+      else if (ch == 'c')
+         p->@(TA) = AtlasConjTrans;
+      else if (ch == 't')
+         p->@(TA) = AtlasTrans;
+      else
+         assert(0);
+   }
+@endwhile
+@ROUT mvread r1read mmread
+@skip   sp = strstr(ln, "MFLOP=");
+@skip   if (sp) p->mflop = atof(sp+6);
+
+@whiledef kw rout auth comp cflags
+   sp = strstr(ln, "@up@(kw)='");
+   if (sp)
+      p->@(kw) = GetSingleQuoteString(sp+@len@(kw)+1);
+   else
+      p->@(kw) = NULL;
+
+@endwhile
+   return(p);
+}
+
+static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
+{
+   int i, j, k;
+   char ta, tb;
+
+   if (!np)
+      return;
+   if (!np->rout)
+      np->ID = 0;
+@ROUT r1read
+   fprintf(fpout, "ID=%d ROUT='%s' AUTH='%s' \\\n",
+           np->ID, np->rout ? np->rout : "generated", 
+           np->auth ? np->auth : "R. Clint Whaley");
+@ROUT mvread mmread
+   if (np->TA == AtlasConjTrans) ta = 'C';
+   else if (np->TA == AtlasTrans) ta = 'T';
+   else ta = 'N';
+@ROUT mvread
+   fprintf(fpout, "ID=%d ROUT='%s' AUTH='%s' TA='%c' \\\n",
+           np->ID, np->rout ? np->rout : "generated", 
+           np->auth ? np->auth : "R. Clint Whaley", ta);
+@ROUT mmread
+   if (np->TB == AtlasConjTrans) tb = 'C';
+   else if (np->TB == AtlasTrans) tb = 'T';
+   else tb = 'N';
+   fprintf(fpout, "ID=%d ROUT='%s' AUTH='%s' TA='%c' TB='%c' \\\n",
+           np->ID, np->rout ? np->rout : "generated", 
+           np->auth ? np->auth : "R. Clint Whaley", ta, tb);
+@ROUT mvread r1read
+   fprintf(fpout, "   ");
+   i = 3;
+@whiledef kw XU YU minY minX alignX alignY alignA SSE CacheElts
+   if (i > 70) { fprintf(fpout, "\\\n   "); i = 3; }
+   i += fprintf(fpout, "@(kw)=%d ", np->@(kw));
+@endwhile
+
+@ROUT mvread r1read mmread
+@ROUT mmread `@define kwd @X87 LDCTOP MRUNTIME NRUNTIME KRUNTIME KUISKB LDISKB BETAN1 LDAB AOUTER@`
+@ROUT r1read `@define kwd @X87 FYU@`
+@ROUT mvread `@define kwd @X87 FYU LDYTOP ALLALIGNXY AXPYBASED GEMMBASED@`
+@whiledef kw @(kwd)
+   if (i > 70) { fprintf(fpout, "\\\n   "); i = 3; }
+   i += fprintf(fpout, "@(kw)=%d ", (np->flag & (1<<@up@(rt)F_@(kw))));
+@endwhile
+
+   if (np->mflop[0]+np->mflop[1]+np->mflop[2]+np->mflop[3]+np->mflop[4]+
+       np->mflop[5]+np->mflop[6] != 0.0)
+   {
+      if (i > 40) { fprintf(fpout, "\\\n   "); i = 3; }
+      i += fprintf(fpout, "MFLOP=%le", np->mflop[0]);
+      for (j=7; j && np->mflop[j] == 0.0; j--);
+      for (k=1; k <= j; k++)
+         i += fprintf(fpout, ",%le", np->mflop[k]);
+   }
+   if (np->asmbits)
+   {
+      if (i > 40) { fprintf(fpout, "\\\n   "); i = 3; }
+      for (j=0; !(np->asmbits & (1<<j)); j++);
+      assert(j < NASMD);
+      i += fprintf(fpout, "  ASM=%s", ASMNAM[j]);
+      for (j++; j < NASMD; j++)
+         if (np->asmbits & (1<<i))
+            i += fprintf(fpout, ",%s", ASMNAM[j]);
+   }
+@whiledef kw comp cflags
+   if (np->@(kw))
+   {
+      if (i+strlen(np->@(kw)) > 70) { fprintf(fpout, "\\\n   "); i = 3; }
+      i += fprintf(fpout, "  @up@(kw)='%s'", np->@(kw));
+   }
+@endwhile
+   if (i)
+      fprintf(fpout, "\n");
+}
+
+void Print@up@(rt)Nodes(FILE *fpout, ATL_@(rt)node_t *bp)
+{
+   while (bp)
+   {
+      Print@up@(rt)Line(fpout, bp);
+      bp = bp->next;
+   }
+}
+
+static void Write@up@(rt)File(char *file, ATL_@(rt)node_t *nq)
+{
+   FILE *fpout;
+
+   if (!file || !strcmp(file, "stdout"))
+      fpout = stdout;
+   else if (!strcmp(file, "stderr"))
+      fpout = stderr;
+   else
+      fpout = fopen(file, "w");
+   assert(fpout);
+   Print@up@(rt)Nodes(fpout, nq);
+   if (fpout != stdout && fpout != stderr)
+      fclose(fpout);
+}
+
+static ATL_@(rt)node_t *Read@up@(rt)File(char *file)
+/*
+ * Reads in a standard ATLAS parsable @up@(rt) index file, and returns a
+ * list of all the kernels defined there.
+ */
+{
+   ATL_@(rt)node_t *nq=NULL, *p;
+   FILE *fpin;
+   char *ln, *sp;
+   int i, j, KeepOn, len;
+
+   if (!file || !strcmp(file, "stdin"))
+      fpin = stdin;
+   else
+      fpin = fopen(file, "r");
+   if (!fpin)
+      return(NULL);
+   nq = p = Get@up@(rt)Node();
+   while (ln = GetJoinedLines(fpin))
+   {
+      if (ln[0] != '#')
+      {
+         p->next = Parse@up@(rt)Line(ln);
+         p = p->next;
+      }
+   }
+   fclose(fpin);
+   return(Kill@up@(rt)Node(nq));
+}
+
+static ATL_@(rt)node_t *DelBadArchKernels(ATL_@(rt)node_t *bp)
+/*
+ * Weeds out kernels that require SSE/assembly that we haven't got
+ */
+{
+   int asmb=0, die;
+   ATL_@(rt)node_t *p, *prev;
+@multidef sh          1         2        3        4          5        6
+@whiledef asm GAS_x8632 GAS_x8664 GAS_SPARC GAS_PPC GAS_PARISC GAS_MIPS
+   #ifdef ATL_@(asm)
+      asmb |= (1<<@(sh));
+   #endif
+   @undef sh
+@endwhile
+
+   prev = p = bp;
+   while (p)
+   {
+      die = (p->asmbits) ? !(asmb & p->asmbits) : 0;
+      #ifndef ATL_SSE3
+         if (p->SSE)
+         {
+            die |= (p->SSE >= 3);
+            #ifndef ATL_SSE2
+               die |= (p->SSE >= 2);
+            #endif
+            #ifndef ATL_SSE1
+               die |= (p->SSE >= 1);
+            #endif
+         }
+      #endif
+      if (die) 
+      {
+         if (p == bp) 
+            bp = p = Kill@up@(rt)Node(p);
+         else 
+            prev->next = p = Kill@up@(rt)Node(p);
+      }
+      else
+      {
+         prev = p;
+         p = p->next;
+      }
+   }
+   return(bp);
+}
+
+@ROUT mvread r1read
+static ATL_@(rt)node_t *FindFastestKernel
+(  char pre,             /* precision prefix */
+   ATL_@(rt)node_t *bp,  /* kernel queue */
+   int imf,              /* which mflop entry to sort by */
+   int RESTRICTOK        /* consider restricted kernel? */
+)
+/*
+ * A RESTRICTed kernel is one that requires something that can't be fixed
+ * by loop peeling or the like.  Examples include forcing lda to a given
+ * multiple, or 16-byte alignment for double complex (can't peel 1/2 of
+ * a complex number to make 8-byte aligned array 16).
+ * RETURNS: pointer to node in bp that is fastest in context imf wt RESTRCT
+ */
+{
+   double mf;
+   ATL_@(rt)node_t *kp, *kmax=bp;
+   int size, usize, RKERN;
+
+   if (bp)
+   {
+      usize = (pre == 'c' || pre == 's') ? 4 : 8;
+      if (pre == 'c' || pre == 'd') size = 8;
+      else if (pre == 's') size = 4;
+      else size = 16;
+      mf = bp->mflop[imf];
+      for (kp=bp->next; kp; kp = kp->next)
+      {
+         if (kp->mflop[imf] > mf)
+         {
+            RKERN = (pre == 'z' || pre == 'c') ? (kp->alignA > usize) : 0;
+            RKERN = RKERN | (kp->ldamul > size);
+            if (RESTRICTOK | !RKERN)
+            {
+               mf = kp->mflop[imf];
+               kmax = kp;
+            }
+         }
+      }
+   }
+   return(kmax);
+}
+@ROUT r1read
+ATL_r1node_t *GetSortedUniqueR1Kerns
+   (char pre, ATL_r1node_t *r1kerns, char **aliases)
+/*
+ * Takes the 8-length queue of rank-1 update kernels:
+ *    First 2 are restricted and normal GER out-of-cache kernels
+ *    next 2 are restricted & normal in-L2 GER kernels
+ *    next 2 are restristed & normal in-L1 GERM kernels
+ *    next 2 are restristed & normal out-of-cache, L1-blocked kernels
+ *
+ * ALIASES: a null-terminated list of string pointers, where pairs
+ *          of strings give the correct aliasing: 1st entry is the
+ *          routine to be aliased, 2nd is what it should be aliased to.
+ *          Every kernel that uses the same actual routine as another
+ *          in the 8-length queue is deleted, and a #define is used
+ *          to call the appropriate kernel, to avoid unnecessary
+ *          code size expansion.
+ *          If ALIASES is NULL, then ALIASES is not accessed.
+ *          ALIASES must be at least 15 pointers long.
+ *
+ * RETURNS: new queue with only the unique kernels left (unrestricted
+ *          kernels appear first in list), and the p->str entry having
+ *          the correct routine/file name.  
+ * NOTE   : Leaves the original queue intact.
+ */
+{
+   ATL_r1node_t *r1b, *r1p, *r1k, *r1prev;
+   char *kern = "gerk";
+   int i, ialias=0;
+   char *suff[8] = {"_L0", "_L0_restrict", "_L2", "_L2_restrict",
+                    "_L1", "_L1_restrict", "_L1b", "_L1b_restrict"};
+
+@skip   kern = (pre == 'z' || pre == 'c') ? "geru" : "ger";
+/*
+ * Make sure all routines are present, and there are no extra
+ */
+  for (i=0, r1p = r1kerns; i < 8; i++, r1p=r1p->next)
+     assert(r1p);
+  assert(!r1p);
+/* 
+ * Build new queue with the "normal" kernels first
+ */
+   r1b = CloneR1Node(r1kerns->next);
+   r1b->next = r1p = CloneR1Node(r1kerns);
+   r1p->next = CloneR1Node(r1kerns->next->next->next);
+   r1p->next->next =  CloneR1Node(r1kerns->next->next);
+   r1p = r1p->next->next;
+   r1p->next = CloneR1Node(r1kerns->next->next->next->next->next);
+   r1p->next->next = CloneR1Node(r1kerns->next->next->next->next);
+   r1p = r1p->next->next;
+   r1p->next = CloneR1Node(r1kerns->next->next->next->next->next->next->next);
+   r1p->next->next = CloneR1Node(r1kerns->next->next->next->next->next->next);
+   r1p->next->next->next = NULL;
+/*
+ * Label queue entries with proper kernel names
+ */
+   for (i=0,r1p = r1b; i < 8; i++, r1p = r1p->next)
+   {
+       r1p->str = malloc(32*sizeof(char));
+       assert(r1p->str);
+       sprintf(r1p->str, "ATL_%c%s%s", pre, kern, suff[i]);
+   }
+/* 
+ * Add duplicated kernels to alias array, and then get rid of them from Q
+ */
+   r1prev = r1b;
+   r1p = r1b->next;
+   while (r1p)
+   {
+      for (r1k=r1b; r1k != r1p; r1k = r1k->next)
+         if (r1k->ID == r1p->ID) break;
+      if (r1k != r1p)  /* got duplicate */
+      {
+         if (aliases)
+         {
+            aliases[ialias++] = r1p->str;
+            r1p->str = NULL;
+            aliases[ialias++] = DupString(r1k->str);
+         }
+         r1prev->next = r1p = KillR1Node(r1p);
+      }
+      else
+      {
+        r1prev = r1p;
+        r1p = r1p->next;
+      }
+   }
+   if (aliases)
+      aliases[ialias] = NULL;
+   return(r1b);
+}
+@ROUT mvread r1read mmread
+#endif  /* end atlas_@(rt)parse.h guard */
+@ROUT atlas_r1testtime.h
+   @define rt @r1@
+@ROUT atlas_mmtesttime.h
+   @define rt @mm@
+@ROUT atlas_gentesttime.h
+#ifndef ATLAS_GENTESTTIME_H
+   #define ATLAS_GENTESTTIME_H
+
+#include "atlas_fopen.h"
+
+static int GetL1CacheSize()
+{
+   FILE *L1f;
+   int L1Size;
+
+   L1f = fopen("res/L1CacheSize", "r");
+   if (!L1f)
+   {
+      assert(system("make res/L1CacheSize\n") == 0);
+      L1f = fopen("res/L1CacheSize", "r");
+   }
+   assert(L1f != NULL);
+   fscanf(L1f, "%d", &L1Size);
+   fclose(L1f);
+   fprintf(stderr, "\n      Read in L1 Cache size as = %dKB.\n",L1Size);
+   return(L1Size);
+}
+
+@ROUT mvres mmres atlas_gentesttime.h
+static int pre2size(char pre)
+{
+   int iret=8;
+   if (pre == 's')
+      iret = 4;
+   else if (pre == 'z')
+      iret = 16;
+   return(iret);
+}
+
+static void SortDoubles(int N, double *d)
+/* 
+ * Sorts N-length array d from least to greatest using N^2 selection sort
+ */
+{
+   double min;
+   int imin, i, j;
+
+   for (i=0; i < N-1; i++)
+   {
+      imin = i;
+      min = d[i];
+      for (j=i+1; j < N; j++)
+      {
+         if (d[j] < min)
+         {
+            imin = j;
+            min = d[j];
+         }
+      }
+      if (imin != i)
+      {
+         d[imin] = d[i];
+         d[i] = min;
+      }
+   }
+}
+
+static void *ReadResultsFile(int FULL, char *resfile)
+/*
+ * Reads an ATLAS results file, which has the following form:
+ *    <N> <walltime>   -> walltime of 0 means CPU timing was used
+ *    sample1
+ *    ....
+ *    sampleN
+ * RETURNS: NULL on error, else if (FULL) it returns an array of form:
+ *             <N> <wall> <sample1> .... <sampleN>
+ *          where samples have been sorted from least-to-greatest.
+ *          where <N> is the number of samples.
+ *          If (!FULL) then a pointer to the max value is returned for
+ *          walltime, and a pointer to the median value is returned for
+ *          for cputime.
+ */
+{
+   static double dret;
+   double *dres;
+   FILE *fpin;
+   char ln[1024];
+   int i, n, wall, ierr;
+
+   fpin = fopen(resfile, "r");
+   if (!fpin)
+      return(NULL);
+   ierr = (fgets(ln, 1024, fpin) == NULL);
+   if (ierr || sscanf(ln, " %d %d", &n, &wall) != 2)
+   {
+      fclose(fpin);
+      return(NULL);
+   }
+   dres = malloc((n+2)*sizeof(double));
+   assert(dres);
+   dres[0] = n;
+   dres[1] = wall;
+   for (i=0; i < n; i++)
+   {
+      ierr = (fgets(ln, 1024, fpin) == NULL);
+      if (ierr || sscanf(ln, " %le", dres+i+2) != 1)
+      {
+         fclose(fpin);
+         return(NULL);
+      }
+   }
+   SortDoubles(n, dres+2);
+   if (FULL)
+      return(dres);
+   dret = (wall) ? dres[n+1] : dres[2+n/2];
+   free(dres);
+   return(&dret);
+}
+
+static double PrintResultsFromFile(FILE *fpout, double *darr)
+{
+   const int N=darr[0], wall=(darr[1] != 0.0);
+   double *dres=darr+2;
+   double dret;
+   int i;
+
+   assert(N > 0);
+   for (i=0; i < N; i++)
+      fprintf(fpout, "   %le\n", dres[i]);
+   if (wall)
+   {
+      fprintf(fpout, "MAX = %.2f\n", dres[N-1]);
+      return(dres[N-1]);
+   }
+   else 
+      fprintf(fpout, "MED = %.2f\n", dres[N/2]);
+   return(dres[N/2]);
+}
+
+@ROUT atlas_gentesttime.h
+#endif  /* end guard around atlas_gentesttime.h */
+@ROUT atlas_mmtesttime.h atlas_r1testtime.h
+#ifndef ATLAS_@up@(rt)TESTTIME_H
+   #define ATLAS_@up@(rt)TESTTIME_H
+
+#include "atlas_@(rt)parse.h"
+#include "atlas_gentesttime.h"
+
+@ROUT atlas_r1testtime.h
+
+static char *GetAlignStr(int alignX, int alignY, int alignA)
+{
+   static char ln[256];
+   int i=0;
+
+   ln[0] = '\0';
+   if (alignX)
+      i += sprintf(ln, "-FAx %d ", alignX);
+   if (alignY)
+      i += sprintf(ln+i, "-FAy %d ", alignY);
+   if (alignA)
+      i += sprintf(ln+i, "-FAa %d ", alignA);
+   return(ln);
+}
+
+static int @up@(rt)KernelFailsTest
+   (int verb, char pre, ATL_INT M, ATL_INT N, ATL_INT lda, ATL_r1node_t *kn)
+{
+   char ln[1024];
+   int i;
+/*
+ * If the file is generated, call generator to create it
+ */
+   if (kn->genstr)
+      assert(!system(kn->genstr));
+   assert(kn->rout);
+   assert (M >= kn->minX);
+   assert (N >= kn->minY);
+   i = sprintf(ln, "make %cr1ktest r1rout=%s align=\"%s\" ", pre, kn->rout,
+               GetAlignStr(kn->alignX, kn->alignY, kn->alignA));
+   if (kn->comp)
+      i += sprintf(ln+i, "%cR1CC=\"%s\" ", pre, kn->comp);
+   if (kn->cflags)
+      i += sprintf(ln+i, "%cR1FLAGS=\"%s\" ", pre, kn->cflags);
+   i += sprintf(ln+i, "Mt=%d Nt=%d ldat=%d", M, N, lda);
+   if (verb < 3)
+      i += sprintf(ln+i, "> /dev/null\n");
+   else 
+      i += sprintf(ln+i, "\n");
+   if (verb > 1)
+      fprintf(stdout, "system call:%s\n", ln);
+   i = system(ln);
+   if (verb)
+   {
+      if (i)
+         fprintf(stderr, "%s(ID=%d) FAILS TESTER!!\n", kn->rout,kn->ID);
+      else
+         fprintf(stderr, "%s(ID=%d) *PASSES* TESTER!!\n", kn->rout,kn->ID);
+   }
+   return(i);
+}
+
+
+static char *GetResIdStr(ATL_r1node_t *r1p, ATL_INT M, ATL_INT N,
+                         ATL_INT lda, ATL_INT percL1, int mflop)
+{
+   /* <ID>_<M>x<N>_<lda>_<percL1>_a<alignA>x<aX>x<aY> */
+   static char ln[512];
+   sprintf(ln, "%d_%dx%d_%d_%d_a%dx%dx%d", r1p->ID, M, N, lda, percL1,
+           r1p->alignA, r1p->alignX, r1p->alignY);
+   return(ln);
+}
+
+static double Time@up@(rt)Kernel
+(int verb,              /* 0: no output, 1 min ouput, 2: full output */
+ int FORCETIME,         /* if nonzero, ignore existing timing file */
+ ATL_r1node_t *r1p,     /* ptr to kernel structure */
+ char pre,              /* precision prefix */
+ ATL_INT M, ATL_INT N,  /* dimensions to time */
+ ATL_INT lda,           /* stride between row elements */
+ ATL_INT percL1,        /* if 0, time kernel directly wt no blocking */
+                        /* if non-zero, block for that % of L1 cache size */
+ int mflop,             /* force mflop flops in each timing interval */
+ int cflush             /* if >= 0, size of cache flush area, else ignored */
+)
+{
+   char ln[2048], resf[256];
+   double *dp, mf;
+   int i;
+/*
+ * If the file is generated, call generator to create it
+ */
+   if (r1p->genstr)
+      assert(!system(r1p->genstr));
+
+   if (r1p->minY)
+      N = Mmax(N, r1p->minY);
+   if (r1p->minX)
+      M = Mmax(M, r1p->minX);
+   i = r1p->ldamul / pre2size(pre);
+   lda = (i) ? ((lda+i-1)/i)*i : lda;
+
+   sprintf(resf, "res/%cr1%s", pre, GetResIdStr(r1p, M, N, lda, percL1, mflop));
+   dp = FORCETIME ? NULL : ReadResultsFile(0, resf);
+   if (dp)
+   {
+      if (verb > 0)
+         fprintf(stdout, "   %d:%s gets %.2f MFLOPS\n", 
+                 r1p->ID, r1p->rout, *dp);
+      return(*dp);
+   }
+
+   if (percL1)
+      i = sprintf(ln, "make %cr1time M=%d N=%d lda=%d l1mul=%d r1rout=\"%s\"",
+                  pre, M, N, lda, percL1, r1p->rout);
+   else
+      i = sprintf(ln, "make %cr1ktime M=%d N=%d lda=%d r1rout=\"%s\"",
+                  pre, M, N, lda, r1p->rout);
+   if (r1p->comp)
+      i += sprintf(ln+i, " %dR1CC=\"%s\"", pre, r1p->comp);
+   if (r1p->cflags)
+      i += sprintf(ln+i, " %dR1CFLAGS=\"%s\"", pre, r1p->cflags);
+   if (r1p->alignA || r1p->alignX || r1p->alignY)
+   {
+      i += sprintf(ln+i, " align=\"");
+      if (r1p->alignA)
+         i += sprintf(ln+i, " -Fa %d", r1p->alignA);
+      if (r1p->alignY)
+         i += sprintf(ln+i, " -Fy %d", r1p->alignY);
+      if (r1p->alignX)
+         i += sprintf(ln+i, " -Fx %d", r1p->alignX);
+      if (mflop >=0)
+         i += sprintf(ln+i, " -F %d", mflop);
+      i += sprintf(ln+i, "\"");
+   }
+   i += sprintf(ln+i, " tflags=\"-f %s", resf);
+   if (mflop >= 0)
+      i += sprintf(ln+i, " -F %d", mflop);
+   if (cflush >=0)
+      i += sprintf(ln+i, " -C %d", cflush);
+   i += sprintf(ln+i, "\"");
+   if (verb < 3)
+      i += sprintf(ln+i, "> /dev/null\n");
+   else
+      i += sprintf(ln+i, "\n");
+   assert(!system(ln));
+   if (verb > 1)
+   {
+      dp = ReadResultsFile(1, resf);
+      mf = PrintResultsFromFile(stdout, dp);
+      free(dp);
+      dp = &mf;
+   }
+   else
+      dp = ReadResultsFile(0, resf);
+   assert(dp);
+   if (verb == 1)
+      fprintf(stdout, "   %d:%s gets %.2f MFLOPS\n", r1p->ID, r1p->rout, *dp);
+   return(*dp);
+}
+
+#endif  /* end guard around atlas_@(rt)testtime.h */
+@ROUT atlas_mmtesttime.h
+int MMKernelFailsTest
+(
+   char pre,                    /* precision/type prefix */
+   int mb, int nb, int kb,      /* dimensions to test */
+   int beta,                    /* beta case to test */
+   ATL_mmnode_t *umm            /* mmkern ptr */
+)
+/*
+ * RETURNS: 0 on success, non-zero on failure
+ */
+{
+   char ln[1024];
+   int i, lda, ldb, ldc;
+   char ch;
+
+/*
+ * If the file is generated, call generator to create it
+ */
+   if (umm->genstr)
+      assert(!system(umm->genstr));
+
+   ldc = mb*2+4;
+   if (FLAG_IS_SET(umm->flag, MMF_LDISKB))
+      lda = ldb = kb;
+   else if (FLAG_IS_SET(umm->flag, MMF_LDAB))
+      lda = ldb = kb+8;
+   else
+   {
+      lda = kb+4;
+      ldb = kb+8;
+   }
+   if (pre == 'c' || pre == 'z')
+      i = sprintf(ln, "make cmmutstcase mmrout=CASES/%s csC=2 ", umm->rout);
+   else
+      i = sprintf(ln, "make mmutstcase mmrout=CASES/%s ", umm->rout);
+   if (umm->comp)
+   {
+      ch = (pre == 'c' || pre == 's') ? 'S' : 'D';
+      i += sprintf(ln+i, "%cMC=\"%s\" %cMCFLAGS=\"%s\" ",
+                   ch, umm->comp, ch, umm->flag);
+   }
+   i += sprintf(ln+i, "pre=%c M=%d N=%d K=%d mb=%d nb=%d kb=%d ",
+                pre, mb, nb, kb, 
+                FLAG_IS_SET(umm->flag, MMF_MRUNTIME) ? 0 : mb, 
+                FLAG_IS_SET(umm->flag, MMF_NRUNTIME) ? 0 : nb, 
+                FLAG_IS_SET(umm->flag, MMF_KRUNTIME) ? 0 : kb);
+   i += sprintf(ln+i, "lda=%d ldb=%d ldc=%d\n", lda, ldb, ldc);
+   fprintf(stdout, "%s", ln);
+   return(system(ln));
+}
+
+double TimeMMKernel
+(
+   int verb,                    /* 0: no output, 1 min output, 2: full output */
+   int FORCETIME,               /* 1: ignore any prior output file */
+   ATL_mmnode_t *umm            /* ptr to mmkern struct */
+   char pre,                    /* type/prec prefix: z,c,d,s */
+   int mb, int nb, int kb,      /* dimensions to time */
+   int lda,                     /* >0: lda to use, else kb */
+   int ldb,                     /* >0: ldb to use, else kb */
+   int ldc,                     /* >0: ldc to use, else mb+8 */
+   int beta,                    /* beta to time */
+   int mflop,                   /* >0: force mflop MFLOPs in each time interv */
+   int cflush                   /* >0: size of cache flush, else ignored */
+)
+{
+   char fnam[128], ln[2048];
+   const char *LO = FLAG_IS_SET(umm->flag, MMF_AOUTER) ? "IJK": "JIK";
+   char *be;
+   int i, j;
+   char ch;
+
+   if (lda < 1)
+      lda = kb;
+   if (ldb < 1)
+      ldb = kb;
+   if (ldc < 1)
+      ldc = mb + 8;
+/*
+ * If the file is generated, call generator to create it
+ */
+   if (umm->genstr)
+      assert(!system(umm->genstr));
+
+   if (beta == 0)
+      be = "b0";
+   else if (beta == 1)
+      be = "b1";
+   else if (beta == -1)
+      be = "bn1";
+   else 
+      be = "bX";
+/*   dmm%d_TNMBxNBxKB_muxnuxku_ldc_rtMxrtNxrtK_a1_bX */
+   sprintf(fnam, "res/%cmm%d_%c%c%dx%dx%d_%dx%dx%d_%d_%dx%dx%d_a1_%s",
+           pre, umm->ID, 'T', 'N', mb, nb, kb, umm->mu, umm->nu, umm->ku, ldc, 
+           FLAG_IS_SET(umm->flag, MMF_MRUNTIME), 
+           FLAG_IS_SET(umm->flag, MMF_NRUNTIME), 
+           FLAG_IS_SET(umm->flag, MMF_KRUNTIME), be);
+
+   if (FORCETIME || !FileExists(fnam))
+   {
+      if (pre == 'c' || pre == 'z')
+         i = sprintf(ln, "make cmmucaseN mmrout=CASES/%s csC=2 ", umm->rout);
+      else i = sprintf(ln, "make mmucaseN mmrout=CASES/%s ", umm->rout);
+      if (umm->comp)
+      {
+         ch = (pre == 'c' || pre == 's') ? 'S' : 'D';
+         i += sprintf(ln+i, "%cMC=\"%s\" %cMCFLAGS=\"%s\" ",
+                      ch, umm->comp, ch, umm->flag);
+      }
+@skip      i += sprintf(ln+i, "moves=\"-DMoveA -DMoveC\" ");
+      i += sprintf(ln+i, "casnam=%s ", fnam);
+      i += sprintf(ln+i, "pre=%c M=%d N=%d K=%d mb=%d nb=%d kb=%d ",
+                   pre, mb, nb, kb, 
+                   FLAG_IS_SET(umm->flag, MMF_MRUNTIME) ? 0:mb,
+                   FLAG_IS_SET(umm->flag, MMF_NRUNTIME) ? 0:nb,
+                   FLAG_IS_SET(umm->flag, MMF_KRUNTIME) ? 0:kb);
+      i += sprintf(ln+i, "mu=%d nu=%d ku=%d lda=%d ldb=%d ldc=%d beta=%d",
+                   umm->mu, umm->nu, umm->ku, lda, ldb, ldc, beta);
+      if (verb < 3)
+         i += sprintf(ln+i, "> /dev/null\n");
+      else
+         i += sprintf(ln+i, "\n");
+      if (verb > 1)
+         fprintf(stdout, "SYSTEM: %s", ln);
+      if (system(ln))
+      {
+         fprintf(stderr, "ERROR IN COMMAND: %s", ln);
+         fprintf(stderr, "   PROPOSED FILENAME: %s\n", fnam);
+         sprintf(ln, "rm -f %s\n", fnam);
+         system(ln);
+         exit(-1);
+      }
+   }
+   return(*((double*)ReadResultsFile(0, fnam)));
+}
+
+#endif  /* end guard around atlas_@(rt)testtime.h */
+@ROUT mvread
+void *SortByTrans
+   (ATL_@(rt)node_t *bp,    /* original kernels wt mixture of trans cases */
+    ATL_@(rt)node_t **bN0,  /* No trans cases */
+    ATL_@(rt)node_t **bT0,  /* trans cases */
+    ATL_@(rt)node_t **bNC0, /* ConjNotrans cases */
+    ATL_@(rt)node_t **bTC0, /* Conjtrans cases */
+/*
+ * Sorts bp into the separate transpose queues, destroying bp in the process.
+ * If a bp entry has the CONJDEF property, then its entry is duplicated to
+ * put it on both queues (it can be used for normal and conjugate cases).
+ */
+{
+   ATL_@(rt)node_t *bN=NULL, *bT=NULL, *bNC=NULL, *bTC=NULL,
+                   *p, *next, *new;
+
+   for (p=bp; p; p = next)
+   {
+      next = p->next;
+      if (p->TA == AtlasNoTrans)
+      {
+         p->next = bN;
+         bN = p;
+         #ifdef TCPLX
+            if (p->flag & (1<<@up@(rt)F_CONJDEF))
+            {
+               new = Clone@up@(rt)Node(p);
+               new->TA = AtlasConj;
+               new->next = bNC;
+               bNC = new;
+            }
+         #endif
+      }
+      else if (p->TA == AtlasTrans)
+      {
+         p->next = bT;
+         bT = p;
+         #ifdef TCPLX
+            if (p->flag & (1<<@up@(rt)F_CONJDEF))
+            {
+               new = Clone@up@(rt)Node(p);
+               new->TA = AtlasConjTrans;
+               new->next = bTC;
+               bTC = new;
+            }
+         #endif
+      }
+   #ifdef TCPLX
+      else if (p->TA == AtlasConjTrans)
+      {
+         p->next = bTC;
+         bTC = p;
+      }
+      else /* TA == AtlasConj */
+      {
+         p->next = bNC;
+         bNC = p;
+      }
+   #endif
+   }
+   *bN0 = bN;
+   *bT0 = bT;
+   *bNC0 = bNC;
+   *bTC0 = bTC;
+}
+@ROUT getflagarrs
+
+int *GetIntList1(int ival)
+/*
+ * returns integer array with iarr[0] = 1, iarr[1] = ival
+ */
+{
+   int *iarr;
+   iarr = malloc(2*sizeof(int));
+   ATL_assert(iarr);
+   iarr[0] = 1;
+   iarr[1] = ival;
+   return(iarr);
+}
+
+int *GetIntList2(int ival1, int ival2)
+/*
+ * returns integer array with iarr[0] = 1, iarr[1] = ival1, ival[2] = ival2
+ */
+{
+   int *iarr;
+   iarr = malloc(3*sizeof(int));
+   ATL_assert(iarr);
+   iarr[0] = 1;
+   iarr[1] = ival1;
+   iarr[2] = ival2;
+   return(iarr);
+}
+
+int *DupIntList(int *list)
+/*
+ * Duplicates list of integers, list[0] holds the length, not including 0
+ */
+{
+   int i, n, *ip;
+
+   assert(list);
+   n = list[0] + 1;
+   ip = malloc(sizeof(int)*n);
+   assert(ip);
+   for (i=0; i < n; i++)
+      ip[i] = list[i];
+   return(ip);
+}
+int *GetIntList(int nargs, char **args, int i, int nmul)
+/*
+ * Gets a list of integers, whose length is given by atoi(args[i])*nmul
+ * list is this length+1, since 0'th location gets atoi(args[i])
+ */
+{
+   int n, *iarr, k;
+
+   if (++i >= nargs)
+      PrintUsage(args[0], i, NULL);
+   n = atoi(args[i]) * nmul;
+   ATL_assert(n > 0);
+   iarr = malloc(sizeof(int)*(n+1));
+   ATL_assert(iarr);
+   
+   iarr[0] = n / nmul;
+   for (k=0; k < n; k++)
+   {
+      if (++i >= nargs)
+         PrintUsage(args[0], i, NULL);
+      iarr[k+1] = atoi(args[i]);
+   }
+   return(iarr);
+}
+
+int *IntRange2IntList(int N0, int NN, int incN)
+{
+   int i, n;
+   int *iarr;
+
+   for (i=N0, n=0; i <= NN; i += incN) n++;
+   iarr = malloc(sizeof(int)*(n+1));
+   ATL_assert(iarr);
+   iarr[0] = n;
+   for (i=N0, n=1 ; i <= NN; i += incN, n++)
+      iarr[n] = i;
+   return(iarr);
+}
+@ROUT L1CacheSize

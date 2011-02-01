@@ -1,0 +1,26 @@
+#ifndef ZXOVER_H
+#define ZXOVER_H
+
+#define ATL_3NB 120
+#define NN_MNK_M 4000
+#define NN_MNK_N 2147483647
+#define NN_MNK_MN 2147483647
+#define NN_MNK_K 112360
+#define NN_MNK_GE 50653000
+#define NT_MNK_M 23040
+#define NT_MNK_N 52808040
+#define NT_MNK_MN 2147483647
+#define NT_MNK_K 57760
+#define NT_MNK_GE 343000
+#define TN_MNK_M 196000
+#define TN_MNK_N 2147483647
+#define TN_MNK_MN 2147483647
+#define TN_MNK_K 23040
+#define TN_MNK_GE 343000
+#define TT_MNK_M 392040
+#define TT_MNK_N 2147483647
+#define TT_MNK_MN 2147483647
+#define TT_MNK_K 112360
+#define TT_MNK_GE 343000
+
+#endif

@@ -1,0 +1,2116 @@
+@extract -addkeys -b @(BASEdir)include/atlas.inc lan=C type=none
+@skip
+@skip ATLAS / multithreaded BLAS 1 implementation                   AP00
+@skip
+@skip Last modification : 08/31/00
+@skip Modified by RCW on 07/24/07 to change all pthread_ calls to assert 
+@skip zero return value (to aid in debugging when stack fails, etc).
+@skip
+@define PT1_INCLUDE @-addkeys -b @(srcdir)/atlpt1blas.base rout=pt1_inc@
+@skip
+@skip
+@rout pt1_inc
+@extract @(INCLUDE)
+#include "atlas_ptmisc.h"
+#include "atlas_ptlvl1.h"
+#include "atlas_ptlevel1.h"
+@skip
+@skip
+@rout ATL_ptrotg
+@define rname @Mjoin( PATL, ptrotg )@
+@extract @(VER_ATLAS_SRC)
+@extract @(PT1_INCLUDE)
+
+#ifdef TREAL
+void @(rname)
+(
+   TYPE                       * A,
+   TYPE                       * B,
+   TYPE                       * C,
+   TYPE                       * S
+)
+#else
+void @(rname)
+(
+   TYPE                       * A,
+   const TYPE                 * B,
+   TYPE                       * C,
+   TYPE                       * S
+)
+#endif
+{
+@extract @(ATLAS_PT1_COMMENT)
+@extract @(EXECUTABLE_STATEMENT)
+   Mjoin( PATL, rotg )( A, B, C, S );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_ptrotmg
+@define rname @Mjoin( PATL, ptrotmg )@
+@extract @(VER_ATLAS_SRC)
+@extract @(PT1_INCLUDE)
+
+void @(rname)
+(
+   TYPE                       * D1,
+   TYPE                       * D2,
+   TYPE                       * X1,
+   const TYPE                 Y1,
+   TYPE                       * PARAM
+)
+{
+@extract @(ATLAS_PT1_COMMENT)
+@extract @(EXECUTABLE_STATEMENT)
+   Mjoin( PATL, rotmg )( D1, D2, X1, Y1, PARAM );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_ptnrm2
+@define rname @Mjoin( PATL, ptnrm2 )@
+@extract @(VER_ATLAS_SRC)
+@extract @(PT1_INCLUDE)
+
+#if   defined( SREAL )
+#ifndef ATL_XOVER_SNRM2
+#define    ATL_XOVER_SNRM2     ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( DREAL )
+#ifndef ATL_XOVER_DNRM2
+#define    ATL_XOVER_DNRM2     ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( SCPLX )
+#ifndef ATL_XOVER_SCNRM2
+#define    ATL_XOVER_SCNRM2    ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( DCPLX )
+#ifndef ATL_XOVER_DZNRM2
+#define    ATL_XOVER_DZNRM2    ATL_XOVER_L1_DEFAULT
+#endif 
+#endif
+
+#if 0           /* temporarily disabled by RCW */
+@define rname @Mjoin( PATL, ptnrm20 )@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(LOCAL_VARIABLE)
+   PT_NRM2_T                  * arg = (PT_NRM2_T *)(ARGS); 
+@extract @(EXECUTABLE_STATEMENT)
+   Mjoin( PATL, ssq )( arg->n, (TYPE *)(arg->x), arg->incx,
+                       (TYPE *)(arg->scale), (TYPE *)(arg->ssq) );
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip 
+#endif
+
+#ifdef TREAL
+TYPE Mjoin( PATL, ptnrm2 )
+#else
+TYPE Mjoin( Mjoin( PATLU, PRE ), ptnrm2 )
+#endif
+(
+   const int                  N,
+   const TYPE                 * X,
+   const int                  INCX
+)
+{
+#if 1  /* threading in nrm2 temporarily disabled by RCW on 5/21/08 */
+   #ifdef TREAL
+      return( Mjoin( PATL, nrm2 )( N, X, INCX ) );
+   #else
+      return( Mjoin( Mjoin( PATLU, PRE ), nrm2 )( N, X, INCX ) );
+   #endif
+#else
+@extract @(ATLAS_PT1_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   pthread_t                  pid[ATL_NTHREADS];
+   PT_NRM2_T                  arg[ATL_NTHREADS];
+   TYPE                       scs[ATL_NTHREADS << 1];
+   pthread_attr_t             attr;
+   TYPE                       scale, ssq, temp;
+   int                        i, i2, ib, nb, nn, nthreads;
+#ifdef TREAL
+#define  incx2                INCX
+#else
+   int                        incx2 = 2 * INCX;
+#endif
+@extract @(EXECUTABLE_STATEMENT)
+   if(    ( N  < 1 ) || ( INCX < 1 ) ) { return( ATL_rzero    ); }
+#if   defined( SREAL )
+   else if( N == 1 )                   { return( Mabs( X[0] ) ); }
+   else if( ( N <= ATL_XOVER_SNRM2  ) || ( ATL_NTHREADS <= 1 ) )
+   { return( Mjoin( PATL, nrm2 )( N, X, INCX ) ); }
+
+   nthreads = ( ATL_XOVER_SNRM2  <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_SNRM2  - 1 ) / ATL_XOVER_SNRM2  );
+#elif defined( DREAL )
+   else if( N == 1 )                   { return( Mabs( X[0] ) ); }
+   else if( ( N <= ATL_XOVER_DNRM2  ) || ( ATL_NTHREADS <= 1 ) )
+   { return( Mjoin( PATL, nrm2 )( N, X, INCX ) ); }
+
+   nthreads = ( ATL_XOVER_DNRM2  <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_DNRM2  - 1 ) / ATL_XOVER_DNRM2  );
+#elif defined( SCPLX )
+   else if( ( N <= ATL_XOVER_SCNRM2 ) || ( ATL_NTHREADS <= 1 ) )
+   { return( Mjoin( Mjoin( PATLU, PRE ), nrm2 )( N, X, INCX ) ); }
+
+   nthreads = ( ATL_XOVER_SCNRM2 <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_SCNRM2 - 1 ) / ATL_XOVER_SCNRM2 );
+#elif defined( DCPLX ) 
+   else if( ( N <= ATL_XOVER_DZNRM2 ) || ( ATL_NTHREADS <= 1 ) )
+   { return( Mjoin( Mjoin( PATLU, PRE ), nrm2 )( N, X, INCX ) ); }
+
+   nthreads = ( ATL_XOVER_DZNRM2 <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_DZNRM2 - 1 ) / ATL_XOVER_DZNRM2 );
+#endif
+   if( nthreads > ATL_NTHREADS ) { nthreads = ATL_NTHREADS; }
+
+   nb = ( ( nn = N ) + nthreads - 1 ) / nthreads;
+
+   ATL_thread_init( &attr );
+
+   for( i = 0, i2 = 0; i < nthreads; i++, i2 += 2 )
+   {
+      scs[i2]  = ATL_rzero; scs[i2+1] = ATL_rone; 
+      arg[i].n = ( ib = Mmin( nb, nn ) );
+      arg[i].x = (void *)(X); arg[i].incx = INCX;
+      arg[i].scale = (void *)(&scs[i2]); arg[i].ssq = (void *)(&scs[i2+1]);
+      ATL_assert(!pthread_create( &pid[i], &attr, Mjoin( PATL, ptnrm20 ),
+                                  (void *)(&arg[i]) ));
+      X += ib * incx2; nn -= ib;
+   }
+
+   for( i = 0; i < nthreads; i++ ) 
+   {
+      ATL_assert(!pthread_join( pid[i], NULL ));
+   }
+
+   ATL_thread_free( &attr );
+/*
+ * Combine the results
+ */ 
+   scale = scs[0]; ssq = scs[1];
+
+   for( i = 1, i2 = 2; i < nthreads; i++, i2 += 2 )
+   {
+      if( scale >= scs[i2] )
+      {
+         if( scale != ATL_rzero )
+         { temp = scs[i2] / scale; ssq += ( temp * temp ) * scs[i2+1]; }
+      }
+      else
+      {
+         temp = scale / scs[i2];
+         ssq  = scs[i2+1] + ( temp * temp ) * ssq; scale = scs[i2];
+      } 
+   }
+#if defined( SREAL ) || defined( SCPLX )
+   return( scale * (TYPE)(sqrt( (double)(ssq) )) );
+#else
+   return( scale * sqrt( ssq ) );
+#endif
+#endif
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_ptasum
+@define rname @Mjoin( PATL, ptasum )@
+@extract @(VER_ATLAS_SRC)
+@extract @(PT1_INCLUDE)
+
+#if   defined( SREAL )
+#ifndef ATL_XOVER_SASUM
+#define    ATL_XOVER_SASUM     ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( DREAL )
+#ifndef ATL_XOVER_DASUM
+#define    ATL_XOVER_DASUM     ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( SCPLX )
+#ifndef ATL_XOVER_SCASUM
+#define    ATL_XOVER_SCASUM    ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( DCPLX )
+#ifndef ATL_XOVER_DZASUM
+#define    ATL_XOVER_DZASUM    ATL_XOVER_L1_DEFAULT
+#endif 
+#endif
+
+@define rname @Mjoin( PATL, ptasum0 )@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(LOCAL_VARIABLE)
+   PT_ASUM_T                  * arg = (PT_ASUM_T *)(ARGS);
+@extract @(EXECUTABLE_STATEMENT)
+#ifdef TREAL
+   *((TYPE *)(arg->sum)) = Mjoin( PATL, asum )( arg->n, (TYPE *)(arg->x),
+                                                arg->incx );
+#else
+   *((TYPE *)(arg->sum)) = Mjoin( Mjoin( PATLU, PRE ), asum )( arg->n,
+                              (TYPE *)(arg->x), arg->incx );
+#endif
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+#ifdef TREAL
+TYPE Mjoin( PATL, ptasum )
+#else
+TYPE Mjoin( Mjoin( PATLU, PRE ), ptasum )
+#endif
+(
+   const int                  N,
+   const TYPE                 * X,
+   const int                  INCX
+)
+{
+@extract @(ATLAS_PT1_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   pthread_t                  pid[ATL_NTHREADS];
+   PT_ASUM_T                  arg[ATL_NTHREADS];
+   TYPE                       sum[ATL_NTHREADS];
+   pthread_attr_t             attr;
+   TYPE                       s;
+   int                        i, ib, nb, nn, nthreads;
+#ifdef TREAL
+#define  incx2                INCX
+#else
+   int                        incx2 = 2 * INCX;
+#endif
+@extract @(EXECUTABLE_STATEMENT)
+   if(    ( N  < 1 ) || ( INCX < 1 ) ) { return( ATL_rzero ); }
+#if   defined( SREAL )
+   else if( ( N <= ATL_XOVER_SASUM  ) || ( ATL_NTHREADS <= 1 ) )
+   { return( Mjoin( PATL, asum )( N, X, INCX ) ); }
+
+   nthreads = ( ATL_XOVER_SASUM  <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_SASUM  - 1 ) / ATL_XOVER_SASUM  );
+#elif defined( DREAL )
+   else if( ( N <= ATL_XOVER_DASUM  ) || ( ATL_NTHREADS <= 1 ) )
+   { return( Mjoin( PATL, asum )( N, X, INCX ) ); }
+
+   nthreads = ( ATL_XOVER_DASUM  <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_DASUM  - 1 ) / ATL_XOVER_DASUM  );
+#elif defined( SCPLX )
+   else if( ( N <= ATL_XOVER_SCASUM ) || ( ATL_NTHREADS <= 1 ) )
+   { return( Mjoin( Mjoin( PATLU, PRE ), asum )( N, X, INCX ) ); }
+
+   nthreads = ( ATL_XOVER_SCASUM <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_SCASUM - 1 ) / ATL_XOVER_SCASUM );
+#elif defined( DCPLX )
+   else if( ( N <= ATL_XOVER_DZASUM  ) || ( ATL_NTHREADS <= 1 ) )
+   { return( Mjoin( Mjoin( PATLU, PRE ), asum )( N, X, INCX ) ); }
+
+   nthreads = ( ATL_XOVER_DZASUM  <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_DZASUM  - 1 ) / ATL_XOVER_DZASUM  );
+#endif
+   if( nthreads > ATL_NTHREADS ) { nthreads = ATL_NTHREADS; }
+ 
+   nb = ( ( nn = N ) + nthreads - 1 ) / nthreads;
+
+   ATL_thread_init( &attr );
+
+   for( i = 0; i < nthreads; i++ )
+   {
+      sum[i]      = ATL_rzero;          arg[i].n    = ( ib = Mmin( nb, nn ) );
+      arg[i].x    = (void *)(X);        arg[i].incx = INCX;
+      arg[i].sum  = (void *)(&sum[i]);
+      ATL_assert(!pthread_create( &pid[i], &attr, Mjoin( PATL, ptasum0 ),
+                                  (void *)(&arg[i]) ));
+      X += ib * incx2; nn -= ib;
+   }
+
+   for( i = 0; i < nthreads; i++ )
+   {
+      ATL_assert(!pthread_join( pid[i], NULL ));
+   }
+ 
+   ATL_thread_free( &attr );
+/*
+ * Combine the results
+ */
+   s = sum[0]; for( i = 1; i < nthreads; i++ ) { s += sum[i]; } return( s );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_ptamax
+@extract @(VER_ATLAS_SRC)
+@extract @(PT1_INCLUDE)
+
+#if   defined( SREAL )
+#ifndef ATL_XOVER_ISAMAX
+#define    ATL_XOVER_ISAMAX    ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( DREAL )
+#ifndef ATL_XOVER_IDAMAX
+#define    ATL_XOVER_IDAMAX    ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( SCPLX )
+#ifndef ATL_XOVER_ICAMAX
+#define    ATL_XOVER_ICAMAX    ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( DCPLX )
+#ifndef ATL_XOVER_IZAMAX
+#define    ATL_XOVER_IZAMAX    ATL_XOVER_L1_DEFAULT
+#endif 
+#endif
+
+@define rname @Mjoin( PATL, ptamax0 )@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(LOCAL_VARIABLE)
+   PT_AMAX_T                  * arg = (PT_AMAX_T *)(ARGS);
+   int                        indx;
+@extract @(EXECUTABLE_STATEMENT)
+   arg->indx = Mjoin( Mjoin( ATL_i, PRE ), amax )( arg->n, (TYPE *)(arg->x),
+                                                   arg->incx );
+   if( arg->n == 0 ) { *((TYPE *)(arg->amax)) = ATL_rzero; }
+   else
+   {
+#ifdef TREAL
+      indx = (arg->indx) * (arg->incx);
+      *((TYPE *)(arg->amax)) = Mabs( ((TYPE *)(arg->x))[indx] );
+#else
+      indx = (arg->indx) * (arg->incx) * 2;
+      *((TYPE *)(arg->amax)) = Mabs( ((TYPE *)(arg->x))[indx]   ) +
+                               Mabs( ((TYPE *)(arg->x))[indx+1] );
+#endif
+   }
+
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip  
+
+@define rname @Mjoin( PATL, ptamax )@
+int Mjoin( Mjoin( Mjoin( ATL_, i ), PRE ), ptamax )
+(
+   const int                  N,
+   const TYPE                 * X,
+   const int                  INCX
+)
+{
+@extract @(ATLAS_PT1_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   pthread_t                  pid[ATL_NTHREADS];
+   PT_AMAX_T                  arg[ATL_NTHREADS];
+   TYPE                       amax[ATL_NTHREADS];
+   pthread_attr_t             attr;
+   TYPE                       smax;
+   int                        i, ib, il, imax, nb, nn, nthreads;
+#ifdef TREAL
+#define  incx2                INCX
+#else
+   int                        incx2 = 2 * INCX;
+#endif
+@extract @(EXECUTABLE_STATEMENT)
+   if( N < 1 ) { return( 0 ); }
+#if   defined( SREAL )
+   else if( ( N <= ATL_XOVER_ISAMAX  ) || ( ATL_NTHREADS <= 1 ) )
+   { return( Mjoin( Mjoin( ATL_i, PRE ), amax )( N, X, INCX ) ); }
+
+   nthreads = ( ATL_XOVER_ISAMAX <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_ISAMAX - 1 ) / ATL_XOVER_ISAMAX );
+#elif defined( DREAL )
+   else if( ( N <= ATL_XOVER_IDAMAX  ) || ( ATL_NTHREADS <= 1 ) )
+   { return( Mjoin( Mjoin( ATL_i, PRE ), amax )( N, X, INCX ) ); }
+
+   nthreads = ( ATL_XOVER_IDAMAX <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_IDAMAX - 1 ) / ATL_XOVER_IDAMAX );
+#elif defined( SCPLX )
+   else if( ( N <= ATL_XOVER_ICAMAX  ) || ( ATL_NTHREADS <= 1 ) )
+   { return( Mjoin( Mjoin( ATL_i, PRE ), amax )( N, X, INCX ) ); }
+
+   nthreads = ( ATL_XOVER_ICAMAX <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_ICAMAX - 1 ) / ATL_XOVER_ICAMAX );
+#elif defined( DCPLX )
+   else if( ( N <= ATL_XOVER_IZAMAX  ) || ( ATL_NTHREADS <= 1 ) )
+   { return( Mjoin( Mjoin( ATL_i, PRE ), amax )( N, X, INCX ) ); }
+
+   nthreads = ( ATL_XOVER_IZAMAX <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_IZAMAX - 1 ) / ATL_XOVER_IZAMAX );
+#endif
+   if( nthreads > ATL_NTHREADS ) { nthreads = ATL_NTHREADS; }
+
+   nb = ( ( nn = N ) + nthreads - 1 ) / nthreads;
+ 
+   ATL_thread_init( &attr );
+ 
+   for( i = 0; i < nthreads; i++ )
+   {
+      amax[i] = ATL_rzero; arg[i].n = ( ib = Mmin( nb, nn ) );
+      arg[i].x = X; arg[i].incx = INCX; arg[i].amax = (void *)(&amax[i]);
+      ATL_assert(!pthread_create( &pid[i], &attr, Mjoin( PATL, ptamax0 ),
+                                  (void *)(&arg[i]) ));
+      X += ib * incx2; nn -= nb;
+   }
+ 
+   for( i = 0; i < nthreads; i++ ) 
+   {
+      ATL_assert(!pthread_join( pid[i], NULL ));
+   }
+ 
+   ATL_thread_free( &attr );
+/*
+ * Combine the results
+ */ 
+   imax = 0; smax = ATL_rzero;
+ 
+   for( i = 0, il = 0, nn = N; i < nthreads; i++ )
+   {
+      ib = Mmin( nn, nb );
+      if( amax[i] > smax ) { imax = il + arg[i].indx; smax = amax[i]; }
+      nn -= ib; il += ib;
+   }
+
+   return( imax );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_ptscal ATL_ptrscal
+@extract @(VER_ATLAS_SRC)
+@extract @(PT1_INCLUDE)
+
+@rout ATL_ptscal
+#if   defined( SREAL )
+#ifndef ATL_XOVER_SSCAL
+#define    ATL_XOVER_SSCAL     ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( DREAL )
+#ifndef ATL_XOVER_DSCAL
+#define    ATL_XOVER_DSCAL     ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( SCPLX )
+#ifndef ATL_XOVER_CSCAL
+#define    ATL_XOVER_CSCAL     ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( DCPLX )
+#ifndef ATL_XOVER_ZSCAL
+#define    ATL_XOVER_ZSCAL     ATL_XOVER_L1_DEFAULT
+#endif 
+#endif
+@rout ATL_ptrscal
+#if   defined( SCPLX )
+#ifndef ATL_XOVER_CSSCAL
+#define    ATL_XOVER_CSSCAL    ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( DCPLX )
+#ifndef ATL_XOVER_ZDSCAL
+#define    ATL_XOVER_ZDSCAL    ATL_XOVER_L1_DEFAULT
+#endif 
+#endif
+@rout ATL_ptscal
+
+@define rname @Mjoin( PATL, ptscal0 )@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(LOCAL_VARIABLE)
+   PT_SCAL_T                  * arg = (PT_SCAL_T *)(ARGS);
+@extract @(EXECUTABLE_STATEMENT)
+#ifdef TREAL
+   Mjoin( PATL, scal )( arg->n, (SCALAR)(*((TYPE *)(arg->alpha))),
+                        (TYPE *)(arg->x), arg->incx );
+#else
+   Mjoin( PATL, scal )( arg->n, (SCALAR)(arg->alpha), (TYPE *)(arg->x),
+                        arg->incx );
+#endif
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+@rout ATL_ptscal
+@define rname @Mjoin( PATL, ptscal )@
+void @(rname)
+(
+   const int                  N,
+   const SCALAR               ALPHA,
+   TYPE                       * X,
+   const int                  INCX
+)
+@rout ATL_ptrscal
+@define rname @Mjoin( Mjoin( PATL, UPR ), ptscal )@
+void @(rname)
+(
+   const int                  N,
+   const TYPE                 ALPHA,
+   TYPE                       * X,
+   const int                  INCX
+)
+@rout ATL_ptscal ATL_ptrscal
+{
+@extract @(ATLAS_PT1_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   pthread_t                  pid[ATL_NTHREADS];
+   PT_SCAL_T                  arg[ATL_NTHREADS];
+   pthread_attr_t             attr;
+@rout ATL_ptscal
+#ifdef TREAL
+   TYPE                       alpha0 = (TYPE)(ALPHA);
+#endif
+@rout ATL_ptrscal
+   TYPE                       Calph[2]; 
+@rout ATL_ptscal ATL_ptrscal
+   TYPE                       * alpha;
+   int                        i, ib, nb, nn, nthreads;
+#ifdef TREAL
+#define  incx2                INCX
+#else
+   int                        incx2 = 2 * INCX;
+#endif
+@extract @(EXECUTABLE_STATEMENT)
+@rout ATL_ptscal
+   if( ( N <= 0 ) || ( SCALAR_IS_ONE( ALPHA ) ) ) { return; }
+#if   defined( SREAL )
+   else if( ( N <= ATL_XOVER_SSCAL  ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, scal )( N, ALPHA, X, INCX ); return; }
+
+   alpha = (void *)(&alpha0);
+   nthreads = ( ATL_XOVER_SSCAL  <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_SSCAL  - 1 ) / ATL_XOVER_SSCAL  );
+#elif defined( DREAL )
+   else if( ( N <= ATL_XOVER_DSCAL  ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, scal )( N, ALPHA, X, INCX ); return; }
+
+   alpha = (void *)(&alpha0);
+   nthreads = ( ATL_XOVER_DSCAL  <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_DSCAL  - 1 ) / ATL_XOVER_DSCAL  );
+#elif defined( SCPLX )
+   else if( ( N <= ATL_XOVER_CSCAL  ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, scal )( N, ALPHA, X, INCX ); return; }
+
+   alpha = (void *)(ALPHA);
+   nthreads = ( ATL_XOVER_CSCAL  <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_CSCAL  - 1 ) / ATL_XOVER_CSCAL  );
+#elif defined( DCPLX )
+   else if( ( N <= ATL_XOVER_ZSCAL  ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, scal )( N, ALPHA, X, INCX ); return; }
+
+   alpha = (void *)(ALPHA);
+   nthreads = ( ATL_XOVER_ZSCAL  <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_ZSCAL  - 1 ) / ATL_XOVER_ZSCAL  );
+#endif
+@rout ATL_ptrscal
+   Calph[0] = ALPHA; Calph[1] = ATL_rzero;
+
+   if( ( N <= 0 ) || ( ALPHA == ATL_rone ) ) { return; }
+#if   defined( SCPLX )
+   else if( ( N <= ATL_XOVER_CSSCAL ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, scal )( N, Calph, X, INCX ); return; }
+
+   alpha = (void *)(Calph);
+   nthreads = ( ATL_XOVER_CSSCAL <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_CSSCAL - 1 ) / ATL_XOVER_CSSCAL );
+#elif defined( DCPLX )
+   else if( ( N <= ATL_XOVER_ZDSCAL ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, scal )( N, Calph, X, INCX ); return; }
+
+   alpha = (void *)(Calph);
+   nthreads = ( ATL_XOVER_ZDSCAL <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_ZDSCAL - 1 ) / ATL_XOVER_ZDSCAL  );
+#endif
+@rout ATL_ptscal ATL_ptrscal
+   if( nthreads > ATL_NTHREADS ) { nthreads = ATL_NTHREADS; }
+ 
+   nb = ( ( nn = N ) + nthreads - 1 ) / nthreads;
+ 
+   ATL_thread_init( &attr );
+ 
+   for( i = 0; i < nthreads; i++ )
+   {
+      arg[i].n = ( ib = Mmin( nb, nn ) );
+      arg[i].x = (void *)(X); arg[i].incx = INCX; arg[i].alpha = alpha;
+      ATL_assert(!pthread_create( &pid[i], &attr, Mjoin( PATL, ptscal0 ),
+                                  (void *)(&arg[i]) ));
+      X += ib * incx2; nn -= ib;
+   }
+ 
+   for( i = 0; i < nthreads; i++ )
+   {
+      ATL_assert(!pthread_join( pid[i], NULL ));
+   }
+ 
+   ATL_thread_free( &attr );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_ptaxpy
+@extract @(VER_ATLAS_SRC)
+@extract @(PT1_INCLUDE)
+ 
+#if   defined( SREAL )
+#ifndef ATL_XOVER_SAXPY
+#define    ATL_XOVER_SAXPY     ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( DREAL )
+#ifndef ATL_XOVER_DAXPY
+#define    ATL_XOVER_DAXPY     ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( SCPLX )
+#ifndef ATL_XOVER_CAXPY
+#define    ATL_XOVER_CAXPY     ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( DCPLX )
+#ifndef ATL_XOVER_ZAXPY
+#define    ATL_XOVER_ZAXPY     ATL_XOVER_L1_DEFAULT
+#endif 
+#endif
+
+@define rname @Mjoin( PATL, ptaxpy0 )@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(LOCAL_VARIABLE)
+   PT_AXPY_T                  * arg = (PT_AXPY_T *)(ARGS);
+@extract @(EXECUTABLE_STATEMENT)
+#ifdef TREAL
+   Mjoin( PATL, axpy )( arg->n, (SCALAR)(*((TYPE *)(arg->alpha))),
+      (TYPE *)(arg->x), arg->incx, (TYPE *)(arg->y), arg->incy );
+#else
+   Mjoin( PATL, axpy )( arg->n, (SCALAR)(arg->alpha), (TYPE *)(arg->x),
+                        arg->incx, (TYPE *)(arg->y), arg->incy );
+#endif
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+ 
+@define rname @Mjoin( PATL, ptaxpy )@
+void @(rname)
+(
+   const int                  N,
+   const SCALAR               ALPHA,
+   const TYPE                 * X,
+   const int                  INCX,
+   TYPE                       * Y,
+   const int                  INCY
+)
+{
+@extract @(ATLAS_PT1_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   pthread_t                  pid[ATL_NTHREADS];
+   PT_AXPY_T                  arg[ATL_NTHREADS];
+   pthread_attr_t             attr;
+#ifdef TREAL
+   TYPE                       alpha0 = (TYPE)(ALPHA);
+#define  incx2                INCX
+#define  incy2                INCY
+#endif
+   TYPE                       * alpha;
+#ifdef TCPLX
+   int                        incx2 = 2 * INCX, incy2 = 2 * INCY;
+#endif
+   int                        i, ib, nb, nn, nthreads;
+@extract @(EXECUTABLE_STATEMENT)
+   if( ( N <= 0 ) || SCALAR_IS_ZERO( ALPHA ) ) { return; }
+#if   defined( SREAL )
+   else if( ( N <= ATL_XOVER_SAXPY ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, axpy )( N, ALPHA, X, INCX, Y, INCY ); return; }
+
+   alpha = (void *)(&alpha0);
+   nthreads = ( ATL_XOVER_SAXPY <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_SAXPY - 1 ) / ATL_XOVER_SAXPY );
+#elif defined( DREAL )
+   else if( ( N <= ATL_XOVER_DAXPY ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, axpy )( N, ALPHA, X, INCX, Y, INCY ); return; }
+
+   alpha = (void *)(&alpha0);
+   nthreads = ( ATL_XOVER_DAXPY <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_DAXPY - 1 ) / ATL_XOVER_DAXPY );
+#elif defined( SCPLX )
+   else if( ( N <= ATL_XOVER_CAXPY ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, axpy )( N, ALPHA, X, INCX, Y, INCY ); return; }
+
+   alpha = (void *)(ALPHA);
+   nthreads = ( ATL_XOVER_CAXPY <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_CAXPY - 1 ) / ATL_XOVER_CAXPY );
+#elif defined( DCPLX )
+   else if( ( N <= ATL_XOVER_ZAXPY ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, axpy )( N, ALPHA, X, INCX, Y, INCY ); return; }
+
+   alpha = (void *)(ALPHA);
+   nthreads = ( ATL_XOVER_ZAXPY <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_ZAXPY - 1 ) / ATL_XOVER_ZAXPY );
+#endif
+   if( nthreads > ATL_NTHREADS ) { nthreads = ATL_NTHREADS; }
+ 
+   nb = ( ( nn = N ) + nthreads - 1 ) / nthreads;
+ 
+   ATL_thread_init( &attr );
+ 
+   for( i = 0; i < nthreads; i++ )
+   {
+      arg[i].n = ( ib = Mmin( nb, nn ) ); arg[i].alpha = alpha;
+      arg[i].x = (void *)(X); arg[i].incx = INCX;
+      arg[i].y = (void *)(Y); arg[i].incy = INCY;
+      ATL_assert(!pthread_create( &pid[i], &attr, Mjoin( PATL, ptaxpy0 ),
+                                  (void *)(&arg[i]) ));
+      X += ib * incx2; Y += ib * incy2; nn -= ib;
+   }
+ 
+   for( i = 0; i < nthreads; i++ ) 
+   {
+      ATL_assert(!pthread_join( pid[i], NULL ));
+   }
+ 
+   ATL_thread_free( &attr );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_ptcopy
+@extract @(VER_ATLAS_SRC)
+@extract @(PT1_INCLUDE)
+
+#if   defined( SREAL )
+#ifndef ATL_XOVER_SCOPY
+#define    ATL_XOVER_SCOPY     ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( DREAL )
+#ifndef ATL_XOVER_DCOPY
+#define    ATL_XOVER_DCOPY     ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( SCPLX )
+#ifndef ATL_XOVER_CCOPY
+#define    ATL_XOVER_CCOPY     ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( DCPLX )
+#ifndef ATL_XOVER_ZCOPY
+#define    ATL_XOVER_ZCOPY     ATL_XOVER_L1_DEFAULT
+#endif 
+#endif
+
+@define rname @Mjoin( PATL, ptcopy0 )@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(LOCAL_VARIABLE)
+   PT_COPY_T                  * arg = (PT_COPY_T *)(ARGS);
+@extract @(EXECUTABLE_STATEMENT)
+   Mjoin( PATL, copy )( arg->n, (TYPE *)(arg->x), arg->incx,
+                        (TYPE *)(arg->y), arg->incy );
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+@define rname @Mjoin( PATL, ptcopy )@
+void @(rname)
+(
+   const int                  N,
+   const TYPE                 * X,
+   const int                  INCX,
+   TYPE                       * Y,
+   const int                  INCY
+)
+{
+@extract @(ATLAS_PT1_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   pthread_t                  pid[ATL_NTHREADS];
+   PT_COPY_T                  arg[ATL_NTHREADS];
+   pthread_attr_t             attr;
+#ifdef TREAL
+#define  incx2                INCX
+#define  incy2                INCY
+#else
+   int                        incx2 = 2 * INCX, incy2 = 2 * INCY;
+#endif
+   int                        i, ib, nb, nn, nthreads;
+@extract @(EXECUTABLE_STATEMENT)
+   if( N <= 0 ) { return; }
+#if   defined( SREAL )
+   else if( ( N <= ATL_XOVER_SCOPY ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, copy )( N, X, INCX, Y, INCY ); return; }
+ 
+   nthreads = ( ATL_XOVER_SCOPY <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_SCOPY - 1 ) / ATL_XOVER_SCOPY );
+#elif defined( DREAL )
+   else if( ( N <= ATL_XOVER_DCOPY ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, copy )( N, X, INCX, Y, INCY ); return; }
+ 
+   nthreads = ( ATL_XOVER_DCOPY <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_DCOPY - 1 ) / ATL_XOVER_DCOPY );
+#elif defined( SCPLX )
+   else if( ( N <= ATL_XOVER_CCOPY ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, copy )( N, X, INCX, Y, INCY ); return; }
+ 
+   nthreads = ( ATL_XOVER_CCOPY <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_CCOPY - 1 ) / ATL_XOVER_CCOPY );
+#elif defined( DCPLX )
+   else if( ( N <= ATL_XOVER_ZCOPY ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, copy )( N, X, INCX, Y, INCY ); return; }
+ 
+   nthreads = ( ATL_XOVER_ZCOPY <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_ZCOPY - 1 ) / ATL_XOVER_ZCOPY );
+#endif
+   if( nthreads > ATL_NTHREADS ) { nthreads = ATL_NTHREADS; }
+ 
+   nb = ( ( nn = N ) + nthreads - 1 ) / nthreads;
+ 
+   ATL_thread_init( &attr );
+ 
+   for( i = 0; i < nthreads; i++ )
+   {
+      arg[i].n = ( ib = Mmin( nb, nn ) );
+      arg[i].x = (void *)(X); arg[i].incx = INCX;
+      arg[i].y = (void *)(Y); arg[i].incy = INCY;
+      ATL_assert(!pthread_create( &pid[i], &attr, Mjoin( PATL, ptcopy0 ),
+                                  (void *)(&arg[i]) ));
+      X += ib * incx2; Y += ib * incy2; nn -= ib;
+   }
+ 
+   for( i = 0; i < nthreads; i++ ) 
+   {
+      ATL_assert(!pthread_join( pid[i], NULL ));
+   }
+ 
+   ATL_thread_free( &attr );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_ptswap
+@extract @(VER_ATLAS_SRC)
+@extract @(PT1_INCLUDE)
+ 
+#if   defined( SREAL )
+#ifndef ATL_XOVER_SSWAP
+#define    ATL_XOVER_SSWAP     ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( DREAL )
+#ifndef ATL_XOVER_DSWAP
+#define    ATL_XOVER_DSWAP     ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( SCPLX )
+#ifndef ATL_XOVER_CSWAP
+#define    ATL_XOVER_CSWAP     ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( DCPLX )
+#ifndef ATL_XOVER_ZSWAP
+#define    ATL_XOVER_ZSWAP     ATL_XOVER_L1_DEFAULT
+#endif 
+#endif
+
+@define rname @Mjoin( PATL, ptswap0 )@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(LOCAL_VARIABLE)
+   PT_SWAP_T                  * arg = (PT_SWAP_T *)(ARGS);
+@extract @(EXECUTABLE_STATEMENT)
+   Mjoin( PATL, swap )( arg->n, (TYPE *)(arg->x), arg->incx,
+                        (TYPE *)(arg->y), arg->incy );
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+ 
+@define rname @Mjoin( PATL, ptswap )@
+void @(rname)
+(
+   const int                  N,
+   TYPE                       * X,
+   const int                  INCX,
+   TYPE                       * Y,
+   const int                  INCY
+)
+{
+@extract @(ATLAS_PT1_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   pthread_t                  pid[ATL_NTHREADS];
+   PT_SWAP_T                  arg[ATL_NTHREADS];
+   pthread_attr_t             attr;
+#ifdef TREAL
+#define  incx2                INCX
+#define  incy2                INCY
+#else
+   int                        incx2 = 2 * INCX, incy2 = 2 * INCY;
+#endif
+   int                        i, ib, nb, nn, nthreads;
+@extract @(EXECUTABLE_STATEMENT)
+   if( N <= 0 ) { return; }
+#if   defined( SREAL )
+   else if( ( N <= ATL_XOVER_SSWAP ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, swap )( N, X, INCX, Y, INCY ); return; }
+ 
+   nthreads = ( ATL_XOVER_SSWAP <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_SSWAP - 1 ) / ATL_XOVER_SSWAP );
+#elif defined( DREAL )
+   else if( ( N <= ATL_XOVER_DSWAP ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, swap )( N, X, INCX, Y, INCY ); return; }
+ 
+   nthreads = ( ATL_XOVER_DSWAP <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_DSWAP - 1 ) / ATL_XOVER_DSWAP );
+#elif defined( SCPLX )
+   else if( ( N <= ATL_XOVER_CSWAP ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, swap )( N, X, INCX, Y, INCY ); return; }
+ 
+   nthreads = ( ATL_XOVER_CSWAP <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_CSWAP - 1 ) / ATL_XOVER_CSWAP );
+#elif defined( DCPLX )
+   else if( ( N <= ATL_XOVER_ZSWAP ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, swap )( N, X, INCX, Y, INCY ); return; }
+ 
+   nthreads = ( ATL_XOVER_ZSWAP <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_ZSWAP - 1 ) / ATL_XOVER_ZSWAP );
+#endif
+   if( nthreads > ATL_NTHREADS ) { nthreads = ATL_NTHREADS; }
+ 
+   nb = ( ( nn = N ) + nthreads - 1 ) / nthreads;
+ 
+   ATL_thread_init( &attr );
+ 
+   for( i = 0; i < nthreads; i++ )
+   {
+      arg[i].n = ( ib = Mmin( nb, nn ) );
+      arg[i].x = (void *)(X); arg[i].incx = INCX;
+      arg[i].y = (void *)(Y); arg[i].incy = INCY;
+      ATL_assert(!pthread_create( &pid[i], &attr, Mjoin( PATL, ptswap0 ),
+                                  (void *)(&arg[i]) ));
+      X += ib * incx2; Y += ib * incy2; nn -= ib;
+   }
+ 
+   for( i = 0; i < nthreads; i++ ) 
+   {
+      ATL_assert(!pthread_join( pid[i], NULL ));
+   }
+ 
+   ATL_thread_free( &attr );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_ptrot
+@extract @(VER_ATLAS_SRC)
+@extract @(PT1_INCLUDE)
+
+#if   defined( SREAL )
+#ifndef ATL_XOVER_SROT
+#define    ATL_XOVER_SROT      ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( DREAL )
+#ifndef ATL_XOVER_DROT
+#define    ATL_XOVER_DROT      ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( SCPLX )
+#ifndef ATL_XOVER_CSROT
+#define    ATL_XOVER_CSROT     ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( DCPLX )
+#ifndef ATL_XOVER_ZDROT
+#define    ATL_XOVER_ZDROT     ATL_XOVER_L1_DEFAULT
+#endif 
+#endif
+
+@define rname @Mjoin( PATL, ptrot0 )@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(LOCAL_VARIABLE)
+   PT_ROT_T                   * arg = (PT_ROT_T *)(ARGS);
+@extract @(EXECUTABLE_STATEMENT)
+#ifdef TREAL
+   Mjoin( PATL, rot )( arg->n, (TYPE *)(arg->x), arg->incx, (TYPE *)(arg->y),
+      arg->incy, (SCALAR)(*((TYPE *)(arg->c))), (SCALAR)(*((TYPE *)(arg->s))) );
+#else
+   Mjoin( Mjoin( PATL, UPR ), rot )( arg->n, (TYPE *)(arg->x), arg->incx,
+   (TYPE *)(arg->y), arg->incy, (*((TYPE *)(arg->c))), (*((TYPE *)(arg->s))) );
+#endif
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+ 
+@define rname @Mjoin( PATL, ptrot )@
+#ifdef TREAL
+void Mjoin( PATL, ptrot )
+(
+   const int                  N,
+   TYPE                       * X,
+   const int                  INCX,
+   TYPE                       * Y,
+   const int                  INCY,
+   const SCALAR               C,
+   const SCALAR               S
+) 
+#else
+void Mjoin( Mjoin( PATL, UPR ), ptrot )
+(
+   const int                  N,
+   TYPE                       * X,
+   const int                  INCX,
+   TYPE                       * Y,
+   const int                  INCY,
+   const TYPE                 C,
+   const TYPE                 S
+) 
+#endif
+{
+@extract @(ATLAS_PT1_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   pthread_t                  pid[ATL_NTHREADS];
+   PT_ROT_T                   arg[ATL_NTHREADS];
+   pthread_attr_t             attr;
+   TYPE                       co0 = (TYPE)(C), si0 = (TYPE)(S), * co, * si;
+#ifdef TREAL
+#define  incx2                INCX
+#define  incy2                INCY
+#else
+   int                        incx2 = 2 * INCX, incy2 = 2 * INCY;
+#endif
+   int                        i, ib, nb, nn, nthreads;
+@extract @(EXECUTABLE_STATEMENT)
+   if( ( N <= 0 ) || ( ( C == ATL_rone ) && ( S == ATL_rzero ) ) ) { return; }
+#if   defined( SREAL )
+   else if( ( N <= ATL_XOVER_SROT  ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, rot )( N, X, INCX, Y, INCY, C, S ); return; }
+ 
+   nthreads = ( ATL_XOVER_SROT  <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_SROT  - 1 ) / ATL_XOVER_SROT  );
+#elif defined( DREAL )
+   else if( ( N <= ATL_XOVER_DROT  ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, rot )( N, X, INCX, Y, INCY, C, S ); return; }
+ 
+   nthreads = ( ATL_XOVER_DROT  <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_DROT  - 1 ) / ATL_XOVER_DROT  );
+#elif defined( SCPLX )
+   else if( ( N <= ATL_XOVER_CSROT ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( Mjoin( PATL, UPR ), rot )( N, X, INCX, Y, INCY, C, S ); return; }
+ 
+   nthreads = ( ATL_XOVER_CSROT <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_CSROT - 1 ) / ATL_XOVER_CSROT );
+#elif defined( DCPLX )
+   else if( ( N <= ATL_XOVER_ZDROT ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( Mjoin( PATL, UPR ), rot )( N, X, INCX, Y, INCY, C, S ); return; }
+ 
+   nthreads = ( ATL_XOVER_ZDROT <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_ZDROT - 1 ) / ATL_XOVER_ZDROT );
+#endif
+   if( nthreads > ATL_NTHREADS ) { nthreads = ATL_NTHREADS; }
+ 
+   co = (void *)(&co0); si = (void *)(&si0);
+   nb = ( ( nn = N ) + nthreads - 1 ) / nthreads;
+ 
+   ATL_thread_init( &attr );
+
+   for( i = 0; i < nthreads; i++ )
+   {
+      arg[i].n = ( ib = Mmin( nb, nn ) );
+      arg[i].x = (void *)(X); arg[i].incx = INCX;
+      arg[i].y = (void *)(Y); arg[i].incy = INCY; arg[i].c = co; arg[i].c = si;
+      ATL_assert(!pthread_create( &pid[i], &attr, Mjoin( PATL, ptrot0 ),
+                                  (void *)(&arg[i]) ));
+      X += ib * incx2; Y += ib * incy2; nn -= ib;
+   }
+ 
+   for( i = 0; i < nthreads; i++ ) 
+   {
+      ATL_assert(!pthread_join( pid[i], NULL ));
+   }
+ 
+   ATL_thread_free( &attr );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_ptrotm
+@extract @(VER_ATLAS_SRC)
+@extract @(PT1_INCLUDE)
+
+#if   defined( SREAL )
+#ifndef ATL_XOVER_SROTM
+#define    ATL_XOVER_SROTM     ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( DREAL )
+#ifndef ATL_XOVER_DROTM
+#define    ATL_XOVER_DROTM     ATL_XOVER_L1_DEFAULT
+#endif 
+#endif
+
+@define rname @Mjoin( PATL, ptrotm0 )@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(LOCAL_VARIABLE)
+   PT_ROTM_T                  * arg = (PT_ROTM_T *)(ARGS);
+@extract @(EXECUTABLE_STATEMENT)
+   Mjoin( PATL, rotm )( arg->n, (TYPE *)(arg->x), arg->incx, (TYPE *)(arg->y),
+                        arg->incy, (TYPE *)(arg->param) );
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+@define rname @Mjoin( PATL, ptrotm )@
+void @(rname)
+(
+   const int                  N,
+   TYPE                       * X,
+   const int                  INCX,
+   TYPE                       * Y,
+   const int                  INCY,
+   const TYPE                 * PARAM
+) 
+{
+@extract @(ATLAS_PT1_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   pthread_t                  pid[ATL_NTHREADS];
+   PT_ROTM_T                  arg[ATL_NTHREADS];
+   pthread_attr_t             attr;
+#define  incx2                INCX
+#define  incy2                INCY
+   int                        i, ib, nb, nn, nthreads;
+@extract @(EXECUTABLE_STATEMENT)
+#if   defined( SREAL )
+   if( ( N <= 0 ) || ( PARAM[0] == 2.0f ) ) { return; }
+   else if( ( N <= ATL_XOVER_SROTM ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, rotm )( N, X, INCX, Y, INCY, PARAM ); return; }
+ 
+   nthreads = ( ATL_XOVER_SROTM <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_SROTM - 1 ) / ATL_XOVER_SROTM );
+#elif defined( DREAL )
+   if( ( N <= 0 ) || ( PARAM[0] == 2.0 ) ) { return; }
+   else if( ( N <= ATL_XOVER_DROTM ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, rotm )( N, X, INCX, Y, INCY, PARAM ); return; }
+ 
+   nthreads = ( ATL_XOVER_DROTM <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_DROTM - 1 ) / ATL_XOVER_DROTM );
+#endif 
+   if( nthreads > ATL_NTHREADS ) { nthreads = ATL_NTHREADS; }
+ 
+   nb = ( ( nn = N ) + nthreads - 1 ) / nthreads;
+ 
+   ATL_thread_init( &attr );
+ 
+   for( i = 0; i < nthreads; i++ )
+   {
+      arg[i].n = ( ib = Mmin( nb, nn ) ); 
+      arg[i].x = (void *)(X); arg[i].incx = INCX;
+      arg[i].y = (void *)(Y); arg[i].incy = INCY;
+      arg[i].param = (void *)(PARAM);
+      ATL_assert(!pthread_create( &pid[i], &attr, Mjoin( PATL, ptrotm0 ),
+                                  (void *)(&arg[i]) ));
+      X += ib * incx2; Y += ib * incy2; nn -= ib;
+   }
+ 
+   for( i = 0; i < nthreads; i++ ) 
+   {
+      ATL_assert(!pthread_join( pid[i], NULL ));
+   }
+ 
+   ATL_thread_free( &attr );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_ptdot ATL_ptdotc ATL_ptdotu
+@extract @(VER_ATLAS_SRC)
+@extract @(PT1_INCLUDE)
+
+@rout ATL_ptdot
+#if   defined( SREAL )
+#ifndef ATL_XOVER_SDOT
+#define    ATL_XOVER_SDOT      ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( DREAL )
+#ifndef ATL_XOVER_DDOT
+#define    ATL_XOVER_DDOT      ATL_XOVER_L1_DEFAULT
+#endif 
+#endif
+@rout ATL_ptdotc
+#if   defined( SCPLX )
+#ifndef ATL_XOVER_CDOTC
+#define    ATL_XOVER_CDOTC     ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( DCPLX )
+#ifndef ATL_XOVER_ZDOTC
+#define    ATL_XOVER_ZDOTC     ATL_XOVER_L1_DEFAULT
+#endif 
+#endif
+@rout ATL_ptdotu
+#if   defined( SCPLX )
+#ifndef ATL_XOVER_CDOTU
+#define    ATL_XOVER_CDOTU     ATL_XOVER_L1_DEFAULT
+#endif 
+#elif defined( DCPLX )
+#ifndef ATL_XOVER_ZDOTU
+#define    ATL_XOVER_ZDOTU     ATL_XOVER_L1_DEFAULT
+#endif 
+#endif
+@rout ATL_ptdot ATL_ptdotc ATL_ptdotu
+
+@rout ATL_ptdot
+@define rname @Mjoin( PATL, ptdot0 )@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(LOCAL_VARIABLE)
+   PT_DOT_T                   * arg = (PT_DOT_T *)(ARGS);
+@extract @(EXECUTABLE_STATEMENT)
+   *((TYPE *)(arg->dot)) = Mjoin( PATL, dot )( arg->n, (TYPE *)(arg->x),
+                           arg->incx, (TYPE *)(arg->y), arg->incy );
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_ptdotc
+@define rname @Mjoin( PATL, ptdotc0 )@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(LOCAL_VARIABLE)
+   PT_DOT_T                   * arg = (PT_DOT_T *)(ARGS);
+@extract @(EXECUTABLE_STATEMENT)
+   Mjoin( PATL, dotc_sub )( arg->n, (TYPE *)(arg->x), arg->incx,
+                            (TYPE *)(arg->y), arg->incy, (TYPE *)(arg->dot) );
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_ptdotu
+@define rname @Mjoin( PATL, ptdotu0 )@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(LOCAL_VARIABLE)
+   PT_DOT_T                   * arg = (PT_DOT_T *)(ARGS);
+@extract @(EXECUTABLE_STATEMENT)
+   Mjoin( PATL, dotu_sub )( arg->n, (TYPE *)(arg->x), arg->incx,
+                            (TYPE *)(arg->y), arg->incy, (TYPE *)(arg->dot) );
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_ptdot ATL_ptdotc ATL_ptdotu
+
+@rout ATL_ptdot
+@define rname @Mjoin( PATL, ptdot )@
+TYPE @(rname)
+(
+   const int                  N,
+   const TYPE                 * X,
+   const int                  INCX,
+   const TYPE                 * Y,
+   const int                  INCY
+)
+@rout ATL_ptdotc
+@define rname @Mjoin( PATL, ptdotc )@
+void Mjoin( PATL, ptdotc_sub )
+@rout ATL_ptdotu
+@define rname @Mjoin( PATL, ptdotu )@
+void Mjoin( PATL, ptdotu_sub )
+@rout ATL_ptdotc ATL_ptdotu
+(
+   const int                  N,
+   const TYPE                 * X,
+   const int                  INCX,
+   const TYPE                 * Y,
+   const int                  INCY,
+   SCALAR                     DOT
+)
+@rout ATL_ptdot ATL_ptdotc ATL_ptdotu
+{
+@extract @(ATLAS_PT1_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   pthread_t                  pid[ATL_NTHREADS];
+   PT_DOT_T                   arg[ATL_NTHREADS];
+#ifdef TREAL
+   TYPE                       dot[ATL_NTHREADS];
+   TYPE                       d;
+#else
+   TYPE                       dot[ATL_NTHREADS << 1];
+#endif
+   pthread_attr_t             attr;
+   int                        i, ib, nb, nn, nthreads;
+#ifdef TREAL
+#define  incx2                INCX
+#define  incy2                INCY
+#else
+   int                        i2, incx2 = 2 * INCX, incy2 = 2 * INCY;
+#endif
+@extract @(EXECUTABLE_STATEMENT)
+@rout ATL_ptdot
+   if( N < 1 ) { return( ATL_rzero ); }
+#if   defined( SREAL )
+   else if( ( N <= ATL_XOVER_SDOT  ) || ( ATL_NTHREADS <= 1 ) )
+   { return( Mjoin( PATL, dot )( N, X, INCX, Y, INCY ) ); }
+
+   nthreads = ( ATL_XOVER_SDOT  <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_SDOT  - 1 ) / ATL_XOVER_SDOT  );
+#elif defined( DREAL )
+   else if( ( N <= ATL_XOVER_DDOT  ) || ( ATL_NTHREADS <= 1 ) )
+   { return( Mjoin( PATL, dot )( N, X, INCX, Y, INCY ) ); }
+
+   nthreads = ( ATL_XOVER_DDOT  <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_DDOT  - 1 ) / ATL_XOVER_DDOT  );
+#endif
+@rout ATL_ptdotc
+   if( N < 1 ) { DOT[0] = ATL_rzero; DOT[1] = ATL_rzero; return; }
+#if   defined( SCPLX )
+   else if( ( N <= ATL_XOVER_CDOTC ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, dotc_sub )( N, X, INCX, Y, INCY, DOT ); return; }
+ 
+   nthreads = ( ATL_XOVER_CDOTC  <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_CDOTC  - 1 ) / ATL_XOVER_CDOTC  );
+#elif defined( DCPLX )
+   else if( ( N <= ATL_XOVER_ZDOTC ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, dotc_sub )( N, X, INCX, Y, INCY, DOT ); return; }
+ 
+   nthreads = ( ATL_XOVER_ZDOTC  <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_ZDOTC  - 1 ) / ATL_XOVER_ZDOTC  );
+#endif
+@rout ATL_ptdotu
+   if( N < 1 ) { DOT[0] = ATL_rzero; DOT[1] = ATL_rzero; return; }
+#if   defined( SCPLX )
+   else if( ( N <= ATL_XOVER_CDOTU ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, dotu_sub )( N, X, INCX, Y, INCY, DOT ); return; }
+
+   nthreads = ( ATL_XOVER_CDOTU  <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_CDOTU  - 1 ) / ATL_XOVER_CDOTU  );
+#elif defined( DCPLX )
+   else if( ( N <= ATL_XOVER_ZDOTU ) || ( ATL_NTHREADS <= 1 ) )
+   { Mjoin( PATL, dotu_sub )( N, X, INCX, Y, INCY, DOT ); return; }
+ 
+   nthreads = ( ATL_XOVER_ZDOTU  <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_ZDOTU  - 1 ) / ATL_XOVER_ZDOTU  );
+#endif
+@rout ATL_ptdot ATL_ptdotc ATL_ptdotu
+   if( nthreads > ATL_NTHREADS ) { nthreads = ATL_NTHREADS; }
+
+   nb = ( ( nn = N ) + nthreads - 1 ) / nthreads;
+ 
+   ATL_thread_init( &attr );
+@rout ATL_ptdot 
+   for( i = 0; i < nthreads; i++ )
+   {
+      dot[i]     = ATL_rzero; arg[i].n = ( ib = Mmin( nb, nn ) );
+      arg[i].x   = (void *)(X); arg[i].incx = INCX;
+      arg[i].y   = (void *)(Y); arg[i].incy = INCY;
+      arg[i].dot = (void *)(&dot[i]);
+      ATL_assert(!pthread_create( &pid[i], &attr, Mjoin( PATL, ptdot0 ),
+                                  (void *)(&arg[i]) ));
+      X += ib * incx2; Y += ib * incy2; nn -= ib;
+   }
+@rout ATL_ptdotc ATL_ptdotu
+   for( i = 0, i2 = 0; i < nthreads; i++, i2 += 2 )
+   {
+      dot[i2]    = ATL_rzero; dot[i2+1]  = ATL_rzero;
+      arg[i].n   = ( ib = Mmin( nb, nn ) );
+      arg[i].x   = (void *)(X); arg[i].incx = INCX;
+      arg[i].y   = (void *)(Y); arg[i].incy = INCY;
+      arg[i].dot = (void *)(&dot[i2]);
+@rout ATL_ptdotc
+      ATL_assert(!pthread_create( &pid[i], &attr, Mjoin( PATL, ptdotc0 ),
+                                  (void *)(&arg[i]) ));
+@rout ATL_ptdotu
+      ATL_assert(!pthread_create( &pid[i], &attr, Mjoin( PATL, ptdotu0 ),
+                                  (void *)(&arg[i]) ));
+@rout ATL_ptdotc ATL_ptdotu
+      X += ib * incx2; Y += ib * incy2; nn -= ib;
+   }
+@rout ATL_ptdot ATL_ptdotc ATL_ptdotu
+ 
+   for( i = 0; i < nthreads; i++ ) 
+   {
+      ATL_assert(!pthread_join( pid[i], NULL ));
+   }
+ 
+   ATL_thread_free( &attr );
+/*
+ * Combine the results
+ */
+@rout ATL_ptdot
+   d = dot[0]; for( i = 1; i < nthreads; i++ ) { d += dot[i]; } return( d );
+@rout ATL_ptdotc ATL_ptdotu
+   *DOT = dot[0]; DOT[1] = dot[1];
+   for( i = 1, i2 = 2; i < nthreads; i++, i2 += 2 ) 
+   { *DOT += dot[i2]; DOT[1] += dot[i2+1]; }
+@rout ATL_ptdot ATL_ptdotc ATL_ptdotu
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_dsptdot
+@extract @(VER_ATLAS_SRC)
+@extract @(PT1_INCLUDE)
+
+#ifndef ATL_XOVER_DSDOT
+#define    ATL_XOVER_DSDOT     ATL_XOVER_L1_DEFAULT
+#endif 
+
+@define rname @ATL_dsptdot0@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(LOCAL_VARIABLE)
+   PT_DOT_T                     * arg = (PT_DOT_T *)(ARGS);
+@extract @(EXECUTABLE_STATEMENT)
+   *((double *)(arg->dot)) = ATL_dsdot( arg->n, (float *)(arg->x), arg->incx,
+                                        (float *)(arg->y), arg->incy );
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+@define rname @ATL_dsptdot@
+double @(rname)
+(
+   const int                  N,
+   const float                * X,
+   const int                  INCX,
+   const float                * Y,
+   const int                  INCY
+)
+{
+@extract @(ATLAS_PT1_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   pthread_t                  pid[ATL_NTHREADS];
+   PT_DOT_T                   arg[ATL_NTHREADS];
+   double                     dot[ATL_NTHREADS];
+   pthread_attr_t             attr;
+   double                     d;
+   int                        i, ib, nb, nn, nthreads;
+#define  incx2                INCX
+#define  incy2                INCY
+@extract @(EXECUTABLE_STATEMENT)
+   if( N < 1 ) { return( 0.0 ); }
+   else if( ( N <= ATL_XOVER_DSDOT  ) || ( ATL_NTHREADS <= 1 ) )
+   { return( ATL_dsdot( N, X, INCX, Y, INCY ) ); }
+ 
+   nthreads = ( ATL_XOVER_DSDOT  <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_DSDOT  - 1 ) / ATL_XOVER_DSDOT  ); 
+   if( nthreads > ATL_NTHREADS ) { nthreads = ATL_NTHREADS; }
+ 
+   nb = ( ( nn = N ) + nthreads - 1 ) / nthreads;
+ 
+   ATL_thread_init( &attr );
+
+   for( i = 0; i < nthreads; i++ )
+   {
+      dot[i]     = 0.0; arg[i].n = ( ib = Mmin( nb, nn ) );
+      arg[i].x   = (void *)(X); arg[i].incx = INCX;
+      arg[i].y   = (void *)(Y); arg[i].incy = INCY;
+      arg[i].dot = (void *)(&dot[i]);
+      ATL_assert(!pthread_create( &pid[i], &attr, ATL_dsptdot0, 
+                                  (void *)(&arg[i]) ));
+      X += ib * incx2; Y += ib * incy2; nn -= ib;
+   }
+
+   for( i = 0; i < nthreads; i++ ) 
+   {
+      ATL_assert(!pthread_join( pid[i], NULL ));
+   }
+ 
+   ATL_thread_free( &attr );
+/*
+ * Combine the results
+ */
+   d = dot[0]; 
+   for( i = 1; i < nthreads; i++ ) { d += dot[i]; } 
+   return( d );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_sdsptdot
+@extract @(VER_ATLAS_SRC)
+@extract @(PT1_INCLUDE)
+
+#ifndef ATL_XOVER_SDSDOT
+#define    ATL_XOVER_SDSDOT    ATL_XOVER_L1_DEFAULT
+#endif 
+ 
+@define rname @ATL_sdsptdot@
+float @(rname)
+(
+   const int                  N,
+   const float                B,
+   const float                * X,
+   const int                  INCX,
+   const float                * Y,
+   const int                  INCY
+)
+{
+@extract @(ATLAS_PT1_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   pthread_t                  pid[ATL_NTHREADS];
+   PT_DOT_T                   arg[ATL_NTHREADS];
+   double                     dot[ATL_NTHREADS];
+   pthread_attr_t             attr;
+   double                     d;
+   int                        i, ib, nb, nn, nthreads;
+#define  incx2                INCX
+#define  incy2                INCY
+@extract @(EXECUTABLE_STATEMENT)
+   if( N < 1 ) { return( B ); }
+   else if( ( N <= ATL_XOVER_SDSDOT  ) || ( ATL_NTHREADS <= 1 ) )
+   { return( ATL_sdsdot( N, B, X, INCX, Y, INCY ) ); }
+ 
+   nthreads = ( ATL_XOVER_SDSDOT  <= 0 ? ATL_NTHREADS :
+                ( N + ATL_XOVER_SDSDOT  - 1 ) / ATL_XOVER_SDSDOT  );
+   if( nthreads > ATL_NTHREADS ) { nthreads = ATL_NTHREADS; }
+ 
+   nb = ( ( nn = N ) + nthreads - 1 ) / nthreads;
+ 
+   ATL_thread_init( &attr );
+ 
+   for( i = 0; i < nthreads; i++ )
+   {
+      dot[i]     = 0.0; arg[i].n = ( ib = Mmin( nb, nn ) );
+      arg[i].x   = (void *)(X); arg[i].incx = INCX;
+      arg[i].y   = (void *)(Y); arg[i].incy = INCY;
+      arg[i].dot = (void *)(&dot[i]);
+      ATL_assert(!pthread_create( &pid[i], &attr, ATL_dsptdot0, 
+                                  (void *)(&arg[i]) ));
+      X += ib * incx2; Y += ib * incy2; nn -= ib;
+   }
+ 
+   for( i = 0; i < nthreads; i++ ) 
+   {
+      ATL_assert(!pthread_join( pid[i], NULL ));
+   }
+ 
+   ATL_thread_free( &attr );
+/*
+ * Combine the results
+ */
+   d = (double)(B); for( i = 0; i < nthreads; i++ ) { d += dot[i]; }
+
+   return( (float)(d) );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout atlas_ptlvl1.h
+@define rname @atlas_ptlvl1.h@
+@extract @(VER_ATLAS_SRC)
+#ifndef ATL_PTLVL1_H
+#define ATL_PTLVL1_H
+/*
+ * =====================================================================
+ * Include files
+ * =====================================================================
+ */
+#include "atlas_ptmisc.h"
+
+#include "atlas_level1.h"
+/*
+ * =====================================================================
+ * Cross-over points (default)
+ * =====================================================================
+ */
+#define    ATL_XOVER_L1_DEFAULT         128 
+/*
+ * =====================================================================
+ * typedef definitions
+ * =====================================================================
+ */
+typedef struct
+{
+   const void                 * x;
+   void                       * scale, * ssq;
+   int                        incx, n;
+} PT_NRM2_T;
+ 
+typedef struct
+{
+   const void                 * x;
+   void                       * sum;
+   int                        incx, n;
+} PT_ASUM_T;
+ 
+typedef struct
+{
+   const void                 * x;
+   void                       * amax;
+   int                        incx, indx, n;
+} PT_AMAX_T;
+ 
+typedef struct
+{
+   const void                 * alpha;
+   void                       * x;
+   int                        incx, n;
+} PT_SCAL_T;
+ 
+typedef struct
+{
+   const void                 * alpha, * x;
+   void                       * y;
+   int                        incx, incy, n;
+} PT_AXPY_T;
+ 
+typedef struct
+{
+   const void                 * x;
+   void                       * y;
+   int                        incx, incy, n;
+} PT_COPY_T;
+ 
+typedef struct
+{
+   void                       * x, * y;
+   int                        incx, incy, n;
+} PT_SWAP_T;
+ 
+typedef struct
+{
+   const void                 * c, * s;
+   void                       * x, * y;
+   int                        incx, incy, n;
+} PT_ROT_T;
+ 
+typedef struct
+{
+   const void                 * param;
+   void                       * x, * y;
+   int                        incx, incy, n;
+} PT_ROTM_T;
+ 
+typedef struct
+{
+   const void                 * x, * y;
+   void                       * dot;
+   int                        incx, incy, n;
+} PT_DOT_T;
+/*
+ * =====================================================================
+ * Function prototypes
+ * =====================================================================
+ */
+PT_FUN_ARG_T      Mjoin( PATL, ptnrm20     )        ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      Mjoin( PATL, ptasum0     )        ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      Mjoin( PATL, ptamax0     )        ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      Mjoin( PATL, ptscal0     )        ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      Mjoin( PATL, ptaxpy0     )        ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      Mjoin( PATL, ptcopy0     )        ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      Mjoin( PATL, ptswap0     )        ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      Mjoin( PATL, ptrot0      )        ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      Mjoin( PATL, ptrotm0     )        ( PT_FUN_ARG_T );
+#ifdef TREAL
+PT_FUN_ARG_T      Mjoin( PATL, ptdot0      )        ( PT_FUN_ARG_T );
+#else
+PT_FUN_ARG_T      Mjoin( PATL, ptdotc0     )        ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      Mjoin( PATL, ptdotu0     )        ( PT_FUN_ARG_T );
+#endif
+PT_FUN_ARG_T      ATL_dsptdot0                      ( PT_FUN_ARG_T );
+/*
+ * =====================================================================
+ * Prototypes for the Level 1 multi-threaded ATLAS BLAS routines
+ * =====================================================================
+ */
+double            ATL_dsptdot
+(  const int,       const float *,   const int,       const float *,
+   const int ); 
+float             ATL_sdsptdot
+(  const int,       const float,     const float *,   const int,
+   const float *,   const int );
+
+#ifdef TREAL
+
+void              Mjoin( PATL, ptrotg )
+(  TYPE *,          TYPE *,          TYPE *,          TYPE * );
+void              Mjoin( PATL, ptrotmg )
+(  TYPE *,          TYPE *,          TYPE *,          const TYPE,
+   TYPE * );
+TYPE              Mjoin( PATL, ptnrm2 )
+(  const int,       const TYPE *,    const int );
+TYPE              Mjoin( PATL, ptasum )
+(  const int,       const TYPE *,    const int );
+void              Mjoin( PATL, ptrot  )
+(  const int,       TYPE *,          const int,       TYPE *,
+   const int,       const SCALAR,    const SCALAR );
+void              Mjoin( PATL, ptrotm )
+(  const int,       TYPE *,          const int,       TYPE *,
+   const int,       const TYPE * );
+TYPE              Mjoin( PATL, ptdot  )
+(  const int,       const TYPE *,    const int,       const TYPE *,
+   const int );
+
+#else
+
+void              Mjoin( PATL, ptrotg )
+(  TYPE  *,         const TYPE *,    TYPE *,          TYPE * );
+TYPE              Mjoin( Mjoin( PATLU, PRE ), ptnrm2 )
+(  const int,       const TYPE *,    const int );
+TYPE              Mjoin( Mjoin( PATLU, PRE ), ptasum )
+(  const int,       const TYPE *,    const int );
+void              Mjoin( Mjoin( PATL,  UPR ), ptscal )
+(  const int,       const TYPE,      TYPE *,          const int );
+void              Mjoin( Mjoin( PATL,  UPR ), ptrot  )
+(  const int,       TYPE *,          const int,       TYPE *,
+   const int,       const TYPE,      const TYPE );
+void              Mjoin( PATL, ptdotc_sub  )
+(  const int,       const TYPE *,    const int,       const TYPE *,
+   const int,       SCALAR );
+void              Mjoin( PATL, ptdotu_sub  )
+(  const int,       const TYPE *,    const int,       const TYPE *,
+   const int,       SCALAR );
+
+#endif
+
+int               Mjoin( Mjoin( Mjoin( ATL_, i ), PRE ), ptamax )
+(  const int,       const TYPE *,    const int );
+void              Mjoin( PATL, ptscal )
+(  const int,       const SCALAR,    TYPE *,          const int );
+void              Mjoin( PATL, ptaxpy )
+(  const int,       const SCALAR,    const TYPE *,    const int,
+   TYPE *,          const int );
+void              Mjoin( PATL, ptcopy )
+(  const int,       const TYPE *,    const int,       TYPE *,
+   const int );
+void              Mjoin( PATL, ptswap )
+(  const int,       TYPE *,          const int,       TYPE *,
+   const int );
+
+#endif
+/*
+ * End of @(rname)
+ */
+@undef rname
+@skip
+@skip
+@rout Make.l1ptblas
+@extract @(VER_ATLAS_MAK)
+#
+include Make.inc
+mySRCdir = $(SRCdir)/src/pthreads/blas/level1
+#
+########################################################################
+#
+INC1dep   = \
+   $(INCAdir)/atlas_pthreads.h     $(INCSdir)/atlas_aux.h     \
+   $(INCSdir)/atlas_misc.h      $(INCSdir)/atlas_level1.h  \
+   $(INCSdir)/atlas_ptmisc.h    $(INCSdir)/atlas_ptlvl1.h  \
+   $(INCSdir)/atlas_ptlevel1.h
+#
+## Object files ########################################################
+#
+@multidef upr_ d s d s
+@whiledef pre_ z c d s
+   @addkeys ptyp_=@(pre_)
+ATL_@(pre_)lvl1obj = \
+   @declare "   " y n
+      @ptyp_ s
+         @multidef rout_
+            sdsptdot       dsptdot        @(pre_)ptdot   @(pre_)ptrotm
+            @(pre_)ptrot   @(pre_)ptswap  @(pre_)ptcopy  @(pre_)ptaxpy
+            i@(pre_)ptamax @(pre_)ptscal  @(pre_)ptasum  @(pre_)ptnrm2  
+            @(pre_)ptrotmg @(pre_)ptrotg
+         @endmultidef
+      @ptyp_ d
+         @multidef rout_
+            @(pre_)ptdot   @(pre_)ptrotm  @(pre_)ptrot   @(pre_)ptswap
+            @(pre_)ptcopy  @(pre_)ptaxpy  i@(pre_)ptamax @(pre_)ptscal
+            @(pre_)ptasum  @(pre_)ptnrm2  @(pre_)ptrotmg @(pre_)ptrotg
+         @endmultidef
+      @ptyp_ c z
+         @multidef rout_
+            @(pre_)ptdotu  @(pre_)ptdotc  @(pre_)@(upr_)ptrot
+            @(pre_)ptswap  @(pre_)ptcopy  @(pre_)ptaxpy  i@(pre_)ptamax
+            @(pre_)@(upr_)ptscal          @(pre_)ptscal  @(upr_)@(pre_)ptasum
+            @(upr_)@(pre_)ptnrm2          @(pre_)ptrotg
+         @endmultidef
+      @ptyp_ !
+      @whiledef rout_
+         ATL_@(rout_).o
+      @endwhile
+   @enddeclare
+   @killkeys ptyp_
+   @undef upr_
+#
+@endwhile
+## Targets #############################################################
+#
+all   : lib
+#
+lvl2  : lib
+#
+lib   : dlib slib zlib clib
+#
+@whiledef pre_ z c d s
+@(pre_)lvl2 : @(pre_)lib
+@endwhile
+#
+@whiledef pre_ z c d s
+@(pre_)lib  : @(pre_)lib.grd
+@endwhile
+#
+@whiledef pre_ z c d s
+@(pre_)lib.grd  : $(ATL_@(pre_)lvl1obj)
+	@(arch) @(archflgs) @(ptxlib) $(ATL_@(pre_)lvl1obj)
+	@(ranlib) @(ptxlib)
+	touch @(pre_)lib.grd
+#
+@endwhile
+########################################################################
+#
+@multidef upr_ d s d s
+@whiledef pre_ z c d s
+   @addkeys ptyp_=@(pre_)
+   @ptyp_ s
+      @multidef rout_
+         sdsptdot dsptdot dot   rotm  rot   swap  copy  axpy
+         amax     asum    nrm2  scal  rotmg rotg
+      @endmultidef
+      @define cdefs @-D@up@(upr_)REAL@
+   @ptyp_ d
+      @multidef rout_
+         dot    rotm  rot   swap  copy  axpy  amax  asum
+         nrm2   scal  rotmg rotg
+      @endmultidef
+      @define cdefs @-D@up@(upr_)REAL@
+   @ptyp_ c z
+      @multidef rout_
+         dotu   dotc  rot   swap  copy  axpy  amax  asum
+         nrm2   rscal scal  rotg
+      @endmultidef
+      @define cdefs @-D@up@(upr_)CPLX@
+   @ptyp_ !
+   @whiledef rout_
+      @addkeys prou_=@(rout_)
+      @prou_ sdsptdot dsptdot
+         @define rpre_ @ATL_@(rout_)@
+         @define rsrc_ @$(mySRCdir)/@(rpre_).c@
+         @define robj_ @ATL_@(rout_).o@
+      @prou_ dot rotm swap  copy axpy scal rotmg rotg dotu dotc
+         @define rpre_ @ATL_pt@(rout_)@
+         @define rsrc_ @$(mySRCdir)/@(rpre_).c@
+         @define robj_ @ATL_@(pre_)pt@(rout_).o@
+      @prou_ rot
+         @ptyp_ s d
+            @define rpre_ @ATL_pt@(rout_)@
+            @define rsrc_ @$(mySRCdir)/@(rpre_).c@
+            @define robj_ @ATL_@(pre_)pt@(rout_).o@
+         @ptyp_ c z
+            @define rpre_ @ATL_pt@(rout_)@
+            @define rsrc_ @$(mySRCdir)/@(rpre_).c@
+            @define robj_ @ATL_@(pre_)@(upr_)pt@(rout_).o@
+         @ptyp_ !
+      @prou_ nrm2 asum
+         @ptyp_ s d
+            @define rpre_ @ATL_pt@(rout_)@
+            @define rsrc_ @$(mySRCdir)/@(rpre_).c@
+            @define robj_ @ATL_@(pre_)pt@(rout_).o@
+         @ptyp_ c z
+            @define rpre_ @ATL_pt@(rout_)@
+            @define rsrc_ @$(mySRCdir)/@(rpre_).c@
+            @define robj_ @ATL_@(upr_)@(pre_)pt@(rout_).o@
+         @ptyp_ !
+      @prou_ amax
+         @define rpre_ @ATL_pt@(rout_)@
+         @define rsrc_ @$(mySRCdir)/@(rpre_).c@
+         @define robj_ @ATL_i@(pre_)pt@(rout_).o@
+      @prou_ rscal
+         @define rpre_ @ATL_pt@(rout_)@
+         @define rsrc_ @$(mySRCdir)/@(rpre_).c@
+         @define robj_ @ATL_@(pre_)@(upr_)ptscal.o@
+      @prou_ !
+@28l@(robj_) : @(rsrc_) $(INC1dep)
+@(CCptcomp) @(cdefs) @(rsrc_)
+      @undef rpre_
+      @undef rsrc_
+      @undef robj_
+      @killkeys prou_
+   @endwhile
+   @undef cdefs
+   @killkeys ptyp_
+   @undef upr_
+#
+@endwhile
+########################################################################
+#
+@whiledef pre_ z c d s
+@(pre_)clean           :
+	rm -f $(ATL_@(pre_)lvl1obj) @(pre_)*.grd
+#
+@endwhile
+#
+clean            :
+	rm -f *.o *.grd
+#
+########################################################################
+@skip
+@skip
+@rout atlas_ptlevel1.h
+@define rname @atlas_ptlevel1.h@
+@extract @(VER_ATLAS_SRC)
+#ifndef ATL_PTLEVEL1_H
+#define ATL_PTLEVEL1_H
+/*
+ * =====================================================================
+ * Prototypes  for single precision real  Level 1  multi-threaded  ATLAS
+ * BLAS routines.
+ * =====================================================================
+ */
+void              ATL_sptrotg
+(  float  *,        float  *,        float  *,        float  * );
+void              ATL_sptfrotmg
+(  float  *,        float  *,        float  *,        const float,
+   float  * );
+float             ATL_sptnrm2
+(  const int,       const float  *,  const int );
+float             ATL_sptasum
+(  const int,       const float  *,  const int );
+int               ATL_isptamax
+(  const int,       const float  *,  const int );
+void              ATL_sptscal
+(  const int,       const float,     float  *,        const int );
+void              ATL_sptaxpy
+(  const int,       const float,     const float  *,  const int,
+   float  *,        const int );
+void              ATL_sptcopy
+(  const int,       const float  *,  const int,       float  *,
+   const int );  
+void              ATL_sptswap
+(  const int,       float  *,        const int,       float  *,
+   const int );
+void              ATL_sptrot
+(  const int,       float  *,        const int,       float  *,
+   const int,       const float,     const float  );
+void              ATL_sptrotm
+(  const int,       float  *,        const int,       float  *,
+   const int,       const float  * );
+float             ATL_sptdot
+(  const int,       const float  *,  const int,       const float  *,
+   const int );
+float             ATL_sdsptdot
+(  const int,       const float,     const float  *,  const int,
+   const float  *,  const int );
+/*
+ * =====================================================================
+ * Prototypes  for double precision real  Level 1  multi-threaded  ATLAS
+ * BLAS routines.
+ * =====================================================================
+ */
+void              ATL_dptrotg
+(  double *,        double *,        double *,        double * );
+void              ATL_dptfrotmg
+(  double *,        double *,        double *,        const double,
+   double * );
+double            ATL_dptnrm2
+(  const int,       const double *,  const int );
+double            ATL_dptasum
+(  const int,       const double *,  const int );
+int               ATL_idptamax
+(  const int,       const double *,  const int );
+void              ATL_dptscal
+(  const int,       const double,    double *,        const int );
+void              ATL_dptaxpy
+(  const int,       const double,    const double *,  const int,
+   double *,        const int );
+void              ATL_dptcopy
+(  const int,       const double *,  const int,       double *,
+   const int );
+void              ATL_dptswap
+(  const int,       double *,        const int,       double *,
+   const int );
+void              ATL_dptrot
+(  const int,       double *,        const int,       double *,
+   const int,       const double,    const double );
+void              ATL_dptrotm
+(  const int,       double *,        const int,       double *,
+   const int,       const double * );
+double            ATL_dptdot
+(  const int,       const double *,  const int,       const double *,
+   const int );
+double            ATL_dsptdot
+(  const int,       const float  *,  const int,       const float  *,
+   const int );
+/*
+ * =====================================================================
+ * Prototypes  for single precision complex Level 1 multi-threaded ATLAS
+ * BLAS routines.
+ * =====================================================================
+ */
+void              ATL_cptrotg
+(  float  *,        const float  *,  float  *,        float  * );
+float             ATL_scptnrm2
+(  const int,       const float  *,  const int );
+float             ATL_scptasum
+(  const int,       const float  *,  const int );
+int               ATL_icptamax
+(  const int,       const float  *,  const int );
+void              ATL_cptscal
+(  const int,       const float  *,  float  *,        const int );
+void              ATL_csptscal
+(  const int,       const float,     float  *,        const int );
+void              ATL_cptaxpy
+(  const int,       const float  *,  const float  *,  const int,
+   float  *,        const int );
+void              ATL_cptcopy
+(  const int,       const float  *,  const int,       float  *,
+   const int );
+void              ATL_cptswap
+(  const int,       float  *,        const int,       float  *,
+   const int );
+void              ATL_csptrot
+(  const int,       float  *,        const int,       float  *,
+   const int,       const float,     const float  );
+void              ATL_cptdotu_sub
+(  const int,       const float  *,  const int,       const float  *,
+   const int,       float * );
+void              ATL_cptdotc_sub
+(  const int,       const float  *,  const int,       const float  *,
+   const int,       float * );
+/*
+ * =====================================================================
+ * Prototypes  for single precision complex Level 1 multi-threaded ATLAS
+ * BLAS routines.
+ * =====================================================================
+ */
+void              ATL_zptfrotg
+(  double *,        const double *,  double *,        double * );
+double            ATL_dzptnrm2
+(  const int,       const double *,  const int );
+double            ATL_dzptasum
+(  const int,       const double *,  const int );
+int               ATL_izptamax
+(  const int,       const double *,  const int );
+void              ATL_zptscal
+(  const int,       const double *,  double *,        const int );
+void              ATL_zdptscal
+(  const int,       const double,    double *,        const int );
+void              ATL_zptaxpy
+(  const int,       const double *,  const double *,  const int,
+   double *,        const int );
+void              ATL_zptcopy
+(  const int,       const double *,  const int,       double *,
+   const int );
+void              ATL_zptswap
+(  const int,       double *,        const int,       double *,
+   const int );
+void              ATL_zdptrot
+(  const int,       double *,        const int,       double *,
+   const int,       const double,    const double );
+void              ATL_zptdotu_sub
+(  const int,       const double *,  const int,       const double *,
+   const int,       double * );
+void              ATL_zptdotc_sub
+(  const int,       const double *,  const int,       const double *,
+   const int,       double * );
+
+#endif
+/*
+ * End of @(rname)
+ */
+@undef rname
+@skip
+@skip
+@rout !
+@skip
+@skip
+@undef PT1_INCLUDE
+@skip
+@skip

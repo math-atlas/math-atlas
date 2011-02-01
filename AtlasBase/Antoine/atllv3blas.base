@@ -1,0 +1,872 @@
+@skip ==================================================================
+@skip ATLAS / L3 BLAS                                               AP00
+@skip Last modification : 05/28/00
+@skip modified by rcw 06/09/01 to add parallel make
+@skip modified by rcw 07/14/03 to add pkmake and call to sprk
+@skip ==================================================================
+@skip File layout:
+@skip
+@skip lv3_inc,  ATL_symm, ATL_hemm, ATL_syr2k, ATL_her2k, ATL_syrk,
+@skip ATL_herk, ATL_trmm, ATL_trsm, atlas_level3.h, Make.l3.
+@skip ==================================================================
+@skip Global define statements
+@skip
+@extract -addkeys -b @(BASEdir)include/atlas.inc lan=C type=none
+@skip ==================================================================
+@skip Specific define statements
+@skip
+@define LV3_INCLUDE @-addkeys -b @(srcdir)/atllv3blas.base rout=lv3_inc@
+@skip ==================================================================
+@skip
+@rout lv3_inc
+@extract @(INCLUDE)
+#include "atlas_rblas3.h"
+#include "atlas_kernel3.h"
+#include "atlas_lvl3.h"
+@skip
+@skip ==================================================================
+@skip
+@rout ATL_symm
+@define dn @symm@
+@rout ATL_hemm
+@define dn @hemm@
+@rout ATL_symm ATL_hemm
+@define rname @Mjoin( PATL, @(dn) )@
+@extract @(VER_ATLAS_SRC) -def contributor "@(clint)"
+@extract @(LV3_INCLUDE) 
+
+#ifndef @up@(dn)_NB
+#define @up@(dn)_NB      NB
+#endif
+
+void @(rname)
+(
+   const enum ATLAS_SIDE      SIDE,
+   const enum ATLAS_UPLO      UPLO,
+   const int                  M,
+   const int                  N,
+   const SCALAR               ALPHA,
+   const TYPE                 * A,
+   const int                  LDA,
+   const TYPE                 * B,
+   const int                  LDB,
+   const SCALAR               BETA,
+   TYPE                       * C,
+   const int                  LDC
+)
+{
+@extract @(ATLAS_LV3_COMMENT)
+@extract @(LOCAL_VARIABLE)
+#ifdef TREAL
+   TYPE                       alpha0 = (TYPE)(ALPHA), beta0 = (TYPE)(BETA);
+   const TYPE                 one = ATL_rone;
+#else 
+   TYPE                       one[2] = { ATL_rone, ATL_rzero };
+#endif
+   TYPE                       * alpha, * beta;
+   RC3_FUN_@up@(dn)_T             ATL_r@(dn);
+   RC3_@up@(dn)_T                 type;
+@extract @(EXECUTABLE_STATEMENT)
+   if( ( M == 0 ) || ( N == 0 ) || 
+       ( ( SCALAR_IS_ZERO( ALPHA ) ) && ( SCALAR_IS_ONE( BETA ) ) ) ) return;
+
+   if( SCALAR_IS_ZERO( ALPHA ) )
+   { Mjoin( PATL, gescal )( M, N, BETA, C, LDC ); return; }
+#ifdef TREAL
+   type.size    = sizeof( TYPE );           type.one = (void *)(&one);
+   type.TgemmNN = Mjoin( PATL, gemmNN_RB );
+   alpha        = &alpha0;                  beta     = &beta0; 
+#else 
+   type.size    = sizeof( TYPE[2] );        type.one = (void *)(one);
+   type.TgemmNN = Mjoin( PATL, gemmNN_RB );
+   alpha = (TYPE *)(ALPHA);                 beta     = (TYPE *)(BETA);
+#endif
+
+   if( SIDE == AtlasLeft )
+   {
+@rout ATL_symm
+      type.Tgemm = Mjoin( PATL, gemmTN_RB );
+@rout ATL_hemm
+      type.Tgemm = Mjoin( PATL, gemmCN_RB );
+@rout ATL_symm ATL_hemm
+      if( UPLO == AtlasUpper )
+      { type.T@(dn) = Mjoin( PATL, @(dn)LU ); ATL_r@(dn) = ATL_r@(dn)LU; }
+      else
+      { type.T@(dn) = Mjoin( PATL, @(dn)LL ); ATL_r@(dn) = ATL_r@(dn)LL; }
+   }
+   else
+   {
+@rout ATL_symm
+      type.Tgemm = Mjoin( PATL, gemmNT_RB );
+@rout ATL_hemm
+      type.Tgemm = Mjoin( PATL, gemmNC_RB );
+@rout ATL_symm ATL_hemm
+      if( UPLO == AtlasUpper )
+      { type.T@(dn) = Mjoin( PATL, @(dn)RU ); ATL_r@(dn) = ATL_r@(dn)RU; }
+      else
+      { type.T@(dn) = Mjoin( PATL, @(dn)RL ); ATL_r@(dn) = ATL_r@(dn)RL; }
+   }
+
+   ATL_r@(dn)( &type, M, N, ((void *)alpha), ((void *)A), LDA, ((void *)B),
+              LDB, ((void *)beta), ((void *)C), LDC, @up@(dn)_NB );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip ==================================================================
+@skip
+@rout ATL_syr2k
+@define dn @syr2k@
+@rout ATL_her2k
+@define dn @her2k@
+@rout ATL_syr2k ATL_her2k
+@define rname @Mjoin( PATL, @(dn) )@
+@extract @(VER_ATLAS_SRC) -def contributor "@(clint)"
+@extract @(LV3_INCLUDE)
+ 
+#ifndef @up@(dn)_NB
+#define @up@(dn)_NB      NB
+#endif
+
+void @(rname)
+(
+   const enum ATLAS_UPLO      UPLO,
+   const enum ATLAS_TRANS     TRANS,
+   const int                  N,
+   const int                  K,
+   const SCALAR               ALPHA,
+   const TYPE                 * A,
+   const int                  LDA,
+   const TYPE                 * B,
+   const int                  LDB,
+@rout ATL_syr2k
+   const SCALAR               BETA,
+@rout ATL_her2k
+   const TYPE                 BETA,
+@rout ATL_syr2k ATL_her2k
+   TYPE                       * C,
+   const int                  LDC
+)
+{
+@extract @(ATLAS_LV3_COMMENT)
+@extract @(LOCAL_VARIABLE)
+@rout ATL_syr2k
+#ifdef TREAL
+   TYPE                       alpha0 = (TYPE)(ALPHA), beta0 = (TYPE)(BETA);
+   TYPE                       one = ATL_rone;
+   TYPE                       * alpha, * beta;
+#else
+   TYPE                       one[2] = { ATL_rone, ATL_rzero };
+   TYPE                       * alpha, * beta;
+#endif
+@rout ATL_her2k
+   TYPE                       one[2] = { ATL_rone, ATL_rzero };
+   TYPE                       * alpha;
+   TYPE                       Calph[2], Cbeta[2];
+@rout ATL_syr2k ATL_her2k
+   RC3_FUN_@up@(dn)_T            ATL_r@(dn);
+   RC3_@up@(dn)_T                type;
+@extract @(EXECUTABLE_STATEMENT)
+@rout ATL_syr2k
+   if( ( N == 0 ) ||
+       ( ( SCALAR_IS_ZERO( ALPHA ) || ( K == 0 ) ) && SCALAR_IS_ONE( BETA ) ) )
+      return;
+
+   if( ( SCALAR_IS_ZERO( ALPHA ) ) || ( K == 0 ) )
+   { Mjoin( PATL, trscal )( UPLO, N, N, BETA, C, LDC ); return; }
+#ifdef TREAL
+   type.size = sizeof( TYPE );    type.one = (void *)(&one);
+   alpha     = &alpha0;           beta     = &beta0;
+#else
+   type.size = sizeof( TYPE[2] ); type.one = (void *)one;
+   alpha     = (TYPE *)(ALPHA);   beta     = (TYPE *)(BETA);
+#endif
+@rout ATL_her2k
+   if( ( N == 0 ) ||
+       ( ( SCALAR_IS_ZERO( ALPHA ) || ( K == 0 ) ) && ( BETA == ATL_rone ) ) )
+      return;
+
+   if( ( SCALAR_IS_ZERO( ALPHA ) ) || ( K == 0 ) )
+   { Mjoin( PATL, hescal )( UPLO, N, N, BETA, C, LDC ); return; }
+
+   type.size = sizeof( TYPE[2] ); type.one = (void *)one;
+   alpha     = (TYPE *)(ALPHA);
+   *Calph    = *ALPHA;            Calph[1] = -ALPHA[1];
+   *Cbeta    = BETA;              Cbeta[1] = ATL_rzero;
+@rout ATL_syr2k
+
+   if( TRANS == AtlasNoTrans )
+   {
+      type.Tgemm = Mjoin( PATL, gemmNT_RB );
+      if( UPLO == AtlasUpper )
+      { type.T@(dn) = Mjoin( PATL, @(dn)UN ); ATL_r@(dn) = ATL_r@(dn)UN; }
+      else
+      { type.T@(dn) = Mjoin( PATL, @(dn)LN ); ATL_r@(dn) = ATL_r@(dn)LN; }
+   }
+   else
+   {
+      type.Tgemm = Mjoin( PATL, gemmTN_RB );
+      if( UPLO == AtlasUpper )
+      { type.T@(dn) = Mjoin( PATL, @(dn)UT ); ATL_r@(dn) = ATL_r@(dn)UT; }
+      else
+      { type.T@(dn) = Mjoin( PATL, @(dn)LT ); ATL_r@(dn) = ATL_r@(dn)LT; }
+   }
+
+   ATL_r@(dn)( &type, N, K, (void *)(alpha), (void *)(A), LDA, (void *)(B),
+               LDB, (void *)(beta), (void *)(C), LDC, @up@(dn)_NB );
+@rout ATL_her2k
+
+   if( TRANS == AtlasNoTrans )
+   {
+      type.Tgemm = Mjoin( PATL, gemmNC_RB );
+      if( UPLO == AtlasUpper )
+      { type.T@(dn) = Mjoin( PATL, @(dn)UN ); ATL_r@(dn) = ATL_r@(dn)UN; }
+      else
+      { type.T@(dn) = Mjoin( PATL, @(dn)LN ); ATL_r@(dn) = ATL_r@(dn)LN; }
+   }
+   else
+   {
+      type.Tgemm = Mjoin( PATL, gemmCN_RB );
+      if( UPLO == AtlasUpper )
+      { type.T@(dn) = Mjoin( PATL, @(dn)UC ); ATL_r@(dn) = ATL_r@(dn)UC; }
+      else
+      { type.T@(dn) = Mjoin( PATL, @(dn)LC ); ATL_r@(dn) = ATL_r@(dn)LC; }
+   }
+
+   ATL_r@(dn)( &type, N, K, (void *)(alpha), (void *)(Calph), (void *)(A),
+               LDA, (void *)(B), LDB, (void *)(Cbeta), (void *)(C), LDC,
+               @up@(dn)_NB );
+@rout ATL_syr2k ATL_her2k
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip ==================================================================
+@skip
+@rout ATL_syrk
+@define dn @syrk@
+@rout ATL_herk
+@define dn @herk@
+@rout ATL_syrk ATL_herk
+@define rname @Mjoin( PATL, @(dn) )@
+@extract @(VER_ATLAS_SRC) -def contributor "@(clint)"
+#define USE_SPRK
+@extract @(LV3_INCLUDE)
+@skip #if defined(USE_SPRK) && !defined(TREAL)
+@skip    #undef USE_SPRK
+@skip #endif
+#ifdef USE_SPRK
+#include "atlas_pkblas.h"
+#endif
+
+#ifndef @up@(dn)_NB
+#define @up@(dn)_NB      NB
+#endif
+
+void @(rname)
+(
+   const enum ATLAS_UPLO      UPLO,
+   const enum ATLAS_TRANS     TRANS,
+   const int                  N,
+   const int                  K,
+@rout ATL_syrk
+   const SCALAR               ALPHA,
+@rout ATL_herk
+   const TYPE                 ALPHA,
+@rout ATL_syrk ATL_herk
+   const TYPE                 * A,
+   const int                  LDA,
+@rout ATL_syrk
+   const SCALAR               BETA,
+@rout ATL_herk
+   const TYPE                 BETA,
+@rout ATL_syrk ATL_herk
+   TYPE                       * C,
+   const int                  LDC
+)
+{
+@extract @(ATLAS_LV3_COMMENT)
+@extract @(LOCAL_VARIABLE)
+@rout ATL_syrk
+#ifdef TREAL
+   TYPE                       alpha0 = (TYPE)(ALPHA), beta0 = (TYPE)(BETA);
+#endif
+   TYPE                       * alpha, * beta;
+@rout ATL_herk
+   TYPE                       Calph[2], Cbeta[2];
+@rout ATL_syrk ATL_herk
+   RC3_FUN_@up@(dn)_T            ATL_r@(dn);
+   RC3_@up@(dn)_T                type;
+@extract @(EXECUTABLE_STATEMENT)
+@rout ATL_syrk
+   #if defined (USE_SPRK)
+      Mjoin(PATL,sprk)(PackGen, TRANS, UPLO, 0, N, K, ALPHA, A, 0, 0, LDA,
+                       BETA, C, 0, 0, LDC);
+      return;
+   #endif
+   if( ( N == 0 ) ||
+       ( ( SCALAR_IS_ZERO( ALPHA ) || ( K == 0 ) ) && SCALAR_IS_ONE( BETA ) ) )
+      return;
+ 
+   if( ( SCALAR_IS_ZERO( ALPHA ) ) || ( K == 0 ) )
+   { Mjoin( PATL, trscal )( UPLO, N, N, BETA, C, LDC ); return; }
+
+#ifdef TREAL
+   type.size = sizeof( TYPE );
+   alpha     = &alpha0;           beta     = &beta0;
+#else
+   type.size = sizeof( TYPE[2] );
+   alpha     = (TYPE *)(ALPHA);   beta     = (TYPE *)(BETA);
+#endif
+@rout ATL_herk
+   #if defined (USE_SPRK)
+      Mjoin(PATL,hprk)(PackGen, TRANS, UPLO, 0, N, K, ALPHA, A, 0, 0, LDA,
+                       BETA, C, 0, 0, LDC);
+      return;
+   #endif
+   if( ( N == 0 ) ||
+       ( ( ( ALPHA == ATL_rzero ) || ( K == 0 ) ) && ( BETA == ATL_rone ) ) )
+      return; 
+
+   if( ( ALPHA == ATL_rzero ) || ( K == 0 ) )
+   { Mjoin( PATL, hescal )( UPLO, N, N, BETA, C, LDC ); return; }
+
+   type.size = sizeof( TYPE[2] );
+   *Calph    = ALPHA; Calph[1] = ATL_rzero;
+   *Cbeta    = BETA;  Cbeta[1] = ATL_rzero;
+@rout ATL_syrk
+
+   if( TRANS == AtlasNoTrans )
+   {
+      type.Tgemm = Mjoin( PATL, gemmNT_RB );
+      if( UPLO == AtlasUpper )
+      { type.T@(dn) = Mjoin( PATL, @(dn)UN ); ATL_r@(dn) = ATL_r@(dn)UN; }
+      else
+      { type.T@(dn) = Mjoin( PATL, @(dn)LN ); ATL_r@(dn) = ATL_r@(dn)LN; }
+   }
+   else
+   {
+      type.Tgemm = Mjoin( PATL, gemmTN_RB );
+      if( UPLO == AtlasUpper )
+      { type.T@(dn) = Mjoin( PATL, @(dn)UT ); ATL_r@(dn) = ATL_r@(dn)UT; }
+      else
+      { type.T@(dn) = Mjoin( PATL, @(dn)LT ); ATL_r@(dn) = ATL_r@(dn)LT; }
+   }
+
+   ATL_r@(dn)( &type, N, K, (void *)(alpha), (void *)(A), LDA, (void *)(beta),
+              (void *)(C), LDC, @up@(dn)_NB );
+@rout ATL_herk
+
+   if( TRANS == AtlasNoTrans )
+   {
+      type.Tgemm = Mjoin( PATL, gemmNC_RB );
+      if( UPLO == AtlasUpper )
+      { type.T@(dn) = Mjoin( PATL, @(dn)UN ); ATL_r@(dn) = ATL_r@(dn)UN; }
+      else
+      { type.T@(dn) = Mjoin( PATL, @(dn)LN ); ATL_r@(dn) = ATL_r@(dn)LN; }
+   }
+   else
+   {
+      type.Tgemm = Mjoin( PATL, gemmCN_RB );
+      if( UPLO == AtlasUpper )
+      { type.T@(dn) = Mjoin( PATL, @(dn)UC ); ATL_r@(dn) = ATL_r@(dn)UC; }
+      else
+      { type.T@(dn) = Mjoin( PATL, @(dn)LC ); ATL_r@(dn) = ATL_r@(dn)LC; }
+   }
+
+   ATL_r@(dn)( &type, N, K, (void *)(Calph), (void *)(A), LDA, (void *)(Cbeta),
+              (void *)(C), LDC, @up@(dn)_NB );
+@rout ATL_syrk ATL_herk
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip ==================================================================
+@skip
+@rout ATL_trmm
+@define dn @trmm@
+@rout ATL_trsm
+@define dn @trsm@
+@rout ATL_trmm ATL_trsm
+@define rname @Mjoin( PATL, @(dn) )@
+@extract @(VER_ATLAS_SRC) -def contributor "@(clint)"
+@extract @(LV3_INCLUDE)
+
+@skip MODIFIED BY RCW TO MAKE IT RECUR TO 1 FOR CPLX, TO 4 FOR LEFT
+@rout ATL_trmm
+#ifndef @up@(dn)_NB
+#define @up@(dn)_NB      NB
+#endif
+@rout ATL_trsm
+#ifndef TRSM_NB
+   #include "atlas_trsmNB.h"
+@beginskip
+   #ifdef TREAL
+      #ifdef ATL_ARCH_ATHLON
+         #ifdef DREAL
+            #define TRSM_NB    NB
+         #else
+            #define TRSM_NB    (NB/4)
+         #endif
+      #elif defined(ATL_ARCH_HAMMER64) || defined(ATL_ARCH_HAMMER32)
+         #ifdef DREAL
+            #define TRSM_NB    (NB/3)
+         #else
+            #define TRSM_NB    (NB/2)
+         #endif
+      #else
+         #define TRSM_NB    NB
+      #endif
+/*
+ *    For larger NB than 8, the intel compiler screws up the TRSM kernel,
+ *    so force 8 as our largest stopping factor.  This is OK performance-
+ *    wise, since all non-x86 archs benefit from not using the x86-specific
+ *    kernel too much anyway (that's why we mandate 8 for all non-x86 archs)
+ *    NOTE: I'm afraid the ATL_GAS_x86* probes might succeed on some
+ *          IA64 due to emulation, and that's why they are explicit
+ */
+      #if defined(ATL_IntelIccBugs) || defined(ATL_ARCH_IA64Itan2) || \
+          defined(ATL_ARCH_IA64Itan2) || \
+          (!defined(ATL_GAS_x8632) && !defined(ATL_GAS_x8664))
+         #undef TRSM_NB
+         #define TRSM_NB 8
+      #endif
+   #else
+      #define TRSM_NB     4
+   #endif
+@endskip
+#endif
+@rout ATL_trmm ATL_trsm
+
+void @(rname)
+(
+   const enum ATLAS_SIDE      SIDE,
+   const enum ATLAS_UPLO      UPLO,
+   const enum ATLAS_TRANS     TRANS,
+   const enum ATLAS_DIAG      DIAG,
+   const int                  M,
+   const int                  N,
+   const SCALAR               ALPHA,
+   const TYPE                 * A,
+   const int                  LDA,
+   TYPE                       * B,
+   const int                  LDB
+)
+{
+@extract @(ATLAS_LV3_COMMENT)
+@extract @(LOCAL_VARIABLE)
+@rout ATL_trmm
+#ifdef TREAL
+   TYPE                       alpha0 = (TYPE)(ALPHA);
+   const TYPE                 one = ATL_rone; 
+#else
+   TYPE                       one[2] = { ATL_rone, ATL_rzero };
+#endif
+   TYPE                       * alpha;
+@rout ATL_trsm
+#ifdef TREAL
+   TYPE                       alpha0 = (TYPE)(ALPHA);
+   const TYPE                 negone = ATL_rnone, one = ATL_rone;
+#else
+   TYPE                       negone[2] = { ATL_rnone, ATL_rzero },
+                              one   [2] = { ATL_rone,  ATL_rzero };
+#endif
+   TYPE                       * alpha;
+@rout ATL_trmm ATL_trsm
+   RC3_FUN_@up@(dn)_T             ATL_r@(dn); 
+   RC3_@up@(dn)_T                 type;
+@extract @(EXECUTABLE_STATEMENT)
+   if( ( M == 0 ) || ( N == 0 ) ) return;
+
+   if( SCALAR_IS_ZERO( ALPHA ) )
+   { Mjoin( PATL, gescal )( M, N, ALPHA, B, LDB ); return; }
+
+@rout ATL_trmm
+#ifdef TREAL
+   type.size   = sizeof( TYPE );    type.one = (void *)(&one);
+   alpha       = &alpha0;
+#else
+   type.size   = sizeof( TYPE[2] ); type.one = (void *)one;
+   alpha       = (TYPE *)(ALPHA);
+#endif
+@rout ATL_trsm
+#ifdef TREAL
+   type.size   = sizeof( TYPE );    type.one = (void *)(&one);
+   type.negone = (void *)(&negone); alpha    = &alpha0;
+#else
+   type.size   = sizeof( TYPE[2] ); type.one = (void *)one;
+   type.negone = (void *)negone;    alpha    = (TYPE *)(ALPHA);
+#endif
+@rout ATL_trmm ATL_trsm
+
+   if( SIDE == AtlasLeft )
+   {
+      if( TRANS == AtlasNoTrans )
+      {
+         type.Tgemm = Mjoin( PATL, gemmNN_RB );
+         if( UPLO == AtlasUpper )
+         {
+            ATL_r@(dn) = ATL_r@(dn)LUN;  
+            if( DIAG == AtlasNonUnit ) type.T@(dn) = Mjoin( PATL, @(dn)LUNN );
+            else                       type.T@(dn) = Mjoin( PATL, @(dn)LUNU );
+         }
+         else
+         {
+            ATL_r@(dn) = ATL_r@(dn)LLN;  
+            if( DIAG == AtlasNonUnit ) type.T@(dn) = Mjoin( PATL, @(dn)LLNN );
+            else                       type.T@(dn) = Mjoin( PATL, @(dn)LLNU );
+         }
+      }
+#ifdef TREAL
+      else
+#else
+      else if( TRANS == AtlasTrans )
+#endif
+      {
+         type.Tgemm = Mjoin( PATL, gemmTN_RB );
+         if( UPLO == AtlasUpper)
+         {
+            ATL_r@(dn) = ATL_r@(dn)LUT;
+            if( DIAG == AtlasNonUnit ) type.T@(dn) = Mjoin( PATL, @(dn)LUTN );
+            else                       type.T@(dn) = Mjoin( PATL, @(dn)LUTU );
+         }
+         else
+         {
+            ATL_r@(dn) = ATL_r@(dn)LLT;
+            if( DIAG == AtlasNonUnit ) type.T@(dn) = Mjoin( PATL, @(dn)LLTN );
+            else                       type.T@(dn) = Mjoin( PATL, @(dn)LLTU );
+         }
+      }
+#ifdef TCPLX
+      else
+      {
+         type.Tgemm = Mjoin( PATL, gemmCN_RB );
+         if( UPLO == AtlasUpper )
+         {
+            ATL_r@(dn) = ATL_r@(dn)LUC;
+            if( DIAG == AtlasNonUnit ) type.T@(dn) = Mjoin( PATL, @(dn)LUCN );
+            else                       type.T@(dn) = Mjoin( PATL, @(dn)LUCU );
+         }
+         else
+         {
+            ATL_r@(dn) = ATL_r@(dn)LLC;
+            if( DIAG == AtlasNonUnit ) type.T@(dn) = Mjoin( PATL, @(dn)LLCN );
+            else                       type.T@(dn) = Mjoin( PATL, @(dn)LLCU );
+         }
+      }
+#endif
+   }
+   else
+   {
+      if( TRANS == AtlasNoTrans )
+      {
+         type.Tgemm = Mjoin( PATL, gemmNN_RB );
+         if( UPLO == AtlasUpper )
+         {
+            ATL_r@(dn) = ATL_r@(dn)RUN;
+            if( DIAG == AtlasNonUnit ) type.T@(dn) = Mjoin( PATL, @(dn)RUNN );
+            else                       type.T@(dn) = Mjoin( PATL, @(dn)RUNU );
+         }
+         else
+         {
+            ATL_r@(dn) = ATL_r@(dn)RLN;
+            if( DIAG == AtlasNonUnit ) type.T@(dn) = Mjoin( PATL, @(dn)RLNN );
+            else                       type.T@(dn) = Mjoin( PATL, @(dn)RLNU );
+         }
+      }
+#ifdef TREAL
+      else
+#else
+      else if( TRANS == AtlasTrans )
+#endif
+      {
+         type.Tgemm = Mjoin( PATL, gemmNT_RB );
+         if( UPLO == AtlasUpper )
+         {
+            ATL_r@(dn) = ATL_r@(dn)RUT;
+            if( DIAG == AtlasNonUnit ) type.T@(dn) = Mjoin( PATL, @(dn)RUTN );
+            else                       type.T@(dn) = Mjoin( PATL, @(dn)RUTU );
+         }
+         else
+         {
+            ATL_r@(dn) = ATL_r@(dn)RLT;
+            if( DIAG == AtlasNonUnit ) type.T@(dn) = Mjoin( PATL, @(dn)RLTN );
+            else                       type.T@(dn) = Mjoin( PATL, @(dn)RLTU );
+         }
+      }
+#ifdef TCPLX
+      else
+      {
+         type.Tgemm = Mjoin( PATL, gemmNC_RB );
+         if( UPLO == AtlasUpper )
+         {
+            ATL_r@(dn) = ATL_r@(dn)RUC;
+            if( DIAG == AtlasNonUnit ) type.T@(dn) = Mjoin( PATL, @(dn)RUCN );
+            else                       type.T@(dn) = Mjoin( PATL, @(dn)RUCU );
+         }
+         else
+         {
+            ATL_r@(dn) = ATL_r@(dn)RLC;
+            if( DIAG == AtlasNonUnit ) type.T@(dn) = Mjoin( PATL, @(dn)RLCN );
+            else                       type.T@(dn) = Mjoin( PATL, @(dn)RLCU );
+         }
+      }
+#endif
+   }
+
+   ATL_r@(dn)( &type, M, N, (void *)(alpha), (void *)(A), LDA, (void *)(B),
+              LDB, @up@(dn)_NB );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip ==================================================================
+@skip
+@rout atlas_level3.h
+@define rname @atlas_level3.h@
+@extract @(VER_ATLAS_SRC)
+#ifndef ATLAS_LEVEL3_H
+#define ATLAS_LEVEL3_H
+ 
+#include "atlas_enum.h"
+/*
+ * =====================================================================
+ * Prototypes for Level 3 ATLAS BLAS routines
+ * =====================================================================
+ */
+@whiledef pre_ z c d s
+   @addkeys ptyp_=@(pre_)
+   @ptyp_ s
+      @define sca_in_    @const float@
+      @define rsca_in_   @const float@
+      @define mat_in_    @const float *,          const int@
+      @define mat_out_   @float *,                const int@
+   @ptyp_ d
+      @define sca_in_    @const double@
+      @define rsca_in_   @const double@
+      @define mat_in_    @const double *,         const int@
+      @define mat_out_   @double *,               const int@
+   @ptyp_ s d
+      @multidef rout_ trsm trmm syr2k syrk symm gemm
+   @ptyp_ c
+      @define sca_in_    @const float *@
+      @define rsca_in_   @const float@
+      @define mat_in_    @const float *,          const int@
+      @define mat_out_   @float *,                const int@
+   @ptyp_ z
+      @define sca_in_    @const double *@
+      @define rsca_in_   @const double@
+      @define mat_in_    @const double *,         const int@
+      @define mat_out_   @double *,               const int@
+   @ptyp_ c z
+      @multidef rout_ trsm trmm syr2k syrk symm her2k herk hemm gemm
+   @ptyp_ !
+   @whiledef rout_
+      @addkeys prou_=@(rout_)
+void       ATL_@(pre_)@(rout_)
+(
+      @prou_ gemm
+  const enum ATLAS_TRANS, const enum ATLAS_TRANS,
+  const int,              const int,              const int,
+  @(sca_in_),
+  @(mat_in_),
+  @(mat_in_),
+  @(sca_in_),
+  @(mat_out_)
+      @prou_ hemm symm
+  const enum ATLAS_SIDE,  const enum ATLAS_UPLO,
+  const int,              const int,
+  @(sca_in_),
+  @(mat_in_),
+  @(mat_in_),
+  @(sca_in_),
+  @(mat_out_)
+      @prou_ herk
+  const enum ATLAS_UPLO,  const enum ATLAS_TRANS,
+  const int,              const int,
+  @(rsca_in_),
+  @(mat_in_),
+  @(rsca_in_),
+  @(mat_out_)
+      @prou_ syrk
+  const enum ATLAS_UPLO,  const enum ATLAS_TRANS,
+  const int,              const int,
+  @(sca_in_),
+  @(mat_in_),
+  @(sca_in_),
+  @(mat_out_)
+      @prou_ her2k
+  const enum ATLAS_UPLO,  const enum ATLAS_TRANS,
+  const int,              const int,
+  @(sca_in_),
+  @(mat_in_),
+  @(mat_in_),
+  @(rsca_in_),
+  @(mat_out_)
+      @prou_ syr2k
+  const enum ATLAS_UPLO,  const enum ATLAS_TRANS,
+  const int,              const int,
+  @(sca_in_),
+  @(mat_in_),
+  @(mat_in_),
+  @(sca_in_),
+  @(mat_out_)
+      @prou_ trmm trsm
+  const enum ATLAS_SIDE,  const enum ATLAS_UPLO,
+  const enum ATLAS_TRANS, const enum ATLAS_DIAG,
+  const int,              const int,
+  @(sca_in_),
+  @(mat_in_),
+  @(mat_out_)
+      @prou_ !
+      @killkeys prou_
+);
+ 
+   @endwhile
+   @undef sca_in_
+   @undef rsca_in_
+   @undef mat_in_
+   @undef mat_out_
+   @killkeys ptyp_
+@endwhile
+
+#endif
+/*
+ * End of @(rname)
+ */
+@undef rname
+@skip
+@skip ==================================================================
+@skip
+@rout Make.l3
+@extract @(VER_ATLAS_MAK)
+#
+include Make.inc
+mySRCdir = $(SRCdir)/src/blas/level3
+#
+########################################################################
+#
+AINCLUDES = \
+   $(INCSdir)/atlas_rblas3.h   $(INCSdir)/atlas_kernel3.h \
+   $(INCSdir)/atlas_lvl3.h     $(INCSdir)/atlas_level3.h
+@whiledef pre_ z c d s
+@up@(pre_)INCLUDES = \
+   $(AINCLUDES) $(INCAdir)/@(pre_)mm.h
+@endwhile
+#
+## Object files ########################################################
+#
+@whiledef pre_ z c d s
+   @addkeys ptyp_=@(pre_)
+@up@(pre_)RBLAS3 = \
+   @declare "   " y y
+      @ptyp_ s d
+         @multidef rout_
+            trsm trmm syr2k syrk symm
+         @endmultidef
+      @ptyp_ c z
+         @multidef rout_
+            trsm trmm syr2k syrk symm her2k herk hemm
+         @endmultidef
+      @ptyp_ !
+      @whiledef rout_
+         ATL_@(pre_)@(rout_).o
+      @endwhile
+   @enddeclare
+   @killkeys ptyp_
+# 
+@endwhile
+## Targets #############################################################
+#
+all   : lib
+#
+lvl3  : lib
+#
+lib   : slib dlib clib zlib
+#
+@whiledef pre_ z c d s
+@(pre_)lvl3 : @(pre_)lib
+@endwhile
+#
+@whiledef pre_ z c d s
+@(pre_)lib  : @(pre_)kern @(pre_)rblas @(pre_)blas3
+@endwhile
+#
+@whiledef pre_ z c d s
+@(pre_)kern :
+	( cd kernel; $(MAKE) @(pre_)lib )
+@endwhile
+#
+@whiledef pre_ z c d s
+@(pre_)rblas:
+	( cd rblas;  $(MAKE) @(pre_)lib )
+@endwhile
+#
+@whiledef pre_ z c d s
+@(pre_)blas3 :
+	cd ../pklevel3 ; $(MAKE) @(pre_)lib
+	$(PMAKE) @(pre_)blas3.grd
+@endwhile
+#
+@whiledef pre_ z c d s
+@(pre_)blas3.grd: $(@up@(pre_)RBLAS3)
+	@(arch) @(archflgs) @(atllib) $(@up@(pre_)RBLAS3)
+	@(ranlib) @(atllib)
+	touch @(pre_)blas3.grd
+#
+@endwhile
+########################################################################
+# 
+@multidef upr_ d s d s
+@whiledef pre_ z c d s
+   @addkeys ptyp_=@(pre_)
+   @ptyp_ s d
+      @multidef rout_
+         trmm syr2k syrk symm
+      @endmultidef
+      @define cdefs @-D@up@(upr_)REAL@
+   @ptyp_ c z
+      @multidef rout_
+         trmm syr2k syrk symm her2k herk hemm
+      @endmultidef
+      @define cdefs @-D@up@(upr_)CPLX@
+   @ptyp_ !
+   @whiledef rout_
+      @define rpre_ @ATL_@(rout_)@
+      @define rsrc_ @$(mySRCdir)/@(rpre_).c@
+      @define robj_ @ATL_@(pre_)@(rout_).o@
+@24l@(robj_) : @(rsrc_) $(@up@(pre_)INCLUDES)
+@(CCcomp) @(cdefs) @(rsrc_)
+      @undef rpre_
+      @undef rsrc_
+      @undef robj_
+   @endwhile
+ATL_@(pre_)trsm.o : $(mySRCdir)/ATL_trsm.c $(@up@(pre_)INCLUDES) $(INCAdir)/atlas_trsmNB.h
+@(CCcomp) @(cdefs) $(mySRCdir)/ATL_trsm.c
+   @undef cdefs
+   @killkeys ptyp_
+   @undef upr_
+#
+@endwhile
+########################################################################
+#
+@whiledef pre_ z c d s
+@(pre_)clean           :
+	( cd kernel; $(MAKE) @(pre_)clean )
+	( cd rblas;  $(MAKE) @(pre_)clean )
+	rm -f $(@up@(pre_)RBLAS3) @(pre_)*.grd
+#
+@endwhile
+#
+clean            :
+	( cd rblas;  $(MAKE)  clean )
+	( cd kernel; $(MAKE)  clean )
+	rm -f *.o *.grd
+#
+########################################################################
+@skip
+@skip
+@rout !
+@skip
+@skip ==================================================================
+@skip
+@undef LV3_INCLUDE
+@skip
+@skip ==================================================================
+@skip

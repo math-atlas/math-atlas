@@ -1,0 +1,2097 @@
+@ifdef ! incd
+   @define incd @/home/rwhaley/Base/ATLAS@
+@endifdef
+@extract -b @(topd)/gen.inc what=crsetup
+@ROUT ! ATL_trscal ATL_hescal ATL_xerbla ATL_lcm ATL_buildinfo @\
+        ATL_flushcache ATL_ptflushcache ATL_gecollapse ATL_trcollapse @\
+        ATL_flushCacheByAddr ATL_syApAt ATL_syApAt_NB ATL_geApBt_NB @\
+        ATL_sqtrans ATL_geswapT ATL_trsetU ATL_trsetL ATL_geset ATL_gemaxnrm
+@extract -b @(topd)/gen.inc what=cw @(cw99)
+#include "atlas_misc.h"
+
+@ROUT ATL_buildinfo
+#include <stdio.h>
+#include "atlas_buildinfo.h"
+#include "atlas_cacheedge.h"
+
+void ATL_buildinfo(void)
+{
+   printf("ATLAS version %s built by %s on %s:\n",
+          ATL_VERS, ATL_UNAM, ATL_DATE);
+   printf("   UNAME    : %s\n", ATL_SYSINFO); 
+   printf("   INSTFLG  : %s\n", ATL_INSTFLAGS);
+@whiledef flg F2CDEFS ARCHDEFS
+   printf("   @8l@(flg) : %s\n", ATL_@(flg));
+@endwhile
+   #ifdef CacheEdge
+      printf("   CACHEEDGE: %d\n", CacheEdge);
+   #else
+      printf("   CACHEEDGE: UNDEFINED\n");
+   #endif
+@whiledef cc DKC SKC DMC SMC ICC F77
+   printf("   %s : %s, version %s\n", "@8l@(cc)", ATL_@(cc), ATL_@(cc)VERS);
+   printf("   @3l@(cc)FLAGS : %s\n", ATL_@(cc)FLAGS);
+   @undef cc
+@endwhile
+}
+@ROUT ATL_kludge_malloc
+#if 0
+#define malloc(arg_) ATL_kludge_malloc(arg_, (void*)1)
+#define free(arg_)   ATL_kludge_malloc(1, arg_)
+#endif
+#ifdef KLUDGE_MALLOC
+
+#include <stdlib.h>
+   #undef KLUDGE_MALLOC
+#include "atlas_misc.h"
+void *ATL_kludge_malloc(size_t size, void *freeme)
+{
+   static int used=0;
+   static size_t chnksize=0;
+   static void *bigchunk=NULL;
+   if (freeme == (void*)1)
+   {
+      if (size < ATL_SYS_FREELIM || used)
+         return(malloc(size));
+      if (chnksize < size && bigchunk) free(bigchunk);
+      chnksize = size >= 1048576 ? size : 1048576;
+      bigchunk = malloc(chnksize);
+      used = 1;
+   }
+   else if (freeme == bigchunk)
+   {
+      used = 0;
+      if (size == 2)
+      {
+         if (bigchunk) free(bigchunk);
+         bigchunk = NULL;
+         chnksize = 0
+      }
+   }
+   else if (freeme) free(freeme);
+   return(bigchunk);
+}
+
+#endif
+@ROUT ATL_xerbla
+@extract -b @(topd)/gen.inc what=cw
+#include "atlas_misc.h"
+#include <stdarg.h>
+void ATL_xerbla(int p, char *rout, char *form, ...)
+{
+   va_list argptr;
+
+   va_start(argptr, form);
+#ifdef GCCWIN
+   if (p) printf("Parameter %d to routine %s was incorrect\n", p, rout);
+   vprintf(form, argptr);
+#else
+   if (p)
+      fprintf(stderr, "Parameter %d to routine %s was incorrect\n", p, rout);
+   vfprintf(stderr, form, argptr);
+#endif
+   va_end(argptr);
+   exit(-1);
+}
+@ROUT ATL_lcm
+@extract -b @(topd)/gen.inc what=cw @(cp99)
+
+int ATL_lcm(const int M, const int N)
+/*
+ * Returns least common multiple (LCM) of two positive integers M & N by
+ * computing greatest common divisor (GCD) and using the property that
+ * M*N = GCD*LCM.
+ */
+{
+   register int tmp, max, min, gcd=0;
+
+   if (M != N)
+   {
+      if (M > N) { max = M; min = N; }
+      else { max = N; min = M; }
+      if (min > 0)  /* undefined for negative numbers */
+      {
+         do  /* while (min) */
+         {
+            if ( !(min & 1) ) /* min is even */
+            {
+               if ( !(max & 1) ) /* max is also even */
+               {
+                  do
+                  {
+                     min >>= 1;
+                     max >>= 1;
+                     gcd++;
+                     if (min & 1) goto MinIsOdd;
+                  }
+                  while ( !(max & 1) );
+               }
+               do min >>=1 ; while ( !(min & 1) );
+            }
+/*
+ *          Once min is odd, halve max until it too is odd.  Then, use
+ *          property that gcd(max, min) = gcd(max, (max-min)/2) 
+ *          for odd max & min
+ */
+MinIsOdd:
+            if (min != 1)
+            {
+               do  /* while (max >= min */
+               {
+                  max -= (max & 1) ? min : 0;
+                  max >>= 1;
+               }
+               while (max >= min);
+            }
+            else return( (M*N) / (1<<gcd) );
+            tmp = max;
+            max = min;
+            min = tmp;
+         }
+         while(tmp);
+      }
+      return( (M*N) / (max<<gcd) );
+   }
+   else return(M);
+}
+@ROUT ATL_zero
+   @define scal @ATL_rzero@
+void Mjoin(PATL,zero)(const int N, TYPE *X, const int incX)
+/*
+ * X <- 0
+ */
+@ROUT ATL_set
+   @define scal @alpha@
+@ROUT ATL_set
+void Mjoin(PATL,set)(const int N, const TYPE alpha, TYPE *X, const int incX)
+/*
+ * X = alpha
+ */
+@ROUT ATL_set ATL_zero
+{
+   int i, n;
+   if (incX == 1)
+   {
+      n = N SHIFT;
+      i = n >> 5;
+      if (i)
+      {
+         n -= (i << 5);
+         do
+         {
+            *X = X[1] = X[2] = X[3] = X[4] = X[5] = X[6] = X[7] = X[8] = X[9] =
+            X[10] = X[11] = X[12] = X[13] = X[14] = X[15] = X[16] = X[17] =
+            X[18] = X[19] = X[20] = X[21] = X[22] = X[23] = X[24] = X[25] =
+            X[26] = X[27] = X[28] = X[29] = X[30] = X[31] = @(scal);
+            X += 32;
+         }
+         while(--i);
+      }
+      if (n >> 4) /* >= 16 */
+      {
+         *X = X[1] = X[2] = X[3] = X[4] = X[5] = X[6] = X[7] = X[8] = X[9] =
+         X[10] = X[11] = X[12] = X[13] = X[14] = X[15] = @(scal);
+         X += 16;
+         n -= 16;
+      }
+      if (n >> 3) /* >= 8 */
+      {
+         *X = X[1] = X[2] = X[3] = X[4] = X[5] = X[6] = X[7] = @(scal);
+         X += 8;
+         n -= 8;
+      }
+      switch(n)
+      {
+         case 1:
+            *X = @(scal);
+            break;
+         case 2:
+            *X = X[1] = @(scal);
+            break;
+         case 3:
+            *X = X[1] = X[2] = @(scal);
+            break;
+         case 4:
+            *X = X[1] = X[2] = X[3] = @(scal);
+            break;
+         case 5:
+            *X = X[1] = X[2] = X[3] = X[4] = @(scal);
+            break;
+         case 6:
+            *X = X[1] = X[2] = X[3] = X[4] = X[5] = @(scal);
+            break;
+         case 7:
+            *X = X[1] = X[2] = X[3] = X[4] = X[5] = X[6] = @(scal);
+            break;
+         default:;
+      }
+   }
+   else
+   {
+      #ifdef TREAL
+         for (i=N; i; i--, X += incX) *X = @(scal);
+      #else
+         for (n=incX<<1, i=N; i; i--, X += n) *X = X[1] = @(scal);
+      #endif
+   }
+}
+@ROUT ATL_scal
+#ifdef Conj_
+void Mjoin(PATL,scalConj)
+/*
+ * X <- alpha * conj(X)
+ */
+#else
+void Mjoin(PATL,scal)
+/*
+ * X <- alpha * X
+ */
+#endif
+   (const int N, const SCALAR alpha, TYPE *X, const int incX)
+{
+   int i;
+   #ifdef TREAL
+      if (alpha != ATL_rzero)
+      {
+         if (incX == 1) for (i=0; i != N; i++) X[i] *= alpha;
+         else for (i=N; i; i--, X += incX) *X *= alpha;
+      }
+      else Mjoin(PATL,zero)(N, X, incX);
+   #else
+      const register TYPE ralpha = *alpha, ialpha = alpha[1];
+      #ifdef Conj_
+         const register TYPE conjal = -ralpha;
+      #else
+         #define conjal ralpha
+      #endif
+      register TYPE rtmp, itmp;
+      int incx = incX<<1;
+
+      if (ialpha == ATL_rzero)
+      {
+         if (ralpha != ATL_rzero)
+         {
+      #ifndef Conj_
+            if (incX == 1) Mjoin(PATLU,scal)(N<<1, ralpha, X, incX);
+            else 
+      #endif
+            {
+               for (i=N; i; i--, X += incx)
+               {
+                  *X *= ralpha;
+                  X[1] *= conjal;
+               }
+            }
+         }
+         else Mjoin(PATL,zero)(N, X, incX);
+      }
+      else
+      {
+         if (incX == 1)
+         {
+            for (i=N; i; i--, X += 2) 
+            {
+               rtmp = X[0];
+               itmp = X[1];
+               #ifdef Conj_
+                  X[0] = rtmp * ralpha + itmp * ialpha;
+                  X[1] = rtmp * ialpha - itmp * ralpha;
+               #else
+                  X[0] = rtmp * ralpha - itmp * ialpha;
+                  X[1] = rtmp * ialpha + itmp * ralpha;
+               #endif
+            }
+         }
+         else
+         {
+            for (i=N; i; i--, X += incx) 
+            {
+               rtmp = X[0];
+               itmp = X[1];
+               #ifdef Conj_
+                  X[0] = rtmp * ralpha + itmp * ialpha;
+                  X[1] = rtmp * ialpha - itmp * ralpha;
+               #else
+                  X[0] = rtmp * ralpha - itmp * ialpha;
+                  X[1] = rtmp * ialpha + itmp * ralpha;
+               #endif
+            }
+         }
+      }
+   #endif
+}
+@ROUT ATL_copy
+#ifdef Conj_
+void Mjoin(PATL,copyConj)
+/*
+ * Y <- conj(X)
+ */
+#else
+void Mjoin(PATL,copy)
+/*
+ * Y <- X
+ */
+#endif
+   (const int N, const TYPE *X, const int incX, TYPE *Y, const int incY)
+{
+   #ifdef TREAL
+      #define M N
+   #else
+      const int M = N<<1, incx = incX<<1, incy = incY<<1;
+   #endif
+   int i;
+
+   #ifndef Conj_
+      if (incY == 1 && incX == 1) for (i=0; i != M; i++) Y[i] = X[i];
+      else
+   #endif
+   #ifdef TREAL
+         for (i=N; i; i--, X += incX, Y += incY) *Y = *X;
+   #else
+      {
+         for (i=N; i; i--, X += incx, Y += incy) 
+         {
+            *Y = *X;
+            #ifdef Conj_
+               Y[1] = -X[1];
+            #else
+               Y[1] = X[1];
+            #endif
+         }
+      }
+   #endif
+}
+@ROUT ATL_move
+#ifdef Conj_
+void Mjoin(PATL,moveConj)
+/*
+ * y <- alpha * conj(x)
+ */
+#else
+void Mjoin(PATL,move)
+/*
+ * y <- alpha * x
+ */
+#endif
+   (const int N, const SCALAR alpha, const TYPE *X, const int incX, 
+    TYPE *Y, const int incY)
+{
+   #ifdef TREAL
+      int i;
+      if (alpha == ATL_rzero) Mjoin(PATL,zero)(N, Y, incY);
+      else if (alpha == ATL_rone) Mjoin(PATL,copy)(N, X, incX, Y, incY);
+      else if (incX == 1 && incY == 1)
+         for (i=0; i != N; i++) Y[i] = alpha * X[i];
+      else for (i=N; i; i--, Y += incY, X += incX) *Y = alpha * *X;
+   #else
+      int i;
+      const int M = N<<1, incx = incX<<1, incy = incY<<1;
+      const register TYPE ralpha = *alpha, ialpha = alpha[1];
+      #ifdef Conj_
+         const register TYPE conjal=-ralpha;
+      #else
+         #define conjal ralpha
+      #endif
+      register TYPE rx, ix;
+      if (ialpha == ATL_rzero)
+      {
+         #ifndef Conj_
+            if (incX == 1 && incY == 1)
+               Mjoin(PATLU,move)(M, ralpha, X, 1, Y, 1);
+            else
+         #endif
+         {
+            for (i=N; i; i--, Y += incy, X += incx)
+            {
+               *Y = ralpha * *X;
+               Y[1] = conjal * X[1];
+            }
+         }
+      }
+      else
+      {
+         for (i=N; i; i--, Y += incy, X += incx)
+         {
+            rx = *X;
+            ix = X[1];
+            #ifdef Conj_
+               *Y = ralpha * rx + ialpha * ix;
+               Y[1] = ialpha * rx - ralpha * ix;
+            #else
+               *Y = ralpha * rx - ialpha * ix;
+               Y[1] = ralpha * ix + ialpha * rx;
+            #endif
+         }
+      }
+   #endif
+}
+@ROUT ATL_axpy
+#ifdef Conj_
+void Mjoin(PATL,axpyConj)
+/*
+ * y <- y + alpha * conj(x);
+ */
+#else
+void Mjoin(PATL,axpy)
+/*
+ * y <- y + alpha * x;
+ */
+#endif
+   (const int N, const SCALAR alpha, const TYPE *X, const int incX, 
+    TYPE *Y, const int incY)
+{
+#ifdef TREAL
+   int i;
+   if (alpha != ATL_rzero)
+   {
+      if (alpha == ATL_rone)
+      {
+         if (incX == 1 && incY == 1)
+            for (i=0; i != N; i++) Y[i] += X[i];
+         else for (i=N; i; i--, X += incX, Y += incY) *Y += *X;
+      }
+      else if (incX == 1 && incY == 1)
+         #if (defined(ATL_NOMULADD) && ATL_mmnreg >= 25) 
+@skip             (defined(ATL_MULADD) && ATL_mmnreg >= 29) 
+            Mjoin(PATL,axpy_x1_y1)(N, alpha, X, 1, Y, 1);
+         #else
+            for (i=0; i != N; i++) Y[i] += alpha * X[i]; 
+         #endif
+      else for (i=N; i; i--, X += incX, Y += incY) *Y += alpha * *X;
+   }
+#else
+   int i;
+   const int incx = incX<<1, incy = incY<<1;
+   const register TYPE ralpha = *alpha, ialpha = alpha[1];
+   #ifdef Conj_
+      const register TYPE conjal = -ralpha;
+   #else 
+      #define conjal ralpha
+   #endif
+   register TYPE rtmp, itmp;
+
+   if (ialpha == ATL_rzero)
+   {
+      if (ralpha == ATL_rzero) return;
+      #ifndef Conj_
+         else if (incX == 1 && incY == 1) 
+            Mjoin(PATLU,axpy)(N<<1, ralpha, X, 1, Y, 1);
+      #endif
+      else
+      {
+         for (i=N; i; i--, X += incx, Y += incy) 
+         {
+            *Y += ralpha * *X;
+            Y[1] += conjal * X[1];
+         }
+      }
+   }
+   else 
+   {
+      #if defined(ATL_NOMULADD) && ATL_mmnreg >= 26
+         if (incX == 1 && incY == 1)
+         {
+            #ifdef Conj_
+               Mjoin(PATL,axpyConj_x1_y1)(N, alpha, X, 1, Y, 1);
+            #else
+               Mjoin(PATL,axpy_x1_y1)(N, alpha, X, 1, Y, 1);
+            #endif
+            return;
+         }
+      #endif
+      for (i=N; i; i--, X += incx, Y += incy) 
+      {
+         rtmp = *X;
+         itmp = X[1];
+         #ifdef Conj_
+            *Y += rtmp * ralpha + itmp * ialpha;
+            Y[1] += rtmp * ialpha - itmp * ralpha;
+         #else
+            *Y += rtmp * ralpha - itmp * ialpha;
+            Y[1] += itmp * ralpha + rtmp * ialpha;
+         #endif
+      }
+   }
+#endif
+}
+
+@ROUT ATL_axpby
+#ifdef Conj_
+   #define AXPBY axpbyConj
+void Mjoin(PATL,axpbyConj)
+/*
+ * y <- beta*y + alpha * conj(x)
+ */
+#else
+   #define AXPBY axpby
+void Mjoin(PATL,axpby)
+/*
+ * y <- beta*y + alpha * x
+ */
+#endif
+   (const int N, const SCALAR alpha, const TYPE *X, const int incX, 
+    const SCALAR beta, TYPE *Y, const int incY)
+{
+#ifdef TREAL
+   if (alpha == ATL_rzero) Mjoin(PATL,scal)(N, beta, Y, incY);
+   else if (beta == ATL_rzero) Mjoin(PATL,cpsc)(N, alpha, X, incX, Y, incY);
+   else if (beta == ATL_rone) Mjoin(PATL,axpy)(N, alpha, X, incX, Y, incY);
+   else if (alpha == ATL_rone) 
+      Mjoin(PATL,axpby_a1_bX)(N, alpha, X, incX, beta, Y, incY);
+   else Mjoin(PATL,axpby_aX_bX)(N, alpha, X, incX, beta, Y, incY);
+#else
+   const int AlphaIsReal = (alpha[1] == ATL_rzero);
+   const int BetaIsReal = (beta[1] == ATL_rzero);
+   const int AlphaIsOne = (AlphaIsReal && *alpha == ATL_rone);
+   const int AlphaIsZero = (AlphaIsReal && *alpha == ATL_rzero);
+   const int BetaIsOne = (BetaIsReal && *beta == ATL_rone);
+   const int BetaIsZero = (BetaIsReal && *beta == ATL_rzero);
+
+   if (AlphaIsZero) Mjoin(PATL,scal)(N, beta, Y, incY);
+   #ifdef Conj_
+      else if (BetaIsZero) Mjoin(PATL,moveConj)(N, alpha, X, incX, Y, incY);
+      else if (BetaIsOne) Mjoin(PATL,axpyConj)(N, alpha, X, incX, Y, incY);
+   #else
+      else if (BetaIsZero) Mjoin(PATL,cpsc)(N, alpha, X, incX, Y, incY);
+      else if (BetaIsOne) Mjoin(PATL,axpy)(N, alpha, X, incX, Y, incY);
+   #endif
+   else if (AlphaIsOne) 
+   {
+      if (BetaIsReal)
+         Mjoin(Mjoin(PATL,AXPBY),_a1_bXi0)(N, alpha, X, incX, beta, Y, incY);
+      else Mjoin(Mjoin(PATL,AXPBY),_a1_bX)(N, alpha, X, incX, beta, Y, incY);
+   }
+   else if (AlphaIsReal)
+   {
+      if (BetaIsReal) 
+         Mjoin(Mjoin(PATL,AXPBY),_aXi0_bXi0)(N, alpha, X, incX, beta, Y, incY);
+      else Mjoin(Mjoin(PATL,AXPBY),_aXi0_bX)(N, alpha, X, incX, beta, Y, incY);
+   }
+   else if (BetaIsReal) 
+      Mjoin(Mjoin(PATL,AXPBY),_aX_bXi0)(N, alpha, X, incX, beta, Y, incY);
+   else Mjoin(Mjoin(PATL,AXPBY),_aX_bX)(N, alpha, X, incX, beta, Y, incY);
+#endif
+}
+@ROUT ATL_cplxdivide
+void Mjoin(PATL,cplxdivide)
+   (ATL_CINT N, TYPE *beta, TYPE *X, ATL_CINT incx, TYPE *Y, ATL_CINT incy)
+/*
+ * Y(:) = X(:)/beta, wt division done with safe complex arithmetic.
+ * It is OK for Y & X to be the same pointer
+ * This code is straight adaptation of LAPACK's DLADIV, which comes from
+ * the algorithm developed by Robert L. Smith (Art of Comp Prog, Vol.2 p.195)
+ */
+{
+   ATL_CINT incY=incy+incy, incX = incx+incx;
+   ATL_INT i;
+   const register TYPE rb = beta[0], ib = beta[1];
+   register TYPE rx, ix, e, f;
+
+   if (Mabs(ib) < Mabs(rb))
+   {
+      e = ib / rb;
+      f = rb + ib*e;
+      for (i=N; i; i--, X += incX, Y += incY)
+      {
+         rx = *X; ix = X[1];
+         Y[0] = (rx + ix*e) / f;
+         Y[1] = (ix - rx*e) / f;
+      }
+   }
+   else
+   {
+      e = rb / ib;
+      f = ib + rb*e;
+      for (i=N; i; i--, X += incX, Y += incY)
+      {
+         rx = *X; ix = X[1];
+         Y[0] = (ix + rx*e) / f;
+         Y[1] = (ix*e - rx) / f;
+      }
+   }
+}
+@ROUT ATL_cplxinvert
+void Mjoin(PATL,cplxinvert)(ATL_CINT N, TYPE *X, ATL_CINT incx, 
+                            TYPE *Y, ATL_CINT incy)
+/*
+ * Y(:) = 1 / X(:)
+ * Invert N complex scalars held in X, and write answer to Y.  
+ * X & Y can be same space
+ */
+{
+   int i;
+   const TYPE one=1.0, none=(-1.0);
+   ATL_CINT incX=incx+incx, incY=incy+incy;
+   register TYPE rtmp, itmp, t0;
+
+   for (i=N; i; i--, X += incX, Y += incY)
+   {
+      rtmp = *X;
+      itmp = X[1];
+      if (Mabs(itmp) <= Mabs(rtmp))
+      {
+         t0 = itmp / rtmp;
+         *Y = rtmp = one / (rtmp + itmp*t0);
+         Y[1] = -rtmp * t0;
+      }
+      else
+      {
+         t0 = rtmp / itmp;
+         Y[1] = rtmp = none / (itmp + rtmp*t0);
+         *Y = -t0 * rtmp;
+      }
+   }
+}
+@ROUT ATL_gezero
+void Mjoin(PATL,gezero)(const int M0, const int N, TYPE *C, const int ldc0)
+/*
+ * C(:,:) = 0, assign matrix C to zero
+ */
+{
+   #ifdef TREAL
+      #define M M0
+      #define ldc ldc0
+   #else
+      const int M = M0<<1, ldc = ldc0<<1;
+   #endif
+   const int m = M >> 5 << 5;
+   TYPE *c, *stC = C + m;
+   register int j;
+   int k;
+
+   for (j=0; j != N; j++)
+   {
+      c = C;
+      if (c != stC)
+      {
+         do
+         {
+            *c    = c[ 1] = c[ 2] = c[ 3] = c[ 4] = c[ 5] = c[ 6] = c[ 7] =
+            c[ 8] = c[ 9] = c[10] = c[11] = c[12] = c[13] = c[14] = c[15] =
+            c[16] = c[17] = c[18] = c[19] = c[20] = c[21] = c[22] = c[23] =
+            c[24] = c[25] = c[26] = c[27] = c[28] = c[29] = c[30] = c[31] = 
+                    ATL_rzero;
+            c += 32;
+         }
+         while (c != stC);
+      }
+
+      k = M - m;
+      if (k)
+      {
+         if (k >> 4) /* K >= 16 */
+         {
+            *c = c[ 1] = c[ 2] = c[ 3] = c[ 4] = c[ 5] = c[ 6] = c[ 7] = c[ 8] =
+            c[ 9] = c[10] = c[11] = c[12] = c[13] = c[14] = c[15] = ATL_rzero;
+            k -= 16;
+            c += 16;
+         }
+         if (k >> 3) /* K >= 8 */
+         {
+            *c    = c[ 1] = c[ 2] = c[ 3] = c[ 4] = c[ 5] = c[ 6] = c[ 7] = 
+                    ATL_rzero;
+            k -= 8;
+            c += 8;
+         }
+         switch(k)
+         {
+         case 1:
+            *c = ATL_rzero;
+            break;
+         case 2:
+            *c    = c[ 1] = ATL_rzero;
+            break;
+         case 3:
+            *c    = c[ 1] = c[ 2] = ATL_rzero;
+            break;
+         case 4:
+            *c    = c[ 1] = c[ 2] = c[ 3] = ATL_rzero;
+            break;
+         case 5:
+            *c    = c[ 1] = c[ 2] = c[ 3] = c[ 4] = ATL_rzero;
+            break;
+         case 6:
+            *c    = c[ 1] = c[ 2] = c[ 3] = c[ 4] = c[ 5] = ATL_rzero;
+            break;
+         case 7:
+            *c    = c[ 1] = c[ 2] = c[ 3] = c[ 4] = c[ 5] = c[ 6] = ATL_rzero;
+            break;
+         default:;
+         }
+      }
+      C += ldc;
+      stC += ldc;
+   }
+}
+@ROUT ATL_gecopy
+void Mjoin(PATL,gecopy)
+   (const int M0, const int N, const TYPE *A, const int lda,
+    TYPE *C, const int ldc)
+/*
+ * C <- A;  copy backwards, so 1st cols of C are retained in cache for reuse
+ */
+{
+   int i, j;
+   #ifdef TREAL
+      #define M M0
+      const int incA = lda+lda, incC = ldc+ldc;
+   #else
+      const int M = M0<<1, incA = lda<<2, incC = ldc<<2;
+   #endif
+   const int n = N>>1;
+   const TYPE *A0, *A1;
+   TYPE *C0, *C1;
+
+   A0 = A + (lda SHIFT)*(N-2);
+   A1 = A0 + (lda SHIFT);
+   C0 = C + (ldc SHIFT)*(N-2);
+   C1 = C0 + (ldc SHIFT);
+   for (j=n; j; j--, A0 -= incA, A1 -= incA, C0 -= incC, C1 -= incC)
+   {
+      for (i=M-1; i >= 0; i--)
+      {
+         C0[i] = A0[i];
+         C1[i] = A1[i];
+      }
+   }
+   if (N-n-n)
+      for (i=M-1; i >= 0; i--)
+         C[i] = A[i];
+}
+@ROUT ATL_gemoveT
+/*
+ * C <- alpha * transpose(A), C is NxM, A is MxN
+ * NOTE: C is written row-wise, on assumption you are copying to a smaller
+ *       matrix.  Also, the multiple writes to C will tend to drive it
+ *       into non-LRU caches (using all the ways).  Should be unrolled
+ *       for optimization, but perfecting the cache helps to make up some.
+ */
+#ifdef TCPLX
+static void ATL_gemoveT_aX(ATL_CINT N, ATL_CINT M, const SCALAR alpha, 
+                           const TYPE *A, ATL_CINT lda, TYPE *C, ATL_CINT ldc)
+{
+   ATL_CINT incA = lda+lda;
+   ATL_INT i;
+
+   for (i=0; i < N; i++, A += incA, C += 2)
+   #ifdef Conj_
+      Mjoin(PATL,moveConj)(M, alpha, A, 1, C, ldc);
+   #else
+      Mjoin(PATL,cpsc)(M, alpha, A, 1, C, ldc);
+   #endif
+}
+#else
+static void ATL_gemoveT_a1(ATL_CINT N, ATL_CINT M, const SCALAR alpha, 
+                           const TYPE *A, ATL_CINT lda, TYPE *C, ATL_CINT ldc)
+{
+   ATL_INT i, j;
+   ATL_CINT incA = lda - M, incC = 1 - ldc*M;
+
+   for (j=N; j; j--, A += incA, C += incC)
+      for (i=M; i; i--, C += ldc)
+         *C = *A++;
+}
+static void ATL_gemoveT_an1(ATL_CINT N, ATL_CINT M, const SCALAR alpha, 
+                            const TYPE *A, ATL_CINT lda, TYPE *C, ATL_CINT ldc)
+{
+   ATL_INT i, j;
+   ATL_CINT incA = lda - M, incC = 1 - ldc*M;
+
+   for (j=N; j; j--, A += incA, C += incC)
+      for (i=M; i; i--, C += ldc)
+         *C = -(*A++);
+}
+static void ATL_gemoveT_aX(ATL_CINT N, ATL_CINT M, const SCALAR alpha, 
+                           const TYPE *A, ATL_CINT lda, TYPE *C, ATL_CINT ldc)
+{
+   ATL_INT i, j;
+   ATL_CINT incA = lda - M, incC = 1 - ldc*M;
+
+   for (j=N; j; j--, A += incA, C += incC)
+      for (i=M; i; i--, C += ldc)
+         *C = alpha*(*A++);
+}
+static void ATL_gemoveT_a0(ATL_CINT N, ATL_CINT M, const SCALAR alpha, 
+                           const TYPE *A, ATL_CINT lda, TYPE *C, ATL_CINT ldc)
+{
+   Mjoin(PATL,gezero)(M, N, C, ldc);
+}
+#endif
+
+#define NB 32
+#define MulByNB(n_) ((n_)<<5)
+#define DivByNB(n_) ((n_)>>5)
+
+#ifdef Conj_
+void Mjoin(PATL,gemoveC)
+#else
+void Mjoin(PATL,gemoveT)
+#endif
+   (ATL_CINT N, ATL_CINT M, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
+    TYPE *C, ATL_CINT ldc)
+/*
+ * C <- alpha * transpose(A), C is NxM, A is MxN
+ */
+{
+   ATL_INT i, j, Mb, Nb, mr, nr, nb, mb;
+#ifdef TREAL
+   void (*gemoveT)(ATL_CINT N, ATL_CINT M, const SCALAR alpha, 
+                   const TYPE *A, ATL_CINT lda, TYPE *C, ATL_CINT ldc);
+   
+   if (alpha == ATL_rzero)
+      gemoveT = ATL_gemoveT_a0;
+   else if (alpha == ATL_rone)
+      gemoveT = ATL_gemoveT_a1;
+   else if (alpha == ATL_rnone)
+      gemoveT = ATL_gemoveT_an1;
+    else
+      gemoveT = ATL_gemoveT_aX;
+#else
+   #define gemoveT ATL_gemoveT_aX
+#endif
+/*
+ * Just call unblocked code for small problems
+ */
+   if (M < NB || N < NB)
+   {
+      gemoveT(N, M, alpha, A, lda, C, ldc);
+      return;
+   }
+/*
+ * Otherwise, block the copy for TLB reuse
+ */
+   Mb = MulByNB(DivByNB(M));
+   Mb = (Mb == M) ? M - NB : Mb;
+   Nb = MulByNB(DivByNB(N));
+   Nb = (Nb == N) ? N - NB : Nb;
+   mr = M - Mb;
+   nr = N - Nb;
+/*
+ * Run loops backwards, with C columnwise, so that we retain last col panal
+ * of C in cache if possible
+ */
+   nb = mr;
+   for (j=Mb; j >= 0; j -= NB)
+   {
+      mb = nr;
+      for (i=Nb; i >= 0; i -= NB)
+      {
+         gemoveT(mb, nb, alpha, A+((j+i*lda)SHIFT), lda, 
+                 C+((i+j*ldc)SHIFT), ldc);
+         mb = NB;
+      }
+      nb = NB;
+   }
+}
+@ROUT ATL_gemoveT00
+#ifdef Conj_
+void Mjoin(PATL,gemoveC)
+#else
+void Mjoin(PATL,gemoveT)
+#endif
+   (const int N, const int M, const SCALAR alpha, const TYPE *A, const int lda,
+    TYPE *C, const int ldc)
+/*
+ * C <- alpha * transpose(A), C is MxN, A is NxM
+ * NOTE: C is written row-wise, on assumption you are copying to a smaller
+ *       matrix.  Should be optimized, say by unrolling so you write 4 elts
+ *       of C at a time.
+ */
+#ifdef TCPLX
+{
+   const TYPE ralpha = *alpha, calpha=alpha[1];
+   const int incA = lda+lda;
+   int i;
+
+   for (i=0; i < M; i++, A += incA, C++)
+   #ifdef Conj_
+      Mjoin(PATL,moveConj)(N, alpha, A, 1, C, ldc);
+   #else
+      Mjoin(PATL,cpsc)(N, alpha, A, 1, C, ldc);
+   #endif
+}
+#else  /* real code */
+{
+   int i, j;
+   const int incA = lda - M, incC = 1 - ldc*M;
+
+   if (alpha == ATL_rone)
+   {
+      for (j=N; j; j--, A += incA, C += incC)
+         for (i=M; i; i--, C += ldc)
+            *C = *A++;
+   }
+   else if (alpha == ATL_rnone)
+   {
+      for (j=N; j; j--, A += incA, C += incC)
+         for (i=M; i; i--, C += ldc)
+            *C = -(*A++);
+   }
+   else if (alpha == ATL_rzero)
+      Mjoin(PATL,gezero)(M, N, C, ldc);
+   else
+   {
+      for (j=N; j; j--, A += incA, C += incC)
+         for (i=M; i; i--, C += ldc)
+            *C = alpha*(*A++);
+   }
+}
+#endif
+@ROUT ATL_gemove
+void Mjoin(PATL,gemove)
+   (const int M, const int N, const SCALAR alpha, const TYPE *A, const int lda,
+    TYPE *C, const int ldc)
+/*
+ * C <- alpha * A
+ */
+{
+#ifdef TREAL
+   if (alpha == ATL_rone) Mjoin(PATL,gecopy)(M, N, A, lda, C, ldc);
+   else if (alpha == ATL_rzero) Mjoin(PATL,gezero)(M, N, C, ldc);
+   else Mjoin(PATL,gemove_aX)(M, N, alpha, A, lda, C, ldc);
+#else
+   TYPE ralpha = *alpha;
+
+   if (alpha[1] == ATL_rzero)
+   {
+      if (ralpha == ATL_rone) Mjoin(PATL,gecopy)(M, N, A, lda, C, ldc);
+      else if (ralpha == ATL_rzero) Mjoin(PATL,gezero)(M, N, C, ldc);
+      else Mjoin(PATL,gemove_aXi0)(M, N, alpha, A, lda, C, ldc);
+   }
+   else Mjoin(PATL,gemove_aX)(M, N, alpha, A, lda, C, ldc);
+#endif
+}
+@ROUT ATL_syreflect
+void Mjoin(PATL,syreflect)
+@define cpyrt @copy@
+@ROUT ATL_hereflect
+void Mjoin(PATL,hereflect)
+@define cpyrt @copyConj@
+@ROUT ATL_syreflect ATL_hereflect
+   (const enum ATLAS_UPLO Uplo, const int N, TYPE *C, const int ldc)
+/*
+ * If Uplo == Lower, reflect lower triangle into upper, 
+ * If Uplo == Upper, reflect upper triangle into lower.
+ */
+{
+   int j;
+   #ifdef TCPLX
+      const int ldc2 = ldc+ldc, incC = ldc2+2;
+   #else
+      const int incC = ldc+1;
+      #define ldc2 ldc
+   #endif
+   TYPE *pC;
+   if (Uplo == AtlasLower)
+   {
+      for (j=0; j < N-1; j++, C += incC)
+         Mjoin(PATL,@(cpyrt))(N-j-1, C+(1 SHIFT), 1, C+ldc2, ldc);
+   }
+   else
+   {
+      pC = C + ((N-1)SHIFT);
+      C += ldc2*(N-1);
+      for (j=0; j < N-1; j++, C -= ldc2, pC -= (1 SHIFT))
+         Mjoin(PATL,@(cpyrt))(N-j-1, C, 1, pC, ldc);
+   }
+}
+@undef cpyrt
+#ifdef ldc2
+   #undef ldc2
+#endif
+@ROUT ATL_tradd
+void Mjoin(PATL,tradd)(const enum ATLAS_UPLO Uplo, ATL_CINT N, const TYPE *A, 
+                       ATL_CINT lda, const SCALAR beta, TYPE *C, ATL_CINT ldc)
+/*
+ * C <- beta*C + A, A & C are triangular matrices of order N
+ */
+{
+   int j;
+
+   #ifdef TCPLX
+      ATL_CINT lda2 = lda+lda, ldc2 = ldc+ldc;
+      ATL_CINT ldap1 = lda2 + 2, ldcp1 = ldc2+2;
+      TYPE ONE[2] = {ATL_rone, ATL_rzero};
+   #else
+      TYPE ONE = ATL_rone;
+      ATL_CINT ldap1 = lda+1, ldcp1 = ldc+1;
+      #define lda2 lda
+      #define ldc2 ldc
+   #endif
+   if (Uplo == AtlasLower)
+   {
+      for (j=0; j < N; j++, A += ldap1, C += ldcp1)
+         Mjoin(PATL,axpby)(N-j, ONE, A, 1, beta, C, 1);
+   }
+   else /* Upper */
+   {
+      for (j=0; j < N; j++, A += lda2, C += ldc2)
+         Mjoin(PATL,axpby)(j+1, ONE, A, 1, beta, C, 1);
+   }
+}
+@ROUT ATL_trscal
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2010
+#include "atlas_misc.h"
+
+void Mjoin( PATL, trscal )
+(
+   const enum ATLAS_UPLO UPLO,
+   ATL_CINT M,
+   ATL_CINT N,
+   const SCALAR ALPHA,
+   TYPE *A,
+   ATL_CINT lda
+)
+{
+/*
+ * Scales a trapezoidal MxN matrix A by the scalar alpha
+ */
+#ifndef TCPLX
+   register ATL_INT i, j;
+   ATL_CINT mn = Mmin(M,N);
+   const register TYPE alpha = ALPHA;
+
+   if (alpha == ATL_rone || mn < 1)
+      return;
+   if( UPLO == AtlasLower )
+   {
+      if (alpha == ATL_rzero)
+      {
+         for (j=0; j < mn; j++, A += lda)
+            for (i=j; i < M; i++)
+               A[i] = alpha;
+      }
+      else
+      {
+         for (j=0; j < mn; j++, A += lda)
+            for (i=j; i < M; i++)
+               A[i] *= alpha;
+      }
+   }
+   else  /* Upper matrix */
+   {
+      if (alpha == ATL_rzero)
+      {
+         for (j=0; j < mn; j++, A += lda)
+            for (i=0; i <= j; i++)
+               A[i] = alpha;
+      }
+      else
+      {
+         for (j=0; j < mn; j++, A += lda)
+            for (i=0; i <= j; i++)
+               A[i] *= alpha;
+      }
+      if (N > mn)  /* scale rectangular portion */
+         Mjoin(PATL,gescal)(M, N-mn, alpha, A, lda);
+   }
+}
+#else
+   ATL_CINT M2 = M+M, incA = lda+lda, mn = Mmin(M,N);
+   register ATL_INT i, j;
+#ifdef TCPLX
+   register TYPE ra, ia;
+   register const TYPE rb = ALPHA[0], ib = ALPHA[1];
+#endif
+   if( UPLO == AtlasLower )
+   {
+      if (ib == ATL_rzero)              /* real scalar */
+      {
+         if (rb == ATL_rzero)           /* scale by zero */
+         {
+            for (j=0; j < mn; j++, A += incA)
+            {
+               for (i=j+j; i < M2; i++)
+                  A[i] = rb;
+            }
+         }
+         else if (rb == ATL_rone)       /* no scaling to be done */
+            return;
+         else                           /* scale by real scalar */
+         {
+            for (j=0; j < mn; j++, A += incA)
+            {
+               for (i=j+j; i < M2; i++)
+                  A[i] *= rb;
+            }
+         }
+      }
+      else /* must apply complex scalar */
+      {
+         for (j=0; j < mn; j++, A += incA)
+         {
+            for (i=j+j; i < M2; i += 2)
+            {
+               ra = A[i];
+               ia = A[i+1];
+               A[i] = ra*rb - ia*ib;
+               A[i+1] = ra*ib + ia*rb;
+            }
+         }
+      }
+   }
+   else  /* Upper matrix */
+   {
+      if (rb == ATL_rzero)              /* real scalar */
+      {
+         if (ra == ATL_rzero)           /* scale by zero */
+         {
+            for (j=1; j <= mn; j++, A += incA)
+            {
+               for (i=0; i < j+j; i++)
+                  A[i] = ATL_rzero;
+            }
+         }
+         else if (ra == ATL_rone)       /* no scaling to be done */
+            return;
+         else                           /* scale by real scalar */
+         {
+            for (j=1; j <= mn; j++, A += incA)
+            {
+               for (i=0; i < j+j; i++)
+                  A[i] *= rb;
+            }
+         }
+      }
+      else                              /* scale by complex scalar */
+      {
+         for (j=1; j <= mn; j++, A += incA)
+         {
+            for (i=0; i < j+j; i += 2)
+            {
+               ra = A[i];
+               ia = A[i+1];
+               A[i] = ra*rb - ia*ib;
+               A[i+1] = ra*ib + ia*rb;
+            }
+         }
+      }
+/*
+ *    Finish off any remaining rectangular portion
+ */
+      if (N > mn)
+         Mjoin(PATL,gescal)(M, N-mn, ALPHA, A, lda);
+   }  /* end if over matrix type */
+}
+#endif
+@ROUT ATL_hescal
+@extract -b @(topd)/gen.inc what=cw @(ap99)
+#include "atlas_misc.h"
+
+void Mjoin( PATL, hescal )
+(
+   const enum ATLAS_UPLO      UPLO,
+   const int                  M,
+   const int                  N,
+   const TYPE                 ALPHA,
+   TYPE                       * A,
+   const int                  LDA
+)
+{
+/*
+ * Purpose
+ * =======
+ *
+ * ATL_hescal  scales a (trapezoidal)  Hermitian  m-by-n matrix A by the
+ * real scalar alpha.  The imaginary parts of the diagonal elements of A
+ * need not be set on input,  they are assumed to be zero,  and  on exit
+ * they are set to zero.
+ *
+ * ---------------------------------------------------------------------
+ */
+/*
+ * .. Local Variables ..
+ */
+   int                        i, incA, j, mn;
+   TYPE                       * a_j;
+/* ..
+ * .. Executable Statements ..
+ *
+ */
+   if( UPLO == AtlasLower )
+   {
+      incA = ( ( LDA - M + 1 ) SHIFT ); mn = Mmin( M, N );
+
+      if(      ALPHA == ATL_rzero )
+      {
+         for( j = 0; j < mn; j++ )
+         {
+            for( i = j; i < M; i++, A += 2 ) { *A = A[1] = ATL_rzero; }
+            A += incA;
+            incA += 2;
+         }
+      }
+      else if( ALPHA != ATL_rone )
+      {
+         for( j = 0; j < mn; j++ )
+         {
+            *A *= ALPHA; A[1] = ATL_rzero; A += 2;
+
+            for( i = j+1; i < M; i++, A += 2 ) { *A *= ALPHA; A[1] *= ALPHA; }
+            A += incA;
+            incA += 2;
+         }
+      }
+   }
+   else
+   {
+      incA = ( LDA SHIFT );
+
+      if(      ALPHA == ATL_rzero )
+      {
+         for( j = 0, mn = M - N; j < N; j++, mn++, A += incA )
+         {
+            a_j = A;
+            for( i = 0; i <= mn; i++, a_j += 2 )
+            {
+               *a_j = a_j[1] = ATL_rzero;
+            }
+         }
+      }
+      else if( ALPHA != ATL_rone )
+      {
+         for( j = 0, mn = M - N; j < N; j++, mn++, A += incA )
+         {
+            a_j = A;
+            for( i = 0; i < mn; i++, a_j += 2 )
+            {
+               *a_j   *= ALPHA;
+               a_j[1] *= ALPHA;
+            }
+            *a_j *= ALPHA; a_j[1] = ATL_rzero;
+         }
+      }
+   }
+}
+@ROUT ATL_gescal
+void Mjoin(PATL,gescal)
+   (const int M, const int N, const SCALAR beta, TYPE *C, const int ldc)
+/*
+ * C <- beta*C
+ */
+{
+#ifdef TREAL
+   if (beta == ATL_rzero) Mjoin(PATL,gezero)(M, N, C, ldc);
+   else if (beta == ATL_rone) return;
+   else Mjoin(PATL,gescal_bX)(M, N, beta, C, ldc);
+#else
+   TYPE rbeta = *beta;
+   if (beta[1] == ATL_rzero)
+   {
+      if (rbeta == ATL_rzero) Mjoin(PATL,gezero)(M, N, C, ldc);
+      else if (rbeta == ATL_rone) return;
+      else Mjoin(PATL,gescal_bXi0)(M, N, beta, C, ldc);
+   }
+   else Mjoin(PATL,gescal_bX)(M, N, beta, C, ldc);
+#endif
+}
+@ROUT ATL_geadd
+void Mjoin(PATL,geadd)
+   (const int M, const int N, const SCALAR alpha, const TYPE *A, const int lda,
+    const SCALAR beta, TYPE *C, const int ldc)
+/*
+ * C <- alpha*A + beta*C
+ */
+{
+#ifdef TREAL
+   if (beta == ATL_rzero) Mjoin(PATL,gemove)(M, N, alpha, A, lda, C, ldc);
+   else if (alpha == ATL_rzero) Mjoin(PATL,gescal)(M, N, beta, C, ldc);
+   else if (alpha == ATL_rone)
+   {
+      if (beta == ATL_rone)
+         Mjoin(PATL,geadd_a1_b1)(M, N, alpha, A, lda, beta, C, ldc);
+      else if (beta == ATL_rzero) 
+         Mjoin(PATL,geadd_a1_b0)(M, N, alpha, A, lda, beta, C, ldc);
+      else Mjoin(PATL,geadd_a1_bX)(M, N, alpha, A, lda, beta, C, ldc);
+   }
+   else
+   {
+      if (beta == ATL_rone)
+         Mjoin(PATL,geadd_aX_b1)(M, N, alpha, A, lda, beta, C, ldc);
+      else if (beta == ATL_rzero) 
+         Mjoin(PATL,geadd_aX_b0)(M, N, alpha, A, lda, beta, C, ldc);
+      else Mjoin(PATL,geadd_aX_bX)(M, N, alpha, A, lda, beta, C, ldc);
+   }
+#else
+   const int AlphaIsReal = (alpha[1] == ATL_rzero);
+   const int AlphaIsOne = (AlphaIsReal && *alpha == ATL_rone);
+   const int AlphaIsZero = (AlphaIsReal && *alpha == ATL_rzero);
+   const int BetaIsReal = (beta[1] == ATL_rzero);
+   const int BetaIsOne = (BetaIsReal && *beta == ATL_rone);
+   const int BetaIsZero = (BetaIsReal && *beta == ATL_rzero);
+
+   if (BetaIsZero) Mjoin(PATL,gemove)(M, N, alpha, A, lda, C, ldc);
+   else if (AlphaIsZero) Mjoin(PATL,gescal)(M, N, beta, C, ldc);
+   else if (AlphaIsOne)
+   {
+      if (BetaIsOne)
+         Mjoin(PATL,geadd_a1_b1)(M, N, alpha, A, lda, beta, C, ldc);
+      else if (BetaIsZero)
+         Mjoin(PATL,geadd_a1_b0)(M, N, alpha, A, lda, beta, C, ldc);
+      else if (BetaIsReal)
+         Mjoin(PATL,geadd_a1_bXi0)(M, N, alpha, A, lda, beta, C, ldc);
+      else Mjoin(PATL,geadd_a1_bX)(M, N, alpha, A, lda, beta, C, ldc);
+   }
+   else if (AlphaIsReal)
+   {
+      if (BetaIsOne)
+         Mjoin(PATL,geadd_aXi0_b1)(M, N, alpha, A, lda, beta, C, ldc);
+      else if (BetaIsZero)
+         Mjoin(PATL,geadd_aXi0_b0)(M, N, alpha, A, lda, beta, C, ldc);
+      else if (BetaIsReal)
+         Mjoin(PATL,geadd_aXi0_bXi0)(M, N, alpha, A, lda, beta, C, ldc);
+      else Mjoin(PATL,geadd_aXi0_bX)(M, N, alpha, A, lda, beta, C, ldc);
+   }
+   else
+   {
+      if (BetaIsOne)
+         Mjoin(PATL,geadd_aX_b1)(M, N, alpha, A, lda, beta, C, ldc);
+      else if (BetaIsZero)
+         Mjoin(PATL,geadd_aX_b0)(M, N, alpha, A, lda, beta, C, ldc);
+      else if (BetaIsReal)
+         Mjoin(PATL,geadd_aX_bXi0)(M, N, alpha, A, lda, beta, C, ldc);
+      else Mjoin(PATL,geadd_aX_bX)(M, N, alpha, A, lda, beta, C, ldc);
+   }
+#endif
+}
+@ROUT ATL_syApAt_NB
+@extract -b @(topd)/gen.inc what=cw @(cw08)
+#include "atlas_misc.h"
+#ifdef Conj_
+   #define axpbyT Mjoin(PATL,axpbyConj)
+void Mjoin(PATL,heApAc_NB)
+#else
+   #define axpbyT Mjoin(PATL,axpby)
+void Mjoin(PATL,syApAt_NB)
+#endif
+   (const enum ATLAS_UPLO uplo, ATL_CINT N, const TYPE *A, ATL_CINT lda, 
+    const SCALAR beta, TYPE *C, ATL_CINT ldc)
+/*
+ * C <- beta*C + A + A', C is Upper or Lower symmetric
+ */
+{
+   const TYPE *Ac, *Ar;
+   #ifdef Conj_
+      TYPE *C0 = C;
+   #endif
+   #ifdef TREAL
+      #define ldc2 ldc
+      #define lda2 lda
+      #define ONE ATL_rone
+      const int ldap1 = lda+1, ldcp1 = ldc+1;
+   #else
+      const int lda2 = lda+lda, ldc2 = ldc+ldc, ldap1 = lda2+2, ldcp1 = ldc2+2;
+      TYPE ONE[2] = {ATL_rone, ATL_rzero};
+   #endif
+   int j;
+
+   if (uplo == AtlasUpper)
+   {
+      Ac = Ar = A;
+      for (j=0; j < N; j++)
+      {
+         Mjoin(PATL,axpby)(j+1, ONE, Ac, 1, beta, C, 1);
+         axpbyT(j+1, ONE, Ar, lda, ONE, C, 1);
+         C += ldc2;
+         Ar += 1 SHIFT;
+         Ac += lda2;
+      }
+   }
+   else
+   {
+      for (j=0; j < N; j++)
+      {
+         Mjoin(PATL,axpby)(N-j, ONE, A, 1, beta, C, 1);
+         axpbyT(N-j, ONE, A, lda, ONE, C, 1);
+         C += ldcp1;
+         A += ldap1;
+      }
+   }
+#ifdef Conj_
+   Mjoin(PATLU,zero)(N, C0+1, ldcp1);  /* zero imag part of diagonal */
+#endif
+}
+#ifdef TREAL
+   #undef lda2
+   #undef ldb2
+   #undef ONE
+#endif
+
+@ROUT ATL_geApBt_NB
+@extract -b @(topd)/gen.inc what=cw @(cw08)
+#include "atlas_misc.h"
+#ifdef Conj_
+   #define axpbyT Mjoin(PATL,axpbyConj)
+void Mjoin(PATL,geApBc_NB)
+#else
+   #define axpbyT Mjoin(PATL,axpby)
+void Mjoin(PATL,geApBt_NB)
+#endif
+   (ATL_CINT M, ATL_CINT N, const TYPE *A, ATL_CINT lda,
+    const TYPE *B, ATL_CINT ldb, const SCALAR beta, TYPE *C, ATL_CINT ldc)
+/*
+ * C <- beta*C + A + B'; this routine needs small N, or you have TLB issues
+ */
+{
+   #ifdef TREAL
+      #define lda2 lda
+      #define ldc2 ldc
+      #define ONE ATL_rone
+   #else
+      ATL_CINT lda2 = lda+lda, ldc2 = ldc+ldc;
+      TYPE ONE[2] = {ATL_rone, ATL_rzero};
+   #endif
+   ATL_INT j;
+
+   for (j=0; j < N; j++)
+   {
+      Mjoin(PATL,axpby)(M, ONE, A, 1, beta, C, 1);
+      axpbyT(M, ONE, B, ldb, ONE, C, 1);
+      C += ldc2;
+      A += lda2;
+      B += 1 SHIFT;
+   }
+}
+#ifdef TREAL
+   #undef lda2
+   #undef ONE
+#endif
+@ROUT ATL_syApAt
+@extract -b @(topd)/gen.inc what=cw @(cw08)
+#include "atlas_misc.h"
+#define NB 40  /* all three matrices fit in 128 entry TLB */
+#ifdef Conj_
+   #define ApBt_NB Mjoin(PATL,geApBc_NB)
+   #define ApAt_NB Mjoin(PATL,heApAc_NB)
+void Mjoin(PATL,heApAc)
+#else
+   #define ApBt_NB Mjoin(PATL,geApBt_NB)
+   #define ApAt_NB Mjoin(PATL,syApAt_NB)
+void Mjoin(PATL,syApAt)
+#endif
+   (const enum ATLAS_UPLO Uplo, ATL_CINT N, const TYPE *A, ATL_CINT lda, 
+    const SCALAR beta, TYPE *C, ATL_CINT ldc)
+/*
+ * C <- A + A', C is Upper or Lower symmetric
+ * Does by blocks in order to prevent massive TLB problems.
+ */
+{
+   ATL_INT i, j, m, n, istart, iend;
+
+   for (j=0; j < N; j += NB)
+   {
+      n = N - j;
+      n = Mmin(NB, n);
+      if (Uplo == AtlasLower) { istart = j; iend = N; }
+      else { istart = 0; iend = j+NB; }
+
+      for (i=istart; i < iend; i += NB)
+      {
+         m = N - i;
+         m = Mmin(NB, m);
+         if (i != j)
+            ApBt_NB(m, n, A+((i+j*lda)SHIFT), lda, A+((j+i*lda)SHIFT), 
+                    lda, beta, C+((i+j*ldc)SHIFT), ldc);
+         else
+            ApAt_NB(Uplo, n, A+((i+j*lda)SHIFT), lda, beta, 
+                    C+((i+j*ldc)SHIFT), ldc);
+      }
+   }
+}
+@ROUT ATL_flushCacheByAddr
+@extract -b @(topd)/gen.inc what=cw @(cw07)
+#include "atlas_misc.h"
+
+#if ATL_LINEFLUSH    /* set in atlas-aux.h, if on one of the below archs */
+
+#if defined(ATL_ARCH_PPCG5) || defined(ATL_ARCH_PPCG4) || defined(ATL_GAS_PPC)
+   #define ATL_flushCacheLine(mem) __asm__ __volatile__ \
+      ("dcbf 0, %0" :: "r"((void *)(mem)))
+#elif defined(ATL_ARCH_IA64Itan) || defined(ATL_ARCH_IA64Itan2)
+   #define ATL_flushCacheLine(mem) __asm__ __volatile__ \
+      ("fc %0" :: "r"((void *)(mem)))
+#elif defined(ATL_SSE1)
+   #define ATL_flushCacheLine(mem) __asm__ __volatile__ \
+      ("clflush %0" : : "m" (*((char *)(mem))))
+#else
+   #define ATL_flushCacheLine(mem) \
+   { \
+      fprintf(stderr, "Cannot do cache-line flushing, %d of %s!\n",  \
+              __LINE__, __FILE__); \
+      exit(-1); \
+   }
+#endif
+
+void ATL_flushCacheByAddr(int N, void *vp)
+{
+   double *dp = vp;  /* assume cache line at least 8 bytes long */
+   int i;
+   for (i=0, N /= sizeof(double); i < N; i++)
+      ATL_flushCacheLine(dp+i);
+}
+
+@beginskip      /* Now in atlas_aux.h */
+struct flStruct
+{
+   void *p;
+   int length;
+   FLSTRUCT *next;
+};
+@endskip
+
+FLSTRUCT *ATL_GetFlushStruct(void *p, int length, FLSTRUCT *next)
+{
+   FLSTRUCT *fp;
+
+   fp = malloc(sizeof(FLSTRUCT));
+   fp->p = p;
+   fp->length = length;
+   fp->next = next;
+
+   return(fp);
+}
+
+void ATL_KillAllFlushStructs(FLSTRUCT *p)
+{
+   FLSTRUCT *kill;
+   while (p)
+   {
+      kill = p;
+      p = p->next;
+      free(kill);
+   }
+}
+
+void ATL_FlushAreasByCL(FLSTRUCT *fp)
+{
+   int i, n;
+   char *cp;
+   while (fp)
+   {
+      ATL_flushCacheByAddr(fp->length, fp->p);
+      fp = fp->next;
+   }
+}
+
+#endif   /* end #if ATL_LINEFLUSH */
+@ROUT ATL_flushcache
+@extract -b @(topd)/gen.inc what=cw @(cw00)
+#include "atlas_misc.h"
+
+double ATL_flushcache(int size)
+/* 
+ * flush cache by reading enough mem; note that if the compiler gets
+ * really smart, may be necessary to make vp a global variable so it
+ * can't figure out it's not being modified other than during setup;
+ * the fact that ATL_dzero is external will confuse most compilers
+ */
+{
+  static void *vp=NULL;
+  static int N = 0;
+  double *cache;
+  double dret=0.0;
+  int i;
+
+  if (size < 0) /* flush cache */
+  {
+     ATL_assert(vp);
+     cache = ATL_AlignPtr(vp);
+     if (N > 0) for (i=0; i != N; i++) dret += cache[i];
+  }
+  else if (size > 0) /* initialize */
+  {
+     vp = malloc(ATL_Cachelen + size);
+     ATL_assert(vp);
+     N = size / sizeof(double);
+     cache = ATL_AlignPtr(vp);
+     ATL_dzero(N, cache, 1);
+  }
+  else if (size == 0) /* free cache */
+  {
+     if (vp) free(vp);
+     vp = NULL;
+     N = 0;
+  }
+  return(dret);
+}
+@ROUT ATL_ptflushcache
+@extract -b @(topd)/gen.inc what=cw @(cw00)
+#include <pthread.h>
+#define DREAL
+#include "atlas_misc.h"
+#include "atlas_threads.h"
+
+typedef struct ATL_FC ATL_FC;
+struct ATL_FC
+{
+   double dret;
+   double *dp;
+   int N;
+};
+
+void ATL_ptCF(ATL_LAUNCHSTRUCT_t *lp, void *vptr)
+{
+   ATL_FC *tp = vptr;
+   int i, N;
+   double *cache, dret=0.0;
+
+   N = tp->N;
+   if (N > 0)
+   {
+      cache = tp->dp;
+      for (i=0; i != N; i++) dret += cache[i];
+   }
+   tp->dret = dret;
+}
+
+double ATL_ptflushcache(int size)
+/* 
+ * flush cache by reading enough mem; note that if the compiler gets
+ * really smart, may be necessary to make vp a global variable so it
+ * can't figure out it's not being modified other than during setup;
+ * the fact that ATL_dzero is external will confuse most compilers
+ */
+{
+  static void *vp=NULL;
+  static double *cache=NULL;
+  double dret=0.0;
+  static int i, N = 0;
+  ATL_LAUNCHSTRUCT_t ls;
+  ATL_thread_t tp[ATL_NTHREADS];
+  ATL_FC fct[ATL_NTHREADS];
+
+  if (size < 0) /* flush cache */
+  {
+     ATL_assert(cache);
+     for (i=0; i < ATL_NTHREADS; i++)
+     {
+        fct[i].N = N;
+        fct[i].dp = cache+i*N;
+@skip        ATL_thread_start(tp+i, i, ATL_ptCF, fct+i);
+     }
+     ls.opstruct = (char*) fct;
+     ls.opstructstride = (int) ( ((char*)(fct+1)) - (char*)fct );
+     ls.OpStructIsInit = NULL;
+     ls.CombineOpStructs = NULL;
+     ls.DoWork = ATL_ptCF;
+     ls.rank2thr = tp;
+     dret = 0;
+     for (i=0; i < ATL_NTHREADS; i++)
+     {
+        tp[i].vp = &ls;
+        tp[i].rank = i;
+@skip        ATL_thread_join(tp+i);
+@skip        dret += fct[i].dret;
+     }
+     ATL_thread_start(tp, 0, ATL_tlaunch, tp);
+     ATL_thread_join(tp);
+  }
+  else if (size > 0) /* initialize */
+  {
+     vp = malloc(ATL_Cachelen + (size * ATL_NTHREADS));
+     ATL_assert(vp);
+     cache = ATL_AlignPtr(vp);
+     N = size / sizeof(double);
+     ATL_dzero(N*ATL_NTHREADS, cache, 1);
+  }
+  else if (size == 0) /* free cache */
+  {
+     if (vp) free(vp);
+     vp = cache = NULL;
+     N = 0;
+  }
+  return(dret);
+}
+
+#if ATL_LINEFLUSH  /* do we have option of flushing by cacheline? */
+
+void ATL_ptCLF(ATL_LAUNCHSTRUCT_t *lp, void *vptr)
+{
+   ATL_FlushAreasByCL(vptr);
+}
+
+void ATL_ptFlushAreasByCL(FLSTRUCT *fp)
+{
+   ATL_thread_t tp[ATL_NTHREADS];
+   ATL_LAUNCHSTRUCT_t ls;
+   int i;
+
+   ls.opstruct = (char*) fp;
+   ls.opstructstride = 0;
+   ls.OpStructIsInit = NULL;
+   ls.CombineOpStructs = NULL;
+   ls.DoWork = ATL_ptCLF;
+   ls.rank2thr = tp;
+   for (i=0; i < ATL_NTHREADS; i++)
+   {
+      tp[i].vp = &ls;
+      tp[i].rank = i;
+   }
+   ATL_thread_start(tp, 0, ATL_tlaunch, tp);
+   ATL_thread_join(tp);
+}
+
+#endif
+@ROUT ATL_gecollapse
+@extract -b @(topd)/gen.inc what=cw @(cw07)
+#include "atlas_misc.h"
+
+#ifdef SREAL
+void ATL_dsgecollapse(const int M, const int N, double *A,
+                      const int lda, const int ldc)
+/*
+ * Copies double precision array C into a float array in-place.
+ */
+{
+   float *C = (float*)A;
+   int i, j;
+
+   ATL_assert(ldc <= 2*lda);
+   for (j=0; j < N; j++, A += lda, C += ldc)
+   {
+      for (i=0; i < M; i++)
+         C[i] = A[i];
+   }
+}
+#elif defined(DREAL)
+void ATL_qdgecollapse(const int M, const int N, ATL_QTYPE *A,
+                      const int lda, const int ldc)
+/*
+ * Copies double precision array C into a float array in-place.
+ */
+{
+   double *C = (double*)A;
+   int i, j;
+
+   ATL_assert(ldc <= 2*lda);
+   for (j=0; j < N; j++, A += lda, C += ldc)
+   {
+      for (i=0; i < M; i++)
+         C[i] = A[i];
+   }
+}
+#elif defined(SCPLX)
+void ATL_zcgecollapse(const int M, const int N, double *A,
+                      const int lda, const int ldc)
+{
+   ATL_dsgecollapse(M+M, N, A, lda+lda, ldc+ldc);
+}
+#else
+void ATL_ezgecollapse(const int M, const int N, ATL_QTYPE *A,
+                      const int lda, const int ldc)
+{
+   ATL_qdgecollapse(M+M, N, A, lda+lda, ldc+ldc);
+}
+#endif
+@ROUT ATL_trcollapse
+@extract -b @(topd)/gen.inc what=cw @(cw07)
+#include "atlas_misc.h"
+
+#ifdef SREAL
+void ATL_dstrcollapse(const enum ATLAS_UPLO Uplo, const enum ATLAS_DIAG Diag,
+                      const int N, double *A, const int lda, const int ldc)
+#elif defined(SCPLX)
+void ATL_zctrcollapse(const enum ATLAS_UPLO Uplo, const enum ATLAS_DIAG Diag,
+                      const int N, double *A, const int lda0, const int ldc0)
+#elif defined(DCPLX)
+void ATL_eztrcollapse(const enum ATLAS_UPLO Uplo, const enum ATLAS_DIAG Diag,
+                      const int N, ATL_QTYPE *A, const int lda0, const int ldc0)
+#else
+void ATL_qdtrcollapse(const enum ATLAS_UPLO Uplo, const enum ATLAS_DIAG Diag,
+                      const int N, ATL_QTYPE *A, const int lda, const int ldc)
+#endif
+/*
+ * Translates upper/lower triangle from double to single precision
+ */
+{
+#if defined(SREAL) || defined(SCPLX)
+   float *C = (float*)A;
+#else
+   double *C = (double*)A;
+#endif
+#ifdef TCPLX
+   const int lda = lda0+lda0, ldc = ldc0+ldc0;
+#endif
+   int i, j, st;
+
+   ATL_assert(ldc <= 2*lda);
+   if (Uplo == AtlasUpper)
+   {
+      for (j=0; j < N; j++, C += ldc, A += lda)
+      {
+         st = (Diag == AtlasUnit) ? j-1 : j;
+         for (i=0; i < st; i++)
+         #ifdef TREAL
+            C[i] = A[i];
+         #else
+         {
+            C[i+i] = A[i+i];
+            C[i+i+1] = A[i+i+1];
+         }
+         #endif
+      }
+   }
+   else
+   {
+      for (j=0; j < N; j++, C += ldc, A += lda)
+      {
+         for (i=(Diag == AtlasUnit) ? j+1 : j; i < N; i++)
+         #ifdef TREAL
+            C[i] = A[i];
+         #else
+         {
+            C[i+i] = A[i+i];
+            C[i+i+1] = A[i+i+1];
+         }
+         #endif
+      }
+   }
+}
+@ROUT ATL_geswapT
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2009
+#include "atlas_misc.h"
+void Mjoin(PATL,geswapT)(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT lda,
+                         TYPE *B, ATL_CINT ldb)
+/*
+ * This routine swaps with transpose two arrays.  In detail:
+ *    C' = A**T
+ *    A' = C**T
+ *    A is of size MxN, B is of size NxM
+ * NOTE: not TLB-optimized, so for use on small matrices.
+ * NOTE: A and C cannot overlap.
+ */
+{
+   ATL_INT i;
+
+   for (i=0; i < M; i++)
+      Mjoin(PATL,swap)(N, A+(i SHIFT), lda, B+(i SHIFT)*ldb, 1);
+}
+@ROUT ATL_sqtrans
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2009
+#include "atlas_misc.h"
+@skip #include Mstr(Mjoin(Mjoin(atlas_,PRE),NCmm.h))
+#define NB 32
+#define ATL_MulByNB(n_) ((n_)<<5)
+#define ATL_DivByNB(n_) ((n_)>>5)
+
+static void Mjoin(PATL,sqtrans0)(ATL_CINT N, TYPE *C, ATL_CINT ldc)
+/*
+ * Does an in-place transpose of a square matrix.
+ * NOTE: this should only be used on small matrices, as it is not optimized
+ *       for the TLB.
+ */
+{
+   ATL_INT j;
+/*
+ * We will work by reflecting swapping columns & rows across diagonal,
+ * starting from the last column, so that early cols are retained in cache
+ */
+   for (j=N-1; j; j--)
+      Mjoin(PATL,swap)(j, C+ldc*(j SHIFT), 1, C+(j SHIFT), ldc);
+}
+
+void Mjoin(PATL,sqtrans)(ATL_CINT N, TYPE *C, ATL_CINT ldc)
+/*
+ * Does an in-place transpose of a square matrix.  This routine is blocked
+ * to help with TLB
+ */
+{
+   ATL_CINT Nnb = ATL_MulByNB(ATL_DivByNB(N)), Nr = N - Nnb;
+   ATL_INT i, j;
+
+   if (N < NB+NB)
+   {
+      Mjoin(PATL,sqtrans0)(N, C, ldc);
+      return;
+   }
+/*
+ * Loop in reverse order, so first part of matrix retained in cache
+ */
+   if (Nr)
+   {
+      for (i=0; i < Nnb; i += NB)
+         Mjoin(PATL,geswapT)(NB, Nr, C+((Nnb*ldc+i)SHIFT), ldc,
+                             C+((Nnb+i*ldc)SHIFT), ldc);
+      Mjoin(PATL,sqtrans0)(Nr, C+((Nnb*(ldc+1))SHIFT), ldc);
+   }
+   for (j=Nnb-NB; j >= 0; j -= NB)
+   {
+      
+      for (i=0; i < j; i += NB)
+         Mjoin(PATL,geswapT)(NB, NB, C+((j*ldc+i)SHIFT), ldc,
+                             C+((j+i*ldc)SHIFT), ldc);
+      Mjoin(PATL,sqtrans0)(NB, C+((j*(ldc+1))SHIFT), ldc);
+   }
+}
+
+/*
+ * temporary F77 interfaces for testing
+ */
+Mjoin(PRE,sqtrans_)(int *N, TYPE *C, int *ldc)
+{
+   Mjoin(PATL,sqtrans)(*N, C, *ldc);
+}
+Mjoin(PRE,gemovet_)(int *M, int *N, TYPE *A, int *lda, TYPE *B, int *ldb)
+{
+   #ifdef TREAL
+      #define ONE 1.0
+   #else
+      TYPE ONE[2] = {1.0, 0.0};
+   #endif
+   Mjoin(PATL,gemoveT)(*M, *N, ONE, A, *lda, B, *ldb);
+}
+@ROUT ATL_trsetU
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2010
+#include "atlas_misc.h"
+
+void Mjoin(PATL,trsetU)
+   (ATL_CINT M, ATL_CINT N, const SCALAR alpha, const SCALAR beta, 
+    TYPE *A, ATL_CINT lda)
+/*
+ * Sets main diagonal to beta, rest of upper triangle to alpha, does not
+ * touch lower triangle
+ */
+{
+   ATL_INT j;
+   #ifdef TCPLX
+      ATL_CINT lda2 = lda+lda;
+   #else
+      #define lda2 lda
+   #endif
+   for (j=0; j < N; j++, A += lda2)
+   {
+      if (j)
+         Mjoin(PATL,set)(j, alpha, A, 1);
+      #ifdef TCPLX
+         A[j+j] = *beta;
+         A[j+j+1] = beta[1];
+      #else
+         A[j] = beta;
+      #endif
+   }
+}
+#ifndef TCPLX
+   #undef lda2
+#endif
+@ROUT ATL_trsetL
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2010
+#include "atlas_misc.h"
+
+void Mjoin(PATL,trsetL)
+   (ATL_CINT M, ATL_CINT N, const SCALAR alpha, const SCALAR beta, 
+    TYPE *A, ATL_CINT lda)
+/*
+ * Sets main diagonal to beta, rest of lower triangle to alpha, does not
+ * touch upper triangle
+ */
+{
+   
+   ATL_INT j;
+   #ifdef TCPLX
+      ATL_CINT ldap1 = lda+1;
+   #else
+      ATL_CINT ldap1 = lda+lda+2;
+   #endif
+
+   for (j=0; j < N; j++, A += ldap1)
+   {
+      #ifdef TCPLX
+         *A = *beta;
+         A[1] = beta[1];
+      #else
+         *A = beta;
+      #endif
+      if (N-j-1)
+         Mjoin(PATL,set)(N-j-1, alpha, A+(1 SHIFT), 1);
+   }
+}
+@ROUT ATL_geset
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2010
+#include "atlas_misc.h"
+
+void Mjoin(PATL,geset)
+   (ATL_CINT M, ATL_CINT N, const SCALAR alpha, const SCALAR beta, 
+    TYPE *A, ATL_CINT lda)
+/*
+ * Sets main diagonal to beta, rest of matrix to alpha
+ */
+{
+   
+   ATL_INT j;
+   #ifdef TCPLX
+      ATL_CINT lda2 = lda+lda;
+   #else
+      #define lda2 lda
+   #endif
+
+#ifdef TCPLX
+   if (*alpha == *beta && alpha[1] == beta[1])
+#else
+   if (alpha == beta)
+#endif
+   {
+      for (j=0; j < N; j++, A += lda2)
+         Mjoin(PATL,set)(j+1, alpha, A, 1);
+      return;
+   }
+   for (j=0; j < N; j++, A += lda2)
+   {
+      if (j)
+         Mjoin(PATL,set)(j, alpha, A, 1);
+      #ifdef TCPLX
+         A[j+j] = *beta;
+         A[j+j+1] = beta[1];
+      #else
+         A[j] = beta;
+      #endif
+      if (N-j-1)
+         Mjoin(PATL,set)(N-j-1, alpha, A+((j+1) SHIFT), 1);
+   }
+}
+#ifndef TCPLX
+   #undef lda2
+#endif
+@ROUT ATL_gemaxnrm
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2010
+#include "atlas_misc.h"
+
+#if defined(DCPLX)
+   #define iamax ATL_izamax
+#elif defined(SCPLX)
+   #define iamax ATL_icamax
+#elif defined(SREAL)
+   #define iamax ATL_isamax
+#else
+   #define iamax ATL_idamax
+#endif
+TYPE Mjoin(PATL,gemaxnrm)
+   (ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT lda)
+/*
+ * Returns maximum absolute value in A;
+ * for complex value CV returns maximum of abs(real(CV)) + abs(cplx(CV))
+ */
+{
+   TYPE maxval=0.0, mv;
+   ATL_INT j, i;
+   #ifdef TCPLX
+      ATL_CINT lda2 = lda+lda;
+   #else
+      #define lda2 lda
+   #endif
+
+   for (j=0; j < N; j++, A += lda2)
+   {
+      i = iamax(N, A, 1);
+      #ifdef TCPLX
+         i += i;
+         mv = Mabs(A[i]) + Mabs(A[i+1]);
+      #else
+         mv = Mabs(A[i]);
+      #endif
+      maxval = (maxval >= mv) ? maxval : mv;
+   }
+   return(maxval);
+}
+#ifndef TCPLX
+   #undef lda2
+#endif

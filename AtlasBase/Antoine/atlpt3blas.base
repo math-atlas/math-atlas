@@ -1,0 +1,3407 @@
+@extract -addkeys -b @(BASEdir)include/atlas.inc lan=C type=none
+@skip
+@skip ATLAS / multithreaded BLAS L3 implementation                  AP00
+@skip
+@skip Last modification : 12/01/00
+@skip
+@skip Modified by RCW on 07/24/07 to slightly improve ptgemm implementation's
+@skip handling of skinny matrices.
+
+@skip
+@define PT3_INCLUDE @-addkeys -b @(srcdir)/atlpt3blas.base rout=pt3_inc@
+@skip
+@skip
+@rout pt3_inc
+@extract @(INCLUDE)
+#include "atlas_ptmisc.h"
+#include "atlas_ptlvl3.h"
+#include "atlas_ptlevel3.h"
+@skip
+@skip
+@rout ATL_ptl3settype
+@define rname @Mjoin( PATL, ptl3settype )@
+@extract @(VER_ATLAS_SRC)
+@extract @(PT3_INCLUDE)
+
+void @(rname)
+(
+   PT_LVL3_TYPE_T             * PLVL3
+)
+{
+@extract @(ATLAS_PT3_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   static TYPE                scalars[6] = { ATL_rnone, ATL_rzero,
+                                             ATL_rzero, ATL_rzero,
+                                             ATL_rone,  ATL_rzero };
+@extract @(EXECUTABLE_STATEMENT)
+#ifdef TREAL
+   PLVL3->size     = sizeof( TYPE    );    
+#else
+   PLVL3->size     = sizeof( TYPE[2] );
+#endif
+   PLVL3->negone   = (void *)(&(scalars[0]));
+   PLVL3->zero     = (void *)(&(scalars[2]));
+   PLVL3->one      = (void *)(&(scalars[4]));
+
+   PLVL3->geadd0   = Mjoin( PATL, ptgeadd0    );
+   PLVL3->gemm0    = Mjoin( PATL, ptgemm0     );
+   PLVL3->symm0    = Mjoin( PATL, ptsymm0     );
+#ifdef TREAL
+   PLVL3->hemm0    = Mjoin( PATL, ptsymm0     );
+#else
+   PLVL3->hemm0    = Mjoin( PATL, pthemm0     );
+#endif
+   PLVL3->syrk0    = Mjoin( PATL, ptsyrk0     );
+   PLVL3->syr2k0   = Mjoin( PATL, ptsyr2k0    );
+#ifdef TREAL
+   PLVL3->herk0    = Mjoin( PATL, ptsyrk0     );
+   PLVL3->her2k0   = Mjoin( PATL, ptsyr2k0    );
+#else
+   PLVL3->herk0    = Mjoin( PATL, ptherk0     );
+   PLVL3->her2k0   = Mjoin( PATL, pther2k0    );
+#endif
+   PLVL3->trmm0    = Mjoin( PATL, pttrmm0     );
+   PLVL3->trsm0    = Mjoin( PATL, pttrsm0     );
+
+   PLVL3->ptgemm   = Mjoin( PATL, ptgemm_nt   );
+   PLVL3->pttrmm   = Mjoin( PATL, pttrmm_nt   );
+#ifdef TREAL
+   PLVL3->ptsyr2k0 = Mjoin( PATL, ptsyr2k0_nt );
+   PLVL3->pther2k0 = Mjoin( PATL, ptsyr2k0_nt );
+#else
+   PLVL3->ptsyr2k0 = Mjoin( PATL, ptsyr2k0_nt );
+   PLVL3->pther2k0 = Mjoin( PATL, pther2k0_nt );
+#endif
+
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_Sgemm
+@define rname @ATL_Sgemm@
+@extract @(VER_ATLAS_SRC)
+@extract @(PT3_INCLUDE)
+
+PT_TREE_T @(rname)
+(
+   const PT_LVL3_TYPE_T       * PLVL3,
+   const unsigned int         NODE,
+   const unsigned int         NTHREADS,
+   pthread_attr_t             * ATTR,
+   const int                  NB,
+   const enum ATLAS_TRANS     TRANSA,
+   const enum ATLAS_TRANS     TRANSB,
+   const int                  M,
+   const int                  N,
+   const int                  K,
+   const void                 * ALPHA,
+   const void                 * A,
+   const int                  LDA,
+   const void                 * B,
+   const int                  LDB,
+   const void                 * BETA,
+   void                       * C,
+   const int                  LDC
+)
+{
+@extract @(ATLAS_PT3_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  left, right, tree = NULL;
+   PT_GEMM_ARGS_T             * a_mm  = NULL;
+   PT_GEADD_ARGS_T            * a_add = NULL;
+   void                       * C0, * vp = NULL;
+   double                     rk, rm, rn;
+   size_t                     size;
+   DIM_1DSPLIT_T              splitM, splitN, splitK;
+   unsigned int               next = (NODE << 1), ntk1, ntk2, ntm1, ntm2,
+                              ntn1, ntn2;
+   int                        incA, incB, incC, k1, k2, m1, m2, n1, n2,
+                              split;
+@extract @(EXECUTABLE_STATEMENT)
+   if( NTHREADS < 1 ) return( tree );
+
+   size   = PLVL3->size;
+   splitM = ATL_1dsplit( NTHREADS, M, NB, &ntm1, &ntm2, &m1, &m2, &rm );
+   splitN = ATL_1dsplit( NTHREADS, N, NB, &ntn1, &ntn2, &n1, &n2, &rn );
+   splitK = ATL_1dsplit( NTHREADS, K, NB, &ntk1, &ntk2, &k1, &k2, &rk );
+ 
+   if( ( splitM == Atlas1dSplit ) && ( splitN == Atlas1dSplit ) )
+   {
+      split = ( rm < rn ? SPLIT_M : SPLIT_N );
+   }
+   else if( splitM == Atlas1dSplit )
+   {
+      split = SPLIT_M;
+   }
+   else if( splitN == Atlas1dSplit )
+   {
+      split = SPLIT_N;
+   }
+   else
+   {
+      split = NOSPLIT;
+      if( ( splitK == Atlas1dSplit ) && ( ( M <= N ) || ( M <= NB ) ) &&
+          ( N <= NB ) )
+      {
+         vp = (void *)malloc( ATL_Cachelen + ( M * N * size ) );
+         if( vp != NULL ) split = SPLIT_K;
+      }
+   }
+
+   if(      split == SPLIT_M )
+   {
+      left  = ATL_Sgemm( PLVL3, next+1, ntm1, ATTR, NB, TRANSA, TRANSB,
+                         m1, N, K, ALPHA, A, LDA, B, LDB, BETA, C, LDC );
+      incA  = ( TRANSA == AtlasNoTrans ? m1 : m1 * LDA ); incC = m1;
+      right = ATL_Sgemm( PLVL3, next+2, ntm2, ATTR, NB, TRANSA, TRANSB,
+                         m2, N, K, ALPHA, Mvpt3( A, incA, size ), LDA,
+                         B, LDB, BETA, Mvpt3( C, incC, size ), LDC );
+      tree = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+   }
+   else if( split == SPLIT_N )
+   {
+      left  = ATL_Sgemm( PLVL3, next+1, ntn1, ATTR, NB, TRANSA, TRANSB,
+                         M, n1, K, ALPHA, A, LDA, B, LDB, BETA, C, LDC );
+      incB  = ( TRANSB == AtlasNoTrans ? n1 * LDB : n1 ); incC  = n1 * LDC;
+      right = ATL_Sgemm( PLVL3, next+2, ntn2, ATTR, NB, TRANSA, TRANSB,
+                         M, n2, K, ALPHA, A, LDA, Mvpt3( B, incB, size ),
+                         LDB, BETA, Mvpt3( C, incC, size ), LDC );
+      tree = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+   }
+   else if( split == SPLIT_K )
+   {
+      left  = ATL_Sgemm( PLVL3, next+1, ntk1, ATTR, NB, TRANSA, TRANSB,
+                         M, N, k1, ALPHA, A, LDA, B, LDB, BETA, C, LDC );
+      C0    = ATL_AlignPtr( vp );
+      incA  = ( TRANSA == AtlasNoTrans ? k1 * LDA : k1 );
+      incB  = ( TRANSB == AtlasNoTrans ? k1 : k1 * LDB );
+      right = ATL_Sgemm( PLVL3, next+2, ntk2, ATTR, NB, TRANSA, TRANSB,
+                         M, N, k2, PLVL3->one, Mvpt3( A, incA, size ),
+                         LDA, Mvpt3( B, incB, size ), LDB, PLVL3->zero,
+                         C0, M );
+      a_add = (PT_GEADD_ARGS_T *)malloc( sizeof( PT_GEADD_ARGS_T ) );
+      ATL_assert( a_add != NULL );
+      a_add->m = M;  a_add->n  = N;   a_add->al = ALPHA;
+      a_add->a = C0; a_add->la = M;   a_add->be = PLVL3->one;
+      a_add->c = C;  a_add->lc = LDC;
+      tree = ATL_init_node( NODE, left, right, vp, NULL, PLVL3->geadd0,
+                            (void *)(a_add) );
+   }
+   else
+   {
+      a_mm = (PT_GEMM_ARGS_T *)malloc( sizeof( PT_GEMM_ARGS_T ) );
+      ATL_assert( a_mm != NULL );
+      a_mm->ta = TRANSA; a_mm->tb = TRANSB;
+      a_mm->m  = M;      a_mm->n  = N;   a_mm->k = K;
+      a_mm->al = ALPHA;  a_mm->a  = A;   a_mm->la = LDA;
+      a_mm->b  = B;      a_mm->lb = LDB; a_mm->be = BETA;
+      a_mm->c  = C;      a_mm->lc = LDC;
+      tree = ATL_init_node( NODE, NULL, NULL, NULL, NULL, PLVL3->gemm0,
+                            (void *)(a_mm) );
+   }
+
+   return( tree );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_ptgemm
+@extract @(VER_ATLAS_SRC)
+@extract @(PT3_INCLUDE)
+
+@define rname @Mjoin( PATL, ptgemm0 )@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  root = (PT_TREE_T)(ARGS);
+   PT_GEMM_ARGS_T             * arg;
+@extract @(EXECUTABLE_STATEMENT)
+   ATL_wait_tree( root );
+   arg = (PT_GEMM_ARGS_T *)(root->arg);
+
+#define  _PT_TRANSA    (arg->ta)
+#define  _PT_TRANSB    (arg->tb)
+#define  _PT_M         (arg->m)
+#define  _PT_N         (arg->n)
+#define  _PT_K         (arg->k)
+
+#ifdef TREAL
+#define  _PT_ALPHA     (SCALAR)(*((TYPE *)(arg->al)))
+#define  _PT_BETA      (SCALAR)(*((TYPE *)(arg->be)))
+#else
+#define  _PT_ALPHA     (SCALAR)(arg->al)
+#define  _PT_BETA      (SCALAR)(arg->be)
+#endif
+ 
+#define  _PT_A         ((TYPE *)(arg->a))
+#define  _PT_LDA       (arg->la)
+#define  _PT_B         ((TYPE *)(arg->b))
+#define  _PT_LDB       (arg->lb)
+#define  _PT_C         ((TYPE *)(arg->c))
+#define  _PT_LDC       (arg->lc)
+
+   Mjoin( PATL, gemm )( _PT_TRANSA, _PT_TRANSB, _PT_M, _PT_N, _PT_K,
+                        _PT_ALPHA, _PT_A, _PT_LDA, _PT_B, _PT_LDB,
+                        _PT_BETA,  _PT_C, _PT_LDC );
+   ATL_signal_tree( root );
+ 
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@beginskip
+#ifndef ATL_ANTOINE_THREADS
+
+#include "atlas_lvl3.h"
+// #define DEBUG
+/* 
+ * This code written by R. Clint Whaley, 2008
+ */
+void InitPTMMNodes(SCALAR alpha, SCALAR beta, ATL_PTMMNODE_t *ptmms)
+{
+   int i;
+   for (i=0; i < ATL_NTHREADS; i++)
+   {
+      ptmms[i].K = 0;
+      ptmms[i].nCw = 0;
+      ptmms[i].rank = i;
+      ptmms[i].alpha = alpha;
+      ptmms[i].beta  = beta;
+      ptmms[i].Cinfp[0] = ptmms+i;
+   }
+}
+
+int ATL_ptrdecomp
+   (ATL_PTMMNODE_t *ptmms, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
+    ATL_INT Mblks, int mr, ATL_INT Nblks, int nr, ATL_INT Kblks, int kr, 
+    TYPE *A, ATL_INT lda, TYPE *B, ATL_INT ldb, TYPE *C, ATL_INT ldc, 
+    int P, int indx, int COPYC)
+{
+   int pR, pL, np;
+   ATL_INT nblksL, nblksR, i, j;
+   double d;
+
+   ATL_assert(P > 0);
+/*
+ * End recursion if we are down to 1 processor, or if we are out of blocks
+ */
+   if ( P <= 1 || (Mblks <= 1 && Nblks <= 1 && Kblks <= 2) )
+   {
+      if (TA == AtlasNoTrans)
+      {
+#ifdef TCPLX
+         if (TB == AtlasConjTrans)
+            ptmms[indx].gemmK = Mjoin(PATL,gemmNC);
+         else
+#endif
+         ptmms[indx].gemmK = 
+            (TB == AtlasNoTrans) ? Mjoin(PATL,gemmNN) : Mjoin(PATL,gemmNT);
+      }
+#ifdef TCPLX
+      else if (TA == AtlasConjTrans)
+      {
+         if (TB == AtlasNoTrans)
+            ptmms[indx].gemmK = Mjoin(PATL,gemmNN);
+         else if (TB == AtlasConjTrans)
+            ptmms[indx].gemmK = Mjoin(PATL,gemmNC);
+         else
+            ptmms[indx].gemmK = Mjoin(PATL,gemmNT);
+      }
+#endif
+      else
+      {
+#ifdef TCPLX
+         if (TB == AtlasConjTrans)
+            ptmms[indx].gemmK = Mjoin(PATL,gemmTC);
+         else
+#endif
+         ptmms[indx].gemmK = 
+            (TB == AtlasNoTrans) ? Mjoin(PATL,gemmTN) : Mjoin(PATL,gemmTT);
+      }
+      ptmms[indx].A = A;
+      ptmms[indx].B = B;
+      ptmms[indx].C = C;
+      ptmms[indx].lda = lda;
+      ptmms[indx].ldb = ldb;
+      ptmms[indx].ldc = ldc;
+      ptmms[indx].M = MB*Mblks + mr;
+      ptmms[indx].N = NB*Nblks + nr;
+      ptmms[indx].K = KB*Kblks + kr;
+      ptmms[indx].nCw = COPYC ? 1 : 0;
+      ptmms[indx].Cw = NULL;
+/*
+ *    Make ldcw a multiple of 4 that is not a power of 2
+ */
+      i = ((ptmms[indx].M + 3)>>2)<<2;
+      for (j=0; j < 31; j++)
+      {
+         if (!((1<<j)^i))
+         {
+            i += 4;
+            break;
+         }
+      }
+      ptmms[indx].ldcw = i;
+#ifdef DEBUG
+fprintf(stderr, "%d: M=%d, N=%d, K=%d, A=%p, B=%p, C=%p, Cw=%p\n",
+        indx, ptmms[indx].M, ptmms[indx].N, ptmms[indx].K, 
+        ptmms[indx].A, ptmms[indx].B, ptmms[indx].C, ptmms[indx].Cw);
+#endif
+      return(1);
+   }
+
+   pR = P>>1;    /* on right, take P/2 threads */
+   pL = P - pR;  /* on left, take remaining threads */
+   d = (pR == pL) ? 0.5 : ((double)pL)/((double)P);    /* percent on left */
+
+/*
+ * Only cut K if it dominates M & N (here we say K must be 4 time larger)
+ * and M&N are small enough that we can afford to malloc C 
+ * (here we say C workspace must be 16MB or less) 
+ */
+   if ( ( ((Mblks < 2) && Nblks < 2) ||
+          (((Kblks>>2) > Mblks) && ((Kblks>>2) > Nblks)) )
+       && (Mblks*((Nblks*MB*ATL_MulBySize(NB)+1023)>>10) <= 16*1024))
+   {
+      nblksL = (d * Kblks);
+      nblksR = Kblks - nblksL;
+      i = (nblksL*KB + kr) SHIFT;
+      np = ATL_ptrdecomp(ptmms, TA, TB, Mblks, mr, Nblks, nr, nblksL, kr, 
+                         A, lda, B, ldb, C, ldc, pL, indx, COPYC);
+      np += ATL_ptrdecomp(ptmms, TA, TB, Mblks, mr, Nblks, nr, nblksR, 0, 
+                          (TA==AtlasNoTrans) ? A+lda*i : A+i, lda, 
+                          (TB == AtlasNoTrans) ? B+i : B+i*ldb, ldb, 
+                          C, ldc, pR, indx+pL, 1);
+      return(np);
+   }
+   else if (Mblks >= Nblks)  /* split M */
+   {
+      nblksL = (d * Mblks);
+      nblksR = Mblks - nblksL;
+      i = (nblksL*MB+mr) SHIFT;
+      np = ATL_ptrdecomp(ptmms, TA, TB, nblksL, mr, Nblks, nr, Kblks, kr, 
+                         A, lda, B, ldb, C, ldc, pL, indx, COPYC);
+      np += ATL_ptrdecomp(ptmms, TA, TB, nblksR, 0, Nblks, nr, Kblks, kr, 
+                          (TA==AtlasNoTrans) ? A+i : A+i*lda, lda, B, ldb, 
+                          C+i, ldc, pR, indx+pL, COPYC);
+      return(np);
+   }
+   else /* split N */
+   {
+      nblksL = (d * Nblks);
+      nblksR = Nblks - nblksL;
+      i = (nblksL*NB+nr) SHIFT;
+      np = ATL_ptrdecomp(ptmms, TA, TB, Mblks, mr, nblksL, nr, Kblks, kr, 
+                         A, lda, B, ldb, C, ldc, pL, indx, COPYC);
+      np += ATL_ptrdecomp(ptmms, TA, TB, Mblks, mr, nblksR, 0, Kblks, kr, 
+                          A,  lda, (TB == AtlasNoTrans) ? B+i*ldb : B+i, ldb, 
+                          C+i*ldc, ldc, pR, indx+pL, COPYC);
+      return(np);
+   }
+}
+
+int MMStructIsInit(void *vp)
+{
+   return(((ATL_PTMMNODE_t*)vp)->K);
+}
+
+void DoWorkMM(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+/*
+ * Current implementation doesn't need lp, but if we had an error queue or
+ * something similar we would need it, so keep it around
+ */
+{
+   ATL_PTMMNODE_t *mmp = vp;
+   TYPE *pC;
+   #ifdef TREAL
+      const TYPE ZERO = 0.0;
+   #else
+      const TYPE ZERO[2] = {0.0, 0.0};
+   #endif
+/*
+ * Allocate space if needed, do operation
+ */
+   if (mmp->nCw)
+   {
+/*
+ *    If malloc fails, we'll do the operation during the combine
+ */
+      pC = mmp->Cw = malloc(ATL_MulBySize(mmp->ldcw)*mmp->N+ATL_Cachelen);
+      if (pC)
+      {
+         mmp->gemmK(mmp->M, mmp->N, mmp->K, mmp->alpha, mmp->A, mmp->lda,
+                    mmp->B, mmp->ldb, ZERO, ATL_AlignPtr(pC), mmp->ldcw);
+      }
+#ifdef DEBUG
+      else
+         fprintf(stderr, "%d: unable to allocate C(%dx%d)!!\n", 
+                 mmp->rank, mmp->M, mmp->N);
+#endif
+   }
+   else  /* do GEMM directly into original C; no possibility of failure! */
+      mmp->gemmK(mmp->M, mmp->N, mmp->K, mmp->alpha, mmp->A, mmp->lda,
+                       mmp->B, mmp->ldb, mmp->beta, mmp->C, mmp->ldc);
+}
+
+void CombineMMStructs(void *vme, void *vhim)
+{
+   ATL_PTMMNODE_t *mme = vme, *mhim = vhim, *mcp, *mycp;
+   int i, j;
+   #ifdef TREAL
+      const TYPE ONE = 1.0;
+   #else
+      const TYPE ONE[2] = {1.0, 0.0};
+   #endif
+
+/*
+ * Need to combine only if joining thread has C in workspace
+ */
+   if (mhim->nCw)
+   { 
+/*
+ *    For all of his workspaces, find out where to combine them into
+ */
+      for (i=0; i < mhim->nCw; i++)
+      {
+         mcp = mhim->Cinfp[i];
+/*
+ *       If I have no workspaces, I own C and can directly modify it
+ */
+         if (mme->nCw == 0)
+         {
+            if (mcp->Cw)  /* his malloc succeeded */
+            {
+               Mjoin(PATL,geadd)(mcp->M, mcp->N, ONE,
+                                 ATL_AlignPtr(mcp->Cw), mcp->ldcw,
+                                 ONE, mcp->C, mcp->ldc);
+               free(mcp->Cw);
+            }
+            else if (mcp->nCw)  /* must do GEMM since he couldn't malloc */
+               mcp->gemmK(mcp->M, mcp->N, mcp->K, mcp->alpha, mcp->A, mcp->lda,
+                          mcp->B, mcp->ldb, ONE, mcp->C, mcp->ldc);
+         }
+/*
+ *       If I use workspaces, must either combine his result with mine
+ *       (as when K has been cut *after* M/N) or add it to my list
+ */
+         else
+         {
+            for (j=0; j < mme->nCw; j++)   /* loop over my workspaces */
+            {
+               mycp = mme->Cinfp[j];
+/*
+ *             If we are writing to same place, combine his C with mine
+ */
+               if (mycp->C == mcp->C)
+               { 
+                  if (mycp->Cw)  /* I succeeded in mallocing this space */
+                  {
+                     Mjoin(PATL,geadd)(mcp->M, mcp->N, ONE,
+                                       ATL_AlignPtr(mcp->Cw), mcp->ldcw, ONE,
+                                       ATL_AlignPtr(mycp->Cw), mycp->ldcw);
+                     free(mcp->Cw);
+                  }
+/*
+ *                If my work allocation failed, do the operation into his now
+ */
+                  else if (mcp->Cw)
+                  {
+                     mycp->Cw = mcp->Cw;
+                     mycp->ldcw = mcp->ldcw;
+                     mcp->gemmK(mycp->M, mycp->N, mycp->K, mycp->alpha, 
+                                mycp->A, mycp->lda, mycp->B, mycp->ldb, ONE,
+                                ATL_AlignPtr(mycp->Cw), mycp->ldcw);
+                  }
+                  else  /* we both failed to allocate space */
+                  {     /* so just add to list for someone else to do */
+                     mme->Cinfp[mme->nCw] = mcp;
+                     (mme->nCw)++;
+                  }
+                  break;
+               }
+            }
+/*
+ *          If we have no workspace going to same place as his,
+ *          add his workspace to my list of workspaces
+ */
+            if (j == mme->nCw)
+            {
+               mme->Cinfp[j] = mcp;
+               mme->nCw = j + 1;
+            }
+         }
+      }
+   }
+}
+
+void *ATL_log2launch(void *vp)
+{
+   ATL_LAUNCHSTRUCT2_t *lps = vp, *blps;
+   ATL_LAUNCHSTRUCT_t *lp;
+   ATL_PTMMNODE_t *mmp;
+   int i, iam, abit, mask, src, dest;
+   #ifdef TREAL
+      const TYPE ONE=1.0, ZERO=0.0;
+   #else
+      const TYPE ONE[2] = {1.0, 0.0}, ZERO[2] = {0.0, 0.0};
+   #endif
+
+   iam = lps->rank;
+   blps = lps - iam;
+   lp = lps->ls;
+   mmp = (ATL_PTMMNODE_t*)(lp->opstruct);
+   mask = (1<<ATL_NTHRPOW2) - 1;   /* no threads are in at beginning */
+/*
+ * Take log_2(NTHR) steps to do log_2 launch 
+ */
+   for (i=ATL_NTHRPOW2-1; i >= 0; i--)
+   {
+      abit = (1<<i);
+      mask ^= abit;   /* double the # of threads participating */
+      if (!(iam & mask))
+      {
+         if (!(iam & abit))
+         {
+            dest = iam ^ abit;
+            if (lp->OpStructIsInit(mmp+dest))
+            {
+               ATL_thread_init_pa(&lp->attr[dest], dest);
+               ATL_assert(!pthread_create(&lp->rank2thr[dest], &lp->attr[dest], 
+                                          ATL_log2launch, blps+dest));
+            }
+         }
+      }
+   }
+   lp->DoWork(lp, mmp+iam);   /* do the operation */
+/*
+ * Join tree back up, combining results as required
+ */
+   mask = 0;
+   for (i=0; i < ATL_NTHRPOW2; i++)
+   {
+      if (!(iam & mask))
+      {
+         abit = (1<<i);
+         if (!(iam & abit))
+         {
+            src = iam ^ abit;
+            if (lp->OpStructIsInit(mmp+src))
+            {
+               pthread_join(lp->rank2thr[src], NULL);
+               pthread_attr_destroy(&lp->attr[src]);
+               if (lp->CombineOpStructs)
+                  lp->CombineOpStructs(mmp+iam, mmp+src);
+            }
+         }
+         else
+            pthread_exit(NULL);
+      }
+      mask |= abit;
+   }
+   return(NULL);
+}
+
+
+void ATL_launchMM(enum ATLAS_TRANS TA, enum ATLAS_TRANS TB, 
+                  ATL_INT M, ATL_INT N, ATL_INT K, SCALAR alpha, TYPE *A, 
+                  int lda, TYPE *B, int ldb, SCALAR beta, TYPE *C, int ldc)
+{
+   ATL_LAUNCHSTRUCT2_t lss[ATL_NTHREADS];
+   ATL_LAUNCHSTRUCT_t ls;
+   ATL_PTMMNODE_t mms[ATL_NTHREADS];
+   unsigned long cpuset;
+   int i, np;
+
+/*
+ * Don't thread if the compute/mem ratio is essentially like a Level 1 blas
+ */
+   i = Mmin(M,N);
+   i = Mmin(i, K);
+   if (i < 8)
+      np = 1;
+   else
+   {
+      InitPTMMNodes(alpha, beta, mms);
+      np = ATL_ptrdecomp(mms, TA, TB, M/MB, M%MB, N/NB, N%NB, K/KB, K%KB, 
+                         A, lda, B, ldb, C, ldc, ATL_NTHREADS, 0, 0);
+   }
+#ifdef DEBUG
+fprintf(stderr, "np=%d\n\n", np);
+#endif
+   if (np < 2)
+   {
+      Mjoin(PATL,gemm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+      return;
+   }
+   ls.opstruct = (char*) mms;
+   ls.opstructstride = (int) ( (mms+1) - mms );
+   ls.OpStructIsInit = MMStructIsInit;
+   ls.CombineOpStructs = CombineMMStructs;
+   ls.DoWork = DoWorkMM;
+   for (i=0; i < ATL_NTHREADS; i++)
+   {
+      lss[i].ls = &ls;
+      lss[i].rank = i;
+   }
+   ATL_thread_init_pa(ls.attr, 0);
+   ATL_assert(!pthread_create(&ls.rank2thr[0], &ls.attr[0], ATL_log2launch, 
+                              lss));
+   ATL_assert(!pthread_join(ls.rank2thr[0], NULL));
+}
+#endif
+@endskip
+
+@define rname @Mjoin( PATL, ptgemm )@
+void @(rname)
+(
+   const enum ATLAS_TRANS     TRANSA,
+   const enum ATLAS_TRANS     TRANSB,
+   const int                  M,
+   const int                  N,
+   const int                  K,
+   const SCALAR               ALPHA,
+   const TYPE                 * A,
+   const int                  LDA,
+   const TYPE                 * B,
+   const int                  LDB,
+   const SCALAR               BETA,
+   TYPE                       * C,
+   const int                  LDC
+)
+{
+@extract @(ATLAS_PT3_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  root = NULL;
+   pthread_attr_t             attr;
+#ifdef TREAL
+   TYPE                       alpha0 = ALPHA, beta0 = BETA;
+#endif
+@extract @(EXECUTABLE_STATEMENT)
+   if( ( M == 0 ) || ( N == 0 ) ||
+       ( ( SCALAR_IS_ZERO( ALPHA ) || ( K == 0 ) ) &&
+         SCALAR_IS_ONE( BETA ) ) ) return;
+ 
+   if( SCALAR_IS_ZERO( ALPHA ) )
+   {
+      if( SCALAR_IS_ZERO( BETA ) ) { Mjoin( PATL, ptgezero )( M, N, C, LDC ); }
+      else                   { Mjoin( PATL, ptgescal )( M, N, BETA, C, LDC ); }
+      return;
+   }
+
+   ATL_thread_init( &attr );
+#ifdef TREAL
+   root = Mjoin( PATL, ptgemm_nt )( ATL_NTHREADS, &attr, TRANSA, TRANSB,
+                                    M, N, K, (void *)(&alpha0), (void *)(A),
+                                    LDA, (void *)(B), LDB, (void *)(&beta0),
+                                    (void *)(C), LDC );
+#else
+   root = Mjoin( PATL, ptgemm_nt )( ATL_NTHREADS, &attr, TRANSA, TRANSB,
+                                    M, N, K, (void *)(ALPHA), (void *)(A),
+                                    LDA, (void *)(B), LDB, (void *)(BETA),
+                                    (void *)(C), LDC );
+#endif
+   ATL_join_tree  ( root );
+   ATL_free_tree  ( root );
+   ATL_thread_free( &attr );
+@beginskip
+#else
+   ATL_launchMM(TRANSA, TRANSB, M, N, K, ALPHA, A, LDA, B, LDB, BETA, C, LDC);
+#endif
+@endskip
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+@define rname @Mjoin( PATL, ptgemm_nt )@
+PT_TREE_T @(rname)
+(
+   const unsigned int         NTHREADS,
+   pthread_attr_t             * ATTR,
+   const enum ATLAS_TRANS     TRANSA,
+   const enum ATLAS_TRANS     TRANSB,
+   const int                  M,
+   const int                  N,
+   const int                  K,
+   const void                 * ALPHA,
+   const void                 * A,
+   const int                  LDA,
+   const void                 * B,
+   const int                  LDB,
+   const void                 * BETA,
+   void                       * C,
+   const int                  LDC
+)
+{ 
+@extract @(ATLAS_PT3_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  root = NULL;
+   PT_LVL3_TYPE_T             type;
+   double                     tblks;
+#ifdef TREAL
+   TYPE                       alpha, beta;
+#else
+   TYPE                       alpha[2], beta[2];
+#endif
+   unsigned int               nthreads;
+   int                        nb, nbm1, NOTHR;
+@extract @(EXECUTABLE_STATEMENT)
+   nbm1  = ( nb = Mjoin( PATL, GetNB )() ) - 1;
+   tblks = (double)( (M+nbm1) / nb ) * (double)( (N+nbm1) / nb ) *
+           (double)( (K+nbm1) / nb );
+/*
+ * When two dimensions or more are less than NB, do not thread.
+ * Changed by RCW to allow threading if tblks is very large.  Need to replace
+ * this with a probe.
+ */
+   NOTHR = (tblks <= (double)(ATL_XOVER_L3_DEFAULT)) || (NTHREADS <= 1);
+   NOTHR = NOTHR & ( ((M<=nb && N<=nb) || (M<=nb && K<=nb) || (N<=nb && K<=nb))
+                     && tblks < 256 );
+@beginskip
+   if( ( ( M <= nb ) && ( N <= nb ) ) || ( ( N <= nb ) && ( K <= nb ) ) ||
+       ( ( K <= nb ) && ( M <= nb ) ) || ( NTHREADS <= 1 ) || 
+       ( tblks <= (double)(ATL_XOVER_L3_DEFAULT) ) )
+@endskip
+   if (NOTHR)
+   {
+#ifdef TREAL
+      alpha    = *((TYPE *)(ALPHA));   beta     = *((TYPE *)(BETA));
+#else
+      alpha[0] = ((TYPE *)(ALPHA))[0]; alpha[1] = ((TYPE *)(ALPHA))[1];
+      beta [0] = ((TYPE *)(BETA ))[0]; beta [1] = ((TYPE *)(BETA ))[1];
+#endif
+      Mjoin( PATL, gemm )( TRANSA, TRANSB, M, N, K, alpha, (TYPE *)(A), LDA,
+                           (TYPE *)(B), LDB, beta, (TYPE *)(C), LDC );
+      return( root );
+   }
+ 
+   if( tblks >= (double)(NTHREADS) ) { nthreads = NTHREADS; }
+   else    { nthreads = (unsigned int)floor( tblks + 0.5 ); }
+
+   Mjoin( PATL, ptl3settype )( &type );
+   root = ATL_Sgemm( &type, 0, nthreads, ATTR, nb, TRANSA, TRANSB, M, N, K,
+                     ALPHA, A, LDA, B, LDB, BETA, C, LDC );
+   ATL_thread_tree( root, ATTR );
+
+   return( root );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_Ssymm
+@define rname @ATL_Ssymm@
+@extract @(VER_ATLAS_SRC)
+@extract @(PT3_INCLUDE)
+ 
+PT_TREE_T @(rname)
+(
+   const PT_LVL3_TYPE_T       * PLVL3,
+   const unsigned int         NODE,
+   const unsigned int         NTHREADS,
+   pthread_attr_t             * ATTR,
+   const int                  NB,
+   const enum ATLAS_TRANS     TGEMM,
+   const enum ATLAS_SIDE      SIDE,
+   const enum ATLAS_UPLO      UPLO,
+   const int                  M,
+   const int                  N,
+   const void                 * ALPHA,
+   const void                 * A,
+   const int                  LDA,
+   const void                 * B,
+   const int                  LDB,
+   const void                 * BETA,
+   void                       * C,
+   const int                  LDC
+)
+{
+@extract @(ATLAS_PT3_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  left, right, tree = NULL;
+   PT_SYMM_ARGS_T             * a_mm = NULL;
+   double                     rm, rn;
+   DIM_1DSPLIT_T              splitM, splitN;
+   size_t                     size;
+   unsigned int               next = ( NODE << 1 ), ntm1, ntm2, ntn1, ntn2;
+   int                        incB, incC, m1, m2, n1, n2;
+@extract @(EXECUTABLE_STATEMENT)
+   if( NTHREADS < 1 ) return( tree );
+
+   size = PLVL3->size;
+ 
+   if( SIDE == AtlasLeft )
+   {
+      splitN = ATL_1dsplit( NTHREADS, N, NB, &ntn1, &ntn2, &n1, &n2, &rn );
+
+      if( splitN == Atlas1dSplit )
+      {
+         left  = ATL_Ssymm( PLVL3, next+1, ntn1, ATTR, NB, TGEMM, SIDE, UPLO,
+                            M, n1, ALPHA, A, LDA, B, LDB, BETA, C, LDC );
+         incB  = n1 * LDB;
+         incC  = n1 * LDC;
+         right = ATL_Ssymm( PLVL3, next+2, ntn2, ATTR, NB, TGEMM, SIDE, UPLO,
+                            M, n2, ALPHA, A, LDA, Mvpt3( B, incB, size ), LDB,
+                            BETA, Mvpt3( C, incC, size ), LDC );
+         tree  = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+      }
+      else
+      {
+         a_mm = (PT_SYMM_ARGS_T *)malloc( sizeof( PT_SYMM_ARGS_T ) );
+         ATL_assert( a_mm != NULL );
+         a_mm->si = SIDE; a_mm->up = UPLO;
+         a_mm->m  = M;    a_mm->n  = N;    a_mm->al = ALPHA;
+         a_mm->a  = A;    a_mm->la = LDA;  a_mm->b  = B;     a_mm->lb = LDB;
+         a_mm->be = BETA; a_mm->c  = C;    a_mm->lc = LDC;
+         tree = ATL_init_node( NODE, NULL, NULL, NULL, NULL,
+                               ( TGEMM == AtlasConjTrans ? PLVL3->hemm0 : 
+                               PLVL3->symm0 ), (void *)(a_mm) );
+      }
+   }
+   else
+   {
+      splitM = ATL_1dsplit( NTHREADS, M, NB, &ntm1, &ntm2, &m1, &m2, &rm );
+
+      if( splitM == Atlas1dSplit )
+      {
+         left  = ATL_Ssymm( PLVL3, next+1, ntm1, ATTR, NB, TGEMM, SIDE, UPLO,
+                            m1, N, ALPHA, A, LDA, B, LDB, BETA, C, LDC );
+         incB  = m1;
+         incC  = m1;
+         right = ATL_Ssymm( PLVL3, next+2, ntm2, ATTR, NB, TGEMM, SIDE, UPLO,
+                            m2, N, ALPHA, A, LDA, Mvpt3( B, incB, size ), LDB,
+                            BETA, Mvpt3( C, incC, size ), LDC );
+         tree  = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+      }
+      else
+      {
+         a_mm = (PT_SYMM_ARGS_T *)malloc( sizeof( PT_SYMM_ARGS_T ) );
+         ATL_assert( a_mm != NULL );
+         a_mm->si = SIDE; a_mm->up = UPLO;
+         a_mm->m  = M;    a_mm->n  = N;    a_mm->al = ALPHA;
+         a_mm->a  = A;    a_mm->la = LDA;  a_mm->b  = B;     a_mm->lb = LDB;
+         a_mm->be = BETA; a_mm->c  = C;    a_mm->lc = LDC;
+         tree = ATL_init_node( NODE, NULL, NULL, NULL, NULL,
+                               ( TGEMM == AtlasConjTrans ? PLVL3->hemm0 : 
+                               PLVL3->symm0 ), (void *)(a_mm) );
+      }
+   }
+
+   return( tree );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_pthemm
+@define sh @he@
+@rout ATL_ptsymm
+@define sh @sy@
+@rout ATL_pthemm ATL_ptsymm
+@extract @(VER_ATLAS_SRC)
+@extract @(PT3_INCLUDE)
+
+@define rname @Mjoin( PATL, pt@(sh)mm0 )@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  root = (PT_TREE_T)(ARGS);
+   PT_SYMM_ARGS_T             * arg;
+@extract @(EXECUTABLE_STATEMENT)
+   ATL_wait_tree( root );
+   arg = (PT_SYMM_ARGS_T *)(root->arg);
+
+#define  _PT_SIDE      (arg->si)
+#define  _PT_UPLO      (arg->up)
+
+#define  _PT_M         (arg->m)
+#define  _PT_N         (arg->n)
+ 
+#ifdef TREAL
+#define  _PT_ALPHA     (SCALAR)(*((TYPE *)(arg->al)))
+#define  _PT_BETA      (SCALAR)(*((TYPE *)(arg->be)))
+#else
+#define  _PT_ALPHA     (SCALAR)(arg->al)
+#define  _PT_BETA      (SCALAR)(arg->be)
+#endif
+ 
+#define  _PT_A         ((TYPE *)(arg->a))
+#define  _PT_LDA       (arg->la)
+#define  _PT_B         ((TYPE *)(arg->b))
+#define  _PT_LDB       (arg->lb)
+#define  _PT_C         ((TYPE *)(arg->c))
+#define  _PT_LDC       (arg->lc)
+
+   Mjoin( PATL, @(sh)mm )( _PT_SIDE, _PT_UPLO, _PT_M, _PT_N, _PT_ALPHA,
+                        _PT_A, _PT_LDA, _PT_B, _PT_LDB, _PT_BETA, _PT_C,
+                        _PT_LDC );
+   ATL_signal_tree( root );
+ 
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+@define rname @Mjoin( PATL, pt@(sh)mm )@
+void @(rname)
+(
+   const enum ATLAS_SIDE      SIDE,
+   const enum ATLAS_UPLO      UPLO,
+   const int                  M,
+   const int                  N,
+   const SCALAR               ALPHA,
+   const TYPE                 * A,
+   const int                  LDA,
+   const TYPE                 * B,
+   const int                  LDB,
+   const SCALAR               BETA,
+   TYPE                       * C,
+   const int                  LDC
+)
+{
+@extract @(ATLAS_PT3_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  root = NULL;
+   pthread_attr_t             attr;
+#ifdef TREAL
+   TYPE                       alpha0 = ALPHA, beta0 = BETA;
+#endif
+@extract @(EXECUTABLE_STATEMENT)
+   if( ( M == 0 ) || ( N == 0 ) ||
+       ( ( SCALAR_IS_ZERO( ALPHA ) ) && ( SCALAR_IS_ONE( BETA ) ) ) )
+      return;
+ 
+   if( SCALAR_IS_ZERO( ALPHA ) )
+   {
+      if( SCALAR_IS_ZERO( BETA ) ) { Mjoin( PATL, ptgezero )( M, N, C, LDC ); }
+      else                   { Mjoin( PATL, ptgescal )( M, N, BETA, C, LDC ); }
+      return;
+   }
+
+   ATL_thread_init( &attr );
+@rout ATL_ptsymm
+#ifdef TREAL
+   root = Mjoin( PATL, pt@(sh)mm_nt )( ATL_NTHREADS, &attr, SIDE, UPLO, M, N,
+                                    (void *)(&alpha0), (void *)(A), LDA,
+                                    (void *)(B), LDB, (void *)(&beta0),
+                                    (void *)(C), LDC );
+#else
+   root = Mjoin( PATL, pt@(sh)mm_nt )( ATL_NTHREADS, &attr, SIDE, UPLO, M, N,
+                                    (void *)(ALPHA), (void *)(A), LDA,
+                                    (void *)(B), LDB, (void *)(BETA),
+                                    (void *)(C), LDC );
+#endif
+@rout ATL_pthemm
+   root = Mjoin( PATL, pt@(sh)mm_nt )( ATL_NTHREADS, &attr, SIDE, UPLO, M, N,
+                                    (void *)(ALPHA), (void *)(A), LDA,
+                                    (void *)(B), LDB, (void *)(BETA),
+                                    (void *)(C), LDC );
+@rout ATL_pthemm ATL_ptsymm
+   ATL_join_tree  ( root );
+   ATL_free_tree  ( root );
+   ATL_thread_free( &attr );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+@define rname @Mjoin( PATL, pt@(sh)mm_nt )@
+PT_TREE_T @(rname)
+(
+   const unsigned int         NTHREADS,
+   pthread_attr_t             * ATTR,
+   const enum ATLAS_SIDE      SIDE,
+   const enum ATLAS_UPLO      UPLO,
+   const int                  M,
+   const int                  N,
+   const void                 * ALPHA,
+   const void                 * A,
+   const int                  LDA,
+   const void                 * B,
+   const int                  LDB,
+   const void                 * BETA,
+   void                       * C,
+   const int                  LDC
+)
+{
+@extract @(ATLAS_PT3_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  root = NULL;
+   PT_LVL3_TYPE_T             type;
+#ifdef TREAL
+   TYPE                       alpha, beta;
+#else
+   TYPE                       alpha[2], beta[2];
+#endif
+   double                     tblks;
+   unsigned int               nthreads;
+   int                        nb, nbm1;
+@extract @(EXECUTABLE_STATEMENT)
+   nbm1  = ( nb = Mjoin( PATL, GetNB )() ) - 1;
+   tblks = (double)( (M+nbm1) / nb ) * (double)( (N+nbm1) / nb );
+
+   if( SIDE == AtlasLeft ) { tblks *= (double)( (M+nbm1) / nb ); }
+   else                    { tblks *= (double)( (N+nbm1) / nb ); }
+
+   if( ( M <= nb ) || ( N <= nb ) || ( NTHREADS <= 1 ) ||
+       ( tblks <= (double)(ATL_XOVER_L3_DEFAULT) ) )
+   {
+#ifdef TREAL
+      alpha    = *((TYPE *)(ALPHA));   beta     = *((TYPE *)(BETA));
+#else
+      alpha[0] = ((TYPE *)(ALPHA))[0]; alpha[1] = ((TYPE *)(ALPHA))[1];
+      beta [0] = ((TYPE *)(BETA ))[0]; beta [1] = ((TYPE *)(BETA ))[1];
+#endif
+      Mjoin( PATL, @(sh)mm )( SIDE, UPLO, M, N, alpha, (TYPE *)(A), LDA,
+                           (TYPE *)(B), LDB, beta, (TYPE *)(C), LDC );
+      return( root );
+   }
+ 
+   if( tblks >= (double)(NTHREADS) ) { nthreads = NTHREADS; }
+   else    { nthreads = (unsigned int)floor( tblks + 0.5 ); }
+
+   Mjoin( PATL, ptl3settype )( &type );
+@rout ATL_ptsymm
+   root = ATL_Ssymm( &type, 0, nthreads, ATTR, nb, AtlasTrans, SIDE, UPLO,
+                     M, N, ALPHA, A, LDA, B, LDB, BETA, C, LDC );
+@rout ATL_pthemm
+   root = ATL_Ssymm( &type, 0, nthreads, ATTR, nb, AtlasConjTrans, SIDE,
+                     UPLO, M, N, ALPHA, A, LDA, B, LDB, BETA, C, LDC );
+@rout ATL_pthemm ATL_ptsymm
+   ATL_thread_tree( root, ATTR );
+
+   return( root );
+@extract @(END_OF_ROUTINE) 
+@undef rname
+@skip
+@skip
+@rout ATL_Ssyr2k
+@define rname @ATL_Ssyr2k@
+@extract @(VER_ATLAS_SRC)
+@extract @(PT3_INCLUDE)
+ 
+PT_TREE_T @(rname)
+(
+   const PT_LVL3_TYPE_T       * PLVL3,
+   const unsigned int         NODE,
+   const unsigned int         NTHREADS,
+   pthread_attr_t             * ATTR,
+   const int                  NB,
+   const enum ATLAS_UPLO      UPLO,
+   const enum ATLAS_TRANS     TRANS,
+   const enum ATLAS_TRANS     TGEMM,
+   const int                  M,
+   const int                  N,
+   const int                  K,
+   const int                  L,
+   const void                 * ALPHA,
+   const void                 * ALPHC,
+   const void                 * A,
+   const int                  LDA,
+   const void                 * B,
+   const int                  LDB,
+   const void                 * BETA,
+   void                       * C,
+   const int                  LDC
+)
+{
+@extract @(ATLAS_PT3_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  left, right, tree = NULL, root;
+   PT_SYR2K_ARGS_T            * a_syr2k  = NULL;
+#if 1
+   double                     rn;
+   DIM_1DSPLIT_T              splitN;
+   size_t                     size;
+   unsigned int               next = ( NODE << 1 ), nt1, nt2;
+   int                        failed, incA, incB, incC, mnk1, mnk2;
+#else
+   size_t                     size;
+   DIM_TZSPLIT_T              split = AtlasTzNoSplit;
+   unsigned int               next = ( NODE << 1 ), nt1, nt2;
+   int                        failed, incA, incB, incC, mnk1, mnk2;
+#endif
+@extract @(EXECUTABLE_STATEMENT)
+   if( NTHREADS < 1 ) return( tree );
+
+   size  = PLVL3->size;
+
+   if( M < 0 || N < 0 ) return( tree ); /* temporary */
+
+#if 1
+   if( TGEMM == AtlasTrans )
+   {
+      failed = PLVL3->ptsyr2k0( NTHREADS, ATTR, UPLO, TRANS, TGEMM, K, L,
+                                ALPHA, A, LDA, B, LDB, BETA, C, LDC );
+   }
+   else
+   {
+      failed = PLVL3->pther2k0( NTHREADS, ATTR, UPLO, TRANS, TGEMM, K, L,
+                                ALPHA, A, LDA, B, LDB, BETA, C, LDC );
+   }
+
+   if( failed )
+   {
+      splitN = ATL_1dsplit( NTHREADS, K, NB, &nt1, &nt2, &mnk1, &mnk2, &rn );
+
+      if( splitN == Atlas1dSplit )
+      {
+         left  = ATL_Ssyr2k( PLVL3, next+1, NTHREADS, ATTR, NB, UPLO, TRANS,
+                             TGEMM, 0, 0, mnk1, L, ALPHA, ALPHC, A, LDA,
+                             B, LDB, BETA, C, LDC );
+
+         if( UPLO == AtlasLower )
+         {
+            if( TRANS == AtlasNoTrans )
+            {
+               incA  = mnk1; incB  = mnk1; incC  = mnk1;
+
+               root = PLVL3->ptgemm( NTHREADS, ATTR, AtlasNoTrans, TGEMM, mnk2,
+                                     mnk1, L, ALPHA, Mvpt3( A, incA, size ),
+                                     LDA, B, LDB, BETA, Mvpt3( C, incC, size ),
+                                     LDC );
+               ATL_join_tree  ( root );
+               ATL_free_tree  ( root );
+ 
+               root = PLVL3->ptgemm( NTHREADS, ATTR, AtlasNoTrans, TGEMM, mnk2,
+                                     mnk1, L, ALPHC, Mvpt3( B, incB, size ),
+                                     LDB, A, LDA, PLVL3->one, Mvpt3( C, incC,
+                                     size ), LDC );
+               ATL_join_tree  ( root );
+               ATL_free_tree  ( root );
+ 
+               incC += mnk1 * LDC;
+            }
+            else
+            {
+               incA  = mnk1 * LDA; incB  = mnk1 * LDB; incC  = mnk1;
+ 
+               root = PLVL3->ptgemm( NTHREADS, ATTR, TGEMM, AtlasNoTrans, mnk2,
+                                     mnk1, L, ALPHA, Mvpt3( A, incA, size ),
+                                     LDA, B, LDB, BETA, Mvpt3( C, incC, size ),
+                                     LDC );
+               ATL_join_tree  ( root );
+               ATL_free_tree  ( root );
+ 
+               root = PLVL3->ptgemm( NTHREADS, ATTR, TGEMM, AtlasNoTrans, mnk2,
+                                     mnk1, L, ALPHC, Mvpt3( B, incB, size ),
+                                     LDB, A, LDA, PLVL3->one, Mvpt3( C, incC,
+                                     size ), LDC );
+               ATL_join_tree  ( root );
+               ATL_free_tree  ( root );
+ 
+               incC += mnk1 * LDC;
+            }
+
+         }
+         else
+         {
+            if( TRANS == AtlasNoTrans )
+            {
+               incA  = mnk1; incB  = mnk1; incC  = mnk1 * LDC;
+ 
+               root = PLVL3->ptgemm( NTHREADS, ATTR, AtlasNoTrans, TGEMM, mnk1,
+                                     mnk2, L, ALPHA, A, LDA, Mvpt3( B, incB,
+                                     size ), LDB, BETA, Mvpt3( C, incC, size ),
+                                     LDC );
+               ATL_join_tree  ( root );
+               ATL_free_tree  ( root );
+ 
+               root = PLVL3->ptgemm( NTHREADS, ATTR, AtlasNoTrans, TGEMM, mnk1,
+                                     mnk2, L, ALPHC, B, LDB, Mvpt3( A, incA,
+                                     size ), LDA, PLVL3->one, Mvpt3( C, incC,
+                                     size ), LDC );
+               ATL_join_tree  ( root );
+               ATL_free_tree  ( root );
+ 
+               incC += mnk1;
+            }
+            else
+            {
+               incA  = mnk1 * LDA; incB  = mnk1 * LDB; incC  = mnk1 * LDC;
+
+               root = PLVL3->ptgemm( NTHREADS, ATTR, TGEMM, AtlasNoTrans, mnk1,
+                                     mnk2, L, ALPHA, A, LDA, Mvpt3( B, incB,
+                                     size ), LDB, BETA, Mvpt3( C, incC, size ),
+                                     LDC );
+               ATL_join_tree  ( root );
+               ATL_free_tree  ( root );
+ 
+               root = PLVL3->ptgemm( NTHREADS, ATTR, TGEMM, AtlasNoTrans, mnk1,
+                                     mnk2, L, ALPHC, B, LDB, Mvpt3( A, incA,
+                                     size ), LDA, PLVL3->one, Mvpt3( C, incC,
+                                     size ), LDC );
+               ATL_join_tree  ( root );
+               ATL_free_tree  ( root );
+ 
+               incC += mnk1;
+            }
+         }
+
+         right = ATL_Ssyr2k( PLVL3, next+2, NTHREADS, ATTR, NB, UPLO, TRANS,
+                             TGEMM, 0, 0, mnk2, L, ALPHA, ALPHC,
+                             Mvpt3( A, incA, size ), LDA,
+                             Mvpt3( B, incB, size ), LDB, BETA,
+                             Mvpt3( C, incC, size ), LDC );
+      }
+      else
+      {
+         a_syr2k = (PT_SYR2K_ARGS_T *)malloc( sizeof( PT_SYR2K_ARGS_T ) );
+         ATL_assert( a_syr2k != NULL );
+         a_syr2k->up = UPLO;  a_syr2k->tr = TRANS; a_syr2k->m  = 0;
+         a_syr2k->n  = 0;     a_syr2k->k  = K;     a_syr2k->l  = L;
+         a_syr2k->al = ALPHA; a_syr2k->ac = ALPHA; a_syr2k->a  = A;
+         a_syr2k->la = LDA;   a_syr2k->b  = B;     a_syr2k->lb = LDB;
+         a_syr2k->be = BETA;  a_syr2k->c  = C;     a_syr2k->lc = LDC;
+ 
+         tree = ATL_init_node( NODE, NULL, NULL, NULL, NULL, 
+                               ( TGEMM == AtlasTrans ? PLVL3->syr2k0 :
+                               PLVL3->her2k0 ), (void *)(a_syr2k) );
+      }
+   }
+
+   return( tree );
+#else
+   split = ATL_tzsplit( UPLO, NTHREADS, M, N, K, NB, &nt1, &nt2,
+                        &mnk1, &mnk2 );
+
+   if( split == AtlasSplitKrow )
+   {
+      if( UPLO == AtlasLower )
+      {
+         left  = ATL_Ssyr2k( PLVL3, next+1, nt1, ATTR, NB, UPLO, TRANS,
+                             TGEMM, 0, N, mnk1, L, ALPHA, ALPHC, A, LDA,
+                             B, LDB, BETA, C, LDC );
+         incA  = ( TRANS == AtlasNoTrans ? mnk1 : 0 );
+         incB  = ( TRANS == AtlasNoTrans ? mnk1 : 0 );
+         incC  = mnk1;
+         right = ATL_Ssyr2k( PLVL3, next+2, nt2, ATTR, NB, UPLO, TRANS,
+                             TGEMM, M, N + mnk1, mnk2, L, ALPHA, ALPHC, 
+                             Mvpt3( A, incA, size ), LDA,
+                             Mvpt3( B, incB, size ), LDB, BETA,
+                             Mvpt3( C, incC, size ), LDC );
+      }
+      else
+      {
+         left  = ATL_Ssyr2k( PLVL3, next+1, nt1, ATTR, NB, UPLO, TRANS,
+                             TGEMM, M, N + mnk2, mnk1, L, ALPHA, ALPHC,
+                             A, LDA, B, LDB, BETA, C, LDC );
+         incA  = ( TRANS == AtlasNoTrans ? mnk1 : mnk1 * LDA );
+         incB  = ( TRANS == AtlasNoTrans ? mnk1 : mnk1 * LDB );
+         incC  = mnk1 * ( LDC + 1 );
+         right = ATL_Ssyr2k( PLVL3, next+2, nt2, ATTR, NB, UPLO, TRANS,
+                             TGEMM, 0, N, mnk2, L, ALPHA, ALPHC,
+                             Mvpt3( A, incA, size ), LDA,
+                             Mvpt3( B, incB, size ), LDB, BETA,
+                             Mvpt3( C, incC, size ), LDC );
+      }
+      tree = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+   }
+   else if( split == AtlasSplitKcol )
+   {
+      if( UPLO == AtlasLower )
+      {
+         left  = ATL_Ssyr2k( PLVL3, next+1, nt1, ATTR, NB, UPLO, TRANS,
+                             TGEMM, M + mnk2, N, mnk1, L, ALPHA, ALPHC,
+                             A, LDA, B, LDB, BETA, C, LDC );
+         incA  = ( TRANS == AtlasNoTrans ? mnk1 : ( N + mnk1 ) * LDA );
+         incB  = ( TRANS == AtlasNoTrans ? mnk1 : ( N + mnk1 ) * LDB );
+         incC  = mnk1 + ( N + mnk1 ) * LDC;
+         right = ATL_Ssyr2k( PLVL3, next+2, nt2, ATTR, NB, UPLO, TRANS,
+                             TGEMM, M, 0, mnk2, L, ALPHA, ALPHC,
+                             Mvpt3( A, incA, size ), LDA,
+                             Mvpt3( B, incB, size ), LDB, BETA,
+                             Mvpt3( C, incC, size ), LDC );
+      }
+      else
+      {
+         left  = ATL_Ssyr2k( PLVL3, next+1, nt1, ATTR, NB, UPLO, TRANS,
+                             TGEMM, M, 0, mnk1, L, ALPHA, ALPHC, A, LDA,
+                             B, LDB, BETA, C, LDC );
+         incA  = ( TRANS == AtlasNoTrans ? 0 : mnk1 * LDA );
+         incB  = ( TRANS == AtlasNoTrans ? 0 : mnk1 * LDB );
+         incC  = mnk1 * LDC;
+         right = ATL_Ssyr2k( PLVL3, next+2, nt2, ATTR, NB, UPLO, TRANS,
+                             TGEMM, M + mnk1, N, mnk2, L, ALPHA, ALPHC,
+                             Mvpt3( A, incA, size ), LDA,
+                             Mvpt3( B, incB, size ), LDB, BETA,
+                             Mvpt3( C, incC, size ), LDC );
+      }
+      tree = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+   }
+   else
+   {
+      a_syr2k = (PT_SYR2K_ARGS_T *)malloc( sizeof( PT_SYR2K_ARGS_T ) );
+      ATL_assert( a_syr2k != NULL );
+      a_syr2k->up = UPLO;  a_syr2k->tr = TRANS; a_syr2k->m  = M;
+      a_syr2k->n  = N;     a_syr2k->k  = K;     a_syr2k->l  = L;
+      a_syr2k->al = ALPHA; a_syr2k->ac = ALPHA; a_syr2k->a  = A;
+      a_syr2k->la = LDA;   a_syr2k->b  = B;     a_syr2k->lb = LDB;
+      a_syr2k->be = BETA;  a_syr2k->c  = C;     a_syr2k->lc = LDC;
+ 
+      tree = ATL_init_node( NODE, NULL, NULL, NULL, NULL, 
+                            ( TGEMM == AtlasTrans ? PLVL3->syr2k0 :
+                            PLVL3->her2k0 ), (void *)(a_syr2k) );
+   }
+ 
+   return( tree );
+#endif
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_ptsyr2k
+@define sh @sy@
+@rout ATL_pther2k
+@define sh @he@
+@rout ATL_pther2k ATL_ptsyr2k
+@extract @(VER_ATLAS_SRC)
+@extract @(PT3_INCLUDE)
+#include "atlas_lvl3.h"
+#include "atlas_kern3.h"
+
+@define rname @Mjoin( PATL, pt@(sh)r2k0 )@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(LOCAL_VARIABLE)
+#ifdef TREAL
+   TYPE                       one    = ATL_rone;
+#else
+   TYPE                       one[2] = { ATL_rone, ATL_rzero };
+#endif
+   PT_TREE_T                  root = (PT_TREE_T)(ARGS);
+   PT_SYR2K_ARGS_T            * arg;
+   int                        k, l, la, lb, lc, m, n;
+@extract @(EXECUTABLE_STATEMENT)
+   ATL_wait_tree( root );
+   arg = (PT_SYR2K_ARGS_T *)(root->arg);
+
+@rout ATL_ptsyr2k
+#ifdef TREAL
+#define  _PT_ALPHA     (SCALAR)(*((TYPE *)(arg->al)))
+#define  _PT_ALPHC     (SCALAR)(*((TYPE *)(arg->al)))
+#define  _PT_BETA      (SCALAR)(*((TYPE *)(arg->be)))
+#define  _PT_BETA_R    (SCALAR)(*((TYPE *)(arg->be)))
+#else
+#define  _PT_ALPHA     (SCALAR)(arg->al)
+#define  _PT_ALPHC     (SCALAR)(arg->al)
+#define  _PT_BETA      (SCALAR)(arg->be)
+#define  _PT_BETA_R    (SCALAR)(arg->be)
+#endif
+
+#define  _PT_GEMM_Nx   Mjoin( PATL, gemmNT )
+#define  _PT_GEMM_xN   Mjoin( PATL, gemmTN )
+
+@rout ATL_pther2k
+#define  _PT_ALPHA     (SCALAR)(arg->al)
+#define  _PT_ALPHC     (SCALAR)(arg->ac)
+#define  _PT_BETA      (SCALAR)(arg->be)
+#define  _PT_BETA_R    *((TYPE *)(arg->be))
+
+#define  _PT_GEMM_Nx   Mjoin( PATL, gemmNC )
+#define  _PT_GEMM_xN   Mjoin( PATL, gemmCN )
+@rout ATL_pther2k ATL_ptsyr2k
+
+#define  _PT_A         ((TYPE *)(arg->a))
+#define  _PT_B         ((TYPE *)(arg->b))
+#define  _PT_C         ((TYPE *)(arg->c))
+
+   k  = arg->k;  l  = arg->l;  m  = arg->m;  n  = arg->n;
+   la = arg->la; lb = arg->lb; lc = arg->lc;
+
+   if( arg->up == AtlasLower )
+   {
+      if( arg->tr == AtlasNoTrans )
+      {
+         if( ( m + k > 0 ) && ( n > 0 ) )
+         {
+            _PT_GEMM_Nx( m + k, n, l, _PT_ALPHA, _PT_A, la, _PT_B - (n SHIFT),
+                         lb, _PT_BETA, _PT_C, lc ); 
+            _PT_GEMM_Nx( m + k, n, l, _PT_ALPHC, _PT_B, lb, _PT_A - (n SHIFT),
+                         la, one,      _PT_C, lc ); 
+         }
+         Mjoin( PATL, @(sh)r2k )( AtlasLower, AtlasNoTrans, k, l, _PT_ALPHA,
+                               _PT_A, la, _PT_B, lb, _PT_BETA_R,
+                               _PT_C + ((n * lc) SHIFT), lc );
+         if( ( m > 0 ) && ( k > 0 ) )
+         {
+            _PT_GEMM_Nx( m, k, l, _PT_ALPHA, _PT_A + (k SHIFT), la, _PT_B, lb,
+                         _PT_BETA, _PT_C + ((k + n * lc) SHIFT), lc );
+            _PT_GEMM_Nx( m, k, l, _PT_ALPHC, _PT_B + (k SHIFT), lb, _PT_A, la,
+                         one,      _PT_C + ((k + n * lc) SHIFT), lc );
+         }
+      }
+      else
+      {
+         if( ( m + k > 0 ) && ( n > 0 ) )
+         {
+            _PT_GEMM_xN( m + k, n, l, _PT_ALPHA, _PT_A + ((n * la) SHIFT),
+                         la, _PT_B, lb, _PT_BETA, _PT_C, lc ); 
+            _PT_GEMM_xN( m + k, n, l, _PT_ALPHC, _PT_B + ((n * lb) SHIFT),
+                         lb, _PT_A, la, one,      _PT_C, lc ); 
+         }
+         Mjoin( PATL, @(sh)r2k )( AtlasLower, AtlasTrans, k, l, _PT_ALPHA,
+                               _PT_A + ((n * la) SHIFT), la,
+                               _PT_B + ((n * lb) SHIFT), lb,
+                               _PT_BETA_R, _PT_C + ((n * lc) SHIFT), lc );
+         if( ( m > 0 ) && ( k > 0 ) )
+         {
+            _PT_GEMM_xN( m, k, l, _PT_ALPHA, _PT_A + (( (n + k) * la) SHIFT),
+                         la, _PT_B + ((n * lb) SHIFT), lb, _PT_BETA, _PT_C + 
+                         ((k + n * lc) SHIFT), lc );
+            _PT_GEMM_xN( m, k, l, _PT_ALPHC, _PT_B + (( (n + k) * lb) SHIFT),
+                         lb, _PT_A + ((n * la) SHIFT), la, one,      _PT_C + 
+                         ((k + n * lc) SHIFT), lc );
+         }
+      }
+   }
+   else
+   {
+      if( arg->tr == AtlasNoTrans )
+      {
+         if( ( m > 0 ) && ( k > 0 ) )
+         {
+            _PT_GEMM_Nx( m, k, l, _PT_ALPHA, _PT_A, la, _PT_B + (m SHIFT),
+                         lb, _PT_BETA, _PT_C, lc );
+            _PT_GEMM_Nx( m, k, l, _PT_ALPHC, _PT_B, lb, _PT_A + (m SHIFT),
+                         la, one,      _PT_C, lc );
+         }
+         Mjoin( PATL, @(sh)r2k )( AtlasUpper, AtlasNoTrans, k, l, _PT_ALPHA,
+                               _PT_A + (m SHIFT), la,
+                               _PT_B + (m SHIFT), lb, _PT_BETA_R,
+                               _PT_C + (m SHIFT), lc );
+         if( ( m + k > 0 ) && ( n > 0 ) )
+         {
+            _PT_GEMM_Nx( m + k, n, l, _PT_ALPHA, _PT_A, la,
+                         _PT_B + ((m + k ) SHIFT), lb, _PT_BETA,
+                         _PT_C + ((k * lc) SHIFT), lc );
+            _PT_GEMM_Nx( m + k, n, l, _PT_ALPHC, _PT_B, lb,
+                         _PT_A + ((m + k ) SHIFT), la, one,     
+                         _PT_C + ((k * lc) SHIFT), lc );
+         }
+      }
+      else
+      {
+         if( ( m > 0 ) && ( k > 0 ) )
+         {
+            _PT_GEMM_xN( m, k, l, _PT_ALPHA, _PT_A - ((m * la) SHIFT), la,
+                         _PT_B, lb, _PT_BETA, _PT_C, lc );
+            _PT_GEMM_xN( m, k, l, _PT_ALPHC, _PT_B - ((m * lb) SHIFT), lb,
+                         _PT_A, la, one,      _PT_C, lc );
+         }
+         Mjoin( PATL, @(sh)r2k )( AtlasUpper, AtlasTrans, k, l, _PT_ALPHA,
+                               _PT_A, la, _PT_B, lb, _PT_BETA_R,
+                               _PT_C + (m SHIFT), lc );
+         if( ( m + k > 0 ) && ( n > 0 ) )
+         {
+            _PT_GEMM_xN( m + k, n, l, _PT_ALPHA, _PT_A - ((m * la) SHIFT),
+                         la, _PT_B + ((k * lb) SHIFT), lb, _PT_BETA,
+                         _PT_C + ((k * lc) SHIFT), lc );
+            _PT_GEMM_xN( m + k, n, l, _PT_ALPHC, _PT_B - ((m * lb) SHIFT),
+                         lb, _PT_A + ((k * la) SHIFT), la, one,       
+                         _PT_C + ((k * lc) SHIFT), lc );
+         }
+      }
+   }
+ 
+   ATL_signal_tree( root );
+ 
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+@define rname @Mjoin( PATL, pt@(sh)r2k0_nt )@
+int @(rname)
+(
+   const unsigned int         NTHREADS,
+   pthread_attr_t             * ATTR,
+   const enum ATLAS_UPLO      UPLO,
+   const enum ATLAS_TRANS     TRANS,
+   const enum ATLAS_TRANS     TGEMM,
+   const int                  N,
+   const int                  K,
+   const void                 * ALPHA,
+   const void                 * A,
+   const int                  LDA,
+   const void                 * B,
+   const int                  LDB,
+   const void                 * BETA,
+   void                       * C,
+   const int                  LDC
+)
+{
+#ifdef TREAL
+   TYPE                       alpha, beta, zero;
+#else
+   TYPE                       alpha[2], beta[2], zero[2];
+#endif
+   PT_TREE_T                  root = NULL;
+   void                       * vc = NULL, * zptr;
+   TYPE                       * c;
+   size_t                     lgth;
+ 
+   if( ( lgth = ATL_MulBySize(N)*N ) <= ATL_MaxMalloc )
+      vc = malloc( ATL_Cachelen + lgth );
+
+   if( vc == NULL ) return( 1 );
+#ifdef TREAL
+   alpha    = *((TYPE *)(ALPHA)); beta = *((TYPE *)(BETA) );
+   zero     = ATL_rzero;          zptr = (void *)(&zero);
+#else
+   alpha[0] = ((TYPE *)(ALPHA))[0]; alpha[1] = ((TYPE *)(ALPHA))[1];
+   beta [0] = ((TYPE *)(BETA ))[0]; beta [1] = ((TYPE *)(BETA ))[1];
+   zero [0] = ATL_rzero;            zero [1] = ATL_rzero;
+   zptr     = (void *)(zero);
+#endif
+   c = ATL_AlignPtr( vc );
+   if( TRANS == AtlasNoTrans )
+   {
+      root = Mjoin( PATL, ptgemm_nt )( NTHREADS, ATTR, AtlasNoTrans, TGEMM,
+                                       N, N, K, ALPHA, A, LDA, B, LDB, zptr,
+                                       (void *)(c), N );
+   }
+   else
+   {
+      root = Mjoin( PATL, ptgemm_nt )( NTHREADS, ATTR, TGEMM, AtlasNoTrans,
+                                       N, N, K, ALPHA, A, LDA, B, LDB, zptr,
+                                       (void *)(c), N );
+   }
+   ATL_join_tree( root );
+   ATL_free_tree( root );
+
+   if( UPLO == AtlasUpper )
+   {
+@rout ATL_ptsyr2k
+      if(      SCALAR_IS_ONE(  beta ) )
+      { Mjoin( PATL, @(sh)r2k_putU_b1   )( N, c, beta, (TYPE *)(C), LDC ); }
+      else if( SCALAR_IS_ZERO( beta ) )
+      { Mjoin( PATL, @(sh)r2k_putU_b0   )( N, c, beta, (TYPE *)(C), LDC ); }
+#ifdef TCPLX
+      else if( SCALAR_IS_NONE( beta ) )
+      { Mjoin( PATL, @(sh)r2k_putU_bn1  )( N, c, beta, (TYPE *)(C), LDC ); }
+      else if( beta[1] == ATL_rzero   )
+      { Mjoin( PATL, @(sh)r2k_putU_bXi0 )( N, c, beta, (TYPE *)(C), LDC ); }
+#endif
+      else
+      { Mjoin( PATL, @(sh)r2k_putU_bX   )( N, c, beta, (TYPE *)(C), LDC ); }
+@rout ATL_pther2k
+      if(      beta[0] == ATL_rone  )
+      { Mjoin( PATL, @(sh)r2k_putU_b1   )( N, c, beta, (TYPE *)(C), LDC ); }
+      else if( beta[0] == ATL_rzero )
+      { Mjoin( PATL, @(sh)r2k_putU_b0   )( N, c, beta, (TYPE *)(C), LDC ); }
+      else
+      { Mjoin( PATL, @(sh)r2k_putU_bXi0 )( N, c, beta, (TYPE *)(C), LDC ); }
+@rout ATL_ptsyr2k ATL_pther2k
+   }
+   else
+   {
+@rout ATL_ptsyr2k
+      if(      SCALAR_IS_ONE(  beta ) )
+      { Mjoin( PATL, @(sh)r2k_putL_b1   )( N, c, beta, (TYPE *)(C), LDC ); }
+      else if( SCALAR_IS_ZERO( beta ) )
+      { Mjoin( PATL, @(sh)r2k_putL_b0   )( N, c, beta, (TYPE *)(C), LDC ); }
+#ifdef TCPLX
+      else if( SCALAR_IS_NONE( beta ) )
+      { Mjoin( PATL, @(sh)r2k_putL_bn1  )( N, c, beta, (TYPE *)(C), LDC ); }
+      else if( beta[1] == ATL_rzero   )
+      { Mjoin( PATL, @(sh)r2k_putL_bXi0 )( N, c, beta, (TYPE *)(C), LDC ); }
+#endif
+      else
+      { Mjoin( PATL, @(sh)r2k_putL_bX   )( N, c, beta, (TYPE *)(C), LDC ); }
+@rout ATL_pther2k
+      if(      beta[0] == ATL_rone  )
+      { Mjoin( PATL, @(sh)r2k_putL_b1   )( N, c, beta, (TYPE *)(C), LDC ); }
+      else if( beta[0] == ATL_rzero )
+      { Mjoin( PATL, @(sh)r2k_putL_b0   )( N, c, beta, (TYPE *)(C), LDC ); }
+      else
+      { Mjoin( PATL, @(sh)r2k_putL_bXi0 )( N, c, beta, (TYPE *)(C), LDC ); }
+@rout ATL_ptsyr2k ATL_pther2k
+   }
+
+   free( vc );
+
+   return( 0 );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+@define rname @Mjoin( PATL, pt@(sh)r2k )@
+void @(rname)
+(
+   const enum ATLAS_UPLO      UPLO,
+   const enum ATLAS_TRANS     TRANS,
+   const int                  N,
+   const int                  K,
+   const SCALAR               ALPHA,
+   const TYPE                 * A,
+   const int                  LDA,
+   const TYPE                 * B,
+   const int                  LDB,
+@rout ATL_ptsyr2k
+   const SCALAR               BETA,
+@rout ATL_pther2k
+   const TYPE                 BETA,
+@rout ATL_ptsyr2k ATL_pther2k
+   TYPE                       * C,
+   const int                  LDC
+)
+{
+@extract @(ATLAS_PT3_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  root = NULL;
+   pthread_attr_t             attr;
+@rout ATL_ptsyr2k
+#ifdef TREAL
+   TYPE                       alpha0 = ALPHA, beta0 = BETA;
+#endif
+@rout ATL_pther2k
+   TYPE                       Calph[2], Cbeta[2];
+   TYPE                       * alpha, * alphc, * beta;
+@rout ATL_ptsyr2k ATL_pther2k
+@extract @(EXECUTABLE_STATEMENT)
+@rout ATL_ptsyr2k
+   if( ( N == 0 ) || ( ( SCALAR_IS_ZERO( ALPHA ) || ( K == 0 ) ) &&
+                       SCALAR_IS_ONE( BETA ) ) ) return;
+
+   if( ( SCALAR_IS_ZERO( ALPHA ) ) || ( K == 0 ) )
+   { Mjoin( PATL, pttrscal )( UPLO, N, N, BETA, C, LDC ); return; }
+@rout ATL_pther2k
+   if( ( N == 0 ) || ( ( SCALAR_IS_ZERO( ALPHA ) || ( K == 0 ) ) &&
+                       ( BETA == ATL_rone ) ) ) return;
+
+   if( ( SCALAR_IS_ZERO( ALPHA ) ) || ( K == 0 ) )
+   { Mjoin( PATL, pthescal )( UPLO, N, N, BETA, C, LDC ); return; }
+@rout ATL_ptsyr2k ATL_pther2k
+
+   ATL_thread_init( &attr );
+@rout ATL_ptsyr2k
+#ifdef TREAL
+   root = Mjoin( PATL, pt@(sh)r2k_nt )( ATL_NTHREADS, &attr, UPLO, TRANS, N,
+                                     K, (void *)(&alpha0), (void *)(&alpha0),
+                                     (void *)(A), LDA, (void *)(B), LDB,
+                                     (void *)(&beta0), (void *)(C), LDC );
+#else
+   root = Mjoin( PATL, pt@(sh)r2k_nt )( ATL_NTHREADS, &attr, UPLO, TRANS, N,
+                                     K, (TYPE *)(ALPHA), (TYPE *)(ALPHA),
+                                     (void *)(A), LDA, (void *)(B), LDB,
+                                     (TYPE *)(BETA), (void *)(C), LDC );
+#endif
+@rout ATL_pther2k
+   alpha  = (TYPE *)(ALPHA);  
+   *Calph = *ALPHA; Calph[1] = -ALPHA[1]; alphc = (TYPE *)(Calph);
+   *Cbeta = BETA;   Cbeta[1] = ATL_rzero; beta  = (TYPE *)(Cbeta);
+   root = Mjoin( PATL, pt@(sh)r2k_nt )( ATL_NTHREADS, &attr, UPLO, TRANS,
+                                     N, K, alpha, alphc, (void *)(A), LDA,
+                                     (void *)(B), LDB, beta, (void *)(C),
+                                     LDC );
+@rout ATL_ptsyr2k ATL_pther2k
+   ATL_join_tree  ( root );
+   ATL_free_tree  ( root );
+   ATL_thread_free( &attr );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+@define rname @Mjoin( PATL, pt@(sh)r2k_nt )@
+PT_TREE_T @(rname)
+(
+   const unsigned int         NTHREADS,
+   pthread_attr_t             * ATTR,
+   const enum ATLAS_UPLO      UPLO,
+   const enum ATLAS_TRANS     TRANS,
+   const int                  N,
+   const int                  K,
+   const void                 * ALPHA,
+   const void                 * ALPHC,
+   const void                 * A,
+   const int                  LDA,
+   const void                 * B,
+   const int                  LDB,
+   const void                 * BETA,
+   void                       * C,
+   const int                  LDC
+) 
+{
+@extract @(ATLAS_PT3_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  root = NULL;
+   PT_LVL3_TYPE_T             type;
+#ifdef TREAL
+   TYPE                       alpha,    beta;
+#else
+   TYPE                       alpha[2], beta[2];
+#endif
+   double                     tblks;
+   unsigned int               nthreads;
+   int                        nb, nbm1;
+@extract @(EXECUTABLE_STATEMENT)
+   nbm1  = ( nb = Mjoin( PATL, GetNB )() ) - 1;
+   tblks = (double)( (N+nbm1) / nb ) * (double)( (N+nbm1) / nb ) *
+           (double)( (K+nbm1) / nb );
+
+   if( ( tblks <= (double)(ATL_XOVER_L3_DEFAULT) ) || ( NTHREADS <= 1 ) )
+   {
+#ifdef TREAL
+      alpha    = *((TYPE *)(ALPHA));   beta     = *((TYPE *)(BETA ));
+#else
+      alpha[0] = ((TYPE *)(ALPHA))[0]; alpha[1] = ((TYPE *)(ALPHA))[1];
+      beta [0] = ((TYPE *)(BETA ))[0]; beta [1] = ((TYPE *)(BETA ))[1];
+#endif
+@rout ATL_ptsyr2k
+      Mjoin( PATL, @(sh)r2k )( UPLO, TRANS, N, K, alpha, (TYPE *)(A), LDA,
+                            (TYPE *)(B), LDB, beta, C, LDC );
+@rout ATL_pther2k
+      Mjoin( PATL, @(sh)r2k )( UPLO, TRANS, N, K, alpha, (TYPE *)(A), LDA,
+                            (TYPE *)(B), LDB, beta[0], (TYPE *)(C), LDC );
+@rout ATL_ptsyr2k ATL_pther2k
+      return( root );
+   }
+
+   if( tblks >= (double)(NTHREADS) ) { nthreads = NTHREADS; }
+   else    { nthreads = (unsigned int)floor( tblks + 0.5 ); }
+
+   Mjoin( PATL, ptl3settype )( &type );
+@rout ATL_ptsyr2k
+   root = ATL_Ssyr2k( &type, 0, nthreads, ATTR, nb, UPLO, TRANS, AtlasTrans,
+                      0, 0, N, K, ALPHA, ALPHC, A, LDA, B, LDB, BETA, C, LDC );
+@rout ATL_pther2k
+   root = ATL_Ssyr2k( &type, 0, nthreads, ATTR, nb, UPLO, TRANS, AtlasConjTrans,
+                      0, 0, N, K, ALPHA, ALPHC, A, LDA, B, LDB, BETA, C, LDC );
+@rout ATL_ptsyr2k ATL_pther2k
+   ATL_thread_tree( root, ATTR );
+
+   return( root );
+@extract @(END_OF_ROUTINE) 
+@undef rname
+@skip
+@skip
+@rout ATL_Ssyrk
+@define rname @ATL_Ssyrk@
+@extract @(VER_ATLAS_SRC)
+@extract @(PT3_INCLUDE)
+ 
+PT_TREE_T @(rname)
+(
+   const PT_LVL3_TYPE_T       * PLVL3,
+   const unsigned int         NODE,
+   const unsigned int         NTHREADS,
+   pthread_attr_t             * ATTR,
+   const int                  NB,
+   const enum ATLAS_UPLO      UPLO,
+   const enum ATLAS_TRANS     TRANS,
+   const enum ATLAS_TRANS     TGEMM,
+   const int                  M,
+   const int                  N,
+   const int                  K,
+   const int                  L,
+   const void                 * ALPHA,
+   const void                 * A,
+   const int                  LDA,
+   const void                 * BETA,
+   void                       * C,
+   const int                  LDC
+)
+{
+@extract @(ATLAS_PT3_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  left, right, tree = NULL;
+   PT_SYRK_ARGS_T             * a_syrk  = NULL;
+   size_t                     size;
+   DIM_TZSPLIT_T              split = AtlasTzNoSplit;
+   unsigned int               next = ( NODE << 1 ), nt1=0, nt2=0;
+   int                        incA, incC, mnk1=0, mnk2=0;
+@extract @(EXECUTABLE_STATEMENT)
+   if( NTHREADS < 1 ) return( tree );
+ 
+   size  = PLVL3->size;
+   split = ATL_tzsplit( UPLO, NTHREADS, M, N, K, NB, &nt1, &nt2,
+                        &mnk1, &mnk2 );
+
+   if(      split == AtlasTzSplitMrow )
+   {
+      if( UPLO == AtlasLower )
+      {
+         if( TRANS == AtlasNoTrans )
+         {
+            left  = ATL_Ssyrk( PLVL3, next+1, nt1, ATTR, NB, UPLO, TRANS,
+                               TGEMM, mnk1, N, K, L, ALPHA, A, LDA, BETA,
+                               C, LDC );
+            right = ATL_Sgemm( PLVL3, next+2, nt2, ATTR, NB, AtlasNoTrans,
+                               TGEMM, mnk2, N+K, L, ALPHA,
+                               Mvpt3( A, K + mnk1, size ), LDA,
+                               Mvpt3( A,   - N,    size ), LDA, BETA,
+                               Mvpt3( C, K + mnk1, size ), LDC );
+         }
+         else
+         {
+            left  = ATL_Ssyrk( PLVL3, next+1, nt1, ATTR, NB, UPLO, TRANS,
+                               TGEMM, mnk1, N, K, L, ALPHA, A, LDA, BETA,
+                               C, LDC );
+            right = ATL_Sgemm( PLVL3, next+2, nt2, ATTR, NB, TGEMM,
+                               AtlasNoTrans, mnk2, N+K, L, ALPHA,
+                               Mvpt3( A, ( N + K + mnk1 ) * LDA,
+                               size ), LDA, A, LDA, BETA,
+                               Mvpt3( C, K + mnk1, size ), LDC );
+         }
+      }
+      else
+      {
+         if( TRANS == AtlasNoTrans )
+         {
+            left  = ATL_Sgemm( PLVL3, next+1, nt1, ATTR, NB, AtlasNoTrans,
+                               TGEMM, mnk1, N+K, L, ALPHA, A, LDA,
+                               Mvpt3( A, M, size ), LDA, BETA,
+                               C, LDC );
+            right = ATL_Ssyrk( PLVL3, next+2, nt2, ATTR, NB, UPLO, TRANS,
+                               TGEMM, mnk2, N, K, L,  ALPHA,
+                               Mvpt3( A, mnk1, size ), LDA, BETA,
+                               Mvpt3( C, mnk1, size ), LDC );
+         }
+         else
+         {
+            left  = ATL_Sgemm( PLVL3, next+1, nt1, ATTR, NB, TGEMM,
+                               AtlasNoTrans, mnk1, N+K, L, ALPHA,
+                               Mvpt3( A, - M * LDA, size ), LDA,
+                               A, LDA, BETA, C, LDC );
+            right = ATL_Ssyrk( PLVL3, next+2, nt2, ATTR, NB, UPLO, TRANS,
+                               TGEMM, mnk2, N, K, L,  ALPHA, A, LDA, BETA,
+                               Mvpt3( C, mnk1, size ), LDC );
+         }
+      }
+
+      tree = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+   }
+   else if( split == AtlasTzSplitKrow )
+   {
+      if( UPLO == AtlasLower )
+      {
+         left  = ATL_Ssyrk( PLVL3, next+1, nt1, ATTR, NB, UPLO, TRANS, TGEMM,
+                            0, N, mnk1, L, ALPHA, A, LDA, BETA, C, LDC );
+         incA  = ( TRANS == AtlasNoTrans ? mnk1 : 0 );
+         incC  = mnk1;
+         right = ATL_Ssyrk( PLVL3, next+2, nt2, ATTR, NB, UPLO, TRANS, TGEMM,
+                            M, N + mnk1, mnk2, L, ALPHA, Mvpt3( A, incA, size ),
+                            LDA,  BETA, Mvpt3( C, incC, size ), LDC );
+      }
+      else
+      {
+         left  = ATL_Ssyrk( PLVL3, next+1, nt1, ATTR, NB, UPLO, TRANS, TGEMM, M,
+                            N + mnk2, mnk1, L, ALPHA, A, LDA, BETA, C, LDC );
+         incA  = ( TRANS == AtlasNoTrans ? mnk1 : mnk1 * LDA );
+         incC  = mnk1 * ( LDC + 1 );
+         right = ATL_Ssyrk( PLVL3, next+2, nt2, ATTR, NB, UPLO, TRANS, TGEMM, 0,
+                            N, mnk2, L, ALPHA, Mvpt3( A, incA, size ),
+                            LDA, BETA, Mvpt3( C, incC, size ), LDC );
+      }
+      tree = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+   }
+   else if( split == AtlasTzSplitKcol )
+   {
+      if( UPLO == AtlasLower )
+      {
+         left  = ATL_Ssyrk( PLVL3, next+1, nt1, ATTR, NB, UPLO, TRANS, TGEMM,
+                            M + mnk2, N, mnk1, L, ALPHA, A, LDA, BETA,
+                            C, LDC );
+         incA  = ( TRANS == AtlasNoTrans ? mnk1 : ( N + mnk1 ) * LDA );
+         incC  = mnk1 + ( N + mnk1 ) * LDC;
+         right = ATL_Ssyrk( PLVL3, next+2, nt2, ATTR, NB, UPLO, TRANS, TGEMM,
+                            M, 0, mnk2, L, ALPHA, Mvpt3( A, incA,
+                            size ), LDA, BETA, Mvpt3( C, incC,
+                            size ), LDC );
+      }
+      else
+      {
+         left  = ATL_Ssyrk( PLVL3, next+1, nt1, ATTR, NB, UPLO, TRANS, TGEMM,
+                            M, 0, mnk1, L, ALPHA, A, LDA, BETA, C, LDC );
+         incA  = ( TRANS == AtlasNoTrans ? 0 : mnk1 * LDA );
+         incC  = mnk1 * LDC;
+         right = ATL_Ssyrk( PLVL3, next+2, nt2, ATTR, NB, UPLO, TRANS, TGEMM,
+                            M + mnk1, N, mnk2, L, ALPHA, Mvpt3( A,
+                            incA, size ), LDA, BETA, Mvpt3( C, incC,
+                            size ), LDC );
+      }
+      tree = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+   }
+   else if( split == AtlasTzSplitNcol )
+   {
+      if( UPLO == AtlasLower )
+      {
+         if( TRANS == AtlasNoTrans )
+         {
+            incA  = -N;
+            left  = ATL_Sgemm( PLVL3, next+1, nt1, ATTR, NB, AtlasNoTrans,
+                               TGEMM, M + K, mnk1, L, ALPHA, A, LDA,
+                               Mvpt3( A, incA, size ), LDA, BETA,
+                               C, LDC );
+            incC  = mnk1 * LDC;
+            right = ATL_Ssyrk( PLVL3, next+2, nt2, ATTR, NB, UPLO, TRANS,
+                               TGEMM, M, mnk2, K, L, ALPHA, A, LDA, BETA,
+                               Mvpt3( C, incC, size ), LDC );
+         }
+         else
+         {
+            incA  = ( N + K ) * LDA;
+            left  = ATL_Sgemm( PLVL3, next+1, nt1, ATTR, NB, TGEMM,
+                               AtlasNoTrans, M + K, mnk1, L, ALPHA,
+                               Mvpt3( A, incA, size ), LDA,
+                               A, LDA, BETA, C, LDC );
+            incA  = mnk1 * LDA;
+            incC  = mnk1 * LDC;
+            right = ATL_Ssyrk( PLVL3, next+2, nt2, ATTR, NB, UPLO, TRANS,
+                               TGEMM, M, mnk2, K, L, ALPHA,
+                               Mvpt3( A, incA, size ), LDA, BETA,
+                               Mvpt3( C, incC, size ), LDC );
+         }
+      }
+      else
+      {
+         left  = ATL_Ssyrk( PLVL3, next+1, nt1, ATTR, NB, UPLO, TRANS, TGEMM,
+                            M, mnk1, K, L, ALPHA, A, LDA, BETA, C, LDC );
+         incC  = ( K + mnk1 ) * LDC;
+
+         if( TRANS == AtlasNoTrans )
+         {
+            incA  = M + K + mnk1;
+            right = ATL_Sgemm( PLVL3, next+2, nt2, ATTR, NB, AtlasNoTrans,
+                               TGEMM, M + K, mnk2, L, ALPHA, A, LDA,
+                               Mvpt3( A, incA, size ), LDA, BETA,
+                               Mvpt3( C, incC, size ), LDC );
+         }
+         else
+         {
+            incA  = ( K + mnk1 ) * LDA;
+            right = ATL_Sgemm( PLVL3, next+2, nt2, ATTR, NB, TGEMM,
+                               AtlasNoTrans, M + K, mnk2, L, ALPHA,
+                               Mvpt3( A, -M * LDA, size ), LDA,
+                               Mvpt3( A,     incA, size ), LDA, BETA,
+                               Mvpt3( C,     incC, size ), LDC );
+         }
+      }
+      tree = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+   }
+   else
+   {
+      a_syrk = (PT_SYRK_ARGS_T *)malloc( sizeof( PT_SYRK_ARGS_T ) );
+      ATL_assert( a_syrk != NULL );
+      a_syrk->up = UPLO;  a_syrk->tr = TRANS; a_syrk->m  = M;
+      a_syrk->n  = N;     a_syrk->k  = K;     a_syrk->l  = L;
+      a_syrk->al = ALPHA; a_syrk->a  = A;     a_syrk->la = LDA;
+      a_syrk->be = BETA;  a_syrk->c  = C;     a_syrk->lc = LDC;
+
+      tree = ATL_init_node( NODE, NULL, NULL, NULL, NULL,
+                            ( TGEMM == AtlasTrans ? PLVL3->syrk0 :
+                            PLVL3->herk0 ), (void *)(a_syrk) );
+   }
+ 
+   return( tree );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_ptsyrk
+@define sh @sy@
+@rout ATL_ptherk
+@define sh @he@
+@rout ATL_ptherk ATL_ptsyrk
+@extract @(VER_ATLAS_SRC)
+@extract @(PT3_INCLUDE)
+
+@define rname @Mjoin( PATL, pt@(sh)rk0 )@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  root = (PT_TREE_T)(ARGS);
+   PT_SYRK_ARGS_T             * arg;
+   int                        k, l, la, lc, m, n;
+@extract @(EXECUTABLE_STATEMENT)
+   ATL_wait_tree( root );
+   arg = (PT_SYRK_ARGS_T *)(root->arg);
+
+@rout ATL_ptsyrk
+#ifdef TREAL
+#define  _PT_ALPHA     (SCALAR)(*((TYPE *)(arg->al)))
+#define  _PT_BETA      (SCALAR)(*((TYPE *)(arg->be)))
+#define  _PT_ALPHA_R   (SCALAR)(*((TYPE *)(arg->al)))
+#define  _PT_BETA_R    (SCALAR)(*((TYPE *)(arg->be)))
+#else
+#define  _PT_ALPHA     (SCALAR)(arg->al)
+#define  _PT_BETA      (SCALAR)(arg->be)
+#define  _PT_ALPHA_R   (SCALAR)(arg->al)
+#define  _PT_BETA_R    (SCALAR)(arg->be)
+#endif
+
+#define  _PT_GEMM_Nx   Mjoin( PATL, gemmNT )
+#define  _PT_GEMM_xN   Mjoin( PATL, gemmTN )
+
+@rout ATL_ptherk
+#define  _PT_ALPHA     (SCALAR)(arg->al)
+#define  _PT_BETA      (SCALAR)(arg->be)
+#define  _PT_ALPHA_R   *((TYPE *)(arg->al))
+#define  _PT_BETA_R    *((TYPE *)(arg->be))
+
+#define  _PT_GEMM_Nx   Mjoin( PATL, gemmNC )
+#define  _PT_GEMM_xN   Mjoin( PATL, gemmCN )
+@rout ATL_ptherk ATL_ptsyrk
+
+#define  _PT_A         ((TYPE *)(arg->a))
+#define  _PT_C         ((TYPE *)(arg->c))
+
+   k = arg->k; l = arg->l; m = arg->m; n = arg->n; la = arg->la; lc = arg->lc;
+
+   if( arg->up == AtlasLower )
+   {
+      if( arg->tr == AtlasNoTrans )
+      {
+         if( ( m + k > 0 ) && ( n > 0 ) )
+         {
+            _PT_GEMM_Nx( m + k, n, l, _PT_ALPHA, _PT_A, la, _PT_A - (n SHIFT),
+                         la, _PT_BETA, _PT_C, lc ); 
+         }
+         Mjoin( PATL, @(sh)rk )( AtlasLower, AtlasNoTrans, k, l, _PT_ALPHA_R,
+                              _PT_A, la, _PT_BETA_R, _PT_C + ((n * lc) SHIFT),
+                              lc );
+         if( ( m > 0 ) && ( k > 0 ) )
+         {
+            _PT_GEMM_Nx( m, k, l, _PT_ALPHA, _PT_A + (k SHIFT), la, _PT_A, la,
+                         _PT_BETA, _PT_C + ((k + n * lc) SHIFT), lc );
+         }
+      }
+      else
+      {
+         if( ( m + k > 0 ) && ( n > 0 ) )
+         {
+            _PT_GEMM_xN( m + k, n, l, _PT_ALPHA, _PT_A + ((n * la) SHIFT),
+                         la, _PT_A, la, _PT_BETA, _PT_C, lc ); 
+         }
+         Mjoin( PATL, @(sh)rk )( AtlasLower, AtlasTrans, k, l, _PT_ALPHA_R,
+                              _PT_A + ((n * la) SHIFT), la, _PT_BETA_R,
+                              _PT_C + ((n * lc) SHIFT), lc );
+         if( ( m > 0 ) && ( k > 0 ) )
+         {
+            _PT_GEMM_xN( m, k, l, _PT_ALPHA, _PT_A + (( (n + k) * la) SHIFT),
+                         la, _PT_A + ((n * la) SHIFT), la, _PT_BETA, _PT_C + 
+                         ((k + n * lc) SHIFT), lc );
+         }
+      }
+   }
+   else
+   {
+      if( arg->tr == AtlasNoTrans )
+      {
+         if( ( m > 0 ) && ( k > 0 ) )
+         {
+            _PT_GEMM_Nx( m, k, l, _PT_ALPHA, _PT_A, la, _PT_A + (m SHIFT),
+                         la, _PT_BETA, _PT_C, lc );
+         }
+         Mjoin( PATL, @(sh)rk )( AtlasUpper, AtlasNoTrans, k, l, _PT_ALPHA_R,
+                              _PT_A + (m SHIFT), la, _PT_BETA_R,
+                              _PT_C + (m SHIFT), lc );
+         if( ( m + k > 0 ) && ( n > 0 ) )
+         {
+            _PT_GEMM_Nx( m + k, n, l, _PT_ALPHA, _PT_A, la,
+                         _PT_A + ((m + k ) SHIFT), la, _PT_BETA,
+                         _PT_C + ((k * lc) SHIFT), lc );
+         }
+      }
+      else
+      {
+         if( ( m > 0 ) && ( k > 0 ) )
+         {
+            _PT_GEMM_xN( m, k, l, _PT_ALPHA, _PT_A - ((m * la) SHIFT), la,
+                         _PT_A, la, _PT_BETA, _PT_C, lc );
+         }
+         Mjoin( PATL, @(sh)rk )( AtlasUpper, AtlasTrans, k, l, _PT_ALPHA_R,
+                              _PT_A, la, _PT_BETA_R, _PT_C + (m SHIFT), lc );
+         if( ( m + k > 0 ) && ( n > 0 ) )
+         {
+            _PT_GEMM_xN( m + k, n, l, _PT_ALPHA, _PT_A - ((m * la) SHIFT),
+                         la, _PT_A + ((k * la) SHIFT), la, _PT_BETA,
+                         _PT_C + ((k * lc) SHIFT), lc );
+         }
+      }
+   }
+ 
+   ATL_signal_tree( root );
+ 
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+@define rname @Mjoin( PATL, pt@(sh)rk )@
+void @(rname)
+(
+   const enum ATLAS_UPLO      UPLO,
+   const enum ATLAS_TRANS     TRANS,
+   const int                  N,
+   const int                  K,
+@rout ATL_ptsyrk
+   const SCALAR               ALPHA,
+@rout ATL_ptherk
+   const TYPE                 ALPHA,
+@rout ATL_ptsyrk ATL_ptherk
+   const TYPE                 * A,
+   const int                  LDA,
+@rout ATL_ptsyrk
+   const SCALAR               BETA,
+@rout ATL_ptherk
+   const TYPE                 BETA,
+@rout ATL_ptsyrk ATL_ptherk
+   TYPE                       * C,
+   const int                  LDC
+)
+{
+@extract @(ATLAS_PT3_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  root = NULL;
+   pthread_attr_t             attr;
+@rout ATL_ptsyrk
+#ifdef TREAL
+   TYPE                       alpha0 = ALPHA, beta0 = BETA;
+#endif
+@rout ATL_ptherk
+   TYPE                       Calph[2], Cbeta[2];
+   void                       * alpha, * beta;
+@rout ATL_ptsyrk ATL_ptherk
+@extract @(EXECUTABLE_STATEMENT)
+@rout ATL_ptsyrk
+   if( ( N == 0 ) ||
+       ( ( SCALAR_IS_ZERO( ALPHA ) || ( K == 0 ) ) && SCALAR_IS_ONE( BETA ) ) )
+      return;
+
+   if( ( SCALAR_IS_ZERO( ALPHA ) ) || ( K == 0 ) )
+   { Mjoin( PATL, pttrscal )( UPLO, N, N, BETA, C, LDC ); return; }
+@rout ATL_ptherk
+   if( ( N == 0 ) ||
+       ( ( ( ALPHA == ATL_rzero ) || ( K == 0 ) ) && ( BETA == ATL_rone ) ) )
+      return;
+
+   if( ( ( ALPHA == ATL_rzero ) ) || ( K == 0 ) )
+   { Mjoin( PATL, pthescal )( UPLO, N, N, BETA, C, LDC ); return; }
+@rout ATL_ptsyrk ATL_ptherk
+
+   ATL_thread_init( &attr );
+@rout ATL_ptsyrk
+#ifdef TREAL
+   root = Mjoin( PATL, pt@(sh)rk_nt )( ATL_NTHREADS, &attr, UPLO, TRANS,
+                                    N, K, (void *)(&alpha0), (void *)(A),
+                                    LDA, (void *)(&beta0), (void *)(C), LDC );
+#else
+   root = Mjoin( PATL, pt@(sh)rk_nt )( ATL_NTHREADS, &attr, UPLO, TRANS,
+                                    N, K, (void *)(ALPHA), (void *)(A),
+                                    LDA, (void *)(BETA), (void *)(C), LDC );
+#endif
+@rout ATL_ptherk
+   *Calph = ALPHA; Calph[1] = ATL_rzero; alpha  = (void *)(Calph);
+   *Cbeta = BETA;  Cbeta[1] = ATL_rzero; beta   = (void *)(Cbeta);
+   root = Mjoin( PATL, pt@(sh)rk_nt )( ATL_NTHREADS, &attr, UPLO, TRANS,
+                                    N, K, alpha, (void *)(A), LDA, beta,
+                                    (void *)(C), LDC );
+@rout ATL_ptsyrk ATL_ptherk
+   ATL_join_tree  ( root );
+   ATL_free_tree  ( root );
+   ATL_thread_free( &attr );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+@define rname @Mjoin( PATL, pt@(sh)rk_nt )@
+PT_TREE_T @(rname)
+(
+   const unsigned int         NTHREADS,
+   pthread_attr_t             * ATTR,
+   const enum ATLAS_UPLO      UPLO,
+   const enum ATLAS_TRANS     TRANS,
+   const int                  N,
+   const int                  K,
+   const void                 * ALPHA,
+   const void                 * A,
+   const int                  LDA,
+   const void                 * BETA,
+   void                       * C,
+   const int                  LDC
+) 
+{
+@extract @(ATLAS_PT3_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  root = NULL;
+   PT_LVL3_TYPE_T             type;
+#ifdef TREAL
+   TYPE                       alpha,    beta;
+#else
+   TYPE                       alpha[2], beta[2];
+#endif
+   double                     tblks;
+   unsigned int               nthreads;
+   int                        nb, nbm1;
+@extract @(EXECUTABLE_STATEMENT)
+   nbm1  = ( nb = Mjoin( PATL, GetNB )() ) - 1;
+   tblks = (double)( (N+nbm1) / nb ) * (double)( (N+nbm1) / nb ) *
+           (double)( (K+nbm1) / nb );
+
+   if( ( tblks <= (double)(ATL_XOVER_L3_DEFAULT) ) || ( NTHREADS <= 1 ) )
+   {
+#ifdef TREAL
+      alpha    = *((TYPE *)(ALPHA));   beta     = *((TYPE *)(BETA));
+#else
+      alpha[0] = ((TYPE *)(ALPHA))[0]; alpha[1] = ((TYPE *)(ALPHA))[1];
+      beta [0] = ((TYPE *)(BETA ))[0]; beta [1] = ((TYPE *)(BETA ))[1];
+#endif
+@rout ATL_ptsyrk
+      Mjoin( PATL, syrk )( UPLO, TRANS, N, K, alpha,    (TYPE *)(A), LDA,
+                           beta, (TYPE *)(C), LDC );
+@rout ATL_ptherk
+      Mjoin( PATL, herk )( UPLO, TRANS, N, K, alpha[0], (TYPE *)(A), LDA,
+                           beta[0], (TYPE *)(C), LDC );
+@rout ATL_ptsyrk ATL_ptherk
+      return( root );
+   }
+ 
+   if( tblks >= (double)(NTHREADS) ) { nthreads = NTHREADS; }
+   else    { nthreads = (unsigned int)floor( tblks + 0.5 ); }
+
+   Mjoin( PATL, ptl3settype )( &type );
+@rout ATL_ptsyrk
+   root = ATL_Ssyrk( &type, 0, nthreads, ATTR, nb, UPLO, TRANS, AtlasTrans,
+                     0, 0, N, K, ALPHA, A, LDA, BETA, C, LDC );
+@rout ATL_ptherk
+   root = ATL_Ssyrk( &type, 0, nthreads, ATTR, nb, UPLO, TRANS, AtlasConjTrans, 
+                     0, 0, N, K, ALPHA, A, LDA, BETA, C, LDC );
+@rout ATL_ptsyrk ATL_ptherk
+   ATL_thread_tree( root, ATTR );
+
+   return( root );
+@extract @(END_OF_ROUTINE) 
+@undef rname
+@skip
+@skip
+@rout ATL_Strmm
+@define rname @ATL_Strmm@
+@extract @(VER_ATLAS_SRC)
+@extract @(PT3_INCLUDE)
+ 
+PT_TREE_T @(rname)
+(
+   const PT_LVL3_TYPE_T       * PLVL3,
+   const unsigned int         NODE,
+   const unsigned int         NTHREADS,
+   pthread_attr_t             * ATTR,
+   const int                  NB,
+   const enum ATLAS_SIDE      SIDE,
+   const enum ATLAS_UPLO      UPLO,
+   const enum ATLAS_TRANS     TRANS,
+   const enum ATLAS_DIAG      DIAG,
+   const int                  M,
+   const int                  N,
+   const void                 * ALPHA,
+   const void                 * A,
+   const int                  LDA,
+   void                       * B,
+   const int                  LDB
+)
+{
+@extract @(ATLAS_PT3_COMMENT)
+@extract @(LOCAL_VARIABLE)
+#if 0
+   PT_TREE_T                  left, right, root = NULL;
+   PT_TRMM_ARGS_T             * a_mm = NULL;
+   size_t                     size;
+   unsigned int               next = ( NODE << 1 ), nt1, nt2;
+   int                        incA, incB, m1, m2, n1, n2;
+#else
+   PT_TREE_T                  left, right, tree = NULL;
+   PT_TRMM_ARGS_T             * a_mm = NULL;
+   double                     rm, rn;
+   DIM_1DSPLIT_T              splitM, splitN;
+   size_t                     size;
+   unsigned int               next = ( NODE << 1 ), ntm1, ntm2, ntn1, ntn2;
+   int                        incB, m1, m2, n1, n2;
+#endif
+@extract @(EXECUTABLE_STATEMENT)
+   if( NTHREADS < 1 ) return( tree );
+ 
+   size = PLVL3->size;
+
+   if( SIDE == AtlasLeft )
+   {
+#if 0
+      if( M > N )
+      {
+         ATL_gesplit( NTHREADS, M, NB, &nt1, &nt2, &m1, &m2 );
+         incA  = m1 + m1 * LDA;
+         incB  = m1;
+         root = PLVL3->pttrmm( NTHREADS, ATTR, SIDE, UPLO, TRANS, DIAG,
+                               m2, N, ALPHA, Mvpt3( A, incA, size ), LDA,
+                               Mvpt3( B, incB, size ), LDB );
+         ATL_join_tree  ( root );
+         ATL_free_tree  ( root );
+         root = PLVL3->ptgemm( NTHREADS, ATTR, AtlasNoTrans, AtlasNoTrans,
+                               m2, N, m1, ALPHA,
+                               Mvpt3( A, m1, size ), LDA,
+                               B, LDB, PLVL3->one, 
+                               Mvpt3( B, m1, size ), LDB );
+         ATL_join_tree  ( root );
+         ATL_free_tree  ( root );
+         root = PLVL3->pttrmm( NTHREADS, ATTR, SIDE, UPLO, TRANS, DIAG,
+                               m1, N, ALPHA, A, LDA, B, LDB );
+         ATL_join_tree  ( root );
+         ATL_free_tree  ( root );
+
+         return( NULL );
+      }
+      else
+      {
+         ATL_gesplit( NTHREADS, N, NB, &nt1, &nt2, &n1, &n2 );
+         left  = ATL_Strmm( PLVL3, next+1, nt1, ATTR, NB, SIDE, UPLO, TRANS,
+                            DIAG, M, n1, ALPHA, A, LDA, B, LDB );
+         incB  = n1 * LDB;
+         right = ATL_Strmm( PLVL3, next+2, nt2, ATTR, NB, SIDE, UPLO, TRANS,
+                            DIAG, M, n2, ALPHA, A, LDA, Mvpt3( B, incB, size ),
+                            LDB );
+      }
+#else
+      splitN = ATL_1dsplit( NTHREADS, N, NB, &ntn1, &ntn2, &n1, &n2, &rn );
+
+      if( splitN == Atlas1dSplit )
+      {
+         left  = ATL_Strmm( PLVL3, next+1, ntn1, ATTR, NB, SIDE, UPLO, TRANS,
+                            DIAG, M, n1, ALPHA, A, LDA, B, LDB );
+         incB  = n1 * LDB;
+         right = ATL_Strmm( PLVL3, next+2, ntn2, ATTR, NB, SIDE, UPLO, TRANS,
+                            DIAG, M, n2, ALPHA, A, LDA, Mvpt3( B, incB,
+                            size ), LDB );
+         tree = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+      }
+      else
+      {
+         a_mm = (PT_TRMM_ARGS_T *)malloc( sizeof( PT_TRMM_ARGS_T ) );
+         ATL_assert( a_mm != NULL );
+         a_mm->si = SIDE; a_mm->up = UPLO; a_mm->tr = TRANS; a_mm->di = DIAG;
+         a_mm->m  = M;    a_mm->n  = N;    a_mm->al = ALPHA;
+         a_mm->a  = A;    a_mm->la = LDA;  a_mm->b  = B;     a_mm->lb = LDB;
+         tree = ATL_init_node( NODE, NULL, NULL, NULL, NULL, PLVL3->trmm0,
+                               (void *)(a_mm) );
+      }
+#endif
+   }
+   else
+   {
+      splitM = ATL_1dsplit( NTHREADS, M, NB, &ntm1, &ntm2, &m1, &m2, &rm );
+
+      if( splitM == Atlas1dSplit )
+      {
+         left  = ATL_Strmm( PLVL3, next+1, ntm1, ATTR, NB, SIDE, UPLO, TRANS,
+                            DIAG, m1, N, ALPHA, A, LDA, B, LDB );
+         incB  = m1;
+         right = ATL_Strmm( PLVL3, next+2, ntm2, ATTR, NB, SIDE, UPLO, TRANS,
+                            DIAG, m2, N, ALPHA, A, LDA, Mvpt3( B, incB,
+                            size ), LDB );
+         tree = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+      }
+      else
+      {
+         a_mm = (PT_TRMM_ARGS_T *)malloc( sizeof( PT_TRMM_ARGS_T ) );
+         ATL_assert( a_mm != NULL );
+         a_mm->si = SIDE; a_mm->up = UPLO; a_mm->tr = TRANS; a_mm->di = DIAG;
+         a_mm->m  = M;    a_mm->n  = N;    a_mm->al = ALPHA;
+         a_mm->a  = A;    a_mm->la = LDA;  a_mm->b  = B;     a_mm->lb = LDB;
+         tree = ATL_init_node( NODE, NULL, NULL, NULL, NULL, PLVL3->trmm0,
+                               (void *)(a_mm) );
+      }
+   }
+
+   return( tree );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_Strsm
+@define rname @ATL_Strsm@
+@extract @(VER_ATLAS_SRC)
+@extract @(PT3_INCLUDE)
+ 
+PT_TREE_T @(rname)
+(
+   const PT_LVL3_TYPE_T       * PLVL3,
+   const unsigned int         NODE,
+   const unsigned int         NTHREADS,
+   pthread_attr_t             * ATTR,
+   const int                  NB,
+   const enum ATLAS_SIDE      SIDE,
+   const enum ATLAS_UPLO      UPLO,
+   const enum ATLAS_TRANS     TRANS,
+   const enum ATLAS_DIAG      DIAG,
+   const int                  M,
+   const int                  N,
+   const void                 * ALPHA,
+   const void                 * A,
+   const int                  LDA,
+   void                       * B,
+   const int                  LDB
+)
+{
+@extract @(ATLAS_PT3_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  left, right, tree = NULL;
+   PT_TRSM_ARGS_T             * a_sm = NULL;
+   double                     rm, rn;
+   DIM_1DSPLIT_T              splitM, splitN;
+   size_t                     size;
+   unsigned int               next = ( NODE << 1 ), ntm1, ntm2, ntn1, ntn2;
+   int                        incB, m1, m2, n1, n2;
+@extract @(EXECUTABLE_STATEMENT)
+   if( NTHREADS < 1 ) return( NULL );
+
+   size = PLVL3->size;
+
+   if( SIDE == AtlasLeft )
+   {
+      splitN = ATL_1dsplit( NTHREADS, N, NB, &ntn1, &ntn2, &n1, &n2, &rn );
+ 
+      if( splitN == Atlas1dSplit )
+      {
+         left  = ATL_Strsm( PLVL3, next+1, ntn1, ATTR, NB, SIDE, UPLO, TRANS,
+                            DIAG, M, n1, ALPHA, A, LDA, B, LDB );
+         incB  = n1 * LDB;
+         right = ATL_Strsm( PLVL3, next+2, ntn2, ATTR, NB, SIDE, UPLO, TRANS,
+                            DIAG, M, n2, ALPHA, A, LDA, Mvpt3( B, incB,
+                            size ), LDB );
+         tree = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+      }
+      else
+      {
+         a_sm = (PT_TRSM_ARGS_T *)malloc( sizeof( PT_TRSM_ARGS_T ) );
+         ATL_assert( a_sm != NULL );
+         a_sm->si = SIDE; a_sm->up = UPLO; a_sm->tr = TRANS; a_sm->di = DIAG;
+         a_sm->m  = M;    a_sm->n  = N;    a_sm->al = ALPHA;
+         a_sm->a  = A;    a_sm->la = LDA;  a_sm->b  = B;     a_sm->lb = LDB;
+         tree = ATL_init_node( NODE, NULL, NULL, NULL, NULL, PLVL3->trsm0,
+                               (void *)(a_sm) );
+      }
+   }
+   else
+   {
+      splitM = ATL_1dsplit( NTHREADS, M, NB, &ntm1, &ntm2, &m1, &m2, &rm );
+ 
+      if( splitM == Atlas1dSplit )
+      {
+         left  = ATL_Strsm( PLVL3, next+1, ntm1, ATTR, NB, SIDE, UPLO, TRANS,
+                            DIAG, m1, N, ALPHA, A, LDA, B, LDB );
+         incB  = m1;
+         right = ATL_Strsm( PLVL3, next+2, ntm2, ATTR, NB, SIDE, UPLO, TRANS,
+                            DIAG, m2, N, ALPHA, A, LDA, Mvpt3( B, incB,
+                            size ), LDB );
+         tree = ATL_init_node( NODE, left, right, NULL, NULL, NULL, NULL );
+      }
+      else
+      {
+         a_sm = (PT_TRSM_ARGS_T *)malloc( sizeof( PT_TRSM_ARGS_T ) );
+         ATL_assert( a_sm != NULL );
+         a_sm->si = SIDE; a_sm->up = UPLO; a_sm->tr = TRANS; a_sm->di = DIAG;
+         a_sm->m  = M;    a_sm->n  = N;    a_sm->al = ALPHA;
+         a_sm->a  = A;    a_sm->la = LDA;  a_sm->b  = B;     a_sm->lb = LDB;
+         tree = ATL_init_node( NODE, NULL, NULL, NULL, NULL, PLVL3->trsm0,
+                               (void *)(a_sm) );
+      }
+   } 
+
+   return( tree ); 
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+@rout ATL_pttrmm
+@define dn @trmm@
+@rout ATL_pttrsm
+@define dn @trsm@
+@rout ATL_pttrmm ATL_pttrsm
+@extract @(VER_ATLAS_SRC)
+@extract @(PT3_INCLUDE)
+
+@define rname @Mjoin( PATL, pt@(dn)0 )@
+PT_FUN_ARG_T @(rname)( PT_FUN_ARG_T ARGS )
+{
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  root = (PT_TREE_T)(ARGS);
+   PT_@up@(dn)_ARGS_T             * arg;
+@extract @(EXECUTABLE_STATEMENT)
+   ATL_wait_tree( root );
+   arg = (PT_@up@(dn)_ARGS_T *)(root->arg);
+
+#define  _PT_SIDE      (arg->si)
+#define  _PT_UPLO      (arg->up)
+#define  _PT_TRANS     (arg->tr)
+#define  _PT_DIAG      (arg->di)
+ 
+#define  _PT_M         (arg->m)
+#define  _PT_N         (arg->n)
+ 
+#ifdef TREAL
+#define  _PT_ALPHA     (SCALAR)(*((TYPE *)(arg->al)))
+#else
+#define  _PT_ALPHA     (SCALAR)(arg->al)
+#endif
+ 
+#define  _PT_A         ((TYPE *)(arg->a))
+#define  _PT_LDA       (arg->la)
+#define  _PT_B         ((TYPE *)(arg->b))
+#define  _PT_LDB       (arg->lb)
+
+   Mjoin( PATL, @(dn) )( _PT_SIDE, _PT_UPLO, _PT_TRANS, _PT_DIAG, _PT_M,
+                        _PT_N, _PT_ALPHA, _PT_A, _PT_LDA, _PT_B, _PT_LDB );
+   ATL_signal_tree( root );
+ 
+   return( NULL );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+@define rname @Mjoin( PATL, pt@(dn) )@
+void @(rname)
+(
+   const enum ATLAS_SIDE      SIDE,
+   const enum ATLAS_UPLO      UPLO,
+   const enum ATLAS_TRANS     TRANS,
+   const enum ATLAS_DIAG      DIAG,
+   const int                  M,
+   const int                  N,
+   const SCALAR               ALPHA,
+   const TYPE                 * A,
+   const int                  LDA,
+   TYPE                       * B,
+   const int                  LDB
+)
+{
+@extract @(ATLAS_PT3_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   pthread_attr_t             attr;
+   PT_TREE_T                  root = NULL;
+#ifdef TREAL
+   TYPE                       alpha0 = ALPHA;
+#endif
+@extract @(EXECUTABLE_STATEMENT)
+   if( ( M == 0 ) || ( N == 0 ) ) return;
+ 
+   if( SCALAR_IS_ZERO( ALPHA ) )
+   { Mjoin( PATL, ptgezero )( M, N, B, LDB ); return; }
+
+   ATL_thread_init( &attr );
+#ifdef TREAL
+   root = Mjoin( PATL, pt@(dn)_nt )( ATL_NTHREADS, &attr, SIDE, UPLO,
+                                    TRANS, DIAG, M, N, (void *)(&alpha0),
+                                    (void *)(A), LDA, (void *)(B), LDB );
+#else
+   root = Mjoin( PATL, pt@(dn)_nt )( ATL_NTHREADS, &attr, SIDE, UPLO,
+                                    TRANS, DIAG, M, N, (void *)(ALPHA),
+                                    (void *)(A), LDA, (void *)(B), LDB );
+#endif
+   ATL_join_tree  ( root );
+   ATL_free_tree  ( root );
+   ATL_thread_free( &attr );
+@extract @(END_OF_ROUTINE)
+@undef rname
+@skip
+@skip
+
+@define rname @Mjoin( PATL, pt@(dn)_nt )@
+PT_TREE_T @(rname)
+(
+   const unsigned int         NTHREADS,
+   pthread_attr_t             * ATTR,
+   const enum ATLAS_SIDE      SIDE,
+   const enum ATLAS_UPLO      UPLO,
+   const enum ATLAS_TRANS     TRANS,
+   const enum ATLAS_DIAG      DIAG,
+   const int                  M,
+   const int                  N,
+   const void                 * ALPHA,
+   const void                 * A,
+   const int                  LDA,
+   void                       * B,
+   const int                  LDB
+)
+{
+@extract @(ATLAS_PT3_COMMENT)
+@extract @(LOCAL_VARIABLE)
+   PT_TREE_T                  root = NULL;
+   PT_LVL3_TYPE_T             type;
+   double                     tblks;
+#ifdef TREAL
+   TYPE                       alpha;
+#else
+   TYPE                       alpha[2];
+#endif
+   unsigned int               nthreads;
+   int                        nb, nbm1;
+@extract @(EXECUTABLE_STATEMENT)
+   nbm1  = ( nb = Mjoin( PATL, GetNB )() ) - 1;
+   tblks = (double)( (M+nbm1) / nb ) * (double)( (N+nbm1) / nb );
+   if( SIDE == AtlasLeft ) { tblks *= (double)( (M+nbm1) / nb ); }
+   else                    { tblks *= (double)( (N+nbm1) / nb ); }
+
+   if( ( M <= nb ) || ( N <= nb ) || ( NTHREADS <= 1 ) ||
+       ( tblks <= (double)(ATL_XOVER_L3_DEFAULT) ) )
+   {
+#ifdef TREAL
+      alpha    = *((TYPE *)(ALPHA));
+#else
+      alpha[0] = ((TYPE *)(ALPHA))[0]; alpha[1] = ((TYPE *)(ALPHA))[1];
+#endif
+      Mjoin( PATL, @(dn) )( SIDE, UPLO, TRANS, DIAG, M, N, alpha,
+                           (TYPE *)(A), LDA, (TYPE *)(B), LDB );
+      return( root );
+   }
+ 
+   if( tblks >= (double)(NTHREADS) ) { nthreads = NTHREADS; }
+   else    { nthreads = (unsigned int)floor( tblks + 0.5 ); }
+
+   Mjoin( PATL, ptl3settype )( &type );
+   root = ATL_S@(dn)( &type, 0, nthreads, ATTR, nb, SIDE, UPLO, TRANS,
+                     DIAG, M, N, ALPHA, A, LDA, B, LDB );
+   ATL_thread_tree( root, ATTR );
+
+   return( root );
+@extract @(END_OF_ROUTINE) 
+@undef rname
+@undef dn
+@skip
+@skip
+@rout atlas_ptlvl3.h
+@define rname @atlas_ptlvl3.h@
+@extract @(VER_ATLAS_SRC)
+#ifndef ATLAS_PTLVL3_H
+#define ATLAS_PTLVL3_H
+/*
+ * =====================================================================
+ * Include files
+ * =====================================================================
+ */
+#include "atlas_ptmisc.h"
+#include "atlas_level3.h"
+#include "atlas_rblas3.h"
+/*
+ * =====================================================================
+ * macro constants
+ * =====================================================================
+ */
+#ifdef TREAL
+#define   ATL_XOVER_L3_DEFAULT      8     /* number of NB x NB blocks */
+#else
+#define   ATL_XOVER_L3_DEFAULT      4
+#endif
+/*
+ * =====================================================================
+ * macro functions
+ * =====================================================================
+ */
+#define    Mpt3(  a_, i_, siz_ ) ( ( (char*)(a_) + ( (i_) * (siz_) ) ) )
+#define    Mvpt3( a_, i_, siz_ ) ( (void *)(Mpt3( (a_), (i_), (siz_) )))
+/*
+ * =====================================================================
+ * typedef definitions
+ * =====================================================================
+ */
+typedef           PT_TREE_T              (*PT_GEMM_FUN_T)
+(
+   const unsigned int,                   pthread_attr_t *,
+   const enum ATLAS_TRANS,               const enum ATLAS_TRANS,
+   const int,         const int,         const int,         const void *,
+   const void *,      const int,         const void *,      const int,
+   const void *,      void *,            const int
+);
+
+typedef           PT_TREE_T              (*PT_TRMM_FUN_T)
+(
+   const unsigned int,                   pthread_attr_t *,
+   const enum ATLAS_SIDE,                const enum ATLAS_UPLO,
+   const enum ATLAS_TRANS,               const enum ATLAS_DIAG,
+   const int,         const int,         const void *,      const void *,
+   const int,         void *,            const int
+);
+
+typedef           int                    (*PT_SYR2K_FUN_T)
+(
+   const unsigned int,                   pthread_attr_t *,
+   const enum ATLAS_UPLO,                const enum ATLAS_TRANS,
+   const enum ATLAS_TRANS,               const int,       const int,
+   const void *,    const void *,        const int,       const void *,
+   const int,       const void *,        void *,          const int
+);
+
+
+typedef struct
+{
+   size_t                     size;
+   void                       * negone, * one, * zero;
+   PT_FUN_T                   geadd0, gemm0,  symm0, hemm0, syrk0, syr2k0,
+                              herk0,  her2k0, trmm0, trsm0;
+   PT_GEMM_FUN_T              ptgemm;
+   PT_TRMM_FUN_T              pttrmm;
+   PT_SYR2K_FUN_T             ptsyr2k0, pther2k0;
+} PT_LVL3_TYPE_T;
+
+typedef struct
+{
+   const void                 * a, * al, * b, * be;
+   void                       * c;
+   enum ATLAS_TRANS           ta, tb;
+   int                        k, la, lb, lc, m, n;
+} PT_GEMM_ARGS_T;
+
+typedef struct
+{
+   const void                 * a, * al, * b, * be;
+   void                       * c;
+   enum ATLAS_SIDE            si;
+   enum ATLAS_UPLO            up;
+   int                        la, lb, lc, m, n;
+} PT_SYMM_ARGS_T;
+ 
+typedef struct
+{
+   const void                 * a, * al, * be;
+   void                       * c;
+   enum ATLAS_UPLO            up;
+   enum ATLAS_TRANS           tr;
+   int                        l, la, lc, m, n, k;
+} PT_SYRK_ARGS_T;
+ 
+typedef struct
+{
+   const void                 * a, * al, * ac, * b, * be;
+   void                       * c;
+   enum ATLAS_UPLO            up;
+   enum ATLAS_TRANS           tr;
+   int                        l, la, lb, lc, m, n, k;
+} PT_SYR2K_ARGS_T;
+ 
+typedef struct
+{
+   const void                 * a, * al;
+   void                       * b;
+   enum ATLAS_SIDE            si;
+   enum ATLAS_UPLO            up;
+   enum ATLAS_TRANS           tr;
+   enum ATLAS_DIAG            di;
+   int                        la, lb, m, n;
+} PT_TRMM_ARGS_T;
+ 
+typedef struct
+{
+   const void                 * a, * al;
+   void                       * b;
+   enum ATLAS_SIDE            si;
+   enum ATLAS_UPLO            up;
+   enum ATLAS_TRANS           tr;
+   enum ATLAS_DIAG            di;
+   int                        la, lb, m, n;
+} PT_TRSM_ARGS_T;
+
+/*
+ * =====================================================================
+ * Function prototypes
+ * =====================================================================
+ */
+PT_TREE_T         ATL_Sgemm
+(  const PT_LVL3_TYPE_T *,               const unsigned int,
+   const unsigned int,                   pthread_attr_t *,  const int,
+   const enum ATLAS_TRANS,               const enum ATLAS_TRANS,
+   const int,         const int,         const int,         const void *,
+   const void *,      const int,         const void *,      const int,
+   const void *,      void *,            const int );
+PT_TREE_T         ATL_Ssymm
+(  const PT_LVL3_TYPE_T *,               const unsigned int,
+   const unsigned int,                   pthread_attr_t *,  const int,
+   const enum ATLAS_TRANS,               const enum ATLAS_SIDE,
+   const enum ATLAS_UPLO,                const int,         const int,
+   const void *,      const void *,      const int,         const void *,
+   const int,         const void *,      void *,            const int );
+PT_TREE_T         ATL_Ssyrk
+(  const PT_LVL3_TYPE_T *,               const unsigned int,
+   const unsigned int,                   pthread_attr_t *,  const int,
+   const enum ATLAS_UPLO,                const enum ATLAS_TRANS,
+   const enum ATLAS_TRANS,               const int,         const int,
+   const int,         const int,         const void *,      const void *,
+   const int,         const void *,      void *,            const int );
+PT_TREE_T         ATL_Ssyr2k
+(  const PT_LVL3_TYPE_T *,               const unsigned int,
+   const unsigned int,                   pthread_attr_t *,  const int,
+   const enum ATLAS_UPLO,                const enum ATLAS_TRANS,
+   const enum ATLAS_TRANS,               const int,         const int,
+   const int,         const int,         const void *,      const void *,
+   const void *,      const int,         const void *,      const int,
+   const void *,      void *,            const int );
+PT_TREE_T         ATL_Strmm
+(  const PT_LVL3_TYPE_T *,               const unsigned int,
+   const unsigned int,                   pthread_attr_t *,  const int,
+   const enum ATLAS_SIDE,                const enum ATLAS_UPLO,
+   const enum ATLAS_TRANS,               const enum ATLAS_DIAG,
+   const int,         const int,         const void *,      const void *,
+   const int,         void *,            const int );
+PT_TREE_T         ATL_Strsm
+(  const PT_LVL3_TYPE_T *,               const unsigned int,
+   const unsigned int,                   pthread_attr_t *,  const int,
+   const enum ATLAS_SIDE,                const enum ATLAS_UPLO,
+   const enum ATLAS_TRANS,               const enum ATLAS_DIAG,
+   const int,         const int,         const void *,      const void *,
+   const int,         void *,            const int );
+
+#if defined( TREAL ) || defined( TCPLX )
+ 
+int               Mjoin( PATL, GetNB     )          ( void );
+ 
+void              Mjoin( PATL, ptl3settype )        ( PT_LVL3_TYPE_T * );
+
+void              Mjoin( PATL, gemmNN )
+(  const int,       const int,       const int,       const SCALAR,
+   const TYPE *,    const int,       const TYPE *,    const int,
+   const SCALAR,    TYPE *,          const int );
+void              Mjoin( PATL, gemmNT )
+(  const int,       const int,       const int,       const SCALAR,
+   const TYPE *,    const int,       const TYPE *,    const int,
+   const SCALAR,    TYPE *,          const int );
+void              Mjoin( PATL, gemmTN )
+(  const int,       const int,       const int,       const SCALAR,
+   const TYPE *,    const int,       const TYPE *,    const int,
+   const SCALAR,    TYPE *,          const int );
+
+#if defined( TCPLX )
+void              Mjoin( PATL, gemmNC )
+(  const int,       const int,       const int,       const SCALAR,
+   const TYPE *,    const int,       const TYPE *,    const int,
+   const SCALAR,    TYPE *,          const int );
+void              Mjoin( PATL, gemmCN )
+(  const int,       const int,       const int,       const SCALAR,
+   const TYPE *,    const int,       const TYPE *,    const int,
+   const SCALAR,    TYPE *,          const int );
+#endif
+
+PT_FUN_ARG_T      Mjoin( PATL, ptgemm0   )          ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      Mjoin( PATL, ptsymm0   )          ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      Mjoin( PATL, ptsyr2k0  )          ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      Mjoin( PATL, ptsyrk0   )          ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      Mjoin( PATL, pttrmm0   )          ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      Mjoin( PATL, pttrsm0   )          ( PT_FUN_ARG_T );
+
+#if defined( TCPLX )
+PT_FUN_ARG_T      Mjoin( PATL, pthemm0   )          ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      Mjoin( PATL, pther2k0  )          ( PT_FUN_ARG_T );
+PT_FUN_ARG_T      Mjoin( PATL, ptherk0   )          ( PT_FUN_ARG_T );
+#endif
+/*
+ * =====================================================================
+ * Prototypes for the Level 3 multi-threaded ATLAS BLAS routines
+ * =====================================================================
+ */
+PT_TREE_T         Mjoin( PATL, ptgemm_nt )
+(  const unsigned int,               pthread_attr_t *,
+   const enum ATLAS_TRANS,           const enum ATLAS_TRANS,
+   const int,       const int,       const int,       const void *,
+   const void *,    const int,       const void *,    const int,
+   const void *,    void *,          const int );
+PT_TREE_T         Mjoin( PATL, ptsymm_nt )
+(  const unsigned int,               pthread_attr_t *, 
+   const enum ATLAS_SIDE,            const enum ATLAS_UPLO,
+   const int,       const int,       const void *,    const void *,
+   const int,       const void *,    const int,       const void *,
+   void *,          const int );
+PT_TREE_T         Mjoin( PATL, ptsyr2k_nt )
+(  const unsigned int,               pthread_attr_t *, 
+   const enum ATLAS_UPLO,            const enum ATLAS_TRANS,
+   const int,       const int,       const void *,    const void *,
+   const void *,    const int,       const void *,    const int,
+   const void *,    void *,          const int );
+int               Mjoin( PATL, ptsyr2k0_nt )
+(  const unsigned int,               pthread_attr_t *,
+   const enum ATLAS_UPLO,            const enum ATLAS_TRANS,
+   const enum ATLAS_TRANS,           const int,       const int,
+   const void *,    const void *,    const int,       const void *,
+   const int,       const void *,    void *,          const int );
+PT_TREE_T         Mjoin( PATL, ptsyrk_nt )
+(  const unsigned int,               pthread_attr_t *,
+   const enum ATLAS_UPLO,            const enum ATLAS_TRANS,
+   const int,       const int,       const void *,    const void *,
+   const int,       const void *,    void *,          const int );
+PT_TREE_T         Mjoin( PATL, pttrmm_nt )
+(  const unsigned int,               pthread_attr_t *,
+   const enum ATLAS_SIDE,            const enum ATLAS_UPLO,
+   const enum ATLAS_TRANS,           const enum ATLAS_DIAG,
+   const int,       const int,       const void *,    const void *,
+   const int,       void *,          const int );
+PT_TREE_T         Mjoin( PATL, pttrsm_nt )
+(  const unsigned int,               pthread_attr_t *,
+   const enum ATLAS_SIDE,            const enum ATLAS_UPLO,
+   const enum ATLAS_TRANS,           const enum ATLAS_DIAG,
+   const int,       const int,       const void *,    const void *,
+   const int,       void *,          const int );
+
+void              Mjoin( PATL, ptgemm )
+(  const enum ATLAS_TRANS,           const enum ATLAS_TRANS,
+   const int,       const int,       const int,       const SCALAR,
+   const TYPE *,    const int,       const TYPE *,    const int,
+   const SCALAR,    TYPE *,          const int );
+void              Mjoin( PATL, ptsymm )
+(  const enum ATLAS_SIDE,            const enum ATLAS_UPLO,
+   const int,       const int,       const SCALAR,    const TYPE *,
+   const int,       const TYPE *,    const int,       const SCALAR,
+   TYPE *,          const int );
+void              Mjoin( PATL, ptsyr2k )
+(  const enum ATLAS_UPLO,            const enum ATLAS_TRANS,
+   const int,       const int,       const SCALAR,    const TYPE *,
+   const int,       const TYPE *,    const int,       const SCALAR,
+   TYPE *,          const int );
+void              Mjoin( PATL, ptsyrk )
+(  const enum ATLAS_UPLO,            const enum ATLAS_TRANS,
+   const int,       const int,       const SCALAR,    const TYPE *,
+   const int,       const SCALAR,    TYPE *,          const int );
+void              Mjoin( PATL, pttrmm )
+(  const enum ATLAS_SIDE,            const enum ATLAS_UPLO,
+   const enum ATLAS_TRANS,           const enum ATLAS_DIAG,
+   const int,       const int,       const SCALAR,    const TYPE *,
+   const int,       TYPE *,          const int );
+void              Mjoin( PATL, pttrsm )
+(  const enum ATLAS_SIDE,            const enum ATLAS_UPLO,
+   const enum ATLAS_TRANS,           const enum ATLAS_DIAG,
+   const int,       const int,       const SCALAR,    const TYPE *,
+   const int,       TYPE *,          const int );
+
+#if defined( TCPLX )
+PT_TREE_T         Mjoin( PATL, pthemm_nt )
+(  const unsigned int,               pthread_attr_t *, 
+   const enum ATLAS_SIDE,            const enum ATLAS_UPLO,
+   const int,       const int,       const void *,    const void *,
+   const int,       const void *,    const int,       const void *,
+   void *,          const int );
+PT_TREE_T         Mjoin( PATL, pther2k_nt )
+(  const unsigned int,               pthread_attr_t *, 
+   const enum ATLAS_UPLO,            const enum ATLAS_TRANS,
+   const int,       const int,       const void *,    const void *,
+   const void *,    const int,       const void *,    const int,
+   const void *,    void *,          const int );
+int               Mjoin( PATL, pther2k0_nt )
+(  const unsigned int,               pthread_attr_t *,
+   const enum ATLAS_UPLO,            const enum ATLAS_TRANS,
+   const enum ATLAS_TRANS,           const int,       const int,
+   const void *,    const void *,    const int,       const void *,
+   const int,       const void *,    void *,          const int );
+PT_TREE_T         Mjoin( PATL, ptherk_nt )
+(  const unsigned int,               pthread_attr_t *, 
+   const enum ATLAS_UPLO,            const enum ATLAS_TRANS,
+   const int,       const int,       const void *,    const void *,
+   const int,       const void *,    void *,          const int );
+
+void              Mjoin( PATL, pthemm )
+(  const enum ATLAS_SIDE,            const enum ATLAS_UPLO,
+   const int,       const int,       const SCALAR,    const TYPE *,
+   const int,       const TYPE *,    const int,       const SCALAR,
+   TYPE *,          const int );
+void              Mjoin( PATL, pther2k )
+(  const enum ATLAS_UPLO,            const enum ATLAS_TRANS,
+   const int,       const int,       const SCALAR,    const TYPE *,
+   const int,       const TYPE *,    const int,       const TYPE,
+   TYPE *,          const int );
+void              Mjoin( PATL, ptherk )
+(  const enum ATLAS_UPLO,            const enum ATLAS_TRANS,
+   const int,       const int,       const TYPE,      const TYPE *,
+   const int,       const TYPE,      TYPE *,          const int );
+#endif
+
+#endif
+
+#endif
+/*
+ * End of @(rname)
+ */
+@undef rname
+@skip
+@skip
+@rout Make.l3ptblas
+@extract @(VER_ATLAS_MAK)
+#
+include Make.inc
+mySRCdir = $(SRCdir)/src/pthreads/blas/level3
+#
+########################################################################
+#
+INC3dep   = \
+   $(INCAdir)/atlas_pthreads.h     $(INCSdir)/atlas_aux.h      \
+   $(INCSdir)/atlas_enum.h      $(INCSdir)/atlas_misc.h     \
+   $(INCSdir)/atlas_kern3.h     $(INCSdir)/atlas_rblas3.h   \
+   $(INCSdir)/atlas_lvl3.h      $(INCSdir)/atlas_level3.h   \
+   $(INCSdir)/atlas_ptmisc.h    $(INCSdir)/atlas_ptlvl3.h   \
+   $(INCSdir)/atlas_ptlevel3.h
+#
+## Object files ########################################################
+#
+ATL_alvl3obj = \
+@declare "   " y y
+   @multidef rout_
+      Sgemm  Ssymm  Ssyrk  Ssyr2k Strmm Strsm 
+   @endmultidef
+   @whiledef rout_
+      ATL_@(rout_)_pt.o
+   @endwhile
+@enddeclare
+#
+@whiledef pre_ z c d s
+   @addkeys ptyp_=@(pre_)
+ATL_@(pre_)lvl3obj = \
+   @declare "   " y y
+      @ptyp_ s d
+         @multidef rout_
+            trsm trmm syr2k syrk symm gemm l3settype
+         @endmultidef
+      @ptyp_ c z
+         @multidef rout_
+            trsm trmm syr2k syrk symm her2k herk hemm gemm l3settype
+         @endmultidef
+      @ptyp_ !
+      @whiledef rout_
+         ATL_@(pre_)pt@(rout_).o
+      @endwhile
+   @enddeclare
+   @killkeys ptyp_
+#
+@endwhile
+## Targets #############################################################
+#
+all   : lib
+#
+lvl3  : lib
+#
+lib   : slib dlib clib zlib
+#
+@whiledef pre_ z c d s
+@(pre_)lvl3 : @(pre_)lib
+@endwhile
+#
+@whiledef pre_ z c d s
+@(pre_)lib  : @(pre_)lib.grd
+@endwhile
+#
+@whiledef pre_ z c d s
+@(pre_)lib.grd  : $(ATL_@(pre_)lvl3obj) $(ATL_alvl3obj)
+	@(arch) @(archflgs) @(ptxlib) $(ATL_@(pre_)lvl3obj) $(ATL_alvl3obj)
+	@(ranlib) @(ptxlib)
+	touch @(pre_)lib.grd
+#
+@endwhile
+########################################################################
+#
+@SKIP
+@skip _pt suffix added by RCW to get around case insensitive archiver on Windows
+@SKIP
+@multidef rout_
+   Sgemm  Ssymm  Ssyrk  Ssyr2k Strmm Strsm 
+@endmultidef
+@whiledef rout_
+   @define rpre_ @ATL_@(rout_)@
+   @define rsrc_ @$(mySRCdir)/@(rpre_).c@
+   @define robj_ @ATL_@(rout_)_pt.o@
+@28l@(robj_) : @(rsrc_) $(INC3dep)
+@(CCptcomp) @(rsrc_)
+   @undef rpre_
+   @undef rsrc_
+   @undef robj_
+@endwhile
+#
+@multidef upr_ d s d s
+@whiledef pre_ z c d s
+   @addkeys ptyp_=@(pre_)
+   @ptyp_ s d
+      @multidef rout_
+         trsm trmm syr2k syrk symm gemm l3settype
+      @endmultidef
+      @define cdefs @-D@up@(upr_)REAL@
+   @ptyp_ c z
+      @multidef rout_
+         trsm trmm syr2k syrk symm her2k herk hemm gemm l3settype
+      @endmultidef
+      @define cdefs @-D@up@(upr_)CPLX@
+   @ptyp_ !
+   @whiledef rout_
+      @define rpre_ @ATL_pt@(rout_)@
+      @define rsrc_ @$(mySRCdir)/@(rpre_).c@
+      @define robj_ @ATL_@(pre_)pt@(rout_).o@
+@28l@(robj_) : @(rsrc_) $(INC3dep)
+@(CCptcomp) @(cdefs) @(rsrc_)
+      @undef rpre_
+      @undef rsrc_
+      @undef robj_
+   @endwhile
+   @undef cdefs
+   @killkeys ptyp_
+   @undef upr_
+#
+@endwhile
+########################################################################
+#
+@whiledef pre_ z c d s
+@(pre_)clean           :
+	rm -f $(ATL_@(pre_)lvl3obj) $(ATL_alvl3obj) @(pre_)*.grd a*.grd
+#
+@endwhile
+#
+clean            :
+	rm -f *.o *.grd
+#
+########################################################################
+@skip
+@skip
+@rout atlas_ptlevel3.h
+@define rname @atlas_ptlevel3.h@
+@extract @(VER_ATLAS_SRC)
+#ifndef ATLAS_PTLEVEL3_H
+#define ATLAS_PTLEVEL3_H
+/*
+ * =====================================================================
+ * Include files
+ * =====================================================================
+ */
+#include "atlas_enum.h"
+#include "atlas_pthreads.h"
+/*
+ * =====================================================================
+ * Prototypes  for single precision real  Level 3  multi-threaded  ATLAS
+ * BLAS routines.
+ * =====================================================================
+ */
+void              ATL_sptgeadd
+(  const int,       const int,       const float,     const float *,
+   const int,       const float,     float *,         const int );
+void              ATL_sptgezero
+(  const int,       const int,       float *,         const int );
+void              ATL_sptgescal
+(  const int,       const int,       const float,     float *,
+   const int );
+void              ATL_spttrscal
+(  const enum ATLAS_UPLO,            const int,       const int,
+   const float,     float *,         const int );
+
+void              ATL_sptgemm
+(  const enum ATLAS_TRANS,           const enum ATLAS_TRANS,
+   const int,       const int,       const int,       const float,
+   const float *,   const int,       const float *,   const int,
+   const float,     float *,         const int );
+void              ATL_sptsymm
+(  const enum ATLAS_SIDE,            const enum ATLAS_UPLO,
+   const int,       const int,       const float,     const float *,
+   const int,       const float *,   const int,       const float,
+   float *,         const int );
+void              ATL_sptsyrk
+(  const enum ATLAS_UPLO,            const enum ATLAS_TRANS,
+   const int,       const int,       const float,     const float *,
+   const int,       const float,     float *,         const int );
+void              ATL_sptsyr2k
+(  const enum ATLAS_UPLO,            const enum ATLAS_TRANS,
+   const int,       const int,       const float,     const float *,
+   const int,       const float *,   const int,       const float,
+   float *,         const int );
+void              ATL_spttrmm
+(  const enum ATLAS_SIDE,            const enum ATLAS_UPLO,
+   const enum ATLAS_TRANS,           const enum ATLAS_DIAG,
+   const int,       const int,       const float,     const float *,
+   const int,       float *,         const int );
+void              ATL_spttrsm
+(  const enum ATLAS_SIDE,            const enum ATLAS_UPLO,
+   const enum ATLAS_TRANS,           const enum ATLAS_DIAG,
+   const int,       const int,       const float,     const float *,
+   const int,       float *,         const int );
+/*
+ * =====================================================================
+ * Prototypes  for double precision real  Level 3  multi-threaded  ATLAS
+ * BLAS routines.
+ * =====================================================================
+ */
+void              ATL_dptgeadd
+(  const int,       const int,       const double,    const double *,
+   const int,       const double,    double *,        const int );
+void              ATL_dptgezero
+(  const int,       const int,       double *,        const int );
+void              ATL_dptgescal
+(  const int,       const int,       const double,    double *,
+   const int );
+void              ATL_dpttrscal
+(  const enum ATLAS_UPLO,            const int,       const int,
+   const double,    double *,        const int );
+
+void              ATL_dptgemm
+(  const enum ATLAS_TRANS,           const enum ATLAS_TRANS,
+   const int,       const int,       const int,       const double,
+   const double *,  const int,       const double *,  const int,
+   const double,    double *,        const int );
+void              ATL_dptsymm
+(  const enum ATLAS_SIDE,            const enum ATLAS_UPLO,
+   const int,       const int,       const double,    const double *,
+   const int,       const double *,  const int,       const double,
+   double *,        const int );
+void              ATL_dptsyrk
+(  const enum ATLAS_UPLO,            const enum ATLAS_TRANS,
+   const int,       const int,       const double,    const double *,
+   const int,       const double,    double *,        const int );
+void              ATL_dptsyr2k
+(  const enum ATLAS_UPLO,            const enum ATLAS_TRANS,
+   const int,       const int,       const double,    const double *,
+   const int,       const double *,  const int,       const double,
+   double *,        const int );
+void              ATL_dpttrmm
+(  const enum ATLAS_SIDE,            const enum ATLAS_UPLO,
+   const enum ATLAS_TRANS,           const enum ATLAS_DIAG,
+   const int,       const int,       const double,    const double *,
+   const int,       double *,        const int );
+void              ATL_dpttrsm
+(  const enum ATLAS_SIDE,            const enum ATLAS_UPLO,
+   const enum ATLAS_TRANS,           const enum ATLAS_DIAG,
+   const int,       const int,       const double,    const double *,
+   const int,       double *,        const int );
+/*
+ * =====================================================================
+ * Prototypes  for single precision complex Level 3 multi-threaded ATLAS
+ * BLAS routines.
+ * =====================================================================
+ */
+void              ATL_cptgeadd
+(  const int,       const int,       const float *,   const float *, 
+   const int,       const float *,   float *,         const int );
+void              ATL_cptgezero
+(  const int,       const int,       float *,         const int );
+void              ATL_cptgescal
+(  const int,       const int,       const float *,   float *,
+   const int );
+void              ATL_cpttrscal
+(  const enum ATLAS_UPLO,            const int,       const int,
+   const float *,   float *,         const int );
+void              ATL_cpthescal
+(  const enum ATLAS_UPLO,            const int,       const int,
+   const float,     float *,         const int );
+
+void              ATL_cptgemm
+(  const enum ATLAS_TRANS,           const enum ATLAS_TRANS,
+   const int,       const int,       const int,       const float *,
+   const float *,   const int,       const float *,   const int,
+   const float *,   float *,         const int );
+void              ATL_cptsymm
+(  const enum ATLAS_SIDE,            const enum ATLAS_UPLO,
+   const int,       const int,       const float *,   const float *,
+   const int,       const float *,   const int,       const float *,
+   float *,         const int );
+void              ATL_cptsyrk
+(  const enum ATLAS_UPLO,            const enum ATLAS_TRANS,
+   const int,       const int,       const float *,   const float *,
+   const int,       const float *,   float *,         const int );
+void              ATL_cptsyr2k
+(  const enum ATLAS_UPLO,            const enum ATLAS_TRANS,
+   const int,       const int,       const float *,   const float *,
+   const int,       const float *,   const int,       const float *,
+   float *,         const int );
+void              ATL_cpttrmm
+(  const enum ATLAS_SIDE,            const enum ATLAS_UPLO,
+   const enum ATLAS_TRANS,           const enum ATLAS_DIAG,
+   const int,       const int,       const float *,   const float *,
+   const int,       float *,         const int );
+void              ATL_cpttrsm
+(  const enum ATLAS_SIDE,            const enum ATLAS_UPLO,
+   const enum ATLAS_TRANS,           const enum ATLAS_DIAG,
+   const int,       const int,       const float *,   const float *,
+   const int,       float *,         const int );
+/*
+ * =====================================================================
+ * Prototypes  for double precision complex Level 3 multi-threaded ATLAS
+ * BLAS routines.
+ * =====================================================================
+ */
+void              ATL_zptgeadd
+(  const int,       const int,       const double *,  const double *,
+   const int,       const double *,  double *,        const int );
+void              ATL_zptgezero
+(  const int,       const int,       double *,        const int );
+void              ATL_zptgescal
+(  const int,       const int,       const double *,  double *,
+   const int );
+void              ATL_zpttrscal
+(  const enum ATLAS_UPLO,            const int,       const int,
+   const double *,  double *,        const int );
+void              ATL_zpthescal
+(  const enum ATLAS_UPLO,            const int,       const int,
+   const double,    double *,        const int );
+
+void              ATL_zptgemm
+(  const enum ATLAS_TRANS,           const enum ATLAS_TRANS,
+   const int,       const int,       const int,       const double *,
+   const double *,  const int,       const double *,  const int,
+   const double *,  double *,        const int );
+void              ATL_zptsymm
+(  const enum ATLAS_SIDE,            const enum ATLAS_UPLO,
+   const int,       const int,       const double *,  const double *,
+   const int,       const double *,  const int,       const double *,
+   double *,        const int );
+void              ATL_zptsyrk
+(  const enum ATLAS_UPLO,            const enum ATLAS_TRANS,
+   const int,       const int,       const double *,  const double *,
+   const int,       const double *,  double *,        const int );
+void              ATL_zptsyr2k
+(  const enum ATLAS_UPLO,            const enum ATLAS_TRANS,
+   const int,       const int,       const double *,  const double *,
+   const int,       const double *,  const int,       const double *,
+   double *,        const int );
+void              ATL_zpttrmm
+(  const enum ATLAS_SIDE,            const enum ATLAS_UPLO,
+   const enum ATLAS_TRANS,           const enum ATLAS_DIAG,
+   const int,       const int,       const double *,  const double *,
+   const int,       double *,        const int );
+void              ATL_zpttrsm
+(  const enum ATLAS_SIDE,            const enum ATLAS_UPLO,
+   const enum ATLAS_TRANS,           const enum ATLAS_DIAG,
+   const int,       const int,       const double *,  const double *,
+   const int,       double *,        const int );
+
+void              ATL_cpthemm
+(  const enum ATLAS_SIDE,            const enum ATLAS_UPLO,
+   const int,       const int,       const float *,   const float *,
+   const int,       const float *,   const int,       const float *,
+   float *,         const int );
+void              ATL_cptherk
+(  const enum ATLAS_UPLO,            const enum ATLAS_TRANS,
+   const int,       const int,       const float,     const float *,
+   const int,       const float,     float *,         const int );
+void              ATL_cpther2k
+(  const enum ATLAS_UPLO,            const enum ATLAS_TRANS,
+   const int,       const int,       const float *,   const float *,
+   const int,       const float *,   const int,       const float,
+   float *,         const int );
+
+void              ATL_zpthemm
+(  const enum ATLAS_SIDE,            const enum ATLAS_UPLO,
+   const int,       const int,       const double *,  const double *,
+   const int,       const double *,  const int,       const double *,
+   double *,        const int );
+void              ATL_zptherk
+(  const enum ATLAS_UPLO,            const enum ATLAS_TRANS,
+   const int,       const int,       const double,    const double *,
+   const int,       const double,    double *,        const int );
+void              ATL_zpther2k
+(  const enum ATLAS_UPLO,            const enum ATLAS_TRANS,
+   const int,       const int,       const double *,  const double *,
+   const int,       const double *,  const int,       const double,
+   double *,        const int );
+
+#endif
+/*
+ * End of @(rname)
+ */
+@undef rname
+@skip
+@skip
+@rout !
+@skip
+@skip
+@undef PT3_INCLUDE
+@skip
+@skip
