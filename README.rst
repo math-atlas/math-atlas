@@ -1,8 +1,10 @@
 INSTALLING FROM GIT/BASEFILES
 =============================
 #. **Use git to grab the files from github**, using one of the workflow ideas
-   outline by `gitwash 
-<http://nipy.sourceforge.net/nipy/stable/devel/guidelines/gitwash/index.html>`__, but obviously replacing nipy with math-atlas.
+   outlined by 
+`gitwash 
+<http://nipy.sourceforge.net/nipy/stable/devel/guidelines/gitwash/index.html>`__
+(obviously replacing nipy-specific info with math-atlas info as appropriate).
 
 #. **Extract Makefile that will build the ATLAS source tree**:
 Decide where you wish to create the ATLAS source tree.  This directory should
