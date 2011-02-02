@@ -1,4 +1,3 @@
-
 /************************************************************************/
 /*                        Extract v4.0.0                                */
 /*  (C) Copyright 1994 R. Clint Whaley (rwhaley@cs.utk.edu).            */
@@ -56,9 +55,9 @@
 #define EC_EndExt   7
 #define EC_Print    8
 #define EC_Exp      9
-#define EC_While   10
-#define EC_Ifdef   11
-#define EC_Dec     12
+#define EC_While   10 
+#define EC_Ifdef   11 
+#define EC_Dec     12 
 #define EC_AddKey  13
 #define EC_Echo    14
 #define EC_Iwhile  15
@@ -123,7 +122,7 @@ struct kEyS
    char *KeyHandle, *Match;
    int HanLen;
    EXTMAC *KeyMac;
-   ARGSTACK *MyArgs, *ArgStack;
+   ARGSTACK *MyArgs, *ArgStack; 
    KEYS *next;
 };
 
@@ -153,7 +152,7 @@ struct eXtPrOc
 };
 
 /*
- * If localprocs is set, I kill not only all my procedures, but all those
+ * If localprocs is set, I kill not only all my procedures, but all those 
  * defined by subservient extracts, and all proc macros become puny
  */
 typedef struct eXtEnV EXTENV;
@@ -240,7 +239,7 @@ int WstrcmpN(char *p1, char *p2, int N)
 
 int Wfnd_substr(char *str, char *sub)
 /*****************************************************************************/
-/*  PURPOSE: finds if a given string (sub) is contained in another (str).    */
+/*  PURPOSE: finds if a given string (sub) is contained in another (str).    */ 
 /*  RETURNS: Position of start of string (starting from 1), 0 if string      */
 /*           is not found.                                                   */
 /*****************************************************************************/
@@ -307,7 +306,7 @@ void WstrcpyN_LOW(char *p1, char *p2, int N)
 {
    if (N)
    {
-      do
+      do 
       {
          *p1++ = Mlowcase(*p2);
          p2++;
@@ -323,7 +322,7 @@ void WstrcpyN_UP(char *p1, char *p2, int N)
 {
    if (N)
    {
-      do
+      do 
       {
          *p1++ = Mupcase(*p2);
          p2++;
@@ -622,12 +621,12 @@ void ExtWarn(EXTENV *EE, char *form, ...)
       fprintf(stderr, "\nExtract warning \'%s\'.\n", cline);
       fprintf(stderr, "Input file chain:\n");
       fprintf(stderr, "   Warning occured on line %d of file %s.\n",
-              EE->FpIn->LineNo, EE->FpIn->Fnam);
+              EE->FpIn->LineNo, EE->FpIn->Fnam); 
       for (fp=EE->FpIn->prev; fp; fp = fp->prev)
          fprintf(stderr, "      Which was extracted from line %d of file %s.\n",
-                 fp->LineNo, fp->Fnam);
+                 fp->LineNo, fp->Fnam); 
       fprintf(stderr, "\nWarning occured after line %d of output file %s.\n",
-              EE->FpOut->LineNo, EE->FpOut->Fnam);
+              EE->FpOut->LineNo, EE->FpOut->Fnam); 
 
    }
    else fprintf(stderr, "\nExtract warning \'%s\'\n", cline);
@@ -658,13 +657,13 @@ void ExtErr(EXTENV *EE, char *form, ...)
       {
          fprintf(stderr, "Input file chain:\n");
          fprintf(stderr, "   Error occured on line %d of file %s.\n",
-                 EE->FpIn->LineNo, EE->FpIn->Fnam);
+                 EE->FpIn->LineNo, EE->FpIn->Fnam); 
          for (fp=EE->FpIn->prev; fp; fp = fp->prev)
-            fprintf(stderr,
+            fprintf(stderr, 
                     "      Which was extracted from line %d of file %s.\n",
-                    fp->LineNo, fp->Fnam);
+                    fp->LineNo, fp->Fnam); 
          fprintf(stderr, "\nError occured after line %d of output file %s.\n\n",
-                 EE->FpOut->LineNo, EE->FpOut->Fnam);
+                 EE->FpOut->LineNo, EE->FpOut->Fnam); 
 
       }
    }
@@ -677,7 +676,7 @@ void HandleAtEscape(char *ln)
 {
    int i;
 
-   while (i = Wfnd_substr(ln, "@"))
+   while (i = Wfnd_substr(ln, "@(@)"))
    {
       Wstrcpy(ln+i, ln+i+3);
       ln += i;
@@ -692,7 +691,7 @@ void PutLn(EXTENV *EE, char *line)
    int ExtLn, h, i=0, k;
    static int j=0;
    char *tln;
-/*
+/* 
  * Check if line needs to be joined with next line
  */
    if (EE->Joining)
@@ -724,7 +723,7 @@ void PutLn(EXTENV *EE, char *line)
       }
       else tln = line;
    }
-   else
+   else 
    {
       tln = line;
       ExtLn = 0;
@@ -743,7 +742,7 @@ void PutLn(EXTENV *EE, char *line)
       }
       else if (EE->FpOut->LineNo == LnNums[nLnNums])
       {
-         fprintf(Warn,
+         fprintf(Warn, 
                  "\nLine %d of extracted file corresponds to line %d of \'%s\'\n",
                  EE->FpOut->LineNo, EE->FpIn->LineNo, EE->FpIn->Fnam);
          nLnNums--;
@@ -811,9 +810,9 @@ FILE2 *OpenFile(EXTENV *EE, char *Fnam, char *mode)
          return(fp);
       }
 
-      if (EE->Flags[F_Verb] > 2)
+      if (EE->Flags[F_Verb] > 2) 
          fprintf(Warn, "Opening file \'%s\' for input . . .\n", Fnam);
-
+      
       if ( access(Fnam, 0) )
       {
          fprintf(Warn, "Cannot find input file \'%s\'\n", Fnam);
@@ -966,7 +965,7 @@ WORDS *GetVars(char *line, char Ab, char Ae)
       wrd[j] = '\0';
       wptr->next = GetWord(wrd);
       wptr = wptr->next;
-      if (line[i] == ',')
+      if (line[i] == ',') 
       {
          i++;
          while(Mciswspace(line[i])) i++;
@@ -1004,7 +1003,7 @@ WORDS *GetArgs(EXTENV *EE, char *line)
          j = 0;
          while(!Mciswspace(line[i]) && line[i])
          {
-            if (line[i] != '@' || line[i+1] != '^')
+            if (line[i] != '@' || line[i+1] != '^') 
                word[j++] = line[i++];
             else  /* sticky space */
             {
@@ -1038,7 +1037,7 @@ WORDS *GetWords(char *line)
       j = 0;
       while(!Mciswspace(line[i]) && line[i])
       {
-         if (line[i] != '@' || line[i+1] != '^')
+         if (line[i] != '@' || line[i+1] != '^') 
             word[j++] = line[i++];
          else  /* sticky space */
          {
@@ -1113,7 +1112,7 @@ WORDS *fGetWords(EXTENV *EE, char *EndStr, int EndLen, char *line, char *tline)
       }
       while (wp == NULL);
 
-      while( fgets(line, LNLEN, fp) )
+      while( fgets(line, LNLEN, fp) ) 
       {
          while (wp->next) wp = wp->next;
          wp->next = GetWords(line);
@@ -1318,7 +1317,7 @@ EXTMAC *FindMac(char *handle)
    for(ptr=MacroBase; ptr; ptr=ptr->next)
    {
       if (ptr->HanLen == i + 3)
-         if( WstrcmpN(&(ptr->Handle[2]), handle, i) )
+         if( WstrcmpN(&(ptr->Handle[2]), handle, i) ) 
             if( ptr->Handle[i+2] == ')' ) break;
    }
    return(ptr);
@@ -1423,7 +1422,7 @@ int PopMacro2(EXTENV *EE, char *handle)
    for(ptr=MacroBase; ptr; ptr=ptr->next)
    {
       if (ptr->HanLen == i + 3)
-         if( WstrcmpN(&(ptr->Handle[2]), handle, i) )
+         if( WstrcmpN(&(ptr->Handle[2]), handle, i) ) 
             if( ptr->Handle[i+2] == ')' ) break;
       tptr = ptr;
    }
@@ -1568,7 +1567,7 @@ int ExpandMacro(EXTMAC *macp, char *line)
 int ExpandThisMacro(EXTENV *EE, char *line, int i, int hlen)
 {
    EXTMAC *mp;
-
+   
    for (mp=MacroBase; mp; mp = mp->next)
       if (mp->HanLen == hlen) if ( WstrcmpN(line+i, mp->Handle, hlen) ) break;
    if (mp)
@@ -1604,7 +1603,7 @@ void MacroSub(EXTENV *EE, char *line)
    }
    if (!DONE)
    {
-      macp=MacroBase;
+      macp=MacroBase; 
       while(macp)
       {
          i = Wfnd_substr(line, "@(");
@@ -1881,7 +1880,7 @@ void HandleKeyLn(EXTENV *EE, char *line, KEYS *Key)
  * If it's a 1-line keyline
  */
    for (i=0; (line[i]) && (line[i] != '`'); i++);
-   if (line[i])
+   if (line[i]) 
    {
       OneLn = i + 1;
       line[i] = '\0';
@@ -1898,7 +1897,7 @@ void HandleKeyLn(EXTENV *EE, char *line, KEYS *Key)
       if ( WstrcmpN(&line[i], "@printargs", 10) )
       {
          i = 0;
-         if (Key->MyArgs->Not)
+         if (Key->MyArgs->Not) 
          {
             line[i++] = '!';
             line[i++] = ' ';
@@ -1908,7 +1907,7 @@ void HandleKeyLn(EXTENV *EE, char *line, KEYS *Key)
          return;
       }
       CHSTAK = 1;
-      if ( WstrcmpN(&line[i], "@push", 5) )
+      if ( WstrcmpN(&line[i], "@push", 5) ) 
       {
          PushKey(EE, Key);
          PeekKey(EE, Key);
@@ -1934,20 +1933,20 @@ void HandleKeyLn(EXTENV *EE, char *line, KEYS *Key)
 
             if (line[i-2] == '+')
             {
-               if (Key->MyArgs->Not)
+               if (Key->MyArgs->Not) 
                {
                   if (k) Wstrcpy(&cptr[k-1], &cptr[k-1+j]);
                }
-               else if (!k)
+               else if (!k) 
                {
                   k = Wstrlen(cptr);
                   if (k == 0) cptr[k++] = ' ';
                   keycpy(&cptr[k], wp->word);
                }
             }
-            else
+            else 
             {
-               if (Key->MyArgs->Not)
+               if (Key->MyArgs->Not) 
                {
                   if (!k)
                   {
@@ -2092,7 +2091,7 @@ int icalc(EXTENV *EE, char line[])
             break;
 #endif
          default:
-            ExtErr(EE,
+            ExtErr(EE, 
                    "Unrecognized character/non-numeric string in @iexp: \'%s\'",
                    line);
          }
@@ -2117,7 +2116,7 @@ void MakeLnButtUgly(EXTENV *EE, char *line)
  *  All comment lines begin with '*'; all other lines must be upcase
  */
    if ( !Mciswspace(line[0]) && !Mcisnum(line[0]) ) line[0] = comm;
-   else
+   else 
    {
 /*      fprintf(stderr, "line0=%c, %d, %d\n",line[0], !Mciswspace(line[0]), !Mcisnum(line[0])); */
       for (i=0; Mciswspace(line[i]); i++);
@@ -2139,7 +2138,7 @@ void MakeLnButtUgly(EXTENV *EE, char *line)
 /*
  *    Use only $ for continuation
  */
-      if ( !Mciswspace(line[5]) )
+      if ( !Mciswspace(line[5]) ) 
       {
          if ( (line[5]) && (line[0] != comm) ) line[5] = ext;
       }
@@ -2157,7 +2156,7 @@ void MakeLnButtUgly(EXTENV *EE, char *line)
    }
 
 /*
- * Change lines of ---- to blank lines
+ * Change lines of ---- to blank lines 
  */
    if (EE->Flags[F_Ugly] == 2)
    {
@@ -2363,7 +2362,7 @@ void HandleDec(EXTENV *EE, char *line)
             ExtErr(EE, "Parameter \'%s\' too long to fit on @DECLARE line",
                    wptr->word);
          i = istart;
-         if (!EXTENDLINE)
+         if (!EXTENDLINE) 
          {
             i -= 2;
             if (WhatLang == LangC) outln[i++] = ';';
@@ -2396,7 +2395,7 @@ void HandleDec(EXTENV *EE, char *line)
             if (EE->Flags[F_Lang] == 'f') outln[5] = '$';
          }
       }
-      else
+      else 
       {
          wptr = wptr->next;
          if (WhatLang != LangMake) outln[i++] = ',';
@@ -2420,7 +2419,7 @@ void HandleMultidef(EXTENV *EE, char *line)
    char tline[LNLEN], cline[LNLEN];
    char *han=line+10;
    int i, j, k;
-
+   
    for (i=10; ((!Mciswspace(line[i])) && line[i]); i++);
    if (line[i]) line[i++] = '\0';
    for (j=i; ( (line[j]) && Mciswspace(line[j]) ); j++);
@@ -2521,7 +2520,7 @@ void HandleWhile(EXTENV *EE, char line[])
 char GetIntComp(EXTENV *EE, char *ln, int *A1CONST, int *A2CONST,
                 int *ia1, int *ia2, char *mac1, char *mac2)
 /*
- * Expects comparison line of form arg1 [<,>,!,=] arg2;
+ * Expects comparison line of form arg1 [<,>,!,=] arg2;  
  * This routine finds arg1 and arg2.  Note that if
  * arg1 or arg2 is a macro, it cannot begin with a number or -
  * Returns type of comparison (<, =, !)
@@ -2822,16 +2821,16 @@ void PrintUsage()
    fprintf(Warn, "\nExtract v%s: Written by R. Clint Whaley.\n", version);
    fprintf(Warn, "Report bugs to: rwhaley@cs.utk.edu,\n");
    fprintf(Warn, "_after_ scoping the homepage: www.cs.utk.edu/~rwhaley/EXTRACT/Extract.html\n");
-   fprintf(Warn,
+   fprintf(Warn, 
            "\nExtract3.0: Victor\'s Revenge -- bells, whistles, a gong, and\n");
    fprintf(Warn, "            a bag hanging off the side.\n");
-   fprintf(Warn,
+   fprintf(Warn, 
            "\nExtract3.1: Andy Strikes Back -- bells, whistles, a gong, \n");
-   fprintf(Warn,
+   fprintf(Warn, 
            "            a bag hanging off the side, and a toupee on top.\n");
-   fprintf(Warn,
+   fprintf(Warn, 
            "\nExtract4.0: This Time, Its Personal -- bells, whistles, a gong, \n");
-   fprintf(Warn,
+   fprintf(Warn, 
            "            a bag hanging off the side, a toupee on top, and\n");
    fprintf(Warn,
            "            chrome all around.\n");
@@ -2843,48 +2842,48 @@ void PrintUsage()
    fprintf(Warn,
            "Those items in [] are optional, while those in <> are to be\n");
    fprintf(Warn,"replaced by the appropriate string.\n");
-   fprintf(Warn,
+   fprintf(Warn, 
 "All flags have the option 0.  This means do not perform the\n");
-   fprintf(Warn,
+   fprintf(Warn, 
 "operation indicated by the flag.  For instance -case0 means do not change case.\n");
-   fprintf(Warn,
+   fprintf(Warn, 
 "This can be used to override the defaults setup by your ~/.extractrc file.\n");
    fprintf(Warn, "\nThe available flags are:\n");
-   fprintf(Warn,
+   fprintf(Warn, 
       "  -o <outfile> : use file <outfile> for output rather than stdout.\n");
    fprintf(Warn,
       "  -b <basefile> : use file <basefile> for input rather than stdin.\n");
-   fprintf(Warn,
+   fprintf(Warn, 
    "  -case[0,U,L]: change case of output file. U=upcase, L=lowcase.\n");
    fprintf(Warn, "  -RepTab[0][#]: replace tabs with # spaces.  # defaults to 8.\n");
-   fprintf(Warn,
+   fprintf(Warn, 
            "  -Remtblank[0]: remove trailing blanks at the end of each line\n");
    fprintf(Warn, "  -LAPACK[0,1,2,3]: Make code look like LAPACK coding style.\n");
    fprintf(Warn, "  -verb[0,1,2,3]: Vary the verbosity of extract.\n");
    fprintf(Warn, "  -LnLen[0]#: set maximal number of columns for line length warning.\n");
    fprintf(Warn, "  -LLWarn[0,1,2]: Line length warnings: 0: none, 1: non-comment, 2: always\n");
-   fprintf(Warn,
+   fprintf(Warn, 
       "  -fmode[0,Q,A]:  File mode.  0: default - overwrite if file exists;\n");
    fprintf(Warn, "                  Q: Query before overwriting, A: Append.\n");
    fprintf(Warn, "  -lang[0,f77,C,M] Language extracted file is.\n");
    fprintf(Warn, "  -addkeys[0]: Makes it so keys are always inherited.\n");
    fprintf(Warn, "  -punymac[0]: Makes it so macros in in-line extract files are automatically\n");
-   fprintf(Warn,
+   fprintf(Warn, 
            "               popped before returning to the @extract line.\n");
    fprintf(Warn, "               NOTE: this flag is never inherited.\n");
-   fprintf(Warn,
+   fprintf(Warn, 
    "  -punyflags[0]: Says that @extract being done should not inherit\n");
    fprintf(Warn, "                present flag settings.\n");
-   fprintf(Warn,
+   fprintf(Warn, 
 "   -localprocs[0]: If true, makes it so extract procedures and functions are\n");
    fprintf(Warn,
 "                   undefined before returning to the calling @extract line\n");
    fprintf(Warn, "  -def <handle> \"<replacement>\".\n");
    fprintf(Warn, "  -indent <col> <nspaces>\n");
-   fprintf(Warn,
+   fprintf(Warn, 
    "  -trans \"Ln#1, ..., Ln#N\": translate extracted line numbers to basefile\n");
    fprintf(Warn, "                            line numbers.\n");
-   fprintf(Warn,
+   fprintf(Warn, 
      "  -no@<extract,skip,def,ifdef,whiledef,indent,key,abort,macsub,endext,print,exp,declare,addkey,echo,iwhile,proc,output,iif,mif,all>[0]:\n");
    fprintf(Warn, "     turn off basefile commands.\n");
    exit(1);
@@ -2962,7 +2961,7 @@ void ExtInit(EXTENV *EE, WORDS *wp)
          else if ( WstrcmpN(&p->word[1], "reptab", 6) )
          {
             if (p->word[7] == '\0') flags[F_RepTab] = 8;
-            else
+            else 
             {
                sscanf(&p->word[7], "%d", &i);
                flags[F_RepTab] = i;
@@ -2977,7 +2976,7 @@ void ExtInit(EXTENV *EE, WORDS *wp)
             if (p->word[7] == '0') flags[F_Ugly] = 0;
             else if (p->word[7] == '2') flags[F_Ugly] = 2;
             else if (p->word[7] == '3') flags[F_Ugly] = 3;
-            else
+            else 
             {
                flags[F_Ugly] = 1;
                flags[F_Case] = 1;
@@ -3054,45 +3053,45 @@ void ExtInit(EXTENV *EE, WORDS *wp)
          else if ( WstrcmpN(&p->word[1], "help", 4) ) PrintUsage();
          else if ( WstrcmpN(&p->word[1], "no@", 3) )
          {
-            if ( WstrcmpN(&p->word[4], "extract", 7) )
+            if ( WstrcmpN(&p->word[4], "extract", 7) ) 
                ec[EC_Extract] = p->word[11] == '0';
-            else if ( WstrcmpN(&p->word[4], "skip", 4) )
+            else if ( WstrcmpN(&p->word[4], "skip", 4) ) 
                ec[EC_Skip] = p->word[8] == '0';
-            else if ( WstrcmpN(&p->word[4], "def", 3) )
+            else if ( WstrcmpN(&p->word[4], "def", 3) ) 
                ec[EC_Define] = p->word[7] == '0';
-            else if ( WstrcmpN(&p->word[4], "ifdef", 5) )
+            else if ( WstrcmpN(&p->word[4], "ifdef", 5) ) 
                ec[EC_Ifdef] = p->word[9] == '0';
-            else if ( WstrcmpN(&p->word[4], "whiledef", 8) )
+            else if ( WstrcmpN(&p->word[4], "whiledef", 8) ) 
                ec[EC_While] = p->word[12] == '0';
-            else if ( WstrcmpN(&p->word[4], "indent", 6) )
+            else if ( WstrcmpN(&p->word[4], "indent", 6) ) 
                ec[EC_Indent] = p->word[10] == '0';
-            else if ( WstrcmpN(&p->word[4], "key", 3) )
+            else if ( WstrcmpN(&p->word[4], "key", 3) ) 
                ec[EC_Key] = p->word[7] == '0';
-            else if ( WstrcmpN(&p->word[4], "abort", 5) )
+            else if ( WstrcmpN(&p->word[4], "abort", 5) ) 
                ec[EC_Abort] = p->word[9] == '0';
-            else if ( WstrcmpN(&p->word[4], "macsub", 6) )
+            else if ( WstrcmpN(&p->word[4], "macsub", 6) ) 
                ec[EC_MacSub] = p->word[10] == '0';
-            else if ( WstrcmpN(&p->word[4], "endext", 6) )
+            else if ( WstrcmpN(&p->word[4], "endext", 6) ) 
                ec[EC_EndExt] = p->word[10] == '0';
-            else if ( WstrcmpN(&p->word[4], "print", 5) )
+            else if ( WstrcmpN(&p->word[4], "print", 5) ) 
                ec[EC_EndExt] = p->word[9] == '0';
-            else if ( WstrcmpN(&p->word[4], "exp", 3) )
+            else if ( WstrcmpN(&p->word[4], "exp", 3) ) 
                ec[EC_Exp] = p->word[7] == '0';
-            else if ( WstrcmpN(&p->word[4], "declare", 7) )
+            else if ( WstrcmpN(&p->word[4], "declare", 7) ) 
                ec[EC_Dec] = p->word[7] == '0';
-            else if ( WstrcmpN(&p->word[4], "addkey", 6) )
+            else if ( WstrcmpN(&p->word[4], "addkey", 6) ) 
                ec[EC_AddKey] = p->word[6] == '0';
-            else if ( WstrcmpN(&p->word[4], "echo", 4) )
+            else if ( WstrcmpN(&p->word[4], "echo", 4) ) 
                ec[EC_Echo] = p->word[4] == '0';
-            else if ( WstrcmpN(&p->word[4], "iwhile", 6) )
+            else if ( WstrcmpN(&p->word[4], "iwhile", 6) ) 
                ec[EC_Iwhile] = p->word[6] == '0';
-            else if ( WstrcmpN(&p->word[4], "output", 6) )
+            else if ( WstrcmpN(&p->word[4], "output", 6) ) 
                ec[EC_Output] = p->word[6] == '0';
-            else if ( WstrcmpN(&p->word[4], "iif", 3) )
+            else if ( WstrcmpN(&p->word[4], "iif", 3) ) 
                ec[EC_Iif] = p->word[6] == '0';
-            else if ( WstrcmpN(&p->word[4], "mif", 3) )
+            else if ( WstrcmpN(&p->word[4], "mif", 3) ) 
                ec[EC_Mif] = p->word[6] == '0';
-            else if ( WstrcmpN(&p->word[4], "all", 3) )
+            else if ( WstrcmpN(&p->word[4], "all", 3) ) 
             {
                if (p->word[7] == '0') CharSet(EC_nExtCmnds, ec, 1);
                else
@@ -3214,13 +3213,13 @@ void Extract(EXTENV *OldEnv, WORDS *wp)
    {
       if (!OldEnv)
       {
-         fprintf(Warn,
+         fprintf(Warn, 
 "Done  commandline extract. Files: in=\'%s\', out=\'%s\'; Lines: in=%d, out=%d.\n",
             EE.FpIn->Fnam, EE.FpOut->Fnam, EE.FpIn->LineNo, EE.FpOut->LineNo);
       }
       else if (EE.Flags[F_Verb] > 1)
       {
-         fprintf(Warn,
+         fprintf(Warn, 
 "  Done  basefile extract. Files: in=\'%s\', out=\'%s\'; Lines: in=%d, out=%d.\n",
             EE.FpIn->Fnam, EE.FpOut->Fnam, EE.FpIn->LineNo, EE.FpOut->LineNo);
       }
@@ -3522,7 +3521,7 @@ int LnIsExtCmnd(EXTENV *EE, char *line)
    case  7:
       if (WstrcmpN(tline, "@undef ", 7))
       {
-         if ( Use[EC_Define] )
+         if ( Use[EC_Define] ) 
          {
             if ( !PopMacro(EE, tline) )
                ExtWarn(EE, "Nonsensical @UNDEF:  %s", line);
@@ -3604,7 +3603,7 @@ int LnIsExtCmnd(EXTENV *EE, char *line)
    case  9:
       if (WstrcmpN(tline, "@extract ", 9))
       {
-         if ( Use[EC_Extract] )
+         if ( Use[EC_Extract] ) 
          {
             Wstrcpy(tline, &tline[9]);
             wp = GetArgs(EE, tline);
@@ -3733,7 +3732,7 @@ int LnIsExtCmnd(EXTENV *EE, char *line)
       else DONE = 0;
       break;
    case 12:
-      if (WstrcmpN(tline, "@enddeclare ", 12))
+      if (WstrcmpN(tline, "@enddeclare ", 12)) 
       {
          if ( Use[EC_Dec] ) ExtWarn(EE, "unmatched @enddeclare");
          else return(0);
@@ -3764,7 +3763,7 @@ int LnIsExtCmnd(EXTENV *EE, char *line)
       DONE = 0;
       break;
    }
-/*
+/* 
  * Must be @<keyhandle>, a line continuation (@\) or an unassociated @ sign
  */
    if (!DONE)
@@ -3774,7 +3773,7 @@ int LnIsExtCmnd(EXTENV *EE, char *line)
          keycpy(tline, line);
          Key = IsKeyLn(EE, tline);
          if (Key) HandleKeyLn(EE, tline, Key);
-         else
+         else 
          {
             if (tline[1] != '\\') /* don't warn about line continuation */
             {
@@ -3814,7 +3813,7 @@ main(int nargs, char *args[])
    path = getenv("HOME");
    i = Wstrcpy(line, path);
    Wstrcpy(&line[i], "/.extractrc");
-   fp = fopen(line, "r");
+   fp = fopen(line, "r"); 
    if (fp)
    {
       if ( fgets(line, LNLEN, fp) ) wp2 = GetWords(line);
