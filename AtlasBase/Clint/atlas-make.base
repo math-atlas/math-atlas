@@ -695,15 +695,23 @@ CCFLAGS=$(CDEFS) $(DKCFLAGS)
 
 force_build :
 
+IThreadTune: IRun_nthr
 IRun_aff : xprobe_aff force_build
 	- rm res/probe.out
 	./xprobe_aff -v 1 -o $(INCAdir)/atlas_taffinity.h
 
+IRun_nthr : IRun_aff xprobe_nthr
+	rm -f $(INCAdir)/atlas_pthreads.h
+	./xprobe_nthr -o $(INCAdir)/atlas_pthreads.h
 tlib : 
 	cd $(BLDdir)/src/threads ; make
 xprobe_aff : probe_aff.o atlconf_misc.o
 	$(XCC) $(XCCFLAGS) -o xprobe_aff probe_aff.o atlconf_misc.o $(LIBS)
 
+@whiledef rt probe_nthr
+x@(rt) : @(rt).o
+	$(CC) $(CCFLAGS) -o x@(rt) @(rt).o $(ATLASlib) $(LIBS)
+@endwhile
 @whiledef rt tune_count test_count
 x@(rt) : @(rt).o tlib
 	$(CC) $(CCFLAGS) -o x@(rt) @(rt).o $(ATLASlib) $(LIBS)
@@ -712,7 +720,7 @@ xtune_spawn : tune_spawn.o ATL_tllg2.o ATL_tllin.o
 	$(CC) $(CCFLAGS) -o xtune_spawn tune_spawn.o ATL_tllg2.o ATL_tllin.o \
               $(ATLASlib) $(LIBS)
 
-@whiledef rt tune_spawn tune_count test_count
+@whiledef rt tune_spawn tune_count test_count probe_nthr
 @(rt).o : $(mySRCdir)/@(rt).c
 	$(CC) $(CCFLAGS) -o @(rt).o -c $(mySRCdir)/@(rt).c
 @whiledef rt lin lg2
@@ -776,8 +784,8 @@ res/@(pre)nreg : $(MMTdir)/res/@(pre)MULADD
 	cd res ; ln -s $(MMTdir)/res/@(pre)nreg @(pre)nreg
         
 @endwhile
-findNT : xfindNT
-	$(ATLRUN) $(SYSdir) xfindNT -o $(INCAdir)/atlas_pthreads.h
+@skip findNT : xfindNT
+@skip 	$(ATLRUN) $(SYSdir) xfindNT -o $(INCAdir)/atlas_pthreads.h
 
 RunTLB : xtlb
 	$(ATLRUN) $(SYSdir) xtlb
@@ -802,8 +810,8 @@ xmasearch : time.o masearch.o
 
 xL1 : time.o L1CacheSize.o
 	$(ICC) $(ICCFLAGS) -o $@ L1CacheSize.o time.o
-xfindNT : ATL_walltime.o findNT.o
-	$(ICC) $(ICCFLAGS) -o $@ findNT.o ATL_walltime.o $(LIBS)
+@skip xfindNT : ATL_walltime.o findNT.o
+@skip	$(ICC) $(ICCFLAGS) -o $@ findNT.o ATL_walltime.o $(LIBS)
 
 xtlb : time.o tlb.o
 	$(CLINKER) $(CLINKFLAGS) -o $@ tlb.o time.o
@@ -2752,8 +2760,8 @@ IBuildPtlibs0:
 	- cd $(BLDdir)/interfaces/blas/F77/src/ ; $(MAKE) ptlib
 	cd $(BLDdir)/src/lapack ; $(MAKE) ptlib
 
-IBuildPtlibs:
-	- rm -f $(INCAdir)/atlas_pthreads.h
+IPTtune:
+	cd $(BLDdir)/tune/threads ; $(MAKE) IThreadTune
 	cd $(BLDdir)/src/auxil/ ; $(MAKE) ptlib
 	$(MAKE) INSTALL_LOG/atlas_tcacheedge.h
 	cd $(BLDdir)/src/blas/gemm ; $(MAKE) lib
@@ -2762,6 +2770,8 @@ IBuildPtlibs:
 	$(MAKE) INSTALL_LOG/atlas_dtXover_$(NPROC)p.h pre=d
 	$(MAKE) INSTALL_LOG/atlas_ctXover_$(NPROC)p.h pre=c
 	$(MAKE) INSTALL_LOG/atlas_ztXover_$(NPROC)p.h pre=z
+
+IBuildPtlibs:
 	cd $(BLDdir)/src/blas/gemm ; $(MAKE) lib
 	cd $(BLDdir)/interfaces/blas/C/src/ ; $(MAKE) ptlib
 	- cd $(BLDdir)/interfaces/blas/F77/src/ ; $(MAKE) ptlib
