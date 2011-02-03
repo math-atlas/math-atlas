@@ -44,8 +44,8 @@ Overview
    # make the patch files
    git format-patch -M -C master
 
-Then, send the generated patch files to the `math-atlas
-mailing list`_ |emdash| where we will thank you warmly.
+Then, post the generated patch files to the `math-atlas
+patch tracker`_ |emdash| where we will thank you warmly.
 
 In detail
 ---------

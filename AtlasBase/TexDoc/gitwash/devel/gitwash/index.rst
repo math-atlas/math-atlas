@@ -1,7 +1,7 @@
 .. _using-git:
 
-Working with *math-atlas* source code
-======================================
+Working with git on *math-atlas* basefiles
+==========================================
 
 Contents:
 

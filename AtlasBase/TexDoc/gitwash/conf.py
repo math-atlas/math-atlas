@@ -48,9 +48,9 @@ copyright = u'2011, Clint Whaley and the ATLAS developers'
 # built documents.
 #
 # The short X.Y version.
-version = '3.9.33'
+version = '3.9'
 # The full version, including alpha/beta/rc tags.
-release = '3.9.33'
+release = '3.9'
 
 # The code domain
 primary_domain = 'c'
