@@ -91,6 +91,8 @@ struct ATL_LaunchStruct
    void (*CombineOpStructs)(void*, void*);  /* combine function */
    void (*DoWork)(ATL_LAUNCHSTRUCT_t*, void*);
    int opstructstride;                  /* size of operation-spec struct */
+   volatile int *imdone;                /* nthr-len checkin array */
+   void **acounts;                      /* var-len array of atomic counters */
 };
 
 
@@ -584,7 +586,57 @@ int ATL_get_ucnt(void *vp, int rank)
  * RETURNS: 0 if all sets taken, else a number between 1...nsets
 {
 }
-@ROUT ATL_SetAtomicCount
+@ROUT ATL_SetAtomicCount_mut
+#include "atlas_misc.h"
+#include <pthread.h>
+
+void *ATL_SetAtomicCount(int cnt)
+{
+   char *cp;
+   pthread_mutex_t *mp;
+   int *cntp;
+   cp = malloc(256+sizeof(int) + sizeof(pthread_mutex_t));
+   ATL_assert(cp);
+   cntp = (int*)(cp+128);  /* avoid false sharing wt 128-byte guard */
+   mp = (pthread_mutex_t*)(cntp+2);
+   ATL_assert(!pthread_mutex_init(mp, NULL));
+   *cntp = cnt;
+   return((void*)cp);
+}
+
+@ROUT ATL_FreeAtomicCount_mut
+#include <stdlib.h>
+#include <pthread.h>
+void ATL_FreeAtomicCount(void *vp)
+{
+   char *cp=vp;
+
+   ATL_assert(!pthread_mutex_destroy((pthread_mutex_t*)(cp+2*sizeof(int)+128)));
+   free(vp);
+}
+@ROUT ATL_ResetAtomicCount_mut ATL_DecAtomicCount_mut
+#include <pthread.h>
+@ROUT ATL_DecAtomicCount_mut
+int ATL_DecAtomicCount(void *vp)
+@ROUT ATL_ResetAtomicCount_mut
+int ATL_ResetAtomicCount(void *vp, int cnt)
+@ROUT ATL_ResetAtomicCount_mut ATL_DecAtomicCount_mut
+{
+   char *cp=vp;
+   pthread_mutex_t *mp;
+   int *cntp;
+   int iret;
+
+   cntp = (int*)(cp+128);
+   mp = (pthread_mutex_t*)(cntp+2);
+   pthread_mutex_lock(mp);
+   iret = *cntp;
+@ROUT ATL_DecAtomicCount_mut   `   (*cntp)--;`
+@ROUT ATL_ResetAtomicCount_mut `   *cntp = cnt;`
+   pthread_mutex_unlock(mp);
+   return(iret);
+}
+@ROUT ATL_SetAtomicCount_arch
 #include "atlas_misc.h"
 
 void *ATL_SetAtomicCount(int cnt)
@@ -596,12 +648,11 @@ void *ATL_SetAtomicCount(int cnt)
    ip[32] = cnt;     /* both sides of counter */
    return((void*)ip);
 }
-@beginskip
+@ROUT ATL_FreeAtomicCount_arch
 void ATL_FreeAtomicCount(void *vp)
 {
    free(vp);   /* could just do #define ATL_FreeAtomicCount free */
-}
-@endskip
+}              /* but do this so compiles same as _mut version */
 @ROUT ATL_GetAtomicCount
 int ATL_GetAtomicCount(void *vp)
 {
@@ -609,6 +660,7 @@ int ATL_GetAtomicCount(void *vp)
    return(ip[32]);
 }
 @ROUT ATL_ResetAtomicCount_ia32 ATL_ResetAtomicCount_amd64
+#include "atlas_asm.h"
 /*
  * eax                       rdi         rsi
  * int ATL_ResetAtomicCount(void *vp, int cnt)
@@ -685,6 +737,12 @@ DONE:
    #endif
    #define ATL_tlaunch ATL_log2tlaunch
    #define ATL_thread_launch ATL_tllg2
+#elif defined(ATL_TUNE_DYN)
+   #ifdef ATL_tlaunch
+      #undef ATL_tlaunch
+   #endif
+   #define ATL_tlaunch ATL_dyntlaunch
+   #define ATL_thread_launch ATL_tldyn
 #endif
 void ATL_thread_launch(void *opstruct, int opstructstride, void *OpStructIsInit,
                        void *DoWork, void *CombineOpStructs)
@@ -699,6 +757,11 @@ void ATL_thread_launch(void *opstruct, int opstructstride, void *OpStructIsInit,
    ls.OpStructIsInit = OpStructIsInit;
    ls.DoWork = DoWork;
    ls.rank2thr = tp;
+   #ifdef ATL_TUNE_DYN
+      ls.acounts[0] = ATL_SetAtomicCount(ATL_NTHREADS-1);
+      ls.imdone = calloc(ATL_NTHREADS, sizeof(int));
+      ATL_assert(ls.imdone);
+   #endif
 
    for (i=0; i < ATL_NTHREADS; i++)
    {
@@ -707,7 +770,10 @@ void ATL_thread_launch(void *opstruct, int opstructstride, void *OpStructIsInit,
    }
    ATL_thread_start(tp, 0, ATL_tlaunch, tp);
    ATL_thread_join(tp);
-
+   #ifdef ATL_TUNE_DYN
+       ATL_FreeAtomicCount(ls.accounts[0]);
+       free(ls.imdone);
+   #endif
 }
 @ROUT ATL_thread_start
 #include "atlas_taffinity.h"  /* include this file first! */
@@ -798,7 +864,7 @@ void ATL_thread_exit(void *retval)
    pthread_exit(retval);
 #endif
 }
-@ROUT ATL_log2tlaunch ATL_lin0tlaunch
+@ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch
 #include "atlas_taffinity.h"  /* include this file first! */
 #include "atlas_misc.h"
 #include "atlas_threads.h"
@@ -887,6 +953,54 @@ void *ATL_lin0tlaunch(void *vp)
             lp->CombineOpStructs(lp->opstruct,
                                  lp->opstruct+lp->opstructstride*i);
       }
+   }
+   return(NULL);
+}
+@ROUT ATL_dyntlaunch
+void *ATL_dyntlaunch(void *vp)
+{
+   ATL_thread_t *tp = vp, *btp;
+   ATL_LAUNCHSTRUCT_t *lp;
+   int i, dest;
+   void *acnt;
+
+   acnt = lp->acounts[0];
+   iam = tp->rank;
+   btp = tp - iam;
+/*
+ * Set my affinity if I haven't already
+ */
+   #ifdef ATL_PAFF_SELF
+      if (!tp->paff_set)
+          ATL_setmyaffinity(tp);
+   #endif
+   dest = ATL_DecAtomicCount(acnt);
+   while(dest)
+   {
+      dest = P - dest;
+      if ((!lp->OpStructIsInit ||
+            lp->OpStructIsInit(lp->opstruct+dest*lp->opstructstride)))
+         ATL_thread_start(btp+dest, dest, ATL_dyntlaunch, btp+dest);
+      dest = ATL_DecAtomicCount(acnt);
+   }
+/*
+ * Do the operation
+ */
+   lp->DoWork(lp, lp->opstruct+lp->opstructstride*iam);
+/*
+ * For right now, we are just testing, so assume there is nothing to combine.
+ * If we wind up using this func, I'll want to rewrite the combne code to
+ * exploit the new framework anyway.
+ */
+   ATL_assert(lp->CombineOpStructs == NULL);
+   lp->imdone[iam] = 1;
+/*
+ * Node 0 waits for everyone to complete before finishing
+ */
+   if (!iam)
+   {
+      for (i=1; i < ATL_NTHREADS; i++)
+         while(!lp->imdone[i]);
    }
    return(NULL);
 }
