@@ -93,6 +93,7 @@ struct ATL_LaunchStruct
    int opstructstride;                  /* size of operation-spec struct */
    volatile int *imdone;                /* nthr-len checkin array */
    void **acounts;                      /* var-len array of atomic counters */
+   void *vp;                            /* misc. extra info ptr */
 };
 
 
@@ -105,6 +106,7 @@ int ATL_thread_join(ATL_thread_t*); /* waits on completion of thread */
 void ATL_thread_exit(void*);        /* exits currently executing thread */
 void *ATL_log2tlaunch(void *vp);    /* min spanning tree launch */
 void *ATL_lin0tlaunch(void *vp);    /* 0 linear launches all threads */
+void *ATL_dyntlaunch(void *vp);     /* launch done as workpool */
 
 void *ATL_SetAtomicCount(int cnt);  /* allocates acnt, sets acnt=cnt */
 int   ATL_DecAtomicCount(void *vp); /* returns acnt-- (not --acnt!) */
@@ -631,7 +633,7 @@ int ATL_ResetAtomicCount(void *vp, int cnt)
    mp = (pthread_mutex_t*)(cntp+2);
    pthread_mutex_lock(mp);
    iret = *cntp;
-@ROUT ATL_DecAtomicCount_mut   `   (*cntp)--;`
+@ROUT ATL_DecAtomicCount_mut   `   if (iret) (*cntp)--;`
 @ROUT ATL_ResetAtomicCount_mut `   *cntp = cnt;`
    pthread_mutex_unlock(mp);
    return(iret);
@@ -656,7 +658,7 @@ void ATL_FreeAtomicCount(void *vp)
 @ROUT ATL_GetAtomicCount
 int ATL_GetAtomicCount(void *vp)
 {
-   volatile *ip = vp;
+   volatile int *ip = vp;
    return(ip[32]);
 }
 @ROUT ATL_ResetAtomicCount_ia32 ATL_ResetAtomicCount_amd64
@@ -749,6 +751,7 @@ void ATL_thread_launch(void *opstruct, int opstructstride, void *OpStructIsInit,
 {
    ATL_thread_t tp[ATL_NTHREADS];
    ATL_LAUNCHSTRUCT_t ls;
+   void *vp;
    int i;
 
    ls.opstruct = opstruct;
@@ -758,6 +761,7 @@ void ATL_thread_launch(void *opstruct, int opstructstride, void *OpStructIsInit,
    ls.DoWork = DoWork;
    ls.rank2thr = tp;
    #ifdef ATL_TUNE_DYN
+      ls.acounts = &vp;
       ls.acounts[0] = ATL_SetAtomicCount(ATL_NTHREADS-1);
       ls.imdone = calloc(ATL_NTHREADS, sizeof(int));
       ATL_assert(ls.imdone);
@@ -771,8 +775,8 @@ void ATL_thread_launch(void *opstruct, int opstructstride, void *OpStructIsInit,
    ATL_thread_start(tp, 0, ATL_tlaunch, tp);
    ATL_thread_join(tp);
    #ifdef ATL_TUNE_DYN
-       ATL_FreeAtomicCount(ls.accounts[0]);
-       free(ls.imdone);
+       ATL_FreeAtomicCount(ls.acounts[0]);
+       free((void*)ls.imdone);
    #endif
 }
 @ROUT ATL_thread_start
@@ -864,13 +868,17 @@ void ATL_thread_exit(void *retval)
    pthread_exit(retval);
 #endif
 }
-@ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch
+@ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch ATL_goparallel
 #include "atlas_taffinity.h"  /* include this file first! */
 #include "atlas_misc.h"
 #include "atlas_threads.h"
 
 #ifdef ATL_PAFF_SELF
+@ROUT ATL_goparallel
+static int ATL_setmyaffinity(void)
+@ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch
 static int ATL_setmyaffinity(ATL_thread_t *me)
+@ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch ATL_goparallel
 /*
  * Attempts to sets the affinity of an already-running thread.  The 
  * aff_set flag is set to true whether we succeed or not (no point in
@@ -878,12 +886,22 @@ static int ATL_setmyaffinity(ATL_thread_t *me)
  * RETURNS: 0 on success, non-zero error code on error
  */
 {
+@ROUT ATL_goparallel
+   int bindID;
+   bindID = omp_get_thread_num();
    #ifdef ATL_RANK_IS_PROCESSORID
-      const int bindID = me->rank;
+      bindID = bindID % ATL_AFF_NUMID;
    #else
-      const int bindID = ATL_rank2ID[me->rank];
+      bindID = ATL_rank2ID[bindID%ATL_AFF_NUMID];
+   #endif
+@ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch
+   #ifdef ATL_RANK_IS_PROCESSORID
+      const int bindID = me->rank % ATL_AFF_NUMID;
+   #else
+      const int bindID = ATL_rank2ID[me->rank%ATL_AFF_NUMID];
    #endif
    me->paff_set = 1;
+@ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch ATL_goparallel
 #ifdef ATL_PAFF_PLPA
    plpa_cpu_set_t cpuset;
    PLPA_CPU_ZERO(&cpuset);
@@ -900,6 +918,12 @@ static int ATL_setmyaffinity(ATL_thread_t *me)
    return(pthread_setrunon_np(bindID));
 #elif defined(ATL_PAFF_BINDP)
    return(bindprocessor(BINDTHREAD, thread_self(), bindID));
+#elif defined(ATL_PAFF_CPUSET)  /* untried FreeBSD code */
+   cpuset_t mycpuset;
+   CPU_ZERO(&mycpuset);         /* no manpage, so guess works like linux */
+   CPU_SET(bindID, &mycpuset);
+   return(cpuset_setaffinity(CPU_LEVEL_WHICH, CPU_WHICH_TID, -1,
+                             sizeof(mycpuset), &mycpuset));
 #endif
    return(0);
 }
@@ -961,11 +985,12 @@ void *ATL_dyntlaunch(void *vp)
 {
    ATL_thread_t *tp = vp, *btp;
    ATL_LAUNCHSTRUCT_t *lp;
-   int i, dest;
+   int i, dest, iam;
    void *acnt;
 
-   acnt = lp->acounts[0];
    iam = tp->rank;
+   lp = tp->vp;
+   acnt = lp->acounts[0];
    btp = tp - iam;
 /*
  * Set my affinity if I haven't already
@@ -977,7 +1002,7 @@ void *ATL_dyntlaunch(void *vp)
    dest = ATL_DecAtomicCount(acnt);
    while(dest)
    {
-      dest = P - dest;
+      dest = ATL_NTHREADS - dest;
       if ((!lp->OpStructIsInit ||
             lp->OpStructIsInit(lp->opstruct+dest*lp->opstructstride)))
          ATL_thread_start(btp+dest, dest, ATL_dyntlaunch, btp+dest);
@@ -988,19 +1013,21 @@ void *ATL_dyntlaunch(void *vp)
  */
    lp->DoWork(lp, lp->opstruct+lp->opstructstride*iam);
 /*
- * For right now, we are just testing, so assume there is nothing to combine.
- * If we wind up using this func, I'll want to rewrite the combne code to
- * exploit the new framework anyway.
+ * Node 0 awaits completion of each task, and do combine (linear!) if requested
  */
-   ATL_assert(lp->CombineOpStructs == NULL);
-   lp->imdone[iam] = 1;
-/*
- * Node 0 waits for everyone to complete before finishing
- */
-   if (!iam)
+   if (iam == 0)
    {
       for (i=1; i < ATL_NTHREADS; i++)
-         while(!lp->imdone[i]);
+      {
+         if (!lp->OpStructIsInit || 
+             lp->OpStructIsInit(lp->opstruct+i*lp->opstructstride))
+         {
+            ATL_thread_join(tp+i);
+            if (lp->CombineOpStructs)  /* do combine if necessary */
+               lp->CombineOpStructs(lp->opstruct,
+                                    lp->opstruct+lp->opstructstride*i);
+         }
+      }
    }
    return(NULL);
 }
@@ -1068,6 +1095,68 @@ void *ATL_log2tlaunch(void *vp)
       mask |= abit;
    }
    return(NULL);
+}
+@ROUT ATL_goparallel
+void ATL_goparallel
+/*
+ * This function is used when you pass a single opstruct to all threads;  
+ * In this case, we stash opstruct in launchstruct's vp, and then use the
+ * rank array as opstruct during the spawn.  Therefore, these routines
+ * should expect to get their problem def from ls.vp, and their rank from
+ * assuming the second argument is an integer ptr to their rank.  The rank
+ * and other info contained in ls.vp allow them to split the problem up
+ * They do any needed combine themselves using the same info.
+ */
+(
+   const int P,         /* # of cores to use */
+   void *DoWork,        /* func ptr to work function */
+   void *opstruct;      /* will be stashed in launchstruct's vp */
+)
+{
+   ATL_thread_t *tp;
+   int *ranks;
+   ATL_LAUNCHSTRUCT_t ls;
+   void *vp;
+   int i;
+
+   ls.opstructstride = sizeof(int);
+   ls.CombineOpStructs = NULL;
+   ls.OpStructIsInit = NULL;
+   ls.DoWork = DoWork;
+   ls.rank2thr = tp;
+   ls.vp = opstruct;
+#ifdef ATL_USEOPENMP
+   omp_set_num_threads(P);
+   #pragma omp parallel
+   {
+/*
+ *    Make sure we got the requested nodes, and set affinity if supported
+ */
+      ATL_assert(omp_get_num_threads() == P);
+      #ifdef ATL_PAFF_SELF
+         ATL_setmyaffinity();
+      #endif
+      i = omp_get_thread_num();
+      DoWork(&ls, &i);
+   }
+#else
+   vp = malloc(P*(sizeof(ATL_thread_t)+sizeof(int)) + ATL_Cachelen);
+   ATL_assert(vp);
+   ranks = vp;
+   ls.opstruct = opstruct;
+   tp = (ATL_thread_t*)(ranks+P);
+   tp = ATL_AlignPtr(tp);
+
+   for (i=0; i < P; i++)
+   {
+      tp[i].vp = &ls;
+      tp[i].rank = i;
+      ranks[i] = i;
+   }
+   ATL_thread_start(tp, 0, ATL_tlaunch, tp);
+   ATL_thread_join(tp);
+   free(vp);
+#endif
 }
 @ROUT ATL_Xtgemm
 #include "atlas_misc.h"
@@ -5723,3 +5812,142 @@ SQUARE:   /* near-square shape, N <= 256 if jumped here */
    return(1);
 }
 #endif
+@ROUT ATL_tgemm_MKp
+#include "atlas_misc.h"
+#include "atlas_tcacheedge.h"
+
+static int ATL_NTHR = ATL_NTHREADS;
+typedef struct
+{
+   void *aBcnt;           /* counter on partitions of B used in B copy */
+   void *aAcnt;           /* count on the partitions of A */
+   volatile int *chkin;   /* NTHR-len checkin array */
+   TYPE *Aws              /* preallocated thread copy areas */
+   TYPE *Bw;              /* workspace for common B */
+   TYPE *A, *B, *C;       /* original matrix pointers */
+   SCALAR alpha;          
+   SCALAR beta;
+   ATL_INT M, N, K, lda, ldb, ldc, Kp, nKp, nNb, klast;
+   enum ATLAS_TRANS TA, TB;
+} ATL_TGEMM_MKP_t;
+
+void Mjoin(PATL,DoWork_MKp)(ATL_LAUNCHSTRUCT *lp, void *vp)
+/* 
+ * This routine loops over Kp-sized chunks of K
+ */
+{
+   ATL_thread_t *tp=vp;
+   ATL_TGEMM_MKP_t *pbdef;
+   ATL_int k, kb, iam;
+   volatile int *chkin;
+   TYPE *Bw, *Aw;
+
+   iam = tp->rank;
+   pbdef = lp->vp;
+   Bw = pbdef->Bw;
+   Aw = pbdef->Aws[iam];
+   chkin = kp->chkin;
+
+   kb = klast;
+   for (k=K-klast; k >= 0; k -= Kp)
+   {
+      int myp;  /* my partition */
+/*
+ *    Copy nNb column panels of A in parallel using the atomic counter aBcnt
+ *    N is the only dim on which we use cleanup (K & M will be padded to NB);
+ *    This means we are either doing a full panel and calling KBmm, or
+ *    doing the last column panel of B, and using pNBmm
+ */
+      while(myp = ATL_DecAtomicCounter(pbdef->aBcnt))
+      {
+         myp -= nNb+1;
+         if (pbdef->TB == AtlasNoTrans)
+         {
+            Mjoin(PATL,col2blk_aX)(M, NB, B+myp*
+         }
+      }
+      
+/*
+ *    Node P-1 makes sure everyone has finished, then he sets our counters
+ *    (safe since everyone else waiting below) before signaling his completion
+ */
+      if (iam == ATL_NTHREADS-1)
+      {
+         const int mycnt = chkin[iam];
+         for (i=0; i < ATL_NTHREADS-1; i++)
+            while(chkin[i] <= mycnt);
+         ATL_ResetAtomicCounter(pbdef->aBcnt, nNb+1);  /* reset for next k-it */
+         ATL_ResetAtomicCounter(pbdef->aAcnt, nMb+1);  /* starting A again */
+         chkin[iam]++;
+      }
+      else
+      {
+         const int mycnt = chkin[iam];
+         chkin[iam]++;
+         for (i=0; i < ATL_NTHREADS; i++)
+            while(chkin[i] <= mycnt);
+      }
+
+      ....
+      kb = Kp;
+   }  
+}
+int Mjoin(PATL,tgemm_MKp)
+   (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, ATL_CINT M, 
+    ATL_CINT N, ATL_CINT K, const SCALAR alpha, const TYPE *A, ATL_CINT lda, 
+    const TYPE *B, ATL_CINT ldb, const SCALAR beta, TYPE *C, ATL_CINT ldc)
+{
+   TYPE *Bw, *p;
+   int *chkin;
+   void *amcnt, *vp;
+   TYPE **Aws;
+   size_t wrksz;
+   ATL_INT Kp = (((CacheEdge>>1) - NB*NB + NB-1)/(NB*NB))*NB;
+   ATL_INT k, klast, nKp, nNb;
+   ATL_TGEMM_MKP_t pbdef;
+/*
+ * Find size of partial block at end.  If it is <= NB, absorb it into previous
+ * block and have no partial block
+ */
+   Kp = (Kp) ? Kp : NB;
+   nKp = K / NB;          /* floor(K/NB) */
+   klast = K - nKp*Kp;
+   if (klast)
+   {
+      if (klast < NB)
+         klast += Kp;
+      else
+         nKp++;
+   }
+   else
+      klast = Kp;  /* K is even multiple of Kp */
+   nNb = (N+NB-1)/NB;  /* ceil(N/NB) */
+   wrksz = (2+ATL_NTHR)*ATL_Cachelen + ATL_MulBySize(NB)*nNb*Kp) + 
+           ATL_NTHR*(sizeof(int)+sizeof(TYPE*) + ATL_MulBySize(NB)*Kp);
+   if (ATL_NTHR*ATL_PTMAXMALLOC) < wrksz)
+      return(1);
+   vp = malloc(wrksz);
+   if (!vp)
+      return(2);
+   Aws = vp;
+   chkin = (int*)(Aws+ATL_NTHR);
+   Bw = (TYPE*)(chkin+ATL_NTHR);
+   Bw = ATL_AlignPtr(Bw);
+   chkin[0] = 0;
+   p = Bw + Kp*N;
+   Aws[0] = ATL_AlignPtr(p);
+   for (k=1; k < ATL_NTHR; k++)
+   {
+      chkin[k] = 0;
+      p = Aws[k-1] + ATL_MulByNB(Kp);
+      Aws[k] = ATL_AlignPtr(p);
+   }
+   pbdef.M = M; pbdef.N = N; pbdef.K = K;
+   pbdef.lda = lda; pbdef.ldb = ldb; pbdef.ldc = ldc;
+   pbdef.Kp = Kp; pbdef.klast = klast; pbdef.nKp = nKp;
+   pbdef.nNb = nNb;
+   pbdef.TA = TA; pbdef.TB = TB;
+   pbdef.Bw = Bw; pbdef.Aws = Aws;
+   ATL_thread_launch1(Mjoin(PATL,DoWork_MKp), &pbdef);
+   free(vp);
+}
