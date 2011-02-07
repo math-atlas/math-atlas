@@ -111,7 +111,7 @@ void *ATL_dyntlaunch(void *vp);     /* launch done as workpool */
 void *ATL_SetAtomicCount(int cnt);  /* allocates acnt, sets acnt=cnt */
 int   ATL_DecAtomicCount(void *vp); /* returns acnt-- (not --acnt!) */
 int   ATL_GetAtomicCount(void *vp); /* returns acnt */
-#define ATL_FreeAtomicCount(mem_) free(mem_)
+void ATL_FreeAtomicCount(void *vp); /* free acount resources */
 
 #define MindxT(A_,i_) ((void*)( ((char*)(A_)) + ((size_t)i_) ))
 #define ATL_tlaunch ATL_log2tlaunch   /* may want linear launch later */
@@ -720,6 +720,56 @@ ZERO_RET:
 @skip   movl %eax, (@(mm))  /* safety to ensure no roll from neg back to pos */
 DONE:
    ret
+@ROUT ATL_ResetAtomicCount_ppc
+   @define op @Reset@
+@ROUT ATL_DecAtomicCount_ppc
+   @define op @Dec@
+@ROUT ATL_DecAtomicCount_ppc ATL_ResetAtomicCount_ppc
+#include "atlas_asm.h"
+.text
+#ifdef ATL_AS_OSX_PPC
+   .globl _ATL_@(op)AtomicCount
+   _ATL_@(op)AtomicCount:
+#else
+   #if defined(ATL_USE64BITS)
+/*
+ *      Official Program Descripter section, seg fault w/o it on Linux/PPC64
+ */
+        .section        ".opd","aw"
+        .align 2
+	.globl  ATL_USERMM
+        .align  3
+ATL_@(op)AtomicCount:
+        .quad   Mjoin(.,ATL_@(op)AtomicCount),.TOC.@tocbase,0
+        .previous
+        .type   Mjoin(.,ATL_@(op)AtomicCount),@function
+        .text
+	.globl  Mjoin(.,ATL_@(op)AtomicCount)
+.ATL_@(op)AtomicCount:
+   #else
+	.globl  ATL_@(op)AtomicCount
+ATL_@(op)AtomicCount:
+   #endif
+#endif
+@ROUT ATL_ResetAtomicCount_ppc
+/* r3                                 r3       r4 */
+/* int int ATL_ResetAtomicCount(void *vp, int cnt) */
+@ROUT ATL_DecAtomicCount_ppc
+#error "Code is not reliable on PPC, don't know why"
+/* r3                           r3  */
+/* int ATL_DecAtomicCount(void *vp) */
+@ROUT ATL_DecAtomicCount_ppc ATL_ResetAtomicCount_ppc
+RETRY:
+   lwarx r5, 0, r3    /* Read int from mem, place reservation */
+@ROUT ATL_DecAtomicCount_ppc
+   addi  r5, r5, -1   /* decrement value */
+   stwcx. r5, 0, r3   /* attempt to store decremented value back to mem */
+@ROUT ATL_ResetAtomicCount_ppc
+   stwcx. r4, 0, r3   /* attempt to store new value back to mem */
+@ROUT ATL_DecAtomicCount_ppc ATL_ResetAtomicCount_ppc
+   bne-  RETRY        /* If store failed, retry */
+   mr r3, r5
+   blr
 @ROUT ATL_thread_launch
 #include "atlas_misc.h"
 #include "atlas_threads.h"
