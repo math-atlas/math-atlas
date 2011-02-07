@@ -9,7 +9,7 @@
 
 .. math-atlas
 .. _math-atlas: http://math-atlas.sourceforge.net
-.. _`math-atlas github`: http://github.com/rcwhaley/math-atlas
+.. _`math-atlas github`: http://github.com/math-atlas/math-atlas
 .. _`math-atlas mailing list`: http://sourceforge.net/mailarchive/forum.php?forum_name=math-atlas-devel
 .. _`math-atlas home page`: http://math-atlas.sourceforge.net/
 .. _`math-atlas home page`: http://math-atlas.sourceforge.net/

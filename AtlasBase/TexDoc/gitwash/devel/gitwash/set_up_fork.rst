@@ -13,7 +13,7 @@ Overview
 
    git clone git@github.com:your-user-name/math-atlas.git
    cd math-atlas
-   git remote add upstream git://github.com/rcwhaley/math-atlas.git
+   git remote add upstream git://github.com/math-atlas/math-atlas.git
 
 In detail
 =========
@@ -46,7 +46,7 @@ Linking your repository to the upstream repo
 ::
 
    cd math-atlas
-   git remote add upstream git://github.com/rcwhaley/math-atlas.git
+   git remote add upstream git://github.com/math-atlas/math-atlas.git
 
 ``upstream`` here is just the arbitrary name we're using to refer to the
 main math-atlas_ repository at `math-atlas github`_.
@@ -59,8 +59,8 @@ use it to merge into our own code.
 Just for your own satisfaction, show yourself that you now have a new
 'remote', with ``git remote -v show``, giving you something like::
 
-   upstream	git://github.com/rcwhaley/math-atlas.git (fetch)
-   upstream	git://github.com/rcwhaley/math-atlas.git (push)
+   upstream	git://github.com/math-atlas/math-atlas.git (fetch)
+   upstream	git://github.com/math-atlas/math-atlas.git (push)
    origin	git@github.com:your-user-name/math-atlas.git (fetch)
    origin	git@github.com:your-user-name/math-atlas.git (push)
 

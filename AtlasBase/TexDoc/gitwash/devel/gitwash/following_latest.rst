@@ -18,7 +18,7 @@ Get the local copy of the code
 
 From the command line::
 
-   git clone git://github.com/rcwhaley/math-atlas.git
+   git clone git://github.com/math-atlas/math-atlas.git
 
 You now have a copy of the code tree in the new ``math-atlas`` directory.
 

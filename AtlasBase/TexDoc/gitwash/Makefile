@@ -155,7 +155,7 @@ doctest:
 
 gitwash-dump:
 	python tools/gitwash_dumper.py devel math-atlas \
-		--github-user=rcwhaley \
+		--github-user=math-atlas \
 		--project-url=http://math-atlas.sourceforge.net \
 		--project-ml-url=http://sourceforge.net/mailarchive/forum.php?forum_name=math-atlas-devel
 
