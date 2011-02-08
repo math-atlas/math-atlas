@@ -1804,6 +1804,11 @@ IRun_SSE3 :
 	$(MAKE) $(atlrun) atldir=$(mydir) exe=xprobe_sse3 args="$(args)" \
                 redir=config0.out
 	- cat config0.out
+IRun_AVX :
+	$(CC) $(CCFLAGS) -o xprobe_avx $(SRCdir)/backend/probe_dAVX.c $(SRCdir)/backend/probe_AVX.S
+	$(MAKE) $(atlrun) atldir=$(mydir) exe=xprobe_avx args="$(args)" \
+                redir=config0.out
+	- cat config0.out
 @whiledef aff BINDP PBIND PLPA RUNON SCHED SETAFFNP SETPROCNP CPUSET WIN
 IRun_@(aff) :
 	$(CC) $(CCFLAGS) -o xprobe_@(aff) $(SRCdir)/backend/probe_aff_@(aff).c \
@@ -2233,6 +2238,38 @@ main(int nargs, char **args)
    free(vp);
    exit(0);
 }
+@ROUT probe_dAVX
+#include <stdio.h>
+#include <stdlib.h>
+main(int nargs, char **args)
+{
+   double *x, *y, *z, ans[4];
+   void *vp;
+   void do_vmacc(double *z, double *x, double *y); 
+
+   vp = malloc(4*3*sizeof(double) + 32);
+   x = (double*) ( 32 + ((((size_t)(vp))>>5)<<5) );
+   y = x + 4;
+   z = y + 4;
+   x[0] = 1.0; x[1] = 2.0; x[2] = 4.0; x[3] = 8.0;
+   y[0] = -4.0; y[1] = -8.0; y[2] = -16.0; y[3] = -32.0;
+   z[0] = 0.0; z[1] = 1.0; z[2] = -1.0; z[3] = -4.0;
+   for (i=0; i < 4; i++)
+      ans[i] = z[i] + x[i] * y[i];
+   do_vmacc(z, x, y);   /* z += x * y */
+   if (z[0] != ans[0] || z[1] != ans[1] || z[2] != ans[2] || z[3] != ans[3])
+   {
+      fprintf(stderr, 
+              "wanted={%.2f,%.2f,%.2f,%.2f}, got={%.2f,%.2f,%.2f,%.2f}\n",
+              ans[0], ans[1], ans[2], ans[3], z[0], z[1], z[2], z[3]);
+      printf("FAILURE\n");
+      free(vp);
+      exit(1);
+   }
+   printf("SUCCESS\n");
+   free(vp);
+   exit(0);
+}
 @ROUT probe_dvec
 #include <stdio.h>
 #include <stdlib.h>
@@ -2408,6 +2445,34 @@ ATL_asmdecor(do_vsum):
         haddpd  %xmm0, %xmm1
         movl    4(%esp), %eax
         movupd  %xmm1, 0(%eax)
+        ret
+#endif
+@ROUT probe_AVX.S
+#include "atlas_asm.h"
+#
+# x86 assembler for:
+# void do_vmacc(z, x, y)
+# RETURNS: z[0:3] += x[0:3] *  y[0:3];
+#
+.text
+.globl ATL_asmdecor(do_vmacc)
+ATL_asmdecor(do_vmacc):
+#ifdef ATL_GAS_x8664
+        vmovupd 0(%rdi), %ymm0                  /* load z */
+        vmovupd 0(%rsi), %ymm1                  /* load x */
+        vmovupd 0(%rdx), %ymm2                  /* load y */
+        vfmadd231pd %ymm2, %ymm1, %ymm0         /* z += x*y */
+        vmovupd %xmm0, 0(%rdi)                  /* store z */
+        ret
+#else
+        movl    12(%esp), %eax
+        vmovupd 0(%eax), %ymm2                  /* load y */
+        movl    8(%esp), %eax
+        vmovupd  (%eax), %xmm1                  /* load x */
+        movl    4(%esp), %eax
+        vmovupd  (%eax), %xmm0                  /* load z */
+        vfmadd231pd %ymm2, %ymm1, %ymm0         /* z += x*y */
+        vmovupd %xmm0, 0(%eax)                  /* store z */
         ret
 #endif
 @ROUT probe_AltiVec.S probe_VSX.S
