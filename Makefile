@@ -6,9 +6,9 @@ topd = $(mydir)/AtlasBase
 defs = -def topd $(topd) -def ext $(mydir)/$(srcdir)/xextract
 
 $(srcdir) :
-	mkdir TEST
-	$(CC) $(CCFLAGS) -o TEST/xextract extract.c
-	./TEST/xextract -langM -b AtlasBase/make.base -o TEST/Makefile \
+	mkdir $(srcdir)
+	$(CC) $(CCFLAGS) -o $(srcdir)/xextract extract.c
+	$(srcdir)/xextract -langM -b AtlasBase/make.base -o $(srcdir)/Makefile \
                   rout=Make.atldir $(defs)
 src : $(srcdir)
 	cd $(srcdir) ; make
