@@ -832,7 +832,6 @@ void ATL_thread_launch(void *opstruct, int opstructstride, void *OpStructIsInit,
 @ROUT ATL_thread_start
 #include "atlas_taffinity.h"  /* include this file first! */
 #include "atlas_misc.h"
-#define ATL_RANK2ID 1  /* tell it I want a rank-to-affinity mapping */
 #include "atlas_threads.h"
 int ATL_thread_start(ATL_thread_t *thr, int proc, 
                      void *(*rout)(void*), void *arg)
@@ -851,13 +850,19 @@ int ATL_thread_start(ATL_thread_t *thr, int proc,
    #ifdef ATL_RANK_IS_PROCESSORID
       ATL_assert(SetThreadAffinityMask(thr->thrH, (1<<proc)));
    #else
-      ATL_assert(SetThreadAffinityMask(thr->thrH, (1<<ATL_rank2ID[proc])));
+      ATL_assert(SetThreadAffinityMask(thr->thrH, 
+                 (1<<ATL_affinityIDs[proc%ATL_AFF_NUMID])));
    #endif
    ATL_assert(ResumeThread(thr->thrH) == 1);
 #else
    pthread_attr_t attr;
    #ifdef ATL_PAFF_SETAFFNP
       cpu_set_t cpuset;
+   #endif
+   #ifdef ATL_RANK_IS_PROCESSORID
+      const int affID = proc;
+   #else
+      const int affID = ATL_affinityIDs[proc%ATL_AFF_NUMID];
    #endif
 
    #ifdef ATL_PAFF_SELF
@@ -873,21 +878,11 @@ int ATL_thread_start(ATL_thread_t *thr, int proc,
    pthread_attr_setscope(&attr, PTHREAD_SCOPE_SYSTEM); /* no chk, OK to fail */
    #ifdef ATL_PAFF_SETAFFNP
       CPU_ZERO(&cpuset);
-      #ifdef ATL_RANK_IS_PROCESSORID
-         CPU_SET(proc, &cpuset);
-      #else
-         CPU_SET(ATL_rank2ID[proc], &cpuset);
-      #endif
+      CPU_SET(affID, &cpuset);
       ATL_assert(!pthread_attr_setaffinity_np(&attr, sizeof(cpuset), &cpuset));
    #elif defined(ATL_PAFF_SETPROCNP)
-      #ifdef ATL_RANK_IS_PROCESSORID
-         ATL_assert(!pthread_attr_setprocessor_np(&attr, (pthread_spu_t)proc, 
-                                                  PTHREAD_BIND_FORCED_NP)); 
-      #else
-         ATL_assert(!pthread_attr_setprocessor_np(&attr, (pthread_spu_t) 
-                                                  ATL_rank2ID[proc], 
-                                                  PTHREAD_BIND_FORCED_NP)); 
-      #endif
+      ATL_assert(!pthread_attr_setprocessor_np(&attr, (pthread_spu_t)affID, 
+                                               PTHREAD_BIND_FORCED_NP)); 
    #endif
    ATL_assert(!pthread_create(&thr->thrH, &attr, rout, arg));
    ATL_assert(!pthread_attr_destroy(&attr));
@@ -942,13 +937,13 @@ static int ATL_setmyaffinity(ATL_thread_t *me)
    #ifdef ATL_RANK_IS_PROCESSORID
       bindID = bindID % ATL_AFF_NUMID;
    #else
-      bindID = ATL_rank2ID[bindID%ATL_AFF_NUMID];
+      bindID = ATL_affinityIDs[bindID%ATL_AFF_NUMID];
    #endif
 @ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch
    #ifdef ATL_RANK_IS_PROCESSORID
       const int bindID = me->rank % ATL_AFF_NUMID;
    #else
-      const int bindID = ATL_rank2ID[me->rank%ATL_AFF_NUMID];
+      const int bindID = ATL_affinityIDs[me->rank%ATL_AFF_NUMID];
    #endif
    me->paff_set = 1;
 @ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch ATL_goparallel
