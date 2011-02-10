@@ -785,21 +785,39 @@ RETRY:
    #ifdef ATL_tlaunch
       #undef ATL_tlaunch
    #endif
-   #define ATL_tlaunch ATL_lin0tlaunch
-   #define ATL_thread_launch ATL_tllin
+   #ifdef ATL_NOAFFINITY
+      #define ATL_tlaunch ATL_lin0tlaunch_noaff
+      #define ATL_thread_launch ATL_tllin_noaff
+
+   #else
+      #define ATL_tlaunch ATL_lin0tlaunch
+      #define ATL_thread_launch ATL_tllin
+   #endif
 #elif defined(ATL_TUNE_LG2)
    #ifdef ATL_tlaunch
       #undef ATL_tlaunch
    #endif
-   #define ATL_tlaunch ATL_log2tlaunch
-   #define ATL_thread_launch ATL_tllg2
+   #ifdef ATL_NOAFFINITY
+      #define ATL_tlaunch ATL_log2tlaunch_noaff
+      #define ATL_thread_launch ATL_tllg2_noaff
+   #else
+      #define ATL_tlaunch ATL_log2tlaunch
+      #define ATL_thread_launch ATL_tllg2
+   #endif
 #elif defined(ATL_TUNE_DYN)
    #ifdef ATL_tlaunch
       #undef ATL_tlaunch
    #endif
-   #define ATL_tlaunch ATL_dyntlaunch
-   #define ATL_thread_launch ATL_tldyn
+   #ifdef ATL_NOAFFINITY
+      #define ATL_tlaunch ATL_dyntlaunch_noaff
+      #define ATL_thread_launch ATL_tldyn_noaff
+   #else
+      #define ATL_tlaunch ATL_dyntlaunch
+      #define ATL_thread_launch ATL_tldyn
+   #endif
 #endif
+void *ATL_tlaunch(void *vp); /* _noaff versions not protoed in threads.h */
+
 void ATL_thread_launch(void *opstruct, int opstructstride, void *OpStructIsInit,
                        void *DoWork, void *CombineOpStructs)
 {
@@ -834,7 +852,11 @@ void ATL_thread_launch(void *opstruct, int opstructstride, void *OpStructIsInit,
    #endif
 }
 @ROUT ATL_thread_start
-#include "atlas_taffinity.h"  /* include this file first! */
+#ifndef ATL_NOAFFINITY
+   #include "atlas_taffinity.h"  /* include this file first! */
+#elif defined(ATL_TUNE)
+   #define ATL_thread_start ATL_thread_start_noaff
+#endif
 #include "atlas_misc.h"
 #include "atlas_threads.h"
 int ATL_thread_start(ATL_thread_t *thr, int proc, 
@@ -848,29 +870,35 @@ int ATL_thread_start(ATL_thread_t *thr, int proc,
 #ifdef ATL_WINTHREADS
    DWORD thrID;
 
-   thr->rank = proc;
-   thr->thrH = CreateThread(NULL, 0, rout, arg, CREATE_SUSPENDED, &thrID);
-   ATL_assert(thr->thrH);
-   #ifdef ATL_RANK_IS_PROCESSORID
-      ATL_assert(SetThreadAffinityMask(thr->thrH, (1<<proc)));
+   #ifdef ATL_NOAFFINITY
+      thr->thrH = CreateThread(NULL, 0, rout, arg, 0, &thrID);
+      ATL_assert(thr->thrH);
    #else
-      ATL_assert(SetThreadAffinityMask(thr->thrH, 
-                 (1<<ATL_affinityIDs[proc%ATL_AFF_NUMID])));
+      thr->rank = proc;
+      thr->thrH = CreateThread(NULL, 0, rout, arg, CREATE_SUSPENDED, &thrID);
+      ATL_assert(thr->thrH);
+      #ifdef ATL_RANK_IS_PROCESSORID
+         ATL_assert(SetThreadAffinityMask(thr->thrH, (1<<proc)));
+      #else
+         ATL_assert(SetThreadAffinityMask(thr->thrH, 
+                    (1<<ATL_affinityIDs[proc%ATL_AFF_NUMID])));
+      #endif
+      ATL_assert(ResumeThread(thr->thrH) == 1);
    #endif
-   ATL_assert(ResumeThread(thr->thrH) == 1);
 #else
    pthread_attr_t attr;
-   #ifdef ATL_PAFF_SETAFFNP
-      cpu_set_t cpuset;
-   #endif
-   #ifdef ATL_RANK_IS_PROCESSORID
-      const int affID = proc;
-   #else
-      const int affID = ATL_affinityIDs[proc%ATL_AFF_NUMID];
-   #endif
-
-   #ifdef ATL_PAFF_SELF
-      thr->paff_set = 0;  /* affinity must be set by created thread */
+   #ifndef ATL_NOAFFINITY
+      #ifdef ATL_PAFF_SETAFFNP
+         cpu_set_t cpuset;
+      #endif
+      #ifdef ATL_RANK_IS_PROCESSORID
+         const int affID = proc;
+      #else
+         const int affID = ATL_affinityIDs[proc%ATL_AFF_NUMID];
+      #endif
+      #ifdef ATL_PAFF_SELF
+         thr->paff_set = 0;  /* affinity must be set by created thread */
+      #endif
    #endif
    thr->rank = proc;
    ATL_assert(!pthread_attr_init(&attr));
@@ -918,11 +946,13 @@ void ATL_thread_exit(void *retval)
 #endif
 }
 @ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch ATL_goparallel
-#include "atlas_taffinity.h"  /* include this file first! */
+#ifndef ATL_NOAFFINITY
+   #include "atlas_taffinity.h"  /* include this file first! */
+#endif
 #include "atlas_misc.h"
 #include "atlas_threads.h"
 
-#ifdef ATL_PAFF_SELF
+#if !defined(ATL_NOAFFINITY) && defined(ATL_PAFF_SELF)
 @ROUT ATL_goparallel
 static int ATL_setmyaffinity(void)
 @ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch
@@ -978,6 +1008,9 @@ static int ATL_setmyaffinity(ATL_thread_t *me)
 }
 #endif
 @ROUT ATL_lin0tlaunch
+#ifdef ATL_NOAFFINITY
+   #define ATL_tDoWorkWrap ATL_tDoWorkWrap_noaff
+#endif
 void *ATL_tDoWorkWrap(void *vp)
 {
    ATL_thread_t *tp = vp;
@@ -986,6 +1019,9 @@ void *ATL_tDoWorkWrap(void *vp)
    return(NULL);
 }
 
+#if defined(ATL_TUNING) && defined(ATL_NOAFFINITY)
+   #define ATL_lin0tlaunch ATL_lin0tlaunch_noaff
+#endif
 void *ATL_lin0tlaunch(void *vp)
 {
    ATL_thread_t *tp = vp;
