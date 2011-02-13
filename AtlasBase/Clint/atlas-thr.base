@@ -890,8 +890,12 @@ int ATL_thread_start(ATL_thread_t *thr, int proc,
 #else
    pthread_attr_t attr;
    #ifndef ATL_NOAFFINITY
-      #ifdef ATL_PAFF_SETAFFNP
+      #if defined(ATL_PAFF_SETAFFNP) || defined(ATL_PAFF_SCHED)
          cpu_set_t cpuset;
+      #elif defined(ATL_PAFF_PLPA)
+         plpa_cpu_set_t cpuset;
+      #elif defined(ATL_PAFF_CPUSET) /* untried FreeBSD code */
+         cpuset_t mycpuset;
       #endif
       #ifdef ATL_RANK_IS_PROCESSORID
          const int affID = proc;
@@ -919,6 +923,19 @@ int ATL_thread_start(ATL_thread_t *thr, int proc,
                                                PTHREAD_BIND_FORCED_NP)); 
    #endif
    ATL_assert(!pthread_create(&thr->thrH, &attr, rout, arg));
+   #if defined(ATL_PAFF_PBIND)
+      ATL_assert(!processor_bind(P_LWPID, thr->thrH, affID, NULL));
+      thr->paff_set = 0;  /* affinity set by spawner */
+   #elif defined(ATL_PAFF_BINDP)
+      ATL_assert(!bindprocessor(BINDTHREAD, thr->thrH, bindID));
+      thr->paff_set = 0;  /* affinity set by spawner */
+   #elif defined(ATL_PAFF_CPUSET)  /* untried FreeBSD code */
+      CPU_ZERO(&mycpuset);         /* no manpage, so guess works like linux */
+      CPU_SET(bindID, &mycpuset);
+      if (!cpuset_setaffinity(CPU_LEVEL_WHICH, CPU_WHICH_TID, thr->thrH,
+                              sizeof(mycpuset), &mycpuset));
+         thr->paff_set = 0;  /* affinity set by spawner */
+   #endif
    ATL_assert(!pthread_attr_destroy(&attr));
 #endif
    return(0);
@@ -981,12 +998,14 @@ static int ATL_setmyaffinity(ATL_thread_t *me)
    #else
       const int bindID = ATL_affinityIDs[me->rank%ATL_AFF_NUMID];
    #endif
-   me->paff_set = 1;
 @ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch ATL_goparallel
 #ifdef ATL_PAFF_PLPA
    plpa_cpu_set_t cpuset;
    PLPA_CPU_ZERO(&cpuset);
    PLPA_CPU_SET(bindID, &cpuset);
+   if (me->paff_set)
+      return(0);
+   me->paff_set = 1;
    return(plpa_sched_setaffinity((pid_t)0, sizeof(cpuset), &cpuset));
 #elif defined(ATL_PAFF_PBIND)
    return(processor_bind(P_LWPID, P_MYID, bindID, NULL));
@@ -994,15 +1013,27 @@ static int ATL_setmyaffinity(ATL_thread_t *me)
    cpu_set_t cpuset;
    CPU_ZERO(&cpuset);
    CPU_SET(bindID, &cpuset);
+   if (me->paff_set)
+      return(0);
+   me->paff_set = 1;
    return(sched_setaffinity(0, sizeof(cpuset), &cpuset));
 #elif defined (ATL_PAFF_RUNON)
+   if (me->paff_set)
+      return(0);
+   me->paff_set = 1;
    return(pthread_setrunon_np(bindID));
 #elif defined(ATL_PAFF_BINDP)
+   if (me->paff_set)
+      return(0);
+   me->paff_set = 1;
    return(bindprocessor(BINDTHREAD, thread_self(), bindID));
 #elif defined(ATL_PAFF_CPUSET)  /* untried FreeBSD code */
    cpuset_t mycpuset;
    CPU_ZERO(&mycpuset);         /* no manpage, so guess works like linux */
    CPU_SET(bindID, &mycpuset);
+   if (me->paff_set)
+      return(0);
+   me->paff_set = 1;
    return(cpuset_setaffinity(CPU_LEVEL_WHICH, CPU_WHICH_TID, -1,
                              sizeof(mycpuset), &mycpuset));
 #endif
