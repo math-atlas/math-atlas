@@ -277,178 +277,14 @@ int main(int nargs, char **args)
    printf("SERIAL SPEEDUP OVER DEC = %.2f\n", tdec / tser);
    return(0);
 }
-@ROUT tune_spawn tune_spawn_fp
-#include "atlas_threads.h"
-#include "atlas_misc.h"
-
-void ATL_tllin
-   (void *opstruct, int opstructstride, void *OpStructIsInit, void *DoWork, 
-    void *CombineOpStructs);
-void ATL_tllg2
-   (void *opstruct, int opstructstride, void *OpStructIsInit, void *DoWork, 
-    void *CombineOpStructs);
-void ATL_tldyn
-   (void *opstruct, int opstructstride, void *OpStructIsInit, void *DoWork, 
-    void *CombineOpStructs);
-@ROUT tune_spawn_fp `void DoFlops(size_t nflops);`
-typedef struct
-{
-@ROUT tune_spawn_fp `   size_t flops;`
-   volatile int *donearr;   /* starts all zero */
-   int rank, nthr;
-} ATL_TUNE_T;
-
-@skip int TuneIsInit(void *vp) { return(1); }  /* all structs init when tuning */
-
-void TuneDoWork(ATL_LAUNCHSTRUCT_t *lp, void *vp)
-/* 
- * Use volatile array to check in, and then quit (cache-speed barrier)
- */
-{
-   ATL_TUNE_T *tp = vp;
-   const int nthr = tp->nthr;
-   int i;
-
-@ROUT tune_spawn_fp
-   DoFlops(tp->flops);
-@ROUT tune_spawn
-   tp->donearr[tp->rank] = 1;
-   for (i=0; i < nthr; i++)
-      while(!tp->donearr[i]);
-@ROUT tune_spawn tune_spawn_fp
-}
-
-void PrintUsage(char *exe)
-{
-@ROUT tune_spawn_fp
-   fprintf(stderr, 
-"USAGE: %s [-r <reps>] [-f flops] [-k <kflops>] [-m <mflops>] -W [which]\n", 
-           exe);
-@ROUT tune_spawn
-   fprintf(stderr, "USAGE: %s [-r <reps>] -W [which]\n", exe);
-@ROUT tune_spawn tune_spawn_fp
-   fprintf(stderr, 
-   "   which: bitfield, 1st bit is dyn, 2nd is lg2, 3rd is linear\n");
-   exit(-1);
-}
-
-@ROUT tune_spawn_fp
-int GetFlags(int nargs, char **args, int *which, size_t *flops)
-@ROUT tune_spawn
-int GetFlags(int nargs, char **args, int *which)
-@ROUT tune_spawn tune_spawn_fp
-{
-   int i, reps=1;
-@ROUT tune_spawn_fp `   int imul=1;`
-
-@ROUT tune_spawn_fp `   *flops = 1000000;`
-   *which = 7;
-   for (i=1; i < nargs; i++)
-   {
-      if (args[i][0] != '-')
-         PrintUsage(args[0]);
-      switch(args[i][1])
-      {
-      case 'r':
-         if (++i >= nargs)
-            PrintUsage(args[0]);
-         reps = atoi(args[i]);
-         break;
-      case 'W':
-         if (++i >= nargs)
-            PrintUsage(args[0]);
-         *which = atoi(args[i]);
-         break;
-@ROUT tune_spawn_fp
-      case 'm':
-         imul *= 1000;
-      case 'k':
-         imul *= 1000;
-      case 'f':
-         if (++i >= nargs)
-            PrintUsage(args[0]);
-         *flops = imul * atoi(args[i]);
-         imul = 1;
-         break;
-@ROUT tune_spawn tune_spawn_fp
-      default:
-         PrintUsage(args[0]);
-      }
-   }
-   return(reps);
-}
-int main(int nargs, char **args)
-{
-   int i, k, nreps = 200, opstride, which;
-   double t0, tlin, tlg2, tdyn;
-   ATL_TUNE_T ta[ATL_NTHREADS];
-   volatile int done[ATL_NTHREADS];
-@ROUT tune_spawn_fp `   size_t flops;`
-
-   tlg2 = tdyn = tlin = 0.0;
-@ROUT tune_spawn `   nreps = GetFlags(nargs, args, &which);`
-@ROUT tune_spawn_fp `   nreps = GetFlags(nargs, args, &which, &flops);`
-
-   for (i=0; i < ATL_NTHREADS; i++)
-   {
-      ta[i].donearr = done;
-      ta[i].rank = i;
-      ta[i].nthr = ATL_NTHREADS;
-@ROUT tune_spawn_fp `      ta[i].flops = flops;`
-   }
-   opstride = (int) ( ((char*)(ta+1)) - (char*)(ta) );
-
-   printf("FINDING SPEED OF CREATE/BARRIER/JOIN USING %d REPITITIONS:\n", 
-          nreps);
-   if (which & 1)
-   {
-      t0 = ATL_walltime();
-      for (k=0; k < nreps; k++)
-      {
-         for (i=0; i < ATL_NTHREADS; i++)
-            done[i] = 0;
-         ATL_tldyn(ta, opstride, NULL, TuneDoWork, NULL);
-      }
-      tdyn = ATL_walltime() - t0;
-      printf("   dyn time = %e\n", (float)tdyn);
-   }
-
-   if (which & 2)
-   {
-      t0 = ATL_walltime();
-      for (k=0; k < nreps; k++)
-      {
-         for (i=0; i < ATL_NTHREADS; i++)
-            done[i] = 0;
-         ATL_tllg2(ta, opstride, NULL, TuneDoWork, NULL);
-      }
-      tlg2 = ATL_walltime() - t0;
-      printf("   lg2 time = %e\n", (float)tlg2);
-   }
-
-   if (which & 4)
-   {
-      t0 = ATL_walltime();
-      for (k=0; k < nreps; k++)
-      {
-         for (i=0; i < ATL_NTHREADS; i++)
-            done[i] = 0;
-         ATL_tllin(ta, opstride, NULL, TuneDoWork, NULL);
-      }
-      tlin = ATL_walltime() - t0;
-      printf("   lin time = %e\n", (float)tlin);
-   }
-   if ((which | 7) == which)
-      printf("DYNAMIC is %.2f%% of LINEAR and %.2f%% of LOG2 SPEED.\n", 
-             (tdyn/tlin)*100.0, (tdyn/tlg2)*100.0);
-   return(0);
-}
 @ROUT tune_aff
 #include "atlas_taffinity.h"
+@ROUT tune_aff tune_spawn_fp
 #include "atlas_threads.h"
 #define DREAL
 #include "atlas_misc.h"
 
+@ROUT tune_aff
 void ATL_tllin
    (void *opstruct, int opstructstride, void *OpStructIsInit, void *DoWork,
     void *CombineOpStructs);
@@ -456,6 +292,7 @@ void ATL_tllin_noaff
    (void *opstruct, int opstructstride, void *OpStructIsInit, void *DoWork,
     void *CombineOpStructs);
 
+@ROUT tune_aff tune_spawn_fp
 typedef struct
 {
    size_t nflops;               /* number of flops to perform */
@@ -512,6 +349,7 @@ void TuneDoWork(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    InCacheGemm(tp->nflops, tp->V);
 }
 
+@ROUT tune_aff
 void PrintUsage(char *exe)
 {
    fprintf(stderr, "USAGE: %s [-r <reps>] -m/k/f [m/k/flops] -o outfile\n", 
@@ -615,6 +453,173 @@ int main(int nargs, char **args)
       fprintf(fpout, "#endif\n");
       fclose(fpout);
    }
+   return(0);
+}
+@ROUT tune_spawn
+#include "atlas_threads.h"
+#include "atlas_misc.h"
+
+@ROUT tune_spawn tune_spawn_fp
+void ATL_tllin
+   (void *opstruct, int opstructstride, void *OpStructIsInit, void *DoWork, 
+    void *CombineOpStructs);
+void ATL_tllg2
+   (void *opstruct, int opstructstride, void *OpStructIsInit, void *DoWork, 
+    void *CombineOpStructs);
+void ATL_tldyn
+   (void *opstruct, int opstructstride, void *OpStructIsInit, void *DoWork, 
+    void *CombineOpStructs);
+@ROUT tune_spawn
+typedef struct
+{
+   volatile int *donearr;   /* starts all zero */
+   int rank, nthr;
+} ATL_TUNE_T;
+
+void TuneDoWork(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+/* 
+ * Use volatile array to check in, and then quit (cache-speed barrier)
+ */
+{
+   ATL_TUNE_T *tp = vp;
+   const int nthr = tp->nthr;
+   int i;
+
+   tp->donearr[tp->rank] = 1;
+   for (i=0; i < nthr; i++)
+      while(!tp->donearr[i]);
+}
+@ROUT tune_spawn tune_spawn_fp
+
+void PrintUsage(char *exe)
+{
+@ROUT tune_spawn_fp
+   fprintf(stderr, 
+"USAGE: %s [-r <reps>] [-f flops] [-k <kflops>] [-m <mflops>] -W [which]\n", 
+           exe);
+@ROUT tune_spawn
+   fprintf(stderr, "USAGE: %s [-r <reps>] -W [which]\n", exe);
+@ROUT tune_spawn tune_spawn_fp
+   fprintf(stderr, 
+   "   which: bitfield, 1st bit is dyn, 2nd is lg2, 3rd is linear\n");
+   exit(-1);
+}
+
+@ROUT tune_spawn_fp
+int GetFlags(int nargs, char **args, int *which, size_t *flops)
+@ROUT tune_spawn
+int GetFlags(int nargs, char **args, int *which)
+@ROUT tune_spawn tune_spawn_fp
+{
+   int i, reps=1;
+@ROUT tune_spawn_fp `   int imul=1;`
+
+@ROUT tune_spawn_fp `   *flops = 1000000;`
+   *which = 7;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0]);
+      switch(args[i][1])
+      {
+      case 'r':
+         if (++i >= nargs)
+            PrintUsage(args[0]);
+         reps = atoi(args[i]);
+         break;
+      case 'W':
+         if (++i >= nargs)
+            PrintUsage(args[0]);
+         *which = atoi(args[i]);
+         break;
+@ROUT tune_spawn_fp
+      case 'm':
+         imul *= 1000;
+      case 'k':
+         imul *= 1000;
+      case 'f':
+         if (++i >= nargs)
+            PrintUsage(args[0]);
+         *flops = imul * atoi(args[i]);
+         imul = 1;
+         break;
+@ROUT tune_spawn tune_spawn_fp
+      default:
+         PrintUsage(args[0]);
+      }
+   }
+   return(reps);
+}
+int main(int nargs, char **args)
+{
+   int i, k, nreps = 200, opstride, which;
+   double t0, tlin, tlg2, tdyn;
+   ATL_TUNE_T ta[ATL_NTHREADS];
+@ROUT tune_spawn `   volatile int done[ATL_NTHREADS];`
+@ROUT tune_spawn_fp `   volatile double VV[16];`
+@ROUT tune_spawn_fp `   size_t flops;`
+
+   tlg2 = tdyn = tlin = 0.0;
+@ROUT tune_spawn `   nreps = GetFlags(nargs, args, &which);`
+@ROUT tune_spawn_fp `   nreps = GetFlags(nargs, args, &which, &flops);`
+
+   for (i=0; i < ATL_NTHREADS; i++)
+   {
+      ta[i].rank = i;
+      ta[i].nthr = ATL_NTHREADS;
+@ROUT tune_spawn `      ta[i].donearr = done;`
+@ROUT tune_spawn_fp `      ta[i].nflops = flops;`
+@ROUT tune_spawn_fp `      ta[i].V = VV;`
+   }
+@ROUT tune_spawn_fp
+   for (i=0; i < 16; i++)
+      VV[i] = ATL_rzero;
+   @define exp @CREATE/DGEMM/JOIN@
+@ROUT  tune_spawn
+   @define exp @CREATE/BARRIER/JOIN@
+@ROUT  tune_spawn_fp tune_spawn
+   opstride = (int) ( ((char*)(ta+1)) - (char*)(ta) );
+
+   printf("FINDING SPEED OF @(exp) USING %d REPITITIONS:\n", 
+          nreps);
+   if (which & 1)
+   {
+      t0 = ATL_walltime();
+      for (k=0; k < nreps; k++)
+      {
+@ROUT tune_spawn `         for (i=0; i < ATL_NTHREADS; i++) done[i] = 0;`
+         ATL_tldyn(ta, opstride, NULL, TuneDoWork, NULL);
+      }
+      tdyn = ATL_walltime() - t0;
+      printf("   dyn time = %e\n", (float)tdyn);
+   }
+
+   if (which & 2)
+   {
+      t0 = ATL_walltime();
+      for (k=0; k < nreps; k++)
+      {
+@ROUT tune_spawn `         for (i=0; i < ATL_NTHREADS; i++) done[i] = 0;`
+         ATL_tllg2(ta, opstride, NULL, TuneDoWork, NULL);
+      }
+      tlg2 = ATL_walltime() - t0;
+      printf("   lg2 time = %e\n", (float)tlg2);
+   }
+
+   if (which & 4)
+   {
+      t0 = ATL_walltime();
+      for (k=0; k < nreps; k++)
+      {
+@ROUT tune_spawn `         for (i=0; i < ATL_NTHREADS; i++) done[i] = 0;`
+         ATL_tllin(ta, opstride, NULL, TuneDoWork, NULL);
+      }
+      tlin = ATL_walltime() - t0;
+      printf("   lin time = %e\n", (float)tlin);
+   }
+   if ((which | 7) == which)
+      printf("DYNAMIC is %.2f%% of LINEAR and %.2f%% of LOG2 SPEED.\n", 
+             (tdyn/tlin)*100.0, (tdyn/tlg2)*100.0);
    return(0);
 }
 @ROUT DoFlops_amd64.S
