@@ -5943,6 +5943,7 @@ SQUARE:   /* near-square shape, N <= 256 if jumped here */
 @ROUT ATL_tgemm_MKp
 #include "atlas_misc.h"
 #include "atlas_tcacheedge.h"
+#include "atlas_lvl3.h"
 
 static int ATL_NTHR = ATL_NTHREADS;
 typedef struct
@@ -5986,10 +5987,14 @@ static DoMM_NMK
    ATL_CINT ldc         /* stride betweent elts in a row of C */
 )
 {
+   ATL_INT j;
+
    for (j=0; j < nfNblks; j++)
    {
       const TYPE *b = B + (nfKblks*NB + kr)*NB*j;
       TYPE *Cc = C + j*NB*ldc;
+      ATL_INT i;
+
       for (i=0; i < nfMblks; i++)
       {
          const TYPE *a = A + (nfKblks*NB + kr)*NB*i;
@@ -6021,6 +6026,41 @@ static DoMM_NMK
    }
    if (nr) /* can use pNBmm for all full blks of M/K, must use pKBmm rest */
    {
+      const TYPE *b = B + (nfKblks*NB + kr)*NB*nfNblks;
+      TYPE *Cc = C + nfNblks*NB*ldc;
+      ATL_CINT nrNB = nr * NB;
+      ATL_INT i;
+
+      for (i=0; i < nfMblks; i++)
+      {
+         const TYPE *a = A + (nfKblks*NB + kr)*NB*i;
+         TYPE *c = Cc + i*NB;
+         for (k=0; k < nfKblks; k++)
+         {
+            pNBmm(MB, nr, KB, ATL_rone, a, KB, b, KB, ATL_rone, c, ldc);
+            a += NBNB;
+            b += nrNB;
+         }
+         if (kr)  /* partial KB requires pKBmm */
+            pKBmm(MB, nr, kr, ATL_rone, a, kr, b, kr, ATL_rone, c, ldc);
+      }
+      if (mr) /* must use pKBmm for two or more partial dim */
+      {
+         const TYPE *b = B + (nfKblks*NB + kr)*NB*nfNblks;
+         const TYPE *a = A + (nfKblks*NB + kr)*NB*nfMblks;
+         TYPE *c = Cc + nfNblks*NB*ldc + nfMblks*NB;
+         const int mrNB = mr*NB, nrNB=nr*NB;
+         ATL_INT k;
+
+         for (k=0; k < nfKblks; k++)
+         {
+            pKBmm(mr, nr, KB, ATL_rone, a, KB, b, KB, ATL_rone, c, ldc);
+            a += mrNB;
+            b += nrNB;
+         }
+         if (kr)  /* partial KB requires pKBmm */
+            pKBmm(mr, nr, kr, ATL_rone, a, kr, b, kr, ATL_rone, c, ldc);
+      }
    }
 }
 
