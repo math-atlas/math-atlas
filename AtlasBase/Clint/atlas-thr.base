@@ -104,6 +104,7 @@ struct ATL_LaunchStruct
 void ATL_thread_launch(void *opstruct, int opstructstride, void *OpStructIsInit,
                        void *DoWork, void *CombineOpStructs);
 /*  Starts a thread running, and sets its affinity to proc if possible */
+void ATL_goparallel(const int P, void *DoWork, void *opstruct);
 int ATL_thread_start(ATL_thread_t *thr, int proc, void *(*rout)(void*), void*);
 int ATL_thread_join(ATL_thread_t*); /* waits on completion of thread */
 void ATL_thread_exit(void*);        /* exits currently executing thread */
@@ -1238,7 +1239,7 @@ void ATL_goparallel
 (
    const int P,         /* # of cores to use */
    void *DoWork,        /* func ptr to work function */
-   void *opstruct;      /* will be stashed in launchstruct's vp */
+   void *opstruct       /* will be stashed in launchstruct's vp */
 )
 {
    ATL_thread_t *tp;
@@ -1268,6 +1269,7 @@ void ATL_goparallel
       DoWork(&ls, &i);
    }
 #else
+   ATL_assert(P == ATL_NTHREADS);  /* need to rewrite thread_start to fix */
    vp = malloc(P*(sizeof(ATL_thread_t)+sizeof(int)) + ATL_Cachelen);
    ATL_assert(vp);
    ranks = vp;
@@ -5953,12 +5955,13 @@ typedef struct
    void *aAcnt;           /* count on the partitions of A */
    void *aCcnt;           /* count on columns of C */
    volatile int *chkin;   /* NTHR-len checkin array */
-   TYPE *Aws;             /* preallocated thread copy areas */
+   TYPE **Aws;            /* preallocated thread copy areas */
    TYPE *Bw;              /* workspace for common B */
-   TYPE *A, *B, *C;       /* original matrix pointers */
+   const TYPE *A, *B;     /* original input matrices */
+   TYPE *C;               /* original output matrix */
    SCALAR alpha;          
    SCALAR beta;
-   ATL_INT M, N, K, lda, ldb, ldc, Kp, nKp, nNb, klast;
+   ATL_INT M, N, K, lda, ldb, ldc, Kp, nKp, nNb, nMb, klast;
    enum ATLAS_TRANS TA, TB;
 } ATL_TGEMM_MKP_t;
 
@@ -6154,8 +6157,7 @@ static void ATL_tloopA
    }
 }
 
-@beginskip
-void Mjoin(PATL,DoWork_MKp)(ATL_LAUNCHSTRUCT *lp, void *vp)
+void Mjoin(PATL,DoWork_MKp)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 /* 
  * This routine loops over Kp-sized chunks of K
  */
@@ -6163,17 +6165,19 @@ void Mjoin(PATL,DoWork_MKp)(ATL_LAUNCHSTRUCT *lp, void *vp)
    ATL_thread_t *tp=vp;
    ATL_TGEMM_MKP_t *pbdef=lp->vp;
    ATL_CINT iam = tp->rank;
-   ATL_int k, kb;
+   ATL_INT k, kb;
    volatile int *chkin = pbdef->chkin;
    TYPE *Bw=pbdef->Bw, *Aw=pbdef->Aws[iam];
    void *aAcnt=pbdef->aAcnt, *aBcnt=pbdef->aBcnt;
    ATL_CINT BNOTRANS = (pbdef->TB == AtlasNoTrans);
    const TYPE *A=pbdef->A, *B=pbdef->B;
    TYPE *C = pbdef->C;
-   aTL_CINT ldc = pbdef->ldc;
+   ATL_CINT M = pbdef->M, N = pbdef->N, K = pbdef->K, klast = pbdef->klast;
+   ATL_CINT nNb = pbdef->nNb,  nMb = pbdef->nMb, Kp = pbdef->Kp;
+   ATL_CINT lda = pbdef->lda, ldc = pbdef->ldc;
    ATL_CINT nfMblks = pbdef->M/NB, nfNblks = pbdef->N/NB;
    ATL_CINT mr = pbdef->M-nfMblks*NB, nr = pbdef->N-nfNblks*NB; 
-   ATL_INT nfKblks, kr, nfKblks0, kr0;
+   ATL_INT nfKblks, kr, nfKblks0, kr0, i;
 
 /*
  * Threads cooperate to scale C if beta is not one; the unit of work is 1 col
@@ -6198,7 +6202,7 @@ void Mjoin(PATL,DoWork_MKp)(ATL_LAUNCHSTRUCT *lp, void *vp)
       while (j = ATL_DecAtomicCount(aCcnt))
       {
          j--;
-         Mjoin(PATL.scal)(M, beta, C+ldc*j, 1);
+         Mjoin(PATL,scal)(M, beta, C+ldc*j, 1);
       }
    }
 /*
@@ -6223,6 +6227,7 @@ void Mjoin(PATL,DoWork_MKp)(ATL_LAUNCHSTRUCT *lp, void *vp)
       {
          if (ATL_DecAtomicCount(pbdef->aBcnt) == nNb+1)
          {
+            const SCALAR alpha = pbdef->alpha;
             if (SCALAR_IS_ONE(alpha))
                Mjoin(PATL,row2blkT2_a1)(N, kb, pbdef->B, pbdef->ldb, Bw, alpha);
             else
@@ -6272,12 +6277,12 @@ void Mjoin(PATL,DoWork_MKp)(ATL_LAUNCHSTRUCT *lp, void *vp)
       }
       ATL_tloopA(aAcnt, iam, nfMblks, mr, nfNblks, nr, nfKblks, kr, 
                  pbdef->TA, A, lda, Aw, Bw, C, ldc);
-      /* .... */
       kb = Kp;
       nfKblks = nfKblks0;
       kr = 0;
    }  
 }
+
 int Mjoin(PATL,tgemm_MKp)
    (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, ATL_CINT M, 
     ATL_CINT N, ATL_CINT K, const SCALAR alpha, const TYPE *A, ATL_CINT lda, 
@@ -6289,7 +6294,7 @@ int Mjoin(PATL,tgemm_MKp)
    TYPE **Aws;
    size_t wrksz;
    ATL_INT Kp = (((CacheEdge>>1) - NB*NB + NB-1)/(NB*NB))*NB;
-   ATL_INT k, klast, nKp, nNb;
+   ATL_INT k, klast, nKp, nNb, nMb;
    ATL_TGEMM_MKP_t pbdef;
 /*
  * Find size of partial block at end.  If it is <= NB, absorb it into previous
@@ -6308,6 +6313,7 @@ int Mjoin(PATL,tgemm_MKp)
    else
       klast = Kp;  /* K is even multiple of Kp */
    nNb = (N+NB-1)/NB;  /* ceil(N/NB) */
+   nMb = (M+NB-1)/NB;  /* ceil(M/NB) */
 /* 
  * Worksize: let k = MAX(Kp,CEIL(klast/NB)*NB), then:
  * All threads share the N*k B workspace, which is split into
@@ -6317,10 +6323,10 @@ int Mjoin(PATL,tgemm_MKp)
  * we use to pass all the A work pointers to the worker nodes.
  */
    k = ((klast+NB-1)/NB)*NB;
-   k = Mmax(Kp, klast);
-   wrksz = (2+ATL_NTHR)*ATL_Cachelen + ATL_MulBySize(NB)*nNb*k) + 
+   k = Mmax(Kp, k);
+   wrksz = (2+ATL_NTHR)*ATL_Cachelen + ATL_MulBySize(NB)*nNb*k + 
            ATL_NTHR*(sizeof(int)+sizeof(TYPE*) + ATL_MulBySize(NB)*k);
-   if (ATL_NTHR*ATL_PTMAXMALLOC) < wrksz)
+   if (ATL_NTHR*ATL_PTMAXMALLOC < wrksz)
       return(1);
    vp = malloc(wrksz);
    if (!vp)
@@ -6338,19 +6344,21 @@ int Mjoin(PATL,tgemm_MKp)
       p = Aws[k-1] + ATL_MulByNB(Kp);
       Aws[k] = ATL_AlignPtr(p);
    }
+   pbdef.chkin = chkin;
+   pbdef.alpha = alpha; pbdef.beta = beta;
+   pbdef.A = A; pbdef.B = B; pbdef.C = C;
    pbdef.M = M; pbdef.N = N; pbdef.K = K;
    pbdef.lda = lda; pbdef.ldb = ldb; pbdef.ldc = ldc;
    pbdef.Kp = Kp; pbdef.klast = klast; pbdef.nKp = nKp;
-   pbdef.nNb = nNb;
+   pbdef.nNb = nNb; pbdef.nMb = nMb;
    pbdef.TA = TA; pbdef.TB = TB;
    pbdef.Bw = Bw; pbdef.Aws = Aws;
-   pbdef.aBcnt = ATL_GetAtomicCount(nNb+1);
-   pbdef.aAcnt = ATL_GetAtomicCount(mNb+1);
+   pbdef.aBcnt = ATL_SetAtomicCount(nNb+1);
+   pbdef.aAcnt = ATL_SetAtomicCount(nMb+1);
    if (SCALAR_IS_ONE(beta))
       pbdef.aCcnt = NULL;
    else
-      pbdef.aCcnt = ATL_GetAtomicCount(N+1);
-   ATL_thread_launch1(Mjoin(PATL,DoWork_MKp), &pbdef);
+      pbdef.aCcnt = ATL_SetAtomicCount(N+1);
+   ATL_goparallel(ATL_NTHREADS, Mjoin(PATL,DoWork_MKp), &pbdef);
    free(vp);
 }
-@endskip
