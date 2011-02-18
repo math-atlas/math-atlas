@@ -5974,7 +5974,9 @@ typedef struct
    TYPE *C;               /* original output matrix */
    SCALAR alpha;          
    SCALAR beta;
-   ATL_INT M, N, K, lda, ldb, ldc, Kp, nKp, nNb, nMb, klast;
+   ATL_INT Kp, nKp, klast;
+   ATL_INT Mp, nMp, mlast;
+   ATL_INT M, N, K, lda, ldb, ldc, nNb;
    enum ATLAS_TRANS TA, TB;
 } ATL_TGEMM_MKP_t;
 
@@ -5987,7 +5989,7 @@ typedef struct
 
 #define pKBmm Mjoin(PATL,pKBmm_b1)  /* cleans up any combin. of partial blks */
 #define pNBmm Mjoin(PATL,pNBmm_b1)  /* cleans up full MB,KB, partial NB */
-#define pMBmm Mjoin(PATL,pMBmm)     /* cleans up full NB,KB, partial MB */
+#define pMBmm Mjoin(PATL,pMBmm_b1)  /* cleans up full NB,KB, partial MB */
 
 /*
  * This routine is a driver routine that makes all the appropriate calls
@@ -6135,11 +6137,13 @@ static void ATL_tloopA
 (
    void *aAcnt,         /* Atomic counter on row panels of A */
    int iam,             /* my rank; */
-   int nfMblks,         /* # of full NB blocks along M */
-   int mr,              /* M%NB */
+   int nMp,             /* how many M partitions are there? */
+   int Mp,              /* size of all but last M partition */
+   int mlast,           /* how many elts in last M partition? */
+   int nfMblks,         /* # of full NB blocks in Mp */
    int nfNblks,         /* # of full NB blocks along N */
    int nr,              /* N%NB */
-   int nfKblks,         /* # of full NB blocks along K */
+   int nfKblks,         /* # of full NB blocks along Kp */
    int kr,              /* K%NB */
    enum ATLAS_TRANS TA,
    const TYPE *A,       /* original A matrix */
@@ -6150,23 +6154,35 @@ static void ATL_tloopA
    ATL_CINT ldc         /* leading dim of C */
 )
 {
-   ATL_CINT M = nfMblks*NB + mr, N = nfNblks*NB + nr, K = nfKblks*NB + kr;
+   ATL_CINT M = ((nMp-1)*Mp)+mlast, N = nfNblks*NB + nr, K = nfKblks*NB + kr;
    ATL_INT iblk;
    size_t i;
 
    while (iblk = ATL_DecAtomicCount(aAcnt))
    {
-      iblk--;
-      i = iblk*NB;
+      ATL_INT mb, mymr, mymblks;
+      if (--iblk == nMp)
+      {
+         mb = mlast;
+         mymblks = (mlast/NB)*NB;
+         mymr = mlast - mymblks*NB;
+      }
+      else
+      {
+         mb = Mp;
+         mymr = 0;
+         mymblks = nfMblks;
+      }
+      i = iblk*Mp;
 /*
  *    Copy the specified row-panel (may be multiple MB-wide row-panels) 
  *    to my private workspace
  */
       if (TA == AtlasNoTrans)
-         Mjoin(PATL,row2blkT2_a1)(M, K, A+i, lda, pA, ATL_rone);
+         Mjoin(PATL,row2blkT2_a1)(mb, K, A+i, lda, pA, ATL_rone);
       else
-         Mjoin(PATL,col2blk_a1)(K, M, A+i, lda, pA, ATL_rone);
-      DoMM_NMK(nfMblks, mr, nfNblks, nr, nfKblks, kr, pA, B, C+i, ldc);
+         Mjoin(PATL,col2blk_a1)(K, mb, A+i*lda, lda, pA, ATL_rone);
+      DoMM_NMK(mymblks, mymr, nfNblks, nr, nfKblks, kr, pA, B, C+i, ldc);
    }
 }
 
@@ -6186,10 +6202,11 @@ void Mjoin(PATL,DoWork_MKp)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    const TYPE *A=pbdef->A, *B=pbdef->B;
    TYPE *C = pbdef->C;
    ATL_CINT M = pbdef->M, N = pbdef->N, K = pbdef->K, klast = pbdef->klast;
-   ATL_CINT nNb = pbdef->nNb,  nMb = pbdef->nMb, Kp = pbdef->Kp;
+   ATL_CINT nNb = pbdef->nNb,  Kp = pbdef->Kp;
    ATL_CINT lda = pbdef->lda, ldc = pbdef->ldc;
-   ATL_CINT nfMblks = pbdef->M/NB, nfNblks = pbdef->N/NB;
-   ATL_CINT mr = pbdef->M-nfMblks*NB, nr = pbdef->N-nfNblks*NB; 
+   ATL_CINT nfMblks = pbdef->Mp/NB, nfNblks = pbdef->N/NB;
+   ATL_CINT nr = pbdef->N-nfNblks*NB; 
+   ATL_CINT nMp=pbdef->nMp, Mp=pbdef->Mp, mlast=pbdef->mlast;
    ATL_INT nfKblks, kr, nfKblks0, kr0, i;
 
 /*
@@ -6258,7 +6275,7 @@ void Mjoin(PATL,DoWork_MKp)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
          const TYPE *B = pbdef->B;
          ATL_CINT ldb = pbdef->ldb;
 
-         while(jblk = ATL_DecAtomicCounter(pbdef->aBcnt))
+         while(jblk = ATL_DecAtomicCount(pbdef->aBcnt))
          {
             ATL_INT nn, j;
             jblk--;
@@ -6277,8 +6294,8 @@ void Mjoin(PATL,DoWork_MKp)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
          const int mycnt = chkin[iam];
          for (i=0; i < ATL_NTHREADS-1; i++)
             while(chkin[i] <= mycnt);
-         ATL_ResetAtomicCounter(pbdef->aBcnt, nNb+1);  /* reset for next k-it */
-         ATL_ResetAtomicCounter(pbdef->aAcnt, nMb+1);  /* starting A again */
+         ATL_ResetAtomicCount(pbdef->aBcnt, nNb+1);  /* reset for next k-it */
+         ATL_ResetAtomicCount(pbdef->aAcnt, nMp+1);  /* starting A again */
          chkin[iam]++;
       }
       else
@@ -6288,8 +6305,8 @@ void Mjoin(PATL,DoWork_MKp)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
          for (i=0; i < ATL_NTHREADS; i++)
             while(chkin[i] <= mycnt);
       }
-      ATL_tloopA(aAcnt, iam, nfMblks, mr, nfNblks, nr, nfKblks, kr, 
-                 pbdef->TA, A, lda, Aw, Bw, C, ldc);
+      ATL_tloopA(aAcnt, iam, nMp, Mp, mlast, nfMblks, nfNblks, nr, 
+                 nfKblks, kr, pbdef->TA, A, lda, Aw, Bw, C, ldc);
       kb = Kp;
       nfKblks = nfKblks0;
       kr = 0;
@@ -6306,14 +6323,43 @@ int Mjoin(PATL,tgemm_MKp)
    void *amcnt, *vp;
    TYPE **Aws;
    size_t wrksz;
-   ATL_INT Kp = (((CacheEdge>>1) - NB*NB + NB-1)/(NB*NB))*NB;
-   ATL_INT k, klast, nKp, nNb, nMb;
+   ATL_INT Kp, Mp, k, klast, mlast, nKp, nMp, nNb;
    ATL_TGEMM_MKP_t pbdef;
+
+/*
+ * =====================================================================
+ * Compute the Kp and Mp partitionings.  We want all our operands to fit
+ * in cache, assuming algorithmic movement and LRU replacement, so:
+ *    Mp*Kp + 2*(NB*Kp + Mp*NB) = CE
+ * =====================================================================
+ */
+/*
+ * See if we must cut K in order to fit in CE; if so, Mp=MB=NB, and:
+ *    MB*Kp + 2*(NB*Kp + MB*NB) = CE  -> Kp = (CE - MB*NB)/(MB + 2*NB)
+ *      A          B       C
+ */
+   if (MB*K + 2*NB*K + MB*NB > CacheEdge)  /* Mp=MB; solve for Kp */
+   {
+      Kp = (CacheEdge - MB*NB)/(MB + 2*NB);
+      Kp = (Kp > KB) ? (Kp/KB)*KB : KB;
+      Mp = MB;
+   }
+/*
+ * Otherwise, Kp = K, and we solve for Mp
+ *    Mp*K + 2*(NB*K + Mp*NB) = CE  -> Mp = (CE - 2*NB*K) / (K+NB)
+ *     A         B       C
+ */
+   else  /* Kp = K, solve for Mp */
+   {
+      Mp = (CacheEdge - 2*NB*K) / (K+NB);
+      Mp = (Mp > MB) ? (Mp/MB)*MB : MB;
+      Kp = K;
+   }
+
 /*
  * Find size of partial block at end.  If it is <= NB, absorb it into previous
- * block and have no partial block
+ * block and have no partial block for both M & K
  */
-   Kp = (Kp) ? Kp : NB;
    nKp = K / Kp;          /* floor(K/Kp) */
    klast = K - nKp*Kp;
    if (klast)
@@ -6325,8 +6371,18 @@ int Mjoin(PATL,tgemm_MKp)
    }
    else
       klast = Kp;  /* K is even multiple of Kp */
+   nMp = M / Mp;        /* floor (K/Kp) */
+   mlast = M - Mp*nMp;
+   if (mlast)
+   {
+      if (mlast < MB)
+         mlast += Mp;   /* absorb partial block into last part */
+      else
+         nMp++;         /* nMp now includes all partitions */
+   }
+   else
+      mlast = Mp;    /* M even multiple of Mp */
    nNb = (N+NB-1)/NB;  /* ceil(N/NB) */
-   nMb = (M+NB-1)/NB;  /* ceil(M/NB) */
 /* 
  * Worksize: let k = MAX(Kp,CEIL(klast/NB)*NB), then:
  * All threads share the N*k B workspace, which is split into
@@ -6338,7 +6394,7 @@ int Mjoin(PATL,tgemm_MKp)
    k = ((klast+NB-1)/NB)*NB;
    k = Mmax(Kp, k);
    wrksz = (2+ATL_NTHR)*ATL_Cachelen + ATL_MulBySize(NB)*nNb*k + 
-           ATL_NTHR*(sizeof(int)+sizeof(TYPE*) + ATL_MulBySize(NB)*k);
+           ATL_NTHR*(sizeof(int)+sizeof(TYPE*) + ATL_MulBySize(Mp)*k);
    if (ATL_NTHR*ATL_PTMAXMALLOC < wrksz)
       return(1);
    vp = malloc(wrksz);
@@ -6354,7 +6410,7 @@ int Mjoin(PATL,tgemm_MKp)
    for (k=1; k < ATL_NTHR; k++)         /* init rest of nthr-len arrays */
    {
       chkin[k] = 0;
-      p = Aws[k-1] + ATL_MulByNB(Kp);
+      p = Aws[k-1] + Mp*Kp;
       Aws[k] = ATL_AlignPtr(p);
    }
    pbdef.chkin = chkin;
@@ -6363,11 +6419,12 @@ int Mjoin(PATL,tgemm_MKp)
    pbdef.M = M; pbdef.N = N; pbdef.K = K;
    pbdef.lda = lda; pbdef.ldb = ldb; pbdef.ldc = ldc;
    pbdef.Kp = Kp; pbdef.klast = klast; pbdef.nKp = nKp;
-   pbdef.nNb = nNb; pbdef.nMb = nMb;
+   pbdef.Mp = Mp; pbdef.mlast = mlast; pbdef.nMp = nMp;
+   pbdef.nNb = nNb;
    pbdef.TA = TA; pbdef.TB = TB;
    pbdef.Bw = Bw; pbdef.Aws = Aws;
    pbdef.aBcnt = ATL_SetAtomicCount(nNb+1);
-   pbdef.aAcnt = ATL_SetAtomicCount(nMb+1);
+   pbdef.aAcnt = ATL_SetAtomicCount(nMp+1);
    if (SCALAR_IS_ONE(beta))
       pbdef.aCcnt = NULL;
    else
