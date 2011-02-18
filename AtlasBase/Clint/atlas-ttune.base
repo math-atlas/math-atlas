@@ -189,6 +189,7 @@ int main(int nargs, char **args)
 static volatile int count=0;
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 static void *acnt;
+static double *timearr=NULL;
 
 int ATL_DecAtomicCount_ser(void)
 {
@@ -219,62 +220,117 @@ int ATL_DecAtomicCount_mut(void)
 
 void TuneDoWork_ser(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
+   double t0, t1;
+   ATL_thread_t *tp = vp;
+   ATL_CINT iam = tp->rank;
+
+   t0 = ATL_walltime();
    while (ATL_DecAtomicCount_ser());
+   timearr[iam] = ATL_walltime() - t0;
 }
 
 void TuneDoWork_mut(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
+   double t0, t1;
+   ATL_thread_t *tp = vp;
+   ATL_CINT iam = tp->rank;
+
+   t0 = ATL_walltime();
    while (ATL_DecAtomicCount_mut());
+   timearr[iam] = ATL_walltime() - t0;
 }
 
 void TuneDoWork(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
+   double t0, t1;
+   ATL_thread_t *tp = vp;
+   ATL_CINT iam = tp->rank;
+
+   t0 = ATL_walltime();
    while (ATL_DecAtomicCount(acnt));
+   t1 = ATL_walltime();
+   timearr[iam] = t1 - t0;
+}
+
+void PrintRank(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   ATL_thread_t *tp = vp;
+   printf("%d: awake with vp=%p\n", tp->rank, lp->vp);
 }
 
 int main(int nargs, char **args)
 {
-   double t0, tmut, tdec, tser; 
-   int nreps=1000000;
+   double t0, tmut_s, tdec_s, tser_s, tmut, tdec, tser;
+   int nreps=1000000, i;
+   ATL_thread_t ts;
 
    if (nargs > 1)
       nreps = atoi(args[1]);
    
-   printf("FINDING SPEED OF COUNTER CHANGING USING %d REPS & %d PROC\n",
-          nreps, ATL_NTHREADS);
+   printf("FINDING SPEED OF SERIAL COUNTER CHANGING USING %d REPS:\n", nreps);
+   ts.rank = 0;
+   timearr = malloc(sizeof(double)*ATL_NTHREADS);
+   ATL_assert(timearr);
    
    acnt = ATL_SetAtomicCount(nreps);
-   t0 = ATL_walltime();
-//   ATL_thread_launch(NULL, 0, NULL, TuneDoWork, NULL);
-   TuneDoWork(NULL, NULL);
-   tdec = ATL_walltime() - t0;
-   printf("   dec time = %e\n", tdec);
+   TuneDoWork(NULL, &ts);
+   tdec_s = timearr[0];
+   printf("   serial AtoDec time = %e\n", tdec_s);
    ATL_FreeAtomicCount(acnt);
    acnt = NULL;
 
    count = nreps;
-   t0 = ATL_walltime();
-//   ATL_thread_launch(NULL, 0, NULL, TuneDoWork_mut, NULL);
-   TuneDoWork_mut(NULL, NULL);
-   tmut = ATL_walltime() - t0;
-   printf("   mut time = %e\n", tmut);
+   TuneDoWork_mut(NULL, &ts);
+   tmut_s = timearr[0];
+   printf("   serial mutex  time = %e\n", tmut_s);
 
    count = nreps;
-   t0 = ATL_walltime();
-//   ATL_thread_launch(NULL, 0, NULL, TuneDoWork_mut, NULL);
-   TuneDoWork_ser(NULL, NULL);
-   tser = ATL_walltime() - t0;
-   printf("   ser time = %e\n", tser);
+   TuneDoWork_ser(NULL, &ts);
+   tser_s = timearr[0];
+   printf("   serial unsafe time = %e\n", tser_s);
 
-   printf("\n   MICROSECONDS PER CALL: SER=%.2f DEC=%.2f, MUT=%.2f\n", 
-          tser*1000000.0, tdec*1000000.0, tmut*1000000.0);
+   #ifdef PentiumCPS
+      t0 = (1000000.0/nreps)*PentiumCPS;
+      printf("   CYCLES PER CALL: SER=%.1f, DEC=%.1f, MUT=%.1f\n", 
+             t0*tser_s, t0*tdec_s, t0*tmut_s);
+   #endif
+   t0 = 1000000.0 / nreps;
+   printf("   MICROSECONDS PER CALL: SER=%.2f DEC=%.2f, MUT=%.2f\n", 
+          tser_s*t0, tdec_s*t0, tmut_s*t0);
+   printf("DEC TIME SPEEDUP OVER MUTEX   = %.2f\n", tmut_s / tdec_s);
+   printf("UNSAFE SPEEDUP OVER DEC = %.2f\n\n", tdec_s / tser_s);
+
+   printf("FINDING SPEED OF PARALLEL COUNTER CHANGING USING %d REPS %d PROC\n",
+          nreps, ATL_NTHREADS);
+
+   acnt = ATL_SetAtomicCount(nreps);
+   ATL_goparallel(ATL_NTHREADS, TuneDoWork, NULL);
+   for (tdec=0.0,i=0; i < ATL_NTHREADS; i++)
+      tdec = Mmax(tdec,timearr[i]);
+   printf("   parallel AtoDec time = %e (par/ser = %.2f)\n", tdec, tdec/tdec_s);
+
+   count = nreps;
+   ATL_goparallel(ATL_NTHREADS, TuneDoWork_mut, NULL);
+   for (tmut=0.0,i=0; i < ATL_NTHREADS; i++)
+      tmut = Mmax(tmut,timearr[i]);
+   printf("   parallel mutex  time = %e (par/ser = %.2f)\n", tmut, tmut/tmut_s);
+
+   count = nreps;
+   ATL_goparallel(ATL_NTHREADS, TuneDoWork_ser, NULL);
+   for (tser=0.0,i=0; i < ATL_NTHREADS; i++)
+      tser = Mmax(tser,timearr[i]);
+   printf("   parallel unsafe time = %e (par/ser = %.2f)\n", tser, tser/tser_s);
+
    #ifdef PentiumCPS
       t0 = 1000000.0*PentiumCPS;
-      printf("   CYCLES: SER=%e, DEC=%e, MUT=%e\n", 
+      printf("   CYCLES PER CALL: SER=%.1f, DEC=%.1f, MUT=%.1f\n", 
              t0*(tser/nreps), t0*(tdec/nreps), t0*(tmut/nreps));
    #endif
+   t0 = 1000000.0 / nreps;
+   printf("   MICROSECONDS PER CALL: SER=%.2f DEC=%.2f, MUT=%.2f\n", 
+          tser*t0, tdec*t0, tmut*t0);
    printf("DEC TIME SPEEDUP OVER MUTEX   = %.2f\n", tmut / tdec);
-   printf("SERIAL SPEEDUP OVER DEC = %.2f\n", tdec / tser);
+   free(timearr);
    return(0);
 }
 @ROUT tune_aff
