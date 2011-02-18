@@ -693,6 +693,8 @@ THRdir = $(BLDdir)/src/threads
 args=
 CC=$(DKC)
 CCFLAGS=$(CDEFS) $(DKCFLAGS)
+acnt_arch = ATL_SetAtomicCount_arch.o ATL_ResetAtomicCount_arch.o \
+            ATL_DecAtomicCount_arch.o ATL_FreeAtomicCount_arch.o
 acnt_mut0 = ATL_SetAtomicCount_mut_mut.o ATL_ResetAtomicCount_mut_mut.o \
             ATL_DecAtomicCount_mut_mut.o ATL_FreeAtomicCount_mut_mut.o
 acnt_mut = $(THRdir)/ATL_SetAtomicCount_mut_mut.o \
@@ -726,6 +728,7 @@ xprobe_atomic_@(arch) : tlib test_count.o
               $(BLDdir)/src/threads/ATL_SetAtomicCount_arch.o \
               $(BLDdir)/src/threads/ATL_ResetAtomicCount_@(arch).o \
               $(BLDdir)/src/threads/ATL_DecAtomicCount_@(arch).o \
+              $(BLDdir)/src/threads/ATL_FreeAtomicCount_arch.o \
               $(ATLASlib) $(LIBS)
 	./xtst_arch
 @endwhile
@@ -749,10 +752,20 @@ iTune_atomic :
         fi
 iFind_atomic_arch :
 	if $(MAKE) xprobe_atomic_amd64 ; then \
+           cp $(myTHRdir)/ATL_*AtomicCount_arch.c . ; \
+           cp $(myTHRdir)/ATL_ResetAtomicCount_amd64.S \
+              ATL_ResetAtomicCount_arch.S ; \
+           cp $(myTHRdir)/ATL_DecAtomicCount_amd64.S \
+              ATL_DecAtomicCount_arch.S ; \
            rm $(BLDdir)/src/threads/atomic.inc ; \
            echo "aobj = ATL_SetAtomicCount_arch.o ATL_ResetAtomicCount_amd64.o ATL_DecAtomicCount_amd64.o ATL_FreeAtomicCount_arch.o" > $(BLDdir)/src/threads/atomic.inc ; \
 @whiledef arch mips sparc ppc ia32
 	elif $(MAKE) xprobe_atomic_@(arch) ; then \
+           cp $(myTHRdir)/ATL_*AtomicCount_arch.c . ; \
+           cp $(myTHRdir)/ATL_ResetAtomicCount_@(arch).S \
+              ATL_ResetAtomicCount_arch.S ; \
+           cp $(myTHRdir)/ATL_DecAtomicCount_@(arch).S \
+              ATL_DecAtomicCount_arch.S ; \
            rm $(BLDdir)/src/threads/atomic.inc ; \
            echo "aobj = ATL_SetAtomicCount_arch.o ATL_ResetAtomicCount_@(arch).o ATL_DecAtomicCount_@(arch).o ATL_FreeAtomicCount_arch.o" > $(BLDdir)/src/threads/atomic.inc ; \
 @endwhile
@@ -773,7 +786,9 @@ x@(rt) : @(rt).o
 mutcnt :
 	cd $(THRdir) ; $(MAKE) $(acnt_mut0)
 xtune_count : tune_count.o tlib mutcnt iFind_atomic_arch
-	$(CC) $(CCFLAGS) -o $@ tune_count.o $(acnt_mut) $(ATLASlib) $(LIBS)
+	$(MAKE) $(acnt_arch)
+	$(CC) $(CCFLAGS) -o $@ tune_count.o $(acnt_arch) $(acnt_mut) \
+              $(ATLASlib) $(LIBS)
 @whiledef rt test_count
 x@(rt) : @(rt).o tlib mutcnt arccnt
 	$(CC) $(CCFLAGS) -o x@(rt) @(rt).o $(ATLASlib) $(LIBS)
@@ -798,6 +813,15 @@ ATL_@(rt)_noaff.o : $(myTHRdir)/ATL_@(rt).c
 ATL_tl@(rt)_noaff.o : $(myTHRdir)/ATL_thread_launch.c
 	$(CC) $(CCFLAGS) -o $@ -c -DATL_TUNE_@up@(rt) -DATL_NOAFFINITY=1 \
                $(myTHRdir)/ATL_thread_launch.c
+@endwhile
+
+@whiledef rt Dec Reset
+ATL_@(rt)AtomicCount_arch.o : ATL_@(rt)AtomicCount_arch.S
+	$(CC) $(CCFLAGS) -o $@ -c ATL_@(rt)AtomicCount_arch.S
+@endwhile
+@whiledef rt Set Get Free
+ATL_@(rt)AtomicCount_arch.o : ATL_@(rt)AtomicCount_arch.c
+	$(CC) $(CCFLAGS) -o $@ -c ATL_@(rt)AtomicCount_arch.c
 @endwhile
 
 @whiledef rt tune_spawn_fp tune_spawn tune_count test_count probe_nthr tune_aff
