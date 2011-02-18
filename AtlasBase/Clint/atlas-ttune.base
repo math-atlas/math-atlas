@@ -202,6 +202,7 @@ int ATL_DecAtomicCount_ser(void)
    return(iret);
 }
 
+@beginskip
 int ATL_DecAtomicCount_mut(void)
 {
    int iret=0;
@@ -217,6 +218,7 @@ int ATL_DecAtomicCount_mut(void)
    }
    return(iret);
 }
+@endskip
 
 void TuneDoWork_ser(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
@@ -236,7 +238,7 @@ void TuneDoWork_mut(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    ATL_CINT iam = tp->rank;
 
    t0 = ATL_walltime();
-   while (ATL_DecAtomicCount_mut());
+   while (ATL_DecAtomicCount_mut(acnt));
    timearr[iam] = ATL_walltime() - t0;
 }
 
@@ -279,15 +281,20 @@ int main(int nargs, char **args)
    ATL_FreeAtomicCount(acnt);
    acnt = NULL;
 
-   count = nreps;
+   acnt = ATL_SetAtomicCount_mut(nreps);
    TuneDoWork_mut(NULL, &ts);
    tmut_s = timearr[0];
+   ATL_FreeAtomicCount_mut(acnt);
    printf("   serial mutex  time = %e\n", tmut_s);
 
+#ifdef UNSAFE
    count = nreps;
    TuneDoWork_ser(NULL, &ts);
    tser_s = timearr[0];
    printf("   serial unsafe time = %e\n", tser_s);
+#else
+   tser_s = tser = 0.0;
+#endif
 
    #ifdef PentiumCPS
       t0 = (1000000.0/nreps)*PentiumCPS;
@@ -298,7 +305,9 @@ int main(int nargs, char **args)
    printf("   MICROSECONDS PER CALL: SER=%.2f DEC=%.2f, MUT=%.2f\n", 
           tser_s*t0, tdec_s*t0, tmut_s*t0);
    printf("DEC TIME SPEEDUP OVER MUTEX   = %.2f\n", tmut_s / tdec_s);
-   printf("UNSAFE SPEEDUP OVER DEC = %.2f\n\n", tdec_s / tser_s);
+   #ifdef UNSAFE
+      printf("UNSAFE SPEEDUP OVER DEC = %.2f\n\n", tdec_s / tser_s);
+   #endif
 
    printf("FINDING SPEED OF PARALLEL COUNTER CHANGING USING %d REPS %d PROC\n",
           nreps, ATL_NTHREADS);
@@ -307,19 +316,23 @@ int main(int nargs, char **args)
    ATL_goparallel(ATL_NTHREADS, TuneDoWork, NULL);
    for (tdec=0.0,i=0; i < ATL_NTHREADS; i++)
       tdec = Mmax(tdec,timearr[i]);
+   ATL_FreeAtomicCount(acnt);
    printf("   parallel AtoDec time = %e (par/ser = %.2f)\n", tdec, tdec/tdec_s);
 
-   count = nreps;
+   acnt = ATL_SetAtomicCount_mut(nreps);
    ATL_goparallel(ATL_NTHREADS, TuneDoWork_mut, NULL);
    for (tmut=0.0,i=0; i < ATL_NTHREADS; i++)
       tmut = Mmax(tmut,timearr[i]);
+   ATL_FreeAtomicCount_mut(acnt);
    printf("   parallel mutex  time = %e (par/ser = %.2f)\n", tmut, tmut/tmut_s);
 
+#ifdef UNSAFE
    count = nreps;
    ATL_goparallel(ATL_NTHREADS, TuneDoWork_ser, NULL);
    for (tser=0.0,i=0; i < ATL_NTHREADS; i++)
       tser = Mmax(tser,timearr[i]);
    printf("   parallel unsafe time = %e (par/ser = %.2f)\n", tser, tser/tser_s);
+#endif
 
    #ifdef PentiumCPS
       t0 = 1000000.0*PentiumCPS;
@@ -330,6 +343,15 @@ int main(int nargs, char **args)
    printf("   MICROSECONDS PER CALL: SER=%.2f DEC=%.2f, MUT=%.2f\n", 
           tser*t0, tdec*t0, tmut*t0);
    printf("DEC TIME SPEEDUP OVER MUTEX   = %.2f\n", tmut / tdec);
+/*
+ * If my assembly isn't noticably faster than the mutex code, just use the
+ * the mutex code
+ */
+   if (tmut < tdec*1.02)
+   {
+      printf("\nNO REAL ADVANTAGE TO ASSEMBLY, FORCING USE OF MUTEX\n");
+      ATL_assert(!system("make iForceUseMutex"));
+   }
    free(timearr);
    return(0);
 }
