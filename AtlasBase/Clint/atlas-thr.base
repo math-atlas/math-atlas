@@ -135,10 +135,12 @@ void ATL_FreeAtomicCount(void *vp); /* free acount resources */
 @whiledef pre z c d s
 int ATL_@(pre)threadMM(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, 
                   size_t M, size_t N, size_t K);
-void ATL_@(pre)tgemm
+@whiledef rt gemm gemm_Mp
+void ATL_@(pre)@(rt)
    (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, ATL_CINT M, 
     ATL_CINT N, ATL_CINT K, const @(styp)alpha, const @(typ) *A, ATL_CINT lda, 
     const @(typ) *B, ATL_CINT ldb, const @(styp)beta, @(typ) *C, ATL_CINT ldc);
+@endwhile
 void ATL_@(pre)tsymm
    (const enum ATLAS_SIDE Side, const enum ATLAS_UPLO Uplo,
     ATL_CINT M, ATL_CINT N, const @(styp)alpha, const @(typ) *A, ATL_CINT lda,
@@ -983,10 +985,11 @@ void ATL_thread_exit(void *retval)
 #include "atlas_misc.h"
 #include "atlas_threads.h"
 
-#if !defined(ATL_NOAFFINITY) && defined(ATL_PAFF_SELF)
 @ROUT ATL_goparallel
-static int ATL_setmyaffinity(void)
+#if !defined(ATL_NOAFFINITY) && defined(ATL_PAFF_SELF) && defined(ATL_USEOPENMP)
+static int ATL_setmyaffinity()
 @ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch
+#if !defined(ATL_NOAFFINITY) && defined(ATL_PAFF_SELF)
 static int ATL_setmyaffinity(ATL_thread_t *me)
 @ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch ATL_goparallel
 /*
@@ -6506,39 +6509,181 @@ int Mjoin(PATL,tgemm_MKp)
    free(vp);
    return(0);
 }
+@ROUT ATL_tgemm2
+#include "atlas_misc.h"
+#include "atlas_lvl3.h"
+#include "atlas_threads.h"
+void Mjoin(PATL,tgemm_MKp)
+   (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, ATL_CINT M, 
+    ATL_CINT N, ATL_CINT K, const SCALAR alpha, const TYPE *A, ATL_CINT lda, 
+    const TYPE *B, ATL_CINT ldb, const SCALAR beta, TYPE *C, ATL_CINT ldc)
+{
+/*
+ * See if it looks like a rank-K problem that can be split on N */
+ */
+   if (K <= 4*NB && N > ATL_NTHREADS*NB && M < N+N) /* rank-K split on N */
+   {
+      if (!Mjoin(PATL,tgemm_Np)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
+                                beta, C, ldc))
+         return;
+   }
+/*
+ * Is it a problem that can really only be split on K?
+ */
+   if ( (K > 4*ATL_NTHREADS*NB && M < 2*NB && N < 2*NB) || 
+        (K >= 4*M && K >= 4*N && M*(size_t)N*K*sizeof(TYPE) < ATL_PTMAXMALLOC) )
+   {
+      if (!Mjoin(PATL,tgemm_Kp)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
+                                beta, C, ldc))
+         return;
+   }
+/*
+ * Is it a problem that can easily be split solely on M
+ */
+   if (M > N && M > 4*ATL_NTHREADS*NB)
+   {
+      if (!Mjoin(PATL,tgemm_Mp)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
+                                beta, C, ldc))
+         return;
+   }
+/*
+ * Is it a problem that can easily be split solely on N
+ */
+   if (N > M && N > 4*ATL_NTHREADS*NB)
+   {
+      if (!Mjoin(PATL,tgemm_Np)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
+                                beta, C, ldc))
+         return;
+   }
+/*
+ * For low-rank problems, use 3-d distribution with minimal copying.  This
+ * should be a specialized routine where we know we can copy the entire
+ * problem up front; no-copy routs should be handled by 1-D distros
+ */
+/*
+ * Large-rank problems using 3-D with work stealing.
+ */
+
+/*
+ * Otherwise, call serial gemm; this will later be replaced by _MpNp, which
+ * is not allowed to fail (return non-zero).  Can we use work-stealing?
+ */
+   Mjoin(PATL,gemm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+}
+@ROUT ATL_tgemm_Kp
+   @define D @K@
+   @define I @k@
+@ROUT ATL_tgemm_Np
+   @define D @N@
+   @define I @j@
 @ROUT ATL_tgemm_Mp
+   @define D @M@
+   @define I @i@
+@ROUT ATL_tgemm_Mp ATL_tgemm_Np ATL_tgemm_Kp
+@define d @@low@(D)@
 #include "atlas_misc.h"
 #include "atlas_lvl3.h"
 #include "atlas_threads.h"
 typedef struct
 {
-   void *aMcnt;           /* which M blk are we doing? */
+@ROUT ATL_tgemm_Kp
+   TYPE *Cws;             /* P-len array of C work areas, Cws[0] = C */
+   volatile int *chkin;   /* P-len checkin array, init to 0 */
+   ATL_INT ldw;           /* leading dim of workspaces */
+@ROUT ATL_tgemm_Mp ATL_tgemm_Np ATL_tgemm_Kp
+   void *a@(D)cnt;           /* which @(D) blk are we doing? */
    const TYPE *A, *B;     /* original input matrices */
    TYPE *C;               /* original output matrix */
    SCALAR alpha;
    SCALAR beta;
-   ATL_INT Mp, nMp, mlast;
+   ATL_INT @(D)p, n@(D)p, @(d)last;
    ATL_INT M, N, K, lda, ldb, ldc;
    enum ATLAS_TRANS TA, TB;
-} ATL_TGEMM_MPART_t;
+} ATL_TGEMM_@(D)PART_t;
 
-void Mjoin(PATL,DoWork_partM)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+void Mjoin(PATL,DoWork_part@(D))(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
    ATL_thread_t *tp=vp;
-   ATL_TGEMM_MPART_t *pd=lp->vp;
-   void *aMcnt = pd->aMcnt;
+   ATL_TGEMM_@(D)PART_t *pd=lp->vp;
+   void *a@(D)cnt = pd->a@(D)cnt;
    const TYPE *A=pd->A, *B=pd->B;
-   TYPE *C=pd->C;
    ATL_CINT iam = tp->rank, ANOTRANS = (pd->TA == AtlasNoTrans);
-   ATL_CINT N=pd->N, K=pd->K, nMp = pd->nMp, Mp = pd->Mp, mlast=pd->mlast;
-   ATL_CINT lda=pd->lda,  ldb=pd->ldb, ldc=pd->ldc;
+   ATL_CINT M=pd->M, N=pd->N, K=pd->K;
+   ATL_CINT n@(D)p = pd->n@(D)p, @(D)p = pd->@(D)p, @(d)last=pd->@(d)last;
+   ATL_CINT lda=pd->lda,  ldb=pd->ldb;
    const enum ATLAS_TRANS TA=pd->TA, TB=pd->TB;
    const SCALAR alpha=pd->alpha; 
+@ROUT ATL_tgemm_Mp ATL_tgemm_Np
+   TYPE *C=pd->C;
+   ATL_CINT ldc = pd->ldc;
    const SCALAR beta=pd->beta;
+@ROUT ATL_tgemm_Kp
+   ATL_CINT ldc = (iam) ? pd->ldw : pd->ldc;
+   TYPE *C = pd->Cws[iam];
+   #ifdef TCPLX
+      const TYPE *beta=pd->beta;
+      const TYPE one[2] = {ATL_rone, ATL_rzero};
+   #else
+      TYPE beta = pd->beta;
+   #endif
+   ATL_INT kblk;
+   ATL_CINT amul = ((TA == AtlasNoTrans || TA == AtlasConj) ? lda : 1)SHIFT;
+   ATL_CINT bmul = ((TB == AtlasNoTrans || TB == AtlasConj) ? 1 : ldb)SHIFT;
 
+   while (iblk = ATL_DecAtomicCount(a@(D)cnt))
+   {
+      const TYPE *a;
+      size_t ka, kb;
+      ATL_INT i, k;
+
+      if (kblk-- == nKp)
+      {
+         k = klast;
+         i = pd->K - k;
+      }
+      else
+      {
+         i = kblk*Kp;
+         k = Kp;
+      }
+      ka = i*amul;
+      kb = i*bmul;
+      Mjoin(PATL,gemm)(TA, TB, M, N, k, alpha, A+ka, lda, B+ka, ldb, beta, 
+                       C, ldc);
+      #ifdef TCPLX
+         beta = ONE;
+      #else
+         beta = ATL_rone;
+      #endif
+   }
+@ROUT ATL_tgemm_Np
+   ATL_CINT bmul = (TB == AtlasNoTrans) ? (ldb SHIFT) : (1 SHIFT);
+   ATL_INT jblk;
+
+   while (jblk = ATL_DecAtomicCount(aNcnt))
+   {
+      ATL_INT n;
+      size_t jb, jc;
+
+      if (jblk-- == nNp)
+      {
+         n = nlast;
+         jc = pd->N - n;
+      }
+      else
+      {
+         jc = jblk*Np;
+         n = Np;
+      }
+      jb = jc*bmul;
+      jc *= (ldc SHIFT);
+      Mjoin(PATL,gemm)(TA, TB, M, n, K, alpha, A, lda, B+jb, ldb, beta, 
+                       C+jc, ldc);
+   }
+@ROUT ATL_tgemm_Mp
    ATL_INT iblk;
 
-   while (iblk = ATL_DecAtomicCount(aMcnt))
+   while (iblk = ATL_DecAtomicCount(a@(D)cnt))
    {
       const TYPE *a;
       ATL_INT i, m;
@@ -6557,43 +6702,99 @@ void Mjoin(PATL,DoWork_partM)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       Mjoin(PATL,gemm)(TA, TB, m, N, K, alpha, a, lda, B, ldb, beta, 
                        C+(i SHIFT), ldc);
    }
+@ROUT ATL_tgemm_Mp ATL_tgemm_Np ATL_tgemm_Kp
 }
 
-/*
- * This routine handles case where both N and K are close to or less than NB.
- * It simply divides M into roughly 4*NTHR chunks, and calls serial GEMM,
- * which will probably not even invoke the copy-code
- */
 int Mjoin(PATL,tgemm_Mp)
    (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, ATL_CINT M,
     ATL_CINT N, ATL_CINT K, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
     const TYPE *B, ATL_CINT ldb, const SCALAR beta, TYPE *C, ATL_CINT ldc)
+/*
+ * This routine divides @(D) into roughly 4*P chunks, and calls serial GEMM.
+ */
 {
-   ATL_INT nMp, Mp, mlast;
-   ATL_TGEMM_MPART_t pd;  /* problem definition */
+   ATL_INT n@(D)p, @(D)p, @(d)last;
+   ATL_TGEMM_@(D)PART_t pd;  /* problem definition */
 
-   Mp = M / (2*ATL_NTHREADS);
-   if (Mp < NB)
+   @(D)p = @(D) / (2*ATL_NTHREADS);
+   if (@(D)p < NB)
       return(0);
-   Mp = (Mp >= NB+NB) ? Mp>>1 : Mp;
-   nMp = M / Mp;
-   mlast = M - nMp*Mp;
-   if (mlast)
+   @(D)p = (@(D)p >= NB+NB) ? @(D)p>>1 : @(D)p;
+   n@(D)p = @(D) / @(D)p;
+   @(d)last = @(D) - n@(D)p*@(D)p;
+   if (@(d)last)
    {
-      if (mlast < MB)
-         mlast += Mp;   /* absorb partial block into last full partition */
+      if (@(d)last < @(D)B)
+         @(d)last += @(D)p;   /* absorb partial block into last full partition */
       else
-         nMp++;
+         n@(D)p++;
    }
    else
-      mlast = Mp;       /* last part same size as all parts */
+      @(d)last = @(D)p;       /* last part same size as all parts */
    pd.M = M; pd.N = N; pd.K = K;
    pd.lda = lda; pd.ldb = ldb; pd.ldc = ldc;
    pd.TA = TA; pd.TB = TB;
    pd.alpha = alpha; pd.beta = beta;
    pd.A = A; pd.B = B; pd.C = C;
-   pd.Mp = Mp; pd.nMp = nMp; pd.mlast = mlast;
-   pd.aMcnt = ATL_SetAtomicCount(nMp);
-   ATL_goparallel(ATL_NTHREADS, Mjoin(PATL,DoWork_partM), &pd);
+   pd.@(D)p = @(D)p; pd.n@(D)p = n@(D)p; pd.@(d)last = @(d)last;
+   pd.a@(D)cnt = ATL_SetAtomicCount(n@(D)p);
+@ROUT ATL_tgemm_Kp
+   // ... allocate Cws, set ldw, etc ...
+@ROUT ATL_tgemm_Mp ATL_tgemm_Np ATL_tgemm_Kp
+   ATL_goparallel(ATL_NTHREADS, Mjoin(PATL,DoWork_part@(D)), &pd);
    return(0);
 }
+@ROUT ATL_tgemm_MpNpKp
+int Mjoin(PATL,tgemm_Mp)
+   (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, ATL_CINT M,
+    ATL_CINT N, ATL_CINT K, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
+    const TYPE *B, ATL_CINT ldb, const SCALAR beta, TYPE *C, ATL_CINT ldc)
+{
+   ATL_INT nmblks, nnblks, nkblks, nblks, m, n, k;
+   int cutKOK;
+
+   nmblks = nnblks = nkblks = 1;
+   m = M; n = N; k = K;
+   do
+   {
+/*
+ *    cost of operation : (2*M*N*K)/P
+ *    worst case combine: (P*M*N)
+ *    If this ratio is large, then we can afford to cut K
+ */
+      cutKOK = (k+k)/((nkblks+1)*(nkblks+1)) >= 200;
+      if (cutKOK && k > m && k > n)
+      {
+         nkblks++;
+         k = K / nkblks;
+         if (k < KB)
+         {
+            nkblks--;
+            break;
+         }
+      }
+      else if (n > m)
+      {
+         nnblks++;
+         n = N / nnblks;
+         if (n < NB)
+         {
+            nnblks--;
+            break;
+         }
+      }
+      else /* M largest dim, cut it */
+      {
+         nmblks++;
+         m = M / nmblks;
+         if (m < MB)
+         {
+            nmblks--;
+            break;
+         }
+      }
+      nblks = nmblks * nnblks * nkblks;
+   }
+   while (nblks < 2*ATL_NTHREADS);
+}
+

@@ -1720,3 +1720,57 @@ int Mjoin(PATL,tgemvN)
       fprintf(stderr, "MASTER: RETURNING FROM GEMM!\n\n");
    #endif
 }
+@ROUT ATL_ger
+#include "atlas_misc.h"
+#include "atlas_level2.h"
+#include "atlas_threads.h"
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),r1_L2.h))
+
+typedef struct
+{
+   void *actionCount;           /* 2: copy X; 1: copy y; 0: ready to start */
+   void *blkCount;              /* row-major nrblks x ncblks block counter */
+   ATL_INT M, N, incX, incY, lda;
+   ATL_INT nrblks, ncblks, nblks;
+   SCALAR alpha;
+   const TYPE *X, *Y;
+   TYPE *A;
+} ATL_TGER_t;
+
+void Mjoin(PATL,tger)
+   (ATL_CINT M, ATL_CINT N, const SCALAR alpha0, const TYPE *X,
+    ATL_CINT incX, const TYPE *Y, ATL_CINT incY, TYPE *A, ATL_CINT lda)
+{
+   ATL_INT mb, nb, mu, nu, nblks, nrblks, ncblks;
+   ATL_TGER_t pd;
+
+   pd.M = M; pd.N = N; pd.incX = incX; pd.incY = incY; pd.lda = lda;
+   pd.alpha = alpha;
+   pd.X = X; pd.Y = Y; pd.A = A;
+
+   ATL_GetPartR1(A, lda, mu, nu);
+   mu = (mu < 256) ? 256 : mu;
+   nu = (nu < 1) ? 8 : nu;
+   nrblks = M / mu;
+   ncblks = N / nu;
+   nblks = nrblks * ncblks;
+   if (nblks > 2*ATL_NTHREADS)
+   {
+      nrblks=ncblks=1;
+      do
+      {
+         ATL_INT Mmb, Nnb;
+         mb = M / nrblks;
+         nb = N / ncblks;
+         Mmb = mb / mu;
+         Nnu = nb / nu;
+         if (Mmb > Nnu)
+            nrblks++;
+         else
+            ncblks++;
+         nblks = nrblks*ncblks;
+      }
+      while(nblks < 2*ATL_NTHREADS);
+   }
+   pd.nrblks = nrblks; pd.ncblks = ncblks; pd.nblks = nblks;
+}
