@@ -146,7 +146,7 @@ int  ATL_mutex_trylock(void *vp); /* opp pthreads: 0 means lock NOT acquired */
 @whiledef pre z c d s
 int ATL_@(pre)threadMM(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, 
                   size_t M, size_t N, size_t K);
-@whiledef rt gemm gemm_Mp
+@whiledef rt gemm gemm_Mp gemm_Np gemm_Kp
 void ATL_@(pre)@(rt)
    (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, ATL_CINT M, 
     ATL_CINT N, ATL_CINT K, const @(styp)alpha, const @(typ) *A, ATL_CINT lda, 
@@ -6648,7 +6648,7 @@ void Mjoin(PATL,tgemm_MKp)
 typedef struct
 {
 @ROUT ATL_tgemm_Kp
-   TYPE *Cws;             /* P-len array of C work areas, Cws[0] = C */
+   TYPE **Cws;            /* P-len array of C work areas, Cws[0] = C */
    void *chklck;          /* 0/1 ctr serves as lock for chkin array */
    volatile int *chkin;   /* P-len checkin array, init to 0 */
    ATL_INT ldw;           /* leading dim of workspaces */
@@ -6668,13 +6668,20 @@ typedef struct
 static void DoCombine
 (
    int iam,               /* rank of this thread */
-   ATL_INT M, N, ldc,     /* size of C array & leading dim */
+   ATL_INT M,             /* # of rows in C */
+   ATL_INT N,             /* # of cols in C */
+   ATL_INT ldc,           /* leading dim of C (>=M) */
    ATL_INT ldw,           /* leading dim of all workspaces */
    volatile int *chkin,   /* check-in array initialized to 0 */
    void *lockC,           /* lock protecting the chkin array */
-   TYPE **Cws,            /* array of C workspaces to combine */
+   TYPE **Cws             /* array of C workspaces to combine */
 )
 {
+   #ifdef TCPLX
+      TYPE one[2] = {ATL_rone, ATL_rzero};
+   #else
+      #define one ATL_rone
+   #endif
    int i, combrank;
    ATL_CINT myldc = (iam) ? ldw : ldc;
 /*
@@ -6701,12 +6708,12 @@ static void DoCombine
 /*
  *       non-zero nodes simply leave if there are no matrices to combine
  */
-         ATL_mutex_lock(pd->lockC);
+         ATL_mutex_lock(lockC);
          for (i=0; i < ATL_NTHREADS && chkin[i] != 1; i++);
          if (i == ATL_NTHREADS)
          {
             chkin[iam] = 1;   /* signal that my array is available to combine */
-            ATL_mutex_unlock(pd->lockC);
+            ATL_mutex_unlock(lockC);
             return;
          }
          else
@@ -6714,14 +6721,14 @@ static void DoCombine
             combrank = i;
             chkin[i] = 2;
          }
-         ATL_mutex_unlock(pd->lockC);
+         ATL_mutex_unlock(lockC);
       }
 /*
  *    I found an uncombined array, see if I can take it
  */
       else
       {
-         ATL_mutex_lock(pd->lockC);
+         ATL_mutex_lock(lockC);
          if (chkin[i] != 1)  /* if that one is gone, see if another is there */
          {
             for (i=0; i < ATL_NTHREADS && chkin[i] != 1; i++);
@@ -6734,12 +6741,12 @@ static void DoCombine
          else if (iam)
          {
             chkin[iam] = 1;   /* signal that my array is available to comb */
-            ATL_mutex_unlock(pd->lockC);
+            ATL_mutex_unlock(lockC);
             return;
          }
          else   /* nothing to combine & I'm node zero */
          {
-            ATL_mutex_unlock(pd->lockC);
+            ATL_mutex_unlock(lockC);
             continue; /* nothing more to do until someone checks in */
          }
       }
@@ -6751,6 +6758,10 @@ static void DoCombine
    }                        /* and nobody writes to loc with 2 in it but me */
    while(1);
 }
+#ifndef TCPLX
+   #undef one
+#endif
+
 
 @ROUT ATL_tgemm_Mp ATL_tgemm_Np ATL_tgemm_Kp
 void Mjoin(PATL,DoWork_part@(D))(ATL_LAUNCHSTRUCT_t *lp, void *vp)
@@ -6784,7 +6795,7 @@ void Mjoin(PATL,DoWork_part@(D))(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    ATL_CINT amul = ((TA == AtlasNoTrans || TA == AtlasConj) ? lda : 1)SHIFT;
    ATL_CINT bmul = ((TB == AtlasNoTrans || TB == AtlasConj) ? 1 : ldb)SHIFT;
 
-   while (iblk = ATL_DecAtomicCount(a@(D)cnt))
+   while (kblk = ATL_DecAtomicCount(a@(D)cnt))
    {
       const TYPE *a;
       size_t ka, kb;
@@ -6805,12 +6816,12 @@ void Mjoin(PATL,DoWork_part@(D))(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       Mjoin(PATL,gemm)(TA, TB, M, N, k, alpha, A+ka, lda, B+ka, ldb, beta, 
                        C, ldc);
       #ifdef TCPLX
-         beta = ONE;
+         beta = one;
       #else
          beta = ATL_rone;
       #endif
    }
-   DoCombine(iam, M, N, pd->ldc, pd->ldw, pd->chkin, pd->lockC, pd->Cws)
+   DoCombine(iam, M, N, pd->ldc, pd->ldw, pd->chkin, pd->lockC, pd->Cws);
 @ROUT ATL_tgemm_Np
    ATL_CINT bmul = (TB == AtlasNoTrans) ? (ldb SHIFT) : (1 SHIFT);
    ATL_INT jblk;
@@ -6860,7 +6871,7 @@ void Mjoin(PATL,DoWork_part@(D))(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 @ROUT ATL_tgemm_Mp ATL_tgemm_Np ATL_tgemm_Kp
 }
 
-int Mjoin(PATL,tgemm_Mp)
+int Mjoin(PATL,tgemm_@(D)p)
    (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, ATL_CINT M,
     ATL_CINT N, ATL_CINT K, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
     const TYPE *B, ATL_CINT ldb, const SCALAR beta, TYPE *C, ATL_CINT ldc)
@@ -6894,7 +6905,11 @@ int Mjoin(PATL,tgemm_Mp)
    pd.M = M; pd.N = N; pd.K = K;
    pd.lda = lda; pd.ldb = ldb; pd.ldc = ldc;
    pd.TA = TA; pd.TB = TB;
-   pd.alpha = alpha; pd.beta = beta;
+   #ifdef TCPLX
+      pd.alpha = (TYPE*)alpha; pd.beta = (TYPE*)beta;
+   #else
+      pd.alpha = alpha; pd.beta = beta;
+   #endif
    pd.A = A; pd.B = B; pd.C = C;
    pd.@(D)p = @(D)p; pd.n@(D)p = n@(D)p; pd.@(d)last = @(d)last;
    pd.a@(D)cnt = ATL_SetAtomicCount(n@(D)p);
@@ -6903,23 +6918,23 @@ int Mjoin(PATL,tgemm_Mp)
    ldw = ((M+7)>>8)<<8;   /* make ldw a multiple of 8 */
    if (!(ldw & (ldw-1)))  /* if ldw is a power of 2 */
       ldw += 8;           /* change it so it is not */
-   totsz = (ATL_sizeof(ldw)*N+ATL_Cachelen) * (ATL_NTHREADS-1) + 
-           ATL_NTHREADS*(TYPE*);
+   totsz = (ATL_MulBySize(ldw)*N+ATL_Cachelen) * (ATL_NTHREADS-1) + 
+           ATL_NTHREADS*sizeof(TYPE*);
    if (totsz > ATL_PTMAXMALLOC*ATL_NTHREADS)
       return(1);
-   pd->Cws = malloc(totsz);
-   pd->Cws[0] = C;
-   pd->ldw = ldw;
-   pd->Cws[1] = (TYPE*) (pd->Cws + ATL_NTHREADS);
-   pd->Cws[1] = ATL_AlignPtr(pd->Cws[1]);
-   pd->chkin[0] = pd->chkin[1] = 0;  /* at least 2 threads, so safe */
+   pd.Cws = malloc(totsz);
+   pd.Cws[0] = C;
+   pd.ldw = ldw;
+   pd.Cws[1] = (TYPE*) (pd.Cws + ATL_NTHREADS);
+   pd.Cws[1] = ATL_AlignPtr(pd.Cws[1]);
+   pd.chkin[0] = pd.chkin[1] = 0;  /* at least 2 threads, so safe */
    for (i=2; i < ATL_NTHREADS; i++)
    {
       void *vp;
       const size_t inc=ldw*N;
-      vp = pd->Cws[i-1] + inc;
-      pd->Cws[i] = ATL_AlignPtr(vp);
-      pd->chkin[i] = 0;
+      vp = pd.Cws[i-1] + inc;
+      pd.Cws[i] = ATL_AlignPtr(vp);
+      pd.chkin[i] = 0;
    }
 @ROUT ATL_tgemm_Mp ATL_tgemm_Np ATL_tgemm_Kp
    ATL_goparallel(ATL_NTHREADS, Mjoin(PATL,DoWork_part@(D)), &pd);
