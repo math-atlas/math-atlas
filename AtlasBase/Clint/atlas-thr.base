@@ -111,11 +111,22 @@ void ATL_thread_exit(void*);        /* exits currently executing thread */
 void *ATL_log2tlaunch(void *vp);    /* min spanning tree launch */
 void *ATL_lin0tlaunch(void *vp);    /* 0 linear launches all threads */
 void *ATL_dyntlaunch(void *vp);     /* launch done as workpool */
+/*
+ * Atomic count functions; may be less overhead than mutex on some systems
+ */
+void *ATL_SetAtomicCount(int cnt);   /* allocates acnt, sets acnt=cnt */
+int   ATL_DecAtomicCount(void *vp);  /* returns acnt-- (not --acnt!) */
+int   ATL_GetAtomicCount(void *vp);  /* returns acnt */
+void  ATL_FreeAtomicCount(void *vp); /* free acount resources */
+/*
+ * If using pthreads, just wrapper around pthread mutex funcs, else written
+ * in terms of the AtomicCount funcs with init value set to 1
+ */
+void *ATL_mutex_init(void);       /* returns mutex pointer */
+void ATL_mutex_lock(void *vp);
+void ATL_mutex_unlock(void *vp);
+int  ATL_mutex_trylock(void *vp); /* opp pthreads: 0 means lock NOT acquired */
 
-void *ATL_SetAtomicCount(int cnt);  /* allocates acnt, sets acnt=cnt */
-int   ATL_DecAtomicCount(void *vp); /* returns acnt-- (not --acnt!) */
-int   ATL_GetAtomicCount(void *vp); /* returns acnt */
-void ATL_FreeAtomicCount(void *vp); /* free acount resources */
 
 #define MindxT(A_,i_) ((void*)( ((char*)(A_)) + ((size_t)i_) ))
 #define ATL_tlaunch ATL_log2tlaunch   /* may want linear launch later */
@@ -594,9 +605,59 @@ int ATL_get_ucnt(void *vp, int rank)
  * RETURNS: 0 if all sets taken, else a number between 1...nsets
 {
 }
+@ROUT ATL_mutex_init
+#include "atlas_misc.h"
+#include "atlas_threads.h"
+void *ATL_mutex_init(void)
+{
+#ifdef ATL_WINTHREADS  /* if not using pthreads, use AtomicCount to sim mut */
+   return(ATL_SetAtomicCount(1);
+#else
+   void *vp;
+   vp = malloc(sizeof(pthread_mutex_t));
+   ATL_assert(vp);
+   ATL_assert(!pthread_mutex_init(vp, NULL));
+   return(vp);
+#endif
+}
+@ROUT ATL_mutex_lock
+   @define rt @lock@
+@ROUT ATL_mutex_unlock
+   @define rt @unlock@
+@ROUT ATL_mutex_lock ATL_mutex_unlock
+#include "atlas_misc.h"
+#include "atlas_threads.h"
+
+void ATL_mutex_@(rt)(void *vp)
+{
+#ifdef ATL_WINTHREADS  /* if not using pthreads, use AtomicCount to sim mut */
+@ROUT ATL_mutex_lock
+   while(!ATL_DecAtomicCount(vp));
+@ROUT ATL_mutex_unlock
+   ATL_ResetAtomicCount(1);
+@ROUT ATL_mutex_lock ATL_mutex_unlock
+#else
+   ATL_assert(!pthread_mutex_@(rt)(vp));
+#endif
+}
+@ROUT ATL_mutex_trylock
+#include "atlas_misc.h"
+#include "atlas_threads.h"
+
+int ATL_mutex_trylock(void *vp)
+/*
+ * return 0 if lock not required, else return non-zero 
+ */
+{
+#ifdef ATL_WINTHREADS  /* if not using pthreads, use AtomicCount to sim mut */
+   return(ATL_DecAtomicCount(vp));
+#else
+   return(!pthread_mutex_trylock(vp));
+#endif
+}
 @ROUT ATL_SetAtomicCount_mut
 #include "atlas_misc.h"
-#include <pthread.h>
+#include "atlas_threads.h"
 
 void *ATL_SetAtomicCount(int cnt)
 {
@@ -6588,8 +6649,10 @@ typedef struct
 {
 @ROUT ATL_tgemm_Kp
    TYPE *Cws;             /* P-len array of C work areas, Cws[0] = C */
+   void *chklck;          /* 0/1 ctr serves as lock for chkin array */
    volatile int *chkin;   /* P-len checkin array, init to 0 */
    ATL_INT ldw;           /* leading dim of workspaces */
+   void *lockC;           /* lock around C combine data structs */
 @ROUT ATL_tgemm_Mp ATL_tgemm_Np ATL_tgemm_Kp
    void *a@(D)cnt;           /* which @(D) blk are we doing? */
    const TYPE *A, *B;     /* original input matrices */
@@ -6600,6 +6663,93 @@ typedef struct
    ATL_INT M, N, K, lda, ldb, ldc;
    enum ATLAS_TRANS TA, TB;
 } ATL_TGEMM_@(D)PART_t;
+
+static void DoCombine
+(
+   int iam,               /* rank of this thread */
+   ATL_INT M, N, ldc,     /* size of C array & leading dim */
+   ATL_INT ldw,           /* leading dim of all workspaces */
+   volatile int *chkin,   /* check-in array initialized to 0 */
+   void *lockC,           /* lock protecting the chkin array */
+   TYPE **Cws,            /* array of C workspaces to combine */
+)
+{
+   int i, combrank;
+   ATL_CINT myldc = (iam) ? ldw : ldc;
+/*
+ * See if there are any C arrays I can combine with mine
+ */
+   do
+   {
+      combrank = -1;
+      for (i=0; i < ATL_NTHREADS && chkin[i] != 1; i++);
+/*
+ *    If there are no arrays available, lock the structure and signal that
+ *    I have left the building by storing a 1 in my structure
+ */
+      if (i == ATL_NTHREADS)
+      {
+         if (iam == 0)  /* rank=zero loops until all matrices are combined */
+         {
+             for (i=1; i < ATL_NTHREADS && chkin[i] == 3; i++);
+             if (i != ATL_NTHREADS)
+                continue;
+             else
+                return;
+         }
+/*
+ *       non-zero nodes simply leave if there are no matrices to combine
+ */
+         ATL_mutex_lock(pd->lockC);
+         for (i=0; i < ATL_NTHREADS && chkin[i] != 1; i++);
+         if (i == ATL_NTHREADS)
+         {
+            chkin[iam] = 1;   /* signal that my array is available to combine */
+            ATL_mutex_unlock(pd->lockC);
+            return;
+         }
+         else
+         {
+            combrank = i;
+            chkin[i] = 2;
+         }
+         ATL_mutex_unlock(pd->lockC);
+      }
+/*
+ *    I found an uncombined array, see if I can take it
+ */
+      else
+      {
+         ATL_mutex_lock(pd->lockC);
+         if (chkin[i] != 1)  /* if that one is gone, see if another is there */
+         {
+            for (i=0; i < ATL_NTHREADS && chkin[i] != 1; i++);
+         }
+         if (i < ATL_NTHREADS)
+         {
+            combrank = i;
+            chkin[i] = 2;
+         }
+         else if (iam)
+         {
+            chkin[iam] = 1;   /* signal that my array is available to comb */
+            ATL_mutex_unlock(pd->lockC);
+            return;
+         }
+         else   /* nothing to combine & I'm node zero */
+         {
+            ATL_mutex_unlock(pd->lockC);
+            continue; /* nothing more to do until someone checks in */
+         }
+      }
+/*
+ *    If I get to here, then combrank should be set, and I must do the combine
+ */
+      Mjoin(ATL,geadd)(M, N, one, Cws[combrank], ldw, one, Cws[iam], myldc);
+      chkin[combrank] = 3;  /* safe since I can only do this after lockC */
+   }                        /* and nobody writes to loc with 2 in it but me */
+   while(1);
+}
 
 void Mjoin(PATL,DoWork_part@(D))(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
@@ -6621,11 +6771,13 @@ void Mjoin(PATL,DoWork_part@(D))(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    ATL_CINT ldc = (iam) ? pd->ldw : pd->ldc;
    TYPE *C = pd->Cws[iam];
    #ifdef TCPLX
-      const TYPE *beta=pd->beta;
       const TYPE one[2] = {ATL_rone, ATL_rzero};
+      const TYPE zero[2] = {ATL_rzero, ATL_rzero};
+      const TYPE *beta= (iam) ? zero : pd->beta;
    #else
-      TYPE beta = pd->beta;
+      TYPE beta = (iam) ? ATL_rzero : pd->beta;
    #endif
+   volatile int *chkin=pd->chkin;
    ATL_INT kblk;
    ATL_CINT amul = ((TA == AtlasNoTrans || TA == AtlasConj) ? lda : 1)SHIFT;
    ATL_CINT bmul = ((TB == AtlasNoTrans || TB == AtlasConj) ? 1 : ldb)SHIFT;
@@ -6656,6 +6808,7 @@ void Mjoin(PATL,DoWork_part@(D))(ATL_LAUNCHSTRUCT_t *lp, void *vp)
          beta = ATL_rone;
       #endif
    }
+   DoCombine(iam, M, N, pd->ldc, pd->ldw, pd->chkin, pd->lockC, pd->Cws)
 @ROUT ATL_tgemm_Np
    ATL_CINT bmul = (TB == AtlasNoTrans) ? (ldb SHIFT) : (1 SHIFT);
    ATL_INT jblk;
@@ -6715,6 +6868,11 @@ int Mjoin(PATL,tgemm_Mp)
 {
    ATL_INT n@(D)p, @(D)p, @(d)last;
    ATL_TGEMM_@(D)PART_t pd;  /* problem definition */
+@ROUT ATL_tgemm_Kp 
+   ATL_INT ldw, i;
+   size_t totsz;
+   void *vp=NULL;
+@ROUT ATL_tgemm_Mp ATL_tgemm_Np ATL_tgemm_Kp
 
    @(D)p = @(D) / (2*ATL_NTHREADS);
    if (@(D)p < NB)
@@ -6739,7 +6897,28 @@ int Mjoin(PATL,tgemm_Mp)
    pd.@(D)p = @(D)p; pd.n@(D)p = n@(D)p; pd.@(d)last = @(d)last;
    pd.a@(D)cnt = ATL_SetAtomicCount(n@(D)p);
 @ROUT ATL_tgemm_Kp
-   // ... allocate Cws, set ldw, etc ...
+  
+   ldw = ((M+7)>>8)<<8;   /* make ldw a multiple of 8 */
+   if (!(ldw & (ldw-1)))  /* if ldw is a power of 2 */
+      ldw += 8;           /* change it so it is not */
+   totsz = (ATL_sizeof(ldw)*N+ATL_Cachelen) * (ATL_NTHREADS-1) + 
+           ATL_NTHREADS*(TYPE*);
+   if (totsz > ATL_PTMAXMALLOC*ATL_NTHREADS)
+      return(1);
+   pd->Cws = malloc(totsz);
+   pd->Cws[0] = C;
+   pd->ldw = ldw;
+   pd->Cws[1] = (TYPE*) (pd->Cws + ATL_NTHREADS);
+   pd->Cws[1] = ATL_AlignPtr(pd->Cws[1]);
+   pd->chkin[0] = pd->chkin[1] = 0;  /* at least 2 threads, so safe */
+   for (i=2; i < ATL_NTHREADS; i++)
+   {
+      void *vp;
+      const size_t inc=ldw*N;
+      vp = pd->Cws[i-1] + inc;
+      pd->Cws[i] = ATL_AlignPtr(vp);
+      pd->chkin[i] = 0;
+   }
 @ROUT ATL_tgemm_Mp ATL_tgemm_Np ATL_tgemm_Kp
    ATL_goparallel(ATL_NTHREADS, Mjoin(PATL,DoWork_part@(D)), &pd);
    return(0);
