@@ -6019,7 +6019,7 @@ SQUARE:   /* near-square shape, N <= 256 if jumped here */
    return(1);
 }
 #endif
-@ROUT ATL_tgemm_MKp
+@ROUT ATL_tgemm_MKp ATL_tgemm_rkK_Np
 #include "atlas_misc.h"
 #include "atlas_tcacheedge.h"
 #ifndef CacheEdge
@@ -6031,6 +6031,7 @@ SQUARE:   /* near-square shape, N <= 256 if jumped here */
 #include "atlas_lvl3.h"
 #include "atlas_threads.h"
 
+@ROUT ATL_tgemm_rkK_Np
 static int ATL_NTHR = ATL_NTHREADS;
 typedef struct
 {
@@ -6049,6 +6050,24 @@ typedef struct
    ATL_INT M, N, K, lda, ldb, ldc, nNb;
    enum ATLAS_TRANS TA, TB;
 } ATL_TGEMM_MKP_t;
+@ROUT ATL_tgemm_rkK_Np
+typedef struct
+{
+   void *aNcnt;           /* counter on col-panels of C */
+   void *aMcnt;           /* count row-panels of A */
+   volatile int *chkin;   /* ATL_NTHREAD-len checkin array */
+   TYPE **Bws;            /* preallocated thread copy areas */
+   TYPE *Aw;              /* workspace for common A */
+   const TYPE *A, *B;     /* original input matrices */
+   TYPE *C;               /* original output matrix */
+   SCALAR alpha;          
+   SCALAR beta;
+   ATL_INT nKb, kr, kr8;
+   ATL_INT nMb, mr, nNb, nr;
+   ATL_INT M, N, K, lda, ldb, ldc;
+   enum ATLAS_TRANS TA, TB;
+} ATL_TGEMM_RKK_NP_t;
+@ROUT ATL_tgemm_MKp ATL_tgemm_rkK_Np
 
 /*
  * Matmul driver, loops over pre-copied A & B, operands are preblocked
@@ -6197,6 +6216,194 @@ static void ExpandBlock
    }
 }
 
+@ROUT ATL_tgemm_rkK_Np
+/*
+ * This routine assumes A has already been copied to block-major, row-panel
+ * format and had ALPHA applied to it, and threads should now cooperate to:
+ * (a) Copy an K8xNB piece of B to their cache in their workspace
+ * (b) Use that copied piece against all of A to update a col-panel of C
+ * (c) Repeat until all column-panels of B have been applied
+ * They determine what col panel of B to operate on using the aNcnt variable.
+ */
+static void ATL_tloopN
+(
+   void *aNcnt,         /* Atomic counter on col panels of C */
+   int iam,             /* my rank; */
+   ATL_CINT nfMblks,    /* # of full NB blocks in Mp */
+   int mr,              /* M%NB */
+   ATL_CINT nfNblks,    /* # of full NB blocks along N */
+   int nr,              /* N%NB */
+   ATL_CINT nfKblks,    /* # of full NB blocks along K8 */
+   int kr,              /* K%NB */
+   int krpad,           /* # of entries to add to K-dim to make mul of 8 */
+   const TYPE *A,       /* A in blk-major, row-panel (K8xMB) format */
+   enum ATLAS_TRANS TB, /* Transpose setting of B */
+   const TYPE *B,       /* B in original column-major format */
+   ATL_CINT ldb,        /* leading dim of B */
+   TYPE *pB,            /* my private workspace to copy col-panels into */
+   TYPE *C,             /* original C matrix */
+   ATL_CINT ldc         /* leading dim of C */
+)
+{
+   ATL_CINT M = nfMblks*NB+mr, N = nfNblks*NB+nr, K = nfKblks*NB+kr, K8=K+krpad;
+   ATL_CINT kr8 = kr+krpad;
+   ATL_INT jblk;
+   #ifdef TCPLX
+      ATL_CINT BNOTRANS = (TB == AtlasNoTrans || TB == AtlasConj);
+   #else
+      ATL_CINT BNOTRANS = (TB == AtlasNoTrans);
+   #endif
+   ATL_CINT bmul = (BNOTRANS) ? ldb : 1;
+
+   while (jblk = ATL_DecAtomicCount(aNcnt))
+   {
+      ATL_INT nb, nnb, nnr;
+      size_t j;
+
+      nnb = jblk-- != nNb;   /* 1 if any but last block */
+      nbr = (nnb) : 0 : nr;
+      nb = (nnb) ? NB : nr;
+      j = jblk*NB;
+/*
+ *    Copy the specified col-panel to my private workspace
+ */
+      if (BNOTRANS)
+         Mjoin(PATL,col2blk_a1)(K, nb, B+j*ldb, ldb, pB, ATL_rone);
+      else
+         Mjoin(PATL,row2blkT_a1)(nb, K, B+j, ldb, pB, ATL_rone);
+/*
+ *    If kr is nonzero and not a multiple of 8, pad K with K8-K zeros
+ *    This allows us to cause less K-cleanup kernels to be loaded, as
+ *    well as ensuring we keep things aligned for vectorized cleanup kernels
+ */
+      if (krpad)
+         ExpandBlock(kr, nb, pB+nKb*NBNB, kr8);
+/* 
+ *    Perform the rank-K8 update of the column panel of C
+ */
+      DoMM_NMK(nfMblks, mr, nnb, nbr, nfKblks, kr8, pA, B, C+j*ldc, ldc);
+   }
+}
+
+void Mjoin(PATL,DoWork_rkK_Np)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+/* 
+ * This routine has everyone cooperate to copy row-panels of A, and then
+ * calls tloopN to perform the rank-K update
+ */
+{
+   ATL_thread_t *tp=vp;
+   ATL_TGEMM_RKK_NP_t *pd=lp->vp;
+   ATL_CINT iam = tp->rank;
+   ATL_INT k, kb;
+   volatile int *chkin = pd->chkin;
+   TYPE *Bw=pd->Bws[iam], *Aw=pd->Aw;
+   void *aMcnt=pd->aMcnt, *aNcnt=pd->aNcnt;
+   ATL_CINT BNOTRANS = (pd->TB == AtlasNoTrans);
+   ATL_CINT ANOTRANS = (pd->TA == AtlasNoTrans);
+   const TYPE *A=pd->A, *B=pd->B;
+   TYPE *C = pd->C;
+   ATL_CINT nMb=pd->nMb, mr=pd->mr, nKb=pd->nKb, kr=pd->kr, kr8=pd->kr8;
+   ATL_CINT nablks = (mr) ? nMb : nMb+1, incA = (nKb*NB + kr8)*NB;
+   ATL_CINT amul = (ANOTRANS) ? (1 SHIFT) : (lda SHIFT);
+   MAT2BLK A2blk;
+   int k;
+
+   if (ANOTRANS)
+      A2blk = (SCALAR_IS_ONE(alpha)) ? 
+              Mjoin(PATL,row2blk_a1) : Mjoin(PATL,row2blk_aX);
+   else
+      A2blk = (SCALAR_IS_ONE(alpha)) ? 
+              Mjoin(PATL,col2blk_a1) : Mjoin(PATL,col2blk_aX);
+/*
+ * Use the AtomicCounter aMcnt to copy the nMb full row panels of A, 
+ * and possibly one partial mr-wide row panel.  Since K is not long, copying
+ * them a rowpanel at a time shouldn't kill us on the TLB.
+ */
+   while(iblk = DecAtomicCount(aMcnt))
+   {
+      int mb;
+      size_t i, ia;
+
+      mb = (iblk-- == nablks && mr) ? mr : NB;
+      i = iblk*NB;
+      i *= amul;
+      A2blk(K, mb, A+i, lda, Aw+iblk*incA, alpha);
+      if (kr8 != kr)
+         ExpandBlock(kr, mb, Aw+nKb*mb*NB, kr8);
+   }
+/*
+ * Tell everyone I have finished copying A, and then loop until everyone
+ * else signals they've copied their pieces
+ */
+   chkin[iam] = 1;
+   for (k=0; k < ATL_NTHREADS; k++)
+      while(!chkin[iam]);
+/*
+ * Perform the rank-K update with a fully-copied A
+ */
+   ATL_tloopN(pd->aNcnt, iam, nMb, mr, pd->nNb, pd->nr, nKb, kr, kr8-kr, Aw,
+              pd->TB, pd->B, pd->ldb, pd->Bws[iam], pd->C, pd->ldc);
+}
+
+int Mjoin(PATL,tgemm_rkK_Np)
+   (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, ATL_CINT M,
+    ATL_CINT N, ATL_CINT K, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
+    const TYPE *B, ATL_CINT ldb, const SCALAR beta, TYPE *C, ATL_CINT ldc)
+/*
+ * Does a rank-K update on dynamically scheduled column panels of C
+ */
+{
+   ATL_TGEMM_RKK_NP_t pd;   /* problem definition */
+   size_t sz;
+   volatile int *chkin
+   TYPE **Bws, *Aw;
+   ATL_CINT nKb = ATL_DivByNB(K), kr = K - ATL_MulByNB(nKb);
+   ATL_CINT K8 = ATL_MulByNB(nKb) + (((kr+7)>>3)<<3);
+   int i, nDb, dr;
+
+   sz = ATL_MulBySize(K8)*(M + NB*ATL_NTHREADS) + ATL_Cachelen +
+        ATL_NTHREADS*(sizeof(TYPE*)+sizeof(int)+ATL_Cachlen);
+   if (sz > ATL_NTHREADS*ATL_PTMAXMALLOC)
+      return(1);
+   Bws = malloc(sz);
+   if (!Bws)
+      return(2);
+   chkin = (volatile int*) (Aws + ATL_NTHREADS);
+   Aw = (TYPE*)(chkin+ATL_NTHREADS);
+   Aw = ATL_AlignPtr(Aw);
+   Bws[0] = Aw + K8*M;
+   Bws[0] = ATL_AlignPtr(Bws[0]);
+   chkin[0] = 0;
+   for (i=1; i < ATL_NTHREADS; i++)
+   {
+      Bws[i] = Aws[i-1] + K8*NB;
+      Bws[i] = ATL_AlignPtr(Bws[i]);
+      chkin[i] = 0;
+   }
+   pd->chkin = chkin;
+   pf->Aw = Aw;
+   pf->Bws = Bws;
+   pd->nMb = nDb = ATL_DivByNB(M);
+   pd->mr = dr = M - ATL_MulByNB(nDb);
+   pd->aMcnt = SetAtomicCount((dr) ? nDb+1 : nDb);
+   pd->nNb = nDb = ATL_DivByNB(N);
+   pd->nr = dr = N - ATL_MulByNB(nDb);
+   pd->aNcnt = SetAtomicCount((dr) ? nDb+1 : nDb);
+   pd->nKb = nDb = ATL_DivByNB(K);
+   pd->kr = dr = K - ATL_MulByNB(nDb);
+   pd->kr8 = K8-K;
+   pd->A = A; pd->B = B; pd->C = C;
+   pd->lda = lda; pd->ldb = ldb; pd->ldc = ldc;
+   pd->M = M; pd->N = N; pd->K = K;
+   pd->TA = TA; pd->TB = TB;
+   pd->alpha = alpha; pd->beta = beta;
+
+   ATL_goparallel(ATL_NTHREADS, Mjoin(PATL,DoWork_rkK_Np), &pd);
+
+   free(vp);
+   return(0);
+}
+@ROUT ATL_tgemm_MKp
 /*
  * This routine assumes B has already been copied to block-major, column-panel
  * format and had ALPHA applied to it, and threads should now cooperate to:
@@ -6993,4 +7200,3 @@ int Mjoin(PATL,tgemm_Mp)
    }
    while (nblks < 2*ATL_NTHREADS);
 }
-
