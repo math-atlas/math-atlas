@@ -6031,7 +6031,7 @@ SQUARE:   /* near-square shape, N <= 256 if jumped here */
 #include "atlas_lvl3.h"
 #include "atlas_threads.h"
 
-@ROUT ATL_tgemm_rkK_Np
+@ROUT ATL_tgemm_MKp
 static int ATL_NTHR = ATL_NTHREADS;
 typedef struct
 {
@@ -6189,30 +6189,32 @@ static void DoMM_NMK
  */
 static void ExpandBlock
 (
-   ATL_INT M,  /* the number of rows that should be expanded to lda */
-   ATL_INT N,  /* number of columns in block */
+   ATL_CINT M, /* the number of rows that should be expanded to lda */
+   ATL_CINT N, /* number of columns in block */
    TYPE *A,    /* in: MxN block, out: ldaxN blk, wt zero-padding in lda-M gap */
    ATL_INT lda /* desired stride between columns */
 )
 {
    TYPE *a, *c;
+   ATL_CINT gap = lda - M;
    ATL_INT j;
 
-   if (lda == M)   /* already done if lda == M */
+   if (gap < 1)   /* already done if lda == M */
       return;
 
-   a = A + (N-1)*M;
-   c = A + (N-1)*lda;
-   for (j=N; j; j++)
+//fprintf(stderr, "ExpandBlock, M=%d, N=%d, A=%p, lda=%d\n", M, N, A, lda);
+   a = A + N*M - 1;
+   c = A + N*lda - 1;
+   for (j=N; j; j--)
    {
-      TYPE *zstop = c + M - 1, *z = c + lda - 1;
+      TYPE *stop = c - gap;
       do 
-         *z-- = ATL_rzero;
-      while (z != zstop);
-      zstop =  c - 1;
+         *c-- = ATL_rzero;
+      while (c != stop);
+      stop =  c - M;
       do
-         *z-- = *a--;
-      while (z != zstop);
+         *c-- = *a--;
+      while (c != stop);
    }
 }
 
@@ -6246,7 +6248,9 @@ static void ATL_tloopN
 )
 {
    ATL_CINT M = nfMblks*NB+mr, N = nfNblks*NB+nr, K = nfKblks*NB+kr, K8=K+krpad;
-   ATL_CINT kr8 = kr+krpad;
+   ATL_CINT kr8 = kr+krpad, nnblks = nr ? nfNblks+1 : nfNblks;
+   ATL_CINT kr8f = (kr8 == NB) ? 0 : kr8;
+   ATL_CINT nfKblksf = (kr8 == NB) ? nfKblks+1 : nfKblks;
    ATL_INT jblk;
    #ifdef TCPLX
       ATL_CINT BNOTRANS = (TB == AtlasNoTrans || TB == AtlasConj);
@@ -6257,31 +6261,40 @@ static void ATL_tloopN
 
    while (jblk = ATL_DecAtomicCount(aNcnt))
    {
-      ATL_INT nb, nnb, nnr;
+      ATL_INT nb, nnb, nbr;
       size_t j;
 
-      nnb = jblk-- != nNb;   /* 1 if any but last block */
-      nbr = (nnb) : 0 : nr;
-      nb = (nnb) ? NB : nr;
-      j = jblk*NB;
+      if (!nr || jblk != nnblks)
+      {
+         nnb = 1;
+         nbr = 0;
+         nb = NB;
+      }
+      else
+      {
+         nnb = 0;
+         nbr = nr;
+         nb = nr;
+      }
+      j = (jblk-1)*(NB SHIFT);
 /*
  *    Copy the specified col-panel to my private workspace
  */
       if (BNOTRANS)
          Mjoin(PATL,col2blk_a1)(K, nb, B+j*ldb, ldb, pB, ATL_rone);
       else
-         Mjoin(PATL,row2blkT_a1)(nb, K, B+j, ldb, pB, ATL_rone);
+         Mjoin(PATL,row2blkT_a1)(K, nb, B+j, ldb, pB, ATL_rone);
 /*
  *    If kr is nonzero and not a multiple of 8, pad K with K8-K zeros
  *    This allows us to cause less K-cleanup kernels to be loaded, as
  *    well as ensuring we keep things aligned for vectorized cleanup kernels
  */
       if (krpad)
-         ExpandBlock(kr, nb, pB+nKb*NBNB, kr8);
+         ExpandBlock(kr, nb, pB+nfKblks*NB*nb, kr8);
 /* 
  *    Perform the rank-K8 update of the column panel of C
  */
-      DoMM_NMK(nfMblks, mr, nnb, nbr, nfKblks, kr8, pA, B, C+j*ldc, ldc);
+      DoMM_NMK(nfMblks, mr, nnb, nbr, nfKblksf, kr8f, A, pB, C+j*ldc, ldc);
    }
 }
 
@@ -6294,23 +6307,25 @@ void Mjoin(PATL,DoWork_rkK_Np)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    ATL_thread_t *tp=vp;
    ATL_TGEMM_RKK_NP_t *pd=lp->vp;
    ATL_CINT iam = tp->rank;
-   ATL_INT k, kb;
    volatile int *chkin = pd->chkin;
    TYPE *Bw=pd->Bws[iam], *Aw=pd->Aw;
    void *aMcnt=pd->aMcnt, *aNcnt=pd->aNcnt;
+   ATL_CINT K = pd->K;
    ATL_CINT BNOTRANS = (pd->TB == AtlasNoTrans);
    ATL_CINT ANOTRANS = (pd->TA == AtlasNoTrans);
    const TYPE *A=pd->A, *B=pd->B;
    TYPE *C = pd->C;
+   SCALAR alpha = pd->alpha;
    ATL_CINT nMb=pd->nMb, mr=pd->mr, nKb=pd->nKb, kr=pd->kr, kr8=pd->kr8;
-   ATL_CINT nablks = (mr) ? nMb : nMb+1, incA = (nKb*NB + kr8)*NB;
-   ATL_CINT amul = (ANOTRANS) ? (1 SHIFT) : (lda SHIFT);
+   ATL_CINT nablks = (mr) ? nMb+1 : nMb, incA = (nKb*NB + kr8)*NB;
+   ATL_CINT lda=pd->lda, amul = (ANOTRANS) ? (1 SHIFT) : (lda SHIFT);
+   ATL_INT iblk;
    MAT2BLK A2blk;
    int k;
 
    if (ANOTRANS)
       A2blk = (SCALAR_IS_ONE(alpha)) ? 
-              Mjoin(PATL,row2blk_a1) : Mjoin(PATL,row2blk_aX);
+              Mjoin(PATL,row2blkT_a1) : Mjoin(PATL,row2blkT_aX);
    else
       A2blk = (SCALAR_IS_ONE(alpha)) ? 
               Mjoin(PATL,col2blk_a1) : Mjoin(PATL,col2blk_aX);
@@ -6319,7 +6334,7 @@ void Mjoin(PATL,DoWork_rkK_Np)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
  * and possibly one partial mr-wide row panel.  Since K is not long, copying
  * them a rowpanel at a time shouldn't kill us on the TLB.
  */
-   while(iblk = DecAtomicCount(aMcnt))
+   while(iblk = ATL_DecAtomicCount(aMcnt))
    {
       int mb;
       size_t i, ia;
@@ -6329,7 +6344,7 @@ void Mjoin(PATL,DoWork_rkK_Np)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       i *= amul;
       A2blk(K, mb, A+i, lda, Aw+iblk*incA, alpha);
       if (kr8 != kr)
-         ExpandBlock(kr, mb, Aw+nKb*mb*NB, kr8);
+         ExpandBlock(kr, mb, Aw+iblk*incA+nKb*NB*mb, kr8);
    }
 /*
  * Tell everyone I have finished copying A, and then loop until everyone
@@ -6337,7 +6352,7 @@ void Mjoin(PATL,DoWork_rkK_Np)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
  */
    chkin[iam] = 1;
    for (k=0; k < ATL_NTHREADS; k++)
-      while(!chkin[iam]);
+      while(!chkin[k]);
 /*
  * Perform the rank-K update with a fully-copied A
  */
@@ -6355,20 +6370,20 @@ int Mjoin(PATL,tgemm_rkK_Np)
 {
    ATL_TGEMM_RKK_NP_t pd;   /* problem definition */
    size_t sz;
-   volatile int *chkin
+   volatile int *chkin;
    TYPE **Bws, *Aw;
    ATL_CINT nKb = ATL_DivByNB(K), kr = K - ATL_MulByNB(nKb);
    ATL_CINT K8 = ATL_MulByNB(nKb) + (((kr+7)>>3)<<3);
    int i, nDb, dr;
 
    sz = ATL_MulBySize(K8)*(M + NB*ATL_NTHREADS) + ATL_Cachelen +
-        ATL_NTHREADS*(sizeof(TYPE*)+sizeof(int)+ATL_Cachlen);
+        ATL_NTHREADS*(sizeof(TYPE*)+sizeof(int)+ATL_Cachelen);
    if (sz > ATL_NTHREADS*ATL_PTMAXMALLOC)
       return(1);
    Bws = malloc(sz);
    if (!Bws)
       return(2);
-   chkin = (volatile int*) (Aws + ATL_NTHREADS);
+   chkin = (volatile int*) (Bws + ATL_NTHREADS);
    Aw = (TYPE*)(chkin+ATL_NTHREADS);
    Aw = ATL_AlignPtr(Aw);
    Bws[0] = Aw + K8*M;
@@ -6376,31 +6391,31 @@ int Mjoin(PATL,tgemm_rkK_Np)
    chkin[0] = 0;
    for (i=1; i < ATL_NTHREADS; i++)
    {
-      Bws[i] = Aws[i-1] + K8*NB;
+      Bws[i] = Bws[i-1] + K8*NB;
       Bws[i] = ATL_AlignPtr(Bws[i]);
       chkin[i] = 0;
    }
-   pd->chkin = chkin;
-   pf->Aw = Aw;
-   pf->Bws = Bws;
-   pd->nMb = nDb = ATL_DivByNB(M);
-   pd->mr = dr = M - ATL_MulByNB(nDb);
-   pd->aMcnt = SetAtomicCount((dr) ? nDb+1 : nDb);
-   pd->nNb = nDb = ATL_DivByNB(N);
-   pd->nr = dr = N - ATL_MulByNB(nDb);
-   pd->aNcnt = SetAtomicCount((dr) ? nDb+1 : nDb);
-   pd->nKb = nDb = ATL_DivByNB(K);
-   pd->kr = dr = K - ATL_MulByNB(nDb);
-   pd->kr8 = K8-K;
-   pd->A = A; pd->B = B; pd->C = C;
-   pd->lda = lda; pd->ldb = ldb; pd->ldc = ldc;
-   pd->M = M; pd->N = N; pd->K = K;
-   pd->TA = TA; pd->TB = TB;
-   pd->alpha = alpha; pd->beta = beta;
+   pd.chkin = chkin;
+   pd.Aw = Aw;
+   pd.Bws = Bws;
+   pd.nMb = nDb = ATL_DivByNB(M);
+   pd.mr = dr = M - ATL_MulByNB(nDb);
+   nDb = (dr) ? nDb+1 : nDb;
+   pd.aMcnt = ATL_SetAtomicCount(nDb);
+   pd.nNb = nDb = ATL_DivByNB(N);
+   pd.nr = dr = N - ATL_MulByNB(nDb);
+   nDb = (dr) ? nDb+1 : nDb;
+   pd.aNcnt = ATL_SetAtomicCount(nDb);
+   pd.nKb = nKb; pd.kr = kr; pd.kr8 = ((kr+7)>>3)<<3;
+   pd.A = A; pd.B = B; pd.C = C;
+   pd.lda = lda; pd.ldb = ldb; pd.ldc = ldc;
+   pd.M = M; pd.N = N; pd.K = K;
+   pd.TA = TA; pd.TB = TB;
+   pd.alpha = alpha; pd.beta = beta;
 
    ATL_goparallel(ATL_NTHREADS, Mjoin(PATL,DoWork_rkK_Np), &pd);
 
-   free(vp);
+   free(Bws);
    return(0);
 }
 @ROUT ATL_tgemm_MKp
