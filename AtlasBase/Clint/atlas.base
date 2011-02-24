@@ -21081,7 +21081,7 @@ int mmcase(int TEST, int CACHESIZE, char TA, char TB, int M, int N, int K,
    return(PASSED);
 }
 
-int mmcase0(int MFLOP, int CACHESIZE, char TA, char TB, int M, int N, int K,
+int mmcase0(int MFLOP, size_t CACHESIZE, char TA, char TB, int M, int N, int K,
 	    SCALAR alpha, int lda, int ldb, SCALAR beta, int ldc)
 {
    char *pc;
@@ -21096,9 +21096,17 @@ int mmcase0(int MFLOP, int CACHESIZE, char TA, char TB, int M, int N, int K,
    char *form="%4d   %c   %c %4d %4d %4d  %5.1f %5.1f  %5.1f %5.1f  %6.2f %6.1f %4.2f   %3s\n";
    TYPE betinv[2], *bet=beta;
 #endif
-   int nreps, incA, incB, incC, inc, nmat, k;
+   #ifdef ATL_USETHREADS
+      const size_t cs=ATL_NTHREADS *
+                      ATL_MulBySize(ATL_DivBySize(CACHESIZE+ATL_sizeof-1));
+   #else
+      const size_t cs=ATL_MulBySize(ATL_DivBySize(CACHESIZE+ATL_sizeof-1));
+   #endif
+   const size_t setsz = M*N + M*K + N*K;
+   size_t nset; 
+   size_t i, incA, incB, incC, inc, k;
    TYPE *c, *C, *a, *A, *b, *B, *st;
-   int ii, jj, i, j=0, PASSED, nerrs;
+   int nreps, ii, jj, j=0, PASSED, nerrs;
    double t0, t1, t2, t3, mflop, mf, mops;
    TYPE maxval, f1, ferr;
    static TYPE feps=0.0;
@@ -21156,22 +21164,22 @@ int mmcase0(int MFLOP, int CACHESIZE, char TA, char TB, int M, int N, int K,
       else TBc = AtlasTrans;
    }
    incC = ldc*N;
-   inc = incA + incB + incC;
-   i = M*K + K*N + M*N;  /* amount of inc actually referenced */
-   /* This is a hack; change to use of flushcache instead. */
-   nmat = ((CACHESIZE/ATL_sizeof) + i)/i;
-   vp = malloc(ATL_MulBySize(nmat*inc)+ATL_Cachelen);
+   inc = incA + incB + incC;   /* amount actually allocated */
+   nset = (cs+setsz-1)/setsz;
+   if (nset < 2)
+      nset = 2;
+   vp = malloc(ATL_MulBySize(nset*inc)+ATL_Cachelen);
    ATL_assert(vp);
    C = c = ATL_AlignPtr(vp);
    a = A = C + incC;
    b = B = A + incA;
-   st = C + nmat*inc;
+   st = C + nset*inc;
    #ifdef ATL_NANC
    if (SCALAR_IS_ZERO(beta))
-      matnan(inc, nmat, C, inc, M*N);
+      matnan(inc, nset, C, inc, M*N);
    else 
    #endif
-   matgen(inc, nmat, C, inc, M*N);
+   matgen(inc, nset, C, inc, M*N);
 
 #ifdef DEBUG
    printmat("A0", M, K, A, lda);
@@ -21202,7 +21210,7 @@ int mmcase0(int MFLOP, int CACHESIZE, char TA, char TB, int M, int N, int K,
    printmat("C", M, N, C, ldc);
 #endif
 
-   matgen(inc, nmat, C, inc, M*N);
+   matgen(inc, nset, C, inc, M*N);
    t0 = time00();
    for (k=nreps; k; k--)
    {
@@ -21253,7 +21261,7 @@ void GetFlags(int nargs, char *args[], int *TEST, int *nside,
               enum ATLAS_DIAG **Diag, int *M0, int *MN, int *Minc, 
               int *N0, int *NN, int *Ninc, int *K0, int *KN, int *Kinc,
               int *nalphas, TYPE **alphas, int *nbetas, TYPE **betas,
-              int *LDA_IS_M, int *MFLOP, int *CACHESIZE)
+              int *LDA_IS_M, int *MFLOP, int *CACHESIZE, int *nrep)
 
 {
    char ch;
@@ -21262,6 +21270,7 @@ void GetFlags(int nargs, char *args[], int *TEST, int *nside,
 /*
  * Set up defaults
  */
+   *nrep = 1;
    *TEST = 1;
    *M0 = *N0 = *K0 = -1;
    *nuplo = *nta = *ntb = *nside = *ndiag = *nalphas = *nbetas = -1;
@@ -21276,6 +21285,9 @@ void GetFlags(int nargs, char *args[], int *TEST, int *nside,
    {
       switch(args[i][1])
       {
+      case '#':
+         *nrep = atoi(args[++i]);
+         break;
       case 'F':
          *MFLOP = atoi(args[++i]);
          break;
@@ -21498,10 +21510,11 @@ void GetFlags(int nargs, char *args[], int *TEST, int *nside,
       #endif
    }
 }
-___main(){}
-__main(){}
-MAIN__(){}
+___main(){}   /* this nonsense helps */
+__main(){}    /* when you link with certain */
+MAIN__(){}    /* fortran compilers */
 _MAIN_(){}
+
 main(int nargs, char *args[])
 /*
  *  tst <tst> <# TA> <TA's> <# TB's> <TB's> <M0> <MN> <incM> <N0> <NN> <incN>
@@ -21511,8 +21524,8 @@ main(int nargs, char *args[])
 {
    int M0, MN, incM, N0, NN, incN, K0, KN, incK, lda, ldb, ldc, MFLOP; 
    int i, k, m, n, im, in, ik, ita, itb, ia, ib, nTA, nTB, nalph, nbeta;
-   int itst=0, ipass=0, TEST, LDA_IS_M, MSAME=0, KSAME=0;
-   int ndiag, nuplo, nside;
+   int itst=0, ipass=0, TEST, LDA_IS_M, MSAME=0, KSAME=0, r;
+   int ndiag, nuplo, nside, nrep;
    TYPE *alph, *beta, *A, *B, *C, *D=NULL;
    #ifdef TREAL
       TYPE bet1 = 1.0, alp1 = -1.0;
@@ -21529,7 +21542,7 @@ main(int nargs, char *args[])
    GetFlags(nargs, args, &TEST, &nside, &Side, &nuplo, &Uplo, 
             &nTA, &TransA, &nTB, &TransB, &ndiag, &Diag, 
             &M0, &MN, &incM, &N0, &NN, &incN, &K0, &KN, &incK,
-            &nalph, &alph, &nbeta, &beta, &LDA_IS_M, &MFLOP,&CACHESIZE);
+            &nalph, &alph, &nbeta, &beta, &LDA_IS_M, &MFLOP,&CACHESIZE, &nrep);
 
    if (M0 == -1)
    {
@@ -21633,52 +21646,54 @@ main(int nargs, char *args[])
                            else ldb = NN;
                            ldc = MN;
                         }
-                        
-                        if (MFLOP)
+                        for (r=0; r < nrep; r++)
                         {
-                           ipass++;
-#ifdef TREAL
-                              mmcase0(MFLOP, CACHESIZE, TA, TB, m, n, k,
-				      alph[ia], lda, ldb, beta[ib], ldc);
-#else
-                              mmcase0(MFLOP, CACHESIZE, TA, TB, m, n, k,
-				      alph+(ia SHIFT), lda, ldb,
-				      beta+(ib SHIFT), ldc);
-#endif
-                        }
-                        else
-                        {
-#ifdef TREAL
-                              ipass += mmcase(TEST, CACHESIZE, TA, TB, m,
-					      n, k, alph[ia], A, lda, B, ldb,
-                                              beta[ib], C, ldc, D,ldc);
-#else
-                              ipass += mmcase(TEST, CACHESIZE, TA, TB, m,
-					      n, k, alph+(ia SHIFT), A,
-					      lda, B, ldb, beta+(ib SHIFT),
-					      C, ldc, D,ldc);
-#endif
-                        }
-/*
- *                      If we lose 5 times in a row, quit search 
- */
-                        #ifdef ATL_RKXOVER
-                           if (k > 16 &&    /* don't quit too early */
-                               !(speedup_rk_b0[k] | speedup_rk_b0[k-1] |
-                                 speedup_rk_b0[k-2] | speedup_rk_b0[k-3] |
-                                 speedup_rk_b0[k-4] | speedup_rk[k] |
-                                 speedup_rk_b0[k-1] | speedup_rk_b0[k-2] |
-                                 speedup_rk_b0[k-3] | speedup_rk[k-4] |
-                                 speedup_rk_b0[k-6] | speedup_rk[k-7] |
-                                 speedup_rk_b0[k-8] | speedup_rk[k-9] |
-                                 speedup_rk_b0[k-10] | speedup_rk[k-11]
-                                )
-                              )
+                           if (MFLOP)
                            {
-                              MAX_vKB = k-5;
-                              goto RANK_K;
+                              ipass++;
+#ifdef TREAL
+                                 mmcase0(MFLOP, CACHESIZE, TA, TB, m, n, k,
+				         alph[ia], lda, ldb, beta[ib], ldc);
+#else
+                                 mmcase0(MFLOP, CACHESIZE, TA, TB, m, n, k,
+				         alph+(ia SHIFT), lda, ldb,
+				         beta+(ib SHIFT), ldc);
+#endif
                            }
-                        #endif
+                           else
+                           {
+#ifdef TREAL
+                                 ipass += mmcase(TEST, CACHESIZE, TA, TB, m,
+					         n, k, alph[ia], A, lda, B, ldb,
+                                                 beta[ib], C, ldc, D,ldc);
+#else
+                                 ipass += mmcase(TEST, CACHESIZE, TA, TB, m,
+					         n, k, alph+(ia SHIFT), A,
+					         lda, B, ldb, beta+(ib SHIFT),
+					         C, ldc, D,ldc);
+#endif
+                           }
+/*
+ *                         If we lose 5 times in a row, quit search 
+ */
+                           #ifdef ATL_RKXOVER
+                              if (k > 16 &&    /* don't quit too early */
+                                  !(speedup_rk_b0[k] | speedup_rk_b0[k-1] |
+                                    speedup_rk_b0[k-2] | speedup_rk_b0[k-3] |
+                                    speedup_rk_b0[k-4] | speedup_rk[k] |
+                                    speedup_rk_b0[k-1] | speedup_rk_b0[k-2] |
+                                    speedup_rk_b0[k-3] | speedup_rk[k-4] |
+                                    speedup_rk_b0[k-6] | speedup_rk[k-7] |
+                                    speedup_rk_b0[k-8] | speedup_rk[k-9] |
+                                    speedup_rk_b0[k-10] | speedup_rk[k-11]
+                                   )
+                                 )
+                              {
+                                 MAX_vKB = k-5;
+                                 goto RANK_K;
+                              }
+                              #endif
+                        }
                      }
                   }
                }
