@@ -20877,7 +20877,7 @@ int mmcase(int TEST, int CACHESIZE, char TA, char TB, int M, int N, int K,
    #define MBETA *beta, beta[1]
    char *form="%4d   %c   %c %4d %4d %4d  %5.1f %5.1f  %5.1f %5.1f  %6.2f %6.1f %4.2f   %3s\n";
 #endif
-   int ii, jj, i, j=0, PASSED, nerrs;
+   int ii, jj, i, j=0, PASSED, nerrs, Na, Nb;
    double t0, t1, t2, t3, mflop;
    TYPE maxval, f1, ferr;
    static TYPE feps=0.0;
@@ -20888,28 +20888,34 @@ int mmcase(int TEST, int CACHESIZE, char TA, char TB, int M, int N, int K,
 
    if (!TEST) D = C;
    /*if (nL2) L2 = malloc(nL2*sizeof(int));*/
-   l2ret = ATL_flushcache( CACHESIZE );
+   #ifndef ATL_LINEFLUSH
+      l2ret = ATL_flushcache( CACHESIZE );
+   #endif
    if (TA == 'n' || TA == 'N') 
    {
       matgen(M, K, A, lda, K*1112);
       TAc = AtlasNoTrans;
+      Na = K;
    }
    else
    {
       matgen(K, M, A, lda, K*1112);
       if (TA == 'c' || TA == 'C') TAc = AtlasConjTrans;
       else TAc = AtlasTrans;
+      Na = M;
    }
    if (TB == 'n' || TB == 'N')
    {
       matgen(K, N, B, ldb, N*2238);
       TBc = AtlasNoTrans;
+      Nb = N;
    }
    else
    {
       matgen(N, K, B, ldb, N*2238);
       if (TB == 'c' || TB == 'C') TBc = AtlasConjTrans;
       else TBc = AtlasTrans;
+      Nb = K;
    }
 #ifdef ATL_NANC
    if (SCALAR_IS_ZERO(beta))
@@ -20932,7 +20938,13 @@ int mmcase(int TEST, int CACHESIZE, char TA, char TB, int M, int N, int K,
      }*/
    
    /* invalidate L2 cache */
-   l2ret = ATL_flushcache( -1 );
+   #ifndef ATL_LINEFLUSH
+      l2ret = ATL_flushcache( -1 );
+   #else
+      ATL_flushCacheByAddr(ldc*N, C);
+      ATL_flushCacheByAddr(ldb*Nb, B);
+      ATL_flushCacheByAddr(lda*Na, A);
+   #endif
 
    t0 = time00();
    trusted_gemm(TAc, TBc, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
@@ -20959,8 +20971,13 @@ int mmcase(int TEST, int CACHESIZE, char TA, char TB, int M, int N, int K,
    matgen(M, N, D, ldd, M*N);
 
    /* invalidate L2 cache */
-   l2ret = ATL_flushcache( -1 );
-
+   #ifndef ATL_LINEFLUSH
+      l2ret = ATL_flushcache( -1 );
+   #else
+      ATL_flushCacheByAddr(ldc*N, D);
+      ATL_flushCacheByAddr(ldb*Nb, B);
+      ATL_flushCacheByAddr(lda*Na, A);
+   #endif
    t0 = time00();
    test_gemm(TAc, TBc, M, N, K, alpha, A, lda, B, ldb, beta, D, ldd);
    
@@ -21058,7 +21075,9 @@ int mmcase(int TEST, int CACHESIZE, char TA, char TB, int M, int N, int K,
    PASSED = 1;
 #endif
    /*free(L2);*/
-   l2ret = ATL_flushcache( 0 );
+   #ifndef ATL_LINEFLUSH
+      l2ret = ATL_flushcache( 0 );
+   #endif
    return(PASSED);
 }
 

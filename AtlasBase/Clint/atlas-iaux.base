@@ -1522,10 +1522,10 @@ void Mjoin(PATL,syApAt)
    }
 #endif
 
-void ATL_flushCacheByAddr(int N, void *vp)
+void ATL_flushCacheByAddr(size_t N, void *vp)
 {
    double *dp = vp;  /* assume cache line at least 8 bytes long */
-   int i;
+   size_t i;
    for (i=0, N /= sizeof(double); i < N; i++)
       ATL_flushCacheLine(dp+i);
 }
@@ -1578,7 +1578,7 @@ void ATL_FlushAreasByCL(FLSTRUCT *fp)
 @extract -b @(topd)/gen.inc what=cw @(cw00)
 #include "atlas_misc.h"
 
-double ATL_flushcache(int size)
+double ATL_flushcache(long long size)
 /* 
  * flush cache by reading enough mem; note that if the compiler gets
  * really smart, may be necessary to make vp a global variable so it
@@ -1587,10 +1587,10 @@ double ATL_flushcache(int size)
  */
 {
   static void *vp=NULL;
-  static int N = 0;
+  static long long N = 0;
   double *cache;
   double dret=0.0;
-  int i;
+  size_t i;
 
   if (size < 0) /* flush cache */
   {
@@ -1629,6 +1629,7 @@ struct ATL_FC
    int N;
 };
 
+@beginskip
 void ATL_ptCF(ATL_LAUNCHSTRUCT_t *lp, void *vptr)
 {
    ATL_FC *tp = vptr;
@@ -1643,8 +1644,25 @@ void ATL_ptCF(ATL_LAUNCHSTRUCT_t *lp, void *vptr)
    }
    tp->dret = dret;
 }
+@endskip
 
-double ATL_ptflushcache(int size)
+void ATL_DoWorkFC(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   ATL_thread_t *tp=vp;
+   ATL_FC **fct=lp->vp, *fp = fct[tp->rank];
+   double *cache, dret=0.0;
+   size_t i, N;
+
+   N = fp->N;
+   if (N > 0)
+   {
+      cache = fp->dp;
+      for (i=0; i != N; i++) dret += cache[i];
+   }
+   fp->dret = dret;
+}
+
+double ATL_ptflushcache(long long size)
 /* 
  * flush cache by reading enough mem; note that if the compiler gets
  * really smart, may be necessary to make vp a global variable so it
@@ -1655,9 +1673,9 @@ double ATL_ptflushcache(int size)
   static void *vp=NULL;
   static double *cache=NULL;
   double dret=0.0;
-  static int i, N = 0;
-  ATL_LAUNCHSTRUCT_t ls;
-  ATL_thread_t tp[ATL_NTHREADS];
+  static long long i, N = 0;
+@skip   ATL_LAUNCHSTRUCT_t ls;
+@skip   ATL_thread_t tp[ATL_NTHREADS];
   ATL_FC fct[ATL_NTHREADS];
 
   if (size < 0) /* flush cache */
@@ -1669,6 +1687,8 @@ double ATL_ptflushcache(int size)
         fct[i].dp = cache+i*N;
 @skip        ATL_thread_start(tp+i, i, ATL_ptCF, fct+i);
      }
+     ATL_goparallel(ATL_NTHREADS, ATL_DoWorkFC, fct);
+@beginskip
      ls.opstruct = (char*) fct;
      ls.opstructstride = (int) ( ((char*)(fct+1)) - (char*)fct );
      ls.OpStructIsInit = NULL;
@@ -1685,6 +1705,7 @@ double ATL_ptflushcache(int size)
      }
      ATL_thread_start(tp, 0, ATL_tlaunch, tp);
      ATL_thread_join(tp);
+@endskip
   }
   else if (size > 0) /* initialize */
   {
@@ -1708,6 +1729,27 @@ double ATL_ptflushcache(int size)
 void ATL_ptCLF(ATL_LAUNCHSTRUCT_t *lp, void *vptr)
 {
    ATL_FlushAreasByCL(vptr);
+}
+
+typedef struct
+{
+   size_t N;
+   void *vp;
+} ATL_TFLUSH_t;
+
+void ATL_DoWorkFCbA(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   ATL_thread_t *tp=vp;
+   ATL_TFLUSH_t *pd=lp->vp;
+   ATL_flushCacheByAddr(pd->N, pd->vp);
+}
+
+void ATL_ptflushCacheByAddr(size_t N, void *vp)
+{
+   ATL_TFLUSH_t pd;
+   pd.N = N;
+   pd.vp = vp;
+   ATL_goparallel(ATL_NTHREADS, ATL_DoWorkFCbA, &pd);
 }
 
 void ATL_ptFlushAreasByCL(FLSTRUCT *fp)
