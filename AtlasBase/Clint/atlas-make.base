@@ -804,6 +804,11 @@ xtune_aff : tune_aff.o tlib  ATL_lin0tlaunch_noaff.o ATL_tllin.o \
 	$(CC) $(CCFLAGS) -o xtune_aff tune_aff.o ATL_lin0tlaunch_noaff.o \
               ATL_tllin.o ATL_tllin_noaff.o ATL_thread_start_noaff.o \
               $(ATLASlib) $(LIBS)
+@whiledef rt thread_start log2tlaunch dyntlaunch goparallel
+ATL_@(rt)_noaf.o : $(myTHRdir)/ATL_@(rt).c
+	$(CC) $(CCFLAGS) -o $@ -c -DATL_NOAFFINITY=1 \
+               $(myTHRdir)/ATL_@(rt).c
+@endwhile
 @whiledef rt thread_start lin0tlaunch
 ATL_@(rt)_noaff.o : $(myTHRdir)/ATL_@(rt).c
 	$(CC) $(CCFLAGS) -o $@ -c -DATL_TUNING -DATL_NOAFFINITY=1 \
@@ -3432,6 +3437,25 @@ x@(pre)mmtst@(suf) : $(INCAdir)/atlas_type.h @(pre)gemmtst@(suf).o @(pre)mmlib@(
 
    @undef suf
    @endwhile
+noaffobj = ATL_goparallel_noaf.o ATL_dyntlaunch_noaf.o \
+           ATL_log2tlaunch_noaf.o ATL_thread_start_noaf.o
+noaffobjd = $(BLDdir)/tune/threads/ATL_goparallel_noaf.o \
+            $(BLDdir)/tune/threads/ATL_dyntlaunch_noaf.o \
+            $(BLDdir)/tune/threads/ATL_log2tlaunch_noaf.o \
+            $(BLDdir)/tune/threads/ATL_thread_start_noaf.o 
+
+x@(pre)mmtst_noaff : $(INCAdir)/atlas_type.h @(pre)gemmtst_noaff.o @(pre)mmlib_pt @(pre)tstlib_pt noaff_pt
+	$(FLINKER) $(FCLINKFLAGS) -o $@ @(pre)gemmtst_noaff.o $(noaffobjd) \
+              $(TESTlib) $(BLASlib) $(@(pre)mmobj) $(ATLASlib) $(LIBS)
+@(pre)gemmtst_noaff.o : $(mySRCdir)/gemmtst.c $(INCSdir)/atlas_misc.h \
+                  $(INCAdir)/@(pre)mm.h $(INCSdir)/atlas_lvl3.h
+	$(ICC) -o $@ -c $(ICCFLAGS) -DATL_USEPTHREADS -DATL_NOAFFINITY=1 \
+               -D@(typ) $(mySRCdir)/gemmtst.c
+
+x@(pre)mmtst_aff : $(INCAdir)/atlas_type.h @(pre)gemmtst_aff.o @(pre)mmlib \
+              @(pre)tstlib
+	$(FLINKER) $(FCLINKFLAGS) -o $@ @(pre)gemmtst_aff.o \
+                   $(TESTlib) $(BLASlib) $(@(pre)mmobj) $(ATLASlib) $(LIBS)
 x@(pre)mmtst_big : $(INCAdir)/atlas_type.h @(pre)gemmtst_big.o @(pre)mmlib \
               @(pre)tstlib
 	$(FLINKER) $(FCLINKFLAGS) -o $@ @(pre)gemmtst_big.o \
@@ -3550,9 +3574,9 @@ x@(pre)printblk : @(pre)printblk.o
 
       @undef df
    @endwhile
-   @multidef dep  @^  @^           @(pre)kbmmlib
-   @multidef def  @^ -DTEST_RANKK -DATL_RKXOVER
-   @whiledef suff big rk rkX
+   @multidef dep  @^  @^           @(pre)kbmmlib @^
+   @multidef def  @^ -DTEST_RANKK -DATL_RKXOVER -DATL_AFFINITY
+   @whiledef suff big rk rkX aff
 @(pre)gemmtst_@(suff).o : $(mySRCdir)/gemmtst.c $(INCSdir)/atlas_misc.h \
                  $(INCAdir)/@(pre)mm.h $(INCSdir)/atlas_lvl3.h @(dep)
 	$(ICC) -o $@ -c $(ICCFLAGS) -D@(typ) -DTRUST_BIG @(def) $(mySRCdir)/gemmtst.c
@@ -3561,6 +3585,8 @@ x@(pre)printblk : @(pre)printblk.o
    @endwhile
    @undef typ
 @endwhile
+noaff_pt : 
+	cd $(BLDdir)/tune/threads ; $(MAKE) $(noaffobj)
 @whiledef pre d s
 c_@(pre)blas3.o : $(mySRCdir)/c_rblas3.c $(INCSdir)/cblas.h $(INCSdir)/cblas_test.h
 	$(ICC) -o $@ -c $(ICCFLAGS) -D@up@(pre)REAL -DF77INT_ $(mySRCdir)/c_rblas3.c
