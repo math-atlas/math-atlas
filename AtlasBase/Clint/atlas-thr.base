@@ -1225,6 +1225,123 @@ void *ATL_dyntlaunch(void *vp)
    }
    return(NULL);
 }
+@ROUT ATL_ranktlaunch_noaff
+static void *ATL_GoToWork(ATL_thread_t *tp, ATL_LAUNCHSTRUCT_t *lp, int iam)
+{
+/*
+ * Do the operation
+ */
+   lp->DoWork(lp, lp->opstruct+lp->opstructstride*iam);
+/*
+ * Node 0 awaits completion of each task, and do combine (linear!) if requested
+ */
+   if (iam == 0)
+   {
+      for (i=1; i < ATL_NTHREADS; i++)
+      {
+         if (!lp->OpStructIsInit || 
+             lp->OpStructIsInit(lp->opstruct+i*lp->opstructstride))
+         {
+            ATL_thread_join(tp+i);
+            if (lp->CombineOpStructs)  /* do combine if necessary */
+               lp->CombineOpStructs(lp->opstruct,
+                                    lp->opstruct+lp->opstructstride*i);
+         }
+      }
+   }
+   return(NULL);
+}
+static unsigned int ATL_coreID(void)
+{
+
+  int myRetn=-1;
+  __asm__ __volatile__ ("\n"
+    "movl $1, %%eax\n"
+    "cpuid\n"
+    "shrl $24, %%ebx\n"
+    "movl %%ebx, %0\n"
+    : "=m" (myRetn)
+    :
+    :"%rax", "%rbx"
+    );
+  
+  return(myRetn);
+} // end *** ATL_coreId ***
+static void ATL_CreateThread(void *vp)
+{
+   pthread_attr_t attr;
+   pthread_t pt;
+   void *ATL_ranktlaunch_noaff(void *vp);
+
+   ATL_assert(!pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED));
+   pthread_attr_setscope(&attr, PTHREAD_SCOPE_SYSTEM); /* no chk, OK to fail */
+   ATL_assert(!pthread_create(&pt, &attr, ATL_ranktlaunch_noaff, vp));
+}
+
+static void *ATL_KeepLaunching(ATL_thread_t tp, ATL_LAUNCHSTRUCT_t *lp)
+{
+   void *ranklock = lp->acounts[0];
+   int i;
+   do
+   {
+/*
+ *    If all cores have gotten a thread, or if any thread has finished the
+ *    problem, then stop launching and exit
+ */
+      if (lp->acounts[1])
+         return(NULL);
+      for (i=0; i < ATL_NTHREADS; i++)
+      {
+         if (lp->impdone[i] == -1)
+            return(NULL);
+      }
+      iam = ATL_coreID();      /* may have changed if I've slept */
+      if (!lp->rank2thr[iam])
+      {
+         int SUCCESS=0;
+         ATL_mutex_lock(ranklock);
+         if (!lp->rank2thr[iam])
+         {
+            int n;
+            tp->rank = iam;
+            lp->rank2thr[iam].thrH = pthread_self();
+            for (i=0; i < ATL_NTHREADS && !lp->rank2thr[i].thrH; i++);
+            if (i == ATL_NTHREADS)         /* if threads on all cores */
+               lp->acounts[1] = (void*)1;  /* set flag saying launch complete */
+            SUCCESS = 1;
+         }
+         ATL_mutex_unlock(ranklock);
+         if (SUCCESS)
+            return(ATL_GoToWork(tp, lp, iam));
+      }
+/*
+ *    If there are still threads that need to run, spawn a new one, and go
+ *    to sleep to yield to computation
+ */
+      ATL_CreateThread(tp);
+      sched_yield();  /* go to sleep if no success */
+   }
+   while(1);
+   return(NULL);
+}
+/*
+ * This routine is for launching on platforms w/o affinity that have some
+ * way for a running process to establish what core they are on.  Threads
+ * are continually launched until there is one on each core, or the first
+ * core runs out of work, whichever comes first.
+ * Any process that is launched with this technique must not barrier,
+ * since the number of cores is unknown, and the will certainly enter
+ * the program at very different times.
+ * NOTE: This routine calls pthreads directly, because ATLAS supports only
+ *       Windows threads and pthreads, and Windows threads have affinity.
+ */
+void *ATL_ranktlaunch_noaff(void *vp)
+{
+   ATL_thread_t *tp = vp;
+   ATL_LAUNCHSTRUCT_t *lp=tp->vp;
+
+   return(ATL_KeepLaunching(vp, lp));
+
 @ROUT ATL_log2tlaunch
 void *ATL_log2tlaunch(void *vp)
 {
