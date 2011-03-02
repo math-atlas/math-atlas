@@ -185,10 +185,12 @@ int main(int nargs, char **args)
 @ROUT tune_count
 #include "atlas_threads.h"
 #include "atlas_misc.h"
+void *ATL_SetAtomicCount_mut(long long);
 
 static volatile int count=0;
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 static void *acnt;
+static void **acnts;
 static double *timearr=NULL;
 
 int ATL_DecAtomicCount_ser(void)
@@ -253,6 +255,23 @@ void TuneDoWork_mut(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    timearr[iam] = ATL_walltime() - t0;
 }
 
+void TuneDoWork_loc(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   double t0, t1;
+   ATL_thread_t *tp = vp;
+   ATL_CINT iam = tp->rank;
+   int i;
+
+   t0 = ATL_walltime();
+   for (i=0; i < ATL_NTHREADS; i++)
+   {
+      void *lacnt = acnts[(iam+i)%ATL_NTHREADS];
+      while (ATL_DecAtomicCount(lacnt));
+   }
+   t1 = ATL_walltime();
+   timearr[iam] = t1 - t0;
+}
+
 void TuneDoWork(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
    double t0, t1;
@@ -273,12 +292,12 @@ void PrintRank(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 
 int main(int nargs, char **args)
 {
-   double t0, tmut_s, tdec_s, tser_s, tmut, tdec, tser;
-   int nreps=1000000, i;
+   double t0, tmut_s, tdec_s, tser_s, tmut, tdec, tser, tldec;
+   size_t nreps=1000000, i, lcnt;
    ATL_thread_t ts;
 
    if (nargs > 1)
-      nreps = atoi(args[1]);
+      nreps = atoll(args[1]);
    
    printf("FINDING SPEED OF SERIAL COUNTER CHANGING USING %d REPS:\n", nreps);
    ts.rank = 0;
@@ -319,6 +338,22 @@ int main(int nargs, char **args)
    printf("FINDING SPEED OF PARALLEL COUNTER CHANGING USING %d REPS %d PROC\n",
           nreps, ATL_NTHREADS);
 
+   for (i=0; i < ATL_NTHREADS-1; i++)
+      timearr[i] = -1.0;
+   acnts = malloc(ATL_NTHREADS*sizeof(void*));
+   ATL_assert(acnts);
+   lcnt = nreps / ATL_NTHREADS;
+   for (i=0; i < ATL_NTHREADS-1; i++)
+      acnts[i] = ATL_SetAtomicCount(lcnt);
+   acnts[ATL_NTHREADS-1] = ATL_SetAtomicCount(lcnt + nreps-lcnt*ATL_NTHREADS);
+   ATL_goparallel(ATL_NTHREADS, TuneDoWork_loc, NULL);
+   for (tldec=0.0,i=0; i < ATL_NTHREADS; i++)
+      tldec = Mmax(tldec,timearr[i]);
+   printf("   parallel LocAD  time = %e (par/ser = %.2f)\n",tldec,tldec/tdec_s);
+   for (i=0; i < ATL_NTHREADS; i++)
+      ATL_FreeAtomicCount(acnts[i]);
+   free(acnts);
+
    acnt = ATL_SetAtomicCount(nreps);
    ATL_goparallel(ATL_NTHREADS, TuneDoWork, NULL);
    for (tdec=0.0,i=0; i < ATL_NTHREADS; i++)
@@ -343,18 +378,21 @@ int main(int nargs, char **args)
 
    #ifdef PentiumCPS
       t0 = 1000000.0*PentiumCPS;
-      printf("   CYCLES PER CALL: SER=%.1f, DEC=%.1f, MUT=%.1f\n", 
-             t0*(tser/nreps), t0*(tdec/nreps), t0*(tmut/nreps));
+      printf("   CYCLES PER CALL: SER=%.1f, DEC=%.1f, LOCDEC=%.1f, MUT=%.1f\n", 
+             t0*(tser/nreps), t0*(tdec/nreps), t0*(tldec/nreps), 
+             t0*(tmut/nreps));
    #endif
    t0 = 1000000.0 / nreps;
-   printf("   MICROSECONDS PER CALL: SER=%.2f DEC=%.2f, MUT=%.2f\n", 
-          tser*t0, tdec*t0, tmut*t0);
+   printf(
+   "   MICROSECONDS PER CALL: SER=%.2f DEC=%.2f, LOCDEC=%.2f, MUT=%.2f\n", 
+          tser*t0, tdec*t0, tldec*t0, tmut*t0);
    printf("DEC TIME SPEEDUP OVER MUTEX   = %.2f\n", tmut / tdec);
+   printf("LOCDEC TIME SPEEDUP OVER MUTEX   = %.2f\n", tmut / tldec);
 /*
  * If my assembly isn't noticably faster than the mutex code, just use the
  * the mutex code
  */
-   if (tmut < tdec*1.02)
+   if (tmut < tldec*1.02)
    {
       printf("\nNO REAL ADVANTAGE TO ASSEMBLY, FORCING USE OF MUTEX\n");
       ATL_assert(!system("make iForceUseMutex"));
