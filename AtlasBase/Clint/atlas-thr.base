@@ -6172,7 +6172,7 @@ typedef struct
 @ROUT ATL_tgemm_rkK_Np
 typedef struct
 {
-   void *aNcnt;           /* counter on col-panels of C */
+   void **aNcnts;         /* Nthr counters on col-panels of C */
    void *aMcnt;           /* count row-panels of A */
    volatile int *chkin;   /* ATL_NTHREAD-len checkin array */
    TYPE **Bws;            /* preallocated thread copy areas */
@@ -6182,7 +6182,7 @@ typedef struct
    SCALAR alpha;          
    SCALAR beta;
    ATL_INT nKb, kr, kr8;
-   ATL_INT nMb, mr, nNb, nr;
+   ATL_INT nMb, mr, nNb, nr, nlblks, nrblks;
    ATL_INT M, N, K, lda, ldb, ldc;
    enum ATLAS_TRANS TA, TB;
 } ATL_TGEMM_RKK_NP_t;
@@ -6348,12 +6348,14 @@ static void ExpandBlock
  */
 static void ATL_tloopN
 (
-   void *aNcnt,         /* Atomic counter on col panels of C */
+   void **aNcnts,       /* NTHR Atomic counters on col panels of C */
    int iam,             /* my rank; */
    ATL_CINT nfMblks,    /* # of full NB blocks in Mp */
    int mr,              /* M%NB */
    ATL_CINT nfNblks,    /* # of full NB blocks along N */
    int nr,              /* N%NB */
+   int nlblks,          /* nfNblks / ATL_NTHREADS */
+   int nrblks,          /* nfNblks % ATL_NTHREADS */
    ATL_CINT nfKblks,    /* # of full NB blocks along K8 */
    int kr,              /* K%NB */
    int krpad,           /* # of entries to add to K-dim to make mul of 8 */
@@ -6370,50 +6372,71 @@ static void ATL_tloopN
    ATL_CINT kr8 = kr+krpad, nnblks = nr ? nfNblks+1 : nfNblks;
    ATL_CINT kr8f = (kr8 == NB) ? 0 : kr8;
    ATL_CINT nfKblksf = (kr8 == NB) ? nfKblks+1 : nfKblks;
-   ATL_INT jblk;
+   ATL_INT jblk, p;
    #ifdef TCPLX
       ATL_CINT BNOTRANS = (TB == AtlasNoTrans || TB == AtlasConj);
    #else
       ATL_CINT BNOTRANS = (TB == AtlasNoTrans);
    #endif
    ATL_CINT bmul = (BNOTRANS) ? ldb : 1;
-
-   while (jblk = ATL_DecAtomicCount(aNcnt))
+/*
+ * Every thread is initially given nlblks, wt the last thread getting the rest.
+ * Each thread first uses his own private atomic counter to do his own column
+ * panels.  Once they are exhausted, each thread traverses all other threads
+ * counters, and steals work until all work is done.  This way, each thread
+ * operates on contiguous regions in C, and their is initially no contention
+ * on counters.  Only once we start stealing work do we get non-contiguous
+ * or is their a possibility of counter contention.  The only difference
+ * between static scheduling if everyone runs at same speed is that we
+ * loop in reverse order over column panels, which can be helpful in that
+ * the last things done in this gemm are then often the first things operated
+ * on in the next step, which if we are lucky may give us some cache reuse.
+ */
+   for (p=0; p < ATL_NTHREADS; p++)
    {
-      ATL_INT nb, nnb, nbr;
-      size_t j;
+      ATL_CINT rk = (iam+p)%ATL_NTHREADS; 
+      ATL_CINT myblks = (rk != ATL_NTHREADS-1) ? nlblks : nlblks+nrblks;
+      void *aNcnt = aNcnts[rk];
 
-      if (!nr || jblk != nnblks)
+      while (jblk = ATL_DecAtomicCount(aNcnt))
       {
-         nnb = 1;
-         nbr = 0;
-         nb = NB;
-      }
-      else
-      {
-         nnb = 0;
-         nbr = nr;
-         nb = nr;
-      }
-      j = (jblk-1)*(NB SHIFT);
+         ATL_INT nb, nnb, nbr;
+         size_t j;
+
+         if (!nr || jblk != myblks || rk != ATL_NTHREADS-1)
+         {
+            nnb = 1;
+            nbr = 0;
+            nb = NB;
+         }
+         else
+         {
+            nnb = 0;
+            nbr = nr;
+            nb = nr;
+         }
+         j = (nlblks*rk + jblk-1)*(NB SHIFT);
 /*
- *    Copy the specified col-panel to my private workspace
+ *       Copy the specified col-panel to my private workspace
  */
-      if (BNOTRANS)
-         Mjoin(PATL,col2blk_a1)(K, nb, B+j*ldb, ldb, pB, ATL_rone);
-      else
-         Mjoin(PATL,row2blkT_a1)(K, nb, B+j, ldb, pB, ATL_rone);
+         if (BNOTRANS)
+            Mjoin(PATL,col2blk_a1)(K, nb, B+j*ldb, ldb, pB, ATL_rone);
+         else
+            Mjoin(PATL,row2blkT_a1)(K, nb, B+j, ldb, pB, ATL_rone);
 /*
- *    If kr is nonzero and not a multiple of 8, pad K with K8-K zeros
- *    This allows us to cause less K-cleanup kernels to be loaded, as
- *    well as ensuring we keep things aligned for vectorized cleanup kernels
+ *       If kr is nonzero and not a multiple of 8, pad K with K8-K zeros
+ *       This allows us to cause less K-cleanup kernels to be loaded, as
+ *       well as ensuring we keep things aligned for vectorized cleanup kernels
+ *       This will tend to depress perf when kr is small, and improve it when
+ *       kr is large and not a multiple of the vector length
  */
-      if (krpad)
-         ExpandBlock(kr, nb, pB+nfKblks*NB*nb, kr8);
+         if (krpad)
+            ExpandBlock(kr, nb, pB+nfKblks*NB*nb, kr8);
 /* 
- *    Perform the rank-K8 update of the column panel of C
+ *       Perform the rank-K8 update of the column panel of C
  */
-      DoMM_NMK(nfMblks, mr, nnb, nbr, nfKblksf, kr8f, A, pB, C+j*ldc, ldc);
+         DoMM_NMK(nfMblks, mr, nnb, nbr, nfKblksf, kr8f, A, pB, C+j*ldc, ldc);
+      }
    }
 }
 
@@ -6428,7 +6451,7 @@ void Mjoin(PATL,DoWork_rkK_Np)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    ATL_CINT iam = tp->rank;
    volatile int *chkin = pd->chkin;
    TYPE *Bw=pd->Bws[iam], *Aw=pd->Aw;
-   void *aMcnt=pd->aMcnt, *aNcnt=pd->aNcnt;
+   void *aMcnt=pd->aMcnt;
    ATL_CINT K = pd->K;
    ATL_CINT BNOTRANS = (pd->TB == AtlasNoTrans);
    ATL_CINT ANOTRANS = (pd->TA == AtlasNoTrans);
@@ -6475,8 +6498,9 @@ void Mjoin(PATL,DoWork_rkK_Np)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 /*
  * Perform the rank-K update with a fully-copied A
  */
-   ATL_tloopN(pd->aNcnt, iam, nMb, mr, pd->nNb, pd->nr, nKb, kr, kr8-kr, Aw,
-              pd->TB, pd->B, pd->ldb, pd->Bws[iam], pd->C, pd->ldc);
+   ATL_tloopN(pd->aNcnts, iam, nMb, mr, pd->nNb, pd->nr, pd->nlblks, pd->nrblks,
+              nKb, kr, kr8-kr, Aw, pd->TB, pd->B, pd->ldb, pd->Bws[iam], 
+              pd->C, pd->ldc);
 }
 
 int Mjoin(PATL,tgemm_rkK_Np)
@@ -6491,8 +6515,10 @@ int Mjoin(PATL,tgemm_rkK_Np)
    size_t sz;
    volatile int *chkin;
    TYPE **Bws, *Aw;
+   void **Acnts;
    ATL_CINT nKb = ATL_DivByNB(K), kr = K - ATL_MulByNB(nKb);
    ATL_CINT K8 = ATL_MulByNB(nKb) + (((kr+7)>>3)<<3);
+   ATL_INT nlblks, nrblks;
    int i, nDb, dr;
    void **acnts;
 
@@ -6525,8 +6551,13 @@ int Mjoin(PATL,tgemm_rkK_Np)
    pd.aMcnt = ATL_SetAtomicCount(nDb);
    pd.nNb = nDb = ATL_DivByNB(N);
    pd.nr = dr = N - ATL_MulByNB(nDb);
-   nDb = (dr) ? nDb+1 : nDb;
-   pd.aNcnt = ATL_SetAtomicCount(nDb);
+   pd.nlblks = nlblks = nDb / ATL_NTHREADS;
+   nrblks = nDb - nlblks*ATL_NTHREADS;
+   pd.nrblks = nrblks = (dr) ? nrblks+1 : nrblks;
+   for (i=0; i < ATL_NTHREADS-1; i++)
+      Acnts[i] = ATL_SetAtomicCount(nlblks);
+   Acnts[ATL_NTHREADS-1] = ATL_SetAtomicCount(nlblks+nrblks);
+   pd.aNcnts = Acnts;
    pd.nKb = nKb; pd.kr = kr; pd.kr8 = ((kr+7)>>3)<<3;
    pd.A = A; pd.B = B; pd.C = C;
    pd.lda = lda; pd.ldb = ldb; pd.ldc = ldc;
@@ -6536,6 +6567,9 @@ int Mjoin(PATL,tgemm_rkK_Np)
 
    ATL_goparallel(ATL_NTHREADS, Mjoin(PATL,DoWork_rkK_Np), &pd);
 
+   ATL_FreeAtomicCount(pd.aMcnt);
+   for (i=0; i < ATL_NTHREADS; i++)
+      ATL_FreeAtomicCount(Acnts[i]);
    free(Bws);
    return(0);
 }
@@ -6917,7 +6951,7 @@ int Mjoin(PATL,tgemm_MKp)
 #include "atlas_misc.h"
 #include "atlas_lvl3.h"
 #include "atlas_threads.h"
-void Mjoin(PATL,tgemm_MKp)
+void Mjoin(PATL,tgemm2)
    (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, ATL_CINT M, 
     ATL_CINT N, ATL_CINT K, const SCALAR alpha, const TYPE *A, ATL_CINT lda, 
     const TYPE *B, ATL_CINT ldb, const SCALAR beta, TYPE *C, ATL_CINT ldc)
