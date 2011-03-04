@@ -7369,3 +7369,278 @@ int Mjoin(PATL,tgemm_Mp)
    }
    while (nblks < 2*ATL_NTHREADS);
 }
+@ROUT ATL_tgemm_rKp
+typedef struct
+{
+   void **aNcnts;         /* P counters on col-panels of C */
+   void *aMcnt;           /* count row-panels of A */
+   void *donecnt;         /* Counter used to detect if op is complete */
+   volatile int *chkin;   /* ATL_NTHREAD-len checkin array */
+   volatile int Riam;     /* 1st arriver on cooperative operation */
+   volatile int DONE;     /* set by Riam when cooperative op is complete */
+   TYPE **Bws;            /* preallocated thread copy areas */
+   TYPE *Aw;              /* workspace for common A */
+   const TYPE *A, *B;     /* original input matrices */
+   TYPE *C;               /* original output matrix */
+   SCALAR alpha;
+   SCALAR beta;
+   ATL_INT Kp, nKp, klast;
+   ATL_INT nMb, mr, nNb, nr, nlblks, nrblks;
+   ATL_INT M, N, K, lda, ldb, ldc;
+   enum ATLAS_TRANS TA, TB;
+} ATL_TGEMM_RKP_t;
+
+void Mjoin(PATL,DoWork_NKp)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+/*
+ * This routine loops over Kp-sized chunks of K
+ */
+{
+   ATL_thread_t *tp=vp;
+   ATL_TGEMM_RKP_t *pbdef=lp->vp;
+   ATL_CINT iam = tp->rank;
+   ATL_INT k, kb;
+   volatile int *chkin = pbdef->chkin;
+   TYPE *Aw=pbdef->Bw, *Bw=pbdef->Bws[iam];
+   void *aAcnt=pbdef->aAcnt, *aBcnt=pbdef->aBcnt;
+   ATL_CINT BNOTRANS = (pbdef->TB == AtlasNoTrans);
+   ATL_CINT ANOTRANS = (pbdef->TA == AtlasNoTrans);
+   const TYPE *A=pbdef->A, *B=pbdef->B;
+   TYPE *C = pbdef->C;
+   ATL_CINT M = pbdef->M, N = pbdef->N, K = pbdef->K, klast = pbdef->klast;
+   ATL_CINT nNb = pbdef->nNb,  Kp = pbdef->Kp;
+   ATL_CINT lda = pbdef->lda, ldb = pbdef->ldb, ldc = pbdef->ldc;
+   ATL_CINT nfMblks = pbdef->nMb, nfNblks = nNb;
+   ATL_CINT nr = pbdef->nr;
+   ATL_CINT nfKblks0 = Kp / NB;
+   ATL_INT nfKblks, kr, i;
+
+/*
+ * Threads cooperate to scale C if beta is not one; the unit of work is 1 col
+ * After this block, we can always use BETA=1 for all GEMM calls
+ */
+   if (SCALAR_IS_ZERO(pbdef->beta))
+   {
+      register int j;
+      int Ciam = iam+1;
+      void *aCcnt = pbdef->aCcnt;
+
+      j = ATL_DecAtomicCount(aCcnt);
+      if (j == N)
+      {
+         pbdef.Riam  = iam;  /* I'm responsible for certifying C is finished */
+      }
+      if (j)
+      {
+         Mjoin(PATL,zero)(M, C+ldc*(j-1), 1);
+         while (j = ATL_DecAtomicCount(aCcnt))
+            Mjoin(PATL,zero)(M, C+ldc*(j-1), 1);
+      }
+      if (iam == pbdef.Riam)
+      {
+         pbdef.Riam = -1;
+      }
+      else
+         while (!pbdef->DONE);
+   }
+   else if (pbdef->aCcnt)   /* cheap test for BETA != 1.0 */
+   {
+      register int j;
+      const SCALAR beta = pbdef->beta;
+      void *aCcnt = pbdef->aCcnt;
+
+      while (j = ATL_DecAtomicCount(aCcnt))
+      {
+         j--;
+         Mjoin(PATL,scal)(M, beta, C+ldc*j, 1);
+      }
+   }
+/*
+ * Loop over partitions of K that have been chosen to fit operands in the
+ * cache so that A can be reused across all of B;  go from last to first.
+ * This will result in CEIL(K/Kp) writes of C
+ */
+   kb = klast;
+   nfKblks = kb / NB;
+   kr = kb - nfKblks * NB;
+   if (K > klast)
+      ATL_assert(nfKblks0*NB == Kp);
+   k = K-klast;
+   B += (BNOTRANS) ?  k : k*ldb;
+   A += (ANOTRANS) ? k*lda : k;
+
+   for (; k >= 0; k -= Kp)
+   {
+      int jblk;
+/*
+ *    If we need row-major access on B, measly parallel speedup not worth
+ *    doing row-access, so first node to arrive here just does the entire copy
+ */
+      if (!BNOTRANS)  /* transpose case */
+      {
+         if (ATL_DecAtomicCount(pbdef->aBcnt) == nNb)
+         {
+            const SCALAR alpha = pbdef->alpha;
+            if (SCALAR_IS_ONE(alpha))
+               Mjoin(PATL,row2blkT2_a1)(N, kb, B, ldb, Bw, alpha);
+            else
+               Mjoin(PATL,row2blkT2_aX)(N, kb, B, ldb, Bw, alpha);
+         }
+         B -= Kp*ldb;
+      }
+/*
+ *    Copy nNb column panels of B in parallel using the atomic counter aBcnt
+ */
+      else  /* No-Tranpose case */
+      {
+         const SCALAR alpha = pbdef->alpha;
+         MAT2BLK B2blk = (SCALAR_IS_ONE(alpha)) ?
+                         Mjoin(PATL,col2blk_a1) : Mjoin(PATL,col2blk_aX);
+
+         while(jblk = ATL_DecAtomicCount(pbdef->aBcnt))
+         {
+            ATL_INT nn, j;
+            jblk--;
+            j = jblk * NB;
+            nn = N - j;
+            nn = Mmin(nn, NB);
+            B2blk(kb, nn, B+j*ldb, ldb, Bw+(size_t)jblk*kb*NB, alpha);
+         }
+         B -= Kp;
+      }
+/*
+ *    Node P-1 makes sure everyone has finished, then he sets our counters
+ *    (safe since everyone else waiting below) before signaling his completion
+ */
+      if (iam == ATL_NTHREADS-1)
+      {
+         const int mycnt = chkin[iam];
+         for (i=0; i < ATL_NTHREADS-1; i++)
+            while(chkin[i] <= mycnt);
+         ATL_ResetAtomicCount(pbdef->aBcnt, nNb);  /* reset for next k-it */
+         ATL_ResetAtomicCount(pbdef->aAcnt, nMp);  /* starting A again */
+         chkin[iam]++;
+      }
+      else
+      {
+         const int mycnt = chkin[iam];
+         chkin[iam]++;
+         for (i=0; i < ATL_NTHREADS; i++)
+            while(chkin[i] <= mycnt);
+      }
+      ATL_tloopA(aAcnt, iam, nMp, Mp, mlast, nfMblks, nfNblks, nr,
+                 nfKblks, kr, pbdef->TA, A, lda, Aw, Bw, C, ldc);
+      A -= (ANOTRANS) ? Kp*lda : Kp;
+      kb = Kp;
+      nfKblks = nfKblks0;
+      kr = 0;
+      if (k)  /* must sync before copying B at top of loop */
+      {
+         const int mycnt = chkin[iam];
+         chkin[iam]++;
+         for (i=0; i < ATL_NTHREADS; i++)
+            while(chkin[i] <= mycnt);
+      }
+   }
+}
+int Mjoin(PATL,tgemm_rKp)
+   (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, ATL_CINT M,
+    ATL_CINT N, ATL_CINT K, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
+    const TYPE *B, ATL_CINT ldb, const SCALAR beta, TYPE *C, ATL_CINT ldc)
+{
+   TYPE *Aw, *p;
+   void **acnts;
+   void *amcnt, *vp;
+   TYPE **Bws;
+   size_t wrksz;
+   ATL_INT Kp, Mp, i, k, m, klast, mlast, nKp, nMp, nNb;
+   ATL_TGEMM_RKP_t pbdef;
+
+/*
+ * =====================================================================
+ * Compute the Kp partitioning.  We want all our operands to fit
+ * in cache, assuming algorithmic movement and LRU replacement, so:
+ *    M*Kp + 2*(NB*Kp + M*NB) = CE
+ * =====================================================================
+ */
+/*
+ * See if we must cut K in order to fit in CE; if so, Mp=MB=NB, and:
+ *    MB*Kp + 2*(NB*Kp + MB*NB) = CE  -> Kp = (CE - MB*NB)/(MB + 2*NB)
+ *      A          B       C
+ */
+   if (MB*K + 2*NB*K + MB*NB > CacheEdge)  /* Mp=MB; solve for Kp */
+   {
+      Kp = (CacheEdge - MB*NB)/(MB + 2*NB);
+      Kp = (Kp > KB) ? (Kp/KB)*KB : KB;
+   }
+   else  /* otherwise, its a rank-K update, call special routine */
+      return(Mjoin(PATL,tgemm_rkK_Np)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
+                                      beta, C, ldc));
+/*
+ * Find size of partial block at end.  If it is <= NB, absorb it into previous
+ * block and have no partial block 
+ */
+   nKp = K / Kp;        /* floor(K/Kp) */
+   klast = K - nKp*Kp;
+   if (klast)
+   {
+      if (klast < NB)
+         klast += Kp;   /* absorb partial block into last K block */
+      else
+         nKp++;         /* nKp now includes klast, which is > NB */
+   }
+   else
+      klast = Kp;       /* K is even multiple of Kp */
+   nMb = M/NB;          /* floor(M/NB) */
+   nNb = N/NB;          /* floor(N/NB) */
+   if (nNb < ATL_NTHREADS*2)
+      return(3);
+/*
+ * Worksize: let k = MAX(Kp,CEIL(klast/NB)*NB), then:
+ * All threads share the N*k B workspace, which is split into
+ * nNb column panels; we round the B workspace up as if N were a multiple of NB
+ * Then all threads need a private k*NB piece of A, and finally we need
+ * nthr-len integer checkin array and a nthr-len array of pointers, which
+ * we use to pass all the A work pointers to the worker nodes.
+ */
+   k = ((klast+NB-1)/NB)*NB;
+   k = Mmax(Kp, k);
+   wrksz = (2+ATL_NTHREADS)*ATL_Cachelen + ATL_MulBySize(MB)*nMb*k +
+           ATL_NTHREADS*(sizeof(void*)+sizeof(TYPE*) + ATL_MulBySize(NB)*k);
+   if (ATL_NTHREADS*ATL_PTMAXMALLOC < wrksz)
+      return(1);
+   vp = malloc(wrksz);
+   if (!vp)
+      return(2);
+   Bws = vp;                            /* B work ptrs first array */
+   acnts = (void*)(Bws+ATL_NTHREADS);   /* then atomic count array */
+   Aw = (TYPE*)(acnts+ATL_NTHREADS);    /* then workspace for common A */
+   Aw = ATL_AlignPtr(Aw);               /* A must be aligned */
+   p = Aw + M*k;                        /* first B wrkspc after A wrkspc */
+   Bws[0] = ATL_AlignPtr(p);            /* B wrkspcs must be aligned */
+   for (i=1; i < ATL_NTHR; i++)         /* init rest of nthr-len arrays */
+   {
+      p = Bws[i-1] + N*k;
+      Bws[i] = ATL_AlignPtr(p);
+   }
+   pbdef.alpha = alpha; pbdef.beta = beta;
+   pbdef.A = A; pbdef.B = B; pbdef.C = C;
+   pbdef.M = M; pbdef.N = N; pbdef.K = K;
+   pbdef.lda = lda; pbdef.ldb = ldb; pbdef.ldc = ldc;
+   pbdef.Kp = Kp; pbdef.klast = klast; pbdef.nKp = nKp;
+   pbdef.nMb = nMb; pbdef.nNb = nNb;
+   pbdef.mr = M - nMb * NB; pbdef.nr = N - nNb * NB;
+   pbdef.TA = TA; pbdef.TB = TB;
+   pbdef.Aw = Aw; pbdef.Bws = Bws;
+   i = nr ? nNb+1 : nNb;
+   pbdef.aBcnt = ATL_SetAtomicCount(i);
+   pbdef.donecnt = ATL_SetAtomicCount(i);
+   if (SCALAR_IS_ONE(beta))
+      pbdef.aCcnt = NULL;
+   else
+      pbdef.aCcnt = ATL_SetAtomicCount(N);
+//   printf("Mp=%d, nMp=%d, mlast=%d, Kp=%d, nKp=%d, klast=%d\n",
+//          Mp, nMp, mlast, Kp, nKp, klast);
+   ATL_goparallel(ATL_NTHREADS, Mjoin(PATL,DoWork_NKp), &pbdef);
+   free(vp);
+   return(0);
+}
