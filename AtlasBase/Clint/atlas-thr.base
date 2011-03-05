@@ -126,6 +126,7 @@ void *ATL_mutex_init(void);       /* returns mutex pointer */
 void ATL_mutex_lock(void *vp);
 void ATL_mutex_unlock(void *vp);
 int  ATL_mutex_trylock(void *vp); /* opp pthreads: 0 means lock NOT acquired */
+void ATL_thread_yield(void);      /* gives up time slice */
 
 
 #define MindxT(A_,i_) ((void*)( ((char*)(A_)) + ((size_t)i_) ))
@@ -604,6 +605,20 @@ int ATL_get_ucnt(void *vp, int rank)
 /* 
  * RETURNS: 0 if all sets taken, else a number between 1...nsets
 {
+}
+@ROUT ATL_thread_yield
+#include "atlas_misc.h"
+#include "atlas_threads.h"
+#ifndef ATL_WINTHREADS
+   #include <sched.h>
+#endif
+void ATL_thread_yield(void)
+{
+   #ifdef ATL_WINTHREADS
+      Sleep(0);
+   #else
+      sched_yield();
+   #endif
 }
 @ROUT ATL_mutex_init
 #include "atlas_misc.h"
@@ -6149,6 +6164,7 @@ SQUARE:   /* near-square shape, N <= 256 if jumped here */
 #endif
 #include "atlas_lvl3.h"
 #include "atlas_threads.h"
+#include "atlas_tsumm.h"
 
 @ROUT ATL_tgemm_MKp
 static int ATL_NTHR = ATL_NTHREADS;
@@ -6440,6 +6456,15 @@ static void ATL_tloopN
    }
 }
 
+/*
+ * If we don't have thread affinity, then the thread I'm waiting on may share
+ * the core with me.  In this case, yield my time slice when polling 
+ */
+#if defined(ATL_TAFFINITY) && ATL_TAFFINITY
+   #define MYPOLL
+#else
+   #define MYPOLL ATL_thread_yield()
+#endif
 void Mjoin(PATL,DoWork_rkK_Np)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 /* 
  * This routine has everyone cooperate to copy row-panels of A, and then
@@ -6494,7 +6519,7 @@ void Mjoin(PATL,DoWork_rkK_Np)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
  */
    chkin[iam] = 1;
    for (k=0; k < ATL_NTHREADS; k++)
-      while(!chkin[k]);
+      while(!chkin[k]) MYPOLL;
 /*
  * Perform the rank-K update with a fully-copied A
  */

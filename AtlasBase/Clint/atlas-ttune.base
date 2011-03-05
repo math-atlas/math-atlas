@@ -290,16 +290,52 @@ void PrintRank(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    printf("%d: awake with vp=%p\n", tp->rank, lp->vp);
 }
 
+void PrintUsage(char *exe)
+{
+   fprintf(stderr, "USAGE: %s [-r <reps>] -o outfile\n", exe);
+   exit(-1);
+}
+
+size_t GetFlags(int nargs, char **args, char **outfile)
+{
+   int i;
+   size_t reps = 1000000;
+
+   *outfile = NULL;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0]);
+      switch(args[i][1])
+      {
+      case 'r':
+         if (++i >= nargs)
+            PrintUsage(args[0]);
+         reps = atoll(args[i]);
+         break;
+      case 'o':
+         if (++i >= nargs)
+            PrintUsage(args[0]);
+         *outfile = args[i];
+         break;
+      default:
+         PrintUsage(args[0]);
+      }
+   }
+   return(reps);
+}
+
 int main(int nargs, char **args)
 {
    double t0, tmut_s, tdec_s, tser_s, tmut, tdec, tser, tldec;
-   size_t nreps=1000000, i, lcnt;
+   size_t nreps, i, lcnt;
    ATL_thread_t ts;
+   char *outfile;
 
-   if (nargs > 1)
-      nreps = atoll(args[1]);
+   nreps = GetFlags(nargs, args, &outfile);
    
-   printf("FINDING SPEED OF SERIAL COUNTER CHANGING USING %d REPS:\n", nreps);
+   printf("FINDING SPEED OF SERIAL COUNTER CHANGING USING %ld REPS:\n", 
+          (long int) nreps);
    ts.rank = 0;
    timearr = malloc(sizeof(double)*ATL_NTHREADS);
    ATL_assert(timearr);
@@ -335,8 +371,8 @@ int main(int nargs, char **args)
    printf("DEC TIME SPEEDUP OVER MUTEX   = %.2f\n", tmut_s / tdec_s);
    printf("UNSAFE/READ SPEEDUP OVER DEC = %.2f\n\n", tdec_s / tser_s);
 
-   printf("FINDING SPEED OF PARALLEL COUNTER CHANGING USING %d REPS %d PROC\n",
-          nreps, ATL_NTHREADS);
+   printf("FINDING SPEED OF PARALLEL COUNTER CHANGING USING %ld REPS %d PROC\n",
+          (long int) nreps, ATL_NTHREADS);
 
    for (i=0; i < ATL_NTHREADS-1; i++)
       timearr[i] = -1.0;
@@ -389,13 +425,20 @@ int main(int nargs, char **args)
    printf("DEC TIME SPEEDUP OVER MUTEX   = %.2f\n", tmut / tdec);
    printf("LOCDEC TIME SPEEDUP OVER MUTEX   = %.2f\n", tmut / tldec);
 /*
- * If my assembly isn't noticably faster than the mutex code, just use the
- * the mutex code
+ * Change nothing unless outfile is non-NULL
  */
-   if (tmut < tldec*1.02)
+   if (outfile)
    {
-      printf("\nNO REAL ADVANTAGE TO ASSEMBLY, FORCING USE OF MUTEX\n");
-      ATL_assert(!system("make iForceUseMutex"));
+      FILE *fpout;
+/*
+ *    If my assembly isn't noticably faster than the mutex code, just use the
+ *    the mutex code
+ */
+      if (tmut < tldec*1.02)
+      {
+         printf("\nNO REAL ADVANTAGE TO ASSEMBLY, FORCING USE OF MUTEX\n");
+         ATL_assert(!system("make iForceUseMutex"));
+      }
    }
    free(timearr);
    return(0);
@@ -564,17 +607,30 @@ int main(int nargs, char **args)
    for (i=0; i < ATL_NTHREADS; i++)
       free(vp[i]);
 
-   if (tnoa*1.01 < taff && outfile)
+   if (outfile)  /* if this is a real run where we want to change things */
    {
-      FILE *fpout;
-      printf(
-      "Affinity is not helpful on your system, forcing ATLAS not to use it\n");
-      fpout = fopen(outfile, "w");
-      ATL_assert(fpout);
-      fprintf(fpout, "#ifndef ATL_TAFFINITY_H\n   #define ATL_TAFFINITY_H\n");
-      fprintf(fpout, "   #define ATL_NOAFFINITY 1\n");
-      fprintf(fpout, "#endif\n");
-      fclose(fpout);
+      if (tnoa*1.02 < taff)
+      {
+         FILE *fpout;
+         printf(
+       "Affinity is not helpful on your system, forcing ATLAS not to use it\n");
+         fpout = fopen(outfile, "w");
+         ATL_assert(fpout);
+         fprintf(fpout, "#ifndef ATL_TAFFINITY_H\n   #define ATL_TAFFINITY_H\n");
+         fprintf(fpout, "   #define ATL_NOAFFINITY 1\n");
+         fprintf(fpout, "#endif\n");
+         fclose(fpout);
+         fpout = fopen("res/aff.h", "w");
+         fprintf(fpout, "#define ATL_TAFFINITY 0\n");
+         fclose(fpout);
+      }
+      else /* affinity was a win */
+      {
+         FILE *fpout;
+         fpout = fopen("res/aff.h", "w");
+         fprintf(fpout, "#define ATL_TAFFINITY 1\n");
+         fclose(fpout);
+      }
    }
    return(0);
 }

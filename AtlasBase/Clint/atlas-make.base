@@ -356,6 +356,7 @@ include/:
 	touch include/atlas_@(pre)@(l2)NX.h
    @endwhile
 @endwhile
+	touch include/atlas_tsumm.h
 	touch include/atlas_taffinity.h
 	touch include/atlas_ssyrNX.h
 	touch include/atlas_ssyrNX.h
@@ -702,11 +703,24 @@ acnt_mut = $(THRdir)/ATL_SetAtomicCount_mut_mut.o \
            $(THRdir)/ATL_DecAtomicCount_mut_mut.o \
            $(THRdir)/ATL_FreeAtomicCount_mut_mut.o
 
-IThreadTune: 
+IThreadTune :
 	- $(MAKE) ITune_aff
 	$(MAKE) iTune_atomic
+	$(MAKE) MakeThreadSum
 force_build :
 
+sumf = $(INCAdir)/atlas_tsumm.h
+MakeThreadSum :
+	- rm -f $(sumf)
+	echo "#ifndef ATLAS_SUMM_H" > $(sumf)
+	echo "   #define ATLAS_SUMM_H" >> $(sumf)
+	cat res/aff.h >> $(sumf)
+	if grep -q ATL_DecAtomicCount_mut $(THRdir)/atomic.inc ; then \
+           echo "#define ATL_ATOMIC_COUNT_MUT 1" >> $(sumf) ; \
+        else \
+           echo "#define ATL_ATOMIC_COUNT_MUT 0" >> $(sumf) ; \
+        fi
+	echo "#endif" >> $(sumf)
 IRun_aff : xprobe_aff force_build
 	- rm res/probe.out
 	./xprobe_aff -v 1 -o $(INCAdir)/atlas_taffinity.h
@@ -747,7 +761,7 @@ xprobe_atomic_mut : tlib test_count.o
 iTune_atomic :
 	if $(MAKE) mutcnt ; then \
            if $(MAKE) iFind_atomic_arch ; then \
-              $(MAKE) xtune_count ; ./xtune_count 1000000 ; \
+              $(MAKE) xtune_count ; ./xtune_count -r 1000000 -o yes; \
            fi ; \
         else \
            $(MAKE) iFind_atomic_arch ; \
@@ -4997,7 +5011,7 @@ dep = $(INCSdir)/atlas_misc.h $(INCAdir)/atlas_pthreads.h \
 
 @multidef rt 
    thread_join thread_exit thread_start thread_launch goparallel
-   mutex_init mutex_lock mutex_unlock mutex_trylock
+   mutex_init mutex_lock mutex_unlock mutex_trylock thread_yield
 @endmultidef
 @declare "obj = " y n
    ATL_lin0tlaunch.o ATL_log2tlaunch.o ATL_dyntlaunch.o
@@ -5130,7 +5144,8 @@ clean : iclean dclean sclean cclean zclean
 
 deps = $(INCSdir)/atlas_misc.h $(INCAdir)/atlas_type.h \
        $(INCSdir)/atlas_lvl3.h $(INCSdir)/atlas_tlvl3.h \
-       $(INCAdir)/atlas_pthreads.h $(INCSdir)/atlas_threads.h
+       $(INCAdir)/atlas_pthreads.h $(INCSdir)/atlas_threads.h \
+       $(INCAdir)/atlas_tsumm.h
 
 @ROUT Make.l3thr
 @multidef crt her2k hemm herk
