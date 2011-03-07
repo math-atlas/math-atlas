@@ -507,6 +507,13 @@ void InCacheGemm
    V[4] = c4; V[5] = c5; V[6] = c6; V[7] = c7;
 }
 
+void TuneDoWork_gp(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   ATL_TUNE_T *tp = lp->vp;
+   int i;
+   InCacheGemm(tp->nflops, tp->V);
+}
+
 void TuneDoWork(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
    ATL_TUNE_T *tp = vp;
@@ -732,7 +739,7 @@ int GetFlags(int nargs, char **args, int *which)
 int main(int nargs, char **args)
 {
    int i, k, nreps = 200, opstride, which;
-   double t0, tlin, tlg2, tdyn;
+   double t0, tlin, tlg2, tdyn, trnk;
    ATL_TUNE_T ta[ATL_NTHREADS];
 @ROUT tune_spawn `   volatile int done[ATL_NTHREADS];`
 @ROUT tune_spawn_fp `   volatile double VV[16];`
@@ -795,6 +802,17 @@ int main(int nargs, char **args)
       }
       tlin = ATL_walltime() - t0;
       printf("   lin time = %e\n", (float)tlin);
+   }
+   if (which & 8)
+   {
+      t0 = ATL_walltime();
+      for (k=0; k < nreps; k++)
+      {
+@ROUT tune_spawn `         for (i=0; i < ATL_NTHREADS; i++) done[i] = 0;`
+         ATL_goparallel_prank(ATL_NTHREADS, TuneDoWork_gp, ta);
+      }
+      trnk = ATL_walltime() - t0;
+      printf("   rnk time = %e\n", (float)trnk);
    }
    if ((which | 7) == which)
       printf("DYNAMIC is %.2f%% of LINEAR and %.2f%% of LOG2 SPEED.\n", 
