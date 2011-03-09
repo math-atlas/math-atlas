@@ -116,9 +116,18 @@ void *ATL_dyntlaunch(void *vp);     /* launch done as workpool */
  * Atomic count functions; may be less overhead than mutex on some systems
  */
 void *ATL_SetAtomicCount(int cnt);   /* allocates acnt, sets acnt=cnt */
+int   ATL_ResetAtomicCount(void *vp, int cnt);  /* reset vp to cnt */
 int   ATL_DecAtomicCount(void *vp);  /* returns acnt-- (not --acnt!) */
 int   ATL_GetAtomicCount(void *vp);  /* returns acnt */
 void  ATL_FreeAtomicCount(void *vp); /* free acount resources */
+/*
+ * Global count functions, built out of P local counters for good scaling
+ */
+void *ATL_SetGlobalAtomicCount(int P, int cnt); 
+void  ATL_ResetGlobalAtomicCount(void *vp, int cnt);
+int   ATL_DecGlobalAtomicCount(void *vp, int rank); 
+int   ATL_GetGlobalAtomicCount(void *vp, int rank);
+void  ATL_FreeGlobalAtomicCount(void *vp);
 /*
  * If using pthreads, just wrapper around pthread mutex funcs, else written
  * in terms of the AtomicCount funcs with init value set to 1
@@ -650,7 +659,7 @@ void ATL_mutex_@(rt)(void *vp)
 @ROUT ATL_mutex_lock
    while(!ATL_DecAtomicCount(vp));
 @ROUT ATL_mutex_unlock
-   ATL_ResetAtomicCount(1);
+   ATL_ResetAtomicCount(vp, 1);
 @ROUT ATL_mutex_lock ATL_mutex_unlock
 #else
    ATL_assert(!pthread_mutex_@(rt)(vp));
@@ -689,6 +698,104 @@ void *ATL_SetAtomicCount(int cnt)
    return((void*)cp);
 }
 
+@ROUT ATL_SetGlobalAtomicCount ATL_ResetGlobalAtomicCount
+#include "atlas_misc.h"
+#include "atlas_threads.h"
+
+@ROUT ATL_ResetGlobalAtomicCount
+void ATL_ResetGlobalAtomicCount(void *vp, int cnt)
+/*
+ * This routine resets the global atomic counter vp to cnt
+ */
+{
+   int *ip=vp;
+   void **cnts = (void**)(ip+4);
+   int i, b, extra;
+   const int P = *ip;
+
+@ROUT ATL_SetGlobalAtomicCount
+void *ATL_SetGlobalAtomicCount(int P, int cnt)
+/*
+ * This routine allocates P atomic counters, and distributes the global count
+ * cnt over them in block format
+ */
+{
+   void **cnts;
+   int *ip;
+   int i, b, extra;
+
+   ip = malloc(P*sizeof(void*)+4*sizeof(int));
+   ATL_assert(ip);
+   cnts = (void**)(ip + 4);
+@ROUT ATL_SetGlobalAtomicCount ATL_ResetGlobalAtomicCount
+
+   b = cnt / P;
+   extra = cnt - b*P;
+   for (i=0; i < P; i++)
+   {
+      int n = b;
+      if (i < extra) n++;
+@ROUT ATL_SetGlobalAtomicCount   `      cnts[i] = ATL_SetAtomicCount(n);`
+@ROUT ATL_ResetGlobalAtomicCount `      ATL_ResetAtomicCount(cnts[i], n);`
+   }
+   ip[0] = P;
+   ip[1] = b;
+   ip[2] = extra;
+@ROUT ATL_SetGlobalAtomicCount `   return((void*)ip);`
+}
+
+@ROUT ATL_FreeGlobalAtomicCount
+#include "atlas_misc.h"
+#include "atlas_threads.h"
+
+void ATL_FreeGlobalAtomicCount(void *vp)
+{
+   int *ip=vp;
+   void **lcnts = (void**)(ip+4);
+   const int P=ip[0];
+   int i;
+
+   for (i=0; i < P; i++)
+      ATL_FreeAtomicCount(lcnts[i]);
+   free(vp);
+}
+
+@ROUT ATL_DecGlobalAtomicCount
+   @define op @Dec@
+@ROUT ATL_GetGlobalAtomicCount
+   @define op @Get@
+@ROUT ATL_DecGlobalAtomicCount ATL_GetGlobalAtomicCount
+#include "atlas_misc.h"
+int ATL_@(op)GlobalAtomicCount(void *vp, int rank)
+/*
+ * This routine returns a global counter that has been distributed over
+ * P local counters
+ */
+{
+   int i, j, iam, P, b, icnt, extra, *ip=vp;
+   void **lcnts = (void**)(ip+4);
+
+   P = ip[0];
+   b = ip[1];
+   extra = ip[2];
+/*
+ * First, find a local counter that still has count
+ */
+   for (i=0; i < P; i++)
+   {
+      icnt = (rank+i)%P;
+      if (j = ATL_@(op)AtomicCount(lcnts[icnt]))
+         break;
+   }
+/* 
+ * If I got a counter value, convert it from local to global
+ */
+   if (j)
+   {
+      j = (b) ? ((j-1)/b)*P*b + icnt*b + (j-1)%b + 1 : icnt+1;
+   }
+   return(j);
+}
 @ROUT ATL_FreeAtomicCount_mut
 #include <stdlib.h>
 #include <pthread.h>
@@ -927,7 +1034,7 @@ void ATL_thread_launch
    ls.rank2thr = tp;
    #ifdef ATL_TUNE_DYN
       ls.acounts = &vp;
-      ls.acounts[0] = ATL_SetAtomicCount(ATL_NTHREADS-1);
+      ls.acounts[0] = ATL_SetGlobalAtomicCount(ATL_NTHREADS>>1, ATL_NTHREADS-1);
       ls.imdone = calloc(ATL_NTHREADS, sizeof(int));
       ATL_assert(ls.imdone);
    #endif
@@ -940,7 +1047,7 @@ void ATL_thread_launch
    ATL_thread_start(tp, 0, ATL_tlaunch, tp);
    ATL_thread_join(tp);
    #ifdef ATL_TUNE_DYN
-       ATL_FreeAtomicCount(ls.acounts[0]);
+       ATL_FreeGlobalAtomicCount(ls.acounts[0]);
        free((void*)ls.imdone);
    #endif
 }
@@ -1209,14 +1316,14 @@ void *ATL_dyntlaunch(void *vp)
       if (!tp->paff_set)
           ATL_setmyaffinity(tp);
    #endif
-   dest = ATL_DecAtomicCount(acnt);
+   dest = ATL_DecGlobalAtomicCount(acnt, iam);
    while(dest)
    {
       dest = ATL_NTHREADS - dest;
       if ((!lp->OpStructIsInit ||
             lp->OpStructIsInit(lp->opstruct+dest*lp->opstructstride)))
          ATL_thread_start(btp+dest, dest, ATL_dyntlaunch, btp+dest);
-      dest = ATL_DecAtomicCount(acnt);
+      dest = ATL_DecGlobalAtomicCount(acnt, iam);
    }
 /*
  * Do the operation
@@ -1479,7 +1586,7 @@ void ATL_goparallel
    }
 #else
    ls.acounts = &lc;
-   ls.acounts[0] = ATL_SetAtomicCount(ATL_NTHREADS-1);
+   ls.acounts[0] = ATL_SetGlobalAtomicCount(P>>1, P-1);
    ATL_assert(P == ATL_NTHREADS);  /* need to rewrite thread_start to fix */
    vp = malloc(P*(sizeof(ATL_thread_t)+sizeof(int)) + ATL_Cachelen);
    ATL_assert(vp);
@@ -1497,13 +1604,14 @@ void ATL_goparallel
    }
    ATL_thread_start(tp, 0, ATL_dyntlaunch, tp);
    ATL_thread_join(tp);
+   ATL_FreeGlobalAtomicCount(ls.acounts[0]);
    free(vp);
 #endif
 }
 @ROUT ATL_goparallel_prank
 #include "atlas_misc.h"
 #include "atlas_threads.h"
-#if defined(ATL_GAS_x8664) || defined(ATL_GAS_x8632)
+#if 0 && (defined(ATL_GAS_x8664) || defined(ATL_GAS_x8632))
    #define ATL_HAS_COREID
 static unsigned int ATL_coreID(void)
 {
@@ -1553,6 +1661,7 @@ typedef struct
    void *Tcnt;              /* atomic counter of # of threads launched */
    void *Trankcnt;          /* atomic ctr providing thread rank */
    int NT, NP;              /* # of threads & processors */
+   int NLC;                 /* # of local cntrs in global acnts Tcnt/Trankcnt */
    pthread_attr_t attr;     /* attribute for pthread_create */
    ATL_LAUNCHSTRUCT_t *lp;  /* to pretend we've been launched normally */
 } ATL_ranklaunch_t;
@@ -1587,18 +1696,28 @@ void *ATL_DoRankLaunch(void *vp)
    const int T = rl->NT, P = rl->NP;
    int trank;   /* thread rank between 0 and NT-1 */
    int prank;   /* processor rank between 0 and NP-1 */
-   int i;
+   int i, coreID;
    pthread_t pt;
 /*
  * Cooperate with master to launch NT threads
  */
+   coreID = ATL_coreID();
+   trank = coreID % rl->NLC;
+   #ifdef ATL_GLOBAL
+   while(ATL_DecGlobalAtomicCount(rl->Tcnt, trank))
+   #else
    while(ATL_DecAtomicCount(rl->Tcnt))
+   #endif
       pthread_create(&pt, &rl->attr, ATL_DoRankLaunch, rl);
 /*
  * Get my coreID, and tell master I'm alive by writing it to coreID array
  */
-   trank = T - ATL_DecAtomicCount(rl->Trankcnt);
-   rl->coreIDs[trank] = ATL_coreID();
+   #ifdef ATL_GLOBAL
+      trank = T - ATL_DecGlobalAtomicCount(rl->Trankcnt, trank);
+   #else
+      trank = T - ATL_DecAtomicCount(rl->Trankcnt);
+   #endif
+   rl->coreIDs[trank] = coreID;
 /*
  * Wait on master to signal ranking have been established
  */
@@ -1661,10 +1780,18 @@ void ATL_goparallel_prank
    ls.opstructstride = 0;
    ls.imdone = NULL;
    ls.acounts = NULL;
-   T = rl.NT = P<<2;
+   T = (P >= 8) ? P<<2 : P+P;
+   rl.NT = T;
    rl.NP = P;
-   rl.Tcnt = ATL_SetAtomicCount(T-1);
-   rl.Trankcnt = ATL_SetAtomicCount(T-1);
+   #ifdef ATL_GLOBAL
+      rl.NLC = P;
+      rl.Tcnt = ATL_SetGlobalAtomicCount(rl.NLC, T-1);
+      rl.Trankcnt = ATL_SetGlobalAtomicCount(rl.NLC, T-1);
+   #else
+      rl.NLC = T >> 2;
+      rl.Tcnt = ATL_SetAtomicCount(T-1);
+      rl.Trankcnt = ATL_SetAtomicCount(T-1);
+   #endif
    rl.lp = &ls;
    uids = malloc(ATL_Cachelen+sizeof(int)*(T+P+P)+sizeof(ATL_thread_t)*P);
    ATL_assert(uids);
@@ -1689,8 +1816,12 @@ void ATL_goparallel_prank
 /*
  * Cooperate with worker threads to spawn all T threads
  */
-   while(ATL_DecAtomicCount(rl.Tcnt))
-      pthread_create(&pt, attr, ATL_DoRankLaunch, &rl);
+   #ifdef ATL_GLOBAL
+      while(ATL_DecGlobalAtomicCount(rl.Tcnt, 0))
+   #else
+      while(ATL_DecAtomicCount(rl.Tcnt))
+   #endif
+         pthread_create(&pt, attr, ATL_DoRankLaunch, &rl);
 /*
  * Wait for all created threads to checkin; worker threads will all write
  * their coreID to their entry in the coreIDs array.  Their index in this array
@@ -1752,12 +1883,18 @@ void ATL_goparallel_prank
  * resources I'm no longer using
  */
    ATL_assert(!pthread_attr_destroy(attr));  /* spawning complete, release */
-   ATL_FreeAtomicCount(rl.Tcnt);
-   ATL_FreeAtomicCount(rl.Trankcnt);
+   #ifdef ATL_GLOBAL
+      ATL_FreeGlobalAtomicCount(rl.Tcnt);
+      ATL_FreeGlobalAtomicCount(rl.Trankcnt);
+   #else
+      ATL_FreeAtomicCount(rl.Tcnt);
+      ATL_FreeAtomicCount(rl.Trankcnt);
+   #endif
 /*
  * Wait for all threads to complete before returning
  */
-   printf("Node 0 awaits completion on %d unique cores\n", nunique);
+   if (nunique < P)
+      printf("Node 0 awaits completion on %d unique cores; P=%d\n", nunique, P);
    for (i=1; i < T; i++)
       while(coreIDs[i] != -2)
         ATL_thread_yield();
