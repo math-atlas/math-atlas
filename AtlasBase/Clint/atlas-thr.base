@@ -1611,7 +1611,7 @@ void ATL_goparallel
 @ROUT ATL_goparallel_prank
 #include "atlas_misc.h"
 #include "atlas_threads.h"
-#if 0 && (defined(ATL_GAS_x8664) || defined(ATL_GAS_x8632))
+#if defined(ATL_GAS_x8664) || defined(ATL_GAS_x8632)
    #define ATL_HAS_COREID
 static unsigned int ATL_coreID(void)
 {
@@ -1625,9 +1625,9 @@ static unsigned int ATL_coreID(void)
     : "=m" (myRetn)
     :
 #if defined(ATL_GAS_x8632)
-    :"%eax", "%ebx"
+    :"%eax", "%ebx", "%edx", "%ecx"
 #elif defined(ATL_GAS_x8664)
-    :"%rax", "%rbx"
+    :"%rax", "%rbx", "%rdx", "%rcx"
 #endif
     );
   return(myRetn);
@@ -7033,7 +7033,7 @@ static void ATL_tloopA
    ATL_INT iblk;
    size_t i;
 
-   while (iblk = ATL_DecAtomicCount(aAcnt))
+   while (iblk = ATL_DecGlobalAtomicCount(aAcnt, iam))
    {
       ATL_INT mb, mymr, mymblks;
       if (iblk-- == nMp)
@@ -7094,7 +7094,7 @@ void Mjoin(PATL,DoWork_MKp)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    {
       register int j;
       void *aCcnt = pbdef->aCcnt;
-      while (j = ATL_DecAtomicCount(aCcnt))
+      while (j = ATL_DecGlobalAtomicCount(aCcnt, iam))
       {
          j--;
          Mjoin(PATL,zero)(M, C+ldc*j, 1);
@@ -7106,7 +7106,7 @@ void Mjoin(PATL,DoWork_MKp)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       const SCALAR beta = pbdef->beta;
       void *aCcnt = pbdef->aCcnt;
 
-      while (j = ATL_DecAtomicCount(aCcnt))
+      while (j = ATL_DecGlobalAtomicCount(aCcnt, iam))
       {
          j--;
          Mjoin(PATL,scal)(M, beta, C+ldc*j, 1);
@@ -7135,7 +7135,7 @@ void Mjoin(PATL,DoWork_MKp)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
  */
       if (!BNOTRANS)  /* transpose case */
       {
-         if (ATL_DecAtomicCount(pbdef->aBcnt) == nNb)
+         if (ATL_DecGlobalAtomicCount(pbdef->aBcnt, iam) == nNb)
          {
             const SCALAR alpha = pbdef->alpha;
             if (SCALAR_IS_ONE(alpha))
@@ -7154,7 +7154,7 @@ void Mjoin(PATL,DoWork_MKp)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
          MAT2BLK B2blk = (SCALAR_IS_ONE(alpha)) ? 
                          Mjoin(PATL,col2blk_a1) : Mjoin(PATL,col2blk_aX);
 
-         while(jblk = ATL_DecAtomicCount(pbdef->aBcnt))
+         while(jblk = ATL_DecGlobalAtomicCount(pbdef->aBcnt, iam))
          {
             ATL_INT nn, j;
             jblk--;
@@ -7174,8 +7174,8 @@ void Mjoin(PATL,DoWork_MKp)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
          const int mycnt = chkin[iam];
          for (i=0; i < ATL_NTHREADS-1; i++)
             while(chkin[i] <= mycnt);
-         ATL_ResetAtomicCount(pbdef->aBcnt, nNb);  /* reset for next k-it */
-         ATL_ResetAtomicCount(pbdef->aAcnt, nMp);  /* starting A again */
+         ATL_ResetGlobalAtomicCount(pbdef->aBcnt, nNb);/* rest for next k-it */
+         ATL_ResetGlobalAtomicCount(pbdef->aAcnt, nMp);/* starting A again */
          chkin[iam]++;
       }
       else
@@ -7361,12 +7361,12 @@ int Mjoin(PATL,tgemm_MKp)
    pbdef.nNb = nNb;
    pbdef.TA = TA; pbdef.TB = TB;
    pbdef.Bw = Bw; pbdef.Aws = Aws;
-   pbdef.aBcnt = ATL_SetAtomicCount(nNb);
-   pbdef.aAcnt = ATL_SetAtomicCount(nMp);
+   pbdef.aBcnt = ATL_SetGlobalAtomicCount(ATL_NTHREADS, nNb);
+   pbdef.aAcnt = ATL_SetGlobalAtomicCount(ATL_NTHREADS, nMp);
    if (SCALAR_IS_ONE(beta))
       pbdef.aCcnt = NULL;
    else
-      pbdef.aCcnt = ATL_SetAtomicCount(N);
+      pbdef.aCcnt = ATL_SetGlobalAtomicCount(ATL_NTHREADS, N);
 //   printf("Mp=%d, nMp=%d, mlast=%d, Kp=%d, nKp=%d, klast=%d\n", 
 //          Mp, nMp, mlast, Kp, nKp, klast);
    ATL_goparallel(ATL_NTHREADS, Mjoin(PATL,DoWork_MKp), &pbdef);
