@@ -133,6 +133,7 @@ void  ATL_FreeGlobalAtomicCount(void *vp);
  * in terms of the AtomicCount funcs with init value set to 1
  */
 void *ATL_mutex_init(void);       /* returns mutex pointer */
+void ATL_mutex_free(void *vp);    /* frees mutex vp */
 void ATL_mutex_lock(void *vp);
 void ATL_mutex_unlock(void *vp);
 int  ATL_mutex_trylock(void *vp); /* opp pthreads: 0 means lock NOT acquired */
@@ -645,6 +646,19 @@ void *ATL_mutex_init(void)
    return(vp);
 #endif
 }
+@ROUT ATL_mutex_free
+#include "atlas_misc.h"
+#include "atlas_threads.h"
+void ATL_mutex_free(void *vp)
+{
+#ifdef ATL_WINTHREADS  /* if not using pthreads, use AtomicCount to sim mut */
+   ATL_FreeAtomicCount(vp);
+#else
+   ATL_assert(!pthread_mutex_destroy(vp));
+   free(vp);
+#endif
+}
+@ROUT ATL_mutex_free
 @ROUT ATL_mutex_lock
    @define rt @lock@
 @ROUT ATL_mutex_unlock
@@ -736,7 +750,6 @@ void *ATL_SetGlobalAtomicCount
    int *ip, *lcnts;
    int i, b, extra, nL, nG;
 
-   ATL_assert(cnt > 0);
 @ROUT ATL_SetGlobalAtomicCount ATL_ResetGlobalAtomicCount
    b = cnt / P;
    extra = cnt - b*P;
@@ -6633,6 +6646,7 @@ typedef struct
    void *aMcnt;           /* count row-panels of A */
 @ROUT ATL_tgemm_rkK 
    void **aMcnts;         /* P-len array of counts on row-blks of C */
+   void **Mlocks;         /* mutexes protecting init of aMcnts */
    int *Js;               /* current C col for each node */
 @ROUT ATL_tgemm_rkK_Np ATL_tgemm_rkK
    volatile int *chkin;   /* ATL_NTHREAD-len checkin array */
@@ -6675,8 +6689,8 @@ static void DoMM_K
    ATL_CINT nb,         /* # of cols in C <= NB */
    ATL_CINT nfKblks,    /* # of full blocks of K */
    ATL_CINT kr,         /* partial remainder block on K */
-   const TYPE *A,       /* block-major A in (nfKblks*KB+kr) x nb panel */
-   const TYPE *B,       /* block-major B in (nfKblks*KB+kr) x nb panel */
+   const TYPE *A,       /* block-major A in (nfKblks*KB+kr) x NB panel */
+   const TYPE *B,       /* block-major B in (nfKblks*KB+kr) x NB panel */
    TYPE *C,             /* ldcxnb array for result */
    ATL_CINT ldc         /* stride betweent elts in a row of C */
 )
@@ -6703,6 +6717,7 @@ static void DoMM_K
       mmk_kr(mb, nb, kr, ATL_rone, A, kr, B, kr, ATL_rone, C, ldc);
 }
 
+@ROUT ATL_tgemm_MKp ATL_tgemm_rkK_Np
 /*
  * This routine is a driver routine that makes all the appropriate calls
  * to the gemm kernel assuming both A & B are already copied to block-major
@@ -6805,6 +6820,7 @@ static void DoMM_NMK
       }
    }
 }
+@ROUT ATL_tgemm_MKp ATL_tgemm_rkK_Np ATL_tgemm_rkK
 
 /* 
  * Takes a MxN block and expands it to an ldaxM block wt zero padding in-place
@@ -7074,7 +7090,7 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       void *aCrow;
       TYPE *c;
 
-      nb = (jblk != tnNblks) ? NB : nr;
+      nb = (jblk != tnNblks || !nr) ? NB : nr;
       pd->Js[iam] = j = (jblk-1)*(NB SHIFT);
       c = C + j * ((size_t)ldc);
 /*
@@ -7105,10 +7121,12 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       if (j < P)
          pL = (100+P-1)/P;
       aCrow = aMcnts[iam];
+      ATL_mutex_lock(pd->Mlocks[iam]);
       ATL_ResetGlobalAtomicCount(aCrow, tnMblks, pL);
+      ATL_mutex_unlock(pd->Mlocks[iam]);
       while (iblk = ATL_DecGlobalAtomicCount(aCrow, 0))
       {
-         const int mb = (iblk != 1) ? MB : mr;
+         const int mb = (!mr || iblk != 1) ? MB : mr;
          const size_t i = (tnMblks-iblk)*(NB SHIFT);
 
          iblk = tnMblks - iblk;
@@ -7127,25 +7145,35 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    {
       const int rk = (iam+k)%P;
       void *aCrow = aMcnts[rk];
-      TYPE *c = C + pd->Js[rk]*((size_t)ldc);
-      int nb;
  
-      nb = pd->N - pd->Js[rk];
-      nb = Mmin(NB, nb);
       Bw = pd->Bws[rk];
-      while (iblk = ATL_DecGlobalAtomicCount(aCrow, 1))
+      ATL_mutex_lock(pd->Mlocks[iam]);
+      if (ATL_GetGlobalAtomicCount(aCrow, 1))
       {
-         const int mb = (iblk != 1) ? MB : mr;
-         const size_t i = (tnMblks-iblk)*(NB SHIFT);
+         TYPE *c = C + pd->Js[rk]*((size_t)ldc);
+         int nb;
 
-         iblk = tnMblks - iblk;
-         DoMM_K(mb, nb, nKb, kr, Aw+(((size_t)iblk)*incA), Bw, c+i, ldc);
+         nb = pd->N - pd->Js[rk];
+         nb = Mmin(NB, nb);
+         while (iblk = ATL_DecGlobalAtomicCount(aCrow, 1))
+         {
+            const int mb = (iblk != 1 || !mr) ? MB : mr;
+            const size_t i = (tnMblks-iblk)*(NB SHIFT);
+   
+            iblk = tnMblks - iblk;
+            DoMM_K(mb, nb, nKb, kr, Aw+(((size_t)iblk)*incA), Bw, c+i, ldc);
+         }
       }
+      ATL_mutex_unlock(pd->Mlocks[iam]);
    }
 }
-@ROUT ATL_tgemm_rkK_Np
 
-int Mjoin(PATL,tgemm_rkK_Np)
+@ROUT ATL_tgemm_rkK_Np 
+   @define sf @_Np@
+@ROUT ATL_tgemm_rkK
+   @define sf @@
+@ROUT ATL_tgemm_rkK_Np ATL_tgemm_rkK
+int Mjoin(PATL,tgemm_rkK@(sf))
    (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, ATL_CINT M,
     ATL_CINT N, ATL_CINT K, const SCALAR alpha, const TYPE *A, ATL_CINT lda,
     const TYPE *B, ATL_CINT ldb, const SCALAR beta, TYPE *C, ATL_CINT ldc)
@@ -7153,7 +7181,7 @@ int Mjoin(PATL,tgemm_rkK_Np)
  * Does a rank-K update on dynamically scheduled column panels of C
  */
 {
-   ATL_TGEMM_RKK_NP_t pd;   /* problem definition */
+   ATL_TGEMM_RKK@up@(sf)_t pd;   /* problem definition */
    size_t sz;
    volatile int *chkin;
    TYPE **Bws, *Aw;
@@ -7163,25 +7191,38 @@ int Mjoin(PATL,tgemm_rkK_Np)
    int i, nDb, dr;
    void **acnts;
 
+@ROUT ATL_tgemm_rkK_Np
    sz = ATL_MulBySize(K8)*(M + NB*ATL_NTHREADS) + ATL_Cachelen +
-        ATL_NTHREADS*(sizeof(TYPE*)+sizeof(int)+ATL_Cachelen+sizeof(void*));
+        ATL_NTHREADS*(sizeof(TYPE*)+sizeof(int)+ATL_Cachelen);
+@ROUT ATL_tgemm_rkK
+   sz = ATL_MulBySize(K8)*(M + NB*ATL_NTHREADS) + ATL_Cachelen +
+        ATL_NTHREADS*(sizeof(TYPE*)+2*sizeof(int)+ATL_Cachelen+2*sizeof(void*));
+@ROUT ATL_tgemm_rkK_Np ATL_tgemm_rkK
    if (sz > ATL_NTHREADS*ATL_PTMAXMALLOC)
       return(1);
    Bws = malloc(sz);
    if (!Bws)
       return(2);
    chkin = (volatile int*) (Bws + ATL_NTHREADS);
-   acnts = (void**) (chkin+ATL_NTHREADS);
-   Aw = (TYPE*)(acnts+ATL_NTHREADS);
+@ROUT ATL_tgemm_rkK
+   pd.Js = (int*) (chkin+ATL_NTHREADS);
+   acnts = (void**) (pd.Js+ATL_NTHREADS);
+   pd.Mlocks = acnts + ATL_NTHREADS;
+   Aw = (TYPE*)(pd.Mlocks+ATL_NTHREADS);
+@ROUT ATL_tgemm_rkK_Np
+   Aw = (TYPE*) (chkin+ATL_NTHREADS);
+@ROUT ATL_tgemm_rkK_Np ATL_tgemm_rkK
    Aw = ATL_AlignPtr(Aw);
    Bws[0] = Aw + K8*M;
    Bws[0] = ATL_AlignPtr(Bws[0]);
+@ROUT ATL_tgemm_rkK `   pd.Js[0] = 0;`
    chkin[0] = 0;
    for (i=1; i < ATL_NTHREADS; i++)
    {
       Bws[i] = Bws[i-1] + K8*NB;
       Bws[i] = ATL_AlignPtr(Bws[i]);
       chkin[i] = 0;
+@ROUT ATL_tgemm_rkK `      pd.Js[i] = 0;`
    }
    pd.chkin = chkin;
    pd.Aw = Aw;
@@ -7190,18 +7231,17 @@ int Mjoin(PATL,tgemm_rkK_Np)
    pd.mr = dr = M - ATL_MulByNB(nDb);
    nDb = (dr) ? nDb+1 : nDb;
    pd.aMcnt = ATL_SetGlobalAtomicCount(ATL_NTHREADS, nDb, 0);
+@ROUT ATL_tgemm_rkK
+   for (i=0; i < ATL_NTHREADS; i++)
+   {
+      pd.Mlocks[i] = ATL_mutex_init();
+      acnts[i] = ATL_SetGlobalAtomicCount(1, 0, 0);
+   }
+   pd.aMcnts = acnts;
+@ROUT ATL_tgemm_rkK_Np ATL_tgemm_rkK
    pd.nNb = nDb = ATL_DivByNB(N);
    pd.nr = dr = N - ATL_MulByNB(nDb);
    pd.aNcnt = ATL_SetGlobalAtomicCount(ATL_NTHREADS, dr ? nDb+1 : nDb, 0);
-@beginskip
-   pd.nlblks = nlblks = nDb / ATL_NTHREADS;
-   nrblks = nDb - nlblks*ATL_NTHREADS;
-   pd.nrblks = nrblks = (dr) ? nrblks+1 : nrblks;
-   for (i=0; i < ATL_NTHREADS-1; i++)
-      acnts[i] = ATL_SetAtomicCount(nlblks);
-   acnts[ATL_NTHREADS-1] = ATL_SetAtomicCount(nlblks+nrblks);
-   pd.aNcnts = acnts;
-@endskip
    pd.nKb = nKb; pd.kr = kr; pd.kr8 = ((kr+7)>>3)<<3;
    pd.A = A; pd.B = B; pd.C = C;
    pd.lda = lda; pd.ldb = ldb; pd.ldc = ldc;
@@ -7209,14 +7249,17 @@ int Mjoin(PATL,tgemm_rkK_Np)
    pd.TA = TA; pd.TB = TB;
    pd.alpha = alpha; pd.beta = beta;
 
-   ATL_goparallel(ATL_NTHREADS, Mjoin(PATL,DoWork_rkK_Np), &pd);
+   ATL_goparallel(ATL_NTHREADS, Mjoin(PATL,DoWork_rkK@(sf)), &pd);
 
    ATL_FreeGlobalAtomicCount(pd.aMcnt);
    ATL_FreeGlobalAtomicCount(pd.aNcnt);
-@beginskip
+@ROUT ATL_tgemm_rkK
    for (i=0; i < ATL_NTHREADS; i++)
-      ATL_FreeAtomicCount(acnts[i]);
-@endskip
+   {
+      ATL_FreeGlobalAtomicCount(acnts[i]);
+      ATL_mutex_free(pd.Mlocks[i]);
+   }
+@ROUT ATL_tgemm_rkK_Np ATL_tgemm_rkK
    free(Bws);
    return(0);
 }
