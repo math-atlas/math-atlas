@@ -6691,29 +6691,72 @@ static void DoMM_K
    ATL_CINT kr,         /* partial remainder block on K */
    const TYPE *A,       /* block-major A in (nfKblks*KB+kr) x NB panel */
    const TYPE *B,       /* block-major B in (nfKblks*KB+kr) x NB panel */
+   const SCALAR beta,   /* scale C by this value */
    TYPE *C,             /* ldcxnb array for result */
    ATL_CINT ldc         /* stride betweent elts in a row of C */
 )
 {
    ATL_INT k;
-   ATL_CINT incA = mb*KB, incB = mb*KB;
-   NBMM0 mmk, mmk_kr=genmm;
+   ATL_CINT incA = mb*KB, incB = KB*nb;
+   NBMM0 mmk, mmk_kr=genmm, mmk_bX;
 
    ATL_assert(mb <= MB && nb <= NB);
+   if (!nfKblks)  /* only partial block to do! */
+   {
+      if (mb != MB || nb != NB)
+         Mjoin(PATL,pKBmm)(mb, nb, kr, ATL_rone, A, kr, B, kr, beta, C, ldc);
+      else
+      {
+         if (SCALAR_IS_ONE(beta))
+            Mjoin(PATL,pKBmm_b1)(mb, nb, kr, ATL_rone, A, kr, B, kr, beta, 
+                                 C, ldc);
+         else if (SCALAR_IS_ZERO(beta))
+            Mjoin(PATL,pKBmm_b0)(mb, nb, kr, ATL_rone, A, kr, B, kr, beta, 
+                                 C, ldc);
+         else
+            Mjoin(PATL,pKBmm_bX)(mb, nb, kr, ATL_rone, A, kr, B, kr, beta, 
+                                 C, ldc);
+      }
+      return;
+   }
    if (mb != NB && nb != NB)
-      mmk = genmm;
+      mmk_bX = mmk = genmm;
    else if (mb != NB)
+   {
       mmk = PMBmm;
+      if (SCALAR_IS_ONE(beta))
+         mmk_bX = Mjoin(PATL,pMBmm_b1);
+      else if (SCALAR_IS_ZERO(beta))
+         mmk_bX = Mjoin(PATL,pMBmm_b0);
+      else
+         mmk_bX = Mjoin(PATL,pMBmm_bX);
+   }
    else if (nb != NB)
+   {
       mmk = PNBmm;
+      if (SCALAR_IS_ONE(beta))
+         mmk_bX = Mjoin(PATL,pNBmm_b1);
+      else if (SCALAR_IS_ZERO(beta))
+         mmk_bX = Mjoin(PATL,pNBmm_b0);
+      else
+         mmk_bX = Mjoin(PATL,pNBmm_bX);
+   }
    else
    {
       mmk = NBmm;
       mmk_kr = PKBmm;
+      if (SCALAR_IS_ONE(beta))
+         mmk_bX = NBmm_b1;
+      else if (SCALAR_IS_ZERO(beta))
+         mmk_bX = NBmm_b0;
+      else
+         mmk_bX = NBmm_bX;
    }
-   for (k=0; k < nfKblks; k++, A += incA, B += incB)
+   mmk_bX(mb, nb, KB, ATL_rone, A, KB, B, KB, beta, C, ldc);  /* apply beta */
+   A += incA; B += incB;
+   for (k=1; k < nfKblks; k++, A += incA, B += incB)  /* full blocks */
       mmk(mb, nb, KB, ATL_rone, A, KB, B, KB, ATL_rone, C, ldc);
-   if (kr)
+   if (kr)  /* partial remainder */
       mmk_kr(mb, nb, kr, ATL_rone, A, kr, B, kr, ATL_rone, C, ldc);
 }
 
@@ -7039,12 +7082,15 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    const TYPE *A=pd->A, *B=pd->B;
    TYPE *C = pd->C;
    SCALAR alpha = pd->alpha;
+   SCALAR beta  = pd->beta;
    ATL_CINT nMb=pd->nMb, mr=pd->mr, nNb=pd->nNb, nr=pd->nr;
    ATL_CINT nKb=pd->nKb, kr=pd->kr, kr8=pd->kr8, krpad = kr8-kr;
-   ATL_CINT incA = (nKb*NB + kr8)*NB, ldc = pd->ldc;
+   ATL_CINT incA = (nKb*KB + kr8)*MB, ldc = pd->ldc;
    ATL_CINT lda=pd->lda, amul = (ANOTRANS) ? (1 SHIFT) : (lda SHIFT);
    ATL_CINT ldb=pd->ldb, bmul = (BNOTRANS) ? ldb : 1, P=ATL_NTHREADS;
    ATL_CINT tnMblks = (mr) ? nMb+1 : nMb, tnNblks = (nr) ? nNb+1 : nNb;
+   ATL_CINT kr8f = (kr8 == NB) ? 0 : kr8;
+   ATL_CINT nfKblks = (kr8 == NB) ? nKb+1 : nKb;
    ATL_INT iblk, jblk;
    MAT2BLK A2blk;
    int k;
@@ -7065,12 +7111,12 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       int mb;
       size_t i, ia;
 
-      mb = (iblk-- == tnMblks && mr) ? mr : NB;
+      mb = (iblk-- == tnMblks && mr) ? mr : MB;
       i = iblk*NB;
       i *= amul;
       A2blk(K, mb, A+i, lda, Aw+iblk*incA, alpha);
       if (kr8 != kr)
-         ExpandBlock(kr, mb, Aw+iblk*incA+nKb*NB*mb, kr8);
+         ExpandBlock(kr, mb, Aw+iblk*incA+nKb*KB*mb, kr8);
    }
 /*
  * Tell everyone I have finished copying A, and then loop until everyone
@@ -7085,7 +7131,7 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
  */
    while (jblk = ATL_DecGlobalAtomicCount(aNcnt, iam))
    {
-      ATL_INT nb, nbr, pL;
+      ATL_INT nb, pL;
       size_t j;
       void *aCrow;
       TYPE *c;
@@ -7108,7 +7154,7 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
  *    kr is large and not a multiple of the vector length
  */
       if (krpad)
-         ExpandBlock(kr, nb, Bw+nKb*NB*nb, kr8);
+         ExpandBlock(kr, nb, Bw+nKb*KB*nb, kr8);
 /*
  *    Given that I'm working on col-panel j, determine the percentage of its
  *    blocks that I reserve for myself based on how many columns are left.
@@ -7130,7 +7176,8 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
          const size_t i = (tnMblks-iblk)*(NB SHIFT);
 
          iblk = tnMblks - iblk;
-         DoMM_K(mb, nb, nKb, kr, Aw+(((size_t)iblk)*incA), Bw, c+i, ldc);
+         DoMM_K(mb, nb, nfKblks, kr8f, Aw+(((size_t)iblk)*incA), Bw, 
+                beta, c+i, ldc);
       }
    }
 /*
@@ -7161,10 +7208,22 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
             const size_t i = (tnMblks-iblk)*(NB SHIFT);
    
             iblk = tnMblks - iblk;
-            DoMM_K(mb, nb, nKb, kr, Aw+(((size_t)iblk)*incA), Bw, c+i, ldc);
+            DoMM_K(mb, nb, nfKblks, kr8f, Aw+(((size_t)iblk)*incA), Bw, beta,
+                   c+i, ldc);
          }
       }
       ATL_mutex_unlock(pd->Mlocks[iam]);
+   }
+/*
+ * Master process is waiting on thread 0, so 0 stays here until all nodes
+ * complete their operations
+ */
+   chkin[iam] = -2;
+   if (!iam)
+   {
+       for (k=1; k < P; k++)
+          while(chkin[k] != -2)
+             MYPOLL;
    }
 }
 
