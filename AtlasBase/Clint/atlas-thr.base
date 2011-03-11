@@ -636,7 +636,11 @@ void ATL_thread_yield(void)
 #include "atlas_threads.h"
 void *ATL_mutex_init(void)
 {
-#ifdef ATL_WINTHREADS  /* if not using pthreads, use AtomicCount to sim mut */
+/*
+ * On Windows, use known-good x86 code.  OS X's mutex have horrible scaling,
+ * so use homebrewed code instead
+ */
+#if defined(ATL_WINTHREADS) || (defined(ATL_OS_OSX) && defined(ATL_SSE1))
    return(ATL_SetAtomicCount(1);
 #else
    void *vp;
@@ -651,7 +655,7 @@ void *ATL_mutex_init(void)
 #include "atlas_threads.h"
 void ATL_mutex_free(void *vp)
 {
-#ifdef ATL_WINTHREADS  /* if not using pthreads, use AtomicCount to sim mut */
+#if defined(ATL_WINTHREADS) || (defined(ATL_OS_OSX) && defined(ATL_SSE1))
    ATL_FreeAtomicCount(vp);
 #else
    ATL_assert(!pthread_mutex_destroy(vp));
@@ -669,10 +673,14 @@ void ATL_mutex_free(void *vp)
 
 void ATL_mutex_@(rt)(void *vp)
 {
-#ifdef ATL_WINTHREADS  /* if not using pthreads, use AtomicCount to sim mut */
 @ROUT ATL_mutex_lock
+#ifdef ATL_WINTHREADS  /* if not using pthreads, use AtomicCount to sim mut */
    while(!ATL_DecAtomicCount(vp));
+#elif defined(ATL_OS_OSX) && defined(ATL_SSE1)
+   while(!ATL_DecAtomicCount(vp))
+      ATL_thread_yield();
 @ROUT ATL_mutex_unlock
+#if defined(ATL_WINTHREADS) || (defined(ATL_OS_OSX) && defined(ATL_SSE1))
    ATL_ResetAtomicCount(vp, 1);
 @ROUT ATL_mutex_lock ATL_mutex_unlock
 #else
@@ -688,7 +696,7 @@ int ATL_mutex_trylock(void *vp)
  * return 0 if lock not required, else return non-zero 
  */
 {
-#ifdef ATL_WINTHREADS  /* if not using pthreads, use AtomicCount to sim mut */
+#if defined(ATL_WINTHREADS) || (defined(ATL_OS_OSX) && defined(ATL_SSE1))
    return(ATL_DecAtomicCount(vp));
 #else
    return(!pthread_mutex_trylock(vp));
@@ -6644,6 +6652,7 @@ typedef struct
 {
    void *aNcnt;           /* count on col-panels of C */
    void *aMcnt;           /* count row-panels of A */
+   void *aMdne;           /* count on finished row-panels of A */
 @ROUT ATL_tgemm_rkK 
    void **aMcnts;         /* P-len array of counts on row-blks of C */
    void **Mlocks;         /* mutexes protecting init of aMcnts */
@@ -7007,7 +7016,7 @@ void Mjoin(PATL,DoWork_rkK_Np)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    ATL_CINT iam = tp->rank;
    volatile int *chkin = pd->chkin;
    TYPE *Bw=pd->Bws[iam], *Aw=pd->Aw;
-   void *aMcnt=pd->aMcnt;
+   void *aMcnt=pd->aMcnt, aMdne = pd->aMdne;
    ATL_CINT K = pd->K;
    ATL_CINT BNOTRANS = (pd->TB == AtlasNoTrans);
    ATL_CINT ANOTRANS = (pd->TA == AtlasNoTrans);
@@ -7043,7 +7052,15 @@ void Mjoin(PATL,DoWork_rkK_Np)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       A2blk(K, mb, A+i, lda, Aw+iblk*incA, alpha);
       if (kr8 != kr)
          ExpandBlock(kr, mb, Aw+iblk*incA+nKb*NB*mb, kr8);
+      i = ATL_DecAtomicCount(aMdne);
    }
+/*
+ * Wait until A copy is finished before proceeding
+ */
+   while (ATL_GetAtomicCount(aMdne))
+      MYPOLL;
+
+@beginskip
 /*
  * Tell everyone I have finished copying A, and then loop until everyone
  * else signals they've copied their pieces
@@ -7051,6 +7068,7 @@ void Mjoin(PATL,DoWork_rkK_Np)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    chkin[iam] = 1;
    for (k=0; k < ATL_NTHREADS; k++)
       while(!chkin[k]) MYPOLL;
+@endskip
 /*
  * Perform the rank-K update with a fully-copied A
  */
@@ -7071,6 +7089,7 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    volatile int *chkin = pd->chkin;
    TYPE *Bw=pd->Bws[iam], *Aw=pd->Aw;
    void *aMcnt=pd->aMcnt, *aNcnt=pd->aNcnt, **aMcnts = pd->aMcnts;
+   void *aMdne=pd->aMdne;
    ATL_CINT K = pd->K;
    #ifdef TCPLX
       ATL_CINT BNOTRANS = (pd->TB == AtlasNoTrans || pd->TB == AtlasConj);
@@ -7117,7 +7136,14 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       A2blk(K, mb, A+i, lda, Aw+iblk*incA, alpha);
       if (kr8 != kr)
          ExpandBlock(kr, mb, Aw+iblk*incA+nKb*KB*mb, kr8);
+      i = ATL_DecAtomicCount(aMdne);
    }
+/*
+ * Wait until A copy is finished before proceeding
+ */
+   while (ATL_GetAtomicCount(aMdne))
+      MYPOLL;
+@beginskip
 /*
  * Tell everyone I have finished copying A, and then loop until everyone
  * else signals they've copied their pieces
@@ -7125,6 +7151,7 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    chkin[iam] = 1;
    for (k=0; k < P; k++)
       while(!chkin[k]) MYPOLL;
+@endskip
 /*
  * Perform the rank-K update with a fully-copied A by looping over column-panels
  * of C in reverse order
@@ -7166,6 +7193,8 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       pL = (j > P+P) ? 100 : 50;
       if (j < P)
          pL = (100+P-1)/P;
+      if (tnMblks < 8)
+         pL = 100;
       aCrow = aMcnts[iam];
       ATL_mutex_lock(pd->Mlocks[iam]);
       ATL_ResetGlobalAtomicCount(aCrow, tnMblks, pL);
@@ -7290,6 +7319,7 @@ int Mjoin(PATL,tgemm_rkK@(sf))
    pd.mr = dr = M - ATL_MulByNB(nDb);
    nDb = (dr) ? nDb+1 : nDb;
    pd.aMcnt = ATL_SetGlobalAtomicCount(ATL_NTHREADS, nDb, 0);
+   pd.aMdne = ATL_SetAtomicCount(nDb);
 @ROUT ATL_tgemm_rkK
    for (i=0; i < ATL_NTHREADS; i++)
    {
