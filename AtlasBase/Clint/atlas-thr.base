@@ -8,6 +8,17 @@
    #endif
    #define ATL_PTMAXMALLOC (((size_t)(ATL_PTMAXMALLOC_MB)<<20)>>ATL_NTHRPOW2)
 #endif
+/*
+ * If we don't have thread affinity, then the thread I'm waiting on may share
+ * the core with me.  In this case, yield my time slice when polling
+ */
+#include "atlas_tsumm.h"
+#if defined(ATL_TAFFINITY) && ATL_TAFFINITY
+   #define ATL_POLL
+#else
+   #define ATL_POLL ATL_thread_yield()
+#endif
+
 #ifdef ATL_OS_WinNT
    #define ATL_WINTHREADS
 #endif
@@ -51,6 +62,7 @@
       void *vp;      /* ptr to extra info */
       HANDLE thrH;   /* handle to thread */
       int rank;      /* my rank */
+      int P;         /* # of processors in this call */
    } ATL_thread_t;
 @beginskip
    #include <windef.h>
@@ -68,6 +80,15 @@
    #ifndef WAIT_FAILED
       #define WAIT_FAILED (~0)
    #endif
+#elif defined(ATL_OMP_THREADS)
+   #include <omp.h>
+   typedef struct
+   {
+      void *vp;      /* ptr to extra info */
+      int rank;      /* my rank */
+      int P;         /* # of processors in this call */
+      int paff_set;  /* have I set my process affinity yet? */
+   } ATL_thread_t;
 #else
 /*
  * Note that we only use paff_set when ATL_PAFF_SELF is defined, but
@@ -80,6 +101,7 @@
       pthread_t thrH;/* handle of thread */
       void *vp;      /* ptr to extra info */
       int rank;      /* my rank */
+      int P;         /* # of processors in this call */
       int paff_set;  /* have I set my process affinity yet? */
    } ATL_thread_t;
 @skip   #define ATL_thread_t pthread_t
@@ -94,7 +116,7 @@ struct ATL_LaunchStruct
    void (*CombineOpStructs)(void*, void*);  /* combine function */
    void (*DoWork)(ATL_LAUNCHSTRUCT_t*, void*);
    int opstructstride;                  /* size of operation-spec struct */
-   volatile int *imdone;                /* nthr-len checkin array */
+   volatile int *chkin;                 /* nthr-len checkin array */
    void **acounts;                      /* var-len array of atomic counters */
    void *vp;                            /* misc. extra info ptr */
 };
@@ -106,7 +128,8 @@ void ATL_thread_launch(void *opstruct, int opstructstride, void *OpStructIsInit,
 void ATL_goparallel(const unsigned int P, void *DoWork, void *opstruct);
 void ATL_goparallel_prank(const unsigned int P, void *DoWork, void *opstruct);
 /*  Starts a thread running, and sets its affinity to proc if possible */
-int ATL_thread_start(ATL_thread_t *thr, int proc, void *(*rout)(void*), void*);
+int ATL_thread_start(ATL_thread_t *thr, int proc, int JOINABLE, 
+                     void *(*rout)(void*), void*);
 int ATL_thread_join(ATL_thread_t*); /* waits on completion of thread */
 void ATL_thread_exit(void*);        /* exits currently executing thread */
 void *ATL_log2tlaunch(void *vp);    /* min spanning tree launch */
@@ -642,6 +665,12 @@ void *ATL_mutex_init(void)
  */
 #if defined(ATL_WINTHREADS) || (defined(ATL_OS_OSX) && defined(ATL_SSE1))
    return(ATL_SetAtomicCount(1);
+#elif defined(ATL_OMP_THREADS)
+   void *vp;
+   vp = malloc(sizeof(omp_lock_t));
+   ATL_assert(vp);
+   omp_init_lock(vp);
+   return(vp);
 #else
    void *vp;
    vp = malloc(sizeof(pthread_mutex_t));
@@ -657,6 +686,9 @@ void ATL_mutex_free(void *vp)
 {
 #if defined(ATL_WINTHREADS) || (defined(ATL_OS_OSX) && defined(ATL_SSE1))
    ATL_FreeAtomicCount(vp);
+#elif defined(ATL_OMP_THREADS)
+   omp_destroy_lock(vp);
+   free(vp);
 #else
    ATL_assert(!pthread_mutex_destroy(vp));
    free(vp);
@@ -683,6 +715,9 @@ void ATL_mutex_@(rt)(void *vp)
 #if defined(ATL_WINTHREADS) || (defined(ATL_OS_OSX) && defined(ATL_SSE1))
    ATL_ResetAtomicCount(vp, 1);
 @ROUT ATL_mutex_lock ATL_mutex_unlock
+#elif defined(ATL_OMP_THREADS)
+@ROUT ATL_mutex_unlock `   omp_unset_lock(vp);`
+@ROUT ATL_mutex_lock `   omp_set_lock(vp);`
 #else
    ATL_assert(!pthread_mutex_@(rt)(vp));
 #endif
@@ -698,6 +733,8 @@ int ATL_mutex_trylock(void *vp)
 {
 #if defined(ATL_WINTHREADS) || (defined(ATL_OS_OSX) && defined(ATL_SSE1))
    return(ATL_DecAtomicCount(vp));
+#elif defined(ATL_OMP_THREADS)
+   return(omp_test_lock(vp));
 #else
    return(!pthread_mutex_trylock(vp));
 #endif
@@ -708,6 +745,18 @@ int ATL_mutex_trylock(void *vp)
 
 void *ATL_SetAtomicCount(int cnt)
 {
+#if defined(ATL_OMP_THREADS)
+   char *cp;
+   omp_lock_t *mp;
+   int *cntp;
+   cp = malloc(256+sizeof(int) + sizeof(omp_lock_t));
+   ATL_assert(cp);
+   cntp = (int*)(cp+128);  /* avoid false sharing wt 128-byte guard */
+   mp = (omp_lock_t*)(cntp+2);
+   omp_init_lock(mp);
+   *cntp = cnt;
+   return((void*)cp);
+#else
    char *cp;
    pthread_mutex_t *mp;
    int *cntp;
@@ -718,6 +767,7 @@ void *ATL_SetAtomicCount(int cnt)
    ATL_assert(!pthread_mutex_init(mp, NULL));
    *cntp = cnt;
    return((void*)cp);
+#endif
 }
 
 @ROUT ATL_SetGlobalAtomicCount ATL_ResetGlobalAtomicCount
@@ -857,17 +907,29 @@ int ATL_@(op)GlobalAtomicCount(void *vp, int rank)
 }
 @ROUT ATL_FreeAtomicCount_mut
 #include <stdlib.h>
-#include <pthread.h>
+#ifdef ATL_OMP_THREADS
+   #include <omp.h>
+#else
+   #include <pthread.h>
+#endif
 #include "atlas_misc.h"
 void ATL_FreeAtomicCount(void *vp)
 {
    char *cp=vp;
 
+#ifdef ATL_OMP_THREADS
+   omp_destroy_lock((omp_lock_t*)(cp+2*sizeof(int)+128));
+#else
    ATL_assert(!pthread_mutex_destroy((pthread_mutex_t*)(cp+2*sizeof(int)+128)));
+#endif
    free(vp);
 }
 @ROUT ATL_ResetAtomicCount_mut ATL_DecAtomicCount_mut
-#include <pthread.h>
+#ifdef ATL_OMP_THREADS
+   #include <omp.h>
+#else
+   #include <pthread.h>
+#endif
 @ROUT ATL_DecAtomicCount_mut
 int ATL_DecAtomicCount(void *vp)
 @ROUT ATL_ResetAtomicCount_mut
@@ -875,17 +937,30 @@ int ATL_ResetAtomicCount(void *vp, int cnt)
 @ROUT ATL_ResetAtomicCount_mut ATL_DecAtomicCount_mut
 {
    char *cp=vp;
-   pthread_mutex_t *mp;
+   #ifdef ATL_OMP_THREADS
+      omp_lock_t *mp;
+   #else
+      pthread_mutex_t *mp;
+   #endif
    int *cntp;
    int iret;
 
    cntp = (int*)(cp+128);
-   mp = (pthread_mutex_t*)(cntp+2);
-   pthread_mutex_lock(mp);
+   #ifdef ATL_OMP_THREADS
+      mp = (omp_lock_t*)(cntp+2);
+      omp_set_lock(mp);
+   #else
+      mp = (pthread_mutex_t*)(cntp+2);
+      pthread_mutex_lock(mp);
+   #endif
    iret = *cntp;
 @ROUT ATL_DecAtomicCount_mut   `   if (iret) (*cntp)--;`
 @ROUT ATL_ResetAtomicCount_mut `   *cntp = cnt;`
-   pthread_mutex_unlock(mp);
+   #ifdef ATL_OMP_THREADS
+      omp_unset_lock(mp);
+   #else
+      pthread_mutex_unlock(mp);
+   #endif
    return(iret);
 }
 @ROUT ATL_SetAtomicCount_arch
@@ -1095,8 +1170,8 @@ void ATL_thread_launch
       ls.acounts = &vp;
       ls.acounts[0] = ATL_SetGlobalAtomicCount(ATL_NTHREADS>>1, 
                                                ATL_NTHREADS-1, 0);
-      ls.imdone = calloc(ATL_NTHREADS, sizeof(int));
-      ATL_assert(ls.imdone);
+      ls.chkin = calloc(ATL_NTHREADS, sizeof(int));
+      ATL_assert(ls.chkin);
    #endif
 
    for (i=0; i < ATL_NTHREADS; i++)
@@ -1104,11 +1179,11 @@ void ATL_thread_launch
       tp[i].vp = &ls;
       tp[i].rank = i;
    }
-   ATL_thread_start(tp, 0, ATL_tlaunch, tp);
+   ATL_thread_start(tp, 0, 1, ATL_tlaunch, tp);
    ATL_thread_join(tp);
    #ifdef ATL_TUNE_DYN
        ATL_FreeGlobalAtomicCount(ls.acounts[0]);
-       free((void*)ls.imdone);
+       free((void*)ls.chkin);
    #endif
 }
 @ROUT ATL_thread_start
@@ -1119,7 +1194,7 @@ void ATL_thread_launch
 #endif
 #include "atlas_misc.h"
 #include "atlas_threads.h"
-int ATL_thread_start(ATL_thread_t *thr, int proc, 
+int ATL_thread_start(ATL_thread_t *thr, int proc, int JOINABLE,
                      void *(*rout)(void*), void *arg)
 /*
  * Creates a thread that will run only on processor proc.
@@ -1145,6 +1220,9 @@ int ATL_thread_start(ATL_thread_t *thr, int proc,
       #endif
       ATL_assert(ResumeThread(thr->thrH) == 1);
    #endif
+#elif defined(ATL_OMP_THREADS)
+   fprintf(stderr, "Should not call thread_start when using OpenMP!");
+   ATL_assert(0);
 #else
    pthread_attr_t attr;
    #ifndef ATL_NOAFFINITY
@@ -1166,11 +1244,18 @@ int ATL_thread_start(ATL_thread_t *thr, int proc,
    #endif
    thr->rank = proc;
    ATL_assert(!pthread_attr_init(&attr));
-   #ifdef IBM_PT_ERROR
-      ATL_assert(!pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_UNDETACHED));
-   #else
-      ATL_assert(!pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE));
-   #endif
+   if (JOINABLE)
+   {
+      #ifdef IBM_PT_ERROR
+         ATL_assert(!pthread_attr_setdetachstate(&attr, 
+                                                 PTHREAD_CREATE_UNDETACHED));
+      #else
+         ATL_assert(!pthread_attr_setdetachstate(&attr, 
+                                                 PTHREAD_CREATE_JOINABLE));
+      #endif
+   }
+   else
+      ATL_assert(!pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED));
    pthread_attr_setscope(&attr, PTHREAD_SCOPE_SYSTEM); /* no chk, OK to fail */
    #ifdef ATL_PAFF_SETAFFNP
       CPU_ZERO(&cpuset);
@@ -1206,6 +1291,9 @@ int ATL_thread_join(ATL_thread_t *thr)   /* waits on completion of thread */
 #ifdef ATL_WINTHREADS
    ATL_assert(WaitForSingleObject(thr->thrH, INFINITE) != WAIT_FAILED);
    ATL_assert(CloseHandle(thr->thrH));
+#elif defined(ATL_OMP_THREADS)
+   fprintf(stderr, "Cannot call thread_join using OpenMP!!\n");
+   ATL_assert(0);  /* should never enter this rout when using OMP */
 #else
    ATL_assert(!pthread_join(thr->thrH, NULL));
 #endif
@@ -1218,6 +1306,9 @@ void ATL_thread_exit(void *retval)
 {
 #ifdef ATL_WINTHREADS
    ExitThread((DWORD)(retval));
+#elif defined(ATL_OMP_THREADS)
+   fprintf(stderr, "Cannot call thread_exit using OpenMP!!\n");
+   ATL_assert(0);  /* should never enter this rout when using OMP */
 #else
    pthread_exit(retval);
 #endif
@@ -1335,7 +1426,7 @@ void *ATL_lin0tlaunch(void *vp)
    {
       if (!lp->OpStructIsInit || 
           lp->OpStructIsInit(lp->opstruct+i*lp->opstructstride))
-         ATL_thread_start(tp+i, i, ATL_tDoWorkWrap, tp+i);
+         ATL_thread_start(tp+i, i, 1, ATL_tDoWorkWrap, tp+i);
    }
 /*
  * Thread 0 must also do the operation
@@ -1382,28 +1473,43 @@ void *ATL_dyntlaunch(void *vp)
       dest = ATL_NTHREADS - dest;
       if ((!lp->OpStructIsInit ||
             lp->OpStructIsInit(lp->opstruct+dest*lp->opstructstride)))
-         ATL_thread_start(btp+dest, dest, ATL_dyntlaunch, btp+dest);
+         ATL_thread_start(btp+dest, dest, 0, ATL_dyntlaunch, btp+dest);
       dest = ATL_DecGlobalAtomicCount(acnt, iam);
    }
 /*
  * Do the operation
  */
    lp->DoWork(lp, lp->opstruct+lp->opstructstride*iam);
+   lp->chkin[iam] = -2048;
 /*
  * Node 0 awaits completion of each task, and do combine (linear!) if requested
  */
    if (iam == 0)
    {
-      for (i=1; i < ATL_NTHREADS; i++)
+      int ndone=1;
+      while (ndone < ATL_NTHREADS)
       {
+/*
+ *       Find an uncombined completed result
+ */
+         for (i=1; i < ATL_NTHREADS && lp->chkin[i] != -2048; i++);
+         if (i == ATL_NTHREADS)
+         {
+            ATL_POLL;
+            continue;
+         }
+/*
+ *       Do the combine if necessary, and mark that thread as completely done
+ */
          if (!lp->OpStructIsInit || 
              lp->OpStructIsInit(lp->opstruct+i*lp->opstructstride))
          {
-            ATL_thread_join(tp+i);
             if (lp->CombineOpStructs)  /* do combine if necessary */
                lp->CombineOpStructs(lp->opstruct,
                                     lp->opstruct+lp->opstructstride*i);
          }
+         ndone++;
+         lp->chkin[i] = -2049;
       }
    }
    return(NULL);
@@ -1557,7 +1663,7 @@ void *ATL_log2tlaunch(void *vp)
             dest = iam ^ abit;
             if ( dest < ATL_NTHREADS && (!lp->OpStructIsInit ||
                  lp->OpStructIsInit(lp->opstruct+dest*lp->opstructstride)) )
-               ATL_thread_start(btp+dest, dest, ATL_log2tlaunch, btp+dest);
+               ATL_thread_start(btp+dest, dest, 1, ATL_log2tlaunch, btp+dest);
          }
       }
    }
@@ -1620,7 +1726,7 @@ void ATL_goparallel
 )
 {
    ATL_thread_t *tp;
-   int *ranks;
+   int *chkin;
    ATL_LAUNCHSTRUCT_t ls;
    void *vp, *lc;
    int i;
@@ -1628,9 +1734,17 @@ void ATL_goparallel
    ls.CombineOpStructs = NULL;
    ls.OpStructIsInit = NULL;
    ls.DoWork = DoWork;
-   ls.rank2thr = tp;
    ls.vp = opstruct;
-#ifdef ATL_USEOPENMP
+#ifdef ATL_OMP_THREADS
+   tp = malloc(sizeof(ATL_thread_t)*P);
+   ATL_assert(tp);
+   for (i=0; i < P; i++)
+   {
+      tp[i].vp = &ls;
+      tp[i].rank = i;
+      tp[i].P = P;
+   }
+   ls.rank2thr = tp;
    omp_set_num_threads(P);
    #pragma omp parallel
    {
@@ -1642,7 +1756,7 @@ void ATL_goparallel
          ATL_setmyaffinity();
       #endif
       i = omp_get_thread_num();
-      DoWork(&ls, &i);
+      ls.DoWork(&ls, tp+i);
    }
 #else
    ls.acounts = &lc;
@@ -1650,9 +1764,10 @@ void ATL_goparallel
    ATL_assert(P == ATL_NTHREADS);  /* need to rewrite thread_start to fix */
    vp = malloc(P*(sizeof(ATL_thread_t)+sizeof(int)) + ATL_Cachelen);
    ATL_assert(vp);
-   ranks = vp;
-   tp = (ATL_thread_t*)(ranks+P);
+   chkin = vp;
+   tp = (ATL_thread_t*)(chkin+P);
    tp = ATL_AlignPtr(tp);
+   ls.rank2thr = tp;
    ls.opstruct = (void*) tp;
    ls.opstructstride = (int)((char*)(tp+1)-(char*)tp);
 
@@ -1660,9 +1775,11 @@ void ATL_goparallel
    {
       tp[i].vp = &ls;
       tp[i].rank = i;
-      ranks[i] = i;
+      tp[i].P = P;
+      chkin[i] = 0;
    }
-   ATL_thread_start(tp, 0, ATL_dyntlaunch, tp);
+   ls.chkin = (volatile int*) chkin;
+   ATL_thread_start(tp, 0, 1, ATL_dyntlaunch, tp);
    ATL_thread_join(tp);
    ATL_FreeGlobalAtomicCount(ls.acounts[0]);
    free(vp);
@@ -1838,7 +1955,7 @@ void ATL_goparallel_prank
    ls.vp = opstruct;
    ls.CombineOpStructs = NULL;
    ls.opstructstride = 0;
-   ls.imdone = NULL;
+   ls.chkin = NULL;
    ls.acounts = NULL;
    T = (P >= 8) ? P<<2 : P+P;
    rl.NT = T;
@@ -3346,7 +3463,7 @@ fprintf(stderr, "np=%d\n\n", np);
       tp[i].vp = &ls;
       tp[i].rank = i;
    }
-   ATL_thread_start(tp, 0, ATL_log2tlaunch, tp);
+   ATL_thread_start(tp, 0, 1, ATL_log2tlaunch, tp);
    ATL_thread_join(tp);
 /*
  * If we are debugging, serially combine all workspaces back to original C
@@ -3720,7 +3837,7 @@ SERIAL:
       tp[i].vp = &ls;
       tp[i].rank = i;
    }
-   ATL_thread_start(tp, 0, ATL_tlaunch, tp);
+   ATL_thread_start(tp, 0, 1, ATL_tlaunch, tp);
    ATL_thread_join(tp);
 }
 
@@ -3877,7 +3994,7 @@ void Mjoin(PATL,t@(rt))(const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
       tp[i].vp = &ls;
       tp[i].rank = i;
    }
-   ATL_thread_start(tp, 0, ATL_tlaunch, tp);
+   ATL_thread_start(tp, 0, 1, ATL_tlaunch, tp);
    ATL_thread_join(tp);
 }
 @ROUT ATL_Xtsyr2k
@@ -4712,7 +4829,7 @@ void ATL_tsyrk_K(ATL_TSYRK_K_t *syp, int np, ATL_CINT N, ATL_CINT K,
                   syp->beta, C, syp->ldc);
       return;
    }
-   ATL_thread_start(syp->lp->rank2thr, 0, ATL_tlaunch, syp->lp->rank2thr);
+   ATL_thread_start(syp->lp->rank2thr, 0, 1, ATL_tlaunch, syp->lp->rank2thr);
    ATL_thread_join(syp->lp->rank2thr);
 }
 
@@ -5425,7 +5542,7 @@ static int ATL_t@(rt)_M
       tp[i].vp = &ls;
       tp[i].rank = i;
    }
-   ATL_thread_start(tp, 0, ATL_tlaunch, tp);
+   ATL_thread_start(tp, 0, 1, ATL_tlaunch, tp);
    ATL_thread_join(tp);
    return(p);
 }
@@ -5478,7 +5595,7 @@ static int ATL_t@(rt)_N
       tp[i].vp = &ls;
       tp[i].rank = i;
    }
-   ATL_thread_start(tp, 0, ATL_tlaunch, tp);
+   ATL_thread_start(tp, 0, 1, ATL_tlaunch, tp);
    ATL_thread_join(tp);
    return(p);
 }
@@ -5598,7 +5715,7 @@ DOSERIAL:
       tp[i].vp = &ls;
       tp[i].rank = i;
    }
-   ATL_thread_start(tp, 0, ATL_tlaunch, tp);
+   ATL_thread_start(tp, 0, 1, ATL_tlaunch, tp);
    ATL_thread_join(tp);
    return;
 @ROUT ATL_therk `   Mjoin(PATLU,zero)(N, C+1, lda+lda+2);  /* zero imag on diag */`
@@ -5627,7 +5744,7 @@ DOSERIAL:
          tp[i].vp = &ls;
          tp[i].rank = i;
       }
-      ATL_thread_start(tp, 0, ATL_tlaunch, tp);
+      ATL_thread_start(tp, 0, 1, ATL_tlaunch, tp);
       ATL_thread_join(tp);
    }
    else
@@ -5644,7 +5761,7 @@ DOSERIAL:
          tp[i].vp = &ls;
          tp[i].rank = i;
       }
-      ATL_thread_start(tp, 0, ATL_tlaunch, tp);
+      ATL_thread_start(tp, 0, 1, ATL_tlaunch, tp);
       ATL_thread_join(tp);
    }
 }
@@ -6033,7 +6150,7 @@ int Mjoin(PATL,tgetf2@(pf))(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT lda, int *
       tp[i].vp = &ls;
       tp[i].rank = i;
    }
-   ATL_thread_start(tp, 0, ATL_tlaunch, tp);
+   ATL_thread_start(tp, 0, 1, ATL_tlaunch, tp);
    ATL_thread_join(tp);
    return(lu2s[0].info);
 }
@@ -6652,7 +6769,6 @@ typedef struct
 {
    void *aNcnt;           /* count on col-panels of C */
    void *aMcnt;           /* count row-panels of A */
-   void *aMdne;           /* count on finished row-panels of A */
 @ROUT ATL_tgemm_rkK 
    void **aMcnts;         /* P-len array of counts on row-blks of C */
    void **Mlocks;         /* mutexes protecting init of aMcnts */
@@ -6993,17 +7109,6 @@ static void ATL_tloopN
    }
 }
 
-@ROUT ATL_tgemm_rkK_Np ATL_tgemm_rkK
-/*
- * If we don't have thread affinity, then the thread I'm waiting on may share
- * the core with me.  In this case, yield my time slice when polling 
- */
-#if defined(ATL_TAFFINITY) && ATL_TAFFINITY
-   #define MYPOLL
-#else
-   #define MYPOLL ATL_thread_yield()
-#endif
-
 @ROUT ATL_tgemm_rkK_Np
 void Mjoin(PATL,DoWork_rkK_Np)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 /* 
@@ -7016,7 +7121,7 @@ void Mjoin(PATL,DoWork_rkK_Np)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    ATL_CINT iam = tp->rank;
    volatile int *chkin = pd->chkin;
    TYPE *Bw=pd->Bws[iam], *Aw=pd->Aw;
-   void *aMcnt=pd->aMcnt, aMdne = pd->aMdne;
+   void *aMcnt=pd->aMcnt;
    ATL_CINT K = pd->K;
    ATL_CINT BNOTRANS = (pd->TB == AtlasNoTrans);
    ATL_CINT ANOTRANS = (pd->TA == AtlasNoTrans);
@@ -7052,23 +7157,14 @@ void Mjoin(PATL,DoWork_rkK_Np)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       A2blk(K, mb, A+i, lda, Aw+iblk*incA, alpha);
       if (kr8 != kr)
          ExpandBlock(kr, mb, Aw+iblk*incA+nKb*NB*mb, kr8);
-      i = ATL_DecAtomicCount(aMdne);
    }
-/*
- * Wait until A copy is finished before proceeding
- */
-   while (ATL_GetAtomicCount(aMdne))
-      MYPOLL;
-
-@beginskip
 /*
  * Tell everyone I have finished copying A, and then loop until everyone
  * else signals they've copied their pieces
  */
    chkin[iam] = 1;
    for (k=0; k < ATL_NTHREADS; k++)
-      while(!chkin[k]) MYPOLL;
-@endskip
+      while(!chkin[k]) ATL_POLL;
 /*
  * Perform the rank-K update with a fully-copied A
  */
@@ -7089,7 +7185,6 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    volatile int *chkin = pd->chkin;
    TYPE *Bw=pd->Bws[iam], *Aw=pd->Aw;
    void *aMcnt=pd->aMcnt, *aNcnt=pd->aNcnt, **aMcnts = pd->aMcnts;
-   void *aMdne=pd->aMdne;
    ATL_CINT K = pd->K;
    #ifdef TCPLX
       ATL_CINT BNOTRANS = (pd->TB == AtlasNoTrans || pd->TB == AtlasConj);
@@ -7136,22 +7231,14 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       A2blk(K, mb, A+i, lda, Aw+iblk*incA, alpha);
       if (kr8 != kr)
          ExpandBlock(kr, mb, Aw+iblk*incA+nKb*KB*mb, kr8);
-      i = ATL_DecAtomicCount(aMdne);
    }
-/*
- * Wait until A copy is finished before proceeding
- */
-   while (ATL_GetAtomicCount(aMdne))
-      MYPOLL;
-@beginskip
 /*
  * Tell everyone I have finished copying A, and then loop until everyone
  * else signals they've copied their pieces
  */
    chkin[iam] = 1;
    for (k=0; k < P; k++)
-      while(!chkin[k]) MYPOLL;
-@endskip
+      while(!chkin[k]) ATL_POLL;
 /*
  * Perform the rank-K update with a fully-copied A by looping over column-panels
  * of C in reverse order
@@ -7252,7 +7339,7 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    {
        for (k=1; k < P; k++)
           while(chkin[k] != -2)
-             MYPOLL;
+             ATL_POLL;
    }
 }
 
@@ -7319,7 +7406,6 @@ int Mjoin(PATL,tgemm_rkK@(sf))
    pd.mr = dr = M - ATL_MulByNB(nDb);
    nDb = (dr) ? nDb+1 : nDb;
    pd.aMcnt = ATL_SetGlobalAtomicCount(ATL_NTHREADS, nDb, 0);
-   pd.aMdne = ATL_SetAtomicCount(nDb);
 @ROUT ATL_tgemm_rkK
    for (i=0; i < ATL_NTHREADS; i++)
    {
