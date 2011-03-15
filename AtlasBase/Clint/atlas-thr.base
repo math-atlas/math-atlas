@@ -3387,6 +3387,25 @@ int Mjoin(PATL,tgemm_@(ds))(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB
    }
 @ROUT ATL_tgemm
 /*
+ * If we are doing a rank-K update, use dynamically scheduled code for
+ * real precision (haven't written it for complex).  Performance of this
+ * code varies: on Intel, its typically faster, and on AMD its slower than
+ * statically scheduled *when run on unloaded machine*.  The difference is
+ * that if there is load on one or more processors, dynamically scheduled
+ * code is almost twice as fast.  On unloaded machines, the performance 
+ * difference is due mostly to the differing partitioning, not the overhead
+ * of dynamic scheduling, which always seems to pay for itself.
+ */
+   #ifdef TREAL
+      i = Mmax(ATL_NTHREADS,4)*NB;
+      if (k <= 4*NB && M >= i && N >= i)
+      {
+         if (!Mjoin(PATL,tgemm_rkK)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
+                                    beta, C, ldc))
+            return;
+      }
+   #endif
+/*
  * See how many processors are optimal for this problem
  */
    np = Mjoin(PATL,threadMM)(TA, TB, M, N, K);
@@ -7277,11 +7296,12 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
  *    getting close to running out of col-panels, reserve less and less of
  *    the problem for my exclusive use.
  */
-      pL = (j > P+P) ? 100 : 50;
-      if (j < P)
-         pL = (100+P-1)/P;
-      if (tnMblks < 8)
+      if (jblk >= P+P)
          pL = 100;
+      else if (jblk <= 2)
+         pL = 0;
+      else
+         pL = (jblk > P) ? 50 : 100/P;
       aCrow = aMcnts[iam];
       ATL_mutex_lock(pd->Mlocks[iam]);
       ATL_ResetGlobalAtomicCount(aCrow, tnMblks, pL);
@@ -7296,40 +7316,48 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
                 beta, c+i, ldc);
       }
    }
+   chkin[iam] = -3;  /* let everyone know I've finished my columns */
 /*
  * When no more col-panels of C are available, it is time to see if I can
- * help other workers finish their columns; if worker has gotten non-zero j,
- * but not yet reset his M counter, we will not help him, but this race
- * condition will at worst cause load balance problems, so I don't want to
- * lose performance by requiring locks.  Instead, check all nodes twice
- * in case we missed one first time around.
+ * help other workers finish their columns; As long as someone hasn't
+ * signalled his completion (negative # in chkin), continue trying to steal.
  */
-   for (k=0; k < P+P; k++)
+   do
    {
-      const int rk = (iam+k)%P;
-      void *aCrow = aMcnts[rk];
- 
-      Bw = pd->Bws[rk];
-      ATL_mutex_lock(pd->Mlocks[iam]);
-      if (ATL_GetGlobalAtomicCount(aCrow, 1))
+/*
+ *    If anyone is still working, continue looking to steal his work
+ */
+      for (k=0; k < P && chkin[k] <= 0; k++);
+      if (k == P)
+         break;    /* everyone done, quit */
+      for (; k < P; k++)
       {
-         TYPE *c = C + pd->Js[rk]*((size_t)ldc);
-         int nb;
-
-         nb = pd->N - pd->Js[rk];
-         nb = Mmin(NB, nb);
-         while (iblk = ATL_DecGlobalAtomicCount(aCrow, 1))
+         const int rk = k;
+         void *aCrow = aMcnts[rk];
+    
+         Bw = pd->Bws[rk];
+         ATL_mutex_lock(pd->Mlocks[iam]);
+         if (ATL_GetGlobalAtomicCount(aCrow, 1))
          {
-            const int mb = (iblk != 1 || !mr) ? MB : mr;
-            const size_t i = (tnMblks-iblk)*(NB SHIFT);
+            TYPE *c = C + pd->Js[rk]*((size_t)ldc);
+            int nb;
    
-            iblk = tnMblks - iblk;
-            DoMM_K(mb, nb, nfKblks, kr8f, Aw+(((size_t)iblk)*incA), Bw, beta,
-                   c+i, ldc);
+            nb = pd->N - pd->Js[rk];
+            nb = Mmin(NB, nb);
+            while (iblk = ATL_DecGlobalAtomicCount(aCrow, 1))
+            {
+               const int mb = (iblk != 1 || !mr) ? MB : mr;
+               const size_t i = (tnMblks-iblk)*(NB SHIFT);
+      
+               iblk = tnMblks - iblk;
+               DoMM_K(mb, nb, nfKblks, kr8f, Aw+(((size_t)iblk)*incA), Bw, beta,
+                      c+i, ldc);
+            }
          }
+         ATL_mutex_unlock(pd->Mlocks[iam]);
       }
-      ATL_mutex_unlock(pd->Mlocks[iam]);
    }
+   while(1);
 /*
  * Master process is waiting on thread 0, so 0 stays here until all nodes
  * complete their operations
@@ -7337,9 +7365,9 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    chkin[iam] = -2;
    if (!iam)
    {
-       for (k=1; k < P; k++)
-          while(chkin[k] != -2)
-             ATL_POLL;
+      for (k=1; k < P; k++)
+         while(chkin[k] != -2)
+            ATL_POLL;
    }
 }
 
