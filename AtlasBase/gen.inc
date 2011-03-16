@@ -20,6 +20,7 @@
 @define cw08 @-def cdate 2008@
 @define cw09 @-def cdate 2009@
 @define cw10 @-def cdate 2010@
+@define cw11 @-def cdate 2011@
 @define cp99 @-def cdate 1999 -def contrib "Antoine P. Petitet"@
 @define cp00 @-def cdate 2000 -def contrib "Antoine P. Petitet"@
 @define sw01 @-def cdate 2001 -def author "Peter Soendergaard" -def contrib "R. Clint Whaley"@
