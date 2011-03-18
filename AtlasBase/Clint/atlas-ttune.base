@@ -43,7 +43,7 @@ void TestDoWork(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
    int i;
    ATL_thread_t *tp = vp;
-   void *acnt = lp->vp;
+   void *acnt = lp->opstruct;
    #ifdef ATL_GLOBAL
       const int iam = tp->rank;
    #endif
@@ -79,7 +79,7 @@ int main(int nargs, char **args)
       #endif
       for (k=0; k < cnt; k++)
          checkin[k] = 0;
-      ATL_goparallel(ATL_NTHREADS, TestDoWork, vp);
+      ATL_goparallel(ATL_NTHREADS, TestDoWork, vp, NULL);
 @skip      ATL_thread_launch(vp, 0, NULL, TestDoWork, NULL);
       for (k=0; k < cnt; k++)
          assert(checkin[k] == 1);
@@ -413,7 +413,7 @@ int main(int nargs, char **args)
    for (i=0; i < ATL_NTHREADS-1; i++)
       acnts[i] = ATL_SetAtomicCount(lcnt);
    acnts[ATL_NTHREADS-1] = ATL_SetAtomicCount(lcnt + nreps-lcnt*ATL_NTHREADS);
-   ATL_goparallel(ATL_NTHREADS, TuneDoWork_loc, NULL);
+   ATL_goparallel(ATL_NTHREADS, TuneDoWork_loc, NULL, NULL);
    for (tldec=0.0,i=0; i < ATL_NTHREADS; i++)
       tldec = Mmax(tldec,timearr[i]);
    printf("   parallel LocAD  time = %e (par/ser = %.2f)\n",tldec,tldec/tdec_s);
@@ -423,7 +423,7 @@ int main(int nargs, char **args)
 @endskip
 
    acnt = ATL_SetGlobalAtomicCount(ATL_NTHREADS, nreps, 0);
-   ATL_goparallel(ATL_NTHREADS, TuneDoWork_gc, NULL);
+   ATL_goparallel(ATL_NTHREADS, TuneDoWork_gc, NULL, NULL);
    for (tldec=0.0,i=0; i < ATL_NTHREADS; i++)
       tldec = Mmax(tldec,timearr[i]);
    ATL_FreeGlobalAtomicCount(acnt);
@@ -432,14 +432,14 @@ int main(int nargs, char **args)
 
    acnt = ATL_SetAtomicCount_mut(nreps);
    acnt = ATL_SetAtomicCount(nreps);
-   ATL_goparallel(ATL_NTHREADS, TuneDoWork, NULL);
+   ATL_goparallel(ATL_NTHREADS, TuneDoWork, NULL, NULL);
    for (tdec=0.0,i=0; i < ATL_NTHREADS; i++)
       tdec = Mmax(tdec,timearr[i]);
    ATL_FreeAtomicCount(acnt);
    printf("   parallel AtoDec time = %e (par/ser = %.2f)\n", tdec, tdec/tdec_s);
 
    acnt = ATL_SetAtomicCount_mut(nreps);
-   ATL_goparallel(ATL_NTHREADS, TuneDoWork_mut, NULL);
+   ATL_goparallel(ATL_NTHREADS, TuneDoWork_mut, NULL, NULL);
    for (tmut=0.0,i=0; i < ATL_NTHREADS; i++)
       tmut = Mmax(tmut,timearr[i]);
    ATL_FreeAtomicCount_mut(acnt);
@@ -447,7 +447,7 @@ int main(int nargs, char **args)
 
    count = nreps;
    acnt = ATL_SetAtomicCount_mut(nreps);
-   ATL_goparallel(ATL_NTHREADS, TuneDoWork_ser, NULL);
+   ATL_goparallel(ATL_NTHREADS, TuneDoWork_ser, NULL, NULL);
    for (tser=0.0,i=0; i < ATL_NTHREADS; i++)
       tser = Mmax(tser,timearr[i]);
    ATL_FreeAtomicCount_mut(acnt);
@@ -492,12 +492,8 @@ int main(int nargs, char **args)
 #include "atlas_misc.h"
 
 @ROUT tune_aff
-void ATL_tllin
-   (void *opstruct, int opstructstride, void *OpStructIsInit, void *DoWork,
-    void *CombineOpStructs);
-void ATL_tllin_noaff
-   (void *opstruct, int opstructstride, void *OpStructIsInit, void *DoWork,
-    void *CombineOpStructs);
+void goparallel_noaff
+   (const unsigned int P, void *DoWork, void *opstruct, void *DoComb);
 
 @ROUT tune_aff tune_spawn_fp
 typedef struct
@@ -550,15 +546,14 @@ void InCacheGemm
 
 void TuneDoWork_gp(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
-   ATL_TUNE_T *tp = lp->vp;
+   ATL_TUNE_T *tp = lp->opstruct;
    int i;
    InCacheGemm(tp->nflops, tp->V);
 }
 
 void TuneDoWork(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
-   ATL_TUNE_T *tp = vp;
-   const int nthr = tp->nthr;
+   ATL_TUNE_T *tp = lp->opstruct;
    int i;
    InCacheGemm(tp->nflops, tp->V);
 }
@@ -641,13 +636,13 @@ int main(int nargs, char **args)
 
    t0 = ATL_walltime();
    for (k=0; k < nreps; k++)
-      ATL_tllin(ta, opstride, NULL, TuneDoWork, NULL);
+      ATL_goparallel(ATL_NTHREADS, TuneDoWork, ta, NULL);
    taff = ATL_walltime() - t0;
    printf("   Affinity    time = %e\n", (float)taff);
 
    t0 = ATL_walltime();
    for (k=0; k < nreps; k++)
-      ATL_tllin_noaff(ta, opstride, NULL, TuneDoWork, NULL);
+      ATL_goparallel_noaff(ATL_NTHREADS, TuneDoWork, ta, NULL);
    tnoa = ATL_walltime() - t0;
    printf("   NO affinity time = %e\n", (float)tnoa);
 
@@ -873,7 +868,7 @@ int main(int nargs, char **args)
       for (k=0; k < nreps; k++)
       {
 @ROUT tune_spawn `         for (i=0; i < ATL_NTHREADS; i++) done[i] = 0;`
-         ATL_goparallel_prank(ATL_NTHREADS, TuneDoWork_gp, ta);
+         ATL_goparallel_prank(ATL_NTHREADS, TuneDoWork_gp, ta, NULL);
       }
       trnk = ATL_walltime() - t0;
       printf("   rnk time = %e\n", (float)trnk);

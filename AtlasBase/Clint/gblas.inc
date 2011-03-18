@@ -41,8 +41,6 @@
       @whiledef rout gemm trsm trmm symm syrk syr2k
    #ifdef ATL_ANTOINE_THREADS
       #define @(han1)@(pre)@(han2)@6l@(rout) @(rep1)@(pre)@(rep2)@(rout)
-   #elif defined(ATL_OMP_THREADS)
-      #define @(han1)@(pre)@(han2)@6l@(rout) @(rep1)@(pre)@(rep2r)@(rout)
    #else
       #define @(han1)@(pre)@(han2)@6l@(rout) @(rep1)@(pre)@(rep2c)@(rout)
    #endif
@@ -73,8 +71,6 @@
    @whiledef rout trsm gemm symm hemm syrk herk syr2k her2k trmm
    #ifdef ATL_ANTOINE_THREADS
       #define @(han1)@(pre)@(han2)@8l@(rout) @(rep1)@(pre)@(rep2)@(rout)
-   #elif defined(ATL_OMP_THREADS)
-      #define @(han1)@(pre)@(han2)@8l@(rout) @(rep1)@(pre)@(rep2r)@(rout)
    #else
       #define @(han1)@(pre)@(han2)@8l@(rout) @(rep1)@(pre)@(rep2c)@(rout)
    #endif

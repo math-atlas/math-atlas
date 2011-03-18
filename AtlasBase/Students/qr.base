@@ -10360,7 +10360,8 @@ int Mjoin(PATL,StructIsInitGEQR2)(void *vp)
 //void* ATL_geqr2Worker(void *myArg)
 void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
-   ATL_DGEQR2_t *myTS = (ATL_DGEQR2_t*) vp;   /* Recast.                   */
+   ATL_thread_t *tp = vp;
+   ATL_DGEQR2_t *myTS = ((ATL_DGEQR2_t*) lp->opstruct)+tp->rank;
    ATL_DGEQR2_t *zTS = myTS - (myTS->rank); /* Point at zero ts.              */
    int   zees, pair, myRank;                /* Log2 looping variables.        */
    int   i,j,M,N,LDA,mScale,mUpdate,newN,KNT,LDT;
@@ -10913,9 +10914,9 @@ int ATL_tgeqr2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
                  TYPE *ws_T, int LDT, TYPE *WORKM, int buildT)
 {
 
-   ATL_thread_t tp[ATL_NTHREADS];
+@skip   ATL_thread_t tp[ATL_NTHREADS];
    ATL_DGEQR2_t ts[ATL_NTHREADS];
-   ATL_LAUNCHSTRUCT_t ls;
+@skip   ATL_LAUNCHSTRUCT_t ls;
    long long t0, t1;
 
    if (M < 0)
@@ -11052,21 +11053,21 @@ int ATL_tgeqr2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
    for (i=1; i < th; i++)
    {
 //      t = ATL_geqr2_Order[i];               /* Get thread to use.             */
-      t =ATL_launchorder[i]; 
-      ts[t].fullM = b;                      /* Remember whole M.              */
-      ts[t].fullN = N;                      /* Need full size N.              */
-      ts[t].myM = b;                        /* 'b' entries for all.           */
-      ts[t].myN = N;                        /* Width is same for all.         */
-      ts[t].myK = 0;                        /* First k for dnrm2.             */
-      ts[t].lda = LDA;                      /* LDA is same for all.           */
-      ts[t].rank = t;                       /* Rank of process.               */
-      ts[t].A = myA;                        /* Point at share of A.           */
-      ts[t].TAU = TAU;                      /* TAU is same for all.           */
-      ts[t].dnrm2 = -1;                     /* Not done yet.                  */
-      ts[t].dgemv = -1;                     /* Not done yet.                  */
-      ts[t].active = 1;                     /* Indicate active.               */
-      ts[t].buildT = buildT;                /* Pass in decision var.          */
-      ts[t].dgemvt = -1;                    /* Not done yet.                  */
+@skip      t =ATL_launchorder[i]; 
+      ts[i].fullM = b;                      /* Remember whole M.              */
+      ts[i].fullN = N;                      /* Need full size N.              */
+      ts[i].myM = b;                        /* 'b' entries for all.           */
+      ts[i].myN = N;                        /* Width is same for all.         */
+      ts[i].myK = 0;                        /* First k for dnrm2.             */
+      ts[i].lda = LDA;                      /* LDA is same for all.           */
+      ts[i].rank = t;                       /* Rank of process.               */
+      ts[i].A = myA;                        /* Point at share of A.           */
+      ts[i].TAU = TAU;                      /* TAU is same for all.           */
+      ts[i].dnrm2 = -1;                     /* Not done yet.                  */
+      ts[i].dgemv = -1;                     /* Not done yet.                  */
+      ts[i].active = 1;                     /* Indicate active.               */
+      ts[i].buildT = buildT;                /* Pass in decision var.          */
+      ts[i].dgemvt = -1;                    /* Not done yet.                  */
       myA += (b SHIFT);                     /* Point at next share.           */
    }
 
@@ -11077,9 +11078,9 @@ int ATL_tgeqr2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
    totmem=MY_align;                         /* Needed for alignment.          */
    for (i=0; i<th; i++)
    {
-      t = ATL_launchorder[i];
-      mem[t] = ATL_geqr2_LC_Setup(ts+t);    /* Find necessary memory.         */
-      totmem += mem[t];                     /* Add to total.                  */
+@skip      t = ATL_launchorder[i];
+      mem[i] = ATL_geqr2_LC_Setup(ts+t);    /* Find necessary memory.         */
+      totmem += mem[i];                     /* Add to total.                  */
    }
 
    allMem = malloc(totmem);                 /* Allocate the memory.           */
@@ -11087,9 +11088,9 @@ int ATL_tgeqr2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
    ts[0].A = (TYPE*) (((size_t) allMem+MY_align)&(-MY_align));
    for (i=1; i<th; i++)                     /* Each thread takes..            */
    {
-      int pt = ATL_launchorder[i-1];        /* Get previous thread id.        */
-      t = ATL_launchorder[i];               /* Get this thread id.            */
-      ts[t].A = (TYPE*) ((size_t) ts[pt].A + mem[pt]);/* ..next block.        */
+@skip      int pt = ATL_launchorder[i-1];        /* Get previous thread id.        */
+@skip      t = ATL_launchorder[i];               /* Get this thread id.            */
+      ts[i].A = (TYPE*) ((size_t) ts[i-1].A + mem[i-1]);/* ..next block.      */
    }
    #endif                                   /* defined(local_copy)            */
 
@@ -11105,6 +11106,8 @@ int ATL_tgeqr2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
 /* Call ATL_launcher to launch thread which runs in different CPUs   cores    */
 /*----------------------------------------------------------------------------*/
 
+   ATL_goparallel(ATL_NTHREADS, ATL_geqr2Worker, ts, NULL);
+@beginskip
    ls.opstruct = (char*) ts;
    ls.opstructstride = (int) ( ((char*)(ts+1)) - (char*)(ts) );
    ls.CombineOpStructs = NULL;
@@ -11119,6 +11122,7 @@ int ATL_tgeqr2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
    }
    ATL_thread_start(tp, 0, 1, ATL_tlaunch, tp);
    ATL_thread_join(tp);
+@endskip
 
 
    #if defined(local_copy)
@@ -11598,7 +11602,8 @@ int Mjoin(PATL,StructIsInitGEQL2)(void *vp)
 //void* ATL_geql2Worker(void *myArg)
 void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
-   ATL_DGEQL2_t *myTS = (ATL_DGEQL2_t*) vp;   /* Recast.                   */
+   ATL_thread_t *tp=vp;
+   ATL_DGEQL2_t *myTS = ((ATL_DGEQL2_t*) vp)+tp->rank;
    ATL_DGEQL2_t *zTS = myTS - (myTS->rank); /* Point at zero ts.              */
    int   zees, pair, myRank;                /* Log2 looping variables.        */
    int   i,j,M,N,LDA,mScale,mUpdate,newN,KNT,LDT;
@@ -12157,9 +12162,9 @@ int ATL_tgeql2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
                  TYPE *ws_T, int LDT, TYPE *WORKM, int buildT)
 {
 
-   ATL_thread_t tp[ATL_NTHREADS];
+@skip   ATL_thread_t tp[ATL_NTHREADS];
    ATL_DGEQL2_t ts[ATL_NTHREADS];
-   ATL_LAUNCHSTRUCT_t ls;
+@skip   ATL_LAUNCHSTRUCT_t ls;
    long long t0, t1;
 
    if (M < 0)
@@ -12288,21 +12293,21 @@ int ATL_tgeql2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
 
    for (i=1; i < th; i++)
    {
-      t = ATL_launchorder[i];               /* Get thread to use.             */
-      ts[t].fullM = b;                      /* Remember whole M.              */
-      ts[t].fullN = N;                      /* Need full size N.              */
-      ts[t].myM = b;                        /* 'b' entries for all.           */
-      ts[t].myN = N;                        /* Width is same for all.         */
-      ts[t].myK = 0;                        /* First k for dnrm2.             */
-      ts[t].lda = LDA;                      /* LDA is same for all.           */
-      ts[t].rank = t;                       /* Rank of process.               */
-      ts[t].A = myA;                        /* Point at share of A.           */
-      ts[t].TAU = TAU;                      /* TAU is same for all.           */
-      ts[t].dnrm2 = -1;                     /* Not done yet.                  */
-      ts[t].dgemv = -1;                     /* Not done yet.                  */
-      ts[t].active = 1;                     /* Indicate active.               */
-      ts[t].buildT = buildT;                /* Pass in decision var.          */
-      ts[t].dgemvt = -1;                    /* Not done yet.                  */
+@skip      t = ATL_launchorder[i];               /* Get thread to use.             */
+      ts[i].fullM = b;                      /* Remember whole M.              */
+      ts[i].fullN = N;                      /* Need full size N.              */
+      ts[i].myM = b;                        /* 'b' entries for all.           */
+      ts[i].myN = N;                        /* Width is same for all.         */
+      ts[i].myK = 0;                        /* First k for dnrm2.             */
+      ts[i].lda = LDA;                      /* LDA is same for all.           */
+      ts[i].rank = t;                       /* Rank of process.               */
+      ts[i].A = myA;                        /* Point at share of A.           */
+      ts[i].TAU = TAU;                      /* TAU is same for all.           */
+      ts[i].dnrm2 = -1;                     /* Not done yet.                  */
+      ts[i].dgemv = -1;                     /* Not done yet.                  */
+      ts[i].active = 1;                     /* Indicate active.               */
+      ts[i].buildT = buildT;                /* Pass in decision var.          */
+      ts[i].dgemvt = -1;                    /* Not done yet.                  */
       myA -= (b SHIFT);                     /* Point at next share.           */
    }
 
@@ -12313,9 +12318,9 @@ int ATL_tgeql2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
    totmem=MY_align;                         /* Needed for alignment.          */
    for (i=0; i<th; i++)
    {
-      t = ATL_launchorder[i];               /* Get active thread id.          */
-      mem[t] = ATL_geql2_LC_Setup(ts+t);    /* Find necessary memory.         */
-      totmem += mem[t];                     /* Add to total.                  */
+@skip      t = ATL_launchorder[i];               /* Get active thread id.          */
+      mem[i] = ATL_geql2_LC_Setup(ts+t);    /* Find necessary memory.         */
+      totmem += mem[i];                     /* Add to total.                  */
    }
 
    allMem = malloc(totmem);                 /* Allocate the memory.           */
@@ -12323,9 +12328,8 @@ int ATL_tgeql2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
    ts[0].A = (TYPE*) (((size_t) allMem+MY_align)&(-MY_align));
    for (i=1; i<th; i++)                     /* Each thread takes..            */
    {
-      int pt = ATL_launchorder[i-1];        /* Get previous thread id.        */
-      t = ATL_launchorder[i];               /* Get this thread id.            */
-      ts[t].A = (TYPE*) ((size_t) ts[pt].A + mem[pt]);/* ..next block.        */
+      int pt = i-1;        /* Get previous thread id.        */
+      ts[i].A = (TYPE*) ((size_t) ts[pt].A + mem[pt]);/* ..next block.        */
    }
    #endif                                   /* defined(local_copy)            */
 
@@ -12340,6 +12344,8 @@ int ATL_tgeql2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
 /* Call ATL_launcher to launch thread which runs in different CPUs   cores    */
 /*----------------------------------------------------------------------------*/
 
+   ATL_goparallel(ATL_NTHREADS, ATL_geql2Worker, ts, NULL);
+@beginskip
    ls.opstruct = (char*) ts;
    ls.opstructstride = (int) ( ((char*)(ts+1)) - (char*)(ts) );
    ls.CombineOpStructs = NULL;
@@ -12354,6 +12360,7 @@ int ATL_tgeql2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
    }
    ATL_thread_start(tp, 0, 1, ATL_tlaunch, tp);
    ATL_thread_join(tp);
+@endskip
 
    #if defined(local_copy)
    free(allMem);                            /* release copied area.           */
