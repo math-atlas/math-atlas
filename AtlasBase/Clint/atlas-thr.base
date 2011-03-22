@@ -346,8 +346,13 @@ typedef struct
    TYPE *Aw;              /* workspace for common A */
    const TYPE *A, *B;     /* original input matrices */
    TYPE *C;               /* original output matrix */
-   SCALAR alpha;          
-   SCALAR beta;
+   #ifdef TREAL
+      TYPE alpha;          
+      TYPE beta;
+   #else
+      const TYPE *alpha;          
+      const TYPE *beta;
+   #endif
    ATL_INT nKb, kr, kr8;
    ATL_INT nMb, mr, nNb, nr;
    ATL_INT M, N, K, lda, ldb, ldc;
@@ -3437,8 +3442,7 @@ int Mjoin(PATL,tgemm_@(ds))(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB
 @ROUT ATL_tgemm
 /*
  * See if we are in a case where we've implemented a dynamically scheduled
- * code for real precision (haven't written any for complex yet).
- * Performance of the dynamically scheduled operations varies:
+ * code.  Performance of the dynamically scheduled operations varies:
  * on Intel, its typically faster, and on AMD its slower than
  * statically scheduled *when run on an unloaded machine*.  The difference is
  * that if there is load on one or more processors, dynamically scheduled
@@ -3447,30 +3451,28 @@ int Mjoin(PATL,tgemm_@(ds))(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB
  * of dynamic scheduling, which always seems to pay for itself.
  * On unloaded AMD machines, the asymptotic loss is roughly 1-2%.
  */
-   #ifdef TREAL
 /*
- *    Rank-K update has special case
+ * Rank-K update has special case
  */
-      i = Mmax(ATL_NTHREADS,4)*NB;
-      if (K <= 4*NB && M >= 2*MB && N >= 2*NB && Mmax(M,N) >= i)
-      {
-         if (!Mjoin(PATL,tgemm_rkK)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
-                                    beta, C, ldc))
-            return;
-      }
+   i = Mmax(ATL_NTHREADS,4)*NB;
+   if (K <= 4*NB && M >= 2*MB && N >= 2*NB && Mmax(M,N) >= i)
+   {
+      if (!Mjoin(PATL,tgemm_rkK)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
+                                 beta, C, ldc))
+         return;
+   }
 /*
- *    Very large matrices loops over rank-Kp updates, where Kp is set by
- *    CacheEdge.  If any dim is very small, use one of the other cases.
+ * Very large matrices loops over rank-Kp updates, where Kp is set by
+ * CacheEdge.  If any dim is very small, use one of the other cases.
  */
-      i = Mmin(M,N);
-      i = Mmin(i, K);
-      if (i > Mmax(8,2*ATL_NTHREADS)*NB)
-      {
-         if (!Mjoin(PATL,tgemm_bigMN_Kp)(TA, TB, M, N, K, alpha, A, lda, 
-                                         B, ldb, beta, C, ldc))
-            return;
-      }
-   #endif
+   i = Mmin(M,N);
+   i = Mmin(i, K);
+   if (i > Mmax(8,2*ATL_NTHREADS)*NB)
+   {
+      if (!Mjoin(PATL,tgemm_bigMN_Kp)(TA, TB, M, N, K, alpha, A, lda, 
+                                      B, ldb, beta, C, ldc))
+         return;
+   }
 /*
  * See how many processors are optimal for this problem
  */
@@ -6942,6 +6944,7 @@ static void DoMM_K
    ATL_CINT ldc         /* stride betweent elts in a row of C */
 )
 {
+#ifdef TREAL
    ATL_INT k;
    ATL_CINT incA = mb*KB, incB = KB*nb;
    NBMM0 mmk, mmk_kr=genmm, mmk_bX;
@@ -7004,6 +7007,111 @@ static void DoMM_K
       mmk(mb, nb, KB, ATL_rone, A, KB, B, KB, ATL_rone, C, ldc);
    if (kr)  /* partial remainder */
       mmk_kr(mb, nb, kr, ATL_rone, A, kr, B, kr, ATL_rone, C, ldc);
+#else  /* complex code */
+   ATL_INT k;
+   ATL_CINT incA = mb*KB*2, incB = 2*KB*nb;
+   const TYPE one[2] = {ATL_rone, ATL_rzero};
+   const TYPE *bet = beta;
+   NBMM0 mmk, mmk_kr=genmm, mmk_bX;
+
+   ATL_assert(mb <= MB && nb <= NB);
+   if (!nfKblks)  /* only partial block to do! */
+   {
+      if (beta[1] == ATL_rzero && beta[0] != ATL_rzero)
+         Mjoin(PATL,pKBmm)(mb, nb, kr, ATL_rone, A, kr, B, kr, *beta, C, ldc);
+      else
+      {
+         if (*beta == ATL_rzero && beta[1] == ATL_rzero)
+            Mjoin(PATL,gezero)(mb, nb, C, ldc);
+         else
+            Mjoin(PATL,gescal)(mb, nb, beta, C, ldc);
+         Mjoin(PATL,pKBmm)(mb, nb, kr, ATL_rone, A, kr, B, kr, ATL_rone,C, ldc);
+      }
+      return;
+   }
+   if (mb == MB && nb == NB)
+   {
+      if (beta[1] == ATL_rzero)  /* real scalar */
+      {
+         if (*beta == ATL_rone)
+         {
+            NBmm_b1(mb, nb, KB, ATL_rone, A, KB, B, KB, ATL_rone, C, ldc);
+         }
+         else if (*beta == ATL_rzero)
+         {
+            NBmm_b0(mb, nb, KB, ATL_rone, A, KB, B, KB, ATL_rzero, C, ldc);
+         }
+         else
+         {
+            NBmm_bX(mb, nb, KB, ATL_rone, A, KB, B, KB, *beta, C, ldc);
+         }
+      }
+      else /* must scale for complex beta */
+      {
+         Mjoin(PATL,gescal)(mb, nb, beta, C, ldc);
+         NBmm_b1(mb, nb, KB, ATL_rone, A, KB, B, KB, ATL_rone, C, ldc);
+      }
+      A += incA; B += incB;
+      for (k=1; k < nfKblks; k++, A += incA, B += incB)  /* full blocks */
+         NBmm_b1(mb, nb, KB, ATL_rone, A, KB, B, KB, ATL_rone, C, ldc);
+      if (kr)  /* partial remainder */
+         Mjoin(PATL,pKBmm)(mb, nb, kr, ATL_rone, A, kr, B, kr, ATL_rone,C, ldc);
+      return;
+   }
+   if (mb != MB)
+   {
+      if (nb != NB)  /* both blocks partial */
+      {
+         if (*beta == ATL_rzero && beta[1] == ATL_rzero)
+         {
+            Mjoin(PATL,gezero)(mb, nb, C, ldc);
+            bet = one;
+         }
+         else if (beta[1] != ATL_rzero)
+         {
+            Mjoin(PATL,gescal)(mb, nb, beta, C, ldc);
+            bet = one;
+         }
+         mmk = mmk_bX =  Mjoin(PATL,pKBmm);
+      }
+      else  /* only M block is partial */
+      {
+         if (beta[1] != ATL_rzero)
+         {
+            Mjoin(PATL,gescal)(mb, nb, beta, C, ldc);
+            bet = one;
+         }
+         mmk = Mjoin(PATL,pMBmm_b1);
+         if (*bet == ATL_rone)
+            mmk_bX = Mjoin(PATL,pMBmm_b1);
+         else if (*bet == ATL_rzero)
+            mmk_bX = Mjoin(PATL,pMBmm_b0);
+         else
+            mmk_bX = Mjoin(PATL,pMBmm_bX);
+      }
+   }
+   else if (nb != MB)  /* only N block is partial */
+   {
+      if (beta[1] != ATL_rzero)
+      {
+         Mjoin(PATL,gescal)(mb, nb, beta, C, ldc);
+         bet = one;
+      }
+      mmk = Mjoin(PATL,pNBmm_b1);
+      if (*bet == ATL_rone)
+         mmk_bX = Mjoin(PATL,pNBmm_b1);
+      else if (*bet == ATL_rzero)
+         mmk_bX = Mjoin(PATL,pNBmm_b0);
+      else
+         mmk_bX = Mjoin(PATL,pNBmm_bX);
+   }
+   mmk_bX(mb, nb, KB, ATL_rone, A, KB, B, KB, *bet, C, ldc);  /* apply beta */
+   A += incA; B += incB;
+   for (k=1; k < nfKblks; k++, A += incA, B += incB)  /* full blocks */
+      mmk(mb, nb, KB, ATL_rone, A, KB, B, KB, ATL_rone, C, ldc);
+   if (kr)  /* partial remainder */
+      Mjoin(PATL,pKBmm)(mb, nb, kr, ATL_rone, A, kr, B, kr, ATL_rone, C, ldc);
+#endif
 }
 
 @ROUT ATL_tgemm_MKp ATL_tgemm_rkK_Np
@@ -7114,6 +7222,7 @@ static void DoMM_NMK
 /* 
  * Takes a MxN block and expands it to an ldaxM block wt zero padding in-place
  */
+#ifdef TREAL
 static void ExpandBlock
 (
    ATL_CINT M, /* the number of rows that should be expanded to lda */
@@ -7144,6 +7253,7 @@ static void ExpandBlock
       while (c != stop);
    }
 }
+#endif
 
 @ROUT ATL_tgemm_rkK_Np
 /*
@@ -7316,26 +7426,74 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    #endif
    const TYPE *A=pd->A, *B=pd->B;
    TYPE *C = pd->C;
-   SCALAR alpha = pd->alpha;
-   SCALAR beta  = pd->beta;
+   #ifdef TREAL
+      TYPE alpha = pd->alpha;
+      TYPE beta  = pd->beta;
+   #else
+      const SCALAR alpha = pd->alpha;
+      const SCALAR beta  = pd->beta;
+   #endif
    ATL_CINT nMb=pd->nMb, mr=pd->mr, nNb=pd->nNb, nr=pd->nr;
    ATL_CINT nKb=pd->nKb, kr=pd->kr, kr8=pd->kr8, krpad = kr8-kr;
-   ATL_CINT incA = (nKb*KB + kr8)*MB, ldc = pd->ldc;
-   ATL_CINT lda=pd->lda, amul = (ANOTRANS) ? (1 SHIFT) : (lda SHIFT);
-   ATL_CINT ldb=pd->ldb, bmul = (BNOTRANS) ? ldb : 1, P=ATL_NTHREADS;
+   size_t incA = (nKb*KB + kr8)*(MB SHIFT), ldc = pd->ldc;
+   size_t lda=pd->lda, amul = (ANOTRANS) ? (1 SHIFT) : (lda SHIFT);
+   size_t ldb=pd->ldb, P=ATL_NTHREADS;
    ATL_CINT tnMblks = (mr) ? nMb+1 : nMb, tnNblks = (nr) ? nNb+1 : nNb;
    ATL_CINT kr8f = (kr8 == NB) ? 0 : kr8;
    ATL_CINT nfKblks = (kr8 == NB) ? nKb+1 : nKb;
    ATL_INT iblk, jblk;
    MAT2BLK A2blk;
    int k;
-
+   #ifdef TCPLX
+      const TYPE one[2] = {ATL_rone, ATL_rzero};
+   #else
+      #define one ATL_rone
+   #endif
+#ifdef TREAL
    if (ANOTRANS)
       A2blk = (SCALAR_IS_ONE(alpha)) ? 
               Mjoin(PATL,row2blkT_a1) : Mjoin(PATL,row2blkT_aX);
    else
       A2blk = (SCALAR_IS_ONE(alpha)) ? 
               Mjoin(PATL,col2blk_a1) : Mjoin(PATL,col2blk_aX);
+#else
+   if (ANOTRANS)
+   {
+      if (alpha[1] == ATL_rzero)
+      {
+         if (*alpha == ATL_rone)
+            A2blk = Mjoin(PATL,row2blkT_a1);
+         else
+            A2blk = Mjoin(PATL,row2blkT_aXi0);
+      }
+      else
+         A2blk = Mjoin(PATL,row2blkT_aX);
+   }
+   else if (pd->TA == AtlasConjTrans)
+   {
+      if (alpha[1] == ATL_rzero)
+      {
+         if (*alpha == ATL_rone)
+            A2blk = Mjoin(PATL,col2blkConj_a1);
+         else
+            A2blk = Mjoin(PATL,col2blkConj_aXi0);
+      }
+      else
+         A2blk = Mjoin(PATL,col2blkConj_aX);
+   }
+   else  /* TA == AtlasTrans */
+   {
+      if (alpha[1] == ATL_rzero)
+      {
+         if (*alpha == ATL_rone)
+            A2blk = Mjoin(PATL,col2blk_a1);
+         else
+            A2blk = Mjoin(PATL,col2blk_aXi0);
+      }
+      else
+         A2blk = Mjoin(PATL,col2blk_aX);
+   }
+#endif
 /*
  * Use the AtomicCounter aMcnt to copy the nMb full row panels of A, 
  * and possibly one partial mr-wide row panel.  Since K is not long, copying
@@ -7350,17 +7508,27 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       i = iblk*NB;
       i *= amul;
       A2blk(K, mb, A+i, lda, Aw+iblk*incA, alpha);
-      if (kr8 != kr)
-         ExpandBlock(kr, mb, Aw+iblk*incA+nKb*KB*mb, kr8);
+      #ifdef TREAL
+         if (kr8 != kr)
+            ExpandBlock(kr, mb, Aw+iblk*incA+nKb*KB*mb, kr8);
+      #endif
    }
 /*
  * Tell everyone I have finished copying A, and then loop until everyone
  * else signals they've copied their pieces
  */
-   chkin[iam] = 1;
-   for (k=0; k < P; k++)
-      while(!chkin[k]) 
-         ATL_POLL;
+   if (iam == 0)
+   {
+      for (k=1; k < P; k++)
+         while(!chkin[k]) 
+            ATL_POLL;
+      chkin[0] = 1;
+   }
+   else
+   {
+      chkin[iam] = 1;
+      while (!chkin[0]);
+   }
 /*
  * Perform the rank-K update with a fully-copied A by looping over column-panels
  * of C in reverse order
@@ -7373,15 +7541,18 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       TYPE *c;
 
       nb = (jblk != tnNblks || !nr) ? NB : nr;
-      pd->Js[iam] = j = (jblk-1)*(NB SHIFT);
-      c = C + j * ((size_t)ldc);
+      pd->Js[iam] = j = (jblk-1)*NB;
+      #ifdef TCPLX
+         j <<= 1;
+      #endif
+      c = C + j*ldc;
 /*
  *    Copy the specified column-panel of B to my private workspace
  */
       if (BNOTRANS)
-         Mjoin(PATL,col2blk_a1)(K, nb, B+j*ldb, ldb, Bw, ATL_rone);
+         Mjoin(PATL,col2blk_a1)(K, nb, B+j*ldb, ldb, Bw, one);
       else
-         Mjoin(PATL,row2blkT_a1)(K, nb, B+j, ldb, Bw, ATL_rone);
+         Mjoin(PATL,row2blkT_a1)(K, nb, B+j, ldb, Bw, one);
 /*
  *    If kr is nonzero and not a multiple of 8, pad K with K8-K zeros
  *    This allows us to cause less K-cleanup kernels to be loaded, as
@@ -7389,8 +7560,10 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
  *    This will tend to depress perf when kr is small, and improve it when
  *    kr is large and not a multiple of the vector length
  */
+      #ifdef TREAL
       if (krpad)
          ExpandBlock(kr, nb, Bw+nKb*KB*nb, kr8);
+      #endif
 /*
  *    Given that I'm working on col-panel j, determine the percentage of its
  *    blocks that I reserve for myself based on how many columns are left.
@@ -7415,15 +7588,14 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
          const size_t i = (tnMblks-iblk)*(NB SHIFT);
 
          iblk = tnMblks - iblk;
-         DoMM_K(mb, nb, nfKblks, kr8f, Aw+(((size_t)iblk)*incA), Bw, 
-                beta, c+i, ldc);
+         DoMM_K(mb, nb, nfKblks, kr8f, Aw+iblk*incA, Bw, beta, c+i, ldc);
       }
    }
    chkin[iam] = -3;  /* let everyone know I've finished my columns */
 /*
  * When no more col-panels of C are available, it is time to see if I can
  * help other workers finish their columns; As long as someone hasn't
- * signalled his completion (negative # in chkin), continue trying to steal.
+ * signaled his completion (negative # in chkin), continue trying to steal.
  */
    do
    {
@@ -7442,7 +7614,7 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
          ATL_mutex_lock(pd->Mlocks[rk]);
          if (ATL_GetGlobalAtomicCount(aCrow, 1))
          {
-            TYPE *c = C + pd->Js[rk]*((size_t)ldc);
+            TYPE *c = C + pd->Js[rk]*(((size_t)ldc)SHIFT);
             int nb;
    
             nb = pd->N - pd->Js[rk];
@@ -7453,7 +7625,7 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
                const size_t i = (tnMblks-iblk)*(NB SHIFT);
       
                iblk = tnMblks - iblk;
-               DoMM_K(mb, nb, nfKblks, kr8f, Aw+(((size_t)iblk)*incA), Bw, beta,
+               DoMM_K(mb, nb, nfKblks, kr8f, Aw+(iblk*incA), Bw, beta,
                       c+i, ldc);
             }
          }
@@ -7479,16 +7651,21 @@ void Mjoin(PATL,DoWork_bigMN_Kp)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    ATL_thread_t *tp = vp;
    const int iam = tp->rank, P = tp->P;
    ATL_TGEMM_RKK_t *pd = lp->opstruct;
-   volatile int *chkin = pd->chkin+P;
+   volatile int *chkin = pd->chkin+P, *hischk = pd->chkin;
    ATL_CINT K = pd->K, Kp = pd->kr, nkb = Kp / NB;
    ATL_CINT nnb = (pd->nr) ? pd->nNb+1 : pd->nNb;
    ATL_CINT nmb = (pd->mr) ? pd->nMb+1 : pd->nMb;
-   const size_t incA = (pd->TA == AtlasNoTrans) ? pd->lda : 1;
-   const size_t incB = (pd->TB == AtlasNoTrans) ? 1 : pd->ldb;
+   const size_t incA = (pd->TA == AtlasNoTrans) ? (pd->lda SHIFT) : (1 SHIFT); 
+   const size_t incB = (pd->TB == AtlasNoTrans) ? (1 SHIFT) : (pd->ldb SHIFT);
    ATL_INT k, kb;
    int i, n;
    const TYPE *A = pd->A, *B = pd->B;
    void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp);
+   #ifdef TCPLX
+      const TYPE one[2] = {ATL_rone, ATL_rzero};
+   #else
+      #define one ATL_rone
+   #endif
 
    for (k=0; k < K; k += Kp)
    {
@@ -7504,7 +7681,9 @@ void Mjoin(PATL,DoWork_bigMN_Kp)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
          for (i=1; i < P; i++)
             while(chkin[i] < n)
                ATL_POLL;
-         pd->beta = (k) ? ATL_rone : pd->beta;
+         for (i=0; i < P; i++)
+            hischk[i] = 0;
+         pd->beta = (k) ? one : pd->beta;
          pd->A = A + k*incA;
          pd->B = B + k*incB;
          ATL_ResetGlobalAtomicCount(pd->aNcnt, nnb, 0);
@@ -7519,7 +7698,12 @@ void Mjoin(PATL,DoWork_bigMN_Kp)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
          {
             pd->nKb = kb / KB;
             pd->kr = kb - pd->nKb * KB;
-            pd->kr8 = ((pd->kr+7)>>3)<<3;
+            #ifdef TREAL
+               pd->kr = kb - pd->nKb * KB;
+               pd->kr8 = ((pd->kr+7)>>3)<<3;
+            #else
+               pd->kr8 = pd->kr = kb - pd->nKb * KB;
+            #endif
          }
          chkin[0] = n;
       }
@@ -7541,6 +7725,10 @@ void Mjoin(PATL,DoWork_bigMN_Kp)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
          while (chkin[i] < n)
             ATL_POLL;
 }
+#ifdef TREAL
+   #undef one
+#endif
+   
 
 int Mjoin(PATL,tgemm_bigMN_Kp)
    (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, ATL_CINT M,
@@ -7575,13 +7763,17 @@ int Mjoin(PATL,tgemm_bigMN_Kp)
    pd.nNb = N / NB;
    pd.nr = N - pd.nNb*NB;
 
-   Kp = (CacheEdge - MB*NB)/(MB + 2*NB);
+   #ifdef TREAL
+      Kp = (CacheEdge - MB*NB)/(MB + 2*NB);
+   #else
+      Kp = (CacheEdge - 2*MB*NB)/(2*MB + 4*NB);
+   #endif
    if (Kp < KB)
       return(1);  /* not going to be efficient */
    Kp = (Kp/KB)*KB;
    pd.kr = Kp;
    sz = ATL_MulBySize(Kp)*M + ATL_Cachelen;  /* sizeof A workspace */
-   sz += ATL_NTHREADS*(ATL_MulBySize(Kp)*NB+ATL_Cachelen);  /* B workspaces */
+   sz += ATL_NTHREADS*(Kp*ATL_MulBySize(NB)+ATL_Cachelen);  /* B workspaces */
    sz += ATL_NTHREADS*3*sizeof(int);  /* chkin1/2 & Js arrays */
    sz += ATL_NTHREADS*sizeof(TYPE*);  /* Bws array */
    sz += ATL_NTHREADS*2*sizeof(void*); /* aMcnts & Mlocks arrays */
@@ -7597,11 +7789,11 @@ int Mjoin(PATL,tgemm_bigMN_Kp)
    pd.Aw = (TYPE *) (pd.Js + ATL_NTHREADS);
    pd.Aw = ATL_AlignPtr(pd.Aw);
    pd.Sync0 = 0;
-   vp = pd.Aw + M * Kp;
+   vp = pd.Aw + M * (Kp SHIFT); 
    pd.Bws[0] = ATL_AlignPtr(vp);
    for (i=1; i < ATL_NTHREADS; i++)
    {
-      vp = pd.Bws[i-1] + NB*Kp;
+      vp = pd.Bws[i-1] + (NB SHIFT)*Kp;
       pd.Bws[i] = ATL_AlignPtr(vp);
    }
    for (i=0; i < ATL_NTHREADS; i++)
@@ -7674,13 +7866,13 @@ int Mjoin(PATL,tgemm_rkK@(sf))
    Aw = (TYPE*) (chkin+ATL_NTHREADS);
 @ROUT ATL_tgemm_rkK_Np ATL_tgemm_rkK
    Aw = ATL_AlignPtr(Aw);
-   Bws[0] = Aw + K8*M;
+   Bws[0] = Aw + K8*(M SHIFT);
    Bws[0] = ATL_AlignPtr(Bws[0]);
 @ROUT ATL_tgemm_rkK `   pd.Js[0] = 0;`
    chkin[0] = 0;
    for (i=1; i < ATL_NTHREADS; i++)
    {
-      Bws[i] = Bws[i-1] + K8*NB;
+      Bws[i] = Bws[i-1] + K8*(NB SHIFT);
       Bws[i] = ATL_AlignPtr(Bws[i]);
       chkin[i] = 0;
 @ROUT ATL_tgemm_rkK `      pd.Js[i] = 0;`
@@ -7703,7 +7895,12 @@ int Mjoin(PATL,tgemm_rkK@(sf))
    pd.nNb = nDb = ATL_DivByNB(N);
    pd.nr = dr = N - ATL_MulByNB(nDb);
    pd.aNcnt = ATL_SetGlobalAtomicCount(ATL_NTHREADS, dr ? nDb+1 : nDb, 0);
-   pd.nKb = nKb; pd.kr = kr; pd.kr8 = ((kr+7)>>3)<<3;
+   pd.nKb = nKb; pd.kr = kr; 
+   #ifdef TREAL
+      pd.kr8 = ((kr+7)>>3)<<3;
+   #else
+      pd.kr8 = kr;
+   #endif
    pd.A = A; pd.B = B; pd.C = C;
    pd.lda = lda; pd.ldb = ldb; pd.ldc = ldc;
    pd.M = M; pd.N = N; pd.K = K;
