@@ -584,7 +584,7 @@ void Mjoin(PATL,tvgemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
                         ATL_CINT M, ATL_CINT N, ATL_CINT K, const void *alpha,
                         const void *A, ATL_CINT lda, const void *B,ATL_CINT ldb,
                         const void *beta, void *C, ATL_CINT ldc);
-@whiledef ds M N K rec rkK bigMN_Kp
+@whiledef ds rec rkK bigMN_Kp
 int Mjoin(PATL,tgemm_@(ds))
    (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, 
     ATL_CINT M, ATL_CINT N, ATL_CINT K, const SCALAR alpha,
@@ -7292,11 +7292,7 @@ static void ATL_tloopN
    ATL_CINT kr8f = (kr8 == NB) ? 0 : kr8;
    ATL_CINT nfKblksf = (kr8 == NB) ? nfKblks+1 : nfKblks;
    ATL_INT jblk, p;
-   #ifdef TCPLX
-      ATL_CINT BNOTRANS = (TB == AtlasNoTrans || TB == AtlasConj);
-   #else
-      ATL_CINT BNOTRANS = (TB == AtlasNoTrans);
-   #endif
+   ATL_CINT BNOTRANS = (TB == AtlasNoTrans);
    ATL_CINT bmul = (BNOTRANS) ? ldb : 1, nNblks=nfNblks+1;
 
    while (jblk = ATL_DecGlobalAtomicCount(aNcnt, iam))
@@ -7417,13 +7413,8 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    TYPE *Bw=pd->Bws[iam], *Aw=pd->Aw;
    void *aMcnt=pd->aMcnt, *aNcnt=pd->aNcnt, **aMcnts = pd->aMcnts;
    ATL_CINT K = pd->K;
-   #ifdef TCPLX
-      ATL_CINT BNOTRANS = (pd->TB == AtlasNoTrans || pd->TB == AtlasConj);
-      ATL_CINT ANOTRANS = (pd->TA == AtlasNoTrans || pd->TA == AtlasConj);
-   #else
-      ATL_CINT BNOTRANS = (pd->TB == AtlasNoTrans);
-      ATL_CINT ANOTRANS = (pd->TA == AtlasNoTrans);
-   #endif
+   ATL_CINT BNOTRANS = (pd->TB == AtlasNoTrans);
+   ATL_CINT ANOTRANS = (pd->TA == AtlasNoTrans);
    const TYPE *A=pd->A, *B=pd->B;
    TYPE *C = pd->C;
    #ifdef TREAL
@@ -7441,8 +7432,18 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    ATL_CINT tnMblks = (mr) ? nMb+1 : nMb, tnNblks = (nr) ? nNb+1 : nNb;
    ATL_CINT kr8f = (kr8 == NB) ? 0 : kr8;
    ATL_CINT nfKblks = (kr8 == NB) ? nKb+1 : nKb;
+   ATL_CINT bmul = (BNOTRANS) ? (ldb SHIFT) : (1 SHIFT);
    ATL_INT iblk, jblk;
    MAT2BLK A2blk;
+   #ifdef TREAL
+      MAT2BLK B2blk = (BNOTRANS) ? Mjoin(PATL,col2blk_a1) : 
+                                   Mjoin(PATL,row2blkT_a1);
+   #else
+      MAT2BLK B2blk = (BNOTRANS) ? Mjoin(PATL,col2blk_a1) : 
+                                  (pd->TB == AtlasTrans) ?
+                                   Mjoin(PATL,row2blkT_a1):
+                                   Mjoin(PATL,row2blkC_a1);
+   #endif
    int k;
    #ifdef TCPLX
       const TYPE one[2] = {ATL_rone, ATL_rzero};
@@ -7542,17 +7543,11 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 
       nb = (jblk != tnNblks || !nr) ? NB : nr;
       pd->Js[iam] = j = (jblk-1)*NB;
-      #ifdef TCPLX
-         j <<= 1;
-      #endif
-      c = C + j*ldc;
+      c = C + j*(ldc SHIFT);
 /*
  *    Copy the specified column-panel of B to my private workspace
  */
-      if (BNOTRANS)
-         Mjoin(PATL,col2blk_a1)(K, nb, B+j*ldb, ldb, Bw, one);
-      else
-         Mjoin(PATL,row2blkT_a1)(K, nb, B+j, ldb, Bw, one);
+      B2blk(K, nb, B+j*bmul, ldb, Bw, one);
 /*
  *    If kr is nonzero and not a multiple of 8, pad K with K8-K zeros
  *    This allows us to cause less K-cleanup kernels to be loaded, as
