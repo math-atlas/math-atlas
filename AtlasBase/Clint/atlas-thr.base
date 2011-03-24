@@ -7434,6 +7434,11 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    ATL_CINT nfKblks = (kr8 == NB) ? nKb+1 : nKb;
    ATL_CINT bmul = (BNOTRANS) ? (ldb SHIFT) : (1 SHIFT);
    ATL_INT iblk, jblk;
+   #define PRINTTOTALS
+   #ifdef PRINTTOTALS
+      int myblks = 0, hisblks=0;
+      static int myarr[ATL_NTHREADS], hisarr[ATL_NTHREADS];
+   #endif
    MAT2BLK A2blk;
    #ifdef TREAL
       MAT2BLK B2blk = (BNOTRANS) ? Mjoin(PATL,col2blk_a1) : 
@@ -7534,6 +7539,7 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
  * Perform the rank-K update with a fully-copied A by looping over column-panels
  * of C in reverse order
  */
+   ATL_mutex_lock(pd->Mlocks[iam]);
    while (jblk = ATL_DecGlobalAtomicCount(aNcnt, iam))
    {
       ATL_INT nb, pL;
@@ -7568,24 +7574,28 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
  *    the problem for my exclusive use.
  */
       if (jblk >= P+P)
-         pL = 100;
+         pL =  100;
       else if (jblk <= 2)
          pL = 0;
       else
          pL = (jblk > P) ? 50 : 100/P;
       aCrow = aMcnts[iam];
-      ATL_mutex_lock(pd->Mlocks[iam]);
       ATL_ResetGlobalAtomicCount(aCrow, tnMblks, pL);
       ATL_mutex_unlock(pd->Mlocks[iam]);
       while (iblk = ATL_DecGlobalAtomicCount(aCrow, 0))
       {
          const int mb = (!mr || iblk != 1) ? MB : mr;
          const size_t i = (tnMblks-iblk)*(NB SHIFT);
+         #ifdef PRINTTOTALS
+            myblks++;
+         #endif
 
          iblk = tnMblks - iblk;
          DoMM_K(mb, nb, nfKblks, kr8f, Aw+iblk*incA, Bw, beta, c+i, ldc);
       }
+      ATL_mutex_lock(pd->Mlocks[iam]);
    }
+   ATL_mutex_unlock(pd->Mlocks[iam]);
    chkin[iam] = -3;  /* let everyone know I've finished my columns */
 /*
  * When no more col-panels of C are available, it is time to see if I can
@@ -7619,6 +7629,9 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
                const int mb = (iblk != 1 || !mr) ? MB : mr;
                const size_t i = (tnMblks-iblk)*(NB SHIFT);
       
+               #ifdef PRINTTOTALS
+                  hisblks++;
+               #endif
                iblk = tnMblks - iblk;
                DoMM_K(mb, nb, nfKblks, kr8f, Aw+(iblk*incA), Bw, beta,
                       c+i, ldc);
@@ -7633,11 +7646,38 @@ void Mjoin(PATL,DoWork_rkK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
  * complete their operations
  */
    chkin[iam] = -2;
+   #ifdef PRINTTOTALS
+      myarr[iam] = myblks;
+      hisarr[iam] = hisblks;
+   #endif
    if (pd->Sync0 && !iam)
    {
+      #ifdef PRINTTOTALS
+         int lblks, rblks;
+      #endif
       for (k=1; k < P; k++)
          while(chkin[k] != -2)
             ATL_POLL;
+      #ifdef PRINTTOTALS
+          printf(" myblks : %4d", myarr[0]);
+          lblks = myarr[0];
+          for (k=1; k < P; k++)
+          {
+             lblks += myarr[k];
+             printf(",%4d", myarr[k]);
+          }
+          printf(" = %d\n", lblks);
+          printf("hisblks : %4d", hisarr[0]);
+          rblks = hisarr[0];
+          for (k=1; k < P; k++)
+          {
+             rblks += hisarr[k];
+             printf(",%4d", hisarr[k]);
+          }
+          printf(" = %d\n", rblks);
+          printf("Total = %d, expected=%d\n", lblks+rblks, 
+                 ((pd->M+NB-1)/NB)*((pd->N+NB-1)/NB));
+      #endif
    }
 }
 @ROUT  ATL_tgemm_bigMN_Kp
