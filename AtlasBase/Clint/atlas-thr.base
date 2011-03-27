@@ -3450,29 +3450,37 @@ int Mjoin(PATL,tgemm_@(ds))(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB
  * difference is due mostly to the differing partitioning, not the overhead
  * of dynamic scheduling, which always seems to pay for itself.
  * On unloaded AMD machines, the asymptotic loss is roughly 1-2%.
+ * Dynamic scheduling seems to always be a performance loss for MAC OSX
  */
-/*
- * Rank-K update has special case
- */
-   i = Mmax(ATL_NTHREADS,4)*NB;
-   if (K <= 4*NB && M >= 2*MB && N >= 2*NB && Mmax(M,N) >= i)
-   {
-      if (!Mjoin(PATL,tgemm_rkK)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
-                                 beta, C, ldc))
+   #ifndef ATL_OS_OSX
+      #ifdef FindingCE
+         ATL_assert(!Mjoin(PATL,tgemm_bigMN_Kp)(TA, TB, M, N, K, alpha, A, lda, 
+                                                B, ldb, beta, C, ldc));
          return;
-   }
+      #endif
 /*
- * Very large matrices loops over rank-Kp updates, where Kp is set by
- * CacheEdge.  If any dim is very small, use one of the other cases.
+ *    Rank-K update has special case
  */
-   i = Mmin(M,N);
-   i = Mmin(i, K);
-   if (i > Mmax(8,2*ATL_NTHREADS)*NB)
-   {
-      if (!Mjoin(PATL,tgemm_bigMN_Kp)(TA, TB, M, N, K, alpha, A, lda, 
-                                      B, ldb, beta, C, ldc))
-         return;
-   }
+      i = Mmax(ATL_NTHREADS,4)*NB;
+      if (K <= 4*NB && M >= 2*MB && N >= 2*NB && Mmax(M,N) >= i)
+      {
+         if (!Mjoin(PATL,tgemm_rkK)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
+                                    beta, C, ldc))
+            return;
+      }
+/*
+ *    Very large matrices loops over rank-Kp updates, where Kp is set by
+ *    CacheEdge.  If any dim is very small, use one of the other cases.
+ */
+      i = Mmin(M,N);
+      i = Mmin(i, K);
+      if (i > Mmax(8,2*ATL_NTHREADS)*NB)
+      {
+         if (!Mjoin(PATL,tgemm_bigMN_Kp)(TA, TB, M, N, K, alpha, A, lda, 
+                                         B, ldb, beta, C, ldc))
+            return;
+      }
+   #endif
 /*
  * See how many processors are optimal for this problem
  */
@@ -7779,7 +7787,35 @@ int Mjoin(PATL,tgemm_bigMN_Kp)
    size_t sz, Kp;
    void *vp;
    int i;
+   #ifdef FindingCE
+      extern int FoundCE, CompCE;
+      #define MY_CE FoundCE
+   #else
+      #define MY_CE CacheEdge
+   #endif
 
+   #ifdef TREAL
+      Kp = (ATL_DivBySize(MY_CE) - MB*NB)/(MB + 2*NB);
+   #else
+      Kp = (ATL_DivBySize(MY_CE) - 2*MB*NB)/(2*MB + 4*NB);
+   #endif
+   Kp = (Kp/KB)*KB;
+   #ifdef FindingCE
+      if (MY_CE == 0)
+         Kp = K;
+      if (Kp < KB)
+         Kp = KB;
+      if (CompCE)
+      {
+         CompCE = Kp;
+         return;
+      }
+   #else
+      if (Kp < KB)
+         return(1);  /* not going to be efficient */
+   #endif
+
+   pd.kr = Kp;
    pd.TA = TA;
    pd.TB = TB;
    pd.M = M;
@@ -7798,15 +7834,6 @@ int Mjoin(PATL,tgemm_bigMN_Kp)
    pd.nNb = N / NB;
    pd.nr = N - pd.nNb*NB;
 
-   #ifdef TREAL
-      Kp = (ATL_DivBySize(CacheEdge) - MB*NB)/(MB + 2*NB);
-   #else
-      Kp = (ATL_DivBySize(CacheEdge) - 2*MB*NB)/(2*MB + 4*NB);
-   #endif
-   if (Kp < KB)
-      return(1);  /* not going to be efficient */
-   Kp = (Kp/KB)*KB;
-   pd.kr = Kp;
    sz = ATL_MulBySize(Kp)*M + ATL_Cachelen;  /* sizeof A workspace */
    sz += ATL_NTHREADS*(Kp*ATL_MulBySize(NB)+ATL_Cachelen);  /* B workspaces */
    sz += ATL_NTHREADS*3*sizeof(int);  /* chkin1/2 & Js arrays */
