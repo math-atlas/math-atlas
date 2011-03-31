@@ -1734,8 +1734,24 @@ void *ATL_log2tlaunch(void *vp)
    void *ATL_log2tlaunch_noaff(void *vp);
    #define ATL_goparallel ATL_goparallel_noaff
    #define ATL_dyntlaunch ATL_log2tlaunch_noaff
+   #define ATL_USE_DYNAMIC 0
 #elif defined(ATL_TUNING)
-   #define ATL_dyntlaunch ATL_log2tlaunch
+   #if defined(ATL_LAUNCH_LINEAR)
+      #define ATL_goparallel ATL_goparallel_lin
+      #define ATL_dyntlaunch ATL_lin0tlaunch
+      #define ATL_USE_DYNAMIC 0
+   #elif defined(ATL_LAUNCH_DYNAMIC)
+      #define ATL_goparallel ATL_goparallel_dyn
+      #define ATL_USE_DYNAMIC 1
+   #else
+      #ifdef ATL_LAUNCH_LOG2
+         #define ATL_goparallel ATL_goparallel_log2
+      #endif
+      #define ATL_dyntlaunch ATL_log2tlaunch
+      #define ATL_USE_DYNAMIC 0
+   #endif
+#else
+   #define ATL_USE_DYNAMIC 1
 #endif
 void ATL_goparallel
 /*
@@ -1804,15 +1820,18 @@ void ATL_goparallel
       for (i=1; i < P; i++)
          ls.DoComb(ls.opstruct, 0, i);
 #else
-   #ifndef ATL_TUNING
+   #if ATL_USE_DYNAMIC
       ls.acounts = &lc;
       ls.acounts[0] = ATL_SetGlobalAtomicCount(P>>1, P-1, 0);
+      vp = malloc(P*(sizeof(ATL_thread_t)+sizeof(int)) + ATL_Cachelen);
+      ATL_assert(vp);
+      chkin = vp;
+      tp = (ATL_thread_t*)(chkin+P);
+      tp = ATL_AlignPtr(tp);
+   #else
+      vp = malloc(P*(sizeof(ATL_thread_t)) + ATL_Cachelen);
+      tp = ATL_AlignPtr(vp);
    #endif
-   vp = malloc(P*(sizeof(ATL_thread_t)+sizeof(int)) + ATL_Cachelen);
-   ATL_assert(vp);
-   chkin = vp;
-   tp = (ATL_thread_t*)(chkin+P);
-   tp = ATL_AlignPtr(tp);
    ls.rank2thr = tp;
 
    for (i=0; i < P; i++)
@@ -1820,12 +1839,16 @@ void ATL_goparallel
       tp[i].vp = &ls;
       tp[i].rank = i;
       tp[i].P = P;
-      chkin[i] = 0;
+      #if ATL_USE_DYNAMIC
+         chkin[i] = 0;
+      #endif
    }
-   ls.chkin = (volatile int*) chkin;
+   #if ATL_USE_DYNAMIC
+      ls.chkin = (volatile int*) chkin;
+   #endif
    ATL_thread_start(tp, 0, 1, ATL_dyntlaunch, tp);
    ATL_thread_join(tp);
-   #ifndef ATL_TUNING
+   #if ATL_USE_DYNAMIC
       ATL_FreeGlobalAtomicCount(ls.acounts[0]);
    #endif
    free(vp);
@@ -2954,7 +2977,7 @@ int Mjoin(PATL,tNumGemmThreads)(ATL_CINT M, ATL_CINT N, ATL_CINT K)
 @endskip
    double flops;
    int np;
-   if (M < 8 || N < 8 || K < 8)
+   if (M < 4 || N < 4 || K < 4)
       return(0);
    flops = ((2.0*M)*N)*K;
    np = flops / ATL_TGEMM_PERTHR_MF;
@@ -6648,7 +6671,7 @@ void Mjoin(PATL,ger1k)
 #include "atlas_misc.h"
 #include "atlas_threads.h"
 #include "atlas_tlvl3.h"
-#include Mstr(Mjoin(atlas_,Mjoin(Mjoin(Mjoin(PRE,tXover_),ATL_NCPU),p.h)))
+@skip #include Mstr(Mjoin(atlas_,Mjoin(Mjoin(Mjoin(PRE,tXover_),ATL_NCPU),p.h)))
 
 #ifdef DEBUG
 #define T2c(ta_) ((ta_) == AtlasNoTrans) ? 'N' : 'T'

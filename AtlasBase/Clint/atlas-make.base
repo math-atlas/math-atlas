@@ -365,10 +365,12 @@ include/:
 	touch include/atlas_cacheedge.h
 	touch include/atlas_zdNKB.h
 	touch include/atlas_csNKB.h
+@beginskip
 	touch include/atlas_stXover_$(NPROC)p.h
 	touch include/atlas_dtXover_$(NPROC)p.h
 	touch include/atlas_ctXover_$(NPROC)p.h
 	touch include/atlas_ztXover_$(NPROC)p.h
+@endskip
 @define pt @@
 @whiledef pt t
    @whiledef rt geqrf geqlf gerqf gelqf
@@ -811,9 +813,10 @@ x@(rt) : @(rt).o tlib  # mutcnt arccnt
 @endwhile
 
 @whiledef spn spawn spawn_fp
-xtune_@(spn) : tune_@(spn).o tlib ATL_tllg2.o ATL_tllin.o ATL_tldyn.o
-	$(CC) $(CCFLAGS) -o xtune_@(spn) tune_@(spn).o ATL_tllg2.o ATL_tllin.o \
-              ATL_tldyn.o $(ATLASlib) $(LIBS)
+xtune_@(spn) : tune_@(spn).o tlib ATL_goparallel_lin.o ATL_goparallel_log2.o \
+               ATL_goparallel_dyn.o
+	$(CC) $(CCFLAGS) -o xtune_@(spn) tune_@(spn).o ATL_goparallel_lin.o \
+              ATL_goparallel_log2.o ATL_goparallel_dyn.o $(ATLASlib) $(LIBS)
 @endwhile
 xtune_aff : tune_aff.o tlib  ATL_goparallel_noaff.o ATL_log2tlaunch_noaff.o \
              ATL_goparallel_aff.o ATL_log2tlaunch.o \
@@ -824,6 +827,13 @@ xtune_aff : tune_aff.o tlib  ATL_goparallel_noaff.o ATL_log2tlaunch_noaff.o \
 
 ATL_goparallel_aff.o : $(myTHRdir)/ATL_goparallel.c
 	$(CC) $(CCFLAGS) -o $@ -DATL_TUNING -c $(myTHRdir)/ATL_goparallel.c
+@multidef df LINEAR DYNAMIC LOG2
+@whiledef sf lin dyn log2
+ATL_goparallel_@(sf).o : $(myTHRdir)/ATL_goparallel.c
+	$(CC) $(CCFLAGS) -o $@ -DATL_TUNING -DATL_LAUNCH_@(df) \
+              -c $(myTHRdir)/ATL_goparallel.c
+   @undef df
+@endwhile
 @whiledef rt thread_start lin0tlaunch dyntlaunch log2tlaunch goparallel
 ATL_@(rt).o : $(myTHRdir)/ATL_@(rt).c
 	$(CC) $(CCFLAGS) -o $@ -c $(myTHRdir)/ATL_@(rt).c
@@ -2141,11 +2151,13 @@ RunFindCE :
 res/atlas_cacheedge.h :
 	$(MAKE) $(pre)RunFindCE
 
+@beginskip
 RunTXover : x$(pre)txover
 	$(ATLRUN) $(MMTdir) x$(pre)txover -o res/atlas_$(pre)tXover_$(NPROC)p.h
 	cp -f res/atlas_$(pre)tXover_$(NPROC)p.h $(INCAdir)/.
 res/atlas_$(pre)tXover_$(NPROC)p.h : 
 	$(MAKE) RunTXover pre=$(pre)
+@endskip
 	
 res/atlas_zdNKB.h :
 	$(MAKE) zdRunFindCE
@@ -2346,11 +2358,13 @@ x@(pre)findCE : $(INCAdir)/atlas_type.h $(L3INCdep) @(pre)mmlib \
 	$(CLINKER) $(CLINKFLAGS) -o $@ @(pre)findCE.o \
                    $(GMMdir)/ATL_@(pre)FindCE_mm.o $(ATLASlib) $(LIBS)
 
+@beginskip
 x@(pre)txover : force_build @(pre)txover.o
 	cd $(BLDdir)/src/threads/blas/level3 ; $(MAKE) ATL_@(pre)tgemm_p.o @(pre)lib
 	$(CLINKER) $(CLINKFLAGS) -o $@ @(pre)txover.o \
               $(BLDdir)/src/threads/blas/level3/ATL_@(pre)tgemm_p.o \
               $(TESTlib) $(ATLASlib) $(LIBS)
+@endskip
 x@(pre)tfc : $(INCAdir)/atlas_type.h $(L3INCdep) \
              $(pre)tfc.o @(pre)mmlib
 	cd $(GMMdir) ; $(MAKE) ATL_@(pre)big_mm.o ATL_@(pre)small_mm.o \
@@ -2380,8 +2394,8 @@ x@(pre)tfc : $(INCAdir)/atlas_type.h $(L3INCdep) \
                                     $(SYSdir)/time.o
 	$(ATLRUN) $(MMTdir) x@(pre)fc
 
-@(pre)txover.o : $(mySRCdir)/txover.c
-	$(ICC) $(ICCFLAGS) -c -D@(typ) -o @(pre)txover.o $(mySRCdir)/txover.c
+@skip @(pre)txover.o : $(mySRCdir)/txover.c
+@skip 	$(ICC) $(ICCFLAGS) -c -D@(typ) -o @(pre)txover.o $(mySRCdir)/txover.c
 @(pre)mmtime_pt.o : $(mySRCdir)/mmtime_pt.c
 	$(ICC) $(ICCFLAGS) -c -D@(typ) -o @(pre)mmtime_pt.o \
                $(mySRCdir)/mmtime_pt.c
@@ -2866,6 +2880,7 @@ IBuildRef:
 
 IBuildDyLibs:
 	cd $(BLDdir) ; $(MAKE) dylibs
+@beginskip
 INSTALL_LOG/atlas_$(pre)tXover_$(NPROC)p.h:
 	if [ -s "$(INCAdir)/atlas_$(pre)tXover_$(NPROC)p.h" ]; then \
            echo "Arch Defaults allow us to skip tuning" ; \
@@ -2876,6 +2891,7 @@ INSTALL_LOG/atlas_$(pre)tXover_$(NPROC)p.h:
            cp $(MMTdir)/res/atlas_$(pre)tXover_$(NPROC)p.h \
               $(BINdir)/INSTALL_LOG/. ; \
         fi
+@endskip
 $(MMTdir)/res/atlas_tcachedge.h :
 	cd $(MMTdir) ; $(MAKE) res/atlas_tcacheedge.h
 INSTALL_LOG/atlas_tcacheedge.h : $(MMTdir)/res/atlas_tcachedge.h
@@ -2895,10 +2911,12 @@ IPTtune:
 	$(MAKE) INSTALL_LOG/atlas_tcacheedge.h
 	cd $(BLDdir)/src/blas/gemm ; $(MAKE) lib
 	cd $(BLDdir)/src/threads/ ; $(MAKE) lib
+@beginskip
 	$(MAKE) INSTALL_LOG/atlas_stXover_$(NPROC)p.h pre=s
 	$(MAKE) INSTALL_LOG/atlas_dtXover_$(NPROC)p.h pre=d
 	$(MAKE) INSTALL_LOG/atlas_ctXover_$(NPROC)p.h pre=c
 	$(MAKE) INSTALL_LOG/atlas_ztXover_$(NPROC)p.h pre=z
+@endskip
 
 IBuildPtlibs:
 	cd $(BLDdir)/src/blas/gemm ; $(MAKE) lib
@@ -5223,8 +5241,8 @@ ATL_@(pre)t@(cr2).o : $(deps) $(mySRCdir)/ATL_t@(cr2).c
 @PTYP !
 ATL_@(pre)tgemm_p.o : $(deps) $(mySRCdir)/ATL_tgemm_p.c
 	$(ICC) $(ICCFLAGS) -D@(typ) -o $@ -c $(mySRCdir)/ATL_tgemm_p.c
-ATL_@(pre)threadMM.o : $(mySRCdir)/ATL_threadMM.c \
-                       $(INCAdir)/atlas_@(pre)tXover_$(NPROC)p.h
+ATL_@(pre)threadMM.o : $(mySRCdir)/ATL_threadMM.c 
+@skip                       $(INCAdir)/atlas_@(pre)tXover_$(NPROC)p.h
 	$(ICC) $(ICCFLAGS) -D@(typ) -o $@ -c $(mySRCdir)/ATL_threadMM.c
 @whiledef rtt2
 ATL_@(pre)t@(rtt2).o : $(deps) $(mySRCdir)/ATL_t@(rtt2).c
