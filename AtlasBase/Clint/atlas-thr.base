@@ -1489,7 +1489,7 @@ void *ATL_dyntlaunch(void *vp)
    ATL_thread_t *tp = vp, *btp;
    ATL_LAUNCHSTRUCT_t *lp;
    const int iam = tp->rank, P = tp->P;
-   int i, dest;
+   int i, src, dest, nthrP2, mask, abit;
    void *acnt;
 
    lp = tp->vp;
@@ -1513,7 +1513,41 @@ void *ATL_dyntlaunch(void *vp)
  * Do the operation
  */
    lp->DoWork(lp, tp);
-   lp->chkin[iam] = ATL_CHK_DONE_OP;
+/*
+ * Do combine in minimum spanning tree, combining results as required
+ */
+   for (i=0; (1<<i) < P; i++);
+   nthrP2 = i;
+   mask = 0;
+   for (i=0; i < nthrP2; i++)
+   {
+      if (!(iam & mask))
+      {
+         abit = (1<<i);
+         if (!(iam & abit))
+         {
+            src = iam ^ abit;
+            if (src < P)
+            {
+               while (lp->chkin[src] != ATL_CHK_DONE_OP)
+                  ATL_POLL;
+               if (lp->DoComb)
+                  lp->DoComb(lp->opstruct, iam, src);
+            }
+         }
+         else
+         {
+            lp->chkin[iam] = ATL_CHK_DONE_OP;
+            ATL_thread_exit(NULL);
+         }
+      }
+      mask |= abit;
+   }
+@beginskip
+/* 
+ * This code does not work, because combine routs assume combine is always
+ * right-to-left
+ */
 /*
  * Node 0 awaits completion of each task, and do combine (linear!) if requested
  * Later on, replace this code with pair-wise summup using AtomicCtrs=2
@@ -1541,6 +1575,7 @@ void *ATL_dyntlaunch(void *vp)
          lp->chkin[i] = ATL_CHK_DONE_COMB;
       }
    }
+@endskip
    return(NULL);
 }
 @ROUT ATL_ranktlaunch_noaff
@@ -3317,8 +3352,8 @@ void Mjoin(PATL,HandleNewCp)(ATL_TMMNODE_t *me, ATL_TMMNODE_t *him)
          if (meB <= himB)  /* my partition has the base pointer */
          {
             I = (himB - meB)>>eltsh;    /* gap between our C's in elements */
-            J = I / ldc;                /* column coord */
-            I -= J*ldc;                 /* row coord */
+            J = I / ldc;                /* column coord from meB */
+            I -= J*ldc;                 /* row coord from meB */
 /*
  *          If we have same row (col) coord and he starts at col (row) that 
  *          I stop at, join column (row) panel
@@ -3334,8 +3369,8 @@ void Mjoin(PATL,HandleNewCp)(ATL_TMMNODE_t *me, ATL_TMMNODE_t *him)
          else              /* his partition has the base pointer */
          {
             I = (meB - himB)>>eltsh;    /* gap between our C's in elements */
-            J = I / ldc;                /* column coord */
-            I -= J*ldc;                 /* row coord */
+            J = I / ldc;                /* column coord from himB */
+            I -= J*ldc;                 /* row coord from himB */
 /*
  *          If we have same row (col) coord and I start at col (row) that 
  *          he stops at, join column (row) space
