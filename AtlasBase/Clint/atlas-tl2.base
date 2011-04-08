@@ -1720,7 +1720,7 @@ int Mjoin(PATL,tgemvN)
       fprintf(stderr, "MASTER: RETURNING FROM GEMM!\n\n");
    #endif
 }
-@ROUT ATL_ger
+@ROUT ATL_tger
 #include "atlas_misc.h"
 #include "atlas_level2.h"
 #include "atlas_threads.h"
@@ -1737,20 +1737,56 @@ typedef struct
    TYPE *A;
 } ATL_TGER_t;
 
+#ifdef TREAL
+   #define MY_GER ger
+#elif defined(Conj_)
+   #define MY_GER gerc
+#else
+   #define MY_GER geru
+#endif
+#define MY_DOWORK_cols Mjoin(Mjoin(Mjoin(PATL,DoWork),MY_GER),_cols)
+#define MY_TGER Mjoin(Mjoin(PATL,t),MY_GER)
+#define MY_GER1 Mjoin(PATL,MY_GER)
+void MY_DOWORK_cols(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   ATL_thread_t *tp = vp;
+   ATL_TGER_t *pd = lp->opstruct;
+   ATL_CINT N = pd->N, lda = pd->lda;
+   const int P = tp->P, iam = tp->rank;
+   size_t n, nr;
+   const TYPE *y = pd->Y + (pd->incY)*(iam SHIFT);
+   TYPE *A;
+
+   n = N / P;
+   nr = N - n*P;
+   if (iam < nr)
+      n++;
+   MY_GER1(pd->M, n, pd->alpha, pd->X, pd->incX, pd->Y+(pd->incY)*(iam SHIFT),
+           P*pd->incY, pd->A+lda*(iam SHIFT), lda*P);
+}
+
 void Mjoin(PATL,tger)
-   (ATL_CINT M, ATL_CINT N, const SCALAR alpha0, const TYPE *X,
+   (ATL_CINT M, ATL_CINT N, const SCALAR alpha, const TYPE *X,
     ATL_CINT incX, const TYPE *Y, ATL_CINT incY, TYPE *A, ATL_CINT lda)
 {
    ATL_INT mb, nb, mu, nu, nblks, nrblks, ncblks;
    ATL_TGER_t pd;
+   int P;
 
    pd.M = M; pd.N = N; pd.incX = incX; pd.incY = incY; pd.lda = lda;
    pd.alpha = alpha;
    pd.X = X; pd.Y = Y; pd.A = A;
 
+   P = N >> 5;   /* want at least 32 cols to amortize X copy */
+   P = Mmin(ATL_NTHREADS, P);
+   ATL_goparallel(P, MY_DOWORK_cols, &pd, NULL);
+@beginskip
    ATL_GetPartR1(A, lda, mu, nu);
-   mu = (mu < 256) ? 256 : mu;
+   mb = ATL_DivBySize(4096);   /* roughly a page of data */
+   mu = (mu < mb) ? mb : mu;
    nu = (nu < 1) ? 8 : nu;
+   if (nu < 32)
+      nu = ((32+nu-1)/nu)*nu;
    nrblks = M / mu;
    ncblks = N / nu;
    nblks = nrblks * ncblks;
@@ -1773,4 +1809,5 @@ void Mjoin(PATL,tger)
       while(nblks < 2*ATL_NTHREADS);
    }
    pd.nrblks = nrblks; pd.ncblks = ncblks; pd.nblks = nblks;
+@endskip
 }
