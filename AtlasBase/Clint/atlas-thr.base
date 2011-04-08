@@ -1260,6 +1260,25 @@ int ATL_thread_start(ATL_thread_t *thr, int proc, int JOINABLE,
 #elif defined(ATL_OMP_THREADS)
    fprintf(stderr, "Should not call thread_start when using OpenMP!");
    ATL_assert(0);
+#elif 0 && defined(ATL_OS_OSX)  /* unchecked special OSX code */
+/* http://developer.apple.com/library/mac/#releasenotes/Performance/RN-AffinityAPI/_index.html */
+   pthread_attr_t attr;
+   #define ATL_OSX_AFF_SETS 2       /* should be probed for */
+   thread_affinity_policy ap;
+
+   ap.affinity_tag = proc % ATL_OSX_AFF_SETS;
+   ATL_assert(!pthread_attr_init(&attr));
+   if (JOINABLE)
+      ATL_assert(!pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE));
+   else
+      ATL_assert(!pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED));
+   pthread_attr_setscope(&attr, PTHREAD_SCOPE_SYSTEM); /* no chk, OK to fail */
+
+   ATL_assert(!pthread_create(&thr->thrH, &attr, rout, arg));
+   ATL_assert(!thread_policy_set(thr->thrH, THREAD_AFFINITY_POLICY, 
+                                 (integer_t*)&ap, 
+                                 THREAD_AFFINITY_POLICY_COUNT));
+   ATL_assert(!pthread_attr_destroy(&attr));
 #else
    pthread_attr_t attr;
    #ifndef ATL_NOAFFINITY

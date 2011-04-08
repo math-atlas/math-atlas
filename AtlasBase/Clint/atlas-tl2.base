@@ -1728,9 +1728,7 @@ int Mjoin(PATL,tgemvN)
 
 typedef struct
 {
-   void *actionCount;           /* 2: copy X; 1: copy y; 0: ready to start */
-   void *blkCount;              /* row-major nrblks x ncblks block counter */
-   ATL_INT M, N, incX, incY, lda;
+   ATL_INT M, N, incX, incY, lda, flg;
    ATL_INT nrblks, ncblks, nblks;
    SCALAR alpha;
    const TYPE *X, *Y;
@@ -1747,22 +1745,36 @@ typedef struct
 #define MY_DOWORK_cols Mjoin(Mjoin(Mjoin(PATL,DoWork),MY_GER),_cols)
 #define MY_TGER Mjoin(Mjoin(PATL,t),MY_GER)
 #define MY_GER1 Mjoin(PATL,MY_GER)
+/*
+ * This routine distributes the columns cyclicly over the processors.
+ * If (tp->flg & 1), then we always assign the first column of the array
+ * to P0, otherwise we always assign the LAST column to P0.  In both
+ * cases, the idea is to make sure that on repetitive calls, the same
+ * processor gets the same cols, in order to encourage cache reuse.
+ * Most LAPACK calls will keep the end of the last column constant,
+ * while a left-looking variant would probably keep the first column constant.
+ * One idea would be to save the address of the
+ * first and last cols between calls, and if the last col address is the
+ * same, use vrank, else use actual rank.
+ */
 void MY_DOWORK_cols(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
    ATL_thread_t *tp = vp;
    ATL_TGER_t *pd = lp->opstruct;
    ATL_CINT N = pd->N, lda = pd->lda;
-   const int P = tp->P, iam = tp->rank;
+   const int P = tp->P;
+   int vrank;
    size_t n, nr;
-   const TYPE *y = pd->Y + (pd->incY)*(iam SHIFT);
-   TYPE *A;
+   const TYPE *y;
 
    n = N / P;
    nr = N - n*P;
-   if (iam < nr)
+   vrank = (!nr || (tp->flg & 1)) ? tp->rank : (P + tp->rank+nr-1)%P;
+   y = pd->Y + (pd->incY)*(vrank SHIFT);
+   if (vrank < nr)
       n++;
-   MY_GER1(pd->M, n, pd->alpha, pd->X, pd->incX, pd->Y+(pd->incY)*(iam SHIFT),
-           P*pd->incY, pd->A+lda*(iam SHIFT), lda*P);
+   MY_GER1(pd->M, n, pd->alpha, pd->X, pd->incX, pd->Y+(pd->incY)*(vrank SHIFT),
+           P*pd->incY, pd->A+lda*(vrank SHIFT), lda*P);
 }
 
 void Mjoin(PATL,tger)
