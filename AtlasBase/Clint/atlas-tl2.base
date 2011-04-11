@@ -1720,20 +1720,136 @@ int Mjoin(PATL,tgemvN)
       fprintf(stderr, "MASTER: RETURNING FROM GEMM!\n\n");
    #endif
 }
-@ROUT ATL_tger
+@ROUT ATL_tger ATL_tgemv
 #include "atlas_misc.h"
 #include "atlas_level2.h"
 #include "atlas_threads.h"
+#include "atlas_tcacheedge.h"
+#if !defined(CacheEdge) || CacheEdge > 4194304
+    #define CacheEdge 262144
+#endif
+@ROUT ATL_tgemv
+
+/*
+ * Flag is a bitfield of info, let bx be the xth least sig bit:
+ *   b0 : 0-Sticky last col of distro; 1-sticky first col 
+ *   b1 : 0-NoTrans, 1-Trans
+ *   b2 : 0-NoConj, 1-Conj
+ */
+typedef struct
+{               
+   int flg;     
+   ATL_INT M, N, incX, incY, lda, n, nr, P;
+   #ifdef TREAL
+      TYPE alpha, beta;
+   #else
+      const TYPE *alpha, *beta;
+   #endif
+   const TYPE *A, *X;
+   TYPE *Y;
+} ATL_TGEMV_t;
+
+void ATL_DOMVNWORK_cols(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   ATL_thread_t *tp = vp;
+   ATL_TGER_t *pd = lp->opstruct;
+   ATL_CINT N = pd->N, lda = pd->lda;
+   const int P = tp->P;
+   int vrank;
+   size_t n, nr;
+   TYPE *y = Y + (tp->rank)*((M SHIFT)+DivBySize(ATL_Cachelen));
+   const TYPE *a;
+   #ifdef TCPLX
+      TYPE one[2] = {ATL_rone, ATL_rzero}, zero[2] = {ATL_rzero, ATL_rzero};
+      const enum ATLAS_TRANS TA = (pd->flg & 4) ? AtlasConj : AtlasNoTrans;
+   #else
+      const enum ATLAS_TRANS TA = AtlasNoTrans;
+      #define one ATL_rone
+      #define zero ATL_rzero
+   #endif
+
+   vrank = (!pd->nr || (pd->flg & 1)) ? tp->rank : (P + tp->rank+nr-1)%P;
+   a = pd->A + (lda SHIFT)vrank;
+   y = ATL_Align2Ptr(y, a);
+   if (vrank < nr)
+      n++;
+
+   Mjoin(PATL,gemv)(TA, pd->M, n, one, a, lda*P, 
+                    X+vrank*((pd->incX)SHIFT), P*pd->incX, zero, y, 1);
+}
+
+void ATL_DOMVTWORK_cols(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   ATL_thread_t *tp = vp;
+   ATL_TGER_t *pd = lp->opstruct;
+   ATL_CINT N = pd->N, lda = pd->lda;
+   const int P = tp->P;
+   int vrank;
+   size_t n, nr;
+   const TYPE *a = pd->A+(lda SHIFT)*vrank;
+   #ifdef TCPLX
+      const enum ATLAS_TRANS TA = (pd->flg & 4) ? AtlasConjTrans : AtlasTrans;
+   #else
+      const enum ATLAS_TRANS TA = AtlasTrans;
+   #endif
+
+   n = N / P;
+   nr = N - n*P;
+   vrank = (!nr || (pd->flg & 1)) ? tp->rank : (P + tp->rank+nr-1)%P;
+   y = pd->Y + (pd->incY)*(vrank SHIFT);
+   if (vrank < nr)
+      n++;
+   Mjoin(PATL,gemv)(TA, pd->M, n, pd->alpha, a, lda*P, X, pd->incX, 
+                    pd->beta, Y+vrank*((pd->incY)SHIFT), P*pd->incY);
+}
+void Mjoin(PATL,CombineMVN)
+(
+   void *vp,          /* void ptr to ATL_GEMV_t struct given to threads */
+   const int myrank,  /* my entry in MMNODE_t array */
+   const int hisrank  /* array entry to be combined into mine */
+)
+{
+   ATL_TGEMV_t *pd = vp;
+   ATL_CINT M = pd->M;
+   ATL_INT i;
+   const int P = pd->P;
+   int vrank = (!pd->nr || (pd->flg & 1)) ?  myrank : (P + myrank+nr-1)%P;
+   const TYPE *a = pd->A + (pd->lda SHIFT)*vrank;
+   TYPE *y = Y + (myrank)*((M SHIFT)+DivBySize(ATL_Cachelen));
+   TYPE *hy = Y + (hisrank)*((M SHIFT)+DivBySize(ATL_Cachelen));
+   #ifdef TCPLX
+      const TYPE one[2] = {ATL_rone, ATL_rzero};
+   #else
+      #define one ATL_rone
+   #endif
+
+   y = ATL_Align2Ptr(y, a);
+   vrank = (!pd->nr || (pd->flg & 1)) ?  hisrank : (P + hisrank+nr-1)%P;
+   a = pd->A + (pd->lda SHIFT)*vrank;
+   hy = ATL_Align2Ptr(hy, a);
+
+   for (i=0; i < M; i++)
+      y[i] += hy[i];
+}
+#ifndef TCPLX
+   #undef one
+#endif
+@ROUT ATL_tger
 #include Mstr(Mjoin(Mjoin(atlas_,PRE),r1_L2.h))
 
 typedef struct
 {
    ATL_INT M, N, incX, incY, lda, flg;
    ATL_INT nrblks, ncblks, nblks;
-   SCALAR alpha;
+   #ifdef TREAL
+      TYPE alpha;
+   #else
+      const TYPE *alpha;
+   #endif
    const TYPE *X, *Y;
    TYPE *A;
 } ATL_TGER_t;
+@ROUT ATL_tger ATL_tgemv
 
 #ifdef TREAL
    #define MY_GER ger
@@ -1747,7 +1863,7 @@ typedef struct
 #define MY_GER1 Mjoin(PATL,MY_GER)
 /*
  * This routine distributes the columns cyclicly over the processors.
- * If (tp->flg & 1), then we always assign the first column of the array
+ * If (pd->flg & 1), then we always assign the first column of the array
  * to P0, otherwise we always assign the LAST column to P0.  In both
  * cases, the idea is to make sure that on repetitive calls, the same
  * processor gets the same cols, in order to encourage cache reuse.
@@ -1769,7 +1885,7 @@ void MY_DOWORK_cols(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 
    n = N / P;
    nr = N - n*P;
-   vrank = (!nr || (tp->flg & 1)) ? tp->rank : (P + tp->rank+nr-1)%P;
+   vrank = (!nr || (pd->flg & 1)) ? tp->rank : (P + tp->rank+nr-1)%P;
    y = pd->Y + (pd->incY)*(vrank SHIFT);
    if (vrank < nr)
       n++;
@@ -1777,21 +1893,30 @@ void MY_DOWORK_cols(ATL_LAUNCHSTRUCT_t *lp, void *vp)
            P*pd->incY, pd->A+lda*(vrank SHIFT), lda*P);
 }
 
-void Mjoin(PATL,tger)
+void Mjoin(Mjoin(PATL,t),MY_GER)
    (ATL_CINT M, ATL_CINT N, const SCALAR alpha, const TYPE *X,
     ATL_CINT incX, const TYPE *Y, ATL_CINT incY, TYPE *A, ATL_CINT lda)
 {
    ATL_INT mb, nb, mu, nu, nblks, nrblks, ncblks;
    ATL_TGER_t pd;
    int P;
+   static TYPE *A0=NULL, *A0e=NULL;
 
    pd.M = M; pd.N = N; pd.incX = incX; pd.incY = incY; pd.lda = lda;
    pd.alpha = alpha;
    pd.X = X; pd.Y = Y; pd.A = A;
+   pd.flg = (A0 == A || A0e == A+(M SHIFT)) ? 1 : 2;
+   A0 = A; A0e = A+(M SHIFT);
 
-   P = N >> 5;   /* want at least 32 cols to amortize X copy */
+   P = ATL_DivBySize(CacheEdge);
+   P = ((size_t)M*N+P-1) / P;   /* add more procs only when cache is full */
+   P = (P&1 && P > 1)?P+1 : P;  /* don't use odd P, since it hurts alignment */
+//   printf("TGER, P=%d\n", P);
    P = Mmin(ATL_NTHREADS, P);
-   ATL_goparallel(P, MY_DOWORK_cols, &pd, NULL);
+   if (P > 1)
+      ATL_goparallel(P, MY_DOWORK_cols, &pd, NULL);
+   else
+      MY_GER1(M, N, alpha, X, incX, Y, incY, A, lda);
 @beginskip
    ATL_GetPartR1(A, lda, mu, nu);
    mb = ATL_DivBySize(4096);   /* roughly a page of data */
