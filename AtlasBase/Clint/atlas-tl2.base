@@ -1864,7 +1864,7 @@ void Mjoin(PATL,tgemv)
 {
    static size_t ALb=0, ALe=0;
    size_t at = (size_t) A;
-   ATL_INT n, P;
+   ATL_INT n, P, ldaP;
    ATL_TGEMV_t pd;
 
    pd.flg = (at >= ALb && at <= ALe) ? 1 : 0;
@@ -1887,6 +1887,15 @@ void Mjoin(PATL,tgemv)
    P = ((size_t)M*N+P-1) / P;   /* add more procs only when cache is full */
    P = (P&1 && P > 1)?P+1 : P;  /* don't use odd P; it hurts alignment */
    P = Mmin(ATL_NTHREADS, P);
+/*
+ * Make sure we don't overflow 32-bit integer lda
+ */
+   ldaP = P * lda;
+   while ((size_t)ldaP != ((size_t)lda)*P)
+   {
+      P--;
+      ldaP = P * lda;
+   }
    if (P > 1)
    {
       pd.M = M; pd.N = N; pd.incX = incX; pd.incY = incY; pd.lda = lda;
@@ -1897,8 +1906,15 @@ void Mjoin(PATL,tgemv)
       pd.n = n;
       pd.nr = N - n*P;
       if (pd.flg & 2)   /* Transpose case */
+      {
          ATL_goparallel(P, Mjoin(PATL,DOMVTWORK_cols), &pd, NULL);
-      else              /* NoTrans not implemented yet */
+         return;
+      }
+/*
+ *    For gemvN, everyone needs a private M-length y.  Don't do this unless
+ *    we are sure the combine cost is likely dominated by the parallelism
+ */
+      else if (n > Mmax(P,8))
       {
          int vrank;
          const TYPE *a;
@@ -1931,10 +1947,13 @@ void Mjoin(PATL,tgemv)
          y = ATL_Align2Ptr(y, a);;
          Mjoin(PATL,axpby)(M, alpha, y, 1, beta, Y, incY);
          free(y0);
+         return;
       }
    }
-   else
-      Mjoin(PATL,gemv)(TA, M, N, alpha, A, lda, X, incX, beta, Y, incY);
+/*
+ * If we haven't parallelized this thing, just do it serial
+ */
+   Mjoin(PATL,gemv)(TA, M, N, alpha, A, lda, X, incX, beta, Y, incY);
 }
 @ROUT ATL_tger
 #include Mstr(Mjoin(Mjoin(atlas_,PRE),r1_L2.h))
@@ -1998,7 +2017,7 @@ void Mjoin(Mjoin(PATL,t),MY_GER)
    (ATL_CINT M, ATL_CINT N, const SCALAR alpha, const TYPE *X,
     ATL_CINT incX, const TYPE *Y, ATL_CINT incY, TYPE *A, ATL_CINT lda)
 {
-   ATL_INT mb, nb, mu, nu, nblks, nrblks, ncblks;
+   ATL_INT mb, nb, mu, nu, nblks, nrblks, ncblks, ldaP;
    ATL_TGER_t pd;
    int P;
    static TYPE *A0=NULL, *A0e=NULL;
@@ -2014,6 +2033,15 @@ void Mjoin(Mjoin(PATL,t),MY_GER)
    P = (P&1 && P > 1)?P+1 : P;  /* don't use odd P, since it hurts alignment */
 //   printf("TGER, P=%d\n", P);
    P = Mmin(ATL_NTHREADS, P);
+/*
+ * Make sure we don't overflow 32-bit integer lda
+ */
+   ldaP = P * lda;
+   while ((size_t)ldaP != ((size_t)lda)*P)
+   {
+      P--;
+      ldaP = P * lda;
+   }
    if (P > 1)
       ATL_goparallel(P, MY_DOWORK_cols, &pd, NULL);
    else
