@@ -1,3 +1,26 @@
+@ROUT atlas_tlvl2.h
+#ifndef ATLAS_TLVL2_H
+   #define ATLAS_TLVL2_H
+
+void Mjoin(PATL,tgemv)
+   (const enum ATLAS_TRANS TA, ATL_CINT M, ATL_CINT N, const SCALAR alpha,
+    const TYPE *A, ATL_CINT lda, const TYPE *X, ATL_CINT incX,
+    const SCALAR beta, TYPE *Y, ATL_CINT incY);
+
+#ifdef TREAL
+   void Mjoin(PATL,tger)
+         (ATL_CINT M, ATL_CINT N, const SCALAR alpha, const TYPE *X,
+          ATL_CINT incX, const TYPE *Y, ATL_CINT incY, TYPE *A, ATL_CINT lda);
+#else
+   void Mjoin(PATL,tgeru)
+         (ATL_CINT M, ATL_CINT N, const SCALAR alpha, const TYPE *X,
+          ATL_CINT incX, const TYPE *Y, ATL_CINT incY, TYPE *A, ATL_CINT lda);
+   void Mjoin(PATL,tgerc)
+         (ATL_CINT M, ATL_CINT N, const SCALAR alpha, const TYPE *X,
+          ATL_CINT incX, const TYPE *Y, ATL_CINT incY, TYPE *A, ATL_CINT lda);
+#endif
+
+#endif   /* end repeat include guard */
 @ROUT ATL_mvtCopyColumnPanel
 /*
 void ATL_mvtCopyColumnPanel
@@ -1749,16 +1772,17 @@ typedef struct
    TYPE *Y;
 } ATL_TGEMV_t;
 
-void ATL_DOMVNWORK_cols(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+void Mjoin(PATL,DOMVNWORK_cols)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
    ATL_thread_t *tp = vp;
    ATL_TGEMV_t *pd = lp->opstruct;
    ATL_CINT N = pd->N, lda = pd->lda;
    const int P = tp->P;
-   int vrank;
-   size_t n, nr;
-   TYPE *y = pd->Y + (tp->rank)*((pd->M SHIFT)+DivBySize(ATL_Cachelen));
-   const TYPE *a;
+   ATL_CINT nr = pd->nr;
+   const int vrank = (!nr || (pd->flg & 1)) ? tp->rank : (P + tp->rank+nr-1)%P;
+   ATL_INT n = pd->n;
+   TYPE *y = pd->Y + (tp->rank)*((pd->M SHIFT)+ATL_Cachelen/sizeof(TYPE));
+   const TYPE *a = pd->A + (lda SHIFT)*vrank;
    #ifdef TCPLX
       TYPE one[2] = {ATL_rone, ATL_rzero}, zero[2] = {ATL_rzero, ATL_rzero};
       const enum ATLAS_TRANS TA = (pd->flg & 4) ? AtlasConj : AtlasNoTrans;
@@ -1768,8 +1792,6 @@ void ATL_DOMVNWORK_cols(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       #define zero ATL_rzero
    #endif
 
-   vrank = (!pd->nr || (pd->flg & 1)) ? tp->rank : (P + tp->rank+nr-1)%P;
-   a = pd->A + (lda SHIFT)*vrank;
    y = ATL_Align2Ptr(y, a);
    if (vrank < nr)
       n++;
@@ -1778,7 +1800,7 @@ void ATL_DOMVNWORK_cols(ATL_LAUNCHSTRUCT_t *lp, void *vp)
                     pd->X+vrank*((pd->incX)SHIFT), P*pd->incX, zero, y, 1);
 }
 
-void ATL_DOMVTWORK_cols(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+void Mjoin(PATL,DOMVTWORK_cols)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
    ATL_thread_t *tp = vp;
    ATL_TGEMV_t *pd = lp->opstruct;
@@ -1810,22 +1832,26 @@ void Mjoin(PATL,CombineMVN)
    ATL_CINT M = pd->M;
    ATL_INT i;
    const int P = pd->P;
-   int vrank = (!pd->nr || (pd->flg & 1)) ?  myrank : (P + myrank+pd->nr-1)%P;
+   const int vrank = (!pd->nr || (pd->flg & 1)) ?  myrank : 
+                     (P + myrank+pd->nr-1)%P;
    const TYPE *a = pd->A + (pd->lda SHIFT)*vrank;
-   TYPE *y = pd->Y + (myrank)*((M SHIFT)+DivBySize(ATL_Cachelen));
-   TYPE *hy = pd->Y + (hisrank)*((M SHIFT)+DivBySize(ATL_Cachelen));
+   TYPE *y = pd->Y + (myrank)*((M SHIFT)+ATL_Cachelen/sizeof(TYPE));
+   TYPE *hy = pd->Y + (hisrank)*((M SHIFT)+ATL_Cachelen/sizeof(TYPE));
    #ifdef TCPLX
+      ATL_CINT M2 = M+M;
       const TYPE one[2] = {ATL_rone, ATL_rzero};
    #else
       #define one ATL_rone
    #endif
 
    y = ATL_Align2Ptr(y, a);
-   vrank = (!pd->nr || (pd->flg & 1)) ?  hisrank : (P + hisrank+nr-1)%P;
-   a = pd->A + (pd->lda SHIFT)*vrank;
    hy = ATL_Align2Ptr(hy, a);
 
+#ifdef TCPLX
+   for (i=0; i < M2; i++)
+#else
    for (i=0; i < M; i++)
+#endif
       y[i] += hy[i];
 }
 #ifndef TCPLX
@@ -1836,13 +1862,14 @@ void Mjoin(PATL,tgemv)
     const TYPE *A, ATL_CINT lda, const TYPE *X, ATL_CINT incX,
     const SCALAR beta, TYPE *Y, ATL_CINT incY)
 {
-   static size_t *ALb=NULL, *ALe=NULL;
+   static size_t ALb=0, ALe=0;
    size_t at = (size_t) A;
-   ATL_INT n;
-   ATL_TGEMV_T pd;
+   ATL_INT n, P;
+   ATL_TGEMV_t pd;
 
-   pd.flg = (at >= ALb && at <= ALe) ? 1 : 0
-   ALb = (size_t)A; ALe = (size_t)(A+(M SHIFT));
+   pd.flg = (at >= ALb && at <= ALe) ? 1 : 0;
+   ALb = (size_t)A; 
+   ALe = (size_t)(A+(M SHIFT));
    #ifdef TREAL
       pd.flg |= (TA == AtlasTrans) ? 2 : 0;
    #else
@@ -1869,7 +1896,42 @@ void Mjoin(PATL,tgemv)
       n = N / P;
       pd.n = n;
       pd.nr = N - n*P;
-      ATL_goparallel(P, MY_DOWORK_cols, &pd, NULL);
+      if (pd.flg & 2)   /* Transpose case */
+         ATL_goparallel(P, Mjoin(PATL,DOMVTWORK_cols), &pd, NULL);
+      else              /* NoTrans not implemented yet */
+      {
+         int vrank;
+         const TYPE *a;
+         TYPE *y, *y0;
+         #ifdef TCPLX
+            TYPE one[2] = {ATL_rone, ATL_rzero};
+            TYPE zero[2] = {ATL_rzero, ATL_rzero};
+         #endif
+
+         y0 = y = malloc(P*(ATL_Cachelen+ATL_MulBySize(M)));
+         ATL_assert(y);
+         pd.Y = y;
+         pd.incY = 1;
+         #ifdef TREAL
+            pd.alpha = ATL_rone;
+            pd.beta  = ATL_rzero;
+         #else
+            pd.alpha = one;
+            pd.beta  = zero;
+         #endif
+         ATL_goparallel(P, Mjoin(PATL,DOMVNWORK_cols), &pd, 
+                        Mjoin(PATL,CombineMVN));
+/*
+ *       goparallel reduces all node's Ys to node 0's.  Extract his from the
+ *       work array, and combine it with input array, applying both alpha
+ *       and beta in the process
+ */
+         vrank = (!pd.nr || (pd.flg & 1)) ? 0 : pd.nr-1;
+         a = A + (lda SHIFT)*vrank;
+         y = ATL_Align2Ptr(y, a);;
+         Mjoin(PATL,axpby)(M, alpha, y, 1, beta, Y, incY);
+         free(y0);
+      }
    }
    else
       Mjoin(PATL,gemv)(TA, M, N, alpha, A, lda, X, incX, beta, Y, incY);
@@ -1889,7 +1951,6 @@ typedef struct
    const TYPE *X, *Y;
    TYPE *A;
 } ATL_TGER_t;
-@ROUT ATL_tger ATL_tgemv
 
 #ifdef TREAL
    #define MY_GER ger
