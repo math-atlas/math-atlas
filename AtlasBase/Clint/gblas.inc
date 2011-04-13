@@ -22,8 +22,8 @@
    @define rep1 @ATL_@
    @define rep2 @pt@
    @define rep2c @t@
-@lvl 1 2
-#define ATLAS_PTALIAS@(lvl)_H /* no threaded routs for Level 1 and 2 yet */
+@lvl 1
+#define ATLAS_PTALIAS@(lvl)_H /* no threaded routs for Level 1 yet */
 @lvl !
 #ifndef ATLAS_PTALIAS@(lvl)_H
 #define ATLAS_PTALIAS@(lvl)_H
