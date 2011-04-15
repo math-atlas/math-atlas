@@ -74,7 +74,7 @@ F77blasclean        :
 	- ( cd $(TOPdir)/interfaces/blas/F77/testing/; $(MAKE) clean );
 F77blascleanexe     :
 	- ( cd $(F77_TS_dir); $(MAKE) cleanexe );
-	- ( cd $(F77_TS_dir); rm -f *.dat );
+#	- ( cd $(F77_TS_dir); rm -f *.dat );
 	- rm -rf $(TSTdir)/F77/*
 	- ( cd $(TOPdir)/interfaces/blas/F77/testing/; $(MAKE) clean );
 	- ( cd $(TOPdir)/interfaces/blas/F77/testing/; rm -f x* );
@@ -101,7 +101,7 @@ Cblasclean          :
 	- ( cd $(TOPdir)/interfaces/blas/C/testing/; $(MAKE) clean );
 Cblascleanexe       :
 	- ( cd $(C_TS_dir); $(MAKE) cleanexe );
-	- ( cd $(C_TS_dir); rm -f *.dat );
+#	- ( cd $(C_TS_dir); rm -f *.dat );
 	- rm -rf $(TSTdir)/C/*
 	- ( cd $(TOPdir)/interfaces/blas/C/testing/; $(MAKE) clean );
 	- ( cd $(TOPdir)/interfaces/blas/C/testing/; rm -f x* );
