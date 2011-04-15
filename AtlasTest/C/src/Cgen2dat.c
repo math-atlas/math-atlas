@@ -8,7 +8,7 @@ main()
    int            kval[MAXNK], nval[MAXNN];
    float          alphaR[MAXAB], alphaI[MAXAB], betaR[MAXAB], betaI[MAXAB];
 
-   str = (char * ) malloc( 15 );
+   str = (char * ) malloc( 16 );
 
    srand48( (long)( time( NULL ) ) );
 

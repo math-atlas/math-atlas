@@ -1799,6 +1799,10 @@ void Mjoin(PATL,DOMVNWORK_cols)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    Mjoin(PATL,gemv)(TA, pd->M, n, one, a, lda*P, 
                     pd->X+vrank*((pd->incX)SHIFT), P*pd->incX, zero, y, 1);
 }
+#ifndef TCPLX
+   #undef one
+   #undef zero
+#endif
 
 void Mjoin(PATL,DOMVTWORK_cols)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
@@ -1866,7 +1870,27 @@ void Mjoin(PATL,tgemv)
    size_t at = (size_t) A;
    ATL_INT n, P, ldaP;
    ATL_TGEMV_t pd;
-
+/*
+ * quick return if possible.
+ */
+   if (M < 1 || N < 1)
+      return;
+   if (SCALAR_IS_ZERO(alpha))   /* No contrib from alpha*A*x */
+   {
+      #ifdef TREAL
+         ATL_CINT NY = (TA == AtlasTrans) ? N : M;
+      #else
+         ATL_CINT NY = (TA == AtlasTrans || TA == AtlasConjTrans) ? N : M;
+      #endif
+      if (!SCALAR_IS_ONE(beta))
+      {
+         if (SCALAR_IS_ZERO(beta))
+            Mjoin(PATL,zero)(NY, Y, incY);
+         else
+            Mjoin(PATL,scal)(NY, beta, Y, incY);
+      }
+      return;
+   }
    pd.flg = (at >= ALb && at <= ALe) ? 1 : 0;
    ALb = (size_t)A; 
    ALe = (size_t)(A+(M SHIFT));
@@ -2021,6 +2045,9 @@ void Mjoin(Mjoin(PATL,t),MY_GER)
    ATL_TGER_t pd;
    int P;
    static TYPE *A0=NULL, *A0e=NULL;
+
+   if (M < 1 || N < 1 || SCALAR_IS_ZERO(alpha))  /* quick return if no-op */
+      return;
 
    pd.M = M; pd.N = N; pd.incX = incX; pd.incY = incY; pd.lda = lda;
    pd.alpha = alpha;
