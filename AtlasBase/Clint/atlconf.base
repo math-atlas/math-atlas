@@ -634,9 +634,9 @@ enum OSTYPE {OSOther=0, OSLinux, OSSunOS, OSSunOS4, OSOSF1, OSIRIX, OSAIX,
 #define OSIsWin(OS_) ( ((OS_) == OSWinNT) || ((OS_) == OSWin9x) || \
                        ((OS_) == OSWinSFU) )
 
-enum ARCHFAM {AFOther=0, AFPPC, AFSPARC, AFALPHA, AFX86, AFIA64, AFMIPS};
+enum ARCHFAM {AFOther=0, AFPPC, AFSPARC, AFALPHA, AFX86, AFIA64, AFMIPS, AFARM};
 
-#define NMACH 37
+#define NMACH 38
 static char *machnam[NMACH] = 
    {"UNKNOWN", "POWER3", "POWER4", "POWER5", "PPCG4", "PPCG5", 
     "POWER6", "POWER7",
@@ -645,7 +645,7 @@ static char *machnam[NMACH] =
     "Efficeon", "K7", "HAMMER", "AMD64K10h", "UNKNOWNx86", 
     "IA64Itan", "IA64Itan2",
     "USI", "USII", "USIII", "USIV", "UST2", "UnknownUS", 
-    "MIPSR1xK", "MIPSICE9"};
+    "MIPSR1xK", "MIPSICE9", "ARMv7"};
 enum MACHTYPE {MACHOther, IbmPwr3, IbmPwr4, IbmPwr5, PPCG4, PPCG5,
                IbmPwr6, IbmPwr7,
                IntP5, IntP5MMX, IntPPRO, IntPII, IntPIII, IntPM, IntCoreS,
@@ -654,7 +654,8 @@ enum MACHTYPE {MACHOther, IbmPwr3, IbmPwr4, IbmPwr5, PPCG4, PPCG5,
                IA64Itan, IA64Itan2,
                SunUSI, SunUSII, SunUSIII, SunUSIV, SunUST2, SunUSX, 
                MIPSR1xK, /* includes R10K, R12K, R14K, R16K */
-               MIPSICE9   /* SiCortex ICE9 -- like MIPS5K */
+               MIPSICE9,  /* SiCortex ICE9 -- like MIPS5K */
+               ARMv7      /* includes Cortex A8, A9 */
                };
 #define MachIsX86(mach_) \
    ( (mach_) >= IntP5 && (mach_) <= x86X )
@@ -671,6 +672,9 @@ enum MACHTYPE {MACHOther, IbmPwr3, IbmPwr4, IbmPwr5, PPCG4, PPCG5,
 #endif
 #define MachIsPPC(mach_) \
    ( (mach_) >= PPCG4 && (mach_) <= PPCG5 )
+#define MachIsARM(mach_) \
+   ( (mach_) == ARMv7 )
+
 
 static char *f2c_namestr[5] = {"UNKNOWN","Add_", "Add__", "NoChange", "UpCase"};
 static char *f2c_intstr[5] =
@@ -683,21 +687,23 @@ enum F2CNAME {f2c_NamErr=0, f2c_Add_, f2c_Add__, f2c_NoChange, f2c_UpCase};
 enum F2CINT {f2c_IntErr=0, FintCint, FintClong, FintClonglong, FintCshort};
 enum F2CSTRING {f2c_StrErr=0, fstrSun, fstrCray, fstrStructVal, fstrStructPtr};
 
-#define NISA 9
+#define NISA 10
 static char *ISAXNAM[NISA] = 
-   {"", "VSX", "AltiVec", "AVXMAC", "AVX", "SSE3", "SSE2", "SSE1", "3DNow"};
+   {"", "VSX", "AltiVec", "AVXMAC", "AVX", "SSE3", "SSE2", "SSE1", "3DNow", 
+    "NEON"};
 enum ISAEXT 
    {ISA_None=0, ISA_VSX, ISA_AV, ISA_AVXMAC, ISA_AVX, 
-    ISA_SSE3, ISA_SSE2, ISA_SSE1, ISA_3DNow};
+    ISA_SSE3, ISA_SSE2, ISA_SSE1, ISA_3DNow,
+    ISA_NEON};
 
 @ROUT atlconf.h asmconf.h
-#define NASMD 7
+#define NASMD 8
 enum ASMDIA 
    {ASM_None=0, gas_x86_32, gas_x86_64, gas_sparc, gas_ppc, gas_parisc, 
-    gas_mips};
+    gas_mips, gas_arm};
 static char *ASMNAM[NASMD] =
    {"",     "GAS_x8632", "GAS_x8664", "GAS_SPARC", "GAS_PPC", "GAS_PARISC",
-    "GAS_MIPS"};
+    "GAS_MIPS", "GAS_ARM"};
 @ROUT atlconf.h
 
 /*
@@ -1082,6 +1088,7 @@ enum ARCHFAM ProbeArchFam(char *targ)
       else if (strstr(res, "alpha")) fam = AFALPHA;
       else if (strstr(res, "ia64")) fam = AFIA64;
       else if (strstr(res, "mips")) fam = AFMIPS;
+      else if (strstr(res, "arm")) fam = AFARM;
       else if ( strstr(res, "i686") || strstr(res, "i586") ||
                 strstr(res, "i486") || strstr(res, "i386") ||
                 strstr(res, "x86") || strstr(res, "x86_64") ) fam = AFX86;
@@ -1103,6 +1110,7 @@ enum ARCHFAM ProbeArchFam(char *targ)
                    strstr(res, "i486") || strstr(res, "i386") ||
                    strstr(res, "x86_64") ) fam = AFX86;
          else if (strstr(res, "mips")) fam = AFMIPS;
+         else if (strstr(res, "arm")) fam = AFARM;
       }
    }
    return(fam);
@@ -1792,6 +1800,12 @@ IRun_@(prb): xprobe_@(prb) force_build
 # Machine-level probes run on machine lib being compiled for
 # These probes do not call system, but actually do something
 #
+IRun_NEON :
+	$(CC) $(CCFLAGS) -mfpu=neon -o xprobe_neon \
+              $(SRCdir)/backend/probe_svec.c $(SRCdir)/backend/probe_NEON.S
+	$(MAKE) $(atlrun) atldir=$(mydir) exe=xprobe_neon args="$(args)" \
+                redir=config0.out
+       - cat config0.out
 @multidef pre s    d    s       d   s
 @whiledef asm SSE1 SSE2 AltiVec VSX 3DNow
 IRun_@(asm) :
@@ -1827,7 +1841,7 @@ IRun_@(aff) :
 	- cat config0.out
 @endwhile
 
-@whiledef asm GAS_x8632 GAS_x8664 GAS_PPC GAS_PARISC GAS_SPARC
+@whiledef asm GAS_x8632 GAS_x8664 GAS_PPC GAS_PARISC GAS_SPARC ARM
 IRun_@(asm) :
 	$(CC) $(CCFLAGS) -o xprobe_@low@(asm) $(SRCdir)/backend/probe_this_asm.c $(SRCdir)/backend/probe_@low@(asm).S
 	$(MAKE) $(atlrun) atldir=$(mydir) exe=xprobe_@low@(asm) args="$(args)" \
@@ -2120,6 +2134,22 @@ main(int nargs, char **args)
    fprintf(stdout, "SUCCESS\n");
    exit(0);
 }
+@ROUT probe_gas_arm
+#define ATL_GAS_ARM
+#include "atlas_asm.h"
+/*
+ * Linux ARM assembler for:
+ * int asm_probe(int i)
+ * RETURNS: i*3
+ */
+.text
+.code   32
+.globl  ATL_asmdecor(asm_probe)
+ATL_asmdecor(asm_probe):
+        add     r1, r0, r0
+        add     r0, r1, r0
+        bx      lr
+.size ATL_asmdecor(asm_probe),.-ATL_asmdecor(asm_probe)
 @ROUT probe_gas_x8664.S
 #include "atlas_asm.h"
 # x86-64 assembler for:
@@ -2379,6 +2409,25 @@ ATL_asmdecor(do_vsum):
         emms
         ret
 #endif
+@ROUT probe_NEON.S
+#include "atlas_asm.h"
+#
+# ARM NEON assembler for:
+# void do_vsum(float* z,float* x,float* y)
+#  where x, y, and z are vectors of length 4
+# RETURNS: z = x + y;
+#
+.text
+.code   32
+.globl  ATL_asmdecor(do_vsum)
+ATL_asmdecor(do_vsum):
+   vldm     r1,     {d0-d1}
+   vldm     r2,     {d2-d3}
+   vadd.f32 d0,     d0,      d2
+   vadd.f32 d1,     d1,      d3
+   vstm     r0,     {d0-d1}
+   bx lr
+.size ATL_asmdecor(do_vsum),.-ATL_asmdecor(do_vsum)
 @ROUT probe_SSE1.S
 #include "atlas_asm.h"
 #
@@ -4988,6 +5037,15 @@ MACH=ALL OS=WinNT LVL=0 COMPS=f77
    'ifort' '-O2 -fltconsistency -nologo'
 MACH=P4,PM OS=WinNT LVL=0 COMPS=icc,dmc,smc,dkc,skc,xcc
    'icl' '-QxN -O3 -Qprec -fp:extended -fp:except -nologo -Oy'
+#
+# ARM defaults
+#
+MACH=ARMv7 OS=ALL LVL=1000 COMPS=icc,xcc
+   'gcc-4.5' '-mcpu=cortex-a8 -O'
+MACH=ARMv7 OS=ALL LVL=1000 COMPS=dmc,dkc,smc,skc
+   'gcc-4.5' '-mcpu=cortex-a8 -mfpu=vfpv3 -O2'
+MACH=ARMv7 OS=ALL LVL=1000 COMPS=f77
+   'gfortran' '-mcpu=cortex-a8 -O'
 #
 # Generic defaults
 #
