@@ -287,7 +287,7 @@ void RunTime(char pre, char *type, int nlma, int mflop)
 
 @extract -b @(basd)/atlas.base rout=Mylcm
 
-main(int nargs, char *args[])
+main(int nargs, char **args)
 {
    char pre, *type, fnam[64];
    int k, kma, kno, kbest, maxlat, mflop, nlma=1;
@@ -7932,7 +7932,7 @@ static void Mjoin(PATL,mmK)
  */
 {
    int m, n, kr;  /* # of row/cols to operate on, m >= M, n >= N */
-   int k;
+   int k, ZEROED=0;
    const TYPE one[2] = {ATL_rone, ATL_rzero}, zero[2] = {ATL_rzero, ATL_rzero};
 /*
  * Indexes to next blk (i.e. real to imag) of matrices; always uses full
@@ -7972,11 +7972,12 @@ static void Mjoin(PATL,mmK)
    else  /* two or more dim < NB, requires generated cleanup */
    {
       NBmm0 = NBmm1 = NBmmX = Mjoin(PATLU,pKBmm);
-      if (SCALAR_IS_ZERO(beta)) 
-      {
-         Mjoin(PATLU,gezero)(M, N, pC+ipc, ldpc);
-         Mjoin(PATLU,gezero)(M, N, pC, ldpc);
-      }
+/*
+ *    Must zero regardless of BETA, since we call wrkspc wt beta=0
+ */
+      Mjoin(PATLU,gezero)(M, N, pC+ipc, ldpc);
+      Mjoin(PATLU,gezero)(M, N, pC, ldpc);
+      ZEROED = 1;
    }
    if (nblk)
    {
@@ -8044,7 +8045,7 @@ static void Mjoin(PATL,mmK)
          if (m < MB || n < NB) /* use general K cleanup */
          {
             n = N; m = M;
-            if (!nblk)
+            if (!nblk && !ZEROED)
             {
                Mjoin(PATLU,gezero)(M, N, pC, ldpc);
                Mjoin(PATLU,gezero)(M, N, pC+ipc, ldpc);
@@ -20908,7 +20909,7 @@ int mmcase(int TEST, int CACHESIZE, char TA, char TB, int M, int N, int K,
 
    if (!TEST) D = C;
    /*if (nL2) L2 = malloc(nL2*sizeof(int));*/
-   #ifndef ATL_LINEFLUSH
+   #if !ATL_LINEFLUSH
       l2ret = ATL_flushcache( CACHESIZE );
    #endif
    if (TA == 'n' || TA == 'N') 
@@ -20958,7 +20959,7 @@ int mmcase(int TEST, int CACHESIZE, char TA, char TB, int M, int N, int K,
      }*/
    
    /* invalidate L2 cache */
-   #ifndef ATL_LINEFLUSH
+   #if !ATL_LINEFLUSH
       l2ret = ATL_flushcache( -1 );
    #else
       ATL_flushCacheByAddr(ldc*N, C);
@@ -20991,7 +20992,7 @@ int mmcase(int TEST, int CACHESIZE, char TA, char TB, int M, int N, int K,
    matgen(M, N, D, ldd, M*N);
 
    /* invalidate L2 cache */
-   #ifndef ATL_LINEFLUSH
+   #if !ATL_LINEFLUSH
       l2ret = ATL_flushcache( -1 );
    #else
       ATL_flushCacheByAddr(ldc*N, D);
@@ -21095,7 +21096,7 @@ int mmcase(int TEST, int CACHESIZE, char TA, char TB, int M, int N, int K,
    PASSED = 1;
 #endif
    /*free(L2);*/
-   #ifndef ATL_LINEFLUSH
+   #if !ATL_LINEFLUSH
       l2ret = ATL_flushcache( 0 );
    #endif
    return(PASSED);
@@ -35054,10 +35055,11 @@ double TryKUs
                          fftch, iftch, nftch, LDTOP, pf, -1, -1);
       mf1 = TimeGMMKernel(verb, 0, pre, MACC, lat, beta, nb, mu, nu, 1, 
                           fftch, iftch, nftch, LDTOP, pf, -1, -1);
-      if (mf >= mf1)
+      if (mf1 >= mf)
+      {
          mmp->ku = 1;
-      else
          mf = mf1;
+      }
    }
    return(mf);
 }
