@@ -1,0 +1,237 @@
+@ROUT ATL_cam2amb @ROUT ATL_ram2amb ATL_muxnu2mat
+//#include "atlas_misc.h"
+#define TYPE double
+#define SCALAR TYPE
+#define ATL_INT int
+#define ATL_rzero 0.0
+#define ATL_CINT const int
+   @ifdef ! alpha
+      @define alpha @1@
+   @endifdef
+   @iif alpha = 1
+      @define malp @@
+   @endiif
+   @iif alpha ! 1
+      @define malp @alpha*@
+   @endiif
+@ROUT ATL_cam2amb
+/*
+ * This routine copies the KxN submatrix A into the KxCEIL(N/@(nu)) block b.
+ * b is stored in access-major storage, where the @(nu) unrolled accesses
+ * are assumed to come from the columns of A.
+ * More specifically, each Kx@(nu) column panel of A is copied into a
+ * @(nu)xK region of b, and if the last such column panel is partial, it
+ * is zero padded.
+ * For GEMM, this routine handles Notrans B matrices, and Trans A matrices.
+ */
+void ATL_cam2amb_a@(alpha)_@(nu)   /* col-access matrix to access-major block */
+(
+   ATL_CINT K,          /* number of rows in A */
+   ATL_CINT N,          /* number of columns in A */
+   const SCALAR alpha,  /* scalar for A */
+   const TYPE *A,       /* matrix to be copied to access-major format */
+   ATL_CINT lda,        /* stride between row elements */
+   TYPE *b              /* OUTPUT: access-major block holding A */
+)
+{
+   ATL_CINT n = (N/@(nu))*@(nu), incA = lda*@(nu);
+   ATL_INT i, j;
+   @declare "   const TYPE " n n ";"
+      *A0=A
+      @define j @1@
+      @iwhile j < @(nu)
+         @iexp i @(j) -1 +
+         *A@(j)=A@(i)+lda
+         @iexp j @(j) 1 +
+      @endiwhile
+   @enddeclare
+
+   for (j=0; j < n; j += @(nu))
+   {
+      for (i=0; i < K; i++, b += @(nu))
+      {
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         b[@(j)] = @(malp)A@(j)[i];
+      @iexp j @(j) 1 +
+      @endiwhile
+      }
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+      A@(j) += incA;
+      @iexp j @(j) 1 +
+      @endiwhile
+   }
+   switch(N-n)
+   {
+   @iexp n 1 0 +
+   @iwhile n < @(nu)
+      @iexp j @(n) -1 + 
+   case @(n):
+      for (i=0; i < K; i++, b += @(nu))
+      {
+      @iexp j 0 0 +
+      @iwhile j < @(n)
+         b[@(j)] = @(malp)A@(j)[i];
+      @iexp j @(j) 1 +
+      @endiwhile
+      @iwhile j < @(nu)
+         b[@(j)] = ATL_rzero;
+      @iexp j @(j) 1 +
+      @endiwhile
+      }
+      break;
+   @iexp n @(n) 1 +
+   @endiwhile
+   default:;
+   }
+}
+@ROUT ATL_ram2amb
+/*
+ * This routine copies the MxK submatrix A into the KxCEIL(M/@(mu) block b.
+ * b is stored in access-major storage, where the @(mu) unrolled accesses
+ * are assumed to come from the rows of A.
+ * More specifically, the @(mu)xK row panel of A becomes a @(mu)xK region
+ * in b, and if the last such row panel is partial, it is zero padded.
+ * For GEMM, this routine handles Notrans A matrices, and Trans B matrices.
+ */
+void ATL_ram2amb_@(mu)   /* row-access matrix to access-major block */
+(
+   ATL_CINT M,          /* number of rows in A */
+   ATL_CINT K,          /* number of columns in A */
+   const SCALAR alpha,  /* scalar for A */
+   const TYPE *A,       /* matrix to be copied to access-major format */
+   ATL_CINT lda,        /* stride between row elements */
+   TYPE *b              /* OUTPUT: access-major block holding condensed A */
+)
+{
+   ATL_CINT pansz = @(mu)*K, m = M/@(mu)*@(mu), mr = M-m, incA = @(mu)*lda - m;
+   ATL_INT i, j;
+
+   for (j=0; j < K; j++, b += @(mu), A += incA)
+   {
+      TYPE *pp = b;  /* panel ptr */
+      for (i=0; i < m; i += @(mu), pp += pansz, A += 4)
+      {
+      @iexp i 0 0 +
+      @iwhile i < @(mu)
+         b[@(i)] = @(malp)A[@(i)];
+      @iexp i @(i) 1 +
+      @endiwhile
+      }
+      switch(mr)
+      {
+      @iexp n 1 0 +
+      @iwhile n < @(mu)
+      case @(n):
+         @iexp i 0 0 +
+         @iwhile i < @(n)
+         b[@(i)] = @(malp)A[@(i)];
+         @iexp i @(i) 1 +
+         @endiwhile
+         @iwhile i < @(mu)
+         b[@(i)] = ATL_rzero;
+         @iexp i @(i) 1 +
+         @endiwhile
+         break;
+      @iexp n @(n) 1 +
+      @endiwhile
+      default:;
+      }
+   }
+}
+@ROUT ATL_muxnu2mat
+/*
+ *  C <- beta*C + alpha*b,
+ *  C is an MxN matrix in column-major storage
+ *  b is a CEIL(M/@(mu))*@(mu) x CEIL(N/@(nu))*@(nu) matrix stored in
+ *    @(mu)x@(nu)-major storage
+ */
+void ATL_@(mu)x@(nu)_2_mat_a@(alpha)_b@(beta)
+(
+   ATL_CINT M,          /* number of rows in A */
+   ATL_CINT N,          /* number of columns in A */
+   const SCALAR alpha,  /* scalar for b */
+   const TYPE *b,       /* matrix stored in @(mu)x@(nu)-major order */
+   const SCALAR beta,   /* scalar for C */
+   TYPE *C,             /* matrix to be copied to access-major format */
+   ATL_CINT ldc         /* stride between row elements */
+)
+{
+   ATL_CINT m = (M/@(mu))*@(mu), n = (N/@(nu))*@(nu), mr = M-m;
+   ATL_CINT incC = ldc*@(nu), incb = @(mu)*@(nu);
+   ATL_INT i, j;
+   @declare "   TYPE " n n ";"
+      *C0=C
+      @define j @1@
+      @iwhile j < @(nu)
+         @iexp i @(j) -1 +
+         *C@(j)=C@(i)+ldc
+         @iexp j @(j) 1 +
+      @endiwhile
+   @enddeclare
+
+   for (j=0; j < n; j += @(nu))
+   {
+      for (i=0; i < m; i += @(mu), b += incb)
+      {
+   @iexp k 0 0 +
+   @iexp j 0 0 +
+   @iwhile j < @(nu)
+      @iexp i 0 0 +
+      @iwhile i < @(mu)
+         @mif beta = "X
+         C@(j)[@(i)] = beta*C@(j)[@(i)] + @(malp)b[@(k)];
+         @endmif
+         @mif beta = "1
+         C@(j)[@(i)] += @(malp)b[@(k)];
+         @endmif
+         @mif beta = "0
+         C@(j)[@(i)] = @(malp)b[@(k)];
+         @endmif
+         @iexp k @(k) 1 +
+      @iexp i @(i) 1 +
+      @endiwhile
+   @iexp j @(j) 1 +
+   @endiwhile
+      }
+      switch(mr)
+      {
+      @iexp n 1 0 +
+      @iwhile n < @(mu)
+      case @(n):
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp k @(mu) @(j) *
+            @iexp i 0 0 +
+            @iwhile i < @(n)
+               @mif beta = "X
+         C@(j)[@(i)] = beta*C@(j)[@(i)] + @(malp)b[@(k)];
+               @endmif
+               @mif beta = "1
+         C@(j)[@(i)] += @(malp)b[@(k)];
+               @endmif
+               @mif beta = "0
+         C@(j)[@(i)] = @(malp)b[@(k)];
+               @endmif
+               @iexp k @(k) 1 + 
+            @iexp i @(i) 1 +
+            @endiwhile
+         @iexp j @(j) 1 +
+         @endiwhile
+         b += incb;
+         break;
+      @iexp n @(n) 1 +
+      @endiwhile
+      default:;
+      }
+   @iexp j 0 0 +
+   @iwhile j < @(nu)
+      C@(j) += incC;
+      @iexp j @(j) 1 +
+   @endiwhile
+   }
+/*
+ * Still need to write nu cleanup
+ */
+}
