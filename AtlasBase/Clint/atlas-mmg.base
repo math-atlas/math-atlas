@@ -1,10 +1,12 @@
-@ROUT ATL_cam2amb @ROUT ATL_ram2amb ATL_muxnu2mat
+@ROUT ATL_cam2amb ATL_ram2amb ATL_muxnu2mat
 //#include "atlas_misc.h"
 #define TYPE double
 #define SCALAR TYPE
 #define ATL_INT int
 #define ATL_rzero 0.0
 #define ATL_CINT const int
+@ROUT ATL_cm2am ATL_rm2am ATL_ablk2cmat
+#include "atlas_misc.h"
    @ifdef ! alpha
       @define alpha @1@
    @endifdef
@@ -14,7 +16,11 @@
    @iif alpha ! 1
       @define malp @alpha*@
    @endiif
-@ROUT ATL_cam2amb
+@ROUT ammmtst
+#include "atlas_misc.h"
+   @define alpha @1@
+   @define malp @@
+@ROUT ATL_cm2am ammmtst
 /*
  * This routine copies the KxN submatrix A into the KxCEIL(N/@(nu)) block b.
  * b is stored in access-major storage, where the @(nu) unrolled accesses
@@ -24,7 +30,7 @@
  * is zero padded.
  * For GEMM, this routine handles Notrans B matrices, and Trans A matrices.
  */
-void ATL_cam2amb_a@(alpha)_@(nu)   /* col-access matrix to access-major block */
+void Mjoin(PATL,cm2am_a@(alpha)_@(nu)) /* col-access matx to access-major blk */
 (
    ATL_CINT K,          /* number of rows in A */
    ATL_CINT N,          /* number of columns in A */
@@ -62,6 +68,7 @@ void ATL_cam2amb_a@(alpha)_@(nu)   /* col-access matrix to access-major block */
       @iexp j @(j) 1 +
       @endiwhile
    }
+   @mif nu ! "1
    switch(N-n)
    {
    @iexp n 1 0 +
@@ -85,8 +92,9 @@ void ATL_cam2amb_a@(alpha)_@(nu)   /* col-access matrix to access-major block */
    @endiwhile
    default:;
    }
+   @endmif
 }
-@ROUT ATL_ram2amb
+@ROUT ATL_ram2amb ammmtst
 /*
  * This routine copies the MxK submatrix A into the KxCEIL(M/@(mu) block b.
  * b is stored in access-major storage, where the @(mu) unrolled accesses
@@ -95,7 +103,7 @@ void ATL_cam2amb_a@(alpha)_@(nu)   /* col-access matrix to access-major block */
  * in b, and if the last such row panel is partial, it is zero padded.
  * For GEMM, this routine handles Notrans A matrices, and Trans B matrices.
  */
-void ATL_ram2amb_@(mu)   /* row-access matrix to access-major block */
+void Mjoin(PATL,rm2am_a@(alpha)_@(mu)) /* row-access matrix to access-major block */
 (
    ATL_CINT M,          /* number of rows in A */
    ATL_CINT K,          /* number of columns in A */
@@ -111,14 +119,15 @@ void ATL_ram2amb_@(mu)   /* row-access matrix to access-major block */
    for (j=0; j < K; j++, b += @(mu), A += incA)
    {
       TYPE *pp = b;  /* panel ptr */
-      for (i=0; i < m; i += @(mu), pp += pansz, A += 4)
+      for (i=0; i < m; i += @(mu), pp += pansz, A += @(mu))
       {
       @iexp i 0 0 +
       @iwhile i < @(mu)
-         b[@(i)] = @(malp)A[@(i)];
+         pp[@(i)] = @(malp)A[@(i)];
       @iexp i @(i) 1 +
       @endiwhile
       }
+      @mif mu ! "1
       switch(mr)
       {
       @iexp n 1 0 +
@@ -126,11 +135,11 @@ void ATL_ram2amb_@(mu)   /* row-access matrix to access-major block */
       case @(n):
          @iexp i 0 0 +
          @iwhile i < @(n)
-         b[@(i)] = @(malp)A[@(i)];
+         pp[@(i)] = @(malp)A[@(i)];
          @iexp i @(i) 1 +
          @endiwhile
          @iwhile i < @(mu)
-         b[@(i)] = ATL_rzero;
+         pp[@(i)] = ATL_rzero;
          @iexp i @(i) 1 +
          @endiwhile
          break;
@@ -138,16 +147,19 @@ void ATL_ram2amb_@(mu)   /* row-access matrix to access-major block */
       @endiwhile
       default:;
       }
+      @endmif
    }
 }
-@ROUT ATL_muxnu2mat
+@ROUT ammmtst
+  @define beta @0@
+@ROUT ATL_ablk2cmat ammmtst
 /*
  *  C <- beta*C + alpha*b,
  *  C is an MxN matrix in column-major storage
  *  b is a CEIL(M/@(mu))*@(mu) x CEIL(N/@(nu))*@(nu) matrix stored in
  *    @(mu)x@(nu)-major storage
  */
-void ATL_@(mu)x@(nu)_2_mat_a@(alpha)_b@(beta)
+void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(alpha)_b@(beta))
 (
    ATL_CINT M,          /* number of rows in A */
    ATL_CINT N,          /* number of columns in A */
@@ -181,13 +193,13 @@ void ATL_@(mu)x@(nu)_2_mat_a@(alpha)_b@(beta)
       @iexp i 0 0 +
       @iwhile i < @(mu)
          @mif beta = "X
-         C@(j)[@(i)] = beta*C@(j)[@(i)] + @(malp)b[@(k)];
+         C@(j)[i] = beta*C@(j)[i] + @(malp)b[@(k)];
          @endmif
          @mif beta = "1
-         C@(j)[@(i)] += @(malp)b[@(k)];
+         C@(j)[i] += @(malp)b[@(k)];
          @endmif
          @mif beta = "0
-         C@(j)[@(i)] = @(malp)b[@(k)];
+         C@(j)[i] = @(malp)b[@(k)];
          @endmif
          @iexp k @(k) 1 +
       @iexp i @(i) 1 +
@@ -195,6 +207,7 @@ void ATL_@(mu)x@(nu)_2_mat_a@(alpha)_b@(beta)
    @iexp j @(j) 1 +
    @endiwhile
       }
+      @mif mu ! "1
       switch(mr)
       {
       @iexp m 1 0 +
@@ -206,13 +219,13 @@ void ATL_@(mu)x@(nu)_2_mat_a@(alpha)_b@(beta)
             @iexp i 0 0 +
             @iwhile i < @(m)
                @mif beta = "X
-         C@(j)[@(i)] = beta*C@(j)[@(i)] + @(malp)b[@(k)];
+         C@(j)[i] = beta*C@(j)[i] + @(malp)b[@(k)];
                @endmif
                @mif beta = "1
-         C@(j)[@(i)] += @(malp)b[@(k)];
+         C@(j)[i] += @(malp)b[@(k)];
                @endmif
                @mif beta = "0
-         C@(j)[@(i)] = @(malp)b[@(k)];
+         C@(j)[i] = @(malp)b[@(k)];
                @endmif
                @iexp k @(k) 1 + 
             @iexp i @(i) 1 +
@@ -225,12 +238,14 @@ void ATL_@(mu)x@(nu)_2_mat_a@(alpha)_b@(beta)
       @endiwhile
       default:;
       }
+      @endmif
    @iexp j 0 0 +
    @iwhile j < @(nu)
       C@(j) += incC;
       @iexp j @(j) 1 +
    @endiwhile
    }
+   @mif nu ! "1
    switch(nr)
    {
    @iexp n 1 0 +
@@ -258,6 +273,7 @@ void ATL_@(mu)x@(nu)_2_mat_a@(alpha)_b@(beta)
       @iexp j @(j) 1 +
       @endiwhile
       }
+      @mif mu ! "1
       switch(mr)
       {
       @iexp m 1 0 +
@@ -288,9 +304,341 @@ void ATL_@(mu)x@(nu)_2_mat_a@(alpha)_b@(beta)
       @endiwhile
       default:;
       }
+      @endmif
       break;
    @iexp n @(n) 1 +
    @endiwhile
    default:;
    }
+   @endmif
 }
+@ROUT ammmtst
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#include <string.h>
+#include "atlas_misc.h"
+
+#define dumb_seed(iseed_) srand(iseed_)
+#ifndef RAND_MAX  /* rather dangerous non-ansi workaround */
+   #define RAND_MAX ((unsigned long)(1<<30))
+#endif
+#define dumb_rand() ( 0.5 - ((double)rand())/((double)RAND_MAX) )
+
+@beginskip
+#define Mjoin(pre, nam) my_join(pre, nam)
+#define my_join(pre, nam) pre ## nam
+#define Mjoin(pre, nam) my_join(pre, nam)
+#define my_join(pre, nam) pre ## nam
+#define Mstr2(m) # m
+#define Mstr(m) Mstr2(m)
+#define Mmin(x, y) ( (x) > (y) ? (y) : (x) )
+
+#if defined(sREAL)
+   #include "atlas_ssysinfo.h"
+   #define PRE 's'
+   #define pre s
+   #define TYPE float
+   #define SCALAR float
+   #define ATL_sizeof sizeof(TYPE)
+   #define TREAL
+   #define SHIFT
+   #define EPS 1.0e-7
+#elif defined(dREAL)
+   #include "atlas_dsysinfo.h"
+   #define PRE 'd'
+   #define pre d
+   #define TYPE double
+   #define SCALAR double
+   #define ATL_sizeof sizeof(TYPE)
+   #define TREAL
+   #define SHIFT
+   #define EPS 1.0e-16
+#elif defined (qREAL)
+   #include "atlas_qsysinfo.h"
+   #define PRE 'q'
+   #define pre q
+   #define TYPE long double
+   #define SCALAR long double
+   #define ATL_sizeof sizeof(TYPE)
+   #define TREAL
+   #define SHIFT
+#elif defined(sCPLX) || defined(cCPLX)
+   #include "atlas_csysinfo.h"
+   #define PRE 'c'
+   #define pre c
+   #define TYPE float
+   #define ATL_sizeof (sizeof(TYPE)<<1)
+   #define SCALAR float *
+   #define TCPLX
+   #define SHIFT <<1
+   #define EPS 1.0e-7
+#else
+   #include "atlas_zsysinfo.h"
+   #define PRE 'z'
+   #define pre z
+   #define TYPE double
+   #define ATL_sizeof (sizeof(TYPE)<<1)
+   #define SCALAR double*
+   #define TCPLX
+   #define SHIFT <<1
+   #define EPS 1.0e-16
+#endif
+@endskip
+
+#define TransA 1
+#define NoTransB 1
+
+void ATL_USERMM(ATL_CINT M, ATL_CINT N, ATL_CINT K, TYPE *A, TYPE *B, TYPE *C);
+
+void tst_mm(const int M, const int N, const int K, const SCALAR alpha,
+            const TYPE *A, const int lda0, const TYPE *B, const int ldb0,
+            const SCALAR beta, TYPE *C, const int ldc0)
+{
+   int i, j, k;
+   int lda = lda0 SHIFT, ldb = ldb0 SHIFT, ldc = ldc0 SHIFT;
+   register TYPE c0;
+   #ifdef TREAL
+      for (j=0; j < N; j++)
+      {
+         for (i=0; i < M; i++)
+         {
+            c0 = 0.0;
+            for (k=0; k < K; k++)
+            {
+               #if defined(NoTransA) && defined(NoTransB)
+                  c0 += A[i+k*lda] * B[j*ldb+k];
+               #elif defined(NoTransA) && defined(TransB)
+                  c0 += A[i+k*lda] * B[j+k*ldb];
+               #elif defined(TransA) && defined(NoTransB)
+                  c0 += A[i*lda+k] * B[j*ldb+k];
+               #elif defined(TransA) && defined(TransB)
+                  c0 += A[i*lda+k] * B[j+k*ldb];
+               #endif
+            }
+            C[i+j*ldc] = beta*C[i+j*ldc] + alpha*c0;
+         }
+      }
+   #else
+      register TYPE cr, ci, ar, ai, br, bi;
+
+      for (j=0; j < N; j++)
+      {
+         for (i=0; i < M; i++)
+         {
+            cr = ci = 0.0;
+            for (k=0; k < K; k++)
+            {
+               #if defined(NoTransA) && defined(NoTransB)
+                  ar = A[2*i+k*lda];
+                  ai = A[2*i+k*lda+1];
+                  br = B[j*ldb+2*k];
+                  bi = B[j*ldb+2*k+1];
+               #elif defined(NoTransA) && !defined(NoTransB)
+                  ar = A[2*i+k*lda] ;
+                  ai = A[2*i+k*lda+1];
+                  br = B[2*j+k*ldb];
+                  bi = B[2*j+k*ldb+1];
+               #elif !defined(NoTransA) && defined(NoTransB)
+                  ar = A[i*lda+k*2];
+                  ai = A[i*lda+k*2+1];
+                  br = B[j*ldb+k*2];
+                  bi = B[j*ldb+k*2+1];
+               #elif !defined(NoTransA) && !defined(NoTransB)
+                  ar = A[i*lda+k*2];
+                  ai = A[i*lda+k*2+1];
+                  br = B[2*j+k*ldb];
+                  bi = B[2*j+k*ldb+1];
+               #endif
+               #ifdef ConjTransA
+                  ai = -ai;
+               #endif
+               #ifdef ConjTransB
+                  bi = -bi;
+               #endif
+               cr += ar * br - ai * bi;
+               ci += ar * bi + ai * br;
+            }
+/*
+ *          Scale by alpha
+ */
+            ar = *alpha;
+            ai = alpha[1];
+            br = cr;
+            bi = ci;
+            cr =  br * ar;
+            ci =  bi * ar;
+            cr -= bi * ai;
+            ci += br * ai;
+/*
+ *          Scale C by beta
+ */
+            br = *beta;
+            bi = beta[1];
+            ar = C[2*i+j*ldc];
+            ai = C[2*i+j*ldc+1];
+            C[2*i+j*ldc]   = ar*br - ai * bi;
+            C[2*i+j*ldc+1] = ai*br + ar * bi;
+/*
+ *          Store answer back to C
+ */
+            C[2*i+j*ldc]   += cr;
+            C[2*i+j*ldc+1] += ci;
+
+         }
+      }
+      #if csA == 1 && csB == 1
+         free(aa);
+         free(bb);
+      #endif
+   #endif
+}
+@ifdef ! M
+   @define M @40@
+@endifdef
+@ifdef ! N
+   @define N @60@
+@endifdef
+@ifdef ! K
+   @define K @80@
+@endifdef
+
+static void ATL_CM2BK
+(
+   ATL_CINT M,   /* # of rows in A */
+   ATL_CINT N,   /* # of cols in A */
+   ATL_CINT mu,  /* M unrolling */
+   ATL_CINT nu,  /* N unrolling */
+   TYPE *A,      /* column-major ldaxN matrix A */
+   ATL_CINT lda, /* stride between row elements of A */
+   TYPE *b       /* OUTPUT: muxnu blk storage of A */
+)
+{
+   ATL_CINT MMU = ((M+mu-1)/mu)*mu, NNU = ((N+nu-1)/nu)*nu;
+   ATL_INT i, j;
+
+   for (j=0; j != NNU; j += nu)
+   {
+      for (i=0; i != MMU; i += mu)
+      {
+         ATL_INT iu, ju;
+         for (ju=0; ju < nu; ju++)
+         {
+            for (iu=0; iu < mu; iu++)
+            {
+               if (i+iu < M && j+ju < N)
+                  *b++ = A[(j+ju)*lda+i+iu];
+               else
+                  *b++ = 0.0;
+            }
+         }
+      }
+   }
+}
+
+int mmtst(void)
+{
+   #ifdef TCPLX
+      int inca, incb, incc;
+      const TYPE one=1.0, none=(-1.0);
+      TYPE alpha[2] = {1.0, 0.0};
+      TYPE beta[2] = {@(be).0, 0.0};
+   #else
+      TYPE alpha=1.0;
+      TYPE beta=@(be).0;
+   #endif
+   const TYPE rone=1.0, rnone=(-1.0);
+   void *va=NULL, *vb=NULL, *vc=NULL;
+   TYPE *C, *D, *A, *B, *a, *b, *c;
+   TYPE diff, tmp;
+   int i, j, k, n, nerr;
+   ATL_CINT M=@(M), N=@(N), K=@(K), lda=K, ldb=K, ldc=M+3;
+   ATL_CINT MMU = ((@(M)+@(mu)-1)/@(mu))*@(mu);
+   ATL_CINT NNU = ((@(N)+@(nu)-1)/@(nu))*@(nu);
+   TYPE ErrBound;
+
+   #ifdef TREAL
+      ErrBound = 2.0 * (2.0*K*EPS + Mabs(beta) * EPS) + EPS;
+   #else
+      tmp = Mabs(*beta) + Mabs(beta[1]);
+      ErrBound =  2.0 * (8.0*K*EPS + tmp*EPS) + EPS;
+   #endif
+/*
+ * Allocate normal & access-major storage arrays; access-major arrays are
+ * always aligned to ATL_Cachelen
+ */
+   
+   A = malloc(sizeof(TYPE)*M*K);
+   B = malloc(sizeof(TYPE)*N*K);
+   C = malloc(sizeof(TYPE)*ldc*N);
+   D = malloc(sizeof(TYPE)*ldc*N);
+   va = malloc(sizeof(TYPE)*MMU*K + ATL_Cachelen);
+   vb = malloc(sizeof(TYPE)*NNU*K + ATL_Cachelen);
+   vc = malloc(sizeof(TYPE)*MMU*NNU + ATL_Cachelen);
+   a = ATL_AlignPtr(va);
+   b = ATL_AlignPtr(vb);
+   c = ATL_AlignPtr(vc);
+/*
+ * Fill in column-major arrays and translate to access-major
+ */
+   assert(A && B && C && a && b && c);
+   for (n=lda*M SHIFT, i=0; i < n; i++) A[i] = dumb_rand();
+   for (n=ldb*N SHIFT, i=0; i < n; i++) B[i] = dumb_rand();
+   for (n=ldc*N SHIFT, i=0; i < n; i++) C[i] = dumb_rand();
+   Mjoin(PATL,rm2am_a1_@(mu))(K, M, 1.0, A, lda, a);
+printf("A = %e %e %e %e\n", *A, A[lda], A[1], A[lda+1]);
+printf("a = %e %e %e %e\n", *a, a[1], a[2], a[3]);
+   Mjoin(PATL,cm2am_a1_@(nu))(K, N, 1.0, B, ldb, b);
+printf("B = %e %e %e %e\n", *B - *b, B[1]-b[1], B[ldb]-b[2], B[ldb+1]-b[3]);
+   ATL_CM2BK(M, N, @(mu), @(nu), C, ldc, c);
+printf("C = %e %e %e %e\n", *C , C[1], C[ldc], C[ldc+1]);
+printf("c = %e %e %e %e\n", *c , c[1], c[2], c[3]);
+printf("D = %e %e %e %e\n", *C - *c, C[1]-c[1], C[ldc]-c[2], C[ldc+1]-c[3]);
+/*
+ * Call test routine, move output to col-major D for comparison with correct C
+ */
+   ATL_USERMM(MMU, NNU, K, a, b, c);
+   tst_mm(M, N, K, alpha, A, K, B, K, beta, C, M);
+printf("d = %e %e %e %e\n", *C - *c, C[1]-c[1], C[ldc]-c[2], C[ldc+1]-c[3]);
+   Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a1_b0)(M, N, 1.0, c, 0.0, D, ldc);
+
+   nerr = 0;
+   for (j=0; j < N; j++)
+   {
+      for (i=0; i < M SHIFT; i++)
+      {
+         k = i + j*(ldc SHIFT);
+         diff = C[k] - D[k];
+         if (diff < 0.0) diff = -diff;
+         if (diff > ErrBound)
+         {
+            fprintf(stderr, "C(%d,%d) : expected=%f, got=%f, diff=%e\n",
+                    i, j, C[k], D[k], diff);
+            nerr++;
+         }
+         else if (D[k] != D[k])   /* test for NaNs in test answer */
+         {
+            fprintf(stderr, "C(%d,%d) : expected=%f, got=%f\n",
+                    i, j, C[k], D[k]);
+            nerr++;
+         }
+      }
+   }
+   free(A);
+   free(B);
+   free(C);
+   free(va);
+   free(vb);
+   free(vc);
+   free(D);
+   return(nerr);
+}
+
+main()
+{
+   int ierr;
+   ierr = mmtst();
+   if (!ierr) fprintf(stdout, "PASSED TEST\n");
+   exit(ierr);
+}
+
