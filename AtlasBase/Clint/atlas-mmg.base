@@ -113,7 +113,7 @@ void Mjoin(PATL,rm2am_a@(alpha)_@(mu)) /* row-access matrix to access-major bloc
    TYPE *b              /* OUTPUT: access-major block holding condensed A */
 )
 {
-   ATL_CINT pansz = @(mu)*K, m = M/@(mu)*@(mu), mr = M-m, incA = @(mu)*lda - m;
+   ATL_CINT pansz = @(mu)*K, m = M/@(mu)*@(mu), mr = M-m, incA = lda - m;
    ATL_INT i, j;
 
    for (j=0; j < K; j++, b += @(mu), A += incA)
@@ -170,7 +170,8 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(alpha)_b@(beta))
    ATL_CINT ldc         /* stride between row elements */
 )
 {
-   ATL_CINT m = (M/@(mu))*@(mu), n = (N/@(nu))*@(nu), mr = M-m;
+   ATL_CINT m = (M/@(mu))*@(mu), n = (N/@(nu))*@(nu), mr = M-m, nr = N-n;
+   ATL_CINT pansz = (nr) ? (n+@(nu))*@(mu) : n*@(mu);
    ATL_CINT incC = ldc*@(nu), incb = @(mu)*@(nu);
    ATL_INT i, j;
    @declare "   TYPE " n n ";"
@@ -183,9 +184,10 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(alpha)_b@(beta))
       @endiwhile
    @enddeclare
 
-   for (j=0; j < n; j += @(nu))
+   for (j=0; j < n; j += @(nu), b += incb)
    {
-      for (i=0; i < m; i += @(mu), b += incb)
+      const TYPE *p = b;
+      for (i=0; i < m; i += @(mu), p += pansz)
       {
    @iexp k 0 0 +
    @iexp j 0 0 +
@@ -193,13 +195,13 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(alpha)_b@(beta))
       @iexp i 0 0 +
       @iwhile i < @(mu)
          @mif beta = "X
-         C@(j)[i] = beta*C@(j)[i] + @(malp)b[@(k)];
+         C@(j)[i+@(i)] = beta*C@(j)[i+@(i)] + @(malp)p[@(k)];
          @endmif
          @mif beta = "1
-         C@(j)[i] += @(malp)b[@(k)];
+         C@(j)[i+@(i)] += @(malp)p[@(k)];
          @endmif
          @mif beta = "0
-         C@(j)[i] = @(malp)b[@(k)];
+         C@(j)[i+@(i)] = @(malp)p[@(k)];
          @endmif
          @iexp k @(k) 1 +
       @iexp i @(i) 1 +
@@ -219,20 +221,19 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(alpha)_b@(beta))
             @iexp i 0 0 +
             @iwhile i < @(m)
                @mif beta = "X
-         C@(j)[i] = beta*C@(j)[i] + @(malp)b[@(k)];
+         C@(j)[i+@(i)] = beta*C@(j)[i+@(i)] + @(malp)p[@(k)];
                @endmif
                @mif beta = "1
-         C@(j)[i] += @(malp)b[@(k)];
+         C@(j)[i+@(i)] += @(malp)p[@(k)];
                @endmif
                @mif beta = "0
-         C@(j)[i] = @(malp)b[@(k)];
+         C@(j)[i+@(i)] = @(malp)p[@(k)];
                @endmif
                @iexp k @(k) 1 + 
             @iexp i @(i) 1 +
             @endiwhile
          @iexp j @(j) 1 +
          @endiwhile
-         b += incb;
          break;
       @iexp m @(m) 1 +
       @endiwhile
@@ -251,7 +252,7 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(alpha)_b@(beta))
    @iexp n 1 0 +
    @iwhile n < @(nu)
    case @(n):
-      for (i=0; i < m; i += @(mu), b += incb)
+      for (i=0; i < m; i += @(mu), b += pansz)
       {
       @iexp k 0 0 +
       @iexp j 0 0 +
@@ -259,13 +260,13 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(alpha)_b@(beta))
          @iexp i 0 0 +
          @iwhile i < @(mu)
             @mif beta = "X
-         C@(j)[@(i)] = beta*C@(j)[@(i)] + @(malp)b[@(k)];
+         C@(j)[i+@(i)] = beta*C@(j)[i+@(i)] + @(malp)b[@(k)];
             @endmif
             @mif beta = "1
-         C@(j)[@(i)] += @(malp)b[@(k)];
+         C@(j)[i+@(i)] += @(malp)b[@(k)];
             @endmif
             @mif beta = "0
-         C@(j)[@(i)] = @(malp)b[@(k)];
+         C@(j)[i+@(i)] = @(malp)b[@(k)];
             @endmif
             @iexp k @(k) 1 +
          @iexp i @(i) 1 +
@@ -285,13 +286,13 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(alpha)_b@(beta))
             @iexp i 0 0 +
             @iwhile i < @(m)
                @mif beta = "X
-         C@(j)[@(i)] = beta*C@(j)[@(i)] + @(malp)b[@(k)];
+         C@(j)[i+@(i)] = beta*C@(j)[@(i)] + @(malp)b[@(k)];
                @endmif
                @mif beta = "1
-         C@(j)[@(i)] += @(malp)b[@(k)];
+         C@(j)[i+@(i)] += @(malp)b[@(k)];
                @endmif
                @mif beta = "0
-         C@(j)[@(i)] = @(malp)b[@(k)];
+         C@(j)[i+@(i)] = @(malp)b[@(k)];
                @endmif
                @iexp k @(k) 1 + 
             @iexp i @(i) 1 +
@@ -386,7 +387,7 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(alpha)_b@(beta))
 #endif
 @endskip
 
-#define TransA 1
+#define NoTransA 1
 #define NoTransB 1
 
 void ATL_USERMM(ATL_CINT M, ATL_CINT N, ATL_CINT K, TYPE *A, TYPE *B, TYPE *C);
@@ -552,7 +553,7 @@ int mmtst(void)
    TYPE *C, *D, *A, *B, *a, *b, *c;
    TYPE diff, tmp;
    int i, j, k, n, nerr;
-   ATL_CINT M=@(M), N=@(N), K=@(K), lda=K, ldb=K, ldc=M+3;
+   ATL_CINT M=@(M), N=@(N), K=@(K), lda=M, ldb=K, ldc=M+3;
    ATL_CINT MMU = ((@(M)+@(mu)-1)/@(mu))*@(mu);
    ATL_CINT NNU = ((@(N)+@(nu)-1)/@(nu))*@(nu);
    TYPE ErrBound;
@@ -568,8 +569,8 @@ int mmtst(void)
  * always aligned to ATL_Cachelen
  */
    
-   A = malloc(sizeof(TYPE)*M*K);
-   B = malloc(sizeof(TYPE)*N*K);
+   A = malloc(sizeof(TYPE)*lda*K);
+   B = malloc(sizeof(TYPE)*ldb*N);
    C = malloc(sizeof(TYPE)*ldc*N);
    D = malloc(sizeof(TYPE)*ldc*N);
    va = malloc(sizeof(TYPE)*MMU*K + ATL_Cachelen);
@@ -582,24 +583,18 @@ int mmtst(void)
  * Fill in column-major arrays and translate to access-major
  */
    assert(A && B && C && a && b && c);
-   for (n=lda*M SHIFT, i=0; i < n; i++) A[i] = dumb_rand();
+   for (n=lda*K SHIFT, i=0; i < n; i++) A[i] = dumb_rand();
    for (n=ldb*N SHIFT, i=0; i < n; i++) B[i] = dumb_rand();
    for (n=ldc*N SHIFT, i=0; i < n; i++) C[i] = dumb_rand();
-   Mjoin(PATL,rm2am_a1_@(mu))(K, M, 1.0, A, lda, a);
-printf("A = %e %e %e %e\n", *A, A[lda], A[1], A[lda+1]);
-printf("a = %e %e %e %e\n", *a, a[1], a[2], a[3]);
+   Mjoin(PATL,rm2am_a1_@(mu))(M, K, 1.0, A, lda, a);
    Mjoin(PATL,cm2am_a1_@(nu))(K, N, 1.0, B, ldb, b);
-printf("B = %e %e %e %e\n", *B - *b, B[1]-b[1], B[ldb]-b[2], B[ldb+1]-b[3]);
    ATL_CM2BK(M, N, @(mu), @(nu), C, ldc, c);
-printf("C = %e %e %e %e\n", *C , C[1], C[ldc], C[ldc+1]);
-printf("c = %e %e %e %e\n", *c , c[1], c[2], c[3]);
-printf("D = %e %e %e %e\n", *C - *c, C[1]-c[1], C[ldc]-c[2], C[ldc+1]-c[3]);
 /*
  * Call test routine, move output to col-major D for comparison with correct C
  */
    ATL_USERMM(MMU, NNU, K, a, b, c);
-   tst_mm(M, N, K, alpha, A, K, B, K, beta, C, M);
-printf("d = %e %e %e %e\n", *C - *c, C[1]-c[1], C[ldc]-c[2], C[ldc+1]-c[3]);
+   tst_mm(M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+//   printf("c=%f,%f,%f,%f; %f,%f,%f,%f\n", c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]);
    Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a1_b0)(M, N, 1.0, c, 0.0, D, ldc);
 
    nerr = 0;
