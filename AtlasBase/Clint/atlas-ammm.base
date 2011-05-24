@@ -1,0 +1,139 @@
+@ROUT ATL_ammmABC
+#include "atlas_misc.h"
+/*
+ * This routine loops over calls to the access-major matmul kernel given
+ * in the arguments, using the NMK loop pattern, using the given blocking
+ * parameters.  
+ * alpha & beta are both applied by ablk2cmat.
+ * It allocates an K*NB workspace for B, and an Mc*K workspace for A,
+ * and a NB*NB workspace for C.
+ */
+
+typedef void (*mat2am_t)
+   (ATL_CINT, ATL_CINT, const SCALAR, const TYPE*, ATL_CINT, TYPE*);
+typedef void (*ablk2cmat_t)
+   (ATL_CINT M, ATL_CINT N, const SCALAR al, const TYPE*A, 
+    const SCALAR beta, TYPE*C, ATL_CINT ldc);
+typedef void (*ammm_t)
+   (ATL_CINT M, ATL_CINT N, ATL_CINT K, TYPE *A, TYPE *B, TYPE *C);
+int Mjoin(PATL,ammmABC)
+(
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   ATL_CINT M,
+   ATL_CINT N,
+   ATL_CINT K,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CINT lda,
+   const TYPE *B,
+   ATL_CINT ldb,
+   const SCALAR beta,
+   const TYPE *C,
+   ATL_CINT ldc,
+   ATL_CINT MB,                 /* chosen M blocking for this problem */
+   ATL_CINT NB,                 /* chosen N blocking for this problem */
+   ATL_CINT KB,                 /* chosen K blocking for this problem */
+   ATL_CINT mu,                 /* M unrolling used by kernels */
+   ATL_CINT nu,                 /* N unrolling used by kernels */
+   ATL_CINT ku,                 /* K unrolling used by non-cleanup kernels */
+   ammm_t ammmk_b0,             /* amm beta=0 kernel to use */
+   ammm_t ammmk_b1,             /* amm beta=1 kernel to use */
+   ammm_t ammmk_ku1,            /* amm beta=1 for K-cleanup */
+   mat2am_t A2am,               /* routine to translate A into access-major */
+   mat2am_t B2am,               /* routine to translate B into access-major */
+   ablk2cmat_t ablk2cmat,       /* put ammmk's C back to user's C */
+)
+{
+   ATL_CINT Mf = (M/mu)*mu, mr = M-Mf, Nf = (N/nu)*nu, nr = N-Nf;
+   ATL_CINT Kf = (K/ku)*ku, kr = K-Kf;
+   ATL_CINT Mc = (mr) ? Mf + mr : Mf;  /* compute CEIL from FLOOR */
+   ATL_CINT Nc = (nr) ? Nf + nr : Nf;
+   ATL_CINT Kc = (kr) ? Kf + kr : Kf;
+   ATL_CINT incBn = (TB == AtlasNoTrans) ldb*NB-Kf : NB-Kf*ldb;
+   ATL_INT i, j, k;
+   void *vp;
+   TYPE *pA, *pB, *c;
+   int COPYA=1;
+
+   if (K <= KB) 
+      return(1);   /* don't handle rank-K update with this routine */
+   vp = malloc(3*ATL_Cacchelen + sizeof(TYPE)*(Mc*K+K*NB+NB*NB));
+   if (!vp)
+      return(2);
+   pB = ATL_AlignPtr(vp);
+   pA = pB + K*NB;
+   pA = ATL_AlignPtr(pA);
+   c = pA + Mc*K;
+   c = ATL_AlignPtr(c);
+
+   for (j=0; j != Nc; j += NB)
+   {
+      ATL_CINT n = Mmin(NB, Nc-j), incb = n*nu*KB, n0 = Mmin(NB, N-j);
+      int COPYB=1;
+      TYPE *b = pB, *a = pA;
+
+      for (i=0; i != Mc; i += MB)
+      {
+         ATL_CINT m = Mmin(MB, Mc-i), inca = m*mu*KB, m0 = Mmin(NB,M-j);
+
+/* 
+ *       Handle first block, known to always have a full KB, using _b0
+ *       case to initialize workspace c
+ */
+         if (COPYA)
+            A2am(m, KB, ATL_rone, A, lda, a);
+         if (COPYB)
+            B2am(KB, n, ATL_rone, B, ldb, b);
+         ammmk_b0(m, n, KB, a, b, c);
+         a += inca; b += incb;
+/*
+ *       Loop over all remaining blocks that can use ammmk_b1
+ */
+         for (k=KB; k < Kf; k += KB, a += inca, b += incb)
+         {
+            ATL_CINT kk = Mmin(KB, Kf-i);
+/*
+ *          If necessary, copy both A & B blocks to access-major format
+ */
+            if (COPYA)
+            {
+               A2am(m, kk, ATL_rone, A, lda, a);
+               A += (TA == AtlasNoTrans) ? kk*lda : kk;
+            }
+            if (COPYB)
+            {
+               B2am(kk, n, ATL_rone, B, ldb, b);
+               B += (TB == AtlasNoTrans) ? kk : kk*ldb;
+            }
+            ammmk_b1(m, n, kk, a, b, c);
+         }
+/*
+ *       Handle K cleanup using the provided kernel
+ */
+         if (kr)
+         {
+            if (COPYA)
+            {
+               A2am(m, kr, ATL_rone, A, lda, a);
+               A += incAm;
+            }
+            if (COPYB)
+               B2am(kr, n, ATL_rone, B, ldb, b);
+            ammmk_ku1(m, n, kr, a, b, c);
+            a += kr*m;
+         }
+/*
+ *       Write answer back out to user's C 
+ */
+         ablk2cmat(m0, n0, alpha, c, beta, C, ldc);
+         C += m0;
+         COPYB = 0;
+         b = pB;
+      }
+      B += incBn;
+      COPYA = 0;
+   }
+
+   free(vp);
+}
