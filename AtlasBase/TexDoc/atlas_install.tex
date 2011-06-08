@@ -711,6 +711,169 @@ of {\tt make} messages about FORTRAN, don't assume your library is messed
 up.  As long as {\tt make check} and {\tt make time} say your {\tt -nof77}
 install is OK, you should be fine.
 
+\newpage
+\subsubsection{Improving flag selection using mmflagsearch}
+\label{sec-flagsearch}
+
+If you are on a architecture or using a gcc for which configure does
+not suggest flags, or if you believe the present set is out-of-date,
+you can quickly search through a host of compiler flags to find the
+best set for a given gemm kernel using the specialized routine
+mmflagsearch.c.  To do this, you need a working install, typically
+installed with your best guess at good flags.  Now, in your
+{\tt BLDdir/tune/blas/gemm} directory, issue {\tt make xmmflagsearch}.
+
+The idea behind this search is that it takes an ATLAS GEMM kernel description
+file (output from one of the ATLAS searches), and then tries a series of
+flags given in another file, and returns to you the best combination found.
+The important flags are:
+\begin{description}
+\item [{\tt -p [s,d,c,z]}] : set type/precision prefix
+\vspace*{-0.1in}
+\item [{\tt -f $<$flagfile$>$}]: file containing all flags to try
+\vspace*{-0.1in}
+\item [{\tt -m $<$mmfile$>$}]: mmsearch output file describing kernel to time
+\end{description}
+
+The {\tt mmfile} is the matmul kernel that you wish to use to find the
+best flags, and if this argument is omitted the search will automatically
+read {\tt res/$<$pre$>$gMMRES.sum}, which is the best kernel found for the
+during the prior install using the scalar ANSI~C generator.  If bad flags
+have caused this search to generate a weird file, you can copy this file
+to a new name, and then hand edit it to have the features you like.
+
+In the {\tt flagfile}, any line beginning with `\verb+#+' is ignored.
+This file has a special format that is more easily understood once 
+you understand the method of the search.  The user provides one line
+for any flags that should always appear (examples include things like
+{\tt -fPIC}, {\tt -m64}, {\tt -mcpu=XXX}, etc.).  This is given on the
+first line.
+
+Now, the way the search is going to work is that first it will find
+the appropriate optimization level and fundamental flag combination,
+which will be searched by trying all combinations of these flags.
+Once these baseline flags are determined, all remaining flags will
+be tried one after the other using a greedy linear search.
+With this in mind, the format of this file is:
+\begin{verbatim}
+Required flags for all cases (eg. -fPIC -m64 -msse3 -mfpmath=sse)
+<N>      Number of optimization levels
+<lvl1>
+....
+<lvlN>
+<F>      Number of fundamental flags
+<fundflag1>
+....
+<fundflagM>
+# Now list any number of modifier flags
+flag set 1
+flag set 2
+...
+flag set X
+\end{verbatim}
+
+So, the way this search is going to work is that we will first try all
+$N \times (F+1)$ combinations of the levels and fundamental flags, and
+choose a best-performing set.  We will then try adding every provided modifier
+flag line to the best found combination.  The best performing list will be 
+given.  
+
+To create such a flag file one usually scopes the compiler documentation, 
+and finds all performance-oriented flags.  For gcc, you can make mmflagsearch
+give you a template that includes all non-architecture-specific optimization
+flags by running {\tt ./xmmflagsearch -f gcc}.  This will create a directory
+called {\tt gccflags.txt} in the current directory, which presently has
+a format like:
+\begin{verbatim}
+ADD ARCH-DEP FLAGS ALWAYS USED HERE (eg, -mfpmath=sse -msse3)
+4
+-O2
+-O1
+-O3
+-Os
+6
+-fschedule-insns 
+-fno-schedule-insns 
+-fschedule-insns2
+-fno-schedule-insns2
+-fexpensive-optimizations
+-fno-expensive-optimizations
+# Flags to probe once optimization level is selected
+...
+whole boatload of flags
+...
+\end{verbatim}
+
+Now lets see an example of this working on my ARM embedded machine.  The first
+thing I do is replace the first line with my mandatory flags:
+\begin{verbatim}
+-mfpu=vfpv3 -mcpu=cortex-a8
+\end{verbatim}
+I then add two architecture-specific flags to the auto-generated general
+flag list (might want to try a lot more, this is just an example), 
+which in this case are:
+\begin{verbatim}
+-mtune=cortex-a8
+-mno-thumb
+\end{verbatim}
+
+An extract of this search is shown in Figure~\ref{fig-flagsrch}.
+
+\begin{figure}[p]
+\begin{footnotesize}
+\begin{verbatim}
+FINDING BEST FLAGS USING MATMUL KERNEL:
+ID=0 ROUT='dgmm.c' AUTH='Whaley/emit_mm' TA='T' TB='N' \
+   MULADD=1 PREF=1 LAT=5 NFTCH=2 IFTCH=6 FFTCH=1 KBMAX=0 KBMIN=0 KU=1 NU=5  \
+   MU=4 MB=80 NB=80 KB=80 L14NB=0 PFBCOLS=0 PFABLK=0 PFACOLS=0 STFLOAT=0  \
+   LDFLOAT=0 AOUTER=0 LDAB=1 BETAN1=0 LDISKB=1 KUISKB=0 KRUNTIME=0 NRUNTIME=0  \
+   MRUNTIME=0 LDCTOP=0 X87=0  \
+   MFLOP=5.848105e+02
+FINDING BEST FLAG SETTINGS FOR THIS MATMUL KERNEL:
+...Trying optlvls using base flags: '-mfpu=vfpv3 -mcpu=cortex-a8'
+   1. mf=557.83, flags='-O2'
+    ---> Opt level '-O2' is better!
+   2. mf=558.18, flags='-O2 -fschedule-insns'
+   3. mf=564.07, flags='-O2 -fno-schedule-insns'
+    ---> Opt combo '-O2 -fno-schedule-insns' is better!
+   4. mf=564.53, flags='-O2 -fno-schedule-insns -fschedule-insns2'
+   5. mf=572.04, flags='-O2 -fno-schedule-insns -fno-schedule-insns2'
+    ---> Opt combo '-O2 -fno-schedule-insns -fno-schedule-insns2' is better!
+   6. mf=572.11, flags='-O2 -fno-schedule-insns -fno-schedule-insns2 
+                        -fexpensive-optimizations'
+   7. mf=573.24, flags='-O2 -fno-schedule-insns -fno-schedule-insns2 
+                        -fno-expensive-optimizations'
+   8. mf=572.34, flags='-O1'
+   ... Bunch of cases elided ...
+  27. mf=562.53, flags='-Os -fno-schedule-insns -fno-schedule-insns2 
+                        -fexpensive-optimizations'
+  28. mf=563.81, flags='-Os -fno-schedule-insns -fno-schedule-insns2 
+                        -fno-expensive-optimizations'
+...All cases using flags: '-O2 -mfpu=vfpv3 -mcpu=cortex-a8 -fno-schedule-insns
+                           -fno-schedule-insns2'
+  29. mf=571.41, flags='-mtune=cortex-a8'
+  30. mf=572.32, flags='-mno-thumb'
+  31. mf=571.02, flags='-fno-cprop-registers'
+   ... Bunch of cases elided  ...
+  42. mf=574.69, flags='-fomit-frame-pointer'
+  43. mf=572.39, flags='-foptimize-register-move'
+  44. mf=571.79, flags='-fno-optimize-register-move'
+  45. mf=592.68, flags='-fprefetch-loop-arrays'
+    ---> Adding flag '-fprefetch-loop-arrays'!
+  46. mf=572.65, flags='-fno-prefetch-loop-arrays'
+   ... Bunch of cases elided  ...
+  90. mf=594.61, flags='-falign-loops=8'
+  91. mf=594.65, flags='-falign-loops=16'
+  92. mf=594.37, flags='-falign-loops=32'
+BEST FLAGS GIVE MFLOP=592.68 (6.25% improvement over first case):
+   '-O2 -mfpu=vfpv3 -mcpu=cortex-a8 -fno-schedule-insns -fno-schedule-insns2 
+    -fprefetch-loop-arrays'
+\end{verbatim}
+\end{footnotesize}
+\caption{Result of {\tt ./xmmflagsearch -p d -f gccflags.txt} on ARM}
+\label{fig-flagsrch}
+\end{figure}
+
 \subsection{Building dynamic/shared libraries}
 \label{sec-shared}
 ATLAS natively builds static libraries (i.e. libs that usually end in

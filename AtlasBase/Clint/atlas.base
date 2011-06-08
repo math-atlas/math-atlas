@@ -36143,13 +36143,11 @@ int CountFlagNodes(ATL_flagnode_t *bp)
 ATL_flagnode_t *GetGccOptFlags(void)
 {
    char *gccflags[] = 
-{"ADD ARCH-DEP FLAGS ALWAYS USED HERE (eg, -mfpmath=sse -msse3)",
- "4", "-O3", "-O1", "-O2", "-Os",
+{"REPLACE THIS LINE WT ARCH-DEP FLAGS ALWAYS USED (eg, -mfpmath=sse -msse3)",
+ "4", "-O2", "-O1", "-O3", "-Os",
  "6",
- "-fschedule-insns -fschedule-insns2",
- "-fschedule-insns -fno-schedule-insns2",
- "-fno-schedule-insns -fschedule-insns2",
- "-fno-schedule-insns -fno-schedule-insns2",
+ "-fschedule-insns", "-fno-schedule-insns",
+ "-fschedule-insns2", "-fno-schedule-insns2",
  "-fexpensive-optimizations", "-fno-expensive-optimizations",
  "# Flags to probe once optimization level is selected",
  "-fno-cprop-registers", "-fcprop-registers",
@@ -36602,6 +36600,73 @@ char *GreedyLinearFlagSearch
       spc = "";
    printf("%sFINDING BEST FLAG SETTINGS FOR THIS MATMUL KERNEL:\n", spc);
 /*
+ * Scope all optimization levels
+ */
+   if (optlvls)
+   {
+      printf("%s...Trying optlvls using base flags: '%s'\n", spc, baseflags);
+      for (fp=optlvls; fp; fp = fp->next)
+      {
+         ATL_flagnode_t *fm;
+/*
+ *       Try level flags w/o any modifiers
+ */
+         i++;
+         flags = JoinStrings(fp->flags, baseflags);
+         if (mmp->cflags)
+            free(mmp->cflags);
+         mmp->cflags = flags;
+         mf = TimeMMKernel(verb, 1, mmp, pre, mmp->mbB, mmp->nbB, mmp->kbB,
+                           0, 0, 0, 1, -1, -1);
+         if (mf0 == 0.0)
+            mf0 = mf;
+         if (verb > 0)
+            printf("%s%4d. mf=%.2f, flags='%s'\n", spc, i, mf, fp->flags);
+         if (mf > mfB*mulB)
+         {
+            if (verb > 0)
+                printf("%s    ---> Opt level '%s' is better!\n", spc, 
+                       fp->flags);
+            lvlB = fp->flags;
+            flagsB = NULL;
+            mfB = mf;
+         }
+/*
+ *       Try all level modifier flags, and choose best combination
+ */
+         jstr = JoinStrings(fp->flags, baseflags);
+         for (fm=lvlflags; fm; fm = fm->next)
+         {
+            i++;
+            sp = JoinStrings(jstr, flagsB);
+            flags = JoinStrings(sp, fm->flags);
+            free(sp);
+            if (mmp->cflags)
+               free(mmp->cflags);
+            mmp->cflags = flags;
+            mf = TimeMMKernel(verb, 1, mmp, pre, mmp->mbB, mmp->nbB, mmp->kbB,
+                              0, 0, 0, 1, -1, -1);
+            if (verb > 0)
+            {
+               printf("%s%4d. mf=%.2f, flags='%s", spc, i, mf, fp->flags);
+               if (flagsB)
+                  printf(" %s", flagsB);
+               printf(" %s'\n", fm->flags);
+            }
+            if (mf > mfB*mulB)
+            {
+               flagsB = JoinStrings(flagsB, fm->flags);
+               lvlB = fp->flags;
+               if (verb > 0)
+                   printf("%s    ---> Opt combo '%s %s' is better!\n", spc, 
+                          lvlB, flagsB);
+               mfB = mf;
+            }
+         }
+      }
+   }
+@beginskip
+/*
  * Try all lvlflags with first optimization level
  */
    mfB = 0.0;
@@ -36684,6 +36749,24 @@ char *GreedyLinearFlagSearch
       free(sp);
    if (flagsB)
       free(flagsB);
+@endskip
+   if (lvlB && flagsB)
+   {
+      char *stmp;
+      stmp = JoinStrings(lvlB, baseflags);
+      sp = JoinStrings(stmp, flagsB);
+      free(stmp);
+   }
+   else if (lvlB)
+      sp = JoinStrings(lvlB, baseflags);
+   else if (flagsB)
+      sp = JoinStrings(baseflags, flagsB);
+   else
+      sp = JoinStrings(baseflags, NULL);
+   free(baseflags);
+   free(flagsB);
+   flagsB = NULL;
+   baseflags = sp;
    printf("%s...All cases using flags: '%s'\n", spc, baseflags?baseflags:"");
    for (fp=bp; fp; fp = fp->next)
    {
@@ -36711,7 +36794,8 @@ char *GreedyLinearFlagSearch
          free(flags);
    }
    mmp->cflags = NULL;
-   printf("%sBEST FLAGS GIVE MFLOP=%.2f (%.2f%% improvement over first case:\n",
+   printf(
+      "%sBEST FLAGS GIVE MFLOP=%.2f (%.2f%% improvement over first case):\n",
           spc, mfB, 100.0*((mfB/mf0)-1.0));
    printf("%s   '%s'\n\n", spc, baseflags);
    return(baseflags);
