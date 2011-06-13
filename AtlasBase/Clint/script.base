@@ -399,14 +399,14 @@ int main(int nargs, char **args)
    }
    exit(0);
 }
-@ROUT negflt getcols stattime
+@ROUT negflt getcols stattime atl2vec
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <string.h>
 #include <assert.h>
 
-@ROUT stattime `static char *SEPSTR = ",";`
+@ROUT atl2vec stattime `static char *SEPSTR = ",";`
 typedef struct wOrDs WORDS;
 struct wOrDs
 {
@@ -529,7 +529,7 @@ int WordIsFloat(char *wrd)
    return ( (GotDot == 1) && (GotDigit) && (GotExp==1 || GotExp==0) );
 }
 
-@ROUT stattime
+@ROUT stattime atl2vec
 void UpCaseWords(WORDS *wb)
 {
    int i;
@@ -806,7 +806,7 @@ main(int nargs, char **args)
    free(cols);
    exit(0);
 }
-@ROUT stattime
+@ROUT stattime atl2vec
 typedef struct wOrDQ WORDQ;
 struct wOrDQ
 {
@@ -1394,6 +1394,151 @@ FILE *OpenOutputFile(char *file)
    return(fp);
 }
 
+@ROUT atl2vec
+void PrintUsage(char *name, char *arg, int i)
+{
+   if (i > 0)
+      fprintf(stderr, "BAD ARG '%s' ON %dth FLAG\n", arg, i);
+   fprintf(stderr, "USAGE: %s <flags> ; flags include:\n", name);
+   fprintf(stderr, 
+           "   -#[+,>,<] : # of reps of each timing consecutive output\n");
+   fprintf(stderr, 
+           "               opt char chooses avg, max or min (default avg)\n");
+   fprintf(stderr, 
+           "   -i <file> : input file for processed results [stdin]\n");
+   fprintf(stderr, 
+           "   -o <file> : output file for processed results [stdout]\n");
+   fprintf(stderr, "   -c \"comment line\"\n");
+   fprintf(stderr,"   -s <sepstr> : cols in output seperated by this string\n");
+   fprintf(stderr,"   -H # <h1> ... <h#> : grab columns with header strings\n");
+   fprintf(stderr,
+           "   -C # <c1> ... <c#> : grab provided columns numbers (1-based)\n");
+   fprintf(stderr, 
+           "   -S <start> <stride> : grab strided rows starting at start\n");
+   exit (i ? i : -1);
+}
+
+#define DWAVG 0  /* do what */
+#define DWMIN 1
+#define DWMAX 2
+
+int GetFlags  /* returns: DOWHAT (AVG,MIN,MAX) */
+(
+   int nargs, char **args, 
+   FILE **fpin,         /* input file (stdin) */
+   FILE **fpout,        /* output file (stdout) */
+   char **cmnt,         /* header comment ("No header specified") */
+   int *nrep,           /* # of repititions (1) */
+   int *start,          /* outline line to start at (1) */
+   int *stride,         /* stride between lines (1) */
+   int *ncols,          /* # of cols to make into vectors */
+   int **cols,          /* NULL: specced by name, else list of col #s to use */
+   char ***colnams,      /* NULL: specced by #, else list of headers to get */
+)
+{
+   int dow = DWAVG;
+   *fpin = stdin;
+   *fpout = stdout;
+   *cmnt = "No  header specified";
+   *nrep = *stride = 1;
+   *start = 0;
+   *ncols = 0;
+   *cols = NULL;
+   *colnams = NULL;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], "no '-' preceeding flag!", i);
+      switch(args[i][1])
+      {
+         case 'c':
+            if (++i >= nargs)
+               PrintUsage(args[0], "out of flags in -c ", i-1);
+            *cmnt = args[i];
+            break;
+         case 's':
+            if (++i >= nargs)
+               PrintUsage(args[0], "out of flags in -s ", i-1);
+            SEPSTR = args[i];
+            break;
+         case '#':
+            if (args[i][2] == '>')
+               dow = DWMAX;
+            else if (args[i][2] == '<')
+               dow = DWMIN;
+            else if (args[i][2] == '+')
+               dow = DWAVG;
+            if (++i >= nargs)
+               PrintUsage(args[0], "out of flags in -# ", i-1);
+            *nrep = atoi(args[i]);
+            break;
+         case 'o':
+            if (++i >= nargs)
+               PrintUsage(args[0], "out of flags in -# ", i-1);
+            *fpout = OpenOutputFile(args[i]);
+            break;
+         case 'S':
+            if (++i >= nargs)
+               PrintUsage(args[0], "out of flags in -S", i-1);
+            *start = atoi(args[i]);
+            if (++i >= nargs)
+               PrintUsage(args[0], "out of flags in -S", i-1);
+            *stride = atoi(args[i]);
+            break;
+         case 'i':
+            if (++i >= nargs)
+               PrintUsage(args[0], "out of flags in -i ", i-1);
+            *fpin = OpenInputFile(args[i]);
+            break;
+         case 'C':  /* col numbers: -C # <c1> ... <c#> */
+         {
+            int j, n, *cn;
+            if (++i >= nargs)
+               PrintUsage(args[0], "out of flags in -C ", i-1);
+            n = atoi(args[i]);
+            cn = malloc(sizeof(int)*n);
+            assert(cn);
+            for (j=0; j < n; j++)
+            {
+               if (++i >= nargs)
+                  PrintUsage(args[0], "out of flags in -C ", i-1);
+               cn[j] = atoi(args[i]);
+            }
+            if (*colnams)
+                free(*colnams);  /* they are exclusive */
+            *colnams = NULL;
+            *ncols = n;
+            *cols = cn;
+         }
+            break;
+         case 'H':  /* column header strings: -H # <h1> ... <h#> */
+         {
+            int n;
+            char **cn;
+
+            if (++i >= nargs)
+               PrintUsage(args[0], "out of flags in -H ", i-1);
+            n = atoi(args[i]);
+            cn = malloc(sizeof(char*)*n);
+            assert(cn);
+            for (j=0; j < n; j++)
+            {
+               if (++i >= nargs)
+                  PrintUsage(args[0], "out of flags in -H ", i-1);
+               cn[j] = args[i];
+            }
+            if (*cols)
+               free(*cols);
+            *cols = NULL;   /* exlusive */
+            *ncols = n;
+            *colnams = cn;
+         }
+            break;
+      }                 /* end of case over flags */
+   }                    /* end of for over flags */
+   return(dow);
+}
+@ROUT stattime
 void PrintUsage(char *name, char *arg, int i)
 {
    if (i > 0)
@@ -1580,6 +1725,7 @@ double *GetConfidences(int n,            /* # of unique problems */
    return(conf);
 }
 
+@ROUT atl2vec stattime
 double *GetMaxMinAvgSample(int n, int nrep, double *mf0)
 /*
  * Takes an n*nrep length nrep-major array, and returns an 3*n-length array
@@ -1852,6 +1998,7 @@ void HandleStandardQs(WORDQ *wqA, WORDQ *wqB, FILE *fpout, int nrep, int verb)
    free(mfB1);
 }
 
+@ROUT stattime
 void HandleTwoFileComp(FILE *fpA, FILE *fpB, FILE *fpout, 
                        int startA, int startB, int strideA, int strideB,
                        int nrep, int verb)
@@ -1983,6 +2130,92 @@ int main (int nargs, char **args)
    }
 
    exit(0);
+}
+int WordNumberInList
+(
+   WORDS *wl,           /* list of words to search through */
+   char *mtch           /* word to search for in wl */
+)
+{
+   int i;
+   
+   for (i=0; wl; i++, wl = wl->next)
+   {
+      if (strcmp(mtch, wl->word))
+         return(i);
+   }
+   return(-1);
+}
+
+int *ColNames2ColNums   /* returns N-len array of column #s to fetch */
+(
+   WORDS *headb,        /* headers of columns */
+   int N,               /* # of names */
+   char **names
+)
+{
+   int *nums, uplen=0;
+   char *upnam;
+
+   nums = malloc(sizeof(int)*N);
+   assert(nums);
+   for (i=0; i < N; i++)
+   {
+      int k, len;
+
+      len = strlen(names[i]) + 1;
+      if (len > uplen)
+      {
+         if (upnam)
+            free(upnam);
+         upnam = malloc(sizeof(char)*len);
+      }
+      for (k=0; upnam[k] = toupper(names[i][k]); k++);
+      nums[i] = WordNumberInList(headb, upnam);
+      if (nums[i] < 0)
+      {
+         fprintf(stderr, "NO SUCH COLUMN HEADER = '%s'\n", names[i]);
+         free(nums);
+         exit(-1);
+      }
+   }
+   if (upnam)
+   free(upnam);
+   return(nums);
+}
+
+@ROUT atl2vec
+int main (int nargs, char **args)
+{
+   int dw, nrep, start, stride, ncols;
+   int *cols;
+   FILE *fpin, *fpout;
+   char *cmnt, **colnams;
+   WORDQ *wqb, *wq;
+
+   dw = GetFlags(nargs, args, &fpin, &fpout, &cmnt, &nrep, &start, &stride,
+                 &ncols, &cols, &colnams);
+   wqb = ReadTimerFile(fpin);  /* read in data by rows, 1st row headers */
+   if (colnams)
+   {
+      assert(!cols);
+      cols = ColNames2ColNums(wbq->wlist, ncols, colnams);
+      free(colnams);
+      colnams = NULL;
+   }
+   assert(cols);
+   wq = GetColumns(ncols, cols);  /* translate all row-major workd queues */
+   KillAllWordQ(wqb);             /* into only selected column-major queues */
+   wqb = wq;
+   wq = HandleRepsInCols(ncols, wqb, nrep, start, stride);  
+         /* MFLOP+,>,< other combined cols assert same */
+   KillAllWordQ(wqb);
+   PrintOutVectors(fpout, cmnt, wq);
+   KillAllWordQ(wq);
+   if (fpin != stdin)
+      fclose(fpin);
+   free(cols);
+   return(0);
 }
 @ROUT timelanb.sh
 #!/bin/sh
