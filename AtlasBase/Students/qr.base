@@ -1,34 +1,4 @@
-@extract -b @(topd)/gen.inc what=crsetup
-@ROUT ATL_gelqr ATL_geqlr ATL_gerqr
-@extract -b @(topd)/cw.inc lang=C -def cwdate 2009 -def cwauth "Siju Samuel" -def contrib "Anthony M. Castaldo, R. Clint Whaley"
-@ROUT ATL_geqrr
-@extract -b @(topd)/cw.inc lang=C -def cwdate 2009 -def cwauth "Siju Samuel" -def contrib "R. Clint Whaley, Anthony M. Castaldo"
-@ROUT ATL_gelqr ATL_geqlr ATL_gerqr ATL_geqrr
 
-#include "atlas_misc.h"
-#include "cblas.h"
-#include "atlas_lapack.h"
-#include "atlas_lvl3.h"
-#if defined(ATL_NCPU) && ATL_NCPU > 1
-   #include "atlas_tcacheedge.h"
-@ROUT ATL_geqrr ATL_geqlr 
-   #ifdef ATL_USEPTHREADS
-      #include "atlas_threads.h"
-   #endif
-@ROUT ATL_gelqr ATL_geqlr ATL_gerqr ATL_geqrr
-#else
-   #include "atlas_cacheedge.h"
-#endif
-
-#ifdef CacheEdge
-   #if CacheEdge > 4194304 || CacheEdge == 0
-      #define LA_CE 262144
-   #else
-      #define LA_CE CacheEdge
-   #endif
-#else
-   #define LA_CE 262144
-#endif
 @ROUT ATL_geqr2
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2009 -def cwauth "Siju Samuel" -def contrib "Anthony M. Castaldo, R. Clint Whaley"
 
@@ -621,12 +591,91 @@ int ATL_gelq2(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT LDA,
 
    return(0);
 }                                           /* END AL_gelq2                   */
+
+
 @ROUT ATL_geqrf
+@define rtn @geqrf@
+@define rec @geqrr@
+@define wks @ws_QR2@
+@define btm @geqr2@
+@ROUT ATL_geqlf
+@define rtn @geqlf@
+@define rec @geqlr@
+@define wks @ws_QL2@
+@define btm @geql2@
+@ROUT ATL_gerqf
+@define rtn @gerqf@
+@define rec @gerqr@
+@define wks @ws_RQ2@
+@define btm @gerq2@
+@ROUT ATL_gelqf
+@define rtn @gelqf@ 
+@define rec @gelqr@ 
+@define wks @ws_LQ2@
+@define btm @gelq2@
+
+@ROUT ATL_geqrf ATL_geqlf ATL_gerqf ATL_gelqf
+
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2009 -def cwauth "Siju Samuel" -def contrib "Anthony M. Castaldo, R. Clint Whaley"
 
 #include "atlas_misc.h"
 #include "cblas.h"
 #include "atlas_lapack.h"
+
+#if defined(ATL_TUNING)
+/*-------------------------------------------------------*/
+/* If PanelTune is non-zero, we use it as both NB *and*  */
+/* a flag to stop after the first trailing update.       */
+/*-------------------------------------------------------*/
+extern int ATL_PanelTune;
+   #if defined(ATL_USEPTHREADS)
+   #define ATL_@(rtn)_Tune Mjoin(Mjoin(PATL,t@(rtn)),_Tune)   /* Add tag */
+   #define ATL_@(rec)_Tune Mjoin(Mjoin(PATL,t@(rec)),_Tune)   /* Add tag */
+   #else
+   #define ATL_@(rtn)_Tune Mjoin(Mjoin(PATL,@(rtn)),_Tune)    /* Add tag */
+   #define ATL_@(rec)_Tune Mjoin(Mjoin(PATL,@(rec)),_Tune)    /* Add tag */
+   #endif /* ATL_USEPTHREADS */
+#else
+   #if defined(ATL_USEPTHREADS)
+   #define ATL_@(rtn)_Tune Mjoin(PATL,t@(rtn)) /* standard method. */
+   #define ATL_@(rec)_Tune Mjoin(PATL,t@(rec)) /* standard method. */
+   #else
+   #define ATL_@(rtn)_Tune Mjoin(PATL,@(rtn))  /* standard method. */
+   #define ATL_@(rec)_Tune Mjoin(PATL,@(rec))  /* standard method. */
+   #endif /* ATL_USEPTHREADS */
+#endif /* ATL_TUNING */
+
+@ROUT ATL_gelqf ATL_gerqf
+/*
+ * RCW: need to get rid of these duplicative routines.  For now, declared
+ *      static so dynamic build will work
+ */
+static void ATL_makeConj
+   (const int M, const int N, TYPE *A, const int lda0)
+{
+   #ifdef TREAL
+      #define SHIFTL
+   #else
+      #define SHIFTL << 1
+   #endif
+
+   const int lda = lda0 SHIFTL;
+   int i, j;
+
+   for (i=0; i != M; i++)
+   {
+      #ifdef TCPLX
+         for (j=0; j != N; j++)
+            A[1+2*i+j*lda] = 0. - A[1+2*i+j*lda];
+      #endif
+   }
+
+}
+
+@ROUT ATL_geqrf ATL_geqlf ATL_gerqf ATL_gelqf
+int ATL_@(rec)_Tune(int M, int N, TYPE *A, int LDA, TYPE *TAU,
+              TYPE *@(wks), TYPE *ws_T, int LDT,
+              TYPE *WORKM, int buildT);
 
 #ifdef  SREAL
    #define MYOPT LASreal
@@ -641,25 +690,35 @@ int ATL_gelq2(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT LDA,
    #define MYOPT  LADcplx
 #endif
 
-
-int ATL_geqrf(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
+int ATL_@(rtn)_Tune(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
                TYPE *WORK, ATL_CINT LWORK)
 /*
  * This is the C translation of the standard LAPACK Fortran routine:
- *      SUBROUTINE DGEQRF( M, N, A, LDA, TAU, WORK, LWORK, INFO )
+ *      SUBROUTINE @(rtn)( M, N, A, LDA, TAU, WORK, LWORK, INFO )
  *
- * ATL_gerqf.c :
- * int ATL_geqrf(int M, int N, TYPE  *A, int LDA, TYPE  *TAU,
+ * ATL_@(rtn).c :
+ * int ATL_@(rtn)(int M, int N, TYPE  *A, int LDA, TYPE  *TAU,
  *              TYPE *WORK, int LWORK)
  *
  *  Purpose
  *  =======
  *
+@ROUT ATL_geqrf
  *  ATL_geqrf  computes a QR factorization of a real/complex M-by-N matrix A:
  *  A = Q * R.
+@ROUT ATL_geqlf
+ *  ATL_geqlf  computes a QL factorization of a real/complex M-by-N matrix A:
+ *  A = Q * L.
+@ROUT ATL_gerqf
+ *  ATL_gerqf  computes an RQ factorization of a real/complex M-by-N matrix A:
+ *  A = R * Q.
+@ROUT ATL_gelqf
+ *  ATL_gelqf  computes an LQ factorization of a real/complex M-by-N matrix A:
+ *  A = L * Q.
+@ROUT ATL_geqrf ATL_geqlf ATL_gerqf ATL_gelqf
  *
- *  Compared to LAPACK, here, a recursive pannel factorization is implemented.
- *  Refer ATL_geqrr.c andd ATL_larft.c for details.
+ *  Compared to LAPACK, here, a recursive panel factorization is implemented.
+ *  Refer to ATL_@(rec).c andd ATL_larft.c for details.
  *
  *  Arguments
  *  =========
@@ -723,9 +782,18 @@ int ATL_geqrf(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
 {
    ATL_CINT minMN = Mmin(M, N), maxMN = Mmax(M, N);
    ATL_INT n, nb, j;
-   TYPE  *ws_QR2,  *ws_T, *ws_larfb;        /* Workspace for QR2,T, larfb     */
+   TYPE  *@(wks),  *ws_T, *ws_larfb;        /* Workspace level 2, T, larfb.   */
    void *vp=NULL;
 
+   #if defined(ATL_TUNING)
+   /*-------------------------------------------------------------------------*/
+   /* For tuning recursion crossover points, the blocking factor is set by    */
+   /* la2xover, the tuning program for that purpose.                          */
+   /*-------------------------------------------------------------------------*/
+   if (ATL_PanelTune) nb=ATL_PanelTune; else
+   #endif /* ATL_TUNING */
+
+@ROUT ATL_geqrf
    nb = clapack_ilaenv(LAIS_OPT_NB, LAgeqrf, MYOPT+LARight+LAUpper, M, N,-1,-1);
 
 /*
@@ -768,8 +836,10 @@ int ATL_geqrf(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
 
    for (j=0; j < n; j += nb)
    {
-      ATL_assert(!ATL_geqrr(M-j, nb, A+(j SHIFT)*(lda+1), lda, TAU+(j SHIFT),
-                            ws_QR2, ws_T, nb, ws_larfb, 1));
+      ATL_assert(!ATL_geqrr_Tune(M-j, nb, A+(j SHIFT)*(lda+1), lda,
+                  TAU+(j SHIFT),
+                  ws_QR2, ws_T, nb, ws_larfb, 1));
+
       if (j+nb < N)     /* if there are more cols left to right, update them  */
       {
 /*
@@ -793,294 +863,17 @@ int ATL_geqrf(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
 /*
  * Build Last panel.  buildT is passed as (0).
  */
-   nb = minMN - n;                          /* remaining nb                   */
-
-   ATL_assert(!ATL_geqrr(M-n, N-n, A+(n SHIFT)*(lda+1), lda, TAU+(n SHIFT),
-                         ws_QR2, ws_T, nb, ws_larfb, 0 ));
+   nb = minMN - n;                              /* remaining columns.         */
+   ATL_assert(!ATL_geqrr_Tune(M-n, N-n, A+(n SHIFT)*(lda+1), lda,
+               TAU+(n SHIFT),
+               ws_QR2, ws_T, nb, ws_larfb, 0 ));
 
    if (vp)
       free(vp);
    return(0);
-}                                           /* END ATL_dgeqrf                 */
-@ROUT ATL_geqrr
-
-int ATL_geqrr(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT LDA, TYPE  *TAU,
-              TYPE *ws_QR2, TYPE *ws_T, ATL_CINT LDT,
-              TYPE *WORKM, const int buildT)
-/*
- * This is a recursive implementation of ATL_dgeqrf.c; it performs a QR
- * factorization of a panel (M > N) with a bottom level of ATL_geqr2. The
- * recursion is on columns only; it divides by 2 until it reaches a
- * stopping point; at which time it calls ATL_geqr2 to complete a sub-panel,
- * ATL_larft and ATL_larfb to propagate the results, etc.
- *
- * ATL_geqrr.c :
- * int ATL_geqrr(int M, int N, TYPE *A, int LDA, TYPE  *TAU,
- *               TYPE *ws_QR2, TYPE *ws_T, int LDT,
- *               TYPE *WORKM, int buildT)
- *      NOTE :   ATL_geqr2.c will get compiled to four precisions
- *               single precision real,      double precision real
- *               single precision complex,   double precision complex
- *  Purpose
- *  =======
- *
- *  ATL_geqrr computes a QR factorization of a real M-by-N matrix A:
- *  A = Q * R.
- *
- *  Arguments
- *  =========
- *
- *  M       (input) INTEGER
- *          The number of rows of the matrix A.  M >= 0.
- *
- *  N       (input) INTEGER
- *          The number of columns of the matrix A.  N >= 0.
- *
- *  A       (input/output)  array, dimension (LDA,N)
- *          On entry, the M-by-N matrix A.
- *          On exit, the elements on and above the diagonal of the array
- *          contain the min(M,N)-by-N upper trapezoidal matrix R (R is
- *          upper triangular if m >= n); the elements below the diagonal,
- *          with the array TAU, represent the orthogonal matrix Q as a
- *          product of min(m,n) elementary reflectors (see Further
- *          Details).
- *
- *  LDA     (input) INTEGER
- *          The leading dimension of the array A.  LDA >= max(1,M).
- *
- *
- *  TAU     (output) DOUBLE PRECISION array, dimension (min(M,N))
- *          The scalar factors of the elementary reflectors (see Further
- *          Details).
- *
- *  ws_QR2  (workspace) workspace for qr2 factorization. To be allocated
- *          with space of max(M,N)
- *
- *  ws_T    (input/output).  Is the size of T matrix. To be allocated
- *          with a space of min(M,N) X min(M,N). If buildT flag is true,
- *          T is computed and populated as output. If buildT is false,
- *          T must not be used as output
- *
- *  LDT     (input) INTEGER
- *          The leading dimension of the array T.  LDT >= max(1,min(M,N)).
- *
- *  WORKM   (workspace) Work space matrix, N rows by
- *          minMN columns; the amount used by larfb.
- *
- *  buildT  If non-zero, dgeqrr will build in ws_T the complete T necessary
- *          for the original panel it is passed;
- *          such that Q= I - transpose(Y) * T * Y.
- *          If zero, ws_T will contain only those elements of T necessary to
- *          complete the panel.
- */
-{
-
-   int I, left, right, INFO, IINFO, lbuilt, rbuilt;
-   int LDA2 = LDA SHIFT;                    /* for complex LDA *2             */
-   int LDT2 = LDT SHIFT;                    /* for complex LDT *2             */
-   ATL_CINT minMN = Mmin(M, N);
-
-   if (M < 1 || N < 1) return(0);           /* Nothing to do.                 */
-/*
- * Choose a smart recursive column partitioning based on N:
- * The mapping from this routs dim:GEMM is : right:M, left:N, K:M-left
- * For big probs, max M & K by making left small & a mult of NB.
- * For small problems, make M a multiple of MU (many x86 have NU=1 anyway!).
- */
-   if (minMN >= NB+NB)            /* big prob, put remainder on right         */
-   {
-      left = ATL_MulByNB(ATL_DivByNB(minMN>>1));
-      right = N - left;                     /* for QR, set right as N - left  */
-   }
-   else       /* small prob, keep M mult of MU (MU more critical than NU)     */
-   {
-      right = ((minMN>>1)/ATL_mmMU)*ATL_mmMU;
-      left = minMN - right;
-      right = N - left;                     /* for QR, set right as N - left  */
-   }
-
-/*
- * Stop recursion if problem cache contained, or no more benefit from L3BLAS
- * minMN is compared against a minimum size of 4. So above computation of
- * minMN >> 1, will operate on value greater than or equal to 4.
- *
- * Modified by RCW to avoid calling PCA when the affinity Siju is using
- * isn't turned on.
- *
- */
-   if (ATL_MulBySize(M)*minMN <= LA_CE || minMN <= 4 || !left || !right)
-   {
-      #if defined(ATL_USEPTHREADS) && defined(ATL_PAFF_SETAFFNP)
-         ATL_tgeqr2(M, minMN, A, LDA, TAU, ws_QR2, ws_T, LDT, WORKM, N);  
-      #else
-         ATL_geqr2(M, minMN, A, LDA, TAU, ws_QR2);
-         if (buildT ||  (N > minMN) )
-            ATL_larft(LAForward, LAColumnStore, M, minMN, A, LDA,
-                    TAU, ws_T, LDT);
-      #endif
-
-/*
- *   Adjust right according to T:  apply H' , if N > minMN
- */
-      if ( N > minMN )
-      {    
-         ATL_larfb(CblasLeft, CblasTrans,   /* From left, Transposed,         */
-            LAForward, LAColumnStore,       /* Forward, Columnwise.           */
-            M,                              /* Update area is M rows,         */
-            N-minMN,                        /* 'right' columns,               */
-            minMN,                          /* V is 'left' columns.           */
-            A, LDA,                         /* V array (inside A)             */
-            ws_T, LDT,                      /* T array (in work space)        */
-            A+(minMN*LDA2), LDA,            /* Array to update.               */
-            WORKM, N);                      /* Workspace, leading dim.        */
-      }
-      return(0);
-   }
-
-/*
- * Factor left half, using same workspaces as we'll eventually use for right.
- * We always build T so that we can multiply by Q for the right side update
- */
-   ATL_geqrr(M, left, A, LDA, TAU, ws_QR2, ws_T, LDT, WORKM, 1);
-
-/*
- * Adjust right according to T:  apply H' to A[0:(M-1), left:(N-1)].
- */
-   ATL_larfb(CblasLeft, CblasTrans,         /* From left, Transposed,         */
-              LAForward, LAColumnStore,     /* Forward, Columnwise.           */
-              M,                            /* Update area is M rows,         */
-              right,                        /* 'right' columns,               */
-              left,                         /* V is 'left' columns.           */
-              A, LDA,                       /* V array (inside A)             */
-              ws_T, LDT,                    /* T array (in work space)        */
-              A+(left*LDA2), LDA,           /* Array to update.               */
-              WORKM, N);                    /* Workspace, leading dim.        */
-
-/*
- * Now factor updated right
- */
-   ATL_geqrr(M-left, right, A+(left SHIFT)*(LDA+1), LDA, TAU+(left SHIFT),
-             ws_QR2, ws_T+(left SHIFT)*(LDT+1), LDT, WORKM, buildT);
-
-/*
- * If we are building T, the left side was completely built above, and the
- * right-hand side is partially built by the recursion.  We need to fill in
- * the upper right quarter of T, which is left x right in size, using the
- * formula -T1 * (Y1^T * Y2) * T2.
- * right :   minMN - left
- */
-   if (buildT)
-      ATL_larft_block(LAForward, LAColumnStore, M, minMN, left, minMN-left,
-                      A, LDA, ws_T, LDT);
-   return(0);
-}                                           /* END ATL_geqrr                  */
+} /* END ATL_dgeqrf */
 
 @ROUT ATL_geqlf
-@extract -b @(topd)/cw.inc lang=C -def cwdate 2009 -def cwauth "Siju Samuel" -def contrib "Anthony M. Castaldo, R. Clint Whaley"
-
-#include "atlas_misc.h"
-#include "cblas.h"
-#include "atlas_lapack.h"
-
-#ifdef  SREAL
-   #define MYOPT LASreal
-#endif
-#ifdef  DREAL
-   #define MYOPT  LADreal
-#endif
-#ifdef  SCPLX
-   #define MYOPT  LAScplx
-#endif
-#ifdef  DCPLX
-   #define MYOPT  LADcplx
-#endif
-
-int ATL_geqlf(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT lda, TYPE *TAU,
-              TYPE *WORK, ATL_CINT LWORK)
-/*-----------------------------------------------------------------------------
- * This is the C translation of the standard LAPACK Fortran routine:
- *      SUBROUTINE DGEQLF( M, N, A, LDA, TAU, WORK, LWORK, INFO )
- *
- * ATL_gerqf.c :
- * int ATL_geqlf(int M, int N, TYPE  *A, int LDA, TYPE  *TAU,
- *              TYPE *WORK, int LWORK)
- *
- *  Purpose
- *  =======
- *
- *  ATL_geqlf  computes a QL factorization of a real/complex M-by-N matrix A:
- *  A = Q * L.
- *
- *  Compared to LAPACK, here, a recursive pannel factorization is implemented.
- *  Refer ATL_geqlr.c andd ATL_larft.c for details.
- *
- *  Arguments
- *  =========
- *
- *  M       (input) INTEGER
- *          The number of rows of the matrix A.  M >= 0.
- *
- *  N       (input) INTEGER
- *          The number of columns of the matrix A.  N >= 0.
- *
- *  A       (input/output) array, dimension (LDA,N)
- *          On entry, the m by n matrix A.
- *          On exit, if m >= n, the lower triangle of the subarray
- *          A(m-n+1:m,1:n) contains the n by n lower triangular matrix L;
- *          if m <= n, the elements on and below the (n-m)-th
- *          superdiagonal contain the m by n lower trapezoidal matrix L;
- *          the remaining elements, with the array TAU, represent the
- *          orthogonal matrix Q ((unitary matrix incase of complex precision )
- *          as a product of elementary reflectors (see Further Details).
- *
- *  LDA     (input) INTEGER
- *          The leading dimension of the array A.  LDA >= max(1,M).
- *
- *  TAU     (output) array, dimension (min(M,N))
- *          The scalar factors of the elementary reflectors (see Further
- *          Details).
- *
- *  WORK    (workspace/output) array, dimension (MAX(1,LWORK))
- *          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
- *
- *  LWORK   (input) INTEGER
- *          The dimension of the array WORK.  LWORK >= max(1,N).
- *          For optimum performance LWORK >= N*NB, where NB is
- *          the optimal blocksize.
- *
- *          If LWORK = -1, then a workspace query is assumed; the routine
- *          only calculates the optimal size of the WORK array, returns
- *          this value as the first entry of the WORK array, and no error
- *          message related to LWORK is issued .
- *
- *  INFO    (output) INTEGER
- *          = 0:  successful exit
- *          < 0:  if INFO = -i, the i-th argument had an illegal value
- *
- *  Further Details
- *  ===============
- *
- *  The matrix Q is represented as a product of elementary reflectors
- *
- *     Q = H(k) . . . H(2) H(1), where k = min(m,n).
- *                                             (for Real/Complex Precisions)
- *
- *  Each H(i) has the form
- *
- *     H(i) = I - tau * v * v'                 (for Real Precision)
- *     H(i) = I - tau * v * conjugate(v)'      (for Complex  Precision)
- *
- *
- *  where tau is a real scalar, and v is a real vector with
- *  v(m-k+i+1:m) = 0 and v(m-k+i) = 1; v(1:m-k+i-1) is stored on exit in
- *  A(1:m-k+i-1,n-k+i), and tau in TAU(i).
- *----------------------------------------------------------------------------*/
-{
-   ATL_CINT minMN = Mmin(M, N), maxMN = Mmax(M, N);
-   ATL_INT n, nb, j;
-   TYPE  *ws_QL2,  *ws_T, *ws_larfb;        /* Workspace for QL2,T, larfb     */
-   void *vp=NULL;
-
    nb = clapack_ilaenv(LAIS_OPT_NB, LAgeqrf, MYOPT+LARight+LALower, M, N,-1,-1);
 
 /*
@@ -1122,7 +915,7 @@ int ATL_geqlf(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT lda, TYPE *TAU,
 
    for (j=0; j < n; j += nb)
    {
-      ATL_assert(!ATL_geqlr(M-j, nb, A+(N SHIFT)*lda-((j + nb) SHIFT)*lda,
+      ATL_assert(!ATL_geqlr_Tune(M-j, nb, A+(N SHIFT)*lda-((j + nb) SHIFT)*lda,
                             lda, TAU+( (minMN -(j +nb)) SHIFT),
                             ws_QL2, ws_T, nb, ws_larfb, 1));
       if (j+nb < N)     /* if there are more cols left to right, update them  */
@@ -1149,357 +942,16 @@ int ATL_geqlf(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT lda, TYPE *TAU,
 /*
  * Build Last panel. buildT is passed as 0
  */
-   nb = minMN - n;                          /* remianing nb                   */
-   ATL_assert(!ATL_geqlr(M-n, N-n, A, lda, TAU,
+   nb = minMN - n;                              /* remaining columns.         */
+   ATL_assert(!ATL_geqlr_Tune(M-n, N-n, A, lda, TAU,
                          ws_QL2, ws_T, nb, ws_larfb, 0));
 
    if (vp)
       free(vp);
    return(0);
-}                                           /* END ATL_dgeqlf                 */
-
-@ROUT ATL_geqlr
-
-int ATL_geqlr(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT LDA, TYPE *TAU,
-               TYPE *ws_LQ2, TYPE *ws_T, ATL_CINT LDT,
-               TYPE *WORKM, const int buildT)
-/*
- * This is a recursive implementation of ATL_dgeqlf.c; it performs a QL
- * factorization of a panel (M > N) with a bottom level of ATL_geql2. The
- * recursion is on columns only; it divides by 2 until it reaches a
- * stopping point; at which time it calls ATL_geql2 to complete a sub-panel,
- * ATL_larft and ATL_larfb to propagate the results, etc.
- *
- * ATL_geqlr.c :
- * int ATL_geqlr(int M, int N, TYPE *A, int LDA, TYPE  *TAU,
- *               TYPE *ws_LQ2, TYPE *ws_T, int LDT,
- *               TYPE *WORKM, int buildT)
- *      NOTE :   ATL_geql2.c will get compiled to four precisions
- *               single precision real,      double precision real
- *               single precision complex,   double precision complex
- *  Purpose
- *  =======
- *
- *  ATL_geqlr computes a QL factorization of a real M-by-N matrix A:
- *  A = Q * L.
- *
- *  Arguments
- *  =========
- *
- *  M       (input) INTEGER
- *          The number of rows of the matrix A.  M >= 0.
- *
- *  N       (input) INTEGER
- *          The number of columns of the matrix A.  N >= 0.
- *
- *  A       (input/output)  array, dimension (LDA,N)
- *          On entry, the M-by-N matrix A.
- *          On exit, the elements on and above the diagonal of the array
- *          contain the min(M,N)-by-N upper trapezoidal matrix R (R is
- *          upper triangular if m >= n); the elements below the diagonal,
- *          with the array TAU, represent the orthogonal matrix Q as a
- *          product of min(m,n) elementary reflectors (see Further
- *          Details).
- *
- *  LDA     (input) INTEGER
- *          The leading dimension of the array A.  LDA >= max(1,M).
- *          If LDA == 0, returns work sizes in *WORKV and *WORKM.
- *
- *  TAU     (output) DOUBLE PRECISION array, dimension (min(M,N))
- *          The scalar factors of the elementary reflectors (see Further
- *          Details).
- *  ws_LQ2  (workspace) workspace for lq2 factorization. To be allocated
- *          with space of max(M,N)
- *
- *  ws_T    (input/output).  Is the size of T matrix. To be allocated
- *          with a space of min(M,N) X min(M,N). If buildT flag is true,
- *          T is computed and populated as output. If buildT is false,
- *          T must not be used as output
- *
- *  LDT     (input) INTEGER
- *          The leading dimension of the array T.  LDT >= max(1,min(M,N)).
- *
- *  WORKM   Work space matrix, double precision matrix at least M rows by
- *          N columns; the amount used by larft and larfb.
- *
- *  buildT  If non-zero, dgeqlr will build in ws_T the complete T necessary
- *          for the original panel it is passed;
- *          such that Q= I - transpose(Y) * T * Y.
- *          If zero, ws_T will contain only those elements of T necessary to
- *          complete the panel.
- */
-{
-   int I, left, right, leftMN, INFO, IINFO;
-   int LDA2 = LDA SHIFT;                    /* for complex LDA *2             */
-   int LDT2 = LDT SHIFT;                    /* for complex LDT *2             */
-
-   ATL_CINT minMN = Mmin(M, N);
-
-   if (M < 1 || N < 1) return(0);           /* Nothing to do.                 */
-
-/*   leftMN = (minMN>>1);       TODO                                          */
-/*   right = minMN - leftMN;                                                  */
-/*   left  = N - right;                                                       */
-
-/*
- * Choose a smart recursive column partitioning based on N:
- * The mapping from this routs dim:GEMM is : right:M, left:N, K:M-left
- * For big probs, max M & K by making left small & a mult of NB.
- * For small problems, make M a multiple of MU (many x86 have NU=1 anyway!).
- */
-   if (minMN >= NB+NB)            /* big prob, put remainder on right         */
-   {
-      leftMN = ATL_MulByNB(ATL_DivByNB(minMN>>1));
-      right = minMN - leftMN;            
-      left  = N -right;
-   }
-   else       /* small prob, keep M mult of MU (MU more critical than NU)     */
-   {
-      right = ((minMN>>1)/ATL_mmMU)*ATL_mmMU;
-      leftMN = minMN - right;
-      left = N - right;                      
-   }
-
-/*
- * Stop recursion if problem cache contained, or no more benefit from L3BLAS
- *
- * Modified by RCW to avoid calling PCA when the affinity Siju is using
- * isn't turned on.
- *
- */
-   if (ATL_MulBySize(M)*minMN <= LA_CE || minMN <= 4 || !leftMN || !right)
-   {
-      #if defined(ATL_USEPTHREADS) && defined(ATL_PAFF_SETAFFNP)
-         ATL_tgeql2(M, minMN, A+((N-minMN)*LDA2), LDA, TAU, ws_LQ2,
-                              ws_T, LDT, WORKM, N);
-      #else
-         ATL_geql2(M, minMN, A+((N-minMN)*LDA2), LDA, TAU, ws_LQ2);
-
-         if (buildT || (N > minMN) )
-         {
-            ATL_larft(LABackward, LAColumnStore, M, minMN, A+((N-minMN)*LDA2), LDA,
-                    TAU, ws_T, LDT);        /* Build the T matrix.            */
-         }
-      #endif
-
-/*
- *   Adjust left  according to T:  apply H' , if N > minMN
- */
-      
-      if (N > minMN )
-      {
-         ATL_larfb(CblasLeft, CblasTrans,   /* From left, Transposed,         */
-              LABackward, LAColumnStore,    /* Forward, Columnwise.           */
-              M,                            /* Update area is M rows,         */
-              N-minMN,                      /* 'left' columns                 */
-              minMN,                        /* V is 'right' columns.          */
-              (A+((N-minMN)*LDA2))  , LDA,  /* V array (inside A)             */
-              (ws_T), LDT,                  /* Build T at T[left,left].       */
-              A, LDA,                       /* Array to update.               */
-              WORKM, N);                    /* Workspace, leading dim.        */
-      }
-
-      return(0);                            /* All okay.                      */
-   }
-
-/*----------------------------------------------------------------------------*/
-/* On the right half, we use the same workspaces.                             */
-/* Because we know we have a left hand side we must always                    */
-/* build T, so we can multiply by Q before doing the left side.               */
-/*----------------------------------------------------------------------------*/
-   ATL_geqlr(M, right,(A+(left*LDA2)), LDA, (TAU+(left SHIFT)), ws_LQ2,
-      ( ws_T+(leftMN SHIFT)+leftMN*LDT2), LDT,   /* Build T at T[left,left].  */
-      WORKM, 1);
-
-/*----------------------------------------------------------------------------*/
-/* Now we must adjust the left hand side according to our T.                  */
-/* We must apply H'                                                           */
-/*----------------------------------------------------------------------------*/
-
-   ATL_larfb(CblasLeft, CblasTrans,         /* From left, Transposed,         */
-              LABackward, LAColumnStore,    /* Forward, Columnwise.           */
-              M,                            /* Update area is M rows,         */
-              left,                         /* 'left' columns (remainder)     */
-              right,                        /* V is 'right' columns.          */
-              (A +(left*LDA2))  , LDA,      /* V array (inside A)             */
-             ( ws_T+(leftMN SHIFT)+leftMN*LDT2), /* Build T at T[left,left] . */
-              LDT,  
-              A, LDA,                       /* Array to update.               */
-              WORKM, N);                    /* Workspace, leading dim.        */
-
-/*----------------------------------------------------------------------------*/
-/* On the left  half, we must adjust all pointers.                            */
-/*----------------------------------------------------------------------------*/
-   ATL_geqlr(M-right, left,                 /* Shorter columns.               */
-              (A), LDA,                     /* A at A[0,0].                   */
-              (TAU),                        /* TAU at TAU[left].              */
-              ws_LQ2,                       /* No returned values.            */
-             ( ws_T), LDT,                  /* Build T at T[left,left].       */
-              WORKM, buildT);               /* No returned values.            */
-
-/*----------------------------------------------------------------------------*/
-/* If we build T, the right side must be completely built, and                */
-/* the left side should be partially built. We need to fill in                */
-/* the lower  left  hand block, 'right' rows by 'left' columns.               */
-/* The formula is -T2 * (Y2^T * Y1) * T1.                                     */
-/* The routine is in ATL_larft.c.                                             */
-/*----------------------------------------------------------------------------*/
-
-   if (buildT)
-   {
-      ATL_larft_block(LABackward, LAColumnStore,M, minMN, minMN-right, right,
-        (A+((N-minMN)*LDA2)) , LDA, ws_T, LDT);  /* compute upper corner.     */
-   }
-
-   return(0);
-}                                           /* END ATL_geqlr                  */
-
+} /* END ATL_dgeqlf */
 
 @ROUT ATL_gelqf
-@extract -b @(topd)/cw.inc lang=C -def cwdate 2009 -def cwauth "Siju Samuel" -def contrib "Anthony M. Castaldo, R. Clint Whaley"
-
-#include "atlas_misc.h"
-#include "cblas.h"
-#include "atlas_lapack.h"
-
-#ifdef  SREAL
-     #define MYOPT LASreal
-#endif
-#ifdef  DREAL
-    #define MYOPT  LADreal
-#endif
-#ifdef  SCPLX
-    #define MYOPT  LAScplx
-#endif
-#ifdef  DCPLX
-    #define MYOPT  LADcplx
-#endif
-
-/*
- * RCW: need to get rid of these duplicative routines.  For now, declared
- *      static so dynamic build will work
- */
-static void ATL_makeConj
-   (const int M, const int N, TYPE *A, const int lda0)
-{
-   #ifdef TREAL
-      #define SHIFTL
-   #else
-      #define SHIFTL << 1
-   #endif
-
-   const int lda = lda0 SHIFTL;
-   int i, j;
-
-   for (i=0; i != M; i++)
-   {
-      #ifdef TCPLX
-         for (j=0; j != N; j++)
-            A[1+2*i+j*lda] = 0. - A[1+2*i+j*lda];
-      #endif
-   }
-
-}
-
-
-int ATL_gelqf(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
-              TYPE *WORK, ATL_CINT LWORK)
-/*-----------------------------------------------------------------------------
- * This is the C translation of the standard LAPACK Fortran routine:
- *      SUBROUTINE DGELQF( M, N, A, LDA, TAU, WORK, LWORK, INFO )
- *
- * ATL_gelqf.c :
- * int ATL_gelqf(int M, int N, TYPE  *A, int LDA, TYPE  *TAU,
- *              TYPE *WORK, int LWORK)
- *     NOTE :a)   ATL_gelqf.c will get compiled to four precisions
- *               single precision real,      double precision real
- *               single precision complex,   double precision complex
- *
- *           b) This routine will not validate the input parameters.
- *
- *  Purpose
- *  =======
- *
- *  ATL_gelqf  computes a LQ factorization of a real/complex M-by-N matrix A:
- *  A = L * Q.
- *
- *  Compared to LAPACK, here, a recursive pannel factorization is implemented.
- *  Refer ATL_gelqr.c andd ATL_larft.c for details.
- *
- *  Arguments
- *  =========
- *
- *  M       (input) INTEGER
- *          The number of rows of the matrix A.  M >= 0.
- *
- *  N       (input) INTEGER
- *          The number of columns of the matrix A.  N >= 0.
- *
- *  A       (input/output) array, dimension (LDA,N)
- *          On entry, the m by n matrix A.
- *          On exit, the elements on and below the diagonal of the array
- *          contain the m by min(m,n) lower trapezoidal matrix L (L is
- *          lower triangular if m <= n); the elements above the diagonal,
- *          with the array TAU, represent the orthogonal matrix Q
- *          (unitary matrix incase of complex precision )  as a
- *          product of elementary reflectors (see Further Details).
- *
- *  LDA     (input) INTEGER
- *          The leading dimension of the array A.  LDA >= max(1,M).
- *
- *  TAU     (output) array, dimension (min(M,N))
- *          The scalar factors of the elementary reflectors (see Further
- *          Details).
- *
- *  WORK    (workspace/output) array, dimension (MAX(1,LWORK))
- *          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
- *
- *  LWORK   (input) INTEGER
- *          The dimension of the array WORK.  LWORK >= max(1,N).
- *          For optimum performance LWORK >= N*NB, where NB is
- *          the optimal blocksize.
- *
- *          If LWORK = -1, then a workspace query is assumed; the routine
- *          only calculates the optimal size of the WORK array, returns
- *          this value as the first entry of the WORK array, and no error
- *          message related to LWORK is issued .
- *
- *  INFO    (output) INTEGER
- *          = 0:  successful exit
- *          < 0:  if INFO = -i, the i-th argument had an illegal value
- *
- *  Further Details
- *  ===============
- *
- *  The matrix Q is represented as a product of elementary reflectors
- *
- *     Q = H(k) . . . H(2) H(1), where k = min(m,n).    ( for Real precision)
- *     Q = H(k)'  . . H(2)' H(1)', where k = min(m,n).  ( for Complex Precison)
- *         (Note : Conjugate Transpose of H is taken above)
- *
- *
- *  Each H(i) has the form
- *
- *     H(i) = I - tau * v * v'                  (For Real precision)
- *     H(i) = I - tau * v * conjugate(v)'       (For Complex precision)
- *
- *  where tau is a real/complex scalar, and v is a real/complex vector with
- *  v(1:i-1) = 0 and v(i) = 1; v(i+1:n) is stored on exit in A(i,i+1:n),
- *  and tau in TAU(i).
- *
- *----------------------------------------------------------------------------*/
-{
-   ATL_CINT minMN = Mmin(M, N), maxMN = Mmax(M, N);
-   ATL_INT n, nb, j;
-   TYPE  *ws_LQ2,  *ws_T, *ws_larfb, *ws_CP;/* Workspace for LQ2,T, larfb     */
-   void *vp=NULL;
-
-   #ifdef TCPLX
-      TYPE ONE[2] = {ATL_rone, ATL_rzero};
-   #else
-      #define ONE ATL_rone
-   #endif
-
    nb = clapack_ilaenv(LAIS_OPT_NB, LAgeqrf, MYOPT+LALeft+LALower, M, N,-1,-1);
 
 /*
@@ -1511,22 +963,9 @@ int ATL_gelqf(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
       *WORK = ( maxMN*nb + nb*nb + maxMN )  ;
       return(0);
    }
-   else if (M < 1 || N < 1)                 /* quick return if no work to do  */
+   else if (M < 1 || N < 1)  /* quick return if no work to do */
       return(0);
-/*
- * QR is transpose of LQ; Use this fact to go from row-major LQ to
- * col-major QR (typically more than 10% faster even wt transpose costs)
- */
-   if (M == N && N >= 128)
-   {
-      Mjoin(PATL,sqtrans)(N, A, lda);
-      n = ATL_geqrf(M, N, A, lda, TAU, WORK, LWORK);
-      Mjoin(PATL,sqtrans)(N, A, lda);
-      #ifdef TCPLX
-         Mjoin(PATLU,scal)(minMN, ATL_rnone, TAU+1, 2);
-      #endif
-      return(n);
-   }
+
 /*
  * If the user gives us too little space, see if we can allocate it ourselves
  */
@@ -1535,17 +974,15 @@ int ATL_gelqf(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
       vp = malloc(ATL_MulBySize(maxMN*nb + nb*nb + maxMN) + ATL_Cachelen);
       if (!vp)
          return(-7);
-      WORK = ATL_AlignPtr(vp);
+       WORK = ATL_AlignPtr(vp);
    }
 
 /*
  * Assign workspace areas for ATL_larft, ATL_gelq2, ATL_larfb
  */
-   ws_T = WORK;                             /* T at begining of work          */
-   ws_LQ2 = WORK +(nb SHIFT)*nb;            /* After T Work space             */
-   ws_larfb = ws_LQ2 + (maxMN SHIFT);       /* After workspace for T and LQ2  */
-
-   ws_CP = malloc(ATL_MulBySize(maxMN*nb + ATL_Cachelen));
+   ws_T = WORK;                         /* T at begining of work */
+   ws_LQ2 = WORK +(nb SHIFT)*nb;        /* After T Work space             */
+   ws_larfb = ws_LQ2 + (maxMN SHIFT);   /* After workspace for T and LQ2  */
 
 /*
  * Leave one iteration to be done outside loop, so we don't build T
@@ -1557,21 +994,13 @@ int ATL_gelqf(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
 
    for (j=0; j < n; j += nb)
    {
-      Mjoin(PATL,gemoveT)(N-j, nb, ONE, A+(j SHIFT)*(lda+1), lda,ws_CP, maxMN);
-
-      ATL_assert(!ATL_geqrr( N-j,nb,  ws_CP, maxMN, TAU+(j SHIFT),
-                            ws_LQ2, ws_T, nb, ws_larfb, 1));
-      // Make conjugate
-      #ifdef TCPLX
-         ATL_makeConj(nb, nb,  ws_T, nb);
-      #endif
-
-      // Copy To M X nb work area in column majour order. Then after solving
-      // copy back
-      Mjoin(PATL,gemoveT)( nb, N-j, ONE, ws_CP, maxMN, A+(j SHIFT)*(lda+1), lda);
-      if (j+nb < M)     /* if there are more cols left to bottom, update them */
+      ATL_assert(!ATL_gelqr_Tune(nb, N-j,  A+(j SHIFT)*(lda+1), lda, 
+                  TAU+(j SHIFT),
+                  ws_LQ2, ws_T, nb, ws_larfb, 1));
+      if (j+nb < M)  /* if there are more cols left to bottom, update them */
       {
 /*
+ *       ======================================================================
  *       Form the triangular factor of the block reflector
  *       After gelqr, ws_T contains 'T', the nb x nb triangular factor 'T'
  *       of the block reflector. It is an output used in the next call, dlarfb.
@@ -1580,6 +1009,7 @@ int ATL_gelqf(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
  *       The ws_T array used above is an input to dlarfb; it is 'T' in
  *       that routine, and LDT x K (translates here to LDWORK x NB).
  *       WORK is an LDWORK x NB workspace (not input or output).
+ *       ======================================================================
  */
          ATL_larfb(CblasRight, CblasNoTrans, LAForward, LARowStore,
                    M-j-nb, N-j, nb, A+(j SHIFT)*(lda+1), lda, ws_T, nb,
@@ -1590,382 +1020,17 @@ int ATL_gelqf(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
 /*
  *  Build Last panel.  build T is set to 0
  */
-   nb = minMN - n;                          /* remianing nb                   */
-
-   if (M > N)                     /* Require to build T and Apply LARFB       */
-   {
-      Mjoin(PATL,gemoveT)(N-n, nb, ONE, A+(n SHIFT)*(lda+1),lda,ws_CP, maxMN);
-      ATL_assert(!ATL_geqrr( N-n, nb,  ws_CP, maxMN, TAU+(n SHIFT),
-                            ws_LQ2, ws_T, nb, ws_larfb, 1));
-      Mjoin(PATL,gemoveT)(nb, N-n, ONE, ws_CP, maxMN, A+(n SHIFT)*(lda+1), lda);
-
-      #ifdef TCPLX
-         ATL_makeConj(nb, nb,  ws_T, nb);
-      #endif
-
-      ATL_larfb(CblasRight, CblasNoTrans, LAForward, LARowStore,
-                   M-n-nb, N-n, nb, A+(n SHIFT)*(lda+1), lda, ws_T, nb,
-                   A+((n SHIFT)*(lda+1))+(nb SHIFT), lda, ws_larfb, M);
-   }
-   else       /* M=N or M < N , perform transpose move and call qrr           */
-   {
-      Mjoin(PATL,gemoveT)(N-n, nb, ONE, A+(n SHIFT)*(lda+1),lda,ws_CP, maxMN);
-      ATL_assert(!ATL_geqrr( N-n, nb,  ws_CP, maxMN, TAU+(n SHIFT),
-                            ws_LQ2, ws_T, nb, ws_larfb, 0));
-      Mjoin(PATL,gemoveT)(nb, N-n, ONE, ws_CP, maxMN, A+(n SHIFT)*(lda+1), lda);
-   }
-   // Take the conjugate for Complex TAU
-   #ifdef TCPLX
-      ATL_lacgv(minMN, TAU  , 1);
-   #endif
+   nb = minMN - n;                              /* remaining rows.            */
+   ATL_assert(!ATL_gelqr_Tune(M-n, N-n, A+(n SHIFT)*(lda+1), lda, 
+               TAU+(n SHIFT),
+               ws_LQ2, ws_T, nb, ws_larfb, 0));
 
    if (vp)
       free(vp);
    return(0);
-}                                           /* END ATL_dgelqf                 */
-
-@ROUT ATL_gelqr
-
-int ATL_gelqr(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT LDA, TYPE *TAU,
-              TYPE *ws_QR2, TYPE *ws_T, ATL_CINT LDT,
-              TYPE *WORKM, const int buildT)
-/*
- * This is a recursive implementation of ATL_dgelqf.c; it performs a QR
- * factorization of a panel (M > N) with a bottom level of ATL_gelq2. The
- * recursion is on columns only; it divides by 2 until it reaches a
- * stopping point; at which time it calls ATL_gelq2 to complete a sub-panel,
- * ATL_larft and ATL_larfb to propagate the results, etc.
- *
- * ATL_gelqr.c :
- * int ATL_gelqr(int M, int N, TYPE *A, int LDA, TYPE  *TAU,
- *               TYPE *ws_QR2, TYPE *ws_T, int LDT,
- *               TYPE *WORKM, int buildT)
- *      NOTE :   ATL_gelq2.c will get compiled to four precisions
- *               single precision real,      double precision real
- *               single precision complex,   double precision complex
- *  Purpose
- *  =======
- *
- *  ATL_gelqr computes a QR factorization of a real M-by-N matrix A:
- *  A = L * Q
- *
- *  Arguments
- *  =========
- *
- *  M       (input) INTEGER
- *          The number of rows of the matrix A.  M >= 0.
- *
- *  N       (input) INTEGER
- *          The number of columns of the matrix A.  N >= 0.
- *
- *  A       (input/output)  array, dimension (LDA,N)
- *          On entry, the M-by-N matrix A.
- *          On exit, the elements on and above the diagonal of the array
- *          contain the min(M,N)-by-N upper trapezoidal matrix R (R is
- *          upper triangular if m >= n); the elements below the diagonal,
- *          with the array TAU, represent the orthogonal matrix Q as a
- *          product of min(m,n) elementary reflectors (see Further
- *          Details).
- *
- *  LDA     (input) INTEGER
- *          The leading dimension of the array A.  LDA >= max(1,M).
- *          If LDA == 0, returns work sizes in *WORKV and *WORKM.
- *
- *  TAU     (output) DOUBLE PRECISION array, dimension (min(M,N))
- *          The scalar factors of the elementary reflectors (see Further
- *          Details).
- *
- *  ws_LQ2  (workspace) workspace for lq2 factorization. To be allocated
- *          with space of max(M,N)
- *
- *  ws_T    (input/output).  Is the size of T matrix. To be allocated
- *          with a space of min(M,N) X min(M,N). If buildT flag is true,
- *          T is computed and populated as output. If buildT is false,
- *          T must not be used as output
- *
- *  LDT     (input) INTEGER
- *          The leading dimension of the array T.  LDT >= max(1,min(M,N)).
- *
- *
- *  WORKM   Work space matrix, double precision matrix at least M rows by
- *          N columns; the amount used by larft and larfb.
- *
- *  buildT  If non-zero, dgelqr will build in ws_T the complete T necessary
- *          for the original panel it is passed;
- *          such that Q= I - transpose(Y) * T * Y.
- *          If zero, ws_T will contain only those elements of T necessary to
- *          complete the panel.
- */
-{
-
-   int I, top, bottom, bottomMN, INFO, IINFO, lbuilt, rbuilt;
-   int LDA2 = LDA SHIFT;                    /* for complex LDA *2             */
-   int LDT2 = LDT SHIFT;                    /* for complex LDT *2             */
-   ATL_CINT minMN = Mmin(M, N);
-   #ifdef TCPLX
-      TYPE ONE[2] = {ATL_rone, ATL_rzero};
-   #else
-      #define ONE ATL_rone
-   #endif
-
-   if (M < 1 || N < 1) return(0);           /* Nothing to do.                 */
-
-/* find bottom and top half for recursion                                     */
-/*   bottomMN = (minMN>>1);                                                   */
-/*   top = minMN - bottomMN;                                                  */
-/*   bottom = M - top;                                                        */
-
-//------------------------------------------------------TODO Check Beg
-
-/*
- * Choose a smart recursive column partitioning based on M:
- */
-   if (minMN >= NB+NB)            /* big prob, put remainder on right         */
-   {
-      bottomMN = ATL_MulByNB(ATL_DivByNB(minMN>>1));
-      top  = minMN - bottomMN;            
-      bottom  = M -top;
-   }
-   else       /* small prob, keep M mult of MU (MU more critical than NU)     */
-   {
-      top  = ((minMN>>1)/ATL_mmMU)*ATL_mmMU;
-      bottomMN = minMN - top;
-      bottom = M - top;                      
-   }
-//--------------------------------------------------------TODO Check End
-
-
-/*
- * Stop recursion if problem cache contained, or no more benefit from L3BLAS
- */
-   if (ATL_MulBySize(N)*minMN <= LA_CE || minMN <= 8 ||  !top || !bottomMN )
-   {
-      #if 0
-      if (minMN >= 4)
-      {
-         Mjoin(PATL,gemoveT)(N, minMN, ONE, A, LDA, WORKM, N);
-         ATL_geqr2(N, minMN, WORKM, N, TAU, ws_QR2);
-         Mjoin(PATL,gemoveT)(minMN, N, ONE, WORKM, N, A, LDA);
-      }
-      else
-      #endif
-         ATL_gelq2(minMN, N, A, LDA, TAU, ws_QR2);
-
-      if (buildT || (M > minMN) )
-      {
-         ATL_larft(LAForward, LARowStore, N, minMN, A, LDA,
-                   TAU, ws_T, LDT);         /* Build the T matrix.            */
-      }
-/*
- *   Adjust bottom according to T:  apply H' , if M > minMN
- */
-
-      if ( M > minMN )
-      {
-         ATL_larfb(CblasRight, CblasNoTrans,/* From top, Transposed,          */
-              LAForward, LARowStore,        /* Forward, Columnwise.           */
-              M-minMN,                      /* Update area is bottom rows,    */
-              N,                            /* 'bottom' columns,              */
-              minMN,                        /* V is 'top' columns.            */
-              A, LDA,                       /* V array (inside A)             */
-              ws_T, LDT,                    /* T array (in work space)        */
-              A+( minMN SHIFT), LDA,        /* Array to update.               */
-              WORKM, M);                    /* Workspace, leading dim.        */
-
-      }
-
-
-      return(0);                            /* All okay.                      */
-   }
-
-/*----------------------------------------------------------------------------*/
-/* On the top half, we use the same workspaces.                               */
-/* Because we know we have a bottom hand side we must always                  */
-/* build T, so we can multiply by Q before doing the bottom side.             */
-/*----------------------------------------------------------------------------*/
-   ATL_gelqr(top, N, A, LDA, TAU, ws_QR2, ws_T, LDT, WORKM, 1);
-
-/*----------------------------------------------------------------------------*/
-/* Now we must adjust the bottom hand side according to our T.                */
-/* We must apply H' to A[0:(M-1), top:(N-1)].                                 */
-/*----------------------------------------------------------------------------*/
-
-   ATL_larfb(CblasRight, CblasNoTrans,      /* From top, Transposed,          */
-              LAForward, LARowStore,        /* Forward, Columnwise.           */
-              bottom,                       /* Update area is bottom rows,    */
-              N,                            /* 'bottom' columns,              */
-              top,                          /* V is 'top' columns.            */
-              A, LDA,                       /* V array (inside A)             */
-              ws_T, LDT,                    /* T array (in work space)        */
-              A+(top SHIFT), LDA,           /* Array to update.               */
-              WORKM, M);                    /* Workspace, leading dim.        */
-
-/*----------------------------------------------------------------------------*/
-/* On the bottom half, we must adjust all pointers.                           */
-/*----------------------------------------------------------------------------*/
-   ATL_gelqr(bottom, N-top,                 /* Shorter rows.                  */
-              (A+(top SHIFT)+top*LDA2), LDA,/* A at A[top,top].               */
-              (TAU+(top SHIFT)),            /* TAU at TAU[top].               */
-              ws_QR2,                       /* No returned values.            */
-             ( ws_T+(top SHIFT)+top*LDT2), LDT,  /* Build T at T[top,top].    */
-              WORKM, buildT);               /* No returned values.            */
-
-/*----------------------------------------------------------------------------*/
-/* If we build T, the left/top side must be completely built, and             */
-/* the right/bottom side should be partially built. We need to fill in        */
-/* the upper left hand block, 'top' rows by 'bottom' columns.                 */
-/* The formula is -T1 * (Y1 * Y2^T) * T2.                                     */
-/* The routine is in ATL_larft.c.                                             */
-/*----------------------------------------------------------------------------*/
-
-   if (buildT)
-   {
-      ATL_larft_block(LAForward, LARowStore, N, minMN, top, bottomMN,  A, LDA,
-                     ws_T, LDT);            /* Build the T matrix.            */
-   }
-   return(0);
-}                                           /* END ATL_gelqr                  */
+} /* END ATL_dgelqf */
 
 @ROUT ATL_gerqf
-@extract -b @(topd)/cw.inc lang=C -def cwdate 2009 -def cwauth "Siju Samuel" -def contrib "Anthony M. Castaldo, R. Clint Whaley"
-
-#include "atlas_misc.h"
-#include "cblas.h"
-#include "atlas_lapack.h"
-
-#ifdef  SREAL
-     #define MYOPT LASreal
-#endif
-#ifdef  DREAL
-    #define MYOPT  LADreal
-#endif
-#ifdef  SCPLX
-    #define MYOPT  LAScplx
-#endif
-#ifdef  DCPLX
-    #define MYOPT  LADcplx
-#endif
-
-/*
- * RCW: need to get rid of these duplicative routines.  For now, declared
- *      static so dynamic build will work
- */
-static void ATL_makeConj1
-   (const int M, const int N, TYPE *A, const int lda0)
-{
-
-   #ifdef TREAL
-      #define SHIFTL
-   #else
-      #define SHIFTL << 1
-   #endif
-
-   const int lda = lda0 SHIFTL;
-   int i, j;
-
-   for (i=0; i != M; i++)
-   {
-      #ifdef TCPLX
-         for (j=0; j != N; j++)
-            A[1+2*i+j*lda] = 0. - A[1+2*i+j*lda];
-      #endif
-   }
-
-}
-
-int ATL_gerqf(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT lda, TYPE *TAU,
-              TYPE *WORK, ATL_CINT LWORK)
-/*
- * This is the C translation of the standard LAPACK Fortran routine:
- *      SUBROUTINE DGERQF( M, N, A, LDA, TAU, WORK, LWORK, INFO )
- *
- * ATL_gerqf.c :
- * int ATL_gerqf(int M, int N, TYPE  *A, int LDA, TYPE  *TAU,
- *              TYPE *WORK, int LWORK)
- *
- *  Purpose
- *  =======
- *
- *  ATL_gerqf  computes a RQ factorization of a real/complex M-by-N matrix A:
- *  A = R * Q.
- *
- *  Compared to LAPACK, here, a recursive pannel factorization is implemented.
- *  Refer ATL_gerqr.c andd ATL_larft.c for details.
- *
- *  Arguments
- *  =========
- *
- *  M       (input) INTEGER
- *          The number of rows of the matrix A.  M >= 0.
- *
- *  N       (input) INTEGER
- *          The number of columns of the matrix A.  N >= 0.
- *
- *  A       (input/output)  array, dimension (LDA,N)
- *          On entry, the m by n matrix A.
- *          On exit, if m <= n, the upper triangle of the subarray
- *          A(1:m,n-m+1:n) contains the m by m upper triangular matrix R;
- *          if m >= n, the elements on and above the (m-n)-th subdiagonal
- *          contain the m by n upper trapezoidal matrix R; the remaining
- *          elements, with the array TAU, represent the orthogonal matrix
- *          (unitary matrix incase of complex precision )  as a
- *          as a product of elementary reflectors (see Further
- *          Details).
- *
- *  LDA     (input) INTEGER
- *          The leading dimension of the array A.  LDA >= max(1,M).
- *
- *  TAU     (output) array, dimension (min(M,N))
- *          The scalar factors of the elementary reflectors (see Further
- *          Details).
- *
- *  WORK    (workspace/output) array, dimension (MAX(1,LWORK))
- *          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
- *
- *  LWORK   (input) INTEGER
- *          The dimension of the array WORK.  LWORK >= max(1,N).
- *          For optimum performance LWORK >= N*NB, where NB is
- *          the optimal blocksize.
- *
- *          If LWORK = -1, then a workspace query is assumed; the routine
- *          only calculates the optimal size of the WORK array, returns
- *          this value as the first entry of the WORK array, and no error
- *          message related to LWORK is issued .
- *
- *  INFO    (output) INTEGER
- *          = 0:  successful exit
- *          < 0:  if INFO = -i, the i-th argument had an illegal value
- *
- *  Further Details
- *  ===============
- *
- *  The matrix Q is represented as a product of elementary reflectors
- *
- *     Q = H(1) H(2) . . . H(k), where k = min(m,n).    (for Real precison)
- *     Q = H(1)' H(2)' . . . H(k)', where k = min(m,n). (for Complex Precison)
- *         (Note : Conjugate Transpose of H is taken above)
- *
- *  Each H(i) has the form
- *
- *     H(i) = I - tau * v * v'                 (for Real Precision)
- *     H(i) = I - tau * v * conjugate(v)'      (for Complex  Precision)
- *
- *  where tau is a real scalar, and v is a real vector with
- *  v(n-k+i+1:n) = 0 and v(n-k+i) = 1; v(1:n-k+i-1) is stored on exit in
- *  A(m-k+i,1:n-k+i-1), and tau in TAU(i).
- */
-{
-   ATL_CINT minMN = Mmin(M, N), maxMN = Mmax(M, N);
-   ATL_INT n, nb, j;
-   TYPE  *ws_RQ2,  *ws_T, *ws_larfb, *ws_CP;/* Workspace for RQ2,T, larfb     */
-   void *vp=NULL;
-
-   #ifdef TCPLX
-      TYPE ONE[2] = {ATL_rone, ATL_rzero};
-   #else
-      #define ONE ATL_rone
-   #endif
-
    nb = clapack_ilaenv(LAIS_OPT_NB, LAgeqrf, MYOPT+LALeft+LAUpper, M, N,-1,-1);
 
 /*
@@ -1978,7 +1043,7 @@ int ATL_gerqf(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT lda, TYPE *TAU,
       *WORK = ( maxMN*nb + nb*nb + maxMN )  ;
       return(0);
    }
-   else if (M < 1 || N < 1)                 /* quick return if no work to do  */
+   else if (M < 1 || N < 1)  /* quick return if no work to do */
       return(0);
 /*
  * If the user gives us too little space, see if we can allocate it ourselves
@@ -1988,31 +1053,15 @@ int ATL_gerqf(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT lda, TYPE *TAU,
       vp = malloc(ATL_MulBySize(maxMN*nb + nb*nb + maxMN) + ATL_Cachelen);
       if (!vp)
          return(-7);
-      WORK = ATL_AlignPtr(vp);
-   }
-/*
- * QL is transpose of RQ; Use this fact to go from row-major RQ to
- * col-major QL (typically more than 10% faster even wt transpose costs)
- */
-   if (M == N && N >= 128)
-   {
-      Mjoin(PATL,sqtrans)(N, A, lda);
-      n = ATL_geqlf(M, N, A, lda, TAU, WORK, LWORK);
-      Mjoin(PATL,sqtrans)(N, A, lda);
-      #ifdef TCPLX
-         Mjoin(PATLU,scal)(minMN, ATL_rnone, TAU+1, 2);
-      #endif
-      return(n);
+       WORK = ATL_AlignPtr(vp);
    }
 
 /*
  * Assign workspace areas for ATL_larft, ATL_gerq2, ATL_larfb
  */
-   ws_T = WORK;                             /* T at begining of work          */
-   ws_RQ2 = WORK +(nb SHIFT)*nb;            /* After T Work space             */
-   ws_larfb = ws_RQ2 + (maxMN SHIFT);       /* After workspace for T and RQ2  */
-
-   ws_CP = malloc(ATL_MulBySize(maxMN*nb + ATL_Cachelen));
+   ws_T = WORK;                         /* T at begining of work */
+   ws_RQ2 = WORK +(nb SHIFT)*nb;        /* After T Work space             */
+   ws_larfb = ws_RQ2 + (maxMN SHIFT);   /* After workspace for T and RQ2  */
 
 /*
  * Leave one iteration to be done outside loop, so we don't build T
@@ -2024,22 +1073,16 @@ int ATL_gerqf(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT lda, TYPE *TAU,
 
    for (j=0; j < n; j += nb)
    {
-
 /*
  *    Starts Factorization from the bottom row
  */
-
-      Mjoin(PATL,gemoveT)(N-j, nb, ONE, A+((M -j -nb) SHIFT),lda,ws_CP, maxMN);
-      ATL_assert(!ATL_geqlr( N-j, nb,  ws_CP, maxMN,  TAU+((minMN -(j+nb)) SHIFT),
+      ATL_assert(!ATL_gerqr_Tune(nb, N-j, A+((M -j -nb) SHIFT), lda,
+                            TAU+((minMN -(j+nb)) SHIFT),
                             ws_RQ2, ws_T, nb, ws_larfb, 1));
-      Mjoin(PATL,gemoveT)(nb, N-j, ONE, ws_CP, maxMN, A+((M -j -nb) SHIFT), lda);
-
-      #ifdef TCPLX
-         ATL_makeConj1(nb, nb,  ws_T, nb);
-      #endif
-      if (j+nb < M)     /* if there are more cols left on top to update them  */
+      if (j+nb < M)  /* if there are more cols left on top to update them */
       {
 /*
+ *       ======================================================================
  *       Form the triangular factor of the block reflector
  *          H = H(i+ib-1) . . . H(i+1) H(i)
  *       After gerqr, ws_T contains 'T', the nb x nb triangular factor 'T'
@@ -2048,82 +1091,196 @@ int ATL_gerqf(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT lda, TYPE *TAU,
  *       The ws_T array used above is an input to ATL_larfb; it is 'T' in
  *       that routine, and LDT x K (translates here to NB  x NB).
  *       WORK is an LDWORK x NB workspace in ATL_larfb(maxMN X NB).
+ *       ======================================================================
  */
 
          ATL_larfb(CblasRight, CblasNoTrans, LABackward, LARowStore,
-               M-j-nb, N-j, nb,
-               A+((M - j -nb ) SHIFT),      /* Pointet to A in larfb          */
-               lda, ws_T, nb,
-               A,                           /* Pointer to C in larfb          */
-               lda, ws_larfb, M);
+                   M-j-nb, N-j, nb,
+                   A+((M - j -nb ) SHIFT),    /* Pointet to A in larfb        */
+                   lda, ws_T, nb,
+                   A,                        /* Pointer to C in larfb         */
+                   lda, ws_larfb, M);
       }
    }
 
 /*
  *  Build Last panel.  buildT  is passed as 0, as there is no need to build T
  */
-   nb = minMN - n;                          /* remianing nb                   */
-
-   if (M > N)                     /* Require to build T and Apply LARFB       */
-   {
-      Mjoin(PATL,gemoveT)(N-n, nb, ONE, A+((M -n -nb) SHIFT),lda,ws_CP, maxMN);
-      ATL_assert(!ATL_geqlr( N-n, nb,  ws_CP, maxMN,  TAU,
-                            ws_RQ2, ws_T, nb, ws_larfb, 1));
-      Mjoin(PATL,gemoveT)(nb, N-n, ONE, ws_CP, maxMN, A+((M -n -nb) SHIFT), lda);
-
-      #ifdef TCPLX
-         ATL_makeConj1(nb, nb,  ws_T, nb);
-      #endif
-
-      ATL_larfb(CblasRight, CblasNoTrans, LABackward, LARowStore,
-                  M-n-nb, N-n, nb,
-                  A+((M - n -nb ) SHIFT),   /* Pointet to A in larfb          */
-                  lda, ws_T, nb,
-                  A,                        /* Pointer to C in larfb          */
-                  lda, ws_larfb, M);
-   }
-   else
-   {
-      Mjoin(PATL,gemoveT)(N-n, nb, ONE, A, lda,ws_CP, maxMN);
-      ATL_assert(!ATL_geqlr( N-n, nb,  ws_CP, maxMN,  TAU,
-                            ws_RQ2, ws_T, nb, ws_larfb, 0));
-      Mjoin(PATL,gemoveT)(nb, N-n, ONE, ws_CP, maxMN, A, lda);
-   }
-
-   #ifdef TCPLX
-      ATL_lacgv(minMN, TAU  , 1);
-   #endif
+   nb = minMN - n;                              /* remaining rows.            */
+   ATL_assert(!ATL_gerqr_Tune(M-n, N-n, A, lda, TAU,
+                         ws_RQ2, ws_T, nb, ws_larfb, 0));
 
    if (vp)
       free(vp);
    return(0);
-}                                           /* END ATL_gerqf                  */
+} /* END ATL_gerqf */
 
-
+@ROUT ATL_geqrr
+@define rtn @geqrf@
+@define rec @geqrr@
+@define wks @ws_QR2@
+@define btm @geqr2@
+@ROUT ATL_geqlr
+@define rtn @geqlf@
+@define rec @geqlr@
+@define wks @ws_QL2@
+@define btm @geql2@
 @ROUT ATL_gerqr
+@define rtn @gerqf@
+@define rec @gerqr@
+@define wks @ws_RQ2@
+@define btm @gerq2@
+@ROUT ATL_gelqr
+@define rtn @gelqf@ 
+@define rec @gelqr@ 
+@define wks @ws_LQ2@
+@define btm @gelq2@
 
-int ATL_gerqr(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT LDA, TYPE *TAU,
-               TYPE *ws_LQ2, TYPE *ws_T, ATL_CINT LDT,
-               TYPE *WORKM, const int buildT)
+@ROUT ATL_geqrr ATL_gelqr ATL_geqlr ATL_gerqr
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2009 -def cwauth "Siju Samuel" -def contrib "Anthony M. Castaldo, R. Clint Whaley"
+
+#include "atlas_misc.h"
+#include "cblas.h"
+#include "atlas_lapack.h"
+#include "atlas_lvl3.h"
+#include "atlas_cacheedge.h"
+
+#ifdef ATL_USEPTHREADS
+   #include "atlas_threads.h"
+   #include "atlas_taffinity.h"
+#endif
+
+#if defined(ATL_TUNING)
+extern   int   ForceMethod;   /* Method used if >=0. */
+extern   int   ATL_Ns;
+extern   int   ATL_N[];
+extern   int   ATL_Serial[];
+extern   int   ATL_CpNoCpLo[];
+extern   int   ATL_CpNoCpHi[];
+extern   int   ATL_Recurse[];
+
+#if defined(ATL_USEPTHREADS)
+#define ATL_@(rec)_Tune Mjoin(Mjoin(PATL,t@(rec)),_Tune)    /* Add tag */
+#else
+#define ATL_@(rec)_Tune Mjoin(Mjoin(PATL,@(rec)),_Tune)     /* Add tag */
+#define ATL_NTHREADS (1)                                  /* Must define... */
+#endif /* ATL_USEPTHREADS */
+
+/* Must find the index with the tables. ATL_N is {NB,2NB, ..., 5NB,4,8,...,}  */
+/* i.e. first five entries are multiples of NB, then powers of 2, starting at */
+/* 4, up to NB without including NB. So, we find which N_ is closest to.      */
+
+#define NIDX(IDX_, N_) \
+if (N_ >= ((ATL_N[ATL_Ns-1]+NB)>>1))                     \
+   IDX_ = Mmin(5, (N_+(NB>>1))/NB)-1;                    \
+else {                                                   \
+   for(IDX_ = 5; IDX_ < ATL_Ns-1; IDX_ ++)               \
+      if (N_ < ((ATL_N[IDX_]+ATL_N[IDX_+1])>>1)) break;  \
+}
+
+/* We do not check if the problem will fit in cache in any way here, we are   */
+/* tuning. So the only question is IF we can recurse, and if  the tuner wants */
+/* us to recurse based on M.                                                  */
+
+#define METHOD(METH_, M_, N_, LDA_) /* 0,1,2,3=Recur,Serial,Cp,NoC*/\
+{ NIDX(METH_, N_);                  /* Get index for N into METH_.*/\
+  if (ForceMethod >= 0) METH_ = ForceMethod; else /* Honor force. */\
+  if (Mmin(M_,N_) > 1 &&            /* If possible to recurse,    */\
+      M_ >= ATL_Recurse[METH_])     /* Recurse if M is large.     */\
+     METH_ = 0;                     /* Set recursion as method.   */\
+  else if (ATL_NTHREADS == 1 ||     /* Use serial if we must, or  */\
+           M_ < ATL_Serial[METH_])  /* if we are beneath thresh.  */\
+     METH_ = 1;                     /* Set Serial as method.      */\
+  else if (LDA_ & (LDA_-1) == 0)    /* PCA. If LDA power of 2,    */\
+     METH_ = 2;                     /* Make sure we copy.         */\
+  else if (M_ >= ATL_CpNoCpHi[METH_] ||   /* If above lower limit,*/\
+           M_ <  ATL_CpNoCpLo[METH_])     /* or below lower limit,*/\
+     METH_ = 3;                     /* NoCopy will be faster,     */\
+  else METH_ = 2;                   /* Copy will be faster.       */\
+} /* END METHOD MACRO */
+
+
+#else /* We aren't tuning, use the tuned values and include files. */
+#define ForceMethod (-1)                    /* Never force if not tuning. */
+
+   #if defined(ATL_USEPTHREADS)
+   #define ATL_@(rec)_Tune Mjoin(PATL,t@(rec)) /* No tuning tag. */
+   #else
+   #define ATL_@(rec)_Tune Mjoin(PATL,@(rec))  /* No tuning tag. */
+   #endif /* ATL_USEPTHREADS */
+
+@ROUT ATL_geqrr `@define L2 @qr@`
+@ROUT ATL_geqlr `@define L2 @ql@`
+@ROUT ATL_gerqr `@define L2 @rq@`
+@ROUT ATL_gelqr `@define L2 @lq@`
+
+#if defined(ATL_USEPTHREADS)  /* Include threaded versions of headers.  */
+#if defined(SREAL)
+#include "atlas_stxover_ge@(L2)r.h"
+#elif defined(DREAL)
+#include "atlas_dtxover_ge@(L2)r.h"
+#elif defined(SCPLX)
+#include "atlas_ctxover_ge@(L2)r.h"
+#elif defined(DCPLX)
+#include "atlas_ztxover_ge@(L2)r.h"
+#endif /* (include on Type)  */
+#else                         /* Include Serial versions of headers.    */
+#if defined(SREAL)
+#include "atlas_sxover_ge@(L2)r.h"
+#elif defined(DREAL)
+#include "atlas_dxover_ge@(L2)r.h"
+#elif defined(SCPLX)
+#include "atlas_cxover_ge@(L2)r.h"
+#elif defined(DCPLX)
+#include "atlas_zxover_ge@(L2)r.h"
+#endif /* (include on Type)  */
+#endif /* Handled Parallel or Serial Includes. */
+
+#if !defined(METHOD)
+#if !defined(ATL_NTHREADS)
+#define MyCacheEdge ((3*CacheEdge)>>2) /* 3/4 single-core cache edge.   */
+#else 
+#define MyCacheEdge ((ATL_NTHREADS*3*CacheEdge)>>2) /* 3/4 collective.  */
+#endif 
+
+#define METHOD(METH_, M_, N_, LDA_) /* 0,1,2,3=Recur,Serial,Cp,NoC      */ \
+{                                                                          \
+   if (Mmin(M_,N_) < 2) METH_ = 1;  /* Force serial if just one column. */ \
+   else {                                                                  \
+      if (ATL_MulBySize(M_) * N_ <= /* If memory size of whole problem  */ \
+         MyCacheEdge)               /* ..fits in 3/4 total cache size,  */ \
+         METH_ = 2;                 /* ..Try PCA COPY.                  */ \
+      else METH_ = 0;               /* Otherwise, recurse.              */ \
+   }                                                                       \
+} /* END METHOD MACRO */
+#endif  /* Method macro not defined.  */
+#endif /* handled ATL_TUNING */
+
+int ATL_@(rec)_Tune(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT LDA, TYPE  *TAU,
+              TYPE *@(wks), TYPE *ws_T, ATL_CINT LDT,
+              TYPE *WORKM, const int buildT)
+{
+@ROUT ATL_geqrr ATL_geqlr
 /*
- * This is a recursive implementation of ATL_dgeqrf.c; it performs a QR
- * factorization of a panel (M > N) with a bottom level of ATL_geqr2. The
+ * This is a recursive implementation of ATL_@(rtn).c; it performs a QR
+ * factorization of a panel (M > N) with a bottom level of ATL_@(btm). The
  * recursion is on columns only; it divides by 2 until it reaches a
- * stopping point; at which time it calls ATL_geqr2 to complete a sub-panel,
+ * stopping point; at which time it calls ATL_@(btm) to complete a sub-panel,
  * ATL_larft and ATL_larfb to propagate the results, etc.
  *
- * ATL_gerqr.c :
- * int ATL_gerqr(int M, int N, TYPE *A, int LDA, TYPE  *TAU,
- *               TYPE *ws_QR2, TYPE *ws_T, int LDT,
+ * ATL_@(rec).c :
+ * int ATL_@(rec)(int M, int N, TYPE *A, int LDA, TYPE  *TAU,
+ *               TYPE *@(wks), TYPE *ws_T, int LDT,
  *               TYPE *WORKM, int buildT)
- *      NOTE :   ATL_geqr2.c will get compiled to four precisions
+ *      NOTE :   ATL_@(btm).c will get compiled to four precisions
  *               single precision real,      double precision real
  *               single precision complex,   double precision complex
  *  Purpose
  *  =======
  *
- *  ATL_gerqr computes a QR factorization of a real M-by-N matrix A:
- *  A = R * Q.
+ *  ATL_@(rec) computes a QR factorization of a real M-by-N matrix A:
+@ROUT ATL_geqrr ` *  A = Q * R.`
+@ROUT ATL_geqlr ` *  A = Q * L.`
  *
  *  Arguments
  *  =========
@@ -2145,13 +1302,13 @@ int ATL_gerqr(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT LDA, TYPE *TAU,
  *
  *  LDA     (input) INTEGER
  *          The leading dimension of the array A.  LDA >= max(1,M).
- *          If LDA == 0, returns work sizes in *WORKV and *WORKM.
+ *
  *
  *  TAU     (output) DOUBLE PRECISION array, dimension (min(M,N))
  *          The scalar factors of the elementary reflectors (see Further
  *          Details).
  *
- *  ws_RQ2  (workspace) workspace for rq2 factorization. To be allocated
+ *  @(wks)  (workspace) workspace for @(btm) factorization. To be allocated
  *          with space of max(M,N)
  *
  *  ws_T    (input/output).  Is the size of T matrix. To be allocated
@@ -2162,138 +1319,563 @@ int ATL_gerqr(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT LDA, TYPE *TAU,
  *  LDT     (input) INTEGER
  *          The leading dimension of the array T.  LDT >= max(1,min(M,N)).
  *
+ *  WORKM   (workspace) Work space matrix, N rows by
+ *          minMN columns; the amount used by larfb.
  *
- *  WORKM   Work space matrix, double precision matrix at least M rows by
- *          N columns; the amount used by larft and larfb.
- *
- *  buildT  If non-zero, dgerqr will build in ws_T the complete T necessary
+ *  buildT  If non-zero, dgeqrr will build in ws_T the complete T necessary
  *          for the original panel it is passed;
  *          such that Q= I - transpose(Y) * T * Y.
  *          If zero, ws_T will contain only those elements of T necessary to
  *          complete the panel.
  */
-{
-   int I, top, topMN,  bottom, INFO, IINFO, lbuilt, rbuilt;
+
+@ROUT ATL_gelqr ATL_gerqr `   int top, bottom, buildT_temp;`
+@ROUT ATL_geqrr ATL_geqlr `   int left, right;`
+@ROUT ATL_geqlr `   int leftMN;`
+@ROUT ATL_gerqr `   int topMN;`
+@ROUT ATL_gelqr `   int bottomMN;`
+@ROUT ATL_geqrr ATL_geqlr ATL_gelqr ATL_gerqr
+   int I, INFO, IINFO, lbuilt, rbuilt, method;
    int LDA2 = LDA SHIFT;                    /* for complex LDA *2             */
    int LDT2 = LDT SHIFT;                    /* for complex LDT *2             */
    ATL_CINT minMN = Mmin(M, N);
+
+@ROUT ATL_gelqr ATL_gerqr
    #ifdef TCPLX
       TYPE ONE[2] = {ATL_rone, ATL_rzero};
    #else
       #define ONE ATL_rone
    #endif
 
+@ROUT ATL_geqrr ATL_geqlr ATL_gelqr ATL_gerqr
    if (M < 1 || N < 1) return(0);           /* Nothing to do.                 */
+@ROUT ATL_geqrr ATL_geqlr `   METHOD(method, M, N, LDA);                   /* Find the method.           */`
+@ROUT ATL_gerqr ATL_gelqr `   METHOD(method, N, M, LDA);                   /* Find the method.           */`
+   #if !defined(ATL_USEPTHREADS) || !defined(ATL_PAFF_SETAFFNP)
+   if (method == 2 || method == 3) method=1;    /* Don't PCA if no affinity.  */
+   #endif
 
-/*   topMN = (minMN>>2)<<1;                                                   */
-/*   bottom = minMN - topMN;                                                  */
-/*   top = M - bottom;                                                        */
-
-/*
- * Choose a smart recursive column partitioning based on M:
- */
-   if (minMN >= NB+NB)            /* big prob, put remainder on right         */
+   switch(method)                               /* Based on method;           */
    {
-      topMN = ATL_MulByNB(ATL_DivByNB(minMN>>1));
-      bottom = minMN - topMN;            
-      top  = M - bottom;
-   }
-   else       /* small prob, keep M mult of MU (MU more critical than NU)     */
+      case 0:  /* RECURSION. */
+@BEGINSKIP 
+/******************************************************************************/
+/* That ends the common portion. These four routines share a lot of structure,*/
+/* but the details are different on almost every line, so being generic with  */
+/* extract for the structure really just makes it more confusing than helpful.*/
+/* So we don't try, the next commonality will just finish the routine.        */
+/******************************************************************************/
+@ENDSKIP
+
+@ROUT ATL_geqrr
+
+      /*
+       * Choose a smart recursive column partitioning based on N:
+       * The mapping from this routs dim:GEMM is : right:M, left:N, K:M-left
+       * For big probs, max M & K by making left small & a mult of NB.
+       * For small problems, make M a mult of MU (many x86 have NU=1 anyway!).
+       */
+
+         if (minMN >= NB+NB)                    /* big prob, put rmnder right */
+         {
+            left = ATL_MulByNB(ATL_DivByNB(minMN>>1));
+            right = N - left;                   /* for QR, right as N - left  */
+         }
+         else /* small prob, keep M mult of MU (MU more critical than NU)     */
+         {
+            right = ((minMN>>1)/ATL_mmMU)*ATL_mmMU;
+            left = minMN - right;
+            right = N - left;                   /* for QR, right as N - left  */
+         }
+
+         if (left==0 || right==0)               /* If too small for that,     */
+         {
+            left=(minMN>>1);                    /* get half for left.         */
+            right = N-left;                     /* half for right.            */
+         }
+
+      /*
+       * Factor left half, using same workspaces as we eventually use for right.
+       * We always build T so we can multiply by Q for the right side update
+       */
+         ATL_geqrr_Tune(M, left, A, LDA, TAU, ws_QR2, ws_T, LDT, WORKM, 1);
+
+      /*
+       * Adjust right according to T:  apply H' to A[0:(M-1), left:(N-1)].
+       */
+         ATL_larfb(CblasLeft, CblasTrans,         /* From left, Transposed,   */
+                    LAForward, LAColumnStore,     /* Forward, Columnwise.     */
+                    M,                            /* Update area is M rows,   */
+                    right,                        /* 'right' columns,         */
+                    left,                         /* V is 'left' columns.     */
+                    A, LDA,                       /* V array (inside A)       */
+                    ws_T, LDT,                    /* T array (in work space)  */
+                    A+(left*LDA2), LDA,           /* Array to update.         */
+                    WORKM, N);                    /* Workspace, leading dim.  */
+
+      /*
+       * Now factor updated right
+       */
+         ATL_geqrr_Tune(M-left, right, A+(left SHIFT)*(LDA+1), LDA,
+            TAU+(left SHIFT),ws_QR2, ws_T+(left SHIFT)*(LDT+1), LDT,
+            WORKM, buildT);
+
+      /*
+       * If we are building T, the left side was completely built above, and the
+       * right-hand side is partially built by the recursion. We need to fill in
+       * the upper right quarter of T, which is left x right in size, using the
+       * formula -T1 * (Y1^T * Y2) * T2.
+       * right :   minMN - left
+       */
+         if (buildT)
+            ATL_larft_block(LAForward, LAColumnStore, M, minMN, left, 
+                            minMN-left, A, LDA, ws_T, LDT);
+         return(0); /* END CASE RECURSION */
+
+
+      case 1:  /* SERIAL. */
+
+         ATL_geqr2(M, minMN, A, LDA, TAU, ws_QR2);
+         if (buildT ||  (N > minMN) )
+         {
+            ATL_larft(LAForward, LAColumnStore,
+                     M, minMN, A, LDA,
+                     TAU, ws_T, LDT);
+         }
+         break; /* END CASE (Update T is after switch). */
+
+      #if defined(ATL_USEPTHREADS)  /* Cases 2 & 3 only for parallel. */
+      case 2: /* PCA COPY (last two parameters: BuildT, Copy) */
+         ATL_tgeqr2(M, minMN, A, LDA, TAU, ws_QR2, ws_T, LDT, WORKM, 1, 1);
+         break; /* END CASE (Update T is after switch). */
+
+      case 3: /* PCA NOCOPY (last two parameters: BuildT, Copy) */
+         ATL_tgeqr2(M, minMN, A, LDA, TAU, ws_QR2, ws_T, LDT, WORKM, 1, 0);
+         break; /* END CASE (Update T is after switch). */
+      #endif /* defined(ATL_USEPTHREADS) */
+   } /* END SWITCH on method. */
+
+   /*
+    *   For cases Serial, PCA_Copy, PCA NoCopy, we must update T.
+    *   Adjust remainder matrix according to T:  apply H' , if N > minMN
+    */
+   if ( N > minMN )
    {
-      bottom = ((minMN>>1)/ATL_mmMU)*ATL_mmMU;
-      topMN = minMN - bottom;
-      top = M - bottom;                      
+      ATL_larfb(CblasLeft, CblasTrans,      /* From left, Transposed,        */
+         LAForward, LAColumnStore,          /* Forward, Columnwise.          */
+         M,                                 /* Update area is M rows,        */
+         N-minMN,                           /* 'right' columns,              */
+         minMN,                             /* V is 'left' columns.          */
+         A, LDA,                            /* V array (inside A)            */
+         ws_T, LDT,                         /* T array (in work space)       */
+         A+(minMN*LDA2), LDA,               /* Array to update.              */
+         WORKM, N);                         /* Workspace, leading dim.       */
    }
 
-/*
- * Stop recursion if problem cache contained, or no more benefit from L3BLAS
- */
-   if (ATL_MulBySize(N)*minMN <= LA_CE || minMN <= 8 || !topMN || !bottom)
-   {
-      #if 0
-      if (minMN >= 4)
-      {
-         Mjoin(PATL,gemoveT)(N, minMN, ONE, A, LDA, WORKM, N);
-         ATL_geql2(N, minMN, WORKM, N, TAU, ws_LQ2);
-         Mjoin(PATL,gemoveT)(minMN, N, ONE, WORKM, N, A, LDA);
-      }
-      else
-      #endif
-         ATL_gerq2(minMN, N, A+((M -minMN) SHIFT) , LDA, TAU, ws_LQ2);
+@ROUT ATL_geqlr 
 
-      if (buildT  || M > minMN)
-      {
-         ATL_larft(LABackward, LARowStore, N, minMN,
-                    A+((M -minMN) SHIFT),   LDA,
-                    TAU, ws_T, LDT);        /* Build the T matrix.            */
-      }
+      /*
+       * Choose a smart recursive column partitioning based on N:
+       * The mapping from this routs dim:GEMM is : right:M, left:N, K:M-left
+       * For big probs, max M & K by making left small & a mult of NB.
+       * For small problems, make M a mult of MU (many x86 have NU=1 anyway!).
+       */
 
-      if (M > minMN)
-      {
-         ATL_larfb(CblasRight, CblasNoTrans,/* From right,Not Transposed,     */
-               LABackward, LARowStore,      /* Backward, Rowwise.             */
-               M-minMN,                     /* Update area is top rows        */
-               N,                           /* 'N' columns (remainder)        */
-               minMN,                       /* V is 'bottom' columns.         */
-               A+((M -minMN) SHIFT)  , LDA, /* V array (inside A)             */
-               (ws_T), LDT,                 /* Build T at T[top,top].         */
-               A, LDA,                      /* Array to update.               */
-               WORKM, M);                   /* Workspace, leading dim.        */
-      }
-        
-      return(0);                            /* All okay.                      */
-   }
+         if (minMN >= NB+NB) /* big prob, put remainder on right.             */
+         {
+            leftMN = ATL_MulByNB(ATL_DivByNB(minMN>>1));
+            right = minMN - leftMN;
+            left  = N -right;
+         }
+         else /* small prob, keep M mult of MU (MU more critical than NU)     */
+         {
+            right = ((minMN>>1)/ATL_mmMU)*ATL_mmMU;
+            leftMN = minMN - right;
+            left = N - right;
+         }
 
-/*----------------------------------------------------------------------------*/
-/* On the bottom half, we use the same workspaces.                            */
-/* Because we know we have a top hand side we must always                     */
-/* build T, so we can multiply by Q before doing the top side.                */
-/*----------------------------------------------------------------------------*/
-   ATL_gerqr(bottom,N, (A+(top SHIFT)), LDA, (TAU+(topMN SHIFT)), ws_LQ2,
-            ( ws_T+(topMN SHIFT)+topMN*LDT2), LDT,    /* Build T at T[top,top]. */
+         if (left==0 || right==0)               /* Stop trying to be fancy.   */
+         {
+            right = (minMN>>1);
+            leftMN = minMN - right;
+            left = N - right;
+         }
+
+      /*----------------------------------------------------------------------*/
+      /* On the right half, we use the same workspaces.                       */
+      /* Because we know we have a left hand side we must always              */
+      /* build T, so we can multiply by Q before doing the left side.         */
+      /*----------------------------------------------------------------------*/
+         ATL_geqlr_Tune(M, right,
+            (A+(left*LDA2)), LDA,
+            (TAU+(leftMN SHIFT)), ws_QL2,
+            (ws_T+(leftMN SHIFT)+leftMN*LDT2), LDT, /* Build T @ T[left,left].*/
             WORKM, 1);
 
-/*----------------------------------------------------------------------------*/
-/* Now we must adjust the top hand side according to our T.                   */
-/* We must apply H'                                                           */
-/*----------------------------------------------------------------------------*/
+      /*----------------------------------------------------------------------*/
+      /* Now we must adjust the left hand side according to our T.            */
+      /* We must apply H'                                                     */
+      /*----------------------------------------------------------------------*/
 
-   ATL_larfb(CblasRight, CblasNoTrans,      /* From right,Not Transposed,     */
-               LABackward, LARowStore,      /* Backward, Rowwise.             */
-               top,                         /* Update area is top rows ,      */
-               N,                           /* 'N' columns (remainder)        */
-               bottom,                      /* V is 'bottom' columns.         */
-               (A +(top SHIFT))  , LDA,     /* V array (inside A)             */
-               (ws_T+(topMN SHIFT)+topMN*LDT2), LDT, /* Build T at T[top,top]. */
-               A, LDA,                      /* Array to update.               */
-               WORKM, M);                   /* Workspace, leading dim.        */
+         ATL_larfb(CblasLeft, CblasTrans,         /* From left, Transposed,   */
+                    LABackward, LAColumnStore,    /* Forward, Columnwise.     */
+                    M,                            /* Update area is M rows,   */
+                    left,                         /* 'left' columns (remainder*/
+                    right,                        /* V is 'right' columns.    */
+                    (A +(left*LDA2))  , LDA,      /* V array (inside A)       */
+                   ( ws_T+(leftMN SHIFT)+leftMN*LDT2), /* Bld T @ T[left,left]*/
+                    LDT,
+                    A, LDA,                       /* Array to update.         */
+                    WORKM, N);                    /* Workspace, leading dim.  */
 
-/*----------------------------------------------------------------------------*/
-/* On the top  half,                                                          */
-/*----------------------------------------------------------------------------*/
-   ATL_gerqr(top, N-bottom,                 /* Shorter columns.               */
-             (A), LDA,                      /* A at A[0,0].                   */
-             (TAU),                         /* TAU at TAU[top].               */
-             ws_LQ2,                        /* No returned values.            */
-             ( ws_T), LDT,                  /* Build T at T[top,top].         */
-             WORKM, buildT);                /* No returned values.            */
+      /*----------------------------------------------------------------------*/
+      /* On the left  half, we must adjust all pointers.                      */
+      /*----------------------------------------------------------------------*/
+         ATL_geqlr_Tune(M-right, left,            /* Shorter columns.         */
+                    (A), LDA,                     /* A at A[0,0].             */
+                    (TAU),                        /* TAU at TAU[left].        */
+                    ws_QL2,                       /* No returned values.      */
+                   ( ws_T), LDT,                  /* Build T at T[left,left]. */
+                    WORKM, buildT);               /* No returned values.      */
 
-/*----------------------------------------------------------------------------*/
-/* If we build T, the bottom side must be completely built, and               */
-/* the top side should be partially built. We need to fill in                 */
-/* the lower  left  hand block, 'bottom' rows by 'top' columns.               */
-/* The formula is -T2 * (Y2 * Y1^T) * T1.                                     */
-/* The routine is in ATL_larft.c.                                             */
-/*----------------------------------------------------------------------------*/
+      /*----------------------------------------------------------------------*/
+      /* If we build T, the right side must be completely built, and          */
+      /* the left side should be partially built. We need to fill in          */
+      /* the lower  left  hand block, 'right' rows by 'left' columns.         */
+      /* The formula is -T2 * (Y2^T * Y1) * T1.                               */
+      /* The routine is in ATL_larft.c.                                       */
+      /*----------------------------------------------------------------------*/
 
-   if (buildT )
+         if (buildT)
+         {
+            ATL_larft_block(LABackward, LAColumnStore,
+                        M, minMN, minMN-right, right,
+                        (A+((N-minMN)*LDA2)) , LDA,
+                        ws_T, LDT);                /* compute upper corner.   */
+         }
+
+         return(0); /* END CASE RECURSION */
+
+
+      case 1:  /* SERIAL. */
+
+         ATL_geql2(M, minMN, A+((N-minMN)*LDA2), LDA, TAU, ws_QL2);
+
+         if (buildT || (N > minMN) )
+         {
+            ATL_larft(LABackward, LAColumnStore,
+                     M, minMN, A+((N-minMN)*LDA2), LDA,
+                     TAU, ws_T, LDT);           /* Build the T matrix.        */
+         }
+         break; /* END CASE (Update T is after switch). */
+
+      #if defined(ATL_USEPTHREADS)  /* Cases 2 & 3 only for parallel. */
+      case 2: /* PCA COPY (last two parameters: BuildT, Copy) */
+         ATL_tgeql2(M, minMN, A+((N-minMN)*LDA2), LDA, TAU, ws_QL2,
+                           ws_T, LDT, WORKM, 1, 1);
+         break; /* END CASE (Update T is after switch). */
+
+      case 3: /* PCA NOCOPY (last two parameters: BuildT, Copy) */
+         ATL_tgeql2(M, minMN, A+((N-minMN)*LDA2), LDA, TAU, ws_QL2,
+                           ws_T, LDT, WORKM, 1, 0);
+         break; /* END CASE (Update T is after switch). */
+      #endif /* defined(ATL_USEPTHREADS) */
+   } /* END SWITCH on method. */
+
+   /*
+    *   For cases Serial, PCA_Copy, PCA NoCopy, we must update T.
+    *   Adjust remainder matrix according to T:  apply H' , if N > minMN
+    */
+   if (N > minMN )
    {
-      ATL_larft_block(LABackward, LARowStore,N, minMN, minMN-bottom, bottom,
-         A+((M -minMN) SHIFT), LDA, ws_T, LDT);  /* compute upper corner.     */
+      ATL_larfb(CblasLeft, CblasTrans,          /* From left, Transposed,     */
+           LABackward, LAColumnStore,           /* Forward, Columnwise.       */
+           M,                                   /* Update area is M rows,     */
+           N-minMN,                             /* 'left' columns             */
+           minMN,                               /* V is 'right' columns.      */
+           (A+((N-minMN)*LDA2))  , LDA,         /* V array (inside A)         */
+           (ws_T), LDT,                         /* Build T at T[left,left].   */
+           A, LDA,                              /* Array to update.           */
+           WORKM, N);                           /* Workspace, leading dim.    */
    }
 
+@ROUT ATL_gelqr
+      /*
+       * Choose a smart recursive column partitioning based on M:
+       */
+         if (minMN >= NB+NB)            /* big prob, put rmndr on bottom.     */
+         {
+            bottomMN = ATL_MulByNB(ATL_DivByNB(minMN>>1));
+            top  = minMN - bottomMN;
+            bottom  = M -top;
+         }
+         else                          /* small prob, keep M mult of MU.      */
+         {
+            top  = ((minMN>>1)/ATL_mmMU)*ATL_mmMU;
+            bottomMN = minMN - top;
+            bottom = M - top;
+         }
+
+         if (top==0 || bottom==0)      /* If too small for that,              */
+         {
+            top=(minMN>>1);            /* Get half for top.                   */
+            bottomMN = minMN - top;
+            bottom = M - top;          /* Rest for bottom.                    */
+         }
+         
+         /*-------------------------------------------------------------------*/
+         /* On the top half, we use the same workspaces.                      */
+         /* Because we know we have a bottom hand side we must always         */
+         /* build T, so we can multiply by Q before doing the bottom side.    */
+         /*-------------------------------------------------------------------*/
+            ATL_gelqr_Tune(top, N, A, LDA, TAU, @(wks), ws_T, LDT, WORKM, 1);
+
+         /*-------------------------------------------------------------------*/
+         /* Now we must adjust the bottom hand side according to our T.       */
+         /* We must apply H' to A[0:(M-1), top:(N-1)].                        */
+         /*-------------------------------------------------------------------*/
+
+            ATL_larfb(CblasRight, CblasNoTrans,      /* From top, Transposed, */
+                       LAForward, LARowStore,        /* Forward, Columnwise.  */
+                       bottom,                       /* Upd area is btm rows. */
+                       N,                            /* 'bottom' columns,     */
+                       top,                          /* V is 'top' columns.   */
+                       A, LDA,                       /* V array (inside A)    */
+                       ws_T, LDT,                    /* T array in work space */
+                       A+(top SHIFT), LDA,           /* Array to update.      */
+                       WORKM, M);                    /* Workspace, leading dim*/
+
+         /*-------------------------------------------------------------------*/
+         /* On the bottom half, we must adjust all pointers.                  */
+         /*-------------------------------------------------------------------*/
+            ATL_gelqr_Tune(bottom, N-top,            /* Shorter rows.         */
+                       (A+(top SHIFT)+top*LDA2), LDA,/* A at A[top,top].      */
+                       (TAU+(top SHIFT)),            /* TAU at TAU[top].      */
+                       @(wks),                       /* No returned values.   */
+                       (ws_T+(top SHIFT)+top*LDT2), LDT,  /* Bld @ T[top,top].*/
+                       WORKM, buildT);               /* No returned values.   */
+
+         /*-------------------------------------------------------------------*/
+         /* If we build T, the left/top side must be completely built, and    */
+         /* the right/bottom side should be partially built. We need to fill  */
+         /* in the upper left hand block, 'top' rows by 'bottom' columns.     */
+         /* The formula is -T1 * (Y1 * Y2^T) * T2.                            */
+         /* The routine is in ATL_larft.c.                                    */
+         /*-------------------------------------------------------------------*/
+
+            if (buildT)
+            {
+               ATL_larft_block(LAForward, LARowStore, 
+                           N, minMN, top, bottomMN,
+                           A, LDA, ws_T, LDT);  /* Build the T matrix.        */
+            }
+            return(0);
+            break;
+
+      case 1: /* SERIAL */ 
+         /*
+          *       ATL_gelq2(minMN, N, A, LDA, TAU, ws_LQ2);
+          *       Transpose the input and sent to QR2 serial.
+          */
+         if (minMN >= 4)
+         {
+            Mjoin(PATL,gemoveT)(N, minMN, ONE, A, LDA, WORKM, N);
+            ATL_geqr2(N, minMN, WORKM, N, TAU, ws_LQ2);
+            Mjoin(PATL,gemoveT)(minMN, N, ONE, WORKM, N, A, LDA);
+            #ifdef TCPLX
+               Mjoin(PATLU,scal)(minMN, ATL_rnone, TAU+1, 2);
+            #endif
+         }
+         else
+         {
+               ATL_gelq2(minMN, N, A, LDA, TAU, ws_LQ2);
+         }
+
+         if (buildT || (M > minMN) )
+         {
+            ATL_larft(LAForward, LARowStore, N, minMN, A, LDA,
+                    TAU, ws_T, LDT);         /* Build the T matrix.           */
+         }
+         break; /* END CASE */
+
+      #if defined(ATL_USEPTHREADS)  /* Cases 2 & 3 only for parallel. */
+      case 2:  /* PCA COPY */
+      case 3:  /* PCA NOCOPY (does not exist for LQ) */
+
+         if (buildT || (M > minMN) )
+         {
+            buildT_temp = 1;
+         } 
+         else 
+         {
+            buildT_temp = buildT;
+         }
+
+         ATL_tgelq2(N, minMN, A, LDA, TAU, 
+            @(wks), ws_T, LDT, WORKM, 
+            buildT_temp, 1); /* '1' for copy. */
+
+         break; /* END CASE */
+      #endif /* defined(ATL_USEPTHREADS) */
+   } /* END SWITCH on method */
+
+   /* Common code for cases Serial, PCA COPY, PCA NOCOPY */
+   /*
+    *   Adjust bottom according to T:  apply H' , if M > minMN
+    */
+   if ( M > minMN )
+   {
+      ATL_larfb(CblasRight, CblasNoTrans,       /* From top, Transposed,      */
+           LAForward, LARowStore,               /* Forward, Columnwise.       */
+           M-minMN,                             /* Update area is bottom rows,*/
+           N,                                   /* 'bottom' columns,          */
+           minMN,                               /* V is 'top' columns.        */
+           A, LDA,                              /* V array (inside A)         */
+           ws_T, LDT,                           /* T array (in work space)    */
+           A+( minMN SHIFT), LDA,               /* Array to update.           */
+           WORKM, M);                           /* Workspace, leading dim.    */
+
+   }
+
+@ROUT ATL_gerqr 
+      /*
+       * Choose a smart recursive column partitioning based on M:
+       */
+         if (minMN >= NB+NB)            /* big prob, put remainder on right   */
+         {
+            topMN = ATL_MulByNB(ATL_DivByNB(minMN>>1));
+            bottom = minMN - topMN;
+            top  = M - bottom;
+         }
+         else /* small prob, keep M mult of MU (MU more critical than NU)     */
+         {
+            bottom = ((minMN>>1)/ATL_mmMU)*ATL_mmMU;
+            topMN = minMN - bottom;
+            top = M - bottom;
+         }
+
+         if (top==0 || bottom==0)      /* If too small for that,              */
+         {
+            bottom = (minMN>>1);       /* Stop trying to be clever.           */
+            topMN = minMN - bottom;
+            top = M - bottom;
+         }
+
+      /*----------------------------------------------------------------------*/
+      /* On the bottom half, we use the same workspaces.                      */
+      /* Because we know we have a top hand side we must always               */
+      /* build T, so we can multiply by Q before doing the top side.          */
+      /*----------------------------------------------------------------------*/
+         ATL_gerqr(bottom,N, (A+(top SHIFT)), LDA, 
+                  (TAU+(topMN SHIFT)), @(wks),
+                  ( ws_T+(topMN SHIFT)+topMN*LDT2), 
+                  LDT,                          /* Build T at T[top,top].     */
+                  WORKM, 1);
+
+      /*----------------------------------------------------------------------*/
+      /* Now we must adjust the top hand side according to our T.             */
+      /* We must apply H'                                                     */
+      /*----------------------------------------------------------------------*/
+
+         ATL_larfb(CblasRight, CblasNoTrans,    /* From right,Not Transposed, */
+                     LABackward, LARowStore,    /* Backward, Rowwise.         */
+                     top,                       /* Update area is top rows ,  */
+                     N,                         /* 'N' columns (remainder)    */
+                     bottom,                    /* V is 'bottom' columns.     */
+                     (A +(top SHIFT))  , LDA,   /* V array (inside A)         */
+                     (ws_T+(topMN SHIFT)+topMN*LDT2), 
+                     LDT,                       /* Build T at T[top,top].     */
+                     A, LDA,                    /* Array to update.           */
+                     WORKM, M);                 /* Workspace, leading dim.    */
+
+      /*----------------------------------------------------------------------*/
+      /* On the top  half,                                                    */
+      /*----------------------------------------------------------------------*/
+         ATL_gerqr(top, N-bottom,                 /* Shorter columns.         */
+                   (A), LDA,                      /* A at A[0,0].             */
+                   (TAU),                         /* TAU at TAU[top].         */
+                   @(wks),                        /* No returned values.      */
+                   ( ws_T), LDT,                  /* Build T at T[top,top].   */
+                   WORKM, buildT);                /* No returned values.      */
+
+      /*----------------------------------------------------------------------*/
+      /* If we build T, the bottom side must be completely built, and         */
+      /* the top side should be partially built. We need to fill in           */
+      /* the lower  left  hand block, 'bottom' rows by 'top' columns.         */
+      /* The formula is -T2 * (Y2 * Y1^T) * T1.                               */
+      /* The routine is in ATL_larft.c.                                       */
+      /*----------------------------------------------------------------------*/
+
+         if (buildT )
+         {
+            ATL_larft_block(LABackward, LARowStore,
+               N, minMN, minMN-bottom, bottom,
+               A+((M -minMN) SHIFT), LDA, 
+               ws_T, LDT);                      /* compute upper corner.      */
+         }
+
+         return(0);
+
+      case 1: /* SERIAL (single core mode) */
+         if (minMN >= 4)
+         {
+            Mjoin(PATL,gemoveT)(N, minMN, ONE, A+((M-minMN) SHIFT),LDA,WORKM,N);
+            ATL_geql2(N, minMN, WORKM, N, TAU, ws_RQ2);
+            Mjoin(PATL,gemoveT)(minMN,N,ONE,WORKM, N, A+((M-minMN) SHIFT), LDA);
+            // make conjugate  of TAU
+            #ifdef TCPLX
+               Mjoin(PATLU,scal)(minMN, ATL_rnone, TAU+1, 2);
+            #endif
+         }
+         else
+         {
+            ATL_gerq2(minMN, N, A+((M -minMN) SHIFT) , LDA, TAU, ws_RQ2);
+         }
+
+         if (buildT  || M > minMN)
+         {
+            ATL_larft(LABackward, LARowStore, N, minMN,
+                       A+((M -minMN) SHIFT),   LDA,
+                       TAU, ws_T, LDT);        /* Build the T matrix.         */
+         }
+         break; /* END CASE */
+
+      #if defined(ATL_USEPTHREADS)  /* Cases 2 & 3 only for parallel. */
+      case 2: /* PCA COPY */
+      case 3: /* PCA NOCOPY (but does not exist for RQ) */
+         if (buildT || (M > minMN) )
+         {
+            buildT_temp = 1;
+         }
+         else
+         {
+            buildT_temp = buildT;
+         }
+
+         /* Here minMN, N are reversed */ 
+         ATL_tgerq2(N, minMN,  A+((M-minMN) SHIFT), LDA, TAU, @(wks),
+                    ws_T, LDT, WORKM, buildT_temp, 1);
+         break; /* END CASE */
+      #endif /* defined(ATL_USEPTHREADS) */
+   } /* END SWITCH on method */
+ 
+   /* Common code for cases Serial, PCA COPY, PCA NOCOPY */
+   if (M > minMN)
+   {
+      ATL_larfb(CblasRight, CblasNoTrans,       /* From right,Not Transposed, */
+            LABackward, LARowStore,             /* Backward, Rowwise.         */
+            M-minMN,                            /* Update area is top rows    */
+            N,                                  /* 'N' columns (remainder)    */
+            minMN,                              /* V is 'bottom' columns.     */
+            A+((M -minMN) SHIFT)  , LDA,        /* V array (inside A)         */
+            (ws_T), LDT,                        /* Build T at T[top,top].     */
+            A, LDA,                             /* Array to update.           */
+            WORKM, M);                          /* Workspace, leading dim.    */
+   }
+
+@ROUT ATL_geqrr ATL_geqlr ATL_gerqr ATL_gelqr
    return(0);
-}                                           /* END ATL_gerqr                  */
+} /* END ATL_@(rec) */
 
 @ROUT ATL_lapy2
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2009 -def cwauth "Siju Samuel" -def contrib "Anthony M. Castaldo, R. Clint Whaley"
@@ -2578,7 +2160,7 @@ void ATL_larfb(const enum CBLAS_SIDE SIDE, const enum CBLAS_TRANSPOSE TRANS,
                      #else
                         C[(j SHIFT) +i*LDC2] -= WORK[(i SHIFT) +j*LDWORK2];
 /*                      Conjugate is taken, hence the addition                */
-                        C[(j SHIFT) +i*LDC2 +1 ] += WORK[(i SHIFT) +j*LDWORK2 +1];
+                        C[(j SHIFT)+i*LDC2+1] += WORK[(i SHIFT)+j*LDWORK2+1];
                      #endif
                   }
                }                            /* for                            */
@@ -2611,7 +2193,7 @@ void ATL_larfb(const enum CBLAS_SIDE SIDE, const enum CBLAS_TRANSPOSE TRANS,
  */
                   cblas_gemm(CblasColMajor,
                               CblasNoTrans, CblasNoTrans, M, K, N-K, ONE,
-                              C+K*LDC2, LDC, V+(K SHIFT), LDV, ONE, WORK, LDWORK);
+                              C+K*LDC2, LDC, V+(K SHIFT), LDV,ONE,WORK,LDWORK);
                }
 /*
  *              W := W * T  or  W * T'
@@ -2630,8 +2212,8 @@ void ATL_larfb(const enum CBLAS_SIDE SIDE, const enum CBLAS_TRANSPOSE TRANS,
  *
  */
                   cblas_gemm(CblasColMajor,
-                              CblasNoTrans, MY_TRANS, M, N-K, K, NONE,
-                              WORK, LDWORK, V+(K SHIFT), LDV, ONE, C+K*LDC2, LDC);
+                              CblasNoTrans, MY_TRANS, M, N-K, K, NONE, WORK,
+                              LDWORK, V+(K SHIFT), LDV, ONE, C+K*LDC2, LDC);
                }
 /*
  *              W := W * V1'
@@ -2652,8 +2234,8 @@ void ATL_larfb(const enum CBLAS_SIDE SIDE, const enum CBLAS_TRANSPOSE TRANS,
                      #ifdef TREAL 
                         C[i+j*LDC] -= WORK[i+j*LDWORK];
                      #else
-                        C[(i SHIFT) +j*LDC2] -= WORK[(i SHIFT)+j*LDWORK2];
-                        C[(i SHIFT) +j*LDC2 + 1] -= WORK[(i SHIFT)+j*LDWORK2 + 1];
+                        C[(i SHIFT)+j*LDC2] -= WORK[(i SHIFT)+j*LDWORK2];
+                        C[(i SHIFT)+j*LDC2+1] -= WORK[(i SHIFT)+j*LDWORK2+1];
                      #endif
                   }
                }
@@ -2743,9 +2325,10 @@ void ATL_larfb(const enum CBLAS_SIDE SIDE, const enum CBLAS_TRANSPOSE TRANS,
                      #ifdef TREAL
                         C[M-K+j+i*LDC] -= WORK[i+j*LDWORK];
                      #else
-                        C[((M-K+j) SHIFT) +i*LDC2] -= WORK[(i SHIFT) +j*LDWORK2];
+                        C[((M-K+j) SHIFT)+i*LDC2] -= WORK[(i SHIFT)+j*LDWORK2];
 /*                      Conjugate is taken, hence the addition                */
-                        C[((M-K+j) SHIFT) + 1+ i*LDC2] += WORK[(i SHIFT)+ 1 +j*LDWORK2];
+                        C[((M-K+j) SHIFT)+1+i*LDC2] += 
+                                                   WORK[(i SHIFT)+1+j*LDWORK2];
                     #endif
                   }
                }
@@ -2819,7 +2402,8 @@ void ATL_larfb(const enum CBLAS_SIDE SIDE, const enum CBLAS_TRANSPOSE TRANS,
                         C[i+(N-K+j)*LDC] -= WORK[i+j*LDWORK];
                      #else
                         C[(i SHIFT)+(N-K+j)*LDC2] -= WORK[(i SHIFT)+j*LDWORK2];
-                        C[(i SHIFT)+(N-K+j)*LDC2 + 1] -= WORK[(i SHIFT)+j*LDWORK2 +1];
+                        C[(i SHIFT)+(N-K+j)*LDC2+1] -= 
+                                                   WORK[(i SHIFT)+j*LDWORK2+1];
                      #endif
                   }
                }
@@ -2884,8 +2468,8 @@ void ATL_larfb(const enum CBLAS_SIDE SIDE, const enum CBLAS_TRANSPOSE TRANS,
  *                 C2 := C2 - V2' * W'
  */
                   cblas_gemm(CblasColMajor,
-                              MY_TRANS, MY_TRANS, M-K, N, K, NONE,
-                              V+(K*LDV2), LDV, WORK, LDWORK, ONE, C+(K SHIFT), LDC);
+                              MY_TRANS, MY_TRANS, M-K, N, K, NONE, V+(K*LDV2),
+                              LDV, WORK, LDWORK, ONE, C+(K SHIFT), LDC);
                }
 
 /*
@@ -2907,7 +2491,7 @@ void ATL_larfb(const enum CBLAS_SIDE SIDE, const enum CBLAS_TRANSPOSE TRANS,
                      #else
                         C[(j SHIFT) +i*LDC2] -= WORK[(i SHIFT)+j*LDWORK2];
 /*                      Conjugate is taken, hence the addition                */
-                        C[(j SHIFT) +i*LDC2 +1 ] += WORK[(i SHIFT) +j*LDWORK2 + 1];
+                        C[(j SHIFT)+i*LDC2+1] += WORK[(i SHIFT)+j*LDWORK2+1];
                      #endif
                   }
                }
@@ -3071,7 +2655,8 @@ void ATL_larfb(const enum CBLAS_SIDE SIDE, const enum CBLAS_TRANSPOSE TRANS,
                      #else 
                         C[((M-K+j) SHIFT) +i*LDC2] -= WORK[(i SHIFT)+j*LDWORK2];
 /*                      Conjugate is taken, hence the addition                */
-                        C[((M-K+j) SHIFT)+i*LDC2 +1 ] += WORK[(i SHIFT) +j*LDWORK2 + 1];
+                        C[((M-K+j) SHIFT)+i*LDC2+1] += 
+                                                   WORK[(i SHIFT)+j*LDWORK2+1];
                      #endif 
                   }
                }
@@ -3142,7 +2727,8 @@ void ATL_larfb(const enum CBLAS_SIDE SIDE, const enum CBLAS_TRANSPOSE TRANS,
                         C[i+(N-K+j)*LDC] -= WORK[i+j*LDWORK];
                      #else
                         C[(i SHIFT)+(N-K+j)*LDC2] -= WORK[(i SHIFT)+j*LDWORK2];
-                        C[(i SHIFT)+1+(N-K+j)*LDC2] -= WORK[(i SHIFT)+1+j*LDWORK2];
+                        C[(i SHIFT)+1+(N-K+j)*LDC2] -= 
+                                                   WORK[(i SHIFT)+1+j*LDWORK2];
                      #endif
                   }
                }
@@ -3529,7 +3115,7 @@ void ATL_larfg(ATL_CINT N, TYPE *ALPHA, TYPE *X, ATL_CINT INCX, TYPE *TAU)
       else
       {
 
-         BETAp = ATL_lapy3(ALPHR, ALPHI, XNORM); /* Get sqrt( a^2 + b^2 + c^2) */
+         BETAp = ATL_lapy3(ALPHR, ALPHI, XNORM); /* Get sqrt(a^2 + b^2 + c^2) */
          BETA = BETAp;                      /* Assume ALPHA < 0               */
          if ( (*ALPHA) > 0) BETA = 0. - BETAp;   /* Change if assumed wrong   */
 
@@ -3570,7 +3156,7 @@ void ATL_larfg(ATL_CINT N, TYPE *ALPHA, TYPE *X, ATL_CINT INCX, TYPE *TAU)
 /*          Modify alpha   to alpha - beta,  which is equal to alphar -beta   */
             *(ALPHA) = *(ALPHA) - BETA;
 /*          Perform complex division before scaling the X vector              */
-            ATL_ladiv( ONEVAL,  ALPHA, ALPHA);   /* ALPHA will have the result */
+            ATL_ladiv( ONEVAL,  ALPHA, ALPHA);   /* ALPHA will have the result*/
             cblas_scal(N-1, ALPHA, X, INCX);
 /*
  *           If ALPHA is subnormal, it may lose relative accuracy
@@ -3761,7 +3347,7 @@ void ATL_larfp(ATL_CINT N, TYPE *ALPHA, TYPE *X, ATL_CINT INCX, TYPE *TAU)
    {
       BETAp = ATL_lapy2((*ALPHA), XNORM);   /* Get sqrt(a^2+b^2)              */
       BETA = BETAp;                         /* Assume ALPHA < 0               */
-      if ((*ALPHA) < 0) BETA = 0.-BETAp;    /* Change the sign if alpha is -ve */
+      if ((*ALPHA) < 0) BETA = 0.-BETAp;    /* Change sign if alpha negative. */
 
 /*    DLAMCH('S') returns 'safe minimum' (sfmin) such that                    */
 /*    1/sfmin does not overflow.                                              */
@@ -3869,7 +3455,7 @@ void ATL_larfp(ATL_CINT N, TYPE *ALPHA, TYPE *X, ATL_CINT INCX, TYPE *TAU)
             *(TAU)  = 2.0;
             *(TAU + 1) = 0.0;
 
-            for ( j = 0; j < ((N-1) SHIFT ) ; j++)    /* complex multiply by 2 */
+            for ( j = 0; j < ((N-1) SHIFT ) ; j++)   /* complex multiply by 2 */
             {
                X[ 2 + (j-1)*INCX ] = ZERO;
             }
@@ -3898,7 +3484,7 @@ void ATL_larfp(ATL_CINT N, TYPE *ALPHA, TYPE *X, ATL_CINT INCX, TYPE *TAU)
    else                                     /* XNORM != 0                     */
    {
 /*    XNORM != 0                                                              */
-      BETAp = ATL_lapy3(ALPHR, ALPHI, XNORM);    /* Get sqrt( a^2 + b^2 + c^2) */
+      BETAp = ATL_lapy3(ALPHR, ALPHI, XNORM);    /* Get sqrt( a^2 + b^2 + c^2)*/
       BETA = BETAp;                         /* Assume ALPHA < 0               */
       if ( (*ALPHA) < 0)
          BETA = 0. - BETAp;       /* Change the sign if alpha is -ve          */
@@ -4441,7 +4027,7 @@ void ATL_larft_blockBC(ATL_CINT N, ATL_CINT K, ATL_CINT left, ATL_CINT right,
 
 /*          copy the imaginary part.                                          */
             *(Tw + (row SHIFT) + 1 + col*LDT2) = /* Work[row, col]            */
-            0.0 - *(Y2+ ((N-K) SHIFT) +row*LDV2 + (col SHIFT) + 1 ); /* Y[col, row]. */
+            0.0 - *(Y2+((N-K) SHIFT)+row*LDV2 + (col SHIFT)+1); /* Y[col,row].*/
          #endif
       }
    }
@@ -4673,7 +4259,7 @@ void ATL_larftFC(const enum ATL_LADIRECT DIRECT, const enum ATL_LASTOREV STOREV,
 
    if (K == 0) return;                      /* Nothing to do.                 */
    if (N == 0) return;                      /* Nothing to do.                 */
-   if (DIRECT != LAForward || STOREV != LAColumnStore) /* If not my specialty, */
+   if (DIRECT != LAForward || STOREV != LAColumnStore) /* If not my specialty */
    {
       fprintf(stderr, "ATL_dlarft called with DIRECT=%d, STOREV=%d.\n"
                      "Aborting.\n", DIRECT, STOREV);
@@ -4787,7 +4373,7 @@ void ATL_larftBC(const enum ATL_LADIRECT DIRECT, const enum ATL_LASTOREV STOREV,
 
    if (K == 0) return;                      /* Nothing to do.                 */
    if (N == 0) return;                      /* Nothing to do.                 */
-   if (DIRECT != LABackward || STOREV != LAColumnStore) /* If not my specialty, */
+   if (DIRECT != LABackward || STOREV != LAColumnStore) /* If not my specialty*/
    {
       fprintf(stderr, "ATL_dlarft called with DIRECT=%d, STOREV=%d.\n"
                      "Aborting.\n", DIRECT, STOREV);
@@ -5061,10 +4647,10 @@ void ATL_larftBR(const enum ATL_LADIRECT DIRECT, const enum ATL_LASTOREV STOREV,
          *(T+LDT2+(1 SHIFT)+1) = *(TAU+(1 SHIFT) +1 );/* ... -imag            */
 
 /*       conjugate of V is taken                                              */
-         MY_DOT( N-2, V, LDV, (V+( 1 SHIFT) ), LDV, d10); /* Main dot product. */
+         MY_DOT( N-2, V, LDV, (V+( 1 SHIFT) ), LDV, d10); /* Main dot product.*/
 
          *(d10)+=*(V+(1 SHIFT) + (N-2)*LDV2);    /* Part mult by assumed 1.0  */
-         *(d10+1)+=*(V+(1 SHIFT)+1 + (N-2)*LDV2 ); /* Part mult by assumed 1.0 */
+         *(d10+1)+=*(V+(1 SHIFT)+1 + (N-2)*LDV2 ); /* Part mult by assumed 1.0*/
 
 /*       T[1,0] = -tau1*tau2*d10                                              */
 /*       Perform                                                              */
@@ -5618,6 +5204,7 @@ TYPE  ATL_epsilon1()
    return(eps);
 }
 
+
 @ROUT qrtst
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2009 -def cwauth "Siju Samuel" -def contrib "R. Clint Whaley, Anthony M. Castaldo"
 /*
@@ -5635,6 +5222,7 @@ TYPE  ATL_epsilon1()
 
 #ifdef ATL_FULL_LAPACK
    #include "atlas_C2Flapack.h"
+
    @whiledef rt qr ql rq lq
    #ifdef TREAL
       #define LA_@up@(rt)2Q Mjoin(Mjoin(ATL_C2F,PRE),orm@(rt))
@@ -5648,7 +5236,7 @@ TYPE  ATL_epsilon1()
    ___main(){} __main(){} MAIN__(){} _MAIN_(){}
 #endif
 #define PRINT_1    0
-#define TESTONLYCALL_1    1
+#define TESTCORRECT  1
 
 #ifdef TREAL
    static const TYPE ONE = ATL_rone;
@@ -5866,7 +5454,7 @@ void populateViForLQ (TYPE *Vi, TYPE * A, int N, int lda,
       for (j=1; j < numberOfVielement; j++)
       {
          Vi[(j SHIFT) ]= *(A+ (( N - numberOfVielement + j)*lda2) );
-         Vi[(j SHIFT) + 1]= 0.0 - *(A+ (( N - numberOfVielement + j)*lda2) + 1 );
+         Vi[(j SHIFT) + 1]= 0.0 - *(A+ (( N - numberOfVielement + j)*lda2)+1);
       }
    #endif
 }
@@ -6063,8 +5651,11 @@ static TYPE lqtest(int M, int N, int lda, int flushKB, double *time)
    A = GetGE(M, N, lda);
    if (A == NULL) AllocationErr("A");
 
+if(TESTCORRECT)
+{
 /* Allocate A Original and copy from A                                        */
    AORIG = DupMat(CblasColMajor, M, N, A, lda, lda);
+}
 
 /* Call to get the  size of workspace required                                */
    test_gelqf(CblasColMajor, M, N, &dtmp1, lda,
@@ -6089,7 +5680,8 @@ static TYPE lqtest(int M, int N, int lda, int flushKB, double *time)
    *time = time00() - t0;
    if (flushKB)
       t0 += ATL_flushcache(0);
-
+if(TESTCORRECT)
+{
 /* Allocate and Copy TAU to TAUNEG                                            */
    TAUNEG = DupMat(CblasColMajor, MNmin, 1, TAU, ldmn, ldmn);
 
@@ -6153,12 +5745,12 @@ static TYPE lqtest(int M, int N, int lda, int flushKB, double *time)
       for (i =  MNmin-1; i >= 0 ;  i-- )
       {
 /*
- *       Make Vi And take its conjugate for Complex numbers . For complex, the conjugate
- *       value is stord in the output.
- *       In the firest iteration, gets V(k)
+ *       Make Vi And take its conjugate for Complex numbers. For complex, 
+ *       the conjugate value is stored in the output.
+ *       In the first iteration, gets V(k)
  */
 
-         populateViForLQ(VI, (A +(( MNmin - ITER) SHIFT)), N, lda, (N - MNmin + ITER ) );
+         populateViForLQ(VI, (A+((MNmin-ITER) SHIFT)), N, lda, (N-MNmin+ITER));
          printVector("VI",VI, M);
 
          #ifdef TREAL
@@ -6225,16 +5817,15 @@ static TYPE lqtest(int M, int N, int lda, int flushKB, double *time)
    resid = Mjoin(PATL,gediffnrm1)(M, N, AORIG, lda, A, lda);
    resid /= (normA * eps * Mmin(M,N));
 
-
-/*   free(A);
-free(TAU);
-free(TAUNEG);
-free(WORK);
-free(L);
-free(Q);
-free (VI);
-free(AORIG);
- */
+}//(TESTCORRECT)
+   if(A) free(A);
+   if(TAU) free(TAU);
+   if(TAUNEG) free(TAUNEG);
+   if(WORK) free(WORK);
+   if(L) free(L);
+   if(Q) free(Q);
+   if(VI) free (VI);
+   if(AORIG) free(AORIG);
 
    return(resid);
 }
@@ -6270,8 +5861,11 @@ static TYPE qltest(int M, int N, int lda, int flushKB, double *time)
    A = GetGE(M, N, lda);
    if (A == NULL) AllocationErr("A");
 
+if(TESTCORRECT)
+{
 /* Allocate A Original and copy from A                                        */
    AORIG = DupMat(CblasColMajor, M, N, A, lda, lda);
+}
 
 /* Call to get the  size of workspace required                                */
    test_geqlf(CblasColMajor, M, N, &dtmp1, lda,
@@ -6298,7 +5892,8 @@ static TYPE qltest(int M, int N, int lda, int flushKB, double *time)
    *time = time00() - t0;
    if (flushKB)
       t0 += ATL_flushcache(0);
-
+if(TESTCORRECT)
+{
 /* Allocate and Copy TAU to TAUNEG                                            */
    TAUNEG = DupMat(CblasColMajor, MNmin, 1, TAU, ldmn, ldmn);
 
@@ -6366,7 +5961,7 @@ static TYPE qltest(int M, int N, int lda, int flushKB, double *time)
       for (i = 0; i <  MNmin; i++)
       {
 /*       Make Vi                                                              */
-         populateViForQL(VI, (A + ((N - MNmin + ITER -1)*lda2)) , (M - MNmin + ITER)) ;
+         populateViForQL(VI, (A+((N-MNmin+ITER-1)*lda2)), (M-MNmin+ITER));
 
          printVector("VI",VI, M);
 
@@ -6427,17 +6022,16 @@ static TYPE qltest(int M, int N, int lda, int flushKB, double *time)
    resid = Mjoin(PATL,gediffnrm1)(M, N, AORIG, lda, A, lda);
    resid /= (normA * eps * Mmin(M,N));
 
+} /*(TESTCORRECT) */
+   if(A) free(A);
+   if(TAU) free(TAU);
+   if(TAUNEG) free(TAUNEG);
+   if(WORK) free(WORK);
+   if(L) free(L);
+   if(Q) free(Q);
+   if(VI) free (VI);
+   if(AORIG) free(AORIG);
 
-// free
-/*   free(A);
-free(TAU);
-free(TAUNEG);
-free(WORK);
-free(L);
-free(Q);
-free (VI);
-free(AORIG);
- */
 
    return(resid);
 }
@@ -6486,9 +6080,11 @@ static TYPE rqtest(int M, int N, int lda, int flushKB, double *time)
 /* Allocate A and initialize                                                  */
    A = GetGE(M, N, lda);
    if (A == NULL) AllocationErr("A");
-
+if(TESTCORRECT)
+{
 /* Allocate A Original and copy from A                                        */
    AORIG = DupMat(CblasColMajor, M, N, A, lda, lda);
+}
 
 /* Call to get the  size of workspace required                                */
    test_gerqf(CblasColMajor, M, N, &dtmp1, lda,
@@ -6515,7 +6111,8 @@ static TYPE rqtest(int M, int N, int lda, int flushKB, double *time)
    *time = time00() - t0;
    if (flushKB)
       t0 += ATL_flushcache(0);
-
+if(TESTCORRECT)
+{
 /* Allocate and Copy TAU to TAUNEG                                            */
    TAUNEG = DupMat(CblasColMajor, MNmin, 1, TAU, ldmn, ldmn);
 
@@ -6581,10 +6178,10 @@ static TYPE rqtest(int M, int N, int lda, int flushKB, double *time)
       for (i = 0  ; i < MNmin ; i++)
       {
 /*
- *       Make Vi And take its conjugate for Complex numbers . For complex, the conjugate
- *       value is stord in the output.
+ *       Make Vi And take its conjugate for Complex numbers. For complex, 
+ *       the conjugate value is stored in the output.
  */
-         populateViForRQ(VI, (A + ((M - MNmin + ITER -1) SHIFT) ) ,lda, (N - MNmin + ITER )) ;
+         populateViForRQ(VI,(A+((M-MNmin+ITER-1) SHIFT)), lda, (N-MNmin+ITER));
          printVector("VI______________ ",VI, N);
 
          #ifdef TREAL
@@ -6644,16 +6241,16 @@ static TYPE rqtest(int M, int N, int lda, int flushKB, double *time)
    resid = Mjoin(PATL,gediffnrm1)(M, N, AORIG, lda, A, lda);
    resid /= (normA * eps * Mmin(M,N));
 
-/*
-free(A);
-free(TAU);
-free(TAUNEG);
-free(WORK);
-free(R);
-free(Q);
-free (VI);
-free(AORIG);
- */
+}/*(TESTCORRECT) */
+   if(A) free(A);
+   if(TAU) free(TAU);
+   if(TAUNEG) free(TAUNEG);
+   if(WORK) free(WORK);
+   if(R) free(R);
+   if(Q) free(Q);
+   if(VI)  free (VI);
+   if(AORIG) free(AORIG);
+
    return(resid);
 }
 
@@ -6702,10 +6299,11 @@ TYPE qrtest(int M, int N, int lda, int flushKB, double *time)
    if (A == NULL) AllocationErr("A");
 
    printMatrix("AORIG from A ", A, M, N, lda);
-
+if(TESTCORRECT)
+{
 /* Allocate A Original and copy from A                                        */
    AORIG = DupMat(CblasColMajor, M, N, A, lda, lda);
-
+}
    test_geqrf(CblasColMajor, M, N, &dtmp1, lda,
                &dtmp1,
                &dtmp, -1);
@@ -6729,7 +6327,8 @@ TYPE qrtest(int M, int N, int lda, int flushKB, double *time)
    *time = time00() - t0;
    if (flushKB)
       t0 += ATL_flushcache(0);
-
+if(TESTCORRECT)
+{
 /* Allocate and Copy TAU to TAUNEG                                            */
    TAUNEG = DupMat(CblasColMajor, MNmin, 1, TAU, ldmn, ldmn);
 
@@ -6864,15 +6463,15 @@ TYPE qrtest(int M, int N, int lda, int flushKB, double *time)
    resid = Mjoin(PATL,gediffnrm1)(M, N, AORIG, lda, A, lda);
    resid /= (normA * eps * Mmin(M,N));
 
-//free
-//   free(A);
-//   free(TAU);
-//   free(TAUNEG);
-//  free(WORK);
-//   free(R);
-//   free(Q);
-//   free(W);
-//   free(AORIG);
+} /*(TESTCORRECT) */
+   if (A)   free(A);
+   if (TAU) free(TAU);
+   if (TAUNEG)   free(TAUNEG);
+   if (WORK)  free(WORK);
+   if (R)   free(R);
+   if (Q)   free(Q);
+   if (W)   free(W);
+   if (AORIG)  free(AORIG);
 
    return(resid);
 }
@@ -6937,6 +6536,8 @@ int RunCase(TYPE thresh, int flushKB, int side, int uplo, int M, int N, int lda)
    resid = qtest(M, N, lda, flushKB, &time);
    printf("%2s  %3s %6d %6d %6d  %10.4e %11.2f  %9.2e\n", qs, "Col", M, N, lda,
          time, Time2Flops(LAgeqrf, uplo+side, M, N, time), resid);
+   /* A temporary fix */
+   if(resid == 0. && M > 10 && N > 10)  resid = 99999999; // Setting to a big num 
    return(resid <= thresh ? 1 : 0);
 }
 
@@ -6992,6 +6593,7 @@ int main(int nargs, char **args)
 }
 
 
+
 @ROUT ATL_ormqr
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2009 -def cwauth "Siju Samuel" -def contrib "Anthony M. Castaldo, R. Clint Whaley"
 
@@ -7030,6 +6632,7 @@ int ATL_ormqr
  *      NOTE :   ATL_ormqr.c will get compiled to four precisions
  *               single precision real,      double precision real
  *               single precision complex,   double precision complex
+ *
  *
  *
  *  Purpose
@@ -10015,11 +9618,12 @@ int main(int nargs, char **args)
 #include "math.h"
 #include "errno.h"
 
-//#define ATL_NTHREADS 8
-#define  local_copy                         /* Uses copy if defined.          */
-// #define  private_copy                    /* Each mallocs and copies.       */
-// #define  perfect_cache 30                /* times to re-read it.           */
-// #define  PreCache                        /* Pre-touch array.               */
+#ifdef TREAL
+   static const TYPE ONE = ATL_rone;
+#else
+   static const TYPE ONE[2] = {ATL_rone, ATL_rzero};
+#endif
+
 #define  MY_align 64                        /* ONLY powers of 2 work.         */
 
 #ifdef  SREAL
@@ -10032,7 +9636,7 @@ int main(int nargs, char **args)
    #define MY_gecopy ATL_sgecopy            /* Copy routine to use.           */
 #endif
 #ifdef  DREAL
-   #define  MY_gemv_Tony  ATL_dgemv_L2      /* L2 tuned dgemv SIJU calling tonys */
+   #define  MY_gemv_Tony  ATL_dgemv_L2      /* L2 tuned dgemv */
    #define  MY_trmv ATL_dtrmv               /* L2 tuned dgemv                 */
    #define  MY_gemvT  ATL_dgemvT_L2         /* L2 tuned dgemv                 */
    #define  MY_gemvN  ATL_dgemvN            /* L2 tuned dgemv                 */
@@ -10066,14 +9670,7 @@ int main(int nargs, char **args)
 #endif
 
 
-#if defined(local_copy)
-   #define need_copy_routines
-#elif defined(private_copy)
-   #define need_copy_routines
-#endif                                      /* any copy                       */
-
 #define ATL_ger_L2 Mjoin(PATL,ger_L2)
-#define ATL_printMatrix4 Mjoin(PATL,printMatrix4)
 #define ATL_geqr2_dnrm2 Mjoin(PATL,geqr2_dnrm2)
 #define ATL_geqr2_LC_Setup Mjoin(PATL,geqr2_LC_Setup)
 #define ATL_geqr2_DoCopy Mjoin(PATL,geqr2_DoCopy)
@@ -10083,8 +9680,6 @@ int main(int nargs, char **args)
 #define ATL_geqr2Worker_Zero Mjoin(PATL,geqr2Worker_Zero)
 #define ATL_tgeqr2 Mjoin(PATL,tgeqr2)
 #define ATL_geqr2_Order Mjoin(PATL,geqr2_Order)
-
-static pthread_mutex_t  countlock = PTHREAD_MUTEX_INITIALIZER;
 
 double time00(void);                        /* prototype external rtn.        */
 /*----------------------------------------------------------------------------*/
@@ -10136,6 +9731,7 @@ typedef struct                              /* Threading structure.           */
    volatile ATL_INT  LDT;
    volatile ATL_INT  buildT;
    volatile ATL_INT  dgemvt;
+   volatile ATL_INT  copy;    
    volatile void     *localMem;
 } ATL_DGEQR2_t;
 #else
@@ -10163,40 +9759,10 @@ typedef struct                              /* Threading structure.           */
    volatile ATL_INT  LDT;
    volatile ATL_INT  buildT;
    volatile ATL_INT  dgemvt;
+   volatile ATL_INT  copy;    
    volatile void     *localMem;
 } ATL_DGEQR2_t;
 #endif
-
-void ATL_printMatrix4
-   (char *mat, const int M, const int N, TYPE *A, const int lda0)
-{
-
-   #ifdef TREAL
-         #define SHIFTL
-   #else
-         #define SHIFTL << 1
-   #endif
-
-   const int lda = lda0 SHIFTL;
-   int i, j;
-
-   pthread_mutex_lock(&countlock);
-
-   printf(" \n sijumat %s = \n",mat);
-   for (i=0; i != M; i++)
-   {
-      #ifdef TREAL
-         for (j=0; j != N; j++) printf("%15.8f  ",A[i+j*lda]);
-      #else
-         for (j=0; j != N; j++)
-            printf("(%15.8f,%15.8f)  ",A[2*i+j*lda], A[1+2*i+j*lda]);
-      #endif
-      printf("\n");
-   }
-pthread_mutex_unlock(&countlock);
-
-}
-
 
 /* This code is used three times below, macro to prevent bug propagation.     */
 #define dnrm2_combine \
@@ -10216,10 +9782,10 @@ pthread_mutex_unlock(&countlock);
 //double dgeqr2_SAFMIN=-1.;
 
 /*-----------------------------------------------------------------------------
-// * ATL_dgeqr2_dnrm2: Compute a dnrm2, but retain scale and value.
-// *---------------------------------------------------------------------------*/
+ * ATL_dgeqr2_dnrm2: Compute a dnrm2, but retain scale and value.
+ *---------------------------------------------------------------------------*/
 
-void ATL_geqr2_dnrm2(ATL_DGEQR2_t *ts)
+static void ATL_geqr2_dnrm2(ATL_DGEQR2_t *ts)
 {
    int i,  N=ts->myM, N2;
    #ifdef TREAL
@@ -10250,7 +9816,7 @@ void ATL_geqr2_dnrm2(ATL_DGEQR2_t *ts)
    } else                                   /* This is the Rank 0 Operation   */
    {
       i = ((ts->myK) SHIFT) +(1 SHIFT);     /* Might as well shortcut.        */
-      for (; i<N2; i++)                      /* 'i' already initialized.       */
+      for (; i<N2; i++)                     /* 'i' already initialized.       */
       {
          if (X[i] != 0.)
          {
@@ -10275,11 +9841,10 @@ void ATL_geqr2_dnrm2(ATL_DGEQR2_t *ts)
 }                                           /* END ATL_dgeqr2_dnrm2           */
 
 
-#if defined(need_copy_routines)             /* Only if routines needed.       */
 /*
  * LC_Setup sets up copy.
  */
-size_t ATL_geqr2_LC_Setup(ATL_DGEQR2_t *myTS)
+static size_t ATL_geqr2_LC_Setup(ATL_DGEQR2_t *myTS)
 {
    int N = myTS->fullN;                     /* width of array.                */
    int M = myTS->myM;                       /* height of array.               */
@@ -10296,35 +9861,45 @@ size_t ATL_geqr2_LC_Setup(ATL_DGEQR2_t *myTS)
 /*
  * DoCopy works from LC_Setup.
  */
-void ATL_geqr2_DoCopy(ATL_DGEQR2_t *myTS)
+static void ATL_geqr2_DoCopy(ATL_DGEQR2_t *myTS)
 {
-   int N = myTS->fullN;                     /* width of array.                */
-   int M = myTS->myM;                       /* height of array.               */
-   MY_gecopy(M, N, myTS->oldA, myTS->oldLDA,/* First arg is source,           */
-   myTS->A, myTS->lda);                     /* This is destination.           */
-}                                           /* ** END ATL_geql2_DoCopy **     */
+   int N = myTS->fullN;                         /* width of array.            */
+   int M = myTS->myM;                           /* height of array.           */
+
+   #ifdef BUILD_LQ2    
+   Mjoin(PATL,gemoveT)(M, N, ONE, myTS->oldA,   /* First arg is source,       */
+         myTS->oldLDA, myTS->A, myTS->lda);     /* This is destination.       */
+   #else
+   MY_gecopy(M, N, myTS->oldA, myTS->oldLDA,    /* First arg is source,       */
+   myTS->A, myTS->lda);                         /* This is destination.       */
+   #endif
+}  /* END ATL_geqr2_DoCopy. */
 
 
 /*
  * UnCopy is just a copy back, no free.
  */
-void ATL_geqr2_UnCopy(ATL_DGEQR2_t *myTS)
+static void ATL_geqr2_UnCopy(ATL_DGEQR2_t *myTS)
 {
-   int N = myTS->fullN;                     /* width of array.                */
-   int M = myTS->myM;                       /* height of array.               */
-   MY_gecopy(M, N, myTS->A, myTS->lda,      /* First arg is source,           */
-   myTS->oldA, myTS->oldLDA);               /* This is destination.           */
-   myTS->lda = myTS->oldLDA;                /* Restore the old one.           */
-   myTS->A = myTS->oldA;                    /* ...                            */
-}                                           /* ** END ATL_geqr2_UnCopy **     */
+   int N = myTS->fullN;                         /* width of array.            */
+   int M = myTS->myM;                           /* height of array.           */
+   #ifdef BUILD_LQ2                                
+   Mjoin(PATL,gemoveT)(N, M , ONE,myTS->A,      /* First arg is source,       */
+      myTS->lda, myTS->oldA, myTS->oldLDA);     /* This is destination.       */
+   #else                                           
+   MY_gecopy(M, N, myTS->A, myTS->lda,          /* First arg is source,       */
+   myTS->oldA, myTS->oldLDA);                   /* This is destination.       */
+   #endif                                          
+   myTS->lda = myTS->oldLDA;                    /* Restore the old one.       */
+   myTS->A = myTS->oldA;                        /* ...                        */
+}  /* END ATL_geqr2_UnCopy. */
 
-#endif                                      /* handled(need_copy_routines)    */
 
 /*
  * Cache will force a read every 64th byte (eighth double) in an array,
  * following LDA.
  */
-void ATL_geqr2_Cache(ATL_DGEQR2_t *myTS)
+static void ATL_geqr2_Cache(ATL_DGEQR2_t *myTS)
 {
    int r, c;
    int N = myTS->fullN;                     /* width of array.                */
@@ -10346,7 +9921,7 @@ void ATL_geqr2_Cache(ATL_DGEQR2_t *myTS)
 /*
  * Callback for thread launcher
  */
-int Mjoin(PATL,StructIsInitGEQR2)(void *vp)
+static int Mjoin(PATL,StructIsInitGEQR2)(void *vp)
 {
    //return 1;
    return(((ATL_DGEQR2_t*)vp)->active);
@@ -10358,17 +9933,20 @@ int Mjoin(PATL,StructIsInitGEQR2)(void *vp)
  * Argument is pointer to a structure which contains our data section.
  */
 //void* ATL_geqr2Worker(void *myArg)
-void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+static void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
    ATL_thread_t *tp = vp;
    ATL_DGEQR2_t *myTS = ((ATL_DGEQR2_t*) lp->opstruct)+tp->rank;
-   ATL_DGEQR2_t *zTS = myTS - (myTS->rank); /* Point at zero ts.              */
-   int   zees, pair, myRank;                /* Log2 looping variables.        */
+// ATL_DGEQR2_t *myTS = (ATL_DGEQR2_t*) vp;     /* Recast.                   */
+   ATL_DGEQR2_t *zTS = myTS - (myTS->rank);     /* Point at zero ts.         */
+   int   zees, pair, myRank;                    /* Log2 looping variables.   */
    int   i,j,M,N,LDA,mScale,mUpdate,newN,KNT,LDT;
-   volatile ATL_DGEQR2_t *ptnr;             /* partner log2 combine.          */
-   TYPE  *A, *scaleA,  *T;                  /* Work variables.                */
+   int i_loop; 
+   int   myCopy = myTS->copy;
+   volatile ATL_DGEQR2_t *ptnr;                 /* partner log2 combine.     */
+   TYPE  *A, *scaleA,  *T;                      /* Work variables.           */
    TYPE XNORM, BETA, BETAp, RSAFMN;
-   TYPE *TAU = myTS->TAU;                   /* Short cut.                     */
+   TYPE *TAU = myTS->TAU;                       /* Short cut.                */
    TYPE ALPHA;
 
    #ifdef TREAL
@@ -10403,22 +9981,10 @@ void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 /*----------------------------------------------------------------------------*/
    N = myTS->fullN;                         /* panel width.                   */
 
-   #if defined(local_copy)
-   ATL_geqr2_DoCopy(myTS);                  /* Copy my data.                  */
-   #elif defined(private_copy)              /* If I must alloc too,           */
-   myTS->localMem = malloc(myMem+MY_align); /* Allocate it.                   */
-   myTS->A = (TYPE*)((((size_t) myTS->localMem)+MY_align-1)&(-MY_align));
-   ATL_geqr2_DoCopy(myTS);                  /* Execute it.                    */
-   #endif                                   /* local_copy or private_copy     */
-
-   #if defined(perfect_cache)               /* read enough to be in c.        */
-   volatile TYPE pX;
-   int p;
-   for (p=0; p<perfect_cache; p++)
-      for (i=0; i<N; i++)
-         for (j=0; j<myTS->myM; j++)
-            pX = *(myTS->A + j + i*myTS->lda);   /* Force read it.            */
-   #endif                                   /* defined(perfect_cache)         */
+   if (myCopy)
+   {
+      ATL_geqr2_DoCopy(myTS);                  /* Execute it.                 */
+   }
 
    LDA = myTS->lda;                         /* Load AFTER local copy.         */
    M = myTS->myM;                           /* Shortcut to M.                 */
@@ -10429,10 +9995,10 @@ void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       {
          mScale = M-i-1;                    /* Special scaling value.         */
          mUpdate = M-i;                     /* Special gemv/ger size.         */
-         A = myTS->A + (i SHIFT)+ (i* (LDA SHIFT));   /* Special pointer to A. */
+         A = myTS->A + (i SHIFT)+ (i* (LDA SHIFT));  /* Special pointer to A. */
          #ifdef TREAL
             myTS->zDiag = (*A);             /* Get the diagonal.              */
-	       *A = 1.;
+	         *A = 1.;
          #else
             myTS->zDiag[0] = (*A);
             myTS->zDiag[1] = *(A+1);
@@ -10488,43 +10054,59 @@ void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 /*----------------------------------------------------------------------------*/
       while (zTS->dnrm2 < myTS->dnrm2);     /* Wait for zero to finish.       */
 
+
 /*----------------------------------------------------------------------------*/
 /*    At this point, zTS->zDiag is valid.                                     */
+/*    However, if we are going to skip the column because SSQ == 0, then we   */
+/*    will require another synchronization in order to make sure everybody    */
+/*    sees the SSQ before we replace it.                                      */
 /*----------------------------------------------------------------------------*/
-      #ifdef TREAL
       if (zTS->SSQ == 0.)                   /* If result was zero,            */
       {
+         zees = myRank;                     /* Init the test flags.           */
+         pair = 1;                          /* Starting pair.                 */
+         while ( (zees & 1) == 0 &&         /* If I must wait on pair,        */
+            (myRank)+pair < ATL_NTHREADS)   /* ..and pair exists,             */
+         {
+            ptnr = myTS+pair;               /* Point at my partner.           */
+
+            if (ptnr->active == 1)          /* If ptnr was used,              */
+            {
+               while (ptnr->dnrm2 <= myTS->dnrm2);  /* Wait for it.           */
+            }
+
+            zees >>= 1;                     /* Shift a zero out.              */
+            pair <<= 1;                     /* Double the pair idx.           */
+         }
+
          if (myRank == 0)
          {
-            *(A) =  myTS->zDiag;
+            #ifdef TREAL
+            *(A) =  zTS->zDiag;
+            #else
+            *(A )  = zTS->zDiag[0];
+            *(A+1) = zTS->zDiag[1];
+            #endif
          }
-         continue;                          /* ..Nothing to do here.          */
+
+         myTS->dnrm2++;                     /* Signal I am done.              */
+         while (zTS->dnrm2 < myTS->dnrm2);  /* Wait for zero to finish.       */
+         continue;                          /* ..Nothing to do on column.     */
       }
-      #else
-      if (zTS->SSQ == 0. && myTS->zDiag[1] == 0.0)    /* If result was zero,  */
-      {
-         if (myRank == 0)
-         {
-            *(A ) =  myTS->zDiag[0];
-            *(A +1) =  myTS->zDiag[1];
-         }
-         continue;                          /* ..Nothing to do here.          */
-      }
-      #endif
 
       XNORM = (zTS->Scale)*sqrt(zTS->SSQ);  /* Compute the norm.              */
 
 /*----------------------------------------------------------------------------*/
 /* The following code is inlined from ATL_larfg.                              */
-/* SSQ = 0 is taken care earlier
+/* Here, SSQ is non-zero, we exited the loop above if that occurred.          */
 /*----------------------------------------------------------------------------*/
    #ifdef TREAL
 /*----------------------------------------------------------------------------*/
 /*    The following code is inlined from ATL_larfg.                           */
 /*----------------------------------------------------------------------------*/
       BETAp = ATL_lapy2((zTS->zDiag), XNORM);    /* Get sqrt(a^2+b^2)         */
-      BETA = BETAp;                         /* Assume diagonal < 0            */
-      if ((zTS->zDiag) < 0.) BETA = 0.-BETAp;    /* Chanege sign.             */
+      BETA = BETAp;                              /* Assume diagonal < 0       */
+      if ((zTS->zDiag) < 0.) BETA = 0.-BETAp;    /* Change sign.              */
 
       ALPHA = zTS->zDiag + BETA;
       if ( BETA < 0.0)
@@ -10553,7 +10135,8 @@ void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       ALPHAR =  zTS->zDiag[0];
       ALPHAI =  zTS->zDiag[1];
 
-      BETAp = ATL_lapy3(zTS->zDiag[0], zTS->zDiag[1], XNORM); /* Get sqrt(a^2+b^2,c^2) */
+      BETAp = ATL_lapy3(zTS->zDiag[0], zTS->zDiag[1], XNORM); 
+                                            /* Get sqrt(a^2+b^2,c^2)          */
 
       BETA = BETAp;                         /* Assume diagonal < 0            */
       if ((zTS->zDiag[0]) < 0.) BETA = 0.-BETAp; /* Change sign ..            */
@@ -10580,7 +10163,11 @@ void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       if (myRank == 0)                      /* Set if rank zero.              */
       {
          TAU[(i SHIFT)] = myTAUi[0];
-         TAU[(i SHIFT) +1] = myTAUi[1];
+         #ifdef BUILD_LQ2
+            TAU[(i SHIFT) +1] = 0. - myTAUi[1];
+         #else
+            TAU[(i SHIFT) +1] = myTAUi[1];
+         #endif
       }
       ALPHADIV[0] = ALPHA;
       ALPHADIV[1] = ALPHAI;
@@ -10669,11 +10256,11 @@ void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 
          myTS->dgemv = i;                   /* Say I finished dgemv.          */
 
-/**********************************                                           */
-/******  S Y N C   P O I N T  *****                                           */
-/******  S Y N C   P O I N T  *****                                           */
-/******  S Y N C   P O I N T  *****                                           */
-/**********************************                                           */
+         /***********************************/
+         /******  S Y N C   P O I N T  ******/
+         /******  S Y N C   P O I N T  ******/
+         /******  S Y N C   P O I N T  ******/
+         /***********************************/
 /*----------------------------------------------------------------------------*/
 /*       We can't start GER until all of                                      */
 /*       'w' is finished. Wait for zero.                                      */
@@ -10724,6 +10311,16 @@ void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
             }
          #endif
       }
+      /*
+       * for computing T,  for LQ replace myTAUi with correct TAU for the 
+       * complex part. 
+       */
+
+      #ifdef TCPLX 
+          #ifdef BUILD_LQ2 
+                myTAUi[1] = 0.0 -  myTAUi[1];
+          #endif
+      #endif
 
       #ifdef TREAL                          /* TODO change later              */
       if (myTS->buildT && i == 0)           /* Simple store will work.        */
@@ -10795,13 +10392,26 @@ void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
          A, 1, 0.0,                         /* Address of u, ldu, Beta.       */
          myTS->WORK+os, 1);                 /* Address of result X, ldx.      */
          #else
-         negTAUi[0]= 0.0 - myTAUi[0];
-         negTAUi[1]= 0.0 - myTAUi[1];       /* conjugate for complex Not required */
-         MY_gemvT( mUpdate,  i,             /* do dgemv.                      */
-         negTAUi,                           /* alpha.                         */
-         A-(i*(LDA SHIFT)), LDA,            /* Address of transpose Q.        */
-         A, 1, ZERO,                        /* Address of u, ldu, Beta.       */
-         myTS->WORK+(os SHIFT), 1);         /* Address of result X, ldx.      */
+              #ifdef BUILD_LQ2
+                 negTAUi[0]= 0.0 + myTAUi[0];
+                 negTAUi[1]= 0.0 - myTAUi[1]; /* conjugate for complex Not required */
+              #else
+                 negTAUi[0]= 0.0 - myTAUi[0];
+                 negTAUi[1]= 0.0 - myTAUi[1]; /* conjugate for complex Not required */
+              #endif
+              MY_gemvT( mUpdate,  i,          /* do dgemv.                      */
+              negTAUi,                        /* alpha.                         */
+              A-(i*(LDA SHIFT)), LDA,         /* Address of transpose Q.        */
+              A, 1, ZERO,                     /* Address of u, ldu, Beta.       */
+              myTS->WORK+(os SHIFT), 1);      /* Address of result X, ldx.      */
+            
+                          #ifdef BUILD_LQ2
+		          for (i_loop = 0; i_loop < i; i_loop++)
+		          {
+		              (myTS->WORK+(os SHIFT))[(i_loop SHIFT) + 0] =
+		                   0.0 - (myTS->WORK+(os SHIFT))[(i_loop SHIFT) + 0];
+		          }
+			  #endif
          #endif
 
 /*----------------------------------------------------------------------------*/
@@ -10874,26 +10484,17 @@ void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 
 
 
-   #if defined(local_copy)
 /*----------------------------------------------------------------------------*/
 /* If we copied, this will copy back.                                         */
 /*----------------------------------------------------------------------------*/
-   ATL_geqr2_UnCopy(myTS);                  /* Do my copy back.               */
-   #elif defined(private_copy)
-   ATL_geqr2_UnCopy(myTS);                  /* Do my copy back.               */
-   free(myTS->localMem);                    /* free the memory.               */
-   #endif                                   /* local_copy or private_copy     */
+   if (myCopy)
+   {
+      ATL_geqr2_UnCopy(myTS);               /* Do my copy back.               */
+   }
 
    return(NULL);                            /* Implicit thread exit.          */
 }                                           /* end *** ATL_geqr2Worker **     */
 
-
-/*-----------------------------------------------------------------------------
- * ATL_geqr2Worker_Zero: Persistent for the duration of the DGEQR2 operation.
- * Argument is pointer to an array of structures, one per core.
- * The only work of this thread is to launch the others and run its own
- * section.
- *---------------------------------------------------------------------------*/
 
 /**************************************************************************** */
 /********************** M A S T E R   C O N T R O L L E R ******************* */
@@ -10910,88 +10511,60 @@ void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 /* launches if it is not already computed.                                    */
 /*                                                                            */
 /*----------------------------------------------------------------------------*/
-int ATL_tgeqr2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
-                 TYPE *ws_T, int LDT, TYPE *WORKM, int buildT)
+#ifdef BUILD_LQ2    
+#define ATL_tgexx2 Mjoin(PATL,tgelq2)
+#else 
+#define ATL_tgexx2 Mjoin(PATL,tgeqr2)
+#endif 
+
+int ATL_tgexx2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
+                 TYPE *ws_T, int LDT, TYPE *WORKM, int buildT, int myCopy)
 {
 
-@skip   ATL_thread_t tp[ATL_NTHREADS];
    ATL_DGEQR2_t ts[ATL_NTHREADS];
-@skip   ATL_LAUNCHSTRUCT_t ls;
    long long t0, t1;
 
+// fprintf (stderr,"______in %s M=%d  N=%d \n", Mstr(ATL_tgexx2), M,N);  
    if (M < 0)
    {
-      fprintf(stderr, "ATL_geqr2: M<0 (%i)\n", M);
+      fprintf(stderr, "%s: M<0 (%i)\n", Mstr(ATL_tgexx2), M);
       return(-1);
    }
 
    if (N < 0)
    {
-      fprintf(stderr, "ATL_geqr2: N<0 (%i)\n", N);
+      fprintf(stderr, "%s: N<0 (%i)\n", Mstr(ATL_tgexx2), N);
       return(-2);
    }
 
-   if (LDA < M)
+   #ifdef BUILD_LQ2   
+   if (LDA < N) /*  N is the original M */
    {
-      fprintf(stderr, "ATL_geqr2: LDA<M (%i, %i)\n", LDA, M);
+      fprintf(stderr, "%s: LDA<M (%i, %i)\n", Mstr(ATL_tgexx2), LDA, M);
       return(-4);
    }
-
-// TODO remove this after testing
-//  if ((M*N) < 4096 ||                      /* If it all fits in L1,          */
-//         M < 128 || N >= M || M < (2*N))    /* Or not worth a split,          */
-  if ((M*N) < 4096 ||                      /* If it all fits in L1,          */
-          N >= M || ATL_NTHREADS == 1 )    /* Or not worth a split,          */
+   #else
+   if (LDA < M)
    {
-      ATL_geqr2(M, N, A, LDA, TAU, WORK);   /* Use serial version.            */
-      if (buildT)                           /* If we build T,                 */
-      {
-         ATL_larft(LAForward, LAColumnStore,
-                  M, N, A, LDA,             /* build T for this panel.        */
-                     TAU, ws_T, LDT);
-      }
-      return(0);                            /* Exit after panel.              */
+      fprintf(stderr, "%s: LDA<M (%i, %i)\n", Mstr(ATL_tgexx2), LDA, M);
+      return(-4);
    }
+   #endif 
+
 
 /*----------------------------------------------------------------------------*/
 /* Preliminaries are done; now split up the problem.                          */
 /* We use a data-owner split, each thread gets 1/p of the data,               */
 /* and does all computation related to it.                                    */
 /*----------------------------------------------------------------------------*/
-   TYPE *myA = A, *allMem, *workMem;
-   int i, j, k, b0, b, t, th;
+   TYPE *myA = A, *myOldA = A, *allMem, *workMem;
+   int i, j, k, b0, b, th;
    long unsigned int CPU;
    size_t mem[ATL_NTHREADS], totmem, workSize;
 
    th = ((M+N-1)/N);                        /* Max number of threads.         */
+   if (th==0) th=1;                         /* Avoid divide by zero.          */
    if (th > ATL_NTHREADS) th=ATL_NTHREADS;  /* Limit on top.                  */
-
-//SIJUUUUUUUUUUU  TODO
-//   th  =1;
-//SIJUUUUUUUUUUU  TODO
-
-   #if defined(FORCE_THREADS)
-   th = FORCE_THREADS;                      /* Force to specific count.       */
-   if (th == 1)                             /* If forcing serial,             */
-   {
-      for (i=0; i<ATL_NTHREADS; i++)        /* Clear some stats.              */
-      {
-         t_myFcopy[i]=0.;
-         t_myBcopy[i]=0.;
-         t_myComp[i]=0.;
-      }
-
-      ATL_geqr2(M, N, A, LDA, TAU, WORK);   /* Use serial version.            */
-      if (buildT)                           /* If we build T,                 */
-      {
-         ATL_larft(LAForward, LAColumnStore,
-                  M, N, A, LDA,             /* build T for this panel.        */
-                  TAU, ws_T, LDT);
-      }
-
-      return(0);
-   }
-   #endif
 
    b0 = (M/th);                             /* Find part for th zero.         */
    if (b0 < N) b0 = N;                      /* Take at least N.               */
@@ -11006,22 +10579,29 @@ int ATL_tgeqr2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
    }
 
    if (b == 0) th = 1;
-
-
-   #ifdef SILLY
-   if (b < 16)                              /* If too small to parlz,         */
+   if (th == 1 || (N> M))                             /* If impossible to split,        */
    {
+
+      #ifdef BUILD_LQ2
+      ATL_gelq2(N, M, A, LDA, TAU, WORK);   /* Use serial version.            */
+      if (buildT)                           /* If we build T,                 */
+      {
+         ATL_larft(LAForward, LARowStore,
+                  M, N, A, LDA,             /* build T for this panel.        */
+                     TAU, ws_T, LDT);
+      }
+      #else
       ATL_geqr2(M, N, A, LDA, TAU, WORK);   /* Use serial version.            */
       if (buildT)                           /* If we build T,                 */
       {
          ATL_larft(LAForward, LAColumnStore,
                   M, N, A, LDA,             /* build T for this panel.        */
-                  TAU, ws_T, LDT);
+                     TAU, ws_T, LDT);
       }
+      #endif
 
-      return(0);
+      return(0);                            /* Exit after panel.              */
    }
-   #endif
 
 /*----------------------------------------------------------------------------*/
 /* Fill out the thread work areas.                                            */
@@ -11048,19 +10628,23 @@ int ATL_tgeqr2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
    ts[0].T = ws_T;                          /* Pass in matrix addr.           */
    ts[0].LDT = LDT;                         /* And leading dimension.         */
    ts[0].dgemvt = -1;                       /* Not done yet.                  */
-   myA += (b0 SHIFT);                       /* Point at next A.               */
+   ts[0].copy   = myCopy;                   /* Whether PCA should copy.       */
+   #ifdef BUILD_LQ2   
+   myA += (b0 SHIFT)*LDA;                   /* Point at next A, LQ.           */
+   #else 
+   myA += (b0 SHIFT);                       /* Point at next A, QR.           */
+   #endif 
 
    for (i=1; i < th; i++)
    {
-//      t = ATL_geqr2_Order[i];               /* Get thread to use.             */
-@skip      t =ATL_launchorder[i]; 
+@skip      t =ATL_launchorder[i];
       ts[i].fullM = b;                      /* Remember whole M.              */
       ts[i].fullN = N;                      /* Need full size N.              */
       ts[i].myM = b;                        /* 'b' entries for all.           */
       ts[i].myN = N;                        /* Width is same for all.         */
       ts[i].myK = 0;                        /* First k for dnrm2.             */
       ts[i].lda = LDA;                      /* LDA is same for all.           */
-      ts[i].rank = t;                       /* Rank of process.               */
+      ts[i].rank = i;                       /* Rank of process.               */
       ts[i].A = myA;                        /* Point at share of A.           */
       ts[i].TAU = TAU;                      /* TAU is same for all.           */
       ts[i].dnrm2 = -1;                     /* Not done yet.                  */
@@ -11068,45 +10652,48 @@ int ATL_tgeqr2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
       ts[i].active = 1;                     /* Indicate active.               */
       ts[i].buildT = buildT;                /* Pass in decision var.          */
       ts[i].dgemvt = -1;                    /* Not done yet.                  */
-      myA += (b SHIFT);                     /* Point at next share.           */
+      ts[i].copy   = myCopy;                /* Whether PCA should copy.       */
+      #ifdef BUILD_LQ2   
+      myA += (b SHIFT)*LDA;                 /* Point at next share, LQ.       */
+      #else 
+      myA += (b SHIFT);                     /* Point at next share, QR.       */
+      #endif
    }
 
-   #if defined(local_copy)
 /*----------------------------------------------------------------------------*/
 /* Deal with memory.                                                          */
 /*----------------------------------------------------------------------------*/
-   totmem=MY_align;                         /* Needed for alignment.          */
-   for (i=0; i<th; i++)
+   if (myCopy)
    {
-@skip      t = ATL_launchorder[i];
-      mem[i] = ATL_geqr2_LC_Setup(ts+t);    /* Find necessary memory.         */
-      totmem += mem[i];                     /* Add to total.                  */
-   }
+      totmem=MY_align;                         /* Needed for alignment.       */
+      for (i=0; i<th; i++)
+      {
+         mem[i] = ATL_geqr2_LC_Setup(ts+i);    /* Find necessary memory.      */
+         totmem += mem[i];                     /* Add to total.               */
+      }
 
-   allMem = malloc(totmem);                 /* Allocate the memory.           */
+      allMem = malloc(totmem);                 /* Allocate the memory.        */
 
-   ts[0].A = (TYPE*) (((size_t) allMem+MY_align)&(-MY_align));
-   for (i=1; i<th; i++)                     /* Each thread takes..            */
-   {
-@skip      int pt = ATL_launchorder[i-1];        /* Get previous thread id.        */
-@skip      t = ATL_launchorder[i];               /* Get this thread id.            */
-      ts[i].A = (TYPE*) ((size_t) ts[i-1].A + mem[i-1]);/* ..next block.      */
+      ts[0].A = (TYPE*) (((size_t) allMem+MY_align)&(-MY_align));
+      for (i=1; i<th; i++)                     /* Each thread takes..         */
+      {
+         ts[i].A = (TYPE*) ((size_t) ts[i-1].A + mem[i-1]);  /* ..next block. */
+      }
    }
-   #endif                                   /* defined(local_copy)            */
 
    workSize = ((2 SHIFT)*(N+4)*sizeof(TYPE) +
                      MY_align-1)&(-MY_align);    /* aligned.                  */
    totmem = MY_align + workSize*ATL_NTHREADS;    /* Find mem to alloc.        */
    workMem = malloc(totmem);
    ts[0].WORK = (TYPE*) (((size_t) workMem + MY_align-1)&(-MY_align));
-   for (i=1; i<ATL_NTHREADS; i++)
+   for (i=1; i<th; i++)
       ts[i].WORK = (TYPE*) ((size_t) ts[i-1].WORK + workSize);
 
 /*----------------------------------------------------------------------------*/
 /* Call ATL_launcher to launch thread which runs in different CPUs   cores    */
 /*----------------------------------------------------------------------------*/
 
-   ATL_goparallel(ATL_NTHREADS, ATL_geqr2Worker, ts, NULL);
+   ATL_goparallel(th, ATL_geqr2Worker, ts, NULL);
 @beginskip
    ls.opstruct = (char*) ts;
    ls.opstructstride = (int) ( ((char*)(ts+1)) - (char*)(ts) );
@@ -11120,7 +10707,7 @@ int ATL_tgeqr2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
       tp[i].vp = &ls;
       tp[i].rank = i;
    }
-   ATL_thread_start(tp, 0, 1, ATL_tlaunch, tp);
+   ATL_thread_start(tp, 0, ATL_tlaunch, tp);
    ATL_thread_join(tp);
 @endskip
 
@@ -11128,15 +10715,12 @@ int ATL_tgeqr2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
    #if defined(local_copy)
    free(allMem);                            /* release copied area.           */
    #endif                                   /* defined(local_copy)            */
-
    free(workMem);                           /* release work area.             */
-
    return(0);                               /* Done with dgeqr2.              */
-}                                           /* END ATL_t_dgeqr2               */
+}  /* END ATL_t_dgeqr2. */
 
 @ROUT ATL_tgeql2
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2009 -def cwauth "Siju Samuel" -def contrib "Anthony M. Castaldo, R. Clint Whaley"
-
 /*-----------------------------------------------------------------------------
  * This is the C translation of the standard LAPACK Fortran routine:
  *      SUBROUTINE DGEQL2( M, N, A, LDA, TAU, WORK, INFO )
@@ -11272,13 +10856,13 @@ int ATL_tgeqr2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
 #include "math.h"
 #include "errno.h"
 
+#ifdef TREAL
+   static const TYPE ONE = ATL_rone;
+#else
+   static const TYPE ONE[2] = {ATL_rone, ATL_rzero};
+#endif
 
-/* #define  FORCE_THREADS 2                                                   */
-   #define  local_copy                      /* Uses copy if defined.          */
-// #define  private_copy                    /* Each mallocs and copies.       */
-// #define  perfect_cache 30                /* times to re-read it.           */
-// #define  PreCache                        /* Pre-touch array.               */
-   #define  MY_align 64                     /* ONLY powers of 2 work.         */
+#define  MY_align 64                        /* ONLY powers of 2 work.         */
 
 #ifdef  SREAL
    #define  MY_gemv ATL_sgemv               /* L2 tuned dgemv                 */
@@ -11315,15 +10899,7 @@ int ATL_tgeqr2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
     #define MY_TRANS CblasConjTrans
 #endif
 
-
-   #if defined(local_copy)
-   #define need_copy_routines
-   #elif defined(private_copy)
-   #define need_copy_routines
-   #endif                                   /* any copy                       */
-
 #define ATL_ger_L2 Mjoin(PATL,ger_L2)
-#define ATL_printMatrix1 Mjoin(PATL,printMatrix1)
 #define ATL_geql2_dnrm2 Mjoin(PATL,geql2_dnrm2)
 #define ATL_geql2_dnrm2_ql Mjoin(PATL,geql2_dnrm2_ql)
 #define ATL_geql2_LC_Setup Mjoin(PATL,geql2_LC_Setup)
@@ -11335,8 +10911,6 @@ int ATL_tgeqr2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
 #define ATL_tgeql2 Mjoin(PATL,tgeql2)
 #define ATL_geql2_Order Mjoin(PATL,geql2_Order)
 
-
-static pthread_mutex_t  countlock = PTHREAD_MUTEX_INITIALIZER;
 
 double time00(void);                        /* prototype external rtn.        */
 /*----------------------------------------------------------------------------*/
@@ -11352,10 +10926,7 @@ double time00(void);                        /* prototype external rtn.        */
       : "=a"(time) : : "%rdx" );
 
 
-//int ATL_geql2_Order[ATL_NTHREADS]={0,4,2,6,1,5,3,7};
-//int ATL_geql2_Order[ATL_NTHREADS]={0,2,1,3};
-
-   #ifdef TREAL
+#ifdef TREAL
 typedef struct                              /* Threading structure.           */
 {
    volatile ATL_INT  fullM;
@@ -11380,9 +10951,10 @@ typedef struct                              /* Threading structure.           */
    volatile ATL_INT  LDT;
    volatile ATL_INT  buildT;
    volatile ATL_INT  dgemvt;
+   volatile ATL_INT  copy;    
    volatile void     *localMem;
 } ATL_DGEQL2_t;
-   #else
+#else
 typedef struct                              /* Threading structure.           */
 {
    volatile ATL_INT  fullM;
@@ -11407,39 +10979,10 @@ typedef struct                              /* Threading structure.           */
    volatile ATL_INT  LDT;
    volatile ATL_INT  buildT;
    volatile ATL_INT  dgemvt;
+   volatile ATL_INT  copy;    
    volatile void     *localMem;
 } ATL_DGEQL2_t;
-  #endif
-
-void ATL_printMatrix1
-   (char *mat, const int M, const int N, TYPE *A, const int lda0)
-{
-
-   #ifdef TREAL
-         #define SHIFTL
-   #else
-         #define SHIFTL << 1
-   #endif
-
-   const int lda = lda0 SHIFTL;
-   int i, j;
-
-   pthread_mutex_lock(&countlock);
-
-   printf(" \n sijumat %s = \n",mat);
-   for (i=0; i != M; i++)
-   {
-      #ifdef TREAL
-         for (j=0; j != N; j++) printf("%15.8f  ",A[i+j*lda]);
-      #else
-         for (j=0; j != N; j++)
-            printf("(%15.8f,%15.8f)  ",A[2*i+j*lda], A[1+2*i+j*lda]);
-      #endif
-      printf("\n");
-   }
-   pthread_mutex_unlock(&countlock);
-}
-
+#endif
 
 
 /* This code is used three times below, macro to prevent bug propagation.     */
@@ -11454,16 +10997,14 @@ void ATL_printMatrix1
       myTS->SSQ *= (w*w);           /* Scale my SSQ first.     */ \
       myTS->SSQ += ptnr->SSQ;       /* Add his to mine.        */ \
       myTS->Scale = ptnr->Scale;    /* Replace my SSQ with his.*/ \
-   }                                        /* END #define dnrm2_combine      */
+   } /* END #define dnrm2_combine */
 
-
-//double dgeqr2_SAFMIN=-1.;
 
 //-----------------------------------------------------------------------------
 //  ATL_dgeqr2_dnrm2: Compute a dnrm2, but retain scale and value.
 // ---------------------------------------------------------------------------
 
-void ATL_geql2_dnrm2_ql(ATL_DGEQL2_t *ts)
+static void ATL_geql2_dnrm2_ql(ATL_DGEQL2_t *ts)
 {
    int i,  N=ts->myM, N2;
    #ifdef TREAL
@@ -11472,11 +11013,12 @@ void ATL_geql2_dnrm2_ql(ATL_DGEQL2_t *ts)
       N2 = N << 1;
    #endif
    TYPE  aX, sX, SSQ=0., Scale=1.0;
-   TYPE *X=ts->A+(((ts->lda) SHIFT)*(ts->myN -1 -ts->myK )); /* Point at proper column. */
+   TYPE *X=ts->A+(((ts->lda) SHIFT)*(ts->myN -1 -ts->myK )); 
+                                             /* Point at proper column. */
 
    if (ts->rank != 0)                       /* If a standard compute,         */
    {
-      for (i=0; i<N2 ; i++)                 /* Do the full column.            */
+      for (i=0; i<N2; i++)                  /* Do the full column.            */
       {
          if (X[i] != 0.)
          {
@@ -11493,9 +11035,9 @@ void ATL_geql2_dnrm2_ql(ATL_DGEQL2_t *ts)
       }
    } else                                   /* This is the Rank 0 Operation   */
    {
-          
-      N2 = ((N-ts->myK -1) SHIFT) ;         /* Not all the N is taken         */    
-      for (i=0; i<N2; i++)                  /* 'i' already initialized.       */
+
+      N2 = ((N-ts->myK -1) SHIFT);          /* Not all the N is taken         */
+      for (i=0; i<N2; i++)                  /* QL starts from zero.           */
       {
          if (X[i] != 0.)
          {
@@ -11518,13 +11060,11 @@ void ATL_geql2_dnrm2_ql(ATL_DGEQL2_t *ts)
    ts->SSQ   = SSQ;
 }                                           /* END ATL_dgeqr2_dnrm2           */
 
-//------------------------------------------SIJU------------------------------
 
-#if defined(need_copy_routines)             /* Only if routines needed.       */
 /*
  * LC_Setup sets up copy.
  */
-size_t ATL_geql2_LC_Setup(ATL_DGEQL2_t *myTS)
+static size_t ATL_geql2_LC_Setup(ATL_DGEQL2_t *myTS)
 {
    int N = myTS->fullN;                     /* width of array.                */
    int M = myTS->myM;                       /* height of array.               */
@@ -11540,34 +11080,45 @@ size_t ATL_geql2_LC_Setup(ATL_DGEQL2_t *myTS)
 /*
  * DoCopy works from LC_Setup.
  */
-void ATL_geql2_DoCopy(ATL_DGEQL2_t *myTS)
+static void ATL_geql2_DoCopy(ATL_DGEQL2_t *myTS)
 {
    int N = myTS->fullN;                     /* width of array.                */
    int M = myTS->myM;                       /* height of array.               */
+
+   #ifdef BUILD_RQ2
+   Mjoin(PATL,gemoveT)(M, N, ONE,  myTS->oldA,  /* First arg is source,       */
+         myTS->oldLDA, myTS->A, myTS->lda);     /* This is destination.       */
+   #else
    MY_gecopy(M, N, myTS->oldA, myTS->oldLDA,/* First arg is source,           */
    myTS->A, myTS->lda);                     /* This is destination.           */
-}                                           /* ** END ATL_geql2_DoCopy **     */
+   #endif
+} /* END ATL_geql2_DoCopy. */
 
 /*
  * UnCopy is just a copy back, no free.
  */
-void ATL_geql2_UnCopy(ATL_DGEQL2_t *myTS)
+static void ATL_geql2_UnCopy(ATL_DGEQL2_t *myTS)
 {
    int N = myTS->fullN;                     /* width of array.                */
    int M = myTS->myM;                       /* height of array.               */
+
+   #ifdef BUILD_RQ2
+   Mjoin(PATL,gemoveT)(N, M , ONE, myTS->A,  /* First arg is source,          */
+      myTS->lda, myTS->oldA, myTS->oldLDA);  /* This is destination.          */
+   #else
    MY_gecopy(M, N, myTS->A, myTS->lda,      /* First arg is source,           */
    myTS->oldA, myTS->oldLDA);               /* This is destination.           */
+   #endif
+
    myTS->lda = myTS->oldLDA;                /* Restore the old one.           */
    myTS->A = myTS->oldA;                    /* ...                            */
 }                                           /* ** END ATL_geql2_UnCopy **     */
-
-#endif                                      /* handled(need_copy_routines)    */
 
 /*
  * Cache will force a read every 64th byte (eighth double) in an array,
  * following LDA.
  */
-void ATL_geql2_Cache(ATL_DGEQL2_t *myTS)
+static void ATL_geql2_Cache(ATL_DGEQL2_t *myTS)
 {
    int r, c;
    int N = myTS->fullN;                     /* width of array.                */
@@ -11588,7 +11139,7 @@ void ATL_geql2_Cache(ATL_DGEQL2_t *myTS)
 /*
  * Callback for thread launcher
  */
-int Mjoin(PATL,StructIsInitGEQL2)(void *vp)
+static int Mjoin(PATL,StructIsInitGEQL2)(void *vp)
 {
    //return 1;
    return(((ATL_DGEQL2_t*)vp)->active);
@@ -11600,14 +11151,17 @@ int Mjoin(PATL,StructIsInitGEQL2)(void *vp)
  * Argument is pointer to a structure which contains our data section.
  */
 //void* ATL_geql2Worker(void *myArg)
-void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+static void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
    ATL_thread_t *tp=vp;
-   ATL_DGEQL2_t *myTS = ((ATL_DGEQL2_t*) vp)+tp->rank;
+   ATL_DGEQL2_t *myTS = ((ATL_DGEQL2_t*) lp->opstruct)+tp->rank;
+// ATL_DGEQL2_t *myTS = (ATL_DGEQL2_t*) vp; /* Recast.                        */
    ATL_DGEQL2_t *zTS = myTS - (myTS->rank); /* Point at zero ts.              */
    int   zees, pair, myRank;                /* Log2 looping variables.        */
+   int   i_loop;
    int   i,j,M,N,LDA,mScale,mUpdate,newN,KNT,LDT;
    int   idup;
+   int   myCopy=myTS->copy;   
    volatile ATL_DGEQL2_t *ptnr;             /* partner log2 combine.          */
    TYPE  *A, *scaleA, *T;                   /* Work variables.                */
    TYPE XNORM, BETA, BETAp, RSAFMN;
@@ -11631,7 +11185,7 @@ void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 
       TYPE ALPHAI, ALPHAR;
       TYPE ALPHADIV[2] ;
-      TYPE w;                            /* Scaling Factor                 */
+      TYPE w;                               /* Scaling Factor                 */
       TYPE wfact[2];                        /* Scaling Factor                 */
       const TYPE ZERO[2] = {ATL_rzero, ATL_rzero};
    #endif
@@ -11645,34 +11199,21 @@ void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 /*----------------------------------------------------------------------------*/
    N = myTS->fullN;                         /* panel width.                   */
 
-   #if defined(local_copy)
-   ATL_geql2_DoCopy(myTS);                  /* Copy my data.                  */
-   #elif defined(private_copy)              /* If I must alloc too,           */
-   size_t myMem = ATL_geql2_LC_Setup(myTS); /* Find memory I need.            */
-   myTS->localMem = malloc(myMem+MY_align); /* Allocate it.                   */
-   myTS->A = (TYPE*)((((size_t) myTS->localMem)+MY_align-1)&(-MY_align));
-   ATL_geql2_DoCopy(myTS);                  /* Execute it.                    */
-   #endif                                   /* local_copy or private_copy     */
-
-   #if defined(perfect_cache)               /* read enough to be in c.        */
-   volatile TYPE pX;
-   int p;
-   for (p=0; p<perfect_cache; p++)
-      for (i=0; i<N; i++)
-         for (j=0; j<myTS->myM; j++)
-            pX = *(myTS->A + j + i*myTS->lda);   /* Force read it.            */
-   #endif                                   /* defined(perfect_cache)         */
+   if (myCopy)
+   {
+      ATL_geql2_DoCopy(myTS);                  /* Copy my data.               */
+   }
 
    LDA = myTS->lda;                         /* Load AFTER local copy.         */
    M = myTS->myM;                           /* Shortcut to M.                 */
 
-/* siju : Here the computation shoudl start from left to right.               */
-/* later also take care of min(M,N) scenario)                                 */
+/* Here the computation should start from left to right.               */
+
    for (i=N-1; i >= 0; i--)                 /* Now, for each column,          */
    {
 /*    i starts from N -1                                                      */
-      myTS->myK =  N - i -1;   // 0, 1, .... N-1  Set my K value.           */
-      idup =  N - i -1;   // 0, 1, .... N-1  Set my K value.                */
+      myTS->myK =  N - i -1;                /* 0, 1, ... N-1  Set my K value. */
+      idup =  N - i -1;                     /* 0, 1, ... N-1  Set my K value. */
 
       if (myRank == 0)                      /* Zero follows diagonal.         */
       {
@@ -11680,15 +11221,15 @@ void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
          mUpdate = M-idup;                  /* Special gemv/ger size.         */
          A = myTS->A + (i* (LDA SHIFT));    /* Special pointer to A.          */
 
+         /* Save diagonal entry, replace with 1.0. */
          #ifdef TREAL
-         myTS->zDiag = *(A + ((M -1 - myTS->myK) SHIFT)); /* Get the diagonal */
-         *(A + M -1 - myTS->myK ) = 1.0;    /* Get the diagonal.              */
+            myTS->zDiag = *(A + ((M -1 - myTS->myK) SHIFT));
+            *(A + M -1 - myTS->myK ) = 1.0;
          #else
-         myTS->zDiag[0] = *(A + ( (M -1 - myTS->myK) SHIFT));
-         myTS->zDiag[1] = *(A + ( (M -1 - myTS->myK) SHIFT) + 1);
-/* Get the diagonal.                                                          */
-         *(A + ((M -1 - myTS->myK) SHIFT) ) = 1.0;    /* Get the diagonal     */
-         *(A + ((M -1 - myTS->myK) SHIFT) + 1 ) = 0.0;/* Get the diagonal     */
+            myTS->zDiag[0] = *(A + ( (M -1 - myTS->myK) SHIFT));
+            myTS->zDiag[1] = *(A + ( (M -1 - myTS->myK) SHIFT) + 1);
+            *(A + ((M -1 - myTS->myK) SHIFT) ) = 1.0;
+            *(A + ((M -1 - myTS->myK) SHIFT) + 1 ) = 0.0;
          #endif
 
          scaleA = A;                        /* What to scale.                 */
@@ -11700,7 +11241,7 @@ void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
          scaleA = A;                        /* What to scale.                 */
       }
 
-/*    i starts from N -1.                                                     */
+      /* i starts from N -1. */
 
       ATL_geql2_dnrm2_ql(myTS);
 
@@ -11723,11 +11264,11 @@ void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 
       myTS->dnrm2++;                        /* Signal I am done.              */
 
-/***************************************                                      */
-/********  S Y N C   P O I N T  ********                                      */
-/********  S Y N C   P O I N T  ********                                      */
-/********  S Y N C   P O I N T  ********                                      */
-/***************************************                                      */
+      /****************************************/
+      /********  S Y N C   P O I N T  *********/
+      /********  S Y N C   P O I N T  *********/
+      /********  S Y N C   P O I N T  *********/
+      /****************************************/
 /*----------------------------------------------------------------------------*/
 /*    Note: We want to avoid syncing after DGER, but                          */
 /*    it is using zTS->WORK as one vector. So it is                           */
@@ -11741,32 +11282,48 @@ void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 
 /*----------------------------------------------------------------------------*/
 /*    At this point, zTS->zDiag is valid.                                     */
+/*    However, if we are going to skip the column because SSQ == 0, then we   */
+/*    will require another synchronization in order to make sure everybody    */
+/*    sees the SSQ before we replace it.                                      */
 /*----------------------------------------------------------------------------*/
-      #ifdef TREAL
       if (zTS->SSQ == 0.)                   /* If result was zero,            */
       {
-         if (myRank == 0)
+         zees = myRank;                     /* Init the test flags.           */
+         pair = 1;                          /* Starting pair.                 */
+         while ( (zees & 1) == 0 &&         /* If I must wait on pair,        */
+            (myRank)+pair < ATL_NTHREADS)   /* ..and pair exists,             */
          {
-            *(A + M -1 - idup) =  myTS->zDiag;
+            ptnr = myTS+pair;               /* Point at my partner.           */
+
+            if (ptnr->active == 1)          /* If ptnr was used,              */
+            {
+               while (ptnr->dnrm2 <= myTS->dnrm2);  /* Wait for it.           */
+            }
+
+            zees >>= 1;                     /* Shift a zero out.              */
+            pair <<= 1;                     /* Double the pair idx.           */
          }
-         continue;                          /* ..Nothing to do here.          */
-      }
-      #else
-      if (zTS->SSQ == 0. && myTS->zDiag[1] == 0.0)    /* If result was zero,  */
-      {
+
          if (myRank == 0)
          {
+            #ifdef TREAL
+            *(A + M -1 - idup) =  myTS->zDiag;
+            #else
             *(A + ((M -1 - idup) SHIFT)) =  myTS->zDiag[0];
             *(A + ((M -1 - idup) SHIFT) +1) =  myTS->zDiag[1];
+            #endif
          }
-         continue;                          /* ..Nothing to do here.          */
+
+         myTS->dnrm2++;                     /* Signal I am done.              */
+         while (zTS->dnrm2 < myTS->dnrm2);  /* Wait for zero to finish.       */
+         continue;                          /* ..Nothing to do on column.     */
       }
-      #endif
+
       XNORM = (zTS->Scale)*sqrt(zTS->SSQ);  /* Compute the norm.              */
 
 /*----------------------------------------------------------------------------*/
 /* The following code is inlined from ATL_larfg.                              */
-/* SSQ = 0 is taken care earlier                                              */
+/* Here, SSQ is non-zero, we exited the loop above if that occurred.          */
 /*----------------------------------------------------------------------------*/
 
    #ifdef TREAL
@@ -11798,7 +11355,7 @@ void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 
       if ( myTS->active == 1)
       {
-         cblas_scal(mScale, wfact, scaleA, 1);  /* Scale the vector.              */
+         cblas_scal(mScale, wfact, scaleA, 1);  /* Scale the vector.          */
       }
 
       if (myRank == 0) AII = BETA;          /* If core 0, remember.           */
@@ -11806,7 +11363,8 @@ void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       ALPHAR =  zTS->zDiag[0];
       ALPHAI =  zTS->zDiag[1];
 
-      BETAp = ATL_lapy3(zTS->zDiag[0], zTS->zDiag[1], XNORM); /* Get sqrt(a^2+b^2,c^2) */
+      BETAp = ATL_lapy3(zTS->zDiag[0], zTS->zDiag[1], XNORM); 
+                                                     /* Get sqrt(a^2+b^2,c^2) */
 /*    Above : already computed using norm                                     */
 
       BETA = BETAp;                         /* Assume diagonal < 0            */
@@ -11834,18 +11392,26 @@ void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 
       if (myRank == 0)                      /* Set if rank zero.              */
       {
-         TAU[(i SHIFT)] = myTAUi[0];
-         TAU[(i SHIFT) +1] = myTAUi[1];
+
+/*      Taking conjugate for TAU for RQ                                       */
+/*      This value is passed as output                                        */ 			 
+	     #ifdef BUILD_RQ2
+            TAU[(i SHIFT)] = myTAUi[0];
+            TAU[(i SHIFT) +1] = 0 - myTAUi[1];
+         #else 
+            TAU[(i SHIFT)] = myTAUi[0];
+            TAU[(i SHIFT) +1] = myTAUi[1];
+         #endif
       }
       ALPHADIV[0] = ALPHA;
       ALPHADIV[1] = ALPHAI;
 
 /*    Perform complex division before scaling the X vector                    */
-      ATL_ladiv( ONE,  ALPHADIV  ,wfact);       /* ALPHA will have the result     */
+      ATL_ladiv( ONE,  ALPHADIV  ,wfact);       /* ALPHA will have the result */
 
       if ( myTS->active == 1)
       {
-         cblas_scal(mScale, wfact, scaleA, 1);  /* Scale the vector.              */
+         cblas_scal(mScale, wfact, scaleA, 1);  /* Scale the vector.          */
       }
 
       if (myRank == 0)
@@ -11870,23 +11436,11 @@ void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 /*                                                                            */
 /* Now, (transpose C) * u is just a GEMV. It produces a vector of             */
 /* (N-i-1) elements. Every core will produce its own copy, and they           */
-/* must be added together. Pictorially, the pieces look like this:            */
-/*                                                                            */
-/* B R R R R R R R R      Q = finished part of column                         */
-/* Q B R R R R R R R      R = upper triangular part for column                */
-/* Q Q B R R R R R R      B = Betas (norm 2) stored on diagonal,              */
-/* Q Q Q 1 C C C C C      1 = forced unit (normally assumed)                  */
-/* Q Q Q u C C C C C      u = vector that H(i) is computed by,                */
-/* Q Q Q u C C C C C      C = portion of panel to be updated.                 */
-/* .     .     .                                                              */
-/* .     .     .          The '1' will later be replaced by BETA for          */
-/* .     .     .          the column 'u'.                                     */
-/* Q Q Q u C C C C C                                                          */
+/* must be added together.                                                    */
 /*                                                                            */
 /* The second part, C += -TAU[i] * u * (transpose w), is just a GER.          */
 /* Each core can do its part independently. We are essentially                */
 /* dividing on M, not N, so every core needs (transpose w).                   */
-/*                                                                            */
 /*----------------------------------------------------------------------------*/
 
    #ifdef TREAL
@@ -11954,12 +11508,15 @@ void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
          #endif
 
          #ifdef TREAL
-            if (myRank == 0) *(A + M -1 - idup) = AII; /* Core 0, restore diag now. */
+            if (myRank == 0) *(A + M -1 - idup) = AII; 
+                                            /* Core 0, restore diag now. */
          #else
             if (myRank == 0)
             {
-               *(A + ((M -1 - idup) SHIFT) ) = AII[0]; /* Core 0, restore diag now. */
-               *(A + ((M -1 - idup) SHIFT)  + 1) = AII[1]; /* Core 0, restore diag now. */
+               *(A + ((M -1 - idup) SHIFT) ) = AII[0]; 
+                                            /* Core 0, restore diag now. */
+               *(A + ((M -1 - idup) SHIFT)  + 1) = AII[1]; 
+                                            /* Core 0, restore diag now. */
             }
          #endif
 /*----------------------------------------------------------------------------*/
@@ -11971,15 +11528,29 @@ void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       else                        /* END IF we need to apply dlarf.           */
       {
          #ifdef TREAL
-            if (myRank == 0) *(A + M -1 - idup) = AII; /* Don't forget to set diag. */
+            if (myRank == 0) *(A + M -1 - idup) = AII; 
+                                                 /* Don't forget to set diag. */
          #else
             if (myRank == 0)
             {
-               *(A + ((M -1 - idup) SHIFT) ) = AII[0]; /* Core 0, restore diag now. */
-               *(A + ((M -1 - idup) SHIFT) +1  ) = AII[1]; /* Core 0, restore diag now. */
+               *(A + ((M -1 - idup) SHIFT) ) = AII[0]; 
+                                                 /* Core 0, restore diag now. */
+               *(A + ((M -1 - idup) SHIFT) +1  ) = AII[1]; 
+                                                 /* Core 0, restore diag now. */
             }
          #endif
       }
+
+      /*
+       * for computing T,  for RQF replace myTAUi with correct TAU for the 
+       * complex part. 
+       */  
+
+      #ifdef TCPLX 
+          #ifdef BUILD_RQ2
+                myTAUi[1] = 0.0 -  myTAUi[1];
+          #endif
+      #endif
 
       #ifdef TREAL
       if (myTS->buildT && idup == 0)        /* Simple store will work.        */
@@ -11987,12 +11558,12 @@ void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       #else
       if (myTS->buildT && idup == 0)        /* Simple store will work.        */
       {
-         *(T +(i*(LDT SHIFT))+ (i SHIFT))  = myTAUi[0]; /* Just store it. NOte later */
+         *(T +(i*(LDT SHIFT))+ (i SHIFT))  = myTAUi[0]; 
+                                            /* Just store it. NOte later      */
          *(T +(i*(LDT SHIFT)) + (i SHIFT) + 1)  = myTAUi[1];
       }
       #endif
 /*    change to min m, n                                                      */
-
       if (myTS->buildT && idup > 0)         /* If I must work for T,          */
       {
 
@@ -12038,8 +11609,8 @@ void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
             AII = *(A + M -1 - idup );      /* Save diagonal element.         */
             *(A + M -1 - idup )  = 1.0;     /* Force to 1.                    */
             #else
-            AII[0] = *(A + ((M -1 - idup) SHIFT) );   /* Save diagonal element. */
-            AII[1] = *(A + ((M -1 - idup ) SHIFT) +1); /* Save diagonal element. */
+            AII[0] = *(A + ((M -1 - idup) SHIFT) );  /* Save diagonal element.*/
+            AII[1] = *(A + ((M -1 - idup ) SHIFT) +1);/* Save diagonal element*/
             *(A + ((M -1 - idup) SHIFT)) = 1.0;  /* Force to 1.               */
             *(A + ((M -1 - idup) SHIFT) + 1) = 0.0;   /* Force to 1.          */
             #endif
@@ -12052,10 +11623,22 @@ void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
          MY_gemvT( mUpdate, idup, 0.-myTAUi, A+LDA, LDA,
                      A, 1, 0.0, myTS->WORK+os, 1);
          #else
-         negTAUi[0]= 0.0 - myTAUi[0];
-         negTAUi[1]= 0.0 - myTAUi[1]; /* conjugate for complex Not required TODO siju check this */
-         MY_gemvT( mUpdate, idup, negTAUi, A+(LDA SHIFT), LDA,
+            #ifdef BUILD_RQ2
+               negTAUi[0]= 0.0 + myTAUi[0];
+               negTAUi[1]= 0.0 - myTAUi[1]; 
+            #else
+               negTAUi[0]= 0.0 - myTAUi[0];
+               negTAUi[1]= 0.0 - myTAUi[1]; 
+            #endif
+            MY_gemvT( mUpdate, idup, negTAUi, A+(LDA SHIFT), LDA,
                      A, 1, ZERO, myTS->WORK+(os SHIFT), 1);
+            #ifdef BUILD_RQ2
+                for (i_loop = 0; i_loop < idup; i_loop++)
+                {
+                     (myTS->WORK+(os SHIFT))[(i_loop SHIFT) + 0] = 
+                                 0.0 - (myTS->WORK+(os SHIFT))[(i_loop SHIFT) + 0];
+                }
+            #endif
          #endif
 
 /*----------------------------------------------------------------------------*/
@@ -12088,13 +11671,14 @@ void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
          if (myRank == 0)
          {
             TYPE *src=zTS->WORK+(os SHIFT); /* Source vector.                 */
-            TYPE *dst= (T + (i*(LDT SHIFT)) +(i SHIFT) +(1 SHIFT)); /* Destination vector. */
+            TYPE *dst= (T + (i*(LDT SHIFT)) +(i SHIFT) +(1 SHIFT)); 
+                                                       /* Destination vector. */
 
             #ifdef TREAL
             *(A + M -1 - idup )  = AII;     /* Restore saved value.           */
             #else
             *(A + ((M -1 - idup) SHIFT) )  = AII[0];  /* Restore saved value. */
-            *(A + ((M -1 - idup) SHIFT) +1 )  = AII[1]; /* Restore saved value. */
+            *(A + ((M -1 - idup) SHIFT) +1 )  = AII[1]; /* Restore svd value. */
             #endif
             for (j=0; j<(idup SHIFT); j++)
             {
@@ -12106,16 +11690,20 @@ void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
                         CblasNoTrans,
                         CblasNonUnit,       /* Actually TAU[i] on diag.       */
                         idup,               /* Dim is i x i.                  */
-                (T + (i+1)*(LDT SHIFT)  + ((i+1) SHIFT) ), /* Point at T prev matrix, */
+                (T + (i+1)*(LDT SHIFT)  + ((i+1) SHIFT) ), 
+                                            /* Point at T prev matrix,        */
                         LDT,                /* Its leading dimension,         */
-                        T+i*(LDT SHIFT)+ ((i+1) SHIFT), /* Point at vector to update. */
+                        T+i*(LDT SHIFT)+ ((i+1) SHIFT), 
+                                            /* Point at vector to update.     */
                         1);                 /* Step by 1.                     */
 
             #ifdef TREAL
             *(T+i*LDT+i)=myTAUi;            /* Force TAU[i] on diagonal.      */
             #else
-            *(T+i*(LDT SHIFT) +(i SHIFT))=myTAUi[0]; /* Force TAU[i] on diagonal. */
-            *(T+i*(LDT SHIFT) +(i SHIFT) + 1)=myTAUi[1]; /* Force TAU[i] on diagonal. */
+            *(T+i*(LDT SHIFT) +(i SHIFT))=myTAUi[0]; 
+                                            /* Force TAU[i] on diagonal.      */
+            *(T+i*(LDT SHIFT) +(i SHIFT) + 1)=myTAUi[1]; 
+                                            /* Force TAU[i] on diagonal.      */
             #endif
 
          }                        /* ** END IF zero must update T. **         */
@@ -12123,25 +11711,17 @@ void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       }                                     /* ** END if building T **        */
    }                                        /* END FOR each column.           */
 
-   #if defined(local_copy)
 /*----------------------------------------------------------------------------*/
 /* If we copied, this will copy back.                                         */
 /*----------------------------------------------------------------------------*/
-   ATL_geql2_UnCopy(myTS);                  /* Do my copy back.               */
-   #elif defined(private_copy)
-   ATL_geql2_UnCopy(myTS);                  /* Do my copy back.               */
-   free(myTS->localMem);                    /* free the memory.               */
-   #endif                                   /* local_copy or private_copy     */
+   if (myCopy)
+   {
+      ATL_geql2_UnCopy(myTS);               /* Do my copy back.               */
+   }
+
    return(NULL);                            /* Implicit thread exit.          */
 }                                           /* end *** ATL_geql2Worker **     */
 
-
-/*-----------------------------------------------------------------------------
- * ATL_geql2Worker_Zero: Persistent for the duration of the DGEQL2 operation.
- * Argument is pointer to an array of structures, one per core.
- * The only work of this thread is to launch the others and run its own
- * section.
- *---------------------------------------------------------------------------*/
 
 /**************************************************************************** */
 /********************** M A S T E R   C O N T R O L L E R ******************* */
@@ -12158,49 +11738,45 @@ void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 /* launches if it is not already computed.                                    */
 /*                                                                            */
 /*----------------------------------------------------------------------------*/
-int ATL_tgeql2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
-                 TYPE *ws_T, int LDT, TYPE *WORKM, int buildT)
+#ifdef BUILD_RQ2    
+#define ATL_tgexx2 Mjoin(PATL,tgerq2)
+#else 
+#define ATL_tgexx2 Mjoin(PATL,tgeql2)
+#endif 
+
+int ATL_tgexx2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
+                 TYPE *ws_T, int LDT, TYPE *WORKM, int buildT, int myCopy)
 {
 
-@skip   ATL_thread_t tp[ATL_NTHREADS];
    ATL_DGEQL2_t ts[ATL_NTHREADS];
-@skip   ATL_LAUNCHSTRUCT_t ls;
+
    long long t0, t1;
 
    if (M < 0)
    {
-      fprintf(stderr, "ATL_geql2: M<0 (%i)\n", M);
+      fprintf(stderr, "%s: M<0 (%i)\n", Mstr(ATL_tgexx2), M);
       return(-1);
    }
 
    if (N < 0)
    {
-      fprintf(stderr, "ATL_geql2: N<0 (%i)\n", N);
+      fprintf(stderr, "%s: N<0 (%i)\n", Mstr(ATL_tgexx2), N);
       return(-2);
    }
 
-   if (LDA < M)
+   #ifdef BUILD_RQ2
+   if (LDA < N)
    {
-      fprintf(stderr, "ATL_geql2: LDA<M (%i, %i)\n", LDA, M);
+      fprintf(stderr, "%s: LDA<N (%i, %i)\n", Mstr(ATL_tgexx2), LDA, N);
       return(-4);
    }
-
-//#ifdef SILYY
-//   if ((M*N) < 4096 ||                      /* If it all fits in L1,          */
-//         M < 128 || N >= M || M < (2*N))    /* Or not worth a split,          */
-   if ((M*N) < 4096 ||                      /* If it all fits in L1,          */
-          N >= M || ATL_NTHREADS == 1 )     /* Or not worth a split,          */
+   #else
+   if (LDA < M)
    {
-      ATL_geql2(M, N, A, LDA, TAU, WORK);   /* Use serial version.            */
-      if (buildT)                           /* If we build T,                 */
-      {
-         ATL_larft(LABackward, LAColumnStore,
-               M, N, A, LDA,                /* build T for this panel.        */
-               TAU, ws_T, LDT);
-      }
-      return(0);                            /* Exit after panel.              */
+      fprintf(stderr, "%s: LDA<M (%i, %i)\n", Mstr(ATL_tgexx2), LDA, M);
+      return(-4);
    }
-//#endif
+   #endif
 
 /*----------------------------------------------------------------------------*/
 /* Preliminaries are done; now split up the problem.                          */
@@ -12208,22 +11784,13 @@ int ATL_tgeql2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
 /* and does all computation related to it.                                    */
 /*----------------------------------------------------------------------------*/
    TYPE *myA = A, *allMem, *workMem;
-   int i, j, k, b0, b, t, th;
+   int i, j, k, b0, b, th;
    long unsigned int CPU;
    size_t mem[ATL_NTHREADS], totmem, workSize;
 
    th = ((M+N-1)/N);                        /* Max number of threads.         */
+   if (th==0) th=1;                         /* Avoid divide by zero.          */
    if (th > ATL_NTHREADS) th=ATL_NTHREADS;  /* Limit on top.                  */
-
-//SIJUUUUUUUUUUU  TODO
-//   th  =1;
-//SIJUUUUUUUUUUU  TODO
- 
-
-/* Assign legth at least N, to that of core 0.  Rest is equally split accross
- * cores. Also, any value exceeds the multiple of 4 (why ?) is added back to
- * core0.
- */
 
    b0 = (M/th);                             /* Find part for th zero.         */
    if (b0 < N) b0 = N;                      /* Take at least N.               */
@@ -12236,25 +11803,30 @@ int ATL_tgeql2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
       b += 4;                     /* Make the others slightly bigger.         */
       b0 -= (th-1)*4;             /* Core 0 has more overhead, do less.       */
    }
-/*
- * If b = 0, then reset the number of threads to 1
- */
-   if (b == 0) th = 1;
 
-//   if (b < 16)                            /* If too small to parlz,         */
-//   {
-//      ATL_geql2(M, N, A, LDA, TAU, WORK); /* Use serial version.            */
-//      if (buildT)                         /* If we build T,                 */
-//      {
-//         ATL_larft(LAForward, LAColumnStore, M, N, A, LDA, /* build T for this panel. */
-////         ATL_larft('F', 'C', M, N, A, LDA,   /* build T for this panel.   */
-//                    TAU, ws_T, LDT);
-//         t_dlarft += t1-t0;               /* Add to time.                   */
-//         t_dgeqlf_first += t1-t0;         /* for first, too.                */
-//      }
-//
-//      return(0);
-//   }
+   if (b == 0) th = 1;
+   if (th == 1 || (M < N) )                             /* If impossible to split,        */
+   {
+
+      #ifdef BUILD_RQ2
+      ATL_gerq2(N, M, A, LDA, TAU, WORK);   /* Use serial version.            */
+      if (buildT)                           /* If we build T,                 */
+      {
+         ATL_larft(LABackward, LARowStore,
+                  M, N, A, LDA,             /* build T for this panel.        */
+                     TAU, ws_T, LDT);
+      }
+      #else
+      ATL_geql2(M, N, A, LDA, TAU, WORK);   /* Use serial version.            */
+      if (buildT)                           /* If we build T,                 */
+      {
+         ATL_larft(LABackward, LAColumnStore,
+                  M, N, A, LDA,             /* build T for this panel.        */
+                     TAU, ws_T, LDT);
+      }
+      #endif
+      return(0);                            /* Exit after panel.              */
+   }
 
 /*----------------------------------------------------------------------------*/
 /* Fill out the thread work areas.                                            */
@@ -12271,7 +11843,11 @@ int ATL_tgeql2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
  */
 
 /* Modify myA  as   A + M - b0                                                */
+   #ifdef BUILD_RQ2
+   myA = A + ((M -b0) * (LDA SHIFT));
+   #else
    myA = A + ((M -b0) SHIFT);
+   #endif 
 
    ts[0].fullM = M;                         /* Need full size M.              */
    ts[0].fullN = N;                         /* Need full size N.              */
@@ -12289,18 +11865,23 @@ int ATL_tgeql2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
    ts[0].T = ws_T;                          /* Pass in matrix addr.           */
    ts[0].LDT = LDT;                         /* And leading dimension.         */
    ts[0].dgemvt = -1;                       /* Not done yet.                  */
-   myA -= (b SHIFT);                        /* Point at next A.               */
+   ts[0].copy = myCopy;                     /* Whether worker should copy.    */
+   #ifdef BUILD_RQ2
+   myA -= (b SHIFT)*LDA;                    /* Point at next A, RQ.           */
+   #else 
+   myA -= (b SHIFT);                        /* Point at next A, QL.           */
+   #endif 
 
    for (i=1; i < th; i++)
    {
-@skip      t = ATL_launchorder[i];               /* Get thread to use.             */
+@skip    t = ATL_launchorder[i];               /* Get thread to use.             */
       ts[i].fullM = b;                      /* Remember whole M.              */
       ts[i].fullN = N;                      /* Need full size N.              */
       ts[i].myM = b;                        /* 'b' entries for all.           */
       ts[i].myN = N;                        /* Width is same for all.         */
       ts[i].myK = 0;                        /* First k for dnrm2.             */
       ts[i].lda = LDA;                      /* LDA is same for all.           */
-      ts[i].rank = t;                       /* Rank of process.               */
+      ts[i].rank = i;                       /* Rank of process.               */
       ts[i].A = myA;                        /* Point at share of A.           */
       ts[i].TAU = TAU;                      /* TAU is same for all.           */
       ts[i].dnrm2 = -1;                     /* Not done yet.                  */
@@ -12308,43 +11889,49 @@ int ATL_tgeql2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
       ts[i].active = 1;                     /* Indicate active.               */
       ts[i].buildT = buildT;                /* Pass in decision var.          */
       ts[i].dgemvt = -1;                    /* Not done yet.                  */
-      myA -= (b SHIFT);                     /* Point at next share.           */
+      ts[i].copy = myCopy;                  /* Whether worker should copy.    */
+      #ifdef BUILD_RQ2
+      myA -= (b SHIFT)*LDA;                 /* Point at next A, RQ.           */
+      #else 
+      myA -= (b SHIFT);                     /* Point at next A, QL.           */
+      #endif 
    }
 
-   #if defined(local_copy)
 /*----------------------------------------------------------------------------*/
 /* Deal with memory.                                                          */
 /*----------------------------------------------------------------------------*/
-   totmem=MY_align;                         /* Needed for alignment.          */
-   for (i=0; i<th; i++)
+   if (myCopy)
    {
-@skip      t = ATL_launchorder[i];               /* Get active thread id.          */
-      mem[i] = ATL_geql2_LC_Setup(ts+t);    /* Find necessary memory.         */
-      totmem += mem[i];                     /* Add to total.                  */
+      totmem=MY_align;                          /* Needed for alignment.      */
+      for (i=0; i<th; i++)                      
+      {                                         
+         mem[i] = ATL_geql2_LC_Setup(ts+i);     /* Find necessary memory.     */
+         totmem += mem[i];                      /* Add to total.              */
+      }                                         
+                                                
+      allMem = malloc(totmem);                  /* Allocate the memory.       */
+
+      ts[0].A = (TYPE*) (((size_t) allMem+MY_align)&(-MY_align));
+      for (i=1; i<th; i++)                      /* Each thread takes..        */
+      {
+         ts[i].A = (TYPE*) ((size_t) ts[i-1].A + mem[i-1]);/* ..next block.     */
+      }
    }
 
-   allMem = malloc(totmem);                 /* Allocate the memory.           */
-
-   ts[0].A = (TYPE*) (((size_t) allMem+MY_align)&(-MY_align));
-   for (i=1; i<th; i++)                     /* Each thread takes..            */
-   {
-      int pt = i-1;        /* Get previous thread id.        */
-      ts[i].A = (TYPE*) ((size_t) ts[pt].A + mem[pt]);/* ..next block.        */
-   }
-   #endif                                   /* defined(local_copy)            */
-
-   workSize = ((2 SHIFT)*(N+4)*sizeof(TYPE) + MY_align-1)&(-MY_align); /* aligned. */
-   totmem = MY_align + workSize*ATL_NTHREADS;    /* Find mem to alloc.        */
+   workSize = ((2 SHIFT)*(N+4)*sizeof(TYPE) + 
+                     MY_align-1)&(-MY_align);   /* aligned. */
+   totmem = MY_align + workSize*ATL_NTHREADS;   /* Find mem to alloc.        */
    workMem = malloc(totmem);
    ts[0].WORK = (TYPE*) (((size_t) workMem + MY_align-1)&(-MY_align));
-   for (i=1; i<ATL_NTHREADS; i++)
+
+   for (i=1; i<th; i++)
       ts[i].WORK = (TYPE*) ((size_t) ts[i-1].WORK + workSize);
 
 /*----------------------------------------------------------------------------*/
 /* Call ATL_launcher to launch thread which runs in different CPUs   cores    */
 /*----------------------------------------------------------------------------*/
 
-   ATL_goparallel(ATL_NTHREADS, ATL_geql2Worker, ts, NULL);
+   ATL_goparallel(th, ATL_geql2Worker, ts, NULL);
 @beginskip
    ls.opstruct = (char*) ts;
    ls.opstructstride = (int) ( ((char*)(ts+1)) - (char*)(ts) );
@@ -12358,16 +11945,13 @@ int ATL_tgeql2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
       tp[i].vp = &ls;
       tp[i].rank = i;
    }
-   ATL_thread_start(tp, 0, 1, ATL_tlaunch, tp);
+   ATL_thread_start(tp, 0, ATL_tlaunch, tp);
    ATL_thread_join(tp);
 @endskip
 
-   #if defined(local_copy)
-   free(allMem);                            /* release copied area.           */
 
-   #endif                                   /* defined(local_copy)            */
-
+   if (myCopy) free(allMem);                /* release copied area.           */
    free(workMem);                           /* release work area.             */
-
    return(0);                               /* Done with dgeql2.              */
-}                                           /* END ATL_t_dgeql2               */
+} /* END ATL_t_dgeql2 */
+
