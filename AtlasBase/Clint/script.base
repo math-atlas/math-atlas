@@ -529,6 +529,19 @@ int WordIsFloat(char *wrd)
    return ( (GotDot == 1) && (GotDigit) && (GotExp==1 || GotExp==0) );
 }
 
+@ROUT atl2vec
+int WordIsInt(char *wrd)
+/*
+ * Returns 0 if wrd is not a valid integer.
+ */
+{
+   int i;
+
+   for (i=0; wrd[i]; i++)
+      if (!isdigit(wrd[i])) 
+         return(0);
+   return(1);
+}
 @ROUT stattime atl2vec
 void UpCaseWords(WORDS *wb)
 {
@@ -1433,15 +1446,14 @@ int GetFlags  /* returns: DOWHAT (AVG,MIN,MAX) */
    int *stride,         /* stride between lines (1) */
    int *ncols,          /* # of cols to make into vectors */
    int **cols,          /* NULL: specced by name, else list of col #s to use */
-   char ***colnams,      /* NULL: specced by #, else list of headers to get */
+   char ***colnams      /* NULL: specced by #, else list of headers to get */
 )
 {
-   int dow = DWAVG;
+   int i, dow = DWAVG;
    *fpin = stdin;
    *fpout = stdout;
    *cmnt = "No  header specified";
-   *nrep = *stride = 1;
-   *start = 0;
+   *nrep = *start = *stride = 1;
    *ncols = 0;
    *cols = NULL;
    *colnams = NULL;
@@ -1502,7 +1514,7 @@ int GetFlags  /* returns: DOWHAT (AVG,MIN,MAX) */
             {
                if (++i >= nargs)
                   PrintUsage(args[0], "out of flags in -C ", i-1);
-               cn[j] = atoi(args[i]);
+               cn[j] = atoi(args[i]) - 1;
             }
             if (*colnams)
                 free(*colnams);  /* they are exclusive */
@@ -1513,7 +1525,7 @@ int GetFlags  /* returns: DOWHAT (AVG,MIN,MAX) */
             break;
          case 'H':  /* column header strings: -H # <h1> ... <h#> */
          {
-            int n;
+            int j, n;
             char **cn;
 
             if (++i >= nargs)
@@ -1534,6 +1546,8 @@ int GetFlags  /* returns: DOWHAT (AVG,MIN,MAX) */
             *colnams = cn;
          }
             break;
+         default :
+            PrintUsage(args[0], args[i], i);
       }                 /* end of case over flags */
    }                    /* end of for over flags */
    return(dow);
@@ -1680,8 +1694,6 @@ int GetFlags(int nargs, char **args, FILE **fpA, FILE **fpB, FILE **fpout,
                PrintUsage(args[0], args[i], i);
             }
             break;
-         default:
-            PrintUsage(args[0], args[i], i);
       }
    }
    if (*fpA == NULL)
@@ -1890,7 +1902,7 @@ WORDQ *GetMassagedQ(FILE *fpin, int start, int stride, int verb)
    return(wq);
 }
 
-
+@ROUT stattime
 void HandleStandardQs(WORDQ *wqA, WORDQ *wqB, FILE *fpout, int nrep, int verb)
 /*
  * Given two queues holding matching results for routA and routB, process
@@ -1998,7 +2010,6 @@ void HandleStandardQs(WORDQ *wqA, WORDQ *wqB, FILE *fpout, int nrep, int verb)
    free(mfB1);
 }
 
-@ROUT stattime
 void HandleTwoFileComp(FILE *fpA, FILE *fpB, FILE *fpout, 
                        int startA, int startB, int strideA, int strideB,
                        int nrep, int verb)
@@ -2131,6 +2142,7 @@ int main (int nargs, char **args)
 
    exit(0);
 }
+@ROUT atl2vec
 int WordNumberInList
 (
    WORDS *wl,           /* list of words to search through */
@@ -2141,7 +2153,7 @@ int WordNumberInList
    
    for (i=0; wl; i++, wl = wl->next)
    {
-      if (strcmp(mtch, wl->word))
+      if (!strcmp(mtch, wl->word))
          return(i);
    }
    return(-1);
@@ -2154,7 +2166,7 @@ int *ColNames2ColNums   /* returns N-len array of column #s to fetch */
    char **names
 )
 {
-   int *nums, uplen=0;
+   int i, *nums, uplen=0;
    char *upnam;
 
    nums = malloc(sizeof(int)*N);
@@ -2184,7 +2196,91 @@ int *ColNames2ColNums   /* returns N-len array of column #s to fetch */
    return(nums);
 }
 
-@ROUT atl2vec
+WORDQ *GetColumnsByNums
+(
+   WORDQ *rowq,    /* original row-wise queue from ATLAS output file */
+   int N,          /* # of columns to grab */
+   int *cnums      /* N-len array of column indexes to grab */
+)
+{
+   int j;
+   WORDQ *wqb, *wqp;
+
+   if (N < 1)
+      return(NULL);
+   wqb = wqp = GetWordQ(GetColByNum(rowq, cnums[0]), NULL);
+   for (j=1; j < N; j++)
+   {
+      wqp->next = GetWordQ(GetColByNum(rowq, cnums[j]), NULL);
+      wqp = wqp->next;
+   }
+   return(wqb);
+}
+
+int CountWords(WORDS *words)
+{
+   int i;
+   for (i=0; words; words = words->next, i++);
+   return(i);
+}
+
+char GetStringType  /* returns c for char, s for string */
+(
+   WORDS *wp
+)
+{
+   for (; wp; wp = wp->next)
+   {
+      if (wp->word[1] != '\0')
+         return('s');
+   }
+   return('c');
+}
+
+void PrintOutVectors
+(
+   int N,               /* # of vectors */
+   int nrep,            /* # of repititions within the vectors */
+   WORDQ *wqb,          /* N-len queue of vectors stored as WORDS */
+   FILE *fpout,         /* stream to print to */
+   char *cmnt           /* comment to stick as 1st line of file */
+)
+/*
+ * Prints all vectors to fpout.  The output looks like:
+ * #<cmnt>
+ * <nvec> <nrep>      # # of vectors, and repititions
+ * <vec1>
+ * <vec2>
+ *
+ * Each vector consists of:
+ * <name>
+ * <len> [i,d,s,c]      # char gives data type (int, double, string, char)
+ * <elt1>
+ * <elt2>
+ */
+{
+   int j;
+   char pre;
+   WORDQ *wq=wqb;
+
+   fprintf(fpout, "#%s\n", cmnt);
+   fprintf(fpout, "%d %d\n", N, nrep);
+   for (j=0; j < N; j++)
+   {
+      WORDS *wp = wq->wlist;
+      if (WordIsFloat(wp->next->word))
+         pre = 'd';
+      else if (WordIsInt(wp->next->word))
+         pre = 'i';
+      else
+         pre = GetStringType(wp->next);
+      fprintf(fpout, "%s\n%d %c\n", wp->word, CountWords(wp->next), pre);
+      for (wp=wp->next; wp; wp = wp->next)
+          fprintf(fpout, "%s\n", wp->word);
+      wq = wq->next;
+   }
+}
+
 int main (int nargs, char **args)
 {
    int dw, nrep, start, stride, ncols;
@@ -2195,22 +2291,18 @@ int main (int nargs, char **args)
 
    dw = GetFlags(nargs, args, &fpin, &fpout, &cmnt, &nrep, &start, &stride,
                  &ncols, &cols, &colnams);
-   wqb = ReadTimerFile(fpin);  /* read in data by rows, 1st row headers */
+   wqb = GetMassagedQ(fpin, start, stride, 0);
    if (colnams)
    {
       assert(!cols);
-      cols = ColNames2ColNums(wbq->wlist, ncols, colnams);
+      cols = ColNames2ColNums(wqb->wlist, ncols, colnams);
       free(colnams);
       colnams = NULL;
    }
    assert(cols);
-   wq = GetColumns(ncols, cols);  /* translate all row-major workd queues */
+   wq = GetColumnsByNums(wqb, ncols, cols);
    KillAllWordQ(wqb);             /* into only selected column-major queues */
-   wqb = wq;
-   wq = HandleRepsInCols(ncols, wqb, nrep, start, stride);  
-         /* MFLOP+,>,< other combined cols assert same */
-   KillAllWordQ(wqb);
-   PrintOutVectors(fpout, cmnt, wq);
+   PrintOutVectors(ncols, nrep, wq, fpout, cmnt);
    KillAllWordQ(wq);
    if (fpin != stdin)
       fclose(fpin);
