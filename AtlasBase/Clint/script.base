@@ -2967,12 +2967,63 @@ char **GetFlags         /* RETURNS: array of names to combine */
 int main(int nargs, char **args)
 {
    FILE *fp1, *fp2, *fpout;
-   char *rngv, **combarr;
-   int Nc, i;
+   char *rngv, **combarr, *cmnt;
+   int N, Nc, i, j, RNGINC=0, nrep;
+   ATL_tvec_t *t1, *t2, *tp, *p1, *p2, *r1, *r2, *cb, *cp;
+
    combarr = GetFlags(nargs, args, &fp1, &fp2, &fpout, &rngv, &Nc);
+/*
+ * Grab only the vectors to be combined, in order user has specified from
+ * both lists, and free all unused vectors */
+   t1 = ATL_ReadTvecFile(fp1, &cmnt, &N, &nrep);
+   if (fp1 != stdin)
+      fclose(fp1);
+   tp = ATL_PullNamedVecsFromList(Nc, combarr, &t1);
+   if (t1)
+      ATL_KillAllTvecs(t1);
+   t1 = tp;
+
+   t2 = ATL_ReadTvecFile(fp1, &cmnt, &i, &j);
+   if (fp2 != stdin)
+      fclose(fp2);
+   tp = ATL_PullNamedVecsFromList(Nc, combarr, &t2);
+   if (t2)
+      ATL_KillAllTvecs(t2);
+   t2 = tp;
+/*
+ * Find range vectors
+ */
+   r1 = ATL_FindTvecByName(t1, rngv);
+   r2 = ATL_FindTvecByName(t2, rngv);
+   assert(r1->pre == 'i' && r2->pre == 'i');  /* restriction to fix later */
+/*
+ * Combine all vectors and build new list cb
+ */
+   for (cb=NULL, p1=t1, p2=t2; p1 && p2; p1 = p1->next, p2 = p2->next)
+   {
+      ATL_tvec_t *p;
+
+      assert(!strcmp(p1->name, p2->name));
+      assert(p1->nrep == p2->nrep);
+      p = ATL_CombineTheseVecsUsingInts(r1, r2, p1, p2);
+      if (cb)
+         cp->next = p;
+      else
+         cb = p;
+      cp = p;
+   }
+   ATL_KillAllTvecs(t1);
+   ATL_KillAllTvecs(t2);
+   ATL_WriteTvecFile(fpout, cmnt, Nc, nrep, cb);
+   ATL_KillAllTvecs(cb);
+   free(cmnt);
+#if 0
    printf("rngv = '%s'\n", rngv);
    for (i=0; i < Nc; i++)
       printf("nam[%d] = '%s'\n", i, combarr[i]);
+#endif
+   if (fpout != stdout && fpout != stderr)
+      fclose(fpout);
    return(0);
 }
 @ROUT !
