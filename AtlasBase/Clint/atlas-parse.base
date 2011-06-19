@@ -3118,6 +3118,7 @@ ATL_tvec_t *ATL_ReadTvec(FILE *fpin, int nrep)
      ATL_ReadCharTvec(fpin, N, tp->vp);
    else /* if (pre == 's') */
      ATL_ReadStringTvec(fpin, N, tp->vp);
+   return(tp);
 }
 
 ATL_tvec_t *ATL_ReadTvecFile(FILE *fpin, char **cmnt, int *nvec, int *nrep)
@@ -3130,11 +3131,14 @@ ATL_tvec_t *ATL_ReadTvecFile(FILE *fpin, char **cmnt, int *nvec, int *nrep)
    char ln[512];
    ATL_tvec_t *tb, *tp;
 
-   assert(fscanf(fpin, "# %s\n", ln) == 1);
-   *cmnt = malloc(sizeof(char)*(strlen(ln)+1));
+   assert(fgets(ln, 512, fpin));
+   n = strlen(ln);
+   while (n > 0 && isspace(ln[n-1]))
+      ln[--n] = '\0';;
+   *cmnt = malloc(sizeof(char)*n);
    assert(*cmnt);
-   strcpy(*cmnt, ln);
-   assert(fscanf(fpin, "%d %d", nvec, nrep) == 2);
+   strcpy(*cmnt, ln+1);
+   assert(fscanf(fpin, " %d %d\n", nvec, nrep) == 2);
 
    n = *nvec;
    nr = *nrep;
@@ -3291,6 +3295,43 @@ ATL_tvec_t *ATL_CombineTheseVecsUsingInts
    return(np);
 }
 
+@beginskip
+ATL_tvec_t *ATL_KillNamedVecFromList  /* returns list w/ named vec(s) removed */
+(
+   char *names,         /* names of vectors to grab */
+   ATL_tvec_t *tb       /* original list */
+)
+{
+   if (!tb)
+      return(NULL);
+   while (!strcmp(tb
+}
+@endskip
+void ATL_SuffixTvecNames
+(
+   ATL_tvec_t *tb,   /* list whose names should be suffixed */
+   char *suff 
+)
+{
+   ATL_tvec_t *tp;
+   int isu;
+
+   isu = strlen(suff) + 1;
+   for (tp=tb; tp; tp = tp->next)
+   {
+      int i, inm, n;
+      char *sp;
+
+      inm = strlen(tp->name);
+      sp = malloc((inm+isu)*sizeof(char));
+      for (i=0; i < inm; i++)
+         sp[i] = tp->name[i];
+      for (n=inm+isu; i < n; i++)
+         sp[i] = suff[i-inm];
+      free(tp->name);
+      tp->name = sp;
+   }
+}
 ATL_tvec_t *ATL_PullNamedVecsFromList  /* returns list of pulled vecs */
 (
    int N,               /* # of vectors to remove from list to */
@@ -3333,6 +3374,30 @@ ATL_tvec_t *ATL_PullNamedVecsFromList  /* returns list of pulled vecs */
       }
    }
    *orig = old;
+   return(nb);
+}
+
+int ATL_CountTVecsInList
+(
+   ATL_tvec_t *tb      /* list to count */
+)
+{
+   int i;
+   for (i=0; tb; i++, tb = tb->next);
+   return(i);
+}
+
+ATL_tvec_t *ATL_FindLastVecInList  /* RETURNS: last tvec in list */
+(
+   ATL_tvec_t *tb      /* list to look through */
+)
+{
+   if (tb)
+   {
+      while (tb->next)
+         tb = tb->next;
+   }
+   return(tb);
 }
 
 ATL_tvec_t *ATL_AlphabetizeVecList  /* returns alphabatized list */
@@ -3374,6 +3439,198 @@ ATL_tvec_t *ATL_AlphabetizeVecList  /* returns alphabatized list */
    tb = ATL_PullNamedVecsFromList(N, names, &tb);
    free(names);
    return(tb);
+}
+
+void ATL_CopyStridedVec(char pre, int n, int inc, void *vin, void *vout)
+{
+   if (pre == 'd')
+   {
+      int i, j;
+      double *in = vin, *out = vout;
+      for (j=i=0; i < n; i++, j += inc)
+         out[i] = in[j];
+   }
+   else if (pre == 'i')
+   {
+      int i, j;
+      int *in = vin, *out = vout;
+      for (j=i=0; i < n; i++, j += inc)
+         out[i] = in[j];
+   }
+   else if (pre == 'c')
+   {
+      int i, j;
+      char *in = vin, *out = vout;
+      for (j=i=0; i < n; i++, j += inc)
+         out[i] = in[j];
+   }
+   else if (pre == 's')
+   {
+      int i, j;
+      char **in = vin, **out = vout;
+      for (j=i=0; i < n; i++, j += inc)
+      {
+         int n;
+         n = strlen(in[i]) + 1;
+         out[i] = malloc(n*sizeof(char));
+         strcpy(out[i], in[j]);
+      }
+   }
+}
+
+void ATL_PrintTVecElt
+(
+   FILE *fpout,         /* stream to print to */
+   ATL_tvec_t *tp,      /* vector to print from */
+   int idx              /* index in vector to print */
+)
+{
+   if (tp->pre == 'd')
+   {
+      double *p = tp->vp;
+      fprintf(fpout, "%e", p[idx]);
+   }
+   else if (tp->pre == 'i')
+   {
+      int *p = tp->vp;
+      fprintf(fpout, "%d", p[idx]);
+   }
+   else if (tp->pre == 'c')
+   {
+      char *p = tp->vp;
+      fprintf(fpout, "%c", p[idx]);
+   }
+   else if (tp->pre == 's')
+   {
+      char **p = tp->vp;
+      fprintf(fpout, "%s", p[idx]);
+   }
+}
+
+void ATL_PrintTVecsInRow
+(
+   FILE *fpout,         /* stream to print to */
+   ATL_tvec_t *tb,      /* list of vectors to print (rowwise) */
+   char *sep            /* string to print between elements */
+)
+{
+   ATL_tvec_t *tp;
+   const int N = tb->N;
+   int i;
+
+   if (!tb)
+      return;
+   for (tp=tb->next; tp; tp = tp->next)
+      assert(tp->N >= N);
+
+   for (i=0; i < N; i++)                        /* loop over rows of vectors */
+   {
+      for (tp=tb; tp->next; tp = tp->next)      /* loop over columns  */
+      {
+         ATL_PrintTVecElt(fpout, tp, i);
+         fprintf(fpout, "%s", sep);
+      }
+      ATL_PrintTVecElt(fpout, tp, i);
+      fprintf(fpout, "%s\n", sep);
+   }
+}
+
+ATL_tvec_t *ATL_GetRep1Vector
+(
+   ATL_tvec_t *tin,    /* vector to split */
+   int istart          /* which repetition to grab */
+)
+{
+   char *name;
+   ATL_tvec_t *t1=NULL;
+   int n;
+   const int Nr = tin->N / tin->nrep;
+   const char pre = tin->pre;
+
+   assert(tin->nrep < 10000000);
+   n = strlen(tin->name) + 9;
+   name = malloc(n*sizeof(char));
+   assert(name);
+   sprintf(name, "%s_%d", tin->name, istart);
+   t1 = ATL_GetTvec(name, Nr, 1, pre);
+   free(name);
+   if (pre == 'd')
+      ATL_CopyStridedVec(pre, Nr, tin->nrep,((double*)(tin->vp))+istart,t1->vp);
+   else if (pre == 'i')
+      ATL_CopyStridedVec(pre, Nr, tin->nrep, ((int*)(tin->vp))+istart, t1->vp);
+   else if (pre == 'c')
+      ATL_CopyStridedVec(pre, Nr, tin->nrep, ((char*)(tin->vp))+istart, t1->vp);
+   else if (pre == 's')
+      ATL_CopyStridedVec(pre, Nr, tin->nrep, ((char**)(tin->vp))+istart,t1->vp);
+
+   return(t1);
+}
+
+ATL_tvec_t *ATL_SplitRepsVector  /* returns Q of sep vecs for each rep */
+(
+   ATL_tvec_t *tin     /* vector to split */
+)
+{
+   int i;
+   const int nrep = tin->nrep;
+   ATL_tvec_t *tb, *tp;
+
+   tp = tb = ATL_GetRep1Vector(tin, 0);
+   for (i=1; i < nrep; i++)
+   {
+      tp->next = ATL_GetRep1Vector(tin, i);
+      tp = tp->next;
+   }
+   return(tb);
+}
+
+ATL_tvec_t *ATL_GetStatVecsDOUBLE  /* returns Q of stat vectors: <,+,> */
+(
+   ATL_tvec_t *tin     /* vector to get stats for */
+)
+{
+   char *name;
+   int i, j, n, N;
+   ATL_tvec_t *tavg, *tmin, *tmax;
+   double *dmin, *dmax, *davg;
+
+   n = strlen(tin->name) + 5;
+   name = malloc(sizeof(char)*n);
+   N = tin->N / tin->nrep;
+   assert(name);
+
+   sprintf(name, "%s_min", tin->name);
+   tmin = ATL_GetTvec(name, N, 1, tin->pre);
+   sprintf(name, "%s_avg", tin->name);
+   tavg = ATL_GetTvec(name, N, 1, tin->pre);
+   sprintf(name, "%s_max", tin->name);
+   tmax = ATL_GetTvec(name, N, 1, tin->pre);
+   dmin = tmin->vp;
+   dmax = tmax->vp;
+   davg = tavg->vp;
+
+   n = tin->nrep;
+   for (j=0; j < N; j++)
+   {
+      double min, max, sum, *din;
+
+      din = ((double*)(tin->vp)) + j*n;
+      min = max = sum = *din;
+      for (i=1; i < n; i++)
+      {
+         if (din[i] < min)
+            min = din[i];
+         if (din[i] > max)
+            max = din[i];
+         sum += din[i];
+      }
+      dmin[j] = min;
+      dmax[j] = min;
+      davg[j] = sum / n;
+   }
+   tmin->next = tavg;
+   tavg->next = tmax;
+   return(tmin);
 }
 
 #endif  /* end ifdef multi-inclusion guard */
