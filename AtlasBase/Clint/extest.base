@@ -9,8 +9,8 @@ int FAx=0, MAx=0, FAy=0, MAy=0, FAa=0, MAa=0;
 @extract -b @(topd)/FAmalloc.inc
 
 @rout r1test r1ktest r2ktest
-static void dumb_ger(int Conj, int M, int N, SCALAR alpha, TYPE *X, int incX, 
-                     TYPE *Y, int incY, TYPE *A, int lda)
+static void dumb_ger(int Conj, int M, int N, const SCALAR alpha, TYPE *X, 
+                     int incX, TYPE *Y, int incY, TYPE *A, int lda)
 {
    #ifdef TCPLX
       TYPE tmp[2];
@@ -288,15 +288,6 @@ static int CheckAns(int M, int N, TYPE *G, int ldg, TYPE *U, int ldu)
 void ATL_gerT(ATL_CINT M, ATL_CINT N, const SCALAR alpha,
               const TYPE *X, ATL_CINT incX, const TYPE *Y, ATL_CINT incY,
               TYPE *A, ATL_CINT lda);
-@ROUT r1ktest
-void ATL_UGERK(ATL_CINT M, ATL_CINT N, const TYPE *X, const TYPE *Y,
-               TYPE *A, ATL_CINT lda);
-@ROUT r2ktest
-void ATL_UGER2K(ATL_CINT M, ATL_CINT N, const TYPE *X, const TYPE *Y, 
-                const TYPE *W, const TYPE *Z, TYPE *A, ATL_CINT lda);
-@ROUT mvnktest mvtktest
-void ATL_UGEMV(ATL_CINT M, ATL_CINT N, const TYPE *A, ATL_CINT lda, 
-               const TYPE *X, TYPE *Y);
 @ROUT mvntest
 #define my_gemv Mjoin(PATL,gemvN)
 @ROUT mvttest
@@ -322,7 +313,15 @@ static int RunTest(int CONJ, int M, int N, int incY, int lda)
 {
    #ifdef TCPLX
       TYPE one[2] = {ATL_rone, ATL_rzero};
-@ROUT mvnktest mvtktest    
+@ROUT r1test
+      #ifdef ALPHA0
+         const TYPE alpha[2] = {ATL_rzero, ATL_rzero};
+      #elif defined(ALPHAX)
+         const TYPE alpha[2] = {ATL_rone, ATL_rzero};
+      #else
+         const TYPE alpha[2] = {0.5, 2.1};
+      #endif
+@ROUT mvnktest mvtktest 
       #ifdef BETA0
          const TYPE beta[2] = {ATL_rzero, ATL_rzero};
       #else
@@ -331,6 +330,14 @@ static int RunTest(int CONJ, int M, int N, int incY, int lda)
 @ROUT r1test r1ktest r2ktest mvnktest mvtktest mvntest mvttest
    #else
       TYPE one = ATL_rone; 
+@ROUT r1test
+      #ifdef ALPHA0
+         const TYPE alpha = ATL_rzero;
+      #elif defined(ALPHAX)
+         const TYPE alpha = ATL_rone;
+      #else
+         const TYPE alpha = 2.0;
+      #endif
 @ROUT mvnktest mvtktest
       #ifdef BETA0
          const TYPE beta = ATL_rzero;
@@ -348,26 +355,11 @@ static int RunTest(int CONJ, int M, int N, int incY, int lda)
 @ROUT mvntest mvttest 
    ATL_CINT aincY = Mabs(incY), aincX = Mabs(incX);
 @ROUT r1test r1ktest r2ktest mvnktest mvtktest mvntest mvttest
+   char *frm = "%5d %5d %5d %3d %3d  %4x %4x %4x  %6s\n";
    int ierr;
+   printf("\n    M     N   lda incY incX     A    X     Y   PASS?\n");
+   printf(  "===== ===== ===== ===  ====  ==== ====  ====  ======\n");
 
-@ROUT mvntest mvttest
-   #ifdef TCPLX
-      fprintf(stdout, 
-"   TEST M=%d, N=%d, lda=%d, iY=%d, iX=%d al=(%.2f,%.2f) be=(%.2f,%.2f) ALG[%d,%d %d,%d %d,%d] STARTED\n",
-              M, N, lda, incY, incX, *alpha, alpha[1], *beta, beta[1],
-              FAa, MAa, FAx, MAx, FAy, MAy);
-   #else
-      fprintf(stdout, 
-"   TEST M=%d, N=%d, lda=%d, iY=%d, iX=%d al=%.2f be=%.2f ALG[%d,%d %d,%d %d,%d] STARTED\n",
-              M, N, lda, incY, incX, alpha, beta, FAa, MAa, FAx, MAx, FAy, MAy);
-   #endif
-@ROUT mvnktest mvtktest
-   fprintf(stdout, 
-           "   TEST M=%d, N=%d, lda=%d, ALG[%d,%d %d,%d %d,%d] STARTED\n", 
-           M, N, lda, FAa, MAa, FAx, MAx, FAy, MAy);
-@ROUT r1test r1ktest r2ktest 
-   fprintf(stdout, "   TEST CONJ=%d, M=%d, N=%d, lda=%d, incY=%d, ALG[%d,%d %d,%d %d,%d] STARTED\n",
-           CONJ, M, N, lda, incY, MAa, FAx, MAx, FAy, MAy);
 @ROUT r1test r1ktest r2ktest mvnktest mvtktest mvntest mvttest
    A = FA_malloc(ATL_MulBySize(lda)*N, FAa, MAa);
 @ROUT r1test r1ktest r2ktest `   A0 = FA_malloc(ATL_MulBySize(M)*N, FAa, MAa);`
@@ -400,6 +392,8 @@ static int RunTest(int CONJ, int M, int N, int incY, int lda)
    Mjoin(PATL,gegen)(1, NY, Y1, aincY, ((N*aincY)<<4)+0xFFABCD);
    Mjoin(PATL,gegen)(1, NX, X1, aincX, NY*aincY+0xAC3955F);
 @ROUT r1test r1ktest r2ktest mvnktest mvtktest mvntest mvttest
+   printf(frm, M, N, lda, incY, incX, ((size_t)A)&0xFFFF, ((size_t)X)&0xFFFF,
+          ((size_t)Y)&0xFFFF, " START");
    Mjoin(PATL,gegen)(1, NY, Y, aincY, NY*aincY);
    Mjoin(PATL,gegen)(1, NX, X, aincX, NY*aincY+127*50+77);
 @ROUT r1test r1ktest r2ktest `   Mjoin(PATL,gegen)(M, N, A0, M, N*M+513*7+90);`
@@ -417,24 +411,10 @@ static int RunTest(int CONJ, int M, int N, int incY, int lda)
    #endif
    my_gemv(M, N, alpha, A, lda, X, incX, beta, Y, incY);
    ierr = CheckAns(M, N, Y0, incY, Y, incY);
-   #ifdef TREAL
-      fprintf(stdout, "   TEST M=%d, N=%d, al,be=%.2f,%.2f, lda=%d, incXY=%d,%d [%d,%d %d,%d %d,%d] %s\n",
-              M, N, alpha, beta, lda, incX, incY, 
-              FAa, MAa, FAx, MAx, FAy, MAy, (ierr) ? "FAILED":"PASSED");
-   #else
-      fprintf(stdout,
- "   TEST M=%d, N=%d, al,be=(%.2f,%2.f),(%.2f,%.2f), lda=%d, incXY=%d,%d [%d,%d %d,%d %d,%d] %s\n",
-              M, N, *alpha, alpha[1], *beta, beta[1], lda, incX, incY, 
-              FAa, MAa, FAx, MAx, FAy, MAy, (ierr) ? "FAILED":"PASSED");
-   #endif
 @ROUT mvnktest mvtktest
    dumb_gemv(0, M, N, one, A, lda, X, 1, beta, Y0, 1);
    ATL_UGEMV(M, N, A, lda, X, Y);
    ierr = CheckAns(M, N, Y0, 1, Y, 1);
-@ROUT mvnktest mvtktest
-   fprintf(stdout, "   TEST M=%d, N=%d, be=%.2f, lda=%d, incXY=%d,%d [%d,%d %d,%d %d,%d] %s\n",
-           M, N, SVAL beta, lda, incX, incY, FAa, MAa, FAx, MAx, FAy, MAy,
-           (ierr)?"FAILED":"PASSED");
 @ROUT mvnktest mvtktest mvntest mvttest
    FA_free(A, FAa, MAa);
    if (incY < 0)
@@ -473,7 +453,7 @@ static int RunTest(int CONJ, int M, int N, int incY, int lda)
    FA_free(Y1, FAy, MAy);
    FA_free(X1, FAx, MAx);
 @rout r1test r1ktest
-   dumb_ger(CONJ, M, N, one, X, 1, Y, incY, A0, M);
+   dumb_ger(CONJ, M, N, alpha, X, 1, Y, incY, A0, M);
 @ROUT r1test r1ktest r2ktest
 
    if (incY < 0) Y -= (N-1) * (aincY SHIFT);
@@ -483,14 +463,9 @@ static int RunTest(int CONJ, int M, int N, int incY, int lda)
    FA_free(A, FAa, MAa);
    FA_free(A0, FAa, MAa);
 
-@ROUT r1test r1ktest r2ktest
-   if (ierr)
-      fprintf(stdout, "   TEST CONJ=%d, M=%d, N=%d, lda=%d, incY=%d, FAILED\n",
-              CONJ, M, N, lda, incY);
-   else fprintf(stdout, 
-                "   TEST CONJ=%d, M=%d, N=%d, lda=%d, incY=%d, PASSED\n",
-                CONJ, M, N, lda, incY);
 @ROUT r1test r1ktest r2ktest mvtktest mvnktest mvntest mvttest
+   printf(frm, M, N, lda, incY, incX, ((size_t)A)&0xFFFF, ((size_t) X)&0xFFFF,
+          ((size_t) Y)&0xFFFF, (ierr) ? "FAILED":"PASSED");
    return(ierr);
 }
 #undef NX
@@ -498,12 +473,12 @@ static int RunTest(int CONJ, int M, int N, int incY, int lda)
 
 @rout mvnktest mvtktest
 int RunTests(int verb, int *Ms, int *Ns, int *ldas)
-@rout r1ktest r2ktest
+@rout r1ktest r2ktest r1test
 int RunTests(int verb, int *CONJs, int *Ms, int *Ns, int *incYs, int *ldas)
 @ROUT mvntest mvttest
 int RunTests(int verb, int *Ms, int *Ns, int *incXs, int *incYs, int *ldas,
              TYPE *alphas, TYPE *betas)
-@rout r1ktest r2ktest mvnktest mvtktest mvntest mvttest
+@rout r1ktest r2ktest mvnktest mvtktest mvntest mvttest r1test
 {
    int iy, ix, ic, in, im, iax, iay, iaa;
    ATL_INT m, n, lda, conj, incy;
@@ -516,7 +491,7 @@ int RunTests(int verb, int *Ms, int *Ns, int *incXs, int *incYs, int *ldas,
    #else
       TYPE alpha, beta;
    #endif
-@rout r1ktest r2ktest mvnktest mvtktest mvntest mvttest
+@rout r1ktest r2ktest mvnktest mvtktest mvntest mvttest r1test
    assert(ldas[0] == Ms[0]);
    for (in=1; in <= Ns[0]; in++)
    {
@@ -527,17 +502,32 @@ int RunTests(int verb, int *Ms, int *Ns, int *incXs, int *incYs, int *ldas,
          lda = ldas[im];
 @rout mvnktest mvtktest
          nerr += RunTest(m, n, lda);
-@rout r1ktest r2ktest mvntest mvttest
+@rout r1ktest r2ktest mvntest mvttest r1test
          for (iy=1; iy <= incYs[0]; iy++)
          {
             incy = incYs[iy];
-@rout r1ktest r2ktest
+@rout r1ktest r2ktest r1test
             for (ic=1; ic <= CONJs[0]; ic++)
             {
                conj = CONJs[ic];
-               nerr += RunTest(conj, m, n, incy, lda);
-               if (nerr && !verb)
-                  return(nerr);
+               for (iaa=0; iaa < 8; iaa++)
+               {
+                  FAa = iaa*sizeof(TYPE);
+                  MAa = FAa + sizeof(TYPE);
+                  for (iay=0; iay < 8; iay++)
+                  {
+                     FAy = iay*sizeof(TYPE);
+                     MAy = FAy + sizeof(TYPE);
+                     for (iax=0; iax < 8; iax++)
+                     {
+                        FAx = iax*sizeof(TYPE);
+                        MAx = FAx + sizeof(TYPE);
+                        nerr += RunTest(conj, m, n, incy, lda);
+                        if (nerr && !verb)
+                           return(nerr);
+                     }
+                  }
+               }
             }
 @ROUT mvntest mvttest
             for (ix=1; ix <= incXs[0]; ix++)
@@ -565,7 +555,7 @@ int RunTests(int verb, int *Ms, int *Ns, int *incXs, int *incYs, int *ldas,
                         {
                            FAy = iay*sizeof(TYPE);
                            MAy = FAy + sizeof(TYPE);
-                           for (iay=0; iay < 8; iay++)
+                           for (iax=0; iax < 8; iax++)
                            {
                               FAx = iax*sizeof(TYPE);
                               MAx = FAx + sizeof(TYPE);
@@ -577,9 +567,9 @@ int RunTests(int verb, int *Ms, int *Ns, int *incXs, int *incYs, int *ldas,
                   }
                }
             }
-@ROUT r1ktest r2ktest mvntest mvttest mvntest mvttest
+@ROUT r1ktest r2ktest mvntest mvttest mvntest mvttest r1test
          }
-@rout r1ktest r2ktest mvnktest mvtktest mvntest mvttest
+@rout r1ktest r2ktest mvnktest mvtktest mvntest mvttest r1test
       }
    }
    return(nerr);
@@ -600,14 +590,14 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "   -M <Mstart> <Mend> <Minc>\n");
    fprintf(stderr, "   -l <#> <lda1> ... <lda#>\n");
    fprintf(stderr, "   -g <ldagap> : lda = M + <ldagap> foreach M\n");
-@rout r1ktest r2ktest mvntest mvttest
+@rout r1ktest r2ktest mvntest mvttest r1test
    fprintf(stderr, "   -y <#> <incY1> ... <incY#>\n");
    fprintf(stderr, "   -x <#> <incX1> ... <incX#>\n");
    fprintf(stderr, "   -C <#> <conj1> ... <conj#>\n");
 @ROUT mvntest mvttest
    fprintf(stderr, "   -a <#> <alpha1> ... <alpha#>\n");
    fprintf(stderr, "   -b <#> <beta1> ... <beta#>\n");
-@rout r1ktest r2ktest mvnktest mvtktest mvntest mvttest
+@rout r1ktest r2ktest mvnktest mvtktest mvntest mvttest r1test
    fprintf(stderr, 
            "   -v [0,1] : 0 - stop on first error, else keep testing\n");
    fprintf(stderr,
@@ -622,13 +612,13 @@ void PrintUsage(char *name, int ierr, char *flag)
 
 @rout mvnktest mvtktest
 int GetFlags(int nargs, char **args, int **Ms, int **Ns, int **LDAs)
-@rout r1ktest r2ktest
+@rout r1ktest r2ktest r1test
 int GetFlags(int nargs, char **args, int **CONJs, int **Ms, int **Ns, 
              int **LDAs, int **incYs, int **incXs)
 @rout mvntest mvttest
 int GetFlags(int nargs, char **args, int **Ms, int **Ns, int **LDAs, 
              int **incYs, int **incXs, TYPE **ALPHAs, TYPE **BETAs)
-@rout r1ktest r2ktest mvnktest mvtktest mvntest mvttest
+@rout r1ktest r2ktest mvnktest mvtktest mvntest mvttest r1test
 {
    int verb, i, k, *ip;
    char ch;
@@ -639,9 +629,9 @@ int GetFlags(int nargs, char **args, int **Ms, int **Ns, int **LDAs,
    #else
       const TYPE one = ATL_rone;
    #endif
-@rout r1ktest r2ktest mvnktest mvtktest mvntest mvttest
+@rout r1ktest r2ktest mvnktest mvtktest mvntest mvttest r1test
 
-@rout r1ktest r2ktest `   *Ns = *Ms = *LDAs = *incYs = *incXs = *CONJs = NULL;`
+@rout r1test r1ktest r2ktest `   *Ns = *Ms = *LDAs = *incYs = *incXs = *CONJs = NULL;`
 @rout mvnktest mvtktest `   *Ns = *Ms = *LDAs = NULL;`
 @ROUT mvntest mvttest `   *Ns = *Ms = *LDAs = *incYs = *incXs = NULL;`
 @ROUT mvntest mvttest `   *ALPHAs = *BETAs = NULL;`
@@ -678,10 +668,10 @@ int GetFlags(int nargs, char **args, int **Ms, int **Ns, int **LDAs,
       case 'n':
       case 'm':
       case 'l':
-@rout r1ktest r2ktest mvntest mvttest
+@rout r1ktest r2ktest mvntest mvttest r1test
       case 'y':
       case 'x':
-@rout r1ktest r2ktest mvnktest mvtktest mvntest mvttest
+@rout r1ktest r2ktest mvnktest mvtktest mvntest mvttest r1test
          ip = GetIntList(nargs, args, i, 1);
          i += ip[0] + 1;
          switch(ch)
@@ -695,14 +685,14 @@ int GetFlags(int nargs, char **args, int **Ms, int **Ns, int **LDAs,
          case 'l':
             *LDAs = ip;
             break;
-@rout r1ktest r2ktest mvntest mvttest
+@rout r1ktest r2ktest mvntest mvttest r1test
          case 'y':
             *incYs = ip;
             break;
          case 'x':
             *incXs = ip;
             break;
-@rout r1ktest r2ktest mvnktest mvtktest mvntest mvttest
+@rout r1ktest r2ktest mvnktest mvtktest mvntest mvttest r1test
          }
          break;
 @ROUT mvntest mvttest
@@ -714,19 +704,19 @@ int GetFlags(int nargs, char **args, int **Ms, int **Ns, int **LDAs,
          *BETAs = GetTypeList(nargs, args, i, 1 SHIFT); 
          i += (((int)((*BETAs)[0]))SHIFT)+1;
          break;
-@rout r1ktest r2ktest mvnktest mvtktest mvntest mvttest
+@rout r1ktest r2ktest mvnktest mvtktest mvntest mvttest r1test
       default:
          PrintUsage(args[0], i, args[i]);
       }
    }
-@rout r1ktest r2ktest
+@rout r1ktest r2ktest r1test
    if (*CONJs == NULL)
    #ifdef TCPX
       *CONJs = GetIntList2(0, 1);
    #else
       *CONJs = GetIntList1(0);
    #endif
-@rout r1ktest r2ktest mvntest mvttest
+@rout r1ktest r2ktest mvntest mvttest r1test
    if (*incXs == NULL)
       *incXs = GetIntList1(1);
    if (*incYs == NULL)
@@ -736,7 +726,7 @@ int GetFlags(int nargs, char **args, int **Ms, int **Ns, int **LDAs,
       *ALPHAs = GetTypeList1(one);
    if (*BETAs == NULL)
       *BETAs = GetTypeList1(one);
-@rout r1ktest r2ktest mvnktest mvtktest mvntest mvttest
+@rout r1ktest r2ktest mvnktest mvtktest mvntest mvttest r1test
    if (*Ms == NULL)
       *Ms = GetIntList1(977);
    if (*Ns == NULL)
@@ -765,14 +755,14 @@ int main(int nargs, char **args)
    ierr = RunTests(verb, Ms, Ns, incXs, incYs, LDAs, ALPHAs, BETAs);
    free(ALPHAs);
    free(BETAs);
-@rout r1ktest r2ktest
+@rout r1ktest r2ktest r1test
    verb = GetFlags(nargs, args, &CONJs, &Ms, &Ns, &LDAs, &incYs, &incXs);
    ierr = RunTests(verb, CONJs, Ms, Ns, incYs, LDAs);
    free(CONJs);
-@rout r1ktest r2ktest mvntest mvttest
+@rout r1ktest r2ktest mvntest mvttest r1test
    free(incXs);
    free(incYs);
-@rout r1ktest r2ktest mvnktest mvtktest mvntest mvttest
+@rout r1ktest r2ktest mvnktest mvtktest mvntest mvttest r1test
    free(Ms);
    free(Ns);
    free(LDAs);
