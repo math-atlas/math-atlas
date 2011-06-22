@@ -3434,6 +3434,15 @@ x@(pre)tlatime_al_ab : @(pre)latimeF.o @(pre)tlapack @(pre)ttstlib \
 	$(FLINKER) $(FCLINKFLAGS) -o $@ @(pre)latimeF.o \
                    $(TESTlib) $(PTLAPACKlib) $(PTCBLASlib) \
                    $(PTF77BLASlib) $(ATLASlib) $(LIBS)
+# ATLAS2-ATLAS2 (to compare against competing ATLAS install)
+x@(pre)slatime_2l_2b : @(pre)latimeF.o @(pre)ststlib 
+	$(FLINKER) $(FCLINKFLAGS) -o $@ @(pre)latimeF.o \
+                   $(TESTlib) $(AT2dir)/liblapack.a $(AT2dir)/libcblas.a \
+                   $(AT2dir)/libf77blas.a $(AT2dir)/libatlas.a $(LIBS)
+x@(pre)tlatime_2l_2b : @(pre)latimeF.o @(pre)ttstlib 
+	$(FLINKER) $(FCLINKFLAGS) -o $@ @(pre)latimeF.o \
+                   $(TESTlib) $(AT2dir)/libptlapack.a $(AT2dir)/libptcblas.a \
+                   $(AT2dir)/libptf77blas.a $(AT2dir)/libatlas.a $(LIBS)
 # F77-ATLAS
 x@(pre)slatime_fl_ab : @(pre)latimeF.o @(pre)slapack @(pre)ststlib \
       @(pre)sl3lib @(pre)sl2lib @(pre)sl1lib @(pre)sfblas
@@ -3611,10 +3620,17 @@ x@(pre)mmtst_sys : $(INCAdir)/atlas_type.h @(pre)gemmtst_f77.o @(pre)tstlib
 x@(pre)mmtst_atl : $(INCAdir)/atlas_type.h @(pre)gemmtst_f77.o @(pre)mmlib @(pre)tstlib
 	$(FLINKER) $(FCLINKFLAGS) -o $@ @(pre)gemmtst_f77.o $(TESTlib) \
                    $(F77BLASlib) $(ATLASlib) $(LIBS)
+
 x@(pre)mmtst_atl_pt : $(INCAdir)/atlas_type.h @(pre)gemmtst_f77_pt.o @(pre)mmlib_pt @(pre)tstlib_pt
 	$(FLINKER) $(FCLINKFLAGS) -o $@ @(pre)gemmtst_f77_pt.o $(TESTlib) \
                    $(PTF77BLASlib) $(ATLASlib) $(LIBS)
 
+x@(pre)mmtst_at2 : @(pre)gemmtst_f77_pt.o @(pre)tstlib_pt
+	$(FLINKER) $(FCLINKFLAGS) -o $@ @(pre)gemmtst_f77_pt.o $(TESTlib) \
+                   $(AT2dir)/libf77blas.a $(AT2dir)/libatlas.a $(LIBS)
+x@(pre)mmtst_at2_pt : @(pre)gemmtst_f77_pt.o @(pre)tstlib_pt
+	$(FLINKER) $(FCLINKFLAGS) -o $@ @(pre)gemmtst_f77_pt.o $(TESTlib) \
+                   $(AT2dir)/libptf77blas.a $(AT2dir)/libatlas.a $(LIBS)
 x@(pre)mmtst_sys_pt : $(INCAdir)/atlas_type.h @(pre)gemmtst_f77_pt.o @(pre)tstlib_pt
 	$(FLINKER) $(FCLINKFLAGS) -o $@ @(pre)gemmtst_f77_pt.o $(TESTlib) \
                    $(BLASlib) $(ATLASlib) $(LIBS)
@@ -3820,8 +3836,16 @@ include Make.inc
 mySRCdir = $(SRCdir)/results
 PLOT = ploticus
 RK=168
+#
+# Set this path to a 2nd ATLAS install you want to compare against
+#
+AT2dir=/home/whaley/TEST/ATLAS3.9.39.0/obj64/lib
 
 @whiledef pre z c d s
+$(BINdir)/x@(pre)slatime_2l_2b :
+	cd $(BINdir) ; $(MAKE) x@(pre)slatime_2l_2b AT2dir=$(AT2dir)
+$(BINdir)/x@(pre)tlatime_2l_2b :
+	cd $(BINdir) ; $(MAKE) x@(pre)tlatime_2l_2b AT2dir=$(AT2dir)
 $(BINdir)/x@(pre)slatime_al_ab :
 	cd $(BINdir) ; $(MAKE) x@(pre)slatime_al_ab
 $(BINdir)/x@(pre)tlatime_al_ab :
@@ -3834,8 +3858,8 @@ $(BINdir)/x@(pre)tlatime_sl_sb :
    @multidef latm x@(pre)slatime x@(pre)tlatime
    @multidef tb 1 3
    @whiledef pt _pt
-      @multidef tms _al_ab _sl_sb
-      @whiledef bl atl sys
+      @multidef tms _2l_2b _al_ab _sl_sb
+      @whiledef bl at2 atl sys
          @iexp irk 3 @(tb) *
          @iexp ism 3 @(tb) *
          @iexp ime 2 @(tb) *
@@ -3856,7 +3880,7 @@ raw/@(pre)la@(rt)_lrg_@(bl)@(pt).out : $(BINdir)/@(latm)@(tms)
          @endwhile
 
 $(BINdir)/x@(pre)mmtst_@(bl)@(pt) :
-	cd $(BINdir) ; $(MAKE) x@(pre)mmtst_@(bl)@(pt)
+	cd $(BINdir) ; $(MAKE) x@(pre)mmtst_@(bl)@(pt) AT2dir=$(AT2dir)
 raw/@(pre)mmrk_tiny_@(bl)@(pt).out : $(BINdir)/x@(pre)mmtst_@(bl)@(pt)
 	- rm -f $@
 	$(BINdir)/x@(pre)mmtst_@(bl)@(pt) -F 120 -N 10 100 10 -k 8 -T 0 \
@@ -3908,34 +3932,38 @@ tvecs/@(pre)mmrk_@(sz)_@(bl)@(pt).tvec : raw/@(pre)mmrk_@(sz)_@(bl)@(pt).out xat
          @undef tms
       @endwhile
 
-      @whiledef sz tiny med lrg
-         @multidef frt geqrf getrf potrf
-         @whiledef sh qr lu lt
-charts/@(pre)la@(sh)_@(sz)@(pt).dat : tvecs/@(pre)la@(sh)_@(sz)_atl@(pt).tvec \
-   tvecs/@(pre)la@(sh)_@(sz)_sys@(pt).tvec xtvec2plp xcattvecs
+      @multidef exp System ATLAS2
+      @whiledef cmp sys at2
+         @whiledef sz tiny med lrg
+            @multidef frt geqrf getrf potrf
+            @whiledef sh qr lu lt
+charts/@(pre)la@(sh)@(cmp)_@(sz)@(pt).dat : tvecs/@(pre)la@(sh)_@(sz)_atl@(pt).tvec \
+   tvecs/@(pre)la@(sh)_@(sz)_@(cmp)@(pt).tvec xtvec2plp xcattvecs
 	cat tvecs/@(pre)la@(sh)_@(sz)_atl@(pt).tvec \
-            tvecs/@(pre)la@(sh)_@(sz)_sys@(pt).tvec | \
+            tvecs/@(pre)la@(sh)_@(sz)_@(cmp)@(pt).tvec | \
         ./xcattvecs -# 2 -c 1 N -C 1 MFLOP_avg | \
         ./xtvec2plp -o $@ -C 3 N MFLOP_avg MFLOP_avg_1
-charts/@(pre)la@(sh)_@(sz)@(pt).eps : charts/@(pre)la@(sh)_@(sz)@(pt).dat
-	$(MAKE) plotbars dataf=charts/@(pre)la@(sh)_@(sz)@(pt).dat \
-           title="ATLAS vs. System: @up@(pre)@up@(frt) @up@(sz)@(pt)" \
+charts/@(pre)la@(sh)@(cmp)_@(sz)@(pt).eps : charts/@(pre)la@(sh)@(cmp)_@(sz)@(pt).dat
+	$(MAKE) plotbars dataf=charts/@(pre)la@(sh)@(cmp)_@(sz)@(pt).dat \
+           title="ATLAS vs. @(exp): @up@(pre)@up@(frt) @up@(sz)@(pt)" \
            outf=$@ 
-            @undef frt
-         @endwhile
+               @undef frt
+            @endwhile
 
-         @whiledef sh sq rk
-charts/@(pre)mm@(sh)_@(sz)@(pt).dat : tvecs/@(pre)mm@(sh)_@(sz)_atl@(pt).tvec \
-   tvecs/@(pre)mm@(sh)_@(sz)_sys@(pt).tvec xtvec2plp xcattvecs
+            @whiledef sh sq rk
+charts/@(pre)mm@(sh)@(cmp)_@(sz)@(pt).dat : tvecs/@(pre)mm@(sh)_@(sz)_atl@(pt).tvec \
+   tvecs/@(pre)mm@(sh)_@(sz)_@(cmp)@(pt).tvec xtvec2plp xcattvecs
 	cat tvecs/@(pre)mm@(sh)_@(sz)_atl@(pt).tvec \
-            tvecs/@(pre)mm@(sh)_@(sz)_sys@(pt).tvec | \
+            tvecs/@(pre)mm@(sh)_@(sz)_@(cmp)@(pt).tvec | \
         ./xcattvecs -# 2 -c 1 N -C 1 MFLOP_avg | \
         ./xtvec2plp -o $@ -C 3 N MFLOP_avg MFLOP_avg_1
-charts/@(pre)mm@(sh)_@(sz)@(pt).eps : charts/@(pre)mm@(sh)_@(sz)@(pt).dat
-	$(MAKE) plotbars dataf=charts/@(pre)mm@(sh)_@(sz)@(pt).dat \
-           title="ATLAS vs. System: @up@(pre)GEMM_@(sh) @up@(sz)@(pt)" \
+charts/@(pre)mm@(sh)@(cmp)_@(sz)@(pt).eps : charts/@(pre)mm@(sh)@(cmp)_@(sz)@(pt).dat
+	$(MAKE) plotbars dataf=charts/@(pre)mm@(sh)@(cmp)_@(sz)@(pt).dat \
+           title="ATLAS vs. @(exp): @up@(pre)GEMM_@(sh) @up@(sz)@(pt)" \
            outf=$@ 
+            @endwhile
          @endwhile
+         @undef exp
       @endwhile
       @undef tb
       @undef latm
