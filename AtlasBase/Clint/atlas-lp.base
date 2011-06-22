@@ -1151,7 +1151,15 @@ void ATL_laswp(const int N, TYPE *A, const int lda0, const int K1,
 #include "atlas_level1.h"
 #include "atlas_lapack.h"
 #include "atlas_lamch.h"
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),sysinfo.h))
 @skip #include "atlas_ptalias_lapack.h"
+#ifdef ATL_USEPTHREADS
+   #include "atlas_pthreads.h"
+   #include "atlas_tcacheedge.h"
+#else
+   #include "atlas_cacheedge.h"
+#endif
+
 
 @beginskip
 #if (ATL_mmMU > ATL_mmNU)
@@ -1479,6 +1487,19 @@ int ATL_getrfC(const int M, const int N, TYPE *A, const int lda, int *ipiv)
    #endif
    TYPE *Ac, *An;
 
+   if (((size_t)M)*N <= ATL_L1elts)
+      return(Mjoin(PATL,getf2)(M, N, A, lda, ipiv));
+   #ifdef ATL_USEPTHREADS
+      if (N < NB && N >= 16 && M >= (128<<ATL_NTHRPOW2) && 
+          ((size_t)ATL_MulBySize(M)*N) <= CacheEdge*ATL_NTHREADS)
+      {
+         if (N >= 16 && (M>>ATL_NTHRPOW2) < 2048)
+            ierr = Mjoin(PATL,tgetf2)(M, N, A, lda, ipiv);
+         else
+            ierr = Mjoin(PATL,tgetf2_nocp)(M, N, A, lda, ipiv);
+         return(ierr);
+      }
+   #endif
 @skip   if (MN > 1)
    if (MN > ATL_luMmin)
    {
