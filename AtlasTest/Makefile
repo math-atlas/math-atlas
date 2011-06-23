@@ -131,6 +131,10 @@ bininit             :
 	( cd $(bindir); $(MAKE) xdlutst       )
 	( cd $(bindir); $(MAKE) xclutst       )
 	( cd $(bindir); $(MAKE) xzlutst       )
+	( cd $(bindir); $(MAKE) xsqrtst       )
+	( cd $(bindir); $(MAKE) xdqrtst       )
+	( cd $(bindir); $(MAKE) xcqrtst       )
+	( cd $(bindir); $(MAKE) xzqrtst       )
 	( cd $(bindir); $(MAKE) xsinvtst      )
 	( cd $(bindir); $(MAKE) xdinvtst      )
 	( cd $(bindir); $(MAKE) xcinvtst      )
@@ -153,6 +157,10 @@ bininit             :
 	   ( cd $(bindir); $(MAKE) xdlutst_pt      ); \
 	   ( cd $(bindir); $(MAKE) xclutst_pt      ); \
 	   ( cd $(bindir); $(MAKE) xzlutst_pt      ); \
+	   ( cd $(bindir); $(MAKE) xsqrtst_pt      ); \
+	   ( cd $(bindir); $(MAKE) xdqrtst_pt      ); \
+	   ( cd $(bindir); $(MAKE) xcqrtst_pt      ); \
+	   ( cd $(bindir); $(MAKE) xzqrtst_pt      ); \
 	   ( cd $(bindir); $(MAKE) xsinvtst_pt      ); \
 	   ( cd $(bindir); $(MAKE) xdinvtst_pt      ); \
 	   ( cd $(bindir); $(MAKE) xcinvtst_pt      ); \

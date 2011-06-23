@@ -20778,7 +20778,7 @@ void matgen(int M, int N, TYPE *A, int lda, int seed)
 #ifdef ATL_NANC
 void matnan(int M, int N, TYPE *C, int ldc, int seed)
 /*
- * Fills matrix with NaNs; presently works only for double on x86
+ * Fills matrix with NaNs
  */
 {
    int i, j;
@@ -20942,11 +20942,10 @@ int mmcase(int TEST, int CACHESIZE, char TA, char TB, int M, int N, int K,
       Nb = K;
    }
 #ifdef ATL_NANC
-   if (SCALAR_IS_ZERO(beta))
-      matnan(M, N, C, ldc, M*N);
-   else 
-#endif
+   matnan(M, N, C, ldc, M*N);
+#else
    matgen(M, N, C, ldc, M*N);
+#endif
 
 #ifdef DEBUG
    printmat("A0", M, K, A, lda);
@@ -20988,11 +20987,10 @@ int mmcase(int TEST, int CACHESIZE, char TA, char TB, int M, int N, int K,
 
 #ifndef TIMEONLY
    #ifdef ATL_NANC
-   if (SCALAR_IS_ZERO(beta))
       matnan(M, N, D, ldd, M*N);
-   else 
+   #else 
+      matgen(M, N, D, ldd, M*N);
    #endif
-   matgen(M, N, D, ldd, M*N);
 
    /* invalidate L2 cache */
    #if !ATL_LINEFLUSH
@@ -21052,6 +21050,20 @@ int mmcase(int TEST, int CACHESIZE, char TA, char TB, int M, int N, int K,
       {
          for (i=0; i != M SHIFT; i++)
          {
+            #ifdef ATL_NANC
+               if (D[i] != D[i])
+               {
+                  nerrs++;
+                  PASSED = 0;
+                  printf("NaN in test_gemm at C(%d,%d)\n", i, j);
+               }
+               if (C[i] != C[i])
+               {
+                  nerrs++;
+                  PASSED = 0;
+                  printf("NaN in trusted_gemm at C(%d,%d)\n", i, j);
+               }
+            #endif
             f1 = D[i] - C[i];
             if (f1 < 0.0) f1 = -f1;
             if (f1 > ferr)
@@ -21199,11 +21211,10 @@ int mmcase0(int MFLOP, size_t CACHESIZE, char TA, char TB, int M, int N, int K,
    b = B = A + incA;
    st = C + nset*inc;
    #ifdef ATL_NANC
-   if (SCALAR_IS_ZERO(beta))
       matnan(inc, nset, C, inc, M*N);
-   else 
+   #else 
+      matgen(inc, nset, C, inc, M*N);
    #endif
-   matgen(inc, nset, C, inc, M*N);
 
 #ifdef DEBUG
    printmat("A0", M, K, A, lda);
@@ -21531,6 +21542,9 @@ void GetFlags(int nargs, char *args[], int *TEST, int *nside,
       #else
          **betas  = 1.0;
          (*betas)[1] = 0.0;
+      #endif
+      #ifdef ATL_NANC
+         **betas = 0.0;
       #endif
    }
 }
