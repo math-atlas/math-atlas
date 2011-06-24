@@ -3929,8 +3929,8 @@ raw/@(pre)mmsq_lrg_@(bl)@(pt).out : $(BINdir)/x@(pre)mmtst_@(bl)@(pt)
 	- rm -f $@
 	$(BINdir)/x@(pre)mmtst_@(bl)@(pt) -N 2400 4000 400 -T 0 -# 1 > $@
 	
-         @whiledef sz tiny med lrg
          @multidef nr @(ism) @(ime) @(ilr)
+         @whiledef sz tiny med lrg
             @whiledef rt qr lu lt
 tvecs/@(pre)la@(rt)_@(sz)_@(bl)@(pt).tvec : raw/@(pre)la@(rt)_@(sz)_@(bl)@(pt).out xatl2tvec xreducetvec
 	./xatl2tvec -# @(nr) -i raw/@(pre)la@(rt)_@(sz)_@(bl)@(pt).out \
@@ -3970,7 +3970,7 @@ charts/@(pre)la@(sh)@(cmp)_@(sz)@(pt).dat : tvecs/@(pre)la@(sh)_@(sz)_atl@(pt).t
 charts/@(pre)la@(sh)@(cmp)_@(sz)@(pt).eps : charts/@(pre)la@(sh)@(cmp)_@(sz)@(pt).dat
 	$(MAKE) plotbars dataf=charts/@(pre)la@(sh)@(cmp)_@(sz)@(pt).dat \
            title="ATLAS vs. @(exp): @up@(pre)@up@(frt) @up@(sz)@(pt)" \
-           outf=$@ 
+           nm1=atl nm2=@(cmp) outf=$@ 
                @undef frt
             @endwhile
 
@@ -3984,19 +3984,70 @@ charts/@(pre)mm@(sh)@(cmp)_@(sz)@(pt).dat : tvecs/@(pre)mm@(sh)_@(sz)_atl@(pt).t
 charts/@(pre)mm@(sh)@(cmp)_@(sz)@(pt).eps : charts/@(pre)mm@(sh)@(cmp)_@(sz)@(pt).dat
 	$(MAKE) plotbars dataf=charts/@(pre)mm@(sh)@(cmp)_@(sz)@(pt).dat \
            title="ATLAS vs. @(exp): @up@(pre)GEMM_@(sh) @up@(sz)@(pt)" \
-           outf=$@ 
+           nm1=atl nm2=@(cmp) outf=$@ 
             @endwhile
          @endwhile
          @undef exp
       @endwhile
       @undef tb
       @undef latm
+      @whiledef sh laqr lalu lalt mmsq mmrk
+tvecs/@(pre)@(sh)_atl@(pt).tvec: tvecs/@(pre)@(sh)_tiny_atl@(pt).tvec \
+   tvecs/@(pre)@(sh)_med_atl@(pt).tvec tvecs/@(pre)@(sh)_lrg_atl@(pt).tvec \
+   xmergetvecs
+	./xmergetvecs -r N -C 2 N MFLOP_avg \
+           -i1 tvecs/@(pre)@(sh)_tiny_atl@(pt).tvec \
+           -i2 tvecs/@(pre)@(sh)_med_atl@(pt).tvec | \
+	./xmergetvecs -r N -C 2 N MFLOP_avg -o $@ \
+           -i2 tvecs/@(pre)@(sh)_lrg_atl@(pt).tvec 
+      @endwhile
+tvecs/@(pre)mmla@(pt).tvec : xcattvecs tvecs/@(pre)mmsq_atl@(pt).tvec \
+   tvecs/@(pre)lalu_atl@(pt).tvec tvecs/@(pre)laqr_atl@(pt).tvec \
+   tvecs/@(pre)lalt_atl@(pt).tvec 
+	cat tvecs/@(pre)mmsq_atl@(pt).tvec tvecs/@(pre)lalu_atl@(pt).tvec \
+            tvecs/@(pre)laqr_atl@(pt).tvec tvecs/@(pre)lalt_atl@(pt).tvec | \
+        ./xcattvecs -# 4 -o $@ -C 2 N MFLOP_avg
+tvecs/@(pre)pcmm@(pt).tvec : tvecs/@(pre)mmla@(pt).tvec xperctvecs
+	./xperctvecs -i tvecs/@(pre)mmla@(pt).tvec -b MFLOP_avg -C 1 N \
+           -R 3 MFLOP_avg_1 MFLOP_avg_2 MFLOP_avg_3 -o $@
+charts/@(pre)pcmm_atl@(pt).dat : tvecs/@(pre)pcmm@(pt).tvec xtvec2plp
+	./xtvec2plp -i tvecs/@(pre)pcmm@(pt).tvec -o $@ \
+           -C 5 N MFLOP_avg_1 MFLOP_avg_2 MFLOP_avg_3 MFLOP_avg
+charts/@(pre)mmla_atl@(pt).dat : tvecs/@(pre)mmla@(pt).tvec xtvec2plp
+	./xtvec2plp -i tvecs/@(pre)mmla@(pt).tvec -o $@ \
+           -C 5 N MFLOP_avg MFLOP_avg_1 MFLOP_avg_2 MFLOP_avg_3
+charts/@(pre)mmla_atl@(pt).eps : charts/@(pre)mmla_atl@(pt).dat
+	$(MAKE) plot4lines dataf=charts/@(pre)mmla_atl@(pt).dat outf=$@ \
+           nm1=GEMM nm2=LU nm3=QR nm4=LLT
+charts/@(pre)pcmm_atl@(pt).eps : charts/@(pre)pcmm_atl@(pt).dat
+	$(MAKE) plot3lines dataf=charts/@(pre)pcmm_atl@(pt).dat outf=$@ \
+           nm1=LU nm2=QR nm3=LLT ylab="% of GEMM" \
+           title="Factorization performance as a % of GEMM@(pt) of same size"
    @endwhile
 @endwhile
-#MUST DEFINE: dataf, title, outf
+
+eps2pdf :
+	epstopdf $fin $fout
+#
+#MUST DEFINE: dataf, title, outf, nm1, nm2, nm3, ylab
+#
+plot3lines:
+	$(PLOT) -prefab lines data=$(dataf) dilim=tab x=1 y=2 y2=3 y3=4 \
+           title="$(title)" name=$(nm1) name2=$(nm2) name3=$(nm3) \
+           xlbl="Problem Order" ylbl="$(ylab)" xlbldistance=0.6 ygrid=yes \
+           legend="2.0 max" yrange=0 legendfmt=across -eps -o $(outf)
+#
+#MUST DEFINE: dataf, title, outf, nm1, nm2, nm3, nm4
+#
+plot4lines:
+	$(PLOT) -prefab lines data=$(dataf) dilim=tab x=1 y=2 y2=3 y3=4 y4=5 \
+           title="$(title)" name=$(nm1) name2=$(nm2) name3=$(nm3) name4=$(nm4) \
+           xlbl="Problem Order" ylbl="MFLOPS" xlbldistance=0.6 \
+           legend="2.0 max" yrange=0 legendfmt=across -eps -o $(outf)
+#MUST DEFINE: dataf, title, outf, nm1, nm2
 plotbars :
 	$(PLOT) -prefab vbars data=$(dataf) delim=tab x=1 y=2 \
-           y2=3 barwidth=0.1 title="$(title)" name="ATL" name2="SYS" \
+           y2=3 barwidth=0.1 title="$(title)" name=$(nm1) name2=$(nm2) \
            stubvert=yes ygrid=yes sep=0.10 yrange=0 legframe=yes \
            xlbl="Problem Order" ylbl="MFLOPS" legendfmt=across \
            ylbldistance=0.6 xlbldistance=0.6 legend="2.7 max" \
@@ -4006,7 +4057,7 @@ plotbars :
 x@(rt) : $(mySRCdir)/@(rt).c
 	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/@(rt).c -lm
 @endwhile
-@whiledef rt mergetvecs reducetvec tvec2plp cattvecs
+@whiledef rt mergetvecs reducetvec tvec2plp cattvecs perctvecs
 x@(rt) : $(mySRCdir)/@(rt).c $(INCSdir)/atlas_tvec.h
 	$(XCC) $(XCCFLAGS) -o $@ $(mySRCdir)/@(rt).c -lm
 @endwhile
