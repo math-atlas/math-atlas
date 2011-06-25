@@ -4160,3 +4160,79 @@ int Mjoin(PATL,getf2)(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT lda, int *ipiv)
    }
    return(iret);
 }
+@ROUT ATL_tgetrfC_blks
+/*
+ * A is stored in col-major NBxNB blocks, and we store row panels of 
+ * these blocks conguiously, so ATLAS GEMM prefetch will grab the right stuff.
+ * If the last blocks are partial, then we pad with the identity for simplicity
+ */
+int ATL_tgetrfC_blks
+(
+   const int P,       /* # of process rows */
+   const int Q,       /* # of process cols */
+   const int myrow,   /* my process row coordinate */
+   const int mycol,   /* my process col coordinate */
+   const int Mblks,   /* number of global NBxNB blocks along matrix rows */
+   const int Nblks,   /* number of global NBxNB blocks along matrix cols */
+   TYPE *A,           /* col-blk-major, stored in block rows */
+   int *ipiv,
+)
+{
+   int arow, acol, I, J;
+   const size_t rowpansz = nblks*NBNB;
+   int nblks, mblks;   /* # of local blocks */
+   TYPE *P=A, *T=A;
+   for (arow=acol=J=0; J < nblks; J++)
+   {
+      int ierr, i, j;
+/* 
+ *    Factor NB diagonaly elts starting in blk j, return if singular
+ */
+      if (mycol == acol)
+      {
+         ierr = ATL_tgetf2C_blks(P, Q, myrow, mycol, mblks, P, J, ipiv);
+         assert(!ierr);  /* fix this later */
+      }
+      if (myrow == arow)
+      {
+         int j;
+         TYPE *d = A + J*(rowpansz+NBNB), *a = d + NBNB;
+/*
+ *       Apply pivots to all blocks to left & right of col blk J in row panel J
+ */
+         ATL_laswp_blks(Nblks, A, J, ipiv);
+/*
+ *       Compute block row of U
+ */
+         for (j=J+1; j < nblks; j++, a += NBNB)
+            Mjoin(PATL,reftrsm)(AtlasLeft, AtlasLower, AtlasNoTrans, AtlasUnit,
+                                NB, NB, d, NB, a, NB);
+      }
+/* 
+ *    Update trailing matrix
+ */
+      if (mblks && nblks)
+      {
+         int i, j;
+         TYPE *t=T, *l=
+         for (i=0; i < nblks; i++)
+      }
+/*
+ *    Update local counters
+ */
+      if (myrow == arow)
+      {
+         mblks--;
+         P += rowpansz;
+         T += rowpansz;
+      }
+      if (mycol == acol)
+      {
+         nblks--;
+         P += NBNB;
+         T += NBNB;
+      }
+      if (++arow == P) arow = 0;
+      if (++acol == Q) acol = 0;
+   }
+}
