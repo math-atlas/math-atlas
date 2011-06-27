@@ -20,7 +20,13 @@
 #endif
 
 #ifdef ATL_OS_WinNT
-   #define ATL_WINTHREADS
+   #ifdef ATL_PAFF_WIN64
+      #define ATL_WIN64THREADS 1
+      #define ATL_WINTHREADS 1
+   #elif defined(ATL_PAFF_WIN)
+      #define ATL_WIN32THREADS 1
+      #define ATL_WINTHREADS 1
+   #endif
 #endif
 @beginskip
 /*
@@ -1240,14 +1246,29 @@ int ATL_thread_start(ATL_thread_t *thr, int proc, int JOINABLE,
  */
 {
 #ifdef ATL_WINTHREADS
-   DWORD thrID;
+   #ifdef ATL_WIN32THREADS
+      DWORD thrID;
+   #else
+      unsigned thrID;
+   #endif
+      
+   #endif
 
    #ifdef ATL_NOAFFINITY
-      thr->thrH = CreateThread(NULL, 0, rout, arg, 0, &thrID);
+      #ifdef ATL_WIN32THREADS
+         thr->thrH = CreateThread(NULL, 0, rout, arg, 0, &thrID);
+      #else
+         thr->thrH = (HANDLE)_beginthreadex(NULL, 0, rout, arg, 0, &thrID);
+      #endif
       ATL_assert(thr->thrH);
    #else
       thr->rank = proc;
-      thr->thrH = CreateThread(NULL, 0, rout, arg, CREATE_SUSPENDED, &thrID);
+      #ifdef ATL_WIN32THREADS
+         thr->thrH = CreateThread(NULL, 0, rout, arg, CREATE_SUSPENDED, &thrID);
+      #else
+         thr->thrH = (HANDLE)_beginthreadex(NULL, 0, rout, arg, 
+                                            CREATE_SUSPENDED, &thrID);
+      #endif
       ATL_assert(thr->thrH);
       #ifdef ATL_RANK_IS_PROCESSORID
          ATL_assert(SetThreadAffinityMask(thr->thrH, (1<<proc)));

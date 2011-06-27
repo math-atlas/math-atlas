@@ -1832,7 +1832,7 @@ IRun_AVX :
 	$(MAKE) $(atlrun) atldir=$(mydir) exe=xprobe_avx args="$(args)" \
                 redir=config0.out
 	- cat config0.out
-@whiledef aff BINDP PBIND PLPA RUNON SCHED SETAFFNP SETPROCNP CPUSET WIN
+@whiledef aff BINDP PBIND PLPA RUNON SCHED SETAFFNP SETPROCNP CPUSET WIN WIN64
 IRun_@(aff) :
 	$(CC) $(CCFLAGS) -o xprobe_@(aff) $(SRCdir)/backend/probe_aff_@(aff).c \
               $(LIBS)
@@ -2652,12 +2652,12 @@ main(int nargs, char **args)
 @ROUT probe_aff
 #include "atlconf.h"
 
-#define NAFF 10
+#define NAFF 11
 static char *AFFS[NAFF] = 
    {"NONE", "SETAFFNP", "SETPROCNP", "PBIND", "BINDP", "RUNON", "SCHED", 
-    "PLPA", "CPUSET", "WIN"};
-@multidef aff NONE SETAFFNP SETPROCNP PBIND BINDP RUNON SCHED PLPA CPUSET WIN
-@whiledef ii     0       1         2      3     4     5     6    7      8   9
+    "PLPA", "CPUSET", "WIN64", "WIN"};
+@multidef aff NONE SETAFFNP SETPROCNP PBIND BINDP RUNON SCHED PLPA CPUSET WIN64 WIN
+@whiledef ii     0       1         2      3     4     5     6    7      8     9 10
 #define IA_@(aff) @(ii)
    @undef aff
 @endwhile
@@ -2667,7 +2667,12 @@ int RunAffProbe(int iaff, int verb, char *targ, int iproc)
    char ln[512], ln2[512];
    char *lib;
 
-   lib = (iaff != IA_WIN) ? "-lpthread" : "-lkernel32";
+   if (iaff == IA_WIN)
+      lib = "-lkernel32";
+   else if (iaff == IAWIN64)
+      lib = "";    /* works w/o -l for 64-bit MinGW */
+   else
+      lib = "-lpthread";
    if (targ)
       sprintf(ln2, "make IRun_%s atlrun=atlas_runX targ=%s LIBS='%s' args='%d' 2> /dev/null | fgrep SUCCESS",
               AFFS[iaff], targ, lib, iproc);
@@ -2706,7 +2711,7 @@ int GetPreferredAffinity(enum OSTYPE OS, int OMP)
    #elif defined(ATL_OS_HPUX)
       return(OMP ? IA_SCHED : IA_SETPROCNP);
    #elif defined(ATL_OS_WinNT)
-      return(IA_WIN);
+      return(IA_WIN64);
    #else
       int iret=1;
       if (OS == OSSunOS)
@@ -2883,6 +2888,10 @@ void PrintResults
 
    switch(iaff)
    {
+   case IA_WIN64:
+   case IA_WIN:
+      fprintf(fpout, "#include <windows.h>\n");
+      break;
    case IA_SETAFFNP:
    case IA_SCHED:
       fprintf(fpout,
@@ -2995,7 +3004,7 @@ int main(int nargs, char **args)
    free(IDs);
    return(0);
 }
-@ROUT probe_aff_WIN
+@ROUT probe_aff_WIN probe_aff_WIN64
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -3012,24 +3021,31 @@ static int rank=0;
 
 void *DumbTest(void *vp)
 {
-   ExitThread((DWORD)(vp));
+@ROUT probe_aff_WIN   `   ExitThread((DWORD)(vp));`
+@ROUT probe_aff_WIN64 `   _endthread((unsigned)vp);`
 }
 int main(int nargs, char **args)
 {
    HANDLE thrH;
-   DWORD thrID;
+@ROUT probe_aff_WIN   `   DWORD thrID;`
+@ROUT probe_aff_WIN64 `   unsigned thrID;`
    void *vp, *vpret;
 
    if (nargs > 1)
       rank = atoi(args[1]);
-   vp = (void*) &thr;
+   vp = (void*) &thrID;
    vpret = NULL;
-   thrH = CreateThread(NULL, 0, rout, arg, CREATE_SUSPENDED, &thrID);
+@ROUT probe_aff_WIN64
+   thrH = (HANDLE)_beginthreadex(NULL, 0, DumbTest, vp, CREATE_SUSPENDED, 
+                                 &thrID);
+@ROUT probe_aff_WIN
+   thrH = CreateThread(NULL, 0, DumbTest, vp, CREATE_SUSPENDED, &thrID);
+@ROUT probe_aff_WIN probe_aff_WIN64
    assert(thrH);
-   assert(SetThreadAffinityMask(thrH, (((long long)1)<<proc)));
+   assert(SetThreadAffinityMask(thrH, (((long long)1)<<rank)));
    assert(ResumeThread(thrH) == 1);
-   assert(WaitForSingleObject(thr->thrH, INFINITE) != WAIT_FAILED);
-   assert(CloseHandle(thr->thrH));
+   assert(WaitForSingleObject(thrH, INFINITE) != WAIT_FAILED);
+   assert(CloseHandle(thrH));
 
    printf("SUCCESS rank %d\n", rank);
    exit(0);
@@ -7193,6 +7209,113 @@ main(int nargs, char **args)
       fclose(fpout);
    exit(0);
 }
+@ROUT mgwcmp
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2011
+/*
+ * This is a BFI wrapper around MinGW compilers for use in cygwin build
+ * framework.  Its only job is to substutute 'c:' for 'cygdrive/c' (where
+ * 'c' can be any single letter) in all paths (except that of the
+ * compiler itself).
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
+#define Mstr2(m) # m
+#define Mstr(m) Mstr2(m)
+#ifndef DEFDF
+   #ifdef WRAP_FORTRAN
+      #define DEFDF /cygdrive/c/Users/whaley/Documents/mingw-w64-bin_i686-mingw_20110625/bin/x86_64-w64-mingw32-gfortran.exe
+   #else
+      #define DEFDF /cygdrive/c/Users/whaley/Documents/mingw-w64-bin_i686-mingw_20110625/bin/x86_64-w64-mingw32-gcc-4.7.0.exe
+   #endif
+#endif
+
+int cygdrivesub(char *ln)
+/*
+ * replaces /cygdrive/c/ with c:/, returns change in string length
+ */
+{
+   char *sp;
+   int i=0;
+
+/*
+ * 01234567890
+ * /cygdrive/L...
+ */
+   while(sp = strstr(ln, "/cygdrive/"))
+   {
+      i++;
+      sp[0] = sp[10];
+      sp[1] = ':';
+      sp += 2;
+      while (*sp = sp[9]) sp++;
+   }
+   return(i*8);
+}
+
+#ifdef DEBUG
+   #define system SYSTEM
+   int system(char *ln)
+   {
+      fprintf(stdout, "%s\n", ln);
+      return(0);
+   }
+#endif
+
+char *GetLongerString(char *old, int len)
+{
+   char *sp
+   assert(len);
+   sp = malloc(sizeof(char)*(len+1));
+   assert(sp);
+   if (old)
+   {
+      assert(len > strlen(old));
+      strcpy(sp, old);
+      free(old);
+   }
+   return(sp);
+}
+
+main(int nargs, char **args)
+{
+   char *ln, *cptr=NULL;
+   int i, j, k, lnlen=0, ierr, ic, ii;
+   int COMP=0, RENAME=0;
+   WORDS *wbase=NULL;
+
+/*
+ * The path to the compiler does not substitute c:/, since it is cygwin
+ * handling it, not MinGW
+ */
+   lnlen = (strlen(Mstr(DEFDF)+2)*2;
+   ln = GetLongerString(NULL, lnlen);
+   ii = ic = sprintf(ln, "\"%s\" ", Mstr(DEFDF));
+
+/*
+ * Just paste all commandline arguments together, substituting c:/ for
+ * any /cygdrive/c/
+ */
+   for (i=1; i < nargs; i++)
+   {
+      j = strlen(args[i]);
+      if (lnlen < ii+j)
+      {
+         lnlen = (lnlen+j)*2;
+         ln = GetLongerString(ln, lnlen);
+      }
+      strcpy(ln+ii, args[i]);
+      j -= cygdrivesub(ln+ii);
+      ii += j;
+   }
+//   fprintf(stdout, "%s", ln);
+   ierr = system(ln);
+   if (ierr)
+      fprintf(stderr, "\nMINGW COMPILER WRAP GAVE ERROR FOR `%s'\n\n", ln);
+   exit(ierr);
+}
+
 @ROUT wincc winar winf77
 @extract -b @(topd)/gen.inc what=cw @(cw99)
 #include <stdio.h>
