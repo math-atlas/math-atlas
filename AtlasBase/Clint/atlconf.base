@@ -1744,6 +1744,10 @@ mgwgfortran : $(SRCdir)/mgwcmp.c
 	$(XCC) $(XCCFLAGS) "-DDEFDF=$(cmppath)" -o $@ $(SRCdir)/mgwcmp.c
 mgwgcc : $(SRCdir)/mgwcmp.c
 	$(XCC) $(XCCFLAGS) "-DDEFDF=$(cmppath)" -o $@ $(SRCdir)/mgwcmp.c
+mgwar : $(SRCdir)/mgwcmp.c
+	$(XCC) $(XCCFLAGS) "-DDEFDF=$(cmppath)" -o $@ $(SRCdir)/mgwcmp.c
+mgwranlib : $(SRCdir)/mgwcmp.c
+	$(XCC) $(XCCFLAGS) "-DDEFDF=$(cmppath)" -o $@ $(SRCdir)/mgwcmp.c
 
 $(wind)/ATLwin_ifort.exe : $(SRCdir)/winf77.c
 	gcc -mno-cygwin -o $(wind)/ATLwin_ifort.exe -DDEFDF=ifort \
@@ -4086,12 +4090,29 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
       while (j > 1 && isspace(res[j-1])) 
          res[--j] = '\0';
       assert(j > 12);
-      sprintf(cmnd, "make mgwgcc cmppath=%s\n", res);
+      sprintf(cmnd, "make mgwgcc cmppath=%s\n", res);  /* build C comp */
       assert(!system(cmnd));
       i = strlen(mgwd);
       mgwc = malloc(sizeof(char)*(i+7+1));
       assert(mgwc);
       sprintf(mgwc, "%s/mgwgcc", mgwd);
+/*
+ *    Build the wrapper for ar and ranlib
+ */
+      assert(!CmndOneLine(targ, "ls /usr/bin/x86_64-w64-mingw32-ar.exe", res));
+      j = strlen(res);
+      while (j > 1 && isspace(res[j-1])) 
+         res[--j] = '\0';
+      sprintf(cmnd, "make mgwar cmppath=%s\n", res);  /* build ar wrapper */
+      assert(!system(cmnd));
+      assert(!CmndOneLine(targ, "ls /usr/bin/x86_64-w64-mingw32-ranlib.exe",
+                          res));
+      j = strlen(res);
+      while (j > 1 && isspace(res[j-1])) 
+         res[--j] = '\0';
+      sprintf(cmnd, "make mgwranlib cmppath=%s\n", res);  /* build ar wrapper */
+      assert(!system(cmnd));
+/*
 /*
  *    Build the gfortran wrapper unless doing an all-C install
  */
@@ -6814,7 +6835,7 @@ main(int nargs, char **args)
    GetGccVers(goodgcc, &i, &j, &k, &k);
    if (OS == OSOSX && j > 3)  /* need bullshit apple annoyance flag */
       fprintf(fpout, " -force_cpusubtype_ALL");
-   if (OSIsWin(OS))  /* stop gcc breaking ABI */
+   if (OSIsWin(OS) && ptrbits != 64)  /* stop gcc breaking ABI */
       fprintf(fpout, " -mpreferred-stack-boundary=2");
    sp = GetPtrbitsFlag(OS, mach, ptrbits, goodgcc);
    if (strlen(sp) > 0)
@@ -6852,13 +6873,18 @@ main(int nargs, char **args)
    fprintf(fpout, "   FCLINKFLAGS = $(FLINKFLAGS)");
    if (strstr(comps[F77_], "ifort") && !OSIsWin(OS))
       fprintf(fpout, " -nofor_main");
-   fprintf(fpout, "\n   ARCHIVER = ar\n");
+   if (OS == OSWinNT && ptrbits == 64)
+      fprintf(fpout, "\n   ARCHIVER = $(BLDdir)/mgwar\n");
+   else
+      fprintf(fpout, "\n   ARCHIVER = ar\n");
    fprintf(fpout, "   ARFLAGS  = r\n");
 /*
  * JF Mertens says that even x86 OS X still need ranlib for safety
  */
-   if (OS == OSOSX /* && MachIsPPC(mach) */)
+   if (OS == OSOSX)
       fprintf(fpout, "   RANLIB   = ranlib\n\n");
+   else if if (OS == OSWinNT && ptrbits == 64)
+      fprintf(fpout, "   RANLIB   = $(BLDdir)/mgwranlib\n\n");
    else
       fprintf(fpout, "   RANLIB   = echo\n\n");
 
@@ -6887,7 +6913,7 @@ main(int nargs, char **args)
    if (THREADS)
    {
       fprintf(fpout, "   LIBS = -lpthread");
-      if (OSIsWin(OS))
+      if (OSIsWin(OS) && ptrbits == 32)
          fprintf(fpout, " -lkernel32");
    }
    else
@@ -7321,7 +7347,7 @@ main(int nargs, char **args)
 @ROUT mgwcmp
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2011
 /*
- * This is a BFI wrapper around MinGW compilers for use in cygwin build
+ * This is a BFI wrapper around MinGW compilers/ar for use in cygwin build
  * framework.  Its only job is to substutute 'c:' for 'cygdrive/c' (where
  * 'c' can be any single letter) in all paths (except that of the
  * compiler itself).
@@ -7335,6 +7361,8 @@ main(int nargs, char **args)
 #ifndef DEFDF
    #ifdef WRAP_FORTRAN
       #define DEFDF /usr/bin/x86_64-w64-mingw32-gfortran.exe
+   #elif defined(WRAP_AR)
+      #define DEFDF /usr/bin/x86_64-w64-mingw32-ar.exe
    #else
       #define DEFDF /usr/bin/x86_64-w64-mingw32-gcc-4.5.3.exe
    #endif
@@ -7361,7 +7389,7 @@ int cygdrivesub(char *ln)
       sp += 3;
       while (*sp = sp[8]) sp++;
    }
-   return(i*9);
+   return(i*8);
 }
 
 #ifdef DEBUG
