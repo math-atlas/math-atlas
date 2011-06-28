@@ -1740,6 +1740,10 @@ xconfig : $(SRCdir)/config.c atlconf_misc.o
 xspew : $(SRCdir)/SpewMakeInc.c atlconf_misc.o
 	$(XCC) $(XCFLAGS) -o xspew $(SRCdir)/SpewMakeInc.c atlconf_misc.o \
                $(LIBS)
+mgwgfortran : $(SRCdir)/mgwcmp.c
+	$(XCC) $(XCCFLAGS) "-DDEFDF=$(cmppath)" -o $@ $(SRCdir)/mgwcmp.c
+mgwgcc : $(SRCdir)/mgwcmp.c
+	$(XCC) $(XCCFLAGS) "-DDEFDF=$(cmppath)" -o $@ $(SRCdir)/mgwcmp.c
 
 $(wind)/ATLwin_ifort.exe : $(SRCdir)/winf77.c
 	gcc -mno-cygwin -o $(wind)/ATLwin_ifort.exe -DDEFDF=ifort \
@@ -2669,7 +2673,7 @@ int RunAffProbe(int iaff, int verb, char *targ, int iproc)
 
    if (iaff == IA_WIN)
       lib = "-lkernel32";
-   else if (iaff == IAWIN64)
+   else if (iaff == IA_WIN64)
       lib = "";    /* works w/o -l for 64-bit MinGW */
    else
       lib = "-lpthread";
@@ -4041,9 +4045,72 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
  */
 {
    COMPNODE **comps, *p;
-   char *ucomp, *dcomp, *flg, *sp, *sp2;
-   char cmnd[256], res[1024];
+   char *ucomp, *dcomp, *flg, *sp, *sp2, *mgwd=NULL, *mgwc=NULL, *mgwf=NULL;
+   char cmnd[1024], res[1024];
    int i, j, k, h;
+/*
+ * If on Win64, build MinGW compiler wrappers. 
+ * Look in /usr/bin/ for standard cygwin names for the cygwin compilers
+ */
+   if (OS == OSWinNT && ptrbits == 64)
+   {
+      int fndit;
+/*
+ *    Get the present directory, which is BLDdir, to have full path to
+ *    MinGW compiler wrappers
+ */
+      assert(!CmndOneLine(NULL, "pwd", res));
+      j = strlen(res);
+      while (j > 0 && isspace(res[j-1])) 
+         res[--j] = '\0';
+      mgwd = malloc(sizeof(char)*(j+1));
+      assert(mgwd);
+      strcpy(mgwd, res);
+      fndit = CmndOneLine(targ, "ls /usr/bin/x86_64-w64-mingw32-gcc-4*", res);
+      if (fndit)
+         fndit = CmndOneLine(targ, "ls /usr/bin/x86_64-w64-mingw32-gcc.exe", 
+                             res);
+      if (fndit)
+      {
+         fprintf(stderr, 
+"Cannot find MinGW compilers in /usr/bin, with names beginning with\n");
+         fprintf(stderr, 
+"x86_64-w64-mingw32* ; Make sure they are installed, then try again.\n");
+         fprintf(stderr, 
+"If your MinGW compiler not named like this, make symbolic link in /usr/bin\n");
+         fprintf(stderr, 
+"eg., ln -s /my/comp /usr/bin/x86_64-w64-mingw32-gcc-4.exe\n");
+         exit(fndit);
+      }
+      j = strlen(res);
+      while (j > 1 && isspace(res[j-1])) 
+         res[--j] = '\0';
+      assert(j > 12);
+      sprintf(cmnd, "make mgwgcc cmppath=%s\n", res);
+      assert(!system(cmnd));
+      i = strlen(mgwd);
+      mgwc = malloc(sizeof(char)*(i+7+1));
+      assert(mgwc);
+      sprintf(mgwc, "%s/mgwgcc", mgwd);
+/*
+ *    Build the gfortran wrapper unless doing an all-C install
+ */
+      if (!nof77)
+      {
+         fndit = CmndOneLine(targ, "ls /usr/bin/x86_64-w64-mingw32-gfortran*", 
+                             res);
+         if (fndit)
+         {
+            fprintf(stderr, "MinGW gfortran not found!\n");
+            exit(-1);
+         }
+         sprintf(cmnd, "make mgwgfortran cmppath=%s\n", res);
+         assert(!system(cmnd));
+         mgwf = malloc(sizeof(char)*(i+12+1));
+         assert(mgwf);
+         sprintf(mgwf, "%s/mgwgfortran", mgwd);
+      }
+   }
 
    comps = GetDefaultComps(OS, arch, verb);
    if (verb > 1)
@@ -4063,26 +4130,53 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
             if (usrcomps[NCOMP*2+i])
                flg = NewAppendedString(flg, usrcomps[NCOMP*2+i]);
             sp = GetWinComp(OS, p->comp);
-            if (!sp) sp = p->comp;
+            if (!sp) 
+            {
+/*
+ *             If mgwd is set, we must substitute MinGW wrap comps for gcc and
+ *             gfortran
+ */
+               if (mgwd && i != XCC_)
+               {
+                  if (CompIsGcc(p->comp))
+                  {
+                     if (strstr(p->comp, "fortran") || strstr(p->comp, "f77"))
+                        sp = mgwf;
+                     else 
+                        sp = mgwc;
+                  }
+                  else
+                     sp = p->comp;
+               }
+               else
+                  sp = p->comp;
+            }
             if (ptrbits)
-               flg = NewAppendedString(flg, 
-                                       GetPtrbitsFlag(OS, arch, ptrbits, sp));
+            {
+               if (OS == OSWinNT && ptrbits == 64 && i == XCC_)
+                  flg = NewAppendedString(flg, "-m32");
+               else
+                  flg = NewAppendedString(flg, 
+                           GetPtrbitsFlag(OS, arch, ptrbits, sp));
+            }
+            if (sp == mgwf)
+               flg = NewAppendedString(flg, "-static");
             if (!CompTest(verb, targ, i, sp, flg))
                break;
             free(flg);
-         }
+         }                              /* end loop over compilers */
          if (!p)
             CompError(i);
          else
             free(flg);
-         usrcomps[i] = p->comp;
+         usrcomps[i] = (mgwd) ? sp : p->comp;
          p->comp = NULL;                /* so it isn't deleted by Kill */
          if (!usrcomps[NCOMP+i])
          {
             usrcomps[NCOMP+i] = p->flags;
             p->flags = NULL;            /* so it isn't deleted by Kill */
          }
-      }
+      }  
 /*
  *    If user specified comp w/o flags, get default flags or error 
  */
@@ -4141,8 +4235,15 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
       if (usrcomps[NCOMP*2+i])
          flg = NewAppendedString(flg, usrcomps[NCOMP*2+i]);
       if (ptrbits)
-         flg = NewAppendedString(flg, 
-                                 GetPtrbitsFlag(OS, arch, ptrbits,usrcomps[i]));
+      {
+         if (OS == OSWinNT && ptrbits == 64 && i == XCC_)
+            flg = NewAppendedString(flg, "-m32");
+         else
+            flg = NewAppendedString(flg, 
+                     GetPtrbitsFlag(OS, arch, ptrbits,usrcomps[i]));
+      }
+      if (usrcomps[i] == mgwf)
+         flg = NewAppendedString(flg, "-static");
       if (CompTest(verb, targ, i, usrcomps[i], flg))
          CompError(i);
       free(flg);
@@ -4172,7 +4273,10 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
       for (i=0; i < NCOMP; i++)
       {
          sp = GetPtrbitsFlag(OS, arch, ptrbits, usrcomps[i]);
-         usrcomps[i+NCOMP] = NewAppendedString(usrcomps[i+NCOMP], sp);
+         if (OS == OSWinNT && ptrbits == 64 && i == XCC_)
+            usrcomps[i+NCOMP] = NewAppendedString(usrcomps[i+NCOMP], "-m32");
+         else
+            usrcomps[i+NCOMP] = NewAppendedString(usrcomps[i+NCOMP], sp);
       }
    }
 /*
@@ -4185,7 +4289,7 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
  * for the tester compiles, but that requires Make.inc changes, so I'm not
  * doing it until I see a need).
  */
-   if (OSIsWin(OS))
+   if (OSIsWin(OS) && ptrbits != 64)
    {
       for (i=0; i < NCOMP; i++)
       {
@@ -4348,11 +4452,12 @@ main(int nargs, char **args)
 /*
  * probe_comp has the following responsibilities:
  * 1. Read in atlcomp.txt for recommended compiler and flags
- * 2. Accept user override of compiler/flags
- * 3. Append any user appended flags
- * 4. Ensure all non-xcc C compilers interoperate by calling probe_ccomps
- * 5. Figure out F77/C interoperating rules by calling probe_f772c
- * 6. Printing out results of these probes for later use
+ * 2. If on Windows wt 64 bits, build MinGW compiler wrappers, for 64-bit comps
+ * 3. Accept user override of compiler/flags
+ * 4. Append any user appended flags
+ * 5. Ensure all non-xcc C compilers interoperate by calling probe_ccomps
+ * 6. Figure out F77/C interoperating rules by calling probe_f772c
+ * 7. Printing out results of these probes for later use
  */
 {
    enum OSTYPE OS;
@@ -6739,7 +6844,11 @@ main(int nargs, char **args)
    fprintf(fpout, "   BC = $(ICC)\n");
    fprintf(fpout, "   NCFLAGS = $(ICCFLAGS)\n");
    fprintf(fpout, "\n   CLINKER = $(ICC)\n   CLINKFLAGS = $(ICCFLAGS)\n");
-   fprintf(fpout, "   FLINKER = $(F77)\n   FLINKFLAGS = $(F77FLAGS)\n");
+   fprintf(fpout, "   FLINKER = $(F77)\n");
+   if (strcmp(comps[F77_], "mgwgfortran"))
+      fprintf(fpout, "   FLINKFLAGS = $(F77FLAGS) -static\n");
+   else
+      fprintf(fpout, "   FLINKFLAGS = $(F77FLAGS)\n");
    fprintf(fpout, "   FCLINKFLAGS = $(FLINKFLAGS)");
    if (strstr(comps[F77_], "ifort") && !OSIsWin(OS))
       fprintf(fpout, " -nofor_main");
@@ -7225,15 +7334,15 @@ main(int nargs, char **args)
 #define Mstr(m) Mstr2(m)
 #ifndef DEFDF
    #ifdef WRAP_FORTRAN
-      #define DEFDF /cygdrive/c/Users/whaley/Documents/mingw-w64-bin_i686-mingw_20110625/bin/x86_64-w64-mingw32-gfortran.exe
+      #define DEFDF /usr/bin/x86_64-w64-mingw32-gfortran.exe
    #else
-      #define DEFDF /cygdrive/c/Users/whaley/Documents/mingw-w64-bin_i686-mingw_20110625/bin/x86_64-w64-mingw32-gcc-4.7.0.exe
+      #define DEFDF /usr/bin/x86_64-w64-mingw32-gcc-4.5.3.exe
    #endif
 #endif
 
 int cygdrivesub(char *ln)
 /*
- * replaces /cygdrive/c/ with c:/, returns change in string length
+ * replaces /cygdrive/c/ with c://, returns change in string length
  */
 {
    char *sp;
@@ -7248,10 +7357,11 @@ int cygdrivesub(char *ln)
       i++;
       sp[0] = sp[10];
       sp[1] = ':';
-      sp += 2;
-      while (*sp = sp[9]) sp++;
+      sp[2] = '/';
+      sp += 3;
+      while (*sp = sp[8]) sp++;
    }
-   return(i*8);
+   return(i*9);
 }
 
 #ifdef DEBUG
@@ -7265,7 +7375,8 @@ int cygdrivesub(char *ln)
 
 char *GetLongerString(char *old, int len)
 {
-   char *sp
+   char *sp;
+
    assert(len);
    sp = malloc(sizeof(char)*(len+1));
    assert(sp);
@@ -7280,39 +7391,50 @@ char *GetLongerString(char *old, int len)
 
 main(int nargs, char **args)
 {
-   char *ln, *cptr=NULL;
-   int i, j, k, lnlen=0, ierr, ic, ii;
-   int COMP=0, RENAME=0;
-   WORDS *wbase=NULL;
+   char *ln;
+   int i, j, k, lnlen=0, ierr, ii;
 
 /*
  * The path to the compiler does not substitute c:/, since it is cygwin
  * handling it, not MinGW
  */
-   lnlen = (strlen(Mstr(DEFDF)+2)*2;
+   lnlen = (strlen(Mstr(DEFDF))+2)*2;
    ln = GetLongerString(NULL, lnlen);
-   ii = ic = sprintf(ln, "\"%s\" ", Mstr(DEFDF));
+   ii = sprintf(ln, "%s", Mstr(DEFDF));
 
 /*
- * Just paste all commandline arguments together, substituting c:/ for
- * any /cygdrive/c/
+ * Just paste all commandline arguments together, getting rid of // from make
+ * and then substituting c:// for any /cygdrive/c/
  */
    for (i=1; i < nargs; i++)
    {
-      j = strlen(args[i]);
+      char *sp;
+      j = strlen(args[i]) + 1;
       if (lnlen < ii+j)
       {
          lnlen = (lnlen+j)*2;
          ln = GetLongerString(ln, lnlen);
       }
+      ln[ii++] = ' ';
       strcpy(ln+ii, args[i]);
-      j -= cygdrivesub(ln+ii);
-      ii += j;
+/*
+ *    ATLAS makefiles often put in // by accident, which is no problem under
+ *    Unix, but means something special in Windows.  Therefore replace all
+ *    // with / before doing cygdrivesub
+ */
+      while (sp = strstr(ln+ii, "//"))
+      {
+         strcpy(sp, sp+1);
+         j--;
+      }
+      j -= cygdrivesub(ln+ii);   /* sub c:// for /cygdrive/c */
+      ii += j - 1;
    }
 //   fprintf(stdout, "%s", ln);
    ierr = system(ln);
    if (ierr)
-      fprintf(stderr, "\nMINGW COMPILER WRAP GAVE ERROR FOR `%s'\n\n", ln);
+      fprintf(stderr, "\nMINGW COMPILER WRAP '%s' GAVE ERROR FOR `%s'\n\n", 
+              args[0], ln);
    exit(ierr);
 }
 
