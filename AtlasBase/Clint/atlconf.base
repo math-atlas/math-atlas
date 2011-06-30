@@ -4301,24 +4301,16 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
       }
    }
 /*
- * On windows, add required -mpreferred-stack-boundary=2 to all gnu comps,
- * since gcc breaks the x86 ABI by default;  If we throw this flag for f77,
- * then the blastesters will generate 4-byte aligned double arrays, which 
- * will cause ATLAS to seg fault.  Since most fortran compilers don't 
- * interoperate anyway, don't throw this flag for gfortran/g77 (a better
- * solution would be to throw this flag for the interface routs, but not
- * for the tester compiles, but that requires Make.inc changes, so I'm not
- * doing it until I see a need).
+ * On windows, add required -mstackrealign to all gnu comps,
+ * since gcc breaks the x86 ABI by default.
  */
    if (OSIsWin(OS) && ptrbits != 64)
    {
       for (i=0; i < NCOMP; i++)
       {
          if (i != F77_ && CompIsGcc(usrcomps[i]))
-         {
             usrcomps[i+NCOMP] = NewAppendedString(usrcomps[i+NCOMP], 
-               " -mpreferred-stack-boundary=2");
-         }
+                                                  " -mstackrealign");
       }
    }
 /*
@@ -6841,7 +6833,7 @@ main(int nargs, char **args)
    if (OS == OSOSX && j > 3)  /* need bullshit apple annoyance flag */
       fprintf(fpout, " -force_cpusubtype_ALL");
    if (OSIsWin(OS) && ptrbits != 64)  /* stop gcc breaking ABI */
-      fprintf(fpout, " -mpreferred-stack-boundary=2");
+      fprintf(fpout, " -mstackrealign");
    sp = GetPtrbitsFlag(OS, mach, ptrbits, goodgcc);
    if (strlen(sp) > 0)
        fprintf(fpout, " %s", sp);
@@ -6992,6 +6984,14 @@ fprintf(fpout,
          fprintf(fpout, " %cpt", pres[i]);
       fprintf(fpout, "\n");
    }
+@beginskip
+   fprintf(fpout, 
+  "#\n# Hack to get around gcc ABI violation when using winthreads\n#\n");
+   if (OS == OSWinNT && ptrbits == 32)
+      fprintf(fpout, "   tstackfix = ATL_gccstackfix.o\n");
+   else
+      fprintf(fpout, "   tstackfix = "\n");
+@endskip
    fprintf(fpout, "#  ---------------------------------------\n");
    fprintf(fpout, "#  Generic targets needed by all makefiles\n");
    fprintf(fpout, "#  ---------------------------------------\n");
