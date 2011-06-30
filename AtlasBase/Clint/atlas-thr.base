@@ -9171,3 +9171,39 @@ int Mjoin(PATL,tgemm_rKp)
    free(vp);
    return(0);
 }
+@ROUT ATL_gccstackfix
+#include "atlas_asm.h"
+/*
+ * This routine necessary to fix gcc's 32-bit ABI violation:
+ *    http://math-atlas.sourceforge.net/errata.html#gccCrazy
+ * This assembly is only called on 32-bit Windows, where all windows calls
+ * call this wrapper function, which takes a pointer to a void pointer array;
+ * the first entry is a function pointer to the function usually threaded,
+ * while the second is a pointer to its argument.  This assembly routine
+ * manually aligns the stack so that gcc's ABI violation doesn't kill
+ * the spawned thread.
+ */
+
+/*
+ *                       4(%esp) 
+ * void *ATL_gccstackfix(void *vp)
+ */
+        .text
+.globl ATL_asmdecor(ATL_gccstackfix)
+ALIGN16
+ATL_asmdecor(ATL_gccstackfix):
+#define FSIZE 12                /* (SP0, arg, func) */
+ATL_gccstackfix:
+   mov %esp, %eax               /* get unaligned stack ptr */
+   and $0xF0, %al               /* align to 16 bytes */
+   mov %esp, %edx               /* save original value of SP */
+   lea -FSIZE(%eax), %esp       /* SP is aligned and has room for FSIZE */
+   movl %edx, 4(%esp)           /* stack has original value of SP */
+   movl 4(%edx), %eax           /* get ptr to func and arg ptrs */
+   movl 4(%eax), %ecx           /* get arg ptr */
+   movl %ecx, (%esp)            /* put arg as parameter for called func */
+   movl 0(%eax), %ecx           /* get address of func to call */
+   call *%ecx                   /* call func, pushing ret @ to stack */
+   mov 4(%esp), %esp            /* restore stack ptr */
+   ret
+
