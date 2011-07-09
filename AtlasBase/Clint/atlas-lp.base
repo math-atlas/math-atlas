@@ -1490,7 +1490,7 @@ int ATL_getrfC(const int M, const int N, TYPE *A, const int lda, int *ipiv)
    if (((size_t)M)*N <= ATL_L1elts)
       return(Mjoin(PATL,getf2)(M, N, A, lda, ipiv));
    #ifdef ATL_USEPTHREADS
-      if (N <= NB && N >= 16 && M >= (128<<ATL_NTHRPOW2) && 
+      if (N <= NB && N >= 16 && M-N >= 256 && 
           ((size_t)ATL_MulBySize(M)*N) <= CacheEdge*ATL_NTHREADS)
       {
          if (N >= 16 && (M>>ATL_NTHRPOW2) < 2048)
@@ -4020,7 +4020,7 @@ static int LU1(ATL_CINT M, ATL_CINT N, ATL_CINT j, TYPE *A, ATL_CINT lda,
    #else
       pivval = Ac[ip];
    #endif
-   if (pivval != ATL_rzero);
+   if (pivval != ATL_rzero)
    {
       if (ip != j)
          cblas_swap(N, A+(j SHIFT), lda, A+(ip SHIFT), lda);
@@ -4060,7 +4060,7 @@ int Mjoin(PATL,getf2_r2)
    for (j=0; j < N2; j += 2, Ac += LDA2)
    {
       if (LU1(M, N, j, A0, lda, ipiv))  /* factor column j */
-         iret = j;
+         iret = j+1;
    }
 /*
  *     Update column j+1
@@ -4160,79 +4160,171 @@ int Mjoin(PATL,getf2)(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT lda, int *ipiv)
    }
    return(iret);
 }
-@ROUT ATL_tgetrfC_blks
+@ROUT ATL_tgetrfC_PCA
+
+typedef struct
+{
+   volatile int *acchk;    /* P-len checkin for the active column */
+   volatile int *archk;    /* Q-len checkin for the active row */
+   size_t pansz;           /* size of row panel in block-major storage */
+   TYPE *A, *B;            /* original A, and page-aligned workspace */
+   int lda;                /* leading dimension of A */
+   int nfmblks, nfnblks;   /* full blocks in each dimension */
+   int mr, nr;             /* remainder for M and N */
+   int P, Q;               /* row and cols in process grid */
+   prrem, pcrem;           /* process coord for remainder blocks, if any */
+
+} ATL_getrf_PCA_t;
+
+static void DealOutMatrix
 /*
- * A is stored in col-major NBxNB blocks, and we store row panels of 
- * these blocks conguiously, so ATLAS GEMM prefetch will grab the right stuff.
- * If the last blocks are partial, then we pad with the identity for simplicity
+ * This routine copies the global matrix A into local storage for processor
+ * myprow,mypcol in the pgrid.  The local storage is in block major
+ * storage with row panels stored contiguously
  */
-int ATL_tgetrfC_blks
 (
-   const int P,       /* # of process rows */
-   const int Q,       /* # of process cols */
-   const int myrow,   /* my process row coordinate */
-   const int mycol,   /* my process col coordinate */
-   const int Mblks,   /* number of global NBxNB blocks along matrix rows */
-   const int Nblks,   /* number of global NBxNB blocks along matrix cols */
-   TYPE *A,           /* col-blk-major, stored in block rows */
-   int *ipiv,
+   ATL_getrf_PCA_t *pd,         /* problem definition */
+   int myprow,                  /* my row coordinate in process grid */
+   int mypcol,                  /* my column coordinate in process grid */
+   TYPE *B,                     /* my row-panel major workspace */
+   size_t lpansz                /* local panel size */
 )
 {
-   int arow, acol, I, J;
-   const size_t rowpansz = nblks*NBNB;
-   int nblks, mblks;   /* # of local blocks */
-   TYPE *P=A, *T=A;
-   for (arow=acol=J=0; J < nblks; J++)
+   const int P = pd->P, Q = pd->Q;
+   const TYPE *A = pd->A;
+   const int prrem = pd->prrem, pcrem = pd->pcrem;
+   size_t incAn = ATL_MulByNB(lda);
+   int arow, acol=0;                    /* active process row/col */
+
+   for (j=0; j < nfnblks; j++)
    {
-      int ierr, i, j;
-/* 
- *    Factor NB diagonaly elts starting in blk j, return if singular
- */
-      if (mycol == acol)
+      if (mypcol == acol)  /* I'm the pcol owning the jth column panel */
       {
-         ierr = ATL_tgetf2C_blks(P, Q, myrow, mycol, mblks, P, J, ipiv);
-         assert(!ierr);  /* fix this later */
+         TYPE *b = B, *a = A;;
+         arow = 0;
+         for (i=0; i < nfmblks; i++)
+         {
+            if (myprow == arow)  /* I'm the prow owning the ith row panel */
+            {
+               Mjoin(PATL,gecopy)(MB, NB, a, lda, b, MB);
+               b += lpansz;
+               a += MB;
+            }
+            if (++arow == P)
+               arow = 0;
+         }
+         if (myprow == prrem)
+            Mjoin(PATL,gecopy)(mr, NB, a, lda, b, MB);
+         B += NBNB;    /* finished one NBxNB entry in each row panel */
       }
-      if (myrow == arow)
-      {
-         int j;
-         TYPE *d = A + J*(rowpansz+NBNB), *a = d + NBNB;
-/*
- *       Apply pivots to all blocks to left & right of col blk J in row panel J
- */
-         ATL_laswp_blks(Nblks, A, J, ipiv);
-/*
- *       Compute block row of U
- */
-         for (j=J+1; j < nblks; j++, a += NBNB)
-            Mjoin(PATL,reftrsm)(AtlasLeft, AtlasLower, AtlasNoTrans, AtlasUnit,
-                                NB, NB, d, NB, a, NB);
-      }
-/* 
- *    Update trailing matrix
- */
-      if (mblks && nblks)
-      {
-         int i, j;
-         TYPE *t=T, *l=
-         for (i=0; i < nblks; i++)
-      }
-/*
- *    Update local counters
- */
-      if (myrow == arow)
-      {
-         mblks--;
-         P += rowpansz;
-         T += rowpansz;
-      }
-      if (mycol == acol)
-      {
-         nblks--;
-         P += NBNB;
-         T += NBNB;
-      }
-      if (++arow == P) arow = 0;
-      if (++acol == Q) acol = 0;
+      A += incAn;   /* copied NB columns */
+      if (++acol == Q)
+         acol = 0;
    }
+   if (mypcol == pcrem)  /* still need to write remainder case! */
+   {
+   }
+}
+
+void *Mjoin(PATL,tgetrfCPCA_WORK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   ATL_thread_t *tp = vp;
+   ATL_getrf_PCA_t *pd = lp->opstruct;
+   const int iam = tp->rank, myprow = iam%Q, mypcol = iam/Q;
+   int lmblks, lnblks, gmblks, gnblks, meblks, neblks, i;
+   size_t lpansz;
+   TYPE *B=pd->B;
+/*
+ * Compute local number of row and column blocks, and find my position
+ * in the work array
+ */
+   gmblks = (mr) ? nfmblks+1 : nfmblks;
+   lmblks = gmblks / P;
+   meblks = gmblks - lmblks*P;
+   gnblks = (nr) ? nfnblks+1 : nfnblks;
+   lnblks = gnblks / Q;
+   neblks = gnblks - lnblks*Q;
+/*
+ * Split up global workspace into local workspaces
+ */
+   for (i=0; i <= iam; i++)
+   {
+      const int pr = i%Q, pc=iam/Q;
+
+      lmblks = gmblks / P;
+      if (pr < meblks)
+         lmblks++;
+      lnblks = gnblks / Q;
+      if (pc < neblks)
+         lnblks++;
+      lpansz = ATL_MulByNBNB(lnblks);
+      B += lpansz * lmblks;
+   }
+   B -= lpansz * lmblks;
+//   Bs[iam] = B;   /* uncomment to fill in array of local workspaces */
+/*
+ * Copy global input matrix into local storage
+ */
+   DealOutMatrix(pd, myprow, mypcol B, lpansz);
+}
+
+int Mjoin(PATL,tgetrfC_PCA)
+   (ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT lda, int *ipiv)
+{
+   const int nmblks = ATL_DivByNB(M), nnblks = ATL_DivByNB(N);
+   const int mr = M-ATL_MulByNB(nmblks), nr = N-ATL_MulByNB(nnblks);
+   const int tmblks = (mr) ? nmblks+1 : nmblks;
+   const int tnblks = (nr) ? nnblks+1 : nnblks;
+   TYPE *w;
+   ATL_getrf_PCA_t pd;
+
+   pd.pansz = ATL_MulByNB(tnblks);
+   w = malloc(4096+ATL_MulBySize(pd.pansz)*tmblks);
+   if (!w)
+      return(-1)
+   pd.nfmblks = nmblks;
+   pd.nfnblks = nnblks;
+   pd.mr = mr;
+   pd.prrem (mr) ? ((M-1)/NB) % P : -1;
+   pd.nr = nr;
+   pd.pcrem (nr) ? ((N-1)/NB) % Q : -1;
+/*
+ * These P/Q computations assume M==N.  For panels, we need to consider
+ * ratio of M/N in choosing P & Q!
+ */
+   #if ATL_NTHREADS == 2 || ATL_NTHREADS == 3 || ATL_NTHREADS == 5 || \
+       ATL_NTHREADS == 7 || ATL_NTHREADS == 11
+      P=1;    Q = ATL_NTHREADS;
+   #elif ATL_NTHREADS == 4
+      P=1;    Q = 4;
+   #elif ATL_NTHREADS == 6
+      P=2;    Q = 3;
+   #elif ATL_NTHREADS == 8
+      P=2;    Q = 4;
+   #elif ATL_NTHREADS == 9
+      P=3;    Q = 3;
+   #elif ATL_NTHREADS == 10
+      P=2;    Q = 5;
+   #elif ATL_NTHREADS == 12 ATL_NTHREADS == 13
+      P=3;    Q = 4;
+   #elif ATL_NTHREADS == 14
+      P=2;    Q = 7;
+   #elif ATL_NTHREADS == 15
+      P=3;    Q = 5;
+   #elif ATL_NTHREADS == 16
+      P=2;    Q = 8;
+   #else
+   {
+/*
+ *    Find P as the largest power of 2 < sqrt(NP)
+ */
+      for (Q=2; Q*Q < ATL_NTHREADS; Q++);
+      if (Q*Q > ATL_NTHREADS)
+         Q--;
+      for (P=1; P < Q; P <<= 1);
+      Q = ATL_NTHREADS / P;
+      ATL_assert(Q);
+   }
+   #endif
+   P = 1; Q = ATL_NTHREADS;   /* until we get debugged */
 }

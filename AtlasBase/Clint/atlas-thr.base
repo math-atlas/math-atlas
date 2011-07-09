@@ -176,6 +176,7 @@ void ATL_thread_yield(void);      /* gives up time slice */
 
 #define MindxT(A_,i_) ((void*)( ((char*)(A_)) + ((size_t)i_) ))
 #define ATL_tlaunch ATL_log2tlaunch   /* may want linear launch later */
+void ATL_tDistMemTouch(size_t N, void *vp);
 
 #endif   /* end of #ifdef protecting include file from redundant inclusion */
 
@@ -9206,4 +9207,53 @@ ATL_gccstackfix:
    call *%ecx                   /* call func, pushing ret @ to stack */
    mov 4(%esp), %esp            /* restore stack ptr */
    ret
+@ROUT ATL_tDistMemTouch
+#include "atlas_misc.h"
+#include "atlas_threads.h"
 
+typedef struct
+{
+   int *mem;   /* ptr to memory location */
+   size_t N;   /* length of mem in sizeof(int) chunks */
+} ATL_dmt_t;
+
+/*
+ * This function will make it so that a first-touch allocation policy
+ * still results in the pages of mem being allocated in cyclic fashion
+ * amongst the nodes.  Without calling this function, all allocated memory
+ * that is serially initialized will be owned by only one processor, which
+ * can cause slowdown on parallel machines.  For AMD machines with HT-assist
+ * putting all pages in one local memory essentially reduces the global
+ * cache size to the local cache size, with a corresponding disastrous
+ * drop in performance.
+ * The first page is always assigned to rank=0; if you allocate a bunch of
+ * small spaces, they will all be owned by rank=0!
+ */
+void ATL_dmt_DOWORK(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   ATL_thread_t *tp=vp;
+   const int iam = tp->rank;
+   ATl_dmt_t *pd = lp->opstruct;
+   const size_t pgsz = 4096 / sizeof(int), stride=pgsz * ATL_NTHREADS;
+   const size_t N = pd->N;
+   int *mp = pd->mem, *end = pd->mem + N;
+
+   mp += iam*pgsz;
+   while (mp < end)
+   {
+      *mp = iam+1;
+      mp += stride;
+   }
+}
+
+void ATL_tDistMemTouch  /* use first-touch policy to force cyclic page distro */
+(
+   size_t N,   /* length of allocated memory */
+   void *vp    /* allocated memory */
+)
+{
+   ATL_dmt_t pd;
+   pd.N = N / sizeof(int);
+   pd.mem = vp;
+   ATL_goparallel(ATL_NTHREADS, ATL_dmt_DOWORK, &pd, NULL);
+}
