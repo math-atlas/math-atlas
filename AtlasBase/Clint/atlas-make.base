@@ -3873,38 +3873,47 @@ include Make.inc
 mySRCdir = $(SRCdir)/results
 PLOT = ploticus
 RK=168
+sep=0.10
 #
 # Set this path to a 2nd ATLAS install you want to compare against
 #
 AT2dir=/home/whaley/TEST/ATLAS3.9.39.0/obj64/lib
+ext = $(BINdir)/xextract
+cmp=MKL
 
-syscmp.pdf : syscmp_pdf.ps
-	ps2pdf syscmp_pdf.ps $@
-syscmp_pdf.ps : syscmp.dvi
-	dvips -P pdf -t letter -o $@ syscmp
-syscmp.ps : syscmp.dvi
-	dvips -t letter -o $@ syscmp
-syscmp.tex : $(mySRCdir)/syscmp.tex
-	cp $(mySRCdir)/syscmp.tex $@
+$(ext) :
+	cd $(BINdir) ; make xextract
+@whiledef cmp sys at2
+atlv@(cmp).pdf : atlv@(cmp)_pdf.ps
+	ps2pdf atlv@(cmp)_pdf.ps $@
+atlv@(cmp)_pdf.ps : atlv@(cmp).dvi
+	dvips -P pdf -t letter -o $@ atlv@(cmp)
+atlv@(cmp).ps : atlv@(cmp).dvi
+	dvips -t letter -o $@ atlv@(cmp)
+atlv@(cmp).tex : $(ext) $(mySRCdir)/report.base
+	$(ext) -langC -b $(mySRCdir)/report.base -o $@ rout=repcmp.tex \
+               -define sys $(cmp)
 
-@declare "syscmp.dvi: " y y
-   syscmp.tex mmla_atl mmla_atl_pt mmla_sys mmla_sys_pt
-   pcmm_atl pcmm_atl_pt pcmm_sys pcmm_sys_pt
-   @whiledef pre s d c z
-      @define pt @@
-      @whiledef pt _pt
-         charts/@(pre)laqrs_sys@(pt).eps
-         charts/@(pre)laqrs_atl@(pt).eps
-         @whiledef rt qr ql rq lq lu lt ut
-            charts/@(pre)la@(rt)sys_tiny@(pt).eps
-            charts/@(pre)la@(rt)sys_med@(pt).eps
-            charts/@(pre)la@(rt)sys_lrg@(pt).eps
+   @declare "atlv@(cmp).dvi: " y y
+      atlv@(cmp).tex mmla_atl mmla_atl_pt mmla_@(cmp) mmla_@(cmp)_pt
+      pcmm_atl pcmm_atl_pt pcmm_@(cmp) pcmm_@(cmp)_pt
+      @whiledef pre s d c z
+         @define pt @@
+         @whiledef pt _pt
+            charts/@(pre)laqrs_@(cmp)@(pt).eps
+            charts/@(pre)laqrs_atl@(pt).eps
+            @whiledef rt mmsq mmrk laqr laql larq lalq lalu lalt laut
+               charts/@(pre)@(rt)@(cmp)_tiny@(pt).eps
+               charts/@(pre)@(rt)@(cmp)_med@(pt).eps
+               charts/@(pre)@(rt)@(cmp)_lrg@(pt).eps
+               charts/@(pre)@(rt)_@(cmp)@(pt).eps
+            @endwhile
          @endwhile
       @endwhile
-   @endwhile
-@enddeclare
-	latex syscmp
-	latex syscmp
+   @enddeclare
+	latex atlv@(cmp)
+	latex atlv@(cmp)
+@endwhile
 
 @define pt @@
 @whiledef pt _pt
@@ -4143,6 +4152,37 @@ charts/@(pre)pcmm_@(lib)@(pt).eps : charts/@(pre)pcmm_@(lib)@(pt).dat
 title="Factorization performance as a % of @(lib)-@(pre)GEMM@(pt) of same size"
       @endwhile
    @endwhile
+   @multidef rtt gemm RK$(RK) geqrf gerqf gelqf geqlf getrf potrfL potrfU
+   @whiledef rt  mmsq mmrk    laqr  larq  lalq  laql  lalu  lalt   laut
+      @define pt @@
+      @whiledef pt _pt
+tvecs/@(pre)@(rt)_atl_ml@(pt).tvec : xmergetvecs \
+   tvecs/@(pre)@(rt)_med_atl@(pt).tvec \
+   tvecs/@(pre)@(rt)_lrg_atl@(pt).tvec
+	./xmergetvecs -r N -C 2 N MFLOP_avg \
+           -i1 tvecs/@(pre)@(rt)_med_atl@(pt).tvec \
+           -i2 tvecs/@(pre)@(rt)_lrg_atl@(pt).tvec -o $@
+         @whiledef cmp sys at2
+tvecs/@(pre)@(rt)_@(cmp)_ml@(pt).tvec : xmergetvecs \
+   tvecs/@(pre)@(rt)_med_@(cmp)@(pt).tvec \
+   tvecs/@(pre)@(rt)_lrg_@(cmp)@(pt).tvec
+	./xmergetvecs -r N -C 2 N MFLOP_avg \
+           -i1 tvecs/@(pre)@(rt)_med_@(cmp)@(pt).tvec \
+           -i2 tvecs/@(pre)@(rt)_lrg_@(cmp)@(pt).tvec -o $@
+charts/@(pre)@(rt)_@(cmp)@(pt).dat: tvecs/@(pre)@(rt)_@(cmp)_ml@(pt).tvec \
+   tvecs/@(pre)@(rt)_atl_ml@(pt).tvec xcattvecs xtvec2plp
+	cat tvecs tvecs/@(pre)@(rt)_atl_ml@(pt).tvec \
+           tvecs/@(pre)@(rt)_@(cmp)_ml@(pt).tvec | \
+           ./xcattvecs -# 2 -c 1 N -C 1 MFLOP_avg | \
+           ./xtvec2plp -o $@ -C 3 N MFLOP_avg MFLOP_avg_1
+charts/@(pre)@(rt)_@(cmp)@(pt).eps : charts/@(pre)@(rt)_@(cmp)@(pt).dat
+	$(MAKE) plotbars dataf=charts/@(pre)@(rt)_@(cmp)@(pt).dat \
+        title="ATLAS vs. System: @up@(pre)@up@(rtt)@(pt)" \
+        nm1=atl nm2=sys sep=0.13 outf=$@
+         @endwhile
+      @endwhile
+      @undef rtt
+   @endwhile
 @endwhile
 
 eps2pdf :
@@ -4175,10 +4215,11 @@ plot5lines:
            ylbldistance=0.6 legend="2.0 max" yrange=0 legendfmt=across \
            -eps -o $(outf)
 #MUST DEFINE: dataf, title, outf, nm1, nm2
+#CAN DEFINED: sep
 plotbars :
 	$(PLOT) -prefab vbars data=$(dataf) delim=tab x=1 y=2 \
            y2=3 barwidth=0.1 title="$(title)" name=$(nm1) name2=$(nm2) \
-           stubvert=yes ygrid=yes sep=0.10 yrange=0 legframe=yes \
+           stubvert=yes ygrid=yes sep=$(sep) yrange=0 legframe=yes \
            xlbl="Problem Order" ylbl="MFLOPS" legendfmt=across \
            ylbldistance=0.6 xlbldistance=0.6 legend="2.7 max" \
            -eps -o $(outf)
