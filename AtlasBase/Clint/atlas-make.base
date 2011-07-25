@@ -3941,6 +3941,10 @@ atlv@(cmp).tex : $(ext) $(mySRCdir)/report.base
             @whiledef rt symm syrk syr2k trmm trsm
                charts/@(pre)@(rt)_@(cmp)@(pt).eps
             @endwhile
+            charts/@(pre)pcmm_tr_sys.eps charts/@(pre)pcmm_sy_sys.eps
+            charts/@(pre)pcmm_tr_atl.eps charts/@(pre)pcmm_sy_atl.eps
+            charts/@(pre)pcmm_tr_sys_pt.eps charts/@(pre)pcmm_sy_sys_pt.eps
+            charts/@(pre)pcmm_tr_atl_pt.eps charts/@(pre)pcmm_sy_atl_pt.eps
             @whiledef rt mmsq mmrk laqr laql larq lalq lalu lalt laut
                charts/@(pre)@(rt)@(cmp)_tiny@(pt).eps
                charts/@(pre)@(rt)@(cmp)_med@(pt).eps
@@ -4091,13 +4095,6 @@ raw/@(pre)@(l3)_@(sd)@(up)@(ta)_lrg_@(bl)@(pt).out : \
 	
          @multidef nr @(ism) @(ime) @(ilr)
          @whiledef sz tiny med lrg
-            @iexp bnr @(nr) @(nr) +
-            @whiledef rt symm hemm syrk herk syr2k her2k trmm trsm
-tvecs/@(pre)@(rt)_@(sz)_@(bl)@(pt).tvec : xatl2tvec xreducetvec \
-   raw/@(pre)@(rt)_LLN_@(sz)_@(bl)@(pt).out
-	./xatl2tvec -# @(bnr) -i raw/@(pre)@(rt)_LLN_@(sz)_@(bl)@(pt).out \
-           -H 2 N MFLOP | ./xreducetvec -o $@ -R 1 N -C 1 MFLOP
-            @endwhile
             @whiledef rt lq ql rq qr lu lt ut
 tvecs/@(pre)la@(rt)_@(sz)_@(bl)@(pt).tvec : raw/@(pre)la@(rt)_@(sz)_@(bl)@(pt).out xatl2tvec xreducetvec
 	./xatl2tvec -# @(nr) -i raw/@(pre)la@(rt)_@(sz)_@(bl)@(pt).out \
@@ -4112,6 +4109,12 @@ tvecs/@(pre)la@(rt)_@(sz)_@(bl)@(pt).tvec : raw/@(pre)la@(rt)_@(sz)_@(bl)@(pt).o
          @define nr @2@
          @iexp irk @(irk) 2 *
          @whiledef sz tiny med lrg
+            @whiledef rt symm hemm syrk herk syr2k her2k trmm trsm
+tvecs/@(pre)@(rt)_@(sz)_@(bl)@(pt).tvec : xatl2tvec xreducetvec \
+   raw/@(pre)@(rt)_LLN_@(sz)_@(bl)@(pt).out
+	./xatl2tvec -# @(nr) -i raw/@(pre)@(rt)_LLN_@(sz)_@(bl)@(pt).out \
+           -H 2 N MFLOP | ./xreducetvec -o $@ -R 1 N -C 1 MFLOP
+            @endwhile
 tvecs/@(pre)mmsq_@(sz)_@(bl)@(pt).tvec : raw/@(pre)mmsq_@(sz)_@(bl)@(pt).out xatl2tvec xreducetvec
 	./xatl2tvec -# @(nr) -i raw/@(pre)mmsq_@(sz)_@(bl)@(pt).out \
            -H 2 N Mflop | ./xreducetvec -o $@ -R 1 N -C 1 MFLOP
@@ -4219,6 +4222,55 @@ charts/@(pre)pcmm_@(lib)@(pt).eps : charts/@(pre)pcmm_@(lib)@(pt).dat
 	$(MAKE) plot3lines_perc dataf=charts/@(pre)pcmm_@(lib)@(pt).dat \
            outf=$@ nm1=LU nm2=QR nm3=LLT ylab="% of @(pre)GEMM" \
 title="Factorization performance as a % of @(lib)-@(pre)GEMM@(pt) of same size"
+
+@whiledef rt symm syrk syr2k trsm trmm hemm her2k
+tvecs/@(pre)@(rt)_@(lib)@(pt).tvec : xmergetvecs \
+   tvecs/@(pre)@(rt)_tiny_@(lib)@(pt).tvec \
+   tvecs/@(pre)@(rt)_med_@(lib)@(pt).tvec \
+   tvecs/@(pre)@(rt)_lrg_@(lib)@(pt).tvec 
+	./xmergetvecs -r N -C 2 N MFLOP_avg \
+           -i1 tvecs/@(pre)@(rt)_tiny_@(lib)@(pt).tvec \
+           -i2 tvecs/@(pre)@(rt)_med_@(lib)@(pt).tvec | \
+        ./xmergetvecs -r N -C 2 N MFLOP_avg -o $@ \
+           -i2 tvecs/@(pre)@(rt)_lrg_@(lib)@(pt).tvec 
+@endwhile
+tvecs/@(pre)mmtr_@(lib)@(pt).tvec : xcattvecs \
+   tvecs/@(pre)mmsq_@(lib)@(pt).tvec \
+   tvecs/@(pre)trmm_@(lib)@(pt).tvec tvecs/@(pre)trsm_@(lib)@(pt).tvec 
+	cat tvecs/@(pre)mmsq_@(lib)@(pt).tvec \
+            tvecs/@(pre)trmm_@(lib)@(pt).tvec \
+            tvecs/@(pre)trsm_@(lib)@(pt).tvec | \
+            ./xcattvecs -# 3 -o $@ -C 2 N MFLOP_avg
+tvecs/@(pre)mmsy_@(lib)@(pt).tvec : xcattvecs \
+   tvecs/@(pre)mmsq_@(lib)@(pt).tvec tvecs/@(pre)symm_@(lib)@(pt).tvec \
+   tvecs/@(pre)syrk_@(lib)@(pt).tvec tvecs/@(pre)syr2k_@(lib)@(pt).tvec 
+	cat tvecs/@(pre)mmsq_@(lib)@(pt).tvec \
+            tvecs/@(pre)symm_@(lib)@(pt).tvec \
+            tvecs/@(pre)syrk_@(lib)@(pt).tvec \
+            tvecs/@(pre)syr2k_@(lib)@(pt).tvec | \
+            ./xcattvecs -# 4 -o $@ -C 2 N MFLOP_avg
+tvecs/@(pre)pcsy_@(lib)@(pt).tvec : xperctvecs tvecs/@(pre)mmsy_@(lib)@(pt).tvec
+	./xperctvecs -i tvecs/@(pre)mmsy_@(lib)@(pt).tvec -b MFLOP_avg -C 1 N \
+           -R 3 MFLOP_avg_1 MFLOP_avg_2 MFLOP_avg_3  -o $@
+tvecs/@(pre)pctr_@(lib)@(pt).tvec : xperctvecs tvecs/@(pre)mmtr_@(lib)@(pt).tvec
+	./xperctvecs -i tvecs/@(pre)mmtr_@(lib)@(pt).tvec -b MFLOP_avg -C 1 N \
+           -R 2 MFLOP_avg_1 MFLOP_avg_2 -o $@
+charts/@(pre)pcmm_tr_@(lib)@(pt).dat : tvecs/@(pre)pctr_@(lib)@(pt).tvec \
+   xtvec2plp
+	./xtvec2plp -i tvecs/@(pre)pctr_@(lib)@(pt).tvec -o $@ \
+           -C 4 N MFLOP_avg_1 MFLOP_avg_2 MFLOP_avg
+charts/@(pre)pcmm_sy_@(lib)@(pt).dat : tvecs/@(pre)pcsy_@(lib)@(pt).tvec \
+   xtvec2plp
+	./xtvec2plp -i tvecs/@(pre)pcsy_@(lib)@(pt).tvec -o $@ \
+           -C 5 N MFLOP_avg_1 MFLOP_avg_2 MFLOP_avg_3 MFLOP_avg
+charts/@(pre)pcmm_tr_@(lib)@(pt).eps : charts/@(pre)pcmm_tr_@(lib)@(pt).dat
+	$(MAKE) plot2lines_perc dataf=charts/@(pre)pcmm_tr_@(lib)@(pt).dat \
+           outf=$@ nm1=TRMM nm2=TRSM ylab="% of @(pre)GEMM" \
+title="Triangular performance as a % of @(lib)-@(pre)GEMM@(pt) of same size"
+charts/@(pre)pcmm_sy_@(lib)@(pt).eps : charts/@(pre)pcmm_sy_@(lib)@(pt).dat
+	$(MAKE) plot3lines_perc dataf=charts/@(pre)pcmm_sy_@(lib)@(pt).dat \
+           outf=$@ nm1=SYMM nm2=SYRK nm3=SYR2K ylab="% of @(pre)GEMM" \
+title="Symmetric performance as a % of @(lib)-@(pre)GEMM@(pt) of same size"
       @endwhile
    @endwhile
    @multidef rtt 
@@ -4264,13 +4316,21 @@ charts/@(pre)@(rt)_@(cmp)@(pt).eps : charts/@(pre)@(rt)_@(cmp)@(pt).dat
 eps2pdf :
 	epstopdf $fin $fout
 #
+#MUST DEFINE: dataf, title, outf, nm1, nm2, ylab
+#
+plot2lines_perc:
+	$(PLOT) -prefab lines data=$(dataf) dilim=tab x=1 y=2 y2=3 \
+           title="$(title)" name=$(nm1) name2=$(nm2) yinc=10 \
+           xlbl="Problem Order" ylbl="$(ylab)" xlbldistance=0.6 ygrid=yes \
+           legend="2.6 2.2" "yrange=0 100" legendfmt=across -eps -o $(outf)
+#
 #MUST DEFINE: dataf, title, outf, nm1, nm2, nm3, ylab
 #
 plot3lines_perc:
 	$(PLOT) -prefab lines data=$(dataf) dilim=tab x=1 y=2 y2=3 y3=4 \
            title="$(title)" name=$(nm1) name2=$(nm2) name3=$(nm3) yinc=10 \
            xlbl="Problem Order" ylbl="$(ylab)" xlbldistance=0.6 ygrid=yes \
-           legend="2.0 max" "yrange=0 100" legendfmt=across -eps -o $(outf)
+           legend="2.4 2.2" "yrange=0 100" legendfmt=across -eps -o $(outf)
 #
 #MUST DEFINE: dataf, title, outf, nm1, nm2, nm3, nm4
 #
