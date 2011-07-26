@@ -3938,6 +3938,16 @@ atlv@(cmp).tex : $(ext) $(mySRCdir)/report.base
          @whiledef pt _pt
             charts/@(pre)laqrs_@(cmp)@(pt).eps
             charts/@(pre)laqrs_atl@(pt).eps
+            @whiledef rt trsm trmm
+               charts/@(pre)pcmm_@(rt)_N_atl@(pt).eps
+               charts/@(pre)pcmm_@(rt)_T_atl@(pt).eps
+               charts/@(pre)pcmm_@(rt)_N_sys@(pt).eps
+               charts/@(pre)pcmm_@(rt)_T_sys@(pt).eps
+            @endwhile
+            @whiledef rt symm syrk syr2k
+               charts/@(pre)pcmm_@(rt)_atl@(pt).eps
+               charts/@(pre)pcmm_@(rt)_sys@(pt).eps
+            @endwhile
             @whiledef rt symm syrk syr2k trmm trsm
                charts/@(pre)@(rt)_@(cmp)@(pt).eps
             @endwhile
@@ -4110,6 +4120,17 @@ tvecs/@(pre)la@(rt)_@(sz)_@(bl)@(pt).tvec : raw/@(pre)la@(rt)_@(sz)_@(bl)@(pt).o
          @iexp irk @(irk) 2 *
          @whiledef sz tiny med lrg
             @whiledef rt symm hemm syrk herk syr2k her2k trmm trsm
+               @whiledef sd L R
+                  @whiledef up U L
+                     @whiledef ta N T C
+tvecs/@(pre)@(rt)_@(sd)@(up)@(ta)_@(sz)_@(bl)@(pt).tvec : xatl2tvec \
+   xreducetvec raw/@(pre)@(rt)_@(sd)@(up)@(ta)_@(sz)_@(bl)@(pt).out
+	./xatl2tvec -# @(nr) -H 2 N MFLOP \
+           -i raw/@(pre)@(rt)_@(sd)@(up)@(ta)_@(sz)_@(bl)@(pt).out | \
+             ./xreducetvec -o $@ -R 1 N -C 1 MFLOP
+                     @endwhile
+                  @endwhile
+               @endwhile
 tvecs/@(pre)@(rt)_@(sz)_@(bl)@(pt).tvec : xatl2tvec xreducetvec \
    raw/@(pre)@(rt)_LLN_@(sz)_@(bl)@(pt).out
 	./xatl2tvec -# @(nr) -i raw/@(pre)@(rt)_LLN_@(sz)_@(bl)@(pt).out \
@@ -4271,6 +4292,112 @@ charts/@(pre)pcmm_sy_@(lib)@(pt).eps : charts/@(pre)pcmm_sy_@(lib)@(pt).dat
 	$(MAKE) plot3lines_perc dataf=charts/@(pre)pcmm_sy_@(lib)@(pt).dat \
            outf=$@ nm1=SYMM nm2=SYRK nm3=SYR2K ylab="% of @(pre)GEMM" \
 title="Symmetric performance as a % of @(lib)-@(pre)GEMM@(pt) of same size"
+
+@whiledef rt symm syrk syr2k trsm trmm hemm her2k
+   @whiledef sd L R
+      @whiledef up U L
+         @whiledef ta N T C
+tvecs/@(pre)@(rt)_@(sd)@(up)@(ta)_@(lib)@(pt).tvec : xmergetvecs \
+   tvecs/@(pre)@(rt)_@(sd)@(up)@(ta)_tiny_@(lib)@(pt).tvec \
+   tvecs/@(pre)@(rt)_@(sd)@(up)@(ta)_med_@(lib)@(pt).tvec \
+   tvecs/@(pre)@(rt)_@(sd)@(up)@(ta)_lrg_@(lib)@(pt).tvec 
+	./xmergetvecs -r N -C 2 N MFLOP_avg \
+           -i1 tvecs/@(pre)@(rt)_@(sd)@(up)@(ta)_tiny_@(lib)@(pt).tvec \
+           -i2 tvecs/@(pre)@(rt)_@(sd)@(up)@(ta)_med_@(lib)@(pt).tvec | \
+        ./xmergetvecs -r N -C 2 N MFLOP_avg -o $@ \
+           -i2 tvecs/@(pre)@(rt)_@(sd)@(up)@(ta)_lrg_@(lib)@(pt).tvec 
+         @endwhile
+      @endwhile
+   @endwhile
+@endwhile
+@whiledef rt trsm trmm
+   @whiledef ta N T C
+tvecs/@(pre)mm@(rt)_@(ta)_@(lib)@(pt).tvec : xcattvecs \
+   tvecs/@(pre)mmsq_@(lib)@(pt).tvec \
+   tvecs/@(pre)@(rt)_LU@(ta)_@(lib)@(pt).tvec \
+   tvecs/@(pre)@(rt)_LL@(ta)_@(lib)@(pt).tvec \
+   tvecs/@(pre)@(rt)_RU@(ta)_@(lib)@(pt).tvec \
+   tvecs/@(pre)@(rt)_RL@(ta)_@(lib)@(pt).tvec 
+	cat tvecs/@(pre)mmsq_@(lib)@(pt).tvec \
+            tvecs/@(pre)@(rt)_LU@(ta)_@(lib)@(pt).tvec \
+            tvecs/@(pre)@(rt)_LL@(ta)_@(lib)@(pt).tvec \
+            tvecs/@(pre)@(rt)_RU@(ta)_@(lib)@(pt).tvec \
+            tvecs/@(pre)@(rt)_RL@(ta)_@(lib)@(pt).tvec \
+            | ./xcattvecs -# 5 -o $@ -C 2 N MFLOP_avg
+tvecs/@(pre)pc@(rt)_@(ta)_@(lib)@(pt).tvec : xperctvecs \
+   tvecs/@(pre)mm@(rt)_@(ta)_@(lib)@(pt).tvec
+	./xperctvecs -i tvecs/@(pre)mm@(rt)_@(ta)_@(lib)@(pt).tvec \
+           -R 4 MFLOP_avg_1 MFLOP_avg_2 MFLOP_avg_3  MFLOP_avg_4 \
+           -b MFLOP_avg -C 1 N -o $@
+charts/@(pre)pcmm_@(rt)_@(ta)_@(lib)@(pt).dat : xtvec2plp \
+   tvecs/@(pre)pc@(rt)_@(ta)_@(lib)@(pt).tvec 
+	./xtvec2plp -i tvecs/@(pre)pc@(rt)_@(ta)_@(lib)@(pt).tvec -o $@ \
+           -C 6 N MFLOP_avg_1 MFLOP_avg_2 MFLOP_avg_3 MFLOP_avg_4 MFLOP_avg
+charts/@(pre)pcmm_@(rt)_@(ta)_@(lib)@(pt).eps : \
+   charts/@(pre)pcmm_@(rt)_@(ta)_@(lib)@(pt).dat
+	$(MAKE) plot4lines_perc \
+           dataf=charts/@(pre)pcmm_@(rt)_@(ta)_@(lib)@(pt).dat \
+           outf=$@ nm1='Left,Upper' nm2='Left,Lower' nm3='Right,Upper' \
+           nm4='Right,Lower' ylab="% of @(pre)GEMM" \
+title="@up@(rt)_@(ta) variant performance as a % of @(lib)-@(pre)GEMM@(pt) of same size"
+   @endwhile
+@endwhile
+@whiledef rt symm hemm
+tvecs/@(pre)mm@(rt)_@(lib)@(pt).tvec : xcattvecs \
+   tvecs/@(pre)mmsq_@(lib)@(pt).tvec \
+   tvecs/@(pre)@(rt)_LUN_@(lib)@(pt).tvec \
+   tvecs/@(pre)@(rt)_LLN_@(lib)@(pt).tvec \
+   tvecs/@(pre)@(rt)_RUN_@(lib)@(pt).tvec \
+   tvecs/@(pre)@(rt)_RLN_@(lib)@(pt).tvec 
+	cat tvecs/@(pre)mmsq_@(lib)@(pt).tvec \
+            tvecs/@(pre)@(rt)_LUN_@(lib)@(pt).tvec \
+            tvecs/@(pre)@(rt)_LLN_@(lib)@(pt).tvec \
+            tvecs/@(pre)@(rt)_RUN_@(lib)@(pt).tvec \
+            tvecs/@(pre)@(rt)_RLN_@(lib)@(pt).tvec \
+            | ./xcattvecs -# 5 -o $@ -C 2 N MFLOP_avg
+tvecs/@(pre)pc@(rt)_@(lib)@(pt).tvec : xperctvecs \
+   tvecs/@(pre)mm@(rt)_@(lib)@(pt).tvec
+	./xperctvecs -i tvecs/@(pre)mm@(rt)_@(lib)@(pt).tvec -b MFLOP_avg \
+           -C 1 N -R 4 MFLOP_avg_1 MFLOP_avg_2 MFLOP_avg_3  MFLOP_avg_4 -o $@
+charts/@(pre)pcmm_@(rt)_@(lib)@(pt).dat : xtvec2plp \
+   tvecs/@(pre)pc@(rt)_@(lib)@(pt).tvec 
+	./xtvec2plp -i tvecs/@(pre)pc@(rt)_@(lib)@(pt).tvec -o $@ \
+           -C 6 N MFLOP_avg_1 MFLOP_avg_2 MFLOP_avg_3 MFLOP_avg_4 MFLOP_avg
+charts/@(pre)pcmm_@(rt)_@(lib)@(pt).eps : \
+   charts/@(pre)pcmm_@(rt)_@(lib)@(pt).dat
+	$(MAKE) plot4lines_perc dataf=charts/@(pre)pcmm_@(rt)_@(lib)@(pt).dat \
+           outf=$@ nm1='Left,Upper' nm2='Left,Lower' nm3='Right,Upper' \
+           nm4='Right,Lower' ylab="% of @(pre)GEMM" \
+title="@up@(rt) variant performance as a % of @(lib)-@(pre)GEMM@(pt) of same size"
+@endwhile
+@whiledef rt syrk herk syr2k her2k
+tvecs/@(pre)mm@(rt)_@(lib)@(pt).tvec : xcattvecs \
+   tvecs/@(pre)mmsq_@(lib)@(pt).tvec \
+   tvecs/@(pre)@(rt)_LUN_@(lib)@(pt).tvec \
+   tvecs/@(pre)@(rt)_LLN_@(lib)@(pt).tvec \
+   tvecs/@(pre)@(rt)_LUT_@(lib)@(pt).tvec \
+   tvecs/@(pre)@(rt)_LLT_@(lib)@(pt).tvec 
+	cat tvecs/@(pre)mmsq_@(lib)@(pt).tvec \
+            tvecs/@(pre)@(rt)_LUN_@(lib)@(pt).tvec \
+            tvecs/@(pre)@(rt)_LLN_@(lib)@(pt).tvec \
+            tvecs/@(pre)@(rt)_LUT_@(lib)@(pt).tvec \
+            tvecs/@(pre)@(rt)_LLT_@(lib)@(pt).tvec \
+            | ./xcattvecs -# 5 -o $@ -C 2 N MFLOP_avg
+tvecs/@(pre)pc@(rt)_@(lib)@(pt).tvec : xperctvecs \
+   tvecs/@(pre)mm@(rt)_@(lib)@(pt).tvec
+	./xperctvecs -i tvecs/@(pre)mm@(rt)_@(lib)@(pt).tvec -b MFLOP_avg \
+           -C 1 N -R 4 MFLOP_avg_1 MFLOP_avg_2 MFLOP_avg_3  MFLOP_avg_4 -o $@
+charts/@(pre)pcmm_@(rt)_@(lib)@(pt).dat : xtvec2plp \
+   tvecs/@(pre)pc@(rt)_@(lib)@(pt).tvec 
+	./xtvec2plp -i tvecs/@(pre)pc@(rt)_@(lib)@(pt).tvec -o $@ \
+           -C 6 N MFLOP_avg_1 MFLOP_avg_2 MFLOP_avg_3 MFLOP_avg_4 MFLOP_avg
+charts/@(pre)pcmm_@(rt)_@(lib)@(pt).eps : \
+   charts/@(pre)pcmm_@(rt)_@(lib)@(pt).dat
+	$(MAKE) plot4lines_perc dataf=charts/@(pre)pcmm_@(rt)_@(lib)@(pt).dat \
+           outf=$@ nm1='Upper,NoTr' nm2='Lower,NoTr' nm3='Upper,Trans' \
+           nm4='Lower,Trans' ylab="% of @(pre)GEMM" \
+title="@up@(rt) variant performance as a % of @(lib)-@(pre)GEMM@(pt) of same size"
+@endwhile
       @endwhile
    @endwhile
    @multidef rtt 
@@ -4331,6 +4458,15 @@ plot3lines_perc:
            title="$(title)" name=$(nm1) name2=$(nm2) name3=$(nm3) yinc=10 \
            xlbl="Problem Order" ylbl="$(ylab)" xlbldistance=0.6 ygrid=yes \
            legend="2.4 2.2" "yrange=0 100" legendfmt=across -eps -o $(outf)
+#
+#MUST DEFINE: dataf, title, outf, nm1, nm2, nm3, nm4, ylab
+#
+plot4lines_perc:
+	$(PLOT) -prefab lines data=$(dataf) dilim=tab x=1 y=2 y2=3 y3=4 y4=5 \
+           title="$(title)" name=$(nm1) name2=$(nm2) name3=$(nm3) name4=$(nm4) \
+           yinc=10 xlbl="Problem Order" ylbl="$(ylab)" xlbldistance=0.6 \
+           ygrid=yes legend="1.0 1.2" "yrange=0 100" legendfmt=across \
+           -eps -o $(outf)
 #
 #MUST DEFINE: dataf, title, outf, nm1, nm2, nm3, nm4
 #
