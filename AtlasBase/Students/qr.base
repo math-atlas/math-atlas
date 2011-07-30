@@ -576,7 +576,7 @@ int ATL_gelq2(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT LDA,
    }                                        /* end of for                     */
 
    return(0);
-}                                           /* END AL_gelq2                   */
+}                                           /* END ATL_gelq2                  */
 
 
 @ROUT ATL_geqrf
@@ -748,6 +748,15 @@ int ATL_@(rtn)(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
    TYPE  *@(wks),  *ws_T, *ws_larfb;        /* Workspace level 2, T, larfb.   */
    void *vp=NULL;
 
+@ROUT ATL_gerqf ATL_gelqf
+   /* For transpose function, may need type-appropriate 'ONE' for alpha. */
+   #ifdef TREAL
+      const TYPE ONE = ATL_rone;
+   #else
+      const TYPE ONE[2] = {ATL_rone, ATL_rzero};
+   #endif
+
+@ROUT ATL_geqrf ATL_geqlf ATL_gerqf ATL_gelqf
    #if defined(ATL_TUNING)
    /*-------------------------------------------------------------------------*/
    /* For tuning recursion crossover points, the blocking factor is set by    */
@@ -927,6 +936,27 @@ int ATL_@(rtn)(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
       return(0);
 
 /*
+ * LQ is the transpose of QR: We use this to go from row-major LQ to
+ * col-major QR, typically faster. Here, if we are square and large,
+ * we transpose the whole matrix in-place and then transpose it back.
+ * This should be a tunable parameter; perhaps if the matrix fits in
+ * L1 or L2? (Note by Tony C, short on time to conduct tuning).
+ */
+   if (M == N && N >= 128)
+   {
+      Mjoin(PATL,sqtrans)(N, A, lda);
+      n = ATL_geqrf(M, N, A, lda, TAU, WORK, LWORK);
+      Mjoin(PATL,sqtrans)(N, A, lda);
+
+      /* Take the conjugate for Complex TAU. */
+      #ifdef TCPLX
+      ATL_INT i;
+      for (i=1; i<(minMN<<1); i+=2)
+         *(TAU+i) = 0.-*(TAU+i);          /* Negate imaginary part. */
+      #endif
+      return(n);
+   }
+/*
  * If the user gives us too little space, see if we can allocate it ourselves
  */
    else if (LWORK < (maxMN*nb + nb*nb + maxMN))
@@ -944,6 +974,12 @@ int ATL_@(rtn)(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
    ws_LQ2 = WORK +(nb SHIFT)*nb;        /* After T Work space             */
    ws_larfb = ws_LQ2 + (maxMN SHIFT);   /* After workspace for T and LQ2  */
 
+   #if !defined(ATL_USEPTHREADS)        /* If no PCA, try to copy up front. */
+   TYPE *ws_CP=NULL;
+   TYPE *ws_CPRaw = malloc(ATL_MulBySize(maxMN*nb + ATL_Cachelen));
+   if (ws_CPRaw) ws_CP=ATL_AlignPtr(ws_CPRaw);  /* Align if malloced. */
+   #endif /* Serial Mode */
+ 
 /*
  * Leave one iteration to be done outside loop, so we don't build T
  * Any loop iterations are therefore known to be of size nb (no partial blocks)
@@ -954,8 +990,35 @@ int ATL_@(rtn)(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
 
    for (j=0; j < n; j += nb)
    {
-      ATL_assert(!ATL_gelqr(nb, N-j,  A+(j SHIFT)*(lda+1), lda, TAU+(j SHIFT),
-                            ws_LQ2, ws_T, nb, ws_larfb, 1));
+      #if !defined(ATL_USEPTHREADS) /* If no PCA it won't copy. Try it here. */
+      /* If we got our copy workspace, transpose panel before recursion. */
+      if (ws_CP)                             /* If workspace exists. */
+      {
+         int ci, cj;                         /* for conjugation.     */
+         Mjoin(PATL,gemoveT)(N-j, nb, ONE, A+(j SHIFT)*(lda+1), 
+                             lda, ws_CP, maxMN);
+
+         ATL_assert(!ATL_geqrr(N-j, nb, ws_CP, maxMN, TAU+(j SHIFT),
+                               ws_LQ2, ws_T, nb, ws_larfb, 1));
+      
+         Mjoin(PATL,gemoveT)(nb, N-j, ONE, ws_CP, maxMN, 
+                             A+(j SHIFT)*(lda+1), lda);
+
+         #if defined(TCPLX)               /* conj upTri T, TAU. */
+         for (cj=0; cj<nb; cj++)          /* column loop... */
+         {
+            TAU[((j+cj) SHIFT)+1] = 0.-TAU[((j+cj) SHIFT)+1];
+            for (ci=0; ci<=cj; ci++)      /* row loop... */
+               ws_T[((ci+cj*nb) SHIFT)+1] = 0.-ws_T[((ci+cj*nb) SHIFT)+1];
+         }
+         #endif /* defined(TCPLX) */
+      } else /* copy workspace was not allocated, use native. */
+      #endif /* Serial Mode (No PCA) */
+      {
+         ATL_assert(!ATL_gelqr(nb, N-j,  A+(j SHIFT)*(lda+1), lda, 
+                               TAU+(j SHIFT), ws_LQ2, ws_T, nb, ws_larfb, 1));
+      }
+
       if (j+nb < M)  /* if there are more cols left to bottom, update them */
       {
 /*
@@ -979,14 +1042,48 @@ int ATL_@(rtn)(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
 /*
  *  Build Last panel.  build T is set to 0
  */
-   nb = minMN - n;                              /* remaining rows.            */
-   ATL_assert(!ATL_gelqr(M-n, N-n, A+(n SHIFT)*(lda+1), lda, TAU+(n SHIFT), 
-                         ws_LQ2, ws_T, nb, ws_larfb, 0));
+   nb = minMN - n;                              /* remaining rows. */
+   if (nb)                                      /* If we have any cleanup, */
+   {
+      #if !defined(ATL_USEPTHREADS)          /* If no PCA try up front copy. */
+      if (ws_CP)                             /* If workspace exists. */
+      {
+         ATL_INT cj;                         /* for conjugation.     */
+         Mjoin(PATL,gemoveT)(N-j, nb, ONE, A+(j SHIFT)*(lda+1), 
+                             lda, ws_CP, maxMN);
+
+         /* Final parm is whether to build T. No need for T on final panel. */
+         ATL_assert(!ATL_geqrr(N-j,nb,  ws_CP, maxMN, TAU+(j SHIFT),
+                               ws_LQ2, ws_T, nb, ws_larfb, 0));
+      
+         Mjoin(PATL,gemoveT)(nb, N-j, ONE, ws_CP, maxMN, 
+                             A+(j SHIFT)*(lda+1), lda);
+
+         /* We only need to conjugate final chunk of TAU. */ 
+         #if defined(TCPLX)
+         for (cj=0; cj<nb; cj++)
+         {
+            TAU[((j+cj) SHIFT)+1] = 0.-TAU[((j+cj) SHIFT)+1];
+         }
+         #endif /* defined(TCPLX) */
+      } else /* copy workspace was not allocated, use native. */
+      #endif /* Serial Mode (No PCA) */
+      {
+         /* Final parm is whether to build T. No need for T on final panel. */
+         ATL_assert(!ATL_gelqr(M-n, N-n, A+(n SHIFT)*(lda+1), lda,
+                               TAU+(n SHIFT), ws_LQ2, ws_T, nb, ws_larfb, 0));
+      }
+   } /* if we had any cleanup rows to do... */
 
    if (vp)
       free(vp);
+
+   #if !defined(ATL_USEPTHREADS)             /* If copy workspace possible, */
+   if (ws_CPRaw) free(ws_CPRaw);             /* Free any space allocated.   */
+   #endif /* Serial Mode */
+
    return(0);
-} /* END ATL_dgelqf */
+} /* END ATL_gelqf */
 
 @ROUT ATL_gerqf
    nb = clapack_ilaenv(LAIS_OPT_NB, LAgeqrf, MYOPT+LALeft+LAUpper, M, N,-1,-1);
@@ -1003,6 +1100,27 @@ int ATL_@(rtn)(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
    }
    else if (M < 1 || N < 1)  /* quick return if no work to do */
       return(0);
+/*
+ * RQ is the transpose of QL: We use this to go from row-major RQ to
+ * col-major QL, typically faster. Here, if we are square and large,
+ * we transpose the whole matrix in-place and then transpose it back.
+ * This should be a tunable parameter; perhaps if the matrix fits in
+ * L1 or L2? (Note by Tony C, short on time to conduct tuning).
+ */
+   if (M == N && N >= 128)
+   {
+      Mjoin(PATL,sqtrans)(N, A, lda);
+      n = ATL_geqlf(M, N, A, lda, TAU, WORK, LWORK);
+      Mjoin(PATL,sqtrans)(N, A, lda);
+
+      /* Take the conjugate for Complex TAU. */
+      #ifdef TCPLX
+      ATL_INT i;
+      for (i=1; i<(minMN<<1); i+=2)
+         *(TAU+i) = 0.-*(TAU+i);          /* Negate imaginary part. */
+      #endif
+      return(n);
+   }
 /*
  * If the user gives us too little space, see if we can allocate it ourselves
  */
@@ -1021,6 +1139,12 @@ int ATL_@(rtn)(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
    ws_RQ2 = WORK +(nb SHIFT)*nb;        /* After T Work space             */
    ws_larfb = ws_RQ2 + (maxMN SHIFT);   /* After workspace for T and RQ2  */
 
+   #if !defined(ATL_USEPTHREADS)        /* If no PCA, try to copy up front. */
+   TYPE *ws_CP=NULL;
+   TYPE *ws_CPRaw = malloc(ATL_MulBySize(maxMN*nb + ATL_Cachelen));
+   if (ws_CPRaw) ws_CP=ATL_AlignPtr(ws_CPRaw);  /* Align if malloced. */
+   #endif /* Serial Mode */
+
 /*
  * Leave one iteration to be done outside loop, so we don't build T
  * Any loop iterations are therefore known to be of size nb (no partial blocks)
@@ -1034,9 +1158,36 @@ int ATL_@(rtn)(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
 /*
  *    Starts Factorization from the bottom row
  */
-      ATL_assert(!ATL_gerqr(nb, N-j, A+((M -j -nb) SHIFT), lda, 
-                            TAU+((minMN -(j+nb)) SHIFT), ws_RQ2, ws_T, nb, 
-                            ws_larfb, 1));
+      #if !defined(ATL_USEPTHREADS) /* If no PCA it won't copy. Try it here. */
+      /* If we got our copy workspace, transpose panel before recursion. */
+      if (ws_CP)                             /* If workspace exists. */
+      {
+         int ci, cj;                         /* for conjugation.     */
+         TYPE *myTAU=TAU+((minMN-(j+nb)) SHIFT);
+         TYPE *myA=A+((M -j -nb) SHIFT);
+
+         Mjoin(PATL,gemoveT)(N-j, nb, ONE, myA, lda, ws_CP, maxMN);
+
+         ATL_assert(!ATL_geqlr(N-j, nb, ws_CP, maxMN, myTAU, 
+                               ws_RQ2, ws_T, nb, ws_larfb, 1));
+      
+         Mjoin(PATL,gemoveT)(nb, N-j, ONE, ws_CP, maxMN, myA, lda);
+
+         #if defined(TCPLX)               /* conj LowTri T, TAU. */
+         for (cj=0; cj<nb; cj++)          /* column loop... */
+         {
+            myTAU[(cj SHIFT)+1] = 0.-myTAU[(cj SHIFT)+1];
+            for (ci=cj; ci< nb; ci++)     /* row loop... */
+               ws_T[((ci+cj*nb) SHIFT)+1] = 0.-ws_T[((ci+cj*nb) SHIFT)+1];
+         }
+         #endif /* defined(TCPLX) */
+      } else /* copy workspace was not allocated, use native. */
+      #endif /* Serial Mode (No PCA) */
+      {
+         ATL_assert(!ATL_gerqr(nb, N-j, A+((M -j -nb) SHIFT), lda, 
+                               TAU+((minMN -(j+nb)) SHIFT), ws_RQ2, ws_T, nb, 
+                               ws_larfb, 1));
+      }
 
       if (j+nb < M)  /* if there are more cols left on top to update them */
       {
@@ -1063,10 +1214,41 @@ int ATL_@(rtn)(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
  *  Build Last panel.  buildT  is passed as 0, as there is no need to build T
  */
    nb = minMN - n;                              /* remaining rows.            */
-   ATL_assert(!ATL_gerqr(M-n, N-n, A, lda, TAU, ws_RQ2, ws_T, nb, ws_larfb, 0));
+   if (nb)                                      /* If we have any to do...    */
+   {
+      #if !defined(ATL_USEPTHREADS) /* If no PCA it won't copy. Try it here. */
+      /* If we got our copy workspace, transpose panel before recursion. */
+      if (ws_CP)                             /* If workspace exists. */
+      {
+         int cj;                             /* for conjugation.     */
+         Mjoin(PATL,gemoveT)(N-j, nb, ONE, A, lda, ws_CP, maxMN);
+
+         ATL_assert(!ATL_geqlr(N-j, nb, ws_CP, maxMN, TAU, 
+                               ws_RQ2, ws_T, nb, ws_larfb, 0));
+      
+         Mjoin(PATL,gemoveT)(nb, N-j, ONE, ws_CP, maxMN, A, lda);
+
+         #if defined(TCPLX)               /* conj TAU. */
+         for (cj=0; cj<nb; cj++)          /* column loop... */
+         {
+            TAU[(cj SHIFT)+1] = 0.-TAU[(cj SHIFT)+1];
+         }
+         #endif /* defined(TCPLX) */
+      } else /* copy workspace was not allocated, use native. */
+      #endif /* Serial Mode (No PCA) */
+      {
+         ATL_assert(!ATL_gerqr(M-n, N-n, A, lda, TAU, ws_RQ2, 
+                               ws_T, nb, ws_larfb, 0));
+      }
+   }
 
    if (vp)
       free(vp);
+
+   #if !defined(ATL_USEPTHREADS)             /* If copy workspace possible, */
+   if (ws_CPRaw) free(ws_CPRaw);             /* Free any space allocated.   */
+   #endif /* Serial Mode */
+
    return(0);
 } /* END ATL_gerqf */
 
