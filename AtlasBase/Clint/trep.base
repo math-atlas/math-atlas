@@ -376,4 +376,203 @@ with commentary after an ATLAS install.
   location: min+2 max
   format: singleline
 
+@ROUT Make.res_lapack
+include Make.plinc
+#
+# List of macros that we need
+#
+pre=d           # precision [s,d,c,z]
+rt=getrf        # routine [getrf,geqrf,potrf]
+sd=L            # side [L,R]
+up=U            # uplo [U,L]
+pt=             # if _pt, then do threaded, if blank do serial
+lib=atl         # library [atl,at2,sys,f77]
+AT2dir=         # path to 2nd ATLAS install to compare against
+
+tvecs/$(pre)mmsq_cmb_$(lib)$(pt).tvec :
+	$(MAKE) -f Make.l3blas tvecs/$(pre)mmsq_cmb_$(lib)$(pt).tvec
+@multidef lpr a   s   f   2
+@whiledef lib atl sys f77 at2
+$(BINdir)/x$(pre)slatime_@(lpre)l_@(lpr)b :
+	cd $(BINdir) ; make x$(pre)slatime_@(lpre)l_@(lpr)b
+$(BINdir)/x$(pre)tlatime_@(lpre)l_@(lpr)b :
+	cd $(BINdir) ; make x$(pre)tlatime_@(lpre)l_@(lpr)b
+x$(pre)latime_@(lib) : $(BINdir)/x$(pre)slatime_@(lpre)l_@(lpr)b
+	ln -s $(BINdir)/x$(pre)slatime_@(lpr)l_@(lpr)b $@
+x$(pre)latime_@(lib)_pt : $(BINdir)/x$(pre)tlatime_@(lpr)l_@(lpr)b
+	ln -s $(BINdir)/x$(pre)tlatime_@(lpr)l_@(lpr)b $@
+   @undef lpr
+@endwhile
+
+@multidef szargs -N@^10@^100@^10 -N@^200@^2000@^200 -N@^2400@^4000@^400
+@multidef rp 9   6   1
+@whiledef sz tin med lrg
+raw/$(pre)$(rt)_$(sd)$(up)_@(sz)_$(lib)$(pt).out : x$(pre)latime_@(lib)@(pt) \
+	./x$(pre)latime_$(lib)@(pt) -F 40 -R 1 $(rt) -S 1 @(sd) \
+           -U 1 $(up) @(szargs) -# @(rp) > $@
+tvecs/$(pre)$(rt)_$(sd)$(up)_@(sz)_$(lib)$(pt).tvec : xatl2tvec \
+   xreducetvec raw/$(pre)$(rt)_$(sd)$(up)_@(sz)_$(lib)$(pt).out
+	./xatl2tvec -# @(rp) -H 2 N MFLOP \
+           -i raw/$(pre)$(rt)_$(sd)$(up)_@(sz)_$(lib)$(pt).out |
+        ./xreducetvec -o $@ -R 1 N -C 1 MFLOP
+   @undef szargs
+   @undef rp
+@endwhile
+#
+# Merge medium and large runs into one combined range
+#
+tvecs/$(pre)$(rt)_$(sd)$(up)_mlr_$(lib)$(pt).tvec : xmergetvecs \
+   tvecs/$(pre)$(rt)_$(sd)$(up)_med_$(lib)$(pt).tvec \
+   tvecs/$(pre)$(rt)_$(sd)$(up)_lrg_$(lib)$(pt).tvec \
+	./xmergetvecs -r N -C 2 N MFLOP_avg -o $@ \
+           -i1 tvecs/$(pre)$(rt)_$(sd)$(up)_med_$(lib)$(pt).tvec \
+           -i2 tvecs/$(pre)$(rt)_$(sd)$(up)_lrg_$(lib)$(pt).tvec 
+#
+# Merge tiny, medium, and large runs into one combined range
+#
+tvecs/$(pre)$(rt)_$(sd)$(up)_cmb_$(lib)$(pt).tvec : xmergetvecs \
+   tvecs/$(pre)$(rt)_$(sd)$(up)_tin_$(lib)$(pt).tvec \
+   tvecs/$(pre)$(rt)_$(sd)$(up)_med_$(lib)$(pt).tvec \
+   tvecs/$(pre)$(rt)_$(sd)$(up)_lrg_$(lib)$(pt).tvec \
+	./xmergetvecs -r N -C 2 N MFLOP_avg \
+           -i1 tvecs/$(pre)$(rt)_$(sd)$(up)_tin_$(lib)$(pt).tvec \
+           -i2 tvecs/$(pre)$(rt)_$(sd)$(up)_med_$(lib)$(pt).tvec | \
+        ./xmergetvecs -r N -C 2 N MFLOP_avg -o $@ \
+           -i2 tvecs/$(pre)$(rt)_$(sd)$(up)$(ta)_lrg_$(lib)$(pt).tvec
+tvecs/$(pre)mmsq_cmb_$(lib)$(pt).tvec : xmergetvecs \
+   tvecs/$(pre)mmsq_tin_$(lib)$(pt).tvec \
+   tvecs/$(pre)mmsq_med_$(lib)$(pt).tvec \
+   tvecs/$(pre)mmsq_lrg_$(lib)$(pt).tvec \
+	./xmergetvecs -r N -C 2 N MFLOP_avg \
+           -i1 tvecs/$(pre)mmsq_tin_$(lib)$(pt).tvec \
+           -i2 tvecs/$(pre)mmsq_med_$(lib)$(pt).tvec | \
+        ./xmergetvecs -r N -C 2 N MFLOP_avg -o $@ \
+           -i2 tvecs/$(pre)mmsq_lrg_$(lib)$(pt).tvec
+#
+# Create master file with all factorizations, in this order: 
+#    MM,LU,LL,UU,QR,QL,RQ,LQ
+#
+tvecs/$(pre)factor_cmb_$(lib)$(pt).tvec : xcattvecs force_build \
+   tvecs/$(pre)mmsq_cmb_$(lib)$(pt).tvec
+	$(MAKE) tvecs/$(pre)getrf_LU_cmb_$(lib)$(pt).tvec sd=L up=U \
+                rt=getrf pre=$(pre) pt="$(pt)" lib=$(lib)
+	$(MAKE) tvecs/$(pre)potrf_LU_cmb_$(lib)$(pt).tvec sd=L up=U \
+                rt=potrf pre=$(pre) pt="$(pt)" lib=$(lib)
+	$(MAKE) tvecs/$(pre)potrf_LL_cmb_$(lib)$(pt).tvec sd=L up=L \
+                rt=potrf pre=$(pre) pt="$(pt)" lib=$(lib)
+	$(MAKE) tvecs/$(pre)geqrf_RU_cmb_$(lib)$(pt).tvec sd=R up=U \
+                rt=geqrf pre=$(pre) pt="$(pt)" lib=$(lib)
+	$(MAKE) tvecs/$(pre)geqrf_RL_cmb_$(lib)$(pt).tvec sd=R up=L \
+                rt=geqrf pre=$(pre) pt="$(pt)" lib=$(lib)
+	$(MAKE) tvecs/$(pre)geqrf_LU_cmb_$(lib)$(pt).tvec sd=L up=U \
+                rt=geqrf pre=$(pre) pt="$(pt)" lib=$(lib)
+	$(MAKE) tvecs/$(pre)geqrf_LL_cmb_$(lib)$(pt).tvec sd=L up=L \
+                rt=geqrf pre=$(pre) pt="$(pt)" lib=$(lib)
+	cat tvecs/$(pre)mmsq_cmb_$(lib)$(pt).tvec \
+            tvecs/$(pre)getrf_LU_cmb_$(lib)$(pt).tvec \
+            tvecs/$(pre)potrf_LU_cmb_$(lib)$(pt).tvec \
+            tvecs/$(pre)potrf_LL_cmb_$(lib)$(pt).tvec \
+            tvecs/$(pre)geqrf_RU_cmb_$(lib)$(pt).tvec \ 
+            tvecs/$(pre)geqrf_RL_cmb_$(lib)$(pt).tvec \
+            tvecs/$(pre)geqrf_LU_cmb_$(lib)$(pt).tvec \
+            tvecs/$(pre)geqrf_LL_cmb_$(lib)$(pt).tvec | \
+        ./xcattvecs -# 8 -o $@ -C 2 N MFLOP_avg
+# 
+# Create Triangular variant file
+#
+tvecs/$(pre)trvar_cmb_$(lib)$(pt).tvec : xcattvecs force_build \
+   tvecs/$(pre)mmsq_cmb_$(lib)$(pt).tvec
+	$(MAKE) tvecs/$(pre)getrf_LU_cmb_$(lib)$(pt).tvec sd=L up=U \
+                rt=getrf pre=$(pre) pt="$(pt)" lib=$(lib)
+	$(MAKE) tvecs/$(pre)potrf_LU_cmb_$(lib)$(pt).tvec sd=L up=U \
+                rt=potrf pre=$(pre) pt="$(pt)" lib=$(lib)
+	$(MAKE) tvecs/$(pre)potrf_LL_cmb_$(lib)$(pt).tvec sd=L up=L \
+                rt=potrf pre=$(pre) pt="$(pt)" lib=$(lib)
+	cat tvecs/$(pre)mmsq_cmb_$(lib)$(pt).tvec \
+            tvecs/$(pre)getrf_LU_cmb_$(lib)$(pt).tvec \
+            tvecs/$(pre)potrf_LU_cmb_$(lib)$(pt).tvec \
+            tvecs/$(pre)potrf_LL_cmb_$(lib)$(pt).tvec | \
+        ./xcattvecs -# 4 -o $@ -C 2 N MFLOP_avg
+
+#
+# Create QR variant combined file
+#
+tvecs/$(pre)qrvar_cmb_$(lib)$(pt).tvec : xcattvecs force_build \
+   tvecs/$(pre)mmsq_cmb_$(lib)$(pt).tvec
+	$(MAKE) tvecs/$(pre)geqrf_RU_cmb_$(lib)$(pt).tvec sd=R up=U \
+                rt=geqrf pre=$(pre) pt="$(pt)" lib=$(lib)
+	$(MAKE) tvecs/$(pre)geqrf_RL_cmb_$(lib)$(pt).tvec sd=R up=L \
+                rt=geqrf pre=$(pre) pt="$(pt)" lib=$(lib)
+	$(MAKE) tvecs/$(pre)geqrf_LU_cmb_$(lib)$(pt).tvec sd=L up=U \
+                rt=geqrf pre=$(pre) pt="$(pt)" lib=$(lib)
+	$(MAKE) tvecs/$(pre)geqrf_LL_cmb_$(lib)$(pt).tvec sd=L up=L \
+                rt=geqrf pre=$(pre) pt="$(pt)" lib=$(lib)
+	cat tvecs/$(pre)mmsq_cmb_$(lib)$(pt).tvec \
+            tvecs/$(pre)geqrf_RU_cmb_$(lib)$(pt).tvec \ 
+            tvecs/$(pre)geqrf_RL_cmb_$(lib)$(pt).tvec \
+            tvecs/$(pre)geqrf_LU_cmb_$(lib)$(pt).tvec \
+            tvecs/$(pre)geqrf_LL_cmb_$(lib)$(pt).tvec | \
+        ./xcattvecs -# 5 -o $@ -C 2 N MFLOP_avg
+#
+# Cat combined Uplo&Trans variants together with sqmm
+#
+tvecs/$(pre)$(rt)_UpTr_cmb_$(lib)$(pt).tvec : xcattvecs force_build \
+   tvecs/$(pre)mmsq_cmb_$(lib)$(pt).tvec
+	$(MAKE) tvecs/$(pre)$(rt)_LUN_cmb_$(lib)$(pt).tvec up=U ta=N \
+                rt=$(rt) pre=$(pre) pt="$(pt)" lib=$(lib)
+	$(MAKE) tvecs/$(pre)$(rt)_LUT_cmb_$(lib)$(pt).tvec up=U ta=T \
+                rt=$(rt) pre=$(pre) pt="$(pt)" lib=$(lib)
+	$(MAKE) tvecs/$(pre)$(rt)_LLN_cmb_$(lib)$(pt).tvec up=L ta=N \
+                rt=$(rt) pre=$(pre) pt="$(pt)" lib=$(lib)
+	$(MAKE) tvecs/$(pre)$(rt)_LLT_cmb_$(lib)$(pt).tvec up=L ta=T \
+                rt=$(rt) pre=$(pre) pt="$(pt)" lib=$(lib)
+	cat tvecs/$(pre)mmsq_cmb_$(lib)$(pt).tvec \
+            tvecs/$(pre)$(rt)_LUN_cmb_$(lib)$(pt).tvec \ 
+            tvecs/$(pre)$(rt)_LUT_cmb_$(lib)$(pt).tvec \
+            tvecs/$(pre)$(rt)_LLN_cmb_$(lib)$(pt).tvec \
+            tvecs/$(pre)$(rt)_LLT_cmb_$(lib)$(pt).tvec | \
+        ./xcattvecs -# 5 -o $@ -C 2 N MFLOP_avg
+#
+# Cat combined Side,Uplo,Trans, variants together with sqmm
+#
+tvecs/$(pre)$(rt)_SdUpTr_cmb_$(lib)$(pt).tvec : xcattvecs force_build \
+   tvecs/$(pre)mmsq_cmb_$(lib)$(pt).tvec
+	$(MAKE) tvecs/$(pre)$(rt)_LUN_cmb_$(lib)$(pt).tvec sd=L up=U ta=N \
+                rt=$(rt) pre=$(pre) pt="$(pt)" lib=$(lib)
+	$(MAKE) tvecs/$(pre)$(rt)_LUT_cmb_$(lib)$(pt).tvec sd=L up=U ta=T \
+                rt=$(rt) pre=$(pre) pt="$(pt)" lib=$(lib)
+	$(MAKE) tvecs/$(pre)$(rt)_LLN_cmb_$(lib)$(pt).tvec sd=L up=L ta=N \
+                rt=$(rt) pre=$(pre) pt="$(pt)" lib=$(lib)
+	$(MAKE) tvecs/$(pre)$(rt)_LLT_cmb_$(lib)$(pt).tvec sd=L up=L ta=T \
+                rt=$(rt) pre=$(pre) pt="$(pt)" lib=$(lib)
+	$(MAKE) tvecs/$(pre)$(rt)_RUN_cmb_$(lib)$(pt).tvec sd=R up=U ta=N \
+                rt=$(rt) pre=$(pre) pt="$(pt)" lib=$(lib)
+	$(MAKE) tvecs/$(pre)$(rt)_RUT_cmb_$(lib)$(pt).tvec sd=R up=U ta=T \
+                rt=$(rt) pre=$(pre) pt="$(pt)" lib=$(lib)
+	$(MAKE) tvecs/$(pre)$(rt)_RLN_cmb_$(lib)$(pt).tvec sd=R up=L ta=N \
+                rt=$(rt) pre=$(pre) pt="$(pt)" lib=$(lib)
+	$(MAKE) tvecs/$(pre)$(rt)_RLT_cmb_$(lib)$(pt).tvec sd=R up=L ta=T \
+                rt=$(rt) pre=$(pre) pt="$(pt)" lib=$(lib)
+	cat tvecs/$(pre)mmsq_cmb_$(lib)$(pt).tvec \
+            tvecs/$(pre)$(rt)_LUN_cmb_$(lib)$(pt).tvec \ 
+            tvecs/$(pre)$(rt)_LUT_cmb_$(lib)$(pt).tvec \
+            tvecs/$(pre)$(rt)_LLN_cmb_$(lib)$(pt).tvec \
+            tvecs/$(pre)$(rt)_LLT_cmb_$(lib)$(pt).tvec \
+            tvecs/$(pre)$(rt)_RUN_cmb_$(lib)$(pt).tvec \ 
+            tvecs/$(pre)$(rt)_RUT_cmb_$(lib)$(pt).tvec \
+            tvecs/$(pre)$(rt)_RLN_cmb_$(lib)$(pt).tvec \
+            tvecs/$(pre)$(rt)_RLT_cmb_$(lib)$(pt).tvec | \
+        ./xcattvecs -# 9 -o $@ -C 2 N MFLOP_avg
+#
+# Change to percentage of GEMM speed
+#
+tvecs/$(pre)pcmm_$(rt)_SdUp_cmb_$(lib)$(pt).tvec : \
+   tvecs/$(pre)$(rt)_SdUp_cmb_$(lib)$(pt).tvec
+	$(MAKE) pcmm4 inf=tvecs/$(pre)$(rt)_SdUp_cmb_$(lib)$(pt).tvec outf=$@
+tvecs/$(pre)pcmm_$(rt)_UpTr_cmb_$(lib)$(pt).tvec : \
+   tvecs/$(pre)$(rt)_UpTr_cmb_$(lib)$(pt).tvec
+	$(MAKE) pcmm4 inf=tvecs/$(pre)$(rt)_UpTr_cmb_$(lib)$(pt).tvec outf=$@
+tvecs/$(pre)pcmm_$(rt)_SdUpTr_cmb_$(lib)$(pt).tvec : \
+   tvecs/$(pre)$(rt)_SdUpTr_cmb_$(lib)$(pt).tvec
+	$(MAKE) pcmm8 inf=tvecs/$(pre)$(rt)_UpTr_cmb_$(lib)$(pt).tvec outf=$@
 @ROUT !
