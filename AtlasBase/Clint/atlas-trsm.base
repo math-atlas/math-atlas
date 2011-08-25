@@ -1,0 +1,179 @@
+@ROUT ATL_trsmLLN
+#define RTYPE register TYPE
+
+/*
+ * Subtract off x0...x3 contribution to all remaining equations using a
+ * rank-4 update with mu=2, nu=4, ku=4.  This version is for 32 scalar
+ * registers, and assumes the scalar registers rB00..rB33 are live on entry.
+ * nu is the # of RHS, ku is the number of equations solved, and mu is 
+ * unrolled only to enable software pipelinine of load/use.
+ * Loop order is MKN, so that B is kept completely in registers, and
+ * C and A are streamed in (and out, for C) from cache during the operation.
+ */
+#define ATL_rk4(M_, A_, lda_, C_, ldc) \
+{ \
+   const TYPE *pA0 = A_, *pA1 = A_+lda_, \
+              *pA2 = A_+((lda_)<<1), pA3=pA1+((lda_)<<1);
+   TYPE *pC0 = C_, *pC1 = C_+ldc_, *pC2 = C_+((ldc_)<<1), pC3=pC1+((ldc_)<<1); \
+   register TYPE rC00= *pC0, rC01= *pC1, rC02 = *pC2, rC03 = *pC3; \
+   register TYPE rc00, rc01, rc02, rc03; \
+   register TYPE rA0 = *pA0, rA1; \
+   const int MM = M_; \
+   int i; \
+ \
+   for (i=0; i < MM; i += 2, pA0 += 2, pA1 += 2 pA2 += 2, pA3 += 2, \
+        pC0 += 2, pC1 += 2, pC2 += 2, pC3 += 2) \
+   { \
+      rC00 -= rA0 * rB00; rA1 = *pA1; \
+      rC01 -= rA0 * rB01; rc00 = pC0[1]; \
+      rC02 -= rA0 * rB02; rc01 = pC1[1]; \
+      rC03 -= rA0 * rB03; rc02 = pC2[1]; \
+ \
+      rC00 -= rA1 * rB10; rA0 = *pA2; \
+      rC01 -= rA1 * rB11; rc03 = pC3[1]; \
+      rC02 -= rA1 * rB12;  \
+      rC03 -= rA1 * rB13;  \
+       \
+      rC00 -= rA0 * rB20; rA1 = *pA3; \
+      rC01 -= rA0 * rB21; \
+      rC02 -= rA0 * rB22;  \
+      rC03 -= rA0 * rB23; rA0 = pA0[1]; \
+       \
+      rC00 -= rA1 * rB30; *pC0 = rC00; \
+      rC01 -= rA1 * rB31; *pC1 = rC01; \
+      rC02 -= rA1 * rB32; *pC2 = rC02; \
+      rC03 -= rA1 * rB33; *pC3 = rC03; \
+       \
+      rc00 -= rA0 * rB00; rA1 = pA1[1]; \
+      rc01 -= rA0 * rB01; rC00 = pC0[1]; \
+      rc02 -= rA0 * rB02; rC01 = pC1[1]; \
+      rc03 -= rA0 * rB03; rC02 = pC2[1]; \
+       \
+      rc00 -= rA1 * rB10; rA0 = pA2[1]; \
+      rc01 -= rA1 * rB11; rC03 = pC3[1]; \
+      rc02 -= rA1 * rB12; \
+      rc03 -= rA1 * rB13;  \
+       \
+      rc00 -= rA0 * rB20; rA1 = pA3[1]; \
+      rc01 -= rA0 * rB21; \
+      rc02 -= rA0 * rB22;  \
+      rc03 -= rA0 * rB23; rA0 = pA0[2]; \
+       \
+      rc00 -= rA1 * rB30; *pC0 = rc00; \
+      rc01 -= rA1 * rB31; *pC1 = rc01; \
+      rc02 -= rA1 * rB32; *pC2 = rc02; \
+      rc03 -= rA1 * rB33; *pC3 = rc03; \
+   } \
+}
+
+void Mjoin(PATL,trsmLLNk)
+(
+   const int M,   /* size of triangular matrix A, M%4 = 0 (mat padded) */
+   const int N,   /* number of RHS in B */
+   const SCALAR alpha,  /* scale factor for B */
+   const TYPE *A, /* MxM lower matrix A, diag has inverse of original diag */
+   TYPE *B,       /* on input, B, on output X, of A x = b */
+   const int ldb, /* leading dim of B */
+   TYPE *W        /* Mx4 workspace with good alignment */
+)
+{
+   for (j=0; j < N; j += 4, B += (ldb<<2))
+   {
+      const int nb = Mmin(4, N-j);
+      int k, i;
+      TYPE *w = W, *b = B;
+/*
+ *    Copy 4 RHS to aligned workspace and scale if necessary, alpha cannot be
+ *    zero, because this is handled as a special case at top
+ */
+      for (k=0; k < nb; k++)
+      {
+         if (alpha != 1.0)
+         {
+            for (i=0; i < M; i++)
+               w[i] = alpha * b[i];
+         }
+         else
+         {
+            for (i=0; i < M; i++)
+               w[i] = b[i];
+         }
+         w += M;
+         b += ldb;
+      }
+      for (; k < 4; k++, w += M)
+         for (i=0; i < M; i++)
+             w[i] = ATL_rzero;
+/*
+ *    Completely solve these 4 RHSs by looping over entire triangular matrix
+ */
+      b = B;
+      for (k=0; k < M; k += 4, b += 4)
+      {
+         RTYPE rB00 = *W, rB10=W[1], rB20=W[2], rB30=W[3];
+         RTYPE rB01=W[M], rB11=W[M+1], rB21=W[M+2], rB31=W[M+3];
+         RTYPE rB02=W[2*M],rB12=W[2*M+1],rB22=W[2*M+2],rB32=W[2*M+3];
+         RTYPE rB03=W[3*M],rB13=W[3*M+1],rB23=W[3*M+2],rB33=W[3*M+3];
+/*
+ *       Solve M=4 NRHS=4 TRSM symbolically
+ */
+         {
+            const RTYPE L00=(*A), L10=A[1], L21=A[2], L31=A[3];
+            const RTYPE L11=A[lda+1], L21=A[lda+2], L31=A[lda+3];
+            const RTYPE L22=A[2*lda+2], L32=A[2*lda+3];
+            const RTYPE L33=A[3*lda+3];
+/*
+ *          x0 = b0 / L00
+ */
+            rB00 *= L00;
+            rB01 *= L00;
+            rB02 *= L00;
+            rB03 *= L00;
+/*
+ *          x1 = (b1 - L10 * x0) / L11
+ */
+            rB10 = (rB10 - L10*rB10) * L11;  /* x1 = (b1 - L10*x0)/L11; */
+            rB11 = (rB11 - L10*rB11) * L11;  /* x1 = (b1 - L10*x0)/L11; */
+            rB12 = (rB12 - L10*rB12) * L11;  /* x1 = (b1 - L10*x0)/L11; */
+            rB13 = (rB13 - L10*rB13) * L11;  /* x1 = (b1 - L10*x0)/L11; */
+/*
+ *          x2 = (b2 - L20*x0 - L21*x1) / L22
+ */
+            rB20 = (rB20 - L20*rB00 - L21*rB10) * L22;
+            rB21 = (rB21 - L20*rB01 - L21*rB11) * L22;
+            rB22 = (rB22 - L20*rB02 - L21*rB12) * L22;
+            rB23 = (rB23 - L20*rB03 - L21*rB13) * L22;
+/*
+ *          x3 = (b3 - L30*x0 - L31*x1 - L32*x2) / L33
+ */
+            rB30 = (rB30 - L30*rB00 - L31*rB10 - L32*rB20) * L33;
+            rB31 = (rB31 - L30*rB01 - L31*rB11 - L32*rB21) * L33;
+            rB32 = (rB32 - L30*rB02 - L31*rB12 - L32*rB22) * L33;
+            rB33 = (rB33 - L30*rB03 - L31*rB13 - L32*rB23) * L33;
+         }  /* complete 4x4 solve block */
+/*
+ *       Write solved 4x4 block out to original workspace (final answer)
+ */
+         *b = rB00;
+         b[1] = rB10;
+         b[2] = rB20;
+         b[3] = rB30;
+         b[ldb] = rB01;
+         b[ldb+1] = rB11;
+         b[ldb+2] = rB21;
+         b[ldb+3] = rB31;
+         b[ldb+ldb] = rB02;
+         b[ldb+ldb+1] = rB12;
+         b[ldb+ldb+2] = rB22;
+         b[ldb+ldb+3] = rB32;
+         b[(ldb<<1)+ldb] = rB03;
+         b[(ldb<<1)+ldb+1] = rB13;
+         b[(ldb<<1)+ldb+2] = rB23;
+         b[(ldb<<1)+ldb+3] = rB33;
+/*
+ *       Subtract off x0-x4 contribution from rest of B using rank-4 update
+ */
+         ATL_rk4(M-k-4, A+k*(lda+1)+4, lda, b+4, ldb);
+      }     /* end k-loop that loops through L */
+   }        /* end j-loop over RHS */
+}           /* end routine */
