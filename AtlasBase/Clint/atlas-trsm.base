@@ -1,4 +1,5 @@
-@ROUT ATL_trsmLLN
+@ROUT ATL_trsmK_L
+#include "atlas_misc.h"
 #define RTYPE register TYPE
 
 /*
@@ -10,18 +11,19 @@
  * Loop order is MKN, so that B is kept completely in registers, and
  * C and A are streamed in (and out, for C) from cache during the operation.
  */
-#define ATL_rk4(M_, A_, lda_, C_, ldc) \
+#define ATL_rk4(M_, A_, lda_, C_, ldc_) \
 { \
    const TYPE *pA0 = A_, *pA1 = A_+lda_, \
-              *pA2 = A_+((lda_)<<1), pA3=pA1+((lda_)<<1);
-   TYPE *pC0 = C_, *pC1 = C_+ldc_, *pC2 = C_+((ldc_)<<1), pC3=pC1+((ldc_)<<1); \
+              *pA2 = A_+((lda_)<<1), *pA3=pA1+((lda_)<<1); \
+   TYPE *pC0 = C_, *pC1 = C_+ldc_, \
+               *pC2 = C_+((ldc_)<<1), *pC3=pC1+((ldc_)<<1); \
    register TYPE rC00= *pC0, rC01= *pC1, rC02 = *pC2, rC03 = *pC3; \
    register TYPE rc00, rc01, rc02, rc03; \
    register TYPE rA0 = *pA0, rA1; \
-   const int MM = M_; \
+   const int MM = M_ - 2; \
    int i; \
  \
-   for (i=0; i < MM; i += 2, pA0 += 2, pA1 += 2 pA2 += 2, pA3 += 2, \
+   for (i=0; i < MM; i += 2, pA0 += 2, pA1 += 2, pA2 += 2, pA3 += 2, \
         pC0 += 2, pC1 += 2, pC2 += 2, pC3 += 2) \
    { \
       rC00 -= rA0 * rB00; rA1 = *pA1; \
@@ -45,12 +47,12 @@
       rC03 -= rA1 * rB33; *pC3 = rC03; \
        \
       rc00 -= rA0 * rB00; rA1 = pA1[1]; \
-      rc01 -= rA0 * rB01; rC00 = pC0[1]; \
-      rc02 -= rA0 * rB02; rC01 = pC1[1]; \
-      rc03 -= rA0 * rB03; rC02 = pC2[1]; \
+      rc01 -= rA0 * rB01; rC00 = pC0[2]; \
+      rc02 -= rA0 * rB02; rC01 = pC1[2]; \
+      rc03 -= rA0 * rB03; rC02 = pC2[2]; \
        \
       rc00 -= rA1 * rB10; rA0 = pA2[1]; \
-      rc01 -= rA1 * rB11; rC03 = pC3[1]; \
+      rc01 -= rA1 * rB11; rC03 = pC3[2]; \
       rc02 -= rA1 * rB12; \
       rc03 -= rA1 * rB13;  \
        \
@@ -59,11 +61,53 @@
       rc02 -= rA0 * rB22;  \
       rc03 -= rA0 * rB23; rA0 = pA0[2]; \
        \
-      rc00 -= rA1 * rB30; *pC0 = rc00; \
-      rc01 -= rA1 * rB31; *pC1 = rc01; \
-      rc02 -= rA1 * rB32; *pC2 = rc02; \
-      rc03 -= rA1 * rB33; *pC3 = rc03; \
+      rc00 -= rA1 * rB30; pC0[1] = rc00; \
+      rc01 -= rA1 * rB31; pC1[1] = rc01; \
+      rc02 -= rA1 * rB32; pC2[1] = rc02; \
+      rc03 -= rA1 * rB33; pC3[1] = rc03; \
    } \
+/* \
+ *  Drain the C fetch/store pipe \
+ */ \
+   rC00 -= rA0 * rB00; rA1 = *pA1; \
+   rC01 -= rA0 * rB01; rc00 = pC0[1]; \
+   rC02 -= rA0 * rB02; rc01 = pC1[1]; \
+   rC03 -= rA0 * rB03; rc02 = pC2[1]; \
+ \
+   rC00 -= rA1 * rB10; rA0 = *pA2; \
+   rC01 -= rA1 * rB11; rc03 = pC3[1]; \
+   rC02 -= rA1 * rB12;  \
+   rC03 -= rA1 * rB13;  \
+    \
+   rC00 -= rA0 * rB20; rA1 = *pA3; \
+   rC01 -= rA0 * rB21; \
+   rC02 -= rA0 * rB22;  \
+   rC03 -= rA0 * rB23; rA0 = pA0[1]; \
+    \
+   rC00 -= rA1 * rB30; *pC0 = rC00; \
+   rC01 -= rA1 * rB31; *pC1 = rC01; \
+   rC02 -= rA1 * rB32; *pC2 = rC02; \
+   rC03 -= rA1 * rB33; *pC3 = rC03; \
+    \
+   rc00 -= rA0 * rB00; rA1 = pA1[1]; \
+   rc01 -= rA0 * rB01; \
+   rc02 -= rA0 * rB02; \
+   rc03 -= rA0 * rB03; \
+    \
+   rc00 -= rA1 * rB10; rA0 = pA2[1]; \
+   rc01 -= rA1 * rB11; \
+   rc02 -= rA1 * rB12; \
+   rc03 -= rA1 * rB13; \
+    \
+   rc00 -= rA0 * rB20; rA1 = pA3[1]; \
+   rc01 -= rA0 * rB21; \
+   rc02 -= rA0 * rB22; \
+   rc03 -= rA0 * rB23; \
+    \
+   rc00 -= rA1 * rB30; pC0[1] = rc00; \
+   rc01 -= rA1 * rB31; pC1[1] = rc01; \
+   rc02 -= rA1 * rB32; pC2[1] = rc02; \
+   rc03 -= rA1 * rB33; pC3[1] = rc03; \
 }
 
 void Mjoin(PATL,trsmLLNk)
@@ -77,11 +121,17 @@ void Mjoin(PATL,trsmLLNk)
    TYPE *W        /* Mx4 workspace with good alignment */
 )
 {
+   int j;
+   #define lda M
+/*
+ * Loop over RHS, 4 RHS at a time
+ */
    for (j=0; j < N; j += 4, B += (ldb<<2))
    {
       const int nb = Mmin(4, N-j);
       int k, i;
       TYPE *w = W, *b = B;
+      const TYPE *a;
 /*
  *    Copy 4 RHS to aligned workspace and scale if necessary, alpha cannot be
  *    zero, because this is handled as a special case at top
@@ -108,20 +158,22 @@ void Mjoin(PATL,trsmLLNk)
  *    Completely solve these 4 RHSs by looping over entire triangular matrix
  */
       b = B;
-      for (k=0; k < M; k += 4, b += 4)
+      w = W;
+      a = A;
+      for (k=0; k < M; k += 4, b += 4, w += 4, a += (lda+1)<<2)
       {
-         RTYPE rB00 = *W, rB10=W[1], rB20=W[2], rB30=W[3];
-         RTYPE rB01=W[M], rB11=W[M+1], rB21=W[M+2], rB31=W[M+3];
-         RTYPE rB02=W[2*M],rB12=W[2*M+1],rB22=W[2*M+2],rB32=W[2*M+3];
-         RTYPE rB03=W[3*M],rB13=W[3*M+1],rB23=W[3*M+2],rB33=W[3*M+3];
+         RTYPE rB00 = *w, rB10=w[1], rB20=w[2], rB30=w[3];
+         RTYPE rB01=w[M], rB11=w[M+1], rB21=w[M+2], rB31=w[M+3];
+         RTYPE rB02=w[2*M],rB12=w[2*M+1],rB22=w[2*M+2],rB32=w[2*M+3];
+         RTYPE rB03=w[3*M],rB13=w[3*M+1],rB23=w[3*M+2],rB33=w[3*M+3];
 /*
  *       Solve M=4 NRHS=4 TRSM symbolically
  */
          {
-            const RTYPE L00=(*A), L10=A[1], L21=A[2], L31=A[3];
-            const RTYPE L11=A[lda+1], L21=A[lda+2], L31=A[lda+3];
-            const RTYPE L22=A[2*lda+2], L32=A[2*lda+3];
-            const RTYPE L33=A[3*lda+3];
+            const RTYPE L00=(*a), L10=a[1], L20=a[2], L30=a[3];
+            const RTYPE L11=a[lda+1], L21=a[lda+2], L31=a[lda+3];
+            const RTYPE L22=a[2*lda+2], L32=a[2*lda+3];
+            const RTYPE L33=a[3*lda+3];
 /*
  *          x0 = b0 / L00
  */
@@ -132,10 +184,10 @@ void Mjoin(PATL,trsmLLNk)
 /*
  *          x1 = (b1 - L10 * x0) / L11
  */
-            rB10 = (rB10 - L10*rB10) * L11;  /* x1 = (b1 - L10*x0)/L11; */
-            rB11 = (rB11 - L10*rB11) * L11;  /* x1 = (b1 - L10*x0)/L11; */
-            rB12 = (rB12 - L10*rB12) * L11;  /* x1 = (b1 - L10*x0)/L11; */
-            rB13 = (rB13 - L10*rB13) * L11;  /* x1 = (b1 - L10*x0)/L11; */
+            rB10 = (rB10 - L10*rB00) * L11; 
+            rB11 = (rB11 - L10*rB01) * L11;
+            rB12 = (rB12 - L10*rB02) * L11;
+            rB13 = (rB13 - L10*rB03) * L11;
 /*
  *          x2 = (b2 - L20*x0 - L21*x1) / L22
  */
@@ -173,7 +225,62 @@ void Mjoin(PATL,trsmLLNk)
 /*
  *       Subtract off x0-x4 contribution from rest of B using rank-4 update
  */
-         ATL_rk4(M-k-4, A+k*(lda+1)+4, lda, b+4, ldb);
+         ATL_rk4(M-k-4, a+4, lda, w+4, M);
       }     /* end k-loop that loops through L */
    }        /* end j-loop over RHS */
+   #undef lda
 }           /* end routine */
+
+void Mjoin(PATL,trsmDR)
+(
+   enum ATLAS_SIDE Side,
+   enum ATLAS_UPLO Uplo,
+   enum ATLAS_TRANS TA,
+   enum ATLAS_DIAG Diag,
+   const int M,   /* size of triangular matrix A, M%4 = 0 (mat padded) */
+   const int N,   /* number of RHS in B */
+   const SCALAR alpha,  /* scale factor for B */
+   const TYPE *A, /* MxM lower matrix A, diag has inverse of original diag */
+   const int lda,
+   TYPE *B,       /* on input, B, on output X, of A x = b */
+   const int ldb  /* leading dim of B */
+)
+{
+   void *vp;
+   TYPE *a, *w;
+   int M4 = ((M+3)>>2)<<2;
+   vp = malloc(sizeof(TYPE)*(M4*M4+4*M4)+2*ATL_Cachelen);
+   ATL_assert(vp);
+   ATL_assert(TA == AtlasNoTrans && Side == AtlasLeft && Uplo == AtlasLower);
+   ATL_assert(M4 == M);
+
+   a = ATL_AlignPtr(vp);
+   w = a + M4*M4;
+   w = ATL_AlignPtr(w);
+   if (Uplo == AtlasLower)
+   {
+      int j, i;
+      TYPE *ap=a;
+/*
+ *    Copy original L to aligned workspace, invert diagonal elts, pad wt I
+ */
+      for (j=0; j < M; j++, ap += M4, A += lda)
+      {
+         for (i=0; i < j; i++)
+            ap[i] = ATL_rzero;
+         ap[j] = (Diag == AtlasNonUnit) ? 1.0 / A[j] : ATL_rone;
+         for (i=j+1; i < M; i++)
+            ap[i] = A[i];
+         for (; i < M4; i++)
+            ap[i] = ATL_rzero;
+      }
+      for (; j < M4; j++, ap += M4)
+      {
+         for (i=0; i < M4; i++)
+            ap[i] = ATL_rzero;
+         ap[j] = ATL_rone;
+      }
+      Mjoin(PATL,trsmLLNk)(M, N, alpha, a, B, ldb, w);
+   }
+   free(vp);
+}
