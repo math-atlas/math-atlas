@@ -9,6 +9,224 @@
 #else
    #define ATL_SINLINE static
 #endif
+@beginskip
+#if defined(ATL_AVX) && defined(DREAL)
+   #define NRHS 3
+   #define ATL_BINWRK 1
+   #include <immintrin.h>
+/*
+ * Subtract off x0...x3 contribution to all remaining equations using a
+ * rank-4 update with mu=4, nu=3, ku=4.  This version is for 16 AVX regs.
+ * nu is the # of RHS, ku is the number of equations solved, and mu is 
+ * unrolled only to enable software pipelinine of load/use.
+ * Loop order is MKN, so that B is kept completely in registers, and
+ * C and A are streamed in (and out, for C) from cache during the operation.
+ */
+ATL_SINLINE void ATL_rk4(ATL_CINT M, const TYPE *A, ATL_CINT lda, 
+                           TYPE *pB0, ATL_CINT ldb, TYPE *C, ATL_CINT ldc) 
+{ 
+   const TYPE *pA0 = A, *pA1 = A+lda, 
+              *pA2 = A+((lda)<<1), *pA3=pA1+((lda)<<1); 
+   TYPE *pC0 = C, *pC1 = C+ldc, *pC2 = C+((ldc)<<1);
+   const int MM = M-4; 
+   int i; 
+   register __m256d rB00, rB01, rB02; 
+   register __m256d rB20, rB21, rB22;
+   register __m256d rC00, rC01, rC02;
+   register __m256d rC40, rC41, rC42;
+   register __m256d rA0, rA1;
+ 
+   if (M < 4)
+      return;
+   rB00 = _mm256_broadcast_pd((void*)pB0);              /* B10 B00 B10 B00 */
+   rB20 = _mm256_broadcast_pd((void*)(pB0+2));
+   rB01 = _mm256_broadcast_pd((void*)(pB0+ldb));
+   rB21 = _mm256_broadcast_pd((void*)(pB0+ldb+2));
+   rB02 = _mm256_broadcast_pd((void*)(pB0+ldb+ldb));
+   rB22 = _mm256_broadcast_pd((void*)(pB0+ldb+ldb+2));
+
+   rC00 = _mm256_load_pd(pC0);                          /* C30 C20 C10 C00 */
+   rC01 = _mm256_load_pd(pC1);
+   rC02 = _mm256_load_pd(pC2);
+   rA0  = _mm256_load_pd(pA0);                          /* A30 A20 A10, A00 */
+   for (i=0; i < MM; i += 4, pA0 += 4, pA1 += 4, pA2 += 4, pA3 += 4,
+        pC0 += 4, pC1 += 4, pC2 += 4)
+   {
+      register __m256d rB;
+
+      rB = _mm_unpacklo_pd(rB00, rB00);
+      rB = _mm_mul_pd(rB, rA0);
+      rC00 = _mm_sub_pd(rC00, rB); rA1 = _mm256_load_pd(pA1);
+      rB = _mm_unpacklo_pd(rB01, rB01);
+      rB = _mm_mul_pd(rB, rA0);
+      rC01 = _mm_sub_pd(rC01, rB); rC40 =_mm256_load_pd(pC0+2);
+      rB = _mm_unpacklo_pd(rB02, rB02);
+      rB = _mm_mul_pd(rB, rA0);
+      rC02 = _mm_sub_pd(rC02, rB); rA0 = _mm256_load_pd(pA2);
+
+      rB = _mm_unpackhi_pd(rB00, rB00);
+      rB = _mm_mul_pd(rB, rA1);
+      rC00 = _mm_sub_pd(rC00, rB); rC41 =_mm256_load_pd(pC1+2);
+      rB = _mm_unpackhi_pd(rB01, rB01);
+      rB = _mm_mul_pd(rB, rA1);
+      rC01 = _mm_sub_pd(rC01, rB); rC42 =_mm256_load_pd(pC2+2);
+      rB = _mm_unpackhi_pd(rB02, rB02);
+      rB = _mm_mul_pd(rB, rA1);
+      rC02 = _mm_sub_pd(rC02, rB); rA1 = _mm256_load_pd(pA3);
+
+      rB = _mm_unpacklo_pd(rB20, rB20);
+      rB = _mm_mul_pd(rB, rA0);
+      rC00 = _mm_sub_pd(rC00, rB);
+      rB = _mm_unpacklo_pd(rB21, rB21);
+      rB = _mm_mul_pd(rB, rA0);
+      rC01 = _mm_sub_pd(rC01, rB);
+      rB = _mm_unpacklo_pd(rB22, rB22);
+      rB = _mm_mul_pd(rB, rA0);
+      rC02 = _mm_sub_pd(rC02, rB); rA0 = _mm256_load_pd(pA0+2);
+
+      rB = _mm_unpackhi_pd(rB20, rB20);
+      rB = _mm_mul_pd(rB, rA1);
+      rC00 = _mm_sub_pd(rC00, rB); _mm_store_pd(pC0, rC00);
+      rB = _mm_unpackhi_pd(rB21, rB21);
+      rB = _mm_mul_pd(rB, rA1);
+      rC01 = _mm_sub_pd(rC01, rB); _mm_store_pd(pC1, rC01);
+      rB = _mm_unpackhi_pd(rB22, rB22);
+      rB = _mm_mul_pd(rB, rA1);
+      rC02 = _mm_sub_pd(rC02, rB); rA1 = _mm256_load_pd(pA1+2);
+/*
+ *    2nd row of C regs
+ */
+      rB = _mm_unpacklo_pd(rB00, rB00);
+      rB = _mm_mul_pd(rB, rA0);
+      rC40 = _mm_sub_pd(rC40, rB); _mm_store_pd(pC2, rC02);
+      rB = _mm_unpacklo_pd(rB01, rB01);
+      rB = _mm_mul_pd(rB, rA0);
+      rC41 = _mm_sub_pd(rC41, rB); rC00 = _mm256_load_pd(pC0+4);
+      rB = _mm_unpacklo_pd(rB02, rB02);
+      rB = _mm_mul_pd(rB, rA0);
+      rC42 = _mm_sub_pd(rC42, rB); rA0 = _mm256_load_pd(pA2+2);
+
+      rB = _mm_unpackhi_pd(rB00, rB00);
+      rB = _mm_mul_pd(rB, rA1);
+      rC40 = _mm_sub_pd(rC40, rB); rC01 = _mm256_load_pd(pC1+4);
+      rB = _mm_unpackhi_pd(rB01, rB01);
+      rB = _mm_mul_pd(rB, rA1);
+      rC41 = _mm_sub_pd(rC41, rB); rC02 = _mm256_load_pd(pC2+4);
+      rB = _mm_unpackhi_pd(rB02, rB02);
+      rB = _mm_mul_pd(rB, rA1);
+      rC42 = _mm_sub_pd(rC42, rB); rA1 = _mm256_load_pd(pA3+2);
+
+      rB = _mm_unpacklo_pd(rB20, rB20);
+      rB = _mm_mul_pd(rB, rA0);
+      rC40 = _mm_sub_pd(rC40, rB);
+      rB = _mm_unpacklo_pd(rB21, rB21);
+      rB = _mm_mul_pd(rB, rA0);
+      rC41 = _mm_sub_pd(rC41, rB);
+      rB = _mm_unpacklo_pd(rB22, rB22);
+      rB = _mm_mul_pd(rB, rA0);
+      rC42 = _mm_sub_pd(rC42, rB); rA0 = _mm256_load_pd(pA0+4);
+
+      rB = _mm_unpackhi_pd(rB20, rB20);
+      rB = _mm_mul_pd(rB, rA1);
+      rC40 = _mm_sub_pd(rC40, rB); _mm_store_pd(pC0+2, rC40);
+      rB = _mm_unpackhi_pd(rB21, rB21);
+      rB = _mm_mul_pd(rB, rA1);
+      rC41 = _mm_sub_pd(rC41, rB); _mm_store_pd(pC1+2, rC41);
+      rB = _mm_unpackhi_pd(rB22, rB22);
+      rB = _mm_mul_pd(rB, rA1);
+      rC42 = _mm_sub_pd(rC42, rB); _mm_store_pd(pC2+2, rC42);
+   }
+/*
+ * Drain C load/use pipeline
+ */
+   {
+      register __m128d rB;
+
+      rB = _mm_unpacklo_pd(rB00, rB00);
+      rB = _mm_mul_pd(rB, rA0);
+      rC00 = _mm_sub_pd(rC00, rB); rA1 = _mm256_load_pd(pA1);
+      rB = _mm_unpacklo_pd(rB01, rB01);
+      rB = _mm_mul_pd(rB, rA0);
+      rC01 = _mm_sub_pd(rC01, rB); rC40 =_mm256_load_pd(pC0+2);
+      rB = _mm_unpacklo_pd(rB02, rB02);
+      rB = _mm_mul_pd(rB, rA0);
+      rC02 = _mm_sub_pd(rC02, rB); rA0 = _mm256_load_pd(pA2);
+
+      rB = _mm_unpackhi_pd(rB00, rB00);
+      rB = _mm_mul_pd(rB, rA1);
+      rC00 = _mm_sub_pd(rC00, rB); rC41 =_mm256_load_pd(pC1+2);
+      rB = _mm_unpackhi_pd(rB01, rB01);
+      rB = _mm_mul_pd(rB, rA1);
+      rC01 = _mm_sub_pd(rC01, rB); rC42 =_mm256_load_pd(pC2+2);
+      rB = _mm_unpackhi_pd(rB02, rB02);
+      rB = _mm_mul_pd(rB, rA1);
+      rC02 = _mm_sub_pd(rC02, rB); rA1 = _mm256_load_pd(pA3);
+
+      rB = _mm_unpacklo_pd(rB20, rB20);
+      rB = _mm_mul_pd(rB, rA0);
+      rC00 = _mm_sub_pd(rC00, rB);
+      rB = _mm_unpacklo_pd(rB21, rB21);
+      rB = _mm_mul_pd(rB, rA0);
+      rC01 = _mm_sub_pd(rC01, rB);
+      rB = _mm_unpacklo_pd(rB22, rB22);
+      rB = _mm_mul_pd(rB, rA0);
+      rC02 = _mm_sub_pd(rC02, rB); rA0 = _mm256_load_pd(pA0+2);
+
+      rB = _mm_unpackhi_pd(rB20, rB20);
+      rB = _mm_mul_pd(rB, rA1);
+      rC00 = _mm_sub_pd(rC00, rB); _mm_store_pd(pC0, rC00);
+      rB = _mm_unpackhi_pd(rB21, rB21);
+      rB = _mm_mul_pd(rB, rA1);
+      rC01 = _mm_sub_pd(rC01, rB); _mm_store_pd(pC1, rC01);
+      rB = _mm_unpackhi_pd(rB22, rB22);
+      rB = _mm_mul_pd(rB, rA1);
+      rC02 = _mm_sub_pd(rC02, rB); rA1 = _mm256_load_pd(pA1+2);
+/*
+ *    2nd row of C regs
+ */
+      rB = _mm_unpacklo_pd(rB00, rB00);
+      rB = _mm_mul_pd(rB, rA0);
+      rC40 = _mm_sub_pd(rC40, rB); _mm_store_pd(pC2, rC02);
+      rB = _mm_unpacklo_pd(rB01, rB01);
+      rB = _mm_mul_pd(rB, rA0);
+      rC41 = _mm_sub_pd(rC41, rB);
+      rB = _mm_unpacklo_pd(rB02, rB02);
+      rB = _mm_mul_pd(rB, rA0);
+      rC42 = _mm_sub_pd(rC42, rB); rA0 = _mm256_load_pd(pA2+2);
+
+      rB = _mm_unpackhi_pd(rB00, rB00);
+      rB = _mm_mul_pd(rB, rA1);
+      rC40 = _mm_sub_pd(rC40, rB);
+      rB = _mm_unpackhi_pd(rB01, rB01);
+      rB = _mm_mul_pd(rB, rA1);
+      rC41 = _mm_sub_pd(rC41, rB);
+      rB = _mm_unpackhi_pd(rB02, rB02);
+      rB = _mm_mul_pd(rB, rA1);
+      rC42 = _mm_sub_pd(rC42, rB); rA1 = _mm256_load_pd(pA3+2);
+
+      rB = _mm_unpacklo_pd(rB20, rB20);
+      rB = _mm_mul_pd(rB, rA0);
+      rC40 = _mm_sub_pd(rC40, rB);
+      rB = _mm_unpacklo_pd(rB21, rB21);
+      rB = _mm_mul_pd(rB, rA0);
+      rC41 = _mm_sub_pd(rC41, rB);
+      rB = _mm_unpacklo_pd(rB22, rB22);
+      rB = _mm_mul_pd(rB, rA0);
+      rC42 = _mm_sub_pd(rC42, rB);
+
+      rB = _mm_unpackhi_pd(rB20, rB20);
+      rB = _mm_mul_pd(rB, rA1);
+      rC40 = _mm_sub_pd(rC40, rB); _mm_store_pd(pC0+2, rC40);
+      rB = _mm_unpackhi_pd(rB21, rB21);
+      rB = _mm_mul_pd(rB, rA1);
+      rC41 = _mm_sub_pd(rC41, rB); _mm_store_pd(pC1+2, rC41);
+      rB = _mm_unpackhi_pd(rB22, rB22);
+      rB = _mm_mul_pd(rB, rA1);
+      rC42 = _mm_sub_pd(rC42, rB); _mm_store_pd(pC2+2, rC42);
+   }
+}
+#elif defined(ATL_SSE2) && defined(DREAL)
+@endskip
 #if defined(ATL_SSE2) && defined(DREAL)
    #define NRHS 3
    #define ATL_BINWRK 1
