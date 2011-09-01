@@ -21,7 +21,7 @@ long GetInt(FILE *fpin, long Default, char *spc, char *expstr)
 {
    char str[64];
    long iin;
-   if (expstr) fprintf(stdout, "%sEnter %s [%d]: ", spc, expstr, Default);
+   if (expstr) fprintf(stdout, "%sEnter %s [%ld]: ", spc, expstr, Default);
    if (fgets(str, 64, fpin) == NULL) return(Default);
    if (sscanf(str, " %ld ", &iin) != 1) return(Default);
    return(iin);
@@ -37,13 +37,13 @@ long GetIntRange(long Default, long Min, long Max, char *spc, char *expstr)
       if (i > Max)
       {
          keepOn = 1;
-         fprintf(stderr, "\n%d larger than max value of %d.  Try again.\n\n",
+         fprintf(stderr, "\n%ld larger than max value of %ld.  Try again.\n\n",
                  i, Max);
       }
       else if (i < Min)
       {
          keepOn = 1;
-         fprintf(stderr, "\n%d smaller than min value of %d.  Try again.\n\n",
+         fprintf(stderr, "\n%ld smaller than min value of %ld.  Try again.\n\n",
                  i, Min);
       }
       else keepOn = 0;
@@ -59,7 +59,7 @@ long GetIntVer(long Default, long Min, long Max, char *spc, char *expstr)
    do 
    {
       i = GetIntRange(Default, Min, Max, spc, expstr);
-      fprintf(stdout, "%s   You entered: %d\n", spc, i);
+      fprintf(stdout, "%s   You entered: %ld\n", spc, i);
       j = GetIntRange(0, 0, 1, spc, "1 to reenter, 0 accepts");
    }
    while(j);
