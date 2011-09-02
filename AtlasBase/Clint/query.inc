@@ -1,4 +1,5 @@
 #include <time.h>
+#include <ctype.h>
 void GetDate(int *month, int *day, int *year, int *hour, int *min)
 {
    time_t tv;

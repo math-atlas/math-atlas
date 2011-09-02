@@ -2904,6 +2904,7 @@ int main(int nargs, char **args)
 #include "cblas.h"
 #include "atlas_cblastypealias.h"
 #include "atlas_tst.h"
+#include "atlas_level3.h"
 
 #ifdef TimeC
    #include "clapack.h"
@@ -2982,7 +2983,7 @@ static void test_inv(const enum CBLAS_ORDER Order, const enum TEST_UPLO Uplo,
                      const int N, TYPE *A, const int lda)
 {
    if (Uplo == TestGE) geinv(Order, N, A, lda);
-   else poinv(Order, (enum CBLAS_ORDER) Uplo, N, A, lda);
+   else poinv(Order, Uplo, N, A, lda);
 }
 
 @extract -b @(basd)/atlas-tlp.base rout=GetMats
@@ -2990,7 +2991,7 @@ static void test_inv(const enum CBLAS_ORDER Order, const enum TEST_UPLO Uplo,
 static TYPE *GetMat(enum CBLAS_ORDER Order, enum TEST_UPLO Uplo, int N, int lda)
 {
    if (Uplo == TestGE) return(GetGE(N, N, lda));
-   return(GetHE(Order, Uplo, N, lda));
+   return(GetHE(Order, (enum CBLAS_UPLO)Uplo, N, lda));
 }
 
 static TYPE geresid(enum CBLAS_ORDER Order, int N, TYPE *A, int lda, 
@@ -3099,7 +3100,7 @@ static TYPE GetResid(enum CBLAS_ORDER Order, enum TEST_UPLO Uplo,
 {
    TYPE ret;
    if (Uplo == TestGE) ret = geresid(Order, N, A, lda, AI, ldi);
-   else ret = poresid(Order, Uplo, N, A, lda, AI, ldi);
+   else ret = poresid(Order, (enum CBLAS_UPLO)Uplo, N, A, lda, AI, ldi);
    return(ret);
 }
 
@@ -3151,8 +3152,11 @@ static double RunTiming
    if (A)
    {
       if (Uplo == TestGE) 
-         for (i=0; i < k; i++) Mjoin(PATL,gegen)(N, N, A+i*incA, lda, N+lda);
-      else for (i=0; i < k; i++) hegen(Order, Uplo, N, A+i*incA, lda);
+         for (i=0; i < k; i++) 
+            Mjoin(PATL,gegen)(N, N, A+i*incA, lda, N+lda);
+      else 
+         for (i=0; i < k; i++) 
+            hegen(Order, (enum CBLAS_UPLO)Uplo, N, A+i*incA, lda);
       
       t0 = time00();
       for (i=nreps; i; i--, a += incA) test_inv(Order, Uplo, N, a, lda);
@@ -3321,7 +3325,7 @@ void GetFlags(int nargs, char **args, int *MFLOP, int *CacheSize, int *lda,
       *N = 821;
       *lda = 823;
    #endif
-   *Uplo = CblasUpper;
+   *Uplo = TestUpper;
    *Ord = CblasColMajor;
    for (i=1; i < nargs; i++)
    {
@@ -3353,8 +3357,8 @@ void GetFlags(int nargs, char **args, int *MFLOP, int *CacheSize, int *lda,
          break;
       case 'U':
          ch = *args[++i];
-         if (ch == 'u' || ch == 'U') *Uplo = AtlasUpper;
-         else if (ch == 'l' || ch == 'L') *Uplo = AtlasLower;
+         if (ch == 'u' || ch == 'U') *Uplo = TestUpper;
+         else if (ch == 'l' || ch == 'L') *Uplo = TestLower;
          else *Uplo = TestGE;
          break;
       default:
@@ -3775,7 +3779,7 @@ void Mjoin( PATL, trsm )
 #include <stdlib.h>
 #include <assert.h>
 
-main(int nargs, char **args)
+int main(int nargs, char **args)
 {
    FILE *fpin, *fpout;
    int stops, stopd;
@@ -3795,7 +3799,7 @@ main(int nargs, char **args)
    fprintf(fpout, "   #else\n      #define TRSM_NB 4\n");
    fprintf(fpout, "   #endif\n\n#endif\n");
    fclose(fpout);
-   exit(0);
+   return(0);
 }
 @ROUT ilaenvF.c lanbtst lanbsrch
 static int ONB=0;       /* optimal NB to return in ILAENV */
