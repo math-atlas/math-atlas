@@ -278,7 +278,11 @@ startup : lib include results EXtest
 	$(MAKE) -f Make.top refresh arch=$(arch)
 
 refresh :
+	cp $(SRCdir)/makes/Make.res_chart results/charts/Makefile
+	cp $(SRCdir)/makes/Make.res_tvec results/tvecs/Makefile
+	cp $(SRCdir)/makes/Make.res_raw results/raw/Makefile
 	cp $(SRCdir)/makes/Make.res results/Makefile
+	cp $(SRCdir)/makes/Make.plinc results/.
 	cp $(SRCdir)/makes/Make.EXtst EXtest/Makefile
 	cp $(SRCdir)/makes/Make.bin bin/Makefile
 	cat $(SRCdir)/makes/Make.lib >> lib/Makefile
@@ -3907,7 +3911,7 @@ x@(pre)@(rt)test : @(pre)@(rt)test.o @(pre)sl2lib
 @endwhile
 
 @ROUT Make.plinc
-../include Make.inc
+include ../Make.inc
 mySRCdir = $(SRCdir)/results
 PLOT = ploticus
 RK=168
@@ -4187,6 +4191,14 @@ $(pre)$(rt)_$(sd)$(up)$(ta)_@(sz)_av@(c)$(pt).tvec : xcattvecs force_build
 	cat $(pre)$(rt)_$(sd)$(up)$(ta)_@(sz)_atl$(pt).tvec \
             $(pre)$(rt)_$(sd)$(up)$(ta)_@(sz)_@(cmp)$(pt).tvec | \
         ./xcattvecs -# 2 -o $@ -C 2 N MFLOP_avg
+$(pre)$(rt)_$(ta)$(tb)_@(sz)_av@(c)$(pt).tvec : xcattvecs force_build
+	$(MAKE) $(pre)$(rt)_$(ta)$(tb)_@(sz)_@(cmp)$(pt).tvec pre=$(pre) \
+                rt=$(rt) ta=$(ta) tb=$(tb) lib=@(cmp) pt="$(pt)" sz=@(sz)
+	$(MAKE) $(pre)$(rt)_$(ta)$(tb)_@(sz)_atl$(pt).tvec pre=$(pre) \
+                rt=$(rt) ta=$(ta) tb=$(tb) lib=atl pt="$(pt)" sz=@(sz)
+	cat $(pre)$(rt)_$(ta)$(tb)_@(sz)_atl$(pt).tvec \
+            $(pre)$(rt)_$(ta)$(tb)_@(sz)_@(cmp)$(pt).tvec | \
+        ./xcattvecs -# 2 -o $@ -C 2 N MFLOP_avg
       @endwhile
       @undef c
    @endwhile
@@ -4339,19 +4351,21 @@ $(pre)qrvar_cmb_$(lib)$(pt).tvec : xcattvecs force_build \
 
 .SUFFIXES:
 @declare ".SUFFIXES: " y y
-   .tvec .pl4p
+   .tvec 
    @iexp i 1 0 +
    @iwhile i < 9
       .pl@(i)
       .pc@(i)
       .pl@(i)s
+      .pl@(i)p
       @iexp i @(i) 1 +
    @endiwhile
 @enddeclare
 @iexp i 1 0 +
 @iwhile i < 9
    @callproc NumSuffix @(i) MFLOP_avg 
-.tvec.pc@(i) : xperctvecs
+.tvec.pc@(i) :
+	$(MAKE) xperctvecs
 	./xperctvecs -i $< -o $@ -b MFLOP_avg -C 1 N -R @(i) @(nl)
    @iexp i @(i) 1 +
 @endiwhile
@@ -4362,16 +4376,16 @@ $(pre)qrvar_cmb_$(lib)$(pt).tvec : xcattvecs force_build \
 .tvec.pl@(i)s:
 	$(MAKE) xtvec2plp
 	./xtvec2plp -i $< -o $@ -C @(j) N @(nl)
-.tvec.pl@(i) : xtvec2plp
-	./xtvec2plp -i $< -o $@ -C @(j) N MFLOP_avg @(nl)
-   @iexp i @(i) 1 +
-@endiwhile
-@beginskip
-.tvec.pl4s:
+.tvec.pl@(i) :
+   @iexp j @(i) 2 +
 	$(MAKE) xtvec2plp
-	./xtvec2plp -i $< -o $@ -C 5 N MFLOP_avg_1 MFLOP_avg_2 \
-                    MFLOP_avg_3 MFLOP_avg_4
-@endskip
+	./xtvec2plp -i $< -o $@ -C @(j) N MFLOP_avg @(nl)
+.tvec.pl@(i)p:
+	$(MAKE) xtvec2plp xperctvecs
+	./xperctvecs -i $< -C 1 N -b MFLOP_avg -R @(i) @(nl) | \
+   @iexp i @(i) 1 +
+        ./xtvec2plp -o $@ -C @(i) N @(nl)
+@endiwhile
 @ROUT Make.res_chart
 
 @whiledef sf a s f
@@ -4381,8 +4395,15 @@ $(pre)$(rt)_$(sd)$(up)$(ta)_$(sz)_av@(sf)$(pt).eps : force_build $(ext)
            pre=$(pre) lib=atl pt="$(pt)" rt=$(rt) sd=$(sd) up=$(up) \
            ta=$(ta) sz=$(sz)
 	$(MAKE) plot2bars nm1="atl" nm2=$(cmp) outf=$@ \
-           title="$(pre)$(rt): ATLAS vs. $(cmp)" \
+           title="$(pre)$(rt): ATLAS$(pt) vs. $(cmp)$(pt)" \
            dataf=../tvecs/$(pre)$(rt)_$(sd)$(up)$(ta)_$(sz)_$(lib)$(pt).pl2
+$(pre)$(rt)_$(ta)$(tb)_$(sz)_av@(sf)$(pt).eps : force_build $(ext)
+	cd ../tvecs ; \
+           $(MAKE) $(pre)$(rt)_$(ta)$(tb)_$(sz)_$(lib)$(pt).pl2 \
+           pre=$(pre) lib=atl pt="$(pt)" rt=$(rt) ta=$(ta) tb=$(tb) sz=$(sz)
+	$(MAKE) plot2bars nm1="atl" nm2=$(cmp) outf=$@ \
+           title="$(pre)$(rt): ATLAS$(pt) vs. $(cmp)$(pt)" \
+           dataf=../tvecs/$(pre)$(rt)_$(ta)$(tb)_$(sz)_$(lib)$(pt).pl2
 @endwhile
 
 $(pre)qrvar_cmb_$(lib)$(pt).eps :  force_build
@@ -4392,18 +4413,25 @@ $(pre)qrvar_cmb_$(lib)$(pt).eps :  force_build
         title="$(lib) QR variant performance" \
         nm1="QR" nm2="QL" nm3="RQ" nm4="LQ" 
 $(pre)factor_cmb_$(lib)$(pt).eps : $(ext) force_build
-	cd ../tvecs $(MAKE) $(pre)factor_cmb_$(lib)$(pt).pl8 pre=$(pre) \
+	cd ../tvecs ; $(MAKE) $(pre)factor_cmb_$(lib)$(pt).pl8 pre=$(pre) \
            lib=$(lib) pt="$(pt)"
 	$(ext) -b $(mySRCdir)/report.base -o tmp.pls rout=linechart \
                -def datf "../tvecs/$(pre)factor_cmb_$(lib)$(pt).pl8" \
                -def nlines "8" -def labs "MM LU LL UU QR QL RQ LQ"
+	$(PLOT) tmp.pls -eps -o $@
+$(pre)pcmm_factor_cmb_$(lib)$(pt).eps : $(ext) force_build
+	cd ../tvecs ; $(MAKE) $(pre)factor_cmb_$(lib)$(pt).pl7p pre=$(pre) \
+           lib=$(lib) pt="$(pt)"
+	$(ext) -b $(mySRCdir)/report.base -o tmp.pls rout=pclinechart \
+               -def datf "../tvecs/$(pre)factor_cmb_$(lib)$(pt).pl7p" \
+               -def nlines "7" -def labs "LU LL UU QR QL RQ LQ"
 	$(PLOT) tmp.pls -eps -o $@
 @ROUT Make.res_new
 include Make.plinc
 ext = $(BINdir)/xextract
 cmp=MKL
 
-@multidef cpv sva ava
+@multidef cpv avs ava
 @whiledef cmp sys at2
 atlv@(cmp).pdf : atlv@(cmp)_pdf.ps
 	ps2pdf atlv@(cmp)_pdf.ps $@
@@ -4416,8 +4444,7 @@ atlv@(cmp).tex : $(ext) $(mySRCdir)/report.base
                -define sys $(cmp)
 
    @declare "atlv@(cmp).dvi: " y y
-      atlv@(cmp).tex mmla_atl mmla_atl_pt mmla_@(cmp) mmla_@(cmp)_pt
-      pcmm_atl pcmm_atl_pt pcmm_@(cmp) pcmm_@(cmp)_pt
+      atlv@(cmp).tex 
       @whiledef pre s d c z
          @define pt @@
          @whiledef pt _pt
@@ -4427,9 +4454,9 @@ atlv@(cmp).tex : $(ext) $(mySRCdir)/report.base
             @endwhile
             @whiledef rt symm syrk syr2k trmm trsm
             @endwhile
-            @whiledef rt mmsq mmrk
-               charts/@(pre)@(rt)_tin_@(cmp)@(pt).eps
-               charts/@(pre)@(rt)_mlr_@(cmp)@(pt).eps
+            @whiledef rt mmsq
+               charts/@(pre)@(rt)_NN_tin_@(cpv)@(pt).eps
+               charts/@(pre)@(rt)_NN_mlr_@(cpv)@(pt).eps
             @endwhile
          @endwhile
       @endwhile
@@ -4443,17 +4470,17 @@ atlv@(cmp).tex : $(ext) $(mySRCdir)/report.base
 #
 @whiledef cmp avs ava sys atl at2
    @whiledef pre s d c z
-      @whiledef sz tim mlr
+      @whiledef sz tin med lrg mlr cmb
          @whiledef rt mmsq mmrk
             @define pt @@
             @whiledef pt _pt
-charts/@(pre)@(rt)_@(sz)_@(cmp)@(pt).dat:
-	$(MAKE) -f Make.res_l3 $@ pre=@(pre) rt=@(rt) pt="@(pt)" \
-                lib=@(cmp) AT2dir=$(AT2dir)
-charts/@(pre)@(rt)_@(sz)_@(cmp)@(pt).eps : @(pre)@(rt)_@(sz)_@(cmp)@(pt).pl2
-	$(MAKE) plot2bars dataf=charts/@(pre)@(rt)_@(sz)_@(cmp)@(pt).pl2 \
-                outf=$@ nm1=atl nm2="$(cmp)" \
-                title="ATLAS vs. $(cmp): @(pre)@(rt)"
+               @whiledef ta T N C
+                  @whiledef tb T N C
+charts/@(pre)@(rt)_@(ta)@(tb)_@(sz)_@(cmp)@(pt).eps : 
+	cd charts ; $(MAKE) @(pre)@(rt)_@(ta)@(tb)_@(sz)_@(cmp)@(pt).eps \
+           pre=@(pre) sz=@(sz) lib=@(cmp) rt=@(rt) pt="@(pt)" ta=@(ta) tb=@(tb)
+                  @endwhile
+               @endwhile
             @endwhile
          @endwhile
       @endwhile
