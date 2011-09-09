@@ -281,7 +281,7 @@ refresh :
 	cp $(SRCdir)/makes/Make.res_chart results/charts/Makefile
 	cp $(SRCdir)/makes/Make.res_tvec results/tvecs/Makefile
 	cp $(SRCdir)/makes/Make.res_raw results/raw/Makefile
-	cp $(SRCdir)/makes/Make.res results/Makefile
+	cp $(SRCdir)/makes/Make.res_new results/Makefile
 	cp $(SRCdir)/makes/Make.plinc results/.
 	cp $(SRCdir)/makes/Make.EXtst EXtest/Makefile
 	cp $(SRCdir)/makes/Make.bin bin/Makefile
@@ -4284,6 +4284,36 @@ $(pre)pcmm_$(rt)_SdUpTr_cmb_$(lib)$(pt).tvec : \
    $(pre)$(rt)_SdUpTr_cmb_$(lib)$(pt).tvec
 	$(MAKE) pcmm8 inf=$(pre)$(rt)_UpTr_cmb_$(lib)$(pt).tvec outf=$@
 #
+# symmetric routs (SYMM, SYRK & SYR2K) compared to square GEMM
+#
+$(pre)mmvsy_$(sd)$(up)$(ta)_$(lib)$(pt).tvec : xcattvecs force_build \
+   $(pre)mmsq_NN_cmb_$(lib)$(pt).tvec
+	$(MAKE) $(pre)symm_$(sd)$(up)$(ta)_cmb_$(lib)$(pt).tvec pre=$(pre) \
+           l3=symm rt=symm sd=$(sd) up=$(up) ta=$(ta) lib=$(lib) pt="$(pt)"
+	$(MAKE) $(pre)syrk_$(sd)$(up)$(ta)_cmb_$(lib)$(pt).tvec pre=$(pre) \
+           l3=syrk rt=syrk up=$(up) ta=$(ta) lib=$(lib) pt="$(pt)"
+	$(MAKE) $(pre)syr2k_$(sd)$(up)$(ta)_cmb_$(lib)$(pt).tvec pre=$(pre) \
+           l3=syr2k rt=syr2k sd=$(sd) up=$(up) ta=$(ta) lib=$(lib) pt="$(pt)"
+	cat $(pre)mmsq_NN_cmb_$(lib)$(pt).tvec \
+            $(pre)symm_$(sd)$(up)$(ta)_cmb_$(lib)$(pt).tvec \
+            $(pre)syrk_$(sd)$(up)$(ta)_cmb_$(lib)$(pt).tvec \
+            $(pre)syr2k_$(sd)$(up)$(ta)_cmb_$(lib)$(pt).tvec | \
+        ./xcattvecs -# 4 -o $@ -C 2 N MFLOP_avg
+#
+# Triangular routs (TRMM, TRSM) compared to square GEMM
+#
+$(pre)mmvtr_$(sd)$(up)$(ta)_$(lib)$(pt).tvec : xcattvecs force_build \
+   $(pre)mmsq_NN_cmb_$(lib)$(pt).tvec
+	$(MAKE) $(pre)trmm_$(sd)$(up)$(ta)_cmb_$(lib)$(pt).tvec pre=$(pre) \
+           l3=trmm rt=trmm sd=$(sd) up=$(up) ta=$(ta) lib=$(lib) pt="$(pt)"
+	$(MAKE) $(pre)trsm_$(sd)$(up)$(ta)_cmb_$(lib)$(pt).tvec pre=$(pre) \
+           l3=trsm rt=trsm sd=$(sd) up=$(up) ta=$(ta) lib=$(lib) pt="$(pt)"
+	cat $(pre)mmsq_NN_cmb_$(lib)$(pt).tvec \
+            $(pre)trmm_$(sd)$(up)$(ta)_cmb_$(lib)$(pt).tvec \
+            $(pre)trsm_$(sd)$(up)$(ta)_cmb_$(lib)$(pt).tvec | \
+        ./xcattvecs -# 3 -o $@ -C 2 N MFLOP_avg
+
+#
 # Create master file with all factorizations, in this order: 
 #    MM,LU,LL,UU,QR,QL,RQ,LQ
 #
@@ -4313,7 +4343,7 @@ $(pre)factor_cmb_$(lib)$(pt).tvec : xcattvecs force_build \
             $(pre)geqrf_LLN_cmb_$(lib)$(pt).tvec | \
         ./xcattvecs -# 8 -o $@ -C 2 N MFLOP_avg
 # 
-# Create Triangular variant file
+# Create Triangular lapack variant file with mmsq
 #
 $(pre)trvar_cmb_$(lib)$(pt).tvec : xcattvecs force_build \
    $(pre)mmsq_NN_cmb_$(lib)$(pt).tvec
@@ -4406,6 +4436,22 @@ $(pre)$(rt)_$(ta)$(tb)_$(sz)_av@(sf)$(pt).eps : force_build $(ext)
            dataf=../tvecs/$(pre)$(rt)_$(ta)$(tb)_$(sz)_$(lib)$(pt).pl2
 @endwhile
 
+$(pre)pcmm_l3sy_$(sd)$(up)$(ta)_$(lib)$(pt).eps : force_build
+	cd ../tvecs ; $(MAKE) $(pre)mmvsy_$(sd)$(up)$(ta)_$(lib)$(pt).pl3p \
+           pre=$(pre) lib=$(lib) pt="$(pt)" sd=$(sd) up=$(up) ta=$(ta)
+	$(ext) -b $(mySRCdir)/report.base -o tmp.pls rout=pclinechart \
+           -def datf "../tvecs/$(pre)mmvsy_$(sd)$(up)$(ta)_$(lib)$(pt).pl3p" \
+           -def nlines "3" -def labs "SYMM SYRK SYR2K"
+	$(PLOT) tmp.pls -eps -o $@
+
+$(pre)pcmm_l3tr_$(sd)$(up)$(ta)_$(lib)$(pt).eps : force_build
+	cd ../tvecs ; $(MAKE) $(pre)mmvtr_$(sd)$(up)$(ta)_$(lib)$(pt).pl2p \
+           pre=$(pre) lib=$(lib) pt="$(pt)" sd=$(sd) up=$(up) ta=$(ta)
+	$(ext) -b $(mySRCdir)/report.base -o tmp.pls rout=pclinechart \
+           -def datf "../tvecs/$(pre)mmvtr_$(sd)$(up)$(ta)_$(lib)$(pt).pl2p" \
+           -def nlines "2" -def labs "TRMM TRSM"
+	$(PLOT) tmp.pls -eps -o $@
+
 $(pre)qrvar_cmb_$(lib)$(pt).eps :  force_build
 	cd ../tvecs ; $(MAKE) $(pre)qrvar_cmb_$(lib).pl4s pre=$(pre) \
            lib=$(lib) pt="$(pt)"
@@ -4448,13 +4494,18 @@ atlv@(cmp).tex : $(ext) $(mySRCdir)/report.base
       @whiledef pre s d c z
          @define pt @@
          @whiledef pt _pt
+            charts/@(pre)pcmm_l3tr_LLN_atl@(pt).eps
+            charts/@(pre)pcmm_l3tr_LLN_@(cmp)@(pt).eps
+            charts/@(pre)pcmm_l3sy_LLN_atl@(pt).eps
+            charts/@(pre)pcmm_l3sy_LLN_@(cmp)@(pt).eps
             @whiledef rt trsm trmm
             @endwhile
             @whiledef rt symm syrk syr2k
+               charts/@(pre)@(rt)_LLN_mlr_@(cpv)@(pt).eps
             @endwhile
             @whiledef rt symm syrk syr2k trmm trsm
             @endwhile
-            @whiledef rt mmsq
+            @whiledef rt mmsq mmrk
                charts/@(pre)@(rt)_NN_tin_@(cpv)@(pt).eps
                charts/@(pre)@(rt)_NN_mlr_@(cpv)@(pt).eps
             @endwhile
@@ -4466,19 +4517,52 @@ atlv@(cmp).tex : $(ext) $(mySRCdir)/report.base
    @undef cpv
 @endwhile
 #
+# Charts where all timings are for one library
+#
+@whiledef lib sys atl at2
+   @whiledef pre s d c z
+      @define pt @@
+      @whiledef pt _pt
+         @whiledef rt pcmm_l3tr pcmm_l3sy
+            @whiledef sd L R
+               @whiledef up U L
+                  @whiledef ta T N
+charts/@(pre)@(rt)_@(sd)@(up)@(ta)_@(lib)@(pt).eps :
+	cd charts ; $(MAKE) @(pre)@(rt)_@(sd)@(up)@(ta)_@(lib)@(pt).eps \
+           pre=@(pre) lib=@(lib) sd=@(sd) up=@(up) ta=@(ta) pt="@(pt)"
+                  @endwhile
+               @endwhile
+            @endwhile
+         @endwhile
+      @endwhile
+   @endwhile
+@endwhile
+#
 # Charts comparing present ATLAS to another system head-to-head
 #
 @whiledef cmp avs ava sys atl at2
    @whiledef pre s d c z
       @whiledef sz tin med lrg mlr cmb
-         @whiledef rt mmsq mmrk
-            @define pt @@
-            @whiledef pt _pt
+         @define pt @@
+         @whiledef pt _pt
+            @whiledef rt mmsq mmrk
                @whiledef ta T N C
                   @whiledef tb T N C
 charts/@(pre)@(rt)_@(ta)@(tb)_@(sz)_@(cmp)@(pt).eps : 
 	cd charts ; $(MAKE) @(pre)@(rt)_@(ta)@(tb)_@(sz)_@(cmp)@(pt).eps \
            pre=@(pre) sz=@(sz) lib=@(cmp) rt=@(rt) pt="@(pt)" ta=@(ta) tb=@(tb)
+                  @endwhile
+               @endwhile
+            @endwhile
+            @whiledef rt symm syrk syr2k hemm herk her2k trmm trsm
+               @whiledef sd L R
+                  @whiledef up U L
+                     @whiledef ta T N
+charts/@(pre)@(rt)_@(sd)@(up)@(ta)_@(sz)_@(cmp)@(pt).eps : 
+	cd charts ; $(MAKE) @(pre)@(rt)_@(sd)@(up)@(ta)_@(sz)_@(cmp)@(pt).eps \
+           pre=@(pre) sz=@(sz) lib=@(cmp) l3=@(rt) pt="@(pt)" \
+           sd=@(sd) up=@(up) ta=@(ta) 
+                     @endwhile
                   @endwhile
                @endwhile
             @endwhile
