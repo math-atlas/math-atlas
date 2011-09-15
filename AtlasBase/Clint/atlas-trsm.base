@@ -145,12 +145,22 @@ ATL_SINLINE void ATL_trsmL2(const TYPE *L, ATL_CINT ldl, TYPE *B, ATL_CINT ldb0)
  * x1 = (b1 - L10 * x0)  [divide by diagonal in next step]
  */
    rX = (rB10 - rL10*rB00 + iL10*iB00);
-   iB00 = (iB10 - rL10*iB00 - iL10*rB00); rB00 = rX;
+   iB10 = (iB10 - rL10*iB00 - iL10*rB00); rB10 = rX;
    rX = (rB11 - rL10*rB00 + iL10*iB00);
-   iB01 = (iB11 - rL10*iB00 - iL10*rB00); rB01 = rX;
+   iB11 = (iB11 - rL10*iB00 - iL10*rB00); rB11 = rX;
    rX = (rB12 - rL10*rB00 + iL10*iB00);
-   iB12 = (iB12 - rL10*iB00 - iL10*rB00); rB02 = rX;
+   iB12 = (iB12 - rL10*iB00 - iL10*rB00); rB12 = rX;
+/*
+ * Mult by recipricol of L11 to finish x1 = (b1 - L10 * x0)/L11.
+ */
+   rX = rB10*rL11 - iB10*iL11;
+   iB10 = rB10*iL11 + iB10*rL11; rB10 = rX;
+   rX = rB11*rL11 - iB11*iL11;
+   iB11 = rB11*iL11 + iB11*rL11; rB11 = rX;
+   rX = rB12*rL11 - iB12*iL11;
+   iB12 = rB12*iL11 + iB12*rL11; rB12 = rX;
 }
+
 @ROUT ATL_trsmKL_rk4 ATL_trsmKR_rk4
 #if defined(ATL_AVX) && defined(DREAL)
    #define NRHS 3
@@ -1265,6 +1275,105 @@ ATL_SINLINE void ATL_rk4(ATL_CINT M, const TYPE *A, ATL_CINT lda,
 }  /* complete 4x4 solve block */
 #endif
 
+@ROUT ATL_ctrsmKL_rk4
+static void ATL_trsmLLN
+(
+   ATL_CINT  M,   /* size of orig triangular matrix A */
+   ATL_CINT  N,   /* number of RHS in B */
+   const SCALAR alpha,  /* scale factor for B */
+   const TYPE *L, /* MxM lower matrix A, diag has inverse of original diag */
+   TYPE *B,       /* on input, B, on output X, of A x = b */
+   ATL_CINT  ldb, /* leading dim of B */
+   TYPE *W        /* Mx4 workspace with good alignment */
+)
+{
+   const TYPE ral=(*alpha), ial=alpha[1];
+   const int ALPHAISREAL = (ial == ATL_rzero);
+   ATL_CINT M2 = M+M;
+
+   int j;
+   #ifdef SCPLX  /* must by aligned for 8 floats */
+      ATL_CINT Mc = ((M2+7)>>3)<<3;   /* Mceiling = CEIL(m/8)*8 */
+   #else         /* must be aligned for 4 doubles */
+      ATL_CINT Mc = ((M2+3)>>2)<<2;   /* Mceiling = CEIL(m/4)*4 */
+   #endif
+/*
+ * Loop over RHS, NRHS RHS at a time
+ */
+   for (j=0; j < N; j += NRHS B += NRHS*ldb)
+   {
+      const int nb = Mmin(NRHS, N-j);
+      TYPE *w = W, *b = B;
+      const TYPE *a;
+/*
+ *    Copy NRHS RHS into aligned workspace, scaling by alpha as required
+ *    Note, will have O(M) reuse
+ */
+      for (k=0; k < nb; k++, w += Mc, b += ldb)
+      {
+         if (ALPHAISREAL)
+         {
+            if (ral  != ATL_rone)
+            {
+               for (i=0; i < M2; i++)
+                  w[i] = ral * b[i];
+            }
+            else
+            {
+               for (i=0; i < M2; i++)
+                  w[i] = b[i];
+            }
+         }
+         else /* must apply a complex alpha */
+         {
+            for (i=0; i < M2; i += 2)
+            {
+               register TYPE rb, ib;
+
+               rb = b[i];
+               ib = b[i+1];
+               w[i] = rb*ral - ib*ial;
+               w[i+1] = rb*ial + ib*ral;
+            }
+         }
+         for (; i < Mc; i++)
+             w[i] = ATL_rzero;
+      }
+      for (; k < NRHS; k++, w += Mc)
+         for (i=0; i < Mc; i++)
+             w[i] = ATL_rzero;
+/*
+ *    Completely solve these copied RHSs by looping over entire triangular mat
+ */
+      b = B;
+      w = W;
+      a = L;
+      for (k=0; k < M; k += 2, b += 4, w += 4 a += (lda+1)<<2)
+      {
+         ATL_CINT mr = Mmin(2,M-k), mr2=mr+mr;
+/*
+ *       Solve M=2 NRHS=NRHS TRSM symbolically
+ */
+         ATL_trsmL2(a, Mc, b, Mc);
+/*
+ *       Write solved 2xNRHS block out to original workspace (final answer)
+ */
+         {
+            ATL_INT ii, jj;
+            TYPE *bb = b;
+            const TYPE *ww = (const TYPE *) w;
+            for (jj=0; jj < nb; jj++, ww += Mc, bb += ldb)
+               for (ii=0; ii < mr2; ii++)
+                  bb[ii] = ww[ii];
+         }
+/*
+ *       Subtract off x0 and x1 contribution from rest of B using rank-2 update
+ */
+         if (M-k-2 > 0)
+            ATL_rk2(Mc-k-2, a+4, Mc, w, Mc, w+4, Mc);
+      }         /* end k-loop over L */
+   }            /* end loop over RHS */
+}  /* end of static func ATL_trsmLLN */
 @ROUT ATL_trsmKL_rk4
 static void ATL_trsmLLN
 (
