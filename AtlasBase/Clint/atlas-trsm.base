@@ -1,4 +1,4 @@
-@ROUT ATL_trsmKL_rk4 ATL_trsmKR_rk4 ATL_ctrsmKL_rk4 ATL_ctrsmKR_rk4
+@ROUT ATL_trsmKL_rk4 ATL_trsmKR_rk4 ATL_ctrsmKL_rk2 ATL_ctrsmKR_rk2
 #include "atlas_misc.h"
 #include "atlas_prefetch.h"
 #define RTYPE register TYPE
@@ -9,7 +9,7 @@
 #else
    #define ATL_SINLINE static
 #endif
-@ROUT ATL_ctrsmKL_rk4 ATL_ctrsmKR_rk4
+@ROUT ATL_ctrsmKL_rk2 ATL_ctrsmKR_rk2
 #if defined(ATL_AVX) && defined(DCPLX)
    #define NRHS 3
    #define ATL_BINWRK 1
@@ -22,31 +22,29 @@
  * Loop order is MKN, so that B is kept completely in registers, and
  * C and A are streamed in (and out, for C) from cache during the operation.
  */
-ATL_SINLINE void ATL_rk2(ATL_CINT M, const TYPE *A, ATL_CINT lda, 
+ATL_SINLINE void ATL_rk2(ATL_CINT M, const TYPE *pA0, ATL_CINT lda, 
                            TYPE *pB0, ATL_CINT ldb, TYPE *C, ATL_CINT ldc) 
 {
-   const TYPE *pA0 = A, *pA1 = A+lda, 
-              *pA2 = A+((lda)<<1), *pA3=pA1+((lda)<<1); 
+   const TYPE *pA1 = pA0+lda, *pA2 = pA0+((lda)<<1), *pA3 = pA1+((lda)<<1); 
    TYPE *pC0 = C, *pC1 = C+ldc, *pC2 = C+((ldc)<<1);
    ATL_CINT MM =  (M & 4) ? M-4 : M-8; 
    int i; 
-   register __m256d rB00, rB01, rB02; 
-   register __m256d iB00, iB21, iB22;
+   register __m256d rB00, iB00, rB01, iB01, rB02, iB02; 
    register __m256d C00, C01, C02; 
    register __m256d C20, C21, C22; 
    register __m256d A, a;
 
    rB00 = _mm256_load_pd(pB0);                  /* iB10 rB10 iB00 rB00 */
-   iB00 = _mm256_unpackhi_pd(rB00, rB00)        /* iB10 iB10 iB00 iB00 */
-   rB00 = _mm256_unpacklo_pd(rB00, rB00)        /* rB10 rB10 rB00 rB00 */
+   iB00 = _mm256_unpackhi_pd(rB00, rB00);       /* iB10 iB10 iB00 iB00 */
+   rB00 = _mm256_unpacklo_pd(rB00, rB00);       /* rB10 rB10 rB00 rB00 */
 
-   rB01 = _mm256_load_pd(pB0,ldb);              /* iB10 rB10 iB00 rB00 */
-   iB01 = _mm256_unpackhi_pd(rB01, rB01)        /* iB10 iB10 iB00 iB00 */
-   rB01 = _mm256_unpacklo_pd(rB01, rB01)        /* rB10 rB10 rB00 rB00 */
+   rB01 = _mm256_load_pd(pB0+ldb);              /* iB10 rB10 iB00 rB00 */
+   iB01 = _mm256_unpackhi_pd(rB01, rB01);       /* iB10 iB10 iB00 iB00 */
+   rB01 = _mm256_unpacklo_pd(rB01, rB01);       /* rB10 rB10 rB00 rB00 */
 
-   rB02 = _mm256_load_pd(pB0,ldb,2);            /* iB10 rB10 iB00 rB00 */
-   iB02 = _mm256_unpackhi_pd(rB02, rB02)        /* iB10 iB10 iB00 iB00 */
-   rB02 = _mm256_unpacklo_pd(rB02, rB02)        /* rB10 rB10 rB00 rB00 */
+   rB02 = _mm256_load_pd(pB0+(ldb<<1));         /* iB10 rB10 iB00 rB00 */
+   iB02 = _mm256_unpackhi_pd(rB02, rB02);       /* iB10 iB10 iB00 iB00 */
+   rB02 = _mm256_unpacklo_pd(rB02, rB02);       /* rB10 rB10 rB00 rB00 */
 
    C00  = _mm256_load_pd(pC0);                  /* iC10 rC10 iC00 rC00 */
    C01  = _mm256_load_pd(pC1);                  /* iC11 rC11 iC01 rC01 */
@@ -54,7 +52,7 @@ ATL_SINLINE void ATL_rk2(ATL_CINT M, const TYPE *A, ATL_CINT lda,
 
    A    = _mm256_load_pd(pA0);                  /* iA10 rA10 iA00 rA00 */
 
-   for (i=0; i < MM; i += 4; pA0 += 8, pA1 += 8, pC0 += 8, pC1 += 8, pC2 += 8)
+   for (i=0; i < MM; i += 4, pA0 += 8, pA1 += 8, pC0 += 8, pC1 += 8, pC2 += 8)
    {
       register __m256d m;
 
@@ -125,12 +123,12 @@ ATL_SINLINE void ATL_rk2(ATL_CINT M, const TYPE *A, ATL_CINT lda,
  */
 ATL_SINLINE void ATL_trsmL2(const TYPE *L, ATL_CINT ldl, TYPE *B, ATL_CINT ldb0)
 {
-   const RTYPE rL00=(*L), iL00=L[1], rL10=L[2], iL10[3], 
-               rL11=L[ldl+2], iL1=L[ldl+3];
+   const RTYPE rL00=(*L), iL00=L[1], rL10=L[2], iL10=L[3], 
+               rL11=L[ldl+2], iL11=L[ldl+3];
    ATL_CINT ldb=ldb0+ldb0, ldb2=(ldb0<<2);
    RTYPE rB00=(*B), iB00=B[1], rB10=L[2], iB10=L[3];
-   RTYPE rB01=B[ldb], iB01=B[ldb+1], rB11=L[ldb+2], iB11=L[ldb+3];
-   RTYPE rB02=B[ldb2], iB02=B[ldb2+1], rB12=L[ldb2+2], iB12=L[ldb2+3];
+   RTYPE rB01=B[ldb], iB01=B[ldb+1], rB11=B[ldb+2], iB11=B[ldb+3];
+   RTYPE rB02=B[ldb2], iB02=B[ldb2+1], rB12=B[ldb2+2], iB12=B[ldb2+3];
    RTYPE rX;
 /*
  * x0 = b0 / L00 
@@ -160,6 +158,7 @@ ATL_SINLINE void ATL_trsmL2(const TYPE *L, ATL_CINT ldl, TYPE *B, ATL_CINT ldb0)
    rX = rB12*rL11 - iB12*iL11;
    iB12 = rB12*iL11 + iB12*rL11; rB12 = rX;
 }
+#endif
 
 @ROUT ATL_trsmKL_rk4 ATL_trsmKR_rk4
 #if defined(ATL_AVX) && defined(DREAL)
@@ -1275,7 +1274,7 @@ ATL_SINLINE void ATL_rk4(ATL_CINT M, const TYPE *A, ATL_CINT lda,
 }  /* complete 4x4 solve block */
 #endif
 
-@ROUT ATL_ctrsmKL_rk4
+@ROUT ATL_ctrsmKL_rk2
 static void ATL_trsmLLN
 (
    ATL_CINT  M,   /* size of orig triangular matrix A */
@@ -1290,8 +1289,8 @@ static void ATL_trsmLLN
    const TYPE ral=(*alpha), ial=alpha[1];
    const int ALPHAISREAL = (ial == ATL_rzero);
    ATL_CINT M2 = M+M;
+   ATL_INT i, j, k;
 
-   int j;
    #ifdef SCPLX  /* must by aligned for 8 floats */
       ATL_CINT Mc = ((M2+7)>>3)<<3;   /* Mceiling = CEIL(m/8)*8 */
    #else         /* must be aligned for 4 doubles */
@@ -1300,7 +1299,7 @@ static void ATL_trsmLLN
 /*
  * Loop over RHS, NRHS RHS at a time
  */
-   for (j=0; j < N; j += NRHS B += NRHS*ldb)
+   for (j=0; j < N; j += NRHS, B += NRHS*ldb)
    {
       const int nb = Mmin(NRHS, N-j);
       TYPE *w = W, *b = B;
@@ -1348,7 +1347,7 @@ static void ATL_trsmLLN
       b = B;
       w = W;
       a = L;
-      for (k=0; k < M; k += 2, b += 4, w += 4 a += (lda+1)<<2)
+      for (k=0; k < M; k += 2, b += 4, w += 4, a += (Mc+1)<<2)
       {
          ATL_CINT mr = Mmin(2,M-k), mr2=mr+mr;
 /*
@@ -1942,6 +1941,47 @@ static void ATL_trsmRUN
       }     /* end k-loop that loops through L */
    }        /* end j-loop over RHS */
 }           /* end routine */
+@ROUT ATL_ctrsmKL_rk200
+ATL_SINLINE void trU2L
+   (ATL_CINT N, const TYPE *U, ATL_CINT ldu, TYPE *L, ATL_CINT ldl)
+/*
+ * reflects upper part of U into lower part of L, L is padded to ldl with I
+ */
+{
+   ATL_CINT N2=N+N, ldU=ldu+ldu, ldL=ldl+ldl;
+   ATL_INT i, j;
+   const TYPE *Uc = U;
+
+   for (j=0; j < N2; j += 2, Uc += ldU)
+   {
+      TYPE *Lr = L + j;
+      for (i=0; i <= j; i += 2, Lr += ldL)
+      {
+         *Lr = Uc[i];
+         Lr[1] = Uc[i+1];
+      }
+   }
+/* 
+ * Pad the last ldl-N rows of L with zeros in the first N columns of L
+ */
+   for (j=0; j < N2; j += 2, L += ldL)
+   {
+      for (i=j+2; i < ldL; i++)
+         L[i] = ATL_rzero;
+   }
+  
+/* 
+ * Pad the last ldl-N columns of L with the identity matrix
+ */
+   for (; j < ldL; j += 2, L += ldL)
+   {
+      L[j] = ATL_rone;
+      L[j+1] = ATL_rzero;
+      for (i=j+2; i < ldL; i++)
+         L[i] = ATL_rzero;
+   }
+}
+
 @ROUT ATL_trsmKL_rk4 ATL_trsmKR_rk4
 
 ATL_SINLINE void trL2U
@@ -2042,8 +2082,103 @@ static void cpypadL
       a[j] = ATL_rone;
    }
 }
+@ROUT ATL_ctrsmKL_rk2
+/*
+ * Copy original L to aligned workspace, invert diagonal elts, pad wt I
+ */
+static void cpypadL
+(
+   enum ATLAS_DIAG Diag, 
+   ATL_CINT N,                  /* size of triangular matrix A */
+   const TYPE *A,               /* lower triangular matrix */
+   ATL_CINT lda,                /* leading dim of A */
+   TYPE *a,                     /* cpy of A, padded to N4 with I */
+   ATL_CINT Nc                  /* leading dim of A, how much to pad */
+)
+{
+   int i, j;
+   ATL_CINT lda2 = lda+lda, N2=N+N, Nc2=Nc+Nc;
 
-@ROUT ATL_trsmKL_rk4 ATL_trsmKR_rk4
+   for (j=0; j < N; j++, a += Nc, A += lda2)
+   {
+      ATL_CINT j2 = j+j;
+
+      if (Diag == AtlasNonUnit)
+         Mjoin(PATL,cplxinvert)(1, (TYPE*)(A+j2), 1, a+j2, 1);
+      else
+      {
+         a[j2] = ATL_rone;
+         a[j2+1] = ATL_rzero;
+      }
+      for (i=j2+2; i < N2; i++)
+         a[i+i] = A[i+i];
+      for (; i < Nc; i++)
+         a[i] = ATL_rzero;
+   }
+   for (; j < Nc; j++, a += Nc)
+   {
+      for (i=0; i < Nc2; i++)
+         a[i] = ATL_rzero;
+      a[j+j] = ATL_rone;
+   }
+}
+int Mjoin(PATL,trsmKL_rk2)   /* returns 0 on success */
+(
+   enum ATLAS_SIDE Side,
+   enum ATLAS_UPLO Uplo,
+   enum ATLAS_TRANS TA,
+   enum ATLAS_DIAG Diag,
+   ATL_CINT  M,   /* size of triangular matrix A */
+   ATL_CINT  N,   /* number of RHS in B */
+   const SCALAR alpha,  /* scale factor for B */
+   const TYPE *A0, /* MxM lower matrix A, diag has inverse of original diag */
+   ATL_CINT  lda0,
+   TYPE *B,       /* on input, B, on output X, of A x = b */
+   ATL_CINT  ldb  /* leading dim of B */
+)
+{
+   void *vp;
+   const TYPE *A = A0;
+   TYPE *a, *w, *t=NULL;
+   #ifdef SCPLX
+      ATL_CINT Mc = ((M+7)>>3)<<3;  /* ceiling */
+   #else
+      ATL_CINT Mc = ((M+3)>>2)<<2;
+   #endif
+   ATL_CINT Mc2 = Mc+Mc;
+   ATL_INT lda = lda0;
+   int UPPER = (Uplo == AtlasUpper);
+
+   ATL_assert(TA == AtlasNoTrans && Side == AtlasLeft && Uplo == AtlasLower);
+   vp = malloc(ATL_sizeof*(Mc*Mc+Mc*NRHS)+2*ATL_Cachelen);
+   if (!vp)
+      return(1);
+
+   a = ATL_AlignPtr(vp);
+   w = a + Mc*Mc2;
+   w = ATL_AlignPtr(w);
+   if (!UPPER)
+   {
+      int j, i;
+      TYPE *ap=a;
+      cpypadL(Diag, M, A, lda, a, Mc);
+      if (t)
+         free(t);
+      ATL_trsmLLN(M, N, alpha, a, B, ldb, w);
+   }
+   else  /* Uplo == AtlasUpper */
+   {
+      int j, i;
+      const int mr = Mc-M;
+      TYPE *ap=a;
+      cpypadU(Diag, M, A, lda, a, Mc);
+      if (t)
+         free(t);
+      ATL_trsmLUN(M, N, alpha, a, B, ldb, w);
+   }
+   free(vp);
+   return(0);
+}
 @ROUT ATL_trsmKL_rk4
 int Mjoin(PATL,trsmKL_rk4)   /* returns 0 on success */
 (
