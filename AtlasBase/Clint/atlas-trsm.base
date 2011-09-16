@@ -124,39 +124,39 @@ ATL_SINLINE void ATL_rk2(ATL_CINT M, const TYPE *pA0, ATL_CINT lda,
 ATL_SINLINE void ATL_trsmL2(const TYPE *L, ATL_CINT ldl, TYPE *B, ATL_CINT ldb0)
 {
    const RTYPE rL00=(*L), iL00=L[1], rL10=L[2], iL10=L[3], 
-               rL11=L[ldl+2], iL11=L[ldl+3];
+               rL11=L[ldl+ldl+2], iL11=L[ldl+ldl+3];
    ATL_CINT ldb=ldb0+ldb0, ldb2=(ldb0<<2);
-   RTYPE rB00=(*B), iB00=B[1], rB10=L[2], iB10=L[3];
+   RTYPE rB00=(*B), iB00=B[1], rB10=B[2], iB10=B[3];
    RTYPE rB01=B[ldb], iB01=B[ldb+1], rB11=B[ldb+2], iB11=B[ldb+3];
    RTYPE rB02=B[ldb2], iB02=B[ldb2+1], rB12=B[ldb2+2], iB12=B[ldb2+3];
    RTYPE rX;
 /*
  * x0 = b0 / L00 
  */
-   *B = rX = rB00*rL00 - iB00*iL00;
-   B[1] = iB00 = rB00*iL00 + iB00*iL00; rB00 = rX;
-   B[ldb] = rX = rB01*rL00 - iB01*iL00;
-   B[ldb+1] = iB01 = rB01*iL00 + iB01*iL00; rB01 = rX;
-   B[ldb2] = rX = rB02*rL00 - iB02*iL00;
-   B[ldb2+1] = iB02 = rB02*iL00 + iB02*iL00; rB02 = rX;
+   *B        = rX = rB00*rL00 - iB00*iL00;
+   B[1]      = iB00 = rB00*iL00 + iB00*rL00; rB00 = rX;
+   B[ldb]    = rX = rB01*rL00 - iB01*iL00;
+   B[ldb+1]  = iB01 = rB01*iL00 + iB01*rL00; rB01 = rX;
+   B[ldb2]   = rX = rB02*rL00 - iB02*iL00;
+   B[ldb2+1] = iB02 = rB02*iL00 + iB02*rL00; rB02 = rX;
 /*
  * x1 = (b1 - L10 * x0)  [divide by diagonal in next step]
  */
-   rX = (rB10 - rL10*rB00 + iL10*iB00);
-   iB10 = (iB10 - rL10*iB00 - iL10*rB00); rB10 = rX;
-   rX = (rB11 - rL10*rB00 + iL10*iB00);
-   iB11 = (iB11 - rL10*iB00 - iL10*rB00); rB11 = rX;
-   rX = (rB12 - rL10*rB00 + iL10*iB00);
-   iB12 = (iB12 - rL10*iB00 - iL10*rB00); rB12 = rX;
+   rB10 = (rB10 - rL10*rB00 + iL10*iB00);
+   iB10 = (iB10 - rL10*iB00 - iL10*rB00);
+   rB11 = (rB11 - rL10*rB01 + iL10*iB01);
+   iB11 = (iB11 - rL10*iB01 - iL10*rB01);
+   rB12 = (rB12 - rL10*rB02 + iL10*iB02);
+   iB12 = (iB12 - rL10*iB02 - iL10*rB02);
 /*
  * Mult by recipricol of L11 to finish x1 = (b1 - L10 * x0)/L11.
  */
-   rX = rB10*rL11 - iB10*iL11;
-   iB10 = rB10*iL11 + iB10*rL11; rB10 = rX;
-   rX = rB11*rL11 - iB11*iL11;
-   iB11 = rB11*iL11 + iB11*rL11; rB11 = rX;
-   rX = rB12*rL11 - iB12*iL11;
-   iB12 = rB12*iL11 + iB12*rL11; rB12 = rX;
+   B[2]      = rB10*rL11 - iB10*iL11;
+   B[3]      = rB10*iL11 + iB10*rL11;
+   B[ldb+2]  = rB11*rL11 - iB11*iL11;
+   B[ldb+3]  = rB11*iL11 + iB11*rL11;
+   B[ldb2+2] = rB12*rL11 - iB12*iL11;
+   B[ldb2+3] = iB12 = rB12*iL11 + iB12*rL11;
 }
 #endif
 
@@ -1288,18 +1288,19 @@ static void ATL_trsmLLN
 {
    const TYPE ral=(*alpha), ial=alpha[1];
    const int ALPHAISREAL = (ial == ATL_rzero);
-   ATL_CINT M2 = M+M;
-   ATL_INT i, j, k;
-
+   ATL_CINT M2 = M+M, ldb2=ldb+ldb;
    #ifdef SCPLX  /* must by aligned for 8 floats */
       ATL_CINT Mc = ((M2+7)>>3)<<3;   /* Mceiling = CEIL(m/8)*8 */
    #else         /* must be aligned for 4 doubles */
       ATL_CINT Mc = ((M2+3)>>2)<<2;   /* Mceiling = CEIL(m/4)*4 */
    #endif
+   ATL_CINT Mc2=Mc+Mc;
+   ATL_INT i, j, k;
+
 /*
  * Loop over RHS, NRHS RHS at a time
  */
-   for (j=0; j < N; j += NRHS, B += NRHS*ldb)
+   for (j=0; j < N; j += NRHS, B += NRHS*ldb2)
    {
       const int nb = Mmin(NRHS, N-j);
       TYPE *w = W, *b = B;
@@ -1308,7 +1309,7 @@ static void ATL_trsmLLN
  *    Copy NRHS RHS into aligned workspace, scaling by alpha as required
  *    Note, will have O(M) reuse
  */
-      for (k=0; k < nb; k++, w += Mc, b += ldb)
+      for (k=0; k < nb; k++, w += Mc2, b += ldb2)
       {
          if (ALPHAISREAL)
          {
@@ -1338,8 +1339,8 @@ static void ATL_trsmLLN
          for (; i < Mc; i++)
              w[i] = ATL_rzero;
       }
-      for (; k < NRHS; k++, w += Mc)
-         for (i=0; i < Mc; i++)
+      for (; k < NRHS; k++, w += Mc2)
+         for (i=0; i < Mc2; i++)
              w[i] = ATL_rzero;
 /*
  *    Completely solve these copied RHSs by looping over entire triangular mat
@@ -1353,7 +1354,7 @@ static void ATL_trsmLLN
 /*
  *       Solve M=2 NRHS=NRHS TRSM symbolically
  */
-         ATL_trsmL2(a, Mc, b, Mc);
+         ATL_trsmL2(a, Mc, w, Mc);
 /*
  *       Write solved 2xNRHS block out to original workspace (final answer)
  */
@@ -1361,7 +1362,7 @@ static void ATL_trsmLLN
             ATL_INT ii, jj;
             TYPE *bb = b;
             const TYPE *ww = (const TYPE *) w;
-            for (jj=0; jj < nb; jj++, ww += Mc, bb += ldb)
+            for (jj=0; jj < nb; jj++, ww += Mc2, bb += ldb2)
                for (ii=0; ii < mr2; ii++)
                   bb[ii] = ww[ii];
          }
@@ -2099,7 +2100,7 @@ static void cpypadL
    int i, j;
    ATL_CINT lda2 = lda+lda, N2=N+N, Nc2=Nc+Nc;
 
-   for (j=0; j < N; j++, a += Nc, A += lda2)
+   for (j=0; j < N; j++, a += Nc2, A += lda2)
    {
       ATL_CINT j2 = j+j;
 
@@ -2111,11 +2112,11 @@ static void cpypadL
          a[j2+1] = ATL_rzero;
       }
       for (i=j2+2; i < N2; i++)
-         a[i+i] = A[i+i];
-      for (; i < Nc; i++)
+         a[i] = A[i];
+      for (; i < Nc2; i++)
          a[i] = ATL_rzero;
    }
-   for (; j < Nc; j++, a += Nc)
+   for (; j < Nc; j++, a += Nc2)
    {
       for (i=0; i < Nc2; i++)
          a[i] = ATL_rzero;
@@ -2150,7 +2151,7 @@ int Mjoin(PATL,trsmKL_rk2)   /* returns 0 on success */
    int UPPER = (Uplo == AtlasUpper);
 
    ATL_assert(TA == AtlasNoTrans && Side == AtlasLeft && Uplo == AtlasLower);
-   vp = malloc(ATL_sizeof*(Mc*Mc+Mc*NRHS)+2*ATL_Cachelen);
+   vp = malloc(ATL_MulBySize(Mc*Mc+Mc*NRHS)+2*ATL_Cachelen);
    if (!vp)
       return(1);
 
@@ -2166,6 +2167,7 @@ int Mjoin(PATL,trsmKL_rk2)   /* returns 0 on success */
          free(t);
       ATL_trsmLLN(M, N, alpha, a, B, ldb, w);
    }
+#if 0
    else  /* Uplo == AtlasUpper */
    {
       int j, i;
@@ -2176,6 +2178,7 @@ int Mjoin(PATL,trsmKL_rk2)   /* returns 0 on success */
          free(t);
       ATL_trsmLUN(M, N, alpha, a, B, ldb, w);
    }
+#endif
    free(vp);
    return(0);
 }
