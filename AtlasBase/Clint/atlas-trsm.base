@@ -465,9 +465,12 @@ ATL_SINLINE void ATL_trsmU2(const TYPE *U, ATL_CINT ldu, TYPE *B, ATL_CINT ldb)
 /*
  * x1 = b1 / U11;  U11 is recipricol, so solve x1 = b1 * U11;
  */
-   rB10 = rB10 * rU11 - iB10 * iU11;
-   rB11 = rB11 * rU11 - iB11 * iU11;
-   rB12 = rB12 * rU11 - iB12 * iU11;
+   B[2] = rX = rB10 * rU11 - iB10 * iU11;
+   B[3] = iB10 = rB10 * iU11 + iB10 * rU11; rB10 = rX;
+   B[ldB+2] = rX = rB11 * rU11 - iB11 * iU11;
+   B[ldB+3] = iB11 = rB11 * iU11 + iB11 * rU11; rB11 = rX;
+   B[ldB2+2] = rX = rB12 * rU11 - iB12 * iU11;
+   B[ldB2+3] = iB12 = rB12 * iU11 + iB12 * rU11; rB12 = rX;
 /*
  * x0 = (b0 - U01*x1) / U00, do x0 = (b0 - U01*x1) first
  */
@@ -1666,7 +1669,7 @@ static void ATL_trsmLUN
       ATL_CINT Mc = ((M+3)>>2)<<2;   /* Mceiling = CEIL(m/4)*4 */
    #endif
    ATL_CINT Mc2=Mc+Mc, gap=Mc2-M2;
-   ATL_INT i, j, k;
+   ATL_INT i, j, k, mr, mr2;
 
 /*
  * Loop over RHS, NRHS RHS at a time
@@ -1719,11 +1722,13 @@ static void ATL_trsmLUN
 /*
  *    Completely solve these copied RHSs by looping over entire triangular mat
  */
-      b = B + M2;
-      w = W + Mc-4;
-      for (k=0; k < M; k += 2, b -= 4, w -= 4, a -= (Mc+1)<<2, Ac -= (Mc2<<1))
+      mr = (M == 1) ? 1 : 2;
+      mr2 = mr + mr;
+      w = W + Mc2-4;
+      b = B + M2 - mr2;
+      for (k=0; k < M; k += 2, w -= 4, a -= (Mc+1)<<2, Ac -= (Mc2<<1))
       {
-         ATL_CINT mr = Mmin(2,M-k), mr2=mr+mr;
+//         ATL_CINT mr = Mmin(2,M-k), mr2=mr+mr;
 /*
  *       Solve M=2 NRHS=NRHS TRSM symbolicly
  */
@@ -1734,7 +1739,7 @@ static void ATL_trsmLUN
          {
             ATL_INT ii, jj;
             TYPE *bb = b;
-            const TYPE *ww = (const TYPE *) w;
+            const TYPE *ww = (const TYPE *) ((mr == 2) ? w : w+2);
             for (jj=0; jj < nb; jj++, ww += Mc2, bb += ldb2)
                for (ii=0; ii < mr2; ii++)
                   bb[ii] = ww[ii];
@@ -1743,7 +1748,10 @@ static void ATL_trsmLUN
  *       Subtract off x0 and x1 contribution from rest of B using rank-2 update
  */
          if (M-k-2 > 0)
-            ATL_rk2(Mc-k-2, Ac, Mc, W, Mc, w, Mc);
+            ATL_rk2(Mc-k-2, Ac, Mc, w, Mc, W, Mc);
+         mr = Mmin(2,M-k-2);
+         mr2 = mr+mr;
+         b -= mr2;
       }         /* end k-loop over U */
    }            /* end loop over RHS */
 }  /* end of static func ATL_trsmLUN */
@@ -2638,9 +2646,9 @@ static void cpypadU
 (
    enum ATLAS_DIAG Diag, 
    ATL_CINT N,                  /* size of triangular matrix A */
-   const TYPE *A,               /* lower triangular matrix */
+   const TYPE *A,               /* upper triangular matrix */
    ATL_CINT lda,                /* leading dim of A */
-   TYPE *a,                     /* cpy of A, padded to N4 with I */
+   TYPE *a,                     /* cpy of A, padded to Nc with I */
    ATL_CINT Nc                  /* leading dim of A, how much to pad */
 )
 {
@@ -2648,7 +2656,7 @@ static void cpypadU
    ATL_CINT lda2 = lda+lda, N2=N+N, Nc2=Nc+Nc;
 
 /* 
- * Pad Nc2-N upper, left of U with I
+ * Pad Nc-N upper, left of U with I
  */
    if (Nc != N)
    {
@@ -2659,7 +2667,6 @@ static void cpypadU
          for (i=0; i < Nc2; i++)
             a[i] = ATL_rzero;
          a[j] = ATL_rone;
-         a[j+1] = ATL_rzero;
       }
 /*
  *    Now zero first few rows of each column above that actual U
