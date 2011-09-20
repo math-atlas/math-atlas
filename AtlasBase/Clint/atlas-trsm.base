@@ -12,7 +12,7 @@
 @ROUT ATL_ctrsmKL_rk2 ATL_ctrsmKR_rk2
 #if defined(ATL_AVX) && defined(DCPLX)
    #define NRHS 3
-   #define ATL_BINWRK 1
+   #define TRU  2     /* this kernel requires A padded to vector length */
    #include <immintrin.h>
 /*
  * Subtract off x0 & x1 contribution to all remaining equations using a
@@ -267,8 +267,83 @@ ATL_SINLINE void ATL_rk2(ATL_CINT M, const TYPE *pA0, ATL_CINT lda0,
       }
    }
 }
+#elif 0 && defined(ATL_SSE3) && defined(SCPLX)
+   #define NRHS 4
+   #define TRU  2
+   #include <xmmintrin.h>
+/*
+ * Subtract off x0 & x1 contribution to all remaining equations using a
+ * rank-2 update with mu=2, nu=4, ku=2.  This version is for 16 SSE regs.
+ * nu is the # of RHS, ku is the number of equations solved, and mu is 
+ * unrolled only to enable vectorization & software pipelining of load/use.
+ * Loop order is MKN, so that B is kept completely in registers, and
+ * C and A are streamed in (and out, for C) from cache during the operation.
+ */
+ATL_SINLINE void ATL_rk2(ATL_CINT M, const TYPE *pA0, ATL_CINT lda0, 
+                           TYPE *pB0, ATL_CINT ldb0, TYPE *C, ATL_CINT ldc0) 
+{
+   ATL_CINT lda=lda0+lda0, ldb=ldb0+ldb0, ldc=ldc0+ldc0;
+   const TYPE *pA1 = pA0+lda;
+   TYPE *pC0 = C, *pC1 = C+ldc, *pC2 = C+((ldc)<<1), pC3 = pC2+ldc;
+   register __m128 B00, B01, B02, B03;
+   register __m128 C00, C01, C02, C03;
+   register __m128 C20, C21, C22, C23;
+   register __m128 A, a;
+
+   A = _mm_set_ps(ATL_rone);
+   B00 = _mm_load_ps(pB0);              /* iB10 rB10 iB00 rB00 */
+   B00 = _mm_mul_ps(B00, A);            /* negate */
+   B01 = _mm_load_ps(pB0+ldb);
+   B01 = _mm_mul_ps(B01, A);           
+   B02 = _mm_load_ps(pB0+ldb+ldb);
+   B02 = _mm_mul_ps(B02, A);          
+   B03 = _mm_load_ps(pB0+ldb+ldb+ldb);
+   B03 = _mm_mul_ps(B03, A);         
+
+   C00 = _mm_load_ps(pC0);
+   C01 = _mm_load_ps(pC1);
+   C02 = _mm_load_ps(pC2);
+   C03 = _mm_load_ps(pC3);
+   A = _mm_load_ps(pA0);                /* iA10 rA10 iA00 rA00 */
+   a = _mm_shuffle_epi32((__m128i)A, 0xB1);
+   for (i=0; i < MM; i += 2, pA0 += 4, pA1 += 4, 
+        pC0 += 4, pC1 += 4, pC2 += 4, pC3 += 4)
+   {
+      register __m128 b;
+/*
+ *    K=0 block, multiply by real B vals
+ */
+      b = _mm_movldup_ps(B00);          /* rB10 rB10 rB00 rB00 */
+      b = _mm_mul_ps(b, A);             
+      rC00 = _mm_add_ps(C00, b);
+      b = _mm_movldup_ps(B01);       
+      b = _mm_mul_ps(b, A);             
+      rC01 = _mm_add_ps(C01, b);
+      b = _mm_movldup_ps(B02);
+      b = _mm_mul_ps(b, A);             
+      rC02 = _mm_add_ps(C02, b);
+      b = _mm_movldup_ps(B03);
+      b = _mm_mul_ps(b, A);             
+      rC03 = _mm_add_ps(C03, b); A = _mm_load_ps(pA1);
+/*
+ *    K=0 block, multiply by imaginary B vals
+ */
+      b = _mm_movhdup_ps(B00);          /* iB10 iB10 iB00 iB00 */
+      b = _mm_mul_ps(b, a);
+      rC00 = _mm_addsub_ps(C00, b);
+      b = _mm_movhdup_ps(B01); 
+      b = _mm_mul_ps(b, a);             
+      rC01 = _mm_addsub_ps(C01, b);
+      b = _mm_movhdup_ps(B02); 
+      b = _mm_mul_ps(b, a);             
+      rC02 = _mm_addsub_ps(C02, b);
+      b = _mm_movhdup_ps(B03); 
+      b = _mm_mul_ps(b, a);             
+      rC03 = _mm_addsub_ps(C03, b); a = _mm_shuffle_epi32((__m128i)A, 0xB1);
+   }
 #else   /* 32 register version goes here */
    #define NRHS 3
+   #define TRU  1   /* this kernel requires no padding */
 /*
  * This routine optimized for OOE machines; for statically scheduled
  * machines, the asg of rCxx followed immediately by the dependent store will
@@ -1663,10 +1738,10 @@ static void ATL_trsmLUN
    const TYPE ral=(*alpha), ial=alpha[1];
    const int ALPHAISREAL = (ial == ATL_rzero);
    ATL_CINT M2 = M+M, ldb2=ldb+ldb;
-   #ifdef SCPLX  /* must by aligned for 8 floats */
-      ATL_CINT Mc = ((M+7)>>3)<<3;   /* Mceiling = CEIL(m/8)*8 */
-   #else         /* must be aligned for 4 doubles */
-      ATL_CINT Mc = ((M+3)>>2)<<2;   /* Mceiling = CEIL(m/4)*4 */
+   #if TRU == 1
+      ATL_CINT Mc = (M == 1) ? 2 : M;  /* need at least 2 for solve */
+   #else
+      ATL_CINT Mc = ((M+TRU-1)/TRU)*TRU;  /* make M multiple of unroll factor */
    #endif
    ATL_CINT Mc2=Mc+Mc, gap=Mc2-M2;
    ATL_INT i, j, k, mr, mr2;
@@ -1770,10 +1845,10 @@ static void ATL_trsmLLN
    const TYPE ral=(*alpha), ial=alpha[1];
    const int ALPHAISREAL = (ial == ATL_rzero);
    ATL_CINT M2 = M+M, ldb2=ldb+ldb;
-   #ifdef SCPLX  /* must by aligned for 8 floats */
-      ATL_CINT Mc = ((M+7)>>3)<<3;   /* Mceiling = CEIL(m/8)*8 */
-   #else         /* must be aligned for 4 doubles */
-      ATL_CINT Mc = ((M+3)>>2)<<2;   /* Mceiling = CEIL(m/4)*4 */
+   #if TRU == 1
+      ATL_CINT Mc = (M == 1) ? 2 : M;  /* need at least 2 for solve */
+   #else
+      ATL_CINT Mc = ((M+TRU-1)/TRU)*TRU;  /* make M multiple of unroll factor */
    #endif
    ATL_CINT Mc2=Mc+Mc;
    ATL_INT i, j, k;
@@ -2537,6 +2612,118 @@ ATL_SINLINE void trU2L
    }
 }
 
+ATL_SINLINE void trL2U
+   (enum ATLAS_DIAG Diag, ATL_CINT N, const TYPE *L, ATL_CINT ldl, 
+    TYPE *U, ATL_CINT ldu)
+/*
+ * reflects lower part of L into upper part of U, 
+ * The upper, left part of U is padded with I to reach ldu size
+ */
+{
+   ATL_CINT N2=N+N, ldu2=ldu+ldu, ldl2=ldl+ldl, gap = ldu2-N2;
+   ATL_INT i, j;
+   TYPE *u;
+
+   if (gap)
+   {
+/*
+ *    Pad ldu-N first columns with I
+ */
+      for (j=0; j < gap; j += 2, U += ldu2)
+      {
+         for (i=0; i < ldu2; i++)
+            U[i] = ATL_rzero;
+         U[j] = ATL_rone;
+      }
+/*
+ *    Pad first ldu-N rows with zeros
+ */
+      u = U;
+      for (j=0; j < N2; j += 2, u += ldu2)
+      {
+         for (i=0; i < gap; i++)
+            u[i] = ATL_rzero;
+      }
+      U += gap;
+   }
+/*
+ * Now transpose L into last N rows/cols of U.  Access rows of U since it
+ * is known to be contiguous, so non-cont L is accessed by columns.
+ */
+   for (j=0; j < N2; j += 2, L += ldl2+2, U += ldu2+2)
+   {
+      if (Diag == AtlasUnit)
+      {
+         *U = ATL_rone;
+         U[1] = ATL_rzero;
+      }
+      else
+         Mjoin(PATL,cplxinvert)(1, (TYPE*)L, 1, U, 1);
+      for (u=U+ldu2,i=j+2; i < N2; i += 2, u += ldu2)
+      {
+         *u = L[i-j];
+         u[1] = L[i-j+1];
+      }
+   }
+}
+ATL_SINLINE void trL2Uc
+   (enum ATLAS_DIAG Diag, ATL_CINT N, const TYPE *L, ATL_CINT ldl, 
+    TYPE *U, ATL_CINT ldu)
+/*
+ * reflects & conjugates lower part of L into upper part of U, 
+ * The upper, left part of U is padded with I to reach ldu size
+ */
+{
+   ATL_CINT N2=N+N, ldu2=ldu+ldu, ldl2=ldl+ldl, gap = ldu2-N2;
+   ATL_INT i, j;
+   TYPE *u;
+
+   if (gap)
+   {
+/*
+ *    Pad ldu-N first columns with I
+ */
+      for (j=0; j < gap; j += 2, U += ldu2)
+      {
+         for (i=0; i < ldu2; i++)
+            U[i] = ATL_rzero;
+         U[j] = ATL_rone;
+      }
+/*
+ *    Pad first ldu-N rows with zeros
+ */
+      u = U;
+      for (j=0; j < N2; j += 2, u += ldu2)
+      {
+         for (i=0; i < gap; i++)
+            u[i] = ATL_rzero;
+      }
+      U += gap;
+   }
+/*
+ * Now transpose L into last N rows/cols of U.  Access rows of U since it
+ * is known to be contiguous, so non-cont L is accessed by columns.
+ */
+   for (j=0; j < N2; j += 2, L += ldl2+2, U += ldu2+2)
+   {
+      if (Diag == AtlasUnit)
+      {
+         *U = ATL_rone;
+         U[1] = ATL_rzero;
+      }
+      else
+      {
+         *U = *L;
+         U[1] = -L[1];
+         Mjoin(PATL,cplxinvert)(1, U, 1, U, 1);
+      }
+      for (u=U+ldu2,i=j+2; i < N2; i += 2, u += ldu2)
+      {
+         *u = L[i-j];
+         u[1] = -L[i-j+1];
+      }
+   }
+}
 @ROUT ATL_trsmKL_rk4 ATL_trsmKR_rk4
 
 ATL_SINLINE void trL2U
@@ -2752,10 +2939,10 @@ int Mjoin(PATL,trsmKL_rk2)   /* returns 0 on success */
    void *vp;
    const TYPE *A = A0;
    TYPE *a, *w, *t=NULL;
-   #ifdef SCPLX
-      ATL_CINT Mc = ((M+7)>>3)<<3;  /* ceiling */
+   #if TRU == 1
+      ATL_CINT Mc = (M == 1) ? 2 : M;  /* need at least 2 for solve */
    #else
-      ATL_CINT Mc = ((M+3)>>2)<<2;
+      ATL_CINT Mc = ((M+TRU-1)/TRU)*TRU;  /* make M multiple of unroll factor */
    #endif
    ATL_CINT Mc2 = Mc+Mc;
    ATL_INT lda = lda0;
@@ -2796,11 +2983,13 @@ int Mjoin(PATL,trsmKL_rk2)   /* returns 0 on success */
       }
       else if (TA == AtlasTrans)
       {
-         ATL_assert(0);
+         trL2U(Diag, M, A, lda, a, Mc);
+         ATL_trsmLUN(M, N, alpha, a, B, ldb, w);
       }
       else  /* TA == AtlasConjTrans */
       {
-         ATL_assert(0);
+         trL2Uc(Diag, M, A, lda, a, Mc);
+         ATL_trsmLUN(M, N, alpha, a, B, ldb, w);
       }
    }
    free(vp);
