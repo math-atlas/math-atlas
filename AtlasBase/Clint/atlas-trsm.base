@@ -267,10 +267,11 @@ ATL_SINLINE void ATL_rk2(ATL_CINT M, const TYPE *pA0, ATL_CINT lda0,
       }
    }
 }
-#elif 0 && defined(ATL_SSE3) && defined(SCPLX)
+#elif defined(ATL_SSE3) && defined(SCPLX)
    #define NRHS 4
-   #define TRU  2
+   #define TRU  4
    #include <xmmintrin.h>
+   #include <pmmintrin.h>
 /*
  * Subtract off x0 & x1 contribution to all remaining equations using a
  * rank-2 update with mu=2, nu=4, ku=2.  This version is for 16 SSE regs.
@@ -284,13 +285,15 @@ ATL_SINLINE void ATL_rk2(ATL_CINT M, const TYPE *pA0, ATL_CINT lda0,
 {
    ATL_CINT lda=lda0+lda0, ldb=ldb0+ldb0, ldc=ldc0+ldc0;
    const TYPE *pA1 = pA0+lda;
-   TYPE *pC0 = C, *pC1 = C+ldc, *pC2 = C+((ldc)<<1), pC3 = pC2+ldc;
+   TYPE *pC0 = C, *pC1 = C+ldc, *pC2 = C+((ldc)<<1), *pC3 = pC2+ldc;
+   ATL_INT i;
+   ATL_CINT MM = (M&2) ? M-2 : M-4;
    register __m128 B00, B01, B02, B03;
    register __m128 C00, C01, C02, C03;
    register __m128 C20, C21, C22, C23;
    register __m128 A, a;
 
-   A = _mm_set_ps(ATL_rone);
+   A = _mm_set1_ps(ATL_rnone);
    B00 = _mm_load_ps(pB0);              /* iB10 rB10 iB00 rB00 */
    B00 = _mm_mul_ps(B00, A);            /* negate */
    B01 = _mm_load_ps(pB0+ldb);
@@ -305,42 +308,294 @@ ATL_SINLINE void ATL_rk2(ATL_CINT M, const TYPE *pA0, ATL_CINT lda0,
    C02 = _mm_load_ps(pC2);
    C03 = _mm_load_ps(pC3);
    A = _mm_load_ps(pA0);                /* iA10 rA10 iA00 rA00 */
-   a = _mm_shuffle_epi32((__m128i)A, 0xB1);
-   for (i=0; i < MM; i += 2, pA0 += 4, pA1 += 4, 
-        pC0 += 4, pC1 += 4, pC2 += 4, pC3 += 4)
+   a = (__m128)_mm_shuffle_epi32((__m128i)A, 0xB1);
+       /* rA10 iA10 rA00 iA00 */
+   for (i=0; i < MM; i += 4, pA0 += 8, pA1 += 8, 
+        pC0 += 8, pC1 += 8, pC2 += 8, pC3 += 8)
    {
       register __m128 b;
 /*
- *    K=0 block, multiply by real B vals
+ *    M=K=0 block, multiply by real B vals
  */
-      b = _mm_movldup_ps(B00);          /* rB10 rB10 rB00 rB00 */
+      b = (__m128)_mm_shuffle_epi32((__m128i)B00, 0x00);
+                                        /* rB00 rB00 rB00 rB00 */
       b = _mm_mul_ps(b, A);             
-      rC00 = _mm_add_ps(C00, b);
-      b = _mm_movldup_ps(B01);       
+      C00 = _mm_add_ps(C00, b);  C20 = _mm_load_ps(pC0+4);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B01, 0x00); 
       b = _mm_mul_ps(b, A);             
-      rC01 = _mm_add_ps(C01, b);
-      b = _mm_movldup_ps(B02);
+      C01 = _mm_add_ps(C01, b);  C21 = _mm_load_ps(pC1+4);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B02, 0x00);
       b = _mm_mul_ps(b, A);             
-      rC02 = _mm_add_ps(C02, b);
-      b = _mm_movldup_ps(B03);
+      C02 = _mm_add_ps(C02, b);  C22 = _mm_load_ps(pC2+4);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B03, 0x00);
       b = _mm_mul_ps(b, A);             
-      rC03 = _mm_add_ps(C03, b); A = _mm_load_ps(pA1);
+      C03 = _mm_add_ps(C03, b); A = _mm_load_ps(pA1);
 /*
- *    K=0 block, multiply by imaginary B vals
+ *    M=K=0 block, multiply by imaginary B vals
  */
-      b = _mm_movhdup_ps(B00);          /* iB10 iB10 iB00 iB00 */
+      b = (__m128)_mm_shuffle_epi32((__m128i)B00, 0x55); 
+                                        /* iB00 iB00, iB00, iB00 */
       b = _mm_mul_ps(b, a);
-      rC00 = _mm_addsub_ps(C00, b);
-      b = _mm_movhdup_ps(B01); 
+      C00 = _mm_addsub_ps(C00, b);  C23 = _mm_load_ps(pC3+4);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B01, 0x55);
       b = _mm_mul_ps(b, a);             
-      rC01 = _mm_addsub_ps(C01, b);
-      b = _mm_movhdup_ps(B02); 
+      C01 = _mm_addsub_ps(C01, b);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B02, 0x55);
       b = _mm_mul_ps(b, a);             
-      rC02 = _mm_addsub_ps(C02, b);
-      b = _mm_movhdup_ps(B03); 
+      C02 = _mm_addsub_ps(C02, b);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B03, 0x55);
       b = _mm_mul_ps(b, a);             
-      rC03 = _mm_addsub_ps(C03, b); a = _mm_shuffle_epi32((__m128i)A, 0xB1);
+      C03 = _mm_addsub_ps(C03, b); 
+      a = (__m128)_mm_shuffle_epi32((__m128i)A, 0xB1);
+/*
+ *    M=0,K=1, multiply by real B values
+ */
+      b = (__m128)_mm_shuffle_epi32((__m128i)B00, 0xAA); 
+                                                /* rB10 rB10, rB10, rBi0 */
+      b = _mm_mul_ps(b, A);             
+      C00 = _mm_add_ps(C00, b);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B01, 0xAA);
+      b = _mm_mul_ps(b, A);             
+      C01 = _mm_add_ps(C01, b);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B02, 0xAA);
+      b = _mm_mul_ps(b, A);             
+      C02 = _mm_add_ps(C02, b);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B03, 0xAA);
+      b = _mm_mul_ps(b, A);             
+      C03 = _mm_add_ps(C03, b); A = _mm_load_ps(pA0+4);
+/*
+ *    M=0,K=1, multiply by imaginary B values
+ */
+      b = (__m128)_mm_shuffle_epi32((__m128i)B00, 0xFF); 
+                                                /* iB10 iB10, iB10, iB10 */
+      b = _mm_mul_ps(b, a);
+      C00 = _mm_addsub_ps(C00, b); _mm_store_ps(pC0, C00);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B01, 0xFF);
+      b = _mm_mul_ps(b, a);             
+      C01 = _mm_addsub_ps(C01, b); _mm_store_ps(pC1, C01);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B02, 0xFF);
+      b = _mm_mul_ps(b, a);             
+      C02 = _mm_addsub_ps(C02, b); _mm_store_ps(pC2, C02);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B03, 0xFF);
+      b = _mm_mul_ps(b, a);             
+      C03 = _mm_addsub_ps(C03, b); 
+      a = (__m128)_mm_shuffle_epi32((__m128i)A, 0xB1);
+/*
+ *    M=2,K=0 block, multiply by real B vals
+ */
+      b = (__m128)_mm_shuffle_epi32((__m128i)B00, 0x00);
+                                                /* rB00 rB00 rB00 rB00 */
+      b = _mm_mul_ps(b, A);             
+      C20 = _mm_add_ps(C20, b); _mm_store_ps(pC3, C03);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B01, 0x00);
+      b = _mm_mul_ps(b, A);             
+      C21 = _mm_add_ps(C21, b);  C00 = _mm_load_ps(pC0+8);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B02, 0x00);
+      b = _mm_mul_ps(b, A);             
+      C22 = _mm_add_ps(C22, b);  C01 = _mm_load_ps(pC1+8);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B03, 0x00);
+      b = _mm_mul_ps(b, A);             
+      C23 = _mm_add_ps(C23, b); A = _mm_load_ps(pA1+4);
+/*
+ *    M=2,K=0 block, multiply by imaginary B vals
+ */
+      b = (__m128)_mm_shuffle_epi32((__m128i)B00, 0x55);
+                                                /* iB00 iB00, iB00, iB00 */
+      b = _mm_mul_ps(b, a);
+      C20 = _mm_addsub_ps(C20, b);  C02 = _mm_load_ps(pC2+8);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B01, 0x55);
+      b = _mm_mul_ps(b, a);             
+      C21 = _mm_addsub_ps(C21, b);  C03 = _mm_load_ps(pC3+8);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B02, 0x55);
+      b = _mm_mul_ps(b, a);             
+      C22 = _mm_addsub_ps(C22, b);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B03, 0x55);
+      b = _mm_mul_ps(b, a);             
+      C23 = _mm_addsub_ps(C23, b); 
+      a = (__m128)_mm_shuffle_epi32((__m128i)A, 0xB1);
+/*
+ *    M=2, K=1, multiply by real B values
+ */
+      b = (__m128)_mm_shuffle_epi32((__m128i)B00, 0xAA);     
+                                                /* rB10 rB10, rB10, rBi0 */
+      b = _mm_mul_ps(b, A);             
+      C20 = _mm_add_ps(C20, b);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B01, 0xAA);
+      b = _mm_mul_ps(b, A);             
+      C21 = _mm_add_ps(C21, b);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B02, 0xAA);
+      b = _mm_mul_ps(b, A);             
+      C22 = _mm_add_ps(C22, b);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B03, 0xAA);
+      b = _mm_mul_ps(b, A);             
+      C23 = _mm_add_ps(C23, b); A = _mm_load_ps(pA0+8);
+/*
+ *    M=2, K=1, multiply by imaginary B values
+ */
+      b = (__m128)_mm_shuffle_epi32((__m128i)B00, 0xFF);
+                                                /* iB10 iB10, iB10, iB10 */
+      b = _mm_mul_ps(b, a);
+      C20 = _mm_addsub_ps(C20, b);  _mm_store_ps(pC0+4, C20);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B01, 0xFF);
+      b = _mm_mul_ps(b, a);             
+      C21 = _mm_addsub_ps(C21, b);  _mm_store_ps(pC1+4, C21);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B02, 0xFF);
+      b = _mm_mul_ps(b, a);             
+      C22 = _mm_addsub_ps(C22, b);  _mm_store_ps(pC2+4, C22);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B03, 0xFF);
+      b = _mm_mul_ps(b, a);             
+      C23 = _mm_addsub_ps(C23, b);  _mm_store_ps(pC3+4, C23);
+      a = (__m128)_mm_shuffle_epi32((__m128i)A, 0xB1);
    }
+/*
+ * Drain pipe
+ */
+   {
+      register __m128 b;
+/*
+ *    M=K=0 block, multiply by real B vals
+ */
+      b = (__m128)_mm_shuffle_epi32((__m128i)B00, 0x00);
+          /* rB00 rB00 rB00 rB00 */
+      b = _mm_mul_ps(b, A); 
+          /* iA10*rB00 rA10*rB00 iA00*rB00 rA00*rB00 */
+      C00 = _mm_add_ps(C00, b);  
+      b = (__m128)_mm_shuffle_epi32((__m128i)B01, 0x00); 
+      b = _mm_mul_ps(b, A);             
+      C01 = _mm_add_ps(C01, b);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B02, 0x00);
+      b = _mm_mul_ps(b, A);             
+      C02 = _mm_add_ps(C02, b);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B03, 0x00);
+      b = _mm_mul_ps(b, A);             
+      C03 = _mm_add_ps(C03, b); A = _mm_load_ps(pA1);
+/*
+ *    M=K=0 block, multiply by imaginary B vals
+ */
+      /* a = rA10 iA10 rA00 iA00 */
+      b = (__m128)_mm_shuffle_epi32((__m128i)B00, 0x55); 
+                                        /* iB00 iB00, iB00, iB00 */
+      b = _mm_mul_ps(b, a); /* rA10*iB00 iA10*iB00 rA00*iB00 iA00*iB00 */
+      C00 = _mm_addsub_ps(C00, b);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B01, 0x55);
+      b = _mm_mul_ps(b, a);             
+      C01 = _mm_addsub_ps(C01, b);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B02, 0x55);
+      b = _mm_mul_ps(b, a);             
+      C02 = _mm_addsub_ps(C02, b);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B03, 0x55);
+      b = _mm_mul_ps(b, a);             
+      C03 = _mm_addsub_ps(C03, b); 
+      a = (__m128)_mm_shuffle_epi32((__m128i)A, 0xB1);
+/*
+ *    M=0,K=1, multiply by real B values
+ */
+      b = (__m128)_mm_shuffle_epi32((__m128i)B00, 0xAA); 
+                                                /* rB10 rB10, rB10, rB10 */
+      b = _mm_mul_ps(b, A);             
+      C00 = _mm_add_ps(C00, b);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B01, 0xAA);
+      b = _mm_mul_ps(b, A);             
+      C01 = _mm_add_ps(C01, b);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B02, 0xAA);
+      b = _mm_mul_ps(b, A);             
+      C02 = _mm_add_ps(C02, b);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B03, 0xAA);
+      b = _mm_mul_ps(b, A);             
+      C03 = _mm_add_ps(C03, b);
+/*
+ *    M=0,K=1, multiply by imaginary B values
+ */
+      b = (__m128)_mm_shuffle_epi32((__m128i)B00, 0xFF); 
+                                                /* iB10 iB10, iB10, iB10 */
+      b = _mm_mul_ps(b, a);
+      C00 = _mm_addsub_ps(C00, b); _mm_store_ps(pC0, C00);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B01, 0xFF);
+      b = _mm_mul_ps(b, a);             
+      C01 = _mm_addsub_ps(C01, b); _mm_store_ps(pC1, C01);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B02, 0xFF);
+      b = _mm_mul_ps(b, a);             
+      C02 = _mm_addsub_ps(C02, b); _mm_store_ps(pC2, C02);
+      b = (__m128)_mm_shuffle_epi32((__m128i)B03, 0xFF);
+      b = _mm_mul_ps(b, a);             
+      C03 = _mm_addsub_ps(C03, b);  _mm_store_ps(pC3, C03);
+/*
+ *    M=2,K=0 block, multiply by real B vals
+ */
+      if (!(M&2))
+      {
+         A = _mm_load_ps(pA0+4);
+         a = (__m128)_mm_shuffle_epi32((__m128i)A, 0xB1);
+         C20 = _mm_load_ps(pC0+4);
+         C21 = _mm_load_ps(pC1+4);
+         b = (__m128)_mm_shuffle_epi32((__m128i)B00, 0x00);
+         C22 = _mm_load_ps(pC2+4);
+         C23 = _mm_load_ps(pC3+4); 
+                                                   /* rB00 rB00 rB00 rB00 */
+         b = _mm_mul_ps(b, A);             
+         C20 = _mm_add_ps(C20, b);
+         b = (__m128)_mm_shuffle_epi32((__m128i)B01, 0x00);
+         b = _mm_mul_ps(b, A);             
+         C21 = _mm_add_ps(C21, b); 
+         b = (__m128)_mm_shuffle_epi32((__m128i)B02, 0x00);
+         b = _mm_mul_ps(b, A);             
+         C22 = _mm_add_ps(C22, b);
+         b = (__m128)_mm_shuffle_epi32((__m128i)B03, 0x00);
+         b = _mm_mul_ps(b, A);             
+         C23 = _mm_add_ps(C23, b); A = _mm_load_ps(pA1+4);
+/*
+ *       M=2,K=0 block, multiply by imaginary B vals
+ */
+         b = (__m128)_mm_shuffle_epi32((__m128i)B00, 0x55);
+                                                   /* iB00 iB00, iB00, iB00 */
+         b = _mm_mul_ps(b, a);
+         C20 = _mm_addsub_ps(C20, b);
+         b = (__m128)_mm_shuffle_epi32((__m128i)B01, 0x55);
+         b = _mm_mul_ps(b, a);             
+         C21 = _mm_addsub_ps(C21, b);
+         b = (__m128)_mm_shuffle_epi32((__m128i)B02, 0x55);
+         b = _mm_mul_ps(b, a);             
+         C22 = _mm_addsub_ps(C22, b);
+         b = (__m128)_mm_shuffle_epi32((__m128i)B03, 0x55);
+         b = _mm_mul_ps(b, a);             
+         C23 = _mm_addsub_ps(C23, b); 
+         a = (__m128)_mm_shuffle_epi32((__m128i)A, 0xB1);
+/*
+ *       M=2, K=1, multiply by real B values
+ */
+         b = (__m128)_mm_shuffle_epi32((__m128i)B00, 0xAA);     
+                                                   /* rB10 rB10, rB10, rBi0 */
+         b = _mm_mul_ps(b, A);             
+         C20 = _mm_add_ps(C20, b);
+         b = (__m128)_mm_shuffle_epi32((__m128i)B01, 0xAA);
+         b = _mm_mul_ps(b, A);             
+         C21 = _mm_add_ps(C21, b);
+         b = (__m128)_mm_shuffle_epi32((__m128i)B02, 0xAA);
+         b = _mm_mul_ps(b, A);             
+         C22 = _mm_add_ps(C22, b);
+         b = (__m128)_mm_shuffle_epi32((__m128i)B03, 0xAA);
+         b = _mm_mul_ps(b, A);             
+         C23 = _mm_add_ps(C23, b);
+/*
+ *       M=2, K=1, multiply by imaginary B values
+ */
+         b = (__m128)_mm_shuffle_epi32((__m128i)B00, 0xFF);
+                                                   /* iB10 iB10, iB10, iB10 */
+         b = _mm_mul_ps(b, a);
+         C20 = _mm_addsub_ps(C20, b);  _mm_store_ps(pC0+4, C20);
+         b = (__m128)_mm_shuffle_epi32((__m128i)B01, 0xFF);
+         b = _mm_mul_ps(b, a);             
+         C21 = _mm_addsub_ps(C21, b);  _mm_store_ps(pC1+4, C21);
+         b = (__m128)_mm_shuffle_epi32((__m128i)B02, 0xFF);
+         b = _mm_mul_ps(b, a);             
+         C22 = _mm_addsub_ps(C22, b);  _mm_store_ps(pC2+4, C22);
+         b = (__m128)_mm_shuffle_epi32((__m128i)B03, 0xFF);
+         b = _mm_mul_ps(b, a);             
+         C23 = _mm_addsub_ps(C23, b);  _mm_store_ps(pC3+4, C23);
+         a = (__m128)_mm_shuffle_epi32((__m128i)A, 0xB1);
+      }
+   }
+}
 #else   /* 32 register version goes here */
    #define NRHS 3
    #define TRU  1   /* this kernel requires no padding */
@@ -606,6 +861,104 @@ ATL_SINLINE void ATL_trsmL2(const TYPE *L, ATL_CINT ldl, TYPE *B, ATL_CINT ldb0)
    B[ldb+3]  = rB11*iL11 + iB11*rL11;
    B[ldb2+2] = rB12*rL11 - iB12*iL11;
    B[ldb2+3] = iB12 = rB12*iL11 + iB12*rL11;
+}
+#elif NRHS == 4
+/* 
+ * Solve 2x2 L with 4 RHS symbolically for complex arithmetic; 
+ * Diagonal elements have already been inverted
+ */
+ATL_SINLINE void ATL_trsmU2(const TYPE *U, ATL_CINT ldu, TYPE *B, ATL_CINT ldb)
+{
+   ATL_CINT ldU=ldu+ldu, ldB = ldb+ldb, ldB2=(ldb<<2), ldB3=ldB+ldB2;
+   const RTYPE rU00=(*U), iU00=U[1], rU01=U[ldU], iU01=U[ldU+1];
+   const RTYPE rU11=U[ldU+2], iU11 = U[ldU+3];
+   RTYPE rB00=(*B), iB00=B[1], rB10=B[2], iB10=B[3];
+   RTYPE rB01=B[ldB], iB01=B[ldB+1], rB11=B[ldB+2], iB11=B[ldB+3];
+   RTYPE rB02=B[ldB2], iB02=B[ldB2+1], rB12=B[ldB2+2], iB12=B[ldB2+3];
+   RTYPE rB03=B[ldB3], iB03=B[ldB3+1], rB13=B[ldB3+2], iB13=B[ldB3+3];
+   RTYPE rX;
+/*
+ * x1 = b1 / U11;  U11 is recipricol, so solve x1 = b1 * U11;
+ */
+   B[2] = rX = rB10 * rU11 - iB10 * iU11;
+   B[3] = iB10 = rB10 * iU11 + iB10 * rU11; rB10 = rX;
+   B[ldB+2] = rX = rB11 * rU11 - iB11 * iU11;
+   B[ldB+3] = iB11 = rB11 * iU11 + iB11 * rU11; rB11 = rX;
+   B[ldB2+2] = rX = rB12 * rU11 - iB12 * iU11;
+   B[ldB2+3] = iB12 = rB12 * iU11 + iB12 * rU11; rB12 = rX;
+   B[ldB3+2] = rX = rB13 * rU11 - iB13 * iU11;
+   B[ldB3+3] = iB13 = rB13 * iU11 + iB13 * rU11; rB13 = rX;
+/*
+ * x0 = (b0 - U01*x1) / U00, do x0 = (b0 - U01*x1) first
+ */
+   rB00 = rB00 - rU01*rB10 + iU01*iB10;
+   iB00 = iB00 - rU01*iB10 - iU01*rB10;
+   rB01 = rB01 - rU01*rB11 + iU01*iB11;
+   iB01 = iB01 - rU01*iB11 - iU01*rB11;
+   rB02 = rB02 - rU01*rB12 + iU01*iB12;
+   iB02 = iB02 - rU01*iB12 - iU01*rB12;
+   rB03 = rB03 - rU01*rB13 + iU01*iB13;
+   iB03 = iB03 - rU01*iB13 - iU01*rB13;
+/*
+ * Finish x0 = (b0 - U01*x1) / U00 by multiplying by U00 (1/U00)
+ */
+   *B = rB00 * rU00 - iB00 * iU00;
+   B[1] = rB00 * iU00 + iB00 * rU00;
+   B[ldB]   = rB01 * rU00 - iB01 * iU00;
+   B[ldB+1] = rB01 * iU00 + iB01 * rU00;
+   B[ldB2]   = rB02 * rU00 - iB02 * iU00;
+   B[ldB2+1] = rB02 * iU00 + iB02 * rU00;
+   B[ldB3]   = rB03 * rU00 - iB03 * iU00;
+   B[ldB3+1] = rB03 * iU00 + iB03 * rU00;
+}
+
+/* 
+ * Solve 2x2 L with 4 RHS symbolically for complex arithmetic; 
+ * Diagonal elements have already been inverted
+ */
+ATL_SINLINE void ATL_trsmL2(const TYPE *L, ATL_CINT ldl, TYPE *B, ATL_CINT ldb0)
+{
+   const RTYPE rL00=(*L), iL00=L[1], rL10=L[2], iL10=L[3], 
+               rL11=L[ldl+ldl+2], iL11=L[ldl+ldl+3];
+   ATL_CINT ldb=ldb0+ldb0, ldb2=(ldb0<<2), ldb3=ldb+ldb2;
+   RTYPE rB00=(*B), iB00=B[1], rB10=B[2], iB10=B[3];
+   RTYPE rB01=B[ldb], iB01=B[ldb+1], rB11=B[ldb+2], iB11=B[ldb+3];
+   RTYPE rB02=B[ldb2], iB02=B[ldb2+1], rB12=B[ldb2+2], iB12=B[ldb2+3];
+   RTYPE rB03=B[ldb3], iB03=B[ldb3+1], rB13=B[ldb3+2], iB13=B[ldb3+3];
+   RTYPE rX;
+/*
+ * x0 = b0 / L00 
+ */
+   *B        = rX = rB00*rL00 - iB00*iL00;
+   B[1]      = iB00 = rB00*iL00 + iB00*rL00; rB00 = rX;
+   B[ldb]    = rX = rB01*rL00 - iB01*iL00;
+   B[ldb+1]  = iB01 = rB01*iL00 + iB01*rL00; rB01 = rX;
+   B[ldb2]   = rX = rB02*rL00 - iB02*iL00;
+   B[ldb2+1] = iB02 = rB02*iL00 + iB02*rL00; rB02 = rX;
+   B[ldb3]   = rX = rB03*rL00 - iB03*iL00;
+   B[ldb3+1] = iB03 = rB03*iL00 + iB03*rL00; rB03 = rX;
+/*
+ * x1 = (b1 - L10 * x0)  [divide by diagonal in next step]
+ */
+   rB10 = (rB10 - rL10*rB00 + iL10*iB00);
+   iB10 = (iB10 - rL10*iB00 - iL10*rB00);
+   rB11 = (rB11 - rL10*rB01 + iL10*iB01);
+   iB11 = (iB11 - rL10*iB01 - iL10*rB01);
+   rB12 = (rB12 - rL10*rB02 + iL10*iB02);
+   iB12 = (iB12 - rL10*iB02 - iL10*rB02);
+   rB13 = (rB13 - rL10*rB03 + iL10*iB03);
+   iB13 = (iB13 - rL10*iB03 - iL10*rB03);
+/*
+ * Mult by recipricol of L11 to finish x1 = (b1 - L10 * x0)/L11.
+ */
+   B[2]      = rB10*rL11 - iB10*iL11;
+   B[3]      = rB10*iL11 + iB10*rL11;
+   B[ldb+2]  = rB11*rL11 - iB11*iL11;
+   B[ldb+3]  = rB11*iL11 + iB11*rL11;
+   B[ldb2+2] = rB12*rL11 - iB12*iL11;
+   B[ldb2+3] = iB12 = rB12*iL11 + iB12*rL11;
+   B[ldb3+2] = rB13*rL11 - iB13*iL11;
+   B[ldb3+3] = iB13 = rB13*iL11 + iB13*rL11;
 }
 #endif
 
