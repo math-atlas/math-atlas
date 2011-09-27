@@ -267,6 +267,293 @@ ATL_SINLINE void ATL_rk2(ATL_CINT M, const TYPE *pA0, ATL_CINT lda0,
       }
    }
 }
+#elif defined(ATL_SSE3) && defined(DCPLX)
+   #define NRHS 3
+   #define TRU 1
+   #include <xmmintrin.h>
+   #include <pmmintrin.h>
+/*
+ * Subtract off x0 & x1 contribution to all remaining equations using a
+ * rank-2 update with mu=2, nu=4, ku=2.  This version is for 16 SSE regs.
+ * nu is the # of RHS, ku is the number of equations solved, and mu is 
+ * unrolled only to enable vectorization & software pipelining of load/use.
+ * Loop order is MKN, so that B is kept completely in registers, and
+ * C and A are streamed in (and out, for C) from cache during the operation.
+ */
+ATL_SINLINE void ATL_rk2(ATL_CINT M, const TYPE *pA0, ATL_CINT lda0, 
+                           TYPE *pB0, ATL_CINT ldb0, TYPE *C, ATL_CINT ldc0) 
+{
+   ATL_CINT lda=lda0+lda0, ldb=ldb0+ldb0, ldc=ldc0+ldc0;
+   const TYPE *pA1 = pA0+lda;
+   const TYPE none = ATL_rnone;
+   TYPE *pC0 = C, *pC1 = C+ldc, *pC2 = C+((ldc)<<1);
+   ATL_INT i;
+   ATL_CINT MM = (M&1) ? M-1 : M-2;
+   register __m128d B00, B10, B01, B11, B02, B12;
+   register __m128d C00, C01, C02, C10, C11, C12;
+   register __m128d A, a;
+
+   A = _mm_loaddup_pd(&none);
+   B00 = _mm_load_pd(pB0);
+   B00 = _mm_mul_pd(B00, A);         
+   B10 = _mm_load_pd(pB0+2);
+   B10 = _mm_mul_pd(B10, A);         
+   B01 = _mm_load_pd(pB0+ldb);
+   B01 = _mm_mul_pd(B01, A);         
+   B11 = _mm_load_pd(pB0+ldb+2);
+   B11 = _mm_mul_pd(B11, A);         
+   B02 = _mm_load_pd(pB0+ldb+ldb);
+   B02 = _mm_mul_pd(B02, A);
+   B12 = _mm_load_pd(pB0+ldb+ldb+2);    	/* iB12, rB12 */
+   B12 = _mm_mul_pd(B12, A);
+
+
+   C00 = _mm_load_pd(pC0);
+   C01 = _mm_load_pd(pC1);
+   C02 = _mm_load_pd(pC2);
+   A = _mm_load_pd(pA0);                		/* iA00, rA00 */
+   for (i=0; i < MM; i += 2, pA0 += 4, pA1 += 4, pC0 += 4, pC1 += 4, pC2 += 4)
+   {
+      register __m128d b;
+/*
+ *    K=0, M=[0,1], apply real components of B0x
+ */
+      b = _mm_movedup_pd(B00);			/* rB00,      rB00 */
+      b = _mm_mul_pd(b, A);                     /* iA00*rB00, rA00*rB00 */
+      C00 = _mm_add_pd(C00, b);
+         a = (__m128d)_mm_shuffle_epi32((__m128i)A, 0x4E);  	/* rA00, iA00 */
+      b = _mm_movedup_pd(B01);	
+      b = _mm_mul_pd(b, A);    
+      C01 = _mm_add_pd(C01, b);
+         C10 = _mm_load_pd(pC0+2);
+      b = _mm_movedup_pd(B02);	
+      b = _mm_mul_pd(b, A);    
+      C02 = _mm_add_pd(C02, b);
+         A = _mm_load_pd(pA1);                		/* iA01, rA01 */
+/*
+ *    K=0, M=0, apply imaginary components of B0x
+ */
+      b = (__m128d)_mm_shuffle_epi32((__m128i)B00, 0xEE); /* iB00, iB00 */
+      b = _mm_mul_pd(b, a);                     /* rA00*iB00, iA00*iB00 */
+      C00 = _mm_addsub_pd(C00, b);
+         C11 = _mm_load_pd(pC1+2);
+      b = (__m128d)_mm_shuffle_epi32((__m128i)B01, 0xEE); 
+      b = _mm_mul_pd(b, a);                     
+      C01 = _mm_addsub_pd(C01, b);
+         C12 = _mm_load_pd(pC2+2);
+      b = (__m128d)_mm_shuffle_epi32((__m128i)B02, 0xEE); 
+      b = _mm_mul_pd(b, a);                     
+      C02 = _mm_addsub_pd(C02, b);
+/*
+ *    K=1, M=0, apply real components of B1x
+ */
+      b = _mm_movedup_pd(B10);			/* rB10,      rB10 */
+      b = _mm_mul_pd(b, A);                     /* iA01*rB10, rA01*rB10 */
+      C00 = _mm_add_pd(C00, b);
+      a = (__m128d)_mm_shuffle_epi32((__m128i)A, 0x4E);  	/* rA01, iA01 */
+      b = _mm_movedup_pd(B11);	
+      b = _mm_mul_pd(b, A);    
+      C01 = _mm_add_pd(C01, b);
+      b = _mm_movedup_pd(B12);	
+      b = _mm_mul_pd(b, A);    
+      C02 = _mm_add_pd(C02, b);
+         A = _mm_load_pd(pA0+2);                /* iA10, rA10 */
+/*
+ *    K=1, M=0, apply imaginary components of B1x
+ */
+      b = (__m128d)_mm_shuffle_epi32((__m128i)B10, 0xEE); /* iB10, iB10 */
+      b = _mm_mul_pd(b, a);                     /* rA01*iB10, iA01*iB10 */
+      C00 = _mm_addsub_pd(C00, b);
+         _mm_store_pd(pC0, C00);   
+      b = (__m128d)_mm_shuffle_epi32((__m128i)B11, 0xEE); 
+      b = _mm_mul_pd(b, a);                     
+      C01 = _mm_addsub_pd(C01, b);
+         _mm_store_pd(pC1, C01);   
+      b = (__m128d)_mm_shuffle_epi32((__m128i)B12, 0xEE); 
+      b = _mm_mul_pd(b, a);                     
+      C02 = _mm_addsub_pd(C02, b);
+         _mm_store_pd(pC2, C02);   
+/*
+ *    K=0, M=1, apply real components of B0x
+ */
+      b = _mm_movedup_pd(B00);			/* rB00,      rB00 */
+      b = _mm_mul_pd(b, A);                     /* iA10*rB00, rA10*rB00 */
+      C10 = _mm_add_pd(C10, b);
+         a = (__m128d)_mm_shuffle_epi32((__m128i)A, 0x4E);  	/* rA10, iA10 */
+      b = _mm_movedup_pd(B01);	
+      b = _mm_mul_pd(b, A);    
+      C11 = _mm_add_pd(C11, b);
+         C00 = _mm_load_pd(pC0+4);
+      b = _mm_movedup_pd(B02);	
+      b = _mm_mul_pd(b, A);    
+      C12 = _mm_add_pd(C12, b);
+         A = _mm_load_pd(pA1+2);               		/* iA11, rA11 */
+/*
+ *    K=0, M=1, apply imaginary components of B0x
+ */
+      b = (__m128d)_mm_shuffle_epi32((__m128i)B00, 0xEE); /* iB00, iB00 */
+      b = _mm_mul_pd(b, a);                     /* rA10*iB00, iA10*iB00 */
+      C10 = _mm_addsub_pd(C10, b);
+         C01 = _mm_load_pd(pC1+4);
+      b = (__m128d)_mm_shuffle_epi32((__m128i)B01, 0xEE); 
+      b = _mm_mul_pd(b, a);                     
+      C11 = _mm_addsub_pd(C11, b);
+         C02 = _mm_load_pd(pC2+4);
+      b = (__m128d)_mm_shuffle_epi32((__m128i)B02, 0xEE); 
+      b = _mm_mul_pd(b, a);                     
+      C12 = _mm_addsub_pd(C12, b);
+/*
+ *    K=1, M=1, apply real components of B1x
+ */
+      b = _mm_movedup_pd(B10);			/* rB10,      rB10 */
+      b = _mm_mul_pd(b, A);                     /* iA11*rB10, rA11*rB10 */
+      C10 = _mm_add_pd(C10, b);
+      a = (__m128d)_mm_shuffle_epi32((__m128i)A, 0x4E);  	/* rA11, iA11 */
+      b = _mm_movedup_pd(B11);	
+      b = _mm_mul_pd(b, A);    
+      C11 = _mm_add_pd(C11, b);
+      b = _mm_movedup_pd(B12);	
+      b = _mm_mul_pd(b, A);    
+      C12 = _mm_add_pd(C12, b);
+         A = _mm_load_pd(pA0+4);               		/* iA20, rA20 */
+/*
+ *    K=1, M=1, apply imaginary components of B1x
+ */
+      b = (__m128d)_mm_shuffle_epi32((__m128i)B10, 0xEE); /* iB10, iB10 */
+      b = _mm_mul_pd(b, a);                     /* rA11*iB10, iA11*iB10 */
+      C10 = _mm_addsub_pd(C10, b);
+         _mm_store_pd(pC0+2, C10);   
+      b = (__m128d)_mm_shuffle_epi32((__m128i)B11, 0xEE); 
+      b = _mm_mul_pd(b, a);                     
+      C11 = _mm_addsub_pd(C11, b);
+         _mm_store_pd(pC1+2, C11);   
+      b = (__m128d)_mm_shuffle_epi32((__m128i)B12, 0xEE); 
+      b = _mm_mul_pd(b, a);                     
+      C12 = _mm_addsub_pd(C12, b);
+         _mm_store_pd(pC2+2, C12);   
+   }
+/*
+ * Drain pipes
+ */
+   {
+      register __m128d b;
+/*
+ *    K=0, M=[0,1], apply real components of B0x
+ */
+      b = _mm_movedup_pd(B00);			/* rB00,      rB00 */
+      b = _mm_mul_pd(b, A);                     /* iA00*rB00, rA00*rB00 */
+      C00 = _mm_add_pd(C00, b);
+         a = (__m128d)_mm_shuffle_epi32((__m128i)A, 0x4E);  	/* rA00, iA00 */
+      b = _mm_movedup_pd(B01);	
+      b = _mm_mul_pd(b, A);    
+      C01 = _mm_add_pd(C01, b);
+      b = _mm_movedup_pd(B02);	
+      b = _mm_mul_pd(b, A);    
+      C02 = _mm_add_pd(C02, b);
+         A = _mm_load_pd(pA1);                		/* iA01, rA01 */
+/*
+ *    K=0, M=0, apply imaginary components of B0x
+ */
+      b = (__m128d)_mm_shuffle_epi32((__m128i)B00, 0xEE); /* iB00, iB00 */
+      b = _mm_mul_pd(b, a);                     /* rA00*iB00, iA00*iB00 */
+      C00 = _mm_addsub_pd(C00, b);
+      b = (__m128d)_mm_shuffle_epi32((__m128i)B01, 0xEE); 
+      b = _mm_mul_pd(b, a);                     
+      C01 = _mm_addsub_pd(C01, b);
+      b = (__m128d)_mm_shuffle_epi32((__m128i)B02, 0xEE); 
+      b = _mm_mul_pd(b, a);                     
+      C02 = _mm_addsub_pd(C02, b);
+/*
+ *    K=1, M=0, apply real components of B1x
+ */
+      b = _mm_movedup_pd(B10);			/* rB10,      rB10 */
+      b = _mm_mul_pd(b, A);                     /* iA01*rB10, rA01*rB10 */
+      C00 = _mm_add_pd(C00, b);
+      a = (__m128d)_mm_shuffle_epi32((__m128i)A, 0x4E);  	/* rA01, iA01 */
+      b = _mm_movedup_pd(B11);	
+      b = _mm_mul_pd(b, A);    
+      C01 = _mm_add_pd(C01, b);
+      b = _mm_movedup_pd(B12);	
+      b = _mm_mul_pd(b, A);    
+      C02 = _mm_add_pd(C02, b);
+/*
+ *    K=1, M=0, apply imaginary components of B1x
+ */
+      b = (__m128d)_mm_shuffle_epi32((__m128i)B10, 0xEE); /* iB10, iB10 */
+      b = _mm_mul_pd(b, a);                     /* rA01*iB10, iA01*iB10 */
+      C00 = _mm_addsub_pd(C00, b);
+         _mm_store_pd(pC0, C00);   
+      b = (__m128d)_mm_shuffle_epi32((__m128i)B11, 0xEE); 
+      b = _mm_mul_pd(b, a);                     
+      C01 = _mm_addsub_pd(C01, b);
+         _mm_store_pd(pC1, C01);   
+      b = (__m128d)_mm_shuffle_epi32((__m128i)B12, 0xEE); 
+      b = _mm_mul_pd(b, a);                     
+      C02 = _mm_addsub_pd(C02, b);
+         _mm_store_pd(pC2, C02);   
+      if (!(M&1))
+      {
+         C10 = _mm_load_pd(pC0+2);
+         C11 = _mm_load_pd(pC1+2);
+         C12 = _mm_load_pd(pC2+2);
+         A = _mm_load_pd(pA0+2);                /* iA10, rA10 */
+/*
+ *       K=0, M=1, apply real components of B0x
+ */
+         b = _mm_movedup_pd(B00);			/* rB00,      rB00 */
+         b = _mm_mul_pd(b, A);                     /* iA10*rB00, rA10*rB00 */
+         C10 = _mm_add_pd(C10, b);
+            a = (__m128d)_mm_shuffle_epi32((__m128i)A, 0x4E);  	/* rA10, iA10 */
+         b = _mm_movedup_pd(B01);	
+         b = _mm_mul_pd(b, A);    
+         C11 = _mm_add_pd(C11, b);
+         b = _mm_movedup_pd(B02);	
+         b = _mm_mul_pd(b, A);    
+         C12 = _mm_add_pd(C12, b);
+            A = _mm_load_pd(pA1+2);               		/* iA11, rA11 */
+/*
+ *       K=0, M=1, apply imaginary components of B0x
+ */
+         b = (__m128d)_mm_shuffle_epi32((__m128i)B00, 0xEE); /* iB00, iB00 */
+         b = _mm_mul_pd(b, a);                     /* rA10*iB00, iA10*iB00 */
+         C10 = _mm_addsub_pd(C10, b);
+         b = (__m128d)_mm_shuffle_epi32((__m128i)B01, 0xEE); 
+         b = _mm_mul_pd(b, a);                     
+         C11 = _mm_addsub_pd(C11, b);
+         b = (__m128d)_mm_shuffle_epi32((__m128i)B02, 0xEE); 
+         b = _mm_mul_pd(b, a);                     
+         C12 = _mm_addsub_pd(C12, b);
+/*
+ *       K=1, M=1, apply real components of B1x
+ */
+         b = _mm_movedup_pd(B10);			/* rB10,      rB10 */
+         b = _mm_mul_pd(b, A);                     /* iA11*rB10, rA11*rB10 */
+         C10 = _mm_add_pd(C10, b);
+         a = (__m128d)_mm_shuffle_epi32((__m128i)A, 0x4E);  	/* rA11, iA11 */
+         b = _mm_movedup_pd(B11);	
+         b = _mm_mul_pd(b, A);    
+         C11 = _mm_add_pd(C11, b);
+         b = _mm_movedup_pd(B12);	
+         b = _mm_mul_pd(b, A);    
+         C12 = _mm_add_pd(C12, b);
+/*
+ *       K=1, M=1, apply imaginary components of B1x
+ */
+         b = (__m128d)_mm_shuffle_epi32((__m128i)B10, 0xEE); /* iB10, iB10 */
+         b = _mm_mul_pd(b, a);                     /* rA11*iB10, iA11*iB10 */
+         C10 = _mm_addsub_pd(C10, b);
+            _mm_store_pd(pC0+2, C10);   
+         b = (__m128d)_mm_shuffle_epi32((__m128i)B11, 0xEE); 
+         b = _mm_mul_pd(b, a);                     
+         C11 = _mm_addsub_pd(C11, b);
+            _mm_store_pd(pC1+2, C11);   
+         b = (__m128d)_mm_shuffle_epi32((__m128i)B12, 0xEE); 
+         b = _mm_mul_pd(b, a);                     
+         C12 = _mm_addsub_pd(C12, b);
+            _mm_store_pd(pC2+2, C12);   
+      }
+   }
+}
 #elif defined(ATL_SSE3) && defined(SCPLX)
    #define NRHS 4
    #define TRU  4
@@ -778,6 +1065,81 @@ ATL_SINLINE void ATL_rk2(ATL_CINT M, const TYPE *pA0, ATL_CINT lda0,
 }
 #endif
 
+@ROUT ATL_ctrsmKR_rk2
+#if (NRHS <= 4 && NRHS >= 2)
+#endif
+/* 
+ * Solve 2x2 L with NRHS RHS symbolically for complex arithmetic; 
+ * Diagonal elements have already been inverted
+ */
+ATL_SINLINE void ATL_trsmL2(const TYPE *L, ATL_CINT ldl, TYPE *B, ATL_CINT ldb)
+{
+   ATL_CINT ldL=ldl+ldl, ldB = ldb+ldb;
+   #if NRHS > 2
+      TYPE *B2 = B + ldB+ldB;
+   #endif
+   const RTYPE rL00=(*L), iL00=L[1], rL10=L[2], iL10=L[3];
+   const RTYPE rL11=L[ldL+2], iL11 = L[ldL+3];
+   RTYPE rB00=(*B), iB00=B[1], rB10=B[2], iB10=B[3];
+   RTYPE rB01=B[ldB], iB01=B[ldB+1], rB11=B[ldB+2], iB11=B[ldB+3];
+   #if NRHS > 2
+      RTYPE rB02=(*B2), iB02=B2[1], rB12=B2[2], iB12=B2[3];
+   #endif
+   #if NRHS > 3
+      RTYPE rB02=B2[ldB], iB02=B2[ldB+1], rB12=B2[ldB+2], iB12=B2[ldB+3];
+   #endif
+   RTYPE rX;
+
+/*
+ * x1 = b1 / L11  --> x1 = b1 * (1/L11)
+ */
+   B[2] = rX = rB10 * rL11 - iB10 * iL11;
+   B[3] = iB10 = rB10 * iL11 + iB10 * rL11;   rB10 = rX;
+   rX = rB11 * rL11 - iB11 * iL11;
+   iB11 = rB11 * iL11 + iB11 * rL11;   rB11 = rX;
+   #if NRHS > 2
+      B2[2] = rX = rB12 * rL11 - iB12 * iL11;
+      B2[3] = iB12 = rB12 * iL11 + iB12 * rL11;   rB12 = rX;
+   #endif
+   #if NRHS > 3
+      B2[ldB+2] = rX = rB13 * rL11 - iB13 * iL11;
+      B2[ldB+3] = iB13 = rB13 * iL11 + iB13 * rL11;   rB13 = rX;
+   #endif
+/*
+ * X0 = B0 - x1*L10 (do /L00 later)
+ */
+   rX   = rB00 - rB10*rL10 + iB10*iL10;
+   iB00 = iB00 - rB10*iL10 - iB10*rL10;   rB00 = rX;
+   rX   = rB01 - rB11*rL10 + iB11*iL10;
+   iB01 = iB01 - rB11*iL10 - iB11*rL10;   rB01 = rX;
+   #if NRHS > 2
+      rX   = rB02 - rB12*rL10 + iB12*iL10;
+      iB02 = iB02 - rB12*iL10 - iB12*rL10;   rB02 = rX;
+   #endif
+   #if NRHS > 3
+      rX   = rB03 - rB13*rL10 + iB30*iL10;
+      iB03 = iB03 - rB13*iL10 - iB30*rL10;   rB03 = rX;
+   #endif
+/*
+ * Apply X0 = (1/L00)*X0 to form X0 = (B0 - X1*L10)/L00
+ */
+   *B = rB00 * rL00 - iB00*iL00;
+   B[1] = rB00 * iL00 + iB00*rL00;
+   B[ldB] = rB01 * rL00 - iB01*iL00;
+   B[ldB+1] = rB01 * iL00 + iB01*rL00;
+   #if NRHS > 2
+      *B2 = rB02 * rL00 - iB02*iL00;
+      B2[1] = rB02 * iL00 + iB02*rL00;
+   #endif
+   #if NRHS > 3
+      B2[ldB] = rB03 * rL00 - iB03*iL00;
+      B2[ldB+1] = rB03 * iL00 + iB03*rL00;
+   #endif
+}
+ATL_SINLINE void ATL_trsmU2(const TYPE *L, ATL_CINT ldl, TYPE *B, ATL_CINT ldb)
+{
+}
+@ROUT ATL_ctrsmKL_rk2
 #if NRHS == 3
 /* 
  * Solve 2x2 L with 3 RHS symbolically for complex arithmetic; 
@@ -2851,7 +3213,123 @@ static void ATL_trsmRUN
       }     /* end k-loop that loops through L */
    }        /* end j-loop over RHS */
 }           /* end routine */
-@ROUT ATL_ctrsmKL_rk2
+@ROUT ATL_ctrsmKR_rk2
+static void ATL_trsmRLN
+(
+   ATL_CINT  M,   /* size of orig triangular matrix A */
+   ATL_CINT  N,   /* number of RHS in B */
+   const TYPE *A, /* McxMc lower matrix A, diag has inverse of original diag */
+   TYPE *W        /* McxN, on input padded B, on output, padded X */
+)
+{
+   int j;
+   ATL_CINT Mc = ((M+TRU-1)/TRU)*TRU, Mc2=Mc+Mc;
+
+/*
+ * Loop over RHS, NRHS RHS at a time
+ */
+   for (j=0; j < N; j += NRHS, W += NRHS*Mc2)
+   {
+      const int nb = Mmin(NRHS, N-j);
+      int k, i;
+      TYPE *w = W;
+      const TYPE *a;
+/*
+ *    Completely solve these RHSs by looping over entire triangular matrix
+ */
+      w = W;
+      a = A;
+      for (k=0; k < M; k += 2, w += 4, a += (Mc+1)<<2)
+      {
+         ATL_CINT mr = Mmin(4,M-k);
+/*
+ *       Solve M=2 NRHS=NRHS TRSM symbolically
+ */
+         ATL_trsmL2(a, Mc, w, Mc);
+/*
+ *       Subtract off x0,x1 contribution from rest of B using rank-2 update
+ */
+	 if (M-k-2 > 0)
+            ATL_rk2(M-k-2, a+4, Mc, w, Mc, w+4, Mc);
+      }     /* end k-loop that loops through L */
+   }        /* end j-loop over RHS */
+}           /* end routine */
+
+static void ATL_trsmRUN
+(
+   ATL_CINT  M,         /* size of orig triangular matrix A */
+   ATL_CINT  N,         /* number of RHS in W */
+   const TYPE *A,       /* M4xM4 Upper matrix A, diag is inverted */
+   TYPE *W              /* M4xN workspace with good alignment */
+)
+{
+@beginskip
+   int j;
+   ATL_CINT M4 = ((M+3)>>2)<<2, mr = M4-M;
+/*
+ * Loop over RHS, NRHS RHS at a time
+ */
+   for (j=0; j < N; j += NRHS, W += NRHS*M4)
+   {
+      const int nb = Mmin(NRHS, N-j);
+      int k, i;
+      TYPE *w = W;
+      const TYPE *Ac = A + (M4-4)*M4, *a = Ac + M4-4;
+/*
+ *    Completely solve these RHSs by looping over entire triangular matrix
+ */
+      w = W + M4-4;
+      for (k=0; k < M; k += 4, w -= 4, a -= (M4+1)<<2, Ac -= M4<<2)
+      {
+         ATL_CINT mr = Mmin(4,M-k);
+         RTYPE rB00 = *w, rB10=w[1], rB20=w[2], rB30=w[3];
+         RTYPE rB01=w[M4], rB11=w[M4+1], rB21=w[M4+2], rB31=w[M4+3];
+         #if NRHS > 2
+            RTYPE rB02=w[2*M4],rB12=w[2*M4+1],rB22=w[2*M4+2],rB32=w[2*M4+3];
+         #endif
+         #if NRHS > 3
+            RTYPE rB03=w[3*M4],rB13=w[3*M4+1],rB23=w[3*M4+2],rB33=w[3*M4+3];
+         #endif
+/*
+ *       Solve M=4 NRHS=4 TRSM symbolically
+ */
+         ATL_trsmU4(a, M4, w, M4);
+/*
+ *       Store solved 4xNRHS elts of X to workspace
+ */
+         *w = rB00;
+         w[1] = rB10;
+         w[2] = rB20;
+         w[3] = rB30;
+         w[M4] = rB01;
+         w[M4+1] = rB11;
+         w[M4+2] = rB21;
+         w[M4+3] = rB31;
+         #if NRHS > 2
+            w[2*M4] = rB02;
+            w[2*M4+1] = rB12;
+            w[2*M4+2] = rB22;
+            w[2*M4+3] = rB32;
+         #endif
+         #if NRHS > 3
+            w[3*M4] = rB03;
+            w[3*M4+1] = rB13;
+            w[3*M4+2] = rB23;
+            w[3*M4+3] = rB33;
+         #endif
+/*
+ *       Subtract off x0-x4 contribution from rest of B using rank-4 update
+ */
+         #if ATL_BINWRK
+            ATL_rk4(M4-k-4, Ac, M4, w, M4, W, M4);
+         #else
+            ATL_rk4(M4-k-4, Ac, M4, W, M4);
+         #endif
+      }     /* end k-loop that loops through L */
+   }        /* end j-loop over RHS */
+@endskip
+}           /* end routine */
+@ROUT ATL_ctrsmKL_rk2 ATL_ctrsmKR_rk2
 ATL_SINLINE void trU2Lc
    (enum ATLAS_DIAG Diag, ATL_CINT N, const TYPE *U, ATL_CINT ldu, 
     TYPE *L, ATL_CINT ldl)
@@ -3177,7 +3655,7 @@ static void cpypadL
       a[j] = ATL_rone;
    }
 }
-@ROUT ATL_ctrsmKL_rk2
+@ROUT ATL_ctrsmKL_rk2 ATL_ctrsmKR_rk2
 /*
  * Copy original U to aligned workspace, invert diagonal elts, pad wt I
  * U is padded with I at top left of matrix to fit Nc
@@ -3274,6 +3752,7 @@ static void cpypadL
       a[j+j] = ATL_rone;
    }
 }
+@ROUT ATL_ctrsmKL_rk2
 int Mjoin(PATL,trsmKL_rk2)   /* returns 0 on success */
 (
    enum ATLAS_SIDE Side,
@@ -3555,6 +4034,109 @@ int Mjoin(PATL,trsmKR_rk4)
          ATL_trsmRLN(N, mr, a, w);
       }
       Mjoin(PATL,gemoveT)(mr, N, ATL_rone, b, N4, B, ldb);
+   }
+   free(vp);
+   return(0);
+}
+@ROUT ATL_ctrsmKR_rk2
+/* 
+ * This routine computes X * op(A) = B by first computing:
+ *    op(A)^T * X^T = B^T
+ * and then transposing the answer back out.
+ */
+int Mjoin(PATL,trsmKR_rk2)
+(
+   enum ATLAS_SIDE Side,
+   enum ATLAS_UPLO Uplo,
+   enum ATLAS_TRANS TA,
+   enum ATLAS_DIAG Diag,
+   ATL_CINT  M,         /* number of RHS in B */
+   ATL_CINT  N,         /* size of triangular matrix A */ 
+   const SCALAR alpha,  /* scale factor for B */
+   const TYPE *A,       /* MxM triangular matrix A */
+   ATL_CINT  lda,
+   TYPE *B,             /* on input, B, on output X, of A x = b */
+   ATL_CINT  ldb        /* leading dim of B */
+)
+{
+   void *vp;
+   TYPE *a, *w, *b;
+   const TYPE one[2] = {ATL_rone, ATL_rzero};
+   enum ATLAS_TRANS TRANSA;
+   ATL_CINT Nc = ((N+TRU-1)/TRU)*TRU, nr = Nc-N, Nc2=Nc+Nc, nr2 = nr+nr;
+   ATL_CINT Mc = Mmin(((M+NRHS-1)/NRHS)*NRHS, 36);
+   int UPPER = (Uplo == AtlasUpper);
+   const int UNIT=(Diag == AtlasUnit);
+   ATL_INT i, j;
+
+   vp = malloc(ATL_MulBySize(Nc*(Mc+Nc)) + 2*ATL_Cachelen);
+   if (!vp) 
+      return(1);
+   a = ATL_AlignPtr(vp);
+   w = a+Nc*Nc2;
+   w = ATL_AlignPtr(w);
+/*
+ * If matrix is already transposed, keep Uplo same and just copy to space
+ * and invert the diagonal, and swap the transpose setting
+ */
+   if (TA == AtlasTrans)
+   {
+     if (UPPER)
+        cpypadU(Diag, N, A, lda, a, Nc);
+     else
+        cpypadL(Diag, N, A, lda, a, Nc);
+      TA = AtlasNoTrans;
+   }
+/*
+ * If matrix is conjugate transposed, keep Uplo same and just conjugate copy 
+ * to space and invert the diagonal, and swap the transpose setting
+ */
+   else if (TA == AtlasConjTrans)
+   {
+     if (UPPER)
+        cpypadUc(Diag, N, A, lda, a, Nc);
+     else
+        cpypadLc(Diag, N, A, lda, a, Nc);
+      TA = AtlasNoTrans;
+   }
+/* 
+ * If the matrix is presently in NoTranspose format, transpose it, which
+ * will swap Uplo setting
+ */
+   else
+   {
+      if (UPPER)
+         trU2L(Diag, N, A, lda, a, Nc);  /* transpose A into lower-triang a */
+/*
+ *       Transpose Lower matrix to Upper; padding goes at top of Upper matrix
+ */
+      else  /* matrix is currently lower */
+         trL2U(Diag, N, A, lda, a, Nc);
+      UPPER = !UPPER;  /* transposition swaps UPLO setting */
+   }
+/*
+ * a now contains correctly padded A^T, so now loop over Mc rows of RHS;
+ * Mc is set to a value near 32 so we can get some TLB reuse when doing
+ * the transpose of the RHS vectors from row-access to column-access
+ */
+   b = (UPPER) ? w + nr2 : w;
+   for (i=0; i < M; i += Mc, B += Mc)
+   {
+      const int mr = Mmin(M-i, Mc);
+      Mjoin(PATL,gemoveT)(N, mr, alpha, B, ldb, b, Nc);
+      if (UPPER)
+      {
+         if (nr)
+            Mjoin(PATL,gezero)(nr, mr, w, Nc);
+         ATL_trsmRUN(N, mr, a, w);
+      }
+      else
+      {
+         if (nr)
+            Mjoin(PATL,gezero)(nr, mr, w+N+N, Nc);
+         ATL_trsmRLN(N, mr, a, w);
+      }
+      Mjoin(PATL,gemoveT)(mr, N, one, b, Nc, B, ldb);
    }
    free(vp);
    return(0);
