@@ -634,12 +634,13 @@ enum OSTYPE {OSOther=0, OSLinux, OSSunOS, OSSunOS4, OSOSF1, OSIRIX, OSAIX,
 #define OSIsWin(OS_) ( ((OS_) == OSWinNT) || ((OS_) == OSWin9x) || \
                        ((OS_) == OSWinSFU) )
 
-enum ARCHFAM {AFOther=0, AFPPC, AFSPARC, AFALPHA, AFX86, AFIA64, AFMIPS, AFARM};
+enum ARCHFAM {AFOther=0, AFPPC, AFSPARC, AFALPHA, AFX86, AFIA64, AFMIPS, 
+              AFARM, AFS390};
 
-#define NMACH 39
+#define NMACH 42
 static char *machnam[NMACH] = 
    {"UNKNOWN", "POWER3", "POWER4", "POWER5", "PPCG4", "PPCG5", 
-    "POWER6", "POWER7",
+    "POWER6", "POWER7", "IBMz9", "IBMz10", "IBMz196",
     "P5", "P5MMX", "PPRO", "PII", "PIII", "PM", "CoreSolo", 
     "CoreDuo", "Core2Solo", "Core2", "Corei1", "Corei2", "Atom", "P4", "P4E", 
     "Efficeon", "K7", "HAMMER", "AMD64K10h", "UNKNOWNx86", 
@@ -648,6 +649,7 @@ static char *machnam[NMACH] =
     "MIPSR1xK", "MIPSICE9", "ARMv7"};
 enum MACHTYPE {MACHOther, IbmPwr3, IbmPwr4, IbmPwr5, PPCG4, PPCG5,
                IbmPwr6, IbmPwr7,
+               IbmZ9, IbmZ10, IbmZ196,  /* s390(x) in Linux */ 
                IntP5, IntP5MMX, IntPPRO, IntPII, IntPIII, IntPM, IntCoreS,
                IntCoreDuo, IntCore2Solo, IntCore2, IntCorei1, IntCorei2,
                IntAtom, IntP4, IntP4E, TMEff, 
@@ -675,6 +677,8 @@ enum MACHTYPE {MACHOther, IbmPwr3, IbmPwr4, IbmPwr5, PPCG4, PPCG5,
    ( (mach_) >= PPCG4 && (mach_) <= PPCG5 )
 #define MachIsARM(mach_) \
    ( (mach_) == ARMv7 )
+#define MachIsS390(mach_) \
+   ( (mach_) >= IbmZ9 && (mach_) <= IbmZ196 )
 
 
 static char *f2c_namestr[5] = {"UNKNOWN","Add_", "Add__", "NoChange", "UpCase"};
@@ -698,13 +702,13 @@ enum ISAEXT
     ISA_NEON};
 
 @ROUT atlconf.h asmconf.h
-#define NASMD 8
+#define NASMD 9
 enum ASMDIA 
    {ASM_None=0, gas_x86_32, gas_x86_64, gas_sparc, gas_ppc, gas_parisc, 
-    gas_mips, gas_arm};
+    gas_mips, gas_arm, gas_s390};
 static char *ASMNAM[NASMD] =
    {"",     "GAS_x8632", "GAS_x8664", "GAS_SPARC", "GAS_PPC", "GAS_PARISC",
-    "GAS_MIPS", "GAS_ARM"};
+    "GAS_MIPS", "GAS_ARM", "GAS_S390"};
 @ROUT atlconf.h
 
 /*
@@ -1090,6 +1094,7 @@ enum ARCHFAM ProbeArchFam(char *targ)
       else if (strstr(res, "ia64")) fam = AFIA64;
       else if (strstr(res, "mips")) fam = AFMIPS;
       else if (strstr(res, "arm")) fam = AFARM;
+      else if (strstr(res, "s390")) fam = AFS390;
       else if ( strstr(res, "i686") || strstr(res, "i586") ||
                 strstr(res, "i486") || strstr(res, "i386") ||
                 strstr(res, "x86") || strstr(res, "x86_64") ) fam = AFX86;
@@ -1112,6 +1117,7 @@ enum ARCHFAM ProbeArchFam(char *targ)
                    strstr(res, "x86_64") ) fam = AFX86;
          else if (strstr(res, "mips")) fam = AFMIPS;
          else if (strstr(res, "arm")) fam = AFARM;
+         else if (strstr(res, "s390")) fam = AFS390;
       }
    }
    return(fam);
@@ -1850,7 +1856,7 @@ IRun_@(aff) :
 	- cat config0.out
 @endwhile
 
-@whiledef asm GAS_x8632 GAS_x8664 GAS_PPC GAS_PARISC GAS_SPARC GAS_ARM
+@whiledef asm GAS_x8632 GAS_x8664 GAS_PPC GAS_PARISC GAS_SPARC GAS_ARM GAS_S390
 IRun_@(asm) :
 	$(CC) $(CCFLAGS) -o xprobe_@low@(asm) $(SRCdir)/backend/probe_this_asm.c $(SRCdir)/backend/probe_@low@(asm).S
 	$(MAKE) $(atlrun) atldir=$(mydir) exe=xprobe_@low@(asm) args="$(args)" \
@@ -3941,6 +3947,8 @@ char *GetPtrbitsFlag(enum OSTYPE OS, enum MACHTYPE arch, int ptrbits,
       return(sp);
    if (MachIsMIPS(arch))
       return((ptrbits == 64) ? "-mabi=64" : "-mabi=n32");
+   if (MachIsS390(arch))
+      return((ptrbits == 64) ? "-m64" : "-m31");
    if (!CompIsGcc(comp))
    {
 /*
@@ -5169,6 +5177,38 @@ MACH=POWER4 OS=ALL LVL=1010 COMPS=icc,dmc,smc,dkc,skc,xcc
    'gcc' '-mcpu=power4 -mtune=power4 -O3 -fno-schedule-insns -fno-rerun-loop-opt'
 MACH=POWER4 OS=ALL LVL=1010 COMPS=f77
    'xlf' '-qtune=pwr4 -qarch=pwr4 -O3 -qmaxmem=-1 -qfloat=hsflt'
+#
+# IBM System z or zEnterprise.
+# These compiler flags given by IBM; -O3 -funroll-loops are chosen because
+# its what their compiler group supports, not necessarily because they are best
+MACH=IBMz9 OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,xcc
+   'gcc' '-march=z9-109 -O3 -funroll-loops'
+MACH=IBMz10 OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,xcc
+   'gcc' '-march=z10 -O3 -funroll-loops -fno-prefetch-loop-arrays'
+# Try to fallback to z9 for older compilers
+MACH=IBMz10 OS=ALL LVL=600 COMPS=f77
+   'gfortran' '-march=z9-109 -O3 -funroll-loops'
+MACH=IBMz10 OS=ALL LVL=600 COMPS=smc,dmc,skc,dkc,icc,xcc
+   'gcc' '-march=z9-109 -O3 -funroll-loops -fno-prefetch-loop-arrays'
+# z196
+MACH=IBMz196 OS=ALL LVL=1000 COMPS=f77
+   'gfortran' '-march=z196 -O3 -funroll-loops -fno-prefetch-loop-arrays'
+MACH=IBMz196 OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,xcc
+   'gcc' '-march=z196 -O3 -funroll-loops -fno-prefetch-loop-arrays'
+# We also try to fallback to z10 or z9 for older compilers
+MACH=IBMz196 OS=ALL LVL=800 COMPS=smc,dmc,skc,dkc,icc,xcc
+   'gcc' '-march=z10 -O3 -funroll-loops -fno-prefetch-loop-arrays'
+MACH=IBMz196 OS=ALL LVL=800 COMPS=f77
+   'gfortran' '-march=z10 -O3 -funroll-loops -fno-prefetch-loop-arrays'
+MACH=IBMz196 OS=ALL LVL=600 COMPS=smc,dmc,skc,dkc,icc,xcc
+   'gcc' '-march=z9-109 -O3 -funroll-loops'
+MACH=IBMz196 OS=ALL LVL=600 COMPS=f77
+   'gfortran' '-march=z9-109 -O3 -funroll-loops'
+# ALL march options failed, go back to conservative defaults
+MACH=IBMz9,IBMz10,IBMz196 OS=ALL LVL=500 COMPS=f77
+   'gfortran' '-O3 -funroll-loops'
+MACH=IBMz9,IBMz10,IBMz196 OS=ALL LVL=500 COMPS=smc,dmc,skc,dkc,icc,xcc
+   'gcc' '-O3 -funroll-loops'
 #
 # Windows defaults ; need to make SSE/SSE2 arch dep.
 #
@@ -6865,6 +6905,8 @@ int main(int nargs, char **args)
             fprintf(fpout, "_fbsd");
       }
    }
+   if (MachIsS390(mach))
+      fprintf(fpout, ptrbits == 32 ? "-m31" : "-m64");
    fprintf(fpout, "\n   F77SYSLIB = %s\n", f77lib ? f77lib : "");
    fprintf(fpout, "   BC = $(ICC)\n");
    fprintf(fpout, "   NCFLAGS = $(ICCFLAGS)\n");
