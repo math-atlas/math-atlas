@@ -269,7 +269,7 @@ ATL_SINLINE void ATL_rk2(ATL_CINT M, const TYPE *pA0, ATL_CINT lda0,
 }
 #elif defined(ATL_SSE3) && defined(DCPLX)
    #define NRHS 3
-   #define TRU 1
+   #define TRU 2
    #include <xmmintrin.h>
    #include <pmmintrin.h>
 /*
@@ -1065,81 +1065,7 @@ ATL_SINLINE void ATL_rk2(ATL_CINT M, const TYPE *pA0, ATL_CINT lda0,
 }
 #endif
 
-@ROUT ATL_ctrsmKR_rk2
-#if (NRHS <= 4 && NRHS >= 2)
-#endif
-/* 
- * Solve 2x2 L with NRHS RHS symbolically for complex arithmetic; 
- * Diagonal elements have already been inverted
- */
-ATL_SINLINE void ATL_trsmL2(const TYPE *L, ATL_CINT ldl, TYPE *B, ATL_CINT ldb)
-{
-   ATL_CINT ldL=ldl+ldl, ldB = ldb+ldb;
-   #if NRHS > 2
-      TYPE *B2 = B + ldB+ldB;
-   #endif
-   const RTYPE rL00=(*L), iL00=L[1], rL10=L[2], iL10=L[3];
-   const RTYPE rL11=L[ldL+2], iL11 = L[ldL+3];
-   RTYPE rB00=(*B), iB00=B[1], rB10=B[2], iB10=B[3];
-   RTYPE rB01=B[ldB], iB01=B[ldB+1], rB11=B[ldB+2], iB11=B[ldB+3];
-   #if NRHS > 2
-      RTYPE rB02=(*B2), iB02=B2[1], rB12=B2[2], iB12=B2[3];
-   #endif
-   #if NRHS > 3
-      RTYPE rB02=B2[ldB], iB02=B2[ldB+1], rB12=B2[ldB+2], iB12=B2[ldB+3];
-   #endif
-   RTYPE rX;
-
-/*
- * x1 = b1 / L11  --> x1 = b1 * (1/L11)
- */
-   B[2] = rX = rB10 * rL11 - iB10 * iL11;
-   B[3] = iB10 = rB10 * iL11 + iB10 * rL11;   rB10 = rX;
-   rX = rB11 * rL11 - iB11 * iL11;
-   iB11 = rB11 * iL11 + iB11 * rL11;   rB11 = rX;
-   #if NRHS > 2
-      B2[2] = rX = rB12 * rL11 - iB12 * iL11;
-      B2[3] = iB12 = rB12 * iL11 + iB12 * rL11;   rB12 = rX;
-   #endif
-   #if NRHS > 3
-      B2[ldB+2] = rX = rB13 * rL11 - iB13 * iL11;
-      B2[ldB+3] = iB13 = rB13 * iL11 + iB13 * rL11;   rB13 = rX;
-   #endif
-/*
- * X0 = B0 - x1*L10 (do /L00 later)
- */
-   rX   = rB00 - rB10*rL10 + iB10*iL10;
-   iB00 = iB00 - rB10*iL10 - iB10*rL10;   rB00 = rX;
-   rX   = rB01 - rB11*rL10 + iB11*iL10;
-   iB01 = iB01 - rB11*iL10 - iB11*rL10;   rB01 = rX;
-   #if NRHS > 2
-      rX   = rB02 - rB12*rL10 + iB12*iL10;
-      iB02 = iB02 - rB12*iL10 - iB12*rL10;   rB02 = rX;
-   #endif
-   #if NRHS > 3
-      rX   = rB03 - rB13*rL10 + iB30*iL10;
-      iB03 = iB03 - rB13*iL10 - iB30*rL10;   rB03 = rX;
-   #endif
-/*
- * Apply X0 = (1/L00)*X0 to form X0 = (B0 - X1*L10)/L00
- */
-   *B = rB00 * rL00 - iB00*iL00;
-   B[1] = rB00 * iL00 + iB00*rL00;
-   B[ldB] = rB01 * rL00 - iB01*iL00;
-   B[ldB+1] = rB01 * iL00 + iB01*rL00;
-   #if NRHS > 2
-      *B2 = rB02 * rL00 - iB02*iL00;
-      B2[1] = rB02 * iL00 + iB02*rL00;
-   #endif
-   #if NRHS > 3
-      B2[ldB] = rB03 * rL00 - iB03*iL00;
-      B2[ldB+1] = rB03 * iL00 + iB03*rL00;
-   #endif
-}
-ATL_SINLINE void ATL_trsmU2(const TYPE *L, ATL_CINT ldl, TYPE *B, ATL_CINT ldb)
-{
-}
-@ROUT ATL_ctrsmKL_rk2
+@ROUT ATL_ctrsmKL_rk2 ATL_ctrsmKR_rk2
 #if NRHS == 3
 /* 
  * Solve 2x2 L with 3 RHS symbolically for complex arithmetic; 
@@ -3241,7 +3167,6 @@ static void ATL_trsmRLN
       a = A;
       for (k=0; k < M; k += 2, w += 4, a += (Mc+1)<<2)
       {
-         ATL_CINT mr = Mmin(4,M-k);
 /*
  *       Solve M=2 NRHS=NRHS TRSM symbolically
  */
@@ -3250,7 +3175,7 @@ static void ATL_trsmRLN
  *       Subtract off x0,x1 contribution from rest of B using rank-2 update
  */
 	 if (M-k-2 > 0)
-            ATL_rk2(M-k-2, a+4, Mc, w, Mc, w+4, Mc);
+            ATL_rk2(Mc-k-2, a+4, Mc, w, Mc, w+4, Mc);
       }     /* end k-loop that loops through L */
    }        /* end j-loop over RHS */
 }           /* end routine */
@@ -3259,75 +3184,40 @@ static void ATL_trsmRUN
 (
    ATL_CINT  M,         /* size of orig triangular matrix A */
    ATL_CINT  N,         /* number of RHS in W */
-   const TYPE *A,       /* M4xM4 Upper matrix A, diag is inverted */
-   TYPE *W              /* M4xN workspace with good alignment */
+   const TYPE *A,       /* McxMc Upper matrix A, diag is inverted */
+   TYPE *W              /* McxN workspace with good alignment */
 )
 {
-@beginskip
    int j;
-   ATL_CINT M4 = ((M+3)>>2)<<2, mr = M4-M;
+   ATL_CINT Mc = ((M+TRU-1)/TRU)*TRU, mr = Mc-M, Mc2=Mc+Mc;
 /*
  * Loop over RHS, NRHS RHS at a time
  */
-   for (j=0; j < N; j += NRHS, W += NRHS*M4)
+   for (j=0; j < N; j += NRHS, W += NRHS*Mc2)
    {
       const int nb = Mmin(NRHS, N-j);
       int k, i;
       TYPE *w = W;
-      const TYPE *Ac = A + (M4-4)*M4, *a = Ac + M4-4;
+      const TYPE *Ac = A + (Mc-2)*Mc2, *a = Ac + Mc2-4;
 /*
  *    Completely solve these RHSs by looping over entire triangular matrix
  */
-      w = W + M4-4;
-      for (k=0; k < M; k += 4, w -= 4, a -= (M4+1)<<2, Ac -= M4<<2)
+      w = W + Mc2-4;
+      for (k=0; k < M; k += 2, w -= 4, a -= (Mc+1)<<2, Ac -= Mc<<2)
       {
-         ATL_CINT mr = Mmin(4,M-k);
-         RTYPE rB00 = *w, rB10=w[1], rB20=w[2], rB30=w[3];
-         RTYPE rB01=w[M4], rB11=w[M4+1], rB21=w[M4+2], rB31=w[M4+3];
-         #if NRHS > 2
-            RTYPE rB02=w[2*M4],rB12=w[2*M4+1],rB22=w[2*M4+2],rB32=w[2*M4+3];
-         #endif
-         #if NRHS > 3
-            RTYPE rB03=w[3*M4],rB13=w[3*M4+1],rB23=w[3*M4+2],rB33=w[3*M4+3];
-         #endif
+         ATL_CINT mr = Mc-k-2;
 /*
  *       Solve M=4 NRHS=4 TRSM symbolically
  */
-         ATL_trsmU4(a, M4, w, M4);
+         ATL_trsmU2(a, Mc, w, Mc);
 /*
- *       Store solved 4xNRHS elts of X to workspace
+ *       Subtract off x0,x1 contribution from rest of B using rank-2 update
  */
-         *w = rB00;
-         w[1] = rB10;
-         w[2] = rB20;
-         w[3] = rB30;
-         w[M4] = rB01;
-         w[M4+1] = rB11;
-         w[M4+2] = rB21;
-         w[M4+3] = rB31;
-         #if NRHS > 2
-            w[2*M4] = rB02;
-            w[2*M4+1] = rB12;
-            w[2*M4+2] = rB22;
-            w[2*M4+3] = rB32;
-         #endif
-         #if NRHS > 3
-            w[3*M4] = rB03;
-            w[3*M4+1] = rB13;
-            w[3*M4+2] = rB23;
-            w[3*M4+3] = rB33;
-         #endif
-/*
- *       Subtract off x0-x4 contribution from rest of B using rank-4 update
- */
-         #if ATL_BINWRK
-            ATL_rk4(M4-k-4, Ac, M4, w, M4, W, M4);
-         #else
-            ATL_rk4(M4-k-4, Ac, M4, W, M4);
-         #endif
+        
+          if (mr)
+            ATL_rk2(mr, Ac, Mc, w, Mc, W, Mc);
       }     /* end k-loop that loops through L */
    }        /* end j-loop over RHS */
-@endskip
 }           /* end routine */
 @ROUT ATL_ctrsmKL_rk2 ATL_ctrsmKR_rk2
 ATL_SINLINE void trU2Lc
@@ -3653,6 +3543,117 @@ static void cpypadL
       for (i=0; i < N4; i++)
          a[i] = ATL_rzero;
       a[j] = ATL_rone;
+   }
+}
+@ROUT ATL_ctrsmKR_rk2
+/*
+ * Conjugate original U to aligned workspace, invert diagonal elts, pad wt I
+ * U is padded with I at top left of matrix to fit Nc
+ */
+static void cpypadUc
+(
+   enum ATLAS_DIAG Diag, 
+   ATL_CINT N,                  /* size of triangular matrix A */
+   const TYPE *A,               /* upper triangular matrix */
+   ATL_CINT lda,                /* leading dim of A */
+   TYPE *a,                     /* cpy of A, padded to Nc with I */
+   ATL_CINT Nc                  /* leading dim of A, how much to pad */
+)
+{
+   int i, j;
+   ATL_CINT lda2 = lda+lda, N2=N+N, Nc2=Nc+Nc;
+
+/* 
+ * Pad Nc-N upper, left of U with I
+ */
+   if (Nc != N)
+   {
+      const int nn = Nc2-N2;
+      TYPE *aa;
+      for (j=0; j < nn; j += 2, a += Nc2)
+      {
+         for (i=0; i < Nc2; i++)
+            a[i] = ATL_rzero;
+         a[j] = ATL_rone;
+      }
+/*
+ *    Now zero first few rows of each column above that actual U
+ */
+      aa = a;
+      for (j=0; j < N; j++, aa += Nc2)
+      {
+         for (i=0; i < nn; i++)
+            aa[i] = ATL_rzero;
+      }
+      a += nn;  /* a now pts to place to copy actual U */
+   }
+/*
+ * Copy unpadded portion to U
+ */
+   for (j=0; j < N2; j += 2, a += Nc2, A += lda2)
+   {
+      for (i=0; i < j; i += 2)
+      {
+         a[i] = A[i];
+         a[i+1] = -A[i+1];
+      }
+      if (Diag == AtlasNonUnit)
+      {
+         a[j] = A[j];
+         a[j+1] = -A[j+1];
+         Mjoin(PATL,cplxinvert)(1, a+j, 1, a+j, 1);
+      }
+      else
+      {
+         a[j] = ATL_rone;
+         a[j+1] = ATL_rzero;
+      }
+   }
+}
+/*
+ * Conjugate original L to aligned workspace, invert diagonal elts, pad wt I
+ */
+static void cpypadLc
+(
+   enum ATLAS_DIAG Diag, 
+   ATL_CINT N,                  /* size of triangular matrix A */
+   const TYPE *A,               /* lower triangular matrix */
+   ATL_CINT lda,                /* leading dim of A */
+   TYPE *a,                     /* cpy of A, padded to N4 with I */
+   ATL_CINT Nc                  /* leading dim of A, how much to pad */
+)
+{
+   int i, j;
+   ATL_CINT lda2 = lda+lda, N2=N+N, Nc2=Nc+Nc;
+
+   for (j=0; j < N; j++, a += Nc2, A += lda2)
+   {
+      ATL_CINT j2 = j+j;
+
+      if (Diag == AtlasNonUnit)
+      {
+         a[j2] = A[j2];
+	 a[j2+1] = -A[j2+1];
+         Mjoin(PATL,cplxinvert)(1, a+j2, 1, a+j2, 1);
+      }
+      else
+      {
+         a[j2] = ATL_rone;
+         a[j2+1] = ATL_rzero;
+      }
+      for (i=j2+2; i < N2; i += 2)
+      {
+         a[i] = A[i];
+         a[i+1] = -A[i+1];
+      }
+      for (; i < Nc2; i++)
+         a[i] = ATL_rzero;
+   }
+   for (; j < Nc; j++, a += Nc2)
+   {
+      for (i=0; i < Nc2; i++)
+         a[i] = ATL_rzero;
+      a[j+j] = ATL_rone;
    }
 }
 @ROUT ATL_ctrsmKL_rk2 ATL_ctrsmKR_rk2
@@ -4064,7 +4065,7 @@ int Mjoin(PATL,trsmKR_rk2)
    const TYPE one[2] = {ATL_rone, ATL_rzero};
    enum ATLAS_TRANS TRANSA;
    ATL_CINT Nc = ((N+TRU-1)/TRU)*TRU, nr = Nc-N, Nc2=Nc+Nc, nr2 = nr+nr;
-   ATL_CINT Mc = Mmin(((M+NRHS-1)/NRHS)*NRHS, 36);
+   ATL_CINT Mc = Mmin(((M+NRHS-1)/NRHS)*NRHS, 36), Mc2 = Mc+Mc;
    int UPPER = (Uplo == AtlasUpper);
    const int UNIT=(Diag == AtlasUnit);
    ATL_INT i, j;
@@ -4120,7 +4121,7 @@ int Mjoin(PATL,trsmKR_rk2)
  * the transpose of the RHS vectors from row-access to column-access
  */
    b = (UPPER) ? w + nr2 : w;
-   for (i=0; i < M; i += Mc, B += Mc)
+   for (i=0; i < M; i += Mc, B += Mc2)
    {
       const int mr = Mmin(M-i, Mc);
       Mjoin(PATL,gemoveT)(N, mr, alpha, B, ldb, b, Nc);

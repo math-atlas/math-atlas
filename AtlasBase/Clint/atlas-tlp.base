@@ -3137,11 +3137,11 @@ static double RunTest
 
 static double RunTiming
    (enum CBLAS_ORDER Order, enum TEST_UPLO Uplo, int N, int lda, 
-    int CacheSize, int nreps)
+    size_t CacheSize, int nreps)
 {
    TYPE *A, *a;
-   const int incA = N*lda;
-   int i, k;
+   const size_t incA = N*lda SHIFT;
+   size_t i, k;
    double t0, t1=0.0;
 
    if (nreps < 1) nreps = 1;
@@ -3380,8 +3380,17 @@ void GetFlags(int nargs, char **args, int *MFLOP, int *CacheSize, int *lda,
             *incN = 1;
          *NN = i << 2;
       #else
-         incN = *N0 = 1;
-         *NN = Mjoin(PATL,GetNB)();
+         i = Mjoin(PATL,GetNB)();
+         *N0 = 4;
+         if ((i>>3)<<3 == i)
+            *N0 = *incN = 8;
+         else if ((i>>2)<<2 == i)
+            *incN = 4;
+         else if ((i>>1)<<1 == i)
+            *incN = 2;
+         else
+            *incN = 1;
+         *NN = i << 1;
       #endif
    }
    if (*lda < *N)
@@ -3782,23 +3791,24 @@ void Mjoin( PATL, trsm )
 int main(int nargs, char **args)
 {
    FILE *fpin, *fpout;
-   int stops, stopd;
-   fpin = fopen("res/sTRSM_NB", "r");
+   int stops, stopd, stopc, stopz;
+   @whiledef pre z c d s
+   fpin = fopen("res/@(pre)TRSM_NB", "r");
    assert(fpin);
-   assert(fscanf(fpin, "%d", &stops) == 1);
+   assert(fscanf(fpin, "%d", &stop@(pre)) == 1);
    fclose(fpin);
-   fpin = fopen("res/dTRSM_NB", "r");
-   assert(fpin);
-   assert(fscanf(fpin, "%d", &stopd) == 1);
-   fclose(fpin);
+   @endwhile
+
    fpout = fopen("res/atlas_trsmNB.h", "w");
    assert(fpout);
    fprintf(fpout, "#ifndef ATLAS_TRSMNB_H\n   #define ATLAS_TRSMNB_H\n\n");
    fprintf(fpout, "   #ifdef SREAL\n      #define TRSM_NB %d\n", stops);
    fprintf(fpout, "   #elif defined(DREAL)\n      #define TRSM_NB %d\n", stopd);
-   fprintf(fpout, "   #else\n      #define TRSM_NB 4\n");
+   fprintf(fpout, "   #elif defined(SCPLX)\n      #define TRSM_NB %d\n", stopc);
+   fprintf(fpout, "   #elif defined(DCPLX)\n      #define TRSM_NB %d\n", stopz);
    fprintf(fpout, "   #endif\n\n#endif\n");
    fclose(fpout);
+
    return(0);
 }
 @ROUT ilaenvF.c lanbtst lanbsrch
