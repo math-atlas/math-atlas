@@ -38,11 +38,7 @@
 @whiledef pre d s
    @LVL 3 ALL
       @whiledef rout gemm trsm trmm symm syrk syr2k
-   #ifdef ATL_ANTOINE_THREADS
-      #define @(han1)@(pre)@(han2)@6l@(rout) @(rep1)@(pre)@(rep2)@(rout)
-   #else
-      #define @(han1)@(pre)@(han2)@6l@(rout) @(rep1)@(pre)@(rep2c)@(rout)
-   #endif
+   #define @(han1)@(pre)@(han2)@6l@(rout) @(rep1)@(pre)@(rep2c)@(rout)
       @endwhile
 @LVL ! 3
    @multidef rout 
@@ -69,11 +65,7 @@
 @whiledef pre z c
       @LVL 3 ALL
    @whiledef rout trsm gemm symm hemm syrk herk syr2k her2k trmm
-   #ifdef ATL_ANTOINE_THREADS
-      #define @(han1)@(pre)@(han2)@8l@(rout) @(rep1)@(pre)@(rep2)@(rout)
-   #else
-      #define @(han1)@(pre)@(han2)@8l@(rout) @(rep1)@(pre)@(rep2c)@(rout)
-   #endif
+   #define @(han1)@(pre)@(han2)@8l@(rout) @(rep1)@(pre)@(rep2c)@(rout)
    @endwhile
       @LVL 2 1
    @multidef rout
