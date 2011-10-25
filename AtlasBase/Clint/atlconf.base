@@ -1279,6 +1279,7 @@ char *GetPathWithoutName(char *file)
    for (lastslash=i=0; file[i]; i++)
       if (file[i] == '/')
          lastslash = i;
+   i = lastslash;
    ch = file[i];
    file[i] = '\0';
    sp = NewStringCopy(file);
@@ -1563,6 +1564,121 @@ char *NewAppendedString(char *old, char *app)
    }
    return(new);
 }
+char **GetLinesFromFile
+(
+   char *fnam,    /* filename to read in */
+   char **curlns  /* NULL-termed list of lines to prepend to file list ret */
+)
+/*
+ * Read all lines from file fnam, suffix them to lines in curlns, delete 
+ * curlns, and return them as NULL-terminated array of strings
+ */
+{
+   char **lns=NULL;
+   FILE *fpin;
+   int i, n, nc=0, N;
+   char ln[2048];
+
+   if (!fnam)
+      return(NULL);
+   fpin = fopen(fnam, "r");
+   assert(fpin);
+   for (n=0; fgets(ln, 2048, fpin); n++);  /* count number of lines in file */
+   rewind(fpin);
+   if (curlns)
+      for (nc=0; curlns[nc]; nc++);
+   N = n+nc;
+   if (N < 1)
+      return(NULL);
+   lns = malloc((N+1)*sizeof(char*));
+   assert(lns);
+   if (nc)
+   {
+      for (i=0; i < nc; i++)
+         lns[i] = curlns[i];
+      free(curlns);
+   }
+   for (i=0; i < n; i++)
+   {
+      int k;
+      char *sp;
+      assert(fgets(ln, 2048, fpin));
+      k = strlen(ln)+1;
+      lns[i+nc] = sp = malloc(k*sizeof(char));
+      assert(sp);
+      strcpy(sp, ln);
+/* 
+ *    Get rid of whitespace on end of line
+ */
+      for (k -= 2; isspace(sp[k]); k--) sp[k] = '\0';
+   }
+   lns[N] = NULL;
+   return(lns);
+}
+
+void PrintAllStringsInList
+(
+   char *exp,
+   char **strs  /* NULL terminated arrayof strings to be printed */
+)
+{
+   int i;
+   if (!strs)
+   {
+      printf("%s: NULL\n", exp);
+      return;
+   }
+   printf("%s:\n", exp);
+   for (i=0; strs[i]; i++)
+      printf("   '%s'\n", strs[i]);
+}
+void KillAllStringsInList
+(
+   char **strs  /* NULL terminated arrayof strings to be freed */
+)
+{
+   int i;
+   if (!strs)
+      return;
+   for (i=0; strs[i]; i++)
+      free(strs[i]);
+   free(strs);
+}
+
+char *FreeListGetString
+(
+   char **strs, /* NULL-terminated array of strings to be freed */
+   int n        /* only string you want to retain from array (returned) */
+)
+{
+   char *ret;
+   int i;
+
+   if (!strs)
+      return(NULL);
+   ret = strs[n];
+   for (i=0; strs[i]; i++)
+   {
+      if (i != n)
+         free(strs[i]);
+   }
+   free(strs);
+   return(ret);
+}
+
+char **NewOneStringList
+(
+   char **strs, /* NULL-terminated array of strings to be freed */
+   int n        /* only string you want to retain from array (returned) */
+)
+{
+   char **nstrs;
+   nstrs = malloc(2*sizeof(char*));
+   assert(nstrs);
+   nstrs[0] = FreeListGetString(strs, n);
+   nstrs[1] = NULL;
+   return(nstrs);
+}
 @endextract
 @ROUT atlconf_misc.h
 #ifndef ATLCONF_MISC_H
@@ -1602,6 +1718,7 @@ int IsBitSetInField(int *field, int bit);
 void SetBitInField(int *field, int bit);
 void KillUselessSpace(char *str);
 char *NameWithoutPath(char *file);
+char *GetPathWithoutName(char *file);
 void GetGccVers(char *gcc, int *comp, int *major, int *minor, int *patch);
 int CompIsGcc(char *comp);
 int CompIsAppleGcc(char *comp);
@@ -1612,6 +1729,11 @@ int CompIsIBMXL(char *comp);
 char *NewStringCopy(char *old);
 char *NewAppendedString0(char *old, char *app);
 char *NewAppendedString(char *old, char *app);
+char **GetLinesFromFile(char *fnam, char **curlns); /* append lines in fnam */
+void KillAllStringsInList(char **strs);
+void PrintAllStringsInList(char *exp, char **strs);
+char *FreeListGetString(char **strs, int n);
+char **NewOneStringList(char **strs, int n);
 
 #define syschk(ln_) \
 { \
@@ -4496,64 +4618,13 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
    }
 }  /* end of routine GetComps */
 
-char **GetLinesFromFile
-(
-   char *fnam,    /* filename to read in */
-   char **curlns  /* NULL-termed list of lines to prepend to file list ret */
-)
-/*
- * Read all lines from file fnam, suffix them to lines in curlns, delete 
- * curlns, and return them as NULL-terminated array of strings
- */
-{
-   char **lns=NULL;
-   FILE *fpin;
-   int i, n, nc=0, N;
-   char ln[2048];
 
-   if (!fnam)
-      return(NULL);
-   fpin = fopen(fnam, "r");
-   assert(fpin);
-   for (n=0; fgets(ln, 2048, fpin); n++);  /* count number of lines in file */
-   rewind(fpin);
-   if (curlns)
-      for (nc=0; curlns[nc]; nc++);
-   N = n+nc;
-   if (N < 1)
-      return(NULL);
-   lns = malloc((N+1)*sizeof(char*));
-   assert(lns);
-   if (nc)
-   {
-      for (i=0; i < nc; i++)
-         lns[i] = curlns[i];
-      free(curlns);
-   }
-   for (i=0; i < n; i++)
-   {
-      int k;
-      char *sp;
-      assert(fgets(ln, 2048, fpin));
-      k = strlen(ln)+1;
-      lns[i+nc] = sp = malloc(k*sizeof(char));
-      assert(sp);
-      strcpy(sp, ln);
-/* 
- *    Get rid of whitespace on end of line
- */
-      for (k -= 2; isspace(sp[k]); k--) sp[k] = '\0';
-   }
-   lns[N] = NULL;
-   return(lns);
-}
-
-#define GMAJOR 4  /* major version must be exactly this */
-#define GMINOR 5  /* minor version must be >= to this (dangerous, but useful) */
 int SelectBestGcc
 (
    int verb,
    char *targ,
+   int GMAJOR,
+   int GMINOR,
    char **gccs   /* NULL-terminated list of possible gcc compilers */
 )
 /*
@@ -4612,54 +4683,9 @@ int SelectBestGcc
    return(-ileastbad);
 }
 
-void KillAllStringsInList
-(
-   char **strs  /* NULL terminated arrayof strings to be freed */
-)
-{
-   int i;
-   if (!strs)
-      return;
-   for (i=0; strs[i]; i++)
-      free(strs[i]);
-   free(strs);
-}
 
-char *FreeListGetString
-(
-   char **strs, /* NULL-terminated array of strings to be freed */
-   int n        /* only string you want to retain from array (returned) */
-)
-{
-   char *ret;
-   int i;
-
-   if (!strs)
-      return(NULL);
-   ret = strs[n];
-   for (i=0; strs[i]; i++)
-   {
-      if (i != n)
-         free(strs[i]);
-   }
-   free(strs);
-   return(ret);
-}
-
-char **NewOneStringList
-(
-   char **strs, /* NULL-terminated array of strings to be freed */
-   int n        /* only string you want to retain from array (returned) */
-)
-{
-   char **nstrs;
-   nstrs = malloc(2*sizeof(char*));
-   assert(nstrs);
-   nstrs[0] = FreeListGetString(strs, n);
-   nstrs[1] = NULL;
-   return(nstrs);
-}
-
+#define GMAJOR 4  /* major version must be exactly this */
+#define GMINOR 5  /* minor version must be >= to this (dangerous, but useful) */
 char *FindGoodGcc(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ)
 {
    char *OSpaths=NULL, *sp, **gccs=NULL;
@@ -4679,7 +4705,7 @@ char *FindGoodGcc(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ)
    {
       sprintf(ln, "find %s -name '*gcc*' -exec ./xisgcc '{}' \\;", OSpaths);
       gccs = GetLinesFromFile(CmndResultsNoErr(NULL, ln), gccs);
-      i = SelectBestGcc(verb, targ, gccs);
+      i = SelectBestGcc(verb, targ, GMAJOR, GMINOR, gccs);
       if (i > 1)
          return(FreeListGetString(gccs, i-1));
       if (i < 0)
@@ -4701,7 +4727,7 @@ char *FindGoodGcc(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ)
               sp);
       free(sp);
       gccs = GetLinesFromFile(CmndResultsNoErr(NULL, ln), gccs);
-      i = SelectBestGcc(verb, targ, gccs);
+      i = SelectBestGcc(verb, targ, GMAJOR, GMINOR, gccs);
       if (i > 0)
          return(FreeListGetString(gccs, i-1));
       if (i < 0)
@@ -4718,7 +4744,100 @@ char *FindGoodGcc(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ)
    i = sprintf(ln, "find %s -name '*gcc*' -exec ./xisgcc '{}' \\;", 
    "/usr/local/ /bin /sbin/ /usr/bin /usr/sbin /opt/bin /opt/sbin");
    gccs = GetLinesFromFile(CmndResultsNoErr(NULL, ln), gccs);
-   i = SelectBestGcc(verb, targ, gccs);
+   i = SelectBestGcc(verb, targ, GMAJOR, GMINOR, gccs);
+   if (i > 1)
+      return(FreeListGetString(gccs, i-1));
+   if (i < 0)
+      return(FreeListGetString(gccs, -(i+1)));
+   else
+      KillAllStringsInList(gccs);
+   return(NULL);
+}
+
+char *FindGoodGfortran(enum OSTYPE OS, enum MACHTYPE arch, int verb, 
+                       char *targ, char *gcc)
+{
+   char *OSpaths=NULL, *sp, **gccs=NULL;
+   char ln[4192];
+   int i;
+   int ccomp, cmaj, cmin, cpat;
+/*
+ * Get gcc's version; we'll try to find a matching gfortran
+ */
+   GetGccVers(gcc, &ccomp, &cmaj, &cmin, &cpat);
+/*
+ * See if we can find gfortran in the same place we found gcc
+ */
+   sp = GetPathWithoutName(gcc);  /* get path to gcc */
+   if (sp)
+   {
+      sprintf(ln, "find %s -name '*gfortran*' -exec ./xisgcc '{}' \\;", sp);
+      gccs = GetLinesFromFile(CmndResultsNoErr(NULL, ln), gccs);
+      i = SelectBestGcc(verb, targ, cmaj, cmin, gccs);
+      if (i > 1)
+         return(FreeListGetString(gccs, i-1));
+      if (i < 0)
+         gccs = NewOneStringList(gccs, -(i+1));
+      else
+      {
+         KillAllStringsInList(gccs);
+	 gccs = NULL;
+      }
+   }
+/*
+ * See if we have some OS-specific places to search for good gcc
+ */
+   if (OS == OSOSX)  /* /sw is for fink, /opt is for macports */
+   {
+      OSpaths = "/sw/bin /opt/local/bin /opt/local/sbin";
+   }
+/*
+ * We first look in any high-priority OS-specific spots for the right files
+ */
+   if (OSpaths)
+   {
+      sprintf(ln, "find %s -name '*gfortran*' -exec ./xisgcc '{}' \\;",OSpaths);
+      gccs = GetLinesFromFile(CmndResultsNoErr(NULL, ln), gccs);
+      i = SelectBestGcc(verb, targ, cmaj, cmin, gccs);
+      if (i > 1)
+         return(FreeListGetString(gccs, i-1));
+      if (i < 0)
+         gccs = NewOneStringList(gccs, -(i+1));
+      else
+      {
+         KillAllStringsInList(gccs);
+	 gccs = NULL;
+      }
+   }
+/*
+ * If we are not satisfied with the places we've looked so far, 
+ * try the user's path environment variable
+ */
+   sp = GetPathEnvVar();
+   if (sp)
+   {
+      sprintf(ln, "find %s -name '*gfortran*' -exec ./xisgcc '{}' \\;",
+              sp);
+      free(sp);
+      gccs = GetLinesFromFile(CmndResultsNoErr(NULL, ln), gccs);
+      i = SelectBestGcc(verb, targ, cmaj, cmin, gccs);
+      if (i > 0)
+         return(FreeListGetString(gccs, i-1));
+      if (i < 0)
+         gccs = NewOneStringList(gccs, -(i+1));
+      else
+      {
+         KillAllStringsInList(gccs);
+	 gccs = NULL;
+      }
+   }
+/*
+ * If we still haven't found it, try standard unix places
+ */
+   i = sprintf(ln, "find %s -name '*gfortran*' -exec ./xisgcc '{}' \\;", 
+   "/usr/local/ /bin /sbin/ /usr/bin /usr/sbin /opt/bin /opt/sbin");
+   gccs = GetLinesFromFile(CmndResultsNoErr(NULL, ln), gccs);
+   i = SelectBestGcc(verb, targ, cmaj, cmin, gccs);
    if (i > 1)
       return(FreeListGetString(gccs, i-1));
    if (i < 0)
@@ -4900,6 +5019,16 @@ int main(int nargs, char **args)
       targarg = "";
    goodgcc = FindGoodGcc(OS, mach,  verb, targ);
    GetComps(OS, mach, verb, targ, ptrbits, usrcomps, nof77, goodgcc);
+/* 
+ * See if we need to search for gfortran
+ */
+   if (!nof77 && usrcomps[F77_] && !strcmp(usrcomps[F77_], "gfortran"))
+   {
+      free(usrcomps[F77_]);
+      usrcomps[F77_] = FindGoodGfortran(OS, mach, verb, targ, goodgcc);
+      if (!usrcomps[F77_])
+         usrcomps[F77_] = NewStringCopy("gfortran");
+   }
    TestComps(OS, mach, verb, targ, targarg, usrcomps, 
              &f2cnam, &f2cint, &f2cstr, nof77);
    if (verb)
@@ -5887,6 +6016,127 @@ int PathLength(char *str)
    return(i);
 }
 
+int TestF77LIB(int verb, char *targarg, enum OSTYPE OS, enum MACHTYPE arch, 
+               char **comps, char *incd, char *f77lib)
+{
+   const char *frm ="make IRunTestCFLink F77='%s' F77FLAGS='%s' CC='%s' CCFLAGS='%s -L%s' F77LIB='%s' LIBS='-lm'";
+   char *ln;
+   int i;
+
+   i = strlen(frm) + strlen(incd) + strlen(f77lib) +
+       strlen(comps[F77_]) + strlen(comps[ICC_]) +
+       strlen(comps[NCOMP+F77_]) + strlen(comps[NCOMP+ICC_]) + 1;
+   ln = malloc(i*sizeof(char));
+   assert(ln);
+   sprintf(ln, frm, comps[F77_], comps[NCOMP+F77_], 
+           comps[ICC_], comps[NCOMP+ICC_], incd, f77lib);
+   if (verb > 1)
+      fprintf(stderr, "cmnd = %s\n", ln);
+   if (verb) 
+      fprintf(stderr, "Trying F77 link path of %s ... ", incd);
+   if (!system(ln))
+   {
+      if (verb) fprintf(stderr, "SUCCESS!\n");
+      free(ln);
+      return(1);
+   }
+   else if (verb)
+      fprintf(stderr, "REJECTED!!!!\n");
+   free(ln);
+   return(0);
+}
+
+char *FindF77LIBInList(int verb, char *targarg, enum OSTYPE OS, 
+                       enum MACHTYPE arch, char **comps, char *f77lib, 
+                       char **paths)
+{
+   int i;
+   if (!paths)
+      return(NULL);
+   for (i=0; paths[i]; i++)
+   {
+      char *path;
+      path = GetPathWithoutName(paths[i]);
+      if (path && TestF77LIB(verb, targarg, OS, arch, comps, path, f77lib))
+      {
+         free(path);
+         return(FreeListGetString(paths, i));
+      }
+      free(path);
+   }
+   KillAllStringsInList(paths);
+   return(NULL);
+}
+
+char *FindF77LIB0(int verb, char *targarg, enum OSTYPE OS, enum MACHTYPE arch, 
+                  char **comps, char *f77lib, char *f77libnam, char *path)
+{
+   char *frm="find %s -name '%s'", *cmnd;
+   char **libs=NULL;
+   int i;
+   i = strlen(frm) + strlen(f77libnam) + strlen(path) + 1;
+   cmnd = malloc(i*sizeof(char));
+   assert(cmnd);
+   sprintf(cmnd, frm, path, f77libnam);
+fprintf(stderr, "cmnd='%s'\n", cmnd);
+   libs = GetLinesFromFile(CmndResultsNoErr(NULL, cmnd), NULL);
+PrintAllStringsInList("FOUND:", libs);
+   free(cmnd);
+   if (!libs)
+      return(NULL);
+
+   return(FindF77LIBInList(verb, targarg, OS, arch, comps, f77lib, libs));
+}
+
+char *FindF77LIB(int verb, char *targarg, enum OSTYPE OS, enum MACHTYPE arch, 
+                 char **comps, char *f77lib, char *f77libnam)
+{
+   char *path, *sp;
+   int i;
+
+/*
+ * See if we can find by substituting "lib" for "bin" in compiler path
+ */
+   path = GetPathWithoutName(comps[F77_]);
+   if (path)
+   {
+      sp = strstr(path, "/bin");
+      if (sp)
+      {
+         sp[1] = 'l';
+         sp[2] = 'i';
+         sp[3] = 'b';
+      }
+      sp = FindF77LIB0(verb, targarg, OS, arch, comps, f77lib, f77libnam, path);
+      free(path);
+      if (sp)
+         return(sp);
+   }
+/*
+ * Scope some OS-specific places
+ */
+   if (OS == OSOSX)  /* /sw is for fink, /opt for macports */
+   {
+      sp = FindF77LIB0(verb, targarg, OS, arch, comps, f77lib, f77libnam, 
+                       "/sw/lib /opt/lib /opt/local/lib");
+      if (sp)
+         return(sp);
+   }
+/*
+ * Scope standard unix places
+ */
+   sp = FindF77LIB0(verb, targarg, OS, arch, comps, f77lib, f77libnam, 
+           "/lib /usr/lib /usr/local/lib /lib64 /usr/lib64 /usr/local/lib64");
+   if (verb)
+   {
+      if (sp)
+         printf("F77libdir = %s\n", sp);
+      else
+         printf("F77LIB left blank\n");
+   }
+   return(sp);
+}
+
 char *ProbeF77LIB(int verb, char *targarg, enum OSTYPE OS, 
                   enum MACHTYPE arch, char **comps, char *f2cdefs, int nof77)
 /*
@@ -5895,19 +6145,32 @@ char *ProbeF77LIB(int verb, char *targarg, enum OSTYPE OS,
  */
 {
    char cmnd[1024], res[2048];
-   char *f77lib, *F77LIBdir, *sp;
+   char *f77lib, *F77LIBdir, *sp, *suff, *f77libnam;
    int i;
    char ch;
 
    if (nof77 || !f2cdefs) return(NULL);
-   if  (strstr(comps[F77_], "g77")) f77lib = "g2c";
-   else if (strstr(comps[F77_], "gfortran")) f77lib = "gfortran";
+   if (CompIsGcc(comps[F77_]))
+   {
+      if  (strstr(comps[F77_], "g77")) f77lib = "g2c";
+      else f77lib = "gfortran";
+   }
    else
    {
       if (verb > 1)
          fprintf(stderr, "Unknown F77 compiler, leaving F77LIBS blank!\n");
       return(NULL);
    }
+   if (OS == OSOSX)
+      suff = ".dylib";
+   else if (OSIsWin(OS))
+      suff = ".dll";
+   else
+      suff = ".so";
+   i = 3 + strlen(f77lib) + strlen(suff) + 1;
+   f77libnam = malloc(i*sizeof(char));
+   assert(f77libnam);
+   sprintf(f77libnam, "lib%s%s", f77lib, suff);
    sprintf(cmnd,  "make IRunFlib F77='%s' F77FLAGS='%s'",
            comps[F77_], comps[NCOMP+F77_]);
    if (verb > 1)
@@ -5922,21 +6185,17 @@ char *ProbeF77LIB(int verb, char *targarg, enum OSTYPE OS,
    while (sp = strstr(sp, "-L"))
    {
       sp += 2;
-      i = PathLength(sp);
+      i = PathLength(sp); 
       if (i)
       {
+         char *sp2;
          ch = sp[i];
          sp[i] = '\0';
-         sprintf(cmnd, "make IRunTestCFLink F77='%s' F77FLAGS='%s' CC='%s' CCFLAGS='%s -L%s' F77LIB='%s' LIBS='-lm'",
-                 comps[F77_], comps[NCOMP+F77_], 
-                 comps[ICC_], comps[NCOMP+ICC_], sp, f77lib);
-         if (verb > 1)
-            fprintf(stderr, "cmnd = %s\n", cmnd);
-         if (verb > 1) 
-            fprintf(stderr, "Trying F77 link path of %s ... ", sp);
-         if (!system(cmnd))
+         sp2 = NewStringCopy(sp);
+         sp2 = NewAppendedString(sp2, f77libnam);
+         if (FileIsThere(sp2) &&
+             TestF77LIB(verb, targarg, OS, arch, comps, sp, f77lib))
          {
-            if (verb > 1) fprintf(stderr, "SUCCESS!\n");
             F77LIBdir = NewStringCopy(sp-2);
             F77LIBdir = NewAppendedString(F77LIBdir, "-l");
             F77LIBdir = NewAppendedString0(F77LIBdir, f77lib);
@@ -5944,14 +6203,31 @@ char *ProbeF77LIB(int verb, char *targarg, enum OSTYPE OS,
                F77LIBdir = NewAppendedString(F77LIBdir, "-lgcc");
             if (verb)
                fprintf(stderr, "F77LIB = %s\n", F77LIBdir);
+            free(sp2);
+            free(f77libnam);
             return(F77LIBdir);
          }
-         if (verb > 1) fprintf(stderr, "REJECTED!!!!\n");
+         free(sp2);
          sp[i] = ch;
          sp += i;
       }
    }
-   if (verb) fprintf(stderr, "F77LIB left blank");
+   sp = FindF77LIB(verb, targarg, OS, arch, comps, f77lib, f77libnam);
+   free(f77libnam);
+   if (sp)
+   {
+      F77LIBdir = NewStringCopy("-L");
+      suff = GetPathWithoutName(sp);
+      F77LIBdir = NewAppendedString0(F77LIBdir, suff);
+      free(suff);
+      free(sp);
+      F77LIBdir = NewAppendedString(F77LIBdir, "-l");
+      F77LIBdir = NewAppendedString0(F77LIBdir, f77lib);
+      if (OSIsWin(OS))
+         F77LIBdir = NewAppendedString(F77LIBdir, "-lgcc");
+      if (verb)
+         fprintf(stderr, "F77LIB = %s\n", F77LIBdir);
+   }
    return(NULL);
 }
 
