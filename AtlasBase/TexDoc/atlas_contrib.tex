@@ -21,6 +21,7 @@
    }
 } {\end{list}}
 \newcommand{\rditem}[2]{\item[#1\hfill(~]#2 )}
+\newcommand{\kernk}[1]{{\tt #1\_k}}
 
 
 
@@ -1455,7 +1456,141 @@ API as previously described:
 
 
 \section{Speeding up the Level 2 BLAS}
+\begin{table}[thb]
+\begin{center}
+\begin{tabular}{lll}
+Mneum & operations & Used to support \\\hline\hline
+\kernk{mvn} & $y \leftarrow Ax$, $y \leftarrow Ax + y$ & GEMV\\\hline
+\kernk{mvt} & $y \leftarrow A^Tx$, $y \leftarrow A^Tx + y$ & GEMV\\\hline
+\kernk{ger} & $A \leftarrow xy^T + A$  & GER, GERU, SYR \\
+            & $A \leftarrow xy^H + A$  & GERC, HER\\\hline
+\kernk{ger2}& $A \leftarrow xy^T + wz^T + A$, & GER2, GER2U, SYR2 \\
+            & $A \leftarrow xy^H + wz^H + A$ & GER2C, HER2 \\\hline
+\end{tabular}
+\end{center}
+\caption{Level-2 BLAS kernels, and the L2BLAS routines they improve}
+\label{tab-l2k}
+\end{table}
+ATLAS presently uses four kernels to support many of the L2BLAS, as shown
+on table~\ref{tab-l2k}.  
 
+At present, the L2BLAS TRMV, TRSV, HEMV, SYMV are not empirically tuned
+by ATLAS.  TRSM and TRMV can be written in terms of \kernk{mvnK} and 
+\kernk{mvtK}, but we have not yet done so.  The present L2BLAS support
+is a complete redesign of ATLAS's old L2BLAS support, and unfortunately,
+after getting all the rank-1/2 based routines written, it was realized
+that the current design is so unwieldy that it is extremely difficult to
+extend.  The plan is to clean up the design at a later date, and then
+complete the L2BLAS support.  In the meantime, the most-called routines
+are GER and GEMV, and these routines are fully tuned under the present
+system.
+
+In this section, we use some macros that are automatically defined
+by the ATLAS build system.  The first is {\tt ATL\_CINT} which is
+presently an alias for {\tt const int}.  The macros {\tt SCALAR}
+and {TYPE} are defined according the precision being being compiled:
+\begin{tabular}{||l|l|l|l|l||}\hline\hline
+\verb+<pre>+ : & {\tt s} & {\tt d} & {\tt c} & {\tt z} \\\hline\hline
+SCALAR & {\tt float} & {\tt double} & {\tt float*} & {\tt float*} \\\hline
+TYPE   & {\tt float} & {\tt double} & {\tt float} & {\tt float} \\\hline\hline
+\end{tabular}
+
+\subsection{Testing and tuning \kernk{mvn}}
+The API of this routine is given by:
+\begin{verbatim}
+void ATL_UGEMV(ATL_CINT M, ATL_CINT N, const TYPE *A, ATL_CINT lda,
+               const TYPE *X, TYPE *Y)
+\end{verbatim}
+If the routine is compiled with the macro {\tt BETA0} defined, then
+it should perform the operation $y \leftarrow Ax$; if this macro is
+not defined, then it should perform $y \leftarrow Ax + y$.
+$A$ is a column-major $lda \times N$ contiguous array where $lda \ge M$.
+$M$ specifies both the number of rows of $A$ and the length of the vector $X$.
+$N$ provides the number of columns in $A$, and the length of the vector $Y$.
+
+Since this is a $O(MN)$ operation, and A is $M \times N$ in size,
+this algorithm is dominated by the load of $A$.  No reuse of $A$ is
+possible, so the best we can do is reuse the vectors (through operations
+like register and cache blocking).
+
+Each element of $Y$ can obviously be computed by doing a dot product of
+the corresponding row of $A$ with $X$.  However, this accesses the
+matrix along the non-contiguous dimension, which leads to terrible memory
+heirarchy usage for any reasonably sized matrix.  Therefore, \kernk{mvn}
+cannot be written in this fashion.
+
+In order to optimize the access of $A$ (dominant algorithmic cost) we must
+access it in a column-major fashion.  Therefore, instead of writing it as
+a series of dot products ({\tt ddot}s), we can write it as a series of 
+{\tt axpy}s (recall that {\tt axpy} does the operation 
+{\tt $y \leftarrow \alpha x + y$}).
+
+Therefore, instead of being composed of a series of {\tt ddot}s, 
+\kernk{mvn} should be implemented as a series of {\tt axpy}s.  In this
+formulation, we access columns of $A$ (the contiguous dimension) at a time,
+and we write update all elements of $Y$ 
+
+A simple implementation of this kernel (for real precisions) is:
+\begin{verbatim}
+#include "atlas_misc.h"  /* define TYPE macros */
+void ATL_UGEMV(ATL_CINT M, ATL_CINT N, const TYPE *A, ATL_CINT lda,
+               const TYPE *X, TYPE *Y)
+{
+   register int j, i;
+
+/*
+ * Peel 1st iteration of N-loop if BETA0 is defined
+ */
+   #ifdef BETA0
+   {
+      const register TYPE x0 = *X;
+      for (i=0; i != M; i++)
+         Y[i] = A[i] * x0;
+      j=1;
+      A += lda;   /* done with this column of A */
+   }
+   #else
+      j=0;
+   #endif
+   for (; j != N; j++)
+   {
+      const TYPE register x0 = X[j];
+      register TYPE y0 = Y[i];
+
+      for (i=0; i != M; i++) 
+         Y[i] += A[i] * x0;
+      A += lda;   /* done with this column of A */
+   }
+}
+\end{verbatim}
+
+To time and test \kernk{mvn} kernel, its implementation must be stored in 
+the {\tt OBJdir/tune/blas/gemv/MVNCASES} directory.  Assuming I saved the
+above implementation to {\tt mvn.c} in the above directory, I can test
+the kernel from the {\tt OBJdir/tune/blas/gemv} directory with the
+command: \verb+make <pre>mvnktest+, where \verb+<pre>+ specifies the
+type/precision and is one of : {\tt s}, {\tt d}, {\tt c}, or {\tt z}.
+\subsection{Testing and tuning \kernk{mvt}}
+This target uses the following {\tt make} variables which you can change
+to vary the type of testing done; number in parens are the default values
+that will be used if no command-line override is given:
+\begin{itemize}
+\item \verb+mu+ (1): Unrolling on M dimension
+\item \verb+nu+ (1): Unrolling on N dimension
+\item \verb+mvnrout+: the filename of your kernel implementation
+\item \verb+Mt+ (297): Number of rows of $A$ (elements of $y$)
+\item \verb+Nt+ (177): Number of columns of $A$ (elements of $x$)
+\item \verb+ldat+ (\verb+Mt+): leading dimension for the matrix $A$
+\item \verb+align+ (\verb+-Fx 16 -Fy 16 -Fa 16+): alignments that
+      matrix and vectors must adhere to.
+\item \verb+<pre>MVCC+ (ATLAS default compiler) : compiler required
+      to compile your kernel
+\item \verb+<pre>MVCFLAGS+ (ATLAS default flags) : compiler flags required
+      to compile your kernel
+\end{itemize}
+%\Wskip
+\subsection{OLDSTUFF}
+{
 All Level 2 BLAS are written in terms of 3 kernel routines:
 \begin{enumerate}
 \item Notranspose GEMV
@@ -2095,6 +2230,7 @@ dominant direction of the loop is expected to be down the columns of
 $A$, {\tt incY} is not restricted to 1, while {\tt incX} is.  As in GEMV,
 all routines except SYR2 block only the the $X$ dimension, while
 SYR2 blocks both, so that $A$ can be reused in L1.
+}
 
 \section{Speeding up the Level 1 BLAS}
 
