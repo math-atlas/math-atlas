@@ -1462,10 +1462,9 @@ API as previously described:
 Mneum & operations & Used to support \\\hline\hline
 \kernk{mvn} & $y \leftarrow Ax$, $y \leftarrow Ax + y$ & GEMV\\\hline
 \kernk{mvt} & $y \leftarrow A^Tx$, $y \leftarrow A^Tx + y$ & GEMV\\\hline
-\kernk{ger} & $A \leftarrow xy^T + A$  & GER, GERU, SYR \\
-            & $A \leftarrow xy^H + A$  & GERC, HER\\\hline
-\kernk{ger2}& $A \leftarrow xy^T + wz^T + A$, & GER2, GER2U, SYR2 \\
-            & $A \leftarrow xy^H + wz^H + A$ & GER2C, HER2 \\\hline
+\kernk{ger} & $A \leftarrow xy^T + A$  & GER, GERU, GERC, SYR, HER \\\hline
+\kernk{ger2}& $A \leftarrow xy^T + wz^T + A$, & GER2, GER2U, GER2C, SYR2, HER2
+\\\hline
 \end{tabular}
 \end{center}
 \caption{Level-2 BLAS kernels, and the L2BLAS routines they improve}
@@ -1488,14 +1487,14 @@ system.
 In this section, we use some macros that are automatically defined
 by the ATLAS build system.  The first is {\tt ATL\_CINT} which is
 presently an alias for {\tt const int}.  The macros {\tt SCALAR}
-and {TYPE} are defined according the precision being being compiled:
+and {TYPE} are defined according the precision being being compiled: \\
 \begin{tabular}{||l|l|l|l|l||}\hline\hline
 \verb+<pre>+ : & {\tt s} & {\tt d} & {\tt c} & {\tt z} \\\hline\hline
 SCALAR & {\tt float} & {\tt double} & {\tt float*} & {\tt float*} \\\hline
 TYPE   & {\tt float} & {\tt double} & {\tt float} & {\tt float} \\\hline\hline
 \end{tabular}
 
-\subsection{Testing and tuning \kernk{mvn}}
+\subsection{Testing and timing \kernk{mvn}}
 The API of this routine is given by:
 \begin{verbatim}
 void ATL_UGEMV(ATL_CINT M, ATL_CINT N, const TYPE *A, ATL_CINT lda,
@@ -1565,12 +1564,12 @@ void ATL_UGEMV(ATL_CINT M, ATL_CINT N, const TYPE *A, ATL_CINT lda,
 \end{verbatim}
 
 To time and test \kernk{mvn} kernel, its implementation must be stored in 
-the {\tt OBJdir/tune/blas/gemv/MVNCASES} directory.  Assuming I saved the
+the\\ {\tt OBJdir/tune/blas/gemv/MVNCASES} directory.  Assuming I saved the
 above implementation to {\tt mvn.c} in the above directory, I can test
 the kernel from the {\tt OBJdir/tune/blas/gemv} directory with the
 command: \verb+make <pre>mvnktest+, where \verb+<pre>+ specifies the
 type/precision and is one of : {\tt s}, {\tt d}, {\tt c}, or {\tt z}.
-\subsection{Testing and tuning \kernk{mvt}}
+
 This target uses the following {\tt make} variables which you can change
 to vary the type of testing done; number in parens are the default values
 that will be used if no command-line override is given:
@@ -1587,10 +1586,367 @@ that will be used if no command-line override is given:
       to compile your kernel
 \item \verb+<pre>MVCFLAGS+ (ATLAS default flags) : compiler flags required
       to compile your kernel
+\item \verb+beta+ (1) : 0 or 1 (scale of $y$)
 \end{itemize}
-%\Wskip
-\subsection{OLDSTUFF}
+
+Therefore, to test the $\beta=1.0$ case of double precision real:
+\begin{verbatim}
+>make dmvnktest mu=1 nu=1 mvnrout=mvn.c
+.... bunch of compilation, etc ....
+   TEST M=997, N=177, lda=1111, STARTED
+   TEST M=997, N=177, be=0.00, lda=1111, incXY=1,1 PASSED
+\end{verbatim}
+
+To test single precision $\beta=0.0$ with a different shape:
+\begin{verbatim}
+>make smvnktest mu=1 nu=1 mvnrout=mvn.c beta=0 Mt=801 Nt=55 ldat=1000
+.... bunch of compilation, etc ....
+   TEST M=801, N=55, lda=1000, STARTED
+   TEST M=801, N=55, be=0.00, lda=1000, incXY=1,1 PASSED
+\end{verbatim}
+
+Now we are ready to time this masterpiece.  We have two choices for timers.
+The first such timer simply calls your newly-written kernel directly.
+It does no cache flushing at all: it initializes the operands
+(bringing them into the fastest level of heirarchy into which they fit),
+and times the operations.  This is the timer to use when you want to preload
+the problem to a given level of cache and see how fast your kernel is in
+isolation.  The make target for this methodology is \verb+<pre>mvnktime+.
+
+The second make target calls ATLAS's GEMV driver that builds the full
+GEMV from the kernels.  This timer does cache flushing, and is what you
+should use to estimate how fast the complete GEMV will be.  This make target
+is \verb+<pre>mvntime+.
+
+Both of these targets take largely the same make macros:
+\begin{itemize}
+\item \verb+mu+ (1): Unrolling on M dimension
+\item \verb+nu+ (1): Unrolling on N dimension
+\item \verb+mvnrout+: the filename of your kernel implementation
+\item \verb+M+ (1000): Number of rows of $A$ (elements of $y$)
+\item \verb+N+ (1000): Number of columns of $A$ (elements of $x$)
+\item \verb+lda+ (\verb+M+): leading dimension for the matrix $A$
+\item \verb+align+ (\verb+-Fx 16 -Fy 16 -Fa 16+): alignments that
+      matrix and vectors must adhere to.
+\item \verb+<pre>MVCC+ (ATLAS default compiler) : compiler required
+      to compile your kernel
+\item \verb+<pre>MVCFLAGS+ (ATLAS default flags) : compiler flags required
+      to compile your kernel; pass "-x assembler-with-cpp" (along with any
+      architecture-specific flags) if your kernel is written in assembly
+      (assuming your compiler is \texttt{gcc}).
+\item \verb+beta+ (1) : 0 or 1 (scale of $y$)
+\item \verb+flushKB+ : for {\tt mvntime}, kilobytes of memory to flush.
+\end{itemize}
+
+Therefore, to time the probable speed of a complete GEMV of size 1000x32 
+while flushing 16MB of memory, I would issue:
+\begin{verbatim}
+>make dmvntime mu=1 nu=1 mvnrout=mvn.c M=1000 N=32 flushKB=16384
+GEMV: M=1000, N=32, lda=1008, AF=[16,16,16], AM=[0,0,0], beta=1.000000e+00, alpha=1.000000e+00:
+   M=1000, N=32, lda=1008, nreps=57, time=2.011856e-05, mflop=3230.85
+   M=1000, N=32, lda=1008, nreps=57, time=2.011042e-05, mflop=3232.15
+   M=1000, N=32, lda=1008, nreps=57, time=2.006722e-05, mflop=3239.11
+NREPS=3, MAX=3239.11, MIN=3230.85, AVG=3234.04, MED=3232.15
+\end{verbatim}
+
+\subsection{Testing and timing \kernk{mvt}}
+The API of this routine is given by:
+\begin{verbatim}
+void ATL_UGEMV(ATL_CINT M, ATL_CINT N, const TYPE *A, ATL_CINT lda,
+               const TYPE *X, TYPE *Y)
+\end{verbatim}
+If the routine is compiled with the macro {\tt BETA0} defined, then
+it should perform the operation $y \leftarrow A^Tx$; if this macro is
+not defined, then it should perform $y \leftarrow A^Tx + y$.
+$A$ is a column-major $lda \times N$ contiguous array where $lda \ge M$.
+$M$ specifies both the number of rows of $A$ and the length of the vector $X$.
+$N$ provides the number of columns in $A$, and the length of the vector $Y$.
+
+Since this is a $O(MN)$ operation, and A is $M \times N$ in size,
+this algorithm is dominated by the load of $A$.  No reuse of $A$ is
+possible, so the best we can do is reuse the vectors (through operations
+like register and cache blocking).
+
+Each element of $Y$ can obviously be computed by doing a dot product of
+the corresponding row of $A$ with $X$, and this gives us the simplist
+implementation possible:
+\begin{verbatim}
+#include "atlas_misc.h"  /* define TYPE macros */
+void ATL_UGEMV(ATL_CINT M, ATL_CINT N, const TYPE *A, ATL_CINT lda,
+               const TYPE *X, TYPE *Y)
 {
+   register int j, i;
+   
+   for (j=0; j < N; j++)
+   {
+      #ifdef BETA0
+         register TYPE y0 = 0.0;
+      #else
+         register TYPE y0 = Y[j];
+      #endif
+      for (i=0; i < M; i++)
+         y0 += A[i] * X[i];
+      Y[j] = y0;
+      A += lda;  /* done with this column */
+   }
+}
+\end{verbatim}
+
+To time and test a \kernk{mvt} kernel, its implementation must be stored in 
+the\\ {\tt OBJdir/tune/blas/gemv/MVTCASES} directory.  Assuming I saved the
+above implementation to {\tt mvt.c} in the above directory, I can test
+the kernel from the {\tt OBJdir/tune/blas/gemv} directory with the
+command: \verb+make <pre>mvtktest+, where \verb+<pre>+ specifies the
+type/precision and is one of : {\tt s}, {\tt d}, {\tt c}, or {\tt z}.
+
+This target uses the following {\tt make} variables which you can change
+to vary the type of testing done; number in parens are the default values
+that will be used if no command-line override is given:
+\begin{itemize}
+\item \verb+mu+ (1): Unrolling on M dimension
+\item \verb+nu+ (1): Unrolling on N dimension
+\item \verb+mvnrout+: the filename of your kernel implementation
+\item \verb+Mt+ (297): Number of rows of $A$ (elements of $y$)
+\item \verb+Nt+ (177): Number of columns of $A$ (elements of $x$)
+\item \verb+ldat+ (\verb+Mt+): leading dimension for the matrix $A$
+\item \verb+align+ (\verb+-Fx 16 -Fy 16 -Fa 16+): alignments that
+      matrix and vectors must adhere to.
+\item \verb+<pre>MVCC+ (ATLAS default compiler) : compiler required
+      to compile your kernel
+\item \verb+<pre>MVCFLAGS+ (ATLAS default flags) : compiler flags required
+      to compile your kernel
+\item \verb+beta+ (1) : 0 or 1 (scale of $y$)
+\end{itemize}
+
+Therefore, to test the $\beta=1.0$ case of double precision real:
+\begin{verbatim}
+>make dmvtktest mu=1 nu=1 mvtrout=mvt.c
+.... bunch of compilation, etc ....
+   TEST M=997, N=177, lda=1111, STARTED
+   TEST M=997, N=177, be=1.00, lda=1111, incXY=1,1 PASSED
+\end{verbatim}
+
+We have two choices for timers.
+The first such timer simply calls your newly-written kernel directly.
+It does no cache flushing at all: it initializes the operands
+(bringing them into the fastest level of heirarchy into which they fit),
+and times the operations.  This is the timer to use when you want to preload
+the problem to a given level of cache and see how fast your kernel is in
+isolation.  The make target for this methodology is \verb+<pre>mvtktime+.
+
+The second make target calls ATLAS's GEMV driver that builds the full
+GEMV from the kernels.  This timer does cache flushing, and is what you
+should use to estimate how fast the complete GEMV will be.  This make target
+is \verb+<pre>mvttime+.
+
+Both of these targets take largely the same make macros:
+\begin{itemize}
+\item \verb+mu+ (1): Unrolling on M dimension
+\item \verb+nu+ (1): Unrolling on N dimension
+\item \verb+mvnrout+: the filename of your kernel implementation
+\item \verb+M+ (1000): Number of rows of $A$ (elements of $y$)
+\item \verb+N+ (1000): Number of columns of $A$ (elements of $x$)
+\item \verb+lda+ (\verb+M+): leading dimension for the matrix $A$
+\item \verb+align+ (\verb+-Fx 16 -Fy 16 -Fa 16+): alignments that
+      matrix and vectors must adhere to.
+\item \verb+<pre>MVCC+ (ATLAS default compiler) : compiler required
+      to compile your kernel
+\item \verb+<pre>MVCFLAGS+ (ATLAS default flags) : compiler flags required
+      to compile your kernel; pass "-x assembler-with-cpp" (along with any
+      architecture-specific flags) if your kernel is written in assembly
+      (assuming your compiler is \texttt{gcc}).
+\item \verb+beta+ (1) : 0 or 1 (scale of $y$)
+\item \verb+flushKB+ : for {\tt mvntime}, kilobytes of memory to flush.
+\end{itemize}
+
+Therefore, to time the probable speed of a complete GEMV of size 1000x32 
+while flushing 16MB of memory, I would issue:
+\begin{verbatim}
+>make dmvttime mu=1 nu=1 mvtrout=mvt.c M=1000 N=32 flushKB=16384
+GEMV: M=1000, N=32, lda=1008, AF=[16,16,16], AM=[0,0,0], beta=1.000000e+00, alpha=1.000000e+00:
+   M=1000, N=32, lda=1008, nreps=57, time=2.809835e-05, mflop=2313.30
+   M=1000, N=32, lda=1008, nreps=57, time=2.812956e-05, mflop=2310.74
+   M=1000, N=32, lda=1008, nreps=57, time=2.807517e-05, mflop=2315.21
+NREPS=3, MAX=2315.21, MIN=2310.74, AVG=2313.08, MED=2313.30
+\end{verbatim}
+
+\subsection{Testing and timing \kernk{ger}}
+The API of \kernk{ger} is given by:
+\begin{verbatim}
+void ATL_UGERK(ATL_CINT M, ATL_CINT N, const TYPE *X, const TYPE *Y, 
+               TYPE *A, ATL_CINT lda)
+\end{verbatim}
+This kernel performs the outer product operation $A \leftarrow xy^T + A$.
+$A$ is a column-major $lda \times N$ contiguous array where $lda \ge M$.
+$M$ specifies both the number of rows of $A$ and the length of the vector $X$.
+$N$ provides the number of columns in $A$, and the length of the vector $Y$.
+
+Since this is a $O(MN)$ operation, and A is $M \times N$ in size,
+this algorithm is dominated by the load of $A$.  No reuse of $A$ is
+possible, so the best we can do is reuse the vectors (through operations
+like register and cache blocking).
+
+The simplist implementation of this operation is done by doing a {\tt axpy}
+operation for each column of the matrix:
+\begin{verbatim}
+#include "atlas_misc.h"  /* define TYPE macros */
+void ATL_UGERK(ATL_CINT M, ATL_CINT N, const TYPE *X, const TYPE *Y, 
+               TYPE *A, ATL_CINT lda)
+{
+   register int j, i;
+   
+   for (j=0; j < N; j++)
+   {
+      const register TYPE y0 = Y[j];
+      for (i=0; i < M; i++)
+         A[i] += X[i] * y0;
+      A += lda;  /* done with this column */
+   }
+}
+\end{verbatim}
+
+To time and test a \kernk{ger} kernel, its implementation must be stored in 
+the\\ {\tt OBJdir/tune/blas/gemv/R1CASES} directory.  Assuming I saved the
+above implementation to {\tt ger.c} in the above directory, I can test
+the kernel from the {\tt OBJdir/tune/blas/ger} directory with the
+command: \verb+make <pre>r1ktest+, where \verb+<pre>+ specifies the
+type/precision and is one of : {\tt s}, {\tt d}, {\tt c}, or {\tt z}.
+
+This target uses the following {\tt make} variables which you can change
+to vary the type of testing done; number in parens are the default values
+that will be used if no command-line override is given:
+\begin{itemize}
+\item \verb+mu+ (1): Unrolling on M dimension
+\item \verb+nu+ (1): Unrolling on N dimension
+\item \verb+mvnrout+: the filename of your kernel implementation
+\item \verb+Mt+ (297): Number of rows of $A$ (elements of $x$)
+\item \verb+Nt+ (177): Number of columns of $A$ (elements of $y$)
+\item \verb+ldat+ (\verb+Mt+): leading dimension for the matrix $A$
+\item \verb+align+ (\verb+-Fx 16 -Fy 16 -Fa 16+): alignments that
+      matrix and vectors must adhere to.
+\item \verb+<pre>MVCC+ (ATLAS default compiler) : compiler required
+      to compile your kernel
+\item \verb+<pre>MVCFLAGS+ (ATLAS default flags) : compiler flags required
+      to compile your kernel
+\end{itemize}
+
+To test this kernel with a 511x220 matrix, I would issue:
+\begin{verbatim}
+>make dr1ktest mu=1 nu=1 r1rout=ger.c Mt=511 Nt=220
+.... bunch of compilation, etc ....
+   TEST CONJ=0, M=511, N=220, lda=511, incY=1, STARTED
+   TEST CONJ=0, M=511, N=220, lda=511, incY=1, PASSED
+\end{verbatim}
+
+We have two choices for timers.
+The first such timer simply calls your newly-written kernel directly.
+It does no cache flushing at all: it initializes the operands
+(bringing them into the fastest level of heirarchy into which they fit),
+and times the operations.  This is the timer to use when you want to preload
+the problem to a given level of cache and see how fast your kernel is in
+isolation.  The make target for this methodology is \verb+<pre>r1ktime+.
+
+The second make target calls ATLAS's GER driver that builds the full
+GER from the kernels.  This timer does cache flushing, and is what you
+should use to estimate how fast the complete GER will be.  This make target
+is \verb+<pre>r1time+.
+
+Both of these targets take largely the same make macros:
+\begin{itemize}
+\item \verb+mu+ (1): Unrolling on M dimension
+\item \verb+nu+ (1): Unrolling on N dimension
+\item \verb+mvnrout+: the filename of your kernel implementation
+\item \verb+M+ (1000): Number of rows of $A$ (elements of $x$)
+\item \verb+N+ (1000): Number of columns of $A$ (elements of $y$)
+\item \verb+lda+ (\verb+M+): leading dimension for the matrix $A$
+\item \verb+align+ (\verb+-Fx 16 -Fy 16 -Fa 16+): alignments that
+      matrix and vectors must adhere to.
+\item \verb+<pre>R1CC+ (ATLAS default compiler) : compiler required
+      to compile your kernel
+\item \verb+<pre>R1CFLAGS+ (ATLAS default flags) : compiler flags required
+      to compile your kernel; pass "-x assembler-with-cpp" (along with any
+      architecture-specific flags) if your kernel is written in assembly
+      (assuming your compiler is \texttt{gcc}).
+\item \verb+beta+ (1) : 0 or 1 (scale of $y$)
+\item \verb+flushKB+ : for {\tt mvntime}, kilobytes of memory to flush.
+\end{itemize}
+
+Therefore, to time the probable speed of a complete GER of size 1000x220
+while flushing 16MB of memory, I would issue:
+\begin{verbatim}
+>make dr1time mu=1 nu=1 r1rout=ger.c M=800 Nt=220 flushKB=16384
+.... bunch of compilation, etc ....
+GER1: M=800, N=1000, lda=800, AF=[16,16,16], AM=[0,0,0], alpha=1.000000e+00:
+   M=800, N=1000, lda=800, nreps=3, time=8.589835e-04, mflop=1863.60
+   M=800, N=1000, lda=800, nreps=3, time=8.340690e-04, mflop=1919.27
+   M=800, N=1000, lda=800, nreps=3, time=8.746753e-04, mflop=1830.16
+NREPS=3, MAX=1919.27, MIN=1830.16, AVG=1871.01, MED=1863.60
+\end{verbatim}
+
+To time the kernel alone without cache flushing:
+\begin{verbatim}
+>make dr1ktime mu=1 nu=1 r1rout=ger.c M=800 Nt=220
+.... bunch of compilation, etc ....
+GER1: M=800, N=1000, lda=800, AF=[16,16,16], AM=[0,0,0], alpha=1.000000e+00:
+   M=800, N=1000, lda=800, nreps=3, time=6.657494e-04, mflop=2404.51
+   M=800, N=1000, lda=800, nreps=3, time=6.664957e-04, mflop=2401.82
+   M=800, N=1000, lda=800, nreps=3, time=6.842208e-04, mflop=2339.60
+NREPS=3, MAX=2404.51, MIN=2339.60, AVG=2381.97, MED=2401.82
+\end{verbatim}
+
+\subsection{Testing and timing \kernk{ger2}}
+The rank-2 update kernel \kernk{ger2} performs the operation
+$A \leftarrow xy^T + wz^T + A$, and has the API:
+\begin{verbatim}
+void ATL_UGER2K
+   (ATL_CINT M, ATL_CINT N, const TYPE *X, const TYPE *Y,
+    const TYPE *W, const TYPE *Z, TYPE *A, ATL_CINT lda)
+\end{verbatim}
+The rank-2 update kernel \kernk{ger2} uses the exact same testing
+and timing methodology as described for \kernk{ger} in the previous
+section, except the kernel must be stored in the {\tt R2CASES/} subdirectory,
+and you substute ``r2'' for ``r1'' in the testing and timing commands,
+and ``R2'' for ``R1'' in the compiler and flag macros.
+
+A simple GER2 implememtation would be:
+\begin{verbatim}
+#include "atlas_misc.h"  /* define TYPE macros */
+void ATL_UGER2K
+   (ATL_CINT M, ATL_CINT N, const TYPE *X, const TYPE *Y,
+    const TYPE *W, const TYPE *Z, TYPE *A, ATL_CINT lda)
+{
+   register ATL_INT i, j;
+
+   for (j=0; j < N; j++)
+   {
+      const register TYPE y0=Y[j], z0=Z[j];
+      for (i=0; i < M; i++)
+         A[i] += X[i]*y0 + W[i]*z0;
+      A += lda;  /* finished with this column */
+   }
+}
+\end{verbatim}
+
+Assuming I save the above file to {\tt R2CASES/r2k.c}, I would test:
+\begin{verbatim}
+>make sr2ktest mu=1 nu=1 r2rout=r2k.c
+.... bunch of compilation, etc ....
+   TEST CONJ=0, M=297, N=177, lda=297, incY=1, STARTED
+   TEST CONJ=0, M=297, N=177, lda=297, incY=1, PASSED
+\end{verbatim}
+
+And time the single precision real kernel without cache flushing with:
+\begin{verbatim}
+>make sr2ktime mu=1 nu=1 r2rout=r2k.c
+.... bunch of compilation, etc ....
+GER2: M=1000, N=1000, lda=1000, AF=[16,16,16], AM=[0,0,0], alpha=1.000000e+00:
+   M=1000, N=1000, lda=1000, nreps=1, time=9.489282e-04, mflop=4217.39
+   M=1000, N=1000, lda=1000, nreps=1, time=9.714776e-04, mflop=4119.50
+   M=1000, N=1000, lda=1000, nreps=1, time=9.486141e-04, mflop=4218.79
+NREPS=3, MAX=4218.79, MIN=4119.50, AVG=4185.22, MED=4217.39
+\end{verbatim}
+\Wskip{
+\subsection{OLDSTUFF}
 All Level 2 BLAS are written in terms of 3 kernel routines:
 \begin{enumerate}
 \item Notranspose GEMV
