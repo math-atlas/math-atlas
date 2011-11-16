@@ -6137,6 +6137,20 @@ char *FindF77LIB(int verb, char *targarg, enum OSTYPE OS, enum MACHTYPE arch,
    return(sp);
 }
 
+char *BuildF77LinkLine(enum OSTYPE OS, char *path, char *libnam)
+{
+   char *sp, *OSextra="";
+   int i;
+
+   if (OSIsWin(OS))
+      OSextra = "-lgcc";
+   i = strlen(path) + strlen(libnam) + strlen(OSextra) + 2 + 2 + 1 + 1;
+   sp = malloc(i*sizeof(char));
+   assert(sp);
+   sprintf(sp, "-L%s -l%s %s", path, libnam, OSextra);
+   return(sp);
+}
+
 char *ProbeF77LIB(int verb, char *targarg, enum OSTYPE OS, 
                   enum MACHTYPE arch, char **comps, char *f2cdefs, int nof77)
 /*
@@ -6161,6 +6175,9 @@ char *ProbeF77LIB(int verb, char *targarg, enum OSTYPE OS,
          fprintf(stderr, "Unknown F77 compiler, leaving F77LIBS blank!\n");
       return(NULL);
    }
+/*
+ * Figure out full name of the libgfortran we are looking ofr
+ */
    if (OS == OSOSX)
       suff = ".dylib";
    else if (OSIsWin(OS))
@@ -6171,6 +6188,31 @@ char *ProbeF77LIB(int verb, char *targarg, enum OSTYPE OS,
    f77libnam = malloc(i*sizeof(char));
    assert(f77libnam);
    sprintf(f77libnam, "lib%s%s", f77lib, suff);
+/*
+ * First, see if we can use 'gfortran -print-file-name=<f77libnam>' to
+ * get definitive answer.  If so, return it.
+ */
+   i = strlen(comps[F77_]) + strlen(comps[F77_+NCOMP]) + strlen(f77libnam) + 21;
+   sp = malloc(i*sizeof(char));
+   assert(sp);
+   sprintf(sp, "%s %s -print-file-name=%s", 
+           comps[F77_], comps[F77_+NCOMP], f77libnam);
+   if (!CmndOneLine(NULL, sp, res))
+   {
+      free(sp);
+      fprintf(stdout, "REPORTED: res=%s\n", res);
+      sp = GetPathWithoutName(res);
+      F77LIBdir = BuildF77LinkLine(OS, sp, f77lib);
+      free(sp);
+      if (verb)
+         fprintf(stderr, "F77LIB = %s\n", F77LIBdir);
+      return(F77LIBdir);
+   }
+   free(sp);
+/*
+ * If we are using a gfortran without the above option, try to parse
+ * a verbose link line for the answer
+ */
    sprintf(cmnd,  "make IRunFlib F77='%s' F77FLAGS='%s'",
            comps[F77_], comps[NCOMP+F77_]);
    if (verb > 1)
