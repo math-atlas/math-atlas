@@ -8607,4 +8607,79 @@ static char *ATL_fgets_CWS(char *sout, int *plen, FILE *fpin)
       sout[j] = '\0';
    return(sout);
 }
+
+static char *ATL_tmpnam(void)
+{
+   static char tnam[L_tmpnam];
+   static char FirstTime=1;
+   if (FirstTime)
+   {
+      FirstTime = 0;
+      assert(tmpnam(tnam));
+   }
+   return(tnam);
+}
+
+FILE *atlsys(char *targ, char *cmnd, int verb, int IgnoreErr)
+/*
+ * Executes command cmnd, returns open ("r" mode) file stream to output of 
+ * command.  If IgnoreErr is 0, then return NULL on error.
+ */
+{
+   char *tnam, *sp;
+   int i;
+   FILE *output=NULL;
+
+   tnam = ATL_tmpnam();
+   if (targ)
+   {
+      i = strlen(targ) + strlen(cmnd) + strlen(tnam) + 24;
+      sp = malloc(i*sizeof(char));
+      assert(sp);
+      sprintf(sp, "ssh %s \"%s\" > %s 2>&1 \n", targ, cmnd, tnam);
+   }
+   else
+   {
+      i = strlen(cmnd) + strlen(tnam) + 16;
+      sp = malloc(i*sizeof(char));
+      assert(sp);
+      sprintf(sp, "%s > %s 2>&1\n", cmnd, tnam);
+   }
+   i = system(sp);
+   if (i && verb)
+   {
+      fprintf(stderr, "\nierr=%d in command='%s'!\n\n", i, cmnd);
+      if (verb > 1)
+      {
+         fprintf(stderr, "OUTPUT:\n=======\n");
+         sprintf(sp, "cat %s", tnam);
+         system(sp);
+      }
+   }
+   if (!i || IgnoreErr)
+      output = fopen(tnam, "r");
+   return(output);
+}
+
+char *atlsys_L1(char *targ, char *cmnd, int verb, int CWS)
+/*
+ * Executes system(cmnd), returns 1st line as allocated string.  Returns NULL
+ * on error.
+ */
+{
+   FILE *fp;
+   char *ln=NULL;
+   int len=0;
+
+   fp = atlsys(targ, cmnd, verb, 0);
+   if (fp)
+   {
+      if (CWS)
+         ln = ATL_fgets_CWS(ln, &len, fp);
+      else
+         ln = ATL_fgets(ln, &len, fp);
+      fclose(fp);
+   }
+   return(ln);
+}
 #endif
