@@ -5764,47 +5764,58 @@ char *GetStrProbe(int verb, char *targarg, char *prb, char *id, char *str)
  * RETURNS: NULL on error, else requested string.
  */
 {
-   char *sp;
-   char ln[2048], ln2[2048];
+   char *sp, *sret=NULL;
    char *ln, *res;
-   int ierr=0, i;
+   int i;
 
    i = strlen(targarg) + strlen(prb) + strlen(id) + 48;
    ln = malloc(i*sizeof(char));
+   assert(ln);
    sprintf(ln, "make IRun_%s args=\"-v %d %s\" | fgrep '%s='", 
            prb, verb, targarg, id);
+   
    if (verb > 1)
       printf("cmnd=%s\n", ln);
-   ierr = CmndOneLine(NULL, ln, ln2);
-   if (!ierr)
+   res = atlsys_L1(NULL, ln, verb, 0);
+   if (res)
    {
       sprintf(ln, "%s='", id);
-      sp = strstr(ln2, ln);
+      sp = strstr(res, ln);
       if (sp)
       {
-         for (sp += strlen(ln); *sp && *sp != '\''; sp++)
-            *str++ = *sp;
-         if (!(*sp)) ierr = -2;
-         *str = '\0';
+         sp += strlen(ln);  /* sp pts to start of string */
+         for (i=0; sp[i] != '\'' && sp[i] != '\0'; i++);
+         if (sp[i] == '\'')  
+         {
+            sp[i] = '\0';  /* get rid of trailing ' and everything behind it */
+            sret = NewStringCopy(sp);
+         }
       }
-      else ierr = -4;
+      free(res);
    }
-   return(ierr);
+   free(ln);
+   return(sret);
 }
 
 int GetIntProbe(int verb, char *targarg, char *prb, char *id, int N)
 {
-   char ln[2048], ln2[2048];
-   int iret=0, ierr;
+   char *ln, char *res;
+   int iret=0, i;
 
-   ln[0] = ln2[0] = '\0';
+   i = strlen(targarg) + strlen(prb) + strlen(id) + 48;
+   ln = malloc(i*sizeof(char));
+   assert(ln);
    sprintf(ln, "make IRun_%s args=\"-v %d %s\" | fgrep '%s='", 
            prb, verb, targarg, id);
    if (verb > 1)
       printf("cmnd=%s\n", ln);
-   ierr = CmndOneLine(NULL, ln, ln2);
-   if (!ierr)
-      iret = GetLastInt(ln2);
+   res = atlsys_L1(NULL, ln, verb, 0);
+   free(ln);
+   if (res)
+   {
+      iret = GetLastInt(res);
+      free(res);
+   }
    if (N)
    {
       if (iret > N || iret < 1)
@@ -5819,45 +5830,91 @@ int GetIntProbe(int verb, char *targarg, char *prb, char *id, int N)
 int GetIntProbeSure(int verb, char *targarg, char *prb, char *id, 
                     int *sure)
 {
-   char ln[2048], ln2[2048];
+   char *ln, *res;
    int iret=0, ierr;
 
-   ln[0] = ln2[0] = '\0';
+   i = strlen(targarg) + strlen(prb) + strlen(id) + 48;
+   ln = malloc(i*sizeof(char));
+   assert(ln);
    sprintf(ln, "make IRun_%s args=\"-v %d %s\" | fgrep '%s='", 
            prb, verb, targarg, id);
    if (verb > 1)
       printf("cmnd=%s\n", ln);
-   ierr = CmndOneLine(NULL, ln, ln2);
-   if (!ierr)
+   res = atlsys_L1(NULL, ln, verb, 0);
+   free(ln);
+   if (res)
    {
-      iret = GetFirstInt(ln2);
-      *sure = GetLastInt(ln2);
+      iret = GetFirstInt(res);
+      *sure = GetLastInt(res);
+      free(res);
    }
    return(iret);
 }
 
-void TransCompsToFlags(char **comps, char *flags)
+char *TransCompsToFlags(char **comps, char *flags)
 {
+   int len, newlen;
    int i, j;
 /*
  * WARNING: if you change the order of the ICC_, etc, must change
  *          compnames!
  */
-   char *compnames[7] = {"ic", "sm", "dm", "sk",  "dk", "xc", "if"};
-
-   *flags = '\0';
+   char *compnames[NCOMP] = {"ic", "sm", "dm", "sk",  "dk", "xc", "gc", "if"};
+   char *flags=NULL, *sp;
+   char *flgtmp[8], char *aflg[9];
+/* 
+ * Up-to-date check, failure will remind me to update this routine!
+ */
+   assert(NCOMP == 8);
+   assert(ICC_ = 0);
+   assert(SMC_ = 1);
+   assert(DMC_ = 2);
+   assert(SKC_ = 3);
+   assert(DKC_ = 4);
+   assert(XCC_ = 5);
+   assert(GCC_ = 6);
+   assert(F77_ = 7);
+/*
+ * Setup prefixes of form "-X xx '" and "-Fa xx '" for appending
+ * X will be replaced by F or C, xx by compiler prefix of compnames
+ */
+   flgtmp[0] = '-';
+   flgtmp[5] = flgtmp[2] = ' ';
+   flgtmp[6] = '\'';
+   flgtmp[7] = '\0'
+   aflg[0] = '-'; aflg[1] = 'F'; aflg[2] = 'a'; aflg[3] = ' ';
+   aflg[6] = ' '; aflg[7] = '\''; aflg[8] = '\0';
 /*
  * Pass any override compilers/flags and appends to probe
  */
-   for (j=i=0; i < NCOMP; i++)
+   for (i=0; i < NCOMP; i++)
    {
+      flg[3] = compnames[i][0];
+      flg[4] = compnames[i][1];
       if (comps[i])
-         j += sprintf(flags+j, "-C %s '%s' ", compnames[i], comps[i]);
+      {
+         flg[1] = 'C';
+         flags = NewAppendedString(flags, flg);  /* append "-C cc '" */
+         flags = NewAppendedString0(flags, comps[i]);
+         flags = NewAppendedString0(flags, "'");
+      }
       if (comps[NCOMP+i])
-         j += sprintf(flags+j, "-F %s '%s' ", compnames[i], comps[NCOMP+i]);
+      {
+         flg[1] = 'F';
+         flags = NewAppendedString(flags, flg);  /* append "-F cc '" */
+         flags = NewAppendedString0(flags, comps[NCOMP+i]);
+         flags = NewAppendedString0(flags, "'");
+      }
       if (comps[2*NCOMP+i])
-         j += sprintf(flags+j, "-Fa %s '%s' ", compnames[i], comps[2*NCOMP+i]);
+      {
+         aflg[4] = compnames[i][0];
+         aflg[5] = compnames[i][1];
+         flags = NewAppendedString(flags, aflg);  /* append "-Fa cc '" */
+         flags = NewAppendedString0(flags, comps[2*NCOMP+i]);
+         flags = NewAppendedString0(flags, "'");
+      }
    }
+   return(flags);
 }
 
 char *ProbeComp(int verb, char *targarg, enum OSTYPE OS, enum MACHTYPE arch, 
@@ -5866,26 +5923,33 @@ char *ProbeComp(int verb, char *targarg, enum OSTYPE OS, enum MACHTYPE arch,
  * RETURNS: f2c define string
  */
 {
-   char ln[4096], flags[2048], comp[512];
+   char *ln, *flags; 
+   char stmp[32];
    int f2cname, f2cint, f2cstr;
    char *f2cdefs;
-   int i, if77=0;
+   int len, i, if77=0;
    FILE *fpin;
 
-   TransCompsToFlags(comps, flags);
+   flags = TransCompsToFlags(comps);
+   i = strlen(targarg) + strlen(flags) + 128;
+   ln = malloc(i*sizeof(char);
    i = sprintf(ln, 
    "make IRun_comp args=\"-v %d -o atlconf.txt -O %d -A %d -Si nof77 %d %s %s",
                verb, OS, arch, nof77, targarg, flags);
    if (ptrbits == 64 || ptrbits == 32)
-      i += sprintf(ln+i, " -b %d", ptrbits);
-   sprintf(ln+i, "\"");
+   {
+      sprintf(stmp, "-b %d", ptrbits);
+      ln = NewAppendedString(ln, stmp);
+   }
+   ln = NewAppendedString0(ln, "\"");
+   len = strlen(ln);
    if (verb > 1)
       fprintf(stderr, "cmnd='%s'\n", ln);
 @skip   assert(CmndResults(NULL, ln));
    syschk(ln);
    fpin = fopen("atlconf.txt", "r");
    assert(fpin);
-   while (fgets(ln, 4096, fpin))
+   while ((ln=ATL_fgets(ln, &len, fpin)))
    {
       if (ln[0] != '#')
       {
@@ -5993,14 +6057,16 @@ char *ProbeComp(int verb, char *targarg, enum OSTYPE OS, enum MACHTYPE arch,
       f2cdefs = NULL;
    else
    {
-      sprintf(ln, "-D%s -D%s -DString%s", 
-              f2c_namestr[f2cname], f2c_intstr[f2cint], f2c_strstr[f2cstr]);
-      f2cdefs = malloc(sizeof(char)*(strlen(ln)+1));
+      i = strlen(f2c_namestr[f2cname]) + strlen(f2c_intstr[f2cint]) +
+          strlen(f2c_strstr[f2cstr]) + 16;
+      f2cdefs = malloc(i*sizeof(char));
       assert(f2cdefs);
-      strcpy(f2cdefs, ln);
+      sprintf(fd2cdefs, "-D%s -D%s -DString%s", 
+              f2c_namestr[f2cname], f2c_intstr[f2cint], f2c_strstr[f2cstr]);
    }
    return(f2cdefs);
 }
+/* RCW : Got HERE HERE HERE in doing nobuff update */
 
 int PathLength(char *str)
 /*
@@ -8449,7 +8515,7 @@ static char *NewStringCopy(char *old)
    return(new);
 }
 
-static char *NewAppendedString(char *old, char *app)
+static char *NewAppendedString0(char *old, char *app)
 /*
  * RETURNS: string holding : old + app
  * NOTE: frees old string after copy
@@ -8473,7 +8539,7 @@ static char *NewAppendedString(char *old, char *app)
    return(new);
 }
 
-static char *NewSpaceAppendedString(char *old, char *app)
+static char *NewAppendedString(char *old, char *app)
 /*
  * RETURNS: string holding : old + " " + app
  * NOTE: frees old string after copy
@@ -8494,6 +8560,33 @@ static char *NewSpaceAppendedString(char *old, char *app)
       strcpy(new, old);
       strcat(new, " ");
       strcat(new, app);
+      free(old);
+   }
+   return(new);
+}
+
+static char *NewAppendedStrings(char *old, char *app0, char *app1)
+/*
+ * RETURNS: string holding : old + " " + app0 + " " + app1
+ * NOTE: frees old string after copy
+ */
+ 
+{
+   char *new;
+   int len;
+   len = strlen(app0) + strlen(app1) + 2;
+   if (!old)
+   {
+      new = malloc(sizeof(char)*len);
+      assert(new);
+      sprintf(ln, "%s %s", app0, app1);
+   }
+   else
+   {
+      len += strlen(old) + 1;
+      new = malloc(sizeof(char)*len);
+      assert(new);
+      sprintf(ln, "%s %s %s", old, app0, app1);
       free(old);
    }
    return(new);
