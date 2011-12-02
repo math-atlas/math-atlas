@@ -4548,6 +4548,9 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
          CompError(i);
       free(flg);
    } /* end of loop over compilers */
+   for (i=0; i < NCOMP; i++)
+      KillAllCompNodes(comps[i]);
+   free(comps);
 /*
  * modify base flags by appending user flags
  */
@@ -4783,6 +4786,7 @@ char *FindGoodGfortran(enum OSTYPE OS, enum MACHTYPE arch, int verb,
          KillAllStringsInList(gccs);
 	 gccs = NULL;
       }
+      free(sp);
    }
 /*
  * See if we have some OS-specific places to search for good gcc
@@ -5029,6 +5033,7 @@ int main(int nargs, char **args)
       if (!usrcomps[F77_])
          usrcomps[F77_] = NewStringCopy("gfortran");
    }
+   free(goodgcc);
    TestComps(OS, mach, verb, targ, targarg, usrcomps, 
              &f2cnam, &f2cint, &f2cstr, nof77);
    if (verb)
@@ -5039,6 +5044,9 @@ int main(int nargs, char **args)
       fprintf(stdout, "\n");
    }
    PrintCompResults(outfile, usrcomps,  f2cnam, f2cint, f2cstr);
+   for (i=0; i < 3*NCOMP; i++)
+      if (usrcomps[i])
+         free(usrcomps[i]);
    if (targ)
       free(targarg);
    return(0);
@@ -5914,6 +5922,11 @@ char *TransCompsToFlags(char **comps)
          flags = NewAppendedString0(flags, "'");
       }
    }
+   if (!flags)
+   {
+      flags = malloc(sizeof(char));
+      flags[0] = '\0';
+   }
    return(flags);
 }
 
@@ -5936,6 +5949,7 @@ char *ProbeComp(int verb, char *targarg, enum OSTYPE OS, enum MACHTYPE arch,
    i = sprintf(ln, 
    "make IRun_comp args=\"-v %d -o atlconf.txt -O %d -A %d -Si nof77 %d %s %s",
                verb, OS, arch, nof77, targarg, flags);
+   free(flags);
    if (ptrbits == 64 || ptrbits == 32)
    {
       sprintf(stmp, "-b %d", ptrbits);
@@ -6222,7 +6236,7 @@ char *BuildF77LinkLine(enum OSTYPE OS, char *path, char *libnam)
 
    if (OSIsWin(OS))
       OSextra = "-lgcc";
-   i = strlen(path) + strlen(libnam) + strlen(OSextra) + 2 + 2 + 1 + 1;
+   i = strlen(path) + strlen(libnam) + strlen(OSextra) + 2 + 2 + 1 + 1 + 1;
    sp = malloc(i*sizeof(char));
    assert(sp);
    sprintf(sp, "-L%s -l%s %s", path, libnam, OSextra);
@@ -6278,6 +6292,7 @@ char *ProbeF77LIB(int verb, char *targarg, enum OSTYPE OS,
    res = atlsys_L1(NULL, sp, verb, 0);
    if (res)
    {
+      free(f77libnam);
       free(sp);
       fprintf(stdout, "REPORTED: res=%s\n", res);
       sp = GetPathWithoutName(res);
@@ -6414,6 +6429,7 @@ int ProbeArch(int verb, char *targarg, enum OSTYPE OS, enum ASMDIA asmb)
    assert(ln);
    sprintf(ln, "%s -O %d -s %d -a", targarg, OS, asmb);
    iret = GetIntProbe(verb, ln, "arch", "MACHTYPE", NMACH);
+   free(ln);
    printf("\nArchitecture configured as  %s (%d)\n", 
           machnam[iret], iret);
    return(iret);
@@ -6489,55 +6505,6 @@ int ProbeCPUThrottle(int verb, char *targarg, enum OSTYPE OS, enum ASMDIA asmb)
    return(iret);
 }
 
-char *Comps2Flags(char **comps)
-/*
- * Takes the comps array (1st NCOMP entries are compilers, next NCOMP entries
- * flags for those compilers) and translates them into the corresponding flags
- * for xspew (or indeed this config.c)
- * NOTE: assumes appended flags (2*NCOMP+i) already appended to flags (NCOMP+i)
- */
-{
-   char *cname[NCOMP] = {"ic", "sm", "dm", "sk", "dk", "xc", "gc", "if"};
-   char *flags=NULL;
-   int i, j=0;
-
-   for (i=0; i < NCOMP; i++)
-   {
-      char stmp[6] = {'-', 'X', ' ', cname[i][0], cname[i][1], '\0'};
-      if (comps[i])
-      {
-         stmp[1] = 'C';
-         flags = NewAppendedString(flags, stmp);
-         flags = NewAppendedString(flags, comps[i]);
-      }
-      if (comps[NCOMP+i])
-      {
-         stmp[1] = 'F';
-         flags = NewAppendedString(flags, stmp);
-         flags = NewAppendedString(flags, comps[NCOMP+i]);
-      }
-   }
-   return(flags);
-}
-
-char *ProbePmake(int verb, enum OSTYPE OS, int ncpu)
-/*
- * WARNING: if cross-comp really worked, this would be ncpu of front-end,
- *          not backend!
- */
-{
-   char args[32], *res;
-   char *sp;
-   int i;
-
-   sprintf(args, "-O %d -t %d", OS, ncpu);
-
-   res = GetStrProbe(verb, args, "pmake", "PMAKE");
-   if (res) printf("Parallel make command configured as '%s'\n", res);
-   else printf("Parallel make not configured.\n");
-   return(res);
-}
-
 char *NewAppendedString_SFLAG(char *old, char *flag, char *str)
 /*
  * RETURNS: string holding <old> + " <flag> '<str>'"
@@ -6548,7 +6515,7 @@ char *NewAppendedString_SFLAG(char *old, char *flag, char *str)
    int i;
 
    i = (old) ? strlen(old)+1 : 1;
-   i += 1 + strlen(flag) + 1 + + 1 + strlen(str) + 1;
+   i += 1 + strlen(flag) + 1 + 1 + strlen(str) + 1 + 1;
    new = malloc(i*sizeof(char));
    assert(new);
    sprintf(new, "%s %s '%s'", (old)?old:"", flag, str);
@@ -6574,6 +6541,54 @@ char *NewAppendedString_IFLAG(char *old, char *flag, int iflag)
    return(new);
 }
 
+char *Comps2Flags(char **comps)
+/*
+ * Takes the comps array (1st NCOMP entries are compilers, next NCOMP entries
+ * flags for those compilers) and translates them into the corresponding flags
+ * for xspew (or indeed this config.c)
+ * NOTE: assumes appended flags (2*NCOMP+i) already appended to flags (NCOMP+i)
+ */
+{
+   char *cname[NCOMP] = {"ic", "sm", "dm", "sk", "dk", "xc", "gc", "if"};
+   char *flags=NULL;
+   int i, j=0;
+
+   for (i=0; i < NCOMP; i++)
+   {
+      char stmp[6] = {'-', 'X', ' ', cname[i][0], cname[i][1], '\0'};
+      if (comps[i])
+      {
+         stmp[1] = 'C';
+         flags = NewAppendedString_SFLAG(flags, stmp, comps[i]);
+      }
+      if (comps[NCOMP+i])
+      {
+         stmp[1] = 'F';
+         flags = NewAppendedString_SFLAG(flags, stmp, comps[NCOMP+i]);
+      }
+   }
+   return(flags);
+}
+
+char *ProbePmake(int verb, enum OSTYPE OS, int ncpu)
+/*
+ * WARNING: if cross-comp really worked, this would be ncpu of front-end,
+ *          not backend!
+ */
+{
+   char args[32], *res;
+   char *sp;
+   int i;
+
+   sprintf(args, "-O %d -t %d", OS, ncpu);
+
+   res = GetStrProbe(verb, args, "pmake", "PMAKE");
+   if (res) printf("Parallel make command configured as '%s'\n", res);
+   else printf("Parallel make not configured.\n");
+   return(res);
+}
+
+
 void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
                  enum ASMDIA asmb, int vecexts, int ptrbits, 
                  int ncpu, int omp, int AntThr,
@@ -6591,7 +6606,7 @@ void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
    int i;
 
    assert(!system("make xspew"));
-   compsflags = Comps2Flags(comps);  /* Translate compiler/flag array to xspew flags */
+   compsflags = Comps2Flags(comps);  /* Xlate comp/flag array to xspew flags */
    i = strlen(frm) + 11*13 + strlen(srcdir) + strlen(bindir);
    if (cdefs)
       i += strlen(cdefs);
@@ -6603,6 +6618,7 @@ void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
    sprintf(ln, frm, verb, OS, arch, mhz, asmb, vecexts, ptrbits, ncpu, l2size,
            srcdir, bindir, cdefs ? cdefs:"", f2cdefs? f2cdefs : "", 
            compsflags, archdef, bozol1, latune, nof77);
+   free(compsflags);
    if (pmake)
       ln = NewAppendedString_SFLAG(ln, "-Ss pmake", pmake);
    if (flapack)
@@ -6696,7 +6712,7 @@ int main(int nargs, char **args)
 
    sp = ProbeComp(verb, targarg, OS, mach, comps, nof77, nocygwin, ptrbits);
    if (nof77)
-      f2cdefs = "-DATL_NoF77";
+      f2cdefs = NewStringCopy("-DATL_NoF77");
    else if (!f2cdefs) f2cdefs = sp;
    if (!f77libs)
       f77libs = ProbeF77LIB(verb, targarg, OS, mach, comps, f2cdefs, nof77);
@@ -6736,6 +6752,12 @@ int main(int nargs, char **args)
                l2size, srcdir, bindir, bozol1, archdef, latune, nof77, 
                comps, gccflags, f2cdefs, cdefs, pmake, flapack, 
                smaflags, dmaflags, f77libs);
+   for (i=0; i < 3*NCOMP; i++)
+      if (comps[i])
+         free(comps[i]);
+   free(f77libs);
+   free(cdefs);
+   free(f2cdefs);
    free(pmake);
 /*
  * Cleanup directory, and exit
@@ -8813,6 +8835,7 @@ static FILE *atlsys(char *targ, char *cmnd, int verb, int IgnoreErr)
          system(sp);
       }
    }
+   free(sp);
    if (!i || IgnoreErr)
       output = fopen(tnam, "r");
    return(output);
