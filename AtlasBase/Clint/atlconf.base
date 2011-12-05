@@ -4689,11 +4689,24 @@ int SelectBestGcc
 
 #define GMAJOR 4  /* major version must be exactly this */
 #define GMINOR 6  /* minor version must be >= to this (dangerous, but useful) */
+char *CheckStrLen(char *str, int *len, int reqlen)
+{
+   if (*len < reqlen)
+   {
+      free(str);
+      str = malloc(reqlen*sizeof(char));
+      *len = reqlen;
+   }
+   return(str);
+}
 char *FindGoodGcc(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ)
 {
    char *OSpaths=NULL, *sp, **gccs=NULL;
-   char ln[4192];
-   int i;
+   char *ln;
+   int i, lnlen=1024;
+
+   ln = malloc(lnlen*sizeof(char));
+   assert(ln);
 /*
  * See if we have some OS-specific places to search for good gcc
  */
@@ -4706,11 +4719,16 @@ char *FindGoodGcc(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ)
  */
    if (OSpaths)
    {
+      i = 64 + strlen(OSpaths);
+      ln = CheckStrLen(ln, &lnlen, i);
       sprintf(ln, "find %s -name '*gcc*' -exec ./xisgcc '{}' \\;", OSpaths);
       gccs = GetLinesFromFile(atlsys(NULL, ln, verb, 1), gccs);
       i = SelectBestGcc(verb, targ, GMAJOR, GMINOR, gccs);
       if (i > 1)
+      {
+         free(ln);
          return(FreeListGetString(gccs, i-1));
+      }
       if (i < 0)
          gccs = NewOneStringList(gccs, -(i+1));
       else
@@ -4721,18 +4739,23 @@ char *FindGoodGcc(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ)
    }
 /*
  * If we are not satisfied with the places we've looked so far, 
- * try the user's path environment variable
+ * try the user's path environment variables $HOME/local
  */
    sp = GetPathEnvVar();
    if (sp)
    {
-      sprintf(ln, "find %s -name '*gcc*' -exec ./xisgcc '{}' \\;",
+      i = 64 + strlen(sp);
+      ln = CheckStrLen(ln, &lnlen, i);
+      sprintf(ln, "find $HOME/local %s -name '*gcc*' -exec ./xisgcc '{}' \\;",
               sp);
       free(sp);
       gccs = GetLinesFromFile(atlsys(NULL, ln, verb, 1), gccs);
       i = SelectBestGcc(verb, targ, GMAJOR, GMINOR, gccs);
       if (i > 0)
+      {
+         free(ln);
          return(FreeListGetString(gccs, i-1));
+      }
       if (i < 0)
          gccs = NewOneStringList(gccs, -(i+1));
       else
@@ -4744,16 +4767,30 @@ char *FindGoodGcc(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ)
 /*
  * If we still haven't found it, try standard unix places
  */
-   i = sprintf(ln, "find %s -name '*gcc*' -exec ./xisgcc '{}' \\;", 
-   "/usr/local/ /bin /sbin/ /usr/bin /usr/sbin /opt/bin /opt/sbin");
-   gccs = GetLinesFromFile(atlsys(NULL, ln, verb, 1), gccs);
-   i = SelectBestGcc(verb, targ, GMAJOR, GMINOR, gccs);
-   if (i > 1)
-      return(FreeListGetString(gccs, i-1));
-   if (i < 0)
-      return(FreeListGetString(gccs, -(i+1)));
-   else
-      KillAllStringsInList(gccs);
+   {
+      char *stdpaths =
+         "/usr/local/ /bin /sbin/ /usr/bin /usr/sbin /opt/bin /opt/sbin";
+
+      i = 64 + strlen(stdpaths);
+      ln = CheckStrLen(ln, &lnlen, i);
+      i = sprintf(ln, "find %s -name '*gcc*' -exec ./xisgcc '{}' \\;",  
+                  stdpaths);
+      gccs = GetLinesFromFile(atlsys(NULL, ln, verb, 1), gccs);
+      i = SelectBestGcc(verb, targ, GMAJOR, GMINOR, gccs);
+      if (i > 1)
+      {
+         free(ln);
+         return(FreeListGetString(gccs, i-1));
+      }
+      if (i < 0)
+      {
+         free(ln);
+         return(FreeListGetString(gccs, -(i+1)));
+      }
+      else
+         KillAllStringsInList(gccs);
+   }
+   free(ln);
    return(NULL);
 }
 
@@ -4761,9 +4798,12 @@ char *FindGoodGfortran(enum OSTYPE OS, enum MACHTYPE arch, int verb,
                        char *targ, char *gcc)
 {
    char *OSpaths=NULL, *sp, **gccs=NULL;
-   char ln[4192];
-   int i;
+   char *ln;
+   int i, lnlen=1024;
    int ccomp, cmaj, cmin, cpat;
+
+   ln = malloc(lnlen*sizeof(char));
+   assert(ln);
 /*
  * Get gcc's version; we'll try to find a matching gfortran
  */
@@ -4774,11 +4814,16 @@ char *FindGoodGfortran(enum OSTYPE OS, enum MACHTYPE arch, int verb,
    sp = GetPathWithoutName(gcc);  /* get path to gcc */
    if (sp)
    {
+      i = 64 + strlen(sp);
+      ln = CheckStrLen(ln, &lnlen, i);
       sprintf(ln, "find %s -name '*gfortran*' -exec ./xisgcc '{}' \\;", sp);
       gccs = GetLinesFromFile(atlsys(NULL, ln, verb, 1), gccs);
       i = SelectBestGcc(verb, targ, cmaj, cmin, gccs);
       if (i > 1)
+      {
+         free(ln);
          return(FreeListGetString(gccs, i-1));
+      }
       if (i < 0)
          gccs = NewOneStringList(gccs, -(i+1));
       else
@@ -4800,11 +4845,16 @@ char *FindGoodGfortran(enum OSTYPE OS, enum MACHTYPE arch, int verb,
  */
    if (OSpaths)
    {
+      i = 64 + strlen(OSpaths);
+      ln = CheckStrLen(ln, &lnlen, i);
       sprintf(ln, "find %s -name '*gfortran*' -exec ./xisgcc '{}' \\;",OSpaths);
       gccs = GetLinesFromFile(atlsys(NULL, ln, verb, 1), gccs);
       i = SelectBestGcc(verb, targ, cmaj, cmin, gccs);
       if (i > 1)
+      {
+         free(ln);
          return(FreeListGetString(gccs, i-1));
+      }
       if (i < 0)
          gccs = NewOneStringList(gccs, -(i+1));
       else
@@ -4815,18 +4865,24 @@ char *FindGoodGfortran(enum OSTYPE OS, enum MACHTYPE arch, int verb,
    }
 /*
  * If we are not satisfied with the places we've looked so far, 
- * try the user's path environment variable
+ * try the user's path environment variable and HOME/local
  */
    sp = GetPathEnvVar();
    if (sp)
    {
-      sprintf(ln, "find %s -name '*gfortran*' -exec ./xisgcc '{}' \\;",
+      i = 64 + strlen(sp);
+      ln = CheckStrLen(ln, &lnlen, i);
+      sprintf(ln, 
+              "find $HOME/local %s -name '*gfortran*' -exec ./xisgcc '{}' \\;",
               sp);
       free(sp);
       gccs = GetLinesFromFile(atlsys(NULL, ln, verb, 1), gccs);
       i = SelectBestGcc(verb, targ, cmaj, cmin, gccs);
       if (i > 0)
+      {
+         free(ln);
          return(FreeListGetString(gccs, i-1));
+      }
       if (i < 0)
          gccs = NewOneStringList(gccs, -(i+1));
       else
@@ -4838,16 +4894,32 @@ char *FindGoodGfortran(enum OSTYPE OS, enum MACHTYPE arch, int verb,
 /*
  * If we still haven't found it, try standard unix places
  */
-   i = sprintf(ln, "find %s -name '*gfortran*' -exec ./xisgcc '{}' \\;", 
-   "/usr/local/ /bin /sbin/ /usr/bin /usr/sbin /opt/bin /opt/sbin");
-   gccs = GetLinesFromFile(atlsys(NULL, ln, verb, 1), gccs);
-   i = SelectBestGcc(verb, targ, cmaj, cmin, gccs);
-   if (i > 1)
-      return(FreeListGetString(gccs, i-1));
-   if (i < 0)
-      return(FreeListGetString(gccs, -(i+1)));
-   else
-      KillAllStringsInList(gccs);
+   {
+      char *stdpaths =
+         "/usr/local/ /bin /sbin/ /usr/bin /usr/sbin /opt/bin /opt/sbin";
+
+      i = 64 + strlen(stdpaths);
+      ln = CheckStrLen(ln, &lnlen, i);
+      i = sprintf(ln, "find %s -name '*gcc*' -exec ./xisgcc '{}' \\;",  
+                  stdpaths);
+      i = sprintf(ln, "find %s -name '*gfortran*' -exec ./xisgcc '{}' \\;", 
+                   stdpaths);
+      gccs = GetLinesFromFile(atlsys(NULL, ln, verb, 1), gccs);
+      i = SelectBestGcc(verb, targ, cmaj, cmin, gccs);
+      if (i > 1)
+      {
+         free(ln);
+         return(FreeListGetString(gccs, i-1));
+      }
+      if (i < 0)
+      {
+         free(ln);
+         return(FreeListGetString(gccs, -(i+1)));
+      }
+      else
+         KillAllStringsInList(gccs);
+   }
+   free(ln);
    return(NULL);
 }
 
