@@ -27,7 +27,7 @@
 @define ps01 @-def cdate 2001 -def author "Peter Soendergaard"@
 @define pw01 @-def cdate 2001 -def author "Peter Soendergaard" -def contrib "R. Clint Whaley"@
 @ifdef ! ver
-   @define ver @3.9.56@
+   @define ver @3.9.57@
 @endifdef
 @ifdef ! author
    @define author @R. Clint Whaley@
