@@ -1,18 +1,17 @@
 #ifndef ATL_dtGetNB_geqrf
 
 /*
- * NB selection for GEQRF: Side='RIGHT', Uplo='LOWER'
- * M : 25,112,168,224,280,616,896,1232,2464,4928
- * N : 25,112,168,224,280,616,896,1232,2464,4928
- * NB : 9,16,14,56,56,56,112,112,112,112
+ * NB selection for GEQRF: Side='RIGHT', Uplo='UPPER'
+ * M : 25,120,160,200,280,560,1120,2280,4560
+ * N : 25,120,160,200,280,560,1120,2280,4560
+ * NB : 4,8,40,40,40,40,80,80,80
  */
 #define ATL_dtGetNB_geqrf(n_, nb_) \
 { \
-   if ((n_) < 68) (nb_) = 9; \
-   else if ((n_) < 140) (nb_) = 16; \
-   else if ((n_) < 196) (nb_) = 14; \
-   else if ((n_) < 756) (nb_) = 56; \
-   else (nb_) = 112; \
+   if ((n_) < 72) (nb_) = 4; \
+   else if ((n_) < 140) (nb_) = 8; \
+   else if ((n_) < 840) (nb_) = 40; \
+   else (nb_) = 80; \
 }
 
 
