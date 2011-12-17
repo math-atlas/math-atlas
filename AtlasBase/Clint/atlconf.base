@@ -959,7 +959,7 @@ int fNumLines(char *fnam)
    return(i);
 }
 
-@ROUT atlconf_misc atlar findgcc
+@ROUT atlar
 char *CmndResultsNoErr(char *targ, char *cmnd)
 {
    static char tnam[128];
@@ -1017,6 +1017,7 @@ int CmndOneLine(char *targ, char *cmnd, char *ln)
    else ln[0] = '\0';
    return(1);
 }
+@ROUT atlconf_misc atlar findgcc
 
 int GetIntBeforeWord(char *word, char *ln)
 /* 
@@ -1152,11 +1153,18 @@ enum ARCHFAM ProbeArchFam(char *targ)
  */
 {
    enum ARCHFAM fam=AFOther;
-   char cmnd[256], res[256];
+   char *cmnd, *res;
    char *uname;
+   int i;
+
    uname = FindUname(targ);
+   i = strlen(uname) + 4;
+
+   cmnd = malloc(i*sizeof(char));
+   assert(cmnd);
    sprintf(cmnd, "%s -m", uname);
-   if ( !CmndOneLine(targ, cmnd, res) )
+   res = atlsys_L1(targ, cmnd, 0, 0);
+   if (res)
    {
       if (strstr(res, "ppc") || strstr(res, "Power Macintosh") ||
           strstr(res, "powerpc")) fam = AFPPC;
@@ -1169,6 +1177,7 @@ enum ARCHFAM ProbeArchFam(char *targ)
       else if ( strstr(res, "i686") || strstr(res, "i586") ||
                 strstr(res, "i486") || strstr(res, "i386") ||
                 strstr(res, "x86") || strstr(res, "x86_64") ) fam = AFX86;
+      free(res);
    }
 /*
  * Try uname -p if uname -m didn't work
@@ -1176,7 +1185,8 @@ enum ARCHFAM ProbeArchFam(char *targ)
    if (fam == AFOther)
    {
       sprintf(cmnd, "%s -p", uname);
-      if ( !CmndOneLine(targ, cmnd, res) )
+      res = atlsys_L1(targ, cmnd, 0, 0);
+      if (res)
       {
          if (strstr(res, "ppc") || strstr(res, "Power Macintosh") ||
              strstr(res, "powerpc")) fam = AFPPC;
@@ -1189,8 +1199,10 @@ enum ARCHFAM ProbeArchFam(char *targ)
          else if (strstr(res, "mips")) fam = AFMIPS;
          else if (strstr(res, "arm")) fam = AFARM;
          else if (strstr(res, "s390")) fam = AFS390;
+         free(res);
       }
    }
+   free(cmnd);
    return(fam);
 }
 
@@ -1343,31 +1355,37 @@ void GetGccVers(char *gcc, int *comp, int *major, int *minor, int *patch)
  * comp: 0: gcc;  1: egcs;  2: pgcc, 3: apple's gcc
  */
 {
-   char ln[512], ln2[512];
+   char *cmnd, *res;
    int i, j;
 
    *comp = *major = *minor = *patch = -1;
-   sprintf(ln, "%s --version", gcc);
-   if (CmndOneLine(NULL, ln, ln2) == 0)
+   i = strlen(gcc) + 12;
+   cmnd = malloc(i * sizeof(char));
+   assert(cmnd);
+   sprintf(cmnd, "%s --version", gcc);
+   res = atlsys_L1(NULL, cmnd, 0, 0);
+   free(cmnd);
+   if (res)
    {
-      if (strstr(ln2, "Apple Computer") || strstr(ln2, "Apple Inc"))
+      if (strstr(res, "Apple Computer") || strstr(res, "Apple Inc"))
          *comp = 3;
 /*
  *    Skip compiler name, which may have digits in it
  */
-      for (i=0; ln2[i] && !isspace(ln2[i]); i++);
-      *major = GetIntVers(ln2+i, &j); j += i;
+      for (i=0; res[i] && !isspace(res[i]); i++);
+      *major = GetIntVers(res+i, &j); j += i;
       if (*major != -1)
       {
-         *minor = GetIntVers(ln2+j, &i); j += i;
+         *minor = GetIntVers(res+j, &i); j += i;
          if (*minor != -1)
          {
-            *patch = GetIntVers(ln2+j, &i); j += i;
-            if (strstr(ln2, "egcs")) *comp = 1;
-            else if (strstr(ln2, "pgcc")) *comp = 2;
+            *patch = GetIntVers(res+j, &i); j += i;
+            if (strstr(res, "egcs")) *comp = 1;
+            else if (strstr(res, "pgcc")) *comp = 2;
             else if (*comp == -1) *comp = 0;
          }
       }
+      free(res);
    }
 }
 
@@ -1407,12 +1425,27 @@ char *GetPathEnvVar(void)
 int CompIsGcc(char *comp)
 /*
  * Tries to detect if compiler is gcc w/o scoping name of compiler
+ * However, rejects compilers with c89 and c90 in name, since these
+ * guys turn off inline assembly, which hurts the ATLAS install on performance.
  */
 {
-   char cmnd[1024], res[1024];
+   char *cmnd, *res;
+   char *cmpname;
+   int i;
 
+   cmpname = NameWithoutPath(char *file);
+   if (strstr(comp, "c89") || strstr(comp, "c90"))
+   {
+      free(cmpname);
+      return(0);
+   }
+   free(cmpname);
+   i = strlen(comp) + 16;
+   cmnd = malloc(i*sizeof(char));
+   assert(cmnd);
    sprintf(cmnd, "%s --version", comp);
-   if (CmndOneLine(NULL, cmnd, res) == 0)
+   res = atlsys_L1(NULL, cmnd, 0, 0);
+   if (res)
    {
 /*
  *    The direct comps added because Ubuntu stopped printing (GCC) in the
@@ -1423,7 +1456,11 @@ int CompIsGcc(char *comp)
           strstr(res, "GNU Fortran") || strstr(res, "(GCC ") ||
           (res[0] == 'g' && res[1] == 'c' && res[2] == 'c' && res[3] == ' ')
          )
+      {
+         free(res);
          return(1);
+      }
+      free(res);
    }
    return(0);
 }
@@ -1432,15 +1469,26 @@ int CompIsAppleGcc(char *comp)
  * Tries to detect if compiler is Apple's funked-up gcc 
  */
 {
-   char cmnd[1024], res[1024];
+   char *cmnd, *res;
 
    if (CompIsGcc(comp))
    {
-      res[0] = '\0';
+      int i;
+      i = strlen(comp) + 24;
+      cmnd = malloc(sizeof(char)*i);
+      assert(cmnd);
       sprintf(cmnd, "%s -v 2>&1 | fgrep Apple", comp);
-      CmndOneLine(NULL, cmnd, res);
-      if (strstr(res, "Apple"))
-         return(1);
+      res = atlsys_L1(NULL, cmnd, 0, 0);
+      free(cmnd);
+      if (res)
+      {
+         if (strstr(res, "Apple"))
+         {
+            free(res);
+            return(1);
+         }
+         free(res);
+      }
    }
    return(0);
 }
@@ -1450,26 +1498,45 @@ int CompIsMIPSpro(char *comp)
  * RETURNS: 1 if compiler is MIPSpro compiler, 0 otherwise
  */
 {
-   char cmnd[1024], res[1024];
+   char *cmnd, *res;
+   int i;
 
+   i = strlen(comp) + 4;
+   cmnd = malloc(sizeof(char)*i);
+   assert(cmnd);
    sprintf(cmnd, "%s -v", comp);
-   if (CmndOneLine(NULL, cmnd, res) == 0)
+   res = atlsys_L1(NULL, cmnd, 0, 0);
+   free(cmnd);
+   if (res)
    {
       if (strstr(res, "MIPSpro Compiler"))
+      {
+         free(res);
          return(1);
+      }
+      free(res);
    }
    return(0);
 }
 
 int CompIsPathScale(char *comp)
 {
-   char cmnd[1024], res[1024];
+   char *cmnd, *res;
 
+   i = strlen(comp) + 4;
+   cmnd = malloc(sizeof(char)*i);
+   assert(cmnd);
    sprintf(cmnd, "%s -v", comp);
-   if (CmndOneLine(NULL, cmnd, res) == 0)
+   res = atlsys_L1(NULL, cmnd, 0, 0);
+   free(cmnd);
+   if (res)
    {
       if (strstr(res, "PathScale"))
+      {
+         free(res);
          return(1);
+      }
+      free(res);
    }
    return(0);
 }
@@ -1479,13 +1546,22 @@ int CompIsSunWorkshop(char *comp)
  * RETURNS: 1 if compiler is Sun WorkShop compiler, 0 otherwise
  */
 {
-   char cmnd[1024], res[1024];
+   char *cmnd, *res;
 
+   i = strlen(comp) + 4;
+   cmnd = malloc(sizeof(char)*i);
+   assert(cmnd);
    sprintf(cmnd, "%s -V", comp);
-   if (CmndOneLine(NULL, cmnd, res) == 0)
+   res = atlsys_L1(NULL, cmnd, 0, 0);
+   free(cmnd);
+   if (res)
    {
       if (strstr(res, "Sun WorkShop"))
+      {
+         free(res);
          return(1);
+      }
+      free(res);
    }
    return(0);
 }
@@ -1495,13 +1571,22 @@ int CompIsIBMXL(char *comp)
  * RETURNS: 1 if compiler is an IBM XL compiler, 0 otherwise
  */
 {
-   char cmnd[1024], res[1024];
+   char *cmnd, *res;
 
+   i = strlen(comp) + 11;
+   cmnd = malloc(sizeof(char)*i);
+   assert(cmnd);
    sprintf(cmnd, "%s -qversion", comp);
-   if (CmndOneLine(NULL, cmnd, res) == 0)
+   res = atlsys_L1(NULL, cmnd, 0, 0);
+   free(cmnd);
+   if (res);
    {
       if (strstr(res, "IBM XL"))
+      {
+         free(res);
          return(1);
+      }
+      free(res);
    }
    return(0);
 }
@@ -1702,9 +1787,9 @@ int GetLastInt(char *ln);
 long long GetLastLong(char *ln);
 int fNumLines(char *fnam);
 char *GetPathEnvVar(void);
-char *CmndResults(char *targ, char *cmnd);
-char *CmndResultsNoErr(char *targ, char *cmnd);
-int CmndOneLine(char *targ, char *cmnd, char *ln);
+@skip char *CmndResults(char *targ, char *cmnd);
+@skip char *CmndResultsNoErr(char *targ, char *cmnd);
+@skip int CmndOneLine(char *targ, char *cmnd, char *ln);
 int GetIntBeforeWord(char *word, char *ln);
 int GetScreenHeight();
 void GetEnter(FILE *fpout);
@@ -1801,49 +1886,56 @@ cannot achieve a valid install in the face of CPU throttling.
 
 enum OSTYPE ProbeOS(int verb, char *targ)
 {
-   int ierr;
+   int i, ierr;
    char ln[1024], ln2[1024];
-   enum OSTYPE i, OS;
+   char *cmnd, *res;
+   enum OSTYPE OS;
    char *unam;
 
    if (verb) printf("Probing to make operating system determination:\n");
    unam = FindUname(targ);
 
-   sprintf(ln2, "%s -s", unam);
-   ierr = CmndOneLine(targ, ln2, ln);
-   if (ierr == 0)
+   i = strlen(unam) + 4;
+   cmnd = malloc(sizeof(char)*i);
+   assert(cmnd);
+   sprintf(cmnd "%s -s", unam);
+   res = atlsys_L1(targ, cmnd, verb, 0);
+   if (res)
    {
 /* 
  *    Accept GNU (HURD) as Linux, since they seem to use same stuff;
  *    This is patch from Sylvestre Ledru; I have no direct experience wt HURD
  */
-      if(strstr(ln, "Linux") || strstr(ln, "GNU")) OS = OSLinux;
-      else if(strstr(ln, "FreeBSD")) OS = OSFreeBSD;
-      else if (strstr(ln, "Darwin")) OS = OSOSX;
-      else if(strstr(ln, "SunOS")) 
+      if(strstr(res, "Linux") || strstr(res, "GNU")) OS = OSLinux;
+      else if(strstr(res, "FreeBSD")) OS = OSFreeBSD;
+      else if (strstr(res, "Darwin")) OS = OSOSX;
+      else if(strstr(res, "SunOS")) 
       {
-         sprintf(ln2, "%s -r", unam);
-         CmndOneLine(targ, ln2, ln);
-         if (ln[0] == '4') OS = OSSunOS4;
+         sprintf(cmnd, "%s -r", unam);
+         free(res);
+         res = atlsys_L1(targ, cmnd, verb, 0);
+         if (res[0] == '4') OS = OSSunOS4;
          else OS = OSSunOS;
       }
-      else if(strstr(ln, "OSF1")) OS = OSOSF1;
-      else if(strstr(ln, "IRIX")) OS = OSIRIX;
-      else if(strstr(ln, "AIX")) OS = OSAIX;
-      else if(strstr(ln, "Interix")) OS = OSWinSFU;
-      else if(strstr(ln, "WIN"))
+      else if(strstr(res, "OSF1")) OS = OSOSF1;
+      else if(strstr(res, "IRIX")) OS = OSIRIX;
+      else if(strstr(res, "AIX")) OS = OSAIX;
+      else if(strstr(res, "Interix")) OS = OSWinSFU;
+      else if(strstr(res, "WIN"))
       {
-         if (strstr(ln, "95") || strstr(ln, "98") || strstr(ln, "_ME")) 
+         if (strstr(res, "95") || strstr(res, "98") || strstr(res, "_ME")) 
             OS = OSWin9x;
 /*
  *       Need to confirm what is returned under cygwin for XP, etc.
  */
-         else if (strstr(ln, "NT")) OS = OSWinNT;
+         else if (strstr(res, "NT")) OS = OSWinNT;
          else ierr = 1;
       }
-      else if (strstr(ln, "HP-UX")) OS = OSHPUX;
+      else if (strstr(res, "HP-UX")) OS = OSHPUX;
       else ierr = 1;
+      free(res);
    }
+   free(cmnd);
    if (ierr)
    {
       printf("\n\nUnable to determine OS, quitting\n\n");
@@ -1905,22 +1997,37 @@ int main(int nargs, char **args)
 int RunASMProbe(char *targ, int verb, enum OSTYPE OS, char *asmnam)
 {
    char ln[2048], ln2[2048];
+   char *cmnd, *res, *frm;
+   i = 0;
    if (targ)
-      sprintf(ln2, "make IRun_%s atlrun=atlas_runX args=\"-v %d\" MYFLAGS=\"-DATL_OS_%s\" targ=%s 2> /dev/null | fgrep SUCCESS",
-              asmnam, verb, osnam[OS], targ);
-   else
-      sprintf(ln2, "make IRun_%s args=\"-v %d\" MYFLAGS=\"-DATL_OS_%s\" 2> /dev/null | fgrep SUCCESS",
-              asmnam, verb, osnam[OS]);
-   if (verb > 1)
-      fprintf(stderr, "system(%s)\n", ln2);
-   if(!CmndOneLine(NULL, ln2, ln))
    {
-      if (strstr(ln, "SUCCESS"))
+      frm = "make IRun_%s atlrun=atlas_runX args=\"-v %d\" MYFLAGS=\"-DATL_OS_%s\" targ=%s 2> /dev/null | fgrep SUCCESS";
+      i = strlen(targ);
+   }
+   else
+      frm = "make IRun_%s args=\"-v %d\" MYFLAGS=\"-DATL_OS_%s\" 2> /dev/null | fgrep SUCCESS";
+
+   i += strlen(frm) + strlen(asmnam) + 11 + strlen(osnam[OS) + 1;
+   cmnd = malloc(i*sizeof(char));
+   assert(cmnd);
+   if (targ)
+      sprintf(cmnd, frm, asmnam, verb, osnam[OS], targ);
+   else
+      sprintf(cmnd, frm, asmnam, verb, osnam[OS]);
+   if (verb > 1)
+      fprintf(stderr, "system(%s)\n", cmnd);
+   res = atlsys_L1(NULL, cmnd, verb, 0);
+   free(cmnd);
+   if (res)
+   {
+      if (strstr(res, "SUCCESS"))
       {
          if (verb)
             fprintf(stdout, "   %s: DETECTED!\n", asmnam);
+         free(res);
          return(1);
       }
+      free(res);
    }
    if (verb)
       fprintf(stdout, "   %s: NO.\n", asmnam);
@@ -2837,24 +2944,37 @@ ATL_asmdecor(do_vsum):
 
 int RunISAProbe(char *isaxnam, int verb, char *targ, char *opt)
 {
-   char ln[512], ln2[512];
+   char *cmnd, *res, *frm;
+   int i=1;
    if (targ)
-      sprintf(ln2, "make IRun_%s atlrun=atlas_runX targ=%s MYFLAGS='%s' 2> /dev/null | fgrep SUCCESS",
-              isaxnam, targ, opt);
-   else
-      sprintf(ln2, "make IRun_%s MYFLAGS='%s' 2> /dev/null | fgrep SUCCESS",
-              isaxnam, opt);
-   if(!CmndOneLine(NULL, ln2, ln))
    {
-      if (strstr(ln, "SUCCESS"))
+      frm = "make IRun_%s atlrun=atlas_runX targ=%s MYFLAGS='%s' 2> /dev/null | fgrep SUCCESS";
+      i += strlen(targ);
+   }
+   else
+      frm = "make IRun_%s MYFLAGS='%s' 2> /dev/null | fgrep SUCCESS";
+   i += strlen(frm) + strlen(isaxnam) + strlen(opt);
+   cmnd = malloc(sizeof(char)*i);
+   assert(cmnd);
+   if (targ)
+      sprintf(cmnd, frm, isaxnam, targ, opt);
+   else
+      sprintf(cmnd, frm, isaxnam, opt);
+   res = atlsys_L1(targ, cmnd, verb, 0);
+   if(res)
+   {
+      if (strstr(res, "SUCCESS"))
       {
          if (verb)
             fprintf(stdout, "   %s: DETECTED!\n", isaxnam);
+         free(res);
          return(1);
       }
    }
    if (verb > 1)
-      fprintf(stdout, "   cmnd='%s' out='%s'\n", ln2, ln);
+      fprintf(stdout, "   cmnd='%s' out='%s'\n", cmnd, res);
+   free(cmnd);
+   free(res);
    if (verb)
       fprintf(stdout, "   %s: NO.\n", isaxnam);
    return(0);
@@ -2923,7 +3043,9 @@ static char *AFFS[NAFF] =
 int RunAffProbe(int iaff, int verb, char *targ, int iproc)
 {
    char ln[512], ln2[512];
+   char *cmnd, *res, *frm;
    char *lib;
+   int i=1;
 
    if (iaff == IA_WIN)
       lib = "-lkernel32";
@@ -2932,22 +3054,35 @@ int RunAffProbe(int iaff, int verb, char *targ, int iproc)
    else
       lib = "-lpthread";
    if (targ)
-      sprintf(ln2, "make IRun_%s atlrun=atlas_runX targ=%s LIBS='%s' args='%d' 2> /dev/null | fgrep SUCCESS",
-              AFFS[iaff], targ, lib, iproc);
-   else
-      sprintf(ln2, "make IRun_%s LIBS='%s' args='%d' 2> /dev/null | fgrep SUCCESS",
-              AFFS[iaff], lib, iproc);
-   if(!CmndOneLine(NULL, ln2, ln))
    {
-      if (strstr(ln, "SUCCESS"))
+      i += strlen(targ);
+      frm = "make IRun_%s atlrun=atlas_runX targ=%s LIBS='%s' args='%d' 2> /dev/null | fgrep SUCCESS";
+   }
+   else
+      frm = "make IRun_%s LIBS='%s' args='%d' 2> /dev/null | fgrep SUCCESS";
+   i += strlen(AFFS[iaff]) + strlen(lib) + 11;
+   cmnd = malloc(sizeof(char)*i);
+   assert(cmnd);
+   if (targ)
+      sprintf(cmnd, frm, AFFS[iaff], targ, lib, iproc);
+   else
+      sprintf(cmnd, frm, AFFS[iaff], lib, iproc);
+   res = atlsys_L1(NULL, cmnd, verb, 0);
+   if (res)
+   {
+      if (strstr(res, "SUCCESS"))
       {
+         free(cmnd);
+         free(res);
          if (verb)
             fprintf(stdout, "   %s: DETECTED!\n", AFFS[iaff]);
          return(1);
       }
    }
    if (verb > 1)
-      fprintf(stdout, "   cmnd='%s' out='%s'\n", ln2, ln);
+      fprintf(stdout, "   cmnd='%s' out='%s'\n", cmnd, res);
+   free(cmnd);
+   free(res);
    if (verb)
       fprintf(stdout, "   %s: NO.\n", AFFS[iaff]);
    return(0);
@@ -3489,6 +3624,7 @@ int ProbeOneInt(enum OSTYPE OS0, enum ASMDIA asmd0, char *targ0,
  */
 {
    char cmnd[2048], res[2048], osname[128], targ[512];
+   char *cmnd, *res, *frm, *targ;
    enum OSTYPE OS;
    enum ASMDIA asmd;
    int iret=0;
@@ -3503,34 +3639,58 @@ int ProbeOneInt(enum OSTYPE OS0, enum ASMDIA asmd0, char *targ0,
    else
       strlowcpy(osname, osnam[OS]);
    if (targ0)
+   {
+      i = strlen(targ0) + 24;
+      targ = malloc(sizeof(char)*i);
+      assert(targ);
       sprintf(targ, "atlrun=atlas_runX targ=%s", targ0);
-   else targ[0] = '\0';
+   }
+   else
+   {
+      targ = malloc(sizeof(char));
+      assert(targ);
+      targ[0] = '\0';
+   }
 
 /* 
  * If Assembler right or unspecified, try x86 probe
  */
    if (asmd == gas_x86_32 || asmd == gas_x86_64)
    {
-      sprintf(cmnd, "make IRunArchInfo_x86 MYFLAGS=\"-DATL_OS_%s -DATL_%s\" args=\"%s\" %s | fgrep '%s'",
-              osnam[OS], ASMNAM[asmd], flag, targ, find);
-      if (!CmndOneLine(NULL, cmnd, res))
+      frm = "make IRunArchInfo_x86 MYFLAGS=\"-DATL_OS_%s -DATL_%s\" args=\"%s\" %s | fgrep '%s'";
+      i = strlen(frm) + strlen(osnam[OS] + strlen(ASMNAM[asmd] + strlen(flag)
+          + strlen(targ) + strlen(find) + 1;
+      cmnd = malloc(sizeof(char)*i);
+      assert(cmnd);
+      sprintf(cmnd, frm, osnam[OS], ASMNAM[asmd], flag, targ, find);
+      res = atlsys_L1(NULL, cmnd, 0, 0);
+      if (res)
       {
          iret = GetFirstInt(res);
          *sure = GetLastInt(res);
+         free(res);
       }
+      free(cmnd);
    }
 /*
  * If that didn't work, try OS-specific probe
  */
    if (!iret)
    {
-      sprintf(cmnd, "make IRunArchInfo_%s MYFLAGS=\"-DATL_OS_%s -DATL_%s\" args=\"%s\" %s | fgrep '%s'",
-              osname, osnam[OS], ASMNAM[asmd], flag, targ, find);
-      if (!CmndOneLine(NULL, cmnd, res))
+      frm = "make IRunArchInfo_%s MYFLAGS=\"-DATL_OS_%s -DATL_%s\" args=\"%s\" %s | fgrep '%s'";
+      i = 1 + strlen(frm) + strlen(osname) + Mmax(3,strlen(osnam[OS])) + 
+          strlen(ASMNAM[asmd]) + strlen(flag) + strlen(targ) + strlen(find);
+      cmnd = malloc(sizeof(char)*i);
+      assert(cmnd);
+      sprintf(cmnd, frm, osname, osnam[OS], ASMNAM[asmd], flag, targ, find);
+      res = atlsys_L1(NULL, cmnd, 0, 0);
+      if (res)
       {
          iret = GetFirstInt(res);
          *sure = GetLastInt(res);
+         free(res);
       }
+@beginskip
 /*
  *    Interix has its own probe under Windows, if all else fails
  */
@@ -3539,6 +3699,8 @@ int ProbeOneInt(enum OSTYPE OS0, enum ASMDIA asmd0, char *targ0,
          sprintf(cmnd, "make IRunArchInfo_sfu MYFLAGS=\"-DATL_OS_%s -DATL_%s\" args=\"%s\" %s | fgrep '%s'",
               osnam[OS], ASMNAM[asmd], flag, targ, find);
       }
+@endskip
+      free(cmnd);
    }
    return(iret);
 }
@@ -3550,7 +3712,9 @@ int ConfirmPtrbits(enum OSTYPE OS0, enum ASMDIA asmd0, char *targ0,
  * case
  */
 {
-   char cmnd[2048], res[2048], osname[128], targ[512];
+   char osname[128];
+   char *cmnd, *res, *targ;
+   char *frm="make IRunArchInfo_%s MYFLAGS=\"-m64 -DATL_OS_%s -DATL_%s\" args=\"%s\" %s | fgrep '%s'";
    enum OSTYPE OS;
    enum ASMDIA asmd;
    int iret=0;
@@ -3558,23 +3722,39 @@ int ConfirmPtrbits(enum OSTYPE OS0, enum ASMDIA asmd0, char *targ0,
    *sure = 0;
    asmd = (asmd0 > ASM_None && asmd0 < NASMD) ? asmd0 : gas_x86_32;
    OS = (OS0 > OSOther && OS0 < NOS) ? OS0 : OSLinux;
-   if (OS == OSOSX)
-      strlowcpy(osname, osnam[OSFreeBSD]);
-   else
-      strlowcpy(osname, osnam[OS]);
+   i = (OS == OSOSX) ? OSFreeBSD : OS;
+   assert(strlen(osnam[i]) < 128);
+   strlowcpy(osname, osnam[i]);
    if (targ0)
+   {
+      i = strlen(targ0) + 24;
+      targ = malloc(sizeof(char)*i);
+      assert(targ);
       sprintf(targ, "atlrun=atlas_runX targ=%s", targ0);
-   else targ[0] = '\0';
+   }
+   else
+   {
+      targ = malloc(sizeof(char));
+      assert(targ);
+      targ[0] = '\0';
+   }
 
 /*
  * Try OS-specific probe, compiling with -m64 (assumes gcc workalike)
  */
-   sprintf(cmnd, "make IRunArchInfo_%s MYFLAGS=\"-m64 -DATL_OS_%s -DATL_%s\" args=\"%s\" %s | fgrep '%s'",
-           osname, osnam[OS], ASMNAM[asmd], flag, targ, find);
-   if (!CmndOneLine(NULL, cmnd, res))
+   i = 1 + strlen(frm) + strlen(osnam) + strlen(osnam[OS]) + 
+       strlen(ASMNAM[asmd]) + strlen(flag) + strlen(targ) + strlen(find);
+   cmnd = malloc(i*sizeof(char));
+   assert(cmnd);
+   sprintf(cmnd, frm, osname, osnam[OS], ASMNAM[asmd], flag, targ, find);
+   free(targ);
+   res = atlsys_L1(NULL, cmnd, 0, 0);
+   free(cmnd);
+   if (res)
    {
       iret = GetFirstInt(res);
       *sure = GetLastInt(res);
+      free(res);
    }
    return(iret);
 }
@@ -4139,26 +4319,46 @@ COMPNODE **GetDefaultComps(enum OSTYPE OS, enum MACHTYPE arch, int verb)
 int CompTest(int verb, char *targ, int icomp, char *comp, char *flag)
 /*
  * Tries to build simple program and run it.
- * RETURNS: result of system call (0: success, else error code)
+ * RETURNS: 0: success: non-zero on error
  */
 {
    char ln[1024], res[1024];
-   int i, iret;
+   char *cmnd, *res, *frm, *trg;
+   int i, iret=1;
 
+   if (targ)
+   {
+      i = 32 + strlen(targ);
+      trg = malloc(i*sizeof(char));
+      assert(trg);
+      sprintf(trg, "atlrun=atlas_runX targ=%s ", targ);
+   }
+   else
+   {
+      trg = malloc(sizeof(char));
+      assert(trg);
+      trg[0] = '\0';
+   }
    if (icomp == ICC_)
       targ = NULL;
    if (icomp == F77_)
-      i = sprintf(ln, "make IRunF77Comp F77='%s' F77FLAGS='%s' ", comp, flag);
+      frm = "make IRunF77Comp F77='%s' F77FLAGS='%s' %s | fgrep SUCCESS";
    else
-      i = sprintf(ln, "make IRunCComp CC='%s' CCFLAGS='%s' ", comp, flag);
-   if (targ)
-      i += sprintf(ln+i, "atlrun=atlas_runX targ=%s ", targ);
-   i += sprintf(ln+i, "| fgrep SUCCESS");
-   iret = CmndOneLine(NULL, ln, res);
-   if (verb > 1)
-      fprintf(stderr, "cmnd=%s\n", ln);
-   if (!iret)
+      frm = "make IRunCComp CC='%s' CCFLAGS='%s' %s | fgrep SUCCESS";
+   i = 1 + strlen(frm) + strlen(comp) + strlen(flag) + strlen(trg);
+   cmnd = malloc(sizeof(char)*i);
+   assert(cmnd);
+   sprintf(cmnd, frm, comp, flag, trg);
+   free(trg);
+   res = atlsys_L1(NULL, cmnd, verb, 0);
+   if (res)
+   {
       iret = !strstr(res, "SUCCESS");
+      free(res);
+   }
+   if (verb > 1)
+      fprintf(stderr, "cmnd=%s\n", cmnd);
+   free(cmnd);
    if (verb)
       fprintf(stderr, "   %s %s : %s!\n", comp, flag, 
               iret ? "FAILURE":"SUCCESS");
@@ -4305,7 +4505,7 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
 {
    COMPNODE **comps, *p;
    char *ucomp, *dcomp, *flg, *sp, *sp2, *mgwd=NULL, *mgwc=NULL, *mgwf=NULL;
-   char cmnd[1024], res[1024];
+   char *cmnd, *res;
    int i, j, k, h;
 /*
  * Look through input compilers; any of them that is simply "gcc" gets replaced
@@ -4335,18 +4535,14 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
  *    Get the present directory, which is BLDdir, to have full path to
  *    MinGW compiler wrappers
  */
-      assert(!CmndOneLine(NULL, "pwd", res));
-      j = strlen(res);
-      while (j > 0 && isspace(res[j-1])) 
-         res[--j] = '\0';
-      mgwd = malloc(sizeof(char)*(j+1));
+      mgwd = atlsys_L1(NULL, "pwd", verb, 1);
       assert(mgwd);
-      strcpy(mgwd, res);
-      fndit = CmndOneLine(targ, "ls /usr/bin/x86_64-w64-mingw32-gcc-4*", res);
-      if (fndit)
-         fndit = CmndOneLine(targ, "ls /usr/bin/x86_64-w64-mingw32-gcc.exe", 
-                             res);
-      if (fndit)
+      res = atlsys_L1(targ, "ls /usr/bin/x86_64-w64-mingw32-gcc-4*", verb, 1);
+      if (!res)
+         res = atlsys_L1(targ, "ls /usr/bin/x86_64-w64-mingw32-gcc.exe", 
+                         verb, 1);
+      
+      if (!res)
       {
          fprintf(stderr, 
 "Cannot find MinGW compilers in /usr/bin, with names beginning with\n");
@@ -4356,14 +4552,14 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
 "If your MinGW compiler not named like this, make symbolic link in /usr/bin\n");
          fprintf(stderr, 
 "eg., ln -s /my/comp /usr/bin/x86_64-w64-mingw32-gcc-4.exe\n");
-         exit(fndit);
+         exit(-1);
       }
-      j = strlen(res);
-      while (j > 1 && isspace(res[j-1])) 
-         res[--j] = '\0';
-      assert(j > 12);
-      sprintf(cmnd, "make mgwgcc cmppath=%s\n", res);  /* build C comp */
+      i = 22 + strlen(res);
+      cmnd = malloc(i*sizeof(char));
+      assert(cmnd);
+      sprintf(cmnd, "make mgwgcc cmppath=%s", res);  /* build C comp */
       syschk(cmnd);
+      free(cmnd);
       i = strlen(mgwd);
       mgwc = malloc(sizeof(char)*(i+7+1));
       assert(mgwc);
@@ -4371,35 +4567,45 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
 /*
  *    Build the wrapper for ar and ranlib
  */
-      assert(!CmndOneLine(targ, "ls /usr/bin/x86_64-w64-mingw32-ar.exe", res));
-      j = strlen(res);
-      while (j > 1 && isspace(res[j-1])) 
-         res[--j] = '\0';
-      sprintf(cmnd, "make mgwar cmppath=%s\n", res);  /* build ar wrapper */
+      res = atlsys_L1(targ, "ls /usr/bin/x86_64-w64-mingw32-ar.exe", verb, 1);
+      assert(res);
+      i = 21 + strlen(res);
+      cmnd = malloc(i*sizeof(char));
+      assert(cmnd);
+      sprintf(cmnd, "make mgwar cmppath=%s", res);  /* build ar wrapper */
       syschk(cmnd);
-      assert(!CmndOneLine(targ, "ls /usr/bin/x86_64-w64-mingw32-ranlib.exe",
-                          res));
-      j = strlen(res);
-      while (j > 1 && isspace(res[j-1])) 
-         res[--j] = '\0';
-      sprintf(cmnd, "make mgwranlib cmppath=%s\n", res);  /* build ar wrapper */
+      free(cmnd);
+      res = atlsys_L1(NULL, "ls /usr/bin/x86_64-w64-mingw32-ranlib.exe", 
+                      verb, 1);
+      assert(res);
+      i = 24 + strlen(res);
+      cmnd = malloc(i*sizeof(char));
+      assert(cmnd);
+      sprintf(cmnd, "make mgwranlib cmppath=%s", res);  /* build ar wrapper */
+      free(res);
       syschk(cmnd);
+      free(cmnd);
 /*
 /*
  *    Build the gfortran wrapper unless doing an all-C install
  */
       if (!nof77)
       {
-         fndit = CmndOneLine(targ, "ls /usr/bin/x86_64-w64-mingw32-gfortran*", 
-                             res);
-         if (fndit)
+         res = atlsys_L1(NULL, "ls /usr/bin/x86_64-w64-mingw32-gfortran*",
+                         verb, 1);
+         if (!res)
          {
             fprintf(stderr, "MinGW gfortran not found!\n");
             exit(-1);
          }
-         sprintf(cmnd, "make mgwgfortran cmppath=%s\n", res);
+         i = strlen(res);
+         cmnd = malloc((i+28)*sizeof(char));
+         assert(cmnd);
+         sprintf(cmnd, "make mgwgfortran cmppath=%s", res);
          syschk(cmnd);
+         free(cmnd);
          mgwf = malloc(sizeof(char)*(i+12+1));
+         free(res);
          assert(mgwf);
          sprintf(mgwf, "%s/mgwgfortran", mgwd);
       }
@@ -4600,11 +4806,22 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
  */
    if (OS == OSIRIX)
    {
-      sprintf(cmnd, "%s -m", FindUname(targ));
-      assert(!CmndOneLine(NULL, cmnd, res));
+      char *fnd;
+      fnd = FindUname(targ);
+      i = strlen(fnd) + 4;
+      cmnd = malloc(sizeof(char)*i);
+      assert(cmnd);
+      sprintf(cmnd, "%s -m", fnd);
+      res = atlsys_L1(NULL, cmnd, verb, 1);
+      free(cmnd);
+      assert(res);
       sp = strstr(res, "IP");
+      assert(sp);
       for (i=2; isdigit(sp[i]); i++);
       sp[i] = '\0';
+      i = strlen(sp) + 20;
+      cmnd = malloc(sizeof(char)*i);
+      assert(cmnd);
       sprintf(cmnd, "-TARG:platform=%s", sp);
       if (ptrbits == 64 || !ptrbits)
          strcat(cmnd, " -64");
@@ -4617,10 +4834,10 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
             usrcomps[i+NCOMP] = NewAppendedString(usrcomps[i+NCOMP], cmnd);
          }
       }
-      free(sp);
+      free(res);
+      free(cmnd);
    }
 }  /* end of routine GetComps */
-
 
 int SelectBestGcc
 (
@@ -4931,7 +5148,6 @@ void TestComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
  * and figure out how to have the fortran compiler call the C compiler
  */
 {
-   char cmnd[2048], res[1024];
    char *sp;
    int i, ierr;
    if (verb)
@@ -4947,13 +5163,22 @@ void TestComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
       {
          if (strcmp(comps[i], comps[ICC_])) /* only check if different */
          {
+            char *frm = "make IRunC2C CC='%s' CCFLAGS='%s' CC1='%s' CC1FLAGS='%s' | fgrep SUCCESS";
+            char *cmnd, *res;
+            int j;
+
+            j = strlen(frm) + strlen(comps[ICC_]) + strlen(comps[NCOMP+ICC_])
+                + strlen(comps[i]) + 1;
+            cmnd = malloc(j*sizeof(char));
+            assert(cmnd);
             sprintf(cmnd, 
    "make IRunC2C CC='%s' CCFLAGS='%s' CC1='%s' CC1FLAGS='%s' | fgrep SUCCESS",
                     comps[ICC_], comps[NCOMP+ICC_], comps[i], comps[i+NCOMP]);
             if (verb > 1)
                fprintf(stderr, "cmnd='%s'\n", cmnd);
-            ierr = CmndOneLine(NULL, cmnd, res);
-            if (!ierr)
+            res = atlsys_L1(NULL, cmnd, verb, 0);
+            free(cmnd);
+            if (ierr)
                ierr = !strstr(res, "SUCCESS");
             if (ierr)
             {
@@ -4961,6 +5186,7 @@ void TestComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
                fprintf(stderr, "ierr=%d, res='%s'\n", ierr, res);
                exit(ierr);
             }
+            free(res);
             if (verb > 1)
                fprintf(stderr, 
                        "   C2C %s/%s -- SUCCESS\n", comps[ICC_], comps[i]);
@@ -4978,20 +5204,30 @@ void TestComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
    }
    else
    {
-      if (strstr(comps[F77_], "mgwgfortran"))
-         sprintf(cmnd, "make IRun_f2c args=\"%s -C ic '%s' -F ic '%s' -C if '%s' -F if '%s -static'\" | fgrep 'F2C=('",
-                 targarg, comps[ICC_], comps[ICC_+NCOMP], 
-                 comps[F77_], comps[F77_+NCOMP]);
+      char *frm, *cmnd, *res;
+      int j;
+      j = (strstr(comps[F77_], "mgwgfortran") != NULL)
+      if (j)
+         frm = "make IRun_f2c args=\"%s -C ic '%s' -F ic '%s' -C if '%s' -F if '%s -static'\";
       else
-         sprintf(cmnd, "make IRun_f2c args=\"%s -C ic '%s' -F ic '%s' -C if '%s' -F if '%s'\" | fgrep 'F2C=('",
-                 targarg, comps[ICC_], comps[ICC_+NCOMP], 
-                 comps[F77_], comps[F77_+NCOMP]);
+         frm = "make IRun_f2c args=\"%s -C ic '%s' -F ic '%s' -C if '%s' -F if '%s'\" | fgrep 'F2C=('";
+
+      j = strlen(frm) + strlen(targarg) + strlen(comps[ICC_] +
+          strlen(comps[ICC_+NCOMP]) + strlen(comps[F77_]) + 
+          strlen(comps[F77_+NCOMP]) + 1;
+      cmnd = malloc(j*sizeof(char));
+      assert(cmnd);
+      sprintf(cmnd, frm, targarg, comps[ICC_], comps[ICC_+NCOMP], 
+              comps[F77_], comps[F77_+NCOMP]);
+      else
       *f2cnam = f2c_NamErr;
       *f2cint = f2c_IntErr;
       *f2cstr = f2c_StrErr;
       if (verb > 1)
          fprintf(stderr, "cmnd='%s'\n", cmnd);
-      if (!CmndOneLine(NULL, cmnd, res))
+      res = atlsys_L1(NULL, cmnd, verb, 0);
+      free(cmnd);
+      if (res)
       {
          if (verb > 1)
             fprintf(stderr, "res='%s'\n", res);
@@ -5001,6 +5237,7 @@ void TestComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
                     i, *f2cnam, *f2cint, *f2cstr);
          if (i != 3)
            *f2cnam = *f2cint = *f2cstr = 0;
+         free(res);
       }
       if (verb)
       {
@@ -5158,15 +5395,23 @@ int main(int nargs, char **args)
 
 int probe_name(char *targarg, int verb, char **usrcomps)
 {
-   char cmnd[2048], res[1024];
+   char *frm = "make IRunF2C_name %s F77=\"%s\" F77FLAGS=\"%s\" CC=\"%s\" CCFLAGS=\"%s\" | fgrep 'F2C name'";
+   char *cmnd, *res;
    enum F2CNAME f2cname = f2c_NamErr;
+   int i;
 
-   sprintf(cmnd, "make IRunF2C_name %s F77=\"%s\" F77FLAGS=\"%s\" CC=\"%s\" CCFLAGS=\"%s\" | fgrep 'F2C name'", 
-           targarg, usrcomps[F77_], usrcomps[F77_+NCOMP],
+   i = 1 + strlen(frm) + strlen(targarg) + strlen(usrcomps[F77_]), 
+       strlen(usrcomps[F77_+NCOMP]) + strlen(usrcomps[ICC_]) +
+       strlen(usrcomps[ICC_+NCOMP]);
+   cmnd = malloc(i*sizeof(char));
+   assert(cmnd);
+   sprintf(cmnd, frm, targarg, usrcomps[F77_], usrcomps[F77_+NCOMP],
            usrcomps[ICC_], usrcomps[ICC_+NCOMP]);
    if (verb > 1)
       fprintf(stderr, "cmnd = '%s'\n", cmnd);
-   if (!CmndOneLine(NULL, cmnd, res))
+   res = atlsys_L1(NULL, cmnd, verb, 0);
+   free(cmnd);
+   if (res)
    {
       if (verb > 1)
          fprintf(stderr, "res = '%s'\n", res);
@@ -5178,6 +5423,7 @@ int probe_name(char *targarg, int verb, char **usrcomps)
          f2cname = f2c_NoChange;
       else if (strstr(res, "UpCase"))
          f2cname = f2c_UpCase;
+      free(res);
    }
    if (verb)
       printf("F2C Name Decoration = %s\n", f2c_namestr[f2cname]);
@@ -5186,14 +5432,22 @@ int probe_name(char *targarg, int verb, char **usrcomps)
 
 int probe_int(char *targarg, int verb, char **usrcomps, int f2cname)
 {
-   char cmnd[2048], res[1024];
+   char *frm="make IRunF2C_int %s F77=\"%s\" F77FLAGS=\"%s\" CC=\"%s\" CCFLAGS=\"-D%s %s\" | fgrep 'F2C int'";
+   char *cmnd, *res;
    enum F2CINT f2c_int = f2c_IntErr;
-   sprintf(cmnd, "make IRunF2C_int %s F77=\"%s\" F77FLAGS=\"%s\" CC=\"%s\" CCFLAGS=\"-D%s %s\" | fgrep 'F2C int'", 
-           targarg, usrcomps[F77_], usrcomps[F77_+NCOMP],
+   int i;
+   i = 1 + strlen(frm) + strlen(targarg) + strlen(usrcomps[F77_]) 
+       + strlen(usrcomps[F77_+NCOMP]) + strlen(usrcomps[ICC_]) 
+       + strlen(f2c_namestr[f2cname]) + strlen(usrcomps[ICC_+NCOMP]);
+   cmnd = malloc(i*sizeof(char));
+   assert(cmnd);
+   sprintf(cmnd, frm, targarg, usrcomps[F77_], usrcomps[F77_+NCOMP],
            usrcomps[ICC_], f2c_namestr[f2cname], usrcomps[ICC_+NCOMP]);
    if (verb > 1)
       fprintf(stderr, "cmnd = '%s'\n", cmnd);
-   if (!CmndOneLine(NULL, cmnd, res))
+   res = atlsys_L1(NULL, cmnd, res);
+   free(cmnd);
+   if (res)
    {
       if (verb > 1)
          fprintf(stderr, "res = '%s'\n", res);
@@ -5205,6 +5459,7 @@ int probe_int(char *targarg, int verb, char **usrcomps, int f2cname)
          f2c_int = FintClong;
       else if (strstr(res, " C short"))
          f2c_int = FintCshort;
+      free(res);
    }
    if (verb)
       printf("F2C int = %s\n", f2c_intstr[f2c_int]);
@@ -5213,22 +5468,33 @@ int probe_int(char *targarg, int verb, char **usrcomps, int f2cname)
 
 int probe_str(char *targarg, int verb, char **usrcomps, int f2cname, int f2cint)
 {
-   char cmnd[2048], res[1024];
+   char *frm = "make IRunF2C_str %s F77=\"%s\" F77FLAGS=\"%s\" CC=\"%s\" CCFLAGS=\"-D%s -D%s -DString%s %s\" | fgrep 'F2C string'";
    enum F2CSTRING f2cstr = f2c_StrErr;
-   int i;
+   int i, len;
 
+   len = 1 + strlen(frm) + strlen(targarg) + strlen(usrcomps[F77_]) +
+        strlen(usrcomps[F77_+NCOMP]) + strlen(usrcomps[ICC_]) +
+        strlen(f2c_namestr[f2cname]) + strlen(f2c_intstr[f2cint]) + 
+        strlen(usrcomps[ICC_+NCOMP]);
    for (i=1; i < 5; i++)
    {
-      sprintf(cmnd, "make IRunF2C_str %s F77=\"%s\" F77FLAGS=\"%s\" CC=\"%s\" CCFLAGS=\"-D%s -D%s -DString%s %s\" | fgrep 'F2C string'", 
-              targarg, usrcomps[F77_], usrcomps[F77_+NCOMP],
+      char *cmnd, *res;
+      int k;
+      k = len + strlen(f2c_strstr[i]);
+      cmnd = malloc(k*sizeof(char));
+      assert(cmnd);
+      sprintf(cmnd, frm, targarg, usrcomps[F77_], usrcomps[F77_+NCOMP],
               usrcomps[ICC_], f2c_namestr[f2cname], f2c_intstr[f2cint], 
               f2c_strstr[i], usrcomps[ICC_+NCOMP]);
       if (verb > 1)
          fprintf(stderr, "cmnd = '%s'\n", cmnd);
-      if (!CmndOneLine(NULL, cmnd, res))
+      res = atlsys_L1(NULL, cmnd, verb, 0);
+      free(cmnd);
+      if (res)
       {
          if (verb > 1)
             fprintf(stderr, "res = '%s'\n", res);
+         free(res);
          f2cstr = i;
          break;
       }
