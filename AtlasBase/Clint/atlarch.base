@@ -561,14 +561,15 @@ enum MACHTYPE ProbeArch()
    enum ARCHFAM fam;
    enum MACHTYPE mach=MACHOther;
    int ierr, i;
-   char res[1024];
+   char *res;
 
    fam = ProbeArchFam(NULL);
    switch(fam)
    {
 @ROUT archinfo_sunos
    case AFSPARC:
-      if (!CmndOneLine(NULL, "/usr/sbin/psrinfo -pv | fgrep UltraSPARC", res))
+      res = atlsys_1L(NULL, "/usr/sbin/psrinfo -pv | fgrep UltraSPARC", 0, 0);
+      if (res)
       {
          if (strstr(res, "UltraSPARC-IV"))
             mach = SunUSIV;
@@ -580,6 +581,7 @@ enum MACHTYPE ProbeArch()
             mach = SunUSII;
          else if (strstr(res, "UltraSPARC-I"))
             mach = SunUSI;
+         free(res);
       }
 /*
  *    sparcv9 could be UltraSPARC I,II, III or IV.  Only USIII/IV run faster
@@ -591,21 +593,28 @@ enum MACHTYPE ProbeArch()
  *    I assume most USIV will have the newer SunOS/psrinfo above, so declare
  *    anything using this to be USIII, to minimize user confusion.
  */
-      else if (!CmndOneLine(NULL, "/usr/sbin/psrinfo -v | fgrep sparcv9", res))
+      else if (res=atlsys_1L(NULL, "/usr/sbin/psrinfo -v | fgrep sparcv9", 0,0))
       {
+         free(res);
          mach = SunUSX;
-         if (!CmndOneLine(NULL, "/usr/sbin/psrinfo -v | fgrep MHz", res))
+         res = atlsys_1L(NULL,  "/usr/sbin/psrinfo -v | fgrep MHz", 0, 0);
+         if (res)
          {
             i = GetIntBeforeWord("MHz", res);
             if (i != BADINT && i > 700) mach = SunUSIII;
+            free(res);
          }
-         else if (!CmndOneLine(NULL, "/usr/sbin/psrinfo -v | fgrep GHz", res))
+         else if (res=atlsys_1L(NULL, "/usr/sbin/psrinfo -v | fgrep GHz", 0, 0))
+         {
             mach = SunUSIII;
+            free(res);
+         }
       }
       break;
 @ROUT archinfo_aix
    case AFPPC: /* don't know */
-      if (!CmndOneLine(NULL, "/usr/sbin/prtconf | fgrep 'Processor Type'", res))
+      res = atlsys_1L(NULL, "/usr/sbin/prtconf | fgrep 'Processor Type'", 0, 0);
+      if (res)
       {
          if (strstr(res, "PowerPC_POWER5"))
             mach = IbmPwr5;
@@ -615,11 +624,13 @@ enum MACHTYPE ProbeArch()
             mach = IbmPwr6;
          else if (strstr(res, "PowerPC_POWER4"))
             mach = IbmPwr4;
+         free(res);
       }
       break;
 @ROUT archinfo_freebsd
    case AFPPC: /* don't know */
-      if (!CmndOneLine(NULL, "sysctl hw.model", res))
+      res = atlsys_1L(NULL, "sysctl hw.model", 0, 0);
+      if (res)
       {
          if (strstr(res, "PowerMac"))
          {
@@ -652,23 +663,27 @@ enum MACHTYPE ProbeArch()
             else if (strstr(res, "c3,1"))
                mach = PPCG5;
          }
+         free(res);
       }
       break;
    case AFSPARC: /* don't know */
       break;
    case AFALPHA:
       #if 0
-      if (!CmndOneLine(NULL, "sysctl hw.model", res))
+      res = atlsys_1L(NULL, "sysctl hw.model", 0, 0);
+      if (res)
       {
          if (strstr(res, "433au")) mach = Dec21164;
          else if (strstr(res, "XP1000")) mach = Dec21264;
+         free(res);
       }
       #endif
       break;
    case AFIA64: /* don't know */
       break;
    case AFX86:
-      if (!CmndOneLine(NULL, "sysctl hw.model", res))
+      res = atlsys_1L(NULL, "sysctl hw.model", 0, 0);
+      if (res)
       {
          if (strstr(res, "Pentium Pro")) mach = IntPPRO;
          else if (strstr(res, "Pentium III")) mach = IntPIII;
@@ -680,32 +695,40 @@ enum MACHTYPE ProbeArch()
          else if (strstr(res, "Pentium/P55C")) mach = IntP5MMX; /* sent by */
          else if (strstr(res, "Pentium")) mach=IntP5;       /* Nakata Maho */
          else if (strstr(res, "iMac4,1")) mach=IntCoreDuo;
+         free(res);
       }
       break;
    default:;
 @ROUT archinfo_irix
    case AFIA64:
-      res[0] = '\0';
-      ierr = CmndOneLine(NULL, "hinv -c processor | fgrep 'Itanium'", res);
-      if (!ierr && res[0] != '\0')
+      res = atlsys_1L(NULL, "hinv -c processor | fgrep 'Itanium'", 0, 0);
+      if (res) 
       {
-         if (strstr(res, "Itanium 2")) mach = IA64Itan2;
-         else if (strstr(res, "Itanium")) mach = IA64Itan;
+         if (res[0] != '\0')
+         {
+            if (strstr(res, "Itanium 2")) mach = IA64Itan2;
+            else if (strstr(res, "Itanium")) mach = IA64Itan;
+         }
+         free(res);
       }
       break;
    case AFMIPS:
-      res[0] = '\0';
-      ierr = CmndOneLine(NULL, "hinv -c processor | fgrep 'CPU'", res);
+      res = atlsys_1L(NULL, "hinv -c processor | fgrep 'CPU'", 0, 0);
       if (!ierr && res[0] != '\0')
       {
-         if (strstr(res, "R12000") || strstr(res, "R10000") ||
-             strstr(res, "R14000") || strstr(res, "R16000"))
-            mach = MIPSR1xK;
+         if (res[0] != '\0')
+         {
+            if (strstr(res, "R12000") || strstr(res, "R10000") ||
+                strstr(res, "R14000") || strstr(res, "R16000"))
+               mach = MIPSR1xK;
+         }
+         free(res);
       }
       break;
 @ROUT archinfo_linux
    case AFPPC:
-      if ( !CmndOneLine(NULL, "cat /proc/cpuinfo | fgrep cpu", res) )
+      res = atlsys_1L(NULL, "cat /proc/cpuinfo | fgrep cpu", 0, 0);
+      if (res)
       {
 #if 0
          if (strstr(res, "604e")) mach = PPC604e;
@@ -723,52 +746,77 @@ enum MACHTYPE ProbeArch()
          else if (strstr(res, "POWER6")) mach = IbmPwr6;
          else if (strstr(res, "POWER5")) mach = IbmPwr5;
          else if (strstr(res, "POWER4")) mach = IbmPwr4;
+         free(res);
       }
       break;
    case AFMIPS:
-      res[0] = '\0';
-      ierr = CmndOneLine(NULL, "fgrep 'cpu model' /proc/cpuinfo", res);
-      if (!ierr && res[0] != '\0')
+      res = atlsys_1L(NULL, "fgrep 'cpu model' /proc/cpuinfo", 0, 0);
+      if (res)
       {
-         if (strstr(res, "ICE9"))
-            mach = MIPSICE9;
+         if (res[0] != '\0')
+         {
+            if (strstr(res, "ICE9"))
+               mach = MIPSICE9;
 /*
- *       I have no access to what cpuinfo on Linux does for this procs, so this
- *       is a WAG as to what it would say
+ *          I have no access to what cpuinfo on Linux does for this procs, 
+ *          so this is a WAG as to what it would say
  */
-         else if (strstr(res, "R10000") || strstr(res, "R12000") ||
-                  strstr(res, "R12000") || strstr(res, "R14000"))
-            mach = MIPSR1xK;
+            else if (strstr(res, "R10000") || strstr(res, "R12000") ||
+                     strstr(res, "R12000") || strstr(res, "R14000"))
+               mach = MIPSR1xK;
+         }
+         free(res);
       }
       break;
    case AFARM:
-      if ( !CmndOneLine(NULL, "fgrep 'Processor' /proc/cpuinfo", res) )
+      res = atlsys_1L(NULL, "fgrep 'Processor' /proc/cpuinfo", 0, 0);
+      if (res)
       {
          if (strstr(res, "ARMv7") || strstr(res,"v7l")) mach = ARMv7;
+         free(res);
       }
-      else if ( !CmndOneLine(NULL, "fgrep cpu /proc/cpuinfo", res) )
+      else if ( res=atlsys_1L(NULL, "fgrep cpu /proc/cpuinfo", 0, 0) )
       {
          if (strstr(res, "ARMv7") || strstr(res,"v7l")) mach = ARMv7;
+         free(res);
       }
       break;
    case AFIA64:
-      res[0] = '\0';
-      ierr = CmndOneLine(NULL, "fgrep 'Itanium' /proc/cpuinfo", res);
-      if (ierr || res[0] == '\0')
-         ierr = CmndOneLine(NULL, "fgrep \"model name\" /proc/cpuinfo", res);
-      if (!ierr && res[0] != '\0')
+      res = atlsys_1L(NULL, "fgrep 'Itanium' /proc/cpuinfo", 0, 0);
+      if (res && res[0] == '\0')
       {
-         if (strstr(res, "Itanium 2") || strstr(res, "McKinley")) 
-            mach = IA64Itan2;
-         else if (strstr(res, "Itanium")) mach = IA64Itan;
+         free(res);
+         res = NULL;
+      }
+      if (!res)
+         res = atlsys_1L(NULL, "fgrep \"model name\" /proc/cpuinfo", 0, 0);
+      if (res)
+      {
+         if (res[0] != '\0')
+         {
+            if (strstr(res, "Itanium 2") || strstr(res, "McKinley")) 
+               mach = IA64Itan2;
+            else if (strstr(res, "Itanium")) mach = IA64Itan;
+         }
+         free(res);
       }
       break;
    case AFX86:
       res[0] = '\0';
-      ierr = CmndOneLine(NULL, "fgrep 'model name' /proc/cpuinfo", res);
-      if (ierr || res[0] == '\0')
-         ierr = CmndOneLine(NULL, "fgrep model /proc/cpuinfo", res);
-      if (!ierr && res[0] != '\0')
+      res = atlsys_1L(NULL, "fgrep 'model name' /proc/cpuinfo", 0, 0);
+      if (res && res[0] == '\0')
+      {
+         free(res);
+         res = NULL;
+      }
+      if (!res)
+         res = atlsys_1L(NULL, "fgrep model /proc/cpuinfo", 0, 0);
+      if (res && res[0] == '\0')
+      {
+         free(res);
+         res = NULL;
+      }
+      if (res)
       {
          if (strstr(res, "Pentium"))
          { /* Pentium of some flavor */
@@ -778,13 +826,15 @@ enum MACHTYPE ProbeArch()
             else if (strstr(res, "MMX")) mach = IntP5MMX;
             else if (strstr(res, " 4 "))
             {
-               ierr = CmndOneLine(NULL,
-                      "fgrep 'model' /proc/cpuinfo | fgrep -v 'name'", res);
-               if (!ierr)
+               char *rs2;
+               rs2 = atlsys_1L(NULL, 
+                      "fgrep 'model' /proc/cpuinfo | fgrep -v 'name'", 0, 0);
+               if (rs2)
                {
                   i = GetLastInt(res);
                   if (i < 3) mach = IntP4;
                   else if (i == 3) mach = IntP4E;
+                  free(rs2);
                }
             }
          }
@@ -820,6 +870,7 @@ enum MACHTYPE ProbeArch()
             mach = AmdHammer;
          else if (strstr(res, "Athlon")) mach = AmdAthlon;
          else if (strstr(res, "AMD-K7")) mach = AmdAthlon;
+         free(res);
       }
       break;
 /*
@@ -827,11 +878,13 @@ enum MACHTYPE ProbeArch()
  */
    case AFSPARC:  /* don't know here anymore */
       #if 0
-      if ( !CmndOneLine(NULL, "fgrep cpu /proc/cpuinfo", res) )
+      res = atlsys_1L(NULL, "fgrep cpu /proc/cpuinfo", 0, 0);
+      if (res)
       {
          if (strstr(res, "UltraSparc II")) mach = SunUS2;
          else if (strstr(res, "UltraSparc I")) mach = SunUS1;
          else if (strstr(res, "UltraSparc")) mach = SunUSX;
+         free(res);
       }
       #endif
       break;
@@ -850,12 +903,14 @@ enum MACHTYPE ProbeArch()
       #endif
       break;
    case AFS390:
-      if ( !CmndOneLine(NULL, "cat /proc/cpuinfo | fgrep \"processor \"", res) )
+      res = atlsys_1L(NULL, "cat /proc/cpuinfo | fgrep \"processor \"", 0, 0);
+      if (res)
       {
          if (strstr(res, "2094") || strstr(res, "2096")) mach = IbmZ9;
          else if (strstr(res, "2097") || strstr(res, "2098")) mach = IbmZ10;
          /* we consider anything else to be a z196 or later */
          else mach = IbmZ196;  /* looks risky to me, but IBM folks did it */
+         free(res);
       }
       break;
    default:
@@ -869,7 +924,6 @@ enum MACHTYPE ProbeArch()
    }
    return(mach);
 }
- 
 @ROUT archinfo_win
 int ProbeNCPU()
 {
@@ -906,23 +960,44 @@ int ProbeNCPU()
 int ProbeNCPU()
 {
    int ncpu = 0;
-   char *reslns, res[1024];
+   char *res;
    
 @ROUT archinfo_aix
-   if (!CmndOneLine(NULL, "/usr/sbin/prtconf | fgrep 'Number Of Processors'",
-                    res))
+   res = atlsys_1L(NULL, "/usr/sbin/prtconf | fgrep 'Number Of Processors'",
+                   0, 0);
+   if (res)
+   {
       ncpu = GetLastInt(res);
+      free(res);
+   }
 @ROUT archinfo_freebsd
-   if (!CmndOneLine(NULL, "sysctl hw.ncpu", res)) ncpu = GetLastInt(res);
+   res = atlsys_1L(NULL, "sysctl hw.ncpu", 0, 0);
+   if (res) 
+   {
+      ncpu = GetLastInt(res);
+      free(res);
+   }
 @ROUT archinfo_sunos
-   if (!CmndOneLine(NULL, "uname -X | fgrep NumCPU", res))
+   res = atlsys_1L(NULL, "uname -X | fgrep NumCPU", 0, 0);
+   if (res)
+   {
       ncpu = GetFirstInt(res);
-   else if (!CmndOneLine(NULL, "/bin/uname -X | fgrep NumCPU", res))
+      free(res);
+   }
+   else if ((res=atlsys_1L(NULL, "/bin/uname -X | fgrep NumCPU", 0, 0)))
+   {
       ncpu = GetFirstInt(res);
+      free(res);
+   }
 @ROUT archinfo_irix
-   if (!CmndOneLine(NULL, 
-          "hinv -c processor | fgrep Processor | fgrep -v 'CPU:'", res))
+   res = atlsys_1L(NULL, 
+                   "hinv -c processor | fgrep Processor | fgrep -v 'CPU:'", 
+                   0, 0);
+   if (res)
+   {
       ncpu = GetFirstInt(res);
+      free(res);
+   }
 @ROUT archinfo_linux
    #if 0
    if (mach == Dec21264 || mach == Dec21164 || mach == Dec21064)
@@ -933,8 +1008,14 @@ int ProbeNCPU()
    #endif
    if (!ncpu)
    {
-      reslns = CmndResults(NULL, "grep '^processor' /proc/cpuinfo");
-      if (reslns) ncpu = fNumLines(reslns);
+      FILE *fpres;
+      int len=0;
+      fpres = atlsys(NULL, "grep '^processor' /proc/cpuinfo", 0, 0);
+      if (fpres)
+      {
+         for (ncpu=0; res = ATL_fgets(res, &len, fpres); ncpu++);
+         fclose(fpres);
+      }
    }
 @ROUT archinfo_linux archinfo_freebsd archinfo_sunos archinfo_irix archinfo_aix
    return(ncpu);
@@ -944,16 +1025,11 @@ int ProbeNCPU()
       archinfo_aix archinfo_sfu archinfo_win
 int ProbePointerBits(int *sure)
 {
-   int iret = 32;
+   int i;
    char *uname;
-   char cmnd[1024], res[1024];
+   char *cmnd, *res;
 
    *sure = 0;
-/*
- * Note this is a weak probe, archinfo_x86 much better . . .
- */
-   uname = FindUname(NULL);
-   sprintf(cmnd, "%s -a", uname);
 /*
  * This probe should be running on backend; if its ptr length is 8, we've
  * definitely got a 64 bit machine
@@ -962,22 +1038,36 @@ int ProbePointerBits(int *sure)
  */
    if (sizeof(void*) == 8)
    {
-      iret = 64;
       *sure = 1;
+      return(64);
    }
 
 @rout archinfo_aix
-   else if (!CmndOneLine(NULL, "/usr/sbin/prtconf | fgrep 'Kernel Type'", res))
+   res = atlsys_1L(NULL, "/usr/sbin/prtconf | fgrep 'Kernel Type'", 0, 0);
+   if (res)
    {
       if (GetLastInt(res) == 64)
       {
-         iret = 64;
          *sure = 1;
+         free(res);
+         return(64);
       }
+      free(res);
    }
 @ROUT archinfo_linux archinfo_freebsd archinfo_sunos archinfo_irix @\
       archinfo_aix archinfo_SFU archinfo_win
-   else if (!CmndOneLine(NULL, cmnd, res))
+/*
+ * Note this is a weak probe, archinfo_x86 much better . . .
+ */
+   uname = FindUname(NULL);
+   i = strlen(uname) + 4;
+   cmnd = malloc(sizeof(char)*i);
+   assert(cmnd);
+   sprintf(cmnd, "%s -a", uname);
+
+   res = atlsys_1L(NULL, cmnd, 0, 0);
+   free(cmnd);
+   if (res)
    {
 /*
  *    If uname is a known 64-bit platform, we're sure we've got OS support
@@ -985,19 +1075,21 @@ int ProbePointerBits(int *sure)
  */
       if (strstr(res, "x86_64") || strstr(res, "ppc64") || strstr(res, "ia64"))
       {
-         iret = 64;
          *sure = 1;
+         free(res);
+         return(64);
       }
+      free(res);
    }
 @ROUT archinfo_linux archinfo_freebsd archinfo_sunos archinfo_irix @\
       archinfo_aix archinfo_SFU archinfo_win
-   return(iret);
+   return(32);
 }
 
 int ProbeMhz()
 {
    int mhz=0;
-   char res[1024];
+   char *res;
 @ROUT archinfo_win00   @SKIP not reliable for Mhz, gives timer res instead
    LARGE_INTEGER msout;
    unsigned long long freq;
@@ -1008,44 +1100,81 @@ int ProbeMhz()
    freq /= 1000000;
    mhz = freq;
 @ROUT archinfo_aix
-   if (!CmndOneLine(NULL, "/usr/sbin/prtconf | fgrep 'Processor Clock Speed'",
-                    res))
+   res = atlsys_1L(NULL, "/usr/sbin/prtconf | fgrep 'Processor Clock Speed'",
+                   0, 0);
+   if (res)
+   {
       mhz = GetLastInt(res);  /* assumes clock speed always given in MHz */
+      free(res);
+   }
 @ROUT archinfo_freebsd
-   if (!CmndOneLine(NULL, "sysctl hw.cpufrequency", res) ) 
+   res = atlsys_1L(NULL, "sysctl hw.cpufrequency", 0, 0);
+   if (res)
+   {
       mhz = GetFirstDouble(res) / 1000000;
+      free(res);
+   }
 @ROUT archinfo_linux archinfo_win
-   if (!CmndOneLine(NULL, "fgrep 'cpu MHz' /proc/cpuinfo", res))
+   res = atlsys_1L(NULL, "fgrep 'cpu MHz' /proc/cpuinfo", 0, 0);
+   if (res)
+   {
       mhz = GetFirstInt(res);
-   if (!mhz && 
-       !CmndOneLine(NULL, "cat /proc/cpuinfo | fgrep clock | fgrep MHz", res))
-      mhz = GetLastInt(res);
+      free(res);
+   }
+   if (!mhz)
+   {
+      res = atlsys_1L(NULL, "cat /proc/cpuinfo | fgrep clock | fgrep MHz",0,0);
+      if (res)
+      {
+         mhz = GetLastInt(res);
+         free(res);
+      }
+   }
 @ROUT archinfo_irix
-   if (!CmndOneLine(NULL, "hinv -c processor | fgrep MHz", res))
+   res = atlsys_1L(NULL, "hinv -c processor | fgrep MHz", 0, 0);
+   if (res)
    {  /* Itanium's use MHz */
       mhz = GetIntBeforeWord("MHz", res);
       if (mhz == BADINT) mhz = 0;
+      free(res);
    }
-   if (!mhz && !CmndOneLine(NULL, "hinv -c processor | fgrep MHZ", res))
-   { /* MIPS uses MHZ */
-      mhz = GetIntBeforeWord("MHZ", res);
-      if (mhz == BADINT) mhz = 0;
+   if (!mhz)
+   {
+      res = atlsys_1L(NULL, "hinv -c processor | fgrep MHZ", 0, 0);
+      if (res)
+      {   /* MIPS uses MHZ */
+         mhz = GetIntBeforeWord("MHZ", res);
+         if (mhz == BADINT) mhz = 0;
+         free(res);
+      }
    }
-   if (!mhz && !CmndOneLine(NULL, "hinv -c processor | fgrep GHz", res))
-   { /* Don't think MIPS will ever get hear, nobody pres uses GHz */
-      mhz = GetIntBeforeWord("GHz", res);
-      mhz = (mhz == BADINT) ? 0 : mhz*1000;
+   if (!mhz)
+   {
+      res = atlsys_1L(NULL, "hinv -c processor | fgrep GHz", 0, 0);
+      if (res)
+      {  /* Don't think MIPS will ever get here, nobody pres uses GHz */
+         mhz = GetIntBeforeWord("GHz", res);
+         mhz = (mhz == BADINT) ? 0 : mhz*1000;
+         free(res);
+      }
    }
 @ROUT archinfo_sunos
-   if (!CmndOneLine(NULL, "/usr/sbin/psrinfo -v | fgrep MHz", res))
+   res = atlsys_1L(NULL, "/usr/sbin/psrinfo -v | fgrep MHz", 0, 0);
+   if (res)
    {
       mhz = GetIntBeforeWord("MHz", res);
       if (mhz == BADINT) mhz = 0;
+      free(res);
    }
-   if (!mhz && !CmndOneLine(NULL, "/usr/sbin/psrinfo -v | fgrep GHz", res))
+   if (!mhz)
    {
-      mhz = GetIntBeforeWord("GHz", res);
-      mhz = (mhz == BADINT) ? 0 : mhz*1000;
+      res = atlsys_1L(NULL, "/usr/sbin/psrinfo -v | fgrep GHz", 0, 0);
+      if (res)
+      {
+         mhz = GetIntBeforeWord("GHz", res);
+         mhz = (mhz == BADINT) ? 0 : mhz*1000;
+         free(res);
+      }
    }
 @ROUT archinfo_SFU
    mhz=0;  /* don't know how do do this on interix */
@@ -1066,7 +1195,7 @@ int ProbeThrottle()
  */
 @ROUT archinfo_freebsd archinfo_linux
    int imax=0, imin=0, icur=0;
-   char res[1024];
+   char *res;
 
 @ROUT archinfo_linux   
 /*
@@ -1075,28 +1204,45 @@ int ProbeThrottle()
  * throttling also enabled if governer is not "performance", and min freq
  * is less than max
  */
-   if (!CmndOneLine(NULL, 
-       "cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq", res) )
+   res = atlsys_1L(NULL, 
+                   "cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq",
+                   0, 0);
+   if (res)
    {
       imax = GetFirstInt(res);
-      assert(!CmndOneLine(NULL, 
-             "cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq", res));
+      free(res);
+      res = atlsys_1L(NULL, 
+            "cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq", 0, 0);
+      assert(res);
       imin = GetFirstInt(res);
-      assert(!CmndOneLine(NULL, 
-             "cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq", res));
+      free(res);
+      res = atlsys_1L(NULL, 
+            "cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq", 0, 0);
+      assert(res);
       icur = GetFirstInt(res);
-      assert(!CmndOneLine(NULL,
-             "cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", res));
+      free(res);
+      res = atlsys_1L(NULL, 
+            "cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", 0, 0);
+      assert(res);
       if (icur < imax) 
          iret = 1;
       else if (!strstr(res, "performance") && imin < imax)
          iret = 1;
+      free(res);
    }
 @ROUT archinfo_freebsd 
-   if (!CmndOneLine(NULL, "sysctl hw.cpufrequency_max", res) )
+   res = atlsys_1L(NULL, "sysctl hw.cpufrequency_max", 0, 0);
+   if (res)
+   {
       imax = GetFirstInt(res);
-   if (!CmndOneLine(NULL, "sysctl hw.cpufrequency_min", res) )
+      free(res);
+   }
+   res = atlsys_1L(NULL, "sysctl hw.cpufrequency_min", 0, 0);
+   if (res)
+   {
       imin = GetFirstInt(res);
+      free(res);
+   }
    if (imax)
    {
       if (imax != imin)
