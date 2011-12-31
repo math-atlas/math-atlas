@@ -755,6 +755,8 @@ int ATL_@(rtn)(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
    #else
       const TYPE ONE[2] = {ATL_rone, ATL_rzero};
    #endif
+   TYPE *ws_CP=NULL, *ws_CPRaw=NULL;
+   ATL_INT ldCP;
 
 @ROUT ATL_geqrf ATL_geqlf ATL_gerqf ATL_gelqf
    #if defined(ATL_TUNING)
@@ -974,12 +976,6 @@ int ATL_@(rtn)(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
    ws_LQ2 = WORK +(nb SHIFT)*nb;        /* After T Work space             */
    ws_larfb = ws_LQ2 + (maxMN SHIFT);   /* After workspace for T and LQ2  */
 
-   #if !defined(ATL_USEPTHREADS)        /* If no PCA, try to copy up front. */
-   TYPE *ws_CP=NULL;
-   TYPE *ws_CPRaw = malloc(ATL_MulBySize(maxMN*nb + ATL_Cachelen));
-   if (ws_CPRaw) ws_CP=ATL_AlignPtr(ws_CPRaw);  /* Align if malloced. */
-   #endif /* Serial Mode */
- 
 /*
  * Leave one iteration to be done outside loop, so we don't build T
  * Any loop iterations are therefore known to be of size nb (no partial blocks)
@@ -987,6 +983,14 @@ int ATL_@(rtn)(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
    n = (minMN / nb) * nb;
    if (n == minMN)
       n -= Mmin(nb, minMN);       /* when n is a multiple of nb, reduce by nb */
+   #if !defined(ATL_USEPTHREADS)        /* If no PCA, try to copy up front. */
+      j = M - n;
+      j = Mmax(nb, j);
+      ldCP = (N&3) ? (((N+7)>>3)<<3) : N;
+      ws_CPRaw = malloc(ATL_MulBySize(ldCP)*j + ATL_Cachelen);
+      if (ws_CPRaw) ws_CP=ATL_AlignPtr(ws_CPRaw);  /* Align if malloced. */
+   #endif /* Serial Mode */
+ 
 
    for (j=0; j < n; j += nb)
    {
@@ -995,13 +999,16 @@ int ATL_@(rtn)(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
       if (ws_CP)                             /* If workspace exists. */
       {
          int ci, cj;                         /* for conjugation.     */
+         ldCP = N-j;
+         if (ldCP&3)
+            ldCP = ((ldCP+7)>>3)<<3;
          Mjoin(PATL,gemoveT)(N-j, nb, ONE, A+(j SHIFT)*(lda+1), 
-                             lda, ws_CP, maxMN);
+                             lda, ws_CP, ldCP);
 
-         ATL_assert(!ATL_geqrr(N-j, nb, ws_CP, maxMN, TAU+(j SHIFT),
+         ATL_assert(!ATL_geqrr(N-j, nb, ws_CP, ldCP, TAU+(j SHIFT),
                                ws_LQ2, ws_T, nb, ws_larfb, 1));
       
-         Mjoin(PATL,gemoveT)(nb, N-j, ONE, ws_CP, maxMN, 
+         Mjoin(PATL,gemoveT)(nb, N-j, ONE, ws_CP, ldCP, 
                              A+(j SHIFT)*(lda+1), lda);
 
          #if defined(TCPLX)               /* conj upTri T, TAU. */
@@ -1041,22 +1048,27 @@ int ATL_@(rtn)(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
 
 /*
  *  Build Last panel.  build T is set to 0
+ *  RCW: changed nb = minMN-n to nb = M-n, since it is used as the # of rows!
  */
-   nb = minMN - n;                              /* remaining rows. */
-   if (nb)                                      /* If we have any cleanup, */
+   nb = minMN - n;                            /* remaining factorization. */
+   if (nb)                                    /* If we have any cleanup, */
    {
+      ATL_CINT mr = M-n;
       #if !defined(ATL_USEPTHREADS)          /* If no PCA try up front copy. */
       if (ws_CP)                             /* If workspace exists. */
       {
          ATL_INT cj;                         /* for conjugation.     */
-         Mjoin(PATL,gemoveT)(N-j, nb, ONE, A+(j SHIFT)*(lda+1), 
-                             lda, ws_CP, maxMN);
+         ldCP = N-n;
+         if (ldCP&3)
+            ldCP = ((ldCP+7)>>3)<<3;
+         Mjoin(PATL,gemoveT)(N-j, mr, ONE, A+(j SHIFT)*(lda+1), 
+                             lda, ws_CP, ldCP);
 
          /* Final parm is whether to build T. No need for T on final panel. */
-         ATL_assert(!ATL_geqrr(N-j,nb,  ws_CP, maxMN, TAU+(j SHIFT),
+         ATL_assert(!ATL_geqrr(N-j, mr,  ws_CP, ldCP, TAU+(j SHIFT),
                                ws_LQ2, ws_T, nb, ws_larfb, 0));
       
-         Mjoin(PATL,gemoveT)(nb, N-j, ONE, ws_CP, maxMN, 
+         Mjoin(PATL,gemoveT)(mr, N-j, ONE, ws_CP, ldCP, 
                              A+(j SHIFT)*(lda+1), lda);
 
          /* We only need to conjugate final chunk of TAU. */ 
@@ -1139,11 +1151,6 @@ int ATL_@(rtn)(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
    ws_RQ2 = WORK +(nb SHIFT)*nb;        /* After T Work space             */
    ws_larfb = ws_RQ2 + (maxMN SHIFT);   /* After workspace for T and RQ2  */
 
-   #if !defined(ATL_USEPTHREADS)        /* If no PCA, try to copy up front. */
-   TYPE *ws_CP=NULL;
-   TYPE *ws_CPRaw = malloc(ATL_MulBySize(maxMN*nb + ATL_Cachelen));
-   if (ws_CPRaw) ws_CP=ATL_AlignPtr(ws_CPRaw);  /* Align if malloced. */
-   #endif /* Serial Mode */
 
 /*
  * Leave one iteration to be done outside loop, so we don't build T
@@ -1152,6 +1159,14 @@ int ATL_@(rtn)(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
    n = (minMN / nb) * nb;
    if (n == minMN)
       n -= Mmin(nb, minMN);  
+
+   #if !defined(ATL_USEPTHREADS)        /* If no PCA, try to copy up front. */
+      j = M - n;
+      j = Mmax(j, nb);
+      ldCP = (N&3) ? (((N+7)>>3)<<3) : N;
+      ws_CPRaw = malloc(ATL_MulBySize(ldCP)*j + ATL_Cachelen);
+      if (ws_CPRaw) ws_CP=ATL_AlignPtr(ws_CPRaw);  /* Align if malloced. */
+   #endif /* Serial Mode */
 
    for (j=0; j < n; j += nb)
    {
@@ -1166,12 +1181,16 @@ int ATL_@(rtn)(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
          TYPE *myTAU=TAU+((minMN-(j+nb)) SHIFT);
          TYPE *myA=A+((M -j -nb) SHIFT);
 
-         Mjoin(PATL,gemoveT)(N-j, nb, ONE, myA, lda, ws_CP, maxMN);
+         ldCP = N-j;
+         if (ldCP&3)
+            ldCP = ((ldCP+7)>>3)<<3;
 
-         ATL_assert(!ATL_geqlr(N-j, nb, ws_CP, maxMN, myTAU, 
+         Mjoin(PATL,gemoveT)(N-j, nb, ONE, myA, lda, ws_CP, ldCP);
+
+         ATL_assert(!ATL_geqlr(N-j, nb, ws_CP, ldCP, myTAU, 
                                ws_RQ2, ws_T, nb, ws_larfb, 1));
       
-         Mjoin(PATL,gemoveT)(nb, N-j, ONE, ws_CP, maxMN, myA, lda);
+         Mjoin(PATL,gemoveT)(nb, N-j, ONE, ws_CP, ldCP, myA, lda);
 
          #if defined(TCPLX)               /* conj LowTri T, TAU. */
          for (cj=0; cj<nb; cj++)          /* column loop... */
@@ -1212,21 +1231,26 @@ int ATL_@(rtn)(ATL_CINT M, ATL_CINT N, TYPE  *A, ATL_CINT lda, TYPE *TAU,
 
 /*
  *  Build Last panel.  buildT  is passed as 0, as there is no need to build T
+ *  RCW: changed nb = minMN-n to nb = M-n, since it is used as the # of rows!
  */
-   nb = minMN - n;                              /* remaining rows.            */
+   nb = minMN - n;                              /* remaining steps in factor */
    if (nb)                                      /* If we have any to do...    */
    {
+      ATL_CINT mr = M-n;
       #if !defined(ATL_USEPTHREADS) /* If no PCA it won't copy. Try it here. */
       /* If we got our copy workspace, transpose panel before recursion. */
       if (ws_CP)                             /* If workspace exists. */
       {
          int cj;                             /* for conjugation.     */
-         Mjoin(PATL,gemoveT)(N-j, nb, ONE, A, lda, ws_CP, maxMN);
+         ldCP = N-n;
+         if (ldCP&3)
+            ldCP = ((ldCP+7)>>3)<<3;
+         Mjoin(PATL,gemoveT)(N-j, mr, ONE, A, lda, ws_CP, ldCP);
 
-         ATL_assert(!ATL_geqlr(N-j, nb, ws_CP, maxMN, TAU, 
+         ATL_assert(!ATL_geqlr(N-j, mr, ws_CP, ldCP, TAU, 
                                ws_RQ2, ws_T, nb, ws_larfb, 0));
       
-         Mjoin(PATL,gemoveT)(nb, N-j, ONE, ws_CP, maxMN, A, lda);
+         Mjoin(PATL,gemoveT)(mr, N-j, ONE, ws_CP, ldCP, A, lda);
 
          #if defined(TCPLX)               /* conj TAU. */
          for (cj=0; cj<nb; cj++)          /* column loop... */
@@ -12338,7 +12362,7 @@ cd ../bin ; make xsormtst_pt xdormtst_pt xcormtst_pt xzormtst_pt; cd ../EXtest
  * entire problem into the L1 cache.  All other problems recur.
  */
    #define METHOD(METH_, M_, N_, LDA_) /* 0,1,2,3=Recur,Unblkd,Cp,NoC      */ \
-      ( (N_ < 8) || (M_ < 8) || (((size_t)M_)*N <= ATL_L1elts) ) ? 1 : 0;
+      (METH_)=( (N_ < 8) || (M_ < 8) || (((size_t)M_)*N <= ATL_L1elts) ) ? 1:0;
 #else
    #define MyCacheEdge (ATL_NTHREADS*(size_t)CacheEdge) /* collective edge */
 /*
