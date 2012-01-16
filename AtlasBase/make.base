@@ -394,7 +394,7 @@ tar cvf atlas.tar \
      ATLAS/tune/lapack/lanbsrch.c  \
 
 bzip2 atlas.tar
-mv atlas.tar.bz2 atlas3.9.63.tar.bz2
+mv atlas.tar.bz2 atlas3.9.64.tar.bz2
 #
 #     ATLAS/src/blas/level1/ATL_asum.c ATLAS/src/blas/level1/ATL_dot.c 
 #     ATLAS/src/blas/level1/ATL_swap.c 
@@ -901,6 +901,7 @@ basfn = $(basdRCW)/atlas-mvtk.base
    @whiledef pre z c d s
       @(pre)@(kn)cases.idx
    @endwhile
+@ROUT ATLAS/tune/blas/gemv/MVTCASES `ATL_sgemvT_8x4_neon.S`
 @ROUT ATLAS/tune/blas/gemv/MVTCASES `ATL_gemvT_8xv3_vsx.c`
 @ROUT ATLAS/tune/blas/gemv/MVNCASES `ATL_gemvN_v6x8_vsx.c`
    @whiledef kr
@@ -930,6 +931,12 @@ kill :
 
 Make.ext : $(topd)/make.base
 	$(extM) -b $(topd)/make.base -o $@ rout=@(@rout)
+@ROUT ATLAS/tune/blas/gemv/MVTCASES
+@whiledef exrt ATL_sgemvT_8x4_neon.S
+@(exrt) : @(topd)/kernel/external/extern.base @(topd)/kernel/external/@(exrt)
+	$(extC) -b @(topd)/kernel/external/extern.base -o $@ rout=$@ \
+                -def rout $@
+@endwhile
 @ROUT ATLAS/tune/blas/ger/R1CASES
    @define rx @r1@
 @ROUT ATLAS/tune/blas/ger/R2CASES 
@@ -963,6 +970,8 @@ bascm = @(topd)/kernel/CammMaguire/camm.base
       @(rt).c
       @define rt1 @@(rt)@
    @endwhile
+   @ROUT ATLAS/tune/blas/ger/R2CASES 
+      ATL_sger2K_NEON_lda4.S ATL_sger2K_NEON.S
    @ROUT ATLAS/tune/blas/gemv/CASES 
       ATL_gemv_SSE.c ATL_gemvN_SSE.c ATL_gemvT_SSE.c
       ATL_dgemvkT_sse3_14x1.c ATL_dgemvkT_sse3_4x1.c
@@ -974,6 +983,11 @@ all : $(files)
 kill : 
 	rm -f $(files)
 
+@whiledef exrt ATL_sger2K_NEON.S ATL_sger2K_NEON_lda4.S
+@(exrt) : @(topd)/kernel/external/extern.base @(topd)/kernel/external/@(exrt)
+	$(extC) -b @(topd)/kernel/external/extern.base -o $@ rout=$@ \
+                -def rout $@
+@endwhile
 @whiledef cpk ATL_gerk_vx4_vsx.c
 @(cpk) : $(topd)/kernel/external/@(cpk)
 	cp -f $(topd)/kernel/external/@(cpk) .
@@ -1159,10 +1173,12 @@ Makefile :$(basjr) $(incf)
 @endwhile
 @ROUT ATLAS/tune/blas/gemm/CASES
 basrwd = @(topd)/kernel/ClintWhaley
+basexd = @(topd)/kernel/external
 basfn = $(basdRCW)/atlas-kmm.base
 basrw = $(basrwd)/clint.base
 bascm = @(topd)/kernel/CammMaguire/camm.base
 basps = @(topd)/kernel/PeterSoendergaard/peter.base
+basex = $(basexd)/extern.base
 
 @multidef rt 
    ATL_mm4x4x2_1_pref ATL_mm4x4x2_1_prefCU ATL_mm4x4x2US
@@ -1218,6 +1234,7 @@ basps = @(topd)/kernel/PeterSoendergaard/peter.base
       @endwhile
    @endwhile
    ATL_dmm8x4x2_vsx.c ATL_smm8x2x4_av.c
+   ATL_smm4x4x4_neon.c
 @enddeclare
 
 all : $(files)
@@ -1245,6 +1262,10 @@ all : $(files)
 
 @endwhile
 
+@whiledef exrt ATL_smm4x4x4_neon.c
+@(exrt) : $(basex) $(basexd)/@(exrt)
+	$(extC) -b $(basex) -o $@ rout=$* -def rout $*
+@endwhile
 @whiledef asis ATL_dmm8x4x2_vsx.c ATL_smm8x2x4_av.c
 @(asis) : $(basrwd)/@(asis)
 	cp $(basrwd)/@(asis) .

@@ -103,6 +103,10 @@ void PrintUsage(char *name, int iarg, char *arg)
    fprintf(stderr, 
            "      -Si archdef <1/0> : enable/supress arch default use\n");
    fprintf(stderr, 
+"      -Si ieee <1/0> : dis/allow optimizations that break IEEE FP standard\n");
+   fprintf(stderr, 
+           "          (eg., NEON, 3DNow!)\n");
+   fprintf(stderr, 
            "      -Si latune <1/0> : do/don't tune F77 LAPACK routines\n");
    @endifdef
    @ifdef -nof77
@@ -221,6 +225,7 @@ void GetFlags(int nargs,                /* nargs as passed into main */
 @ifdef -ad
               int *bozol1,            /* Use untuned L1 */
               int *UseArchDef,        /* Use arch defaults */
+              int *IEEE,              /* enforce IEEE FP standard? */
               int *latune,            /* Tune LAPACK? */
 @endifdef
 @ifdef -nof77
@@ -287,7 +292,7 @@ void GetFlags(int nargs,                /* nargs as passed into main */
 @endifdef
 @ifdef -ad
     *bozol1 = 0;
-    *latune = *UseArchDef = 1;
+    *IEEE = *latune = *UseArchDef = 1;
 @endifdef
 @ifdef -flapack
     *flapack = NULL;
@@ -388,6 +393,8 @@ void GetFlags(int nargs,                /* nargs as passed into main */
    @ifdef -ad
          if (!strcmp(sp0, "archdef"))
             *UseArchDef = k;
+         else if (!strcmp(sp0, "ieee"))
+            *IEEE = k;
          else if (!strcmp(sp0, "bozol1"))
             *bozol1 = k;
          else if (!strcmp(sp0, "latune"))
@@ -6939,7 +6946,7 @@ void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
                  enum ASMDIA asmb, int vecexts, int ptrbits, 
                  int ncpu, int omp, int AntThr,
                  int l2size, char *srcdir, char *bindir, int bozol1, 
-                 int archdef, int latune,  int nof77, char **comps, 
+                 int archdef, int IEEE, int latune,  int nof77, char **comps, 
                  char *gccflags,
                  char *f2cdefs, char *cdefs, char *pmake, char *flapack, 
                  char *smaflags, char *dmaflags, char *f77libs)
@@ -6947,7 +6954,7 @@ void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
  * Calls xspew with correct arguments to build required Make.inc
  */
 {
-   char *frm = "./xspew -v %d -O %d -A %d -m %d -s %d -V %d -b %d -t %d -f %d -d s '%s' -d b '%s' -D c '%s' -D f '%s' %s -Si archdef %d -Si bozol1 %d -Si latune %d -Si nof77 %d -o Make.inc";
+   char *frm = "./xspew -v %d -O %d -A %d -m %d -s %d -V %d -b %d -t %d -f %d -d s '%s' -d b '%s' -D c '%s' -D f '%s' %s -Si archdef %d -Si ieee %d -Si bozol1 %d -Si latune %d -Si nof77 %d -o Make.inc";
    char *ln, *compsflags, archflags[1024];
    int i;
 
@@ -6963,7 +6970,7 @@ void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
    assert(ln);
    sprintf(ln, frm, verb, OS, arch, mhz, asmb, vecexts, ptrbits, ncpu, l2size,
            srcdir, bindir, cdefs ? cdefs:"", f2cdefs? f2cdefs : "", 
-           compsflags, archdef, bozol1, latune, nof77);
+           compsflags, archdef, IEEE, bozol1, latune, nof77);
    free(compsflags);
    if (pmake)
       ln = NewAppendedString_SFLAG(ln, "-Ss pmake", pmake);
@@ -6996,7 +7003,7 @@ int main(int nargs, char **args)
    int i, verb, asmb, f2cname, f2cint, f2cstr, ncpu, nof77, nocygwin;
    int thrchk, mhz, omp, AntThr, lapackref;
    int j, k, h, vecexts;
-   int ptrbits, l2size, bozol1, latune, archdef;
+   int ptrbits, l2size, bozol1, latune, archdef, ieee;
    char *targ, *f2cdefs, *cdefs, *srcdir, *bindir, *outfile, *sp;
    char targarg[256];
    char *comps[3*NCOMP], *gccflags;
@@ -7005,8 +7012,8 @@ int main(int nargs, char **args)
 
    GetFlags(nargs, args, &verb, &OS, (enum ASMDIA*) &asmb, &vecexts, &mach, 
             &mhz, &ptrbits, &ncpu, &omp, &AntThr, comps, &gccflags, &outfile, 
-            &srcdir, &bindir, &bozol1, &archdef, &latune, &nof77, &nocygwin, 
-            &thrchk, &lapackref, &f2cdefs, &cdefs, &pmake, &flapack, 
+            &srcdir, &bindir, &bozol1, &archdef, &ieee, &latune, &nof77, 
+            &nocygwin, &thrchk, &lapackref, &f2cdefs, &cdefs, &pmake, &flapack, 
             &smaflags, &dmaflags, &f77libs, &l2size, &targ);
    if (targ)
       sprintf(targarg, "-T %s", targ);
@@ -7095,7 +7102,7 @@ int main(int nargs, char **args)
          dmaflags = " -O2";
    }
    SpewItForth(verb, OS, mach, mhz, asmb, vecexts, ptrbits, ncpu, omp, AntThr,
-               l2size, srcdir, bindir, bozol1, archdef, latune, nof77, 
+               l2size, srcdir, bindir, bozol1, archdef, ieee, latune, nof77, 
                comps, gccflags, f2cdefs, cdefs, pmake, flapack, 
                smaflags, dmaflags, f77libs);
    for (i=0; i < 3*NCOMP; i++)
@@ -7669,7 +7676,7 @@ int main(int nargs, char **args)
    int THREADS=0;
    int Use3DNow=0;  /* this needs to come from getflags */
    int ncpu, omp, AntThr, lapackref;
-   int USEDEFL1, USEARCHDEF, LATUNE;
+   int USEDEFL1, USEARCHDEF, LATUNE, USEIEEE;
    #define NPREC 4
    char pres[NPREC] = {'s', 'd', 'c', 'z'};
    char *targ, *sp, *pmake, *flapack;
@@ -7681,7 +7688,7 @@ int main(int nargs, char **args)
 
    GetFlags(nargs, args, &verb, &OS, (enum ASMDIA*) &asmb, &vecexts, &mach, 
             &mhz, &ptrbits, &ncpu, &omp, &AntThr, comps, &gccflags, &outfile, 
-            &srcdir, &blddir, &USEDEFL1, &USEARCHDEF, &LATUNE, &nof77, 
+            &srcdir, &blddir, &USEDEFL1, &USEARCHDEF, &USEIEEE, &LATUNE, &nof77,
             &lapackref, &f2cdefs, &cdefs, &pmake, &flapack, 
             &smaflags, &dmaflags, &f77lib, &l2size, &targ);
    if (ncpu > 1) THREADS = 1;
@@ -7771,6 +7778,8 @@ int main(int nargs, char **args)
    fprintf(fpout, "%d", ptrbits);
    if (ISAX)
       fprintf(fpout, "%s", ISAXNAM[ISAX]);
+   if (!USEIEEE)
+      fprintf(fpout, "NONIEEE");
    fprintf(fpout, "\n\n");
 
    fprintf(fpout, "#  ----------------------------\n");
@@ -7903,6 +7912,8 @@ int main(int nargs, char **args)
    DisplayFile(ln, fpout, 0);
    fprintf(fpout, "   NPROC=%d\n", ncpu);
    fprintf(fpout, "   CDEFS = $(L2SIZE) $(INCLUDES) $(F2CDEFS) $(ARCHDEFS)");
+   if (!USEIEEE)
+      fprintf(fpout, " -DATL_NONIEEE=1");
    if (cdefs) fprintf(fpout, " %s", cdefs);
    if (THREADS)
    {
