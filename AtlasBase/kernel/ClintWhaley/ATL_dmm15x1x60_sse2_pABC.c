@@ -10,6 +10,10 @@
 #ifndef ATL_GAS_x8664
    #error "This kernel requires gas x86-64 assembler!"
 #endif
+#ifndef ATL_SSE2
+   #error "This routine requires SSE2!"
+#endif
+
 
 /*
  * Integer register usage shown be these defines

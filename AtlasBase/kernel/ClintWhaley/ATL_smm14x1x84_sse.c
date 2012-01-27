@@ -1,6 +1,9 @@
 #if !defined(NB) || (NB == 0)
    #error "NB must be a compile-time constant!"
 #endif
+#ifndef ATL_SSE1
+   #error "This routine requires SSE1!"
+#endif
 #if NB != MB || NB != KB
    #error "For this kernel, MB = NB = KB required!"
 #endif

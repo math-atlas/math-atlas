@@ -1,3 +1,6 @@
+#ifndef ATL_SSE2
+   #error "This routine requires SSE2!"
+#endif
 #if !defined(MB) || (MB == 0)
    #error "MB must be a compile-time constant!"
 #endif

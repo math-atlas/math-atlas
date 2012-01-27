@@ -1,4 +1,7 @@
 #include "atlas_asm.h"
+#ifndef ATL_SSE3
+   #error "This routine requires SSE3!"
+#endif
 /*
  * This routine optimized for Core2Duo, which has a relatively weak frontend,
  * so we have to be very careful about alignment, and things seem to work

@@ -1,3 +1,7 @@
+#ifndef ATL_SSE3
+   #error "This routine requires SSE3!"
+#endif
+
 /*
  * This routine designed for Core2, which seems to have relatively few
  * reservation stations on both the VPUs and ld/st, so we make it so

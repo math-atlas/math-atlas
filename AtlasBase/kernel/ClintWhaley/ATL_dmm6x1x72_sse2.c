@@ -1,6 +1,9 @@
 #if !defined(ATL_GAS_x8632) && !defined(ATL_GAS_x8664)
    #error "This kernel requires x86 gas 32 or 64 bit x86 assembler!"
 #endif
+#ifndef ATL_SSE2
+   #error "This kernel requires SSE2"
+#endif
 #if !defined(KB) || (KB == 0)
    #error "KB must be a compile-time constant!"
 #endif

@@ -1,6 +1,10 @@
 #ifndef ATL_GAS_x8664
    #error "This kernel requires gas x86-64 assembler!"
 #endif
+#ifndef ATL_SSE2
+   #error "This routine requires SSE2!"
+#endif
+
 #if !defined(MB) || (MB == 0)
    #error "MB must be a compile-time constant!"
 #elif !defined(KB) || (KB == 0)

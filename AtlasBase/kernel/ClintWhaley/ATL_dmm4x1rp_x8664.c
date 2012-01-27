@@ -1,3 +1,6 @@
+#ifndef ATL_SSE2
+   #error "This kernel requires SSE2
+#endif
 /*
  * Integer register usage shown be these defines
  */
@@ -784,7 +787,7 @@ MLOOP:
 /*
  *      Sum up vectors, and write results to C
  */
-   #if 1
+   #ifdef ATL_SSE3
         haddpd  rC1, rC0
         haddpd  rC3, rC2
    #else

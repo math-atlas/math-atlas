@@ -1,6 +1,10 @@
 #if !defined(ATL_GAS_x8632) && !defined(ATL_GAS_x8664)
    #error "This kernel requires x86 gas 32 or 64 bit assembler!"
 #endif
+#ifndef ATL_SSE2
+   #error "This routine requires SSE2!"
+#endif
+
 #ifdef SCPLX
    #define CMUL(i_) ((i_)+(i_))
 #else

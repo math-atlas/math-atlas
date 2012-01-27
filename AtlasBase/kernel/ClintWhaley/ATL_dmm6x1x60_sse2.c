@@ -10,6 +10,10 @@
 #if (NB/6)*6 != NB
    #error "NB must be multiple of 6!"
 #endif
+#ifndef ATL_SSE2
+   #error "This routine requires SSE2!"
+#endif
+
 /*
  * Integer register usage shown be these defines
  */

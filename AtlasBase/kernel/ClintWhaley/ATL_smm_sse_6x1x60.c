@@ -1,3 +1,7 @@
+#ifndef ATL_SSE1
+   #error "This routine requires SSE1!"
+#endif
+
 /* INTEGER REGISTER SUMMARY:
  *
  * EAX : pA0

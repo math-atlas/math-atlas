@@ -1,3 +1,6 @@
+#ifndef ATL_SSE1
+   #error "This routine requires SSE1!"
+#endif
 #ifndef NB
    #define NB 0
 #endif

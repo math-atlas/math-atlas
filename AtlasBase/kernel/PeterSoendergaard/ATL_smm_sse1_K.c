@@ -1,3 +1,6 @@
+#ifndef ATL_SSE1
+   #error "This routine requires SSE1!"
+#endif
 /*
  * This file combines all of Peter Soendergaard's K-cleanup routines, and
  * then uses Camm Maguire's general routine for other cases of K-cleanup.

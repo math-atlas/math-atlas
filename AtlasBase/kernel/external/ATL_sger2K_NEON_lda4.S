@@ -1,3 +1,7 @@
+#ifndef ATL_NEON
+   #error "This routine requires NEON!"
+#endif
+
 /*
  * This code works with any alignment but only lda multiple of 4 (if M >= 8).
  */

@@ -9,6 +9,9 @@
 #else
    #error "This kernel requires a gas x86 assembler!"
 #endif
+#ifndef ATL_SSE1
+   #error "This routine requires SSE1!"
+#endif
 #ifndef MB
    #ifdef X8664
       #define MB 0

@@ -1,3 +1,7 @@
+#ifndef ATL_SSE2
+   #error "This routine requires SSE2!"
+#endif
+
 #define SSE2
 #include "SSE3Dnow.h"
 #include "atlas_misc.h"

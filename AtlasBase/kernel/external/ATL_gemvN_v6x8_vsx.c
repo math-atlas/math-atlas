@@ -27,6 +27,10 @@
  *
  */
 
+#ifndef ATL_VSX
+   #error "This routine requires VSX!"
+#endif
+
 #include <altivec.h>
 #include "atlas_misc.h"
 

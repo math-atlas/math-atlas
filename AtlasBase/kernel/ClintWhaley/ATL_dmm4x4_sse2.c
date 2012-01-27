@@ -1,3 +1,7 @@
+#ifndef ATL_SSE2
+   #error "This routine requires SSE2!"
+#endif
+
 #
 #  Test case 4x4 blocking, assuming A packed in MU-block-major order,
 #  B in normal block-major order.  Did not make run as fast as normal

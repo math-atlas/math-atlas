@@ -1,3 +1,7 @@
+#ifndef ATL_SSE2
+   #error "This routine requires SSE2!"
+#endif
+
 #if !defined(MB)
    #define MB 0
 #endif

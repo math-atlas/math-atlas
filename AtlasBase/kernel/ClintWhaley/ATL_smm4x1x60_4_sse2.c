@@ -8,6 +8,10 @@
 #ifndef ATL_GAS_x8632
    #error "This kernel requires gas x86-32 assembler!"
 #endif
+#ifndef ATL_SSE2
+   #error "This routine requires SSE2!"
+#endif
+
 /*
 #if KB != 60
    #error "KB must be 60!"

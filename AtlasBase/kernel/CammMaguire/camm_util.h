@@ -1,6 +1,9 @@
 #ifndef CAMM_UTIL_H
 #define CAMM_UTIL_H    /*+ To stop multiple inclusions. +*/
 
+#ifndef ATL_SSE1
+   #error "This routine requires SSE1!"
+#endif
 typedef struct {
   float r,i;
 } Complex;

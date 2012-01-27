@@ -1,4 +1,7 @@
 #include "atlas_asm.h"
+#ifndef ATL_SSE3
+   #error "This routine requires SSE3"
+#endif
 
 /*
  * This routine hastily adapted to the 3rd gen Opteron from the Core2 kernel,

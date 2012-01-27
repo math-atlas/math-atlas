@@ -1,4 +1,8 @@
 #include "atlas_asm.h"   /* usually do this in include file */
+#ifndef ATL_SSE1
+   #error "This routine requires SSE1!"
+#endif
+
 #if !defined(MB)
    #define MB 0
 #endif

@@ -1,6 +1,10 @@
 #ifndef ATL_GAS_x8632
    #error "This kernel requires gas x86-32 assembler!"
 #endif
+#ifndef ATL_SSE1
+   #error "This routine requires SSE1!"
+#endif
+
 #if !defined(NB) || (NB == 0)
    #error "NB must be a compile-time constant!"
 #endif
