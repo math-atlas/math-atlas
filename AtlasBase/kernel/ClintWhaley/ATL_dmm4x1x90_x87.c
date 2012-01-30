@@ -14,6 +14,26 @@
 #else
    #define CMUL(arg_) arg_
 #endif
+/*
+ * Prefetch defines
+ */
+#if defined(ATL_SSE1) || defined(ATL_SSE2)
+   #define pref2(mem) prefetcht1   mem
+   #define prefB(mem) prefetcht0   mem
+   #ifdef ATL_3DNow
+      #define prefC(mem) prefetchw  mem
+   #else
+      #define prefC(mem) prefetchnta  mem
+   #endif
+#elif defined(ATL_3DNow)
+   #define pref2(mem) prefetch   mem
+   #define prefB(mem) prefetch   mem
+   #define prefC(mem) prefetchw  mem
+#else
+   #define pref2(mem)
+   #define prefB(mem)
+   #define prefC(mem)
+#endif
 #ifdef ATL_GAS_x8632
    #define movq movl
    #define addq addl
@@ -90,7 +110,7 @@ ATL_asmdecor(ATL_USERMM):
         movq    %r12, -24(%rsp)
         movq    %r13, -32(%rsp)
         movq    %r14, -40(%rsp)
-                                        prefetcht0 (pA0)
+                                        pref2((pA0))
 /*        movq    %r15, -48(%rsp) */
 #endif
         
@@ -103,15 +123,15 @@ ATL_asmdecor(ATL_USERMM):
         movl    STKSIZE+8(%esp), lda3
         movl    lda3, NN
         movl    STKSIZE+24(%esp), pA0
-                                prefetcht0 (pA0)
+                                pref2((pA0))
         movl    STKSIZE+28(%esp), lda
-                                prefetcht0 (pA0,lda)
+                                pref2((pA0,lda))
         movl    STKSIZE+32(%esp), pB0
-                                prefetcht0 (pB0)
+                                pref2((pB0))
         movl    STKSIZE+36(%esp), ldb
-                                prefetcht0 (pA0,lda,2)
+                                pref2((pA0,lda,2))
         movl    STKSIZE+48(%esp), pC0
-                                prefetcht0 KB*8(pA0,lda,2)
+                                pref2(KB*8(pA0,lda,2))
 /*
  *      incCn = (ldc - M)*sizeof
  */
@@ -128,26 +148,26 @@ ATL_asmdecor(ATL_USERMM):
  */
         sub     $-128, pA0
         sub     $-128, pB0
-                                prefetcht0 -64(pB0)
+                                prefB(-64(pB0))
 /*
  *      lda *= sizeof; ldb *= sizeof; lda3 = lda*3
  */
         shl     $3, lda
-                                prefetcht0 (pB0)
+                                prefB((pB0))
         shl     $3, ldb
-                                prefetcht0 64(pB0)
+                                prefB(64(pB0))
         lea     (lda,lda,2), lda3
 /*
  *      pfA = A + lda*M; incAn = lda*M
  */
         movl    MM0, pfA
-                                prefetcht0 128(pB0)
+                                prefB(128(pB0))
         imull   lda, pfA
-                                prefetcht0 192(pB0)
-                                prefetcht0 256(pB0)
+                                prefB(192(pB0))
+                                prefB(256(pB0))
         movl    pfA, incAn
         lea     -128(pA0, pfA), pfA
-                                prefetcht0 320(pB0)
+                                prefB(320(pB0))
         shrl    $2, MM0            /* MM0 = MM0 / mu */
 #else
    #ifdef BETAX
@@ -157,14 +177,14 @@ ATL_asmdecor(ATL_USERMM):
         movq    %rdi, MM0
         movq    %rsi, NN
         movq    %r8, lda
-                                        prefetcht0      (pA0,lda)
+                                        pref2((pA0,lda))
         movq    %r9, pB0
-                                        prefetcht0      (pB0)
+                                        prefB((pB0))
         movslq  8(%rsp), ldb
-                                        prefetcht0      (pA0,lda,2)
+                                        pref2((pA0,lda,2))
         movq    16(%rsp), pC0
         movslq  24(%rsp), incCn
-                                        prefetcht0      KB*8(pA0,lda,2)
+                                        pref2(KB*8(pA0,lda,2))
 /*
  *      incCn = (ldc-M)*sizeof
  */
@@ -179,31 +199,31 @@ ATL_asmdecor(ATL_USERMM):
  */
         sub     $-128, pA0
         sub     $-128, pB0
-                                        prefetcht0      -64(pB0)
+                                        prefB(-64(pB0))
 /*
  *      lda = lda*sizeof;  lda3 = lda*3
  */
         shl     $3, lda
-                                                prefetcht0      (pB0)
+                                                prefB((pB0))
         lea     (lda,lda,2), lda3
 /*
  *      ldb = ldb*sizeof
  */     
         shl     $3, ldb
-                                                prefetcht0      64(pB0)
+                                                prefB(64(pB0))
 /*
  *      pfA = A + lda*M ; incAn = lda*M, pfB = B + ldb*N
  */
         movq    lda, pfA
-                                                prefetcht0      128(pB0)
+                                                prefB(128(pB0))
         imulq   MM0, pfA
-/*                                                prefetcht0      192(pB0) */
-/*                                                prefetcht0      256(pB0) */
+/*                                                prefB(192(pB0)) */
+/*                                                prefB(256(pB0)) */
         movq    pfA, incAn
 /*        movq    ldb, pfB */
 /*        imulq   NN, pfB */
         lea     -128(pA0, pfA), pfA
-/*                                                prefetcht0      320(pB0) */
+/*                                                prefB(320(pB0)) */
 /*       lea     -128-(MB-8)*KB*8(pA0, pfA), pfA */
 /*
  *      pAE (pointer to end of column of A) = pA + lda
@@ -228,11 +248,11 @@ NLOOP:
 #else
         movq    MM0, MM
 #endif
-        prefetcht0      -128(pB0,ldb,2)
-        prefetcht0      -64(pB0,ldb,2)
-        prefetcht0      (pB0,ldb,2)
+        prefB(-128(pB0,ldb,2))
+        prefB(-64(pB0,ldb,2))
+        prefB((pB0,ldb,2))
 MLOOP:
-        prefetchw       (pC0)
+        prefC((pC0))
         fldl    0-128(pB0)       /* st = rB0 */
         fldl    0-128(pA0)       /* st = rA0, rB0 */
         fmul    %st(1), %st      /* st = rA0*rB0, rB0 */
@@ -1543,7 +1563,7 @@ ALIGN8
         fstpl   CMUL(16)(pC0)
 #endif
         add     $4*CMUL(8), pC0
-          prefetcht1      (pfA)
+          pref2((pfA))
           add     $32, pfA
 
 #if KB > 32 && defined(ATL_GAS_x8632)
@@ -1559,17 +1579,17 @@ ALIGN8
         jnz     MLOOP
 
         sub     incAn, pA0
-        prefetcht0      64(pB0,ldb,2)
+        prefB(64(pB0,ldb,2))
    #if KB > 32 && !defined(ATL_GAS_x8632)
         sub     incAn, pAE
         add     ldb, pBE
    #endif
-        prefetcht0      128(pB0,ldb,2)
+        prefB(128(pB0,ldb,2))
         add     incCn, pC0
-        prefetcht0      192(pB0,ldb,2)
+        prefB(192(pB0,ldb,2))
         add     ldb, pB0
-        prefetcht0      256(pB0,ldb,2)
-        prefetcht0      320(pB0,ldb,2)
+        prefB(256(pB0,ldb,2))
+        prefB(320(pB0,ldb,2))
         sub     $1, NN
         jnz     NLOOP
 
