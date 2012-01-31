@@ -1002,6 +1002,112 @@ the installer wants to use only SSE2, even though this will make the library
 sub-optimal on the machine possessing SSE3.  
 }
 
+\subsection{Building Generic x86 libraries}
+Many users ask how ATLAS can be used to build libraries that will run on
+all x86 platforms.  In general, this is a bad idea: ATLAS gets its speed by
+specializing for particular platforms, so the more generic a library is the
+less performance it will achieve!  Note that libraries like MKL can do well
+across many platforms by having fat binaries, where each kernel routine has
+actually
+been seperately tuned for many different platforms, and then queries something
+like CPUID
+to determine what sublibrary to call dynamically.  ATLAS does not have the
+ability to build fat libraries.
+
+So, users wanting generic x86 libraries will definitely lose performance in
+ATLAS, but many system admins have asked for this feature, and so I have
+added it to ATLAS.  The idea is to get you libraries that get better 
+performance than the reference BLAS, but whose percentage of peak may be
+woefully low, but that will run on a variety of platforms.  You can do this
+by artificially overriding ATLAS's architecture detection, and manually
+telling configure to use use some generic architectural defaults that have
+been created, as described in the following paragraphs.
+
+Never use these libraries unless this portability is absolutely required.
+They must use portable settings for blocking, for instance, which will mean
+that on many platforms they will use only a fraction of the actual cache,
+causing large performance drops.  Even worse, peak performance may by reduced
+by as much as factor of 8, due to not using the proper ISA extension.
+The most portable ISA uses only the x87 unit, which has a much lower peak
+rate on most modern machines (eg., an Intel sandy bridge can do 16 flops/cycle
+using AVX in single precision, but only 8 flops/cycle if using SSE, and only
+2 flops/cycle using the x87 unit).
+
+\subsubsection{Building generic libraries for any x86 with an x87 FPU (PPRO \& later)}
+To build binaries that will run on any x86 platform that implements an
+x87 FPU unit (I believe this is all Intel architectures from PentiumPRO
+onwards, and any AMD platform since at least the original Athlon), add
+the following flags to your configure line:
+\begin{verbatim}
+    -b 32 -V -1 -A 11
+\end{verbatim}
+
+\verb+-b 32+ ensures that you build the 32-bit libraries, which is necessary,
+since most older machines do not implement x86-64 (AMD64).  The 
+\verb+-V -1+ says use no ISA extensions beyond the original x86 spec.
+The \verb+-A 11+ selects an artificial architecture called \verb+x86x87+,
+providing you with portable (but slow!) architectural defaults.
+
+\subsubsection{Building generic libraries for SSE1 (PIII \& later)}
+If all of the machine you target implement the original SSE ISA extension,
+then you can improve your single precision peak by allowing ATLAS to use
+SSE1 kernels.  These libraries should work on the Pentium~III or any following
+Intel chip; for AMD it should work with the Athlon~XP or any following chip.
+
+To build this generic target, add the following flags to your configure line:
+\begin{verbatim}
+    -b 32 -V 128 -A 12
+\end{verbatim}
+
+\verb+-b 32+ ensures that you build the 32-bit libraries, which is necessary,
+since most older machines do not implement x86-64 (AMD64).  The 
+\verb+-V 128+ says that the original x86 ISA is extended by SSE1 only.
+The \verb+-A 12+ selects an artificial architecture called \verb+x86SSE1+,
+providing you with portable (but slow!) architectural defaults.
+
+\subsubsection{Building generic libraries for SSE2 (P4 \& later)}
+If all your target machines at least have SSE2, then you can use SSE for
+double precision computations as well.  For intel, chips starting with
+the Pentium~4 had SSE2, and I believe AMD introduced SSE2 with the Opteron
+processor.  Early P4's are 32-bit, and later are 64-bit, so you will need
+to decide yourself if you want \verb+-b 32+ or \verb+-b 64+ for your 
+libraries.  Right now, we have introduced architectural defaults only
+for 32-bits (meaning the 64-bit installs will take much longer).  So, to
+limit the ISA to 32-bit, add these flags to your configure line:
+\begin{verbatim}
+    -b 32 -V 192 -A 13
+\end{verbatim}
+
+\subsubsection{Handling paralellism in generic libraries}
+The most portable library is the serial library.  You can instruct ATLAS
+to build only the serial library by adding \verb+-t 0+ to your configure
+flags.
+
+Assuming all your platforms provide the same type of threading (eg., pthreads),
+then you may also build the threaded libraries.  However, since ATLAS uses
+processor affinity, you will need to build the threaded libs to match the
+smallest number of processors of any machine you are targeting.  You can
+limit the number of processors to compile for using the \verb+-t X+
+configure flag, where \verb+X+ is the number of processors to tune for.
+So, if your smallest targeted core count was 2, you would add \verb+-t 2+
+to your configure flags.
+
+\subsection{Kludging an install to workaround the gfortran/x87 compiler bug}
+\label{sec-gf77err}
+ATLAS defaults to using gcc/gfortran 4.6, which unfortunately has a
+compiler bug when using the x87 unit.  In this case, the Fortran77
+BLAS and LAPACK testers must be compiled with low optimization, or
+they will (erroneously) show failures in every routine.  In order to
+get around this problem, install as normal, but do not issue the 
+\verb+make check+ or any other testing command.  \underline{After}
+the build is complete, edit your {\tt Make.inc}, and scope the
+\verb+F77FLAGS+ macro.  If it has the flag \verb+-mfpmath=387+ anywhere
+in it, then you must append \verb+-O1+ to it in order for gfortran 4.6
+to properly compile the testers.
+If you make this change before the
+build, it will slow down all Fortran routines (eg., many lapack routines),
+which does not seem necessary to defeat the compiler bug.
+
 \subsection{Various other flags}
 \label{sec-flag-other}
 
