@@ -7353,7 +7353,7 @@ void col2blk2(const int M, const int N, const TYPE *A, const int lda, TYPE *V,
 {
    int j;
    const int nNb = ATL_DivByNB(N), jb = N - ATL_MulByNB(nNb);
-   const int incA = (lda*NB)<<1, incV = (M*NB)<<1;
+   size_t incA = (lda*NB)<<1, incV = (M*NB)<<1;
 
    for (j=nNb; j; j--)
    {
@@ -7619,7 +7619,7 @@ void Mjoin(PATL,mm_axpy)
  */
 {
    int i, j, k, incBk, incBn;
-   const int incAn = lda*K;
+   size_t incAn = lda*K;
 
    if (TB == AtlasNoTrans)
    {
@@ -8237,7 +8237,7 @@ int Mjoin(PATL,mmJITcp)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
  * (lots of reuse in algorithm) the extra cache noise makes this a bad idea.
  */
 {
-   int incAk, incBk, incAW, incBW, incAB, incC;
+   size_t incAk, incBk, incAW, incBW, incAB, incC;
    int i, j, m, n;
    const int M = (M0 >= 0) ? M0 : -M0; 
    const int nkblks = (K/KB), kr = K-nkblks*KB;
@@ -8507,7 +8507,7 @@ int Mjoin(PATL,mmJITcp)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    NBMM0 NBmm0, NBmm1, pNBmm0;
    const int M = (M0 >= 0) ? M0 : -M0;
    int nkblks, nmblks, nnblks, mr, nr, kr, KR, bigK, h, i, j, ZEROC;
-   int incAk, incBk, incAm, incBn, incAW, incAWp, incBW, incBWp, incW;
+   size_t incAk, incBk, incAm, incBn, incAW, incAWp, incBW, incBWp, incW;
 
 /*
  * If both M and N <= NB, and one of them is not full, call BPP, which
@@ -8699,7 +8699,8 @@ int Mjoin(PATL,mmBPP)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    void (*B2blk)(int N, int M, const SCALAR alpha, const TYPE *A, int lda,
                  TYPE *C, int ldc);
    NBMM0 NBmm0, NBmm1;
-   int ldc, m, n, nblk, k, kr, incA, incB;
+   size_t ldc, incA, incB;
+   int m, n, nblk, k, kr;
 
    if (M > MB || N > NB)  /* don't handle multiple M/N blocks */
       return(1);
@@ -9142,7 +9143,7 @@ int Mjoin(PATL,mmJIK)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
             if (SCALAR_IS_ZERO(beta)) h = ldc;
             else if (pC == C)
             {
-               pC = pA + M * K;
+               pC = pA + ((size_t)M) * K;
                h = M;
             }
             else h = NB;
@@ -9239,16 +9240,18 @@ int Mjoin(PATL,mmJIK)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 @endskip
 int Mjoin(PATL,mmJIK)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, 
                       const int M0, const int N, const int K, 
-                      const SCALAR alpha, const TYPE *A, const int lda, 
-                      const TYPE *B, const int ldb, const SCALAR beta, 
-                      TYPE *C, const int ldc)
+                      const SCALAR alpha, const TYPE *A, const int lda0, 
+                      const TYPE *B, const int ldb0, const SCALAR beta, 
+                      TYPE *C, const int ldc0)
 /*
  * Outer three loops for matmul with outer loop over columns of B
  */
 {
    int M = M0;
-   int nMb, nNb, nKb, ib, jb, kb, ib2, h, i, j, k, m, n, incA, incB, incC;
-   const int incK = ATL_MulByNB(K);
+   int nMb, nNb, nKb, ib, jb, kb, ib2, h, i, j, k, m, n;
+   const size_t lda = lda0, ldb = ldb0, ldc = ldc0;
+   const size_t incK = ATL_MulByNB((size_t)K);
+   size_t incA, incB, incC;
    void *vB=NULL, *vC=NULL;
    TYPE *pA, *pB, *pC;
    MAT2BLK A2blk, B2blk;
@@ -9354,7 +9357,7 @@ int Mjoin(PATL,mmJIK)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
             if (SCALAR_IS_ZERO(beta)) h = ldc;
             else if (pC == C)
             {
-               pC = pA + M * K;
+               pC = pA + ((size_t)M) * K;
                h = M;
             }
             else h = NB;
@@ -9605,13 +9608,14 @@ void Mjoin(PATL,mmIJK2)
 
 int Mjoin(PATL,mmIJK)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, 
                       const int M, const int N0, const int K, 
-                      const SCALAR alpha, const TYPE *A, const int lda,
-                      const TYPE *B, const int ldb, const SCALAR beta, 
-                      TYPE *C, const int ldc)
+                      const SCALAR alpha, const TYPE *A, const int lda0,
+                      const TYPE *B, const int ldb0, const SCALAR beta, 
+                      TYPE *C, const int ldc0)
 {
    int N = N0;
-   int nMb, nNb, nKb, ib, jb, kb, jb2, h, i, j, k, n, incA, incB, incC;
-   const int incK = ATL_MulByNB(K);
+   int nMb, nNb, nKb, ib, jb, kb, jb2, h, i, j, k, n;
+   const size_t incK = ATL_MulByNB(K), lda=lda0, ldb=ldb0, ldc=ldc0;
+   size_t incA, incB, incC;
    void *vA=NULL;
    TYPE *pA, *pB;
    MAT2BLK A2blk, B2blk;
@@ -9759,7 +9763,7 @@ void Mjoin(PATL,mm_axpy)
  */
 {
    int i, j, k, incBk, incBn;
-   const int lda=lda0+lda0, ldc=ldc0+ldc0, incAn = lda*K;
+   const size_t lda=((size_t)lda0)+lda0, ldc=((size_t)ldc0)+ldc0, incAn = lda*K;
    const int ALONE=SCALAR_IS_ONE(alpha), BEONE=SCALAR_IS_ONE(beta);
    TYPE alph[2], BC[2];
    register TYPE r1, r2, i1, i2;
@@ -10138,17 +10142,19 @@ void Mjoin(PATL,mmJIK2)
 
 int Mjoin(PATL,mmJIK)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, 
                       const int M0, const int N, const int K, 
-                      const SCALAR alpha, const TYPE *A, const int lda, 
-                      const TYPE *B, const int ldb, const SCALAR beta, 
-                      TYPE *C, const int ldc)
+                      const SCALAR alpha, const TYPE *A, const int lda0, 
+                      const TYPE *B, const int ldb0, const SCALAR beta, 
+                      TYPE *C, const int ldc0)
 /*
  * Outer three loops for matmul with outer loop over columns of B
  */
 {
    int M = M0;
-   int nMb, nNb, nKb, ib, jb, kb, ib2, h, i, j, k, m, n, incA, incB, incC;
+   int nMb, nNb, nKb, ib, jb, kb, ib2, h, i, j, k, m, n;
+   const size_t lda=lda0, ldb=ldb0, ldc=ldc0;
+   size_t incA, incB, incC;
    int AlphaIsOne;
-   const int incK = ATL_MulByNB(K);
+   const size_t incK = ATL_MulByNB((size_t)K);
    void *vB=NULL, *vC=NULL;
    TYPE *pA, *pB, *pC;
    const TYPE one[2] = {1.0,0.0}, zero[2] = {0.0,0.0};
@@ -10202,7 +10208,7 @@ int Mjoin(PATL,mmJIK)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
             if (SCALAR_IS_ZERO(beta)) h = ldc;
             else if (pC == C)
             {
-               pC = pA + (M * K SHIFT);
+               pC = pA + (((size_t)M) * K SHIFT);
                h = M;
             }
             else h = NB;
@@ -10714,14 +10720,16 @@ void mmJIK2(int K, int nMb, int nNb, int nKb, int ib, int jb, int kb,
 
 int mmJIK(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, 
           const int M0, const int N, const int K, const TYPE *alpha, 
-          const TYPE *A, const int lda, const TYPE *B, const int ldb, 
-          const TYPE *beta, TYPE *C, const int ldc)
+          const TYPE *A, const int lda0, const TYPE *B, const int ldb0,
+          const TYPE *beta, TYPE *C, const int ldc0)
 /*
  * Blocked matmul with JIK loop ordering
  */
 {
    int M = M0;
-   int nMb, nNb, nKb, ib, jb, kb, ib2, h, i, j, k, m, n, incA, incB, incC;
+   size_t incA, incB, incC;
+   size_t lda=lda0, ldb=ldb0; ldc=ldc0;
+   int nMb, nNb, nKb, ib, jb, kb, ib2, h, i, j, k, m, n;
    int AlphaIsOne;
    const int incK = ATL_MulByNB(K);
    void *vB=NULL, *vC=NULL;
@@ -11180,13 +11188,15 @@ int Mjoin(PATL,mmIJK)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 @endskip
 int Mjoin(PATL,mmIJK)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, 
                       const int M, const int N0, const int K, 
-                      const SCALAR alpha, const TYPE *A, const int lda,
-                      const TYPE *B, const int ldb, const SCALAR beta, 
-                      TYPE *C, const int ldc)
+                      const SCALAR alpha, const TYPE *A, const int lda0,
+                      const TYPE *B, const int ldb0, const SCALAR beta, 
+                      TYPE *C, const int ldc0)
 {
+   size_t incA, incB, incC;
+   const size_t lda=lda0, ldb=ldb0, ldc=ldc0;
+   const size_t incK = ATL_MulByNB((size_t)K);
    int N = N0;
-   int nMb, nNb, nKb, ib, jb, kb, jb2, h, i, j, k, n, incA, incB, incC;
-   const int incK = ATL_MulByNB(K);
+   int nMb, nNb, nKb, ib, jb, kb, jb2, h, i, j, k, n;
    void *vA=NULL, *vC=NULL;
    TYPE *pA, *pB, *pC;
    MAT2BLK A2blk, B2blk;
@@ -20896,8 +20906,8 @@ void matnan(int M, int N, TYPE *C, int ldc, int seed)
 #endif
 
 int mmcase(int TEST, int CACHESIZE, char TA, char TB, int M, int N, int K,
-	   SCALAR alpha, TYPE *A, int lda, TYPE *B, int ldb, SCALAR beta,
-	   TYPE *C, int ldc, TYPE *D, int ldd)
+	   SCALAR alpha, TYPE *A, size_t lda, TYPE *B, size_t ldb, SCALAR beta,
+	   TYPE *C, size_t ldc, TYPE *D, size_t ldd)
 {
    char *pc;
 #ifdef TREAL
@@ -21126,7 +21136,7 @@ int mmcase(int TEST, int CACHESIZE, char TA, char TB, int M, int N, int K,
 }
 
 int mmcase0(int MFLOP, size_t CACHESIZE, char TA, char TB, int M, int N, int K,
-	    SCALAR alpha, int lda, int ldb, SCALAR beta, int ldc)
+	    SCALAR alpha, size_t lda, size_t ldb, SCALAR beta, size_t ldc)
 {
    char *pc;
 #ifdef TREAL
@@ -31225,20 +31235,21 @@ int Mjoin(PATL,NCmm@(lo))
 @ROUT ATL_NCmmJIK ATL_NCmmIJK ATL_NCmmJIK_c ATL_NCmmIJK_c
    (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
     const int M, const int N, const int K, const SCALAR alpha,
-    const TYPE *A, const int lda, const TYPE *B, const int ldb, 
-    const SCALAR beta, TYPE *C, const int ldc)
+    const TYPE *A, const int lda0, const TYPE *B, const int ldb0,
+    const SCALAR beta, TYPE *C, const int ldc0)
 /*
  * @(lo) loop-ordered matmul with no matrix copy
  */
 {
+   size_t incAk, incAm, incAn, incBk, incBm, incBn;
+   const size_t lda=lda0, ldb=ldb0, ldc=ldc0;
    const int Mb = M / MB, Nb = N / NB, Kb = K / KB;
    const int mr = M - Mb*MB, nr = N - Nb*NB, kr = K - Kb*KB;
-   int incAk, incAm, incAn, incBk, incBm, incBn;
 @ROUT ATL_NCmmJIK_c ATL_NCmmJIK
    #define incCm MB
-   const int incCn = ldc*NB - M + mr;
+   const size_t incCn = ldc*NB - M + mr;
 @ROUT ATL_NCmmIJK_c ATL_NCmmIJK
-   const int incCn = ldc*NB, incCm = MB - Nb * incCn;
+   const size_t incCn = ldc*NB, incCm = MB - Nb * incCn;
 @ROUT ATL_NCmmJIK ATL_NCmmIJK
    const int BetaIsZero = (beta == ATL_rzero);
 @ROUT ATL_NCmmJIK ATL_NCmmIJK ATL_NCmmJIK_c ATL_NCmmIJK_c
@@ -31685,19 +31696,20 @@ int Mjoin(PATL,NCmm@(lo))
 @ROUT ATL_cNCmmJIK ATL_cNCmmIJK ATL_cNCmmJIK_c ATL_cNCmmIJK_c
    (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
     const int M, const int N, const int K, const SCALAR alpha,
-    const TYPE *A, const int lda, const TYPE *B, const int ldb, 
-    const SCALAR beta, TYPE *C, const int ldc)
+    const TYPE *A, const int lda0, const TYPE *B, const int ldb0,
+    const SCALAR beta, TYPE *C, const int ldc0)
 /*
  * @(lo) loop-ordered matmul with no matrix copy
  */
 {
+   const size_t lda=lda0, ldb=ldb0, ldc=ldc0;
+   size_t incAk, incAm, incAn, incBk, incBm, incBn;
    const int Mb = M / MB, Nb = N / NB, Kb = K / KB;
    const int mr = M - Mb*MB, nr = N - Nb*NB, kr = K - Kb*KB;
-   int incAk, incAm, incAn, incBk, incBm, incBn;
 @ROUT ATL_cNCmmJIK_c ATL_cNCmmJIK
-   const int incCm = (MB<<1), incCn = (ldc*NB - M + mr)<<1;
+   const size_t incCm = (MB<<1), incCn = (ldc*NB - M + mr)<<1;
 @ROUT ATL_cNCmmIJK_c ATL_cNCmmIJK
-   const int incCn = ldc*(NB<<1), incCm = (MB<<1) - Nb * incCn;
+   const size_t incCn = ldc*(NB<<1), incCm = (MB<<1) - Nb * incCn;
 @ROUT ATL_cNCmmJIK ATL_cNCmmIJK ATL_cNCmmJIK_c ATL_cNCmmIJK_c
    int i, j, k;
    const TYPE *a=A, *b=B;
