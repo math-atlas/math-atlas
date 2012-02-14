@@ -4353,6 +4353,7 @@ void ATL_tvsyr2k_rec
 #include "atlas_misc.h"
 #include "atlas_threads.h"
 #include "atlas_tlvl3.h"
+#include "atlas_lvl3.h"
 
 void Mjoin(PATL,tv@(ApA))(const enum ATLAS_UPLO Uplo, ATL_CINT N, const void *A,
                           ATL_CINT lda, const void *beta, void *C, ATL_CINT ldc)
@@ -4390,6 +4391,26 @@ void Mjoin(PATL,t@(rt))
 @ROUT ATL_tsyr2k 
       if (!SCALAR_IS_ONE(beta))
          Mjoin(PATL,trscal)(Uplo, N, N, beta, C, ldc);
+@ROUT ATL_tsyr2k ATL_ther2k
+      return;
+   }
+/*
+ * This call to serial is usually a performance optimization, but was actually
+ * put in to avoid a failure in the LAPACK eigenvalue tests that is caused
+ * by subtractive cancellation.  There is no bug, but our parallel algorithm
+ * does the operations in a different order than small-case serial, and in
+ * one case used by the lapack testers, this causes subtractive cancellation
+ * to occur (the serial code can use different orders for differing problem
+ * sizes).  Other problems will experience cancelation under the serial order,
+ * so AFAIK, neither is more correct numerically.
+ */
+   if (N < 3*NB && K < 3*NB)
+   {
+@ROUT ATL_tsyr2k
+      Mjoin(PATL,syr2k)(Uplo, Trans, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+@ROUT ATL_ther2k 
+      Mjoin(PATL,her2k)(Uplo, Trans, N, K, alpha, A, lda, B, ldb, 
+                        beta0, C, ldc);
 @ROUT ATL_tsyr2k ATL_ther2k
       return;
    }
