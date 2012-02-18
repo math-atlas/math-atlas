@@ -10,6 +10,13 @@
 #ifndef MB
    #define MB 0
 #endif
+#ifdef ATL_GAS_LINUX_PPC
+   #define ATL_ReadVRSAVE(r_) mfvrsave r_
+   #define ATL_WriteVRSAVE(r_) mtvrsave r_
+#else
+   #define ATL_ReadVRSAVE(r_) mfspr r_, VRsave
+   #define ATL_WriteVRSAVE(r_) mtspr VRsave, r_
+#endif
 
 #ifdef DCPLX
    #define CMUL(i_) ((i_)*2)
@@ -209,7 +216,7 @@ ATL_USERMM:
         std     r18, FST+32(r1)
         std     r19, FST+40(r1)
         std     r20, FST+48(r1)
-        mfspr   r14, VRsave
+        ATL_ReadVRSAVE(r14)
         std     r14, FST+56(r1)
         li      r14, FST+64
         stvx    v20, r1, r14
@@ -246,7 +253,7 @@ ATL_USERMM:
         stvx    v0, 0, pBETA
 #endif
         eqv     r0, r0, r0      /* all 1s */
-        mtspr   VRsave, r0      /* signal we use all vector regs */
+        ATL_WriteVRSAVE(r0)     /* signal we use all vector regs */
 #if defined (ATL_USE64BITS)
         ld      pC0, FSIZE+120(r1)
         ld      ldc, FSIZE+128(r1)
@@ -4127,7 +4134,7 @@ MPEELED:
         ld      r19, FST+40(r1)
         ld      r20, FST+48(r1)
         ld      r3, FST+56(r1)
-        mtspr   VRsave, r3
+        ATL_WriteVRSAVE(r3)
         li      r3, FST+64
         lvx     v20, r1, r3
         addi    r3, r3, 16
@@ -4169,7 +4176,7 @@ UNALIGNED_C:
         std     r16, FST+16(r1)
         std     r17, FST+24(r1)
 
-        mfspr   r14, VRsave
+        ATL_ReadVRSAVE(r14)
 	nop
 	nop
 	nop
@@ -4219,7 +4226,7 @@ UNALIGNED_C:
         stvx    v0, 0, pBETA
 #endif
         eqv     r0, r0, r0      /* all 1s */
-        mtspr   VRsave, r0      /* signal we use all vector regs */
+        ATL_WriteVRSAVE(r0)     /* signal we use all vector regs */
 #if defined (ATL_USE64BITS)
         ld      pC0, FSIZE+120(r1)
         ld      ldc, FSIZE+128(r1)
@@ -8275,7 +8282,7 @@ MPEELEDU:
         ld      r25, FST+88(r1)
         ld      r26, FST+96(r1)
         ld      r3, FST+104(r1)
-        mtspr   VRsave, r3
+        ATL_WriteVRSAVE(r3)
         li      r3, FST+112
         lvx     v20, r1, r3
         addi    r3, r3, 16
