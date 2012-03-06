@@ -12,11 +12,19 @@ struct locinit *LIhead=NULL,       /* Locals to be init to constant vals */
 short type2len(int type)
 {
    short len=4;
+/* 
+ * Majedul: in X86_64, ptr is 64 bit but int is still 32 bit. So, the size of
+ * T_INT should be 4 byte; otherwise, it will create problem in loop unroll 
+ * for INT array (itst9.b). ArchPtrIsLong may not be appropriate here.    
+ */   
+#if 0
    #ifdef ArchPtrIsLong
       if (type == T_INT || type == T_DOUBLE) len = 8;
    #else
       if (type == T_DOUBLE) len = 8;
    #endif
+#endif
+   if (type == T_DOUBLE) len =8;
    else if (IS_VEC(type)) len = 16;
    return(len);
 }
@@ -24,11 +32,17 @@ short type2len(int type)
 short type2shift(int type)
 {
    short len=2;
+/* 
+ * Majedul: ArchPtrIsLong may not be appropriate here.
+ */
+#if 0
    #ifdef  ArchPtrIsLong
       if (type == T_DOUBLE || type == T_INT) len = 3;
    #else
       if (type == T_DOUBLE) len = 3;
    #endif
+#endif    
+   if (type == T_DOUBLE) len = 3;
    else if (IS_VEC(type)) len = 4;
    return(len);
 }

@@ -63,11 +63,19 @@ void KillBitVec(int iv)
 
 int *ExtendBitVec(int iv, int nwords)
 {
-   int j, k;
+   int j, k, ind;
    int *v;
+   
+/*
+ * FIX: [Majedul] There was a segmentation fault assoicated with the follwoing
+ * statement:  v = bvecs[NewBitVec(nwords*32)-1];
+ * There may be a compiler error. This statement is replaced by the following 
+ * two statements.
+ */
+   ind = NewBitVec(nwords*32)-1;
+   v = bvecs[ind];         
 
-   v = bvecs[NewBitVec(nwords*32)-1];
-   for (k=ni[--iv], j=0; j < k; j++) v[j] = bvecs[iv][j];
+   for (k=ni[--iv], j=0; j < k; j++) v[j] = bvecs[iv][j]; 
    for (ni[iv] = nwords; j < nwords; j++) v[j] = 0;
    free(bvecs[iv]);
    bvecs[iv] = v;

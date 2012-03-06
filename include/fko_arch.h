@@ -10,8 +10,8 @@
 #if !defined(LINUX_PPC) && !defined(OSX_PPC) && !defined(LINUX_X86_32) && \
     !defined(LINUX_X86_64) && !defined(SOLARIS_SPARC)
 /*   #define FKO_ANSIC32 */
-/*   #define LINUX_X86_64  */
-   #define LINUX_X86_32  
+/*     #define LINUX_X86_64 */  
+     #define LINUX_X86_32  
 /*   #define SOLARIS_SPARC  */
 /*   #define OSX_PPC  */
 #endif
@@ -47,6 +47,9 @@
       ( ((mul_) == 1) || ((mul_) == 2) || ((mul_) == 4) || ((mul_) == 8) || \
         ((mul_) == 0) || ((mul_) == -1) )
    #if defined(X86_64)
+/*
+ * Majedul: ArchPtrIsLong was only used in arch.c which is not used currently. 
+ */
       #define ArchPtrIsLong 1
    #endif
    #define ArchConstAndIndex

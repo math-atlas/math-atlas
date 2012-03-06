@@ -1527,6 +1527,10 @@ struct assmln *lil2ass(BBLOCK *bbase)
       case FABSD:
          #ifdef X86
 	    assert(DTabsds);
+/*          
+ *          Majedul: Here, assert is a macro which is defined in fko.h header
+ *          file. ';' is not needed.
+ */
             assert (op2 == op2)
             if (op3 >= 0)
                ap->next = PrintAssln("\tandpd\t%s,%s\n",

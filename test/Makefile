@@ -1,6 +1,8 @@
 SHELL = /bin/tcsh
+
 CC = gcc
-CCFLAGS = -g
+CCFLAGS = -g -m32
+#CCFLAGS = -g -m64
 IFKO = ../bin/fko
 KFLAGS = -U 4 -v
 

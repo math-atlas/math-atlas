@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>  /* Majedul: just to avoid the warning by compiler */
 
 #define IFKO_DEBUG_LEVEL 1
 
