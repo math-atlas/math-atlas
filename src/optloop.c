@@ -1815,6 +1815,12 @@ EOL:
 /*
  * Check that last inst added before EOL
  */
+
+/*
+ * Majedul: tails of loop is considered to calc inst count. It is very unlikely
+ * but still possible that prefetch insts are placed after these CMPFLAGs. In 
+ * that case, it may hang the program.
+ */
    assert(bl && ip);
    if (bl->blk == lp->tails->blk)
    {
