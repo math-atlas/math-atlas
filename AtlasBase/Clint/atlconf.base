@@ -1473,6 +1473,35 @@ int CompIsGcc(char *comp)
    }
    return(0);
 }
+
+int CompIsMinGW(char *comp)
+/*
+ * Tries to detect if compiler is MinGW compiler
+ */
+{
+   if (CompIsGcc(comp))
+   {
+      char *cmnd, *res;
+      int i;
+      i = strlen(comp) + 24;
+      cmnd = malloc(sizeof(char)*i);
+      assert(cmnd);
+      sprintf(cmnd, "%s -v 2>&1 | fgrep mingw", comp);
+      res = atlsys_1L(NULL, cmnd, 0, 0);
+      free(cmnd);
+      if (res)
+      {
+         if (strstr(res, "mingw"))
+         {
+            free(res);
+            return(1);
+         }
+         free(res);
+      }
+   }
+   return(0);
+}
+
 int CompIsAppleGcc(char *comp)
 /*
  * Tries to detect if compiler is Apple's funked-up gcc 
@@ -4510,6 +4539,90 @@ char *GetWinComp(enum OSTYPE OS, char *comp)
    return(ucomp);
 }
 
+@beginskip
+COMPNODE *WinnowBadComps
+(
+   int verb,           /* verbosity */
+   COMPNODE *bc,       /* queue of compilers to try */
+   char **usrcomps,    /* user overrides for comp flags and appended flags */
+   char *mgwd,         /* non-NULL if are wrapping 64-bit MinGW comps */
+   char *mgwf,         /* C MinGW wrapper */
+   char *mgwc,         /* C MinGW wrapper */
+)
+/*
+ * This routine takes a queue of COMPNODEs, and gets rid of all those
+ * compilers that don't pass our test using the flags specified in usrcomps
+ * or defaults in COMPNODE
+ */
+{
+   COMPNODE *p, *prev;
+   prev = p = bc;
+
+   if (verb)
+      printf("Testing all discovered compilers:\n");
+   while (p)
+   {
+      char *flg, *sp;
+      flg = NewStringCopy(usrcomps[NCOMP+i]?usrcomps[NCOMP+i]:p->flags);
+      if (usrcomps[NCOMP*2+i])
+         flg = NewAppendedString(flg, usrcomps[NCOMP*2+i]);
+      sp = GetWinComp(OS, p->comp);  /* non-MinGW Windows comp wrapper */
+      if (!sp) 
+      {
+/*
+ *       If mgwd is set, we must substitute MinGW wrap comps for gcc and
+ *       gfortran
+ */
+         if (mgwd && i != XCC_)
+         {
+            if (CompIsGcc(p->comp))
+            {
+               if (strstr(p->comp, "fortran") || strstr(p->comp, "f77"))
+                  sp = mgwf;
+               else 
+                  sp = mgwc;
+            }
+            else
+               sp = p->comp;
+         }
+         else
+            sp = p->comp;
+      }
+      if (ptrbits)
+      {
+         if (OS == OSWinNT && ptrbits == 64 && i == XCC_)
+            flg = NewAppendedString(flg, "-m32");
+         else
+            flg = NewAppendedString(flg, GetPtrbitsFlag(OS, arch, ptrbits, sp));
+      }
+      if (sp == mgwf)
+         flg = NewAppendedString(flg, "-static");
+      if (CompTest(verb, targ, i, sp, flg))  /* did not work! */
+      {
+         if (verb)
+            printf("   FAILED: '%s %s'\n", sp, flg);
+         if (p == bc)
+            p = bc = KillCompNode(bc);
+         else
+         {
+            prev->next = p->next;
+            p = KillCompNode(p);
+         }
+         break;
+      }
+      else  /* compiler works, retain it */
+      {
+         if (verb)
+            printf("   'RETAINED: %s %s'\n", sp, flg);
+         prev = p;
+         p = p->next;
+      }
+      free(flg);
+   }
+   return(bc);
+}
+@endskip
+
 void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
               int ptrbits, char **usrcomps, int nof77, char *goodgcc)
 /*
@@ -4885,7 +4998,12 @@ int SelectBestGcc
       if (major == GMAJOR && minor == GMINOR)
       {
          if (!CompTest(verb, targ, GCC_, gccs[i], "-O"))
-            return(i+1);
+         {
+            if (CompIsMinGW(gccs[i]) || CompIsAppleGcc(gccs[i]))
+               ibest = i+1;
+            else if (!CompTest(verb, targ, GCC_, gccs[i], "-O"))
+               return(i+1);
+         }
       }
       else if (major == GMAJOR && minor >= GMINOR)
       {
