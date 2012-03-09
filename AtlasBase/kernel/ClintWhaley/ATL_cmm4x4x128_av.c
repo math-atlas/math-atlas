@@ -95,10 +95,10 @@
 #define pC3     r22
 
 #if defined(ATL_USE64BITS)
-   #define FSIZE   320
+   #define FSIZE   352
    #define FST     48
 #else
-   #define FSIZE   304
+   #define FSIZE   336
    #define FST     32
 #endif
 #define BOFF    FSIZE-16

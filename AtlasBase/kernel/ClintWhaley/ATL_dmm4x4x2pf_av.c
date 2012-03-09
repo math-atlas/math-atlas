@@ -268,9 +268,9 @@ Mjoin(.,ATL_USERMM):
    #else
 .globl	ATL_USERMM
 ATL_USERMM:
-      #define IROFF FROFF+144
-      #define FROFF 8
-      #define FSIZE 224
+      #define IROFF 8
+      #define FROFF IROFF+48
+      #define FSIZE (((IROFF+FROFF+144+15)/16)*16)
 	mflr	r0
 	stw	r0, 4(r1)
 	stwu	r1, -FSIZE(r1)
