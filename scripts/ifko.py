@@ -6,6 +6,11 @@ import l1cmnd
 
 optT = "-X 1 1 -Y 1 1 -Fx 16 -Fy 16"
 #
+# For AVX, 32 byte alignment is needed
+#
+#optT = "-X 1 1 -Y 1 1 -Fx 32 -Fy 32"
+
+#
 # Given set of arrs that are write-only (no uses), tries using non-temporal
 # writes
 #
@@ -520,12 +525,23 @@ if (nargs > 1):
          N = int(sys.argv[3])
          if (nargs > 4):
             uopt = sys.argv[4]
+
+#
+# For AVX, 32 byte alignment is needed
+#
+#opt = "-X 1 -Y 1 -Fx 32 -Fy 32 " + uopt
+
 #opt = "-X 1 -Y 1 -Fx 16 -Fy 16 " + uopt
 
+#
 # Out of Cache
+#
+
 #opt = "-C 8388608 -X 1 -Y 1 -Fx 16 -Fy 16 " + uopt
 
+#
 # with out cache flushing
+#
 opt = "-C 0 -X 1 -Y 1 -Fx 16 -Fy 16 " + uopt
 
 print opt
