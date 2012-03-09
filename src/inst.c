@@ -213,7 +213,9 @@ char *head0a="INUM INSTRUCT   DESTINATION       SOURCE 1       SOURCE 2      ",
      *head0b="      USES              SETS              DEADS\n",
      *head1b="================= ================= =================\n\n",
      *form=
-     "%4d %8.8s %4d,%10.10s %4d,%10.10s %4d,%10.10s  %17.17s %17.17s %17.17s\n";
+     "%4d %8.8s %4d,%10.10s %4d,%10.10s %4d,%10.10s  %17.17s %17.17s %17.17s\n",
+     *shortform=
+     "%4d %8.8s %4d,%10.10s %4d,%10.10s %4d,%10.10s\n";
 
 int FindInstNum(BBLOCK *blk, INSTQ *inst)
 /*
@@ -338,10 +340,19 @@ void PrintThisInst(FILE *fpout, int i, INSTQ *ip)
    }
    else
    {
+#if 0
       fprintf(fpout, form, i, instmnem[inst], op1, op2str(op1),
               op2, op2str(op2), op3, op2str(op3),
               BV2NumList(ip->use), BV2NumList(ip->set),
               BV2NumList(ip->deads));
+#else
+/*
+ *    This is to print LIL without live-vars. To enable live-vars prints,
+ *    enable the #if and enable header prints in PrintInst function
+ */      
+      fprintf(fpout, shortform, i, instmnem[inst], op1, op2str(op1),
+              op2, op2str(op2), op3, op2str(op3));
+#endif
    }
 }
 
@@ -350,11 +361,17 @@ void PrintInst(FILE *fpout, BBLOCK *bbase)
    BBLOCK *bp;
    INSTQ *ip;
    int i=1;
-
+#if 0
    fprintf(fpout, head0a);
    fprintf(fpout, head0b);
    fprintf(fpout, head1a);
    fprintf(fpout, head1b);
+#else
+   fprintf(fpout, head0a);
+   fprintf(fpout, "\n");
+   fprintf(fpout, head1a);
+   fprintf(fpout, "\n");
+#endif
    for (bp=bbase; bp; bp = bp->down)
    {
       fprintf(fpout, "\n  ** BLOCK %d **\n", bp->bnum);

@@ -662,6 +662,8 @@ void ReadSTFromFile(char *fname)
    #endif
    extern short STderef;
 
+   /*fprintf(stdout, "ST file name: %s\n", fname);*/
+
    fp = fopen(fname, "rb");
    assert(fp);
    KillSTStrings();

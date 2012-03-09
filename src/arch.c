@@ -2,7 +2,6 @@
 #include "fko.h"
 struct locinit *LIhead=NULL,       /* Locals to be init to constant vals */
                *ParaDerefQ=NULL;   /* Derefs created for parameters */
-
 #ifdef X86_64
    #define ISIZE 8
 #else
@@ -12,38 +11,46 @@ struct locinit *LIhead=NULL,       /* Locals to be init to constant vals */
 short type2len(int type)
 {
    short len=4;
-/* 
- * Majedul: in X86_64, ptr is 64 bit but int is still 32 bit. So, the size of
+/*
+ * Majedul: in X86_64, PTR is 64 bit but INT is still 32 bit. So, the size of
  * T_INT should be 4 byte; otherwise, it will create problem in loop unroll 
  * for INT array (itst9.b). ArchPtrIsLong may not be appropriate here.    
  */   
-#if 0
+#if 0   
    #ifdef ArchPtrIsLong
       if (type == T_INT || type == T_DOUBLE) len = 8;
    #else
       if (type == T_DOUBLE) len = 8;
    #endif
 #endif
-   if (type == T_DOUBLE) len =8;
-   else if (IS_VEC(type)) len = 16;
+   if (type == T_DOUBLE) len = 8;
+   else if (IS_VEC(type))
+      #if defined(X86) && defined(AVX)
+         len = 32;
+      #else      
+         len = 16;
+      #endif
    return(len);
 }
 
 short type2shift(int type)
 {
    short len=2;
-/* 
- * Majedul: ArchPtrIsLong may not be appropriate here.
- */
-#if 0
-   #ifdef  ArchPtrIsLong
+/* Majedul: ArchPtrIsLong may not be appropriate here. */   
+#if 0    
+   #ifdef  ArchPtrIsLong /* HERE. need to check */
       if (type == T_DOUBLE || type == T_INT) len = 3;
    #else
       if (type == T_DOUBLE) len = 3;
    #endif
-#endif    
+#endif
    if (type == T_DOUBLE) len = 3;
-   else if (IS_VEC(type)) len = 4;
+   else if (IS_VEC(type))
+      #if defined(X86) && defined(AVX)
+         len = 5;
+      #else
+         len = 4;
+      #endif
    return(len);
 }
 
@@ -564,7 +571,7 @@ void FPConstStore(INSTQ *next, short id, short con,
       else
       {
          #ifdef X86_32
-            ip = (int*) &d;
+            ip = (int*) &d; 
             InsNewInst(NULL, NULL, next, MOV, -reg, STiconstlookup(*ip), 0);
             i = SToff[SToff[id-1].sa[2]-1].sa[3];
             InsNewInst(NULL, NULL, next, VGR2VR16, -dreg, -reg, 
@@ -801,14 +808,23 @@ void Extern2Local(INSTQ *next, int rsav)
          default:
          }
    #endif
+   /* Majedul: need to check for AVX imp later*/
    #ifdef X86_64
       reg1 = GetReg(T_INT);
       while (iparareg[reg1-IREGBEG]) reg1 = GetReg(T_INT);
-      fnam[0] = '@';
-      fnam[1] = 'x';
-      fnam[2] = 'm';
-      fnam[3] = 'm';
-      fnam[5] = '\0';
+      #ifdef AVX   
+         fnam[0] = '@';
+         fnam[1] = 'y';
+         fnam[2] = 'm';
+         fnam[3] = 'm';
+         fnam[5] = '\0';
+      #else
+         fnam[0] = '@';
+         fnam[1] = 'x';
+         fnam[2] = 'm';
+         fnam[3] = 'm';
+         fnam[5] = '\0';
+      #endif
       for (i=nof=nd=ni=0; i < NPARA; i++)
       {
          USED = SToff[SToff[paras[i]].sa[2]-1].sa[0];
@@ -1871,7 +1887,7 @@ void GenPrologueEpilogueStubs(BBLOCK *bbase, int rsav)
    CreateSysLocals();
    NumberLocalsByType();
    #ifdef X86_64
-      UpdateLocalDerefs(8);
+      UpdateLocalDerefs(8); /* parameter for integer */
    #else
       UpdateLocalDerefs(4);
    #endif

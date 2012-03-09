@@ -1268,7 +1268,7 @@ void UnrollCleanup(LOOPQ *lp, int unroll)
       }
    }
    FORWARDLOOP = L_FORWARDLC_BIT & lp->flag;
-   unroll *= Type2Vlen(lp->vflag);
+   unroll *= Type2Vlen(lp->vflag);  /* need to update Type2Vlen for AVX*/
 /*
  * Require one and only one post-tail; later do transformation to ensure this
  * for loops where it is not natively true
@@ -1336,10 +1336,10 @@ int UnrollLoop(LOOPQ *lp, int unroll)
    extern int FKO_BVTMP;
    extern BBLOCK *bbbase;
 
-   URmul = Type2Vlen(FLAG2TYPE(lp->vflag));
+   URmul = Type2Vlen(FLAG2TYPE(lp->vflag)); /*need to update for AVX*/
    UR = lp->vflag ? URmul*unroll : unroll;
    KillLoopControl(lp);
-PrintInst(fopen("err.tmp", "w"), bbbase);
+   PrintInst(fopen("err.tmp", "w"), bbbase);
    il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
    if (il) KillIlist(il);
    else UsesIndex = 0;
@@ -1544,7 +1544,7 @@ BLIST *FindAlwaysTakenBlocks(LOOPQ *lp)
  */
 {
    BLIST *base=NULL, *bl, *btail;
-   BBLOCK *bp;
+   BBLOCK *bp, *nbp;
 /*
  * Take all straightline code from tail back to header
  */
@@ -1571,9 +1571,21 @@ BLIST *FindAlwaysTakenBlocks(LOOPQ *lp)
          bl = base = NewBlockList(bp, base);
          if (!bp->csucc || !bp->usucc)
          {
+/*
+ *          Majedul: HERE HERE: 
+ *          tail is added two times as tail is part of loop block in this case
+ *          which incrases the instruction count resulting the error in skip. 
+ *          Another point: how to skip the actual tail part from the active 
+ *          instruction count??? Is it needed at all?
+ */
             for(; bp && (!bp->csucc || !bp->usucc);
                 bp = bp->usucc ? bp->usucc : bp->csucc, bl = bl->next)
-               bl->next = NewBlockList(bp->usucc ? bp->usucc : bp->csucc, btail);
+            {
+               nbp = bp->usucc ? bp->usucc : bp->csucc;
+               if (nbp != lp->tails->blk )
+                  bl->next = NewBlockList(nbp, btail);
+              /*bl->next = NewBlockList(bp->usucc?bp->usucc:bp->csucc,btail);*/
+            }
          }
       }
    }
@@ -1997,6 +2009,11 @@ void AddPrefetch(LOOPQ *lp, int unroll)
  * NOTE: assumes called after loop unrolling, but before repeatable opt
  */
 {
+
+#if 0
+   ShowFlow("ShowFlow.txt",bbbase);
+#endif
+
 #if 1
    ILIST *il;
    il = GetPrefetchInst(lp, unroll);

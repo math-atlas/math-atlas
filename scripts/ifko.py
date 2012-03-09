@@ -520,6 +520,13 @@ if (nargs > 1):
          N = int(sys.argv[3])
          if (nargs > 4):
             uopt = sys.argv[4]
-opt = "-X 1 -Y 1 -Fx 16 -Fy 16 " + uopt
+#opt = "-X 1 -Y 1 -Fx 16 -Fy 16 " + uopt
+
+# Out of Cache
+#opt = "-C 8388608 -X 1 -Y 1 -Fx 16 -Fy 16 " + uopt
+
+# with out cache flushing
+opt = "-C 0 -X 1 -Y 1 -Fx 16 -Fy 16 " + uopt
+
 print opt
 ifko(blas, pre, N)

@@ -866,6 +866,7 @@ void InvalidateLoopInfo(void)
    KillAllLoops();
 }
 
+
 void InsertLoopBlock(short blkvec, BBLOCK *blk)
 {
    BLIST *lp;
@@ -1087,6 +1088,11 @@ void FindLoops()
       CFDOMU2D = 1;
    }
    CheckFlow(bbbase, __FILE__, __LINE__);
+
+/* 
+ * need comments here: initially CFLOOP==0, loopq has enrty already??
+ * invalidate will throw away all but optloop info that comes from front-end
+ */
    if (!CFLOOP || loopq)
       InvalidateLoopInfo();
 /*
@@ -1100,6 +1106,10 @@ void FindLoops()
       if (bp->csucc && BitVecCheck(bp->dom, bp->csucc->bnum-1))
          FindBlocksInLoop(bp->csucc, bp);
    }
+
+/*
+ * Need comments here: ??
+ */
    FinalizeLoops();
 }
 
@@ -1145,10 +1155,18 @@ void ShowFlow(char *fout, BBLOCK *base)
    fprintf(fpout, "digraph G{\n   node [shape=box]\n");
    for (bp=base; bp; bp = bp->down)
    {
+#if 1
+/*    This is to show conditional/unconditional jump block */
+      if (bp->csucc)
+         fprintf(fpout, "   block_%d -CS> block_%d\n", bp->bnum, bp->csucc->bnum);
+      if (bp->usucc)
+         fprintf(fpout, "   block_%d -US> block_%d\n", bp->bnum, bp->usucc->bnum);
+#else
       if (bp->csucc)
          fprintf(fpout, "   block_%d -> block_%d\n", bp->bnum, bp->csucc->bnum);
       if (bp->usucc)
          fprintf(fpout, "   block_%d -> block_%d\n", bp->bnum, bp->usucc->bnum);
+#endif
    }
    fprintf(fpout, "}\n");
    if (fout)

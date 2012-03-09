@@ -47,11 +47,15 @@
 
 #define FLAG2PTYPE(flag_) ( IS_PTR(flag_) ? T_INT : ((flag_) & 0x7) )
 
-
 #define REG_SP   1
 
-#define FKO_DVLEN 2  /* this will later be a variable */
-#define FKO_SVLEN 4  /* this will later be a variable */
+#if defined(X86) && defined(AVX)
+   #define FKO_DVLEN 4  
+   #define FKO_SVLEN 8  
+#else
+   #define FKO_DVLEN 2  
+   #define FKO_SVLEN 4  
+#endif
 
 #ifndef NO_STEXTERN
    extern char         **STname;

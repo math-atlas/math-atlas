@@ -10,8 +10,10 @@
 #if !defined(LINUX_PPC) && !defined(OSX_PPC) && !defined(LINUX_X86_32) && \
     !defined(LINUX_X86_64) && !defined(SOLARIS_SPARC)
 /*   #define FKO_ANSIC32 */
-/*     #define LINUX_X86_64 */  
-     #define LINUX_X86_32  
+/*   #define LINUX_X86_64  */
+     #define LINUX_X86_64    
+/*   #define LINUX_X86_32 */
+/*   #define AVX   */                  
 /*   #define SOLARIS_SPARC  */
 /*   #define OSX_PPC  */
 #endif
@@ -48,7 +50,7 @@
         ((mul_) == 0) || ((mul_) == -1) )
    #if defined(X86_64)
 /*
- * Majedul: ArchPtrIsLong was only used in arch.c which is not used currently. 
+ *    Majedul:ArchPtrIsLong was only used in arch.c which isn't used currently.
  */
       #define ArchPtrIsLong 1
    #endif
@@ -148,12 +150,21 @@
       int  icalleesave[NIR] = {0, 0, 0, 0, 1, 1, 1, 1};
       int iparareg[NIR] = {0,0,0,0,0,0,0,0};
       char *archiregs[NIR] = 
-      {"@esp", "@edx", "@ecx", "@eax", "@ebp", "@ebx", "@esi", "@edi"};
+      {"@esp", "@edx", "@ecx", "@eax", "@ebp", "@ebx", "@esi", "@edi"};   
       int  fcallersave[TNFR] = {1,1,1,1,1,1,1,1, 1};
       int  fcalleesave[TNFR] = {0,0,0,0,0,0,0,0, 0};
-      char *archfregs[TNFR] = 
-      {"@xmm0", "@xmm1", "@xmm2", "@xmm3", "@xmm4", "@xmm5", "@xmm6", "@xmm7",
-       "@st"};
+      #ifdef AVX
+         char *archfregs[TNFR] =
+            {"@ymm0", "@ymm1", "@ymm2", "@ymm3", "@ymm4", "@ymm5", "@ymm6",
+            "@ymm7", "@st"};
+         char *archxmmregs[TNFR] =
+            {"@xmm0", "@xmm1", "@xmm2", "@xmm3", "@xmm4", "@xmm5", "@xmm6",
+            "@xmm7", "@st"};
+      #else
+         char *archfregs[TNFR] =
+            {"@xmm0", "@xmm1", "@xmm2", "@xmm3", "@xmm4", "@xmm5", "@xmm6",
+            "@xmm7", "@st"};
+      #endif
    #else
       extern char *archiregs[NIR], *archfregs[TNFR];
       extern int iparareg[NIR], icalleesave[NIR], icallersave[NIR], 
@@ -197,10 +208,21 @@
        "@r8", "@r9", "@r10", "@r11", "@r12", "@r13", "@r14", "@r15"};
       int  fcallersave[NFR] = {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1};
       int  fcalleesave[NFR] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-      char *archfregs[NFR] = 
-      {"@xmm0", "@xmm1", "@xmm2", "@xmm3", "@xmm4", "@xmm5", "@xmm6", "@xmm7",
-       "@xmm8", "@xmm9", "@xmm10", "@xmm11", "@xmm12", "@xmm13", "@xmm14", 
-       "@xmm15"};
+      #ifdef AVX
+         char *archfregs[NFR] = 
+         {"@ymm0", "@ymm1", "@ymm2", "@ymm3", "@ymm4", "@ymm5", "@ymm6", "@ymm7",
+         "@ymm8", "@ymm9", "@ymm10", "@ymm11", "@ymm12", "@ymm13", "@ymm14", 
+         "@ymm15"};
+         char *archxmmregs[NFR] = 
+         {"@xmm0", "@xmm1", "@xmm2", "@xmm3", "@xmm4", "@xmm5", "@xmm6", "@xmm7",
+         "@xmm8", "@xmm9", "@xmm10", "@xmm11", "@xmm12", "@xmm13", "@xmm14", 
+         "@xmm15"};
+      #else
+         char *archfregs[NFR] = 
+         {"@xmm0", "@xmm1", "@xmm2", "@xmm3", "@xmm4", "@xmm5", "@xmm6", "@xmm7",
+         "@xmm8", "@xmm9", "@xmm10", "@xmm11", "@xmm12", "@xmm13", "@xmm14", 
+         "@xmm15"};
+      #endif
    #else
       extern char *archiregs[NIR], *archfregs[NFR], *archsregs[NSR];
       extern int iparareg[NIR], icalleesave[NIR], icallersave[NIR], 

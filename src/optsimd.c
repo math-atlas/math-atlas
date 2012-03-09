@@ -1,11 +1,27 @@
 #include "fko.h"
 
+/* 
+ * Majedul: Changed for AVX
+ */
+
 int Type2Vlen(int type)
 {
    if (type == T_VDOUBLE || type == T_DOUBLE)
-      return(2);
+
+   #if defined(X86) && defined(AVX)
+       return(4);
+   #else
+       return(2);   
+   #endif
+
    else if (type == T_VFLOAT || type == T_FLOAT)
-      return(4);
+   #if defined(X86) && defined(AVX)
+       return(8);
+   #else
+       return(4);
+   #endif
+
+   else
    return(1);
 }
 
@@ -174,6 +190,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
 /*
  *    For non-fp var, if it's not the index var, give up
  */
+#if 1
       else if (sp[i] != lp->I && sp[i] != lp->end && 
                sp[i] != lp->inc)
       {
@@ -182,6 +199,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
          free(sp);
          return(3);
       }
+#endif
    }
 /*
  * If no fp vars, nothing to vectorize
@@ -448,7 +466,11 @@ int SimdLoop(LOOPQ *lp)
    {
       sinst = sfinsts;
       vinst = vfinsts;
-      vlen = 4;
+      #if defined(X86) && defined(AVX)
+         vlen = 8;
+      #else
+         vlen = 4;
+      #endif
       vsld = VFLDS;
       vsst = VFSTS;
       vshuf = VFSHUF;
@@ -463,7 +485,11 @@ int SimdLoop(LOOPQ *lp)
       sinst = sdinsts;
       vinst = vdinsts;
       vld = VDLD;
-      vlen = 2;
+      #if defined(X86) && defined(AVX)
+         vlen = 4;
+      #else
+         vlen = 2;
+      #endif
       vst = VDST;
    }
    r0 = GetReg(FLAG2TYPE(lp->vflag));
@@ -556,22 +582,55 @@ int SimdLoop(LOOPQ *lp)
                            SToff[lp->vvscal[i+1]-1].sa[2], 0);
          if (vld == VDLD)
          {
-            iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1, -r0,
-                              STiconstlookup(0x33));
-            iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VDADD,-r0,-r0,-r1);
-            iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS, 
-                              SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+            #if defined(X86) && defined(AVX)
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1, 
+                                 -r0, STiconstlookup(0x3276));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VDADD,-r0,-r0,
+                                 -r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1, 
+                                 -r0, STiconstlookup(0x3715));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VDADD,-r0,-r0,
+                                 -r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS, 
+                                 SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+            #else
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1, 
+                                 -r0, STiconstlookup(0x33));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VDADD,-r0,-r0,
+                                 -r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS, 
+                                 SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+            #endif
          }
          else
          {
-            iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF, -r1, -r0,
-                              STiconstlookup(0x3276));
-            iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,-r0,-r0,-r1);
-            iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF, -r1, -r0,
-                              STiconstlookup(0x5555));
-            iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,-r0,-r0,-r1);
-            iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSTS, 
-                              SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+            #if defined(X86) && defined(AVX)
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF, 
+                                 -r1, -r0, STiconstlookup(0x7654FEDC));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF, 
+                                 -r1, -r0, STiconstlookup(0x765432BA));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF, 
+                                 -r1, -r0, STiconstlookup(0x76CD3289));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSTS, 
+                                 SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);         
+            #else
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF, 
+                                 -r1, -r0, STiconstlookup(0x3276));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF, 
+                                 -r1, -r0, STiconstlookup(0x5555));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSTS, 
+                                 SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+            #endif
          }
       }
    }
@@ -687,15 +746,26 @@ int VectorizeStage1(void)
    FindLoops();
    CheckFlow(bbbase,__FILE__,__LINE__);
    lp = optloop;
+   
+#if 0
+   fprintf(stdout,"LIL Vector Analysis \n\n");
+   PrintInst(stdout,bbbase);
+   exit(0);
+#endif
+   
 /*
  * Create a bad LIL to perform vector loop analysis
  */
    KillLoopControl(lp);
+
+#if 1
    if (FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]))
    {
       fko_warn(__LINE__, "Index refs inside loop prevent vectorization!!\n");
       return(11);
    }
+#endif
+   
    pi0 = FindMovingPointers(lp->blocks);
    for (pi=pi0; pi; pi = pi->next)
    {
@@ -773,6 +843,11 @@ int VectorizeStage3(int savesp, int SVSTATE)
    NewBasicBlocks(bbbase);
    FindLoops();
    CheckFlow(bbbase,__FILE__,__LINE__);
+#if 0
+         fprintf(stdout,"LIL just Before Vectorization\n\n");
+         PrintInst(stdout,bbbase);
+         exit(0);
+#endif
    i = SimdLoop(optloop);
    if (i)
       return(i);

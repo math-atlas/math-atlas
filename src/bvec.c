@@ -74,7 +74,6 @@ int *ExtendBitVec(int iv, int nwords)
  */
    ind = NewBitVec(nwords*32)-1;
    v = bvecs[ind];         
-
    for (k=ni[--iv], j=0; j < k; j++) v[j] = bvecs[iv][j]; 
    for (ni[iv] = nwords; j < nwords; j++) v[j] = 0;
    free(bvecs[iv]);

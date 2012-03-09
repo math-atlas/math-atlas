@@ -68,9 +68,13 @@ def test(ATLdir, ARCH, pre, blas, N, rout, cc=None, ccf=None, opt=""):
    if (opt != ""):
       opt = 'opt="' + opt + '"'
    if(cc != None):
-      opt = opt + ' UCC=' + cc + ' UCCFLAGS="' + ccf + '"'
-   cmnd = 'cd %s/tune/blas/level1/%s ; make %s%stest N=%d urout=%s %s' % \
-          (ATLdir, ARCH, pre, blas, N, rout, opt)
+      opt = opt + ' dUCC=' + cc + ' dUCCFLAGS="' + ccf + '"'
+#   cmnd = 'cd %s/tune/blas/level1/%s ; make %s%stest N=%d urout=%s %s' % \
+#          (ATLdir, ARCH, pre, blas, N, rout, opt)
+   cmnd = 'cd %s/tune/blas/level1 ; make %s%stest N=%d urout=%s %s' % \
+          (ATLdir, pre, blas, N, rout, opt)
+  
+   
    fo = os.popen(cmnd, 'r')
    lines = fo.readlines()
    err = fo.close()
@@ -101,9 +105,10 @@ def time(ATLdir, ARCH, pre, blas, N, rout, cc=None, ccf=None, opt=""):
       
    if PROFILE:
       popt = opt + ' UCC=icc UCCFLAGS="' + ccf + ' -prof_genx -prof_dir /tmp"'
-      pcmnd = 'rm -f /tmp/*.dyn ; cd %s/tune/blas/level1/%s ; make %s%scase N=%d urout=%s %s' % \
-             (ATLdir, ARCH, pre, blas, N, rout, popt)
-#      print "cmnd = '%s'" % (pcmnd)
+#      pcmnd = 'rm -f /tmp/*.dyn ; cd %s/tune/blas/level1/%s ; make %s%scase N=%d urout=%s %s' % \
+      pcmnd = 'rm -f /tmp/*.dyn ; cd %s/tune/blas/level1 ; make %s%scase N=%d urout=%s %s' % \
+             (ATLdir, pre, blas, N, rout, popt)
+      print "cmnd = '%s'" % (pcmnd)
       fo = os.popen(pcmnd, 'r')
       lines = fo.readlines()
       err = fo.close()
@@ -117,12 +122,14 @@ def time(ATLdir, ARCH, pre, blas, N, rout, cc=None, ccf=None, opt=""):
 #   print "opt = '%s'" % opt
    cmnd = 'make %s%scase N=%d urout=%s %s' % (pre, blas, N, rout, opt)
    if WALLTIME and 0:
-      cmnds = 'cd %s/tune/blas/level1/%s ; %s ; %s ; %s' % (ATLdir, ARCH, 
+#      cmnds = 'cd %s/tune/blas/level1/%s ; %s ; %s ; %s' % (ATLdir, ARCH, 
+      cmnds = 'cd %s/tune/blas/level1 ; %s ; %s ; %s' % (ATLdir,  
               cmnd, cmnd, cmnd)
 #   elif PROFILE and cc == None:
 #      cmnds = 'cd %s/tune/blas/level1/%s ; %s ' % (ATLdir, ARCH, cmnd)
    else :
-      cmnds = 'cd %s/tune/blas/level1/%s ; %s ; %s' % (ATLdir, ARCH, cmnd, cmnd)
+#      cmnds = 'cd %s/tune/blas/level1/%s ; %s ; %s' % (ATLdir, ARCH, cmnd, cmnd)
+      cmnds = 'cd %s/tune/blas/level1; %s ; %s' % (ATLdir, cmnd, cmnd)
    gc.disable()
    fo = os.popen(cmnds, 'r')
    lines = fo.readlines()
@@ -183,7 +190,8 @@ def getucc(ATLdir, ARCH, rout, id, pre='d'):
    return[CC, CCF]
 
 def res(ATLdir, ARCH, rout, pre='d'):
-   file = ATLdir + L1Tdir + ARCH + '/res/' + pre + rout.upper() + '_SUMM'
+#   file = ATLdir + L1Tdir + ARCH + '/res/' + pre + rout.upper() + '_SUMM'
+   file = ATLdir + L1Tdir + '/res/' + pre + rout.upper() + '_SUMM'
    fi = open(file, 'r')
    line = fi.readline()
    line = fi.readline()
