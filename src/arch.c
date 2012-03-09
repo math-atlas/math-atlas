@@ -947,60 +947,158 @@ void Extern2Local(INSTQ *next, int rsav)
       InsNewInst(NULL, NULL, next, COMMENT, STstrconstlookup("done paras"),
                  0, 0);
       ir = reg1;
+/*
+ *    Majedul: Consider DTnzerod, DTnzero, DTabsd and DTabs; 
+ *    If SIMD vectorization is not applied, we need not generate vector
+ *    constant. It creates problem in stack alignment.
+ */
+
       if (DTnzerod > 0)
       {
-         PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
-         VDConstGen(next, ir, vdreg, 0x8000000000000000);
-         InsNewInst(NULL, NULL, next, VDST, SToff[DTnzerod-1].sa[2], -vdreg, 0);
-         k = SToff[DTnzerod-1].sa[2] - 1;
+         if (FKO_FLAG & IFF_VECTORIZE)
+         {
+            PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
+            VDConstGen(next, ir, vdreg, 0x8000000000000000);
+            InsNewInst(NULL, NULL, next, VDST, SToff[DTnzerod-1].sa[2], -vdreg, 0);
+            k = SToff[DTnzerod-1].sa[2] - 1;
 
-         DTnzerods = STdef("_NEGZERODs", T_DOUBLE | LOCAL_BIT, 0);
-         SToff[DTnzerods-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTnzerods,
-                     -DTnzerods, SToff[k].sa[3], DTnzerods);
-         k = vdreg - VDREGBEG + DREGBEG;
-         InsNewInst(NULL, NULL, next, VDMOVS, -k, -vdreg, 0);
-         InsNewInst(NULL, NULL, next, FSTD, SToff[DTnzerods-1].sa[2], -k, 0);
+            DTnzerods = STdef("_NEGZERODs", T_DOUBLE | LOCAL_BIT, 0);
+            SToff[DTnzerods-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTnzerods,
+                        -DTnzerods, SToff[k].sa[3], DTnzerods);
+            k = vdreg - VDREGBEG + DREGBEG;
+            InsNewInst(NULL, NULL, next, VDMOVS, -k, -vdreg, 0);
+            InsNewInst(NULL, NULL, next, FSTD, SToff[DTnzerods-1].sa[2], -k, 0);
+         }
+         else
+         {
+/*
+ *          Majedul: Need to improve by rewriting the ConstGen function.
+ *          Why DTnzerod && DTnzerods ??? 
+ */            
+            PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
+            VDConstGen(next, ir, vdreg, 0x8000000000000000);
+            k = vdreg - VDREGBEG + DREGBEG;
+            InsNewInst(NULL, NULL, next, FSTD, SToff[DTnzerod-1].sa[2], -k, 0);
+            k = SToff[DTnzerod-1].sa[2] - 1;
+
+            DTnzerods = STdef("_NEGZERODs", T_DOUBLE | LOCAL_BIT, 0);
+            SToff[DTnzerods-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTnzerods,
+                        -DTnzerods, SToff[k].sa[3], DTnzerods);
+            k = vdreg - VDREGBEG + DREGBEG;
+            InsNewInst(NULL, NULL, next, FSTD, SToff[DTnzerods-1].sa[2], -k, 0);
+         }
       }
       if (DTnzero > 0)
       {
-         PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
-         VSConstGen(next, ir, vfreg, 0x80000000);
-         InsNewInst(NULL, NULL, next, VFST, SToff[DTnzero-1].sa[2], -vfreg, 0);
-         k = SToff[DTnzero-1].sa[2] - 1;
-         DTnzeros = STdef("_NEGZEROs", T_FLOAT | LOCAL_BIT, 0);
-         SToff[DTnzeros-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTnzeros,
-                     -DTnzeros, SToff[k].sa[3], DTnzeros);
-         k = vfreg - VFREGBEG + FREGBEG;
-         InsNewInst(NULL, NULL, next, VFMOVS, -k, -vfreg, 0);
-         InsNewInst(NULL, NULL, next, FST, SToff[DTnzeros-1].sa[2], -k, 0);
+         if (FKO_FLAG & IFF_VECTORIZE)
+         {
+            PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
+            VSConstGen(next, ir, vfreg, 0x80000000);
+            InsNewInst(NULL, NULL, next, VFST, SToff[DTnzero-1].sa[2], -vfreg, 0);
+            k = SToff[DTnzero-1].sa[2] - 1;
+            DTnzeros = STdef("_NEGZEROs", T_FLOAT | LOCAL_BIT, 0);
+            SToff[DTnzeros-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTnzeros,
+                        -DTnzeros, SToff[k].sa[3], DTnzeros);
+            k = vfreg - VFREGBEG + FREGBEG;
+            InsNewInst(NULL, NULL, next, VFMOVS, -k, -vfreg, 0);
+            InsNewInst(NULL, NULL, next, FST, SToff[DTnzeros-1].sa[2], -k, 0);
+         }
+         else
+         {
+/*
+ *          Majedul: can improve by rewriting ConstGen function for scalar
+ *          Do we need to have both DTnzero && DTnzeros
+ */
+            PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
+            VSConstGen(next, ir, vfreg, 0x80000000);
+            k = vfreg - VFREGBEG + FREGBEG;
+            InsNewInst(NULL, NULL, next, FST, SToff[DTnzero-1].sa[2], -k, 0);
+            k = SToff[DTnzero-1].sa[2] - 1;
+            DTnzeros = STdef("_NEGZEROs", T_FLOAT | LOCAL_BIT, 0);
+            SToff[DTnzeros-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTnzeros,
+                        -DTnzeros, SToff[k].sa[3], DTnzeros);
+            k = vfreg - VFREGBEG + FREGBEG;
+            InsNewInst(NULL, NULL, next, FST, SToff[DTnzeros-1].sa[2], -k, 0);
+
+         }
       }
       if (DTabsd)
       {
-         PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for absd");
-         VDConstGen(next, ir, vdreg, 0x7FFFFFFFFFFFFFFF);
-         InsNewInst(NULL, NULL, next, VDST, SToff[DTabsd-1].sa[2], -vdreg, 0);
-         k = SToff[DTabsd-1].sa[2] - 1;
-         DTabsds = STdef("_ABSVALs", T_DOUBLE | LOCAL_BIT, 0);
-         SToff[DTabsds-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTabsds,
-                     -DTabsds, SToff[k].sa[3], DTabsds);
-         k = vdreg - VDREGBEG + DREGBEG;
-         InsNewInst(NULL, NULL, next, VDMOVS, -k, -vdreg, 0);
-         InsNewInst(NULL, NULL, next, FSTD, SToff[DTabsds-1].sa[2], -k, 0);
+/*
+ *       Majedul: Need to consider non-vectorized case.
+ */         
+         if(FKO_FLAG & IFF_VECTORIZE)
+         {
+            PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for absd");
+            VDConstGen(next, ir, vdreg, 0x7FFFFFFFFFFFFFFF);
+            InsNewInst(NULL, NULL, next, VDST, SToff[DTabsd-1].sa[2], -vdreg, 0);
+            k = SToff[DTabsd-1].sa[2] - 1;
+            DTabsds = STdef("_ABSVALs", T_DOUBLE | LOCAL_BIT, 0);
+            SToff[DTabsds-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTabsds,
+                        -DTabsds, SToff[k].sa[3], DTabsds);
+            k = vdreg - VDREGBEG + DREGBEG;
+            InsNewInst(NULL, NULL, next, VDMOVS, -k, -vdreg, 0);
+            InsNewInst(NULL, NULL, next, FSTD, SToff[DTabsds-1].sa[2], -k, 0);
+         }
+         else
+         {
+/*
+ *          Majedul: Works now but can improve the output code by rewriting 
+ *          the ConnstGen function and eliminating the shuffle for scalar.
+ */
+            PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for absd");
+            VDConstGen(next, ir, vdreg, 0x7FFFFFFFFFFFFFFF);
+            k = vdreg - VDREGBEG + DREGBEG;
+            InsNewInst(NULL, NULL, next, FSTD, SToff[DTabsd-1].sa[2], -k, 0);
+            k = SToff[DTabsd-1].sa[2] - 1;
+            DTabsds = STdef("_ABSVALs", T_DOUBLE | LOCAL_BIT, 0);
+            SToff[DTabsds-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTabsds,
+                        -DTabsds, SToff[k].sa[3], DTabsds);
+            k = vdreg - VDREGBEG + DREGBEG;
+            InsNewInst(NULL, NULL, next, FSTD, SToff[DTabsds-1].sa[2], -k, 0);
+         }
       }
       if (DTabs)
       {
-         PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for abss");
-         VSConstGen(next, ir, vfreg, 0x7fffffff);
-         InsNewInst(NULL, NULL, next, VFST, SToff[DTabs-1].sa[2], -vfreg, 0);
+/*
+ *       Majedul: Need ti handle non vectorized case
+ */         
+         if (FKO_FLAG & IFF_VECTORIZE)
+         {
+            PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for abss");
+            VSConstGen(next, ir, vfreg, 0x7fffffff);
+            InsNewInst(NULL, NULL, next, VFST, SToff[DTabs-1].sa[2], -vfreg, 0);
 
-         k = SToff[DTabs-1].sa[2] - 1;
-         DTabss = STdef("_ABSVALs", T_FLOAT | LOCAL_BIT, 0);
-         SToff[DTabss-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTabss,
-                     -DTabss, SToff[k].sa[3], DTabss);
-         k = vfreg - VFREGBEG + FREGBEG;
-         InsNewInst(NULL, NULL, next, VFMOVS, -k, -vfreg, 0);
-         InsNewInst(NULL, NULL, next, FST, SToff[DTabss-1].sa[2], -k, 0);
+            k = SToff[DTabs-1].sa[2] - 1;
+            DTabss = STdef("_ABSVALs", T_FLOAT | LOCAL_BIT, 0);
+            SToff[DTabss-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTabss,
+                        -DTabss, SToff[k].sa[3], DTabss);
+            k = vfreg - VFREGBEG + FREGBEG;
+            InsNewInst(NULL, NULL, next, VFMOVS, -k, -vfreg, 0);
+            InsNewInst(NULL, NULL, next, FST, SToff[DTabss-1].sa[2], -k, 0);
+         }
+         else
+         {
+/*
+ *          Majedul: Need to check why DTabss is used along with DTabs. 
+ *          Can reduce the computation further, No need to use shuffle here
+ *          Need to rewrite ConstGen function for scalar. 
+ *          Right now, the problem is solved but more efficient code can be
+ *          produced.
+ */
+            PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for abss");
+            VSConstGen(next, ir, vfreg, 0x7fffffff);
+           
+            k = vfreg - VFREGBEG + FREGBEG;
+            InsNewInst(NULL, NULL, next, FST, SToff[DTabs-1].sa[2], -k, 0);
 
+            k = SToff[DTabs-1].sa[2] - 1;
+            DTabss = STdef("_ABSVALs", T_FLOAT | LOCAL_BIT, 0);
+            SToff[DTabss-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTabss,
+                        -DTabss, SToff[k].sa[3], DTabss);
+            k = vfreg - VFREGBEG + FREGBEG;
+            InsNewInst(NULL, NULL, next, FST, SToff[DTabss-1].sa[2], -k, 0);
+         }         
       }
       InsNewInst(NULL, NULL, next, COMMENT, STstrconstlookup("done archspec"), 
                  0, 0);
