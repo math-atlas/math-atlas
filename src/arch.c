@@ -38,7 +38,7 @@ short type2shift(int type)
    short len=2;
 /* Majedul: ArchPtrIsLong may not be appropriate here. */   
 #if 0    
-   #ifdef  ArchPtrIsLong /* HERE. need to check */
+   #ifdef  ArchPtrIsLong 
       if (type == T_DOUBLE || type == T_INT) len = 3;
    #else
       if (type == T_DOUBLE) len = 3;
@@ -179,7 +179,20 @@ int GetArchAlign(int nvd, int nvf, int nd, int nf, int nl, int ni)
  */
 {
    #ifdef X86_64
-      return(16);
+/*    return(16); */
+/* 
+ *    Majedul: Required alignment is changed for AVX. 32 byte alignment may be
+ *    required.
+ */   
+      #ifdef AVX
+         int align = 0;
+         if (nvd) align = FKO_DVLEN*8;
+         else if (nvf) align = FKO_SVLEN*4;
+         else align = 16;
+         return (align);
+      #else
+         return (16);
+      #endif
    #else
    int align = 0;
    if (nvd) align = FKO_DVLEN*8;
@@ -808,7 +821,6 @@ void Extern2Local(INSTQ *next, int rsav)
          default:
          }
    #endif
-   /* Majedul: need to check for AVX imp later*/
    #ifdef X86_64
       reg1 = GetReg(T_INT);
       while (iparareg[reg1-IREGBEG]) reg1 = GetReg(T_INT);
