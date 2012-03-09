@@ -90,10 +90,10 @@
 #define off12   r26
 
 #if defined(ATL_USE64BITS)
-   #define FSIZE   320
+   #define FSIZE   368
    #define FST     48
 #else
-   #define FSIZE   304
+   #define FSIZE   352
    #define FST     32
 #endif
 #define BOFF    FSIZE-16
