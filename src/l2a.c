@@ -2002,6 +2002,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                }
 	       else
                   #ifdef AVX
+/*                   vmovss xmm1,xmm2,xmm3 #merge xmm1 and xmm2 into xmm3 */
                      ap->next = PrintAssln("\tvmovss\t%s,%s,%s\n",
 	                                   archxmmregs[-FREGBEG-op2],
 	                                   archxmmregs[-FREGBEG-op1],
@@ -2081,6 +2082,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                }
 	       else
                   #ifdef AVX
+/*                   vmovsd xmm1,xmm2,xmm3 # for regs move, 3 operands */
                      ap->next = PrintAssln("\tvmovsd\t%s,%s,%s\n",
 	                                   archxmmregs[-DREGBEG-op2], 
 	                                   archxmmregs[-DREGBEG-op1], 
