@@ -8,12 +8,14 @@ N = 80000
 L = 1
 TEST = 1
 CC = "gcc"
+#CCF = "-m32 -x assembler-with-cpp"
 CCF = "-x assembler-with-cpp"
 (IFKOdir,fko) = fkocmnd.GetFKOinfo()
 [ATLdir,ARCH] = fkocmnd.FindAtlas(IFKOdir)
 uopt=""
 
 teopt = "-X 1 1 -Y 1 1 -Fx 16 -Fy 16"
+#teopt = "-X 1 1 -Y 1 1 -Fx 32 -Fy 32"
 
 nargs = len(sys.argv)
 if nargs < 4:
@@ -35,6 +37,7 @@ if nargs > 4 :
             CCF = sys.argv[8]
 
 opt = "-X 1 -Y 1 -Fx 16 -Fy 16 " + uopt
+#opt = "-X 1 -Y 1 -Fx 32 -Fy 32 " + uopt
 [t0,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, file, cc=CC, ccf=CCF, opt=opt)
 if TEST:
    i = l1cmnd.test(ATLdir, ARCH, pre, blas, N, file, cc=CC, ccf=CCF, opt=teopt)
