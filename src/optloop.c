@@ -1339,7 +1339,7 @@ int UnrollLoop(LOOPQ *lp, int unroll)
    URmul = Type2Vlen(FLAG2TYPE(lp->vflag)); /*need to update for AVX*/
    UR = lp->vflag ? URmul*unroll : unroll;
    KillLoopControl(lp);
-   PrintInst(fopen("err.tmp", "w"), bbbase);
+/* PrintInst(fopen("err.tmp", "w"), bbbase); */
    il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
    if (il) KillIlist(il);
    else UsesIndex = 0;
