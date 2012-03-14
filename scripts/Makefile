@@ -2,20 +2,19 @@
 #include /home/rwhaley/AT3.7/ATLAS3.7.6.2/Make.Linux_P4ESSE3_2
 #include /home/rwhaley/AT3.7/ATLAS3.7.9.1/Make.Linux_P4ESSE3
 #include /home/rwhaley/AT3.7/ATLAS3.7.9.1/Make.Linux_gcc
-
-#include /home/msujon/ATLAS/ATLAS/MYBUILD/Make.inc
-#include /home/msujon/ATLAS/ATLAS3.9.67/Linux_X8632_SSE/Make.Linux_X8632_SSE
-include /home/msujon/ATLAS/ATLAS3.9.67/Linux_X8664_SSE/Make.Linux_X8664_SSE
-
 #include /opt/whaley/TEST/ATLAS3.7.9.0/Make.Linux_P4SSE2
 #include /home/rwhaley/AT/ATLAS3.7.9.1/Make.Linux_icc32
 #include /home/rwhaley/AT/ATLAS3.7.9.1/Make.Linux_HAMMER64SSE2
 #include /home/rwhaley/TEST/ATLAS3.7.8.2/Make.Linux_EfficeonSSE2
 #include /home/rwhaley/TEST/ATLAS3.7.9.0/Make.Linux_EfficeonSSE2
 
+#include /home/msujon/ATLAS/ATLAS3.9.67/Linux_X8632_AVX/Make.Linux_X8632_AVX
+#include /home/msujon/ATLAS/ATLAS3.9.67/Linux_X8664_AVX/Make.Linux_X8664_AVX
+#include /home/msujon/ATLAS/ATLAS3.9.67/Linux_X8632_SSE/Make.Linux_X8632_SSE
+include /home/msujon/ATLAS/ATLAS3.9.67/Linux_X8664_SSE/Make.Linux_X8664_SSE
 
 
-KFLAGS= 
+KFLAGS=-V -Ps b A 0 1 -P all 0 128 -U 2
 pre=d
 rout=dot
 N=80000
@@ -24,20 +23,68 @@ URT=DOT
 FKO = ../bin/fko
 test=1
 uopt=
+#uopt="-X 1 -Y 1 -Fx 16 -Fy 16"
+#uopt="-X 1 -Y 1 -Fx 32 -Fy 32"
+
+all: dot axpy asum copy swap scal
 
 dot: sdot ddot
+axpy: saxpy daxpy
+asum: sasum dasum
+copy: scopy dcopy
+swap: sswap dswap
+scal: sscal dscal
 
 sdot : $(FKO)
-	$(MAKE) build pre=s URT=`echo dot | tr 'a-z' 'A-Z'` KFLAGS="$(KFLAGS)"
+	$(MAKE) build pre=s rout=dot URT=`echo dot | tr 'a-z' 'A-Z'` \
+	   			     KFLAGS="$(KFLAGS)"
 	./TestTime.py s dot $(file) $(N) $(test) $(uopt)
 ddot : $(FKO)
-	$(MAKE) build pre=d URT=`echo dot | tr 'a-z' 'A-Z'` KFLAGS="$(KFLAGS)"
+	$(MAKE) build pre=d rout=dot URT=`echo dot | tr 'a-z' 'A-Z'` \
+	   			     KFLAGS="$(KFLAGS)"
 	./TestTime.py d dot $(file) $(N) $(test) $(uopt)
 
+saxpy: $(FKO)
+	$(MAKE) build pre=s rout=axpy URT=`echo axpy | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py s axpy $(file) $(N) $(test) $(uopt)
 daxpy: $(FKO)
-	$(MAKE) build pre=d rout=axpy URT=`echo axpy | tr 'a-z' 'A-Z'` KFLAGS="$(KFLAGS)"
+	$(MAKE) build pre=d rout=axpy URT=`echo axpy | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
 	./TestTime.py d axpy $(file) $(N) $(test) $(uopt)
 
+sasum: $(FKO)
+	$(MAKE) build pre=s rout=asum URT=`echo asum | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py s asum $(file) $(N) $(test) $(uopt)
+dasum: $(FKO)
+	$(MAKE) build pre=d rout=asum URT=`echo asum | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py d asum $(file) $(N) $(test) $(uopt)
+scopy: $(FKO)
+	$(MAKE) build pre=s rout=copy URT=`echo copy | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py s copy $(file) $(N) $(test) $(uopt)
+dcopy: $(FKO)
+	$(MAKE) build pre=d rout=copy URT=`echo copy | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py d copy $(file) $(N) $(test) $(uopt)
+sswap: $(FKO)
+	$(MAKE) build pre=s rout=swap URT=`echo swap | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py s swap $(file) $(N) $(test) $(uopt)
+dswap: $(FKO)
+	$(MAKE) build pre=d rout=swap URT=`echo swap | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py d swap $(file) $(N) $(test) $(uopt)
+sscal: $(FKO)
+	$(MAKE) build pre=s rout=scal URT=`echo scal | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py s scal $(file) $(N) $(test) $(uopt)
+dscal: $(FKO)
+	$(MAKE) build pre=d rout=scal URT=`echo scal | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py d scal $(file) $(N) $(test) $(uopt)
 
 go : $(FKO)
 	$(MAKE) build URT=`echo $(rout) | tr 'a-z' 'A-Z'` KFLAGS="$(KFLAGS)"
