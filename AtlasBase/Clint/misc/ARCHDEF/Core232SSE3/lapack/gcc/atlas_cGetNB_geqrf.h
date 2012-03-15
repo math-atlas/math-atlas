@@ -2,8 +2,8 @@
 
 /*
  * NB selection for GEQRF: Side='RIGHT', Uplo='UPPER'
- * M : 25,216,432,936,1872
- * N : 25,216,432,936,1872
+ * M : 25,216,432,936,1944
+ * N : 25,216,432,936,1944
  * NB : 9,72,72,72,72
  */
 #define ATL_cGetNB_geqrf(n_, nb_) \
