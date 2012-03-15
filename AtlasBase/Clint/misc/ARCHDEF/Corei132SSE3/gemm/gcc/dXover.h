@@ -5,8 +5,8 @@
 #define NN_MNK_M 5400
 #define NN_MNK_N 5400
 #define NN_MNK_MN 29160
-#define NN_MNK_K 12150
-#define NN_MNK_GE 3375
+#define NN_MNK_K 5400
+#define NN_MNK_GE 1000
 #define NT_MNK_M 5400
 #define NT_MNK_N 5400
 #define NT_MNK_MN 29160
@@ -15,12 +15,12 @@
 #define TN_MNK_M 5400
 #define TN_MNK_N 5400
 #define TN_MNK_MN 29160
-#define TN_MNK_K 31104
-#define TN_MNK_GE 3375
+#define TN_MNK_K 48600
+#define TN_MNK_GE 13824
 #define TT_MNK_M 5400
 #define TT_MNK_N 5400
 #define TT_MNK_MN 29160
-#define TT_MNK_K 31104
-#define TT_MNK_GE 3375
+#define TT_MNK_K 12150
+#define TT_MNK_GE 13824
 
 #endif

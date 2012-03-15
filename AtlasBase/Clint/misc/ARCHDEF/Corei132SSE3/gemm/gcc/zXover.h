@@ -20,7 +20,7 @@
 #define TT_MNK_M 5200
 #define TT_MNK_N 5200
 #define TT_MNK_MN 27040
-#define TT_MNK_K 11700
+#define TT_MNK_K 5200
 #define TT_MNK_GE 1000
 #define C2R_K 2147483647
 
