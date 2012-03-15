@@ -22,7 +22,7 @@ struct FA_allocs *NewAlloc(size_t size, struct FA_allocs *next,
    int n, i;
    const int malign = align >= misalign ? align : misalign;
 
-   n = size + align + malign;
+   n = size + align + align + malign;
    i = (n >> 3)<<3;
    if (n != i)
       n += n - i;
@@ -36,12 +36,13 @@ struct FA_allocs *NewAlloc(size_t size, struct FA_allocs *next,
    ap->memA = align ? (void*) ((((size_t) cp)/align)*align + align) : cp;
 /*
  * Misalign to misalign
+ * We often need to make sure to unaligned addresses share the same modulo
+ * so that they have the *same* degree of misalignment (so that their alignment
+ * can be fixed by simple peeling), and so in this case force the address
+ * modulo the misalign to be the exact align value.
  */
    if (misalign)
-   {
-      if (((size_t)ap->memA)%misalign == 0)
-         ap->memA = ((char*)ap->memA) + align;
-   }
+      ap->memA = (void*)((((size_t)ap->memA)/malign)*malign + malign + align);
    ap->next = next;
    return(ap);
 }
