@@ -135,11 +135,12 @@ void PrintUsage(char *nam)
 void GetFlags(int nargs, char **args, int *N0, int *NN, int *incN, 
               int *R0, int *RN, int *incR, int *ldagap, int *ldbgap,
               double *thresh, int *nord, enum CBLAS_ORDER **Ord, 
-              int *nuplo, int **Uplo, int *CS, int *MFLOP, int *QR)
+              int *nuplo, int **Uplo, int *CS, int *MFLOP, int *QR, int *nrep)
 {
    int i, j;
    char ch;
 
+   *nrep = 1;
    *QR = 0;
    *N0 = 100; *NN = 1000; *incN = 100;
    *R0 = *RN = *incR = 1;
@@ -160,6 +161,9 @@ void GetFlags(int nargs, char **args, int *N0, int *NN, int *incN,
       if (args[i][0] != '-') PrintUsage(args[0]);
       switch(args[i][1])
       {
+      case '#':
+         *nrep = atoi(args[++i]);
+         break;
       case 'Q':
          *QR = atoi(args[++i]);
          break;
@@ -892,13 +896,13 @@ static int gesvtst(enum CBLAS_ORDER Order, int N, int NRHS, int lda, int ldb,
    return(ierr);
 }
 
-static int DoAllTests(int N0, int NN, int incN, int R0, int RN, int incR, 
-                      int ldagap, int ldbgap, double thresh, 
+static int DoAllTests(int nrep, int N0, int NN, int incN, int R0, int RN, 
+                      int incR, int ldagap, int ldbgap, double thresh, 
                       int nord, enum CBLAS_ORDER *Orders, 
                       int nuplo, int *Uplos, int CS, int MFLOP,
                       int QR)
 {
-   int i=0, ierr=0, n, r, lda, ldb, io, iu;
+   int i=0, ierr=0, n, r, lda, ldb, io, iu, in;
 
    fprintf(stdout, "ORD  UPLO       N    NRHS     lda     ldb       TIME     MFLOP        RESID\n");
    fprintf(stdout, "===  ====  ======  ======  ======  ======  =========  ========  ===========\n\n");
@@ -913,13 +917,16 @@ static int DoAllTests(int N0, int NN, int incN, int R0, int RN, int incR,
          {
             for (iu=0; iu < nuplo; iu++, i++)
             {
-               if (Uplos[iu] == 0)
-                  ierr += gesvtst(Orders[io], n, r, lda, ldb, CS, thresh);
-               else if (Uplos[iu] == 1)
-                  ierr += gelstst(Orders[io], n, r, lda, ldb, CS, thresh);
-               else
-                  ierr += posvtst(Orders[io], Uplos[iu], n, r, lda, ldb, 
-                                  CS, thresh);
+               for (in=0; in < nrep; in++)
+               {
+                  if (Uplos[iu] == 0)
+                     ierr += gesvtst(Orders[io], n, r, lda, ldb, CS, thresh);
+                  else if (Uplos[iu] == 1)
+                     ierr += gelstst(Orders[io], n, r, lda, ldb, CS, thresh);
+                  else
+                     ierr += posvtst(Orders[io], Uplos[iu], n, r, lda, ldb, 
+                                     CS, thresh);
+               }
             }
          }
       }
@@ -931,13 +938,13 @@ static int DoAllTests(int N0, int NN, int incN, int R0, int RN, int incR,
 main(int nargs, char **args)
 {
    int ierr, N0, NN, incN, R0, RN, incR, ldagap, ldbgap, nord, nuplo;
-   int CS, MFLOP, QR;
+   int CS, MFLOP, QR, nrep;
    enum CBLAS_ORDER *Order;
    int *Uplo;
    double thresh;
    GetFlags(nargs, args, &N0, &NN, &incN, &R0, &RN, &incR, &ldagap, &ldbgap,
-            &thresh, &nord, &Order, &nuplo, &Uplo, &CS, &MFLOP, &QR);
-   ierr = DoAllTests(N0, NN, incN, R0, RN, incR, ldagap, ldbgap, thresh, 
+            &thresh, &nord, &Order, &nuplo, &Uplo, &CS, &MFLOP, &QR, &nrep);
+   ierr = DoAllTests(nrep, N0, NN, incN, R0, RN, incR, ldagap, ldbgap, thresh, 
                      nord, Order, nuplo, Uplo, CS, MFLOP, QR);
    if (Order) free(Order);
    if (Uplo) free(Uplo);
