@@ -125,7 +125,7 @@ int ATL_geqr2(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT LDA, TYPE  *TAU,
          ATL_larf(CblasLeft, M-i, N-i-1, (A+(i SHIFT)+i*lda2), 1, TAUVAL ,
                   (A+(i SHIFT)+(i+1)*lda2) , LDA, WORK);
 
-/*       Reassign the values of A[i]                                          */
+         /*  Reassign the values of A[i] */
          #ifdef TREAL
             A[(i SHIFT)+i*lda2] = AII;
          #else
@@ -133,9 +133,9 @@ int ATL_geqr2(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT LDA, TYPE  *TAU,
             A[(i SHIFT) +i*lda2 + 1] = AII[1];
          #endif
       }
-   }                                        /* end of for                     */
+   } /* END for each column. */
    return(0);
-}                                           /* END AL_geqr2                   */
+} /* END ATL_geqr2 */
 @ROUT ATL_gerq2
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2009 -def cwauth "Siju Samuel" -def contrib "Anthony M. Castaldo, R. Clint Whaley"
 
@@ -9389,6 +9389,7 @@ int main(int nargs, char **args)
 #include "atlas_threads.h"
 #include "atlas_tlvl3.h"
 #include "atlas_level2.h"
+#include "atlas_lamch.h"
 #include "math.h"
 #include "errno.h"
 
@@ -9691,17 +9692,17 @@ static void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    int   myCopy = myTS->copy;
    volatile ATL_DGEQR2_t *ptnr;                 /* partner log2 combine.     */
    TYPE  *A, *scaleA,  *T;                      /* Work variables.           */
-   TYPE XNORM, BETA, BETAp, RSAFMN;
+   TYPE XNORM, BETA, BETAp;           
    TYPE *TAU = myTS->TAU;                       /* Short cut.                */
    TYPE ALPHA;
-
+   TYPE w;                                      /* Used in dnrm2_combine mac.*/
    #ifdef TREAL
       const TYPE ONE = ATL_rone;
       TYPE AII ;
       TYPE TAUVAL ;
       TYPE myTAUi;
-      TYPE w;                               /* Scaling Factor                 */
-      TYPE wfact;                           /* Scaling Factor                 */
+      TYPE sc;
+      TYPE RSAFMN;
       const TYPE ZERO = ATL_rzero;
    #else
       const TYPE ONE[2] = {ATL_rone, ATL_rzero};
@@ -9712,8 +9713,8 @@ static void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 
       TYPE ALPHAI, ALPHAR;
       TYPE ALPHADIV[2] ;
-      TYPE w;                               /* Scaling Factor                 */
-      TYPE wfact[2];                        /* Scaling Factor                 */
+      TYPE sc[2];
+      TYPE RSAFMN[2]; 
       const TYPE ZERO[2] = {ATL_rzero, ATL_rzero};
    #endif
 
@@ -9784,30 +9785,37 @@ static void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 
       myTS->dnrm2++;                        /* Signal I am done.              */
 
-/***************************************                                      */
-/********  S Y N C   P O I N T  ********                                      */
-/********  S Y N C   P O I N T  ********                                      */
-/********  S Y N C   P O I N T  ********                                      */
-/***************************************                                      */
-/*----------------------------------------------------------------------------*/
-/* Note: We want to avoid syncing after DGER, but                             */
-/* it is using zTS->WORK as one vector. So it is                              */
-/* important zTS->WORK is NOT corrupted before this                           */
-/* sync. All threads converge here for the next col                           */
-/* and so will be done with zTS->WORK at this point                           */
-/* and each individually will be ready to start its                           */
-/* dnrm2 work on its share.                                                   */
-/*----------------------------------------------------------------------------*/
+      /*************************************/
+      /******  S Y N C   P O I N T  ********/
+      /******  S Y N C   P O I N T  ********/
+      /******  S Y N C   P O I N T  ********/
+      /*************************************/
+  
+      /*-----------------------------------------------------------------*/
+      /* Note: We can avoid syncing immediately after the DGER, but DGER */
+      /* does use zTS->WORK as its vector. So here is the point where we */
+      /* have to make sure everybody's DGER is done, and they have done  */
+      /* their norm2 work. All threads converge here for the next column */
+      /* and so will be done with their DGER, and zTS->WORK is free.     */
+      /*-----------------------------------------------------------------*/
       while (zTS->dnrm2 < myTS->dnrm2);     /* Wait for zero to finish.       */
 
-
-/*----------------------------------------------------------------------------*/
-/*    At this point, zTS->zDiag is valid.                                     */
-/*    However, if we are going to skip the column because SSQ == 0, then we   */
-/*    will require another synchronization in order to make sure everybody    */
-/*    sees the SSQ before we replace it.                                      */
-/*----------------------------------------------------------------------------*/
-      if (zTS->SSQ == 0.)                   /* If result was zero,            */
+      /*-------------------------------------------------------------*/
+      /* At this point, zTS->SSQ is computed. If it is zero, then no */
+      /* rotation is needed, and TAU should be set to zero, and we   */
+      /* just skip to the next column.                               */
+      /* HOWEVER, core zero may be fast on the next compare, and     */
+      /* change zTS->SSQ before some other core gets a chance to see */
+      /* it was zero. So we must have a barrier here before we go on.*/
+      /*                                                             */
+      /* In Complex we require both SSQ == 0 and IMAG(A[i,i]) == 0.  */
+      /*-------------------------------------------------------------*/
+      /* If H should be Identity, set TAU to zero and go to next column. */
+      #ifdef TREAL 
+      if (zTS->SSQ == 0.)
+      #else /* COMPLEX */
+      if (zTS->SSQ == 0. && zTS->zDiag[1] == 0.)
+      #endif /* REAL or CPLX */
       {
          zees = myRank;                     /* Init the test flags.           */
          pair = 1;                          /* Starting pair.                 */
@@ -9825,117 +9833,208 @@ static void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
             pair <<= 1;                     /* Double the pair idx.           */
          }
 
-         if (myRank == 0)
+         if (myRank == 0)                   /* Restore A[i,i] we replaced w 1.*/
          {
             #ifdef TREAL
             *(A) =  zTS->zDiag;
+            TAU[i] = 0.;                    /* clear TAU so H[i]=Identity.    */
             #else
             *(A )  = zTS->zDiag[0];
             *(A+1) = zTS->zDiag[1];
+            TAU[(i SHIFT)] = 0.;            /* clear TAU so H[i]=Identity.    */
+            TAU[(i SHIFT)+1] = 0.;
             #endif
          }
 
          myTS->dnrm2++;                     /* Signal I am done.              */
          while (zTS->dnrm2 < myTS->dnrm2);  /* Wait for zero to finish.       */
-         continue;                          /* ..Nothing to do on column.     */
-      }
+         continue;                          /* ..Proceed to next column.      */
+      } /* END if H=Identity no need to process column. */
 
+/*----------------------------------------------------------------------------*/
+/* Here, H is not identity, we 'continued' the loop if it was.                */
+/*----------------------------------------------------------------------------*/
       XNORM = (zTS->Scale)*sqrt(zTS->SSQ);  /* Compute the norm.              */
 
+      #ifdef TREAL
 /*----------------------------------------------------------------------------*/
-/* The following code is inlined from ATL_larfg.                              */
-/* Here, SSQ is non-zero, we exited the loop above if that occurred.          */
-/*----------------------------------------------------------------------------*/
-   #ifdef TREAL
-/*----------------------------------------------------------------------------*/
-/*    The following code is inlined from ATL_larfg.                           */
+/*    The following code is inlined from ATL_larfg; the main difference is    */
+/*    that we use zTS->zDiag instead of ALPHA, and recompute is parallel.     */
 /*----------------------------------------------------------------------------*/
       BETAp = ATL_lapy2((zTS->zDiag), XNORM);    /* Get sqrt(a^2+b^2)         */
-      BETA = BETAp;                              /* Assume diagonal < 0       */
-      if ((zTS->zDiag) < 0.) BETA = 0.-BETAp;    /* Change sign.              */
+      BETA = BETAp;                              /* Assume diagonal < 0 ...   */
+      if ((zTS->zDiag) >= 0.) BETA = -BETAp;     /* .. If >= 0, change sign.  */
 
-      ALPHA = zTS->zDiag + BETA;
-      if ( BETA < 0.0)
+      KNT = 0;                                   /* Init power to zero. */
+      if (BETAp < ATL_laSAFMIN)
       {
-         BETA = 0. - BETA;
-         myTAUi = (0. - ALPHA)/BETA;
+         RSAFMN = ATL_rone / ATL_laSAFMIN;       /* Set a maximum. */
+
+         /*---------------------------------------------------------------*/
+         /* BETAp is the same for all cores, so this loop can be executed */
+         /* independently. However, XNORM must be computed in concert.    */
+         /* The new BETAp will be at most 1, at least SAFMIN.             */
+         /*---------------------------------------------------------------*/
+         while (BETAp < ATL_laSAFMIN)
+         {
+            KNT++;                              /* increment power. */
+            if ( myTS->active == 1)             /* If I am active, */
+            {
+               cblas_scal(mScale, RSAFMN,  
+                                    scaleA, 1); /* Scale my share. */
+            }
+
+            BETA *= RSAFMN;
+            BETAp *= RSAFMN;
+            if (myRank==0) zTS->zDiag *= RSAFMN;   /* Only done by core 0! */
+         }
+
+         ATL_geqr2_dnrm2(myTS);                /* Do my share of new norm2. */
+
+         zees = myRank;                        /* Init the test flags.    */
+         pair = 1;                             /* Starting pair.          */
+         while ( (zees & 1) == 0 &&            /* If I must wait on pair, */
+            (myRank)+pair < ATL_NTHREADS)      /* ..and pair exists,      */
+         {
+            ptnr = myTS+pair;                  /* Point at my partner.    */
+
+            if (ptnr->active == 1)             /* If ptnr was used,       */
+            {
+               while (ptnr->dnrm2 <= myTS->dnrm2);  /* Wait for it.       */
+                  dnrm2_combine;
+            }
+
+            zees >>= 1;                        /* Shift a zero out.       */
+            pair <<= 1;                        /* Double the pair idx.    */
+         }
+
+         myTS->dnrm2++;                        /* Signal I am done.       */
+
+         /*************************************/
+         /******  S Y N C   P O I N T  ********/
+         /******  S Y N C   P O I N T  ********/
+         /******  S Y N C   P O I N T  ********/
+         /*************************************/
+         while (zTS->dnrm2 < myTS->dnrm2);         /* Wait on zero to finish. */
+  
+         XNORM = (zTS->Scale)*sqrt(zTS->SSQ);      /* Compute the norm. */
+         BETAp = ATL_lapy2((zTS->zDiag), XNORM);   /* Get sqrt(a^2+b^2) */
+         BETA = BETAp;                             /* Assume diagonal < 0 ... */
+         if ((zTS->zDiag) >= 0.) BETA = 0.-BETAp;  /* ..If >= 0, change sign. */
       }
-      else
-      {
-         ALPHA = XNORM * (XNORM/(ALPHA));
-         myTAUi   = ALPHA/BETA;
-         ALPHA = 0.0 - ALPHA ;
-      }
 
-      if (myRank == 0) TAU[i] = myTAUi;     /* Set if rank zero.              */
+      myTAUi = (BETA-(zTS->zDiag)) / BETA;         /* Compute TAU[i]. */
+      if (myRank == 0) TAU[i] = myTAUi;            /* Set if I own TAU. */
 
-      wfact = 1./(ALPHA);                   /* Compute scaling factor.        */
-
+      sc = ATL_rone/((zTS->zDiag)-BETA);           /* Find scaling factor. */
       if ( myTS->active == 1)
       {
-         cblas_scal(mScale, wfact, scaleA, 1);   /* Scale the vector.         */
+         cblas_scal(mScale, sc, scaleA, 1);        /* Scale the vector. */
       }
 
-      if (myRank == 0) AII = BETA;          /* If core 0, remember.           */
-   #else
-      ALPHAR =  zTS->zDiag[0];
-      ALPHAI =  zTS->zDiag[1];
-
-      BETAp = ATL_lapy3(zTS->zDiag[0], zTS->zDiag[1], XNORM); 
-                                            /* Get sqrt(a^2+b^2,c^2)          */
-
-      BETA = BETAp;                         /* Assume diagonal < 0            */
-      if ((zTS->zDiag[0]) < 0.) BETA = 0.-BETAp; /* Change sign ..            */
-
-      ALPHA = zTS->zDiag[0] + BETA;
-      if ( BETA < 0.0)
+      if (myRank == 0)                             /* If I own diagonal, */
       {
-         BETA = 0. - BETA;
-         myTAUi[0] = (0. - ALPHA)/BETA;
-         myTAUi[1] = (0. - zTS->zDiag[1])/BETA;
+         AII = BETA;                               /* Set new A[i,i] element. */
+         for (j=0; j<KNT; j++)                     /* Rescaling loop...       */
+            AII *= ATL_laSAFMIN;                   /* ...Adjust it.           */
       }
-      else
+
+   #else /* COMPLEX VERSION of LARFG, modeled on clarfg.f. */
+      ALPHAR =  zTS->zDiag[0];                     /* Real portion. */
+      ALPHAI =  zTS->zDiag[1];                     /* Imaginary portion. */
+
+      BETAp = ATL_lapy3(ALPHAR, ALPHAI, XNORM);    /* sqrt(a^2+b^2,c^2) */
+      BETA = BETAp;                                /* Assume ALPHAR < 0.*/
+      if (ALPHAR >= 0.) BETA = -BETAp;             /* If >=0, Change sign. */
+
+      KNT = 0;                                     /* Init power to zero. */
+      if (BETAp < ATL_laSAFMIN)
       {
-         ALPHAR = zTS->zDiag[1] * ( zTS->zDiag[1] / ALPHA ) ;
-         ALPHAR = ALPHAR + XNORM * ( XNORM / ALPHA ) ;
+         RSAFMN[0] = ATL_rone/ATL_laSAFMIN;        /* Set a maximum. */
+         RSAFMN[1] = ATL_rzero;                    /* ..for scaling. */
 
-/* TAU = DCMPLX( ALPHR/BETA, -ALPHI/BETA )                                    */
-         myTAUi[0] = ALPHAR/BETA;
-         myTAUi[1] = (0. - zTS->zDiag[1])/BETA;
+         /*---------------------------------------------------------------*/
+         /* BETAp is the same for all cores, so this loop can be executed */
+         /* independently. However, XNORM must be computed in concert.    */
+         /* The new BETAp will be at most 1, at least SAFMIN.             */
+         /*---------------------------------------------------------------*/
+         while (BETAp < ATL_laSAFMIN)
+         {
+            KNT++;                                 /* increment power. */
+            if ( myTS->active == 1)                /* If I am active, */
+            {
+               cblas_scal(mScale, RSAFMN,  
+                                    scaleA, 1);    /* Scale my share. */
+            }
 
-         ALPHA = 0.0 - ALPHAR;
+            BETA *= RSAFMN[0];
+            BETAp *= RSAFMN[0];
+            ALPHAR *= RSAFMN[0];
+            ALPHAI *= RSAFMN[0];
+         }
+
+         ATL_geqr2_dnrm2(myTS);                /* Do my share of new norm2. */
+
+         zees = myRank;                        /* Init the test flags.      */
+         pair = 1;                             /* Starting pair.            */
+         while ( (zees & 1) == 0 &&            /* If I must wait on pair,   */
+            (myRank)+pair < ATL_NTHREADS)      /* ..and pair exists,        */
+         {
+            ptnr = myTS+pair;                  /* Point at my partner.      */
+
+            if (ptnr->active == 1)             /* If ptnr was used,         */
+            {
+               while (ptnr->dnrm2 <= myTS->dnrm2);  /* Wait for it.         */
+                  dnrm2_combine;
+            }
+
+            zees >>= 1;                        /* Shift a zero out.         */
+            pair <<= 1;                        /* Double the pair idx.      */
+         }
+
+         myTS->dnrm2++;                        /* Signal I am done.         */
+
+         /*************************************/
+         /******  S Y N C   P O I N T  ********/
+         /******  S Y N C   P O I N T  ********/
+         /******  S Y N C   P O I N T  ********/
+         /*************************************/
+         while (zTS->dnrm2 < myTS->dnrm2);         /* Wait on zero to finish.*/
+      
+         XNORM = (zTS->Scale)*sqrt(zTS->SSQ);      /* Compute the norm. */
+         BETAp = ATL_lapy3(ALPHAR, ALPHAI, XNORM); /* sqrt(a^2+b^2,c^2) */
+         BETA = BETAp;                             /* Assume ALPHAR < 0.*/
+         if (ALPHAR >= 0.) BETA = 0.-BETAp;        /* If >=0, Change sign. */
       }
 
-      if (myRank == 0)                      /* Set if rank zero.              */
+      myTAUi[0] = (BETA-ALPHAR) / BETA;      /* Compute real part. */
+      myTAUi[1] = (0.-ALPHAI) / BETA;        /* Compute imag part. */
+
+      ALPHADIV[0] = ALPHAR - BETA;           /* prepare for 1/(alpha-beta) */
+      ALPHADIV[1] = ALPHAI;                  /* ...                        */
+      ATL_ladiv(ONE, ALPHADIV, sc);          /* compute scaling factor.    */
+      if (myTS->active == 1)                 /* If I have some of vector,  */
+      {
+         cblas_scal(mScale, sc, scaleA, 1);  /* ..scale it. */
+      }
+
+      if (myRank == 0)                       /* If I own TAU, */
       {
          TAU[(i SHIFT)] = myTAUi[0];
          #ifdef BUILD_LQ2
-            TAU[(i SHIFT) +1] = 0. - myTAUi[1];
+            TAU[(i SHIFT) +1] = -myTAUi[1];  /* LQ2 needs conjugate. */
          #else
-            TAU[(i SHIFT) +1] = myTAUi[1];
+            TAU[(i SHIFT) +1] = myTAUi[1];   /* otherwise use normal. */
          #endif
       }
-      ALPHADIV[0] = ALPHA;
-      ALPHADIV[1] = ALPHAI;
 
-/*    
- *    Perform complex division before scaling the X vector. 
- *    ALPHA will have the result                       
- */
-
-      ATL_ladiv( ONE,  ALPHADIV  ,wfact);
-
-      if ( myTS->active == 1)
+      if (myRank == 0)                       /* If I own diagonal, */
       {
-            cblas_scal(mScale, wfact, scaleA, 1);/* Scale the vector.         */
-      }
-
-      if (myRank == 0)
-      {
-         AII[0] = BETA;                     /* If core 0, remember.           */
+         for (j=0; j<KNT; j++) BETA *= ATL_laSAFMIN;  /* Rescale BETA. */         
+         AII[0] = BETA;                               /* save for later. */
          AII[1] = 0.0;
       }
-   #endif
+   #endif /* COMPLEX version of larfg. */
 
 /*----------------------------------------------------------------------------*/
 /*   Now we apply dlarf, if we are not on the last column. This is            */
@@ -9977,9 +10076,9 @@ static void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       if (i < (N-1) )                       /* If dlarf necessary,            */
    #endif
       {
-         newN = N-i-1;                      /* Width of update array & w.     */
+         newN = N-i-1;                      /* Width of update array & vect w.*/
          MY_gemvT(mUpdate, newN,
-                  ONE,   A+(LDA SHIFT), LDA, A, 1, ZERO, myTS->WORK, 1);      
+                  ONE, A+(LDA SHIFT), LDA, A, 1, ZERO, myTS->WORK, 1);      
 
 /*----------------------------------------------------------------------------*/
 /*       Now combine with other threads.                                      */
@@ -10008,15 +10107,15 @@ static void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
          /******  S Y N C   P O I N T  ******/
          /******  S Y N C   P O I N T  ******/
          /***********************************/
-/*----------------------------------------------------------------------------*/
-/*       We can't start GER until all of                                      */
-/*       'w' is finished. Wait for zero.                                      */
-/*----------------------------------------------------------------------------*/
+         /*---------------------------------*/
+         /* We can't start GER until all of */
+         /* 'w' is finished. Wait for zero. */
+         /*---------------------------------*/
          while (zTS->dgemv < i);            /* Wait for zero to build 'w'.    */
 
-/*----------------------------------------------------------------------------*/
-/*       'w' now in WORK. Use for GER.                                        */
-/*----------------------------------------------------------------------------*/
+         /*---------------------------------*/
+         /* 'w' now in WORK. Use for GER.   */
+         /*---------------------------------*/
          #ifdef TREAL
          MY_ger(mUpdate, newN, 0.-myTAUi, A, 1, zTS->WORK, 1,                
                 A+(LDA SHIFT), LDA);                
@@ -10028,32 +10127,23 @@ static void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
                 A+(LDA SHIFT), LDA);           
          #endif
 
-         #ifdef TREAL
-            if (myRank == 0) *A = AII;      /* Core 0, restore diag now.      */
-         #else
-            if (myRank == 0)
-            {
-               *(A ) = AII[0];              /* Core 0, restore diag now.      */
-               *(A + 1) = AII[1];           /* Core 0, restore diag now.      */
-            }
-         #endif
-/*----------------------------------------------------------------------------*/
-/*       Once we finish it is safe for us to start our                        */
-/*       next column and dnrm2 on our share. We  will                         */
-/*       sync up with other threads to complete that.                         */
-/*----------------------------------------------------------------------------*/
-      } else                      /* END IF we need to apply dlarf.           */
-      {
-         #ifdef TREAL
-            if (myRank == 0) *A = AII;      /* Core 0, restore diag now.      */
-         #else
-            if (myRank == 0)
-            {
-               *(A ) = AII[0];              /* Core 0, restore diag now.      */
-               *(A + 1) = AII[1];           /* Core 0, restore diag now.      */
-            }
-         #endif
-      }
+         /*-----------------------------------------------*/
+         /* Once we finish it is safe for us to start our */
+         /* next column and dnrm2 on our share. We  will  */
+         /* sync up with other threads to complete that.  */
+         /*-----------------------------------------------*/
+      } /* END IF we needed to apply dlarf. */
+      
+      #ifdef TREAL
+         if (myRank == 0) *A = AII;      /* Core 0, restore diag now.      */
+      #else
+         if (myRank == 0)
+         {
+            *(A ) = AII[0];              /* Core 0, restore diag now.      */
+            *(A + 1) = AII[1];           /* Core 0, restore diag now.      */
+         }
+      #endif
+
       /*
        * for computing T,  for LQ replace myTAUi with correct TAU for the 
        * complex part. 
@@ -10129,23 +10219,20 @@ static void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
          int os=(N+3)&(-4);                 /* Find even offset into work.    */
 
          #ifdef TREAL
-         MY_gemvT( mUpdate,  i,              
-         0.-myTAUi,                          
-         A-i*LDA, LDA,                       
-         A, 1, 0.0,                          
-         myTS->WORK+os, 1);                  
+         MY_gemvT(mUpdate, i, 0.-myTAUi, 
+                  A-i*LDA, LDA, A, 1, 0.0, myTS->WORK+os, 1); 
          #else
               #ifdef BUILD_LQ2
                  negTAUi[0]= 0.0 + myTAUi[0];
-                 negTAUi[1]= 0.0 - myTAUi[1]; /* conjugate for complex Not required */
+                 negTAUi[1]= 0.0 - myTAUi[1]; /* conj for cplx Not required */
               #else
                  negTAUi[0]= 0.0 - myTAUi[0];
-                 negTAUi[1]= 0.0 - myTAUi[1]; /* conjugate for complex Not required */
+                 negTAUi[1]= 0.0 - myTAUi[1]; /* conj for cplx Not required */
               #endif
               MY_gemvT(mUpdate,  i, negTAUi, A-(i*(LDA SHIFT)), LDA,          
                        A, 1, ZERO, myTS->WORK+(os SHIFT), 1);       
             
-                          #ifdef BUILD_LQ2
+          #ifdef BUILD_LQ2
 		          for (i_loop = 0; i_loop < i; i_loop++)
 		          {
 		              (myTS->WORK+(os SHIFT))[(i_loop SHIFT) + 0] =
@@ -10199,21 +10286,17 @@ static void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
             cblas_trmv(CblasColMajor, CblasUpper, CblasNoTrans, CblasNonUnit,        
                         i, T, LDT, T+(i*(LDT SHIFT)), 1);                  
 
+            /* Force TAU[i] on diagonal. */
             #ifdef TREAL
-	       *(T+i+i*LDT)=myTAUi;                /* Force TAU[i] on diagonal       */
+	         *(T+i+i*LDT)=myTAUi;
             #else
-               *(T+(i SHIFT)+(i*(LDT SHIFT)))=
-                        myTAUi[0];          /* Force TAU[i] on diagonal.      */
-               *(T+(i SHIFT)+(i*(LDT SHIFT)) + 1)=
-                        myTAUi[1];          /* Force TAU[i] on diagonal.      */
+            *(T+(i SHIFT)+(i*(LDT SHIFT))    ) = myTAUi[0];
+            *(T+(i SHIFT)+(i*(LDT SHIFT)) + 1) = myTAUi[1];
             #endif
 
-         }                        /* ** END IF zero must update T. **         */
-
-      }                                     /* ** END if building T **        */
-   }                                        /* END FOR each column.           */
-
-
+         } /* END IF zero must update T. */
+      } /* END IF building T. */
+   } /* END FOR each column. */
 
 
 /*----------------------------------------------------------------------------*/
@@ -10225,7 +10308,7 @@ static void* ATL_geqr2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    }
 
    return(NULL);                            /* Implicit thread exit.          */
-}                                           /* end *** ATL_geqr2Worker **     */
+} /* END ATL_geqr2Worker() */
 
 
 /**************************************************************************** */
@@ -10311,7 +10394,7 @@ int ATL_tgexx2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
    }
 
    if (b == 0) th = 1;
-   if (th == 1 || (N> M))                             /* If impossible to split,        */
+   if (th == 1 || (N> M))         /* If impossible to split, use serial. */
    {
 
       #ifdef BUILD_LQ2
@@ -10581,6 +10664,7 @@ int ATL_tgexx2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
 #include "atlas_threads.h"
 #include "atlas_tlvl3.h"
 #include "atlas_level2.h"
+#include "atlas_lamch.h"
 #include "math.h"
 #include "errno.h"
 
@@ -10864,17 +10948,18 @@ static void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    int   myCopy=myTS->copy;   
    volatile ATL_DGEQL2_t *ptnr;             /* partner log2 combine.          */
    TYPE  *A, *scaleA, *T;                   /* Work variables.                */
-   TYPE XNORM, BETA, BETAp, RSAFMN;
-   TYPE *TAU = myTS->TAU;                   /* Short cut.                     */
+   TYPE XNORM, BETA, BETAp;
+   TYPE *TAU = myTS->TAU;                   /* Short cut.              */
    TYPE ALPHA;
+   TYPE w;
 
    #ifdef TREAL
       const TYPE ONE = ATL_rone;
       TYPE AII ;
       TYPE TAUVAL ;
       TYPE myTAUi;
-      TYPE w;                               /* Scaling Factor                 */
-      TYPE wfact;                           /* Scaling Factor                 */
+      TYPE sc;
+      TYPE RSAFMN;
       const TYPE ZERO = ATL_rzero;
    #else
       const TYPE ONE[2] = {ATL_rone, ATL_rzero};
@@ -10885,8 +10970,8 @@ static void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 
       TYPE ALPHAI, ALPHAR;
       TYPE ALPHADIV[2] ;
-      TYPE w;                               /* Scaling Factor                 */
-      TYPE wfact[2];                        /* Scaling Factor                 */
+      TYPE sc[2];
+      TYPE RSAFMN[2];
       const TYPE ZERO[2] = {ATL_rzero, ATL_rzero};
    #endif
 
@@ -10964,29 +11049,38 @@ static void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 
       myTS->dnrm2++;                        /* Signal I am done.              */
 
+
       /****************************************/
       /********  S Y N C   P O I N T  *********/
       /********  S Y N C   P O I N T  *********/
       /********  S Y N C   P O I N T  *********/
       /****************************************/
-/*----------------------------------------------------------------------------*/
-/*    Note: We want to avoid syncing after DGER, but                          */
-/*    it is using zTS->WORK as one vector. So it is                           */
-/*    important zTS->WORK is NOT corrupted before this                        */
-/*    sync. All threads converge here for the next col                        */
-/*    and so will be done with zTS->WORK at this point                        */
-/*    and each individually will be ready to start its                        */
-/*    dnrm2 work on its share.                                                */
-/*----------------------------------------------------------------------------*/
+
+      /*-----------------------------------------------------------------*/
+      /* Note: We can avoid syncing immediately after the DGER, but DGER */
+      /* does use zTS->WORK as its vector. So here is the point where we */
+      /* have to make sure everybody's DGER is done, and they have done  */
+      /* their norm2 work. All threads converge here for the next column */
+      /* and so will be done with their DGER, and zTS->WORK is free.     */
+      /*-----------------------------------------------------------------*/
       while (zTS->dnrm2 < myTS->dnrm2);     /* Wait for zero to finish.       */
 
-/*----------------------------------------------------------------------------*/
-/*    At this point, zTS->zDiag is valid.                                     */
-/*    However, if we are going to skip the column because SSQ == 0, then we   */
-/*    will require another synchronization in order to make sure everybody    */
-/*    sees the SSQ before we replace it.                                      */
-/*----------------------------------------------------------------------------*/
-      if (zTS->SSQ == 0.)                   /* If result was zero,            */
+      /*-------------------------------------------------------------*/
+      /* At this point, zTS->SSQ is computed. If it is zero, then no */
+      /* rotation is needed, and TAU should be set to zero, and we   */
+      /* just skip to the next column.                               */
+      /* HOWEVER, core zero may be fast on the next compare, and     */
+      /* change zTS->SSQ before some other core gets a chance to see */
+      /* it was zero. So we must have a barrier here before we go on.*/
+      /*                                                             */
+      /* In Complex we require both SSQ == 0 and IMAG(A[i,i]) == 0.  */
+      /*-------------------------------------------------------------*/
+      /* If H should be Identity, set TAU to zero and go to next column. */
+      #ifdef TREAL
+      if (zTS->SSQ == 0.)
+      #else /* COMPLEX */
+      if (zTS->SSQ == 0. && zTS->zDiag[1] == 0.)
+      #endif /* REAL or CPLX */
       {
          zees = myRank;                     /* Init the test flags.           */
          pair = 1;                          /* Starting pair.                 */
@@ -11004,21 +11098,27 @@ static void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
             pair <<= 1;                     /* Double the pair idx.           */
          }
 
-         if (myRank == 0)
+         if (myRank == 0)                   /* Replace A[i,i] we repl with 1. */
          {
             #ifdef TREAL
             *(A + M -1 - idup) =  myTS->zDiag;
+            TAU[i] = 0.;                    /* clear TAU so H[i]=Identity.    */
             #else
             *(A + ((M -1 - idup) SHIFT)) =  myTS->zDiag[0];
             *(A + ((M -1 - idup) SHIFT) +1) =  myTS->zDiag[1];
+            TAU[(i SHIFT)] = 0.;            /* clear TAU so H[i]=Identity.    */
+            TAU[(i SHIFT)+1] = 0.;
             #endif
          }
 
          myTS->dnrm2++;                     /* Signal I am done.              */
          while (zTS->dnrm2 < myTS->dnrm2);  /* Wait for zero to finish.       */
-         continue;                          /* ..Nothing to do on column.     */
-      }
+         continue;                          /* ..Proceed to next column.      */
+      } /* END if H=Identity no need to process column. */
 
+/*----------------------------------------------------------------------------*/
+/* Here, H is not identity, we 'continued' the loop if it was.                */
+/*----------------------------------------------------------------------------*/
       XNORM = (zTS->Scale)*sqrt(zTS->SSQ);  /* Compute the norm.              */
 
 /*----------------------------------------------------------------------------*/
@@ -11028,98 +11128,185 @@ static void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 
    #ifdef TREAL
 /*----------------------------------------------------------------------------*/
-/*    The following code is inlined from ATL_larfg.                           */
+/*    The following code is inlined from ATL_larfg; the main difference is    */
+/*    that we use zTS->zDiag instead of ALPHA, and recompute is parallel.     */
 /*----------------------------------------------------------------------------*/
-
       BETAp = ATL_lapy2((zTS->zDiag), XNORM);    /* Get sqrt(a^2+b^2)         */
-/*    Above : already computed using norm                                     */
+      BETA = BETAp;                              /* Assume diagonal < 0 ...   */
+      if ((zTS->zDiag) >= 0.) BETA = -BETAp;     /* .. If >= 0, change sign.  */
 
-      BETA = BETAp;                         /* Assume diagonal < 0            */
-      if ((zTS->zDiag) < 0.) BETA = 0.-BETAp;    /* Change sign ..            */
-      ALPHA = zTS->zDiag + BETA;
-      if ( BETA < 0.0)
+      KNT = 0;                                   /* Init power to zero. */
+      if (BETAp < ATL_laSAFMIN)
       {
-         BETA = 0. - BETA;
-         myTAUi = (0. - ALPHA)/BETA;
+         RSAFMN = ATL_rone / ATL_laSAFMIN;       /* Set a maximum. */
+
+         /*---------------------------------------------------------------*/
+         /* BETAp is the same for all cores, so this loop can be executed */
+         /* independently. However, XNORM must be computed in concert.    */
+         /* The new BETAp will be at most 1, at least SAFMIN.             */
+         /*---------------------------------------------------------------*/
+         while (BETAp < ATL_laSAFMIN)
+         {
+            KNT++;                              /* increment power. */
+            if ( myTS->active == 1)             /* If I am active, */
+            {
+               cblas_scal(mScale, RSAFMN,
+                                    scaleA, 1); /* Scale my share. */
+            }
+
+            BETA *= RSAFMN;
+            BETAp *= RSAFMN;
+            if (myRank==0) zTS->zDiag *= RSAFMN;   /* Only done by core 0! */
+         }
+
+         /* i starts from N -1. */
+         ATL_geql2_dnrm2_ql(myTS);             /* Do my share of new norm2. */
+
+         zees = myRank;                        /* Init the test flags.    */
+         pair = 1;                             /* Starting pair.          */
+         while ( (zees & 1) == 0 &&            /* If I must wait on pair, */
+            (myRank)+pair < ATL_NTHREADS)      /* ..and pair exists,      */
+         {
+            ptnr = myTS+pair;                  /* Point at my partner.    */
+
+            if (ptnr->active == 1)             /* If ptnr was used,       */
+            {
+               while (ptnr->dnrm2 <= myTS->dnrm2);  /* Wait for it.       */
+                  dnrm2_combine_ql;
+            }
+
+            zees >>= 1;                        /* Shift a zero out.       */
+            pair <<= 1;                        /* Double the pair idx.    */
+         }
+
+         myTS->dnrm2++;                        /* Signal I am done.       */
+
+         /*************************************/
+         /******  S Y N C   P O I N T  ********/
+         /******  S Y N C   P O I N T  ********/
+         /******  S Y N C   P O I N T  ********/
+         /*************************************/
+         while (zTS->dnrm2 < myTS->dnrm2);         /* Wait on zero to finish. */
+
+         XNORM = (zTS->Scale)*sqrt(zTS->SSQ);      /* Compute the norm. */
+         BETAp = ATL_lapy2((zTS->zDiag), XNORM);   /* Get sqrt(a^2+b^2) */
+         BETA = BETAp;                             /* Assume diagonal < 0 ... */
+         if ((zTS->zDiag) >= 0.) BETA = 0.-BETAp;  /* ..If >= 0, change sign. */
       }
-      else
-      {
-         ALPHA = XNORM * (XNORM/(ALPHA));
-         myTAUi   = ALPHA/BETA;
-         ALPHA = 0.0 - ALPHA ;
-      }
 
-      if (myRank == 0) TAU[i] = myTAUi;     /* Set if rank zero.              */
+      myTAUi = (BETA-(zTS->zDiag)) / BETA;         /* Compute TAU[i]. */
+      if (myRank == 0) TAU[i] = myTAUi;            /* Set if I own TAU. */
 
-      wfact = 1./(ALPHA);                   /* Compute scaling factor.        */
-
+      sc = ATL_rone/((zTS->zDiag)-BETA);           /* Find scaling factor. */
       if ( myTS->active == 1)
       {
-         cblas_scal(mScale, wfact, scaleA, 1);  /* Scale the vector.          */
+         cblas_scal(mScale, sc, scaleA, 1);        /* Scale the vector. */
       }
 
-      if (myRank == 0) AII = BETA;          /* If core 0, remember.           */
-   #else
-      ALPHAR =  zTS->zDiag[0];
-      ALPHAI =  zTS->zDiag[1];
-
-      BETAp = ATL_lapy3(zTS->zDiag[0], zTS->zDiag[1], XNORM); 
-                                                     /* Get sqrt(a^2+b^2,c^2) */
-/*    Above : already computed using norm                                     */
-
-      BETA = BETAp;                         /* Assume diagonal < 0            */
-      if ((zTS->zDiag[0]) < 0.) BETA = 0.-BETAp; /* Change sign ..            */
-
-      ALPHA = zTS->zDiag[0] + BETA;
-      if ( BETA < 0.0)
+      if (myRank == 0)                             /* If I own diagonal, */
       {
-         BETA = 0. - BETA;
-         myTAUi[0] = (0. - ALPHA)/BETA;
-         myTAUi[1] = (0. - zTS->zDiag[1])/BETA;
-      }
-      else
-      {
-         ALPHAR = zTS->zDiag[1] * ( zTS->zDiag[1] / ALPHA ) ;
-         ALPHAR = ALPHAR + XNORM * ( XNORM / ALPHA ) ;
-
-/*       TAU = DCMPLX( ALPHR/BETA, -ALPHI/BETA )                              */
-         myTAUi[0] = ALPHAR/BETA;
-         myTAUi[1] = (0. - zTS->zDiag[1])/BETA;
-
-         ALPHA = 0.0 - ALPHAR;
+         AII = BETA;                               /* Set new A[i,i] element. */
+         for (j=0; j<KNT; j++)                     /* Rescaling loop...       */
+            AII *= ATL_laSAFMIN;                   /* ...Adjust it.           */
       }
 
+   #else /* COMPLEX VERSION of LARFG, modeled on clarfg.f. */
+      ALPHAR =  zTS->zDiag[0];                     /* Real portion. */
+      ALPHAI =  zTS->zDiag[1];                     /* Imaginary portion. */
 
-      if (myRank == 0)                      /* Set if rank zero.              */
+      BETAp = ATL_lapy3(ALPHAR, ALPHAI, XNORM);    /* sqrt(a^2+b^2,c^2) */
+      BETA = BETAp;                                /* Assume ALPHAR < 0.*/
+      if (ALPHAR >= 0.) BETA = -BETAp;             /* If >=0, Change sign. */
+
+      KNT = 0;                                     /* Init power to zero. */
+      if (BETAp < ATL_laSAFMIN)
       {
+         RSAFMN[0] = ATL_rone/ATL_laSAFMIN;        /* Set a maximum. */
+         RSAFMN[1] = ATL_rzero;                    /* ..for scaling. */
 
-/*      Taking conjugate for TAU for RQ                                       */
-/*      This value is passed as output                                        */ 			 
-	     #ifdef BUILD_RQ2
-            TAU[(i SHIFT)] = myTAUi[0];
-            TAU[(i SHIFT) +1] = 0 - myTAUi[1];
-         #else 
-            TAU[(i SHIFT)] = myTAUi[0];
-            TAU[(i SHIFT) +1] = myTAUi[1];
+         /*---------------------------------------------------------------*/
+         /* BETAp is the same for all cores, so this loop can be executed */
+         /* independently. However, XNORM must be computed in concert.    */
+         /* The new BETAp will be at most 1, at least SAFMIN.             */
+         /*---------------------------------------------------------------*/
+         while (BETAp < ATL_laSAFMIN)
+         {
+            KNT++;                                 /* increment power. */
+            if ( myTS->active == 1)                /* If I am active, */
+            {
+               cblas_scal(mScale, RSAFMN,
+                                    scaleA, 1);    /* Scale my share. */
+            }
+
+            BETA *= RSAFMN[0];
+            BETAp *= RSAFMN[0];
+            ALPHAR *= RSAFMN[0];
+            ALPHAI *= RSAFMN[0];
+         }
+
+         /* i starts from N -1. */
+         ATL_geql2_dnrm2_ql(myTS);             /* Do my share of new norm2. */
+
+         zees = myRank;                        /* Init the test flags.      */
+         pair = 1;                             /* Starting pair.            */
+         while ( (zees & 1) == 0 &&            /* If I must wait on pair,   */
+            (myRank)+pair < ATL_NTHREADS)      /* ..and pair exists,        */
+         {
+            ptnr = myTS+pair;                  /* Point at my partner.      */
+
+            if (ptnr->active == 1)             /* If ptnr was used,         */
+            {
+               while (ptnr->dnrm2 <= myTS->dnrm2);  /* Wait for it.         */
+                  dnrm2_combine_ql;
+            }
+
+            zees >>= 1;                        /* Shift a zero out.         */
+            pair <<= 1;                        /* Double the pair idx.      */
+         }
+
+         myTS->dnrm2++;                        /* Signal I am done.         */
+
+         /*************************************/
+         /******  S Y N C   P O I N T  ********/
+         /******  S Y N C   P O I N T  ********/
+         /******  S Y N C   P O I N T  ********/
+         /*************************************/
+         while (zTS->dnrm2 < myTS->dnrm2);         /* Wait on zero to finish.*/
+
+         XNORM = (zTS->Scale)*sqrt(zTS->SSQ);      /* Compute the norm. */
+         BETAp = ATL_lapy3(ALPHAR, ALPHAI, XNORM); /* sqrt(a^2+b^2,c^2) */
+         BETA = BETAp;                             /* Assume ALPHAR < 0.*/
+         if (ALPHAR >= 0.) BETA = 0.-BETAp;        /* If >=0, Change sign. */
+      }
+
+      myTAUi[0] = (BETA-ALPHAR) / BETA;      /* Compute real part. */
+      myTAUi[1] = (0.-ALPHAI) / BETA;        /* Compute imag part. */
+
+      ALPHADIV[0] = ALPHAR - BETA;           /* prepare for 1/(alpha-beta) */
+      ALPHADIV[1] = ALPHAI;                  /* ...                        */
+      ATL_ladiv(ONE, ALPHADIV, sc);          /* compute scaling factor.    */
+      if (myTS->active == 1)                 /* If I have some of vector,  */
+      {
+         cblas_scal(mScale, sc, scaleA, 1);  /* ..scale it. */
+      }
+
+      if (myRank == 0)                       /* If I own TAU, */
+      {
+         TAU[(i SHIFT)] = myTAUi[0];
+         #ifdef BUILD_RQ2
+            TAU[(i SHIFT) +1] = -myTAUi[1];  /* RQ2 needs conjugate. */
+         #else
+            TAU[(i SHIFT) +1] = myTAUi[1];   /* otherwise use normal. */
          #endif
       }
-      ALPHADIV[0] = ALPHA;
-      ALPHADIV[1] = ALPHAI;
 
-/*    Perform complex division before scaling the X vector                    */
-      ATL_ladiv( ONE,  ALPHADIV  ,wfact);       /* ALPHA will have the result */
-
-      if ( myTS->active == 1)
+      if (myRank == 0)                       /* If I own diagonal, */
       {
-         cblas_scal(mScale, wfact, scaleA, 1);  /* Scale the vector.          */
-      }
-
-      if (myRank == 0)
-      {
-         AII[0] = BETA;                     /* If core 0, remember.           */
+         for (j=0; j<KNT; j++) BETA *= ATL_laSAFMIN;  /* Rescale BETA. */
+         AII[0] = BETA;                               /* save for later. */
          AII[1] = 0.0;
       }
-   #endif
+   #endif /* COMPLEX version of larfg. */
 
 /*----------------------------------------------------------------------------*/
 /* Now we apply dlarf, if we are not on the last column. This is              */
@@ -11334,8 +11521,8 @@ static void* ATL_geql2Worker(ATL_LAUNCHSTRUCT_t *lp, void *vp)
             #ifdef BUILD_RQ2
                 for (i_loop = 0; i_loop < idup; i_loop++)
                 {
-                     (myTS->WORK+(os SHIFT))[(i_loop SHIFT) + 0] = 
-                                 0.0 - (myTS->WORK+(os SHIFT))[(i_loop SHIFT) + 0];
+                     (myTS->WORK+(os SHIFT))[(i_loop SHIFT)    ] = 
+                         -(myTS->WORK+(os SHIFT))[(i_loop SHIFT)    ];
                 }
             #endif
          #endif
@@ -11495,7 +11682,7 @@ int ATL_tgexx2(int M, int N, TYPE *A, int LDA, TYPE *TAU, TYPE *WORK,
    }
 
    if (b == 0) th = 1;
-   if (th == 1 || (M < N) )                             /* If impossible to split,        */
+   if (th == 1 || (M < N) )       /* If impossible to split, use serial. */
    {
 
       #ifdef BUILD_RQ2
