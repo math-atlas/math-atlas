@@ -99,9 +99,9 @@
       LOGICAL            LTEST( NSUBS )
       CHARACTER*6        SNAMES( NSUBS )
 *     .. External Functions ..
-      REAL               SDIFF
+      REAL               SDIFF, slamch
       LOGICAL            LCE
-      EXTERNAL           SDIFF, LCE
+      EXTERNAL           SDIFF, LCE, slamch
 *     .. External Subroutines ..
       EXTERNAL           CCHK1, CCHK2, CCHK3, CCHK4, CCHK5, CCHK6,
      $                   CCHKE, CMVCH
@@ -240,14 +240,15 @@
 *
 *     Compute EPS (the machine precision).
 *
-      EPS = RONE
-   90 CONTINUE
-      IF( SDIFF( RONE + EPS, RONE ).EQ.RZERO )
-     $   GO TO 100
-      EPS = RHALF*EPS
-      GO TO 90
-  100 CONTINUE
-      EPS = EPS + EPS
+*      EPS = RONE
+*   90 CONTINUE
+*      IF( SDIFF( RONE + EPS, RONE ).EQ.RZERO )
+*     $   GO TO 100
+*      EPS = RHALF*EPS
+*      GO TO 90
+*  100 CONTINUE
+*      EPS = EPS + EPS
+      eps = slamch('e')
       WRITE( NOUT, FMT = 9998 )EPS
 *
 *     Check the reliability of CMVCH using exact data.

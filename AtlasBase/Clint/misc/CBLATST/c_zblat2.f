@@ -99,9 +99,9 @@
       LOGICAL            LTEST( NSUBS )
       CHARACTER*12       SNAMES( NSUBS )
 *     .. External Functions ..
-      DOUBLE PRECISION   DDIFF
+      DOUBLE PRECISION   DDIFF, dlamch
       LOGICAL            LZE
-      EXTERNAL           DDIFF, LZE
+      EXTERNAL           DDIFF, LZE, dlamch
 *     .. External Subroutines ..
       EXTERNAL           ZCHK1, ZCHK2, ZCHK3, ZCHK4, ZCHK5, ZCHK6,
      $                   CZ2CHKE, ZMVCH
@@ -252,14 +252,15 @@
 *
 *     Compute EPS (the machine precision).
 *
-      EPS = RONE
-   90 CONTINUE
-      IF( DDIFF( RONE + EPS, RONE ).EQ.RZERO )
-     $   GO TO 100
-      EPS = RHALF*EPS
-      GO TO 90
-  100 CONTINUE
-      EPS = EPS + EPS
+*      EPS = RONE
+*   90 CONTINUE
+*      IF( DDIFF( RONE + EPS, RONE ).EQ.RZERO )
+*     $   GO TO 100
+*      EPS = RHALF*EPS
+*      GO TO 90
+*  100 CONTINUE
+*      EPS = EPS + EPS
+      eps = dlamch('e')
       WRITE( NOUT, FMT = 9998 )EPS
 *
 *     Check the reliability of ZMVCH using exact data.

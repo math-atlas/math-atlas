@@ -73,9 +73,9 @@
       LOGICAL            LTEST( NSUBS )
       CHARACTER*12       SNAMES( NSUBS )
 *     .. External Functions ..
-      DOUBLE PRECISION   DDIFF
+      DOUBLE PRECISION   DDIFF, dlamch
       LOGICAL            LDE
-      EXTERNAL           DDIFF, LDE
+      EXTERNAL           DDIFF, LDE, dlamch
 *     .. External Subroutines ..
       EXTERNAL           DCHK1, DCHK2, DCHK3, DCHK4, DCHK5, CD3CHKE,
      $			 DMMCH
@@ -198,13 +198,14 @@
 *
 *     Compute EPS (the machine precision).
 *
-      EPS = ONE
-   70 CONTINUE
-      IF( DDIFF( ONE + EPS, ONE ).EQ.ZERO )
-     $   GO TO 80
-      EPS = HALF*EPS
-      GO TO 70
-   80 CONTINUE
+*      EPS = ONE
+*   70 CONTINUE
+*      IF( DDIFF( ONE + EPS, ONE ).EQ.ZERO )
+*     $   GO TO 80
+*      EPS = HALF*EPS
+*      GO TO 70
+*   80 CONTINUE
+      eps = dlamch('e')
       EPS = EPS + EPS
       WRITE( NOUT, FMT = 9998 )EPS
 *
