@@ -645,14 +645,14 @@ enum OSTYPE {OSOther=0, OSLinux, OSSunOS, OSSunOS4, OSOSF1, OSIRIX, OSAIX,
 enum ARCHFAM {AFOther=0, AFPPC, AFSPARC, AFALPHA, AFX86, AFIA64, AFMIPS, 
               AFARM, AFS390};
 
-#define NMACH 46
+#define NMACH 47
 static char *machnam[NMACH] = 
    {"UNKNOWN", "POWER3", "POWER4", "POWER5", "PPCG4", "PPCG5", 
     "POWER6", "POWER7", "IBMz9", "IBMz10", "IBMz196",
     "x86x87", "x86SSE1", "x86SSE2", "x86SSE3",
     "P5", "P5MMX", "PPRO", "PII", "PIII", "PM", "CoreSolo", 
     "CoreDuo", "Core2Solo", "Core2", "Corei1", "Corei2", "Atom", "P4", "P4E", 
-    "Efficeon", "K7", "HAMMER", "AMD64K10h", "UNKNOWNx86", 
+    "Efficeon", "K7", "HAMMER", "AMD64K10h", "AMDDOZER", "UNKNOWNx86", 
     "IA64Itan", "IA64Itan2",
     "USI", "USII", "USIII", "USIV", "UST2", "UnknownUS", 
     "MIPSR1xK", "MIPSICE9", "ARMv7"};
@@ -663,7 +663,7 @@ enum MACHTYPE {MACHOther, IbmPwr3, IbmPwr4, IbmPwr5, PPCG4, PPCG5,
                IntP5, IntP5MMX, IntPPRO, IntPII, IntPIII, IntPM, IntCoreS,
                IntCoreDuo, IntCore2Solo, IntCore2, IntCorei1, IntCorei2,
                IntAtom, IntP4, IntP4E, TMEff, 
-               AmdAthlon, AmdHammer, Amd64K10h, x86X, 
+               AmdAthlon, AmdHammer, Amd64K10h, AmdDozer, x86X, 
                IA64Itan, IA64Itan2,
                SunUSI, SunUSII, SunUSIII, SunUSIV, SunUST2, SunUSX, 
                MIPSR1xK, /* includes R10K, R12K, R14K, R16K */
@@ -702,14 +702,13 @@ enum F2CNAME {f2c_NamErr=0, f2c_Add_, f2c_Add__, f2c_NoChange, f2c_UpCase};
 enum F2CINT {f2c_IntErr=0, FintCint, FintClong, FintClonglong, FintCshort};
 enum F2CSTRING {f2c_StrErr=0, fstrSun, fstrCray, fstrStructVal, fstrStructPtr};
 
-#define NISA 10
+#define NISA 11
 static char *ISAXNAM[NISA] = 
-   {"", "VSX", "AltiVec", "AVXMAC", "AVX", "SSE3", "SSE2", "SSE1", "3DNow", 
-    "NEON"};
+   {"", "VSX", "AltiVec", "AVXMAC", "AVXFMA4", "AVX", "SSE3", "SSE2", "SSE1", 
+    "3DNow", "NEON"};
 enum ISAEXT 
-   {ISA_None=0, ISA_VSX, ISA_AV, ISA_AVXMAC, ISA_AVX, 
-    ISA_SSE3, ISA_SSE2, ISA_SSE1, ISA_3DNow,
-    ISA_NEON};
+   {ISA_None=0, ISA_VSX, ISA_AV, ISA_AVXMAC, ISA_AVXFMA4, ISA_AVX, 
+    ISA_SSE3, ISA_SSE2, ISA_SSE1, ISA_3DNow, ISA_NEON};
 
 @ROUT atlconf.h asmconf.h
 #define NASMD 9
@@ -2245,6 +2244,12 @@ IRun_SSE3 :
 	$(MAKE) $(atlrun) atldir=$(mydir) exe=xprobe_sse3 args="$(args)" \
                 redir=config0.out
 	- cat config0.out
+IRun_AVXFMA4 :
+	$(CC) $(CCFLAGS) -o xprobe_avxmac $(SRCdir)/backend/probe_dAVX.c \
+              $(SRCdir)/backend/probe_AVXFMA4.S
+	$(MAKE) $(atlrun) atldir=$(mydir) exe=xprobe_avxmac args="$(args)" \
+                redir=config0.out
+	- cat config0.out
 IRun_AVXMAC :
 	$(CC) $(CCFLAGS) -o xprobe_avxmac $(SRCdir)/backend/probe_dAVX.c \
               $(SRCdir)/backend/probe_AVXMAC.S
@@ -2930,7 +2935,7 @@ ATL_asmdecor(do_vsum):
         movupd  %xmm1, 0(%eax)
         ret
 #endif
-@ROUT probe_AVX.S probe_AVXMAC.S
+@ROUT probe_AVX.S probe_AVXMAC.S probe_AVXFMA4.S
 #include "atlas_asm.h"
 #
 # x86 assembler for:
@@ -2949,7 +2954,9 @@ ATL_asmdecor(do_vmacc):
         vaddpd %ymm3, %ymm0, %ymm0
 @ROUT probe_AVXMAC.S
         vfmadd231pd %ymm2, %ymm1, %ymm0         /* z += x*y */
-@ROUT probe_AVX.S probe_AVXMAC.S
+@ROUT probe_AVXFMA4.S
+        vfmaddpd %ymm0, %ymm1, %ymm2, %ymm0     /* z += x*y */
+@ROUT probe_AVX.S probe_AVXMAC.S probe_AVXFMA4.S
         vmovupd %ymm0, 0(%rdi)                  /* store z */
         ret
 #else
@@ -2964,7 +2971,9 @@ ATL_asmdecor(do_vmacc):
         vaddpd %ymm3, %ymm0, %ymm0
 @ROUT probe_AVXMAC.S
         vfmadd231pd %ymm2, %ymm1, %ymm0         /* z += x*y */
-@ROUT probe_AVX.S probe_AVXMAC.S
+@ROUT probe_AVXFMA4.S
+        vfmaddpd %ymm0, %ymm1, %ymm2, %ymm0     /* z += x*y */
+@ROUT probe_AVX.S probe_AVXMAC.S probe_AVXFMA4.S
         vmovupd %xmm0, 0(%eax)                  /* store z */
         ret
 #endif
@@ -6107,6 +6116,8 @@ MACH=AMD64K10h OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc' '-fomit-frame-pointer -mfpmath=sse -msse3 -O2'
 MACH=AMD64K10h OS=Win9x,WinNT LVL=1005 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc' '-fomit-frame-pointer -mfpmath=sse -msse3 -O2'
+MACH=AMDDOZER OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
+   'gcc' '-fomit-frame-pointer -mfpmath=sse -mfma4 -O2 -fno-tree-loop-optimize'
 # UltraSPARC T2
 MACH=UST2 OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,xcc,gcc
    'gcc' '-mcpu=niagara2 -mtune=niagara2 -Os'
