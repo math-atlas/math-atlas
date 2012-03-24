@@ -3678,12 +3678,20 @@ MNLOOP:
         movq    -40(%rsp), %r14
 /*        movq    -48(%rsp), %r15  */
         ret
+@ROUT ATL_smm2x4x256_fma4
+  @define sh @2@
+  @define shp1 @3@
+  @define cplx @SCPLX@
+@ROUT ATL_dmm2x4x256_fma4
+  @define sh @3@
+  @define shp1 @4@
+  @define cplx @DCPLX@
 @ROUT ATL_dmm2x4x256_fma4 ATL_smm2x4x256_fma4
 #include "atlas_asm.h"
 #ifndef ATL_AVXFMA4
    #error "This kernel requires AMD's 4-operand FMAC (FM4)"
 #endif
-#ifdef DCPLX
+#ifdef @(cplx)
    #define CMUL(arg_) 2*arg_
 #else
    #define CMUL(arg_) arg_
@@ -3761,20 +3769,13 @@ ATL_asmdecor(ATL_USERMM):
  */
    #ifdef BETAX
       #define BETAOFF -72
-@ROUT
 @ROUT ATL_smm2x4x256_fma4
         movlhps %xmm1, %xmm1
         unpcklps %xmm1, %xmm1
         movaps  %xmm1, BETAOFF(%rsp)
-  @define sh @2@
-  @define shp1 @3@
-  @define cplx @SCPLX@
 @ROUT ATL_dmm2x4x256_fma4
         unpcklpd        %xmm1, %xmm1
         movapd  %xmm1, BETAOFF(%rsp)
-  @define sh @3@
-  @define shp1 @4@
-  @define cplx @DCPLX@
 @ROUT ATL_dmm2x4x256_fma4 ATL_smm2x4x256_fma4
    #endif
         movq    %rdi, MM0
@@ -3847,62 +3848,62 @@ ALIGN16
          vfmaddps rC13, rA0, rB3, rC03
          movaps -128(pA0,lda), rA1
          vfmaddps rC13, rA1, rB0, rC10
-         #if KB > 2
+         #if KB > 4
             movaps -112(pA0), ra0
          #endif
          vfmaddps rC13, rA1, rB1, rC11
-         #if KB > 2
+         #if KB > 4
             movaps -112(pA0,lda), ra1
          #endif
          vfmaddps rC13, rA1, rB2, rC12
-         #if KB > 2
+         #if KB > 4
             movaps -112(pB0), rB0
          #endif
          vfmaddps rC13, rA1, rB3, rC13
-         #if KB > 2
+         #if KB > 4
             movaps -112(pB0,ldb), rB1
          #endif
 /*
  *       K=4-7
  */
-        #if KB > 2
+        #if KB > 4
            vfmaddps rC00, ra0, rB0, rC00
            movaps -112(pB0,ldb,2), rB2
            vfmaddps rC10, ra1, rB0, rC10
            movaps -112(pB0,ldb3), rB3
            vfmaddps rC01, ra0, rB1, rC01
-           #if KB > 4
+           #if KB > 8
               movaps -96(pA0), rA0
            #endif
            vfmaddps rC11, ra1, rB1, rC11
-           #if KB > 4
+           #if KB > 8
               movaps -96(pA0,lda), rA1
            #endif
            vfmaddps rC02, ra0, rB2, rC02
-           #if KB > 4
+           #if KB > 8
               movaps -96(pB0), rB0
            #endif
            vfmaddps rC12, ra1, rB2, rC12
-           #if KB > 4
+           #if KB > 8
               movaps -96(pB0,ldb), rB1
            #endif
            vfmaddps rC03, ra0, rB3, rC03
-           #if KB > 4
+           #if KB > 8
               movaps -96(pB0,ldb,2), rB2
            #endif
            vfmaddps rC13, ra1, rB3, rC13
-           #if KB > 4
+           #if KB > 8
               movaps -96(pB0,ldb3), rB3
            #endif
         #endif
-        #if KB <= 4
+        #if KB <= 8
         #endif
    @define N @256@
    @iexp off -96 16 +
-   @iexp i 4 0 +
+   @iexp i 8 0 +
    @iwhile i < @(N)
         #if KB > @(i)
-      @iexp i @(i) 2 +
+      @iexp i @(i) 4 +
            vfmaddps rC00, rA0, rB0, rC00
            #if KB > @(i)
               movaps @(off)(pA0), ra0
@@ -3914,21 +3915,21 @@ ALIGN16
            vfmaddps rC01, rA0, rB1, rC01
            #if KB > @(i)
               movaps @(off)(pB0), rB0
-           #elif KB == @(i) && !defined(BETA0)
+           #elif KB == @(i) && defined(BETA1)
            #endif
            vfmaddps rC11, rA1, rB1, rC11
            #if KB > @(i)
               movaps @(off)(pB0,ldb), rB1
-           #elif KB == @(i) && !defined(BETA0)
-   @iif i = 6
+           #elif KB == @(i) && defined(BETA1)
+   @iif i ! 12
            #endif
            vfmaddps rC02, rA0, rB2, rC02
-           #if KB == @(i) && !defined(BETA0)
+           #if KB == @(i) && defined(BETA0)
    @endiif
-   @iif i ! 6
+   @iif i = 12
            #endif
            vfmaddps rC02, rA0, rB2, rC02
-           #if KB == @(i) && !defined(BETA0)
+           #if KB == @(i)
               prefetcht0 (pfB)
               add $64, pfB
    @endiif
@@ -3936,20 +3937,20 @@ ALIGN16
            vfmaddps rC12, rA1, rB2, rC12
            #if KB > @(i)
               movaps @(off)(pB0,ldb,2), rB2
-           #elif KB == @(i) && !defined(BETA0)
+           #elif KB == @(i) && defined(BETA1)
            #endif
            vfmaddps rC03, rA0, rB3, rC03
-           #if KB == @(i) && !defined(BETA0)
+           #if KB == @(i) && defined(BETA1)
            #endif
            vfmaddps rC13, rA1, rB3, rC13
            #if KB > @(i)
               movaps @(off)(pB0,ldb3), rB3
-           #elif KB == @(i) && !defined(BETA0)
+           #elif KB == @(i) && defined(BETA0)
            #endif
         #endif
       @iexp off @(off) 16 +
         #if KB > @(i)
-      @iexp i @(i) 2 +
+      @iexp i @(i) 4 +
            vfmaddps rC00, ra0, rB0, rC00
            #if KB > @(i)
               movaps @(off)(pA0), rA0
@@ -3961,38 +3962,38 @@ ALIGN16
            vfmaddps rC01, ra0, rB1, rC01
            #if KB > @(i)
               movaps @(off)(pB0), rB0
-           #elif KB == @(i) && !defined(BETA0)
+           #elif KB == @(i) && defined(BETA1)
            #endif
            vfmaddps rC11, ra1, rB1, rC11
            #if KB > @(i)
               movaps @(off)(pB0,ldb), rB1
-   @iif i = 8
-           #elif KB == @(i) && !defined(BETA0)
+   @iif i = 16
+           #elif KB == @(i) && defined(BETA1)
            #endif
            vfmaddps rC02, ra0, rB2, rC02
-           #if KB == @(i) && !defined(BETA0)
+           #if KB == @(i)
               prefetcht0 (pfB)
               add $64, pfB
    @endiif
-   @iif i ! 8
-           #elif KB == @(i) && !defined(BETA0)
+   @iif i ! 16
+           #elif KB == @(i) && defined(BETA1)
            #endif
            vfmaddps rC02, ra0, rB2, rC02
-           #if KB == @(i) && !defined(BETA0)
+           #if KB == @(i) && defined(BETA1)
    @endiif
            #endif
            vfmaddps rC12, ra1, rB2, rC12
            #if KB > @(i)
               movaps @(off)(pB0,ldb,2), rB2
-           #elif KB == @(i) && !defined(BETA0)
+           #elif KB == @(i) && defined(BETA1)
            #endif
            vfmaddps rC03, ra0, rB3, rC03
-           #if KB == @(i) && !defined(BETA0)
+           #if KB == @(i) && defined(BETA1)
            #endif
            vfmaddps rC13, ra1, rB3, rC13
            #if KB > @(i)
               movaps @(off)(pB0,ldb3), rB3
-           #elif KB == @(i) && !defined(BETA0)
+           #elif KB == @(i) && defined(BETA1)
            #endif
         #endif
       @iexp off @(off) 16 +
@@ -4001,41 +4002,32 @@ ALIGN16
  *       Add in original C if necessary
  */
          #ifdef BETA1
-            addsd (pC0), rC00
-            addsd CMUL(8)(pC0), rC10
-            addsd (pC0,ldc), rC01
-            addsd CMUL(8)(pC0,ldc), rC11
-            addsd (pC0,ldc,2), rC02
-            addsd CMUL(8)(pC0,ldc,2), rC12
-            addsd (pC0,ldc3), rC03
-            addsd CMUL(8)(pC0,ldc3), rC13
+            addss (pC0), rC00
+            addss CMUL(4)(pC0), rC10
+            addss (pC0,ldc), rC01
+            addss CMUL(4)(pC0,ldc), rC11
+            addss (pC0,ldc,2), rC02
+            addss CMUL(4)(pC0,ldc,2), rC12
+            addss (pC0,ldc3), rC03
+            addss CMUL(4)(pC0,ldc3), rC13
          #elif defined(BETAX)
             movaps BETAOFF(%rsp), rA0
-            vfmaddss rC00, (pC0), rA0, rC00
-            vfmaddss rC10, CMUL(8)(pC0), rA0, rC10
-            vfmaddss rC01, (pC0,ldc), rA0, rC01
-            vfmaddss rC11, CMUL(8)(pC0,ldc), rA0, rC11
-            vfmaddss rC02, (pC0,ldc,2), rA0, rC02
-            vfmaddss rC12, CMUL(8)(pC0,ldc,2), rA0, rC12
-            vfmaddss rC03, (pC0,ldc3), rA0, rC03
-            vfmaddss rC13, CMUL(8)(pC0,ldc3), rA0, rC13
+            xorps ra0, ra0
+            vfmaddss ra0, (pC0), rA0, rB0
+            vfmaddss ra0, CMUL(4)(pC0), rA0, rB1
+            unpcklps rB1, rB0                   /* rB0={0,0,c10,c00} */
+            vfmaddss ra0, (pC0,ldc), rA0, rB2
+            vfmaddss ra0, CMUL(4)(pC0,ldc), rA0, rB3
+            unpcklps rB3, rB2                   /* rB2={0,0,c11,c01} */
+            movlhps  rB2, rB0                   /* rB0={c11,c01,c10,c00} */
+            vfmaddss ra0, (pC0,ldc,2), rA0, rB1
+            vfmaddss ra0, CMUL(4)(pC0,ldc,2), rA0, rB3
+            unpcklps rB3, rB1                   /* rB1={0,0,c12,c02} */
+            vfmaddss ra0, (pC0,ldc3), rA0, rA1
+            vfmaddss ra0, CMUL(4)(pC0,ldc3), rA0, ra1
+            unpcklps ra1, rA1                   /* rA1={0,0,c13,c03} */
+            movlhps  rA1, rB1                   /* rB1={c13,c03,c12,c02} */
          #endif
-         @beginskip
-            movss (pC0), rB0
-            movss CMUL(8)(pC0), rB1
-            unpcklps rB1, rB0           /* rB0 = {0, 0, c10, c00} */
-            movss (pC0,ldc), rB2
-            movss CMUL(8)(pC0,ldc), rB3
-            unpcklps rB3, rB2           /* rB2 = {0, 0, c11, c01} */
-            movlhps  rB2, rB0           /* rB0 = {c11, c01, c10, c00} */
-            movss (pC0,ldc,2), rB1
-            movss CMUL(8)(pC0,ldc,2), rB3
-            unpcklps rB3, rB1           /* rB1 = {0, 0, c12, c02} */
-            movss (pC0,ldc3), ra0
-            movss CMUL(8)(pC0,ldc3), ra1
-            unpcklps ra1, ra0           /* ra0 = {0, 0, c13, c03} */
-            movlhps ra0, rB1            /* rB1 = {c13, c03, c12, c02} */
-         @endskip
 /*
  *       K-loop finished, sum up vectors
  */
@@ -4047,35 +4039,28 @@ ALIGN16
          haddps rC13, rC03    /* rC03 = {c13cd, c13ab, c03cd, c03ab} */
          haddps rC01, rC00    /* rC00 = {c11a-d, c01a-d, c10a-d, c00a-d} */
          haddps rC03, rC02    /* rC02 = {c13a-d, c03a-d, c12a-d, c02a-d} */
-         #ifndef BETA0
-            #ifdef BETAX
-               movaps BETAOFF(%rsp), rA0
-               vfmaddps rC00, rB0, rA0, rC00
-               vfmaddps rC01, rB1, rA0, rC01
-               vfmaddps rC02, rB2, rA0, rC02
-               vfmaddps rC03, rB3, rA0, rC03
-            #else
-               addpd rB0, rC00
-               addpd rB1, rC01
-               addpd rB2, rC02
-               addpd rB3, rC03
-            #endif
+         #ifdef BETAX
+            addps rB0, rC00
+            addps rB1, rC02
          #endif
-         #ifndef DCPLX
-            MOVCPD rC00, (pC0)
-            MOVCPD rC01, (pC0,ldc)
-            MOVCPD rC02, (pC0,ldc,2)
-            MOVCPD rC03, (pC0,ldc3)
-         #else
-            movlpd rC00, (pC0)
-            movhpd rC00, 16(pC0)
-            movlpd rC01, (pC0,ldc)
-            movhpd rC01, 16(pC0,ldc)
-            movlpd rC02, (pC0,ldc,2)
-            movhpd rC02, 16(pC0,ldc,2)
-            movlpd rC03, (pC0,ldc3)
-            movhpd rC03, 16(pC0,ldc3)
-         #endif
+
+                                        /* rC00 = {c11, c01, c10, c00} */
+                                        /* rC02 = {c13, c03, c12, c02} */
+         movss rC00, (pC0)
+         pshufd $0xB1, rC00, rC01       /* rC01 = {C01, c11, c00, c10} */
+         movss rC02, (pC0,ldc,2)
+         pshufd $0xB1, rC02, rC03       /* rC03 = {C03, c13, c02, c12} */
+         movss rC01, CMUL(4)(pC0)
+         movhlps rC00, rC00             /* rC00 = {c11, c01, c11, c01} */
+         movss rC03, CMUL(4)(pC0,ldc,2)
+         movhlps rC02, rC02             /* rC02 = {c13, c03, c13, c03} */
+         movss rC00, (pC0,ldc)
+         movhlps rC01, rC01             /* rC01 = {c01, c11, c01, c11} */
+         movss rC02, (pC0,ldc3)
+         movhlps rC03, rC03             /* rC03 = {c03, c13, c03, c13} */
+         movss rC01, CMUL(4)(pC0,ldc)
+         movss rC03, CMUL(4)(pC0,ldc3)
+   @define eltsz @4@
 @ROUT ATL_dmm2x4x256_fma4
 /*
  *       K=0,1, with rCxx starting at zero
@@ -4175,19 +4160,19 @@ ALIGN16
            #if KB > @(i)
               movapd @(off)(pB0,ldb), rB1
            #elif KB == @(i) && !defined(BETA0)
-   @iif i = 6
+   @iif i ! 6
                movlpd (pC0,ldc),rB1
            #endif
            vfmaddpd rC02, rA0, rB2, rC02
            #if KB == @(i) && !defined(BETA0)
                movhpd CMUL(8)(pC0,ldc),rB1
    @endiif
-   @iif i ! 6
+   @iif i = 6
                movlpd (pC0,ldc),rB1
                movhpd CMUL(8)(pC0,ldc),rB1
            #endif
            vfmaddpd rC02, rA0, rB2, rC02
-           #if KB == @(i) && !defined(BETA0)
+           #if KB == @(i)
               prefetcht0 (pfB)
               add $64, pfB
    @endiif
@@ -4237,7 +4222,7 @@ ALIGN16
                movhpd CMUL(8)(pC0,ldc),rB1
            #endif
            vfmaddpd rC02, ra0, rB2, rC02
-           #if KB == @(i) && !defined(BETA0)
+           #if KB == @(i)
               prefetcht0 (pfB)
               add $64, pfB
    @endiif
@@ -4326,10 +4311,11 @@ ALIGN16
             movlpd rC03, (pC0,ldc3)
             movhpd rC03, 16(pC0,ldc3)
          #endif
+   @define eltsz @8@
 @ROUT ATL_dmm2x4x256_fma4 ATL_smm2x4x256_fma4
 
          lea (pA0,lda,2), pA0
-         add $2*CMUL(8), pC0
+         add $2*CMUL(@(eltsz)), pC0
 
       sub $2, MM
       jnz MNLOOP
