@@ -1457,7 +1457,11 @@ int DoScopeRegAsg(BLIST *scope, int thresh, int *tnig)
    *tnig = CalcScopeIG(scope);
    igs = SortIG(&N, thresh);
    nret = DoIGRegAsg(N, igs);
-CheckIG(N, igs);
+   CheckIG(N, igs);
+#if 0
+   fprintf(stderr,"IG ");
+   DumpIG(stderr,N,igs);
+#endif 
    if (fpIG)
    {
       DumpIG(fpIG, N, igs);
@@ -1556,8 +1560,28 @@ int AsgGlobalLoopVars(LOOPQ *loop, short *iregs, short *fregs, short *dregs)
  * NOTE: only done on innermost loop
  * RETURNS: 0 on success, non-zero on failure.
  */
+
+/*
+ * Majedul: This register assignment doesn't produce correct code for the 
+ * following HIL:
+ *    ... ...
+ *    LOOP_BODY
+ *    x = X[0];
+ *    x = ABS x;
+ *    X[0] = x;
+ *    Y[0] = y;
+ *    X += 1;
+ *    Y += 1;
+ *    LOOP_END
+ *    ... ...
+ * Though a value is stored in stack to implement ABS function, it is not 
+ * considered as variable. So, this function doesn't keep track this. As it
+ * considers all registers as unused, the register used to load ABSVAL is 
+ * in correctly reused to assign variable. 
+ */
+
 {
-   int iv, i, j, k, n;
+   int iv, i, j, k, n, m;
    BLIST *bl;
    INSTQ *ip;
    short *sa, *s;
@@ -1603,6 +1627,7 @@ short id;
       {
          k = STflag[k-1-TNREG];
          k = FLAG2PTYPE(k);
+#if 0    /* previous implementation*/
          if (k == T_INT)
          {
             s = iregs;
@@ -1626,6 +1651,48 @@ short id;
          for (k=0; k != n && s[k]; k++);
          if (k != n)
             s[k] = sa[i] - TNREG;
+         else
+         {
+            fko_error(__LINE__, "Out of regs in global asg, var=%s, file=%s\n",
+                      STname[sa[i]-TNREG], __FILE__);
+            return(1);
+         }
+#endif
+/*    
+ *       Majedul: for float or double variable, ST index is stored in 
+ *       appropriate regs array and store -1 to block the other. for 
+ *       example: if a float variable is assigned, a float register is marked
+ *       and corresponding double register is blocked storing -1  
+ */ 
+         if (k == T_INT)
+         {
+            s = iregs;
+            n = NIR;
+         }
+         else if (k == T_DOUBLE)
+         {
+            s = dregs;
+            n = NDR;
+         }
+         else if (k == T_FLOAT)
+         {
+            s = fregs;
+            n = NFR;
+         }
+         else
+         {
+            fko_error(__LINE__, "Unknown type %d, file=%s\n", k, __FILE__);
+            return(1);
+         }
+         for (m = 0; m != n && s[m]; m++);
+         if (m != n)
+         {
+            s[m] = sa[i] - TNREG;   /* store ST index of the var */
+            #ifdef X86              /* block the alias regs */
+               if (k == T_FLOAT) dregs[m] = -1;
+               if (k == T_DOUBLE) fregs[m] = -1;
+            #endif
+         }
          else
          {
             fko_error(__LINE__, "Out of regs in global asg, var=%s, file=%s\n",
