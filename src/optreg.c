@@ -1256,7 +1256,7 @@ int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
             ip->inst[2] = -ig->reg;
             break;
          default:
-            fprintf(stderr, "\n\nWARNING(%s,%d): inst %d being var2reged!!\n\n",
+            fprintf(stderr,"\n\nWARNING(%s,%d): inst %d being var2reged!!\n\n",
                     __FILE__, __LINE__, ip->inst[0]);
          }
          CalcThisUseSet(ip);
@@ -1560,26 +1560,6 @@ int AsgGlobalLoopVars(LOOPQ *loop, short *iregs, short *fregs, short *dregs)
  * NOTE: only done on innermost loop
  * RETURNS: 0 on success, non-zero on failure.
  */
-
-/*
- * Majedul: This register assignment doesn't produce correct code for the 
- * following HIL:
- *    ... ...
- *    LOOP_BODY
- *    x = X[0];
- *    x = ABS x;
- *    X[0] = x;
- *    Y[0] = y;
- *    X += 1;
- *    Y += 1;
- *    LOOP_END
- *    ... ...
- * Though a value is stored in stack to implement ABS function, it is not 
- * considered as variable. So, this function doesn't keep track this. As it
- * considers all registers as unused, the register used to load ABSVAL is 
- * in correctly reused to assign variable. 
- */
-
 {
    int iv, i, j, k, n, m;
    BLIST *bl;
@@ -1688,7 +1668,7 @@ short id;
          if (m != n)
          {
             s[m] = sa[i] - TNREG;   /* store ST index of the var */
-            #ifdef X86              /* block the alias regs */
+            #ifdef X86                 /* X86: block the alias regs */
                if (k == T_FLOAT) dregs[m] = -1;
                if (k == T_DOUBLE) fregs[m] = -1;
             #endif
@@ -1726,6 +1706,15 @@ void FindInitRegUsage(BLIST *bp, short *iregs, short *fregs, short *dregs)
       fregs[i] = 0;
    for (i=0; i < DREGEND-DREGBEG; i++)
       dregs[i] = 0;
+/*
+ * Majedul: Should check whether the blk info is updated or not!!! 
+ * previous optimization (like: Enforced Load Store) might change the 
+ * blk->uses, blk->defs, etc. So, need to recalculate those staffs  
+ */ 
+   if (!INDEADU2D)
+      CalcAllDeadVariables();
+   else if (!CFUSETU2D || !CFU2D || !INUSETU2D)
+      CalcInsOuts(bbbase);
 /*
  * Find all vars & regs used or defed in all blocks
  */
