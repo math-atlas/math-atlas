@@ -1,12 +1,33 @@
 SHELL = /bin/tcsh
 
 CC = gcc
-#CCFLAGS = -g -m32
-CCFLAGS = -g -m64
+CCFLAGS = -g -m32
+#CCFLAGS = -g -m64
 IFKO = ../bin/fko
 KFLAGS = -U 4 -v
 
-all : ibuild fbuild dbuild hbuild irun frun drun hrun
+all : ibuild fbuild dbuild hbuild svbuild irun frun drun hrun svrun
+
+svbuild : xsvtst0 xsvtst1 xsvtst2 xsvtst3 xsvtst4 xsvtst5
+svrun:
+	./xsvtst0
+	./xsvtst1
+	./xsvtst2
+	./xsvtst3
+	./xsvtst4
+	./xsvtst5
+xsvtst0 : msvtst0.o svtst0.o
+	$(CC) $(CCFLAGS) -o $@ msvtst0.o svtst0.o
+xsvtst1 : msvtst1.o svtst1.o
+	$(CC) $(CCFLAGS) -o $@ msvtst1.o svtst1.o
+xsvtst2 : msvtst2.o svtst2.o
+	$(CC) $(CCFLAGS) -o $@ msvtst2.o svtst2.o
+xsvtst3 : msvtst3.o svtst3.o
+	$(CC) $(CCFLAGS) -o $@ msvtst3.o svtst3.o
+xsvtst4 : msvtst4.o svtst4.o
+	$(CC) $(CCFLAGS) -o $@ msvtst4.o svtst4.o
+xsvtst5 : msvtst5.o svtst5.o
+	$(CC) $(CCFLAGS) -o $@ msvtst5.o svtst5.o
 
 hbuild :xhtst0 xhtst1 xhtst2 xhtst3 xhtst4
 hrun:
