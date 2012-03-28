@@ -160,19 +160,35 @@ void magen
    fprintf(fpout, "}\n");
 }
 
-double matime(char pre, int MAC, int lat, int flops)
+double matime
+(
+   char pre,   /* precision: s,d,q */
+   int MAC,    /* 0: separate mul/add, 1: FMAC */
+   int lat,    /* latency : number of multiply and add registers */
+   int fmf,    /* how many mflops to force during timing */
+   int TIME,   /* 0: return mflops, else return times in seconds */
+   int FRC     /* 1: force retime if output file already there */
+)
 {
    char fnam[128];
    FILE *fp;
    double t0, mflop[NTIM];
    int i, j;
 
-   sprintf(fnam, "res/%cmuladd%d_%d", pre, MAC, lat);
-   fp = fopen(fnam, "r");
+   if (FRC)
+   {
+      sprintf(fnam, "res/%ctmp", pre);
+      fp = NULL;
+   }
+   else
+   {
+      sprintf(fnam, "res/%cmuladd%d_%d", pre, MAC, lat);
+      fp = fopen(fnam, "r");
+   }
    if (!fp)
    {
       FILE *fpout;
-      char maf[16], ln[128];
+      char maf[16], ln[128], flgs[64];
       maf[0] = pre;
       maf[1] = 'm';
       maf[2] = 'u';
@@ -185,9 +201,14 @@ double matime(char pre, int MAC, int lat, int flops)
       maf[9] = '\0';
       fpout = fopen(maf, "w");
       assert(fpout);
-      magen(pre, fpout, flops, MAC, lat);
+      magen(pre, fpout, 256, MAC, lat);
       fclose(fpout);
-      sprintf(ln, "make x%cma outf='%s'", pre, fnam);
+      i = sprintf(ln, "make x%cma outf='%s' flags=\"-m %d", pre, fnam, fmf);
+      if (TIME)
+         i += sprintf(ln+i, " -t 1");
+      ln[i++] = '"';
+      ln[i] = '\0';
+      sprintf(ln+i, "2>&1 > /dev/null");
       assert(!system(ln));
       fp = fopen(fnam, "r");
       assert(fp);
@@ -219,26 +240,246 @@ double matime(char pre, int MAC, int lat, int flops)
  * For walltime, return min time, else return median
  */
    #if defined(PentiumCPS) || defined(WALL)
-      return(mflop[0]);
+      return(TIME ? mflop[NTIM-1] : mflop[0]);
    #else
       return(mflop[NTIM/2]);
    #endif
 }
 
+int FindMflop
+(
+   char pre,   /* precision: s,d,q */
+   int MAC,    /* 0: separate mul/add, 1: FMAC */
+   int lat     /* latency : number of multiply and add registers */
+)
+/*
+ * Finds minimum mflop setting required to get a timing that takes roughly
+ * 0.1 seconds
+ */
+{
+   double tim;
+   int mf, mfn = 1, ratio;
+   printf("Finding how many mflops required to get .025 second timings:\n");
+
+   do
+   {
+      mf = mfn;
+      tim = matime(pre, MAC, lat, mf, 1, 1);
+      printf("   %d: %e\n", mf, tim);
+      mfn = mf<<1;
+   }
+   while(tim < 0.025);
+   printf("FORCE MFLOP=%d, TIME=%e\n\n", mf, tim);
+   return(mf);
+}
+
+FindNreg
+(
+   char pre,   /* precision: s,d,q */
+   int fmf,    /* number of mflops to force timer on */
+   int MAC,    /* 0: separate mul/add, 1: FMAC */
+   int lat     /* latency : number of multiply and add registers */
+)
+/*
+ * Tries to find total number of registers by noticing when performance
+ * goes down with latency increase
+ */
+{
+   double mfmax, mf;
+   int nr;
+
+   printf("FINDING USABLE NREG:\n");
+   nr = 1;
+   mfmax = matime(pre, MAC, nr, fmf, 0, 0);
+   printf("   %3d: %.2f\n", nr+nr, mfmax);
+   do
+   {
+      nr <<= 1;
+      mf = matime(pre, MAC, nr, fmf, 0, 0);
+      printf("   %3d: %.2f\n", nr+nr, mf);
+      if (mf > mfmax)
+         mfmax = mf;
+      else if (1.1*mf < mfmax)
+         break;
+   }
+   while (nr < 256);
+   printf("\n");
+@beginskip
+   if (nr < 256)
+   {
+      int maxreg=nr;
+
+      for (nr = (nr>>1)+1; nr < maxreg; nr++)
+      {
+         mf = matime(pre, MAC, nr, fmf, 0, 1);
+         printf("   %3d: %.2f\n", nr+nr, mf);
+         if (mf > mfmax)
+            mfmax = mf;
+         else if (1.05*mf < mfmax)
+            break;
+      }
+   }
+   nr = nr+nr-2;
+@endskip
+   printf("NREG=%d\n\n", nr);
+   return(nr);
+}
+
+int FindLat
+(
+   char pre,   /* precision: s,d,q */
+   int fmf,    /* number of mflops to force timer on */
+   int MAC,    /* 0: separate mul/add, 1: FMAC */
+   int nreg,   /* max number of registers to try */
+   double *MFMAX
+)
+{
+   double mf, mfmax;
+   int i, latmax = 1;
+
+   printf("FINDING BEST LATENCY, MAC=%d:\n", MAC);
+   mfmax = matime(pre, MAC, 1, fmf, 0, 0);
+   printf("   lat=%d, MFLOPS=%.2f\n", 1, mfmax);
+   for (i=2, nreg >>= 1; i < nreg; i++)
+   {
+      mf = matime(pre, MAC, i, fmf, 0, 0);
+      printf("   lat=%d, MFLOPS=%.2f\n", i, mf);
+      if (mf < mfmax*1.02)
+         break;
+      mfmax = mf;
+      latmax = i;
+   }
+   printf("LAT=%d, MFLOPS=%.2f\n\n", latmax, mfmax);
+   *MFMAX = mfmax;
+   return(latmax);
+}
+
+void PrintUsage(char *xnam)
+{
+   fprintf(stderr, 
+   "USAGE: %s -p <pre> -o <outfile> -F <mflop> -n <nreg> -L <lat> -M <mac>\n",
+           xnam);
+   exit(-1);
+}
+
+char *GetFlags(int nargs, char **args, char *PRE, int *FMF, int *NREG,
+               int *LAT, int *MAC)
+{
+   char *fnam=NULL;
+   int i;
+   *PRE = 'd';
+   *LAT = *FMF = *NREG = 0;
+   *MAC = -1;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0]);
+      switch(args[i][1])
+      {
+      case 'p':
+         if (++i == nargs)
+            PrintUsage(args[0]);
+         *PRE = args[i][0];
+         break;
+      case 'L':
+         if (++i == nargs)
+            PrintUsage(args[0]);
+         *LAT = atoi(args[i]);
+         break;
+      case 'n':
+         if (++i == nargs)
+            PrintUsage(args[0]);
+         *NREG = atoi(args[i]);
+         break;
+      case 'F':
+         if (++i == nargs)
+            PrintUsage(args[0]);
+         *FMF = atoi(args[i]);
+         break;
+      case 'M':
+         if (++i == nargs)
+            PrintUsage(args[0]);
+         *MAC = atoi(args[i]);
+         break;
+      case 'o':
+         if (++i == nargs)
+            PrintUsage(args[0]);
+         fnam = args[i];
+         break;
+      default:
+         PrintUsage(args[0]);
+      }
+   }
+   assert(*PRE == 's' || *PRE == 'd');
+   return(fnam);
+}
+
 int main(int nargs, char **args)
 {
    char pre='d';
-   int MAC=0, lat=1;
-   double mf;
+   int MAC=0, lat=1, fmf, nreg, latMAC, latMA, RUNSRCH=1;
+   double mf, mfMAC, mfMA;
+   char *fnam;
+   FILE *fp;
 
-   if (nargs > 1)
-      pre = args[1][0];
-   if (nargs > 2)
-      MAC = atoi(args[2]);
-   if (nargs > 3)
-      lat = atoi(args[3]);
-   mf = matime(pre, MAC, lat, 128);
-   printf("pre=%c, MAC=%d, lat=%d, mf=%.2f\n", pre, MAC, lat, mf);
+   fnam = GetFlags(nargs, args, &pre, &fmf, &nreg, &lat, &MAC);
+/*
+ * If MAC is set, just time the indicated case and output to screen
+ */
+   if (MAC != -1)
+   {
+      mf = matime(pre, MAC, lat, fmf, 0, 1);
+      printf("pre=%c, MAC=%d, lat=%d, mf=%.2f\n", pre, MAC, lat, mf);
+      exit(0);
+   }
+/*
+ * If user specified a file that already exists, just read in data and run
+ * case
+ */
+   if (fnam)
+   {
+      fp = fopen(fnam, "r");
+      if (fp)
+      {
+         assert(fscanf(fp, "%d", &MAC) == 1);
+         assert(fscanf(fp, "%d", &lat) == 1);
+         assert(fscanf(fp, "%lf", &mf) == 1);
+         assert(fscanf(fp, "%d", &nreg) == 1);
+         fclose(fp);
+         fmf = FindMflop(pre, MAC, lat);
+         mf = matime(pre, MAC, lat, fmf, 0, 1);
+         RUNSRCH=0;
+      }
+   }
+   if (RUNSRCH)
+   {
+      fmf = FindMflop(pre, 0, 4);
+      nreg = FindNreg(pre, fmf, 0, 4);
+      latMA = FindLat(pre, fmf, 0, nreg, &mfMA);
+      latMAC = FindLat(pre, fmf, 1, nreg, &mfMAC);
+      if (mfMA*1.02 > mfMAC)
+      {
+         MAC = 0;
+         lat = latMA;
+         mf = mfMA;
+      }
+      else
+      {
+         MAC = 1;
+         lat = latMAC;
+         mf = mfMAC;
+      }
+      printf("NREG=%d, FMAC=%d, LAT=%d, MFLOP=%.2f\n", nreg, MAC, lat, mf);
+   }
+   if (fnam)
+   {
+      fp = fopen(fnam, "w");
+      assert(fp);
+      fprintf(fp, "%d\n%d\n%.2f\n%d\n", MAC, lat, mf, nreg);
+      fclose(fp);
+   }
+   else
+      printf("NREG=%d, FMAC=%d, LAT=%d, MFLOP=%.2f\n", nreg, MAC, lat, mf);
    return(0);
 }
 @ROUT masearch
