@@ -286,7 +286,7 @@ FindNreg
  */
 {
    double mfmax, mf;
-   int nr;
+   int nr, n, nreg=0;
 
    printf("FINDING USABLE NREG:\n");
    nr = 1;
@@ -299,30 +299,54 @@ FindNreg
       printf("   %3d: %.2f\n", nr+nr, mf);
       if (mf > mfmax)
          mfmax = mf;
-      else if (1.1*mf < mfmax)
+      else if (1.08*mf < mfmax)
          break;
+      nreg = nr+nr;
    }
    while (nr < 256);
    printf("\n");
-@beginskip
-   if (nr < 256)
+/*
+ * Since some compilers reserve some registers for themselves, don't believe
+ * power-of-two results alone.  Refine estimate by scoping if intermediate
+ * number of registers is still competitive
+ */
+   if (nreg == 16)
+      n = 10;
+   else if (nreg < 16)
+      n = (nreg>>1)+2;
+   else
+      n = (nreg>>1) + (nreg>>2);
+   mf = matime(pre, MAC, n, fmf, 0, 0);
+   printf("   %3d: %.2f\n", n+n, mf);
+   if (mf*1.02 >= mfmax)   /* worth refining further */
    {
-      int maxreg=nr;
+      const int maxreg=nreg;
+      if (mf*1.01 >= mfmax)
+         nreg = n+n;
+      if (mf > mfmax)
+         mfmax = mf;
 
-      for (nr = (nr>>1)+1; nr < maxreg; nr++)
+      for (nr = n+1; nr < maxreg; nr++)
       {
-         mf = matime(pre, MAC, nr, fmf, 0, 1);
+         mf = matime(pre, MAC, nr, fmf, 0, 0);
          printf("   %3d: %.2f\n", nr+nr, mf);
+         if (mf*1.01 >= mfmax)
+            nreg = nr+nr;
          if (mf > mfmax)
             mfmax = mf;
-         else if (1.05*mf < mfmax)
+         else if (1.03*mf < mfmax)
             break;
       }
    }
-   nr = nr+nr-2;
-@endskip
-   printf("NREG=%d\n\n", nr);
-   return(nr);
+   for (n=1; n < nreg; n <<= 1);
+   if (n == nreg)
+      printf("NREG=%d\n\n", nreg);
+   else
+   {
+      printf("DETECTED nreg=%d; ASSIGNED nreg=%d\n", nreg, n);
+      nreg = n;
+   }
+   return(nreg);
 }
 
 int FindLat
@@ -340,7 +364,7 @@ int FindLat
    printf("FINDING BEST LATENCY, MAC=%d:\n", MAC);
    mfmax = matime(pre, MAC, 1, fmf, 0, 0);
    printf("   lat=%d, MFLOPS=%.2f\n", 1, mfmax);
-   for (i=2, nreg >>= 1; i < nreg; i++)
+   for (i=2, nreg >>= 1; i <= nreg; i++)
    {
       mf = matime(pre, MAC, i, fmf, 0, 0);
       printf("   lat=%d, MFLOPS=%.2f\n", i, mf);
@@ -410,7 +434,7 @@ char *GetFlags(int nargs, char **args, char *PRE, int *FMF, int *NREG,
          PrintUsage(args[0]);
       }
    }
-   assert(*PRE == 's' || *PRE == 'd');
+   assert(*PRE == 's' || *PRE == 'd' || *PRE == 'q');
    return(fnam);
 }
 
