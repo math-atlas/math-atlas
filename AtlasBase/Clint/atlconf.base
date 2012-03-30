@@ -4368,7 +4368,8 @@ COMPNODE *ReadComps(char *file)
    return(compq);
 }
 
-COMPNODE **GetDefaultComps(enum OSTYPE OS, enum MACHTYPE arch, int verb)
+COMPNODE **GetDefaultComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, 
+                           int vecexts)
 /*
  * This routine reads the file atlcomp.txt, and returns them sorted by
  * order of priority for each compiler ATLAS needs.  This list can then
@@ -4376,8 +4377,23 @@ COMPNODE **GetDefaultComps(enum OSTYPE OS, enum MACHTYPE arch, int verb)
  */
 {
    COMPNODE *q, *p, **comps;
+   char *vp=NULL;
    int i;
 
+   if ((vecexts & (1<<ISA_AVXFMA4)) && arch == AmdDozer)
+      vp = "-msse4.2 -mfma4";
+   else if (vecexts & (1<<ISA_VSX))
+      vp = "-mvsx";
+   else if (vecexts & (1<<ISA_AV))
+      vp = "-maltivec";
+   else if (vecexts & (1<<ISA_AVX))
+      vp = "-mavx";
+   else if (vecexts & (1<<ISA_SSE3))
+      vp = "-msse3";
+   else if (vecexts & (1<<ISA_SSE2))
+      vp = "-msse2";
+   else if (vecexts & (1<<ISA_SSE1))
+      vp = "-msse";
    comps = malloc(sizeof(COMPNODE)*NCOMP);
    q = ReadComps("atlcomp.txt");    /* get all compiler lines */
    if (verb > 1)
@@ -4388,6 +4404,19 @@ COMPNODE **GetDefaultComps(enum OSTYPE OS, enum MACHTYPE arch, int verb)
    q = SortCompsByPriority(q);      /* q is smallest, bottom is largest */
    if (verb > 1)
       PrintCompNodes(stderr, q, "Sorted");
+/*
+ * Add the ISA extension-using flags to any gcc compiler.  Since we have just
+ * read in the compilers from compflags.txt, we can be sure that any gcc
+ * compiler has gcc in the name
+ */
+   if (vp)
+   {
+      for (p=q; p; p = p->next)
+      {
+         if (strstr(p->comp, "gcc"))
+            p->flags = NewAppendedString(p->flags, vp);
+      }
+   }
    DivideCompsByComp(q, comps);     /* split into individual queues */
    return(comps);
 }
@@ -4652,7 +4681,8 @@ COMPNODE *WinnowBadComps
 @endskip
 
 void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
-              int ptrbits, char **usrcomps, int nof77, char *goodgcc)
+              int ptrbits, char **usrcomps, int nof77, int vecext, 
+              char *goodgcc)
 /*
  * This routine gives config a list of compilers to use.  The first NCOMP
  * entries in usrcomps indicate a user override of the default compiler,
@@ -4769,8 +4799,7 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
          sprintf(mgwf, "%s/mgwgfortran", mgwd);
       }
    }
-
-   comps = GetDefaultComps(OS, arch, verb);
+   comps = GetDefaultComps(OS, arch, verb, vecext);
    if (verb > 1)
       fprintf(stdout, "Finding good compilers:\n");
    for (i=0; i < NCOMP; i++)
@@ -5492,7 +5521,7 @@ int main(int nargs, char **args)
    else
       targarg = "";
    goodgcc = FindGoodGcc(OS, mach,  verb, targ);
-   GetComps(OS, mach, verb, targ, ptrbits, usrcomps, nof77, goodgcc);
+   GetComps(OS, mach, verb, targ, ptrbits, usrcomps, nof77, vecexts, goodgcc);
 /* 
  * See if we need to search for gfortran
  */
@@ -6058,19 +6087,19 @@ int main(int nargs, char **args)
 #
 # Core2/Corei1/Corei2
 MACH=Corei2 OS=Win9x,WinNT LVL=1005 COMPS=smc,dmc,skc,dkc,icc
-   'gcc-4' '-fomit-frame-pointer -mfpmath=sse -mavx -O2 -fno-schedule-insns2'
+   'gcc-4' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
 MACH=Corei2 OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
-   'gcc' '-fomit-frame-pointer -mfpmath=sse -mavx -O2 -fno-schedule-insns2'
-MACH=Corei2 OS=ALL LVL=500 COMPS=smc,dmc,skc,dkc,icc,gcc
-   'clang' '-fomit-frame-pointer -mavx -O2 -m64 -Wno-parentheses'
+   'gcc' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
+@skip MACH=Corei2 OS=ALL LVL=500 COMPS=smc,dmc,skc,dkc,icc,gcc
+@skip    'clang' '-fomit-frame-pointer -mavx -O2 -m64 -Wno-parentheses'
 MACH=Corei1 OS=Win9x,WinNT LVL=1005 COMPS=smc,dmc,skc,dkc,icc,gcc
-   'gcc-4' '-fomit-frame-pointer -mfpmath=sse -msse3 -O2 -fno-schedule-insns2'
+   'gcc-4' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
 MACH=Corei1 OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
-   'gcc' '-fomit-frame-pointer -mfpmath=sse -msse3 -O2 -fno-schedule-insns2'
+   'gcc' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
 MACH=Core2 OS=Win9x,WinNT LVL=1005 COMPS=smc,dmc,skc,dkc,icc
-   'gcc-4' '-fomit-frame-pointer -mfpmath=sse -msse3 -O2'
+   'gcc-4' '-fomit-frame-pointer -mfpmath=sse -O2'
 MACH=Core2 OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
-   'gcc' '-fomit-frame-pointer -mfpmath=sse -msse3 -O2'
+   'gcc' '-fomit-frame-pointer -mfpmath=sse -O2'
 MACH=Atom OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc
    'gcc' '-O3 -fno-schedule-insns2 -funroll-all-loops -fno-tree-ch'
 MACH=Atom OS=ALL LVL=1000 COMPS=icc,gcc
@@ -6081,51 +6110,40 @@ MACH=x86x87 OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
 MACH=x86x87,x86SSE1 OS=ALL LVL=1000 COMPS=f77
    'gfortran' '-fomit-frame-pointer -mfpmath=387 -O2 -falign-loops=4'
 MACH=x86SSE1 OS=ALL LVL=1000 COMPS=dmc,dkc,icc,gcc
-   'gcc' '-fomit-frame-pointer -msse -mfpmath=387 -O2 -falign-loops=4'
+   'gcc' '-fomit-frame-pointer -mfpmath=387 -O2 -falign-loops=4'
 MACH=x86SSE1 OS=ALL LVL=1000 COMPS=smc,skc
-   'gcc' '-fomit-frame-pointer -mfpmath=sse -msse -O2'
+   'gcc' '-fomit-frame-pointer -mfpmath=sse -O2'
 MACH=x86SSE1 OS=ALL LVL=1000 COMPS=f77
    'gfortran' '-fomit-frame-pointer -mfpmath=387 -O2 -falign-loops=4'
 MACH=x86SSE2 OS=ALL LVL=1000 COMPS=smc,skc,dmc,dkc,icc,gcc
-   'gcc' '-fomit-frame-pointer -msse2 -mfpmath=sse -msse2 -O2'
+   'gcc' '-fomit-frame-pointer -mfpmath=sse -O2'
 MACH=x86SSE2 OS=ALL LVL=1000 COMPS=f77
-   'gfortran' '-fomit-frame-pointer -msse2 -mfpmath=sse -msse2 -O2'
+   'gfortran' '-fomit-frame-pointer -mfpmath=sse -O2'
 MACH=x86SSE3 OS=ALL LVL=1000 COMPS=dmc,smc,dkc,skc,icc,gcc
-   'gcc' '-fomit-frame-pointer -msse3 -mfpmath=sse -msse3 -O2'
+   'gcc' '-fomit-frame-pointer -mfpmath=sse -O2'
 MACH=x86SSE3 OS=ALL LVL=1000 COMPS=f77
-   'gfortran' '-fomit-frame-pointer -mfpmath=sse -msse3 -O2'
+   'gfortran' '-fomit-frame-pointer -mfpmath=sse -O2'
 @skip # PPRO,PII,PIII,P4,P4E,K7,HAMMER
 @skip MACH=PPRO,PII,PIII,P4,P4E,K7,HAMMER OS=ALL LVL=2000 COMPS=smc,dmc,skc,dkc
 @skip    'gcc32' '-fomit-frame-pointer -mfpmath=387 -O2 -falign-loops=4'
-# P4
-MACH=P4 OS=ALL LVL=1000 COMPS=f77
-   'gfortran' '-O2 -fomit-frame-pointer -mfpmath=sse -msse2'
-MACH=P4 OS=ALL LVL=1000 COMPS=skc,dkc,icc
-   'gcc' '-O2 -fomit-frame-pointer -mfpmath=sse -msse2 -m64'
-MACH=P4 OS=ALL LVL=1000 COMPS=smc,dmc
-   'gcc' '-O2 -fomit-frame-pointer -mfpmath=sse -msse2 -m64 -fno-schedule-insns -fno-optimize-register-move'
-MACH=P4 OS=Win9x,WinNT LVL=1005 COMPS=smc,dmc
-   'gcc-4' '-O2 -fomit-frame-pointer -mfpmath=sse -msse2 -m64 -fno-schedule-insns -fno-optimize-register-move'
-MACH=P4 OS=ALL LVL=1000 COMPS=skc,dkc,icc
-   'gcc-4' '-O2 -fomit-frame-pointer -mfpmath=sse -msse2 -m64'
-# P4E
-MACH=P4E OS=ALL LVL=1000 COMPS=f77
-   'gfortran' '-O2 -fomit-frame-pointer -mfpmath=sse -msse3'
+# P4E, P4
+MACH=P4E,P4 OS=ALL LVL=1000 COMPS=f77
+   'gfortran' '-O2 -fomit-frame-pointer -mfpmath=sse'
 MACH=P4E OS=ALL LVL=1000 COMPS=skc,dkc,icc
-   'gcc' '-O2 -fomit-frame-pointer -mfpmath=sse -msse3 -m64'
-MACH=P4E OS=ALL LVL=1000 COMPS=smc,dmc
-   'gcc' '-O2 -fomit-frame-pointer -mfpmath=sse -msse3 -m64 -fno-schedule-insns -fno-optimize-register-move'
-MACH=P4E OS=Win9x,WinNT LVL=1005 COMPS=smc,dmc
-   'gcc-4' '-O2 -fomit-frame-pointer -mfpmath=sse -msse3 -m64 -fno-schedule-insns -fno-optimize-register-move'
-MACH=P4E OS=ALL LVL=1000 COMPS=skc,dkc,icc
-   'gcc-4' '-O2 -fomit-frame-pointer -mfpmath=sse -msse3 -m64'
+   'gcc' '-O2 -fomit-frame-pointer -mfpmath=sse'
+MACH=P4E,P4 OS=ALL LVL=1000 COMPS=smc,dmc
+   'gcc' '-O2 -fomit-frame-pointer -mfpmath=sse -fno-schedule-insns -fno-optimize-register-move'
+MACH=P4E,P4 OS=Win9x,WinNT LVL=1005 COMPS=smc,dmc
+   'gcc-4' '-O2 -fomit-frame-pointer -mfpmath=sse -fno-schedule-insns -fno-optimize-register-move'
+MACH=P4E,P4 OS=ALL LVL=1000 COMPS=skc,dkc,icc
+   'gcc-4' '-O2 -fomit-frame-pointer -mfpmath=sse'
 # Hammer
 MACH=HAMMER OS=ALL LVL=1000 COMPS=f77
-   'gfortran' '-msse3 -fomit-frame-pointer -mfpmath=387 -O2'
+   'gfortran' '-fomit-frame-pointer -mfpmath=387 -O2'
 MACH=HAMMER OS=Win9x,WinNT LVL=1005 COMPS=smc,dmc,skc,dkc,icc
-   'gcc-4' '-fomit-frame-pointer -msse3 -mfpmath=387 -O2'
+   'gcc-4' '-fomit-frame-pointer -mfpmath=387 -O2'
 MACH=HAMMER OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
-   'gcc' '-fomit-frame-pointer -msse3 -mfpmath=387 -O2'
+   'gcc' '-fomit-frame-pointer -mfpmath=387 -O2'
 # PPRO,PII,PIII,K7
 MACH=PPRO,PII,PIII,K7 OS=ALL LVL=1000 COMPS=f77
    'gfortran' '-fomit-frame-pointer -mfpmath=387 -O2 -falign-loops=4'
@@ -6140,11 +6158,11 @@ MACH=CoreSolo,CoreDuo OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc' '-fomit-frame-pointer -O3 -mfpmath=387'
 # 3rd generation opteron (Barcelona and descendents)
 MACH=AMD64K10h OS=ALL LVL=1000 COMPS=f77
-   'gfortran' '-fomit-frame-pointer -mfpmath=sse -msse3 -O2'
+   'gfortran' '-fomit-frame-pointer -mfpmath=sse -O2'
 MACH=AMD64K10h OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
-   'gcc' '-fomit-frame-pointer -mfpmath=sse -msse3 -O2'
+   'gcc' '-fomit-frame-pointer -mfpmath=sse -O2'
 MACH=AMD64K10h OS=Win9x,WinNT LVL=1005 COMPS=smc,dmc,skc,dkc,icc,gcc
-   'gcc' '-fomit-frame-pointer -mfpmath=sse -msse3 -O2'
+   'gcc' '-fomit-frame-pointer -mfpmath=sse -O2'
 MACH=AMDDOZER OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc' '-fomit-frame-pointer -mfpmath=sse -mfma4 -O2 -fno-tree-loop-optimize'
 # UltraSPARC T2
@@ -6475,7 +6493,7 @@ char *TransCompsToFlags(char **comps)
 }
 
 char *ProbeComp(int verb, char *targarg, enum OSTYPE OS, enum MACHTYPE arch, 
-                 char **comps, int nof77, int nocygwin, int ptrbits)
+                 char **comps, int nof77, int nocygwin, int ptrbits, int vecext)
 /*
  * RETURNS: f2c define string
  */
@@ -6490,9 +6508,8 @@ char *ProbeComp(int verb, char *targarg, enum OSTYPE OS, enum MACHTYPE arch,
    flags = TransCompsToFlags(comps);
    i = strlen(targarg) + strlen(flags) + 128;
    ln = malloc(i*sizeof(char));
-   i = sprintf(ln, 
-   "make IRun_comp args=\"-v %d -o atlconf.txt -O %d -A %d -Si nof77 %d %s %s",
-               verb, OS, arch, nof77, targarg, flags);
+   i = sprintf(ln, "make IRun_comp args=\"-v %d -o atlconf.txt -O %d -A %d -Si nof77 %d -V %d %s %s",
+               verb, OS, arch, nof77, vecext, targarg, flags);
    free(flags);
    if (ptrbits == 64 || ptrbits == 32)
    {
@@ -7254,7 +7271,8 @@ int main(int nargs, char **args)
    else if (asmb == gas_x86_32 && ptrbits == 64)
       asmb = gas_x86_64;
 
-   sp = ProbeComp(verb, targarg, OS, mach, comps, nof77, nocygwin, ptrbits);
+   sp = ProbeComp(verb, targarg, OS, mach, comps, nof77, nocygwin, ptrbits, 
+                  vecexts);
    if (nof77)
       f2cdefs = NewStringCopy("-DATL_NoF77");
    else if (!f2cdefs) f2cdefs = sp;
