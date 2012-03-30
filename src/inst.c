@@ -340,11 +340,17 @@ void PrintThisInst(FILE *fpout, int i, INSTQ *ip)
    }
    else
    {
-#if 0
+#if 1
       fprintf(fpout, form, i, instmnem[inst], op1, op2str(op1),
               op2, op2str(op2), op3, op2str(op3),
               BV2NumList(ip->use), BV2NumList(ip->set),
               BV2NumList(ip->deads));
+
+      /*fprintf(stderr,"\n %s : %d (use)\n",instmnem[ip->inst[0]],ip->use);*/
+      /*if (ip->inst[0] == FABSD)
+         fprintf(stderr, "\ninst: %s use id: %d val: %s\n", 
+                 instmnem[ip->inst[0]], ip->use, 
+                 PrintVecList(ip->use,0));*/
 #else
 /*
  *    This is to print LIL without live-vars. To enable live-vars prints,
@@ -361,7 +367,7 @@ void PrintInst(FILE *fpout, BBLOCK *bbase)
    BBLOCK *bp;
    INSTQ *ip;
    int i=1;
-#if 0
+#if 1
    fprintf(fpout, head0a);
    fprintf(fpout, head0b);
    fprintf(fpout, head1a);
@@ -435,4 +441,67 @@ void ReadLILFromBinFile(char *fname)
       InsNewInst(bbbase, NULL, NULL, inst[0], inst[1], inst[2], inst[3]);
    }
    fclose(fp);
+}
+
+static
+char *mark="\n#############################################################\n";
+
+void PrintOptInst(FILE *fpout, int iopt, int op, BLIST *scope, 
+                  int global, int changes)
+/*
+ * Majedul: Prints LIL instruction with Optimization information
+ * like: number of optimization already done, immediate opt that has done,
+ * global or local, list of blocks in scope, number of changes that has made
+ * after the last opt, etc.
+ */ 
+{
+   int i, j, k;
+   BLIST *iscope;
+
+   fprintf(fpout,mark);
+   fprintf(fpout,"\t\t OPTIMIZTION META DATA \n");
+   fprintf(fpout,mark);
+   
+   fprintf(fpout,"Number of optimization done so far = %d\n",iopt);
+   fprintf(fpout,"Last Optimization Done = %s\n",optmnem[op]);
+   if (global)
+      fprintf(fpout,"Last Optimization is a GLOBAL optimization\n",iopt);
+   else
+      fprintf(fpout,"Last Optimization is a LOCAL optimization\n",iopt);
+   
+   switch(op)
+   {
+   case GlobRegAsg:
+      fprintf(fpout, " Block List for OptLoop: ");
+      iscope = optloop->blocks;
+      for ( ; iscope ; iscope = iscope->next )
+         fprintf(fpout, "%d ",iscope->blk->bnum);
+      fprintf(fpout,"\n");
+      break;
+   case RegAsg:
+   case CopyProp:
+   case RemoveOneUseLoads:
+   case LastUseLoadRemoval:
+   case ReverseCopyProp:
+   case EnforceLoadStore:
+      fprintf(fpout, " Block List for the scope: ");
+      for (iscope = scope ; iscope ; iscope = iscope->next )
+         fprintf(fpout, "%d ",iscope->blk->bnum);
+      fprintf(fpout,"\n");
+      break;
+   case UselessLabElim:
+   case UselessJmpElim:
+   case BranchChain:
+   case DoNothing:
+      break;
+   default:
+      break;
+   }
+
+   fprintf(fpout,"Number of changes done in last opt  = %d\n",changes);
+   fprintf(fpout,mark);
+   fprintf(fpout,"\t\t LIL AFTER THE LAST OPT \n");
+   fprintf(fpout,mark);
+   PrintInst(fpout,bbbase);
+
 }
