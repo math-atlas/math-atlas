@@ -12,16 +12,16 @@
 #define NT_MNK_MN 12960
 #define NT_MNK_K 8100
 #define NT_MNK_GE 1000
-#define TN_MNK_M 3600
-#define TN_MNK_N 3600
+#define TN_MNK_M 8100
+#define TN_MNK_N 8100
 #define TN_MNK_MN 12960
 #define TN_MNK_K 3600
 #define TN_MNK_GE 1000
-#define TT_MNK_M 3600
+#define TT_MNK_M 8100
 #define TT_MNK_N 3600
 #define TT_MNK_MN 12960
 #define TT_MNK_K 8100
 #define TT_MNK_GE 1000
-#define C2R_K 2551
+#define C2R_K 1684
 
 #endif
