@@ -13,7 +13,9 @@
 /*   #define LINUX_X86_64  */
      #define LINUX_X86_64    
 /*   #define LINUX_X86_32 */
-/*   #define AVX   */                  
+     #define AVX                    
+     #define ArchHasMAC
+     #define FMA4
 /*   #define SOLARIS_SPARC  */
 /*   #define OSX_PPC  */
 #endif
