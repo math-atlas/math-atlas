@@ -476,7 +476,7 @@ void DoArith(short dest, short src0, char op, short src1)
          #ifdef ArchHasMAC
             rd = LocalLoad(dest);
             if (type == T_FLOAT) inst = FMAC;
-            else isnt = FMACD;
+            else inst = FMACD; /*Majedul: was a type, corrected it. */
          #else
             if (type == T_FLOAT)
             {
@@ -532,7 +532,13 @@ void DoArith(short dest, short src0, char op, short src1)
       break;
    }
    InsNewInst(NULL, NULL, NULL, inst, -rd, -rs0, -rs1);
-   LocalStore(dest, rs0);
+/*
+ * Majedul: rd should be stored to dest (not rs0) to be consistant though
+ * without FMAC it doesn't create any problem. In case of FMAC, rs0 and rd 
+ * are different. 
+ */
+   /* LocalStore(dest, rs0);*/
+   LocalStore(dest, rd);
    GetReg(-1);
 }
 
