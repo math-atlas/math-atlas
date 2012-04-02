@@ -1419,8 +1419,23 @@ struct assmln *lil2ass(BBLOCK *bbase)
 
       case FMACD:
          #ifdef X86
-            ap->next = PrintAssln("\tUNIMP\n");
-	    fko_error(__LINE__, "FMACD found in x86 code!");
+            #if defined(ArchHasMAC) && defined(FMA4)
+               if (op3 < 0)   /* FMA4: only src2 can be mem */
+                  ap->next = PrintAssln("\tvfmaddsd\t%s,%s,%s,%s\n", 
+	                                archxmmregs[-DREGBEG-op1],
+                                        archxmmregs[GetDregID(op3)],
+	                                archxmmregs[-DREGBEG-op2],
+                                        archxmmregs[-DREGBEG-op1]);
+               else   
+                  ap->next = PrintAssln("\tvfmaddsd\t%s,%s,%s,%s\n", 
+	                                archxmmregs[-DREGBEG-op1],
+                                        GetDregOrDeref(op3),
+	                                archxmmregs[-DREGBEG-op2],
+                                        archxmmregs[-DREGBEG-op1]);
+            #else
+               ap->next = PrintAssln("\tUNIMP\n");
+	       fko_error(__LINE__, "FMACD Not found in this x86 arch!");
+            #endif
          #elif defined(SPARC)
             ap->next = PrintAssln("\tUNIMP\n");
 	    fko_error(__LINE__, "FMACD found in SPARC code!");
@@ -1436,8 +1451,23 @@ struct assmln *lil2ass(BBLOCK *bbase)
          break;
       case FMAC:
          #ifdef X86
-            ap->next = PrintAssln("\tUNIMP\n");
-	    fko_error(__LINE__, "FMAC found in x86 code!");
+            #if defined(ArchHasMAC) && defined(FMA4) 
+               if (op3 < 0) /*FMA4: only src2 can be used as mem */
+                  ap->next = PrintAssln("\tvfmaddss\t%s,%s,%s,%s\n", 
+	                                archxmmregs[-FREGBEG-op1],
+                                        archxmmregs[GetDregID(op3)],
+	                                archxmmregs[-FREGBEG-op2],
+	                                archxmmregs[-FREGBEG-op1]);
+               else
+                  ap->next = PrintAssln("\tvfmaddss\t%s,%s,%s,%s\n", 
+	                                archxmmregs[-FREGBEG-op1],
+                                        GetDregOrDeref(op3),
+	                                archxmmregs[-FREGBEG-op2],
+	                                archxmmregs[-FREGBEG-op1]);
+            #else
+               ap->next = PrintAssln("\tUNIMP\n");
+	       fko_error(__LINE__, "FMAC Not found in this x86 arch!");
+            #endif
          #elif defined(SPARC)
             ap->next = PrintAssln("\tUNIMP\n");
 	    fko_error(__LINE__, "FMAC found in SPARC code!");
@@ -1926,7 +1956,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             sptr = "UNKNOWN COMPFLAG";
          }
          #ifdef X86
-            continue; /*just to skip the FLAG comments*/ 
+            /*continue;*/ /*just to skip the FLAG comments*/ 
 	    ap->next = PrintAssln("# CMPFLAG %d %d %d; %s\n",
                                   op1, op2, op3, sptr);
          #elif defined(SPARC)
@@ -2105,7 +2135,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
 	 break;
       case COMMENT:
          #ifdef X86
-             continue;  /* skip comments temporary for testing with ATLAS*/
+             /*continue;*/  /* skip comments temporary for testing with ATLAS*/
             ap->next = PrintAssln("#%s\n", op1 ? STname[op1-1] : "");
          #elif defined(SPARC)
             ap->next = PrintAssln("!%s\n", op1 ? STname[op1-1] : "");
@@ -2293,6 +2323,31 @@ struct assmln *lil2ass(BBLOCK *bbase)
             assert(op1 == op2);
             ap->next = PrintAssln("\tmulpd\t%s, %s\n", GetDregOrDeref(op3),
                                archvdregs[-VDREGBEG-op1]);
+         #endif
+         break;
+      case VDMAC:
+         #ifdef X86
+            #if defined(ArchHasMAC) && defined(FMA4) 
+               assert( (op1 < 0) && (op2 < 0));
+               if (op3 < 0) /*FMA4: only src2(here op3) can be mem */
+                  ap->next = PrintAssln("\tvfmaddpd\t%s,%s,%s,%s\n", 
+	                                archdregs[-VDREGBEG-op1],
+                                        archdregs[GetDregID(op3)],
+	                                archdregs[-VDREGBEG-op2],
+	                                archdregs[-VDREGBEG-op1]);
+               else
+                  ap->next = PrintAssln("\tvfmaddpd\t%s,%s,%s,%s\n", 
+	                                archdregs[-VDREGBEG-op1],
+                                        GetDregOrDeref(op3),
+	                                archdregs[-VDREGBEG-op2],
+	                                archdregs[-VDREGBEG-op1]);
+            #else
+               ap->next = PrintAssln("\tUNIMP\n");
+	       fko_error(__LINE__, "VDMAC Not found in this x86 arch!");
+            #endif
+         #else
+               ap->next = PrintAssln("\tUNIMP\n");
+	       fko_error(__LINE__, "VDMAC Not supported in this arch!");
          #endif
          break;
       case VDADD:
@@ -2646,6 +2701,31 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tmulps\t%s, %s\n", GetDregOrDeref(op3),
                                   archvfregs[-VFREGBEG-op1]);
          #endif 
+         break;
+      case VFMAC:
+         #ifdef X86
+            #if defined(ArchHasMAC) && defined(FMA4) 
+               assert( (op1 < 0) && (op2 < 0));
+               if (op3 < 0) /*FMA4: only src2(here op3) can be mem */
+                  ap->next = PrintAssln("\tvfmaddps\t%s,%s,%s,%s\n", 
+	                                archfregs[-VFREGBEG-op1],
+                                        archfregs[GetDregID(op3)],
+	                                archfregs[-VFREGBEG-op2],
+	                                archfregs[-VFREGBEG-op1]);
+               else
+                  ap->next = PrintAssln("\tvfmaddps\t%s,%s,%s,%s\n", 
+	                                archfregs[-VFREGBEG-op1],
+                                        GetDregOrDeref(op3),
+	                                archfregs[-VFREGBEG-op2],
+	                                archfregs[-VFREGBEG-op1]);
+            #else
+               ap->next = PrintAssln("\tUNIMP\n");
+	       fko_error(__LINE__, "VFMAC Not found in this x86 arch!");
+            #endif
+         #else
+               ap->next = PrintAssln("\tUNIMP\n");
+	       fko_error(__LINE__, "VFMAC Not supported in this arch!");
+         #endif
          break;
       case VFADD:
          #ifdef AVX
