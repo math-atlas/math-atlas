@@ -154,6 +154,7 @@ enum inst
    VDADD,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 + vr2 */
    VDSUB,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 - vr2 */
    VDMUL,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
+   VDMAC,                      /* [vr0], [vr1], [vr2] : vr0 += vr1 * vr2 */
    VDABS,                      /* [vr0], [vr1] : vr0 = abs(vr1) */
    VDSHUF,                     /* [vr0], [vr1], [int32]; vr0 = shuf(vr1|vr0) */
           /* [int32] is split into 8 4 bit words; 1st word indicates which */
@@ -176,6 +177,7 @@ enum inst
    VFADD,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 + vr2 */
    VFSUB,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 - vr2 */
    VFMUL,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
+   VFMAC,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
    VFABS,                      /* [vr0], [vr1] : vr0 = abs(vr1) */
    VFSHUF,                     /* [vr0], [vr1], [int32]; vr0 = shuf(vr1|vr0) */
           /* [int32] is split into 8 4 bit words; 1st word indicates which */
@@ -324,6 +326,7 @@ char *instmnem[] =
    "VDADD",
    "VDSUB",
    "VDMUL",
+   "VDMAC",
    "VDABS",
    "VDSHUF",
 /*
@@ -342,6 +345,7 @@ char *instmnem[] =
    "VFADD",
    "VFSUB",
    "VFMUL",
+   "VFMAC",
    "VFABS",
    "VFSHUF",
 /*
@@ -384,6 +388,8 @@ char *instmnem[] =
                       (i_) == VDLDL || (i_) == VDLDH)
 #define IS_MOVE(i_) ((i_) == MOV || (i_) == FMOV || (i_) == FMOVD || \
                      (i_) == VFMOV || (i_) == VDMOV)
+#define IS_MAC(i_) ((i_) == FMAC || (i_) == FMACD || (i_) == VFMAC || \
+                    (i_) == VDMAC)
 #define IS_STORE(i_)  ((i_) == ST || (i_) == FST || (i_) == FSTD || \
                        (i_) == VFST || (i_) == VDST || (i_) == STS || \
                        (i_) == VFSTS || (i_) == VDSTS || \
