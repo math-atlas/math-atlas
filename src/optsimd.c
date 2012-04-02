@@ -442,12 +442,12 @@ int SimdLoop(LOOPQ *lp)
    short *sp;
    BLIST *bl;
    static enum inst 
-      sfinsts[] = {FLD,  FST,  FMUL,  FADD,  FSUB,  FABS,  FMOV,  FZERO},
-      vfinsts[] = {VFLD, VFST, VFMUL, VFADD, VFSUB, VFABS, VFMOV, VFZERO},
-      sdinsts[] = {FLDD, FSTD, FMULD, FADDD, FSUBD, FABSD, FMOVD, FZEROD},
-      vdinsts[] = {VDLD, VDST, VDMUL, VDADD, VDSUB, VDABS, VDMOV, VDZERO};
-   const int nvinst=8;
-   enum inst sld, vld, sst, vst, smul, vmul, sadd, vadd, ssub, vsub, 
+      sfinsts[] = {FLD,  FST,  FMUL,  FMAC, FADD,  FSUB,  FABS,  FMOV,  FZERO},
+      vfinsts[] = {VFLD, VFST, VFMUL, VFMAC, VFADD, VFSUB, VFABS, VFMOV, VFZERO},
+      sdinsts[] = {FLDD, FSTD, FMULD, FMACD, FADDD, FSUBD, FABSD, FMOVD, FZEROD},
+      vdinsts[] = {VDLD, VDST, VDMUL, VDMAC, VDADD, VDSUB, VDABS, VDMOV, VDZERO};
+   const int nvinst=9;
+   enum inst sld, vld, sst, vst, smul, vmul, smac, vmac, sadd, vadd, ssub, vsub, 
              sabs, vabs, smov, vmov, szero, vzero, inst;
    short r0, r1, op;
    enum inst *sinst, *vinst;
