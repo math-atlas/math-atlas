@@ -1334,6 +1334,8 @@ int DoRegAsgTransforms(IGNODE *ig)
  *    NOTE: we have no memory-output instructions, so assert set is ST
  */
       ip = bl->ptr;
+/*    Majedul: lets check ip got NULL ??! */
+      assert(ip);
       if (ip && BitVecCheck(ip->set, ig->var+TNREG-1))
       {
          inst = GET_INST(ip->inst[0]);
@@ -2235,6 +2237,15 @@ fprintf(stderr, ", src=%s\n", Int2Reg(-src));
                   return(change);
                }
             }
+/*
+ *          Majedul: for MAC inst, may not found but is in use, need to update
+ */
+            else if (IS_MAC(ip->inst[0]))
+            {
+               BitVecComb(ip->use, ip->use, ivdst, '-');
+               BitVecComb(ip->use, ip->use, ivsrc, '|');
+               
+            }
             else /* not found, is implicit use, put move back & stop */
                goto PUTMOVEBACK;
          }
@@ -2344,7 +2355,8 @@ INSTQ *CopyPropTrans(BLIST *scope, int scopeblks, BBLOCK *blk, INSTQ *ipret)
  */
    if (dest == src)
    {
-      INDEADU2D = 0;
+      /* INDEADU2D = 0; */
+      CFUSETU2D = INDEADU2D = 0;
       return(DelInst(ipret));
    }
    if (!INDEADU2D)
