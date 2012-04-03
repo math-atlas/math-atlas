@@ -2087,10 +2087,15 @@ int VarIsAccumulator(BLIST *scope, int var)
  * followed by write to same location of addition
  * NOTE: assumes h2l format, so no cross-block ops
  */
+/*
+ * Majedul: accumulator expansion can also be used for FMAC and FMACD. So,
+ * I extend those as candidates to determine the acc vars.
+ */
+
 {
    BLIST *bl;
    INSTQ *ip;
-   enum inst inst, ld, st, add;
+   enum inst inst, ld, st, add, mac;
    int i;
 
    i = FLAG2TYPE(STflag[var-1]);
@@ -2100,16 +2105,19 @@ int VarIsAccumulator(BLIST *scope, int var)
       ld = FLD;
       st = FST;
       add = FADD;
+      mac = FMAC;
       break;
    case T_DOUBLE:
       ld = FLDD;
       st = FSTD;
       add = FADDD;
+      mac = FMACD;
       break;
    case T_INT:
       ld = LD;
       st = ST;
       add = ADD;
+      mac = UNIMP; /* INT MAC is not implemented yet */
       break;
    default:
    case T_VFLOAT:
@@ -2124,7 +2132,9 @@ int VarIsAccumulator(BLIST *scope, int var)
          {
             if (ip->next->inst[0] == ld)
                ip = ip->next;
-            if (ip->next->inst[0] != add)
+            if (ip->next->inst[0] != add && ip->next->inst[0] != mac)
+               return(0);            
+            if (ip->next->inst[0] == mac && mac == UNIMP) /* INT MAC */
                return(0);
             ip = ip->next->next;
             if (!ip)
