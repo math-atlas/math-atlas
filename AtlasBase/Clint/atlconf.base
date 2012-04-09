@@ -6090,8 +6090,8 @@ MACH=Corei2 OS=Win9x,WinNT LVL=1005 COMPS=smc,dmc,skc,dkc,icc
    'gcc-4' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
 MACH=Corei2 OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
-@skip MACH=Corei2 OS=ALL LVL=500 COMPS=smc,dmc,skc,dkc,icc,gcc
-@skip    'clang' '-fomit-frame-pointer -mavx -O2 -m64 -Wno-parentheses'
+MACH=Corei2 OS=ALL LVL=50000 COMPS=smc,dmc,skc,dkc,icc,gcc
+    'clang' '-fomit-frame-pointer -mavx -O2 -m64 -Wno-parentheses'
 MACH=Corei1 OS=Win9x,WinNT LVL=1005 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc-4' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
 MACH=Corei1 OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
@@ -9443,3 +9443,98 @@ static char *atlsys_1L(char *targ, char *cmnd, int verb, int CWS)
    return(ln);
 }
 #endif
+@ROUT gnuccw
+/*
+ * This is a wrapper around a GNU gcc installation which is using the
+ * native assembler and linker rather than the gnu alternatives.  This
+ * scenario happens extremely often, for example on Mac OS 10.7 where
+ * the native gnu binutils are broken old versions, or on Solaris with the same.
+ * This wrapper parses the input and breaks the command into 1-3 separate
+ * actions, depending on the flags and files given:
+ * (1) Compile any .c or .S files to .s using the provided gcc
+ * (2) Assemble these new .s files to .o using the provided assembler
+ * (3) Link these files together using the provided linker
+ *
+ * Compiles with "-c" as a flag do only steps 1-2.
+ */
+
+/* 
+ * HERE HERE HERE
+ * Must rewrite to build queues of words for each phase, so we can do all
+ * compilation one-file-at-a-time, so we can delete the .s immediately and
+ * use known name so that we don't overwrite .S on non-case sensitive syss
+ * like MacOS.
+ */
+void ParseFlags(int nargs, char **args, 
+                char **CMPLN, char **ASMLN, char **LNKLN, char **DELLN)
+{
+   char *outnm=NULL, *cmpln, *asmln, *lnkln, *delln;
+   int len, lnlen=0, DOLINK=1, ncomp, ic, ia, il, id;
+
+/*
+ * First, go through flags and count required maximal line length, and see
+ * if -c or -o has been thrown.  
+ */
+   for (i=1; i < nargs; i++)
+   {
+      len = strlen(args[i]);
+      if (len == 2 && args[i][0] == '-' && args[i][1] == 'c')
+         DOLINK=0;
+      else if (len >= 2 && args[i][0] == '-' && args[i][1] == 'o')
+      {
+         if (len == 2)
+         {
+            assert(++i < nargs);
+            outnm = args[i];
+         }
+         else /* "-oname" */
+            outnm = &args[i][2];
+      }
+      lnlen += len + 1;
+   }
+/*
+ * Allocate strings to hold compile, assemble, link and delete lines.  
+ * Space will too long, since not all flags go to every stage, but that's OK.
+ */
+   len = lnlen + strlen(MYGCC) + 1;
+   cmpln = malloc(len);
+   assert(cmpln);
+   len = lnlen + strlen(MYASM) + 1;
+   asmln = malloc(len);
+   assert(asmln);
+   if (!DOLINK)
+      lnkln = NULL;
+   else
+   {
+      len = lnlen + strlen(MYLNK) + 1;
+      lnkln = malloc(len);
+      assert(lnkln);
+   }
+   len = lnlen + 3 + 1;
+   delln = malloc(len);
+   assert(delln);
+/*
+ * Go though flags again, and add them to the appropriate lines
+ */
+   delln[0] = 'r';
+   delln[1] = 'm';
+   delln[2] = ' ';
+   id = 3;
+   ic = sprintf(cmpln, MYGCC);
+   ia = sprintf(asmln, MYASM);
+   if (DOLINK)
+      il = sprintf(lnkln, MYLNK);
+   ncomp = 0;
+   for (i=1; i < nargs; i++)
+   {
+      len = strlen(args[i]);
+/*
+ *    See if line as a .S or .c file, and if so, count it and put
+ */
+      if (args[i][0] != '-' && args[i][len-2] == '.' &&
+          (args[i][len-1] == 'o' || args[i][len-1] == 'S'))
+      {
+         ncomp++;
+      }
+   }
+}
