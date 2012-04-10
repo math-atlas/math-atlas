@@ -9443,7 +9443,12 @@ static char *atlsys_1L(char *targ, char *cmnd, int verb, int CWS)
    return(ln);
 }
 #endif
-@ROUT gnuccw
+@ROUT gnuccw gnuf90w
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#include <ctype.h>
+#include <string.h>
 /*
  * This is a wrapper around a GNU gcc installation which is using the
  * native assembler and linker rather than the gnu alternatives.  This
@@ -9465,76 +9470,341 @@ static char *atlsys_1L(char *targ, char *cmnd, int verb, int CWS)
  * use known name so that we don't overwrite .S on non-case sensitive syss
  * like MacOS.
  */
-void ParseFlags(int nargs, char **args, 
-                char **CMPLN, char **ASMLN, char **LNKLN, char **DELLN)
+char *CatStrs(char *s1, char *s2)
 {
-   char *outnm=NULL, *cmpln, *asmln, *lnkln, *delln;
-   int len, lnlen=0, DOLINK=1, ncomp, ic, ia, il, id;
+   int i1, i2;
+   char *sp;
+   i1 = stlren(s1);
+   i2 = strlen(s2);
+   sp = malloc(i1 + i2 + 1);
+   assert(sp);
+   for (i=0; i < i1; i++)
+      sp[i] = s1[i];
+   for (i=0; i < i2; i++)
+      sp[i1+i] = s2[i];
+   sp[i1+i2] = '\0';
+   return(sp);
+}
 
+typedef ARGNODE ATL_arg_t;
+struct ARGNODE
+{
+   ATL_arg_t *next;
+   char *arg;
+   int len, nespc;    /* len of arg, # of embedded spaces in arg */
+};
+
+ATL_arg_t *NewArg(char *arg)
+{
+   ATL_arg_t *ap;
+   char *sp;
+   int ib, ie, i, nes, len;
+
+   ap = malloc(sizeof(ATL_arg_t));
+   assert(ap);
+
+   if (!arg)
+   {
+      ap->sp = NULL;
+      ap->len = ap->nespc = 0;
+      return(ap);
+   }
+   for (ib=0; arg[ib] != '\0' && isspace(arg[ib]); ib++);
+   for (ie=ib; arg[ie] != '\0'; ie++);
+   for (ie--; isspace(arg[ie]); ie--);
+   len = ie - ib + 1;
+   ap->arg = sp = malloc(len);
+   assert(sp);
+   for (len=nes=0,i=ib; i <= ie; i++)
+   {
+      char ch;
+      sp[len++] = ch = arg[i];
+      if (isspace(ch))
+         nes++;
+   }
+   sp[len] = '\0';
+   ap->len = len;
+   ap->nespc = nes;
+   return(ap);
+}
+
+ATL_arg_t *DupArg(ATL_arg_t *ap)
+{
+   ATL_arg_t *np;
+   np = malloc(sizeof(ATL_arg_t));
+   assert(np);
+   np->len = ap->len;
+   np->nespc = ap->nespc;
+   np->next = NULL;
+   np->arg = malloc(ap->len+1);
+   assert(np->arg);
+   strcpy(np->arg, ap->arg);
+   return(np)
+}
+
+ATL_arg_t *KillArg(ATL_arg_t *ap)
+{
+   ATL_arg_t ret=NULL;
+   if (ap)
+   {
+      ret = ap->next;
+      if (ap->arg)
+         free(ap->arg);
+      free(ap);
+   }
+   return(ret);
+}
+
+void KillAllArgs(ATL_arg_t *ap)
+{
+   while(ap)
+      ap = KillArg(ap);
+}
+
+ATL_arg_t *CombineArgs(ATL_arg_t *a1, ATL_arg_t *a2)
 /*
- * First, go through flags and count required maximal line length, and see
- * if -c or -o has been thrown.  
+ * RETURNS: one argument that cats the two args together, separated by a space
  */
+{
+   ATL_arg_t *np;
+   int l1, l2, len;
+   assert(a1 && a2);
+   assert(a1->arg && a2->arg);
+   l1 = a1->len;
+   l2 = a2->len;
+   len = l1 + l2 + 2;
+   np = malloc(sizeof(ATL_arg_t));
+   assert(np);
+   np->arg = malloc(len);
+   assert(np->arg);
+   np->len = len;
+   strcpy(np->arg, a1->arg);
+   np->arg[l1] = ' ';
+   strcpy(np->arg+l1+1, a2->arg);
+   np->nespc = a1->nespc + a2->nespc + 1;
+   np->next = NULL;
+   return(np);
+}
+
+ATL_arg_t CombAndKill(ATL_arg_t *ap, char *str)
+/*
+ * Cats string to argument in ap.
+ */
+{
+   ATL_arg_t *np, *tp
+   tp = NewArg(str);
+   np = CombineArgs(ap, tp);
+   np->next = NULL;
+   KillArg(ap);
+   return(np);
+}
+
+void ParseCompFlags(int nargs, char **args, int *DOLINK, int *DOASG, int *BITS,
+                    ATL_arg_t *files,
+                    ATL_arg_t **CMP, ATL_arg_t *ASM, ATL_arg_t *LNK)
+{
+   int i, nfiles=0, DOASM=1, DOLNK=1;
+   ATL_arg_t *cmpb, *cp, *asmb, *ap, *lnkb, *lp, *filb, *fp, *rnm, *an;
+/*
+ * Go through compiler flags and separate them into flags affecting
+ * compilation, assembling, and linking
+ */
+   cmpb = cp = NewArg(MYGCC);
+   asmb = ap = NewArg(MYASM);
+   lnkb = lp = NewArg(MYLNK);
+   rnm = filb = NULL;
    for (i=1; i < nargs; i++)
    {
-      len = strlen(args[i]);
-      if (len == 2 && args[i][0] == '-' && args[i][1] == 'c')
-         DOLINK=0;
-      else if (len >= 2 && args[i][0] == '-' && args[i][1] == 'o')
+      ATL_arg_t *at;
+      at = NewArg(args[i]);
+      if (at->arg[0] == '-')  /* flag */
       {
-         if (len == 2)
+         switch (at->arg[1])
          {
-            assert(++i < nargs);
-            outnm = args[i];
-         }
-         else /* "-oname" */
-            outnm = &args[i][2];
-      }
-      lnlen += len + 1;
-   }
+         case 'o' :  /* -o : found name of output file */
 /*
- * Allocate strings to hold compile, assemble, link and delete lines.  
- * Space will too long, since not all flags go to every stage, but that's OK.
+ *          If this is just -o, then actual name is given in the next arg
  */
-   len = lnlen + strlen(MYGCC) + 1;
-   cmpln = malloc(len);
-   assert(cmpln);
-   len = lnlen + strlen(MYASM) + 1;
-   asmln = malloc(len);
-   assert(asmln);
-   if (!DOLINK)
-      lnkln = NULL;
+            if (at->len == 2)
+            {
+               assert(++i < nargs);
+               rnm = CombAndKill(at, args[i])
+            }
+/*
+ *          is of form -o<name>
+ */
+            else
+               rnm = at;
+            break;
+         case 'L' : /* -L/l args go only to linker  */
+         case 'l' :
+            if (at->len == 2)
+            {
+               assert(++i < nargs);
+               lp->next = CombAndKill(at, args[i])
+               lp = lp->next;
+            }
+            else
+            break;
+         case 'c' :
+            DOLNK = 0;
+            break;
+         case 'S' :
+            DOASM = DOLNK = 0;
+            break;
+         case 'E':
+         case 'X':
+         case 'T':
+         case 'u':
+            assert(0); /* not implemented at moment */
+         case 'W': /* possible linker/assembler pass-thru */
+           if (at->len > 3)
+           {
+              if (at->arg[2] == 'a' && at->arg[3] == ',') /* asm pass-thru */
+              {
+                 ap->next = at;
+                 ap = at;
+              }
+              else if (at->arg[2] == 'l' && at->arg[3] == ',') /* lnk pass */
+              {
+                 ln->next = at;
+                 ln = at;
+              }
+           }
+           /* else fall-thru to default */
+         default:  /* everything else assumed to be a compiler-only flag */
+/*
+ *          In default, compare against all known linker options
+ */
+            if ( (at->len == 13 && !strcmp(at->arg, "-nostartfiles")) ||
+                 (at->len == 14 && !strcmp(at->arg, "-nodefaultlibs")) ||
+                 (at->len == 9 && !strcmp(at->arg, "-nostdlib")) ||
+                 (at->len == 4 && !strcmp(at->arg, "-pie")) ||
+                 (at->len == 9 && !strcmp(at->arg, "-rdynamic")) ||
+                 (at->len == 2 && at->arg[1] == 's') ||
+                 (at->len == 7 && !strcmp(at->arg, "-static")) ||
+                 (at->len == 14 && !strcmp(at->arg, "-static-libgcc")) ||
+                 (at->len == 9 && !strcmp(at->arg, "-symbolic"))
+               )
+            {
+               ln->next = at;
+               ln = at;
+            }
+            else if (at->len == 8 && !strcmp(at->arg, "-Xlinker"))
+            {
+               assert(++i < nargs);
+               lp->next = CombAndKill(at, args[i])
+               lp = lp->next;
+            }
+            else if (at->len == 11 && !strcmp(at->arg, "-Xassembler"))
+            {
+               assert(++i < nargs);
+               ap->next = CombAndKill(at, args[i])
+               ap = ap->next;
+            }
+/*
+ *          -m64/32 args get passed to comp, asm & linker
+ */
+            else if (at->len == 4 && 
+                     (!strcmp(at->arg, "-m64") || !strcmp(at->arg, "-m32")))
+            {
+               lp->next = DupArg(at);
+               lp = lp->next;
+               ap->next = DupArg(at);
+               ap = ap->next;
+               cp->next = at;
+               cp = at;
+            }
+            else
+            {
+               cp->next = at;
+               cp = at;
+            }
+         }
+      }
+@skip      if (at->arg[0] != '-')  /* must be filename */
+      else  /* anything not beginning with - must be a filename */
+      {
+@ROUT gnuf90w `         int F90=0;`
+         int len = at->len;
+         nfiles++;
+         if (!filb)
+            filb = fp = at;
+         else
+         {
+            fp->next = at;
+            fp = at;
+         }
+         assert(len > 2);
+@ROUT gnuf90w
+         if (at->arg[len-2] == '.') /* .f or .F */
+         {
+            assert(at->arg[len-1] == 'f' || at->arg[len-1] == 'F');
+         }
+         else  /* .f90 */
+         {
+            F90 = 1;
+            assert(len > 4)
+            assert(at->arg[len-4] == '.' && 
+                   (at->arg[len-3] == 'f' || at->arg[len-3] == 'F') ||
+                   (at->arg[len-2] == '9'));
+         }
+@ROUT gnuccw gnuf90w
+         assert(at->arg[len-2] == '.' && 
+                (at->arg[len-1] == 'c' || at->arg[len-1] == 'S'));
+/*
+ *       Put file on link line with language extension replaced by ".o"
+ */
+         lp->next = NewArg(at->arg);
+         lp = lp->next;
+@ROUT gnuccw
+         lp->arg[len-1] = 'o';
+@ROUT gnuf90w
+         if (!F90)
+            lp->arg[len-1] = 'o';
+         else
+         {
+            lp->arg[len-3] = 'o';
+            lp->arg[len-2] = '\0';
+            lp->len = len - 2;
+         }
+@ROUT gnuccw gnuf90w
+      }
+   }
+   if (rnm)  /* must use particular output name */
+   {
+      if (DOLNK) /* name is for linker */
+      {
+         lp->next = rnm;
+         lp = rnm;
+      }
+      else if (DOASM)
+      {
+         ap->next = rnm;
+         ap = rnm;
+      }
+   }
+   if (rnm && !DOLNK)
+      assert(nfiles == 1);
+   else
+      assert(nfiles > 0);
+
+   *CMP = cmpb;
+   if (DOASM)
+      *ASM = asmb;
    else
    {
-      len = lnlen + strlen(MYLNK) + 1;
-      lnkln = malloc(len);
-      assert(lnkln);
+      *ASM = NULL;
+      KillAllArgs(asmb);
    }
-   len = lnlen + 3 + 1;
-   delln = malloc(len);
-   assert(delln);
-/*
- * Go though flags again, and add them to the appropriate lines
- */
-   delln[0] = 'r';
-   delln[1] = 'm';
-   delln[2] = ' ';
-   id = 3;
-   ic = sprintf(cmpln, MYGCC);
-   ia = sprintf(asmln, MYASM);
-   if (DOLINK)
-      il = sprintf(lnkln, MYLNK);
-   ncomp = 0;
-   for (i=1; i < nargs; i++)
+   if (DOLNK)
+      *LNK = lnkb;
+   else
    {
-      len = strlen(args[i]);
-/*
- *    See if line as a .S or .c file, and if so, count it and put
- */
-      if (args[i][0] != '-' && args[i][len-2] == '.' &&
-          (args[i][len-1] == 'o' || args[i][len-1] == 'S'))
-      {
-         ncomp++;
-      }
+      *LNK = NULL;
+      KillAllArgs(lnkb);
    }
+   *files = filb;
+   *DOLINK = DOLNK;
+   *DOASG = DOASM;
 }
