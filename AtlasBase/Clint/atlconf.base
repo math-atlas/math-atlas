@@ -9449,6 +9449,27 @@ static char *atlsys_1L(char *targ, char *cmnd, int verb, int CWS)
 #include <assert.h>
 #include <ctype.h>
 #include <string.h>
+#if 1
+   #ifndef MYGCC
+      #define MYGCC "/sw/bin/gcc-fsf-4.6"
+   #endif
+   #ifndef MYASM
+      #define MYASM "clang"
+   #endif
+   #ifndef MYLNK
+      #define MYLNK "clang"
+   #endif
+#else
+   #ifndef MYGCC
+      #define MYGCC "gcc"
+   #endif
+   #ifndef MYASM
+      #define MYASM "gcc"
+   #endif
+   #ifndef MYLNK
+      #define MYLNK "gcc"
+   #endif
+#endif
 /*
  * This is a wrapper around a GNU gcc installation which is using the
  * native assembler and linker rather than the gnu alternatives.  This
@@ -9472,9 +9493,9 @@ static char *atlsys_1L(char *targ, char *cmnd, int verb, int CWS)
  */
 char *CatStrs(char *s1, char *s2)
 {
-   int i1, i2;
+   int i1, i2, i;
    char *sp;
-   i1 = stlren(s1);
+   i1 = strlen(s1);
    i2 = strlen(s2);
    sp = malloc(i1 + i2 + 1);
    assert(sp);
@@ -9486,7 +9507,7 @@ char *CatStrs(char *s1, char *s2)
    return(sp);
 }
 
-typedef ARGNODE ATL_arg_t;
+typedef struct ARGNODE ATL_arg_t;
 struct ARGNODE
 {
    ATL_arg_t *next;
@@ -9502,10 +9523,11 @@ ATL_arg_t *NewArg(char *arg)
 
    ap = malloc(sizeof(ATL_arg_t));
    assert(ap);
+   ap->next = NULL;
 
    if (!arg)
    {
-      ap->sp = NULL;
+      ap->arg = NULL;
       ap->len = ap->nespc = 0;
       return(ap);
    }
@@ -9539,12 +9561,12 @@ ATL_arg_t *DupArg(ATL_arg_t *ap)
    np->arg = malloc(ap->len+1);
    assert(np->arg);
    strcpy(np->arg, ap->arg);
-   return(np)
+   return(np);
 }
 
 ATL_arg_t *KillArg(ATL_arg_t *ap)
 {
-   ATL_arg_t ret=NULL;
+   ATL_arg_t *ret=NULL;
    if (ap)
    {
       ret = ap->next;
@@ -9572,7 +9594,7 @@ ATL_arg_t *CombineArgs(ATL_arg_t *a1, ATL_arg_t *a2)
    assert(a1->arg && a2->arg);
    l1 = a1->len;
    l2 = a2->len;
-   len = l1 + l2 + 2;
+   len = l1 + l2 + 1;
    np = malloc(sizeof(ATL_arg_t));
    assert(np);
    np->arg = malloc(len);
@@ -9586,12 +9608,13 @@ ATL_arg_t *CombineArgs(ATL_arg_t *a1, ATL_arg_t *a2)
    return(np);
 }
 
-ATL_arg_t CombAndKill(ATL_arg_t *ap, char *str)
+ATL_arg_t *CombAndKill(ATL_arg_t *ap, char *str)
 /*
  * Cats string to argument in ap.
  */
 {
-   ATL_arg_t *np, *tp
+   ATL_arg_t *np, *tp;
+
    tp = NewArg(str);
    np = CombineArgs(ap, tp);
    np->next = NULL;
@@ -9599,12 +9622,81 @@ ATL_arg_t CombAndKill(ATL_arg_t *ap, char *str)
    return(np);
 }
 
-void ParseCompFlags(int nargs, char **args, int *DOLINK, int *DOASG, int *BITS,
-                    ATL_arg_t *files,
-                    ATL_arg_t **CMP, ATL_arg_t *ASM, ATL_arg_t *LNK)
+int FindTotLen(ATL_arg_t *ap)
+/*
+ * Finds total length of all arguments, including enclosing "" for args with
+ * embedded spaces and space added to end to seperate with next flag
+ */
+{
+   int len = 0;
+   while (ap)
+   {
+      len += ap->len + 1;
+      if (ap->nespc > 0)
+         len += 2;
+      ap = ap->next;
+   }
+   return(len);
+}
+
+int FindMaxLen(ATL_arg_t *ap)
+/*
+ * Finds max length of any arg, including enclosing "" for args with
+ * embedded spaces
+ */
+{
+   int maxlen = 0;
+   while (ap)
+   {
+      int len;
+      len = ap->len;
+      if (ap->nespc > 0)
+         len += 2;
+      maxlen = (maxlen >= len) ? maxlen : len;
+      ap = ap->next;
+   }
+   return(maxlen);
+}
+
+int PrintArgToStr(ATL_arg_t *ap, char *str)
+/*
+ * Prints ap->arg to str, RETURNS: # of characters printed
+ */
+{
+   int i;
+
+   if (ap->nespc > 0)
+      i = sprintf(str, "\"%s\" ", ap->arg);
+   else
+      i = sprintf(str, "%s ", ap->arg);
+   return(i);
+}
+
+int PrintAllArgsToStr(ATL_arg_t *ab, char *str)
+/*
+ * Prints all arguments in ab to str, RETURNS: # of characters printed
+ */
+{
+   int i=0;
+
+   while (ab)
+   {
+      if (ab->nespc > 0)
+         i += sprintf(str+i, "\"%s\" ", ab->arg);
+      else
+         i += sprintf(str+i, "%s ", ab->arg);
+      ab = ab->next;
+   }
+   return(i);
+}
+
+
+char *ParseCompFlags(int nargs, char **args, int *BITS, ATL_arg_t **files,
+                     ATL_arg_t **CMP, ATL_arg_t **ASM, ATL_arg_t **LNK)
 {
    int i, nfiles=0, DOASM=1, DOLNK=1;
-   ATL_arg_t *cmpb, *cp, *asmb, *ap, *lnkb, *lp, *filb, *fp, *rnm, *an;
+   ATL_arg_t *cmpb, *cp, *asmb, *ap, *lnkb, *lp, *filb, *fp, *an;
+   char *outn=NULL;
 /*
  * Go through compiler flags and separate them into flags affecting
  * compilation, assembling, and linking
@@ -9612,7 +9704,7 @@ void ParseCompFlags(int nargs, char **args, int *DOLINK, int *DOASG, int *BITS,
    cmpb = cp = NewArg(MYGCC);
    asmb = ap = NewArg(MYASM);
    lnkb = lp = NewArg(MYLNK);
-   rnm = filb = NULL;
+   filb = NULL;
    for (i=1; i < nargs; i++)
    {
       ATL_arg_t *at;
@@ -9628,23 +9720,27 @@ void ParseCompFlags(int nargs, char **args, int *DOLINK, int *DOASG, int *BITS,
             if (at->len == 2)
             {
                assert(++i < nargs);
-               rnm = CombAndKill(at, args[i])
+               outn = args[i];
             }
 /*
  *          is of form -o<name>
  */
             else
-               rnm = at;
+               outn = args[i]+2;
             break;
          case 'L' : /* -L/l args go only to linker  */
          case 'l' :
             if (at->len == 2)
             {
                assert(++i < nargs);
-               lp->next = CombAndKill(at, args[i])
+               lp->next = CombAndKill(at, args[i]);
                lp = lp->next;
             }
             else
+            {
+               lp->next = at;
+               lp = at;
+            }
             break;
          case 'c' :
             DOLNK = 0;
@@ -9667,8 +9763,8 @@ void ParseCompFlags(int nargs, char **args, int *DOLINK, int *DOASG, int *BITS,
               }
               else if (at->arg[2] == 'l' && at->arg[3] == ',') /* lnk pass */
               {
-                 ln->next = at;
-                 ln = at;
+                 lp->next = at;
+                 lp = at;
               }
            }
            /* else fall-thru to default */
@@ -9687,19 +9783,19 @@ void ParseCompFlags(int nargs, char **args, int *DOLINK, int *DOASG, int *BITS,
                  (at->len == 9 && !strcmp(at->arg, "-symbolic"))
                )
             {
-               ln->next = at;
-               ln = at;
+               lp->next = at;
+               lp = at;
             }
             else if (at->len == 8 && !strcmp(at->arg, "-Xlinker"))
             {
                assert(++i < nargs);
-               lp->next = CombAndKill(at, args[i])
+               lp->next = CombAndKill(at, args[i]);
                lp = lp->next;
             }
             else if (at->len == 11 && !strcmp(at->arg, "-Xassembler"))
             {
                assert(++i < nargs);
-               ap->next = CombAndKill(at, args[i])
+               ap->next = CombAndKill(at, args[i]);
                ap = ap->next;
             }
 /*
@@ -9708,6 +9804,10 @@ void ParseCompFlags(int nargs, char **args, int *DOLINK, int *DOASG, int *BITS,
             else if (at->len == 4 && 
                      (!strcmp(at->arg, "-m64") || !strcmp(at->arg, "-m32")))
             {
+               if (at->arg[2] == '6')
+                  *BITS = 64;
+               else 
+                  *BITS = 32;
                lp->next = DupArg(at);
                lp = lp->next;
                ap->next = DupArg(at);
@@ -9725,33 +9825,61 @@ void ParseCompFlags(int nargs, char **args, int *DOLINK, int *DOASG, int *BITS,
 @skip      if (at->arg[0] != '-')  /* must be filename */
       else  /* anything not beginning with - must be a filename */
       {
+         char ch;
 @ROUT gnuf90w `         int F90=0;`
          int len = at->len;
-         nfiles++;
-         if (!filb)
-            filb = fp = at;
-         else
-         {
-            fp->next = at;
-            fp = at;
-         }
+
          assert(len > 2);
+         ch = at->arg[len-1];
+         nfiles++;
 @ROUT gnuf90w
          if (at->arg[len-2] == '.') /* .f or .F */
-         {
-            assert(at->arg[len-1] == 'f' || at->arg[len-1] == 'F');
-         }
+            assert(ch == 'f' || ch == 'F' || ch == 'o');
          else  /* .f90 */
          {
             F90 = 1;
+            ch = at->arg[len-3];
             assert(len > 4)
             assert(at->arg[len-4] == '.' && 
-                   (at->arg[len-3] == 'f' || at->arg[len-3] == 'F') ||
+                   (ch == 'f' || ch == 'F') ||
                    (at->arg[len-2] == '9'));
          }
-@ROUT gnuccw gnuf90w
+@ROUT gnuccw
          assert(at->arg[len-2] == '.' && 
-                (at->arg[len-1] == 'c' || at->arg[len-1] == 'S'));
+                (ch == 'c' || ch == 'S' || ch == 's' || ch == 'o'));
+@ROUT gnuccw gnuf90w
+/*
+ *       If it isn't already an object file, add it to list of files to be
+ *       renamed during compilation
+ */
+         if (ch != 'o')
+         {
+            if (!filb)
+               filb = fp = at;
+            else
+            {
+               fp->next = at;
+               fp = at;
+            }
+/*
+ *          Put empty node in linker options to indicate where to put in the 
+ *          generated file names
+ */
+            lp->next = NewArg(NULL);
+            lp = lp->next;
+         }
+/*
+ *       If it is a object file, just add it to link line and forget it
+ */
+         else
+         {
+            lp->next = NewArg(at->arg);
+            lp = lp->next;
+         }
+/*
+ *       If the file is already an object file, add it to linker
+ */
+@beginskip
 /*
  *       Put file on link line with language extension replaced by ".o"
  */
@@ -9769,22 +9897,18 @@ void ParseCompFlags(int nargs, char **args, int *DOLINK, int *DOASG, int *BITS,
             lp->len = len - 2;
          }
 @ROUT gnuccw gnuf90w
+@endskip
       }
    }
-   if (rnm)  /* must use particular output name */
+   if (outn)  /* must use particular output name */
    {
-      if (DOLNK) /* name is for linker */
-      {
-         lp->next = rnm;
-         lp = rnm;
-      }
-      else if (DOASM)
-      {
-         ap->next = rnm;
-         ap = rnm;
-      }
+      ATL_arg_t *tp;
+      tp = (DOLNK) ? lp : ap;
+      tp->next = NewArg("-o");
+      tp->next->next = NewArg(outn);
+      tp = tp->next->next;
    }
-   if (rnm && !DOLNK)
+   if (outn && !DOLNK)
       assert(nfiles == 1);
    else
       assert(nfiles > 0);
@@ -9805,6 +9929,137 @@ void ParseCompFlags(int nargs, char **args, int *DOLINK, int *DOASG, int *BITS,
       KillAllArgs(lnkb);
    }
    *files = filb;
-   *DOLINK = DOLNK;
-   *DOASG = DOASM;
+   return(outn);
+}
+
+int main(int nargs, char **args)
+{
+   ATL_arg_t *cmpb, *asmb, *lnkb, *filb, *ap, *rmb=NULL, *rp;
+   int bits, lcmp, lasm, llnk, lfil, i, lout=0;
+   char *cmps, *asms, *lnks, *outn;
+
+   outn = ParseCompFlags(nargs, args, &bits, &filb, &cmpb, &asmb, &lnkb);
+   assert(filb);
+   if (outn)
+      lout = strlen(outn);
+/*
+ * Now, compile each file to the standard name ATL_tmp#.s using gcc -S
+ */
+   rp = rmb = NewArg("rm");
+   lcmp = FindTotLen(cmpb);
+   lfil = FindMaxLen(filb);
+   cmps = malloc(lcmp + lfil + 32);
+   assert(cmps);
+   i = PrintAllArgsToStr(cmpb, cmps);
+   assert(i == lcmp);
+   for (i=0,ap=filb; ap; i++, ap = ap->next)
+   {
+      int k;
+      char tmpnam[16];
+      sprintf(tmpnam, "ATL_tmp%d.[s,o]", i);
+      rp->next = NewArg(tmpnam);
+      rp = rp->next;
+      k = lcmp + sprintf(cmps+lcmp, "-S -o ATL_tmp%d.s ", i);
+      PrintArgToStr(ap, cmps+k);
+      printf("%s\n", cmps);
+      assert(!system(cmps));
+   }
+   KillAllArgs(cmpb);
+   free(cmps);
+/*
+ * If we aren't linking and we have only one file with a specified name,
+ * assemble the .s file to the specified .o file
+ */
+   lasm = FindTotLen(asmb);
+   cmps = malloc(lasm + lfil + 32);
+   assert(cmps);
+   i = PrintAllArgsToStr(asmb, cmps);
+   assert(i == lasm);
+   if (!lnkb && !filb->next)
+   {
+      int k;
+      char *sp;
+      if (outn)
+         sp = outn;
+      else
+      {
+         k = filb->len;
+         sp = malloc(k + 1);
+         strcpy(sp, filb->arg);
+         assert(k > 2);
+         if (sp[k-2] == '.')
+            sp[k-1] = 'o';
+         else
+         {
+            assert(k > 4 && sp[k-4] == '.');   /* .f90 */
+            sp[k-3] = 'o';
+            sp[k-2] = '\0';
+         }
+      }
+      k = lasm + sprintf(cmps+lasm, "-c ATL_tmp0.s");
+      if (sp != outn)
+         sprintf(cmps+k, " -o %s", sp);
+      printf("%s\n", cmps);
+      k = system(cmps);
+      KillAllArgs(filb);
+      KillAllArgs(asmb);
+      free(cmps);
+      if (sp != outn)
+         free(sp);
+      return(k);
+   }
+/*
+ * Now assemble every .s into a .o
+ */
+   for (i=0,ap=filb; ap; i++, ap = ap->next)
+   {
+      int k;
+      k = lasm + sprintf(cmps+lasm, "-c ATL_tmp%d.s ", i);
+      printf("%s\n", cmps);
+      assert(!system(cmps));
+   }
+   KillAllArgs(asmb);
+   free(cmps);
+/*
+ * Now issue link line
+ */
+   if (lnkb)
+   {
+/*
+ *    Put files back into link line in the order in which they were found
+ *    NULL-arg nodes are placeholders for the names.
+ */
+      for (i=0,ap=filb; ap; i++,ap = ap->next)
+      {
+         ATL_arg_t *tp;
+         for (tp=lnkb; tp && tp->arg; tp = tp->next);
+         assert(tp);
+         tp->arg = malloc(16);
+         assert(tp->arg);
+         tp->len = sprintf(tp->arg, "ATL_tmp%d.o", i);
+      }
+      llnk = FindTotLen(lnkb);
+      cmps = malloc(llnk + 1);
+      assert(cmps);
+      i = PrintAllArgsToStr(lnkb, cmps);
+      assert(i == llnk);
+      printf("%s\n", cmps);
+      assert(!system(cmps));
+      KillAllArgs(lnkb);
+      free(cmps);
+   }
+   KillAllArgs(filb);
+/*
+ * Now delete the temporary files that we have created
+ */
+   i = FindTotLen(rmb);
+   cmps = malloc(i + 1);
+   assert(cmps);
+   assert(i == PrintAllArgsToStr(rmb, cmps));
+   KillAllArgs(rmb);
+   printf("%s\n", cmps);
+   system(cmps);
+   free(cmps);
+
+   return(0);
 }
