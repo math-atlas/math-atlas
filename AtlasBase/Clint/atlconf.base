@@ -5520,7 +5520,21 @@ int main(int nargs, char **args)
    }
    else
       targarg = "";
-   goodgcc = FindGoodGcc(OS, mach,  verb, targ);
+   #ifdef ATL_GCCCLANG
+   {
+      char *topd;
+      int dlen;
+      topd = atlsys_1L(NULL, "pwd", verb, 1);
+      assert(topd);
+      dlen = strlen(topd);
+      goodgcc = malloc(dlen + 10);
+      assert(goodgcc);
+      sprintf(goodgcc, "%s/gccclang", topd);
+      free(topd);
+   }
+   #else
+      goodgcc = FindGoodGcc(OS, mach,  verb, targ);
+   #endif
    GetComps(OS, mach, verb, targ, ptrbits, usrcomps, nof77, vecexts, goodgcc);
 /* 
  * See if we need to search for gfortran
@@ -6090,7 +6104,7 @@ MACH=Corei2 OS=Win9x,WinNT LVL=1005 COMPS=smc,dmc,skc,dkc,icc
    'gcc-4' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
 MACH=Corei2 OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
-MACH=Corei2 OS=ALL LVL=50000 COMPS=smc,dmc,skc,dkc,icc,gcc
+MACH=Corei2 OS=ALL LVL=50 COMPS=smc,dmc,skc,dkc,icc,gcc
     'clang' '-fomit-frame-pointer -mavx -O2 -m64 -Wno-parentheses'
 MACH=Corei1 OS=Win9x,WinNT LVL=1005 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc-4' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
@@ -7453,6 +7467,8 @@ do
       echo "     Use this library to build a mixed netlib/ATLAS LAPACK."
       echo "     The two libs will be merged so they must be built wt compatible compilers."
 @endskip
+      echo "  --apple-is-evil=<gcc for frontend>,<clang for backend>"
+      echo "     Provide full paths to both compilers"
       echo "Attempting to build xconfig to get probe flags:"
       rm -f Makefile > /dev/null 2>&1
       echo BLDdir="$blddir" > Makefile
@@ -7520,6 +7536,21 @@ do
       dylib=1
       pass="$pass -D c -DATL_DYLIBS"
       cflags="$cflags -DATL_DYLIBS"
+      handled=1
+   fi
+#
+   flag=`echo "$arg" | sed -e "s/--apple-is-evil=//"`
+   if test "$flag" != "$arg"
+   then
+      ccF=`echo "$flag" | sed -e "s/,.*//"`
+      ccB=`echo "$flag" | sed -e "s/.*,//"`
+      echo "#define MYGCC \"$ccF\"" > $blddir/gccclang.c
+      echo "#define MYASM \"$ccB\"" >> $blddir/gccclang.c
+      echo "#define MYLNK \"$ccB\"" >> $blddir/gccclang.c
+      cat $topdir/CONFIG/src/gnuccw.c >> $blddir/gccclang.c
+      $ccB -O -o $blddir/gccclang $blddir/gccclang.c
+      cc=$blddir/gccclang
+      cflags="$cflags -DATL_GCCCLANG"
       handled=1
    fi
 #
@@ -9449,6 +9480,10 @@ static char *atlsys_1L(char *targ, char *cmnd, int verb, int CWS)
 #include <assert.h>
 #include <ctype.h>
 #include <string.h>
+#define DEBUG 1
+#ifdef DEBUG
+   FILE *fplog=NULL;
+#endif
 #if 1
    #ifndef MYGCC
       #define MYGCC "/sw/bin/gcc-fsf-4.6"
@@ -9484,13 +9519,6 @@ static char *atlsys_1L(char *targ, char *cmnd, int verb, int CWS)
  * Compiles with "-c" as a flag do only steps 1-2.
  */
 
-/* 
- * HERE HERE HERE
- * Must rewrite to build queues of words for each phase, so we can do all
- * compilation one-file-at-a-time, so we can delete the .s immediately and
- * use known name so that we don't overwrite .S on non-case sensitive syss
- * like MacOS.
- */
 char *CatStrs(char *s1, char *s2)
 {
    int i1, i2, i;
@@ -9535,7 +9563,7 @@ ATL_arg_t *NewArg(char *arg)
    for (ie=ib; arg[ie] != '\0'; ie++);
    for (ie--; isspace(arg[ie]); ie--);
    len = ie - ib + 1;
-   ap->arg = sp = malloc(len);
+   ap->arg = sp = malloc(len+1);
    assert(sp);
    for (len=nes=0,i=ib; i <= ie; i++)
    {
@@ -9752,6 +9780,7 @@ char *ParseCompFlags(int nargs, char **args, int *BITS, ATL_arg_t **files,
          case 'X':
          case 'T':
          case 'u':
+            fprintf(stderr, "FLAG '-%c' NOT HANDLED, DYING\n", at->arg[1]);
             assert(0); /* not implemented at moment */
          case 'W': /* possible linker/assembler pass-thru */
            if (at->len > 3)
@@ -9814,6 +9843,21 @@ char *ParseCompFlags(int nargs, char **args, int *BITS, ATL_arg_t **files,
                ap = ap->next;
                cp->next = at;
                cp = at;
+            }
+            else if (at->len == 9 && !strcmp(at->arg, "--version"))
+            {
+               char *sp;
+               int i;
+               i = strlen(MYGCC);
+               sp = malloc(i + 12);
+               strcpy(sp, MYGCC);
+               strcpy(sp+i, " --version");
+               system(sp);
+               free(sp);
+               #ifdef DEBUG
+                  fclose(fplog);
+               #endif
+               exit(0);  /* ugly uncleaned-up exit; live with it */
             }
             else
             {
@@ -9912,14 +9956,30 @@ char *ParseCompFlags(int nargs, char **args, int *BITS, ATL_arg_t **files,
       assert(nfiles == 1);
    else
       assert(nfiles > 0);
-
-   *CMP = cmpb;
-   if (DOASM)
-      *ASM = asmb;
+/*
+ * If there are no files in filb, that means nothing need be compiled, so
+ * the only thing we are doing is linking
+ */
+   if (!filb)
+   {
+      assert(DOLNK);
+      if (cmpb)
+         KillAllArgs(cmpb);
+      if (asmb)
+         KillAllArgs(asmb);
+      *CMP = NULL;
+      *ASM = NULL;
+   }
    else
    {
-      *ASM = NULL;
-      KillAllArgs(asmb);
+      *CMP = cmpb;
+      if (DOASM)
+         *ASM = asmb;
+      else
+      {
+         *ASM = NULL;
+         KillAllArgs(asmb);
+      }
    }
    if (DOLNK)
       *LNK = lnkb;
@@ -9932,94 +9992,151 @@ char *ParseCompFlags(int nargs, char **args, int *BITS, ATL_arg_t **files,
    return(outn);
 }
 
+#ifdef DEBUG
+void PrintFlags(int nargs, char **args)
+{
+   int i;
+
+   fprintf(fplog, "\nINPUT:\n");
+   for (i=0; i < nargs; i++)
+      fprintf(fplog, "%s ", args[i]);
+   fprintf(fplog, "\n");
+   fflush(fplog);
+}
+#endif
+
+char *GetDefObjNam(char *infile)
+/*
+ * When -c is specified, output file should be same as infile but w/o path
+ */
+{
+   int ib, ie, len;
+   char *sp;
+
+   ie = strlen(infile);
+   for (ib=ie-1; ib >=0 && infile[ib] != '/'; ib--);
+   ib++;
+   len = ie-ib;
+   sp = malloc(len+1);
+   assert(sp);
+   strcpy(sp, infile+ib);
+/*
+ * Substitute .o for any 1 letter extension (eg: .c,.f,.s, etc)
+ */
+   if (sp[len-2] == '.')
+      sp[len-1] = 'o';
+@ROUT gnuf90w
+   else if (sp[len-4] == '.')  /* 3 letter extension (.f90) */
+   {
+      sp[len-3] = 'o';
+      sp[len-2] = '\0';
+   }
+@ROUT gnuccw gnuf90w
+   return(sp);
+}
+
 int main(int nargs, char **args)
 {
    ATL_arg_t *cmpb, *asmb, *lnkb, *filb, *ap, *rmb=NULL, *rp;
    int bits, lcmp, lasm, llnk, lfil, i, lout=0;
    char *cmps, *asms, *lnks, *outn;
+   #ifdef DEBUG
+      fplog = fopen("ATL_CCWRAP.log", "w");
+      PrintFlags(nargs, args);
+   #endif
 
    outn = ParseCompFlags(nargs, args, &bits, &filb, &cmpb, &asmb, &lnkb);
-   assert(filb);
    if (outn)
       lout = strlen(outn);
 /*
  * Now, compile each file to the standard name ATL_tmp#.s using gcc -S
  */
-   rp = rmb = NewArg("rm");
-   lcmp = FindTotLen(cmpb);
-   lfil = FindMaxLen(filb);
-   cmps = malloc(lcmp + lfil + 32);
-   assert(cmps);
-   i = PrintAllArgsToStr(cmpb, cmps);
-   assert(i == lcmp);
-   for (i=0,ap=filb; ap; i++, ap = ap->next)
+   if (cmpb)
    {
-      int k;
-      char tmpnam[16];
-      sprintf(tmpnam, "ATL_tmp%d.[s,o]", i);
-      rp->next = NewArg(tmpnam);
-      rp = rp->next;
-      k = lcmp + sprintf(cmps+lcmp, "-S -o ATL_tmp%d.s ", i);
-      PrintArgToStr(ap, cmps+k);
-      printf("%s\n", cmps);
-      assert(!system(cmps));
-   }
-   KillAllArgs(cmpb);
-   free(cmps);
-/*
- * If we aren't linking and we have only one file with a specified name,
- * assemble the .s file to the specified .o file
- */
-   lasm = FindTotLen(asmb);
-   cmps = malloc(lasm + lfil + 32);
-   assert(cmps);
-   i = PrintAllArgsToStr(asmb, cmps);
-   assert(i == lasm);
-   if (!lnkb && !filb->next)
-   {
-      int k;
-      char *sp;
-      if (outn)
-         sp = outn;
-      else
+      rp = rmb = NewArg("rm");
+      lcmp = FindTotLen(cmpb);
+      lfil = FindMaxLen(filb);
+      cmps = malloc(lcmp + lfil + 32);
+      assert(cmps);
+      i = PrintAllArgsToStr(cmpb, cmps);
+      if (i != lcmp)
       {
-         k = filb->len;
-         sp = malloc(k + 1);
-         strcpy(sp, filb->arg);
-         assert(k > 2);
-         if (sp[k-2] == '.')
-            sp[k-1] = 'o';
-         else
-         {
-            assert(k > 4 && sp[k-4] == '.');   /* .f90 */
-            sp[k-3] = 'o';
-            sp[k-2] = '\0';
-         }
+         fprintf(stderr, "ERROR: lcmp=%d, i=%d, strlen=%d, str='%s'\n", 
+                 lcmp, i, (int)strlen(cmps), cmps);
+         #ifdef DEBUG
+            fprintf(fplog, "ERROR: lcmp=%d, i=%d, strlen=%d, str='%s'\n", 
+                    lcmp, i, (int)strlen(cmps), cmps);
+            fflush(fplog);
+         #endif
+         assert(i == lcmp);
       }
-      k = lasm + sprintf(cmps+lasm, "-c ATL_tmp0.s");
-      if (sp != outn)
-         sprintf(cmps+k, " -o %s", sp);
-      printf("%s\n", cmps);
-      k = system(cmps);
-      KillAllArgs(filb);
+      for (i=0,ap=filb; ap; i++, ap = ap->next)
+      {
+         int k;
+         char tmpnam[16];
+         sprintf(tmpnam, "ATL_tmp%d.[s,o]", i);
+         rp->next = NewArg(tmpnam);
+         rp = rp->next;
+         if (ap->arg[ap->len-1] == 'S')
+            k = lcmp + sprintf(cmps+lcmp, "-E -o ATL_tmp%d.s ", i);
+         else
+            k = lcmp + sprintf(cmps+lcmp, "-S -o ATL_tmp%d.s ", i);
+         PrintArgToStr(ap, cmps+k);
+         #ifdef DEBUG
+            fprintf(fplog, "COMP: %s\n", cmps);
+            fflush(fplog);
+         #endif
+         assert(!system(cmps));
+      }
+      KillAllArgs(cmpb);
+      free(cmps);
+/*
+ *    If we aren't linking and we have only one file with a specified name,
+ *    assemble the .s file to the specified .o file
+ */
+      lasm = FindTotLen(asmb);
+      cmps = malloc(lasm + lfil + 64);
+      assert(cmps);
+      i = PrintAllArgsToStr(asmb, cmps);
+      assert(i == lasm);
+      if (!lnkb && !filb->next)
+      {
+         int k;
+         char *sp;
+         if (outn)
+            sp = outn;
+         else
+            sp = GetDefObjNam(filb->arg);
+         k = lasm + sprintf(cmps+lasm, "-c ATL_tmp0.s");
+         if (sp != outn)
+            sprintf(cmps+k, " -o %s", sp);
+         #ifdef DEBUG
+            fprintf(fplog, "ASSEMBLE: %s\n", cmps);
+         #endif
+         k = system(cmps);
+         KillAllArgs(filb);
+         KillAllArgs(asmb);
+         free(cmps);
+         if (sp != outn)
+            free(sp);
+         return(k);
+      }
+/*
+ *    Now assemble every .s into a .o
+ */
+      for (i=0,ap=filb; ap; i++, ap = ap->next)
+      {
+         int k;
+         k = lasm + sprintf(cmps+lasm, "-c ATL_tmp%d.s -o ATL_tmp%d.o", i, i);
+         #ifdef DEBUG
+            fprintf(fplog, "ASSEMBLE: %s\n", cmps);
+            fflush(fplog);
+         #endif
+         assert(!system(cmps));
+      }
       KillAllArgs(asmb);
       free(cmps);
-      if (sp != outn)
-         free(sp);
-      return(k);
    }
-/*
- * Now assemble every .s into a .o
- */
-   for (i=0,ap=filb; ap; i++, ap = ap->next)
-   {
-      int k;
-      k = lasm + sprintf(cmps+lasm, "-c ATL_tmp%d.s ", i);
-      printf("%s\n", cmps);
-      assert(!system(cmps));
-   }
-   KillAllArgs(asmb);
-   free(cmps);
 /*
  * Now issue link line
  */
@@ -10043,7 +10160,10 @@ int main(int nargs, char **args)
       assert(cmps);
       i = PrintAllArgsToStr(lnkb, cmps);
       assert(i == llnk);
-      printf("%s\n", cmps);
+      #ifdef DEBUG
+         fprintf(fplog, "LINK: '%s'\n", cmps);
+         fflush(fplog);
+      #endif
       assert(!system(cmps));
       KillAllArgs(lnkb);
       free(cmps);
@@ -10061,5 +10181,9 @@ int main(int nargs, char **args)
    system(cmps);
    free(cmps);
 
+   #ifdef DEBUG
+      system("cat ATL_CCWRAP.log");
+      fclose(fplog);
+   #endif
    return(0);
 }
