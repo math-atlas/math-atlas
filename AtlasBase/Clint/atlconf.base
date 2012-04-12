@@ -5520,7 +5520,7 @@ int main(int nargs, char **args)
    }
    else
       targarg = "";
-   #ifdef ATL_GCCCLANG
+   #if defined(ATL_GCCCLANG) || defined(ATL_GCC3P)
    {
       char *topd;
       int dlen;
@@ -5529,7 +5529,11 @@ int main(int nargs, char **args)
       dlen = strlen(topd);
       goodgcc = malloc(dlen + 10);
       assert(goodgcc);
-      sprintf(goodgcc, "%s/gccclang", topd);
+      #ifdef ATL_GCCCLANG
+         sprintf(goodgcc, "%s/gccclang", topd);
+      #else
+         sprintf(goodgcc, "%s/gcc3p", topd);
+      #endif
       free(topd);
    }
    #else
@@ -7467,8 +7471,10 @@ do
       echo "     Use this library to build a mixed netlib/ATLAS LAPACK."
       echo "     The two libs will be merged so they must be built wt compatible compilers."
 @endskip
-      echo "  --apple-is-evil=<gcc for frontend>,<clang for backend>"
-      echo "     Provide full paths to both compilers"
+      echo "  --gcc3pass=<gcc for frontend>,<assembler>;<linker>"
+      echo "     Provide full paths for all compilers/assemblers"
+@skip      echo "  --apple-is-evil=<gcc for frontend>,<clang for backend>"
+@skip      echo "     Provide full paths to both compilers"
       echo "Attempting to build xconfig to get probe flags:"
       rm -f Makefile > /dev/null 2>&1
       echo BLDdir="$blddir" > Makefile
@@ -7536,6 +7542,22 @@ do
       dylib=1
       pass="$pass -D c -DATL_DYLIBS"
       cflags="$cflags -DATL_DYLIBS"
+      handled=1
+   fi
+#  --gcc3pass=gcc,as:lnk
+   flag=`echo "$arg" | sed -e "s/--gcc3pass=//"`
+   if test "$flag" != "$arg"
+   then
+      ccC=`echo "$flag" | sed -e "s/,.*//"`
+      ccA=`echo "$flag" | sed -e "s/.*,//" -e "s/:.*//"`
+      ccL=`echo "$flag" | sed -e "s/.*://"`
+      echo "#define MYGCC \"$ccC\"" > $blddir/gcc3p.c
+      echo "#define MYASM \"$ccA\"" >> $blddir/gcc3p.c
+      echo "#define MYLNK \"$ccL\"" >> $blddir/gcc3p.c
+      cat $topdir/CONFIG/src/gcc3p.c >> $blddir/gcc3p.c
+      $ccL -O -o $blddir/gcc3p $blddir/gcc3p.c
+      cc=$blddir/gcc3p
+      cflags="$cflags -DATL_GCC3P"
       handled=1
    fi
 #
@@ -9474,7 +9496,7 @@ static char *atlsys_1L(char *targ, char *cmnd, int verb, int CWS)
    return(ln);
 }
 #endif
-@ROUT gnuccw gnuf90w
+@ROUT gnuccw gnuf90w gcc3p
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -9484,6 +9506,17 @@ static char *atlsys_1L(char *targ, char *cmnd, int verb, int CWS)
 #ifdef DEBUG
    FILE *fplog=NULL;
 #endif
+@ROUT gcc3p
+#ifndef MYGCC
+   #define MYGCC "gcc"
+#endif
+#ifndef MYASM
+   #define MYASM "as"
+#endif
+#ifndef MYLNK
+   #define MYLNK "clang"
+#endif
+@ROUT gnuccw gnuf90w
 #if 1
    #ifndef MYGCC
       #define MYGCC "/sw/bin/gcc-fsf-4.6"
@@ -9505,6 +9538,7 @@ static char *atlsys_1L(char *targ, char *cmnd, int verb, int CWS)
       #define MYLNK "gcc"
    #endif
 #endif
+@ROUT gnuccw gnuf90w gcc3p
 /*
  * This is a wrapper around a GNU gcc installation which is using the
  * native assembler and linker rather than the gnu alternatives.  This
@@ -9761,8 +9795,8 @@ char *ParseCompFlags(int nargs, char **args, int *BITS, ATL_arg_t **files,
             if (at->len == 2)
             {
                assert(++i < nargs);
-               lp->next = CombAndKill(at, args[i]);
-               lp = lp->next;
+               lp->next = at;
+               lp = at->next = NewArg(args[i]);
             }
             else
             {
@@ -9787,11 +9821,19 @@ char *ParseCompFlags(int nargs, char **args, int *BITS, ATL_arg_t **files,
            {
               if (at->arg[2] == 'a' && at->arg[3] == ',') /* asm pass-thru */
               {
+@ROUT gcc3p 
+                 strcpy(at->arg, at->arg+4);
+                 at->len -= 4;
+@ROUT gnuccw gnuf90w gcc3p
                  ap->next = at;
                  ap = at;
               }
               else if (at->arg[2] == 'l' && at->arg[3] == ',') /* lnk pass */
               {
+@ROUT gcc3p 
+@skip                 strcpy(at->arg, at->arg+4);
+@skip                 at->len -= 4;
+@ROUT gnuccw gnuf90w gcc3p
                  lp->next = at;
                  lp = at;
               }
@@ -9818,14 +9860,22 @@ char *ParseCompFlags(int nargs, char **args, int *BITS, ATL_arg_t **files,
             else if (at->len == 8 && !strcmp(at->arg, "-Xlinker"))
             {
                assert(++i < nargs);
-               lp->next = CombAndKill(at, args[i]);
-               lp = lp->next;
+@skip @ROUT gcc3p 
+@skip               lp->next = NewArg(args[i]);
+@ROUT gnuccw gnuf90w gcc3p
+               lp->next = at;
+               lp = at->next = NewArg(args[i]);
+@ROUT gnuccw gnuf90w gcc3p
             }
             else if (at->len == 11 && !strcmp(at->arg, "-Xassembler"))
             {
                assert(++i < nargs);
-               ap->next = CombAndKill(at, args[i]);
-               ap = ap->next;
+@ROUT gcc3p 
+              ap->next = NewArg(args[i]);
+@ROUT gnuccw gnuf90w
+               ap->next = at;
+               ap = at->next = NewArg(args[i]);
+@ROUT gnuccw gnuf90w gcc3p
             }
 /*
  *          -m64/32 args get passed to comp, asm & linker
@@ -9833,6 +9883,21 @@ char *ParseCompFlags(int nargs, char **args, int *BITS, ATL_arg_t **files,
             else if (at->len == 4 && 
                      (!strcmp(at->arg, "-m64") || !strcmp(at->arg, "-m32")))
             {
+@ROUT gcc3p
+               if (at->arg[2] == '6')
+               {
+                  ap->next = NewArg("--64");
+                  *BITS = 64;
+               }
+               else
+               {
+                  ap->next = NewArg("--32");
+                  *BITS = 32;
+               }
+@ROUT gcc3p
+               lp->next = DupArg(at);
+               lp = lp->next;
+@ROUT gnuccw gnuf90w
                if (at->arg[2] == '6')
                   *BITS = 64;
                else 
@@ -9841,6 +9906,7 @@ char *ParseCompFlags(int nargs, char **args, int *BITS, ATL_arg_t **files,
                lp = lp->next;
                ap->next = DupArg(at);
                ap = ap->next;
+@ROUT gnuccw gnuf90w gcc3p
                cp->next = at;
                cp = at;
             }
@@ -9878,7 +9944,7 @@ char *ParseCompFlags(int nargs, char **args, int *BITS, ATL_arg_t **files,
          nfiles++;
 @ROUT gnuf90w
          if (at->arg[len-2] == '.') /* .f or .F */
-            assert(ch == 'f' || ch == 'F' || ch == 'o');
+            assert(ch == 'f' || ch == 'F' || ch == 'o' || ch == 'a');
          else  /* .f90 */
          {
             F90 = 1;
@@ -9888,15 +9954,15 @@ char *ParseCompFlags(int nargs, char **args, int *BITS, ATL_arg_t **files,
                    (ch == 'f' || ch == 'F') ||
                    (at->arg[len-2] == '9'));
          }
-@ROUT gnuccw
+@ROUT gnuccw gcc3p
          assert(at->arg[len-2] == '.' && 
-                (ch == 'c' || ch == 'S' || ch == 's' || ch == 'o'));
-@ROUT gnuccw gnuf90w
+            (ch == 'c' || ch == 'S' || ch == 's' || ch == 'o' || ch == 'a'));
+@ROUT gnuccw gnuf90w gcc3p
 /*
  *       If it isn't already an object file, add it to list of files to be
  *       renamed during compilation
  */
-         if (ch != 'o')
+         if (ch != 'o' && ch != 'a')
          {
             if (!filb)
                filb = fp = at;
@@ -9913,7 +9979,7 @@ char *ParseCompFlags(int nargs, char **args, int *BITS, ATL_arg_t **files,
             lp = lp->next;
          }
 /*
- *       If it is a object file, just add it to link line and forget it
+ *       If it is a object/archive file, just add it to link line and forget it
  */
          else
          {
@@ -9929,7 +9995,7 @@ char *ParseCompFlags(int nargs, char **args, int *BITS, ATL_arg_t **files,
  */
          lp->next = NewArg(at->arg);
          lp = lp->next;
-@ROUT gnuccw
+@ROUT gnuccw gcc3p
          lp->arg[len-1] = 'o';
 @ROUT gnuf90w
          if (!F90)
@@ -9940,7 +10006,7 @@ char *ParseCompFlags(int nargs, char **args, int *BITS, ATL_arg_t **files,
             lp->arg[len-2] = '\0';
             lp->len = len - 2;
          }
-@ROUT gnuccw gnuf90w
+@ROUT gnuccw gnuf90w gcc3p
 @endskip
       }
    }
@@ -10031,7 +10097,7 @@ char *GetDefObjNam(char *infile)
       sp[len-3] = 'o';
       sp[len-2] = '\0';
    }
-@ROUT gnuccw gnuf90w
+@ROUT gnuccw gnuf90w gcc3p
    return(sp);
 }
 
@@ -10107,9 +10173,14 @@ int main(int nargs, char **args)
             sp = outn;
          else
             sp = GetDefObjNam(filb->arg);
+@ROUT gcc3p
+   /* still need to add arch+isaext flag */
+         k = lasm + sprintf(cmps+lasm, "ATL_tmp0.s -o %s", sp);
+@ROUT gnuccw gnuf90w
          k = lasm + sprintf(cmps+lasm, "-c ATL_tmp0.s");
          if (sp != outn)
             sprintf(cmps+k, " -o %s", sp);
+@ROUT gnuccw gnuf90w gcc3p
          #ifdef DEBUG
             fprintf(fplog, "ASSEMBLE: %s\n", cmps);
          #endif
@@ -10127,7 +10198,11 @@ int main(int nargs, char **args)
       for (i=0,ap=filb; ap; i++, ap = ap->next)
       {
          int k;
+@skip @ROUT gcc3p
+@skip         k = lasm + sprintf(cmps+lasm, "ATL_tmp%d.s -o ATL_tmp%d.o", i, i);
+@ROUT gnuccw gnuf90w gcc3p
          k = lasm + sprintf(cmps+lasm, "-c ATL_tmp%d.s -o ATL_tmp%d.o", i, i);
+@ROUT gnuccw gnuf90w gcc3p
          #ifdef DEBUG
             fprintf(fplog, "ASSEMBLE: %s\n", cmps);
             fflush(fplog);
