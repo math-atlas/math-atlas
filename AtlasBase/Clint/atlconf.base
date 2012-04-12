@@ -3900,8 +3900,12 @@ void GetPmake(int verb, enum OSTYPE OS, int ncpu, char *pmake)
       if (res)
       {
          free(res);
-         if (ncpu == 1) sprintf(pmake, "$(MAKE) -j 2");
-         else sprintf(pmake, "$(MAKE) -j %d", ncpu);
+         #if defined(ATL_GCCCLANG) || defined(ATL_GCC3P)
+            sprintf(pmake, "$(MAKE) -j 1");
+         #else
+            if (ncpu == 1) sprintf(pmake, "$(MAKE) -j 2");
+            else sprintf(pmake, "$(MAKE) -j %d", ncpu);
+         #endif
       }
    }
    else
@@ -3909,11 +3913,19 @@ void GetPmake(int verb, enum OSTYPE OS, int ncpu, char *pmake)
       switch(OS)
       {
       case OSIRIX:
-         strcpy(pmake, "$(MAKE) -P");
+         #if defined(ATL_GCCCLANG) || defined(ATL_GCC3P)
+            strcpy(pmake, "$(MAKE)");
+         #else
+            strcpy(pmake, "$(MAKE) -P");
+         #endif
          break;
       case OSFreeBSD:
-         if (ncpu == 1) sprintf(pmake, "$(MAKE) -j 2");
-         else sprintf(pmake, "$(MAKE) -j %d", ncpu);
+         #if defined(ATL_GCCCLANG) || defined(ATL_GCC3P)
+            sprintf(pmake, "$(MAKE) -j 1");
+         #else
+            if (ncpu == 1) sprintf(pmake, "$(MAKE) -j 2");
+            else sprintf(pmake, "$(MAKE) -j %d", ncpu);
+         #endif
          break;
       default:
          strcpy(pmake, "$(MAKE)");
@@ -4413,8 +4425,22 @@ COMPNODE **GetDefaultComps(enum OSTYPE OS, enum MACHTYPE arch, int verb,
    {
       for (p=q; p; p = p->next)
       {
-         if (strstr(p->comp, "gcc") || strstr(p->comp, "gfortran"))
-            p->flags = NewAppendedString(p->flags, vp);
+         #if defined(ATL_GCCCLANG) || defined(ATL_GCC3P)
+            if (strstr(p->comp, "gfortran"))
+            {
+               if (!strcmp(vp, "-mavx"))
+                  p->flags = NewAppendedString(p->flags, "-msse3");
+               else
+                  p->flags = NewAppendedString(p->flags, vp);
+                  
+            }
+            else if (CompIsGcc(p->comp))
+               p->flags = NewAppendedString(p->flags, vp);
+         #else
+@skip            if (strstr(p->comp, "gcc") || strstr(p->comp, "gfortran"))
+            if (CompIsGcc(p->comp))
+               p->flags = NewAppendedString(p->flags, vp);
+         #endif
       }
    }
    DivideCompsByComp(q, comps);     /* split into individual queues */
@@ -4799,7 +4825,27 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
          sprintf(mgwf, "%s/mgwgfortran", mgwd);
       }
    }
+/*
+ * Get the ATLAS-suggested compilers and flags
+ */
    comps = GetDefaultComps(OS, arch, verb, vecext);
+/*
+ * Look through comps, and substitute any "gcc" with goodgcc
+ */
+   if (goodgcc)
+   {
+      for (i=0; i < NCOMP; i++)
+      {
+         for (p=comps[i]; p; p = p->next)
+         {
+            if (!strcmp(p->comp, "gcc"))
+            {
+               free(p->comp);
+               p->comp = NewStringCopy(goodgcc);
+            }
+         }
+      }
+   }
    if (verb > 1)
       fprintf(stdout, "Finding good compilers:\n");
    for (i=0; i < NCOMP; i++)
@@ -7471,7 +7517,7 @@ do
       echo "     Use this library to build a mixed netlib/ATLAS LAPACK."
       echo "     The two libs will be merged so they must be built wt compatible compilers."
 @endskip
-      echo "  --gcc3pass=<gcc for frontend>,<assembler>;<linker>"
+      echo "  --gcc3pass=<gcc for frontend>,<assembler>:<linker>"
       echo "     Provide full paths for all compilers/assemblers"
 @skip      echo "  --apple-is-evil=<gcc for frontend>,<clang for backend>"
 @skip      echo "     Provide full paths to both compilers"
