@@ -4416,34 +4416,42 @@ COMPNODE **GetDefaultComps(enum OSTYPE OS, enum MACHTYPE arch, int verb,
    q = SortCompsByPriority(q);      /* q is smallest, bottom is largest */
    if (verb > 1)
       PrintCompNodes(stderr, q, "Sorted");
+   DivideCompsByComp(q, comps);     /* split into individual queues */
 /*
  * Add the ISA extension-using flags to any gcc compiler.  Since we have just
  * read in the compilers from compflags.txt, we can be sure that any gcc
  * compiler has gcc in the name
+ * Don't add these flags to XCC, since it doesn't matter there
  */
    if (vp)
    {
-      for (p=q; p; p = p->next)
-      {
-         #if defined(ATL_GCCCLANG) || defined(ATL_GCC3P)
-            if (strstr(p->comp, "gfortran"))
-            {
-               if (!strcmp(vp, "-mavx"))
-                  p->flags = NewAppendedString(p->flags, "-msse3");
-               else
+      int i;
+      for (i=0; i < NCOMP; i++)
+      { 
+         if (i == XCC_)
+	    continue;
+         for (p=comps[i]; p; p = p->next)
+         {
+            #if defined(ATL_GCCCLANG) || defined(ATL_GCC3P)
+               if (strstr(p->comp, "gfortran"))
+               {
+                  if (!strcmp(vp, "-mavx"))
+                     p->flags = NewAppendedString(p->flags, "-msse3");
+                  else
+                     p->flags = NewAppendedString(p->flags, vp);
+               }
+               else if (strstr(p->comp, "gcc"))
                   p->flags = NewAppendedString(p->flags, vp);
-                  
-            }
-            else if (CompIsGcc(p->comp))
-               p->flags = NewAppendedString(p->flags, vp);
-         #else
-@skip            if (strstr(p->comp, "gcc") || strstr(p->comp, "gfortran"))
-            if (CompIsGcc(p->comp))
-               p->flags = NewAppendedString(p->flags, vp);
-         #endif
+            #else
+               if (strstr(p->comp, "gcc") || strstr(p->comp, "gfortran"))
+                  p->flags = NewAppendedString(p->flags, vp);
+            #endif
+         }
       }
    }
-   DivideCompsByComp(q, comps);     /* split into individual queues */
+/*
+ * Add appropriate ISA extension flags to all compilers except XCC
+ */
    return(comps);
 }
 
@@ -5071,8 +5079,7 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
       free(res);
       free(cmnd);
    }
-}  /* end of routine GetComps */
-
+}  /* end of routine GetComps */ 
 int SelectBestGcc
 (
    int verb,
@@ -6154,7 +6161,7 @@ MACH=Corei2 OS=Win9x,WinNT LVL=1005 COMPS=smc,dmc,skc,dkc,icc
    'gcc-4' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
 MACH=Corei2 OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
-MACH=Corei2 OS=ALL LVL=50 COMPS=smc,dmc,skc,dkc,icc,gcc
+MACH=Corei2 OS=ALL LVL=50000 COMPS=skc,dkc,icc,xcc
     'clang' '-fomit-frame-pointer -mavx -O2 -m64 -Wno-parentheses'
 MACH=Corei1 OS=Win9x,WinNT LVL=1005 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc-4' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
@@ -9800,11 +9807,13 @@ int PrintAllArgsToStr(ATL_arg_t *ab, char *str)
 
 
 char *ParseCompFlags(int nargs, char **args, int *BITS, ATL_arg_t **files,
-                     ATL_arg_t **CMP, ATL_arg_t **ASM, ATL_arg_t **LNK)
+                     ATL_arg_t **CMP, ATL_arg_t **ASM, ATL_arg_t **LNK,
+                     int *CPPONLY)
 {
    int i, nfiles=0, DOASM=1, DOLNK=1;
    ATL_arg_t *cmpb, *cp, *asmb, *ap, *lnkb, *lp, *filb, *fp, *an;
    char *outn=NULL;
+   *CPPONLY = 0;
 /*
  * Go through compiler flags and separate them into flags affecting
  * compilation, assembling, and linking
@@ -9851,9 +9860,11 @@ char *ParseCompFlags(int nargs, char **args, int *BITS, ATL_arg_t **files,
             }
             break;
          case 'x' :  /* I only use -x asg-with-cpp, so pass to comp only */
+            *CPPONLY = 1;
             cp->next = at;
             assert(++i < nargs);
-            cp = at->next = NewARg(args[i]);
+            assert(!strcmp(args[i], "assembler-with-cpp"));
+            cp = at->next = NewArg(args[i]);
             break;
          case 'c' :
             DOLNK = 0;
@@ -10155,14 +10166,15 @@ char *GetDefObjNam(char *infile)
 int main(int nargs, char **args)
 {
    ATL_arg_t *cmpb, *asmb, *lnkb, *filb, *ap, *rmb=NULL, *rp;
-   int bits, lcmp, lasm, llnk, lfil, i, lout=0;
+   int bits, lcmp, lasm, llnk, lfil, i, lout=0, CPPONLY;
    char *cmps, *asms, *lnks, *outn;
    #ifdef DEBUG
       fplog = fopen("ATL_CCWRAP.log", "w");
       PrintFlags(nargs, args);
    #endif
 
-   outn = ParseCompFlags(nargs, args, &bits, &filb, &cmpb, &asmb, &lnkb);
+   outn = ParseCompFlags(nargs, args, &bits, &filb, &cmpb, &asmb, &lnkb,
+                         &CPPONLY);
    if (outn)
       lout = strlen(outn);
 /*
@@ -10194,7 +10206,7 @@ int main(int nargs, char **args)
          sprintf(tmpnam, "ATL_tmp%d.[s,o]", i);
          rp->next = NewArg(tmpnam);
          rp = rp->next;
-         if (ap->arg[ap->len-1] == 'S')
+         if (ap->arg[ap->len-1] == 'S' || CPPONLY)
             k = lcmp + sprintf(cmps+lcmp, "-E -o ATL_tmp%d.s ", i);
          else
             k = lcmp + sprintf(cmps+lcmp, "-S -o ATL_tmp%d.s ", i);
