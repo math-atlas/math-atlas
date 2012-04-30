@@ -16,7 +16,8 @@ enum comp_flag
    CF_LOOP_PTRUPDATE,
    CF_LOOP_TEST,
    CF_LOOP_END,
-   CF_VRED_END
+   CF_VRED_END,
+   CF_SCAL_RES     /* for Speculative vectorization*/
 };
 
 /*
@@ -192,6 +193,29 @@ enum inst
    CVTBFI,   /* ireg, freg    x86 only movmskps -> bit move (no conversion) */
    CVTBDI,   /* ireg, dreg    x86 only movmskpd */
 /*
+ * vector cmp instructions
+ */ 
+   VDCMPEQW,
+   VDCMPNEW,
+   VDCMPLTW,
+   VDCMPLEW,
+   VDCMPNLTW,
+   VDCMPNLEW,
+   VDCMPGTW,
+   VDCMPGEW,
+   VDCMPNGTW,
+   VDCMPNGEW,
+   VFCMPEQW,
+   VFCMPNEW,
+   VFCMPLTW,
+   VFCMPLEW,
+   VFCMPNLTW,
+   VFCMPNLEW,
+   VFCMPGTW,
+   VFCMPGEW,
+   VFCMPNGTW,
+   VFCMPNGEW,
+/*
  * Type conversion instructions
  */
    CVTIS,
@@ -356,6 +380,29 @@ char *instmnem[] =
    "FCMPWD",
    "CVTBFI",
    "CVTBDI",
+/*
+ * vector cmp intructions
+ */
+   "VDCMPEQW",
+   "VDCMPNEW",
+   "VDCMPLTW",
+   "VDCMPLEW",
+   "VDCMPNLTW",
+   "VDCMPNLEW",
+   "VDCMPGTW",
+   "VDCMPGEW",
+   "VDCMPNGTW",
+   "VDCMPNGEW",
+   "VFCMPEQW",
+   "VFCMPNEW",
+   "VFCMPLTW",
+   "VFCMPLEW",
+   "VFCMPNLTW",
+   "VFCMPNLEW",
+   "VFCMPGTW",
+   "VFCMPGEW",
+   "VFCMPNGTW",
+   "VFCMPNGEW",
 /*
  * Type conversion instructions
  */

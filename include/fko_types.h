@@ -185,6 +185,45 @@ struct ignode
    short reg;                   /* register assigned to this live range */
 };
 
+#define LP_VEC 1                /* Loop Path vectorizable */
+#define LP_OPT_LCONTROL 2       /* Loop Path loop control optimizable */
+#define LP_OPT_MOVPTR 4         /* Loop Path Moving Ptr optimizable */
+
+#define SC_SET 1
+#define SC_USE 2
+#define SC_PRIVATE 4
+#define SC_LIVEIN 8
+#define SC_LIVEOUT 16
+#define SC_IACC 32
+#define SC_IMUL 64
+#define SC_IEQ 128
+#define SC_IABS 256
+#define SC_IMIXED 512
+#define SC_OACC 1024
+#define SC_OMUL 2048
+#define SC_OMIXED 4096
+
+typedef struct looppath LOOPPATH;
+struct looppath    /* data structure for paths in loop */
+{
+   short pnum;                  /* path index of this path*/
+   BLIST *blocks;               /* blocks in the path */
+   BBLOCK *head;                /* head block of the path */
+   BBLOCK *tail;                /* tail block of the path */
+   ushort uses;                 /* var uses in the path */
+   ushort defs;                 /* var defs in the path */
+   struct ptrinfo *ptrs;        /* ptr info in the path */
+   short *scal;                 /* scalar vars in path, skipped integer */
+   short *sflag;                /* sc flag for scalar variable */
+   short lpflag;                /* Vector/LoopControl opt flag */
+/* data for vector paths. NOTE: vect local will be decided at final stage */
+   short vflag;                /* vector type */
+   short *varrs;                /* vectorized arrays */
+   short *vscal;                /* vectorized scalars */
+   short *vsflag;               /* info array for vscal */
+   short *vsoflag;              /* info array for output vscal */
+};
+
 #if 0
 typedef struct iglist IGLIST;
 struct iglist

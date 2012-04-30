@@ -14,6 +14,7 @@ BBLOCK *FindBlockInListByNumber(BLIST *lp, ushort bnum);
 BLIST *MergeBlockLists(BLIST *l1, BLIST *l2);
 void KillBlockList(BLIST *lp);
 BLIST *ReverseBlockList(BLIST *list);
+BLIST *NewReverseBlockList(BLIST *list);
 BLIST *MergeBlockLists(BLIST *l1, BLIST *l2);
 BLIST *FindBlockListWithLabel(BLIST *list, int ilab);
 BLIST *GetGlobalScope();
