@@ -2775,6 +2775,122 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archvfregs[-VFREGBEG-op1]);
          #endif   
          break;
+/*
+ *    Majedul: adding new vector-compare instructions. they overwrite the 
+ *    destination register.... I use 4 operand instruction here without 
+ *    predicates ... 
+ */
+      case VFCMPEQW:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpss\t$0,%s,%s,%s\n",
+                                  archfregs[-FREGBEG-op2],
+                                  archfregs[-FREGBEG-op1],
+                                  archfregs[-FREGBEG-op1]);
+         #else
+            ap->next = PrintAssln("\tcmpss\t$0,%s,%s\n",  
+                          archfregs[-FREGBEG-op2], archfregs[-FREGBEG-op1]);
+         #endif 
+         break;
+      case VFCMPNEW:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpss\t$4,%s,%s,%s\n",
+                                  archfregs[-FREGBEG-op2],
+                                  archfregs[-FREGBEG-op1],
+                                  archfregs[-FREGBEG-op1]);
+         #else
+            ap->next = PrintAssln("\tcmpss\t$4,%s,%s\n",  
+                          archfregs[-FREGBEG-op2], archfregs[-FREGBEG-op1]);
+         #endif 
+         break;
+      case VFCMPLTW:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpss\t$1,%s,%s,%s\n",
+                                  archfregs[-FREGBEG-op2],
+                                  archfregs[-FREGBEG-op1],
+                                  archfregs[-FREGBEG-op1]);
+         #else
+            ap->next = PrintAssln("\tcmpss\t$1,%s,%s\n",  
+                          archfregs[-FREGBEG-op2], archfregs[-FREGBEG-op1]);
+         #endif 
+         break;
+      case VFCMPLEW:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpss\t$2,%s,%s,%s\n",
+                                  archfregs[-FREGBEG-op2],
+                                  archfregs[-FREGBEG-op1],
+                                  archfregs[-FREGBEG-op1]);
+         #else
+            ap->next = PrintAssln("\tcmpss\t$2,%s,%s\n",  
+                          archfregs[-FREGBEG-op2], archfregs[-FREGBEG-op1]);
+         #endif 
+         break;
+      case VFCMPNLTW:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpss\t$5,%s,%s,%s\n",
+                                  archfregs[-FREGBEG-op2],
+                                  archfregs[-FREGBEG-op1],
+                                  archfregs[-FREGBEG-op1]);
+         #else
+            ap->next = PrintAssln("\tcmpss\t$5,%s,%s\n",  
+                          archfregs[-FREGBEG-op2], archfregs[-FREGBEG-op1]);
+         #endif 
+         break;
+      case VFCMPNLEW:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpss\t$6,%s,%s,%s\n",
+                                  archfregs[-FREGBEG-op2],
+                                  archfregs[-FREGBEG-op1],
+                                  archfregs[-FREGBEG-op1]);
+         #else
+            ap->next = PrintAssln("\tcmpss\t$6,%s,%s\n",  
+                          archfregs[-FREGBEG-op2], archfregs[-FREGBEG-op1]);
+         #endif 
+         break;
+/* 
+ *    Majedul: Following vector-cmps are not supported in SSE, only 
+ *    supported by AVX
+ */         
+      case VFCMPGTW:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpss\t$0x0EH,%s,%s,%s\n",
+                                  archfregs[-FREGBEG-op2],
+                                  archfregs[-FREGBEG-op1],
+                                  archfregs[-FREGBEG-op1]);
+         #else
+	    fko_error(__LINE__, "VFCMPGTW only supported in AVX!");
+         #endif 
+         break;
+      case VFCMPGEW:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpss\t$0x0DH,%s,%s,%s\n",
+                                  archfregs[-FREGBEG-op2],
+                                  archfregs[-FREGBEG-op1],
+                                  archfregs[-FREGBEG-op1]);
+         #else
+	    fko_error(__LINE__, "VFCMPGEW only supported in AVX!");
+         #endif 
+         break;
+      case VFCMPNGTW:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpss\t$0x0AH,%s,%s,%s\n",
+                                  archfregs[-FREGBEG-op2],
+                                  archfregs[-FREGBEG-op1],
+                                  archfregs[-FREGBEG-op1]);
+         #else
+	    fko_error(__LINE__, "VFCMPNGTW only supported in AVX!");
+         #endif 
+         break;
+      case VFCMPNGEW:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpss\t$9,%s,%s,%s\n",
+                                  archfregs[-FREGBEG-op2],
+                                  archfregs[-FREGBEG-op1],
+                                  archfregs[-FREGBEG-op1]);
+         #else
+	    fko_error(__LINE__, "VFCMPNGEW only supported in AVX!");
+         #endif 
+         break;
+
       case VFSHUF:
          cp = imap2cmap(SToff[op3-1].i); /* return hex char */ 
 /*       
