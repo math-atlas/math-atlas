@@ -123,6 +123,20 @@ void KillBlockList(BLIST *lp)
       free(lp);
    }
 }
+BLIST *NewReverseBlockList(BLIST *list)
+/*
+ * Given a list creates a new list with reverse the block points
+ * doesn't delete the old blist.
+ */
+{
+   BLIST *ln=NULL, *bl;
+   for (bl=list; bl; bl = bl->next)
+   {
+      ln = AddBlockToList(ln, bl->blk);
+      ln->ptr = bl->ptr;
+   }
+   return(ln);
+}
 
 BLIST *ReverseBlockList(BLIST *list)
 {
@@ -1155,7 +1169,7 @@ void ShowFlow(char *fout, BBLOCK *base)
    fprintf(fpout, "digraph G{\n   node [shape=box]\n");
    for (bp=base; bp; bp = bp->down)
    {
-#if 1
+#if 0
 /*    This is to show conditional/unconditional jump block */
       if (bp->csucc)
          fprintf(fpout, "   block_%d -CS> block_%d\n", bp->bnum, bp->csucc->bnum);
