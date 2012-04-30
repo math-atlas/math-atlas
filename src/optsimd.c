@@ -1,5 +1,197 @@
 #include "fko.h"
 
+/* Majedul: to save the paths for speculative Vectorization. */
+static LOOPPATH **PATHS = NULL;
+static int NPATH = 0, TNPATH = 0, VPATH = -1;
+
+void NewPathTable(int chunk)
+{
+   int i, n;
+   LOOPPATH **new;
+   n = TNPATH + chunk;
+   new = malloc(n*sizeof(LOOPPATH*));
+   assert(new);
+   for (i=0; i!=TNPATH; i++)
+      new[i] = PATHS[i];
+   for (; i!=n ; i++)
+      new[i] = NULL;
+   if(PATHS)
+      free(PATHS);
+   PATHS = new;
+   TNPATH = n;
+}
+int AddPath2Table(LOOPPATH *path)
+{
+   if (NPATH == TNPATH)
+      NewPathTable(8);
+   PATHS[NPATH] = path;
+   path->pnum = NPATH;
+   return(NPATH++); 
+}
+
+LOOPPATH *NewLoopPath(BLIST *blks)
+{
+   BLIST *bl;
+   BBLOCK *bp;
+   LOOPPATH *new;
+   new = malloc(sizeof(LOOPPATH));
+   assert(new);
+/*
+ * update the block list and info related to it
+ */
+#if 1
+   assert(blks); /* right now, we don't expect NULL list*/
+#endif
+   if (blks)
+   {
+      new->blocks = blks;
+      new->head = blks->blk;
+      for (bl = blks; bl->next; bl=bl->next);
+      new->tail = bl->blk;
+
+      new->uses = NewBitVec(TNREG+32); /*by default they are 0 */
+      new->defs = NewBitVec(TNREG+32);
+      SetVecAll(new->uses, 0);
+      SetVecAll(new->defs, 0);
+/*
+ *    Are you sure that uses/defs are calulated yet?? 
+ */
+      for (bl = blks; bl; bl=bl->next)
+      {
+         if (bl->blk->uses && bl->blk->defs)
+         {
+            BitVecComb(new->uses, new->uses, bl->blk->uses, '|');
+            BitVecComb(new->defs, new->defs, bl->blk->defs, '|');
+         }
+      }
+/*    will update after path analysis */
+      new->ptrs = NULL;
+      new->scal = NULL;
+      new->sflag = NULL;
+      new->lpflag = 0;
+      new->vflag = 0;
+      new->varrs = NULL;
+      new->vscal = NULL;
+      new->vsflag = NULL;
+      new->vsoflag = NULL;
+   }
+   else /* is there any case where we may need this? */
+   {
+      new->blocks = NULL;
+      new->head = NULL;
+      new->tail = NULL;
+      new->ptrs = NULL;
+      new->scal = NULL;
+      new->sflag = NULL;
+      new->uses = 0;
+      new->defs = 0;
+      new->lpflag = 0;
+      new->vflag = 0;
+      new->varrs = NULL;
+      new->vscal = NULL;
+      new->vsflag = NULL;
+      new->vsoflag = NULL;
+   }
+   new->pnum = AddPath2Table(new); /* though it is updated inside the func */
+   return new;
+}
+
+void KillPath(LOOPPATH *path)
+{
+   if (path->blocks) /* insert by creating new list */
+      KillBlockList(path->blocks);
+   if (path->ptrs)
+      KillAllPtrinfo(path->ptrs);
+   if (path->scal)
+      free(path->scal);
+   if (path->sflag)
+      free(path->sflag);
+   if (path->uses) 
+      KillBitVec(path->uses);
+   if (path->defs)
+      KillBitVec(path->defs);
+   PATHS[path->pnum] = NULL;  
+/* head and tail points to the bblock which should not be deleted */
+   free(path);
+}
+void KillPathFromTable(LOOPPATH *apath)
+{
+   int i, j;
+   for (i = 0; i < NPATH; i++)
+   {
+      if (PATHS[i] == apath) break;
+   }
+   if (i != NPATH)
+   {
+      KillPath(PATHS[i]);
+      PATHS[i] = NULL;
+      if (VPATH == i) VPATH = -1;
+      for (j = i+1; j < NPATH; i++, j++)
+      {
+         PATHS[i] = PATHS[j];
+         PATHS[i]->pnum = i;
+      }
+      NPATH--;
+   }
+}
+void KillPathTableEntries()
+{
+   int i;
+   for (i=0; i < NPATH; i++)
+   {
+      if (PATHS[i])
+      {
+         KillPath(PATHS[i]);
+         PATHS[i] = NULL;
+         if (VPATH == i) VPATH = -1;
+      }
+   }
+   NPATH = 0;
+}
+void KillPathTable()
+{
+   KillPathTableEntries();
+   free(PATHS);
+   PATHS = NULL;
+   TNPATH = 0;
+}
+
+#if 0
+static BLIST **PATHS = NULL;
+static int NPATH = 0, TNPATH = 0, VPATH = -1;
+
+void NewPathList(int chunk)
+{
+   int i, n;
+   BLIST **new;
+   n = TNPATH + chunk;
+   new = malloc(n*sizeof(BLIST*));
+   assert(new);
+   for (i=0; i!=TNPATH; i++)
+      new[i] = PATHS[i];
+   for (; i!=n ; i++)
+      new[i] = NULL;
+   if(PATHS)
+      free(PATHS);
+   PATHS = new;
+   TNPATH = n;
+}
+
+void AddPath2PathList(BLIST *path)
+{
+   if (NPATH == TNPATH)
+      NewPathList(8);
+   PATHS[NPATH++] = path;
+}
+
+BLIST* ReverseBlocksPath(BLIST *path)
+{
+   BLIST *bl, *rvp = NULL;
+   for (bl = path; bl; bl=bl->next)
+      rvp = AddBlockToList(rvp, bl->blk);
+   return rvp;
+}
+#endif
 /* 
  * Majedul: Changed for AVX
  */
@@ -190,7 +382,6 @@ int DoLoopSimdAnal(LOOPQ *lp)
 /*
  *    For non-fp var, if it's not the index var, give up
  */
-#if 1
       else if (sp[i] != lp->I && sp[i] != lp->end && 
                sp[i] != lp->inc)
       {
@@ -199,7 +390,6 @@ int DoLoopSimdAnal(LOOPQ *lp)
          free(sp);
          return(3);
       }
-#endif
    }
 /*
  * If no fp vars, nothing to vectorize
@@ -236,6 +426,18 @@ int DoLoopSimdAnal(LOOPQ *lp)
  * Find arrays to vectorize
  */
    pbase = FindMovingPointers(lp->blocks);
+#if 1
+   if (pbase)
+   {
+      fprintf(stderr, "moving pointers!!!\n");
+      for (p=pbase; p; p=p->next)
+      {
+          fprintf(stderr, "%s\n",STname[SToff[pbase->ptr-1].sa[0]]);
+      }
+   }
+   else
+      fprintf(stderr, "No moving pointer, already deleted!!!\n");
+#endif
    for (N=0,p=pbase; p; p = p->next)
    {
       if (IS_FP(STflag[p->ptr-1]))
@@ -262,7 +464,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
 /*
  * Remove the moving arrays from scalar vals
  */
-   for (k=0,i=1; i <= n; i++)
+   for (k=0,i=1; i < n; i++) /* FIXME: prev: i <=n*/
    {
       for (j=1; j <= N && s[j] != sp[i]; j++);
       if (j > N)
@@ -739,14 +941,14 @@ int VectorizeStage1(void)
       return(15);
    }
 /*
- * Get code into standard form for analysis
+ * Get code into standard form for analysis, it can be made isolated from
+ * this function. but needed to do it before any analysis.
  */
    GenPrologueEpilogueStubs(bbbase, 0);
    NewBasicBlocks(bbbase);
    FindLoops();
    CheckFlow(bbbase,__FILE__,__LINE__);
    lp = optloop;
-   
 #if 0
    fprintf(stdout,"LIL Vector Analysis \n\n");
    PrintInst(stdout,bbbase);
@@ -758,13 +960,11 @@ int VectorizeStage1(void)
  */
    KillLoopControl(lp);
 
-#if 1
    if (FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]))
    {
       fko_warn(__LINE__, "Index refs inside loop prevent vectorization!!\n");
       return(11);
    }
-#endif
    
    pi0 = FindMovingPointers(lp->blocks);
    for (pi=pi0; pi; pi = pi->next)
@@ -854,5 +1054,1976 @@ int VectorizeStage3(int savesp, int SVSTATE)
    UpdateNamedLoopInfo();
    if (SVSTATE)
       SaveFKOState(3);
+   return(0);
+}
+
+int IsSpeculationNeeded()
+/*
+ * check wether speculative vectorization is needed.
+ * Returns 1 if SSV is needed, 0 otherwise
+ */
+{
+   LOOPQ *lp;
+   BLIST *bp;
+
+   if (!optloop)
+   {
+      fko_warn(__LINE__, "Cannot vectorize rout without loop!!\n");
+      return(0);
+   }
+/*
+ * Get code into standard form for analysis, it can be made isolated from
+ * this function. but needed to do it before any analysis.
+ */
+   GenPrologueEpilogueStubs(bbbase, 0);
+   NewBasicBlocks(bbbase);
+   FindLoops();
+   CheckFlow(bbbase,__FILE__,__LINE__);
+   lp = optloop;
+
+#if 0
+   fprintf(stdout, "\n CFG: \n");
+   ShowFlow(NULL,bbbase);
+   fprintf(stdout, "\n LOOP BLOCKS: \n");
+   for (bp = lp->blocks; bp ; bp = bp->next)
+      fprintf(stdout, "%d ",bp->blk->bnum);
+   fprintf(stdout,"\n");
+#endif
+
+/*
+ * check for conditional branch inside loop other than loop itself,
+ * if there is one, it is a candidate for speculative vectorization
+ * NOTE: If conditional branch consists of those variable which are not set
+ * inside loop, we don't need to vectorize the branch itself. But we omit this
+ * case here because we can use some loop transformation like: loop unswitching
+ * to split loop as branch condition is invariant with the loop.
+ */
+   for (bp = lp->blocks; bp ; bp = bp->next)
+   {
+      if (bp->blk->csucc && bp->blk->csucc != lp->header)
+      {
+#if 0
+         fprintf(stderr,"%d has csucc=%d but loop header= %d\n",bp->blk->bnum,
+                 bp->blk->csucc->bnum, lp->header->bnum);
+#endif
+         return 1;
+      }
+   }
+   return 0;
+}
+
+void FindPaths(BBLOCK *head, BLIST *loopblocks, LOOPQ *lp, BLIST *blkstack)
+/*
+ * Majedul: It will save all the paths from header to the tail of loop in 
+ * the global path data structure (PATHS).
+ */
+{
+   BLIST *bl;
+   if (head == lp->tails->blk)
+   {
+      blkstack = AddBlockToList(blkstack,head);
+/*
+ *    This will create a new list without killing the previous one but
+ *    in reverse direction. I avoid killing as we need the list to track 
+ *    the path when it backtracks.
+ */
+      NewLoopPath(NewReverseBlockList(blkstack));
+#if 0
+   fprintf(stderr, "PATH COMPLETE!\n");
+   for (bl = blkstack; bl ; bl = bl->next)
+      fprintf(stderr, "%d ",bl->blk->bnum);
+   fprintf(stderr,"\n");
+#endif
+      return ;
+   }
+/*
+ * this will not be the case as we skip the invalid path. only occurs
+ * when there is no head at the first time.
+ */
+   if (!head)
+   {
+      fprintf(stderr, "Invalid Path!\n");
+      return ;
+   }
+/*
+ * adds a node to point the blk at the front of the list and returns that ptr
+ * So, before returning recursive function, free the node; otherwise we can't 
+ * find it again.
+ */
+   blkstack = AddBlockToList(blkstack, head);
+   if (head->csucc)
+   {
+      if (FindBlockInList(loopblocks,head->csucc))
+      {
+         FindPaths(head->csucc, loopblocks, lp, blkstack);
+      }
+   }
+   if (head->usucc)
+   {
+      if (FindBlockInList(loopblocks,head->usucc))
+      {
+         FindPaths(head->usucc, loopblocks, lp, blkstack);
+      }
+   }
+/*
+ * we create a new list (hence, allocate mem) to save the list which 
+ * completes a path in reverse direction. So, when backtracks, we can free 
+ * this mem. 
+ */
+   free(blkstack);
+}
+
+void FindLoopPaths(LOOPQ *lp)
+/*
+ * Majedul: works after the creation of CFG and loop info by FindLoops()
+ * finds all the paths from head to tails for optloop maintaining the order
+ * form head to tail.
+ */
+{
+   BLIST *bl;
+   int i;
+   BBLOCK *blk;
+   
+   bl = NULL; /* serves as a temporary ptr in recusion */
+/*
+ * There must be loop and loop blocks to find the paths for it.
+ */
+   if (!lp)
+   {
+      fko_warn(__LINE__,"Must apply on a loop");
+   }
+
+/*
+ * Consider only one tail of loop for this, after SSV there may be
+ * multiple tails.... 
+ * HERE HERE. is it a necessary? will make a conclusion after SSV.
+ */
+   if (!lp->tails || lp->tails->next)
+   {
+      fko_warn(__LINE__,"Must have only one tail of loop right now!\n");
+      return ;
+   }
+#if 0
+   fprintf(stdout, "\n CFG: \n");
+   ShowFlow(NULL,bbbase);
+   fprintf(stdout, "\n LOOP BLOCKS: \n");
+   for (bp = lp->blocks; bp ; bp = bp->next)
+      fprintf(stdout, "%d ",bp->blk->bnum);
+   fprintf(stdout,"\n");
+#endif
+
+/*
+ * Find all the paths from head to tail and save it in PATHS in
+ * head to tail order.
+ */
+   FindPaths(lp->header, lp->blocks, lp, bl); /* use modified DFS algorithm */
+
+#if 1
+   fprintf(stderr, "\nBLOCK LIST IN EACH PATH: \n");
+   for (i = 0; i < NPATH; i++)
+   {
+      fprintf(stderr, "PATH %d: ",i);
+      for (bl = PATHS[i]->blocks; bl ; bl = bl->next)
+      {
+         fprintf(stderr, "%d ",bl->blk->bnum);
+      }
+      fprintf(stderr,"\n");
+   }
+#endif
+}
+
+void PrintVars(FILE *out, char* title, ushort iv)
+/*
+ * temporary for testing, will be moved to misc later 
+ */ 
+{
+   short *sp;
+   int i, N;
+   sp = BitVec2Array(iv, 1-TNREG);
+   fprintf(out, "%s : ", title);
+   for (N=sp[0], i=1; i <= N; i++)
+   {
+      if (!STname[sp[i-1]])
+         fprintf(out,"[ST NULL] ");
+      fprintf(out, "%s(%d) ",STname[sp[i]-1]? STname[sp[i-1]]: "NULL",sp[i]-1);
+   }
+   fprintf(out, "\n");
+}
+
+void PrintPtrInfo(FILE *out, struct ptrinfo *ptrs)
+/*
+ * Temporary function, will be moved later
+ */
+{
+   struct ptrinfo *pl;
+   for (pl = ptrs; pl ; pl = pl->next)
+   {
+      fprintf(out, "ptr: %s, nupdates: %d, flag = %d\n",STname[pl->ptr-1],
+              pl->nupdate, pl->flag);
+   }
+}
+
+int CheckVarInBitvec(int vid, short iv)
+/*
+ * check whether this var is set in the bit vector,
+ * return 0 otherwise.
+ */
+{
+   short *sp;
+   int i, n, N;
+   extern short STderef;
+/*
+ * skip registers 
+ */
+   for (i=0; i < TNREG; i++)
+      SetVecBit(iv, i, 0);
+   SetVecBit(iv, STderef+TNREG-1, 0);
+
+   sp = BitVec2Array(iv, 1-TNREG);
+   for (N=sp[0],n=0,i=1; i <= N; i++)
+   {
+      if (vid == (sp[i]-1))
+      {
+         free(sp);
+         return(1);
+      }
+   }
+   free(sp);
+   return(0);
+}
+
+int PathFlowVectorAnalysis(LOOPPATH *path)
+/*
+ * Analyze single path of loop and stores all the info in paths,
+ * returns error code if failed, otherwise 0. 
+ * NOTE: don't stop the analysis when error is found, rather complete all
+ * the analysis, save the data structure and return error code at last
+ */
+{
+   extern short STderef;
+   int errcode;
+   short iv, iv1, blkvec;
+   int i, j, k, n, N, vid;
+   int vflag;
+   LOOPQ *lp;
+   BLIST *scope, *bl, *blTmp;
+   ILIST *il, *ib;
+   INSTQ *ip;
+   char ln[1024];
+   struct ptrinfo *pbase, *p;
+/*
+ * all these arrays store element count at 0 position.
+ */
+   short *sp, *s;        /* temporary ptrs */
+/*
+ * tempory for paths 
+ */
+   short *scal;         /* store all fp variable, N arr format */
+   short *sflag;          /* store all moving pointers, N arr format */
+   short lpflag;
+/*
+ * for vector analysis 
+ */
+   short *varrs, *vscal, *vsflag, *vsoflag ; /* either save or free mem */
+/* 
+ * initialize neccessary locals 
+ */
+   errcode = 0; /* by default vectorizable */
+   lp = optloop;
+   scope = path->blocks;
+
+/*
+ * Find variable accessed in the path and store it in path
+ */
+   iv = NewBitVec(32);
+   if (!CFUSETU2D)
+   {
+      CalcInsOuts(bbbase);
+      CalcAllDeadVariables();
+      for (bl=scope; bl; bl=bl->next)
+      {
+         path->uses = BitVecComb(path->uses, path->uses, bl->blk->uses, '|');
+         path->defs = BitVecComb(path->defs, path->defs, bl->blk->defs, '|');
+      }
+   }
+   iv = BitVecComb(iv, path->uses, path->defs, '|');
+/*
+ * right now, skip all the regs from uses, defs
+ * NOTE: Need to check why there are redundent vars with diff ST index 
+ */
+   for (i=0; i < TNREG; i++)
+      SetVecBit(iv, i, 0);
+   SetVecBit(iv, STderef+TNREG-1, 0);
+
+#if 0
+   fprintf(stderr,"Vars of path %d \n", path->pnum);
+   PrintVars(stderr, "ALL VARS",iv);
+#endif
+
+/*
+ * Skip all non-fp variables, valid entires upto n (included) 
+ * NOTE: No action for INT var in vector but need to consider complex case 
+ * with index var update later!!!
+ * NOTE: As our vector path never uses/sets integer variable (except index)
+ * we don't have to worry about this in Backup/Recovery stage. So, we just 
+ * skip int here.
+ */
+   sp = BitVec2Array(iv, 1-TNREG);
+   lpflag |= LP_OPT_LCONTROL; /* by default optimizable */
+   for (N=sp[0],n=0,i=1; i <= N; i++)
+   {
+      if (IS_FP(STflag[sp[i]-1]))
+         sp[n++] = sp[i];
+/*
+ *    For non-fp var, if it's not the index var, avoid vectorization
+ */
+      else if (sp[i] != lp->I && sp[i] != lp->end &&
+               sp[i] != lp->inc)
+      {
+         fko_warn(__LINE__, "Bailing out Path%d on vect due to var %d,%s\n",
+                  path->pnum,sp[i],STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
+         errcode += 1;
+      }
+/*
+ *    Use of index variable [need to check by condtion? ]
+ *    NOTE: need to check the index var variable whether it is set outside
+ *    of the loop control. Make sure loop control is killed before.
+ */
+      else 
+      {
+         if (CheckVarInBitvec(sp[i]-1, path->defs))
+         {
+            fko_warn(__LINE__,
+                     "Index variable = %d is updated outside loop control\n",
+                     STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
+            lpflag &= ~(LP_OPT_LCONTROL);
+         }
+      }
+   }   
+   if (!n) 
+   {
+      fko_warn(__LINE__,"No fp var, Nothing to vectorize");
+      errcode += 2;
+   }
+#if 0
+/*
+ * HERE HERE, format of sp is changed. skip the element count 
+ */
+   if (lpflag)
+      fprintf(stderr, "Loop control optimizable\n");
+   fprintf(stderr, "Vars: ");
+   for (i=0; i < n ; i++)
+   {
+      fprintf(stderr,"%s[%d] ",STname[sp[i]-1],sp[i]-1);
+   }
+   fprintf(stderr, "\n");
+#endif
+
+/*
+ * Make sure all the vars are of same type; will reconsider this limitation
+ * later
+ */
+   j = FLAG2TYPE(STflag[sp[0]-1]); /* this is element not count now*/
+   for (i=1; i < n; i++)
+   {
+      if (FLAG2TYPE(STflag[sp[i]-1]) != j)
+      {
+         fko_warn(__LINE__,
+               "Mixed type %d(%s), %d(%s) prevents vectorization!!\n\n",
+               j, STname[sp[0]-1] ? STname[sp[0]-1] : "NULL",
+               FLAG2TYPE(sp[i]-1), STname[sp[i]-1] ? STname[sp[i]-1]
+               : "NULL");
+         errcode += 4;
+         break;
+      }
+   }
+/*
+ * Stored the required type for vectorization, may need later
+ */
+   if (i == n )
+   {
+      if (j == T_FLOAT)
+         vflag = T_VFLOAT;
+      else if (j == T_DOUBLE)
+         vflag = T_VDOUBLE;
+   }
+
+/*
+ * Moving pointer analysis for path
+ */
+   pbase = FindMovingPointers(scope);
+   lpflag |= LP_OPT_MOVPTR;      /* by default optimizable*/
+   for (N=0,p = pbase; p; p = p->next)
+   {
+      if (IS_FP(STflag[p->ptr-1]))
+      {
+         N++;
+         if ((p->flag | PTRF_CONTIG | PTRF_INC) != p->flag)
+         {
+            fko_warn(__LINE__, "Ptr movement prevents vectorization!!\n");
+            errcode += 8;
+            lpflag &= ~LP_OPT_MOVPTR;
+         }
+      }
+      if (p->nupdate > 1)
+      {
+         fko_warn(__LINE__, "Multiple ptr updates prevent vectorization!!\n");
+         errcode += 16;
+         lpflag &= ~LP_OPT_MOVPTR;
+      }
+      if (!(p->flag & PTRF_CONTIG))
+      {
+         fko_warn(__LINE__,
+                  "Non-contiguous ptr updates prevent vectorization!!\n");
+         errcode += 32;
+         lpflag &= ~LP_OPT_MOVPTR;
+      }
+   }
+/*
+ * Copy all moving pointers to varrs
+ */
+   s = malloc(sizeof(short)*(N+1));
+   assert(s);
+   s[0] = N;
+   for (j=0,i=1,p=pbase; p; p = p->next)
+      if (IS_FP(STflag[p->ptr-1]))
+         s[i++] = p->ptr;
+   varrs = s; /* do we need varrs later??? */
+
+#if 0
+   fprintf(stderr,"MOV PTR: ");
+   for (i=1, j=varrs[0]; i <=j; i++)
+      fprintf(stderr,"%s[%d] ",STname[varrs[i]-1],varrs[i]-1);
+   fprintf(stderr,"\n");
+#endif
+
+/*
+ * Remove the moving arrays from scalar vals.
+ * NOTE: array ptr which not changed, considered as scal
+ * ==============================================================
+ * FIXME: number of vscal is not correct always???? why! 
+ *===============================================================
+ */
+#if 0
+   for (i=0; i <= n; i++)
+   {
+      fprintf(stderr, "sp = %d, s = %d\n",sp[i], s[i]);
+   }
+#endif 
+   for (k=0,i=1; i < n; i++) /* BUG: why n is included??? changed to < n */
+   {
+      for (j=1; j <= N && s[j] != sp[i]; j++);
+      if (j > N)
+      {
+         sp[k++] = sp[i]; /*sp elem starts with 0 pos*/
+      }
+   }
+   n = k;   /* n is k+1 */
+
+/*
+ * Store the scals for path->scals. we will update the flags later. 
+ */
+   scal = malloc(sizeof(short)*(n+1));
+   sflag = calloc(n+1,sizeof(short)); /* initialize by 0 */
+   assert(scal && sflag);
+   scal[0] = sflag[0] = n;
+   for (i=1; i <= n; i++)
+      scal[i] = sp[i-1];
+/*
+ * Set flags for those variables which are used, 
+ * flags wil be set for for defs later along with vscal analysis
+ */
+   for (i=1; i <=n; i++)
+   {
+      if (CheckVarInBitvec(scal[i]-1, path->uses))
+         sflag[i] |= SC_USE;
+   }
+   
+/*
+ * Here start the analysis for vector scalars 
+ * copy for the vector analysis  
+ */
+   vscal = malloc(sizeof(short)*(n+1)); 
+   assert(vscal);
+/*
+ * save scalar vars and flags 
+ * n = number of scal vars
+ */
+   if (n)
+   {
+      vsflag = calloc(n+1, sizeof(short));
+      vsoflag = calloc(n+1, sizeof(short));
+      assert(vsflag && vsoflag);
+   }
+   vscal[0] = vsflag[0] = vsoflag[0] = n;
+   for (i=1; i <= n; i++)
+      vscal[i] = sp[i-1];
+
+   free(sp);
+   sp = vscal+1;
+   
+#if 0 
+   fprintf(stderr, "Scal Vars: ");
+   for (i=1, N=vscal[0]; i <= N ; i++)
+   {
+      fprintf(stderr,"%s[%d]",STname[vscal[i]-1],vscal[i]-1);
+   }
+   fprintf(stderr,"\n");
+#endif
+
+/*
+ * Sort scalar vals into livein,liveout, and tmp
+ */
+   if (n)
+   {
+/*
+ *    Find fp scalars set inside path
+ */
+      iv1 = Array2BitVec(n, sp, TNREG-1);
+      SetVecAll(iv, 0);
+      for (bl=scope; bl; bl = bl->next)
+      {
+         for (ip=bl->blk->ainst1; ip; ip = ip->next)
+            if (ACTIVE_INST(ip->inst[0]))
+               BitVecComb(iv, iv, ip->set, '|');
+      }
+      BitVecComb(iv, iv, iv1, '&');  /* filter out */
+      s = BitVec2StaticArray(iv);
+      for (i=1; i <= s[0]; i++)
+      {
+         k = s[i] - TNREG + 1;
+         for (j=0; j < n; j++)
+         {
+            if (sp[j] == k)
+            {
+               vsflag[j+1] |= VS_SET;
+               sflag[j+1] |= SC_SET;
+               break;
+            }
+         }
+      }
+/*
+ *    Find fp scalars live on loop input
+ */
+      iv1 = Array2BitVec(n, sp, TNREG-1);
+      BitVecComb(iv1, iv1, lp->header->ins, '&');
+      s = BitVec2StaticArray(iv1);
+      for (i=1; i <= s[0]; i++)
+      {
+         k = s[i] - TNREG + 1;
+         for (j=0; j < n; j++)
+         {
+            if (sp[j] == k)
+            {
+               vsflag[j+1] |= VS_LIVEIN;
+               sflag[j+1] |=SC_LIVEIN;
+               break;
+            }
+         }
+      }
+/*
+ *    Find vars live on loop exit, that are also accessed in post-tail
+ *          but later phase of dead assignment elim can clean this up
+ *
+ */
+      SetVecAll(iv1, 0);
+      SetVecAll(iv, 0);
+      for (bl=lp->tails; bl; bl = bl->next)
+      {
+         BitVecDup(iv1, bl->blk->outs, '=');
+         if (bl->blk->usucc &&
+             !BitVecCheck(lp->blkvec, bl->blk->usucc->bnum-1))
+            BitVecComb(iv1, iv1, bl->blk->usucc->ins, '&');
+         else
+         {
+            assert(bl->blk->csucc &&
+                   !BitVecCheck(lp->blkvec, bl->blk->csucc->bnum-1));
+            BitVecComb(iv1, iv1, bl->blk->csucc->ins, '&');
+         }
+         BitVecComb(iv, iv, iv1, '|');
+      }
+      iv1 = Array2BitVec(n, sp, TNREG-1);
+      BitVecComb(iv, iv, iv1, '&');     /* filter out for this path*/
+      s =  BitVec2StaticArray(iv);
+      for (i=1; i <= s[0]; i++)
+      {
+         k = s[i] - TNREG + 1;
+         for (j=0; j < n; j++)
+         {
+            if (sp[j] == k)
+            {
+               vsflag[j+1] |= VS_LIVEOUT;
+               sflag[j+1] |= SC_LIVEOUT;
+               break;
+            }
+         }
+      }
+/*
+ *    convert blocks of scope into bvec
+ */
+      blTmp = scope; /* need to copy pointer as the function changes pointer */
+      blkvec = BlockList2BitVec(blTmp);
+/*
+ *    Find out how to init livein and reduce liveout vars
+ */
+      s = vsflag+1;
+      for (i=0; i < n; i++)
+      {
+/*
+ *       For livein variables, any access is legal, but only handled in 2 ways:
+ *       If adder, init one val to 0, others to init val, if anything else
+ *       (MUL or assignment), init all vals to same
+ *
+ */
+         if (s[i] & VS_LIVEIN) /* skip private variable here */
+         {
+            j = FindReadUseType(lp->header->inst1, sp[i], blkvec);
+            if (j == VS_ACC)
+            {
+               s[i] |= VS_ACC;
+               sflag[i+1] |= SC_IACC;
+            }
+            else if (j == VS_MUL)
+            {
+               s[i] |= VS_MUL;
+               sflag[i+1] != SC_IMUL;
+            }
+            else
+            {
+/*
+ *             HERE HERE. Is there other operator we need to check?? 
+ *             check the func FIndReadUseType!!!
+ */
+               fprintf(stderr, "j=%d, ACC=%d,MUL=%d\n", j, VS_ACC, VS_MUL);
+               fko_warn(__LINE__,
+                        "Mixed use of var %d(%s) prevents vectorization!!\n\n",
+                        sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
+               errcode += 64;
+               sflag[i+1] |= SC_IMIXED;
+            }
+         }
+/*
+ *       Output scalars must be accumulators to vectorize
+ */
+         else if (s[i] & VS_LIVEOUT)
+         {
+            SetVecAll(iv, 0);
+            ib = FindPrevStore(lp->posttails->blk->inst1, sp[i],blkvec, iv);
+            j = 0;
+            vsoflag[i+1] |= VS_ACC;
+            /* by default all set, will clear accordingly */
+            sflag[i+1] |= SC_OACC;
+            sflag[i+1] |= SC_OMUL;
+            sflag[i+1] |= SC_OMIXED;
+            for (il=ib; il; il = il->next)
+            {
+               if (ip->prev->inst[0] == FADD || ip->prev->inst[0] == FADDD)
+               {
+                  sflag[i+1] &= ~SC_OMUL;
+               }
+               else if (ip->prev->inst[0] == FMUL || ip->prev->inst[0] == FMULD)
+               {
+                  fko_warn(__LINE__,
+                "Non-add use of output var %d(%s) prevents vectorization!!\n\n",
+                           sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
+                  errcode += 128;
+                  vsoflag[i+1] &= ~VS_ACC;
+                  sflag[i+1] &= ~SC_OACC;
+               }
+               else
+               {
+                  fko_warn(__LINE__,
+                "Non-add use of output var %d(%s) prevents vectorization!!\n\n",
+                           sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
+                  errcode += 128;
+                  vsoflag[i+1] &= ~VS_ACC;
+                  sflag[i+1] &= ~SC_OACC;
+                  sflag[i+1] &= ~SC_OMUL;
+               }
+            }
+            KillIlist(ib);
+         }
+         else /* Only Private variables are not livein and liveout */
+         {
+            sflag[i+1] |= SC_PRIVATE;
+         }
+      }
+   }
+/*
+ * Update path data structure 
+ */
+   if (!errcode)
+   {
+      lpflag |= LP_VEC;
+      path->lpflag = lpflag;
+      path->ptrs = pbase;
+      path->scal = scal;
+      path->sflag = sflag;
+/*
+ *    update data for vector path
+ *    NOTE: VVSCAL is updated when vector path is finalized 
+ */
+      path->vflag = vflag;
+      path->varrs = varrs;
+      path->vscal = vscal;
+      path->vsflag = vsflag;
+      path->vsoflag = vsoflag;
+   }
+   else /* Scalar Path */
+   {
+      path->lpflag = lpflag;
+      path->ptrs = pbase;
+      path->scal = scal;
+      path->sflag = sflag;
+      path->vflag = 0;
+/*
+ *    free all data for vector path 
+ */
+      free(varrs);
+      free(vscal);
+      free(vsflag);
+      free(vsoflag);
+   }
+
+/*
+ * Time to check all the information
+ */
+#if 1
+   fprintf(stderr, "PATH = %d \n", path->pnum);
+   fprintf(stderr, "--------------\n");
+   fprintf(stderr, "Control Flag : %d\n", lpflag);
+   fprintf(stderr, "SCALARS(FLAG) : ");
+   for (N=scal[0],i=1; i <= N; i++)
+   {
+      fprintf(stderr, "%s(%d) ",STname[scal[i]-1],sflag[i]);
+   }
+   fprintf(stderr, "\n");
+#endif 
+
+return errcode;
+
+////////////////////////////////////////////////////////////////////
+#if 0
+   if (state)
+   {
+      lp->vflag = vflag;
+      lp->varrs = varrs;
+      lp->vscal = vscal;
+      lp->vsflag = vsflag;
+      lp->vsoflag = vsoflag;
+/*
+ *    Create vector local for all vector scalars in loop
+ */
+      k = LOCAL_BIT | FLAG2TYPE(vflag);
+      n = lp->vscal[0];
+      lp->vvscal = malloc(sizeof(short)*(n+1));
+      assert(lp->vvscal);
+      lp->vvscal[0] = n;
+      sp = vscal + 1;
+      for (i=0; i < n; i++)
+      {
+         sprintf(ln, "_V%d_%s", i-1, STname[sp[i]-1] ? STname[sp[i]-1] : "");
+         j = lp->vvscal[i+1] = STdef(ln, k, 0);
+         SToff[j-1].sa[2] = AddDerefEntry(-REG_SP, j, -j, 0, j);
+      }
+   }
+   else
+   {
+      free(varrs);
+      free(vsflag);
+      free(vscal);
+      free(vsflag);
+      free(vsoflag);
+   }
+#endif
+
+}
+
+int SpeculativeVectorAnalysis()
+/*
+ * Duplicated the optloop blks, do analysis with this. 
+ */
+{
+   int i, j, n, k;
+   LOOPPATH *vpath;
+   LOOPQ *lp;
+   short *sp;
+   char ln[512];
+
+   lp = optloop;
+/*
+ * Find paths from optloop
+ */
+   CalcInsOuts(bbbase);
+   CalcAllDeadVariables();
+   FindLoopPaths(lp);
+#if 0
+   fprintf(stdout, "Symbol Table \n");
+   PrintST(stdout);
+#endif
+/*
+ *
+ */
+   KillLoopControl(lp);
+   CalcInsOuts(bbbase);
+   CalcAllDeadVariables();
+
+/*
+ * apply analysis for each path
+ */
+   assert(PATHS);
+   for (i=0; i < NPATH; i++)
+   {
+      PathFlowVectorAnalysis(PATHS[i]);
+   }
+
+/*
+ * Select path for vectorization. Currently, select first available vec path
+ * Later we may consider special logic to minimize complexity 
+ */
+   for (i=0; i < NPATH; i++)
+   {
+      if (PATHS[i]->lpflag & LP_VEC) /* first vectorizable path */
+      {
+         VPATH = i;
+         break;
+      }
+   }
+   if (VPATH != -1)
+   {
+/*
+ *    Update optloop with the vector path 
+ */
+      vpath = PATHS[VPATH];
+      n = vpath->varrs[0];
+      lp->varrs = malloc(sizeof(short)*(n+1));
+      assert(lp->varrs);
+      for (i=0; i <=n; i++)
+      {
+         lp->varrs[i] = vpath->varrs[i];
+      }
+
+      n = vpath->vscal[0];
+      lp->vscal = malloc(sizeof(short)*(n+1));
+      lp->vvscal = malloc(sizeof(short)*(n+1));
+      lp->vsflag = malloc(sizeof(short)*(n+1));
+      lp->vsoflag = malloc(sizeof(short)*(n+1));
+      assert(lp->vscal && lp->vvscal && lp->vsflag && lp->vsoflag);
+      for (i=0; i <= n; i++)
+      {
+         lp->vscal[i] = vpath->vscal[i];
+         lp->vsflag[i] = vpath->vsflag[i];
+         lp->vsoflag[i] = vpath->vsoflag[i];
+      }
+      /*
+       * Create vector local for all vector scalars in loop
+       */
+      k = LOCAL_BIT | FLAG2TYPE(vpath->vflag);
+      lp->vvscal[0] = n;
+      sp = vpath->vscal + 1;
+      for (i=0; i < n; i++)
+      {
+         sprintf(ln, "_V%d_%s", i-1, STname[sp[i]-1] ? STname[sp[i]-1] : "");
+         j = lp->vvscal[i+1] = STdef(ln, k, 0);
+         SToff[j-1].sa[2] = AddDerefEntry(-REG_SP, j, -j, 0, j);
+      }
+      /*
+       * Save fko
+       */
+      SaveFKOState(1);
+      return(0);
+   }
+   else
+   {
+      return(1);
+   }
+}
+
+int PathFlowAnal(BLIST *scope, int state)
+{
+   int iv, iv1;
+   int i, j, k, n, N;
+   short *sp, *s;
+   struct ptrinfo *pbase, *p;
+   BLIST *bl, *blTmp;
+   LOOPQ *lp;
+   INSTQ *ip;
+   ILIST *il, *ib;
+   extern short STderef;
+   int vflag;
+   short *varrs, *vsflag, *vsoflag, *vscal;
+   ushort blkvec;
+   char ln[1024];
+
+   lp = optloop;
+/*
+ * Using index var inside path prevents vectorization, must killed all
+ * loopcontrols before using KillLoopControl function.
+ */
+   if (FindIndexRef(scope,SToff[lp->I-1].sa[2]))
+   {
+      fko_warn(__LINE__,"Index ref inside a path !");
+      return(11);
+   }
+/*
+ * Find variable accessed in the path
+ */
+   iv = NewBitVec(32);
+   for (bl=scope; bl; bl=bl->next)
+   {
+      iv = BitVecComb(iv, iv, bl->blk->uses, '|');
+      iv = BitVecComb(iv, iv, bl->blk->defs, '|');
+   }
+/*
+ * Subtract off all registers and ptr deref warning
+ */
+
+   for (i=0; i < TNREG; i++)
+      SetVecBit(iv, i, 0);
+   SetVecBit(iv, STderef+TNREG-1, 0);
+/*
+ * Allow only fp ops & index ops
+ * NOTE: need also array incrementing.?????   
+ */
+   sp = BitVec2Array(iv, 1-TNREG);
+   for (N=sp[0],n=0,i=1; i <= N; i++)
+   {
+      if (IS_FP(STflag[sp[i]-1]))
+         sp[n++] = sp[i];
+/*
+ *    For non-fp var, if it's not the index var, give up
+ */
+      else if (sp[i] != lp->I && sp[i] != lp->end &&
+               sp[i] != lp->inc)
+      {
+         fko_warn(__LINE__, "Bailing on vect due to var %d,%s\n", sp[i],
+                  STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
+         free(sp);
+         return(3);
+      }
+   }
+/*
+ * If no fp vars, nothing to vectorize
+ */
+   if (!n)
+   {
+      free(sp);
+      return(4);
+   }
+   else
+   {
+   /*
+    * Make sure all vars are of same type
+    */
+      j = FLAG2TYPE(STflag[sp[0]-1]);
+      for (i=1; i < n; i++)
+      {
+         if (FLAG2TYPE(STflag[sp[i]-1]) != j)
+         {
+             fko_warn(__LINE__,
+                      "Mixed type %d(%s), %d(%s) prevents vectorization!!\n\n",
+                      j, STname[sp[0]-1] ? STname[sp[0]-1] : "NULL",
+                      FLAG2TYPE(sp[i]-1), STname[sp[i]-1] ? STname[sp[i]-1]
+                      : "NULL");
+             return(4);
+         }
+      }
+      if (j == T_FLOAT)
+         vflag = T_VFLOAT;
+      else if (j == T_DOUBLE)
+         vflag = T_VDOUBLE;
+   }
+
+/*
+ * Find arrays to vectorize in that path
+ */
+   pbase = FindMovingPointers(scope);
+   
+#if 1
+   for (N=0,p = pbase; p; p = p->next)
+   {
+      if (IS_FP(STflag[p->ptr-1]))
+      {
+         N++;
+         if ((p->flag | PTRF_CONTIG | PTRF_INC) != p->flag)
+         {
+            fko_warn(__LINE__, "Ptr movement prevents vectorization!!\n");
+            free(sp);
+            return(5);
+         }
+      }
+      if (p->nupdate > 1)
+      {
+         fko_warn(__LINE__, "Multiple ptr updates prevent vectorization!!\n");
+         free(sp);
+         return(12);
+      }
+      if (!(p->flag & PTRF_CONTIG))
+      {
+         fko_warn(__LINE__,
+                  "Non-contiguous ptr updates prevent vectorization!!\n");
+         free(sp);
+         return(13);
+      }
+   }
+#else
+   for (N=0,p=pbase; p; p = p->next)
+   {
+      if (IS_FP(STflag[p->ptr-1]))
+      {
+         N++;
+         if ((p->flag | PTRF_CONTIG | PTRF_INC) != p->flag)
+         {
+            fko_warn(__LINE__, "Ptr movement prevents vectorization!!\n");
+            free(sp);
+            return(5);
+         }
+      }
+   }
+#endif
+/*
+ * Copy all moving pointers to varrs
+ */
+   s = malloc(sizeof(short)*(N+1));
+   assert(s);
+   s[0] = N;
+   for (j=0,i=1,p=pbase; p; p = p->next)
+      if (IS_FP(STflag[p->ptr-1]))
+         s[i++] = p->ptr;
+   varrs = s;
+/*
+ * Remove the moving arrays from scalar vals
+ */
+   for (k=0,i=1; i <= n; i++)
+   {
+      for (j=1; j <= N && s[j] != sp[i]; j++);
+      if (j > N)
+         sp[k++] = sp[i];
+   }
+   n = k;
+   assert(n >= 0);
+   vscal = malloc(sizeof(short)*(n+1)); 
+   assert(vscal)
+   if (n)
+   {
+      vsflag = calloc(n+1, sizeof(short));
+      vsoflag = calloc(n+1, sizeof(short));
+      assert(vsflag && vsoflag);
+   }
+   vscal[0] = vsflag[0] = vsoflag[0] = n;
+   for (i=1; i <= n; i++)
+      vscal[i] = sp[i-1];
+
+   free(sp);
+   sp = vscal+1;
+/*
+ * Sort scalar vals into livein,liveout, and tmp
+ */
+   if (n)
+   {
+/*
+ *    Find fp scalars set inside path
+ */
+      iv1 = Array2BitVec(n, sp, TNREG-1);
+      SetVecAll(iv, 0);
+      for (bl=scope; bl; bl = bl->next)
+      {
+         for (ip=bl->blk->ainst1; ip; ip = ip->next)
+            if (ACTIVE_INST(ip->inst[0]))
+               BitVecComb(iv, iv, ip->set, '|');
+      }
+      BitVecComb(iv, iv, iv1, '&');  /* filter out */
+      s = BitVec2StaticArray(iv);
+      for (i=1; i <= s[0]; i++)
+      {
+         k = s[i] - TNREG + 1;
+         for (j=0; j < n; j++)
+         {
+            if (sp[j] == k)
+            {
+               vsflag[j+1] |= VS_SET;
+               break;
+            }
+         }
+      }
+/*
+ *    Find fp scalars live on loop input
+ */
+      iv1 = Array2BitVec(n, sp, TNREG-1);
+      BitVecComb(iv1, iv1, lp->header->ins, '&');
+      s = BitVec2StaticArray(iv1);
+      for (i=1; i <= s[0]; i++)
+      {
+         k = s[i] - TNREG + 1;
+         for (j=0; j < n; j++)
+         {
+            if (sp[j] == k)
+            {
+               vsflag[j+1] |= VS_LIVEIN;
+               break;
+            }
+         }
+      }
+/*
+ *    Find vars live on loop exit, that are also accessed in post-tail
+ *          but later phase of dead assignment elim can clean this up
+ *
+ */
+      SetVecAll(iv1, 0);
+      SetVecAll(iv, 0);
+      for (bl=lp->tails; bl; bl = bl->next)
+      {
+         BitVecDup(iv1, bl->blk->outs, '=');
+         if (bl->blk->usucc &&
+             !BitVecCheck(lp->blkvec, bl->blk->usucc->bnum-1))
+            BitVecComb(iv1, iv1, bl->blk->usucc->ins, '&');
+         else
+         {
+            assert(bl->blk->csucc &&
+                   !BitVecCheck(lp->blkvec, bl->blk->csucc->bnum-1));
+            BitVecComb(iv1, iv1, bl->blk->csucc->ins, '&');
+         }
+         BitVecComb(iv, iv, iv1, '|');
+      }
+      iv1 = Array2BitVec(n, sp, TNREG-1);
+      BitVecComb(iv, iv, iv1, '&');     /* filter out for this path*/
+      s =  BitVec2StaticArray(iv);
+      for (i=1; i <= s[0]; i++)
+      {
+         k = s[i] - TNREG + 1;
+         for (j=0; j < n; j++)
+         {
+            if (sp[j] == k)
+            {
+               vsflag[j+1] |= VS_LIVEOUT;
+               break;
+            }
+         }
+      }
+/*
+ *    convert blocks of scope into bvec
+ */
+      blTmp = scope; /* need to copy pointer as the function changes pointer */
+      blkvec = BlockList2BitVec(blTmp);
+/*
+ *    Find out how to init livein and reduce liveout vars
+ */
+      s = vsflag+1;
+      for (i=0; i < n; i++)
+      {
+/*
+ *       For livein variables, any access is legal, but only handled in 2 ways:
+ *       If adder, init one val to 0, others to init val, if anything else
+ *       (MUL or assignment), init all vals to same
+ *
+ */
+         if (s[i] & VS_LIVEIN) /* skip private variable here */
+         {
+            j = FindReadUseType(lp->header->inst1, sp[i], blkvec);
+            if (j == VS_ACC)
+               s[i] |= VS_ACC;
+            else if (j == VS_MUL)
+               s[i] |= VS_MUL;
+            else
+            {
+               fprintf(stderr, "j=%d, ACC=%d,MUL=%d\n", j, VS_ACC, VS_MUL);
+               fko_warn(__LINE__,
+                        "Mixed use of var %d(%s) prevents vectorization!!\n\n",
+                        sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
+               return(6);
+            }
+         }
+/*
+ *       Output scalars must be accumulators to vectorize
+ */
+         else if (s[i] & VS_LIVEOUT)
+         {
+            SetVecAll(iv, 0);
+            ib = FindPrevStore(lp->posttails->blk->inst1, sp[i],blkvec, iv);
+            j = 0;
+            for (il=ib; il; il = il->next)
+            {
+               if (ip->prev->inst[0] != FADD || ip->prev->inst[0] != FADDD)
+               {
+                  fko_warn(__LINE__,
+                "Non-add use of output var %d(%s) prevents vectorization!!\n\n",
+                           sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
+                  return(7);
+               }
+            }
+            KillIlist(ib);
+            vsoflag[i+1] |= VS_ACC;
+         }
+      }
+   }
+/* 
+ * State 1 means: we have already done analysis. So, it's time to update the
+ * loop info for vectorization, otherwise don't save any info 
+ */
+   if (state)
+   {
+      lp->vflag = vflag;
+      lp->varrs = varrs;
+      lp->vscal = vscal;
+      lp->vsflag = vsflag;
+      lp->vsoflag = vsoflag;
+/*
+ *    Create vector local for all vector scalars in loop
+ */
+      k = LOCAL_BIT | FLAG2TYPE(vflag);
+      n = lp->vscal[0];
+      lp->vvscal = malloc(sizeof(short)*(n+1));
+      assert(lp->vvscal);
+      lp->vvscal[0] = n;
+      sp = vscal + 1;
+      for (i=0; i < n; i++)
+      {
+         sprintf(ln, "_V%d_%s", i-1, STname[sp[i]-1] ? STname[sp[i]-1] : "");
+         j = lp->vvscal[i+1] = STdef(ln, k, 0);
+         SToff[j-1].sa[2] = AddDerefEntry(-REG_SP, j, -j, 0, j);
+      }
+   }
+   else
+   {
+      free(varrs);
+      free(vsflag);
+      free(vscal);
+      free(vsflag);
+      free(vsoflag);
+   }
+   
+   return(0);
+}
+
+int SpecVectorAnal()
+/*
+ * this func will return 0 if there is at least one path which can be 
+ * vectoried, nozero value otherwise. Must perform path finding before.
+ */
+{
+   int i, err;
+   BLIST *path;
+   LOOPQ *lp;
+   
+   lp = optloop;
+   assert(NPATH); /* must have a path*/
+/*
+ * Kill loop controls from loop pre-header and tails. It is not dependent on
+ * path. so, do it before path analysis. re-insert appropriate control later.
+ * NOTE: Must update the data flow 
+ */
+   KillLoopControl(lp);
+   CalcInsOuts(bbbase);
+   CalcAllDeadVariables();
+/*
+ * for each path, Path vectorization analysis is applied
+ */
+   for (i = 0; i < NPATH; i++)
+   {
+      err = PathFlowAnal(PATHS[i]->blocks,0);
+      if(err)
+         fprintf(stderr, "Path %d cannot be vectorizable, err=%d\n",i,err);
+      else
+      {
+         PATHS[i]->lpflag |= LP_VEC;
+      }
+   }
+/* check for the passed paths */
+   for (i = 0; i < NPATH; i++)
+   {
+      if (PATHS[i]->lpflag & LP_VEC)
+         fprintf(stderr, "Path %d passed!\n",i);
+   }
+/*
+ * Select the vector-path from the paths which are vectorizable. Right now,
+ * select the first such path. Later, some other strategy can be used.
+ */
+   for (i = 0; i < NPATH; i++)
+   {
+      if(PATHS[i]->lpflag & LP_VEC)
+      {
+         VPATH = i;
+         err = 0;
+         break;
+      }
+   }
+/*
+ * Now, it's time to update the optloop considering the vector path
+ */
+   if (VPATH != -1)
+   {
+      PathFlowAnal(PATHS[VPATH]->blocks,1); /* state 1 to update optloop*/
+   }
+
+   return err;
+}
+
+int SpecVecTransform(LOOPQ *lp)
+/*
+ * transform Vector in single path which is saved globaly as vect path. Must 
+ * call before scalar Restart. Scalar Restart will messed the optloop up.
+ * assume analysis updated the optloop according to the vect path only
+ */
+{
+   short *sp;
+   BLIST *bl, *scope;
+   static enum inst
+      sfinsts[]= {FLD,  FST,  FMUL,  FMAC, FADD,  FSUB,  FABS,  FMOV,  FZERO},
+      vfinsts[]= {VFLD, VFST, VFMUL, VFMAC, VFADD, VFSUB, VFABS, VFMOV, VFZERO},
+      sdinsts[]= {FLDD, FSTD, FMULD, FMACD, FADDD, FSUBD, FABSD, FMOVD, FZEROD},
+      vdinsts[]= {VDLD, VDST, VDMUL, VDMAC, VDADD, VDSUB, VDABS, VDMOV, VDZERO};
+   const int nvinst=9;
+   enum inst sld, vld, sst, vst, smul, vmul, smac, vmac, sadd, vadd, ssub, vsub,
+             sabs, vabs, smov, vmov, szero, vzero, inst;
+   short r0, r1, op;
+   enum inst *sinst, *vinst;
+   int i, j, n, k, nfr=0;
+   char ln[512];
+   struct ptrinfo *pi0, *pi;
+   INSTQ *ip, *ippu, *iph, *iptp, *iptn;
+   short vlen;
+   enum inst vsld, vsst, vshuf;
+   short sregs[TNFR], vregs[TNFR];
+
+/*
+ * Need at least one path to vectorize
+ */
+   assert(VPATH!=-1);
+   scope = PATHS[VPATH]->blocks;
+
+/*
+ * Figure out what type of insts to translate
+ */
+   if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+   {
+      sinst = sfinsts;
+      vinst = vfinsts;
+      #if defined(X86) && defined(AVX)
+         vlen = 8;
+      #else
+         vlen = 4;
+      #endif
+      vsld = VFLDS;
+      vsst = VFSTS;
+      vshuf = VFSHUF;
+      vld = VFLD;
+      vst = VFST;
+   }
+   else
+   {
+      vsld = VDLDS;
+      vsst = VDSTS;
+      vshuf = VDSHUF;
+      sinst = sdinsts;
+      vinst = vdinsts;
+      vld = VDLD;
+      #if defined(X86) && defined(AVX)
+         vlen = 4;
+      #else
+         vlen = 2;
+      #endif
+      vst = VDST;
+   }
+   r0 = GetReg(FLAG2TYPE(lp->vflag));
+   r1 = GetReg(FLAG2TYPE(lp->vflag));
+
+/*
+ * If Loop control is already not killed, kill all controls in optloop 
+ * We will put back the appropriate loop control at the end of the function.
+ */
+   KillLoopControl(lp);
+#if 0
+/*
+ * Generate scalar cleanup loop before simdifying loop
+ */
+   GenCleanupLoop(lp);
+#endif
+
+/*
+ * Find all pointer updates, and remove them from vector path (leaving only
+ * vectorized instructions for analysis); will put them back in loop after
+ * vectorization is done.
+ */
+
+   pi0 = FindMovingPointers(scope);
+   ippu = KillPointerUpdates(pi0, vlen);
+/*
+ * Find inst in preheader to insert scalar init before; want it inserted last
+ * unless last instruction is a jump, in which case put it before the jump.
+ * As long as loads don't reset condition codes, this should be safe
+ * (otherwise, need to move before compare as well as jump)
+ */
+   iph = lp->preheader->ainstN;
+   if (iph && IS_BRANCH(iph->inst[0]))
+      iph = iph->prev;
+   else
+      iph = NULL;
+/*
+ * Find inst in posttail to insert reductions before; if 1st active inst
+ * is not a label, insert at beginning of block, else insert after label
+ */
+   if (lp->posttails->blk->ilab)
+   {
+      iptp = lp->posttails->blk->ainst1;
+      iptn = NULL;
+   }
+   else
+   {
+      iptp = NULL;
+      iptn = lp->posttails->blk->ainst1;
+      if (!iptn)
+         iptn = lp->posttails->blk->inst1;
+   }
+
+/*
+ * Insert scalar-to-vector initialization in preheader for vars live on entry
+ * and vector-to-scalar reduction in post-tail for vars live on exit
+ */
+   j = 0;
+   k = STiconstlookup(0);
+   for (n=lp->vscal[0],i=0; i < n; i++)
+   {
+      if (VS_LIVEIN & lp->vsflag[i+1])
+      {
+/*
+ *       ADD-updated vars set v[0] = scalar, v[1:N] = 0
+ */
+         if (VS_ACC & lp->vsflag[i+1])
+            PrintComment(lp->preheader, NULL, iph,
+               "Init accumulator vector for %s", STname[lp->vscal[i+1]-1]);
+         else
+            PrintComment(lp->preheader, NULL, iph,
+               "Init vector equiv of %s", STname[lp->vscal[i+1]-1]);
+         InsNewInst(lp->preheader, NULL, iph, vsld, -r0,
+                    SToff[lp->vscal[i+1]-1].sa[2], 0);
+         if (!(VS_ACC & lp->vsflag[i+1]))
+            InsNewInst(lp->preheader, NULL, iph, vshuf, -r0, -r0, k);
+         InsNewInst(lp->preheader, NULL, iph, vst,
+                    SToff[lp->vvscal[i+1]-1].sa[2], -r0, 0);
+      }
+/*
+ *    Output vars are known to be updated only by ADD
+ */
+      if (VS_LIVEOUT & lp->vsflag[i+1])
+      {
+         j++;
+         assert((lp->vsoflag[i+1] & (VS_MUL | VS_EQ | VS_ABS)) == 0);
+         iptp = PrintComment(lp->posttails->blk, iptp, iptn,
+                  "Reduce accumulator vector for %s", STname[lp->vscal[i+1]-1]);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vld, -r0,
+                           SToff[lp->vvscal[i+1]-1].sa[2], 0);
+         if (vld == VDLD)
+         {
+            #if defined(X86) && defined(AVX)
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
+                                 -r0, STiconstlookup(0x3276));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VDADD,-r0,-r0,
+                                 -r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
+                                 -r0, STiconstlookup(0x3715));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VDADD,-r0,-r0,
+                                 -r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS,
+                                 SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+            #else
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
+                                 -r0, STiconstlookup(0x33));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VDADD,-r0,-r0,
+                                 -r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS,
+                                 SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+            #endif
+         }
+         else
+         {
+            #if defined(X86) && defined(AVX)
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                 -r1, -r0, STiconstlookup(0x7654FEDC));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                 -r1, -r0, STiconstlookup(0x765432BA));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                 -r1, -r0, STiconstlookup(0x76CD3289));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSTS,
+                                 SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+            #else
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                 -r1, -r0, STiconstlookup(0x3276));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                 -r1, -r0, STiconstlookup(0x5555));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSTS,
+                                 SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+            #endif
+         }
+      }
+   }
+   GetReg(-1);
+   iptp = InsNewInst(lp->posttails->blk, iptp, NULL, CMPFLAG, CF_VRED_END,
+                     0, 0);
+/*
+ * Translate body of loop
+ */
+   for (bl=scope; bl; bl = bl->next)
+   {
+      for (ip=bl->blk->ainst1; ip; ip = ip->next)
+      {
+         inst = GET_INST(ip->inst[0]);
+         if (ACTIVE_INST(inst))
+         {
+            for (i=0; i < nvinst; i++)
+            {
+/*
+ *             If the inst is scalar fp, translate to vector fp, and insist
+ *             all fp ops become vector ops
+ */
+               if (sinst[i] == inst)
+               {
+                  ip->inst[0] = vinst[i];
+/*
+ *                Change scalar ops to vector ops
+ */
+                  for (j=1; j < 4; j++)
+                  {
+                     op = ip->inst[j];
+                     if (!op) continue;
+                     else if (op < 0)
+                     {
+                        op = -op;
+                        k = FindInShortList(nfr, sregs, op);
+                        if (!k)
+                        {
+                           nfr = AddToShortList(nfr, sregs, op);
+                           k = FindInShortList(nfr, sregs, op);
+                           vregs[k-1] = GetReg(FLAG2TYPE(lp->vflag));
+                        }
+                        ip->inst[j] = -vregs[k-1];
+                     }
+                     else
+                     {
+                        if (IS_DEREF(STflag[op-1]))
+                        {
+                           k = STpts2[op-1];
+                           if (!FindInShortList(lp->varrs[0],lp->varrs+1,k))
+                           {
+                              k = FindInShortList(lp->vscal[0],lp->vscal+1,k);
+                              assert(k);
+                              ip->inst[j] = SToff[lp->vvscal[k]-1].sa[2];
+                              assert(ip->inst[j] > 0);
+                           }
+                        }
+                        else if (!FindInShortList(lp->varrs[0],lp->varrs+1,op))
+                        {
+                           k = FindInShortList(lp->vscal[0], lp->vscal+1, op);
+                           assert(k);
+                           ip->inst[j] = lp->vvscal[k];
+                        }
+                     }
+                  }
+                  break;
+               }
+            }
+         }
+      }
+   }
+   GetReg(-1);
+/*
+ * Put back loop control and pointer updates
+ */
+   OptimizeLoopControl(lp, vlen, 0, ippu);
+   CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = CFLOOP = 0;
+#if 0
+   InvalidateLoopInfo();
+   NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   FindLoops();
+   CheckFlow(bbbase, __FILE__, __LINE__);
+#endif
+   return(0);
+}
+
+void ScalarRestart(LOOPQ *lp)
+{
+   BBLOCK *bp0, *bp, *newCF, *bdown;
+   BLIST *bl, *vbl, *dupblks, *ftheads, *delblks;
+   INSTQ *ip, *ip0;
+   int i, j, cflag, vlen;
+   int iv, ivtails;
+   char ln[512];
+   extern BBLOCK *bbbase;
+   extern int FKO_BVTMP;
+   
+/*
+ * Need at least one path to vectorize
+ */
+   assert(VPATH!=-1);
+/*
+ * Find the header of loop in the bbbase
+ * NOTE: after cleanup, blocks have duplicate names. don't check anything
+ * by bnum.
+ */
+   for (bp0 = bbbase; bp0; bp0 = bp0->down )
+   {
+      if (bp0 == lp->header)
+         break;
+   }
+/*
+ * Find the block where we need to implement Scalar Restart stage
+ * from head to tail where the two pathfirst split.
+ * NOTE: we need to implement Scalar Restart in each path except the vect path.
+ */
+   for (i = 0; i < NPATH; i++)
+   {
+/*
+ *    Vector path needs no scalar restart
+ */
+      if (i == VPATH)
+         continue;
+/*
+ *    check with vector path, determine where to implement scalar restart
+ */
+      for (bl = PATHS[i]->blocks,vbl = PATHS[VPATH]->blocks; bl && vbl ;
+           bl = bl->next, vbl = vbl->next)
+      {
+         if (bl->blk != vbl->blk)
+         {
+            fprintf(stderr, "Split in vpath blk = %d, spath blk = %d\n",
+                    vbl->blk->bnum, bl->blk->bnum);
+            break;
+         }
+      }
+      assert(bl); /* atleast one block which is not common */
+/*
+ *    Add duplicated blocks after this block, will delete this path later
+ */
+      for ( ; bp0 != bl->blk; bp0 = bp0->down);
+      assert(bp0);
+/*
+ *    Find all fall thru path headers in loop, copy it after the new block
+ */
+/*      FKO_BVTMP = iv = BitVecCopy(FKO_BVTMP, lp->blkvec); */
+      iv = FKO_BVTMP;
+      SetVecAll(iv, 0);
+      ivtails = BlockList2BitVec(lp->tails);
+      ftheads = FindAllFallHeads(NULL, lp->blkvec, lp->header, ivtails, iv);
+      ftheads = ReverseBlockList(ftheads);
+/*
+ *    NOTE, to avoid the nested loop, we need to copy the loop blks vec len
+ *    times. but need to update the dup tails also.
+ *    Right now, test with fixed length = 4, later changed it by vec length
+ *    times
+ */
+      bdown = bp0->down;
+      vlen = Type2Vlen(lp->vflag);
+      for (j = 0; j < vlen ; j++)
+      {
+/*
+ *       Need to duplicate the loop blocks before updating the blocks for
+ *       scalar restart.
+ *       NOTE: header needs to be isolated from blks to use dup function.
+ *       Need to iterate the Dup functions with diff label value: 0 is for
+ *       cleanup.
+ */
+         SetVecBit(lp->blkvec, lp->header->bnum-1,0);
+         FKO_BVTMP = iv = BitVecCopy(FKO_BVTMP, lp->blkvec);
+         newCF = DupCFScope(lp->blkvec, iv, i*4+j+1, lp->header);
+         assert(newCF->ilab);
+         SetVecBit(lp->blkvec, lp->header->bnum-1,1);
+         iv = BitVecCopy(iv, lp->blkvec);
+         dupblks = CF2BlockList(NULL, iv, newCF);
+/*
+ *       Need to kill backedge (branch inst from tail of loop), add JMP to 
+ *       the start of next scalar iteration.for last iteration, need to create
+ *       a block and check condition for loop.
+ *       NOTE: CFG is completely messedup but don't update the CFG yet, 
+ *       should update it after vect transform.
+ */
+         for (bl=lp->tails; bl; bl=bl->next)
+         {
+            bp = FindBlockInListByNumber(dupblks,bl->blk->bnum);
+            assert(bp);
+/*          search for the branch instruction */
+            for (ip = bp->inst1; ip; ip=ip->next)
+            {
+               if (IS_BRANCH(ip->inst[0]))
+               {
+                  ip = DelInst(ip); /* recalc the inst1, instN*/
+                  break;
+               }
+            }
+/*          Add new jump to 1st block of next iteration  */
+            if (ip)
+            {
+               sprintf(ln, "_S_%d_%d",i,j+1); /*1st block of next */
+               cflag = STlabellookup(ln);
+               InsNewInst(bp, NULL,ip,JMP,-PCREG,cflag,0);
+            }
+            else
+            {
+               ip = bp->instN; /*CMPFLAG isn't considered as active inst*/
+               assert(ip);
+               sprintf(ln, "_S_%d_%d",i,j+1); /*1st block of next */
+               cflag = STlabellookup(ln);
+               InsNewInst(bp, ip,NULL,JMP,-PCREG,cflag,0);
+            }
+            
+         }
+/*
+ *       create new block after bp0
+ */
+         bp = NewBasicBlock(bp0, NULL);
+         bp0->down = bp;
+         bp0 = bp;
+         sprintf(ln, "_S_%d_%d",i,j);
+         cflag = STlabellookup(ln);
+         InsNewInst(bp, NULL, NULL, LABEL, cflag,0,0);
+
+         for (bl=ftheads; bl; bl = bl->next)
+         {
+            for (bp=bl->blk;bp; bp = bp->down)
+            {
+               if (!BitVecCheck(lp->blkvec, bp->bnum-1))
+                  break;
+               bp0->down = FindBlockInListByNumber(dupblks, bp->bnum);
+               bp0->down->up = bp0;
+               bp0 = bp0->down;
+               if (BitVecCheck(ivtails, bp->bnum-1))
+                  break;
+            }
+            bp0->down = NULL;
+         }
+/*
+ *       need to add block of the tails of dup blocks to the loop header
+ */
+      }
+/*
+ *    create a new block at the last of scalar restart path to check and
+ *    jump back to lp->header or, lp->posttail (vector reduction)
+ */
+      bp = NewBasicBlock(bp0, NULL);
+      bp0->down = bp;
+      bp0 = bp;
+      sprintf(ln, "_S_%d_%d",i,j);
+      cflag = STlabellookup(ln);
+      InsNewInst(bp, NULL, NULL, LABEL, cflag,0,0);
+/*
+ *    Creating two posttails would complicate the analysis later. So, need to
+ *    skip that by intelligent design.
+ */
+#if 0
+/*
+ *    Need to add loop test here. assume that loop test codes are on lp->tails
+ *    from CF_LOOP_TEST to CF_LOOP_END
+ *    NOTE: May have only branch inst. do we need reg laod/st?
+ */
+      ip0 = bp->ainstN;
+      ip = FindCompilerFlag(lp->tails->blk, CF_LOOP_TEST);   
+      assert(ip);
+      ip = ip->next;
+/*    condition: de morgan's law */      
+      while (ip && (ip->inst[0] != CMPFLAG || ip->inst[1] != CF_LOOP_END))
+      {
+         InsNewInst(bp, ip0, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
+                    ip->inst[3]);
+         ip0 = ip0->next;
+         ip = ip->next;
+      }
+
+/*
+ *    Add jump to post tail of loop. only one posttail, posttail should have
+ *    a label
+ */
+      assert(lp->posttails->blk && !lp->posttails->next && 
+             lp->posttails->blk->ilab);
+      InsNewInst(bp,ip0,NULL,JMP,-PCREG,lp->posttails->blk->ilab,0);
+#else
+/*
+ *    To avoid multiple posttails (and also violation of loop normal form), 
+ *    the original loop tail is splited into 2 parts here. We will jump back
+ *    to the loop test from here. 
+ *    NOTE: LOOP update and loop test is become isolated now. Need to check 
+ *    whether it creates problem later. Need to make sure that the condition
+ *    codes (status register) also don't changed by this time.
+ *    HERE HERE, Alternate solution: skip all the loop update in scalar 
+ *    result jump back to loop update.
+ */
+      ip0 = bp->instN; /* aisnt not considered CMPFLAG and COMMENT*/
+/*
+ *    split tail by adding label to the tail of original loop.
+ *    NOTE: add label before CMPFLAG
+ */   assert(lp->tails->blk && !lp->tails->next);
+      ip = FindCompilerFlag(lp->tails->blk, CF_LOOP_TEST);
+      assert(ip);
+      sprintf(ln,"%s_LOOP_TEST",STname[lp->body_label-1]);
+      cflag = STlabellookup(ln);
+      InsNewInst(lp->tails->blk, NULL, ip, LABEL, cflag,0,0);
+/*
+ *    now jump back to new label in tail
+ */
+      InsNewInst(bp, ip0, NULL, JMP, -PCREG, cflag, 0);
+
+#endif
+/*    
+ *    Link down to the cleanup code
+ */
+      bp0->down = bdown; /* need to correct the up link!*/
+      bdown->up = bp0;
+   }
+/* Need to delete the inst of first block of scalar restart and delete the
+ * blks which are not used by vect path or yet to come paths. This should be
+ * done after the duplication, otherwise the original loop blks change.
+ * NOTE: need to delete all blocks upto tail(if tail diff then including tail)
+ * need to change the optloop info after that. Be sure that original loop
+ * format is not needed anywhere else after this function.
+ */
+   for (i = 0; i < NPATH; i++)
+   {
+      if (i == VPATH) continue;
+      for (bl = PATHS[i]->blocks,vbl = PATHS[VPATH]->blocks; bl && vbl ;
+           bl = bl->next, vbl = vbl->next)
+      {
+         if (bl->blk != vbl->blk)
+            break;
+
+      }
+      assert(bl); /* atleast one block which is not common */
+/*
+ *    mark the scalar restart block with a CMPFLAG, if first inst is label
+ *    insert flag after that. Remove all inst of that block.
+ *    HERE HERE. We need to delete all instructions upto tail block
+ */
+      ip = InsNewInstAfterLabel(bl->blk, CMPFLAG, CF_SCAL_RES, 0 ,0);
+      ip = ip->next;
+      while (ip)
+         ip = DelInst(ip);
+/*
+ *    list blocks to delete except the 1st one.
+ */
+      delblks = NULL;
+      bp0 = NULL;
+      bp = bl->blk;
+      for (bl = bl->next; bl; bl = bl->next)
+      {
+         if (!FindInList(PATHS[VPATH]->blocks,bl->blk))
+         {
+/*
+ *          Need to check whether it is not part of other paths yet to test
+ */
+            for (j = i+1; j < NPATH; j++)
+            {
+               bp0 = FindBlockInList(PATHS[i]->blocks,bl->blk);
+               if (bp0) break;
+            }
+            if (bp0) continue;
+            delblks = AddBlockToList(delblks,bl->blk);
+         }
+      }
+/*
+ *    HERE HERE. Need to consider the side effect of block killing... ...
+ *    Haven't checked with example yet
+ */
+#if 1      
+      if (!delblks)
+         for (bl = delblks; bl; bl=bl->next)
+            KillBlock(bp, bl->blk);
+#endif
+   }
+/*
+ *    Need to re-calculate the optloop and all its info. But before that need
+ *    to temporarily add the OptimizeLoopControl
+ */
+  /* OptimizeLoopControl(); */
+}
+
+int SpecSIMDLoop(void)
+{
+   LOOPQ *lp;
+   INSTQ *ippu;
+   struct ptrinfo *pi0;
+   BLIST *bl;
+   lp = optloop;
+   
+#if 1   
+   KillLoopControl(lp);
+   GenCleanupLoop(lp);
+   OptimizeLoopControl(lp, 1, 0, NULL);
+#endif
+
+/*
+ * ScalarRestart messes up the optloop and all its parameter. Still, we need to
+ * call it before. So, don't update optloop yet. all work is done with the 
+ * original optloop.
+ */
+#if 1
+   fprintf(stdout, " LIL BEFORE SCALAR RESTART LOOP \n");
+   PrintInst(stdout, bbbase);
+#endif
+   ScalarRestart(lp);
+/*
+ * Consider only vector path now. Need to add some analysis for various vars
+ * to implement backup stages.
+ */
+   SpecVecTransform(lp);  
+#if 1
+   UnrollCleanup(lp,1);
+#endif
+#if 1
+   fprintf(stdout, " LIL AFTER SSV LOOP \n");
+   PrintInst(stdout, bbbase);
+   fprintf(stdout, " SYMBOL TABLE \n");
+   PrintST(stdout);
+#endif
+
+   InvalidateLoopInfo();
+   bbbase = NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   FindLoops();
+   CheckFlow(bbbase, __FILE__, __LINE__);
+#if 1
+   fprintf(stdout, " LIL NEW CFG \n");
+   PrintInst(stdout, bbbase);
+   
+   ShowFlow("cfg.dot",bbbase);
+#if 1
+   lp = optloop;
+   fprintf(stderr, "\n LOOP BLOCKS: \n");
+   if(!lp->blocks) fprintf(stderr, "NO LOOP BLK!!!\n");
+   for (bl = lp->blocks; bl ; bl = bl->next)
+   {
+      assert(bl->blk);
+      fprintf(stderr, "%d ",bl->blk->bnum);
+   }
+   fprintf(stderr,"\n");
+   fprintf(stderr, "\n LOOP BLOCKS: \n");
+   if(lp->header) fprintf(stderr, "loop header: %d\n",lp->header->bnum);
+   if(lp->preheader) fprintf(stderr, "loop preheader: %d\n",
+                             lp->preheader->bnum);
+   
+   fprintf(stderr,"loop tails: ");
+   for (bl = lp->tails; bl ; bl = bl->next)
+   {
+      assert(bl->blk);
+      fprintf(stderr, "%d ",bl->blk->bnum);
+   }
+   fprintf(stderr,"\n");
+   
+   fprintf(stderr,"loop posttails: ");
+   for (bl = lp->posttails; bl ; bl = bl->next)
+   {
+      assert(bl->blk);
+      fprintf(stderr, "%d ",bl->blk->bnum);
+   }
+   fprintf(stderr,"\n");
+#endif
+
+#endif
    return(0);
 }
