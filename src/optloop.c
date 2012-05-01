@@ -641,7 +641,13 @@ void KillLoopControl(LOOPQ *lp)
       ip = ip->next;
       while (ip && (ip->inst[0] != CMPFLAG || ip->inst[1] != CF_LOOP_END))
       {
-         if (ip->inst[0] != CMPFLAG || ip->inst[1] != CF_LOOP_TEST)
+/*
+ *       Majedul: Need to keep LABEL which may be needed for Scalar Restart
+ *       NOTE: Keep in mind that this will break the structure of tail 
+ */
+         if (ip->inst[0] == LABEL)
+            ip = ip->next;
+         else if (ip->inst[0] != CMPFLAG || ip->inst[1] != CF_LOOP_TEST)
             ip = DelInst(ip);
          else
             ip = ip->next;
@@ -1336,7 +1342,7 @@ int UnrollLoop(LOOPQ *lp, int unroll)
    extern int FKO_BVTMP;
    extern BBLOCK *bbbase;
 
-   URmul = Type2Vlen(FLAG2TYPE(lp->vflag)); /*need to update for AVX*/
+   URmul = Type2Vlen(FLAG2TYPE(lp->vflag)); 
    UR = lp->vflag ? URmul*unroll : unroll;
    KillLoopControl(lp);
 /* PrintInst(fopen("err.tmp", "w"), bbbase); */
