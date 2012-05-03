@@ -607,10 +607,10 @@ int SimdLoop(LOOPQ *lp)
    short *sp;
    BLIST *bl;
    static enum inst 
-      sfinsts[] = {FLD,  FST,  FMUL,  FMAC, FADD,  FSUB,  FABS,  FMOV,  FZERO},
-      vfinsts[] = {VFLD, VFST, VFMUL, VFMAC, VFADD, VFSUB, VFABS, VFMOV, VFZERO},
-      sdinsts[] = {FLDD, FSTD, FMULD, FMACD, FADDD, FSUBD, FABSD, FMOVD, FZEROD},
-      vdinsts[] = {VDLD, VDST, VDMUL, VDMAC, VDADD, VDSUB, VDABS, VDMOV, VDZERO};
+     sfinsts[] = {FLD,  FST,  FMUL,  FMAC, FADD,  FSUB,  FABS,  FMOV,  FZERO},
+     vfinsts[] = {VFLD, VFST, VFMUL, VFMAC, VFADD, VFSUB, VFABS, VFMOV, VFZERO},
+     sdinsts[] = {FLDD, FSTD, FMULD, FMACD, FADDD, FSUBD, FABSD, FMOVD, FZEROD},
+     vdinsts[] = {VDLD, VDST, VDMUL, VDMAC, VDADD, VDSUB, VDABS, VDMOV, VDZERO};
    const int nvinst=9;
    enum inst sld, vld, sst, vst, smul, vmul, smac, vmac, sadd, vadd, ssub, vsub, 
              sabs, vabs, smov, vmov, szero, vzero, inst;
@@ -1878,17 +1878,35 @@ int SpeculativeVecTransform(LOOPQ *lp)
 {
    short *sp;
    BLIST *bl, *scope;
+/*
+ * Need to add vector conditional cmp for branchs like: JEQ, JNE, JLT, JGT, JGE 
+ * Corresponding vector cmp of br for single precision: 
+ * VFCMPEQW, VFCMPNEW, VFCMPNLTW, VFCMPGTW, VFCMPGEW
+ * For double precision:
+ * VDCMPEQW, VDCMPNEW, VDCMPNLTW, VDCMPGTW, VDCMPGEW
+ * NOTE: Vec CMP changes the destination vector register, 
+ * 
+ */
    static enum inst
       sfinsts[]= {FLD,  FST,  FMUL,  FMAC, FADD,  FSUB,  FABS,  FMOV,  FZERO},
       vfinsts[]= {VFLD, VFST, VFMUL, VFMAC, VFADD, VFSUB, VFABS, VFMOV, VFZERO},
       sdinsts[]= {FLDD, FSTD, FMULD, FMACD, FADDD, FSUBD, FABSD, FMOVD, FZEROD},
       vdinsts[]= {VDLD, VDST, VDMUL, VDMAC, VDADD, VDSUB, VDABS, VDMOV, VDZERO};
+/*
+ * for vector cmp
+ */
+   static enum inst
+      brinsts[] = {JEQ, JNE, JLT, JGT, JGE},
+      vfcmpinsts[] = {VFCMPEQW, VFCMPNEW, VFCMPLTW, VFCMPGTW, VFCMPGEW},
+      vdcmpinsts[] = {VDCMPEQW, VDCMPNEW, VDCMPLTW, VDCMPGTW, VDCMPGEW};
+   const int nbr=5;
+
    const int nvinst=9;
    enum inst sld, vld, sst, vst, smul, vmul, smac, vmac, sadd, vadd, ssub, vsub,
-             sabs, vabs, smov, vmov, szero, vzero, inst;
-   short r0, r1, op;
-   enum inst *sinst, *vinst;
-   int i, j, n, k, nfr=0;
+             sabs, vabs, smov, vmov, szero, vzero, inst, binst, mskinst;
+   short r0, r1, op, ir, vrd;
+   enum inst *sinst, *vinst, *vcmpinst;
+   int i, j, n, k, m, mskval, nfr=0;
    char ln[512];
    struct ptrinfo *pi0, *pi;
    INSTQ *ip, *ippu, *iph, *iptp, *iptn;
@@ -1909,6 +1927,7 @@ int SpeculativeVecTransform(LOOPQ *lp)
    {
       sinst = sfinsts;
       vinst = vfinsts;
+      vcmpinst = vfcmpinsts;
       #if defined(X86) && defined(AVX)
          vlen = 8;
       #else
@@ -1927,6 +1946,7 @@ int SpeculativeVecTransform(LOOPQ *lp)
       vshuf = VDSHUF;
       sinst = sdinsts;
       vinst = vdinsts;
+      vcmpinst = vdcmpinsts;
       vld = VDLD;
       #if defined(X86) && defined(AVX)
          vlen = 4;
@@ -2090,56 +2110,174 @@ int SpeculativeVecTransform(LOOPQ *lp)
          inst = GET_INST(ip->inst[0]);
          if (ACTIVE_INST(inst))
          {
-            for (i=0; i < nvinst; i++)
+/*
+ *          check for FCMP/FCMPD instruction so that we can replace it
+ *          with vector cmp. 
+ */
+            if (inst == FCMP || inst == FCMPD)
             {
 /*
- *             If the inst is scalar fp, translate to vector fp, and insist
- *             all fp ops become vector ops
+ *             Select appropriate vector cmp inst
  */
-               if (sinst[i] == inst)
+               if (inst == FCMP)
                {
-                  ip->inst[0] = vinst[i];
+                  vcmpinst = vfcmpinsts;
+                  mskinst = VFSBTI;
+               }
+               else
+               {
+                  vcmpinst = vdcmpinsts;
+                  mskinst = VDSBTI;
+               }
 /*
- *                Change scalar ops to vector ops
+ *             check for the next inst. Right now assume the next instruction
+ *             would always be one of the conditional branch
  */
-                  for (j=1; j < 4; j++)
+               binst = ip->next->inst[0]; /* assume next ainst alwasy branch*/
+/*
+ *             find index of appropriate branch and VCMP
+ */
+               for (m = 0; m < nbr; m++)
+               {
+                  if (brinsts[m] == binst)
+                     break;
+               }
+               assert(m!=nbr); /* there must be a branch */
+/*
+ *             insert new instructions replacing old FCMP and BR insts.
+ *             NOTE: Those two old instructions use two fregs/dregs (fcc, icc
+ *             and pc), but new insts would use 3 vfregs/vdregs and 1 iregs (icc
+ *             and pc) where 1 vfreg/vdreg and ireg would be overwritten.
+ *             
+ *             NOTE: We reserve  new ireg and vreg here, these regs are only
+ *             used as destination. So, we can reuse later. Need to free those.
+ *             I avoid that here right now. We consider this later.
+ */
+               ip->inst[0] = vcmpinst[m];
+/*
+ *             get new vregs for the destination, no vld as it is not uses but
+ *             sets
+ */
+               vrd = GetReg(FLAG2TYPE(lp->vflag));
+               ip->inst[1] = -vrd;
+/*
+ *             Find appropriate vector source regs for VCMP, here assume all the
+ *             regs are of same type set by vflag, later relax this assumption
+ */
+               for (j = 2; j < 4; j++)
+               {
+                  op = ip->inst[j];
+                  assert(op);
+                  if ( op < 0)
                   {
-                     op = ip->inst[j];
-                     if (!op) continue;
-                     else if (op < 0)
+                     op = -op;
+                     k = FindInShortList(nfr,sregs, op);
+                     if (!k)
                      {
-                        op = -op;
+                        nfr = AddToShortList(nfr, sregs, op);
                         k = FindInShortList(nfr, sregs, op);
-                        if (!k)
-                        {
-                           nfr = AddToShortList(nfr, sregs, op);
-                           k = FindInShortList(nfr, sregs, op);
-                           vregs[k-1] = GetReg(FLAG2TYPE(lp->vflag));
-                        }
-                        ip->inst[j] = -vregs[k-1];
+                        vregs[k-1] = GetReg(FLAG2TYPE(lp->vflag));
                      }
-                     else
+                     ip->inst[j] = -vregs[k-1];
+                  }
+                  else
+                  {
+                     if (IS_DEREF(STflag[op-1]))
                      {
-                        if (IS_DEREF(STflag[op-1]))
+                        k = STpts2[op-1];
+                        if (!FindInShortList(lp->varrs[0],lp->varrs+1,k))
                         {
-                           k = STpts2[op-1];
-                           if (!FindInShortList(lp->varrs[0],lp->varrs+1,k))
-                           {
-                              k = FindInShortList(lp->vscal[0],lp->vscal+1,k);
-                              assert(k);
-                              ip->inst[j] = SToff[lp->vvscal[k]-1].sa[2];
-                              assert(ip->inst[j] > 0);
-                           }
-                        }
-                        else if (!FindInShortList(lp->varrs[0],lp->varrs+1,op))
-                        {
-                           k = FindInShortList(lp->vscal[0], lp->vscal+1, op);
+                           k = FindInShortList(lp->vscal[0],lp->vscal+1,k);
                            assert(k);
-                           ip->inst[j] = lp->vvscal[k];
+                           ip->inst[j] = SToff[lp->vvscal[k]-1].sa[2];
+                           assert(ip->inst[j] > 0);
                         }
+                     }
+                     else if (!FindInShortList(lp->varrs[0],lp->varrs+1,op))
+                     {
+                        k = FindInShortList(lp->vscal[0], lp->vscal+1, op);
+                        assert(k);
+                        ip->inst[j] = lp->vvscal[k];
                      }
                   }
-                  break;
+               }
+/*
+ *             it's time to add other instruction like mask and test
+ *             ireg is set, so, get a new ireg
+ */
+               ir = GetReg(T_INT);
+               ip = InsNewInst(bl->blk, ip, NULL, mskinst, -ir, -vrd, 0);
+/*
+ *             add test the iregs with const val populated by vec len
+ */
+               mskval = 1;
+               for (i = 1; i < vlen; i++)
+                  mskval = (mskval << 1) | 1;
+               ip = InsNewInst(bl->blk, ip, NULL, CMP, -ICC0, -ir, 
+                               STiconstlookup(mskval)) ;
+/*             ip = InsNewInst(bl->blk, ip, NULL, CMPAND, -ir, -ir, 
+                               STiconstLoopup(mskval)) ; */
+/*
+ *             Change the branch in next inst as a JEQ
+ */
+               ip->next->inst[0] = JEQ;    
+            }
+            else
+            {
+               for (i=0; i < nvinst; i++)
+               {
+/*
+ *                If the inst is scalar fp, translate to vector fp, and insist
+ *                all fp ops become vector ops
+ */
+                  if (sinst[i] == inst)
+                  {
+                     ip->inst[0] = vinst[i];
+/*
+ *                   Change scalar ops to vector ops
+ */
+                     for (j=1; j < 4; j++)
+                     {
+                        op = ip->inst[j];
+                        if (!op) continue;
+                        else if (op < 0)
+                        {
+                           op = -op;
+                           k = FindInShortList(nfr, sregs, op);
+                           if (!k)
+                           {
+                              nfr = AddToShortList(nfr, sregs, op);
+                              k = FindInShortList(nfr, sregs, op);
+                              vregs[k-1] = GetReg(FLAG2TYPE(lp->vflag));
+                           }
+                           ip->inst[j] = -vregs[k-1];
+                        }
+                        else
+                        {
+                           if (IS_DEREF(STflag[op-1]))
+                           {
+                              k = STpts2[op-1];
+                              if (!FindInShortList(lp->varrs[0],lp->varrs+1,k))
+                              {
+                                 k = FindInShortList(lp->vscal[0],lp->vscal+1,
+                                                     k);
+                                 assert(k);
+                                 ip->inst[j] = SToff[lp->vvscal[k]-1].sa[2];
+                                 assert(ip->inst[j] > 0);
+                              }
+                           }
+                           else if (!FindInShortList(lp->varrs[0],lp->varrs+1,
+                                    op))
+                           {
+                              k = FindInShortList(lp->vscal[0], lp->vscal+1,
+                                                  op);
+                              assert(k);
+                              ip->inst[j] = lp->vvscal[k];
+                           }
+                        }
+                     }
+                     break;
+                  }
                }
             }
          }
