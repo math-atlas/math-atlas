@@ -216,6 +216,11 @@ enum inst
    VFCMPNGTW,
    VFCMPNGEW,
 /*
+ * Masks instruction: masks sign bits of vector to integer reg
+ */
+   VFSBTI,
+   VDSBTI,
+/*
  * Type conversion instructions
  */
    CVTIS,
@@ -403,6 +408,11 @@ char *instmnem[] =
    "VFCMPGEW",
    "VFCMPNGTW",
    "VFCMPNGEW",
+/*
+ * Masks instruction: masks sign bits of vector to integer reg
+ */
+   "VFSBTI",
+   "VDSBTI",
 /*
  * Type conversion instructions
  */
