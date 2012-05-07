@@ -198,6 +198,60 @@ ILIST *FindChainDest(ILIST *jumps, ILIST *labs, INSTQ *jump)
    return(lret);
 }
 
+int DeadCodeElim(BBLOCK *base)
+/*
+ * Finds blocks other than base that have no predecessors, and delete them.
+ */
+{
+   BBLOCK *bp, *bnext;
+   int ndel;
+
+   ndel =0;
+   if (!base) return;
+   for (bp=base->down; bp; bp = bnext)
+   {
+/*
+ *    check blocks which doesn't have preds
+ */
+      bnext = bp->down;
+      if (!bp->preds || !bp->preds->blk)
+      {
+#if 1
+         fprintf(stderr, "Dead Block=%d\n",bp->bnum);
+#endif
+/*
+ *       it doesn't have any predecessor, so, deleting the block would be
+ *       simple, just need to keep track of up,down and update the list where
+ *       it is a predecessor.
+ *       NOTE: Bug fixed in KillBlock.
+ */
+         KillAllInst(bp->inst1);
+#if 1
+         KillBlock(base, bp); /* noway to delete base*/
+#else
+         if (bp->up)
+            bp->up->down = bp->down;
+         if (bp->down)
+            bp->down->up = bp->up;
+         
+         if (bp->usucc)
+            bp->usucc->preds = RemoveBlockFromList(bp->usucc->preds, bp);
+         if (bp->csucc)
+            bp->csucc->preds = RemoveBlockFromList(bp->csucc->preds, bp);
+#endif
+         if (bp) free(bp);
+         bp = NULL;
+         ndel++;
+      }
+   }
+   /* if (ndel) CFU2D =0; */
+   if (ndel)
+   {
+      NewBasicBlocks(bbbase);
+   }
+   return(ndel);
+}
+
 int DoBranchChaining(void)
 /*
  * Replaces jumps to unconditional jump(s) with jumps to final target
@@ -230,24 +284,19 @@ int DoBranchChaining(void)
          n++;
       }
    }
+/*
+ * Majedul: Branch chaining may invalidate certain blocks. So, call 
+ * Dead code Elim, but before that need to correct the CFG as it already
+ * messed up
+ */
+   if (n)
+   {
+      NewBasicBlocks(bbbase); 
+      DeadCodeElim(bbbase);
+   }
    KillAllIlist(jumps);
    KillAllIlist(labs);
    return(n);
-}
-
-int DeadCodeElim(BBLOCK *base)
-/*
- * Finds blocks other than base that have no predecessors, and delete them.
- */
-{
-   BBLOCK *bp;
-   if (!base) return;
-   for (bp=base->down; bp; bp = bp->down)
-   {
-      if (!AnyBitsSet(bp->preds))
-      {
-      }
-   }
 }
 
 int DoUselessLabelElim(int nkeep, short *keeps)
