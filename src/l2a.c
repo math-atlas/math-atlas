@@ -2852,7 +2852,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
  */         
       case VFCMPGTW:
          #ifdef AVX
-            ap->next = PrintAssln("\tvcmpss\t$0x0EH,%s,%s,%s\n",
+            ap->next = PrintAssln("\tvcmpss\t$0x0E,%s,%s,%s\n",
                                   archvfregs[-VFREGBEG-op2],
                                   archvfregs[-VFREGBEG-op1],
                                   archvfregs[-VFREGBEG-op1]);
@@ -2862,7 +2862,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          break;
       case VFCMPGEW:
          #ifdef AVX
-            ap->next = PrintAssln("\tvcmpss\t$0x0DH,%s,%s,%s\n",
+            ap->next = PrintAssln("\tvcmpss\t$0x0D,%s,%s,%s\n",
                                   archvfregs[-VFREGBEG-op2],
                                   archvfregs[-VFREGBEG-op1],
                                   archvfregs[-VFREGBEG-op1]);
@@ -2872,7 +2872,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          break;
       case VFCMPNGTW:
          #ifdef AVX
-            ap->next = PrintAssln("\tvcmpss\t$0x0AH,%s,%s,%s\n",
+            ap->next = PrintAssln("\tvcmpss\t$0x0A,%s,%s,%s\n",
                                   archvfregs[-VFREGBEG-op2],
                                   archvfregs[-VFREGBEG-op1],
                                   archvfregs[-VFREGBEG-op1]);
@@ -2977,7 +2977,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
  */         
       case VDCMPGTW:
          #ifdef AVX
-            ap->next = PrintAssln("\tvcmpss\t$0x0EH,%s,%s,%s\n",
+            ap->next = PrintAssln("\tvcmpss\t$0x0E,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1],
                                   archvdregs[-VDREGBEG-op1]);
@@ -2987,7 +2987,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          break;
       case VDCMPGEW:
          #ifdef AVX
-            ap->next = PrintAssln("\tvcmpss\t$0x0DH,%s,%s,%s\n",
+            ap->next = PrintAssln("\tvcmpss\t$0x0D,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1],
                                   archvdregs[-VDREGBEG-op1]);
@@ -2997,7 +2997,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          break;
       case VDCMPNGTW:
          #ifdef AVX
-            ap->next = PrintAssln("\tvcmpss\t$0x0AH,%s,%s,%s\n",
+            ap->next = PrintAssln("\tvcmpss\t$0x0A,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1],
                                   archvdregs[-VDREGBEG-op1]);
