@@ -957,7 +957,7 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
    BBLOCK *bp;
    int i, j, k, nchanges=0, nc0;
    static short nlab=0, labs[4];
-
+   static int iopt = 0; /* Majedul: for opt logger */
 /*
  * Form scope based on global setting
  */
@@ -1030,6 +1030,12 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
       }
       optchng[noptrec] = nchanges - nc0;
       optrec[noptrec++] = global ? k+MaxOpt : k;
+#if 0
+      //char file[20];
+      PrintOptInst(stdout, ++iopt, k, scope, nchanges-nc0);
+      //sprintf(file, "cfg/%s%d.dot", "cfg", iopt);
+      //ShowFlow(file,bbbase);
+#endif
    }
    return(nchanges);
 }
@@ -1191,11 +1197,21 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
          else
             OptimizeLoopControl(optloop, 1, 1, NULL);
       }
+#if 0
+      fprintf(stdout, "\n LIL BEFORE AE\n");
+      PrintInst(stdout,bbbase);
+      exit(0);
+#endif
 /*
  *    Do accumulator expansion if requested
  */
       if (optloop->ae)
          DoAllAccumExpansion(optloop, unroll, DO_VECT(FKO_FLAG));
+#if 0
+      fprintf(stdout, "\n LIL AFTER AE\n");
+      PrintInst(stdout,bbbase);
+      exit(0);
+#endif
 /*
  *    Add any prefetch inst to header of loop
  */
@@ -1601,10 +1617,75 @@ int main(int nargs, char **args)
       fclose(fpin);
       AddOptSTEntries();
       SaveFKOState(0);
+#if 0
+      GenPrologueEpilogueStubs(bbbase,0);
+      NewBasicBlocks(bbbase);
+      fprintf(stdout,"LIL before Vect\n");
+      PrintInst(stdout,bbbase);
+      exit(0);
+#endif
       if (!fpLOOPINFO && (FKO_FLAG & IFF_VECTORIZE))
       {
-         assert(!VectorizeStage1());
-         assert(!VectorizeStage3(0, 0));
+         if (IsSpeculationNeeded())
+         {
+#if 0 
+            fprintf(stdout, "LIL BEFORE SV\n");
+            PrintInst(stdout, bbbase);
+#endif
+            fprintf(stderr, "\nSPECULATION IS NEEDED! IMPLEMENT SSV ASAP!!\n");
+/*
+ *          Finalizing the analysis
+ */
+            SpeculativeVectorAnalysis();
+            SpecSIMDLoop();
+/*
+ *          Attempt to generate assembly after repeatable optimization
+ */
+#if 0 
+            fprintf(stdout, "\nUnoptimized LIL\n");
+            PrintInst(stdout, bbbase);
+#endif            
+#if 1             
+            extern struct locinit *ParaDerefQ;
+
+            CalcInsOuts(bbbase);
+            CalcAllDeadVariables();
+            PerformOptN(0, optblks);
+#if 0
+            fprintf(stdout, "Optimized LIL\n");
+            PrintInst(stdout, bbbase);
+#endif
+            INUSETU2D = INDEADU2D = CFUSETU2D = 0;
+            if (!INDEADU2D)
+               CalcAllDeadVariables();
+            if (!CFLOOP)
+               FindLoops();
+            AddBlockComments(bbbase);
+            AddLoopComments();
+            i = FinalizePrologueEpilogue(bbbase,0 );
+            KillAllLocinit(ParaDerefQ);
+            ParaDerefQ = NULL;
+            if (i)
+               fprintf(stderr, "ERR from PrologueEpilogue\n");
+            CheckFlow(bbbase, __FILE__,__LINE__);
+
+            DumpOptsPerformed(stderr, FKO_FLAG & IFF_VERBOSE);
+#if 0
+            fprintf(stdout, "Optimized LIL Before Assembly\n");
+            PrintInst(stdout, bbbase);
+#endif
+            abase = lil2ass(bbbase);
+            KillAllBasicBlocks(bbbase);
+            dump_assembly(stdout, abase);
+            KillAllAssln(abase);
+#endif            
+            exit(0);
+         }
+         else
+         {
+            assert(!VectorizeStage1());
+            assert(!VectorizeStage3(0, 0));
+         }
       }
       else
          DoStage2(0, 0);
@@ -1700,6 +1781,11 @@ int main(int nargs, char **args)
 /*   ShowFlow("dot.out", bbbase); */
    if (DO_ASS(FKO_FLAG))
    {
+#if 0
+      fprintf(stdout, "\n LIL BEFORE L2A: \n");
+      PrintInst(stdout,bbbase);
+      exit(0);
+#endif
       abase = lil2ass(bbbase);
       KillAllBasicBlocks(bbbase);
       dump_assembly(fpout, abase);
