@@ -28,6 +28,7 @@ static BLIST *KillBlockListEntry(BLIST *lp)
    {
       ln = lp->next;
       free(lp);
+      lp = NULL;
    }
    else ln = NULL;
    return(ln);
@@ -120,7 +121,8 @@ void KillBlockList(BLIST *lp)
    for(; lp; lp = ln)
    {
       ln = lp->next;
-      free(lp);
+      if(lp) free(lp);
+      lp = NULL;
    }
 }
 BLIST *NewReverseBlockList(BLIST *list)
@@ -223,11 +225,13 @@ BBLOCK *KillBlock(BBLOCK *base, BBLOCK *killme)
    }
 /*
  * Remove this block from pred of any successor
+ * NOTE: BUG: Majedul: RemoveBlockFromList may change the ptr of preds list
+ * So, must re-assign the pointer with return value
  */
    if (killme->usucc)
-      RemoveBlockFromList(killme->usucc->preds, killme);
+      killme->usucc->preds = RemoveBlockFromList(killme->usucc->preds, killme);
    if (killme->csucc)
-      RemoveBlockFromList(killme->csucc->preds, killme);
+      killme->csucc->preds = RemoveBlockFromList(killme->csucc->preds, killme);
 /*
  * HERE HERE HERE
  */
@@ -246,6 +250,7 @@ void KillAllBasicBlocks(BBLOCK *base)
       KillAllInst(bp->inst1);
       KillBlockList(bp->preds);
       free(bp);
+      bp = NULL;    /* Majedul: to avoid problem of dangling pointer */
    }
 }
 
