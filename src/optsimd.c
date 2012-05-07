@@ -1752,11 +1752,12 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
 #if 1
    fprintf(stderr, "PATH = %d \n", path->pnum);
    fprintf(stderr, "--------------\n");
-   fprintf(stderr, "Control Flag : %d\n", lpflag);
+   fprintf(stderr, "Control Flag : %d\n", path->lpflag);
    fprintf(stderr, "SCALARS(FLAG) : ");
    for (N=scal[0],i=1; i <= N; i++)
    {
-      fprintf(stderr, "%s(%d) ",STname[scal[i]-1],sflag[i]);
+      //fprintf(stderr, "%s(%d) ",STname[scal[i]-1],sflag[i]);
+      fprintf(stderr, "%s(%d) ",STname[path->scal[i]-1],path->sflag[i]);
    }
    fprintf(stderr, "\n");
 #endif 
@@ -1769,10 +1770,10 @@ int SpeculativeVectorAnalysis()
  * Duplicated the optloop blks, do analysis with this. 
  */
 {
-   int i, j, n, k;
+   int i, j, n, k, N;
    LOOPPATH *vpath;
    LOOPQ *lp;
-   short *sp;
+   short *sp, *sc, *sf;
    char ln[512];
 
    lp = optloop;
@@ -1805,7 +1806,24 @@ int SpeculativeVectorAnalysis()
    {
       PathFlowVectorAnalysis(PATHS[i]);
    }
+#if 0
+   fprintf(stderr, "\nFigure out all vars in each path\n");
+   fprintf(stderr, "================================\n");
 
+   for (i = 0; i < NPATH; i++)
+   {
+      fprintf(stderr, "PATH : %d\n", i);
+      fprintf(stderr, "Control Flag: %d\n", PATHS[i]->lpflag);
+      fprintf(stderr, "FP SCALAR (FLAG) : ");
+      sc = PATHS[i]->scal;
+      sf = PATHS[i]->sflag;
+      for (j=1, N=sc[0]; j <= N; j++ )
+      {
+         fprintf(stderr,"%s(%d) ",STname[sc[j]-1], sf[j]);
+      }
+      fprintf(stderr,"\n");
+   }
+#endif
 /*
  * Select path for vectorization. Currently, select first available vec path
  * Later we may consider special logic to minimize complexity 
@@ -2135,7 +2153,7 @@ int SpeculativeVecTransform(LOOPQ *lp)
  */
                binst = ip->next->inst[0]; /* assume next ainst alwasy branch*/
 /*
- *             find index of appropriate branch and VCMP
+ *             find ioptsimdndex of appropriate branch and VCMP
  */
                for (m = 0; m < nbr; m++)
                {
@@ -2222,7 +2240,7 @@ int SpeculativeVecTransform(LOOPQ *lp)
  */
                ip->next->inst[0] = JEQ;    
             }
-            else
+            else /* changing other scalar inst to vector inst */
             {
                for (i=0; i < nvinst; i++)
                {
@@ -2250,7 +2268,7 @@ int SpeculativeVecTransform(LOOPQ *lp)
                               k = FindInShortList(nfr, sregs, op);
                               vregs[k-1] = GetReg(FLAG2TYPE(lp->vflag));
                            }
-                           ip->inst[j] = -vregs[k-1];
+                          ip->inst[j] = -vregs[k-1];
                         }
                         else
                         {
@@ -2297,6 +2315,148 @@ int SpeculativeVecTransform(LOOPQ *lp)
    CheckFlow(bbbase, __FILE__, __LINE__);
 #endif
    return(0);
+}
+
+void AddBackupRecovery(BLIST *scope, LOOPQ *lp)
+/*
+ * Right now, we fill focus on only iamax, later generalize
+ * add recovery vector inst in scalar restart
+ */
+{
+   BLIST *bl;
+   INSTQ *ip;
+   int i, j, N;
+   short sc, sf, vs;
+   LOOPPATH *vp, *path;
+   BBLOCK *bp;
+   enum inst vsld, vshuf, vst;
+   short r0;
+
+   vp = PATHS[VPATH];
+   if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+   {
+      vsld = VFLDS;
+      vshuf = VFSHUF;
+      vst = VFST;
+   }
+   else
+   {
+      vsld = VDLDS;
+      vshuf = VDSHUF;
+      vst = VDST;
+   }
+#if 0
+   fprintf(stderr, "\nFigure out all vars in each path\n");
+   fprintf(stderr, "================================\n");
+
+   for (i = 0; i < NPATH; i++)
+   {
+      fprintf(stderr, "PATH : %d\n", i);
+      fprintf(stderr, "Control Flag: %d\n", PATHS[i]->lpflag);
+      fprintf(stderr, "FP SCALAR (FLAG) : ");
+      sc = PATHS[i]->scal;
+      sf = PATHS[i]->sflag;
+      for (j=1, N=sc[0]; j <= N; j++ )
+      {
+         fprintf(stderr,"%s(%d) ",STname[sc[j]-1], sf[j]);
+      }
+      fprintf(stderr,"\n");
+   }
+#endif
+   
+/*
+ * Check all the scalar variables of vector path, those may need backup
+ * recovery. vars which accessed in scalar path only, need no recovery.
+ */
+
+   for (i=1, N=vp->scal[0]; i <= N; i++)
+   {
+      sc = vp->scal[i]; /* scal and vscal are same here */
+      vs = vp->vscal[i];
+      sf = vp->sflag[i];
+/*
+ *    if it is private variable, nothing to do.
+ */
+      if (sf & SC_PRIVATE )
+         continue;
+/*
+ *    simple case first: this scalar is used in vector path as vscal but 
+ *    not set in this path like: amax in iamax.
+ *
+ *    NOTE: vscal and scal are the same for vector path as we skip integer and
+ *    moving array pointer from scal. Right now, our vector path doesn't have 
+ *    any integer vars (except index) and moving array pointer just have one
+ *    update at most (which will be moved to the tail of loop).
+ */
+      if ((sf & SC_USE) && !(sf & SC_SET))
+      {
+/*
+ *       check for all scalar paths whether this var is set.
+ *       Simple Transformation: set corresponding vscal after that inst.
+ *       Later can be optimized by putting this set at the last once, if 
+ *       possible.
+ */
+         for (j=0; j < NPATH; j++)
+         {
+            if (j == VPATH) continue; /* skip vector path */
+            path = PATHS[j];
+/*
+ *          NOTE: Need to count blocks once if there are some common blocks in
+ *          several scalar paths. right at this point, assume no common path.
+ *          NOTE: blocks common with vector path doesn't set this variable, as 
+ *          we checked that first. so, don't worry check those blocks.
+ */
+            for (bl=path->blocks; bl; bl=bl->next)
+            {
+               bp = FindBlockInListByNumber(scope, bl->blk->bnum);
+/*
+ *             HERE HERE, need to find where the scalar is set, but dupblks
+ *             doesn't have set/use info. So, we reply on the HIL format, 
+ *             checking for destination of FST. 
+ *             NOTE: for vector path, scal and vscal represent same vars, but
+ *             vflag and sflag are different.
+ *             optloop has vvscal for vscal!
+ */            
+               for (ip = bp->inst1; ip; ip=ip->next)
+               {
+                  if (ip->inst[0] == FST && ip->inst[1] == SToff[vs-1].sa[2])
+                  {
+                     r0 = GetReg(FLAG2TYPE(lp->vflag));
+                     ip = PrintComment(bp, ip, NULL,
+                     "Vector Recovery of %s", STname[vs-1]);
+                     ip = InsNewInst(bp, ip, NULL, vsld, -r0,
+                                     SToff[vs-1].sa[2], 0);
+                     ip = InsNewInst(bp, ip, NULL, vshuf, -r0, -r0, 
+                                     STiconstlookup(0));
+/*                   uses optloop's vvscal */                     
+                     ip = InsNewInst(lp->preheader, ip, NULL, vst,
+                                     SToff[lp->vvscal[i]-1].sa[2], -r0, 0);
+                     GetReg(-1);
+                  }
+               }
+            }
+         }
+      }
+/*
+ *    if the var is only set in vpath and not used, we need to look for the
+ *    use and set in scalar path. 
+ *    NOTE: not consider this yet, need not for iamax.
+ */
+      else if (!(sf & SC_USE) && (sf & SC_SET))
+      {
+      }
+/*
+ *    vars which is neither sets nor uses cannot be in scal. so, the only
+ *    option left is both SET and USE. In that case, check whether it is a
+ *    reduction variable!
+ *    NOTE: not implemented yet as need not for iamax
+ */
+      else
+      {
+
+      }
+   }
+   
 }
 
 void ScalarRestart(LOOPQ *lp)
@@ -2376,10 +2536,12 @@ void ScalarRestart(LOOPQ *lp)
       {
 /*
  *       Need to duplicate the loop blocks before updating the blocks for
- *       scalar restart.
+ *       scalar restart. 
  *       NOTE: header needs to be isolated from blks to use dup function.
  *       Need to iterate the Dup functions with diff label value: 0 is for
  *       cleanup.
+ *       NOTE: all these codes for dupblks run vlen times, only Labels are
+ *       changes. Start from 1 as 0 is used for cleanup for label
  */
          SetVecBit(lp->blkvec, lp->header->bnum-1,0);
          FKO_BVTMP = iv = BitVecCopy(FKO_BVTMP, lp->blkvec);
@@ -2388,6 +2550,13 @@ void ScalarRestart(LOOPQ *lp)
          SetVecBit(lp->blkvec, lp->header->bnum-1,1);
          iv = BitVecCopy(iv, lp->blkvec);
          dupblks = CF2BlockList(NULL, iv, newCF);
+/*
+ *       Loop blocks are duplicated. Now add backup recovery operation.
+ *       Right now, add instructions whenever it requires. Later, we can
+ *       optimize it by putting those all together at the end (but keep in mind
+ *       that we need to do it before loop control and ptr movement update)
+ */
+         AddBackupRecovery(dupblks, lp);
 /*
  *       Need to kill backedge (branch inst from tail of loop), add JMP to 
  *       the start of next scalar iteration.for last iteration, need to create
@@ -2618,7 +2787,7 @@ int SpecSIMDLoop(void)
  * NOTE: may copy all the loop blocks and apply scalar restart using those
  * duplicated block.
  */
-#if 1
+#if 0 
    fprintf(stdout, " LIL BEFORE SCALAR RESTART LOOP \n");
    PrintInst(stdout, bbbase);
 #endif
@@ -2631,7 +2800,7 @@ int SpecSIMDLoop(void)
 #if 1
    UnrollCleanup(lp,1);
 #endif
-#if 1
+#if 0
    fprintf(stdout, " LIL AFTER SSV LOOP \n");
    PrintInst(stdout, bbbase);
    fprintf(stdout, " SYMBOL TABLE \n");
@@ -2643,7 +2812,7 @@ int SpecSIMDLoop(void)
    CheckFlow(bbbase, __FILE__, __LINE__);
    FindLoops();
    CheckFlow(bbbase, __FILE__, __LINE__);
-#if 1
+#if 0
    fprintf(stdout, " LIL NEW CFG \n");
    PrintInst(stdout, bbbase);
    
@@ -2681,5 +2850,11 @@ int SpecSIMDLoop(void)
 #endif
 
 #endif
+
+#if 0
+      fprintf(stdout, "Final SSV \n");
+      PrintInst(stdout, bbbase);
+#endif 
+
    return(0);
 }
