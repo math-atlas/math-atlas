@@ -1915,8 +1915,13 @@ int SpeculativeVecTransform(LOOPQ *lp)
  */
    static enum inst
       brinsts[] = {JEQ, JNE, JLT, JGT, JGE},
-      vfcmpinsts[] = {VFCMPEQW, VFCMPNEW, VFCMPLTW, VFCMPGTW, VFCMPGEW},
-      vdcmpinsts[] = {VDCMPEQW, VDCMPNEW, VDCMPLTW, VDCMPGTW, VDCMPGEW};
+      #if defined(AVX)
+         vfcmpinsts[] = {VFCMPEQW, VFCMPNEW, VFCMPLTW, VFCMPGTW, VFCMPGEW},
+         vdcmpinsts[] = {VDCMPEQW, VDCMPNEW, VDCMPLTW, VDCMPGTW, VDCMPGEW};
+      #else
+         vfcmpinsts[] = {VFCMPEQW, VFCMPNEW, VFCMPLTW, VFCMPNLEW, VFCMPNLTW},
+         vdcmpinsts[] = {VDCMPEQW, VDCMPNEW, VDCMPLTW, VDCMPNLEW, VDCMPNLTW};
+      #endif
    const int nbr=5;
 
    const int nvinst=9;
@@ -2325,8 +2330,9 @@ void AddBackupRecovery(BLIST *scope, LOOPQ *lp)
 {
    BLIST *bl;
    INSTQ *ip;
-   int i, j, N;
+   int i, j, k, N;
    short sc, sf, vs;
+   short vlen;
    LOOPPATH *vp, *path;
    BBLOCK *bp;
    enum inst vsld, vshuf, vst;
@@ -2338,12 +2344,22 @@ void AddBackupRecovery(BLIST *scope, LOOPQ *lp)
       vsld = VFLDS;
       vshuf = VFSHUF;
       vst = VFST;
+      #if defined(X86) && defined(AVX)
+         vlen = 8;
+      #else
+         vlen = 4;
+      #endif
    }
    else
    {
       vsld = VDLDS;
       vshuf = VDSHUF;
       vst = VDST;
+      #if defined(X86) && defined(AVX)
+         vlen = 4;
+      #else
+         vlen = 2;
+      #endif
    }
 #if 0
    fprintf(stderr, "\nFigure out all vars in each path\n");
@@ -2411,7 +2427,7 @@ void AddBackupRecovery(BLIST *scope, LOOPQ *lp)
                bp = FindBlockInListByNumber(scope, bl->blk->bnum);
 /*
  *             HERE HERE, need to find where the scalar is set, but dupblks
- *             doesn't have set/use info. So, we reply on the HIL format, 
+ *             doesn't have set/use info. So, we rely on the HIL format, 
  *             checking for destination of FST. 
  *             NOTE: for vector path, scal and vscal represent same vars, but
  *             vflag and sflag are different.
@@ -2429,9 +2445,20 @@ void AddBackupRecovery(BLIST *scope, LOOPQ *lp)
                      ip = InsNewInst(bp, ip, NULL, vshuf, -r0, -r0, 
                                      STiconstlookup(0));
 /*                   uses optloop's vvscal */                     
-                     ip = InsNewInst(lp->preheader, ip, NULL, vst,
+                     /*ip = InsNewInst(lp->preheader, ip, NULL, vst,
+                                     SToff[lp->vvscal[i]-1].sa[2], -r0, 0);*/
+                     ip = InsNewInst(bp, ip, NULL, vst,
                                      SToff[lp->vvscal[i]-1].sa[2], -r0, 0);
                      GetReg(-1);
+                  }
+/*
+ *                Find all index ref and update that with vlen-1
+ */
+                  if (ip->inst[0] == LD && ip->inst[2] == SToff[lp->I-1].sa[2])
+                  {
+                     k = ip->inst[1];
+                     InsNewInst(bp, ip, NULL, ADD, k, k, 
+                                STiconstloopup(vlen-1) );
                   }
                }
             }
