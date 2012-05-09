@@ -1911,12 +1911,14 @@ int SpeculativeVecTransform(LOOPQ *lp)
       sdinsts[]= {FLDD, FSTD, FMULD, FMACD, FADDD, FSUBD, FABSD, FMOVD, FZEROD},
       vdinsts[]= {VDLD, VDST, VDMUL, VDMAC, VDADD, VDSUB, VDABS, VDMOV, VDZERO};
 /*
- * for vector cmp
+ * for vector cmp... temporary solution for siamax using JGT
+ * need to generalized later
  */
    static enum inst
       brinsts[] = {JEQ, JNE, JLT, JGT, JGE},
       #if defined(AVX)
-         vfcmpinsts[] = {VFCMPEQW, VFCMPNEW, VFCMPLTW, VFCMPGTW, VFCMPGEW},
+         /*vfcmpinsts[] = {VFCMPEQW, VFCMPNEW, VFCMPLTW, VFCMPGTW, VFCMPGEW},*/
+         vfcmpinsts[] = {VFCMPEQW, VFCMPNEW, VFCMPLTW, VFCMPLEW, VFCMPGEW},
          vdcmpinsts[] = {VDCMPEQW, VDCMPNEW, VDCMPLTW, VDCMPGTW, VDCMPGEW};
       #else
          vfcmpinsts[] = {VFCMPEQW, VFCMPNEW, VFCMPLTW, VFCMPNLEW, VFCMPNLTW},
@@ -2242,8 +2244,10 @@ int SpeculativeVecTransform(LOOPQ *lp)
                                STiconstLoopup(mskval)) ; */
 /*
  *             Change the branch in next inst as a JEQ
+ *             NOTE: changed the logic.. need to check later
  */
-               ip->next->inst[0] = JEQ;    
+               /*ip->next->inst[0] = JEQ;*/
+               ip->next->inst[0] = JNE;    
             }
             else /* changing other scalar inst to vector inst */
             {
