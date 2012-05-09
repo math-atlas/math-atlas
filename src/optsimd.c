@@ -2457,12 +2457,16 @@ void AddBackupRecovery(BLIST *scope, LOOPQ *lp)
                   }
 /*
  *                Find all index ref and update that with vlen-1
+ *                NOTE: need to skip loop update part, will remove the loop 
+ *                update at the last.
  */
-                  if (ip->inst[0] == LD && ip->inst[2] == SToff[lp->I-1].sa[2])
+                  if (ip->inst[0] == LD && ip->inst[2] == SToff[lp->I-1].sa[2]
+                      && !(ip->prev->inst[0] == CMPFLAG && ip->prev->inst[1] ==
+                           CF_LOOP_UPDATE))
                   {
                      k = ip->inst[1];
                      InsNewInst(bp, ip, NULL, ADD, k, k, 
-                                STiconstloopup(vlen-1) );
+                                STiconstlookup(vlen-1) );
                   }
                }
             }
