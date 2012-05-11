@@ -958,6 +958,7 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
    int i, j, k, nchanges=0, nc0;
    static short nlab=0, labs[4];
    static int iopt = 0; /* Majedul: for opt logger */
+   BLIST *bl;
 /*
  * Form scope based on global setting
  */
@@ -975,6 +976,15 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
    else
       for (scope=NULL,bp=bbbase; bp; bp = bp->down)
          scope = AddBlockToList(scope, bp);
+#if 0
+   if (global)
+   {
+      fprintf(stdout, "Scope : " );
+      for (bl=scope; bl; bl=bl->next )
+          fprintf(stdout, " %d ",bl->blk->bnum);
+      fprintf(stdout, "\n");
+   }
+#endif
 /*
  * NOTE: Need a way to eliminate _IFKO_EPILOGUE iff this is last optimization
  */
@@ -1032,7 +1042,7 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
       optrec[noptrec++] = global ? k+MaxOpt : k;
 #if 0
       //char file[20];
-      PrintOptInst(stdout, ++iopt, k, scope, nchanges-nc0);
+      PrintOptInst(stdout, ++iopt, k, scope, global, nchanges-nc0);
       //sprintf(file, "cfg/%s%d.dot", "cfg", iopt);
       //ShowFlow(file,bbbase);
 #endif
@@ -1312,12 +1322,26 @@ struct optblkq *DefaultOptBlocks(void)
 
    if (DO_VECT(FKO_FLAG))
    {
+/*
+ * Majedul: consider EnforceLoadStore as global optimization, otherwise FABS in
+ * Cleanup could not be updated
+ * 
+ */
+#if 0
       op = base = NewOptBlock(1, 0, 5, 0);
       op->opts[0] = EnforceLoadStore;
       op->opts[1] = MaxOpt+2;
       op->opts[2] = MaxOpt+3;
       op->opts[3] = MaxOpt+4;
       op->opts[4] = MaxOpt+5;
+#else
+      op = base = NewOptBlock(1, 0, 5, IOPT_GLOB);
+      op->opts[0] = EnforceLoadStore;
+      op->opts[1] = MaxOpt+2;
+      op->opts[2] = MaxOpt+3;
+      op->opts[3] = MaxOpt+4;
+      op->opts[4] = MaxOpt+5;
+#endif
    }
    else
    {
@@ -1521,6 +1545,10 @@ void DoStage2(int SAVESP, int SVSTATE)
    NewBasicBlocks(bbbase);
    FindLoops(); 
    CheckFlow(bbbase, __FILE__, __LINE__);
+#if 1
+   fprintf(stdout, "LIL before LOOP UNROLL \n");
+   PrintInst(stdout,bbbase);
+#endif
 /*
  * Having found the optloop, save which arrays to prefetch
  */
@@ -1548,6 +1576,10 @@ void DoStage2(int SAVESP, int SVSTATE)
    }
    if (SVSTATE)
       SaveFKOState(2);
+#if 1
+   fprintf(stdout, "LIL AFTER DO STAGE 2 \n");
+   PrintInst(stdout, bbbase);
+#endif
 }
 
 void AddOptSTEntries()
@@ -1618,17 +1650,14 @@ int main(int nargs, char **args)
       AddOptSTEntries();
       SaveFKOState(0);
 #if 0
-      GenPrologueEpilogueStubs(bbbase,0);
-      NewBasicBlocks(bbbase);
-      fprintf(stdout,"LIL before Vect\n");
+      fprintf(stdout,"FIRST LIL\n");
       PrintInst(stdout,bbbase);
-      exit(0);
 #endif
       if (!fpLOOPINFO && (FKO_FLAG & IFF_VECTORIZE))
       {
          if (IsSpeculationNeeded())
          {
-#if 0 
+#if 0
             fprintf(stdout, "LIL BEFORE SV\n");
             PrintInst(stdout, bbbase);
 #endif
@@ -1673,10 +1702,12 @@ int main(int nargs, char **args)
 #if 0
             fprintf(stdout, "Optimized LIL Before Assembly\n");
             PrintInst(stdout, bbbase);
+            fprintf(stdout, "SYmbol Table\n");
+            PrintST(stdout);
 #endif
             abase = lil2ass(bbbase);
             KillAllBasicBlocks(bbbase);
-            dump_assembly(stdout, abase);
+            dump_assembly(fpout, abase);
             KillAllAssln(abase);
 #endif            
             exit(0);
@@ -1690,6 +1721,12 @@ int main(int nargs, char **args)
       else
          DoStage2(0, 0);
    }
+   
+#if 0
+   fprintf("LIL before optimization\n");
+   PrintInst(stdout, bbbase);
+#endif
+
    if (fpLOOPINFO)
       PrintLoopInfo();
    if (FKO_FLAG & IFF_GENINTERM)
