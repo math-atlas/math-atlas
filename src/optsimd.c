@@ -2663,6 +2663,7 @@ void ScalarRestart(LOOPQ *lp)
  */
       bp = NewBasicBlock(bp0, NULL);
       bp0->down = bp;
+      bp->up = bp0;
       bp0 = bp;
       sprintf(ln, "_S_%d_%d",i,j);
       cflag = STlabellookup(ln);
