@@ -637,6 +637,101 @@ main()
    if (!ierr) fprintf(stdout, "PASSED TEST\n");
    exit(ierr);
 }
+@ROUT ATL_mm4x2
+void ATL_UGEMM
+(
+   size_t nmus,
+   size_t nnus,
+   TYPE *pA,    /* mu*KB*nmus-length access-major array of A */
+   TYPE *pB,    /* nu*KB*nnus-length access-major array of B */
+   TYPE *pC,    /* mu*nu*nnus*nmus-length acces-major array of C */
+   TYPE *pf     /* will prefetch next KB*KB elts from this area into L2cache */
+)
+/*
+ * Performs a GEMM operation on a 4x2 jammed GEMM with a compile-time
+ * constant K-length of ATL_MM_KB.
+ */
+{
+   register TYPE rA0, rA1, rA2, rA3, rB0, rB1;
+   register TYPE rC00, rC10, rC20, rC30,
+                 rC01, rC11, rC21, rC31,
+                 rC02, rC12, rC22, rC32,
+                 rC03, rC13, rC23, rC33;
+   TYPE pB0 = pB;
+   ATL_CINT incPF = ((size_t)KB*KB)/(nmus*nnus);
+   for (i=0; i < nmus; i++)
+   {
+      for (j=0; j < nnus; j++)
+      {
+         rA0 = *pA;
+         rA1 = pA[1];
+         rA2 = pA[2];
+         rA3 = pA[3];
+         rB0 = *pB;
+         rB1 = pB[1];
+         rC00 = rA0 * rB0;
+         ATL_pfL1W(pC);
+         rC10 = rA1 * rB0;
+         pA += 4;
+         rC20 = rA2 * rB0;
+         pB += 2;
+         rC30 = rA3 * rB0;
+         rC01 = rA0 * rB1;
+         rC11 = rA1 * rB1;
+         ATL_pfl2R(pf);
+         rC21 = rA2 * rB1;
+         pf += incPF;
+         rC31 = rA3 * rB1;
+         for (k=1; k < ATL_MM_KB; k++)
+         {
+            rA0 = *pA; rA1 = pA[1]; rA2 = pA[2]; rA3 = pA[3];
+            rB0 = *pB; rB1 = pB[1];
+            rC00 += rA0 * rB0;
+            rC10 += rA1 * rB0;
+            rC20 += rA2 * rB0;
+            rC30 += rA3 * rB0;
+            rC01 += rA0 * rB1;
+            rC11 += rA1 * rB1;
+            rC21 += rA2 * rB1;
+            rC31 += rA3 * rB1;
+            pA += 4;
+            pB += 2;
+         }
+         pA -= 4*ATL_MM_KB;
+         #ifdef BETA0
+            pC[0] = rC00;
+            pC[1] = rC10;
+            pC[2] = rC20;
+            pC[3] = rC30;
+            pC[4] = rC01;
+            pC[5] = rC11;
+            pC[6] = rC21;
+            pC[7] = rC31;
+         #elif defined(BETAN1)
+            pC[0] = rC00 - pC[0];
+            pC[1] = rC10 - pC[1];
+            pC[2] = rC20 - pC[2];
+            pC[3] = rC30 - pC[3];
+            pC[4] = rC01 - pC[4];
+            pC[5] = rC11 - pC[5];
+            pC[6] = rC21 - pC[6];
+            pC[7] = rC31 - pC[7];
+         #else /* BETA=1 */
+            pC[0] += rC00;
+            pC[1] += rC10;
+            pC[2] += rC20;
+            pC[3] += rC30;
+            pC[4] += rC01;
+            pC[5] += rC11;
+            pC[6] += rC21;
+            pC[7] += rC31;
+         #endif
+         pC += 8;
+      }
+      pA += 4*ATL_MM_KB;
+      pB = pB0;
+   }
+}
 @rout ATL_ChooseNB
 /*
  * This include file defines teh following:
