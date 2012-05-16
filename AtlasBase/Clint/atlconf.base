@@ -3,6 +3,7 @@
    @ifdef allflags
       @define -t @-t@
       @define -t2 @-t2@
+      @define -t3 @-t3@
       @define -O @-O@
       @define -s @-s@
       @define -A @-A@
@@ -123,6 +124,10 @@ void PrintUsage(char *name, int iarg, char *arg)
       fprintf(stderr, 
         "      -Si cputhrchk <0/1> : Ignore/heed CPU throttle probe\n");
    @endifdef
+   @ifdef -t3
+      fprintf(stderr, 
+           "   -tl <#> <list> : set # of threads, use list of affinity IDs\n");
+   @endifdef
    @ifdef -t2
       fprintf(stderr, 
         "      -Si omp <0/1> : don'tuse/use OpenMP for threading\n");
@@ -201,9 +206,12 @@ void GetFlags(int nargs,                /* nargs as passed into main */
               int *ptrbits             /* # of bits in ptr: 32/64 */,
 @endifdef
 @ifdef -t
-   @define iflag @t@
-   @define ivar @nthreads@
+@skip   @define iflag @t@
+@skip   @define ivar @nthreads@
               int *nthreads,           /* # of threads */
+   @ifdef -t3
+              int **tids,              /* thread affinity ID list */
+   @endifdef
    @ifdef -t2
               int *omp,                /* Build OpenMP version of threading? */
               int *AntThr,             /* Build Antoine's threads? */
@@ -347,6 +355,9 @@ void GetFlags(int nargs,                /* nargs as passed into main */
 @ifdef -t
    *nthreads = -1;
 @endifdef
+@ifdef -t3
+   *tids = NULL;
+@endifdef
 @ifdef -t2
    *omp = *AntThr = 0;
 @endifdef
@@ -359,6 +370,26 @@ void GetFlags(int nargs,                /* nargs as passed into main */
          PrintUsage(args[0], i, args[i]);
       switch(args[i][1])
       {
+@ifdef -t
+      case 't':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of arguments");
+         *nthreads = atoi(args[i]);
+   @ifdef -t3
+         if (args[i-1][2] == 'l')
+         {
+            *tids = malloc(*nthreads * sizeof(int));
+            assert(*tids);
+            for (k=0; k < *nthreads; k++)
+            {
+               if (++i >= nargs)
+                  PrintUsage(args[0], i, "out of arguments");
+               (*tids)[k] = atoi(args[i]);
+            }
+         }
+   @endifdef
+         break;
+@endifdef
 @whiledef iflag
       case '@(iflag)':
          if (++i >= nargs)
@@ -3326,7 +3357,7 @@ int *ProbeAffIDs
    IDs[0] = (SEQ) ? -IDs[nID] : nID;
    return(IDs);
 }
-@extract -b @(basd)/atlconf.base rout=GetFlags -def -O "" -def -o "" -def -t "" -def -t2 ""
+@extract -b @(basd)/atlconf.base rout=GetFlags -def -O "" -def -o "" -def -t "" -def -t2 "" -def -t3 ""
 
 void PrintResults
 (
@@ -3440,9 +3471,26 @@ int main(int nargs, char **args)
    enum OSTYPE OS;
    char *targ, *outfile;
 
-   GetFlags(nargs, args, &verb, &OS, &maxT, &OMP, &AntThr, &outfile, &targ);
+   GetFlags(nargs, args, &verb, &OS, &maxT, &IDs, &OMP, &AntThr, 
+            &outfile, &targ);
    iaff = ProbeAffinity(verb, targ, OS, OMP);
-   if (iaff)
+   if (IDs)
+   {
+      int *ids;
+      if (!iaff)
+      {
+         fprintf(stderr, 
+         "You have assigned particular IDs, but affinity does not work!\n");
+         exit(-1);
+      }
+      ids = malloc((maxT+1)*sizeof(int));
+      ids[0] = maxT;
+      for (i=0; i < maxT; i++)
+         ids[i+1] = IDs[i];
+      free(IDs);
+      IDs = ids;
+   }
+   if (iaff && !IDs)
    {
       IDs = ProbeAffIDs(verb, targ, OS, OMP, iaff);
       assert(IDs);
@@ -7221,7 +7269,7 @@ char *ProbePmake(int verb, enum OSTYPE OS, int ncpu)
 
 void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
                  enum ASMDIA asmb, int vecexts, int ptrbits, 
-                 int ncpu, int omp, int AntThr,
+                 int ncpu, int *tids, int omp, int AntThr,
                  int l2size, char *srcdir, char *bindir, int bozol1, 
                  int archdef, int IEEE, int latune,  int nof77, char **comps, 
                  char *gccflags,
@@ -7231,7 +7279,7 @@ void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
  * Calls xspew with correct arguments to build required Make.inc
  */
 {
-   char *frm = "./xspew -v %d -O %d -A %d -m %d -s %d -V %d -b %d -t %d -f %d -d s '%s' -d b '%s' -D c '%s' -D f '%s' %s -Si archdef %d -Si ieee %d -Si bozol1 %d -Si latune %d -Si nof77 %d -o Make.inc";
+   char *frm = "./xspew -v %d -O %d -A %d -m %d -s %d -V %d -b %d -f %d -d s '%s' -d b '%s' -D c '%s' -D f '%s' %s -Si archdef %d -Si ieee %d -Si bozol1 %d -Si latune %d -Si nof77 %d -o Make.inc";
    char *ln, *compsflags, archflags[1024];
    int i;
 
@@ -7243,12 +7291,27 @@ void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
    if (f2cdefs)
       i += strlen(f2cdefs);
    i += strlen(compsflags);
+   if (tids)
+   {
+      i += ncpu * 12 + 6;
+   }
+   else
+      i += 16;
    ln = malloc(i*sizeof(char));
    assert(ln);
-   sprintf(ln, frm, verb, OS, arch, mhz, asmb, vecexts, ptrbits, ncpu, l2size,
-           srcdir, bindir, cdefs ? cdefs:"", f2cdefs? f2cdefs : "", 
-           compsflags, archdef, IEEE, bozol1, latune, nof77);
+   i = sprintf(ln, frm, verb, OS, arch, mhz, asmb, vecexts, ptrbits, l2size,
+               srcdir, bindir, cdefs ? cdefs:"", f2cdefs? f2cdefs : "", 
+               compsflags, archdef, IEEE, bozol1, latune, nof77);
    free(compsflags);
+   if (tids)
+   {
+      int k;
+      i += sprintf(ln+i, " -tl %d", ncpu);
+      for (k=0; k < ncpu; k++)
+         i += sprintf(ln+i, " %d", tids[k]);
+   }
+   else
+      i += sprintf(ln+i, " -t %d", ncpu);
    if (pmake)
       ln = NewAppendedString_SFLAG(ln, "-Ss pmake", pmake);
    if (flapack)
@@ -7281,6 +7344,7 @@ int main(int nargs, char **args)
    int thrchk, mhz, omp, AntThr, lapackref;
    int j, k, h, vecexts;
    int ptrbits, l2size, bozol1, latune, archdef, ieee;
+   int *tids;
    char *targ, *f2cdefs, *cdefs, *srcdir, *bindir, *outfile, *sp;
    char targarg[256];
    char *comps[3*NCOMP], *gccflags;
@@ -7288,10 +7352,10 @@ int main(int nargs, char **args)
 @skip   char *archdefs[NARDEF], *ad2[NARDEF];
 
    GetFlags(nargs, args, &verb, &OS, (enum ASMDIA*) &asmb, &vecexts, &mach, 
-            &mhz, &ptrbits, &ncpu, &omp, &AntThr, comps, &gccflags, &outfile, 
-            &srcdir, &bindir, &bozol1, &archdef, &ieee, &latune, &nof77, 
-            &nocygwin, &thrchk, &lapackref, &f2cdefs, &cdefs, &pmake, &flapack, 
-            &smaflags, &dmaflags, &f77libs, &l2size, &targ);
+            &mhz, &ptrbits, &ncpu, &tids, &omp, &AntThr, comps, &gccflags, 
+            &outfile, &srcdir, &bindir, &bozol1, &archdef, &ieee, &latune, 
+            &nof77, &nocygwin, &thrchk, &lapackref, &f2cdefs, &cdefs, &pmake,
+            &flapack, &smaflags, &dmaflags, &f77libs, &l2size, &targ);
    if (targ)
       sprintf(targarg, "-T %s", targ);
    else
@@ -7393,9 +7457,9 @@ int main(int nargs, char **args)
          dmaflags = " -O2";
    }
 @endskip
-   SpewItForth(verb, OS, mach, mhz, asmb, vecexts, ptrbits, ncpu, omp, AntThr,
-               l2size, srcdir, bindir, bozol1, archdef, ieee, latune, nof77, 
-               comps, gccflags, f2cdefs, cdefs, pmake, flapack, 
+   SpewItForth(verb, OS, mach, mhz, asmb, vecexts, ptrbits, ncpu, tids, omp, 
+               AntThr, l2size, srcdir, bindir, bozol1, archdef, ieee, latune,
+               nof77, comps, gccflags, f2cdefs, cdefs, pmake, flapack, 
                smaflags, dmaflags, f77libs);
    for (i=0; i < 3*NCOMP; i++)
       if (comps[i])
@@ -7513,6 +7577,7 @@ do
       echo "                        Default: $prefix/lib"
       echo "   --shared : same as --dylibs"
       echo "   --dylibs : build dynamic/shared libs in addition to static libs"
+      echo '   --force-tids="<#> threadIDlist"'
       echo "   --nof77 : You have no Fortran compiler installed.  Note that"
       echo "             this will disallow building the F77 interface, and"
       echo "             some of the tests (eg, standard BLAS testers)"
@@ -7577,6 +7642,12 @@ do
    if test "$flag" != "$arg"
    then
       incinstdir="$flag"
+      handled=1
+   fi
+   flag=`echo "$arg" | sed -e "s/--force-tids=//"`
+   if test "$flag" != "$arg"
+   then
+      pass="$pass -tl $flag"
       handled=1
    fi
    flag=`echo "$arg" | sed -e "s/--shared//"`
@@ -8004,6 +8075,7 @@ int main(int nargs, char **args)
    int Use3DNow=0;  /* this needs to come from getflags */
    int ncpu, omp, AntThr, lapackref;
    int USEDEFL1, USEARCHDEF, LATUNE, USEIEEE;
+   int *tids;
    #define NPREC 4
    char pres[NPREC] = {'s', 'd', 'c', 'z'};
    char *targ, *sp, *pmake, *flapack;
@@ -8014,9 +8086,9 @@ int main(int nargs, char **args)
    char *adnames[NARDEF] = {"sKERNDEF", "dKERNDEF", "sMMDEF", "dMMDEF"};
 
    GetFlags(nargs, args, &verb, &OS, (enum ASMDIA*) &asmb, &vecexts, &mach, 
-            &mhz, &ptrbits, &ncpu, &omp, &AntThr, comps, &gccflags, &outfile, 
-            &srcdir, &blddir, &USEDEFL1, &USEARCHDEF, &USEIEEE, &LATUNE, &nof77,
-            &lapackref, &f2cdefs, &cdefs, &pmake, &flapack, 
+            &mhz, &ptrbits, &ncpu, &tids, &omp, &AntThr, comps, &gccflags, 
+            &outfile, &srcdir, &blddir, &USEDEFL1, &USEARCHDEF, &USEIEEE, 
+            &LATUNE, &nof77, &lapackref, &f2cdefs, &cdefs, &pmake, &flapack, 
             &smaflags, &dmaflags, &f77lib, &l2size, &targ);
    if (ncpu > 1) THREADS = 1;
    if (!outfile)
@@ -8221,6 +8293,16 @@ int main(int nargs, char **args)
    if ((ISAX == ISA_AV || ISAX == ISA_VSX) && CompIsGcc(comps[DMC_]) && 
         !CompIsAppleGcc(comps[DMC_]))
       fprintf(fpout, " -DATL_AVgcc");
+   fprintf(fpout, "\n\n");
+   if (tids)
+   {
+      int k;
+      fprintf(fpout, "   TIDLIST= -tl %d", ncpu);
+      for (k=0; k < ncpu; k++)
+         fprintf(fpout, " %d", tids[k]);
+   }
+   else
+      fprintf(fpout, "TIDLIST=");
    fprintf(fpout, "\n\n");
 
    fprintf(fpout,
