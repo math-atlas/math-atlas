@@ -876,6 +876,61 @@ BEST FLAGS GIVE MFLOP=592.68 (6.25% improvement over first case):
 \end{figure}
 
 \clearpage
+\subsection{Handling hyperthreading, SMT, modules, and other horrors}
+Most modern machines include multiple virtual processors on each core;
+this basic idea is called hyperthreading by Intel, SMT by IBM, and other
+names by others.  AMD took it to a new level with the dozer architecture,
+where two integer units share an FPU.
+
+All of these techniques mainly help for codes that are extremely inefficient:
+by allowing multiple threads that cannot drive the architecture's backend at 
+its maximal rate, you can get the backend running nearer to peak.  However,
+for efficient codes that can drive the bottleneck backend functional units
+at their maximal rate, these strategies can cause slowdowns that range
+from slight to catastrophic, depending on the situation.  For ATLAS,
+the main problem is usually that contention on the caches tends to thrash
+them.
+
+The only architecture where I have seen the use of these virtual processors
+yield speedups on most ATLAS operations is the Sun Niagara;  I believe the
+machine I observed speedups on was a T2, but this might be true for any
+of the T-series.
+
+I recommend that HPC users turn off these virtual processors on all other
+systems, which is usually done either in the BIOS or by OS calls.  If
+you do not have root, or if you have less optimized applications that are
+getting speedup from these virtual cores, you can tell ATLAS to use only
+the real cores if you learn a little about your machine.  Unfortunately,
+ATLAS cannot presently autodetect these features, but if you experiment
+you can discover which affinity IDs are the separate cores, and tell
+ATLAS to use only these cores.  The general form is to add the following
+to your usual configure flags:
+\begin{verbatim}
+    --force-tids="# <thread ID list>"
+\end{verbatim}
+
+For instance, on my AMD Dozer system,
+there are 8 integer cores, but only 4 FPUs, and so for best performance we
+would like to use 4 threads rather than 8, and be sure to not use any
+integer core that shares an FPU.  A little testing showed that on my
+system, core IDs 0, 1, 3, and 6 are all independent of each other, and so
+I can tell ATLAS to use only these four cores in threaded operations by
+adding this flag to configure:
+\begin{verbatim}
+    --force-tids="4 0 1 3 6"
+\end{verbatim}
+On my system, this actually slightly reduces parallel GEMM performance, but
+noticably improves factorization performance.
+
+Similarly, an IBM Power7 I have access to has 8 physical cores, but offers
+64 SMT units.  If you install with the default flags, your parallel speedup
+for moderate sized DGEMMs is around 4.75.  On the other hand, if you add:
+\begin{verbatim}
+    --force-tids="8 0 8 16 24 32 40 48 56"
+\end{verbatim}
+Then the parallel DGEMM speedup for moderate sized problems is more like 6.5.
+
+\clearpage
 \subsection{Building dynamic/shared libraries}
 \label{sec-shared}
 ATLAS natively builds static libraries (i.e. libs that usually end in
