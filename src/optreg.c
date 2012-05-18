@@ -2576,7 +2576,11 @@ int DoEnforceLoadStore(BLIST *scope)
                op = 0;
             else if (!IS_DEREF(STflag[op-1]))
                op = 0;
-            #ifdef X86
+/*
+ *          Majedul: Right now, I skipped the update of the 2nd src operand
+ *          from here, add a new function to reveal this kind of arch event
+ */
+            #if defined(X86) && 0 
                if (ip->inst[3] >= 0)
                {
                if (inst == FABS)
