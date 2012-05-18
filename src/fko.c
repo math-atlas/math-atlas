@@ -1237,7 +1237,15 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
    }
    CalcInsOuts(bbbase); 
    CalcAllDeadVariables();
-
+/*
+ * Majedul: Revealing hidden mem use for X86 before optimization
+ */
+   RevealArchMemUses();
+   if (!CFUSETU2D)
+   {
+      CalcInsOuts(bbbase); 
+      CalcAllDeadVariables();
+   }
 #if 1
    PerformOptN(SAVESP, optblks);
 #else
@@ -1324,10 +1332,10 @@ struct optblkq *DefaultOptBlocks(void)
    {
 /*
  * Majedul: consider EnforceLoadStore as global optimization, otherwise FABS in
- * Cleanup could not be updated
+ * Cleanup could not be updated ... solved this issue with a extra stage.
  * 
  */
-#if 0
+#if 1
       op = base = NewOptBlock(1, 0, 5, 0);
       op->opts[0] = EnforceLoadStore;
       op->opts[1] = MaxOpt+2;
@@ -1545,7 +1553,7 @@ void DoStage2(int SAVESP, int SVSTATE)
    NewBasicBlocks(bbbase);
    FindLoops(); 
    CheckFlow(bbbase, __FILE__, __LINE__);
-#if 1
+#if 0
    fprintf(stdout, "LIL before LOOP UNROLL \n");
    PrintInst(stdout,bbbase);
 #endif
@@ -1576,7 +1584,7 @@ void DoStage2(int SAVESP, int SVSTATE)
    }
    if (SVSTATE)
       SaveFKOState(2);
-#if 1
+#if 0 
    fprintf(stdout, "LIL AFTER DO STAGE 2 \n");
    PrintInst(stdout, bbbase);
 #endif
@@ -1679,6 +1687,7 @@ int main(int nargs, char **args)
 
             CalcInsOuts(bbbase);
             CalcAllDeadVariables();
+            RevealArchMemUses(); /* to handle ABS in X86 */
             PerformOptN(0, optblks);
 #if 0
             fprintf(stdout, "Optimized LIL\n");
@@ -1821,6 +1830,8 @@ int main(int nargs, char **args)
 #if 0
       fprintf(stdout, "\n LIL BEFORE L2A: \n");
       PrintInst(stdout,bbbase);
+      fprintf(stdout, "\n ST BEFORE L2A: \n");
+      PrintST(stdout,bbbase);
       exit(0);
 #endif
       abase = lil2ass(bbbase);
