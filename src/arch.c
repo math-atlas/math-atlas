@@ -53,6 +53,119 @@ short type2shift(int type)
       #endif
    return(len);
 }
+int RevealArchMemUses(void)
+/*
+ * reveals all the mem uses for DTabs/DTnzeros, 
+ * returns number of changes
+ * Note: Do we need the LD of those ABSVAL??? Otherwise format of LIL 
+ * may be violated!!
+ */
+{
+   BBLOCK *bp;
+   INSTQ *ip, *ipN;
+   enum inst inst;
+   short op, ir;
+   int nchanges, arinst, j;
+   extern int DTabs, DTabsd, DTnzero, DTnzerod;
+   extern int DTabss, DTabsds, DTnzeros, DTnzerods;
+   extern BBLOCK *bbbase;
+
+   nchanges = 0;
+   for (bp=bbbase; bp; bp=bp->down)
+   {
+      for (ip=bp->ainst1; ip; ip = ip->next)
+      {
+            #if defined(X86)  
+               inst = ip->inst[0];
+               arinst = 0;
+               if (ip->inst[3] >= 0)
+               {
+                  if (inst == FABS)
+                  {
+                     ip->inst[3] = op = SToff[DTabss-1].sa[2];
+                     arinst = 1;
+                  }
+                  else if (inst == VFABS)
+                  {
+                     ip->inst[3] = op = SToff[DTabs-1].sa[2];
+                     arinst = 1;
+                  }
+                  else if (inst == FABSD)
+                  {
+                     ip->inst[3] = op = SToff[DTabsds-1].sa[2];
+                     arinst = 1;
+                  }
+                  else if (inst == VDABS)
+                  {
+                     ip->inst[3] = op = SToff[DTabsd-1].sa[2];
+                     arinst = 1;
+                  }
+                  else if (inst == FNEG)
+                  {
+                     ip->inst[3] = op = SToff[DTnzeros-1].sa[2];
+                     arinst = 1;
+                  }
+                  else if (inst == FNEGD)
+                  {
+                     ip->inst[3] = op = SToff[DTnzerods-1].sa[2];
+                     arinst = 1;
+                  }
+               }
+               if (arinst)
+               {
+                  assert((ip->inst[2] < 0) && (ip->inst[1] < 0)); /*mustbe reg*/
+/*
+ *                Need to Load the the mem first to maintain the structure of 
+ *                LIL. following block ensure this format. 
+ */               
+               #if 1
+                  j = ireg2type(-ip->inst[1]);
+                  ir = GetReg(j);
+                  while (ir == -ip->inst[1] || ir == -ip->inst[2])
+                     ir = GetReg(j);
+                  /*fprintf(stderr, "avail reg = %d\n",ir);*/
+                  
+                  if (ir)
+                  {
+                     switch(j)
+                     {
+                     case T_INT:
+                        inst = LD;
+                        break;
+                     case T_FLOAT:
+                        inst = FLD;
+                        break;
+                     case T_DOUBLE:
+                        inst = FLDD;
+                        break;
+                     case T_VFLOAT:
+                        inst = VFLD;
+                        break;
+                     case T_VDOUBLE:
+                        inst = VDLD;
+                        break;
+                     }
+                     ipN = InsNewInst(NULL, NULL, ip, inst, -ir, op, 0);
+                     ip->inst[3] = -ir;
+                  }
+                  GetReg(-1);
+                  CalcThisUseSet(ipN);
+               #endif  
+
+                  CalcThisUseSet(ip);
+                  nchanges++;
+               }
+            #endif
+      }
+   }
+#if 0
+   PrintInst(stdout,bbbase);
+#endif   
+   if (nchanges)
+      CFUSETU2D = INDEADU2D = 0;
+
+   return nchanges;
+}
 
 void FindRegUsage(BBLOCK *bbase, int *ni0, int *iregs, 
                   int *nf0, int *fregs, int *nd0, int *dregs)
@@ -1956,7 +2069,6 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
       if (maxalign > ASPALIGN)
       {
          Loff += 8; /* must have saved rsp, keep space for it */
-         //SAVESP = Loff - 8;
          SAVESP = 8; /* always save the rsp at 1st location for X64 */
          Soff +=8; /* keep space to save old stack pointer */
 /*
