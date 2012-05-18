@@ -48,15 +48,20 @@
 #define FLAG2PTYPE(flag_) ( IS_PTR(flag_) ? T_INT : ((flag_) & 0x7) )
 
 #define REG_SP   1
-
-#if defined(X86) && defined(AVX)
+/*
+ * Majedul: AVX is defined in another header file. We can't ensure that it is 
+ * defined before this header file. So these are shifted to fko_arch
+ */
+/*#if defined(X86) && defined(AVX)*/
+/*
+#if defined(AVX) || 1
    #define FKO_DVLEN 4  
    #define FKO_SVLEN 8  
 #else
    #define FKO_DVLEN 2  
    #define FKO_SVLEN 4  
 #endif
-
+*/
 #ifndef NO_STEXTERN
    extern char         **STname;
    extern union valoff *SToff;

@@ -13,11 +13,28 @@
 /*   #define LINUX_X86_64  */
      #define LINUX_X86_64    
 /*   #define LINUX_X86_32 */
+/*   #define SOLARIS_SPARC  */
+/*   #define OSX_PPC  */
+#endif
+
+/*
+ * Majedul: SIMD Vector related 
+ */
+#if !defined(ARCH_VEC) && 1 
      #define AVX                    
      #define ArchHasMAC
      #define FMA4
-/*   #define SOLARIS_SPARC  */
-/*   #define OSX_PPC  */
+#endif
+/*
+ * Majedul: as VLEN depends on the system, this is shifted here. Otherwise, we
+ * can't ensure that AVX is defined before VLEN
+ */
+#ifdef AVX
+   #define FKO_DVLEN 4  
+   #define FKO_SVLEN 8  
+#else
+   #define FKO_DVLEN 2  
+   #define FKO_SVLEN 4  
 #endif
 
 #if defined(FKO_ANSIC32) || defined(FKO_ANSIC64)
