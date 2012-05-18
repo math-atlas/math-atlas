@@ -1919,7 +1919,8 @@ int SpeculativeVecTransform(LOOPQ *lp)
       #if defined(AVX)
          /*vfcmpinsts[] = {VFCMPEQW, VFCMPNEW, VFCMPLTW, VFCMPGTW, VFCMPGEW},*/
          vfcmpinsts[] = {VFCMPEQW, VFCMPNEW, VFCMPLTW, VFCMPLEW, VFCMPGEW},
-         vdcmpinsts[] = {VDCMPEQW, VDCMPNEW, VDCMPLTW, VDCMPGTW, VDCMPGEW};
+         /*vdcmpinsts[] = {VDCMPEQW, VDCMPNEW, VDCMPLTW, VDCMPGTW, VDCMPGEW};*/
+         vdcmpinsts[] = {VDCMPEQW, VDCMPNEW, VDCMPLTW, VDCMPLEW, VDCMPGEW};
       #else
          vfcmpinsts[] = {VFCMPEQW, VFCMPNEW, VFCMPLTW, VFCMPNLEW, VFCMPNLTW},
          vdcmpinsts[] = {VDCMPEQW, VDCMPNEW, VDCMPLTW, VDCMPNLEW, VDCMPNLTW};
@@ -2339,7 +2340,7 @@ void AddBackupRecovery(BLIST *scope, LOOPQ *lp)
    short vlen;
    LOOPPATH *vp, *path;
    BBLOCK *bp;
-   enum inst vsld, vshuf, vst;
+   enum inst vsld, vshuf, vst, fst;
    short r0;
 
    vp = PATHS[VPATH];
@@ -2348,6 +2349,7 @@ void AddBackupRecovery(BLIST *scope, LOOPQ *lp)
       vsld = VFLDS;
       vshuf = VFSHUF;
       vst = VFST;
+      fst = FST;     /* to check the recovery vars */
       #if defined(X86) && defined(AVX)
          vlen = 8;
       #else
@@ -2359,6 +2361,7 @@ void AddBackupRecovery(BLIST *scope, LOOPQ *lp)
       vsld = VDLDS;
       vshuf = VDSHUF;
       vst = VDST;
+      fst = FSTD;
       #if defined(X86) && defined(AVX)
          vlen = 4;
       #else
@@ -2439,7 +2442,7 @@ void AddBackupRecovery(BLIST *scope, LOOPQ *lp)
  */            
                for (ip = bp->inst1; ip; ip=ip->next)
                {
-                  if (ip->inst[0] == FST && ip->inst[1] == SToff[vs-1].sa[2])
+                  if (ip->inst[0] == fst && ip->inst[1] == SToff[vs-1].sa[2])
                   {
                      r0 = GetReg(FLAG2TYPE(lp->vflag));
                      ip = PrintComment(bp, ip, NULL,
