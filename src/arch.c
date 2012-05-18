@@ -1067,6 +1067,9 @@ void Extern2Local(INSTQ *next, int rsav)
             DTabss = STdef("_ABSVALs", T_FLOAT | LOCAL_BIT, 0);
             SToff[DTabss-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTabss,
                         -DTabss, SToff[k].sa[3], DTabss);
+#if 1
+            fprintf(stderr, "Dtabs_off=%d\n",SToff[k].sa[3]);
+#endif
             k = vfreg - VFREGBEG + FREGBEG;
             InsNewInst(NULL, NULL, next, VFMOVS, -k, -vfreg, 0);
             InsNewInst(NULL, NULL, next, FST, SToff[DTabss-1].sa[2], -k, 0);
@@ -1800,6 +1803,21 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
  * Calculates required frame size, corrects local and parameter offsets
  * appropriately, and then inserts instructions to save and restore
  * callee-saved regs
+ * NOTE: Majedul: all parameters are copied into local area of stack, so we 
+ * don't need old stack pointer to find those out. Still need to save the old 
+ * one to restore it before function returns. The stack looks like following
+ * after this operation:
+ * 
+ *          sp
+ *    ------------------
+ *    Local Area for
+ *    all params/vars
+ *    (larger->below)
+ *    ------------------      Align to largest params/vars
+ *    Register Save area
+ *    ------------------      Atleast Align to largest reg size
+ *          New SP
+ *
  */
 {
    INSTQ *ip, *oldhead;
@@ -1817,7 +1835,9 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
    int maxalign, ssize=0;
    int csize=0;/* call parameter area size */
    extern int LOCALIGN, LOCSIZE;
+   int userbp; /* Majedul: to keep track whether rbp is saved */
 
+   userbp = 0;
    maxalign = align = LOCALIGN;
    lsize = LOCSIZE;
 /*
@@ -1872,6 +1892,9 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
    }
 
    #ifdef X86_64
+   /* 
+    * NOTE: rsp is not aligned 16 byte. rsp-8 is aligned to 16 byte
+    */
       if (!align) align = 16;
    #else
       if (!align) align = 4;
@@ -1887,11 +1910,12 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
 /*
  * For x86-64, save %rbp, if necessary, to the reserved location of 0(%rsp)
  */
-   #ifdef X86_64
+   #if defined(X86_64) && 1 
       k = iName2Reg("%rbp");
       for (i=0; i < nir && ir[i] != k; i++);
       if (i < nir)
       {
+         userbp = 1;
          InsNewInst(NULL, NULL, oldhead, ST,
                     AddDerefEntry(-REG_SP, 0, 0, 0, 0), -k, 0);
          for (nir--; i < nir; i++) ir[i] = ir[i+1];
@@ -1919,10 +1943,57 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
    Soff += csize;
    #ifdef X86_64
       Loff = 8*(nir+ndr) + 4*nfr;
-      if (Loff % ASPALIGN) Loff = (Loff/ASPALIGN)*ASPALIGN + ASPALIGN;
-      Loff += Soff;
+/*
+ *    if rbp is used separately, keep space for it
+ */
+      if (userbp) 
+      {
+         Loff += 8;
+      }
+/*
+ *    Majedul: in case of AVX, maxalign may be 32 byte .
+ */
+      if (maxalign > ASPALIGN)
+      {
+         Loff += 8; /* must have saved rsp, keep space for it */
+         //SAVESP = Loff - 8;
+         SAVESP = 8; /* always save the rsp at 1st location for X64 */
+         Soff +=8; /* keep space to save old stack pointer */
+/*
+ *       Majedul: we will force new sp  align with maxalign anyway
+ *       So, need to maintain multiple of align/maxalign
+ */
+         if (Loff % align) Loff = (Loff/align)*align + align;
+      }
+      else /* we need to maintain 16 byte alignment at most*/
+      {
+         if (Loff % ASPALIGN) Loff = (Loff/ASPALIGN)*ASPALIGN + ASPALIGN;
+         Loff += Soff; /* to make 16 byte align, we need to add this 8 byte */  
+      }
       tsize = Loff + lsize;
+/*
+ *       Majedul: lsize may only be multiple of 4 byte. We need 8 byte alignment
+ *       for saving register. Here, Aligning total size by 16 byte will 
+ *       actually ensure the alignment of 8 byte.
+ */
       if (tsize % ASPALIGN) tsize = (tsize/ASPALIGN)*ASPALIGN + ASPALIGN;
+/*
+ *    Majedul: print all offset related params
+ */
+#if 0
+      fprintf(stderr, "Stack Offset related\n");
+      fprintf(stderr, "--------------------\n");
+      fprintf(stderr, "Loff = %d\n",Loff);
+      fprintf(stderr, "Soff = %d\n",Soff);
+      fprintf(stderr, "Aoff = %d\n",Aoff);
+      fprintf(stderr, "align = %d\n",align);
+      fprintf(stderr, "ASPALIGN = %d\n",ASPALIGN);
+      fprintf(stderr, "maxalign = %d\n",maxalign);
+      fprintf(stderr, "lsize = %d\n",lsize);
+      fprintf(stderr, "tsize = %d\n",tsize);
+      fprintf(stderr, "SAVESP = %d\n",SAVESP);
+#endif
+
    #else
 /*
  *    We assume sp already 4-byte aligned but may need to make 8-byte aligned
@@ -1944,6 +2015,10 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
       if (Loff%align) Loff = (Loff/align)*align + align;
       tsize = Loff + lsize;
       if (tsize % ASPALIGN) tsize = (tsize/ASPALIGN)*ASPALIGN + ASPALIGN;
+   #endif
+/*
+ *    Majedul: now we consider sp save for both 32 bit and 64 bit.
+ */
       if (SAVESP >= 0)
       {
          PrintMajorComment(bbase, NULL, oldhead, 
@@ -1976,12 +2051,12 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
 #ifdef X86_64
          assert(rsav <= NSIR);
 #endif
-#endif
+ #endif 
          rsav = -rsav;
          InsNewInst(NULL, NULL, oldhead, MOV, rsav, -REG_SP, 0);
       }
       else
-   #endif
+/*   #endif */
    {
       PrintMajorComment(bbase, NULL, oldhead, "Adjust sp");
    }
@@ -2005,6 +2080,11 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
    }
    PrintMajorComment(bbase, NULL, oldhead, "Save registers");
    CorrectLocalOffsets(Loff);
+/*
+ * Majedul: does it make anysense if the new sp is forced aligned using shift
+ * operation? the distance of new sp from old one may not be tsize then. 
+ * I guess, it is not used later as parameters are copied into the local area.
+ */
    CorrectParamDerefs(ParaDerefQ, rsav ? rsav : -REG_SP, 
                       rsav ? Aoff : tsize+Aoff);
 /*
