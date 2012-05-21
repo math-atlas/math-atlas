@@ -2845,12 +2845,26 @@ int SpecSIMDLoop(void)
    fprintf(stdout, " SYMBOL TABLE \n");
    PrintST(stdout);
 #endif
+/*
+ * It's time to kill the data structure for paths. 
+ * If path info is needed later, skip this deletion.
+ */
+   KillPathTable();
 
+/*
+ * Everything is messed up already. So, re-make the control flow and check it 
+ */
    InvalidateLoopInfo();
    bbbase = NewBasicBlocks(bbbase);
    CheckFlow(bbbase, __FILE__, __LINE__);
    FindLoops();
    CheckFlow(bbbase, __FILE__, __LINE__);
+
+/*
+ * 
+ */
+   UpdateNamedLoopInfo();
+
 #if 0
    fprintf(stdout, " LIL NEW CFG \n");
    PrintInst(stdout, bbbase);
