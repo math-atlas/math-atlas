@@ -9,6 +9,7 @@
 void AddLoopControl(LOOPQ *lp, INSTQ *ipinit, INSTQ *ipupdate, INSTQ *ippost,
                     INSTQ *iptest);
 void KillLoopControl(LOOPQ *lp);
+ILIST *FindIndexRef(BLIST *scope, short I);
 void UpdatePointerLoads(BLIST *scope, struct ptrinfo *pbase, int UR);
 INSTQ *KillPointerUpdates(struct ptrinfo *pbase, int UR);
 struct ptrinfo *FindMovingPointers(BLIST *scope);

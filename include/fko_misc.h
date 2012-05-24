@@ -19,5 +19,6 @@ struct ptrinfo *FindPtrinfo(struct ptrinfo *base, short ptr);
 struct ptrinfo *NewPtrinfo(short ptr, short flag, struct ptrinfo *next);
 struct locinit *NewLI(short id, short con, struct locinit *next);
 void KillAllLI(struct locinit *die);
+int FindInShortList(int n, short *sp, short val);
 
 #endif
