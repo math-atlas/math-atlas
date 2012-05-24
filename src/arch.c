@@ -1180,7 +1180,7 @@ void Extern2Local(INSTQ *next, int rsav)
             DTabss = STdef("_ABSVALs", T_FLOAT | LOCAL_BIT, 0);
             SToff[DTabss-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTabss,
                         -DTabss, SToff[k].sa[3], DTabss);
-#if 1
+#if 0
             fprintf(stderr, "Dtabs_off=%d\n",SToff[k].sa[3]);
 #endif
             k = vfreg - VFREGBEG + FREGBEG;

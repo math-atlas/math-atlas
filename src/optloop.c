@@ -2250,10 +2250,25 @@ void PrintLoopInfo()
       if (!UR || UR > 1)
       {
          RestoreFKOState(0);
+#if 0         
          vect = VectorizeStage1();
          if (!vect)
             vect = VectorizeStage3(0,0);
          vect = !vect;
+#else
+         if (IsSpeculationNeeded())
+         {
+            vect = SpeculativeVectorAnalysis();
+            vect = !vect;
+         }
+         else
+         {
+            vect = VectorizeStage1();
+            if (!vect)
+               vect = VectorizeStage3(0,0);
+            vect = !vect;
+         }
+#endif
          RestoreFKOState(0);
          DoStage2(0, 0);
       }

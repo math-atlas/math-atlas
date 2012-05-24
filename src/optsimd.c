@@ -1183,7 +1183,7 @@ void FindLoopPaths(LOOPQ *lp)
  */
    FindPaths(lp->header, lp->blocks, lp, bl); /* use modified DFS algorithm */
 
-#if 1
+#if 0
    fprintf(stderr, "\nBLOCK LIST IN EACH PATH: \n");
    for (i = 0; i < NPATH; i++)
    {
@@ -1751,7 +1751,7 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
 /*
  * Time to check all the information
  */
-#if 1
+#if 0
    fprintf(stderr, "PATH = %d \n", path->pnum);
    fprintf(stderr, "--------------\n");
    fprintf(stderr, "Control Flag : %d\n", path->lpflag);
@@ -2737,8 +2737,8 @@ void ScalarRestart(LOOPQ *lp)
       {
          if (bl->blk != vbl->blk)
          {
-            fprintf(stderr, "Split in vpath blk = %d, spath blk = %d\n",
-                    vbl->blk->bnum, bl->blk->bnum);
+            /*fprintf(stderr, "Split in vpath blk = %d, spath blk = %d\n",
+                    vbl->blk->bnum, bl->blk->bnum);*/
             break;
          }
       }
