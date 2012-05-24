@@ -1681,7 +1681,11 @@ int main(int nargs, char **args)
 #if 0 
             fprintf(stdout, "\nUnoptimized LIL\n");
             PrintInst(stdout, bbbase);
-#endif            
+#endif
+#if 1
+            if (optloop->pfarrs)
+                AddPrefetch(optloop, 1);
+#endif
 #if 1             
             extern struct locinit *ParaDerefQ;
 
