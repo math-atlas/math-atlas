@@ -17,7 +17,9 @@ enum comp_flag
    CF_LOOP_TEST,
    CF_LOOP_END,
    CF_VRED_END,
-   CF_SCAL_RES     /* for Speculative vectorization*/
+   CF_SCAL_RES,     /* for Speculative vectorization*/
+   CF_SSV_VUPDATE,
+   CF_SSV_VRECOVERY
 };
 
 /*
