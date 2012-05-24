@@ -123,12 +123,14 @@ void ATL_UGEMV(const int M, const int N, const float *A, const int lda, const
 float *X		,float *Y)
 */
 
-.text
 .code 32
+.fpu neon
+.text
+.align 2
 /* .arm */
-.globl ATL_UGEMV
-
-ATL_UGEMV:
+.globl ATL_asmdecor(ATL_UGEMV)
+ATL_asmdecor(ATL_UGEMV):
+.type ATL_asmdecor(ATL_UGEMV), %function
 
 /* save regs */
 

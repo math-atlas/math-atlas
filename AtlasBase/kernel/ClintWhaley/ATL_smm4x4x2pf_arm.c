@@ -69,9 +69,12 @@ void ATL_USERMM (const int M, const int N, const int K, const TYPE alpha,
 */
 #define FSIZE 64+36
 #include "atlas_asm.h"
-.text
 .code 32
+.fpu vfpv3
+.text
+.align 2
 .globl ATL_asmdecor(ATL_USERMM)
+.type  ATL_asmdecor(ATL_USERMM), %function
 ATL_asmdecor(ATL_USERMM):
    fstmDBs SP!, {s16-s31}
    stmDB SP!, {r4-r11,r14}

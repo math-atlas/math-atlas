@@ -137,10 +137,13 @@
  *		   const TYPE *W, const TYPE *Z, TYPE *A, ATL_CINT lda)
  *                            0(%r13(sp))    4        8              12
  */
-.text
 .code 32
-.globl ATL_UGER2K
-ATL_UGER2K:
+.fpu neon
+.text
+.align 2
+.globl ATL_asmdecor(ATL_UGER2K)
+.type ATL_asmdecor(ATL_UGER2K), %function
+ATL_asmdecor(ATL_UGER2K):
       pld [X]
       pld [Y]
    mov r12, SP                   /* save stack pointer to load params */
