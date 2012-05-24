@@ -1652,7 +1652,7 @@ void FinalizeEpilogue(BBLOCK *bbase,
                       int *dr     /* double regs saved */
                       )
 {
-   int i;
+   int i, k;
    INSTQ *next;
    BBLOCK *blk;
 
@@ -1692,6 +1692,16 @@ void FinalizeEpilogue(BBLOCK *bbase,
    else
       InsNewInst(blk, NULL, next, ADD, -REG_SP, -REG_SP,
                  STiconstlookup(fsize));
+
+#if defined(X86_64) && 0
+/*
+ * Majedul: restore back the rbp
+ */
+   k = iName2Reg("@rbp");
+   InsNewInst(blk, NULL, next, LD, -k, 
+                    AddDerefEntry(-REG_SP, 0, 0, 0, 0), 0);
+
+#endif   
 }
 
 int FindUsedParaRegs(BBLOCK *bp, int *ir)
@@ -2023,11 +2033,10 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
  * For x86-64, save %rbp, if necessary, to the reserved location of 0(%rsp)
  */
    #if defined(X86_64) && 0 
-      k = iName2Reg("%rbp");
+      k = iName2Reg("@rbp"); /* FIXED: @rbp from %rbp*/
       for (i=0; i < nir && ir[i] != k; i++);
       if (i < nir)
       {
-         userbp = 1;
          InsNewInst(NULL, NULL, oldhead, ST,
                     AddDerefEntry(-REG_SP, 0, 0, 0, 0), -k, 0);
          for (nir--; i < nir; i++) ir[i] = ir[i+1];
@@ -2055,13 +2064,6 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
    Soff += csize;
    #ifdef X86_64
       Loff = 8*(nir+ndr) + 4*nfr;
-/*
- *    if rbp is used separately, keep space for it
- */
-      if (userbp) 
-      {
-         Loff += 8;
-      }
 /*
  *    Majedul: in case of AVX, maxalign may be 32 byte .
  */
