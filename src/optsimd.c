@@ -389,7 +389,8 @@ int DoLoopSimdAnal(LOOPQ *lp)
  * Find arrays to vectorize
  */
    pbase = FindMovingPointers(lp->blocks);
-#if 1
+
+#if 0
    if (pbase)
    {
       fprintf(stderr, "moving pointers!!!\n");
@@ -401,6 +402,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
    else
       fprintf(stderr, "No moving pointer, already deleted!!!\n");
 #endif
+  
    for (N=0,p=pbase; p; p = p->next)
    {
       if (IS_FP(STflag[p->ptr-1]))
@@ -2327,7 +2329,7 @@ int SpeculativeVecTransform(LOOPQ *lp)
    return(0);
 }
 
-void AddBackupRecovery(BLIST *scope, LOOPQ *lp)
+void AddInstBackupRecovery(BLIST *scope, LOOPQ *lp)
 /*
  * Right now, we fill focus on only iamax, later generalize
  * add recovery vector inst in scalar restart
@@ -2462,7 +2464,9 @@ void AddBackupRecovery(BLIST *scope, LOOPQ *lp)
  *                Find all index ref and update that with vlen-1
  *                NOTE: need to skip loop update part, will remove the loop 
  *                update at the last.
+ *                can be done before after duplicating the blocks
  */
+#if 0                  
                   if (ip->inst[0] == LD && ip->inst[2] == SToff[lp->I-1].sa[2]
                       && !(ip->prev->inst[0] == CMPFLAG && ip->prev->inst[1] ==
                            CF_LOOP_UPDATE))
@@ -2471,6 +2475,7 @@ void AddBackupRecovery(BLIST *scope, LOOPQ *lp)
                      InsNewInst(bp, ip, NULL, ADD, k, k, 
                                 STiconstlookup(vlen-1) );
                   }
+#endif                  
                }
             }
          }
@@ -2497,12 +2502,165 @@ void AddBackupRecovery(BLIST *scope, LOOPQ *lp)
    
 }
 
+void AddBackupRecovery()
+/*
+ * adds back in vector path and recovery at the first of scalar path
+ */
+{
+
+}
+void AddVectorUpdate(LOOPQ *lp, BBLOCK *blk, int spath)
+/*
+ * updates necessary vars for the next speculative vector iteration
+ */
+{
+   BLIST *bl;
+   INSTQ *ip;
+   int i, j, k, N, N1, found;
+   short scal, spsflag, vpsflag, vscal;
+   short vlen;
+   LOOPPATH *vp, *sp;
+   BBLOCK *bp;
+   enum inst vsld, vshuf, vst, fst;
+   short r0;
+
+   vp = PATHS[VPATH];
+   sp = PATHS[spath];
+   if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+   {
+      vsld = VFLDS;
+      vshuf = VFSHUF;
+      vst = VFST;
+      fst = FST;     /* to check the recovery vars */
+      #if defined(X86) && defined(AVX)
+         vlen = 8;
+      #else
+         vlen = 4;
+      #endif
+   }
+   else
+   {
+      vsld = VDLDS;
+      vshuf = VDSHUF;
+      vst = VDST;
+      fst = FSTD;
+      #if defined(X86) && defined(AVX)
+         vlen = 4;
+      #else
+         vlen = 2;
+      #endif
+   }
+#if 0
+   fprintf(stderr, "\nFigure out all vars in each path\n");
+   fprintf(stderr, "================================\n");
+
+   for (i = 0; i < NPATH; i++)
+   {
+      fprintf(stderr, "PATH : %d\n", i);
+      fprintf(stderr, "Control Flag: %d\n", PATHS[i]->lpflag);
+      fprintf(stderr, "FP SCALAR (FLAG) : ");
+      sc = PATHS[i]->scal;
+      sf = PATHS[i]->sflag;
+      for (j=1, N=sc[0]; j <= N; j++ )
+      {
+         fprintf(stderr,"%s(%d) ",STname[sc[j]-1], sf[j]);
+      }
+      fprintf(stderr,"\n");
+   }
+#endif
+   
+/*
+ * Check all the vectors of vector path, those may need to update for
+ * next iteration. vars which accessed in scalar path only, need no recovery.
+ */
+
+   for (i=1, N=vp->vscal[0]; i <= N; i++)
+   {
+      //scal = vp->scal[i];   /* scal and vscal are same for vector path */
+      vscal = vp->vscal[i];
+      vpsflag = vp->sflag[i]; /* flags for the vars */
+/*
+ *    if it is private vector variable, nothing to do.
+ */
+      if (vpsflag & SC_PRIVATE )
+         continue;
+/*
+ *    simple case first: this var is used in vector path as vscal but 
+ *    not set in this path like: amax in iamax.b
+ *    NOTE: vscal and scal are the same for vector path as we skip integer and
+ *    moving array pointer from scal.
+ *    HERE. If a variable is used in vector path but set in scalar path, we 
+ *    need to update the appropriate vector at the update stage.
+ */
+      if ( (vpsflag & SC_USE) && !(vpsflag & SC_SET)) 
+      {
+/*
+ *       check the scal flag for the scalar path 
+ *       If it is set here, update the appropriate vector.
+ */
+         found = 0;
+         for (j=1, N1=sp->scal[0]; j <= N1; j++)
+         {
+            if (vscal == sp->scal[j])
+            {
+               found = 1;
+               spsflag = sp->sflag[j];
+               break;
+            }
+         }
+         if (found)
+         {
+            if (spsflag & SC_SET)
+            {
+               ip = FindCompilerFlag(blk, CF_SSV_VUPDATE);
+               if (!ip)
+                  ip = InsNewInst(blk, NULL, NULL, CMPFLAG, CF_SSV_VUPDATE, 
+                                  0, 0);
+               ip = PrintComment(blk, ip, NULL,"Vector Update of %s", 
+                                 STname[vscal-1]);
+               r0 = GetReg(FLAG2TYPE(lp->vflag));
+               ip = InsNewInst(blk, ip, NULL, vsld, -r0, 
+                               SToff[vscal-1].sa[2], 0);
+               ip = InsNewInst(blk, ip, NULL, vshuf,-r0, -r0, 
+                               STiconstlookup(0));
+               ip = InsNewInst(blk, ip, NULL, vst, 
+                               SToff[lp->vvscal[i]-1].sa[2], -r0, 0);
+               GetReg(-1);
+            }
+         }
+       }
+/*
+ *    although a var is not use in vector path but set, we need to check
+ *    whether it is live out at the exit of loop. If so, we need to update
+ *    the vector. not implemented yet as not needed for iamax
+ */
+      else if ( !(vpsflag & SC_USE) && (vpsflag & SC_SET))
+      {
+
+      }
+/*
+ *    We need to further check whether it is reduction variable. in case so,
+ *    we will need to update the vector accordingly. 
+ *    Not implemented yet.
+ */
+      else if ( (vpsflag & SC_USE) && (vpsflag & SC_SET) )
+      {
+
+      }
+
+   }
+
+}
+
 void ScalarRestart(LOOPQ *lp)
 {
-   BBLOCK *bp0, *bp, *newCF, *bdown;
+   BBLOCK *bp, *bp0, *bpi, *newCF, *bdown;
    BLIST *bl, *vbl, *dupblks, *ftheads, *delblks;
-   INSTQ *ip, *ip0;
-   int i, j, cflag, vlen;
+   INSTQ *ip, *ip0, *ipn;
+   ILIST *il;
+   struct ptrinfo *pi, *pi0;
+   int i, j, cflag, vlen, URbase;
+   int islpopt, UsesIndex, UsesPtrs;
    int iv, ivtails;
    char ln[512];
    extern BBLOCK *bbbase;
@@ -2512,6 +2670,43 @@ void ScalarRestart(LOOPQ *lp)
  * Need at least one path to vectorize
  */
    assert(VPATH!=-1);
+
+   vlen = Type2Vlen(lp->vflag);
+   URbase = (lp->flag & L_FORWARDLC_BIT) ? 0 :vlen-1;
+/*
+ * Check all paths of the loop is optimizable for loop control and loop_mov_ptr
+ * Right now, consider both yes or no. Later can be optimized for either one
+ */
+   islpopt = 1;
+   UsesIndex = 1;
+   UsesPtrs = 1;
+   for (i = 0; i< NPATH; i++ )
+   {
+      if ( !(PATHS[i]->lpflag & LP_OPT_LCONTROL) || 
+           !(PATHS[i]->lpflag & LP_OPT_MOVPTR) )
+      {
+         islpopt = 0;
+         break;
+      }
+   }
+   /*fprintf(stderr, "is loop optimizable = %d\n",islpopt);*/
+/*
+ * Check whether index is used inside the optloop
+ */
+   if (islpopt)
+   {
+      KillLoopControl(lp);
+      il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
+      if (il) KillIlist(il);
+      else UsesIndex = 0;
+      pi0 = FindMovingPointers(lp->blocks);
+      if (!pi0)
+         UsesPtrs = 0;
+   }
+#if 0
+   fprintf(stderr, "Optloop tail: \n");
+   PrintThisBlockInst(stderr, lp->tails->blk);
+#endif
 /*
  * Find the header of loop in the bbbase
  * NOTE: after cleanup, blocks have duplicate names. don't check anything
@@ -2569,7 +2764,6 @@ void ScalarRestart(LOOPQ *lp)
  *    times
  */
       bdown = bp0->down;
-      vlen = Type2Vlen(lp->vflag);
       for (j = 0; j < vlen ; j++)
       {
 /*
@@ -2589,12 +2783,100 @@ void ScalarRestart(LOOPQ *lp)
          iv = BitVecCopy(iv, lp->blkvec);
          dupblks = CF2BlockList(NULL, iv, newCF);
 /*
+ *       if all paths are loop control and moving ptr optimizable, then delete
+ *       loop control and moving ptr form duplicated blocks and update the load
+ *       of the pointer accordingly.
+ *       NOTE: don't kill loop control and moving pointer from the optloop. it 
+ *       may be needed in vector transform stage. so, delete those from copied
+ *       blocks
+ */
+         if (islpopt)
+         {
+/*
+ *          Delete loop control and moving ptr from tail of dublicated blocks
+ */
+#if 0
+            for (bl = lp->tails; bl; bl = bl->next)
+            {
+               bp = FindBlockInListByNumber(dupblks, bl->blk->bnum);
+               assert(bp);
+#if 1
+               fprintf(stderr, "copied block tail: \n");
+               PrintThisBlockInst(stderr, bp);
+#endif
+/*
+ *             keep logic same as unroll
+ */
+               ip = FindCompilerFlag(bp, CF_LOOP_PTRUPDATE);
+#if 1
+               if (ip)
+                  ip = DelInst(ip);
+#else               
+               while (ip && (ip->inst[0] != CMPFLAG || 
+                             ip->inst[1] != CF_LOOP_UPDATE))
+               {
+                  if (ip->inst[0] != CMPFLAG)
+                     ip = DelInst(ip);
+                  else
+                     ip = ip->next;
+               }
+#endif               
+               ip = FindCompilerFlag(bp, CF_LOOP_UPDATE);
+               assert(ip);
+               ip=ip->next;
+               while (ip && (ip->inst[0] != CMPFLAG || 
+                             ip->inst[1] != CF_LOOP_END))
+               {
+                  if (ip->inst[0] != CMPFLAG ||
+                      ip->inst[1] != CF_LOOP_TEST)
+                     ip = DelInst(ip);
+                  else
+                     ip = ip->next;
+               }
+#if 1
+               fprintf(stderr, "copied block after deleting tail: \n");
+               PrintThisBlockInst(stderr, bp);
+#endif
+            }
+#endif            
+#if 0
+               fprintf(stderr, "copied block after deleting tail: \n");
+               bp = FindBlockInListByNumber(dupblks, lp->tails->blk->bnum);
+               PrintThisBlockInst(stderr, bp);
+#endif
+/*
+ *          Find moving pointer and update pointer loads accordingly          
+ */
+            pi = FindMovingPointers(dupblks);
+            assert(pi);
+            ip = KillPointerUpdates(pi, j);
+            for (; ip; ip = ipn)
+            {
+               ipn = ip->next;
+               free(ip);
+            }
+            UpdatePointerLoads(dupblks, pi, j);
+            KillAllPtrinfo(pi);
+/*
+ *          Need to check the loop for forwarding or not!
+ */
+            if (UsesPtrs)
+               UpdateUnrolledIndices(dupblks, lp->I, (lp->flag & L_NINC_BIT)?
+                                     URbase-j:URbase+j);
+         }
+
+#if 0
+/*
  *       Loop blocks are duplicated. Now add backup recovery operation.
  *       Right now, add instructions whenever it requires. Later, we can
  *       optimize it by putting those all together at the end (but keep in mind
  *       that we need to do it before loop control and ptr movement update)
  */
-         AddBackupRecovery(dupblks, lp);
+         
+         if (!islpopt)
+            AddInstBackupRecovery(dupblks, lp);
+#endif
+
 /*
  *       Need to kill backedge (branch inst from tail of loop), add JMP to 
  *       the start of next scalar iteration.for last iteration, need to create
@@ -2662,7 +2944,7 @@ void ScalarRestart(LOOPQ *lp)
       }
 /*
  *    create a new block at the last of scalar restart path to check and
- *    jump back to lp->header or, lp->posttail (vector reduction)
+ *    jump back to tail of loop
  */
       bp = NewBasicBlock(bp0, NULL);
       bp0->down = bp;
@@ -2671,6 +2953,11 @@ void ScalarRestart(LOOPQ *lp)
       sprintf(ln, "_S_%d_%d",i,j);
       cflag = STlabellookup(ln);
       InsNewInst(bp, NULL, NULL, LABEL, cflag,0,0);
+/*
+ *    Add vector update for this path
+ */
+      AddVectorUpdate(lp, bp, i);
+
 /*
  *    Creating two posttails would complicate the analysis later. So, need to
  *    skip that by intelligent design.
@@ -2718,15 +3005,38 @@ void ScalarRestart(LOOPQ *lp)
  *
  */
       ip0 = bp->instN; /* aisnt not considered CMPFLAG and COMMENT*/
+      
+      if (islpopt)
+      {
 /*
- *    split tail by adding label to the tail of original loop.
- *    NOTE: add label before CMPFLAG
- */   assert(lp->tails->blk && !lp->tails->next);
-      ip = FindCompilerFlag(lp->tails->blk, CF_LOOP_TEST);
-      assert(ip);
-      sprintf(ln,"%s_LOOP_TEST",STname[lp->body_label-1]);
-      cflag = STlabellookup(ln);
-      InsNewInst(lp->tails->blk, NULL, ip, LABEL, cflag,0,0);
+ *       Jump back to loop tail. assume only one tail now
+ */
+         assert(lp->tails->blk && !lp->tails->next);
+         bpi = lp->tails->blk;
+         
+         if (bpi->ainst1->inst[0] == LABEL)
+            cflag = bpi->ainst1->inst[1];
+         else
+         {
+            sprintf(ln,"%s_LOOP_TEST",STname[lp->body_label-1]);
+            cflag = STlabellookup(ln);
+            InsNewInst(bpi, NULL, bp->ainst1, LABEL, cflag,0,0);
+         }
+
+      }
+      else
+      {
+/*
+ *       split tail by adding label to the tail of original loop.
+ *       NOTE: add label before CMPFLAG
+ */
+         assert(lp->tails->blk && !lp->tails->next);
+         ip = FindCompilerFlag(lp->tails->blk, CF_LOOP_TEST);
+         assert(ip);
+         sprintf(ln,"%s_LOOP_TEST",STname[lp->body_label-1]);
+         cflag = STlabellookup(ln);
+         InsNewInst(lp->tails->blk, NULL, ip, LABEL, cflag,0,0);
+      }
 /*
  *    now jump back to new label in tail
  */
@@ -2777,7 +3087,7 @@ void ScalarRestart(LOOPQ *lp)
          if (!FindInList(PATHS[VPATH]->blocks,bl->blk))
          {
 /*
- *          Need to check whether it is not part of other paths yet to test
+ *          Need to check whether it is not part of other paths yet to test.
  */
             for (j = i+1; j < NPATH; j++)
             {
@@ -2813,10 +3123,22 @@ int SpecSIMDLoop(void)
    BLIST *bl;
    lp = optloop;
    
-#if 1   
    KillLoopControl(lp);
    GenCleanupLoop(lp);
-   OptimizeLoopControl(lp, 1, 0, NULL);
+
+/* skip the loop controls for now*/
+#if 0
+/*
+ * FIXME: LOOP_PTR_UPDATE is not introduced yet at 1st. ptr_update is located 
+ * before anyother loop control flag. So, KillPtrUpdate is necessary before the
+ * OptimizeLoopControl. 
+ * We can kill the ptr updates for loop tails only and pass it with the func,
+ * Still need to check the function.
+ */
+   pi0 = FindMovingPointers(lp->tails);
+   ippu = KillPointerUpdates(pi0,1);
+   /*OptimizeLoopControl(lp, 1, 0, NULL);*/
+   OptimizeLoopControl(lp, 1, 0, ippu);
 #endif
 
 /*
@@ -2861,11 +3183,26 @@ int SpecSIMDLoop(void)
    CheckFlow(bbbase, __FILE__, __LINE__);
 
 /*
- * 
+ * Update prefetch information
  */
    UpdateNamedLoopInfo();
 
 #if 0
+   int i,N;
+   lp = optloop; 
+   fprintf(stderr, "vars info:[%d] \n",lp->varrs[0]);
+   for (i=1,N=lp->varrs[0]; i<=N; i++)
+   {
+      fprintf(stderr, "vars = %d ",lp->varrs[i]);
+   }
+   fprintf(stderr, "Prefetch info: \n");
+   for (i=1,N=lp->pfarrs[0]; i<=N; i++)
+   {
+      fprintf(stderr, "Arr = %d ",lp->pfarrs[i]);
+   }
+#endif
+
+#if 0 
    fprintf(stdout, " LIL NEW CFG \n");
    PrintInst(stdout, bbbase);
    
