@@ -28,6 +28,7 @@ INSTQ *KillThisInst(INSTQ *kp)
    if (kp->deads)
       KillBitVec(kp->deads);
    free(kp);
+   kp = NULL;
    return(kn);
 }
 void KillAllInst(INSTQ *base)
@@ -201,6 +202,7 @@ INSTQ *DelInst(INSTQ *del)
    if (del->deads)
       KillBitVec(del->deads);
    free(del);
+   del = NULL;
    return(ip);
 }
 
@@ -245,7 +247,10 @@ static char *BV2NumList(int iv)
    if (!v) return("0");
    n = v[0];
    if (!n) return("0");
-
+/* 
+ * Majedul: As right now reg alias is implemented, we just need to print
+ * the original num of single reg type ... .. 
+ */
    tnreg = NumberArchRegs();
    sptr = &lns[k][0];
    if (++k == 3) k = 0;
@@ -340,17 +345,17 @@ void PrintThisInst(FILE *fpout, int i, INSTQ *ip)
    }
    else
    {
-#if 1
-      fprintf(fpout, form, i, instmnem[inst], op1, op2str(op1),
+#if 0
+/*      fprintf(fpout, form, i, instmnem[inst], op1, op2str(op1),
               op2, op2str(op2), op3, op2str(op3),
               BV2NumList(ip->use), BV2NumList(ip->set),
               BV2NumList(ip->deads));
+*/
+      fprintf(fpout, form, i, instmnem[inst], op1, op2str(op1),
+              op2, op2str(op2), op3, op2str(op3),
+              PrintVecList(ip->use,0), PrintVecList(ip->set,0),
+              PrintVecList(ip->deads,0));
 
-      /*fprintf(stderr,"\n %s : %d (use)\n",instmnem[ip->inst[0]],ip->use);*/
-      /*if (ip->inst[0] == FABSD)
-         fprintf(stderr, "\ninst: %s use id: %d val: %s\n", 
-                 instmnem[ip->inst[0]], ip->use, 
-                 PrintVecList(ip->use,0));*/
 #else
 /*
  *    This is to print LIL without live-vars. To enable live-vars prints,
@@ -362,12 +367,86 @@ void PrintThisInst(FILE *fpout, int i, INSTQ *ip)
    }
 }
 
+void PrintThisInstQ(FILE *fpout, INSTQ *ip)
+{
+   short inst, op1, op2, op3;
+   int i;
+   i = 1;
+   for ( ; ip; ip = ip->next, i++)
+   {
+      inst = GET_INST(ip->inst[0]);
+      op1 = ip->inst[1];
+      op2 = ip->inst[2];
+      op3 = ip->inst[3];
+      if (inst == COMMENT)
+      {
+         if (!DO_KILLCOMMENTS(FKO_FLAG))
+         {
+            fprintf(fpout, "%4d %8.8s %s\n", i, "COMMENT:",
+                    op1 ? STname[op1 - 1] : "");
+         }
+      }
+      else
+      {
+#if 0
+         /*      fprintf(fpout, form, i, instmnem[inst], op1, op2str(op1),
+                       op2, op2str(op2), op3, op2str(op3),
+                       BV2NumList(ip->use), BV2NumList(ip->set),
+                       BV2NumList(ip->deads));
+          */
+         fprintf(fpout, form, i, instmnem[inst], op1, op2str(op1),
+                 op2, op2str(op2), op3, op2str(op3),
+                 PrintVecList(ip->use, 0), PrintVecList(ip->set, 0),
+                 PrintVecList(ip->deads, 0));
+
+         /*fprintf(stderr,"\n %s : %d (use)\n",instmnem[ip->inst[0]],ip->use);*/
+         /*      if (ip->inst[0] == FMACD || ip->inst[0] == VDMAC)
+                  fprintf(stderr, "\ninst: %s use id: %d val: %s\n",
+                          instmnem[ip->inst[0]], ip->use,
+                          PrintVecList(ip->use,0));
+          */
+#else
+         /*
+          *    This is to print LIL without live-vars.To enable live-vars prints
+          *    enable the #if and enable header prints in PrintInst function
+          */
+         fprintf(fpout, shortform, i, instmnem[inst], op1, op2str(op1),
+                 op2, op2str(op2), op3, op2str(op3));
+#endif
+      }
+   }
+}
+void PrintThisBlockInst(FILE *fpout, BBLOCK *bp)
+{
+   INSTQ *ip;
+   int i;
+
+   i = 1;
+#if 0
+   fprintf(fpout, head0a);
+   fprintf(fpout, head0b);
+   fprintf(fpout, head1a);
+   fprintf(fpout, head1b);
+#else
+   fprintf(fpout, head0a);
+   fprintf(fpout, "\n");
+   fprintf(fpout, head1a);
+   fprintf(fpout, "\n");
+#endif
+
+   fprintf(fpout, "\n  ** BLOCK %d **\n", bp->bnum);
+   for (ip=bp->inst1; ip; ip = ip->next)
+   {
+      PrintThisInst(fpout, i, ip);
+      i++;
+   }
+}
 void PrintInst(FILE *fpout, BBLOCK *bbase)
 {
    BBLOCK *bp;
    INSTQ *ip;
    int i=1;
-#if 1
+#if 0
    fprintf(fpout, head0a);
    fprintf(fpout, head0b);
    fprintf(fpout, head1a);
