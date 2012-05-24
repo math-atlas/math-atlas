@@ -11,10 +11,13 @@
 #include /home/msujon/ATLAS/ATLAS3.9.67/Linux_X8632_AVX/Make.Linux_X8632_AVX
 #include /home/msujon/ATLAS/ATLAS3.9.67/Linux_X8664_AVX/Make.Linux_X8664_AVX
 #include /home/msujon/ATLAS/ATLAS3.9.67/Linux_X8632_SSE/Make.Linux_X8632_SSE
-include /home/msujon/ATLAS/ATLAS3.9.67/Linux_X8664_SSE/Make.Linux_X8664_SSE
+#include /home/msujon/ATLAS/ATLAS3.9.67/Linux_X8664_SSE/Make.Linux_X8664_SSE
+
+include /home/msujon/ATLAS/ATLAS3.9.74/Linux_X8664_AVX/Make.Linux_X8664_AVX
 
 
-KFLAGS=-V -Ps b A 0 1 -P all 0 128 -U 2
+#KFLAGS=-V -Ps b A 0 1 -P all 0 128 -U 2
+KFLAGS=-V -Ps b A 0 1 -P all 0 128 
 pre=d
 rout=dot
 N=80000
@@ -26,7 +29,7 @@ uopt=
 #uopt="-X 1 -Y 1 -Fx 16 -Fy 16"
 #uopt="-X 1 -Y 1 -Fx 32 -Fy 32"
 
-all: dot axpy asum copy swap scal
+all: dot axpy asum copy swap scal iamax
 
 dot: sdot ddot
 axpy: saxpy daxpy
@@ -34,6 +37,7 @@ asum: sasum dasum
 copy: scopy dcopy
 swap: sswap dswap
 scal: sscal dscal
+iamax: siamax diamax
 
 sdot : $(FKO)
 	$(MAKE) build pre=s rout=dot URT=`echo dot | tr 'a-z' 'A-Z'` \
@@ -85,6 +89,16 @@ dscal: $(FKO)
 	$(MAKE) build pre=d rout=scal URT=`echo scal | tr 'a-z' 'A-Z'` \
 	   			      KFLAGS="$(KFLAGS)"
 	./TestTime.py d scal $(file) $(N) $(test) $(uopt)
+
+siamax: $(FKO)
+	$(MAKE) build pre=s rout=iamax URT=`echo iamax | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py s iamax $(file) $(N) $(test) $(uopt)
+
+diamax: $(FKO)
+	$(MAKE) build pre=d rout=iamax URT=`echo iamax | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py d iamax $(file) $(N) $(test) $(uopt)
 
 go : $(FKO)
 	$(MAKE) build URT=`echo $(rout) | tr 'a-z' 'A-Z'` KFLAGS="$(KFLAGS)"
