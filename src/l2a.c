@@ -2135,7 +2135,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
 	 break;
       case COMMENT:
          #ifdef X86
-             continue;  /* skip comments temporary for testing with ATLAS*/
+             /*continue; */ /* skip comments temporary for testing with ATLAS*/
             ap->next = PrintAssln("#%s\n", op1 ? STname[op1-1] : "");
          #elif defined(SPARC)
             ap->next = PrintAssln("!%s\n", op1 ? STname[op1-1] : "");
@@ -2910,67 +2910,67 @@ struct assmln *lil2ass(BBLOCK *bbase)
       
       case VDCMPEQW:
          #ifdef AVX
-            ap->next = PrintAssln("\tvcmpps\t$0,%s,%s,%s\n",
+            ap->next = PrintAssln("\tvcmppd\t$0,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op3],
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1]);
          #else
-            ap->next = PrintAssln("\tcmpps\t$0,%s,%s\n",  
+            ap->next = PrintAssln("\tcmppd\t$0,%s,%s\n",  
                           archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
          #endif 
          break;
       case VDCMPNEW:
          #ifdef AVX
-            ap->next = PrintAssln("\tvcmpps\t$4,%s,%s,%s\n",
+            ap->next = PrintAssln("\tvcmppd\t$4,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op3],
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1]);
          #else
-            ap->next = PrintAssln("\tcmpps\t$4,%s,%s\n",  
+            ap->next = PrintAssln("\tcmppd\t$4,%s,%s\n",  
                           archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
          #endif 
          break;
       case VDCMPLTW:
          #ifdef AVX
-            ap->next = PrintAssln("\tvcmpps\t$1,%s,%s,%s\n",
+            ap->next = PrintAssln("\tvcmppd\t$1,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op3],
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1]);
          #else
-            ap->next = PrintAssln("\tcmpps\t$1,%s,%s\n",  
+            ap->next = PrintAssln("\tcmppd\t$1,%s,%s\n",  
                           archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
          #endif 
          break;
       case VDCMPLEW:
          #ifdef AVX
-            ap->next = PrintAssln("\tvcmpps\t$2,%s,%s,%s\n",
+            ap->next = PrintAssln("\tvcmppd\t$2,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op3],
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1]);
          #else
-            ap->next = PrintAssln("\tcmpps\t$2,%s,%s\n",  
+            ap->next = PrintAssln("\tcmppd\t$2,%s,%s\n",  
                           archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
          #endif 
          break;
       case VDCMPNLTW:
          #ifdef AVX
-            ap->next = PrintAssln("\tvcmpps\t$5,%s,%s,%s\n",
+            ap->next = PrintAssln("\tvcmppd\t$5,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op3],
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1]);
          #else
-            ap->next = PrintAssln("\tcmpps\t$5,%s,%s\n",  
+            ap->next = PrintAssln("\tcmppd\t$5,%s,%s\n",  
                           archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
          #endif 
          break;
       case VDCMPNLEW:
          #ifdef AVX
-            ap->next = PrintAssln("\tvcmpps\t$6,%s,%s,%s\n",
+            ap->next = PrintAssln("\tvcmppd\t$6,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op3],
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1]);
          #else
-            ap->next = PrintAssln("\tcmpps\t$6,%s,%s\n",  
+            ap->next = PrintAssln("\tcmppd\t$6,%s,%s\n",  
                           archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
          #endif 
          break;
@@ -2980,7 +2980,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
  */         
       case VDCMPGTW:
          #ifdef AVX
-            ap->next = PrintAssln("\tvcmpps\t$0x0E,%s,%s,%s\n",
+            ap->next = PrintAssln("\tvcmppd\t$0x0E,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op3],
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1]);
@@ -2990,7 +2990,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          break;
       case VDCMPGEW:
          #ifdef AVX
-            ap->next = PrintAssln("\tvcmpps\t$0x0D,%s,%s,%s\n",
+            ap->next = PrintAssln("\tvcmppd\t$0x0D,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op3],
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1]);
@@ -3000,7 +3000,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          break;
       case VDCMPNGTW:
          #ifdef AVX
-            ap->next = PrintAssln("\tvcmpps\t$0x0A,%s,%s,%s\n",
+            ap->next = PrintAssln("\tvcmppd\t$0x0A,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op3],
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1]);
@@ -3010,7 +3010,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          break;
       case VDCMPNGEW:
          #ifdef AVX
-            ap->next = PrintAssln("\tvcmpps\t$9,%s,%s,%s\n",
+            ap->next = PrintAssln("\tvcmppd\t$9,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op3],
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1]);
@@ -3023,11 +3023,11 @@ struct assmln *lil2ass(BBLOCK *bbase)
  */
       case VDSBTI:
          #ifdef AVX
-            ap->next = PrintAssln("\tvmovmskps\t%s,%s\n",
+            ap->next = PrintAssln("\tvmovmskpd\t%s,%s\n",
                                    archvdregs[-VDREGBEG-op2],
                                    archiregs[-IREGBEG-op1]);      
          # else
-            ap->next = PrintAssln("\tmovmskps\t%s,%s\n",
+            ap->next = PrintAssln("\tmovmskpd\t%s,%s\n",
                                    archvdregs[-VDREGBEG-op2],
                                    archiregs[-IREGBEG-op1]);
          #endif
