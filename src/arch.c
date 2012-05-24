@@ -1672,7 +1672,6 @@ void FinalizeEpilogue(BBLOCK *bbase,
 #endif
    assert(next);
 /*
-/*
  * Restore registers
  */
    for (i=0; i < ndr; i++)
@@ -2023,7 +2022,7 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
 /*
  * For x86-64, save %rbp, if necessary, to the reserved location of 0(%rsp)
  */
-   #if defined(X86_64) && 1 
+   #if defined(X86_64) && 0 
       k = iName2Reg("%rbp");
       for (i=0; i < nir && ir[i] != k; i++);
       if (i < nir)
