@@ -1669,7 +1669,6 @@ int main(int nargs, char **args)
             fprintf(stdout, "LIL BEFORE SV\n");
             PrintInst(stdout, bbbase);
 #endif
-            fprintf(stderr, "\nSPECULATION IS NEEDED! IMPLEMENT SSV ASAP!!\n");
 /*
  *          Finalizing the analysis
  */
@@ -1697,6 +1696,11 @@ int main(int nargs, char **args)
             fprintf(stdout, "Optimized LIL\n");
             PrintInst(stdout, bbbase);
 #endif
+            if (NWNT)
+            {
+               NAWNT = DoStoreNT(NULL);
+            }
+
             INUSETU2D = INDEADU2D = CFUSETU2D = 0;
             if (!INDEADU2D)
                CalcAllDeadVariables();
