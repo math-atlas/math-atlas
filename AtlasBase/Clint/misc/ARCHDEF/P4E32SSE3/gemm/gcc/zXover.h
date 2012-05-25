@@ -22,6 +22,6 @@
 #define TT_MNK_MN 12960
 #define TT_MNK_K 8100
 #define TT_MNK_GE 1000
-#define C2R_K 1684
+#define C2R_K 1270
 
 #endif

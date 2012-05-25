@@ -10,17 +10,17 @@
 #define NT_MNK_M 6000
 #define NT_MNK_N 6000
 #define NT_MNK_MN 36000
-#define NT_MNK_K 13500
+#define NT_MNK_K 6000
 #define NT_MNK_GE 1000
 #define TN_MNK_M 6000
-#define TN_MNK_N 34560
+#define TN_MNK_N 132540
 #define TN_MNK_MN 36000
-#define TN_MNK_K 13500
-#define TN_MNK_GE 13824
+#define TN_MNK_K 86640
+#define TN_MNK_GE 54872
 #define TT_MNK_M 6000
 #define TT_MNK_N 6000
 #define TT_MNK_MN 36000
-#define TT_MNK_K 54000
+#define TT_MNK_K 86640
 #define TT_MNK_GE 1000
 
 #endif
