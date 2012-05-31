@@ -5247,6 +5247,78 @@ int utstmmcase(char pre, int ifile, int NB)
                       mu, nu, ku, fnam, MCC, MMFLAGS));
 }
 
+
+int GetUserFNB(char pre, int NB, int mb, int nb, int kb, int iflag)
+/*
+ * RETURNS: 0 if described kernel cannot handle NB, else NB
+ */
+{
+   int i, mult;
+   static int nelt=0;
+
+   if ((mb < 0 && mb != -NB) || (nb < 0 && nb != -NB) || (kb < 0 && kb != -NB))
+      return(0);
+   if (mb > 0 && NB%mb)
+      return(0);
+   if (nb > 0 && NB%nb)
+      return(0);
+   if (kb > 0 && NB%kb)
+      return(0);
+   return(NB);
+}
+
+int FindBestUserFNB(char pre, int nb0)
+/*
+ * returns index in <pre>cases.dsc of best user-supplied GEMM, using
+ * a blocking factor of exactly nb
+ */
+{
+   char *MCC, *MMFLAGS;
+   char ln[256], fnam[256];
+   double mf, mfbest=0.0, adv;
+   int ibest=(-1), i, ncases;
+   int ID, iflag, NB, mb, nb, kb, ma, lat, mu, nu, ku, nbB=0;
+   FILE *fpsum;
+
+   sprintf(ln, "res/%cucases.res", pre);
+   fpsum = fopen(ln, "w");
+   ncases = NumUserCases(pre);
+   for (i=0; i < ncases; i++)
+   {
+      ID = GetUserCase(pre, -i, &iflag, &mb, &nb, &kb, &ma, &lat, 
+                       &mu, &nu, &ku, fnam, ln, &MCC, &MMFLAGS);
+      assert(ID > 0);
+      NB = GetUserFNB(pre, nb0, mb, nb, kb, iflag);
+      if (!NB)
+         printf("Rejected icase=%d, NB=%d, MB,NB,KB=%d,%d,%d\n", 
+                ID, nb0, mb, nb, kb);
+      else
+      {
+         mf = ummcase(pre, ID, NB);
+         adv = 1.0;
+            
+         if (mf > adv*mfbest)
+         {
+            if (utstmmcase(pre, ID, NB))
+            { /* test kernel before accepting */
+               ibest = ID;
+               mfbest = mf;
+               nbB = NB;
+            }
+         }
+         fprintf(stdout, "%3d. NB=%3d, rout=%40s, MFLOP=%.2f\n", 
+                 i, NB, fnam, mf);
+         if (fpsum)
+            fprintf(fpsum, "%3d. ID=%8d, NB=%3d, rout=%40s, MFLOP=%.2f\n", 
+                    i, ID, NB, fnam, mf);
+      }
+   }
+   if (fpsum)
+      fclose(fpsum);
+   printf("BEST CASE IS ID=%d, NB=%d, MFLOP=%.2f\n", ibest, nbB, mfbest);
+   return(ibest);
+}
+
 int FindBestUser(char pre, int nb0)
 /*
  * returns index in <pre>cases.dsc of best user-supplied GEMM, using
@@ -5310,7 +5382,7 @@ void PrintUsage(char *fnam)
    exit(-1);
 }
 
-ROUTNODE *GetFlags(int nargs, char **args, char *pre, int *nb0, 
+ROUTNODE *GetFlags(int nargs, char **args, char *pre, int *nb0, int *FNB,
                    enum CLEAN_WHICH *which)
 /*
  * RETURNS: a queue of filenames, which are the output files from external
@@ -5321,7 +5393,7 @@ ROUTNODE *GetFlags(int nargs, char **args, char *pre, int *nb0,
    char ch;
    ROUTNODE *efb=NULL, *ef, *ep;/* base &ptr to external search summary files */
 
-   *nb0 = 0;
+   *FNB = *nb0 = 0;
    *pre = 'd';
    *which = CleanNot;
    for (i=1; i < nargs; i++)
@@ -5337,6 +5409,9 @@ ROUTNODE *GetFlags(int nargs, char **args, char *pre, int *nb0,
          break;
       case 'n':
          *nb0 = atoi(args[++i]);
+         break;
+      case 'N':
+         *FNB = atoi(args[++i]);
          break;
       case 'e':
          if (++i > nargs)
@@ -5764,13 +5839,18 @@ void getBestOfSearches
 
 int main(int nargs, char **args)
 {
-   int i, nb0, verb=1;
+   int i, nb0, verb=1, FNB;
    enum CLEAN_WHICH which;
    char pre, ln[16];
    ROUTNODE *esumb;
 
-   esumb = GetFlags(nargs, args, &pre, &nb0, &which);
-   if (nb0 <= 0)
+   esumb = GetFlags(nargs, args, &pre, &nb0, &FNB, &which);
+   if (FNB)
+   {
+      i = FindBestUserFNB(pre, FNB);
+      printf("nb=%d, i=%d\n", FNB, i);
+   }
+   else if (nb0 <= 0)
    {
       GetuMMRES(pre);
       getBestOfSearches(pre, verb, esumb);
