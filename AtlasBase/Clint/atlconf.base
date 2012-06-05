@@ -667,11 +667,11 @@ void GetFlags(int nargs,                /* nargs as passed into main */
 #define NOS 13
 static char *osnam[NOS] = 
    {"UNKNOWN", "Linux", "SunOS", "SunOS4", "OSF1", "IRIX", "AIX", 
-    "Win9x", "WinNT", "WinSFU", "HPUX", "FreeBSD", "OSX"};
+    "Win9x", "WinNT", "Win64", "HPUX", "FreeBSD", "OSX"};
 enum OSTYPE {OSOther=0, OSLinux, OSSunOS, OSSunOS4, OSOSF1, OSIRIX, OSAIX,
-             OSWin9x, OSWinNT, OSWinSFU, OSHPUX, OSFreeBSD, OSOSX};
+             OSWin9x, OSWinNT, OSWin64, OSHPUX, OSFreeBSD, OSOSX};
 #define OSIsWin(OS_) ( ((OS_) == OSWinNT) || ((OS_) == OSWin9x) || \
-                       ((OS_) == OSWinSFU) )
+                       ((OS_) == OSWin64) )
 
 enum ARCHFAM {AFOther=0, AFPPC, AFSPARC, AFALPHA, AFX86, AFIA64, AFMIPS, 
               AFARM, AFS390};
@@ -2012,7 +2012,6 @@ enum OSTYPE ProbeOS(int verb, char *targ)
       else if(strstr(res, "OSF1")) OS = OSOSF1;
       else if(strstr(res, "IRIX")) OS = OSIRIX;
       else if(strstr(res, "AIX")) OS = OSAIX;
-      else if(strstr(res, "Interix")) OS = OSWinSFU;
       else if(strstr(res, "WIN"))
       {
          if (strstr(res, "95") || strstr(res, "98") || strstr(res, "_ME")) 
@@ -2020,6 +2019,7 @@ enum OSTYPE ProbeOS(int verb, char *targ)
 /*
  *       Need to confirm what is returned under cygwin for XP, etc.
  */
+         else if (strstr(res, "WOW64")) OS =OSWin64;
          else if (strstr(res, "NT")) OS = OSWinNT;
          else ierr = 1;
       }
@@ -2177,7 +2177,7 @@ rdir = /tmp
 arch=
 GUNZIP = gunzip
 TAR = tar
-wind=/usr/local/bin
+wind=$(BLDdir)
 
 all : build
 xconfig : $(SRCdir)/config.c atlconf_misc.o
@@ -2197,20 +2197,25 @@ mgwranlib : $(SRCdir)/mgwcmp.c
 	$(XCC) $(XCCFLAGS) "-DDEFDF=$(cmppath)" -o $@ $(SRCdir)/mgwcmp.c
 
 $(wind)/ATLwin_ifort.exe : $(SRCdir)/winf77.c
-	gcc -mno-cygwin -o $(wind)/ATLwin_ifort.exe -DDEFDF=ifort \
-            $(SRCdir)/winf77.c
+	cp $(SRCdir)/wincc.c $(wind)/.
+	cd $(wind) ; icl /FeATLwin_ifort.exe /DDEFDF=ifort wincc.c
+	rm -f $(wind)/wincc.c
 $(wind)/ATLwin_icc.exe : $(SRCdir)/wincc.c
-	gcc -mno-cygwin -o $(wind)/ATLwin_icc.exe -DDEFDF=icl \
-            $(SRCdir)/wincc.c
+	cp $(SRCdir)/wincc.c $(wind)/.
+	cd $(wind) ; icl /FeATLwin_icc.exe /DDEFDF=icl wincc.c
+	rm -f $(wind)/wincc.c
 $(wind)/ATLwin_cl.exe : $(SRCdir)/wincc.c
-	mv $(SRCdir)/wincc.c $(wind)/.
+	cp $(SRCdir)/wincc.c $(wind)/.
 	cd $(wind) ; cl /FeATLwin_cl.exe /DDEFDF=cl wincc.c
 	rm -f $(wind)/wincc.c
+@beginskip
 @whiledef wcc icl
 $(wind)/ATLwin_@(wcc).exe : $(SRCdir)/wincc.c
+	cp $(SRCdir)/wincc.c $(wind)/.
 	gcc -mno-cygwin -o $(wind)/ATLwin_@(wcc).exe -DDEFDF=@(wcc) \
             $(SRCdir)/wincc.c
 @endwhile
+@endskip
 xprobe_comp : xisgcc probe_comp.o atlconf_misc.o
 	$(XCC) $(XCFLAGS) -o xprobe_comp probe_comp.o atlconf_misc.o $(LIBS)
 @whiledef prb OS asm vec arch f2c pmake aff
@@ -2242,7 +2247,14 @@ force_build:
 # General probes always ran locally (possibly cross-compiling machine)
 # General probes call system (they're essentially shell scripts)
 #
-@whiledef prb OS comp
+@whiledef prb comp
+IRun_@(prb): xprobe_@(prb) force_build
+	- rm -f config1.out
+	$(MAKE) atlas_run atldir=$(mydir) exe=xprobe_@(prb) redir=config1.out \
+                args="$(args) -d b $(BLDdir)"
+	- cat config1.out
+@endwhile
+@whiledef prb OS
 IRun_@(prb): xprobe_@(prb) force_build
 	- rm -f config1.out
 	$(MAKE) atlas_run atldir=$(mydir) exe=xprobe_@(prb) args="$(args)" \
@@ -2488,8 +2500,8 @@ cleanall: clean
    #define my_join(pre, nam) pre ## nam
 #endif
 
-#if (defined(ATL_OS_WinNT) && !defined(ATL_USE64BITS)) || \
-    defined(ATL_OS_Win9x) || defined(ATL_OS_OSX) || defined(ATL_OS_WinSFU)
+#if (defined(ATL_OS_Win64) && !defined(ATL_USE64BITS)) || \
+    defined(ATL_OS_Win9x) || defined(ATL_OS_OSX) || defined(ATL_OS_WinNT)
    #define ATL_asmdecor(nam) Mjoin(_,nam)
 #elif defined(ATL_OS_AIX) && defined(ATL_GAS_PPC)
    #define ATL_asmdecor(nam) Mjoin(.,nam)
@@ -3161,7 +3173,7 @@ int RunAffProbe(int iaff, int verb, char *targ, int iproc)
    if (iaff == IA_WIN)
       lib = "-lkernel32";
    else if (iaff == IA_WIN64)
-      lib = "";    /* works w/o -l for 64-bit MinGW */
+      lib = "/usr/local/lib/msvcrt.lib";    /* works w/o -l for 64-bit MinGW */
    else
       lib = "-lpthread";
    if (targ)
@@ -3215,6 +3227,8 @@ int GetPreferredAffinity(enum OSTYPE OS, int OMP)
    #elif defined(ATL_OS_HPUX)
       return(OMP ? IA_SCHED : IA_SETPROCNP);
    #elif defined(ATL_OS_WinNT)
+      return(IA_WIN);
+   #elif defined(ATL_OS_Win64)
       return(IA_WIN64);
    #else
       int iret=1;
@@ -3307,6 +3321,14 @@ int *ProbeAffIDs
       }
       else
          printf("   ID=%d FAILS.\n", (1<<i));
+/*
+ *    Windows appears to roll IDs after 32, so don't test past this point
+ */
+      #if defined(ATL_OS_WinNT) || defined(ATL_OS_Win9x) || \
+          defined(ATL_OS_Win64)
+         if (i == 5)
+            break;
+      #endif
    }
    if (maxlog2 == -1)
    {
@@ -3425,7 +3447,8 @@ void PrintResults
    fprintf(fpout, "#define ATL_PAFF_%s 1\n", AFFS[iaff]);
    if (iaff)
    {
-      if (iaff == IA_SETAFFNP || iaff == IA_SETPROCNP)
+      if (iaff == IA_SETAFFNP || iaff == IA_SETPROCNP || 
+          iaff == IA_WIN64 || iaff == IA_WIN64)
          fprintf(fpout, 
 "#define ATL_PAFF_LAUNCH 1  /* affinity can be set during thread launch */\n");
       else
@@ -4664,10 +4687,11 @@ char *GetStandardCompName(char *comp)
       ucomp = NameWithoutPath(comp);
    return(ucomp);
 }
-char *GetWinComp(enum OSTYPE OS, char *comp)
+char *GetWinComp(enum OSTYPE OS, char *comp, char *bindir)
 {
-   char ln[1024];
+   char *ln;
    char *ucomp;
+   int i;
    if (!OSIsWin(OS))
       return(NULL);
    ucomp = GetStandardCompName(comp);
@@ -4679,14 +4703,19 @@ char *GetWinComp(enum OSTYPE OS, char *comp)
       ucomp = "ATLwin_cl";
    else /* not a recognized windows compiler that needs wrapping, done */
       return(NULL);
-   sprintf(ln, "make wind=/usr/local/bin /usr/local/bin/%s.exe \n", ucomp);
+   i = strlen(bindir);
+   ln = malloc(i+16+strlen(ucomp));
+   assert(ln);
+   sprintf(ln, "make %s/%s.exe", bindir, ucomp);
    if (system(ln))
    {
       fprintf(stderr, "Unable to to build %s, quitting\n", ucomp);
       fprintf(stderr, "cmnd='%s'\n", ln);
+      free(ln);
       exit(-1);
    }
-   return(ucomp);
+   sprintf(ln, "%s/%s", bindir, ucomp);
+   return(ln);
 }
 
 @beginskip
@@ -4740,7 +4769,7 @@ COMPNODE *WinnowBadComps
       }
       if (ptrbits)
       {
-         if (OS == OSWinNT && ptrbits == 64 && i == XCC_)
+         if (OS == OSWin64 && ptrbits == 64 && i == XCC_)
             flg = NewAppendedString(flg, "-m32");
          else
             flg = NewAppendedString(flg, GetPtrbitsFlag(OS, arch, ptrbits, sp));
@@ -4775,7 +4804,7 @@ COMPNODE *WinnowBadComps
 
 void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
               int ptrbits, char **usrcomps, int nof77, int vecext, 
-              char *goodgcc)
+              char *goodgcc, char *bindir)
 /*
  * This routine gives config a list of compilers to use.  The first NCOMP
  * entries in usrcomps indicate a user override of the default compiler,
@@ -4810,7 +4839,7 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
  * If on Win64, build MinGW compiler wrappers. 
  * Look in /usr/bin/ for standard cygwin names for the cygwin compilers
  */
-   if (OS == OSWinNT && ptrbits == 64)
+   if (OS == OSWin64 && ptrbits == 64)
    {
       int fndit;
 /*
@@ -4926,10 +4955,11 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
       {
          for (p=comps[i]; p; p = p->next)
          {
+            char *freeme=NULL;
             flg = NewStringCopy(usrcomps[NCOMP+i]?usrcomps[NCOMP+i]:p->flags);
             if (usrcomps[NCOMP*2+i])
                flg = NewAppendedString(flg, usrcomps[NCOMP*2+i]);
-            sp = GetWinComp(OS, p->comp);
+            freeme = sp = GetWinComp(OS, p->comp, bindir);
             if (!sp) 
             {
 /*
@@ -4953,7 +4983,7 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
             }
             if (ptrbits)
             {
-               if (OS == OSWinNT && ptrbits == 64 && i == XCC_)
+               if (OS == OSWin64 && ptrbits == 64 && i == XCC_)
                   flg = NewAppendedString(flg, "-m32");
                else
                   flg = NewAppendedString(flg, 
@@ -4964,6 +4994,8 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
             if (!CompTest(verb, targ, i, sp, flg))
                break;
             free(flg);
+            if (freeme)
+               free(freeme);
          }                              /* end loop over compilers */
          if (!p)
             CompError(i);
@@ -5029,11 +5061,11 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
 /*
  *    On windows, build compiler wrapper for MSVC++ or Intel compilers
  */
-      sp = GetWinComp(OS, usrcomps[i]);
+      sp = GetWinComp(OS, usrcomps[i], bindir);
       if (sp)
       {
          free(usrcomps[i]);
-         usrcomps[i] = NewStringCopy(sp);
+         usrcomps[i] = sp;
       }
 /*
  *    Test selected compiler and flags, and die if they don't work
@@ -5043,7 +5075,7 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
          flg = NewAppendedString(flg, usrcomps[NCOMP*2+i]);
       if (ptrbits)
       {
-         if (OS == OSWinNT && ptrbits == 64 && i == XCC_)
+         if (OS == OSWin64 && ptrbits == 64 && i == XCC_)
             flg = NewAppendedString(flg, "-m32");
          else
             flg = NewAppendedString(flg, 
@@ -5083,7 +5115,7 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
       for (i=0; i < NCOMP; i++)
       {
          sp = GetPtrbitsFlag(OS, arch, ptrbits, usrcomps[i]);
-         if (OS == OSWinNT && ptrbits == 64 && i == XCC_)
+         if (OS == OSWin64 && ptrbits == 64 && i == XCC_)
             usrcomps[i+NCOMP] = NewAppendedString(usrcomps[i+NCOMP], "-m32");
          else
             usrcomps[i+NCOMP] = NewAppendedString(usrcomps[i+NCOMP], sp);
@@ -5623,7 +5655,7 @@ void PrintUsage(char *name, int i)
 }
 @endskip
 
-@extract -b @(basd)/atlconf.base rout=GetFlags -def -O "" -def -v "" -def -A "" -def -V "" -def -b "" -def -C "" -def -o "" -def -S "-S" -def -nof77 "-nof77"
+@extract -b @(basd)/atlconf.base rout=GetFlags -def -O "" -def -v "" -def -A "" -def -V "" -def -b "" -def -C "" -def -o "" -def -S "-S" -def -nof77 "-nof77" -def -d ""
 
 int main(int nargs, char **args)
 /*
@@ -5642,13 +5674,13 @@ int main(int nargs, char **args)
    enum MACHTYPE mach;
    int ptrbits, verb, vecexts, i, nof77;
    char *usrcomps[3*NCOMP];
-   char *outfile, *targ, *targarg, *goodgcc;
+   char *outfile, *targ, *targarg, *goodgcc, *srcdir, *bindir;
    enum F2CNAME f2cnam;
    enum F2CINT f2cint; 
    enum F2CSTRING f2cstr;
 
    GetFlags(nargs, args, &verb, &OS, &vecexts, &mach, &ptrbits, usrcomps, 
-            &outfile, &nof77, &targ);
+            &outfile, &srcdir, &bindir, &nof77, &targ);
 
    if (verb > 1)
    {
@@ -5687,7 +5719,8 @@ int main(int nargs, char **args)
    #else
       goodgcc = FindGoodGcc(OS, mach,  verb, targ);
    #endif
-   GetComps(OS, mach, verb, targ, ptrbits, usrcomps, nof77, vecexts, goodgcc);
+   GetComps(OS, mach, verb, targ, ptrbits, usrcomps, nof77, vecexts, goodgcc,
+            bindir);
 /* 
  * See if we need to search for gfortran
  */
@@ -6252,17 +6285,17 @@ int main(int nargs, char **args)
 # Level 1 & 2, but must confirm)
 #
 # Core2/Corei1/Corei2
-MACH=Corei2 OS=Win9x,WinNT LVL=1005 COMPS=smc,dmc,skc,dkc,icc
+MACH=Corei2 OS=Win9x,WinNT,Win64 LVL=1005 COMPS=smc,dmc,skc,dkc,icc
    'gcc-4' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
 MACH=Corei2 OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc,xcc
    'gcc' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
 MACH=Corei2 OS=ALL LVL=50 COMPS=skc,dkc,icc,xcc
     'clang' '-fomit-frame-pointer -mavx -O2 -m64 -Wno-parentheses'
-MACH=Corei1 OS=Win9x,WinNT LVL=1005 COMPS=smc,dmc,skc,dkc,icc,gcc
+MACH=Corei1 OS=Win9x,WinNT,Win64 LVL=1005 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc-4' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
 MACH=Corei1 OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
-MACH=Core2 OS=Win9x,WinNT LVL=1005 COMPS=smc,dmc,skc,dkc,icc
+MACH=Core2 OS=Win9x,WinNT,Win64 LVL=1005 COMPS=smc,dmc,skc,dkc,icc
    'gcc-4' '-fomit-frame-pointer -mfpmath=sse -O2'
 MACH=Core2 OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc' '-fomit-frame-pointer -mfpmath=sse -O2'
@@ -6299,26 +6332,26 @@ MACH=P4E OS=ALL LVL=1000 COMPS=skc,dkc,icc
    'gcc' '-O2 -fomit-frame-pointer -mfpmath=sse'
 MACH=P4E,P4 OS=ALL LVL=1000 COMPS=smc,dmc
    'gcc' '-O2 -fomit-frame-pointer -mfpmath=sse -fno-schedule-insns -fno-optimize-register-move'
-MACH=P4E,P4 OS=Win9x,WinNT LVL=1005 COMPS=smc,dmc
+MACH=P4E,P4 OS=Win9x,WinNT,Win64 LVL=1005 COMPS=smc,dmc
    'gcc-4' '-O2 -fomit-frame-pointer -mfpmath=sse -fno-schedule-insns -fno-optimize-register-move'
 MACH=P4E,P4 OS=ALL LVL=1000 COMPS=skc,dkc,icc
    'gcc-4' '-O2 -fomit-frame-pointer -mfpmath=sse'
 # Hammer
 MACH=HAMMER OS=ALL LVL=1000 COMPS=f77
    'gfortran' '-fomit-frame-pointer -mfpmath=387 -O2'
-MACH=HAMMER OS=Win9x,WinNT LVL=1005 COMPS=smc,dmc,skc,dkc,icc
+MACH=HAMMER OS=Win9x,WinNT,Win64 LVL=1005 COMPS=smc,dmc,skc,dkc,icc
    'gcc-4' '-fomit-frame-pointer -mfpmath=387 -O2'
 MACH=HAMMER OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc' '-fomit-frame-pointer -mfpmath=387 -O2'
 # PPRO,PII,PIII,K7
 MACH=PPRO,PII,PIII,K7 OS=ALL LVL=1000 COMPS=f77
    'gfortran' '-fomit-frame-pointer -mfpmath=387 -O2 -falign-loops=4'
-MACH=PPRO,PII,PIII,K7 OS=Win9x,WinNT LVL=1005 COMPS=smc,dmc,skc,dkc,icc
+MACH=PPRO,PII,PIII,K7 OS=Win9x,WinNT,Win64 LVL=1005 COMPS=smc,dmc,skc,dkc,icc
    'gcc-4' '-fomit-frame-pointer -mfpmath=387 -O2 -falign-loops=4'
 MACH=PPRO,PII,PIII,P4,P4E,K7 OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc' '-fomit-frame-pointer -mfpmath=387 -O2 -falign-loops=4'
 # CoreSolo,CoreDuo
-MACH=CoreSolo,CoreDuo OS=WinNT,Win9x LVL=1005 COMPS=smc,dmc,skc,dkc,icc
+MACH=CoreSolo,CoreDuo OS=WinNT,Win9x,Win64 LVL=1005 COMPS=smc,dmc,skc,dkc,icc
    'gcc-4' '-fomit-frame-pointer -O3 -mfpmath=387'
 MACH=CoreSolo,CoreDuo OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc' '-fomit-frame-pointer -O3 -mfpmath=387'
@@ -6327,7 +6360,7 @@ MACH=AMD64K10h OS=ALL LVL=1000 COMPS=f77
    'gfortran' '-fomit-frame-pointer -mfpmath=sse -O2'
 MACH=AMD64K10h OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc' '-fomit-frame-pointer -mfpmath=sse -O2'
-MACH=AMD64K10h OS=Win9x,WinNT LVL=1005 COMPS=smc,dmc,skc,dkc,icc,gcc
+MACH=AMD64K10h OS=Win9x,WinNT,Win64 LVL=1005 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc' '-fomit-frame-pointer -mfpmath=sse -O2'
 MACH=AMDDOZER OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc' '-fomit-frame-pointer -mfpmath=sse -mfma4 -O2 -fno-tree-loop-optimize'
@@ -6457,15 +6490,15 @@ MACH=IBMz9,IBMz10,IBMz196 OS=ALL LVL=500 COMPS=smc,dmc,skc,dkc,icc,xcc,gcc
 #
 # Windows defaults ; need to make SSE/SSE2 arch dep.
 #
-MACH=P5,P5MMX,PPRO,PII OS=WinNT LVL=4 COMPS=icc,dmc,smc,dkc,skc,xcc
+MACH=P5,P5MMX,PPRO,PII OS=WinNT,Win64 LVL=4 COMPS=icc,dmc,smc,dkc,skc,xcc
    'cl' '-Oy -Ox'
-MACH=PIII,K7 OS=WinNT LVL=4 COMPS=icc,dmc,smc,dkc,skc,xcc
+MACH=PIII,K7 OS=WinNT,Win64 LVL=4 COMPS=icc,dmc,smc,dkc,skc,xcc
    'cl' '-Oy -Ox -arch:SSE -nologo'
-MACH=ALL OS=WinNT LVL=0 COMPS=icc,dmc,smc,dkc,skc,xcc
+MACH=ALL OS=WinNT,Win64 LVL=0 COMPS=icc,dmc,smc,dkc,skc,xcc
    'cl' '-Oy -Ox -arch:SSE2 -nologo'
-MACH=ALL OS=WinNT LVL=0 COMPS=f77
+MACH=ALL OS=WinNT,Win64 LVL=0 COMPS=f77
    'ifort' '-O2 -fltconsistency -nologo'
-MACH=P4,PM OS=WinNT LVL=0 COMPS=icc,dmc,smc,dkc,skc,xcc
+MACH=P4,PM OS=WinNT,Win64 LVL=0 COMPS=icc,dmc,smc,dkc,skc,xcc
    'icl' '-QxN -O3 -Qprec -fp:extended -fp:except -nologo -Oy'
 #
 # ARM defaults
@@ -8447,6 +8480,7 @@ int main(int nargs, char **args)
          fprintf(fpout, " -fPIC");
    #endif
    fprintf(fpout, "\n");
+   fprintf(fpout, "   KC = $(DKC)\n   KCFLAGS = $(CDEFS) $(DKCFLAGS)\n");
 
    fprintf(fpout, "   LDFLAGS =");
    if (MachIsX86(mach))
@@ -8466,9 +8500,9 @@ int main(int nargs, char **args)
    if (MachIsS390(mach))
       fprintf(fpout, ptrbits == 32 ? "-m31" : "-m64");
    fprintf(fpout, "\n   F77SYSLIB = %s\n", f77lib ? f77lib : "");
-   fprintf(fpout, "   BC = $(ICC)\n");
-   fprintf(fpout, "   NCFLAGS = $(ICCFLAGS)\n");
-   fprintf(fpout, "\n   CLINKER = $(ICC)\n   CLINKFLAGS = $(ICCFLAGS)\n");
+   fprintf(fpout, "   BC = $(KC)\n");
+   fprintf(fpout, "   NCFLAGS = $(KCFLAGS)\n");
+   fprintf(fpout, "\n   CLINKER = $(KC)\n   CLINKFLAGS = $(KCFLAGS)\n");
    fprintf(fpout, "   FLINKER = $(F77)\n");
    if (strstr(comps[F77_], "mgwgfortran"))
       fprintf(fpout, "   FLINKFLAGS = $(F77FLAGS) -static\n");
@@ -8477,7 +8511,7 @@ int main(int nargs, char **args)
    fprintf(fpout, "   FCLINKFLAGS = $(FLINKFLAGS)");
    if (strstr(comps[F77_], "ifort") && !OSIsWin(OS))
       fprintf(fpout, " -nofor_main");
-   if (OS == OSWinNT && ptrbits == 64)
+   if (OS == OSWin64 && ptrbits == 64)
       fprintf(fpout, "\n   ARCHIVER = $(BLDdir)/mgwar\n");
    else
       fprintf(fpout, "\n   ARCHIVER = ar\n");
@@ -8487,7 +8521,7 @@ int main(int nargs, char **args)
  */
    if (OS == OSOSX)
       fprintf(fpout, "   RANLIB   = ranlib\n\n");
-   else if (OS == OSWinNT && ptrbits == 64)
+   else if (OS == OSWin64 && ptrbits == 64)
       fprintf(fpout, "   RANLIB   = $(BLDdir)/mgwranlib\n\n");
    else
       fprintf(fpout, "   RANLIB   = echo\n\n");
@@ -8516,15 +8550,14 @@ int main(int nargs, char **args)
    fprintf(fpout, "   SSLAPACKlib =  # set to serial system lapack\n");
    if (THREADS)
    {
-      fprintf(fpout, "   LIBS = -lpthread");
-      if (OSIsWin(OS) && ptrbits == 32)
-         fprintf(fpout, " -lkernel32");
+      if (OSIsWin(OS))
+         fprintf(fpout, "   LIBS = -lkernel32 -lm\n\n");
+      else
+         fprintf(fpout, "   LIBS = -lpthread -lm\n\n");
    }
    else
-      fprintf(fpout, "   LIBS =");
+      fprintf(fpout, "   LIBS = -lm\n\n");
 @skip   if (!OSIsWin(OS))
-   fprintf(fpout, " -lm");
-   fprintf(fpout, "\n\n");
 
    fprintf(fpout, 
    "#  --------------------------------------------------------------------\n");
@@ -8594,7 +8627,7 @@ fprintf(fpout,
 @beginskip
    fprintf(fpout, 
   "#\n# Hack to get around gcc ABI violation when using winthreads\n#\n");
-   if (OS == OSWinNT && ptrbits == 32)
+   if (OS == OSWin64 && ptrbits == 32)
       fprintf(fpout, "   tstackfix = ATL_gccstackfix.o\n");
    else
       fprintf(fpout, "   tstackfix = "\n");
@@ -9339,6 +9372,26 @@ int main(int nargs, char **args)
                j = sprintf(ln+ic, "/link:DEFAULTLIB:%s", &args[i][2]);
             slashsub(ln+ic+17);
          }
+         else if (args[i][1] == 'm' && args[i][2] == '3' 
+                  && args[i][3] == '2' && args[i][4] == '\0')
+            j=0;  /* do not pass on -m32/64 to windows compilers */
+         else if (args[i][1] == 'm' && args[i][2] == '3' 
+                  && args[i][3] == '2' && args[i][4] == '\0')
+            j=0;  /* do not pass on -m32/64 to windows compilers */
+         else if (args[i][1]=='m' && args[i][2]=='s' && args[i][3]=='s' && 
+                  args[i][4] == 'e')
+         {
+            if (args[i][5] == '\0')
+               j = sprintf(ln+ic, "/arch:sse");
+            else
+               j = sprintf(ln+ic, "/arch:sse2");
+         }
+         else if (args[i][1]=='m' && args[i][2]=='a' && args[i][3]=='v' && 
+                  args[i][4] == 'x')
+            j = sprintf(ln+ic, "/arch:avx");
+         else if (args[i][1] == 'm' && args[i][2] == '3' 
+                  && args[i][3] == '2' && args[i][4] == '\0')
+              ;  /* do not pass on -m32/64 to windows compilers */
          else
          {
             if (args[i][1] == 'c') COMP=1;
