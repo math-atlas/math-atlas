@@ -2943,8 +2943,8 @@ void ScalarRestart(LOOPQ *lp)
  */
       }
 /*
- *    create a new block at the last of scalar restart path to check and
- *    jump back to tail of loop
+ *    create a new block at the last of scalar restart path to implement vector
+ *    update stage and to check and jump back to tail of loop
  */
       bp = NewBasicBlock(bp0, NULL);
       bp0->down = bp;
@@ -2952,7 +2952,13 @@ void ScalarRestart(LOOPQ *lp)
       bp0 = bp;
       sprintf(ln, "_S_%d_%d",i,j);
       cflag = STlabellookup(ln);
-      InsNewInst(bp, NULL, NULL, LABEL, cflag,0,0);
+      ip = InsNewInst(bp, NULL, NULL, LABEL, cflag,0,0);
+/*
+ *    Create a label to indicate the vector update stage
+ */
+      sprintf(ln, "_IFKO_VECTOR_UPDATE_%d",i);
+      cflag = STlabellookup(ln);
+      ip = InsNewInst(bp, ip, NULL, LABEL, cflag,0,0);
 /*
  *    Add vector update for this path
  */
