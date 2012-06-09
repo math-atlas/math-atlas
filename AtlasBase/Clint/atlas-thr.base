@@ -1032,10 +1032,14 @@ int ATL_GetAtomicCount(void *vp)
    volatile int *ip = vp;
    return(ip[32]);
 }
-@ROUT ATL_ResetAtomicCount_ia32 ATL_ResetAtomicCount_amd64
+@ROUT ATL_ResetAtomicCount_ia32 ATL_ResetAtomicCount_amd64 ATL_ResetAtomicCount_win64
 #include "atlas_asm.h"
 /*
- * eax                       rdi         rsi
+@ROUT ATL_ResetAtomicCount_ia32 ATL_ResetAtomicCount_amd64
+ * rax                       rdi         rsi
+@ROUT ATL_ResetAtomicCount_win64
+ * rax                       rcx         rdx
+@ROUT ATL_ResetAtomicCount_ia32 ATL_ResetAtomicCount_amd64 ATL_ResetAtomicCount_win64
  * int ATL_ResetAtomicCount(void *vp, int cnt)
  * Sets vp's acnt=cnt.
  * RETURNS: acnt before the reset
@@ -1051,7 +1055,10 @@ ATL_asmdecor(ATL_ResetAtomicCount):
 @ROUT ATL_ResetAtomicCount_amd64
    @define mm @%rdi@
    @define ct @%esi@
-@ROUT ATL_ResetAtomicCount_ia32 ATL_ResetAtomicCount_amd64
+@ROUT ATL_ResetAtomicCount_win64
+   @define mm @%rcx@
+   @define ct @%esx@
+@ROUT ATL_ResetAtomicCount_ia32 ATL_ResetAtomicCount_amd64 ATL_ResetAtomicCount_win64
    sub $-128, @(mm)            /* skip false sharing guard zone */
    ATOMIC_LOOP:
       movl (@(mm)), %eax       /* read acnt from memory */
@@ -1061,9 +1068,9 @@ ATL_asmdecor(ATL_ResetAtomicCount):
    jmp ATOMIC_LOOP            /* ZF=0 means cmpxch failed, try again */
 DONE:
    ret
-@ROUT ATL_DecAtomicCount_amd64 ATL_DecAtomicCount_ia32
+@ROUT ATL_DecAtomicCount_amd64 ATL_DecAtomicCount_ia32 ATL_DecAtomicCount_win64
 #include "atlas_asm.h"
-/* eax                      %rdi/4  */
+/* rax                  %rdi/rcx/4  */
 /* int ATL_DecAtomicCount(void *vp) */
 .text
 .global ATL_asmdecor(ATL_DecAtomicCount)
@@ -1073,7 +1080,10 @@ ATL_asmdecor(ATL_DecAtomicCount):
    @define mm @%edx@
 @ROUT ATL_DecAtomicCount_amd64 
    @define mm @%rdi@
-@ROUT ATL_DecAtomicCount_amd64 ATL_DecAtomicCount_ia32
+@ROUT ATL_DecAtomicCount_win64 
+   @define mm @%rdx@
+   movq %rcx, %rdx
+@ROUT ATL_DecAtomicCount_amd64 ATL_DecAtomicCount_ia32 ATL_DecAtomicCount_win64
    sub $-128, @(mm)            /* skip false sharing guard zone */
    ATOMIC_LOOP:
       movl (@(mm)), %eax       /* read cnt from memory */
@@ -1086,7 +1096,7 @@ ATL_asmdecor(ATL_DecAtomicCount):
    jmp ATOMIC_LOOP            /* ZF=0 means cmpxch failed, try again */
 
 ZERO_RET:
-@ROUT ATL_DecAtomicCount_amd64 `   xor %rax, %rax`
+@ROUT ATL_DecAtomicCount_amd64 ATL_DecAtomicCount_win64 `   xor %rax, %rax`
 @ROUT ATL_DecAtomicCount_ia32  `   xor %eax, %eax`
 @skip   movl %eax, (@(mm))  /* safety to ensure no roll from neg back to pos */
 DONE:
