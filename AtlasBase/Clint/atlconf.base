@@ -4851,6 +4851,144 @@ COMPNODE *WinnowBadComps
 }
 @endskip
 
+int ReadMinGW(int ptrbits, int nof77
+              char **mgar, char **mgran, char **mgc, char **mgf)
+/*
+ * Reads MinGW library building tools from file MinGW[32,64].dat, of form:
+ * <MinGW ar>
+ * <MinGW ranlib>
+ * <MinGW gcc>
+ * <MinGW gfortran>
+ * RETURNS: 1 if file exists, otherwise 0.
+ */
+{
+   FILE fpin;
+
+   if (ptrbts == 64)
+      fpin = fopen("MinGW64.dat", "r");
+   else
+      fpin = fopen("MinGW32.dat", "r");
+   if (!fpin)
+      return(0);
+   *mgar = ATL_fgetln(fpin);
+   *mgran = ATL_fgetln(fpin);
+   *mgc = ATL_fgetln(fpin);
+   *mgf = ATL_fgetln(fpin);
+   if (!nof77)
+      assert(*mgf);
+   assert(*mgar && *mgran && *mgc);
+   return(1);
+}
+
+void FindMinGW(int verb, int ptrbits, int nof77
+               char **mgar, char **mgran, char **mgc, char **mgf)
+/*
+ * Searches for MinGW compilers using cygwin's standard name/path on 06/11/2012
+ */
+{
+   const char *pref = (ptrbits == 64) ? "/usr/bin/x86_64-w64-mingw32-" : 
+                                        "/usr/bin/i686-w64-mingw32-" : 
+   char ln[64], *res, *cmnd;
+   sprintf(ln, "ls %sgcc-4*", pref);
+   res = atlsys_1L(NULL, ln, verb, 1);
+   if (!res)
+   {
+      sprintf(ln, "ls %sgcc.exe", pref);
+      res = atlsys_1L(NULL, ln, verb, 1);
+   }
+   if (!res)
+   {
+      fprintf(stderr,
+              "Cannot find MinGW gcc in /usr/bin, with names beginning with\n");
+      fprintf(stderr,
+              "%s* ; Make sure MinGW is installed, then try again.\n", pref);
+      fprintf(stderr,
+      "If your MinGW compiler not named like this, specify them using file\n");
+      exit(-1);
+   }
+   *mgc = res;
+   if (!nof77)
+   {
+      sprintf(ln, "ls %sgfortran*", pref);
+      res = atlsys_1L(NULL, ln, verb, 1);
+      if (!res)
+      {
+         fprintf(stderr, "MinGW gfortran not found!\n");
+         exit(-1);
+      }
+      *mgf = res;
+   }
+   else
+      *mgf = NULL;
+   sprintf(ln, "ls %sar.exe", pref);
+   res = atlsys_1L(NULL, ln, verb, 1);
+   if (!res)
+   {
+      fprintf(stderr, "MinGW ar not found!\n");
+      exit(-1);
+   }
+   *mgar = res;
+
+   sprintf(ln, "ls %sranlib.exe", pref);
+   res = atlsys_1L(NULL, ln, verb, 1);
+   if (!res)
+   {
+      fprintf(stderr, "MinGW ranlib not found!\n");
+      exit(-1);
+   }
+   *mgranlib = res;
+}
+
+char *BuildMinGW(int verb, int ptrbits, int nof77, 
+                 char *mgar, char *mgran, char *mgc, char *mgf)
+/* 
+ * Build the MinGW wrappers using the provided MinGW tool path/names
+ * RETURNS: fully qualified path to BLDdir, where MinGW wrappers are built
+ */
+{
+   char *cmnd, *mgwd;
+   int dlen, mlen, i;
+   mgwd = atlsys_1L(NULL, "pwd", verb, 1);
+   assert(mgwd);
+   blen = strlen(mgwd) + 1;
+   mlen = strlen(mgar);
+   i = strlen(mgran);
+   mlen = (mlen >= i) ? mlen : i;
+   i = strlen(mgc);
+   mlen = (mlen >= i) ? mlen : i;
+   if (mgf)
+   {
+      i = strlen(mgc);
+      mlen = (mlen >= i) ? mlen : i;
+   }
+   cmnd = malloc((blen+mlen+36)*sizeof(char));
+   assert(cmnd);
+
+   sprintf(cmnd, "make mgwar cmppath=%s -DDEFDF=%s", mgwd, mgar);
+   syschk(cmnd);
+
+   sprintf(cmnd, "make mgwranlib cmppath=%s -DDEFDF=%s", mgwd, mgranlib);
+   syschk(cmnd);
+
+   sprintf(cmnd, "make mgwgcc cmppath=%s -DDEFDF=%s", mgwd, mgc);
+   syschk(cmnd);
+
+   if (mgf)
+   {
+      sprintf(cmnd, "make mgwgfortran cmppath=%s -DDEFDF=%s", mgwd, mgf);
+      syschk(cmnd);
+   }
+   return(mgwd);
+}
+
+void GetMinGW(int verb, int ptrbits, int nof77, 
+              char **mgar, char **mgran, char **mgc, char **mgf)
+{
+   *mgar = *mgran = *mgc = *mgf = NULL;
+   if (!ReadMinGW(ptrbits, nof77 mgar, mgran, mgc, mgf))
+      FindMinGW(targ, ptrbits, nof77 mgar, mgran, mgc, mgf);
+}
+
 void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
               int ptrbits, char **usrcomps, int nof77, int vecext, 
               char *goodgcc, char *bindir)
