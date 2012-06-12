@@ -542,6 +542,11 @@ void DoArith(short dest, short src0, char op, short src1)
    GetReg(-1);
 }
 
+void DoEmptyReturn()
+{
+   InsNewInst(NULL, NULL, NULL, JMP, -PCREG, 
+              STlabellookup("_IFKO_EPILOGUE"), 0);
+}
 void DoReturn(short rret)
 {
    int retreg, srcreg;

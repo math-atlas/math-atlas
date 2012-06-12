@@ -171,6 +171,7 @@ statement : arith ';'
           | ID '=' ID       ';'   {DoMove($1, $3);}
 	  | ID '=' const ';'	  {DoMove($1, $3);}
           | RETURN avar  ';'      {DoReturn($2);}
+          | RETURN ';'            {DoEmptyReturn();}
           | NAME ':'              {DoLabel($1);}
           | GOTO NAME ';'         {DoGoto($2);}
           | ifstate ';'
