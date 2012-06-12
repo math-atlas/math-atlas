@@ -221,7 +221,11 @@
       {"@esp", "@edx", "@ecx", "@eax", "@esi", "@edi", "@ebp", "@ebx"};
       int  icallersave[NIR] = {0, 1,1,1,1,1,0,0, 1,1,1,1, 0,0,0,0};
       int  icalleesave[NIR] = {0, 0,0,0,0,0,1,1, 0,0,0,0, 1,1,1,1};
-      int iparareg[NIR] = {0,0,0,0,1,1,0,0, 1,1,0,0,0,0,0,0};
+/*
+ *    Majedul: BUGFIXED: rdx and rcx can also be used for parameters
+ */
+      /*int iparareg[NIR] = {0,0,0,0,1,1,0,0, 1,1,0,0,0,0,0,0};*/
+      int iparareg[NIR] = {0,1,1,0,1,1,0,0, 1,1,0,0,0,0,0,0};
       char *archiregs[NIR] = 
       {"@rsp", "@rdx", "@rcx", "@rax", "@rsi", "@rdi", "@rbp", "@rbx",
        "@r8", "@r9", "@r10", "@r11", "@r12", "@r13", "@r14", "@r15"};
