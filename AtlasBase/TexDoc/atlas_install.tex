@@ -2055,6 +2055,10 @@ site, and selecting the right packages.  If you have found you have
 missed a package, just rerun the install script to add it.  The packages
 that I install are pretty much everything that mentions gcc and gfortran.
 You can find these packages by entering ``gcc'' in the search box.  
+You will also need gfortran, and all the usual developer stuff (make, etc.).
+If you want to build libraries to be used by applications using MSVC++
+or the Intel compilers, you will also want to be sure to install all the
+MinGW compilers and tools (see the following sections for more info).
 
 Microsoft's Interix (AKA Windows Services for Unix, etc.) is not supported;
 Interix does not appear to be actively supported by MS, and its tools
@@ -2063,6 +2067,7 @@ the MinGW compilers (\verb|http://www.mingw.org/|), but the install itself
 still requires cygwin, and in our MinGW support we have used the MinGW 
 compilers provided by cygwin.
 
+\Wskip{
 \subsubsection{Setting up to use non-GNU native Windows compilers}
 The only native compilers that I have experience with is MSVC++ (\texttt{cl}),
 and the Intel compilers (\texttt{icl}/\texttt{ifort}).  In order to find
@@ -2124,23 +2129,95 @@ If you can't login from a remote machine to it, then the most common
 problem is that the Windows firewall is blocking it.  I had to change
 to change my windows firewall settings under control panel, under advanced
 settings, I added a rule to accept TCP port 22.
+}
+
+\subsubsection{Choosing cygwin or MinGW compilers}
+ATLAS supports two installation methods under 32-bit Windows installs, and one
+on 64-bit installs.  For Windows where the library will be used in 32-bit
+mode, the user may choose to install ATLAS using the cygwin GNU compilers.
+This is primarily useful when the user's applications are also compiled 
+using the cygwin enviromnent.  This is the default installation method
+when 32-bit is selected.
+
+However, if the user's application uses native Windows compilers such as
+MSVC++ or the Intel compilers, the cygwin libraries can be hard to link to.
+In this case, ATLAS can be installed to use the the MinGW GNU compilers, which
+provide gcc/gfortran that interoperate with native compilers.  To tell
+ATLAS to build the 32-bit libraries using the MinGW compilers, you should add:
+\begin{verbatim}
+   -b 32 -Si nocygin 1
+\end{verbatim}
+to your normal configure flags.
+
+When ATLAS is configured to build 64-bit libraries, then the only supported
+compilers are MinGW, since cygwin does not work in 64-bit mode.  Therefore,
+no additional flags beyond the usual \verb+-b 64+ need be passed to configure
+in order to build a natively interoperable 64-bit library.
+
+If you are using the MinGW compilers, configure will try to autofind the
+correct MinGW binutils, but this may fail.  If configure does not work,
+you may have to specify where your MinGW binutils are installed, as discussed
+in the following section.
+
+\subsubsection{Specifying the MinGW binutils to use}
+If ATLAS fails to find the correct MinGW compilers that you wish to use,
+you can manually specify complete paths to configure.  In the directory
+where you plan to do configure, but before doing configure, create the
+file \verb+MinGW64.dat+ for a 64-bit install, or \verb+MinGW32.dat+ for
+a 32-bit install.  This file specifies complete paths to all the MinGW
+binutils needed by ATLAS, one per line.  The first line points to
+your MinGW \verb+ar+, the second to \verb+ranlib+, the third to your \verb+gcc+,
+and the fourth to your \verb+gfortran+.  If you are planning to configure
+to not use a FORTRAN compiler (using the \verb+--nof77+ flag), then
+you can omit the gfortran line.
+
+Each line must be appropriately escaped if it contains embedded spaces or
+parens, as Windows often does.  This may or may not work, and if you have
+problems getting it to work, I recommend using logical links to create
+working paths that don't embed these characters.
+
+Here is an example of such a file as created for a 64-bit install using the
+MinGW compilers provided by cygwin, saved to \verb+BLDdir/MinGW64.dat+:
+\begin{verbatim}
+/usr/bin/x86_64-w64-mingw32-ar.exe
+/usr/bin/x86_64-w64-mingw32-ranlib.exe
+/usr/bin/x86_64-w64-mingw32-gcc-4.5.3.exe
+/usr/bin/x86_64-w64-mingw32-gfortran.exe
+\end{verbatim}
+Note that the entire file should be 4 (or 3 if gfortran isn't used) lines, 
+with no blank lines.
 
 \subsubsection{Special Instructions for 64 bit Windows (eg., Windows 7) users}
 \label{sec-windows64}
 
-If you have a 64-bit capable Windows like Windows~7, and it is possible
-for your application to use the 64-bit libraries, it is highly recommended
-to build the 64-bit versions rather than the 32-bit legacy versions.  The
-32-bit library only has access to half as many registers, which will result
-in strongly reduced performance.  Unfortunately, Windows chose not to use
-the standard AMD64 assembly ABI, and so ATLAS's assembly kernels cannot 
-be used on 64-bit Windows.  Therefore, ATLAS's architectural defaults
-cannot be used (because they include assembly files with the wrong ABI),
-and ATLAS performance is noticably worse than it is under other OSes
-(such as GNU/Linux or OS~X).  Without architectural defaults installs
-typically take most of a day.  To avoid this, I hope to create a tarfile
-of user-generated Windows Architectural defaults, which can be found in
-the errata file.
+64-bit capable Windows (like Windows~7) users can choose to build either
+the 32-bit or 64-bit libraries.  If your application requires one or the
+other, then you know which you want to use.  If you have a choice,
+the 64-bit libraries are {\em usually} faster, due to the fact that
+32-bit applications have access to only half as many registers.  However,
+Windows chose not use the standard AMD64 ABI.  This has two
+unfortunate affects: (1) A 64-bit Windows install cannot use ATLAS's
+64-bit assembly kernels, since they require the standard AMD64 ABI.
+(2) A 64-bit Windows install cannot use the architectural defaults,
+since ATLAS's architectural defaults will typically use assembly kernels
+that won't work properly under 64-bit Windows.  This means that 64-bit
+Windows installs can be substantially slower than when using the same
+hardware with another OS (eg., Linux).
+
+Therefore, on some platform where hand-tuned assembly is
+critical, 32-bit libraries can be faster than 64-bit, since Windows
+utilized the standard 32-bit ABI.  On systems where good performing 
+ANSI~C routines are available, the extra registers will likely make 64-bit
+perform faster.  Therefore, if you can use either 32- or 64-bit libraries,
+it may make sense to install both versions, and compare their performance.
+
+Without architectural defaults ATLAS installs
+typically take most of a day.  To avoid this, consult the errata file:
+the plan is to try to get Windows users to submit their architectural
+defaults, so that Windows users can help each other.  The errata file
+should contain a link to the 64-bit Windows architectural defaults tarfile
+(remember that Windows users wishing to build 32-bit libraries can
+use the standard architectural defaults).
 
 During cygwin setup, be sure
 to select the gcc and gfortran packages that start with ``ming64''.
@@ -2177,6 +2254,7 @@ from the errata file, you would instead use the additional flags:
    -b 64 -Ss ADdir <path to unpacked Win64 archdef directory>
 \end{verbatim}
 
+\Wskip{
 \subsubsection{Special Instructions for 32-bit Windows users}
 \label{sec-windows32}
 
@@ -2210,6 +2288,7 @@ This is because
 ATLAS uses the POSIX threading standard, which of course Microsoft
 does not support, and so you need the cygwin emulation layer to use
 a decade-old standard.
+}
 
 \subsection{Special instructions for AIX}
 Under AIX, it is critical that you define an envirnment variable

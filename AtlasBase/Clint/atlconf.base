@@ -1029,7 +1029,7 @@ char *ATL_fgetln(FILE *fpin)
  */
 {
    char *ln, *sp;
-   int len=2, i;
+   int len=128, i;
    ln = malloc(len*sizeof(char));
    assert(ln);
    if (!fgets(ln, len, fpin))
@@ -3219,10 +3219,10 @@ int RunAffProbe(int iaff, int verb, char *targ, int iproc)
    char *lib;
    int i=1;
 
-   if (iaff == IA_WIN)
+   if (iaff == IA_WIN || iaff == IA_WIN64)
       lib = "-lkernel32";
-   else if (iaff == IA_WIN64)
-      lib = "/usr/local/lib/msvcrt.lib";    /* works w/o -l for 64-bit MinGW */
+@skip   else if (iaff == IA_WIN64)
+@skip      lib = "/usr/local/lib/msvcrt.lib";    /* works w/o -l for 64-bit MinGW */
    else
       lib = "-lpthread";
    if (targ)
@@ -3497,7 +3497,7 @@ void PrintResults
    if (iaff)
    {
       if (iaff == IA_SETAFFNP || iaff == IA_SETPROCNP || 
-          iaff == IA_WIN64 || iaff == IA_WIN64)
+          iaff == IA_WIN64 || iaff == IA_WIN)
          fprintf(fpout, 
 "#define ATL_PAFF_LAUNCH 1  /* affinity can be set during thread launch */\n");
       else
@@ -4851,7 +4851,7 @@ COMPNODE *WinnowBadComps
 }
 @endskip
 
-int ReadMinGW(int ptrbits, int nof77
+int ReadMinGW(int ptrbits, int nof77,
               char **mgar, char **mgran, char **mgc, char **mgf)
 /*
  * Reads MinGW library building tools from file MinGW[32,64].dat, of form:
@@ -4862,9 +4862,9 @@ int ReadMinGW(int ptrbits, int nof77
  * RETURNS: 1 if file exists, otherwise 0.
  */
 {
-   FILE fpin;
+   FILE *fpin;
 
-   if (ptrbts == 64)
+   if (ptrbits == 64)
       fpin = fopen("MinGW64.dat", "r");
    else
       fpin = fopen("MinGW32.dat", "r");
@@ -4880,16 +4880,16 @@ int ReadMinGW(int ptrbits, int nof77
    return(1);
 }
 
-void FindMinGW(int verb, int ptrbits, int nof77
+void FindMinGW(int verb, int ptrbits, int nof77,
                char **mgar, char **mgran, char **mgc, char **mgf)
 /*
  * Searches for MinGW compilers using cygwin's standard name/path on 06/11/2012
  */
 {
    const char *pref = (ptrbits == 64) ? "/usr/bin/x86_64-w64-mingw32-" : 
-                                        "/usr/bin/i686-w64-mingw32-" : 
+                                        "/usr/bin/i686-w64-mingw32-";
    char ln[64], *res, *cmnd;
-   sprintf(ln, "ls %sgcc-4*", pref);
+   sprintf(ln, "ls -1 %sgcc-4*", pref);
    res = atlsys_1L(NULL, ln, verb, 1);
    if (!res)
    {
@@ -4909,7 +4909,7 @@ void FindMinGW(int verb, int ptrbits, int nof77
    *mgc = res;
    if (!nof77)
    {
-      sprintf(ln, "ls %sgfortran*", pref);
+      sprintf(ln, "ls -1 %sgfortran*", pref);
       res = atlsys_1L(NULL, ln, verb, 1);
       if (!res)
       {
@@ -4920,7 +4920,7 @@ void FindMinGW(int verb, int ptrbits, int nof77
    }
    else
       *mgf = NULL;
-   sprintf(ln, "ls %sar.exe", pref);
+   sprintf(ln, "ls -1 %sar.exe", pref);
    res = atlsys_1L(NULL, ln, verb, 1);
    if (!res)
    {
@@ -4929,14 +4929,14 @@ void FindMinGW(int verb, int ptrbits, int nof77
    }
    *mgar = res;
 
-   sprintf(ln, "ls %sranlib.exe", pref);
+   sprintf(ln, "ls -1 %sranlib.exe", pref);
    res = atlsys_1L(NULL, ln, verb, 1);
    if (!res)
    {
       fprintf(stderr, "MinGW ranlib not found!\n");
       exit(-1);
    }
-   *mgranlib = res;
+   *mgran = res;
 }
 
 char *BuildMinGW(int verb, int ptrbits, int nof77, 
@@ -4947,10 +4947,9 @@ char *BuildMinGW(int verb, int ptrbits, int nof77,
  */
 {
    char *cmnd, *mgwd;
-   int dlen, mlen, i;
+   int mlen, i;
    mgwd = atlsys_1L(NULL, "pwd", verb, 1);
    assert(mgwd);
-   blen = strlen(mgwd) + 1;
    mlen = strlen(mgar);
    i = strlen(mgran);
    mlen = (mlen >= i) ? mlen : i;
@@ -4961,36 +4960,45 @@ char *BuildMinGW(int verb, int ptrbits, int nof77,
       i = strlen(mgc);
       mlen = (mlen >= i) ? mlen : i;
    }
-   cmnd = malloc((blen+mlen+36)*sizeof(char));
+   cmnd = malloc((mlen+32)*sizeof(char));
    assert(cmnd);
 
-   sprintf(cmnd, "make mgwar cmppath=%s -DDEFDF=%s", mgwd, mgar);
+   sprintf(cmnd, "make mgwar cmppath=%s", mgar);
    syschk(cmnd);
 
-   sprintf(cmnd, "make mgwranlib cmppath=%s -DDEFDF=%s", mgwd, mgranlib);
+   sprintf(cmnd, "make mgwranlib cmppath=%s", mgran);
    syschk(cmnd);
 
-   sprintf(cmnd, "make mgwgcc cmppath=%s -DDEFDF=%s", mgwd, mgc);
+   sprintf(cmnd, "make mgwgcc cmppath=%s", mgc);
    syschk(cmnd);
 
    if (mgf)
    {
-      sprintf(cmnd, "make mgwgfortran cmppath=%s -DDEFDF=%s", mgwd, mgf);
+      sprintf(cmnd, "make mgwgfortran cmppath=%s", mgf);
       syschk(cmnd);
    }
    return(mgwd);
 }
 
-void GetMinGW(int verb, int ptrbits, int nof77, 
-              char **mgar, char **mgran, char **mgc, char **mgf)
+char *SetupMinGW(int verb, int ptrbits, int nof77)
+/*
+ * RETURNS: BLDdir, where MinGW tools have been built
+ */
 {
-   *mgar = *mgran = *mgc = *mgf = NULL;
-   if (!ReadMinGW(ptrbits, nof77 mgar, mgran, mgc, mgf))
-      FindMinGW(targ, ptrbits, nof77 mgar, mgran, mgc, mgf);
+   char *mgar=NULL, *mgran=NULL, *mgc=NULL, *mgf=NULL, *mgd;
+   if (!ReadMinGW(ptrbits, nof77, &mgar, &mgran, &mgc, &mgf))
+      FindMinGW(verb, ptrbits, nof77, &mgar, &mgran, &mgc, &mgf);
+   mgd = BuildMinGW(verb, ptrbits, nof77, mgar, mgran, mgc, mgf);
+   free(mgar);
+   free(mgran);
+   free(mgc);
+   if (mgf)
+      free(mgf);
+   return(mgd);
 }
 
 void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
-              int ptrbits, char **usrcomps, int nof77, int vecext, 
+              int ptrbits, char **usrcomps, int nof77, int nocygwin, int vecext,
               char *goodgcc, char *bindir)
 /*
  * This routine gives config a list of compilers to use.  The first NCOMP
@@ -5022,6 +5030,23 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
       }
    }
 
+/* 
+ * If the user requests MinGW install, or is on 64-bit platform, build
+ * wrapper code
+ */
+   if (nocygwin || (OS == OSWin64 && ptrbits == 64))
+   {
+      int fndit;
+      mgwd = SetupMinGW(verb, ptrbits, nof77);
+      i = strlen(mgwd);
+      mgwc = malloc(sizeof(char)*(i+7+1));
+      assert(mgwc);
+      sprintf(mgwc, "%s/mgwgcc", mgwd);
+      mgwf = malloc(sizeof(char)*(i+12+1));
+      assert(mgwf);
+      sprintf(mgwf, "%s/mgwgfortran", mgwd);
+   }
+@beginskip
 /*
  * If on Win64, build MinGW compiler wrappers. 
  * Look in /usr/bin/ for standard cygwin names for the cygwin compilers
@@ -5029,6 +5054,14 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
    if (OS == OSWin64 && ptrbits == 64)
    {
       int fndit;
+      mgwd = SetupMinGW(verb, ptrbits, nof77)
+      i = strlen(mgwd);
+      mgwc = malloc(sizeof(char)*(i+7+1));
+      assert(mgwc);
+      sprintf(mgwc, "%s/mgwgcc", mgwd);
+      mgwf = malloc(sizeof(char)*(i+12+1));
+      assert(mgwf);
+      sprintf(mgwf, "%s/mgwgfortran", mgwd);
 /*
  *    Get the present directory, which is BLDdir, to have full path to
  *    MinGW compiler wrappers
@@ -5109,6 +5142,7 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
          sprintf(mgwf, "%s/mgwgfortran", mgwd);
       }
    }
+@endskip
 /*
  * Get the ATLAS-suggested compilers and flags
  */
@@ -5852,7 +5886,7 @@ void PrintUsage(char *name, int i)
 }
 @endskip
 
-@extract -b @(basd)/atlconf.base rout=GetFlags -def -O "" -def -v "" -def -A "" -def -V "" -def -b "" -def -C "" -def -o "" -def -S "-S" -def -nof77 "-nof77" -def -d ""
+@extract -b @(basd)/atlconf.base rout=GetFlags -def -O "" -def -v "" -def -A "" -def -V "" -def -b "" -def -C "" -def -o "" -def -S "-S" -def -nof77 "-nof77" -def -d "" -def -nocygwin "-nocygwin"
 
 int main(int nargs, char **args)
 /*
@@ -5869,7 +5903,7 @@ int main(int nargs, char **args)
 {
    enum OSTYPE OS;
    enum MACHTYPE mach;
-   int ptrbits, verb, vecexts, i, nof77;
+   int ptrbits, verb, vecexts, i, nof77, nocygwin;
    char *usrcomps[3*NCOMP];
    char *outfile, *targ, *targarg, *goodgcc, *srcdir, *bindir;
    enum F2CNAME f2cnam;
@@ -5877,7 +5911,7 @@ int main(int nargs, char **args)
    enum F2CSTRING f2cstr;
 
    GetFlags(nargs, args, &verb, &OS, &vecexts, &mach, &ptrbits, usrcomps, 
-            &outfile, &srcdir, &bindir, &nof77, &targ);
+            &outfile, &srcdir, &bindir, &nof77, &nocygwin, &targ);
 
    if (verb > 1)
    {
@@ -5916,8 +5950,8 @@ int main(int nargs, char **args)
    #else
       goodgcc = FindGoodGcc(OS, mach,  verb, targ);
    #endif
-   GetComps(OS, mach, verb, targ, ptrbits, usrcomps, nof77, vecexts, goodgcc,
-            bindir);
+   GetComps(OS, mach, verb, targ, ptrbits, usrcomps, nof77, nocygwin, vecexts, 
+            goodgcc, bindir);
 /* 
  * See if we need to search for gfortran
  */
@@ -6910,6 +6944,8 @@ char *ProbeComp(int verb, char *targarg, enum OSTYPE OS, enum MACHTYPE arch,
       sprintf(stmp, "-b %d", ptrbits);
       ln = NewAppendedString(ln, stmp);
    }
+   if (nocygwin)
+      ln = NewAppendedString(ln, "-Si nocygwin 1");
    ln = NewAppendedString0(ln, "\"");
    len = strlen(ln);
    if (verb > 1)
@@ -6950,21 +6986,6 @@ char *ProbeComp(int verb, char *targarg, enum OSTYPE OS, enum MACHTYPE arch,
    fclose(fpin);
    if (comp)
       free(comp);
-/*
- * For windows only, all non-XCC gnu compilers get -mnocygwin flag if user has
- * asked for it
- */
-   if (nocygwin && OSIsWin(OS))
-   {
-      for (i=0; i < NCOMP; i++)
-      {
-         if (i != XCC_)
-         {
-            if (CompIsGcc(comps[i]))
-               comps[i+NCOMP] = NewAppendedString(comps[i+NCOMP],"-mno-cygwin");
-         }
-      }
-   }
 /*
  * Add the flag to build shared objects, if we know what it is
  */
@@ -8360,7 +8381,7 @@ int main(int nargs, char **args)
    int THREADS=0;
    int Use3DNow=0;  /* this needs to come from getflags */
    int ncpu, omp, AntThr, lapackref;
-   int USEDEFL1, USEARCHDEF, LATUNE, USEIEEE;
+   int USEDEFL1, USEARCHDEF, LATUNE, USEIEEE, USEMINGW;
    int *tids;
    #define NPREC 4
    char pres[NPREC] = {'s', 'd', 'c', 'z'};
@@ -8431,6 +8452,7 @@ int main(int nargs, char **args)
       if (!comps[NCOMP+i])
          comps[NCOMP+i] = comps[NCOMP+k];
    }
+   USEMINGW = (OSIsWin(OS) && strstr(comps[GCC_], "mgwgcc"));
 /*
  * If F77 compiler unspecified or nof77 asserted, set it to ICC for linking
  */
@@ -8721,7 +8743,7 @@ int main(int nargs, char **args)
    fprintf(fpout, "   FCLINKFLAGS = $(FLINKFLAGS)");
    if (strstr(comps[F77_], "ifort") && !OSIsWin(OS))
       fprintf(fpout, " -nofor_main");
-   if (OS == OSWin64 && ptrbits == 64)
+   if (USEMINGW)
       fprintf(fpout, "\n   ARCHIVER = $(BLDdir)/mgwar\n");
    else
       fprintf(fpout, "\n   ARCHIVER = ar\n");
@@ -8731,7 +8753,7 @@ int main(int nargs, char **args)
  */
    if (OS == OSOSX)
       fprintf(fpout, "   RANLIB   = ranlib\n\n");
-   else if (OS == OSWin64 && ptrbits == 64)
+   else if (USEMINGW)
       fprintf(fpout, "   RANLIB   = $(BLDdir)/mgwranlib\n\n");
    else
       fprintf(fpout, "   RANLIB   = echo\n\n");
