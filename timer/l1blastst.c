@@ -304,12 +304,12 @@ Mjoin( AP1, rotm )(      N,     X, iX, Y, iY,                  PARAM )
                                TYPE *Y, const int incY);
       #define test_dot(        N,     X, iX, Y, iY                         ) \
          Mjoin(PRE,dot_mike)(N, X, iX, Y, iY)
-/*
-      #if defined(IFKO)
+
+    #elif defined(IFKO)
       TYPE ATL_UDOT( int N, TYPE *X, int iX, TYPE *Y, int iY );
       #define test_dot(        N,     X, iX, Y, iY                         ) \
          ATL_UDOT(             N,     X, iX, Y, iY                         )
-*/
+
    #else
       #define test_dot(        N,     X, iX, Y, iY                         ) \
          Mjoin( AP1, dot )(       N,     X, iX, Y, iY                         )
@@ -319,15 +319,6 @@ Mjoin( AP1, rotm )(      N,     X, iX, Y, iY,                  PARAM )
 Mjoin( AP1, dotc_sub )(  N,     X, iX, Y, iY,                  DOT   )
 #define test_dotu(       N,     X, iX, Y, iY,                  DOT   ) \
 Mjoin( AP1, dotu_sub )(  N,     X, iX, Y, iY,                  DOT   )
-#endif
-
-/*
- * Majedul: need to figure out which verision I need to replace with
- */
-#if defined(IFKO)
-      TYPE ATL_UDOT( int N, TYPE *X, int iX, TYPE *Y, int iY );
-      #define test_dot(        N,     X, iX, Y, iY                         ) \
-         ATL_UDOT(             N,     X, iX, Y, iY                         )
 #endif
 
 #ifdef SREAL
