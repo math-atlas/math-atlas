@@ -340,6 +340,8 @@ Mjoin( ASD, dot )(       N, B,  X, iX, Y, iY                         )
 
 #ifdef  ATL_NTHREADS
 #define LCSIZE          ATL_NTHREADS * L2SIZE
+#elif IFKO
+#define LCSIZE CACHESIZE
 #else
 #define LCSIZE          L2SIZE
 #endif
@@ -4251,7 +4253,6 @@ void RunsclCase
             else                pass = "FAIL ";
 
             if( ires > 0 ) (*NPASSED)++;
-
             if( ( mftrust > 0.0 ) && ( mftest > 0.0 ) ) t0 = mftest / mftrust;
             else                                        t0 = 0.0;
 #ifdef TREAL
