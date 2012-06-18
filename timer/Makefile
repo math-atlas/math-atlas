@@ -8,8 +8,8 @@ acmld = /opt/acml5.1.0/
 #----------------------------
 # Set reference library here 
 #----------------------------
-FBLASlib = $(LIBdir)/libf77refblas.a
-#FBLASlib = $(acmld)/gfortran64/lib/libacml.a
+#FBLASlib = $(LIBdir)/libf77refblas.a
+FBLASlib = $(acmld)/gfortran64/lib/libacml.a
 
 BLASlib = $(FBLASlib)
 
@@ -34,12 +34,12 @@ xdl1blastst_ifko : dl1blastst_ifko.o dl1lib dtstlib
 
 sl1blastst_ifko.o : $(mySRCdir)/l1blastst.c $(INCSdir)/atlas_misc.h \
                     $(INCSdir)/atlas_tst.h $(INCSdir)/atlas_level1.h
-	$(ICC) -o $@ -c $(ICCFLAGS) -DSREAL -DIFKO  $(mySRCdir)/l1blastst.c
+	$(ICC) -o $@ -c $(ICCFLAGS) -DSREAL -DIFKO -DALIGN32  $(mySRCdir)/l1blastst.c
 
 
 dl1blastst_ifko.o : $(mySRCdir)/l1blastst.c $(INCSdir)/atlas_misc.h \
                    $(INCSdir)/atlas_tst.h $(INCSdir)/atlas_level1.h
-	$(ICC) -o $@ -c $(ICCFLAGS) -DDREAL -DIFKO  $(mySRCdir)/l1blastst.c
+	$(ICC) -o $@ -c $(ICCFLAGS) -DDREAL -DIFKO -DALIGN32 $(mySRCdir)/l1blastst.c
 
 ssl1lib: sl1lib
 sl1lib: auxlib
