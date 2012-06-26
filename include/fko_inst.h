@@ -18,6 +18,7 @@ enum comp_flag
    CF_LOOP_END,
    CF_VRED_END,
    CF_SCAL_RES,     /* for Speculative vectorization*/
+   CF_SSV_SUPDATE,
    CF_SSV_VUPDATE,
    CF_SSV_VRECOVERY
 };
@@ -157,6 +158,7 @@ enum inst
    VDADD,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 + vr2 */
    VDSUB,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 - vr2 */
    VDMUL,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
+   VDDIV,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */ 
    VDMAC,                      /* [vr0], [vr1], [vr2] : vr0 += vr1 * vr2 */
    VDABS,                      /* [vr0], [vr1] : vr0 = abs(vr1) */
    VDSHUF,                     /* [vr0], [vr1], [int32]; vr0 = shuf(vr1|vr0) */
@@ -180,6 +182,7 @@ enum inst
    VFADD,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 + vr2 */
    VFSUB,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 - vr2 */
    VFMUL,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
+   VFDIV,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
    VFMAC,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
    VFABS,                      /* [vr0], [vr1] : vr0 = abs(vr1) */
    VFSHUF,                     /* [vr0], [vr1], [int32]; vr0 = shuf(vr1|vr0) */
@@ -357,6 +360,7 @@ char *instmnem[] =
    "VDADD",
    "VDSUB",
    "VDMUL",
+   "VDDIV",
    "VDMAC",
    "VDABS",
    "VDSHUF",
@@ -376,6 +380,7 @@ char *instmnem[] =
    "VFADD",
    "VFSUB",
    "VFMUL",
+   "VFDIV",
    "VFMAC",
    "VFABS",
    "VFSHUF",

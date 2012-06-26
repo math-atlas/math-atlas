@@ -1956,7 +1956,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             sptr = "UNKNOWN COMPFLAG";
          }
          #ifdef X86
-            /*continue;*/ /*just to skip the FLAG comments*/ 
+            continue; /*just to skip the FLAG comments*/ 
 	    ap->next = PrintAssln("# CMPFLAG %d %d %d; %s\n",
                                   op1, op2, op3, sptr);
          #elif defined(SPARC)
@@ -2135,7 +2135,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
 	 break;
       case COMMENT:
          #ifdef X86
-             /*continue; */ /* skip comments temporary for testing with ATLAS*/
+            continue; /* skip comments temporary for testing with ATLAS*/
             ap->next = PrintAssln("#%s\n", op1 ? STname[op1-1] : "");
          #elif defined(SPARC)
             ap->next = PrintAssln("!%s\n", op1 ? STname[op1-1] : "");
@@ -2322,6 +2322,18 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #else
             assert(op1 == op2);
             ap->next = PrintAssln("\tmulpd\t%s, %s\n", GetDregOrDeref(op3),
+                               archvdregs[-VDREGBEG-op1]);
+         #endif
+         break;
+      case VDDIV:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvdivpd\t%s, %s, %s\n", 
+                                  GetDregOrDeref(op3),
+                                  archvdregs[-VDREGBEG-op2],
+                                  archvdregs[-VDREGBEG-op1]);
+         #else
+            assert(op1 == op2);
+            ap->next = PrintAssln("\tdivpd\t%s, %s\n", GetDregOrDeref(op3),
                                archvdregs[-VDREGBEG-op1]);
          #endif
          break;
@@ -2699,6 +2711,18 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #else
             assert(op1 == op2);
             ap->next = PrintAssln("\tmulps\t%s, %s\n", GetDregOrDeref(op3),
+                                  archvfregs[-VFREGBEG-op1]);
+         #endif 
+         break;
+      case VFDIV:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvdivps\t%s, %s, %s\n", 
+                                  GetDregOrDeref(op3),
+                                  archvfregs[-VFREGBEG-op2],
+                                  archvfregs[-VFREGBEG-op1]);
+         #else
+            assert(op1 == op2);
+            ap->next = PrintAssln("\tdivps\t%s, %s\n", GetDregOrDeref(op3),
                                   archvfregs[-VFREGBEG-op1]);
          #endif 
          break;
