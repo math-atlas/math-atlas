@@ -7,9 +7,10 @@ echo $scripttime
 #
 # set all paths. 
 #
-FKOPATH=/home/msujon/iFKO
-TIMEdir=/home/msujon/iFKO/timer
-SCRIPTdir=/home/msujon/iFKO/scripts
+#FKOPATH=/home/msujon/iFKO
+FKOPATH=/home/msujon/Research/working/iFKO-Norm2-SSV/iFKO
+TIMEdir=${FKOPATH}/timer
+SCRIPTdir=${FKOPATH}/scripts
 
 FKOLIBdir=$TIMEdir/lib
 mkdir $FKOLIBdir
