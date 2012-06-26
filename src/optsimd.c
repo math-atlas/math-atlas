@@ -269,15 +269,16 @@ short FindReadUseType(INSTQ *ip, short var, int blkvec)
    for (il=ib; il; il = il->next)
    {
       ip = il->inst;
-      if (ip->next->inst[0] == FADD || ip->next->inst[0] == FADDD)
+      if (ip->next->inst[0] == FADD || ip->next->inst[0] == FADDD ||
+          ip->next->inst[0] == FMAC || ip->next->inst[0] == FMACD)
          j |= VS_ACC;
       else if (IS_STORE(ip->next->inst[0])&& STpts2[ip->next->inst[2]-1] == var)
       {
          j |= FindReadUseType(ip->next, var, blkvec);
          j |= FindReadUseType(ip->next, STpts2[ip->next->inst[1]-1], blkvec);
       }
-      else
-         j |= VS_MUL;
+      else 
+         j |= VS_MUL; /* VS_MUL represents anything but accumulator */
    }
    KillIlist(ib);
    return(j);
@@ -303,7 +304,10 @@ int DoLoopSimdAnal(LOOPQ *lp)
    extern short STderef;
 
    if (!lp)
+   {
+      fko_warn(__LINE__, " No Loop to Vectorize\n\n");
       return(1);
+   }
 /*
  * Require one and only one post-tail to simplify analysis
  */
@@ -359,6 +363,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
  */
    if (!n)
    {
+      fko_warn(__LINE__, "No fp vars : Nothing to Vectorize!\n\n");
       free(sp);
       return(4);
    }
@@ -574,6 +579,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
             j = 0;
             for (il=ib; il; il = il->next)
             {
+               ip = il->inst; /* FIXED: ip is assigned here */
                if (ip->prev->inst[0] != FADD || ip->prev->inst[0] != FADDD)
                {
                   fko_warn(__LINE__, 
@@ -1279,7 +1285,7 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
 /*
  * all these arrays store element count at 0 position.
  */
-   short *sp, *s;        /* temporary ptrs */
+   short *sp, *s, *scf;        /* temporary ptrs */
 /*
  * tempory for paths 
  */
@@ -1630,16 +1636,25 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
  *    Find out how to init livein and reduce liveout vars
  */
       s = vsflag+1;
+      scf = sflag+1;
+
       for (i=0; i < n; i++)
       {
+#if 0         
 /*
  *       For livein variables, any access is legal, but only handled in 2 ways:
  *       If adder, init one val to 0, others to init val, if anything else
  *       (MUL or assignment), init all vals to same
  *
  */
+/*
+ *       Majedul: vars can be both LIVEIN and LIVEOUT. So, in analysis phrase
+ *       why not we check for both. 
+ */
          if (s[i] & VS_LIVEIN) /* skip private variable here */
          {
+            /*fprintf(stderr,"%d(%s) : LIVEIN\n",
+                        sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");*/
             j = FindReadUseType(lp->header->inst1, sp[i], blkvec);
             if (j == VS_ACC)
             {
@@ -1668,9 +1683,16 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
 /*
  *       Output scalars must be accumulators to vectorize
  */
-         else if (s[i] & VS_LIVEOUT)
+         if (s[i] & VS_LIVEOUT)
          {
+            /*fprintf(stderr,"%d(%s) : LIVEOUT\n",
+                        sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");*/
             SetVecAll(iv, 0);
+/*
+ *          Majedul: Check this function. Need to resolved norm2
+ *          for SSQ, we need to differentiate the scal and ssq as input/ouput
+ *          although both are LIVEOUT at the exit of the loop
+ */
             ib = FindPrevStore(lp->posttails->blk->inst1, sp[i],blkvec, iv);
             j = 0;
             vsoflag[i+1] |= VS_ACC;
@@ -1680,9 +1702,17 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
             sflag[i+1] |= SC_OMIXED;
             for (il=ib; il; il = il->next)
             {
+/*
+ *             Majedul: 
+ *             FIXME: Figure out the ip issue. Shouldn't be it derived from
+ *             ILIST pointer il !!??
+ */
+               ip = il->inst; /* FIXED */
                if (ip->prev->inst[0] == FADD || ip->prev->inst[0] == FADDD)
                {
                   sflag[i+1] &= ~SC_OMUL;
+                  fprintf(stderr, "var = %s -> ACCUMULATOR\n",
+                          STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
                }
                else if (ip->prev->inst[0] == FMUL || ip->prev->inst[0] == FMULD)
                {
@@ -1695,6 +1725,13 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
                }
                else
                {
+                  fprintf(stderr,"var = %s : prev_inst = %s, cur_inst = %s\n", 
+                          STname[sp[i]-1] ? STname[sp[i]-1] : "NULL", 
+                          instmnem[ip->prev->inst[0]],instmnem[ip->inst[0]]);
+                  fprintf(stderr, "cur_inst_dest = %s\n",
+                          STname[STpts2[ip->inst[1]]-1] ? 
+                          STname[STpts2[ip->inst[1]]-1] : "NULL"); 
+
                   fko_warn(__LINE__,
                 "Non-add use of output var %d(%s) prevents vectorization!!\n\n",
                            sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
@@ -1706,10 +1743,98 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
             }
             KillIlist(ib);
          }
-         else /* Only Private variables are not livein and liveout */
+/*       Only private variables are neither livein nor liveout */               
+         if (!(s[i] & VS_LIVEIN) && ! (s[i] & VS_LIVEOUT)) 
          {
+            /*fprintf(stderr,"%d(%s) : PRIVATE\n",
+                        sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");*/
             sflag[i+1] |= SC_PRIVATE;
          }
+#else
+/*
+ *       Majedul: Re-write the analysis for livein/liveout var to be acc/mul
+ *       NOTE: for livein var, we can handle both accumulator and MUL/DIV/ASSIGN
+ *       for liveout, we can handle accumulator when it is reduction var and 
+ *       if it is not set inside the loop/path, we can handle MUL/DIV/ASSIGN.
+ */
+         if (scf[i] & SC_LIVEIN) /* need to check for the vector init */
+         {
+/*
+ *          There are two options: 
+ *          a) Accumulator: both use and set, but use only with ADD
+ *          b) Not set/ only used: used for MUL/DIV.... ADD? skip right now
+ */
+            j = FindReadUseType(lp->header->inst1, sp[i], blkvec);
+            
+            if ( (scf[i] & SC_SET) && (scf[i] & SC_USE) ) /*mustbe used as acc*/
+            {
+               if (j == VS_ACC)
+               {
+                  s[i] |= VS_ACC;
+                  scf[i] |= SC_IACC;
+               }
+               else
+               {
+                  fko_warn(__LINE__,
+                          "var %d(%s) must be Accumulator !!\n\n",
+                           sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
+                  errcode += 64;
+                  scf[i] |= SC_IMIXED;
+               }
+            }
+            else if (scf[i] & SC_USE)
+            {
+               if (j == VS_MUL) /*includes div: check this func, make explicit*/
+               {
+                  s[i] |= VS_MUL;
+                  scf[i] |= SC_IMUL;
+               }
+               else
+               {
+                  fko_warn(__LINE__,
+                           "Mixed use of var %d(%s) prevents vectorization!!\n",
+                           sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
+                  errcode += 64;
+                  scf[i] |= SC_IMIXED;
+               }
+            }
+         }
+
+         if (scf[i] & SC_LIVEOUT) /* if it is set, it must be acc*/
+         {
+            if (scf[i] & SC_SET)
+            {
+/*
+ *             Now, we need to check whether it is used as accumulator!
+ *             it is already checked in LIVEIN part as accumulator must also
+ *             be LIVEIN... right now
+ */   
+               if (! (s[i] & VS_ACC))
+               {
+                  fko_warn(__LINE__,
+                          "Liveout var %d(%s) must be Accumulator when set!!\n",
+                           sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
+                  errcode +=128;
+               }
+
+            }
+            else if (scf[i] & SC_USE)
+            {
+/*
+ *             if the variable is only used, it can be vectorized. 
+ *             Need to check whether it is only used for MUL/DIV
+ */
+
+            }
+         }
+/*
+ *       Private vars, nothing to worry
+ */
+         if (!(scf[i] & SC_LIVEIN) && ! (scf[i] & SC_LIVEOUT)) 
+         {
+            scf[i] |= SC_PRIVATE;
+         }
+#endif
       }
    }
 /*
@@ -1762,6 +1887,23 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
       fprintf(stderr, "%s(%d) ",STname[path->scal[i]-1],path->sflag[i]);
    }
    fprintf(stderr, "\n");
+/*  print flags of each scalar*/
+   for (N=scal[0], i=1; i <= N; i++)
+   {
+      fprintf(stderr, "%s : ",STname[path->scal[i]-1]);
+      if (path->sflag[i] & SC_LIVEIN) fprintf(stderr, "LIVEIN ");
+      if (path->sflag[i] & SC_LIVEOUT) fprintf(stderr, "LIVEOUT ");
+      if (path->sflag[i] & SC_PRIVATE) fprintf(stderr, "PRIVATE ");
+      if (path->sflag[i] & SC_SET) fprintf(stderr, "SET ");
+      if (path->sflag[i] & SC_USE) fprintf(stderr, "USE ");
+      if (path->sflag[i] & SC_IACC) fprintf(stderr, "IN_ACC ");
+      if (path->sflag[i] & SC_OACC) fprintf(stderr, "OUT_ACC ");
+      if (path->sflag[i] & SC_IMUL) fprintf(stderr, "IN_MUL ");
+      if (path->sflag[i] & SC_OMUL) fprintf(stderr, "OUT_MUL ");
+      fprintf(stderr, "\n");
+   }
+
+   fprintf(stderr, "ERR CODE: %d\n",errcode);
 #endif 
 
 return errcode;
@@ -1908,10 +2050,14 @@ int SpeculativeVecTransform(LOOPQ *lp)
  * 
  */
    static enum inst
-      sfinsts[]= {FLD,  FST,  FMUL,  FMAC, FADD,  FSUB,  FABS,  FMOV,  FZERO},
-      vfinsts[]= {VFLD, VFST, VFMUL, VFMAC, VFADD, VFSUB, VFABS, VFMOV, VFZERO},
-      sdinsts[]= {FLDD, FSTD, FMULD, FMACD, FADDD, FSUBD, FABSD, FMOVD, FZEROD},
-      vdinsts[]= {VDLD, VDST, VDMUL, VDMAC, VDADD, VDSUB, VDABS, VDMOV, VDZERO};
+      sfinsts[]= {FLD,  FST,  FMUL, FDIV,  FMAC, FADD,  FSUB,  FABS,  FMOV,  
+                  FZERO},
+      vfinsts[]= {VFLD, VFST, VFMUL, VFDIV, VFMAC, VFADD, VFSUB, VFABS, VFMOV, 
+                  VFZERO},
+      sdinsts[]= {FLDD, FSTD, FMULD, FDIVD, FMACD, FADDD, FSUBD, FABSD, FMOVD, 
+                  FZEROD},
+      vdinsts[]= {VDLD, VDST, VDMUL, VDDIV, VDMAC, VDADD, VDSUB, VDABS, VDMOV, 
+                  VDZERO};
 /*
  * for vector cmp... temporary solution for siamax using JGT
  * need to generalized later
@@ -1927,11 +2073,12 @@ int SpeculativeVecTransform(LOOPQ *lp)
          vfcmpinsts[] = {VFCMPEQW, VFCMPNEW, VFCMPLTW, VFCMPNLEW, VFCMPNLTW},
          vdcmpinsts[] = {VDCMPEQW, VDCMPNEW, VDCMPLTW, VDCMPNLEW, VDCMPNLTW};
       #endif
-   const int nbr=5;
+   const int nbr = 5;
 
-   const int nvinst=9;
-   enum inst sld, vld, sst, vst, smul, vmul, smac, vmac, sadd, vadd, ssub, vsub,
-             sabs, vabs, smov, vmov, szero, vzero, inst, binst, mskinst;
+   const int nvinst = 10;
+   enum inst sld, vld, sst, vst, smul, vmul, sdiv, vdiv, smac, vmac, sadd, vadd,
+             ssub, vsub, sabs, vabs, smov, vmov, szero, vzero, inst, binst, 
+             mskinst;
    short r0, r1, op, ir, vrd;
    enum inst *sinst, *vinst, *vcmpinst;
    int i, j, n, k, m, mskval, nfr=0;
@@ -2062,17 +2209,22 @@ int SpeculativeVecTransform(LOOPQ *lp)
       }
 /*
  *    Output vars are known to be updated only by ADD
+ *    Majedul: output var doesn't have to be accumulator. We will 
+ *    Handle var after checking the VS_ACC flag
+ *
  */
       if (VS_LIVEOUT & lp->vsflag[i+1])
       {
          j++;
-         assert((lp->vsoflag[i+1] & (VS_MUL | VS_EQ | VS_ABS)) == 0);
-         iptp = PrintComment(lp->posttails->blk, iptp, iptn,
-                  "Reduce accumulator vector for %s", STname[lp->vscal[i+1]-1]);
-         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vld, -r0,
-                           SToff[lp->vvscal[i+1]-1].sa[2], 0);
-         if (vld == VDLD)
+         /*assert((lp->vsoflag[i+1] & (VS_MUL | VS_EQ | VS_ABS)) == 0);*/
+         if (lp->vsflag[i+1] & VS_ACC)
          {
+            iptp = PrintComment(lp->posttails->blk, iptp, iptn,
+                  "Reduce accumulator vector for %s", STname[lp->vscal[i+1]-1]);
+            iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vld, -r0,
+                              SToff[lp->vvscal[i+1]-1].sa[2], 0);
+            if (vld == VDLD)
+            {
             #if defined(X86) && defined(AVX)
                iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
                                  -r0, STiconstlookup(0x3276));
@@ -2092,9 +2244,9 @@ int SpeculativeVecTransform(LOOPQ *lp)
                iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS,
                                  SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
             #endif
-         }
-         else
-         {
+            }
+            else
+            {
             #if defined(X86) && defined(AVX)
                iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
                                  -r1, -r0, STiconstlookup(0x7654FEDC));
@@ -2122,6 +2274,16 @@ int SpeculativeVecTransform(LOOPQ *lp)
                iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSTS,
                                  SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
             #endif
+            }
+         }
+         else /* VS_MUL/ VS_DIV*/
+         {
+            iptp = PrintComment(lp->posttails->blk, iptp, iptn,
+                  "Reduce vector for %s", STname[lp->vscal[i+1]-1]);
+            iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vld, -r0,
+                              SToff[lp->vvscal[i+1]-1].sa[2], 0);
+            iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vsst,
+                              SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
          }
       }
    }
@@ -2502,13 +2664,130 @@ void AddInstBackupRecovery(BLIST *scope, LOOPQ *lp)
    
 }
 
-void AddBackupRecovery()
+void AddBackupRecover(LOOPQ *lp, BBLOCK *bp0, int spath)
 /*
  * adds back in vector path and recovery at the first of scalar path
  */
 {
 
 }
+
+void AddScalarUpdate(LOOPQ *lp, BBLOCK *bp0, int spath)
+/*
+ * Vector-to-scalar reduction to operate on scalar in Scalar Restart
+ */
+{
+   int i, j, k, N;
+   short r0, r1, op;
+   short scal, spsflag, vpsflag, vscal, vvflag;
+   INSTQ *ip;
+   BLIST *bl;
+   LOOPPATH *vp, *sp;
+
+   vp = PATHS[VPATH];
+   sp = PATHS[spath];
+
+/*
+ * Note: variable that is set on vector path needs vector to scalar reduction.
+ * If there are other scalar paths, we may need vector to scalar reduction 
+ * for that also, as at the end of scalar path, scalar is updated to vector.
+ * NOTE: Right now, we just consider 2 paths!!!
+ */
+   assert(NPATH <= 2); /* we will handle more paths later*/
+   
+   for (i=1, N=vp->vscal[0]; i <= N; i++)
+   {
+      vscal = vp->vscal[i];
+      vpsflag = vp->sflag[i]; /* flags for the vars */
+/*
+ *    if it is private vector variable, nothing to do.
+ */
+      if (vpsflag & SC_PRIVATE )  
+         continue; 
+   
+      if ( (vpsflag & SC_USE) && !(vpsflag & SC_SET))
+         continue; /* not modified in vpath, so use scalar directly */
+
+      else if ( vpsflag & SC_SET )
+      {
+/*
+ *       This var is updated in vpath as vector. So, reduce the updated one 
+ *       into scalar
+ */
+         vvflag = vp-> vsflag[i];
+         if (vvflag & VS_ACC ) /* accumulator! so, reduce it*/
+         {
+           ip = bp0->instN;
+           r0 = GetReg(FLAG2TYPE(lp->vflag));
+           r1 = GetReg(FLAG2TYPE(lp->vflag));
+/*
+ *         Reduce this vector in scalar, vvscal has the vector of corresponding
+ *         scalar of vscal in vector path
+ */         
+           if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+           {
+              ip = PrintComment(bp0, ip, NULL, "Reduce accumulator vector for%s"
+                                ,STname[vscal-1]);
+              ip = InsNewInst(bp0, ip, NULL, VFLD, -r0, 
+                              SToff[lp->vvscal[i]-1].sa[2], 0);
+               #if defined(X86) && defined(AVX)
+                  ip = InsNewInst(bp0, ip, NULL, VFSHUF, -r1, -r0, 
+                                    STiconstlookup(0x7654FEDC));
+                  ip = InsNewInst(bp0, ip, NULL,VFADD,-r0,-r0,-r1);
+                  ip = InsNewInst(bp0, ip, NULL, VFSHUF, -r1, -r0, 
+                                    STiconstlookup(0x765432BA));
+                  ip = InsNewInst(bp0, ip, NULL,VFADD,-r0,-r0,-r1);
+                  ip = InsNewInst(bp0, ip, NULL, VFSHUF, -r1, -r0, 
+                                    STiconstlookup(0x76CD3289));
+                  ip = InsNewInst(bp0, ip, NULL,VFADD,-r0,-r0,-r1);
+                  ip = InsNewInst(bp0, ip, NULL, VFSTS, 
+                                    SToff[lp->vscal[i]-1].sa[2], -r0, 0);
+               #else
+                  ip = InsNewInst(bp0, ip, NULL, VFSHUF, -r1, -r0, 
+                                    STiconstlookup(0x3276));
+                  ip = InsNewInst(bp0, ip, NULL,VFADD,-r0,-r0,-r1);
+                  ip = InsNewInst(bp0, ip, NULL, VFSHUF, -r1, -r0, 
+                                    STiconstlookup(0x5555));
+                  ip = InsNewInst(bp0, ip, NULL,VFADD,-r0,-r0,-r1);
+                  ip = InsNewInst(bp0, ip, NULL, VFSTS,
+                                    SToff[lp->vscal[i]-1].sa[2], -r0, 0);
+               #endif
+           }
+           else  /* type is double */
+           {
+              ip = PrintComment(bp0, ip, NULL, "Reduce accumulator vector for%s"
+                                ,STname[vscal-1]);
+              ip = InsNewInst(bp0, ip, NULL, VDLD, -r0, 
+                              SToff[lp->vvscal[i]-1].sa[2], 0);
+               #if defined(X86) && defined(AVX)
+                  ip = InsNewInst(bp0, ip, NULL, VDSHUF, -r1, -r0, 
+                                    STiconstlookup(0x3276));
+                  ip = InsNewInst(bp0, ip, NULL,VDADD,-r0,-r0,-r1);
+                  ip = InsNewInst(bp0, ip, NULL, VDSHUF, -r1, -r0, 
+                                    STiconstlookup(0x3715));
+                  ip = InsNewInst(bp0, ip, NULL,VDADD,-r0,-r0,-r1);
+                  ip = InsNewInst(bp0, ip, NULL, VDSTS,
+                                    SToff[lp->vscal[i]-1].sa[2], -r0, 0);
+               #else
+                  ip = InsNewInst(bp0, ip, NULL, VDSHUF, -r1, -r0, 
+                                    STiconstlookup(0x33));
+                  ip = InsNewInst(bp0, ip, NULL,VDADD,-r0,-r0,-r1);
+                  ip = InsNewInst(bp0, ip, NULL, VDSTS,
+                                    SToff[lp->vscal[i]-1].sa[2], -r0, 0);
+               #endif
+           }
+
+           GetReg(-1);
+
+         }
+         else /* not accumulator. So, must be MUL/DIV. just broadcast */
+         {
+
+         }
+      }
+   }
+}
+
 void AddVectorUpdate(LOOPQ *lp, BBLOCK *blk, int spath)
 /*
  * updates necessary vars for the next speculative vector iteration
@@ -2517,7 +2796,7 @@ void AddVectorUpdate(LOOPQ *lp, BBLOCK *blk, int spath)
    BLIST *bl;
    INSTQ *ip;
    int i, j, k, N, N1, found;
-   short scal, spsflag, vpsflag, vscal;
+   short scal, spsflag, vpsflag, vscal, vsflag;
    short vlen;
    LOOPPATH *vp, *sp;
    BBLOCK *bp;
@@ -2579,6 +2858,7 @@ void AddVectorUpdate(LOOPQ *lp, BBLOCK *blk, int spath)
       //scal = vp->scal[i];   /* scal and vscal are same for vector path */
       vscal = vp->vscal[i];
       vpsflag = vp->sflag[i]; /* flags for the vars */
+      vsflag = vp->vsflag[i]; /* lp->vsflag[i]*/
 /*
  *    if it is private vector variable, nothing to do.
  */
@@ -2645,14 +2925,497 @@ void AddVectorUpdate(LOOPQ *lp, BBLOCK *blk, int spath)
  */
       else if ( (vpsflag & SC_USE) && (vpsflag & SC_SET) )
       {
-
+         r0 = GetReg(FLAG2TYPE(lp->vflag));
+         ip = FindCompilerFlag(blk, CF_SSV_VUPDATE);
+         if (!ip)
+            ip = InsNewInst(blk, NULL, NULL, CMPFLAG, CF_SSV_VUPDATE, 0, 0);
+      
+         if (VS_ACC & lp->vsflag[i])
+            ip = PrintComment(blk, ip, NULL,
+               "Init accumulator vector for %s", STname[lp->vscal[i]-1]);
+         else
+            ip = PrintComment(blk, ip, NULL,
+               "Init vector equiv of %s", STname[lp->vscal[i]-1]);
+         ip = InsNewInst(blk, ip, NULL, vsld, -r0,
+                    SToff[lp->vscal[i]-1].sa[2], 0);
+         if (!(VS_ACC & lp->vsflag[i]))
+            ip = InsNewInst(blk, ip, NULL, vshuf, -r0, -r0, STiconstlookup(0));
+         ip = InsNewInst(blk, ip, NULL, vst,
+                    SToff[lp->vvscal[i]-1].sa[2], -r0, 0);
+         GetReg(-1);
       }
 
    }
 
 }
 
+void SetScalarRestartOptFlag(LOOPQ *lp, int *lpOpt, int *usesIndex, int *usesPtr)
+{
+   int i, j;
+   int lo, ui, up;
+   ILIST *il;
+   struct ptrinfo *pi;
+/*
+ * by default, all are set. 
+ */
+   lo = 1; ui = 1; up = 1;
+/*
+ * Check all paths of the loop is optimizable for loop control and loop_mov_ptr
+ * Right now, consider both yes or no. Later can be optimized for either one
+ */
+   for (i = 0; i< NPATH; i++ )
+   {
+      if ( !(PATHS[i]->lpflag & LP_OPT_LCONTROL) || 
+           !(PATHS[i]->lpflag & LP_OPT_MOVPTR) )
+      {
+         lo = 0;
+         break;
+      }
+   }
+/*
+ * Check whether index is used inside the optloop
+ */
+   if (lo)
+   {
+      KillLoopControl(lp);
+      il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
+      if (il) KillIlist(il);
+      else ui = 0;
+      pi = FindMovingPointers(lp->blocks);
+      if (!pi)
+         up = 0;
+   }
+
+/*
+ * Update the flags
+ */
+   *lpOpt = lo;
+   *usesIndex = ui;
+   *usesPtr = up;
+}
+
+void DupBlkPathWithOpt(LOOPQ *lp, BLIST **dupblks, int islpopt, int UsesIndex,
+                       int UsesPtrs, int path)
+/*
+ * duplicates loop blks vector lenth's time with loop index and ptr update
+ * optimization if valid
+ */
+{
+   int i, j;
+   int vlen, URbase, cflag;
+   int iv;
+   BBLOCK *newCF, *bp;
+   INSTQ *ip, *ipn;
+   BLIST *bl;
+   char ln[512];
+   struct ptrinfo *pi;
+   extern int FKO_BVTMP;
+   static int fid = 1;
+
+   vlen = Type2Vlen(lp->vflag);
+   URbase = (lp->flag & L_FORWARDLC_BIT) ? 0 :vlen-1;
+   iv = FKO_BVTMP;
+   SetVecAll(iv, 0);
+
+   for ( i=0; i < vlen; i++)
+   {
+      SetVecBit(lp->blkvec, lp->header->bnum-1, 0);
+      FKO_BVTMP = iv = BitVecCopy(FKO_BVTMP, lp->blkvec);
+      newCF = DupCFScope(lp->blkvec, iv, fid++, lp->header);
+      assert(newCF->ilab);
+      SetVecBit(lp->blkvec, lp->header->bnum-1,1);
+      iv = BitVecCopy(iv, lp->blkvec);
+      dupblks[i] = CF2BlockList(NULL, iv, newCF);   
+#if 0
+      fprintf(stderr, "dupblks : ");
+      for (bl = dupblks[i]; bl; bl=bl->next)
+         fprintf(stderr, "%d ", bl->blk->bnum);
+      fprintf(stderr, "\n");
+      ShowFlow(NULL, newCF);      
+#endif
+/*
+ *    if all paths are loop control and moving ptr optimizable, then delete
+ *    loop control and moving ptr form duplicated blocks and update the load
+ *    of the pointer accordingly.
+ *    NOTE: don't kill loop control and moving pointer from the optloop. it 
+ *    may be needed in vector transform stage. so, delete those from copied
+ *    blocks
+ */
+      if (islpopt)
+      {
+/*
+ *       Assuming loop control is deleted before the scalar Restart.
+ *       Now, find moving pointer and update pointer loads accordingly
+ *       in dublicated blocks
+ */
+         pi = FindMovingPointers(dupblks[i]);
+         assert(pi);
+         ip = KillPointerUpdates(pi, i);
+         for (; ip; ip = ipn)
+         {
+            ipn = ip->next;
+            free(ip);
+         }
+         UpdatePointerLoads(dupblks[i], pi, i);
+         KillAllPtrinfo(pi);
+/*
+ *       Need to check the loop for forwarding or not!
+ */
+         if (UsesPtrs)
+            UpdateUnrolledIndices(dupblks[i], lp->I, (lp->flag & L_NINC_BIT)?
+                                  URbase-i:URbase+i);
+      }
+/*
+ *    Need to kill backedge (branch inst from tail of loop), add JMP to 
+ *    the start of next scalar iteration pro-actively.
+ *    for last iteration, need to create a block and check condition for loop.
+ *    NOTE: HERE HERE. assuming each iteration is started with a label 
+ *    S_path_iter
+ *
+ *    NOTE: CFG is completely messedup but don't update the CFG yet, 
+ *    should update it after vect transform.
+ */
+      for (bl=lp->tails; bl; bl=bl->next)
+      {
+         bp = FindBlockInListByNumber(dupblks[i],bl->blk->bnum);
+         assert(bp);
+/*       search for the branch instruction */
+         for (ip = bp->inst1; ip; ip=ip->next)
+         {
+            if (IS_BRANCH(ip->inst[0]))
+            {
+               ip = DelInst(ip); /* recalc the inst1, instN*/
+               break;
+            }
+         }
+/*       Add new jump to 1st block of next iteration  */
+         if (ip)
+         {
+            sprintf(ln, "_S_%d_%d",path,i+1); /*1st block of next */
+            cflag = STlabellookup(ln);
+            InsNewInst(bp, NULL,ip,JMP,-PCREG,cflag,0);
+         }
+         else
+         {
+            ip = bp->instN; /*CMPFLAG isn't considered as active inst*/
+            assert(ip);
+            sprintf(ln, "_S_%d_%d",path,i+1); /*1st block of next */
+            cflag = STlabellookup(ln);
+            InsNewInst(bp, ip,NULL,JMP,-PCREG,cflag,0);
+         }
+            
+      }
+      
+   }
+   
+}
+
+BBLOCK *GenScalarRestartPathCode(LOOPQ *lp, int path, int vlen,BLIST *ftheads, 
+                                 int ivtails)
+{
+   int i, j;
+   char ln[512];
+   int cflag;
+   BBLOCK *bp0, *bp, *bptop, *bpi;
+   BLIST **dupblks;
+   BLIST *bl;
+   INSTQ *ip, *ip0;
+   int islpopt, UsesIndex, UsesPtrs;
+
+
+   dupblks = malloc(sizeof(BLIST*)*vlen);
+   assert(dupblks);
+/*
+ * Set all flags to optimized the duplicated blocks
+ */
+   SetScalarRestartOptFlag(lp, &islpopt, &UsesIndex, &UsesPtrs);
+
+/*
+ * dublicates blocks with required optimization
+ */
+   DupBlkPathWithOpt(lp, dupblks, islpopt, UsesIndex, UsesPtrs, path);
+
+/*
+ * create a new BBLOCK structure for the scalar restart of this path
+ */
+   bptop = bp0 = NewBasicBlock(NULL,NULL);
+   sprintf(ln, "_Scalar_Restart_%d",path);
+   cflag = STlabellookup(ln);
+   InsNewInst(bp0, NULL,NULL,LABEL,cflag,0,0);
+/*
+ * Here starts the backup recovery operation.
+ * Right now, it is dummy function. 
+ */
+   AddBackupRecover(lp, bp0, path);
+/*
+ * Here, we start vector to scalar update
+ */
+   AddScalarUpdate(lp, bp0, path);
+
+/*
+ * copy duplicated blocks 
+ */
+   for (i = 0; i < vlen; i++)
+   {
+/*
+ *    create new block for each iteration
+ */
+      bp = NewBasicBlock(bp0, NULL);
+      bp0->down = bp;
+      bp->up = bp0;
+      bp0 = bp;
+      sprintf(ln, "_S_%d_%d",path,i);
+      cflag = STlabellookup(ln);
+      ip = InsNewInst(bp, NULL, NULL, LABEL, cflag,0,0);
+/*
+ *    copy duplicated blocks for each iteration
+ */
+      for (bl=ftheads; bl; bl = bl->next)
+      {
+         for (bp=bl->blk;bp; bp = bp->down)
+         {
+            if (!BitVecCheck(lp->blkvec, bp->bnum-1))
+               break;
+            bp0->down = FindBlockInListByNumber(dupblks[i], bp->bnum);
+            bp0->down->up = bp0;
+            bp0 = bp0->down;
+            if (BitVecCheck(ivtails, bp->bnum-1))
+               break;
+         }
+         bp0->down = NULL;
+      }
+   }
+/*
+ *    create a new block at the last of scalar restart path to implement vector
+ *    update stage and to check and jump back to tail of loop
+ */
+   bp = NewBasicBlock(bp0, NULL);
+   bp0->down = bp;
+   bp->up = bp0;
+   bp0 = bp;
+   sprintf(ln, "_S_%d_%d",path,i);
+   cflag = STlabellookup(ln);
+   ip = InsNewInst(bp, NULL, NULL, LABEL, cflag,0,0);
+/*
+ * Create a label to indicate the vector update stage
+ */
+   sprintf(ln, "_IFKO_VECTOR_UPDATE_%d",path);
+   cflag = STlabellookup(ln);
+   ip = InsNewInst(bp, ip, NULL, LABEL, cflag,0,0);
+/*
+ * Add vector update for this path
+ */
+   AddVectorUpdate(lp, bp, path);
+
+/*
+ * To avoid multiple posttails (and also violation of loop normal form), 
+ * the original loop tail is splited into 2 parts here. We will jump back
+ * to the loop test from here. 
+ * NOTE: LOOP update and loop test is become isolated now. Need to check 
+ * whether it creates problem later. Need to make sure that the condition
+ * codes (status register) also don't changed by this time.
+ *    
+ * HERE HERE, 
+ * We can do better: we can check all paths whether we can apply 
+ * loop control and ptr update optimization. I keep that info in
+ * path->lpflag. if it is true, we can kill all the loop comtrol and 
+ * ptr updates and jump back to original loop tail.
+ *
+ */
+   ip0 = bp->instN; /* aisnt not considered CMPFLAG and COMMENT*/
+      
+   if (islpopt)
+   {
+      /*
+       *       Jump back to loop tail. assume only one tail now
+       */
+      assert(lp->tails->blk && !lp->tails->next);
+      bpi = lp->tails->blk;
+
+      if (bpi->ainst1->inst[0] == LABEL)
+         cflag = bpi->ainst1->inst[1];
+      else
+      {
+         sprintf(ln,"%s_LOOP_TEST",STname[lp->body_label-1]);
+         cflag = STlabellookup(ln);
+         InsNewInst(bpi, NULL, bp->ainst1, LABEL, cflag,0,0);
+      }
+
+   }
+   else
+   {
+/*
+ *    split tail by adding label to the tail of original loop.
+ *    NOTE: add label before CMPFLAG
+ */
+      assert(lp->tails->blk && !lp->tails->next);
+      ip = FindCompilerFlag(lp->tails->blk, CF_LOOP_TEST);
+      assert(ip);
+      sprintf(ln,"%s_LOOP_TEST",STname[lp->body_label-1]);
+      cflag = STlabellookup(ln);
+      InsNewInst(lp->tails->blk, NULL, ip, LABEL, cflag,0,0);
+   }
+/*
+ * now jump back to new label in tail
+ */
+   InsNewInst(bp, ip0, NULL, JMP, -PCREG, cflag, 0);
+   bp->down = NULL;
+
+/*
+ * Return the base pointer 
+ */
+   return bptop;
+}
+
 void ScalarRestart(LOOPQ *lp)
+/*
+ * changing in plan: 1st generate the whole code structure for each path 
+ * which can be explored by down/up pointer, then update the original code
+ */
+{
+   int i, j, k;
+   int iv, ivtails, vlen;
+   BBLOCK **bpaths; /* hold complete code structure for each path*/
+   BBLOCK *bp0, *bdown, *bp;
+   BLIST *ftheads, *bl, *vbl;
+   INSTQ *ip;
+   extern BBLOCK *bbbase;
+   extern int FKO_BVTMP;
+
+   assert(VPATH!=-1);
+   bpaths = malloc(sizeof(BBLOCK*)*NPATH);
+   vlen = Type2Vlen(lp->vflag);
+/*
+ * Find the header of loop in the bbbase
+ * NOTE: after cleanup, blocks have duplicate names. don't check anything
+ * by bnum.
+ */
+   for (bp0 = bbbase; bp0; bp0 = bp0->down )
+   {
+      if (bp0 == lp->header)
+         break;
+   }
+/*
+ *    Find all fall thru path headers in loop which will be needed at code 
+ *    generation
+ */
+   iv = FKO_BVTMP;
+   SetVecAll(iv, 0);
+   ivtails = BlockList2BitVec(lp->tails);
+   ftheads = FindAllFallHeads(NULL, lp->blkvec, lp->header, ivtails, iv);
+   ftheads = ReverseBlockList(ftheads);
+
+/*
+ * Generate scalar restart code for each path first before any update
+ */
+   for (i=0; i < NPATH; i++)
+   {
+      if ( i == VPATH)
+      {
+         bpaths[i] = NULL; /* nothing for vector path*/ 
+         continue;
+      }
+/*
+ *    Generate code for Scalar Restart before any update of original code
+ */
+      bpaths[i] = GenScalarRestartPathCode(lp, i, vlen, ftheads, ivtails);
+#if 0
+      fprintf(stdout, "SCALAR RESTART CODE :\n");
+      PrintInst(stdout, bpaths[i]);
+      exit(0);
+#endif           
+   }
+
+/*
+ * Now check each path to figure out where to copy 
+ */
+   for (i=0; i < NPATH; i++)
+   {
+      if (i == VPATH) continue;
+/*
+ *    check with vector path, determine where to implement scalar restart
+ *    Requirement: blocklist blocks in path must be in sequential according
+ *    to control flow
+ */
+      for (bl = PATHS[i]->blocks,vbl = PATHS[VPATH]->blocks; bl && vbl ;
+           bl = bl->next, vbl = vbl->next)
+      {
+         if (bl->blk != vbl->blk)
+         {
+            /*fprintf(stderr, "Split in vpath blk = %d, spath blk = %d\n",
+                    vbl->blk->bnum, bl->blk->bnum);*/
+            break;
+         }
+      }
+      assert(bl); /* atleast one block which is not common */
+/*
+ *    Add duplicated blocks after this block, will delete this path later
+ */
+      for ( ; bp0 != bl->blk; bp0 = bp0->down);
+      assert(bp0); /* starting of scalar */
+/*
+ *    add the generated scalar restart code at the appropriate position
+ */
+#if 0
+      bdown = bp0->down;
+      ip = InsNewInstAfterLabel(bp0, CMPFLAG, CF_SCAL_RES,0,0);
+      while(ip) ip = DelInst(ip);
+      bp0->down = bpaths[i];
+      bpaths[i]->up = bp0;
+      
+      for (bp0 = bpaths[i]; bp0->down; bp0 = bp0->down);
+      bp0->down = bdown;
+      bdown->up = bp0;
+#else
+/*
+ *    bp0 is the starting block. figure out the block upto which we will 
+ *    kill. 
+ */
+      bdown = bp0->down;
+      for (; bdown; bdown=bdown->down)
+      {
+         if (!FindInList(PATHS[VPATH]->blocks, bdown) 
+             && FindInList(lp->blocks,bdown))
+         {
+            //bdown->up = KillBlock(bdown->up, bp);
+         }
+         else
+            break;
+      }
+      assert(bdown); /* right now, it should be NULL. atleast tail blk! */
+/*
+ *    delete instruction from bp0. NOTE: don't delete bp0 itself. 
+ */
+      ip = InsNewInstAfterLabel(bp0, CMPFLAG, CF_SCAL_RES,0,0);
+      while(ip) ip = DelInst(ip);
+      
+/*
+ *    link blks of scalar restart
+ */
+      bp0->down = bpaths[i];
+      bpaths[i]->up = bp0;
+/*
+ *    link the common blks down.
+ *    NOTE: There may be several special case which is not handle yet. 
+ *    if there are multiple if statement, we may need to change this simple
+ *    logic
+ */
+      for (bp0 = bpaths[i]; bp0->down; bp0 = bp0->down);
+      bp0->down = bdown;
+      bdown->up = bp0;
+
+#endif
+
+   }
+}
+
+void ScalarRestart0(LOOPQ *lp)
+/*
+ * This is an old implementation. It does have issue. It only handles the code
+ * structure exactly like iamax. Still, I've kept it for the reference of 
+ * various implementation consideration.
+ *
+ */
 {
    BBLOCK *bp, *bp0, *bpi, *newCF, *bdown;
    BLIST *bl, *vbl, *dupblks, *ftheads, *delblks;
@@ -2670,6 +3433,10 @@ void ScalarRestart(LOOPQ *lp)
  * Need at least one path to vectorize
  */
    assert(VPATH!=-1);
+
+/*
+ * All the parameter settings for scalar restart and to optimize the structure
+ */
 
    vlen = Type2Vlen(lp->vflag);
    URbase = (lp->flag & L_FORWARDLC_BIT) ? 0 :vlen-1;
@@ -2782,6 +3549,16 @@ void ScalarRestart(LOOPQ *lp)
          SetVecBit(lp->blkvec, lp->header->bnum-1,1);
          iv = BitVecCopy(iv, lp->blkvec);
          dupblks = CF2BlockList(NULL, iv, newCF);
+#if 1
+         fprintf(stderr, "dupblks : ");
+         for (bl = dupblks; bl; bl=bl->next)
+         {
+            fprintf(stderr, "%d ", bl->blk->bnum);
+         }
+         fprintf(stderr, "\n");
+      
+         ShowFlow(NULL, newCF);     
+#endif      
 /*
  *       if all paths are loop control and moving ptr optimizable, then delete
  *       loop control and moving ptr form duplicated blocks and update the load
@@ -2793,59 +3570,9 @@ void ScalarRestart(LOOPQ *lp)
          if (islpopt)
          {
 /*
- *          Delete loop control and moving ptr from tail of dublicated blocks
- */
-#if 0
-            for (bl = lp->tails; bl; bl = bl->next)
-            {
-               bp = FindBlockInListByNumber(dupblks, bl->blk->bnum);
-               assert(bp);
-#if 1
-               fprintf(stderr, "copied block tail: \n");
-               PrintThisBlockInst(stderr, bp);
-#endif
-/*
- *             keep logic same as unroll
- */
-               ip = FindCompilerFlag(bp, CF_LOOP_PTRUPDATE);
-#if 1
-               if (ip)
-                  ip = DelInst(ip);
-#else               
-               while (ip && (ip->inst[0] != CMPFLAG || 
-                             ip->inst[1] != CF_LOOP_UPDATE))
-               {
-                  if (ip->inst[0] != CMPFLAG)
-                     ip = DelInst(ip);
-                  else
-                     ip = ip->next;
-               }
-#endif               
-               ip = FindCompilerFlag(bp, CF_LOOP_UPDATE);
-               assert(ip);
-               ip=ip->next;
-               while (ip && (ip->inst[0] != CMPFLAG || 
-                             ip->inst[1] != CF_LOOP_END))
-               {
-                  if (ip->inst[0] != CMPFLAG ||
-                      ip->inst[1] != CF_LOOP_TEST)
-                     ip = DelInst(ip);
-                  else
-                     ip = ip->next;
-               }
-#if 1
-               fprintf(stderr, "copied block after deleting tail: \n");
-               PrintThisBlockInst(stderr, bp);
-#endif
-            }
-#endif            
-#if 0
-               fprintf(stderr, "copied block after deleting tail: \n");
-               bp = FindBlockInListByNumber(dupblks, lp->tails->blk->bnum);
-               PrintThisBlockInst(stderr, bp);
-#endif
-/*
- *          Find moving pointer and update pointer loads accordingly          
+ *          Assuming loop control is deleted before the scalar Restart.
+ *          Now, find moving pointer and update pointer loads accordingly
+ *          in dublicated blocks
  */
             pi = FindMovingPointers(dupblks);
             assert(pi);
@@ -2864,19 +3591,6 @@ void ScalarRestart(LOOPQ *lp)
                UpdateUnrolledIndices(dupblks, lp->I, (lp->flag & L_NINC_BIT)?
                                      URbase-j:URbase+j);
          }
-
-#if 0
-/*
- *       Loop blocks are duplicated. Now add backup recovery operation.
- *       Right now, add instructions whenever it requires. Later, we can
- *       optimize it by putting those all together at the end (but keep in mind
- *       that we need to do it before loop control and ptr movement update)
- */
-         
-         if (!islpopt)
-            AddInstBackupRecovery(dupblks, lp);
-#endif
-
 /*
  *       Need to kill backedge (branch inst from tail of loop), add JMP to 
  *       the start of next scalar iteration.for last iteration, need to create
@@ -2968,33 +3682,7 @@ void ScalarRestart(LOOPQ *lp)
  *    Creating two posttails would complicate the analysis later. So, need to
  *    skip that by intelligent design.
  */
-#if 0
-/*
- *    Need to add loop test here. assume that loop test codes are on lp->tails
- *    from CF_LOOP_TEST to CF_LOOP_END
- *    NOTE: May have only branch inst. do we need reg laod/st?
- */
-      ip0 = bp->ainstN;
-      ip = FindCompilerFlag(lp->tails->blk, CF_LOOP_TEST);   
-      assert(ip);
-      ip = ip->next;
-/*    condition: de morgan's law */      
-      while (ip && (ip->inst[0] != CMPFLAG || ip->inst[1] != CF_LOOP_END))
-      {
-         InsNewInst(bp, ip0, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
-                    ip->inst[3]);
-         ip0 = ip0->next;
-         ip = ip->next;
-      }
-
-/*
- *    Add jump to post tail of loop. only one posttail, posttail should have
- *    a label
- */
-      assert(lp->posttails->blk && !lp->posttails->next && 
-             lp->posttails->blk->ilab);
-      InsNewInst(bp,ip0,NULL,JMP,-PCREG,lp->posttails->blk->ilab,0);
-#else
+      
 /*
  *    To avoid multiple posttails (and also violation of loop normal form), 
  *    the original loop tail is splited into 2 parts here. We will jump back
@@ -3047,8 +3735,6 @@ void ScalarRestart(LOOPQ *lp)
  *    now jump back to new label in tail
  */
       InsNewInst(bp, ip0, NULL, JMP, -PCREG, cflag, 0);
-
-#endif
 /*    
  *    Link down to the cleanup code
  */
