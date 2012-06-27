@@ -3807,6 +3807,219 @@ void ScalarRestart0(LOOPQ *lp)
   /* OptimizeLoopControl(); */
 }
 
+INSTQ *AddAlignTest(LOOPQ *lp, BBLOCK *bp, INSTQ *ip, int fa_label)
+{
+   int k;
+   int r0, r1;
+   int hconst; 
+/*
+ * we need to populate the const correctly irrespectively
+ * in X86_32, ptr is 32 bit but X86_64, ptr is 64 bit
+ * NOTE: right now, it is hard-coded for AVX and SSE. Later, we need to 
+ * generalize it for any architecture
+ */
+   #ifdef AVX
+      hconst = 0x1F;      
+   #else
+      hconst = 0x0F;
+   #endif
+   k = STiconstlookup(hconst);
+   r0 = GetReg(T_INT); /*ptr is loaded in int reg*/
+/*
+ * load X and test with the const. need to check whether load ptr is ok
+ */
+   ip = InsNewInst(bp, ip, NULL, LD, -r0, SToff[lp->varrs[1]-1].sa[2], 0);
+   ip = InsNewInst(bp, ip, NULL, CMPAND, -ICC0, -r0, k );
+   ip = InsNewInst(bp, ip, NULL, JNE, -PCREG, -ICC0, fa_label);
+   
+   GetReg(-1);
+
+   return ip;   
+}
+
+void AddLoopPeeling(LOOPQ *lp, int jblabel, int falabel)
+{
+   BBLOCK *bp0, *bp, *newCF;
+   BLIST *ftheads, *bl, *dupblks;
+   LOOPQ *lpn;
+   INSTQ *ip;
+   int iv, ivtails, lnum;
+   int k, hconst, r0;
+   extern BBLOCK *bbbase;
+   extern int FKO_BVTMP;
+
+/*
+ * Find last block, add loop peeling after it
+ */
+   for (bp0=bbbase; bp0->down; bp0=bp0->down);
+   bp = NewBasicBlock(bp0, NULL);
+   bp0->down = bp;
+   bp0 = bp;
+/*
+ * Start new block with a  label
+ */
+   InsNewInst(bp, NULL, NULL, LABEL, falabel , 0, 0);
+/*
+ * Duplicate original loop body
+ */
+   lnum = NPATH * Type2Vlen(lp->vflag) + 1; /* keep space for SSV*/
+   fprintf(stderr, "lnum = %d",lnum);
+   SetVecBit(lp->blkvec, lp->header->bnum-1, 0);
+   FKO_BVTMP = iv = BitVecCopy(FKO_BVTMP, lp->blkvec);
+   newCF = DupCFScope(lp->blkvec, iv, lnum, lp->header); 
+   assert(newCF->ilab);
+/*
+ * Use CF to produce a block list of duped blocks
+ */
+   SetVecBit(lp->blkvec, lp->header->bnum-1, 1);
+   iv = BitVecCopy(iv, lp->blkvec);
+   dupblks = CF2BlockList(NULL, iv, newCF);
+
+/*
+ * Find all fall-thru path headers in loop; iv becomes blocks we have already
+ * added
+ */
+   SetVecAll(iv, 0);
+   ivtails = BlockList2BitVec(lp->tails);
+   ftheads = FindAllFallHeads(NULL, lp->blkvec, lp->header, ivtails, iv);
+   ftheads = ReverseBlockList(ftheads);
+/*
+ * Add new loop (minus I init) at end of rout, one fall-thru path at
+ * a time
+ */
+   for (bl=ftheads; bl; bl = bl->next)
+   {
+      for (bp=bl->blk; bp; bp = bp->down)
+      {
+         if (!BitVecCheck(lp->blkvec, bp->bnum-1))
+            break;
+         bp0->down = FindBlockInListByNumber(dupblks, bp->bnum);
+         bp0->down->up = bp0;
+         bp0 = bp0->down;
+         if (BitVecCheck(ivtails, bp->bnum-1))
+            break;
+      }
+      bp0->down = NULL;
+   }
+/*
+ * Form temporary new loop struct for loop
+ */
+   lpn = NewLoop(lp->flag);
+   lpn->I = lp->I;
+   lpn->beg = lp->beg;
+   lpn->end = lp->end;
+   lpn->inc = lp->inc;
+   bp = FindBlockInListByNumber(dupblks, lp->header->bnum);
+   assert(bp && bp->ilab);
+   lpn->body_label = bp->ilab;
+   for (bl=lp->tails; bl; bl = bl->next)
+   {
+      bp = FindBlockInListByNumber(dupblks, bl->blk->bnum);
+      assert(bp);
+      lpn->tails = AddBlockToList(lpn->tails, bp);
+   }
+   lpn->blocks = dupblks;
+   OptimizeLoopControl(lpn, 1, 0, NULL);
+
+/*
+ * HERE HERE, now it's time to change the test of the loop. 
+ * NOTE: it works only when the loop control follows the SimpleLC
+ * N should be decreased to have an effect with the later loops
+ */
+   #ifdef AVX
+      hconst = 0x1F;      
+   #else
+      hconst = 0x0F;
+   #endif
+   k = STiconstlookup(hconst);
+   for (bl=lpn->tails; bl; bl = bl->next)
+   {
+      bp = bl->blk;
+      for (ip=bp->inst1; ip; ip=ip->next)
+      {
+         if (IS_BRANCH(ip->inst[0])) break;
+      }
+      assert(IS_BRANCH(ip->inst[0]));
+/*
+ * change the branch 
+ */
+   //ip = InsNewInst(bp, ip, NULL, JNE, -PCREG, -ICC0, fa_label);
+   ip->inst[0] = JNE;
+   ip->inst[1] = -PCREG;
+   ip->inst[2] = -ICC0;
+/*
+ * change the condition of the loop
+ */
+   r0 = GetReg(T_INT); /*ptr is loaded in int reg*/
+   ip = InsNewInst(bp, NULL, ip,  LD, -r0, SToff[lp->varrs[1]-1].sa[2], 0);
+   ip = InsNewInst(bp, ip, NULL, CMPAND, -ICC0, -r0, k );
+   GetReg(-1);
+   }
+
+/*
+ * After all tails of cleanup loop, add jump back to aligned code
+ */
+   for (bl=lpn->tails; bl; bl = bl->next)
+   {
+      bp = NewBasicBlock(bl->blk, bl->blk->down);
+      bl->blk->down = bp;
+      InsNewInst(bp, NULL, NULL, JMP, -PCREG, jblabel, 0);
+   }
+   KillLoop(lpn);
+
+}
+
+void GenForceAlignedPeeling(LOOPQ *lp)
+/*
+ * Generate code of loop peeling for force aligned. works only with single 
+ * moving array ptr. Force aligned is only needed when we can vectorize the
+ * code. so, it is considered as a part of SSV now. Later, we will apply it 
+ * at the normal vectorization stage.
+ */
+{
+   int i, j;
+   int jBlabel, fAlabel;
+   BBLOCK *bp;
+   INSTQ *ip;
+/*
+ * For now, the necessary conditions:
+ * 1. Only one Moving array ptr
+ * 2. Must be vectorized 
+ * 3. loop structure is SimpleLC/backword loop, will relax the cond later
+ * NOTE: Only applied after Optimize Loop Control (LC). Need to check this out!!
+ */
+   assert(lp->varrs[0]==1);
+   assert(VPATH!=-1);
+   //assert(AlreadySimpleLC(lp));
+   fprintf(stderr, "lp->flag: %d\n",lp->flag);
+
+/*
+ * find the location to add checking of alignment. 
+ */
+   bp = bbbase;
+   ip = FindCompilerFlag(bp, CF_LOOP_INIT);
+   assert(ip); 
+   jBlabel = STlabellookup("ALIGNED");
+   fAlabel = STlabellookup("FORCE_ALIGNED");
+   ip = InsNewInst(bp, NULL, ip, CMPFLAG, CF_FORCE_ALIGN, 0, 0);
+
+/*
+ * Add the checking of alignment. it is always related with the vector length
+ * the system supports, eg.- for SSE vlen 128bit, for AVX, 256 bit.
+ */
+   ip = AddAlignTest(lp, bp, ip, fAlabel); 
+   ip = InsNewInst(bp, ip, NULL, LABEL, jBlabel,0,0);   
+
+/*
+ * Add loop peeling at the end of the code after cleanup (if this function is 
+ * called after cleanup, otherwise after ret)
+ */
+   AddLoopPeeling(lp, jBlabel, fAlabel);
+
+}
+
+
+
 int SpecSIMDLoop(void)
 {
    LOOPQ *lp;
@@ -3814,10 +4027,30 @@ int SpecSIMDLoop(void)
    struct ptrinfo *pi0;
    BLIST *bl;
    lp = optloop;
-   
+
+/*
+ * Generate cleanup loop before speculative vector transformation, as it will
+ * change the optloop structure
+ */
    KillLoopControl(lp);
    GenCleanupLoop(lp);
 
+/*
+ * Add loop peeling to force align with the vector alignemnt requirement.
+ * will work when only there is only one moving array pointer. 
+ * Of course, it should be done before vector trnasformation, before changing
+ * the optloop structure.
+ * NOTE: checking of force alignment is done before cleanup but I added this
+ * after cleanup to take advantages of the analysis of cleanup directly!
+ */
+   
+   GenForceAlignedPeeling(lp);
+
+#if 0
+   fprintf(stdout, "LIL after cleanup generation\n");
+   PrintInst(stdout,bbbase);
+   exit(0);
+#endif
 /* skip the loop controls for now*/
 #if 0
 /*
@@ -3894,7 +4127,7 @@ int SpecSIMDLoop(void)
    }
 #endif
 
-#if 0 
+#if 1 
    fprintf(stdout, " LIL NEW CFG \n");
    PrintInst(stdout, bbbase);
    
@@ -3933,9 +4166,10 @@ int SpecSIMDLoop(void)
 
 #endif
 
-#if 0
+#if 1 
       fprintf(stdout, "Final SSV \n");
       PrintInst(stdout, bbbase);
+      //exit(0);
 #endif 
 
    return(0);
