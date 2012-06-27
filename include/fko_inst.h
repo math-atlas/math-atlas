@@ -20,7 +20,8 @@ enum comp_flag
    CF_SCAL_RES,     /* for Speculative vectorization*/
    CF_SSV_SUPDATE,
    CF_SSV_VUPDATE,
-   CF_SSV_VRECOVERY
+   CF_SSV_VRECOVERY,
+   CF_FORCE_ALIGN
 };
 
 /*
