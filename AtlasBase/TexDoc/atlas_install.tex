@@ -491,36 +491,37 @@ parentheses:
 
 It is almost \underline{never} a good idea to change {\tt DMC} or {\tt SMC},
 and it is only very rarely a good idea to change {\tt DKC} or {\tt SKC}.
-For ATLAS~3.8.0, all architectural defaults are set using gcc 4.2 only
-(the one exception is MIPS/IRIX, where SGI's compiler is used).  In most
+For ATLAS~3.10.0, all architectural defaults are set using gcc 4.7.0 only
+(the one exception is PowerPCG4, where gcc 4.6.2 was used).  In most
 cases, switching these compilers will get you worse performance and accuracy,
 even when you are \underline{\em absolutely} sure it is a better compiler
-and flag combination!  In particular we tried the Intel compiler {\tt icc} 
-(called {\tt icl} on Windows) on Intel x86 platforms,
-and overall performance was lower than {\tt gcc}.  Even worse, 
+and flag combination!  In particular, our timings indicated that {\tt clang} 
+was always slower on all platforms that gcc, and that it very often produced
+incorrect code.  Intel's {\tt icc} was not tried for this release since
+it is a non-free compiler, but 
+even worse, 
 from the documentation
 {\tt icc} does not seem to have any firm IEEE floating point compliance unless
 you want to run so slow that you could compute it by hand faster.  This means
 that whenever {\tt icc} achieves reasonable performance, I
-have no idea if the error will be bounded or not.  I could not obtain
-access to {\tt icc} on the Itaniums, where {\tt icc} has historically been
-much faster than {\tt gcc}, but I note that the performance of 
-{\tt gcc4.2} is much better than {\tt gcc3} for most routines, so {\tt gcc}
-may be the best compiler there now as well.
+have no idea if the error will be bounded or not.  
+%I could not obtain
+%access to {\tt icc} on the Itaniums, where {\tt icc} has historically been
+%much faster than {\tt gcc}, but I note that the performance of 
+%{\tt gcc4.2} is much better than {\tt gcc3} for most routines, so {\tt gcc}
+%may be the best compiler there now as well.
 
 There is almost never a need to change {\tt XCC}, since it doesn't affect
 the output libraries in any way, and we have seen that changing the kernel
-compilers is a bad idea.  However, what if you yourself use a non-gnu
-compiler, like Intel's {\tt icc} or {\tt ifort}, then what you need to
-do is tell ATLAS to compile its interface routines with your compilers,
-which is discussed in Section~\ref{sec-cc-iface}.  Another common problem
-is that your OS has been built with an older {\tt gcc} whose libraries
-are incompatible with {\tt gcc 4.2}.  In this case, creating an executable
-with {\tt gcc4.2} can cause problems, and so what you want to do is keep
-{\tt gcc3} as you default compiler (compiling ATLAS interface routines
-with it, as well as using it for all linking) but
-compile the ATLAS kernel routines with {\tt gcc4}.  This
-case is discussed in Section~\ref{sec-cc-4v3}.
+compilers is a bad idea.  Under Unix, most compilers interoperate with the
+GNU compilers, and so you can build ATLAS with the GNU compilers, and then
+simply link to the resulting libs with the compiler of your choice.
+
+On Windows, if you want to build ATLAS for linking with native libraries
+such as MSVC++, then you can build ATLAS with the MinGW compilers, which
+are GNU compilers that are made to natively interoprate with native Windows
+compilers.  See Section~\ref{sec-windows} for more information.
+
 For those who insist on monkeying with
 other compilers, Section~\ref{sec-cc-override} gives some guidance.
 Finally installing ATLAS without a FORTRAN compiler
@@ -532,7 +533,8 @@ is discussed in Section~\ref{sec-nof77}.
 As mentioned, ATLAS typically gets its best performance when compiled
 with {\tt gcc} using the flags that ATLAS automatically picks for
 your platform (this assumes you are installing on a system that ATLAS
-provides architectural defaults for).  However, you can vary the interface
+provides architectural defaults for).  
+However, you can vary the interface
 (API) compilers without affecting ATLAS's performance.  Since most compilers
 are interoperable with {\tt gcc} this is what we recommend you do if you
 are using a non-default compiler.  Note that almost all compilers can
@@ -551,6 +553,7 @@ The configure flags to override the FORTRAN interface compiler and flags are:
    -C if <FORTRAN compiler> -F if '<compiler flags>'
 \end{verbatim}
 
+\Wskip{
 A few example will help here.  If I wanted to use Intel's FORTRAN and C
 compilers under windows on a P4, I could issue:
 \vspace*{-0.1in}
@@ -575,8 +578,9 @@ like a standard Unix compiler.  The second thing to notice is that we don't
 have to say to use the {\tt /iface:cref} flag, because this same wrapper
 always throws this flag (ATLAS does not work with the other rather bizarre
 naming strategies).
+}
 
-For a non-Windows example, assume you use the Sun Workshop compilers available
+For example, assume you use the Sun Workshop compilers available
 under Solaris.  You can instruct {\tt configure} to use them for building the
 APIs rather than the gnu compilers with something like:
 \vspace*{-0.1in}
@@ -585,6 +589,7 @@ APIs rather than the gnu compilers with something like:
    -C ic cc -F ic '-dalign -fsingle -xO5 -native'
 \end{verbatim}
 
+\Wskip{
 \subsubsection{Compiling ATLAS with gcc 4.2 when your OS uses an
 incompatible gcc}
 \label{sec-cc-4v3}
@@ -621,6 +626,7 @@ all kernel compilers to the given compiler.  Therefore, if I have installed
 \begin{verbatim}
    -Ss kern /home/whaley/local/gcc42/bin/gcc
 \end{verbatim}
+}
 
 \subsubsection{Rough guide to overriding ATLAS's compiler choice/changing flags}
 \label{sec-cc-override}
@@ -631,21 +637,18 @@ This is rarely a good idea, and almost always provides reduced performance.
 However, you can do it.  You can find more details by passing 
 {\tt --help} to {\tt configure}.  
 
-As previously mentioned (\S\ref{sec-cc-iface}), you can specify what compiler
-(flag setting) to
-override by passing the appropriate abbreviation to the {\tt -C} ({\tt -F})
-configure flags in order to change the compiler (compiler flags). For
-example, you would pass {\tt -C if} to override interface FORTRAN compiler.
-{\tt configure} also supports appending certain compiler flags, so that user
-flags are simply added to the defaults that ATLAS uses.  This is done:
-\vspace*{-0.1in}
-\begin{verbatim}
-   -Fa <abbr> '<comp flags to append>'
-\end{verbatim}
-where \verb|<abbr>| is one of:
+If you use the {\tt -C} flag, then you are overriding ATLAS's compiler
+choice (based on the abbrevation you specify, as described below),
+{\tt -F} means to override the flags for that compiler, and {\tt -Fa}
+tells configure that you want to keep ATLAS's default flags, but wish
+to append your own list of flags to them.
+
+All of these flags take an abbreviation (\verb+<abbr>+) describing the 
+particular compiler/flag to override/append,
+where \verb|<abbr>| is one of,
 \begin{itemize}
 \item One of the already discussed compiler abbreviations 
-      (eg, {\tt xc}, {\tt ic}, {\tt if}, {\tt sk}, {\tt dc}, {\tt sm} 
+      (eg, {\tt xc}, {\tt gc}, {\tt ic}, {\tt if}, {\tt sk}, {\tt dc}, {\tt sm} 
        or {\tt dm})
 \item {\tt al}: all compilers (including FORTRAN) except {\tt GOODGCC}
 \item {\tt alg} all compilers (including FORTRAN) including {\tt GOODGCC}
@@ -663,11 +666,11 @@ We would have all C routines compiled with {\tt -fPIC}, and also have the
 macro {\tt UsingDynamic} defined (ATLAS does not use this macro, this is
 for example only).
 
-The compiler overriding flag {-C} can also take the abbreviation {\tt ac}
-which will override all C compilers except {\tt GOODGCC} with the given
-C compiler.  There is currently no flag to override {\tt GOODGCC} on
-the command line, so if you need to do this, you will need to edit the
-output {\tt Make.inc} after configure.
+%The compiler overriding flag {-C} can also take the abbreviation {\tt ac}
+%which will override all C compilers except {\tt GOODGCC} with the given
+%C compiler.  There is currently no flag to override {\tt GOODGCC} on
+%the command line, so if you need to do this, you will need to edit the
+%output {\tt Make.inc} after configure.
 
 As an example, if I want to use SunOS's {\tt f77} rather than {\tt gfortran},
 I could pass the following compiler and flag override:
@@ -685,6 +688,40 @@ Section~\ref{sec-time-nondefault} for details on how to do this.
 If your compiler is a different version of {\tt gcc}, you may also
 want to tell ATLAS not to use the architectural defaults, as described
 in Section~\ref{sec-nodefaults}.
+
+\subsubsection{Forcing ATLAS to use a particular gcc}
+ATLAS contains architectural defaults allowing installers to skip most
+of the empirical tuning, and these defaults were built on most systems
+for gcc 4.7.0.  By default, ATLAS will search for this version on
+your system during configure, and if it can't find it, it will select
+the closest version number that it can find.  Not even later versions
+of the compiler are necessarily safe to use, since both performance
+and correctness regressions are relatively common.  However, many users
+wish to force ATLAS to use a particular gcc, even when they have many
+different gccs installed.  The easiest way to force ATLAS to use a
+particular gcc for all C compilers is:
+\begin{verbatim}
+   -C acg /full/path/to/your/gcc
+\end{verbatim}
+
+If you specify only the name and not the path (eg., ``\texttt{-C alg gcc-4.4}'',
+then ATLAS will search for the named compiler in your PATH variable.  The
+safest approach is to give the full path to the compiler if gcc choice
+is critical to you.  If you want also specify the {\tt gfortran} to use,
+additionally add the flag:
+\begin{verbatim}
+   -C if /full/path/to/your/gfortran
+\end{verbatim}
+
+{\bf IMPORTANT NOTE}: If you use a different gcc than 4.7.0,
+you may reduce performance.  Therefore once
+your build is finished, you should make sure to compare your achieved
+performance against what ATLAS's architectural defaults achieved.  See
+Section~\ref{sec-time-nondefault} for details on how to do this.
+If you can tolerate a long install time, you may also
+want to tell ATLAS not to use the architectural defaults, as described
+in Section~\ref{sec-nodefaults}.
+
 
 \subsubsection{Installing ATLAS when you don't have access to a FORTRAN
 compiler}
@@ -1019,7 +1056,7 @@ So, for my 2.4Ghz Core2Duo, I would pass:
    -D c -DPentiumCPS=2400
 \end{verbatim}
 
-If you are not on an x86 machine, or if your interface compiler is not {\tt gcc}
+If you are not on an x86 machine, or if your kernel compiler is not {\tt gcc}
 (or {\tt icc} if on Linux), then you cannot use the above cycle-accurate
 wall timer.  However, wall time is still much more accurate than CPU time,
 so you can indicate ATLAS should use its wall timer for the install by passing

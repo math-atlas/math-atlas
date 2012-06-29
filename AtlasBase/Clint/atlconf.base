@@ -561,7 +561,7 @@ void GetFlags(int nargs,                /* nargs as passed into main */
          sp = args[i];
          k = -1;
          if (*sp == 'i' && sp[1] == 'c') k = ICC_;
-         if (*sp == 'g' && sp[1] == 'c') k = GCC_;
+         else if (*sp == 'g' && sp[1] == 'c') k = GCC_;
          else if (*sp == 'i' && sp[1] == 'f') k = F77_;
          else if (*sp == 's' && sp[1] == 'k') k = SKC_;
          else if (*sp == 'd' && sp[1] == 'k') k = DKC_;
@@ -570,6 +570,7 @@ void GetFlags(int nargs,                /* nargs as passed into main */
          else if (*sp == 'x' && sp[1] == 'c') k = XCC_;
          if (*sp == 'a' && (sp[1] == 'l' || sp[1] == 'c'))
          {  /* only appended flags can be applied to all compilers */
+            const int SKIPGCC=(sp[2] != 'g'), SKIPF=(sp[1] == 'c');
 @skip            if (args[i-1][1] != 'F') PrintUsage(args[0], i, args[i]);
 @skip            if (args[i-1][2] != 'a') PrintUsage(args[0], i, args[i]);
             if (args[i-1][1] == 'F') 
@@ -593,7 +594,7 @@ void GetFlags(int nargs,                /* nargs as passed into main */
             if (++i >= nargs)
                PrintUsage(args[0], i, "out of arguments");
             for (k=k0; k < kn; k++)
-               if (sp[1] == 'l' || k-2*NCOMP != F77_)
+               if ((!SKIPF || k-k0 != F77_) && (!SKIPGCC || k-k0 != GCC_))
                   comps[k] = args[i];
 @ifdef -Cg
             if (sp[2] == 'g' && args[i-2][1] == 'F')
@@ -1565,7 +1566,8 @@ int CompIsGcc(char *comp)
       if (strstr(res, "(GCC)")  || strstr(res, " GCC ") ||
           strstr(res, "gcc-mp") || strstr(res, "(GCC ") ||
           strstr(res, "GNU Fortran") || 
-          (res[0] == 'g' && res[1] == 'c' && res[2] == 'c' && res[3] == ' ')
+          (res[0] == 'g' && res[1] == 'c' && res[2] == 'c' && 
+           (res[3] == ' ' || res[3] == '-'))
          )
       {
          free(res);
@@ -5263,7 +5265,7 @@ void GetComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
             else if (i == F77_)
                ucomp = "gfortran";
             else
-               ucomp = "gcc";
+               ucomp = goodgcc;
          }
          for (p=comps[i]; p; p = p->next)
          {
@@ -5519,6 +5521,7 @@ char *FindGoodGcc(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ)
 {
    char *OSpaths=NULL, *sp, **gccs=NULL;
    char *ln;
+   FILE *fp;
    int i, lnlen=1024;
    int GMAJOR, GMINOR, GPATCH;
 
@@ -5539,7 +5542,8 @@ char *FindGoodGcc(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ)
    {
       i = 64 + strlen(OSpaths);
       ln = CheckStrLen(ln, &lnlen, i);
-      sprintf(ln, "find %s -name '*gcc*' -exec ./xisgcc '{}' \\;", OSpaths);
+      sprintf(ln, "find %s -maxdepth 1 -name '*gcc*' -exec ./xisgcc '{}' \\;", 
+              OSpaths);
       gccs = GetLinesFromFile(atlsys(NULL, ln, verb, 1), gccs);
       i = SelectBestGcc(verb, targ, GMAJOR, GMINOR, gccs);
       if (i > 1)
@@ -5557,15 +5561,14 @@ char *FindGoodGcc(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ)
    }
 /*
  * If we are not satisfied with the places we've looked so far, 
- * try the user's path environment variables $HOME/local
+ * try the user's path environment variables, don't search recursively
  */
    sp = GetPathEnvVar();
    if (sp)
    {
-      FILE *fp;
       i = 64 + strlen(sp);
       ln = CheckStrLen(ln, &lnlen, i);
-      sprintf(ln, "find $HOME/local %s -name '*gcc*' -exec ./xisgcc '{}' \\;",
+      sprintf(ln, "find %s -maxdepth 1 -name '*gcc*' -exec ./xisgcc '{}' \\;", 
               sp);
       free(sp);
       fp = atlsys(NULL, ln, verb, 1);
@@ -5588,11 +5591,34 @@ char *FindGoodGcc(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ)
       }
    }
 /*
- * If we still haven't found it, try standard unix places
+ * Try searching in $HOME/local, including all subdirs
+ */
+   ln = CheckStrLen(ln, &lnlen, 64);
+   sprintf(ln, "find $HOME/local -name '*gcc*' -exec ./xisgcc '{}' \\;");
+   fp = atlsys(NULL, ln, verb, 1);
+   if (fp)
+   {
+      gccs = GetLinesFromFile(fp, gccs);
+      i = SelectBestGcc(verb, targ, GMAJOR, GMINOR, gccs);
+      if (i > 0)
+      {
+         free(ln);
+         return(FreeListGetString(gccs, i-1));
+      }
+      if (i < 0)
+         gccs = NewOneStringList(gccs, -(i+1));
+      else
+      {
+         KillAllStringsInList(gccs);
+         gccs = NULL;
+      }
+   }
+/*
+ * If we still haven't found it, try standard unix places, recursively searched
  */
    {
       char *stdpaths =
-         "/usr/local/ /bin /sbin/ /usr/bin /usr/sbin /opt/bin /opt/sbin";
+         "/usr/local /bin /sbin /usr/bin /usr/sbin /opt/bin /opt/sbin";
 
       i = 64 + strlen(stdpaths);
       ln = CheckStrLen(ln, &lnlen, i);
@@ -5622,6 +5648,7 @@ char *FindGoodGfortran(enum OSTYPE OS, enum MACHTYPE arch, int verb,
 {
    char *OSpaths=NULL, *sp, **gccs=NULL;
    char *ln;
+   FILE *fp;
    int i, lnlen=1024;
    int ccomp, cmaj, cmin, cpat;
 
@@ -5639,7 +5666,8 @@ char *FindGoodGfortran(enum OSTYPE OS, enum MACHTYPE arch, int verb,
    {
       i = 64 + strlen(sp);
       ln = CheckStrLen(ln, &lnlen, i);
-      sprintf(ln, "find %s -name '*gfortran*' -exec ./xisgcc '{}' \\;", sp);
+      sprintf(ln, 
+         "find %s -maxdepth 1 -name '*gfortran*' -exec ./xisgcc '{}' \\;", sp);
       gccs = GetLinesFromFile(atlsys(NULL, ln, verb, 1), gccs);
       i = SelectBestGcc(verb, targ, cmaj, cmin, gccs);
       if (i > 1)
@@ -5670,7 +5698,9 @@ char *FindGoodGfortran(enum OSTYPE OS, enum MACHTYPE arch, int verb,
    {
       i = 64 + strlen(OSpaths);
       ln = CheckStrLen(ln, &lnlen, i);
-      sprintf(ln, "find %s -name '*gfortran*' -exec ./xisgcc '{}' \\;",OSpaths);
+      sprintf(ln, 
+         "find %s -maxdepth 1 -name '*gfortran*' -exec ./xisgcc '{}' \\;",
+         OSpaths);
       gccs = GetLinesFromFile(atlsys(NULL, ln, verb, 1), gccs);
       i = SelectBestGcc(verb, targ, cmaj, cmin, gccs);
       if (i > 1)
@@ -5696,8 +5726,7 @@ char *FindGoodGfortran(enum OSTYPE OS, enum MACHTYPE arch, int verb,
       i = 64 + strlen(sp);
       ln = CheckStrLen(ln, &lnlen, i);
       sprintf(ln, 
-              "find $HOME/local %s -name '*gfortran*' -exec ./xisgcc '{}' \\;",
-              sp);
+         "find %s -maxdepth 1 -name '*gfortran*' -exec ./xisgcc '{}' \\;", sp);
       free(sp);
       gccs = GetLinesFromFile(atlsys(NULL, ln, verb, 1), gccs);
       i = SelectBestGcc(verb, targ, cmaj, cmin, gccs);
@@ -5715,11 +5744,34 @@ char *FindGoodGfortran(enum OSTYPE OS, enum MACHTYPE arch, int verb,
       }
    }
 /*
+ * Try searching in $HOME/local, including all subdir
+ */
+   ln = CheckStrLen(ln, &lnlen, 64);
+   sprintf(ln, "find $HOME/local -name '*gfortran*' -exec ./xisgcc '{}' \\;");
+   fp = atlsys(NULL, ln, verb, 1);
+   if (fp)
+   {
+      gccs = GetLinesFromFile(fp, gccs);
+      i = SelectBestGcc(verb, targ, cmaj, cmin, gccs);
+      if (i > 0)
+      {
+         free(ln);
+         return(FreeListGetString(gccs, i-1));
+      }
+      if (i < 0)
+         gccs = NewOneStringList(gccs, -(i+1));
+      else
+      {
+         KillAllStringsInList(gccs);
+         gccs = NULL;
+      }
+   }
+/*
  * If we still haven't found it, try standard unix places
  */
    {
       char *stdpaths =
-         "/usr/local/ /bin /sbin/ /usr/bin /usr/sbin /opt/bin /opt/sbin";
+         "/usr/local /bin /sbin /usr/bin /usr/sbin /opt/bin /opt/sbin";
 
       i = 64 + strlen(stdpaths);
       ln = CheckStrLen(ln, &lnlen, i);
@@ -5744,6 +5796,42 @@ char *FindGoodGfortran(enum OSTYPE OS, enum MACHTYPE arch, int verb,
    }
    free(ln);
    return(NULL);
+}
+
+char *FindNamedComp(enum OSTYPE OS, enum MACHTYPE arch, int verb, 
+                    char *targ, char *comp)
+/*
+ * This routine searches for a named compiler only in the user's path.
+ * RETURNS: fully qualified name
+ */
+{
+   char *sp, *ln=NULL, **gccs;
+   int i, lcmp, lnlen=0;
+
+   if (!comp)
+      return(NULL);
+/*
+ * Return copy of original name if it already contains a path
+ */
+   for (i=0; comp[i] != '\0'; i++)
+      if (comp[i] == '/')
+         return(NewStringCopy(comp));
+   lcmp = i;
+/*
+ * Otherwise, search the user's path to find which compiler to use
+ */
+   sp = GetPathEnvVar();
+   if (sp)
+   {
+      i = 64 + lcmp + strlen(sp);
+      ln = CheckStrLen(ln, &lnlen, i);
+      sprintf(ln, "find %s -maxdepth 1 -name '%s' \\;", sp, comp);
+      free(sp);
+      gccs = GetLinesFromFile(atlsys(NULL, ln, verb, 1), gccs);
+      free(ln);
+      return(FreeListGetString(gccs, 0));
+   }
+   return(NewStringCopy(comp));
 }
 
 void TestComps(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ,
@@ -5914,7 +6002,18 @@ int main(int nargs, char **args)
 
    GetFlags(nargs, args, &verb, &OS, &vecexts, &mach, &ptrbits, usrcomps, 
             &outfile, &srcdir, &bindir, &nof77, &nocygwin, &targ);
-
+/*
+ * Fully qualify any usr-override compilers
+ */
+   for (i=0; i < NCOMP; i++)
+   {
+      if (usrcomps[i])
+      {
+         char *sp = usrcomps[i];
+         usrcomps[i] = FindNamedComp(OS, mach, verb, targ, sp);
+         free(sp);
+      }
+   }
    if (verb > 1)
    {
       fprintf(stdout, "User Override Compilers:\n");
@@ -5950,7 +6049,10 @@ int main(int nargs, char **args)
       free(topd);
    }
    #else
-      goodgcc = FindGoodGcc(OS, mach,  verb, targ);
+      if (usrcomps[GCC_])
+         goodgcc = NewStringCopy(usrcomps[GCC_]);
+      else
+         goodgcc = FindGoodGcc(OS, mach,  verb, targ);
    #endif
    GetComps(OS, mach, verb, targ, ptrbits, usrcomps, nof77, nocygwin, vecexts, 
             goodgcc, bindir);
