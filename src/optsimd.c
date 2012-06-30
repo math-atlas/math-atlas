@@ -3827,6 +3827,8 @@ INSTQ *AddAlignTest(LOOPQ *lp, BBLOCK *bp, INSTQ *ip, int fa_label)
    r0 = GetReg(T_INT); /*ptr is loaded in int reg*/
 /*
  * load X and test with the const. need to check whether load ptr is ok
+ * NOTE: in X8664, reg is 64 bit but int is 32 bit. As we use constant
+ * the CMPAND should not create any problem.
  */
    ip = InsNewInst(bp, ip, NULL, LD, -r0, SToff[lp->varrs[1]-1].sa[2], 0);
    ip = InsNewInst(bp, ip, NULL, CMPAND, -ICC0, -r0, k );
@@ -3837,36 +3839,32 @@ INSTQ *AddAlignTest(LOOPQ *lp, BBLOCK *bp, INSTQ *ip, int fa_label)
    return ip;   
 }
 
-void AddLoopPeeling(LOOPQ *lp, int jblabel, int falabel)
+short InsertNewLocal(char *name, int type )
 {
-   BBLOCK *bp0, *bp, *newCF;
-   BLIST *ftheads, *bl, *dupblks;
-   LOOPQ *lpn;
-   INSTQ *ip;
-   int iv, ivtails, lnum;
-   int k, hconst, r0;
-   extern BBLOCK *bbbase;
-   extern int FKO_BVTMP;
+   short k;
+   k = STdef(name, type | LOCAL_BIT, 0);
+   SToff[k-1].sa[2] = AddDerefEntry(-REG_SP, k, -k, 0, k);
+   return k;
+}
 
+BLIST *AddLoopDupBlks(LOOPQ *lp, BBLOCK *up, BBLOCK *down, int lbNum)
 /*
- * Find last block, add loop peeling after it
+ * Returns pointer of block list of duplicated blocks, adding duplicated 
+ * loop blocks between up and down blocks using lbNum label index extension
  */
-   for (bp0=bbbase; bp0->down; bp0=bp0->down);
-   bp = NewBasicBlock(bp0, NULL);
-   bp0->down = bp;
-   bp0 = bp;
-/*
- * Start new block with a  label
- */
-   InsNewInst(bp, NULL, NULL, LABEL, falabel , 0, 0);
+{
+   BLIST *dupblks, *ftheads, *bl;
+   BBLOCK *newCF, *bp, *bp0;
+   int iv, ivtails;
+   extern int FKO_BVTMP; 
+   
+   bp0 = up;
 /*
  * Duplicate original loop body
  */
-   lnum = NPATH * Type2Vlen(lp->vflag) + 1; /* keep space for SSV*/
-   fprintf(stderr, "lnum = %d",lnum);
    SetVecBit(lp->blkvec, lp->header->bnum-1, 0);
    FKO_BVTMP = iv = BitVecCopy(FKO_BVTMP, lp->blkvec);
-   newCF = DupCFScope(lp->blkvec, iv, lnum, lp->header); 
+   newCF = DupCFScope(lp->blkvec, iv, lbNum, lp->header); 
    assert(newCF->ilab);
 /*
  * Use CF to produce a block list of duped blocks
@@ -3884,8 +3882,7 @@ void AddLoopPeeling(LOOPQ *lp, int jblabel, int falabel)
    ftheads = FindAllFallHeads(NULL, lp->blkvec, lp->header, ivtails, iv);
    ftheads = ReverseBlockList(ftheads);
 /*
- * Add new loop (minus I init) at end of rout, one fall-thru path at
- * a time
+ *  add loop blks one fall-thru path at a time
  */
    for (bl=ftheads; bl; bl = bl->next)
    {
@@ -3901,14 +3898,204 @@ void AddLoopPeeling(LOOPQ *lp, int jblabel, int falabel)
       }
       bp0->down = NULL;
    }
+   
+   bp0->down = down;
+   return dupblks;
+}
+
+void updatePLIndexRef(INSTQ *ip0, short Nv, short Np )
+{
+   INSTQ *ipstart, *ipend, *ip;
 /*
- * Form temporary new loop struct for loop
+ * Need to find out the LIL code block where index ref is used
+ */
+}
+
+
+void AddLoopPeeling(LOOPQ *lp, int jblabel, int falabel, short Np, 
+                    short Nv)
+/*
+ * original loop, lp = [N, -1, 0] or, [0, 1, N]
+ * 
+ * After loop peeling: 
+ * NINC: 
+ * 1. Peel loop, lpn = [Np, -1, 0] 
+ * 2. All use of induction var (i) is changed by i + N-Np
+ * 3. Vector loop, lp = [N-Np, -1, 0] 
+ * PNIC:
+ * 1. Peel loop, lpn = [0, 1, Np]
+ * 2. Vector Loop, lp = [0, 1, N-Np]
+ * 3. All use of induction var (i) is changed by i + Np
+ * .......................................................
+ * 
+ * Change in plan ... we will change the loop control, left the index intact
+ * NINC
+ * 1. Peel loop, lpn = [N, -1, N-Np]
+ * 2. Vect loop, lp = [N-Np, -1, 0]
+ * 
+ * PINC
+ * 1. Peel loop, lpn = [0, 1, Np]
+ * 2. Vect loop, lp = [Np, 1, N]
+ */
+{
+   BBLOCK *bp0, *bp;
+   BLIST *bl, *dupblks;
+   INSTQ *ip, *iip;
+   ILIST *il, *iref;
+   int lnum;
+   short oldN;
+   int k, r0, r1;
+   LOOPQ *lpn;
+   extern BBLOCK *bbbase;
+   extern int FKO_BVTMP;
+
+/*
+ * Find last block, add loop peeling after it
+ */
+   for (bp0=bbbase; bp0->down; bp0=bp0->down);
+   bp = NewBasicBlock(bp0, NULL);
+   bp0->down = bp;
+   bp0 = bp;
+/*
+ * Start new block with a  label
+ */
+   ip = InsNewInst(bp, NULL, NULL, LABEL, falabel , 0, 0);
+/*
+ * Add new local for loop->end and populate this var 
+ * NOTE: 
+ * NINC: 
+ */
+   k = type2shift(lp->vflag);
+   r0 = GetReg(T_INT);
+   r1 = GetReg(T_INT);
+   ip = InsNewInst(bp, ip, NULL, LD, -r0, SToff[lp->varrs[1]-1].sa[2], 0);
+   ip = InsNewInst(bp, ip, NULL, MOV, -r1, -r0, 0);
+   ip = InsNewInst(bp, ip, NULL, ADD, -r0, -r0, STiconstlookup((1<<k)-1));
+   ip = InsNewInst(bp, ip, NULL, SHR, -r0, -r0, STiconstlookup(k));
+   ip = InsNewInst(bp, ip, NULL, SHL, -r0, -r0, STiconstlookup(k)); 
+   ip = InsNewInst(bp, ip, NULL, SUB, -r0, -r0, -r1);
+   
+   if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+      ip = InsNewInst(bp, ip, NULL, SHR, -r0, -r0, STiconstlookup(2)); 
+   else /* array type is double */
+      ip = InsNewInst(bp, ip, NULL, SHR, -r0, -r0, STiconstlookup(3)); 
+/*
+ * NOTE: depending on NINC/PINC, _Np will store N-NP or Np value
+ */
+   if (lp->flag & L_NINC_BIT) oldN = lp->beg;
+   else oldN = lp->end;
+   
+   if (lp->flag & L_NINC_BIT)
+   {
+      ip = InsNewInst(bp, ip, NULL, LD, -r1, SToff[oldN-1].sa[2], 0);
+      ip = InsNewInst(bp, ip, NULL, SUB, -r1, -r1, -r0);
+      ip = InsNewInst(bp, ip, NULL, ST, SToff[Np-1].sa[2],-r1,  0); 
+   }
+   else
+      ip = InsNewInst(bp, ip, NULL, ST, SToff[Np-1].sa[2],-r0,  0); 
+   GetReg(-1);
+/*
+ * Test new _N, if it is greater than N, jump back to Aligned part. 
+ * It will go to cleanup loop (not vector loop) anyway.
+ */
+
+   r0 = GetReg(T_INT);
+   r1 = GetReg(T_INT);
+   ip = InsNewInst(bp, ip, NULL, LD, -r0, SToff[Np-1].sa[2], 0);
+   if (lp->flag & L_NINC_BIT) /* Np = N - np, if 0>Np jumpback*/
+   {  
+      ip = InsNewInst(bp, ip, NULL, CMP, -ICC0, -r0, STiconstlookup(0));
+      ip = InsNewInst(bp, ip, NULL, JLT, -PCREG, -ICC0, jblabel);
+   }
+   else /* Np = np*/
+   {
+      ip = InsNewInst(bp, ip, NULL, LD, -r1, SToff[oldN-1].sa[2], 0);
+      ip = InsNewInst(bp, ip, NULL, CMP, -ICC0, -r1, -r0);
+      ip = InsNewInst(bp, ip, NULL, JLT, -PCREG, -ICC0, jblabel);
+   }
+   GetReg(-1);
+/*
+ * Create a new block for the loop preheader to manage the loop.
+ */
+   bp = NewBasicBlock(bp0, NULL);
+   bp0->down = bp;
+   bp0 = bp;
+   ip = InsNewInst(bp, NULL, NULL, CMPFLAG, CF_LOOP_INIT, 0, 0);
+/*
+ * Make sure loop control is killed before copied the optloop
+ * shoule be killed before ... ...
+ */
+   KillLoopControl(lp);
+/*
+ * Add duplicated loop body
+ */
+   lnum = (NPATH -1) * Type2Vlen(lp->vflag) + 1; /* keep space for SSV*/
+   dupblks = AddLoopDupBlks(lp, bp0, bp0->down, lnum );
+
+/*
+ * Create new loop structure for peel loop
+ * loop structure: [ N, -1, N-Np]
+ * main loop: now [N, -1, 0] will be: [N-Np, -1, 0]
  */
    lpn = NewLoop(lp->flag);
    lpn->I = lp->I;
-   lpn->beg = lp->beg;
-   lpn->end = lp->end;
-   lpn->inc = lp->inc;
+   if (lp->flag & L_NINC_BIT )
+   {
+      assert(IS_CONST(STflag[lp->end-1]) && (SToff[lp->end-1].i == 0));
+      assert(IS_CONST(STflag[lp->inc-1]) && SToff[lp->inc-1].i == -1);
+/*
+ *    Peel loop .... Np = N - np, Nv = N yet
+ */
+      lpn->beg = lp->beg; /* N */
+      lpn->end = Np;   /* N-Np */
+      lpn->inc = lp->inc;
+/*
+ *    change main loop... 
+ *    NOTE: This is used even if program the doen't enter peeling loop
+ */
+      lp->beg = Nv; /* need to change the value of Nv to Np at end of loop*/
+   }
+   else if (lp->flag & L_PINC_BIT )
+   {
+      assert(IS_CONST(STflag[lp->beg-1]) && (SToff[lp->beg-1].i == 0));
+      assert(IS_CONST(STflag[lp->inc-1]) && SToff[lp->inc-1].i == 1);
+      
+      lpn->beg = lp->beg;
+      lpn->end = Np; /* Np */
+      lpn->inc = lp->inc;
+/*
+ *    change the original loop
+ *    NOTE: not tested yet
+ */
+      lp->beg = Nv; /* update Nv with Np*/
+   }
+   else
+      assert(0);
+#if 0
+/*
+ * NOTE: if induction var (index var) is used inside loop and the loop is
+ * NINC, then we need to change the index by i + N - Np
+ * HERE HERE, I don't think the issue yet: it i is set inside the loop.
+ */
+
+   iref = FindIndexRef(dupblks, SToff[lpn->I-1].sa[2]);
+   if (iref)
+   {
+      if (lp->flag | L_NINC_BIT) /* need to update all the index ref */
+      {
+         for (il=iref; il; il=il->next)
+            UpdatePLIndexRef(il->inst, Nv, Np);
+      }
+   }
+#endif
+
+/*
+ * NOTE: set CMPFLAG CF_LOOP_INIT at the preheader and mark the preheader
+ * Now, OptimizeLoopControl can handle the loop accordingly. We don't need to
+ * manage I manually, but we need to update the loop control accordingly. 
+ */
+   lpn->preheader = bp; /* to manage the loop control automatically */
+
    bp = FindBlockInListByNumber(dupblks, lp->header->bnum);
    assert(bp && bp->ilab);
    lpn->body_label = bp->ilab;
@@ -3922,51 +4109,21 @@ void AddLoopPeeling(LOOPQ *lp, int jblabel, int falabel)
    OptimizeLoopControl(lpn, 1, 0, NULL);
 
 /*
- * HERE HERE, now it's time to change the test of the loop. 
- * NOTE: it works only when the loop control follows the SimpleLC
- * N should be decreased to have an effect with the later loops
- */
-   #ifdef AVX
-      hconst = 0x1F;      
-   #else
-      hconst = 0x0F;
-   #endif
-   k = STiconstlookup(hconst);
-   for (bl=lpn->tails; bl; bl = bl->next)
-   {
-      bp = bl->blk;
-      for (ip=bp->inst1; ip; ip=ip->next)
-      {
-         if (IS_BRANCH(ip->inst[0])) break;
-      }
-      assert(IS_BRANCH(ip->inst[0]));
-/*
- * change the branch 
- */
-   //ip = InsNewInst(bp, ip, NULL, JNE, -PCREG, -ICC0, fa_label);
-   ip->inst[0] = JNE;
-   ip->inst[1] = -PCREG;
-   ip->inst[2] = -ICC0;
-/*
- * change the condition of the loop
- */
-   r0 = GetReg(T_INT); /*ptr is loaded in int reg*/
-   ip = InsNewInst(bp, NULL, ip,  LD, -r0, SToff[lp->varrs[1]-1].sa[2], 0);
-   ip = InsNewInst(bp, ip, NULL, CMPAND, -ICC0, -r0, k );
-   GetReg(-1);
-   }
-
-/*
  * After all tails of cleanup loop, add jump back to aligned code
+ * before that save Np to Nv... it will needed for main loop
  */
    for (bl=lpn->tails; bl; bl = bl->next)
    {
       bp = NewBasicBlock(bl->blk, bl->blk->down);
       bl->blk->down = bp;
-      InsNewInst(bp, NULL, NULL, JMP, -PCREG, jblabel, 0);
+      r0 = GetReg(T_INT);
+      ip = InsNewInst(bp, ip, NULL, LD, -r0, SToff[Np-1].sa[2], 0);
+      ip = InsNewInst(bp, ip, NULL, ST, SToff[Nv-1].sa[2], -r0, 0);
+      InsNewInst(bp, ip, NULL, JMP, -PCREG, jblabel, 0);
+      GetReg(-1);
    }
-   KillLoop(lpn);
 
+   KillLoop(lpn); 
 }
 
 void GenForceAlignedPeeling(LOOPQ *lp)
@@ -3981,17 +4138,43 @@ void GenForceAlignedPeeling(LOOPQ *lp)
    int jBlabel, fAlabel;
    BBLOCK *bp;
    INSTQ *ip;
+   short Np, Nv;
+   int r0, r1;
+   LOOPQ *lpn;
 /*
- * For now, the necessary conditions:
- * 1. Only one Moving array ptr
- * 2. Must be vectorized 
- * 3. loop structure is SimpleLC/backword loop, will relax the cond later
- * NOTE: Only applied after Optimize Loop Control (LC). Need to check this out!!
+ * Need to create 2 new var for peel and vector loop control
  */
-   assert(lp->varrs[0]==1);
-   assert(VPATH!=-1);
-   //assert(AlreadySimpleLC(lp));
-   fprintf(stderr, "lp->flag: %d\n",lp->flag);
+   Np = InsertNewLocal("_Np", T_INT ); /* actually save, N-Np or Np value */
+   Nv = InsertNewLocal("_Nv", T_INT ); /* 1st, N then changed to N-Np or N*/
+#if 0
+/*
+ * Create new loop structure for peel loop
+ * loop structure: [ N, -1, N-Np]
+ * main loop: now [N, -1, 0] will be: [N-Np, -1, 0]
+ */
+   lpn = NewLoop(lp->flag);
+   lpn->I = lp->I;
+   if (lp->flag | L_NINC_BIT )
+   {
+      assert(IS_CONST(STflag[lp->end-1]) && (SToff[lp->end-1].i == 0));
+      assert(IS_CONST(STflag[lp->inc-1]) && SToff[lp->inc-1].i == -1);
+      
+      lpn->beg = Np;
+      lpn->end = lp->end;
+      lpn->inc = lp->inc;
+   }
+   else if (lp->flag | L_PINC_BIT )
+   {
+      assert(IS_CONST(STflag[lp->beg-1]) && (SToff[lp->beg-1].i == 0));
+      assert(IS_CONST(STflag[lp->inc-1]) && SToff[lp->inc-1].i == 1);
+      
+      lpn->beg = lp->beg;
+      lpn->end = Np;
+      lpn->inc = lp->inc;
+   }
+   else
+      assert(0);
+#endif
 
 /*
  * find the location to add checking of alignment. 
@@ -3999,10 +4182,28 @@ void GenForceAlignedPeeling(LOOPQ *lp)
    bp = bbbase;
    ip = FindCompilerFlag(bp, CF_LOOP_INIT);
    assert(ip); 
-   jBlabel = STlabellookup("ALIGNED");
-   fAlabel = STlabellookup("FORCE_ALIGNED");
+   jBlabel = STlabellookup("_FKO_ALIGNED");
+   fAlabel = STlabellookup("_FKO_FORCE_ALIGN");
    ip = InsNewInst(bp, NULL, ip, CMPFLAG, CF_FORCE_ALIGN, 0, 0);
-
+/*
+ * Now, the vector loop control is changed, so initialize it with original N
+ */
+   r0 = GetReg(T_INT);
+   if (lp->flag & L_NINC_BIT)
+   {
+      ip = InsNewInst(bp, ip, NULL, LD, -r0, SToff[lp->beg-1].sa[2], 0);
+      ip = InsNewInst(bp, ip, NULL, ST, SToff[Nv-1].sa[2], -r0, 0);
+      //lp->beg = Nv;
+   }
+   else /* PINC, i believe, we need to make the Nv 0*/
+   {
+      //ip = InsNewInst(bp, ip, NULL, LD, -r0, SToff[lp->end-1].sa[2], 0);
+      //ip = InsNewInst(bp, ip, NULL, ST, SToff[Nv-1].sa[2], -r0, 0);
+      //lp->end = Nv;
+      ip = InsNewInst(bp, ip, NULL, MOV, -r0, STiconstlookup(0), 0);
+      ip = InsNewInst(bp, ip, NULL, ST, SToff[Nv-1].sa[2], -r0, 0);
+   }
+   GetReg(-1);
 /*
  * Add the checking of alignment. it is always related with the vector length
  * the system supports, eg.- for SSE vlen 128bit, for AVX, 256 bit.
@@ -4014,11 +4215,42 @@ void GenForceAlignedPeeling(LOOPQ *lp)
  * Add loop peeling at the end of the code after cleanup (if this function is 
  * called after cleanup, otherwise after ret)
  */
-   AddLoopPeeling(lp, jBlabel, fAlabel);
-
+   AddLoopPeeling(lp, jBlabel, fAlabel, Np, Nv);
+  /* KillLoop(lpn); */
 }
 
+int IsLoopPeelOptimizable(LOOPQ *lp)
+{
+   int peel, flag;
+   short beg, end, inc;
 
+   peel = 1;
+   beg = lp->beg;
+   end = lp->end;
+   inc = lp->inc;
+   flag = lp->flag;
+/*
+ * For now, the necessary conditions:
+ * 1. Only one Moving array ptr
+ * 2. Must be vectorized
+ * 3. Simple loop format: [N, -1, 0] or, [0, 1, N]
+ */
+   if (lp->varrs[0] > 1) peel = 0;
+   if (VPATH == -1) peel = 0;
+
+   if (!(flag & L_NINC_BIT) && !(flag & L_PINC_BIT) ) peel = 0;
+   if (flag & L_NINC_BIT)
+   {
+      if (!IS_CONST(STflag[end-1]) || SToff[end-1].i != 0 ) peel = 0;
+      if (!IS_CONST(STflag[inc-1]) || SToff[inc-1].i != -1 ) peel = 0;
+   }
+   else if (flag & L_PINC_BIT)
+   {
+      if (!IS_CONST(STflag[beg-1]) || SToff[beg-1].i != 0 ) peel = 0;
+      if (!IS_CONST(STflag[inc-1]) || SToff[inc-1].i != 1 ) peel = 0;
+   }
+   else peel = 0;
+}
 
 int SpecSIMDLoop(void)
 {
@@ -4028,13 +4260,27 @@ int SpecSIMDLoop(void)
    BLIST *bl;
    lp = optloop;
 
+   KillLoopControl(lp);
+/*
+ * NOTE: Loop peeling must be called before cleanup, as it may chnage the loop
+ * control structure of main loop, hence the cleanup loop. 
+ * all the loop control should be killed before loop peeling or, cleanup loop.
+ */
+#if 0   
+   if (IsLoopPeelOptimizable(lp))
+      GenForceAlignedPeeling(lp);
+#endif
+
 /*
  * Generate cleanup loop before speculative vector transformation, as it will
  * change the optloop structure
  */
-   KillLoopControl(lp);
    GenCleanupLoop(lp);
-
+#if 0
+   fprintf(stdout, "After Cleanup\n");
+   PrintInst(stdout, bbbase);
+   exit(0);
+#endif   
 /*
  * Add loop peeling to force align with the vector alignemnt requirement.
  * will work when only there is only one moving array pointer. 
@@ -4043,8 +4289,10 @@ int SpecSIMDLoop(void)
  * NOTE: checking of force alignment is done before cleanup but I added this
  * after cleanup to take advantages of the analysis of cleanup directly!
  */
-   
-   GenForceAlignedPeeling(lp);
+#if 0   
+   if (IsLoopPeelOptimizable(lp))
+      GenForceAlignedPeeling(lp);
+#endif
 
 #if 0
    fprintf(stdout, "LIL after cleanup generation\n");
@@ -4127,7 +4375,7 @@ int SpecSIMDLoop(void)
    }
 #endif
 
-#if 1 
+#if 0 
    fprintf(stdout, " LIL NEW CFG \n");
    PrintInst(stdout, bbbase);
    
@@ -4169,7 +4417,7 @@ int SpecSIMDLoop(void)
 #if 1 
       fprintf(stdout, "Final SSV \n");
       PrintInst(stdout, bbbase);
-      //exit(0);
+      PrintST(stdout);
 #endif 
 
    return(0);
