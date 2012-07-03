@@ -14537,7 +14537,6 @@ void Mjoin(PATL,syr2KL)
 void Mjoin(PATL,@(rt)_kU)
 (
    ATL_r1kern_t gerk0,          /* func ptr to selected GER kernel */
-   ATL_CINT FNU,                /* non-0: kern does not handle N%NU != 0 */
    ATL_CINT N,                  /* size of prob to solve */
    const TYPE alpha,            /* alpha */
 @ROUT ATL_syr
@@ -14657,6 +14656,168 @@ void Mjoin(PATL,@(rt)_kL)
 @ROUT ATL_syr ATL_her
 }
 
+void ATL_@(rt)(const enum ATLAS_UPLO Uplo, ATL_CINT N, const TYPE alpha,
+               const TYPE *X, ATL_CINT incX, TYPE *A, ATL_CINT lda)
+{
+@ROUT ATL_her `   const TYPE calpha[2] = {alpha, ATL_rzero};`
+   void *vp=NULL;
+   TYPE *x, *xt;
+   ATL_r1kern_t gerk;
+   ATL_INT CacheElts;
+   const int ALP1 = (alpha == ATL_rone);
+   int COPYX, COPYXt;
+   int mu, nu, minM, minN, alignX, alignXt, FNU, ALIGNX2A;
+   if (N < 1 || (alpha == ATL_rzero))
+      return;
+/*
+ * For very small problems, avoid overhead of func calls & data copy
+ */
+   if (N < 50)
+   {
+      Mjoin(PATL,ref@(rt))(Uplo, N, alpha, X, incX, A, lda);
+      return;
+   }
+/*
+ * Determine the GER kernel to use, and its parameters
+ */
+   gerk = ATL_GetR1Kern(N-ATL_s1L_NU, ATL_s1L_NU, A, lda, &mu, &nu, 
+                        &minM, &minN, &alignX, &ALIGNX2A, &alignXt, 
+                        &FNU, &CacheElts);
+/*
+ * Determine if we need to copy the vectors
+ */
+@ROUT ATL_her
+   COPYX = (incX != 1);
+@ROUT ATL_syr
+   COPYXt = COPYX = (incX != 1);
+@ROUT ATL_syr ATL_her
+   if (!COPYX)  /* may still need to copy due to alignment issues */
+   {
+/*
+ *    ATL_Cachelen is the highest alignment that can be requested, so
+ *    make X's % with Cachelen match that of A if you want A & X to have
+ *    the same alignment
+ */
+      if (ALIGNX2A)
+      {
+         size_t t1 = (size_t) A, t2 = (size_t) X;
+         COPYX = (t1 - ATL_MulByCachelen(ATL_DivByCachelen(t1))) !=
+                 (t2 - ATL_MulByCachelen(ATL_DivByCachelen(t2)));
+      }
+      else if (alignX)
+      {
+         size_t t1 = (size_t) X;
+         COPYX = ((t1/alignX)*alignX != t1);
+      }
+   }
+@ROUT ATL_syr
+   if (!COPYXt && alignXt)  /* alignment might still force a copy */
+   {
+      size_t t1 = (size_t) X;
+      COPYXt = ((t1/alignX)*alignX != t1);
+   }
+   if (!COPYX && !COPYXt && !ALP1)
+      COPYX=1;
+/*
+ * See if X and Xt can legally be the same vector
+ */
+   if (ALP1 && (!alignXt || alignX == alignXt))
+   {
+      if (COPYX)
+      {
+         vp = malloc(ATL_MulBySize(N)+ATL_Cachelen);
+         if (!vp)
+         {
+            Mjoin(PATL,refsyr)(Uplo, N, alpha, X, incX, A, lda);
+            return;
+         }
+         x = xt = ALIGNX2A ? ATL_Align2Ptr(vp, A) : ATL_AlignPtr(vp);
+         Mjoin(PATL,copy)(N, X, incX, x, 1);
+         COPYX = 0;
+      }
+      else
+         x = xt = (TYPE*) X;
+   }
+   else if (COPYX || COPYXt)
+   {
+      vp = malloc((COPYX+COPYXt)*(ATL_Cachelen + ATL_MulBySize(N)));
+      if (!vp)
+      {
+         Mjoin(PATL,refsyr)(Uplo, N, alpha, X, incX, A, lda);
+         return;
+      }
+      if (!COPYXt)      /* apply alpha to X, orig vec Xt */
+      {
+         xt = (TYPE*) X;
+         x = (ALIGNX2A) ? ATL_Align2Ptr(vp, A) : ATL_AlignPtr(vp);
+         if (ALP1)
+            Mjoin(PATL,copy)(N, X, incX, x, 1);
+         else
+            Mjoin(PATL,cpsc)(N, alpha, X, incX, x, 1);
+      }
+      else if (!COPYX)  /* apply alpha to Xt, orig vec X */
+      {
+         x = (TYPE*) X;
+         xt = ATL_AlignPtr(vp);
+         if (ALP1)
+            Mjoin(PATL,copy)(N, X, incX, xt, 1);
+         else
+            Mjoin(PATL,cpsc)(N, alpha, X, incX, xt, 1);
+      }
+      else /* copy both vectors */
+      {
+         xt = ATL_AlignPtr(vp);
+         x = xt + N;
+         x = (ALIGNX2A) ? ATL_Align2Ptr(x, A) : ATL_AlignPtr(x);
+         if (ALP1)
+         {
+            register int i;
+            for (i=0; i < N; i++, X += incX)
+               xt[i] = x[i] = *X;
+         }
+         else
+         {
+            register int i;
+            for (i=0; i < N; i++, X += incX)
+            {
+               const register TYPE rx = *X;
+               xt[i] = rx;
+               x[i] = alpha * rx;
+            }
+         }
+      }
+   }
+   else
+      x = xt = (TYPE*)X;
+@ROUT ATL_her
+   vp = malloc((ATL_Cachelen+ATL_MulBySize(N))*(1+COPYX));
+   if (!vp)
+   {
+      Mjoin(PATL,refher)(Uplo, N, alpha, X, incX, A, lda);
+      return;
+   }
+   xt = ATL_AlignPtr(vp);
+   if (COPYX)
+   {
+      x = xt + N+N;
+      x = ALIGNX2A ? ATL_Align2Ptr(x, A) : ATL_AlignPtr(x);
+      Mjoin(PATL,copy)(N, X, incX, x, 1);
+   }
+   else
+      x = (TYPE*) X;
+   if (ALP1)
+      Mjoin(PATL,copyConj)(N, X, incX, xt, 1);
+   else
+      Mjoin(PATL,moveConj)(N, calpha, X, incX, xt, 1);
+@ROUT ATL_syr ATL_her
+   if (Uplo == AtlasUpper)
+      Mjoin(PATL,@(rt)_kU)(gerk, N, alpha, x, xt, A, lda);
+   else
+      Mjoin(PATL,@(rt)_kL)(gerk, N, alpha, x, xt, A, lda);
+   if (vp)
+     free(vp);
+}
+@beginskip
 #define MY_GERK(m_, n_, x_, xt_, A_, lda_) \
 { \
    if (FNU) \
@@ -14666,11 +14827,16 @@ void Mjoin(PATL,@(rt)_kL)
       if (nnu) \
          gerk(m_, nnu, x_, xt_, A_, lda_); \
       if (nr) \
+@ROUT ATL_syr
          ATL_GENGERK(m_, nr, x_, (xt_)+nnu, (A_)+nnu*(lda_), lda_); \
+@ROUT ATL_her
+         ATL_GENGERK(m_, nr, x_, (xt_)+nnu+nnu, (A_)+(nnu+nnu)*(lda_), lda_); \
+@ROUT ATL_syr ATL_her
    } \
    else \
       gerk(m_, n_, x_, xt_, A_, lda_); \
 }
+
 void ATL_@(rt)(const enum ATLAS_UPLO Uplo, ATL_CINT N, const TYPE alpha,
                const TYPE *X, ATL_CINT incX, TYPE *A, ATL_CINT lda)
 {
@@ -14747,9 +14913,10 @@ void ATL_@(rt)(const enum ATLAS_UPLO Uplo, ATL_CINT N, const TYPE alpha,
       t1 = (size_t) X;
       COPYXt = ((t1/alignX)*alignX != t1);
    }
-   MB = (mb > N || mb < 1) ? N : mb;
-   if (nb > N || nb < 1)
-      nb = N;
+   MB = mb;
+@skip   MB = (mb > N || mb < 1) ? N : mb;
+@skip   if (nb > N || nb < 1)
+@skip      nb = N;
 @ROUT ATL_her
    i = N + COPYX*mb;
    vp = malloc(ATL_MulBySize(i)+2*ATL_Cachelen);
@@ -14896,6 +15063,7 @@ void ATL_@(rt)(const enum ATLAS_UPLO Uplo, ATL_CINT N, const TYPE alpha,
    if (vp)
      free(vp);
 }
+@endskip
 @ROUT ATL_syr2
    @define rt @syr2@
 @ROUT ATL_her2
@@ -14936,8 +15104,13 @@ void ATL_@(rt)(const enum ATLAS_UPLO Uplo, ATL_CINT N, const TYPE alpha,
       if (nnu) \
          gerk(m_, nnu, x_, y_, w_, z_, A_, lda_); \
       if (nr) \
+@ROUT ATL_syr2
          ATL_GENGERK(m_, nr, x_, (y_)+nnu, w_, (z_)+nnu, \
                      (A_)+nnu*(lda_), lda_); \
+@ROUT ATL_her2
+         ATL_GENGERK(m_, nr, x_, (y_)+nnu+nnu, w_, (z_)+nnu, \
+                     (A_)+(nnu+nnu)*(lda_), lda_); \
+@ROUT ATL_her2 ATL_syr2
    } \
    else \
       gerk(m_, n_, x_, y_, w_, z_, A_, lda_); \
@@ -15125,8 +15298,7 @@ void Mjoin(PATL,@(rt))(const enum ATLAS_UPLO Uplo, ATL_CINT N,
    {
       MB = N-S2NU;
       NB = N-S2NU;
-      mb = N;
-      nb = N;
+      mb = nb = N;
    }
    else
    {
@@ -15387,7 +15559,7 @@ void Mjoin(PATL,@(rt))(const enum ATLAS_UPLO Uplo, ATL_CINT N,
             Mjoin(PATL,cpsc)(mb, alphaY, Y+i*incy, incy, y, 1);
          Mjoin(PATL,syr2_kU)(gerk, FNU, mb, x, yt+i, A+i*(lda+1), lda);
          if (n)
-            gerk(mb, n, x, yt+i+mb, y, xt+i+mb, A+(mb+i)*lda+i, lda);
+            MY_GERK(mb, n, x, yt+i+mb, y, xt+i+mb, A+(mb+i)*lda+i, lda);
          if (!COPYX)
             x += mb;
          if (!COPYY)
@@ -15400,7 +15572,7 @@ void Mjoin(PATL,@(rt))(const enum ATLAS_UPLO Uplo, ATL_CINT N,
          Mjoin(PATL,her2_kU)(gerk, FNU, mb, alpha0, x, xh+i+i, y, yh+i+i, 
                              A+i*(lda2+2), lda);
          if (n)
-            gerk(mb, n, x, yh+((i+mb)<<1), y, xh+((i+mb)<<1), 
+            MY_GERK(mb, n, x, yh+((i+mb)<<1), y, xh+((i+mb)<<1), 
                     A+(mb+i)*lda2+i+i, lda);
          if (!COPYX)
             x += mb+mb;
@@ -15442,7 +15614,7 @@ void Mjoin(PATL,@(rt))(const enum ATLAS_UPLO Uplo, ATL_CINT N,
             Mjoin(PATL,cpsc)(mb, alpha, Y+i*incy, incy, y, 1);
          else 
             y += mb;
-         gerk(mb, i, x+i, yt, y+i, xt, A+i,lda);
+         MY_GERK(mb, i, x+i, yt, y+i, xt, A+i,lda);
          Mjoin(PATL,syr2_kL)(gerk, mb, x+i, yt+i*incy, A+i*(lda+1), lda);
 @ROUT ATL_her2
          if (COPYX)
@@ -15453,7 +15625,7 @@ void Mjoin(PATL,@(rt))(const enum ATLAS_UPLO Uplo, ATL_CINT N,
             Mjoin(PATL,copy)(mb, Y+i*incy, incY, y, 1);
          else 
             y += mb+mb;
-         gerk(mb, i, x+i+i, yh, y+i+i, xh, A+i+i, lda);
+         MY_GERK(mb, i, x+i+i, yh, y+i+i, xh, A+i+i, lda);
          Mjoin(PATL,her2_kL)(gerk, mb, alpha0, x+i+i, xh+i+i, y+i+i, yh+i+i,
                              A+i*(lda2+2), lda);
 @ROUT ATL_syr2 ATL_her2
