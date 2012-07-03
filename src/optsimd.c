@@ -3496,7 +3496,11 @@ void SetScalarRestartOptFlag(LOOPQ *lp, int *lpOpt, int *usesIndex, int *usesPtr
    {
       KillLoopControl(lp);
       il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
-      if (il) KillIlist(il);
+      if (il)
+      {
+         lp->flag |= L_IREF_BIT;
+         KillIlist(il);
+      }
       else ui = 0;
       pi = FindMovingPointers(lp->blocks);
       if (!pi)

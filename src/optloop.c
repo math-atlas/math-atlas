@@ -695,6 +695,13 @@ static void ForwardLoop(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
    {
       assert(IS_CONST(STflag[lp->inc-1]));
       assert(SToff[lp->inc-1].i == 1);
+/*
+ *    Majedul: OL_NEINC is also used to update N by N+Unroll-1 for the 
+ *    forward loop when it is directly jump to cleanup without the main
+ *    loop. Look into the code of GenCleanupLoop. 
+ */
+      //SToff[OL_NEINC-1].i = unroll-1;
+      SToff[OL_NEINC-1].i = unroll;
    }
    if (IS_CONST(STflag[lp->beg-1]))
       *ipinit = ip = NewInst(NULL, NULL, NULL, MOV, -r0, lp->beg, 0);
@@ -705,17 +712,42 @@ static void ForwardLoop(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
  * If loop is unrolled,  and end is non-constant, subtract off UR-1 so we
  * don't go extra distance
  */
+
+/*
+ * Majedul: Need to add conditional branch to jump to cleanup
+ * NOTE: for cleanup loop, as header is not set, this ipinit will not be added
+ * for Loop peeling, as Unroll is 1, lp->end is not updated
+ * NOTE: I haven't consider the case where lp->end is constant.
+ */
+   assert(!IS_CONST(STflag[lp->end-1]));
+
    if (unroll > 1 && !IS_CONST(STflag[lp->end-1]))
    {
       ip = ip->next;
       ip->next = NewInst(NULL, NULL, NULL, LD, -r0, SToff[lp->end-1].sa[2], 0);
       ip = ip->next;
+      /*ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, 
+                         STiconstlookup(unroll*SToff[lp->inc-1].i-1));*/
       ip->next = NewInst(NULL, NULL, NULL, SUB, -r0, -r0, 
-                         STiconstlookup(unroll*SToff[lp->inc-1].i-1));
+                         STiconstlookup(unroll*SToff[lp->inc-1].i));
       ip = ip->next;
       ip->next = NewInst(NULL, NULL, NULL, ST, SToff[lp->end-1].sa[2], -r0, 0);
+ /*
+  *   add checking to jump to cleanup.
+  */
+      ip = ip->next;
+      ip->next = NewInst(NULL, NULL, NULL, LD, -r0, SToff[lp->I-1].sa[2], 0);
+      ip = ip->next;
+      ip->next = NewInst(NULL, NULL, NULL, LD, -r1, SToff[lp->end-1].sa[2], 0);
+      ip = ip->next;
+      ip->next = NewInst(NULL, NULL, NULL, CMP, -ICC0, -r0, -r1);
+      ip = ip->next;
+      ip->next = NewInst(NULL, NULL, NULL, JGT, -PCREG, -ICC0, lp->NE_label);
+/*    to keep preheader intact... deleted by cp */
+      ip = ip->next;
+      ip->next = NewInst(NULL, NULL, NULL, MOV, -REG_SP, -REG_SP, 0);
    }
-
+ 
    *ipupdate = ip = NewInst(NULL, NULL, NULL, LD, -r0, SToff[lp->I-1].sa[2], 0);
    if (IS_CONST(STflag[lp->inc-1]))
    {
@@ -902,6 +934,58 @@ int AlreadySimpleLC(LOOPQ *lp)
    return( (IS_CONST(STflag[lp->inc-1]) && IS_CONST(STflag[lp->end-1])
             && SToff[lp->inc-1].i == -1 && SToff[lp->end-1].i == 0) );
 }
+
+void SetLoopControlFlag(LOOPQ *lp, int NeedKilling)
+/*
+ * Majedul: As this checking is performed sevaral times, I made it a function
+ * KNOWN ISSUE: lp->blocks is changed but not updated yet. There is a inconsis-
+ * tancy. We need to update the loop control flags once before changing the 
+ * loop structure. 
+ */
+{
+   ILIST *il;
+   int isLcOpt;
+
+   if (NeedKilling)
+      KillLoopControl(lp);
+   if (AlreadySimpleLC(lp))
+      lp->flag |= (L_NSIMPLELC_BIT | L_SIMPLELC_BIT);
+/*
+ * if we've not yet determined what kind of loop control to use, do so
+ */
+   if (!(lp->flag & (L_FORWARDLC_BIT | L_SIMPLELC_BIT)))
+   {
+/*
+ *    Majedul: FIXME: in SSV, we check only the vector path. for iamax, vector
+ *    path doesn't contain Index ref. Hence, for optloop the loop control is 
+ *    optimized where as the clean up doesn't follow it. 
+ */
+      
+/*
+ *    if SSV is used, LIREF_BIT is set if index is refered in loop
+ */
+      if (lp->flag & L_IREF_BIT)
+      {
+         isLcOpt = 0;    
+      }
+      else /* normal vector*/
+      {
+         il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
+         if (il)
+         {
+            isLcOpt = 0;
+            lp->flag |= L_IREF_BIT;
+            KillIlist(il);
+         }
+         else isLcOpt = 1;
+      }
+      if (!AlreadySimpleLC(lp) && !isLcOpt)
+        lp->flag |= L_FORWARDLC_BIT;
+      else lp->flag |= L_SIMPLELC_BIT;
+   }
+}
+
+
 void OptimizeLoopControl(LOOPQ *lp, /* Loop whose control should be opt */
                          int unroll, /* unroll factor to apply */
                          int NeedKilling, /* 0 if LC already removed */
@@ -925,6 +1009,7 @@ void OptimizeLoopControl(LOOPQ *lp, /* Loop whose control should be opt */
  */
    if (unroll)
       assert(IS_CONST(STflag[lp->inc-1]));
+#if 0
    if (NeedKilling)
       KillLoopControl(lp);
    if (AlreadySimpleLC(lp))
@@ -934,13 +1019,23 @@ void OptimizeLoopControl(LOOPQ *lp, /* Loop whose control should be opt */
  */
    if (!(lp->flag & (L_FORWARDLC_BIT | L_SIMPLELC_BIT)))
    {
+/*
+ *    Majedul: FIXME: in SSV, we check only the vector path. for iamax, vector
+ *    path doesn't contain Index ref. Hence, for optloop the loop control is 
+ *    optimized where as the clean up doesn't follow it. 
+ */
       il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
-      if (!AlreadySimpleLC(lp) && il)
+      //if (!AlreadySimpleLC(lp) && il)
+      if (!AlreadySimpleLC(lp) )
         lp->flag |= L_FORWARDLC_BIT;
       else lp->flag |= L_SIMPLELC_BIT;
       if (il)
          KillIlist(il);
    }
+#else
+   SetLoopControlFlag(lp, NeedKilling); 
+#endif
+
    if (lp->flag & L_FORWARDLC_BIT)
    {
       fprintf(stderr, "\nIndex refs in loop prevent SimpleLC!!!\n\n");
@@ -1147,16 +1242,44 @@ void GenCleanupLoop(LOOPQ *lp)
 /*
  * First block is for getting N right when unrolled loop never entered
  */
-   r0 = GetReg(T_INT);
-   InsNewInst(bp, NULL, NULL, LABEL, lp->NE_label, 0, 0);
-   InsNewInst(bp, NULL, NULL, LD, -r0, SToff[lp->I-1].sa[2], 0);
 /*
- * OL_NEINC will be changed to real unrolling when known 
+ * Majedul: This block is specially for cleanup loop, only when the program
+ * will not enter into the vector/unroll loop.
+ * But we need to handle this part for forward loop separately.
+ * FIXME: for forward loop, index variable 'I' should not be changed. 
+ * We need to update N by N+unroll as we updated the main loop_init but reverse
+ * way in forward loop.
+ * NOTE: forward loop only executed when there is a index ref inside the loop.
+ * Normall forward loop is converted to backward using LC optimization.
  */
-   OL_NEINC = STdef(NULL, CONST_BIT | T_INT, 1);
-   InsNewInst(bp, NULL, NULL, ADD, -r0, -r0, OL_NEINC);
-   InsNewInst(bp, NULL, NULL, ST, SToff[lp->I-1].sa[2], -r0, 0);
-   GetReg(-1);
+   SetLoopControlFlag(lp, 0);      
+  
+   if (lp->flag & L_FORWARDLC_BIT) /* update N by N+unroll*/
+   {
+      r0 = GetReg(T_INT);
+      InsNewInst(bp, NULL, NULL, LABEL, lp->NE_label, 0, 0);
+      InsNewInst(bp, NULL, NULL, LD, -r0, SToff[lp->end-1].sa[2], 0);
+/*
+ *    OL_NEINC will be changed to real unrolling when known 
+ */
+      OL_NEINC = STdef(NULL, CONST_BIT | T_INT, 1);
+      InsNewInst(bp, NULL, NULL, ADD, -r0, -r0, OL_NEINC);
+      InsNewInst(bp, NULL, NULL, ST, SToff[lp->end-1].sa[2], -r0, 0);
+      GetReg(-1);
+   }
+   else  /* update I by I+unroll*/
+   {
+      r0 = GetReg(T_INT);
+      InsNewInst(bp, NULL, NULL, LABEL, lp->NE_label, 0, 0);
+      InsNewInst(bp, NULL, NULL, LD, -r0, SToff[lp->I-1].sa[2], 0);
+/*
+ *    OL_NEINC will be changed to real unrolling when known 
+ */
+      OL_NEINC = STdef(NULL, CONST_BIT | T_INT, 1);
+      InsNewInst(bp, NULL, NULL, ADD, -r0, -r0, OL_NEINC);
+      InsNewInst(bp, NULL, NULL, ST, SToff[lp->I-1].sa[2], -r0, 0);
+      GetReg(-1);
+   }
 /*
  * Start new block with a cleanup label
  */
@@ -1259,6 +1382,7 @@ void UnrollCleanup(LOOPQ *lp, int unroll)
 /*
  * If flag's loop control not set, compute it, then set boolean based on flag
  */
+#if 0  
    if (!(lp->flag & (L_FORWARDLC_BIT | L_SIMPLELC_BIT)))
    {
       if (AlreadySimpleLC(lp))
@@ -1266,13 +1390,22 @@ void UnrollCleanup(LOOPQ *lp, int unroll)
       else
       {
          il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
-         if (!AlreadySimpleLC(lp) && il)
+/*
+ *       Majedul: same problem as the OptimizeLoopControl...
+ *       vector path of SSV cannot figure out the Index uses. 
+ *       FIXME: 
+ */
+         //if (!AlreadySimpleLC(lp) && il)
+         if (!AlreadySimpleLC(lp) )
             lp->flag |= L_FORWARDLC_BIT;
          else
             lp->flag |= L_SIMPLELC_BIT;
          if (il) KillIlist(il);
       }
    }
+#else
+   SetLoopControlFlag(lp, 0);
+#endif
    FORWARDLOOP = L_FORWARDLC_BIT & lp->flag;
    unroll *= Type2Vlen(lp->vflag);  /* need to update Type2Vlen for AVX*/
 /*
@@ -1296,16 +1429,20 @@ void UnrollCleanup(LOOPQ *lp, int unroll)
       ipnext = bp->ainst1->next;
    else
       ipnext = bp->ainst1;
+   
    if (FORWARDLOOP)
    {
 /*
  *    If we've used unrolled forward loop, restore N to original value
  */
+      fprintf(stderr, "\n\nForward loop !!!\n");
       if (!IS_CONST(STflag[lp->end-1]))
       {
          InsNewInst(bp, NULL, ipnext, LD, -r1, SToff[lp->end-1].sa[2], 0);
+         /*InsNewInst(bp, NULL, ipnext, ADD, -r1, -r1, 
+                            STiconstlookup(unroll*SToff[lp->inc-1].i-1));*/
          InsNewInst(bp, NULL, ipnext, ADD, -r1, -r1, 
-                            STiconstlookup(unroll*SToff[lp->inc-1].i-1));
+                            STiconstlookup(unroll*SToff[lp->inc-1].i));
          InsNewInst(bp, NULL, ipnext, ST, SToff[lp->end-1].sa[2], -r1, 0);
       }
       InsNewInst(bp, NULL, ipnext, LD, -r0, SToff[lp->I-1].sa[2], 0);
