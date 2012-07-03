@@ -269,6 +269,27 @@ short FindReadUseType(INSTQ *ip, short var, int blkvec)
    for (il=ib; il; il = il->next)
    {
       ip = il->inst;
+#if 0
+    fprintf(stderr, "%s: inst=%s, inst->next=%s\n", STname[var-1],
+              instmnem[ip->inst[0]], instmnem[ip->next->inst[0]] );
+#endif
+/*
+ *    Majedul: 
+ *    1. Production: "ID PE ID * avar" this logic is OK
+ *       Example: dot += x * y;
+ *    2. Production: "ID PE avar" this is not OK
+ *       Example: sum += x;
+ *       here, the LIL:
+ *          LD reg0, sum
+ *          LD reg1, x
+ *          FADD reg0, reg0, reg1
+ *          FST sum, reg0
+ *    So, I have added this while loop to skip all the lds      
+ */
+      while (ip->next->inst[0] == FLD || ip->next->inst[0] == FLDD)
+         ip=ip->next;
+      assert(ip->next);
+
       if (ip->next->inst[0] == FADD || ip->next->inst[0] == FADDD ||
           ip->next->inst[0] == FMAC || ip->next->inst[0] == FMACD)
          j |= VS_ACC;
@@ -556,6 +577,11 @@ int DoLoopSimdAnal(LOOPQ *lp)
          if (s[i] & VS_LIVEIN)
          {
             j = FindReadUseType(lp->header->inst1, sp[i], lp->blkvec);
+#if 0            
+            fprintf(stderr," V1: LIVEIN : %s[%d], sp: %s[%d], j=%d\n",
+                    STname[lp->vscal[i+1]-1],lp->vscal[i+1], STname[sp[i]-1],
+                    sp[i], j);
+#endif
             if (j == VS_ACC)
                s[i] |= VS_ACC;
             else if (j == VS_MUL)
@@ -1211,9 +1237,10 @@ int SimdLoop(LOOPQ *lp)
  *       It doesn't recognize sum as accumulator to init but can recognize
  *       in reduction.
  */
+#if 0         
          fprintf(stderr, "LIVEIN : %s : %d\n", 
                  STname[lp->vscal[i+1]-1], lp->vsflag[i+1]);
-         
+#endif         
          if (VS_ACC & lp->vsflag[i+1])
             PrintComment(lp->preheader, NULL, iph, 
                "Init accumulator vector for %s", STname[lp->vscal[i+1]-1]);
@@ -1232,8 +1259,10 @@ int SimdLoop(LOOPQ *lp)
  */
       if (VS_LIVEOUT & lp->vsflag[i+1])
       {
+#if 0         
          fprintf(stderr, "LIVEOUT : %s : %d\n", 
                  STname[lp->vscal[i+1]-1], lp->vsflag[i+1]);
+#endif
          j++;
          assert((lp->vsoflag[i+1] & (VS_MUL | VS_EQ | VS_ABS)) == 0);
          iptp = PrintComment(lp->posttails->blk, iptp, iptn,
