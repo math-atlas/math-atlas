@@ -221,13 +221,19 @@ Mjoin( AP1, rotg )(                            A,  B,  C,  S         )
 Mjoin( AP1, rotmg )(                           D1, D2, X1, Y1, PARAM )
 #endif
 
+#ifdef IFKO
+   TYPE ATL_UNRM2( int N, TYPE *X, int iX);
+#define test_nrm2(       N,     X, iX                                ) \
+ATL_UNRM2(               N,     X, iX                                )
+#else   
 #define test_nrm2(       N,     X, iX                                ) \
 Mjoin( ASC, nrm2 )(      N,     X, iX                                )
+#endif
 
 #ifdef IFKO
    TYPE ATL_UASUM( int N, TYPE *X, int iX); 
 #define test_asum(       N,     X, iX                                ) \
-ATL_UASUM(            N,     X, iX                                )
+ATL_UASUM(               N,     X, iX                                )
 #else   
 #define test_asum(       N,     X, iX                                ) \
 Mjoin( ASC, asum )(      N,     X, iX                                )

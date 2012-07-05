@@ -8,8 +8,8 @@ acmld = /opt/acml5.1.0/
 #----------------------------
 # Set reference library here 
 #----------------------------
-#FBLASlib = $(LIBdir)/libf77refblas.a
-FBLASlib = $(acmld)/gfortran64/lib/libacml.a
+FBLASlib = $(LIBdir)/libf77refblas.a
+#FBLASlib = $(acmld)/gfortran64/lib/libacml.a
 
 BLASlib = $(FBLASlib)
 
@@ -19,8 +19,8 @@ BLASlib = $(FBLASlib)
 
 FKOdir = /home/msujon/iFKO
 Blib = $(mySRCdir)/lib
-sFKOlib = $(Blib)/sblas_fko.a
-dFKOlib = $(Blib)/dblas_fko.a
+sFKOlib = $(Blib)/sblas_fko.a $(Blib)/snrm2.a
+dFKOlib = $(Blib)/dblas_fko.a $(Blib)/dnrm2.a
 
 all: xsl1blastst_ifko xdl1blastst_ifko
 
