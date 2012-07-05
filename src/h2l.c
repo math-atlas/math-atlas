@@ -476,7 +476,7 @@ void DoArith(short dest, short src0, char op, short src1)
          #ifdef ArchHasMAC
             rd = LocalLoad(dest);
             if (type == T_FLOAT) inst = FMAC;
-            else inst = FMACD; /*Majedul: was a type, corrected it. */
+            else inst = FMACD; /*Majedul: was a typo, corrected it. */
          #else
             if (type == T_FLOAT)
             {
@@ -646,7 +646,11 @@ LOOPQ *DoLoop(short I, short start, short end, short inc,
       sst = GetSignInfo(start);
    if (!send || IS_CONST(STflag[end-1]))
       send = GetSignInfo(end);
-   if (!sinc || IS_CONST(STflag[end-1]))
+/*
+ * Majedul: fixed to check the 'inc' from 'end'
+ */
+   /*if (!sinc || IS_CONST(STflag[end-1]))*/
+   if (!sinc || IS_CONST(STflag[inc-1]))
       sinc = GetSignInfo(inc);
    if (sst)
    {
