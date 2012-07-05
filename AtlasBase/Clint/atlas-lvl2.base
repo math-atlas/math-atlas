@@ -17957,11 +17957,8 @@ void TRMVUN
 {
    TRMVUN_k(N, A, lda, X, incX);
 }
-@ROUT ATL_trmv  ATL_trsv 
+@ROUT ATL_trmv  ATL_trsv ATL_symv ATL_hemv
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2012 -define cwdate 2010 -define contrib "Antoine P. Petitet"
-@ROUT ATL_symv ATL_hemv
-@extract -b @(topd)/cw.inc lang=c -define cwdate 2010 -define contrib "Antoine P. Petitet"
-@ROUT ATL_trmv ATL_trsv ATL_symv ATL_hemv
 #include "atlas_misc.h"
 #include "atlas_level1.h"
 #include "atlas_kernel2.h"
@@ -17969,13 +17966,17 @@ void TRMVUN
 
 #include "atlas_reflvl2.h"          /* temporary for building purposes */
 #include "atlas_reflevel2.h"        /* used for gbmv, gpmv and gpr.    */
-@ROUT ATL_trmv  ATL_trsv 
 #include Mstr(Mjoin(Mjoin(atlas_,PRE),sysinfo.h))
 #include "atlas_cacheedge.h"
 
 #ifdef CacheEdge
-   #if CacheEdge > 4194304 || CacheEdge == 0
+@ROUT ATL_trmv  ATL_trsv
+   #if !defined(CacheEdge) || CacheEdge > 4194304 || CacheEdge == 0
       #define MY_CE (4*ATL_MulBySize(ATL_L1elts))
+@ROUT ATL_symv ATL_hemv
+   #if !defined(CacheEdge) || CacheEdge == 0
+      #define MY_CE (4*ATL_MulBySize(ATL_L1elts))
+@ROUT ATL_trmv  ATL_trsv ATL_symv ATL_hemv
    #else
       #define MY_CE CacheEdge
    #endif
@@ -19144,6 +19145,81 @@ void Mjoin(PATL,trsv)
    if (ierr)
       Mjoin(PATL,reftrsv)(Uplo, Trans, Diag, N, A, lda, X, incX);
 }
+@ROUT ATL_symv ATL_hemv
+typedef void (*ATL_symvK_t)
+   (const enum ATLAS_UPLO, const int, const SCALAR, const TYPE*, const int,
+    const TYPE*, const int, const SCALAR, TYPE*, const int);
+static void ATL_symvL
+(
+   ATL_symvK_t symvK,
+   const int NB,
+   ATL_CINT N,
+   const TYPE *A,
+   ATL_CINT lda,
+   const TYPE *x,
+   TYPE  *y,
+   const TYPE *xt,
+   TYPE  *yt
+)
+{
+@ROUT ATL_symv
+   #define one ATL_rone
+   @define j2 @j@
+   @define i2 @i@
+   @define Mmb2 @Mmb@
+@ROUT ATL_hemv
+   const TYPE one[2] = {ATL_rone, ATL_rzero};
+   ATL_INT Mmb2;
+   @define j2 @j2@
+   @define i2 @i2@
+   @define Mmb2 @Mmb2@
+@ROUT ATL_symv ATL_hemv
+   ATL_INT Mmb, mr, MB, j;
+   const size_t incA = (NB SHIFT)*lda;
+   const size_t opsize = ((size_t)(N+8)*(N+4))*(sizeof(TYPE)>>1)SHIFT;
+   void (*gemvT)(ATL_CINT, ATL_CINT, const SCALAR, const TYPE*, ATL_CINT,
+                 const TYPE*, ATL_CINT, const SCALAR, TYPE*, ATL_CINT);
+   void (*gemvN)(ATL_CINT, ATL_CINT, const SCALAR, const TYPE*, ATL_CINT,
+                 const TYPE*, ATL_CINT, const SCALAR, TYPE*, ATL_CINT);
+
+   if (opsize > MY_CE)
+   {
+      gemvT = Mjoin(PATL,gemvT);
+      gemvN = Mjoin(PATL,gemvN_L2);
+   }
+   else if (opsize <= ATL_MulBySize(ATL_L1elts))
+   {
+      gemvT = Mjoin(PATL,gemvT_L1);
+      gemvN = Mjoin(PATL,gemvN_L1);
+   }
+   else
+   {
+      gemvT = Mjoin(PATL,gemvT_L2);
+      gemvN = Mjoin(PATL,gemvN_L2);
+   }
+/*
+ * Choose MB such that A is retained in L2 cache for second GEMV call
+ * If partial block is tiny, absorbe it into last block since cache is not
+ * precise anyway.
+ */
+   MB = ATL_DivBySize(MY_CE) / NB;
+   MB = (MB > N || MB < 240) ? N : MB;
+@ROUT ATL_hemv `   Mmb2 = Mmb+Mmb;`
+   for (j=0; j < N; j += NB, A += incA)
+   {
+      register int i, nb=N-j;
+      nb = (nb >= NB) ? NB : nb;
+      symvK(AtlasLower, nb, one, A+@(j2), lda, x+@(j2), 1, one, y+@(j2), 1);
+      for (i=j+nb; i < N; i += MB)
+      {
+@ROUT ATL_hemv `         register size_t i2 = i+i;`
+         register int mb = N-i;
+         mb = (mb >= MB) ? MB : mb;
+         gemvT(mb, nb, one, A+@(i2), lda, xt+@(i2), 1, one, yt+@(j2), 1);
+         gemvN(mb, nb, one, A+@(i2), lda, x+@(j2), 1, one, y+@(i2), 1);
+      }
+   }
+}
 @ROUT ATL_symv
 void Mjoin(PATL,symv)
 (
@@ -19176,6 +19252,62 @@ void Mjoin(PATL,symv)
  * ---------------------------------------------------------------------
  */
 {
+   if (N <= 0 || (alpha == ATL_rzero && beta == ATL_rone))
+      return;
+   if (alpha == ATL_rzero)
+   {
+      if (beta == ATL_rzero)
+         Mjoin(PATL,zero)(N, Y, incY);
+      else
+         Mjoin(PATL,scal)(N, beta, Y, incY);
+      return;
+   }
+   if (Uplo == AtlasLower)
+   {
+      void *vp=NULL;
+      TYPE *x=(TYPE*)X, *y=Y;
+      const size_t tX = (size_t)X, tY = (size_t)Y;
+      const int BETA0 = (beta == ATL_rzero);
+      const int ALPHA1 = (alpha == ATL_rone);
+      const int COPYY = !(incY == 1 && (beta == ATL_rone || BETA0) &&
+                          (ATL_MulByCachelen(ATL_DivByCachelen(tY)) == tY));
+      const int COPYX = !(incX == 1 && (COPYY || ALPHA1) &&
+                          (ATL_MulByCachelen(ATL_DivByCachelen(tX)) == tX));
+      TYPE calp=one, cbet=one;
+      if (COPYX || COPYY)
+      {
+         TYPE *tp;
+         tp = vp = malloc((COPYX+COPYY)*(ATL_Cachelen+ATL_MulBySize(N)));
+         if (!vp)
+         {
+            Mjoin(PATL,refsymv)(Uplo, N, alpha, A, lda, X, incX, beta, Y, incY);
+            return;
+         }
+         if (COPYX)
+         {
+            x = ATL_AlignPtr(tp);
+            if (COPYY || alpha == ATL_rone)
+               Mjoin(PATL,copy)(N, X, incX, x, 1);
+            else
+               Mjoin(PATL,cpsc)(N, alpha, X, incX, x, 1);
+            tp = x + N;
+         }
+         if (COPYY)
+         {
+            calp = alpha;
+            cbet = beta;
+            y = ATL_AlignPtr(tp);
+            Mjoin(PATL,zero)(N, y, 1);
+         }
+         else if (BETA0)
+            Mjoin(PATL,zero)(N, y, 1);
+      }
+      ATL_symvL(Mjoin(PATL,refsymv), 120, N, A, lda, x, y, x, y);
+      if (COPYY)
+         Mjoin(PATL,axpby)(N, calp, y, 1, cbet, Y, incY);
+      free(vp);
+      return;
+   }
    Mjoin(PATL,refsymv)(Uplo, N, alpha, A, lda, X, incX, beta, Y, incY);
 }
 @ROUT ATL_hemv
