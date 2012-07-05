@@ -17957,8 +17957,11 @@ void TRMVUN
 {
    TRMVUN_k(N, A, lda, X, incX);
 }
-@ROUT ATL_trmv ATL_trsv ATL_symv ATL_hemv
+@ROUT ATL_trmv 
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2012 -define cwdate 2010 -define contrib "Antoine P. Petitet"
+@ROUT ATL_trsv ATL_symv ATL_hemv
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2010 -define contrib "Antoine P. Petitet"
+@ROUT ATL_trmv ATL_trsv ATL_symv ATL_hemv
 #include "atlas_misc.h"
 #include "atlas_level1.h"
 #include "atlas_kernel2.h"
@@ -17966,7 +17969,644 @@ void TRMVUN
 
 #include "atlas_reflvl2.h"          /* temporary for building purposes */
 #include "atlas_reflevel2.h"        /* used for gbmv, gpmv and gpr.    */
-@ROUT ATL_trsv
+@ROUT ATL_trmv
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),sysinfo.h))
+#include "atlas_cacheedge.h"
+
+#ifdef CacheEdge
+   #if CacheEdge > 4194304 || CacheEdge == 0
+      #define MY_CE (4*ATL_MulBySize(ATL_L1elts))
+   #else
+      #define MY_CE CacheEdge
+   #endif
+#else
+   #define MY_CE (4*ATL_MulBySize(ATL_L1elts))
+#endif
+
+static void ATL_trmvUTNk
+(
+   ATL_CINT N,
+   const TYPE *A,
+   ATL_CINT lda,
+   const TYPE *X,  /* aligned with A */
+   TYPE *Y         /* 16-byte aligned */
+)
+{
+   register ATL_INT j;
+#ifdef TREAL
+   for (j=0; j < N; j++)
+      Y[j] += Mjoin(PATL,dot)(j+1, X, 1, A+j*lda, 1);
+#else
+   for (j=0; j < N; j++)
+   {
+      const register ATL_INT j2 = j + j;
+      register TYPE ry=Y[j2], iy=Y[j2+1];
+      Mjoin(PATL,dotu_sub)(j+1, X, 1, A+j2*lda, 1, Y+j2);
+      Y[j2] += ry;
+      Y[j2+1] += iy;
+   }
+#endif
+}
+
+static void ATL_trmvUTUk
+(
+   ATL_CINT N,
+   const TYPE *A,
+   ATL_CINT lda,
+   const TYPE *X,  /* aligned with A */
+   TYPE *Y         /* 16-byte aligned */
+)
+{
+   register ATL_INT j;
+#ifdef TREAL
+   *Y += *X; A += lda;
+   for (j=1; j < N; j++, A += lda)
+      Y[j] += X[j] + Mjoin(PATL,dot)(j, X, 1, A, 1);
+#else
+   register ATL_CINT lda2=lda+lda;
+   *Y += *X;
+   Y[1] += X[1];
+   A += lda2;
+   for (j=1; j < N; j++, A += lda2)
+   {
+      const register ATL_INT j2 = j + j;
+      register TYPE ry=Y[j2], iy=Y[j2+1];
+      ry += X[j2];
+      iy += X[j2+1];
+      Mjoin(PATL,dotu_sub)(j, X, 1, A, 1, Y+j2);
+      Y[j2] += ry;
+      Y[j2+1] += iy;
+   }
+#endif
+}
+
+static void ATL_trmvUNNk
+(
+   ATL_CINT N,
+   const TYPE *A,
+   ATL_CINT lda,
+   const TYPE *X,
+   TYPE *Y
+)
+{
+   ATL_INT j;
+   #ifdef TREAL
+      for (j=0; j < N; j++, A += lda)
+         Mjoin(PATL,axpy)(j+1, X[j], A, 1, Y, 1);
+   #else
+      ATL_CINT lda2=lda+lda;
+      for (j=0; j < N; j++, A += lda2)
+         Mjoin(PATL,axpy)(j+1, X+j+j, A, 1, Y, 1);
+   #endif
+}
+static void ATL_trmvUNUk
+(
+   ATL_CINT N,
+   const TYPE *A,
+   ATL_CINT lda,
+   const TYPE *X,
+   TYPE *Y
+)
+{
+#ifdef TREAL
+   ATL_INT j;
+   *Y += *X; A += lda;
+   for (j=1; j < N; j++, A += lda)
+   {
+      register TYPE x=X[j];
+      Mjoin(PATL,axpy)(j, x, A, 1, Y, 1);
+      Y[j] += x;
+   }
+#else
+   register ATL_INT j;
+   register ATL_CINT lda2 = lda+lda;
+   *Y += *X;
+   Y[1] += X[1]; A += lda2;
+   for (j=1; j < N; j++, A += lda2)
+   {
+      register ATL_CINT j2 = j + j;
+      Mjoin(PATL,axpy)(j, X+j2, A, 1, Y, 1);
+      Y[j2] += X[j2];
+      Y[j2+1] += X[j2+1];
+   }
+#endif
+}
+
+
+static void ATL_trmvLTNk
+(
+   ATL_CINT N,
+   const TYPE *A,
+   ATL_CINT lda,
+   const TYPE *X,  /* aligned with A */
+   TYPE *Y         /* 16-byte aligned */
+)
+{
+   register ATL_INT j;
+   ATL_CINT ldap1 = lda+1;
+#ifdef TREAL
+   for (j=0; j < N; j++)
+      Y[j] += Mjoin(PATL,dot)(N-j, X+j, 1, A+j*ldap1, 1);
+#else
+   for (j=0; j < N; j++)
+   {
+      const register ATL_INT j2 = j + j;
+      register TYPE ry=Y[j2], iy=Y[j2+1];
+      Mjoin(PATL,dotu_sub)(N-j, X+j2, 1, A+j2*ldap1, 1, Y+j2);
+      Y[j2] += ry;
+      Y[j2+1] += iy;
+   }
+#endif
+}
+
+static void ATL_trmvLTUk
+(
+   ATL_CINT N,
+   const TYPE *A,
+   ATL_CINT lda,
+   const TYPE *X,  /* aligned with A */
+   TYPE *Y         /* 16-byte aligned */
+)
+{
+   register ATL_INT j;
+   register ATL_CINT ldap1 = lda+1, Nm1 = N-1;
+#ifdef TREAL
+   for (j=0; j < Nm1; j++)
+   {
+      register TYPE t0 = X[j];
+      t0 += Mjoin(PATL,dot)(N-j-1, X+j+1, 1, A+1+j*ldap1, 1);
+      Y[j] += t0;
+   }
+   Y[Nm1] += X[Nm1];
+#else
+   for (j=0; j < Nm1; j++)
+   {
+      const register ATL_INT j2 = j + j;
+      register TYPE ry=Y[j2], iy=Y[j2+1];
+      ry += X[j2];
+      iy += X[j2+1];
+      Mjoin(PATL,dotu_sub)(N-j-1, X+j2+2, 1, A+2+j2*ldap1, 1, Y+j2);
+      Y[j2] += ry;
+      Y[j2+1] += iy;
+   }
+   j = Nm1+Nm1;
+   Y[j] += X[j];
+   Y[j+1] += X[j+1];
+#endif
+}
+
+static void ATL_trmvLNNk
+(
+   ATL_CINT N,
+   const TYPE *A,
+   ATL_CINT lda,
+   const TYPE *X,
+   TYPE *Y
+)
+{
+   ATL_INT j;
+   ATL_CINT ldap1 = (lda+1)SHIFT;
+   #ifdef TREAL
+      for (j=0; j < N; j++)
+         Mjoin(PATL,axpy)(N-j, X[j], A+j*ldap1, 1, Y+j, 1);
+   #else
+      for (j=0; j < N; j++)
+         Mjoin(PATL,axpy)(N-j, X+j+j, A+j*ldap1, 1, Y+j+j, 1);
+   #endif
+}
+static void ATL_trmvLNUk
+(
+   ATL_CINT N,
+   const TYPE *A,
+   ATL_CINT lda,
+   const TYPE *X,
+   TYPE *Y
+)
+{
+#ifdef TREAL
+   ATL_INT j;
+   ATL_CINT ldap1 = lda+1, Nm1=N-1;
+   for (j=0; j < Nm1; j++)
+   {
+      Y[j] += X[j];
+      Mjoin(PATL,axpy)(N-j-1, X[j], A+1+j*ldap1, 1, Y+j+1, 1);
+   }
+   Y[N-1] += X[N-1];
+#else
+   ATL_INT j, n=N-1;
+   ATL_CINT ldap1 = lda+1, Nm1 = N+N-2;
+   for (j=0,n=N-1; n; n--)
+   {
+      register ATL_CINT jn = j + 2;
+      Y[j] += X[j];
+      Y[j+1] += X[j+1];
+      Mjoin(PATL,axpy)(n, X+j, A+2+j*ldap1, 1, Y+jn, 1);
+      j = jn;
+   }
+   Y[Nm1] += X[Nm1];
+   Y[Nm1+1] += X[Nm1+1];
+#endif
+}
+
+static int ATL_trmvUN
+(
+   const enum ATLAS_DIAG  Diag,
+   const int nb,
+   ATL_CINT N,
+   const TYPE *A,
+   ATL_CINT lda,
+   TYPE *X,
+   ATL_CINT incX
+)
+/*
+ * RETURNS: 0 if TRMV was performed, non-zero if nothing done
+ */
+{
+   static void (*trmvK)(ATL_CINT, const TYPE*, ATL_CINT, const TYPE*, TYPE*);
+   void (*gemv)(ATL_CINT, ATL_CINT, const SCALAR, const TYPE*, ATL_CINT, 
+                const TYPE*, ATL_CINT, const SCALAR, TYPE*, ATL_CINT);
+   void *vp;
+   TYPE *x, *y;
+   const size_t opsize = (N*N+N+N)*sizeof(TYPE)SHIFT;
+   size_t t0;
+   #ifdef TCPLX
+      size_t N2=N+N, lda2 = lda+lda;
+      TYPE one[2] = {ATL_rone, ATL_rzero};
+   #else
+      #define N2 N
+      #define lda2 lda
+      #define one ATL_rone
+   #endif
+   const size_t incA = ((size_t)lda2)*nb;
+   ATL_CINT Nnb = (N/nb)*nb, Nr = N-Nnb;
+   ATL_INT j;
+
+   if (N <= nb+nb)
+      return(1);
+   if (opsize > MY_CE)
+      gemv = Mjoin(PATL,gemvN);
+   else
+      gemv = (opsize <= ATL_MulBySize(ATL_L1elts)) ? Mjoin(PATL,gemvN_L1) :
+             Mjoin(PATL,gemvN_L2);
+   trmvK = (Diag == AtlasNonUnit) ? ATL_trmvUNNk : ATL_trmvUNUk;
+/*
+ * If X is aligned to Cachelen wt inc=1, use it as y
+ */
+   t0 = (size_t) X;
+   if (incX == 1 && (ATL_MulByCachelen(ATL_DivByCachelen(t0)) == t0))
+   {
+      ATL_INT i;
+      vp = malloc(ATL_Cachelen+ATL_MulBySize(N));
+      if (!vp)
+         return(2);
+      x = ATL_AlignPtr(vp);
+      y = X;
+      for (i=0; i < N2; i++)
+      {
+         x[i] = X[i];
+         X[i] = ATL_rzero;
+      }
+
+   }
+   else  /* allocate both X and Y */
+   {
+      vp = malloc((ATL_Cachelen+ATL_MulBySize(N))<<1);
+      if (!vp)
+         return(3);
+      x = ATL_AlignPtr(vp);
+      y = x + N2;
+      y = ATL_AlignPtr(y);
+      Mjoin(PATL,copy)(N, X, incX, x, 1);
+      Mjoin(PATL,zero)(N, y, 1);
+   }
+   trmvK(nb, A, lda, x, y);
+   A += incA;
+   for (j=nb; j < N; j += nb, A += incA)
+   {
+      int kb = N-j;
+      #ifdef TCPLX
+         const register size_t j2 = j + j;
+      #else
+         #define j2 j
+      #endif
+      kb = Mmin(nb, kb);
+      gemv(j, kb, one, A, lda, x+j2, 1, one, y, 1);
+      trmvK(kb, A+j2, lda, x+j2, y+j2);
+      #ifndef TCPLX
+         #undef j2
+      #endif
+   }
+   if (y != X)
+      Mjoin(PATL,copy)(N, y, 1, X, incX);
+   free(vp);
+   return(0);
+}
+#ifndef TCPLX
+   #undef N2
+   #undef lda2
+   #undef one
+#endif
+
+static int ATL_trmvUT
+(
+   const enum ATLAS_DIAG  Diag,
+   const int nb,
+   ATL_CINT N,
+   const TYPE *A,
+   ATL_CINT lda,
+   TYPE *X,
+   ATL_CINT incX
+)
+/*
+ * RETURNS: 0 if TRMV was performed, non-zero if nothing done
+ */
+{
+   static void (*trmvK)(ATL_CINT, const TYPE*, ATL_CINT, const TYPE*, TYPE*);
+   void (*gemv)(ATL_CINT, ATL_CINT, const SCALAR, const TYPE*, ATL_CINT, 
+                const TYPE*, ATL_CINT, const SCALAR, TYPE*, ATL_CINT);
+   void *vp;
+   TYPE *x, *y;
+   const size_t opsize = (N*N+N+N)*sizeof(TYPE)SHIFT;
+   size_t t0;
+   #ifdef TCPLX
+      size_t N2=N+N, lda2 = lda+lda;
+      TYPE one[2] = {ATL_rone, ATL_rzero};
+   #else
+      #define N2 N
+      #define lda2 lda
+      #define one ATL_rone
+   #endif
+   const size_t incA = ((size_t)lda2)*nb;
+   ATL_CINT Nnb = (N/nb)*nb, Nr = N-Nnb;
+   ATL_INT j;
+
+   if (N <= nb+nb)
+      return(1);
+   if (opsize > MY_CE)
+      gemv = Mjoin(PATL,gemvT);
+   else
+      gemv = (opsize <= ATL_MulBySize(ATL_L1elts)) ? Mjoin(PATL,gemvT_L1) :
+             Mjoin(PATL,gemvT_L2);
+   trmvK = (Diag == AtlasNonUnit) ? ATL_trmvUTNk : ATL_trmvUTUk;
+/*
+ * If X is aligned to Cachelen wt inc=1, use it as y
+ */
+   t0 = (size_t) X;
+   if (incX == 1 && (ATL_MulByCachelen(ATL_DivByCachelen(t0)) == t0))
+   {
+      ATL_INT i;
+      vp = malloc(ATL_Cachelen+ATL_MulBySize(N));
+      if (!vp)
+         return(2);
+      x = ATL_AlignPtr(vp);
+      y = X;
+      for (i=0; i < N2; i++)
+      {
+         x[i] = X[i];
+         X[i] = ATL_rzero;
+      }
+
+   }
+   else  /* allocate both X and Y */
+   {
+      vp = malloc((ATL_Cachelen+ATL_MulBySize(N))<<1);
+      if (!vp)
+         return(3);
+      x = ATL_AlignPtr(vp);
+      y = x + N2;
+      y = ATL_AlignPtr(y);
+      Mjoin(PATL,copy)(N, X, incX, x, 1);
+      Mjoin(PATL,zero)(N, y, 1);
+   }
+   trmvK(nb, A, lda, x, y);
+   A += incA;
+   for (j=nb; j < N; j += nb, A += incA)
+   {
+      int kb = N-j;
+      #ifdef TCPLX
+         const register size_t j2 = j + j;
+      #else
+         #define j2 j
+      #endif
+      kb = Mmin(nb, kb);
+      gemv(j, kb, one, A, lda, x, 1, one, y+j2, 1);
+      trmvK(kb, A+j2, lda, x+j2, y+j2);
+      #ifndef TCPLX
+         #undef j2
+      #endif
+   }
+   if (y != X)
+      Mjoin(PATL,copy)(N, y, 1, X, incX);
+   free(vp);
+   return(0);
+}
+#ifndef TCPLX
+   #undef N2
+   #undef lda2
+   #undef one
+#endif
+
+static int ATL_trmvLN
+(
+   const enum ATLAS_DIAG  Diag,
+   const int nb,
+   ATL_CINT N,
+   const TYPE *A,
+   ATL_CINT lda,
+   TYPE *X,
+   ATL_CINT incX
+)
+/*
+ * RETURNS: 0 if TRMV was performed, non-zero if nothing done
+ */
+{
+   static void (*trmvK)(ATL_CINT, const TYPE*, ATL_CINT, const TYPE*, TYPE*);
+   void (*gemv)(ATL_CINT, ATL_CINT, const SCALAR, const TYPE*, ATL_CINT, 
+                const TYPE*, ATL_CINT, const SCALAR, TYPE*, ATL_CINT);
+   void *vp;
+   TYPE *x, *y;
+   const size_t opsize = (N*N+N+N)*sizeof(TYPE)SHIFT;
+   size_t t0;
+   #ifdef TCPLX
+      size_t N2=N+N, lda2 = lda+lda;
+      TYPE one[2] = {ATL_rone, ATL_rzero};
+   #else
+      #define N2 N
+      #define lda2 lda
+      #define one ATL_rone
+   #endif
+   const size_t incA = ((size_t)lda+1)*(nb SHIFT);
+   ATL_CINT Nnb = ((N-1)/nb)*nb, Nr = N-Nnb;
+   ATL_INT j;
+
+   if (N <= nb+nb)
+      return(1);
+   if (opsize > MY_CE)
+      gemv = Mjoin(PATL,gemvN);
+   else
+      gemv = (opsize <= ATL_MulBySize(ATL_L1elts)) ? Mjoin(PATL,gemvN_L1) :
+             Mjoin(PATL,gemvN_L2);
+   trmvK = (Diag == AtlasNonUnit) ? ATL_trmvLNNk : ATL_trmvLNUk;
+/*
+ * If X is aligned to Cachelen wt inc=1, use it as y
+ */
+   t0 = (size_t) X;
+   if (incX == 1 && (ATL_MulByCachelen(ATL_DivByCachelen(t0)) == t0))
+   {
+      ATL_INT i;
+      vp = malloc(ATL_Cachelen+ATL_MulBySize(N));
+      if (!vp)
+         return(2);
+      x = ATL_AlignPtr(vp);
+      y = X;
+      for (i=0; i < N2; i++)
+      {
+         x[i] = X[i];
+         X[i] = ATL_rzero;
+      }
+
+   }
+   else  /* allocate both X and Y */
+   {
+      vp = malloc((ATL_Cachelen+ATL_MulBySize(N))<<1);
+      if (!vp)
+         return(3);
+      x = ATL_AlignPtr(vp);
+      y = x + N2;
+      y = ATL_AlignPtr(y);
+      Mjoin(PATL,copy)(N, X, incX, x, 1);
+      Mjoin(PATL,zero)(N, y, 1);
+   }
+   for (j=0; j < Nnb; j += nb, A += incA)
+   {
+      #ifdef TCPLX
+         const register size_t j2=j+j, nb2=nb+nb;
+      #else
+         #define j2 j
+         #define nb2 nb
+      #endif
+      trmvK(nb, A, lda, x+j2, y+j2);
+      gemv(N-j-nb, nb, one, A+nb2, lda, x+j2, 1, one, y+j2+nb2, 1);
+      #ifndef TCPLX
+         #undef j2
+         #undef nb2
+      #endif
+   }
+   #ifdef TCPLX
+      j += j;
+   #endif
+   trmvK(Nr, A, lda, x+j, y+j);
+   if (y != X)
+      Mjoin(PATL,copy)(N, y, 1, X, incX);
+   free(vp);
+   return(0);
+}
+#ifndef TCPLX
+   #undef N2
+   #undef lda2
+   #undef one
+#endif
+
+static int ATL_trmvLT
+(
+   const enum ATLAS_DIAG  Diag,
+   const int nb,
+   ATL_CINT N,
+   const TYPE *A,
+   ATL_CINT lda,
+   TYPE *X,
+   ATL_CINT incX
+)
+/*
+ * RETURNS: 0 if TRMV was performed, non-zero if nothing done
+ */
+{
+   static void (*trmvK)(ATL_CINT, const TYPE*, ATL_CINT, const TYPE*, TYPE*);
+   void (*gemv)(ATL_CINT, ATL_CINT, const SCALAR, const TYPE*, ATL_CINT, 
+                const TYPE*, ATL_CINT, const SCALAR, TYPE*, ATL_CINT);
+   void *vp;
+   TYPE *x, *y;
+   const size_t opsize = (N*N+N+N)*sizeof(TYPE)SHIFT;
+   size_t t0;
+   #ifdef TCPLX
+      size_t N2=N+N, lda2 = lda+lda;
+      TYPE one[2] = {ATL_rone, ATL_rzero};
+   #else
+      #define N2 N
+      #define lda2 lda
+      #define one ATL_rone
+   #endif
+   const size_t incA = ((size_t)lda+1)*(nb SHIFT);
+   ATL_CINT Nnb = ((N-1)/nb)*nb, Nr = N-Nnb;
+   ATL_INT j;
+
+   if (N <= nb+nb)
+      return(1);
+   if (opsize > MY_CE)
+      gemv = Mjoin(PATL,gemvT);
+   else
+      gemv = (opsize <= ATL_MulBySize(ATL_L1elts)) ? Mjoin(PATL,gemvT_L1) :
+             Mjoin(PATL,gemvT_L2);
+   trmvK = (Diag == AtlasNonUnit) ? ATL_trmvLTNk : ATL_trmvLTUk;
+/*
+ * If X is aligned to Cachelen wt inc=1, use it as y
+ */
+   t0 = (size_t) X;
+   if (incX == 1 && (ATL_MulByCachelen(ATL_DivByCachelen(t0)) == t0))
+   {
+      ATL_INT i;
+      vp = malloc(ATL_Cachelen+ATL_MulBySize(N));
+      if (!vp)
+         return(2);
+      x = ATL_AlignPtr(vp);
+      y = X;
+      for (i=0; i < N2; i++)
+      {
+         x[i] = X[i];
+         X[i] = ATL_rzero;
+      }
+
+   }
+   else  /* allocate both X and Y */
+   {
+      vp = malloc((ATL_Cachelen+ATL_MulBySize(N))<<1);
+      if (!vp)
+         return(3);
+      x = ATL_AlignPtr(vp);
+      y = x + N2;
+      y = ATL_AlignPtr(y);
+      Mjoin(PATL,copy)(N, X, incX, x, 1);
+      Mjoin(PATL,zero)(N, y, 1);
+   }
+   for (j=0; j < Nnb; j += nb, A += incA)
+   {
+      #ifdef TCPLX
+         const register size_t j2=j+j, nb2=nb+nb;
+      #else
+         #define j2 j
+         #define nb2 nb
+      #endif
+      trmvK(nb, A, lda, x+j2, y+j2);
+      gemv(N-j-nb, nb, one, A+nb2, lda, x+j2+nb2, 1, one, y+j2, 1);
+      #ifndef TCPLX
+         #undef j2
+         #undef nb2
+      #endif
+   }
+   #ifdef TCPLX
+      j += j;
+   #endif
+   trmvK(Nr, A, lda, x+j, y+j);
+   if (y != X)
+      Mjoin(PATL,copy)(N, y, 1, X, incX);
+   free(vp);
+   return(0);
+}
+#ifndef TCPLX
+   #undef N2
+   #undef lda2
+   #undef one
+#endif
 void Mjoin(PATL,trmv)
 (
    const enum ATLAS_UPLO  Uplo,
@@ -17998,7 +18638,88 @@ void Mjoin(PATL,trmv)
  * ---------------------------------------------------------------------
  */
 {
+   int ierr=1;
+/*
+ * Small-case code just calls reference to avoid copies and setup costs
+ */
+   if (N < 240)
+   {
+      Mjoin(PATL,reftrmv)(Uplo, Trans, Diag, N, A, lda, X, incX);
+      return;
+   }
+/*
+ * Handle conjugate transpose by conjugating input/output vector
+ */
+   #ifdef TCPLX
+   if (Trans == AtlasConjTrans)
+   {
+      Mjoin(PATLU,scal)(N, ATL_rnone, X+1, incX+incX);
+      Mjoin(PATL,trmv)(Uplo, AtlasTrans, Diag, N, A, lda, X, incX);
+      Mjoin(PATLU,scal)(N, ATL_rnone, X+1, incX+incX);
+      return;
+   }
+   #endif
+   if (Uplo == AtlasUpper)
+   {
+      if (Trans == AtlasNoTrans)
+         ierr = ATL_trmvUN(Diag, 120, N, A, lda, X, incX);
+      else
+         ierr = ATL_trmvUT(Diag, 120, N, A, lda, X, incX);
+   }
+   else if (Trans == AtlasNoTrans)
+      ierr = ATL_trmvLN(Diag, 120, N, A, lda, X, incX);
+   else /* if (Trans == AtlasTrans) */
+      ierr = ATL_trmvLT(Diag, 120, N, A, lda, X, incX);
+   if (ierr)
+      Mjoin(PATL,reftrmv)(Uplo, Trans, Diag, N, A, lda, X, incX);
+@beginskip
+   return;
+   if (incX == 1)
+   {
+      void *vp;
+      TYPE *y;
+      vp = malloc(ATL_Cachelen + ATL_MulBySize(N));
+      y = ATL_Align2Ptr(vp, A);
+      Mjoin(PATL,zero)(N, y, 1);
+      if (Uplo == AtlasLower)
+      {
+         if (Trans == AtlasNoTrans)
+         {
+            if (Diag == AtlasNonUnit)
+               ATL_trmvLNNk(N, A, lda, X, y);
+            else
+               ATL_trmvLNUk(N, A, lda, X, y);
+         }
+         else
+         {
+            if (Diag == AtlasNonUnit)
+               ATL_trmvLTNk(N, A, lda, X, y);
+            else
+               ATL_trmvLTUk(N, A, lda, X, y);
+         }
+      }
+      else
+      {
+         if (Trans == AtlasNoTrans)
+         {
+            if (Diag == AtlasNonUnit)
+               ATL_trmvUNNk(N, A, lda, X, y);
+            else
+               ATL_trmvUNUk(N, A, lda, X, y);
+         }
+         else
+         {
+            if (Diag == AtlasNonUnit)
+               ATL_trmvUTNk(N, A, lda, X, y);
+            else
+               ATL_trmvUTUk(N, A, lda, X, y);
+         }
+      }
+      Mjoin(PATL,copy)(N, y, 1, X, incX);
+      return;
+   }
    Mjoin(PATL,reftrmv)(Uplo, Trans, Diag, N, A, lda, X, incX);
+@endskip
 }
 @ROUT ATL_trsv
 void Mjoin(PATL,trsv)
