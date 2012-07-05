@@ -848,13 +848,17 @@ void AddLoopPeeling(LOOPQ *lp, int jblabel, int falabel, short Np,
 /*
  * Add duplicated loop body
  * NOTE: assumption: lp is vectorizable, either normal or SSV
+ * NOTE: if unroll is used, we need to keep space for that too. 
+ *
  */
    if (NPATH >  0 ) /* SSV is aplied */
    {
       lnum = (NPATH -1) * Type2Vlen(lp->vflag) + 1; /* keep space for SSV*/
    }
    else /* normal vectorization. 0 is preserve for cleanup*/
-      lnum = 1; 
+   { 
+      lnum = FKO_UR + 1;  /* need to reserve label for unroll */
+   }
    
    dupblks = AddLoopDupBlks(lp, bp0, bp0->down, lnum );
 /*
