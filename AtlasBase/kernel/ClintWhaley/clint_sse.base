@@ -3680,10 +3680,12 @@ MNLOOP:
         ret
 @ROUT ATL_smm2x4x256_fma4 ATL_smm2x2x256_fma4
   @define sh @2@
+  @define sz @4@
   @define shp1 @3@
   @define cplx @SCPLX@
 @ROUT ATL_dmm2x4x256_fma4 ATL_dmm2x2x256_fma4
   @define sh @3@
+  @define sz @8@
   @define shp1 @4@
   @define cplx @DCPLX@
 @ROUT ATL_dmm2x4x256_fma4 ATL_smm2x4x256_fma4 ATL_dmm2x2x256_fma4 ATL_smm2x2x256_fma4
@@ -3701,6 +3703,17 @@ MNLOOP:
 #define prefA(mem) prefetch   mem
 #define prefB(mem) prefetch   mem
 /*
+ * Stack locations and frame size
+ */
+#define pAOFF 16
+#define iCOFF 20
+#define JOFF  24
+#define MOFF  28
+#define M0OFF 32
+#define LDCOFF 36
+#define BETOFF FSIZE+40
+#define FSIZE 40
+/*
  * Integer register usage shown by these defines
  */
 #ifdef ATL_GAS_x8632
@@ -3710,13 +3723,15 @@ MNLOOP:
    #define pC0     %esi
    #define ldb     %edi
    #define pfA     %edx
-   #define MM      %ebp
+   #define ldc     %ebp
 
-   #define incAn   iAOFF(%esp)
+   #define pA00    pAOFF(%esp)
    #define incCn   iCOFF(%esp)
    #define NN      JOFF(%esp)
-   #define MM0     MOFF(%esp)
+   #define MM      MOFF(%esp)
+   #define MM0     M0OFF(%esp)
 #else
+   #error "This kernel Requires IA32 assembler!"
    #define pA0     %rcx
    #define lda     %rbx
 //   #define lda3    %rbp
@@ -3733,9 +3748,27 @@ MNLOOP:
    #define MM0     %r14
 #endif
 
-#define pA0 %ecx
-#define
-#ifdef
+#define rA0     %xmm0
+#define rA1     %xmm1
+#define rB0     %xmm2
+#define rB1     %xmm3
+#define rC00    %xmm4
+#define rC10    %xmm5
+#define rC01    %xmm6
+#define rC11    %xmm7
+
+#if defined(DCPLX) || defined(SCPLX)
+   #define TCPLX 1
+#endif
+/*
+ * Save some inst space by using short version of instructions
+ */
+#define movapd movaps
+#define movupd movups
+#define movlpd movlps
+#define movhpd movhps
+#define MOVCPD movups
+
 /*
                       %rdi/4       %rsi/8       %rdx/12          %xmm0/16
  void ATL_USERMM(const int M, const int N, const int K, const TYPE alpha,
@@ -3748,6 +3781,210 @@ MNLOOP:
 .global ATL_asmdecor(ATL_USERMM)
 ALIGN16
 ATL_asmdecor(ATL_USERMM):
+#ifdef ATL_GAS_x8632
+/*
+ * Save callee-saved registers
+ */
+   subl $FSIZE, %esp
+   movl %ebx, 0(%esp)
+   movl %ebp, 4(%esp)
+   movl %esi, 8(%esp)
+   movl %edi, 12(%esp)
+
+
+/* 
+ * Load values from stack, and save some back.
+ */
+   movl FSIZE+24(%esp), pA0
+   movl FSIZE+28(%esp), lda
+   shl  $@(sh), lda
+   movl FSIZE+36(%esp), ldb
+   shl  $@(sh), ldb
+   movl FSIZE+4(%esp), pfA
+   movl pfA, MM0
+   movl pfA, MM
+   movl FSIZE+52(%esp), pfA           /* pfA = ldc */
+   movl pfA, ldc
+   #ifdef TCPLX
+      shl $@(sh)+1, ldc              /* ldc *= sizeof */
+   #else
+      shl $@(sh), ldc                /* ldc *= sizeof */
+   #endif
+   movl ldc, LDCOFF(%esp)
+   add pfA, pfA                 /* pfA = 2*ldc */
+   sub MM, pfA                  /* pfA = 2*ldc - M */
+   #ifdef TCPLX
+      shl $@(sh)+1, pfA              /* pfA = (2*ldc-M)*sizeof */
+   #else
+      shl $@(sh), pfA                /* pfA = (2*ldc-M)*sizeof */
+   #endif
+   movl pfA, incCn              /* incCn = (2*ldc-M)*sizeof */
+   movl FSIZE+8(%esp), pfA
+   movl pfA, NN          /* JOFF(%esp) = N */
+   movl FSIZE+32(%esp), pB0
+   movl FSIZE+48(%esp), pC0
+   lea NBNB*@(sz)(pA0), pfA
+#endif
+/*
+ * pA0 += 128; pB0 += 128
+ */
+   sub $-128, pA0
+   movl pA0, pAOFF(%esp)     /* save for restoration at end of N-loop */
+   sub $-128, pB0
+ALIGN16
+   MNLOOP:
+@ROUT ATL_dmm2x2x256_fma4
+/*
+ *       K=0,1, with rCxx starting at zero
+ */
+         movapd -128(pB0), rB0
+         xorpd  rC11, rC11
+         movapd -128(pA0), rA0
+         vfmaddpd rC11, rA0, rB0, rC00
+         movapd -128(pB0,ldb), rB1
+         vfmaddpd rC11, rA0, rB1, rC01
+         movapd -128(pA0,lda), rA1
+         vfmaddpd rC11, rA1, rB0, rC10
+         #if KB > 2
+            movapd -112(pB0), rB0
+         #elif KB == 2 && !defined(BETA0)
+            #ifdef TREAL
+               MOVCPD (pC0), rB0
+            #else
+               movlpd (pC0),rB0
+               movhpd CMUL(8)(pC0),rB0
+            #endif
+         #endif
+         vfmaddpd rC11, rA1, rB1, rC11
+         #if KB > 2
+            movapd -112(pA0), rA0
+         #elif KB == 2 && !defined(BETA0)
+            #ifdef TREAL
+               MOVCPD (pC0,ldc), rB0
+            #else
+               movlpd (pC0,ldc),rA0
+               movhpd CMUL(8)(pC0,ldc),rA0
+            #endif
+         #endif
+/*
+ *    K=2,3
+ */
+         #if KB > 2
+            vfmaddpd rC00, rA0, rB0, rC00
+            movapd -112(pA0,lda), rA1
+            vfmaddpd rC10, rA1, rB0, rC10
+            movapd -112(pB0,ldb), rB1
+            vfmaddpd rC01, rA0, rB1, rC01
+            #if KB > 4
+               movapd -96(pB0), rB0
+            #elif KB == 4 && !defined(BETA0)
+               #ifdef TREAL
+                  MOVCPD (pC0), rB0
+               #else
+                  movlpd (pC0),rB0
+                  movhpd CMUL(8)(pC0),rB0
+               #endif
+            #endif
+            vfmaddpd rC11, rA1, rB1, rC11
+            #if KB > 4
+               movapd -96(pA0), rA0
+            #elif KB == 4 && !defined(BETA0)
+               #ifdef TREAL
+                  MOVCPD (pC0,ldc), rB0
+               #else
+                  movlpd (pC0,ldc),rA0
+                  movhpd CMUL(8)(pC0,ldc),rA0
+               #endif
+            #endif
+         #endif
+   @define N @256@
+   @iexp off -96 0 +
+   @iexp i 4 0 +
+   @iwhile i < @(N)
+         #if KB > @(i)
+      @iexp i @(i) 2 +
+            vfmaddpd rC00, rA0, rB0, rC00
+            movapd @(off)(pA0,lda), rA1
+            vfmaddpd rC10, rA1, rB0, rC10
+            movapd @(off)(pB0,ldb), rB1
+      @iexp off @(off) 16 +
+            vfmaddpd rC01, rA0, rB1, rC01
+            #if KB > @(i)
+               movapd @(off)(pB0), rB0
+            #elif KB == @(i) && !defined(BETA0)
+               #ifdef TREAL
+                  MOVCPD (pC0), rB0
+               #else
+                  movlpd (pC0),rB0
+                  movhpd CMUL(8)(pC0),rB0
+               #endif
+            #endif
+            vfmaddpd rC11, rA1, rB1, rC11
+            #if KB > @(i)
+               movapd @(off)(pA0), rA0
+            #elif KB == @(i) && !defined(BETA0)
+               #ifdef TREAL
+                  MOVCPD (pC0,ldc), rB0
+               #else
+                  movlpd (pC0,ldc),rA0
+                  movhpd CMUL(8)(pC0,ldc),rA0
+               #endif
+            #endif
+         #endif
+   @endiwhile
+
+/*
+ *    K-loop finished, sum up vectors, write to C
+ */
+         #ifdef BETAX
+            movddup BETOFF(%esp), rA1
+         #endif
+         haddpd rC10, rC00
+         prefA((pfA))
+         #ifdef BETAX
+               mulpd rA1, rB0
+         #endif
+         haddpd rC11, rC01
+         #ifdef BETAX
+            mulpd rA1, rA0
+         #endif
+         #ifndef BETA0
+            addpd rB0, rC00
+            addpd rA0, rC01
+         #endif
+         add $64, pfA
+         #ifndef TCPLX
+            MOVCPD rC00, (pC0)
+            MOVCPD rC01, (pC0,ldc)
+         #else
+            movlpd rC00, (pC0)
+            movhpd rC00, 16(pC0)
+            movlpd rC01, (pC0,ldc)
+            movhpd rC01, 16(pC0,ldc)
+         #endif
+
+         lea (pA0, lda,2), pA0
+         add $2*CMUL(8), pC0
+      sub $2, MM
+      jnz MNLOOP
+
+      lea (pB0,ldb,2), pB0
+      movl MM0, pA0
+      prefetcht0 (pB0)
+      movl pA0, MM
+      prefetcht0 (pB0,ldb)
+      movl pAOFF(%esp), pA0
+      add incCn, pC0
+   sub $2, NN
+   jnz MNLOOP
+
+/* DONE: */
+   movl 0(%esp), %ebx
+   movl 4(%esp), %ebp
+   movl 8(%esp), %esi
+   movl 12(%esp), %edi
+   addl $FSIZE, %esp
+   ret
 
 @ROUT ATL_dmm2x4x256_fma4 ATL_smm2x4x256_fma4 
 /*
