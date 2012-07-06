@@ -18652,10 +18652,11 @@ void Mjoin(PATL,trmv)
  * Handle conjugate transpose by conjugating input/output vector
  */
    #ifdef TCPLX
-   if (Trans == AtlasConjTrans)
+   if (Trans == AtlasConjTrans || Trans == AtlasConj)
    {
       Mjoin(PATLU,scal)(N, ATL_rnone, X+1, incX+incX);
-      Mjoin(PATL,trmv)(Uplo, AtlasTrans, Diag, N, A, lda, X, incX);
+      Mjoin(PATL,trmv)(Uplo, (Trans == AtlasConj) ? AtlasNoTrans:AtlasTrans, 
+                       Diag, N, A, lda, X, incX);
       Mjoin(PATLU,scal)(N, ATL_rnone, X+1, incX+incX);
       return;
    }
@@ -19131,21 +19132,67 @@ void Mjoin(PATL,trsv)
 {
    int ierr=1;
    #define NBSV 120  /* LCM(1,2,3,4,5,6,8), min NU cleanup in gemv kerns */
-   if (Uplo == AtlasUpper)
+   if (N >= NBSV+NBSV)
    {
-      if (Trans == AtlasNoTrans)
-         ierr = ATL_trsvUN_k(Diag, NBSV, N, A, lda, X, incX);
+      #ifdef TCPLX
+      if (Trans == AtlasConjTrans)
+      {
+         Mjoin(PATLU,scal)(N, ATL_rnone, X+1, incX+incX);
+         Mjoin(PATL,trsv)(Uplo, AtlasTrans, Diag, N, A, lda, X, incX);
+         Mjoin(PATLU,scal)(N, ATL_rnone, X+1, incX+incX);
+         return;
+      }
+      else if (Trans == AtlasConj)
+      {  
+         Mjoin(PATLU,scal)(N, ATL_rnone, X+1, incX+incX);
+         Mjoin(PATL,trsv)(Uplo, AtlasNoTrans, Diag, N, A, lda, X, incX);
+         Mjoin(PATLU,scal)(N, ATL_rnone, X+1, incX+incX);
+         return;
+      }
+
+      #endif
+      if (Uplo == AtlasUpper)
+      {
+         if (Trans == AtlasNoTrans)
+            ierr = ATL_trsvUN_k(Diag, NBSV, N, A, lda, X, incX);
+         else
+            ierr = ATL_trsvUT_k(Diag, NBSV, N, A, lda, X, incX);
+      }
+      else if (Trans == AtlasNoTrans)
+         ierr = ATL_trsvLN_k(Diag, NBSV, N, A, lda, X, incX);
       else
-         ierr = ATL_trsvUT_k(Diag, NBSV, N, A, lda, X, incX);
+         ierr = ATL_trsvLT_k(Diag, NBSV, N, A, lda, X, incX);
    }
-   else if (Trans == AtlasNoTrans)
-      ierr = ATL_trsvLN_k(Diag, NBSV, N, A, lda, X, incX);
-   else
-      ierr = ATL_trsvLT_k(Diag, NBSV, N, A, lda, X, incX);
    if (ierr)
       Mjoin(PATL,reftrsv)(Uplo, Trans, Diag, N, A, lda, X, incX);
 }
 @ROUT ATL_symv ATL_hemv
+/*
+ * Guess as to whether GEMV-based SYRK will beat ref.  Will on any arch
+ * where the compiler is not too whoopy (ARM) or where vectorization provides
+ * faster memory load as well as computation (x86 with vectorization).
+ * Single precision complex has enough flops/load to be almost always
+ * compute-bound enough that the auto-GEMV-tuning outweighs the double load.
+ */
+#if defined(ATL_GAS_ARM)
+   #define USE_GEMV_BASED 1
+#elif defined(SREAL)
+   #ifdef ATL_SSE1
+      #define USE_GEMV_BASED 1
+   #endif
+#elif defined(DREAL)
+   #ifdef ATL_SSE2
+      #define USE_GEMV_BASED 1
+   #endif
+#elif defined(SCPLX)
+   #define USE_GEMV_BASED 1
+#elif defined(DCPLX)
+   #ifdef ATL_SSE2
+      #define USE_GEMV_BASED 1
+   #endif
+#endif
+
+#ifdef USE_GEMV_BASED
 typedef void (*ATL_symvK_t)
    (const enum ATLAS_UPLO, const int, const SCALAR, const TYPE*, const int,
     const TYPE*, const int, const SCALAR, TYPE*, const int);
@@ -19300,6 +19347,7 @@ static void ATL_symvU
       symvK(AtlasUpper, nb, one, A+@(j2), lda, x+@(j2), 1, one, y+@(j2), 1);
    }
 }
+#endif
 
 @ROUT ATL_symv
 void Mjoin(PATL,symv)
@@ -19347,6 +19395,7 @@ void Mjoin(PATL,symv)
          Mjoin(PATL,scal)(N, beta, Y, incY);
       return;
    }
+#ifdef USE_GEMV_BASED
    if (N >= 240)
    {
       void *vp=NULL;
@@ -19400,6 +19449,7 @@ void Mjoin(PATL,symv)
       free(vp);
       return;
    }
+#endif
    Mjoin(PATL,refsymv)(Uplo, N, alpha, A, lda, X, incX, beta, Y, incY);
 }
 @ROUT ATL_hemv
@@ -19448,6 +19498,7 @@ void Mjoin(PATL,hemv)
          Mjoin(PATL,scal)(N, beta, Y, incY);
       return;
    }
+#ifdef USE_GEMV_BASED
    if (N >= 240)
    {
       void *vp=NULL;
@@ -19544,6 +19595,7 @@ void Mjoin(PATL,hemv)
       free(vp);
       return;
    }
+#endif
    Mjoin(PATL,refhemv)(Uplo, N, alpha, A, lda, X, incX, beta, Y, incY);
 }
 @ROUT s1nxtune
