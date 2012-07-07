@@ -106,23 +106,33 @@ and C API quick references guides available in the ATLAS tarfile at:
 
 ATLAS also natively provides a few routines from the LAPACK~\cite{lug}
 (Linear Algebra PACKage).  LAPACK is an extremely comprehensive
-FORTRAN77 package for solving the most commonly occurring problems in numerical
-linear algebra.  LAPACK is available as an open source FORTRAN77 package from
+FORTRAN package for solving the most commonly occurring problems in numerical
+linear algebra.  LAPACK is available as an open source FORTRAN package from
 netlib~\cite{lapack-hp}, and its size and complexity effectively rule out the
 idea of ATLAS providing a full implementation.  Therefore, we add support
 for particular LAPACK routines only when we believe that the potential
 performance win we can offer make the extra development and maintenance
-costs worthwhile.  Presently, ATLAS provides roughly 40 routines, all of
-which derive from our improved LU and Cholesky factorizations, which use
-recursive blocking.  The standard LAPACK routines use statically blocked
+costs worthwhile.  Presently, ATLAS provides roughly most of the routines
+that involve the LU, QR and Cholesky factorizations.  ATLAS's implementation
+uses pure recursive version of LU and Cholesky based on the work 
+of~\cite{Toledo-LU,RecFred,gustavson98A,WN146}, and the QR version 
+uses the hybrid algorithm
+with static outer blocking and panel recursion described in~\cite{RecQR};
+the static blocking is empirically tuned as described in~\cite{lanb08}.
+In parallel, these routines are further sped up by the PCA panel 
+factorization~\cite{panel10} and the threading techniques discussed
+in~\cite{thr08}.  The standard LAPACK routines use statically blocked
 routines, which typically run slower than recursively blocked for all
-problem sizes.  ATLAS's LU and Cholesky factorizations are based on
-the work of~\cite{Toledo-LU,RecFred,gustavson98a,WN146,RecQR}.
+problem sizes. 
 
 In addition to providing the standard FORTRAN77 interface to LAPACK,
 ATLAS also provides its own C interface, modeled after the official C interface
 to the BLAS~\cite{Blast,blast-toms}, which includes support for row-major
-storage in addition to the standard column-major implementations.  Note that
+storage in addition to the standard column-major implementations.  
+The netlib LAPACK has recently begun supporting Intel's propriatary C
+interface, which is incompatible with the C BLAS as well as ATLAS's C
+interface, as well as performaing a host of unnecessary matrix transpositions.
+Note that
 there is no official C interface to LAPACK, and so there is no general C
 API that allows users to easily substitute one C-interface LAPACK for
 another, as there is when one uses the standard FORTRAN77 API. 
@@ -162,8 +172,8 @@ less generic.  For instance, assuming I have saved the tarfile to
 ({\tt SRCdir}) with the following commands:
 \begin{verbatim}
    cd ~/numerics
-   bunzip2 -c ~/dload/atlas3.8.0.tar.bz2 | tar xfm -
-   mv ATLAS ATLAS3.8.0
+   bunzip2 -c ~/dload/atlas3.10.0.tar.bz2 | tar xfm -
+   mv ATLAS ATLAS3.10.0
 \end{verbatim}
 
 Before doing anything else, scope the ATLAS errata file for known 
@@ -177,7 +187,7 @@ This file contains not only all bugs found, but also all kinds
 of platform-specific installation and tuning help.
 
 \subsection{Turn off CPU throttling when installing ATLAS}
-Most OSes (including Linux) now turn on CPU throttling for power management\\
+Most OSes and hardware now turn on CPU throttling for power management\\
 \underline{even if you are using a desktop machine}.  CPU throttling makes
 pretty much all timings completely random, and so any ATLAS install will be
 junk.  Therefore, before installing ATLAS, turn off CPU throttling.  For most
@@ -202,13 +212,13 @@ frequency was to issue the following as root after setting CPU0 to performance:
 Under MacOS or Windows,
 you may be able to change this under the power settings.
 
-ATLAS config tries to detect if CPU throttling is enabled, but it may not
-always detect it, and sometimes may detect it after you have disabled it.
-In the latter case, to force the {\tt configure} to continue regardless of the
-results of the CPU throttling probe, pass this flag to {\tt configure}:
-\begin{verbatim}
-   -Si cputhrchk 0
-\end{verbatim}
+%ATLAS config tries to detect if CPU throttling is enabled, but it may not
+%always detect it, and sometimes may detect it after you have disabled it.
+%In the latter case, to force the {\tt configure} to continue regardless of the
+%results of the CPU throttling probe, pass this flag to {\tt configure}:
+%\begin{verbatim}
+%   -Si cputhrchk 0
+%\end{verbatim}
 
 \subsection{Basic Steps of an ATLAS install}
 An ATLAS install is performed in 5 steps, only the first two of which
@@ -266,16 +276,17 @@ of the {\tt configure} flags, since they will not work on all systems);
 note that the characters after the \verb+#+ character are comments,
 and not meant to be typed in:
 \begin{verbatim}
-   bunzip2 -c atlas3.9.x.tar.bz2 | tar xfm -     # create SRCdir
-   mv ATLAS ATLAS3.9.x                           # get unique dir name
-   cd ATLAS3.9.x                                 # enter SRCdir
+   bunzip2 -c atlas3.10.x.tar.bz2 | tar xfm -    # create SRCdir
+   mv ATLAS ATLAS3.10.x                          # get unique dir name
+   cd ATLAS3.10.x                                # enter SRCdir
    mkdir Linux_C2D64SSE3                         # create BLDdir
    cd Linux_C2D64SSE3                            # enter BLDdir
    ../configure -b 64 -D c -DPentiumCPS=2400 \   # configure command
      --prefix=/home/whaley/lib/atlas \           # install dir
-     --with-netlib-lapack-tarfile=/home/whaley/dload/lapack.tgz
+     --with-netlib-lapack-tarfile=/home/whaley/dload/lapack-3.4.1.tgz
    make build                                    # tune & build lib
    make check                                    # sanity check correct answer
+   make ptcheck                                  # sanity check parallel
    make time                                     # check if lib is fast
    make install                                  # copy libs to install dir
 \end{verbatim}
@@ -326,17 +337,19 @@ If you want your final libraries to have all the LAPACK routines,
 then you just need to pass the {\tt --with-netlib-lapack-tarfile} flag
 to configure, along with the netlib tarfile that you have previously
 downloaded.  For instance, assuming you have previously downloaded
-the lapack tarfile to {\tt /home/whaley/dload/lapack.tgz}, you
+the lapack tarfile to \\
+{\tt /home/whaley/dload/lapack-3.4.1.tgz}, you
 would add the following to your {\tt configure} flags:
 \begin{verbatim}
-  --with-netlib-lapack-tarfile=/home/whaley/dload/lapack.tgz
+  --with-netlib-lapack-tarfile=/home/whaley/dload/lapack-3.4.1.tgz
 \end{verbatim}
 
 Configure then auto-builds a {\tt make.inc} for LAPACK to use,
 and builds netlib LAPACK as part of the ATLAS install process.
-Section~\ref{sec-lpdetails} provides details on how this works 
-in case it breaks down for future releases of LAPACK (it has been
-tested to work with netlib LAPACK 3.1.1 and 3.2.1).
+ATLAS 3.10.0 was tested tow work with LAPACK v3.4.1 and 3.3.1.
+%Section~\ref{sec-lpdetails} provides details on how this works 
+%in case it breaks down for future releases of LAPACK (it has been
+%tested to work with netlib LAPACK 3.4.1 and 3.3.1).
 
 \subsubsection{LAPACK APIs}
 Note that there is no standard C API to LAPACK.  Therefore, when
@@ -345,7 +358,7 @@ all platforms.  Various vendor libraries provide various C APIs.
 ATLAS provides two types of LAPACK APIs for C.
 
 \paragraph{ATLAS's clapack API:}
-ATLAS's original C interface to the LU and Cholesky-related routines
+ATLAS's original C interface to the LU, QR and Cholesky-related routines
 is built from the {\tt ATLAS/interfaces/lapack/C/src/} directory,
 and is documented in {\tt ATLAS/doc/cblasqref.pdf}.  This API
 is like that of the {\tt cblas}, in that all routines take a
@@ -356,6 +369,7 @@ uses the CBLAS enum types for F77's string arguments, and the
 appropriate pass-by-value or pass-by-address.  This API prefixes
 {\tt clapack\_} to the native lapack routine name.
 
+\Wskip{
 \paragraph{ATLAS's C2F API:}
 For routines where we depend on the Fortran LAPACK for implementation,
 we have created a new C/LAPACK API, which can be found in \\
@@ -384,7 +398,9 @@ of LAPACK, but I won't do so unless users ask for given routines,
 or my own research requires them (no use producing code that
 one using), so let me know if there are routines you'd like to
 see ATLAS provide via this API.
+}
 
+\Wskip{
 \subsubsection{Details on ATLAS's LAPACK autobuild}
 \label{sec-lpdetails}
 The main thing that you need to install the netlib LAPACK is a correct
@@ -402,6 +418,7 @@ working by creating a compatible {\tt make.inc} yourself after
 the ATLAS configure step, but before the build step.  You can
 see the Makefile targets for autobuilding netlib's ATLAS in
 {\tt BLDdir/interfaces/lapack/C2F/Makefile}.
+}
 \Wskip{
 Note that there is no standard C API to LAPACK, so this will get you
 only the FORTRAN API.  As previously mentioned, ATLAS provides its own
@@ -440,8 +457,9 @@ LAPACK to an already existing ATLAS build.
 \label{sec-netlib-lp}
 
 You can download the LAPACK reference implementation from
-{\tt www.netlib.org/lapack/}.  As of this writing, the newest LAPACK
-tarfile was {\tt http://www.netlib.org/lapack/lapack.tgz}.
+{\tt www.netlib.org/lapack/}.  
+%As of this writing, the newest LAPACK
+%tarfile was {\tt http://www.netlib.org/lapack/lapack.tgz}.
 
 For more standard information on LAPACK, please scope the following URLs:
 \vspace*{-0.1in}
@@ -925,8 +943,8 @@ its maximal rate, you can get the backend running nearer to peak.  However,
 for efficient codes that can drive the bottleneck backend functional units
 at their maximal rate, these strategies can cause slowdowns that range
 from slight to catastrophic, depending on the situation.  For ATLAS,
-the main problem is usually that contention on the caches tends to thrash
-them.
+the main problem is usually that the increased contention on the caches 
+caused by the extra threads tends to thrash the caches.
 
 The only architecture where I have seen the use of these virtual processors
 yield speedups on most ATLAS operations is the Sun Niagara;  I believe the
@@ -1018,6 +1036,10 @@ Note that this support for building dynamic libraries is new in this release,
 and not well debugged or supported, and is much less likely to work for
 non-gnu compilers.
 
+\textbf{WINDOWS NOTE}: If you are on Windows and using the MinGW compilers
+to work natively in windows (outside cygwin), then please see the errata
+file for additional instructions on enabling this porting.
+
 \textbf{IMPORTANT NOTE}: Since gcc uses one less integer register when
       compiling with this flag, this
       could potentially impact performance of the architectural defaults,
@@ -1033,7 +1055,8 @@ non-gnu compilers.
 By default ATLAS does all timings with a CPU timer, so that the install
 can be done on a machine that is experiencing relatively heavy load.  However,
 CPU time has very poor resolution, and so this makes the timings less repeatable
-and provides for only a rough idea of overall performance.  Therefore, if
+and thus tends to produce relatively poorly optimized libraries.
+Therefore, if
 you are installing ATLAS on a machine which is not heavily loaded, you will
 want to improve your install by instructing ATLAS to use one of its higher
 resolution wall timers.
@@ -1200,6 +1223,7 @@ configure flag, where \verb+X+ is the number of processors to tune for.
 So, if your smallest targeted core count was 2, you would add \verb+-t 2+
 to your configure flags.
 
+\Wskip{
 \subsection{Kludging an install to workaround the gfortran/x87 compiler bug}
 \label{sec-gf77err}
 ATLAS defaults to using gcc/gfortran 4.6, which unfortunately has a
@@ -1215,6 +1239,7 @@ to properly compile the testers.
 If you make this change before the
 build, it will slow down all Fortran routines (eg., many lapack routines),
 which does not seem necessary to defeat the compiler bug.
+}
 
 \subsection{Various other flags}
 \label{sec-flag-other}
@@ -1290,7 +1315,7 @@ prevents this from happening.
 By default, ATLAS automatically uses the architectural defaults anytime
 it has results for the given architecture and compiler.  However, the
 compiler detection is based on the compiler name, not version, and so
-ATLAS's architectural defaults for gnu {\tt gcc4.2} might not be best
+ATLAS's architectural defaults for gnu {\tt gcc4.7.0} might not be best
 for {\tt gcc3} or apple's {\tt gcc}, etc, even though {\tt configure} would
 use the architectural defaults in such cases.
 
@@ -1481,7 +1506,7 @@ Benchmark   Refrenc Present  Refrenc Present  Refrenc Present  Refrenc Present
 \end{verbatim}
 \end{footnotesize}
 \caption{Timings results when architectural defaults are compiled with 
-         substandard gcc4.1, rather than gcc4.2}
+         substandard gcc4.1}
 \label{fig-tim-gcc4}
 \end{figure}
 
@@ -1514,7 +1539,7 @@ lower the performance of most compiled kernels, without affecting the speed
 of assembly kernels.  Figure~\ref{fig-tim-gcc4} shows 
 such an example, where {\tt gcc 4.1} (a terrible
 compiler for floating point arithmetic on x86 machines) has been used to
-install ATLAS on an Opteron, rather than {\tt gcc 4.2}, which was the compiler
+install ATLAS on an Opteron, rather than {\tt gcc 4.7.0}, which was the compiler
 that was used to create the architectural defaults.
 Here, we see that the present machine is actually slower than the machine
 that was used to create the defaults, so if anything, we expect it to
@@ -1552,7 +1577,7 @@ called by {\tt make time} ({\tt xatlbench} to do the comparison.  The most
 common example would
 be you have switched to an unsupported compiler (eg., the Intel compiler),
 and now you want to see if the library you built using it is as fast or faster
-than the one using the default {\tt gcc 4.2} compiler.  Another example would
+than the one using the default {\tt gcc 4.7} compiler.  Another example would
 be that you want to compare the performance of two closely related
 architectures.  This is what we will do here, where we contrast the performance
 of the 32 and 64 bit versions of the library on my Core2Duo.
@@ -1566,11 +1591,11 @@ perform the following steps:
        in {\tt BLDdir/bin/INSTALL\_LOG}.
 \item {\tt cd SRCdir/CONFIG/ARCHS}, and find the tarfile containing the
       results you wish to compare against.  In our case, we choose
-      {\tt Core2Duo32SSE3.tgz} to compare against our own Core2Duo64SSE
+      {\tt Core2Duo32SSE3.tar.bz2} to compare against our own Core2Duo64SSE
       results.
-\item {\tt gunzip -c Core2Duo32SSE3.tgz | tar xvf -} untars the
-      selected architectural results (replace {\tt Core2Duo32SSE3.tgz} with the
-      tarfile you have selected in step\#2).
+\item {\tt bunzip2 -c Core2Duo32SSE3.tar.bz2 | tar xvf -} untars the
+      selected architectural results (replace {\tt Core2Duo32SSE3.tar.bz2} 
+      with the tarfile you have selected in step\#2).
 \item {\tt cd BLDdir}
 \item \verb|./xatlbench -dp SRCdir/CONFIG/ARCHS/<ARCH> -dc BLDdir/bin/INSTALL_LOG|  \\
     {\tt xatlbench} is the program that compares two sets of results, with
@@ -1660,9 +1685,8 @@ The next three lines report Level 2 BLAS kernel performance (the Level~2
 BLAS' performance will follow these kernels in roughly the same way that
 the Level~3 follow the GEMM kernels).
 
-We should eventually supply an expanded timing comparison that would include
-higher level timings, such as LAPACK routines and threaded performance,
-but do not currently do so.
+See Appendix~\ref{sec-full-timing} for details on more extensive 
+auto-benchmarking.
 
 \section{The ATLAS install step}
 \label{sec-install-step}
@@ -2258,10 +2282,10 @@ Windows installs can be substantially slower than when using the same
 hardware with another OS (eg., Linux).
 
 Therefore, on some platform where hand-tuned assembly is
-critical, 32-bit libraries can be faster than 64-bit, since Windows
+critical, the 32-bit libraries can be faster than the 64-bit, since Windows
 utilized the standard 32-bit ABI.  On systems where good performing 
 ANSI~C routines are available, the extra registers will likely make 64-bit
-perform faster.  Therefore, if you can use either 32- or 64-bit libraries,
+perform better.  Therefore, if you can use either 32- or 64-bit libraries,
 it may make sense to install both versions, and compare their performance.
 
 Without architectural defaults ATLAS installs
@@ -2343,6 +2367,22 @@ does not support, and so you need the cygwin emulation layer to use
 a decade-old standard.
 }
 
+\subsection{Special instructions for OS~X}
+Newer versions of OS~X ship broken versions of the gnu binutils.  They
+are deprecated in favor of \textbf{clang}, which presently produces
+poor performance and wrong results for ATLAS.  Therefore, you will want
+to install a modern gcc using a system like fink, macports or homebrew.
+Note that even in this case, Apple's decisition to break gnu portability
+will still limit your performance.  The crippled assembler they provide
+does not understand AVX instructions, which reduces your peak performance
+by half, and for some reason GNU gcc is pretty much impossible to configure
+to ignore the native assembler in favor of its own binutils.
+
+Note that more recent GNU {\bf tar} releases have become incompatible with 
+OS~X's native tar.  If you have difficulty untarring the tarfiles, you
+may need to use gnu tar rather than OS X tar.  On many OS~X systems,
+GNU tar is available as {\tt gtar}.
+
 \subsection{Special instructions for AIX}
 Under AIX, it is critical that you define an envirnment variable
 indicating whether you are building 64 or 32 bit libraries, and
@@ -2422,6 +2462,7 @@ in the ATLAS FAQ at:
 \appendix
 
 \section{Post-install Timing and Benchmarking}
+\label{sec-full-timing}
 
 This appendix describes how to use ATLAS's benchmarking tools, which are
 built and run in {\tt OBJdir/results}.
@@ -2430,6 +2471,11 @@ built and run in {\tt OBJdir/results}.
 You will need to get ploticus installed.  On ubuntu, all you need is:
 \begin{verbatim}
    sudo apt-get install ploticus
+\end{verbatim}
+
+I believe the command for fedora is (as root):
+\begin{verbatim}
+   yum install -y pl
 \end{verbatim}
 
 For other OSes, download the software from the ploticus homepage:
@@ -2579,7 +2625,7 @@ To give an example, say we ran the following line:
 
 This will use {\tt gemmtst.c} to time all square problems between 10 and
 100 in steps of 10, without doing any testing, forcing at least 120MFLOPS
-of computation for accuracy, with three repetitions.
+of computation for timing accuracy, with three repetitions.
 
 Here's the tools I have written so far:
 \begin{description}
@@ -2601,8 +2647,8 @@ Here's the tools I have written so far:
       {\tt ploticus} data file from it.
 \item [{\tt xmergetvecs}]: Take two standard tvecs that contain separate runs
       of the same data with non-overlapping data, and combine them into
-      one vector.  Eg., you do one run with $N=100,200, 300$ and a second
-      with $N=1000 5000 8000$.  This routine will allow you to combine 
+      one vector.  Eg., you do one run with $N=100, 200, 300$ and a second
+      with $N=1000, 5000, 8000$.  This routine will allow you to combine 
       these $N$ ranges into one for charting all results in one graph.
       This can be done repeatedly to merge any number of runs together.
 \item [{\tt xperctvecs}]: recast named tvecs as a percentage of a baseline.
