@@ -1456,12 +1456,36 @@ API as previously described:
 
 
 \section{Speeding up the Level 2 BLAS}
+
+ATLAS presently empirically tunes four kernels to optimize the various
+L2BLAS, as shown in Table~\ref{tab-l2k}.
+This table shows matvec used to tune SYMV and HEMV, and this is mostly
+true.  For essentially any modern x86 or ARM, GEMV will be used speed up
+HEMV and SYMV, but on other systems, ATLAS will simply use the reference
+implementation, which may be faster.  The problem is that to support
+HEMV/SYMV optimally, we need a kernel which we have not yet
+empirically tuned.  You can build SYMV and HEMV out of GEMV, but in
+doing so you bring the matrix $A$ into registers twice (once from
+memory, and once from cache).  Since the load of $A$ is the dominant
+cost in these operations, that is not good news.  However, for places
+where vector instructions speed up memory access (modern x86) and where
+the compiler can't do a great job (ARM), using a tuned GEMV in this
+fashion is still faster than just calling a reference version.  So,
+for most systems, speeding up the GEMV kernels will cause a corresponding
+speedup in SYMV and GEMV, but these operations are the least well-tuned
+BLAS that ATLAS supports (as a percentage of achievable peak, not raw
+MFLOP, of course).  All other L2BLAS operations should be well optimized,
+particularly for large problems.
+
+
 \begin{table}[thb]
 \begin{center}
 \begin{tabular}{lll}
 Mneum & operations & Used to support \\\hline\hline
-\kernk{mvn} & $y \leftarrow Ax$, $y \leftarrow Ax + y$ & GEMV\\\hline
-\kernk{mvt} & $y \leftarrow A^Tx$, $y \leftarrow A^Tx + y$ & GEMV\\\hline
+\kernk{mvn} & $y \leftarrow Ax$, $y \leftarrow Ax + y$ & GEMV, TRMV, TRSV, 
+HEMV, SYMV\\\hline
+\kernk{mvt} & $y \leftarrow A^Tx$, $y \leftarrow A^Tx + y$ & GEMV, TRMV, TRSV,
+HEMV SYMV\\\hline
 \kernk{ger} & $A \leftarrow xy^T + A$  & GER, GERU, GERC, SYR, HER \\\hline
 \kernk{ger2}& $A \leftarrow xy^T + wz^T + A$, & GER2, GER2U, GER2C, SYR2, HER2
 \\\hline
@@ -1470,19 +1494,6 @@ Mneum & operations & Used to support \\\hline\hline
 \caption{Level-2 BLAS kernels, and the L2BLAS routines they improve}
 \label{tab-l2k}
 \end{table}
-ATLAS presently uses four kernels to support many of the L2BLAS, as shown
-on table~\ref{tab-l2k}.  
-
-At present, the L2BLAS TRMV, TRSV, HEMV, SYMV are not empirically tuned
-by ATLAS.  TRSM and TRMV can be written in terms of \kernk{mvnK} and 
-\kernk{mvtK}, but we have not yet done so.  The present L2BLAS support
-is a complete redesign of ATLAS's old L2BLAS support, and unfortunately,
-after getting all the rank-1/2 based routines written, it was realized
-that the current design is so unwieldy that it is extremely difficult to
-extend.  The plan is to clean up the design at a later date, and then
-complete the L2BLAS support.  In the meantime, the most-called routines
-are GER and GEMV, and these routines are fully tuned under the present
-system.
 
 In this section, we use some macros that are automatically defined
 by the ATLAS build system.  The first is {\tt ATL\_CINT} which is
