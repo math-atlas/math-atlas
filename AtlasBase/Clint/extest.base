@@ -1,5 +1,5 @@
-@extract -b @(topd)/cw.inc lang=c -define cwdate 2011
 @rout r1test r1ktest r2ktest mvnktest mvtktest mvntest mvttest
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2011
 #include "atlas_misc.h"
 #include "atlas_tst.h"
 #include "atlas_lvl2.h"
@@ -811,4 +811,125 @@ int main(int nargs, char **args)
    free(Ns);
    free(LDAs);
    exit(ierr);
+}
+@rout rowgelstst
+/*
+ * This routine started, but not finished, RCW July 9, 2012
+ */
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2012
+#include "atlas_misc.h"
+#include "clapack.h"
+void PrintUsage(char *name, int i, char *arg)
+{
+   if (i > 0)
+      fprintf(stderr, "\nbad arg %d: '%s'\n", i, arg)
+   else
+      fprintf(stderr, "\nERROR: %s\n", arg);
+   fprintf(stderr, 
+"USAGE: %s -m <M> -n <N> -A <n/t/c> -a <lda> -r <nrhs> -b <ldb>\n",
+           name);
+   exit(-1);
+}
+
+void GetFlags(int nargs, char **args, int *TA, int *M, int *N, 
+              int *NRHS, int *LDA, int *LDB)
+{
+   *Order = CblasRowMajor;
+   *TA = AtlasNoTrans;
+   *LDB = *LDA = *M = 200;
+   *N = 100;
+   *NRHS = 1;
+   for (i=0; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+      switch(args[i][1])
+      {
+      case 'A':
+         if (++i >= nargs)
+            PrintUsage(args[0], 0, "out of arguments");
+         if (args[i][0] == 't' || args[i][0] == 'T')
+            *TA = AtlasTrans;
+         #ifdef TCPLX
+         else if (args[i][0] == 'c' || args[i][0] == 'C')
+            *TA = AtlasConjTrans;
+         #endif
+         else
+            *TA = AtlasNoTrans;
+      case 'm':
+         if (++i >= nargs)
+            PrintUsage(args[0], 0, "out of arguments");
+         *M = atoi(args[i]);
+         break;
+      case 'n':
+         if (++i >= nargs)
+            PrintUsage(args[0], 0, "out of arguments");
+         *N = atoi(args[i]);
+         break;
+      case 'r':
+         if (++i >= nargs)
+            PrintUsage(args[0], 0, "out of arguments");
+         *NRHS = atoi(args[i]);
+         break;
+      case 'a':
+         if (++i >= nargs)
+            PrintUsage(args[0], 0, "out of arguments");
+         *LDA = atoi(args[i]);
+         break;
+      case 'b':
+         if (++i >= nargs)
+            PrintUsage(args[0], 0, "out of arguments");
+         *LDB = atoi(args[i]);
+         break;
+      }
+   }
+}
+#define gels Mjoin(Mjoin(clapack_,PRE),gels)
+int main(int nargs, char **args)
+{
+   enum CBLAS_TRANSPOSE TA, TAc;
+   int M, N, NRHS, lda, ldb;
+   size_t i, j;
+
+   GetFlags(nargs, args, &TA, &M, &N, &NRHS, &lda, &ldb);
+   assert(ldb >= M);
+   assert(lda >= N);
+   lda2 = lda SHIFT;
+   ldb2 = ldb SHIFT;
+   TAc = (TA == AtlasNoTrans) ? AtlasTrans : AtlasNoTrans;
+
+   Ar = malloc(ATL_MulBySize(lda)*M);
+   Ac = malloc(ATL_MulBySize(M)*N*sizeof(TYPE));
+   Rr = malloc(NRHS*ATL_MulBySize(ldb));
+   Rc = malloc(NRHS*ATL_MulBySize(ldb));
+   assert(Ar && Ac && Rr && Rc);
+/*
+ * Initialize row- and column-major A
+ */
+   for (i=0; i < M; i++)
+   {
+      for (j=0; j < N; j++)
+      {
+         #ifdef TREAL
+            Ac[j*M+i] = Ar[i*lda+j] = drand48();
+         #else
+            size_t j2= j+j, incR=i*lda2, incC=j2*M;
+            Ac[incC+i+i] = Ar[incR+j2] = drand48();
+            if (TA == AtlasConjTrans)
+               Ac[incC+i+i+1] = -(Ar[incR+j2+1] = drand48());
+            else
+               Ac[incC+i+i+1] = (Ar[incR+j2+1] = drand48());
+         #endif
+      }
+   }
+/*
+ * Initialize row- and column-major RHS (same)
+ */
+   for (j=0; j < NRHS; j++)
+   {
+      for (i=0; i < M SHIFT; i++)
+         Rr[j*ldb2+i] = Rc[j*ldb2+i] = drand48();
+   }
+   gels(CblasRowMajor, TA, M, N, Ar, lda, Rr, ldb);
+   gels(CblasColMajor, TAc, N, M, Ac, M, Rc, ldb);
 }
