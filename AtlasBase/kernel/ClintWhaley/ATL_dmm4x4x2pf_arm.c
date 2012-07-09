@@ -69,6 +69,9 @@ void ATL_USERMM (const int M, const int N, const int K, const TYPE alpha,
 #include "atlas_asm.h"
 .code 32
 .fpu vfpv3
+#ifdef ATL_ARM_HARDFP
++.eabi_attribute 28, 1
+#endif
 .text
 .align 2
 .globl ATL_asmdecor(ATL_USERMM)
@@ -79,8 +82,15 @@ ATL_asmdecor(ATL_USERMM):
 /*
  * Load needed vals to registers
  */
+#ifdef ATL_ARM_HARDFP
+   add M0, SP, #FSIZE
+   ldmIA M0, {lda,pB0,pA00,pC0,ldc} /* lda,B,ldb,C,ldc */
+   vmov M0, zero, d1  /* put beta in M0, zero */
+   push {M0,zero}     /* put beta on stack */
+#else
    add M0, SP, #8+FSIZE
    ldmIA M0, {pA0,lda,pB0,pA00,K0,pfA,pC0,ldc}  /* K0/pfA hold beta, unused */
+#endif
    mov lda, lda, LSL #3   /* lda *= sizeof */
    #ifdef DCPLX
       mov ldc, ldc, LSL #4   /* ldc *= sizeof */
@@ -123,7 +133,11 @@ ATL_asmdecor(ATL_USERMM):
          #else
             add PTR, pC0, ldc
             #ifdef BETAX
-               fldd rb0, [SP, #(FSIZE+24)]
+               #ifdef ATL_ARM_HARDFP
+                  fldd rb0, [SP, #0]
+               #else
+                  fldd rb0, [SP, #(FSIZE+24)]
+               #endif
             #endif
             #ifdef DCPLX
                fldd rC00, [pC0] 
@@ -309,6 +323,9 @@ ATL_asmdecor(ATL_USERMM):
       mov M, M0
    bne NLOOP
 
+   #ifdef ATL_ARM_HARDFP
+      pop {r0,r1}  /* clear beta off stack */
+   #endif
    ldmIA SP!, {r4-r11,r14}
    fldmIAd SP!, {d8-d15}
    bx      lr
