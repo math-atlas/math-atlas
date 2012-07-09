@@ -1063,7 +1063,7 @@ int IsLoopPeelOptimizable(LOOPQ *lp)
    if (lp->varrs[0] > 1) 
    {
       peel = 0;  
-      fprintf(stderr, "morethan one moving array ptr prevents align-peel!! \n");
+      fko_warn(__LINE__,"morethan one moving array ptr prevents align-peel!!\n");
    }
 /*
  * Always call after confirming vectorization.
@@ -1086,29 +1086,29 @@ int IsLoopPeelOptimizable(LOOPQ *lp)
       {
          peel = 0;
       }
-      if (!peel) fprintf(stderr, "NINC: must be [N, 0, -1] format \n");
+      if (!peel) fko_warn(__LINE__, "NINC: must be [N, 0, -1] format \n");
    }
    else if (flag & L_PINC_BIT)
    {
       if ( !(IS_CONST(STflag[beg-1]) && SToff[beg-1].i == 0) ) 
       {
          peel = 0;
-         fprintf(stderr,"beg = %d, Const?=%d !!\n", SToff[beg-1].i, 
+         fko_warn(__LINE__,"beg = %d, Const?=%d !!\n", SToff[beg-1].i, 
                  IS_CONST(STflag[lp->beg-1]));
       }
       if (!(IS_CONST(STflag[inc-1]) && SToff[inc-1].i == 1) ) 
       {
          peel = 0;
-         fprintf(stderr,"inc = %d, Const?=%d !!\n", SToff[inc-1].i, 
+         fko_warn(__LINE__,"inc = %d, Const?=%d !!\n", SToff[inc-1].i, 
                  IS_CONST(STflag[lp->inc-1]));
       }
-      if (!peel) fprintf(stderr, "PINC: must be [0, N, 1] format:[%d,%d] !!\n",
+      if (!peel) fko_warn(__LINE__,"PINC: must be [0, N, 1] format:[%d,%d]!!\n",
                          SToff[beg-1].i, SToff[inc-1].i);
    }
    else 
    {
       peel = 0;
-      fprintf(stderr, "Neither NINC nor PINC, no align-peel!! \n");
+      fko_warn(__LINE__, "Neither NINC nor PINC, no align-peel!! \n");
    }
    
    return peel;
@@ -2491,14 +2491,20 @@ int SpeculativeVectorAnalysis()
 #endif
 /*
  * Select path for vectorization. Currently, select first available vec path
- * Later we may consider special logic to minimize complexity 
+ * Later we may consider special logic to minimize complexity
+ * 
+ * NOTE: First path often not the fall thru path. We will choose fall thru path
  */
    for (i=0; i < NPATH; i++)
    {
       if (PATHS[i]->lpflag & LP_VEC) /* first vectorizable path */
       {
          VPATH = i;
+#if 0
          break;
+#else    /* if all the blocks of this path are in fall thru, choose it */
+         
+#endif
       }
    }
    if (VPATH != -1)
@@ -2561,15 +2567,6 @@ int SpeculativeVecTransform(LOOPQ *lp)
 {
    short *sp;
    BLIST *bl, *scope;
-/*
- * Need to add vector conditional cmp for branchs like: JEQ, JNE, JLT, JGT, JGE 
- * Corresponding vector cmp of br for single precision: 
- * VFCMPEQW, VFCMPNEW, VFCMPNLTW, VFCMPGTW, VFCMPGEW
- * For double precision:
- * VDCMPEQW, VDCMPNEW, VDCMPNLTW, VDCMPGTW, VDCMPGEW
- * NOTE: Vec CMP changes the destination vector register, 
- * 
- */
    static enum inst
       sfinsts[]= {FLD,  FST,  FMUL, FDIV,  FMAC, FADD,  FSUB,  FABS,  FMOV,  
                   FZERO},
@@ -2579,18 +2576,53 @@ int SpeculativeVecTransform(LOOPQ *lp)
                   FZEROD},
       vdinsts[]= {VDLD, VDST, VDMUL, VDDIV, VDMAC, VDADD, VDSUB, VDABS, VDMOV, 
                   VDZERO};
+/*****************************************************************************/
 /*
- * for vector cmp... temporary solution for siamax using JGT
- * need to generalized later
+ * Generalization of Vector Compare. 
+ *
+ * Case-1: (Any condition, fall through vector path )
+ * -------------------------------------------------
+ * if_condition -> true -> scalar_path
+ * scalar: if (condition) GOTO SCALAR_PATH
+ * vector: if (condition_any_vector_element) GOTO SCALAR_PATH
+ * Comment: "if condition is true (to goto scalar path) for any of the vector 
+ * element, goto scalar_path."
+ * 
+ * Implementation: 
+ *
+ * V_CMP__W ... ... ...
+ * V_SBTI $ireg, ...
+ * CMP $ireg, $0,
+ * JNE ...
+ *
+ * Case-2: (All Condition, fall through scalar path)
+ * if_condition -> true -> scalar_path
+ * scalar: if (condition) GOTO VECTOR_PATH
+ * vector: if (condition_all_vector_element) GOTO VECTOR_PATH
+ * comment: "jump to vector path only if all the elements follow the condition."
+ *
+ * Implementation:
+ *
+ * V_CMP__W ... ... ...
+ * V_SBTI $ireg, ...
+ * CMP $ireg, $0x0F  # for avx and double
+ * JEQ ...
+ * 
+ * NOTE: only case-1 is implemented right now.
  */
-   static enum inst
+/*****************************************************************************/   
+
+static enum inst
       brinsts[] = {JEQ, JNE, JLT, JGT, JGE},
       #if defined(AVX)
-         /*vfcmpinsts[] = {VFCMPEQW, VFCMPNEW, VFCMPLTW, VFCMPGTW, VFCMPGEW},*/
-         vfcmpinsts[] = {VFCMPEQW, VFCMPNEW, VFCMPLTW, VFCMPLEW, VFCMPGEW},
-         /*vdcmpinsts[] = {VDCMPEQW, VDCMPNEW, VDCMPLTW, VDCMPGTW, VDCMPGEW};*/
-         vdcmpinsts[] = {VDCMPEQW, VDCMPNEW, VDCMPLTW, VDCMPLEW, VDCMPGEW};
+         vfcmpinsts[] = {VFCMPEQW, VFCMPNEW, VFCMPLTW, VFCMPGTW, VFCMPGEW},
+         vdcmpinsts[] = {VDCMPEQW, VDCMPNEW, VDCMPLTW, VDCMPGTW, VDCMPGEW};
       #else
+/*
+ *    SSE supports : EQ, NE, LT, LE, NLT, NLE
+ *    not supports : GT, GE, NGT, NGE
+ *    So, we need to replace GT and GE with NLE and NLT
+ */
          vfcmpinsts[] = {VFCMPEQW, VFCMPNEW, VFCMPLTW, VFCMPNLEW, VFCMPNLTW},
          vdcmpinsts[] = {VDCMPEQW, VDCMPNEW, VDCMPLTW, VDCMPNLEW, VDCMPNLTW};
       #endif
@@ -2921,9 +2953,13 @@ int SpeculativeVecTransform(LOOPQ *lp)
 /*
  *             add test the iregs with const val populated by vec len
  */
+#if 0               
                mskval = 1;
                for (i = 1; i < vlen; i++)
                   mskval = (mskval << 1) | 1;
+#else          /* consider only vcmp_any case.. fall through vector path */
+               mskval = 0;
+#endif 
                ip = InsNewInst(bl->blk, ip, NULL, CMP, -ICC0, -ir, 
                                STiconstlookup(mskval)) ;
 /*             ip = InsNewInst(bl->blk, ip, NULL, CMPAND, -ir, -ir, 
