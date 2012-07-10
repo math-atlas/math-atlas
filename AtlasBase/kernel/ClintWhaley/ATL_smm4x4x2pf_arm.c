@@ -86,7 +86,7 @@ ATL_asmdecor(ATL_USERMM):
  */
 #ifdef ATL_ARM_HARDFP
    add M0, SP, #FSIZE
-   ldmIA M0, {lda,pB0,pA1,pC0,ldc} /* lda,B,ldb,C,ldc */
+   ldmIA M0, {lda,pB0,pA00,pC0,ldc} /* lda,B,ldb,C,ldc */
    vmov.32 M0, d0[1] /* put beta in M0 */
    push {M0}         /* put beta on stack */
 #else
