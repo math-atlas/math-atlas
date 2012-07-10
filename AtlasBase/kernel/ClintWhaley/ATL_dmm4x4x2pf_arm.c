@@ -70,7 +70,7 @@ void ATL_USERMM (const int M, const int N, const int K, const TYPE alpha,
 .code 32
 .fpu vfpv3
 #ifdef ATL_ARM_HARDFP
-+.eabi_attribute 28, 1
+.eabi_attribute 28, 1
 #endif
 .text
 .align 2
