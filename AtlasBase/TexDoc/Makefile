@@ -8,8 +8,21 @@ atlas_install.pdf : atlas_install.tex
 	rm -f atlas_install.aux atlas_install.dvi atlas_install.log \
               atlas_install.toc atlas_install.bbl atlas_install.blg \
               texput.log
+atlas_install_html:
+	latex atlas_install ; latex atlas_install
+	- bibtex atlas_install
+	latex atlas_install ; latex atlas_install
+	latex2html atlas_install
+	rm -f atlas_install.aux atlas_install.dvi atlas_install.log \
+              atlas_install.toc atlas_install.bbl atlas_install.blg \
+              texput.log
 atlas_devel.pdf : atlas_devel.tex
 	pdflatex atlas_devel ; pdflatex atlas_devel
+	rm -f atlas_devel.aux atlas_devel.dvi atlas_devel.log \
+              atlas_devel.toc texput.log
+atlas_devel_html : atlas_devel.tex
+	latex atlas_devel ; latex atlas_devel ; \
+        latex2html atlas_devel
 	rm -f atlas_devel.aux atlas_devel.dvi atlas_devel.log \
               atlas_devel.toc texput.log
 atlas_devel.ps : atlas_devel.tex
@@ -24,6 +37,11 @@ atlas_contrib.pdf : atlas_contrib.tex
 atlas_contrib.ps : atlas_contrib.tex
 	latex atlas_contrib ; latex atlas_contrib ; \
         dvips -o atlas_contrib.ps atlas_contrib ; \
+	rm -f atlas_contrib.aux atlas_contrib.dvi atlas_contrib.log \
+              atlas_contrib.toc texput.log
+atlas_contrib_html : atlas_contrib.tex
+	latex atlas_contrib ; latex atlas_contrib ; \
+	latex2html atlas_contrib
 	rm -f atlas_contrib.aux atlas_contrib.dvi atlas_contrib.log \
               atlas_contrib.toc texput.log
 lapackqref_pdf.ps :
