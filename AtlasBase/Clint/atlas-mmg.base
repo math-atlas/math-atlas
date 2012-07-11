@@ -316,14 +316,24 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(alpha)_b@(beta))
 @ROUT ATL_mm@(mu)x@(nu)_1
 #include "atlas_misc.h"
 #include "atlas_prefetch.h"
-void ATL_UGEMM
+#ifndef ATL_CSZT
+   #define ATL_CSZT const size_t
+#endif
+#ifndef ATL_MM_KB 
+   #define ATL_MM_KB 40
+#endif
+void ATL_USERMM
 (
-   size_t nmus,
-   size_t nnus,
-   TYPE *pA,    /* @(mu)*KB*nmus-length access-major array of A */
-   TYPE *pB,    /* @(nu)*KB*nnus-length access-major array of B */
-   TYPE *pC,    /* @(mu)*@(nu)*nnus*nmus-length access-major array of C */
-   TYPE *pf     /* will prefetch next KB*KB elts from this area into L2cache */
+   ATL_CSZT nmus,
+   ATL_CSZT nnus,
+   ATL_CSZT K,
+   const TYPE *pA,    /* @(mu)*KB*nmus-length access-major array of A */
+   const TYPE *pB,    /* @(nu)*KB*nnus-length access-major array of B */
+   TYPE *pC,          /* @(mu)*@(nu)*nnus*nmus-length access-major array of C */
+   ATL_CSZT npfA,     /* number of elements to prefetch */
+   const TYPE *pfA,   /* will prefetch next npfA elts from this area into L2 */
+   ATL_CSZT npfB,     /* number of elements to prefetch */
+   const TYPE *pfB    /* will prefetch next npfB elts from this area into L2 */
 )
 /*
  * Performs a GEMM operation on a @(mu)x@(nu) jammed GEMM with a compile-time
@@ -331,60 +341,71 @@ void ATL_UGEMM
  */
 {
    @declare "   register TYPE " y n ";"
-      @iexp j 1 0 +
+      @iexp j 0 0 +
       @iwhile j < @(nu)
          rB@(j)
-         @iexp i 1 0 +
+         @iexp i 0 0 +
          @iwhile i < @(mu)
             rC@(i)@(j)
             @iexp i @(i) 1 +
          @endiwhile
          @iexp j @(j) 1 +
       @endiwhile
-      @iexp i 1 0 +
+      @iexp i 0 0 +
       @iwhile i < @(mu)
          rA@(i)
          @iexp i @(i) 1 +
       @endiwhile
    @enddeclare
-   TYPE pB0 = pB;
-   ATL_CINT incPF = ((size_t)KB*KB)/(nmus*nnus);
+   const TYPE *pB0 = pB;
+   ATL_CSZT incPFA = ATL_MulBySize(npfA) / (nmus*nnus);
+   ATL_CSZT incPFB = ATL_MulBySize(npfB) / (nmus*nnus);
+   size_t i, j, k;
 
    for (i=0; i < nmus; i++)
    {
       for (j=0; j < nnus; j++)
       {
+/*
+ *       Peel K=1 iteration to avoid zero of rCxx and extra add 
+ */
          rA0 = *pA;
          rB0 = *pB;
-         @iexp i 1 1 +
+         @iexp i 0 1 +
          @iwhile i < @(mu)
          rA@(i) = pA[@(i)];
             @iexp i @(i) 1 +
          @endiwhile
-         @iexp j 1 1 +
+         @iexp j 0 1 +
          @iwhile j < @(nu)
          rB@(j) = pB[@(j)];
             @iexp j @(j) 1 +
          @endiwhile
          @iexp k 0 0 +
-         @iexp j 1 0 +
+         @iexp j 0 0 +
          @iwhile j < @(nu)
-            @iexp i 1 0 +
+            @iexp i 0 0 +
             @iwhile i < @(mu)
          rC@(i)@(j) = rA@(i) * rB@(j);
             @iif k = 0
-               ATL_pfL1W(pC);
+               ATL_pfl1W(pC);
             @endiif
             @iif k = 1
-               ATL_pfL2R(pf);
+               ATL_pfl2R(pfA);
             @endiif
             @iif k = 2
-               pf += incPF;
+               ATL_pfl2R(pfB);
             @endiif
             @iif k = 3
-               pA += @(mu);
+               pfA += incPFA;
             @endiif
             @iif k = 4
+               pfB += incPFB;
+            @endiif
+            @iif k = 5
+               pA += @(mu);
+            @endiif
+            @iif k = 6
                pB += @(nu);
             @endiif
                @iexp k @(k) 1 +
@@ -393,34 +414,40 @@ void ATL_UGEMM
             @iexp j @(j) 1 +
          @endiwhile
          @iif k < 2
-               ATL_pfL2R(pf);
+               ATL_pfL2R(pfA);
          @endiif
          @iif k < 3
-               pf += incPF;
+               ATL_pfL2R(pfB);
          @endiif
          @iif k < 4
-               pA += @(mu);
+               pf += incPF;
          @endiif
          @iif k < 5
+               pA += @(mu);
+         @endiif
+         @iif k < 6
                pB += @(nu);
          @endiif
-         pA += @(mu);
-         pB += @(nu);
+/*
+ *       Handle remaining K its with rolled loop (compiler can unroll easily)
+ */
          for (k=1; k < ATL_MM_KB; k++)
          {
-            @iexp i 1 1 +
+            rA0 = *pA;
+            rB0 = *pB;
+            @iexp i 0 1 +
             @iwhile i < @(mu)
             rA@(i) = pA[@(i)];
                @iexp i @(i) 1 +
             @endiwhile
-            @iexp j 1 1 +
+            @iexp j 0 1 +
             @iwhile j < @(nu)
             rB@(j) = pB[@(j)];
                @iexp j @(j) 1 +
             @endiwhile
-            @iexp j 1 0 +
+            @iexp j 0 0 +
             @iwhile j < @(nu)
-               @iexp i 1 0 +
+               @iexp i 0 0 +
                @iwhile i < @(mu)
             rC@(i)@(j) += rA@(i) * rB@(j);
                   @iexp i @(i) 1 +
@@ -433,36 +460,36 @@ void ATL_UGEMM
          pA -= @(mu)*ATL_MM_KB;
          #ifdef BETA0
          @iexp k 0 0 +
-         @iexp j 1 0 +
+         @iexp j 0 0 +
          @iwhile j < @(nu)
-            @iexp i 1 0 +
+            @iexp i 0 0 +
             @iwhile i < @(mu)
             pC[@(k)] = rC@(i)@(j);
-               @iexp k @(i) 1 +
+               @iexp k @(k) 1 +
                @iexp i @(i) 1 +
             @endiwhile
             @iexp j @(j) 1 +
          @endiwhile
          #elif defined(BETAN1)
          @iexp k 0 0 +
-         @iexp j 1 0 +
+         @iexp j 0 0 +
          @iwhile j < @(nu)
-            @iexp i 1 0 +
+            @iexp i 0 0 +
             @iwhile i < @(mu)
             pC[@(k)] = rC@(i)@(j) - pC[@(k)];
-               @iexp k @(i) 1 +
+               @iexp k @(k) 1 +
                @iexp i @(i) 1 +
             @endiwhile
             @iexp j @(j) 1 +
          @endiwhile
          #else  /* BETA = 1 */
          @iexp k 0 0 +
-         @iexp j 1 0 +
+         @iexp j 0 0 +
          @iwhile j < @(nu)
-            @iexp i 1 0 +
+            @iexp i 0 0 +
             @iwhile i < @(mu)
             pC[@(k)] += rC@(i)@(j);
-               @iexp k @(i) 1 +
+               @iexp k @(k) 1 +
                @iexp i @(i) 1 +
             @endiwhile
             @iexp j @(j) 1 +
@@ -507,7 +534,7 @@ void ATL_UGEMM
          rB0 = *pB;
          rB1 = pB[1];
          rC00 = rA0 * rB0;
-         ATL_pfL1W(pC);
+         ATL_pfl1W(pC);
          rC10 = rA1 * rB0;
          pA += 4;
          rC20 = rA2 * rB0;
@@ -646,7 +673,10 @@ void ATL_UGEMM
 #define NoTransA 1
 #define NoTransB 1
 
-void ATL_USERMM(ATL_CINT M, ATL_CINT N, ATL_CINT K, TYPE *A, TYPE *B, TYPE *C);
+void ATL_USERMM(const size_t nmu, const size_t nnu, const size_t K, 
+                TYPE *A, TYPE *B, TYPE *C, 
+                const size_t npfA, TYPE *pfA,
+                const size_t npfB, TYPE *pfB);
 
 void tst_mm(const int M, const int N, const int K, const SCALAR alpha,
             const TYPE *A, const int lda0, const TYPE *B, const int ldb0,
@@ -842,13 +872,13 @@ int mmtst(void)
    for (n=lda*K SHIFT, i=0; i < n; i++) A[i] = dumb_rand();
    for (n=ldb*N SHIFT, i=0; i < n; i++) B[i] = dumb_rand();
    for (n=ldc*N SHIFT, i=0; i < n; i++) C[i] = dumb_rand();
-   Mjoin(PATL,rm2am_a1_@(mu))(M, K, 1.0, A, lda, a);
+   Mjoin(PATL,rm2am_a1_@(mu))(K, M, 1.0, A, lda, a);
    Mjoin(PATL,cm2am_a1_@(nu))(K, N, 1.0, B, ldb, b);
    ATL_CM2BK(M, N, @(mu), @(nu), C, ldc, c);
 /*
  * Call test routine, move output to col-major D for comparison with correct C
  */
-   ATL_USERMM(MMU, NNU, K, a, b, c);
+   ATL_USERMM(MMU/@(mu), NNU/@(nu), K, a, b, c, 0, NULL, 0, NULL);
    tst_mm(M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
 //   printf("c=%e,%e,%e,%e; %e,%e,%e,%e\n", c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]);
 //   printf("C=%e,%e,%e,%e; %e,%e,%e,%e\n", C[0], C[1], C[2], C[3], C[ldc], C[ldc+1], C[ldc+2], C[ldc+3]);

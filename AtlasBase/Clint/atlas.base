@@ -25543,10 +25543,12 @@ void Cgemv(const enum ATLAS_TRANS TA, int M, int N, const SCALAR alpha,
    #define NBmm Mjoin(Mjoin(Mjoin(Mjoin(Mjoin(ppre,MNKnam), TRnam),ldnam), ALPHAnam), BETAnam)
 
 #ifdef NEWMM
-   #ifndef ATL_CINT
-      #define ATL_CINT const int
+   #ifndef ATL_CSZT
+      #define ATL_CSZT const size_t
    #endif
-   void NBmm(ATL_CINT M, ATL_CINT N, ATL_CINT K, TYPE *A, TYPE *B, TYPE *C);
+   void NBmm(ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, const TYPE *A, const TYPE *B, 
+             TYPE *C, ATL_CSZT npfA, const TYPE *pfA, 
+             ATL_CSZT npfB, const TYPE *pfB);
 #else
    void NBmm(const int, const int, const int, const SCALAR, const TYPE*, 
              const int, const TYPE*, const int, const SCALAR, TYPE*, const int);
@@ -26017,7 +26019,23 @@ int mmtst(void)
       for (k=reps; k; k--)
       {
          #ifdef NEWMM
-            NBmm(MB, NB, KB, a, b, c);
+            #if defined(MoveA) && defined(MoveB)
+               NBmm(MB, NB, KB, a, b, c, MB*KB, a+incA, KB*NB, b+incB);
+            #elif defined(MoveA) && defined(MoveC)
+               NBmm(MB, NB, KB, a, b, c, MB*KB, a+incA, MB*NB, c+incC);
+            #else  defined(MoveB) && defined(MoveC)
+               NBmm(MB, NB, KB, a, b, c, KB*NB, b+incB, MB*NB, c+incC);
+            #else if (MoveA)
+               const int incAh=(incA>>1); mbnbh = MB*KB>>1;
+               NBmm(MB, NB, KB, a, b, c, mbnbh, a+incA, a+incAh, a+incA+incAh);
+            #else if (MoveB)
+               const int incBh=(incB>>1); mbnbh = MB*KB>>1;
+               NBmm(MB, NB, KB, a, b, c, mbnbh, b+incB, b+incBh, b+incB+incBh);
+            #endif
+            #else if (MoveC)
+               const int incCh=(incC>>1); mbnbh = MB*NB>>1;
+               NBmm(MB, NB, KB, a, b, c, mbnbh, c+incC, c+incCh, c+incC+incCh);
+            #endif
          #else
             NBmm(MB, NB, KB, alpha, a, lda, b, ldb, beta, c, ldc);
          #endif
