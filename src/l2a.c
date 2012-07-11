@@ -2374,6 +2374,18 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                archvdregs[-VDREGBEG-op1]);
          #endif
          break;
+      case VDSUB:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvsubpd\t%s, %s, %s\n", 
+                                  GetDregOrDeref(op3),
+                                  archvdregs[-VDREGBEG-op1], 
+                                  archvdregs[-VDREGBEG-op1]); 
+         #else
+            assert(op1 == op2);
+            ap->next = PrintAssln("\tsubpd\t%s, %s\n", GetDregOrDeref(op3),
+                               archvdregs[-VDREGBEG-op1]);
+         #endif
+         break;
       case VDABS:
          #ifdef AVX
 /*         
@@ -2760,6 +2772,18 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #else
             assert(op1 == op2);
             ap->next = PrintAssln("\taddps\t%s, %s\n", GetDregOrDeref(op3),
+                                  archvfregs[-VFREGBEG-op1]);
+         #endif
+         break;
+      case VFSUB:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvsubps\t%s,%s,%s\n", 
+                                  GetDregOrDeref(op3),
+                                  archvfregs[-VFREGBEG-op2], 
+                                  archvfregs[-VFREGBEG-op1]); 
+         #else
+            assert(op1 == op2);
+            ap->next = PrintAssln("\tsubps\t%s, %s\n", GetDregOrDeref(op3),
                                   archvfregs[-VFREGBEG-op1]);
          #endif
          break;
