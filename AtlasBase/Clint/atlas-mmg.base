@@ -320,7 +320,13 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(alpha)_b@(beta))
    #define ATL_CSZT const size_t
 #endif
 #ifndef ATL_MM_KB 
-   #define ATL_MM_KB 40
+   #ifdef KB
+      #define ATL_MM_KB KB
+   #elif defined(NB)
+      #define ATL_MM_KB NB
+   #else
+      #define ATL_MM_KB 40
+   #endif
 #endif
 void ATL_USERMM
 (
@@ -330,10 +336,9 @@ void ATL_USERMM
    const TYPE *pA,    /* @(mu)*KB*nmus-length access-major array of A */
    const TYPE *pB,    /* @(nu)*KB*nnus-length access-major array of B */
    TYPE *pC,          /* @(mu)*@(nu)*nnus*nmus-length access-major array of C */
-   ATL_CSZT npfA,     /* number of elements to prefetch */
-   const TYPE *pfA,   /* will prefetch next npfA elts from this area into L2 */
-   ATL_CSZT npfB,     /* number of elements to prefetch */
-   const TYPE *pfB    /* will prefetch next npfB elts from this area into L2 */
+   const TYPE *pAn,   /* next block of A */
+   const TYPE *pBn,   /* next block of B */
+   const TYPE *pCn    /* next block of C */
 )
 /*
  * Performs a GEMM operation on a @(mu)x@(nu) jammed GEMM with a compile-time
@@ -358,10 +363,30 @@ void ATL_USERMM
       @endiwhile
    @enddeclare
    const TYPE *pB0 = pB;
-   ATL_CSZT incPFA = ATL_MulBySize(npfA) / (nmus*nnus);
-   ATL_CSZT incPFB = ATL_MulBySize(npfB) / (nmus*nnus);
+   const TYPE *pf;
+   size_t incPF;
    size_t i, j, k;
 
+   if (pBn && pBn != pB)
+   {
+      pf = pBn;
+      incPF = (K*nnus*@(nu)*sizeof(TYPE)) / (nmus * nnus);
+   }
+   else if (pAn && pAn != pA)
+   {
+      pf = pAn;
+      incPF = (nmus*@(mu)*K*sizeof(TYPE)) / (nmus * nnus);
+   }
+   else if (pCn && pCn != pA)
+   {
+      pf = pCn;
+      incPF = (nmus*@(mu)*nnus*@(nu)*sizeof(TYPE)) / (nmus * nnus);
+   }
+   else
+   {
+      pf = pA + nmus*@(mu)*(K>>1);
+      incPF = (nmus*@(mu)*K*sizeof(TYPE)) / (nmus * nnus);
+   }
    for (i=0; i < nmus; i++)
    {
       for (j=0; j < nnus; j++)
@@ -391,21 +416,15 @@ void ATL_USERMM
                ATL_pfl1W(pC);
             @endiif
             @iif k = 1
-               ATL_pfl2R(pfA);
+               ATL_pfl2R(pf);
             @endiif
             @iif k = 2
-               ATL_pfl2R(pfB);
+               pf += incPF;
             @endiif
             @iif k = 3
-               pfA += incPFA;
-            @endiif
-            @iif k = 4
-               pfB += incPFB;
-            @endiif
-            @iif k = 5
                pA += @(mu);
             @endiif
-            @iif k = 6
+            @iif k = 4
                pB += @(nu);
             @endiif
                @iexp k @(k) 1 +
@@ -414,18 +433,15 @@ void ATL_USERMM
             @iexp j @(j) 1 +
          @endiwhile
          @iif k < 2
-               ATL_pfL2R(pfA);
+               ATL_pfL2R(pf);
          @endiif
          @iif k < 3
-               ATL_pfL2R(pfB);
-         @endiif
-         @iif k < 4
                pf += incPF;
          @endiif
-         @iif k < 5
+         @iif k < 4
                pA += @(mu);
          @endiif
-         @iif k < 6
+         @iif k < 5
                pB += @(nu);
          @endiif
 /*
@@ -674,9 +690,8 @@ void ATL_UGEMM
 #define NoTransB 1
 
 void ATL_USERMM(const size_t nmu, const size_t nnu, const size_t K, 
-                TYPE *A, TYPE *B, TYPE *C, 
-                const size_t npfA, TYPE *pfA,
-                const size_t npfB, TYPE *pfB);
+                const TYPE *A, const TYPE *B, TYPE *C, 
+                const TYPE *pAn, const TYPE *pBn, const TYPE *pCn);
 
 void tst_mm(const int M, const int N, const int K, const SCALAR alpha,
             const TYPE *A, const int lda0, const TYPE *B, const int ldb0,
@@ -878,7 +893,7 @@ int mmtst(void)
 /*
  * Call test routine, move output to col-major D for comparison with correct C
  */
-   ATL_USERMM(MMU/@(mu), NNU/@(nu), K, a, b, c, 0, NULL, 0, NULL);
+   ATL_USERMM(MMU/@(mu), NNU/@(nu), K, a, b, c, NULL, NULL, NULL);
    tst_mm(M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
 //   printf("c=%e,%e,%e,%e; %e,%e,%e,%e\n", c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]);
 //   printf("C=%e,%e,%e,%e; %e,%e,%e,%e\n", C[0], C[1], C[2], C[3], C[ldc], C[ldc+1], C[ldc+2], C[ldc+3]);

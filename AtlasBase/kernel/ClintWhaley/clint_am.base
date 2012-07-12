@@ -1,0 +1,381 @@
+@ROUT ATL_dammm2x4x1_sse2.S ATL_dammm2x4x256_sse2.S
+@extract -b @(topd)/gen.inc what=crsetup
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2012
+#include "atlas_asm.h"
+#ifdef DCPLX
+   #define CMUL(arg_) 2*arg_
+#else
+   #define CMUL(arg_) arg_
+#endif
+#define nmu     %rdi
+#define nnu     %rsi
+#define nnu0    %r10
+@ROUT ATL_dammm2x4x1_sse2.S
+#define KK      %rdx
+#define KK0     %r11
+#define pA      %rcx
+#define pB      %rax
+#define pC      %r9
+#define pf      %rbp
+#define pB0     %r12
+#define incPF   %rbx
+#define pA0     %r13
+#define incAm   %r14
+@ROUT ATL_dammm2x4x256_sse2.S
+#define pA      %rcx
+#define pB      %rax
+#define pC      %r9
+#define pf      %rbp
+#define pB0     %r12
+#define incPF   %rbx
+// #define pA0     %rdx
+#define incAm   %r11
+@ROUT ATL_dammm2x4x1_sse2.S ATL_dammm2x4x256_sse2.S
+
+#define rA0     %xmm0
+#define rA1     %xmm1
+#define rB0     %xmm2
+#define rB1     %xmm3
+#define rB2     %xmm4
+#define rB3     %xmm5
+#define rC00    %xmm6
+#define rC10    %xmm7
+#define rC01    %xmm8
+#define rC11    %xmm9
+#define rC02    %xmm10
+#define rC12    %xmm11
+#define rC03    %xmm12
+#define rC13    %xmm13
+#define rm0     %xmm14
+#ifndef pref
+   #define pref prefetcht0
+#endif
+#ifndef prefC
+   #define prefC prefetcht0
+#endif
+#ifdef BETAN1
+   #define BETCOP subpd
+#else
+   #define BETCOP addpd
+#endif
+/*
+                    rdi      rsi    rdx        rcx         r8        r9  
+void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC, 
+                  8(%rsp)    16(%rsp)     24(%rsp)   
+                CTYPE *pAn, CTYPE *pBn, CTYPE *pCn);
+ */
+.text
+.global ATL_asmdecor(ATL_USERMM)
+ALIGN16
+ATL_asmdecor(ATL_USERMM):
+/*
+ * Save callee-saved iregs
+ */
+   movq    %rbp, -8(%rsp)
+   movq    %rbx, -16(%rsp)
+   movq    %r12, -24(%rsp)
+@ROUT ATL_dammm2x4x1_sse2.S 
+   movq    %r13, -32(%rsp)
+   movq    %r14, -40(%rsp)
+#if 0
+   movq    %r15, -48(%rsp)
+#endif
+@ROUT ATL_dammm2x4x1_sse2.S ATL_dammm2x4x256_sse2.S
+/*
+ * Load paramaters
+ */
+   movq %r8, pB
+   mov nnu, nnu0
+   movq 16(%rsp), pf
+   cmp $0, pf
+   je BADPFB
+   cmp pf, pB
+   je BADPFB
+.local PFSETUP
+PFSETUP:
+   mov $8*4*4, incPF
+@ROUT ATL_dammm2x4x256_sse2.S
+/*
+ * Extend range of small operands by starting at -128
+ */
+   sub $-128, pA
+   sub $-128, pB
+   mov $KB*4*8, incAm           /* incAm = KB*MU*size */
+@ROUT ATL_dammm2x4x1_sse2.S
+   mov KK, incAm                /* incAm = K */
+   shl $5, incAm                /* incAm = K*MU*size = K*4*8 = K*32 = K << 5 */
+   mov KK, KK0
+   mov pA, pA0
+@ROUT ATL_dammm2x4x1_sse2.S ATL_dammm2x4x256_sse2.S
+   movq pB, pB0
+
+   .local MNLOOP
+   MNLOOP:
+/*
+ *       Peel first iteration of K-loop to handle init of C to 0
+ */
+@ROUT ATL_dammm2x4x256_sse2.S
+         movapd -128(pB), rB1
+         pshufd $0x44, rB1, rB0
+         movapd -128(pA), rC00
+
+         movapd rC00, rC01
+         mulpd rB0, rC00
+         unpckhpd rB1, rB1
+         movapd -112(pA), rC10
+         movapd rC10, rC11
+         mulpd rB0, rC10
+
+         movapd -112(pB), rB3
+         pshufd $0x44, rB3, rB2
+         movapd rC01, rC02
+         mulpd rB1, rC01
+         unpckhpd rB3, rB3
+         movapd rC11, rC12
+         mulpd rB1, rC11
+         #if KB > 1
+            movapd -96(pB), rB1
+         #else
+            pref (pf)
+         #endif
+
+         #if KB > 1
+            movapd -96(pA), rA0
+         #else
+            pref 64(pf)
+         #endif
+         movapd rC02, rC03
+         mulpd rB2, rC02
+         movapd rC12, rC13
+         mulpd rB2, rC12
+         #if KB > 1
+            pshufd $0x44, rB1, rB0
+         #else
+            add incPF, pf
+         #endif
+
+         mulpd rB3, rC03
+         prefC (pC)
+         mulpd rB3, rC13
+         prefC 64(pC)
+/*
+ *       ==========================
+ *       Completely unrolled K-loop
+ *       ==========================
+ */
+@iexp ao -80 0 +
+@iexp bo -80 0 +
+@iexp k 1 0 +
+@iwhile k < 256
+         #if KB > @(k)
+   @iexp k @(k) 1 +
+            movapd rB0, rm0
+            mulpd rA0, rm0
+            addpd rm0, rC00
+            movapd @(ao)(pA), rA1
+   @iexp ao @(ao) 16 +
+            mulpd rA1, rB0
+            addpd rB0, rC10
+            unpckhpd rB1, rB1
+
+            movapd rB1, rm0
+            mulpd rA0, rm0
+            addpd rm0, rC01
+            movapd @(bo)(pB), rB3
+   @iexp bo @(bo) 16 +
+            mulpd rA1, rB1
+            addpd rB1, rC11
+            pshufd $0x44, rB3, rB2
+
+            movapd rB2, rm0
+            mulpd rA0, rm0
+            addpd rm0, rC02
+            unpckhpd rB3, rB3
+            mulpd rA1, rB2
+            addpd rB2, rC12
+
+            #if KB > @(k)
+               movapd @(bo)(pB), rB1
+   @iexp bo @(bo) 16 +
+            #elif KB == @(k)
+               pref (pf)
+            #endif
+            mulpd rB3, rA0
+            addpd rA0, rC03
+            #if KB > @(k)
+               movapd @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            #elif KB == @(k)
+               pref 64(pf)
+            #endif
+            mulpd rA1, rB3
+            addpd rB3, rC13
+            #if KB > @(k)
+               pshufd $0x44, rB1, rB0
+            #elif KB == @(k)
+               add incPF, pf
+            #endif
+         #endif   
+@endiwhile
+@ROUT ATL_dammm2x4x1_sse2.S
+         movapd (pB), rB1
+         pshufd $0x44, rB1, rB0
+         movapd (pA), rC00
+
+         movapd rC00, rC01
+         mulpd rB0, rC00
+         unpckhpd rB1, rB1
+         movapd 16(pA), rC10
+         movapd rC10, rC11
+         mulpd rB0, rC10
+
+         movapd 16(pB), rB3
+         pshufd $0x44, rB3, rB2
+         movapd rC01, rC02
+         mulpd rB1, rC01
+         pref (pf)
+         movapd rC11, rC12
+         mulpd rB1, rC11
+         unpckhpd rB3, rB3
+
+         pref 64(pf)
+         movapd rC02, rC03
+         mulpd rB2, rC02
+         movapd rC12, rC13
+         mulpd rB2, rC12
+
+         prefC (pC)
+         mulpd rB3, rC03
+         add $32, pB
+         prefC 64(pC)
+         mulpd rB3, rC13
+         add incPF, pf
+         add $32, pA
+         sub $1, KK
+         jz DONEK
+
+         KLOOP:
+            movapd (pB), rB1
+            pshufd $0x44, rB1, rB0
+            movapd (pA), rA0
+            movapd rB0, rm0
+            mulpd rA0, rm0
+            addpd rm0, rC00
+            movapd 16(pA), rA1
+            movapd rB0, rm0
+            mulpd rA1, rm0
+            addpd rm0, rC10
+            unpckhpd rB1, rB1
+
+            movapd 16(pB), rB3
+            movapd rB1, rm0
+            mulpd rA0, rm0
+            addpd rm0, rC01
+            pshufd $0x44, rB3, rB2
+            movapd rB1, rm0
+            mulpd rA1, rm0
+            addpd rm0, rC11
+            unpckhpd rB3, rB3
+
+            movapd rB2, rm0
+            mulpd rA0, rm0
+            addpd rm0, rC02
+            add $32, pA
+            movapd rB2, rm0
+            mulpd rA1, rm0
+            addpd rm0, rC12
+            add $32, pB
+
+            movapd rB3, rm0
+            mulpd rA0, rm0
+            addpd rm0, rC03
+            movapd rB3, rm0
+            mulpd rA1, rm0
+            addpd rm0, rC13
+         sub $1, KK
+         jnz KLOOP
+         DONEK:
+@ROUT ATL_dammm2x4x1_sse2.S ATL_dammm2x4x256_sse2.S
+         #if defined(BETA1) || defined(BETAN1)
+            BETCOP (pC), rC00
+            BETCOP 16(pC), rC10
+            BETCOP 32(pC), rC01
+            BETCOP 48(pC), rC11
+            BETCOP 64(pC), rC02
+            BETCOP 80(pC), rC12
+            BETCOP 96(pC), rC03
+            BETCOP 112(pC), rC13
+         #endif
+         movapd rC00, (pC)
+         movapd rC10, 16(pC)
+         movapd rC01, 32(pC)
+         movapd rC11, 48(pC)
+         movapd rC02, 64(pC)
+         movapd rC12, 80(pC)
+         movapd rC03, 96(pC)
+         movapd rC13, 112(pC)
+         sub $-128, pC
+@ROUT ATL_dammm2x4x1_sse2.S 
+         mov KK0, KK
+         mov pA0, pA
+@ROUT ATL_dammm2x4x256_sse2.S
+         add $KB*4*8, pB
+@ROUT ATL_dammm2x4x1_sse2.S ATL_dammm2x4x256_sse2.S
+      sub $1, nnu
+      jnz MNLOOP
+      mov nnu0, nnu
+      mov pB0, pB
+@ROUT ATL_dammm2x4x1_sse2.S
+      add incAm, pA0
+      mov pA0, pA
+@ROUT ATL_dammm2x4x256_sse2.S
+      add incAm, pA
+@ROUT ATL_dammm2x4x1_sse2.S ATL_dammm2x4x256_sse2.S
+   sub $1, nmu
+   jnz MNLOOP
+
+/* DONE: */
+   movq    -8(%rsp), %rbp
+   movq    -16(%rsp), %rbx
+   movq    -24(%rsp), %r12
+@ROUT ATL_dammm2x4x1_sse2.S
+   movq    -32(%rsp), %r13
+   movq    -40(%rsp), %r14
+#if 0
+   movq    -48(%rsp), %r15
+#endif
+@ROUT ATL_dammm2x4x1_sse2.S ATL_dammm2x4x256_sse2.S
+   ret
+/*
+ * Can't use next B as pointer as usual, see if we can use next A
+ */
+.local BADPFB
+BADPFB:
+   movq 16(%rsp), pf
+   cmp $0, pf
+   je BADPFAB
+   cmp pf, pA
+   jne PFSETUP
+/*
+ * Can't use A or B as ptr, try C
+ */
+.local BADPFAB
+BADPFAB:
+   movq 24(%rsp), pf
+   cmp $0, pf
+   je BADPFABC
+   cmp pf, pA
+   jne PFSETUP
+/*
+ * No next block, so just fetch this time's A ahead
+ */
+.local BADPFABC
+BADPFABC:
+#ifndef KB
+   #define KB 40
+#endif
+#ifndef MB
+   #define MB KB
+#endif
+   lea KB*MB*4(pA), pf
+   jmp PFSETUP
