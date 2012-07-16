@@ -210,7 +210,7 @@ void GetFlags(int nargs,                /* nargs as passed into main */
 @ifdef -b
    @define iflag @b@
    @define ivar @ptrbits@
-              int *ptrbits             /* # of bits in ptr: 32/64 */,
+              int *ptrbits             /* # of bits in ptr: -32/32/64 */,
 @endifdef
 @ifdef -t
 @skip   @define iflag @t@
@@ -666,7 +666,7 @@ void GetFlags(int nargs,                /* nargs as passed into main */
    *ecdefs = cdefs;
 @endifdef
 @ifdef -b
-   if (*ptrbits != 32 && *ptrbits != 64)
+   if (*ptrbits != 32 && *ptrbits != -32 && *ptrbits != 64)
       *ptrbits = 0;
 @endifdef
 @ifdef -ad
@@ -4706,8 +4706,10 @@ char *GetPtrbitsFlag(enum OSTYPE OS, enum MACHTYPE arch, int ptrbits,
    {
       if (ptrbits == 64)
          sp = "-m64";
-       else if (ptrbits == 32)
+      else if (ptrbits == 32)
          sp = "-m32";
+      else if (ptrbits == -32)
+         sp = "-mx32";
    }
    return(sp);
 }
@@ -7047,7 +7049,7 @@ char *ProbeComp(int verb, char *targarg, enum OSTYPE OS, enum MACHTYPE arch,
    i = sprintf(ln, "make IRun_comp args=\"-v %d -o atlconf.txt -O %d -A %d -Si nof77 %d -V %d %s %s",
                verb, OS, arch, nof77, vecext, targarg, flags);
    free(flags);
-   if (ptrbits == 64 || ptrbits == 32)
+   if (ptrbits == 64 || ptrbits == 32 || ptrbits == -32)
    {
       sprintf(stmp, "-b %d", ptrbits);
       ln = NewAppendedString(ln, stmp);
@@ -7811,7 +7813,7 @@ int main(int nargs, char **args)
  */
    if (asmb == gas_x86_64 && ptrbits == 32)
       asmb = gas_x86_32;
-   else if (asmb == gas_x86_32 && ptrbits == 64)
+   else if (asmb == gas_x86_32 && (ptrbits == 64 || ptrbits == -32)
       asmb = gas_x86_64;
 /*
  * Now that we've detected architecture stuff, kill assembly dialect for
@@ -8755,6 +8757,8 @@ int main(int nargs, char **args)
       fprintf(fpout, " -m32");
    else if (strstr(comps[NCOMP+DKC_], " -m64"))
       fprintf(fpout, " -m64");
+   else if (strstr(comps[NCOMP+DKC_], " -mx32"))
+      fprintf(fpout, " -mx32");
    if (cdefs) fprintf(fpout, " %s", cdefs);
    if (THREADS)
    {
@@ -8835,6 +8839,8 @@ int main(int nargs, char **args)
             fprintf(fpout, " -melf_i386");
          else if (ptrbits == 64)
             fprintf(fpout, " -melf_x86_64");
+         else if (ptrbits == -32)
+            fprintf(fpout, " -melf_x32_x86_64");
          if (OS == OSFreeBSD)
             fprintf(fpout, "_fbsd");
       }
@@ -10483,7 +10489,8 @@ char *ParseCompFlags(int nargs, char **args, int *BITS, ATL_arg_t **files,
  *          -m64/32 args get passed to comp, asm & linker
  */
             else if (at->len == 4 && 
-                     (!strcmp(at->arg, "-m64") || !strcmp(at->arg, "-m32")))
+                     (!strcmp(at->arg, "-m64") || !strcmp(at->arg, "-mx32") ||
+                      !strcmp(at->arg, "-m32")))
             {
 @ROUT gcc3p
                if (at->arg[2] == '6')
