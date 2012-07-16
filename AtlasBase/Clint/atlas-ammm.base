@@ -117,7 +117,47 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
    sprintf(ln, "%s/%cMake_amm", outd, pre);
    fp = fopen(ln, "w");
    assert(fp);
-   fprintf(fp, "include ../Make.inc\n\n");
+   fprintf(fp, "include ../Make.inc\n");
+   fprintf(fp, "CDEFS2=$(CDEFS)\n\n");
+/*
+ * Spew out all filenames that must be compiled
+ */
+   fprintf(fp, "objs =");
+/*
+ * Copy2blk routines
+ */
+   for (mmp=mmb; mmp; mmp = mmp->next)
+   {
+      for (i=0; i < 2; i++)
+      {
+         const int u = (i) ? mmp->mu : mmp->nu;
+/*
+ *       See if we've already made a rule for this unrolling
+ */
+         for (p=mmb; p != mmp && p->mu != u && p->nu != u; p = p->next);
+         if (p != mmp)  /* u not seen before */
+         {
+            int j;
+            for (j=0; j < 3; j++)
+               fprintf(fp, 
+               " \\\n       ATL_%crm2am_a%c_%d.o ATL_%ccm2am_a%c_%d.o",
+                       pre, al[j], u, pre, al[j], u);
+         }
+      }
+   }
+/*
+ * AMM kernel routines
+ */
+/*
+ * library make targets
+ */
+   fprintf(fp, "\n\nlib : %clib.grd\nall : %clib.grd\n%clib : %clib.grd\n", 
+           pre, pre, pre, pre);
+   fprintf(fp, "%clib.grd : $(objs)\n", pre);
+   fprintf(fp, "\t$(ARCHIVER) $(ARFLAGS) $(ATLASlib) $(objs)\n");
+   fprintf(fp, "\t $(RANLIB) $(ATLASlib)\n");
+   fprintf(fp, "\t touch %clib.grd\n", pre);
+
 /*
  * Print out the individual rules for each needed copy function
  */
@@ -180,21 +220,23 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
          cflags = dflags;
       }
 /* 
- *    ATL_<pre>AMMM_<ID>_<kb>_b<X>
+ *    ATL_<pre>AMMM_<ID>_<kb/ku>_b<X>
  */
       for (i=0; i < 3; i++)
       {
+         const int kb=FLAG_IS_SET(mmp->flag, MMF_KRUNTIME)?mmp->ku:mmp->kbB;
          fprintf(fp, "ATL_%cAMMM_%d_%d_b%c.o : %s\n", pre, mmp->ID, 
-                 mmp->kbB, be[i], mmp->rout);
+                 kb, be[i], mmp->rout);
          fprintf(fp, "\t%s $(CDEFS2) -DBETA%s=1", comp, bes[i]);
          if (!FLAG_IS_SET(mmp->flag, MMF_KRUNTIME))
             fprintf(fp, " -DMB=%d -DNB=%d, -DKB=%d", 
                     mmp->mbB, mmp->nbB, mmp->kbB);
          fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_%d_b%c", pre, mmp->ID,
-                 mmp->kbB, be[i]);
+                 kb, be[i]);
          fprintf(fp, " %s -c %s\n", cflags, mmp->rout);
       }
    }
+   fclose(fp);
 }
 
 void GenUserFiles(char pre, ATL_mmnode_t *mmb, char *outd)
@@ -305,6 +347,7 @@ int main(int nargs, char **args)
    mmb = GetFlags(nargs, args, &pre, &outd);
    assert(mmb);
    GenUserFiles(pre, mmb, outd);
+   GenMakefile(pre, mmb, outd);
 }
 @ROUT ammusearch
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2012
