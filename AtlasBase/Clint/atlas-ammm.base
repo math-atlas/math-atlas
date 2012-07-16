@@ -129,14 +129,15 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
  */
    for (mmp=mmb; mmp; mmp = mmp->next)
    {
-      for (i=0; i < 2; i++)
+      const int mu=mmp->mu, nu=mmp->nu;
+      for (i=(mu == nu); i < 2; i++)
       {
-         const int u = (i) ? mmp->mu : mmp->nu;
+         const int u = (i) ? mu : nu;
 /*
  *       See if we've already made a rule for this unrolling
  */
          for (p=mmb; p != mmp && p->mu != u && p->nu != u; p = p->next);
-         if (p != mmp)  /* u not seen before */
+         if (p == mmp)  /* u not seen before */
          {
             int j;
             for (j=0; j < 3; j++)
@@ -149,6 +150,28 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
 /*
  * AMM kernel routines
  */
+   for (mmp=mmb; mmp; mmp = mmp->next)
+   {
+      int kb = mmp->kbB;
+/*
+ *    Kernels that take runtime K are only compiled once, so don't repeat them
+ *    for every KB
+ */
+      if (FLAG_IS_SET(mmp->flag, MMF_KRUNTIME))
+      {
+         const int id = mmp->ID;
+         for (p=mmb; p != mmp && p->ID != id; p = p->next);
+         if (p != mmp)
+            continue;
+         kb = mmp->ku;
+      }
+/* 
+ *    ATL_<pre>AMMM_<ID>_<kb/ku>_b<X>
+ */
+      for (i=0; i < 3; i++)
+         fprintf(fp, " \\\n       ATL_%cAMMM_%d_%d_b%c.o", pre, mmp->ID, 
+                 kb, be[i], mmp->rout);
+   }
 /*
  * library make targets
  */
@@ -166,14 +189,15 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
    dflags[3] = dcomp[3] = 'K';
    for (mmp=mmb; mmp; mmp = mmp->next)
    {
-      for (i=0; i < 2; i++)
+      const int mu=mmp->mu, nu = mmp->nu;
+      for (i=(mu == nu) ? 1:0; i < 2; i++)
       {
-         const int u = (i) ? mmp->mu : mmp->nu;
+         const int u = (i) ? mu : nu;
 /*
  *       See if we've already made a rule for this unrolling
  */
          for (p=mmb; p != mmp && p->mu != u && p->nu != u; p = p->next);
-         if (p != mmp)  /* u not seen before */
+         if (p == mmp)  /* u not seen before */
          {
             int j;
             for (j=0; j < 3; j++)
@@ -197,7 +221,7 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
    for (mmp=mmb; mmp; mmp = mmp->next)
    {
 /*
- *    Flags that take runtime K are only compiled once, so print rules on
+ *    Kernels that take runtime K are only compiled once, so print rules on
  *    only the first encounter of that ID
  */
       if (FLAG_IS_SET(mmp->flag, MMF_KRUNTIME))
@@ -234,7 +258,8 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
                     mmp->mbB, mmp->nbB, mmp->kbB);
          fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_%d_b%c", pre, mmp->ID,
                  kb, be[i]);
-         fprintf(fp, " %s -c %s\n", cflags, mmp->rout);
+         fprintf(fp, " %s -o ATL_%cAMMM_%d_%d_b%c.o -c %s\n", 
+                 cflags, pre, mmp->ID, kb, be[i], mmp->rout);
       }
    }
    fclose(fp);
@@ -337,6 +362,16 @@ void GenUserFiles(char pre, ATL_mmnode_t *mmb, char *outd)
    if (ln)
       free(ln);
 }
+void GenHeaderFiles(char pre, ATL_mmnode_t *mmb, char *outd)
+{
+}
+void GenAllFiles(char pre, ATL_mmnode_t *mmb, char *outd)
+{
+   GenUserFiles(pre, mmb, outd);
+   GenMakefile(pre, mmb, outd);
+   GenHeaderFiles(pre, mmb, outd);
+}
+
 int main(int nargs, char **args)
 {
    char pre='d';
@@ -347,8 +382,9 @@ int main(int nargs, char **args)
 
    mmb = GetFlags(nargs, args, &pre, &outd);
    assert(mmb);
-   GenUserFiles(pre, mmb, outd);
-   GenMakefile(pre, mmb, outd);
+   GenAllFiles(pre, mmb, outd);
+   KillAllMMNodes(mmb);
+   exit(0);
 }
 @ROUT ammusearch
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2012
@@ -382,18 +418,7 @@ ATL_mmnode_t *BestForThisNB
  *    Choose kb, if forced only kb will do, so skip if kernel can't do it
  */
       if (FORCE || nb <= 16)
-      {
          kb = nb;
-         if ((mmp->kbmin && kb < mmp->kbmin) ||
-             (mmp->kbmax && kb > mmp->kbmax) ||
-             ((kb/mmp->mu)*mmp->mu != kb) || ((kb/mmp->nu)*mmp->nu != kb) ||
-             ((kb/mmp->ku)*mmp->ku != kb))
-         {
-         
-            printf("   %d. %s: SKIPPED, bad NB\n", mmp->ID, mmp->rout);
-            continue;
-         }
-      }
 /*
  *    If this kernel can't do the exact block factor, allow leeway
  */
@@ -401,7 +426,7 @@ ATL_mmnode_t *BestForThisNB
       {
          int u;
          u = Mylcm(mmp->mu, mmp->nu);
-         u = Mylcm(kb, mmp->ku);
+         u = Mylcm(u, mmp->ku);
          kb = (nb/u)*u;
          if (kb != nb)
          {
@@ -410,6 +435,15 @@ ATL_mmnode_t *BestForThisNB
             if (kbB-nb < nb-kb && kbB <= 4)
                kb = kbB;
          }
+      }
+      if ((mmp->kbmin && kb < mmp->kbmin) ||
+          (mmp->kbmax && kb > mmp->kbmax) ||
+          ((kb/mmp->mu)*mmp->mu != kb) || ((kb/mmp->nu)*mmp->nu != kb) ||
+          ((kb/mmp->ku)*mmp->ku != kb))
+      {
+         
+         printf("   %d. %s: SKIPPED, bad NB\n", mmp->ID, mmp->rout);
+         continue;
       }
       mf = TimeMMKernel(verb, 0, mmp, pre, kb, kb, kb, kb, kb, kb, 1, 0, -1);
       if (mf > mfB)
