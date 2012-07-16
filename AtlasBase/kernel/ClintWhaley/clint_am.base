@@ -27,6 +27,7 @@
 #define incPF   %rbx
 #define pA0     %r13
 #define incAm   %r14
+#define pfB     %r15
 @ROUT ATL_dammm2x4x256_sse2.S ATL_dammm3x3x256_sse2.S
 #define pA      %rcx
 #define pB      %rax
@@ -109,9 +110,7 @@ ATL_asmdecor(ATL_USERMM):
 @ROUT ATL_dammm2x4x1_sse2.S 
    movq    %r13, -32(%rsp)
    movq    %r14, -40(%rsp)
-#if 0
    movq    %r15, -48(%rsp)
-#endif
 @ROUT ATL_dammm2x4x1_sse2.S ATL_dammm2x4x256_sse2.S ATL_dammm3x3x256_sse2.S
 /*
  * Load paramaters
@@ -538,9 +537,7 @@ ALIGN8
 @ROUT ATL_dammm2x4x1_sse2.S
    movq    -32(%rsp), %r13
    movq    -40(%rsp), %r14
-#if 0
    movq    -48(%rsp), %r15
-#endif
 @ROUT ATL_dammm2x4x1_sse2.S ATL_dammm2x4x256_sse2.S ATL_dammm3x3x256_sse2.S
    ret
 /*
@@ -579,7 +576,267 @@ BADPFABC:
 BADPF_2:
    movq 24(%rsp), pfB
    jmp PFSETUP_2
-@ROUT ATL_dammm_nb4.S
+@ROUT ATL_dammm_nb8_avx.S
+@extract -b @(topd)/gen.inc what=crsetup
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2012
+#include "atlas_asm.h"
+
+#define pA %rcx
+#define pB %r8
+#define pC %r9
+#define rA00    %ymm0
+#define rA10    %ymm1
+#define rA01    %ymm2
+#define rA11    %ymm3
+#define rA02    %ymm4
+#define rA12    %ymm5
+#define rA03    %ymm6
+#define rA13    %ymm7
+#define rB0     %ymm8
+#define rB1     %ymm9
+#define rC00    %ymm10
+#define rC10    %ymm11
+#define rC01    %ymm12
+#define rC11    %ymm13
+#define rb0     %ymm14
+#define rb0_x   %xmm14
+#define rb1     %ymm15
+#define rb1_x   %xmm15
+/*
+                    rdi      rsi    rdx        rcx         r8        r9
+void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
+                  8(%rsp)    16(%rsp)     24(%rsp)
+                CTYPE *pAn, CTYPE *pBn, CTYPE *pCn);
+ */
+.text
+ALIGN16
+.global ATL_asmdecor(ATL_USERMM)
+ATL_asmdecor(ATL_USERMM):
+   vmovapd (pA), rA00
+   movapd 16(pA), rA10
+   movapd 32(pA), rA01
+   movapd 48(pA), rA11
+   movapd 64(pA), rA02
+   movapd 80(pA), rA12
+   movapd 96(pA), rA03
+   movapd 112(pA), rA13
+
+/*
+ * ======================================================
+ * rC00 = rA00 * rB00 + rA01*rB10 + rA02*rB20 + rA03*rB30
+ * rC10 = rA10 * rB00 + rA11*rB10 + rA12*rB20 + rA13*rB30
+ * rC01 = rA00 * rB01 + rA01*rB11 + rA02*rB21 + rA03*rB31
+ * rC11 = rA10 * rB01 + rA11*rB11 + rA12*rB21 + rA13*rB31
+ * ======================================================
+ */
+/*
+ * rC00 = rA00 * rB0
+ * rC10 = rA10 * rB0
+ * rC01 = rA00 * rB1
+ * rC11 = rA10 * rB1
+ */
+   #if defined(BETA0) || defined(BETAN1)
+      movddup (pB), rC10
+      movapd rC10, rC00
+      mulpd rA00, rC00
+      movddup 32(pB), rC11
+      mulpd rA10, rC10
+      movapd rC11, rC01
+      mulpd rA00, rC01
+      mulpd rA10, rC11
+   #else
+      movddup (pB), rB0
+      movddup 32(pB), rB1
+      movapd rB0, m0
+      mulpd rA00, m0
+      movapd (pC), rC00
+      addpd m0, rC00
+      mulpd rA10, rB0
+      movapd 16(pC), rC10
+      addpd rB0, rC10
+      movapd rB1, m0
+      mulpd rA00, m0
+      movapd 32(pC), rC01
+      addpd m0, rC01
+      mulpd rA10, rB1
+      movapd 48(pC), rC11
+      addpd rB1, rC11
+   #endif
+/*
+ * rC00 = rA01*rB10 
+ * rC10 = rA11*rB10 
+ * rC01 = rA01*rB11 
+ * rC11 = rA11*rB11 
+ */
+   movddup 8(pB), rB0
+   movapd rB0, m0
+   mulpd rA01, m0
+   addpd m0, rC00
+   mulpd rA11, rB0
+   addpd rB0, rC10
+   movddup 40(pB), rB1
+   movapd rB1, m0
+   mulpd rA01, m0
+   addpd m0, rC01
+   mulpd rA11, rB1
+   addpd rB1, rC11
+/*
+ * rC00 = rA02*rB20
+ * rC10 = rA12*rB20
+ * rC01 = rA02*rB21
+ * rC11 = rA12*rB21
+ */
+   movddup 16(pB), rB0
+   movapd rA02, m0
+   mulpd rB0, m0
+   addpd m0, rC00
+   mulpd rA12, rB0
+   addpd rB0, rC10
+   movapd rA02, m0
+   movddup 48(pB), rB1
+   mulpd rB1, m0
+   addpd m0, rC01
+   mulpd rA12, rB1
+   addpd rB1, rC11
+/*
+ * rC00 = rA03*rB30
+ * rC10 = rA13*rB30
+ * rC01 = rA03*rB31
+ * rC11 = rA13*rB31
+ */
+   movddup 24(pB), rB0
+   movapd rA03, m0
+   mulpd rB0, m0
+   addpd m0, rC00
+   #ifdef BETAN1
+      subpd (pC), rC00
+   #endif
+   movapd rC00, (pC)
+   mulpd rA13, rB0
+   addpd rB0, rC10
+   #ifdef BETAN1
+      subpd 16(pC), rC10
+   #endif
+   movapd rC10, 16(pC)
+   movapd rA03, m0
+   movddup 56(pB), rB1
+   mulpd rB1, m0
+   addpd m0, rC01
+   #ifdef BETAN1
+      subpd 32(pC), rC01
+   #endif
+   movapd rC01, 32(pC)
+   mulpd rA13, rB1
+   addpd rB1, rC11
+   #ifdef BETAN1
+      subpd 48(pC), rC11
+   #endif
+   movapd rC11, 48(pC)
+
+/*
+ * rC00 = rA00 * rB0
+ * rC10 = rA10 * rB0
+ * rC01 = rA00 * rB1
+ * rC11 = rA10 * rB1
+ */
+   #if defined(BETA0) || defined(BETAN1)
+      movddup 64(pB), rC10
+      movapd rC10, rC00
+      mulpd rA00, rC00
+      movddup 96(pB), rC11
+      mulpd rA10, rC10
+      movapd rC11, rC01
+      mulpd rA00, rC01
+      mulpd rA10, rC11
+   #else
+      movddup 64(pB), rB0
+      movddup 96(pB), rB1
+      movapd rB0, m0
+      mulpd rA00, m0
+      movapd 64(pC), rC00
+      addpd m0, rC00
+      mulpd rA10, rB0
+      movapd 80(pC), rC10
+      addpd rB0, rC10
+      movapd rB1, m0
+      mulpd rA00, m0
+      movapd 96(pC), rC01
+      addpd m0, rC01
+      mulpd rA10, rB1
+      movapd 112(pC), rC11
+      addpd rB1, rC11
+   #endif
+/*
+ * rC00 = rA01*rB10 
+ * rC10 = rA11*rB10 
+ * rC01 = rA01*rB11 
+ * rC11 = rA11*rB11 
+ */
+   movddup 72(pB), rB0
+   movapd rB0, m0
+   mulpd rA01, m0
+   addpd m0, rC00
+   mulpd rA11, rB0
+   addpd rB0, rC10
+   movddup 104(pB), rB1
+   movapd rB1, m0
+   mulpd rB1, rA01
+   addpd rA01, rC01
+   mulpd rA11, rB1
+   addpd rB1, rC11
+/*
+ * rC00 = rA02*rB20
+ * rC10 = rA12*rB20
+ * rC01 = rA02*rB21
+ * rC11 = rA12*rB21
+ */
+   movddup 80(pB), rB0
+   movapd rA02, m0
+   mulpd rB0, m0
+   addpd m0, rC00
+   mulpd rA12, rB0
+   addpd rB0, rC10
+   movddup 112(pB), rB1
+   mulpd rB1, rA02
+   addpd rA02, rC01
+   mulpd rA12, rB1
+   addpd rB1, rC11
+/*
+ * rC00 = rA03*rB30
+ * rC10 = rA13*rB30
+ * rC01 = rA03*rB31
+ * rC11 = rA13*rB31
+ */
+   movddup 88(pB), rB0
+   movapd rA03, m0
+   mulpd rB0, m0
+   addpd m0, rC00
+   #ifdef BETAN1
+      subpd 64(pC), rC00
+   #endif
+   movapd rC00, 64(pC)
+   mulpd rA13, rB0
+   addpd rB0, rC10
+   #ifdef BETAN1
+      subpd 80(pC), rC10
+   #endif
+   movapd rC10, 80(pC)
+   movddup 120(pB), rB1
+   mulpd rB1, rA03
+   addpd rA03, rC01
+   #ifdef BETAN1
+      subpd 96(pC), rC01
+   #endif
+   movapd rC01, 96(pC)
+   mulpd rA13, rB1
+   addpd rB1, rC11
+   #ifdef BETAN1
+      subpd 112(pC), rC11
+   #endif
+   movapd rC11, 112(pC)
+   ret
+
+@ROUT ATL_dammm_nb4_sse2.S
 @extract -b @(topd)/gen.inc what=crsetup
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2012
 #include "atlas_asm.h"
@@ -835,3 +1092,31 @@ ATL_asmdecor(ATL_USERMM):
    #endif
    movapd rC11, 112(pC)
    ret
+@ROUT damcases.idx
+#
+# In this file, any line beginning with a '#' is ignored, but the # must be in
+# column 0.  All multiple whitespace is reduced to one space (i.e. used only
+# to distinguish where words begin/end).  Lines may be extended by putting '\'
+# as the *last* character of line.
+#
+# The file has the following format:
+# ROUT='routine name' AUTH='author names' COMP='compiler name' CFLAGS='flags'
+# ID=<id> NU=<nu> MU=<mu> KU=<ku> KBMAX=<kbmax> KBMIN=<kbmin>
+# SSE=[0,1,2,3] X87=[0,1] BMABC=<0/1> BMAB=<0/1> JKMAB=<0/1> JKMABC=<0/1>
+# AOUTER=<0/1> BETAN1=<0/1> KRUNTIME=<0/1> LDCTOP=<0/1> X87=<0/1>
+# ASM=[asmlist], eg., asmlist is "GAS_x8664,GAS_x8632" or "GAS_SPARC"
+# ASM defaults to no assembly dialect required.
+# If NU/MU is negative, then the routine can only handle multiples of NU/MU.
+#
+ID=1 MU=4 NU=4 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_dammm2x4x1_sse2.S' \
+     SSE=2 KRUNTIME=1 LDCTOP=1 ASM=GAS_x8664 \
+     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
+ID=2 MU=4 NU=4 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_dammm2x4x256_sse2.S' \
+     SSE=2 LDCTOP=1 KBMAX=256 ASM=GAS_x8664 \
+     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
+ID=3 MU=6 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_dammm3x3x256_sse2.S' \
+     SSE=2 LDCTOP=1 KBMAX=256 ASM=GAS_x8664 \
+     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
+ID=4 MU=4 NU=1 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_dammm_nb4_sse2.S' \
+     SSE=2 LDCTOP=1 KBMIN=4 KBMAX=4 ASM=GAS_x8664 \
+     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'

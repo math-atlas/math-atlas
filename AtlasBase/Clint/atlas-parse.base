@@ -60,8 +60,17 @@
 #define MMF_SINGLE     16  /* 1: single precision, else double */
 #define MMF_COMPLEX    17  /* 1: complex type, else real */
 #define MMF_L14NB      18  /* 1: need to fit all 3 matrices+nextA in L1 */
+#define MMF_JKMABC     19  /* 1: Jam-K major all arrays (access major) */
+#define MMF_JKMAB      20  /* 1: Jam-K major A/B, column-major C */
+#define MMF_BMAB       21  /* 1: block major A/B, col-maj C */
+#define MMF_BMABC      22  /* 1: block major A/B/C */
 
-#define MMF_DEFAULT ( (1<<MMF_LDISKB) | (1<<MMF_LDAB) )
+#ifdef ATL_JKMDEF
+   #define MMF_DEFAULT ( (1<<MMF_LDCTOP) | (1<<MMF_JKMABC) | (1<<MMF_AOUTER) | \
+                         (1<<MMF_NRUNTIME) | (1<<MMF_MRUNTIME) )
+#else
+   #define MMF_DEFAULT ( (1<<MMF_LDISKB) | (1<<MMF_LDAB) )
+#endif
 #ifndef  FLAG_IS_SET
    #define FLAG_IS_SET(field_, bit_) ( ((field_) & (1<<(bit_))) != 0 )
 #endif
@@ -530,6 +539,9 @@ static char *GetKCFlags(char pre)
 }
 #endif /* end atlas_genparse.h guard */
 @ROUT mmread
+#ifndef ATL_DEF_MMFLAG
+   #define ATL_DEF_MMFLAG @up@(rt)F_DEFAULT
+#endif
    @define rt @mm@
 @ROUT mvread
    @define rt @mv@
@@ -1075,7 +1087,7 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
 @ROUT mmread
 @multidef fl 
    X87 LDCTOP MRUNTIME NRUNTIME KRUNTIME KUISKB LDISKB BETAN1 LDAB AOUTER
-   LDFLOAT STFLOAT PFACOLS PFABLK PFBCOLS PFCELTS L14NB
+   LDFLOAT STFLOAT PFACOLS PFABLK PFBCOLS PFCELTS L14NB JKMABC JKMAB BMAB BMABC
 @endmultidef
 
 @ROUT mvread
@@ -1196,7 +1208,7 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
    @define kwd @@
    @multidef kw
       X87 LDCTOP MRUNTIME NRUNTIME KRUNTIME KUISKB LDISKB BETAN1 LDAB AOUTER
-      LDFLOAT STFLOAT PFACOLS PFABLK PFBCOLS L14NB
+      LDFLOAT STFLOAT PFACOLS PFABLK PFBCOLS L14NB JKMABC JKMAB BMAB BMABC
    @endmultidef
 @ROUT r1read 
    @define kwd @X87 INCYISONE FNU ADDCFLAGS ALIGNX2A PFTUNABLE@
@@ -2460,10 +2472,17 @@ int MMKernelFailsTest
       lda = kb+8;
       ldb = kb+16;
    }
-   if (pre == 'c' || pre == 'z')
+   if (FLAG_IS_SET(umm->flag, MMF_JKMABC))
+      i = sprintf(ln, "make %cammmtst mmrout=AMMCASES/%s mu=%d nu=%d ku=%d ", 
+                  pre, umm->rout, umm->mu, umm->nu, umm->ku);
+   else if (pre == 'c' || pre == 'z')
       i = sprintf(ln, "make cmmutstcase mmrout=%s csC=2 ", umm->rout);
    else
       i = sprintf(ln, "make mmutstcase mmrout=%s ", umm->rout);
+   if (beta == -1)
+      i += sprintf(ln+i, "beta=-1 betan=\"N1\" ");
+   else
+      i += sprintf(ln+i, "beta=%d ", beta);
    if (umm->comp)
    {
       ch = (pre == 'c' || pre == 's') ? 'S' : 'D';
@@ -2506,7 +2525,7 @@ static ATL_mmnode_t *DelBadMMKernels(char pre, int verb, ATL_mmnode_t *bp)
    {
       if (MMKernelFailsTest(pre, p->mbB, p->nbB, p->kbB, 0, p) ||
           MMKernelFailsTest(pre, p->mbB, p->nbB, p->kbB, 1, p) ||
-          MMKernelFailsTest(pre, p->mbB, p->nbB, p->kbB, 2, p))
+          MMKernelFailsTest(pre, p->mbB, p->nbB, p->kbB, -1, p))
       {
          if (verb > 0)
             printf("   NUKING bad kernel %s(%d)\n", p->rout, p->ID);
@@ -2715,11 +2734,12 @@ double TimeMMKernel
    int ldc,                     /* >0: ldc to use, else mb+8 */
    int beta,                    /* beta to time */
    int mflop,                   /* >0: force mflop MFLOPs in each time interv */
-   int cflush                   /* >0: size of cache flush, else ignored */
+   int cflush                   /* >=0: size of cache flush, else ignored */
 )
 {
    char fnam[128], ln[2048];
    const char *LO = FLAG_IS_SET(mmp->flag, MMF_AOUTER) ? "IJK": "JIK";
+   const int JKMAJOR = FLAG_IS_SET(mmp->flag, MMF_JKMABC);
    char *be;
    int i, j;
    char ch;
@@ -2772,20 +2792,33 @@ double TimeMMKernel
       be = "bn1";
    else 
       be = "bX";
-/*   dmm%d_TNMBxNBxKB_muxnuxku_ldc_rtMxrtNxrtK_LDTOP_pf_a1_bX_flushKB */
-   sprintf(fnam, "res/%cmm%s%d_%c%c%dx%dx%d_%dx%dx%d_%d_%dx%dx%d_%d_%d_a1_%s_%d",
-           pre, FLAG_IS_SET(mmp->flag, MMF_AOUTER) ? "MNK" : "NMK",
-           mmp->ID, 'T', 'N', mb, nb, kb, mmp->mu, mmp->nu, mmp->ku, ldc, 
-           FLAG_IS_SET(mmp->flag, MMF_MRUNTIME), 
-           FLAG_IS_SET(mmp->flag, MMF_NRUNTIME), 
-           FLAG_IS_SET(mmp->flag, MMF_KRUNTIME), 
-           FLAG_IS_SET(mmp->flag, MMF_LDCTOP), mmp->pref, be, cflush);
+   if (JKMAJOR) 
+   /*   dmmMNK%d_JMMBxNBxKB_muxnuxku_rtK_LDTOP_pf_a1_bX_flushKB */
+      sprintf(fnam, 
+              "res/%cmm%s%d_%dx%dx%d_%dx%dx%d_rtK%d_%d_%d_a1_%s_%d",
+              pre, FLAG_IS_SET(mmp->flag, MMF_AOUTER) ? "MNK" : "NMK",
+              mmp->ID, mb, nb, kb, mmp->mu, mmp->nu, mmp->ku, 
+              FLAG_IS_SET(mmp->flag, MMF_KRUNTIME), 
+              FLAG_IS_SET(mmp->flag, MMF_LDCTOP), mmp->pref, be, cflush);
+
+   else /*   dmm%d_TNMBxNBxKB_muxnuxku_ldc_rtMxrtNxrtK_LDTOP_pf_a1_bX_flushKB */
+      sprintf(fnam, 
+              "res/%cmm%s%d_%c%c%dx%dx%d_%dx%dx%d_%d_%dx%dx%d_%d_%d_a1_%s_%d",
+              pre, FLAG_IS_SET(mmp->flag, MMF_AOUTER) ? "MNK" : "NMK",
+              mmp->ID, 'T', 'N', mb, nb, kb, mmp->mu, mmp->nu, mmp->ku, ldc, 
+              FLAG_IS_SET(mmp->flag, MMF_MRUNTIME), 
+              FLAG_IS_SET(mmp->flag, MMF_NRUNTIME), 
+              FLAG_IS_SET(mmp->flag, MMF_KRUNTIME), 
+              FLAG_IS_SET(mmp->flag, MMF_LDCTOP), mmp->pref, be, cflush);
 
    if (FORCETIME || !FileExists(fnam))
    {
       if (pre == 'c' || pre == 'z')
          i = sprintf(ln, "make cmmucase mmrout=%s csC=2 ", mmp->rout);
-      else i = sprintf(ln, "make mmucaseN mmrout=%s ", mmp->rout);
+      else if (JKMAJOR) 
+         i = sprintf(ln, "make mmucaseN mmrout=AMMCASES/%s ", mmp->rout);
+      else
+         i = sprintf(ln, "make mmucase mmrout=%s ", mmp->rout);
       if (mmp->cflags)
       {
          ch = (pre == 'c' || pre == 's') ? 'S' : 'D';

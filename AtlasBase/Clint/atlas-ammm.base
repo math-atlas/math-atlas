@@ -1,3 +1,313 @@
+@ROUT damcases.idx samcases.idx
+#
+# In this file, any line beginning with a '#' is ignored, but the # must be in
+# column 0.  All multiple whitespace is reduced to one space (i.e. used only
+# to distinguish where words begin/end).  Lines may be extended by putting '\'
+# as the *last* character of line.
+#
+# The file has the following format:
+# ROUT='routine name' AUTH='author names' COMP='compiler name' CFLAGS='flags'
+# ID=<id> NU=<nu> MU=<mu> KU=<ku> KBMAX=<kbmax> KBMIN=<kbmin>
+# SSE=[0,1,2,3] X87=[0,1] BMABC=<0/1> BMAB=<0/1> JKMAB=<0/1> JKMABC=<0/1>
+# AOUTER=<0/1> BETAN1=<0/1> KRUNTIME=<0/1> LDCTOP=<0/1> X87=<0/1>
+# ASM=[asmlist], eg., asmlist is "GAS_x8664,GAS_x8632" or "GAS_SPARC"
+# ASM defaults to no assembly dialect required.
+# If NU/MU is negative, then the routine can only handle multiples of NU/MU.
+#
+@ROUT damcases.idx
+ID=1 MU=4 NU=4 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_dammm2x4x1_sse2.S' \
+     SSE=2 KRUNTIME=1 ASM=GAS_x8664 \
+     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
+ID=2 MU=4 NU=4 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_dammm2x4x256_sse2.S' \
+     SSE=2 KBMAX=256 ASM=GAS_x8664 \
+     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
+ID=3 MU=6 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_dammm3x3x256_sse2.S' \
+     SSE=2 KBMAX=256 ASM=GAS_x8664 \
+     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
+ID=4 MU=4 NU=1 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_dammm_nb4_sse2.S' \
+     SSE=2 KBMIN=4 KBMAX=4 ASM=GAS_x8664 KUISKB=1 \
+     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
+@ROUT ammusearch
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2012
+#include "atlas_misc.h"
+#define ATL_JKMDEF 1
+#include "atlas_mmtesttime.h"
+
+@extract -b @(basd)/atlas.base rout=Mylcm
+
+ATL_mmnode_t *BestForThisNB
+(
+   int verb, 
+   char pre, 
+   ATL_mmnode_t *mmb, 
+   int nb, 
+   int FORCE
+)
+/*
+ * Times all kernels in mmb
+ * RETURNS: ptr to best performing kernel, NULL if no kernel worked
+ */
+{
+   ATL_mmnode_t *mmp, *mmB=NULL;
+   double mf, mfB=0.0;
+
+   printf("SCOPING FOR BEST PERFORMING KERNEL FOR NB=%d\n", nb);
+   for (mmp=mmb; mmp; mmp = mmp->next)
+   {
+      int kb;
+/*
+ *    Choose kb, if forced only kb will do, so skip if kernel can't do it
+ */
+      if (FORCE || nb <= 16)
+      {
+         kb = nb;
+         if ((mmp->kbmin && kb < mmp->kbmin) ||
+             (mmp->kbmax && kb > mmp->kbmax) ||
+             ((kb/mmp->mu)*mmp->mu != kb) || ((kb/mmp->nu)*mmp->nu != kb) ||
+             ((kb/mmp->ku)*mmp->ku != kb))
+         {
+         
+            printf("   %d. %s: SKIPPED, bad NB\n", mmp->ID, mmp->rout);
+            continue;
+         }
+      }
+/*
+ *    If this kernel can't do the exact block factor, allow leeway
+ */
+      else
+      {
+         int u;
+         u = Mylcm(mmp->mu, mmp->nu);
+         u = Mylcm(kb, mmp->ku);
+         kb = (nb/u)*u;
+         if (kb != nb)
+         {
+            int kbB;
+            kbB = ((nb+u-1)/u)*u;
+            if (kbB-nb < nb-kb && kbB <= 4)
+               kb = kbB;
+         }
+      }
+      mf = TimeMMKernel(verb, 0, mmp, pre, kb, kb, kb, kb, kb, kb, 1, 0, -1);
+      if (mf > mfB)
+      {
+         mfB = mf;
+         mmB = mmp;
+         mmB->mbB = mmB->nbB = mmB->kbB = kb;
+      }
+      printf("   %d. %s: kb=%d, MFLOP=%.2f\n", mmp->ID, mmp->rout, kb, mf);
+   }
+   if (!mmB)
+   {
+      printf("NO KERNEL POSSIBLE FOR NB=%d\n", nb);
+      mmB = GetMMNode();
+   }
+   else
+   {
+      int i, kb = mmB->kbB;
+      i = MMKernelFailsTest(pre, kb, kb, kb, 0, mmB);
+      if (!i)
+         i = MMKernelFailsTest(pre, kb, kb, kb, 1, mmB);
+      if (!i)
+         i = MMKernelFailsTest(pre, kb, kb, kb, -1, mmB);
+      if (i)
+      {
+         printf("BEST KERNEL FAILS TESTER FOR NB=%d\n", kb);
+         exit(i);
+      }
+      printf("BEST KERNEL FOUND FOR NB=%d: ID#%d '%s' %.2f MFLOPS\n\n", 
+             nb, mmB->ID, mmB->rout, mfB);
+      mmB = CloneMMNode(mmB);
+      mmB->mflop[0] = mfB;
+      mmB->next = NULL;
+   }
+   return(mmB);
+}
+
+int DeleteBadBigNBs(ATL_mmnode_t *mmb, int *nbs)
+{
+   ATL_mmnode_t *best=NULL, *mmp;
+   double mfB=0.0;
+   int n=0;
+/*
+ * Find the best-performing kernel
+ */
+   for (mmp=mmb; mmp; mmp = mmp->next)
+   {
+      double mf;
+      mf = mmp->mflop[0];
+      if (mf > mfB)
+      {
+         mfB = mf;
+         best = mmp;
+      }
+   }
+/*
+ * Delete all NBs larger than best
+ */
+   while (best->next)
+   {
+      best->next = KillMMNode(best->next);
+      n++;
+   }
+   if (n)
+      printf("Deleted %d large, slow kernels starting at NB=%d\n", 
+             n, nbs[nbs[0]-n+1]);
+   return(n);
+}
+ATL_mmnode_t *FindBestForEachNB(int verb, char pre, ATL_mmnode_t *mmb, int *nbs)
+{
+   int i, n, FORCE;
+   ATL_mmnode_t *best, *bp;
+/*
+ * If # of nbs is negative, then each nb is required and that exact size
+ * will be used, or no NB of that size if no kernel works.  The normal behavior
+ * is the exact size of forced for all nb <= 16, and inexact for larger
+ */
+   n = nbs[0];
+   if (n < 0)  /* negative # of nbs says force exact NB or nothing */
+   {
+      n = -n;
+      FORCE = 1;
+   }
+   bp = best = BestForThisNB(verb, pre, mmb, nbs[1], FORCE);
+   for (i=2; i <= n; i++)
+   {
+      bp->next = BestForThisNB(verb, pre, mmb, nbs[i], FORCE);
+      bp = bp->next;
+   }
+   i = DeleteBadBigNBs(best, nbs);
+   return(best);
+}
+
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr, 
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+   fprintf(stderr, "USAGE: %s [flags:\n", name);
+   fprintf(stderr, "   -p [s,d,c,z]: set type/precision prefix (d) \n");
+   fprintf(stderr, "   -o <outfile>: output file (res/<pre>uAMMRES.sum)\n");
+   fprintf(stderr, "   -n # nb1 ... nb# : NBs to try for\n");
+   fprintf(stderr, "   -N # nb1 ... nb# : force exact NBs in search\n");
+   exit(ierr ? ierr : -1);
+}
+
+int *GetFlags(int nargs, char **args, char *PRE, char **FNOUT)
+{
+   int i, j=0, n, k;
+   char pre='d';
+   int *nbs=NULL;
+   *FNOUT = NULL;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+      
+      switch(args[i][1])
+      {
+      case 'p':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        pre = tolower(args[i][0]);
+        assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+        break;
+      case 'o':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        *FNOUT = DupString(args[i]);
+        break;
+      case 'n':
+         j = 1;
+      case 'N':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         n = atoi(args[i]);
+         nbs = malloc((n+1)*sizeof(int));
+         assert(nbs);
+         nbs[0] = (j) ? n : -n;
+         for (k=1; k <= n; k++)
+         {
+           if (++i >= nargs)
+               PrintUsage(args[0], i-1, NULL);
+            nbs[k] = atoi(args[i]);
+         }
+      }
+   }
+   *PRE = pre;
+   if (!(*FNOUT))
+   {
+      *FNOUT = malloc(32*sizeof(char));
+      *FNOUT = DupString("res/duAMMRES.sum");
+      (*FNOUT)[4] = pre;
+   }
+   if (!nbs)
+   {
+      nbs = malloc(18*sizeof(int));
+      assert(nbs);
+      nbs[0] = 16; nbs[1] = 4; nbs[2] = 6; nbs[3] = 8; 
+      nbs[4] = 12; nbs[5] = 16; nbs[6] = 18; nbs[7] = 24;
+      nbs[8] = 32; nbs[9] = 48; nbs[10] = 56; nbs[11] = 60;
+      nbs[12] = 72; nbs[13] = 80; nbs[14] = 120; nbs[15] = 180;
+      nbs[16] = 240; nbs[17] = 480;
+   }
+   return(nbs);
+}
+int main(int nargs, char **args)
+{
+   char pre='d';
+   int verb=1;
+   int *nbs;
+   char *fnout;
+   ATL_mmnode_t *mmb, *mmp;
+
+   nbs = GetFlags(nargs, args, &pre, &fnout);
+   if (verb)
+   {
+      int i;
+      const int n = nbs[0]+1;
+      printf("NBs = %3d", nbs[1]);
+      for (i=2; i < n; i++)
+         printf(", %3d", nbs[i]);
+      printf("\n");
+   }
+   mmb = ReadMMFileWithPath(pre, "AMMCASES", "amcases.idx");
+   assert(mmb);
+/*
+ * Eliminate those kernels that can't work for any block size
+ */
+   for (mmp=mmb; mmp; mmp = mmp->next)
+   {
+      if (FLAG_IS_SET(mmp->flag, MMF_KUISKB))
+         mmp->mbB = mmp->nbB = mmp->kbB = mmp->ku;
+      else
+      {
+         int m = Mylcm(mmp->mu, mmp->nu);
+         m = (60/m)*m;
+         if (mmp->kbmin)
+            m = Mmax(m, mmp->kbmin);
+         if (mmp->kbmax)
+            m = Mmin(m, mmp->kbmax);
+         mmp->mbB = mmp->nbB = mmp->kbB = m;
+      }
+   }
+   mmb = DelBadMMKernels(pre, verb, mmb);
+   assert(mmb);
+#if 0
+   if (verb)
+   {
+      printf("\nSURVIVING KERNELS:\n");
+      PrintMMNodes(stdout, mmb);
+   }
+#endif
+   mmp = FindBestForEachNB(verb, pre, mmb, nbs);
+   KillAllMMNodes(mmb);
+   free(nbs);
+   WriteMMFile(fnout, mmp);
+   exit(0);
+}
 @ROUT ATL_ammmABC
 #include "atlas_misc.h"
 /*

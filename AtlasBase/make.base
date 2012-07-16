@@ -6,7 +6,8 @@
    @endwhile
    ATLAS/tune/blas/gemm/CASES/objs
    ATLAS/tune/blas/ger/R1CASES ATLAS/tune/blas/ger/R2CASES 
-   ATLAS/tune/blas/gemm/CASES ATLAS/tune/blas/gemv/CASES
+   ATLAS/tune/blas/gemm/CASES ATLAS/tune/blas/gemm/AMMCASES 
+   ATLAS/tune/blas/gemv/CASES
    ATLAS/tune/blas/gemv/MVTCASES ATLAS/tune/blas/gemv/MVNCASES
    ATLAS/tune/blas/level1 ATLAS/tune/blas/level3
    ATLAS/tune/blas/gemm ATLAS/tune/blas/gemv ATLAS/tune/blas/ger
@@ -1173,6 +1174,38 @@ Makefile :$(basjr) $(incf)
 @(jr1) : $(basjr) $(incf)
 	$(extC) -b $(basjr) -o $@ rout=$@ -def rout $@
 @endwhile
+@ROUT ATLAS/tune/blas/gemm/AMMCASES
+basrwd = @(topd)/kernel/ClintWhaley
+basfn = $(basrwd)/clint_am.base
+
+@multidef rcw_am 
+   ATL_dammm2x4x256_sse2.S ATL_dammm3x3x256_sse2.S 
+   ATL_dammm2x4x1_sse2.S ATL_dammm_nb4_sse2.S
+@endmultidef
+@declare "files = " y y
+   damcases.idx samcases.idx
+   @whiledef han rcw_am
+      @whiledef @(han)
+         @(@(han))
+         @define @(han)1 @@(@(han))@
+      @endwhile
+   @endwhile
+@enddeclare
+
+all : $(files)
+
+@whiledef fl damcases.idx samcases.idx
+@(fl) : $(basdRCW)/atlas-ammm.base $(incf)
+	$(extC) -b $(basdRCW)/atlas-ammm.base -o $@ rout=$@
+@endwhile
+@whiledef rcw_am1
+@(rcw_am1) : $(basrwd)/clint_am.base $(incf)
+	$(extC) -b $(basrwd)/clint_am.base -o $@ rout=$@
+@endwhile
+
+Make.ext : $(topd)/make.base
+	$(extM) -o Make.ext -b $(topd)/make.base \
+                rout=ATLAS/tune/blas/gemm/AMMCASES
 @ROUT ATLAS/tune/blas/gemm/CASES
 basrwd = @(topd)/kernel/ClintWhaley
 basexd = @(topd)/kernel/external
@@ -1199,10 +1232,6 @@ basex = $(basexd)/extern.base
    ATL_dmm2x2x2_sse2 ATL_dmm2x2x128_sse2 ATL_smm2x2x256_sse
    ATL_dmm4x2x256_avx ATL_smm4x2x256_avx
    ATL_dmm2x4x256_fma4 ATL_smm2x4x256_fma4
-@endmultidef
-@multidef rcw_am 
-   ATL_dammm2x4x256_sse2.S ATL_dammm3x3x256_sse2.S 
-   ATL_dammm2x4x1_sse2.S ATL_dammm_nb4.S
 @endmultidef
 @multidef rcw 
    ATL_mm6x8x8_1p ATL_mm4x3x8p ATL_mm4x3x2p ATL_mm4x4x2rp ATL_mm4x4x8p
@@ -1234,12 +1263,6 @@ basex = $(basexd)/extern.base
          @(pre)cases.@(suf)
       @endwhile
    @endwhile
-   @whiledef han rcw_am
-      @whiledef @(han)
-         @(@(han))
-         @define @(han)1 @@(@(han))@
-      @endwhile
-   @endwhile
    @whiledef han rt rcw cm ps rcw_sse
       @whiledef @(han)
          @(@(han)).c
@@ -1263,10 +1286,6 @@ all : $(files)
 @whiledef rcw_sse1
 @(rcw_sse1).c : $(basrwd)/clint_sse.base $(incf)
 	$(extC) -b $(basrwd)/clint_sse.base -o $@ rout=$*
-@endwhile
-@whiledef rcw_am1
-@(rcw_am1) : $(basrwd)/clint_am.base $(incf)
-	$(extC) -b $(basrwd)/clint_am.base -o $@ rout=$@
 @endwhile
 
 @multidef bas $(basfn) $(basrw) $(bascm) $(basps)
@@ -1375,7 +1394,7 @@ all : $(files)
 @skip @ROUT ATLAS/tune/blas/gemv `emit_head.c emit_rmvT.c mvgen_sse.c atlas-l2g.base`
 @ROUT ATLAS/tune/blas/gemv `atlas-l2g.base`
 @skip @ROUT ATLAS/tune/blas/gemm `emit_mm.c vnbmmsearch.c emit_vKB.c mm_old2new.c vmmf_gccsub.c`
-@ROUT ATLAS/tune/blas/gemm `emit_mm.c mmgen_sse.c mmksearch_sse.c mmflagsearch.c gmmsearch.c mmsearch.c mmcuncpsearch.c`
+@ROUT ATLAS/tune/blas/gemm `emit_mm.c mmgen_sse.c mmksearch_sse.c mmflagsearch.c gmmsearch.c mmsearch.c mmcuncpsearch.c ammusearch.c`
 @ROUT ATLAS/tune/sysinfo `emit_typ.c emit_lamch.c`
 @enddeclare
 
@@ -1427,6 +1446,8 @@ atlas-mmg.base : $(basd)/atlas-mmg.base
 
 mmflagsearch.c : $(basfn) $(incf)
 	$(extC) -b $(basfn) -o $@ rout=$*
+ammusearch.c : $(basdRCW)/atlas-ammm.base $(incf)
+	$(extC) -b $(basdRCW)/atlas-ammm.base -o $@ rout=$*
 gmmsearch.c : $(basfn) $(incf)
 	$(extC) -b $(basfn) -o $@ rout=$*
 mmsearch.c : $(basfn) $(incf)
