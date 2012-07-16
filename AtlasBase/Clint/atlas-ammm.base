@@ -27,6 +27,285 @@ ID=3 MU=6 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_dammm3x3x256_sse2.S' \
 ID=4 MU=4 NU=1 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_dammm_nb4_sse2.S' \
      SSE=2 KBMIN=4 KBMAX=4 ASM=GAS_x8664 KUISKB=1 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
+@ROUT emit_amm
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2012
+#include "atlas_misc.h"
+#define ATL_JKMDEF 1
+#include "atlas_mmparse.h"
+#include "atlas_sys.h"
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr, 
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+   fprintf(stderr, "USAGE: %s [flags]:\n", name);
+   fprintf(stderr, "   -p [s,d,c,z]: set type/precision prefix (d) \n");
+   fprintf(stderr, "   -d <outdir>: directory to dump files to\n");
+   fprintf(stderr, "   -i <infile> : can be repeated for multiple files\n");
+   exit(ierr ? ierr : -1);
+}
+
+ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char **DOUT)
+{
+   int i, j=0, n, k;
+   char pre='d';
+   *DOUT = NULL;
+   ATL_mmnode_t *mmb=NULL, *mmp, *mp;
+
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+      
+      switch(args[i][1])
+      {
+      case 'p':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        pre = tolower(args[i][0]);
+        assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+        break;
+      case 'd':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        *DOUT = DupString(args[i]);
+        break;
+      case 'i':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        mmp = ReadMMFile(args[i]);
+        if (mmb)
+        {
+           ATL_mmnode_t *mp;
+           for (mp=mmb; mp->next; mp = mp->next);
+           mp->next = mmp;
+        }
+        else
+           mmb = mmp;
+        break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   *PRE = pre;
+   if (!(*DOUT))
+   {
+      *DOUT = DupString("dMake_amm");
+      (*DOUT)[0] = pre;
+   }
+   return(mmb);
+}
+
+void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
+{
+   ATL_mmnode_t *mmp, *p;
+   FILE *fp;
+   char *comp, *cflags;
+   char *ln;
+   int i;
+   char be[3] = {'1', 'n', '0'};
+   char *bes[3] = {"1", "N1", "0"};
+   char al[3] = {'1', 'n', 'X'};
+   char dcomp[8] = {'$', '(', 'D', 'M', 'C', ')', '\0'};
+   char dflags[12] = {'$', '(', 'D', 'M', 'C', 'F', 'L', 'A', 'G', 'S', 
+                     ')', '\0'};
+
+   ln = malloc((strlen(outd)+11)*sizeof(char));
+   assert(ln);
+   sprintf(ln, "%s/%cMake_amm", outd, pre);
+   fp = fopen(ln, "w");
+   assert(fp);
+   fprintf(fp, "include ../Make.inc\n\n");
+/*
+ * Print out the individual rules for each needed copy function
+ */
+   dcomp[2] = dflags[2] = toupper(pre);
+   dflags[3] = dcomp[3] = 'K';
+   for (mmp=mmb; mmp; mmp = mmp->next)
+   {
+      for (i=0; i < 2; i++)
+      {
+         const int u = (i) ? mmp->mu : mmp->nu;
+/*
+ *       See if we've already made a rule for this unrolling
+ */
+         for (p=mmb; p != mmp && p->mu != u && p->nu != u; p = p->next);
+         if (p != mmp)  /* u not seen before */
+         {
+            int j;
+            for (j=0; j < 3; j++)
+            {
+               fprintf(fp, "ATL_%crm2am_a%c_%d.o : ATL_%crm2am_a%c_%d.c\n",
+                       pre, al[j], u, pre, al[j], u);
+               fprintf(fp, "\t%s %s -c ATL_%crm2am_a%c_%d.c\n", dcomp, dflags,
+                       pre, al[j], u, pre, al[j], u);
+               fprintf(fp, "ATL_%ccm2am_a%c_%d.o : ATL_%ccm2am_a%c_%d.c\n",
+                       pre, al[j], u, pre, al[j], u);
+               fprintf(fp, "\t%s %s -c ATL_%ccm2am_a%c_%d.c\n", dcomp, dflags,
+                       pre, al[j], u, pre, al[j], u);
+            }
+         }
+      }
+   }
+/*
+ * Print out the individual rules for each kernel compile
+ */
+   dflags[3] = dcomp[3] = 'M';
+   for (mmp=mmb; mmp; mmp = mmp->next)
+   {
+/*
+ *    Flags that take runtime K are only compiled once, so print rules on
+ *    only the first encounter of that ID
+ */
+      if (FLAG_IS_SET(mmp->flag, MMF_KRUNTIME))
+      {
+         const int id = mmp->ID;
+         for (p=mmb; p != mmp && p->ID != id; p = p->next);
+         if (p != mmp)
+            continue;
+      }
+      if (mmp->comp)
+      {
+         comp = (mmp->comp[0] == 'g' && mmp->comp[1] == 'c' && 
+                 mmp->comp[2] == 'c' && 
+                 (mmp->comp[3] == '\0' || mmp->comp[3] == ' ')) 
+              ? "$(GOODGCC)" : mmp->comp;
+         cflags = mmp->cflags;
+      }
+      else
+      {
+         comp = dcomp;
+         cflags = dflags;
+      }
+/* 
+ *    ATL_<pre>AMMM_<ID>_<kb>_b<X>
+ */
+      for (i=0; i < 3; i++)
+      {
+         fprintf(fp, "ATL_%cAMMM_%d_%d_b%c.o : %s\n", pre, mmp->ID, 
+                 mmp->kbB, be[i], mmp->rout);
+         fprintf(fp, "\t%s $(CDEFS2) -DBETA%s=1", comp, bes[i]);
+         if (!FLAG_IS_SET(mmp->flag, MMF_KRUNTIME))
+            fprintf(fp, " -DMB=%d -DNB=%d, -DKB=%d", 
+                    mmp->mbB, mmp->nbB, mmp->kbB);
+         fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_%d_b%c", pre, mmp->ID,
+                 mmp->kbB, be[i]);
+         fprintf(fp, " %s -c %s\n", cflags, mmp->rout);
+      }
+   }
+}
+
+void GenUserFiles(char pre, ATL_mmnode_t *mmb, char *outd)
+/*
+ * Creates any files that can be copied from the AMMCASES directory
+ */
+{
+   ATL_mmnode_t *mmp, *p;
+   char *ln=NULL;
+   int lnlen=0, dlen;
+   char al[3] = {'1', 'n', 'X'};
+   int ial[3] = {1,   -1,   2};
+
+   dlen = strlen(outd);
+/*
+ * Extract every unique block-copy routine
+ */
+   for (mmp=mmb; mmp; mmp = mmp->next)
+   {
+      int i;
+      for (i=0; i < 2; i++)
+      {
+         const int u = (i) ? mmp->mu : mmp->nu;
+/*
+ *       See if we've extracted for this unrolling
+ */
+         for (p=mmb; p != mmp && p->mu != u && p->nu != u; p = p->next);
+         if (p == mmp)  /* u not seen before */
+         {
+            int j;
+            j = 16 * 40 + (strlen(outd)<<1);
+            j = (j > 90) ? j : 90;
+            if (lnlen < j)
+            {
+               free(ln);
+               lnlen = j;
+               ln = malloc(j*sizeof(char));
+               assert(ln);
+            }
+            for (j=0; j < 3; j++)
+            {
+               int ierr;
+               sprintf(ln, 
+"make ATL_%crm2am_a%c_%d.c ATL_%ccm2am_a%c_%d.c pre=%c UR=%d alpha=%d al=%c",
+                       pre, al[j], u, pre, al[j], u, pre, u, ial[j], al[j]);
+               ierr = system(ln);
+               if (ierr)
+               {
+                  fprintf(stderr, "FAILED CMND='%s'\n", ln);
+                  exit(ierr);
+               }
+               sprintf(ln, 
+                  "mv ATL_%crm2am_a%c_%d.c %s/. ;mv ATL_%ccm2am_a%c_%d.c %s/.",
+                       pre, al[j], u, outd, pre, al[j], u, outd);
+               ierr = system(ln);
+               if (ierr)
+               {
+                  fprintf(stderr, "FAILED CMND='%s'\n", ln);
+                  exit(ierr);
+               }
+            }
+         }
+      }
+   }
+   
+/*
+ * Copy every unique user-supplied file, but only once
+ */
+   for (mmp=mmb; mmp; mmp = mmp->next)
+   {
+      const int id=mmp->ID;
+      assert(id > 0);   /* will need to extend to handle generation! */
+/*
+ *    File must still be physically copied
+ */
+      for (p=mmb; p != mmp && p->ID != id; p = p->next);
+      if (p == mmp)
+      {
+         int i, ierr;
+         i = strlen(mmp->rout) + dlen + 16;
+         if (i > lnlen)
+         {
+            if (ln)
+               free(ln);
+            ln = malloc(i*sizeof(char));
+            assert(ln);
+         }
+         sprintf(ln, "cp AMMCASES/%s %s/.", mmp->rout, outd);
+         ierr = system(ln);
+         if (ierr)
+         {
+            fprintf(stderr, "FAILED CMND='%s'\n", ln);
+            exit(ierr);
+         }
+      }
+   }
+   if (ln)
+      free(ln);
+}
+int main(int nargs, char **args)
+{
+   char pre='d';
+   int verb=1;
+   int *nbs;
+   char *outd;
+   ATL_mmnode_t *mmb, *mmp;
+
+   mmb = GetFlags(nargs, args, &pre, &outd);
+   assert(mmb);
+   GenUserFiles(pre, mmb, outd);
+}
 @ROUT ammusearch
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2012
 #include "atlas_misc.h"
@@ -234,12 +513,14 @@ int *GetFlags(int nargs, char **args, char *PRE, char **FNOUT)
                PrintUsage(args[0], i-1, NULL);
             nbs[k] = atoi(args[i]);
          }
+         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
       }
    }
    *PRE = pre;
    if (!(*FNOUT))
    {
-      *FNOUT = malloc(32*sizeof(char));
       *FNOUT = DupString("res/duAMMRES.sum");
       (*FNOUT)[4] = pre;
    }
