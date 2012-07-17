@@ -130,12 +130,28 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
    for (mmp=mmb; mmp; mmp = mmp->next)
    {
       const int mu=mmp->mu, nu=mmp->nu;
+/*
+ *    See if we've already made an entry for this unrolling
+ */
+      for (p=mmb; p != mmp && (p->mu != mu || p->nu != nu); p = p->next);
+      if (p == mmp)  /* mu,nu not seen before */
+      {
+         int j;
+         for (j=0; j < 3; j++)
+         {
+            fprintf(fp, " \\\n       ATL_%cablk2cmat_%dx%d_a%c_b1.o",
+                    pre, mu, nu, al[j]);
+            fprintf(fp, " ATL_%cablk2cmat_%dx%d_a%c_bX.o",
+                    pre, mu, nu, al[j]);
+            fprintf(fp, " \\\n       ATL_%cablk2cmat_%dx%d_a%c_b0.o",
+                    pre, mu, nu, al[j]);
+            fprintf(fp, " ATL_%cablk2cmat_%dx%d_a%c_bn.o",
+                    pre, mu, nu, al[j]);
+         }
+      }
       for (i=(mu == nu); i < 2; i++)
       {
          const int u = (i) ? mu : nu;
-/*
- *       See if we've already made a rule for this unrolling
- */
          for (p=mmb; p != mmp && p->mu != u && p->nu != u; p = p->next);
          if (p == mmp)  /* u not seen before */
          {
@@ -190,6 +206,28 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
    for (mmp=mmb; mmp; mmp = mmp->next)
    {
       const int mu=mmp->mu, nu = mmp->nu;
+/*
+ *    Print out 2-D ablk2Cmat targets
+ */
+      for (p=mmb; p != mmp && (p->mu != mu || p->nu != nu); p = p->next);
+      if (p == mmp)  /* mu,nu not seen before */
+      {
+         char cbe[4] = {'0', '1', 'n', 'X'};
+         int ibe[4] =  {0,    1,  -1,  2};
+         int i, j;
+         for (i=0; i < 4; i++)
+         {
+            for (j=0; j < 3; j++)
+            {
+               char rn[64];
+               sprintf(rn, "ATL_%cablk2cmat_%dx%d_a%c_b%c",
+                       pre, mu, nu, al[j], cbe[i]);
+               fprintf(fp, "%s.o : %s.c\n", rn, rn);
+               fprintf(fp, "\t%s %s $(CDEFS) %s -c %s.c\n", 
+                       dcomp, dflags, styp, rn);
+            }
+         }
+      }
       for (i=(mu == nu) ? 1:0; i < 2; i++)
       {
          const int u = (i) ? mu : nu;
@@ -283,9 +321,52 @@ void GenUserFiles(char pre, ATL_mmnode_t *mmb, char *outd)
    for (mmp=mmb; mmp; mmp = mmp->next)
    {
       int i;
+      const int mu=mmp->mu, nu=mmp->nu;
+      for (p=mmb; p != mmp && (p->mu != mu || p->nu != nu); p = p->next);
+      if (p == mmp)  /* mu,nu not seen before */
+      {
+         char cbe[4] = {'0', '1', 'n', 'X'};
+         int ibe[4] =  {0,    1,  -1,  2};
+         int i, j;
+         j = 64+8 + strlen(outd);
+         j = (j > 128) ? j : 128;
+         if (lnlen < j)
+         {
+            free(ln);
+            lnlen = j;
+            ln = malloc(j*sizeof(char));
+            assert(ln);
+         }
+         for (i=0; i < 4; i++)
+         {
+            for (j=0; j < 3; j++)
+            {
+               char rn[64];
+               int ierr;
+               sprintf(rn, "ATL_%cablk2cmat_%dx%d_a%c_b%c.c",
+                       pre, mu, nu, al[j], cbe[i]);
+               sprintf(ln, 
+                  "make %s pre=%c mu=%d nu=%d al=%c be=%c alpha=%d beta=%d", 
+                       rn, pre, mu, nu, al[j], cbe[i], ial[j], ibe[i]);
+               ierr = system(ln);
+               if (ierr)
+               {
+                  fprintf(stderr, "FAILED CMND='%s'\n", ln);
+                  exit(ierr);
+               }
+               sprintf(ln, "mv %s %s/.", rn, outd);
+               ierr = system(ln);
+               if (ierr)
+               {
+                  fprintf(stderr, "FAILED CMND='%s'\n", ln);
+                  exit(ierr);
+               }
+            }
+         }
+      }
       for (i=0; i < 2; i++)
       {
-         const int u = (i) ? mmp->mu : mmp->nu;
+         const int u = (i) ? mu : nu;
 /*
  *       See if we've extracted for this unrolling
  */
