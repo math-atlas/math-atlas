@@ -1,3 +1,4 @@
+#define movapd movaps
 @ROUT ATL_dammm2x4x1_sse2.S ATL_dammm2x4x256_sse2.S
    @define mu @4@
    @define nu @4@
@@ -135,6 +136,7 @@ PFSETUP_2:
 /*
  * Extend range of small operands by starting at -128
  */
+@ROUT ATL_dammm3x3x256_sse2.S `         movddup (pB), rC00`
    sub $-128, pA
    sub $-128, pB
    mov $KB*@(mu)*8, incAm           /* incAm = KB*MU*size */
@@ -157,7 +159,6 @@ ALIGN8
  *       Peel first iteration of K-loop to handle init of C to 0
  */
 @ROUT ATL_dammm3x3x256_sse2.S
-         movddup -128(pB), rC00
          movapd  -128(pA), rA0
          movapd rC00, rC10
          mulpd rA0, rC00
@@ -261,9 +262,11 @@ ALIGN8
 /*
  *       Bring in C if necessary, and store out final answer
  */
+         add $KB*@(nu)*8, pB
          #if defined(BETA1) || defined(BETAN1)
             BETCOP -128(pC), rC00
             movapd rC00, -128(pC)
+               movddup -128(pB), rC00
             BETCOP 16-128(pC), rC10
             movapd rC10, 16-128(pC)
             BETCOP 32-128(pC), rC20
@@ -282,6 +285,7 @@ ALIGN8
             movapd rC22, (pC)
          #else
             movapd rC00, -128(pC)
+               movddup -128(pB), rC00
             movapd rC10, 16-128(pC)
             movapd rC20, 32-128(pC)
             movapd rC01, 48-128(pC)
@@ -292,9 +296,9 @@ ALIGN8
             movapd rC22, (pC)
          #endif
          add $144, pC
-         add $KB*@(nu)*8, pB
       sub $1, nnu
       jnz MNLOOP
+               movddup -128(pB0), rC00
       mov nnu0, nnu
       mov pB0, pB
       add incAm, pA
@@ -1092,31 +1096,360 @@ ATL_asmdecor(ATL_USERMM):
    #endif
    movapd rC11, 112(pC)
    ret
-@ROUT damcases.idx
-#
-# In this file, any line beginning with a '#' is ignored, but the # must be in
-# column 0.  All multiple whitespace is reduced to one space (i.e. used only
-# to distinguish where words begin/end).  Lines may be extended by putting '\'
-# as the *last* character of line.
-#
-# The file has the following format:
-# ROUT='routine name' AUTH='author names' COMP='compiler name' CFLAGS='flags'
-# ID=<id> NU=<nu> MU=<mu> KU=<ku> KBMAX=<kbmax> KBMIN=<kbmin>
-# SSE=[0,1,2,3] X87=[0,1] BMABC=<0/1> BMAB=<0/1> JKMAB=<0/1> JKMABC=<0/1>
-# AOUTER=<0/1> BETAN1=<0/1> KRUNTIME=<0/1> LDCTOP=<0/1> X87=<0/1>
-# ASM=[asmlist], eg., asmlist is "GAS_x8664,GAS_x8632" or "GAS_SPARC"
-# ASM defaults to no assembly dialect required.
-# If NU/MU is negative, then the routine can only handle multiples of NU/MU.
-#
-ID=1 MU=4 NU=4 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_dammm2x4x1_sse2.S' \
-     SSE=2 KRUNTIME=1 LDCTOP=1 ASM=GAS_x8664 \
-     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
-ID=2 MU=4 NU=4 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_dammm2x4x256_sse2.S' \
-     SSE=2 LDCTOP=1 KBMAX=256 ASM=GAS_x8664 \
-     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
-ID=3 MU=6 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_dammm3x3x256_sse2.S' \
-     SSE=2 LDCTOP=1 KBMAX=256 ASM=GAS_x8664 \
-     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
-ID=4 MU=4 NU=1 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_dammm_nb4_sse2.S' \
-     SSE=2 LDCTOP=1 KBMIN=4 KBMAX=4 ASM=GAS_x8664 \
-     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
+@ROUT ATL_dammm3x3x256MI_sse2.S
+@extract -b @(topd)/gen.inc what=crsetup
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2012
+#include "atlas_asm.h"
+#if KB < 2
+   #error This kernel demands K >= 2
+#endif
+#define nmu     %rdi
+#define nnu     %rsi
+#define nnu0    %r10
+#define pA      %rcx
+#define pB      %rax
+#define pC      %r9
+#define pf      %rbp
+#define pB0     %r12
+#define incPF   %rbx
+#define pfB     %rdx
+#define incAm   %r11 
+
+#define rA0     %xmm0
+#define rA1     %xmm1
+#define rA2     %xmm2
+#define rB0     %xmm3
+#define rB1     %xmm4
+#define rB2     %xmm5
+#define rC00    %xmm6
+#define rC10    %xmm7
+#define rC20    %xmm8
+#define rC01    %xmm9
+#define rC11    %xmm10
+#define rC21    %xmm11
+#define rC02    %xmm12
+#define rC12    %xmm13
+#define rC22    %xmm14
+#define rm0     %xmm15
+#ifndef pref
+   #define pref prefetcht1
+#endif
+#ifndef prefB
+   #define prefB prefetcht1
+#endif
+#ifndef prefC
+   #ifdef ATL_3DNow
+      #define prefC prefetchw
+   #else
+      #define prefC prefetcht0
+   #endif
+#endif
+#ifdef BETAN1
+   #define BETCOP subpd
+#else
+   #define BETCOP addpd
+#endif
+/*
+                    rdi      rsi    rdx        rcx         r8        r9  
+void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC, 
+                  8(%rsp)    16(%rsp)     24(%rsp)   
+                CTYPE *pAn, CTYPE *pBn, CTYPE *pCn);
+ */
+.text
+.global ATL_asmdecor(ATL_USERMM)
+ALIGN16
+ATL_asmdecor(ATL_USERMM):
+/*
+ * Save callee-saved iregs
+ */
+   movq    %rbp, -8(%rsp)
+   movq    %rbx, -16(%rsp)
+   movq    %r12, -24(%rsp)
+#if 0
+   movq    %r13, -32(%rsp)
+   movq    %r14, -40(%rsp)
+   movq    %r15, -48(%rsp)
+#endif
+/*
+ * Load paramaters
+ */
+   movq %r8, pB
+   mov nnu, nnu0
+   movq 16(%rsp), pf
+   cmp $0, pf
+   je BADPFB
+   cmp pf, pB
+   je BADPFB
+.local PFSETUP
+PFSETUP:
+   movq 8(%rsp), pfB
+   cmp $0, pfB
+   je BADPF_2
+   cmp pf, pA
+   je BADPF_2
+PFSETUP_2:
+   mov $8*6*3, incPF
+/*
+ * Extend range of small operands by starting at -128
+ */
+   sub $-128, pA
+   sub $-128, pB
+   mov $KB*6*8, incAm           /* incAm = KB*MU*size */
+   sub $-128, pf
+   sub $-128, pC
+   sub $-128, pfB
+   movq pB, pB0
+
+ALIGN8
+   .local mLOOP
+   MLOOP:
+/*
+ *       Peel first iteration of K-loop to handle init of C to 0
+ */
+         movddup -128(pB), rC00
+         movapd  -128(pA), rA0
+         movapd rC00, rC10
+         mulpd rA0, rC00
+         movapd rC10, rC20
+         movapd  -112(pA), rA1
+         mulpd rA1, rC10
+         movapd  -96(pA), rA2
+         mulpd rA2, rC20
+         movddup -120(pB), rC01
+         movapd rC01, rC11
+         mulpd rA0, rC01
+         movapd rC11, rC21
+         mulpd rA1, rC11
+         mulpd rA2, rC21
+         movddup -112(pB), rC02
+         movapd rC02, rC12
+         mulpd rA0, rC02
+         movapd rC12, rC22
+         mulpd rA1, rC12
+         #if KB > 1
+            movddup -104(pB), rB0
+         #endif
+         mulpd rA2, rC22
+ALIGN8
+      .local NLOOP
+      NLOOP:
+
+@iexp ao -80 0 +
+@iexp bo -96 0 +
+@iexp k 1 0 +
+@iwhile k < 257
+         #if KB > @(k)
+   @iexp k @(k) 1 +
+            movapd @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            movapd rA0, rm0
+            mulpd rB0, rm0
+            addpd rm0, rC00
+            movapd @(ao)(pA), rA1
+   @iexp ao @(ao) 16 +
+            movapd rA1, rm0
+            mulpd rB0, rm0
+            addpd rm0, rC10
+            movapd @(ao)(pA), rA2
+   @iexp ao @(ao) 16 +
+            movapd rA2, rm0
+            mulpd rA2, rB0
+            addpd rB0, rC20
+   
+            movddup @(bo)(pB), rB1
+   @iexp bo @(bo) 8 +
+            movapd rA0, rm0
+            mulpd rB1, rm0
+            addpd rm0, rC01
+            movddup @(bo)(pB), rB2
+   @iexp bo @(bo) 8 +
+            movapd rA1, rm0
+            mulpd rB1, rm0
+            addpd rm0, rC11
+@skip            #if KB > @(k)
+               movddup @(bo)(pB), rB0
+   @iexp bo @(bo) 8 +
+@skip            #endif
+            mulpd rA2, rB1
+            addpd rB1, rC21
+   
+   @iif k = 2
+            prefC -64(pC)
+   @endiif
+   @iif k = 3
+               pref -128(pf)
+   @endiif
+   @iif k = 4
+               prefB -128(pfB)
+   @endiif
+            #if KB == @(k)
+               movddup @(bo)(pB), rB1
+            #endif
+            mulpd rB2, rA0
+            addpd rA0, rC02
+   @iif k = 3
+@skip               pref 64-128(pf)
+   @endiif
+            #if KB == @(k)
+               movapd -128(pA), rA0
+            #endif
+            mulpd rB2, rA1
+            addpd rA1, rC12
+   @iif k = 4
+               prefB (pfB)
+   @endiif
+   @iif k = 3
+               pref 128(pf)
+   @endiif
+            #if KB == @(k)
+               movapd -112(pA), rA1
+            #endif
+            mulpd rB2, rA2
+            addpd rA2, rC22
+   @iif k = 2
+            prefC (pC)
+   @endiif
+   @iif k = 3
+            prefC -128(pC)
+   @endiif
+   @iif k = 4
+               add incPF, pf
+   @endiif
+   @iif k = 5
+               add incPF, pfB
+   @endiif
+         #endif
+@endiwhile
+         add $KB*3*8, pB
+/*
+ *       Bring in C if necessary, and store out final answer while starting
+ *       operations for the next N iteration.
+ *       Upon loop exit, next N iteration's rA[0-1] and rB[0-1] are preloaded
+ */
+         #if defined(BETA1) || defined(BETAN1)
+            BETCOP -128(pC), rC00
+            movapd rC00, -128(pC)
+               movapd rA0, rC00
+               mulpd  rB0, rC00
+            BETCOP -112(pC), rC10
+            movapd rC10, 16-128(pC)
+               movapd rA1, rC10
+               mulpd  rB0, rC10
+            BETCOP -96(pC), rC20
+            movapd rC20, 32-128(pC)
+               movapd -96(pA), rA2
+               movapd rA2, rC20
+               mulpd rB0, rC20
+            BETCOP 48-128(pC), rC01
+            movapd rC01, 48-128(pC)
+               movapd rA0, rC01
+               mulpd rB1, rC01
+            BETCOP 64-128(pC), rC11
+            movapd rC11, 64-128(pC)
+               movapd rA1, rC11
+               mulpd rB1, rC11
+            BETCOP 80-128(pC), rC21
+            movapd rC21, 80-128(pC)
+               movapd rA2, rC21
+               mulpd rB1, rC21
+            BETCOP 96-128(pC), rC02
+            movapd rC02, 96-128(pC)
+               movddup -112(pB), rB2
+               movapd rB2, rC02
+               mulpd rA0, rC02
+            BETCOP 112-128(pC), rC12
+            movapd rC12, 112-128(pC)
+               movapd rA1, rC12
+               mulpd rB2, rC12
+            BETCOP (pC), rC22
+            movapd rC22, (pC)
+               movapd rA2, rC22
+               mulpd rB2, rC22
+         #else
+               movapd -96(pA), rA2
+            movapd rC00, -128(pC)
+               movapd rA0, rC00
+               mulpd rB0, rC00
+               movddup -112(pB), rB2
+            movapd rC10, 16-128(pC)
+               movapd rA1, rC10
+               mulpd rB0, rC10
+            movapd rC20, 32-128(pC)
+               movapd rA2, rC20
+               mulpd rB0, rC20
+            movapd rC01, 48-128(pC)
+               movapd rA0, rC01
+               mulpd rB1, rC01
+            movapd rC11, 64-128(pC)
+               movapd rA1, rC11
+               mulpd rB1, rC11
+            movapd rC21, 80-128(pC)
+               movapd rA2, rC21
+               mulpd rB1, rC21
+            movapd rC02, 96-128(pC)
+               movapd rA0, rC02
+               mulpd rB2, rC02
+            movapd rC12, 112-128(pC)
+               movapd rA1, rC12
+               mulpd rB2, rC12
+            movapd rC22, (pC)
+               movapd rA2, rC22
+               mulpd rB2, rC22
+         #endif
+         add $144, pC
+      sub $1, nnu
+         #if KB > 1
+            movddup -104(pB), rB0
+         #endif
+      jnz NLOOP
+      mov nnu0, nnu
+      mov pB0, pB
+      add incAm, pA
+   sub $1, nmu
+   jnz MLOOP
+/* DONE: */
+   movq    -8(%rsp), %rbp
+   movq    -16(%rsp), %rbx
+   movq    -24(%rsp), %r12
+#if 0
+   movq    -32(%rsp), %r13
+   movq    -40(%rsp), %r14
+   movq    -48(%rsp), %r15
+#endif
+   ret
+/*
+ * Can't use next B as pointer as usual, see if we can use next A
+ */
+.local BADPFB
+BADPFB:
+   movq 16(%rsp), pf
+   cmp $0, pf
+   je BADPFAB
+   cmp pf, pA
+   jne PFSETUP
+/*
+ * Can't use A or B as ptr, try C
+ */
+.local BADPFAB
+BADPFAB:
+   movq 24(%rsp), pf
+   cmp $0, pf
+   je BADPFABC
+   cmp pf, pA
+   jne PFSETUP
+/*
+ * No next block, so just fetch this time's A ahead
+ */
+.local BADPFABC
+BADPFABC:
+#ifndef KB
+   #define KB 40
+#endif
+#ifndef MB
+   #define MB KB
+#endif
+   lea KB*MB*4(pA), pf
+   jmp PFSETUP
+BADPF_2:
+   movq 24(%rsp), pfB
+   jmp PFSETUP_2
