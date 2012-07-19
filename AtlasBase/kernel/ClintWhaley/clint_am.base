@@ -9,11 +9,6 @@
 @extract -b @(topd)/gen.inc what=crsetup
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2012
 #include "atlas_asm.h"
-#ifdef DCPLX
-   #define CMUL(arg_) 2*arg_
-#else
-   #define CMUL(arg_) arg_
-#endif
 #define nmu     %rdi
 #define nnu     %rsi
 #define nnu0    %r10
@@ -29,6 +24,7 @@
 #define pA0     %r13
 #define incAm   %r14
 #define pfB     %r15
+#define FSIZE 6*8
 @ROUT ATL_dammm2x4x256_sse2.S ATL_dammm3x3x256_sse2.S
 #define pA      %rcx
 #define pB      %rax
@@ -56,7 +52,9 @@
 #define rC12    %xmm13
 #define rC22    %xmm14
 #define rm0     %xmm15
+#define FSIZE 4*8
 @ROUT ATL_dammm2x4x1_sse2.S ATL_dammm2x4x256_sse2.S
+#define FSIZE 4*8
 
 #define rA0     %xmm0
 #define rA1     %xmm1
@@ -105,32 +103,39 @@ ATL_asmdecor(ATL_USERMM):
 /*
  * Save callee-saved iregs
  */
-   movq    %rbp, -8(%rsp)
-   movq    %rbx, -16(%rsp)
-   movq    %r12, -24(%rsp)
+   sub $FSIZE, %rsp
+   movq    %rbp, 0(%rsp)
+   movq    %rbx, 8(%rsp)
+   movq    %r12, 16(%rsp)
 @ROUT ATL_dammm2x4x1_sse2.S 
-   movq    %r13, -32(%rsp)
-   movq    %r14, -40(%rsp)
-   movq    %r15, -48(%rsp)
+   movq    %r13, 24(%rsp)
+   movq    %r14, 32(%rsp)
+   movq    %r15, 40(%rsp)
 @ROUT ATL_dammm2x4x1_sse2.S ATL_dammm2x4x256_sse2.S ATL_dammm3x3x256_sse2.S
 /*
  * Load paramaters
  */
    movq %r8, pB
    mov nnu, nnu0
-   movq 16(%rsp), pf
+   movq FSIZE+16(%rsp), pf      /* pf = pBn */
+   movq FSIZE+8(%rsp), pfB      /* pfB = pAn */
+   cmp pf, pB                   /* if (pBn == pB) */
+   CMOVE pfB, pf                /* if (pBn == pB) pfB = pAn */
+   CMOVEq FSIZE+24(%rsp), pfB   /* if (pbN == pB) pfB = pCn */
+@beginskip
    cmp $0, pf
    je BADPFB
    cmp pf, pB
    je BADPFB
 .local PFSETUP
 PFSETUP:
-   movq 8(%rsp), pfB
+   movq FSIZE+8(%rsp), pfB
    cmp $0, pfB
    je BADPF_2
    cmp pf, pA
    je BADPF_2
 PFSETUP_2:
+@endskip
    mov $8*@(mu)*@(nu), incPF
 @ROUT ATL_dammm2x4x256_sse2.S ATL_dammm3x3x256_sse2.S
 /*
@@ -535,15 +540,17 @@ ALIGN8
 
 @ROUT ATL_dammm2x4x1_sse2.S ATL_dammm2x4x256_sse2.S ATL_dammm3x3x256_sse2.S
 /* DONE: */
-   movq    -8(%rsp), %rbp
-   movq    -16(%rsp), %rbx
-   movq    -24(%rsp), %r12
+   movq    (%rsp), %rbp
+   movq    8(%rsp), %rbx
+   movq    16(%rsp), %r12
 @ROUT ATL_dammm2x4x1_sse2.S
-   movq    -32(%rsp), %r13
-   movq    -40(%rsp), %r14
-   movq    -48(%rsp), %r15
+   movq    24(%rsp), %r13
+   movq    32(%rsp), %r14
+   movq    40(%rsp), %r15
 @ROUT ATL_dammm2x4x1_sse2.S ATL_dammm2x4x256_sse2.S ATL_dammm3x3x256_sse2.S
+   add $FSIZE, %rsp
    ret
+@beginskip
 /*
  * Can't use next B as pointer as usual, see if we can use next A
  */
@@ -580,6 +587,7 @@ BADPFABC:
 BADPF_2:
    movq 24(%rsp), pfB
    jmp PFSETUP_2
+@endskip
 @ROUT ATL_dammm_nb8_avx.S
 @extract -b @(topd)/gen.inc what=crsetup
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2012
