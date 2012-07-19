@@ -67,8 +67,12 @@ def GetDefaultPre():
 def test(ATLdir, ARCH, pre, blas, N, rout, cc=None, ccf=None, opt=""):
    if (opt != ""):
       opt = 'opt="' + opt + '"'
+#
+#  Majedul: for single, we need to use sUCCFLAGS   
+#
    if(cc != None):
-      opt = opt + ' dUCC=' + cc + ' dUCCFLAGS="' + ccf + '"'
+      #opt = opt + ' dUCC=' + cc + ' dUCCFLAGS="' + ccf + '"'
+      opt = opt + ' ' + pre + 'UCC=' + cc + ' '+ pre + 'UCCFLAGS="' + ccf + '"'
 #   cmnd = 'cd %s/tune/blas/level1/%s ; make %s%stest N=%d urout=%s %s' % \
 #          (ATLdir, ARCH, pre, blas, N, rout, opt)
    cmnd = 'cd %s/tune/blas/level1 ; make %s%stest N=%d urout=%s %s' % \
@@ -113,12 +117,17 @@ def time(ATLdir, ARCH, pre, blas, N, rout, cc=None, ccf=None, opt=""):
       lines = fo.readlines()
       err = fo.close()
 #      print lines
-      assert(err == None)
+      assert(err == None) 
+#
+#     Majedul: there is no variable named UCCFLAGS. it should be sUCCFLAGS or
+#     dUCCFLAGS. Same as UCC. 
+#
       zopt = opt + ' UCC=icc UCCFLAGS="' + ccf + ' -prof_use -prof_dir /tmp"'
    if PROFILE:
       opt = zopt
    elif cc != None :
-      opt = opt + ' UCC=' + cc + ' UCCFLAGS="' + ccf + '"'
+      #opt = opt + ' UCC=' + cc + ' UCCFLAGS="' + ccf + '"'       
+      opt = opt + ' '+ pre + 'UCC=' + cc + ' '+ pre + 'UCCFLAGS="' + ccf + '"'     
 #   print "opt = '%s'" % opt
    cmnd = 'make %s%scase N=%d urout=%s %s' % (pre, blas, N, rout, opt)
    if WALLTIME and 0:
