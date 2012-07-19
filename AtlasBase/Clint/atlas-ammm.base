@@ -467,7 +467,7 @@ int main(int nargs, char **args)
    KillAllMMNodes(mmb);
    exit(0);
 }
-@ROUT ammusearch
+@ROUT ammusearch ammgsearch
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2012
 #include "atlas_misc.h"
 #define ATL_JKMDEF 1
@@ -589,8 +589,12 @@ int DeleteBadBigNBs(ATL_mmnode_t *mmb, int *nbs)
       n++;
    }
    if (n)
+   {
+      int N = nbs[s];
+      N = (N >= 0) N : -N;
       printf("Deleted %d large, slow kernels starting at NB=%d\n", 
-             n, nbs[nbs[0]-n+1]);
+             n, nbs[N-n+1]);
+   }
    return(n);
 }
 ATL_mmnode_t *FindBestForEachNB(int verb, char pre, ATL_mmnode_t *mmb, int *nbs)
@@ -619,6 +623,7 @@ ATL_mmnode_t *FindBestForEachNB(int verb, char pre, ATL_mmnode_t *mmb, int *nbs)
 }
 
 void PrintUsage(char *name, int ierr, char *flag)
+@ROUT ammusearch ammgsearch
 {
    if (ierr > 0)
       fprintf(stderr, "Bad argument #%d: '%s'\n", ierr, 
@@ -630,15 +635,34 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "   -o <outfile>: output file (res/<pre>uAMMRES.sum)\n");
    fprintf(stderr, "   -n # nb1 ... nb# : NBs to try for\n");
    fprintf(stderr, "   -N # nb1 ... nb# : force exact NBs in search\n");
+@ROUT ammgsearch
+   fprintf(stderr, "   -r <nreg> : set max # of registers to try\n");
+   fprintf(stderr, "   -b <nb>   : set initial block factor to try\n");
+@ROUT ammusearch ammgsearch
    exit(ierr ? ierr : -1);
 }
 
+@ROUT ammgsearch
+int *GetFlags(int nargs, char **args, char *PRE, char **FNOUT, 
+              int *NREG, int *NB)
+@ROUT ammusearch
 int *GetFlags(int nargs, char **args, char *PRE, char **FNOUT)
+@ROUT ammusearch ammgsearch
 {
    int i, j=0, n, k;
    char pre='d';
    int *nbs=NULL;
    *FNOUT = NULL;
+@ROUT ammgsearch
+   *NB = 0;
+   #ifdef ATL_GAS_x8664
+      *NREG = 16;
+   #elif defined(aTL_GAS_x8632)
+      *NREG = 8;
+   #else
+      *NREG = 32;
+   #endif
+@ROUT ammusearch ammgsearch
    for (i=1; i < nargs; i++)
    {
       if (args[i][0] != '-')
@@ -673,11 +697,28 @@ int *GetFlags(int nargs, char **args, char *PRE, char **FNOUT)
             nbs[k] = atoi(args[i]);
          }
          break;
+@ROUT ammgsearch
+      case 'r':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         *NREG = atoi(args[i]);
+         break;
+      case 'b':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         *NB = atoi(args[i]);
+         break;
+   fprintf(stderr, "   -b <nb>   : set initial block factor to try\n");
+@ROUT ammusearch ammgsearch
       default:
          PrintUsage(args[0], i, args[i]);
       }
    }
    *PRE = pre;
+@ROUT ammgsearch
+   if (*NB == 0)
+      *NB = (pre == 'd') ? 36 : 48;
+@ROUT ammusearch ammgsearch
    if (!(*FNOUT))
    {
       *FNOUT = DupString("res/duAMMRES.sum");
@@ -695,6 +736,30 @@ int *GetFlags(int nargs, char **args, char *PRE, char **FNOUT)
    }
    return(nbs);
 }
+
+@ROUT ammgsearch
+int main(int nargs, char **args)
+int main(int nargs, char **args)
+{
+   char pre='d';
+   int verb=1;
+   int *nbs;
+   char *fnout;
+   ATL_mmnode_t *mmb, *mmp;
+
+   nbs = GetFlags(nargs, args, &pre, &fnout);
+   if (verb)
+   {
+      int i;
+      const int n = nbs[0]+1;
+      printf("NBs = %3d", nbs[1]);
+      for (i=2; i < n; i++)
+         printf(", %3d", nbs[i]);
+      printf("\n");
+   }
+   return(0);
+}
+@ROUT ammusearch
 int main(int nargs, char **args)
 {
    char pre='d';
