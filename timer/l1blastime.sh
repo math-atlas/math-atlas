@@ -54,7 +54,11 @@ CFLAGS="-fomit-frame-pointer -mfpmath=sse -mfma4 -O2 -fno-tree-loop-optimize \
 #SMLIB=sblas_fko.a
 #DMLIB=dblas_fko.a
 MLIB=blas_fko.a
+NRM2LIB=nrm2_fko.a
+
 OBJ=
+NRM2OBJ=
+
 #
 # set configuration parameters
 #
@@ -62,7 +66,7 @@ copt=noflushing
 N=16384
 #C=8388
 C=1
-R="7 copy swap scal asum amax axpy dot" 
+R="8 copy swap scal asum amax axpy dot nrm2" 
 F=200
 
 if [ $# -ge 1 ] 
@@ -76,7 +80,7 @@ for pre in s d
 do
       echo "Tuning " ${pre}blas "... ... ..."
       echo "==============================="
-   for blas in swap copy asum axpy dot scal iamax
+   for blas in swap copy asum axpy dot scal iamax nrm2
    do
       inputlog=$LOGPATH/$pre${blas}_${N}_${scripttime}
       $SCRIPTdir/ifko.py $blas $pre $N > $inputlog
@@ -90,10 +94,28 @@ do
 #
 #     regenarate the assembly using the opt flags
 #
-      $FKOPATH/bin/fko $iflag -o $SRCPATH/$pre${blas}.s $FKOPATH/blas/$pre$blas.b
-      #cerate obj using the assemblies
-      $CC $CFLAGS -o $SRCPATH/$pre${blas}.o -c $SRCPATH/$pre${blas}.s
-      OBJ="$OBJ $SRCPATH/$pre${blas}.o"
+
+#     
+#     NOTE: Right now, we need to handle nrm2 separately. nrm2.b in blas dir
+#     actually represents ssq.b and nrm2.c is the stub for nrm2. we rename 
+#     nrm2.b from ssq.b just to simpify the use of python scripts
+#     NOTE: we need special nrm2test and nrm2time to time norm2 
+#
+      if [ $blas = nrm2 ]
+      then
+         $FKOPATH/bin/fko $iflag -o $SRCPATH/${pre}ssq.s \
+            $FKOPATH/blas/$pre$blas.b
+         $CC $CFLAGS -o $SRCPATH/${pre}ssq.o -c $SRCPATH/${pre}ssq.s
+         cp $FKOPATH/blas/${pre}nrm2.c $SRCPATH/${pre}nrm2.c
+         $CC $CFLAGS -o $SRCPATH/${pre}nrm2.o -c $SRCPATH/${pre}nrm2.c
+         NRM2OBJ="$SRCPATH/${pre}nrm2.o $SRCPATH/${pre}ssq.o"  
+      else
+         $FKOPATH/bin/fko $iflag -o $SRCPATH/$pre${blas}.s \
+            $FKOPATH/blas/$pre$blas.b
+         #cerate obj using the assemblies
+         $CC $CFLAGS -o $SRCPATH/$pre${blas}.o -c $SRCPATH/$pre${blas}.s
+         OBJ="$OBJ $SRCPATH/$pre${blas}.o"
+      fi
    done
    echo ""
 #   
@@ -101,6 +123,9 @@ do
 #
    ar r $FKOLIBdir/${pre}${MLIB} $OBJ
    OBJ=
+   echo ""
+   ar r $FKOLIBdir/${pre}${NRM2LIB} $NRM2OBJ
+   NRM2OBJ=
    echo ""
 done
 
