@@ -13,11 +13,12 @@
 #include /home/msujon/ATLAS/ATLAS3.9.67/Linux_X8632_SSE/Make.Linux_X8632_SSE
 #include /home/msujon/ATLAS/ATLAS3.9.67/Linux_X8664_SSE/Make.Linux_X8664_SSE
 
-include /home/msujon/ATLAS/ATLAS3.9.74/Linux_X8664_AVX/Make.Linux_X8664_AVX
+include /home/msujon/ATLAS/ATLAS3.9.77/Linux_X8664_AVX/Make.Linux_X8664_AVX
 
 
+KFLAGS=-V 
 #KFLAGS=-V -Ps b A 0 1 -P all 0 128 -U 2
-KFLAGS=-V -Ps b A 0 1 -P all 0 128 
+#KFLAGS=-V -Ps b A 0 1 -P all 0 128 
 pre=d
 rout=dot
 N=80000
