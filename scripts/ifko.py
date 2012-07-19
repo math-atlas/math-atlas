@@ -4,11 +4,11 @@ import sys
 import fkocmnd
 import l1cmnd
 
-optT = "-X 1 1 -Y 1 1 -Fx 16 -Fy 16"
+#optT = "-X 1 1 -Y 1 1 -Fx 16 -Fy 16"
 #
 # For AVX, 32 byte alignment is needed
 #
-#optT = "-X 1 1 -Y 1 1 -Fx 32 -Fy 32"
+optT = "-X 1 1 -Y 1 1 -Fx 32 -Fy 32"
 
 #
 # Given set of arrs that are write-only (no uses), tries using non-temporal
@@ -542,7 +542,8 @@ if (nargs > 1):
 #
 # with out cache flushing
 #
-opt = "-C 0 -X 1 -Y 1 -Fx 16 -Fy 16 " + uopt
+#opt = "-C 0 -X 1 -Y 1 -Fx 16 -Fy 16 " + uopt
+opt = "-C 0 -X 1 -Y 1 -Fx 32 -Fy 32 " + uopt
 
 print opt
 ifko(blas, pre, N)
