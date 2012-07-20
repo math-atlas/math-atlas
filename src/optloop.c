@@ -719,7 +719,7 @@ static void ForwardLoop(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
  * for Loop peeling, as Unroll is 1, lp->end is not updated
  * NOTE: I haven't consider the case where lp->end is constant.
  */
-   if (!IS_CONST(STflag[lp->end-1]))
+   if (IS_CONST(STflag[lp->end-1]))
    {
       fprintf(stderr, "\nHaven't consider constant end for forward loop yet\n");
       assert(!IS_CONST(STflag[lp->end-1]));
