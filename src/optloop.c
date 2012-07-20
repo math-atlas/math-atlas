@@ -700,8 +700,8 @@ static void ForwardLoop(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
  *    forward loop when it is directly jump to cleanup without the main
  *    loop. Look into the code of GenCleanupLoop. 
  */
-      //SToff[OL_NEINC-1].i = unroll-1;
-      SToff[OL_NEINC-1].i = unroll;
+      /*SToff[OL_NEINC-1].i = unroll-1;*/
+      SToff[OL_NEINC-1].i = unroll; /* it works. */
    }
    if (IS_CONST(STflag[lp->beg-1]))
       *ipinit = ip = NewInst(NULL, NULL, NULL, MOV, -r0, lp->beg, 0);
@@ -719,7 +719,11 @@ static void ForwardLoop(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
  * for Loop peeling, as Unroll is 1, lp->end is not updated
  * NOTE: I haven't consider the case where lp->end is constant.
  */
-   assert(!IS_CONST(STflag[lp->end-1]));
+   if (!IS_CONST(STflag[lp->end-1]))
+   {
+      fprintf(stderr, "\nHaven't consider constant end for forward loop yet\n");
+      assert(!IS_CONST(STflag[lp->end-1]));
+   }
 
    if (unroll > 1 && !IS_CONST(STflag[lp->end-1]))
    {
@@ -1038,7 +1042,7 @@ void OptimizeLoopControl(LOOPQ *lp, /* Loop whose control should be opt */
 
    if (lp->flag & L_FORWARDLC_BIT)
    {
-      fprintf(stderr, "\nIndex refs in loop prevent SimpleLC!!!\n\n");
+      fko_warn(__LINE__, "\nIndex refs in loop prevent SimpleLC!!!\n\n");
       ForwardLoop(lp, unroll, &ipinit, &ipupdate, &iptest);
    }
    else
@@ -1586,6 +1590,13 @@ int UnrollLoop(LOOPQ *lp, int unroll)
  * Fix CF by recomputing it and all loop stuff
  */
    CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = 0;
+
+#if 0
+   fprintf(stdout, "LIL just after unroll\n");
+   PrintInst(stdout, bbbase);
+   exit(0);
+#endif
+
 #if 0
    RemoveLoopFromQ(optloop);
    optloop->depth = 0;
