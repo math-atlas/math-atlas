@@ -1186,7 +1186,17 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
    {
       if (unroll > 1)
       {
+#if 0
+         fprintf(stdout, "LIL before unroll \n");
+         PrintInst(stdout, bbbase);
+         exit(0);
+#endif
          UnrollLoop(optloop, unroll);
+#if 0
+         fprintf(stdout, "LIL after unroll \n");
+         PrintInst(stdout, bbbase);
+         exit(0);
+#endif
          InvalidateLoopInfo();
          bbbase = NewBasicBlocks(bbbase);
          CheckFlow(bbbase, __FILE__, __LINE__);
@@ -1207,10 +1217,9 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
          else
             OptimizeLoopControl(optloop, 1, 1, NULL);
       }
-#if 0
-      fprintf(stdout, "\n LIL BEFORE AE\n");
+#if 0 
+      fprintf(stdout, "\n LIL After Unroll cleanup\n");
       PrintInst(stdout,bbbase);
-      exit(0);
 #endif
 /*
  *    Do accumulator expansion if requested
@@ -1660,10 +1669,11 @@ int main(int nargs, char **args)
 #if 0
       fprintf(stdout,"FIRST LIL\n");
       PrintInst(stdout,bbbase);
+      exit(0);
 #endif
       if (!fpLOOPINFO && (FKO_FLAG & IFF_VECTORIZE))
       {
-         if (IsSpeculationNeeded())
+         if (IsSpeculationNeeded() && 1)
          {
 #if 0
             fprintf(stdout, "LIL BEFORE SV\n");
@@ -1672,8 +1682,12 @@ int main(int nargs, char **args)
 /*
  *          Finalizing the analysis
  */
+            #if 1                  
             SpeculativeVectorAnalysis();
             SpecSIMDLoop();
+            #else
+            VectorRedundantComputation();
+            #endif
 /*
  *          Attempt to generate assembly after repeatable optimization
  */
@@ -1739,9 +1753,10 @@ int main(int nargs, char **args)
          DoStage2(0, 0);
    }
    
-#if 0
-   fprintf("LIL before optimization\n");
+#if 0 
+   fprintf(stdout,"LIL before optimization\n");
    PrintInst(stdout, bbbase);
+   exit(0);
 #endif
 
    if (fpLOOPINFO)

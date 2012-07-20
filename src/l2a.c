@@ -2428,6 +2428,70 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #endif
          break;
 /*
+ *    Conditional MOV or, Select operation.
+ *    NOTE: these instructions are only supported in SSE4.1 (or, above) and AVX
+ *    AVX: 
+ *             vblendvps ymm1, ymm2, ymm3/m256, ymm4
+ *    SSE4.1: 
+ *             blendvps xmm1, xmm2/m128, <XMM0>
+ *    
+ *    NOTE: There are two problems with SSE's inst:
+ *          1) XMM0 must be used as the mask which may complicate the ra.
+ *          2) dest is always set as src1, can't implement 2 version without
+ *             changing the mask (need to compute mask' )
+ *          
+ *    VFCMOV1:  vreg0, vreg1/mem, vreg2    # vreg0 = vreg2? vreg0 : vreg1         
+ *    VFCMOV2:  vreg0, vreg1, vreg2        # vreg0 = vreg2? vreg1 : vreg0
+ *
+ *    NOTE: for 2nd version, no mem can be used. in AVX, only src2 can be mem.
+ *    but here, we use dest as src2 and it can't be mem.
+ */
+      case VDCMOV1:
+         #ifdef X86
+            #if defined(AVX) 
+               assert( (op1 < 0) && (op3 < 0));
+               if (op2 < 0) /* only src2(here op2) can be mem */
+                  ap->next = PrintAssln("\tvblendvpd\t%s,%s,%s,%s\n", 
+	                                archfregs[-VFREGBEG-op3],
+                                        archfregs[-VFREGBEG-op2],
+	                                archfregs[-VFREGBEG-op1],
+	                                archfregs[-VFREGBEG-op1]);
+               else
+                  ap->next = PrintAssln("\tvblendvpd\t%s,%s,%s,%s\n", 
+	                                archfregs[-VFREGBEG-op3],
+                                        GetDregOrDeref(op2),
+	                                archfregs[-VFREGBEG-op1],
+	                                archfregs[-VFREGBEG-op1]);
+            #else
+               ap->next = PrintAssln("\tUNIMP\n");
+	       fko_error(__LINE__, "This CMOV is Not found in this x86 arch!");
+            #endif
+         #else
+               ap->next = PrintAssln("\tUNIMP\n");
+	       fko_error(__LINE__, "This CMOV Not supported in this arch!");
+         #endif
+         break;
+
+      case VDCMOV2:
+         #ifdef X86
+            #if defined(AVX) 
+               assert( (op1 < 0) && (op3 < 0) && (op2 < 0));
+                  ap->next = PrintAssln("\tvblendvpd\t%s,%s,%s,%s\n", 
+	                                archfregs[-VFREGBEG-op3],
+                                        archfregs[-VFREGBEG-op1],
+	                                archfregs[-VFREGBEG-op2],
+	                                archfregs[-VFREGBEG-op1]);
+            #else
+               ap->next = PrintAssln("\tUNIMP\n");
+	       fko_error(__LINE__, "This CMOV is Not found in this x86 arch!");
+            #endif
+         #else
+               ap->next = PrintAssln("\tUNIMP\n");
+	       fko_error(__LINE__, "This CMOV Not supported in this arch!");
+         #endif
+         break;
+         
+/*
  * NOTE: can use PSHUFD for case where dest is output only
  */
       case VDSHUF:
@@ -3023,7 +3087,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #endif 
          break;
 /* 
- *    Majedul: Dollowing vector-cmps are not supported in SSE, only 
+ *    Majedul: Vector-cmps are not supported in SSE, only 
  *    supported by AVX
  */         
       case VDCMPGTW:
@@ -3078,6 +3142,68 @@ struct assmln *lil2ass(BBLOCK *bbase)
             ap->next = PrintAssln("\tmovmskpd\t%s,%s\n",
                                    archvdregs[-VDREGBEG-op2],
                                    archiregs[-IREGBEG-op1]);
+         #endif
+         break;
+/*
+ *    Conditional MOV or, Select operation.
+ *    NOTE: these instructions are only supported in SSE4.1 (or, above) and AVX
+ *    AVX: 
+ *             vblendvps ymm1, ymm2, ymm3/m256, ymm4
+ *    SSE4.1: 
+ *             blendvps xmm1, xmm2/m128, <XMM0>
+ *    
+ *    NOTE: There are two problems with SSE's inst:
+ *          1) XMM0 must be used as the mask which may complicate the ra.
+ *          2) dest is always set as src1, can't implement 2 version without
+ *             changing the mask (need to compute mask' )
+ *          
+ *    VFCMOV1:  vreg0, vreg1/mem, vreg2    # vreg0 = vreg2? vreg0 : vreg1         
+ *    VFCMOV2:  vreg0, vreg1, vreg2        # vreg0 = vreg2? vreg1 : vreg0
+ *
+ *    NOTE: for 2nd version, no mem can be used. in AVX, only src2 can be mem.
+ *    but here, we use dest as src2 and it can't be mem.
+ */
+      case VFCMOV1:
+         #ifdef X86
+            #if defined(AVX) 
+               assert( (op1 < 0) && (op3 < 0));
+               if (op2 < 0) /* only src2(here op2) can be mem */
+                  ap->next = PrintAssln("\tvblendvps\t%s,%s,%s,%s\n", 
+	                                archfregs[-VFREGBEG-op3],
+                                        archfregs[-VFREGBEG-op2],
+	                                archfregs[-VFREGBEG-op1],
+	                                archfregs[-VFREGBEG-op1]);
+               else
+                  ap->next = PrintAssln("\tvblendvps\t%s,%s,%s,%s\n", 
+	                                archfregs[-VFREGBEG-op3],
+                                        GetDregOrDeref(op2),
+	                                archfregs[-VFREGBEG-op1],
+	                                archfregs[-VFREGBEG-op1]);
+            #else
+               ap->next = PrintAssln("\tUNIMP\n");
+	       fko_error(__LINE__, "This CMOV is Not found in this x86 arch!");
+            #endif
+         #else
+               ap->next = PrintAssln("\tUNIMP\n");
+	       fko_error(__LINE__, "This CMOV Not supported in this arch!");
+         #endif
+         break;
+      case VFCMOV2:
+         #ifdef X86
+            #if defined(AVX) 
+               assert( (op1 < 0) && (op3 < 0) && (op2 < 0));
+                  ap->next = PrintAssln("\tvblendvps\t%s,%s,%s,%s\n", 
+	                                archfregs[-VFREGBEG-op3],
+                                        archfregs[-VFREGBEG-op1],
+	                                archfregs[-VFREGBEG-op2],
+	                                archfregs[-VFREGBEG-op1]);
+            #else
+               ap->next = PrintAssln("\tUNIMP\n");
+	       fko_error(__LINE__, "This CMOV is Not found in this x86 arch!");
+            #endif
+         #else
+               ap->next = PrintAssln("\tUNIMP\n");
+	       fko_error(__LINE__, "This CMOV Not supported in this arch!");
          #endif
          break;
 
