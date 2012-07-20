@@ -128,6 +128,11 @@ enum inst
    FNEG,                        /* [fr0], [fr1] : fr0 = -fr1 */
    FMOV,                        /* fr0 = fr1 */
 /*
+ * Conditional move
+ */
+   FCMOV1,                        /* fr0 = ireg? fr0 : fr1/mem */
+   FCMOV2,                        /* fr0 = ireg? fr1/mem : fr0 */
+/*
  * Floating point instructions, double precision
  */
    FZEROD,                      /* [fr] : fr = 0.0 */
@@ -142,6 +147,11 @@ enum inst
    FCMPD,                       /* [fr0], [fr1] : set [cc] by (fr0 - fr1) */
    FNEGD,                       /* [fr0], [fr1] : fr0 = -fr1 */
    FMOVD,                       /* fr0 = fr1 */
+/*
+ * Conditional Move
+ */
+   FCMOV1D,                        /* fr0 = ireg? fr0 : fr1 */
+   FCMOV2D,                        /* fr0 = ireg? fr1 : fr0 */
 /*
  * Double precision vector instructions
  * [memA] is a vector-aligned mem @ [mem] is any alignment
@@ -162,6 +172,13 @@ enum inst
    VDDIV,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */ 
    VDMAC,                      /* [vr0], [vr1], [vr2] : vr0 += vr1 * vr2 */
    VDABS,                      /* [vr0], [vr1] : vr0 = abs(vr1) */
+/*
+ * Majedul: 
+ * NOTE: SSE -> 3 operand, AVX -> 4 operand
+ */
+   VDCMOV1,                      /* vr0 = vr2? vr0 : vr1 */ 
+   VDCMOV2,                      /* vr0 = vr2? vr1 : vr0 */ 
+
    VDSHUF,                     /* [vr0], [vr1], [int32]; vr0 = shuf(vr1|vr0) */
           /* [int32] is split into 8 4 bit words; 1st word indicates which */
           /* should reside in vr0[0], 4th in vr0[3];  Words are numbered */
@@ -186,6 +203,14 @@ enum inst
    VFDIV,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
    VFMAC,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
    VFABS,                      /* [vr0], [vr1] : vr0 = abs(vr1) */
+/*
+ * Majedul: 
+ * NOTE: SSE -> 3 operand, AVX -> 4 operand
+ * ---------
+ */
+   VFCMOV1,                      /* vr0 = vr2? vr0 : vr1 */
+   VFCMOV2,                      /* vr0 = vr2? vr1 : vr0 */
+
    VFSHUF,                     /* [vr0], [vr1], [int32]; vr0 = shuf(vr1|vr0) */
           /* [int32] is split into 8 4 bit words; 1st word indicates which */
           /* should reside in vr0[0], 4th in vr0[3];  Words are numbered */
@@ -239,6 +264,30 @@ enum inst
    CVTSF,
    CVTDS,
    CVTSD,
+/*
+ * Dummy CMP instruction which are needed for ReductionVector translation.
+ * I don't find their implementation yet.
+ */
+   FCMPEQDW,
+   FCMPNEDW,
+   FCMPLTDW,
+   FCMPLEDW,
+   FCMPNLTDW,
+   FCMPNLEDW,
+   FCMPGTDW,
+   FCMPGEDW,
+   FCMPNGTDW,
+   FCMPNGEDW,
+   FCMPEQW,
+   FCMPNEW,
+   FCMPLTW,
+   FCMPLEW,
+   FCMPNLTW,
+   FCMPNLEW,
+   FCMPGTW,
+   FCMPGEW,
+   FCMPNGTW,
+   FCMPNGEW,
    LAST_INST
 };
 
@@ -330,6 +379,8 @@ char *instmnem[] =
    "FCMP",
    "FNEG",
    "FMOV",
+   "FCMOV1",
+   "FCMOV2",
 /*
  * Floating point instructions, double precision
  */
@@ -345,6 +396,8 @@ char *instmnem[] =
    "FCMPD",
    "FNEGD",
    "FMOVD",
+   "FCMOV1D",
+   "FCMOV2D",
 /*
  * Double precision vector inst
  */
@@ -364,6 +417,8 @@ char *instmnem[] =
    "VDDIV",
    "VDMAC",
    "VDABS",
+   "VDCMOV1",
+   "VDCMOV2",
    "VDSHUF",
 /*
  * Single precision vector inst
@@ -384,6 +439,8 @@ char *instmnem[] =
    "VFDIV",
    "VFMAC",
    "VFABS",
+   "VFCMOV1",
+   "VFCMOV2",
    "VFSHUF",
 /*
  * x86-only instructions
@@ -434,6 +491,30 @@ char *instmnem[] =
    "CVTSF",
    "CVTDS",
    "CVTSD",
+/*
+ * Dummy inst for redundant vector transformation
+ */ 
+   "FCMPEQDW",
+   "FCMPNEDW",
+   "FCMPLTDW",
+   "FCMPLEDW",
+   "FCMPNLTDW",
+   "FCMPNLEDW",
+   "FCMPGTDW",
+   "FCMPGEDW",
+   "FCMPNGTDW",
+   "FCMPNGEDW",
+   "FCMPEQW",
+   "FCMPNEW",
+   "FCMPLTW",
+   "FCMPLEW",
+   "FCMPNLTW",
+   "FCMPNLEW",
+   "FCMPGTW",
+   "FCMPGEW",
+   "FCMPNGTW",
+   "FCMPNGEW",
+
    "LAST_INST"
 };
 #else
@@ -446,6 +527,15 @@ char *instmnem[] =
 #define GET_INST(inst_) ((inst_) & 0x3FFF)
 #define ACTIVE_INST(i_) ((i_) != COMMENT && (i_) != CMPFLAG)
 #define IS_BRANCH(i_) ((i_) >= FIRSTBRANCH && (i_) <= LASTBRANCH)
+
+/*
+ * Majedul: checking conditional branch.
+ * assuming, only unconditional branches are JMP and RET and they are set 
+ * as 1st and last branches.  
+ */
+
+#define IS_COND_BRANCH(i_) ((i_) > FIRSTBRANCH && (i_) < LASTBRANCH)
+
 #define IS_LOAD(i_)  ((i_) == LD || (i_) == FLD || (i_) == FLDD || \
                       (i_) == VFLD || (i_) == VDLD || (i_) == LDS || \
                       (i_) == VFLDS || (i_) == VDLDS || \
@@ -459,10 +549,37 @@ char *instmnem[] =
                        (i_) == VFST || (i_) == VDST || (i_) == STS || \
                        (i_) == VFSTS || (i_) == VDSTS || \
                        (i_) == VFSTNT || (i_) == VDSTNT)
+
+#define IS_CMPW(i_)  ((i_) == FCMPEQDW || (i_) == FCMPNEDW || \
+                      (i_) == FCMPLTDW || (i_) == FCMPLEDW || \
+                      (i_) == FCMPNLTDW || (i_) == FCMPNLEDW || \
+                      (i_) == FCMPGTDW || (i_) ==  FCMPGEDW || \
+                      (i_) == FCMPNGTDW || (i_) == FCMPNGEDW || \
+                      (i_) == FCMPEQW || (i_) ==  FCMPNEW || \
+                      (i_) == FCMPLTW || (i_) ==  FCMPLEW || \
+                      (i_) == FCMPNLTW || (i_) == FCMPNLEW || \
+                      (i_) == FCMPGTW || (i_) ==  FCMPGEW || \
+                      (i_) == FCMPNGTW || (i_) == FCMPNGEW || \
+                      (i_) == VDCMPEQW || (i_) == VDCMPNEW || \
+                      (i_) == VDCMPLTW || (i_) == VDCMPLEW || \
+                      (i_) == VDCMPNLTW || (i_) == VDCMPNLEW || \
+                      (i_) == VDCMPGTW || (i_) == VDCMPGEW || \
+                      (i_) == VDCMPNGTW || (i_) == VDCMPNGEW || \
+                      (i_) == VFCMPEQW || (i_) == VFCMPNEW || \
+                      (i_) == VFCMPLTW || (i_) == VFCMPLEW || \
+                      (i_) == VFCMPNLTW || (i_) == VFCMPNLEW || \
+                      (i_) == VFCMPGTW || (i_) == VFCMPGEW || \
+                      (i_) == VFCMPNGTW || (i_) == VFCMPNGEW)
+
 #define IS_CMP(i_) ((i_) == CMP || (i_) == CMPAND || (i_) == CMPS || \
-                    (i_) == FCMP || (i_) == FCMPD || (i_) == VFCMP || \
+                    (i_) == FCMP || (i_) == FCMPD || \
+                    IS_CMPW(i_))
+/*      
+                    (i_) == VFCMP || \
                     (i_) == VDCMP || \
                     (i_) == CFTBFI || (i_) == CFTBDI || (i_) == FCMPWD)
+*/
+                     
 #define IS_IOPCC(i_) ((i_) == ANDCC || (i_) == SUBCC || (i_) == ANDCC)
 #define IS_NOMEM(i_) ((i_) == MUL || (i_) == UMUL || (i_) == DIV || \
                       (i_) == UDIV)
@@ -472,6 +589,17 @@ char *instmnem[] =
                       (i_) == FMULD || (i_) == FADDD || \
                       (i_) == VDADD || (i_) == VDMUL || \
                       (i_) == VFADD || (i_) == VFMUL)
+/*
+ * Majedul: These are the instructions where destination is inherently used as
+ * one of the sources. This is due to map 4 operands instruction into our 
+ * three operand LIL instruction.
+ */
+#define IS_DEST_INUSE_INHERENTLY(i_) ((i_) == FMAC || (i_) == FMACD || \
+                                      (i_) == VFMAC || (i_) == VDMAC || \
+                                      (i_) == FCMOV1 || (i_) == FCMOV2 || \
+                                      (i_) == FCMOV1D || (i_) == FCMOV2D || \
+                                      (i_) == VFCMOV1 || (i_) == VFCMOV2 || \
+                                      (i_) == VDCMOV1 || (i_) == VDCMOV2) 
 
 INSTQ *NewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,
                short dest, short src1, short src2);
