@@ -7,7 +7,7 @@
 #define ATL_rzero 0.0
 #define ATL_CINT const int
 @endskip
-@ROUT ATL_cm2am ATL_rm2am ATL_ablk2cmat
+@ROUT ATL_cm2am ATL_rm2am ATL_ablk2cmat ATL_cmat2ablk
 #include "atlas_misc.h"
    @ifdef ! alpha
       @define alpha @1@
@@ -23,14 +23,20 @@
       @define nalp @@(alpha)@
       @iif alpha ! 1
          @define malp @alpha*@
+         @define nalp @X@
       @endiif
    @endiif
-@ROUT ATL_ablk2cmat
+@ROUT ATL_ablk2cmat ATL_cmat2ablk
    @iif beta = -1
       @define nbet @n@
    @endiif
    @iif beta ! -1
-      @define nbet @@(beta)@
+      @iif beta = 0
+         @define nbet @@(beta)@
+      @endiif
+      @iif beta ! 0
+         @define nbet @X@
+      @endiif
    @endiif
 @ROUT ammmtst
 #include "atlas_misc.h"
@@ -1092,3 +1098,208 @@ int ATL_ChooseNB(ATL_CINT M, ATL_CINT N, ATL_CINT K)
 #define ATL_B2blk_a@(al) Mjoin(Mjoin(PATL,cm2am_a@(al)_),ATL_MM_NU)
 #define ATL_BT2blk_a@(al) Mjoin(Mjoin(PATL,rm2am_a@(al)_),ATL_MM_NU)
 @endwhile
+@ROUT ATL_cmat2ablk
+/*
+ *  b <- alpha*C + beta*b,
+ *  C is an MxN matrix in column-major storage
+ *  b is a CEIL(M/@(mu))*@(mu) x CEIL(N/@(nu))*@(nu) matrix stored in
+ *    @(mu)x@(nu)-major storage
+ */
+void Mjoin(PATL,cmat2ablk_@(mu)x@(nu)_a@(nalp)_b@(nbet))
+(
+   ATL_CINT M,          /* number of rows in A */
+   ATL_CINT N,          /* number of columns in A */
+   const SCALAR alpha,  /* scalar for C */
+   const TYPE *C,       /* matrix to be copied to access-major format */
+   ATL_CINT ldc,        /* stride between row elements */
+   const SCALAR beta,   /* scalar for b */
+   TYPE *b              /* matrix stored in @(mu)x@(nu)-major order */
+)
+{
+   ATL_CINT m = (M/@(mu))*@(mu), n = (N/@(nu))*@(nu), mr = M-m, nr = N-n;
+   ATL_CINT pansz = (nr) ? (n+@(nu))*@(mu) : n*@(mu);
+   ATL_CINT incC = ldc*@(nu), incb = @(mu)*@(nu);
+   ATL_INT i, j;
+   @declare "   const TYPE " n n ";"
+      *C0=C
+      @define j @1@
+      @iwhile j < @(nu)
+         @iexp i @(j) -1 +
+         *C@(j)=C@(i)+ldc
+         @iexp j @(j) 1 +
+      @endiwhile
+   @enddeclare
+
+   for (j=0; j < n; j += @(nu), b += incb)
+   {
+      TYPE *p = b;
+      for (i=0; i < m; i += @(mu), p += pansz)
+      {
+   @iexp k 0 0 +
+   @iexp j 0 0 +
+   @iwhile j < @(nu)
+      @iexp i 0 0 +
+      @iwhile i < @(mu)
+         @mif nalp = "n
+            @mif nbet = "X
+         p[@(k)] = beta*p[@(k)] - C@(j)[i+@(i)];
+            @endmif
+         @mif nbet = "1
+         p[@(k)] -= C@(j)[i+@(i)];
+            @endmif
+            @mif nbet = "0
+         p[@(k)] = @(malp)C@(j)[i+@(i)];
+            @endmif
+            @mif nbet = "n
+         p[@(k)] = -(p[@(k)] + C@(j)[i+@(i)]);
+            @endmif
+         @endmif
+         @mif nalp ! "n
+            @mif nbet = "X
+         p[@(k)] = @(malp)C@(j)[i+@(i)] + beta*p[@(k)];
+            @endmif
+         @mif nbet = "1
+         p[@(k)] += @(malp)C@(j)[i+@(i)];
+            @endmif
+            @mif nbet = "0
+         p[@(k)] = @(malp)C@(j)[i+@(i)];
+            @endmif
+            @mif nbet = "n
+         p[@(k)] = @(malp)C@(j)[i+@(i)] - p[@(k)];
+            @endmif
+         @endmif
+         @iexp k @(k) 1 +
+      @iexp i @(i) 1 +
+      @endiwhile
+   @iexp j @(j) 1 +
+   @endiwhile
+      }
+      @mif mu ! "1
+      switch(mr)
+      {
+      @iexp m 1 0 +
+      @iwhile m < @(mu)
+      case @(m):
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp k @(mu) @(j) *
+            @iexp i 0 0 +
+            @iwhile i < @(m)
+         @mif nalp = "n
+            @mif nbet = "X
+         p[@(k)] = beta*p[@(k)] - C@(j)[i+@(i)];
+            @endmif
+            @mif nbet = "1
+         p[@(k)] -= C@(j)[i+@(i)];
+            @endmif
+            @mif nbet = "0
+         p[@(k)] = @(malp)C@(j)[i+@(i)];
+            @endmif
+            @mif nbet = "n
+         p[@(k)] = -(p[@(k)] + C@(j)[i+@(i)]);
+            @endmif
+         @endmif
+         @mif nalp ! "n
+            @mif nbet = "X
+         p[@(k)] = @(malp)C@(j)[i+@(i)] + beta*p[@(k)];
+            @endmif
+            @mif nbet = "1
+         p[@(k)] += @(malp)C@(j)[i+@(i)];
+            @endmif
+            @mif nbet = "0
+         p[@(k)] = @(malp)C@(j)[i+@(i)];
+            @endmif
+            @mif nbet = "n
+         p[@(k)] = @(malp)C@(j)[i+@(i)] - p[@(k)];
+            @endmif
+         @endmif
+               @iexp k @(k) 1 + 
+            @iexp i @(i) 1 +
+            @endiwhile
+         @iexp j @(j) 1 +
+         @endiwhile
+         break;
+      @iexp m @(m) 1 +
+      @endiwhile
+      default:;
+      }
+      @endmif
+   @iexp j 0 0 +
+   @iwhile j < @(nu)
+      C@(j) += incC;
+      @iexp j @(j) 1 +
+   @endiwhile
+   }
+   @mif nu ! "1
+   switch(nr)
+   {
+   @iexp n 1 0 +
+   @iwhile n < @(nu)
+   case @(n):
+      for (i=0; i < m; i += @(mu), b += pansz)
+      {
+      @iexp k 0 0 +
+      @iexp j 0 0 +
+      @iwhile j < @(n)
+         @iexp i 0 0 +
+         @iwhile i < @(mu)
+            @mif nbet = "X
+         b[@(k)] = @(malp)C@(j)[i+@(i)] + beta*b[@(k)];
+            @endmif
+            @mif nbet = "1
+         b[@(k)] += @(malp)C@(j)[i+@(i)];
+            @endmif
+            @mif nbet = "n
+         b[@(k)] = @(malp)C@(j)[i+@(i)] - b[@(k)];
+            @endmif
+            @mif nbet = "0
+         b[@(k)] = @(malp)C@(j)[i+@(i)];
+            @endmif
+            @iexp k @(k) 1 +
+         @iexp i @(i) 1 +
+         @endiwhile
+      @iexp j @(j) 1 +
+      @endiwhile
+      }
+      @mif mu ! "1
+      switch(mr)
+      {
+      @iexp m 1 0 +
+      @iwhile m < @(mu)
+      case @(m):
+         @iexp j 0 0 +
+         @iwhile j < @(n)
+            @iexp k @(mu) @(j) *
+            @iexp i 0 0 +
+            @iwhile i < @(m)
+               @mif nbet = "n
+         b[@(k)] = @(malp)C@(j)[i+@(i)] - b[@(k)];
+               @endmif
+               @mif nbet = "X
+         b[@(k)] = @(malp)C@(j)[i+@(i)] + beta*b[@(k)];
+               @endmif
+               @mif nbet = "1
+         b[@(k)] += @(malp)C@(j)[i+@(i)];
+               @endmif
+               @mif nbet = "0
+         b[@(k)] = @(malp)C@(j)[i+@(i)];
+               @endmif
+               @iexp k @(k) 1 + 
+            @iexp i @(i) 1 +
+            @endiwhile
+         @iexp j @(j) 1 +
+         @endiwhile
+         b += incb;
+         break;
+      @iexp m @(m) 1 +
+      @endiwhile
+      default:;
+      }
+      @endmif
+      break;
+   @iexp n @(n) 1 +
+   @endiwhile
+   default:;
+   }
+   @endmif
+}
