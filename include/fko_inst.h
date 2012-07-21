@@ -150,8 +150,8 @@ enum inst
 /*
  * Conditional Move
  */
-   FCMOV1D,                        /* fr0 = ireg? fr0 : fr1 */
-   FCMOV2D,                        /* fr0 = ireg? fr1 : fr0 */
+   FCMOVD1,                        /* fr0 = ireg? fr0 : fr1 */
+   FCMOVD2,                        /* fr0 = ireg? fr1 : fr0 */
 /*
  * Double precision vector instructions
  * [memA] is a vector-aligned mem @ [mem] is any alignment
@@ -226,26 +226,26 @@ enum inst
 /*
  * vector cmp instructions
  */ 
-   VDCMPEQW,
-   VDCMPNEW,
-   VDCMPLTW,
-   VDCMPLEW,
-   VDCMPNLTW,
-   VDCMPNLEW,
-   VDCMPGTW,
-   VDCMPGEW,
-   VDCMPNGTW,
-   VDCMPNGEW,
-   VFCMPEQW,
-   VFCMPNEW,
-   VFCMPLTW,
-   VFCMPLEW,
-   VFCMPNLTW,
-   VFCMPNLEW,
-   VFCMPGTW,
-   VFCMPGEW,
-   VFCMPNGTW,
-   VFCMPNGEW,
+   VDCMPWEQ,
+   VDCMPWNE,
+   VDCMPWLT,
+   VDCMPWLE,
+   VDCMPWNLT,
+   VDCMPWNLE,
+   VDCMPWGT,
+   VDCMPWGE,
+   VDCMPWNGT,
+   VDCMPWNGE,
+   VFCMPWEQ,
+   VFCMPWNE,
+   VFCMPWLT,
+   VFCMPWLE,
+   VFCMPWNLT,
+   VFCMPWNLE,
+   VFCMPWGT,
+   VFCMPWGE,
+   VFCMPWNGT,
+   VFCMPWNGE,
 /*
  * Masks instruction: masks sign bits of vector to integer reg
  */
@@ -268,26 +268,26 @@ enum inst
  * Dummy CMP instruction which are needed for ReductionVector translation.
  * I don't find their implementation yet.
  */
-   FCMPEQDW,
-   FCMPNEDW,
-   FCMPLTDW,
-   FCMPLEDW,
-   FCMPNLTDW,
-   FCMPNLEDW,
-   FCMPGTDW,
-   FCMPGEDW,
-   FCMPNGTDW,
-   FCMPNGEDW,
-   FCMPEQW,
-   FCMPNEW,
-   FCMPLTW,
-   FCMPLEW,
-   FCMPNLTW,
-   FCMPNLEW,
-   FCMPGTW,
-   FCMPGEW,
-   FCMPNGTW,
-   FCMPNGEW,
+   FCMPDWEQ,
+   FCMPDWNE,
+   FCMPDWLT,
+   FCMPDWLE,
+   FCMPDWNLT,
+   FCMPDWNLE,
+   FCMPDWGT,
+   FCMPDWGE,
+   FCMPDWNGT,
+   FCMPDWNGE,
+   FCMPWEQ,
+   FCMPWNE,
+   FCMPWLT,
+   FCMPWLE,
+   FCMPWNLT,
+   FCMPWNLE,
+   FCMPWGT,
+   FCMPWGE,
+   FCMPWNGT,
+   FCMPWNGE,
    LAST_INST
 };
 
@@ -396,8 +396,8 @@ char *instmnem[] =
    "FCMPD",
    "FNEGD",
    "FMOVD",
-   "FCMOV1D",
-   "FCMOV2D",
+   "FCMOVD1",
+   "FCMOVD2",
 /*
  * Double precision vector inst
  */
@@ -453,26 +453,26 @@ char *instmnem[] =
 /*
  * vector cmp intructions
  */
-   "VDCMPEQW",
-   "VDCMPNEW",
-   "VDCMPLTW",
-   "VDCMPLEW",
-   "VDCMPNLTW",
-   "VDCMPNLEW",
-   "VDCMPGTW",
-   "VDCMPGEW",
-   "VDCMPNGTW",
-   "VDCMPNGEW",
-   "VFCMPEQW",
-   "VFCMPNEW",
-   "VFCMPLTW",
-   "VFCMPLEW",
-   "VFCMPNLTW",
-   "VFCMPNLEW",
-   "VFCMPGTW",
-   "VFCMPGEW",
-   "VFCMPNGTW",
-   "VFCMPNGEW",
+   "VDCMPWEQ",
+   "VDCMPWNE",
+   "VDCMPWLT",
+   "VDCMPWLE",
+   "VDCMPWNLT",
+   "VDCMPWNLE",
+   "VDCMPWGT",
+   "VDCMPWGE",
+   "VDCMPWNGT",
+   "VDCMPWNGE",
+   "VFCMPWEQ",
+   "VFCMPWNE",
+   "VFCMPWLT",
+   "VFCMPWLE",
+   "VFCMPWNLT",
+   "VFCMPWNLE",
+   "VFCMPWGT",
+   "VFCMPWGE",
+   "VFCMPWNGT",
+   "VFCMPWNGE",
 /*
  * Masks instruction: masks sign bits of vector to integer reg
  */
@@ -494,26 +494,26 @@ char *instmnem[] =
 /*
  * Dummy inst for redundant vector transformation
  */ 
-   "FCMPEQDW",
-   "FCMPNEDW",
-   "FCMPLTDW",
-   "FCMPLEDW",
-   "FCMPNLTDW",
-   "FCMPNLEDW",
-   "FCMPGTDW",
-   "FCMPGEDW",
-   "FCMPNGTDW",
-   "FCMPNGEDW",
-   "FCMPEQW",
-   "FCMPNEW",
-   "FCMPLTW",
-   "FCMPLEW",
-   "FCMPNLTW",
-   "FCMPNLEW",
-   "FCMPGTW",
-   "FCMPGEW",
-   "FCMPNGTW",
-   "FCMPNGEW",
+   "FCMPDWEQ",
+   "FCMPDWNE",
+   "FCMPDWLT",
+   "FCMPDWLE",
+   "FCMPDWNLT",
+   "FCMPDWNLE",
+   "FCMPDWGT",
+   "FCMPDWGE",
+   "FCMPDWNGT",
+   "FCMPDWNGE",
+   "FCMPWEQ",
+   "FCMPWNE",
+   "FCMPWLT",
+   "FCMPWLE",
+   "FCMPWNLT",
+   "FCMPWNLE",
+   "FCMPWGT",
+   "FCMPWGE",
+   "FCMPWNGT",
+   "FCMPWNGE",
 
    "LAST_INST"
 };
@@ -550,26 +550,26 @@ char *instmnem[] =
                        (i_) == VFSTS || (i_) == VDSTS || \
                        (i_) == VFSTNT || (i_) == VDSTNT)
 
-#define IS_CMPW(i_)  ((i_) == FCMPEQDW || (i_) == FCMPNEDW || \
-                      (i_) == FCMPLTDW || (i_) == FCMPLEDW || \
-                      (i_) == FCMPNLTDW || (i_) == FCMPNLEDW || \
-                      (i_) == FCMPGTDW || (i_) ==  FCMPGEDW || \
-                      (i_) == FCMPNGTDW || (i_) == FCMPNGEDW || \
-                      (i_) == FCMPEQW || (i_) ==  FCMPNEW || \
-                      (i_) == FCMPLTW || (i_) ==  FCMPLEW || \
-                      (i_) == FCMPNLTW || (i_) == FCMPNLEW || \
-                      (i_) == FCMPGTW || (i_) ==  FCMPGEW || \
-                      (i_) == FCMPNGTW || (i_) == FCMPNGEW || \
-                      (i_) == VDCMPEQW || (i_) == VDCMPNEW || \
-                      (i_) == VDCMPLTW || (i_) == VDCMPLEW || \
-                      (i_) == VDCMPNLTW || (i_) == VDCMPNLEW || \
-                      (i_) == VDCMPGTW || (i_) == VDCMPGEW || \
-                      (i_) == VDCMPNGTW || (i_) == VDCMPNGEW || \
-                      (i_) == VFCMPEQW || (i_) == VFCMPNEW || \
-                      (i_) == VFCMPLTW || (i_) == VFCMPLEW || \
-                      (i_) == VFCMPNLTW || (i_) == VFCMPNLEW || \
-                      (i_) == VFCMPGTW || (i_) == VFCMPGEW || \
-                      (i_) == VFCMPNGTW || (i_) == VFCMPNGEW)
+#define IS_CMPW(i_)  ((i_) == FCMPDWEQ || (i_) == FCMPDWNE || \
+                      (i_) == FCMPDWLT || (i_) == FCMPDWLE || \
+                      (i_) == FCMPDWNLT || (i_) == FCMPDWNLE || \
+                      (i_) == FCMPDWGT || (i_) ==  FCMPDWGE || \
+                      (i_) == FCMPDWNGT || (i_) == FCMPDWNGE || \
+                      (i_) == FCMPWEQ || (i_) ==  FCMPDWNE || \
+                      (i_) == FCMPWLT || (i_) ==  FCMPWLE || \
+                      (i_) == FCMPWNLT || (i_) == FCMPWNLE || \
+                      (i_) == FCMPWGT || (i_) ==  FCMPWGE || \
+                      (i_) == FCMPWNGT || (i_) == FCMPWNGE || \
+                      (i_) == VDCMPWEQ || (i_) == VDCMPWNE || \
+                      (i_) == VDCMPWLT || (i_) == VDCMPWLE || \
+                      (i_) == VDCMPWNLT || (i_) == VDCMPWNLE || \
+                      (i_) == VDCMPWGT || (i_) == VDCMPWGE || \
+                      (i_) == VDCMPWNGT || (i_) == VDCMPWNGE || \
+                      (i_) == VFCMPWEQ || (i_) == VFCMPWNE || \
+                      (i_) == VFCMPWLT || (i_) == VFCMPWLE || \
+                      (i_) == VFCMPWNLT || (i_) == VFCMPWNLE || \
+                      (i_) == VFCMPWGT || (i_) == VFCMPWGE || \
+                      (i_) == VFCMPWNGT || (i_) == VFCMPWNGE)
 
 #define IS_CMP(i_) ((i_) == CMP || (i_) == CMPAND || (i_) == CMPS || \
                     (i_) == FCMP || (i_) == FCMPD || \
@@ -597,7 +597,7 @@ char *instmnem[] =
 #define IS_DEST_INUSE_INHERENTLY(i_) ((i_) == FMAC || (i_) == FMACD || \
                                       (i_) == VFMAC || (i_) == VDMAC || \
                                       (i_) == FCMOV1 || (i_) == FCMOV2 || \
-                                      (i_) == FCMOV1D || (i_) == FCMOV2D || \
+                                      (i_) == FCMOVD1 || (i_) == FCMOVD2 || \
                                       (i_) == VFCMOV1 || (i_) == VFCMOV2 || \
                                       (i_) == VDCMOV1 || (i_) == VDCMOV2) 
 
@@ -610,6 +610,7 @@ INSTQ *InsNewInstAfterLabel(BBLOCK *blk, enum inst ins,
 void InsInstInBlockList(BLIST *blist, int FIRST, enum inst ins,
                         short dest, short src1, short src2);
 INSTQ *DelInst(INSTQ *del);
+INSTQ *RemoveInstFromQ(INSTQ *del);
 INSTQ *KillThisInst(INSTQ *kp);
 void KillAllInst(INSTQ *base);
 
