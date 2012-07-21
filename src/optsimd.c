@@ -2629,16 +2629,16 @@ int SpeculativeVecTransform(LOOPQ *lp)
 static enum inst
       brinsts[] = {JEQ, JNE, JLT, JGT, JGE},
       #if defined(AVX)
-         vfcmpinsts[] = {VFCMPEQW, VFCMPNEW, VFCMPLTW, VFCMPGTW, VFCMPGEW},
-         vdcmpinsts[] = {VDCMPEQW, VDCMPNEW, VDCMPLTW, VDCMPGTW, VDCMPGEW};
+         vfcmpinsts[] = {VFCMPWEQ, VFCMPWNE, VFCMPWLT, VFCMPWGT, VFCMPWGE},
+         vdcmpinsts[] = {VDCMPWEQ, VDCMPWNE, VDCMPWLT, VDCMPWGT, VDCMPWGE};
       #else
 /*
  *    SSE supports : EQ, NE, LT, LE, NLT, NLE
  *    not supports : GT, GE, NGT, NGE
  *    So, we need to replace GT and GE with NLE and NLT
  */
-         vfcmpinsts[] = {VFCMPEQW, VFCMPNEW, VFCMPLTW, VFCMPNLEW, VFCMPNLTW},
-         vdcmpinsts[] = {VDCMPEQW, VDCMPNEW, VDCMPLTW, VDCMPNLEW, VDCMPNLTW};
+         vfcmpinsts[] = {VFCMPWEQ, VFCMPWNE, VFCMPWLT, VFCMPWNLE, VFCMPWNLT},
+         vdcmpinsts[] = {VDCMPWEQ, VDCMPWNE, VDCMPWLT, VDCMPWNLE, VDCMPWNLT};
       #endif
    const int nbr = 5;
 
@@ -4623,16 +4623,16 @@ short RemoveBranchWithMask(BBLOCK *sblk)
    static enum inst
       brinsts[] = {JEQ, JNE, JLT, JGT, JGE},
       #if defined(AVX)
-         fcmpwinsts[] = {FCMPEQW, FCMPNEW, FCMPLTW, FCMPGTW, FCMPGEW},
-         dcmpwinsts[] = {FCMPEQDW, FCMPNEDW, FCMPLTDW, FCMPGTDW, FCMPGEDW};
+         fcmpwinsts[] = {FCMPWEQ, FCMPWNE, FCMPWLT, FCMPWGT, FCMPWGE},
+         dcmpwinsts[] = {FCMPDWEQ, FCMPDWNE, FCMPDWLT, FCMPDWGT, FCMPDWGE};
       #else
 /*
  *    SSE supports : EQ, NE, LT, LE, NLT, NLE
  *    not supports : GT, GE, NGT, NGE
  *    So, we need to replace GT and GE with NLE and NLT
  */
-         fcmpwinsts[] = {FCMPEQW, FCMPNEW, FCMPLTW, FCMPNLEW, FCMPNLTW},
-         dcmpwinsts[] = {FCMPEQDW, FCMPNEDW, FCMPLTDW, FCMPNLEDW, FCMPNLTDW};
+         fcmpwinsts[] = {FCMPWEQ, FCMPWNE, FCMPWLT, FCMPWNLE, FCMPWNLT},
+         dcmpwinsts[] = {FCMPDWEQ, FCMPDWNE, FCMPDWLT, FCMPDWNLE, FCMPDWNLT};
       #endif
    enum inst *cmpinsts;      
    int nbr;
@@ -4992,8 +4992,8 @@ void RedundantVectorAnalysis(LOOPQ *lp)
       }
       else
       {
-         cmov1 = FCMOV1D;
-         cmov2 = FCMOV2D;
+         cmov1 = FCMOVD1;
+         cmov2 = FCMOVD2;
          fld = FLDD;
          fst = FSTD;
          type = T_DOUBLE;

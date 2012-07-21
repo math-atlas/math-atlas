@@ -2895,7 +2895,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
  *    than any other srcs. For SSE, as it supports 3 operands, need to change
  *    the LIL for it!
  */
-      case VFCMPEQW:
+      case VFCMPWEQ:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpps\t$0,%s,%s,%s\n",
                                   archvfregs[-VFREGBEG-op3],
@@ -2906,7 +2906,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                           archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
          #endif 
          break;
-      case VFCMPNEW:
+      case VFCMPWNE:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpps\t$4,%s,%s,%s\n",
                                   archvfregs[-VFREGBEG-op3],
@@ -2917,7 +2917,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                           archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
          #endif 
          break;
-      case VFCMPLTW:
+      case VFCMPWLT:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpps\t$1,%s,%s,%s\n",
                                   archvfregs[-VFREGBEG-op3],
@@ -2928,7 +2928,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                           archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
          #endif 
          break;
-      case VFCMPLEW:
+      case VFCMPWLE:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpps\t$2,%s,%s,%s\n",
                                   archvfregs[-VFREGBEG-op3],
@@ -2939,7 +2939,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                           archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
          #endif 
          break;
-      case VFCMPNLTW:
+      case VFCMPWNLT:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpps\t$5,%s,%s,%s\n",
                                   archvfregs[-VFREGBEG-op3],
@@ -2950,7 +2950,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                           archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
          #endif 
          break;
-      case VFCMPNLEW:
+      case VFCMPWNLE:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpps\t$6,%s,%s,%s\n",
                                   archvfregs[-VFREGBEG-op3],
@@ -2965,44 +2965,44 @@ struct assmln *lil2ass(BBLOCK *bbase)
  *    Majedul: Following vector-cmps are not supported in SSE, only 
  *    supported by AVX
  */         
-      case VFCMPGTW:
+      case VFCMPWGT:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpps\t$0x0E,%s,%s,%s\n",
                                   archvfregs[-VFREGBEG-op3],
                                   archvfregs[-VFREGBEG-op2],
                                   archvfregs[-VFREGBEG-op1]);
          #else
-	    fko_error(__LINE__, "VFCMPGTW only supported in AVX!");
+	    fko_error(__LINE__, "VFCMPWGT only supported in AVX!");
          #endif 
          break;
-      case VFCMPGEW:
+      case VFCMPWGE:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpps\t$0x0D,%s,%s,%s\n",
                                   archvfregs[-VFREGBEG-op3],
                                   archvfregs[-VFREGBEG-op2],
                                   archvfregs[-VFREGBEG-op1]);
          #else
-	    fko_error(__LINE__, "VFCMPGEW only supported in AVX!");
+	    fko_error(__LINE__, "VFCMPWGE only supported in AVX!");
          #endif 
          break;
-      case VFCMPNGTW:
+      case VFCMPWNGT:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpps\t$0x0A,%s,%s,%s\n",
                                   archvfregs[-VFREGBEG-op3],
                                   archvfregs[-VFREGBEG-op2],
                                   archvfregs[-VFREGBEG-op1]);
          #else
-	    fko_error(__LINE__, "VFCMPNGTW only supported in AVX!");
+	    fko_error(__LINE__, "VFCMPWNGT only supported in AVX!");
          #endif 
          break;
-      case VFCMPNGEW:
+      case VFCMPWNGE:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpps\t$9,%s,%s,%s\n",
                                   archvfregs[-VFREGBEG-op3],
                                   archvfregs[-VFREGBEG-op2],
                                   archvfregs[-VFREGBEG-op1]);
          #else
-	    fko_error(__LINE__, "VFCMPNGEW only supported in AVX!");
+	    fko_error(__LINE__, "VFCMPWNGE only supported in AVX!");
          #endif 
          break;
 /*
@@ -3020,7 +3020,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #endif
          break;
       
-      case VDCMPEQW:
+      case VDCMPWEQ:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmppd\t$0,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op3],
@@ -3031,7 +3031,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                           archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
          #endif 
          break;
-      case VDCMPNEW:
+      case VDCMPWNE:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmppd\t$4,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op3],
@@ -3042,7 +3042,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                           archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
          #endif 
          break;
-      case VDCMPLTW:
+      case VDCMPWLT:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmppd\t$1,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op3],
@@ -3053,7 +3053,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                           archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
          #endif 
          break;
-      case VDCMPLEW:
+      case VDCMPWLE:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmppd\t$2,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op3],
@@ -3064,7 +3064,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                           archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
          #endif 
          break;
-      case VDCMPNLTW:
+      case VDCMPWNLT:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmppd\t$5,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op3],
@@ -3075,7 +3075,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                           archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
          #endif 
          break;
-      case VDCMPNLEW:
+      case VDCMPWNLE:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmppd\t$6,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op3],
@@ -3090,44 +3090,44 @@ struct assmln *lil2ass(BBLOCK *bbase)
  *    Majedul: Vector-cmps are not supported in SSE, only 
  *    supported by AVX
  */         
-      case VDCMPGTW:
+      case VDCMPWGT:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmppd\t$0x0E,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op3],
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1]);
          #else
-	    fko_error(__LINE__, "VDCMPGTW only supported in AVX!");
+	    fko_error(__LINE__, "VDCMPWGT only supported in AVX!");
          #endif 
          break;
-      case VDCMPGEW:
+      case VDCMPWGE:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmppd\t$0x0D,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op3],
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1]);
          #else
-	    fko_error(__LINE__, "VDCMPGEW only supported in AVX!");
+	    fko_error(__LINE__, "VDCMPWGE only supported in AVX!");
          #endif 
          break;
-      case VDCMPNGTW:
+      case VDCMPWNGT:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmppd\t$0x0A,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op3],
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1]);
          #else
-	    fko_error(__LINE__, "VDCMPNGTW only supported in AVX!");
+	    fko_error(__LINE__, "VDCMPWNGT only supported in AVX!");
          #endif 
          break;
-      case VDCMPNGEW:
+      case VDCMPWNGE:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmppd\t$9,%s,%s,%s\n",
                                   archvdregs[-VDREGBEG-op3],
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1]);
          #else
-	    fko_error(__LINE__, "VDCMPNGEW only supported in AVX!");
+	    fko_error(__LINE__, "VDCMPWNGE only supported in AVX!");
          #endif 
          break;
 /*
