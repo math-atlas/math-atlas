@@ -2627,20 +2627,24 @@ int SpeculativeVecTransform(LOOPQ *lp)
 /*****************************************************************************/   
 
 static enum inst
-      brinsts[] = {JEQ, JNE, JLT, JGT, JGE},
+      brinsts[] = {JEQ, JNE, JLT, JLE, JGT, JGE},
       #if defined(AVX)
-         vfcmpinsts[] = {VFCMPWEQ, VFCMPWNE, VFCMPWLT, VFCMPWGT, VFCMPWGE},
-         vdcmpinsts[] = {VDCMPWEQ, VDCMPWNE, VDCMPWLT, VDCMPWGT, VDCMPWGE};
+         vfcmpinsts[] = {VFCMPWEQ, VFCMPWNE, VFCMPWLT, VFCMPWLE, VFCMPWGT, 
+                         VFCMPWGE},
+         vdcmpinsts[] = {VDCMPWEQ, VDCMPWNE, VDCMPWLT, VDCMPWLE, VDCMPWGT, 
+                         VDCMPWGE};
       #else
 /*
  *    SSE supports : EQ, NE, LT, LE, NLT, NLE
  *    not supports : GT, GE, NGT, NGE
  *    So, we need to replace GT and GE with NLE and NLT
  */
-         vfcmpinsts[] = {VFCMPWEQ, VFCMPWNE, VFCMPWLT, VFCMPWNLE, VFCMPWNLT},
-         vdcmpinsts[] = {VDCMPWEQ, VDCMPWNE, VDCMPWLT, VDCMPWNLE, VDCMPWNLT};
+         vfcmpinsts[] = {VFCMPWEQ, VFCMPWNE, VFCMPWLT, VFCMPWLE, VFCMPWNLE, 
+                         VFCMPWNLT},
+         vdcmpinsts[] = {VDCMPWEQ, VDCMPWNE, VDCMPWLT, VDCMPWLE, VDCMPWNLE, 
+                         VDCMPWNLT};
       #endif
-   const int nbr = 5;
+   const int nbr = 6;
 
    const int nvinst = 10;
    enum inst sld, vld, sst, vst, smul, vmul, sdiv, vdiv, smac, vmac, sadd, vadd,
@@ -4621,23 +4625,26 @@ short RemoveBranchWithMask(BBLOCK *sblk)
    int freg0;
    enum inst fst;
    static enum inst
-      brinsts[] = {JEQ, JNE, JLT, JGT, JGE},
+      brinsts[] = {JEQ, JNE, JLT, JLE, JGT, JGE},
       #if defined(AVX)
-         fcmpwinsts[] = {FCMPWEQ, FCMPWNE, FCMPWLT, FCMPWGT, FCMPWGE},
-         dcmpwinsts[] = {FCMPDWEQ, FCMPDWNE, FCMPDWLT, FCMPDWGT, FCMPDWGE};
+         fcmpwinsts[] = {FCMPWEQ, FCMPWNE, FCMPWLT, FCMPWLE, FCMPWGT, FCMPWGE},
+         dcmpwinsts[] = {FCMPDWEQ, FCMPDWNE, FCMPDWLT,FCMPDWLE, FCMPDWGT, 
+                         FCMPDWGE};
       #else
 /*
  *    SSE supports : EQ, NE, LT, LE, NLT, NLE
  *    not supports : GT, GE, NGT, NGE
  *    So, we need to replace GT and GE with NLE and NLT
  */
-         fcmpwinsts[] = {FCMPWEQ, FCMPWNE, FCMPWLT, FCMPWNLE, FCMPWNLT},
-         dcmpwinsts[] = {FCMPDWEQ, FCMPDWNE, FCMPDWLT, FCMPDWNLE, FCMPDWNLT};
+         fcmpwinsts[] = {FCMPWEQ, FCMPWNE, FCMPWLT, FCMPWLE, FCMPWNLE, 
+                         FCMPWNLT},
+         dcmpwinsts[] = {FCMPDWEQ, FCMPDWNE, FCMPDWLT, FCMPDWLE, FCMPDWNLE, 
+                         FCMPDWNLT};
       #endif
    enum inst *cmpinsts;      
    int nbr;
 
-   nbr = 5;
+   nbr = 6;
    
    for (ip=sblk->ainst1; ip; ip=ip->next)
    {
