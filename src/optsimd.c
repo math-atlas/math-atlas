@@ -4691,7 +4691,20 @@ short RemoveBranchWithMask(BBLOCK *sblk)
          ip0->inst[1] = ip0->inst[2]; /* update value in a reg*/
          ip0 = InsNewInst(sblk, ip0, NULL, fst, SToff[mask-1].sa[2], 
                           ip0->inst[1], 0);
+#if 0
          DelInst(ip); 
+#else
+/*
+ *       Changing the conditional branch into unconditinal
+ *       format: 
+ *             JMP PCREG, LABEL, 0
+ *             BR  PCREG, cc#, LABEL
+ */
+         ip->inst[0] = JMP;
+         ip->inst[2] = ip->inst[3];
+         ip->inst[3] = 0;
+
+#endif
 /*
  *       HERE HERE, we consider only one conditinal branch in a block
  *       So, no need to check other instructions after getting that.
@@ -4763,7 +4776,7 @@ void RedundantVectorAnalysis(LOOPQ *lp)
    short freg0, freg1, freg2;
    enum inst cmov1, cmov2, fld, fst; 
    BBLOCK *bp, *bp0;
-   INSTQ *ip;
+   INSTQ *ip, *ip0;
    BLIST *ifblks, *elseblks, *splitblks, *mergeblks;
    BLIST *bl;
    extern short STderef;
@@ -5049,10 +5062,92 @@ void RedundantVectorAnalysis(LOOPQ *lp)
  * We will move all instruction from if/else blk and adding it after split block
  * Hopefully, deadblock elemination will indentify and delete the blk structure.
  */
+#if 0
    bp0 = splitblks->blk;
    bp = NewBasicBlock(NULL, NULL);
-   
+/*
+ * copy if blk first
+ */
+   ip0 = InsNewInst(bp, NULL, NULL, COMMENT, STstrconstlookup("NEW MERGE BLK"),
+                    0, 0);
+   ip = ifblks->blk->inst1;
 
+   while (ip)
+   {
+      if (ip->inst[0] != JMP) /* what if, cond branch! not consider this*/
+      {
+         ip0 = InsNewInst(bp, ip0, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
+                          ip->inst[3]);
+         ip = RemoveInstFromQ(ip);
+      }
+      else
+         ip = ip->next;
+   }
+/*
+ * copy else blk if exists
+ */
+   if (elseblks)
+   {
+      ip = elseblks->blk->inst1;
+      while (ip)
+      {
+         if (ip->inst[0] != JMP) /* what if, cond branch! not consider this*/
+         {
+            ip0 = InsNewInst(bp, ip0, NULL, ip->inst[0], ip->inst[1], 
+                                 ip->inst[2], ip->inst[3]);
+            ip = RemoveInstFromQ(ip);
+         }
+         else
+            ip = ip->next;
+      }
+   }
+#if 1
+   fprintf(stderr, "New Block: \n");
+   PrintInst(stderr, bp);
+#endif
+
+#else
+/*
+ * add instruction at the end of the splitblks
+ */
+   ip0 = splitblks->blk->instN;
+   if (ip0->inst[0] == JMP) ip0 = ip0->prev;
+/*
+ * copy if blks
+ */
+   ip = ifblks->blk->inst1;
+
+   while (ip)
+   {
+      if (ip->inst[0] != JMP && ip->inst[0] != LABEL) 
+      {
+         ip0 = InsNewInst(bp, ip0, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
+                          ip->inst[3]);
+         ip = RemoveInstFromQ(ip);
+      }
+      else
+         ip = ip->next;
+   }
+/*
+ * copy else blk if exists
+ */
+   if (elseblks)
+   {
+      ip = elseblks->blk->inst1;
+      while (ip)
+      {
+         if (ip->inst[0] != JMP && ip->inst[0] != LABEL) 
+         {
+            ip0 = InsNewInst(bp, ip0, NULL, ip->inst[0], ip->inst[1], 
+                                 ip->inst[2], ip->inst[3]);
+            ip = RemoveInstFromQ(ip);
+         }
+         else
+            ip = ip->next;
+      }
+   }
+
+#endif
 }
 
 void VectorRedundantComputation()
@@ -5066,7 +5161,10 @@ void VectorRedundantComputation()
    short *sc, *sf;
    LOOPQ *lp;
 
-   
+   INSTQ *ippu;
+   struct ptrinfo *pi0;
+   BLIST *bl;
+
    lp = optloop;
 /*
  * Find paths from optloop
@@ -5119,11 +5217,56 @@ void VectorRedundantComputation()
    RedundantVectorAnalysis(lp);
 
 #if 1
+   pi0 = FindMovingPointers(lp->tails);
+   ippu = KillPointerUpdates(pi0,1);
+   /*OptimizeLoopControl(lp, 1, 0, NULL);*/
+   OptimizeLoopControl(lp, 1, 0, ippu);
+
+   InvalidateLoopInfo();
+   bbbase = NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   FindLoops();
+   CheckFlow(bbbase, __FILE__, __LINE__);
+#endif
+
+#if 1
+   lp = optloop;
+   fprintf(stderr, "\n LOOP BLOCKS: \n");
+   if(!lp->blocks) fprintf(stderr, "NO LOOP BLK!!!\n");
+   for (bl = lp->blocks; bl ; bl = bl->next)
+   {
+      assert(bl->blk);
+      fprintf(stderr, "%d ",bl->blk->bnum);
+   }
+   fprintf(stderr,"\n");
+   fprintf(stderr, "\n LOOP BLOCKS: \n");
+   if(lp->header) fprintf(stderr, "loop header: %d\n",lp->header->bnum);
+   if(lp->preheader) fprintf(stderr, "loop preheader: %d\n",
+                             lp->preheader->bnum);
+   
+   fprintf(stderr,"loop tails: ");
+   for (bl = lp->tails; bl ; bl = bl->next)
+   {
+      assert(bl->blk);
+      fprintf(stderr, "%d ",bl->blk->bnum);
+   }
+   fprintf(stderr,"\n");
+   
+   fprintf(stderr,"loop posttails: ");
+   for (bl = lp->posttails; bl ; bl = bl->next)
+   {
+      assert(bl->blk);
+      fprintf(stderr, "%d ",bl->blk->bnum);
+   }
+   fprintf(stderr,"\n");
+#endif
+#if 1
    fprintf(stdout, "LIL\n");
    PrintInst(stdout,bbbase);
-   fprintf(stdout, "Symbol Table\n");
-   PrintST(stdout);
+   //fprintf(stdout, "Symbol Table\n");
+   //PrintST(stdout);
    exit(0);
 #endif
+
 }
 
