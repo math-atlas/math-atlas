@@ -2010,3 +2010,631 @@ ATL_asmdecor(ATL_USERMM):
    movq    40(%rsp), %r15
    add $FSIZE, %rsp
    ret
+@ROUT ATL_damm12x3x256_avx.S ATL_samm24x3x256_avx.S
+@extract -b @(topd)/gen.inc what=crsetup
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2012
+#include "atlas_asm.h"
+#ifndef KB
+   #define KB 0
+#endif
+/*
+ * innermost (K-) loop items get priority on 1st 7 regs
+ */
+#define pA      %rcx
+#define pB      %rdi
+#define i256    %rax
+#define i768    %rdx   /* 3 * 256 */
+#define i1280   %rsi   /* 5 * 256 */
+#define i1792   %rbx   /* 7 * 256 */
+#define i2304   %r11
+/*
+ * Second (N-) loop items get next level of priority on good regs
+ */
+#define pC      %rbp
+#define pfA     %r8
+#define pfB     %r9
+#define incPF   %r10
+#define nnu     %r12
+/*
+ * Outer- (M-) loop variables assigned to any regs
+ */
+#define nmu     %r13
+#define pB0     %r14
+#define nnu0    %r15
+/*
+ * floating point registers
+ */
+#define m0   %ymm0
+#define rA0  %ymm1
+#define rA1  %ymm2
+#define rA2  %ymm3
+#define rB0  %ymm4
+#define rB1  %ymm5
+#define rB2  %ymm6
+#define rC00 %ymm7
+#define rC10 %ymm8
+#define rC20 %ymm9
+#define rC01 %ymm10
+#define rC11 %ymm11
+#define rC21 %ymm12
+#define rC02 %ymm13
+#define rC12 %ymm14
+#define rC22 %ymm15
+/*
+                    rdi      rsi    rdx        rcx         r8        r9
+void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
+                  8(%rsp)    16(%rsp)     24(%rsp)
+                CTYPE *pAn, CTYPE *pBn, CTYPE *pCn);
+ */
+
+#define FSIZE 6*8
+#ifndef prefA
+   #define prefA prefetcht0
+#endif
+#ifndef prefB
+   #define prefB prefetcht0
+#endif
+#ifndef prefC
+   #ifdef ATL_3DNow
+      #define prefC prefetchw
+   #else
+      #define prefC prefetcht0
+   #endif
+#endif
+@ROUT ATL_samm24x3x256_avx.S
+#ifdef BETAN1
+   #define BETCOP vsubps
+#else
+   #define BETCOP vaddps
+#endif
+#define vmovapd vmovaps
+#define vmulpd vmulps
+#define vaddpd vaddps
+#define vbroadcastsd vbroadcastss
+@define sz @4@
+@ROUT ATL_damm12x3x256_avx.S
+#ifdef BETAN1
+   #define BETCOP vsubpd
+#else
+   #define BETCOP vaddpd
+#endif
+#define vmovapd vmovaps
+@define sz @8@
+@ROUT ATL_damm12x3x256_avx.S ATL_samm24x3x256_avx.S
+/*
+                    rdi      rsi    rdx        rcx         r8        r9
+void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
+                  8(%rsp)    16(%rsp)     24(%rsp)
+                CTYPE *pAn, CTYPE *pBn, CTYPE *pCn);
+ */
+.text
+.global ATL_asmdecor(ATL_USERMM)
+ALIGN16
+ATL_asmdecor(ATL_USERMM):
+/*
+ * Save callee-saved iregs
+ */
+   sub $FSIZE, %rsp
+   movq    %rbp, 0(%rsp)
+   movq    %rbx, 8(%rsp)
+   movq    %r12, 16(%rsp)
+   movq    %r13, 24(%rsp)
+   movq    %r14, 32(%rsp)
+   movq    %r15, 40(%rsp)
+/*
+ * Load paramaters
+ */
+   mov %rdi, nmu
+   mov %rsi, nnu
+   mov %r8, pB
+   mov %r9, pC
+   mov nnu, nnu0
+   movq FSIZE+8(%rsp), pfB      /* pfB = pAn */
+   movq FSIZE+16(%rsp), pfA     /* pf = pBn */
+   cmp pfA, pB
+   CMOVE pfB, pfA
+   CMOVEq FSIZE+24(%rsp), pfB
+   mov $2*12*@(sz), incPF           /* incPF = mu*nu*sizeof */
+/*
+ * Extend range of 1-byte offsets  by starting at -128
+ */
+   sub $-128, pA
+   sub $-128, pB
+   sub $-128, pC
+   sub $-128, pfA
+   sub $-128, pfB
+   movq pB, pB0
+@BEGINPROC doref p io r
+   @define io0 @@(io)@
+   @mif "pB = p
+      @ROUT ATL_damm12x3x256_avx.S `@define mv @   vbroadcastsd@`
+      @ROUT ATL_samm24x3x256_avx.S `@define mv @   vbroadcastss@`
+   @endmif
+   @mif "pB ! p
+      @ROUT ATL_damm12x3x256_avx.S `@define mv @   vmovapd@`
+      @ROUT ATL_samm24x3x256_avx.S `@define mv @   vmovaps@`
+   @endmif
+   @iif io = 0
+      @define of @@
+   @endiif
+   @iif io ! 0
+      @define of @@(io)@
+   @endiif
+   @iif io < 128
+         @(mv) @(of)(@(p)), @(r)
+      @endextract
+   @endiif
+@skip   @callproc decio
+   @iexp io @(io) -256 +
+   @undef of
+   @iif io = 0
+      @define of @@
+   @endiif
+   @iif io ! 0
+      @define of @@(io)@
+   @endiif
+   @iif io0 < 384
+         @(mv) @(of)(@(p),i256), @(r)
+      @endextract
+   @endiif
+@skip   @callproc decio
+   @iexp io @(io) -256 +
+   @undef of
+   @iif io = 0
+      @define of @@
+   @endiif
+   @iif io ! 0
+      @define of @@(io)@
+   @endiif
+   @iif io0 < 640
+         @(mv) @(of)(@(p),i256,2), @(r)
+      @endextract
+   @endiif
+@skip   @callproc decio
+   @iexp io @(io) -256 +
+   @undef of
+   @iif io = 0
+      @define of @@
+   @endiif
+   @iif io ! 0
+      @define of @@(io)@
+   @endiif
+   @iif io0 < 896
+         @(mv) @(of)(@(p),i768), @(r)
+      @endextract
+   @endiif
+@skip   @callproc decio
+   @iexp io @(io) -256 +
+   @undef of
+   @iif io = 0
+      @define of @@
+   @endiif
+   @iif io ! 0
+      @define of @@(io)@
+   @endiif
+   @iif io0 < 1152
+         @(mv) @(of)(@(p),i256,4), @(r)
+      @endextract
+   @endiif
+@skip   @callproc decio
+   @iexp io @(io) -256 +
+   @undef of
+   @iif io = 0
+      @define of @@
+   @endiif
+   @iif io ! 0
+      @define of @@(io)@
+   @endiif
+   @iif io0 < 1408
+         @(mv) @(of)(@(p),i1280), @(r)
+      @endextract
+   @endiif
+@skip   @callproc decio
+   @iexp io @(io) -256 +
+   @undef of
+   @iif io = 0
+      @define of @@
+   @endiif
+   @iif io ! 0
+      @define of @@(io)@
+   @endiif
+   @iif io0 < 1664
+         @(mv) @(of)(@(p),i768,2), @(r)
+      @endextract
+   @endiif
+@skip   @callproc decio
+   @iexp io @(io) -256 +
+   @undef of
+   @iif io = 0
+      @define of @@
+   @endiif
+   @iif io ! 0
+      @define of @@(io)@
+   @endiif
+   @iif io0 < 1920
+         @(mv) @(of)(@(p),i1792), @(r)
+      @endextract
+   @endiif
+@skip   @callproc decio
+   @iexp io @(io) -256 +
+   @undef of
+   @iif io = 0
+      @define of @@
+   @endiif
+   @iif io ! 0
+      @define of @@(io)@
+   @endiif
+   @iif io0 < 2176
+         @(mv) @(of)(@(p),i256,8), @(r)
+      @endextract
+   @endiif
+@skip   @callproc decio
+   @iexp io @(io) -256 +
+   @undef of
+   @iif io = 0
+      @define of @@
+   @endiif
+   @iif io ! 0
+      @define of @@(io)@
+   @endiif
+   @iif io0 < 2432
+         @(mv) @(of)(@(p),i2304), @(r)
+      @endextract
+   @endiif
+@skip   @callproc decio
+   @iexp io @(io) -256 +
+   @undef of
+   @iif io = 0
+      @define of @@
+   @endiif
+   @iif io ! 0
+      @define of @@(io)@
+   @endiif
+   @iif io0 < 2688
+         @(mv) @(of)(@(p),i1280,2), @(r)
+      @endextract
+   @endiif
+@skip   @callproc decio
+   @iexp io @(io) -256 +
+   @undef of
+   @iif io = 0
+      @define of @@
+   @endiif
+   @iif io ! 0
+      @define of @@(io)@
+   @endiif
+   @iif io0 < 2944
+         @(mv) @(io0)(@(p)), @(r)
+      @endextract
+   @endiif
+@skip   @callproc decio
+   @iexp io @(io) -256 +
+   @undef of
+   @iif io = 0
+      @define of @@
+   @endiif
+   @iif io ! 0
+      @define of @@(io)@
+   @endiif
+   @iif io0 < 3200
+         @(mv) @(of)(@(p),i768,4), @(r)
+      @endextract
+   @endiif
+@skip   @callproc decio
+   @iexp io @(io) -256 +
+   @undef of
+   @iif io = 0
+      @define of @@
+   @endiif
+   @iif io ! 0
+      @define of @@(io)@
+   @endiif
+   @iif io0 < 3456
+         @(mv) @(io0)(@(p)), @(r)
+      @endextract
+   @endiif
+@skip   @callproc decio
+   @iexp io @(io) -256 +
+   @undef of
+   @iif io = 0
+      @define of @@
+   @endiif
+   @iif io ! 0
+      @define of @@(io)@
+   @endiif
+   @iif io0 < 3712
+         @(mv) @(of)(@(p),i1792,2), @(r)
+      @endextract
+   @endiif
+   @iif io0 < 4736
+      @iif io0 > 4479
+         @iexp io @(io0) -4480 +
+         @iexp io @(io) -128 +
+         @iif io = 0
+         @(mv) (@(p),i2304,2), @(r)
+         @endiif
+         @iif io ! 0
+         @(mv) @(io)(@(p),i2304,2), @(r)
+         @endiif
+         @endextract
+      @endiif
+   @endiif
+   @iif io0 < 5248
+      @iif io0 > 4991
+         @iexp io @(io0) -4992 +
+         @iexp io @(io) -128 +
+         @iif io = 0
+         @(mv) (@(p),i1280,4), @(r)
+         @endiif
+         @iif io ! 0
+         @(mv) @(io)(@(p),i1280,4), @(r)
+         @endiif
+         @endextract
+      @endiif
+   @endiif
+   @iif io0 < 6272
+      @iif io0 > 6015
+         @iexp io @(io0) -6016 +
+         @iexp io @(io) -128 +
+         @iif io = 0
+         @(mv) (@(p),i768,8), @(r)
+         @endiif
+         @iif io ! 0
+         @(mv) @(io)(@(p),i768,8), @(r)
+         @endiif
+         @endextract
+      @endiif
+   @endiif
+   @iif io0 < 7296
+      @iif io0 > 7039
+         @iexp io @(io0) -7040 +
+         @iexp io @(io) -128 +
+         @iif io = 0
+         @(mv) (@(p),i1792,4), @(r)
+         @endiif
+         @iif io ! 0
+         @(mv) @(io)(@(p),i1792,4), @(r)
+         @endiif
+         @endextract
+      @endiif
+   @endiif
+   @iif io0 < 7296
+      @iif io0 > 7039
+         @iexp io @(io0) -7040 +
+         @iexp io @(io) -128 +
+         @iif io = 0
+         @(mv) (@(p),i1792,4), @(r)
+         @endiif
+         @iif io ! 0
+         @(mv) @(io)(@(p),i1792,4), @(r)
+         @endiif
+         @endextract
+      @endiif
+   @endiif
+   @iif io0 < 9344
+      @iif io0 > 9087
+         @iexp io @(io0) -9088 +
+         @iexp io @(io) -128 +
+         @iif io = 0
+         @(mv) (@(p),i2304,4), @(r)
+         @endiif
+         @iif io ! 0
+         @(mv) @(io)(@(p),i2304,4), @(r)
+         @endiif
+         @endextract
+      @endiif
+   @endiif
+   @iif io0 < 10368
+      @iif io0 > 10111
+         @iexp io @(io0) -10112 +
+         @iexp io @(io) -128 +
+         @iif io = 0
+         @(mv) (@(p),i1280,8), @(r)
+         @endiif
+         @iif io ! 0
+         @(mv) @(io)(@(p),i1280,8), @(r)
+         @endiif
+         @endextract
+      @endiif
+   @endiif
+@SKIP default case just indexes ptr
+         @(mv) @(io0)(@(p)), @(r)
+   @undef io0
+   @undef of
+   @undef mv
+@ENDPROC
+   mov $256, i256
+   lea (i256, i256,2), i768
+   lea (i256, i256,4), i1280
+   lea (i256, i768,2), i1792
+   lea (i256, i256,8), i2304
+   ALIGN8
+   .local MNLOOP
+   MNLOOP:
+/*
+      .local NLOOP
+      NLOOP:
+*/
+/*
+ *       Peel first iteration of K loop to initialize rCx
+ */
+@iexp bo -128 0 +
+         vmovapd -128(pA), rA0
+         @callproc doref pB @(bo) rB0
+         @iexp bo @(bo) @(sz) +
+         vmulpd rA0, rB0, rC00
+         vmovapd -96(pA), rA1
+         vmulpd rA1, rB0, rC10
+         vmovapd -64(pA), rA2
+         vmulpd rA2, rB0, rC20
+         @callproc doref pB @(bo) rB1
+         @iexp bo @(bo) @(sz) +
+         vmulpd rA0, rB1, rC01
+         @callproc doref pB @(bo) rB2
+         @iexp bo @(bo) @(sz) +
+         vmulpd rA1, rB1, rC11
+         #if KB > 1
+         @callproc doref pB @(bo) rB0
+         @iexp bo @(bo) @(sz) +
+         #endif
+         vmulpd rA2, rB1, rC21
+         #if KB > 1
+         @callproc doref pB @(bo) rB1
+         @iexp bo @(bo) @(sz) +
+         #endif
+         vmulpd rA0, rB2, rC02
+         #if KB > 1
+            vmovapd -32(pA), rA0
+         #endif
+         vmulpd rA1, rB2, rC12
+         #if KB > 1
+            vmovapd (pA), rA1
+         #endif
+         vmulpd rA2, rB2, rC22
+         #if KB > 1
+            vmovapd 32(pA), rA2
+         #endif
+/*
+ *       Fully unrolled K-loop
+ */
+@iexp ao 64 0 +
+@skip @iexp bo -88 0 +
+@iexp k 1 0 +
+@iwhile k < 256
+         #if KB > @(k)
+   @iexp k @(k) 1 +
+            vmulpd rB0, rA0, m0
+            vaddpd rC00, m0, rC00
+            @callproc doref pB @(bo) rB2
+            @iexp bo @(bo) @(sz) +
+            vmulpd rB0, rA1, m0
+            vaddpd rC10, m0, rC10
+            @iif @(k) = 1
+               prefC -128(pC)
+            @endiif
+            @iif @(k) = 2
+               prefC (pC)
+            @endiif
+            @iif @(k) = 3
+               prefC 128(pC)
+            @endiif
+            @iif @(k) = 4
+            prefA -128(pfA)
+            @endiif
+            @iif @(k) = 5
+            prefA -64(pfA)
+            @endiif
+            @iif @(k) = 6
+            prefA (pfA)
+            @endiif
+            @iif @(k) = 7
+            prefB -128(pfB)
+            @endiif
+            @iif @(k) = 8
+            prefB -64(pfB)
+            @endiif
+            @iif @(k) = 9
+            prefB (pfB)
+            @endiif
+            vmulpd rB0, rA2, m0
+            vaddpd rC20, m0, rC20
+            #if KB > @(k)
+               @callproc doref pB @(bo) rB0
+               @iexp bo @(bo) @(sz) +
+            #endif
+
+            vmulpd rB1, rA0, m0
+            vaddpd rC01, m0, rC01
+            @iif @(k) = 1
+               prefC -64(pC)
+            @endiif
+            @iif @(k) = 2
+               prefC 64(pC)
+            @endiif
+            vmulpd rB1, rA1, m0
+            vaddpd rC11, m0, rC11
+            vmulpd rB1, rA2, m0
+            vaddpd rC21, m0, rC21
+            #if KB > @(k)
+               @callproc doref pB @(bo) rB1
+               @iexp bo @(bo) @(sz) +
+            #endif
+      
+            vmulpd rB2, rA0, m0
+            vaddpd rC02, m0, rC02
+            #if KB > @(k)
+               @callproc doref pA @(ao) rA0
+               @iexp ao @(ao) 32 +
+            #endif
+            vmulpd rB2, rA1, m0
+            vaddpd rC12, m0, rC12
+            #if KB > @(k)
+               @callproc doref pA @(ao) rA1
+               @iexp ao @(ao) 32 +
+            #endif
+            vmulpd rB2, rA2, m0
+            vaddpd rC22, m0, rC22
+            #if KB > @(k)
+               @callproc doref pA @(ao) rA2
+               @iexp ao @(ao) 32 +
+            #endif
+
+         #endif
+@endiwhile
+         add incPF, pfA
+         add incPF, pfB
+/*
+ *       Write answer back out to C
+ */
+         #ifdef BETA0
+            vmovapd rC00, -128(pC)
+            vmovapd rC10, -96(pC)
+            vmovapd rC20, -64(pC)
+            vmovapd rC01, -32(pC)
+            vmovapd rC11, (pC)
+            vmovapd rC21, 32(pC)
+            vmovapd rC02, 64(pC)
+            vmovapd rC12, 96(pC)
+            vmovapd rC22, 128(pC)
+/*
+ *          Add running sum in rCx with original C, then store back out
+ */
+         #else
+            BETCOP -128(pC), rC00, rC00
+            vmovapd rC00, -128(pC)
+            BETCOP -96(pC), rC10, rC10
+            vmovapd rC10, -96(pC)
+            BETCOP -64(pC), rC20, rC20
+            vmovapd rC20, -64(pC)
+            BETCOP -32(pC), rC01, rC01
+            vmovapd rC01, -32(pC)
+            BETCOP (pC), rC11, rC11
+            vmovapd rC11, (pC)
+            BETCOP 32(pC), rC21, rC21
+            vmovapd rC21, 32(pC)
+            BETCOP 64(pC), rC02, rC02
+            vmovapd rC02, 64(pC)
+            BETCOP 96(pC), rC12, rC12
+            vmovapd rC12, 96(pC)
+            BETCOP 128(pC), rC22, rC22
+            vmovapd rC22, 128(pC)
+         #endif
+         add $12*3*8, pC        /* pC += MU*NU*sizeof */
+         add $KB*3*@(sz), pB        /* pB += K*NU*sizeof */
+      sub $1, nnu
+      jnz MNLOOP
+
+      mov nnu0, nnu
+      mov pB0, pB
+      add $KB*12*8, pA          /* pA += KB*MU*size */
+   sub $1, nmu
+   jnz MNLOOP
+/* DONE: */
+   movq    (%rsp), %rbp
+   movq    8(%rsp), %rbx
+   movq    16(%rsp), %r12
+   movq    24(%rsp), %r13
+   movq    32(%rsp), %r14
+   movq    40(%rsp), %r15
+   add $FSIZE, %rsp
+   ret
