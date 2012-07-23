@@ -2625,7 +2625,7 @@ int SpeculativeVecTransform(LOOPQ *lp)
  * NOTE: only case-1 is implemented right now.
  */
 /*****************************************************************************/   
-
+#if 0
 static enum inst
       brinsts[] = {JEQ, JNE, JLT, JLE, JGT, JGE},
       #if defined(AVX)
@@ -2644,6 +2644,18 @@ static enum inst
          vdcmpinsts[] = {VDCMPWEQ, VDCMPWNE, VDCMPWLT, VDCMPWLE, VDCMPWNLE, 
                          VDCMPWNLT};
       #endif
+#endif
+/*
+ * NOTE: We have 6 conditional branches. So, we only need to keep 6 VCMPWXX inst
+ * for SSE, GT and GE are replaced with the NLE and NLT inside the l2a while
+ * converting lil to assembly
+ */
+   static enum inst
+      brinsts[] = {JEQ, JNE, JLT, JLE, JGT, JGE},
+         vfcmpinsts[] = {VFCMPWEQ, VFCMPWNE, VFCMPWLT, VFCMPWLE, VFCMPWGT, 
+                         VFCMPWGE},
+         vdcmpinsts[] = {VDCMPWEQ, VDCMPWNE, VDCMPWLT, VDCMPWLE, VDCMPWGT, 
+                         VDCMPWGE};
    const int nbr = 6;
 
    const int nvinst = 10;
@@ -2916,12 +2928,6 @@ static enum inst
  */
                ip->inst[0] = vcmpinst[m];
 /*
- *             get new vregs for the destination, no vld as it is not uses but
- *             sets
- */
-               vrd = GetReg(FLAG2TYPE(lp->vflag));
-               ip->inst[1] = -vrd;
-/*
  *             Find appropriate vector source regs for VCMP, here assume all the
  *             regs are of same type set by vflag, later relax this assumption
  */
@@ -2962,6 +2968,24 @@ static enum inst
                      }
                   }
                }
+#ifdef AVX
+/*
+ *             get new vregs for the destination, no vld as it is not uses but
+ *             sets
+ */
+               vrd = GetReg(FLAG2TYPE(lp->vflag));
+               ip->inst[1] = -vrd;
+#else
+/*
+ *             NOTE: for SSE, vcmpwXX has 3 operand, des and src1 is aliased
+ */            
+               op = ip->inst[2];
+               if (op < 0 )
+                  ip->inst[1] = op;
+               else
+                  assert(0); /* src1 is deref: will consider this case later */
+
+#endif
 /*
  *             it's time to add other instruction like mask and test
  *             ireg is set, so, get a new ireg
@@ -4624,8 +4648,16 @@ short RemoveBranchWithMask(BBLOCK *sblk)
    int type;
    int freg0;
    enum inst fst;
+/*
+ * NOTE: Although SSE doesn't support GT and GE, we can implement those with
+ * NLT, NLE
+ */
    static enum inst
       brinsts[] = {JEQ, JNE, JLT, JLE, JGT, JGE},
+      fcmpwinsts[] = {FCMPWEQ, FCMPWNE, FCMPWLT, FCMPWLE, FCMPWGT, FCMPWGE},
+      dcmpwinsts[] = {FCMPDWEQ, FCMPDWNE, FCMPDWLT,FCMPDWLE, FCMPDWGT, 
+                      FCMPDWGE};
+#if 0      
       #if defined(AVX)
          fcmpwinsts[] = {FCMPWEQ, FCMPWNE, FCMPWLT, FCMPWLE, FCMPWGT, FCMPWGE},
          dcmpwinsts[] = {FCMPDWEQ, FCMPDWNE, FCMPDWLT,FCMPDWLE, FCMPDWGT, 
@@ -4641,6 +4673,8 @@ short RemoveBranchWithMask(BBLOCK *sblk)
          dcmpwinsts[] = {FCMPDWEQ, FCMPDWNE, FCMPDWLT, FCMPDWLE, FCMPDWNLE, 
                          FCMPDWNLT};
       #endif
+#endif
+
    enum inst *cmpinsts;      
    int nbr;
 
@@ -4694,8 +4728,11 @@ short RemoveBranchWithMask(BBLOCK *sblk)
          assert(k!=nbr);
          
          ip0->inst[0] = cmpinsts[k];
+/*
+ *       NOTE: we keep op1 and op2 same which will work for both AVX and SSE
+ */
          /*ip0->inst[1] = SToff[mask-1].sa[2];*/
-         ip0->inst[1] = ip0->inst[2]; /* update value in a reg*/
+         ip0->inst[1] = ip0->inst[2]; /* update value in a reg */
          ip0 = InsNewInst(sblk, ip0, NULL, fst, SToff[mask-1].sa[2], 
                           ip0->inst[1], 0);
 #if 0
@@ -4804,6 +4841,7 @@ void RedundantVectorAnalysis(LOOPQ *lp)
 
 /*
  * Finding all split blks inside the optloop
+ * NOTE: call KillLoopControl before it, otherwise catch that one also 
  */
    for (bl = lp->blocks; bl; bl = bl->next  )
    {
@@ -5173,6 +5211,8 @@ void VectorRedundantComputation()
    BLIST *bl;
 
    lp = optloop;
+
+#if 0
 /*
  * Find paths from optloop
  */
@@ -5221,6 +5261,9 @@ void VectorRedundantComputation()
    }
 #endif
 
+#endif
+
+   KillLoopControl(lp);
    RedundantVectorAnalysis(lp);
 
 #if 1
@@ -5228,7 +5271,9 @@ void VectorRedundantComputation()
    ippu = KillPointerUpdates(pi0,1);
    /*OptimizeLoopControl(lp, 1, 0, NULL);*/
    OptimizeLoopControl(lp, 1, 0, ippu);
+#endif
 
+#if 1
    InvalidateLoopInfo();
    bbbase = NewBasicBlocks(bbbase);
    CheckFlow(bbbase, __FILE__, __LINE__);

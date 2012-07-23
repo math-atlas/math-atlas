@@ -2133,6 +2133,179 @@ struct assmln *lil2ass(BBLOCK *bbase)
             #endif
             }
 	 break;
+/*
+ *    Majedul: Right now, these special purpose FCMPW insts are considered 
+ *    only for X86. 
+ *    We have 6 conditional branches: JEQ, JNE, JLT, JLE, JGT, JGE
+ *    So, we will have six variants of those.
+ *    Format:  FCMPWXX and FCMPDWXX
+ *    NOTE: SSE doesn't support GT and GE, we will implement those with 
+ *    NLE, NLT
+ */
+#ifdef X86
+      case FCMPWEQ:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpss\t$0,%s,%s,%s\n",
+                                  archxmmregs[-VFREGBEG-op3],
+                                  archxmmregs[-VFREGBEG-op2],
+                                  archxmmregs[-VFREGBEG-op1]);
+         #else
+            assert(op1 == op2);
+            ap->next = PrintAssln("\tcmpss\t$0,%s,%s\n", 
+                                  archxmmregs[-VFREGBEG-op3], 
+                                  archxmmregs[-VFREGBEG-op1]);
+         #endif 
+         break;
+      case FCMPWNE:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpss\t$4,%s,%s,%s\n",
+                                  archxmmregs[-VFREGBEG-op3],
+                                  archxmmregs[-VFREGBEG-op2],
+                                  archxmmregs[-VFREGBEG-op1]);
+         #else
+            assert(op1 == op2);
+            ap->next = PrintAssln("\tcmpss\t$4,%s,%s\n",  
+                                  archxmmregs[-VFREGBEG-op3], 
+                                  archxmmregs[-VFREGBEG-op1]);
+         #endif 
+         break;
+      case FCMPWLT:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpss\t$1,%s,%s,%s\n",
+                                  archxmmregs[-VFREGBEG-op3],
+                                  archxmmregs[-VFREGBEG-op2],
+                                  archxmmregs[-VFREGBEG-op1]);
+         #else
+            assert(op1 == op2);
+            ap->next = PrintAssln("\tcmpss\t$1,%s,%s\n",  
+                                   archxmmregs[-VFREGBEG-op3], 
+                                   archxmmregs[-VFREGBEG-op1]);
+         #endif 
+         break;
+      case FCMPWLE:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpss\t$2,%s,%s,%s\n",
+                                  archxmmregs[-VFREGBEG-op3],
+                                  archxmmregs[-VFREGBEG-op2],
+                                  archxmmregs[-VFREGBEG-op1]);
+         #else
+            assert(op1 == op2);
+            ap->next = PrintAssln("\tcmpss\t$2,%s,%s\n",  
+                                  archxmmregs[-VFREGBEG-op3], 
+                                  archxmmregs[-VFREGBEG-op1]);
+         #endif 
+         break;
+      case FCMPWGT:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpss\t$0x0E,%s,%s,%s\n",
+                                  archxmmregs[-VFREGBEG-op3],
+                                  archxmmregs[-VFREGBEG-op2],
+                                  archxmmregs[-VFREGBEG-op1]);
+         #else
+/*             SSE: GT is replaced with NLE */            
+            assert(op1 == op2);
+            ap->next = PrintAssln("\tcmpss\t$6,%s,%s\n",  
+                                  archxmmregs[-VFREGBEG-op3], 
+                                  archxmmregs[-VFREGBEG-op1]);
+         #endif 
+         break;
+      case FCMPWGE:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpss\t$0x0D,%s,%s,%s\n",
+                                  archxmmregs[-VFREGBEG-op3],
+                                  archxmmregs[-VFREGBEG-op2],
+                                  archxmmregs[-VFREGBEG-op1]);
+         #else
+/*          GE is replaced with NLT*/            
+            assert(op1 == op2);
+            ap->next = PrintAssln("\tcmpss\t$5,%s,%s\n",  
+                                  archxmmregs[-VFREGBEG-op3], 
+                                  archxmmregs[-VFREGBEG-op1]);
+         #endif 
+         break;
+         
+      case FCMPDWEQ:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpsd\t$0,%s,%s,%s\n",
+                                  archxmmregs[-VDREGBEG-op3],
+                                  archxmmregs[-VDREGBEG-op2],
+                                  archxmmregs[-VDREGBEG-op1]);
+         #else
+            assert(op1 ==op2);
+            ap->next = PrintAssln("\tcmpsd\t$0,%s,%s\n",  
+                                  archxmmregs[-VDREGBEG-op3], 
+                                  archxmmregs[-VDREGBEG-op1]);
+         #endif 
+         break;
+      case FCMPDWNE:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpsd\t$4,%s,%s,%s\n",
+                                  archxmmregs[-VDREGBEG-op3],
+                                  archxmmregs[-VDREGBEG-op2],
+                                  archxmmregs[-VDREGBEG-op1]);
+         #else
+            assert(op1 ==op2);
+            ap->next = PrintAssln("\tcmpsd\t$4,%s,%s\n",  
+                                  archxmmregs[-VDREGBEG-op3], 
+                                  archxmmregs[-VDREGBEG-op1]);
+         #endif
+         break;
+      case FCMPDWLT:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpsd\t$1,%s,%s,%s\n",
+                                  archxmmregs[-VDREGBEG-op3],
+                                  archxmmregs[-VDREGBEG-op2],
+                                  archxmmregs[-VDREGBEG-op1]);
+         #else
+            assert(op1 ==op2);
+            ap->next = PrintAssln("\tcmpsd\t$1,%s,%s\n",  
+                                  archxmmregs[-VDREGBEG-op3], 
+                                  archxmmregs[-VDREGBEG-op1]);
+         #endif
+         break;
+      case FCMPDWLE:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpsd\t$2,%s,%s,%s\n",
+                                  archxmmregs[-VDREGBEG-op3],
+                                  archxmmregs[-VDREGBEG-op2],
+                                  archxmmregs[-VDREGBEG-op1]);
+         #else
+            assert(op1 ==op2);
+            ap->next = PrintAssln("\tcmpsd\t$2,%s,%s\n",  
+                                  archxmmregs[-VDREGBEG-op3], 
+                                  archxmmregs[-VDREGBEG-op1]);
+         #endif
+         break;
+      case FCMPDWGT:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpsd\t$0x0E,%s,%s,%s\n",
+                                  archxmmregs[-VDREGBEG-op3],
+                                  archxmmregs[-VDREGBEG-op2],
+                                  archxmmregs[-VDREGBEG-op1]);
+         #else
+/*             SSE: GT is replaced with NLE */            
+            assert(op1 ==op2);
+            ap->next = PrintAssln("\tcmpsd\t$6,%s,%s\n",  
+                                  archxmmregs[-VDREGBEG-op3], 
+                                  archxmmregs[-VDREGBEG-op1]);
+         #endif
+         break;
+      case FCMPDWGE:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpsd\t$0x0D,%s,%s,%s\n",
+                                  archxmmregs[-VDREGBEG-op3],
+                                  archxmmregs[-VDREGBEG-op2],
+                                  archxmmregs[-VDREGBEG-op1]);
+         #else
+/*             SSE: GE is replaced with NLT */            
+            assert(op1 ==op2);
+            ap->next = PrintAssln("\tcmpsd\t$5,%s,%s\n",  
+                                  archxmmregs[-VDREGBEG-op3], 
+                                  archxmmregs[-VDREGBEG-op1]);
+         #endif
+         break;         
+#endif         
+
       case COMMENT:
          #ifdef X86
             continue; /* skip comments temporary for testing with ATLAS*/
@@ -2893,7 +3066,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
  *    predicates ...
  *    NOTE: in avx implementation, the inst supports 4 operand. dest is diff
  *    than any other srcs. For SSE, as it supports 3 operands, need to change
- *    the LIL for it!
+ *    the LIL for it! and also the transformation it uses!!!
  */
       case VFCMPWEQ:
          #ifdef AVX
@@ -2902,8 +3075,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archvfregs[-VFREGBEG-op2],
                                   archvfregs[-VFREGBEG-op1]);
          #else
+            assert(op1 == op2); /* 1st src and dest are same */
             ap->next = PrintAssln("\tcmpps\t$0,%s,%s\n",  
-                          archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
+                          archvfregs[-VFREGBEG-op3], archvfregs[-VFREGBEG-op1]);
          #endif 
          break;
       case VFCMPWNE:
@@ -2913,8 +3087,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archvfregs[-VFREGBEG-op2],
                                   archvfregs[-VFREGBEG-op1]);
          #else
+            assert(op1 == op2);
             ap->next = PrintAssln("\tcmpps\t$4,%s,%s\n",  
-                          archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
+                          archvfregs[-VFREGBEG-op3], archvfregs[-VFREGBEG-op1]);
          #endif 
          break;
       case VFCMPWLT:
@@ -2924,8 +3099,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archvfregs[-VFREGBEG-op2],
                                   archvfregs[-VFREGBEG-op1]);
          #else
+            assert(op1 == op2);
             ap->next = PrintAssln("\tcmpps\t$1,%s,%s\n",  
-                          archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
+                          archvfregs[-VFREGBEG-op3], archvfregs[-VFREGBEG-op1]);
          #endif 
          break;
       case VFCMPWLE:
@@ -2935,10 +3111,38 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archvfregs[-VFREGBEG-op2],
                                   archvfregs[-VFREGBEG-op1]);
          #else
+            assert(op1 == op2);
             ap->next = PrintAssln("\tcmpps\t$2,%s,%s\n",  
-                          archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
+                          archvfregs[-VFREGBEG-op3], archvfregs[-VFREGBEG-op1]);
          #endif 
          break;
+      case VFCMPWGT:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpps\t$0x0E,%s,%s,%s\n",
+                                  archvfregs[-VFREGBEG-op3],
+                                  archvfregs[-VFREGBEG-op2],
+                                  archvfregs[-VFREGBEG-op1]);
+         #else
+/*             SSE: GT is replaced with NLE */            
+            assert(op1 == op2);
+            ap->next = PrintAssln("\tcmpps\t$6,%s,%s\n",  
+                          archvfregs[-VFREGBEG-op3], archvfregs[-VFREGBEG-op1]);
+         #endif 
+         break;
+      case VFCMPWGE:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmpps\t$0x0D,%s,%s,%s\n",
+                                  archvfregs[-VFREGBEG-op3],
+                                  archvfregs[-VFREGBEG-op2],
+                                  archvfregs[-VFREGBEG-op1]);
+         #else
+            assert(op1 == op2);
+/*             SSE: GE is replaced with NLT */            
+            ap->next = PrintAssln("\tcmpps\t$5,%s,%s\n",  
+                          archvfregs[-VFREGBEG-op3], archvfregs[-VFREGBEG-op1]);
+         #endif 
+         break;
+#if 0
       case VFCMPWNLT:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpps\t$5,%s,%s,%s\n",
@@ -2946,8 +3150,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archvfregs[-VFREGBEG-op2],
                                   archvfregs[-VFREGBEG-op1]);
          #else
+            assert(op1 == op2);
             ap->next = PrintAssln("\tcmpps\t$5,%s,%s\n",  
-                          archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
+                          archvfregs[-VFREGBEG-op3], archvfregs[-VFREGBEG-op1]);
          #endif 
          break;
       case VFCMPWNLE:
@@ -2957,8 +3162,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archvfregs[-VFREGBEG-op2],
                                   archvfregs[-VFREGBEG-op1]);
          #else
+            assert(op1 == op2);
             ap->next = PrintAssln("\tcmpps\t$6,%s,%s\n",  
-                          archvfregs[-VFREGBEG-op2], archvfregs[-VFREGBEG-op1]);
+                          archvfregs[-VFREGBEG-op3], archvfregs[-VFREGBEG-op1]);
          #endif 
          break;
 /* 
@@ -3005,6 +3211,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
 	    fko_error(__LINE__, "VFCMPWNGE only supported in AVX!");
          #endif 
          break;
+#endif
+
 /*
  *    Mov masks the sign bits of all floats to low 4/8 bits of ireg 
  */
@@ -3027,8 +3235,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1]);
          #else
+            assert(op1 ==op2);
             ap->next = PrintAssln("\tcmppd\t$0,%s,%s\n",  
-                          archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
+                          archvdregs[-VDREGBEG-op3], archvdregs[-VDREGBEG-op1]);
          #endif 
          break;
       case VDCMPWNE:
@@ -3038,8 +3247,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1]);
          #else
+            assert(op1 == op2);
             ap->next = PrintAssln("\tcmppd\t$4,%s,%s\n",  
-                          archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
+                          archvdregs[-VDREGBEG-op3], archvdregs[-VDREGBEG-op1]);
          #endif 
          break;
       case VDCMPWLT:
@@ -3049,8 +3259,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1]);
          #else
+            assert(op1 == op2);
             ap->next = PrintAssln("\tcmppd\t$1,%s,%s\n",  
-                          archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
+                          archvdregs[-VDREGBEG-op3], archvdregs[-VDREGBEG-op1]);
          #endif 
          break;
       case VDCMPWLE:
@@ -3060,30 +3271,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1]);
          #else
+            assert(op1 == op2);
             ap->next = PrintAssln("\tcmppd\t$2,%s,%s\n",  
-                          archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
-         #endif 
-         break;
-      case VDCMPWNLT:
-         #ifdef AVX
-            ap->next = PrintAssln("\tvcmppd\t$5,%s,%s,%s\n",
-                                  archvdregs[-VDREGBEG-op3],
-                                  archvdregs[-VDREGBEG-op2],
-                                  archvdregs[-VDREGBEG-op1]);
-         #else
-            ap->next = PrintAssln("\tcmppd\t$5,%s,%s\n",  
-                          archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
-         #endif 
-         break;
-      case VDCMPWNLE:
-         #ifdef AVX
-            ap->next = PrintAssln("\tvcmppd\t$6,%s,%s,%s\n",
-                                  archvdregs[-VDREGBEG-op3],
-                                  archvdregs[-VDREGBEG-op2],
-                                  archvdregs[-VDREGBEG-op1]);
-         #else
-            ap->next = PrintAssln("\tcmppd\t$6,%s,%s\n",  
-                          archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
+                          archvdregs[-VDREGBEG-op3], archvdregs[-VDREGBEG-op1]);
          #endif 
          break;
 /* 
@@ -3097,7 +3287,10 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1]);
          #else
-	    fko_error(__LINE__, "VDCMPWGT only supported in AVX!");
+/*             SSE: GT is replaced with NLE */            
+            assert(op1 == op2);
+            ap->next = PrintAssln("\tcmppd\t$6,%s,%s\n",  
+                          archvdregs[-VDREGBEG-op3], archvdregs[-VDREGBEG-op1]);
          #endif 
          break;
       case VDCMPWGE:
@@ -3107,7 +3300,35 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archvdregs[-VDREGBEG-op2],
                                   archvdregs[-VDREGBEG-op1]);
          #else
-	    fko_error(__LINE__, "VDCMPWGE only supported in AVX!");
+/*             SSE: GE is replaced with NLT */            
+            assert(op1 == op2);
+            ap->next = PrintAssln("\tcmppd\t$5,%s,%s\n",  
+                          archvdregs[-VDREGBEG-op3], archvdregs[-VDREGBEG-op1]);
+         #endif 
+         break;
+#if 0         
+      case VDCMPWNLT:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmppd\t$5,%s,%s,%s\n",
+                                  archvdregs[-VDREGBEG-op3],
+                                  archvdregs[-VDREGBEG-op2],
+                                  archvdregs[-VDREGBEG-op1]);
+         #else
+            assert(op1 == op2);
+            ap->next = PrintAssln("\tcmppd\t$5,%s,%s\n",  
+                          archvdregs[-VDREGBEG-op3], archvdregs[-VDREGBEG-op1]);
+         #endif 
+         break;
+      case VDCMPWNLE:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvcmppd\t$6,%s,%s,%s\n",
+                                  archvdregs[-VDREGBEG-op3],
+                                  archvdregs[-VDREGBEG-op2],
+                                  archvdregs[-VDREGBEG-op1]);
+         #else
+            assert(op1 == op2);
+            ap->next = PrintAssln("\tcmppd\t$6,%s,%s\n",  
+                          archvdregs[-VDREGBEG-op3], archvdregs[-VDREGBEG-op1]);
          #endif 
          break;
       case VDCMPWNGT:
@@ -3130,6 +3351,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
 	    fko_error(__LINE__, "VDCMPWNGE only supported in AVX!");
          #endif 
          break;
+#endif         
 /*
  *    Mov masks the sign bits of all doubles to low 2/4 bits of ireg 
  */
