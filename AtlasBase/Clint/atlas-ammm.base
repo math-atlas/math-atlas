@@ -480,7 +480,7 @@ int main(int nargs, char **args)
    KillAllMMNodes(mmb);
    exit(0);
 }
-@ROUT ammusearch ammgsearch
+@ROUT ammusearch
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2012
 #include "atlas_misc.h"
 #define ATL_JKMDEF 1
@@ -669,7 +669,7 @@ int *GetFlags(int nargs, char **args, char *PRE,
    *NB = 0;
    #ifdef ATL_GAS_x8664
       *NREG = 16;
-   #elif defined(aTL_GAS_x8632)
+   #elif defined(ATL_GAS_x8632)
       *NREG = 8;
    #elif defined(ATL_ARCH_IA64Itan) || defined(ATL_ARCH_IA64Itan)
       *NREG = 128;
@@ -790,7 +790,19 @@ ATL_mmnode_t *FindDefMUNU(int verb, char *vec, char pre, int nreg, int lat,
 {
    ATL_mmnode_t *mmp;
    double mf, mfB=0.0;
-   int n, i, j, kb;
+   int n, i, j, kb, muB=1, nuB=1;
+
+   mmp = ReadMMFileWithPath(pre, "res", "gAMMMUNU.sum");
+   if (mmp)
+   {
+      nb = mmp->kbB;
+      if (mmp->mflop[0] < 0.0)
+         mmp->mflop[0] = TimeMMKernel(verb, 1, mmp, pre, nb, nb, nb, 
+                                      nb, nb, nb, 1, 0, -1);
+      printf("READ IN BEST GENNED MU=%d, NU=%d, MFLOP=%.2f\n\n", 
+             mmp->mu, mmp->nu, mmp->mflop[0]);
+      return(mmp);
+   }
 /*
  * Try all near-square cases
  */
@@ -798,27 +810,179 @@ ATL_mmnode_t *FindDefMUNU(int verb, char *vec, char pre, int nreg, int lat,
    mmp->ku = ku;
    mmp->muladd = (lat != 0);
    mmp->lat = lat;
+   mmp->rout = DupString("amm_munu.c");
+   mmp->mbB = mmp->nbB = mmp->kbB = nb;
+   printf("Finding best MUxNU case for nb=%d\n", nb);
    for (n=4; n < nreg; n++)
    {
       for (j=1; j*j < n; j++);
       i = n / j;
+      if (nb%i || nb%j)
+         continue;
+      mmp->mu = i;
+      mmp->nu = j;
       if (mmp->genstr)
         free(mmp->genstr);
-      mmp->genstr = GenString(vec, lat, nb, i, j, ku, "bob.c");
-      mf = TimeMMKernel(verb, 0, mmp, pre, kb, kb, kb, kb, kb, kb, 1, 0, -1);
+      mmp->genstr = GenString(vec, lat, nb, i, j, ku, mmp->rout);
+      mf = TimeMMKernel(verb, 1, mmp, pre, nb, nb, nb, nb, nb, nb, 1, 0, -1);
+      printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
+      if (mf > mfB)
+      {
+         muB = i;
+         nuB = j;
+         mfB = mf;
+      }
    }
+/*
+ * For x86, try 1-D cases since older machines are 2-operand assemblies
+ */
+   #if defined(ATL_GAS_x8664) || defined(ATL_GAS_x8664)
+   printf("BEST NEAR-SQUARE CASE IS MU=%d, NU=%d, MFLOP=%.2f\n\n", 
+          muB, nuB, mfB);
+   printf("Finding best 1-D outer loop unrolling for nb=%d\n", nb);
+   for (n=2; n < nreg; n++)
+   {
+      i = 1; j = n;
+      if (nb % n)
+         continue;
+      mmp->mu = i;
+      mmp->nu = j;
+      if (mmp->genstr)
+        free(mmp->genstr);
+      mmp->genstr = GenString(vec, lat, nb, i, j, ku, mmp->rout);
+      mf = TimeMMKernel(verb, 1, mmp, pre, nb, nb, nb, nb, nb, nb, 1, 0, -1);
+      printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
+      if (mf > mfB)
+      {
+         muB = i;
+         nuB = j;
+         mfB = mf;
+      }
+      i = n; j = 1;
+      mmp->mu = i;
+      mmp->nu = j;
+      if (mmp->genstr)
+        free(mmp->genstr);
+      mmp->genstr = GenString(vec, lat, nb, i, j, ku, mmp->rout);
+      mf = TimeMMKernel(verb, 1, mmp, pre, nb, nb, nb, nb, nb, nb, 1, 0, -1);
+      printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
+      if (mf > mfB)
+      {
+         muB = i;
+         nuB = j;
+         mfB = mf;
+      }
+   }
+   #endif
+   mmp->mu = muB;
+   mmp->nu = nuB;
+   mmp->mflop[0] = mfB;
+   WriteMMFileWithPath(pre, "res", "gAMMMUNU.sum", mmp);
+   printf("BEST CASE IS MU=%d, NU=%d, MFLOP=%.2f\n\n", 
+          muB, nuB, mfB);
+   return(mmp);
 }
 
+void GetMUNUbyNB(int nb, int nreg, int *MU, int *NU)
+{
+   int mu=(*MU), nu=(*NU);
+
+   assert(mu && nu);
+   if (!(nb%mu) && !(nb%nu))
+      return;
+   if (mu == 1 || nu == 1) /* handle 1-D cases by just inc/dec U */
+   {
+      int u = (mu == 1) ? nu : mu;
+      while (u+u+1 < nreg && nb%u)
+         u++;
+      while (nb%u)
+         u--;
+      if (mu == 1)
+         *NU = u;
+      else
+         *MU = u;
+      return;
+   }
+   if (nb%mu)  /* mu can't handle NB */
+   {
+      int i;
+/* 
+ *    try increasing mu until we run out of registers
+ */
+      for (i=mu+1; i*nu+i+nu <= nreg; i++)
+         if (!(nb%i))
+            break;
+/*
+ *    Try decreasing mu until it divides
+ */
+      if (nb%i)
+      {
+         for (mu--; mu; mu--)
+            if (!(nb%mu))
+               break;
+      }
+      else
+         mu = i;
+   }
+   if (nb%nu)  /* nu can't handle NB */
+   {
+      int i;
+/* 
+ *    try increasing nu until we run out of registers
+ */
+      for (i=nu+1; i*mu+i+mu <= nreg; i++)
+         if (!(nb%i))
+            break;
+/*
+ *    Try decreasing nu until it divides
+ */
+      if (nb%i)
+      {
+         for (nu--; nu; nu--)
+            if (!(nb%nu))
+               break;
+      }
+      else
+         nu = i;
+   }
+   *MU = mu;
+   *NU = nu;
+}
+
+int FindNBInArray(int nb, int *nbs)
+/*
+ * RETURNS: location+1, or 0 if not found
+ */
+{
+   int n = (nbs[0] > 0) ? nbs[0] : -nbs[0];
+   for (i=1; i <= n; i++)
+       if (nbs[i] == nb)
+          return(i);
+   return(0);
+}
+ATL_mmnode_t CreateUserCasesFromNBs(ATL_mmnode_t *mmb, int *nbs)
+/*
+ * Generate a list of generated kernels, with the union of nb's in nbs
+ * and mmb, and return the generated nodes for timing.
+ */
+{
+   ATL_mmnode_t *mp;
+   int n = (nbs[0] > 0) ? nbs[0] : -nbs[0], ne=0;
+   for (mp=mmb; mp; mp = mmp
+}
 ATL_mmnode_t *FindBestGenCases(int verb, char pre, int nreg, int *nbs, 
                                ATL_mmnode_t *ummb)
 {
-   ATL_mmnode_t *mp, *gmmb;
+   ATL_mmnode_t *mp, *gmmU, *gmmb;
+   int MU, NU;
 /*
  * Find the best mu/nu for NB=120; we don't care if we overflow cache for
  * this timing, and 120 = LCM(2,3,4,5,6,8,12).  Use ku=1 so that large
  * problems don't have large K-driven advantage.
  */
-   gmmb = FindDefMUNU(verb, "scalar", pre, nreg, 0, 120, 1);
+   gmmU = FindDefMUNU(verb, "scalar", pre, nreg, 0, 120, 1);
+   MU = gmmU->mu; 
+   NU = gmmU->nu; 
 }
 
 ATL_mmnode_t *FindBestUserCases(int verb, char pre, int *nbs)
@@ -906,6 +1070,19 @@ int main(int nargs, char **args)
    }
    mmb = FindBestUserCases(verb, pre, nbs);
    mmp = FindBestGenCases(verb, pre, nregs, nbs, mmb);
+@beginskip
+   {
+      int i, mu=3, nu=5, m, n;
+      int ns[5] = {7, 22, 32, 36, 38};
+      for (i=0; i < 5; i++)
+      {
+         m = mu;
+         n = nu;
+         GetMUNUbyNB(ns[i], nregs, &m, &n);
+         printf("nb=%d, mu=%d, nu=%d, MU=%d, NU=%d\n", ns[i], mu, nu, m, n);
+      }
+   }
+@endskip
    KillAllMMNodes(mmb);
    exit(0);
 }
