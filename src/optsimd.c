@@ -2981,7 +2981,10 @@ static enum inst
  */            
                op = ip->inst[2];
                if (op < 0 )
+               {
+                  vrd = -op;
                   ip->inst[1] = op;
+               }
                else
                   assert(0); /* src1 is deref: will consider this case later */
 
