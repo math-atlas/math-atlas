@@ -1215,6 +1215,12 @@ struct assmln *lil2ass(BBLOCK *bbase)
  * These are x86-only instructions to handle SSE-to-icc conversions
  */
    #ifdef X86
+
+#if 0 
+/*
+ * NOTE: these two instructions are replaced with FCMPWXX and FCMPDWXX
+ * see below.
+ */
 /*    Majedul: Not in use right now. see h2l.c:800 */
       case FCMPW:  /* special cmp that overwrites an operand */
          assert(op3 > 0);
@@ -1254,6 +1260,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
                           archdregs[-DREGBEG-op2], archdregs[-DREGBEG-op1]);
          #endif
          break;
+#endif         
+
 /*    Majedul: Not in use currently. see h2l.c:800*/
       case CVTBFI:
          #ifdef AVX
@@ -2152,8 +2160,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #else
             assert(op1 == op2);
             ap->next = PrintAssln("\tcmpss\t$0,%s,%s\n", 
-                                  archxmmregs[-VFREGBEG-op3], 
-                                  archxmmregs[-VFREGBEG-op1]);
+                                  archvfregs[-VFREGBEG-op3], 
+                                  archvfregs[-VFREGBEG-op1]);
          #endif 
          break;
       case FCMPWNE:
@@ -2165,8 +2173,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #else
             assert(op1 == op2);
             ap->next = PrintAssln("\tcmpss\t$4,%s,%s\n",  
-                                  archxmmregs[-VFREGBEG-op3], 
-                                  archxmmregs[-VFREGBEG-op1]);
+                                  archvfregs[-VFREGBEG-op3], 
+                                  archvfregs[-VFREGBEG-op1]);
          #endif 
          break;
       case FCMPWLT:
@@ -2178,8 +2186,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #else
             assert(op1 == op2);
             ap->next = PrintAssln("\tcmpss\t$1,%s,%s\n",  
-                                   archxmmregs[-VFREGBEG-op3], 
-                                   archxmmregs[-VFREGBEG-op1]);
+                                   archvfregs[-VFREGBEG-op3], 
+                                   archvfregs[-VFREGBEG-op1]);
          #endif 
          break;
       case FCMPWLE:
@@ -2191,8 +2199,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #else
             assert(op1 == op2);
             ap->next = PrintAssln("\tcmpss\t$2,%s,%s\n",  
-                                  archxmmregs[-VFREGBEG-op3], 
-                                  archxmmregs[-VFREGBEG-op1]);
+                                  archvfregs[-VFREGBEG-op3], 
+                                  archvfregs[-VFREGBEG-op1]);
          #endif 
          break;
       case FCMPWGT:
@@ -2205,8 +2213,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
 /*             SSE: GT is replaced with NLE */            
             assert(op1 == op2);
             ap->next = PrintAssln("\tcmpss\t$6,%s,%s\n",  
-                                  archxmmregs[-VFREGBEG-op3], 
-                                  archxmmregs[-VFREGBEG-op1]);
+                                  archvfregs[-VFREGBEG-op3], 
+                                  archvfregs[-VFREGBEG-op1]);
          #endif 
          break;
       case FCMPWGE:
@@ -2219,8 +2227,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
 /*          GE is replaced with NLT*/            
             assert(op1 == op2);
             ap->next = PrintAssln("\tcmpss\t$5,%s,%s\n",  
-                                  archxmmregs[-VFREGBEG-op3], 
-                                  archxmmregs[-VFREGBEG-op1]);
+                                  archvfregs[-VFREGBEG-op3], 
+                                  archvfregs[-VFREGBEG-op1]);
          #endif 
          break;
          
@@ -2233,8 +2241,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #else
             assert(op1 ==op2);
             ap->next = PrintAssln("\tcmpsd\t$0,%s,%s\n",  
-                                  archxmmregs[-VDREGBEG-op3], 
-                                  archxmmregs[-VDREGBEG-op1]);
+                                  archvdregs[-VDREGBEG-op3], 
+                                  archvdregs[-VDREGBEG-op1]);
          #endif 
          break;
       case FCMPDWNE:
@@ -2246,8 +2254,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #else
             assert(op1 ==op2);
             ap->next = PrintAssln("\tcmpsd\t$4,%s,%s\n",  
-                                  archxmmregs[-VDREGBEG-op3], 
-                                  archxmmregs[-VDREGBEG-op1]);
+                                  archvdregs[-VDREGBEG-op3], 
+                                  archvdregs[-VDREGBEG-op1]);
          #endif
          break;
       case FCMPDWLT:
@@ -2259,8 +2267,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #else
             assert(op1 ==op2);
             ap->next = PrintAssln("\tcmpsd\t$1,%s,%s\n",  
-                                  archxmmregs[-VDREGBEG-op3], 
-                                  archxmmregs[-VDREGBEG-op1]);
+                                  archvdregs[-VDREGBEG-op3], 
+                                  archvdregs[-VDREGBEG-op1]);
          #endif
          break;
       case FCMPDWLE:
@@ -2272,8 +2280,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #else
             assert(op1 ==op2);
             ap->next = PrintAssln("\tcmpsd\t$2,%s,%s\n",  
-                                  archxmmregs[-VDREGBEG-op3], 
-                                  archxmmregs[-VDREGBEG-op1]);
+                                  archvdregs[-VDREGBEG-op3], 
+                                  archvdregs[-VDREGBEG-op1]);
          #endif
          break;
       case FCMPDWGT:
@@ -2286,8 +2294,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
 /*             SSE: GT is replaced with NLE */            
             assert(op1 ==op2);
             ap->next = PrintAssln("\tcmpsd\t$6,%s,%s\n",  
-                                  archxmmregs[-VDREGBEG-op3], 
-                                  archxmmregs[-VDREGBEG-op1]);
+                                  archvdregs[-VDREGBEG-op3], 
+                                  archvdregs[-VDREGBEG-op1]);
          #endif
          break;
       case FCMPDWGE:
@@ -2300,8 +2308,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
 /*             SSE: GE is replaced with NLT */            
             assert(op1 ==op2);
             ap->next = PrintAssln("\tcmpsd\t$5,%s,%s\n",  
-                                  archxmmregs[-VDREGBEG-op3], 
-                                  archxmmregs[-VDREGBEG-op1]);
+                                  archvdregs[-VDREGBEG-op3], 
+                                  archvdregs[-VDREGBEG-op1]);
          #endif
          break;         
 #endif         
