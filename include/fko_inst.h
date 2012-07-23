@@ -225,7 +225,8 @@ enum inst
    CVTBDI,   /* ireg, dreg    x86 only movmskpd */
 /*
  * vector cmp instructions
- */ 
+ */
+#if 0   
    VDCMPWEQ,
    VDCMPWNE,
    VDCMPWLT,
@@ -246,6 +247,20 @@ enum inst
    VFCMPWGE,
    VFCMPWNGT,
    VFCMPWNGE,
+#else
+   VDCMPWEQ,
+   VDCMPWNE,
+   VDCMPWLT,
+   VDCMPWLE,
+   VDCMPWGT,
+   VDCMPWGE,
+   VFCMPWEQ,
+   VFCMPWNE,
+   VFCMPWLT,
+   VFCMPWLE,
+   VFCMPWGT,
+   VFCMPWGE,
+#endif
 /*
  * Masks instruction: masks sign bits of vector to integer reg
  */
@@ -268,6 +283,7 @@ enum inst
  * Dummy CMP instruction which are needed for ReductionVector translation.
  * I don't find their implementation yet.
  */
+#if 0   
    FCMPDWEQ,
    FCMPDWNE,
    FCMPDWLT,
@@ -288,6 +304,20 @@ enum inst
    FCMPWGE,
    FCMPWNGT,
    FCMPWNGE,
+#else
+   FCMPDWEQ,
+   FCMPDWNE,
+   FCMPDWLT,
+   FCMPDWLE,
+   FCMPDWGT,
+   FCMPDWGE,
+   FCMPWEQ,
+   FCMPWNE,
+   FCMPWLT,
+   FCMPWLE,
+   FCMPWGT,
+   FCMPWGE,
+#endif
    LAST_INST
 };
 
@@ -453,6 +483,7 @@ char *instmnem[] =
 /*
  * vector cmp intructions
  */
+#if 0   
    "VDCMPWEQ",
    "VDCMPWNE",
    "VDCMPWLT",
@@ -473,6 +504,20 @@ char *instmnem[] =
    "VFCMPWGE",
    "VFCMPWNGT",
    "VFCMPWNGE",
+#else
+   "VDCMPWEQ",
+   "VDCMPWNE",
+   "VDCMPWLT",
+   "VDCMPWLE",
+   "VDCMPWGT",
+   "VDCMPWGE",
+   "VFCMPWEQ",
+   "VFCMPWNE",
+   "VFCMPWLT",
+   "VFCMPWLE",
+   "VFCMPWGT",
+   "VFCMPWGE",
+#endif
 /*
  * Masks instruction: masks sign bits of vector to integer reg
  */
@@ -493,7 +538,8 @@ char *instmnem[] =
    "CVTSD",
 /*
  * Dummy inst for redundant vector transformation
- */ 
+ */
+#if 0   
    "FCMPDWEQ",
    "FCMPDWNE",
    "FCMPDWLT",
@@ -514,7 +560,20 @@ char *instmnem[] =
    "FCMPWGE",
    "FCMPWNGT",
    "FCMPWNGE",
-
+#else
+   "FCMPDWEQ",
+   "FCMPDWNE",
+   "FCMPDWLT",
+   "FCMPDWLE",
+   "FCMPDWGT",
+   "FCMPDWGE",
+   "FCMPWEQ",
+   "FCMPWNE",
+   "FCMPWLT",
+   "FCMPWLE",
+   "FCMPWGT",
+   "FCMPWGE",
+#endif
    "LAST_INST"
 };
 #else
@@ -552,24 +611,25 @@ char *instmnem[] =
 
 #define IS_CMPW(i_)  ((i_) == FCMPDWEQ || (i_) == FCMPDWNE || \
                       (i_) == FCMPDWLT || (i_) == FCMPDWLE || \
-                      (i_) == FCMPDWNLT || (i_) == FCMPDWNLE || \
                       (i_) == FCMPDWGT || (i_) ==  FCMPDWGE || \
-                      (i_) == FCMPDWNGT || (i_) == FCMPDWNGE || \
                       (i_) == FCMPWEQ || (i_) ==  FCMPDWNE || \
                       (i_) == FCMPWLT || (i_) ==  FCMPWLE || \
-                      (i_) == FCMPWNLT || (i_) == FCMPWNLE || \
                       (i_) == FCMPWGT || (i_) ==  FCMPWGE || \
-                      (i_) == FCMPWNGT || (i_) == FCMPWNGE || \
                       (i_) == VDCMPWEQ || (i_) == VDCMPWNE || \
                       (i_) == VDCMPWLT || (i_) == VDCMPWLE || \
-                      (i_) == VDCMPWNLT || (i_) == VDCMPWNLE || \
                       (i_) == VDCMPWGT || (i_) == VDCMPWGE || \
-                      (i_) == VDCMPWNGT || (i_) == VDCMPWNGE || \
                       (i_) == VFCMPWEQ || (i_) == VFCMPWNE || \
                       (i_) == VFCMPWLT || (i_) == VFCMPWLE || \
+                      (i_) == VFCMPWGT || (i_) == VFCMPWGE )
+
+                      /*(i_) == FCMPDWNLT || (i_) == FCMPDWNLE || \
+                      (i_) == FCMPDWNGT || (i_) == FCMPDWNGE || \
+                      (i_) == FCMPWNLT || (i_) == FCMPWNLE || \
+                      (i_) == FCMPWNGT || (i_) == FCMPWNGE || \
+                      (i_) == VDCMPWNLT || (i_) == VDCMPWNLE || \
+                      (i_) == VDCMPWNGT || (i_) == VDCMPWNGE || \
                       (i_) == VFCMPWNLT || (i_) == VFCMPWNLE || \
-                      (i_) == VFCMPWGT || (i_) == VFCMPWGE || \
-                      (i_) == VFCMPWNGT || (i_) == VFCMPWNGE)
+                      (i_) == VFCMPWNGT || (i_) == VFCMPWNGE)*/
 
 #define IS_CMP(i_) ((i_) == CMP || (i_) == CMPAND || (i_) == CMPS || \
                     (i_) == FCMP || (i_) == FCMPD || \
