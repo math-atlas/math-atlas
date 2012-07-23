@@ -41,7 +41,6 @@ ID=7 MU=24 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_samm24x3x256_avx.S' \
      SSE=3 KBMAX=256 ASM=GAS_x8664 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -mavx'
 @ROUT emit_amm
-@ROUT emit_amm
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2012
 #include "atlas_misc.h"
 #define ATL_JKMDEF 1
@@ -495,11 +494,13 @@ ATL_mmnode_t *BestForThisNB
    char pre, 
    ATL_mmnode_t *mmb, 
    int nb, 
+   int pnb,  /* previous nb */
+   int nnb,  /* next nb */
    int FORCE
 )
 /*
  * Times all kernels in mmb
- * RETURNS: ptr to best performing kernel, NULL if no kernel worked
+ * RETURNS: ptr to best performing kernel, empty gen node if no user case wrks
  */
 {
    ATL_mmnode_t *mmp, *mmB=NULL;
@@ -534,7 +535,7 @@ ATL_mmnode_t *BestForThisNB
       if ((mmp->kbmin && kb < mmp->kbmin) ||
           (mmp->kbmax && kb > mmp->kbmax) ||
           ((kb/mmp->mu)*mmp->mu != kb) || ((kb/mmp->nu)*mmp->nu != kb) ||
-          ((kb/mmp->ku)*mmp->ku != kb))
+          ((kb/mmp->ku)*mmp->ku != kb) || (kb == pnb) || (kb == nnb))
       {
          
          printf("   %d. %s: SKIPPED, bad NB\n", mmp->ID, mmp->rout);
@@ -553,6 +554,7 @@ ATL_mmnode_t *BestForThisNB
    {
       printf("NO KERNEL POSSIBLE FOR NB=%d\n", nb);
       mmB = GetMMNode();
+      mmB->mbB = mmB->nbB = mmB->kbB = nb;
    }
    else
    {
@@ -611,6 +613,7 @@ int DeleteBadBigNBs(ATL_mmnode_t *mmb, int *nbs)
    }
    return(n);
 }
+
 ATL_mmnode_t *FindBestForEachNB(int verb, char pre, ATL_mmnode_t *mmb, int *nbs)
 {
    int i, n, FORCE;
@@ -626,10 +629,12 @@ ATL_mmnode_t *FindBestForEachNB(int verb, char pre, ATL_mmnode_t *mmb, int *nbs)
       n = -n;
       FORCE = 1;
    }
-   bp = best = BestForThisNB(verb, pre, mmb, nbs[1], FORCE);
+   bp = best = BestForThisNB(verb, pre, mmb, nbs[1], 0, (n == 1)?nbs[1]:0,
+                             FORCE);
    for (i=2; i <= n; i++)
    {
-      bp->next = BestForThisNB(verb, pre, mmb, nbs[i], FORCE);
+      int pnb = nbs[i-1], nnb = (i < n) ? nbs[i+1]:0;
+      bp->next = BestForThisNB(verb, pre, mmb, nbs[i], pnb, nnb, FORCE);
       bp = bp->next;
    }
    i = DeleteBadBigNBs(best, nbs);
@@ -637,7 +642,6 @@ ATL_mmnode_t *FindBestForEachNB(int verb, char pre, ATL_mmnode_t *mmb, int *nbs)
 }
 
 void PrintUsage(char *name, int ierr, char *flag)
-@ROUT ammusearch ammgsearch
 {
    if (ierr > 0)
       fprintf(stderr, "Bad argument #%d: '%s'\n", ierr, 
@@ -646,37 +650,33 @@ void PrintUsage(char *name, int ierr, char *flag)
       fprintf(stderr, "ERROR: %s\n", flag);
    fprintf(stderr, "USAGE: %s [flags:\n", name);
    fprintf(stderr, "   -p [s,d,c,z]: set type/precision prefix (d) \n");
-   fprintf(stderr, "   -o <outfile>: output file (res/<pre>uAMMRES.sum)\n");
+@skip    fprintf(stderr, "   -o <outfile>: output file (res/<pre>uAMMRES.sum)\n");
    fprintf(stderr, "   -n # nb1 ... nb# : NBs to try for\n");
    fprintf(stderr, "   -N # nb1 ... nb# : force exact NBs in search\n");
-@ROUT ammgsearch
    fprintf(stderr, "   -r <nreg> : set max # of registers to try\n");
    fprintf(stderr, "   -b <nb>   : set initial block factor to try\n");
-@ROUT ammusearch ammgsearch
+   fprintf(stderr, "   -v <verb> : set verbosity (1)\n");
    exit(ierr ? ierr : -1);
 }
 
-@ROUT ammgsearch
-int *GetFlags(int nargs, char **args, char *PRE, char **FNOUT, 
-              int *NREG, int *NB)
-@ROUT ammusearch
-int *GetFlags(int nargs, char **args, char *PRE, char **FNOUT)
-@ROUT ammusearch ammgsearch
+int *GetFlags(int nargs, char **args, char *PRE, 
+              int *verb, int *NREG, int *NB)
 {
    int i, j=0, n, k;
    char pre='d';
    int *nbs=NULL;
-   *FNOUT = NULL;
-@ROUT ammgsearch
+@skip   *FNOUT = NULL;
    *NB = 0;
    #ifdef ATL_GAS_x8664
       *NREG = 16;
    #elif defined(aTL_GAS_x8632)
       *NREG = 8;
+   #elif defined(ATL_ARCH_IA64Itan) || defined(ATL_ARCH_IA64Itan)
+      *NREG = 128;
    #else
       *NREG = 32;
    #endif
-@ROUT ammusearch ammgsearch
+   *verb = 1;
    for (i=1; i < nargs; i++)
    {
       if (args[i][0] != '-')
@@ -690,11 +690,13 @@ int *GetFlags(int nargs, char **args, char *PRE, char **FNOUT)
         pre = tolower(args[i][0]);
         assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
         break;
+@beginskip
       case 'o':
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
         *FNOUT = DupString(args[i]);
         break;
+@endskip
       case 'n':
          j = 1;
       case 'N':
@@ -711,11 +713,15 @@ int *GetFlags(int nargs, char **args, char *PRE, char **FNOUT)
             nbs[k] = atoi(args[i]);
          }
          break;
-@ROUT ammgsearch
       case 'r':
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
          *NREG = atoi(args[i]);
+         break;
+      case 'v':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         *verb = atoi(args[i]);
          break;
       case 'b':
         if (++i >= nargs)
@@ -723,69 +729,74 @@ int *GetFlags(int nargs, char **args, char *PRE, char **FNOUT)
          *NB = atoi(args[i]);
          break;
    fprintf(stderr, "   -b <nb>   : set initial block factor to try\n");
-@ROUT ammusearch ammgsearch
       default:
          PrintUsage(args[0], i, args[i]);
       }
    }
    *PRE = pre;
-@ROUT ammgsearch
-   if (*NB == 0)
-      *NB = (pre == 'd') ? 36 : 48;
-@ROUT ammusearch ammgsearch
+@skip   if (*NB == 0)
+@skip      *NB = (pre == 'd') ? 36 : 48;
+@beginskip
    if (!(*FNOUT))
    {
       *FNOUT = DupString("res/duAMMRES.sum");
       (*FNOUT)[4] = pre;
    }
+@endskip
    if (!nbs)
    {
-      nbs = malloc(18*sizeof(int));
+      nbs = malloc(19*sizeof(int));
       assert(nbs);
-      nbs[0] = 16; nbs[1] = 4; nbs[2] = 6; nbs[3] = 8; 
+      nbs[0] = 17; nbs[1] = 4; nbs[2] = 6; nbs[3] = 8; 
       nbs[4] = 12; nbs[5] = 16; nbs[6] = 18; nbs[7] = 24;
       nbs[8] = 32; nbs[9] = 48; nbs[10] = 56; nbs[11] = 60;
-      nbs[12] = 72; nbs[13] = 80; nbs[14] = 120; nbs[15] = 180;
-      nbs[16] = 240; nbs[17] = 480;
+      nbs[12] = 72; nbs[13] = 80; nbs[14] = 120; nbs[15] = 144;
+      nbs[16] = 180; nbs[17] = 240; nbs[18] = 480;
    }
    return(nbs);
 }
 
-@ROUT ammgsearch
-char *GenString(char *vec, int lat, int mu, int nu, int ku)
+char *GenString(char *vec, int lat, int nb, int mu, int nu, int ku, char *rt)
 {
-   char *frm=make gen_amm_%s lat=%d mu=%d nu=%d ku=%d", *ln;
+   char *frm="make gen_amm_%s lat=%d mu=%d nu=%d ku=%d kb=%d rt=%s", *ln;
    int l;
    l = strlen(frm) + strlen(vec) + 5;
    ln = malloc(l*sizeof(char));
    assert(ln);
-   sprintf(ln, frm, vec, lat, mu, nu, ku);
+   sprintf(ln, frm, vec, lat, mu, nu, ku, nb, rt);
    return(ln);
 }
 
-ATL_mmnode_t GetNewGenNode(char *vec, int lat, int mu, int nu, int ku)
+ATL_mmnode_t *GetNewGenNode(char *vec, int nb, int lat, int mu, int nu, int ku)
 {
    ATL_mmnode_t *np;
-   np = GetMMnode();
+   char *ln;
+   np = GetMMNode();
+   np->rout = malloc(sizeof(char)*16);
+   assert(np->rout);
+   sprintf(np->rout, "ATL_gamm_%d.c", nb);
+   np->nbB = np->mbB = np->kbB = nb;
    np->mu = mu;
    np->nu = nu;
    np->ku = ku;
    np->muladd = (lat != 0);
    np->lat = lat;
-   np->genstr = GenString(vec, lat, mu, nu, ku);
+   np->genstr = GenString(vec, lat, nb, mu, nu, ku, np->rout);
    return(np);
 }
-ATL_mmnode_t *FindDefMUNU(int verb, char *vec, char pre, int nreg, int nb, 
-                          int ku);
+
+ATL_mmnode_t *FindDefMUNU(int verb, char *vec, char pre, int nreg, int lat, 
+                          int nb, int ku)
 {
    ATL_mmnode_t *mmp;
    double mf, mfB=0.0;
+   int n, i, j, kb;
 /*
  * Try all near-square cases
  */
    mmp = GetMMNode();
    mmp->ku = ku;
-   np->muladd = (lat != 0);
+   mmp->muladd = (lat != 0);
    mmp->lat = lat;
    for (n=4; n < nreg; n++)
    {
@@ -793,50 +804,54 @@ ATL_mmnode_t *FindDefMUNU(int verb, char *vec, char pre, int nreg, int nb,
       i = n / j;
       if (mmp->genstr)
         free(mmp->genstr);
-      mmp->genstr = GenString(vec, lat, i, j, ku);
+      mmp->genstr = GenString(vec, lat, nb, i, j, ku, "bob.c");
       mf = TimeMMKernel(verb, 0, mmp, pre, kb, kb, kb, kb, kb, kb, 1, 0, -1);
    }
 }
-int main(int nargs, char **args)
-{
-   char pre='d';
-   int verb=1, nb, nreg, mu, nu;
-   int *nbs;
-   char *fnout;
-   ATL_mmnode_t *mmb, *mmp;
 
-   nbs = GetFlags(nargs, args, &pre, &fnout, &nreg, &nb);
-   FindDefMUNU(pre, nreg, nb, &mu, &nu);
-   if (verb)
-   {
-      int i;
-      const int n = nbs[0]+1;
-      printf("NBs = %3d", nbs[1]);
-      for (i=2; i < n; i++)
-         printf(", %3d", nbs[i]);
-      printf("\n");
-   }
-   return(0);
+ATL_mmnode_t *FindBestGenCases(int verb, char pre, int nreg, int *nbs, 
+                               ATL_mmnode_t *ummb)
+{
+   ATL_mmnode_t *mp, *gmmb;
+/*
+ * Find the best mu/nu for NB=120; we don't care if we overflow cache for
+ * this timing, and 120 = LCM(2,3,4,5,6,8,12).  Use ku=1 so that large
+ * problems don't have large K-driven advantage.
+ */
+   gmmb = FindDefMUNU(verb, "scalar", pre, nreg, 0, 120, 1);
 }
-@ROUT ammusearch
-int main(int nargs, char **args)
-{
-   char pre='d';
-   int verb=1;
-   int *nbs;
-   char *fnout;
-   ATL_mmnode_t *mmb, *mmp;
 
-   nbs = GetFlags(nargs, args, &pre, &fnout);
-   if (verb)
+ATL_mmnode_t *FindBestUserCases(int verb, char pre, int *nbs)
+/*
+ * RETURNS: list of the best user case for each supplied NB; if no user case
+ *          works, special "generated" node is returned for later filling out.
+ */
+{
+   ATL_mmnode_t *mmb, *mmp;
+   mmb = ReadMMFileWithPath(pre, "res", "uAMMRES.sum");
+/*
+ * If final output file exists, then we need to rerun timings at worst
+ */
+   if (mmb)
    {
-      int i;
-      const int n = nbs[0]+1;
-      printf("NBs = %3d", nbs[1]);
-      for (i=2; i < n; i++)
-         printf(", %3d", nbs[i]);
+      for (mmp=mmb; mmp; mmp = mmp->next)
+      {
+         if (mmp->ID > 0 && mmp->mflop[0] < 0.0)
+            mmp->mflop[0] = TimeMMKernel(verb, 0, mmp, pre, mmp->mbB, mmp->nbB,
+                                         mmp->kbB, mmp->kbB, mmp->kbB, mmp->kbB,
+                                         1, 0, -1);
+         if (mmp->ID > 0)
+            printf("USER KERNEL AT NB=%d gets MFLOP=%.2f\n",
+                   mmp->kbB, mmp->mflop[0]);
+         else
+            printf("NO USER KERNEL FOR NB=%d\n", mmp->kbB);
+      }
       printf("\n");
+      return(mmb);
    }
+/*
+ * If answer isn't already known, read index file for queue of candidate kerns
+ */
    mmb = ReadMMFileWithPath(pre, "AMMCASES", "amcases.idx");
    assert(mmb);
 /*
@@ -859,17 +874,39 @@ int main(int nargs, char **args)
    }
    mmb = DelBadMMKernels(pre, verb, mmb);
    assert(mmb);
-#if 0
-   if (verb)
+   if (verb > 1)
    {
       printf("\nSURVIVING KERNELS:\n");
       PrintMMNodes(stdout, mmb);
    }
-#endif
    mmp = FindBestForEachNB(verb, pre, mmb, nbs);
    KillAllMMNodes(mmb);
    free(nbs);
-   WriteMMFile(fnout, mmp);
+   WriteMMFileWithPath(pre, "res", "uAMMRES.sum", mmp);
+   return(mmp);
+}
+
+int main(int nargs, char **args)
+{
+   char pre='d';
+   int verb, nregs, nb;
+   int *nbs;
+   char *fnout;
+   ATL_mmnode_t *mmb, *mmp;
+
+   nbs = GetFlags(nargs, args, &pre, &verb, &nregs, &nb);
+   if (verb)
+   {
+      int i;
+      const int n = nbs[0]+1;
+      printf("NBs = %3d", nbs[1]);
+      for (i=2; i < n; i++)
+         printf(", %3d", nbs[i]);
+      printf("\n");
+   }
+   mmb = FindBestUserCases(verb, pre, nbs);
+   mmp = FindBestGenCases(verb, pre, nregs, nbs, mmb);
+   KillAllMMNodes(mmb);
    exit(0);
 }
 @ROUT ATL_ammmABC
