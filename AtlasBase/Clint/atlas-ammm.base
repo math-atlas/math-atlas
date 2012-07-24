@@ -760,7 +760,7 @@ char *GenString(char *vec, int lat, int nb, int mu, int nu, int ku, char *rt)
 {
    char *frm="make gen_amm_%s lat=%d mu=%d nu=%d ku=%d kb=%d rt=%s", *ln;
    int l;
-   l = strlen(frm) + strlen(vec) + 5;
+   l = strlen(frm) + strlen(vec) + strlen(rt) + 8;
    ln = malloc(l*sizeof(char));
    assert(ln);
    sprintf(ln, frm, vec, lat, mu, nu, ku, nb, rt);
@@ -772,9 +772,9 @@ ATL_mmnode_t *GetNewGenNode(char *vec, int nb, int lat, int mu, int nu, int ku)
    ATL_mmnode_t *np;
    char *ln;
    np = GetMMNode();
-   np->rout = malloc(sizeof(char)*16);
+   np->rout = malloc(sizeof(char)*24);
    assert(np->rout);
-   sprintf(np->rout, "ATL_gamm_%d.c", nb);
+   sprintf(np->rout, "ATL_gamm%dx%d_nb%d.c", mu, nu, nb);
    np->nbB = np->mbB = np->kbB = nb;
    np->mu = mu;
    np->nu = nu;
@@ -954,21 +954,71 @@ int FindNBInArray(int nb, int *nbs)
  * RETURNS: location+1, or 0 if not found
  */
 {
-   int n = (nbs[0] > 0) ? nbs[0] : -nbs[0];
+   int i, n = (nbs[0] > 0) ? nbs[0] : -nbs[0];
    for (i=1; i <= n; i++)
        if (nbs[i] == nb)
           return(i);
    return(0);
 }
-ATL_mmnode_t CreateUserCasesFromNBs(ATL_mmnode_t *mmb, int *nbs)
+ATL_mmnode_t *CreateGenCasesFromNBs
+(
+   ATL_mmnode_t *mmb,   /* best user-contributed kernels */
+   char *vec,           /* what vector extension we are generating */
+   int *nbs,            /* list of desired NBs */
+   int nreg,            /* upper bound on register use */
+   int MU, int NU,      /* default M/N unrolling */
+   int KU               /* -1 for fully unrolled, else unrolling factor */
+)
 /*
  * Generate a list of generated kernels, with the union of nb's in nbs
  * and mmb, and return the generated nodes for timing.
  */
 {
-   ATL_mmnode_t *mp;
-   int n = (nbs[0] > 0) ? nbs[0] : -nbs[0], ne=0;
-   for (mp=mmb; mp; mp = mmp
+   ATL_mmnode_t *mp, *umb=NULL, *mmp;
+   int i, n = (nbs[0] > 0) ? nbs[0] : -nbs[0], ne=0, *enbs;
+   enbs = malloc(sizeof(int)*(n+1));
+   for (mp=mmb; mp; mp = mp->next)
+      if (!FindNBInArray(mp->kbB, nbs))
+         enbs[ne++] = mp->kbB;
+/*
+ * Create new queue for all NBs
+ */
+   i = 0; mp = mmb;
+   do
+   {
+      ATL_mmnode_t *p;
+      int nb, ku;
+      int mu=MU, nu=NU;
+      if (mmp)
+      {
+         if (i < ne)
+         {
+            nb = enbs[i];
+            nb = Mmin(nb, mp->kbB);
+            if (nb == enbs[i])
+               i++;
+         }
+         else
+            nb = mp->kbB;
+         if (nb == mp->kbB)
+            mp = mp->next;
+      }
+      else  /* only taking stuff rom enbs */
+         nb = enbs[i++];
+      ku = (KU == -1) ? nb : KU;
+      GetMUNUbyNB(nb, nreg, &mu, &nu);
+      p = GetNewGenNode(vec, nb, 0, mu, nu, ku);
+      if (umb)
+      {
+         mmp->next = p;
+         mmp = p;
+      }
+      else
+         umb = mmp = p;
+   }
+   while (mp || i < ne);
+   free(enbs);
+   return(umb);
 }
 ATL_mmnode_t *FindBestGenCases(int verb, char pre, int nreg, int *nbs, 
                                ATL_mmnode_t *ummb)
@@ -983,7 +1033,23 @@ ATL_mmnode_t *FindBestGenCases(int verb, char pre, int nreg, int *nbs,
    gmmU = FindDefMUNU(verb, "scalar", pre, nreg, 0, 120, 1);
    MU = gmmU->mu; 
    NU = gmmU->nu; 
+   KillMMNode(gmmU);
+   gmmb = CreateGenCasesFromNBs(ummb, "scalar", nbs, nreg, MU, NU, 1);
+   printf("\n");
+   PrintMMNodes(stdout, gmmb);
+   printf("\n");
+   printf("Finding generated cases for all NBs:\n");
+   for (mp=gmmb; mp; mp = mp->next)
+   {
+      mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB, mp->kbB, 
+                                  mp->kbB, mp->kbB, mp->kbB, 1, 0, -1);
+      printf("   NB=%d, mu=%d, nu=%d, MFLOPS=%.2f\n", 
+             mp->kbB, mp->mu, mp->nu, mp->mflop[0]);
+   }
+   printf("Done.\n\n");
+   return(gmmb);
 }
+
 
 ATL_mmnode_t *FindBestUserCases(int verb, char pre, int *nbs)
 /*
@@ -1050,6 +1116,58 @@ ATL_mmnode_t *FindBestUserCases(int verb, char pre, int *nbs)
    return(mmp);
 }
 
+ATL_mmnode_t *MergeAndWinnowCases
+(
+   int verb, 
+   char pre, 
+   ATL_mmnode_t *umb, /* queue of user cases */
+   ATL_mmnode_t *gmb  /* genned cases, always include NBs of umb */
+)
+/*
+ * Merges user and gmp cases, while getting rid of cases that get worse
+ * performance than their smaller blocks; FREES umb and gmb
+ * RETURNS: new merged and winnowed queue
+ */
+{
+   ATL_mmnode_t *mmb=NULL, *mmp, *gmp, *ump=umb;
+   for (gmp=gmb; gmp; gmp = gmp->next)
+   {
+      ATL_mmnode_t *p;
+      if (ump)
+      {
+         if (ump->kbB == gmp->kbB)
+         {
+            if (gmp->mflop[0] >= ump->mflop[0])
+               p = CloneMMNode(gmp);
+            else
+               p = CloneMMNode(ump);
+            ump = ump->next;
+         }
+      }
+      else
+         p = CloneMMNode(gmp);
+      p->next = NULL;
+      if (mmb)
+      {
+/*
+ *       If larger NB isn't faster than smaller one, kill it for nb >= 16
+ */
+         if (p->kbB >= 16 && mmp->mflop[0] > p->mflop[0])
+            KillMMNode(p);
+         else
+         {
+            mmp->next = p;
+            mmp = p;
+         }
+      }
+      else
+         mmp = mmb = p;
+   }
+   KillAllMMNodes(umb);
+   KillAllMMNodes(gmb);
+   return(mmb);
+}
+
 int main(int nargs, char **args)
 {
    char pre='d';
@@ -1070,19 +1188,8 @@ int main(int nargs, char **args)
    }
    mmb = FindBestUserCases(verb, pre, nbs);
    mmp = FindBestGenCases(verb, pre, nregs, nbs, mmb);
-@beginskip
-   {
-      int i, mu=3, nu=5, m, n;
-      int ns[5] = {7, 22, 32, 36, 38};
-      for (i=0; i < 5; i++)
-      {
-         m = mu;
-         n = nu;
-         GetMUNUbyNB(ns[i], nregs, &m, &n);
-         printf("nb=%d, mu=%d, nu=%d, MU=%d, NU=%d\n", ns[i], mu, nu, m, n);
-      }
-   }
-@endskip
+   mmb = MergeAndWinnowCases(verb, pre, mmb, mmp);
+   WriteMMFileWithPath(pre, "res", "eAMMRES.sum", mmb);
    KillAllMMNodes(mmb);
    exit(0);
 }
