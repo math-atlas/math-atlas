@@ -36,6 +36,12 @@ ID=6 MU=2 NU=12 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm2x12x256_sse2.S' \
 ID=7 MU=12 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm12x3x256_avx.S' \
      SSE=3 KBMAX=256 ASM=GAS_x8664 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -mavx'
+ID=8 MU=6 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm6x3x256_sse3.S' \
+     SSE=3 KBMAX=256 ASM=GAS_x8664 \
+     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse3'
+ID=8 MU=6 NU=3 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_damm6x3x4_sse3.S' \
+     SSE=3 KBMIN=4 ASM=GAS_x8664 \
+     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse3'
 @ROUT samcases.idx
 ID=7 MU=24 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_samm24x3x256_avx.S' \
      SSE=3 KBMAX=256 ASM=GAS_x8664 \
@@ -152,14 +158,19 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
          int j;
          for (j=0; j < 3; j++)
          {
-            fprintf(fp, " \\\n       ATL_%cablk2cmat_%dx%d_a%c_b1.o",
-                    pre, mu, nu, al[j]);
-            fprintf(fp, " ATL_%cablk2cmat_%dx%d_a%c_bX.o",
-                    pre, mu, nu, al[j]);
-            fprintf(fp, " \\\n       ATL_%cablk2cmat_%dx%d_a%c_b0.o",
-                    pre, mu, nu, al[j]);
-            fprintf(fp, " ATL_%cablk2cmat_%dx%d_a%c_bn.o",
-                    pre, mu, nu, al[j]);
+            int k;
+            char *rtn[2] = {"ablk2cmat", "cmat2ablk"};
+            for (k=0; k < 2; k++)
+            {
+               fprintf(fp, " \\\n       ATL_%c%s_%dx%d_a%c_b1.o",
+                       pre, rtn[k], mu, nu, al[j]);
+               fprintf(fp, " ATL_%c%s_%dx%d_a%c_bX.o",
+                       pre, rtn[k], mu, nu, al[j]);
+               fprintf(fp, " \\\n       ATL_%c%s_%dx%d_a%c_b0.o",
+                       pre, rtn[k], mu, nu, al[j]);
+               fprintf(fp, " ATL_%c%s_%dx%d_a%c_bn.o",
+                       pre, rtn[k], mu, nu, al[j]);
+            }
          }
       }
       for (i=(mu == nu); i < 2; i++)
@@ -220,7 +231,7 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
    {
       const int mu=mmp->mu, nu = mmp->nu;
 /*
- *    Print out 2-D ablk2Cmat targets
+ *    Print out 2-D ablk2Cmat and cmat2ablk targets
  */
       for (p=mmb; p != mmp && (p->mu != mu || p->nu != nu); p = p->next);
       if (p == mmp)  /* mu,nu not seen before */
@@ -232,12 +243,17 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
          {
             for (j=0; j < 3; j++)
             {
-               char rn[64];
-               sprintf(rn, "ATL_%cablk2cmat_%dx%d_a%c_b%c",
-                       pre, mu, nu, al[j], cbe[i]);
-               fprintf(fp, "%s.o : %s.c\n", rn, rn);
-               fprintf(fp, "\t%s %s $(CDEFS) %s -c %s.c\n", 
-                       dcomp, dflags, styp, rn);
+               int k;
+               char *rtn[2] = {"ablk2cmat", "cmat2ablk"};
+               for (k=0; k < 2; k++)
+               {
+                  char rn[64];
+                  sprintf(rn, "ATL_%c%s_%dx%d_a%c_b%c",
+                          pre, rtn[k], mu, nu, al[j], cbe[i]);
+                  fprintf(fp, "%s.o : %s.c\n", rn, rn);
+                  fprintf(fp, "\t%s %s $(CDEFS) %s -c %s.c\n", 
+                          dcomp, dflags, styp, rn);
+               }
             }
          }
       }
@@ -356,23 +372,31 @@ void GenUserFiles(char pre, ATL_mmnode_t *mmb, char *outd)
             {
                char rn[64];
                int ierr;
-               sprintf(rn, "ATL_%cablk2cmat_%dx%d_a%c_b%c.c",
-                       pre, mu, nu, al[j], cbe[i]);
-               sprintf(ln, 
-                  "make %s pre=%c mu=%d nu=%d al=%c be=%c alpha=%d beta=%d", 
-                       rn, pre, mu, nu, al[j], cbe[i], ial[j], ibe[i]);
-               ierr = system(ln);
-               if (ierr)
+               int k;
+               for (k=0; k < 2; k++)
                {
-                  fprintf(stderr, "FAILED CMND='%s'\n", ln);
-                  exit(ierr);
-               }
-               sprintf(ln, "mv %s %s/.", rn, outd);
-               ierr = system(ln);
-               if (ierr)
-               {
-                  fprintf(stderr, "FAILED CMND='%s'\n", ln);
-                  exit(ierr);
+                  if (!k)
+                     sprintf(rn, "ATL_%cablk2cmat_%dx%d_a%c_b%c.c",
+                             pre, mu, nu, al[j], cbe[i]);
+                  else
+                     sprintf(rn, "ATL_%ccmat2ablk_%dx%d_a%c_b%c.c",
+                             pre, mu, nu, al[j], cbe[i]);
+                  sprintf(ln, 
+                     "make %s pre=%c mu=%d nu=%d al=%c be=%c alpha=%d beta=%d", 
+                          rn, pre, mu, nu, al[j], cbe[i], ial[j], ibe[i]);
+                  ierr = system(ln);
+                  if (ierr)
+                  {
+                     fprintf(stderr, "FAILED CMND='%s'\n", ln);
+                     exit(ierr);
+                  }
+                  sprintf(ln, "mv %s %s/.", rn, outd);
+                  ierr = system(ln);
+                  if (ierr)
+                  {
+                     fprintf(stderr, "FAILED CMND='%s'\n", ln);
+                     exit(ierr);
+                  }
                }
             }
          }
