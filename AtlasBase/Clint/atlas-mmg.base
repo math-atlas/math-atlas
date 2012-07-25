@@ -847,6 +847,7 @@ void ATL_USERMM
 @ROUT ATL_mm@(mu)x@(nu)_gvec
 #include "atlas_misc.h"
 #include "atlas_prefetch.h"
+#include "atlas_gnuvec.h"
 #ifndef ATL_CSZT
    #define ATL_CSZT const size_t
 #endif
@@ -870,9 +871,9 @@ void ATL_USERMM
    ATL_CSZT nmus,
    ATL_CSZT nnus,
    ATL_CSZT K,
-   const void *pAv,   /* @(mu)*KB*nmus-length access-major array of A */
+   const TYPE *pAv,   /* @(mu)*KB*nmus-length access-major array of A */
    const TYPE *pB,    /* @(nu)*KB*nnus-length access-major array of B */
-   void *pCv,         /* @(mu)*@(nu)*nnus*nmus-length access-major array of C */
+   TYPE *pCv,         /* @(mu)*@(nu)*nnus*nmus-length access-major array of C */
    const TYPE *pAn,   /* next block of A */
    const TYPE *pBn,   /* next block of B */
    const TYPE *pCn    /* next block of C */
@@ -882,8 +883,8 @@ void ATL_USERMM
  * constant K-length of ATL_MM_KB.
  */
 {
-   const ATL_vec_t *pA = pAv;
-   ATL_vec_t *pC = pCv;
+   const ATL_vec_t *pA = (const ATL_vec_t*)pAv;
+   ATL_vec_t *pC = (ATL_vec_t*)pCv;
    @declare "   register ATL_vec_t " y n ";"
       @iexp j 0 0 +
       @iwhile j < @(nu)
@@ -911,12 +912,12 @@ void ATL_USERMM
       #define incAm (@(mu)*ATL_MM_KB)
    #endif
 
-   if (pAn != pA)
+   if (pAn != pAv)
    {
       pfA = pAn;
       incPF = (nmus*@(mu)*K*sizeof(TYPE)) / (nmus * nnus);
    }
-   else if (pCn != pA)
+   else if (pCn != pCv)
    {
       pfA = pCn;
       incPF = (nmus*@(mu)*nnus*@(nu)*sizeof(TYPE)) / (nmus * nnus);
@@ -928,7 +929,7 @@ void ATL_USERMM
    }
    else
    {
-      pfA = pA + nmus*@(mu)*(K>>1);
+      pfA = pAv + nmus*@(mu)*(K>>1);
       incPF = (nmus*@(mu)*K*sizeof(TYPE)) / (nmus * nnus);
    }
    for (i=0; i < nmus; i++)
@@ -939,7 +940,7 @@ void ATL_USERMM
  *       Peel K=1 iteration to avoid zero of rCxx and extra add 
  */
          rA0 = *pA;
-         rB0 = *pB;
+         ATL_gvbcast(pB, rB0);
          @iexp i 0 1 +
          @iwhile i < @(mu)
          rA@(i) = pA[@(i)];
@@ -947,7 +948,7 @@ void ATL_USERMM
          @endiwhile
          @iexp j 0 1 +
          @iwhile j < @(nu)
-         rB@(j) = pB[@(j)];
+         ATL_gvbcast(pB+@(j), rB@(j));
             @iexp j @(j) 1 +
          @endiwhile
          @iexp k 0 0 +
@@ -994,7 +995,7 @@ void ATL_USERMM
          for (k=1; k < ATL_MM_KB; k++)
          {
             rA0 = *pA;
-            rB0 = *pB;
+            ATL_gvbcast(pB, rB0);
             @iexp i 0 1 +
             @iwhile i < @(mu)
             rA@(i) = pA[@(i)];
@@ -1002,7 +1003,7 @@ void ATL_USERMM
             @endiwhile
             @iexp j 0 1 +
             @iwhile j < @(nu)
-            rB@(j) = pB[@(j)];
+            ATL_gvbcast(pB+@(j), rB@(j));
                @iexp j @(j) 1 +
             @endiwhile
             @iexp j 0 0 +

@@ -46,6 +46,158 @@ ID=8 MU=6 NU=3 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_damm6x3x4_sse3.S' \
 ID=7 MU=24 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_samm24x3x256_avx.S' \
      SSE=3 KBMAX=256 ASM=GAS_x8664 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -mavx'
+@ROUT atlas_gnuvec.h
+#ifndef ATLAS_GNUVEC
+   #define ATLAS_GNUVEC 1
+   #ifndef TYPE
+      #if defined(SREAL) || defined(SCPLX)
+         #define TYPE float
+      #else
+         #define TYPE double
+      #endif
+   #endif
+   #ifdef ATL_VSX
+      #define ATL_NVREG 64
+      #define ATL_VLENb 16
+      #if defined(SREAL) || defined (SCPLX)
+         #define ATL_VLEN 4
+      #else
+         #define ATL_VLEN 2
+      #endif
+   #elif defined(ATL_AltiVec)
+      #define ATL_NVREG 32
+      #define ATL_VLENb 16
+      #if defined(SREAL) || defined (SCPLX)
+         #define ATL_VLEN 4
+      #else
+         #define ATL_VLEN 2
+      #endif
+   #elif defined(ATL_AVXMAC) || defined(ATL_AVXFMA4) || defined(ATL_AVX)
+      #ifdef ATL_GAS_x8664
+         #define ATL_NVREG 16
+      #else
+         #define ATL_NVREG 8
+      #endif
+      #define ATL_VLENb 32
+      #if defined(SREAL) || defined (SCPLX)
+         #define ATL_VLEN 8
+         #define ATL_vec_t v8sf
+      #else
+         #define ATL_VLEN 4
+         #define ATL_vec_t v4df
+      #endif
+      #define ATL_gvbcast(ptr_, v_) \
+         (v_) = __builtin_ia32_vbroadcastsd256((void*)(ptr_));
+   #elif defined(ATL_SSE3) || defined(ATL_SSE2)
+      #ifdef ATL_GAS_x8664
+         #define ATL_NVREG 16
+      #else
+         #define ATL_NVREG 8
+      #endif
+      #define ATL_VLENb 16
+      #if defined(SREAL) || defined (SCPLX)
+         #define ATL_vec_t v4sf
+         #define ATL_VLEN 4
+      #else
+         #define ATL_vec_t v2df
+         #define ATL_VLEN 2
+         #ifdef ATL_SSE3
+            #define ATL_gvbcast(ptr_, v_) \
+               (v_) = __builtin_ia32_loaddup(ptr_);
+         #endif
+      #endif
+   #elif defined(SREAL) || defined(SCPLX)   /* single-only stuff */
+      #ifdef ATL_AltiVec
+         #define ATL_NVREG 32
+         #define ATL_VLENb 16
+         #define ATL_VLEN 4
+      #elif defined(ATL_SSE1)
+         #define ATL_vec_t v4sf
+         #ifdef ATL_GAS_x8664
+            #define ATL_NVREG 16
+         #else
+            #define ATL_NVREG 8
+         #endif
+         #define ATL_VLENb 16
+         #define ATL_VLEN 4
+      #elif defined(ATL_NONIEEE) && ATL_NONIEEE != 0
+         #ifdef ATL_NEON
+            #define ATL_NVREG 16
+            #define ATL_VLENb 8
+            #define ATL_VLEN 2
+         #elif defined(ATL_3DNow)
+            #define ATL_NVREG 8
+            #define ATL_VLENb 16
+            #define ATL_VLEN 4
+         #endif
+      #endif
+   #endif
+   #ifndef ATL_VLENb
+      #define ATL_VLEN 1
+      #if defined(SREAL) || defined (SCPLX)
+         #define ATL_VLENb 4
+      #else
+         #define ATL_VLENb 8
+      #endif
+      #if defined(ATL_GAS_x8664) || defined(ATL_GAS_x8632)
+         #define ATL_NVREG 8
+      #else
+         #define ATL_NVREG 32
+      #endif
+   #endif
+   #ifndef ATL_vec_t
+      #if ATL_VLEN > 1
+         typedef TYPE ATL_vec_t  __attribute__ ((vector_size (ATL_VLENb)));
+      #else
+         #define ATL_vec_t TYPE
+      #endif
+   #endif
+/*
+ * Setup macros to multiply and divide by VLEN using shifts
+ */
+   #if ATL_VLEN == 1
+      #define ATL_DivByVLEN(i_) (i_)
+      #define ATL_MulByVLEN(i_) (i_)
+@iexp s 1 0 +
+@iexp i 2 0 +
+@iwhile i < 64
+   #elif ATL_VLEN == @(i)
+      #define ATL_DivByVLEN(i_) ((i_)>>@(s))
+      #define ATL_MulByVLEN(i_) ((i_)<<@(s))
+   @iexp s @(s) 1 +
+   @iexp i @(i) 2 *
+@endiwhile
+   #else
+      #define ATL_DivByVLEN(i_) ((i_)/ATL_VLEN)
+      #define ATL_MulByVLEN(i_) ((i_)*ATL_VLEN)
+   #endif
+   #ifndef ATL_gvbcast
+      #if ATL_VLEN == 1
+         #define ATL_gvbcast(ptr_, v_) \
+            v_ = {*(ptr_)}
+      #elif ATL_VLEN == 2
+         #define ATL_gvbcast(ptr_, v_) \
+            v_ = {*(ptr_), *(ptr_)}
+      #elif ATL_VLEN == 4
+         #define ATL_gvbcast(ptr_, v_) \
+            v_ = {*(ptr_), *(ptr_), *(ptr_), *(ptr_)}
+      #elif ATL_VLEN == 8
+         #define ATL_gvbcast(ptr_, v_) \
+            v_ = {*(ptr_), *(ptr_), *(ptr_), *(ptr_), \
+                  *(ptr_), *(ptr_), *(ptr_), *(ptr_)}
+      #elif ATL_VLEN == 16
+         #define ATL_gvbcast(ptr_, v_) \
+            v_ = {*(ptr_), *(ptr_), *(ptr_), *(ptr_), \
+                  *(ptr_), *(ptr_), *(ptr_), *(ptr_), \
+                  *(ptr_), *(ptr_), *(ptr_), *(ptr_), \
+                  *(ptr_), *(ptr_), *(ptr_), *(ptr_), \
+                 }
+      #else
+         #error "Cannot create gvbcast"
+      #endif
+   #endif
+   
+#endif
 @ROUT emit_amm
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2012
 #include "atlas_misc.h"
@@ -786,10 +938,10 @@ int *GetFlags(int nargs, char **args, char *PRE,
             VLEN = 2;
       }
       #endif
-   #elif defined(ATL_AltiVec00)  /* not implemented yet */
+   #elif defined(ATL_AltiVec)  /* not implemented yet */
       if (pre == 's')
       {
-         VEC = "av";
+         VEC = "gvec";
          VLEN = 4;
       }
    #endif
