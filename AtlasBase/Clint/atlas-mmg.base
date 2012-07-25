@@ -381,7 +381,7 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
    }
    @endmif
 }
-@ROUT ATL_mm@(mu)x@(nu)_1_avx
+@ROUT ATL_mm@(mu)x@(nu)_1_avx ATL_mm@(mu)x@(nu)_1_sse
 #include <immintrin.h>
 #include "atlas_misc.h"
 #include "atlas_prefetch.h"
@@ -390,19 +390,65 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
 #endif
 #ifndef ATL_MM_KB 
    #ifdef KB
-      #define ATL_MM_KB KB
-   #elif defined(NB)
-      #define ATL_MM_KB NB
+      #if KB == 0
+         #define ATL_MM_KB K
+         #define ATL_KBCONST 0
+      #else
+         #define ATL_MM_KB KB
+         #define ATL_KBCONST 1
+      #endif
    #else
-      #define ATL_MM_KB 40
+      #define ATL_MM_KB K
+      #define ATL_KBCONST 0
    #endif
+#else
+   #define ATL_KBCONST 1
 #endif
+@ROUT ATL_mm@(mu)x@(nu)_1_sse
+@ifdef ! vlen
+   @define vlen @2$
+@endifdef
+@iif vlen = 2
+   @define vtyp @__m128d@
+   @define bcast @_mm_movdup_pd@
+   @define mul @_mm_mul_pd@
+   @define add @_mm_add_pd@
+   @define sub @_mm_sub_ps@
+   @define ld  @_mm_load_pd@
+   @define store @_mm_store_pd@
+   @define CL @8@
+#ifdef ATL_SSE3
+   #define ATL_bcast(p_, r_) \
+      r_ = _mm_loaddup_pd(p_)
+#else
+   #define ATL_bcast(p_, r_) \
+      r_ = _mm_load1_pd(p_)
+#endif
+@endiif
+@iif vlen = 4
+   @define vtyp @__m128@
+   @define bcast @_mm_load1_ps@
+   @define mul @_mm_mul_ps@
+   @define add @_mm_add_ps@
+   @define sub @_mm_sub_ps@
+   @define ld  @_mm_load_ps@
+   @define store @_mm_store_ps@
+   @define CL @16@
+#define ATL_bcast(p_, r_) \
+   r_ = _mm_load1_ps(p_)
+@endiif
+@iexp vmu @(vlen) @(mu) /
+@iexp i @(vmu) @(vlen) *
+@iif i ! @(mu)
+   @error "@(mu) must be a multiple of @(vlen)!"
+@endiif
+@ROUT ATL_mm@(mu)x@(nu)_1_avx
 @ifdef ! vlen
    @define vlen @4$
 @endifdef
 @iif vlen = 4
-   @define vtyp @_m256@
-   @define bcast @_mm256_broadcast_pd@
+   @define vtyp @__m256d@
+   @define bcast @_mm256_broadcast_sd@
    @define mul @_mm256_mul_pd@
    @define add @_mm256_add_pd@
    @define sub @_mm256_sub_ps@
@@ -411,8 +457,8 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
    @define CL @8@
 @endiif
 @iif vlen = 8
-   @define vtyp @_m256d@
-   @define bcast @_mm256_broadcast_ps@
+   @define vtyp @__m256@
+   @define bcast @_mm256_broadcast_ss@
    @define mul @_mm256_mul_ps@
    @define add @_mm256_add_ps@
    @define sub @_mm256_sub_ps@
@@ -425,6 +471,7 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
 @iif i ! @(mu)
    @error "@(mu) must be a multiple of @(vlen)!"
 @endiif
+@ROUT ATL_mm@(mu)x@(nu)_1_avx ATL_mm@(mu)x@(nu)_1_sse
 void ATL_USERMM
 (
    ATL_CSZT nmus,
@@ -464,6 +511,11 @@ void ATL_USERMM
    const TYPE *pfA, *pfB;
    size_t incPF;
    size_t i, j, k;
+   #if ATL_KBCONST == 0
+      size_t incAm = @(mu)*ATL_MM_KB;
+   #else
+      #define incAm @(mu)*ATL_MM_KB
+   #endif
 
    if (pAn != pA)
    {
@@ -486,9 +538,10 @@ void ATL_USERMM
    }
    else
    {
-      pf = pA + nmus*@(mu)*(K>>1);
+      pfA = pA + nmus*@(mu)*(K>>1);
       incPF = (nmus*@(mu)*K) / (nmus * nnus);
    }
+@ROUT ATL_mm@(mu)x@(nu)_1_avx
    for (i=0; i < nmus; i++)
    {
       for (j=0; j < nnus; j++)
@@ -497,7 +550,7 @@ void ATL_USERMM
  *       Peel K=1 iteration to avoid zero of rCxx and extra add 
  */
          rA0 = @(ld)(pA);
-         rB0 = @(ld)(pB);
+         rB0 = @(bcast)(pB);
          @iexp k 0 @(vlen) +
          @iexp i 0 1 +
          @iwhile i < @(vmu)
@@ -563,9 +616,7 @@ void ATL_USERMM
          for (k=1; k < ATL_MM_KB; k++)
          {
             rA0 = @(ld)(pA);
-            rB0 = @(ld)(pB);
-            rA0 = *pA;
-            rB0 = *pB;
+            rB0 = @(bcast)(pB);
             @iexp k 0 @(vlen) +
             @iexp i 0 1 +
             @iwhile i < @(vmu)
@@ -591,7 +642,7 @@ void ATL_USERMM
             pA += @(mu);
             pB += @(nu);
          }
-         pA -= @(mu)*ATL_MM_KB;
+         pA -= incAm;
          #ifdef BETA0
          @iexp k 0 0 +
          @iexp j 0 0 +
@@ -609,7 +660,7 @@ void ATL_USERMM
          @iexp j 0 0 +
          @iwhile j < @(nu)
             @iexp i 0 0 +
-            @iwhile i < @(mu)
+            @iwhile i < @(vmu)
             m0 = @(ld)(pC+@(k));
             rC@(i)@(j) = @(sub)(rC@(i)@(j), m0);
             @(store)(pC+@(k), rC@(i)@(j));
@@ -623,10 +674,381 @@ void ATL_USERMM
          @iexp j 0 0 +
          @iwhile j < @(nu)
             @iexp i 0 0 +
-            @iwhile i < @(mu)
+            @iwhile i < @(vmu)
             m0 = @(ld)(pC+@(k));
             rC@(i)@(j) = @(add)(rC@(i)@(j), m0);
             @(store)(pC+@(k), rC@(i)@(j));
+               @iexp k @(k) @(vlen) +
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+         #endif
+         pC += @(mu)*@(nu);
+      }
+      pA += incAm;
+      pB = pB0;
+   }
+}
+@ROUT ATL_mm@(mu)x@(nu)_1_sse
+   for (i=0; i < nmus; i++)
+   {
+      for (j=0; j < nnus; j++)
+      {
+/*
+ *       Peel K=1 iteration to avoid zero of rCxx and extra add 
+ */
+         rA0 = @(ld)(pA);
+         ATL_bcast(pB, rB0);
+         @iexp k 0 @(vlen) +
+         @iexp i 0 1 +
+         @iwhile i < @(vmu)
+         rA@(i) = @(ld)(pA+@(k));
+            @iexp k @(k) @(vlen) +
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j 0 1 +
+         @iwhile j < @(nu)
+         ATL_bcast(pB+@(j), rB@(j));
+            @iexp j @(j) 1 +
+         @endiwhile
+         @iexp k 0 0 +
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp i 0 0 +
+            @iwhile i < @(vmu)
+         rC@(i)@(j) = @(mul)(rA@(i), rB@(j));
+            @iif k = 0
+               ATL_pfl1W(pC);
+            @endiif
+            @iif k = 1
+               ATL_pfl1W(pC+@(CL));
+            @endiif
+            @iif k = 2
+               ATL_pfl1R(pfA);
+            @endiif
+            @iif k = 3
+               ATL_pfl1R(pfA+@(CL));
+            @endiif
+            @iif k = 4
+               pfA += incPF;
+            @endiif
+            @iif k = 5
+               pA += @(mu);
+            @endiif
+            @iif k = 6
+               pB += @(nu);
+            @endiif
+               @iexp k @(k) 1 +
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+         @iif k < 2
+               ATL_pfl1W(pC+@(CL));
+         @endiif
+         @iif k < 3
+               ATL_pfl1R(pfA+@(CL));
+         @endiif
+         @iif k < 4
+               pfA += incPF;
+         @endiif
+         @iif k < 5
+               pA += @(mu);
+         @endiif
+         @iif k < 6
+               pB += @(nu);
+         @endiif
+/*
+ *       Handle remaining K its with rolled loop (compiler can unroll easily)
+ */
+         for (k=1; k < ATL_MM_KB; k++)
+         {
+            rA0 = @(ld)(pA);
+            ATL_bcast(pB, rB0);
+            @iexp k 0 @(vlen) +
+            @iexp i 0 1 +
+            @iwhile i < @(vmu)
+            rA@(i) = @(ld)(pA+@(k));
+               @iexp k @(k) @(vlen) +
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j 0 1 +
+            @iwhile j < @(nu)
+            ATL_bcast(pB+@(j), rB@(j));
+               @iexp j @(j) 1 +
+            @endiwhile
+            @iexp j 0 0 +
+            @iwhile j < @(nu)
+               @iexp i 0 0 +
+               @iwhile i < @(vmu)
+            m0 = @(mul)(rA@(i), rB@(j));
+            rC@(i)@(j) = @(add)(m0, rC@(i)@(j));
+                  @iexp i @(i) 1 +
+               @endiwhile
+               @iexp j @(j) 1 +
+            @endiwhile
+            pA += @(mu);
+            pB += @(nu);
+         }
+         pA -= incAm;
+         #ifdef BETA0
+         @iexp k 0 0 +
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp i 0 0 +
+            @iwhile i < @(vmu)
+            @(store)(pC+@(k), rC@(i)@(j));
+               @iexp k @(k) @(vlen) +
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+         #elif defined(BETAN1)
+         @iexp k 0 0 +
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp i 0 0 +
+            @iwhile i < @(vmu)
+            m0 = @(ld)(pC+@(k));
+            rC@(i)@(j) = @(sub)(rC@(i)@(j), m0);
+            @(store)(pC+@(k), rC@(i)@(j));
+               @iexp k @(k) @(vlen) +
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+         #else  /* BETA = 1 */
+         @iexp k 0 0 +
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp i 0 0 +
+            @iwhile i < @(vmu)
+            m0 = @(ld)(pC+@(k));
+            rC@(i)@(j) = @(add)(rC@(i)@(j), m0);
+            @(store)(pC+@(k), rC@(i)@(j));
+               @iexp k @(k) @(vlen) +
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+         #endif
+         pC += @(mu)*@(nu);
+      }
+      pA += incAm;
+      pB = pB0;
+   }
+}
+@ROUT ATL_mm@(mu)x@(nu)_1_sse ATL_mm@(mu)x@(nu)_1_avx
+#if ATL_KBCONST != 0
+   #undef incAm
+#endif
+#undef ATL_KBCONST
+@ROUT ATL_mm@(mu)x@(nu)_gvec
+#include "atlas_misc.h"
+#include "atlas_prefetch.h"
+#ifndef ATL_CSZT
+   #define ATL_CSZT const size_t
+#endif
+#ifndef ATL_MM_KB 
+   #ifdef KB
+      #if KB == 0
+         #define ATL_KBCONST 0
+         #define ATL_MM_KB K
+      #else
+         #define ATL_KBCONST 1
+         #define ATL_MM_KB KB
+      #endif
+   #else
+      #define ATL_KBCONST 0
+      #define ATL_MM_KB K
+   #endif
+#endif
+typedef TYPE ATL_vec_t __attribute__ ((vector_size (@(vlen))));
+void ATL_USERMM
+(
+   ATL_CSZT nmus,
+   ATL_CSZT nnus,
+   ATL_CSZT K,
+   const void *pAv,   /* @(mu)*KB*nmus-length access-major array of A */
+   const TYPE *pB,    /* @(nu)*KB*nnus-length access-major array of B */
+   void *pCv,         /* @(mu)*@(nu)*nnus*nmus-length access-major array of C */
+   const TYPE *pAn,   /* next block of A */
+   const TYPE *pBn,   /* next block of B */
+   const TYPE *pCn    /* next block of C */
+)
+/*
+ * Performs a GEMM operation on a @(mu)x@(nu) jammed GEMM with a compile-time
+ * constant K-length of ATL_MM_KB.
+ */
+{
+   const ATL_vec_t *pA = pAv;
+   ATL_vec_t *pC = pCv;
+   @declare "   register ATL_vec_t " y n ";"
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         rB@(j)
+         @iexp i 0 0 +
+         @iwhile i < @(mu)
+            rC@(i)@(j)
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+      @iexp i 0 0 +
+      @iwhile i < @(mu)
+         rA@(i)
+         @iexp i @(i) 1 +
+      @endiwhile
+   @enddeclare
+   const TYPE *pB0 = pB;
+   const TYPE *pfA;
+   size_t incPF;
+   size_t i, j, k;
+   #if ATL_KBCONST == 0
+      size_t incAm = @(mu)*K;
+   #else
+      #define incAm (@(mu)*ATL_MM_KB)
+   #endif
+
+   if (pAn != pA)
+   {
+      pfA = pAn;
+      incPF = (nmus*@(mu)*K*sizeof(TYPE)) / (nmus * nnus);
+   }
+   else if (pCn != pA)
+   {
+      pfA = pCn;
+      incPF = (nmus*@(mu)*nnus*@(nu)*sizeof(TYPE)) / (nmus * nnus);
+   }
+   else if (pBn != pB)
+   {
+      pfA = pBn;
+      incPF = (K*nnus*@(nu)*sizeof(TYPE)) / (nmus * nnus);
+   }
+   else
+   {
+      pfA = pA + nmus*@(mu)*(K>>1);
+      incPF = (nmus*@(mu)*K*sizeof(TYPE)) / (nmus * nnus);
+   }
+   for (i=0; i < nmus; i++)
+   {
+      for (j=0; j < nnus; j++)
+      {
+/*
+ *       Peel K=1 iteration to avoid zero of rCxx and extra add 
+ */
+         rA0 = *pA;
+         rB0 = *pB;
+         @iexp i 0 1 +
+         @iwhile i < @(mu)
+         rA@(i) = pA[@(i)];
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j 0 1 +
+         @iwhile j < @(nu)
+         rB@(j) = pB[@(j)];
+            @iexp j @(j) 1 +
+         @endiwhile
+         @iexp k 0 0 +
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp i 0 0 +
+            @iwhile i < @(mu)
+         rC@(i)@(j) = rA@(i) * rB@(j);
+            @iif k = 0
+               ATL_pfl1W(pC);
+            @endiif
+            @iif k = 1
+               ATL_pfl1R(pfA);
+            @endiif
+            @iif k = 2
+               pfA += incPF;
+            @endiif
+            @iif k = 3
+               pA += @(mu);
+            @endiif
+            @iif k = 4
+               pB += @(nu);
+            @endiif
+               @iexp k @(k) 1 +
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+         @iif k < 2
+               ATL_pfl1R(pfA);
+         @endiif
+         @iif k < 3
+               pfA += incPF;
+         @endiif
+         @iif k < 4
+               pA += @(mu);
+         @endiif
+         @iif k < 5
+               pB += @(nu);
+         @endiif
+/*
+ *       Handle remaining K its with rolled loop (compiler can unroll easily)
+ */
+         for (k=1; k < ATL_MM_KB; k++)
+         {
+            rA0 = *pA;
+            rB0 = *pB;
+            @iexp i 0 1 +
+            @iwhile i < @(mu)
+            rA@(i) = pA[@(i)];
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j 0 1 +
+            @iwhile j < @(nu)
+            rB@(j) = pB[@(j)];
+               @iexp j @(j) 1 +
+            @endiwhile
+            @iexp j 0 0 +
+            @iwhile j < @(nu)
+               @iexp i 0 0 +
+               @iwhile i < @(mu)
+            rC@(i)@(j) += rA@(i) * rB@(j);
+                  @iexp i @(i) 1 +
+               @endiwhile
+               @iexp j @(j) 1 +
+            @endiwhile
+            pA += @(mu);
+            pB += @(nu);
+         }
+         pA -= incAm;
+         #ifdef BETA0
+         @iexp k 0 0 +
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp i 0 0 +
+            @iwhile i < @(mu)
+            pC[@(k)] = rC@(i)@(j);
+               @iexp k @(k) 1 +
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+         #elif defined(BETAN1)
+         @iexp k 0 0 +
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp i 0 0 +
+            @iwhile i < @(mu)
+            pC[@(k)] = rC@(i)@(j) - pC[@(k)];
+               @iexp k @(k) 1 +
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+         #else  /* BETA = 1 */
+         @iexp k 0 0 +
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp i 0 0 +
+            @iwhile i < @(mu)
+            pC[@(k)] += rC@(i)@(j);
                @iexp k @(k) 1 +
                @iexp i @(i) 1 +
             @endiwhile
@@ -635,10 +1057,14 @@ void ATL_USERMM
          #endif
          pC += @(mu)*@(nu);
       }
-      pA += @(mu)*ATL_MM_KB;
+      pA += incAm;
       pB = pB0;
    }
 }
+#if ATL_KBCONST != 0
+   #undef incAm
+#endif
+#undef ATL_KBCONST
 @ROUT ATL_mm@(mu)x@(nu)_1
 #include "atlas_misc.h"
 #include "atlas_prefetch.h"
@@ -647,11 +1073,16 @@ void ATL_USERMM
 #endif
 #ifndef ATL_MM_KB 
    #ifdef KB
-      #define ATL_MM_KB KB
-   #elif defined(NB)
-      #define ATL_MM_KB NB
+      #if KB == 0
+         #define ATL_KBCONST 0
+         #define ATL_MM_KB K
+      #else
+         #define ATL_KBCONST 1
+         #define ATL_MM_KB KB
+      #endif
    #else
-      #define ATL_MM_KB 40
+      #define ATL_KBCONST 0
+      #define ATL_MM_KB K
    #endif
 #endif
 void ATL_USERMM
@@ -692,6 +1123,11 @@ void ATL_USERMM
    const TYPE *pf;
    size_t incPF;
    size_t i, j, k;
+   #if ATL_KBCONST == 0
+      size_t incAm = @(mu)*K;
+   #else
+      #define incAm (@(mu)*ATL_MM_KB)
+   #endif
 
    if (pAn != pA)
    {
@@ -742,7 +1178,7 @@ void ATL_USERMM
                ATL_pfl1W(pC);
             @endiif
             @iif k = 1
-               ATL_pfl2R(pf);
+               ATL_pfl1R(pfA);
             @endiif
             @iif k = 2
                pf += incPF;
@@ -759,7 +1195,7 @@ void ATL_USERMM
             @iexp j @(j) 1 +
          @endiwhile
          @iif k < 2
-               ATL_pfL2R(pf);
+               ATL_pfl1R(pfA);
          @endiif
          @iif k < 3
                pf += incPF;
@@ -799,7 +1235,7 @@ void ATL_USERMM
             pA += @(mu);
             pB += @(nu);
          }
-         pA -= @(mu)*ATL_MM_KB;
+         pA -= incAm;
          #ifdef BETA0
          @iexp k 0 0 +
          @iexp j 0 0 +
@@ -839,10 +1275,14 @@ void ATL_USERMM
          #endif
          pC += @(mu)*@(nu);
       }
-      pA += @(mu)*ATL_MM_KB;
+      pA += incAm;
       pB = pB0;
    }
 }
+#if ATL_KBCONST != 0
+   #undef incAm
+#endif
+#undef ATL_KBCONST
 @ROUT ATL_mm4x2
 void ATL_UGEMM
 (
@@ -884,7 +1324,7 @@ void ATL_UGEMM
          rC30 = rA3 * rB0;
          rC01 = rA0 * rB1;
          rC11 = rA1 * rB1;
-         ATL_pfl2R(pf);
+         ATL_pfl1R(pf);
          rC21 = rA2 * rB1;
          pf += incPF;
          rC31 = rA3 * rB1;

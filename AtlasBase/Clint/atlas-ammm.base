@@ -510,6 +510,9 @@ int main(int nargs, char **args)
 #define ATL_JKMDEF 1
 #include "atlas_mmtesttime.h"
 
+static int VLEN=1;
+static char *VEC="scalar";
+
 @extract -b @(basd)/atlas.base rout=Mylcm
 
 ATL_mmnode_t *BestForThisNB
@@ -767,6 +770,29 @@ int *GetFlags(int nargs, char **args, char *PRE,
       (*FNOUT)[4] = pre;
    }
 @endskip
+   #ifdef ATL_AVX
+      VEC = "avx";
+      VLEN = (pre == 's') ? 8 : 4;
+   #elif defined(ATL_SSE1)
+      if (pre == 's')
+      {
+         VEC = "sse";
+         VLEN = 4;
+      }
+      #ifdef ATL_SSE2
+      else
+      {
+            VEC = "sse";
+            VLEN = 2;
+      }
+      #endif
+   #elif defined(ATL_AltiVec00)  /* not implemented yet */
+      if (pre == 's')
+      {
+         VEC = "av";
+         VLEN = 4;
+      }
+   #endif
    if (!nbs)
    {
       nbs = malloc(19*sizeof(int));
@@ -780,18 +806,20 @@ int *GetFlags(int nargs, char **args, char *PRE,
    return(nbs);
 }
 
-char *GenString(char *vec, int lat, int nb, int mu, int nu, int ku, char *rt)
+char *GenString(char pre, int lat, int nb, int mu, int nu, 
+                int ku, char *rt)
 {
-   char *frm="make gen_amm_%s lat=%d mu=%d nu=%d ku=%d kb=%d rt=%s", *ln;
+   char *frm="make gen_amm_%s lat=%d mu=%d nu=%d ku=%d kb=%d vlen=%d rt=%s"; 
+   char *ln;
    int l;
-   l = strlen(frm) + strlen(vec) + strlen(rt) + 8;
+   l = strlen(frm) + strlen(VEC) + strlen(rt) + 8;
    ln = malloc(l*sizeof(char));
    assert(ln);
-   sprintf(ln, frm, vec, lat, mu, nu, ku, nb, rt);
+   sprintf(ln, frm, VEC, lat, mu*VLEN, nu, ku, nb, VLEN, rt);
    return(ln);
 }
 
-ATL_mmnode_t *GetNewGenNode(char *vec, int nb, int lat, int mu, int nu, int ku)
+ATL_mmnode_t *GetNewGenNode(char pre, int nb, int lat, int mu, int nu, int ku)
 {
    ATL_mmnode_t *np;
    char *ln;
@@ -799,18 +827,19 @@ ATL_mmnode_t *GetNewGenNode(char *vec, int nb, int lat, int mu, int nu, int ku)
    np->rout = malloc(sizeof(char)*24);
    assert(np->rout);
    sprintf(np->rout, "ATL_gamm%dx%d_nb%d.c", mu, nu, nb);
+   np->vlen = VLEN;
    np->nbB = np->mbB = np->kbB = nb;
-   np->mu = mu;
+   np->mu = mu*VLEN;
    np->nu = nu;
    np->ku = ku;
    np->muladd = (lat != 0);
    np->lat = lat;
-   np->genstr = GenString(vec, lat, nb, mu, nu, ku, np->rout);
+   np->genstr = GenString(pre, lat, nb, mu, nu, ku, np->rout);
    return(np);
 }
 
-ATL_mmnode_t *FindDefMUNU(int verb, char *vec, char pre, int nreg, int lat, 
-                          int nb, int ku)
+void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
+                 int *MU, int *NU)
 {
    ATL_mmnode_t *mmp;
    double mf, mfB=0.0;
@@ -825,7 +854,10 @@ ATL_mmnode_t *FindDefMUNU(int verb, char *vec, char pre, int nreg, int lat,
                                       nb, nb, nb, 1, 0, -1);
       printf("READ IN BEST GENNED MU=%d, NU=%d, MFLOP=%.2f\n\n", 
              mmp->mu, mmp->nu, mmp->mflop[0]);
-      return(mmp);
+      *MU = mmp->mu / VLEN;
+      assert(*MU);
+      *NU = mmp->nu;
+      return;
    }
 /*
  * Try all near-square cases
@@ -843,11 +875,11 @@ ATL_mmnode_t *FindDefMUNU(int verb, char *vec, char pre, int nreg, int lat,
       i = n / j;
       if (nb%i || nb%j)
          continue;
-      mmp->mu = i;
+      mmp->mu = i * VLEN;
       mmp->nu = j;
       if (mmp->genstr)
         free(mmp->genstr);
-      mmp->genstr = GenString(vec, lat, nb, i, j, ku, mmp->rout);
+      mmp->genstr = GenString(pre, lat, nb, i, j, ku, mmp->rout);
       mf = TimeMMKernel(verb, 1, mmp, pre, nb, nb, nb, nb, nb, nb, 1, 0, -1);
       printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
       if (mf > mfB)
@@ -860,65 +892,71 @@ ATL_mmnode_t *FindDefMUNU(int verb, char *vec, char pre, int nreg, int lat,
 /*
  * For x86, try 1-D cases since older machines are 2-operand assemblies
  */
-   #if defined(ATL_GAS_x8664) || defined(ATL_GAS_x8664)
-   printf("BEST NEAR-SQUARE CASE IS MU=%d, NU=%d, MFLOP=%.2f\n\n", 
-          muB, nuB, mfB);
-   printf("Finding best 1-D outer loop unrolling for nb=%d\n", nb);
-   for (n=2; n < nreg; n++)
+   #if defined(ATL_GAS_x8664) || defined(ATL_GAS_x8664) 
+   if (VEC[0] != 'a')  /* AVX is 3-operand */
    {
-      i = 1; j = n;
-      if (nb % n)
-         continue;
-      mmp->mu = i;
-      mmp->nu = j;
-      if (mmp->genstr)
-        free(mmp->genstr);
-      mmp->genstr = GenString(vec, lat, nb, i, j, ku, mmp->rout);
-      mf = TimeMMKernel(verb, 1, mmp, pre, nb, nb, nb, nb, nb, nb, 1, 0, -1);
-      printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
-      if (mf > mfB)
+      printf("BEST NEAR-SQUARE CASE IS MU=%d, NU=%d, MFLOP=%.2f\n\n", 
+             muB, nuB, mfB);
+      printf("Finding best 1-D outer loop unrolling for nb=%d\n", nb);
+      for (n=2; n < nreg; n++)
       {
-         muB = i;
-         nuB = j;
-         mfB = mf;
-      }
-      i = n; j = 1;
-      mmp->mu = i;
-      mmp->nu = j;
-      if (mmp->genstr)
-        free(mmp->genstr);
-      mmp->genstr = GenString(vec, lat, nb, i, j, ku, mmp->rout);
-      mf = TimeMMKernel(verb, 1, mmp, pre, nb, nb, nb, nb, nb, nb, 1, 0, -1);
-      printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
-      if (mf > mfB)
-      {
-         muB = i;
-         nuB = j;
-         mfB = mf;
+         i = 1; j = n;
+         if (nb % n)
+            continue;
+         mmp->mu = i;
+         mmp->nu = j;
+         if (mmp->genstr)
+           free(mmp->genstr);
+         mmp->genstr = GenString(pre, lat, nb, i, j, ku, mmp->rout);
+         mf = TimeMMKernel(verb, 1, mmp, pre, nb, nb, nb, nb, nb, nb, 1, 0, -1);
+         printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
+         if (mf > mfB)
+         {
+            muB = i;
+            nuB = j;
+            mfB = mf;
+         }
+         i = n; j = 1;
+         mmp->mu = i;
+         mmp->nu = j;
+         if (mmp->genstr)
+           free(mmp->genstr);
+         mmp->genstr = GenString(pre, lat, nb, i, j, ku, mmp->rout);
+         mf = TimeMMKernel(verb, 1, mmp, pre, nb, nb, nb, nb, nb, nb, 1, 0, -1);
+         printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
+         if (mf > mfB)
+         {
+            muB = i;
+            nuB = j;
+            mfB = mf;
+         }
       }
    }
    #endif
-   mmp->mu = muB;
+   mmp->mu = muB * VLEN;
    mmp->nu = nuB;
    mmp->mflop[0] = mfB;
    WriteMMFileWithPath(pre, "res", "gAMMMUNU.sum", mmp);
    printf("BEST CASE IS MU=%d, NU=%d, MFLOP=%.2f\n\n", 
           muB, nuB, mfB);
-   return(mmp);
+   *MU = muB;
+   *NU = nuB;
 }
 
 void GetMUNUbyNB(int nb, int nreg, int *MU, int *NU)
 {
-   int mu=(*MU), nu=(*NU);
+   int mu=(*MU), nu=(*NU), vmu=mu*VLEN;
 
-   assert(mu && nu);
-   if (!(nb%mu) && !(nb%nu))
+   assert(mu && nu && !(nb%VLEN));
+   if (!(nb%vmu) && !(nb%nu))
       return;
    if (mu == 1 || nu == 1) /* handle 1-D cases by just inc/dec U */
    {
       int u = (mu == 1) ? nu : mu;
-      while (u+u+1 < nreg && nb%u)
+      while (u+u+1 <= nreg && nb%u)
          u++;
+      if (u+u+1 > nreg)
+         u--;
       while (nb%u)
          u--;
       if (mu == 1)
@@ -927,22 +965,22 @@ void GetMUNUbyNB(int nb, int nreg, int *MU, int *NU)
          *MU = u;
       return;
    }
-   if (nb%mu)  /* mu can't handle NB */
+   if (nb%vmu)  /* mu can't handle NB */
    {
       int i;
 /* 
  *    try increasing mu until we run out of registers
  */
       for (i=mu+1; i*nu+i+nu <= nreg; i++)
-         if (!(nb%i))
+         if (!(nb%(i*VLEN)))
             break;
 /*
  *    Try decreasing mu until it divides
  */
-      if (nb%i)
+      if (nb%(i*VLEN) || i*nu+i+nu > nreg)
       {
          for (mu--; mu; mu--)
-            if (!(nb%mu))
+            if (!(nb%(mu*VLEN)))
                break;
       }
       else
@@ -960,7 +998,7 @@ void GetMUNUbyNB(int nb, int nreg, int *MU, int *NU)
 /*
  *    Try decreasing nu until it divides
  */
-      if (nb%i)
+      if (nb%i || i*mu+i+mu > nreg)
       {
          for (nu--; nu; nu--)
             if (!(nb%nu))
@@ -987,7 +1025,7 @@ int FindNBInArray(int nb, int *nbs)
 ATL_mmnode_t *CreateGenCasesFromNBs
 (
    ATL_mmnode_t *mmb,   /* best user-contributed kernels */
-   char *vec,           /* what vector extension we are generating */
+   char pre,            /* precision: s/d */
    int *nbs,            /* list of desired NBs */
    int nreg,            /* upper bound on register use */
    int MU, int NU,      /* default M/N unrolling */
@@ -1030,8 +1068,42 @@ ATL_mmnode_t *CreateGenCasesFromNBs
       else  /* only taking stuff rom enbs */
          nb = enbs[i++];
       ku = (KU == -1) ? nb : KU;
-      GetMUNUbyNB(nb, nreg, &mu, &nu);
-      p = GetNewGenNode(vec, nb, 0, mu, nu, ku);
+/*
+ *    If NB is not a multiple of VLEN, drop down to scalar generation
+ */
+      if (nb%VLEN)
+      {
+         char *sp=VEC;
+         int vl=VLEN;
+         p = NULL;
+/*
+ *       For AVX, see if dropping to SSE will help
+ */
+         #if defined(ATL_AVX) && defined(ATL_SSE1) && defined(ATL_SSE2)
+            
+            VLEN >>= 1;
+            if (VEC[0] == 'a' && !(nb%VLEN))
+            {
+               VEC = "sse";
+               GetMUNUbyNB(nb, nreg, &mu, &nu);
+               p = GetNewGenNode(pre, nb, 0, mu, nu, ku);
+            }
+         #endif
+         if (!p)
+         {
+            VLEN=1;
+            VEC = "scalar";
+            GetMUNUbyNB(nb, nreg, &mu, &nu);
+            p = GetNewGenNode(pre, nb, 0, mu, nu, ku);
+         }
+         VLEN = vl;
+         VEC = sp;
+      }
+      else
+      {
+         GetMUNUbyNB(nb, nreg, &mu, &nu);
+         p = GetNewGenNode(pre, nb, 0, mu, nu, ku);
+      }
       if (umb)
       {
          mmp->next = p;
@@ -1044,33 +1116,124 @@ ATL_mmnode_t *CreateGenCasesFromNBs
    free(enbs);
    return(umb);
 }
-ATL_mmnode_t *FindBestGenCases(int verb, char pre, int nreg, int *nbs, 
-                               ATL_mmnode_t *ummb)
+
+ATL_mmnode_t *FindBestGenCases(int verb, char pre, int nreg, 
+                               int *nbs, ATL_mmnode_t *ummb)
 {
    ATL_mmnode_t *mp, *gmmU, *gmmb;
    int MU, NU;
+
+   gmmb = ReadMMFileWithPath(pre, "res", "gAMMRES.sum");
+   if (gmmb)
+   {
+      printf("Reading in generated cases for all NBs:\n");
+      for (mp=gmmb; mp; mp = mp->next)
+      {
+         const int mu = (mp->vlen) ? mp->mu / mp->vlen : mp->mu;
+         int nb = mp->kbB;
+         if (mp->mflop[0] < 0.0)
+            mp->mflop[0] = TimeMMKernel(verb, 1, mp, pre, nb, nb, nb,
+                                         nb, nb, nb, 1, 0, -1);
+         printf("  NB=%d, MU=%d, NU=%d, vlen=%d, MFLOP=%.2f\n", 
+                nb, mu, mp->nu, mp->vlen, mp->mflop[0]);
+      }
+      printf("Done.\n\n");
+      return(gmmb);
+   }
+/*
+ * If vector operations are being used, make sure they work; compiler and
+ * flag changes can mess them up, and in this case we'll fall back to
+ * scalar generation.  Try to see if we can successfully test simplist
+ * possible vector kernel, and fall back to scalar kernel if we can't
+ */
+   if (VLEN > 1)
+   {
+      mp = GetNewGenNode(pre, 32, 0, 1, 1, 1);
+      if (MMKernelFailsTest(pre, 32, 32, 32, 1, mp))
+      {
+         printf("ERROR: VEC='%s' FAILED, genstr='%s'!\n", VEC, mp->genstr);
+         KillMMNode(mp);
+/*
+ *       For AVX, try falling back to SSE
+ */
+         #ifdef ATL_AVX
+            VEC="sse";
+            VLEN = (pre == 's') ? 4:2;
+            mp = GetNewGenNode(pre, 32, 0, 1, 1, 1);
+            if (MMKernelFailsTest(pre, 32, 32, 32, 1, mp))
+            {
+               VEC="scalar";
+               VLEN=1;
+            }
+         #else
+            VEC="scalar";
+            VLEN=1;
+         #endif
+
+      }
+      free(mp);
+/*
+ *    For AVX, switch to SSE if AVX doesn't offer a performance advantage
+ *    (as on AMD Dozer), since SSE smaller code size and requires less cleanup 
+ */
+      #ifdef ATL_AVX
+         if (VEC[0] == 'a')  /* haven't already switched to sse */
+         {
+            double mfA, mfS;
+            char *sp; 
+            int vl;
+            mp = GetNewGenNode(pre, 128, 0, 1, 4, 1);
+            mfA = TimeMMKernel(verb, 1, mp, pre, 128, 128, 128, 128, 128, 128,
+                               1, 0, -1);
+            KillMMNode(mp);
+            vl = VLEN;
+            sp = VEC;
+            VEC = "sse";
+            VLEN = (pre == 's') ? 4 : 2;
+            mp = GetNewGenNode(pre, 128, 0, 1, 4, 1);
+            mfS = TimeMMKernel(verb, 1, mp, pre, 128, 128, 128, 128, 128, 128,
+                               1, 0, -1);
+            KillMMNode(mp);
+            if (mfA < 1.05*mfS)
+            {
+               printf("USING SSE INSTEAD OF AVX, AVX=%.2f, SSE=%.2f\n", 
+                      mfA, mfS);
+            }
+            else
+            {
+               printf("AVX GOOD, AVX=%.2f, SSE=%.2f\n", mfA, mfS);
+               VEC=sp;
+               VLEN=vl;
+            }
+         }
+      #endif
+   }
+   printf("GENERATING WITH VEC='%s', VLEN=%d\n\n", VEC, VLEN);
 /*
  * Find the best mu/nu for NB=120; we don't care if we overflow cache for
  * this timing, and 120 = LCM(2,3,4,5,6,8,12).  Use ku=1 so that large
  * problems don't have large K-driven advantage.
  */
-   gmmU = FindDefMUNU(verb, "scalar", pre, nreg, 0, 120, 1);
-   MU = gmmU->mu; 
-   NU = gmmU->nu; 
-   KillMMNode(gmmU);
-   gmmb = CreateGenCasesFromNBs(ummb, "scalar", nbs, nreg, MU, NU, 1);
-   printf("\n");
-   PrintMMNodes(stdout, gmmb);
-   printf("\n");
+   FindDefMUNU(verb, pre, nreg, 0, 120, 1, &MU, &NU);
+   gmmb = CreateGenCasesFromNBs(ummb, pre, nbs, nreg, MU, NU, 1);
+   if (verb > 1)
+   {
+      printf("\n");
+      PrintMMNodes(stdout, gmmb);
+      printf("\n");
+   }
    printf("Finding generated cases for all NBs:\n");
    for (mp=gmmb; mp; mp = mp->next)
    {
+      int mu;
       mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB, mp->kbB, 
                                   mp->kbB, mp->kbB, mp->kbB, 1, 0, -1);
-      printf("   NB=%d, mu=%d, nu=%d, MFLOPS=%.2f\n", 
-             mp->kbB, mp->mu, mp->nu, mp->mflop[0]);
+      mu = (mp->vlen) ? mp->mu / mp->vlen : mp->mu;
+      printf("   NB=%d, mu=%d, nu=%d, vlen=%d, MFLOPS=%.2f\n", 
+             mp->kbB, mu, mp->nu, mp->vlen, mp->mflop[0]);
    }
    printf("Done.\n\n");
+   WriteMMFileWithPath(pre, "res", "gAMMRES.sum", gmmb);
    return(gmmb);
 }
 
