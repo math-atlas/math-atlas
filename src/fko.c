@@ -1218,7 +1218,7 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
             OptimizeLoopControl(optloop, 1, 1, NULL);
       }
 #if 0 
-      fprintf(stdout, "\n LIL After Unroll cleanup\n");
+      fprintf(stdout, "\n LIL After Unroll cleanup and before AE\n");
       PrintInst(stdout,bbbase);
 #endif
 /*
@@ -1255,6 +1255,12 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
       CalcInsOuts(bbbase); 
       CalcAllDeadVariables();
    }
+
+#if 0 
+      fprintf(stdout, "\n LIL Before OptN\n");
+      PrintInst(stdout,bbbase);
+#endif
+
 #if 1
    PerformOptN(SAVESP, optblks);
 #else
@@ -1634,6 +1640,94 @@ void AddOptSTEntries()
    }
 }
 
+void GenAssenblyApplyingOpt4SSV(FILE *fpout, struct optblkq *optblks, 
+                                struct assmln *abase)
+/*
+ * Apply all repeatable optimization for SSV
+ * NOTE: right now, we skip Unrolling, AE, etc optimization for SSV. So, we
+ * skip more general function GoToTown and use this one. It is temporary func.
+ * We will generalize it later.
+ */
+{
+
+   int i;
+
+   UnrollCleanup(optloop,1);
+/*
+ * Everything is messed up already. So, re-make the control flow and check it 
+ */
+   InvalidateLoopInfo();
+   bbbase = NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   FindLoops();
+   CheckFlow(bbbase, __FILE__, __LINE__);
+
+/*
+ * Update prefetch information, done inside vectorization
+ */
+#if 0   
+   UpdateNamedLoopInfo();
+#endif
+
+/*
+ * Attempt to generate assembly after repeatable optimization
+ */
+#if 0 
+   fprintf(stdout, "\nUnoptimized LIL\n");
+   PrintInst(stdout, bbbase);
+#endif
+
+/*
+ * add Prefetch
+ */
+#if 1
+   if (optloop->pfarrs)
+   AddPrefetch(optloop, 1);
+#endif
+
+   extern struct locinit *ParaDerefQ;
+   CalcInsOuts(bbbase);
+   CalcAllDeadVariables();
+   RevealArchMemUses(); /* to handle ABS in X86 */
+   PerformOptN(0, optblks);
+
+   #if 0
+      fprintf(stdout, "Optimized LIL\n");
+      PrintInst(stdout, bbbase);
+   #endif
+   
+   if (NWNT)
+   {
+      NAWNT = DoStoreNT(NULL);
+   }
+   INUSETU2D = INDEADU2D = CFUSETU2D = 0;
+   if (!INDEADU2D)
+      CalcAllDeadVariables();
+   if (!CFLOOP)
+      FindLoops();
+   AddBlockComments(bbbase);
+   AddLoopComments();
+   i = FinalizePrologueEpilogue(bbbase,0 );
+   KillAllLocinit(ParaDerefQ);
+   ParaDerefQ = NULL;
+   if (i)
+      fprintf(stderr, "ERR from PrologueEpilogue\n");
+   CheckFlow(bbbase, __FILE__,__LINE__);
+   DumpOptsPerformed(stderr, FKO_FLAG & IFF_VERBOSE);
+   #if 0
+      fprintf(stdout, "Optimized LIL Before Assembly\n");
+      PrintInst(stdout, bbbase);
+      fprintf(stdout, "SYmbol Table\n");
+      PrintST(stdout);
+   #endif
+   abase = lil2ass(bbbase);
+   KillAllBasicBlocks(bbbase);
+   dump_assembly(fpout, abase);
+   KillAllAssln(abase);
+   /*exit(0);*/
+   return ;
+}
+
 int main(int nargs, char **args)
 {
    FILE *fpin, *fpout, *fpl;
@@ -1683,65 +1777,22 @@ int main(int nargs, char **args)
  *          Finalizing the analysis
  */
             #if 1                  
-            SpeculativeVectorAnalysis();
-            SpecSIMDLoop();
-            #else
-            VectorRedundantComputation();
-            #endif
+               SpeculativeVectorAnalysis();
+               SpecSIMDLoop();
+               #if 1
+                  GenAssenblyApplyingOpt4SSV(fpout, optblks, abase);
+                  exit(0);
+               #else
 /*
- *          Attempt to generate assembly after repeatable optimization
+ *                NOTE: need to parameterize the vectorization.
+ *                Haven't fixed the issue if there is outof Regs!!!
  */
-#if 0 
-            fprintf(stdout, "\nUnoptimized LIL\n");
-            PrintInst(stdout, bbbase);
-#endif
-#if 1
-            if (optloop->pfarrs)
-                AddPrefetch(optloop, 1);
-#endif
-#if 1             
-            extern struct locinit *ParaDerefQ;
+                  FKO_UR = 1; /* forced to unroll factor 1*/
+               #endif
+            #else
+               VectorRedundantComputation();
+            #endif
 
-            CalcInsOuts(bbbase);
-            CalcAllDeadVariables();
-            RevealArchMemUses(); /* to handle ABS in X86 */
-            PerformOptN(0, optblks);
-#if 0
-            fprintf(stdout, "Optimized LIL\n");
-            PrintInst(stdout, bbbase);
-#endif
-            if (NWNT)
-            {
-               NAWNT = DoStoreNT(NULL);
-            }
-
-            INUSETU2D = INDEADU2D = CFUSETU2D = 0;
-            if (!INDEADU2D)
-               CalcAllDeadVariables();
-            if (!CFLOOP)
-               FindLoops();
-            AddBlockComments(bbbase);
-            AddLoopComments();
-            i = FinalizePrologueEpilogue(bbbase,0 );
-            KillAllLocinit(ParaDerefQ);
-            ParaDerefQ = NULL;
-            if (i)
-               fprintf(stderr, "ERR from PrologueEpilogue\n");
-            CheckFlow(bbbase, __FILE__,__LINE__);
-
-            DumpOptsPerformed(stderr, FKO_FLAG & IFF_VERBOSE);
-#if 0
-            fprintf(stdout, "Optimized LIL Before Assembly\n");
-            PrintInst(stdout, bbbase);
-            fprintf(stdout, "SYmbol Table\n");
-            PrintST(stdout);
-#endif
-            abase = lil2ass(bbbase);
-            KillAllBasicBlocks(bbbase);
-            dump_assembly(fpout, abase);
-            KillAllAssln(abase);
-#endif            
-            exit(0);
          }
          else
          {
@@ -1855,7 +1906,7 @@ int main(int nargs, char **args)
       PrintInst(stdout,bbbase);
       fprintf(stdout, "\n ST BEFORE L2A: \n");
       PrintST(stdout,bbbase);
-      exit(0);
+      //exit(0);
 #endif
       abase = lil2ass(bbbase);
       KillAllBasicBlocks(bbbase);
