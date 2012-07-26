@@ -174,24 +174,27 @@ ID=7 MU=24 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_samm24x3x256_avx.S' \
    #ifndef ATL_gvbcast
       #if ATL_VLEN == 1
          #define ATL_gvbcast(ptr_, v_) \
-            v_ = {*(ptr_)}
+            { ATL_vec_t z={*(ptr_)}; v_ = z; }
       #elif ATL_VLEN == 2
          #define ATL_gvbcast(ptr_, v_) \
-            v_ = {*(ptr_), *(ptr_)}
+            { ATL_vec_t z={*(ptr_),*(ptr_)}; v_ = z; }
       #elif ATL_VLEN == 4
          #define ATL_gvbcast(ptr_, v_) \
-            v_ = {*(ptr_), *(ptr_), *(ptr_), *(ptr_)}
+            { ATL_vec_t z={*(ptr_),*(ptr_),*(ptr_),*(ptr_)}; v_ = z; }
       #elif ATL_VLEN == 8
          #define ATL_gvbcast(ptr_, v_) \
             v_ = {*(ptr_), *(ptr_), *(ptr_), *(ptr_), \
                   *(ptr_), *(ptr_), *(ptr_), *(ptr_)}
       #elif ATL_VLEN == 16
          #define ATL_gvbcast(ptr_, v_) \
-            v_ = {*(ptr_), *(ptr_), *(ptr_), *(ptr_), \
+         { \
+            ATL_vec_t z_ = {*(ptr_), *(ptr_), *(ptr_), *(ptr_), \
                   *(ptr_), *(ptr_), *(ptr_), *(ptr_), \
                   *(ptr_), *(ptr_), *(ptr_), *(ptr_), \
                   *(ptr_), *(ptr_), *(ptr_), *(ptr_), \
-                 }
+                 } \
+            v_ = z_; \
+         }
       #else
          #error "Cannot create gvbcast"
       #endif
@@ -1197,10 +1200,13 @@ ATL_mmnode_t *CreateGenCasesFromNBs
 /*
  * Generate a list of generated kernels, with the union of nb's in nbs
  * and mmb, and return the generated nodes for timing.
+ * HERE HERE HERE: this code is crap, needs to merge both lists, not user
+ * list twice.
  */
 {
    ATL_mmnode_t *mp, *umb=NULL, *mmp;
    int i, n = (nbs[0] > 0) ? nbs[0] : -nbs[0], ne=0, *enbs;
+
    enbs = malloc(sizeof(int)*(n+1));
    for (mp=mmb; mp; mp = mp->next)
       if (!FindNBInArray(mp->kbB, nbs))
@@ -1214,7 +1220,7 @@ ATL_mmnode_t *CreateGenCasesFromNBs
       ATL_mmnode_t *p;
       int nb, ku;
       int mu=MU, nu=NU;
-      if (mmp)
+      if (mp)
       {
          if (i < ne)
          {
@@ -1349,6 +1355,10 @@ ATL_mmnode_t *FindBestGenCases(int verb, char pre, int nreg,
             VECi = vl;
          }
       }
+/*
+ *    For any system, don't use vector instructions if they aren't faster than
+ *    scalar. HERE HERE HERE
+ */
    }
    printf("GENERATING WITH VEC='%s', VLEN=%d\n\n", VECs[VECi], VLEN[VECi]);
 /*
@@ -1432,7 +1442,8 @@ ATL_mmnode_t *FindBestUserCases(int verb, char pre, int *nbs)
       }
    }
    mmb = DelBadMMKernels(pre, verb, mmb);
-   assert(mmb);
+   if (!mmb)
+      return(NULL);
    if (verb > 1)
    {
       printf("\nSURVIVING KERNELS:\n");
@@ -1571,13 +1582,38 @@ void ComputeKClean(int verb, char pre, ATL_mmnode_t *mmb)
 /*
  * Now, create a queue of generated kernels for each needed pair
  */
+   gmmb = NULL;
+   printf("Timing K Cleanup:\n");
    for (i=0; i < nn; i++)
    {
-      const int i3 = (i<<1)+i, mu=nl[i3];
+      ATL_mmnode_t *p;
+      const int i3 = (i<<1)+i, mu=nl[i3], nu=nl[i3+1], nb=nl[i3+2];
+      int kb;
+      double mf;
+      kb = nb >> 2;
+      kb = (kb >= 4) ? kb : 4;
       if (mu % VLEN[VECi])
       {
-         int vl=VLEN[VECi];
+         int vl=VECi;
+         if (VECi == VTAVX && !(mu%VLEN[VTSSE]))
+            VECi = VTSSE;
+         else
+            VECi = VTSC;
       }
+      p = GetNewGenNode(pre, nb, 0, mu, nu, 1);
+      p->mflop[0] = TimeMMKernel(verb, 0, p, pre, nb, nb, kb, kb, kb, kb, 
+                                 0, 0, -1);
+      mf = (2.0*nb)*nb;  /* flop count of gemm/kits (kb) */
+      p->mflop[1] = mf / p->mflop[0];   /* time in microseconds for 1 k it */
+      printf("   nb=%d, kb=%d, mu=%d, nu=%d, mf=%.2f (%e Usec/Kit)\n", 
+             nb, kb, mu, nu, p->mflop[0], mf);
+      if (gmmb)
+      {
+         mp->next = p;
+         mp = p;
+      }
+      else
+         gmmb = mp = p;
    }
    free(nl);
 }
@@ -1626,7 +1662,7 @@ int main(int nargs, char **args)
    mmp = FindBestGenCases(verb, pre, nregs, nbs, mmb);
    mmb = MergeAndWinnowCases(verb, pre, mmb, mmp);
    WriteMMFileWithPath(pre, "res", "eAMMRES.sum", mmb);
-   ComputeKClean(verb, pre, mmb);
+//   ComputeKClean(verb, pre, mmb);
    KillAllMMNodes(mmb);
    FindBestKU1(verb, pre, 17);  /* create kern for use in low-rank update */
    free(nbs);
