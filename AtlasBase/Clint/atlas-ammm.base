@@ -663,8 +663,11 @@ int main(int nargs, char **args)
 #define ATL_JKMDEF 1
 #include "atlas_mmtesttime.h"
 
-static int VLEN=1;
-static char *VEC="scalar";
+#define NVECS 4
+static enum VECTYPE {VTAVX=0, VTSSE=1, VTGV=2, VTSC=3} VECi=VTSC;
+static VLEN[4] = {4, 2, 2, 1};  /* assume double, fix up if necessary later */
+static char *VECs[4] = {"avx", "sse", "gvec", "scalar"};
+static int TSIZE=8;
 
 @extract -b @(basd)/atlas.base rout=Mylcm
 
@@ -904,34 +907,37 @@ int *GetFlags(int nargs, char **args, char *PRE,
       }
    }
    *PRE = pre;
+   if (pre == 's')
+   {
+      VLEN[VTAVX] = 8;
+      VLEN[VTSSE] = 4;
+      VLEN[VTGV] = 4;
+      TSIZE = 4;
+   }
    #ifdef ATL_AVX
       if (*NREG == 0)
          *NREG = ATL_NVREG;
-      VEC = "avx";
-      VLEN = (pre == 's') ? 8 : 4;
+      VECi = VTAVX;
    #elif defined(ATL_SSE1)
       if (*NREG == 0)
          *NREG = ATL_NVREG;
       if (pre == 's')
-      {
-         VEC = "sse";
-         VLEN = 4;
-      }
+         VECi = VTSSE;
       #ifdef ATL_SSE2
       else
-      {
-            VEC = "sse";
-            VLEN = 2;
-      }
+         VECi = VTSSE;
       #endif
-   #elif defined(ATL_AltiVec) || defined(ATL_VSX)
+   #elif (defined(ATL_AltiVec) && !defined(ATL_VSX)) || \
+         (defined(ATL_NEON) && defined(ATL_NONIEEE) && ATL_NONIEEE != 0) || \
+         (defined(ATL_3DNow) && defined(ATL_NONIEEE) && ATL_NONIEEE != 0)
       if (*NREG == 0)
          *NREG = ATL_NVREG;
       if (pre == 's')
-      {
-         VEC = "gvec";
-         VLEN = 4;
-      }
+         VECi = VTGV;
+   #elif defined(ATL_VSX)
+      if (*NREG == 0)
+         *NREG = ATL_NVREG;
+      VECi = VTGV;
    #endif
       if (*NREG == 0)
       #ifdef ATL_GAS_x8664
@@ -945,13 +951,13 @@ int *GetFlags(int nargs, char **args, char *PRE,
       #endif
    if (!nbs)
    {
-      nbs = malloc(19*sizeof(int));
+      nbs = malloc(20*sizeof(int));
       assert(nbs);
-      nbs[0] = 17; nbs[1] = 4; nbs[2] = 6; nbs[3] = 8; 
+      nbs[0] = 19; nbs[1] = 4; nbs[2] = 6; nbs[3] = 8; 
       nbs[4] = 12; nbs[5] = 16; nbs[6] = 18; nbs[7] = 24;
-      nbs[8] = 32; nbs[9] = 48; nbs[10] = 56; nbs[11] = 60;
-      nbs[12] = 72; nbs[13] = 80; nbs[14] = 120; nbs[15] = 144;
-      nbs[16] = 180; nbs[17] = 240; nbs[18] = 480;
+      nbs[8] = 32; nbs[9] = 36; nbs[10] = 48; nbs[11] = 56; 
+      nbs[12] = 60; nbs[13] = 72; nbs[14] = 80; nbs[15] = 120; 
+      nbs[16] = 144; nbs[17] = 180; nbs[18] = 240; nbs[19] = 480;
    }
    return(nbs);
 }
@@ -962,15 +968,16 @@ char *GenString(char pre, int lat, int nb, int mu, int nu,
    char *frm="make gen_amm_%s lat=%d mu=%d nu=%d ku=%d kb=%d vlen=%d rt=%s"; 
    char *ln;
    int l;
-   l = strlen(frm) + strlen(VEC) + strlen(rt) + 8;
+   l = strlen(frm) + strlen(VECs[VECi]) + strlen(rt) + 8;
    ln = malloc(l*sizeof(char));
    assert(ln);
-   if (VEC[0] != 'g' || VEC[1] != 'v')
-      sprintf(ln, frm, VEC, lat, mu*VLEN, nu, ku, nb, VLEN, rt);
+   if (VECi != VTGV)
+      sprintf(ln, frm, VECs[VECi], lat, mu*VLEN[VECi], nu, ku, nb, 
+              VLEN[VECi], rt);
    else
    {
       int sz = (pre == 's') ? 4 : 8;
-      sprintf(ln, frm, VEC, lat, mu, nu, ku, nb, VLEN*sz, rt);
+      sprintf(ln, frm, VECs[VECi], lat, mu, nu, ku, nb, VLEN[VECi]*sz, rt);
    }
    return(ln);
 }
@@ -983,12 +990,12 @@ ATL_mmnode_t *GetNewGenNode(char pre, int nb, int lat, int mu, int nu, int ku)
    np->rout = malloc(sizeof(char)*24);
    assert(np->rout);
    sprintf(np->rout, "ATL_gamm%dx%d_nb%d.c", mu, nu, nb);
-   np->vlen = VLEN;
+   np->vlen = VLEN[VECi];
    np->nbB = np->mbB = np->kbB = nb;
-   np->mu = mu*VLEN;
+   np->mu = mu*VLEN[VECi];
    np->nu = nu;
    np->ku = ku;
-   np->muladd = (lat != 0);
+   np->muladd = VECi;  /* stores what vector ISA to use */
    np->lat = lat;
    np->genstr = GenString(pre, lat, nb, mu, nu, ku, np->rout);
    return(np);
@@ -1010,7 +1017,7 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
                                       nb, nb, nb, 1, 0, -1);
       printf("READ IN BEST GENNED MU=%d, NU=%d, MFLOP=%.2f\n\n", 
              mmp->mu, mmp->nu, mmp->mflop[0]);
-      *MU = mmp->mu / VLEN;
+      *MU = mmp->mu / VLEN[VECi];
       assert(*MU);
       *NU = mmp->nu;
       return;
@@ -1031,7 +1038,7 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
       i = n / j;
       if (nb%i || nb%j)
          continue;
-      mmp->mu = i * VLEN;
+      mmp->mu = i * VLEN[VECi];
       mmp->nu = j;
       if (mmp->genstr)
         free(mmp->genstr);
@@ -1049,7 +1056,7 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
  * For x86, try 1-D cases since older machines are 2-operand assemblies
  */
    #if defined(ATL_GAS_x8664) || defined(ATL_GAS_x8632) 
-   if (VEC[0] != 'a')  /* AVX is 3-operand */
+   if (VECi != VTAVX)  /* AVX is 3-operand */
    {
       printf("BEST NEAR-SQUARE CASE IS MU=%d, NU=%d, MFLOP=%.2f\n\n", 
              muB, nuB, mfB);
@@ -1059,7 +1066,7 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
          i = 1; j = n;
          if (nb % n)
             continue;
-         mmp->mu = i*VLEN;
+         mmp->mu = i*VLEN[VECi];
          mmp->nu = j;
          if (mmp->genstr)
            free(mmp->genstr);
@@ -1073,7 +1080,7 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
             mfB = mf;
          }
          i = n; j = 1;
-         mmp->mu = i * VLEN;
+         mmp->mu = i * VLEN[VECi];
          mmp->nu = j;
          if (mmp->genstr)
            free(mmp->genstr);
@@ -1089,7 +1096,7 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
       }
    }
    #endif
-   mmp->mu = muB * VLEN;
+   mmp->mu = muB * VLEN[VECi];
    mmp->nu = nuB;
    mmp->mflop[0] = mfB;
    WriteMMFileWithPath(pre, "res", "gAMMMUNU.sum", mmp);
@@ -1101,9 +1108,9 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
 
 void GetMUNUbyNB(int nb, int nreg, int *MU, int *NU)
 {
-   int mu=(*MU), nu=(*NU), vmu=mu*VLEN;
+   int mu=(*MU), nu=(*NU), vmu=mu*VLEN[VECi];
 
-   assert(mu && nu && !(nb%VLEN));
+   assert(mu && nu && !(nb%VLEN[VECi]));
    if (!(nb%vmu) && !(nb%nu))
       return;
    if (mu == 1 || nu == 1) /* handle 1-D cases by just inc/dec U */
@@ -1128,15 +1135,15 @@ void GetMUNUbyNB(int nb, int nreg, int *MU, int *NU)
  *    try increasing mu until we run out of registers
  */
       for (i=mu+1; i*nu+i+nu <= nreg; i++)
-         if (!(nb%(i*VLEN)))
+         if (!(nb%(i*VLEN[VECi])))
             break;
 /*
  *    Try decreasing mu until it divides
  */
-      if (nb%(i*VLEN) || i*nu+i+nu > nreg)
+      if (nb%(i*VLEN[VECi]) || i*nu+i+nu > nreg)
       {
          for (mu--; mu; mu--)
-            if (!(nb%(mu*VLEN)))
+            if (!(nb%(mu*VLEN[VECi])))
                break;
       }
       else
@@ -1225,35 +1232,27 @@ ATL_mmnode_t *CreateGenCasesFromNBs
          nb = enbs[i++];
       ku = (KU == -1) ? nb : KU;
 /*
- *    If NB is not a multiple of VLEN, drop down to scalar generation
+ *    If NB is not a multiple of VLEN, drop down to shorter ops
  */
-      if (nb%VLEN)
+      if (nb%VLEN[VECi])
       {
-         char *sp=VEC;
-         int vl=VLEN;
-         p = NULL;
+         int vl=VECi;
 /*
- *       For AVX, see if dropping to SSE will help
+ *       For AVX, see if dropping to SSE will fix problem
  */
-         #if defined(ATL_AVX) && defined(ATL_SSE1) && defined(ATL_SSE2)
-            
-            VLEN >>= 1;
-            if (VEC[0] == 'a' && !(nb%VLEN))
-            {
-               VEC = "sse";
-               GetMUNUbyNB(nb, nreg, &mu, &nu);
-               p = GetNewGenNode(pre, nb, 0, mu, nu, ku);
-            }
-         #endif
-         if (!p)
+         if (VECi == VTAVX && !(nb%VLEN[VTSSE]))  /* AVX can drop to SSE */
          {
-            VLEN=1;
-            VEC = "scalar";
+            VECi = VTSSE;
             GetMUNUbyNB(nb, nreg, &mu, &nu);
             p = GetNewGenNode(pre, nb, 0, mu, nu, ku);
          }
-         VLEN = vl;
-         VEC = sp;
+         if (!p)
+         {
+            VECi = VTSC;
+            GetMUNUbyNB(nb, nreg, &mu, &nu);
+            p = GetNewGenNode(pre, nb, 0, mu, nu, ku);
+         }
+         VECi = vl;
       }
       else
       {
@@ -1302,69 +1301,56 @@ ATL_mmnode_t *FindBestGenCases(int verb, char pre, int nreg,
  * scalar generation.  Try to see if we can successfully test simplist
  * possible vector kernel, and fall back to scalar kernel if we can't
  */
-   if (VLEN > 1)
+   if (VLEN[VECi] > 1)
    {
       mp = GetNewGenNode(pre, 32, 0, 1, 1, 1);
       if (MMKernelFailsTest(pre, 32, 32, 32, 1, mp))
       {
-         printf("ERROR: VEC='%s' FAILED, genstr='%s'!\n", VEC, mp->genstr);
+         printf("ERROR: VEC='%s' FAILED, genstr='%s'!\n",VECs[VECi],mp->genstr);
          KillMMNode(mp);
 /*
  *       For AVX, try falling back to SSE
  */
-         #ifdef ATL_AVX
-            VEC="sse";
-            VLEN = (pre == 's') ? 4:2;
+         if (VECi == VTAVX)
+         {
+            VECi = VTSSE;
             mp = GetNewGenNode(pre, 32, 0, 1, 1, 1);
             if (MMKernelFailsTest(pre, 32, 32, 32, 1, mp))
-            {
-               VEC="scalar";
-               VLEN=1;
-            }
-         #else
-            VEC="scalar";
-            VLEN=1;
-         #endif
-
+               VECi = VTSC;
+         }
+         else
+            VECi = VTSC;
       }
       free(mp);
 /*
  *    For AVX, switch to SSE if AVX doesn't offer a performance advantage
  *    (as on AMD Dozer), since SSE smaller code size and requires less cleanup 
  */
-      #ifdef ATL_AVX
-         if (VEC[0] == 'a')  /* haven't already switched to sse */
+      if (VECi == VTAVX)
+      {
+         double mfA, mfS;
+         char *sp; 
+         int vl;
+         mp = GetNewGenNode(pre, 128, 0, 1, 4, 1);
+         mfA = TimeMMKernel(verb, 1, mp, pre, 128, 128, 128, 128, 128, 128,
+                            1, 0, -1);
+         KillMMNode(mp);
+         vl = VECi;
+         VECi = VTSSE;
+         mp = GetNewGenNode(pre, 128, 0, 1, 4, 1);
+         mfS = TimeMMKernel(verb, 1, mp, pre, 128, 128, 128, 128, 128, 128,
+                            1, 0, -1);
+         KillMMNode(mp);
+         if (mfA < 1.05*mfS)
+            printf("USING SSE INSTEAD OF AVX, AVX=%.2f, SSE=%.2f\n", mfA, mfS);
+         else
          {
-            double mfA, mfS;
-            char *sp; 
-            int vl;
-            mp = GetNewGenNode(pre, 128, 0, 1, 4, 1);
-            mfA = TimeMMKernel(verb, 1, mp, pre, 128, 128, 128, 128, 128, 128,
-                               1, 0, -1);
-            KillMMNode(mp);
-            vl = VLEN;
-            sp = VEC;
-            VEC = "sse";
-            VLEN = (pre == 's') ? 4 : 2;
-            mp = GetNewGenNode(pre, 128, 0, 1, 4, 1);
-            mfS = TimeMMKernel(verb, 1, mp, pre, 128, 128, 128, 128, 128, 128,
-                               1, 0, -1);
-            KillMMNode(mp);
-            if (mfA < 1.05*mfS)
-            {
-               printf("USING SSE INSTEAD OF AVX, AVX=%.2f, SSE=%.2f\n", 
-                      mfA, mfS);
-            }
-            else
-            {
-               printf("AVX GOOD, AVX=%.2f, SSE=%.2f\n", mfA, mfS);
-               VEC=sp;
-               VLEN=vl;
-            }
+            printf("AVX GOOD, AVX=%.2f, SSE=%.2f\n", mfA, mfS);
+            VECi = vl;
          }
-      #endif
+      }
    }
-   printf("GENERATING WITH VEC='%s', VLEN=%d\n\n", VEC, VLEN);
+   printf("GENERATING WITH VEC='%s', VLEN=%d\n\n", VECs[VECi], VLEN[VECi]);
 /*
  * Find the best mu/nu for NB=120; we don't care if we overflow cache for
  * this timing, and 120 = LCM(2,3,4,5,6,8,12).  Use ku=1 so that large
@@ -1486,6 +1472,8 @@ ATL_mmnode_t *MergeAndWinnowCases
                p = CloneMMNode(ump);
             ump = ump->next;
          }
+         else
+            p = CloneMMNode(gmp);
       }
       else
          p = CloneMMNode(gmp);
@@ -1511,6 +1499,111 @@ ATL_mmnode_t *MergeAndWinnowCases
    return(mmb);
 }
 
+void ComputeKClean(int verb, char pre, ATL_mmnode_t *mmb)
+/*
+ * This kernel generates K-cleanup for all routines present in mmb.
+ * To do this, it finds all unique (mu,nu) pairs, and then finds the
+ * best ku=1, K-runtime kernel for that pair (timing both user and generated).
+ * OUTPUT: <pre>AMMKCLEAN.SUM: all unique kerns to be compiled
+ *   <pre>AMMKCLEANBYNB.SUM: non-unique K-clean for each NB in mmb
+ *      mflop[1] contains estimated time for 1 K-it using K=MAX(kb/4,4)
+ *   <pre>AMMKCLEAN_<nb>.TIM: timing of K-clean for nb=<nb>; there are
+ *   i=nb-1 timings, mflop[0] contains time to do NB-i K its.  Will use
+ *   these times to get completely accurate estimate of total time for
+ *   large problems (use estimated time in CLBYNB for small probs).
+ * 
+ * NOTE: we will gen/time K-cleanup kernels only in BETA=0 case, and peel
+ *    the first K-block rather than the last.  This will minimize the C cost,
+ *    which is more appreciable for short-K.
+ */
+{
+   ATL_mmnode_t *mp, *gmmb, *ummb;
+   int nn=0, nd=0, n=0;  /* #needed & done, total */
+   int *dl, *nl;         /* done and needed lists */
+   int i;
+/*
+ * Find out how many total kernels, and how many already have their own
+ * cleanup (nd, number done)
+ */
+   for (mp=mmb; mp; mp = mp->next, n++)
+      if (mp->ku == 1 && FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+        nd++;
+   dl = malloc(3*n*sizeof(int));
+   assert(dl);
+   nl = dl + nd+nd+nd;
+   nd = 0;
+   for (mp=mmb; mp; mp = mp->next, n++)
+   {
+      int mu=mp->mu, nu=mp->nu, nn3=(nn<<1)+nn, nd3=(nd<<1)+nd;
+/*
+ *    See if pair is already in done list or needed list, if so, no change
+ */
+      for (i=0; i < nd3; i += 3)
+         if (mu == dl[i] && nu == dl[i+1])
+            break;
+      if (i < nd3)
+         continue;
+      for (i=0; i < nn3; i += 3)
+         if (mu == nl[i] && nu == nl[i+1])
+            break;
+      if (i < nn3)
+         continue;
+/*
+ *    Add surviving pair to done or needed list, as required.  When two kerns
+ *    have same mu/nu, we take larger NB (later in list) as the guy we'll use
+ *    to tune the ku=1 cases.
+ */
+      if (mp->ku == 1 && FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+      {
+         dl[nd3] = mu;
+         dl[nd3+1] = nu;
+         dl[nd3+2] = mp->kbB;
+         nd++;
+      }
+      else
+      {
+         nl[nn3] = mu;
+         nl[nn3+1] = nu;
+         dl[nn3+2] = mp->kbB;
+         nn++;
+      }
+   }
+/*
+ * Now, create a queue of generated kernels for each needed pair
+ */
+   for (i=0; i < nn; i++)
+   {
+      const int i3 = (i<<1)+i, mu=nl[i3];
+      if (mu % VLEN[VECi])
+      {
+         int vl=VLEN[VECi];
+      }
+   }
+   free(nl);
+}
+
+void FindBestKU1
+(
+   int verb, 
+   char pre,   
+   int K       /* K dim, should be small, probably like 23 or 17 */
+)
+/* 
+ * Find the best possible kernel for use in low-rank update;  We only consider
+ * kernels with runtime-K that handle all possible K (ku=1).  We will try
+ * all legal blocking factors between 16 & 480 for this kernel, and choose
+ * the one that performs best.  This kernel always used for any K not covered
+ * by optimized kernels given in eAMMRES kbBs.  When we match a kbB, we
+ * compare the perf of this kernel at its optimal nbB/mbB wt that of the
+ * specialized kernel, and choose the best.
+ *
+ * OUTPUT: This routine outputs two files:
+ * (1) AMMRANKK: best ku=1 kern wt best MB/NB, K=K
+ * (2) AMMRANKKT: timing of this kern wt M=mbB, N=nbB, all K between 1 & maxNB
+ */
+{
+}
+
 int main(int nargs, char **args)
 {
    char pre='d';
@@ -1533,7 +1626,10 @@ int main(int nargs, char **args)
    mmp = FindBestGenCases(verb, pre, nregs, nbs, mmb);
    mmb = MergeAndWinnowCases(verb, pre, mmb, mmp);
    WriteMMFileWithPath(pre, "res", "eAMMRES.sum", mmb);
+   ComputeKClean(verb, pre, mmb);
    KillAllMMNodes(mmb);
+   FindBestKU1(verb, pre, 17);  /* create kern for use in low-rank update */
+   free(nbs);
    exit(0);
 }
 @ROUT ATL_ammmABC
