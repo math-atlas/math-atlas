@@ -656,9 +656,10 @@ int main(int nargs, char **args)
    KillAllMMNodes(mmb);
    exit(0);
 }
-@ROUT ammusearch
+@ROUT ammsearch
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2012
 #include "atlas_misc.h"
+#include "atlas_gnuvec.h"
 #define ATL_JKMDEF 1
 #include "atlas_mmtesttime.h"
 
@@ -844,17 +845,7 @@ int *GetFlags(int nargs, char **args, char *PRE,
    int i, j=0, n, k;
    char pre='d';
    int *nbs=NULL;
-@skip   *FNOUT = NULL;
-   *NB = 0;
-   #ifdef ATL_GAS_x8664
-      *NREG = 16;
-   #elif defined(ATL_GAS_x8632)
-      *NREG = 8;
-   #elif defined(ATL_ARCH_IA64Itan) || defined(ATL_ARCH_IA64Itan)
-      *NREG = 128;
-   #else
-      *NREG = 32;
-   #endif
+   *NREG = *NB = 0;
    *verb = 1;
    for (i=1; i < nargs; i++)
    {
@@ -913,19 +904,14 @@ int *GetFlags(int nargs, char **args, char *PRE,
       }
    }
    *PRE = pre;
-@skip   if (*NB == 0)
-@skip      *NB = (pre == 'd') ? 36 : 48;
-@beginskip
-   if (!(*FNOUT))
-   {
-      *FNOUT = DupString("res/duAMMRES.sum");
-      (*FNOUT)[4] = pre;
-   }
-@endskip
    #ifdef ATL_AVX
+      if (*NREG == 0)
+         *NREG = ATL_NVREG;
       VEC = "avx";
       VLEN = (pre == 's') ? 8 : 4;
    #elif defined(ATL_SSE1)
+      if (*NREG == 0)
+         *NREG = ATL_NVREG;
       if (pre == 's')
       {
          VEC = "sse";
@@ -938,13 +924,25 @@ int *GetFlags(int nargs, char **args, char *PRE,
             VLEN = 2;
       }
       #endif
-   #elif defined(ATL_AltiVec)  /* not implemented yet */
+   #elif defined(ATL_AltiVec) || defined(ATL_VSX)
+      if (*NREG == 0)
+         *NREG = ATL_NVREG;
       if (pre == 's')
       {
          VEC = "gvec";
          VLEN = 4;
       }
    #endif
+      if (*NREG == 0)
+      #ifdef ATL_GAS_x8664
+         *NREG = 16;
+      #elif defined(ATL_GAS_x8632)
+         *NREG = 8;
+      #elif defined(ATL_ARCH_IA64Itan) || defined(ATL_ARCH_IA64Itan)
+         *NREG = 128;
+      #else
+         *NREG = 32;
+      #endif
    if (!nbs)
    {
       nbs = malloc(19*sizeof(int));
@@ -967,7 +965,13 @@ char *GenString(char pre, int lat, int nb, int mu, int nu,
    l = strlen(frm) + strlen(VEC) + strlen(rt) + 8;
    ln = malloc(l*sizeof(char));
    assert(ln);
-   sprintf(ln, frm, VEC, lat, mu*VLEN, nu, ku, nb, VLEN, rt);
+   if (VEC[0] != 'g' || VEC[1] != 'v')
+      sprintf(ln, frm, VEC, lat, mu*VLEN, nu, ku, nb, VLEN, rt);
+   else
+   {
+      int sz = (pre == 's') ? 4 : 8;
+      sprintf(ln, frm, VEC, lat, mu, nu, ku, nb, VLEN*sz, rt);
+   }
    return(ln);
 }
 
@@ -1044,7 +1048,7 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
 /*
  * For x86, try 1-D cases since older machines are 2-operand assemblies
  */
-   #if defined(ATL_GAS_x8664) || defined(ATL_GAS_x8664) 
+   #if defined(ATL_GAS_x8664) || defined(ATL_GAS_x8632) 
    if (VEC[0] != 'a')  /* AVX is 3-operand */
    {
       printf("BEST NEAR-SQUARE CASE IS MU=%d, NU=%d, MFLOP=%.2f\n\n", 
@@ -1055,7 +1059,7 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
          i = 1; j = n;
          if (nb % n)
             continue;
-         mmp->mu = i;
+         mmp->mu = i*VLEN;
          mmp->nu = j;
          if (mmp->genstr)
            free(mmp->genstr);
@@ -1069,7 +1073,7 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
             mfB = mf;
          }
          i = n; j = 1;
-         mmp->mu = i;
+         mmp->mu = i * VLEN;
          mmp->nu = j;
          if (mmp->genstr)
            free(mmp->genstr);
