@@ -4,6 +4,13 @@
 static LOOPPATH **PATHS = NULL;
 static int NPATH = 0, TNPATH = 0, VPATH = -1;
 
+/* 
+ * Majedul: temporary flag for SSV which is needed in loop peeling to predict
+ * max LABEL_id. I will manage that using special flag which indicates the type
+ * of vectorization.
+ */
+int isSSV = 0;
+
 void NewPathTable(int chunk)
 {
    int i, n;
@@ -851,7 +858,7 @@ void AddLoopPeeling(LOOPQ *lp, int jblabel, int falabel, short Np,
  * NOTE: if unroll is used, we need to keep space for that too. 
  *
  */
-   if (NPATH >  0 ) /* SSV is aplied */
+   if (NPATH >  0 && isSSV) /* SSV is aplied */
    {
       lnum = (NPATH -1) * Type2Vlen(lp->vflag) + 1; /* keep space for SSV*/
    }
@@ -970,6 +977,7 @@ void GenForceAlignedPeeling(LOOPQ *lp)
    short Np, Nv;
    int r0, r1;
    LOOPQ *lpn;
+   extern BBLOCK *bbbase;
 /*
  * Need to create 2 new var for peel and vector loop control
  */
@@ -1118,11 +1126,23 @@ int SimdLoop(LOOPQ *lp)
    short *sp;
    BLIST *bl;
    static enum inst 
-     sfinsts[] = {FLD,  FST,  FMUL,  FMAC, FADD,  FSUB,  FABS,  FMOV,  FZERO},
-     vfinsts[] = {VFLD, VFST, VFMUL, VFMAC, VFADD, VFSUB, VFABS, VFMOV, VFZERO},
-     sdinsts[] = {FLDD, FSTD, FMULD, FMACD, FADDD, FSUBD, FABSD, FMOVD, FZEROD},
-     vdinsts[] = {VDLD, VDST, VDMUL, VDMAC, VDADD, VDSUB, VDABS, VDMOV, VDZERO};
-   const int nvinst=9;
+     sfinsts[] = {FLD,      FST,      FMUL,     FMAC,     FADD,     FSUB,    
+                  FABS,     FMOV,     FZERO,    FNEG,     FCMOV1,   FCMOV2, 
+                  FCMPWEQ,  FCMPWNE,  FCMPWLT,  FCMPWLE,  FCMPWGT,  FCMPWGE},
+
+     vfinsts[] = {VFLD,     VFST,     VFMUL,    VFMAC,    VFADD,    VFSUB,   
+                  VFABS,    VFMOV,    VFZERO,   VFNEG,    VFCMOV1,  VFCMOV2,
+                  VFCMPWEQ, VFCMPWNE, VFCMPWLT, VFCMPWLE, VFCMPWGT, VFCMPWGE},
+
+     sdinsts[] = {FLDD,     FSTD,     FMULD,    FMACD,    FADDD,    FSUBD, 
+                  FABSD,    FMOVD,    FZEROD,   FNEGD,    FCMOVD1,  FCMOVD2, 
+                  FCMPDWEQ, FCMPDWNE, FCMPDWLT, FCMPDWLE, FCMPDWGT, FCMPDWGE},
+
+     vdinsts[] = {VDLD,     VDST,     VDMUL,    VDMAC,    VDADD,    VDSUB, 
+                  VDABS,    VDMOV,    VDZERO,   VDNEG,    VDCMOV1,  VDCMOV2,
+                  VDCMPWEQ, VDCMPWNE, VDCMPWLT, VDCMPWLE, VDCMPWGT, VDCMPWGE};
+   
+   const int nvinst=18;
    enum inst sld, vld, sst, vst, smul, vmul, smac, vmac, sadd, vadd, ssub, vsub, 
              sabs, vabs, smov, vmov, szero, vzero, inst;
    short r0, r1, op;
@@ -1178,6 +1198,10 @@ int SimdLoop(LOOPQ *lp)
  *       ptr arith instead.
  */
    KillLoopControl(lp);
+/*
+ * temp testing 
+ */
+
 #if 1
    if (IsLoopPeelOptimizable(lp))
       GenForceAlignedPeeling(lp);
@@ -1537,11 +1561,12 @@ int VectorizeStage3(int savesp, int SVSTATE)
  */
 {
    int i;
+   extern BBLOCK *bbbase;
 /*
  * Get code into standard form for analysis
  */
    GenPrologueEpilogueStubs(bbbase, savesp);
-   NewBasicBlocks(bbbase);
+   bbbase = NewBasicBlocks(bbbase);
    FindLoops();
    CheckFlow(bbbase,__FILE__,__LINE__);
 #if 0
@@ -1796,7 +1821,8 @@ int CheckVarInBitvec(int vid, short iv)
 int PathFlowVectorAnalysis(LOOPPATH *path)
 /*
  * Analyze single path of loop and stores all the info in paths,
- * returns error code if failed, otherwise 0. 
+ * returns error code if failed, otherwise 0.
+ * NOTE: it doesn't change the original code but assume loopcontrol is killed.
  * NOTE: don't stop the analysis when error is found, rather complete all
  * the analysis, save the data structure and return error code at last
  */
@@ -2485,6 +2511,10 @@ int SpeculativeVectorAnalysis()
    {
       PathFlowVectorAnalysis(PATHS[i]);
    }
+/*
+ * Loop Control should be re-inserted 
+ */
+
 #if 0
    fprintf(stderr, "\nFigure out all vars in each path\n");
    fprintf(stderr, "================================\n");
@@ -4441,6 +4471,7 @@ int SpecSIMDLoop(void)
  * control structure of main loop, hence the cleanup loop. 
  * all the loop control should be killed before loop peeling or, cleanup loop.
  */
+   isSSV = 1;
 #if 1   
    if (IsLoopPeelOptimizable(lp))
       GenForceAlignedPeeling(lp);
@@ -4501,9 +4532,11 @@ int SpecSIMDLoop(void)
  * to implement backup stages.
  */
    SpeculativeVecTransform(lp);  
-#if 1
+
+#if 0
    UnrollCleanup(lp,1);
 #endif
+
 #if 0
    fprintf(stdout, " LIL AFTER SSV LOOP \n");
    PrintInst(stdout, bbbase);
@@ -4517,6 +4550,12 @@ int SpecSIMDLoop(void)
    KillPathTable();
 
 /*
+ * Update prefetch information
+ */
+   UpdateNamedLoopInfo();
+
+#if 0   
+/*
  * Everything is messed up already. So, re-make the control flow and check it 
  */
    InvalidateLoopInfo();
@@ -4529,6 +4568,8 @@ int SpecSIMDLoop(void)
  * Update prefetch information
  */
    UpdateNamedLoopInfo();
+
+#endif
 
 #if 0
    int i,N;
@@ -4593,28 +4634,45 @@ int SpecSIMDLoop(void)
    return(0);
 }
 
-void UpdateBlkWithNewVar(BBLOCK *bp0, int vid, short *sp, short *nvp)
+short *UpdateBlkWithNewVar(BBLOCK *bp0, int vid, short *sp)
+/*
+ * take a var list (format: N, v1, v2,..) and blk; rename and update with
+ * new var and returns the newvar list in same format
+ */
 {
    int i, j, k, N;
-   short sv, nv;
-   char *nvar;
+   short sv, nv, op;
+   short *newvars; 
+   char *strnvar;
    INSTQ *ip;
    
+/*
+ * allocate space for newvars
+ */
+   newvars = calloc(sp[0]+1, sizeof(short));
+/*
+ * Findout the first set of var, update the destination and update all later
+ * use of the var as dest/src
+ */
+
    for ( N=sp[0], i=1; i <= N; i++ )
    {
       sv = sp[i];
       for (ip = bp0->ainst1, j=1; ip; ip=ip->next, j++)
       {
-         k = SToff[ip->inst[1]-1].sa[1]; /* index of original ST */
+         op = ip->inst[1];
+         if (op <= 0) continue; /* reg, no need to check */
+
+         k = SToff[op-1].sa[1]; /* index of original ST */
          /*fprintf(stderr, "%d: %d\n", j, k);*/
          if (k == sv)
          {
-            fprintf(stderr, " got 1st set for %s at inst %d\n", 
-                    STname[sv-1], j);
-            nvar = malloc(sizeof(char)*(strlen(STname[sv-1])+4));
-            sprintf(nvar,"%s_%d",STname[sv-1],vid);
-            nv = InsertNewLocal(nvar,STflag[sv-1]);
-            *nvp = nv; /* update the param */
+            /*fprintf(stderr, " got 1st set for %s at inst %d\n", 
+                    STname[sv-1], j);*/
+            strnvar = malloc(sizeof(char)*(strlen(STname[sv-1])+4));
+            sprintf(strnvar,"%s_%d",STname[sv-1],vid);
+            nv = InsertNewLocal(strnvar,STflag[sv-1]);
+            newvars[i] = nv; /* update the param */
             /*ip->inst[1] = nv;*/
             ip->inst[1] = SToff[nv-1].sa[2];
             break;
@@ -4630,12 +4688,12 @@ void UpdateBlkWithNewVar(BBLOCK *bp0, int vid, short *sp, short *nvp)
             if (k == sv)
             {
                /*ip->inst[j] = nv;*/
-               ip->inst[1] = SToff[nv-1].sa[2];
+               ip->inst[j] = SToff[nv-1].sa[2];
             }
          }
       }
    }
-
+   return newvars;
 }
 
 short RemoveBranchWithMask(BBLOCK *sblk)
@@ -4738,7 +4796,7 @@ short RemoveBranchWithMask(BBLOCK *sblk)
          ip0->inst[1] = ip0->inst[2]; /* update value in a reg */
          ip0 = InsNewInst(sblk, ip0, NULL, fst, SToff[mask-1].sa[2], 
                           ip0->inst[1], 0);
-#if 0
+#if 1 
          DelInst(ip); 
 #else
 /*
@@ -4811,13 +4869,59 @@ short *FindVarsCMOVNeeded(BBLOCK *bp0)
    return sp;
 }
 
+short *FindVarsSetInBlock(BBLOCK *bp0)
+{
+   int i;
+   short iv;
+   short *sp;
+   INSTQ *ip;
+   extern int FKO_BVTMP;
+   extern short STderef;
+
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
+   iv = FKO_BVTMP;   /* avoiding init of temp vec rather reuse */
+   SetVecAll(iv, 0);
+/*
+ * Recalculate ins and outs, dead vars if not updated yet.
+ */
+   if (!CFUSETU2D )
+   {
+      CalcInsOuts(bbbase);
+      CalcAllDeadVariables();
+   }
+/*
+ * figure out all vars and regs which is set in this blk
+ */
+   for (ip = bp0->inst1; ip; ip=ip->next)
+   {
+      iv = BitVecComb(iv, iv, ip->set, '|');
+   }
+/*
+ * clear all the regs in bvec to find out vars only
+ */
+   for (i=0; i < TNREG; i++)
+   {
+      SetVecBit(iv, i, 0);
+   }
+   SetVecBit(iv, STderef+TNREG-1,0);
+/*
+ * create array of vars (st-index) which needed CMOV
+ */
+   sp = BitVec2Array(iv, 1-TNREG);
+   return sp;
+}
+
 void RedundantVectorAnalysis(LOOPQ *lp)
 {
    int i, j, k, n, N;
    int type;
    int *vpos;
    short iv, iv1;
-   short *ifsetsp, *elsetsp, *sp; 
+   short *sp;
+   
+   short *isetvars, *esetvars, *icmvars, *ecmvars; /* i=if, e=else */
+   short *inewvars, *enewvars;
+
    char *nvar;
    short nv, sv, nv1, nv2, mask;
    short freg0, freg1, freg2;
@@ -4892,12 +4996,99 @@ void RedundantVectorAnalysis(LOOPQ *lp)
 #endif
 
 /*
+ * NOTE: We need to rename all the variables which are set inside the blks
+ * even if it is not a candidate for select operation: 
+ * Example: 
+ * 
+ * [using if-else]
+ *
+ * if (x < 0.0)
+ * { 
+ *    x = -x;
+ *    sum +=x;
+ * }
+ * else
+ *    sum+=x;
+ *
+ * Transformation:
+ *
+ * x = X[0];
+ * mask1 = x < 0.0 
+ *    x1 = -x;          # if x is not renamed, it doesn't work
+ *    sum1 = sum + x1;
+ *    sum2 = sum + x
+ *    sum = mask1 ? sum1: sum2
+ *
+ * RULE: rename if it is set in both blks or, it is live out
+ */
+
+/*
+ * finding all the variables which are set inside blks
+ */
+   if (ifblks) isetvars = FindVarsSetInBlock(ifblks->blk);
+   if (elseblks) esetvars = FindVarsSetInBlock(elseblks->blk);
+/*
  * identify all vars which need select operation
  * 1) which is set inside if/else blks
  * 2) which is liveout at the exit of the block
  */
+#if 0   
    if (ifblks) ifsetsp = FindVarsCMOVNeeded(ifblks->blk);
    if (elseblks) elsetsp = FindVarsCMOVNeeded(elseblks->blk);
+#endif
+
+   if (ifblks) icmvars = FindVarsCMOVNeeded(ifblks->blk);
+   if (elseblks) ecmvars = FindVarsCMOVNeeded(elseblks->blk);
+/*
+ * Update with new vars, return new vars' st index in corresponding location
+ * that means, if x var is in pos 2 in setvars, new var st will be found on the
+ * same index of nvars
+ */
+   if(ifblks) inewvars = UpdateBlkWithNewVar(ifblks->blk, 1, isetvars);
+   if (elseblks) enewvars = UpdateBlkWithNewVar(elseblks->blk, 2, esetvars);
+/*
+ * copy the if/else block at end of split block
+ */
+   bp = splitblks->blk;
+   ip0 = splitblks->blk->instN;
+   if (ip0->inst[0] == JMP) ip0 = ip0->prev;
+/*
+ * copy if blks
+ */
+   ip = ifblks->blk->inst1;
+
+   while (ip)
+   {
+      if (ip->inst[0] != JMP && ip->inst[0] != LABEL) 
+      {
+         ip0 = InsNewInst(bp, ip0, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
+                          ip->inst[3]);
+         ip = RemoveInstFromQ(ip);
+      }
+      else
+         /*ip = ip->next;*/
+         ip = RemoveInstFromQ(ip); /* delete all */
+   }
+/*
+ * copy else blk if exists
+ */
+   if (elseblks)
+   {
+      ip = elseblks->blk->inst1;
+      while (ip)
+      {
+         if (ip->inst[0] != JMP && ip->inst[0] != LABEL) 
+         {
+            ip0 = InsNewInst(bp, ip0, NULL, ip->inst[0], ip->inst[1], 
+                                 ip->inst[2], ip->inst[3]);
+            ip = RemoveInstFromQ(ip);
+         }
+         else
+            /*ip = ip->next;*/
+            ip = RemoveInstFromQ(ip); /* delete all */
+      }
+   }
+
 
 #if 0
    fprintf(stderr, "vars set [ifblk]: ");
@@ -4921,9 +5112,9 @@ void RedundantVectorAnalysis(LOOPQ *lp)
  * NOTE: BitVec2Array returns formated array[N,s1,s2...] but Array2BitVec
  * takes unformatted array without the count.
  */
-   iv = BitVecCopy(iv, Array2BitVec(ifsetsp[0], ifsetsp+1, TNREG-1));
+   iv = BitVecCopy(iv, Array2BitVec(icmvars[0], icmvars+1, TNREG-1));
    if (elseblks)
-      iv = BitVecComb(iv, iv, Array2BitVec(elsetsp[0], elsetsp+1, TNREG-1),'|');
+      iv = BitVecComb(iv, iv, Array2BitVec(ecmvars[0], ecmvars+1, TNREG-1),'|');
    sp = BitVec2Array(iv, 1-TNREG);
 
 #if 0
@@ -4941,15 +5132,15 @@ void RedundantVectorAnalysis(LOOPQ *lp)
 
   for (i = 1 ; i <= N; i++)
   {
-      for (n=ifsetsp[0], j=1; j <= n ;j++) 
-         if (sp[i] == ifsetsp[j])
+      for (n=icmvars[0], j=1; j <= n ;j++) 
+         if (sp[i] == icmvars[j])
             break;
       if (j != (n+1))
       {
          if (elseblks) /* any elseblk at all? */
          {
-            for (n=elsetsp[0], j=1; j <= n ;j++) 
-               if (sp[i] == elsetsp[j])
+            for (n=ecmvars[0], j=1; j <= n ;j++) 
+               if (sp[i] == ecmvars[j])
                   break; 
             if (j != (n+1)) /* both in if and else*/
             {
@@ -4967,52 +5158,11 @@ void RedundantVectorAnalysis(LOOPQ *lp)
       }
   }
    
-#if 1
+#if 0
    fprintf(stderr, "vars set [union]: ");
    for (N=sp[0], i=1; i <=N; i++)
       fprintf(stderr, "%s[%d] = %d ", STname[sp[i]-1], sp[i]-1, vpos[i]);
    fprintf(stderr, "\n");
-#endif
-/*
- * Rename the destination of with a new variable where is 1st sets
- * Rename all the uses of that var after that inst
- */
-   if(ifblks->blk) UpdateBlkWithNewVar(ifblks->blk, 1, ifsetsp, &nv1);
-   if (elseblks->blk) UpdateBlkWithNewVar(elseblks->blk, 2, elsetsp, &nv2);
-
-#if 0   
-   for ( N=ifsetsp[0], i=1; i <= N; i++ )
-   {
-      sv = ifsetsp[i];
-      for (ip = ifblks->blk->ainst1, j=1; ip; ip=ip->next, j++)
-      {
-         k = SToff[ip->inst[1]-1].sa[1]; /* index of original ST */
-         /*fprintf(stderr, "%d: %d\n", j, k);*/
-         if (k == sv)
-         {
-            fprintf(stderr, " got 1st set for %s at inst %d\n", 
-                    STname[sv-1], j);
-            nvar = malloc(sizeof(char)*(strlen(STname[sv-1])+4));
-            sprintf(nvar,"%s_1",STname[sv-1]);
-            nv = InsertNewLocal(nvar,STflag[sv-1]);
-            ip->inst[1] = nv;
-            break;
-         }
-      }
-      /* findout the use of this var in remaining instruction */
-      if (!ip) continue;
-      for ( ;ip; ip=ip->next)
-      {
-         for (j=1; j < 4; j++)
-         {
-            k = SToff[ip->inst[j]-1].sa[1]; /* index of original ST */
-            if (k == sv)
-            {
-               ip->inst[j] = nv;
-            }
-         }
-      }
-   }
 #endif
 
 /*
@@ -5025,8 +5175,27 @@ void RedundantVectorAnalysis(LOOPQ *lp)
  * 
  * NOTE: before inserting the select inst, the conditinal jump should be change
  * update the mask variable.....!!!!!!!!!
+ *
+ * KEEP IN MIND: 
+ * convention of select: 
+ * dest = (mask==0) ? src1 : src2   
+ * that means, dest = mask? scr1: src2
+ *
+ * LIL:
+ * FCMOV1   :  dest = (mask==0) ? dest : src   # dest is aliased with src1 
+ * FCMOV2   :  dest = (mask==0) ? src : dest   # dest is aliased with src2
+ *
+ */
+
+/*
+ * NOTE: We should merge everything into single blk so that other optimization
+ * can be performed, like: AE 
  */
    mask = RemoveBranchWithMask(splitblks->blk);
+            
+   bp = splitblks->blk;
+   ip = bp->ainstN;
+   if (ip->inst[0] == JMP) ip=ip->prev;
 
    for (N=sp[0], i=1; i <= N; i++)
    {
@@ -5049,9 +5218,11 @@ void RedundantVectorAnalysis(LOOPQ *lp)
       switch(vpos[i])
       {
          case 1:  /* if blks*/ 
-            bp = ifblks->blk;
-            ip = bp->ainstN;
-            if (ip->inst[0] == JMP) ip=ip->prev;
+/*
+ *          findout corrsponding new vars
+ */
+            k = FindInShortList(isetvars[0], isetvars+1, sp[i]);
+            nv1 = inewvars[k];
 /*
  *          Now time to insert select inst
  *          new var in if: nv1 
@@ -5061,15 +5232,18 @@ void RedundantVectorAnalysis(LOOPQ *lp)
             freg2 = GetReg(type);
             ip = InsNewInst(bp, ip, NULL, fld, -freg0, SToff[sp[i]-1].sa[2], 0);
             ip = InsNewInst(bp, ip, NULL, fld, -freg1, SToff[nv1-1].sa[2], 0);
-            ip = InsNewInst(bp, ip, NULL, fld, -freg1, SToff[mask-1].sa[2], 0);
-            ip = InsNewInst(bp, ip, NULL, cmov1, -freg0, -freg1, -freg2 );
+            ip = InsNewInst(bp, ip, NULL, fld, -freg2, SToff[mask-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, cmov2, -freg0, -freg1, -freg2 );
             ip = InsNewInst(bp, ip, NULL, fst, SToff[sp[i]-1].sa[2], -freg0, 0);
             GetReg(-1);
             break;
          case 2:  /* else blks*/
-            bp = elseblks->blk;
-            ip = bp->ainstN;
-            if (ip->inst[0] == JMP) ip=ip->prev;
+            /*bp = elseblks->blk;*/
+/*
+ *          findout corrsponding new vars
+ */
+            k = FindInShortList(esetvars[0], esetvars+1, sp[i]);
+            nv2 = inewvars[k];
 /*
  *          Now time to insert select inst
  *          New var in else: nv2
@@ -5079,15 +5253,24 @@ void RedundantVectorAnalysis(LOOPQ *lp)
             freg2 = GetReg(type);
             ip = InsNewInst(bp, ip, NULL, fld, -freg0, SToff[sp[i]-1].sa[2], 0);
             ip = InsNewInst(bp, ip, NULL, fld, -freg1, SToff[nv2-1].sa[2], 0);
-            ip = InsNewInst(bp, ip, NULL, fld, -freg1, SToff[mask-1].sa[2], 0);
-            ip = InsNewInst(bp, ip, NULL, cmov2, -freg0, -freg1, -freg2 );
+            ip = InsNewInst(bp, ip, NULL, fld, -freg2, SToff[mask-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, cmov1, -freg0, -freg1, -freg2 );
             ip = InsNewInst(bp, ip, NULL, fst, SToff[sp[i]-1].sa[2], -freg0, 0);
             GetReg(-1);
             break;
          case 3:  /* both in if and else blk */
-            bp = mergeblks->blk;
+            
+            /*bp = mergeblks->blk;
             ip = bp->ainst1;
             if (ip->inst[0] == LABEL) ip=ip->next;
+            */
+/*
+ *          findout corrsponding new vars
+ */
+            k = FindInShortList(isetvars[0], isetvars+1, sp[i]);
+            nv1 = inewvars[k];
+            k = FindInShortList(esetvars[0], esetvars+1, sp[i]);
+            nv2 = enewvars[k];
 /*
  *          Now time to insert select inst
  *          new var in if: nv1, New var in else: nv2
@@ -5095,10 +5278,11 @@ void RedundantVectorAnalysis(LOOPQ *lp)
             freg0 = GetReg(type);
             freg1 = GetReg(type);
             freg2 = GetReg(type);
-            ip = InsNewInst(bp, NULL, ip, fld, -freg0, SToff[nv1-1].sa[2], 0);
+            /*ip = InsNewInst(bp, NULL, ip, fld, -freg0, SToff[nv1-1].sa[2],0);*/
+            ip = InsNewInst(bp, ip, NULL, fld, -freg0, SToff[nv1-1].sa[2], 0);
             ip = InsNewInst(bp, ip, NULL, fld, -freg1, SToff[nv2-1].sa[2], 0);
-            ip = InsNewInst(bp, ip, NULL, fld, -freg1, SToff[mask-1].sa[2], 0);
-            ip = InsNewInst(bp, ip, NULL, cmov1, -freg0, -freg1, -freg2 );
+            ip = InsNewInst(bp, ip, NULL, fld, -freg2, SToff[mask-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, cmov2, -freg0, -freg1, -freg2 );
             ip = InsNewInst(bp, ip, NULL, fst, SToff[sp[i]-1].sa[2], -freg0, 0);
             GetReg(-1);
             break;
@@ -5110,54 +5294,10 @@ void RedundantVectorAnalysis(LOOPQ *lp)
  * We will move all instruction from if/else blk and adding it after split block
  * Hopefully, deadblock elemination will indentify and delete the blk structure.
  */
-#if 0
-   bp0 = splitblks->blk;
-   bp = NewBasicBlock(NULL, NULL);
-/*
- * copy if blk first
- */
-   ip0 = InsNewInst(bp, NULL, NULL, COMMENT, STstrconstlookup("NEW MERGE BLK"),
-                    0, 0);
-   ip = ifblks->blk->inst1;
-
-   while (ip)
-   {
-      if (ip->inst[0] != JMP) /* what if, cond branch! not consider this*/
-      {
-         ip0 = InsNewInst(bp, ip0, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
-                          ip->inst[3]);
-         ip = RemoveInstFromQ(ip);
-      }
-      else
-         ip = ip->next;
-   }
-/*
- * copy else blk if exists
- */
-   if (elseblks)
-   {
-      ip = elseblks->blk->inst1;
-      while (ip)
-      {
-         if (ip->inst[0] != JMP) /* what if, cond branch! not consider this*/
-         {
-            ip0 = InsNewInst(bp, ip0, NULL, ip->inst[0], ip->inst[1], 
-                                 ip->inst[2], ip->inst[3]);
-            ip = RemoveInstFromQ(ip);
-         }
-         else
-            ip = ip->next;
-      }
-   }
-#if 1
-   fprintf(stderr, "New Block: \n");
-   PrintInst(stderr, bp);
-#endif
-
-#else
 /*
  * add instruction at the end of the splitblks
  */
+#if 0
    ip0 = splitblks->blk->instN;
    if (ip0->inst[0] == JMP) ip0 = ip0->prev;
 /*
@@ -5174,7 +5314,8 @@ void RedundantVectorAnalysis(LOOPQ *lp)
          ip = RemoveInstFromQ(ip);
       }
       else
-         ip = ip->next;
+         /*ip = ip->next;*/
+         ip = RemoveInstFromQ(ip); /* delete all */
    }
 /*
  * copy else blk if exists
@@ -5191,11 +5332,28 @@ void RedundantVectorAnalysis(LOOPQ *lp)
             ip = RemoveInstFromQ(ip);
          }
          else
-            ip = ip->next;
+            /*ip = ip->next;*/
+            ip = RemoveInstFromQ(ip); /* delete all */
       }
    }
-
 #endif
+}
+
+void ApplyCFGOpt(int nopt)
+{
+   int i;
+   int changes;
+
+   i = 0;
+   while (changes && (i <= nopt))
+   {
+      changes = 0;
+      changes = DoUselessJumpElim();
+      /*changes += DoBranchChaining();*/
+      i++;
+   }
+   fprintf(stderr, "opt done = %d\n", i);
+
 }
 
 void VectorRedundantComputation()
@@ -5212,6 +5370,7 @@ void VectorRedundantComputation()
    INSTQ *ippu;
    struct ptrinfo *pi0;
    BLIST *bl;
+   extern BBLOCK *bbbase;
 
    lp = optloop;
 
@@ -5280,13 +5439,18 @@ void VectorRedundantComputation()
    InvalidateLoopInfo();
    bbbase = NewBasicBlocks(bbbase);
    CheckFlow(bbbase, __FILE__, __LINE__);
+   
+   //ApplyCFGOpt(10);
+   
    FindLoops();
    CheckFlow(bbbase, __FILE__, __LINE__);
+   
 #endif
 
-#if 1
    lp = optloop;
-   fprintf(stderr, "\n LOOP BLOCKS: \n");
+#if 0
+   lp = optloop;
+   fprintf(stderr, "\nLOOP BLOCKS: ");
    if(!lp->blocks) fprintf(stderr, "NO LOOP BLK!!!\n");
    for (bl = lp->blocks; bl ; bl = bl->next)
    {
@@ -5294,7 +5458,6 @@ void VectorRedundantComputation()
       fprintf(stderr, "%d ",bl->blk->bnum);
    }
    fprintf(stderr,"\n");
-   fprintf(stderr, "\n LOOP BLOCKS: \n");
    if(lp->header) fprintf(stderr, "loop header: %d\n",lp->header->bnum);
    if(lp->preheader) fprintf(stderr, "loop preheader: %d\n",
                              lp->preheader->bnum);
@@ -5315,12 +5478,66 @@ void VectorRedundantComputation()
    }
    fprintf(stderr,"\n");
 #endif
-#if 1
+
+#if 0 
+   fprintf(stdout, "LIL Before Vectorization\n");
+   PrintInst(stdout,bbbase);
+   ShowFlow("cfg.dot",bbbase); /* checked for scalar, it's ok */
+   exit(0);
+#endif
+
+/*
+ * Apply normal vectorization
+ * NOTE: VectorizeStage1 and VectorizeSatge3 don't work; as stage1 
+ * restore FKOstate0 code. So, redundant code transformation is lost. 
+ * need to update the analysis.
+ * Saving current state as State0 would not work. SaveFKOState(0) doesn't 
+ * save bit vector. So, it would create a segfault with RestoreFKOstate
+ *
+ */
+#if 0
+   /*SaveFKOState(0);*/
+   assert(!VectorizeStage1());
+   assert(!VectorizeStage3(0,0));
+#endif
+  
+#if 1 
+ assert(!SpeculativeVectorAnalysis());
+#endif
+
+/*
+ * restate mvptr and loop control 
+ */
+#if 0
+ pi0 = FindMovingPointers(lp->tails);
+ ippu = KillPointerUpdates(pi0,1);
+ /*OptimizeLoopControl(lp, 1, 0, NULL);*/
+ OptimizeLoopControl(lp, 1, 0, ippu);
+ assert(!VectorizeStage3(0,0));
+#endif
+
+ assert(!SimdLoop(lp));
+#if 0 
    fprintf(stdout, "LIL\n");
    PrintInst(stdout,bbbase);
-   //fprintf(stdout, "Symbol Table\n");
-   //PrintST(stdout);
+   ShowFlow("cfg.dot",bbbase); /* checked for scalar, it's ok */
    exit(0);
+#endif
+ UpdateNamedLoopInfo();
+
+#if 0
+  
+   UnrollCleanup(optloop,1);
+   fprintf(stdout, "LIL After Vectorization \n");
+   PrintInst(stdout,bbbase);
+/*
+ * Everything is messed up already. So, re-make the control flow and check it 
+ */
+   InvalidateLoopInfo();
+   bbbase = NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   FindLoops();
+   CheckFlow(bbbase, __FILE__, __LINE__);
 #endif
 
 }
