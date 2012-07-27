@@ -1023,6 +1023,7 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
       *MU = mmp->mu / VLEN[VECi];
       assert(*MU);
       *NU = mmp->nu;
+      KillMMNode(mmp);
       return;
    }
 /*
@@ -1103,6 +1104,7 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
    mmp->nu = nuB;
    mmp->mflop[0] = mfB;
    WriteMMFileWithPath(pre, "res", "gAMMMUNU.sum", mmp);
+   KillMMNode(mmp);
    printf("BEST CASE IS MU=%d, NU=%d, MFLOP=%.2f\n\n", 
           muB, nuB, mfB);
    *MU = muB;
@@ -1204,39 +1206,40 @@ ATL_mmnode_t *CreateGenCasesFromNBs
  * list twice.
  */
 {
-   ATL_mmnode_t *mp, *umb=NULL, *mmp;
+   ATL_mmnode_t *mp, *umb=NULL, *ap;
    int i, n = (nbs[0] > 0) ? nbs[0] : -nbs[0], ne=0, *enbs;
 
-   enbs = malloc(sizeof(int)*(n+1));
-   for (mp=mmb; mp; mp = mp->next)
-      if (!FindNBInArray(mp->kbB, nbs))
-         enbs[ne++] = mp->kbB;
 /*
- * Create new queue for all NBs
+ * Create new queue with an entry for all NBs; both lists (mmb & nbs) are
+ * sorted in increasing size
  */
-   i = 0; mp = mmb;
+   if (!n && !mmb)
+      return(NULL);
+   n++;
+   ap = mmb;  /* add ptr */
+   i = 1;     /* ptr to normal block under consideration */
    do
    {
-      ATL_mmnode_t *p;
-      int nb, ku;
-      int mu=MU, nu=NU;
-      if (mp)
+      int nb, mu=MU, nu=NU, ku;
+      ATL_mmnode_t *p=NULL;
+      if (ap && i < n)  /* must choose amongst blocks */
       {
-         if (i < ne)
-         {
-            nb = enbs[i];
-            nb = Mmin(nb, mp->kbB);
-            if (nb == enbs[i])
-               i++;
-         }
-         else
-            nb = mp->kbB;
-         if (nb == mp->kbB)
-            mp = mp->next;
+         nb = ap->kbB;
+         nb = Mmin(nb, nbs[i]);
+         if (nb == ap->kbB)
+            ap = ap->next;
+         if (nb == nbs[i])
+            i++;
       }
-      else  /* only taking stuff rom enbs */
-         nb = enbs[i++];
+      else if (ap)
+      {
+         nb = ap->kbB;
+         ap = ap->next;
+      }
+      else
+         nb = nbs[i++];
       ku = (KU == -1) ? nb : KU;
+   
 /*
  *    If NB is not a multiple of VLEN, drop down to shorter ops
  */
@@ -1267,14 +1270,13 @@ ATL_mmnode_t *CreateGenCasesFromNBs
       }
       if (umb)
       {
-         mmp->next = p;
-         mmp = p;
+         mp->next = p;
+         mp = p;
       }
       else
-         umb = mmp = p;
+         umb = mp = p;
    }
-   while (mp || i < ne);
-   free(enbs);
+   while (i < n || ap);
    return(umb);
 }
 
@@ -1320,6 +1322,7 @@ ATL_mmnode_t *FindBestGenCases(int verb, char pre, int nreg,
          if (VECi == VTAVX)
          {
             VECi = VTSSE;
+            KillMMNode(mp);
             mp = GetNewGenNode(pre, 32, 0, 1, 1, 1);
             if (MMKernelFailsTest(pre, 32, 32, 32, 1, mp))
                VECi = VTSC;
@@ -1327,7 +1330,7 @@ ATL_mmnode_t *FindBestGenCases(int verb, char pre, int nreg,
          else
             VECi = VTSC;
       }
-      free(mp);
+      KillMMNode(mp);
 /*
  *    For AVX, switch to SSE if AVX doesn't offer a performance advantage
  *    (as on AMD Dozer), since SSE smaller code size and requires less cleanup 
@@ -1357,8 +1360,32 @@ ATL_mmnode_t *FindBestGenCases(int verb, char pre, int nreg,
       }
 /*
  *    For any system, don't use vector instructions if they aren't faster than
- *    scalar. HERE HERE HERE
+ *    scalar. 
  */
+      if (VLEN[VECi] > 1)
+      {
+         double mfV, mfS;
+         char *sp; 
+         int vl;
+         mp = GetNewGenNode(pre, 128, 0, 1, 4, 1);
+         mfV = TimeMMKernel(verb, 1, mp, pre, 128, 128, 128, 128, 128, 128,
+                            1, 0, -1);
+         KillMMNode(mp);
+         vl = VECi;
+         VECi = VTSC;
+         mp = GetNewGenNode(pre, 128, 0, 1, 4, 1);
+         mfS = TimeMMKernel(verb, 1, mp, pre, 128, 128, 128, 128, 128, 128,
+                            1, 0, -1);
+         KillMMNode(mp);
+         if (mfV < 1.05*mfS)
+            printf("USING SCALAR INSTEAD OF VECTOR, VEC=%.2f, SCALAR=%.2f\n", 
+                   mfV, mfS);
+         else
+         {
+            printf("VEC GOOD, VEC=%.2f, SCALAR=%.2f\n", mfV, mfS);
+            VECi = vl;
+         }
+      }
    }
    printf("GENERATING WITH VEC='%s', VLEN=%d\n\n", VECs[VECi], VLEN[VECi]);
 /*
@@ -1451,7 +1478,6 @@ ATL_mmnode_t *FindBestUserCases(int verb, char pre, int *nbs)
    }
    mmp = FindBestForEachNB(verb, pre, mmb, nbs);
    KillAllMMNodes(mmb);
-   free(nbs);
    WriteMMFileWithPath(pre, "res", "uAMMRES.sum", mmp);
    return(mmp);
 }
@@ -1510,28 +1536,31 @@ ATL_mmnode_t *MergeAndWinnowCases
    return(mmb);
 }
 
-void ComputeKClean(int verb, char pre, ATL_mmnode_t *mmb)
+ATL_mmnode_t *GetUniqueKCLEAN(int verb, char pre, ATL_mmnode_t *mmb)
 /*
- * This kernel generates K-cleanup for all routines present in mmb.
- * To do this, it finds all unique (mu,nu) pairs, and then finds the
- * best ku=1, K-runtime kernel for that pair (timing both user and generated).
  * OUTPUT: <pre>AMMKCLEAN.SUM: all unique kerns to be compiled
- *   <pre>AMMKCLEANBYNB.SUM: non-unique K-clean for each NB in mmb
- *      mflop[1] contains estimated time for 1 K-it using K=MAX(kb/4,4)
- *   <pre>AMMKCLEAN_<nb>.TIM: timing of K-clean for nb=<nb>; there are
- *   i=nb-1 timings, mflop[0] contains time to do NB-i K its.  Will use
- *   these times to get completely accurate estimate of total time for
- *   large problems (use estimated time in CLBYNB for small probs).
- * 
- * NOTE: we will gen/time K-cleanup kernels only in BETA=0 case, and peel
- *    the first K-block rather than the last.  This will minimize the C cost,
- *    which is more appreciable for short-K.
  */
 {
-   ATL_mmnode_t *mp, *gmmb, *ummb;
+   ATL_mmnode_t *mp, *gmmb, *ummb, *ub, *np;
    int nn=0, nd=0, n=0;  /* #needed & done, total */
    int *dl, *nl;         /* done and needed lists */
    int i;
+   gmmb = ReadMMFileWithPath(pre, "res", "AMMKCLEAN.SUM");
+   if (gmmb)
+   {
+      printf("READING IN UNIQUE K-CLEANUP:\n");
+      for (mp=gmmb; mp; mp = mp->next)
+      {
+         int nb = mp->kbB;
+         if (mp->mflop[0] < 0.0)
+            mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre,nb, nb, nb, nb, nb, nb,
+                                        0, 0, -1);
+         printf("   nb=%d,  mu=%d, nu=%d, MFLOP=%.2f\n", 
+                nb, mp->mu, mp->nu, mp->mflop[0]);
+      }
+      printf("Done.\n");
+      return(gmmb);
+   }
 /*
  * Find out how many total kernels, and how many already have their own
  * cleanup (nd, number done)
@@ -1553,12 +1582,18 @@ void ComputeKClean(int verb, char pre, ATL_mmnode_t *mmb)
          if (mu == dl[i] && nu == dl[i+1])
             break;
       if (i < nd3)
+      {
+         dl[i+2] = mp->kbB;  /* take largest kbB that matches mu/nu */
          continue;
+      }
       for (i=0; i < nn3; i += 3)
          if (mu == nl[i] && nu == nl[i+1])
             break;
       if (i < nn3)
+      {
+         nl[i+2] = mp->kbB;
          continue;
+      }
 /*
  *    Add surviving pair to done or needed list, as required.  When two kerns
  *    have same mu/nu, we take larger NB (later in list) as the guy we'll use
@@ -1588,25 +1623,21 @@ void ComputeKClean(int verb, char pre, ATL_mmnode_t *mmb)
    {
       ATL_mmnode_t *p;
       const int i3 = (i<<1)+i, mu=nl[i3], nu=nl[i3+1], nb=nl[i3+2];
-      int kb;
+      int vl=VECi;
       double mf;
-      kb = nb >> 2;
-      kb = (kb >= 4) ? kb : 4;
       if (mu % VLEN[VECi])
       {
-         int vl=VECi;
          if (VECi == VTAVX && !(mu%VLEN[VTSSE]))
             VECi = VTSSE;
          else
             VECi = VTSC;
       }
-      p = GetNewGenNode(pre, nb, 0, mu, nu, 1);
-      p->mflop[0] = TimeMMKernel(verb, 0, p, pre, nb, nb, kb, kb, kb, kb, 
+      p = GetNewGenNode(pre, nb, 0, mu/VLEN[VECi], nu, 1);
+      VECi = vl;
+      p->mflop[0] = TimeMMKernel(verb, 0, p, pre, nb, nb, nb, nb, nb, nb, 
                                  0, 0, -1);
-      mf = (2.0*nb)*nb;  /* flop count of gemm/kits (kb) */
-      p->mflop[1] = mf / p->mflop[0];   /* time in microseconds for 1 k it */
-      printf("   nb=%d, kb=%d, mu=%d, nu=%d, mf=%.2f (%e Usec/Kit)\n", 
-             nb, kb, mu, nu, p->mflop[0], mf);
+      printf("   nb=%d,  mu=%d, nu=%d, MFLOP=%.2f\n", 
+             nb, mu, nu, p->mflop[0]);
       if (gmmb)
       {
          mp->next = p;
@@ -1615,7 +1646,89 @@ void ComputeKClean(int verb, char pre, ATL_mmnode_t *mmb)
       else
          gmmb = mp = p;
    }
+/*
+ * Now, search index file for suitable user-submitted kernels
+ */
+   ub = ReadMMFileWithPath(pre, "AMMCASES", "amcases.idx");
+   ummb = NULL;  /* no suitable user cases to begin */
+/*
+ * Look through user-list for any routine with ku=1 and K-Runtime
+ */
+   for (mp=ub; mp; mp = mp->next)
+   {
+      if (mp->ku == 1 && FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+      {
+/*
+ *       It matched our gross criteria, see if it is a required mu/nu
+ */
+         for (i=0; i < nn; i++)
+         {
+            const int i3 = (i<<1)+i, mu=nl[i3], nu=nl[i3+1], nb=nl[i3+2];
+            if (mp->mu == mu && mp->nu == nu)
+            {
+               ATL_mmnode_t *p;
+               p = CloneMMNode(mp);
+               p->next = NULL;
+               p->nbB = p->kbB = p->mbB = nb;
+               if (ummb)
+               {
+                  np->next = p;
+                  np = p;
+               }
+               else
+                  np = ummb = p;
+               break;
+            }
+         }
+      }
+   }
+   KillAllMMNodes(ub);
+   if (ummb)
+   {
+      assert(0);  /* remind me to fix once I have some cleanup kerns */
+      /* then merge into gmmb; */
+   }
+   else
+      printf("NO VALID USER-SUBMITTED K-CLEANUP KERNELS\n\n");
    free(nl);
+   WriteMMFileWithPath(pre, "res", "AMMKCLEAN.SUM", gmmb);
+   return(gmmb);
+@beginskip
+      int kb;
+      double mf;
+      kb = nb >> 2;
+      kb = (kb >= 4) ? kb : 4;
+      p->mflop[0] = TimeMMKernel(verb, 0, p, pre, nb, nb, kb, kb, kb, kb, 
+                                 0, 0, -1);
+      mf = (2.0*nb)*nb;  /* flop count of gemm/kits (kb) */
+      p->mflop[1] = mf / p->mflop[0];   /* time in microseconds for 1 k it */
+      printf("   nb=%d, kb=%d, mu=%d, nu=%d, mf=%.2f (%e Usec/Kit)\n", 
+             nb, kb, mu, nu, p->mflop[0], mf);
+@endskip
+}
+
+void ComputeKClean(int verb, char pre, ATL_mmnode_t *mmb)
+/*
+ * This kernel generates K-cleanup for all routines present in mmb.
+ * To do this, it finds all unique (mu,nu) pairs, and then finds the
+ * best ku=1, K-runtime kernel for that pair (timing both user and generated).
+ * OUTPUT: <pre>AMMKCLEAN.SUM: all unique kerns to be compiled
+ *   <pre>AMMKCLEANBYNB.SUM: non-unique K-clean for each NB in mmb
+ *      mflop[1] contains estimated time for 1 K-it using K=MAX(kb/4,4)
+ *   <pre>AMMKCLEAN_<nb>.TIM: timing of K-clean for nb=<nb>; there are
+ *   i=nb-1 timings, mflop[0] contains time to do NB-i K its.  Will use
+ *   these times to get completely accurate estimate of total time for
+ *   large problems (use estimated time in CLBYNB for small probs).
+ * 
+ * NOTE: we will gen/time K-cleanup kernels only in BETA=0 case, and peel
+ *    the first K-block rather than the last.  This will minimize the C cost,
+ *    which is more appreciable for short-K.
+ */
+{
+   ATL_mmnode_t *mkb;
+   mkb = GetUniqueKCLEAN(verb, pre, mmb);
+
+   KillAllMMNodes(mkb);
 }
 
 void FindBestKU1
@@ -1662,7 +1775,7 @@ int main(int nargs, char **args)
    mmp = FindBestGenCases(verb, pre, nregs, nbs, mmb);
    mmb = MergeAndWinnowCases(verb, pre, mmb, mmp);
    WriteMMFileWithPath(pre, "res", "eAMMRES.sum", mmb);
-//   ComputeKClean(verb, pre, mmb);
+   ComputeKClean(verb, pre, mmb);
    KillAllMMNodes(mmb);
    FindBestKU1(verb, pre, 17);  /* create kern for use in low-rank update */
    free(nbs);
