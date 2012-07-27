@@ -2239,13 +2239,21 @@ fprintf(stderr, ", src=%s\n", Int2Reg(-src));
             }
 /*
  *          Majedul: for MAC inst, may not found but is in use, need to update
+ *          same for all inst where dest is in use implicitly
  */
+#if 0            
             else if (IS_MAC(ip->inst[0]))
             {
                BitVecComb(ip->use, ip->use, ivdst, '-');
-               BitVecComb(ip->use, ip->use, ivsrc, '|');
-               
+               BitVecComb(ip->use, ip->use, ivsrc, '|');   
             }
+#else
+            else if (IS_DEST_INUSE_IMPLICITLY(ip->inst[0]))
+            {
+               BitVecComb(ip->use, ip->use, ivdst, '-');
+               BitVecComb(ip->use, ip->use, ivsrc, '|');   
+            }
+#endif
             else /* not found, is implicit use, put move back & stop */
                goto PUTMOVEBACK;
          }
