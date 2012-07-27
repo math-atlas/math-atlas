@@ -110,6 +110,16 @@ int RevealArchMemUses(void)
                      ip->inst[3] = op = SToff[DTnzerods-1].sa[2];
                      arinst = 1;
                   }
+                  else if (inst == VFNEG)
+                  {
+                     ip->inst[3] = op = SToff[DTnzero-1].sa[2];
+                     arinst = 1;
+                  }
+                  else if (inst == VDNEG)
+                  {
+                     ip->inst[3] = op = SToff[DTnzerod-1].sa[2];
+                     arinst = 1;
+                  }
                }
                if (arinst)
                {

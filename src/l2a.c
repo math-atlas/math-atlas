@@ -2744,7 +2744,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #ifdef AVX
             if (op3 >= 0) /* need to check the usage */
                ap->next = PrintAssln("\tvxorpd\t%s,%s,%s\n", 
-                                     GetDeref(SToff[DTnzerods-1].sa[2]),
+                                     GetDeref(SToff[DTnzerod-1].sa[2]),
                                      archdregs[-VDREGBEG-op2],
 	                             archdregs[-VDREGBEG-op1]);
             else
@@ -2756,7 +2756,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             assert(op1==op2);
             if (op3 >= 0)
                ap->next = PrintAssln("\txorpd\t%s,%s\n", 
-                                     GetDeref(SToff[DTnzerods-1].sa[2]),
+                                     GetDeref(SToff[DTnzerod-1].sa[2]),
 	                             archdregs[-VDREGBEG-op1]);
             else
                ap->next = PrintAssln("\txorpd\t%s,%s\n", 
@@ -3229,7 +3229,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #ifdef AVX
             if (op3 >= 0)
                ap->next = PrintAssln("\tvxorps\t%s,%s,%s\n", 
-                                     GetDeref(SToff[DTnzeros-1].sa[2]),
+                                     GetDeref(SToff[DTnzero-1].sa[2]),
 	                             archfregs[-VFREGBEG-op2],
 	                             archfregs[-VFREGBEG-op1]);
             else
@@ -3241,7 +3241,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             assert(op2 == op1);
             if (op3 >= 0)
                ap->next = PrintAssln("\txorps\t%s,%s\n", 
-                                     GetDeref(SToff[DTnzeros-1].sa[2]),
+                                     GetDeref(SToff[DTnzero-1].sa[2]),
 	                             archfregs[-VFREGBEG-op1]);
             else
                ap->next = PrintAssln("\txorps\t%s,%s\n", 
