@@ -79,10 +79,15 @@ void CalcThisUseSet(INSTQ *ip)
 /*
  *    Majedul: for FMAC type instruction, dest is also use before set. 
  *    it should be reflected here. So, handled MAC specially.
+ *    NOTE: There are other instruction like: FCMOV1 
  */
+#if 0            
       if (IS_MAC(inst))   
          HandleUseSet(ip->use, ip->use, ip->inst[1]);
-      
+#else
+      if (IS_DEST_INUSE_IMPLICITLY(inst))
+         HandleUseSet(ip->use, ip->use, ip->inst[1]);
+#endif
       HandleUseSet(ip->set, ip->use, ip->inst[1]);
 /*
  *    A XOR op with src1 == src2 does not really use the src
