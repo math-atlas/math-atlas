@@ -1129,7 +1129,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                         archxmmregs[GetDregID(op3)],
 	                                archxmmregs[-DREGBEG-op2]);
                else
-                  ap->next = PrintAssln("\tvcomisd\t%s,%s\n", GetDregOrDeref(op3),
+                  ap->next = PrintAssln("\tvcomisd\t%s,%s\n", 
+                                        GetDregOrDeref(op3),
 	                                archxmmregs[-DREGBEG-op2]);
             #else
                ap->next = PrintAssln("\tcomisd\t%s,%s\n", GetDregOrDeref(op3),
@@ -1261,8 +1262,6 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #endif
          break;
 #endif         
-
-/*    Majedul: Not in use currently. see h2l.c:800*/
       case CVTBFI:
          #ifdef AVX
             ap->next = PrintAssln("\tvmovmskps\t%s,%s\n",
@@ -1274,7 +1273,6 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                    archiregs[-IREGBEG-op1]);
          #endif
          break;
- /*   Majedul: Not in use right now. see h2l.c:800*/   
       case CVTBDI:
          #ifdef AVX
             ap->next = PrintAssln("\tvmovmskpd\t%s,%s\n", 
@@ -1866,6 +1864,30 @@ struct assmln *lil2ass(BBLOCK *bbase)
       case FNEG:
          #ifdef X86
 	    assert(DTnzeros);
+#if 1 
+            #ifdef AVX
+               if (op3 >= 0)
+                  ap->next = PrintAssln("\tvxorps\t%s,%s,%s\n", 
+                                        GetDeref(SToff[DTnzeros-1].sa[2]),
+	                                archfregs[-FREGBEG-op2],
+	                                archfregs[-FREGBEG-op1]);
+               else
+                  ap->next = PrintAssln("\tvxorps\t%s,%s,%s\n", 
+	                                archfregs[-FREGBEG-op3],
+	                                archfregs[-FREGBEG-op2],
+	                                archfregs[-FREGBEG-op1]);
+            #else
+               assert(op2 == op1);
+               if (op3 >= 0)
+                  ap->next = PrintAssln("\txorps\t%s,%s\n", 
+                                        GetDeref(SToff[DTnzeros-1].sa[2]),
+	                                archfregs[-FREGBEG-op1]);
+               else
+                  ap->next = PrintAssln("\txorps\t%s,%s\n", 
+	                                archfregs[-FREGBEG-op3],
+	                                archfregs[-FREGBEG-op1]);
+            #endif
+#else
             #ifdef AVX
                if (op1 == op2)
                   ap->next = PrintAssln("\tvxorps\t%s,%s,%s\n", 
@@ -1887,6 +1909,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
 	                                archfregs[-FREGBEG-op2],
 	                                archfregs[-FREGBEG-op1]);
             #endif
+#endif
          #elif defined(SPARC)
             ap->next = PrintAssln("\tfnegs\t%s,%s\n", 
 	       archfregs[-FREGBEG-op2], archfregs[-FREGBEG-op1]);
@@ -1901,6 +1924,30 @@ struct assmln *lil2ass(BBLOCK *bbase)
       case FNEGD:
          #ifdef X86
 	    assert(DTnzerods);
+#if 1            
+            #ifdef AVX
+               if (op3 >= 0) /* need to check the usage */
+                  ap->next = PrintAssln("\tvxorpd\t%s,%s,%s\n", 
+                                        GetDeref(SToff[DTnzerods-1].sa[2]),
+                                        archdregs[-DREGBEG-op2],
+	                                archdregs[-DREGBEG-op1]);
+               else
+                  ap->next = PrintAssln("\tvxorpd\t%s,%s,%s\n", 
+                                        archdregs[-DREGBEG-op3],
+                                        archdregs[-DREGBEG-op2],
+	                                archdregs[-DREGBEG-op1]);
+            #else
+               assert(op1==op2);
+               if (op3 >= 0)
+                  ap->next = PrintAssln("\txorpd\t%s,%s\n", 
+                                        GetDeref(SToff[DTnzerods-1].sa[2]),
+	                                archdregs[-DREGBEG-op1]);
+               else
+                  ap->next = PrintAssln("\txorpd\t%s,%s\n", 
+                                        archdregs[-DREGBEG-op3],
+	                                archdregs[-DREGBEG-op1]);
+               #endif
+#else
             #ifdef AVX
 	       if (op1 == op2)
                   ap->next = PrintAssln("\tvxorpd\t%s,%s,%s\n", 
@@ -1922,6 +1969,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                          archdregs[-DREGBEG-op2],
                                          archdregs[-DREGBEG-op1]);
             #endif
+#endif               
          #elif defined(SPARC)
             ap->next = PrintAssln("\tfnegd\t%s,%s\n", 
 	       archdregs[-DREGBEG-op2], archdregs[-DREGBEG-op1]);
@@ -1959,6 +2007,15 @@ struct assmln *lil2ass(BBLOCK *bbase)
             break;
          case CF_VRED_END:
             sptr = "VECTOR REDUCTION END";
+            break;
+         case CF_SCAL_RES:
+            sptr = "SCALAR RESTART START";
+            break;
+         case CF_SSV_VUPDATE:
+            sptr = "SSV VECTOR UPDATE";
+            break;
+         case CF_SSV_VRECOVERY:
+            sptr = "SSV VECTOR RECOVERY";
             break;
          default:
             sptr = "UNKNOWN COMPFLAG";
@@ -2141,6 +2198,91 @@ struct assmln *lil2ass(BBLOCK *bbase)
             #endif
             }
 	 break;
+#ifdef X86         
+/*
+ *    CMOV1 and CMOV2
+ *    Right Now, We will consider only X86 arch for this conditional move
+ *    later, we will implment the select for AltiVec.
+ *    NOTE: AVX/SSE doesn't have scalar blend. So, we use vector blend 
+ *
+ *    NOTE: 
+ *         convention: 
+ *         dest = mask==0? scr1: src2
+ *         dest = mask? src2: src1
+ *         if mask is zero, then dest is set from src1; otherwise from scr2
+ *
+ *   LIL:
+ *        FCMOV1 means dest is alias with SRC1
+ *        FCMOV2 means dest is alias with SRC2
+ */
+      case FCMOV1:
+            #if defined(AVX) 
+               assert( (op1 < 0) && (op3 < 0));
+               if (op2 < 0) /* only src2(here op2) can be mem */
+                  ap->next = PrintAssln("\tvblendvps\t%s,%s,%s,%s\n", 
+	                                archfregs[-FREGBEG-op3],
+                                        archfregs[-FREGBEG-op2],
+	                                archfregs[-FREGBEG-op1],
+	                                archfregs[-FREGBEG-op1]);
+               else
+                  ap->next = PrintAssln("\tvblendvps\t%s,%s,%s,%s\n", 
+	                                archfregs[-FREGBEG-op3],
+                                        GetDregOrDeref(op2),
+	                                archfregs[-FREGBEG-op1],
+	                                archfregs[-FREGBEG-op1]);
+            #else
+               ap->next = PrintAssln("\tUNIMP\n");
+	       fko_error(__LINE__, "This CMOV is Not found in this x86 arch!");
+            #endif
+         break;
+      case FCMOV2:
+            #if defined(AVX) 
+               assert( (op1 < 0) && (op3 < 0) && (op2 < 0));
+                  ap->next = PrintAssln("\tvblendvps\t%s,%s,%s,%s\n", 
+	                                archfregs[-FREGBEG-op3],
+                                        archfregs[-FREGBEG-op1],
+	                                archfregs[-FREGBEG-op2],
+	                                archfregs[-FREGBEG-op1]);
+            #else
+               ap->next = PrintAssln("\tUNIMP\n");
+	       fko_error(__LINE__, "This CMOV is Not found in this x86 arch!");
+            #endif
+         break;
+      case FCMOVD1:
+            #if defined(AVX) 
+               assert( (op1 < 0) && (op3 < 0));
+               if (op2 < 0) /* only src2(here op2) can be mem */
+                  ap->next = PrintAssln("\tvblendvpd\t%s,%s,%s,%s\n", 
+	                                archfregs[-DREGBEG-op3],
+                                        archfregs[-DREGBEG-op2],
+	                                archfregs[-DREGBEG-op1],
+	                                archfregs[-DREGBEG-op1]);
+               else
+                  ap->next = PrintAssln("\tvblendvpd\t%s,%s,%s,%s\n", 
+	                                archfregs[-DREGBEG-op3],
+                                        GetDregOrDeref(op2),
+	                                archfregs[-DREGBEG-op1],
+	                                archfregs[-DREGBEG-op1]);
+            #else
+               ap->next = PrintAssln("\tUNIMP\n");
+	       fko_error(__LINE__, "This CMOV is Not found in this x86 arch!");
+            #endif
+         break;
+      case FCMOVD2:
+            #if defined(AVX) 
+               assert( (op1 < 0) && (op3 < 0) && (op2 < 0));
+                  ap->next = PrintAssln("\tvblendvpd\t%s,%s,%s,%s\n", 
+	                                archfregs[-DREGBEG-op3],
+                                        archfregs[-DREGBEG-op1],
+	                                archfregs[-DREGBEG-op2],
+	                                archfregs[-DREGBEG-op1]);
+            #else
+               ap->next = PrintAssln("\tUNIMP\n");
+	       fko_error(__LINE__, "This CMOV is Not found in this x86 arch!");
+            #endif
+         break;
+#endif
+
 /*
  *    Majedul: Right now, these special purpose FCMPW insts are considered 
  *    only for X86. 
@@ -2154,162 +2296,162 @@ struct assmln *lil2ass(BBLOCK *bbase)
       case FCMPWEQ:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpss\t$0,%s,%s,%s\n",
-                                  archxmmregs[-VFREGBEG-op3],
-                                  archxmmregs[-VFREGBEG-op2],
-                                  archxmmregs[-VFREGBEG-op1]);
+                                  archxmmregs[-FREGBEG-op3],
+                                  archxmmregs[-FREGBEG-op2],
+                                  archxmmregs[-FREGBEG-op1]);
          #else
             assert(op1 == op2);
             ap->next = PrintAssln("\tcmpss\t$0,%s,%s\n", 
-                                  archvfregs[-VFREGBEG-op3], 
-                                  archvfregs[-VFREGBEG-op1]);
+                                  archvfregs[-FREGBEG-op3], 
+                                  archvfregs[-FREGBEG-op1]);
          #endif 
          break;
       case FCMPWNE:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpss\t$4,%s,%s,%s\n",
-                                  archxmmregs[-VFREGBEG-op3],
-                                  archxmmregs[-VFREGBEG-op2],
-                                  archxmmregs[-VFREGBEG-op1]);
+                                  archxmmregs[-FREGBEG-op3],
+                                  archxmmregs[-FREGBEG-op2],
+                                  archxmmregs[-FREGBEG-op1]);
          #else
             assert(op1 == op2);
             ap->next = PrintAssln("\tcmpss\t$4,%s,%s\n",  
-                                  archvfregs[-VFREGBEG-op3], 
-                                  archvfregs[-VFREGBEG-op1]);
+                                  archvfregs[-FREGBEG-op3], 
+                                  archvfregs[-FREGBEG-op1]);
          #endif 
          break;
       case FCMPWLT:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpss\t$1,%s,%s,%s\n",
-                                  archxmmregs[-VFREGBEG-op3],
-                                  archxmmregs[-VFREGBEG-op2],
-                                  archxmmregs[-VFREGBEG-op1]);
+                                  archxmmregs[-FREGBEG-op3],
+                                  archxmmregs[-FREGBEG-op2],
+                                  archxmmregs[-FREGBEG-op1]);
          #else
             assert(op1 == op2);
             ap->next = PrintAssln("\tcmpss\t$1,%s,%s\n",  
-                                   archvfregs[-VFREGBEG-op3], 
-                                   archvfregs[-VFREGBEG-op1]);
+                                   archvfregs[-FREGBEG-op3], 
+                                   archvfregs[-FREGBEG-op1]);
          #endif 
          break;
       case FCMPWLE:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpss\t$2,%s,%s,%s\n",
-                                  archxmmregs[-VFREGBEG-op3],
-                                  archxmmregs[-VFREGBEG-op2],
-                                  archxmmregs[-VFREGBEG-op1]);
+                                  archxmmregs[-FREGBEG-op3],
+                                  archxmmregs[-FREGBEG-op2],
+                                  archxmmregs[-FREGBEG-op1]);
          #else
             assert(op1 == op2);
             ap->next = PrintAssln("\tcmpss\t$2,%s,%s\n",  
-                                  archvfregs[-VFREGBEG-op3], 
-                                  archvfregs[-VFREGBEG-op1]);
+                                  archvfregs[-FREGBEG-op3], 
+                                  archvfregs[-FREGBEG-op1]);
          #endif 
          break;
       case FCMPWGT:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpss\t$0x0E,%s,%s,%s\n",
-                                  archxmmregs[-VFREGBEG-op3],
-                                  archxmmregs[-VFREGBEG-op2],
-                                  archxmmregs[-VFREGBEG-op1]);
+                                  archxmmregs[-FREGBEG-op3],
+                                  archxmmregs[-FREGBEG-op2],
+                                  archxmmregs[-FREGBEG-op1]);
          #else
 /*             SSE: GT is replaced with NLE */            
             assert(op1 == op2);
             ap->next = PrintAssln("\tcmpss\t$6,%s,%s\n",  
-                                  archvfregs[-VFREGBEG-op3], 
-                                  archvfregs[-VFREGBEG-op1]);
+                                  archvfregs[-FREGBEG-op3], 
+                                  archvfregs[-FREGBEG-op1]);
          #endif 
          break;
       case FCMPWGE:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpss\t$0x0D,%s,%s,%s\n",
-                                  archxmmregs[-VFREGBEG-op3],
-                                  archxmmregs[-VFREGBEG-op2],
-                                  archxmmregs[-VFREGBEG-op1]);
+                                  archxmmregs[-FREGBEG-op3],
+                                  archxmmregs[-FREGBEG-op2],
+                                  archxmmregs[-FREGBEG-op1]);
          #else
 /*          GE is replaced with NLT*/            
             assert(op1 == op2);
             ap->next = PrintAssln("\tcmpss\t$5,%s,%s\n",  
-                                  archvfregs[-VFREGBEG-op3], 
-                                  archvfregs[-VFREGBEG-op1]);
+                                  archvfregs[-FREGBEG-op3], 
+                                  archvfregs[-FREGBEG-op1]);
          #endif 
          break;
          
       case FCMPDWEQ:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpsd\t$0,%s,%s,%s\n",
-                                  archxmmregs[-VDREGBEG-op3],
-                                  archxmmregs[-VDREGBEG-op2],
-                                  archxmmregs[-VDREGBEG-op1]);
+                                  archxmmregs[-DREGBEG-op3],
+                                  archxmmregs[-DREGBEG-op2],
+                                  archxmmregs[-DREGBEG-op1]);
          #else
             assert(op1 ==op2);
             ap->next = PrintAssln("\tcmpsd\t$0,%s,%s\n",  
-                                  archvdregs[-VDREGBEG-op3], 
-                                  archvdregs[-VDREGBEG-op1]);
+                                  archvdregs[-DREGBEG-op3], 
+                                  archvdregs[-DREGBEG-op1]);
          #endif 
          break;
       case FCMPDWNE:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpsd\t$4,%s,%s,%s\n",
-                                  archxmmregs[-VDREGBEG-op3],
-                                  archxmmregs[-VDREGBEG-op2],
-                                  archxmmregs[-VDREGBEG-op1]);
+                                  archxmmregs[-DREGBEG-op3],
+                                  archxmmregs[-DREGBEG-op2],
+                                  archxmmregs[-DREGBEG-op1]);
          #else
             assert(op1 ==op2);
             ap->next = PrintAssln("\tcmpsd\t$4,%s,%s\n",  
-                                  archvdregs[-VDREGBEG-op3], 
-                                  archvdregs[-VDREGBEG-op1]);
+                                  archvdregs[-DREGBEG-op3], 
+                                  archvdregs[-DREGBEG-op1]);
          #endif
          break;
       case FCMPDWLT:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpsd\t$1,%s,%s,%s\n",
-                                  archxmmregs[-VDREGBEG-op3],
-                                  archxmmregs[-VDREGBEG-op2],
-                                  archxmmregs[-VDREGBEG-op1]);
+                                  archxmmregs[-DREGBEG-op3],
+                                  archxmmregs[-DREGBEG-op2],
+                                  archxmmregs[-DREGBEG-op1]);
          #else
             assert(op1 ==op2);
             ap->next = PrintAssln("\tcmpsd\t$1,%s,%s\n",  
-                                  archvdregs[-VDREGBEG-op3], 
-                                  archvdregs[-VDREGBEG-op1]);
+                                  archvdregs[-DREGBEG-op3], 
+                                  archvdregs[-DREGBEG-op1]);
          #endif
          break;
       case FCMPDWLE:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpsd\t$2,%s,%s,%s\n",
-                                  archxmmregs[-VDREGBEG-op3],
-                                  archxmmregs[-VDREGBEG-op2],
-                                  archxmmregs[-VDREGBEG-op1]);
+                                  archxmmregs[-DREGBEG-op3],
+                                  archxmmregs[-DREGBEG-op2],
+                                  archxmmregs[-DREGBEG-op1]);
          #else
             assert(op1 ==op2);
             ap->next = PrintAssln("\tcmpsd\t$2,%s,%s\n",  
-                                  archvdregs[-VDREGBEG-op3], 
-                                  archvdregs[-VDREGBEG-op1]);
+                                  archvdregs[-DREGBEG-op3], 
+                                  archvdregs[-DREGBEG-op1]);
          #endif
          break;
       case FCMPDWGT:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpsd\t$0x0E,%s,%s,%s\n",
-                                  archxmmregs[-VDREGBEG-op3],
-                                  archxmmregs[-VDREGBEG-op2],
-                                  archxmmregs[-VDREGBEG-op1]);
+                                  archxmmregs[-DREGBEG-op3],
+                                  archxmmregs[-DREGBEG-op2],
+                                  archxmmregs[-DREGBEG-op1]);
          #else
 /*             SSE: GT is replaced with NLE */            
             assert(op1 ==op2);
             ap->next = PrintAssln("\tcmpsd\t$6,%s,%s\n",  
-                                  archvdregs[-VDREGBEG-op3], 
-                                  archvdregs[-VDREGBEG-op1]);
+                                  archvdregs[-DREGBEG-op3], 
+                                  archvdregs[-DREGBEG-op1]);
          #endif
          break;
       case FCMPDWGE:
          #ifdef AVX
             ap->next = PrintAssln("\tvcmpsd\t$0x0D,%s,%s,%s\n",
-                                  archxmmregs[-VDREGBEG-op3],
-                                  archxmmregs[-VDREGBEG-op2],
-                                  archxmmregs[-VDREGBEG-op1]);
+                                  archxmmregs[-DREGBEG-op3],
+                                  archxmmregs[-DREGBEG-op2],
+                                  archxmmregs[-DREGBEG-op1]);
          #else
 /*             SSE: GE is replaced with NLT */            
             assert(op1 ==op2);
             ap->next = PrintAssln("\tcmpsd\t$5,%s,%s\n",  
-                                  archvdregs[-VDREGBEG-op3], 
-                                  archvdregs[-VDREGBEG-op1]);
+                                  archvdregs[-DREGBEG-op3], 
+                                  archvdregs[-DREGBEG-op1]);
          #endif
          break;         
 #endif         
@@ -2597,6 +2739,31 @@ struct assmln *lil2ass(BBLOCK *bbase)
 	                             archvdregs[-VDREGBEG-op1]);
          #endif
          break;
+      case VDNEG:
+	 assert(DTnzerods);
+         #ifdef AVX
+            if (op3 >= 0) /* need to check the usage */
+               ap->next = PrintAssln("\tvxorpd\t%s,%s,%s\n", 
+                                     GetDeref(SToff[DTnzerods-1].sa[2]),
+                                     archdregs[-VDREGBEG-op2],
+	                             archdregs[-VDREGBEG-op1]);
+            else
+               ap->next = PrintAssln("\tvxorpd\t%s,%s,%s\n", 
+                                     archdregs[-VDREGBEG-op3],
+                                     archdregs[-VDREGBEG-op2],
+	                             archdregs[-VDREGBEG-op1]);
+         #else
+            assert(op1==op2);
+            if (op3 >= 0)
+               ap->next = PrintAssln("\txorpd\t%s,%s\n", 
+                                     GetDeref(SToff[DTnzerods-1].sa[2]),
+	                             archdregs[-VDREGBEG-op1]);
+            else
+               ap->next = PrintAssln("\txorpd\t%s,%s\n", 
+                                     archdregs[-VDREGBEG-op3],
+	                             archdregs[-VDREGBEG-op1]);
+         #endif
+         break;
       case VDZERO:
          #ifdef AVX
             ap->next = PrintAssln("\tvxorpd\t%s,%s,%s\n", 
@@ -2633,16 +2800,16 @@ struct assmln *lil2ass(BBLOCK *bbase)
                assert( (op1 < 0) && (op3 < 0));
                if (op2 < 0) /* only src2(here op2) can be mem */
                   ap->next = PrintAssln("\tvblendvpd\t%s,%s,%s,%s\n", 
-	                                archfregs[-VFREGBEG-op3],
-                                        archfregs[-VFREGBEG-op2],
-	                                archfregs[-VFREGBEG-op1],
-	                                archfregs[-VFREGBEG-op1]);
+	                                archfregs[-VDREGBEG-op3],
+                                        archfregs[-VDREGBEG-op2],
+	                                archfregs[-VDREGBEG-op1],
+	                                archfregs[-VDREGBEG-op1]);
                else
                   ap->next = PrintAssln("\tvblendvpd\t%s,%s,%s,%s\n", 
-	                                archfregs[-VFREGBEG-op3],
+	                                archfregs[-VDREGBEG-op3],
                                         GetDregOrDeref(op2),
-	                                archfregs[-VFREGBEG-op1],
-	                                archfregs[-VFREGBEG-op1]);
+	                                archfregs[-VDREGBEG-op1],
+	                                archfregs[-VDREGBEG-op1]);
             #else
                ap->next = PrintAssln("\tUNIMP\n");
 	       fko_error(__LINE__, "This CMOV is Not found in this x86 arch!");
@@ -2658,10 +2825,10 @@ struct assmln *lil2ass(BBLOCK *bbase)
             #if defined(AVX) 
                assert( (op1 < 0) && (op3 < 0) && (op2 < 0));
                   ap->next = PrintAssln("\tvblendvpd\t%s,%s,%s,%s\n", 
-	                                archfregs[-VFREGBEG-op3],
-                                        archfregs[-VFREGBEG-op1],
-	                                archfregs[-VFREGBEG-op2],
-	                                archfregs[-VFREGBEG-op1]);
+	                                archfregs[-VDREGBEG-op3],
+                                        archfregs[-VDREGBEG-op1],
+	                                archfregs[-VDREGBEG-op2],
+	                                archfregs[-VDREGBEG-op1]);
             #else
                ap->next = PrintAssln("\tUNIMP\n");
 	       fko_error(__LINE__, "This CMOV is Not found in this x86 arch!");
@@ -3055,6 +3222,31 @@ struct assmln *lil2ass(BBLOCK *bbase)
                ap->next = PrintAssln("\tandps\t%s,%s\n",
 	                             archvfregs[-VFREGBEG-op3],
 	                             archvfregs[-VFREGBEG-op1]);
+         #endif
+         break;
+      case VFNEG:
+	 assert(DTnzeros);
+         #ifdef AVX
+            if (op3 >= 0)
+               ap->next = PrintAssln("\tvxorps\t%s,%s,%s\n", 
+                                     GetDeref(SToff[DTnzeros-1].sa[2]),
+	                             archfregs[-VFREGBEG-op2],
+	                             archfregs[-VFREGBEG-op1]);
+            else
+               ap->next = PrintAssln("\tvxorps\t%s,%s,%s\n", 
+	                             archfregs[-VFREGBEG-op3],
+	                             archfregs[-VFREGBEG-op2],
+	                             archfregs[-VFREGBEG-op1]);
+         #else
+            assert(op2 == op1);
+            if (op3 >= 0)
+               ap->next = PrintAssln("\txorps\t%s,%s\n", 
+                                     GetDeref(SToff[DTnzeros-1].sa[2]),
+	                             archfregs[-VFREGBEG-op1]);
+            else
+               ap->next = PrintAssln("\txorps\t%s,%s\n", 
+	                             archfregs[-VFREGBEG-op3],
+	                             archfregs[-VFREGBEG-op1]);
          #endif
          break;
       case VFZERO:
