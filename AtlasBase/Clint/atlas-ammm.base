@@ -27,8 +27,8 @@ ID=3 MU=6 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_dammm3x3x256_sse2.S' \
 ID=4 MU=4 NU=1 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_dammm_nb4_sse2.S' \
      SSE=3 KBMIN=4 KBMAX=4 ASM=GAS_x8664 KUISKB=1 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
-ID=5 MU=2 NU=12 KU=2 AUTH="R. Clint Whaley" ROUT='ATL_damm2x12x2_sse2.S' \
-     SSE=3 KBMIN=2 ASM=GAS_x8664 \
+ID=5 MU=2 NU=12 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm2x12x2_sse2.S' \
+     SSE=3 ASM=GAS_x8664 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
 ID=6 MU=2 NU=12 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm2x12x256_sse2.S' \
      SSE=3 KBMAX=256 ASM=GAS_x8664 \
@@ -39,9 +39,12 @@ ID=7 MU=12 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm12x3x256_avx.S' \
 ID=8 MU=6 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm6x3x256_sse3.S' \
      SSE=3 KBMAX=256 ASM=GAS_x8664 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -msse3'
-ID=8 MU=6 NU=3 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_damm6x3x4_sse3.S' \
+ID=9 MU=6 NU=3 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_damm6x3x4_sse3.S' \
      SSE=3 KBMIN=4 ASM=GAS_x8664 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -msse3'
+ID=10 MU=2 NU=12 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm2x12x2_sse2.S' \
+     SSE=3 KRUNTIME=1 ASM=GAS_x8664 \
+     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
 @ROUT samcases.idx
 ID=7 MU=24 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_samm24x3x256_avx.S' \
      SSE=3 KBMAX=256 ASM=GAS_x8664 \
@@ -81,10 +84,8 @@ ID=7 MU=24 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_samm24x3x256_avx.S' \
       #define ATL_VLENb 32
       #if defined(SREAL) || defined (SCPLX)
          #define ATL_VLEN 8
-         #define ATL_vec_t v8sf
       #else
          #define ATL_VLEN 4
-         #define ATL_vec_t v4df
       #endif
       #define ATL_gvbcast(ptr_, v_) \
          (v_) = __builtin_ia32_vbroadcastsd256((void*)(ptr_));
@@ -96,10 +97,8 @@ ID=7 MU=24 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_samm24x3x256_avx.S' \
       #endif
       #define ATL_VLENb 16
       #if defined(SREAL) || defined (SCPLX)
-         #define ATL_vec_t v4sf
          #define ATL_VLEN 4
       #else
-         #define ATL_vec_t v2df
          #define ATL_VLEN 2
          #ifdef ATL_SSE3
             #define ATL_gvbcast(ptr_, v_) \
@@ -112,7 +111,6 @@ ID=7 MU=24 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_samm24x3x256_avx.S' \
          #define ATL_VLENb 16
          #define ATL_VLEN 4
       #elif defined(ATL_SSE1)
-         #define ATL_vec_t v4sf
          #ifdef ATL_GAS_x8664
             #define ATL_NVREG 16
          #else
@@ -1536,7 +1534,36 @@ ATL_mmnode_t *MergeAndWinnowCases
    return(mmb);
 }
 
-ATL_mmnode_t *GetUniqueKCLEAN(int verb, char pre, ATL_mmnode_t *mmb)
+int FailKCleanTests(char pre, int nb, ATL_mmnode_t *kp)
+/*
+ *  This routine tests if a kernel is suitable for use in K-cleanup by
+ *  doing testing with ku=1, kb=0, and tries all K values between 1 and nb
+ *  RETURNS: 0 if kernel passes all tests, else non-zero
+ */
+{
+   int i;
+
+   if (!FLAG_IS_SET(kp->flag, MMF_MRUNTIME) || kp->ku != 1)
+      return(-1);
+   printf("TESTING ID=%d, rout='%s', nb=%d, mu=%d, nu=%d for K-cleanup:\n",
+          kp->ID, kp->rout, nb, kp->mu, kp->nu);
+
+   for (i=1; i <= nb; i++)
+   {
+      int ierr;
+      ierr = MMKernelFailsTest(pre, nb, nb, i, 0, kp);
+      if (ierr)
+      {
+         printf("  K=%d: FAILED!\n", i);
+         return(ierr);
+      }
+      else
+         printf("  K=%d: PASSED!\n", i);
+   }
+   printf("PASSED ALL K-tests!\n\n");
+   return(0);
+}
+ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
 /*
  * OUTPUT: <pre>AMMKCLEAN.SUM: all unique kerns to be compiled
  */
@@ -1601,10 +1628,13 @@ ATL_mmnode_t *GetUniqueKCLEAN(int verb, char pre, ATL_mmnode_t *mmb)
  */
       if (mp->ku == 1 && FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
       {
-         dl[nd3] = mu;
-         dl[nd3+1] = nu;
-         dl[nd3+2] = mp->kbB;
-         nd++;
+         if (!FailKCleanTests(pre, mp->kbB, mp))
+         {
+            dl[nd3] = mu;
+            dl[nd3+1] = nu;
+            dl[nd3+2] = mp->kbB;
+            nd++;
+         }
       }
       else
       {
@@ -1633,8 +1663,12 @@ ATL_mmnode_t *GetUniqueKCLEAN(int verb, char pre, ATL_mmnode_t *mmb)
             VECi = VTSC;
       }
       p = GetNewGenNode(pre, nb, 0, mu/VLEN[VECi], nu, 1);
+      p->flag |= (1<<MMF_KRUNTIME);
       VECi = vl;
-      p->mflop[0] = TimeMMKernel(verb, 0, p, pre, nb, nb, nb, nb, nb, nb, 
+      #if 0  /* by default don't waste time testing generated code */
+         assert(!FailKCleanTests(pre, nb, p));
+      #endif
+      p->mflop[0] = TimeMMKernel(verb, 0, p, pre, nb, nb, nb, 0, 0, nb, 
                                  0, 0, -1);
       printf("   nb=%d,  mu=%d, nu=%d, MFLOP=%.2f\n", 
              nb, mu, nu, p->mflop[0]);
@@ -1666,18 +1700,21 @@ ATL_mmnode_t *GetUniqueKCLEAN(int verb, char pre, ATL_mmnode_t *mmb)
             const int i3 = (i<<1)+i, mu=nl[i3], nu=nl[i3+1], nb=nl[i3+2];
             if (mp->mu == mu && mp->nu == nu)
             {
-               ATL_mmnode_t *p;
-               p = CloneMMNode(mp);
-               p->next = NULL;
-               p->nbB = p->kbB = p->mbB = nb;
-               if (ummb)
+               if (!FailKCleanTests(pre, mp->kbB, mp))
                {
-                  np->next = p;
-                  np = p;
+                  ATL_mmnode_t *p;
+                  p = CloneMMNode(mp);
+                  p->next = NULL;
+                  p->nbB = p->kbB = p->mbB = nb;
+                  if (ummb)
+                  {
+                     np->next = p;
+                     np = p;
+                  }
+                  else
+                     np = ummb = p;
+                  break;
                }
-               else
-                  np = ummb = p;
-               break;
             }
          }
       }
@@ -1693,18 +1730,152 @@ ATL_mmnode_t *GetUniqueKCLEAN(int verb, char pre, ATL_mmnode_t *mmb)
    free(nl);
    WriteMMFileWithPath(pre, "res", "AMMKCLEAN.SUM", gmmb);
    return(gmmb);
-@beginskip
-      int kb;
-      double mf;
+}
+
+ATL_mmnode_t *FindMUNU(ATL_mmnode_t *mb, int mu, int nu)
+{
+   ATL_mmnode_t *mp;
+   for (mp=mb; mp; mp = mp->next)
+      if (mp->mu == mu && mp->nu == nu)
+         return(mp);
+   return(NULL);
+}
+
+ATL_mmnode_t *KCleanByNB
+(
+   int verb, 
+   char pre, 
+   ATL_mmnode_t *mmb, /* final kernels giving final supported NBs */
+   ATL_mmnode_t *mkb  /* All necessary routs ku=1 to clean all kerns in mmb */
+)
+/*
+ * Replicates mkb so that it includes all NBs in mmb, times K-clean,
+ * **FREES** mkb, and returns by-NB list
+ *
+ * OUTPUT:
+ *   <pre>AMMKCLEANBYNB.SUM: non-unique K-clean for each NB in mmb
+ *      mflop[1] contains estimated time for 1 K-it using K=MAX(kb/4,4)
+ */
+{
+   ATL_mmnode_t *mb, *mp, *np;
+   int kb;
+   double mf;
+
+   mb = ReadMMFileWithPath(pre, "res", "AMMKCLEANBYNB.SUM");
+   if (mb)
+   {
+      KillAllMMNodes(mkb);
+      printf("READING IN BY-NB K-CLEANUP:\n");
+      for (mp=mb; mp; mp = mp->next)
+      {
+         int nb = mp->kbB;
+         kb = nb >> 2;
+         kb = (kb >= 4) ? kb : 4;
+         if (mp->mflop[0] < 0.0)
+         {
+            mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre,nb, nb, kb, 0, 0, kb,
+                                        0, 0, -1);
+            mf = (2.0*nb)*nb;  /* flop count of gemm/kits (kb) */
+            mp->mflop[1] = mf / mp->mflop[0]; /* time in microsecs for 1 k-it */
+         }
+         printf("   nb=%d, kb=%d, mu=%d, nu=%d, mf=%.2f (%e Usec/Kit)\n", 
+                nb, kb, mp->mu, mp->nu, mp->mflop[0], mf);
+      }
+      printf("Done.\n");
+      return(mb);
+   }
+   printf("TIMING K-CLEAN FOR ALL SUPPORTED NBs:\n");
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      ATL_mmnode_t *p;
+      int nb = mp->nbB, kb;
+
       kb = nb >> 2;
       kb = (kb >= 4) ? kb : 4;
-      p->mflop[0] = TimeMMKernel(verb, 0, p, pre, nb, nb, kb, kb, kb, kb, 
+
+      p = FindMUNU(mkb, mp->mu, mp->nu);
+      p = CloneMMNode(p);
+      p->next = NULL;
+      p->nbB = p->mbB = nb;  p->kbB = kb;
+      p->mflop[0] = TimeMMKernel(verb, 0, p, pre, nb, nb, kb, 0, 0, kb, 
                                  0, 0, -1);
       mf = (2.0*nb)*nb;  /* flop count of gemm/kits (kb) */
       p->mflop[1] = mf / p->mflop[0];   /* time in microseconds for 1 k it */
       printf("   nb=%d, kb=%d, mu=%d, nu=%d, mf=%.2f (%e Usec/Kit)\n", 
-             nb, kb, mu, nu, p->mflop[0], mf);
-@endskip
+             nb, kb, p->mu, p->nu, p->mflop[0], mf);
+      if (mb)
+      {
+         np->next = p;
+         np = p;
+      }
+      else
+         mb = np = p;
+   }
+   printf("DONE.\n\n");
+   KillAllMMNodes(mkb);
+   WriteMMFileWithPath(pre, "res", "AMMKCLEANBYNB.SUM", mb);
+   return(mb);
+}
+
+void TimeKClean(int verb, char pre, ATL_mmnode_t *mp)
+/*
+ *   mp is the ku=1, KRUNTIME K-cleanup kernel for a support NB.
+ *   This routine creates an output file for supported the NB, where we
+ *   document the performance for all NB different KB values.  These
+ *   timings can therefore precisely document how expensive K-cleanup
+ *   will be for each NB.  
+ *   OUTPUT:
+ *   <pre>AMMKCLEAN_<nb>.TIM: timing of K-clean for nb=<nb>; there are
+ *   i=nb-1 timings, mflop[0] contains time to do NB-i K its.  Will use
+ *   these times to get completely accurate estimate of total time for
+ *   large problems (use estimated time in CLBYNB for small probs).
+ */
+{
+   ATL_mmnode_t *mb, *p, *np;
+   char fn[32];
+   int nb = mp->nbB, i;
+
+   sprintf(fn, "AMMKCLEAN_%d.TIM", mp->nbB);
+   mb = ReadMMFileWithPath(pre, "res", fn);
+   if (mb)
+   {
+      printf("READING IN K-CLEANUP TIMINGS FOR NB=%d:\n", nb);
+      for (p=mb; p; p = p->next)
+      {
+         int kb = p->kbB;
+         assert(nb == p->nbB);
+         if (p->mflop < 0)
+            p->mflop[0] = TimeMMKernel(verb, 0, p, pre, nb, nb, kb, 0, 0, kb, 
+                                       0, 0, -1);
+         printf("   MB=NB=%d, KB=%d, mu=%d, nu=%d, MFLOP=%.2f\n", nb, kb, 
+                p->mu, p->nu, p->mflop[0]);
+      }
+      printf("Done.\n\n");
+      WriteMMFileWithPath(pre, "res", fn, mb);
+      KillAllMMNodes(mb);
+      return;
+   }
+   
+   printf("TIMING K-CLEANUP FOR NB=%d:\n", nb);
+   for (i=1; i <= nb; i++)  /* create queue of ascending KB */
+   {
+      p = CloneMMNode(mp);
+      p->next = NULL;
+      p->kbB = i;
+      p->mflop[0] = TimeMMKernel(verb, 0, p, pre, nb, nb, i, 0, 0, i, 0, 0, -1);
+      printf("   MB=NB=%d, KB=%d, mu=%d, nu=%d, MFLOP=%.2f\n", nb, i, 
+             p->mu, p->nu, p->mflop[0]);
+      if (mb)
+      {
+         np->next = p;
+         np = p;
+      }
+      else
+         mb = np = p;
+   }
+   WriteMMFileWithPath(pre, "res", fn, mb);
+   KillAllMMNodes(mb);
+   printf("Done.\n");
 }
 
 void ComputeKClean(int verb, char pre, ATL_mmnode_t *mmb)
@@ -1725,9 +1896,15 @@ void ComputeKClean(int verb, char pre, ATL_mmnode_t *mmb)
  *    which is more appreciable for short-K.
  */
 {
-   ATL_mmnode_t *mkb;
-   mkb = GetUniqueKCLEAN(verb, pre, mmb);
-
+   ATL_mmnode_t *mkb, *mp;
+   mkb = GetUniqueKClean(verb, pre, mmb);
+   mkb = KCleanByNB(verb, pre, mmb, mkb);
+/*
+ * Now, create NB detailed K-cleanup files
+ */
+   for (mp=mkb; mp; mp = mp->next)
+      TimeKClean(verb, pre, mp);
+   printf("\n");
    KillAllMMNodes(mkb);
 }
 

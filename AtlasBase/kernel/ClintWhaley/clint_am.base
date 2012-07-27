@@ -1125,7 +1125,7 @@ ATL_asmdecor(ATL_USERMM):
 #define pC      %rbp
 #define pfA     %rsi
 #define pfB     %rbx
-/* #define pfC     %r8 */
+#define K1      %r8
 #define incPF   %r9
 #define nnu     %r10
 #define incAm   %r11
@@ -1249,6 +1249,20 @@ ATL_asmdecor(ATL_USERMM):
    sub $-128, pfB
    movq pB, pB0
 @ROUT ATL_damm2x12x2_sse2.S
+#if KB == 0
+/*
+ * Make KK even, and store if we have an extra iteration in K1
+ */
+   mov $2, KK0  /* KK0 sets 2nd bit, used only when K==3 */
+   mov $1, K1
+   and KK, K1   /* K1 1 for odd K, else 0 */
+   add K1, KK0  /* KK0 has both bits set appropriately for K==3 case */
+   cmp $3, KK   /* is K == 3? */
+   CMOVE KK0, K1/* bit 0: even/odd, bit1: set only if K == 3 */
+   sub K1, KK   /* KK now guaranteed even */
+#elif KB%2
+      sub $1, KK  /* make loop variable even */
+#endif
 /*
  * incAm = KB*MU*sizeof = K*2*8 = K*16
  */
@@ -1772,6 +1786,10 @@ ATL_asmdecor(ATL_USERMM):
       .local NLOOP
       NLOOP:
 */
+         #if KB == 0
+            bt $1, K1   /* If K==3, use special-case code that avoids loop */
+            jc KISTHREE
+         #endif
 /*
  *       Peel first iteration of K loop to initialize rCx
  */
@@ -1810,56 +1828,62 @@ ATL_asmdecor(ATL_USERMM):
          mulpd a0, rC10
          movddup -40(pB), rC11
          mulpd a0, rC11
+      #if KB == 0
+         cmp $0, KK
+         jz KLOOPDONE
+      #endif
 
-         movapd 16(pA,KK), a0
-         movddup -32(pB), b0
-         mulpd a0, b0
-         addpd b0, rC0
-         movddup -24(pB), b0
-         mulpd a0, b0
-         addpd b0, rC1
-            #if KB > 2
+         #if KB > 1 || KB == 0
+            movapd 16(pA,KK), a0
+            movddup -32(pB), b0
+            mulpd a0, b0
+            addpd b0, rC0
+            movddup -24(pB), b0
+            mulpd a0, b0
+            addpd b0, rC1
+               #if KB > 2
+                  add $32, KK
+               #endif
+            movddup -16(pB), b0
+            mulpd a0, b0
+            addpd b0, rC2
+               add incPF, pfA
+            movddup -8(pB), b0
+            mulpd a0, b0
+            addpd b0, rC3
+               add incPF, pfB
+            movddup (pB), b0
+            mulpd a0, b0
+            addpd b0, rC4
+            movddup 8(pB), b0
+            mulpd a0, b0
+            addpd b0, rC5
+            movddup 16(pB), b0
+            mulpd a0, b0
+            addpd b0, rC6
+            movddup 24(pB), b0
+            mulpd a0, b0
+            addpd b0, rC7
+            movddup 32(pB), b0
+            mulpd a0, b0
+            addpd b0, rC8
+            movddup 40(pB), b0
+            mulpd a0, b0
+            addpd b0, rC9
+            movddup 48(pB), b0
+            mulpd a0, b0
+            addpd b0, rC10
+            movddup 56(pB), b0
+            add incB, pB
+            mulpd a0, b0
+            addpd b0, rC11
+            #if KB == 0
                add $32, KK
+               jz KLOOPDONE
             #endif
-         movddup -16(pB), b0
-         mulpd a0, b0
-         addpd b0, rC2
-            add incPF, pfA
-         movddup -8(pB), b0
-         mulpd a0, b0
-         addpd b0, rC3
-            add incPF, pfB
-         movddup (pB), b0
-         mulpd a0, b0
-         addpd b0, rC4
-         movddup 8(pB), b0
-         mulpd a0, b0
-         addpd b0, rC5
-         movddup 16(pB), b0
-         mulpd a0, b0
-         addpd b0, rC6
-         movddup 24(pB), b0
-         mulpd a0, b0
-         addpd b0, rC7
-         movddup 32(pB), b0
-         mulpd a0, b0
-         addpd b0, rC8
-         movddup 40(pB), b0
-         mulpd a0, b0
-         addpd b0, rC9
-         movddup 48(pB), b0
-         mulpd a0, b0
-         addpd b0, rC10
-         movddup 56(pB), b0
-         add incB, pB
-         mulpd a0, b0
-         addpd b0, rC11
-         #if KB == 0
-            add $32, KK
-            jz KLOOPDONE
          #endif
 
-         #if KB > 2 || KB == 0
+         #if KB >= 4 || KB == 0
          .local KLOOP
          KLOOP:
             movapd (pA,KK), a0
@@ -1942,8 +1966,48 @@ ATL_asmdecor(ATL_USERMM):
          jnz KLOOP
          #endif
          #if KB == 0
-         .local KLOOPDONE
-         KLOOPDONE:
+            bt $0, K1    /* set CF if odd # of K */
+            jc ONEEXTRAKIT
+            .local KLOOPDONE
+            KLOOPDONE:
+         #elif KB%2 && KB != 1
+            movapd (pA,KK), a0
+            movddup -128(pB), b0
+            mulpd a0, b0
+            addpd b0, rC0
+            movddup -120(pB), b0
+            mulpd a0, b0
+            addpd b0, rC1
+            movddup -112(pB), b0
+            mulpd a0, b0
+            addpd b0, rC2
+            movddup -104(pB), b0
+            mulpd a0, b0
+            addpd b0, rC3
+            movddup -96(pB), b0
+            mulpd a0, b0
+            addpd b0, rC4
+            movddup -88(pB), b0
+            mulpd a0, b0
+            addpd b0, rC5
+            movddup -80(pB), b0
+            mulpd a0, b0
+            addpd b0, rC6
+            movddup -72(pB), b0
+            mulpd a0, b0
+            addpd b0, rC7
+            movddup -64(pB), b0
+            mulpd a0, b0
+            addpd b0, rC8
+            movddup -56(pB), b0
+            mulpd a0, b0
+            addpd b0, rC9
+            movddup -48(pB), b0
+            mulpd a0, b0
+            addpd b0, rC10
+            movddup -40(pB), b0
+            mulpd a0, b0
+            addpd b0, rC11
          #endif
 /*
  *       Write answer back out to C
@@ -2010,6 +2074,135 @@ ATL_asmdecor(ATL_USERMM):
    movq    40(%rsp), %r15
    add $FSIZE, %rsp
    ret
+@ROUT ATL_damm2x12x2_sse2.S
+/*
+ * This code executed only for odd K
+ */
+#if KB == 0
+KISTHREE:
+/*
+ *       Peel first 2 iteration of K to initialize rCx
+ */
+         movapd (pA,KK), a0
+         movddup -128(pB), rC0
+         mulpd a0, rC0
+            prefC -128(pC)
+         movddup -120(pB), rC1
+         mulpd a0, rC1
+            prefC -64(pC)
+         movddup -112(pB), rC2
+         mulpd a0, rC2
+            prefC (pC)
+         movddup -104(pB), rC3
+         mulpd a0, rC3
+            prefA -128(pfA)
+         movddup -96(pB), rC4
+         mulpd a0, rC4
+            prefA -64(pfA)
+         movddup -88(pB), rC5
+         mulpd a0, rC5
+            prefA (pfA)
+         movddup -80(pB), rC6
+         mulpd a0, rC6
+            prefB -128(pfB)
+         movddup -72(pB), rC7
+         mulpd a0, rC7
+            prefB -64(pfB)
+         movddup -64(pB), rC8
+         mulpd a0, rC8
+            prefB (pfB)
+         movddup -56(pB), rC9
+         mulpd a0, rC9
+         movddup -48(pB), rC10
+         mulpd a0, rC10
+         movddup -40(pB), rC11
+         mulpd a0, rC11
+
+         movapd 16(pA,KK), a0
+         movddup -32(pB), b0
+         mulpd a0, b0
+         addpd b0, rC0
+         movddup -24(pB), b0
+         mulpd a0, b0
+         addpd b0, rC1
+         movddup -16(pB), b0
+         mulpd a0, b0
+         addpd b0, rC2
+            add incPF, pfA
+         movddup -8(pB), b0
+         mulpd a0, b0
+         addpd b0, rC3
+            add incPF, pfB
+         movddup (pB), b0
+         mulpd a0, b0
+         addpd b0, rC4
+         movddup 8(pB), b0
+         mulpd a0, b0
+         addpd b0, rC5
+         movddup 16(pB), b0
+         mulpd a0, b0
+         addpd b0, rC6
+         movddup 24(pB), b0
+         mulpd a0, b0
+         addpd b0, rC7
+         movddup 32(pB), b0
+         mulpd a0, b0
+         addpd b0, rC8
+         movddup 40(pB), b0
+         mulpd a0, b0
+         addpd b0, rC9
+         movddup 48(pB), b0
+         add $32, KK
+         mulpd a0, b0
+         addpd b0, rC10
+         movddup 56(pB), b0
+         add incB, pB
+         mulpd a0, b0
+         addpd b0, rC11
+/*
+ *       Then fall thru into last K iteration to finish K==3
+ */
+.local ONEEXTRAKIT
+ONEEXTRAKIT:
+            movapd (pA,KK), a0
+            movddup -128(pB), b0
+            mulpd a0, b0
+            addpd b0, rC0
+            movddup -120(pB), b0
+            mulpd a0, b0
+            addpd b0, rC1
+            movddup -112(pB), b0
+            mulpd a0, b0
+            addpd b0, rC2
+            movddup -104(pB), b0
+            mulpd a0, b0
+            addpd b0, rC3
+            movddup -96(pB), b0
+            mulpd a0, b0
+            addpd b0, rC4
+            movddup -88(pB), b0
+            mulpd a0, b0
+            addpd b0, rC5
+            movddup -80(pB), b0
+            mulpd a0, b0
+            addpd b0, rC6
+            movddup -72(pB), b0
+            mulpd a0, b0
+            addpd b0, rC7
+            movddup -64(pB), b0
+            mulpd a0, b0
+            addpd b0, rC8
+            movddup -56(pB), b0
+            mulpd a0, b0
+            addpd b0, rC9
+            movddup -48(pB), b0
+            mulpd a0, b0
+            addpd b0, rC10
+            movddup -40(pB), b0
+            mulpd a0, b0
+            addpd b0, rC11
+            jmp KLOOPDONE
+#endif
 @ROUT ATL_damm12x3x256_avx.S ATL_samm24x3x256_avx.S
 @extract -b @(topd)/gen.inc what=crsetup
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2012
