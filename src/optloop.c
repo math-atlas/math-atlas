@@ -1301,7 +1301,6 @@ void GenCleanupLoop(LOOPQ *lp)
    SetVecBit(lp->blkvec, lp->header->bnum-1, 1);
    iv = BitVecCopy(iv, lp->blkvec);
    dupblks = CF2BlockList(NULL, iv, newCF);
-
 /*
  * Find all fall-thru path headers in loop; iv becomes blocks we have already
  * added
@@ -2817,6 +2816,16 @@ int DoAccumExpansOnLoop(LOOPQ *lp, short type, short ae, short *aes)
 /*
  *    For AE to be legal, every load must be followed by an add, which must
  *    be followed by a store, so just change the loads & stores
+ */
+/*
+ *    Majedul: It works for simple format. To make it work, keep the loopbody
+ *    into a single block.
+ *
+ *    FIXME: in case of redundant vector computation, there may be more than
+ *    one blks which need to be duplicated for unrolled. in that case, load and
+ *    store may not be in same blk. 
+ *    Question: need AE in that case? PrintLoopInfo provides status for state0
+ *    code but after vectorization, it may change!!!
  */
       for (ip=bl->blk->ainst1; ip; ip = ip->next)
       {
