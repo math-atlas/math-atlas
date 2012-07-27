@@ -854,4 +854,11 @@ void DoIf(char op, short id, short avar, char *labnam)
          InsNewInst(NULL, NULL, NULL, br, -PCREG, -ICC0, label);
       }
 #endif
+/*
+ * Majedul: the scope of if-statement is finished. Why not we re-initialized
+ * The register bank.
+ * NOTE: it doesn't work. If-statement doesn't store any value, may be 
+ * That's the reason, we can't use initiate regs here.
+ */
+   /*GetReg(-1); */     
 }
