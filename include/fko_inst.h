@@ -172,6 +172,7 @@ enum inst
    VDDIV,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */ 
    VDMAC,                      /* [vr0], [vr1], [vr2] : vr0 += vr1 * vr2 */
    VDABS,                      /* [vr0], [vr1] : vr0 = abs(vr1) */
+   VDNEG,                      /* [vr0], [vr1] : vr0 = -(vr1) */
 /*
  * Majedul: 
  * NOTE: SSE -> 3 operand, AVX -> 4 operand
@@ -203,6 +204,7 @@ enum inst
    VFDIV,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
    VFMAC,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
    VFABS,                      /* [vr0], [vr1] : vr0 = abs(vr1) */
+   VFNEG,                      /* [vr0], [vr1] : vr0 = -(vr1) */
 /*
  * Majedul: 
  * NOTE: SSE -> 3 operand, AVX -> 4 operand
@@ -447,6 +449,7 @@ char *instmnem[] =
    "VDDIV",
    "VDMAC",
    "VDABS",
+   "VDNEG",
    "VDCMOV1",
    "VDCMOV2",
    "VDSHUF",
@@ -469,6 +472,7 @@ char *instmnem[] =
    "VFDIV",
    "VFMAC",
    "VFABS",
+   "VFNEG",
    "VFCMOV1",
    "VFCMOV2",
    "VFSHUF",
@@ -654,7 +658,7 @@ char *instmnem[] =
  * one of the sources. This is due to map 4 operands instruction into our 
  * three operand LIL instruction.
  */
-#define IS_DEST_INUSE_INHERENTLY(i_) ((i_) == FMAC || (i_) == FMACD || \
+#define IS_DEST_INUSE_IMPLICITLY(i_) ((i_) == FMAC || (i_) == FMACD || \
                                       (i_) == VFMAC || (i_) == VDMAC || \
                                       (i_) == FCMOV1 || (i_) == FCMOV2 || \
                                       (i_) == FCMOVD1 || (i_) == FCMOVD2 || \
