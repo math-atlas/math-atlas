@@ -2638,6 +2638,67 @@ cleanall: clean
 @endiwhile
    #endif
 #endif
+@beginskip
+/*
+ * If on ARM, and in GEMM, produce header function that translates HARDFP
+ * ABI to SOFTFP so we can use unchanged SOFTP kernels
+ */
+#if defined(ATL_ARM_HARDFP) && defined(ATL_GEMMALIAS)
+.code 32
+.vfpv3
+.eabi_attribute 28, 1
+.text
+.align 2
+.globl ATL_asmdecor(ATL_USERMM)
+type  ATL_asmdecor(ATL_USERMM), %function
+ATL_asmdecor(ATL_USERMM):
+/*
+ * Create bogus softfp-style stack
+ */
+   #define FSZ 48
+   sub SP, SP, #FSZ
+   fstd d0, [SP]
+   str  r3, [SP,#8]
+   ld r3, [SP,#FSZ]
+   str  r3, [SP,#12]
+   ld r3, [SP,#(FSZ+4)]
+   str  r3, [SP,#16]
+   ld r3, [SP,#(FSZ+8)]
+   str  r3, [SP,#20]
+   fstd d1, [SP,#(FSZ+24)]
+   ld r3, [SP,#(FSZ+12)]
+   str  r3, [SP,#32]
+   ld r3, [SP,#(FSZ+16)]
+   str  r3, [SP,#40]
+/*
+ * Save link register to stack, and jump to softMM
+ */
+   str r14, [SP,#44]
+   bl ATL_asmdecor(ATL_softMM)
+/*
+ * Upon return, reload saved link register, move stack back up, and jump back
+ */
+   ld r14, [SP,#44]
+   add SP, SP, #FSZ
+   bx lr
+.size ATL_asmdecor(ATL_USERMM),.-ATL_asmdecor(ATL_USERMM)
+/*
+ * SOFT/HARD
+                       r0/r0        r1/r1        r2/r2            0/d0
+void ATL_USERMM (const int M, const int N, const int K, const TYPE alpha,
+                          8/r3           12/0           16/4           20/8
+                 const TYPE *A, const int lda, const TYPE *B, const int ldb,
+                           24/d0    32/12          40/16
+                 const TYPE beta, TYPE *C, const int ldc)
+*/
+
+#undef FSZ
+#undef ATL_ARM_HARDFP
+#define ATL_ARM_GLOBAL .local
+#undef ATL_USERMM
+#define ATL_USERMM ATL_softMM
+#endif
+@endskip
 
 /*
  * For GNU/Linux, set no-execute bit for all ATLAS assembly
