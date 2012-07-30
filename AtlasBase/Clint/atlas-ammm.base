@@ -45,6 +45,9 @@ ID=9 MU=6 NU=3 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_damm6x3x4_sse3.S' \
 ID=10 MU=2 NU=12 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm2x12x2_sse2.S' \
      SSE=3 KRUNTIME=1 ASM=GAS_x8664 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
+ID=11 MU=12 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm12x3x1_avx.S' \
+     SSE=3 ASM=GAS_x8664 KRUNTIME=1 \
+     COMP='gcc' CFLAGS='-x assembler-with-cpp -mavx'
 @ROUT samcases.idx
 ID=1 MU=16 NU=4 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_samm16x4x1_av.c' \
      KRUNTIME=1 COMP='gcc' CFLAGS='-Os -maltivec -mabi=altivec -mcpu=970 -mtune=970 -mvrsave -fschedule-insns2 -fno-schedule-insns'
@@ -1570,8 +1573,8 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
  * OUTPUT: <pre>AMMKCLEAN.SUM: all unique kerns to be compiled
  */
 {
-   ATL_mmnode_t *mp, *gmmb, *ummb, *ub, *np;
-   int nn=0, nd=0, n=0;  /* #needed & done, total */
+   ATL_mmnode_t *mp, *gmmb, *ummb, *ub, *np, **dlmm;
+   int nn=0, nd=0, n=0;  /* #needed & done, total, copy of done */
    int *dl, *nl;         /* done and needed lists */
    int i;
    gmmb = ReadMMFileWithPath(pre, "res", "AMMKCLEAN.SUM");
@@ -1580,27 +1583,90 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
       printf("READING IN UNIQUE K-CLEANUP:\n");
       for (mp=gmmb; mp; mp = mp->next)
       {
-         int nb = mp->kbB;
+         int nb = mp->nbB, kb = (nb > 8) ? (nb>>2) : nb;
          if (mp->mflop[0] < 0.0)
-            mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre,nb, nb, nb, nb, nb, nb,
+            mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, nb, nb, kb, 0, 0, nb,
                                         0, 0, -1);
-         printf("   nb=%d,  mu=%d, nu=%d, MFLOP=%.2f\n", 
-                nb, mp->mu, mp->nu, mp->mflop[0]);
+         printf("   nb=%d,  kb=%d, mu=%d, nu=%d, MFLOP=%.2f\n", 
+                nb, kb, mp->mu, mp->nu, mp->mflop[0]);
       }
       printf("Done.\n");
       return(gmmb);
    }
 /*
  * Find out how many total kernels, and how many already have their own
- * cleanup (nd, number done)
+ * cleanup (nd, number done).  This nd may be bigger than it should, because
+ * we can't guarantee they are unique
  */
    for (mp=mmb; mp; mp = mp->next, n++)
       if (mp->ku == 1 && FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
         nd++;
-   dl = malloc(3*n*sizeof(int));
+   dl = malloc(6*n*sizeof(int));
    assert(dl);
-   nl = dl + nd+nd+nd;
+   if (nd)
+   {
+      dlmm = malloc(nd*sizeof(ATL_mmnode_t*));
+      assert(dlmm);
+   }
+   else
+      dlmm = NULL;
+
+   nl = dl + n+n+n;
    nd = 0;
+/*
+ * First, go back through kernels, and add kernels that can serve as K-cleaners
+ * to the done list
+ */
+   for (mp=mmb; mp; mp = mp->next, n++)
+   {
+      if (mp->ku == 1 && FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+      {
+         const int nd3 = (nd<<1)+nd, mu=mp->mu, nu=mp->nu;
+/*
+ *       See if pair is already in done list if so, no new entry, just update kb
+ *       and cleanup kernel entry
+ */
+         for (i=0; i < nd3; i += 3)
+            if (mu == dl[i] && nu == dl[i+1])
+               break;
+         if (i < nd3)
+         {                      /* (larger NB always later) */
+            dl[i+2] = mp->kbB;  /* take largest kbB that matches mu/nu */
+            dlmm[i/3] = mp;
+            continue;           
+         }
+         else
+         {
+            dl[nd3] = mu;
+            dl[nd3+1] = nu;
+            dl[nd3+3] = mp->kbB;
+            dlmm[nd++] = mp;
+         }
+      }
+   }
+/*
+ * Delete any kernels from dl that fail to actually work for K cleaning
+ */
+   for (i=0; i < nd; i++)
+   {
+      if (FailKCleanTests(pre, dlmm[i]->kbB, dlmm[i]))
+      {
+         const int i3=(i<<1)+i, nc=nd-i-1;
+         if (nc > 0)
+         {
+            memcpy(dl+i3, dl+i3+3, ((nc<<1)+nc)*sizeof(int));
+            memcpy(dlmm[i], dlmm[i+1], nc*sizeof(ATL_mmnode_t*));
+         }
+         nd--;
+      }
+   }
+
+/*
+ * Find all unique (mu,nu) combos that still need to to be cleaned; there will
+ * nn (# needed) of these, and we'll save (mu,nu,MAXNB) in needed list (nl)
+ * We use MAXNB for testing (large NB tests mosts cases of K).
+ * Pairs that are handled by the done list (dl) aren't added to needed list.
+ */
    for (mp=mmb; mp; mp = mp->next, n++)
    {
       int mu=mp->mu, nu=mp->nu, nn3=(nn<<1)+nn, nd3=(nd<<1)+nd;
@@ -1610,51 +1676,41 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
       for (i=0; i < nd3; i += 3)
          if (mu == dl[i] && nu == dl[i+1])
             break;
-      if (i < nd3)
-      {
-         dl[i+2] = mp->kbB;  /* take largest kbB that matches mu/nu */
-         continue;
-      }
+      if (i < nd3)    /* if it was found in the done list */
+         continue;    /* this pair is already handled */
+/*
+ *    If we reach here, pair is not handled, must add to needed list 
+ */
       for (i=0; i < nn3; i += 3)
          if (mu == nl[i] && nu == nl[i+1])
             break;
-      if (i < nn3)
+      if (i < nn3)            /* If already in needed list */
       {
-         nl[i+2] = mp->kbB;
+         nl[i+2] = mp->kbB;   /* just update kb so we get largest for testing */
          continue;
       }
 /*
- *    Add surviving pair to done or needed list, as required.  When two kerns
- *    have same mu/nu, we take larger NB (later in list) as the guy we'll use
- *    to tune the ku=1 cases.
+ *    If we haven't seen this pair before, add to needed list
  */
-      if (mp->ku == 1 && FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
-      {
-         if (!FailKCleanTests(pre, mp->kbB, mp))
-         {
-            dl[nd3] = mu;
-            dl[nd3+1] = nu;
-            dl[nd3+2] = mp->kbB;
-            nd++;
-         }
-      }
       else
       {
          nl[nn3] = mu;
          nl[nn3+1] = nu;
-         dl[nn3+2] = mp->kbB;
+         nl[nn3+2] = mp->kbB;
          nn++;
       }
    }
 /*
- * Now, create a queue of generated kernels for each needed pair
+ * Now, create a queue of generated kernels for each needed pair, and time
+ * it's maxNB performance.
  */
    gmmb = NULL;
-   printf("Timing K Cleanup:\n");
+   printf("Timing Generated K-cleanup:\n");
    for (i=0; i < nn; i++)
    {
       ATL_mmnode_t *p;
       const int i3 = (i<<1)+i, mu=nl[i3], nu=nl[i3+1], nb=nl[i3+2];
+      const int kb = (nb > 8) ? (nb>>2) : nb;
       int vl=VECi;
       double mf;
       if (mu % VLEN[VECi])
@@ -1670,10 +1726,10 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
       #if 0  /* by default don't waste time testing generated code */
          assert(!FailKCleanTests(pre, nb, p));
       #endif
-      p->mflop[0] = TimeMMKernel(verb, 0, p, pre, nb, nb, nb, 0, 0, nb, 
+      p->mflop[0] = TimeMMKernel(verb, 0, p, pre, nb, nb, kb, 0, 0, nb, 
                                  0, 0, -1);
-      printf("   nb=%d,  mu=%d, nu=%d, MFLOP=%.2f\n", 
-             nb, mu, nu, p->mflop[0]);
+      printf("   nb=%d, kb=%d,  mu=%d, nu=%d, MFLOP=%.2f\n", 
+             nb, kb, mu, nu, p->mflop[0]);
       if (gmmb)
       {
          mp->next = p;
@@ -1682,8 +1738,34 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
       else
          gmmb = mp = p;
    }
+   printf("Done.\n");
 /*
- * Now, search index file for suitable user-submitted kernels
+ * Now, add the done-list items to generated list
+ */
+   for (i=0; i < nd; i++)
+   {
+      const int i3=3*i, mu=dl[i3], nu=dl[i3+1], nb=dl[i3+2];
+      ATL_mmnode_t *prev=NULL;
+/*
+ *    Get a copy of done-list kern that can be added to genlist
+ */
+      np = CloneMMNode(dlmm[i]);
+/*
+ *    List must stay in increasing order, so find where to shove done-list item
+ */
+      for (mp=gmmb; mp && mp->kbB < nb; mp = mp->next)
+         prev = mp;
+      np->next = (mp) ? mp->next : NULL;
+      if (gmmb)
+         prev->next = np;
+      else
+         gmmb = np;
+   }
+   if (dlmm)
+      free(dlmm);
+/*
+ * Now, search index file for suitable user-submitted kernels to compete
+ * with existing solutions
  */
    ub = ReadMMFileWithPath(pre, "AMMCASES", "amcases.idx");
    ummb = NULL;  /* no suitable user cases to begin */
@@ -1722,14 +1804,70 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
       }
    }
    KillAllMMNodes(ub);
+/*
+ * If we have both user and genned code, must compare timing to select best
+ */
    if (ummb)
    {
-      assert(0);  /* remind me to fix once I have some cleanup kerns */
-      /* then merge into gmmb; */
+/*
+ *    Now, loop over user cases and time them for comparison with genned
+ */
+      printf("Timing User K-cleanup:\n");
+      for (mp=ummb; mp; mp = mp->next)
+      {
+         const int nb = mp->nbB, kb = (nb > 8) ? (nb>>2) : nb;
+         mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, nb, nb, nb, 0, 0, nb, 
+                                    0, 0, -1);
+         printf("   ID=%d, nb=%d, kb=%d, mu=%d, nu=%d, MFLOP=%.2f\n", 
+                mp->ID, nb, kb, mp->mu, mp->nu, mp->mflop[0]);
+      }
+      printf("Done timing, merging lists:\n");
+/*
+ *    Merge generated (gmmb) and user (ummb) kerns by selecting best performing
+ *    gmmb is a superset of ummb, so what we will do is look through gmmb
+ *    for matching (mu,nu) pairs, time them, and if ummb is faster, replace
+ *    that entry in gmmb with ummb.
+ */
+      while (ummb)
+      {
+         ATL_mmnode_t *prev=NULL;
+         int mu=ummb->mu, nu=ummb->nu;
+         for (mp=gmmb; mp && (mp->mu != mu || mp->nu != nu); mp = mp->next)
+            prev = mp;
+         assert(mp);  /* logic error if we haven't found it */
+/*
+ *       If user case gets better performance, replace genned case in queue
+ */
+         if (ummb->mflop[0] > gmmb->mflop[0])
+         {
+            printf("   Replacing genned case (%.2f) with user ID %d (%.2f)\n",
+                   gmmb->mflop[0], ummb->ID, ummb->mflop[0]);
+            if (prev)
+            {
+               prev->next = ummb;
+               ummb = ummb->next;
+               prev->next->next = KillMMNode(mp);
+            }
+            else /* replace gmmb, mp pts at gmmb */
+            {
+               ATL_mmnode_t *up=ummb;
+               ummb = ummb->next;
+               up->next = KillMMNode(gmmb);
+               gmmb = up;
+            }
+         }
+         else /* user case loser, just delete it */
+         {
+            printf("   Preferring genned case (%.2f) over user ID %d (%.2f)\n",
+                   gmmb->mflop[0], ummb->ID, ummb->mflop[0]);
+            ummb = KillMMNode(ummb);
+         }
+      }
+      printf("DONE.\n\n");
    }
    else
       printf("NO VALID USER-SUBMITTED K-CLEANUP KERNELS\n\n");
-   free(nl);
+   free(dl);
    WriteMMFileWithPath(pre, "res", "AMMKCLEAN.SUM", gmmb);
    return(gmmb);
 }
@@ -1796,6 +1934,7 @@ ATL_mmnode_t *KCleanByNB
       kb = (kb >= 4) ? kb : 4;
 
       p = FindMUNU(mkb, mp->mu, mp->nu);
+      assert(p);
       p = CloneMMNode(p);
       p->next = NULL;
       p->nbB = p->mbB = nb;  p->kbB = kb;
