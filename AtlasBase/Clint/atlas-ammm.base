@@ -674,6 +674,7 @@ static enum VECTYPE {VTAVX=0, VTSSE=1, VTGV=2, VTSC=3} VECi=VTSC;
 static VLEN[4] = {4, 2, 2, 1};  /* assume double, fix up if necessary later */
 static char *VECs[4] = {"avx", "sse", "gvec", "scalar"};
 static int TSIZE=8;
+#define KRUNMUL 1.02   /* KRUNTIME speedup increase over K-compile time */
 
 @extract -b @(basd)/atlas.base rout=Mylcm
 
@@ -693,7 +694,7 @@ ATL_mmnode_t *BestForThisNB
  */
 {
    ATL_mmnode_t *mmp, *mmB=NULL;
-   double mf, mfB=0.0;
+   double mf, mf0, mfB=0.0;
 
    printf("SCOPING FOR BEST PERFORMING KERNEL FOR NB=%d\n", nb);
    for (mmp=mmb; mmp; mmp = mmp->next)
@@ -730,14 +731,21 @@ ATL_mmnode_t *BestForThisNB
          printf("   %d. %s: SKIPPED, bad NB\n", mmp->ID, mmp->rout);
          continue;
       }
-      mf = TimeMMKernel(verb, 0, mmp, pre, kb, kb, kb, kb, kb, kb, 1, 0, -1);
+      mf0 = TimeMMKernel(verb, 0, mmp, pre, kb, kb, kb, kb, kb, kb, 1, 0, -1);
+/*
+ *    Give bonus to K-runtime variable over K-compile time; K-runtime kernels
+ *    can be used for some K-cleanup, and they can be used for any required KB
+ *    as well as being typically much smaller instruction load, so they are
+ *    strongly prefered
+ */
+      mf = FLAG_IS_SET(mmp->flag, MMF_KRUNTIME) ? mf0*KRUNMUL : mf0;
       if (mf > mfB)
       {
          mfB = mf;
          mmB = mmp;
          mmB->mbB = mmB->nbB = mmB->kbB = kb;
       }
-      printf("   %d. %s: kb=%d, MFLOP=%.2f\n", mmp->ID, mmp->rout, kb, mf);
+      printf("   %d. %s: kb=%d, MFLOP=%.2f\n", mmp->ID, mmp->rout, kb, mf0);
    }
    if (!mmB)
    {
@@ -758,6 +766,8 @@ ATL_mmnode_t *BestForThisNB
          printf("BEST KERNEL FAILS TESTER FOR NB=%d\n", kb);
          exit(i);
       }
+      if (FLAG_IS_SET(mmB->flag, MMF_KRUNTIME))
+         mfB /= KRUNMUL;
       printf("BEST KERNEL FOUND FOR NB=%d: ID#%d '%s' %.2f MFLOPS\n\n", 
              nb, mmB->ID, mmB->rout, mfB);
       mmB = CloneMMNode(mmB);
@@ -2071,6 +2081,61 @@ void FindBestKU1
 {
 }
 
+int FitsInCache_all3(size_t CS, size_t mb, size_t nb, size_t kb, 
+                     size_t mu, size_t nu)
+{ /* RETURNS 1 if 3 matmul ops all fit in cache, else 0 */
+   return(kb*(mb+nb)+mb*nb <= CS);
+}
+
+int FitsInCache_one(size_t CS, size_t mb, size_t nb, size_t kb, 
+                    size_t mu, size_t nu)
+{ /* RETURNS 1 if B + working set of A/C fit in cache, else 0 */
+   return(kb*nb + 2*(mu*kb + mu*nu) <= CS);
+}
+
+int FitsInCache_ws(size_t CS, size_t mb, size_t nb, size_t kb, 
+                    size_t mu, size_t nu)
+{ /* RETURNS 1 if working set of all matmul ops fit in cache, else 0 */
+   return(kb*nb + 2*(mu*kb + mu*nu) < CS);
+}
+
+typedef int (*fits_in_cache_t)(size_t,size_t,size_t,size_t,size_t,size_t);
+
+void GetMbNbFromBudget(fits_in_cache_t FitsInCache, size_t CS, 
+                       size_t mu, size_t nu, size_t kb,
+                       size_t *MB, size_t *NB)
+{
+   size_t mb=mu, nb=nu;
+   do
+   {
+      if (mb >= nb && FitsInCache_ws(CS, mb+mu, nb, kb, mu, nu))
+         mb += mu;
+      else if (FitsInCache_ws(CS, mb, nb+nu, kb, mu, nu))
+         nb += nu;
+      else if (FitsInCache_ws(CS, mb+mu, nb, kb, mu, nu))
+         mb += mu;
+      else
+         break;
+   }
+   while (1);
+   *MB = mb;
+   *NB = nb;
+}
+
+ATL_mmnode_t FindBestCacheBudgetCases
+(
+   fits_in_cache_t FitsInCache,  /* func ptr to budget function */
+   size_t CS,                    /* size of cache we are optimizing for */
+   int kb,                       /* kb to force */
+   ATL_mmnode_t *mmb             /* list of cases to try */
+)
+/*
+ * RETURNS: clone of best-peforming kernel in mmb for kb=kb, mb & nb 
+ *          near-square and within budget
+ */
+{
+
+}
 int main(int nargs, char **args)
 {
    char pre='d';
