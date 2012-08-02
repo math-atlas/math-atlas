@@ -1652,6 +1652,36 @@ ATL_mmnode_t *MergeCases
       else
         mp = mb = p;
    }
+   return(mb);
+}
+
+ATL_mmnode_t *WinnowCases
+(
+   int imf,
+   ATL_mmnode_t *mb  /* queue of cases */
+)
+/*
+ * Removes any case that runs slower than a smaller case
+ * RETURNS: mb with queue bad kernels deleted
+ * NOTE: mb can never change, since by def nothing smaller than 1st case
+ */
+{
+   ATL_mmnode_t *prev = mb, *mp;
+
+   if (!mb)
+      return(NULL);
+   mp = mb->next;
+   while (mp)
+   {
+      if (mp->mflop[imf] <= prev->mflop[imf])  /* kill slow KB */
+         mp = prev->next = KillMMNode(mp);
+      else
+      {
+         prev = mp;
+         mp = mp->next;
+      }
+   }
+   return(mb);
 }
 
 ATL_mmnode_t *MergeAndWinnowCases
@@ -1717,7 +1747,7 @@ int FailKCleanTests(char pre, int nb, ATL_mmnode_t *kp)
 {
    int i;
 
-   if (!FLAG_IS_SET(kp->flag, MMF_MRUNTIME) || kp->ku != 1)
+   if (!FLAG_IS_SET(kp->flag, MMF_KRUNTIME) || kp->ku != 1)
       return(-1);
    printf("TESTING ID=%d, rout='%s', nb=%d, mu=%d, nu=%d for K-cleanup:\n",
           kp->ID, kp->rout, nb, kp->mu, kp->nu);
@@ -2066,23 +2096,23 @@ ATL_mmnode_t *KCleanByNB
  *      mflop[1] contains estimated time for 1 K-it using K=MAX(kb/4,4)
  */
 {
-   ATL_mmnode_t *mb, *mp, *np;
+   ATL_mmnode_t *nkb, *mp, *np;
    int kb;
    double mf;
 
-   mb = ReadMMFileWithPath(pre, "res", "AMMKCLEANBYNB.SUM");
-   if (mb)
+   nkb = ReadMMFileWithPath(pre, "res", "AMMKCLEANBYNB.SUM");
+   if (nkb)
    {
       KillAllMMNodes(mkb);
       printf("READING IN BY-NB K-CLEANUP:\n");
-      for (mp=mb; mp; mp = mp->next)
+      for (mp=nkb; mp; mp = mp->next)
       {
-         int nb = mp->kbB;
-         kb = nb >> 2;
+         int mb=mp->mbB, nb=mp->nbB;
+         kb = mp->kbB >> 2;
          kb = (kb >= 4) ? kb : 4;
          if (mp->mflop[0] < 0.0)
          {
-            mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre,nb, nb, kb, 0, 0, kb,
+            mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, mb, nb, kb, 0, 0, kb,
                                         0, 0, -1);
             mf = (2.0*nb)*nb;  /* flop count of gemm/kits (kb) */
             mp->mflop[1] = mf / mp->mflop[0]; /* time in microsecs for 1 k-it */
@@ -2091,40 +2121,40 @@ ATL_mmnode_t *KCleanByNB
                 nb, kb, mp->mu, mp->nu, mp->mflop[0], mf);
       }
       printf("Done.\n");
-      return(mb);
+      return(nkb);
    }
    printf("TIMING K-CLEAN FOR ALL SUPPORTED NBs:\n");
    for (mp=mmb; mp; mp = mp->next)
    {
       ATL_mmnode_t *p;
-      int nb = mp->nbB, kb;
+      int mb = mp->mbB, nb = mp->nbB, kb;
 
-      kb = nb >> 2;
+      kb = mp->kbB >> 2;
       kb = (kb >= 4) ? kb : 4;
 
       p = FindMUNU(mkb, mp->mu, mp->nu);
       assert(p);
       p = CloneMMNode(p);
       p->next = NULL;
-      p->nbB = p->mbB = nb;  p->kbB = kb;
-      p->mflop[0] = TimeMMKernel(verb, 0, p, pre, nb, nb, kb, 0, 0, kb, 
+      p->nbB = nb; p->mbB = mb;  p->kbB = kb;
+      p->mflop[0] = TimeMMKernel(verb, 0, p, pre, mb, nb, kb, 0, 0, kb, 
                                  0, 0, -1);
-      mf = (2.0*nb)*nb;  /* flop count of gemm/kits (kb) */
+      mf = mb*nb;
       p->mflop[1] = mf / p->mflop[0];   /* time in microseconds for 1 k it */
-      printf("   nb=%d, kb=%d, mu=%d, nu=%d, mf=%.2f (%e Usec/Kit)\n", 
-             nb, kb, p->mu, p->nu, p->mflop[0], mf);
-      if (mb)
+      printf("   mb=%d, nb=%d, kb=%d, mu=%d, nu=%d, mf=%.2f (%e Usec/Kit)\n", 
+             mb, nb, kb, p->mu, p->nu, p->mflop[0], mf);
+      if (nkb)
       {
          np->next = p;
          np = p;
       }
       else
-         mb = np = p;
+         nkb = np = p;
    }
    printf("DONE.\n\n");
    KillAllMMNodes(mkb);
-   WriteMMFileWithPath(pre, "res", "AMMKCLEANBYNB.SUM", mb);
-   return(mb);
+   WriteMMFileWithPath(pre, "res", "AMMKCLEANBYNB.SUM", nkb);
+   return(nkb);
 }
 
 void TimeKClean(int verb, char pre, ATL_mmnode_t *mp)
@@ -2141,50 +2171,50 @@ void TimeKClean(int verb, char pre, ATL_mmnode_t *mp)
  *   large problems (use estimated time in CLBYNB for small probs).
  */
 {
-   ATL_mmnode_t *mb, *p, *np;
+   ATL_mmnode_t *mmb, *p, *np;
    char fn[32];
-   int nb = mp->nbB, i;
+   int mb = mp->mbB, nb = mp->nbB, i;
 
    sprintf(fn, "AMMKCLEAN_%d.TIM", mp->nbB);
-   mb = ReadMMFileWithPath(pre, "res", fn);
-   if (mb)
+   mmb = ReadMMFileWithPath(pre, "res", fn);
+   if (mmb)
    {
       printf("READING IN K-CLEANUP TIMINGS FOR NB=%d:\n", nb);
-      for (p=mb; p; p = p->next)
+      for (p=mmb; p; p = p->next)
       {
          int kb = p->kbB;
-         assert(nb == p->nbB);
+         assert(nb == p->nbB && mb == p->mbB);
          if (p->mflop < 0)
-            p->mflop[0] = TimeMMKernel(verb, 0, p, pre, nb, nb, kb, 0, 0, kb, 
+            p->mflop[0] = TimeMMKernel(verb, 0, p, pre, mb, nb, kb, 0, 0, kb, 
                                        0, 0, -1);
-         printf("   MB=NB=%d, KB=%d, mu=%d, nu=%d, MFLOP=%.2f\n", nb, kb, 
-                p->mu, p->nu, p->mflop[0]);
+         printf("   MB=%d, NB=%d, KB=%d, mu=%d, nu=%d, MFLOP=%.2f\n", 
+                mb, nb, kb, p->mu, p->nu, p->mflop[0]);
       }
       printf("Done.\n\n");
-      WriteMMFileWithPath(pre, "res", fn, mb);
-      KillAllMMNodes(mb);
+      WriteMMFileWithPath(pre, "res", fn, mmb);
+      KillAllMMNodes(mmb);
       return;
    }
    
-   printf("TIMING K-CLEANUP FOR NB=%d:\n", nb);
+   printf("TIMING K-CLEANUP FOR MB=%d, NB=%d:\n", mb, nb);
    for (i=1; i <= nb; i++)  /* create queue of ascending KB */
    {
       p = CloneMMNode(mp);
       p->next = NULL;
       p->kbB = i;
-      p->mflop[0] = TimeMMKernel(verb, 0, p, pre, nb, nb, i, 0, 0, i, 0, 0, -1);
-      printf("   MB=NB=%d, KB=%d, mu=%d, nu=%d, MFLOP=%.2f\n", nb, i, 
+      p->mflop[0] = TimeMMKernel(verb, 0, p, pre, mb, nb, i, 0, 0, i, 0, 0, -1);
+      printf("   MB=%d, NB=%d, KB=%d, mu=%d, nu=%d, MFLOP=%.2f\n", mb, nb, i, 
              p->mu, p->nu, p->mflop[0]);
-      if (mb)
+      if (mmb)
       {
          np->next = p;
          np = p;
       }
       else
-         mb = np = p;
+         mmb = np = p;
    }
-   WriteMMFileWithPath(pre, "res", fn, mb);
-   KillAllMMNodes(mb);
+   WriteMMFileWithPath(pre, "res", fn, mmb);
+   KillAllMMNodes(mmb);
    printf("Done.\n");
 }
 
@@ -2596,6 +2626,28 @@ ATL_mmnode_t *FindCacheBudgetCasesByKB
 {
    ATL_mmnode_t *mm3b, *mp;
 /*
+ * See if we just need to rerun cases
+ */
+   mm3b = ReadMMFileWithPath(pre, "res", "bAMMRES.sum");
+   if (mm3b)
+   {
+      int i=0;
+      printf("READING IN LARGE KERNEL CASES FROM res/<pre>bAMMRES:\n");
+      for (mp=mm3b; mp; mp = mp->next)
+      {
+         if (mp->mflop[0] <= 0.0)
+            mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB, 
+                                        mp->kbB, 0, 0, 0, 1, 0, -1);
+         printf("   ID=%d, %s: MB=%d, NB=%d, KB=%d, KRUN=%d, MFLOP=%.2f\n",
+                mp->ID, mp->rout ? mp->rout : "Gennedkern",
+                mp->mbB, mp->nbB, mp->kbB, FLAG_IS_SET(mp->flag, MMF_KRUNTIME),
+                mp->mflop[0]);
+         i++;
+      }
+      printf("DONE %d CASES.\n\n", i);
+      return(mm3b);
+   }
+/*
  * Find best performing kernels for each of our 3 cache budgets
  */
    mm3b = FindBestCacheBudgetCases(verb, pre, CS, mmb);
@@ -2620,8 +2672,10 @@ ATL_mmnode_t *FindCacheBudgetCasesByKB
    }
    KillAllMMNodes(mm3b);
 /*
- * Now, need to winnow merged cases
+ * Now, get rid of any blocking factor that is slower than the preceeding one
  */
+   mmb = WinnowCases(0, mmb);
+   WriteMMFileWithPath(pre, "res", "bAMMRES.sum", mmb);
    return(mmb);
 }
 
@@ -2676,21 +2730,23 @@ int main(int nargs, char **args)
  * this case to default list to be searched.
  */
    gmm = DecentGenCase(verb, pre, nregs);
-   p = CloneMMNode(gmm);
-   p->next = mmb;
-   mmb = p;
+   gmm->next = mmb;
+   mmb = gmm;
 /*
  * Find the best user-supplied cases for the three common cache blocking cases
  */
    mmb = FindCacheBudgetCasesByKB(verb, pre, CS, mmb);
+/*
+ * Now add small-case kernels back in, and write it out
+ */
+   p = MergeCases(0, mmb, smmb);
+   KillAllMMNodes(smmb);
    KillAllMMNodes(mmb);
-@beginskip
-   mmb = MergeAndWinnowCases(verb, pre, mmb, mmp);
+   mmb = p;
    WriteMMFileWithPath(pre, "res", "eAMMRES.sum", mmb);
-//   ComputeKClean(verb, pre, mmb);
+   ComputeKClean(verb, pre, mmb);
    KillAllMMNodes(mmb);
-//   FindBestKU1(verb, pre, 17);  /* create kern for use in low-rank update */
-@endskip
+   FindBestKU1(verb, pre, 17);  /* create kern for use in low-rank update */
    free(nbs);
    exit(0);
 }
