@@ -275,6 +275,219 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char **DOUT)
    return(mmb);
 }
 
+char *GetVecStr(char pre, int vlen)
+{
+   if (vlen == 1)
+      return("scalar");
+   #ifdef ATL_AVX
+      if (pre == 'd')
+      {
+         if (vlen == 4)
+            return("avx");
+         else if (vlen == 2)
+            return("sse");
+      }
+      else if (pre == 's')
+      {
+         if (vlen == 8)
+            return("avx");
+         else if (vlen == 4)
+            return("sse");
+      }
+   #elif defined(ATL_SSE1)
+      #ifdef ATL_SSE2
+         if (pre == 'd' && vlen == 2)
+               return("sse");
+      #endif
+      if (pre == 's' && vlen == 4)
+         return("sse");
+   #endif
+/*
+ * Any vector length > 1 that isn't one of our known cases uses gnuvec
+ */
+   return("gvec");
+}
+
+void FillInGenStrings
+(
+   char pre,
+   ATL_mmnode_t *mmb,  /* queue to look through */
+   char *dir           /* output directory to generate into */
+)
+/*
+ * Creates GenString for any ID=0 in mmb
+ */
+{
+   ATL_mmnode_t *mp;
+   char *frm="make gen_amm_%s lat=%d mu=%d nu=%d ku=%d kb=%d vlen=%d rt=%s/%s";
+   int frml;
+
+   frml = strlen(frm);
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      if (mp->ID == 0)  /* is generated file */
+      {
+         int ll;
+         char *sp, *vec;
+         int vlen = mp->vlen;
+
+         assert(mp->rout);  /* should have been filled in by search */
+         ll = frml + strlen(dir) + strlen(mp->rout) + 8;
+         sp = malloc(ll*sizeof(char));
+         assert(sp);
+
+         vec = GetVecStr(pre, mp->vlen);
+         if (vec[0] == 'g' && vec[1] == 'v' && vec[2] == 'e' && vlen != 1)
+            vlen *= (pre == 'd') ? 8:4;
+
+         sprintf(sp, frm, vec, mp->lat, mp->mu, mp->nu,
+                 mp->ku, FLAG_IS_SET(mp->flag, MMF_KRUNTIME) ? 0 : mp->kbB,
+                 vlen, dir, mp->rout);
+         mp->genstr = sp;
+      }
+   }
+}
+
+void PrintBegBlock(char pre, ATL_mmnode_t *mmb, char *nam)
+/*
+ * HERE HERE HERE
+ */
+{
+   char PRE = toupper(pre);
+   fprintf(fp, "#ifndef ATLAS_%cAMM_%s_H\n   #define ATLAS_%cAMM_%s_H\n\n",
+           PRE, nam, PRE, nam);
+/*
+ * Count mmb, and print def of NCASES
+ */
+}
+void GenBlockingFile(char pre, ATL_mmnode_t *mmb, char *outd)
+{
+   ATL_mmnode_t *mp;
+   char *fnam;
+   FILE *fp;
+   char *type = "unsigned short";
+   int i, n, maxb, maxNB, maxMB, maxKB;
+   char PRE = toupper(pre), bc[3] = {'M', 'N', 'K'};
+
+   i = strlen(outd) + 18;
+   fnam = malloc(i*sizeof(char));
+   assert(fnam);
+   
+   sprintf(fnam, "%s/atlas_%camm_blk.h", outd, pre);
+   fp = fopen(fnam, "w");
+   assert(fp);
+   free(fnam);
+
+   fprintf(fp, "#ifndef ATLAS_%cAMM_BLK_H\n   #define ATLAS_%cAMM_BLK_H\n\n",
+           PRE, PRE);
+
+   maxNB = maxKB = maxMB = 0;
+   for (n=0,mp=mmb; mp; n++, mp = mp->next)
+   {
+      maxMB = Mmax(maxMB, mp->mbB);
+      maxNB = Mmax(maxNB, mp->nbB);
+      maxKB = Mmax(maxKB, mp->kbB);
+   }
+   maxb = Mmax(maxMB, maxNB);
+   maxb = Mmax(maxb, maxKB);
+
+   fprintf(fp, "#ifdef ATL_AMM_NCASES\n");
+   fprintf(fp, "   #if ATL_AMM_NCASES != %d\n", n);
+   fprintf(fp, "      #error \"NCASES MISMATCH!\"\n");
+   fprintf(fp, "   #endif\n");
+   fprintf(fp, "#else\n");
+   fprintf(fp, "   #define ATL_AMM_NCASES %d\n", n);
+   fprintf(fp, "#endif\n");
+   fprintf(fp, "#define ATL_AMM_MAXMB %d\n", maxMB);
+   fprintf(fp, "#define ATL_AMM_MAXNB %d\n", maxNB);
+   fprintf(fp, "#define ATL_AMM_MAXKB %d\n", maxKB);
+   fprintf(fp, "\n");
+
+   if (maxb <= 255)
+      type = "unsigned char";
+   for (i=0; i < 3; i++)
+   {
+      int j;
+      fprintf(fp, "static %s ATL_AMM_%cBs[%d] =\n{\n", type, bc[i], n);
+      for (j=0,mp=mmb; mp; j++,mp = mp->next)
+      {
+         int b;
+         if (bc[i] == 'M')
+            b = mp->mbB;
+         else if (bc[i] == 'N')
+            b = mp->nbB;
+         else if (bc[i] == 'K')
+            b = mp->kbB;
+         if (mp->next)
+            fprintf(fp, "%8d,  /* index %d */\n", b, j);
+         else
+            fprintf(fp, "%8d   /* index %d */\n", b, j);
+      }
+      fprintf(fp, "}\n\n");
+   }
+
+   fprintf(fp, "\n#endif  /* end ifdef include file guard */\n");
+}
+
+void GenCMAJ2AMAJ(char pre, ATL_mmnode_t *mmb, char *outd)
+/*
+ * 3. atlas_<pre>amm_cm2am_a[1,X,n]: 
+ *    defines: ATL_AMM_NCASES
+ *    prototypes all rm2am & cm2am routines
+ *    1 indexible array giving which to use for each block factor
+ */
+{
+   char ac[3] = {'1', 'n', 'X'};
+   int ia;
+   char *fnam, *sp;
+
+   ia = strlen(outd) + 24;
+   fnam = malloc(ia*sizeof(char));
+   assert(fnam);
+   sprintf(fnam, "%s/atlas_%camm_cm2am_a1.h", outd, pre);
+   sp = fnam+ia-24+20;
+   assert(*sp == '1');
+
+   for (ia=0; ia < 3; ia++)
+   {
+      char *rt[2] = {"cm2am", "rm2am"};
+      FILE *fp;
+
+      *sp = ac[ia];
+      fp = fopen(fnam, "w");
+      assert(fp);
+      fclose(fp);
+   }
+}
+
+void GenHeaderFiles(char pre, ATL_mmnode_t *mmb, char *outd)
+/*
+ * Header files required to build full gemm (no timing):
+ *X1. atlas_<pre>amm_blk.h : 
+ *X   defines: ATL_AMM_NCASES, ATL_AMM_MAX[M,N,K]B
+ *X   3 arrays indexed by case give blocking
+ * 2  atlas_<pre>amm_flag.h
+ *    defines: ATL_AMM_NCASES
+ *    1 indexible array giving KRUNTIME for now
+ * 3. atlas_<pre>amm_cm2am_a[1,X,n]: 
+ *    defines: ATL_AMM_NCASES
+ *    prototypes all rm2am & cm2am routines
+ *    1 indexible array giving which to use for each block factor
+ * 4. atlas_<pre>amm_ablk2cmat.h
+ *    defines: ATL_AMM_NCASES
+ *    prototypes all ablk2cmat routines
+ *    1 indexible array for each alpha,beta combination
+ *    -> 3*4 = 12 indexible arrays total
+ * 5. atlas_<pre>amm_kerns.h
+ *    defines: ATL_AMM_NCASES
+ *    prototypes all kernels, including K-cleanup
+ *    1 indexible array gives kernel to use for each case as func ptr
+ *    1 indexible array gives K-clean kernel
+ */
+{
+   GenBlockingFile(pre, mmb, outd);
+}
+
 void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
 {
    ATL_mmnode_t *mmp, *p;
@@ -295,6 +508,7 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
    sprintf(ln, "%s/%cMake_amm", outd, pre);
    fp = fopen(ln, "w");
    assert(fp);
+   free(ln);
    fprintf(fp, "include ../Make.inc\n");
    fprintf(fp, "CDEFS2=$(CDEFS)\n\n");
 /*
@@ -364,11 +578,11 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
          kb = mmp->ku;
       }
 /* 
- *    ATL_<pre>AMMM_<ID>_<kb/ku>_b<X>
+ *    ATL_<pre>AMMM_<ID>_<mu>x<nu>x<kb/ku>_b<X>
  */
       for (i=0; i < 3; i++)
-         fprintf(fp, " \\\n       ATL_%cAMMM_%d_%d_b%c.o", pre, mmp->ID, 
-                 kb, be[i], mmp->rout);
+         fprintf(fp, " \\\n       ATL_%cAMMM_%d_%dx%dx%d_b%c.o", pre, mmp->ID, 
+                 mmp->mu, mmp->nu, kb, be[i], mmp->rout);
    }
 /*
  * library make targets
@@ -470,29 +684,29 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
          cflags = dflags;
       }
 /* 
- *    ATL_<pre>AMMM_<ID>_<kb/ku>_b<X>
+ *    ATL_<pre>AMMM_<ID>_<mu>x<nu>x<kb/ku>_b<X>
  */
       for (i=0; i < 3; i++)
       {
          const int kb=FLAG_IS_SET(mmp->flag, MMF_KRUNTIME)?mmp->ku:mmp->kbB;
-         fprintf(fp, "ATL_%cAMMM_%d_%d_b%c.o : %s\n", pre, mmp->ID, 
-                 kb, be[i], mmp->rout);
+         fprintf(fp, "ATL_%cAMMM_%d_%dx%dx%d_b%c.o : %s\n", pre, mmp->ID, 
+                 mmp->mu, mmp->nu, kb, be[i], mmp->rout);
          fprintf(fp, "\t%s $(CDEFS2) %s -DBETA%s=1", comp, styp, bes[i]);
          if (!FLAG_IS_SET(mmp->flag, MMF_KRUNTIME))
             fprintf(fp, " -DMB=%d -DNB=%d, -DKB=%d", 
                     mmp->mbB, mmp->nbB, mmp->kbB);
-         fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_%d_b%c", pre, mmp->ID,
-                 kb, be[i]);
-         fprintf(fp, " %s -o ATL_%cAMMM_%d_%d_b%c.o -c %s\n", 
-                 cflags, pre, mmp->ID, kb, be[i], mmp->rout);
+         fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_%dx%dx%d_b%c", pre, mmp->ID,
+                 mmp->mu, mmp->nu, kb, be[i]);
+         fprintf(fp, " %s -o ATL_%cAMMM_%d_%dx%dx%d_b%c.o -c %s\n", 
+                 cflags, pre, mmp->ID, mmp->mu, mmp->nu, kb, be[i], mmp->rout);
       }
    }
    fclose(fp);
 }
 
-void GenUserFiles(char pre, ATL_mmnode_t *mmb, char *outd)
+void GenKerns(char pre, ATL_mmnode_t *mmb, char *outd)
 /*
- * Creates any files that can be copied from the AMMCASES directory
+ * Creates/copies all required matmul kernels into outd using specified names
  */
 {
    ATL_mmnode_t *mmp, *p;
@@ -605,47 +819,61 @@ void GenUserFiles(char pre, ATL_mmnode_t *mmb, char *outd)
    }
    
 /*
- * Copy every unique user-supplied file, but only once
+ * Copy/generate every unique file, but only once
  */
    for (mmp=mmb; mmp; mmp = mmp->next)
    {
       const int id=mmp->ID;
-      assert(id > 0);   /* will need to extend to handle generation! */
 /*
- *    File must still be physically copied
+ *    For generated files, just overwrite dups with same file, won't hurt
  */
-      for (p=mmb; p != mmp && p->ID != id; p = p->next);
-      if (p == mmp)
+      if (id == 0)
       {
-         int i, ierr;
-         i = strlen(mmp->rout) + dlen + 16;
-         if (i > lnlen)
+         assert(mmp->genstr);
+         assert(!system(mmp->genstr));
+      }
+      else  /* user-supplied files copied from AMMCASES directory */
+      {
+/*
+ *       If this is the first time we've seen this ID, it must be copied
+ */
+         for (p=mmb; p != mmp && p->ID != id; p = p->next);
+         if (p == mmp)
          {
-            if (ln)
-               free(ln);
-            ln = malloc(i*sizeof(char));
-            assert(ln);
-         }
-         sprintf(ln, "cp AMMCASES/%s %s/.", mmp->rout, outd);
-         ierr = system(ln);
-         if (ierr)
-         {
-            fprintf(stderr, "FAILED CMND='%s'\n", ln);
-            exit(ierr);
+            int i, ierr;
+            i = strlen(mmp->rout) + dlen + 16;
+            if (i > lnlen)
+            {
+               if (ln)
+                  free(ln);
+               ln = malloc(i*sizeof(char));
+               assert(ln);
+               lnlen = i;
+            }
+            sprintf(ln, "cp AMMCASES/%s %s/.", mmp->rout, outd);
+            ierr = system(ln);
+            if (ierr)
+            {
+               fprintf(stderr, "FAILED CMND='%s'\n", ln);
+               exit(ierr);
+            }
          }
       }
    }
    if (ln)
       free(ln);
 }
-void GenHeaderFiles(char pre, ATL_mmnode_t *mmb, char *outd)
-{
-}
 void GenAllFiles(char pre, ATL_mmnode_t *mmb, char *outd)
+/*
+ * Still need to add K-cleanup support to:
+ * (1) GenHeaderFiles
+ * (2) GenMakefile
+ * (3) GenKerns
+ */
 {
-   GenUserFiles(pre, mmb, outd);
-   GenMakefile(pre, mmb, outd);
    GenHeaderFiles(pre, mmb, outd);
+   GenMakefile(pre, mmb, outd);
+   GenKerns(pre, mmb, outd);
 }
 
 int main(int nargs, char **args)
@@ -658,6 +886,7 @@ int main(int nargs, char **args)
 
    mmb = GetFlags(nargs, args, &pre, &outd);
    assert(mmb);
+   FillInGenStrings(pre, mmb, outd);
    GenAllFiles(pre, mmb, outd);
    KillAllMMNodes(mmb);
    exit(0);
