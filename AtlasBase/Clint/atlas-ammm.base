@@ -210,10 +210,10 @@ ID=7 MU=24 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_samm24x3x256_avx.S' \
 
 #include "atlas_misc.h"
 typedef void (*cm2am_t)(const size_t, const size_t, const SCALAR,
-                       const TYPE*, const size_t, const TYPE*);
+                       const TYPE*, const size_t, TYPE*);
 typedef void (*ablk2cmat_t)(const size_t, const size_t, const SCALAR,
-                            const TYPE*, const SCALAR, TYPE *, const size_t*);
-typedef void (*cmat2ablk_t)(const size_t, const size_t, const SCALAR
+                            const TYPE*, const SCALAR, TYPE *, const size_t);
+typedef void (*cmat2ablk_t)(const size_t, const size_t, const SCALAR,
                             const TYPE*, const size_t, const SCALAR,TYPE*);
 typedef void (*ammkern_t)(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,
                           TYPE*, const TYPE*, const TYPE*, const TYPE*);
@@ -492,7 +492,7 @@ void GenBlockingFile(char pre, ATL_mmnode_t *mmb, char *outd)
          else
             fprintf(fp, "%8d   /* index %d */\n", b, j);
       }
-      fprintf(fp, "}\n\n");
+      fprintf(fp, "};\n\n");
    }
    for (i=0; i < 3; i++)
    {
@@ -512,7 +512,7 @@ void GenBlockingFile(char pre, ATL_mmnode_t *mmb, char *outd)
          else
             fprintf(fp, "%8d   /* index %d */\n", b, j);
       }
-      fprintf(fp, "}\n\n");
+      fprintf(fp, "};\n\n");
    }
 
    fprintf(fp, "\n#endif  /* end include file guard */\n");
@@ -538,7 +538,7 @@ void GenFlagH(char pre, ATL_mmnode_t *mmb, char *outd)
       else
          fprintf(fp, "%6d   /* index %d */\n", flag, j);
    }
-   fprintf(fp, "}\n\n");
+   fprintf(fp, "};\n\n");
    fprintf(fp, "#define ATL_AMM_KRUNTIME(idx_) (ATL_AMM_KFLAG[idx_] & 1)\n");
    fprintf(fp, "\n#endif  /* end include file guard */\n");
    fclose(fp);
@@ -555,10 +555,10 @@ void SpewForthC2MProto(char pre, FILE *fp0, FILE *fp1, int mu, int nu)
       {
          fprintf(fp0, "void ATL_%cablk2cmat_%dx%d_a%c_b%c\n", 
                  pre, mu, nu, ac[ia], bc[ib]);
-         fprintf(fp0, "   (ATL_CINT,ATL_CINT,const SCALAR,const TYPE*,const SCALAR,TYPE *,ATL_CINT);\n");
+         fprintf(fp0, "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,const SCALAR,TYPE *,ATL_CSZT);\n");
          fprintf(fp1, "void ATL_%ccmat2ablk_%dx%d_a%c_b%c\n", 
                  pre, mu, nu, ac[ia], bc[ib]);
-         fprintf(fp1, "   (ATL_CINT,ATL_CINT,const SCALAR,const TYPE*,ATL_CINT,const SCALAR,TYPE*);\n");
+         fprintf(fp1, "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,const SCALAR,TYPE*);\n");
       }
    }
 }
@@ -578,7 +578,7 @@ void SpewForthC2BDecl(char pre, ATL_mmnode_t *mmb, FILE *fp, char *rt,
          fprintf(fp, "   ATL_%c%s_%dx%d_a%c_b%c   /* index %d */\n", 
                  pre, rt, mp->mu,mp->nu, alp, bet, j);
       }
-      fprintf(fp, "}\n\n");
+      fprintf(fp, "};\n\n");
 }
 
 void GenC2BLK(char pre, ATL_mmnode_t *mmb, char *outd)
@@ -615,12 +615,12 @@ void GenC2BLK(char pre, ATL_mmnode_t *mmb, char *outd)
       for (ib=0; ib < 4; ib++)
       {
          fprintf(fp0, 
-            "static ablk2cmat_t ATL_AMM_BLK2C_a%c_b%c[ATL_AMM_NCASES] =\n",
-                 ac[ia], bc[ia]);
+            "static ablk2cmat_t ATL_AMM_BLK2C_a%c_b%c[ATL_AMM_NCASES] =\n{\n",
+                 ac[ia], bc[ib]);
          SpewForthC2BDecl(pre, mmb, fp0, "ablk2cmat", ac[ia], bc[ib]);
          fprintf(fp1, 
-            "static cmat2ablk_t ATL_AMM_C2BLK_a%c_b%c[ATL_AMM_NCASES] =\n",
-                 ac[ia], bc[ia]);
+            "static cmat2ablk_t ATL_AMM_C2BLK_a%c_b%c[ATL_AMM_NCASES] =\n{\n",
+                 ac[ia], bc[ib]);
          SpewForthC2BDecl(pre, mmb, fp1, "cmat2ablk", ac[ia], bc[ib]);
       }
    }
@@ -634,10 +634,10 @@ void SpewForthCpProto(char pre, FILE *fp, char alp, int u)
 {
    fprintf(fp, "void ATL_%ccm2am_a%c_%d\n", pre, alp, u);
    fprintf(fp,
-           "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE,ATL_CSZT,TYPE*);\n");
+           "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE*);\n");
    fprintf(fp, "void ATL_%crm2am_a%c_%d\n", pre, alp, u);
    fprintf(fp,
-           "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE,ATL_CSZT,TYPE*);\n");
+           "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE*);\n");
 }
 
 void SpewForthCpDecl(char pre, ATL_mmnode_t *mmb, FILE *fp, 
@@ -646,7 +646,7 @@ void SpewForthCpDecl(char pre, ATL_mmnode_t *mmb, FILE *fp,
    ATL_mmnode_t *mp;
    int j;
 
-   fprintf(fp, "static cm2am_t %s[ATL_AMM_NCASES] =\n{\n", arr);
+   fprintf(fp, "static cm2am_t %s_a%c[ATL_AMM_NCASES] =\n{\n", arr, alp);
    for (j=0,mp=mmb; mp; j++,mp = mp->next)
    {
       if (mp->next)
@@ -656,7 +656,7 @@ void SpewForthCpDecl(char pre, ATL_mmnode_t *mmb, FILE *fp,
          fprintf(fp, "   ATL_%c%s_a%c_%d   /* index %d */\n", 
                  pre, rt, alp, u?mp->mu:mp->nu, j);
       }
-      fprintf(fp, "}\n\n");
+      fprintf(fp, "};\n\n");
 }
 
 void GenCMAJ2AMAJ(char pre, ATL_mmnode_t *mmb, char *outd)
@@ -714,16 +714,16 @@ void GenCMAJ2AMAJ(char pre, ATL_mmnode_t *mmb, char *outd)
       SpewForthCpDecl(pre, mmb, fp, "ATL_AMM_A2BLK", "cm2am", ac[ia], 1);
       SpewForthCpDecl(pre, mmb, fp, "ATL_AMM_AT2BLK", "rm2am", ac[ia], 1);
       SpewForthCpDecl(pre, mmb, fp, "ATL_AMM_B2BLK", "cm2am", ac[ia], 0);
-      SpewForthCpDecl(pre, mmb, fp, "ATL_AMM_AT2BLK", "rm2am", ac[ia], 0);
+      SpewForthCpDecl(pre, mmb, fp, "ATL_AMM_BT2BLK", "rm2am", ac[ia], 0);
       fprintf(fp, "\n#endif  /* end include file guard */\n");
       fclose(fp);
    }
    free(fnam);
 }
 
-int KernelIsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
+int KernelIsExactSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
 /*
- * RETURNS: 1 if kernels are the same except for blocking, 0 otherwise
+ * RETURNS: 1 if kernels are the same including KB, 0 otherwise
  */
 {
 /*
@@ -732,6 +732,8 @@ int KernelIsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
  */
    if (FLAG_IS_SET(p0->flag, MMF_KRUNTIME) != 
        FLAG_IS_SET(p1->flag, MMF_KRUNTIME))
+      return(0);
+   if (!FLAG_IS_SET(p0->flag, MMF_KRUNTIME) && (p0->kbB != p1->kbB))
       return(0);
 /*
  * Two generated kernels are the same if mu,nu,ku,VLEN,flag are the same.
@@ -749,7 +751,7 @@ int KernelIsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
    return(0);  /* Can't be the same if above criteria fails */
 }
 
-int KernelInList(ATL_mmnode_t *mmb, ATL_mmnode_t *p)
+int ExactKernelInList(ATL_mmnode_t *mmb, ATL_mmnode_t *p)
 /*
  * RETURNS: 1 if p is duplicated in mmb, else 0
  */
@@ -758,7 +760,7 @@ int KernelInList(ATL_mmnode_t *mmb, ATL_mmnode_t *p)
    if (!p || !mmb)
       return(0);
    for (mp=mmb; mp; mp = mp->next)
-      if (KernelIsSame(mp, p))
+      if (KernelIsExactSame(mp, p))
          return(1);
     return(0);
 }
@@ -778,7 +780,7 @@ void SpewForthKernProtos(FILE *fp, char pre, ATL_mmnode_t *mmb, int nbet)
    ATL_mmnode_t *mp;
    for (mp=mmb; mp; mp = mp->next)
    {
-      if (!KernelInList(mp->next, mp))
+      if (!ExactKernelInList(mp->next, mp))
       {
          char bc[3] = {'0', '1', 'N'};  /* 0 must come first */
          int ib;
@@ -802,7 +804,7 @@ void SpewForthKernArray(FILE *fp, char pre, ATL_mmnode_t *mmb,
       if (mp->next)
          fprintf(fp, ",\n");
    }
-   fprintf(fp, "\n}\n\n");
+   fprintf(fp, "\n};\n\n");
 }
 
 void GenKernH(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, 
@@ -991,6 +993,8 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, char *outd)
  */
    dcomp[2] = dflags[2] = toupper(pre);
    dflags[3] = dcomp[3] = 'K';
+   fprintf(fp, "\ntsth.o : tsth.c\n");
+   fprintf(fp, "\t%s %s $(CDEFS) %s -c tsth.c\n\n", dcomp, dflags, styp);
    fprintf(fp, "#\n# Data copy rules\n#\n");
    for (mmp=mmb; mmp; mmp = mmp->next)
    {
@@ -1022,6 +1026,7 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, char *outd)
             }
          }
       }
+
       for (i=(mu == nu) ? 1:0; i < 2; i++)
       {
          const int u = (i) ? mu : nu;
@@ -1326,6 +1331,47 @@ void GenAllFiles(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
    GenKerns(pre, mmb, ukb, outd);
 }
 
+int KernelIsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
+/*
+ * RETURNS: 1 if kernels are the same except for blocking, 0 otherwise
+ */
+{
+/*
+ * Kernels aren't the same if one is being compiled with specific KB,
+ * and the other has runtime
+ */
+   if (FLAG_IS_SET(p0->flag, MMF_KRUNTIME) != 
+       FLAG_IS_SET(p1->flag, MMF_KRUNTIME))
+      return(0);
+/*
+ * Two generated kernels are the same if mu,nu,ku,VLEN,flag are the same.
+ * NOTE: if we make generator handle muladd, etc, MUST UPDATE HERE!!!
+ */
+   if (p0->ID == 0 && p1->ID == 0)
+      return(p0->mu == p1->mu && p0->nu == p1->nu && p0->ku == p1->ku &&
+             p0->vlen == p1->vlen && p0->flag == p1->flag);
+/*
+ * If both are user kernels, then they may be repeats.  For user kernels,
+ * they are the same if both ID and flag match, else they are not.
+ */
+   else if (p0->ID > 0 && p1->ID > 0)
+      return(p0->ID == p1->ID && p0->flag == p1->flag);
+   return(0);  /* Can't be the same if above criteria fails */
+}
+
+int KernelInList(ATL_mmnode_t *mmb, ATL_mmnode_t *p)
+/*
+ * RETURNS: 1 if p is duplicated in mmb, else 0
+ */
+{
+   ATL_mmnode_t *mp;
+   if (!p || !mmb)
+      return(0);
+   for (mp=mmb; mp; mp = mp->next)
+      if (KernelIsSame(mp, p))
+         return(1);
+    return(0);
+}
 
 ATL_mmnode_t *StripNonUniqueKs(ATL_mmnode_t *ukb, ATL_mmnode_t *mmb) 
 /*
