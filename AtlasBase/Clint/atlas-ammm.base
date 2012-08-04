@@ -236,14 +236,17 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "   -p [s,d,c,z]: set type/precision prefix (d) \n");
    fprintf(stderr, "   -d <outdir>: directory to dump files to\n");
    fprintf(stderr, "   -i <infile> : can be repeated for multiple files\n");
+   fprintf(stderr, "   -k <unique K cleanup index file> : \n");
+   fprintf(stderr, "   -K <K cleanup by NB file> : \n");
    exit(ierr ? ierr : -1);
 }
 
-ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char **DOUT)
+ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char **DOUT, 
+                       char **UKIN, char **KCIN)
 {
    int i, j=0, n, k;
    char pre='d';
-   *DOUT = NULL;
+   *UKIN = *KCIN = *DOUT = NULL;
    ATL_mmnode_t *mmb=NULL, *mmp, *mp;
 
    for (i=1; i < nargs; i++)
@@ -258,6 +261,16 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char **DOUT)
             PrintUsage(args[0], i-1, NULL);
         pre = tolower(args[i][0]);
         assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+        break;
+      case 'k':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        *UKIN = DupString(args[i]);
+        break;
+      case 'K':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        *KCIN = DupString(args[i]);
         break;
       case 'd':
         if (++i >= nargs)
@@ -481,6 +494,26 @@ void GenBlockingFile(char pre, ATL_mmnode_t *mmb, char *outd)
       }
       fprintf(fp, "}\n\n");
    }
+   for (i=0; i < 3; i++)
+   {
+      int j;
+      fprintf(fp, "static %s ATL_AMM_%cUs[%d] =\n{\n", type, bc[i], n);
+      for (j=0,mp=mmb; mp; j++,mp = mp->next)
+      {
+         int b;
+         if (bc[i] == 'M')
+            b = mp->mu;
+         else if (bc[i] == 'N')
+            b = mp->nu;
+         else if (bc[i] == 'K')
+            b = FLAG_IS_SET(mp->flag, MMF_KRUNTIME) ? mp->ku : mp->kbB;
+         if (mp->next)
+            fprintf(fp, "%8d,  /* index %d */\n", b, j);
+         else
+            fprintf(fp, "%8d   /* index %d */\n", b, j);
+      }
+      fprintf(fp, "}\n\n");
+   }
 
    fprintf(fp, "\n#endif  /* end include file guard */\n");
    fclose(fp);
@@ -509,6 +542,121 @@ void GenFlagH(char pre, ATL_mmnode_t *mmb, char *outd)
    fprintf(fp, "#define ATL_AMM_KRUNTIME(idx_) (ATL_AMM_KFLAG[idx_] & 1)\n");
    fprintf(fp, "\n#endif  /* end include file guard */\n");
    fclose(fp);
+}
+
+void SpewForthC2MProto(char pre, FILE *fp0, FILE *fp1, int mu, int nu)
+{
+   char ac[3] = {'1', 'n', 'X'};
+   char bc[4] = {'0', '1', 'n', 'X'};
+   int ia, ib;
+   for (ia=0; ia < 3; ia ++)
+   {
+      for (ib=0; ib < 4; ib++)
+      {
+         fprintf(fp0, "void ATL_%cablk2cmat_%dx%d_a%c_b%c\n", 
+                 pre, mu, nu, ac[ia], bc[ib]);
+         fprintf(fp0, "   (ATL_CINT,ATL_CINT,const SCALAR,const TYPE*,const SCALAR,TYPE *,ATL_CINT);\n");
+         fprintf(fp1, "void ATL_%ccmat2ablk_%dx%d_a%c_b%c\n", 
+                 pre, mu, nu, ac[ia], bc[ib]);
+         fprintf(fp1, "   (ATL_CINT,ATL_CINT,const SCALAR,const TYPE*,ATL_CINT,const SCALAR,TYPE*);\n");
+      }
+   }
+}
+
+void SpewForthC2BDecl(char pre, ATL_mmnode_t *mmb, FILE *fp, char *rt, 
+                      char alp, char bet)
+{
+   ATL_mmnode_t *mp;
+   int j;
+
+   for (j=0,mp=mmb; mp; j++,mp = mp->next)
+   {
+      if (mp->next)
+         fprintf(fp, "   ATL_%c%s_%dx%d_a%c_b%c,  /* index %d */\n", 
+                 pre, rt, mp->mu,mp->nu, alp, bet, j);
+      else
+         fprintf(fp, "   ATL_%c%s_%dx%d_a%c_b%c   /* index %d */\n", 
+                 pre, rt, mp->mu,mp->nu, alp, bet, j);
+      }
+      fprintf(fp, "}\n\n");
+}
+
+void GenC2BLK(char pre, ATL_mmnode_t *mmb, char *outd)
+{
+   FILE *fp0, *fp1;
+   ATL_mmnode_t *mp;
+   int ia, ib;
+   char ac[3] = {'1', 'n', 'X'};
+   char bc[4] = {'0', '1', 'n', 'X'};
+
+   fp0 = StandHStart(pre, mmb, outd, "ablk2cmat");
+   fp1 = StandHStart(pre, mmb, outd, "cmat2ablk");
+   fprintf(fp0, "\n");
+   fprintf(fp1, "\n");
+/*
+ * Crank out prototypes
+ */
+   SpewForthC2MProto(pre, fp0, fp1, mmb->mu, mmb->nu);
+   for (mp=mmb->next; mp; mp = mp->next)
+   {
+      ATL_mmnode_t *p;
+      const int mu=mp->mu, nu=mp->nu;
+      for (p=mmb; p->mu != mu || p->nu != nu; p = p->next);
+      if (p == mp)  /* first occurance of this mu,nu pair */
+         SpewForthC2MProto(pre, fp0, fp1, mp->mu, mp->nu);
+   }
+   fprintf(fp0, "\n");
+   fprintf(fp1, "\n");
+/*
+ * Now, crank out funcptr arrays
+ */
+   for (ia=0; ia < 3; ia ++)
+   {
+      for (ib=0; ib < 4; ib++)
+      {
+         fprintf(fp0, 
+            "static ablk2cmat_t ATL_AMM_BLK2C_a%c_b%c[ATL_AMM_NCASES] =\n",
+                 ac[ia], bc[ia]);
+         SpewForthC2BDecl(pre, mmb, fp0, "ablk2cmat", ac[ia], bc[ib]);
+         fprintf(fp1, 
+            "static cmat2ablk_t ATL_AMM_C2BLK_a%c_b%c[ATL_AMM_NCASES] =\n",
+                 ac[ia], bc[ia]);
+         SpewForthC2BDecl(pre, mmb, fp1, "cmat2ablk", ac[ia], bc[ib]);
+      }
+   }
+   fprintf(fp0, "\n#endif  /* end include file guard */\n");
+   fclose(fp0);
+   fprintf(fp1, "\n#endif  /* end include file guard */\n");
+   fclose(fp1);
+}
+
+void SpewForthCpProto(char pre, FILE *fp, char alp, int u)
+{
+   fprintf(fp, "void ATL_%ccm2am_a%c_%d\n", pre, alp, u);
+   fprintf(fp,
+           "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE,ATL_CSZT,TYPE*);\n");
+   fprintf(fp, "void ATL_%crm2am_a%c_%d\n", pre, alp, u);
+   fprintf(fp,
+           "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE,ATL_CSZT,TYPE*);\n");
+}
+
+void SpewForthCpDecl(char pre, ATL_mmnode_t *mmb, FILE *fp, 
+                     char *arr, char *rt, char alp, int u)
+{
+   ATL_mmnode_t *mp;
+   int j;
+
+   fprintf(fp, "static cm2am_t %s[ATL_AMM_NCASES] =\n{\n", arr);
+   for (j=0,mp=mmb; mp; j++,mp = mp->next)
+   {
+      if (mp->next)
+         fprintf(fp, "   ATL_%c%s_a%c_%d,  /* index %d */\n", 
+                 pre, rt, alp, u?mp->mu:mp->nu, j);
+      else
+         fprintf(fp, "   ATL_%c%s_a%c_%d   /* index %d */\n", 
+                 pre, rt, alp, u?mp->mu:mp->nu, j);
+      }
+      fprintf(fp, "}\n\n");
 }
 
 void GenCMAJ2AMAJ(char pre, ATL_mmnode_t *mmb, char *outd)
@@ -544,29 +692,151 @@ void GenCMAJ2AMAJ(char pre, ATL_mmnode_t *mmb, char *outd)
       sp[1] = '\0';
       PrintBegBlock(pre, mmb, np, fp);
       sp[1] = '.';
-/*
- *    HERE HERE HERE
- *    need to add declaration of: AT2BLK, B2BLK, BT2BLK, and all prototypes
- */
- 
-      fprintf(fp, "static cm2am_t ATL_AMM_A2BLK[ATL_AMM_NCASES] =\n{\n");
-      for (j=0,mp=mmb; mp; j++,mp = mp->next)
+      fprintf(fp, "/*\n * mat2blk prototypes\n */\n");
+      SpewForthCpProto(pre, fp, ac[ia], mmb->mu);
+      if (mmb->nu != mmb->mu)
+         SpewForthCpProto(pre, fp, ac[ia], mmb->nu);
+      for (mp=mmb->next; mp; mp = mp->next)
       {
-         if (mp->next)
-            fprintf(fp, "   ATL_%ccm2am_a%c_%d,  /* index %d */\n", 
-                    pre, ac[ia], mp->mu, j);
-         else
-            fprintf(fp, "   ATL_%ccm2am_a%c_%d   /* index %d */\n", 
-                    pre, ac[ia], mp->mu, j);
+         ATL_mmnode_t *p;
+         int mu = mp->mu, nu = mp->nu;
+         for (p=mmb; p->mu != mu && p->nu != mu; p = p->next);
+         if (p == mp) /* haven't seen before */
+            SpewForthCpProto(pre, fp, ac[ia], mp->mu);
+         if (nu != mu)
+         {
+            for (p=mmb; p->nu != nu && p->mu != nu; p = p->next);
+            if (p == mp) /* haven't seen before */
+               SpewForthCpProto(pre, fp, ac[ia], mp->nu);
+         }
       }
-      fprintf(fp, "}\n\n");
+      fprintf(fp, "\n");
+      SpewForthCpDecl(pre, mmb, fp, "ATL_AMM_A2BLK", "cm2am", ac[ia], 1);
+      SpewForthCpDecl(pre, mmb, fp, "ATL_AMM_AT2BLK", "rm2am", ac[ia], 1);
+      SpewForthCpDecl(pre, mmb, fp, "ATL_AMM_B2BLK", "cm2am", ac[ia], 0);
+      SpewForthCpDecl(pre, mmb, fp, "ATL_AMM_AT2BLK", "rm2am", ac[ia], 0);
       fprintf(fp, "\n#endif  /* end include file guard */\n");
       fclose(fp);
    }
    free(fnam);
 }
 
-void GenHeaderFiles(char pre, ATL_mmnode_t *mmb, char *outd)
+int KernelIsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
+/*
+ * RETURNS: 1 if kernels are the same except for blocking, 0 otherwise
+ */
+{
+/*
+ * Kernels aren't the same if one is being compiled with specific KB,
+ * and the other has runtime
+ */
+   if (FLAG_IS_SET(p0->flag, MMF_KRUNTIME) != 
+       FLAG_IS_SET(p1->flag, MMF_KRUNTIME))
+      return(0);
+/*
+ * Two generated kernels are the same if mu,nu,ku,VLEN,flag are the same.
+ * NOTE: if we make generator handle muladd, etc, MUST UPDATE HERE!!!
+ */
+   if (p0->ID == 0 && p1->ID == 0)
+      return(p0->mu == p1->mu && p0->nu == p1->nu && p0->ku == p1->ku &&
+             p0->vlen == p1->vlen && p0->flag == p1->flag);
+/*
+ * If both are user kernels, then they may be repeats.  For user kernels,
+ * they are the same if both ID and flag match, else they are not.
+ */
+   else if (p0->ID > 0 && p1->ID > 0)
+      return(p0->ID == p1->ID && p0->flag == p1->flag);
+   return(0);  /* Can't be the same if above criteria fails */
+}
+
+int KernelInList(ATL_mmnode_t *mmb, ATL_mmnode_t *p)
+/*
+ * RETURNS: 1 if p is duplicated in mmb, else 0
+ */
+{
+   ATL_mmnode_t *mp;
+   if (!p || !mmb)
+      return(0);
+   for (mp=mmb; mp; mp = mp->next)
+      if (KernelIsSame(mp, p))
+         return(1);
+    return(0);
+}
+
+void SpewForthKernProto(FILE *fp, char pre, ATL_mmnode_t *p, char bc)
+{
+   fprintf(fp, "void ATL_%cAMMM_%d_%dx%dx%d_b%c\n", pre, p->ID, p->mu, p->nu, 
+           FLAG_IS_SET(p->flag, MMF_KRUNTIME)?p->ku:p->kbB, bc);
+   fprintf(fp, 
+      "   (ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,TYPE*,\n");
+   fprintf(fp, 
+      "    const TYPE*,const TYPE*,const TYPE*);\n");
+}
+
+void SpewForthKernProtos(FILE *fp, char pre, ATL_mmnode_t *mmb, int nbet)
+{
+   ATL_mmnode_t *mp;
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      if (!KernelInList(mp->next, mp))
+      {
+         char bc[3] = {'0', '1', 'N'};  /* 0 must come first */
+         int ib;
+         for (ib=0; ib < nbet; ib++)
+            SpewForthKernProto(fp, pre, mp, bc[ib]);
+      }
+   }
+}
+
+void SpewForthKernArray(FILE *fp, char pre, ATL_mmnode_t *mmb, 
+                        char *vnam, char cbet)
+{
+   ATL_mmnode_t *mp;
+
+   fprintf(fp, "static ammkern_t ATL_AMM_%s[ATL_AMM_NCASES] =\n", vnam);
+   fprintf(fp, "{\n");
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      fprintf(fp, "   ATL_%cAMMM_%d_%dx%dx%d_b%c", pre, mp->ID, mp->mu, 
+              mp->nu, FLAG_IS_SET(mp->flag, MMF_KRUNTIME)?mp->ku:mp->kbB, cbet);
+      if (mp->next)
+         fprintf(fp, ",\n");
+   }
+   fprintf(fp, "\n}\n\n");
+}
+
+void GenKernH(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, 
+              ATL_mmnode_t *kcb, char *outd)
+/*
+ * 5. atlas_<pre>amm_kerns.h
+ *    defines: ATL_AMM_NCASES
+ *    prototypes all kernels, including K-cleanup
+ *    1 indexible array gives kernel to use for each case as func ptr
+ *    1 indexible array gives K-clean kernel
+ */
+{
+   FILE *fp;
+/*
+ * Dump out standard header start and kernel prototypes
+ */
+   fp = StandHStart(pre, mmb, outd, "kern");
+   fprintf(fp, "\n");
+   SpewForthKernProtos(fp, pre, mmb, 3);
+   SpewForthKernProtos(fp, pre, ukb, 1);
+   fprintf(fp, "\n");
+/*
+ * Dump out kernel ptr arrays
+ */
+   SpewForthKernArray(fp, pre, mmb, "KERN_b0", '0');
+   SpewForthKernArray(fp, pre, mmb, "KERN_b1", '1');
+   SpewForthKernArray(fp, pre, mmb, "KERN_bN", 'N');
+   SpewForthKernArray(fp, pre, kcb, "KERN_K1", '0');
+
+   fprintf(fp, "\n#endif  /* end include file guard */\n");
+   fclose(fp);
+}
+void GenHeaderFiles(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, 
+                    ATL_mmnode_t *kcb, char *outd)
 /*
  * Header files required to build full gemm (no timing):
  *X1. atlas_<pre>amm_blk.h : 
@@ -575,28 +845,35 @@ void GenHeaderFiles(char pre, ATL_mmnode_t *mmb, char *outd)
  *X2  atlas_<pre>amm_flag.h
  *X   defines: ATL_AMM_NCASES
  *X   1 indexible array giving KRUNTIME for now
- * 3. atlas_<pre>amm_cm2am_a[1,X,n]: 
- *    defines: ATL_AMM_NCASES
- *    prototypes all rm2am & cm2am routines
- *    1 indexible array giving which to use for each block factor
- * 4. atlas_<pre>amm_ablk2cmat.h
- *    defines: ATL_AMM_NCASES
- *    prototypes all ablk2cmat routines
- *    1 indexible array for each alpha,beta combination
- *    -> 3*4 = 12 indexible arrays total
- * 5. atlas_<pre>amm_kerns.h
- *    defines: ATL_AMM_NCASES
- *    prototypes all kernels, including K-cleanup
- *    1 indexible array gives kernel to use for each case as func ptr
- *    1 indexible array gives K-clean kernel
+ *X3. atlas_<pre>amm_cm2am_a[1,X,n]: 
+ *X   defines: ATL_AMM_NCASES
+ *X   prototypes all rm2am & cm2am routines
+ *X   1 indexible array giving which to use for each block factor
+ *X4. atlas_<pre>amm_ablk2cmat.h
+ *X   defines: ATL_AMM_NCASES
+ *X   prototypes all ablk2cmat routines
+ *X   1 indexible array for each alpha,beta combination
+ *X   -> 3*4 = 12 indexible arrays total
+ *X5. atlas_<pre>amm_kerns.h
+ *X   defines: ATL_AMM_NCASES
+ *X   prototypes all kernels, including K-cleanup
+ *X   1 indexible array gives kernel to use for each case as func ptr
+ *X   1 indexible array gives K-clean kernel
+ *X6. atlas_<pre>amm_cmat2ablk.h (I don't need, Rakib does)
+ *X   defines: ATL_AMM_NCASES 
+ *X   prototypes all cmat2ablk routines
+ *X   1 indexible array for each alpha,beta combination
+ *X   -> 3*4 = 12 indexible arrays total
  */
 {
    GenBlockingFile(pre, mmb, outd);
    GenFlagH(pre, mmb, outd);
    GenCMAJ2AMAJ(pre, mmb, outd);
+   GenC2BLK(pre, mmb, outd);
+   GenKernH(pre, mmb, ukb, kcb, outd);
 }
 
-void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
+void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, char *outd)
 {
    ATL_mmnode_t *mmp, *p;
    FILE *fp;
@@ -693,6 +970,13 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
                  mmp->mu, mmp->nu, kb, be[i], mmp->rout);
    }
 /*
+ * AMM K-cleanup kernel routines are all unique, so no checking for repeats
+ *    ATL_<pre>AMMM_<ID>_<mu>x<nu>x<ku>_b0
+ */
+   for (mmp=ukb; mmp; mmp = mmp->next)
+      fprintf(fp, " \\\n       ATL_%cAMMM_%d_%dx%dx%d_b0.o", pre, mmp->ID, 
+              mmp->mu, mmp->nu, mmp->ku, mmp->rout);
+/*
  * library make targets
  */
    fprintf(fp, "\n\nlib : %clib.grd\nall : %clib.grd\n%clib : %clib.grd\n", 
@@ -707,6 +991,7 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
  */
    dcomp[2] = dflags[2] = toupper(pre);
    dflags[3] = dcomp[3] = 'K';
+   fprintf(fp, "#\n# Data copy rules\n#\n");
    for (mmp=mmb; mmp; mmp = mmp->next)
    {
       const int mu=mmp->mu, nu = mmp->nu;
@@ -765,6 +1050,7 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
  * Print out the individual rules for each kernel compile
  */
    dflags[3] = dcomp[3] = 'M';
+   fprintf(fp, "#\n#  AMM kernel rules\n#\n");
    for (mmp=mmb; mmp; mmp = mmp->next)
    {
 /*
@@ -792,7 +1078,7 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
          cflags = dflags;
       }
 /* 
- *    ATL_<pre>AMMM_<ID>_<mu>x<nu>x<kb/ku>_b<X>
+ *    ATL_<pre>AMMM_<ID>_<mu>x<nu>x<kb/ku>_b<X>, kerns in all 3 beta cases
  */
       for (i=0; i < 3; i++)
       {
@@ -809,10 +1095,37 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
                  cflags, pre, mmp->ID, mmp->mu, mmp->nu, kb, be[i], mmp->rout);
       }
    }
+/*
+ * K-cleanup comes only in BETA=0, and needs only the kernel compile rule
+ */
+   fprintf(fp, "#\n#  K-cleanup rules\n#\n");
+   for (mmp=ukb; mmp; mmp = mmp->next)
+   {
+      if (mmp->comp)
+      {
+         comp = (mmp->comp[0] == 'g' && mmp->comp[1] == 'c' && 
+                 mmp->comp[2] == 'c' && 
+                 (mmp->comp[3] == '\0' || mmp->comp[3] == ' ')) 
+              ? "$(GOODGCC)" : mmp->comp;
+         cflags = mmp->cflags;
+      }
+      else
+      {
+         comp = dcomp;
+         cflags = dflags;
+      }
+      fprintf(fp, "ATL_%cAMMM_%d_%dx%dx%d_b0.o : %s\n", pre, mmp->ID, 
+              mmp->mu, mmp->nu, mmp->ku, mmp->rout);
+      fprintf(fp, "\t%s $(CDEFS2) %s -DBETA0=1", comp, styp);
+      fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_%dx%dx%d_b0", pre, mmp->ID,
+              mmp->mu, mmp->nu, mmp->ku);
+      fprintf(fp, " %s -o ATL_%cAMMM_%d_%dx%dx%d_b0.o -c %s\n", 
+              cflags, pre, mmp->ID, mmp->mu, mmp->nu, mmp->ku, mmp->rout);
+   }
    fclose(fp);
 }
 
-void GenKerns(char pre, ATL_mmnode_t *mmb, char *outd)
+void GenKerns(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, char *outd)
 /*
  * Creates/copies all required matmul kernels into outd using specified names
  */
@@ -925,7 +1238,6 @@ void GenKerns(char pre, ATL_mmnode_t *mmb, char *outd)
          }
       }
    }
-   
 /*
  * Copy/generate every unique file, but only once
  */
@@ -968,20 +1280,83 @@ void GenKerns(char pre, ATL_mmnode_t *mmb, char *outd)
          }
       }
    }
+/*
+ * Copy/generate k-cleanup which is known to be unique
+ */
+   for (mmp=ukb; mmp; mmp = mmp->next)
+   {
+      const int id=mmp->ID;
+/*
+ *    For generated files, just generate it using genstr
+ */
+      if (id == 0)
+      {
+         assert(mmp->genstr);
+         assert(!system(mmp->genstr));
+      }
+      else  /* user-supplied files copied from AMMCASES directory */
+      {
+         int i, ierr;
+         i = strlen(mmp->rout) + dlen + 16;
+         if (i > lnlen)
+         {
+            if (ln)
+               free(ln);
+            ln = malloc(i*sizeof(char));
+            assert(ln);
+            lnlen = i;
+         }
+         sprintf(ln, "cp AMMCASES/%s %s/.", mmp->rout, outd);
+         ierr = system(ln);
+         if (ierr)
+         {
+            fprintf(stderr, "FAILED CMND='%s'\n", ln);
+            exit(ierr);
+         }
+      }
+   }
    if (ln)
       free(ln);
 }
-void GenAllFiles(char pre, ATL_mmnode_t *mmb, char *outd)
+void GenAllFiles(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, 
+                 ATL_mmnode_t *kcb, char *outd)
+{
+   GenHeaderFiles(pre, mmb, ukb, kcb, outd);
+   GenMakefile(pre, mmb, ukb, outd);
+   GenKerns(pre, mmb, ukb, outd);
+}
+
+
+ATL_mmnode_t *StripNonUniqueKs(ATL_mmnode_t *ukb, ATL_mmnode_t *mmb) 
 /*
- * Still need to add K-cleanup support to:
- * (1) GenHeaderFiles
- * (2) GenMakefile
- * (3) GenKerns
+ * Deletes any ukb node that also appears in mmb,
+ * RETURNS: possibly shortened ukb
  */
 {
-   GenHeaderFiles(pre, mmb, outd);
-   GenMakefile(pre, mmb, outd);
-   GenKerns(pre, mmb, outd);
+   ATL_mmnode_t *mp, *prev;
+/*
+ * Delete any repetitive nodes starting unique queue
+ */
+   while(ukb && KernelInList(mmb, ukb))
+      ukb = KillMMNode(ukb);
+   if (!ukb)
+      return(ukb);
+/*
+ * Now, delete any internal non-unique K-cleanup
+ */
+   prev = ukb;
+   mp = ukb->next;
+   while (mp)
+   {
+      if (KernelInList(mmb, mp))
+         mp = prev->next = KillMMNode(mp);
+      else
+      {
+         prev = mp;
+         mp = mp->next;
+      }
+   }
+   return(ukb);
 }
 
 int main(int nargs, char **args)
@@ -989,14 +1364,32 @@ int main(int nargs, char **args)
    char pre='d';
    int verb=1;
    int *nbs;
-   char *outd;
-   ATL_mmnode_t *mmb, *mmp;
+   char *outd, *ukin, *kcin;
+   ATL_mmnode_t *mmb, *mmp, *ukb=NULL, *kcb=NULL;
 
-   mmb = GetFlags(nargs, args, &pre, &outd);
+   mmb = GetFlags(nargs, args, &pre, &outd, &ukin, &kcin);
    assert(mmb);
+   if (ukin)
+   {
+      ukb = ReadMMFile(ukin);
+      free(ukin);
+/*
+ *    Now, strip off any ukb node that also appears in mmb, in order to
+ *    make sure we don't repeat prototypes, generation, etc
+ */
+      ukb = StripNonUniqueKs(ukb, mmb);
+   }
+   if (kcin)
+   {
+      kcb = ReadMMFile(kcin);
+      free(kcin);
+   }
    FillInGenStrings(pre, mmb, outd);
-   GenAllFiles(pre, mmb, outd);
+   FillInGenStrings(pre, ukb, outd);
+   GenAllFiles(pre, mmb, ukb, kcb, outd);
    KillAllMMNodes(mmb);
+   KillAllMMNodes(ukb);
+   KillAllMMNodes(kcb);
    exit(0);
 }
 @ROUT ammsearch
@@ -2577,11 +2970,17 @@ void ComputeKClean(int verb, char pre, ATL_mmnode_t *mmb)
    mkb = GetUniqueKClean(verb, pre, mmb);
    mkb = KCleanByNB(verb, pre, mmb, mkb);
 /*
+ * For now, skip the timing until we have things working and know better 
+ * what timings we'll need
+ */
+   #if 0
+/*
  * Now, create NB detailed K-cleanup files
  */
    for (mp=mkb; mp; mp = mp->next)
       TimeKClean(verb, pre, mp);
    printf("\n");
+   #endif
    KillAllMMNodes(mkb);
 }
 
