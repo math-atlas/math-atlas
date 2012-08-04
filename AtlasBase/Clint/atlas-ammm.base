@@ -204,6 +204,21 @@ ID=7 MU=24 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_samm24x3x256_avx.S' \
    #endif
    
 #endif
+@ROUT atlas_amm.h
+#ifndef ATLAS_AMM_H
+   #define ATLAS_AMM_H
+
+#include "atlas_misc.h"
+typedef void (*cm2am_t)(const size_t, const size_t, const SCALAR,
+                       const TYPE*, const size_t, const TYPE*);
+typedef void (*ablk2cmat_t)(const size_t, const size_t, const SCALAR,
+                            const TYPE*, const SCALAR, TYPE *, const size_t*);
+typedef void (*cmat2ablk_t)(const size_t, const size_t, const SCALAR
+                            const TYPE*, const size_t, const SCALAR,TYPE*);
+typedef void (*ammkern_t)(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,
+                          TYPE*, const TYPE*, const TYPE*, const TYPE*);
+
+#endif  /* end include file guard */
 @ROUT emit_amm
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2012
 #include "atlas_misc.h"
@@ -348,16 +363,21 @@ void FillInGenStrings
    }
 }
 
-void PrintBegBlock(char pre, ATL_mmnode_t *mmb, char *nam)
-/*
- * HERE HERE HERE
- */
+void PrintBegBlock(char pre, ATL_mmnode_t *mmb, char *nam, FILE *fp)
 {
    ATL_mmnode_t *mp;
    char PRE = toupper(pre);
    int i;
-   fprintf(fp, "#ifndef ATLAS_%cAMM_%s_H\n   #define ATLAS_%cAMM_%s_H\n\n",
-           PRE, nam, PRE, nam);
+
+   if (nam)
+   {
+      fprintf(fp, "#ifndef ATLAS_%cAMM_%s_H\n   #define ATLAS_%cAMM_%s_H\n\n",
+              PRE, nam, PRE, nam);
+      fprintf(fp, "#include \"atlas_amm.h\"\n");
+   }
+   else
+      fprintf(fp, "#ifndef ATLAS_%cAMM_H\n   #define ATLAS_%cAMM_H\n\n",
+              PRE, PRE);
 /*
  * Count mmb, and print def of NCASES
  */
@@ -371,6 +391,50 @@ void PrintBegBlock(char pre, ATL_mmnode_t *mmb, char *nam)
    fprintf(fp, "   #define ATL_AMM_NCASES %d\n", i);
    fprintf(fp, "#endif\n");
 }
+
+char *GetHName(char pre, char *outd, char *bnam)
+{
+   int i, NOBASE=0;
+   char *fnam;
+   if (!bnam)
+   {
+      NOBASE = 1;
+      bnam = "";
+   }
+   i = strlen(outd) + strlen(bnam) + 15;
+
+   fnam = malloc(i*sizeof(char));
+   assert(fnam);
+   if (NOBASE)
+      sprintf(fnam, "%s/atlas_%camm.h", outd, pre);
+   else
+      sprintf(fnam, "%s/atlas_%camm_%s.h", outd, pre, bnam);
+   return(fnam);
+}
+
+FILE *StandHStart(char pre, ATL_mmnode_t *mmb, char *outd, char *bnam)
+{
+   char *fnam;
+   FILE *fp;
+   int i;
+
+   assert(outd);
+   fnam = GetHName(pre, outd, bnam);
+   fp = fopen(fnam, "w");
+   assert(fp);
+   if (bnam)
+   {
+      for (i=0; bnam[i]; i++)
+         fnam[i] = toupper(bnam[i]);
+      fnam[i] = '\0';
+      PrintBegBlock(pre, mmb, fnam, fp);
+   }
+   else
+      PrintBegBlock(pre, mmb, NULL, fp);
+   free(fnam);
+   return(fp);
+}
+
 void GenBlockingFile(char pre, ATL_mmnode_t *mmb, char *outd)
 {
    ATL_mmnode_t *mp;
@@ -380,16 +444,7 @@ void GenBlockingFile(char pre, ATL_mmnode_t *mmb, char *outd)
    int i, n, maxb, maxNB, maxMB, maxKB;
    char PRE = toupper(pre), bc[3] = {'M', 'N', 'K'};
 
-   i = strlen(outd) + 18;
-   fnam = malloc(i*sizeof(char));
-   assert(fnam);
-   
-   sprintf(fnam, "%s/atlas_%camm_blk.h", outd, pre);
-   fp = fopen(fnam, "w");
-   assert(fp);
-   free(fnam);
-   PrintBegBlock(pre, mmb, "BLK");
-
+   fp = StandHStart(pre, mmb, outd, "blk");
    maxNB = maxKB = maxMB = 0;
    for (n=0,mp=mmb; mp; n++, mp = mp->next)
    {
@@ -399,18 +454,6 @@ void GenBlockingFile(char pre, ATL_mmnode_t *mmb, char *outd)
    }
    maxb = Mmax(maxMB, maxNB);
    maxb = Mmax(maxb, maxKB);
-
-@beginskip
-   fprintf(fp, "#ifndef ATLAS_%cAMM_BLK_H\n   #define ATLAS_%cAMM_BLK_H\n\n",
-           PRE, PRE);
-   fprintf(fp, "#ifdef ATL_AMM_NCASES\n");
-   fprintf(fp, "   #if ATL_AMM_NCASES != %d\n", n);
-   fprintf(fp, "      #error \"NCASES MISMATCH!\"\n");
-   fprintf(fp, "   #endif\n");
-   fprintf(fp, "#else\n");
-   fprintf(fp, "   #define ATL_AMM_NCASES %d\n", n);
-   fprintf(fp, "#endif\n");
-@endskip
    fprintf(fp, "#define ATL_AMM_MAXMB %d\n", maxMB);
    fprintf(fp, "#define ATL_AMM_MAXNB %d\n", maxNB);
    fprintf(fp, "#define ATL_AMM_MAXKB %d\n", maxKB);
@@ -439,7 +482,33 @@ void GenBlockingFile(char pre, ATL_mmnode_t *mmb, char *outd)
       fprintf(fp, "}\n\n");
    }
 
-   fprintf(fp, "\n#endif  /* end ifdef include file guard */\n");
+   fprintf(fp, "\n#endif  /* end include file guard */\n");
+   fclose(fp);
+}
+
+void GenFlagH(char pre, ATL_mmnode_t *mmb, char *outd)
+{
+   FILE *fp;
+   int j, n;
+   ATL_mmnode_t *mp;
+
+   fp = StandHStart(pre, mmb, outd, "flag");
+
+   for (n=0,mp=mmb; mp; n++,mp = mp->next);
+
+   fprintf(fp, "static unsigned char ATL_AMM_KFLAG[%d] =\n{\n", n);
+   for (j=0,mp=mmb; mp; j++,mp = mp->next)
+   {
+      unsigned char flag=FLAG_IS_SET(mp->flag, MMF_KRUNTIME) ? 1 : 0;
+      if (mp->next)
+         fprintf(fp, "%6d,  /* index %d */\n", flag, j);
+      else
+         fprintf(fp, "%6d   /* index %d */\n", flag, j);
+   }
+   fprintf(fp, "}\n\n");
+   fprintf(fp, "#define ATL_AMM_KRUNTIME(idx_) (ATL_AMM_KFLAG[idx_] & 1)\n");
+   fprintf(fp, "\n#endif  /* end include file guard */\n");
+   fclose(fp);
 }
 
 void GenCMAJ2AMAJ(char pre, ATL_mmnode_t *mmb, char *outd)
@@ -451,14 +520,17 @@ void GenCMAJ2AMAJ(char pre, ATL_mmnode_t *mmb, char *outd)
  */
 {
    char ac[3] = {'1', 'n', 'X'};
-   int ia;
-   char *fnam, *sp;
+   int ia, j;
+   char *fnam, *sp, *np;
+   ATL_mmnode_t *mp;
 
-   ia = strlen(outd) + 24;
+   ia = strlen(outd) + 23;
    fnam = malloc(ia*sizeof(char));
    assert(fnam);
    sprintf(fnam, "%s/atlas_%camm_cm2am_a1.h", outd, pre);
-   sp = fnam+ia-24+20;
+   np = fnam+ia-23+12;
+   assert(*np == 'c' && np[1] == 'm');
+   sp = fnam+ia-4;
    assert(*sp == '1');
 
    for (ia=0; ia < 3; ia++)
@@ -469,8 +541,29 @@ void GenCMAJ2AMAJ(char pre, ATL_mmnode_t *mmb, char *outd)
       *sp = ac[ia];
       fp = fopen(fnam, "w");
       assert(fp);
+      sp[1] = '\0';
+      PrintBegBlock(pre, mmb, np, fp);
+      sp[1] = '.';
+/*
+ *    HERE HERE HERE
+ *    need to add declaration of: AT2BLK, B2BLK, BT2BLK, and all prototypes
+ */
+ 
+      fprintf(fp, "static cm2am_t ATL_AMM_A2BLK[ATL_AMM_NCASES] =\n{\n");
+      for (j=0,mp=mmb; mp; j++,mp = mp->next)
+      {
+         if (mp->next)
+            fprintf(fp, "   ATL_%ccm2am_a%c_%d,  /* index %d */\n", 
+                    pre, ac[ia], mp->mu, j);
+         else
+            fprintf(fp, "   ATL_%ccm2am_a%c_%d   /* index %d */\n", 
+                    pre, ac[ia], mp->mu, j);
+      }
+      fprintf(fp, "}\n\n");
+      fprintf(fp, "\n#endif  /* end include file guard */\n");
       fclose(fp);
    }
+   free(fnam);
 }
 
 void GenHeaderFiles(char pre, ATL_mmnode_t *mmb, char *outd)
@@ -479,9 +572,9 @@ void GenHeaderFiles(char pre, ATL_mmnode_t *mmb, char *outd)
  *X1. atlas_<pre>amm_blk.h : 
  *X   defines: ATL_AMM_NCASES, ATL_AMM_MAX[M,N,K]B
  *X   3 arrays indexed by case give blocking
- * 2  atlas_<pre>amm_flag.h
- *    defines: ATL_AMM_NCASES
- *    1 indexible array giving KRUNTIME for now
+ *X2  atlas_<pre>amm_flag.h
+ *X   defines: ATL_AMM_NCASES
+ *X   1 indexible array giving KRUNTIME for now
  * 3. atlas_<pre>amm_cm2am_a[1,X,n]: 
  *    defines: ATL_AMM_NCASES
  *    prototypes all rm2am & cm2am routines
@@ -499,6 +592,8 @@ void GenHeaderFiles(char pre, ATL_mmnode_t *mmb, char *outd)
  */
 {
    GenBlockingFile(pre, mmb, outd);
+   GenFlagH(pre, mmb, outd);
+   GenCMAJ2AMAJ(pre, mmb, outd);
 }
 
 void GenMakefile(char pre, ATL_mmnode_t *mmb, char *outd)
