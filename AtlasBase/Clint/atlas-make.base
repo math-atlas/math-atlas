@@ -27,6 +27,7 @@ $atldir/$*
    src/blas/f77reference
    src/blas/gemv 
    src/blas/ger 
+   src/blas/ammm 
    src/blas/gemm 
 @skip   src/blas/kbmm 
 @skip   src/blas/gemm/GOTO
@@ -247,6 +248,7 @@ startup : lib include results EXtest
 	$(MAKE) -f Make.top leafstart leaf=@(archdir)
 @endwhile
 	cd src/threads ; touch atomic.inc
+	cd src/blas/ammm ; mkdir KERNEL
 	cd src/blas/gemm ; mkdir KERNEL
 @skip	cd src/blas/kbmm ; mkdir KBMMS
 	cd tune/blas/gemm ; mkdir KERNEL
@@ -291,6 +293,7 @@ refresh :
 	cp $(SRCdir)/makes/Make.mvsrc src/blas/gemv/Makefile
 	cp $(SRCdir)/makes/Make.r1src src/blas/ger/Makefile
 	cp $(SRCdir)/makes/Make.mmsrc src/blas/gemm/Makefile
+	cp $(SRCdir)/makes/Make.ammsrc src/blas/ammm/Makefile
 @skip	cp $(SRCdir)/makes/Make.kbmm  src/blas/kbmm/Makefile
 @skip	cp $(SRCdir)/makes/Make.goto  src/blas/gemm/GOTO/Makefile
 	cp $(SRCdir)/makes/Make.l1src src/blas/level1/Makefile
@@ -7032,6 +7035,49 @@ ATL_@(pre)tgemm_bigMN_Kp_CE.o : $(deps) slib $(mySRCdir)/ATL_tgemm_bigMN_Kp.c
 
    @undef typ
    @killkeys ptyp
+@endwhile
+
+@ROUT Make.ammsrc
+include Make.inc
+mySRCdir = $(SRCdir)/src/blas/ammm
+
+all : lib
+lib : dlib slib zlib clib
+tlib : dtlib stlib ztlib ctlib
+double    : dlib
+single    : slib
+complex   : clib
+complex16 : zlib
+
+clean : dclean sclean cclean zclean
+	rm -f KERNEL/*.o
+
+@multidef typ DCPLX SCPLX DREAL SREAL
+@multidef UPR D S D S
+@whiledef pre z c d s
+   @addkeys ptyp=@(pre)
+@(pre)INCdep = $(INCSdir)/atlas_misc.h $(INCAdir)/atlas_type.h \
+          $(INCAdir)/atlas_@(pre)amm_blk.h $(INCAdir)/atlas_@(pre)amm_flag.h \
+          $(INCAdir)/atlas_@(pre)amm_kern.h \
+          $(INCAdir)/atlas_@(pre)amm_cm2am_a1.h \
+          $(INCAdir)/atlas_@(pre)amm_ablk2cmat.h 
+
+@(pre)obj = ATL_@(pre)ammmNMK.o
+
+@(pre)lib : @(pre)lib.grd
+@(pre)clean:
+	rm -f $(@(pre)obj) @(pre)lib.grd
+
+@(pre)lib.grd : $(@(pre)obj)
+	$(ARCHIVER) $(ARFLAGS) $(ATLASlib) $(@(pre)obj)
+	$(RANLIB) $(ATLASlib)
+	touch @(pre)lib.grd
+
+ATL_@(pre)ammmNMK.o : $(mySRCdir)/ATL_ammmNMK.c
+	$(@(UPR)KC) -D@(typ)=1 -o $@ -c $(@(UPR)KCFLAGS)
+   @killkeys ptyp
+   @undef UPR
+   @undef typ
 @endwhile
 
 @ROUT Make.mmsrc

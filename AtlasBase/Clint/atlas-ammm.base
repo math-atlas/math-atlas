@@ -824,7 +824,8 @@ void GenKernH(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
    fp = StandHStart(pre, mmb, outd, "kern");
    fprintf(fp, "\n");
    SpewForthKernProtos(fp, pre, mmb, 3);
-   SpewForthKernProtos(fp, pre, ukb, 1);
+   if (ukb)
+      SpewForthKernProtos(fp, pre, ukb, 1);
    fprintf(fp, "\n");
 /*
  * Dump out kernel ptr arrays
@@ -832,11 +833,13 @@ void GenKernH(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
    SpewForthKernArray(fp, pre, mmb, "KERN_b0", '0');
    SpewForthKernArray(fp, pre, mmb, "KERN_b1", '1');
    SpewForthKernArray(fp, pre, mmb, "KERN_bN", 'N');
-   SpewForthKernArray(fp, pre, kcb, "KERN_K1", '0');
+   if (kcb)
+      SpewForthKernArray(fp, pre, kcb, "KERN_K1", '0');
 
    fprintf(fp, "\n#endif  /* end include file guard */\n");
    fclose(fp);
 }
+
 void GenHeaderFiles(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, 
                     ATL_mmnode_t *kcb, char *outd)
 /*
@@ -3669,4 +3672,165 @@ int Mjoin(PATL,ammmABC)
    }
    free(vp);
    return(0);
+}
+@ROUT ATL_ammmNMK
+#include "atlas_misc.h"
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_blk.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_ablk2cmat.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_a1.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_flag.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_kern.h))
+
+int Mjoin(PATL,ammmNMK)
+(
+   int IK,                /* index of kernel to use */
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   ATL_CSZT M,
+   ATL_CSZT N,
+   ATL_CSZT K,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CSZT lda,
+   const TYPE *B,
+   ATL_CSZT ldb,
+   const SCALAR beta,
+   const TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   ATL_CINT mu=ATL_MM_MUs[IK], nu=ATL_MM_NUs[IK], ku=ATL_AMM_KUs[IK];
+   ATL_CINT KRUN = ATL_AMM_KRUNTIME(IK);
+   size_t mb=ATL_MM_MBs[IK], nb=ATL_MM_NBs[IK], kb=ATL_MM_KBs[IK], b;
+   size_t nmblks, nnblks, nkblks, mr, nr, kr, nnu, nmu;
+   size_t incAk, incAm, incBk, incBn, incCn, incwA, incwB;
+   const TYPE B0 = B;
+   TYPE *wA, *wB, *wC, *wA0, *wB0;
+   cm2am_t a2blk, b2blk;
+   ablk2cmat_t blk2c;
+   ammkern_t amm_b1 = ATL_AMM_KERN_b1[IK], amm_b0 = ATL_AMM_KERN_b0[IK];
+
+   if (alpha == ATL_rone)
+   {
+      if (beta == ATL_rone)
+         blk2c = ATL_AMM_BLK2C_a1_b1[IK];
+      else if (beta == ATL_rnone)
+         blk2c = ATL_AMM_BLK2C_a1_bn[IK];
+      else if (beta == ATL_rzero)
+         blk2c = ATL_AMM_BLK2C_a1_b0[IK];
+      else
+         blk2c = ATL_AMM_BLK2C_a1_bX[IK];
+   }
+   else if (alpha == ATL_rnone)
+   {
+      if (beta == ATL_rone)
+         blk2c = ATL_AMM_BLK2C_an_b1[IK];
+      else if (beta == ATL_rnone)
+         blk2c = ATL_AMM_BLK2C_an_bn[IK];
+      else if (beta == ATL_rzero)
+         blk2c = ATL_AMM_BLK2C_an_b0[IK];
+      else
+         blk2c = ATL_AMM_BLK2C_an_bX[IK];
+   }
+   else
+   {
+      if (beta == ATL_rone)
+         blk2c = ATL_AMM_BLK2C_aX_b1[IK];
+      else if (beta == ATL_rnone)
+         blk2c = ATL_AMM_BLK2C_aX_bn[IK];
+      else if (beta == ATL_rzero)
+         blk2c = ATL_AMM_BLK2C_aX_b0[IK];
+      else
+         blk2c = ATL_AMM_BLK2C_aX_bX[IK];
+   }
+   nmblks = M/mb;
+   assert(nmblks);
+   mr = M - nmblks * mb;
+   assert(mr == 0);
+
+   nnblks = N/nb;
+   assert(nnblks);
+   nr = N - nnblks * nb;
+   assert(nr == 0);
+
+   nkblks = K/kb;
+   assert(nkblks);
+   kr = K - nkblks * kb;
+   assert(kr == 0);
+
+   nnu = nb / nu;
+   nmu = mb / mu;
+
+   vp = malloc(mb*nb + M*N  + K*nb + 3*ATL_cachelen);
+   assert(vp);
+   wB0 = wB = ATL_AlignPtr(vp);
+   wC = wB + K*nb;
+   wC = ATL_AlignPtr(wC);
+   wA = wC + mb*nb;
+   wA0 = wA = ATL_AlignPtr(wA);
+
+   if (TA == AtlasNoTrans)
+   {
+      incAk = kb*lda;
+      incAm = mb - incAk*nkblks;
+      a2blk = ATL_AMM_A2BLK_a1[IK];
+   }
+   else
+   {
+      incAk = kb;
+      incAm = lda-m + (mb-1)*lda;
+      a2blk = ATL_AMM_AT2BLK_a1[IK];
+   }
+   if (TB == AtlasNoTrans)
+   {
+      incBk = kb;
+      incBn = nb*ldb;
+      b2blk = ATL_AMM_B2BLK_a1[IK];
+   }
+   else
+   {
+      incBk = kb*ldb;
+      incBn = nb;
+      b2blk = ATL_AMM_BT2BLK_a1[IK];
+   }
+   incCn = ldc*nb-M;
+   incwA = mb*kb;
+   incwB = nb*kb;
+
+   for (j=0; j < nnblks; j++)
+   {
+      for (i=0; i < nmblks; i++)
+      {
+         if (!j)
+            a2blk(kb, mb, ATL_rone, A, lda, wA);
+         if (!i)
+            b2blk(kb, nb, ATL_rone, B, ldb, wB);
+         amm_b0(nmu, nnu, kb, wA, wB, wC, wA+incwA, wB+incwB, wC);
+         wA += incwA;
+         wB += incwB;
+         A += incAk;
+         B += incBk;
+         for (k=1; k < nkblks; k++)
+         {
+            if (!j)
+               a2blk(kb, mb, ATL_rone, A, lda, wA);
+            if (!i)
+               b2blk(kb, nb, ATL_rone, B, ldb, wB);
+            amm_b1(nmu, nnu, kb, wA, wB, wC, wA+incwA, wB+incwB, wC);
+            wA += incwA;
+            wB += incwB;
+            A += incAk;
+            B += incBk;
+         }
+         blk2c(mb, nb, alpha, wC, beta, C, ldc);
+         A += incAm;
+         wB = wB0;
+         B = B0;
+         C += mb;
+      }
+      wA = wA0;
+      B = B0 += incBn;
+      C += incCn;
+   }
+   free(vp);
 }
