@@ -21414,6 +21414,10 @@ void matnan(int M, int N, TYPE *C, int ldc, int seed)
 }
 #endif
 
+#if defined(TEST_AMMM)
+   #define TRUST_BLKMAJ 1
+   static int IIK=0;
+#endif
 #if defined(TRUST_C)
    #define trusted_gemm(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc) \
       Mjoin(Mjoin(cblas_,PRE),gemm) \
@@ -21436,7 +21440,7 @@ void matnan(int M, int N, TYPE *C, int ldc, int seed)
 #elif defined(TRUST_JIT)
    #define trusted_gemm(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc) \
       Mjoin(PATL,mmJITcp)(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc)
-#elif defined(ATL_USEPTHREADS) && !defined(TEST_F77)
+#elif (defined(ATL_USEPTHREADS) && !defined(TEST_F77)) || defined(TRUST_BLKMAJ)
    #define trusted_gemm(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc) \
       Mjoin(PATL,gemm)(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc)
 #else
@@ -21448,6 +21452,9 @@ void matnan(int M, int N, TYPE *C, int ldc, int seed)
    #define test_gemm(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc) \
       Mjoin(PATL,gpmm)(PackGen, TA, PackGen, TB, PackGen, m, n, k, al, \
                        A, 0, 0, lda, B, 0, 0, ldb, be, C, 0, 0, ldc)
+#elif defined(TEST_AMMM)
+   #define test_gemm(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc) \
+      Mjoin(PATL,ammmNMK)(IIK,TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc)
 #elif defined(ATL_NOAFFINITY) || defined(ATL_AFFINITY)
    #define test_gemm(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc) \
       Mjoin(PATL,tgemm)(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc)
@@ -21895,7 +21902,7 @@ int mmcase0(int MFLOP, size_t CACHESIZE, char TA, char TB, int M, int N, int K,
 
 void PrintUsage(char *nam)
 {
-   fprintf(stderr, "USAGE: %s -Side <nsides> L/R -Uplo <nuplo> L/U -Atrans <ntrans> n/t/c -Btrans <ntrans> n/t/c -Diag <ndiags> N/U -M <m1> <mN> <minc> -N <n1> <nN> <ninc> <k1> <kN> <kinc> -n <n> -m <m> -k <k> -a <nalphas> <alpha1> ... <alphaN> -b <nbetas> <beta1> ... <betaN> -Test <0/1> -F <mflops> -C <cachesize>\n", nam);
+   fprintf(stderr, "USAGE: %s -Side <nsides> L/R -Uplo <nuplo> L/U -Atrans <ntrans> n/t/c -Btrans <ntrans> n/t/c -Diag <ndiags> N/U -M <m1> <mN> <minc> -N <n1> <nN> <ninc> <k1> <kN> <kinc> -n <n> -m <m> -k <k> -a <nalphas> <alpha1> ... <alphaN> -b <nbetas> <beta1> ... <betaN> -Test <0/1> -F <mflops> -I <IKERN> -C <cachesize>\n", nam);
    exit(-1);
 }
 
@@ -21935,6 +21942,9 @@ void GetFlags(int nargs, char *args[], int *TEST, int *nside,
          break;
       case 'F':
          *MFLOP = atoi(args[++i]);
+         break;
+      case 'I':
+         IIK = atoi(args[++i]);
          break;
       case 'C':
             if( args[i+1] == NULL ) PrintUsage( args[0] );
