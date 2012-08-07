@@ -286,7 +286,7 @@ char *BV2VarNames(int iv)
          if (vals[i] < tnreg) vals[i] = -vals[i];
          else vals[i] -= tnreg;
          if (vals[i] < 0) 
-            j += sprintf(ln+j, "%s,", Int2Reg(vals[i]));
+            j += sprintf(ln+j, "%s,", Int2Reg(vals[i])); /*req short but int*/
          else
             j += sprintf(ln+j, "%s,", STi2str(vals[i]));
       }
