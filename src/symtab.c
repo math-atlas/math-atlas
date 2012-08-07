@@ -553,8 +553,16 @@ short FindDerefEntry(short ptr, short ireg, short mul, short con)
 short AddDerefEntry(short ptr, short reg, short mul, short con, short pts2)
 {
    int i;
-   i = STdef("DT", DEREF_BIT | FLAG2TYPE(STflag[pts2-1]) | 
-             (UNKILL_BIT & STflag[pts2-1]), 0) - 1;
+/*
+ * Majedul: pts2 can be 0, see FinalizeEpilogue. It will create some invalid
+ * read (Valgrind).
+ */
+   if (pts2 > 0)
+      i = STdef("DT", DEREF_BIT | FLAG2TYPE(STflag[pts2-1]) | 
+                (UNKILL_BIT & STflag[pts2-1]), 0) - 1;
+   else
+      i = STdef("DT", DEREF_BIT,  0) - 1;
+
    SToff[i].sa[0] = ptr;
    SToff[i].sa[1] = reg;
    SToff[i].sa[2] = mul;

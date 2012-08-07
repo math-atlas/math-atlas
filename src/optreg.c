@@ -7,7 +7,8 @@ void DumpIG(FILE *fpout, int N, IGNODE **igs);
 
 int ireg2type(int ireg)
 {
-   int iret = -1;
+   int iret;
+   iret = -1;
    if (ireg >= IREGBEG && ireg < IREGEND)
       iret = T_INT;
    else if (ireg >= FREGBEG && ireg < FREGEND)
@@ -1205,7 +1206,8 @@ int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
 /*
  *    Change all uses of this ig->var to ig->reg
  */
-      if (ACTIVE_INST(ip->inst[0]) && BitVecCheck(ip->use, ig->var+TNREG-1))
+      if (ip && ACTIVE_INST(ip->inst[0]) && 
+          BitVecCheck(ip->use, ig->var+TNREG-1)) /* majedul: invalid read?? */
       {
          SetVecBit(ip->use, ig->var+TNREG-1, 0);
          SetVecBit(ip->use, ig->reg-1, 0);
@@ -2293,7 +2295,7 @@ fprintf(stderr, ", src=%s\n", Int2Reg(-src));
          if (blk->usucc && BitVecCheck(blk->usucc->ins, dest-1))
          {
             bl = FindInList(scope, blk->usucc);
-            if (!bl->ptr)
+            if (bl && !bl->ptr) /* majedul: bl can be NULL */
             {
                bl->ptr = (void*) 1;
                change += CopyPropTrans0(0, scope, scopeblks, blk->usucc,
@@ -2306,7 +2308,7 @@ fprintf(stderr, ", src=%s\n", Int2Reg(-src));
          if (blk->csucc && BitVecCheck(blk->csucc->ins, dest-1))
          {
             bl = FindInList(scope, blk->csucc);
-            if (!bl->ptr)
+            if (bl && !bl->ptr) /* majedul: bl can be NULL*/
             {
                bl->ptr = (void*) 1;
                change += CopyPropTrans0(0, scope, scopeblks, blk->csucc,
@@ -2423,6 +2425,11 @@ int DoCopyProp(BLIST *scope)
                next = CopyPropTrans(scope, scopeblks, bl->blk, ip);
                for (lp=bl; lp; lp = lp->next)
                   lp->ptr = NULL;
+/*
+ *             Majedul: There is an invalid read reported by valgrind at the end
+ *             of the if branch (called from DoOptList).
+ *
+ */
                if (next)
                {
                   ip = next;
@@ -2608,8 +2615,13 @@ int DoEnforceLoadStore(BLIST *scope)
             if (!op)
             {
                op = ip->inst[2];
-               if (!IS_DEREF(STflag[op-1]))
-                  op = 0;
+/*
+ *             Majedul: op can be negative if reg. There may be an invalid read
+ *             I corrected this.
+ */           
+               if ( op > 0)
+                  if (!IS_DEREF(STflag[op-1]))
+                     op = 0;
             }
             if (inst == PREFR || inst == PREFW ||
                 inst == PREFRS || inst == PREFWS)
