@@ -125,7 +125,9 @@ enum inst
    FSUB,                        /* fr0 = fr1 - fr2 */
    FABS,                        /* [fr0], [fr1] : fr0 = abs(fr1) */
    FCMP,                        /* [fr0], [fr1] : set [cc] by (fr0 - fr1) */
-   FNEG,                        /* [fr0], [fr1] : fr0 = -fr1 */
+   FNEG,                        /* fr0, fr1 : fr0 = -fr1 */
+   FMAX,                        /* fr0 = max(fr1,fr2) */
+   FMIN,                        /* fr0 = min(fr1,fr2) */
    FMOV,                        /* fr0 = fr1 */
 /*
  * Conditional move
@@ -146,6 +148,8 @@ enum inst
    FABSD,                       /* [fr0], [fr1] : fr0 = abs(fr1) */
    FCMPD,                       /* [fr0], [fr1] : set [cc] by (fr0 - fr1) */
    FNEGD,                       /* [fr0], [fr1] : fr0 = -fr1 */
+   FMAXD,                       /* fr0 = max(fr1,fr2) */
+   FMIND,                       /* fr0 = min(fr1,fr2) */
    FMOVD,                       /* fr0 = fr1 */
 /*
  * Conditional Move
@@ -173,6 +177,8 @@ enum inst
    VDMAC,                      /* [vr0], [vr1], [vr2] : vr0 += vr1 * vr2 */
    VDABS,                      /* [vr0], [vr1] : vr0 = abs(vr1) */
    VDNEG,                      /* [vr0], [vr1] : vr0 = -(vr1) */
+   VDMAX,                      /* vr0 = max(vr1,vr2) */
+   VDMIN,                      /* vr0 = min(vr1,vr2) */
 /*
  * Majedul: 
  * NOTE: SSE -> 3 operand, AVX -> 4 operand
@@ -205,6 +211,8 @@ enum inst
    VFMAC,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
    VFABS,                      /* [vr0], [vr1] : vr0 = abs(vr1) */
    VFNEG,                      /* [vr0], [vr1] : vr0 = -(vr1) */
+   VFMAX,                      /* vr0 = max(vr1,vr2) */
+   VFMIN,                      /* vr0 = min(vr1,vr2) */
 /*
  * Majedul: 
  * NOTE: SSE -> 3 operand, AVX -> 4 operand
@@ -410,6 +418,8 @@ char *instmnem[] =
    "FABS",
    "FCMP",
    "FNEG",
+   "FMAX",
+   "FMIN",
    "FMOV",
    "FCMOV1",
    "FCMOV2",
@@ -427,6 +437,8 @@ char *instmnem[] =
    "FABSD",
    "FCMPD",
    "FNEGD",
+   "FMAXD",
+   "FMIND",
    "FMOVD",
    "FCMOVD1",
    "FCMOVD2",
@@ -450,6 +462,8 @@ char *instmnem[] =
    "VDMAC",
    "VDABS",
    "VDNEG",
+   "VDMAX",
+   "VDMIN",
    "VDCMOV1",
    "VDCMOV2",
    "VDSHUF",
@@ -473,6 +487,8 @@ char *instmnem[] =
    "VFMAC",
    "VFABS",
    "VFNEG",
+   "VFMAX",
+   "VFMIN",
    "VFCMOV1",
    "VFCMOV2",
    "VFSHUF",
@@ -677,5 +693,6 @@ INSTQ *DelInst(INSTQ *del);
 INSTQ *RemoveInstFromQ(INSTQ *del);
 INSTQ *KillThisInst(INSTQ *kp);
 void KillAllInst(INSTQ *base);
+char *op2str(short op);
 
 #endif
