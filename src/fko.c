@@ -847,6 +847,11 @@ static void ReadMiscFromFile(char *name)
       optloop->abalign = NULL;  /* handle this later */
       optloop->preheader = optloop->header = NULL;
       optloop->tails = optloop->posttails = NULL;
+/*
+ *    Majedul: constructing blocks from bitvec may not work. 
+ *    We can recompute everything.
+ *    FIXME: How can we get blkvec if it is not saved!!! 
+ */
       if (optloop->blkvec)
          optloop->blocks = BitVec2BlockList(optloop->blkvec);
       else
@@ -1041,10 +1046,10 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
       optchng[noptrec] = nchanges - nc0;
       optrec[noptrec++] = global ? k+MaxOpt : k;
 #if 0
-      //char file[20];
       PrintOptInst(stdout, ++iopt, k, scope, global, nchanges-nc0);
-      //sprintf(file, "cfg/%s%d.dot", "cfg", iopt);
-      //ShowFlow(file,bbbase);
+      /*char file[20];*/
+      /*sprintf(file, "cfg/%s%d.dot", "cfg", iopt);*/
+      /*ShowFlow(file,bbbase);*/
 #endif
    }
    return(nchanges);
@@ -1763,6 +1768,7 @@ int main(int nargs, char **args)
 #if 0
       fprintf(stdout,"FIRST LIL\n");
       PrintInst(stdout,bbbase);
+      PrintST(stdout);
       exit(0);
 #endif
       if (!fpLOOPINFO && (FKO_FLAG & IFF_VECTORIZE))
@@ -1773,6 +1779,15 @@ int main(int nargs, char **args)
             fprintf(stdout, "LIL BEFORE SV\n");
             PrintInst(stdout, bbbase);
 #endif
+/*
+ *          Handle max vars separately
+ */
+#if 0
+/*
+ *          NOTE: for nrm2, it identifies scal as max var!!!! 
+ */
+            UpdateOptLoopWithMaxMinVars(optloop);
+#endif            
 /*
  *          Finalizing the analysis
  */
@@ -1790,7 +1805,11 @@ int main(int nargs, char **args)
                   FKO_UR = 1; /* forced to unroll factor 1*/
                #endif
             #else
-               VectorRedundantComputation();
+               #if 1
+                  UpdateOptLoopWithMaxMinVars(optloop);
+                  VectorRedundantComputation();
+               #else
+               #endif
             #endif
 
          }
