@@ -604,6 +604,9 @@ int DoLoopSimdAnal(LOOPQ *lp)
          }
 /*
  *       Output scalars must be accumulators to vectorize
+ *       FIXME: if liveout var is also livein, vsoflag is not updated.
+ *       still it works for old SimdLoop as by default all liveouts are
+ *       VS_ACC
  */
          else if (s[i] & VS_LIVEOUT)
          {
@@ -885,6 +888,8 @@ void AddLoopPeeling(LOOPQ *lp, int jblabel, int falabel, short Np,
       lpn->beg = lp->beg; /* N */
       lpn->end = Np;   /* N-Np */
       lpn->inc = lp->inc;
+      /*fprintf(stderr, "NINC: lpn->beg = %s, lpn->end = %s\n", 
+              STname[lpn->beg-1], STname[lpn->end-1]);*/
 /*
  *    change main loop... 
  *    NOTE: This is used even if program the doen't enter peeling loop
@@ -1024,10 +1029,13 @@ void GenForceAlignedPeeling(LOOPQ *lp)
    ip = InsNewInst(bp, NULL, ip, CMPFLAG, CF_FORCE_ALIGN, 0, 0);
 /*
  * Now, the vector loop control is changed, so initialize it with original N
+ * HERE HERE, flag may changed after loop control optimization, is it 
+ * considered, here???
  */
    r0 = GetReg(T_INT);
    if (lp->flag & L_NINC_BIT)
    {
+      /*fprintf(stderr, "NINC! \n\n");*/
       ip = InsNewInst(bp, ip, NULL, LD, -r0, SToff[lp->beg-1].sa[2], 0);
       ip = InsNewInst(bp, ip, NULL, ST, SToff[Nv-1].sa[2], -r0, 0);
    }
@@ -1303,7 +1311,7 @@ int SimdLoop(LOOPQ *lp)
          j++;
          assert((lp->vsoflag[i+1] & (VS_MUL | VS_EQ | VS_ABS)) == 0);
          iptp = PrintComment(lp->posttails->blk, iptp, iptn,
-                  "Reduce accumulator vector for %s", STname[lp->vscal[i+1]-1]);
+               "Reduce accumulator vector for %s", STname[lp->vscal[i+1]-1]);
          iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vld, -r0,
                            SToff[lp->vvscal[i+1]-1].sa[2], 0);
          if (vld == VDLD)
@@ -1820,7 +1828,7 @@ int CheckVarInBitvec(int vid, short iv)
 
 int PathFlowVectorAnalysis(LOOPPATH *path)
 /*
- * Analyze single path of loop and stores all the info in paths,
+ * Analyze single path of loop and stores all the info in paths data structure,
  * returns error code if failed, otherwise 0.
  * NOTE: it doesn't change the original code but assume loopcontrol is killed.
  * NOTE: don't stop the analysis when error is found, rather complete all
@@ -1840,11 +1848,11 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
    char ln[1024];
    struct ptrinfo *pbase, *p;
 /*
- * all these arrays store element count at 0 position.
+ * all these arrays element count is at position 0.
  */
    short *sp, *s, *scf;        /* temporary ptrs */
 /*
- * tempory for paths 
+ * temporary for paths 
  */
    short *scal;         /* store all fp variable, N arr format */
    short *sflag;          /* store all moving pointers, N arr format */
@@ -1872,12 +1880,13 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
    {
       CalcInsOuts(bbbase);
       CalcAllDeadVariables();
-      for (bl=scope; bl; bl=bl->next)
-      {
-         path->uses = BitVecComb(path->uses, path->uses, bl->blk->uses, '|');
-         path->defs = BitVecComb(path->defs, path->defs, bl->blk->defs, '|');
-      }
    }
+   for (bl=scope; bl; bl=bl->next)
+   {
+      path->uses = BitVecComb(path->uses, path->uses, bl->blk->uses, '|');
+      path->defs = BitVecComb(path->defs, path->defs, bl->blk->defs, '|');
+   }
+   
    iv = BitVecComb(iv, path->uses, path->defs, '|');
 /*
  * right now, skip all the regs from uses, defs
@@ -1955,7 +1964,7 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
  * Make sure all the vars are of same type; will reconsider this limitation
  * later
  */
-   j = FLAG2TYPE(STflag[sp[0]-1]); /* this is element not count now*/
+   j = FLAG2TYPE(STflag[sp[0]-1]); /* this is element, not element-count now*/
    for (i=1; i < n; i++)
    {
       if (FLAG2TYPE(STflag[sp[i]-1]) != j)
@@ -2146,7 +2155,7 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
             if (sp[j] == k)
             {
                vsflag[j+1] |= VS_LIVEIN;
-               sflag[j+1] |=SC_LIVEIN;
+               sflag[j+1] |= SC_LIVEIN;
                break;
             }
          }
@@ -2188,6 +2197,23 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
             }
          }
       }
+/*
+ *    Special treatment for max/min vars
+ */
+   /*lp = optloop; */
+#if 0
+   if (lp->maxvars)
+   {
+      N = lp->mmaxvars[0];
+      for (i=1; i <= N; i++)
+      {
+         k = FindInShortList(vscal[0], vscal+1, lp->maxvars[i]);
+         vsflag[k] |= VS_MAX;
+         sflag[k]  |= SC_MAX;
+      }
+   }
+#endif
+
 /*
  *    convert blocks of scope into bvec
  */
@@ -2317,15 +2343,25 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
  *       NOTE: for livein var, we can handle both accumulator and MUL/DIV/ASSIGN
  *       for liveout, we can handle accumulator when it is reduction var and 
  *       if it is not set inside the loop/path, we can handle MUL/DIV/ASSIGN.
+ *       NOTE: Right now, we consider VS_ACC and VS_MAX both are LIVEIN and 
+ *       LIVEOUT
  */
          if (scf[i] & SC_LIVEIN) /* need to check for the vector init */
          {
 /*
- *          There are two options: 
+ *          There are three options: 
  *          a) Accumulator: both use and set, but use only with ADD
+ *          d) Max var: can be either use or set depend on path  
  *          b) Not set/ only used: used for MUL/DIV.... ADD? skip right now
  */
-            j = FindReadUseType(lp->header->inst1, sp[i], blkvec);
+            if (lp->maxvars && 
+                  FindInShortList(lp->maxvars[0], lp->maxvars+1, sp[i]))
+               j = VS_MAX;
+            else if (lp->minvars && 
+                  FindInShortList(lp->minvars[0], lp->minvars+1, sp[i]))
+               j = VS_MIN;
+            else
+               j = FindReadUseType(lp->header->inst1, sp[i], blkvec);
             
             if ( (scf[i] & SC_SET) && (scf[i] & SC_USE) ) /*mustbe used as acc*/
             {
@@ -2333,6 +2369,19 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
                {
                   s[i] |= VS_ACC;
                   scf[i] |= SC_IACC;
+                  /*vsoflag[i+1] |= VS_ACC;*/
+               }
+               else if (j == VS_MAX)
+               {
+                  s[i] |= VS_MAX;
+                  scf[i] |= SC_MAX;
+                  /*vsoflag[i+1] |= VS_MAX;*/
+               }
+               else if (j == VS_MIN)
+               {
+                  s[i] |= VS_MIN;
+                  scf[i] |= SC_MIN;
+                  /*vsoflag[i+1] |= VS_MIN;*/
                }
                else
                {
@@ -2341,14 +2390,28 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
                            sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
                   errcode += 64;
                   scf[i] |= SC_IMIXED;
+                  /*vsoflag[i+1] &= ~(VS_ACC | VS_MAX);*/
                }
             }
             else if (scf[i] & SC_USE)
             {
-               if (j == VS_MUL) /*includes div: check this func, make explicit*/
+               if (j == VS_MAX) /* can be used depends on path choice */
+               {
+                  s[i] |= VS_MAX;
+                  scf[i] |= SC_MAX;
+                  /*vsoflag[i+1] |= VS_MAX;*/
+               }
+               else if (j == VS_MIN) /* can be used depends on path choice */
+               {
+                  s[i] |= VS_MIN;
+                  scf[i] |= SC_MIN;
+                  /*vsoflag[i+1] |= VS_MIN;*/
+               }
+               else if (j == VS_MUL) /*includes div */
                {
                   s[i] |= VS_MUL;
                   scf[i] |= SC_IMUL;
+                  /*vsoflag[i+1] |= VS_MUL;*/
                }
                else
                {
@@ -2369,11 +2432,26 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
  *             Now, we need to check whether it is used as accumulator!
  *             it is already checked in LIVEIN part as accumulator must also
  *             be LIVEIN... right now
+ *             NOTE: we consider that all liveout must be also livein here.
  */   
-               if (! (s[i] & VS_ACC))
+               if (s[i] & VS_ACC)
+                  vsoflag[i+1] |= VS_ACC;
+               else if (s[i] & VS_MAX)
+               {
+                  vsoflag[i+1] |= VS_MAX;
+                  /*fprintf(stderr, "%s is a max var which is set in path: %d\n",
+                          STname[sp[i]-1], path->pnum);*/
+               }
+               else if (s[i] & VS_MIN)
+               {
+                  vsoflag[i+1] |= VS_MIN;
+                  /*fprintf(stderr, "%s is a max var which is set in path: %d\n",
+                          STname[sp[i]-1], path->pnum);*/
+               }
+               else
                {
                   fko_warn(__LINE__,
-                          "Liveout var %d(%s) must be Accumulator when set!!\n",
+                     "Liveout var %d(%s) must be Accumulator/max when set!!\n",
                            sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
                   errcode +=128;
                }
@@ -2384,7 +2462,31 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
 /*
  *             if the variable is only used, it can be vectorized. 
  *             Need to check whether it is only used for MUL/DIV
+ *             NOTE: not consider yet!!!
  */
+               if (s[i] & VS_MUL)
+                  vsoflag[i+1] |= VS_MUL;
+               else if (s[i] & VS_MAX)
+               {
+                  vsoflag[i+1] |= VS_MAX;
+                  /*fprintf(stderr, 
+                        "%s is a max var which is only used in path:%d\n",
+                          STname[sp[i]-1], path->pnum);*/
+               }
+               else if (s[i] & VS_MIN)
+               {
+                  vsoflag[i+1] |= VS_MIN;
+                  /*fprintf(stderr, 
+                        "%s is a min var which is only used in path:%d\n",
+                          STname[sp[i]-1], path->pnum);*/
+               }
+               else
+               {
+                  fko_warn(__LINE__,
+                     "Liveout var %d(%s) must be mul/max when only use!!\n",
+                           sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
+                  errcode +=256;
+               }
 
             }
          }
@@ -2607,6 +2709,12 @@ int SpeculativeVecTransform(LOOPQ *lp)
  * transform Vector in single path which is saved globaly as vect path. Must 
  * call before scalar Restart. Scalar Restart will messed the optloop up.
  * assume analysis updated the optloop according to the vect path only
+ *
+ * NOTE: This vector transform should work for Redundant Vector operation also
+ * as we have done if-conversion before this. We don't have normal FCMP and 
+ * branches after that. So, it can be done trivially.
+ *
+ *
  */
 {
    short *sp;
@@ -2622,7 +2730,7 @@ int SpeculativeVecTransform(LOOPQ *lp)
                   VDZERO};
 /*****************************************************************************/
 /*
- * Generalization of Vector Compare. 
+ * Generalization of Vector Compare for SSV. 
  *
  * Case-1: (Any condition, fall through vector path )
  * -------------------------------------------------
@@ -2640,7 +2748,7 @@ int SpeculativeVecTransform(LOOPQ *lp)
  * JNE ...
  *
  * Case-2: (All Condition, fall through scalar path)
- * if_condition -> true -> scalar_path
+ * if_condition -> true -> vector_path
  * scalar: if (condition) GOTO VECTOR_PATH
  * vector: if (condition_all_vector_element) GOTO VECTOR_PATH
  * comment: "jump to vector path only if all the elements follow the condition."
@@ -2830,8 +2938,9 @@ static enum inst
       {
          j++;
          /*assert((lp->vsoflag[i+1] & (VS_MUL | VS_EQ | VS_ABS)) == 0);*/
-         if (lp->vsflag[i+1] & VS_ACC)
+         if (lp->vsoflag[i+1] & VS_ACC)
          {
+
             iptp = PrintComment(lp->posttails->blk, iptp, iptn,
                   "Reduce accumulator vector for %s", STname[lp->vscal[i+1]-1]);
             iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vld, -r0,
@@ -3107,6 +3216,389 @@ static enum inst
                      }
                      break;
                   }
+               }
+            }
+         }
+      }
+   }
+   GetReg(-1);
+/*
+ * Put back loop control and pointer updates
+ */
+   OptimizeLoopControl(lp, vlen, 0, ippu);
+   CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = CFLOOP = 0;
+#if 0
+   InvalidateLoopInfo();
+   NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   FindLoops();
+   CheckFlow(bbbase, __FILE__, __LINE__);
+#endif
+   return(0);
+}
+
+int RedundantVectorTransform(LOOPQ *lp)
+/*
+ * NOTE: This is similar of normal vector transformation DoSimdLoop except max
+ * is need to be recognized. As I have changes lot in vector analysis in 
+ * Path based analysis, I will create separate vector xform here. 
+ * NOTE: this vector transform can be and will be merge with Speculative vector
+ * transfer later. 
+ */
+{
+   short *sp;
+   BLIST *bl;
+   static enum inst 
+     sfinsts[] = {FLD,      FST,      FMUL,     FMAC,     FADD,     FSUB,    
+                  FABS,     FMOV,     FZERO,    FNEG,     FCMOV1,   FCMOV2, 
+                  FCMPWEQ,  FCMPWNE,  FCMPWLT,  FCMPWLE,  FCMPWGT,  FCMPWGE},
+
+     vfinsts[] = {VFLD,     VFST,     VFMUL,    VFMAC,    VFADD,    VFSUB,   
+                  VFABS,    VFMOV,    VFZERO,   VFNEG,    VFCMOV1,  VFCMOV2,
+                  VFCMPWEQ, VFCMPWNE, VFCMPWLT, VFCMPWLE, VFCMPWGT, VFCMPWGE},
+
+     sdinsts[] = {FLDD,     FSTD,     FMULD,    FMACD,    FADDD,    FSUBD, 
+                  FABSD,    FMOVD,    FZEROD,   FNEGD,    FCMOVD1,  FCMOVD2, 
+                  FCMPDWEQ, FCMPDWNE, FCMPDWLT, FCMPDWLE, FCMPDWGT, FCMPDWGE},
+
+     vdinsts[] = {VDLD,     VDST,     VDMUL,    VDMAC,    VDADD,    VDSUB, 
+                  VDABS,    VDMOV,    VDZERO,   VDNEG,    VDCMOV1,  VDCMOV2,
+                  VDCMPWEQ, VDCMPWNE, VDCMPWLT, VDCMPWLE, VDCMPWGT, VDCMPWGE};
+   
+   const int nvinst=18;
+   enum inst sld, vld, sst, vst, smul, vmul, smac, vmac, sadd, vadd, ssub, vsub, 
+             sabs, vabs, smov, vmov, szero, vzero, inst;
+   short r0, r1, op;
+   enum inst *sinst, *vinst;
+   int i, j, n, k, nfr=0;
+   char ln[512];
+   struct ptrinfo *pi0, *pi;
+   INSTQ *ip, *ippu, *iph, *iptp, *iptn;
+   short vlen;
+   enum inst vsld, vsst, vshuf;
+   short sregs[TNFR], vregs[TNFR];
+
+/*
+ * Figure out what type of insts to translate
+ */
+   if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+   {
+      sinst = sfinsts;
+      vinst = vfinsts;
+      #if defined(X86) && defined(AVX)
+         vlen = 8;
+      #else
+         vlen = 4;
+      #endif
+      vsld = VFLDS;
+      vsst = VFSTS;
+      vshuf = VFSHUF;
+      vld = VFLD;
+      vst = VFST;
+   }
+   else
+   {
+      vsld = VDLDS;
+      vsst = VDSTS;
+      vshuf = VDSHUF;
+      sinst = sdinsts;
+      vinst = vdinsts;
+      vld = VDLD;
+      #if defined(X86) && defined(AVX)
+         vlen = 4;
+      #else
+         vlen = 2;
+      #endif
+      vst = VDST;
+   }
+   r0 = GetReg(FLAG2TYPE(lp->vflag));
+   r1 = GetReg(FLAG2TYPE(lp->vflag));
+/*
+ * Remove loop control logic from loop, and disallow simdification if
+ * index is used in loop
+ * NOTE: could allow index ref, but then need special case of non-vectorized
+ *       op, so don't.  Can transform loops that use I to loops that use
+ *       ptr arith instead.
+ */
+   KillLoopControl(lp);
+
+#if 0
+   fprintf(stdout, "LIL before Peeling\n");
+   PrintInst(stdout, bbbase);
+#endif
+/*
+ * Loop peeling for single moving ptr alignment 
+ */
+
+#if 1
+   if (IsLoopPeelOptimizable(lp))
+      GenForceAlignedPeeling(lp);
+#endif   
+
+#if 0
+   fprintf(stdout, "LIL After Peeling\n");
+   PrintInst(stdout, bbbase);
+#endif
+/*
+ * Generate scalar cleanup loop before simdifying loop
+ */
+   GenCleanupLoop(lp);
+
+/* 
+ * Find all pointer updates, and remove them from body of loop (leaving only
+ * vectorized instructions for analysis); will put them back in loop after
+ * vectorization is done.
+ */
+
+   pi0 = FindMovingPointers(lp->blocks);
+   ippu = KillPointerUpdates(pi0, vlen);
+/* 
+ * Find inst in preheader to insert scalar init before; want it inserted last
+ * unless last instruction is a jump, in which case put it before the jump.
+ * As long as loads don't reset condition codes, this should be safe
+ * (otherwise, need to move before compare as well as jump)
+ */
+   iph = lp->preheader->ainstN;
+   if (iph && IS_BRANCH(iph->inst[0]))
+      iph = iph->prev;
+   else
+      iph = NULL;
+/*
+ * Find inst in posttail to insert reductions before; if 1st active inst
+ * is not a label, insert at beginning of block, else insert after label
+ */
+   if (lp->posttails->blk->ilab)
+   {
+      iptp = lp->posttails->blk->ainst1;
+      iptn = NULL;
+   }
+   else
+   {
+      iptp = NULL;
+      iptn = lp->posttails->blk->ainst1;
+      if (!iptn)
+         iptn = lp->posttails->blk->inst1;
+   }
+
+/*
+ * Insert scalar-to-vector initialization in preheader for vars live on entry
+ * and vector-to-scalar reduction in post-tail for vars live on exit
+ */
+   j = 0;
+   k = STiconstlookup(0);
+   for (n=lp->vscal[0],i=0; i < n; i++)
+   {
+      if (VS_LIVEIN & lp->vsflag[i+1])
+      {
+/*
+ *       ADD-updated vars set v[0] = scalar, v[1:N] = 0
+ */
+/*
+ *       Majedul: FIXME: There is a bug in the vector analysis...
+ *       It doesn't recognize sum as accumulator to init but can recognize
+ *       in reduction.
+ */
+#if 0         
+         fprintf(stderr, "LIVEIN : %s : %d\n", 
+                 STname[lp->vscal[i+1]-1], lp->vsflag[i+1]);
+#endif   
+/*
+ *       Majedul: FIXME: for accumulator init, shouldn't we need an Xor
+ *       though most of the time it works as vmoss/vmosd automatically
+ *       zerod the upper element. but what if the optimization transforms it
+ *       into reg-reg move. vmovss/vmosd for reg-reg doesn't make the upper 
+ *       element zero!!! 
+ *       NOTE: so far, it works. as temp reg normally uses a move from mem
+ *       before reg-reg move, which makes the upper element zero.
+ */
+         if (VS_ACC & lp->vsflag[i+1])
+            PrintComment(lp->preheader, NULL, iph, 
+               "Init accumulator vector for %s", STname[lp->vscal[i+1]-1]);
+         else
+            PrintComment(lp->preheader, NULL, iph, 
+               "Init vector equiv of %s", STname[lp->vscal[i+1]-1]);
+         InsNewInst(lp->preheader, NULL, iph, vsld, -r0,
+                    SToff[lp->vscal[i+1]-1].sa[2], 0);
+         if (!(VS_ACC & lp->vsflag[i+1]))
+            InsNewInst(lp->preheader, NULL, iph, vshuf, -r0, -r0, k);
+         InsNewInst(lp->preheader, NULL, iph, vst, 
+                    SToff[lp->vvscal[i+1]-1].sa[2], -r0, 0);
+      }
+/*
+ *    Output vars are known to be updated only by ADD
+ */
+      if (VS_LIVEOUT & lp->vsflag[i+1])
+      {
+         j++;
+         /*assert((lp->vsoflag[i+1] & (VS_MUL | VS_EQ | VS_ABS)) == 0);*/
+         if (lp->vsoflag[i+1] & VS_ACC || lp->vsoflag[i+1] & VS_MAX || 
+             lp->vsoflag[i+1] & VS_MIN)
+         {
+            if (lp->vsoflag[i+1] & VS_ACC)
+            {
+               iptp = PrintComment(lp->posttails->blk, iptp, iptn,
+                  "Reduce accumulator vector for %s", STname[lp->vscal[i+1]-1]);
+            }
+            else if (lp->vsoflag[i+1] & VS_MAX)
+            {
+               iptp = PrintComment(lp->posttails->blk, iptp, iptn,
+                  "Reduce max vector for %s", STname[lp->vscal[i+1]-1]);
+
+            }
+            else if (lp->vsoflag[i+1] & VS_MIN)
+            {
+               iptp = PrintComment(lp->posttails->blk, iptp, iptn,
+                  "Reduce min vector for %s", STname[lp->vscal[i+1]-1]);
+            }
+            else assert(0);
+
+            iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vld, -r0,
+                              SToff[lp->vvscal[i+1]-1].sa[2], 0); 
+            if (vld == VDLD)
+            {
+               if (lp->vsoflag[i+1] & VS_ACC)
+                  inst = VDADD;
+               else if (lp->vsoflag[i+1] & VS_MAX)
+                  inst = VDMAX;
+               else if (lp->vsoflag[i+1] & VS_MIN)
+                  inst = VDMIN;
+               else
+                  assert(0);
+
+            #if defined(X86) && defined(AVX)
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
+                                 -r0, STiconstlookup(0x3276));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,-r0,-r0,
+                                 -r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
+                                 -r0, STiconstlookup(0x3715));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,-r0,-r0,
+                                 -r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS,
+                                 SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+            #else
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
+                                 -r0, STiconstlookup(0x33));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,-r0,-r0,
+                                 -r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS,
+                                 SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+            #endif
+            }
+            else
+            {
+               if (lp->vsoflag[i+1] & VS_ACC)
+                  inst = VFADD;
+               else if (lp->vsoflag[i+1] & VS_MAX)
+                  inst = VFMAX;
+               else if (lp->vsoflag[i+1] & VS_MIN)
+                  inst = VFMIN;
+               else
+                  assert(0);
+
+            #if defined(X86) && defined(AVX)
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                 -r1, -r0, STiconstlookup(0x7654FEDC));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                 -r1, -r0, STiconstlookup(0x765432BA));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                 -r1, -r0, STiconstlookup(0x76CD3289));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSTS,
+                                 SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+            #else
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                 -r1, -r0, STiconstlookup(0x3276));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                 -r1, -r0, STiconstlookup(0x5555));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSTS,
+                                 SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+            #endif
+            }
+         }
+         else /* VS_MUL/ VS_DIV*/
+         {
+            iptp = PrintComment(lp->posttails->blk, iptp, iptn,
+                  "Reduce vector for %s", STname[lp->vscal[i+1]-1]);
+            iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vld, -r0,
+                              SToff[lp->vvscal[i+1]-1].sa[2], 0);
+            iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vsst,
+                              SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+         }
+      }
+   }
+   GetReg(-1);
+   iptp = InsNewInst(lp->posttails->blk, iptp, NULL, CMPFLAG, CF_VRED_END,
+                     0, 0);
+/*
+ * Translate body of loop
+ */
+   for (bl=lp->blocks; bl; bl = bl->next)
+   {
+      for (ip=bl->blk->ainst1; ip; ip = ip->next)
+      {
+         inst = GET_INST(ip->inst[0]);
+         if (ACTIVE_INST(inst))
+         {
+            for (i=0; i < nvinst; i++)
+            {
+/*
+ *             If the inst is scalar fp, translate to vector fp, and insist
+ *             all fp ops become vector ops
+ */
+               if (sinst[i] == inst)
+               {
+                  ip->inst[0] = vinst[i];
+/*
+ *                Change scalar ops to vector ops
+ */
+                  for (j=1; j < 4; j++)
+                  {
+                     op = ip->inst[j];
+                     if (!op) continue;
+                     else if (op < 0)
+                     {
+                        op = -op;
+                        k = FindInShortList(nfr, sregs, op);
+                        if (!k)
+                        {
+                           nfr = AddToShortList(nfr, sregs, op);
+                           k = FindInShortList(nfr, sregs, op);
+                           vregs[k-1] = GetReg(FLAG2TYPE(lp->vflag));
+                        }
+                        ip->inst[j] = -vregs[k-1];
+                     }
+                     else
+                     {
+                        if (IS_DEREF(STflag[op-1]))
+                        {
+                           k = STpts2[op-1];
+                           if (!FindInShortList(lp->varrs[0],lp->varrs+1,k))
+                           {
+                              k = FindInShortList(lp->vscal[0],lp->vscal+1,k);
+                              assert(k);
+                              ip->inst[j] = SToff[lp->vvscal[k]-1].sa[2];
+                              assert(ip->inst[j] > 0);
+                           }
+                        }
+                        else if (!FindInShortList(lp->varrs[0],lp->varrs+1,op))
+                        {
+                           k = FindInShortList(lp->vscal[0], lp->vscal+1, op);
+                           assert(k);
+                           ip->inst[j] = lp->vvscal[k];
+                        }
+                     }
+                  }
+                  break;
                }
             }
          }
@@ -3868,7 +4360,16 @@ BBLOCK *GenScalarRestartPathCode(LOOPQ *lp, int path, int vlen,BLIST *ftheads,
  * We can do better: we can check all paths whether we can apply 
  * loop control and ptr update optimization. I keep that info in
  * path->lpflag. if it is true, we can kill all the loop comtrol and 
- * ptr updates and jump back to original loop tail.
+ * ptr updates and jump back to original loop tail. 
+ *
+ * FIXED: JUMP back to tail will not work if tail contains other statements
+ * than just the ptr and lc update!!!! 
+ * HERE HERE, to solve the issue add LOOP_TEST for all the cases before 
+ * loop control..... 
+ * Test Case : modified asum: 
+ *       if (x < 0.0)
+ *          x = -x;
+ *       sum += x;
  *
  */
    ip0 = bp->instN; /* aisnt not considered CMPFLAG and COMMENT*/
@@ -3880,7 +4381,7 @@ BBLOCK *GenScalarRestartPathCode(LOOPQ *lp, int path, int vlen,BLIST *ftheads,
        */
       assert(lp->tails->blk && !lp->tails->next);
       bpi = lp->tails->blk;
-
+#if 0
       if (bpi->ainst1->inst[0] == LABEL)
          cflag = bpi->ainst1->inst[1];
       else
@@ -3889,7 +4390,17 @@ BBLOCK *GenScalarRestartPathCode(LOOPQ *lp, int path, int vlen,BLIST *ftheads,
          cflag = STlabellookup(ln);
          InsNewInst(bpi, NULL, bp->ainst1, LABEL, cflag,0,0);
       }
-
+#endif
+/*
+ *    We need to jump back before the ptr update but after any other 
+ *    instruction. So, insert LABEL accordingly.
+ */
+      ip = FindCompilerFlag(bpi, CF_LOOP_PTRUPDATE);
+      if (!ip) ip = FindCompilerFlag(bpi, CF_LOOP_UPDATE);
+      assert(ip);
+      sprintf(ln,"%s_LOOP_TEST",STname[lp->body_label-1]);
+      cflag = STlabellookup(ln);
+      InsNewInst(bpi, NULL, ip, LABEL, cflag,0,0);
    }
    else
    {
@@ -4540,8 +5051,9 @@ int SpecSIMDLoop(void)
 #if 0
    fprintf(stdout, " LIL AFTER SSV LOOP \n");
    PrintInst(stdout, bbbase);
-   fprintf(stdout, " SYMBOL TABLE \n");
-   PrintST(stdout);
+   //fprintf(stdout, " SYMBOL TABLE \n");
+   //PrintST(stdout);
+   exit(0);
 #endif
 /*
  * It's time to kill the data structure for paths. 
@@ -4629,6 +5141,7 @@ int SpecSIMDLoop(void)
       fprintf(stdout, "Final SSV \n");
       PrintInst(stdout, bbbase);
       PrintST(stdout);
+      exit(0);
 #endif 
 
    return(0);
@@ -4649,7 +5162,13 @@ short *UpdateBlkWithNewVar(BBLOCK *bp0, int vid, short *sp)
 /*
  * allocate space for newvars
  */
+#if 0
    newvars = calloc(sp[0]+1, sizeof(short));
+#else
+   newvars = malloc(sizeof(short)*(sp[0]+1));
+   for (i=0; i < (sp[0]+1); i++)
+      newvars[i] = 0;
+#endif
 /*
  * Findout the first set of var, update the destination and update all later
  * use of the var as dest/src
@@ -4661,34 +5180,39 @@ short *UpdateBlkWithNewVar(BBLOCK *bp0, int vid, short *sp)
       for (ip = bp0->ainst1, j=1; ip; ip=ip->next, j++)
       {
          op = ip->inst[1];
-         if (op <= 0) continue; /* reg, no need to check */
-
-         k = SToff[op-1].sa[1]; /* index of original ST */
-         /*fprintf(stderr, "%d: %d\n", j, k);*/
-         if (k == sv)
+         if (op > 0)
          {
-            /*fprintf(stderr, " got 1st set for %s at inst %d\n", 
-                    STname[sv-1], j);*/
-            strnvar = malloc(sizeof(char)*(strlen(STname[sv-1])+4));
-            sprintf(strnvar,"%s_%d",STname[sv-1],vid);
-            nv = InsertNewLocal(strnvar,STflag[sv-1]);
-            newvars[i] = nv; /* update the param */
-            /*ip->inst[1] = nv;*/
-            ip->inst[1] = SToff[nv-1].sa[2];
-            break;
+            k = SToff[op-1].sa[1]; /* index of original ST */
+            /*fprintf(stderr, "%d: %d\n", j, k);*/
+            if (k == sv)
+            {
+               /*fprintf(stderr, " got 1st set for %s at inst %d\n", 
+                       STname[sv-1], j);*/
+               strnvar = malloc(sizeof(char)*(strlen(STname[sv-1])+4));
+               sprintf(strnvar,"%s_%d",STname[sv-1],vid);
+               nv = InsertNewLocal(strnvar,STflag[sv-1]);
+               newvars[i] = nv; /* update the param */
+               /*ip->inst[1] = nv;*/
+               ip->inst[1] = SToff[nv-1].sa[2];
+               break;
+            }
          }
       }
       /* findout the use of this var in remaining instruction */
       if (!ip) continue;
-      for ( ;ip; ip=ip->next)
+      for (ip=ip->next; ip; ip=ip->next)
       {
          for (j=1; j < 4; j++)
          {
-            k = SToff[ip->inst[j]-1].sa[1]; /* index of original ST */
-            if (k == sv)
+            op = ip->inst[j];
+            if (op > 0)
             {
-               /*ip->inst[j] = nv;*/
-               ip->inst[j] = SToff[nv-1].sa[2];
+               k = SToff[op-1].sa[1]; /* index of original ST */
+               if (k == sv)
+               {
+                  /*ip->inst[j] = nv;*/
+                  ip->inst[j] = SToff[nv-1].sa[2];
+               }
             }
          }
       }
@@ -4911,7 +5435,37 @@ short *FindVarsSetInBlock(BBLOCK *bp0)
    return sp;
 }
 
-void RedundantVectorAnalysis(LOOPQ *lp)
+void MovInstFromBlkToBlk(BBLOCK *fromblk, BBLOCK *toblk)
+/*
+ * delete all inst and move inst except JMP and LABEL from that blk to a another
+ * blk (at the end but before JMP). 
+ * HERE HERE, don't consider conditional branch yet
+ */
+{
+   BBLOCK *bp;
+   INSTQ *ip, *ip0;
+
+   bp = toblk;
+   ip0 = toblk->instN;
+   if (ip0->inst[0] == JMP) ip0 = ip0->prev; /* JMP, keep that at the end */
+   
+   ip = fromblk->inst1; /* inst to be moved */
+
+   while (ip)
+   {
+      if (ip->inst[0] != JMP && ip->inst[0] != LABEL) 
+      {
+         ip0 = InsNewInst(bp, ip0, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
+                          ip->inst[3]);
+         ip = RemoveInstFromQ(ip);
+      }
+      else
+         /*ip = ip->next;*/
+         ip = RemoveInstFromQ(ip); /* delete all */
+   }
+}
+
+void RedundantScalarComputation(LOOPQ *lp)
 {
    int i, j, k, n, N;
    int type;
@@ -5032,11 +5586,6 @@ void RedundantVectorAnalysis(LOOPQ *lp)
  * 1) which is set inside if/else blks
  * 2) which is liveout at the exit of the block
  */
-#if 0   
-   if (ifblks) ifsetsp = FindVarsCMOVNeeded(ifblks->blk);
-   if (elseblks) elsetsp = FindVarsCMOVNeeded(elseblks->blk);
-#endif
-
    if (ifblks) icmvars = FindVarsCMOVNeeded(ifblks->blk);
    if (elseblks) ecmvars = FindVarsCMOVNeeded(elseblks->blk);
 /*
@@ -5046,61 +5595,26 @@ void RedundantVectorAnalysis(LOOPQ *lp)
  */
    if(ifblks) inewvars = UpdateBlkWithNewVar(ifblks->blk, 1, isetvars);
    if (elseblks) enewvars = UpdateBlkWithNewVar(elseblks->blk, 2, esetvars);
-/*
- * copy the if/else block at end of split block
- */
-   bp = splitblks->blk;
-   ip0 = splitblks->blk->instN;
-   if (ip0->inst[0] == JMP) ip0 = ip0->prev;
-/*
- * copy if blks
- */
-   ip = ifblks->blk->inst1;
-
-   while (ip)
-   {
-      if (ip->inst[0] != JMP && ip->inst[0] != LABEL) 
-      {
-         ip0 = InsNewInst(bp, ip0, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
-                          ip->inst[3]);
-         ip = RemoveInstFromQ(ip);
-      }
-      else
-         /*ip = ip->next;*/
-         ip = RemoveInstFromQ(ip); /* delete all */
-   }
-/*
- * copy else blk if exists
- */
-   if (elseblks)
-   {
-      ip = elseblks->blk->inst1;
-      while (ip)
-      {
-         if (ip->inst[0] != JMP && ip->inst[0] != LABEL) 
-         {
-            ip0 = InsNewInst(bp, ip0, NULL, ip->inst[0], ip->inst[1], 
-                                 ip->inst[2], ip->inst[3]);
-            ip = RemoveInstFromQ(ip);
-         }
-         else
-            /*ip = ip->next;*/
-            ip = RemoveInstFromQ(ip); /* delete all */
-      }
-   }
-
 
 #if 0
+   sp = isetvars;
    fprintf(stderr, "vars set [ifblk]: ");
-   for (N=ifsetsp[0], i=1; i <=N; i++)
-      fprintf(stderr, "%s[%d] ", STname[ifsetsp[i]-1], ifsetsp[i]-1);
-   fprintf(stderr, "\n");
-   
-   fprintf(stderr, "vars set [elseblk]: ");
-   for (N=elsetsp[0], i=1; i <=N; i++)
-      fprintf(stderr, "%s[%d] ", STname[elsetsp[i]-1], elsetsp[i]-1);
+   for (N=sp[0], i=1; i <=N; i++)
+      fprintf(stderr, "%s[%d] ", STname[sp[i]-1], sp[i]-1);
    fprintf(stderr, "\n");
 #endif
+
+/*
+ * Update the conditional branch of split blk with VCMPW updating a mask. 
+ * Conditional branch is deleted.
+ */
+   mask = RemoveBranchWithMask(splitblks->blk);  
+/*
+ * copy the if/else block at end of split block but before JMP, if any
+ */
+   if (ifblks) MovInstFromBlkToBlk(ifblks->blk, splitblks->blk);
+   if (elseblks) MovInstFromBlkToBlk(elseblks->blk, splitblks->blk);
+
 /*
  * find out the union of reguired vars form if/else blks
  * NOTE: avoid creating new bvec rather use tmp
@@ -5124,40 +5638,30 @@ void RedundantVectorAnalysis(LOOPQ *lp)
    fprintf(stderr, "\n");
 #endif
 /*
- * All vars set in if/else blk but not liveout in each blk
+ * Figure out which var is in which blk
  */
-  N = sp[0]; 
-  vpos = malloc(sizeof(int)*(N+1));
-  vpos[0] = N;
-
-  for (i = 1 ; i <= N; i++)
-  {
-      for (n=icmvars[0], j=1; j <= n ;j++) 
-         if (sp[i] == icmvars[j])
-            break;
-      if (j != (n+1))
+   N = sp[0]; 
+   vpos = malloc(sizeof(int)*(N+1));
+   vpos[0] = N;
+   
+   for (i=1; i <= N; i++)
+   {
+      if (FindInShortList(icmvars[0], icmvars+1, sp[i]))
       {
-         if (elseblks) /* any elseblk at all? */
+         if (elseblks)
          {
-            for (n=ecmvars[0], j=1; j <= n ;j++) 
-               if (sp[i] == ecmvars[j])
-                  break; 
-            if (j != (n+1)) /* both in if and else*/
-            {
+            if (FindInShortList(ecmvars[0], ecmvars+1, sp[i]))
                vpos[i] = 3;
-            }
             else
-               vpos[i] = 1; /* only in if blks */
+               vpos[i] = 1;
          }
          else
-            vpos[i] = 1; /* only in if blks */
+            vpos[i] = 1;
       }
-      else /* not in if blks, must be in else blks */
-      {
+      else
          vpos[i] = 2;
-      }
-  }
-   
+   }
+
 #if 0
    fprintf(stderr, "vars set [union]: ");
    for (N=sp[0], i=1; i <=N; i++)
@@ -5191,7 +5695,6 @@ void RedundantVectorAnalysis(LOOPQ *lp)
  * NOTE: We should merge everything into single blk so that other optimization
  * can be performed, like: AE 
  */
-   mask = RemoveBranchWithMask(splitblks->blk);
             
    bp = splitblks->blk;
    ip = bp->ainstN;
@@ -5233,11 +5736,11 @@ void RedundantVectorAnalysis(LOOPQ *lp)
             ip = InsNewInst(bp, ip, NULL, fld, -freg0, SToff[sp[i]-1].sa[2], 0);
             ip = InsNewInst(bp, ip, NULL, fld, -freg1, SToff[nv1-1].sa[2], 0);
             ip = InsNewInst(bp, ip, NULL, fld, -freg2, SToff[mask-1].sa[2], 0);
-            ip = InsNewInst(bp, ip, NULL, cmov2, -freg0, -freg1, -freg2 );
+            ip = InsNewInst(bp, ip, NULL, cmov1, -freg0, -freg1, -freg2 );
             ip = InsNewInst(bp, ip, NULL, fst, SToff[sp[i]-1].sa[2], -freg0, 0);
             GetReg(-1);
             break;
-         case 2:  /* else blks*/
+         case 2:  /* else blks.... only else possible??? */
             /*bp = elseblks->blk;*/
 /*
  *          findout corrsponding new vars
@@ -5289,71 +5792,417 @@ void RedundantVectorAnalysis(LOOPQ *lp)
          default: ;
      }
    }
-/*
- * merge if and else block into a single block, preserving prog order.
- * We will move all instruction from if/else blk and adding it after split block
- * Hopefully, deadblock elemination will indentify and delete the blk structure.
- */
-/*
- * add instruction at the end of the splitblks
- */
-#if 0
-   ip0 = splitblks->blk->instN;
-   if (ip0->inst[0] == JMP) ip0 = ip0->prev;
-/*
- * copy if blks
- */
-   ip = ifblks->blk->inst1;
-
-   while (ip)
-   {
-      if (ip->inst[0] != JMP && ip->inst[0] != LABEL) 
-      {
-         ip0 = InsNewInst(bp, ip0, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
-                          ip->inst[3]);
-         ip = RemoveInstFromQ(ip);
-      }
-      else
-         /*ip = ip->next;*/
-         ip = RemoveInstFromQ(ip); /* delete all */
-   }
-/*
- * copy else blk if exists
- */
-   if (elseblks)
-   {
-      ip = elseblks->blk->inst1;
-      while (ip)
-      {
-         if (ip->inst[0] != JMP && ip->inst[0] != LABEL) 
-         {
-            ip0 = InsNewInst(bp, ip0, NULL, ip->inst[0], ip->inst[1], 
-                                 ip->inst[2], ip->inst[3]);
-            ip = RemoveInstFromQ(ip);
-         }
-         else
-            /*ip = ip->next;*/
-            ip = RemoveInstFromQ(ip); /* delete all */
-      }
-   }
-#endif
 }
 
-void ApplyCFGOpt(int nopt)
+int CheckMaxMinConstraints(BLIST *scope, short var, short label)
+/*
+ * 
+ */
 {
-   int i;
-   int changes;
+   int i, j;
+   int isetcount, osetcount;
+   BLIST *bl;
+   BBLOCK *bp;
+   INSTQ *ip;
+   enum inst st;
 
-   i = 0;
-   while (changes && (i <= nopt))
+   i = FLAG2TYPE(STflag[var-1]);
+   if (i == T_FLOAT)
+      st = FST;
+   else if (i == T_DOUBLE)
+      st = FSTD;
+   else if (i == T_INT)
+      st = ST;
+   else
+      fko_error(__LINE__,"Unknown type=%d, file=%s", i, __FILE__);
+
+#if 0   
+   switch(i)
    {
-      changes = 0;
-      changes = DoUselessJumpElim();
-      /*changes += DoBranchChaining();*/
-      i++;
+   case T_FLOAT:
+      st = FST;
+      break;
+   case T_DOUBLE:
+      st = FSTD;
+      break;
+   case T_INT:
+      st = ST;
+      break;
+   default:;
    }
-   fprintf(stderr, "opt done = %d\n", i);
+#endif   
+   
+/*
+ * check in the if blk, found by label. var should be set only once
+ */
+   isetcount = 0;
+   osetcount = 0;
 
+   for (bl = scope; bl; bl=bl->next)
+   {
+      bp = bl->blk;
+      ip = bp->ainst1;
+      if (ip->inst[0] == LABEL && ip->inst[1] == label)
+      {
+         for ( ; ip; ip=ip->next)
+         {
+            /*fprintf(stderr," %s %d \n", instmnem[ip->inst[0]], ip->inst[1]);*/
+/*
+ *          Figure out when to use STpts2 and SToff[].sa[2] ??? 
+ */
+            if (ip->inst[0] == st && STpts2[ip->inst[1]-1] == var)
+               isetcount++;
+         }
+      }
+      else
+      {
+         for ( ; ip; ip=ip->next)
+         {
+            if (ip->inst[0] == st && STpts2[ip->inst[1]-1] == var)
+               osetcount++;
+         }
+      }
+   }
+/*
+ * condition to be max is: update only once inside if-blk, not in other blk
+ */
+   if (isetcount == 1 && !osetcount)
+      return (1);
+
+   return (0);
+}
+
+int VarIsMax(BLIST *scope, short var)
+/*
+ * Figure out whether a var is Max varibale
+ * shifted in appropriate location later.
+ */
+{
+   int i, j;
+   short reg0, reg1, regv;
+   enum inst inst, ld, st, br, cmp;
+   BBLOCK *bp;
+   INSTQ *ip, *ip0, *ip1;
+   BLIST *bl;
+
+   i = FLAG2TYPE(STflag[var-1]);
+   switch(i)
+   {
+   case T_FLOAT:
+      ld = FLD;
+      st = FST;
+      cmp = FCMP;
+      break;
+   case T_DOUBLE:
+      ld = FLDD;
+      st = FSTD;
+      cmp = FCMPD;
+      break;
+   case T_INT:
+      ld = LD;
+      st = ST;
+      cmp = CMP;
+      break;
+   default:
+   case T_VFLOAT:
+   case T_VDOUBLE:
+      fko_error(__LINE__,"Unknown type=%d, file=%s. Should be done before Vect",
+                i, __FILE__);
+   }
+
+   for (bl = scope; bl; bl = bl->next)
+   {
+      bp = bl->blk;
+      for (ip = bp-> ainst1; ip; ip = ip->next)
+      {
+/*
+ *       FORMAT: cmp fcc, reg0, reg1
+ *               JLT/JGT PC, fcc, LABEL
+ *       There would be exactly two ld of 2 vars/const
+ */
+         if (IS_COND_BRANCH(ip->inst[0]) && (ip->prev->inst[0]== cmp))
+         {
+            reg0 = ip->prev->inst[2];
+            reg1 = ip->prev->inst[3];
+            br = ip->inst[0];
+
+            ip0 = ip->prev->prev->prev;     /* 1st ld */
+            assert((ip0->inst[0] == ld));
+            ip1 = ip->prev->prev;           /* 2nd ld */
+            assert((ip1->inst[0] == ld));
+/*
+ *          for load, inst[2] must be a var 
+ */
+            if (STpts2[ip0->inst[2]-1] == var)
+               regv = ip0->inst[1];
+            else if (STpts2[ip1->inst[2]-1] == var)
+               regv = ip1->inst[1];
+            else 
+               regv = 0;
+            if ( ((regv == reg0) && (br == JLT)) ||  
+                 ((regv == reg1) && (br == JGT)) )
+            {
+               /* check for single set inside if-blk and not set where else*/
+               if (CheckMaxMinConstraints(scope, var, ip->inst[3]))
+                  return (1);
+            }
+         }
+      }
+   }
+   return (0);
+}
+
+int VarIsMin(BLIST *scope, short var)
+/*
+ * Figure out whether a var is Min varibale
+ * shifted in appropriate location later.
+ * NOTE: this function is same as the VarIsMax, it can be merged with that
+ */
+{
+   int i, j;
+   short reg0, reg1, regv;
+   enum inst inst, ld, st, br, cmp;
+   BBLOCK *bp;
+   INSTQ *ip, *ip0, *ip1;
+   BLIST *bl;
+
+   i = FLAG2TYPE(STflag[var-1]);
+   switch(i)
+   {
+   case T_FLOAT:
+      ld = FLD;
+      st = FST;
+      cmp = FCMP;
+      break;
+   case T_DOUBLE:
+      ld = FLDD;
+      st = FSTD;
+      cmp = FCMPD;
+      break;
+   case T_INT:
+      ld = LD;
+      st = ST;
+      cmp = CMP;
+      break;
+   default:
+   case T_VFLOAT:
+   case T_VDOUBLE:
+      fko_error(__LINE__,"Unknown type=%d, file=%s. Should be done before Vect",
+                i, __FILE__);
+   }
+
+   for (bl = scope; bl; bl = bl->next)
+   {
+      bp = bl->blk;
+      for (ip = bp-> ainst1; ip; ip = ip->next)
+      {
+/*
+ *       FORMAT: cmp fcc, reg0, reg1
+ *               JLT/JGT PC, fcc, LABEL
+ *       There would be exactly two ld of 2 vars/const
+ */
+         if (IS_COND_BRANCH(ip->inst[0]) && (ip->prev->inst[0]== cmp))
+         {
+            reg0 = ip->prev->inst[2];
+            reg1 = ip->prev->inst[3];
+            br = ip->inst[0];
+
+            ip0 = ip->prev->prev->prev;     /* 1st ld */
+            assert((ip0->inst[0] == ld));
+            ip1 = ip->prev->prev;           /* 2nd ld */
+            assert((ip1->inst[0] == ld));
+/*
+ *          for load, inst[2] must be a var 
+ */
+            if (STpts2[ip0->inst[2]-1] == var)
+               regv = ip0->inst[1];
+            else if (STpts2[ip1->inst[2]-1] == var)
+               regv = ip1->inst[1];
+            else 
+               regv = 0;
+/*
+ *          NOTE: cbr is opposit from Max
+ */
+            if ( ((regv == reg0) && (br == JGT)) ||  
+                 ((regv == reg1) && (br == JLT)) )
+            {
+               /* check for single set inside if-blk and not set where else*/
+               if (CheckMaxMinConstraints(scope, var, ip->inst[3]))
+                  return (1);
+            }
+         }
+      }
+   }
+   return (0);
+}
+
+short *FindAllScalarVars(BLIST *scope)
+{
+   struct ptrinfo *pbase, *p;
+   short *sp, *s, *scal;
+   int i, j, k, n, N;
+   int iv;
+   BLIST *bl;
+   extern int FKO_BVTMP;
+   extern short STderef;
+/*
+ * Find variable accessed in the path and store it in path
+ */
+   /*iv = NewBitVec(32);*/
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
+   iv = FKO_BVTMP;
+   SetVecAll(iv, 0);
+
+   if (!CFUSETU2D)
+   {
+      CalcInsOuts(bbbase);
+      CalcAllDeadVariables();
+   }
+   for (bl=scope; bl; bl=bl->next)
+   {
+      iv = BitVecComb(iv, iv, bl->blk->uses, '|');
+      iv = BitVecComb(iv, iv, bl->blk->defs, '|');
+   }
+   
+/*
+ * right now, skip all the regs from uses, defs
+ */
+   for (i=0; i < TNREG; i++)
+      SetVecBit(iv, i, 0);
+   SetVecBit(iv, STderef+TNREG-1, 0);
+
+/*
+ * Skip all non-fp variables, valid entires upto n (included) 
+ * NOTE: No action for INT var in vector but need to consider complex case 
+ * with index var update later!!!
+ * NOTE: As our vector path never uses/sets integer variable (except index)
+ * we don't have to worry about this in Backup/Recovery stage. So, we just 
+ * skip int here.
+ */
+   sp = BitVec2Array(iv, 1-TNREG);
+   for (N=sp[0],n=0,i=1; i <= N; i++)
+   {
+      if (IS_FP(STflag[sp[i]-1]))
+         sp[n++] = sp[i];
+   }   
+
+/*
+ * Moving pointer analysis for path
+ */
+   pbase = FindMovingPointers(scope);
+   for (N=0, p=pbase; p; p = p->next)
+      if (IS_FP(STflag[p->ptr-1]))
+         N++;
+/*
+ * Copy all moving pointers to varrs
+ */
+   s = malloc(sizeof(short)*(N+1));
+   assert(s);
+   s[0] = N;
+   for (j=0,i=1,p=pbase; p; p = p->next)
+      if (IS_FP(STflag[p->ptr-1]))
+         s[i++] = p->ptr;
+
+   for (k=0,i=1; i < n; i++) /* BUG: why n is included??? changed to < n */
+   {
+      for (j=1; j <= N && s[j] != sp[i]; j++);
+      if (j > N)
+      {
+         sp[k++] = sp[i]; /*sp elem starts with 0 pos*/
+      }
+   }
+   n = k;   /* n is k+1 */
+
+/*
+ * Store the scals for path->scals. we will update the flags later. 
+ */
+   scal = malloc(sizeof(short)*(n+1));
+   assert(scal );
+   scal[0] =  n;
+   for (i=1; i <= n; i++)
+      scal[i] = sp[i-1];
+   
+   if (s) free(s);
+   if (sp) free(sp);
+
+   return scal;
+
+}
+
+void UpdateOptLoopWithMaxMinVars(LOOPQ *lp)
+{
+   int i, j, N, n, m;
+   short *scal, *spmax, *spmin;
+/*   
+   InvalidateLoopInfo();
+   bbbase = NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   FindLoops();
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   
+   lp = optloop; 
+*/
+   scal = FindAllScalarVars(lp->blocks);   
+   N = scal[0];
+   spmax = malloc(sizeof(short)*(N+1));
+   assert(spmax);
+   spmin = malloc(sizeof(short)*(N+1));
+   assert(spmin);
+
+   for (i=1, m=0, n=0; i <= N; i++)
+   {
+      /*fprintf(stderr, " var = %s(%d)\n",STname[scal[i]-1], scal[i] );*/
+      if (VarIsMax(lp->blocks, scal[i]))
+      {
+         spmax[++m] = scal[i];
+         fprintf(stderr, " Max var = %s\n",STname[scal[i]-1] );
+      }
+      else if (VarIsMin(lp->blocks, scal[i]))
+      {
+         spmin[++n] = scal[i];
+         fprintf(stderr, " Min var = %s\n",STname[scal[i]-1] );
+      }
+   }
+/*
+ * Update with max vars
+ */
+   if (m)
+   {
+      if (lp->maxvars) free(lp->maxvars);
+      lp->maxvars = malloc(sizeof(short)*(m+1));
+      assert(lp->maxvars);
+      lp->maxvars[0] = m;
+      for (i=1; i <=m ; i++)
+         lp->maxvars[i] = spmax[i];
+   }
+   else
+   {
+      if (lp->maxvars) free(lp->maxvars);
+      lp->maxvars = NULL;
+   }
+/*
+ * update with min vars
+ */
+   if (n)
+   {
+      if (lp->minvars) free(lp->minvars);
+      lp->minvars = malloc(sizeof(short)*(n+1));
+      assert(lp->minvars);
+      lp->minvars[0] = n;
+      for (i=1; i <=n ; i++)
+         lp->minvars[i] = spmin[i];
+   }
+   else
+   {
+      if (lp->minvars) free(lp->minvars);
+      lp->minvars = NULL;
+   }
+/*
+ * free all temporaries
+ */
+   if (scal) free(scal);
+   if (spmax) free(spmax);
+   if (spmin) free(spmin);
 }
 
 void VectorRedundantComputation()
@@ -5363,8 +6212,10 @@ void VectorRedundantComputation()
  * compute both blocks and use a select operation to select the correct one.
  */
 {
-   int i, j, N;
+   int i, j, N, n;
    short *sc, *sf;
+   short *scal;
+   short *sp;
    LOOPQ *lp;
 
    INSTQ *ippu;
@@ -5374,59 +6225,11 @@ void VectorRedundantComputation()
 
    lp = optloop;
 
-#if 0
 /*
- * Find paths from optloop
- */
-   CalcInsOuts(bbbase);
-   CalcAllDeadVariables();
-   FindLoopPaths(lp);
-#if 0
-   fprintf(stdout, "Symbol Table \n");
-   PrintST(stdout);
-#endif
-
-/*
- * NOTE: Loop control can always be killed assuming optloop is always
- * contructed by loop statement in HIL
+ * Redundant Scalar Computation Transformation using CMOV 
  */
    KillLoopControl(lp);
-   CalcInsOuts(bbbase);
-   CalcAllDeadVariables();
-
-/*
- * apply analysis for each path
- * NOTE: Analysis needs to be performed on original blocks (not on duplicated)
- * because we will need the data flow anlysis (uses/defs,livein/liveout) also.
- */
-   assert(PATHS);
-   for (i=0; i < NPATH; i++)
-   {
-      PathFlowVectorAnalysis(PATHS[i]);
-   }
-#if 1
-   fprintf(stderr, "\nFigure out all vars in each path\n");
-   fprintf(stderr, "================================\n");
-
-   for (i = 0; i < NPATH; i++)
-   {
-      fprintf(stderr, "PATH : %d\n", i);
-      fprintf(stderr, "Control Flag: %d\n", PATHS[i]->lpflag);
-      fprintf(stderr, "FP SCALAR (FLAG) : ");
-      sc = PATHS[i]->scal;
-      sf = PATHS[i]->sflag;
-      for (j=1, N=sc[0]; j <= N; j++ )
-      {
-         fprintf(stderr,"%s(%d) ",STname[sc[j]-1], sf[j]);
-      }
-      fprintf(stderr,"\n");
-   }
-#endif
-
-#endif
-
-   KillLoopControl(lp);
-   RedundantVectorAnalysis(lp);
+   RedundantScalarComputation(lp);
 
 #if 1
    pi0 = FindMovingPointers(lp->tails);
@@ -5439,12 +6242,8 @@ void VectorRedundantComputation()
    InvalidateLoopInfo();
    bbbase = NewBasicBlocks(bbbase);
    CheckFlow(bbbase, __FILE__, __LINE__);
-   
-   //ApplyCFGOpt(10);
-   
    FindLoops();
    CheckFlow(bbbase, __FILE__, __LINE__);
-   
 #endif
 
    lp = optloop;
@@ -5480,10 +6279,10 @@ void VectorRedundantComputation()
 #endif
 
 #if 0 
-   fprintf(stdout, "LIL Before Vectorization\n");
+   fprintf(stdout, "LIL Before Vectorization: SRC \n");
    PrintInst(stdout,bbbase);
-   ShowFlow("cfg.dot",bbbase); /* checked for scalar, it's ok */
-   exit(0);
+   //ShowFlow("cfg-sc.dot",bbbase); /* checked for scalar, it's ok */
+   //exit(0);
 #endif
 
 /*
@@ -5502,8 +6301,9 @@ void VectorRedundantComputation()
 #endif
   
 #if 1 
- assert(!SpeculativeVectorAnalysis());
+   assert(!SpeculativeVectorAnalysis());
 #endif
+
 
 /*
  * restate mvptr and loop control 
@@ -5516,17 +6316,16 @@ void VectorRedundantComputation()
  assert(!VectorizeStage3(0,0));
 #endif
 
- assert(!SimdLoop(lp));
+ assert(!RedundantVectorTransform(lp));
 #if 0 
-   fprintf(stdout, "LIL\n");
+   fprintf(stdout, "LIL-Vector \n");
    PrintInst(stdout,bbbase);
-   ShowFlow("cfg.dot",bbbase); /* checked for scalar, it's ok */
-   exit(0);
+   //ShowFlow("cfg-vrc.dot",bbbase); /* checked for scalar, it's ok */
+   //exit(0);
 #endif
  UpdateNamedLoopInfo();
 
 #if 0
-  
    UnrollCleanup(optloop,1);
    fprintf(stdout, "LIL After Vectorization \n");
    PrintInst(stdout,bbbase);
@@ -5539,6 +6338,5 @@ void VectorRedundantComputation()
    FindLoops();
    CheckFlow(bbbase, __FILE__, __LINE__);
 #endif
-
 }
 
