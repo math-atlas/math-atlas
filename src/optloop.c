@@ -683,6 +683,10 @@ static void ForwardLoop(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
 /*
  * This loop only used when index value is referenced inside loop.
  * NOTE: presently assumes constant lp->inc if unroll > 1
+ *
+ * NOTE: Forward Loop actually works for both NINC and PINC format, at least
+ * for cleanup and loop peeling. 
+ *
  */
 {
    short r0, r1;
@@ -724,7 +728,13 @@ static void ForwardLoop(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
       fprintf(stderr, "\nHaven't consider constant end for forward loop yet\n");
       assert(!IS_CONST(STflag[lp->end-1]));
    }
-
+/*
+ * Majedul: this is when used for main loop (in case of cleanup and peeling
+ * unroll=1). I have consider that for PINC, need to check whether it works 
+ * for NINC also!!! for iamax and for main loop, only runs this for PINC 
+ * 
+ * FIXME: consider MAIN LOOP with vector/unroll and NINC format...
+ */
    if (unroll > 1 && !IS_CONST(STflag[lp->end-1]))
    {
       ip = ip->next;
@@ -751,7 +761,9 @@ static void ForwardLoop(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
       ip = ip->next;
       ip->next = NewInst(NULL, NULL, NULL, MOV, -REG_SP, -REG_SP, 0);
    }
- 
+/*
+ * NOTE: this loop update and loop test both work for NINC and PINC loop
+ */ 
    *ipupdate = ip = NewInst(NULL, NULL, NULL, LD, -r0, SToff[lp->I-1].sa[2], 0);
    if (IS_CONST(STflag[lp->inc-1]))
    {
@@ -801,6 +813,10 @@ static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
  * Do simple N..0 loop.
  * NOTE: later specialize to use loop reg on PPC
  *       Assumes inc = 1
+ *
+ * NOTE: it works for all the cases: NINC, PINC. It uses LC optimization.
+ * But if index ref is used inside the loop, it can't be used as it changes 
+ * the index value for optimization. Then, we need to use ForwardLC
  */
 {
    INSTQ *ip;
@@ -816,7 +832,7 @@ static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
    r0 = GetReg(T_INT);
    r1 = GetReg(T_INT);
 /*
- * Loop already in SimpleLC form (i = N, 0, -1)
+ * Loop already in SimpleLC form (i = N, 0, -1) 
  */
    if (lp->flag & L_NSIMPLELC_BIT)
    {
@@ -944,7 +960,9 @@ void SetLoopControlFlag(LOOPQ *lp, int NeedKilling)
  * Majedul: As this checking is performed sevaral times, I made it a function
  * KNOWN ISSUE: lp->blocks is changed but not updated yet. There is a inconsis-
  * tancy. We need to update the loop control flags once before changing the 
- * loop structure. 
+ * loop structure. This is done for speculative vector in the analysis.
+ * NOTE: The main logic here is that even PINC can be made simpleLC if index 
+ * ref is not used inside loop. 
  */
 {
    ILIST *il;
@@ -952,19 +970,43 @@ void SetLoopControlFlag(LOOPQ *lp, int NeedKilling)
 
    if (NeedKilling)
       KillLoopControl(lp);
+
+/*
+ * NOTE: L_FORWARDLC_BIT and L_SIMPLELC_BIT are one time decision, it is true
+ * for every loop (main, cleanup and peel). as cleanup and peel loop control
+ * (lpn) is created with original lp flag, both two pass through.
+ * 
+ * L_FORWARDLC: loop may be NINC/PINC but can't be optimized as there is index
+ *              ref inside loop. forward loop works both for PINC and NINC
+ * 
+ * L_SIMPLELC: Loop may be inherently simple (L_NSIMPLELC_BIT) or can be
+ *             optimizable (as no index ref) and use LC optimization.
+ *
+ * L_NSIMPLELC: this flag means loop is inherently simple format [N,0,-1].
+ *              Keep in mind that it is one time decision. Adding loop
+ *              peeling may create a NSIMPLELC into ~NSIMPLELC. So, we need
+ *              to recheck this for every lp control.
+ *
+ */
    if (AlreadySimpleLC(lp))
       lp->flag |= (L_NSIMPLELC_BIT | L_SIMPLELC_BIT);
-/*
- * if we've not yet determined what kind of loop control to use, do so
- */
+   else   
+      lp->flag &= ~L_NSIMPLELC_BIT;
+   
    if (!(lp->flag & (L_FORWARDLC_BIT | L_SIMPLELC_BIT)))
    {
 /*
- *    Majedul: FIXME: in SSV, we check only the vector path. for iamax, vector
+ *    Majedul: in SSV, we check only the vector path. for iamax, vector
  *    path doesn't contain Index ref. Hence, for optloop the loop control is 
- *    optimized where as the clean up doesn't follow it. 
+ *    optimized where as the clean up doesn't follow it.
+ *    I fixed this issue using existing L_IREF_BIT flag.
+ *    
+ *    HERE HERE, when this is true, it true for all loop. But what happens if
+ *    we create transformation which changes the scenario!!!
  */
-      
+      /*fprintf(stderr, "\n\n\nlp->end = %s, lp->beg = %s \n", 
+              STname[lp->end-1], STname[lp->beg-1]);*/
+
 /*
  *    if SSV is used, LIREF_BIT is set if index is refered in loop
  */
@@ -983,10 +1025,20 @@ void SetLoopControlFlag(LOOPQ *lp, int NeedKilling)
          }
          else isLcOpt = 1;
       }
-      if (!AlreadySimpleLC(lp) && !isLcOpt)
+/*
+ *    We have already check the NSIMPLELC, if it is true, we will not enter 
+ *    into this condition.
+ */
+      /*if (!AlreadySimpleLC(lp) && !isLcOpt)*/
+      if (!isLcOpt)
         lp->flag |= L_FORWARDLC_BIT;
       else lp->flag |= L_SIMPLELC_BIT;
+      
+      /*fprintf(stderr, "flag: %d, SIMPLELC = %d, FORWARDLC = %d\n\n\n", 
+            lp->flag, lp->flag & L_SIMPLELC_BIT, lp->flag & L_FORWARDLC_BIT);*/
+              
    }
+
 }
 
 
@@ -1250,7 +1302,7 @@ void GenCleanupLoop(LOOPQ *lp)
  * Majedul: This block is specially for cleanup loop, only when the program
  * will not enter into the vector/unroll loop.
  * But we need to handle this part for forward loop separately.
- * FIXME: for forward loop, index variable 'I' should not be changed. 
+ * FIXED: for forward loop, index variable 'I' should not be changed. 
  * We need to update N by N+unroll as we updated the main loop_init but reverse
  * way in forward loop.
  * NOTE: forward loop only executed when there is a index ref inside the loop.
@@ -1385,30 +1437,10 @@ void UnrollCleanup(LOOPQ *lp, int unroll)
 /*
  * If flag's loop control not set, compute it, then set boolean based on flag
  */
-#if 0  
-   if (!(lp->flag & (L_FORWARDLC_BIT | L_SIMPLELC_BIT)))
-   {
-      if (AlreadySimpleLC(lp))
-         lp->flag |= (L_NSIMPLELC_BIT | L_SIMPLELC_BIT);
-      else
-      {
-         il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
 /*
- *       Majedul: same problem as the OptimizeLoopControl...
- *       vector path of SSV cannot figure out the Index uses. 
- *       FIXME: 
+ * Majedul: it is used in many places. So, I use that a function. 
  */
-         //if (!AlreadySimpleLC(lp) && il)
-         if (!AlreadySimpleLC(lp) )
-            lp->flag |= L_FORWARDLC_BIT;
-         else
-            lp->flag |= L_SIMPLELC_BIT;
-         if (il) KillIlist(il);
-      }
-   }
-#else
    SetLoopControlFlag(lp, 0);
-#endif
    FORWARDLOOP = L_FORWARDLC_BIT & lp->flag;
    unroll *= Type2Vlen(lp->vflag);  /* need to update Type2Vlen for AVX*/
 /*
@@ -1438,7 +1470,7 @@ void UnrollCleanup(LOOPQ *lp, int unroll)
 /*
  *    If we've used unrolled forward loop, restore N to original value
  */
-      fprintf(stderr, "\n\nForward loop !!!\n");
+      /*fprintf(stderr, "\n\nForward loop !!!\n");*/
       if (!IS_CONST(STflag[lp->end-1]))
       {
          InsNewInst(bp, NULL, ipnext, LD, -r1, SToff[lp->end-1].sa[2], 0);
@@ -2295,6 +2327,9 @@ int VarIsAccumulator(BLIST *scope, int var)
             if (ip->inst[0] != st || STpts2[ip->inst[1]-1] != var)
                return(0);
          }
+/*
+ *       Majedul: why STpts2[ip->inst[0]-1] instead of ...ip->inst[1]...
+ */
          else if (ip->inst[0] == st && STpts2[ip->inst[0]-1] == var)
             return(0);
       }
