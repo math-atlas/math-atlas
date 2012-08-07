@@ -297,7 +297,7 @@ char *op2str(short op)
             if (IS_INT(flag))
                sprintf(sptr, "i(%7d)", SToff[op-1].i);
             else if (IS_SHORT(flag))
-               sprintf(sptr, "l(%7d)", SToff[op-1].l);
+               sprintf(sptr, "l(%7ld)", SToff[op-1].l);
          #else
             if (IS_INT(flag) || IS_SHORT(flag))
                sprintf(sptr, "i(%7d)", SToff[op-1].i);
@@ -423,14 +423,14 @@ void PrintThisBlockInst(FILE *fpout, BBLOCK *bp)
 
    i = 1;
 #if 0
-   fprintf(fpout, head0a);
-   fprintf(fpout, head0b);
-   fprintf(fpout, head1a);
-   fprintf(fpout, head1b);
+   fprintf(fpout, "%s", head0a);
+   fprintf(fpout, "%s", head0b);
+   fprintf(fpout, "%s", head1a);
+   fprintf(fpout, "%s", head1b);
 #else
-   fprintf(fpout, head0a);
+   fprintf(fpout, "%s", head0a);
    fprintf(fpout, "\n");
-   fprintf(fpout, head1a);
+   fprintf(fpout, "%s", head1a);
    fprintf(fpout, "\n");
 #endif
 
@@ -447,14 +447,14 @@ void PrintInst(FILE *fpout, BBLOCK *bbase)
    INSTQ *ip;
    int i=1;
 #if 0
-   fprintf(fpout, head0a);
-   fprintf(fpout, head0b);
-   fprintf(fpout, head1a);
-   fprintf(fpout, head1b);
+   fprintf(fpout, "%s", head0a);
+   fprintf(fpout, "%s", head0b);
+   fprintf(fpout, "%s", head1a);
+   fprintf(fpout, "%s", head1b);
 #else
-   fprintf(fpout, head0a);
+   fprintf(fpout, "%s", head0a);
    fprintf(fpout, "\n");
-   fprintf(fpout, head1a);
+   fprintf(fpout, "%s", head1a);
    fprintf(fpout, "\n");
 #endif
    for (bp=bbase; bp; bp = bp->down)
@@ -537,9 +537,9 @@ void PrintOptInst(FILE *fpout, int iopt, int op, BLIST *scope,
    int i, j, k;
    BLIST *iscope;
 
-   fprintf(fpout,mark);
+   fprintf(fpout,"%s",mark);
    fprintf(fpout,"\t\t OPTIMIZTION META DATA \n");
-   fprintf(fpout,mark);
+   fprintf(fpout,"%s",mark);
    
    fprintf(fpout,"Number of optimization done so far = %d\n",iopt);
    fprintf(fpout,"Last Optimization Done = %s\n",optmnem[op]);
@@ -578,9 +578,9 @@ void PrintOptInst(FILE *fpout, int iopt, int op, BLIST *scope,
    }
 
    fprintf(fpout,"Number of changes done in last opt  = %d\n",changes);
-   fprintf(fpout,mark);
+   fprintf(fpout,"%s",mark);
    fprintf(fpout,"\t\t LIL AFTER THE LAST OPT \n");
-   fprintf(fpout,mark);
+   fprintf(fpout,"%s",mark);
    PrintInst(fpout,bbbase);
 
 }
