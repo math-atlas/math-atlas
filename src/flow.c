@@ -534,7 +534,7 @@ void CheckFlow(BBLOCK *bbase, char *file, int line)
       else if (!(bp->inst1 || bp->instN))
       {
          fprintf(stderr, "Block %d, inst1=%d, instN=%d\n", bp->bnum,
-                 bp->inst1, bp->instN);
+                 bp->inst1->inst[0], bp->instN->inst[0]);
          error = i+1;
       }
 /*
@@ -560,7 +560,7 @@ void CheckFlow(BBLOCK *bbase, char *file, int line)
          if (ip != bp->ainst1)
          {
             fprintf(stderr, "Wrong ainst1 (%d) for block %d, expected %d\n",
-                    bp->ainst1, bp->bnum, ip);
+                    bp->ainst1->inst[0], bp->bnum, ip);
             fprintf(stderr, "ainst1 = ");
             PrintThisInst(stderr, 0, bp->ainst1);
             fprintf(stderr, "Expected = ");
@@ -572,7 +572,7 @@ void CheckFlow(BBLOCK *bbase, char *file, int line)
          if (ip != bp->instN)
          {
             fprintf(stderr, "Wrong instN (%d) for block %d, expected %d\n",
-                    bp->instN, bp->bnum, ip);
+                    bp->instN->inst[0], bp->bnum, ip);
             error = i+1;
          }
          for (; ip && !ACTIVE_INST(ip->inst[0]); ip = ip->prev);
@@ -747,6 +747,8 @@ LOOPQ *NewLoop(int flag)
    lp = calloc(1, sizeof(struct loopq));
    assert(lp);
    lp->flag = flag;
+   lp->maxvars = NULL;
+   lp->minvars = NULL;
    return(lp);
 }
 
@@ -783,6 +785,32 @@ LOOPQ *KillLoop(LOOPQ *lp)
          KillBitVec(lp->blkvec);
       if (lp->posttails)
          KillBlockList(lp->posttails);
+/*
+ *    Majedul: this free list is not updated, we need to kill other elements
+ *    NOTE: can't free them, need to check in details ... ...
+ */
+/*      
+      if (lp->vvscal)
+         free(lp->vvscal);
+      if (lp->pfarrs)
+         free(lp->pfarrs);
+      if (lp->pfdist)
+         free(lp->pfdist);
+      if (lp->pfflag)
+         free(lp->pfflag);
+      if (lp->ae)
+         free(lp->ae);
+      if (lp->ne)
+         free(lp->ne);
+      if (lp->maxvars)
+         free(lp->maxvars);
+      if (lp->minvars)
+         free(lp->minvars);
+*/
+
+/*
+ *    FIXME: need to free space for shadow acc : short **aes
+ */
       free(lp);
    }
    return(ln);
@@ -869,6 +897,8 @@ void InvalidateLoopInfo(void)
       lp->ae = optloop->ae;
       lp->ne = optloop->ne;
       lp->aes = optloop->aes;
+      lp->maxvars = optloop->maxvars;      /* keep track of max var */
+      lp->minvars = optloop->minvars;      /* keep track of min var */
       lp->nopf = optloop->nopf;
       lp->aaligned = optloop->aaligned;
       lp->abalign = optloop->abalign;
@@ -879,6 +909,8 @@ void InvalidateLoopInfo(void)
          optloop->ae = optloop->ne = optloop->nopf = optloop->aaligned = NULL;
       optloop->aes = NULL;
       optloop->abalign = NULL;
+      optloop->maxvars = NULL;     /* sothat killloop not freed prev space */
+      optloop->minvars = NULL;     /* sothat killloop not freed prev space */
       KillLoop(optloop);
       optloop = lp;
    }
