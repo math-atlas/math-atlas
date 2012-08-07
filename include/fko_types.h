@@ -33,7 +33,7 @@ struct optblkq
    struct optblkq *down; /* opts included in while(change)                   */
    struct optblkq *next; /* succeeding opts not in while(change)             */
    struct optblkq *ifblk;/* if non-null, this is conditional block, and      *
-                         /* down is applied if ifblk produces changes, and   *
+                          * down is applied if ifblk produces changes, and   *
                           * next is applied if not                           */
    ushort nopt;          /* # of opt in opts                                 */
    ushort maxN;          /* if zero, do not do while(change)                 *
@@ -127,6 +127,8 @@ struct blist
 #define VS_MUL     16  /* updated with mul */
 #define VS_EQ      32  /* updated by assignment */
 #define VS_ABS     64  /* updated by absolute value */
+#define VS_MAX    128  /* updated as max var */
+#define VS_MIN    256  /* updated as min var */
 typedef struct loopq LOOPQ;
 struct loopq
 {
@@ -157,6 +159,8 @@ struct loopq
    short *ae;         /* accumulators to expand */
    short *ne;         /* # of acc to use for each original acc */
    short **aes;       /* shadow acc for each ae */
+   short *maxvars;      /* to track max vars, as redundant xform changes it*/
+   short *minvars;      /* to track min vars, as redundant xform changes it*/
    BBLOCK *preheader, *header;
    BLIST *tails, *posttails;
    BLIST *blocks;     /* blocks in the loop */
@@ -202,6 +206,8 @@ struct ignode
 #define SC_OACC 1024
 #define SC_OMUL 2048
 #define SC_OMIXED 4096
+#define SC_MAX 8192
+#define SC_MIN 16384
 
 typedef struct looppath LOOPPATH;
 struct looppath    /* data structure for paths in loop */
