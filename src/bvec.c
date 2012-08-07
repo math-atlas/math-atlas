@@ -188,6 +188,10 @@ int BitVecCheck(int iv, int ibit)
    n = ni[--iv];
    k = ibit >> 5;
    ibit -= k << 5;
+/*
+ * Majedul: there is an invalid read reported by valgrind when is called from
+ * VarUse2RegUse(optreg.c:1208), CombineLiveRanges(optreg.c:736)
+ */
    return(bvecs[iv][k] & (1<<ibit));
 }
 
