@@ -24,9 +24,9 @@ ID=2 MU=4 NU=4 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_dammm2x4x256_sse2.S' \
 ID=3 MU=6 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_dammm3x3x256_sse2.S' \
      SSE=3 KBMAX=256 ASM=GAS_x8664 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
-ID=4 MU=4 NU=1 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_dammm_nb4_sse2.S' \
-     SSE=3 KBMIN=4 KBMAX=4 ASM=GAS_x8664 KUISKB=1 \
-     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
+#ID=4 MU=4 NU=1 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_dammm_nb4_sse2.S' \
+#     SSE=3 KBMIN=4 KBMAX=4 ASM=GAS_x8664 KUISKB=1 \
+#     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
 ID=5 MU=2 NU=12 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm2x12x2_sse2.S' \
      SSE=3 ASM=GAS_x8664 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
@@ -3708,10 +3708,11 @@ int Mjoin(PATL,ammmNMK)
 {
    ATL_CINT mu=ATL_AMM_MUs[IK], nu=ATL_AMM_NUs[IK], ku=ATL_AMM_KUs[IK];
    ATL_CINT KRUN = ATL_AMM_KRUNTIME(IK);
-   size_t MB=ATL_AMM_MBs[IK], NB=ATL_AMM_NBs[IK], kb=ATL_AMM_KBs[IK];
-   size_t nmblks, nnblks, nkblks, mb0, nb, nb0, kb0;
-   size_t incAk, incBk, incAk0, incBk0;
-   size_t i, j, k, szA, szB, szC;
+   ATL_CSZT mb=ATL_AMM_MBs[IK], NB=ATL_AMM_NBs[IK], kb=ATL_AMM_KBs[IK];
+   ATL_CSZT incwA = mb*kb, nmu = mb / mu;
+   size_t nmblks, nnblks, nkblks, mbF, nbF, kb0, nmuF, MBF, NBF;
+   size_t incAk, incBk, incAk0, incBk0, incAm, incBn, incCn;
+   size_t i, j, k, szA, szB, szC, nnu0, nnuF;
    const TYPE *B0 = B;
    TYPE *wA, *wB, *wC, *wA0, *wB0;
    void *vp;
@@ -3752,44 +3753,84 @@ int Mjoin(PATL,ammmNMK)
       else
          blk2c = ATL_AMM_BLK2C_aX_bX[IK];
    }
-   nmblks = M/MB;
-   mb0 = M - nmblks * MB;
-   if (mb0 < mu+mu)
-      mb0 += MB;
-   else
-      nmblks++;
-
-   nnblks = N/NB;
-   nb0 = N - nnblks * NB;
-   if (nb0 < nu+nu)
-      nb0 += NB;
-   else
-      nnblks++;
-
-   nkblks = K/kb;
-   kb0 = K - nkblks * kb;
-   if (!kb0)
+/*
+ * Handle N differently than other dims: since it is outer loop, don't want
+ * to peel, so just vary nb inside the main loop.  nnblks therefore includes
+ * final block, unlike for M or K.
+ */
+   if (N >= NB+nu+nu)
    {
-      kb0 = kb;
-      nkblks--;
+      nnblks = N/NB;
+      nbF = N - nnblks * NB;
+      if (nbF < nu+nu)
+         nbF += NB;
+      else
+         nnblks++;
    }
    else
    {
-      if (!ATL_AMM_KRUNTIME(IK))
-         amm_b0 = ATL_AMM_KERN_K1[IK];
-      if (kb0 < 4)
+      nnblks = 1;
+      nbF = N;
+   }
+   nnu0 = NB / nu;
+   nnuF = (nbF+nu-1)/nu;
+   NBF = nnuF * nu;
+/*
+ * For M, we must peel the final block to handle any cleanup (can't peel 1st
+ * block or we mess up alignment!), so this block is not included in the
+ * block count
+ */
+   if (M >= mb+mu+mu)  /* more than just last block */
+   {
+      nmblks = M/mb;
+      mbF = M - nmblks * mb;
+      if (mbF < mu+mu)  /* steal block from main iteration, not enough here! */
       {
-         kb0 += kb;
-         nkblks--;
+         nmblks--;
+         mbF += mb;
       }
    }
-
-
-   i = (nmblks-1)*MB + mb0;     /* M rounded up to MU */
-   szA = i*K;                   /* workspace for all of A */
-   j = Mmax(NB, nb0);
-   i = Mmax(MB, mb0);
-   k = Mmax(kb, kb0);
+   else /* put everything in final block */
+   {
+      mbF = M;
+      nmblks = 0;
+   }
+   nmuF = (M+mu-1) / mu;
+   MBF = nmuF * mu;
+/*
+ * For K, we peel the first iteration to set BETA=0, so the nkblks does not
+ * include the peeled block
+ */
+   if (K >= kb)
+   {
+      nkblks = K/kb;
+      kb0 = K - nkblks * kb;
+      if (!kb0)
+      {
+         kb0 = kb;
+         nkblks--;
+      }
+      else
+      {
+         if (!ATL_AMM_KRUNTIME(IK))
+            amm_b0 = ATL_AMM_KERN_K1[IK];
+         if (kb0 < 4)
+         {
+            kb0 += kb;
+            nkblks--;
+         }
+      }
+   }
+   else /* K < nb */
+   {
+      kb0 = K;
+      nkblks = 0;
+      if (!ATL_AMM_KRUNTIME(IK))
+         amm_b0 = ATL_AMM_KERN_K1[IK];
+   }
+   szA = (nmblks*mb+MBF)*K; /* wrkspc for all of A wt M rounded up to MU*/
+   j = Mmax(NB, NBF);
+   i = Mmax(MBF, mb);
    szC = i*j;
    szB = K*j;                   /* workspace for panel of B */
 
@@ -3803,12 +3844,14 @@ int Mjoin(PATL,ammmNMK)
 
    if (TA == AtlasNoTrans)
    {
+      incAm = mb;
       incAk0 = kb0*lda;
       incAk = kb*lda;
       a2blk = ATL_AMM_AT2BLK_a1[IK];
    }
    else
    {
+      incAm = mb*lda;
       incAk0 = kb0;
       incAk = kb;
       a2blk = ATL_AMM_A2BLK_a1[IK];
@@ -3818,33 +3861,49 @@ int Mjoin(PATL,ammmNMK)
       incBk0 = kb0;
       incBk = kb;
       b2blk = ATL_AMM_B2BLK_a1[IK];
+      incBn = NB*ldb;
    }
    else
    {
       incBk0 = kb0*ldb;
       incBk = kb*ldb;
       b2blk = ATL_AMM_BT2BLK_a1[IK];
+      incBn = NB;
    }
+   incCn = ldc*NB;
 
-   nb = nb0;
    for (j=0; j < nnblks; j++)
    {
-      ATL_CSZT incwB = nb*kb, incwB0 = nb*kb0, nnu = nb/nu;
-      int mb = mb0;
-      const TYPE *Bn = (TA == AtlasNoTrans) ? B+nb*ldb : B+nb;
-      TYPE *Cn = C + ldc*nb;
+      size_t nb, nbsz, incwB, incwB0, nnu;
+      const TYPE *Bn = B+incBn;
+      TYPE *Cn = C + incCn;
+      if (j != nnblks-1)
+      {
+         nbsz = nb = NB;
+         nnu = nnu0;
+      }
+      else
+      {
+         nb = nbF;
+         nbsz = NBF;
+         nnu = nnuF;
+      }
+      incwB = nbsz*kb;
+      incwB0 = nbsz*kb0;
+/*
+ *    Do all M-blocks except final one, which may be of differing size & partial
+ */
       for (i=0; i < nmblks; i++)
       {
-         ATL_CSZT incwA = mb*kb, incwC = mb*nb, nmu = mb / mu;
          TYPE *wAn, *wBn;
-         const TYPE *An = (TA == AtlasNoTrans) ? A+mb : A+mb*lda;
+         const TYPE *An = A+incAm;
 /*
  *       Peel first K it to handle K-cleanup and set BETA=0
  */
          if (!j)
-            a2blk(kb, mb, ATL_rone, A, lda, wA);
+            a2blk(kb0, mb, ATL_rone, A, lda, wA);
          if (!i)
-            b2blk(kb, nb, ATL_rone, B, ldb, wB);
+            b2blk(kb0, nb, ATL_rone, B, ldb, wB);
          wAn = wA+mb*kb0;
          wBn = (nkblks) ? wB+incwB0 : wB;
          amm_b0(nmu, nnu, kb0, wA, wB, wC, nkblks?wAn:wA, wBn, wC);
@@ -3862,7 +3921,7 @@ int Mjoin(PATL,ammmNMK)
                wAn = wA+incwA;
                wBn = wB+incwB;
                if (!j)
-                  a2blk(kb, mb, ATL_rone, A, lda, wA);
+                  a2blk(kb, mbF, ATL_rone, A, lda, wA);
                if (!i)
                   b2blk(kb, nb, ATL_rone, B, ldb, wB);
                amm_b1(nmu, nnu, kb, wA, wB, wC, wAn, wBn, wC);
@@ -3874,7 +3933,7 @@ int Mjoin(PATL,ammmNMK)
 /*
  *          Last K-block peeled to change prefetch pattern
  */
-            wAn = (i < nmblks-1) ? wA+incwA : wA0;
+            wAn = wA+incwA;
             if (!j)
                a2blk(kb, mb, ATL_rone, A, lda, wA);
             if (!i)
@@ -3887,51 +3946,61 @@ int Mjoin(PATL,ammmNMK)
          A = An;
          B = B0;
          C += mb;
-         mb = MB;
       }
+/*
+ *    Do the final peeled M-block, which is of non-constant size mbF
+ */
+      {
+         TYPE *wAn, *wBn;
+/*
+ *       Peel first K it to handle K-cleanup and set BETA=0
+ */
+         if (!j)
+            a2blk(kb0, mbF, ATL_rone, A, lda, wA);
+         if (!i)
+            b2blk(kb0, nb, ATL_rone, B, ldb, wB);
+         wAn = wA+MBF*kb0;
+         wBn = (nkblks) ? wB+incwB0 : wB;
+         amm_b0(nmuF, nnu, kb0, wA, wB, wC, nkblks?wAn:wA, wBn, wC);
+         wA = wAn;
+         wB = wBn;
+         A += incAk0;
+         B += incBk0;
+/*
+ *       If first K-block not the only K-block
+ */
+         if (nkblks)
+         {
+            for (k=nkblks-1; k; k--)
+            {
+               wAn = wA+MBF*kb;
+               wBn = wB+incwB;
+               if (!j)
+                  a2blk(kb, mbF, ATL_rone, A, lda, wA);
+               if (!i)
+                  b2blk(kb, nb, ATL_rone, B, ldb, wB);
+               amm_b1(nmuF, nnu, kb, wA, wB, wC, wAn, wBn, wC);
+               wA += MBF*kb;
+               wB = wBn;
+               A += incAk;
+               B += incBk;
+            }
+/*
+ *          Last K-block peeled to change prefetch pattern
+ */
+            if (!j)
+               a2blk(kb, mbF, ATL_rone, A, lda, wA);
+            if (!i)
+               b2blk(kb, nb, ATL_rone, B, ldb, wB);
+            amm_b1(nmuF, nnu, kb, wA, wB, wC, wA0, wB0, wC);
+            wA = wA0;
+            wB = wB0;
+         }
+         blk2c(mbF, nb, alpha, wC, beta, C, ldc);
+      }  /* end M-peel */
       wA = wA0;
       B = B0 = Bn;
       C = Cn;
-      nb = NB;
    }
-@beginskip
-   for (j=0; j < nnblks; j++)
-   {
-      int mb = mb0;
-      for (i=0; i < nmblks; i++)
-      {
-         if (!j)
-            a2blk(kb, mb, ATL_rone, A, lda, wA);
-         if (!i)
-            b2blk(kb, nb, ATL_rone, B, ldb, wB);
-         amm_b0(nmu, nnu, kb, wA, wB, wC, wA+incwA, wB+incwB, wC);
-         wA += incwA0;
-         wB += incwB0;
-         A += incAk0;
-         B += incBk0;
-         for (k=1; k < nkblks; k++)
-         {
-            if (!j)
-               a2blk(kb, mb, ATL_rone, A, lda, wA);
-            if (!i)
-               b2blk(kb, nb, ATL_rone, B, ldb, wB);
-            amm_b1(nmu, nnu, kb, wA, wB, wC, wA+incwA, wB+incwB, wC);
-            wA += incwA;
-            wB += incwB;
-            A += incAk;
-            B += incBk;
-         }
-         blk2c(mb, nb, alpha, wC, beta, C, ldc);
-         A += incAm;
-         wB = wB0;
-         B = B0;
-         C += mb;
-         mb = MB;
-      }
-      wA = wA0;
-      B = B0 += incBn;
-      C += incCn;
-   }
-@endskip
    free(vp);
 }
