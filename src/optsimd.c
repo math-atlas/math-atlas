@@ -3251,21 +3251,25 @@ int RedundantVectorTransform(LOOPQ *lp)
    static enum inst 
      sfinsts[] = {FLD,      FST,      FMUL,     FMAC,     FADD,     FSUB,    
                   FABS,     FMOV,     FZERO,    FNEG,     FCMOV1,   FCMOV2, 
-                  FCMPWEQ,  FCMPWNE,  FCMPWLT,  FCMPWLE,  FCMPWGT,  FCMPWGE},
+                  FCMPWEQ,  FCMPWNE,  FCMPWLT,  FCMPWLE,  FCMPWGT,  FCMPWGE,
+                  FMAX,     FMIN },
 
      vfinsts[] = {VFLD,     VFST,     VFMUL,    VFMAC,    VFADD,    VFSUB,   
                   VFABS,    VFMOV,    VFZERO,   VFNEG,    VFCMOV1,  VFCMOV2,
-                  VFCMPWEQ, VFCMPWNE, VFCMPWLT, VFCMPWLE, VFCMPWGT, VFCMPWGE},
+                  VFCMPWEQ, VFCMPWNE, VFCMPWLT, VFCMPWLE, VFCMPWGT, VFCMPWGE,
+                  VFMAX,    VFMIN },
 
      sdinsts[] = {FLDD,     FSTD,     FMULD,    FMACD,    FADDD,    FSUBD, 
                   FABSD,    FMOVD,    FZEROD,   FNEGD,    FCMOVD1,  FCMOVD2, 
-                  FCMPDWEQ, FCMPDWNE, FCMPDWLT, FCMPDWLE, FCMPDWGT, FCMPDWGE},
+                  FCMPDWEQ, FCMPDWNE, FCMPDWLT, FCMPDWLE, FCMPDWGT, FCMPDWGE,
+                  FMAXD,    FMIND },
 
      vdinsts[] = {VDLD,     VDST,     VDMUL,    VDMAC,    VDADD,    VDSUB, 
                   VDABS,    VDMOV,    VDZERO,   VDNEG,    VDCMOV1,  VDCMOV2,
-                  VDCMPWEQ, VDCMPWNE, VDCMPWLT, VDCMPWLE, VDCMPWGT, VDCMPWGE};
+                  VDCMPWEQ, VDCMPWNE, VDCMPWLT, VDCMPWLE, VDCMPWGT, VDCMPWGE,
+                  VDMAX,    VDMIN };
    
-   const int nvinst=18;
+   const int nvinst=20;
    enum inst sld, vld, sst, vst, smul, vmul, smac, vmac, sadd, vadd, ssub, vsub, 
              sabs, vabs, smov, vmov, szero, vzero, inst;
    short r0, r1, op;
@@ -5466,6 +5470,9 @@ void MovInstFromBlkToBlk(BBLOCK *fromblk, BBLOCK *toblk)
 }
 
 void RedundantScalarComputation(LOOPQ *lp)
+/*
+ * Assuming CFG is already constructed.
+ */
 {
    int i, j, k, n, N;
    int type;
@@ -5842,6 +5849,9 @@ int CheckMaxMinConstraints(BLIST *scope, short var, short label)
    {
       bp = bl->blk;
       ip = bp->ainst1;
+/*
+ *    NOTE: assuming this if blk begins with ainst LABEL
+ */
       if (ip->inst[0] == LABEL && ip->inst[1] == label)
       {
          for ( ; ip; ip=ip->next)
@@ -6012,7 +6022,8 @@ int VarIsMin(BLIST *scope, short var)
             ip1 = ip->prev->prev;           /* 2nd ld */
             assert((ip1->inst[0] == ld));
 /*
- *          for load, inst[2] must be a var 
+ *          for load, inst[2] must be a var
+ *          STpts2[] vs. SToff[].sa[2] 
  */
             if (STpts2[ip0->inst[2]-1] == var)
                regv = ip0->inst[1];
@@ -6155,12 +6166,12 @@ void UpdateOptLoopWithMaxMinVars(LOOPQ *lp)
       if (VarIsMax(lp->blocks, scal[i]))
       {
          spmax[++m] = scal[i];
-         fprintf(stderr, " Max var = %s\n",STname[scal[i]-1] );
+         /*fprintf(stderr, " Max var = %s\n",STname[scal[i]-1] );*/
       }
       else if (VarIsMin(lp->blocks, scal[i]))
       {
          spmin[++n] = scal[i];
-         fprintf(stderr, " Min var = %s\n",STname[scal[i]-1] );
+         /*fprintf(stderr, " Min var = %s\n",STname[scal[i]-1] );*/
       }
    }
 /*
@@ -6323,6 +6334,9 @@ void VectorRedundantComputation()
    //ShowFlow("cfg-vrc.dot",bbbase); /* checked for scalar, it's ok */
    //exit(0);
 #endif
+#if 1
+   KillPathTable();
+#endif
  UpdateNamedLoopInfo();
 
 #if 0
@@ -6339,4 +6353,244 @@ void VectorRedundantComputation()
    CheckFlow(bbbase, __FILE__, __LINE__);
 #endif
 }
+
+
+int CheckMaxReduceConstraints(BLIST *scope, short maxvar, short xvar, 
+                              short label)
+/*
+ * this function checks the ifblk whether, 
+ */
+{
+   int i, j; 
+   enum inst st;
+   BLIST *bl;
+   BBLOCK *bp;
+   INSTQ *ip, *ip0;
+
+   i = FLAG2TYPE(STflag[maxvar-1]);
+   switch(i)
+   {
+   case T_FLOAT:
+      st = FST;
+      break;
+   case T_DOUBLE:
+      st = FSTD;
+      break;
+   case T_INT:
+      st = ST;
+      break;
+   default:
+   case T_VFLOAT:
+   case T_VDOUBLE:
+      fko_error(__LINE__,"Unknown type=%d, file=%s. Should be done before Vect",
+                i, __FILE__);
+   }
+
+ /*fprintf(stderr, "check for maxvar=%s, lable=%d\n", STname[maxvar-1],label);*/
+
+   for (bl=scope; bl; bl=bl->next)
+   {
+      bp = bl->blk;
+/*
+ *    Assumption: if blk starts with active inst LABEL
+ */
+      ip0 = bp->ainst1;
+      if (ip0->inst[0] == LABEL && ip0->inst[1] == label)
+      {
+        for (ip = ip0; ip; ip=ip->next)
+        {
+           if (ip->inst[0] == st && STpts2[ip->inst[1]-1]!= maxvar)
+              return 0;
+        }
+      }
+   }
+   return 1;
+
+}
+
+void RemoveInstFromLabel2Br(BLIST *scope, short label)
+{
+   int i, j;
+   BLIST *bl;
+   BBLOCK *bp;
+   INSTQ *ip;
+
+   for (bl=scope; bl; bl=bl->next)
+   {
+      bp = bl->blk;
+      for (ip=bp->inst1; ip; ip=ip->next)
+      {
+         if (ip->inst[0] == LABEL && ip->inst[1] == label)
+         {
+            while (ip && ip->inst[0]!=JMP)
+            {  
+               assert(!IS_COND_BRANCH(ip->inst[0]));
+               ip = RemoveInstFromQ(ip);
+            }
+            assert(ip->inst[0] == JMP);
+            RemoveInstFromQ(ip);
+         }
+      }
+   }
+   
+}
+
+int CheckElimIFBlk(short maxvar)
+/*
+ * Assuming single occurrance first 
+ */
+{
+   int i, j;
+   short reg0, reg1, regv, regx;
+   short xvar, label;
+   enum inst inst, ld, st, br, cmp, max;
+   BBLOCK *bp;
+   INSTQ *ip, *ip0, *ip1;
+   BLIST *bl, *scope;
+
+   i = FLAG2TYPE(STflag[maxvar-1]);
+   switch(i)
+   {
+   case T_FLOAT:
+      ld = FLD;
+      st = FST;
+      cmp = FCMP;
+      max = FMAX;
+      break;
+   case T_DOUBLE:
+      ld = FLDD;
+      st = FSTD;
+      cmp = FCMPD;
+      max = FMAXD;
+      break;
+   default:
+   case T_VFLOAT:
+   case T_VDOUBLE:
+      fko_error(__LINE__,"Unknown type=%d, file=%s. Should be done before Vect",
+                i, __FILE__);
+   }
+/*
+ * Primarily, we are concern about the optloop blks, but need to extend to
+ * all blocks in bbbase later
+ */   
+   scope = optloop->blocks;
+
+   for (bl = scope; bl; bl = bl->next)
+   {
+      bp = bl->blk;
+      for (ip = bp-> ainst1; ip; ip = ip->next)
+      {
+/*
+ *       FORMAT: cmp fcc, reg0, reg1
+ *               JLT/JGT PC, fcc, LABEL
+ *       There would be exactly two ld of 2 vars/const
+ */
+         if (IS_COND_BRANCH(ip->inst[0]) && (ip->prev->inst[0]== cmp))
+         {
+            reg0 = ip->prev->inst[2];
+            reg1 = ip->prev->inst[3];
+            br = ip->inst[0];
+
+            ip0 = ip->prev->prev->prev;     /* 1st ld */
+            assert((ip0->inst[0] == ld));
+            ip1 = ip->prev->prev;           /* 2nd ld */
+            assert((ip1->inst[0] == ld));
+/*
+ *          for load, inst[2] must be a var 
+ */
+            if (STpts2[ip0->inst[2]-1] == maxvar)
+            {
+               regv = ip0->inst[1];
+               xvar = ip1->inst[2];
+               regx = ip1->inst[1];
+            }
+            else if (STpts2[ip1->inst[2]-1] == maxvar)
+            {
+               regv = ip1->inst[1];
+               xvar = ip0->inst[2];
+               regx = ip0->inst[1];
+            }
+            else 
+               regv = 0;
+            if ( ((regv == reg0) && (br == JLT)) ||  
+                 ((regv == reg1) && (br == JGT)) )
+            {
+               label = ip->inst[3];
+               /* check for single set inside if-blk and not set where else*/
+               if (CheckMaxMinConstraints(scope, maxvar, label) && 
+                   CheckMaxReduceConstraints(scope, maxvar, xvar, label))
+               {
+                  // Now, it's time to eliminiate ifblk inserting max inst
+                  /*fprintf(stderr, "elim blks for max var = %s\n", 
+                          STname[maxvar-1]);*/
+                  assert(ip0->prev->inst[0] != ld);
+                  ip1 = InsNewInst(bp, ip1, NULL, max, regv, regv, regx);
+                  ip1 = InsNewInst(bp, ip1, NULL, st, SToff[maxvar-1].sa[2],
+                                   regv, 0);
+                  ip1 = ip1->next;
+                  while (ip1 && !IS_COND_BRANCH(ip1->inst[0])) 
+                     ip1 = RemoveInstFromQ(ip1);
+                  assert(IS_COND_BRANCH(ip1->inst[0]));
+                  ip1 = RemoveInstFromQ(ip1); /* delete the branch itself */
+                  // it's time to delete the if blk
+                  RemoveInstFromLabel2Br(scope, label);
+               }
+            }
+         }
+      }
+   }
+   return (0);
+   
+}
+
+void VectorizeElimIFwithMaxMin()
+{
+   int i, j, N;
+   short *scal;
+   LOOPQ *lp;
+
+   lp = optloop;
+   scal = FindAllScalarVars(lp->blocks);   
+   for (N = scal[0], i=1; i <= N; i++)
+   {
+      if (VarIsMax(lp->blocks, scal[i]))
+      {
+         /*fprintf(stderr, "Max var = %s\n", STname[scal[i]-1]);*/
+         CheckElimIFBlk(scal[i]);
+      }
+   }
+/*
+ * re-construct the CFG 
+ */
+   InvalidateLoopInfo();
+   bbbase = NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   FindLoops();
+   CheckFlow(bbbase, __FILE__, __LINE__);
+/*
+ * analyze and vectorize 
+ */
+   //assert(!IsSpeculationNeeded());
+
+   lp = optloop;
+#if 1 
+   assert(!SpeculativeVectorAnalysis());
+   assert(NPATH==1); /* still multiple path!! */
+#endif
+
+   assert(!RedundantVectorTransform(lp));
+#if 0 
+   fprintf(stdout, "LIL-Vector \n");
+   PrintInst(stdout,bbbase);
+   //ShowFlow("cfg-vrc.dot",bbbase); /* checked for scalar, it's ok */
+   //exit(0);
+#endif
+#if 1   
+   KillPathTable();
+#endif
+
+   UpdateNamedLoopInfo();
+
+}
+
 
