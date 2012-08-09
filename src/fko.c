@@ -1790,8 +1790,11 @@ int main(int nargs, char **args)
 #endif            
 /*
  *          Finalizing the analysis
+ *          NOTE: temporarily we just use compile time flag only to choose 
+ *          the right vectorization method here. It will be changed with 
+ *          appropriate input option later..
  */
-            #if 1                  
+            #if defined(SSV)                  
                SpeculativeVectorAnalysis();
                SpecSIMDLoop();
                #if 1
@@ -1804,12 +1807,18 @@ int main(int nargs, char **args)
  */
                   FKO_UR = 1; /* forced to unroll factor 1*/
                #endif
-            #else
-               #if 1
+            #elif defined(VRC)
                   UpdateOptLoopWithMaxMinVars(optloop);
                   VectorRedundantComputation();
-               #else
-               #endif
+                  /*FKO_UR = 1;*/ /* forced to unroll factor 1*/
+            #elif defined(VEM)      
+                  UpdateOptLoopWithMaxMinVars(optloop);
+                  VectorizeElimIFwithMaxMin();
+                  /*FKO_UR = 1;*/  /* forced to unroll factor 1*/
+            #else    
+                  fprintf(stderr, 
+                          "Must provide one option for Vectorization\n");
+                  exit(0);
             #endif
 
          }
