@@ -39,6 +39,8 @@
 #include "fko_optloop.h"
 #include "fko_optflow.h"
 #include "fko_optmisc.h"
+#include "fko_optsimd.h"  
+
 
 #ifdef IFKO_DECLARE
    BBLOCK *bbbase=NULL;
@@ -77,6 +79,19 @@
 #define IFF_3DNOWR       0x100 /* use 3DNow! for L1 read prefetch */
 #define IFF_3DNOWW       0x200 /* use 3DNow! for L1 write prefetch */
 #define IFF_VERBOSE      0x400 /* verbose output */
+/*
+ * Majedul: 
+ *    As we will introduce more and more new optimizations, I will keep 
+ *    flag according to program states. 
+ *    STATE1 has two optimization, hence 2 flags:
+ *    STAT1_RC
+ *    STAT1_MMC
+ */
+#define IFF_ST1_RC  0x1
+#define IFF_ST1_MMR 0x2
+
+#define IFF_ST3_SE 0x1
+#define IFF_ST3_PREF 0x2
 
 #define DO_ASS(flg_) (!((flg_) & IFF_NOASS))
 #define DO_LIL(flg_) ((flg_) & IFF_LIL)

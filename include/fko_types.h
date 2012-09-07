@@ -159,8 +159,23 @@ struct loopq
    short *ae;         /* accumulators to expand */
    short *ne;         /* # of acc to use for each original acc */
    short **aes;       /* shadow acc for each ae */
+/*
+ * Majedul: max/min vars can also be candidate for variable expansion
+ * (scalar/vector expansion). So, keep data structure for that
+ * NOTE: Right now, consider only max vars
+ * NOTE: after adding any new data structure, must update InvalidateLoopInfo 
+ * in flow.c
+ */
+   short *se;         /* scalar vars to expand */
+   short *nse;         /* # of expanded vars to use for each original var */
+   short **ses;       /* shadow scalar/vectors for each var to expand */
+   int *seflag;       /* flag to indicate type of scalar: SC_ACC/SC_MAX/SC_MIN*/
+/*
+ * to keep track for -rc, -mmr 
+ */
    short *maxvars;      /* to track max vars, as redundant xform changes it*/
    short *minvars;      /* to track min vars, as redundant xform changes it*/
+   
    BBLOCK *preheader, *header;
    BLIST *tails, *posttails;
    BLIST *blocks;     /* blocks in the loop */
@@ -193,21 +208,19 @@ struct ignode
 #define LP_OPT_LCONTROL 2       /* Loop Path loop control optimizable */
 #define LP_OPT_MOVPTR 4         /* Loop Path Moving Ptr optimizable */
 
+
 #define SC_SET 1
 #define SC_USE 2
 #define SC_PRIVATE 4
 #define SC_LIVEIN 8
 #define SC_LIVEOUT 16
-#define SC_IACC 32
-#define SC_IMUL 64
-#define SC_IEQ 128
-#define SC_IABS 256
-#define SC_IMIXED 512
-#define SC_OACC 1024
-#define SC_OMUL 2048
-#define SC_OMIXED 4096
-#define SC_MAX 8192
-#define SC_MIN 16384
+#define SC_ACC 32
+#define SC_MUL 64
+#define SC_EQ 128
+#define SC_ABS 256
+#define SC_MIXED 512
+#define SC_MAX 1024
+#define SC_MIN 2048
 
 typedef struct looppath LOOPPATH;
 struct looppath    /* data structure for paths in loop */
