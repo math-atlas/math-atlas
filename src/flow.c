@@ -898,7 +898,11 @@ void InvalidateLoopInfo(void)
       lp->ne = optloop->ne;
       lp->aes = optloop->aes;
       lp->maxvars = optloop->maxvars;      /* keep track of max var */
-      lp->minvars = optloop->minvars;      /* keep track of min var */
+      lp->minvars = optloop->minvars;      /* keep track of min var */ 
+      lp->se = optloop->se;
+      lp->nse = optloop->nse;
+      lp->ses = optloop->ses;
+      lp->seflag = optloop->seflag;
       lp->nopf = optloop->nopf;
       lp->aaligned = optloop->aaligned;
       lp->abalign = optloop->abalign;
@@ -911,6 +915,7 @@ void InvalidateLoopInfo(void)
       optloop->abalign = NULL;
       optloop->maxvars = NULL;     /* sothat killloop not freed prev space */
       optloop->minvars = NULL;     /* sothat killloop not freed prev space */
+      optloop->se = optloop->nse = optloop->ses = optloop->seflag = NULL;
       KillLoop(optloop);
       optloop = lp;
    }

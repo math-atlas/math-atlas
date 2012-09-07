@@ -61,6 +61,30 @@ void KillBitVec(int iv)
    ni[iv] = 0;
 }
 
+void KillAllBitVec()
+/*
+ * Majedul: this function will kill all bit vectors. 
+ * Needed when we restore the FKO state 0
+ */
+{
+   int i;
+   for (i=0; i < nvalloc; i++)
+   {
+      if (bvecs[i])
+         free(bvecs[i]);
+   }
+   free(bvecs);
+   free(ni);
+/*
+ * intialize all the global var with initial value
+ */
+   nvalloc=0;  
+   nvused=0;  
+   bvecs=NULL;
+   ni=NULL;  
+   FKO_BVTMP=0;
+}
+
 int *ExtendBitVec(int iv, int nwords)
 {
    int j, k, ind;

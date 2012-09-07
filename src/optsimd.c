@@ -970,9 +970,10 @@ void AddLoopPeeling(LOOPQ *lp, int jblabel, int falabel, short Np,
 void GenForceAlignedPeeling(LOOPQ *lp)
 /*
  * Generate code of loop peeling for force aligned. works only with single 
- * moving array ptr. Force aligned is only needed when we can vectorize the
- * code. so, it is considered as a part of SSV now. Later, we will apply it 
- * at the normal vectorization stage.
+ * moving array ptr. Force aligned is only applied when we can vectorize the
+ * code.
+ * NOTE: loop peeling may change the loop control of main loop. It should be
+ * called before GenCleanupLoop and FinalizeVectorCleanup for consistancy
  */
 {
    int i, j;
@@ -1609,11 +1610,26 @@ int IsSpeculationNeeded()
  * Get code into standard form for analysis, it can be made isolated from
  * this function. but needed to do it before any analysis.
  */
+
+/*
+ * NOTE: As UpdateOptLoopWithMaxMinVars() is called before, Prologue Epilogue is 
+ * already generated. 
+ */
+
+#if 0   
    GenPrologueEpilogueStubs(bbbase, 0);
    NewBasicBlocks(bbbase);
    FindLoops();
    CheckFlow(bbbase,__FILE__,__LINE__);
    lp = optloop;
+#else
+   InvalidateLoopInfo();
+   bbbase = NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   FindLoops();
+   CheckFlow(bbbase, __FILE__, __LINE__); 
+   lp = optloop; 
+#endif
 
 #if 0
    fprintf(stdout, "\n CFG: \n");
@@ -1837,6 +1853,8 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
 {
    extern short STderef;
    extern int FKO_BVTMP;
+   extern int VECT_FLAG;
+
    int errcode;
    short iv, iv1, blkvec;
    int i, j, k, n, N, vid;
@@ -2354,21 +2372,33 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
  *          d) Max var: can be either use or set depend on path  
  *          b) Not set/ only used: used for MUL/DIV.... ADD? skip right now
  */
-            if (lp->maxvars && 
-                  FindInShortList(lp->maxvars[0], lp->maxvars+1, sp[i]))
-               j = VS_MAX;
-            else if (lp->minvars && 
-                  FindInShortList(lp->minvars[0], lp->minvars+1, sp[i]))
-               j = VS_MIN;
+/*
+ *          NOTE: for SSV, even though a var is max/min, reduction is not
+ *          dependent on that. Reduction is dependant on the analysis of 
+ *          vector path.
+ */
+            if (VECT_FLAG & VECT_SV)  /* not consider max/min for SSV */
+            {
+                j = FindReadUseType(lp->header->inst1, sp[i], blkvec);
+            }
+            else /* consider max/min var for reduction otherwise */
+            {
+               if (lp->maxvars && 
+                   FindInShortList(lp->maxvars[0], lp->maxvars+1, sp[i]))
+                  j = VS_MAX;
+               else if (lp->minvars && 
+                        FindInShortList(lp->minvars[0], lp->minvars+1, sp[i]))
+                  j = VS_MIN;
             else
-               j = FindReadUseType(lp->header->inst1, sp[i], blkvec);
-            
+                j = FindReadUseType(lp->header->inst1, sp[i], blkvec);
+            }
+
             if ( (scf[i] & SC_SET) && (scf[i] & SC_USE) ) /*mustbe used as acc*/
             {
                if (j == VS_ACC)
                {
                   s[i] |= VS_ACC;
-                  scf[i] |= SC_IACC;
+                  scf[i] |= SC_ACC;
                   /*vsoflag[i+1] |= VS_ACC;*/
                }
                else if (j == VS_MAX)
@@ -2389,7 +2419,7 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
                           "var %d(%s) must be Accumulator !!\n\n",
                            sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
                   errcode += 64;
-                  scf[i] |= SC_IMIXED;
+                  scf[i] |= SC_MIXED;
                   /*vsoflag[i+1] &= ~(VS_ACC | VS_MAX);*/
                }
             }
@@ -2410,7 +2440,7 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
                else if (j == VS_MUL) /*includes div */
                {
                   s[i] |= VS_MUL;
-                  scf[i] |= SC_IMUL;
+                  scf[i] |= SC_MUL;
                   /*vsoflag[i+1] |= VS_MUL;*/
                }
                else
@@ -2419,7 +2449,7 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
                            "Mixed use of var %d(%s) prevents vectorization!!\n",
                            sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
                   errcode += 64;
-                  scf[i] |= SC_IMIXED;
+                  scf[i] |= SC_MIXED;
                }
             }
          }
@@ -2559,10 +2589,18 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
       if (path->sflag[i] & SC_PRIVATE) fprintf(stderr, "PRIVATE ");
       if (path->sflag[i] & SC_SET) fprintf(stderr, "SET ");
       if (path->sflag[i] & SC_USE) fprintf(stderr, "USE ");
-      if (path->sflag[i] & SC_IACC) fprintf(stderr, "IN_ACC ");
-      if (path->sflag[i] & SC_OACC) fprintf(stderr, "OUT_ACC ");
-      if (path->sflag[i] & SC_IMUL) fprintf(stderr, "IN_MUL ");
-      if (path->sflag[i] & SC_OMUL) fprintf(stderr, "OUT_MUL ");
+      if (path->sflag[i] & SC_ACC && path->sflag[i] & SC_LIVEIN) 
+         fprintf(stderr, "IN_ACC ");
+      if (path->sflag[i] & SC_ACC && path->sflag & SC_LIVEOUT) 
+         fprintf(stderr, "OUT_ACC ");
+      if (path->sflag[i] & SC_MUL && path->sflag & SC_LIVEIN) 
+         fprintf(stderr, "IN_MUL ");
+      if (path->sflag[i] & SC_MUL && path->sflag & SC_LIVEOUT) 
+         fprintf(stderr, "OUT_MUL ");
+      if (path->sflag[i] & SC_MAX && path->sflag & SC_LIVEOUT) 
+         fprintf(stderr, "OUT_MAX ");
+      if (path->sflag[i] & SC_MIN && path->sflag & SC_LIVEOUT) 
+         fprintf(stderr, "OUT_MIN ");
       fprintf(stderr, "\n");
    }
 
@@ -5067,8 +5105,12 @@ int SpecSIMDLoop(void)
 
 /*
  * Update prefetch information
+ * NOTE: according to new program states, it will be updated in STATE 3.
+ * So, we no longer need this here.
  */
+#if 0   
    UpdateNamedLoopInfo();
+#endif
 
 #if 0   
 /*
@@ -6140,19 +6182,103 @@ short *FindAllScalarVars(BLIST *scope)
 
 }
 
-void UpdateOptLoopWithMaxMinVars(LOOPQ *lp)
+void UpdateOptLoopWithMaxMinVars()
 {
    int i, j, N, n, m;
    short *scal, *spmax, *spmin;
-/*   
+   LOOPQ *lp;
+   
+#if 0   
    InvalidateLoopInfo();
    bbbase = NewBasicBlocks(bbbase);
    CheckFlow(bbbase, __FILE__, __LINE__);
    FindLoops();
-   CheckFlow(bbbase, __FILE__, __LINE__);
-   
+   CheckFlow(bbbase, __FILE__, __LINE__); 
    lp = optloop; 
-*/
+#else
+   GenPrologueEpilogueStubs(bbbase, 0);
+   NewBasicBlocks(bbbase);
+   FindLoops();
+   CheckFlow(bbbase,__FILE__,__LINE__);
+   lp = optloop;
+#endif
+   
+   scal = FindAllScalarVars(lp->blocks);   
+   N = scal[0];
+   spmax = malloc(sizeof(short)*(N+1));
+   assert(spmax);
+   spmin = malloc(sizeof(short)*(N+1));
+   assert(spmin);
+
+   for (i=1, m=0, n=0; i <= N; i++)
+   {
+      /*fprintf(stderr, " var = %s(%d)\n",STname[scal[i]-1], scal[i] );*/
+      if (VarIsMax(lp->blocks, scal[i]))
+      {
+         spmax[++m] = scal[i];
+         /*fprintf(stderr, " Max var = %s\n",STname[scal[i]-1] );*/
+      }
+      else if (VarIsMin(lp->blocks, scal[i]))
+      {
+         spmin[++n] = scal[i];
+         /*fprintf(stderr, " Min var = %s\n",STname[scal[i]-1] );*/
+      }
+   }
+/*
+ * Update with max vars
+ */
+   if (m)
+   {
+      if (lp->maxvars) free(lp->maxvars);
+      lp->maxvars = malloc(sizeof(short)*(m+1));
+      assert(lp->maxvars);
+      lp->maxvars[0] = m;
+      for (i=1; i <=m ; i++)
+         lp->maxvars[i] = spmax[i];
+   }
+   else
+   {
+      if (lp->maxvars) free(lp->maxvars);
+      lp->maxvars = NULL;
+   }
+/*
+ * update with min vars
+ */
+   if (n)
+   {
+      if (lp->minvars) free(lp->minvars);
+      lp->minvars = malloc(sizeof(short)*(n+1));
+      assert(lp->minvars);
+      lp->minvars[0] = n;
+      for (i=1; i <=n ; i++)
+         lp->minvars[i] = spmin[i];
+   }
+   else
+   {
+      if (lp->minvars) free(lp->minvars);
+      lp->minvars = NULL;
+   }
+/*
+ * free all temporaries
+ */
+   if (scal) free(scal);
+   if (spmax) free(spmax);
+   if (spmin) free(spmin);
+}
+
+void UpdateOptLoopWithMaxMinVars1()
+/*
+ * This function is used in state1 to keep track of all the max/min vars
+ * there is an other version of it which is kept for backward compability and
+ * will be deleted later.
+ */
+{
+   int i, j, N, n, m;
+   short *scal, *spmax, *spmin;
+   LOOPQ *lp;
+   
+   lp = optloop;
+   
    scal = FindAllScalarVars(lp->blocks);   
    N = scal[0];
    spmax = malloc(sizeof(short)*(N+1));
@@ -6593,4 +6719,111 @@ void VectorizeElimIFwithMaxMin()
 
 }
 
+/*=============================================================================
+ * Functions for new program flow. 
+ * Many of the functions of this file will be obsolete after the completion 
+ * of this section.
+ *============================================================================*/
+int VectorAnalysis()
+{  
+   int i, j, n, k, N;
+   LOOPPATH *vpath;
+   LOOPQ *lp;
+   short *sp, *sc, *sf;
+   char ln[512];
 
+   lp = optloop;
+/*
+ * Find paths from optloop
+ */
+   
+   CalcInsOuts(bbbase);
+   CalcAllDeadVariables();
+   FindLoopPaths(lp);
+#if 0
+   fprintf(stdout, "Symbol Table \n");
+   PrintST(stdout);
+#endif
+
+/*
+ * NOTE: Loop control can always be killed assuming optloop is always
+ * contructed by loop statement in HIL
+ */
+   KillLoopControl(lp);
+   CalcInsOuts(bbbase);
+   CalcAllDeadVariables();
+
+/*
+ * apply analysis for each path
+ * NOTE: Analysis needs to be performed on original blocks (not on duplicated)
+ * because we will need the data flow anlysis (uses/defs,livein/liveout) also.
+ */
+   assert(PATHS);
+   assert(!PathFlowVectorAnalysis(PATHS[0]));
+
+   if (PATHS[0]->lpflag & LP_VEC)
+         VPATH = 0;
+   
+   if (VPATH != -1)
+   {
+/*
+ *    Update optloop with the vector path 
+ */
+      vpath = PATHS[VPATH];
+      n = vpath->varrs[0];
+      lp->varrs = malloc(sizeof(short)*(n+1));
+      assert(lp->varrs);
+      for (i=0; i <=n; i++)
+      {
+         lp->varrs[i] = vpath->varrs[i];
+      }
+
+      n = vpath->vscal[0];
+      lp->vscal = malloc(sizeof(short)*(n+1));
+      lp->vvscal = malloc(sizeof(short)*(n+1));
+      lp->vsflag = malloc(sizeof(short)*(n+1));
+      lp->vsoflag = malloc(sizeof(short)*(n+1));
+      assert(lp->vscal && lp->vvscal && lp->vsflag && lp->vsoflag);
+      for (i=0; i <= n; i++)
+      {
+         lp->vscal[i] = vpath->vscal[i];
+         lp->vsflag[i] = vpath->vsflag[i];
+         lp->vsoflag[i] = vpath->vsoflag[i];
+      }
+      /*
+       * Create vector local for all vector scalars in loop
+       */
+      lp->vflag = vpath->vflag;
+      k = LOCAL_BIT | FLAG2TYPE(vpath->vflag);
+      lp->vvscal[0] = n;
+      sp = vpath->vscal + 1;
+      for (i=0; i < n; i++)
+      {
+         sprintf(ln, "_V%d_%s", i-1, STname[sp[i]-1] ? STname[sp[i]-1] : "");
+         j = lp->vvscal[i+1] = STdef(ln, k, 0);
+         SToff[j-1].sa[2] = AddDerefEntry(-REG_SP, j, -j, 0, j);
+      }
+      /*
+       * Save fko
+       */
+      SaveFKOState(1);
+      return(0);
+   }
+   else
+   {
+      return(1);
+   }
+}
+
+int Vectorization()
+/*
+ * So far RedundantVectorTransform is the most general vector Transform. 
+ * will re-write later.
+ */
+{
+   LOOPQ *lp;
+   lp = optloop;
+   assert(!RedundantVectorTransform(lp));
+   KillPathTable();
+   return (0);
+}

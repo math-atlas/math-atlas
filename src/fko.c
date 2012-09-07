@@ -9,10 +9,23 @@ int FUNC_FLAG=0;
 int DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0, DTx87=0, DTx87d=0;
 int DTnzerods=0, DTabsds=0, DTnzeros=0, DTabss=0;
 int FKO_FLAG;
+int VECT_FLAG=0;  /* Majedul: for different vectorization methods */
+/*
+ * Majedul: 
+ *    As we will introduce more and more new optimizations, I will keep 
+ *    flag according to program states. 
+ *    STATE1 has two optimization, hence 2 flag: 
+ */
+int STATE1_FLAG=0;
+int STATE2_FLAG=0;
+int STATE3_FLAG=0;
+
 int PFISKIP=0, PFINST=(-1), PFCHUNK=1;
 int NWNT=0, NAWNT=0;
 short *AEn=NULL;
 char **ARRWNT=NULL, **AES=NULL;
+short *SEn=NULL;    /* Majedul: this is for generalizing the Scalar Expansion */
+char **SES=NULL;    /* Majedul: this is for generalizing the Scalar Expansion */
 static char fST[1024], fLIL[1024], fmisc[1024];
 static short *PFDST=NULL, *PFLVL=NULL;
 static char **PFARR=NULL;
@@ -43,7 +56,12 @@ void PrintUsageN(char *name)
    fprintf(stderr, "     L : dump LIL <file>.L\n");
    fprintf(stderr, "     o : dump opt sequence to <file>.opt\n");
    fprintf(stderr, "  -U <#> : Unroll main loop # of times\n");
-   fprintf(stderr, "  -V     : Vectorize (SIMD) main loop\n");
+   fprintf(stderr, "  -V : Vectorize (SIMD) main loop with no control flow\n");
+   fprintf(stderr, 
+"  -Vm [SSV,VRC,VEM]: Vectorize (SIMD) main loop with control flow\n");
+   fprintf(stderr, "     SSV : Speculative vectorization \n");
+   fprintf(stderr, "     VRC : Vector Redundant Computation \n");
+   fprintf(stderr, "     VEM : Vector after elim of control flow for max\n");
    fprintf(stderr, "  -W <name> : use cache write-through stores\n");
    fprintf(stderr, "  -P <all/name> <cache level> <dist(bytes)>\n");
    fprintf(stderr, 
@@ -241,6 +259,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
    char *fin=NULL, *fout=NULL;
    struct optblkq *obq=NULL, *op;
    struct ptrinfo *pf, *pfb=NULL, *pf0, *pfK, *pfP, *aeb=NULL;
+   struct ptrinfo *seb=NULL;    /* this is to generalize the scalar expansion */
    struct idlist  *id, *idb=NULL, *idP, *idK;
    char *sp, *rpath=NULL, *rname=NULL;
    int i, j, k, n;
@@ -315,6 +334,15 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             aeb = NewPtrinfo(i+1, atoi(args[i+2]), aeb);
             i += 2;
             break;
+/*
+ *       Majedul: To generalize the AccumExpansion with Scalar Expansion
+ *       -SE var # 
+ */
+         case 'S':
+            assert(args[i][2]=='E');
+            seb = NewPtrinfo(i+1, atoi(args[i+2]), seb);
+            i += 2;
+            break;
          case 'W':
             id = malloc(sizeof(struct idlist));
             id->name = args[++i];
@@ -333,6 +361,49 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             break;
          case 'V':
             FKO_FLAG |= IFF_VECTORIZE;
+/*
+ *          Majedul: Recognize different vector methods from command line
+ *          changed the concept!
+ */
+#if 0            
+            if (args[i][2])
+            {
+               if (args[i][2] == 'm')
+               {
+                  i++;
+                  if (i >= nargs)
+                  {
+                     fprintf(stderr, "Incomplete flag '%s'\n", args[i-1]);
+                     PrintUsageN(args[0]);
+                  }
+                  else if (args[i] && strlen(args[i]) != 3)
+                  {
+                     fprintf(stderr, "Unknown flag '%s'\n", args[i]);
+                     PrintUsageN(args[0]);
+                  }
+                  else if (args[i][0]=='S' && args[i][1]=='S' && args[i][2]=='V')
+                     VECT_FLAG |= VECT_SSV;
+                  else if (args[i][0]=='V' && args[i][1]=='R' && args[i][2]=='C')
+                     VECT_FLAG |= VECT_VRC;
+                  else if (args[i][0]=='V' && args[i][1]=='E' && args[i][2]=='M')
+                     VECT_FLAG |= VECT_VEM;
+                  else
+                  {
+                     fprintf(stderr, "Unknown flag '%s'\n", args[i]);
+                     PrintUsageN(args[0]);
+                  }
+               }
+               else
+               {
+                  fprintf(stderr, "Unknown flag '%s'\n", args[i]);
+                  PrintUsageN(args[0]);
+               }
+            }
+            else 
+            {
+               VECT_FLAG |= VECT_NCONTRL;
+            }
+#endif            
             break;
          case 'c':
             fpIG = fpST = fpLIL = fpOPT = (FILE*) 1;
@@ -458,6 +529,34 @@ ERR:
             obq = op;
             i += 4;
             break;
+/*
+ *    Majedul:
+ *       -rc = redundant computation
+ *       -mmc = max/min reduction
+ */
+         case 'r':
+            if (args[i][2] && args[i][2] == 'c')
+            {
+               STATE1_FLAG |= IFF_ST1_RC; 
+            }
+            else
+            {
+               fprintf(stderr, "Unknown flag '%s'\n", args[i]);
+               PrintUsageN(args[0]);
+            }
+            break;
+         case 'm':
+            assert(args[i][2] && args[i][3]);
+            if (args[i][2] == 'm' && args[i][3] == 'r')
+            {
+               STATE1_FLAG |= IFF_ST1_MMR; 
+            }
+            else
+            {
+               fprintf(stderr, "Unknown flag '%s'\n", args[i]);
+               PrintUsageN(args[0]);
+            }
+            break;
          default:
             fprintf(stderr, "Unknown flag '%s'\n", args[i]);
             PrintUsageN(args[0]);
@@ -508,6 +607,21 @@ ERR:
          AEn[i] = pf->flag;
       KillAllPtrinfo(aeb);
    }
+/*
+ * Majedul: This is to generalize the scalar expansion
+ */
+   if (seb)
+   {
+      STATE3_FLAG |= IFF_ST3_SE ; /* to keep track of the opt */
+      n = KillDupPtrinfo(args, seb);
+      SES = PtrinfoToStrings(args, n, seb);
+      SEn = malloc(sizeof(short)*(n+1));
+      SEn[0] = n;
+      for (pf=seb,i=1; i <= n; pf=pf->next,i++)
+         SEn[i] = pf->flag;
+      KillAllPtrinfo(seb);
+   }
+
    if (pfb)
    {
 /*
@@ -727,6 +841,82 @@ static short **ReadArrayOfShortArrayFromFile(FILE *fp)
    return(sp);
 }
 
+static void WriteState0MiscToFile(char *name)
+/*
+ * Majedul: This is only to save the new state0
+ */
+{
+   FILE *fp;
+   short *sp;
+   short i, n;
+   struct locinit *lp;
+   extern struct locinit *LIhead;
+
+   fp = fopen(name, "wb");
+   assert(fp);
+/*
+ * 1. Save optloop related information. We don't need to save recomputable info
+ *    but need to save those data which are computed during parsing(HIL to LIL).
+ *    it will provide us opportunity to restore the program state from files 
+ *    offline.
+ */
+   if (optloop)
+   {
+      n = 1;
+      assert(fwrite(&n, sizeof(short), 1, fp) == 1);
+/*
+ *    Need to save information which is computed during parsing:
+ *    int flag 
+ *    short I, beg, end, inc, body_label, end_label
+ *    short maxunroll
+ *    We saved the full structure, but need to invalidated all the pointers
+ *    when restored.
+ */
+      assert(fwrite(optloop, sizeof(LOOPQ), 1, fp) == 1);
+   }
+   else
+   {
+      n = 0;
+      assert(fwrite(&n, sizeof(short), 1, fp) == 1);
+   }
+/*
+ * 2. Need to save structure for const initialization as it is constructed 
+ *    during parsing.
+ */
+   if (LIhead)
+   {
+      for (n=0,lp=LIhead; lp; lp = lp->next) n++;
+      sp = malloc(n*sizeof(short));
+      assert(sp);
+      for (n=0,lp=LIhead; lp; lp = lp->next)
+         sp[n++] = lp->id;
+      WriteShortArrayToFile(fp, n, sp);
+      for (n=0,lp=LIhead; lp; lp = lp->next)
+      {
+/*         fprintf(stderr, "W id=%d, ptr=%d\n", lp->id, lp->con); */
+         sp[n++] = lp->con;
+      }
+      WriteShortArrayToFile(fp, n, sp);
+      free(sp);
+   }
+   else
+   {
+      n = 0;
+      assert(fwrite(&n, sizeof(short), 1, fp) == 1);
+   }
+/*
+ * 3. Need to save global data which is generated from GetFlagsN(). 
+ *    We can restore the program state from files offline. 
+ */
+      n = PFDST ? PFDST[0] : 0;
+      WriteStringArrayToFile(fp, n, PFARR);
+      WriteShortArrayToFile(fp, n, PFLVL+1);
+      WriteShortArrayToFile(fp, n, PFDST+1);
+      WriteStringArrayToFile(fp, NWNT, ARRWNT);
+      fclose(fp);
+}
+
+
 static void WriteMiscToFile(char *name)
 {
    FILE *fp;
@@ -802,6 +992,145 @@ static void KillArrayOfStr(int n, char **str)
          free(str[i]);
    free(str);
 }
+
+static void ReadState0MiscFromFile(char *name)
+{
+   int i;
+   short n;
+   FILE *fp;
+   LOOPQ *lp;
+   short *sp, *s;
+   extern struct locinit *LIhead;
+/*
+ * Kill current optloop and restore the old one
+ */
+   KillLoop(optloop);
+   optloop = NewLoop(0);
+   fp = fopen(name, "rb");
+   assert(fp);
+   assert(fread(&n, sizeof(short), 1, fp) == 1);
+   if (n)
+   {
+      assert(fread(optloop, sizeof(LOOPQ), 1, fp) == 1);
+/*
+ * Need to check whether all the information is loaded successfully
+ * Ofcourse, need to mark all pointers as NULL
+ */
+#if 1
+      fprintf(stderr, "optloop->flag = %d\n", optloop->flag);
+      fprintf(stderr, "optloop->I = %d\n", optloop->I);
+      fprintf(stderr, "optloop->beg = %d\n", optloop->beg);
+      fprintf(stderr, "optloop->end = %d\n", optloop->end);
+      fprintf(stderr, "optloop->inc = %d\n", optloop->inc);
+      fprintf(stderr, "optloop->body_label = %d\n", optloop->body_label);
+      fprintf(stderr, "optloop->end_label = %d\n", optloop->end_label);
+      fprintf(stderr, "optloop->maxunroll = %d\n", optloop->maxunroll);
+#endif  
+/*
+ * initialize/invalidate all data which are recomputed.
+ * NOTE:  need to figure out what would be the initial value for the following
+ *        [all of these would be recomputed afterward ]
+ *          optloop->vflag
+ *          optloop->ndup
+ *          optloop->depth
+ *          optloop->CU_label
+ *          optloop->PTCU_label
+ *          optloop->NE_label
+ *          optloop->loopnum
+ *          optloop->writedd
+ *          optloop->blkvec
+ *          optloop->outs
+ *          optloop->sets
+ */
+      optloop->blkvec = 0;
+      optloop->outs = 0;
+      optloop->sets = 0;
+
+      optloop->varrs = NULL;
+      optloop->vscal = NULL;
+      optloop->vsflag = NULL;
+      optloop->vsoflag = NULL;
+      optloop->vvscal = NULL;
+      optloop->nopf = NULL;
+      optloop->aaligned = NULL;
+      optloop->abalign = NULL;
+      optloop->pfarrs = NULL;
+      optloop->pfdist = NULL;
+      optloop->pfflag = NULL;
+      optloop->ae = NULL;
+      optloop->ne = NULL;
+      optloop->aes = NULL;
+      optloop->se = NULL;
+      optloop->nse = NULL;
+      optloop->ses = NULL;
+      optloop->seflag = NULL;
+      optloop->maxvars = NULL;
+      optloop->minvars = NULL;
+      optloop->preheader = NULL;
+      optloop->header = NULL;
+      optloop->tails = NULL;
+      optloop->posttails = NULL;
+      optloop->blocks = NULL;
+      optloop->next = NULL;
+
+   }
+   else 
+      optloop = NULL;
+/*
+ * Kill LIhead and restore the old one 
+ */   
+   KillAllLI(LIhead);
+   LIhead = NULL;
+   sp = ReadShortArrayFromFile(fp);
+   if (sp)
+   {
+      s = ReadShortArrayFromFile(fp);
+      for (i=1; i <= s[0]; i++)
+      {
+/*         fprintf(stderr, "R id=%d, ptr=%d\n", sp[i], s[i]); */
+         LIhead = NewLI(sp[i], s[i], LIhead);
+      }
+      free(sp);
+      free(s);
+   }
+/*
+ * load all the global data which are needed to restore the states offline.
+ * NOTE: need to store the num also to restore it ofline
+ */
+   i = PFDST ? PFDST[0] : 0; /* need to save it in file also*/
+   KillArrayOfStr(i, PFARR);
+   if (PFLVL)
+      free(PFLVL);
+   if (PFDST)
+      free(PFDST);
+   PFARR = ReadStringArrayFromFile(fp);
+   PFLVL = ReadShortArrayFromFile(fp);
+   PFDST = ReadShortArrayFromFile(fp);
+
+   if (NWNT && ARRWNT)
+   {
+      for (i=0; i < NWNT; i++)
+         if (ARRWNT[i])
+            free(ARRWNT[i]);
+      free(ARRWNT);
+   }
+   ARRWNT = ReadStringArrayFromFile(fp);
+   if (ARRWNT)
+      for (NWNT=0; ARRWNT[NWNT]; NWNT++);
+   else NWNT = 0;
+   fclose(fp);
+/*
+ * Now, we need to free all global data which are re-computed in later states
+ * like: Bitvec
+ */
+   KillAllBitVec(); 
+/*
+ * what other info we need to free!!
+ */
+
+}
+
+
 
 static void ReadMiscFromFile(char *name)
 {
@@ -897,6 +1226,62 @@ static void ReadMiscFromFile(char *name)
    fclose(fp);
 }
 
+
+void RestoreFKOState0()
+/*
+ * Majedul: 
+ * This is only to restore program states from saved state0.
+ * We need to kill/free all the unnecessary global data which is not already
+ * computed in during state0
+ */
+{
+   char ln[1024];
+   extern BBLOCK *bbbase;
+   extern struct locinit *ParaDerefQ;
+/*
+ * free ParaDerefQ if it is computed. ParaDerefQ is computed at the end during
+ * finalizing the epilogue and prologue. 
+ */
+   if (ParaDerefQ)
+   {
+      KillAllLocinit(ParaDerefQ);
+      ParaDerefQ = NULL;
+   }
+/*
+ * No repeatable opt yet in state0
+ */
+   noptrec = 0;
+/*
+ * Restore related data structure for Symbol table: 
+ *    1. global flag like: DTnzerod, Dtabsd, etc.
+ *    2. glabal data like: STderef, N, niloc, nlloc, nfloc, ... NPARA, etc
+ *    3. all data structure for Symbol table: SToff, STflag, STpts2, STName
+ */
+   sprintf(ln, "%s%d", fST, 0);
+   ReadSTFromFile(ln);
+/*
+ * Restore basic block bbbase
+ */
+   sprintf(ln, "%s%d", fLIL, 0);
+   ReadLILFromBinFile(ln);
+/*
+ * Majedul: 
+ * Restoring information like:
+ *    1. Optloop: I, beg, end, inc, flag, body_label, end_label, CU_label
+ *       TCU_label, NE_label, maxunroll, etc.
+ *    2. LIhead: this is for const initialization which is built during parsing
+ *    3. Global data structure for main program which are generated from 
+ *       GetFlagsN() so that we can restore whole program from file 
+ */
+   sprintf(ln, "%s%d", fmisc, 0);
+   ReadState0MiscFromFile(ln);
+/*
+ * All annotation must be done afresh
+ */
+   CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = CFLOOP = 0;
+}
+
+
 void RestoreFKOState(int isav)
 {
    char ln[1024];
@@ -951,6 +1336,48 @@ void SaveFKOState(int isav)
    sprintf(ln, "%s%d", fmisc, isav);
    WriteMiscToFile(ln);
 }
+
+void SaveFKOState0()
+/*
+ * Majedul: 
+ * this function is used only to save the state0. Saving and restoring multiple
+ * states would complicate the procedure. So, right now, I just consider to save
+ * state0 and recompute all states from state0 if needed.
+ */
+{
+   char ln[1024];
+   extern BBLOCK *bbbase;     
+
+/*
+ * saving following global data related to symbol table:
+ *    1. global flag like: DTnzerod, Dtabsd, etc.
+ *    2. glabal data like: STderef, N, niloc, nlloc, nfloc, ... NPARA, etc
+ *    3. all data structure for Symbol table: SToff, STflag, STpts2, STName
+ */
+   sprintf(ln, "%s%d", fST, 0);
+   WriteSTToFile(ln);
+/*
+ * saving bbbase block structure
+ */
+   sprintf(ln, "%s%d", fLIL, 0);
+   WriteLILToBinFile(ln, bbbase);
+/*
+ * Majedul: 
+ * we don't need to save re-computable information of optloop like: varrs, vscal,
+ * ... ... ae, aes, etc. we just need to save all those marker which is found
+ * while parsing the HIL to LIL. 
+ * saving information like:
+ *    1. Optloop: I, beg, end, inc, flag, body_label, end_label, CU_label
+ *       TCU_label, NE_label, maxunroll, etc.
+ *    2. LIhead: this is for const initialization which is built during parsing
+ *    3. Global data structure for main program which are generated from 
+ *       GetFlagsN() so that we can restore whole program from file 
+ */
+
+   sprintf(ln, "%s%d", fmisc, 0);
+   WriteState0MiscToFile(ln); /* this function is diff than old one */
+}
+
 
 int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
 /*
@@ -1231,6 +1658,19 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
  */
       if (optloop->ae)
          DoAllAccumExpansion(optloop, unroll, DO_VECT(FKO_FLAG));
+#if 0
+      if (VECT_FLAG & (VECT_SSV | VECT_VRC | VECT_VEM))
+      {
+         if (optloop->se)
+            DoAllScalarExpansion(optloop, unroll, DO_VECT(FKO_FLAG));
+         if (optloop->ae)
+            DoAllAccumExpansion(optloop, unroll, DO_VECT(FKO_FLAG));
+      }
+      else
+         if (optloop->ae)
+            DoAllAccumExpansion(optloop, unroll, DO_VECT(FKO_FLAG));
+#endif 
+
 #if 0
       fprintf(stdout, "\n LIL AFTER AE\n");
       PrintInst(stdout,bbbase);
@@ -1645,6 +2085,112 @@ void AddOptSTEntries()
    }
 }
 
+/*void AddOptSTEntries1()*/
+void AddOptST4SE()
+/*
+ * Majedul: This is for generalizing the scalar expansion. 
+ * NOTE: if it is accumulator, we should update that before state0. it will
+ * be needed in normal vectorization. But if it is max/min var, we will need
+ * special transformation before vectorization. 
+ * 
+ * FIXME: Need to solved the problem with saving the temporary LIL and 
+ * restoring it later even after updating the bitvectors.  See SaveFKOstate
+ * function for details.
+ *
+ * NOTE: AES/SES is 0 indexed (means SES[0] has valid element) but AEn/SEn
+ * is 1 indexed (SEn[0] contains the number of elements)
+ *
+ * PrevNote: Some optimizations require additional locals to be allocated.  
+ * This routine adds them to ST, though they may not be used if optimization 
+ * is not applied Must call this routine before initial save state, so args 
+ * remain in ST for later use. 
+ */
+{
+   int i, n, VEC;
+   short st;
+   int *scf;
+
+   short *se;   /* [0] = number of elements */
+   short **ses; /* element from 0 position */
+   
+   se = NULL;
+   ses = NULL;
+   scf = NULL;
+
+   VEC = DO_VECT(FKO_FLAG);
+   if (optloop && SEn)
+   {
+      n = SEn[0];
+      scf = calloc(n, sizeof(int));
+      se = malloc((n+1)*sizeof(short));
+      ses = malloc((n+1)*sizeof(short*));
+      scf = malloc((n+1)*sizeof(int));
+      assert(scf && se && ses && scf);
+      ses[n] = NULL;
+      se[0] = n;
+      for (i=1 ; i <= n; i++)
+      {
+         st = FindVarFromName(SES[i-1]);
+         assert(st);
+         se[i] = st;
+/*
+ *       HERE HERE, f we applied -rc before, there is no way to determine a var
+ *       as max/min. So, check the optloop->maxvars and optloop->minvars before 
+ *       testing for Accumulator!!!
+ *       UpdateOptLoopSTWithMaxMinVars must be applied irrespective of any
+ *       transformation!!!
+ */
+         if (FindInShortList(optloop->maxvars[0], optloop->maxvars+1, st))
+         {
+            scf[i] = SC_MAX;
+            ses[i-1] = DeclareMaxE(VEC, SEn[i], st);
+         }
+         else if (FindInShortList(optloop->minvars[0], optloop->minvars+1, st))
+         {
+            scf[i] = SC_MIN;
+            ses[i-1] = DeclareMinE(VEC, SEn[i], st);
+         }
+         else if (VarIsAccumulator(optloop->blocks, st))
+         {
+            scf[i] = SC_ACC;
+            ses[i-1] = DeclareAE(VEC, SEn[i], st);
+         }
+/*
+ *    NOTE: -rc transformation modifies the max/min structure. So, following
+ *    max/min testing will not work. 
+ */
+#if 0         
+         else if (VarIsMax(optloop->blocks, st))
+         {
+            scf[i] = SC_MAX;
+            ses[i-1] = DeclareMaxE(VEC, SEn[i], st);
+         }
+         else if (VarIsMin(optloop->blocks, st))
+         {
+            scf[i] = SC_MIN;
+            ses[i-1] = DeclareMinE(VEC, SEn[i], st);
+         }
+#endif         
+         else
+         {
+            fko_error(__LINE__, "%s not a candidate for scalar expansion\n",
+                     SES[i-1]);
+         }
+      }
+/*
+ *    update optloop 
+ */
+      optloop->se = se;
+      optloop->nse = SEn; /* number of expansion */
+      SEn = NULL;
+      optloop->ses = ses;
+      optloop->seflag = scf;
+   }
+    
+}
+
+
+
 void GenAssenblyApplyingOpt4SSV(FILE *fpout, struct optblkq *optblks, 
                                 struct assmln *abase)
 /*
@@ -1657,7 +2203,8 @@ void GenAssenblyApplyingOpt4SSV(FILE *fpout, struct optblkq *optblks,
 
    int i;
 
-   UnrollCleanup(optloop,1);
+   /*UnrollCleanup(optloop,1);*/
+   UnrollCleanup2(optloop,1);
 /*
  * Everything is messed up already. So, re-make the control flow and check it 
  */
@@ -1733,7 +2280,147 @@ void GenAssenblyApplyingOpt4SSV(FILE *fpout, struct optblkq *optblks,
    return ;
 }
 
+void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks,
+                                    struct assmln *abase)
+/*
+ * NOTE: this is used temporarily to genarate assembly and test the output
+ * will formalize later ... fpout, optblks, abase
+ */
+{
+   int i; 
+   extern struct locinit *ParaDerefQ;
+
+   CalcInsOuts(bbbase);
+   CalcAllDeadVariables();
+   RevealArchMemUses(); /* to handle ABS in X86 */
+   PerformOptN(0, optblks);
+/*
+ * Non Temporal write
+ */
+   if (NWNT)
+   {
+      NAWNT = DoStoreNT(NULL);
+/*
+ * Need to free ???? 
+ */
+   }
+
+
+   INUSETU2D = INDEADU2D = CFUSETU2D = 0;
+   if (!INDEADU2D)
+      CalcAllDeadVariables();
+   if (!CFLOOP)
+      FindLoops();
+   AddBlockComments(bbbase);
+   AddLoopComments();
+   i = FinalizePrologueEpilogue(bbbase,0 );
+   KillAllLocinit(ParaDerefQ);
+   ParaDerefQ = NULL;
+   if (i)
+      fprintf(stderr, "ERR from PrologueEpilogue\n");
+   CheckFlow(bbbase, __FILE__,__LINE__);
+   DumpOptsPerformed(stderr, FKO_FLAG & IFF_VERBOSE);
+   abase = lil2ass(bbbase);
+   KillAllBasicBlocks(bbbase);
+   dump_assembly(fpout, abase);
+   KillAllAssln(abase);
+}
+
+int IsControlFlowInLoop(BLIST *lpblks, BBLOCK *header)
+{
+   BLIST *bl;
+
+   for (bl = lpblks; bl; bl = bl->next)
+   {
+      if (bl->blk->csucc && bl->blk->csucc != header)
+         return(1);
+   }
+   return 0;
+}
+
+void AddOptWithOptimizeLC(LOOPQ *lp)
+/*
+ * Optimize loop control only for UR =1 and update the optloop->varrs
+ */
+{
+   struct ptrinfo *pi, *pi0;
+   int i, n, k;
+   short *sp;
+
+   if (!lp) return;
+/*
+ * killed the loop control to make the analysis easier, we will update the
+ * loop control with OptimizeLoopControl again!
+ */
+#if 0
+   fprintf(stdout, "lil\n");
+   PrintInst(stdout, bbbase);
+   exit(0);
+#endif
+
+   KillLoopControl(optloop);
+   pi0 = FindMovingPointers(lp->blocks);
+   for (n=0,pi=pi0; pi; pi=pi->next,n++);
+   sp = malloc(sizeof(short)*(n+1));
+   assert(sp);
+   sp[0] = n;
+   for (i=1,pi=pi0; i <= n; i++,pi=pi->next)
+      sp[i] = pi->ptr;
+   KillAllPtrinfo(pi0);
+  
+   if (!lp->varrs)
+      lp->varrs = sp;
+   else assert(0);
+/*
+ * NOTE: it will not be applied if the code is vectorized or UR > 1 
+ */
+   OptimizeLoopControl(lp, 1, 0, NULL); /* lc is already killed */
+}
+
 int main(int nargs, char **args)
+/*
+ * ==========================================================================
+ * Majedul:
+ * I'm going to change the program states of FKO. Here is short description
+ * of that:
+ *
+ * State 0: Plain LIL (with no prologue/epilogue), initial ST
+ *          no update in ST and optloop for AE/SE (Scalar Expansion)
+ *
+ * State 1:  
+ *    a) Generate initial Prologue/Epilogue, so that we can create CFG and 
+ *       update optloop info
+ *    b) We will apply some optimization which is pre-requisit for some 
+ *       some vectorization method. Eg.- 
+ *       i) If conversion with Redundant Computation
+ *       ii) Max/Min variable reduction.
+ * 
+ * State 2:      
+ *    a) Vector Analysis: able to perform path based vector analysis
+ *    b) Vectorization: Normal and Speculative (SV)
+ *    c) Loop peeling for Alignment (if applicable)
+ *    d) complete cleanup for vectorization (may be updated after unrolling)
+ *         
+ * State 3:
+ *    a) Unrolling with updated cleanup 
+ *    b) Scalar Expansion (supports Accumulator, Max/Min expansion)
+ *    c) Prefetching
+ *
+ * State 4: (Common Optimization State)
+ *    a) Reveal Architectural memory usage (Enable or disable)
+ *    b) Repeatable Optimization
+ *    b) Finalize Prologue and Epilogue
+ *    c) LIL to Assembly
+ *
+ * Relationship of states if all applied (state0 and state4 are must):
+ *    State0 <-- State1 <-- State2 <-- State3 <-- State4
+ *
+ * NOTE: 
+ * I will fix the Save/Restore function for states. Initial plan: all states
+ * are completely separate and the complete program states for each can be 
+ * saved and restored.
+ *===========================================================================
+ */
 {
    FILE *fpin, *fpout, *fpl;
    char *fin;
@@ -1744,6 +2431,314 @@ int main(int nargs, char **args)
    int i;
    extern FILE *yyin;
    extern BBLOCK *bbbase;
+
+/*
+ * Update flags using command line options and create Optimization block 
+ * structures. Note: It's not CFG block, it's block for opts and will be used
+ * later in repeatable optimization.
+ */
+   optblks = GetFlagsN(nargs, args, &fin, &fpin, &fpout);
+   if (!optblks)
+      optblks = DefaultOptBlocks();
+   optblks = OptBlockQtoTree(optblks);
+/*
+ * If we have already saved the program state into files, load that (if it is
+ * requested from command line).
+ * 
+ * Previous Requirement:
+ * Files: IG, ST, LIL, OPT 
+ * Normally files saved/restored from /tmp/FKO_ST.0/2/3, /tmp/FKO_LIL.0/2/3,
+ * /tmp/FKO_misc.0/2/3 
+ * NOTE: I was not be able to successfully restore program state from command
+ * line. 
+ *
+ * Future Plan: 
+ * ------------ 
+ *    I have 4 intermidiate steps. All of them would be saved/restored using 
+ *    the appropriate prefix (0~3). I will update it after fixing the 
+ *    SaveFKOState and RestoreFKOState functions.
+ * 
+ * NOTE: We need to find a way to continue the program flow after retrieving
+ * the program states.
+ */
+   if (FKO_FLAG & IFF_READINTERM)
+   {
+      fprintf(stderr, 
+             "Need to call restore function. It is not implemented yet\n");
+      exit(0);
+   }
+
+/*===========================================================================
+ *    STATE 0:
+ *       1. Generate 1st LIL after parsing the HIL (Simple ld/st LIL).
+ *       2. No CFG, No Prolgue/Epilogue, no extra info
+ *==========================================================================*/
+
+   yyin = fpin;
+   bp = bbbase = NewBasicBlock(NULL, NULL);
+   bp->inst1 = bp->instN = NULL;
+   yyparse();
+   fclose(fpin);
+   /*SaveFKOState(0);*/  /* this Save function works for state0. Fixed it later */
+   SaveFKOState0(); /* this Save function works for state0. Fixed it later */
+
+/*
+ * if we need information for tunning, Generate and return those info.
+ * NOTE: info returns can be based on any states. PrintLoopInfo will provide
+ * That. I will change the function later accordingly. Even may be, I will 
+ * implement a new function for this.
+ */
+   if (fpLOOPINFO)
+   {
+      //PrintLoopInfo();
+      FeedbackLoopInfo();
+      exit(0);
+   }
+#if 0
+   if (FKO_FLAG & IFF_GENINTERM && state0) /*flag state0 is not impl yet */
+   {
+      SaveFKOState(0);
+      exit(0);
+   }
+#endif   
+
+/*===========================================================================
+ *    STATE 1:
+ *       1. Generate initial prologue/epilogue, CFG, find loops
+ *       2. If conversion with Redundant computation if requested
+ *       3. Max/Min Reduction, if requested
+ *
+ * NOTE: introduce new 2 command line flags: -rc, -mmr 
+ *==========================================================================*/
+/*
+ * Get code into standard form for analysis
+ */
+   GenPrologueEpilogueStubs(bbbase, 0); /* rsav = 0, normal case */
+   NewBasicBlocks(bbbase);
+   FindLoops();
+   CheckFlow(bbbase,__FILE__,__LINE__);
+/*
+ * Right now, we will consider only optloop for theses transformation, but
+ * it can be applied anywhere. 
+ * It will be applied only if there exists a control flow inside the loop.
+ * NOTE: 
+ *    1st MMR then RC to be applied. 
+ */
+   if (optloop && IsControlFlowInLoop(optloop->blocks, optloop->header))
+   {
+/*
+ *    After this state, the structure of Max/Min will be lost. So, update 
+ *    optloop with that. We can use this info later (both in this state and SE )
+ */
+      UpdateOptLoopWithMaxMinVars1(optloop);
+      if (STATE1_FLAG & IFF_ST1_MMR)
+      {
+/*
+ *       Right now, we will transform the whole if blk, if this blk is used only
+ *       for determing the max/min. We will extend this to figure out the 
+ *       max/min var and strip it out from the loop. 
+ */
+         ElimMaxMinIf();
+#if 0 
+         fprintf(stdout, "LIL after ElimMax/MinIf\n");
+         PrintInst(stdout, bbbase);
+         GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
+#endif
+      }
+
+      if (STATE1_FLAG & IFF_ST1_RC)
+      {
+         IfConvWithRedundantComp();
+#if 0 
+         fprintf(stdout, "LIL after ElimMax/MinIf\n");
+         PrintInst(stdout, bbbase);
+         GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
+#endif         
+      } 
+   }
+   else
+   {
+      if (STATE1_FLAG & IFF_ST1_RC || STATE1_FLAG & IFF_ST1_MMR)
+         fko_error(__LINE__, "No Control Flow in optloop to transform!!!\n");
+   }
+
+#if 0
+   if (FKO_FLAG & IFF_GENINTERM && state1) /*flag state0 is not impl yet */
+   {
+      SaveFKOState(1);
+      exit(0);
+   }
+#endif   
+/*============================================================================
+ *    STATE2 : Vectorization 
+ *    [This state is dedicated for vectorization. Right now, we deal with two 
+ *    types of vectorization: normal, Speculative. Later, we will apply 
+ *    speculation before vectorization. Then, vectorization will be straight 
+ *    forward.]
+ *
+ *    1. Vector Analysis (Path based vector analyzer)
+ *    2. Vectorization (Normal, Speculative - SV ) with loop peeling for 
+ *       Alignment and cleanup
+ *    
+ *    NOTE: during vector analysis, we have updated optloop with necessary info
+ *    like: varrs which is needed later.
+ *
+ *    NOTE: for speculative vectorization, unrolling is not implemented yet
+ *===========================================================================*/
+   if (FKO_FLAG & IFF_VECTORIZE)
+   {
+#if 0
+         fprintf(stdout, "LIL before speculation test \n");
+         PrintInst(stdout, bbbase);
+         exit(0);
+#endif
+      if (IsSpeculationNeeded())
+      {
+         #if IFKO_DEBUG_LEVEL > 1
+            fprintf(stderr,"Vectorization Method: SV \n");
+         #endif
+/*
+ *       update flag for later use
+ */
+         VECT_FLAG &= ~VECT_NCONTRL;
+         VECT_FLAG |= VECT_SV;
+         
+         SpeculativeVectorAnalysis();
+         SpecSIMDLoop();
+         
+         #if 0
+            GenAssenblyApplyingOpt4SSV(fpout, optblks, abase);
+            exit(0);
+         #else
+/*
+ *                NOTE: need to parameterize the vectorization.
+ *                Haven't fixed the issue if there is outof Regs!!!
+ */
+                  FKO_UR = 1; /* forced to unroll factor 1*/
+         #endif
+      }
+      else
+      {
+         VECT_FLAG &= ~VECT_SV;
+         VECT_FLAG |= VECT_NCONTRL;
+         
+         /*VectorAnalysis();*/
+         SpeculativeVectorAnalysis();
+         Vectorization();
+      }
+/*
+ *    NOTE:
+ *    old UnrollCleanup will not work anymore after calling this function.
+ *    new UnrollCleanup should recognize the changes and update accordingly
+ */
+      FinalizeVectorCleanup(optloop); 
+      
+#if 0 
+   #if 0         
+         assert(!GoToTown(0, FKO_UR, optblks));
+         abase = lil2ass(bbbase);
+         KillAllBasicBlocks(bbbase);
+         dump_assembly(fpout, abase);
+         KillAllAssln(abase);
+   #else
+         fprintf(stdout, "LIL after Vectorization \n");
+         PrintInst(stdout, bbbase);
+         GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
+         exit(0);
+   #endif
+
+#endif         
+   }
+
+/*=============================================================================
+ *    STATE3 : Transformation and optimization which should be applied after 
+ *    vectorization (if applied with it)
+ *    1. Unrolling with cleanup
+ *    2. OptimizeLoopControl -> if neither Vect or Unroll
+ *    3. Scalar Expansion
+ *    4. Prefetching
+ *
+ *============================================================================*/
+/*
+ * unrolling ... ... LC optimization if neither unrolling nor Vectorization
+ * NOTE: as after unrolling cleanup would be introduced. Traditional Killloop
+ * control and OptimizeLoopControl will not work!!! Hence, update optloop also.
+ * So, we should do the moving ptr analysis before/at the loop unrolling.
+ * NOTE: if it is vectorized, this analysis is already done in vector analysis.
+ *
+ * NOTE: moving ptr analysis is essential for unrolling too. Why not we update
+ * varrs at that time (if vectorization is not applied. )
+ * 
+ */
+   if (FKO_UR > 1)
+   {
+      UnrollLoop(optloop, FKO_UR); /* with modified cleanup */
+   }
+   else if (!DO_VECT(FKO_FLAG)) /* neither vectorize nor unrolled ! */
+   {
+      AddOptWithOptimizeLC(optloop);
+      /*OptimizeLoopControl(optloop, 1, 1, NULL);*/
+   }
+   else ;
+
+#if 0 
+         fprintf(stdout, "LIL after Unrolling \n");
+         PrintInst(stdout, bbbase);
+         GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
+         exit(0);
+#endif         
+
+/*
+ * Scalar Expansion ... ... 
+ */
+   if (STATE3_FLAG & IFF_ST3_SE)
+   {
+      AddOptST4SE();
+      if (optloop->se)
+      {
+         fprintf(stderr, "se!\n");
+         DoAllScalarExpansion(optloop, FKO_UR, DO_VECT(FKO_FLAG));   
+      }
+   }
+/*
+ * Prefetching ... ...
+ * NOTE: To apply prefetching, we need to update optloop->varrs info. 
+ * if vectorization is applied, it is already propulated in analysis phase. 
+ */
+  
+   if (PFARR )  /* request for prefetch... IFF_ST3_PREF */
+   {
+      if (optloop->varrs)
+         UpdateNamedLoopInfo();
+      else assert(0); /* must have moving ptr for prefetch */
+         
+      if (optloop->pfarrs)
+         AddPrefetch(optloop, FKO_UR);
+   }
+
+#if 1 
+         //fprintf(stdout, "LIL after SE \n");
+         //PrintInst(stdout, bbbase);
+         GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
+         exit(0);
+#endif         
+
+
+
+   return(0);
+
+#if 0
+/*==========================================================================
+ * Previous code with 3 states:
+ * 
+ * State0: plain LIL but with updates of ST and optloop for AE
+ * State1 & State3:  Generating Epilogue and Prologue, Vector analysis,
+ *        Resrtore State0 code, then vectorization.
+ * State2 : Applied only if Vectorization is not applied.
+ *        Scalar Vars analyis, Restore State0 code, Epilogue/Prologue 
+ *        generation, updates optloop with prefetche info.
+ *==========================================================================*/
+
 
    optblks = GetFlagsN(nargs, args, &fin, &fpin, &fpout);
    if (!optblks)
@@ -1771,30 +2766,62 @@ int main(int nargs, char **args)
       PrintST(stdout);
       exit(0);
 #endif
+/*
+ *    Majedul: 
+ *    Consider Max/Min vars detection as global 
+ *    NOTE: It can't be done at the AddOptSTEntires as max/min var analysis 
+ *    needs CFG formation. For this, we need to generate the prologue and 
+ *    epilogue. 
+ *
+ *    Note that GenPrologueEpilogueStubs should be called only once
+ *    so, removed it from IsSpeculationNeeded(). For normal vectorization, 
+ *    FKOstate0 code is retrieved anyway. So, it will not create problem 
+ *    it state0 code is save without generating PrologueEpilogue.
+ *
+ *    HERE HERE, if we need Max/Min var analysis in NCONTRL vectorization, this
+ *    information will be lost!!! As we consider Max/Min only inside optloop, 
+ *    NCONTRL vectorization can't be applied if there is a Max/Min var. 
+ */
+      if (optloop && FKO_FLAG & IFF_VECTORIZE)
+         UpdateOptLoopWithMaxMinVars();
+      AddOptSTEntries1(); /* these two will be merge later */
+
       if (!fpLOOPINFO && (FKO_FLAG & IFF_VECTORIZE))
       {
          if (IsSpeculationNeeded() && 1)
          {
-#if 0
-            fprintf(stdout, "LIL BEFORE SV\n");
-            PrintInst(stdout, bbbase);
-#endif
+            /*UpdateOptLoopWithMaxMinVars(optloop);*/
+            
+            if (VECT_FLAG & VECT_NCONTRL)
+            {
+
+              /* fprintf(stderr, "Control Flow exists in main loop!!\n");*/
 /*
- *          Handle max vars separately
+ *             keep backward compatibility right now
  */
-#if 0
-/*
- *          NOTE: for nrm2, it identifies scal as max var!!!! 
- */
-            UpdateOptLoopWithMaxMinVars(optloop);
-#endif            
-/*
- *          Finalizing the analysis
- *          NOTE: temporarily we just use compile time flag only to choose 
- *          the right vectorization method here. It will be changed with 
- *          appropriate input option later..
- */
-            #if defined(SSV)                  
+               #if defined(SSV)
+                  VECT_FLAG &= ~VECT_NCONTRL;
+                  VECT_FLAG |= VECT_SSV;
+                  fprintf(stderr, "Considering macro(SSV) for vector!!\n");
+               #elif defined(VRC)
+                  VECT_FLAG &= ~VECT_NCONTRL;
+                  VECT_FLAG |= VECT_VRC;
+                  /*fprintf(stderr, "Considering macro(VRC) for vector!!\n");*/
+               #elif defined(VEM)
+                  VECT_FLAG &= ~VECT_NCONTRL;
+                  VECT_FLAG |= VECT_VEM;
+                  fprintf(stderr, "Considering macro(VEM) for vector!!\n");
+               #else
+                  fko_error(__LINE__, "Unknown Vectorization");
+               #endif
+
+            }
+
+            if (VECT_FLAG & VECT_SSV)
+            {
+               #if IFKO_DEBUG_LEVEL > 1
+                  fprintf(stderr,"Vectorization Method: SSV \n");
+               #endif
                SpeculativeVectorAnalysis();
                SpecSIMDLoop();
                #if 1
@@ -1807,20 +2834,24 @@ int main(int nargs, char **args)
  */
                   FKO_UR = 1; /* forced to unroll factor 1*/
                #endif
-            #elif defined(VRC)
-                  UpdateOptLoopWithMaxMinVars(optloop);
-                  VectorRedundantComputation();
+            }
+            else if (VECT_FLAG & VECT_VRC)
+            {
+               #if IFKO_DEBUG_LEVEL > 1
+                  fprintf(stderr,"Vectorization Method: VRC \n");
+               #endif
+               VectorRedundantComputation();
                   /*FKO_UR = 1;*/ /* forced to unroll factor 1*/
-            #elif defined(VEM)      
-                  UpdateOptLoopWithMaxMinVars(optloop);
-                  VectorizeElimIFwithMaxMin();
+            }
+            else if (VECT_FLAG & VECT_VEM)
+            {
+               #if IFKO_DEBUG_LEVEL > 1
+                  fprintf(stderr,"Vectorization Method: VEM \n");
+               #endif
+               VectorizeElimIFwithMaxMin();
                   /*FKO_UR = 1;*/  /* forced to unroll factor 1*/
-            #else    
-                  fprintf(stderr, 
-                          "Must provide one option for Vectorization\n");
-                  exit(0);
-            #endif
-
+            }
+            else ; /* no other choice */
          }
          else
          {
@@ -1942,4 +2973,5 @@ int main(int nargs, char **args)
       KillAllAssln(abase);
    }
    return(0);
+#endif   
 }
