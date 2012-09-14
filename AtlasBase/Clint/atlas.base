@@ -5889,6 +5889,7 @@ void PrintUsage(char *nam)
 #include <assert.h>
 #include "atlas_type.h"
 #include "atlas_fopen.h"
+#include "atlas_sys.h"
 @ROUT mvsearch GetSysSum
 int GetL1CacheSize(int MaxL1Size)
 {
@@ -5910,6 +5911,22 @@ int GetL1CacheSize(int MaxL1Size)
 }
 
 @ROUT GetSysSum
+size_t GetPageSize(void)
+{
+   size_t pgsz=4096;
+   char *sp;
+   sp = atlsys_1L(NULL, "getconf PAGESIZE", 0, 1);
+   if (!sp)
+      sp = atlsys_1L(NULL, "getconf PAGE_SIZE", 0, 1);
+   if (sp)
+   {
+      unsigned long sz;
+      if (sscanf(sp, "%lu", &sz) == 1)
+         pgsz = sz;
+      free(sp);
+   }
+   return(pgsz);
+}
 void getfpinfo0(char pre, int *muladd, int *lat, int *lbnreg, double *mf)
 {
    char fnam[128];
@@ -5958,7 +5975,7 @@ void getfpinfo(char pre, int *muladd, int *lat, int *lbnreg, int *nkflop)
 }
 
 void CreateHeader(char pre, char *fnam, int L1Size, int muladd, int lat,
-                  int lbnreg, int nkflop, int mmnreg)
+                  int lbnreg, int nkflop, int mmnreg, size_t pgsz)
 {
    FILE *fpout;
 
@@ -5973,6 +5990,7 @@ void CreateHeader(char pre, char *fnam, int L1Size, int muladd, int lat,
    fprintf(fpout, "#define ATL_lbnreg %d\n", lbnreg);
    fprintf(fpout, "#define ATL_mmnreg %d\n", mmnreg);
    fprintf(fpout, "#define ATL_nkflop %d\n", nkflop);
+   fprintf(fpout, "#define ATL_pgsz %lu\n", pgsz);
    fprintf(fpout, "\n#endif\n");
    fclose(fpout);
 }
@@ -6001,6 +6019,7 @@ int getmmnreg(char pre)
 
 int main(int nargs, char **args)
 {
+   size_t pgsz;
    int MaxL1Size;
    int muladd, lat, lbnreg, L1Size, mmnreg, nkflop;
    FILE *fpout;
@@ -6019,9 +6038,10 @@ int main(int nargs, char **args)
    else if (pre == 'z') L1Size /= ATL_csize;
    else if (pre == 'c') L1Size /= ATL_zsize;
    getfpinfo(pre, &muladd, &lat, &lbnreg, &nkflop);
-   CreateHeader(pre, args[2], L1Size, muladd, lat, lbnreg, nkflop, 0);
+   pgsz = GetPageSize();
+   CreateHeader(pre, args[2], L1Size, muladd, lat, lbnreg, nkflop, 0, pgsz);
    mmnreg = getmmnreg(pre);
-   CreateHeader(pre, args[2], L1Size, muladd, lat, lbnreg, nkflop, mmnreg);
+   CreateHeader(pre, args[2], L1Size, muladd, lat, lbnreg, nkflop, mmnreg,pgsz);
    return(0);
 }
 @ROUT masearch
