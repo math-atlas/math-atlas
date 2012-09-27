@@ -200,6 +200,10 @@ void CalcInsOuts(BBLOCK *base)
 }
 
 void CalcBlocksDeadVariables(BBLOCK *bp)
+/*
+ * Majedul: No way, it can be called with NULL. So, I updated to re-init the
+ * static vars if it is called by NULL.
+ */
 {
    BBLOCK *bb;
    static ushort mask=0;
@@ -209,50 +213,58 @@ void CalcBlocksDeadVariables(BBLOCK *bp)
    extern int FKO_BVTMP;
    extern BBLOCK *bbbase;
 
-   if (!mask)
+   if (bp)
    {
-      if (!STderef) STderef = STdef("_NONLOCDEREF", PTR_BIT|DEREF_BIT, 0);
-      mask = NewBitVec(32);
-      SetVecBit(mask, REG_SP-1, 1);
-      SetVecBit(mask, -1-Reg2Int("PC"), 1);
-      SetVecBit(mask, STderef-1+NumberArchRegs(), 1);
-   }
-   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
-   seenwrite = FKO_BVTMP;
-   if (!INUSETU2D) CalcUseSet(bp);
-   if (!CFUSETU2D)
-   {
-      assert(FindBlockByNumber(bbbase, bp->bnum) == bp);
-      CalcInsOuts(bbbase);
-   }
-/*
- * Treat each referenced var known to be dead on leaving the block as having
- * seen a range-killing write
- */
-   BitVecComb(seenwrite, bp->uses, bp->defs, '|');
-   BitVecComb(seenwrite, seenwrite, bp->outs, '-');
-   for (ip=bp->ainstN; ip; ip = ip->prev)
-   {
-      if (ip->deads) SetVecAll(ip->deads, 0);
-      else ip->deads = NewBitVec(32);
-      inst = GET_INST(ip->inst[0]);
-      if (ACTIVE_INST(inst))
+      if (!mask)
       {
-/*
- *       Any sets in this instruction are added to range-killing writes
- */
-         BitVecComb(seenwrite, seenwrite, ip->set, '|');
-/*
- *       Dead values occur when we have previously seen a range-killing write,
- *       and we now see a last read
- */
-         BitVecComb(ip->deads, seenwrite, ip->use, '&');
-         BitVecComb(ip->deads, ip->deads, mask, '-');
-/*
- *       A last use negates a previous write (we are now in new range)
- */
-         BitVecComb(seenwrite, seenwrite, ip->deads, '-');
+         if (!STderef) STderef = STdef("_NONLOCDEREF", PTR_BIT|DEREF_BIT, 0);
+         mask = NewBitVec(32);
+         SetVecBit(mask, REG_SP-1, 1);
+         SetVecBit(mask, -1-Reg2Int("PC"), 1);
+         SetVecBit(mask, STderef-1+NumberArchRegs(), 1);
       }
+      if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
+      seenwrite = FKO_BVTMP;
+      if (!INUSETU2D) CalcUseSet(bp);
+      if (!CFUSETU2D)
+      {
+         assert(FindBlockByNumber(bbbase, bp->bnum) == bp);
+         CalcInsOuts(bbbase);
+      }
+/*
+ *    Treat each referenced var known to be dead on leaving the block as having
+ *    seen a range-killing write
+ */
+      BitVecComb(seenwrite, bp->uses, bp->defs, '|');
+      BitVecComb(seenwrite, seenwrite, bp->outs, '-');
+      for (ip=bp->ainstN; ip; ip = ip->prev)
+      {
+         if (ip->deads) SetVecAll(ip->deads, 0);
+         else ip->deads = NewBitVec(32);
+         inst = GET_INST(ip->inst[0]);
+         if (ACTIVE_INST(inst))
+         {
+/*
+ *          Any sets in this instruction are added to range-killing writes
+ */
+            BitVecComb(seenwrite, seenwrite, ip->set, '|');
+/*
+ *          Dead values occur when we have previously seen a range-killing 
+ *          write, and we now see a last read
+ */   
+            BitVecComb(ip->deads, seenwrite, ip->use, '&');
+            BitVecComb(ip->deads, ip->deads, mask, '-');
+/*
+ *          A last use negates a previous write (we are now in new range)
+ */
+            BitVecComb(seenwrite, seenwrite, ip->deads, '-');
+         }
+      }
+   }
+   else
+   {
+      if (mask) KillBitVec(mask);
+      mask = 0;
    }
 }
 
@@ -286,7 +298,7 @@ char *BV2VarNames(int iv)
          if (vals[i] < tnreg) vals[i] = -vals[i];
          else vals[i] -= tnreg;
          if (vals[i] < 0) 
-            j += sprintf(ln+j, "%s,", Int2Reg(vals[i])); /*req short but int*/
+            j += sprintf(ln+j, "%s,", Int2Reg(vals[i])); 
          else
             j += sprintf(ln+j, "%s,", STi2str(vals[i]));
       }
