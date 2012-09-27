@@ -255,7 +255,15 @@ int FindLiveregs(INSTQ *here)
          SetAllTypeReg(mask, T_VDOUBLE);
          SetVecBit(mask, REG_SP-1, 0);
          #ifdef X86_32
-            SetVecBit(mask, Reg2Int("@st")-1, 0);
+/*
+ *          FIXME:  Reg2Int always return -ve index!!! How can we use this!!!
+ *          FIXED but not fully tested!
+ */
+            #if 0
+               SetVecBit(mask, Reg2Int("@st")-1, 0);
+            #else
+               SetVecBit(mask, -Reg2Int("@st")-1, 0);
+            #endif
          #endif
       }
       else
@@ -428,16 +436,27 @@ IGNODE *NewIGNode(BBLOCK *blk, short var)
    return(new);
 }
 
-ushort AllRegVec()
+ushort AllRegVec(int k)
+/*
+ * Majedul: this func is changed to add opportunity to reset the static var
+ * k is for reset the static var iv.
+ */
 {
    static int iv=0;
    int i;
-
-   if (!iv)
+   if (k <= 0)
    {
-      iv = NewBitVec(TNREG);
-      for (i=0; i < TNREG; i++)
-         SetVecBit(iv, i, 1);
+      if (iv) KillBitVec(iv);
+      iv = 0;
+   }
+   else
+   {
+      if (!iv)
+      {
+         iv = NewBitVec(TNREG);
+         for (i=0; i < TNREG; i++)
+            SetVecBit(iv, i, 1);
+      }
    }
    return(iv);
 }
@@ -734,6 +753,9 @@ void CombineLiveRanges(BLIST *scope, BBLOCK *pred, int pig,
  */
    for (bl=scope; bl; bl = bl->next)
    {
+/*
+ *    Majedul: invalid read is reported from Valgrind !!
+ */
       if (BitVecCheck(bl->blk->ignodes, sig))
       {
          SetVecBit(bl->blk->ignodes, sig, 0);
@@ -787,6 +809,9 @@ fprintf(stderr, "succ->conin=%s\n", PrintVecList(pred->conin, 0));
  *          HERE, HERE: put this in to protect when sig is joined to pig
  */
             if (!IG[kk] || !IG[k]) continue;
+/*
+ *          Majedul: need to check!!
+ */
             if (k != kk && svar == IG[kk]->var)
                CombineLiveRanges(scope, pred, kk, succ, k);
          }
@@ -905,6 +930,8 @@ int Scope2BV(BLIST *scope)
 int CalcScopeIG(BLIST *scope)
 /*
  * RETURNS: total number of IG
+ * Majedul: parameter NULL is used to re-init the static var blkvec. 
+ * So, make sure it is not used with NULL ( adding assert ) in normal case
  */
 {
    static ushort blkvec=0;
@@ -912,39 +939,50 @@ int CalcScopeIG(BLIST *scope)
    short *sp;
    int i, j;
 
-   if (!INDEADU2D)
-      CalcAllDeadVariables();
-   else if (!CFUSETU2D || !CFU2D || !INUSETU2D)
-      CalcInsOuts(bbbase);
-
-/*
- * Set blkvec to reflect all blocks in scope, and calculate each block's IG
- */
-   if (blkvec) SetVecAll(blkvec, 0);
-   else blkvec = NewBitVec(32);
-   for (bl=scope; bl; bl = bl->next)
+   if (scope)
    {
-      SetVecBit(blkvec, bl->blk->bnum-1, 1);
-      CalcBlockIG(bl->blk);
-   }
-/*   DumpIG(stderr, NIG, IG); */
+      if (!INDEADU2D)
+         CalcAllDeadVariables();
+      else if (!CFUSETU2D || !CFU2D || !INUSETU2D)
+         CalcInsOuts(bbbase);
 /*
- * Try to combine live ranges across basic blocks
+ *    Set blkvec to reflect all blocks in scope, and calculate each block's IG
  */
-   for (bl=scope; bl; bl = bl->next)
-   {
-      if (bl->blk->usucc)
-         CombineBlockIG(scope, blkvec, bl->blk, bl->blk->usucc);
-      if (bl->blk->csucc)
-         CombineBlockIG(scope, blkvec, bl->blk, bl->blk->csucc);
-      for (lp=bl->blk->preds; lp; lp = lp->next)
-         if (!BitVecCheck(blkvec, lp->blk->bnum-1) &&
-             lp->blk != bl->blk->usucc && lp->blk != bl->blk->csucc)
-            CombineBlockIG(scope, blkvec, lp->blk, bl->blk);
+      if (blkvec) SetVecAll(blkvec, 0);
+      else blkvec = NewBitVec(32);
+      for (bl=scope; bl; bl = bl->next)
+      {
+         SetVecBit(blkvec, bl->blk->bnum-1, 1);
+         CalcBlockIG(bl->blk);
+      }
+/*    DumpIG(stderr, NIG, IG); */
+/*
+ *    Try to combine live ranges across basic blocks
+ */
+      for (bl=scope; bl; bl = bl->next)
+      {
+         if (bl->blk->usucc)
+            CombineBlockIG(scope, blkvec, bl->blk, bl->blk->usucc);
+/*
+ *       Majedul: need to check!!! 
+ */
+         if (bl->blk->csucc)
+            CombineBlockIG(scope, blkvec, bl->blk, bl->blk->csucc);
+         for (lp=bl->blk->preds; lp; lp = lp->next)
+            if (!BitVecCheck(blkvec, lp->blk->bnum-1) &&
+                  lp->blk != bl->blk->usucc && lp->blk != bl->blk->csucc)
+               CombineBlockIG(scope, blkvec, lp->blk, bl->blk);
+      }
+      for (j=i=0; i < NIG; i++)
+         if (IG[i]) j++;
+      return(j);
    }
-   for (j=i=0; i < NIG; i++)
-      if (IG[i]) j++;
-   return(j);
+   else
+   {
+      if (blkvec) KillBitVec(blkvec);
+      blkvec = 0;
+      return(0);
+   }
 }
 
 void SortUnconstrainedIG(int N, IGNODE **igarr)
@@ -1206,8 +1244,15 @@ int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
 /*
  *    Change all uses of this ig->var to ig->reg
  */
+/*
+ *    Majedul: 
+ *    A invalid read is reported here by valgrind!
+ *    FIXED: every bitvec is allocated with size of 32 first. ig->var+TNREG-1
+ *    may exceed the size. I fixed this issue by extending the bitvec when 
+ *    size smaller than the index it is checked. May be it would be used later.
+ */
       if (ip && ACTIVE_INST(ip->inst[0]) && 
-          BitVecCheck(ip->use, ig->var+TNREG-1)) /* majedul: invalid read?? */
+          BitVecCheck(ip->use, ig->var+TNREG-1)) 
       {
          SetVecBit(ip->use, ig->var+TNREG-1, 0);
          SetVecBit(ip->use, ig->reg-1, 0);
@@ -1421,6 +1466,9 @@ int DoRegAsgTransforms(IGNODE *ig)
          assert(ig->deref > 0);
       #endif
       ip = InsNewInst(bl->blk, bl->ptr, NULL, ld, -ig->reg, ig->deref, 0);
+#if 0
+      PrintThisInst(stderr,ip);
+#endif      
       CalcThisUseSet(ip);
       CHANGE++;
    }
@@ -1433,6 +1481,15 @@ int DoRegAsgTransforms(IGNODE *ig)
          assert(bl->ptr);
       #endif
       ip = InsNewInst(bl->blk, NULL, bl->ptr, st, ig->deref, -ig->reg, 0);
+/*
+ *    Majedul: 
+ *    V0_sum should be a candidate for stpush for the modified dasum where
+ *    fall-thru path is used as scalar_restart path when speculative 
+ *    vectorization is applied !!! 
+ */
+#if 0
+      PrintThisInst(stderr,ip);
+#endif      
       CalcThisUseSet(ip);
       CHANGE++;
    }
@@ -1457,7 +1514,12 @@ int DoScopeRegAsg(BLIST *scope, int thresh, int *tnig)
    int i, N, nret;
    extern FILE *fpIG, *fpLIL, *fpST;
    extern BBLOCK *bbbase;
-
+/*
+ * Majedul: 
+ * scope can't be NULL, it shouldn't be. NULL is used to re-init the static 
+ * variable used for bitvec. 
+ */
+   assert(scope);
    *tnig = CalcScopeIG(scope);
    igs = SortIG(&N, thresh);
    nret = DoIGRegAsg(N, igs);
@@ -2367,7 +2429,23 @@ INSTQ *CopyPropTrans(BLIST *scope, int scopeblks, BBLOCK *blk, INSTQ *ipret)
    {
       /* INDEADU2D = 0; */
       CFUSETU2D = INDEADU2D = 0;
+/*
+ *    Majedul: reported error form Valgrind! inst deleted would be accessed
+ *    later. FIXED this issue. see DoCopyProp()
+ */
+#if 1
       return(DelInst(ipret));
+#else
+      
+      ip = ipret;
+      fprintf(stderr,"DEL: %p ip->inst = %s\t%d %d %d\n", ip,
+                          instmnem[ip->inst[0]], ip->inst[1], ip->inst[2],
+                          ip->inst[3]);
+      ipret = DelInst(ipret);
+      if (!ipret) fprintf(stderr, "NULL!!\n");
+      fflush(stderr);
+      return(ipret);
+#endif
    }
    if (!INDEADU2D)
       CalcAllDeadVariables();
@@ -2409,7 +2487,7 @@ int DoCopyProp(BLIST *scope)
  */
 {
    int scopeblks, CHANGE=0;
-   INSTQ *ip=NULL, *next;
+   INSTQ *ip=NULL, *next, *ipnext;
    BLIST *bl, *epil=NULL, *lp;
 
    scopeblks = Scope2BV(scope);
@@ -2422,20 +2500,41 @@ int DoCopyProp(BLIST *scope)
             ip = FindReg2RegMove(bl->blk, ip, NULL);
             if (ip) 
             {
+/*
+ *             Majedul: ip itself may be deleted in CopyPropTrans()
+ *             so, why not save the ip->next before
+ */
+               ipnext = ip->next;
                next = CopyPropTrans(scope, scopeblks, bl->blk, ip);
                for (lp=bl; lp; lp = lp->next)
                   lp->ptr = NULL;
-/*
- *             Majedul: There is an invalid read reported by valgrind at the end
- *             of the if branch (called from DoOptList).
- *
- */
+               
                if (next)
                {
                   ip = next;
                   CHANGE++;
                }
-               else ip = ip->next;
+/*
+ *             Majedul: Invalid read reported by valgrind!
+ *             FIXED: CopyPropTrans() may change the ip itself but return NULL!
+ *             What if DelInst() delete ip itself!!!! 
+ *             use ipnext to keep track previous one.
+ *             NOTE: if ip->next is deleted and CopyPropTrans returns NULL as
+ *             the next inst of ip->next is NULL !!! 
+ */
+               else
+               {
+#if 0                  
+                  /*fprintf(stderr,"%p ip->inst = %s\t%d %d %d\n", ip,
+                          instmnem[ip->inst[0]], ip->inst[1], ip->inst[2],
+                          ip->inst[3]);*/
+                  fprintf(stderr, "%p\n",ip);
+                  fflush(stderr);                  
+                  assert(ip);
+                  ip = ip->next;
+#endif
+                  ip = ipnext;
+               }
             }
          }
          while(ip);
