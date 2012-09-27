@@ -53,16 +53,46 @@ BLIST *RemoveBlockFromList(BLIST *list, BBLOCK *blk)
    return(list);
 }
 
+
+#if 0
 int BlockList2BitVec(BLIST *lp)
 {
    static int iv=0;
-
    if (!iv) iv = NewBitVec(32);
    SetVecAll(iv, 0);
    for (; lp; lp = lp->next)
       SetVecBit(iv, lp->blk->bnum-1, 1);
    return(iv);
 }
+#else
+int BlockList2BitVecFlagged(BLIST *lp, int init)
+/*
+ * Added the facility to initialize the static variable
+ */
+{
+   static int iv=0;
+   if (!init)
+   {
+      if (!iv) iv = NewBitVec(32);
+      SetVecAll(iv, 0);
+      for (; lp; lp = lp->next)
+         SetVecBit(iv, lp->blk->bnum-1, 1);
+   }
+   else
+   {
+      if (iv) KillBitVec(iv);
+      iv = 0;
+   }
+   return(iv);
+}
+int BlockList2BitVec(BLIST *lp)
+/*
+ * Majedul: it's a wrapper function so that existing code can be kept unchanged 
+ */
+{
+   return(BlockList2BitVecFlagged(lp, 0));
+}
+#endif
 
 BLIST *BitVec2BlockList(int iv)
 /*
@@ -190,7 +220,18 @@ BBLOCK *NewBasicBlock(BBLOCK *up, BBLOCK *down)
    BBLOCK *bp;
    bp = malloc(sizeof(BBLOCK));
    assert(bp);
+/*
+ * Majedul: FIXME: creating new block with 0 would complicate the bvec checking
+ * as bvec is used for bnum-1!!!
+ */
+#if 0   
    bp->bnum = 0;
+#else
+/*
+ * Majedul: need to check if bnum = 0 has any special usage!!!
+ */
+   bp->bnum = 1;
+#endif
    bp->ilab = 0;
    bp->up = up;
    bp->down = down;
@@ -250,7 +291,6 @@ void KillAllBasicBlocks(BBLOCK *base)
       KillAllInst(bp->inst1);
       KillBlockList(bp->preds);
       free(bp);
-      bp = NULL;    /* Majedul: to avoid problem of dangling pointer */
    }
 }
 
@@ -375,6 +415,13 @@ BBLOCK *FindBasicBlocks(BBLOCK *base0)
          {
             InsNewInst(bn, NULL, NULL, ip->inst[0], ip->inst[1],
                        ip->inst[2], ip->inst[3]);
+/*
+ *          Majedul: checking for possible memory leak!!!
+ */
+#if 0
+            fprintf(stderr, "%s %d %d %d\n\n", instmnem[ip->inst[0]], 
+                    ip->inst[1], ip->inst[2], ip->inst[3]);
+#endif            
             if (ip->inst[0] == LABEL) bn->ilab = ip->inst[1];
          }
 /*
@@ -559,8 +606,8 @@ void CheckFlow(BBLOCK *bbase, char *file, int line)
          for (ip=bp->inst1; ip && !ACTIVE_INST(ip->inst[0]); ip = ip->next);
          if (ip != bp->ainst1)
          {
-            fprintf(stderr, "Wrong ainst1 (%d) for block %d, expected %d\n",
-                    bp->ainst1->inst[0], bp->bnum, ip);
+            fprintf(stderr, "Wrong ainst1 (%p) for block %d, expected %p\n",
+                    bp->ainst1, bp->bnum, ip);
             fprintf(stderr, "ainst1 = ");
             PrintThisInst(stderr, 0, bp->ainst1);
             fprintf(stderr, "Expected = ");
@@ -571,14 +618,14 @@ void CheckFlow(BBLOCK *bbase, char *file, int line)
          for (ip=bp->inst1; ip->next; ip = ip->next);
          if (ip != bp->instN)
          {
-            fprintf(stderr, "Wrong instN (%d) for block %d, expected %d\n",
-                    bp->instN->inst[0], bp->bnum, ip);
+            fprintf(stderr, "Wrong instN (%p) for block %d, expected %p\n",
+                    bp->instN, bp->bnum, ip);
             error = i+1;
          }
          for (; ip && !ACTIVE_INST(ip->inst[0]); ip = ip->prev);
          if (ip != bp->ainstN)
          {
-            fprintf(stderr, "Wrong ainstN (%d) for block %d, expected %d\n",
+            fprintf(stderr, "Wrong ainstN (%p) for block %d, expected %p\n",
                     bp->ainstN, bp->bnum, ip);
             fprintf(stderr, "ainstN = ");
             PrintThisInst(stderr, 0, bp->ainstN);
@@ -752,6 +799,85 @@ LOOPQ *NewLoop(int flag)
    return(lp);
 }
 
+LOOPQ *KillFullLoop(LOOPQ *lp)
+/*
+ * As KillLoop function doesn't kill all element, rather preserve some element
+ * which will be used in InvalidateLoop, we a function which will kill the Loop
+ * Completely
+ */
+{
+   int i, N;
+   LOOPQ *ln=NULL;
+   if (lp)
+   {
+      ln = lp->next;
+      if (lp->vsflag)
+         free(lp->vsflag);
+      if (lp->vsoflag)
+         free(lp->vsoflag);
+      if (lp->vscal)
+         free(lp->vscal);
+      if (lp->varrs)
+         free(lp->varrs);
+      if (lp->nopf)
+         free(lp->nopf);
+      if (lp->aaligned)
+         free(lp->aaligned);
+      if (lp->abalign)
+         free(lp->abalign);
+      if (lp->outs)
+         KillBitVec(lp->outs);
+      if (lp->sets)
+         KillBitVec(lp->sets);
+      if (lp->blocks)
+         KillBlockList(lp->blocks);
+      if (lp->tails)
+         KillBlockList(lp->tails);
+      if (lp->blkvec)
+         KillBitVec(lp->blkvec);
+      if (lp->posttails)
+         KillBlockList(lp->posttails);
+      if (lp->vvscal)
+         free(lp->vvscal);
+      if (lp->pfarrs)
+         free(lp->pfarrs);
+      if (lp->pfdist)
+         free(lp->pfdist);
+      if (lp->pfflag)
+         free(lp->pfflag);
+      if (lp->ae)
+      {
+         for (N=lp->ae[0],i=0; i < N; i++)
+            free(lp->aes[i]);
+         free(lp->aes);
+      }
+      if (lp->ae)
+         free(lp->ae);
+      if (lp->ne)
+         free(lp->ne);
+      if (lp->se)
+      {
+         for (N=lp->se[0],i=0; i < N; i++)
+            free(lp->ses[i]);
+         free(lp->ses);
+      }
+      if (lp->se)
+         free(lp->se);
+      if (lp->nse)
+         free(lp->nse);
+      if (lp->seflag)
+         free(lp->seflag);
+      
+      if (lp->maxvars)
+         free(lp->maxvars);
+      if (lp->minvars)
+         free(lp->minvars);
+
+      free(lp);
+   }
+   return(ln);
+}
+
 LOOPQ *KillLoop(LOOPQ *lp)
 {
    LOOPQ *ln=NULL;
@@ -812,8 +938,17 @@ LOOPQ *KillLoop(LOOPQ *lp)
  *    FIXME: need to free space for shadow acc : short **aes
  */
       free(lp);
+      lp = NULL; /* to avoid dangling pointer with optloop and loopq */
    }
    return(ln);
+}
+
+void KillAllLoopsComplete(void)
+/*
+ * it will kill loops with all of its' elements using KillLoopWhole
+ */
+{
+   while (loopq) loopq = KillFullLoop(loopq);
 }
 
 void KillAllLoops(void)
@@ -915,7 +1050,9 @@ void InvalidateLoopInfo(void)
       optloop->abalign = NULL;
       optloop->maxvars = NULL;     /* sothat killloop not freed prev space */
       optloop->minvars = NULL;     /* sothat killloop not freed prev space */
-      optloop->se = optloop->nse = optloop->ses = optloop->seflag = NULL;
+      optloop->se = optloop->nse = NULL;
+      optloop->ses = NULL;
+      optloop->seflag = NULL;
       KillLoop(optloop);
       optloop = lp;
    }
@@ -1053,6 +1190,9 @@ void FinalizeLoops()
 
    for (lp=loopq; lp; lp = lp->next)
    {
+#if 0
+      fprintf(stderr, "lp->blkvec = %d\n", lp->blkvec);
+#endif      
       lp->blocks = BitVec2BlockList(lp->blkvec);
       lp->depth = 1;
       lp->body_label = lp->header->ilab;
@@ -1227,4 +1367,559 @@ void ShowFlow(char *fout, BBLOCK *base)
    fprintf(fpout, "}\n");
    if (fout)
       fclose(fpout);
+}
+
+/*=============================================================================
+ *                      RELATED TO PROGRAM FALL THROUGH
+ *                      MAINLY DEALS WITH OPTLOOP PATHS
+ *=========================================================================== */
+
+static BLIST *FindFallThruPath(BLIST *scope, BBLOCK *head, BBLOCK *tail, 
+                               BLIST *ftblks)
+/*
+ * checks only the fall-thru paths, returns NULL if there isn't any.
+ * Only checks the path which consists of usucc.
+ * NOTE: only used from this src file for internal purpose
+ */
+{
+   if (head == tail)
+   {
+      ftblks = ReverseBlockList(AddBlockToList(ftblks, head));
+      return ftblks;
+   }
+   ftblks = AddBlockToList(ftblks, head);
+   if (head->usucc)
+   {
+      if (FindBlockInList(scope, head->usucc))
+         ftblks = FindFallThruPath(scope, head->usucc, tail, ftblks);
+   }
+   else
+   {
+      fprintf(stderr,"NO FALL-THRU!! \n");
+      if (ftblks) KillBlockList(ftblks);
+      return NULL;
+   }
+   return ftblks;
+}
+
+BLIST *FindFallThruPathBlks(BLIST *scope, BBLOCK *head, BLIST *tails)
+{
+   BLIST *bl, *ftblks; 
+   ftblks = NULL;
+/*
+ * consider one tail right now.
+ */
+   assert(tails->blk && !tails->next);
+   ftblks= FindFallThruPath(scope, head, tails->blk, ftblks);
+/*
+ * checking whether code follows the fall-tru requence! 
+ */
+#if 0
+   fprintf(stderr, "head=%d, tail=%d \n", head->bnum, tails->blk->bnum);
+   fprintf(stderr, "Fall Through Path blks = %s\n", PrintBlockList(ftblks));
+
+   bl = ftblks;
+   while(bl && bl->next)
+   {
+      if (bl->blk->down != bl->next->blk)
+      {
+         fprintf(stderr,"CODE DOESN'T FOLLOW FALL-THRU!!!\n");
+         break;
+      }
+      else
+      {
+         if (bl->next->blk == tails->blk)
+         {
+            fprintf(stderr, "CODE FOLLOWS THE FALL-THRU BLKS\n");
+            break;
+         }
+         else bl = bl->next;
+      }
+   }
+#endif
+/*
+ * Returns the fall thru blklist 
+ */
+   return (ftblks);
+}
+
+static BLIST **FindAllPathsBlks(int *np, BLIST *scope, BBLOCK *head, 
+                                BBLOCK *tail, BLIST **paths, BLIST *bst)
+/*
+ * Returns the path (contails blist for each path) and store path count on np.
+ */
+{
+   int i, n;
+   BLIST **new;
+/*
+ * found tail, that completes a path. So, create new paths updated with new 
+ * blocklist for that path. path[0] contains the fall-thru path
+ */
+   if (head == tail)
+   {
+      bst = AddBlockToList(bst, head);
+      n = ++(*np);
+      new = malloc(sizeof(BLIST*) * (n));
+      assert(new);
+      for (i=0; i < (n-1); i++)
+      {
+         new[i] = paths[i];
+      }
+      new[n-1] = NewReverseBlockList(bst);
+#if 0
+      fprintf(stderr, "path%d: %s\n",n, PrintBlockList(new[n-1]));
+#endif
+      if (paths) free(paths);
+      paths = new;
+/*
+ *    bst works as a stack. so, delete the top most to avoid mem leak
+ */
+      free(bst);
+      return paths;
+   }
+   bst = AddBlockToList(bst, head);
+/*
+ * NOTE: traversing usucc first provides fall-thru path as the first path
+ */
+   if (head->usucc)
+   {
+      if (FindBlockInList(scope, head->usucc))
+      {
+         paths = FindAllPathsBlks(np,scope,head->usucc,tail, paths,bst);
+      } 
+   }
+   if (head->csucc)
+   {
+      if (FindBlockInList(scope, head->csucc))
+      {
+         paths = FindAllPathsBlks(np,scope,head->csucc,tail, paths,bst);
+      }
+   }
+   free(bst);
+   return paths;
+}
+
+void KillAllList(int n, BLIST** bls)
+/*
+ * provided the number of blist, kill all and free mem
+ */
+{
+   int i;
+   for (i=0; i < n; i++)
+      KillBlockList(bls[i]);
+   free(bls);
+}
+
+void SwapSuccessor(BBLOCK *blk, BBLOCK *csucc, BBLOCK *usucc)
+/*
+ * changes the conditional jump and the csucc and usucc without changing
+ * the block structure. After this conversion, the cfg becomes messed-up
+ */
+{
+   int i, k;
+   BBLOCK *bp;
+   INSTQ *ip, *ipu;
+   enum inst prebr[] = {JEQ, JNE, JLT, JLE, JGT, JGE};
+   enum inst abr[]   = {JNE, JEQ, JGE, JGT, JLE, JLT};
+   const int nbr = 6;
+   static short lid = 0;
+   short label;
+   char ln[256]; /* temp as ST copied the str */
+
+   for (ip=blk->ainst1; ip; ip=ip->next)
+   {
+      if(IS_COND_BRANCH(ip->inst[0]))
+      {
+/*
+ *       add lebel at the first of previous usucc
+ */
+         if (usucc->ainst1->inst[0] != LABEL)
+         {
+            sprintf(ln, "_FKO_XCHNG_SUCC_%d", ++lid);
+            usucc->ilab = label = STlabellookup(ln);
+            InsNewInst(usucc, NULL, usucc->ainst1, LABEL, label, 0, 0);
+         }
+         else
+         {
+            label = usucc->ainst1->inst[1];
+         }
+
+/*
+ *       chnages for the condition of the blk
+ */
+         for (k=0; k < nbr; k++)
+            if (prebr[k] == ip->inst[0])
+               break;
+         assert(k != nbr);
+         ip->inst[0] = abr[k]; 
+         ip->inst[3] = label;
+/*
+ *       Now, time to change the csucc/usucc ptr which would invalidate the 
+ *       CFG of bbbase
+ */
+         blk->csucc = usucc;
+         blk->usucc = csucc;
+      }
+   }
+}
+
+static void InsertJmpAtEndWithLabel(BBLOCK *blk, short label)
+/*
+ * Add JMP to the label at the end, or update the label if exists.
+ */
+{
+   INSTQ *ip;
+   ip = blk->ainstN;
+   if (ip && ip->inst[0] == JMP)
+   {
+      ip->inst[2] = label;
+   }
+   else
+   {
+      InsNewInst(blk, ip, NULL, JMP, -PCREG, label, 0);
+   }
+}
+static void NewFallThruBasicBlocks(int *count, BBLOCK *head, BBLOCK *tail, 
+                                   BBLOCK *end0)
+/*
+ * considering only loop blocks and single head and tail of loop.
+ * will consider the multiple tails later.
+ */
+{
+   int i;
+   BBLOCK *bp;
+   INSTQ *ip;
+   extern BBLOCK *bbbase;
+   static BBLOCK *end = NULL;
+/*
+ * count 0 indicates the 1st function call. so, initiate the start and end block
+ */
+   if (*count == 0)
+   {
+      end = end0;
+      *count++; 
+   }
+/*
+ * one path is complete.
+ */
+   if (head == tail)
+   {
+#if 0      
+      fprintf(stderr, "One path is complete!\n");
+#endif
+      return;
+   }
+/*
+ * has an usucc, add this block as down if not added yet
+ */
+   if (head->usucc)
+   {
+/*
+ *    usucc not yet explored, so add it below the head
+ */
+      if (!head->down && !head->usucc->up)
+      {
+         head->down = head->usucc; /* head->usucc->down is NULL */
+         head->usucc->up = head;
+/*
+ *       delete any unconditional jmp for the fall thru
+ */
+         if (head->ainstN && head->ainstN->inst[0] == JMP)
+            DelInst(head->ainstN);
+/*
+ *       Need to move the end marker if head is previous end.
+ */
+         if (head == end)
+            end = head->usucc;
+#if 0
+         fprintf(stderr, "usucc %d is placed\n", head->usucc->bnum);
+#endif         
+         NewFallThruBasicBlocks(count, head->usucc, tail, end0);
+      }
+/*
+ *    usucc already explored, so add jmp at the end of head
+ */
+      else if (!head->down && head->usucc->up)
+      {
+         InsertJmpAtEndWithLabel(head, head->usucc->ilab);
+      }
+/*
+ *    if head already placed, nothing to do
+ *    How is it possible? No way!! A blk can't have 2 usucc!!! Check the CFG!
+ */
+      else 
+      {
+         if (head->down)
+         {
+#if 1            
+            fprintf(stderr, "BLK-%d: Already placed with a down!\n",head->bnum);
+            fprintf(stderr, "usucc-%d: yet to place!!!\n", head->usucc->bnum);
+            assert(0);
+#endif
+         }
+      }
+   }
+/*
+ * has a csucc, add this at the end point
+ */
+   if (head->csucc)
+   {
+/*
+ *    head is placed but csucc is not placed yet, add it at the end point
+ *    NOTE: If there is a csucc, there must be a usucc. head must be placed
+ *    before exploring it's csucc!
+ */
+      if (head->down && !head->csucc->up)
+      {
+         head->csucc->up = end; /* head->csucc->down is NULL*/
+         end->down = head->csucc;
+         end = head->csucc;
+#if 0
+         fprintf(stderr, "csucc %d is placed\n", head->csucc->bnum);
+#endif         
+         NewFallThruBasicBlocks(count, head->csucc, tail, end0);
+      }
+      else if (head->csucc->up)
+      {
+#if 0         
+            fprintf(stderr, "BLK-%d: Already placed this csucc!\n", 
+                    head->csucc->bnum);
+#endif            
+      }
+      else assert(head->down);
+   }
+#if 0
+   fprintf(stderr, "Exiting blk : %d\n", head->bnum);
+#endif
+   return ;
+}
+
+void RemakeWithNewFallThru(LOOPQ *lp)
+/*
+ * this function will change fall-thru only for the optloop 
+ */
+{
+   int i, count;
+   BLIST *bl, *ftblks, *allblks;
+   BBLOCK *bp;
+   INSTQ *ip;
+   extern BBLOCK *bbbase;
+/*
+ * Assume single tail for loop now
+ */   
+   assert(lp->tails && !lp->tails->next);
+   count = 0;
+#if 0
+   ftblks = FindFallThruPathBlks(lp->blocks, lp->header, lp->tails);
+   fprintf(stderr, "New Fall-thru: %s\n", PrintBlockList(ftblks));
+   KillBlockList(ftblks);
+#endif
+#if 0   
+   PrintInst(stderr, bbbase);
+   fflush(stderr);
+   exit(0);
+#endif     
+#if 0
+   allblks = NULL;
+   for (bp=bbbase; bp; bp=bp->down)
+      allblks = AddBlockToList(allblks, bp);
+   allblks = ReverseBlockList(allblks);
+#endif   
+
+/*
+ * find the block where the ret instruction belongs
+ */
+   for (bp=bbbase; bp; bp=bp->down)
+   {
+#if 0      
+      for (ip=bp->ainst1; ip; ip=ip->next)
+      {
+         if (ip->inst[0] == RET)
+            break;
+      }
+#else
+      if (bp->ainstN->inst[0] == RET)
+         break;
+#endif
+   }
+   assert(bp);
+/*
+ * disconnect edges of loop blks except the head->up and tail->down.
+ * Need isolates the blks totally from the code flow!
+ */
+   for (bl=lp->blocks; bl; bl=bl->next)
+   {
+      if (bl->blk == lp->header)
+      {
+         if(bl->blk->down) bl->blk->down->up = NULL; 
+         bl->blk->down = NULL;
+      }
+      else if (bl->blk == lp->tails->blk)
+      {
+         if (bl->blk->up) bl->blk->up->down = NULL;
+         bl->blk->up = NULL;
+      }
+      else
+      {
+/*
+ *       Need to bypass the blk first, then invalidate the link
+ */
+         if(bl->blk->down) bl->blk->down->up = bl->blk->up;
+         if(bl->blk->up) bl->blk->up->down = bl->blk->down;
+         bl->blk->up = NULL;
+         bl->blk->down = NULL;
+      }
+   }
+#if 0
+   fprintf(stderr, "All Blk list: \n");
+   for (bl=allblks; bl; bl=bl->next)
+   {
+      fprintf(stderr, "b%d: up = %d, down = %d\n", bl->blk->bnum, 
+              bl->blk->up?bl->blk->up->bnum:-1, 
+              bl->blk->down?bl->blk->down->bnum:-1);
+   }
+#endif
+/*
+ * Rearrange bbbase structure based on  
+ */
+   NewFallThruBasicBlocks(&count, lp->header, lp->tails->blk, bp);
+/*
+ * checking ... ...
+ */
+#if 0
+   fprintf(stderr, "All Blk list After Transformation : \n");
+   for (bl=allblks; bl; bl=bl->next)
+   {
+      fprintf(stderr, "b%d: up = %d, down = %d\n", bl->blk->bnum, 
+              bl->blk->up?bl->blk->up->bnum:-1, 
+              bl->blk->down?bl->blk->down->bnum:-1);
+   }
+   KillBlockList(allblks);
+#endif   
+}
+
+void TransformFallThruPath(int path)
+/*
+ * this function takes a path and re-structure the code to make it fall-thru
+ * (it will re-structure in its own way even path is already a fall-thru)
+ */
+{
+   int i, np;
+   LOOPQ *lp;
+   BBLOCK *bp;
+   BLIST **paths;
+   BLIST *bl, *ftblks, *blInvExpBlks;
+   extern LOOPQ *optloop;
+   extern BBLOCK *bbase;
+   
+   paths = NULL;
+   bl = NULL;
+   blInvExpBlks = NULL;
+   lp = optloop;
+   np = 0;
+/*
+ * assumption: single tail so far!
+ */
+   assert(lp->tails && !lp->tails->next);
+/*
+ * create path list with blist for each path updating np as the path count
+ */
+   paths = FindAllPathsBlks(&np, lp->blocks, lp->header, lp->tails->blk, 
+                            paths, bl);
+#if 0   
+   fprintf(stderr, "Paths=%d\n",np);
+   for (i=0; i < np; i++)
+   {
+      fprintf(stderr,"Path%d : %s\n", i, PrintBlockList(paths[i]));
+   }
+#endif
+/*
+ * checking for the valid argument
+ */
+   if (path == 1)
+   {
+      fprintf(stderr, "PATH1 IS ALREADY A FALL-THRU. STILL APPLYING ... ...\n");
+/*
+ *    Do we still need to check that!!!!
+ *    Still we can apply fall-true transformation to re-structure
+ */
+      RemakeWithNewFallThru(lp);
+      KillAllList(np, paths);
+      return;
+   }
+   if (path > np)
+   {
+      fprintf(stderr, "INVALID PATH TO MAKE FALL-THRU !!!\n");
+      KillAllList(np, paths);
+      assert(path <= np);
+      return;
+   }
+   
+/*
+ * NOTE: As we have 2 paths for most of the kernel, here I experimentally
+ * test to swap the fall thru path from 0 to 1. We will parameterize it later.
+ */
+/*
+ * Figure out the blks where exp need to change
+ */
+   for (bl = paths[path-1]; bl; bl=bl->next)
+   {
+      if (bl->blk == lp->tails->blk) break;
+      if (bl->blk->csucc && (bl->blk->csucc == bl->next->blk))
+         blInvExpBlks = AddBlockToList(blInvExpBlks, bl->blk);
+   }
+#if 0
+   fprintf(stderr, "Blk need to update: %s\n", PrintBlockList(blInvExpBlks));
+#endif   
+/*
+ * Change the cond to swap csucc and usucc
+ */
+   for (bl = blInvExpBlks; bl; bl=bl->next)
+      SwapSuccessor(bl->blk, bl->blk->csucc, bl->blk->usucc);
+   KillBlockList(blInvExpBlks);
+/*
+ * Re-structure the basic block according to updated information
+ */
+   RemakeWithNewFallThru(lp);
+   KillAllList(np, paths);
+   return;
+}
+
+void PrintLoopPaths()
+{
+   int i, np;
+   BLIST **paths;
+   BLIST *bl;
+   LOOPQ *lp;
+   extern LOOPQ *optloop;
+
+   np = 0;
+   paths = NULL;
+   bl = NULL;
+   lp = optloop;
+
+   assert(lp->tails && !lp->tails->next);
+
+   paths = FindAllPathsBlks(&np, lp->blocks, lp->header, lp->tails->blk, 
+                            paths, bl);
+   assert(paths);
+#if 1   
+   fprintf(stderr, "**************************\n");
+   fprintf(stderr, "Paths=%d\n",np);
+   for (i=0; i < np; i++)
+   {
+      fprintf(stderr,"Path%d : %s\n", i, PrintBlockList(paths[i]));
+   }
+   fprintf(stderr, "**************************\n");
+#endif
+   KillAllList(np, paths);
+}
+
+void PrintFallThruLoopPath(LOOPQ *lp)
+{
+   BLIST *ftblks; 
+   ftblks = FindFallThruPathBlks(lp->blocks, lp->header, lp->tails);
+   fprintf(stderr, "FALL-THRU LOOP PATH: %s\n", PrintBlockList(ftblks));
+   KillBlockList(ftblks);
+   return;
 }
