@@ -19,7 +19,10 @@ void OptimizeLoopControl(LOOPQ *lp, int unroll, int NeedKilling, INSTQ *ippost);
 int UnrollLoop(LOOPQ *lp, int unroll);
 void AddPrefetch(LOOPQ *lp, int unroll);
 short *DeclareAE(int VEC, int ne, short STi);
+short *DeclareMaxE(int VEC, int ne, short STi);
+short *DeclareMinE(int VEC, int ne, short STi);
 int DoAllAccumExpansion(LOOPQ *lp, int unroll, int vec);
+short *FindAllScalarVars(BLIST *scope);
 BLIST *FindAllFallHeads(BLIST *ftheads, int iscope, BBLOCK *head, int tails,
                         int inblks);
 BBLOCK *DupCFScope(short ivscp0, short ivscp, int dupnum, BBLOCK *head);
