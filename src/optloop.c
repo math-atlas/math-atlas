@@ -2361,8 +2361,10 @@ int VarIsAccumulator(BLIST *scope, int var)
          }
 /*
  *       Majedul: why STpts2[ip->inst[0]-1] instead of ...ip->inst[1]...
+ *       FIXED. 
  */
-         else if (ip->inst[0] == st && STpts2[ip->inst[0]-1] == var)
+         /*else if (ip->inst[0] == st && STpts2[ip->inst[0]-1] == var)*/
+         else if (ip->inst[0] == st && STpts2[ip->inst[1]-1] == var)
             return(0);
       }
    }
@@ -2414,6 +2416,241 @@ void CountArrayAccess(BLIST *scope, int ptr, int *nread, int *nwrite)
    *nwrite = nw;
 }
 
+short *FindAllScalarVars(BLIST *scope)
+{
+   struct ptrinfo *pbase, *p;
+   short *sp, *s, *scal;
+   int i, j, k, n, N;
+   int iv;
+   BLIST *bl;
+   extern int FKO_BVTMP;
+   extern short STderef;
+/*
+ * Find variable accessed in the path and store it in path
+ */
+   /*iv = NewBitVec(32);*/
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
+   iv = FKO_BVTMP;
+   SetVecAll(iv, 0);
+
+   if (!CFUSETU2D)
+   {
+      CalcInsOuts(bbbase);
+      CalcAllDeadVariables();
+   }
+   for (bl=scope; bl; bl=bl->next)
+   {
+      iv = BitVecComb(iv, iv, bl->blk->uses, '|');
+      iv = BitVecComb(iv, iv, bl->blk->defs, '|');
+   }
+   
+/*
+ * right now, skip all the regs from uses, defs
+ */
+   for (i=0; i < TNREG; i++)
+      SetVecBit(iv, i, 0);
+   SetVecBit(iv, STderef+TNREG-1, 0);
+
+/*
+ * Skip all non-fp variables, valid entires upto n (included) 
+ * NOTE: No action for INT var in vector but need to consider complex case 
+ * with index var update later!!!
+ * NOTE: As our vector path never uses/sets integer variable (except index)
+ * we don't have to worry about this in Backup/Recovery stage. So, we just 
+ * skip int here.
+ */
+   sp = BitVec2Array(iv, 1-TNREG);
+   for (N=sp[0],n=0,i=1; i <= N; i++)
+   {
+      if (IS_FP(STflag[sp[i]-1]))
+         sp[n++] = sp[i];
+   }   
+
+/*
+ * Moving pointer analysis for path
+ */
+   pbase = FindMovingPointers(scope);
+   for (N=0, p=pbase; p; p = p->next)
+      if (IS_FP(STflag[p->ptr-1]))
+         N++;
+/*
+ * Copy all moving pointers to varrs
+ */
+   s = malloc(sizeof(short)*(N+1));
+   assert(s);
+   s[0] = N;
+   for (j=0,i=1,p=pbase; p; p = p->next)
+      if (IS_FP(STflag[p->ptr-1]))
+         s[i++] = p->ptr;
+
+   for (k=0,i=1; i < n; i++) /* BUG: why n is included??? changed to < n */
+   {
+      for (j=1; j <= N && s[j] != sp[i]; j++);
+      if (j > N)
+      {
+         sp[k++] = sp[i]; /*sp elem starts with 0 pos*/
+      }
+   }
+   n = k;   /* n is k+1 */
+   KillAllPtrinfo(pbase); /* free mem */
+/*
+ * Store the scals for path->scals. we will update the flags later. 
+ */
+   scal = malloc(sizeof(short)*(n+1));
+   assert(scal );
+   scal[0] =  n;
+   for (i=1; i <= n; i++)
+      scal[i] = sp[i-1];
+   
+   if (s) free(s);
+   if (sp) free(sp);
+
+   return scal;
+
+}
+
+void PrintMovingPtrAnalysis(FILE *fpout)
+{
+   int i, j, k, ns, N;
+   short set, use, var;
+   short *sp;
+   char pre;
+   struct ptrinfo *pi, *pi0;
+   BLIST *bl;
+   INSTQ *ip;
+   LOOPQ *lp;
+   extern short STderef;
+   
+/*
+ *    Find all vars set & used in loop
+ */
+   lp = optloop;
+   KillLoopControl(lp);
+
+   set = NewBitVec(32);
+   use = NewBitVec(32);
+   for (bl=lp->blocks; bl; bl = bl->next)
+   {
+      CalcUseSet(bl->blk);
+      for (ip=bl->blk->ainst1; ip; ip = ip->next)
+      {
+         if (ip->set)
+            set = BitVecComb(set, set, ip->set, '|');
+         if (ip->use)
+            use = BitVecComb(use, use, ip->use, '|');
+      }
+   }
+   pi0 = FindMovingPointers(lp->blocks);
+   for (N=0,pi=pi0; pi; pi = pi->next)
+      if (IS_FP(STflag[pi->ptr-1]))
+         N++;
+   fprintf(fpout, "   Moving FP Pointers: %d\n", N);
+   for (pi=pi0; pi; pi = pi->next)
+   {
+      i = pi->ptr-1;
+      if (IS_FP(STflag[i]))
+      {
+         fprintf(fpout, "      '%s': type=%c", STname[i]?STname[i]:"NULL",
+               IS_FLOAT(STflag[i]) ? 's' : 'd');
+         j = ((pi->flag | PTRF_CONTIG | PTRF_INC) == pi->flag);
+         if (lp->nopf)
+            if (FindInShortList(lp->nopf[0], lp->nopf+1, i+1))
+               j = 0;
+         fprintf(fpout, " prefetch=%d", j);
+         CountArrayAccess(lp->blocks, i+1, &k, &j);
+         fprintf(fpout, " sets=%d uses=%d\n", j, k);
+      }
+   }
+/*
+ *    sets + use - regs - ptrs = scalars in loop
+ */
+   var = BitVecComb(0, set, use, '|');
+/*
+ *    Sub off all registers
+ */
+   for (i=0; i < TNREG; i++)
+      SetVecBit(var, i, 0);
+/*
+ *    Sub off all moving ptrs
+ */
+   for (pi=pi0; pi; pi = pi->next)
+      SetVecBit(var, pi->ptr-1+TNREG, 0);
+   KillAllPtrinfo(pi0);
+
+/*
+ *    Find all scalars used in loop
+ */
+   sp = BitVec2Array(var, 1-TNREG);
+   for (j=0, ns=sp[0], i=1; i <= ns; i++)
+   { 
+      k = sp[i];
+      if (k == STderef)
+         continue;
+      if (IS_DEREF(STflag[k-1]))
+         k = STpts2[k-1];
+      assert(STname[k-1]);
+      if (!FindInShortList(j, sp+1, k))
+         sp[j++] = k;
+   }
+   ns = j;
+   fprintf(fpout, "   Scalars used in loop: %d\n", ns);
+   for (i=0; i < ns; i++)
+   { 
+      k = sp[i]-1;
+      j = STflag[k];
+      j = FLAG2TYPE(j);
+      switch(j)
+      {
+         case T_FLOAT:
+         case T_VFLOAT:
+            pre = 's';
+            break;
+         case T_DOUBLE:
+         case T_VDOUBLE:
+            pre = 'd';
+            break;
+         case T_INT:
+            pre = 'i';
+            break;
+         default:
+            fko_error(__LINE__, "Unknown type %d, file %s", j, __FILE__);
+      }
+
+      fprintf(fpout, "      '%s': type=%c", STname[k], pre);
+      CountArrayAccess(lp->blocks, sp[i], &k, &j);
+      fprintf(fpout, " sets=%d uses=%d", j, k);
+#if 0      
+      if (j == k)
+         j = VarIsAccumulator(lp->blocks, sp[i]);
+      else
+         j = 0;
+      fprintf(fpout, " accum=%d", j);
+#else
+      if (j) /* all SE vars is set inside loop */
+      {
+         if (VarIsAccumulator(lp->blocks, sp[i]))
+            j = 1;
+         else if (VarIsMax(lp->blocks, sp[i]))
+            j = 1;
+         else if (VarIsMin(lp->blocks, sp[i]))
+            j = 1;
+         else j = 0;   
+      }
+      else j = 0;
+
+      fprintf(fpout, " ScalarExpandable=%d", j);
+#endif
+      fprintf(fpout, "\n");
+   }
+/*
+ * Kill all tem data structure
+ */
+   KillBitVec(set);
+   KillBitVec(use);
+   KillBitVec(var);
+   free(sp);
+}
+
 void FeedbackLoopInfo()
 /*=============================================================================
 NCACHES=N
@@ -2442,14 +2679,21 @@ OPTLOOP=1
       ... ... ... 
  *============================================================================*/
 {
-   int i, j;
+   int i, j, N, npaths;
    LOOPQ *lp;
    ILIST *il;
+   BLIST *bl;
    FILE *fpout=stdout;
    int SimpleLC=0, UR;
+   short *scal;
+   int MaxR, MinR, MaxMinR, RC, pv;
+   int VmaxR, VminR, VmaxminR, Vrc, Vspec, Vn;
    extern FILE *fpLOOPINFO;
    extern short STderef;
+   extern BBLOCK *bbbase;
 
+   MaxR=0; MinR=0; MaxMinR=0; RC=0; pv =0;
+   VmaxR=0; VminR=0; VmaxminR=0; Vrc=0; Vspec=0; Vn=0;
    if (fpLOOPINFO)
       fpout = fpLOOPINFO;
 /*
@@ -2510,17 +2754,222 @@ OPTLOOP=1
       fprintf(fpout, "   LoopNormalForm=%d\n", SimpleLC);
 /*
  *    Restoring state0 ... ... ...
- *    FIXME: I wonder what happens with old global data like: bitvec
  */
       RestoreFKOState0();
       GenPrologueEpilogueStubs(bbbase,0);
       NewBasicBlocks(bbbase);
       FindLoops(); 
       CheckFlow(bbbase, __FILE__, __LINE__);
+#if 0
+/*
+ *    Check all loop info 
+ */
+      lp = optloop;
+      fprintf(stderr, "\n LOOP BLOCKS: \n");
+      if(!lp->blocks) fprintf(stderr, "NO LOOP BLK!!!\n");
+      for (bl = lp->blocks; bl ; bl = bl->next)
+      {
+         assert(bl->blk);
+         fprintf(stderr, "%d ",bl->blk->bnum);
+      }
+      fprintf(stderr,"\n");
+      fprintf(stderr, "\n LOOP BLOCKS: \n");
+      if(lp->header) fprintf(stderr, "loop header: %d\n",lp->header->bnum);
+      if(lp->preheader) fprintf(stderr, "loop preheader: %d\n",
+                                lp->preheader->bnum);
+   
+      fprintf(stderr,"loop tails: ");
+      for (bl = lp->tails; bl ; bl = bl->next)
+      {
+         assert(bl->blk);
+         fprintf(stderr, "%d ",bl->blk->bnum);
+      }
+      fprintf(stderr,"\n");
+   
+      fprintf(stderr,"loop posttails: ");
+      for (bl = lp->posttails; bl ; bl = bl->next)
+      {
+         assert(bl->blk);
+         fprintf(stderr, "%d ",bl->blk->bnum);
+      }
+      fprintf(stderr,"\n");
+#endif      
+
+/*
+ *    Findout Path information.
+ *    NOTE: always kill path table after doing the analysis. Here, it is 
+ *    done inside FindNumPaths() function
+ */
+      npaths = FindNumPaths(optloop);
+      fprintf(fpout, "   NUMPATHS=%d\n",npaths);
+
+      if (npaths > 1)
+      {
+#if 0         
+         RestoreFKOState0();
+         GenPrologueEpilogueStubs(bbbase,0);
+         NewBasicBlocks(bbbase);
+         FindLoops(); 
+         CheckFlow(bbbase, __FILE__, __LINE__);
+#endif         
+/*
+ *       Check Whether it is reducable by Max/Min
+ */
+
+         UpdateOptLoopWithMaxMinVars1(optloop);
+
+         scal = FindAllScalarVars(optloop->blocks);
+         for (N = scal[0], i=1; i <= N; i++)
+         {
+            if (VarIsMax(optloop->blocks, scal[i]))
+            {
+               MaxR = ElimMaxMinIf(scal[i]);
+               if (MaxR) break;
+            }
+         }         
+         for (N = scal[0], i=1; i <= N; i++)
+         {
+            if (VarIsMin(optloop->blocks, scal[i]))
+            {
+               MinR = ElimMaxMinIf(scal[i]); /* this only support max now */
+               if (MinR) break;
+            }
+         }
+         if(scal) free(scal);
+/*
+ *       haven't checked MaxMin... no imp yet 
+ */
+         if (MaxMinR)
+         {
+            VmaxminR = !(SpeculativeVectorAnalysis()); /* the most general */
+/*
+ *          Normally, during vectorization, we killed the path tables. 
+ *          Must kill all before applying path based analysis again
+ */
+            KillPathTable();
+         }
+         else if (MaxR)
+         {
+            VmaxR = !(SpeculativeVectorAnalysis()); /*it is the most general */
+            KillPathTable();
+         }
+         else if (MinR)
+         {
+            VminR = !(SpeculativeVectorAnalysis()); /*it is the most general */
+            KillPathTable();
+         }
+         else;
+
+         fprintf(fpout, "      MaxMinReducesToOnePath=%d\n",MaxMinR);/*not yet*/
+         fprintf(fpout, "      MaxReducesToOnePath=%d\n",MaxR);
+         fprintf(fpout, "      MinReducesToOnePath=%d\n",MinR);
+/*
+ *       Check whether RedundantComputation Transformation can be applied
+ *       NOTE: right now, we can apply RC only for 2 paths! if or if-else
+ */
+         RestoreFKOState0();
+         GenPrologueEpilogueStubs(bbbase,0);
+         NewBasicBlocks(bbbase);
+         FindLoops(); 
+         CheckFlow(bbbase, __FILE__, __LINE__);
+         
+         if (!CFUSETU2D || 1)
+         {
+            CalcInsOuts(bbbase);
+            CalcAllDeadVariables();
+         }
+
+         if (npaths > 2)
+         {
+            /*fprintf(fpout, "      RedCompReducesToOnePath=%d\n",0);*/
+            RC = 0;
+         }
+         else
+         {
+            /*fprintf(fpout, "      RedCompReducesToOnePath=%d\n",1);*/
+            UpdateOptLoopWithMaxMinVars1(optloop);
+            IfConvWithRedundantComp();
+            RC = 1; /* need to return value from RSC... */
+         }
+         fprintf(fpout, "      RedCompReducesToOnePath=%d\n",RC);
+         
+         if (RC)
+         {
+            Vrc = !(SpeculativeVectorAnalysis()); /*it is the most general */
+            KillPathTable();
+         }
+      }
+/*
+ *    Now, we will check the vectorization 
+ *    Restoring to state0
+ */
+      RestoreFKOState0();
+      GenPrologueEpilogueStubs(bbbase,0);
+      NewBasicBlocks(bbbase);
+      FindLoops(); 
+      CheckFlow(bbbase, __FILE__, __LINE__);
+      
+      if (IsSpeculationNeeded())
+      {
+         Vspec = !(SpeculativeVectorAnalysis()); /*it is the most general */
+/*
+ *       Kill path after getting vectorization info
+ */
+         /*KillPathTable();*/
+      }
+      else
+      {
+         Vspec = 0;
+         Vn = !(SpeculativeVectorAnalysis()); /*it is the most general */ 
+         KillPathTable();
+      }
+      
+      if (Vn || Vrc || VmaxR || VminR || VmaxminR || Vspec)
+      {
+         fprintf(fpout, "   VECTORIZABLE=%d\n",1);
+         if (npaths > 1)
+         { 
+            fprintf(fpout, "      MaxMinOK=%d\n",VmaxminR);
+            fprintf(fpout, "      MaxOK=%d\n",VmaxR);
+            fprintf(fpout, "      MinOK=%d\n",VminR);
+            fprintf(fpout, "      RedCompOK=%d\n",Vrc);
+            fprintf(fpout, "      SpecultaionOK=%d\n",Vspec);
+            if (Vspec)
+            {
+               for (i=0; i < npaths; i++)
+               {
+                  pv = PathVectorizable(i+1);
+                  fprintf(fpout, "         path-%dVect=%d\n", i+1, pv);
+               }               
+               KillPathTable();
+            }
+         }
+      }
+      else
+         fprintf(fpout, "   VECTORIZABLE=%d\n",0);
+      /*
+       *    Start checking for moving ptr
+       */
+      RestoreFKOState0();
+      GenPrologueEpilogueStubs(bbbase,0);
+      NewBasicBlocks(bbbase);
+      FindLoops(); 
+      CheckFlow(bbbase, __FILE__, __LINE__);
+      PrintMovingPtrAnalysis(fpout);     
 
    }
 
+   if (fpout != stdout && fpout != stderr)
+      fclose(fpout);
 
+   if (fpLOOPINFO)
+   {
+/*
+ *    Just to kill every thing
+ */
+      KillAllGlobalData();
+      exit(0);
+   }
 }
 
 void PrintLoopInfo()
@@ -3436,6 +3885,123 @@ int DoAllScalarExpansion(LOOPQ *lp, int unroll, int vec)
  * on optloop now but they can be applied in anywhere.  
  *============================================================================*/
 
+int ElimIFBlkWithMin(short minvar)
+/*
+ * Assuming single occurrance first
+ * NOTE: we will combine the func with Max later!!
+ */
+{
+   int i, j;
+   short reg0, reg1, regv, regx;
+   short xvar, label;
+   enum inst inst, ld, st, br, cmp, min;
+   BBLOCK *bp;
+   INSTQ *ip, *ip0, *ip1;
+   BLIST *bl, *scope;
+
+   i = FLAG2TYPE(STflag[minvar-1]);
+   switch(i)
+   {
+   case T_FLOAT:
+      ld = FLD;
+      st = FST;
+      cmp = FCMP;
+      min = FMIN;
+      break;
+   case T_DOUBLE:
+      ld = FLDD;
+      st = FSTD;
+      cmp = FCMPD;
+      min = FMIND;
+      break;
+   default:
+   case T_VFLOAT:
+   case T_VDOUBLE:
+      fko_error(__LINE__,"Unknown type=%d, file=%s. Should be done before Vect",
+                i, __FILE__);
+   }
+/*
+ * Primarily, we are concern about the optloop blks, but need to extend to
+ * all blocks in bbbase later
+ */   
+   scope = optloop->blocks;
+
+   for (bl = scope; bl; bl = bl->next)
+   {
+      bp = bl->blk;
+      for (ip = bp-> ainst1; ip; ip = ip->next)
+      {
+/*
+ *       FORMAT: cmp fcc, reg0, reg1
+ *               JLT/JGT PC, fcc, LABEL
+ *       There would be exactly two ld of 2 vars/const
+ */
+         if (IS_COND_BRANCH(ip->inst[0]) && (ip->prev->inst[0]== cmp))
+         {
+            reg0 = ip->prev->inst[2];
+            reg1 = ip->prev->inst[3];
+            br = ip->inst[0];
+
+            ip0 = ip->prev->prev->prev;     /* 1st ld */
+            assert((ip0->inst[0] == ld));
+            ip1 = ip->prev->prev;           /* 2nd ld */
+            assert((ip1->inst[0] == ld));
+/*
+ *          for load, inst[2] must be a var 
+ */
+            if (STpts2[ip0->inst[2]-1] == minvar)
+            {
+               regv = ip0->inst[1];
+               xvar = ip1->inst[2];
+               regx = ip1->inst[1];
+            }
+            else if (STpts2[ip1->inst[2]-1] == minvar)
+            {
+               regv = ip1->inst[1];
+               xvar = ip0->inst[2];
+               regx = ip0->inst[1];
+            }
+            else 
+               regv = 0;
+            if ( ((regv == reg0) && (br == JGT)) ||  
+                 ((regv == reg1) && (br == JLT)) )
+            {
+               label = ip->inst[3];
+               /* check for single set inside if-blk and not set where else*/
+/*
+ *             There are two checks:
+ *                1. Max/Min var is only set inside the ifblk, nowhere else. It
+ *                   needed for the reduction at posttails
+ *                2. No other var but max/min is set inside ifblk
+ */
+               if (CheckMaxMinConstraints(scope, minvar, label) && 
+                   CheckMaxMinReduceConstraints(scope, minvar, label))
+               {
+                  // Now, it's time to eliminiate ifblk inserting max inst
+                  /*fprintf(stderr, "elim blks for max var = %s\n", 
+                          STname[maxvar-1]);*/
+                  assert(ip0->prev->inst[0] != ld);
+                  ip1 = InsNewInst(bp, ip1, NULL, min, regv, regv, regx);
+                  ip1 = InsNewInst(bp, ip1, NULL, st, SToff[minvar-1].sa[2],
+                                   regv, 0);
+                  ip1 = ip1->next;
+                  while (ip1 && !IS_COND_BRANCH(ip1->inst[0])) 
+                     ip1 = RemoveInstFromQ(ip1);
+                  assert(IS_COND_BRANCH(ip1->inst[0]));
+                  ip1 = RemoveInstFromQ(ip1); /* delete the branch itself */
+                  // it's time to delete the if blk
+                  RemoveInstFromLabel2Br(scope, label);
+                  return(1);
+               }
+            }
+         }
+      }
+   }
+   return (0);
+   
+}
+
+
 int ElimIFBlkWithMax(short maxvar)
 /*
  * Assuming single occurrance first
@@ -3521,8 +4087,14 @@ int ElimIFBlkWithMax(short maxvar)
             {
                label = ip->inst[3];
                /* check for single set inside if-blk and not set where else*/
+/*
+ *             There are two checks:
+ *                1. Max/Min var is only set inside the ifblk, nowhere else. It
+ *                   needed for the reduction at posttails
+ *                2. No other var but max/min is set inside ifblk
+ */
                if (CheckMaxMinConstraints(scope, maxvar, label) && 
-                   CheckMaxReduceConstraints(scope, maxvar, xvar, label))
+                   CheckMaxMinReduceConstraints(scope, maxvar, label))
                {
                   // Now, it's time to eliminiate ifblk inserting max inst
                   /*fprintf(stderr, "elim blks for max var = %s\n", 
@@ -3562,19 +4134,26 @@ int ElimMaxMinIf()
    {
       if (VarIsMax(lp->blocks, scal[i]))
       {
-         /*fprintf(stderr, "Max var = %s\n", STname[scal[i]-1]);*/
+         #if IFKO_DEBUG_LEVEL >=1
+            fprintf(stderr, "Max var = %s\n", STname[scal[i]-1]);  
+         #endif
          changes += ElimIFBlkWithMax(scal[i]);
       }
-      if (VarIsMin(lp->blocks, scal[i]))
+      else if (VarIsMin(lp->blocks, scal[i]))
       {
-         fprintf(stderr, "Not Updated yet!!!\n");
+         #if IFKO_DEBUG_LEVEL >=1
+            fprintf(stderr, "Min var = %s\n", STname[scal[i]-1]);
+         #endif
+         changes += ElimIFBlkWithMin(scal[i]);
       }
    }
+   if (scal) free(scal);
 /*
  * re-construct the CFG 
  */
    if (changes)
    {
+      CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = CFLOOP = 0;
       InvalidateLoopInfo();
       bbbase = NewBasicBlocks(bbbase);
       CheckFlow(bbbase, __FILE__, __LINE__);
@@ -3602,9 +4181,11 @@ int IfConvWithRedundantComp()
    ippu = KillPointerUpdates(pi0,1);
    /*OptimizeLoopControl(lp, 1, 0, NULL);*/
    OptimizeLoopControl(lp, 1, 0, ippu);
+   KillAllPtrinfo(pi0);
 #endif
 
 #if 1
+   CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = CFLOOP = 0;
    InvalidateLoopInfo();
    bbbase = NewBasicBlocks(bbbase);
    CheckFlow(bbbase, __FILE__, __LINE__);
