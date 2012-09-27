@@ -649,8 +649,11 @@ void PrintST(FILE *fpout)
          fprintf(fpout, " UNKNOWN UNKNOWN\n");
    }
 }
-
+#if 0
 static void KillSTStrings()
+#else
+void KillSTStrings()
+#endif
 {
    int i;
    if (STname)
@@ -677,6 +680,10 @@ void ReadSTFromFile(char *fname)
    KillSTStrings();
    if (SToff) free(SToff);
    if (STflag) free(STflag);
+/*
+ * Majedul: FIXED: possible memory leak as STpts2 is not freed
+ */
+   if (STpts2) free(STpts2);
    Nalloc = N = 0;
    assert(fread(&len, sizeof(int), 1, fp) == 1);
    GetNewSymtab(((len+STCHUNK+1)/STCHUNK)*STCHUNK);
