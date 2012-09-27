@@ -10,7 +10,21 @@
 #if IFKO_DEBUG_LEVEL >= 1
    #define Mstr2(m) # m
    #define Mstr(m) Mstr2(m)
-
+/*
+ * Majedul: It will create a dangling-if problem. Consider the following
+ * example: 
+ *          if (exp1) assert();
+ *          else statement1;
+ * this will expand as :
+ *          if (exp1) 
+ *             if (!arg)
+ *             {
+ *             ....
+ *             }
+ *             else .....
+ * So, I fixed this issue.             
+ */
+#if 0
    #define MyAssert(arg_) \
    { \
       if (!(arg_)) \
@@ -21,6 +35,21 @@
          while(1); \
       } \
    }
+#else
+   #define MyAssert(arg_) \
+   { \
+      if ((arg_)) \
+      { }\
+      else \
+      { \
+         fprintf(stderr, \
+                 "\n\nassertion '%s' failed on line %d of %s, hanging:\n\n", \
+                 Mstr(arg_), __LINE__, __FILE__);\
+         while(1); \
+      } \
+   }
+#endif
+
    #define assert MyAssert
 #else
    #include <assert.h>
@@ -40,7 +69,7 @@
 #include "fko_optflow.h"
 #include "fko_optmisc.h"
 #include "fko_optsimd.h"  
-
+#include "fko_optreg.h"
 
 #ifdef IFKO_DECLARE
    BBLOCK *bbbase=NULL;
