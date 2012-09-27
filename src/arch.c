@@ -1643,6 +1643,10 @@ void Extern2Local(INSTQ *next, int rsav)
    #endif
    InsNewInst(NULL, NULL, next, CMPFLAG, CF_PARASAVE, 2, 0);
 /*
+ * Majedul: FIXED: possible memory leak! need to free local paras
+ */
+   if (paras) free(paras);
+/*
  * Initialize constants
  */
    if (!reg1) reg1 = GetReg(T_INT);
@@ -1929,6 +1933,13 @@ if (KeepOn)
    if (icalleesave[k-1]) k = -k;
    return(k);
 }
+
+/*
+ * Majedul:
+ * Need to check for bug again, specially when mixed data type is used! 
+ * check ../test/svtst1.b, ../test/svtst4.b  
+ * date: 9/18/12
+ */
 
 int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
 /*
