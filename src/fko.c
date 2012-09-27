@@ -19,6 +19,7 @@ int VECT_FLAG=0;  /* Majedul: for different vectorization methods */
 int STATE1_FLAG=0;
 int STATE2_FLAG=0;
 int STATE3_FLAG=0;
+int path = -1; /* this is for speculation */
 
 int PFISKIP=0, PFINST=(-1), PFCHUNK=1;
 int NWNT=0, NAWNT=0;
@@ -56,12 +57,16 @@ void PrintUsageN(char *name)
    fprintf(stderr, "     L : dump LIL <file>.L\n");
    fprintf(stderr, "     o : dump opt sequence to <file>.opt\n");
    fprintf(stderr, "  -U <#> : Unroll main loop # of times\n");
-   fprintf(stderr, "  -V : Vectorize (SIMD) main loop with no control flow\n");
+   fprintf(stderr, "  -V : Vectorize (SIMD) main loop\n");
+#if 0
    fprintf(stderr, 
 "  -Vm [SSV,VRC,VEM]: Vectorize (SIMD) main loop with control flow\n");
    fprintf(stderr, "     SSV : Speculative vectorization \n");
    fprintf(stderr, "     VRC : Vector Redundant Computation \n");
    fprintf(stderr, "     VEM : Vector after elim of control flow for max\n");
+#endif
+   fprintf(stderr, 
+         "  -p [#]: path to speculate in speculative vectirization\n");
    fprintf(stderr, "  -W <name> : use cache write-through stores\n");
    fprintf(stderr, "  -P <all/name> <cache level> <dist(bytes)>\n");
    fprintf(stderr, 
@@ -358,6 +363,21 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             break;
          case 'v':
             FKO_FLAG |= IFF_VERBOSE;
+            break;
+/*
+ *       specify the path to speculate for speculative vectorization, this is
+ *       optional.
+ */
+         case 'p' :
+            if (args[i+1])
+               path = atoi(args[i+1]);
+            else 
+            {
+               fprintf(stderr, "Specify path number. \n");
+               PrintUsageN(args[0]);
+            }
+            assert(path>0);
+            i++;
             break;
          case 'V':
             FKO_FLAG |= IFF_VECTORIZE;
@@ -993,6 +1013,40 @@ static void KillArrayOfStr(int n, char **str)
    free(str);
 }
 
+static void ReinitAllStatic4bitvec()
+/*
+ * to initialize all the static vars after Killing the bitVec entry
+ */
+{
+   extern int FKO_BVTMP;
+/*
+ * Majedul: we have following functions which use local static variable for 
+ * bit vectors:
+ *    1. Reg2Regstate(-1); --- works
+ *    2. FindLiveregs(NULL); ---works
+ *    3. AllRegVec(-1); ---added, not tested yet
+ *    4. Scope2BV(NULL); --- works
+ *    5. CalcScopeIG(NULL); --- added, not tested yet
+ *    6. FindReadUseType(NULL,0,0); --- added, not tested yet
+ *    7. CalcBlocksDeadVariables(NULL);
+ *    8. Array2BitVecFlagged(0, NULL,0, -1)....
+ *    9. BlockList2BitVecFlagegd(NULL, -1).....
+ */
+
+   Reg2Regstate(-1); 
+   FindLiveregs(NULL); 
+   AllRegVec(-1); 
+   Scope2BV(NULL); 
+   CalcScopeIG(NULL); 
+   FindReadUseType(NULL,0,0); 
+   CalcBlocksDeadVariables(NULL);
+   Array2BitVecFlagged(0, NULL,0, -1);
+   BlockList2BitVecFlagged(NULL, -1);
+
+   if (FKO_BVTMP) KillBitVec(FKO_BVTMP);
+   FKO_BVTMP = 0;
+}
+
 static void ReadState0MiscFromFile(char *name)
 {
    int i;
@@ -1001,10 +1055,42 @@ static void ReadState0MiscFromFile(char *name)
    LOOPQ *lp;
    short *sp, *s;
    extern struct locinit *LIhead;
+   extern LOOPQ *loopq;
 /*
  * Kill current optloop and restore the old one
+ * NOTE: need to kill all loops in loopq
+ * Majedul:
+ * HERE HERE, We added a new loop killing function which would kill all the 
+ * elements of loop. We don't need to preserve any info which is calculated 
+ * during program states as we restore in program state0. Only the information 
+ * which is added during parsing is needed; it can be saved and restore from 
+ * file.
  */
-   KillLoop(optloop);
+#if 0   
+   while(loopq)
+   {
+      if (loopq == optloop)
+         loopq = loopq->next; /* delete optloop loop later */
+      else      
+      loopq = KillLoop(loopq);
+   }
+
+   if (optloop) KillLoop(optloop);  /* delete optloop safely now */
+#else
+   #if 0
+      KillAllLoopsComplete();
+   #else
+   while(loopq)
+   {
+      if (loopq == optloop)
+         loopq = loopq->next; /* delete optloop loop later */
+      else      
+      loopq = KillFullLoop(loopq);
+   }
+
+   if (optloop) KillFullLoop(optloop);  /* delete optloop safely now */
+   #endif
+#endif
    optloop = NewLoop(0);
    fp = fopen(name, "rb");
    assert(fp);
@@ -1016,7 +1102,7 @@ static void ReadState0MiscFromFile(char *name)
  * Need to check whether all the information is loaded successfully
  * Ofcourse, need to mark all pointers as NULL
  */
-#if 1
+#if 0
       fprintf(stderr, "optloop->flag = %d\n", optloop->flag);
       fprintf(stderr, "optloop->I = %d\n", optloop->I);
       fprintf(stderr, "optloop->beg = %d\n", optloop->beg);
@@ -1028,6 +1114,7 @@ static void ReadState0MiscFromFile(char *name)
 #endif  
 /*
  * initialize/invalidate all data which are recomputed.
+ * 
  * NOTE:  need to figure out what would be the initial value for the following
  *        [all of these would be recomputed afterward ]
  *          optloop->vflag
@@ -1042,9 +1129,20 @@ static void ReadState0MiscFromFile(char *name)
  *          optloop->outs
  *          optloop->sets
  */
+/*
+ *    NOTE: There are options to set some elements from markup like: 
+ *    nopf, aaligned, abalign, maxunroll, writedd, etc (see: hil_gram.y: 317)
+ *    but those are not fully implemented. Need to update here during fixing 
+ *    them. 
+ */
+/*
+ *    NOTE: unmark the element which is set during parsing of the HIL.
+ *    Other than those, reset all the elements.
+ */
       optloop->blkvec = 0;
       optloop->outs = 0;
       optloop->sets = 0;
+      optloop->ndup = 0;
 
       optloop->varrs = NULL;
       optloop->vscal = NULL;
@@ -1072,7 +1170,6 @@ static void ReadState0MiscFromFile(char *name)
       optloop->posttails = NULL;
       optloop->blocks = NULL;
       optloop->next = NULL;
-
    }
    else 
       optloop = NULL;
@@ -1121,8 +1218,11 @@ static void ReadState0MiscFromFile(char *name)
    fclose(fp);
 /*
  * Now, we need to free all global data which are re-computed in later states
- * like: Bitvec
+ * like: Bitvec. 
+ * NOTE: must reinitialize all the static vars and Kill associate bit vector
+ * before kill all.
  */
+   ReinitAllStatic4bitvec();
    KillAllBitVec(); 
 /*
  * what other info we need to free!!
@@ -1130,7 +1230,61 @@ static void ReadState0MiscFromFile(char *name)
 
 }
 
+void KillAllGlobalData()
+/*
+ * This function is called at the exit of the program to free all memory, 
+ * by this way, we can check whether there is any memory leak using Valgrind.
+ */
+{
+   int i;
+   extern struct locinit *ParaDerefQ;
+   extern struct locinit *LIhead;
 
+   if (ParaDerefQ)
+   {
+      KillAllLocinit(ParaDerefQ);
+      ParaDerefQ = NULL;
+   }
+   
+   KillAllLI(LIhead);
+   LIhead = NULL;
+   
+   KillSTStrings();
+   if (SToff) free(SToff);
+   if (STflag) free(STflag);
+   if (STpts2) free(STpts2);
+#if 0 
+   KillAllLoopsComplete();
+#else
+   while(loopq)
+   {
+      if (loopq == optloop)
+         loopq = loopq->next; /* delete optloop loop later */
+      else      
+      loopq = KillFullLoop(loopq);
+   }
+   if (optloop) KillFullLoop(optloop);  /* delete optloop safely now */
+#endif
+   KillAllBasicBlocks(bbbase);
+   bbbase = NULL; /* whenever kill, make it NULL */
+   ReinitAllStatic4bitvec();
+   KillAllBitVec(); 
+   
+   i = PFDST ? PFDST[0] : 0;
+   KillArrayOfStr(i, PFARR);
+   if (PFLVL)
+      free(PFLVL);
+   if (PFDST)
+      free(PFDST);
+   
+   if (NWNT && ARRWNT)
+   {
+      for (i=0; i < NWNT; i++)
+         if (ARRWNT[i])
+            free(ARRWNT[i]);
+      free(ARRWNT);
+   }
+}
 
 static void ReadMiscFromFile(char *name)
 {
@@ -1261,6 +1415,7 @@ void RestoreFKOState0()
    ReadSTFromFile(ln);
 /*
  * Restore basic block bbbase
+ * NOTE: need to verify: is there any info related to optloop in bbbase
  */
    sprintf(ln, "%s%d", fLIL, 0);
    ReadLILFromBinFile(ln);
@@ -1474,6 +1629,13 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
       optrec[noptrec++] = global ? k+MaxOpt : k;
 #if 0
       PrintOptInst(stdout, ++iopt, k, scope, global, nchanges-nc0);
+      
+      if (k == RegAsg)
+      {
+         ShowFlow("cfg.dot", bbbase);
+         exit(0);
+      }
+      
       /*char file[20];*/
       /*sprintf(file, "cfg/%s%d.dot", "cfg", iopt);*/
       /*ShowFlow(file,bbbase);*/
@@ -2274,6 +2436,7 @@ void GenAssenblyApplyingOpt4SSV(FILE *fpout, struct optblkq *optblks,
    #endif
    abase = lil2ass(bbbase);
    KillAllBasicBlocks(bbbase);
+   bbbase = NULL;
    dump_assembly(fpout, abase);
    KillAllAssln(abase);
    /*exit(0);*/
@@ -2292,8 +2455,39 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks,
 
    CalcInsOuts(bbbase);
    CalcAllDeadVariables();
+   
    RevealArchMemUses(); /* to handle ABS in X86 */
+   if (!CFUSETU2D)
+   {
+#if 0
+      bbbase = NewBasicBlocks(bbbase);
+      CheckFlow(bbbase, __FILE__, __LINE__);
+      FindLoops();
+      CheckFlow(bbbase, __FILE__, __LINE__);
+#endif
+#if 0
+      fprintf(stdout, "LIL before Repeatable opt\n");
+      PrintInst(stdout, bbbase);
+      exit(0);
+#endif      
+      CalcInsOuts(bbbase);
+      CalcAllDeadVariables();
+   }
+#if 0
+   fprintf(stdout, "LIL before Repeatable Opt \n");
+   PrintInst(stdout, bbbase);
+   exit(0);
+#endif  
+
    PerformOptN(0, optblks);
+
+#if 0 
+   fprintf(stdout, "LIL after Repeatable Opt \n");
+   PrintInst(stdout, bbbase);
+   exit(0);
+#endif   
+
+
 /*
  * Non Temporal write
  */
@@ -2322,6 +2516,7 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks,
    DumpOptsPerformed(stderr, FKO_FLAG & IFF_VERBOSE);
    abase = lil2ass(bbbase);
    KillAllBasicBlocks(bbbase);
+   bbbase=NULL; /* whenever Kill, make it NULL */
    dump_assembly(fpout, abase);
    KillAllAssln(abase);
 }
@@ -2479,9 +2674,20 @@ int main(int nargs, char **args)
    bp->inst1 = bp->instN = NULL;
    yyparse();
    fclose(fpin);
-   /*SaveFKOState(0);*/  /* this Save function works for state0. Fixed it later */
+/*
+ * To provide feedback to the tuning scripts 
+ */
+#if 1
+/*
+ * old implementation
+ */
+   SaveFKOState(0); 
+   if (fpLOOPINFO)
+   {
+      PrintLoopInfo();
+   }
+#else   
    SaveFKOState0(); /* this Save function works for state0. Fixed it later */
-
 /*
  * if we need information for tunning, Generate and return those info.
  * NOTE: info returns can be based on any states. PrintLoopInfo will provide
@@ -2490,10 +2696,11 @@ int main(int nargs, char **args)
  */
    if (fpLOOPINFO)
    {
-      //PrintLoopInfo();
       FeedbackLoopInfo();
       exit(0);
    }
+#endif
+
 #if 0
    if (FKO_FLAG & IFF_GENINTERM && state0) /*flag state0 is not impl yet */
    {
@@ -2514,9 +2721,51 @@ int main(int nargs, char **args)
  * Get code into standard form for analysis
  */
    GenPrologueEpilogueStubs(bbbase, 0); /* rsav = 0, normal case */
-   NewBasicBlocks(bbbase);
+   bbbase = NewBasicBlocks(bbbase);
    FindLoops();
    CheckFlow(bbbase,__FILE__,__LINE__);
+#if 0
+   fprintf(stdout, "1st LIL");
+   PrintInst(stdout, bbbase);
+   exit(0);
+#endif   
+/*
+ * NOTE: if there is no optloop, we can't perform transformation of 
+ * State1~State3. So, we will jump to State4 to generate code
+ */
+   if (!optloop)
+   {
+      GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
+      KillAllGlobalData(); 
+      return(0);
+   }
+
+#if 0   
+   fprintf(stdout, "Before Fall-thru conversion\n");
+   PrintInst(stdout, bbbase);
+   fflush(stdout);
+#endif   
+   if (path != -1)
+   {
+      /*PrintFallThruLoopPath(optloop); */
+      TransformFallThruPath(path);
+      PrintLoopPaths();
+/*
+ *    Re-structure the CFG and loop info 
+ */
+      InvalidateLoopInfo();
+      bbbase = NewBasicBlocks(bbbase);
+      CheckFlow(bbbase, __FILE__,__LINE__);
+      FindLoops();
+      CheckFlow(bbbase, __FILE__, __LINE__);
+   }
+#if 0   
+   fprintf(stdout, "After Fall-thru conversion\n");
+   PrintInst(stdout, bbbase);
+   ShowFlow("fall.dot",bbbase);
+   exit(0);
+#endif   
+
 /*
  * Right now, we will consider only optloop for theses transformation, but
  * it can be applied anywhere. 
@@ -2607,7 +2856,8 @@ int main(int nargs, char **args)
          SpecSIMDLoop();
          
          #if 0
-            GenAssenblyApplyingOpt4SSV(fpout, optblks, abase);
+            //GenAssenblyApplyingOpt4SSV(fpout, optblks, abase);
+            GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
             exit(0);
          #else
 /*
@@ -2630,14 +2880,38 @@ int main(int nargs, char **args)
  *    NOTE:
  *    old UnrollCleanup will not work anymore after calling this function.
  *    new UnrollCleanup should recognize the changes and update accordingly
+ *    NOTE: as this cleanup updates the loopcontrol, must invalidate the old 
+ *    one
  */
-      FinalizeVectorCleanup(optloop); 
-      
+      FinalizeVectorCleanup(optloop);
+/*
+ *    NOTE: There is a issue here. If we reconstruct the CFG after vectorization
+ *    we can't call existing KillLoopControl function. checking for cleanup 
+ *    will split the basic block. Existing KillLoopControl function always
+ *    check preheader for the CF_LOOP_INIT flag. So, it will fail the assertion.
+ *    There can be two way to solve this issue:
+ *       1. Update the KillLoopControl, make it robust and check preheader->up
+ *          blk also for CF_LOOP_INIT. Need to update the AddLoopControl func 
+ *          also to find out the flag.
+ *       2. Keep track of the New CFG construction. Avoid creating this before
+ *          unroll loop if vectorization is applied. 
+ *    sol-2 may not work after implementing the unroll for speculative 
+ *    vectorization. We may need to reconstruct CFG after Vspec!!!
+ */
+      if (FKO_UR <= 1)
+      {
+         InvalidateLoopInfo();
+         bbbase = NewBasicBlocks(bbbase);
+         CheckFlow(bbbase, __FILE__,__LINE__);
+         FindLoops();
+         CheckFlow(bbbase, __FILE__, __LINE__);
+      }
 #if 0 
    #if 0         
          assert(!GoToTown(0, FKO_UR, optblks));
          abase = lil2ass(bbbase);
          KillAllBasicBlocks(bbbase);
+         bbbase = NULL;
          dump_assembly(fpout, abase);
          KillAllAssln(abase);
    #else
@@ -2668,22 +2942,35 @@ int main(int nargs, char **args)
  *
  * NOTE: moving ptr analysis is essential for unrolling too. Why not we update
  * varrs at that time (if vectorization is not applied. )
- * 
+ * NOTE: loop control may be changed. So, re-construct the CFG
  */
    if (FKO_UR > 1)
    {
       UnrollLoop(optloop, FKO_UR); /* with modified cleanup */
+      
+      InvalidateLoopInfo();
+      bbbase = NewBasicBlocks(bbbase);
+      CheckFlow(bbbase, __FILE__,__LINE__);
+      FindLoops();
+      CheckFlow(bbbase, __FILE__, __LINE__);
    }
    else if (!DO_VECT(FKO_FLAG)) /* neither vectorize nor unrolled ! */
    {
       AddOptWithOptimizeLC(optloop);
+      
       /*OptimizeLoopControl(optloop, 1, 1, NULL);*/
+      InvalidateLoopInfo();
+      bbbase = NewBasicBlocks(bbbase);
+      CheckFlow(bbbase, __FILE__,__LINE__);
+      FindLoops();
+      CheckFlow(bbbase, __FILE__, __LINE__);
    }
    else ;
 
 #if 0 
          fprintf(stdout, "LIL after Unrolling \n");
          PrintInst(stdout, bbbase);
+         //exit(0);
          GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
          exit(0);
 #endif         
@@ -2717,13 +3004,18 @@ int main(int nargs, char **args)
    }
 
 #if 1 
-         //fprintf(stdout, "LIL after SE \n");
-         //PrintInst(stdout, bbbase);
-         GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
-         exit(0);
+         #if 0
+            fprintf(stdout, "LIL Before Repeat Opt \n");
+            PrintInst(stdout, bbbase);
+            PrintST(stdout);
+            exit(0);
+         #else
+            //ShowFlow("cfg.dot",bbbase);
+            GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
+            KillAllGlobalData(); 
+            //exit(0);
+         #endif
 #endif         
-
-
 
    return(0);
 
@@ -2969,9 +3261,11 @@ int main(int nargs, char **args)
 #endif
       abase = lil2ass(bbbase);
       KillAllBasicBlocks(bbbase);
+      bbbase = NULL;
       dump_assembly(fpout, abase);
       KillAllAssln(abase);
    }
    return(0);
 #endif   
 }
+
