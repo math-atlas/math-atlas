@@ -17,11 +17,29 @@ static void NewVecChunk(int increase)
    n = nvalloc + increase;
    newv = malloc(sizeof(int*)*n);
    newni = malloc(sizeof(int)*n);
+   assert(newv && newni); /* Majedul: this check is added */
    for (i=0; i < nvused; i++)
    {
       newv[i] = bvecs[i];
       newni[i] = ni[i];
    }
+/*
+ * Majedul:
+ *    bvecs[nvused] to bvecs[nvalloc] contains garbage values
+ *    why not we initialize it with NULL, otherwise how can we free mem!
+ *    If we want to kill all the bitvectors, it will be neccessary
+ *    
+ *    NOTE: Nullify this is not necessary! we have nvused!
+ *    It may optimize the code by not having the extra assignment.
+ */
+#if 0   
+   for (i=nvused; i < nvalloc; i++)
+   {
+      newv[i] = NULL;
+      newni[i] = 0;
+   }
+#endif
+
    if (bvecs) free(bvecs);
    if (ni) free(ni);
    bvecs = newv;
@@ -49,15 +67,28 @@ int NewBitVec(int size)
    nv = (size+32) >> 5;
    v = calloc(nv, sizeof(int));
    assert(v);
+/*
+ * Why not we free the memory if it is occupied yet
+ * But before that make sure that all uninitialize ptr is init with NULL
+ * 
+ * NOTE: as we avoid initialize by NULL, bvecs[i] points to garbage value!
+ * so, we can't free them. There can be 2 cases:
+ * case-1: i is return from already freed position.Make sure it is already free
+ * case-2: i is return from newly created bvecs. so, it is by default not alloc
+ */
    bvecs[i] = v;
    ni[i] = nv;
+#if 0
+   fprintf(stderr, "new bvec created = %d\n", i);
+#endif   
    return(i+1);
 }
 
 void KillBitVec(int iv)
 {
-   free(bvecs[--iv]);
-   bvecs[iv] = NULL;
+   iv--;
+   if(bvecs[iv]) free(bvecs[iv]);
+   bvecs[iv] = NULL; /* it is necessary for KillAllBitVec()  */
    ni[iv] = 0;
 }
 
@@ -68,13 +99,16 @@ void KillAllBitVec()
  */
 {
    int i;
-   for (i=0; i < nvalloc; i++)
+   for (i=0; i < nvused; i++) /* mem alloc upto nvused! */
    {
-      if (bvecs[i])
+      if (bvecs[i])  /* already freed one is asigned NULL, may check ni[i]! */ 
          free(bvecs[i]);
+      bvecs[i] = NULL;
+      ni[i] = 0;
    }
-   free(bvecs);
-   free(ni);
+
+   if (bvecs) free(bvecs);
+   if (ni) free(ni);
 /*
  * intialize all the global var with initial value
  */
@@ -82,25 +116,45 @@ void KillAllBitVec()
    nvused=0;  
    bvecs=NULL;
    ni=NULL;  
-   FKO_BVTMP=0;
+   FKO_BVTMP=0; /* need to init with 0 so that new bitvec will be allocated */
 }
 
 int *ExtendBitVec(int iv, int nwords)
+/*
+ * To increase the size of specific bitvector
+ * This function increases the size by allocating new memory keeping the index
+ * same.
+ * Majedul: This can be implemented simply by allocating a new memory without
+ * using the NewBitVec function at all.
+ */
 {
-   int j, k, ind;
+   int j, k, iv0;
    int *v;
    
 /*
- * FIX: [Majedul] There was a segmentation fault assoicated with the follwoing
+ * FIXED: [Majedul] There was a segmentation fault assoicated with the follwoing
  * statement:  v = bvecs[NewBitVec(nwords*32)-1];
- * There may be a compiler error. This statement is replaced by the following 
- * two statements.
  */
-   ind = NewBitVec(nwords*32)-1;
-   v = bvecs[ind];         
-   for (k=ni[--iv], j=0; j < k; j++) v[j] = bvecs[iv][j]; 
+   iv0 = NewBitVec(nwords*32)-1;
+   v = bvecs[iv0];        
+   for (k=ni[--iv], j=0; j < k; j++) v[j] = bvecs[iv][j];
    for (ni[iv] = nwords; j < nwords; j++) v[j] = 0;
+/*
+ * Majedul:
+ * iv0 and iv never be same if ExtendedBitVec is called for already created
+ * bit vector which should be the case. 
+ */
+   assert(iv0!=iv);
+/*
+ * Majedul:
+ * Free the old allocated memory.
+ * HERE HERE: both bvecs[iv0] and bvecs[iv] points the same memory!!!
+ * make bvecs[iv0] NULL
+ */
    free(bvecs[iv]);
+   bvecs[iv0] = NULL;
+   ni[iv0] = 0; 
+   
    bvecs[iv] = v;
    return(v);
 }
@@ -113,8 +167,28 @@ void SetVecAll(int iv, int val)
    int n, i;
    int *v;
 
+   assert(iv); /* it should be applied on existing bitvec */
+
    if (val) val = -1;
    v = bvecs[--iv];
+#if 0
+/*
+ * Majedul: Is there anyway where we want to set a bit vector but is not 
+ * allocated yet or freed before!!! 
+ * It will work if it is freed as ni[iv] would be 0
+ */
+   if (!v)
+   {
+      fprintf(stderr,"bvec[%d] not created yet! check the caller!\n\n", iv);
+      return;
+   }
+#else
+/*
+ * Should not applied on already freed bvec 
+ */
+   assert(v);
+#endif
+
    n = ni[iv];
    for (i=0; i < n; i++) v[i] = val;
 }
@@ -126,6 +200,7 @@ void SetVecBit(int iv, int ibit, int val)
 {
    int *v;
    int i, j, k;
+   assert(iv); /* should applied on existing one */
    iv--;
    i = ibit >> 5;
 /*
@@ -138,6 +213,51 @@ void SetVecBit(int iv, int ibit, int val)
    else *v |= (1<<ibit);
 }
 
+int BitVecCheck(int iv, int ibit)
+/*
+ * Returns value nonzero if ibit in bit vector iv is set, zero otherwise
+ */
+{
+   int n, k;
+/*
+ * Majedul: add additional checking! iv != 0 and iv !=nvused
+ */
+   assert(iv>0 && iv<=nvused);
+/*
+ * FIXED: as bnum gets 0 when a new block is created, bnum-1 becomes -1
+ * this is a major bug which creates the invalid read! 
+ */
+   assert(ibit!=-1); 
+
+   n = ni[--iv];
+   k = ibit >> 5; 
+   ibit -= k << 5;
+/*
+ * Majedul: there is an invalid read reported by valgrind when is called from
+ * VarUse2RegUse(optreg.c:1208), CombineLiveRanges(optreg.c:736)
+ * FIXME: 
+ *       k=5, n=5, ibit=160 (0) !!! off-by-one error!! for 160, n should be 6
+ *       k=3, n=2, ibit=31 !!! 
+ */
+/*
+ * FIXME: k should be < n. 
+ *        (k >= n) means we want to set a bit but it is not allocated yet!
+ * keep in mind: argument iv starts from 1 but ibit starts from 0.
+ * 
+ * Oneway to solve this issue is to extend the bit vector and returns false.
+ * the logic behind this is that this position may be set afterward as a bit 
+ * vector keep increasing from its default size of 32 anyway. 
+ */
+#if 1
+   if (k >= n) 
+   {
+      ExtendBitVec(iv+1, k+1);
+      return 0;
+   }
+#endif
+   return(bvecs[iv][k] & (1<<ibit));
+}
+
 int BitVecComb(int ivD, int iv1, int iv2, char op)
 /*
  * ivD = iv1 | iv2; if ivD == 0, allocate new vector
@@ -145,6 +265,9 @@ int BitVecComb(int ivD, int iv1, int iv2, char op)
  */
 {
    int i, n;
+
+   assert(iv1 && iv2); /* iv1 && iv2 should not be 0 */
+   
    iv1--; iv2--;
    n = ni[iv1];
    if (n > ni[iv2]) ExtendBitVec(iv2+1, n);
@@ -202,22 +325,6 @@ int BitVecCheckComb(int iv1, int iv2, char op)
    return(0);
 }
 
-int BitVecCheck(int iv, int ibit)
-/*
- * Returns value nonzero if ibit in bit vector iv is set, zero otherwise
- */
-{
-   int n, k;
-
-   n = ni[--iv];
-   k = ibit >> 5;
-   ibit -= k << 5;
-/*
- * Majedul: there is an invalid read reported by valgrind when is called from
- * VarUse2RegUse(optreg.c:1208), CombineLiveRanges(optreg.c:736)
- */
-   return(bvecs[iv][k] & (1<<ibit));
-}
 
 int BitVecComp(int iv1, int iv2)
 /*
@@ -351,7 +458,7 @@ char *PrintVecList(int iv, int ioff)
    if (sptr != ln) sptr[-2] = '\0';
    return(ln);
 }
-
+#if 0
 int Array2BitVec(int n, short *sp, short off)
 /*
  * Given array of shorts, creates a bitvec with bits set at pos sp[]+off
@@ -368,13 +475,39 @@ int Array2BitVec(int n, short *sp, short off)
       SetVecBit(iv, sp[i]+off, 1);
    return(iv);
 }
+#else
+int Array2BitVecFlagged(int n, short *sp, short off, int init)
+{
+   static int iv=0;
+   int i;
+   if (!init)
+   {
+      if (!iv)
+         iv = NewBitVec(32);
+      else
+         SetVecAll(iv, 0);
+      for (i=0; i < n; i++)
+         SetVecBit(iv, sp[i]+off, 1);
+   }
+   else
+   {
+      if (iv) KillBitVec(iv);
+      iv = 0;
+   }
+   return(iv);
+}
+int Array2BitVec(int n, short *sp, short off)
+{
+   return(Array2BitVecFlagged(n, sp, off, 0));
+}
+#endif
 short *BitVec2StaticArray(int iv)
-/*
- * Translates a bitvector to an array of shorts, where each element holds the
- * position of the set bit.  Position 0 is N, the length of the array
- * (the number of bits set).
- * RETURNS: (N+1) length short static array
- */
+   /*
+    * Translates a bitvector to an array of shorts, where each element holds the
+    * position of the set bit.  Position 0 is N, the length of the array
+    * (the number of bits set).
+    * RETURNS: (N+1) length short static array
+    */
 {
    int i, j, n;
    static int N=0;
