@@ -28,7 +28,7 @@ INSTQ *KillThisInst(INSTQ *kp)
    if (kp->deads)
       KillBitVec(kp->deads);
    free(kp);
-   kp = NULL;
+   /*kp = NULL;*/
    return(kn);
 }
 void KillAllInst(INSTQ *base)
@@ -68,8 +68,14 @@ INSTQ *InsNewInst(BBLOCK *blk, INSTQ *prev, INSTQ *next, enum inst ins,
          blk->instN = ip;
       }
       else
+      {
+/*
+ *       Majedul: checking for possible memory leak.
+ */
+         assert(!blk->instN);
          ip = blk->inst1 = blk->instN = NewInst(blk, NULL, NULL, 
                                                 ins, dest, src1, src2);
+      }
    }
 /*
  * Adding after prev
@@ -538,7 +544,7 @@ void PrintOptInst(FILE *fpout, int iopt, int op, BLIST *scope,
    BLIST *iscope;
 
    fprintf(fpout,"%s",mark);
-   fprintf(fpout,"\t\t OPTIMIZTION META DATA \n");
+   fprintf(fpout,"\t\t OPTIMIZATION META DATA \n");
    fprintf(fpout,"%s",mark);
    
    fprintf(fpout,"Number of optimization done so far = %d\n",iopt);
