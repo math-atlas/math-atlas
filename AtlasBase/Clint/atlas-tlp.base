@@ -12,7 +12,9 @@
 #include "atlas_misc.h"
 #include "atlas_lapack.h"
 @ROUT lanbtst slvtst lanbsrch latime
-@skip #include "atlas_ptalias_lapack.h"
+#ifdef ATL_USEPTHREADS
+   #include "atlas_ptalias_lapack.h"
+#endif
 @ROUT lanbtst lanbsrch
 #ifdef ATL_ilaenv
    #undef ATL_ilaenv
@@ -254,7 +256,13 @@ TYPE *GetGE(int M, int N, int lda)
 {
    TYPE *A;
    A = malloc(ATL_MulBySize(lda)*N);
-   if (A) Mjoin(PATL,gegen)(M, N, A, lda, M*N+lda);
+   if (A) 
+   {
+      #if defined(ATL_USEPTHREADS) && !defined(ATL_NONUMATOUCH)
+         ATL_NumaTouchSpread(ATL_MulBySize(lda)+N, A);
+      #endif
+      Mjoin(PATL,gegen)(M, N, A, lda, M*N+lda);
+   }
    return(A);
 }
 
@@ -304,6 +312,9 @@ static TYPE *DupMat(enum ATLAS_ORDER Order, int M, int N, TYPE *A, int lda,
    ATL_assert(ldc >= M);
    C = malloc(ATL_MulBySize(ldc)*N);
    ATL_assert(C);
+   #if defined(ATL_USEPTHREADS) && !defined(ATL_NONUMATOUCH)
+      ATL_NumaTouchSpread(ATL_MulBySize(ldc)+N, C);
+   #endif
    for (j=0; j != N; j++)
    {
       for (i=0; i != M2; i++) C[i] = A[i];
