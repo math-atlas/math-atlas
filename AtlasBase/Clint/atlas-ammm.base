@@ -1666,7 +1666,8 @@ ATL_mmnode_t *FindBestForEachNB(int verb, char pre, ATL_mmnode_t *mmb, int *nbs)
       bp->next = BestForThisNB(verb, pre, mmb, nbs[i], pnb, nnb, FORCE);
       bp = bp->next;
    }
-   i = DeleteBadBigNBs(best, nbs);
+   if (!FORCE)
+      i = DeleteBadBigNBs(best, nbs);
    return(best);
 }
 
@@ -3534,28 +3535,39 @@ int main(int nargs, char **args)
       mmp = CloneMMQueue(mmb);
       smmb = FindBestUserCases(verb, pre, nbs, mmp);
       mmp = FindBestGenCases(verb, pre, nregs, nbs, smmb);
-      smmb = MergeAndWinnowCases(verb, pre, smmb, mmp);
+      if (nbs[0] >= 0)
+         smmb = MergeAndWinnowCases(verb, pre, smmb, mmp);
+      else  /* forced nbs are all kept, so just merge */
+         smmb = MergeCases(0, smmb, mmp);
    }
    else
      smmb = FindBestGenCases(verb, pre, nregs, nbs, NULL);
 /*
- * Find decent generator case and find correct vectorization settings, add
- * this case to default list to be searched.
+ * If nbs aren't being forced, then try larger ranges using cache budgets
  */
-   gmm = DecentGenCase(verb, pre, nregs);
-   gmm->next = mmb;
-   mmb = gmm;
+   if (nbs[0] >= 0)
+   {
 /*
- * Find the best user-supplied cases for the three common cache blocking cases
+ *    Find decent generator case and find correct vectorization settings, add
+ *    this case to default list to be searched.
  */
-   mmb = FindCacheBudgetCasesByKB(verb, pre, CS, mmb);
+      gmm = DecentGenCase(verb, pre, nregs);
+      gmm->next = mmb;
+      mmb = gmm;
 /*
- * Now add small-case kernels back in, and write it out
+ *    Find the best user-supplied cases for the three common cache blking cases
  */
-   p = MergeCases(0, mmb, smmb);
-   KillAllMMNodes(smmb);
-   KillAllMMNodes(mmb);
-   mmb = p;
+      mmb = FindCacheBudgetCasesByKB(verb, pre, CS, mmb);
+/*
+ *    Now add small-case kernels back in, and write it out
+ */
+      p = MergeCases(0, mmb, smmb);
+      KillAllMMNodes(smmb);
+      KillAllMMNodes(mmb);
+      mmb = p;
+   }
+   else /* when we force nbs, we just blindly use the provided list */
+      mmb = smmb;
    WriteMMFileWithPath(pre, "res", "eAMMRES.sum", mmb);
    ComputeKClean(verb, pre, mmb);
    KillAllMMNodes(mmb);
