@@ -3246,7 +3246,7 @@ static enum inst
  */
                binst = ip->next->inst[0]; /* assume next ainst alwasy branch*/
 /*
- *             find ioptsimdndex of appropriate branch and VCMP
+ *             find index of appropriate branch and VCMP
  */
                for (m = 0; m < nbr; m++)
                {
@@ -4428,20 +4428,23 @@ void DupBlkPathWithOpt(LOOPQ *lp, BLIST **dupblks, int islpopt, int UsesIndex,
  *       Now, find moving pointer and update pointer loads accordingly
  *       in dublicated blocks
  */
-         pi = FindMovingPointers(dupblks[i]);
-         assert(pi);
-         ip = KillPointerUpdates(pi, i);
-         for (; ip; ip = ipn)
+         if (UsesPtrs)
          {
-            ipn = ip->next;
-            free(ip);
+            pi = FindMovingPointers(dupblks[i]);
+            assert(pi);
+            ip = KillPointerUpdates(pi, i);
+            for (; ip; ip = ipn)
+            {
+               ipn = ip->next;
+               free(ip);
+            }
+            UpdatePointerLoads(dupblks[i], pi, i);
+            KillAllPtrinfo(pi);
          }
-         UpdatePointerLoads(dupblks[i], pi, i);
-         KillAllPtrinfo(pi);
 /*
  *       Need to check the loop for forwarding or not!
  */
-         if (UsesPtrs)
+         if (UsesIndex)
             UpdateUnrolledIndices(dupblks[i], lp->I, (lp->flag & L_NINC_BIT)?
                                   URbase-i:URbase+i);
       }
@@ -4710,8 +4713,11 @@ BBLOCK *CreateSclResBlk(BBLOCK *fromBlk, BBLOCK *toBlk, int path)
 
 void ScalarRestart(LOOPQ *lp)
 /*
- * changing in plan: 1st generate the whole code structure for each path 
+ * In new Imp: 1st generate the whole code structure for each path 
  * which can be explored by down/up pointer, then update the original code
+ * NOTE: scalar restart is tested with 2 paths. I'm not sure how to place
+ * scalar restart if there are morethan 2 paths. note that this implementation
+ * is not tested for morethan 2 paths. 
  */
 {
    int i, j, k;
@@ -4738,10 +4744,10 @@ void ScalarRestart(LOOPQ *lp)
          break;
    }
 /*
- *    Find all fall thru path headers in loop which will be needed at code 
- *    generation
+ * Find all fall thru path headers in loop which will be needed at code 
+ * generation
  */
-   iv = FKO_BVTMP;
+   iv = FKO_BVTMP; /* FKO_BVTMP should already be created*/
    SetVecAll(iv, 0);
    ivtails = BlockList2BitVec(lp->tails);
    ftheads = FindAllFallHeads(NULL, lp->blkvec, lp->header, ivtails, iv);
@@ -4845,7 +4851,7 @@ void ScalarRestart(LOOPQ *lp)
  *       just added a new blk... 
  *       NOTE: we need to test with different scenario.
  */
-#if 1
+#if 0
          fprintf(stderr, "SCAL_RESTART: CREATE NEW BLK \n\n");
 #endif   
 /*
@@ -5826,13 +5832,13 @@ void MovInstFromBlkToBlk(BBLOCK *fromblk, BBLOCK *toblk)
    }
 }
 
-void RedundantScalarComputation(LOOPQ *lp)
+int RedundantScalarComputation(LOOPQ *lp)
 /*
  * Assuming CFG is already constructed.
  */
 {
    int i, j, k, n, N;
-   int type;
+   int type, err;
    int *vpos;
    short iv, iv1;
    short *sp;
@@ -5857,6 +5863,7 @@ void RedundantScalarComputation(LOOPQ *lp)
    
    isetvars = esetvars = icmvars = ecmvars = inewvars = enewvars = NULL;
    sp = NULL;
+   err = 0;
 /*
  * identify the ifblks, elseblks and common blks
  * NOTE: loopcontrol is killed already. So, there should not be any loop branch
@@ -6076,13 +6083,18 @@ void RedundantScalarComputation(LOOPQ *lp)
          fst = FST;
          type = T_FLOAT;
       }
-      else
+      else if (IS_DOUBLE(STflag[sp[i]-1]))
       {
          cmov1 = FCMOVD1;
          cmov2 = FCMOVD2;
          fld = FLDD;
          fst = FSTD;
          type = T_DOUBLE;
+      }
+      else  /* can't handle integer yet */
+      {
+         err = 1;
+         break;
       }
       switch(vpos[i])
       {
@@ -6175,6 +6187,7 @@ void RedundantScalarComputation(LOOPQ *lp)
    KillBlockList(elseblks);
    KillBlockList(splitblks);
    KillBlockList(mergeblks);
+   return err; 
 }
 
 int CheckMaxMinConstraints(BLIST *scope, short var, short label)
