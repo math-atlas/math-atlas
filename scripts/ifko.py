@@ -1,14 +1,19 @@
-#! /usr/bin/python
+#! /usr/bin/python -tt
 
 import sys
 import fkocmnd
 import l1cmnd
+import re
 
-#optT = "-X 1 1 -Y 1 1 -Fx 16 -Fy 16"
 #
-# For AVX, 32 byte alignment is needed
+# Global Variable to save the Altas opt flag  
+# optT is for tester and opt is for timer
 #
+
+# optT = "-X 1 1 -Y 1 1 -Fx 16 -Fy 16"
 optT = "-X 1 1 -Y 1 1 -Fx 32 -Fy 32"
+opt = "" ## populated with user argument 
+skipOpt = [] ## opt named as(fko cmnd): mmr,rc,v,vs,se,P,ps,par,p
 
 #
 # Given set of arrs that are write-only (no uses), tries using non-temporal
@@ -200,6 +205,11 @@ def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=64):
 #
    if blas.find("amax") != -1 :
       URN = 32
+   if blas.find("iamax") != -1 :
+      URN = 32
+   if blas.find("nrm2") != -1 : ## limit the blind unrolling for nrm2... 
+      URN = 16
+   
    j = KF0.find("-U ")
    if j != -1:
       words = KF0[j:].split()
@@ -226,6 +236,79 @@ def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=64):
 
    KF0 = KF0 + " -U %d" % URB
    return [mf0,KF0]
+
+def FindSE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=6):
+   """ Exactly same as FindAE but the fko command is changed 
+   """
+#
+#  Time the default case
+#
+   fkocmnd.callfko(fko, KF0)
+   [t0,m0] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                         "gcc", "-x assembler-with-cpp", opt=opt)
+   mf0 = m0
+#
+#  Find present unrolling factor, and remove it from flags
+#
+   j = KF0.find("-U ")
+   assert(j != -1)
+   words = KF0[j:].split()
+   ur = int(words[1])
+   if j > 0: KFN = KF0[0:j-1]
+   else : KFN = ""
+   for word in words[2:] :
+      KFN = KFN + " " + word
+   KF0 = KFN
+   print "   Finding ScalarExpan, UR=%d, mflop= %.2f" % (ur, m0)
+   mfB = 0.0
+   urB = ur
+   aeB = 1
+   nacc = len(acc)
+   for ac in acc:
+      i = 2
+      while i <= maxlen:
+         if ur >= i :
+            KFLAG = KFN + " -U %d -SE %s %d" % (ur, ac, i)
+            fkocmnd.callfko(fko, KFLAG)
+            [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                                 "gcc", "-x assembler-with-cpp", opt=opt)
+            print "      '%s' SE=%d, UR=%d, mflop= %.2f" % (ac, i, ur, mf)
+            if mf > mfB:
+               mfB = mf
+               urB = ur
+               aeB = i
+         if i < ur or ur%i :
+            j = ((ur+i-1) / i)*i
+            if j != ur:
+               KFLAG = KFN + " -U %d -SE %s %d" % (j, ac, i)
+               fkocmnd.callfko(fko, KFLAG)
+               [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                                    "gcc", "-x assembler-with-cpp", opt=opt)
+               print "      '%s' SE=%d, UR=%d, mflop= %.2f" % (ac, i, j, mf)
+               if mf > mfB:
+                  mfB = mf
+                  urB = j
+                  aeB = i
+
+            j = (ur / i) * i
+            if j  and j != ur:
+               KFLAG = KFN + " -U %d -SE %s %d" % (j, ac, i)
+               fkocmnd.callfko(fko, KFLAG)
+               [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                                    "gcc", "-x assembler-with-cpp", opt=opt)
+               print "      '%s' SE=%d, UR=%d, mflop= %.2f" % (ac, i, j, mf)
+            if mf > mfB:
+               mfB = mf
+               urB = j
+               aeB = i
+         i += 1
+
+      if mfB > mf0*1.001:
+         KFN = KFN + " -U %d -SE %s %d" % (urB, ac, aeB)
+         mf0 = mfB
+
+   print "   SE=%d, UR=%d, mfB=%2.f, KFN=%s" % (aeB, urB, mfB, KFN)
+   return[mfB, KFN]
 
 def FindAE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=6):
 #
@@ -317,42 +400,275 @@ def FindMatchList(st0, st1):
    return(matches)
 
 
+def ifko_PathXform(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
+                   npath, red1p):
+   """ This function will apply some basic transformation on scalar code 
+       like: fall-thru xform, rc, mmr etc
+       should only call this when npath > 1
+   """
+#
+#  checkout the default performance 
+#
+   #print KF0 
+   fkocmnd.callfko(fko, KF0)
+   [t0,m0] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                         "gcc", "-x assembler-with-cpp", opt=opt)
+#
+#  must have multiple paths 
+#  
+   if npath == 1 :
+      print 'Single path! No Xform can be applied!!'
+      sys.exit(1);
+   
+#
+#  apply fall-thru optimization and see which fall-thru path is better
+#
+   KFn = KF0
+   print "\n   Finding best fall-thru path:"
+   for i in range(npath):
+      KF1 = ' -p %d' %(i+1) + KF0
+      fkocmnd.callfko(fko, KF1)
+      [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                           "gcc", "-x assembler-with-cpp", opt=opt)
+      print "      Path = %d, mflop = %.2f" % (i+1, mf)
+      if mf > m0:
+         m0 = mf
+         t0 = t
+         KFn = KF1
+
+#
+#  apply various reduction methods
+#  [mmr, maxr, minr, rc] => [mmr, rc]
+#
+   if red1p[0] or red1p[1] or red1p[2] or red1p[3]:
+      print "\n   Finding best path reduction:"
+   if red1p[0] or red1p[1] or red1p[2] :
+      if 'mmr' in skipOpt:
+         print '      SKIPPING MMR'
+      else:
+         KF1 = ' -mmr' + KF0
+         fkocmnd.callfko(fko, KF1)
+         [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                              "gcc", "-x assembler-with-cpp", opt=opt)
+         print "      MMR, mflop = %.2f" % ( mf)
+         if mf > m0:
+            m0 = mf
+            t0 = t
+            KFn = KF1 
+   if red1p[3] :
+      if 'rc' in skipOpt:
+         print '      SKIPPING RC'
+      else: 
+         KF1 = ' -rc' + KF0 
+         fkocmnd.callfko(fko, KF1)
+         [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                              "gcc", "-x assembler-with-cpp", opt=opt)
+         print "      RC,  mflop = %.2f" % ( mf)
+         if mf > m0:
+            m0 = mf
+            t0 = t
+            KFn = KF1
+
+   KF0 = KFn
+   return [m0, KF0]
+
+
+def ifko_Vec(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N, 
+             npath, vm, vpath):
+   """ This function will try all vectorization methods incorporating other
+   """
+#
+#  add vector flag if not in the flags
+#
+   if KF0.find('-V') == -1:
+      KF0 = ' -V' + KF0
+#
+#  delete all flags which are associated with -p/rc/mmr
+#
+   j = KF0.find('-p')
+   if j != -1:
+      match = re.serch(r'-p\s\d+',KF0)
+      rem = match.group()
+      KF0 = KF0.replace(rem, '') ## removing the -p val 
+   j = KF0.find('-rc')
+   if j != -1:
+      KF0 = KF0.replace('-rc','')
+   j = KF0.find('-mmr')
+   if j != -1:
+      KF0 = KF0.replace('-mmr','')
+
+   print "\n   Finding best vectorization:"
+#
+#  check with other xforms
+#
+   m0 = 0
+   t0 = 0
+   if npath > 1:
+      if vm[0] or vm[1] or vm[2]:
+         if 'mmr' in skipOpt:
+            print '      SKIPPING MMR+V'
+         else:
+            KF1 = ' -mmr' + KF0
+            fkocmnd.callfko(fko, KF1)
+            [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                                "gcc", "-x assembler-with-cpp", opt=opt)
+            print "      MMR+V, mflop = %.2f" % ( mf)
+            if mf > m0:
+               m0 = mf
+               t0 = t
+               KFn = KF1
+      if vm[3] :
+         if 'rc' in skipOpt:
+            print '      SKIPPING RC+V'
+         else:
+            KF1 = ' -rc' + KF0 
+            fkocmnd.callfko(fko, KF1)
+            [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                                "gcc", "-x assembler-with-cpp", opt=opt)
+            print "      RC+V,  mflop = %.2f" % ( mf)
+            if mf > m0:
+               m0 = mf
+               t0 = t
+               KFn = KF1
+#
+#     check for speculative 
+#
+      if vm[4] :
+         if 'vs' in skipOpt:
+            print '      SKIPPING SPECULATIVE VECTORIZATION'
+         else:
+            for i in range(npath):
+               if vpath[i] :
+                  KF1 = ' -p %d' %(i+1) + KF0  
+                  fkocmnd.callfko(fko, KF1)
+                  [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                                      "gcc", "-x assembler-with-cpp", opt=opt)
+                  print "      V+SP%d, mflop = %.2f" % (i+1, mf)
+                  if mf > m0:
+                     m0 = mf
+                     t0 = t
+                     KFn = KF1
+   else:    ## no path to reduce 
+      fkocmnd.callfko(fko, KF0)
+      [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                           "gcc", "-x assembler-with-cpp", opt=opt)
+      print "      V, mflop = %.2f" % (mf)
+      if mf > m0:
+         m0 = mf
+         t0 = t
+         KFn = KF0
+
+   KF0 = KFn
+   return [m0,KFn]
+
+
 def ifko0(l1bla, pre, N):
    (IFKOdir, fko) = fkocmnd.GetFKOinfo()
    (ATLdir, ARCH) = fkocmnd.FindAtlas(IFKOdir)
    rout =  IFKOdir + '/blas/' + pre + l1bla + '.b'
    outf =  ATLdir + '/tune/blas/level1/' + l1bla.upper() + '/fkorout.s'
-   info = fkocmnd.info(fko, rout)
+#
+#  Majedul: calling new info func, info represents the old list
+#  new data: [npath, red2onePath, vecMethod, vpathinfo, arrtypes] at the end
+#
+   #info = fkocmnd.info(fko, rout)
+
+   newinfo = fkocmnd.NewInfo(fko, rout)
+   info = [newinfo[i] for i in range(11) ]
+   [npath, red1path, vecm, vpath, arrtypes] = [ newinfo[i] for i in range(11,16)]
+   
    ncache = info[0]
+   vec = info[5]
    (fparrs, fpsets, fpuses) = fkocmnd.GetFPInfo(info)
    nfp = len(fparrs)
+#
+#  Findout the default flags (it includes vector, default prefetch and unroll)
+#
    KFLAGS = fkocmnd.GetStandardFlags(fko, rout, pre)
    KFLAGS = KFLAGS + " -o " + str(outf) + " " + rout
    mflist = []
    testlist = []
+#
+#  Majedul: default and vect case would not be same now. Vspec may be 
+#  worse than NonVec case.
+#  So, I will choose the best as the default for the later optimization
+#
 
 #
-#  Find performance of default case
+#  check best scalar xforms, delete any vector flag
 #
    j = KFLAGS.find("-V")
    if j != -1 :
       KFn = KFLAGS[0:j-1] + KFLAGS[j+2:]
-      fkocmnd.callfko(fko, KFn)
-      [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, l1bla, N, "fkorout.s", 
-                           "gcc", "-x assembler-with-cpp", opt=opt)
-      mflist.append(mf)
-      testlist.append("default")
-      fkocmnd.callfko(fko, KFLAGS)
-      [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, l1bla, N, "fkorout.s", 
-                           "gcc", "-x assembler-with-cpp", opt=opt)
-   else :
-      fkocmnd.callfko(fko, KFLAGS)
-      [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, l1bla, N, "fkorout.s", 
-                           "gcc", "-x assembler-with-cpp", opt=opt)
-      testlist.append("default")
-      mflist.append(mf)
-   mflist.append(mf)
-   testlist.append("vect")
+#
+#  standard flag without vect
+#
+   KF0 = KFn
+   fkocmnd.callfko(fko, KF0)
+   [t0,mf0] = l1cmnd.time(ATLdir, ARCH, pre, l1bla, N, "fkorout.s", 
+                        "gcc", "-x assembler-with-cpp", opt=opt)
+   mflist.append(mf0)
+   testlist.append("default") ## this is using std flags
+
+#
+#  Finding the best path reduction option
+#
+   if npath > 1:
+      [mfs, KFs] = ifko_PathXform(ATLdir, ARCH, KFn, ncache, fko, rout, pre,
+                                 l1bla, N, npath, red1path)
+      mflist.append(mfs)
+      testlist.append("PathXform")
+      if (mfs > mf0) :
+         mf0 = mfs
+         KF0 = KFs
+#
+#  Finding the best vector option with/without path reduction
+#
+   if vec:
+      if 'v' in skipOpt:
+         print '\n   SKIPPING VECTORIZATION'
+      else:
+         [mfv, KFv] =  ifko_Vec(ATLdir, ARCH, KFn, ncache, fko, rout, pre, 
+                                l1bla, N, npath, vecm, vpath)
+         mflist.append(mfv)
+         testlist.append("vect")
+         if (mfv > mf0) :
+            mf0 = mfv
+            KF0 = KFv
+#
+#  choose the better as the ref of later opt
+#
+   KFLAGS = KF0
+   mf = mf0
+   
+   print "\n   FLAGS so far =", fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS)
+
+#
+#  Previous code which is substituted by the above codes
+#
+
+#
+#  Find performance of default case
+#
+#   j = KFLAGS.find("-V")
+#   if j != -1 :
+#      KFn = KFLAGS[0:j-1] + KFLAGS[j+2:]
+#      fkocmnd.callfko(fko, KFn)
+#      [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, l1bla, N, "fkorout.s", 
+#                           "gcc", "-x assembler-with-cpp", opt=opt)
+#      mflist.append(mf)
+#      testlist.append("default")
+#      fkocmnd.callfko(fko, KFLAGS)
+#      [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, l1bla, N, "fkorout.s", 
+#                           "gcc", "-x assembler-with-cpp", opt=opt)
+#   else :
+#      fkocmnd.callfko(fko, KFLAGS)
+#      [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, l1bla, N, "fkorout.s", 
+#                           "gcc", "-x assembler-with-cpp", opt=opt)
+#      testlist.append("default")
+#      mflist.append(mf)
+#   mflist.append(mf)
+#   testlist.append("vect")
 #
 #  Eventually, want to try both -V and scalar, but for now, use -V whenever
 #  possible
@@ -360,24 +676,27 @@ def ifko0(l1bla, pre, N):
 #
 #  Find if we want to use cache-through writes on any arrays
 #
-   n = len(fpsets)
-   i = 0
-   wnt = []
-   while i < n:
-      if fpsets[i] > 0 :
-#      and fpuses[i] == 0:
-         wnt.append(fparrs[i])
-      i += 1
-   if len(wnt) > 0:
-      [mf,KFLAGS,wnt] = ifko_writeNT(ATLdir, ARCH, KFLAGS, fko, rout, pre,
+   if 'wnt' in skipOpt:
+      print '\n   SKIPPING WNT'
+   else:
+      n = len(fpsets)
+      i = 0
+      wnt = []
+      while i < n:
+         if fpsets[i] > 0 :
+#        and fpuses[i] == 0:
+            wnt.append(fparrs[i])
+         i += 1
+      if len(wnt) > 0:
+         [mf,KFLAGS,wnt] = ifko_writeNT(ATLdir, ARCH, KFLAGS, fko, rout, pre,
                                      l1bla, N, wnt)
-   mflist.append(mf)
-   testlist.append("writeNT")
-   pfarrs = fparrs
-   pfsets = fpsets
+      mflist.append(mf)
+      testlist.append("writeNT") 
 #
 #  Find best PFD for each pfarr
 #
+   pfarrs = fparrs
+   pfsets = fpsets
    for arr in pfarrs:
       [mf,KFLAGS] = FindPFD(ATLdir, ARCH, KFLAGS, fko, rout, pre,l1bla, N, 
                             info, arr)
@@ -398,15 +717,30 @@ def ifko0(l1bla, pre, N):
    [mf,KFLAGS] = FindUR(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N, info)
    mflist.append(mf)
    testlist.append("unroll")
+
+
 #
 #  See if we can apply accumulator expansion
 #
+#   acc = fkocmnd.GetFPAccum(info)
+#   nacc = len(acc)
+#   if nacc > 0 and nacc < 3:
+#      [mf,KFLAGS] = FindAE(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N, acc)
+#   mflist.append(mf)
+#   testlist.append("accexpans")
+
+#
+#  Majedul: See if we can apply scalar expansion (accexpan + man/min expansion)
+#
    acc = fkocmnd.GetFPAccum(info)
    nacc = len(acc)
-   if nacc > 0 and nacc < 3:
-      [mf,KFLAGS] = FindAE(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N, acc)
-   mflist.append(mf)
-   testlist.append("accexpans")
+   if 'se' in skipOpt:
+      print '\n   SKIPPING SCALAR EXPANSION'
+   else:
+      if nacc > 0 and nacc < 3:
+         [mf,KFLAGS] = FindSE(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N, acc)
+      mflist.append(mf)
+      testlist.append("sclexp")
 #
 #  Find performance of best case
 #
@@ -418,9 +752,16 @@ def ifko0(l1bla, pre, N):
    res = fkocmnd.GetOptVals(KFLAGS, pfarrs, pfsets, acc)
    tst = l1cmnd.test(ATLdir, ARCH, pre, l1bla, N, "fkorout.s",
                      cc="gcc", ccf="-x assembler-with-cpp", opt=optT)
+   #tst = l1cmnd.silent_test(ATLdir, ARCH, pre, l1bla, N, "fkorout.s",
+   #                     cc="gcc", ccf="-x assembler-with-cpp", opt=optT)
+
    return(res, KFLAGS, mf, tst, testlist, mflist)
 
+
 def ifko(routs, pres, N):
+   """ This function figures out the best parameter after tunning and print this
+       out.
+   """
    if routs.find("default") != -1:
       routlist = l1cmnd.GetDefaultBlas()
    else:
@@ -454,39 +795,50 @@ def ifko(routs, pres, N):
          idecmflist.append(decmf)
    i = 0
    n = len(reslist)
-   while i < n :
-      mf0 = idecmflist[i][0]
-      (vec, UR, npf, pfinst, pfd, AE, WT) = reslist[i]
-      if vec: sv = "Y"
-      else : sv = "N"
-      mfsv = idecmflist[i][1]
-      mfsv = max(mf0, mfsv)
+#
+#  Majedul:
+#  Summerize the results of different opts
+#  NOTE: this is to generate the string of latex syntax. As some optimization 
+#  can be optional, need to redesign it when necessary
+# 
+#   while i < n :
+#      mf0 = idecmflist[i][0]
+#      (vec, UR, npf, pfinst, pfd, AE, WT) = reslist[i]
+#      if vec: sv = "Y"
+#      else : sv = "N"
+#      mfsv = idecmflist[i][1]
+#      mfsv = max(mf0, mfsv)
+#
+#      if len(WT) : wt = 'Y'
+#      else : wt = 'N'
+#      mfwt = max(mfsv,idecmflist[i][2])
+#
+#      pfdX = pfd[0]
+#      if pfinst[0].find("none") != -1: pfIX = pfinst[0]
+#      else : pfIX = r"{\tt " + pfinst[0][2:] + "}"
+#      if npf == 2 :
+#         pfdY = pfd[1]
+#         if pfinst[1].find("none") != -1: pfIY = pfinst[1]
+#         else : pfIY = r"{\tt " + pfinst[1][2:] + "}"
+#      else :
+#         pfdY = 0
+#         pfIY = "N/A"
+#      if len(AE) : ae = AE[0]
+#      else : ae = 0
+#      mfI  = max(mfwt,idecmflist[i][3])
+#      mfpf = max(mfI,idecmflist[i][4])
+#      mfur = max(mfpf,idecmflist[i][5])
+#      mfae = max(mfur,idecmflist[i][6])
 
-      if len(WT) : wt = 'Y'
-      else : wt = 'N'
-      mfwt = max(mfsv,idecmflist[i][2])
+#      print "%10s & %1.1s (%.2f) & %1.1s (%.2f) & %s &%6d & %s (%.2f) &%6d (%.2f) & %d (%.2f) & %d (%.2f)\\\\\\hline" % \
+#            (r"{\tt " + blalist[i]+"}", sv, mfsv/mf0, wt, mfwt/mfsv, pfIX,pfdX, 
+#            pfIY, mfI/mfsv, pfdY, mfpf/mfsv, UR, mfur/mfsv, ae, mfae/mfsv)
+#      i += 1
 
-      pfdX = pfd[0]
-      if pfinst[0].find("none") != -1: pfIX = pfinst[0]
-      else : pfIX = r"{\tt " + pfinst[0][2:] + "}"
-      if npf == 2 :
-         pfdY = pfd[1]
-         if pfinst[1].find("none") != -1: pfIY = pfinst[1]
-         else : pfIY = r"{\tt " + pfinst[1][2:] + "}"
-      else :
-         pfdY = 0
-         pfIY = "N/A"
-      if len(AE) : ae = AE[0]
-      else : ae = 0
-      mfI  = max(mfwt,idecmflist[i][3])
-      mfpf = max(mfI,idecmflist[i][4])
-      mfur = max(mfpf,idecmflist[i][5])
-      mfae = max(mfur,idecmflist[i][6])
 
-      print "%10s & %1.1s (%.2f) & %1.1s (%.2f) & %s &%6d & %s (%.2f) &%6d (%.2f) & %d (%.2f) & %d (%.2f)\\\\\\hline" % \
-            (r"{\tt " + blalist[i]+"}", sv, mfsv/mf0, wt, mfwt/mfsv, pfIX,pfdX, 
-             pfIY, mfI/mfsv, pfdY, mfpf/mfsv, UR, mfur/mfsv, ae, mfae/mfsv)
-      i += 1
+#
+#  print the final result for each blas
+#
    i = 0
    print "\n"
    while i < n :
@@ -494,56 +846,178 @@ def ifko(routs, pres, N):
       else : tst = "PASS"
       print "%10s : %5.5s %9.2f" % (blalist[i], tst, mflist[i])
       i += 1
+#
+#  print the table of result 
+#
    i = 0
    print "\n"
-   m = len(ideclist[0])
-   st = "%7.7s" % ("BLAS")
-   j = 1
-   while j < m:
-      st = st + " %6.6s" % (ideclist[0][j])
-      j += 1
-   print st
-   while i < n :
-      st = "%7.7s" % blalist[i]
+#
+#  FIXED: type of transformation can be varied from kernel to kernel now.
+#  So, if parameter is default, need to show up all the transformation.
+#
+   if n > 1: ## when morethan one is applied, consider all xform
+      StandardXform = ['default','PathXform','vect','writeNT','pfdist','pftype',
+                      'unroll', 'sclexp']
+      m = len(StandardXform)
+      st = "%7.7s" % ("BLAS")
       j = 1
-      while j < m :
-         st = st + " %6.2f" % (idecmflist[i][j] / idecmflist[i][j-1])
+      while j < m:
+         st = st + " %6.6s" % (StandardXform[j])
          j += 1
       print st
-      i += 1
+      while i < n :
+         st = "%7.7s" % blalist[i]
+         j = 1 ## 1st one is always the default..
+         #dmf = idecmflist[i][ideclist[i].index['default']]
+         dmf = idecmflist[i][0]
+         while j < m :
+            if StandardXform[j] in ideclist[i]:
+               mf = idecmflist[i][ideclist[i].index(StandardXform[j])] 
+               st = st + " %6.2f" %(mf/dmf)
+               dmf = mf
+            else:
+               st = st + "   --- " 
+            j += 1
+         print st
+         i += 1
+   else: ## previous one, consider only the xform which are applied
+      m = len(ideclist[0])
+      st = "%7.7s" % ("BLAS")
+      j = 1
+      while j < m:
+         st = st + " %6.6s" % (ideclist[0][j])
+         j += 1
+      print st
+      while i < n :
+         st = "%7.7s" % blalist[i]
+         j = 1
+         while j < m :
+            st = st + " %6.2f" % (idecmflist[i][j] / idecmflist[i][j-1])
+            j += 1
+         print st
+         i += 1
 
-nargs = len(sys.argv)
-blas = "asum"
-pre  = "s"
-N = 80000
-uopt =""
-if (nargs > 1):
-   blas = sys.argv[1]
-   if (nargs > 2):
-      pre = sys.argv[2]
-      if (nargs > 3):
-         N = int(sys.argv[3])
-         if (nargs > 4):
-            uopt = sys.argv[4]
+def PrintUsage():
+   print 'usage: '
+   print 'Style1: ./ifko.py [asum, s]'
+   print 'Style2: ./ifko.py default [s]'
+   print 'Style3: ./ifko.py default default'
+   print 'Style4: ./ifko.py (b1,b2,..) (s,d)'
+   print 'Style5: ./ifko.py (b1,b2,..) (s,d) N'
+   print 'Style6: ./ifko.py (b1,b2,..) (s,d) N=val'
+   print 'Style7: ./ifko.py (b1,b2,..) (s,d) N --no=(opt1,opt2,..) ',
+   print 'atlopt=\'opt-str-for-atlas\' '
+   print 'Style8: ./ifko.py (b1,b2,..) (s,d) N=val --no=(opt1,opt2,..) ',
+   print 'atlopt=\'opt-str-for-atlas\' '
+   print 'note that atlopt=\'opt-str-for-atlas\' should be last argument '
+   return
+
+def ParseArgv(argv):
+   """ this function parses the commanline argument
+   """
+#
+#  var init
+#
+   blas = None
+   pre = None
+   N = 0
+   atlopt = None
+   noOpt = []
+
+   nargs = len(argv)
+#
+#  Set default parameters, if not set by user
+#  Majedul: I kept backward compatibility 
+#
+   blas = 'asum'
+   pre = 's'
+   N = 80000
+#
+#  keep backward compatibility sothat it works with old arguments
+#
+   if nargs > 1:
+      blas = argv[1]
+      if nargs > 2:
+         pre = argv[2]
+         if nargs > 3:
+            if argv[3].isdigit() :
+               N = int(sys.argv[3])
+            else:
+               for i in range(3, nargs):
+                  if argv[i].find('--no=') != -1:
+                     noOpt = argv[i][argv[i].find('=')+1:].split(',')
+                  elif argv[i].find('N=') != -1:
+                     N = int(argv[i][argv[i].find('=')+1:])
+                  elif argv[i].find('atlopt') != -1:
+                     atlopt = ' '.join([argv[j] for j in range(i, nargs)])
+                     #argument with ' ' behave differently with system to system
+                     if atlopt.find('\'') != -1:
+                        atlopt = atlopt.split('\'')[1]
+                     else:
+                        atlopt = atlopt[atlopt.find('=')+1:]
+                     break; ## stop checking any other argment
+                  else:
+                     PrintUsage()
+                     sys.exit(1)
+#   if atlopt is None:
+#      print [blas, pre, N, noOpt]
+#   else:
+#      print [blas, pre, N, noOpt, atlopt]
+   
+   return(blas,pre,N,noOpt,atlopt) 
+#
+#  Majedul: create a main function to increase the readability
+#
+def main(argv):
+   """This function will only be executed when the program is being run by 
+      itself and not imported by others. it will examin the commnad line 
+      argument and run the ifko functtion with blas, pre, N, uopt
+   """
+   nargs = len(argv)
+#
+#  Majedul: new design for command line argument, make it fexible as possible
+#  with default values but keep backward compatibility ... 
+#  Argument format :
+#     blas pre N 
+#     blas, pre, N=value, opt=value, --nopt=opt1,opt2, ...
+#  (blas, pre) is must, other args are optional 
+#
 
 #
-# For AVX, 32 byte alignment is needed
+#  parse the commnad line argument 
 #
-#opt = "-X 1 -Y 1 -Fx 32 -Fy 32 " + uopt
+   (blas, pre, N, noOpt, uopt) = ParseArgv(argv)
+#
+#  Generate opt for altas  based on the argument 
+#
+   global skipOpt
+   skipOpt = noOpt
+   #print skipOpt
 
-#opt = "-X 1 -Y 1 -Fx 16 -Fy 16 " + uopt
+   global opt       
+   if uopt is None:
+      opt = "-C 1 -X 1 -Y 1 -Fx 32 -Fy 32"  ## default opt
+   else:
+      if uopt.find('-X') is -1:  ## returns -1 if not found, otherwise index
+         opt +='-X 1 '
+      if uopt.find('-Y') is -1:
+         opt +='-Y 1 '
+      if uopt.find('-C') is -1:
+         opt +='-C 1 '           ## no cache flushing by default 
+      if uopt.find('-Fx') is -1:
+         opt +='-Fx 32 '         ## default for AVX 
+      if uopt.find('-Fy') is -1:
+         opt +='-Fy 32 '
+      opt += uopt
+   
+   #print [blas, pre, N, noOpt, opt]
+   #sys.exit(0)
+   ifko(blas, pre, N)
 
 #
-# Out of Cache
+# Majedul: If the program is being run by itself and not imported by others, 
+# run the main function only then
 #
 
-#opt = "-C 8388608 -X 1 -Y 1 -Fx 16 -Fy 16 " + uopt
-
-#
-# with out cache flushing
-#
-#opt = "-C 0 -X 1 -Y 1 -Fx 16 -Fy 16 " + uopt
-opt = "-C 0 -X 1 -Y 1 -Fx 32 -Fy 32 " + uopt
-
-print opt
-ifko(blas, pre, N)
+if __name__ == '__main__':
+   main(sys.argv)
