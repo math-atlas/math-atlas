@@ -2302,12 +2302,14 @@ void AddOptST4SE()
  *       UpdateOptLoopSTWithMaxMinVars must be applied irrespective of any
  *       transformation!!!
  */
-         if (FindInShortList(optloop->maxvars[0], optloop->maxvars+1, st))
+         if (optloop->maxvars && 
+             FindInShortList(optloop->maxvars[0], optloop->maxvars+1, st))
          {
             scf[i] = SC_MAX;
             ses[i-1] = DeclareMaxE(VEC, SEn[i], st);
          }
-         else if (FindInShortList(optloop->minvars[0], optloop->minvars+1, st))
+         else if (optloop->minvars && 
+                  FindInShortList(optloop->minvars[0], optloop->minvars+1, st))
          {
             scf[i] = SC_MIN;
             ses[i-1] = DeclareMinE(VEC, SEn[i], st);
@@ -2419,8 +2421,14 @@ void GenAssenblyApplyingOpt4SSV(FILE *fpout, struct optblkq *optblks,
       CalcAllDeadVariables();
    if (!CFLOOP)
       FindLoops();
+/*
+ * Majedul: adding comments significantly slow down the compilation after 
+ * adding unrolling for SV (specially for -U 32)
+ */
+#if 0
    AddBlockComments(bbbase);
    AddLoopComments();
+#endif   
    i = FinalizePrologueEpilogue(bbbase,0 );
    KillAllLocinit(ParaDerefQ);
    ParaDerefQ = NULL;
@@ -2677,7 +2685,7 @@ int main(int nargs, char **args)
 /*
  * To provide feedback to the tuning scripts 
  */
-#if 1
+#if 0
 /*
  * old implementation
  */
@@ -2749,7 +2757,7 @@ int main(int nargs, char **args)
    {
       /*PrintFallThruLoopPath(optloop); */
       TransformFallThruPath(path);
-      PrintLoopPaths();
+      /*PrintLoopPaths();*/
 /*
  *    Re-structure the CFG and loop info 
  */
@@ -2797,10 +2805,11 @@ int main(int nargs, char **args)
 
       if (STATE1_FLAG & IFF_ST1_RC)
       {
-         IfConvWithRedundantComp();
+         assert(!IfConvWithRedundantComp());
 #if 0 
          fprintf(stdout, "LIL after ElimMax/MinIf\n");
          PrintInst(stdout, bbbase);
+         exit(0);
          GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
 #endif         
       } 
@@ -2854,18 +2863,16 @@ int main(int nargs, char **args)
          
          SpeculativeVectorAnalysis();
          SpecSIMDLoop();
-         
          #if 0
             //GenAssenblyApplyingOpt4SSV(fpout, optblks, abase);
             GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
             exit(0);
-         #else
+         #endif
 /*
  *                NOTE: need to parameterize the vectorization.
  *                Haven't fixed the issue if there is outof Regs!!!
  */
-                  FKO_UR = 1; /* forced to unroll factor 1*/
-         #endif
+                 /* FKO_UR = 1;*/  /* forced to unroll factor 1*/
       }
       else
       {
@@ -2896,8 +2903,10 @@ int main(int nargs, char **args)
  *       2. Keep track of the New CFG construction. Avoid creating this before
  *          unroll loop if vectorization is applied. 
  *    sol-2 may not work after implementing the unroll for speculative 
- *    vectorization. We may need to reconstruct CFG after Vspec!!!
+ *    vectorization. We may need to reconstruct CFG after Vspec!!
+ *    DONE: KillLoopControl and AddLoopControl function is updated.!
  */
+#if 0      
       if (FKO_UR <= 1)
       {
          InvalidateLoopInfo();
@@ -2906,22 +2915,13 @@ int main(int nargs, char **args)
          FindLoops();
          CheckFlow(bbbase, __FILE__, __LINE__);
       }
-#if 0 
-   #if 0         
-         assert(!GoToTown(0, FKO_UR, optblks));
-         abase = lil2ass(bbbase);
-         KillAllBasicBlocks(bbbase);
-         bbbase = NULL;
-         dump_assembly(fpout, abase);
-         KillAllAssln(abase);
-   #else
-         fprintf(stdout, "LIL after Vectorization \n");
-         PrintInst(stdout, bbbase);
-         GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
-         exit(0);
-   #endif
-
-#endif         
+#else
+      InvalidateLoopInfo();
+      bbbase = NewBasicBlocks(bbbase);
+      CheckFlow(bbbase, __FILE__,__LINE__);
+      FindLoops();
+      CheckFlow(bbbase, __FILE__, __LINE__);
+#endif
    }
 
 /*=============================================================================
@@ -2946,27 +2946,39 @@ int main(int nargs, char **args)
  */
    if (FKO_UR > 1)
    {
+/*
+ *    NOTE: to use blind unroll, we need to reshape the scalar Restart code.
+ */
+      if (VECT_FLAG & VECT_SV)
+      {
+         TransformFallThruPath(1);
+         
+         InvalidateLoopInfo();
+         bbbase = NewBasicBlocks(bbbase);
+         CheckFlow(bbbase, __FILE__,__LINE__);
+         FindLoops();
+         CheckFlow(bbbase, __FILE__, __LINE__);
+      }
+/*
+ *    NOTE: for complex cfg, we may need to apply TransformFallThruPath first;
+ *    even not done the speculative vect.
+ */
       UnrollLoop(optloop, FKO_UR); /* with modified cleanup */
-      
-      InvalidateLoopInfo();
-      bbbase = NewBasicBlocks(bbbase);
-      CheckFlow(bbbase, __FILE__,__LINE__);
-      FindLoops();
-      CheckFlow(bbbase, __FILE__, __LINE__);
    }
    else if (!DO_VECT(FKO_FLAG)) /* neither vectorize nor unrolled ! */
    {
-      AddOptWithOptimizeLC(optloop);
-      
+      AddOptWithOptimizeLC(optloop); 
       /*OptimizeLoopControl(optloop, 1, 1, NULL);*/
-      InvalidateLoopInfo();
-      bbbase = NewBasicBlocks(bbbase);
-      CheckFlow(bbbase, __FILE__,__LINE__);
-      FindLoops();
-      CheckFlow(bbbase, __FILE__, __LINE__);
    }
    else ;
-
+/*
+ * reconstruct for next opt
+ */
+   InvalidateLoopInfo();
+   bbbase = NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__,__LINE__);
+   FindLoops();
+   CheckFlow(bbbase, __FILE__, __LINE__);
 #if 0 
          fprintf(stdout, "LIL after Unrolling \n");
          PrintInst(stdout, bbbase);
@@ -2983,8 +2995,16 @@ int main(int nargs, char **args)
       AddOptST4SE();
       if (optloop->se)
       {
-         fprintf(stderr, "se!\n");
-         DoAllScalarExpansion(optloop, FKO_UR, DO_VECT(FKO_FLAG));   
+/*
+ *       Restrict SE if there is control flow but Rc or mmc is not applied
+ *       Need to check for others later !!!
+ */
+         /*fprintf(stderr, "se!\n");*/
+         if (IsControlFlowInLoop(optloop->blocks, optloop->header) && 
+             !( (STATE1_FLAG & IFF_ST1_RC) || (STATE1_FLAG & IFF_ST1_MMR)) )
+            fprintf(stderr, "SE not Applied right now!!!\n");
+         else
+            DoAllScalarExpansion(optloop, FKO_UR, DO_VECT(FKO_FLAG));   
       }
    }
 /*
