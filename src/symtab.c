@@ -1,10 +1,24 @@
 #define NO_STEXTERN
 #include "fko.h"
 
+/*
+ * Majedul: FIXME: all the 4 pointers for symbol table are global and visible
+ * from anyother files. any lookup function can overflow the size and change
+ * the glabal pointers. So, using a statement where these pointers are accessed
+ * while calling the lookup/add function is potentially dangarous.
+ * Here is an example:
+ *    SToff[k-1].sa[2] = AddDerefEntry(... ....);
+ *    if AddDerefEntry() overflows and changes the SToff pointer, there would
+ *    be an invalid memory write (as SToff may point the old address which is
+ *    already freed)
+ *
+ */
+
 char **STname;
 union valoff *SToff;
 int *STflag;
 short *STpts2;
+
 static int N=0, Nalloc=0;
 static int niloc=0, nlloc=0, nfloc=0, ndloc=0, nvfloc=0, nvdloc=0;
 int    LOCSIZE=0, LOCALIGN=0, NPARA=0;
@@ -70,6 +84,7 @@ short STdef(char *name, int flag, int off)
    return(STnew(name, flag, offset));
 }
 
+
 short STdconstlookup(double f)
 /*
  * Searches for fp constant f in symbol table, allocating new entry if not
@@ -113,8 +128,16 @@ short STfconstlookup(float f)
    val.f = f;
    return(STnew(name, GLOB_BIT | CONST_BIT | T_FLOAT, val));
 }
-
-
+/*=============================================================================
+ * Majedul: added the concept of new group of i/l constant: 'special purpose' 
+ * for integer and long. normal i/l constlookup function would skip them from 
+ * their search. Special purpose constant would store with a name in STname, 
+ * not as NULL. 
+ * NOTE: i/l constlookup functions now also check whether STname of that entry
+ * is NULL.
+ * Example: OL_NEINC 
+ * ============================================================================
+ */
 short STlconstlookup(long ic)
 /*
  * Searches for long constant ic in symbol table, allocating new entry if not
@@ -126,7 +149,12 @@ short STlconstlookup(long ic)
    union valoff val;
    for (i=0; i != N; i++)
    {
+#if 0      
       if (SToff[i].l == ic && IS_CONST(STflag[i]) && IS_INT(STflag[i]))
+#else
+      if (SToff[i].l == ic && IS_CONST(STflag[i]) && IS_INT(STflag[i])
+          && !STname[i])
+#endif
          return(i+1);
    }
    val.l = ic;
@@ -144,8 +172,22 @@ short STiconstlookup(int ic)
    union valoff val;
    for (i=0; i != N; i++)
    {
+/*
+ *    Majedul: normally all the constonts are stored with NULL in STname 
+ *    except the special purpose one!
+ *    Skip the special purpose const like: OL_NEINC in search where a str is
+ *    saved in STname instead of NULL.
+ *    =======================================================================
+ *    need to use this new definiton for all other constant.
+ */
+#if 0      
       if (SToff[i].i == ic && IS_CONST(STflag[i]) && IS_INT(STflag[i]))
          return(i+1);
+#else
+      if (SToff[i].i == ic && IS_CONST(STflag[i]) && IS_INT(STflag[i]) 
+          && !STname[i]) /* this extra checking is to skip special entry */
+         return(i+1);
+#endif
    }
    val.i = ic;
    return(STnew(NULL, CONST_BIT | T_INT, val));
