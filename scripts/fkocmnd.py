@@ -26,6 +26,165 @@ def FindAtlas(FKOdir):
    fi.close()
    return(ATLdir, ARCH) 
 #
+#  Majedul: this is for new fko's analysis
+#
+def NewInfo(fko, routine):
+   """
+   Given the fko path and routine name, this function will run "fko -i" command
+   and parse the optloop information for the routine and return the list of 
+   parse output. The format of the output list is :
+   [nc, LS, ol, maxunroll, lnf, npath, red2onePath, vec, vecMethod, \
+           vpathinfo, arrs, pref, sets, uses, scalinf]
+   """
+
+#
+#  getting the optloop info by using -i fko argument
+#
+   cmnd = fko + ' -i stdout ' +routine
+   fi = os.popen(cmnd, 'r')
+   lines = fi.readlines()
+   err = fi.close()
+#
+#  checking for read error
+#
+   if (err != None):
+      print 'command died with: %d' % (err)
+      sys.exit(err)
+#
+#  find the cache info 
+#
+   nc = int(lines[0][8:])
+   words = lines[1].split()
+   #print nc
+   i = 0
+   LS = []
+   while (i < nc):
+      LS.append(int(words[i+2]))
+      i += 1
+   lineNum = 2
+#
+#  initialize  all the data returns ...
+#
+   red2onePath = []
+   vecMethod = []
+   vpathinfo = []
+   scalinf = (0, [], [], [], [], [])
+   arrs = []
+   arrtypes = []
+   pref = []
+   sets = []
+   uses = []
+   vec = 0
+   #ol = int(lines[2][8:])
+   ol = int(lines[2][lines[2].find('=')+1:])
+   lineNum += 1
+#
+#  If it has an optloop to perform optimization
+#  line 3, 4 , 4. lineNum is 3 here
+#
+   if (ol != 0):
+      maxunroll = int(lines[lineNum][lines[lineNum].find('=')+1:])
+      lnf = int(lines[lineNum+1][lines[lineNum+1].find('=')+1:])
+      npath = int(lines[lineNum+2][lines[lineNum+2].find('=')+1:])
+      lineNum += 3
+#
+#     has multiple loop paths?
+#
+      if (npath > 1):
+#
+#        update info for reducible methods of paths        
+#        standard code for this: 
+#        -----------------------
+#         for i in range(lineNum,lineNum+4):  # line 10 for vec, omit it 
+#            red2onePath.append(int(lines[i][lines[i].find('=')+1:]))
+#
+#        using the syntax of list comprehension 
+#
+         red2onePath = [int(lines[i][lines[i].find('=')+1:]) \
+                        for i in range(lineNum, lineNum+4)]
+         vec = int(lines[lineNum+4][lines[lineNum+4].find('=')+1:])
+         lineNum += 5
+#        
+#        update vectorization method 
+#
+#         for i in range(lineNum,lineNum+5):
+#            vecMethod.append(int(lines[i][lines[i].find('=')+1:]))
+#
+#        syntax of list comprehension
+#
+         vecMethod = [int(lines[i][lines[i].find('=')+1:]) \
+                      for i in range(lineNum, lineNum+5)]
+         vspec = vecMethod[-1] # -1 indicate the last eliment 
+         lineNum += 5
+#
+#        if Vspec can be applied, findout the path info for vec
+#
+         if (vspec != 0):
+            i = 0
+            while (i < npath):
+               vpathinfo.append(int(lines[lineNum][lines[lineNum].find('=')+1:]))
+               lineNum += 1
+               i += 1;
+      else: # npath = 1
+         vec = int(lines[lineNum][lines[lineNum].find('=')+1:])
+         lineNum += 1
+#
+#     info about moving floating pointer 
+#
+      mfp = int(lines[lineNum][lines[lineNum].find(':')+1:])
+      lineNum += 1
+      i = 0;
+      while (i < mfp):
+         words = lines[lineNum].split()
+         j = len(words[0])
+         arrs.append(words[0][1:j-2])
+         j = words[1].rfind('=')
+         arrtypes.append(words[1][j+1:])
+         j = words[2].rfind("=")
+         pref.append(int(words[2][j+1:]))
+         j = words[3].rfind("=")
+         sets.append(int(words[3][j+1:]))
+         j = words[4].rfind("=")
+         uses.append(int(words[4][j+1:]))
+         lineNum += 1
+         i += 1;
+#
+#     info about scalars 
+#
+      ns = int(lines[lineNum][lines[lineNum].find(':')+1:])
+      lineNum += 1
+      scal = []
+      styp = []
+      sset = []
+      suse = []
+      se = []
+      i = 0
+      while i < ns:
+         words = lines[lineNum].split()
+         j = len(words[0])
+         scal.append(words[0][1:j-2])
+         j = words[1].rfind("=")
+         styp.append(words[1][j+1])
+         j = words[2].rfind("=")
+         sset.append(int(words[2][j+1:]))
+         j = words[3].rfind("=")
+         suse.append(int(words[3][j+1:]))
+         j = words[4].rfind("=")
+         se.append(int(words[4][j+1:]))
+         lineNum += 1
+         i += 1
+      scalinf = (ns, scal, styp, sset, suse, se)
+
+   else: #no optloop 
+      maxunroll = lnf = vec = mfp = npath = 0
+#
+#  returning the whole list of info, maintain previous order to keep backward
+#  compatibilty
+#
+   return [nc, LS, ol, maxunroll, lnf, vec, arrs, pref, sets, uses, scalinf, \
+           npath, red2onePath, vecMethod, vpathinfo, arrtypes]
+
+#
 # returns info from fko's analysis using -i
 #
 def info(fko, routine):
@@ -97,6 +256,7 @@ def info(fko, routine):
    else:
       maxunroll = lnf = vec = mfp = 0
    return[nc, LS, ol, maxunroll, lnf, vec, arrs, pref, sets, uses, scalinf]
+
 
 def GetFPAccum(info) :
    scalinf = info[10]
@@ -176,7 +336,10 @@ def callfko(fko, flag):
       sys.exit(err)
 
 def GetStandardFlags(fko, rout, pre):
-   inf = info(fko, rout)
+   #inf = info(fko, rout)
+   newinfo = NewInfo(fko, rout)
+   inf = [newinfo[i] for i in range(11) ]
+
    VEC = inf[5]
    LS  = inf[1][0]
    (pfarrs, pfsets, pfuses) = GetFPInfo(inf)
