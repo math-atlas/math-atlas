@@ -796,6 +796,9 @@ LOOPQ *NewLoop(int flag)
    lp->flag = flag;
    lp->maxvars = NULL;
    lp->minvars = NULL;
+   lp->se = NULL;
+   lp->ae = NULL;
+
    return(lp);
 }
 
@@ -1579,17 +1582,20 @@ static void InsertJmpAtEndWithLabel(BBLOCK *blk, short label)
       InsNewInst(blk, ip, NULL, JMP, -PCREG, label, 0);
    }
 }
-static void NewFallThruBasicBlocks(int *count, BBLOCK *head, BBLOCK *tail, 
+static BBLOCK *NewFallThruBasicBlocks(int *count, BBLOCK *head, BBLOCK *tail, 
                                    BBLOCK *end0)
 /*
  * considering only loop blocks and single head and tail of loop.
  * will consider the multiple tails later.
+ * Returns the end marker blk, end->down need to be adjusted  if there is an 
+ * other flow for cleanup or loop peeling
  */
 {
    int i;
    BBLOCK *bp;
    INSTQ *ip;
    extern BBLOCK *bbbase;
+
    static BBLOCK *end = NULL;
 /*
  * count 0 indicates the 1st function call. so, initiate the start and end block
@@ -1605,9 +1611,9 @@ static void NewFallThruBasicBlocks(int *count, BBLOCK *head, BBLOCK *tail,
    if (head == tail)
    {
 #if 0      
-      fprintf(stderr, "One path is complete!\n");
+      fprintf(stderr, "One path is complete! return from %d\n",head->bnum);
 #endif
-      return;
+      return end;
    }
 /*
  * has an usucc, add this block as down if not added yet
@@ -1672,7 +1678,7 @@ static void NewFallThruBasicBlocks(int *count, BBLOCK *head, BBLOCK *tail,
       if (head->down && !head->csucc->up)
       {
          head->csucc->up = end; /* head->csucc->down is NULL*/
-         end->down = head->csucc;
+         end->down = head->csucc; /* end->down is lost!!! */
          end = head->csucc;
 #if 0
          fprintf(stderr, "csucc %d is placed\n", head->csucc->bnum);
@@ -1689,9 +1695,9 @@ static void NewFallThruBasicBlocks(int *count, BBLOCK *head, BBLOCK *tail,
       else assert(head->down);
    }
 #if 0
-   fprintf(stderr, "Exiting blk : %d\n", head->bnum);
+   fprintf(stderr, "Exiting blk : %d, now end : %d\n", head->bnum, end->bnum);
 #endif
-   return ;
+   return end;
 }
 
 void RemakeWithNewFallThru(LOOPQ *lp)
@@ -1702,6 +1708,7 @@ void RemakeWithNewFallThru(LOOPQ *lp)
    int i, count;
    BLIST *bl, *ftblks, *allblks;
    BBLOCK *bp;
+   BBLOCK *end, *endnext; /* end: RET blk, endnext: other flow [if cleanup] */
    INSTQ *ip;
    extern BBLOCK *bbbase;
 /*
@@ -1743,6 +1750,14 @@ void RemakeWithNewFallThru(LOOPQ *lp)
 #endif
    }
    assert(bp);
+   end = bp;
+/*
+ * find out the next of end until it is not a loop blk
+ *
+ */
+   for (endnext=end->down; endnext && FindBlockInList(lp->blocks, endnext) ; 
+        endnext=endnext->down);
+
 /*
  * disconnect edges of loop blks except the head->up and tail->down.
  * Need isolates the blks totally from the code flow!
@@ -1770,6 +1785,7 @@ void RemakeWithNewFallThru(LOOPQ *lp)
          bl->blk->down = NULL;
       }
    }
+
 #if 0
    fprintf(stderr, "All Blk list: \n");
    for (bl=allblks; bl; bl=bl->next)
@@ -1780,9 +1796,12 @@ void RemakeWithNewFallThru(LOOPQ *lp)
    }
 #endif
 /*
- * Rearrange bbbase structure based on  
+ * Rearrange bbbase structure based on 
+ * Returns the final end marker block, add the existing flow at the down of
+ * end
  */
-   NewFallThruBasicBlocks(&count, lp->header, lp->tails->blk, bp);
+   end = NewFallThruBasicBlocks(&count, lp->header, lp->tails->blk, end);
+   end->down = endnext;
 /*
  * checking ... ...
  */
@@ -1838,7 +1857,9 @@ void TransformFallThruPath(int path)
  */
    if (path == 1)
    {
+#if 0
       fprintf(stderr, "PATH1 IS ALREADY A FALL-THRU. STILL APPLYING ... ...\n");
+#endif
 /*
  *    Do we still need to check that!!!!
  *    Still we can apply fall-true transformation to re-structure
