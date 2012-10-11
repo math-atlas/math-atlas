@@ -1,5 +1,6 @@
 #include "fko.h"
 
+/*FIXED: considered OL_NEINC as special purpose const in symbol table */
 static short OL_NEINC=0;
 
 int NonLocalDeref(short dt)
@@ -214,6 +215,12 @@ BBLOCK *GetFallPath(BBLOCK *head, int loopblks, int inblks, int tails,
 
 void InsUnrolledCode(int unroll, BLIST **dupblks, BBLOCK *head,
                      int loopblks, int inblks, int tails, int fallblks)
+/*
+ * Majedul: FIXME:
+ * This function can't explore and copy all the blks recursively. Only works 
+ * for those where each conditional successor much have other csucc to create
+ * a path. If an usucc of a csucc has csucc, it doesn't work!!! 
+ */
 {
    BBLOCK *prev, *bpN, *bp0, bplast;
    int i, k, n;
@@ -226,6 +233,10 @@ void InsUnrolledCode(int unroll, BLIST **dupblks, BBLOCK *head,
       return;
 /*
  * Find fall-through path to duplicate
+ */
+/*
+ * FIXME: What would be the fallpath? here only the code fallpath is considered
+ * not explored all the paths 
  */
    prev = GetFallPath(head, loopblks, inblks, tails, fallblks);
    if (prev)
@@ -264,6 +275,92 @@ void InsUnrolledCode(int unroll, BLIST **dupblks, BBLOCK *head,
                       inblks, tails, fallblks);
 }
 
+void InsUnrolledBlksInCode(int unroll, BLIST **dupblks, BBLOCK *head,
+                     int loopblks, int inblks, int tails, int fallblks)
+/*
+ * insert duplicated blks in code. This is a modified version based on the 
+ * previous function to support complex CFG like: the CFG after SV.
+ * Assumption:
+ * -----------
+ * called TransformFallThruPath before to reshape the code flow
+ * GetFallpath function examine only the down blks as fall-thru blks(not usucc).
+ * This assumption is always true only if reshape the code with my fall-thru
+ * transformation. So, need to call the transformation before calling the 
+ * UnrollLoop, at-least the LIL where SV is applied before.
+ */
+{
+   BBLOCK *prev, *bpN, *bp0, bplast;
+   int i, k, n;
+/*
+ * nothing to do if this blk is not inside the loop 
+ */
+
+   if (!BitVecCheck(loopblks, head->bnum-1) )
+   {
+      return;
+   }
+
+/*
+ * If it is not considered yet, get fallpath and added the duplicated code.
+ */
+   if (!BitVecCheck(inblks, head->bnum-1))
+   {
+/*
+ *    Find fall-through path to duplicate
+ *    NOTE: here fall-thru path is considered to be located at down.
+ *    we need to insert code between prev and prev->down. Fall-path includes
+ *    the tail block also
+ */
+      prev = GetFallPath(head, loopblks, inblks, tails, fallblks);
+      if (prev)
+      {
+/*
+ *       Count blocks in path
+ */
+         for (bp0=head,n=0; bp0 != prev->down; n++,bp0 = bp0->down);
+/*
+ *       Add unrolled paths in order, one-by-one, to loop
+ */
+         for (i=1; i < unroll; i++)
+         {
+/*
+ *       For each original block, find it's analogue in the unrolled block,
+ *       and add them in order below the final block in the path
+ */
+            for (k=0,bp0=head; k != n; k++,bp0 = bp0->down)
+            {
+               bpN = FindBlockInListByNumber(dupblks[i-1], bp0->bnum);
+               bpN->up = prev;
+               bpN->down = prev->down;
+               prev->down = bpN;
+               prev = bpN;
+            }
+         }
+      }
+   }
+/*
+ * If it is a tail blk, returns. No need to recurse further!
+ * Otherwise, it will create infinite loop as tail has a csucc to the head.
+ * NOTE: this terminating condition for recursion is used after coping the 
+ * blks, otherwise no blk would be copied if there is only one blk inside the 
+ * loop (head=tail)
+ */
+   if (BitVecCheck(tails, head->bnum-1))
+      return;
+
+/*
+ * Try to build paths based on successors
+ */
+   if (head->usucc)
+      InsUnrolledBlksInCode(unroll, dupblks, head->usucc, loopblks,
+                      inblks, tails, fallblks);
+   if (head->csucc)
+      InsUnrolledBlksInCode(unroll, dupblks, head->csucc, loopblks,
+                      inblks, tails, fallblks);
+   
+}
+
+
 void InsertUnrolledCode(LOOPQ *lp, int unroll, BLIST **dupblks)
 {
    int tails, fallblks, inblks;
@@ -272,8 +369,13 @@ void InsertUnrolledCode(LOOPQ *lp, int unroll, BLIST **dupblks)
    fallblks = NewBitVec(32);
    inblks = NewBitVec(32);
    SetVecAll(inblks, 0);
+#if 0
    InsUnrolledCode(unroll, dupblks, lp->header, lp->blkvec, 
                    inblks, tails, fallblks);
+#else   
+   InsUnrolledBlksInCode(unroll, dupblks, lp->header, lp->blkvec, 
+                         inblks, tails, fallblks);
+#endif
    KillBitVec(fallblks);
    KillBitVec(inblks);
 }
@@ -281,11 +383,12 @@ void InsertUnrolledCode(LOOPQ *lp, int unroll, BLIST **dupblks)
 int UpdateIndexRef(BLIST *scope, short I, int ur)
 /*
  * Finds all LDs from I in given scope, and adds UR to the lded reg.
+ * Majedul: new updates: If a const is already added, try to update it.
  */
 {
    BLIST *bl;
    INSTQ *ip;
-   int changes=0; 
+   int changes=0, val; 
    short deref, k;
    deref = SToff[I-1].sa[2];
    for (bl=scope; bl; bl = bl->next)
@@ -294,14 +397,50 @@ int UpdateIndexRef(BLIST *scope, short I, int ur)
       {
          if (ip->inst[0] == LD && ip->inst[2] == deref)
          {
+#if 0            
             k = ip->inst[1];
             InsNewInst(bl->blk, ip, NULL, ADD, k, k, STiconstlookup(ur));
             changes++;
+#else
+/*
+ * works with unrolling of scalar_restart but only for PINC right now.
+ * Need to figure out the logic for NINC as well.
+ */
+            k = ip->next->inst[3];
+            if (ip->next->inst[0] == ADD && IS_CONST(STflag[k-1]))
+            {
+               if (ur)
+               {
+                  val = SToff[k-1].i + ur; /* populate the value */
+                  //ip->next->inst[3] = STiconstlookup(val);
+                  k = STiconstlookup(val);
+                  ip->next->inst[3] = k;
+/*
+ *                FIXME: 
+ *                OL_NEINC collide with the index of val !!!!!
+ *                as OL_NEINC is changed so the val!!!
+ */
+#if 0                  
+                  fprintf(stderr, "%s val = %d, k = [%d]%d, ol=%d\n", 
+                          STname[ip->next->myblk->ilab-1], 
+                          val, k, SToff[k-1].i, OL_NEINC);
+#endif
+                  changes++;
+               }
+            }
+            else
+            {
+               k = ip->inst[1];
+               InsNewInst(bl->blk, ip, NULL, ADD, k, k, STiconstlookup(ur));
+               changes++;
+            }
+#endif
          }
       }
    }
    return(changes);
 }
+
 ILIST *FindIndexRef(BLIST *scope, short I)
 /*
  * Finds all LDs from I in given scope.
@@ -479,7 +618,7 @@ short *UpdateDeref(INSTQ *ip, int ireg, int inc)
    static short inst[4];
    int i;
    short ST, k;
-
+   
    inst[0] = ip->inst[0];
    for (i=1; i < 4; i++)
    {
@@ -501,7 +640,16 @@ short *UpdateDeref(INSTQ *ip, int ireg, int inc)
          if (SToff[ST].sa[0] == -ireg)
          {
             k = SToff[ST].sa[3];
+/*
+ *       FIXED: 
+ *       in l2a, SToff[].sa[3] is used directly as the offset. Here, why we 
+ *       do look in SToff entry to figure out the value???
+ */
+#if 0
             k = k ? SToff[k-1].i+inc : inc;
+#else
+            k = k + inc;
+#endif
             inst[i] = AddDerefEntry(-ireg, SToff[ST].sa[1], SToff[ST].sa[2], k,
                                     STpts2[ST]);
          }
@@ -555,6 +703,9 @@ void UpdatePointerLoads(BLIST *scope, struct ptrinfo *pbase, int UR)
  *          Now that we've got a moving pointer, determing unrolling increment
  */
             inc = UR * type2len(FLAG2TYPE(STflag[k-1]));
+/*
+ *          NOTE: i can be 0 ...
+ */
             for (pi=pbase; i && pi->ptr != k; pi=pi->next,i--);
             assert(pi);
             if (!(pi->flag & PTRF_INC))
@@ -576,6 +727,9 @@ void UpdatePointerLoads(BLIST *scope, struct ptrinfo *pbase, int UR)
                   break;
             }
             assert(ip && BitVecCheck(ip->use, k-1));
+#if 0
+            PrintThisInst(stderr, 1, ip);
+#endif
 /*
  *          Presently not allowing ptr0 = ptr1 + ptr2, so no explicit ref
  */
@@ -609,7 +763,7 @@ void KillLoopControl(LOOPQ *lp)
  * (set, increment & test of index and goto top of loop body)
  */
 {
-   INSTQ *ip;
+   INSTQ *ip, *ip1;
    BLIST *bl;
 
    if (!lp) return;
@@ -617,6 +771,13 @@ void KillLoopControl(LOOPQ *lp)
  * Delete index init that must be in preheader
  */
    ip = FindCompilerFlag(lp->preheader, CF_LOOP_INIT);
+/*
+ * NOTE: If AddLoopControl is already declared (suppose from GenLoopCleanup),
+ * the preheader would be splited already and CF_LOOP_INIT would not be found
+ * then. Extend the search to check predecessor of preheader. Need to change the 
+ * AddLoopControl same way.
+ */
+#if 0   
    #if IFKO_DEBUG_LEVEL >= 1
       assert(ip);
    #endif
@@ -626,6 +787,49 @@ void KillLoopControl(LOOPQ *lp)
    #if IFKO_DEBUG_LEVEL >= 1
       assert(ip);
    #endif
+#else
+/*
+ * extend the search to pred of preheader and delete inst. CFG is messed up now
+ */
+   if (!ip)
+   {
+#if 0      
+      fprintf(stderr, "EXTENDING SEARCH FOR KILLLOOPCONTROL!!\n");
+#endif
+/*
+ *    must have only one predecessor of pre-header and it's for cleanup 
+ *    checking
+ */
+      assert(lp->preheader->preds && !lp->preheader->preds->next);
+      ip = FindCompilerFlag(lp->preheader->preds->blk, CF_LOOP_INIT);
+      assert(ip); /* now, it must find the loop init */
+
+      ip1 = FindCompilerFlag(lp->preheader, CF_LOOP_BODY);
+      assert(ip1); /* loop body must be in preheader */
+/*
+ *    delete all inst of pred of preheader next to the CMPFLAG
+ */
+      ip = ip->next;
+      while (ip) /* delete all inst in this block from CF_LOOP_INIT */  
+         ip = DelInst(ip);
+/*
+ *    delete all inst up to the CF_LOOP_BODY in preheader 
+ */
+      ip = lp->preheader->inst1;
+      while (ip && ip != ip1)
+         ip = DelInst(ip);
+      assert(ip);
+   }
+   else
+   {
+      ip = ip->next;
+      while (ip && (ip->inst[0] != CMPFLAG || ip->inst[1] != CF_LOOP_BODY))
+         ip = DelInst(ip);
+      #if IFKO_DEBUG_LEVEL >= 1
+         assert(ip);
+      #endif
+   }
+#endif
 /*
  * Delete index update, test and branch that must be in all tails
  */
@@ -886,6 +1090,10 @@ static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
       ip->next = NewInst(NULL, NULL, NULL, ST, Ioff, -r0, 0);
       ip = ip->next;
       ip->next = NewInst(NULL, NULL, NULL, JLE, -PCREG, -ICC0, lp->NE_label);
+/*
+ *    Majedul: I'm not sure why it is necessary!!! this inst can't keep 
+ *    preheader intact if new CFG is built!!!
+ */
       ip = ip->next;
       /* Keep preheader intact; this inst will be deleted by CP */
       ip->next = NewInst(NULL, NULL, NULL, MOV, -REG_SP, -REG_SP, 0);
@@ -915,9 +1123,24 @@ void AddLoopControl(LOOPQ *lp, INSTQ *ipinit, INSTQ *ipupdate, INSTQ *ippost,
    BLIST *bl;
 
    assert(lp->tails);
-   if (ipinit)
+   if (ipinit) /* applied on original loop, not in cleanup loop */
    {
       ipl = FindCompilerFlag(lp->preheader, CF_LOOP_INIT);
+/*
+ *    IF CF_LOOP_INIT is not found in preheader, may be found on 
+ *    predecessor of preheader. see the new implementation of 
+ *    KillLoopControl
+ */
+#if 1 /* to support new loop control */
+      if (!ipl)
+      {
+         /*fprintf(stderr, "EXTENDING SERACH IN ADDLOOPCONTROL \n");*/
+         assert(lp->preheader && lp->preheader->preds && 
+                !lp->preheader->preds->next);
+         ipl = FindCompilerFlag(lp->preheader->preds->blk, CF_LOOP_INIT);
+         assert(ipl);
+      }
+#endif      
       for (ip = ipinit; ip; ip = ip->next)
          ipl = InsNewInst(NULL, ipl, NULL, ip->inst[0], ip->inst[1], 
                           ip->inst[2], ip->inst[3]);
@@ -1111,11 +1334,20 @@ void OptimizeLoopControl(LOOPQ *lp, /* Loop whose control should be opt */
 char *DupedLabelName(int dupnum, int ilab)
 /*
  * Given a label and the dupnum, returns duped label name
+ * 
  */
 {
+   int i;
    static char ln[256];
    char *sp;
+   char spnum[64];
    sp = STname[ilab-1];
+/*
+ * FIXED: If we need to duplicate any blk which is already duplicated, treat 
+ * them as seperate blk. In Scalar Restart, _IFKOCD1_NEW and _IFKOCD2_NEW are 
+ * the separate blks, duplicated blks of them should also be separated.
+ */
+#if 0   
    if (!strncmp(sp, "_IFKOCD", 7) && isdigit(sp[7]))
    {
       sp += 7;
@@ -1124,10 +1356,36 @@ char *DupedLabelName(int dupnum, int ilab)
       sp++;
    }
    sprintf(ln, "_IFKOCD%d_%s", dupnum, sp);
+#else
+/*
+ * to keep the already duplicated blks separated, don't skip their dupnum
+ * NOTE: to keep track the duplicated blks(from where it is being duplicated)
+ * I added the original dupnum at the end using spnum, like:
+ *    _IFKOCD1_NEWMAX, the duplicated one is : _IFKOCDx_NEWMAX1
+ *    here, x is any number maintained by a static variable
+ *    
+ */
+   if (!strncmp(sp, "_IFKOCD", 7) && isdigit(sp[7]))
+   {
+      sp += 7;
+      i = 0;
+      while (*sp && *sp != '_')
+      {
+        spnum[i++] = *(sp++);
+      }
+      assert(*sp == '_' && sp[1]);
+      sp++;
+      spnum[i]='\0';
+   }
+   else 
+      spnum[0]='\0';
+   sprintf(ln, "_IFKOCD%d_%s%s", dupnum, sp, spnum);
+#endif   
+   
    return(ln);
 }
 
-BBLOCK *DupCFScope(short ivscp0, /* original scope */
+BBLOCK *DupCFScope0(short ivscp0, /* original scope */
                    short ivscp,  /* scope left to dupe */
                    int dupnum,   /* number of duplication, starting at 1 */
                    BBLOCK *head) /* block being duplicated */
@@ -1171,10 +1429,23 @@ BBLOCK *DupCFScope(short ivscp0, /* original scope */
       }
    }
    if (head->usucc && BitVecCheck(ivscp, head->usucc->bnum-1))
-      nhead->usucc = DupCFScope(ivscp0, ivscp, dupnum, head->usucc);
+      nhead->usucc = DupCFScope0(ivscp0, ivscp, dupnum, head->usucc);
    if (head->csucc && BitVecCheck(ivscp, head->csucc->bnum-1))
-      nhead->csucc = DupCFScope(ivscp0, ivscp, dupnum, head->csucc);
+      nhead->csucc = DupCFScope0(ivscp0, ivscp, dupnum, head->csucc);
    return(nhead);
+}
+
+BBLOCK *DupCFScope(short ivscp0, /* original scope */
+                   short ivscp,  /* scope left to dupe */
+                   int dupnum,   /* number of duplication, starting at 1 */
+                   BBLOCK *head) /* block being duplicated */
+{
+#if 1
+   static int dnum=0;
+   return (DupCFScope0(ivscp0, ivscp, dnum++, head));
+#else
+   return (DupCFScope0(ivscp0, ivscp, dupnum, head));
+#endif
 }
 
 BLIST *CF2BlockList(BLIST *bl, short bvblks, BBLOCK *head)
@@ -1200,7 +1471,7 @@ void UpdateUnrolledIndices(BLIST *scope, short I, int UR)
 /*
  * Adds UR*sizeof to all index refs in scope
  */
-{
+{ 
    UpdateIndexRef(scope, I, UR);
 }
 
@@ -1316,9 +1587,18 @@ void GenCleanupLoop(LOOPQ *lp)
       InsNewInst(bp, NULL, NULL, LABEL, lp->NE_label, 0, 0);
       InsNewInst(bp, NULL, NULL, LD, -r0, SToff[lp->end-1].sa[2], 0);
 /*
- *    OL_NEINC will be changed to real unrolling when known 
+ *    OL_NEINC will be changed to real unrolling when known
+ *    ========================================================================
+ *    FIXME: OL_NEINC can be updated multiple time as we may call the cleanup
+ *    several times. It would create problem if other inst use this entry as
+ *    a const. We need to consider this as special purpose constant entry and
+ *    prevent the search of symbol table to return this entry for others.
+ *    FIXED: changes made in STiconstlookup to skip this type of entry!!!
+ *    check for side affect
+ *    ========================================================================
  */
-      OL_NEINC = STdef(NULL, CONST_BIT | T_INT, 1);
+      /*OL_NEINC = STdef(NULL, CONST_BIT | T_INT, 1);*/
+      OL_NEINC = STdef("OL_NEINC", CONST_BIT | T_INT, 1);
       InsNewInst(bp, NULL, NULL, ADD, -r0, -r0, OL_NEINC);
       InsNewInst(bp, NULL, NULL, ST, SToff[lp->end-1].sa[2], -r0, 0);
       GetReg(-1);
@@ -1505,6 +1785,7 @@ void UnrollCleanup(LOOPQ *lp, int unroll)
 
 
 void UnrollCleanup2(LOOPQ *lp, int unroll); /* defined later */
+int ListElemCount(BLIST *blist);
 
 int UnrollLoop(LOOPQ *lp, int unroll)
 {
@@ -1520,17 +1801,32 @@ int UnrollLoop(LOOPQ *lp, int unroll)
    int n;
    extern int FKO_BVTMP;
    extern BBLOCK *bbbase;
-
+   extern int VECT_FLAG;
+/*
+ * Kill previous loop control to simplify the analysis for unroll
+ * NOTE: If vectorization is applied before, killing loop control may not 
+ * be straight forward. Condition for cleanup loop will split the preheader
+ */
+   KillLoopControl(lp);
    URmul = Type2Vlen(FLAG2TYPE(lp->vflag)); 
    UR = lp->vflag ? URmul*unroll : unroll;
-   KillLoopControl(lp);
+#if 0
+   fprintf(stdout, "\nAfter killing lp \n");
+   PrintInst(stdout, bbbase);
+   OptimizeLoopControl(lp, URmul, 0, ippost);
+   fprintf(stdout, "\nAfter adding lp control \n");
+   PrintInst(stdout, bbbase);
+   exit(0);
+#endif
 /* PrintInst(fopen("err.tmp", "w"), bbbase); */
+   
    il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
    if (il) KillIlist(il);
    else UsesIndex = 0;
    pi0 = FindMovingPointers(lp->blocks);
    if (!pi0)
       UsesPtrs = 0;
+
 /*
  * NOTE: after unrolling, cleanup is introduced. Analysis for moving ptr would 
  * be difficult. So, if vectorization is not applied and optloop->varrs is not 
@@ -1572,7 +1868,17 @@ int UnrollLoop(LOOPQ *lp, int unroll)
  *    Duplicate original loop body for unroll i
  */
       FKO_BVTMP = iv = BitVecCopy(FKO_BVTMP, lp->blkvec);
+/*
+ *    FIXME: need to provide appropriate dupnum. 
+ *    DupCFScope is already called in several places: cleanup, loop peeling,
+ *    speculative vect!!
+ *    Why don't use a static variable inside DupCFScope!!!
+ */
+#if 0      
       newCF = DupCFScope(lp->blkvec, iv, i, lp->header);
+#else
+      newCF = DupCFScope(lp->blkvec, iv, 100+i, lp->header);
+#endif      
       iv = BitVecCopy(iv, lp->blkvec);
 /*
  *    Use CF to produce a block list of duped blocks
@@ -1610,13 +1916,48 @@ int UnrollLoop(LOOPQ *lp, int unroll)
       }
 /*
  *    Update indices to add in unrolling factor
+ *    NOTE: if SV is already applied, Index need to update with following rules
  */
       if (UsesIndex)
-         UpdateUnrolledIndices(dupblks[i-1], lp->I, (lp->flag & L_NINC_BIT) ?
-                               URbase-i : URbase+i);
+      {
+         if (VECT_FLAG & VECT_SV) /* unrolling after SV*/
+         {
+            if (lp->flag & L_NINC_BIT) 
+            {
+/*
+ *             haven't tested this for NINC yet!
+ */
+               UpdateUnrolledIndices(dupblks[i-1], lp->I, (unroll-i-1)*URmul); 
+            }
+            else
+               UpdateUnrolledIndices(dupblks[i-1], lp->I, i*URmul); 
+         }
+         else
+            UpdateUnrolledIndices(dupblks[i-1], lp->I, (lp->flag & L_NINC_BIT) ?
+                                  URbase-i : URbase+i);
+      }
    }
+/*
+ * NOTE: this is to update the original loop blks which would be placed
+ * first before duplicated blks.
+ */
    if (UsesIndex)
-      UpdateUnrolledIndices(lp->blocks, lp->I, URbase);
+   {
+      if (VECT_FLAG & VECT_SV)
+      {
+         if (lp->flag & L_NINC_BIT)
+         {
+            UpdateUnrolledIndices(lp->blocks, lp->I, (unroll-1)*URmul);
+         }
+         else
+         {
+            /* adding 0 means : don't need to call at all*/
+            /*UpdateUnrolledIndices(lp->blocks, lp->I, 0);*/
+         }
+      }
+      else
+         UpdateUnrolledIndices(lp->blocks, lp->I, URbase);
+   }
                             
    if (pi0)
    {
@@ -1631,6 +1972,14 @@ int UnrollLoop(LOOPQ *lp, int unroll)
  * the blocks [up,down] links are correct, but CF is messed up
  */
    InsertUnrolledCode(lp, unroll, dupblks);
+#if 0
+   for (i=1; i < unroll ; i++)
+      fprintf(stderr, "\n\n Copied: id=%d BLKS[%d]: %s\n\n", i, 
+              ListElemCount(dupblks[i-1]), PrintBlockList(dupblks[i-1]));
+   fprintf(stdout, "Inserted code: \n");
+   PrintInst(stdout, bbbase);
+   fflush(stdout);
+#endif   
 /*
  * Fix the tails info for OptimizeLoopControl
  */
@@ -1657,7 +2006,8 @@ int UnrollLoop(LOOPQ *lp, int unroll)
 #if 0
    fprintf(stdout, "LIL just after unroll\n");
    PrintInst(stdout, bbbase);
-   exit(0);
+   //ShowFlow("ursv.dot", bbbase);
+   //exit(0);
 #endif
 
 #if 0
@@ -1669,7 +2019,12 @@ int UnrollLoop(LOOPQ *lp, int unroll)
 #endif
    NewBasicBlocks(bbbase);
    CheckFlow(bbbase, __FILE__, __LINE__);
-// ShowFlow("dot.err", bbbase);
+#if 0
+   fprintf(stdout, "LIL after unroll\n");
+   PrintInst(stdout, bbbase);
+   ShowFlow("ur.dot", bbbase);
+   exit(0);
+#endif   
    FindLoops();  /* need to setup optloop for this */
    CheckFlow(bbbase, __FILE__, __LINE__);
    return(0);
@@ -2593,7 +2948,7 @@ void PrintMovingPtrAnalysis(FILE *fpout)
          sp[j++] = k;
    }
    ns = j;
-   fprintf(fpout, "   Scalars used in loop: %d\n", ns);
+   fprintf(fpout, "   Scalars Used in Loop: %d\n", ns);
    for (i=0; i < ns; i++)
    { 
       k = sp[i]-1;
@@ -2888,8 +3243,7 @@ OPTLOOP=1
          {
             /*fprintf(fpout, "      RedCompReducesToOnePath=%d\n",1);*/
             UpdateOptLoopWithMaxMinVars1(optloop);
-            IfConvWithRedundantComp();
-            RC = 1; /* need to return value from RSC... */
+            RC = !(IfConvWithRedundantComp());
          }
          fprintf(fpout, "      RedCompReducesToOnePath=%d\n",RC);
          
@@ -2933,7 +3287,7 @@ OPTLOOP=1
             fprintf(fpout, "      MaxOK=%d\n",VmaxR);
             fprintf(fpout, "      MinOK=%d\n",VminR);
             fprintf(fpout, "      RedCompOK=%d\n",Vrc);
-            fprintf(fpout, "      SpecultaionOK=%d\n",Vspec);
+            fprintf(fpout, "      SpeculationOK=%d\n",Vspec);
             if (Vspec)
             {
                for (i=0; i < npaths; i++)
@@ -3184,7 +3538,7 @@ short *DeclareAE(int VEC, int ne, short STi)
  * Declare ne-1 extra vars for accum expans on var STi
  */
 {
-   int type, i;
+   int type, i, j;
    short *sp, k;
    char ln[1024];
 
@@ -3202,7 +3556,23 @@ short *DeclareAE(int VEC, int ne, short STi)
    {
       sprintf(ln, "_AE_%s_%d", STname[STi-1], i);
       k = sp[i] = STdef(ln, type | LOCAL_BIT | UNKILL_BIT, 0);
-      SToff[k-1].sa[2] = AddDerefEntry(-REG_SP, k, -k, 0, k);
+/*
+ *    FIXME:  
+ *    AddDerefEntry func will change the SToff pointer itselt. But compiler
+ *    can't track this up and tried to store value using the old pinter!
+ *    This can be solved by breaking the statement down1!
+ *
+ *    Interesting findings: 
+ *    Why messed up here? Adding the previous _AE_... the SToff went to the 
+ *    border line (k=256, means updated the [255] entry), now adding the DT 
+ *    entry will overflow the table. This problem will only show up where 
+ *    STdef() is called with the last entry and AddDerefEntry() is called 
+ *    with the following syntax!!
+ *    
+ */
+      /*SToff[k-1].sa[2] = AddDerefEntry(-REG_SP, k, -k, 0, k);*/
+      j = AddDerefEntry(-REG_SP, k, -k, 0, k);
+      SToff[k-1].sa[2] = j; 
    }
    return(sp);
 }
@@ -3220,6 +3590,7 @@ void AddInstToPrehead(LOOPQ *lp, INSTQ *iadd, short type, short r0, short r1)
 
    bp = lp->preheader;
    ipn = bp->ainstN;
+      
 /*
  * If we must rename registers
  */
@@ -3232,7 +3603,9 @@ void AddInstToPrehead(LOOPQ *lp, INSTQ *iadd, short type, short r0, short r1)
          s1 = s0;
       }
       else
+      {
          s1 = -GetReg(type);
+      }
       for (ip=iadd; ip; ip = ip->next)
       {
          for (i=1; i < 4; i++)
@@ -3253,7 +3626,6 @@ void AddInstToPrehead(LOOPQ *lp, INSTQ *iadd, short type, short r0, short r1)
    {
       ip = InsNewInst(bp, NULL, ipn, ipA->inst[0], ipA->inst[1], ipA->inst[2], 
                       ipA->inst[3]);
-      CalcThisUseSet(ip);
    }
    GetReg(-1);
 }
@@ -3531,10 +3903,9 @@ short *DeclareMaxE(int VEC, int ne, short STi)
  * Declare ne-1 extra vars for max expans on var STi
  */
 {
-   int type, i;
+   int type, i, j;
    short *sp, k;
    char ln[1024];
-
    sp = malloc(ne*sizeof(short));
    sp[0] = ne-1;
    type = FLAG2TYPE(STflag[STi-1]);
@@ -3549,7 +3920,12 @@ short *DeclareMaxE(int VEC, int ne, short STi)
    {
       sprintf(ln, "_MAXE_%s_%d", STname[STi-1], i);
       k = sp[i] = STdef(ln, type | LOCAL_BIT | UNKILL_BIT, 0);
-      SToff[k-1].sa[2] = AddDerefEntry(-REG_SP, k, -k, 0, k);
+/*
+ *    Majedul: see bug report on DeclareAE function 
+ */
+      /*SToff[k-1].sa[2] = AddDerefEntry(-REG_SP, k, -k, 0, k);*/
+      j = AddDerefEntry(-REG_SP, k, -k, 0, k);
+      SToff[k-1].sa[2] = j;
    }
    return(sp);
 }
@@ -3559,7 +3935,7 @@ short *DeclareMinE(int VEC, int ne, short STi)
  * Declare ne-1 extra vars for max expans on var STi
  */
 {
-   int type, i;
+   int type, i, j;
    short *sp, k;
    char ln[1024];
 
@@ -3577,7 +3953,12 @@ short *DeclareMinE(int VEC, int ne, short STi)
    {
       sprintf(ln, "_MINE_%s_%d", STname[STi-1], i);
       k = sp[i] = STdef(ln, type | LOCAL_BIT | UNKILL_BIT, 0);
-      SToff[k-1].sa[2] = AddDerefEntry(-REG_SP, k, -k, 0, k);
+/*
+ *    Majedul: see bug report on DeclareAE function 
+ */
+      /*SToff[k-1].sa[2] = AddDerefEntry(-REG_SP, k, -k, 0, k);*/
+      j = AddDerefEntry(-REG_SP, k, -k, 0, k);
+      SToff[k-1].sa[2] = j;
    }
    return(sp);
 }
@@ -3666,8 +4047,6 @@ INSTQ *GetSEHeadTail(LOOPQ *lp, short se, short ne, short *ses, int vec,
 /*
  * Shadow initialization actuallly depends on instruction type 
  * ACCUM -> 0 but for Max/Min -> init value 
- * FIXME: 
- *
  */
 #if 0   
    fprintf(stderr, "inst = %s\n", instmnem[inst]);
@@ -4134,14 +4513,14 @@ int ElimMaxMinIf()
    {
       if (VarIsMax(lp->blocks, scal[i]))
       {
-         #if IFKO_DEBUG_LEVEL >=1
+         #if 0
             fprintf(stderr, "Max var = %s\n", STname[scal[i]-1]);  
          #endif
          changes += ElimIFBlkWithMax(scal[i]);
       }
       else if (VarIsMin(lp->blocks, scal[i]))
       {
-         #if IFKO_DEBUG_LEVEL >=1
+         #if 0
             fprintf(stderr, "Min var = %s\n", STname[scal[i]-1]);
          #endif
          changes += ElimIFBlkWithMin(scal[i]);
@@ -4167,6 +4546,7 @@ int ElimMaxMinIf()
 
 int IfConvWithRedundantComp()
 {
+   int err;
    LOOPQ *lp;
 
    INSTQ *ippu;
@@ -4174,7 +4554,7 @@ int IfConvWithRedundantComp()
    
    lp = optloop;
    KillLoopControl(lp);
-   RedundantScalarComputation(lp);
+   err = RedundantScalarComputation(lp);
 
 #if 1
    pi0 = FindMovingPointers(lp->tails);
@@ -4192,7 +4572,7 @@ int IfConvWithRedundantComp()
    FindLoops();
    CheckFlow(bbbase, __FILE__, __LINE__);
 #endif
-
+   return(err);
 }
 
 void FinalizeVectorCleanup(LOOPQ *lp)
@@ -4382,3 +4762,33 @@ void UnrollCleanup2(LOOPQ *lp, int unroll)
    
    GetReg(-1);
 }
+
+int ListElemCount(BLIST *blist)
+{
+   BLIST *bl;
+   int i;
+   for (i=0, bl = blist; bl; bl = bl->next) i++;
+   return i; 
+}
+
+void PrintLoop(FILE *fpout, LOOPQ *lp)
+/*
+ * Print necessary basic info for loop
+ */
+{
+   BLIST *bl;
+   fprintf(fpout, "LOOP INFO: \n");
+   fprintf(fpout, "========================================================\n");
+   fprintf(fpout, "Loop #%d\n", lp->loopnum);
+   fprintf(fpout, "Depth: %d\n", lp->depth);
+   fprintf(fpout, "Duplication: %d\n", lp->ndup);
+   fprintf(fpout, "BLOCKS[%d]: %s\n",ListElemCount(lp->blocks), 
+           PrintBlockList(lp->blocks));
+   fprintf(fpout, "PreHeader: %d\n", lp->preheader->bnum);
+   fprintf(fpout, "Head: %d\n", lp->header->bnum);
+   fprintf(fpout, "Tails: %s\n", PrintBlockList(lp->tails));
+   fprintf(fpout, "PostTails: %s\n", PrintBlockList(lp->posttails));
+   fprintf(fpout, "========================================================\n");
+}
+
+
