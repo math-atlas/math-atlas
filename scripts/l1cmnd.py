@@ -7,7 +7,8 @@ WALLTIME = 1
 L1Tdir = '/tune/blas/level1/'
 
 def GetDefaultBlas():
-   return ['swap', 'copy', 'asum', 'axpy', 'dot', 'scal', 'iamax']
+   return ['swap', 'copy', 'asum', 'axpy', 'dot', 'scal', 'iamax', 'amax', 
+           'nrm2']
 
 def GetDefaultRefBlas(blas):
    n = len(blas)
@@ -86,6 +87,33 @@ def test(ATLdir, ARCH, pre, blas, N, rout, cc=None, ccf=None, opt=""):
       print 'command died with:'
       print lines
       print err
+      return err
+   for line in lines:
+      if line.find("ALL") != -1 and line.find("SANITY TESTS PASSED") != -1:
+         break
+   else:
+      return 1
+   return 0 
+
+#
+#  Majedul: silent test with no err msg 
+#
+def silent_test(ATLdir, ARCH, pre, blas, N, rout, cc=None, ccf=None, opt=""):
+   if (opt != ""):
+      opt = 'opt="' + opt + '"'
+   if(cc != None):
+      opt = opt + ' ' + pre + 'UCC=' + cc + ' '+ pre + 'UCCFLAGS="' + ccf + '"'
+   cmnd = 'cd %s/tune/blas/level1 ; make %s%stest N=%d urout=%s %s' % \
+          (ATLdir, pre, blas, N, rout, opt)
+   try:
+      fo = os.popen(cmnd, 'r')
+      lines = fo.readlines()
+      err = fo.close()
+   except OSError:
+      # skip the err msg !
+      pass
+
+   if (err != None):
       return err
    for line in lines:
       if line.find("ALL") != -1 and line.find("SANITY TESTS PASSED") != -1:
