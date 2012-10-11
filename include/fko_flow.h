@@ -30,6 +30,7 @@ void SetBlocksActiveInst(BBLOCK *bp);
 BBLOCK *NewBasicBlocks(BBLOCK *base0);
 BBLOCK *FindBlockByNumber(BBLOCK *bp, const short bnum);
 BBLOCK *FindBlockWithLabel(BBLOCK *bp, int ilab);
+char *PrintBlockList(BLIST *lp);
 
 void InvalidateLoopInfo(void);
 
