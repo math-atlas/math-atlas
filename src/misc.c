@@ -216,12 +216,15 @@ INSTQ *PrintComment(BBLOCK *blk, INSTQ *prev, INSTQ *next, ...)
 {
    va_list argptr;
    char *form;
-   char ln[2048];
+/*
+ * Majedul: 2048 is not enough now (unrolling after SV)
+ */
+   char ln[4096];
 
    va_start(argptr, next);
    form = va_arg(argptr, char*);
    vsprintf(ln, form, argptr);
-   assert(strlen(ln) < 2048);
+   assert(strlen(ln) < 4096);
    va_end(argptr);
    return(InsNewInst(blk, prev, next, COMMENT, STstrconstlookup(ln), 0, 0));
 }
