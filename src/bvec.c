@@ -133,7 +133,10 @@ int *ExtendBitVec(int iv, int nwords)
    
 /*
  * FIXED: [Majedul] There was a segmentation fault assoicated with the follwoing
- * statement:  v = bvecs[NewBitVec(nwords*32)-1];
+ * statement:  v = bvecs[NewBitVec(nwords*32)-1]; 
+ * Reason: NewBitVec function changes the global pointer bvecs itselt. But the
+ * compiler can't track this up and trying to store value using the old bvecs 
+ * pointer. 
  */
    iv0 = NewBitVec(nwords*32)-1;
    v = bvecs[iv0];        
@@ -246,12 +249,16 @@ int BitVecCheck(int iv, int ibit)
  * 
  * Oneway to solve this issue is to extend the bit vector and returns false.
  * the logic behind this is that this position may be set afterward as a bit 
- * vector keep increasing from its default size of 32 anyway. 
+ * vector keep increasing from its default size of 32 anyway.
  */
 #if 1
    if (k >= n) 
    {
-      ExtendBitVec(iv+1, k+1);
+/*
+ *    NOTE: For BitVecCheck, extending the bvec doesn't make sense. We will
+ *    return 0 without Extending the bvec. SetBitVec will extend if neccessary.
+ */
+      /*ExtendBitVec(iv+1, k+1);*/
       return 0;
    }
 #endif
@@ -436,7 +443,11 @@ char *PrintVecList(int iv, int ioff)
  * RETURNS: ptr to string containing # of all set bits
  */
 {
-   static char ln[2048];
+/*
+ * Majedul: as the bvec increases beyond 2048 while applying blind unroll after
+ * sepculative vectorization, this limit is increased
+ */
+   static char ln[4096];
    char *sptr;
    int i, j, k, n;
 
@@ -452,7 +463,7 @@ char *PrintVecList(int iv, int ioff)
       {
          if (k & (1<<i))
             sptr += sprintf(sptr, "%d, ", j*32+i+ioff);
-         assert((size_t)sptr < (size_t) ln + 2048);
+         assert((size_t)sptr < (size_t) ln + 4096);
       }
    }
    if (sptr != ln) sptr[-2] = '\0';
