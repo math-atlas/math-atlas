@@ -28,7 +28,6 @@ static BLIST *KillBlockListEntry(BLIST *lp)
    {
       ln = lp->next;
       free(lp);
-      lp = NULL;
    }
    else ln = NULL;
    return(ln);
@@ -152,7 +151,6 @@ void KillBlockList(BLIST *lp)
    {
       ln = lp->next;
       if(lp) free(lp);
-      lp = NULL;
    }
 }
 BLIST *NewReverseBlockList(BLIST *list)
@@ -842,6 +840,8 @@ LOOPQ *KillFullLoop(LOOPQ *lp)
          KillBlockList(lp->posttails);
       if (lp->vvscal)
          free(lp->vvscal);
+      if (lp->bvvscal)
+         free(lp->bvvscal);
       if (lp->pfarrs)
          free(lp->pfarrs);
       if (lp->pfdist)
@@ -936,12 +936,10 @@ LOOPQ *KillLoop(LOOPQ *lp)
       if (lp->minvars)
          free(lp->minvars);
 */
-
 /*
  *    FIXME: need to free space for shadow acc : short **aes
  */
       free(lp);
-      lp = NULL; /* to avoid dangling pointer with optloop and loopq */
    }
    return(ln);
 }
@@ -1028,6 +1026,7 @@ void InvalidateLoopInfo(void)
       lp->vsflag = optloop->vsflag;
       lp->vsoflag = optloop->vsoflag;
       lp->vvscal = optloop->vvscal;
+      lp->bvvscal = optloop->bvvscal;
       lp->vflag = optloop->vflag;
       lp->pfarrs = optloop->pfarrs;
       lp->pfdist = optloop->pfdist;
@@ -1049,6 +1048,7 @@ void InvalidateLoopInfo(void)
       lp->PTCU_label = optloop->PTCU_label;
       optloop->vsflag = optloop->vsoflag = optloop->vscal = optloop->varrs = 
          optloop->ae = optloop->ne = optloop->nopf = optloop->aaligned = NULL;
+      optloop->bvvscal = NULL;
       optloop->aes = NULL;
       optloop->abalign = NULL;
       optloop->maxvars = NULL;     /* sothat killloop not freed prev space */
@@ -1589,6 +1589,7 @@ static BBLOCK *NewFallThruBasicBlocks(int *count, BBLOCK *head, BBLOCK *tail,
  * will consider the multiple tails later.
  * Returns the end marker blk, end->down need to be adjusted  if there is an 
  * other flow for cleanup or loop peeling
+ * NOTE: this algorithm is not costly, acts like DFS
  */
 {
    int i;
@@ -1603,7 +1604,7 @@ static BBLOCK *NewFallThruBasicBlocks(int *count, BBLOCK *head, BBLOCK *tail,
    if (*count == 0)
    {
       end = end0;
-      *count++; 
+      *count = 1; 
    }
 /*
  * one path is complete.
@@ -1715,7 +1716,6 @@ void RemakeWithNewFallThru(LOOPQ *lp)
  * Assume single tail for loop now
  */   
    assert(lp->tails && !lp->tails->next);
-   count = 0;
 #if 0
    ftblks = FindFallThruPathBlks(lp->blocks, lp->header, lp->tails);
    fprintf(stderr, "New Fall-thru: %s\n", PrintBlockList(ftblks));
@@ -1786,7 +1786,7 @@ void RemakeWithNewFallThru(LOOPQ *lp)
       }
    }
 
-#if 0
+#if 0 
    fprintf(stderr, "All Blk list: \n");
    for (bl=allblks; bl; bl=bl->next)
    {
@@ -1800,6 +1800,7 @@ void RemakeWithNewFallThru(LOOPQ *lp)
  * Returns the final end marker block, add the existing flow at the down of
  * end
  */
+   count = 0;
    end = NewFallThruBasicBlocks(&count, lp->header, lp->tails->blk, end);
    end->down = endnext;
 /*
@@ -1821,6 +1822,8 @@ void TransformFallThruPath(int path)
 /*
  * this function takes a path and re-structure the code to make it fall-thru
  * (it will re-structure in its own way even path is already a fall-thru)
+ * NOTE: This function will work for few number of branches, can't be applied
+ * after the SB of SV. cost of finding all paths would be 2^n 
  */
 {
    int i, np;
@@ -1842,6 +1845,8 @@ void TransformFallThruPath(int path)
    assert(lp->tails && !lp->tails->next);
 /*
  * create path list with blist for each path updating np as the path count
+ * NOTE: finding all paths would be costly, specially when we call this 
+ * after SB.
  */
    paths = FindAllPathsBlks(&np, lp->blocks, lp->header, lp->tails->blk, 
                             paths, bl);
@@ -1879,6 +1884,7 @@ void TransformFallThruPath(int path)
 /*
  * NOTE: As we have 2 paths for most of the kernel, here I experimentally
  * test to swap the fall thru path from 0 to 1. We will parameterize it later.
+ * HERE HERE, applying this after SB, there are lots of paths!!!!
  */
 /*
  * Figure out the blks where exp need to change
@@ -1904,6 +1910,18 @@ void TransformFallThruPath(int path)
    RemakeWithNewFallThru(lp);
    KillAllList(np, paths);
    return;
+}
+
+void ReshapeFallThruCode()
+/*
+ * this function will reshape the code with the existing fall-thru
+ */
+{
+   LOOPQ *lp;
+
+   lp = optloop;
+   assert(lp->tails && !lp->tails->next);
+   RemakeWithNewFallThru(lp);
 }
 
 void PrintLoopPaths()
