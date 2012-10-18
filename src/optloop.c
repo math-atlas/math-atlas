@@ -276,7 +276,8 @@ void InsUnrolledCode(int unroll, BLIST **dupblks, BBLOCK *head,
 }
 
 void InsUnrolledBlksInCode(int unroll, BLIST **dupblks, BBLOCK *head,
-                     int loopblks, int inblks, int tails, int fallblks)
+                     int loopblks, int inblks, int tails, int fallblks, 
+                     int visitedblks)
 /*
  * insert duplicated blks in code. This is a modified version based on the 
  * previous function to support complex CFG like: the CFG after SV.
@@ -302,6 +303,9 @@ void InsUnrolledBlksInCode(int unroll, BLIST **dupblks, BBLOCK *head,
 
 /*
  * If it is not considered yet, get fallpath and added the duplicated code.
+ * NOTE: if the blk is placed already, we don't need to findout its fall-path; 
+ * its fallpath should also be placed. But we need to explore all of its 
+ * successor to visit the node which is not visited yet.
  */
    if (!BitVecCheck(inblks, head->bnum-1))
    {
@@ -347,23 +351,27 @@ void InsUnrolledBlksInCode(int unroll, BLIST **dupblks, BBLOCK *head,
  */
    if (BitVecCheck(tails, head->bnum-1))
       return;
-
+/*
+ * to limit the recursion, need to check whether it is already visited
+ * If it is already visited, we don't need to visit its successor; otherwise
+ * it would recurse all its successor. Total function call would be 2^n
+ */   
+   SetVecBit(visitedblks, head->bnum-1, 1);
 /*
  * Try to build paths based on successors
  */
-   if (head->usucc)
+   if (head->usucc && !BitVecCheck(visitedblks, head->usucc->bnum-1))
       InsUnrolledBlksInCode(unroll, dupblks, head->usucc, loopblks,
-                      inblks, tails, fallblks);
-   if (head->csucc)
+                      inblks, tails, fallblks, visitedblks);
+   if (head->csucc && !BitVecCheck(visitedblks, head->csucc->bnum-1))
       InsUnrolledBlksInCode(unroll, dupblks, head->csucc, loopblks,
-                      inblks, tails, fallblks);
+                      inblks, tails, fallblks, visitedblks);
    
 }
 
-
 void InsertUnrolledCode(LOOPQ *lp, int unroll, BLIST **dupblks)
 {
-   int tails, fallblks, inblks;
+   int tails, fallblks, inblks, visitedblks;
 
    tails = BlockList2BitVec(lp->tails);
    fallblks = NewBitVec(32);
@@ -373,8 +381,11 @@ void InsertUnrolledCode(LOOPQ *lp, int unroll, BLIST **dupblks)
    InsUnrolledCode(unroll, dupblks, lp->header, lp->blkvec, 
                    inblks, tails, fallblks);
 #else   
+   visitedblks = NewBitVec(32);
+   SetVecAll(visitedblks, 0);
    InsUnrolledBlksInCode(unroll, dupblks, lp->header, lp->blkvec, 
-                         inblks, tails, fallblks);
+                         inblks, tails, fallblks, visitedblks);
+   KillBitVec(visitedblks);
 #endif
    KillBitVec(fallblks);
    KillBitVec(inblks);
@@ -1808,7 +1819,14 @@ int UnrollLoop(LOOPQ *lp, int unroll)
  * be straight forward. Condition for cleanup loop will split the preheader
  */
    KillLoopControl(lp);
+#if 0   
    URmul = Type2Vlen(FLAG2TYPE(lp->vflag)); 
+#else
+   /*fprintf(stderr, "SB = %d\n", FKO_SB);*/
+   URmul = Type2Vlen(FLAG2TYPE(lp->vflag)); 
+   if (FKO_SB && (VECT_FLAG & VECT_SV) )
+      URmul *= FKO_SB;
+#endif
    UR = lp->vflag ? URmul*unroll : unroll;
 #if 0
    fprintf(stdout, "\nAfter killing lp \n");
@@ -1851,7 +1869,10 @@ int UnrollLoop(LOOPQ *lp, int unroll)
  * So, need to use new UnrollCleanup function.
  */
    /*UnrollCleanup(lp, unroll);*/
-   UnrollCleanup2(lp, unroll);
+   if (FKO_SB && (VECT_FLAG & VECT_SV) )
+      UnrollCleanup2(lp, unroll*FKO_SB);
+   else 
+      UnrollCleanup2(lp, unroll);
 
    URbase = (lp->flag & L_FORWARDLC_BIT) ? 0 : UR-1;
 
@@ -4575,7 +4596,7 @@ int IfConvWithRedundantComp()
    return(err);
 }
 
-void FinalizeVectorCleanup(LOOPQ *lp)
+void FinalizeVectorCleanup(LOOPQ *lp, int unroll)
 /*
  * this function will finalize the vector cleanup adding instructions to test
  * for cleanup after CF_VRED_END CMPFLAG. 
@@ -4583,14 +4604,18 @@ void FinalizeVectorCleanup(LOOPQ *lp)
  * accordingly.
  * NOTE: loop peeling might change the loop control information. So, both
  * GenCleanupLoop and FinalizeVectorCleanup should be called before Looppeeling.
+ * NOTE: need to parametrize the cleanup for larger bet unrolling... now,
+ * this function and UnrollCleanup bacomes similar....
+ * HERE HERE why not use the same cleanup function for both vector and unroll!!
  */
 {
-   int vlen;
    BBLOCK *bp;
    INSTQ *ipnext;
    ILIST *il;
    int FORWARDLOOP;
    short r0, r1;
+
+   if (unroll < 1) unroll = 1;
 /*
  * Cleanup should already be generated before finalizing it
  */
@@ -4605,7 +4630,7 @@ void FinalizeVectorCleanup(LOOPQ *lp)
  */
    SetLoopControlFlag(lp, 0);
    FORWARDLOOP = L_FORWARDLC_BIT & lp->flag;
-   vlen = Type2Vlen(lp->vflag);  
+   unroll *= Type2Vlen(lp->vflag);  
 /*
  * Require one and only one post-tail; later do transformation to ensure this
  * for loops where it is not natively true
@@ -4629,7 +4654,7 @@ void FinalizeVectorCleanup(LOOPQ *lp)
       {
          InsNewInst(bp, NULL, ipnext, LD, -r1, SToff[lp->end-1].sa[2], 0);
          InsNewInst(bp, NULL, ipnext, ADD, -r1, -r1, 
-                            STiconstlookup(vlen*SToff[lp->inc-1].i));
+                            STiconstlookup(unroll*SToff[lp->inc-1].i));
          InsNewInst(bp, NULL, ipnext, ST, SToff[lp->end-1].sa[2], -r1, 0);
       }
       InsNewInst(bp, NULL, ipnext, LD, -r0, SToff[lp->I-1].sa[2], 0);
@@ -4642,7 +4667,7 @@ void FinalizeVectorCleanup(LOOPQ *lp)
    {
       InsNewInst(bp, NULL, ipnext, LD, -r0, SToff[lp->I-1].sa[2], 0);
       InsNewInst(bp, NULL, ipnext, SUBCC, -r0, -r0,
-                 STiconstlookup(-(FKO_abs(SToff[lp->inc-1].i)*vlen-1)));
+                 STiconstlookup(-(FKO_abs(SToff[lp->inc-1].i)*unroll-1)));
       InsNewInst(bp, NULL, ipnext, ST, SToff[lp->I-1].sa[2], -r0, 0);
    }
    InsNewInst(bp, NULL, ipnext, JNE, -PCREG, -ICC0, lp->CU_label);
