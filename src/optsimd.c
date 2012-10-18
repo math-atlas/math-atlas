@@ -711,14 +711,21 @@ INSTQ *AddAlignTest(LOOPQ *lp, BBLOCK *bp, INSTQ *ip, int fa_label)
 }
 
 short InsertNewLocal(char *name, int type )
+/*
+ * add new local var in symbol table. We should always use this function 
+ * to insert any var for compiler's internal purpose.
+ */
 {
-   short k;
+   short k, j;
 /*
  * NOTE: name string is copied and stored in Symbol Table
  * So, free the string from the caller function
+ * FIXED: SToff is a global pointer and it can be updated from AddDerefEntry()
+ * so, splited the statement.
  */
    k = STdef(name, type | LOCAL_BIT, 0);
-   SToff[k-1].sa[2] = AddDerefEntry(-REG_SP, k, -k, 0, k);
+   j =  AddDerefEntry(-REG_SP, k, -k, 0, k);
+   SToff[k-1].sa[2] = j;
    return k;
 }
 
@@ -2715,7 +2722,10 @@ int PathVectorizable(int pnum)
 
 int SpeculativeVectorAnalysis()
 /*
- * Duplicated the optloop blks, do analysis with this. 
+ * Duplicated the optloop blks, do analysis with this.
+ * NOTE: Assuming the number of branches inside loop is few. finding all loop
+ * paths is costly, but not worried with that now. possible to  implement 
+ * incremental algorithm without explicitly figuring out all the paths
  */
 {
    int i, j, n, k, N;
@@ -2903,6 +2913,852 @@ int SpeculativeVectorAnalysis()
    }
 }
 
+void AddVectorInitReduction(LOOPQ *lp)
+{
+   int i, j, k, n;
+   INSTQ *iph, *iptp, *iptn;
+   short r0, r1;    
+   enum inst vld, vsld, vst, vsst, vshuf;
+/*
+ * Figure out what type of insts to translate
+ */
+   if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+   {
+      vsld = VFLDS;
+      vsst = VFSTS;
+      vshuf = VFSHUF;
+      vld = VFLD;
+      vst = VFST;
+   }
+   else
+   {
+      vsld = VDLDS;
+      vsst = VDSTS;
+      vshuf = VDSHUF;
+      vld = VDLD;
+      vst = VDST;
+   }
+
+   r0 = GetReg(FLAG2TYPE(lp->vflag));
+   r1 = GetReg(FLAG2TYPE(lp->vflag));
+/*
+ * Find inst in preheader to insert scalar init before; want it inserted last
+ * unless last instruction is a jump, in which case put it before the jump.
+ * As long as loads don't reset condition codes, this should be safe
+ * (otherwise, need to move before compare as well as jump)
+ */
+   iph = lp->preheader->ainstN;
+   if (iph && IS_BRANCH(iph->inst[0]))
+      iph = iph->prev;
+   else
+      iph = NULL;
+/*
+ * Find inst in posttail to insert reductions before; if 1st active inst
+ * is not a label, insert at beginning of block, else insert after label
+ */
+   if (lp->posttails->blk->ilab)
+   {
+      iptp = lp->posttails->blk->ainst1;
+      iptn = NULL;
+   }
+   else
+   {
+      iptp = NULL;
+      iptn = lp->posttails->blk->ainst1;
+      if (!iptn)
+         iptn = lp->posttails->blk->inst1;
+   }
+
+/*
+ * Insert scalar-to-vector initialization in preheader for vars live on entry
+ * and vector-to-scalar reduction in post-tail for vars live on exit
+ */
+   j = 0;
+   k = STiconstlookup(0);
+   for (n=lp->vscal[0],i=0; i < n; i++)
+   {
+      if (VS_LIVEIN & lp->vsflag[i+1])
+      {
+/*
+ *       ADD-updated vars set v[0] = scalar, v[1:N] = 0
+ */
+         if (VS_ACC & lp->vsflag[i+1])
+            PrintComment(lp->preheader, NULL, iph,
+               "Init accumulator vector for %s", STname[lp->vscal[i+1]-1]);
+         else
+            PrintComment(lp->preheader, NULL, iph,
+               "Init vector equiv of %s", STname[lp->vscal[i+1]-1]);
+         InsNewInst(lp->preheader, NULL, iph, vsld, -r0,
+                    SToff[lp->vscal[i+1]-1].sa[2], 0);
+         if (!(VS_ACC & lp->vsflag[i+1]))
+            InsNewInst(lp->preheader, NULL, iph, vshuf, -r0, -r0, k);
+         InsNewInst(lp->preheader, NULL, iph, vst,
+                    SToff[lp->vvscal[i+1]-1].sa[2], -r0, 0);
+      }
+/*
+ *    Output vars are known to be updated only by ADD
+ *    Majedul: output var doesn't have to be accumulator. We will 
+ *    Handle var after checking the VS_ACC flag
+ *
+ */
+      if (VS_LIVEOUT & lp->vsflag[i+1])
+      {
+         j++;
+         /*assert((lp->vsoflag[i+1] & (VS_MUL | VS_EQ | VS_ABS)) == 0);*/
+         if (lp->vsoflag[i+1] & VS_ACC)
+         {
+
+            iptp = PrintComment(lp->posttails->blk, iptp, iptn,
+                  "Reduce accumulator vector for %s", STname[lp->vscal[i+1]-1]);
+            iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vld, -r0,
+                              SToff[lp->vvscal[i+1]-1].sa[2], 0);
+            if (vld == VDLD)
+            {
+            #if defined(X86) && defined(AVX)
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
+                                 -r0, STiconstlookup(0x3276));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VDADD,-r0,-r0,
+                                 -r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
+                                 -r0, STiconstlookup(0x3715));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VDADD,-r0,-r0,
+                                 -r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS,
+                                 SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+            #else
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
+                                 -r0, STiconstlookup(0x33));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VDADD,-r0,-r0,
+                                 -r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS,
+                                 SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+            #endif
+            }
+            else
+            {
+            #if defined(X86) && defined(AVX)
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                 -r1, -r0, STiconstlookup(0x7654FEDC));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                 -r1, -r0, STiconstlookup(0x765432BA));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                 -r1, -r0, STiconstlookup(0x76CD3289));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSTS,
+                                 SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+            #else
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                 -r1, -r0, STiconstlookup(0x3276));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                 -r1, -r0, STiconstlookup(0x5555));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL,VFADD,
+                                 -r0,-r0,-r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSTS,
+                                 SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+            #endif
+            }
+         }
+         else /* VS_MUL/ VS_DIV*/
+         {
+            iptp = PrintComment(lp->posttails->blk, iptp, iptn,
+                  "Reduce vector for %s", STname[lp->vscal[i+1]-1]);
+            iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vld, -r0,
+                              SToff[lp->vvscal[i+1]-1].sa[2], 0);
+            iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vsst,
+                              SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+         }
+      }
+   }
+   GetReg(-1);
+   iptp = InsNewInst(lp->posttails->blk, iptp, NULL, CMPFLAG, CF_VRED_END,
+                     0, 0);
+}
+
+void AddVectorBackup(LOOPQ *lp)
+{
+   int i, j, N;
+   BBLOCK *bp;
+   INSTQ *ip;
+   short vreg;
+   enum inst vld, vst;
+
+/*
+ * no var to backup, return. 
+ * NOTE: Scalar Restart is called before the VecXform. So, bvvscal is already
+ * populated, if any
+ */ 
+   if (!lp->bvvscal) return; 
+
+   if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+   {
+      vld = VFLD;
+      vst = VFST;
+   }
+   else
+   {
+      vld = VDLD;
+      vst = VDST;
+   }
+
+   bp = lp->header;
+   assert(bp->ainst1->inst[0] == LABEL); /* 1st inst should be LABEL*/
+   ip = bp->ainst1;
+   ip = InsNewInst(bp, ip, NULL, CMPFLAG, CF_SSV_VBACKUP, 0, 0);
+   for (N=lp->bvvscal[0], i=1; i <= N; i++)
+   {
+      if (lp->bvvscal[i])
+      {
+         vreg = GetReg(FLAG2TYPE(lp->vflag)); 
+         ip = PrintComment(bp, ip, NULL, "Backing up vector %s to %s",
+                           STname[lp->vvscal[i]-1], STname[lp->bvvscal[i]-1]);
+         ip = InsNewInst(bp, ip, NULL, vld, -vreg, 
+                           SToff[lp->vvscal[i]-1].sa[2], 0);
+         ip = InsNewInst(bp, ip, NULL, vst, SToff[lp->bvvscal[i]-1].sa[2],
+                           -vreg, 0);
+      }
+   }
+
+   ip = InsNewInst(bp, ip, NULL, CMPFLAG, CF_SSV_VBACKUP_END, 0, 0);
+
+}
+void SpecVecPathXform(BLIST *scope, LOOPQ *lp)
+{
+   int i, j, n, k, m, mskval, nfr;
+   INSTQ *ip;
+   BLIST *bl;
+   static enum inst
+      sfinsts[]= {FLD,  FST,  FMUL, FDIV,  FMAC, FADD,  FSUB,  FABS,  FMOV,  
+                  FZERO, FNEG},
+      vfinsts[]= {VFLD, VFST, VFMUL, VFDIV, VFMAC, VFADD, VFSUB, VFABS, VFMOV, 
+                  VFZERO, VFNEG},
+      sdinsts[]= {FLDD, FSTD, FMULD, FDIVD, FMACD, FADDD, FSUBD, FABSD, FMOVD, 
+                  FZEROD, FNEGD},
+      vdinsts[]= {VDLD, VDST, VDMUL, VDDIV, VDMAC, VDADD, VDSUB, VDABS, VDMOV, 
+                  VDZERO, VDNEG};
+/*
+ * NOTE: We have 6 conditional branches. So, we only need to keep 6 VCMPWXX inst
+ * for SSE, GT and GE are replaced with the NLE and NLT inside the l2a while
+ * converting lil to assembly
+ */
+   static enum inst
+      brinsts[] = {JEQ, JNE, JLT, JLE, JGT, JGE},
+         vfcmpinsts[] = {VFCMPWEQ, VFCMPWNE, VFCMPWLT, VFCMPWLE, VFCMPWGT, 
+                         VFCMPWGE},
+         vdcmpinsts[] = {VDCMPWEQ, VDCMPWNE, VDCMPWLT, VDCMPWLE, VDCMPWGT, 
+                         VDCMPWGE};
+   enum inst inst, binst, mskinst;
+   short sregs[TNFR], vregs[TNFR];
+   short op, ir, vrd;
+   enum inst *sinst, *vinst, *vcmpinst;
+   const int nbr = 6;
+   const int nvinst = 11;
+
+   nfr = 0;
+/*
+ * Figure out what type of insts to translate
+ */
+   if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+   {
+      sinst = sfinsts;
+      vinst = vfinsts;
+      vcmpinst = vfcmpinsts;
+   }
+   else
+   {
+      sinst = sdinsts;
+      vinst = vdinsts;
+      vcmpinst = vdcmpinsts;
+   }
+/*
+ * Translate body of loop
+ */
+   for (bl=scope; bl; bl = bl->next)
+   {
+/*
+ *    skip the code of vector backup, if exists
+ */
+      if (bl->blk == lp->header)
+      {
+         ip = FindCompilerFlag(bl->blk, CF_SSV_VBACKUP_END);
+         if (ip)
+            ip = ip->next;
+         else ip = bl->blk->ainst1;
+      }
+      else ip = bl->blk->ainst1;
+/*
+ *    transform the rest of the code
+ */
+      for ( ; ip; ip = ip->next)
+      {
+         inst = GET_INST(ip->inst[0]);
+         if (ACTIVE_INST(inst))
+         {
+/*
+ *          check for FCMP/FCMPD instruction so that we can replace it
+ *          with vector cmp. 
+ */
+            if (inst == FCMP || inst == FCMPD)
+            {
+/*
+ *             Select appropriate vector cmp inst
+ */
+               if (inst == FCMP)
+               {
+                  vcmpinst = vfcmpinsts;
+                  mskinst = VFSBTI;
+               }
+               else
+               {
+                  vcmpinst = vdcmpinsts;
+                  mskinst = VDSBTI;
+               }
+/*
+ *             check for the next inst. Right now assume the next instruction
+ *             would always be one of the conditional branch
+ */
+               binst = ip->next->inst[0]; /* assume next ainst alwasy branch*/
+/*
+ *             find index of appropriate branch and VCMP
+ */
+               for (m = 0; m < nbr; m++)
+               {
+                  if (brinsts[m] == binst)
+                     break;
+               }
+               assert(m!=nbr); /* there must be a branch */
+/*
+ *             insert new instructions replacing old FCMP and BR insts.
+ *             NOTE: Those two old instructions use two fregs/dregs (fcc, icc
+ *             and pc), but new insts would use 3 vfregs/vdregs and 1 iregs (icc
+ *             and pc) where 1 vfreg/vdreg and ireg would be overwritten.
+ *             
+ *             NOTE: We reserve  new ireg and vreg here, these regs are only
+ *             used as destination. So, we can reuse later. Need to free those.
+ *             I avoid that here right now. We consider this later.
+ */
+               ip->inst[0] = vcmpinst[m];
+/*
+ *             Find appropriate vector source regs for VCMP, here assume all the
+ *             regs are of same type set by vflag, later relax this assumption
+ */
+               for (j = 2; j < 4; j++)
+               {
+                  op = ip->inst[j];
+                  assert(op);
+                  if ( op < 0)
+                  {
+                     op = -op;
+                     k = FindInShortList(nfr,sregs, op);
+                     if (!k)
+                     {
+                        nfr = AddToShortList(nfr, sregs, op);
+                        k = FindInShortList(nfr, sregs, op);
+                        vregs[k-1] = GetReg(FLAG2TYPE(lp->vflag));
+                     }
+                     ip->inst[j] = -vregs[k-1];
+                  }
+                  else
+                  {
+                     if (IS_DEREF(STflag[op-1]))
+                     {
+                        k = STpts2[op-1];
+                        if (!FindInShortList(lp->varrs[0],lp->varrs+1,k))
+                        {
+                           k = FindInShortList(lp->vscal[0],lp->vscal+1,k);
+                           assert(k);
+                           ip->inst[j] = SToff[lp->vvscal[k]-1].sa[2];
+                           assert(ip->inst[j] > 0);
+                        }
+                     }
+                     else if (!FindInShortList(lp->varrs[0],lp->varrs+1,op))
+                     {
+                        k = FindInShortList(lp->vscal[0], lp->vscal+1, op);
+                        assert(k);
+                        ip->inst[j] = lp->vvscal[k];
+                     }
+                  }
+               }
+#ifdef AVX
+/*
+ *             get new vregs for the destination, no vld as it is not uses but
+ *             sets
+ */
+               vrd = GetReg(FLAG2TYPE(lp->vflag));
+               ip->inst[1] = -vrd;
+#else
+/*
+ *             NOTE: for SSE, vcmpwXX has 3 operand, des and src1 is aliased
+ */            
+               op = ip->inst[2];
+               if (op < 0 )
+               {
+                  vrd = -op;
+                  ip->inst[1] = op;
+               }
+               else
+                  assert(0); /* src1 is deref: will consider this case later */
+
+#endif
+/*
+ *             it's time to add other instruction like mask and test
+ *             ireg is set, so, get a new ireg
+ *             NOTE: in vector path, no integer is used. So, we can safely
+ *             use a int reg.
+ */
+               ir = GetReg(T_INT);
+               ip = InsNewInst(bl->blk, ip, NULL, mskinst, -ir, -vrd, 0);
+/*
+ *             NOTE: 
+ *             By default, we always vectorize the fall-thru case, our 
+ *             intension is to get the maxium perf. So, making the scalar 
+ *             path as fall-thru is meaningless!! Still, you can see the 
+ *             code in the old implementation. 
+ */
+               mskval = 0;
+               ip = InsNewInst(bl->blk, ip, NULL, CMP, -ICC0, -ir, 
+                               STiconstlookup(mskval)) ;
+/*             ip = InsNewInst(bl->blk, ip, NULL, CMPAND, -ir, -ir, 
+                               STiconstLoopup(mskval)) ; */
+               ip->next->inst[0] = JNE;   
+/*
+ *             Majedul: NOTE: here ends a block. Shouldn't we re-initialize
+ *             the reg with GetReg(-1). !!!!! 
+ */
+            }
+            else /* changing other scalar inst to vector inst */
+            {
+               for (i=0; i < nvinst; i++)
+               {
+/*
+ *                If the inst is scalar fp, translate to vector fp, and insist
+ *                all fp ops become vector ops
+ */
+                  if (sinst[i] == inst)
+                  {
+                     ip->inst[0] = vinst[i];
+/*
+ *                   Change scalar ops to vector ops
+ */
+                     for (j=1; j < 4; j++)
+                     {
+                        op = ip->inst[j];
+                        if (!op) continue;
+                        else if (op < 0)
+                        {
+                           op = -op;
+                           k = FindInShortList(nfr, sregs, op);
+                           if (!k)
+                           {
+                              nfr = AddToShortList(nfr, sregs, op);
+                              k = FindInShortList(nfr, sregs, op);
+                              vregs[k-1] = GetReg(FLAG2TYPE(lp->vflag));
+                           }
+                          ip->inst[j] = -vregs[k-1];
+                        }
+                        else
+                        {
+                           if (IS_DEREF(STflag[op-1]))
+                           {
+                              k = STpts2[op-1];
+                              if (!FindInShortList(lp->varrs[0],lp->varrs+1,k))
+                              {
+                                 k = FindInShortList(lp->vscal[0],lp->vscal+1,
+                                                     k);
+                                 assert(k);
+                                 ip->inst[j] = SToff[lp->vvscal[k]-1].sa[2];
+                                 assert(ip->inst[j] > 0);
+                              }
+                           }
+                           else if (!FindInShortList(lp->varrs[0],lp->varrs+1,
+                                    op))
+                           {
+                              k = FindInShortList(lp->vscal[0], lp->vscal+1,
+                                                  op);
+                              assert(k);
+                              ip->inst[j] = lp->vvscal[k];
+                           }
+                        }
+                     }
+                     break;
+                  }
+               }
+            }
+         }
+      }
+   }
+   GetReg(-1);
+}
+
+INSTQ *DupVecPathInst(BLIST *scope, BBLOCK *bp0, LOOPQ *lp)
+{
+   BLIST *bl;
+   INSTQ *ip, *ipN, *ip0;
+   
+/*
+ * NOTE: can be set with a CMPFLAG
+ */
+   ip0 = ipN = PrintComment(bp0, NULL, NULL, "Duplicable Instructions begin!!!");
+
+   for (bl=scope; bl; bl=bl->next)
+   {
+/*
+ *    skip the code of vector backup, if exists
+ */
+      if (bl->blk == lp->header)
+      {
+         ip = FindCompilerFlag(bl->blk, CF_SSV_VBACKUP_END);
+         if (ip)
+            ip = ip->next;
+         else ip = bl->blk->ainst1;
+      }
+      else ip = bl->blk->ainst1;
+      
+      for ( ; ip; ip=ip->next)
+      { 
+/*
+ *       skip all LABEL and FLAG
+ */
+         if (ip->inst[0] == LABEL || ip->inst[0] == CMPFLAG) continue;
+/*
+ *       Copy the remaining instruction.
+ */
+         ip0 = InsNewInst(bp0, ip0, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
+                          ip->inst[3]);
+      }
+   }
+   return ipN;
+}
+
+BLIST *UnrollLargerBet(BBLOCK *bp0, LOOPQ *lp, struct ptrinfo *pi,  int unroll)
+{
+   int i, j;
+   short imask;
+   short r0, r1;
+   INSTQ *ip, *ip1, *ipCB, *ipnext;
+   BBLOCK *bp; 
+   BLIST *bl, *dupblks;
+
+   dupblks = NULL;
+/*
+ * NOTE:
+ * Assumption: only one conditional branch to handle, no more than 2 paths.
+ * Note about the duplication:
+ * 1. vector path can be xformed as a single basic block after unrolling.
+ * 2. As it will be a single block, all labels can be deleted.
+ * 3. like the normal unrolling, ptr lds need to be updated
+ * 4. unlike the normal unrolling, no need to consider index var update; 
+ *    vector path ensure that there would be no integer vars used/set here.
+ * 5. issue: 
+ *    need extra int reg to preserve the mask val:
+ *    - can be kept an int reg live on through the whole unrolled blk
+ *    - can be used an int ver to store the mask val and use ld/st format.
+ *    NOTE: choose 2nd option now. 
+ */
+   assert(NPATH==2); /* morethan 2 paths are not consider right now */
+   
+   if (unroll < 2) return(NULL); /* no need to duplicate */
+   if (!bp0) return(NULL);       /* nothing to duplicate */
+/*
+ *    update the integer mask and remove the conditional branch.
+ */
+   imask = InsertNewLocal("_imask", T_INT);
+
+   for (i=1; i < unroll; i++)
+   {
+      bp = NewBasicBlock(NULL, NULL);
+      bl = NULL;
+      bl = AddBlockToList(bl, bp);
+      ip1 = PrintComment(bp, NULL, NULL, "Dup-%d begins!!!", i);
+/*
+ *    copy all instructions
+ */
+      for (ip=bp0->inst1; ip; ip=ip->next)
+      {
+         ip1 = InsNewInst(bp, ip1, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
+                          ip->inst[3]);
+/*
+ *       save branch inst to use later
+ */
+         if (IS_COND_BRANCH(ip->inst[0]))
+            ipCB = ip;
+      }
+/*
+ *    update the ptr lds. Assumption: ptr updated already being killed at SV
+ *    HERE HERE ptr is already deleted from this path!!! how can we figure out
+ *    the moving ptr now!!! Must be passed from outside!!!
+ */
+      if (pi)
+         UpdatePointerLoads(bl, pi, i*Type2Vlen(FLAG2TYPE(lp->vflag)));
+/*
+ *    chnage the mask inst and deleted the branch    
+ */
+      for (ip=bp->ainst1; ip; ip=ip->next)
+      {
+         if (IS_CMPW(ip->inst[0]) && 
+             (ip->next->inst[0]==VFSBTI || ip->next->inst[0] == VDSBTI))
+         {
+            r0 = GetReg(T_INT);
+            r1 = GetReg(T_INT);
+            InsNewInst(bp, NULL, ip, LD, -r0, SToff[imask-1].sa[2], 0);
+            ip = ip->next; /* mask inst */
+/*
+ *          update the mask inst with new int reg and insert a store in imask
+ */
+            ip->inst[1] = -r1;
+            ip = InsNewInst(bp, ip, NULL, OR, -r0, -r0, -r1);
+            ip = InsNewInst(bp, ip, NULL, ST, SToff[imask-1].sa[2],-r0, 0);
+            ip = ip->next;
+            assert(IS_CMP(ip->inst[0]) && IS_COND_BRANCH(ip->next->inst[0]));
+            ipnext = ip->next;  /* save the next inst*/
+            DelInst(ip);
+            DelInst(ip->next);
+            GetReg(-1);
+         }
+      }
+/*
+ *    Insert branch at the end of the for last duplication
+ */
+      if (i == (unroll-1) )
+      {
+         r0 = GetReg(T_INT);
+         ip = bp->ainstN;
+         ip = InsNewInst(bp, ip, NULL, LD, -r0, SToff[imask-1].sa[2], 0);
+         ip = InsNewInst(bp, ip, NULL, CMP, -ICC0, -r0, STiconstlookup(0));
+         ip = InsNewInst(bp, ip, NULL, ipCB->inst[0], ipCB->inst[1], 
+                         ipCB->inst[2], ipCB->inst[3]);
+         GetReg(-1);
+      }
+#if 0
+      fprintf(stderr, "Dup #%d: \n", i);
+      fprintf(stderr, "================\n");
+      PrintThisBlockInst(stderr, bp);
+#endif
+/*
+ *    add blks in list
+ */
+      dupblks = AddBlockToList(dupblks, bp);
+      //KillBlockList(bl);
+      //KillAllInst(bp);
+      //KillAllBasicBlocks(bp);
+   }
+/*
+ * update the main loop blk
+ */
+   for (ip=bp0->ainst1; ip; ip=ip->next)
+   {
+      if (IS_CMPW(ip->inst[0]) && 
+         (ip->next->inst[0]==VFSBTI || ip->next->inst[0] == VDSBTI))
+      { 
+         r0 = GetReg(T_INT);
+         ip = ip->next; /* mask inst */
+/*
+ *       update the mask inst with new int reg and insert a store in imask
+ */
+         ip->inst[1] = -r0;
+         ip = InsNewInst(bp, ip, NULL, ST, SToff[imask-1].sa[2], -r0, 0);
+         ip = ip->next;
+         assert(IS_CMP(ip->inst[0]) && IS_COND_BRANCH(ip->next->inst[0]));
+         ipnext = ip->next;  /* save the next inst*/
+         DelInst(ip);
+         DelInst(ip->next);
+         GetReg(-1);
+      }
+   }
+/*
+ * reverse the list to maintain the sequence, add the original blk
+ */
+   dupblks = ReverseBlockList(dupblks);
+   dupblks = AddBlockToList(dupblks, bp0);
+#if 0
+   for (bl=dupblks; bl; bl=bl->next)
+   {
+      PrintThisBlockInst(stderr, bl->blk);
+   }
+#endif   
+
+   return(dupblks);
+}
+
+void InsUnrolledCodeToVpath(LOOPQ *lp, BLIST *scope, BLIST *dupblks)
+{
+   BLIST *bl;
+   BBLOCK *bp;
+   INSTQ *ip, *ip0, *ipn;
+   
+   if (!dupblks) return;
+/*
+ * delete all inst after backup to tails (upto the label before CF_LOOP_TEST)
+ * Assumption: always jumpback from scalar_resatrt to label before CF_LOOP_TEST
+ * which follows the current implementation.
+ */
+   for (bl=scope; bl; bl=bl->next)
+   {
+/*
+ *    skip the code of vector backup, if exists
+ */
+      if (bl->blk == lp->header)
+      {
+         ip = FindCompilerFlag(bl->blk, CF_SSV_VBACKUP_END);
+         if (ip)
+            ip = ip->next;
+         else
+         {
+            assert(bl->blk->ainst1->inst[0] == LABEL); /* atleast has a label*/
+            ip = bl->blk->ainst1->next;
+         }
+      }
+      else ip = bl->blk->inst1;
+/*
+ *    If it is tail blk, delete inst upto the LABEL inserted by Scalar Restart 
+ */
+      if (FindBlockInList(lp->tails, bl->blk))
+      {
+         for ( ; ip; ip=ipn)
+         {
+/*
+ *          HERE HERE, need to identify the LABEL which is inserted by the
+ *          Scalar Resart. 
+ *          NOTE: kept all labels. So, now just need to check whether The 
+ *          CMPFLAG is one them which are used to update loopcontrol
+ */
+            if (ip->inst[0] == CMPFLAG && 
+                (ip->inst[1] == CF_LOOP_PTRUPDATE 
+                 || ip->inst[1] == CF_LOOP_UPDATE))
+               break;
+            else
+            {
+               if (ip->inst[0] == LABEL || ip->inst[0] == CMPFLAG)
+                  ipn = ip->next;
+               else
+                  ipn = DelInst(ip);
+            }
+         }
+      }
+/*
+ *    for other blks, delete all instructions
+ */
+      else 
+      {
+         while (ip)
+            ip = DelInst(ip);
+      }
+   }
+
+/*
+ * Now, add instructions from duplicated blks at the header of lp
+ */
+   bp = lp->header;
+   ip0 = FindCompilerFlag(bp, CF_SSV_VBACKUP_END);
+   if (!ip0) 
+   {
+      ip0=bp->ainst1;
+      assert(ip0->inst[0] == LABEL);
+   }
+   for (bl=dupblks; bl; bl=bl->next)
+   {
+      for (ip=bl->blk->inst1; ip; ip=ip->next)
+      {
+         ip0 = InsNewInst(bp, ip0, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
+                          ip->inst[3]);
+      }
+   }
+/*
+ * delete all temporary blks and inst
+ */
+   for (bl=dupblks; bl; bl=bl->next)
+      KillAllBasicBlocks(bl->blk);
+   KillBlockList(bl);
+
+#if 0
+   fprintf(stdout, "Final SV with Unroll\n");
+   PrintInst(stdout, bbbase);
+   exit(0);
+#endif   
+}
+
+
+int SpecVecXform(LOOPQ *lp, int unroll)
+/*
+ * supports larger bet for unrolling of speculative vectorization
+ */
+{
+   BBLOCK *bp;
+   BLIST *scope, *dupblks;
+   INSTQ *ippu, *ip0, *ip;
+   struct ptrinfo *pi0, *pi;
+   short vlen, URbase;
+   
+/*
+ * Need at least one path to vectorize
+ */
+   assert(VPATH!=-1);
+   scope = PATHS[VPATH]->blocks;
+
+   vlen = Type2Vlen(lp->vflag);
+   URbase = unroll? vlen*unroll: unroll;
+
+/*
+ * If Loop control is already not killed, kill all controls in optloop 
+ * We will put back the appropriate loop control at the end of the function.
+ */
+   KillLoopControl(lp);
+
+/*
+ * Find all pointer updates, and remove them from vector path (leaving only
+ * vectorized instructions for analysis); will put them back in loop after
+ * vectorization is done.
+ */
+   pi0 = FindMovingPointers(scope);
+   ippu = KillPointerUpdates(pi0, URbase);
+/*
+ * It's time to generate the vector initialization and vector reduction
+ */
+   AddVectorInitReduction(lp);
+/*
+ * add vector backup there based on lp->bvvscal. Recovery code is inserted in
+ * Scalar Restart.
+ */
+   AddVectorBackup(lp);
+/*
+ * Transform the vector path 
+ */
+   SpecVecPathXform(scope, lp);
+/*
+ * Now, we need to duplicate the vector path 
+ * ***********************************************************
+ */
+   bp = NewBasicBlock(NULL, NULL);
+   ip0 = DupVecPathInst(scope, bp, lp); 
+   dupblks = UnrollLargerBet(bp, lp, pi0,  unroll);
+   
+   KillAllPtrinfo(pi0); /* pi0 is needed in unroll. So, kill after that */
+
+#if 0
+   PrintThisInstQ(stderr, ip0);
+   PrintThisBlockInst(stderr, bp);
+#endif
+/*
+ * Put back loop control and pointer updates
+ */
+   OptimizeLoopControl(lp, URbase, 0, ippu);
+/*
+ * Now, we can update with the duplicated blks, deleting the previous insts 
+ */
+   if (dupblks) 
+      InsUnrolledCodeToVpath(lp, scope, dupblks);
+
+   CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = CFLOOP = 0;
+   
+   return(0);
+}
+
 int SpeculativeVecTransform(LOOPQ *lp)
 /*
  * transform Vector in single path which is saved globaly as vect path. Must 
@@ -3071,7 +3927,7 @@ static enum inst
  * vectorization is done.
  */
 
-   pi0 = FindMovingPointers(scope);
+   pi0 = FindMovingPointers(scope); /* mem leak, need to kill */
    ippu = KillPointerUpdates(pi0, vlen);
 /*
  * Find inst in preheader to insert scalar init before; want it inserted last
@@ -4028,21 +4884,206 @@ void AddInstBackupRecovery(BLIST *scope, LOOPQ *lp)
       {
 
       }
-   }
-   
+   } 
 }
 
-void AddBackupRecover(LOOPQ *lp, BBLOCK *bp0, int spath)
+int IsBackupCandidate(short var, short vpflag, int chcom)
 /*
- * adds back in vector path and recovery at the first of scalar path
+ * check whether this var is a candidate for back and recovery, 
+ * when chcom is set, check only the common blks upto cond branch
+ * vpflag represent the flag got from vector path
  */
 {
+   int i, j, check;
+   BLIST *bl, *scope;
+   BBLOCK *bp;
+   INSTQ *ip;
+/*
+ * this logic of this function is true only if there is 2 paths.
+ * if there are morethan 2 paths, we need to extend the logic
+ */
+   assert(NPATH==2);
+/*
+ * private var need no backup/recovery
+ */
+   if (vpflag & SC_PRIVATE) return(0);
+   if (vpflag & SC_SET)
+   {
+/*
+ * if chcom is set, only the common blks before 1st conditional branch is 
+ * checked. 
+ */
+      if (chcom)
+      {
+         scope = PATHS[VPATH]->blocks;
+/*
+ *       assuming blks are consequtive in path, FindLoopPath algo suggests 
+ *       that
+ */
+         for (bl=scope; bl; bl=bl->next)
+         {
+            for (ip = bl->blk->inst1; ip; ip=ip->next)
+            {
+/*
+ *             can be checked whether a var is set using bitvec, but 
+ *             I use here directly the inst format as it maintain the ld
+ *             st syntax yet.
+ */
+               if (IS_COND_BRANCH(ip->inst[0]))
+               {
+                  return(0);
+               }
+               /*else if (IS_STORE(ip->inst[0]) && ip->inst[1] == var)*/
+               else if(ip->inst[1] == var)
+               {
+                  return(1);
+               }
+            }
+         }
+         return(0);
+      }
+      else
+         return(1);
+   }
+   else return(0); /* if not set in vpath, no need to backup it */
+}
 
+void AddVectorRecover(LOOPQ *lp, BBLOCK *bp0, int spath, int chcom)
+/*
+ * adds backup in vector path and recovery at the first of scalar path
+ * if chcom (check common) is set, check only common path before the conditional
+ * branch.
+ */
+{
+   int i, j, N, n, k;
+   short *sc, *vvsc, *sf, *bvvscal;
+   BLIST *scope;
+   INSTQ *ip;
+   enum inst vld, vst;
+   short vreg;
+   char ln[512];
+/*
+ * temporary for backup variables
+ */
+   n = 0;
+   bvvscal = calloc(lp->vvscal[0]+1, sizeof(short));
+   assert(bvvscal);
+/*
+ * we need to check only the vector path for vector backup and recovery
+ * NOTE: What happens for Memory write!!! There is no recopvery machanism. 
+ * FIXME: right now, we don't consider memory write in speculation. we
+ * should add an assert to exit if there is a memory write in our scope.
+ */
+   vvsc = lp->vvscal;
+/*
+ * NOTE: in vpath, scal and vscal represent the same. There should not be any
+ * scal in vector path which is not vectorizatable. So, in vector path, I use
+ * scal and vscal interchangeably. But for scalar path, it would not be the 
+ * case. vscal should be NULL. 
+ * HERE HERE, but sflag and vsflag can't be used interchangeably. 
+ * FIXME: Then why both scal and vscal are used in optloop !!! 
+ */
+   sc = PATHS[VPATH]->vscal; /* check only the scalar of vpath */
+   sf = PATHS[VPATH]->sflag;
+
+   for (i=1, N=sc[0]; i <= N; i++) /* */
+   {
+      if (IsBackupCandidate(sc[i], sf[i], chcom))
+      {
+/*
+ *       accroding to current implementation of PathFlowVectorAnalysis, 
+ *       scal, vscal are same. inserted a assert about the assumption.
+ */
+         assert(lp->vscal[i] == PATHS[VPATH]->vscal[i] 
+                && lp->vscal[i] == PATHS[VPATH]->scal[i]) ;
+/*
+ *       create new vector var for backup ... ... ... 
+ */   
+         sprintf(ln, "_B%s", STname[vvsc[i]-1]);
+         k = bvvscal[i] = STdef(ln, LOCAL_BIT | FLAG2TYPE(lp->vflag), 0);
+         j = AddDerefEntry(-REG_SP, k, -k, 0, k);
+         SToff[k-1].sa[2] = j; /* AddDerefEntry may change the SToff itself */
+         n++;
+#if 0         
+         fprintf(stderr, "%s: %s(%s) needs backup!\n", STname[bvvscal[i]-1], 
+                 STname[vvsc[i]-1], STname[sc[i]-1]);
+#endif         
+      }
+   }
+/*
+ * has backup var? update optloop
+ */
+   if (n)
+   {
+      bvvscal[0] = N;
+      lp->bvvscal = bvvscal;
+/*
+ *    Add code to restore the original vector from the backup at the begining of
+ *    scalar restart. This func is call right after the creation of the scalar
+ *    restart blk. so, add inst at the end to keep the necessary labels intack.
+ *    HERE HERE, backup of this variable should be at the beginning of vector 
+ *    path.
+ */
+/*
+ *    set appropriate inst
+ */
+      if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+      {
+         vld = VFLD;
+         vst = VFST;
+      }
+      else
+      {
+         vld = VDLD;
+         vst = VDST;
+      }
+
+      ip = bp0->instN;
+      ip = InsNewInst(bp0, ip, NULL, CMPFLAG, CF_SSV_VRECOVERY, 0, 0);
+      for (N=lp->bvvscal[0], i=1; i <= N; i++)
+      {
+        if(lp->bvvscal[i])
+        {
+           vreg = GetReg(FLAG2TYPE(lp->vflag)); 
+           ip = PrintComment(bp0, ip, NULL, "Restoring vector %s form %s",
+                             STname[lp->vvscal[i]-1], STname[lp->bvvscal[i]-1]);
+           ip = InsNewInst(bp0, ip, NULL, vld, -vreg, 
+                           SToff[lp->bvvscal[i]-1].sa[2], 0);
+           ip = InsNewInst(bp0, ip, NULL, vst, SToff[lp->vvscal[i]-1].sa[2],
+                           -vreg, 0);
+           GetReg(-1);
+        }
+      }
+   }
+   else
+   {
+      lp->bvvscal = NULL;
+      free(bvvscal);
+   }
+
+#if 0
+   fprintf(stderr, "\n Vaiable set in vector path\n");
+   fprintf(stderr, "================================\n");
+
+    //fprintf(stderr, "Control Flag: %d\n", PATHS[i]->lpflag);
+   fprintf(stderr, "SET: ");
+   sc = PATHS[VPATH]->scal;
+   sf = PATHS[VPATH]->sflag;
+   for (j=1, N=sc[0]; j <= N; j++ )
+   {
+      if (sf[j] & SC_PRIVATE) continue;
+      if (sf[j] & SC_SET)
+         fprintf(stderr,"%s(%d) ",STname[sc[j]-1], sf[j]);
+   }
+   fprintf(stderr,"\n");
+#endif
+   
 }
 
 void AddScalarUpdate(LOOPQ *lp, BBLOCK *bp0, int spath)
 /*
  * Vector-to-scalar reduction to operate on scalar in Scalar Restart
+ * inst is added at the end of the block bp0
  */
 {
    int i, j, k, N;
@@ -4066,7 +5107,7 @@ void AddScalarUpdate(LOOPQ *lp, BBLOCK *bp0, int spath)
    for (i=1, N=vp->vscal[0]; i <= N; i++)
    {
       vscal = vp->vscal[i];
-      vpsflag = vp->sflag[i]; /* flags for the vars */
+      vpsflag = vp->sflag[i]; /* SC flags for the vars */
 /*
  *    if it is private vector variable, nothing to do.
  */
@@ -4094,7 +5135,7 @@ void AddScalarUpdate(LOOPQ *lp, BBLOCK *bp0, int spath)
  */         
            if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
            {
-              ip = PrintComment(bp0, ip, NULL, "Reduce accumulator vector for%s"
+              ip = PrintComment(bp0, ip, NULL,"Reduce accumulator vector for %s"
                                 ,STname[vscal-1]);
               ip = InsNewInst(bp0, ip, NULL, VFLD, -r0, 
                               SToff[lp->vvscal[i]-1].sa[2], 0);
@@ -4375,7 +5416,7 @@ void SetScalarRestartOptFlag(LOOPQ *lp, int *lpOpt, int *usesIndex, int *usesPtr
 }
 
 void DupBlkPathWithOpt(LOOPQ *lp, BLIST **dupblks, int islpopt, int UsesIndex,
-                       int UsesPtrs, int path)
+                       int UsesPtrs, int path, int dups)
 /*
  * duplicates loop blks vector lenth's time with loop index and ptr update
  * optimization if valid
@@ -4391,13 +5432,16 @@ void DupBlkPathWithOpt(LOOPQ *lp, BLIST **dupblks, int islpopt, int UsesIndex,
    struct ptrinfo *pi;
    extern int FKO_BVTMP;
    static int fid = 1;
-
+#if 0
    vlen = Type2Vlen(lp->vflag);
    URbase = (lp->flag & L_FORWARDLC_BIT) ? 0 :vlen-1;
+#else
+   URbase = (lp->flag & L_FORWARDLC_BIT) ? 0 :dups-1;
+#endif
    iv = FKO_BVTMP;
    SetVecAll(iv, 0);
 
-   for ( i=0; i < vlen; i++)
+   for ( i=0; i < dups; i++)
    {
       SetVecBit(lp->blkvec, lp->header->bnum-1, 0);
       FKO_BVTMP = iv = BitVecCopy(FKO_BVTMP, lp->blkvec);
@@ -4493,7 +5537,7 @@ void DupBlkPathWithOpt(LOOPQ *lp, BLIST **dupblks, int islpopt, int UsesIndex,
    
 }
 
-BBLOCK *GenScalarRestartPathCode(LOOPQ *lp, int path, int vlen,BLIST *ftheads, 
+BBLOCK *GenScalarRestartPathCode(LOOPQ *lp, int path, int vlen, BLIST *ftheads, 
                                  int ivtails)
 {
    int i, j;
@@ -4516,7 +5560,7 @@ BBLOCK *GenScalarRestartPathCode(LOOPQ *lp, int path, int vlen,BLIST *ftheads,
 /*
  * dublicates blocks with required optimization
  */
-   DupBlkPathWithOpt(lp, dupblks, islpopt, UsesIndex, UsesPtrs, path);
+   DupBlkPathWithOpt(lp, dupblks, islpopt, UsesIndex, UsesPtrs, path, vlen);
 
 /*
  * create a new BBLOCK structure for the scalar restart of this path
@@ -4527,9 +5571,17 @@ BBLOCK *GenScalarRestartPathCode(LOOPQ *lp, int path, int vlen,BLIST *ftheads,
    InsNewInst(bp0, NULL,NULL,LABEL,cflag,0,0);
 /*
  * Here starts the backup recovery operation.
- * Right now, it is dummy function. 
+ * Right now, it is dummy function.
+ * NOTE: We will need to check the whole vector path for backup/recovery 
+ * if we want to unroll it, otherwise we need to check only the blks upto
+ * the conditional branch to scalar_restart
  */
-   AddBackupRecover(lp, bp0, path);
+/*
+ * HERE HERE, why dasum (with if clause) with vector backup/recovery 
+ * provides better performance!!!
+ */
+  AddVectorRecover(lp, bp0, path, vlen > Type2Vlen(lp->vflag)? 0 : 1);
+  //AddVectorRecover(lp, bp0, path, 0); /* for testing */
 /*
  * Here, we start vector to scalar update
  */
@@ -4711,8 +5763,9 @@ BBLOCK *CreateSclResBlk(BBLOCK *fromBlk, BBLOCK *toBlk, int path)
    return bp;
 }
 
-void ScalarRestart(LOOPQ *lp)
+void ScalarRestart(LOOPQ *lp, int dups)
 /*
+ * NOTE: added a new parameter to control the num of dups 
  * In new Imp: 1st generate the whole code structure for each path 
  * which can be explored by down/up pointer, then update the original code
  * NOTE: scalar restart is tested with 2 paths. I'm not sure how to place
@@ -4732,7 +5785,11 @@ void ScalarRestart(LOOPQ *lp)
 
    assert(VPATH!=-1);
    bpaths = malloc(sizeof(BBLOCK*)*NPATH);
+#if 0   
    vlen = Type2Vlen(lp->vflag);
+#else
+   vlen = dups;
+#endif
 /*
  * Find the header of loop in the bbbase
  * NOTE: after cleanup, blocks have duplicate names. don't check anything
@@ -5329,8 +6386,9 @@ void ScalarRestart0(LOOPQ *lp)
 }
 
 
-int SpecSIMDLoop(void)
+int SpecSIMDLoop(int SB_UR)
 {
+   int unroll;    /* stronger bet unroll */
    LOOPQ *lp;
    INSTQ *ippu;
    struct ptrinfo *pi0;
@@ -5338,6 +6396,8 @@ int SpecSIMDLoop(void)
    lp = optloop;
 
    KillLoopControl(lp);
+
+   unroll = (SB_UR < 2)? 1: SB_UR;
 /*
  * NOTE: Loop peeling must be called before cleanup, as it may chnage the loop
  * control structure of main loop, hence the cleanup loop. 
@@ -5399,18 +6459,24 @@ int SpecSIMDLoop(void)
    PrintInst(stdout, bbbase);
    exit(0);
 #endif
-   ScalarRestart(lp);
+   
+   ScalarRestart(lp, Type2Vlen(lp->vflag)*unroll);
+
 /*
  * Consider only vector path now. Need to add some analysis for various vars
- * to implement backup stages.
+ * to implemnt backup stages.
  */
 #if 0 
    fprintf(stdout, " LIL AFTER SCALAR RESTART LOOP \n");
    PrintInst(stdout, bbbase);
    exit(0);
 #endif
-   SpeculativeVecTransform(lp);  
 
+#if 0   
+   SpeculativeVecTransform(lp);  
+#else
+   SpecVecXform(lp, unroll);
+#endif
 #if 0
    fprintf(stdout, " LIL AFTER SSV LOOP \n");
    PrintInst(stdout, bbbase);
