@@ -150,6 +150,7 @@ struct loopq
    short *vsflag;    /* info array for vscal */
    short *vsoflag;   /* info array for output vscal */
    short *vvscal;    /* vect locals used for vscal */
+   short *bvvscal;   /* backup var for vvscal, needed in SV */
    short *nopf;      /* arrays which should not be prefetched */
    short *aaligned;   /* arrays that have known alignment */
    uchar *abalign;    /* alignments of above arrays */
