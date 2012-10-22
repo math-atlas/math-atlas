@@ -58,6 +58,7 @@ void PrintUsageN(char *name)
    fprintf(stderr, "     o : dump opt sequence to <file>.opt\n");
    fprintf(stderr, "  -U <#> : Unroll main loop # of times\n");
    fprintf(stderr, "  -V : Vectorize (SIMD) main loop\n");
+   fprintf(stderr, "  -B : Stronger Bet unrolling for SV\n");
 #if 0
    fprintf(stderr, 
 "  -Vm [SSV,VRC,VEM]: Vectorize (SIMD) main loop with control flow\n");
@@ -338,6 +339,12 @@ struct optblkq *GetFlagsN(int nargs, char **args,
          case 'A':
             aeb = NewPtrinfo(i+1, atoi(args[i+2]), aeb);
             i += 2;
+            break;
+/*
+ *       stronger bet unrolling for SV
+ */
+         case 'B':
+            FKO_SB = atoi(args[++i]);
             break;
 /*
  *       Majedul: To generalize the AccumExpansion with Scalar Expansion
@@ -2862,7 +2869,15 @@ int main(int nargs, char **args)
          VECT_FLAG |= VECT_SV;
          
          SpeculativeVectorAnalysis();
-         SpecSIMDLoop();
+         SpecSIMDLoop(FKO_SB);
+         
+         FinalizeVectorCleanup(optloop, FKO_SB);
+#if 0
+         fprintf(stdout, "LIL AFTER LARGER BET \n");
+         PrintInst(stdout, bbbase);
+         //PrintST(stdout);
+         exit(0);
+#endif         
          #if 0
             //GenAssenblyApplyingOpt4SSV(fpout, optblks, abase);
             GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
@@ -2882,6 +2897,7 @@ int main(int nargs, char **args)
          /*VectorAnalysis();*/
          SpeculativeVectorAnalysis();
          Vectorization();
+         FinalizeVectorCleanup(optloop, 1);
       }
 /*
  *    NOTE:
@@ -2889,8 +2905,8 @@ int main(int nargs, char **args)
  *    new UnrollCleanup should recognize the changes and update accordingly
  *    NOTE: as this cleanup updates the loopcontrol, must invalidate the old 
  *    one
+ *    HERE HERE .... shifted up 
  */
-      FinalizeVectorCleanup(optloop);
 /*
  *    NOTE: There is a issue here. If we reconstruct the CFG after vectorization
  *    we can't call existing KillLoopControl function. checking for cleanup 
@@ -2951,7 +2967,15 @@ int main(int nargs, char **args)
  */
       if (VECT_FLAG & VECT_SV)
       {
-         TransformFallThruPath(1);
+/*
+ *       NOTE: running fall-thru after unrolling is not a good idea as it will
+ *       traverse all the paths. If we use SB (strong bet) 8 for a double kernel
+ *       there would be atleast 8*4 = 32 branch in scalar restart which means
+ *       2^32 seperate paths!!!
+ */
+         /*TransformFallThruPath(1);*/
+
+         ReshapeFallThruCode(); /* it requires very less time */
          
          InvalidateLoopInfo();
          bbbase = NewBasicBlocks(bbbase);
@@ -3020,7 +3044,11 @@ int main(int nargs, char **args)
       else assert(0); /* must have moving ptr for prefetch */
          
       if (optloop->pfarrs)
-         AddPrefetch(optloop, FKO_UR);
+      {
+         if (!FKO_SB) FKO_SB = 1;
+         if (!FKO_UR) FKO_UR = 1;
+         AddPrefetch(optloop, FKO_UR*FKO_SB);
+      }
    }
 
 #if 1 
