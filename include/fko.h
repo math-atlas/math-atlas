@@ -85,12 +85,13 @@
     CFLOOP=0;     /* Loop info up-to-date */
 
     int FKO_UR=0; /* unroll factor */
+    int FKO_SB=0; /* stronger bet unroll factor */
 #else
    extern BBLOCK *bbbase;
    extern char rout_name[128];
    extern int rout_flag, FKO_FLAG;
    extern int CFU2D, CFDOMU2D, CFUSETU2D, INUSETU2D, INDEADU2D;
-   extern int CFLOOP, FKO_UR;
+   extern int CFLOOP, FKO_UR, FKO_SB;
 #endif
 
 #define IRET_BIT 0x1
