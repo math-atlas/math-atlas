@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 
 def GetFKOinfo():
    pwd = os.getcwd()
@@ -280,6 +281,28 @@ def RemoveFilesFromFlags(blas, flags):
          nf = nf + flag + " "
    return nf
 
+def SetDefaultPFD(KFLAG0, inf):
+#
+#  Remove all prefetch flags
+#
+   KFLAG = KFLAG0
+
+   matches= re.findall(r'-Ps\s\w\s\w\s\d+\s\d+',KFLAG0) ## find -Ps b A 0 1
+   for ps in matches:
+      KFLAG = KFLAG.replace(ps, '') ## remove the pattern
+   
+   matches = re.findall(r'-P\s\w+\s[-]?\d+\s\d+',KFLAG0) ## find -P X 0 1
+   for pfs in matches:
+      KFLAG = KFLAG.replace(pfs, '') ## remove the pattern
+#
+#  add default prefetch flags
+#
+   LS  = inf[1][0]
+   (pfarrs, pfsets, pfuses) = GetFPInfo(inf)
+   npf = len(pfarrs)
+   KFLAG = KFLAG + " -Ps b A 0 " + str(npf) + " -P all 0 " + str(LS*2) 
+   return KFLAG
+
 def RemoveRedundantPrefFlags(flags, pfarrs):
 #
 #  If we've got a -P all spec, make sure some array not given explicitly
@@ -334,6 +357,49 @@ def callfko(fko, flag):
    if (err != None):
       print "command '%s' died with: %d" % (cmnd, err)
       sys.exit(err)
+#
+#  parameterize standard flag for Vec and SB
+#
+def GetOptStdFlags(fko, rout, pre, VEC, SB=0, URF=0):
+   newinfo = NewInfo(fko, rout)
+   inf = [newinfo[i] for i in range(11) ]
+   vec = inf[5]
+   if vec and VEC:
+      VEC = 1
+   else:
+      VEC = 0
+   LS  = inf[1][0]
+   (pfarrs, pfsets, pfuses) = GetFPInfo(inf)
+   npf = len(pfarrs)
+   if (VEC == 0):
+      if (pre == 's'): psiz = 4
+      else: psiz = 8
+#
+#     If URF > 0, force Unroll to URF
+#
+      if URF:
+         UR = URF
+      else:
+         UR = LS / psiz
+      UF = " -U %d" %UR
+      VF = ""
+   else: ##  VEC
+      if URF:
+         UR = URF
+         UF = " -U %d" %UR
+      else: ## no force UR
+         if SB:
+            UR = int(LS / (32*SB))      ## for AVX 
+            if UR < 1:
+               UF = " -U %d" %UR
+            else:
+               UF = ""
+         else: ## no SB
+            UR = LS / 32      ## for AVX 
+            UF = " -U %d" %UR
+      VF = " -V"
+   KFLAG = VF + " -Ps b A 0 " + str(npf) + " -P all 0 " + str(LS*2) + UF
+   return KFLAG 
 
 def GetStandardFlags(fko, rout, pre):
    #inf = info(fko, rout)
@@ -350,7 +416,8 @@ def GetStandardFlags(fko, rout, pre):
       UR = LS / psiz
       VF = ""
    else:
-      UR = LS / 16
+      #UR = LS / 16
+      UR = LS / 32      ## for AVX 
       VF = " -V"
    assert(UR > 0)
    KFLAG = VF + " -Ps b A 0 " + str(npf) + " -P all 0 " + str(LS*2) + " -U " \

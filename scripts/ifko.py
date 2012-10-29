@@ -14,6 +14,9 @@ import re
 optT = "-X 1 1 -Y 1 1 -Fx 32 -Fy 32"
 opt = "" ## populated with user argument 
 skipOpt = [] ## opt named as(fko cmnd): mmr,rc,v,vs,se,P,ps,par,p
+SB = 0 # temporary global just to test
+URF = 0 # forced UR, tuned with fixed UR
+isSV = 0 # special flag for speculation applied!
 
 #
 # Given set of arrs that are write-only (no uses), tries using non-temporal
@@ -131,8 +134,12 @@ def ifko_pftype(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
 #
 def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr,
             pfd0=0, pfdN=2048, pfdinc=0):
+#
+#  Figure out the prefetch cache level
+#
    st = "-P %s " % (arr)
    j = KF0.find(st)
+
    if j == -1:
       j = KF0.find("-P all ")
       assert(j != -1)
@@ -141,6 +148,7 @@ def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr,
       j += 4 + len(arr)
    words = KF0[j:].split()
    pflvl = int(words[0])
+   
    LS = info[1][pflvl];
    if not pfd0: pfd0 = LS
    if not pfdinc: pfdinc = LS
@@ -148,7 +156,22 @@ def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr,
    ipd = int(words[1])
    mfM = 0.0
    pfdM = 0
-   KF0 = KF0 + " -Ps b A 0 1"
+#
+#  Majedul: delete previous default pref sch
+# 
+#   match = re.search(r'-Ps\s\w\s\w\s\d+\s\d+',KF0) ## find -Ps b A 0 1
+#   if match:
+#      pat = match.group()
+#      KF0 = KF0.replace(pat, '') ## remove the all occurance
+#   KF0 = KF0 + " -Ps b A 0 1"
+#
+#  will delete the -P all 0 128
+#
+#   match = re.search(r'-P\s\w+\s[-]?\d+\s\d+',KF0) ## find -P X 0 1
+#   if match:
+#      pat = match.group()
+#      KF0 = KF0.replace(pat, '') ## remove all occurance
+
 #
 #  Scope very short PFD
 #
@@ -185,7 +208,7 @@ def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr,
 #  Try not prefetching array at all
 #
    KFn = KF0 + " -P %s -1 0" % (arr)
-   print KFn
+#   print KFn
    fkocmnd.callfko(fko, KFn)
    [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
                         "gcc", "-x assembler-with-cpp", opt=opt)
@@ -202,13 +225,35 @@ def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=64):
    print "   Finding best unroll:"
 #
 #  Get rid of default unrolling so we can add our own
+
 #
-   if blas.find("amax") != -1 :
-      URN = 32
-   if blas.find("iamax") != -1 :
-      URN = 32
-   if blas.find("nrm2") != -1 : ## limit the blind unrolling for nrm2... 
+#  default max unroll, URN is 64
+#  if speculation is applied, max_unroll is applied to 16
+#  
+   if isSV:
       URN = 16
+#
+#     if SB is specified, SB*UR can be MaxUnroll
+#
+      if SB:
+         URN = int (URN+SB-1)/SB 
+
+#  MAX_UR = 32
+#   if blas.find("amax") != -1 :
+#      if SB:
+#         URN = int((MAX_UR+SB-1)/SB) ### just testing!!
+#      else:
+#         URN = MAX_UR
+#   if blas.find("iamax") != -1 :
+#      if SB:
+#         URN = int((MAX_UR+SB-1)/SB)
+#      else:
+#         URN = MAX_UR
+#   if blas.find("nrm2") != -1 : ## limit the blind unrolling for nrm2... 
+#      if SB:
+#         URN = int((MAX_UR+SB-1)/SB)
+#      else:
+#         URN = MAX_UR
    
    j = KF0.find("-U ")
    if j != -1:
@@ -232,9 +277,17 @@ def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=64):
       if (mf >= mf0*1.01):
          URB = UR
          mf0 = mf
-      UR *= 2
+#
+#     for SV, we need to increament by 1 
+#
+      if isSV:
+         UR += 1
+      else:
+         UR *= 2
+         #UR += 1
 
    KF0 = KF0 + " -U %d" % URB
+   print "\n   BEST Unroll Factor = %d" %URB
    return [mf0,KF0]
 
 def FindSE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=6):
@@ -242,6 +295,8 @@ def FindSE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=6):
    """
 #
 #  Time the default case
+#  FIXED: need to save the default flag also. If SE is no better than previous
+#  one, restore the default flag
 #
    fkocmnd.callfko(fko, KF0)
    [t0,m0] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
@@ -258,7 +313,8 @@ def FindSE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=6):
    else : KFN = ""
    for word in words[2:] :
       KFN = KFN + " " + word
-   KF0 = KFN
+   #KF0 = KFN ## don't! lost the previous -U 
+   
    print "   Finding ScalarExpan, UR=%d, mflop= %.2f" % (ur, m0)
    mfB = 0.0
    urB = ur
@@ -306,8 +362,18 @@ def FindSE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=6):
       if mfB > mf0*1.001:
          KFN = KFN + " -U %d -SE %s %d" % (urB, ac, aeB)
          mf0 = mfB
+#
+#  check for altimate result
+#
+   #print mfB, KFN
+   #print mf0, KF0
 
-   print "   SE=%d, UR=%d, mfB=%2.f, KFN=%s" % (aeB, urB, mfB, KFN)
+   if mfB > m0*1.001:
+      print "   SE=%d, UR=%d, mfB=%2.f, KFN=%s" % (aeB, urB, mfB, KFN)
+   else:
+      KFN = KF0         ## restore original flags
+      mfB = m0
+      print "   KFN = KF0 = %s" % KFN
    return[mfB, KFN]
 
 def FindAE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=6):
@@ -483,13 +549,26 @@ def ifko_Vec(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
    if KF0.find('-V') == -1:
       KF0 = ' -V' + KF0
 #
+#  flag for speculation 
+#
+   global isSV
+#
+#  find out the standard vec flags
+#
+   #if SB:
+   #   KF0 = GetOptStdFlags(fko, rout, pre, 1, SB);
+   #else:
+   #   KF0 = GetOptStdFlags(fko, rout, pre, 1);
+   #print KF0
+#
 #  delete all flags which are associated with -p/rc/mmr
 #
    j = KF0.find('-p')
    if j != -1:
-      match = re.serch(r'-p\s\d+',KF0)
-      rem = match.group()
-      KF0 = KF0.replace(rem, '') ## removing the -p val 
+      match = re.search(r'-p\s\d+\s',KF0) ## single instance
+      if match:
+         rem = match.group()
+         KF0 = KF0.replace(rem, '') ## removing the -p val 
    j = KF0.find('-rc')
    if j != -1:
       KF0 = KF0.replace('-rc','')
@@ -503,6 +582,7 @@ def ifko_Vec(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
 #
    m0 = 0
    t0 = 0
+   KFn = KF0
    if npath > 1:
       if vm[0] or vm[1] or vm[2]:
          if 'mmr' in skipOpt:
@@ -534,20 +614,26 @@ def ifko_Vec(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
 #     check for speculative 
 #
       if vm[4] :
-         if 'vs' in skipOpt:
+         if 'sv' in skipOpt:
             print '      SKIPPING SPECULATIVE VECTORIZATION'
          else:
             for i in range(npath):
                if vpath[i] :
-                  KF1 = ' -p %d' %(i+1) + KF0  
+                  KF1 = ' -p %d' %(i+1) + KF0
+                  if SB:
+                     KF1 = ' -B %d ' %(SB) + KF1
                   fkocmnd.callfko(fko, KF1)
                   [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
                                       "gcc", "-x assembler-with-cpp", opt=opt)
-                  print "      V+SP%d, mflop = %.2f" % (i+1, mf)
+                  if SB:
+                     print "      V+SP%d SB=%d, mflop = %.2f" % (i+1, SB, mf)
+                  else:
+                     print "      V+SP%d, mflop = %.2f" % (i+1, mf)
                   if mf > m0:
                      m0 = mf
                      t0 = t
                      KFn = KF1
+                     isSV = 1  ## SV is superior, so is applied from now
    else:    ## no path to reduce 
       fkocmnd.callfko(fko, KF0)
       [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
@@ -561,6 +647,89 @@ def ifko_Vec(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
    KF0 = KFn
    return [m0,KFn]
 
+def FindBET(ATLdir, ARCH, KF0, fko, rout, pre, blas, N):
+#
+#  figure out the UR factor from flag
+#
+   j = KF0.find('-U')
+   if j != -1:
+      words = KF0[j:].split() 
+      UR0 = int(words[1])
+   else:
+      UR0 = 1
+#
+#  set max bet as the UR but not less than 4, 
+#  but not greater than 10
+#
+   #maxbet = UR0 * 2;
+   maxbet = UR0
+   if maxbet < 4:
+      maxbet = 4
+   if maxbet > 10:
+      maxbet = 10
+   
+   URm = 16 
+#
+#  time default case 
+#
+   fkocmnd.callfko(fko, KF0)
+   [t0,m0] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                         "gcc", "-x assembler-with-cpp", opt=opt)
+   KFn = KF0
+   KF1 = KF0
+   mf1 = m0
+   UR = 1
+   SB = 1
+
+   print "   Finding Over Speculation Factor, UR=%d, mflop= %.2f" % (UR0, m0)
+   
+   for i in range (2, maxbet):
+#
+#  remove previous bet if exists
+#
+      match = re.search(r'-B\s\d+',KFn) ## should not put space \s at last!
+      if match:
+         pat = match.group()
+         KFn = KFn.replace(pat, '') ## remove all bet
+
+      KFn = '-B %d ' %i + KFn
+#
+#     SB * UR should not be greater than 32 
+#
+      URN = int (URm/i) 
+      for j in range (1, URN+1):
+#
+#        remove prev unroll factor
+#
+         match = re.search(r'-U\s\d+',KFn) ## should not put space \s at last!
+         if match:
+            pat = match.group()
+            KFn = KFn.replace(pat, '') ## remove all bet
+      
+         KFn = '-U %d ' %j + KFn
+      
+         fkocmnd.callfko(fko, KFn)
+         [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                           "gcc", "-x assembler-with-cpp", opt=opt)
+         
+         print "      SB=%d, UR=%d, mflop= %.2f" % (i, j, mf)
+         
+         if mf > mf1*1.001:
+            mf1 = mf
+            KF1 = KFn
+            SB = i
+            UR = j
+
+   if mf1 > m0:
+      KFn = KF1
+      print "   Over Speculation : SB=%d, UR=%d, mf=%2.f, KFn=%s" % (SB, UR, 
+             mf1, KFn)
+   else:
+      print "   No Over Speculation Selected!\n" 
+      KFn = KF0
+      mf1 = m0
+
+   return [mf1, KFn]
 
 def ifko0(l1bla, pre, N):
    (IFKOdir, fko) = fkocmnd.GetFKOinfo()
@@ -584,10 +753,12 @@ def ifko0(l1bla, pre, N):
 #
 #  Findout the default flags (it includes vector, default prefetch and unroll)
 #
-   KFLAGS = fkocmnd.GetStandardFlags(fko, rout, pre)
+   #KFLAGS = fkocmnd.GetStandardFlags(fko, rout, pre) 
+   KFLAGS = fkocmnd.GetOptStdFlags(fko, rout, pre, 1, URF) 
    KFLAGS = KFLAGS + " -o " + str(outf) + " " + rout
    mflist = []
    testlist = []
+   #print KFLAGS
 #
 #  Majedul: default and vect case would not be same now. Vspec may be 
 #  worse than NonVec case.
@@ -597,9 +768,15 @@ def ifko0(l1bla, pre, N):
 #
 #  check best scalar xforms, delete any vector flag
 #
-   j = KFLAGS.find("-V")
-   if j != -1 :
-      KFn = KFLAGS[0:j-1] + KFLAGS[j+2:]
+   #j = KFLAGS.find("-V")
+   #if j != -1 :
+      #KFn = KFLAGS[0:j-1] + KFLAGS[j+2:]
+#
+#  find out best standard scalar flag 
+#
+   KFn = fkocmnd.GetOptStdFlags(fko, rout, pre, 0, URF) 
+   KFn = KFn + " -o " + str(outf) + " " + rout
+   #print KFn
 #
 #  standard flag without vect
 #
@@ -624,11 +801,16 @@ def ifko0(l1bla, pre, N):
 #
 #  Finding the best vector option with/without path reduction
 #
+   if SB:
+      KFv = fkocmnd.GetOptStdFlags(fko, rout, pre, 1, SB, URF)
+   else:
+      KFv = fkocmnd.GetOptStdFlags(fko, rout, pre, 1, 0, URF)
+   KFv = KFv + " -o " + str(outf) + " " + rout
    if vec:
       if 'v' in skipOpt:
          print '\n   SKIPPING VECTORIZATION'
       else:
-         [mfv, KFv] =  ifko_Vec(ATLdir, ARCH, KFn, ncache, fko, rout, pre, 
+         [mfv, KFv] =  ifko_Vec(ATLdir, ARCH, KFv, ncache, fko, rout, pre, 
                                 l1bla, N, npath, vecm, vpath)
          mflist.append(mfv)
          testlist.append("vect")
@@ -711,13 +893,26 @@ def ifko0(l1bla, pre, N):
    mflist.append(mf)
    testlist.append("pftype")
    print "\n   FLAGS so far =", fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS)
+   
 #
 #  Find best unroll
 #
-   [mf,KFLAGS] = FindUR(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N, info)
-   mflist.append(mf)
-   testlist.append("unroll")
+   if URF:
+      print '\n   SKIPPING UNROLL TUNNING : FORCED TO %d' %URF
+   else:
+      [mf,KFLAGS] = FindUR(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N,
+                           info)
+      mflist.append(mf)
+      testlist.append("unroll")
 
+#
+#  Find best bet for over speculation
+#  FIXME: find out the -U and pass it to the function
+#
+   if isSV:
+      [mf,KFLAGS] = FindBET(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N)
+      mflist.append(mf)
+      testlist.append("OverSpec")
 
 #
 #  See if we can apply accumulator expansion
@@ -736,11 +931,84 @@ def ifko0(l1bla, pre, N):
    nacc = len(acc)
    if 'se' in skipOpt:
       print '\n   SKIPPING SCALAR EXPANSION'
+   elif isSV:
+      print '\n   SKIPPING SCALAR EXPANSION: NOT SUPPORTED WITH SV'
    else:
       if nacc > 0 and nacc < 3:
-         [mf,KFLAGS] = FindSE(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N, acc)
+         [mf,KFLAGS] = FindSE(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N, 
+                              acc)
       mflist.append(mf)
       testlist.append("sclexp")
+#
+#  Majedul: shifted it here to test
+#
+#
+#  Find if we want to use cache-through writes on any arrays
+#
+   """if 'wnt' in skipOpt:
+      print '\n   SKIPPING WNT'
+   else:
+      n = len(fpsets)
+      i = 0
+      wnt = []
+      while i < n:
+         if fpsets[i] > 0 :
+#        and fpuses[i] == 0:
+            wnt.append(fparrs[i])
+         i += 1
+      if len(wnt) > 0:
+         [mf,KFLAGS,wnt] = ifko_writeNT(ATLdir, ARCH, KFLAGS, fko, rout, pre,
+                                     l1bla, N, wnt)
+      mflist.append(mf)
+      testlist.append("writeNT") 
+#
+#  Find best PFD for each pfarr
+#
+   pfarrs = fparrs
+   pfsets = fpsets
+   for arr in pfarrs:
+      [mf,KFLAGS] = FindPFD(ATLdir, ARCH, KFLAGS, fko, rout, pre,l1bla, N, 
+                            info, arr)
+   mflist.append(mf)
+   testlist.append("pfdist")
+   KFLAGS = fkocmnd.RemoveRedundantPrefFlags(KFLAGS, pfarrs)
+#
+#  Find best pf type
+#
+   [mf,KFLAGS] = ifko_pftype(ATLdir, ARCH, KFLAGS, ncache, fko, rout, pre, 
+                             l1bla, N, info, pfarrs, pfsets)
+   mflist.append(mf)
+   testlist.append("pftype")
+   print "\n   FLAGS so far =", fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS)
+  """
+#
+#  tesing: re-tune the prefetch distance!
+#  NOTE:  this re-tuning can be omitted just by enabling the comment
+#
+   #"""
+   KFLAGS = fkocmnd.SetDefaultPFD(KFLAGS, info)
+   #print "default PFD: ", KFLAGS
+   print "\n   TUNING PFD AGAIN: "
+   for arr in pfarrs:
+      [mf,KFLAGS] = FindPFD(ATLdir, ARCH, KFLAGS, fko, rout, pre,l1bla, N, 
+                            info, arr)
+   KFLAGS = fkocmnd.RemoveRedundantPrefFlags(KFLAGS, pfarrs)
+#
+# FIXME: it will create problem for the calculaton of % of improvement
+#
+#   if 'pfdist' in testlist:
+#      j = testlist.index('pfdist')
+#      mflist[j] = mf
+#   else:
+#      mflist.append(mf)
+#      testlist.append("pfdist")
+   #KFLAGS = fkocmnd.RemoveRedundantPrefFlags(KFLAGS, pfarrs)
+
+   mflist.append(mf)
+   testlist.append("pfd2")
+   
+   #"""
+
 #
 #  Find performance of best case
 #
@@ -857,7 +1125,7 @@ def ifko(routs, pres, N):
 #
    if n > 1: ## when morethan one is applied, consider all xform
       StandardXform = ['default','PathXform','vect','writeNT','pfdist','pftype',
-                      'unroll', 'sclexp']
+                      'unroll', 'sclexp', 'pfd2']
       m = len(StandardXform)
       st = "%7.7s" % ("BLAS")
       j = 1
@@ -904,10 +1172,10 @@ def PrintUsage():
    print 'Style3: ./ifko.py default default'
    print 'Style4: ./ifko.py (b1,b2,..) (s,d)'
    print 'Style5: ./ifko.py (b1,b2,..) (s,d) N'
-   print 'Style6: ./ifko.py (b1,b2,..) (s,d) N=val'
-   print 'Style7: ./ifko.py (b1,b2,..) (s,d) N --no=(opt1,opt2,..) ',
+   print 'Style6: ./ifko.py (b1,b2,..) (s,d) -n val'
+   print 'Style7: ./ifko.py (b1,b2,..) (s,d) N --no <opt1,opt2,..> ',
    print 'atlopt=\'opt-str-for-atlas\' '
-   print 'Style8: ./ifko.py (b1,b2,..) (s,d) N=val --no=(opt1,opt2,..) ',
+   print 'Style8: ./ifko.py (b1,b2,..) (s,d) -N val --no <opt1,opt2,..> ',
    print 'atlopt=\'opt-str-for-atlas\' '
    print 'note that atlopt=\'opt-str-for-atlas\' should be last argument '
    return
@@ -931,7 +1199,13 @@ def ParseArgv(argv):
 #
    blas = 'asum'
    pre = 's'
-   N = 80000
+   #N = 80000
+   N = 16000
+#
+#  tmp for SB testing, force UR
+#
+   global SB
+   global URF
 #
 #  keep backward compatibility sothat it works with old arguments
 #
@@ -940,25 +1214,34 @@ def ParseArgv(argv):
       if nargs > 2:
          pre = argv[2]
          if nargs > 3:
+            i = 3
             if argv[3].isdigit() :
                N = int(sys.argv[3])
-            else:
-               for i in range(3, nargs):
-                  if argv[i].find('--no=') != -1:
-                     noOpt = argv[i][argv[i].find('=')+1:].split(',')
-                  elif argv[i].find('N=') != -1:
-                     N = int(argv[i][argv[i].find('=')+1:])
-                  elif argv[i].find('atlopt') != -1:
-                     atlopt = ' '.join([argv[j] for j in range(i, nargs)])
-                     #argument with ' ' behave differently with system to system
-                     if atlopt.find('\'') != -1:
-                        atlopt = atlopt.split('\'')[1]
-                     else:
-                        atlopt = atlopt[atlopt.find('=')+1:]
+               i = i + 1
+            while i < nargs: 
+               if argv[i].find('--no') != -1:
+                  noOpt = argv[i+1].split(',')
+                  i = i + 2
+               elif argv[i].find('-n') != -1:
+                  N = int(argv[i+1])
+                  i = i + 2
+               elif argv[i].find('-s') != -1:
+                  SB = int(argv[i+1])
+                  i = i + 2
+               elif argv[i].find('-u') != -1:
+                  URF = int(argv[i+1])
+                  i = i + 2
+               elif argv[i].find('-atlopt') != -1:
+                  atlopt = ' '.join([argv[j] for j in range(i+1, nargs)])
+            #argument with ' ' behave differently with system to system
+                  if atlopt.find('\'') != -1:
+                     atlopt = atlopt.split('\'')[1]
+                     #else:
+                        #atlopt = atlopt[atlopt.find('=')+1:]
                      break; ## stop checking any other argment
-                  else:
-                     PrintUsage()
-                     sys.exit(1)
+               else:
+                  PrintUsage()
+                  sys.exit(1)
 #   if atlopt is None:
 #      print [blas, pre, N, noOpt]
 #   else:
@@ -1012,6 +1295,7 @@ def main(argv):
    
    #print [blas, pre, N, noOpt, opt]
    #sys.exit(0)
+   print N, opt
    ifko(blas, pre, N)
 
 #
