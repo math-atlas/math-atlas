@@ -151,7 +151,10 @@ constinit : CONST_INIT LST initlist
 idlist  : idlist ',' NAME            {NewID($3);}
         | NAME                       {NewID($1);}
 	;
-initlist : inititem ',' inititem
+/*initlist : inititem ',' inititem
+         | inititem
+         ;*/
+initlist : initlist ',' inititem
          | inititem
          ;
 inititem :  ID '=' iconst { ConstInit($1, $3); }
