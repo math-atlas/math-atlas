@@ -246,6 +246,7 @@ BBLOCK *KillBlock(BBLOCK *base, BBLOCK *killme)
 /*
  * Removes block killme from queue starting at base
  * RETURNS: (possibly new) base
+ * NOTE: this function doesn't free the blk!!!
  */
 {
 /* 
@@ -275,6 +276,49 @@ BBLOCK *KillBlock(BBLOCK *base, BBLOCK *killme)
  * HERE HERE HERE
  */
    return(base);
+}
+
+BBLOCK *DelBlock(BBLOCK *delblk)
+/*
+ * This function will not only remove a blk from CFG but also free its storage 
+ * will return the down blk
+ */
+{
+   BBLOCK *bdown;
+   bdown = delblk->down; 
+
+/*
+ * remove the blk from CFG
+ */
+   if (delblk->up) 
+      delblk->up->down = delblk->down;
+   if (delblk->down)
+      delblk->down->up = delblk->up;
+/*
+ * If this block usucc of up blk, change it to down
+ */
+   if (delblk->up && delblk->up->usucc == delblk)
+   {
+      assert(GET_INST(delblk->up->ainstN->inst[0] != JMP));
+      delblk->up->usucc = delblk->down;
+   }
+/*
+ * Update preds list of other blks
+ */
+   if (delblk->usucc)
+      delblk->usucc->preds = RemoveBlockFromList(delblk->usucc->preds, 
+                                                  delblk);
+   if (delblk->csucc)
+      delblk->csucc->preds = RemoveBlockFromList(delblk->csucc->preds, 
+                                                  delblk);
+   /*
+    *    now, we can delete the blk
+    */
+   KillAllInst(delblk->inst1);
+   KillBlockList(delblk->preds);
+   free(delblk);
+   
+   return bdown; 
 }
 
 void KillAllBasicBlocks(BBLOCK *base)
@@ -1606,6 +1650,9 @@ static BBLOCK *NewFallThruBasicBlocks(int *count, BBLOCK *head, BBLOCK *tail,
       end = end0;
       *count = 1; 
    }
+#if 0
+   fprintf(stderr, "Head = %d\n", head->bnum);
+#endif   
 /*
  * one path is complete.
  */
@@ -1649,6 +1696,10 @@ static BBLOCK *NewFallThruBasicBlocks(int *count, BBLOCK *head, BBLOCK *tail,
       else if (!head->down && head->usucc->up)
       {
          InsertJmpAtEndWithLabel(head, head->usucc->ilab);
+#if 0
+         fprintf(stderr, "usucc %d is already placed before\n", 
+                 head->usucc->bnum);
+#endif         
       }
 /*
  *    if head already placed, nothing to do
@@ -1658,7 +1709,7 @@ static BBLOCK *NewFallThruBasicBlocks(int *count, BBLOCK *head, BBLOCK *tail,
       {
          if (head->down)
          {
-#if 1            
+#if 1           
             fprintf(stderr, "BLK-%d: Already placed with a down!\n",head->bnum);
             fprintf(stderr, "usucc-%d: yet to place!!!\n", head->usucc->bnum);
             assert(0);
@@ -1693,7 +1744,26 @@ static BBLOCK *NewFallThruBasicBlocks(int *count, BBLOCK *head, BBLOCK *tail,
                     head->csucc->bnum);
 #endif            
       }
-      else assert(head->down);
+/*
+ *    !head->csucc->up && !head->down
+ *    head->down is NULL, uplink ensures whether a blk is placed or not.
+ *    Head should be placed before placing its successor. 
+ *    head->usucc is placed before head through other path.
+ *    So, place the csucc after the head and point the end to it. 
+ */
+      else
+      {
+         assert(head->up && !head->down);
+#if 0
+         fprintf(stderr, "head=%d, head->csucc= %d\n", head->bnum, 
+                 head->csucc->bnum);
+#endif
+         head->down = head->csucc; /* head->usucc is already placed above */
+         head->csucc->up = head;
+         assert(end == head);
+         end = head->csucc;
+         NewFallThruBasicBlocks(count, head->csucc, tail, end0);
+      }
    }
 #if 0
    fprintf(stderr, "Exiting blk : %d, now end : %d\n", head->bnum, end->bnum);
@@ -1921,6 +1991,9 @@ void ReshapeFallThruCode()
 
    lp = optloop;
    assert(lp->tails && !lp->tails->next);
+/*
+ * NOTE: should apply only when there is multiple paths
+ */
    RemakeWithNewFallThru(lp);
 }
 
