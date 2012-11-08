@@ -2523,6 +2523,10 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks,
    AddBlockComments(bbbase);
    AddLoopComments();
    i = FinalizePrologueEpilogue(bbbase,0 );
+#if 0
+   fprintf(stdout, "LIL after OPTs\n");
+   PrintInst(stdout, bbbase);
+#endif   
    KillAllLocinit(ParaDerefQ);
    ParaDerefQ = NULL;
    if (i)
@@ -2739,10 +2743,11 @@ int main(int nargs, char **args)
    bbbase = NewBasicBlocks(bbbase);
    FindLoops();
    CheckFlow(bbbase,__FILE__,__LINE__);
-#if 0
+#if 0 
    fprintf(stdout, "1st LIL");
    PrintInst(stdout, bbbase);
-   exit(0);
+   ShowFlow("cfg.dot", bbbase);
+   //exit(0);
 #endif   
 /*
  * NOTE: if there is no optloop, we can't perform transformation of 
@@ -2763,8 +2768,9 @@ int main(int nargs, char **args)
    if (path != -1)
    {
       /*PrintFallThruLoopPath(optloop); */
-      TransformFallThruPath(path);
       /*PrintLoopPaths();*/
+      TransformFallThruPath(path);
+      /*PrintFallThruLoopPath(optloop); */
 /*
  *    Re-structure the CFG and loop info 
  */
@@ -2773,6 +2779,10 @@ int main(int nargs, char **args)
       CheckFlow(bbbase, __FILE__,__LINE__);
       FindLoops();
       CheckFlow(bbbase, __FILE__, __LINE__);
+#if 0      
+      PrintLoopPaths();
+      ShowFlow("fall.dot",bbbase);
+#endif      
    }
 #if 0   
    fprintf(stdout, "After Fall-thru conversion\n");
@@ -2872,6 +2882,15 @@ int main(int nargs, char **args)
          SpecSIMDLoop(FKO_SB);
          
          FinalizeVectorCleanup(optloop, FKO_SB);
+         InvalidateLoopInfo();
+         bbbase = NewBasicBlocks(bbbase);
+         CheckFlow(bbbase, __FILE__,__LINE__);
+         FindLoops();
+         CheckFlow(bbbase, __FILE__, __LINE__);
+/*
+ *       Want to reshape the vector code always
+ */
+         ReshapeFallThruCode(); 
 #if 0
          fprintf(stdout, "LIL AFTER LARGER BET \n");
          PrintInst(stdout, bbbase);
@@ -2939,7 +2958,6 @@ int main(int nargs, char **args)
       CheckFlow(bbbase, __FILE__, __LINE__);
 #endif
    }
-
 /*=============================================================================
  *    STATE3 : Transformation and optimization which should be applied after 
  *    vectorization (if applied with it)
@@ -2988,6 +3006,12 @@ int main(int nargs, char **args)
  *    even not done the speculative vect.
  */
       UnrollLoop(optloop, FKO_UR); /* with modified cleanup */
+#if 0
+         fprintf(stdout, "LIL AFTER UNROLL \n");
+         PrintInst(stdout, bbbase);
+         //PrintST(stdout);
+         exit(0);
+#endif         
    }
    else if (!DO_VECT(FKO_FLAG)) /* neither vectorize nor unrolled ! */
    {
@@ -3045,7 +3069,8 @@ int main(int nargs, char **args)
          
       if (optloop->pfarrs)
       {
-         if (!FKO_SB) FKO_SB = 1;
+         
+         if (!FKO_SB || !(VECT_FLAG & VECT_SV)) FKO_SB = 1;
          if (!FKO_UR) FKO_UR = 1;
          AddPrefetch(optloop, FKO_UR*FKO_SB);
       }
