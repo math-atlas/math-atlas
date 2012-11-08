@@ -348,6 +348,9 @@ void InsUnrolledBlksInCode(int unroll, BLIST **dupblks, BBLOCK *head,
  * NOTE: this terminating condition for recursion is used after coping the 
  * blks, otherwise no blk would be copied if there is only one blk inside the 
  * loop (head=tail)
+ * NOTE: After implementing the visitedblk concept like: DFS, do we really need
+ * this terminating concept??? Already visited blocks is skipped, should not 
+ * fall into inifite loop, will check later when consider inner loop!!!
  */
    if (BitVecCheck(tails, head->bnum-1))
       return;
@@ -1513,27 +1516,98 @@ BBLOCK *FindFallHead(BBLOCK *head, int tails, int inblks)
    return(head);
 }
 
-BLIST *FindAllFallHeads(BLIST *ftheads, int iscope, BBLOCK *head, int tails,
-                        int inblks)
+static BLIST *FindAllFallHeads0(BLIST *ftheads, int iscope, BBLOCK *head, 
+                                int tails, int inblks, int visitedblks)
 {
    BBLOCK *bp;
+#if 0
+   fprintf(stderr, "enter blk = %d\n", head->bnum);
+#endif   
 /*
  * If we've added all blocks in scope, or head is already in, or head is not
  * in scope, stop recursion
+ * NOTE: BitVecComp() is a costly operation.
  */
    if (!head || !BitVecComp(iscope, inblks))
       return(ftheads);
+/*
+ * FIXED: need to explore the node further.
+ */
+#if 0   
    if (BitVecCheck(inblks, head->bnum-1) || !BitVecCheck(iscope, head->bnum-1))
-      return(ftheads);
-   
+      return(ftheads); 
    bp = FindFallHead(head, tails, inblks);
-   if (bp)
-      ftheads = AddBlockToList(ftheads, bp);
+#endif
+/*
+ * need no recursion if head isn't in scope
+ */
+   if (!BitVecCheck(iscope, head->bnum-1))
+      return(ftheads);
+/*
+ * If it is already inblk (as fall-thru or any way), we don't need to find fall
+ * head using it
+ */
+   if (!BitVecCheck(inblks, head->bnum-1))
+   {
+      bp = FindFallHead(head, tails, inblks);
+      if (bp)
+         ftheads = AddBlockToList(ftheads, bp);
+   }
+
+/*
+ * FIXED: checking with inblks would prevent a node from being explored
+ * further. We need to track the explored blk like: DFS to control the 
+ * recursion.
+ */
+#if 0   
    if (head->usucc && !BitVecCheck(inblks, head->usucc->bnum-1))
       ftheads = FindAllFallHeads(ftheads, iscope, head->usucc, tails, inblks);
    if (head->csucc && !BitVecCheck(inblks, head->csucc->bnum-1))
       ftheads = FindAllFallHeads(ftheads, iscope, head->csucc, tails, inblks);
+#endif
+
+/*
+ * If it is tail blk, we don't need to recurse; otherwise, we will fall into
+ * infinit loop. 
+ * FIXME: if there is a nested loop inside the scope, it will fail. 
+ * Need to handle specially for nested loop and will do it later.
+ */
+#if 0   
+   if (BitVecCheck(tails, head->bnum-1))
+      return(ftheads);
+#endif   
+/*
+ * make this node visited 
+ */
+   SetVecBit(visitedblks, head->bnum-1, 1);
+/*
+ * recurse only unvisited successors 
+ */
+   if (head->usucc && !BitVecCheck(visitedblks, head->usucc->bnum-1))
+      ftheads = FindAllFallHeads0(ftheads, iscope, head->usucc, tails, inblks, 
+                                  visitedblks);
+   if (head->csucc && !BitVecCheck(visitedblks, head->csucc->bnum-1))
+      ftheads = FindAllFallHeads0(ftheads, iscope, head->csucc, tails, inblks,
+                                  visitedblks);
    return(ftheads);
+}
+
+BLIST *FindAllFallHeads(BLIST *ftheads, int iscope, BBLOCK *head, int tails,
+                        int inblks)
+/*
+ * It's a wrapper funtion for the original function. I introduce an extra
+ * parameter to manage the visited nodes like: DFS. To avoid the change in 
+ * function call, this wrapper is used.
+ */
+{
+   int visitedblks;
+   BLIST *bl;
+
+   visitedblks = NewBitVec(32);
+   SetVecAll(visitedblks, 0);
+   bl = FindAllFallHeads0(ftheads, iscope, head, tails, inblks, visitedblks);
+   KillBitVec(visitedblks);
+   return(bl);
 }
 
 void GenCleanupLoop(LOOPQ *lp)
@@ -1644,6 +1718,9 @@ void GenCleanupLoop(LOOPQ *lp)
    SetVecBit(lp->blkvec, lp->header->bnum-1, 1);
    iv = BitVecCopy(iv, lp->blkvec);
    dupblks = CF2BlockList(NULL, iv, newCF);
+#if 0
+   fprintf(stderr, "Dupblks = %s\n", PrintBlockList(dupblks));
+#endif
 /*
  * Find all fall-thru path headers in loop; iv becomes blocks we have already
  * added
@@ -1652,6 +1729,9 @@ void GenCleanupLoop(LOOPQ *lp)
    ivtails = BlockList2BitVec(lp->tails);
    ftheads = FindAllFallHeads(NULL, lp->blkvec, lp->header, ivtails, iv);
    ftheads = ReverseBlockList(ftheads);
+#if 0
+   fprintf(stderr, "ftheads = %s\n", PrintBlockList(ftheads));
+#endif
 /*
  * Add new cleanup loop (minus I init) at end of rout, one fall-thru path at
  * a time
@@ -1663,13 +1743,29 @@ void GenCleanupLoop(LOOPQ *lp)
          if (!BitVecCheck(lp->blkvec, bp->bnum-1))
             break;
          bp0->down = FindBlockInListByNumber(dupblks, bp->bnum);
+#if 0
+         //PrintThisBlockInst(stderr, bp0->down);
+         fprintf(stderr, "blk added = %d\n", bp0->down->bnum);
+         fflush(stderr);
+#endif
          bp0->down->up = bp0;
          bp0 = bp0->down;
          if (BitVecCheck(ivtails, bp->bnum-1))
             break;
+/*
+ *       if bp->down is not a succesor of bp, we don't need to explore that
+ *       NOTE: it's a safe guard. We ensure that everytime, only one path is
+ *       copied. ftheads contains the head of each path.
+ */
+         if (bp->usucc != bp->down && bp->csucc != bp->down)
+            break;
       }
       bp0->down = NULL;
    }
+#if 0
+   PrintLoop(stderr,lp);
+   fflush(stderr);
+#endif
 /*
  * Form temporary new loop struct for cleanup loop
  */
@@ -2027,8 +2123,8 @@ int UnrollLoop(LOOPQ *lp, int unroll)
 #if 0
    fprintf(stdout, "LIL just after unroll\n");
    PrintInst(stdout, bbbase);
-   //ShowFlow("ursv.dot", bbbase);
-   //exit(0);
+   ShowFlow("ursv.dot", bbbase);
+   exit(0);
 #endif
 
 #if 0
@@ -3214,6 +3310,9 @@ OPTLOOP=1
          if(scal) free(scal);
 /*
  *       haven't checked MaxMin... no imp yet 
+ *       NOTE: SpeculativeVectorAnalysis also works if there are multiple 
+ *       paths still. So, it's a design decision whether we need to apply 
+ *       SpeculativeVectorAnalysis ... ... 
  */
          if (MaxMinR)
          {
