@@ -10,7 +10,7 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "//"[^\n]*\n    { lnno++; strcpy(yylval.str, yytext+2); return(TCOMMENT); }
 [\t \v]		{}
 [\n]    {lnno++;}
-{ICON}"."{ICON}[e,E]{ICON} { sscanf(yytext, "%f", &yylval.fnum);  return(FCONST); }
+[-]?{ICON}"."{ICON}[e,E][-+]?{ICON} { sscanf(yytext, "%f", &yylval.fnum);  return(FCONST); }
 {ICON}"\."{ICON}([d,D]ICON)? { yylval.dnum = atof(yytext); 
        return(DCONST); }
 {ICON}	{ yylval.inum = atoi(yytext); return(ICONST); }
