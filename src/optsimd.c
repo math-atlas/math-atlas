@@ -772,7 +772,6 @@ BLIST *AddLoopDupBlks(LOOPQ *lp, BBLOCK *up, BBLOCK *down, int lbNum)
       for (bp=bl->blk; bp; bp = bp->down)
       {
 /*
- *       FIXME: how come the bnum becomes 0 !!!
  *       FIXED: NewBasicBlock with create new block with bnum 1
  */
          if (!BitVecCheck(lp->blkvec, bp->bnum-1))
@@ -781,6 +780,13 @@ BLIST *AddLoopDupBlks(LOOPQ *lp, BBLOCK *up, BBLOCK *down, int lbNum)
          bp0->down->up = bp0;
          bp0 = bp0->down;
          if (BitVecCheck(ivtails, bp->bnum-1))
+            break;
+/*
+ *       if bp->down is not a succesor of bp, we don't need to explore that
+ *       NOTE: it's a safe guard. We ensure that everytime, only one path is
+ *       copied. ftheads contains the head of each path.
+ */
+         if (bp->usucc != bp->down && bp->csucc != bp->down)
             break;
       }
       bp0->down = NULL;
@@ -1126,10 +1132,23 @@ int IsLoopPeelOptimizable(LOOPQ *lp)
  * 2. Must be vectorized
  * 3. Simple loop format: [N, -1, 0] or, [0, 1, N]
  */
+
+/*
+ * NO moving ptr !!!, not peelable 
+ */
+   if (!lp->varrs) 
+   {
+#if 1
+      fprintf(stderr, "NO moving ptr!!! \n");
+#endif
+      return 0; 
+   }
+
    if (lp->varrs[0] > 1) 
    {
       peel = 0;  
-      fko_warn(__LINE__,"morethan one moving array ptr prevents align-peel!!\n");
+      fko_warn(__LINE__,"more than one moving array ptr" 
+               " prevents align-peel!!\n");
    }
 /*
  * Always call after confirming vectorization.
@@ -2542,7 +2561,7 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
                   fko_warn(__LINE__,
                            "Mixed use of var %d(%s) prevents vectorization!!\n",
                            sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
-                  errcode += 64;
+                  errcode += 128;
                   scf[i] |= SC_MIXED;
                }
             }
@@ -2579,10 +2598,10 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
  *                NOTE: for speculative vectorization, a global max var may
  *                not be considered as max at all!
  */
-                  fko_warn(__LINE__,
-               "Liveout var %d(%s) must be Accumulator/ max(nonVs) when set!\n",
-                           sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
-                  errcode +=128;
+                  fko_warn(__LINE__, "Liveout var %d(%s) must be Accumulator/"
+                           "max(nonVs) when set!\n", sp[i], 
+                           STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
+                  errcode +=256;
                }
 
             }
@@ -2614,7 +2633,7 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
                   fko_warn(__LINE__,
                      "Liveout var %d(%s) must be mul/max when only use!!\n",
                            sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
-                  errcode +=256;
+                  errcode +=512;
                }
 
             }
@@ -3438,7 +3457,7 @@ INSTQ *DupVecPathInst(BLIST *scope, BBLOCK *bp0, LOOPQ *lp)
 
 BLIST *UnrollLargerBet(BBLOCK *bp0, LOOPQ *lp, struct ptrinfo *pi,  int unroll)
 {
-   int i, j;
+   int i, j, nbr;
    short imask;
    short r0, r1;
    INSTQ *ip, *ip1, *ipCB, *ipnext;
@@ -3448,7 +3467,8 @@ BLIST *UnrollLargerBet(BBLOCK *bp0, LOOPQ *lp, struct ptrinfo *pi,  int unroll)
    dupblks = NULL;
 /*
  * NOTE:
- * Assumption: only one conditional branch to handle, no more than 2 paths.
+ * --Assumption: only one conditional branch to handle, no more than 2 paths.
+ *  This limitation is relaxed!
  * Note about the duplication:
  * 1. vector path can be xformed as a single basic block after unrolling.
  * 2. As it will be a single block, all labels can be deleted.
@@ -3461,15 +3481,47 @@ BLIST *UnrollLargerBet(BBLOCK *bp0, LOOPQ *lp, struct ptrinfo *pi,  int unroll)
  *    - can be used an int ver to store the mask val and use ld/st format.
  *    NOTE: choose 2nd option now. 
  */
-   assert(NPATH==2); /* morethan 2 paths are not consider right now */
+   /*assert(NPATH==2);*/ /* morethan 2 paths are not consider right now */
+
+/*
+ * Now, it's time to do it for multiple paths with multiple branches in vector
+ * path.
+ * NOTE: same imask can be used to store the result after ORing for all the 
+ * branches and for all unrolled code, as only one failure would lead to the
+ * Scalar Restart.
+ */
    
    if (unroll < 2) return(NULL); /* no need to duplicate */
    if (!bp0) return(NULL);       /* nothing to duplicate */
 /*
- *    update the integer mask and remove the conditional branch.
+ * update the integer mask and remove the conditional branch.
  */
    imask = InsertNewLocal("_imask", T_INT);
-
+/*
+ * Figure out the number of conditional branches inside the main vector 
+ * path. If there are more than one branches, we need to update the main
+ * vector path with _imask also. But, we will do that after duplicating.
+ */
+/*
+ * Need to point a branch sothat we can copy it at the end
+ * NOTE: interesting point: After vectorization, all conditional branches share
+ * the same br-inst (JNE), even the destination is also same, points to the 
+ * Scalar Restart. So, we can use any of them
+ */
+   ipCB = NULL;
+   nbr = 0;
+   for (ip=bp0->inst1; ip; ip=ip->next)
+   {
+      if (IS_COND_BRANCH(ip->inst[0]))
+      {
+         nbr++;
+         ipCB = ip; /* will overwrite each time, still point valid one */
+      }
+   }
+   assert(ipCB); /* there must be atleast one branch */
+/*
+ * duplicate inst but change the mask and delete the branch
+ */
    for (i=1; i < unroll; i++)
    {
       bp = NewBasicBlock(NULL, NULL);
@@ -3480,15 +3532,8 @@ BLIST *UnrollLargerBet(BBLOCK *bp0, LOOPQ *lp, struct ptrinfo *pi,  int unroll)
  *    copy all instructions
  */
       for (ip=bp0->inst1; ip; ip=ip->next)
-      {
          ip1 = InsNewInst(bp, ip1, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
                           ip->inst[3]);
-/*
- *       save branch inst to use later
- */
-         if (IS_COND_BRANCH(ip->inst[0]))
-            ipCB = ip;
-      }
 /*
  *    update the ptr lds. Assumption: ptr updated already being killed at SV
  *    HERE HERE ptr is already deleted from this path!!! how can we figure out
@@ -3497,7 +3542,7 @@ BLIST *UnrollLargerBet(BBLOCK *bp0, LOOPQ *lp, struct ptrinfo *pi,  int unroll)
       if (pi)
          UpdatePointerLoads(bl, pi, i*Type2Vlen(FLAG2TYPE(lp->vflag)));
 /*
- *    chnage the mask inst and deleted the branch    
+ *    change the mask inst and deleted the branch    
  */
       for (ip=bp->ainst1; ip; ip=ip->next)
       {
@@ -3518,7 +3563,7 @@ BLIST *UnrollLargerBet(BBLOCK *bp0, LOOPQ *lp, struct ptrinfo *pi,  int unroll)
             assert(IS_CMP(ip->inst[0]) && IS_COND_BRANCH(ip->next->inst[0]));
             ipnext = ip->next;  /* save the next inst*/
             DelInst(ip);
-            DelInst(ip->next);
+            ip = DelInst(ipnext);
             GetReg(-1);
          }
       }
@@ -3550,6 +3595,8 @@ BLIST *UnrollLargerBet(BBLOCK *bp0, LOOPQ *lp, struct ptrinfo *pi,  int unroll)
    }
 /*
  * update the main loop blk
+ * NOTE: If there are more than one one branches, update the later branches 
+ * as well
  */
    for (ip=bp0->ainst1; ip; ip=ip->next)
    {
@@ -3567,10 +3614,42 @@ BLIST *UnrollLargerBet(BBLOCK *bp0, LOOPQ *lp, struct ptrinfo *pi,  int unroll)
          assert(IS_CMP(ip->inst[0]) && IS_COND_BRANCH(ip->next->inst[0]));
          ipnext = ip->next;  /* save the next inst*/
          DelInst(ip);
-         DelInst(ip->next);
+         ip = DelInst(ipnext);
          GetReg(-1);
+         break;   /* this is to ensure for the 1st branch */
       }
    }
+/*
+ * If there are multiple branches, update the later branches with imask
+ */
+   if (nbr > 1)
+   {
+      assert(ip); /* DelInst returns the next inst */
+      for (; ip; ip=ip->next)
+      {
+         if (IS_CMPW(ip->inst[0]) && 
+             (ip->next->inst[0]==VFSBTI || ip->next->inst[0] == VDSBTI))
+         {
+            r0 = GetReg(T_INT);
+            r1 = GetReg(T_INT);
+            InsNewInst(bp, NULL, ip, LD, -r0, SToff[imask-1].sa[2], 0);
+            ip = ip->next; /* mask inst */
+/*
+ *          update the mask inst with new int reg and insert a store in imask
+ */
+            ip->inst[1] = -r1;
+            ip = InsNewInst(bp, ip, NULL, OR, -r0, -r0, -r1);
+            ip = InsNewInst(bp, ip, NULL, ST, SToff[imask-1].sa[2],-r0, 0);
+            ip = ip->next;
+            assert(IS_CMP(ip->inst[0]) && IS_COND_BRANCH(ip->next->inst[0]));
+            ipnext = ip->next;  /* save the next inst*/
+            DelInst(ip);
+            ip = DelInst(ipnext);
+            GetReg(-1);
+         }
+      }
+   }
+
 /*
  * reverse the list to maintain the sequence, add the original blk
  */
@@ -3702,7 +3781,7 @@ int SpecVecXform(LOOPQ *lp, int unroll)
    scope = PATHS[VPATH]->blocks;
 
    vlen = Type2Vlen(lp->vflag);
-   URbase = unroll? vlen*unroll: unroll;
+   URbase = unroll? vlen*unroll: vlen;
 
 /*
  * If Loop control is already not killed, kill all controls in optloop 
@@ -4715,6 +4794,7 @@ int RedundantVectorTransform(LOOPQ *lp)
    return(0);
 }
 
+#if 0
 void AddInstBackupRecovery(BLIST *scope, LOOPQ *lp)
 /*
  * Right now, we fill focus on only iamax, later generalize
@@ -4886,6 +4966,7 @@ void AddInstBackupRecovery(BLIST *scope, LOOPQ *lp)
       }
    } 
 }
+#endif
 
 int IsBackupCandidate(short var, short vpflag, int chcom)
 /*
@@ -4894,15 +4975,10 @@ int IsBackupCandidate(short var, short vpflag, int chcom)
  * vpflag represent the flag got from vector path
  */
 {
-   int i, j, check;
+   int i, j, check, nbr;
    BLIST *bl, *scope;
    BBLOCK *bp;
    INSTQ *ip;
-/*
- * this logic of this function is true only if there is 2 paths.
- * if there are morethan 2 paths, we need to extend the logic
- */
-   assert(NPATH==2);
 /*
  * private var need no backup/recovery
  */
@@ -4917,19 +4993,36 @@ int IsBackupCandidate(short var, short vpflag, int chcom)
       {
          scope = PATHS[VPATH]->blocks;
 /*
+ *       We may have multiple conditional branches when we deals with several
+ *       paths. 
+ *       Algorithm: we will check until the last branch arrives. As after that 
+ *       we don't need to jump to Scalar Restart, we don't need to consider inst
+ *       beyond that. 
+ */
+/*
+ *       Figure out the number of branches in vector path
+ */
+         nbr = 0;
+         for (bl=scope; bl; bl=bl->next)
+            for (ip=bl->blk->inst1; ip; ip=ip->next)
+               if (IS_COND_BRANCH(ip->inst[0]))
+                  nbr++;
+/*
  *       assuming blks are consequtive in path, FindLoopPath algo suggests 
  *       that
  */
          for (bl=scope; bl; bl=bl->next)
          {
-            for (ip = bl->blk->inst1; ip; ip=ip->next)
+            for (ip=bl->blk->inst1, i=1; ip; ip=ip->next, i++)
             {
 /*
  *             can be checked whether a var is set using bitvec, but 
- *             I use here directly the inst format as it maintain the ld
+ *             I use here directly the inst format as it maintains the ld
  *             st syntax yet.
+ *             NOTE: Now, there can be multiple conditional branches. 
+ *             we need to check until the last branch ... 
  */
-               if (IS_COND_BRANCH(ip->inst[0]))
+               if (IS_COND_BRANCH(ip->inst[0]) && i == nbr)
                {
                   return(0);
                }
@@ -4948,7 +5041,7 @@ int IsBackupCandidate(short var, short vpflag, int chcom)
    else return(0); /* if not set in vpath, no need to backup it */
 }
 
-void AddVectorRecover(LOOPQ *lp, BBLOCK *bp0, int spath, int chcom)
+void AddVectorRecover(LOOPQ *lp, BBLOCK *bp0, int chcom)
 /*
  * adds backup in vector path and recovery at the first of scalar path
  * if chcom (check common) is set, check only common path before the conditional
@@ -4966,6 +5059,7 @@ void AddVectorRecover(LOOPQ *lp, BBLOCK *bp0, int spath, int chcom)
  * temporary for backup variables
  */
    n = 0;
+   assert(lp->vvscal);
    bvvscal = calloc(lp->vvscal[0]+1, sizeof(short));
    assert(bvvscal);
 /*
@@ -4992,7 +5086,8 @@ void AddVectorRecover(LOOPQ *lp, BBLOCK *bp0, int spath, int chcom)
       {
 /*
  *       accroding to current implementation of PathFlowVectorAnalysis, 
- *       scal, vscal are same. inserted a assert about the assumption.
+ *       #elem of scal, vscal are same. 
+ *       inserted a assert about the assumption.
  */
          assert(lp->vscal[i] == PATHS[VPATH]->vscal[i] 
                 && lp->vscal[i] == PATHS[VPATH]->scal[i]) ;
@@ -5080,7 +5175,7 @@ void AddVectorRecover(LOOPQ *lp, BBLOCK *bp0, int spath, int chcom)
    
 }
 
-void AddScalarUpdate(LOOPQ *lp, BBLOCK *bp0, int spath)
+void AddScalarUpdate(LOOPQ *lp, BBLOCK *bp0)
 /*
  * Vector-to-scalar reduction to operate on scalar in Scalar Restart
  * inst is added at the end of the block bp0
@@ -5091,19 +5186,14 @@ void AddScalarUpdate(LOOPQ *lp, BBLOCK *bp0, int spath)
    short scal, spsflag, vpsflag, vscal, vvflag;
    INSTQ *ip;
    BLIST *bl;
-   LOOPPATH *vp, *sp;
+   LOOPPATH *vp;
 
    vp = PATHS[VPATH];
-   sp = PATHS[spath];
 
 /*
- * Note: variable that is set on vector path needs vector to scalar reduction.
- * If there are other scalar paths, we may need vector to scalar reduction 
- * for that also, as at the end of scalar path, scalar is updated to vector.
- * NOTE: Right now, we just consider 2 paths!!!
+ * NOTE: variable that is set on vector path needs vector to scalar reduction.
+ * So, the Scalar update doesn't depend on scalar path at all!!!
  */
-   assert(NPATH <= 2); /* we will handle more paths later*/
-   
    for (i=1, N=vp->vscal[0]; i <= N; i++)
    {
       vscal = vp->vscal[i];
@@ -5135,8 +5225,8 @@ void AddScalarUpdate(LOOPQ *lp, BBLOCK *bp0, int spath)
  */         
            if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
            {
-              ip = PrintComment(bp0, ip, NULL,"Reduce accumulator vector for %s"
-                                ,STname[vscal-1]);
+              ip = PrintComment(bp0, ip, NULL,"Reduce accumulator vector for "
+                                "%s", STname[vscal-1]);
               ip = InsNewInst(bp0, ip, NULL, VFLD, -r0, 
                               SToff[lp->vvscal[i]-1].sa[2], 0);
                #if defined(X86) && defined(AVX)
@@ -5164,8 +5254,8 @@ void AddScalarUpdate(LOOPQ *lp, BBLOCK *bp0, int spath)
            }
            else  /* type is double */
            {
-              ip = PrintComment(bp0, ip, NULL, "Reduce accumulator vector for%s"
-                                ,STname[vscal-1]);
+              ip = PrintComment(bp0, ip, NULL, "Reduce accumulator vector for " 
+                                "%s",STname[vscal-1]);
               ip = InsNewInst(bp0, ip, NULL, VDLD, -r0, 
                               SToff[lp->vvscal[i]-1].sa[2], 0);
                #if defined(X86) && defined(AVX)
@@ -5191,20 +5281,26 @@ void AddScalarUpdate(LOOPQ *lp, BBLOCK *bp0, int spath)
          }
          else /* not accumulator. So, must be MUL/DIV. just broadcast */
          {
-
+/*
+ *          NOTE: currently we only supports accumulator as a set var!
+ *          Will implement when we expands the limitation
+ */
+            assert(0); /* should be filter by the analysis itself */
          }
       }
    }
 }
 
-void AddVectorUpdate(LOOPQ *lp, BBLOCK *blk, int spath)
+void AddVectorUpdate(LOOPQ *lp, BBLOCK *blk)
 /*
  * updates necessary vars for the next speculative vector iteration
+ * let's get rid of spath!!!
  */
 {
    BLIST *bl;
    INSTQ *ip;
    int i, j, k, N, N1, found;
+   int isScSet;
    short scal, spsflag, vpsflag, vscal, vsflag;
    short vlen;
    LOOPPATH *vp, *sp;
@@ -5213,7 +5309,7 @@ void AddVectorUpdate(LOOPQ *lp, BBLOCK *blk, int spath)
    short r0;
 
    vp = PATHS[VPATH];
-   sp = PATHS[spath];
+
    if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
    {
       vsld = VFLDS;
@@ -5264,6 +5360,7 @@ void AddVectorUpdate(LOOPQ *lp, BBLOCK *blk, int spath)
 
    for (i=1, N=vp->vscal[0]; i <= N; i++)
    {
+      isScSet = 0;            /* is set in scalar path ? */
       //scal = vp->scal[i];   /* scal and vscal are same for vector path */
       vscal = vp->vscal[i];
       vpsflag = vp->sflag[i]; /* flags for the vars */
@@ -5287,37 +5384,43 @@ void AddVectorUpdate(LOOPQ *lp, BBLOCK *blk, int spath)
  *       check the scal flag for the scalar path 
  *       If it is set here, update the appropriate vector.
  */
-         found = 0;
-         for (j=1, N1=sp->scal[0]; j <= N1; j++)
+         //found = 0;
+/*
+ *       Need to check all the scalar paths 
+ */
+         for (k=0; k < NPATH; k++)
          {
-            if (vscal == sp->scal[j])
+            if (k == VPATH) continue;
+            sp = PATHS[k];
+            for (j=1, N1=sp->scal[0]; j <= N1; j++)
             {
-               found = 1;
-               spsflag = sp->sflag[j];
-               break;
+               if (vscal == sp->scal[j] && (sp->sflag[j] & SC_SET))
+               {
+                  //found = 1;
+                  //spsflag = sp->sflag[j];
+                  isScSet = 1;
+                  break;
+               }
             }
          }
-         if (found)
+         if (isScSet)
          {
-            if (spsflag & SC_SET)
-            {
-               ip = FindCompilerFlag(blk, CF_SSV_VUPDATE);
-               if (!ip)
-                  ip = InsNewInst(blk, NULL, NULL, CMPFLAG, CF_SSV_VUPDATE, 
-                                  0, 0);
-               ip = PrintComment(blk, ip, NULL,"Vector Update of %s", 
-                                 STname[vscal-1]);
-               r0 = GetReg(FLAG2TYPE(lp->vflag));
-               ip = InsNewInst(blk, ip, NULL, vsld, -r0, 
-                               SToff[vscal-1].sa[2], 0);
-               ip = InsNewInst(blk, ip, NULL, vshuf,-r0, -r0, 
-                               STiconstlookup(0));
-               ip = InsNewInst(blk, ip, NULL, vst, 
-                               SToff[lp->vvscal[i]-1].sa[2], -r0, 0);
-               GetReg(-1);
-            }
+            ip = FindCompilerFlag(blk, CF_SSV_VUPDATE);
+            if (!ip)
+               ip = InsNewInst(blk, NULL, NULL, CMPFLAG, CF_SSV_VUPDATE, 
+                     0, 0);
+            ip = PrintComment(blk, ip, NULL,"Vector Update of %s", 
+                  STname[vscal-1]);
+            r0 = GetReg(FLAG2TYPE(lp->vflag));
+            ip = InsNewInst(blk, ip, NULL, vsld, -r0, 
+                  SToff[vscal-1].sa[2], 0);
+            ip = InsNewInst(blk, ip, NULL, vshuf,-r0, -r0, 
+                  STiconstlookup(0));
+            ip = InsNewInst(blk, ip, NULL, vst, 
+                  SToff[lp->vvscal[i]-1].sa[2], -r0, 0);
+            GetReg(-1);
          }
-       }
+      }
 /*
  *    although a var is not use in vector path but set, we need to check
  *    whether it is live out at the exit of loop. If so, we need to update
@@ -5325,7 +5428,11 @@ void AddVectorUpdate(LOOPQ *lp, BBLOCK *blk, int spath)
  */
       else if ( !(vpsflag & SC_USE) && (vpsflag & SC_SET))
       {
-
+/*
+ *       NOTE: as we only permit accumulator to be set in vector path right now,
+ *       we will not face this issue. will extends when remove this limitation
+ */
+         assert(0);
       }
 /*
  *    We need to further check whether it is reduction variable. in case so,
@@ -5416,7 +5523,7 @@ void SetScalarRestartOptFlag(LOOPQ *lp, int *lpOpt, int *usesIndex, int *usesPtr
 }
 
 void DupBlkPathWithOpt(LOOPQ *lp, BLIST **dupblks, int islpopt, int UsesIndex,
-                       int UsesPtrs, int path, int dups)
+                       int UsesPtrs, int dups)
 /*
  * duplicates loop blks vector lenth's time with loop index and ptr update
  * optimization if valid
@@ -5518,7 +5625,7 @@ void DupBlkPathWithOpt(LOOPQ *lp, BLIST **dupblks, int islpopt, int UsesIndex,
 /*       Add new jump to 1st block of next iteration  */
          if (ip)
          {
-            sprintf(ln, "_S_%d_%d",path,i+1); /*1st block of next */
+            sprintf(ln, "_S_%d",i+1); /*1st block of next */
             cflag = STlabellookup(ln);
             InsNewInst(bp, NULL,ip,JMP,-PCREG,cflag,0);
          }
@@ -5526,7 +5633,7 @@ void DupBlkPathWithOpt(LOOPQ *lp, BLIST **dupblks, int islpopt, int UsesIndex,
          {
             ip = bp->instN; /*CMPFLAG isn't considered as active inst*/
             assert(ip);
-            sprintf(ln, "_S_%d_%d",path,i+1); /*1st block of next */
+            sprintf(ln, "_S_%d",i+1); /*1st block of next */
             cflag = STlabellookup(ln);
             InsNewInst(bp, ip,NULL,JMP,-PCREG,cflag,0);
          }
@@ -5537,7 +5644,7 @@ void DupBlkPathWithOpt(LOOPQ *lp, BLIST **dupblks, int islpopt, int UsesIndex,
    
 }
 
-BBLOCK *GenScalarRestartPathCode(LOOPQ *lp, int path, int vlen, BLIST *ftheads, 
+BBLOCK *GenScalarRestartPathCode(LOOPQ *lp, int path, int dups, BLIST *ftheads, 
                                  int ivtails)
 {
    int i, j;
@@ -5550,7 +5657,7 @@ BBLOCK *GenScalarRestartPathCode(LOOPQ *lp, int path, int vlen, BLIST *ftheads,
    int islpopt, UsesIndex, UsesPtrs;
 
 
-   dupblks = malloc(sizeof(BLIST*)*vlen);
+   dupblks = malloc(sizeof(BLIST*)*dups);
    assert(dupblks);
 /*
  * Set all flags to optimized the duplicated blocks
@@ -5560,13 +5667,13 @@ BBLOCK *GenScalarRestartPathCode(LOOPQ *lp, int path, int vlen, BLIST *ftheads,
 /*
  * dublicates blocks with required optimization
  */
-   DupBlkPathWithOpt(lp, dupblks, islpopt, UsesIndex, UsesPtrs, path, vlen);
+   DupBlkPathWithOpt(lp, dupblks, islpopt, UsesIndex, UsesPtrs, dups);
 
 /*
  * create a new BBLOCK structure for the scalar restart of this path
  */
    bptop = bp0 = NewBasicBlock(NULL,NULL);
-   sprintf(ln, "_Scalar_Restart_%d",path);
+   sprintf(ln, "_Scalar_Restart");
    cflag = STlabellookup(ln);
    InsNewInst(bp0, NULL,NULL,LABEL,cflag,0,0);
 /*
@@ -5580,17 +5687,16 @@ BBLOCK *GenScalarRestartPathCode(LOOPQ *lp, int path, int vlen, BLIST *ftheads,
  * HERE HERE, why dasum (with if clause) with vector backup/recovery 
  * provides better performance!!!
  */
-  AddVectorRecover(lp, bp0, path, vlen > Type2Vlen(lp->vflag)? 0 : 1);
-  //AddVectorRecover(lp, bp0, path, 0); /* for testing */
+  AddVectorRecover(lp, bp0, dups > Type2Vlen(lp->vflag)? 0 : 1);
 /*
  * Here, we start vector to scalar update
  */
-   AddScalarUpdate(lp, bp0, path);
+   AddScalarUpdate(lp, bp0);
 
 /*
  * copy duplicated blocks 
  */
-   for (i = 0; i < vlen; i++)
+   for (i = 0; i < dups; i++)
    {
 /*
  *    create new block for each iteration
@@ -5599,7 +5705,7 @@ BBLOCK *GenScalarRestartPathCode(LOOPQ *lp, int path, int vlen, BLIST *ftheads,
       bp0->down = bp;
       bp->up = bp0;
       bp0 = bp;
-      sprintf(ln, "_S_%d_%d",path,i);
+      sprintf(ln, "_S_%d",i);
       cflag = STlabellookup(ln);
       ip = InsNewInst(bp, NULL, NULL, LABEL, cflag,0,0);
 /*
@@ -5616,6 +5722,13 @@ BBLOCK *GenScalarRestartPathCode(LOOPQ *lp, int path, int vlen, BLIST *ftheads,
             bp0 = bp0->down;
             if (BitVecCheck(ivtails, bp->bnum-1))
                break;
+/*
+ *          if bp->down is not a succesor of bp, we don't need to explore that
+ *          NOTE: it's a safe guard. We ensure that everytime, only one path is
+ *          copied. ftheads contains the head of each path.
+ */
+            if (bp->usucc != bp->down && bp->csucc != bp->down)
+               break;
          }
          bp0->down = NULL;
       }
@@ -5628,19 +5741,19 @@ BBLOCK *GenScalarRestartPathCode(LOOPQ *lp, int path, int vlen, BLIST *ftheads,
    bp0->down = bp;
    bp->up = bp0;
    bp0 = bp;
-   sprintf(ln, "_S_%d_%d",path,i);
+   sprintf(ln, "_S_%d",i);
    cflag = STlabellookup(ln);
    ip = InsNewInst(bp, NULL, NULL, LABEL, cflag,0,0);
 /*
  * Create a label to indicate the vector update stage
  */
-   sprintf(ln, "_IFKO_VECTOR_UPDATE_%d",path);
+   sprintf(ln, "_IFKO_VECTOR_UPDATE");
    cflag = STlabellookup(ln);
    ip = InsNewInst(bp, ip, NULL, LABEL, cflag,0,0);
 /*
  * Add vector update for this path
  */
-   AddVectorUpdate(lp, bp, path);
+   AddVectorUpdate(lp, bp);
 
 /*
  * To avoid multiple posttails (and also violation of loop normal form), 
@@ -5761,6 +5874,245 @@ BBLOCK *CreateSclResBlk(BBLOCK *fromBlk, BBLOCK *toBlk, int path)
    InsNewInst(bp, bp->ainstN, NULL, JMP, -PCREG, toBlk->ilab, 0);
 #endif
    return bp;
+}
+
+/*=============================================================================
+ * Rewriting the Scalar Restart so that it can be applied for loop paths more
+ * than two. This design depends on the following assertions:
+ *
+ *    1. After SV, there would two parts of the loop structure: vector path and
+ *    scalar restart. 
+ *    
+ *    2. We will need only one Scalar Restart and jump to that as soon as
+ *    any of the condition for vector path fails. So, there would be multiple
+ *    entry points of scalar restart but only one exit (like: superblock but 
+ *    here Scalar Restart has many blocks not a single super blk)
+ *
+ *    3. After generating the Scalar Restart, we will delete all blocks of all
+ *    scalar paths which are not common with the vector path
+ *
+ *    4. Scalar Restart will be generated at the end of Return(RET) block (where
+ *    is the epilogue of the function) always for the shake of generality.
+ *
+ *============================================================================*/
+
+void AddScalarRestart(BBLOCK *base)
+/*
+ * this function will add the scalar restar code at the end of epilogue
+ */
+{
+   BBLOCK *bp, *bpdown;
+   extern BBLOCK *bbbase;
+
+   for (bp=bbbase; bp; bp=bp->down)
+   {
+      if (bp->ainstN->inst[0] == RET)
+         break;
+   }
+   assert(bp);          /* there must be a epilogue */
+   bpdown = bp->down;
+/*
+ * add scalar restart code
+ */
+   bp->down = base;
+   base->up = bp;
+
+   for (bp=base; bp->down; bp=bp->down)
+      ;                 /* find out the last block of scalar restart */
+   bp->down = bpdown;   /* append the previous down blk of epilogue */
+   bpdown->up = bp;
+}
+
+void UpdateLoopPaths(int srlb)
+/*
+ * this function will update the loop structure by deleting all the blks of 
+ * scalar paths (which is not common with vector path) and will update all 
+ * the destination of vector path.
+ * NOTE: make sure that after calling this function, lp->blocks will not use
+ * anywhere.
+ */
+{
+   int i;
+   BBLOCK *bp;
+   BLIST *bl, *delblks, *pbl;
+   INSTQ *ip;
+
+   delblks = NULL;
+   for (i=0; i < NPATH; i++)
+   {
+      if (i == VPATH) /* vector path*/
+      {
+/*
+ *       update all destination of braches to the scalar restart
+ *       LOOP control is deleted. so, conditional br need to fwd to sr
+ */
+         for (bl = PATHS[i]->blocks; bl; bl=bl->next)
+         {
+            bp = bl->blk;
+            for (ip=bp->ainst1; ip; ip=ip->next)
+            {
+               if (IS_COND_BRANCH(ip->inst[0]))
+               {
+                  ip->inst[3] = srlb;  /* jump to scalar restart */
+               }
+            }
+         }
+      }
+      else /* scalar path */
+      {
+/*
+ *       update dellist: add the blk which is not common to vector path
+ */
+         for (bl = PATHS[i]->blocks; bl; bl=bl->next)
+         {
+            bp = bl->blk;
+            if (!FindBlockInList(PATHS[VPATH]->blocks, bp))
+            {
+/*
+ *             if it is not already inserted in delblk lists
+ */
+               if (!FindBlockInList(delblks, bp))
+                  delblks = AddBlockToList(delblks, bp);
+            }
+         }
+      }
+   }
+/*
+ * kill blks from delblks list
+ * NOTE: need to make a complete function in flow.c to completely delete a blk
+ */
+#if 0
+   fprintf(stderr, "delblks = %s\n", PrintBlockList(delblks));
+#endif   
+   for (bl=delblks; bl; bl=bl->next)
+   {
+      bp = bl->blk;
+#if 0
+      fprintf(stderr, "\nbp=%d : up=%d, down=%d, usucc=%d, csucc=%d\n",bp->bnum,
+              bp->up?bp->up->bnum:-1, bp->down?bp->down->bnum:-1 ,
+              bp->usucc?bp->usucc->bnum:-1, bp->csucc?bp->csucc->bnum:-1 );
+#endif      
+#if 1
+/*
+ *    We always deals with intermediate blk (loop blk), not the first blk
+ */
+      assert(bp->up);
+/*
+ *    remove the blk from CFG
+ */
+      if (bp->up) 
+      {
+         bp->up->down = bp->down;
+         if (bp->down)
+            bp->down->up = bp->up;
+      }
+/*
+ *    If this block usucc of up blk, change it to down
+ */
+      if (bp->up && bp->up->usucc == bp)
+      {
+         assert(GET_INST(bp->up->ainstN->inst[0] != JMP));
+         bp->up->usucc = bp->down;
+      }
+/*
+ *    with multiple paths, down blk can be the csucc when this blk doesn't
+ *    belong to fall-thru path. usucc of this blk may be part of other path,
+ *    hence placed before.
+ */
+      else if (bp->up && bp->up->csucc == bp)
+      {
+/*
+ *       make the csucc NULL, semantic is incorrect. but it may be intermediate
+ *       steps and we will check the flow after xfrom anyway
+ */
+         bp->up->csucc = NULL; 
+      }
+/*
+ *    FIXED: Still this block may be a csucc/usucc of other blks. 
+ *    check the preds of this blk. Make the csucc/usucc NULL to avoid dangling
+ *    ptr.
+ */
+      for (pbl = bp->preds; pbl; pbl=pbl->next)
+      {
+         if (pbl->blk->csucc == bp)
+            pbl->blk->csucc = NULL;
+         else if (pbl->blk->usucc == bp)
+            pbl->blk->usucc = NULL;
+      }
+/*
+ *    Update preds list of other blks
+ */
+      if (bp->usucc)
+         bp->usucc->preds = RemoveBlockFromList(bp->usucc->preds, bp);
+      if (bp->csucc)
+         bp->csucc->preds = RemoveBlockFromList(bp->csucc->preds, bp);
+/*
+ *    now, we can delete the blk
+ */
+#if 0
+      fprintf(stderr, "Blk deleted = %d\n", bp->bnum);
+#endif
+      KillAllInst(bp->inst1);
+      KillBlockList(bp->preds);
+      free(bp);
+#else
+      DelBlock(bp); /* not updated yet */
+#endif
+   }
+   KillBlockList(delblks);
+}
+
+void ScalarRestart1(LOOPQ *lp, int ndups)
+/*
+ * This function will generate the scalar restart structure and added it at the
+ * end of Epilogue Block.
+ * ndups represents the number of duplication of main loop needed.
+ */
+{
+   int iv, ivtails;
+   int srlb;
+   BBLOCK *srblks;   /* will point the CFG of scalar restart */
+   BLIST *ftheads;
+   extern int FKO_BVTMP;
+
+/*
+ * Generate codes for Scalar Restart
+ * ----------------------------------
+ * NOTE: right now, GenScalarResartPathCode() takes a paratemer to indicate 
+ * the scalar restart index. It is not necessary now on, will change this later
+ */
+   iv = FKO_BVTMP;
+   if (!FKO_BVTMP) 
+      iv = FKO_BVTMP = NewBitVec(32);
+   else
+      SetVecAll(iv, 0);
+   ivtails = BlockList2BitVec(lp->tails);
+   ftheads = FindAllFallHeads(NULL, lp->blkvec, lp->header, ivtails, iv);
+   ftheads = ReverseBlockList(ftheads);
+   srblks = GenScalarRestartPathCode(lp, 0, ndups, ftheads, ivtails);   
+#if 0
+   fprintf(stderr, "Scalar Restart\n");
+   PrintInst(stderr, srblks);
+   exit(0);
+#endif
+
+/*
+ * Place the Scalar Restart code at the end of Epilogue blk 
+ * --------------------------------------------------------
+ */
+   AddScalarRestart(srblks);
+#if 0
+   fprintf(stderr, "From epilogue \n");
+   PrintInst(stderr, srblks->up);
+   exit(0);
+#endif
+/*
+ * Delete all scalar blks and re-adjust the cond branch in vpath
+ * ------------------------------------------------------------
+ */
+   assert(srblks->ainst1->inst[0] == LABEL);
+   srlb = srblks->ainst1->inst[1];
+   UpdateLoopPaths(srlb);
 }
 
 void ScalarRestart(LOOPQ *lp, int dups)
@@ -5987,6 +6339,7 @@ void ScalarRestart(LOOPQ *lp, int dups)
    }
 }
 
+#if 0
 void ScalarRestart0(LOOPQ *lp)
 /*
  * This is an old implementation. It does have issue. It only handles the code
@@ -6227,6 +6580,13 @@ void ScalarRestart0(LOOPQ *lp)
                bp0 = bp0->down;
                if (BitVecCheck(ivtails, bp->bnum-1))
                   break;
+/*
+ *             if bp->down is not a succesor of bp, we don't need to explore it
+ *             NOTE: it's a safe guard. We ensure that everytime, only one path 
+ *             is copied. ftheads contains the head of each path.
+ */
+               if (bp->usucc != bp->down && bp->csucc != bp->down)
+                  break;
             }
             bp0->down = NULL;
          }
@@ -6384,7 +6744,7 @@ void ScalarRestart0(LOOPQ *lp)
  */
   /* OptimizeLoopControl(); */
 }
-
+#endif
 
 int SpecSIMDLoop(int SB_UR)
 {
@@ -6393,7 +6753,12 @@ int SpecSIMDLoop(int SB_UR)
    INSTQ *ippu;
    struct ptrinfo *pi0;
    BLIST *bl;
+
    lp = optloop;
+
+#if 0
+   PrintLoop(stderr, lp);
+#endif    
 
    KillLoopControl(lp);
 
@@ -6459,9 +6824,12 @@ int SpecSIMDLoop(int SB_UR)
    PrintInst(stdout, bbbase);
    exit(0);
 #endif
-   
+  
+#if 0
    ScalarRestart(lp, Type2Vlen(lp->vflag)*unroll);
-
+#else
+   ScalarRestart1(lp, Type2Vlen(lp->vflag)*unroll);
+#endif
 /*
  * Consider only vector path now. Need to add some analysis for various vars
  * to implemnt backup stages.
@@ -6485,7 +6853,7 @@ int SpecSIMDLoop(int SB_UR)
    exit(0);
 #endif
 
-#if 0   
+#if 0 
 /*
  * Everything is messed up already. So, re-make the control flow and check it 
  */
@@ -6495,6 +6863,11 @@ int SpecSIMDLoop(int SB_UR)
    CheckFlow(bbbase, __FILE__, __LINE__);
    FindLoops();
    CheckFlow(bbbase, __FILE__, __LINE__);
+   
+   fprintf(stdout, " LIL NEW CFG \n");
+   PrintInst(stdout, bbbase);
+   ShowFlow("cfg.dot",bbbase);
+   exit(0);
 #endif
 
 /*
@@ -7308,7 +7681,7 @@ int CheckMaxMinConstraints(BLIST *scope, short var, short label)
 /*
  *    NOTE: assuming this if blk begins with ainst LABEL
  */
-      if (ip->inst[0] == LABEL && ip->inst[1] == label)
+      if (ip && ip->inst[0] == LABEL && ip->inst[1] == label)
       {
          for ( ; ip; ip=ip->next)
          {
@@ -7391,7 +7764,9 @@ int VarIsMax(BLIST *scope, short var)
             reg0 = ip->prev->inst[2];
             reg1 = ip->prev->inst[3];
             br = ip->inst[0];
-
+/*
+ *          FIXME: what if we use a condition with const!!! 
+ */
             ip0 = ip->prev->prev->prev;     /* 1st ld */
             assert((ip0->inst[0] == ld));
             ip1 = ip->prev->prev;           /* 2nd ld */
