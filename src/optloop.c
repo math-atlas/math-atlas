@@ -2843,6 +2843,419 @@ int VarIsAccumulator(BLIST *scope, int var)
    return(1);
 }
 
+int CheckMaxMinConstraints(BLIST *scope, short var, short label)
+/*
+ * This function checks whether a max/min var is only set inside the if-blk
+ * and from no other location inside the loop.
+ */
+{
+   int i, j;
+   int isetcount, osetcount;
+   BLIST *bl;
+   BBLOCK *bp;
+   INSTQ *ip;
+   enum inst st;
+
+   i = FLAG2TYPE(STflag[var-1]);
+   if (i == T_FLOAT)
+      st = FST;
+   else if (i == T_DOUBLE)
+      st = FSTD;
+   else if (i == T_INT)
+      st = ST;
+   else
+      fko_error(__LINE__,"Unknown type=%d, file=%s", i, __FILE__);
+
+#if 0   
+   switch(i)
+   {
+   case T_FLOAT:
+      st = FST;
+      break;
+   case T_DOUBLE:
+      st = FSTD;
+      break;
+   case T_INT:
+      st = ST;
+      break;
+   default:;
+   }
+#endif   
+   
+/*
+ * check in the if blk, found by label. var should be set only once
+ */
+   isetcount = 0;
+   osetcount = 0;
+
+   for (bl = scope; bl; bl=bl->next)
+   {
+      bp = bl->blk;
+      ip = bp->ainst1;
+/*
+ *    NOTE: assuming this if blk begins with ainst LABEL
+ */
+      if (ip && ip->inst[0] == LABEL && ip->inst[1] == label)
+      {
+         for ( ; ip; ip=ip->next)
+         {
+            /*fprintf(stderr," %s %d \n", instmnem[ip->inst[0]], ip->inst[1]);*/
+/*
+ *          Figure out when to use STpts2 and SToff[].sa[2] ??? 
+ */
+            if (ip->inst[0] == st && STpts2[ip->inst[1]-1] == var)
+               isetcount++;
+         }
+      }
+      else
+      {
+         for ( ; ip; ip=ip->next)
+         {
+            if (ip->inst[0] == st && STpts2[ip->inst[1]-1] == var)
+               osetcount++;
+         }
+      }
+   }
+/*
+ * condition to be max is: update only once inside if-blk, not in other blk
+ */
+   if (isetcount == 1 && !osetcount)
+      return (1);
+
+   return (0);
+}
+
+int VarIsMax(BLIST *scope, short var)
+/*
+ * Figure out whether a var is Max varibale
+ * shifted in appropriate location later.
+ */
+{
+   int i, j;
+   short reg0, reg1, regv;
+   enum inst inst, ld, st, br, cmp;
+   BBLOCK *bp;
+   INSTQ *ip, *ip0, *ip1;
+   BLIST *bl;
+
+   i = FLAG2TYPE(STflag[var-1]);
+   switch(i)
+   {
+   case T_FLOAT:
+      ld = FLD;
+      st = FST;
+      cmp = FCMP;
+      break;
+   case T_DOUBLE:
+      ld = FLDD;
+      st = FSTD;
+      cmp = FCMPD;
+      break;
+   case T_INT:
+      ld = LD;
+      st = ST;
+      cmp = CMP;
+      break;
+   default:
+   case T_VFLOAT:
+   case T_VDOUBLE:
+      fko_error(__LINE__,"Unknown type=%d, file=%s. Should be done before Vect",
+                i, __FILE__);
+   }
+
+   for (bl = scope; bl; bl = bl->next)
+   {
+      bp = bl->blk;
+      for (ip = bp-> ainst1; ip; ip = ip->next)
+      {
+/*
+ *       FORMAT: cmp fcc, reg0, reg1
+ *               JLT/JGT PC, fcc, LABEL
+ *       There would be exactly two ld of 2 vars/const
+ */
+         if (IS_COND_BRANCH(ip->inst[0]) && (ip->prev->inst[0]== cmp))
+         {
+            reg0 = ip->prev->inst[2];
+            reg1 = ip->prev->inst[3];
+            br = ip->inst[0];
+/*
+ *          FIXME: what if we use a condition with const!!! 
+ */
+            ip0 = ip->prev->prev->prev;     /* 1st ld */
+            assert((ip0->inst[0] == ld));
+            ip1 = ip->prev->prev;           /* 2nd ld */
+            assert((ip1->inst[0] == ld));
+/*
+ *          for load, inst[2] must be a var 
+ */
+            if (STpts2[ip0->inst[2]-1] == var)
+               regv = ip0->inst[1];
+            else if (STpts2[ip1->inst[2]-1] == var)
+               regv = ip1->inst[1];
+            else 
+               regv = 0;
+            if ( ((regv == reg0) && (br == JLT)) ||  
+                 ((regv == reg1) && (br == JGT)) )
+            {
+               /* check for single set inside if-blk and not set where else*/
+               if (CheckMaxMinConstraints(scope, var, ip->inst[3]))
+                  return (1);
+            }
+         }
+      }
+   }
+   return (0);
+}
+
+int VarIsMin(BLIST *scope, short var)
+/*
+ * Figure out whether a var is Min varibale
+ * shifted in appropriate location later.
+ * NOTE: this function is same as the VarIsMax, it can be merged with that
+ */
+{
+   int i, j;
+   short reg0, reg1, regv;
+   enum inst inst, ld, st, br, cmp;
+   BBLOCK *bp;
+   INSTQ *ip, *ip0, *ip1;
+   BLIST *bl;
+
+   i = FLAG2TYPE(STflag[var-1]);
+   switch(i)
+   {
+   case T_FLOAT:
+      ld = FLD;
+      st = FST;
+      cmp = FCMP;
+      break;
+   case T_DOUBLE:
+      ld = FLDD;
+      st = FSTD;
+      cmp = FCMPD;
+      break;
+   case T_INT:
+      ld = LD;
+      st = ST;
+      cmp = CMP;
+      break;
+   default:
+   case T_VFLOAT:
+   case T_VDOUBLE:
+      fko_error(__LINE__,"Unknown type=%d, file=%s. Should be done before Vect",
+                i, __FILE__);
+   }
+
+   for (bl = scope; bl; bl = bl->next)
+   {
+      bp = bl->blk;
+      for (ip = bp-> ainst1; ip; ip = ip->next)
+      {
+/*
+ *       FORMAT: cmp fcc, reg0, reg1
+ *               JLT/JGT PC, fcc, LABEL
+ *       There would be exactly two ld of 2 vars/const
+ */
+         if (IS_COND_BRANCH(ip->inst[0]) && (ip->prev->inst[0]== cmp))
+         {
+            reg0 = ip->prev->inst[2];
+            reg1 = ip->prev->inst[3];
+            br = ip->inst[0];
+
+            ip0 = ip->prev->prev->prev;     /* 1st ld */
+            assert((ip0->inst[0] == ld));
+            ip1 = ip->prev->prev;           /* 2nd ld */
+            assert((ip1->inst[0] == ld));
+/*
+ *          for load, inst[2] must be a var
+ *          STpts2[] vs. SToff[].sa[2] 
+ */
+            if (STpts2[ip0->inst[2]-1] == var)
+               regv = ip0->inst[1];
+            else if (STpts2[ip1->inst[2]-1] == var)
+               regv = ip1->inst[1];
+            else 
+               regv = 0;
+/*
+ *          NOTE: cbr is opposit from Max
+ */
+            if ( ((regv == reg0) && (br == JGT)) ||  
+                 ((regv == reg1) && (br == JLT)) )
+            {
+               /* check for single set inside if-blk and not set where else*/
+               if (CheckMaxMinConstraints(scope, var, ip->inst[3]))
+                  return (1);
+            }
+         }
+      }
+   }
+   return (0);
+}
+#if 0
+void UpdateOptLoopWithMaxMinVars()
+/*
+ * Note: it is not used anymore in new program states
+ */
+{
+   int i, j, N, n, m;
+   short *scal, *spmax, *spmin;
+   LOOPQ *lp;
+   
+#if 0   
+   InvalidateLoopInfo();
+   bbbase = NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   FindLoops();
+   CheckFlow(bbbase, __FILE__, __LINE__); 
+   lp = optloop; 
+#else
+   GenPrologueEpilogueStubs(bbbase, 0);
+   NewBasicBlocks(bbbase);
+   FindLoops();
+   CheckFlow(bbbase,__FILE__,__LINE__);
+   lp = optloop;
+#endif
+   
+   scal = FindAllScalarVars(lp->blocks);   
+   N = scal[0];
+   spmax = malloc(sizeof(short)*(N+1));
+   assert(spmax);
+   spmin = malloc(sizeof(short)*(N+1));
+   assert(spmin);
+
+   for (i=1, m=0, n=0; i <= N; i++)
+   {
+      /*fprintf(stderr, " var = %s(%d)\n",STname[scal[i]-1], scal[i] );*/
+      if (VarIsMax(lp->blocks, scal[i]))
+      {
+         spmax[++m] = scal[i];
+         /*fprintf(stderr, " Max var = %s\n",STname[scal[i]-1] );*/
+      }
+      else if (VarIsMin(lp->blocks, scal[i]))
+      {
+         spmin[++n] = scal[i];
+         /*fprintf(stderr, " Min var = %s\n",STname[scal[i]-1] );*/
+      }
+   }
+/*
+ * Update with max vars
+ */
+   if (m)
+   {
+      if (lp->maxvars) free(lp->maxvars);
+      lp->maxvars = malloc(sizeof(short)*(m+1));
+      assert(lp->maxvars);
+      lp->maxvars[0] = m;
+      for (i=1; i <=m ; i++)
+         lp->maxvars[i] = spmax[i];
+   }
+   else
+   {
+      if (lp->maxvars) free(lp->maxvars);
+      lp->maxvars = NULL;
+   }
+/*
+ * update with min vars
+ */
+   if (n)
+   {
+      if (lp->minvars) free(lp->minvars);
+      lp->minvars = malloc(sizeof(short)*(n+1));
+      assert(lp->minvars);
+      lp->minvars[0] = n;
+      for (i=1; i <=n ; i++)
+         lp->minvars[i] = spmin[i];
+   }
+   else
+   {
+      if (lp->minvars) free(lp->minvars);
+      lp->minvars = NULL;
+   }
+/*
+ * free all temporaries
+ */
+   if (scal) free(scal);
+   if (spmax) free(spmax);
+   if (spmin) free(spmin);
+}
+#endif
+
+void UpdateOptLoopWithMaxMinVars1()
+/*
+ * This function is used in state1 to keep track of all the max/min vars
+ * there is an other version of it which is kept for backward compability and
+ * will be deleted later.
+ */
+{
+   int i, j, N, n, m;
+   short *scal, *spmax, *spmin;
+   LOOPQ *lp;
+   
+   lp = optloop;
+   
+   scal = FindAllScalarVars(lp->blocks);   
+   N = scal[0];
+   spmax = malloc(sizeof(short)*(N+1));
+   assert(spmax);
+   spmin = malloc(sizeof(short)*(N+1));
+   assert(spmin);
+
+   for (i=1, m=0, n=0; i <= N; i++)
+   {
+      /*fprintf(stderr, " var = %s(%d)\n",STname[scal[i]-1], scal[i] );*/
+      if (VarIsMax(lp->blocks, scal[i]))
+      {
+         spmax[++m] = scal[i];
+         /*fprintf(stderr, " Max var = %s\n",STname[scal[i]-1] );*/
+      }
+      else if (VarIsMin(lp->blocks, scal[i]))
+      {
+         spmin[++n] = scal[i];
+         /*fprintf(stderr, " Min var = %s\n",STname[scal[i]-1] );*/
+      }
+   }
+/*
+ * Update with max vars
+ */
+   if (m)
+   {
+      if (lp->maxvars) free(lp->maxvars);
+      lp->maxvars = malloc(sizeof(short)*(m+1));
+      assert(lp->maxvars);
+      lp->maxvars[0] = m;
+      for (i=1; i <=m ; i++)
+         lp->maxvars[i] = spmax[i];
+   }
+   else
+   {
+      if (lp->maxvars) free(lp->maxvars);
+      lp->maxvars = NULL;
+   }
+/*
+ * update with min vars
+ */
+   if (n)
+   {
+      if (lp->minvars) free(lp->minvars);
+      lp->minvars = malloc(sizeof(short)*(n+1));
+      assert(lp->minvars);
+      lp->minvars[0] = n;
+      for (i=1; i <=n ; i++)
+         lp->minvars[i] = spmin[i];
+   }
+   else
+   {
+      if (lp->minvars) free(lp->minvars);
+      lp->minvars = NULL;
+   }
+/*
+ * free all temporaries
+ */
+   if (scal) free(scal);
+   if (spmax) free(spmax);
+   if (spmin) free(spmin);
+}
+
 void CountArrayAccess(BLIST *scope, int ptr, int *nread, int *nwrite)
 /*
  * Finds number of read/write to *ptr in scope, 
@@ -4384,6 +4797,407 @@ int DoAllScalarExpansion(LOOPQ *lp, int unroll, int vec)
  * on optloop now but they can be applied in anywhere.  
  *============================================================================*/
 
+void FinalizeVectorCleanup(LOOPQ *lp, int unroll)
+/*
+ * this function will finalize the vector cleanup adding instructions to test
+ * for cleanup after CF_VRED_END CMPFLAG. 
+ * NOTE: Need to change UnrollCleanup to identify these and update the test 
+ * accordingly.
+ * NOTE: loop peeling might change the loop control information. So, both
+ * GenCleanupLoop and FinalizeVectorCleanup should be called before Looppeeling.
+ * NOTE: need to parametrize the cleanup for larger bet unrolling... now,
+ * this function and UnrollCleanup bacomes similar....
+ * HERE HERE why not use the same cleanup function for both vector and unroll!!
+ */
+{
+   BBLOCK *bp;
+   INSTQ *ipnext;
+   ILIST *il;
+   int FORWARDLOOP;
+   short r0, r1;
+
+   if (unroll < 1) unroll = 1;
+/*
+ * Cleanup should already be generated before finalizing it
+ */
+   assert(lp->CU_label > 0);
+
+   r0 = GetReg(T_INT);
+   r1 = GetReg(T_INT);
+/*
+ * If flag's loop control not set, compute it, then set boolean based on flag
+ * NOTE: loop peeling might change the loop control information. So, both
+ * GenCleanupLoop and FinalizeVectorCleanup should be called before Looppeeling.
+ */
+   SetLoopControlFlag(lp, 0);
+   FORWARDLOOP = L_FORWARDLC_BIT & lp->flag;
+   unroll *= Type2Vlen(lp->vflag);  
+/*
+ * Require one and only one post-tail; later do transformation to ensure this
+ * for loops where it is not natively true
+ */
+   assert(lp->posttails && !lp->posttails->next);
+/*
+ * put cleanup test after vector reduction
+ */   
+   bp = lp->posttails->blk;
+   ipnext = FindCompilerFlag(bp, CF_VRED_END);
+   assert(ipnext);
+   ipnext = ipnext->next;
+   
+   if (FORWARDLOOP)
+   {
+/*
+ *    If we've used unrolled forward loop, restore N to original value
+ */
+      /*fprintf(stderr, "\n\nForward loop !!!\n");*/
+      if (!IS_CONST(STflag[lp->end-1]))
+      {
+         InsNewInst(bp, NULL, ipnext, LD, -r1, SToff[lp->end-1].sa[2], 0);
+         InsNewInst(bp, NULL, ipnext, ADD, -r1, -r1, 
+                            STiconstlookup(unroll*SToff[lp->inc-1].i));
+         InsNewInst(bp, NULL, ipnext, ST, SToff[lp->end-1].sa[2], -r1, 0);
+      }
+      InsNewInst(bp, NULL, ipnext, LD, -r0, SToff[lp->I-1].sa[2], 0);
+      if (IS_CONST(STflag[lp->end-1]))
+         InsNewInst(bp, NULL, ipnext, CMP, -ICC0, -r0, lp->end);
+      else
+         InsNewInst(bp, NULL, ipnext, CMP, -ICC0, -r0, -r1);
+   }
+   else
+   {
+      InsNewInst(bp, NULL, ipnext, LD, -r0, SToff[lp->I-1].sa[2], 0);
+      InsNewInst(bp, NULL, ipnext, SUBCC, -r0, -r0,
+                 STiconstlookup(-(FKO_abs(SToff[lp->inc-1].i)*unroll-1)));
+      InsNewInst(bp, NULL, ipnext, ST, SToff[lp->I-1].sa[2], -r0, 0);
+   }
+   InsNewInst(bp, NULL, ipnext, JNE, -PCREG, -ICC0, lp->CU_label);
+/*
+ * Add label to jump back to when cleanup is done (screws up block, of course)
+ */
+   InsNewInst(bp, NULL, ipnext, LABEL, lp->PTCU_label, 0, 0);
+   GetReg(-1);
+}
+
+void UnrollCleanup2(LOOPQ *lp, int unroll)
+/*
+ * this is actually a modified version of previous unroll cleanup function
+ * NOTE: this cleanup can be merged with FinalizeVectorCleanup function later
+ */
+{    
+   BBLOCK *bp;
+   INSTQ *ipnext, *ip;
+   ILIST *il;
+   int FORWARDLOOP;
+   short r0, r1;
+
+   if (lp->CU_label == -1)
+      return;
+/*
+ * Generate the actual code to do loop cleanup
+ */
+   if (lp->CU_label == 0)
+      GenCleanupLoop(lp);
+
+   r0 = GetReg(T_INT);
+   r1 = GetReg(T_INT);
+/*
+ * If flag's loop control not set, compute it, then set boolean based on flag
+ */
+/*
+ * Majedul: it is used in many places. So, I use that a function. 
+ */
+   SetLoopControlFlag(lp, 0);
+   FORWARDLOOP = L_FORWARDLC_BIT & lp->flag;
+   unroll *= Type2Vlen(lp->vflag);  /* need to update Type2Vlen for AVX*/
+/*
+ * Require one and only one post-tail; later do transformation to ensure this
+ * for loops where it is not natively true
+ */
+   assert(lp->posttails && !lp->posttails->next);
+/*
+ * Put cleanup info before 1st non-label instruction in posttail, unless
+ * we are doing vectorization, in which case put it after all live-out
+ * vectors are reduced
+ */
+   bp = lp->posttails->blk;
+   if (DO_VECT(FKO_FLAG))
+   {
+      ipnext = FindCompilerFlag(bp, CF_VRED_END);
+      assert(ipnext);
+/*
+ *    Majedul: need to delete previous cleanup test instruction
+ *    HERE HERE 
+ *    assuming : FinalizeVectorCleanup is already called  and
+ *    instructions after CF_VRED_END upto branch is just for cleanup. 
+ *    NOTE: keeping track with CMPFLAG will not work as adding branch may 
+ *    screw up the block structure.
+ */
+#if 0
+      extern BBLOCK *bbbase;
+      fprintf(stdout, "LIL before removing the cu_tst\n");
+      PrintInst(stdout, bbbase);
+#endif      
+      ip = ipnext->next;
+      while (ip && !IS_COND_BRANCH(ip->inst[0]))
+            ip = RemoveInstFromQ(ip);
+      assert(ip && ip->inst[3] == lp->CU_label);
+      ipnext = RemoveInstFromQ(ip); /* remove the branch too */      
+   }
+   else if (bp->ainst1 && bp->ainst1->inst[0] == LABEL)
+      ipnext = bp->ainst1->next;
+   else
+      ipnext = bp->ainst1;
+   
+   if (FORWARDLOOP)
+   {
+/*
+ *    If we've used unrolled forward loop, restore N to original value
+ */
+      /*fprintf(stderr, "\n\nForward loop !!!\n");*/
+      if (!IS_CONST(STflag[lp->end-1]))
+      {
+         InsNewInst(bp, NULL, ipnext, LD, -r1, SToff[lp->end-1].sa[2], 0);
+         /*InsNewInst(bp, NULL, ipnext, ADD, -r1, -r1, 
+                            STiconstlookup(unroll*SToff[lp->inc-1].i-1));*/
+         InsNewInst(bp, NULL, ipnext, ADD, -r1, -r1, 
+                            STiconstlookup(unroll*SToff[lp->inc-1].i));
+         InsNewInst(bp, NULL, ipnext, ST, SToff[lp->end-1].sa[2], -r1, 0);
+      }
+      InsNewInst(bp, NULL, ipnext, LD, -r0, SToff[lp->I-1].sa[2], 0);
+      if (IS_CONST(STflag[lp->end-1]))
+         InsNewInst(bp, NULL, ipnext, CMP, -ICC0, -r0, lp->end);
+      else
+         InsNewInst(bp, NULL, ipnext, CMP, -ICC0, -r0, -r1);
+   }
+   else
+   {
+      InsNewInst(bp, NULL, ipnext, LD, -r0, SToff[lp->I-1].sa[2], 0);
+      InsNewInst(bp, NULL, ipnext, SUBCC, -r0, -r0,
+                 STiconstlookup(-(FKO_abs(SToff[lp->inc-1].i)*unroll-1)));
+      InsNewInst(bp, NULL, ipnext, ST, SToff[lp->I-1].sa[2], -r0, 0);
+   }
+   InsNewInst(bp, NULL, ipnext, JNE, -PCREG, -ICC0, lp->CU_label);
+/*
+ * Add label to jump back to when cleanup is done (screws up block, of course)
+ * NOTE: If FinalizeVectorCleanup is called before, it is already added.
+ */
+
+   if (!DO_VECT(FKO_FLAG))
+      InsNewInst(bp, NULL, ipnext, LABEL, lp->PTCU_label, 0, 0);
+   
+   GetReg(-1);
+}
+
+int ListElemCount(BLIST *blist)
+{
+   BLIST *bl;
+   int i;
+   for (i=0, bl = blist; bl; bl = bl->next) i++;
+   return i; 
+}
+
+void PrintLoop(FILE *fpout, LOOPQ *lp)
+/*
+ * Print necessary basic info for loop
+ */
+{
+   BLIST *bl;
+   fprintf(fpout, "LOOP INFO: \n");
+   fprintf(fpout, "========================================================\n");
+   fprintf(fpout, "Loop #%d\n", lp->loopnum);
+   fprintf(fpout, "Depth: %d\n", lp->depth);
+   fprintf(fpout, "Duplication: %d\n", lp->ndup);
+   fprintf(fpout, "BLOCKS[%d]: %s\n",ListElemCount(lp->blocks), 
+           PrintBlockList(lp->blocks));
+   fprintf(fpout, "PreHeader: %d\n", lp->preheader->bnum);
+   fprintf(fpout, "Head: %d\n", lp->header->bnum);
+   fprintf(fpout, "Tails: %s\n", PrintBlockList(lp->tails));
+   fprintf(fpout, "PostTails: %s\n", PrintBlockList(lp->posttails));
+   fprintf(fpout, "========================================================\n");
+}
+
+
+/*============================================================================
+ *    MAX/MIN REDUCTION:
+ *
+ *
+ * ==========================================================================*/
+
+int CheckMaxMinReduceConstraints(BLIST *scope, short var, short label)
+/*
+ * this function checks the ifblk whether anyother variable is set inside that
+ * blk. That means, this if blk is only to compute the max/min var; then we can
+ * reduce the ifblk with single max/min inst.
+ */
+{
+   int i, j; 
+   BLIST *bl;
+   BBLOCK *bp;
+   INSTQ *ip, *ip0;
+
+ /*fprintf(stderr, "check for maxvar=%s, lable=%d\n", STname[maxvar-1],label);*/
+
+   for (bl=scope; bl; bl=bl->next)
+   {
+      bp = bl->blk;
+/*
+ *    Assumption: if blk starts with active inst LABEL
+ */
+      ip0 = bp->ainst1;
+      if (ip0->inst[0] == LABEL && ip0->inst[1] == label)
+      {
+         for (ip = ip0; ip; ip=ip->next)
+         {
+/*
+ *          Need to check for all stores, not just one type      
+ */
+            if ( IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]-1]!= var)
+               return 0;
+         }
+      }
+   }
+   return 1;
+}
+
+#if 0
+int CheckElimIFBlk(short maxvar)
+/*
+ * Assuming single occurrance first 
+ */
+{
+   int i, j;
+   short reg0, reg1, regv, regx;
+   short xvar, label;
+   enum inst inst, ld, st, br, cmp, max;
+   BBLOCK *bp;
+   INSTQ *ip, *ip0, *ip1;
+   BLIST *bl, *scope;
+
+   i = FLAG2TYPE(STflag[maxvar-1]);
+   switch(i)
+   {
+   case T_FLOAT:
+      ld = FLD;
+      st = FST;
+      cmp = FCMP;
+      max = FMAX;
+      break;
+   case T_DOUBLE:
+      ld = FLDD;
+      st = FSTD;
+      cmp = FCMPD;
+      max = FMAXD;
+      break;
+   default:
+   case T_VFLOAT:
+   case T_VDOUBLE:
+      fko_error(__LINE__,"Unknown type=%d, file=%s. Should be done before Vect",
+                i, __FILE__);
+   }
+/*
+ * Primarily, we are concern about the optloop blks, but need to extend to
+ * all blocks in bbbase later
+ */   
+   scope = optloop->blocks;
+
+   for (bl = scope; bl; bl = bl->next)
+   {
+      bp = bl->blk;
+      for (ip = bp-> ainst1; ip; ip = ip->next)
+      {
+/*
+ *       FORMAT: cmp fcc, reg0, reg1
+ *               JLT/JGT PC, fcc, LABEL
+ *       There would be exactly two ld of 2 vars/const
+ */
+         if (IS_COND_BRANCH(ip->inst[0]) && (ip->prev->inst[0]== cmp))
+         {
+            reg0 = ip->prev->inst[2];
+            reg1 = ip->prev->inst[3];
+            br = ip->inst[0];
+
+            ip0 = ip->prev->prev->prev;     /* 1st ld */
+            assert((ip0->inst[0] == ld));
+            ip1 = ip->prev->prev;           /* 2nd ld */
+            assert((ip1->inst[0] == ld));
+/*
+ *          for load, inst[2] must be a var 
+ */
+            if (STpts2[ip0->inst[2]-1] == maxvar)
+            {
+               regv = ip0->inst[1];
+               xvar = ip1->inst[2];
+               regx = ip1->inst[1];
+            }
+            else if (STpts2[ip1->inst[2]-1] == maxvar)
+            {
+               regv = ip1->inst[1];
+               xvar = ip0->inst[2];
+               regx = ip0->inst[1];
+            }
+            else 
+               regv = 0;
+            if ( ((regv == reg0) && (br == JLT)) ||  
+                 ((regv == reg1) && (br == JGT)) )
+            {
+               label = ip->inst[3];
+               /* check for single set inside if-blk and not set anywhere else*/
+               if (CheckMaxMinConstraints(scope, maxvar, label) && 
+                   CheckMaxMinReduceConstraints(scope, maxvar, label))
+               {
+                  // Now, it's time to eliminiate ifblk inserting max inst
+                  /*fprintf(stderr, "elim blks for max var = %s\n", 
+                          STname[maxvar-1]);*/
+                  assert(ip0->prev->inst[0] != ld);
+                  ip1 = InsNewInst(bp, ip1, NULL, max, regv, regv, regx);
+                  ip1 = InsNewInst(bp, ip1, NULL, st, SToff[maxvar-1].sa[2],
+                                   regv, 0);
+                  ip1 = ip1->next;
+                  while (ip1 && !IS_COND_BRANCH(ip1->inst[0])) 
+                     ip1 = RemoveInstFromQ(ip1);
+                  assert(IS_COND_BRANCH(ip1->inst[0]));
+                  ip1 = RemoveInstFromQ(ip1); /* delete the branch itself */
+                  // it's time to delete the if blk
+                  RemoveInstFromLabel2Br(scope, label);
+                  return 1; /* elim is successful */
+               }
+            }
+         }
+      }
+   }
+   return (0);
+   
+}
+#endif
+
+void RemoveInstFromLabel2Br(BLIST *scope, short label)
+{
+   int i, j;
+   BLIST *bl;
+   BBLOCK *bp;
+   INSTQ *ip;
+
+   for (bl=scope; bl; bl=bl->next)
+   {
+      bp = bl->blk;
+      for (ip=bp->inst1; ip; ip=ip->next)
+      {
+         if (ip->inst[0] == LABEL && ip->inst[1] == label)
+         {
+            while (ip && ip->inst[0]!=JMP)
+            {  
+               assert(!IS_COND_BRANCH(ip->inst[0]));
+               ip = RemoveInstFromQ(ip);
+            }
+            assert(ip->inst[0] == JMP);
+            RemoveInstFromQ(ip);
+         }
+      }
+   }
+   
+}
+
 int ElimIFBlkWithMin(short minvar)
 /*
  * Assuming single occurrance first
@@ -4664,6 +5478,693 @@ int ElimMaxMinIf()
    return (0);  
 }
 
+/*=============================================================================
+ *    REDUNDANT COMPUTATION:
+ *
+ *  
+ *============================================================================*/
+
+short *UpdateBlkWithNewVar(BBLOCK *bp0, int vid, short *sp)
+/*
+ * take a var list (format: N, v1, v2,..) and blk; rename and update with
+ * new var and returns the newvar list in same format
+ */
+{
+   int i, j, k, N;
+   short sv, nv, op;
+   short *newvars; 
+   char *strnvar;
+   INSTQ *ip;
+   
+/*
+ * allocate space for newvars
+ */
+#if 0
+   newvars = calloc(sp[0]+1, sizeof(short));
+#else
+   newvars = malloc(sizeof(short)*(sp[0]+1));
+   assert(newvars);
+   for (i=0; i < (sp[0]+1); i++)
+      newvars[i] = 0;
+#endif
+/*
+ * Findout the first set of var, update the destination and update all later
+ * use of the var as dest/src
+ */
+
+   for ( N=sp[0], i=1; i <= N; i++ )
+   {
+      sv = sp[i];
+      for (ip = bp0->ainst1, j=1; ip; ip=ip->next, j++)
+      {
+         op = ip->inst[1];
+         if (op > 0)
+         {
+            k = SToff[op-1].sa[1]; /* index of original ST */
+            /*fprintf(stderr, "%d: %d\n", j, k);*/
+            if (k == sv)
+            {
+               /*fprintf(stderr, " got 1st set for %s at inst %d\n", 
+                       STname[sv-1], j);*/
+               strnvar = malloc(sizeof(char)*(strlen(STname[sv-1])+4));
+               assert(strnvar);
+               sprintf(strnvar,"%s_%d",STname[sv-1],vid);
+               nv = InsertNewLocal(strnvar,STflag[sv-1]);
+               free(strnvar); /* string copied and stored in ST */
+               newvars[i] = nv; /* update the param */
+               /*ip->inst[1] = nv;*/
+               ip->inst[1] = SToff[nv-1].sa[2];
+               break;
+            }
+         }
+      }
+      /* findout the use of this var in remaining instruction */
+      if (!ip) continue;
+      for (ip=ip->next; ip; ip=ip->next)
+      {
+         for (j=1; j < 4; j++)
+         {
+            op = ip->inst[j];
+            if (op > 0)
+            {
+               k = SToff[op-1].sa[1]; /* index of original ST */
+               if (k == sv)
+               {
+                  /*ip->inst[j] = nv;*/
+                  ip->inst[j] = SToff[nv-1].sa[2];
+               }
+            }
+         }
+      }
+   }
+   return newvars;
+}
+
+short RemoveBranchWithMask(BBLOCK *sblk)
+/*
+ * removes conditional branches from a split blk with appropriate CMP and mask 
+ */
+{
+   int i, j, k;
+   INSTQ *ip, *ip0;
+   short mask;
+   static int maskid = 0;
+   char *cmask;
+   int type;
+   int freg0;
+   enum inst fst;
+/*
+ * NOTE: Although SSE doesn't support GT and GE, we can implement those with
+ * NLT, NLE
+ */
+   static enum inst
+      brinsts[] = {JEQ, JNE, JLT, JLE, JGT, JGE},
+      fcmpwinsts[] = {FCMPWEQ, FCMPWNE, FCMPWLT, FCMPWLE, FCMPWGT, FCMPWGE},
+      dcmpwinsts[] = {FCMPDWEQ, FCMPDWNE, FCMPDWLT,FCMPDWLE, FCMPDWGT, 
+                      FCMPDWGE};
+#if 0      
+      #if defined(AVX)
+         fcmpwinsts[] = {FCMPWEQ, FCMPWNE, FCMPWLT, FCMPWLE, FCMPWGT, FCMPWGE},
+         dcmpwinsts[] = {FCMPDWEQ, FCMPDWNE, FCMPDWLT,FCMPDWLE, FCMPDWGT, 
+                         FCMPDWGE};
+      #else
+/*
+ *    SSE supports : EQ, NE, LT, LE, NLT, NLE
+ *    not supports : GT, GE, NGT, NGE
+ *    So, we need to replace GT and GE with NLE and NLT
+ */
+         fcmpwinsts[] = {FCMPWEQ, FCMPWNE, FCMPWLT, FCMPWLE, FCMPWNLE, 
+                         FCMPWNLT},
+         dcmpwinsts[] = {FCMPDWEQ, FCMPDWNE, FCMPDWLT, FCMPDWLE, FCMPDWNLE, 
+                         FCMPDWNLT};
+      #endif
+#endif
+
+   enum inst *cmpinsts;      
+   int nbr;
+
+   nbr = 6;
+   
+   for (ip=sblk->ainst1; ip; ip=ip->next)
+   {
+      if (IS_COND_BRANCH(ip->inst[0]))
+      {
+/*
+ *       Right now, we don't expect cmp without float/double
+ *       format: 
+ *                CMP -FCC0, -freg0, -freg1
+ *                BR -PCREG, -FCC0, LABEL
+ */
+         assert((ip->inst[2] == -FCC0));
+         ip0 = ip->prev;
+/*
+ *       Assuming that this conditional branch is not optimized (unlike 
+ *       loopcontrol). So, there must be a CMP inst. We need that to modify 
+ *       this to CMPW, writing result on mask. 
+ */
+         assert(IS_CMP(ip0->inst[0]) && (ip0->inst[1]==-FCC0));
+         if (ip0->inst[0] == FCMP)
+         {
+            type = T_FLOAT;
+            cmpinsts = fcmpwinsts;
+            fst = FST;
+         }
+         else if (ip0->inst[0] == FCMPD)
+         {
+            type = T_DOUBLE;
+            cmpinsts = dcmpwinsts;
+            fst = FSTD;
+         }
+         else assert(0);
+/*
+ *       creating mask local variable to store the result of CMP
+ */
+         cmask = (char*)malloc(sizeof(char)*10);
+         assert(cmask);
+         sprintf(cmask,"mask_%d",++maskid);
+         mask = InsertNewLocal(cmask,type);
+         free(cmask); /* string copied and stored in ST */
+/*
+ *       changing the CMP with CMPW, remove the branch
+ *       NOTE: of course, it will messed up the CFG  but we will change the CFG
+ *       anyway after this translation.
+ */
+         for (k=0; k < nbr; k++)
+            if (brinsts[k] == ip->inst[0])
+               break;
+         assert(k!=nbr);
+         
+         ip0->inst[0] = cmpinsts[k];
+/*
+ *       NOTE: we keep op1 and op2 same which will work for both AVX and SSE
+ */
+         /*ip0->inst[1] = SToff[mask-1].sa[2];*/
+         ip0->inst[1] = ip0->inst[2]; /* update value in a reg */
+         ip0 = InsNewInst(sblk, ip0, NULL, fst, SToff[mask-1].sa[2], 
+                          ip0->inst[1], 0);
+#if 1 
+         DelInst(ip); 
+#else
+/*
+ *       Changing the conditional branch into unconditinal
+ *       format: 
+ *             JMP PCREG, LABEL, 0
+ *             BR  PCREG, cc#, LABEL
+ */
+         ip->inst[0] = JMP;
+         ip->inst[2] = ip->inst[3];
+         ip->inst[3] = 0;
+
+#endif
+/*
+ *       HERE HERE, we consider only one conditinal branch in a block
+ *       So, no need to check other instructions after getting that.
+ */
+         break;
+      }
+   }
+   return mask;
+}
+
+short *FindVarsCMOVNeeded(BBLOCK *bp0)
+/*
+ * returns array of vars in standard format (N,s1,s2...) which needed the
+ * CMOV for redundant vector transformation.
+ */
+{
+   int i;
+   short iv;
+   short *sp;
+   INSTQ *ip;
+   extern int FKO_BVTMP;
+   extern short STderef;
+
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
+   iv = FKO_BVTMP;   /* avoiding init of temp vec rather reuse */
+   SetVecAll(iv, 0);
+/*
+ * Recalculate ins and outs, dead vars if not updated yet.
+ */
+   if (!CFUSETU2D )
+   {
+      CalcInsOuts(bbbase);
+      CalcAllDeadVariables();
+   }
+/*
+ * figure out all vars and regs which is set in this blk
+ * Take those which is liveout at the exiting of this blk
+ * NOTE: only fully tested but works for the default testcase.
+ */
+   for (ip = bp0->inst1; ip; ip=ip->next)
+   {
+      iv = BitVecComb(iv, iv, ip->set, '|');
+   }
+   iv = BitVecComb(iv, iv, bp0->outs, '&');
+/*
+ * clear all the regs in bvec to find out vars only
+ */
+   for (i=0; i < TNREG; i++)
+   {
+      SetVecBit(iv, i, 0);
+   }
+   SetVecBit(iv, STderef+TNREG-1,0);
+/*
+ * create array of vars (st-index) which needed CMOV
+ */
+   sp = BitVec2Array(iv, 1-TNREG);
+   return sp;
+}
+
+short *FindVarsSetInBlock(BBLOCK *bp0)
+{
+   int i;
+   short iv;
+   short *sp;
+   INSTQ *ip;
+   extern int FKO_BVTMP;
+   extern short STderef;
+
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
+   iv = FKO_BVTMP;   /* avoiding init of temp vec rather reuse */
+   SetVecAll(iv, 0);
+/*
+ * Recalculate ins and outs, dead vars if not updated yet.
+ */
+   if (!CFUSETU2D )
+   {
+      CalcInsOuts(bbbase);
+      CalcAllDeadVariables();
+   }
+/*
+ * figure out all vars and regs which is set in this blk
+ */
+   for (ip = bp0->inst1; ip; ip=ip->next)
+   {
+      iv = BitVecComb(iv, iv, ip->set, '|');
+   }
+/*
+ * clear all the regs in bvec to find out vars only
+ */
+   for (i=0; i < TNREG; i++)
+   {
+      SetVecBit(iv, i, 0);
+   }
+   SetVecBit(iv, STderef+TNREG-1,0);
+/*
+ * create array of vars (st-index) which needed CMOV
+ */
+   sp = BitVec2Array(iv, 1-TNREG);
+   return sp;
+}
+
+void MovInstFromBlkToBlk(BBLOCK *fromblk, BBLOCK *toblk)
+/*
+ * delete all inst and move inst except JMP and LABEL from that blk to a another
+ * blk (at the end but before JMP). 
+ * HERE HERE, don't consider conditional branch yet
+ */
+{
+   BBLOCK *bp;
+   INSTQ *ip, *ip0;
+
+   bp = toblk;
+   ip0 = toblk->instN;
+   if (ip0->inst[0] == JMP) ip0 = ip0->prev; /* JMP, keep that at the end */
+   
+   ip = fromblk->inst1; /* inst to be moved */
+
+   while (ip)
+   {
+      if (ip->inst[0] != JMP && ip->inst[0] != LABEL) 
+      {
+         ip0 = InsNewInst(bp, ip0, NULL, ip->inst[0], ip->inst[1], ip->inst[2],
+                          ip->inst[3]);
+         ip = RemoveInstFromQ(ip);
+      }
+      else
+         /*ip = ip->next;*/
+         ip = RemoveInstFromQ(ip); /* delete all */
+   }
+}
+
+int RedundantScalarComputation(LOOPQ *lp)
+/*
+ * Assuming CFG is already constructed.
+ */
+{
+   int i, j, k, n, N;
+   int type, err;
+   int *vpos;
+   short iv, iv1;
+   short *sp;
+   
+   short *isetvars, *esetvars, *icmvars, *ecmvars; /* i=if, e=else */
+   short *inewvars, *enewvars;
+
+   short nv, sv, nv1, nv2, mask;
+   short freg0, freg1, freg2;
+   enum inst cmov1, cmov2, fld, fst; 
+   BBLOCK *bp, *bp0;
+   INSTQ *ip, *ip0;
+   BLIST *ifblks, *elseblks, *splitblks, *mergeblks;
+   BLIST *bl;
+   extern short STderef;
+   extern int FKO_BVTMP;
+
+   splitblks = NULL;
+   ifblks = NULL;
+   elseblks = NULL;
+   mergeblks = NULL;
+   
+   isetvars = esetvars = icmvars = ecmvars = inewvars = enewvars = NULL;
+   sp = NULL;
+   err = 0;
+/*
+ * identify the ifblks, elseblks and common blks
+ * NOTE: loopcontrol is killed already. So, there should not be any loop branch
+ * Only branch should be the branches responsiblefor  the control flow inside 
+ * loop.
+ * 
+ * Right now, I just consider the single if-else block
+ */
+
+/*
+ * Finding all split blks inside the optloop
+ * NOTE: call KillLoopControl before it, otherwise catch that one also 
+ */
+   for (bl = lp->blocks; bl; bl = bl->next  )
+   {
+      bp = bl->blk;
+      for (ip = bp->ainst1; ip; ip=ip->next) 
+      {
+         if (IS_COND_BRANCH(ip->inst[0]))
+         {
+            splitblks = AddBlockToList(splitblks, bp);
+         }
+      }
+   }
+/*
+ * Right now, we consider single if-else block, will generalize later
+ */
+   assert(!splitblks->next);
+/*
+ * find out if and corresponding else block
+ * NOTE: right now, ifblks / elseblks are the single blk. need to traverse
+ * the bbbase otherwise.
+ */
+   ifblks = AddBlockToList(ifblks, splitblks->blk->csucc); 
+
+   if (ifblks->blk->usucc != splitblks->blk->usucc)
+      elseblks = AddBlockToList(elseblks, splitblks->blk->usucc);
+   
+   if (elseblks)
+      bp = elseblks->blk->usucc;
+   else
+      bp = splitblks->blk->usucc;
+   assert(bp);
+   
+   if (bp == ifblks->blk->usucc)
+      mergeblks = AddBlockToList(mergeblks, bp);
+   else assert(0);
+
+#if 0
+   fprintf(stderr, "Split Blocks: \n");
+   for (bl = splitblks; bl; bl = bl->next)
+      fprintf(stderr, "%d ", bl->blk->bnum);
+   fprintf(stderr, "\n");
+   fprintf(stderr, " if-block = %d\n", ifblks->blk->bnum);
+   fprintf(stderr, " else-block = %d\n", elseblks->blk->bnum);
+   fprintf(stderr, " commonblks = %d\n", mergeblks->blk->bnum);
+#endif
+
+/*
+ * NOTE: We need to rename all the variables which are set inside the blks
+ * even if it is not a candidate for select operation: 
+ * Example: 
+ * 
+ * [using if-else]
+ *
+ * if (x < 0.0)
+ * { 
+ *    x = -x;
+ *    sum +=x;
+ * }
+ * else
+ *    sum+=x;
+ *
+ * Transformation:
+ *
+ * x = X[0];
+ * mask1 = x < 0.0 
+ *    x1 = -x;          # if x is not renamed, it doesn't work
+ *    sum1 = sum + x1;
+ *    sum2 = sum + x
+ *    sum = mask1 ? sum1: sum2
+ *
+ * RULE: rename if it is set in both blks or, it is live out
+ */
+
+/*
+ * finding all the variables which are set inside blks
+ */
+   if (ifblks) isetvars = FindVarsSetInBlock(ifblks->blk);
+   if (elseblks) esetvars = FindVarsSetInBlock(elseblks->blk);
+/*
+ * identify all vars which need select operation
+ * 1) which is set inside if/else blks
+ * 2) which is liveout at the exit of the block
+ */
+   if (ifblks) icmvars = FindVarsCMOVNeeded(ifblks->blk);
+   if (elseblks) ecmvars = FindVarsCMOVNeeded(elseblks->blk);
+/*
+ * Update with new vars, return new vars' st index in corresponding location
+ * that means, if x var is in pos 2 in setvars, new var st will be found on the
+ * same index of nvars
+ */
+   if(ifblks) inewvars = UpdateBlkWithNewVar(ifblks->blk, 1, isetvars);
+   if (elseblks) enewvars = UpdateBlkWithNewVar(elseblks->blk, 2, esetvars);
+
+#if 0
+   sp = isetvars;
+   fprintf(stderr, "vars set [ifblk]: ");
+   for (N=sp[0], i=1; i <=N; i++)
+      fprintf(stderr, "%s[%d] ", STname[sp[i]-1], sp[i]-1);
+   fprintf(stderr, "\n");
+#endif
+
+/*
+ * Update the conditional branch of split blk with VCMPW updating a mask. 
+ * Conditional branch is deleted.
+ */
+   mask = RemoveBranchWithMask(splitblks->blk);  
+/*
+ * copy the if/else block at end of split block but before JMP, if any
+ */
+   if (ifblks) MovInstFromBlkToBlk(ifblks->blk, splitblks->blk);
+   if (elseblks) MovInstFromBlkToBlk(elseblks->blk, splitblks->blk);
+
+/*
+ * find out the union of reguired vars form if/else blks
+ * NOTE: avoid creating new bvec rather use tmp
+ */
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
+   iv = FKO_BVTMP;   /* avoiding init of temp vec rather reuse */
+   SetVecAll(iv, 0); 
+/*
+ * NOTE: BitVec2Array returns formated array[N,s1,s2...] but Array2BitVec
+ * takes unformatted array without the count.
+ */
+   iv = BitVecCopy(iv, Array2BitVec(icmvars[0], icmvars+1, TNREG-1));
+   if (elseblks)
+      iv = BitVecComb(iv, iv, Array2BitVec(ecmvars[0], ecmvars+1, TNREG-1),'|');
+   sp = BitVec2Array(iv, 1-TNREG);
+
+#if 0
+   fprintf(stderr, "vars set [union]: ");
+   for (N=sp[0], i=1; i <=N; i++)
+      fprintf(stderr, "%s[%d] ", STname[sp[i]-1], sp[i]-1);
+   fprintf(stderr, "\n");
+#endif
+/*
+ * Figure out which var is in which blk
+ */
+   N = sp[0]; 
+   vpos = malloc(sizeof(int)*(N+1));
+   vpos[0] = N;
+   
+   for (i=1; i <= N; i++)
+   {
+      if (FindInShortList(icmvars[0], icmvars+1, sp[i]))
+      {
+         if (elseblks)
+         {
+            if (FindInShortList(ecmvars[0], ecmvars+1, sp[i]))
+               vpos[i] = 3;
+            else
+               vpos[i] = 1;
+         }
+         else
+            vpos[i] = 1;
+      }
+      else
+         vpos[i] = 2;
+   }
+
+#if 0
+   fprintf(stderr, "vars set [union]: ");
+   for (N=sp[0], i=1; i <=N; i++)
+      fprintf(stderr, "%s[%d] = %d ", STname[sp[i]-1], sp[i]-1, vpos[i]);
+   fprintf(stderr, "\n");
+#endif
+
+/*
+ * Add select operations. two cases:
+ * CASE-1: var is set in both if and else blks
+ * CASE-2: var is set either of the blks but not in both
+ *
+ * for case-1, add select instruction at the first of the common blocks.
+ * for case-2, add select inst at the end of the working blk.
+ * 
+ * NOTE: before inserting the select inst, the conditinal jump should be change
+ * update the mask variable.....!!!!!!!!!
+ *
+ * KEEP IN MIND: 
+ * convention of select: 
+ * dest = (mask==0) ? src1 : src2   
+ * that means, dest = mask? scr1: src2
+ *
+ * LIL:
+ * FCMOV1   :  dest = (mask==0) ? dest : src   # dest is aliased with src1 
+ * FCMOV2   :  dest = (mask==0) ? src : dest   # dest is aliased with src2
+ *
+ */
+
+/*
+ * NOTE: We should merge everything into single blk so that other optimization
+ * can be performed, like: AE 
+ */
+            
+   bp = splitblks->blk;
+   ip = bp->ainstN;
+   if (ip->inst[0] == JMP) ip=ip->prev;
+
+   for (N=sp[0], i=1; i <= N; i++)
+   {
+      if (IS_FLOAT(STflag[sp[i]-1]))
+      {
+         cmov1 = FCMOV1;
+         cmov2 = FCMOV2;
+         fld = FLD;
+         fst = FST;
+         type = T_FLOAT;
+      }
+      else if (IS_DOUBLE(STflag[sp[i]-1]))
+      {
+         cmov1 = FCMOVD1;
+         cmov2 = FCMOVD2;
+         fld = FLDD;
+         fst = FSTD;
+         type = T_DOUBLE;
+      }
+      else  /* can't handle integer yet */
+      {
+         err = 1;
+         break;
+      }
+      switch(vpos[i])
+      {
+         case 1:  /* if blks*/ 
+/*
+ *          findout corrsponding new vars
+ */
+            k = FindInShortList(isetvars[0], isetvars+1, sp[i]);
+            nv1 = inewvars[k];
+/*
+ *          Now time to insert select inst
+ *          new var in if: nv1 
+ */
+            freg0 = GetReg(type);
+            freg1 = GetReg(type);
+            freg2 = GetReg(type);
+            ip = InsNewInst(bp, ip, NULL, fld, -freg0, SToff[sp[i]-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, fld, -freg1, SToff[nv1-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, fld, -freg2, SToff[mask-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, cmov1, -freg0, -freg1, -freg2 );
+            ip = InsNewInst(bp, ip, NULL, fst, SToff[sp[i]-1].sa[2], -freg0, 0);
+            GetReg(-1);
+            break;
+         case 2:  /* else blks.... only else possible??? */
+            /*bp = elseblks->blk;*/
+/*
+ *          findout corrsponding new vars
+ */
+            k = FindInShortList(esetvars[0], esetvars+1, sp[i]);
+            nv2 = inewvars[k];
+/*
+ *          Now time to insert select inst
+ *          New var in else: nv2
+ */
+            freg0 = GetReg(type);
+            freg1 = GetReg(type);
+            freg2 = GetReg(type);
+            ip = InsNewInst(bp, ip, NULL, fld, -freg0, SToff[sp[i]-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, fld, -freg1, SToff[nv2-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, fld, -freg2, SToff[mask-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, cmov1, -freg0, -freg1, -freg2 );
+            ip = InsNewInst(bp, ip, NULL, fst, SToff[sp[i]-1].sa[2], -freg0, 0);
+            GetReg(-1);
+            break;
+         case 3:  /* both in if and else blk */
+            
+            /*bp = mergeblks->blk;
+            ip = bp->ainst1;
+            if (ip->inst[0] == LABEL) ip=ip->next;
+            */
+/*
+ *          findout corrsponding new vars
+ */
+            k = FindInShortList(isetvars[0], isetvars+1, sp[i]);
+            nv1 = inewvars[k];
+            k = FindInShortList(esetvars[0], esetvars+1, sp[i]);
+            nv2 = enewvars[k];
+/*
+ *          Now time to insert select inst
+ *          new var in if: nv1, New var in else: nv2
+ */
+            freg0 = GetReg(type);
+            freg1 = GetReg(type);
+            freg2 = GetReg(type);
+            /*ip = InsNewInst(bp, NULL, ip, fld, -freg0, SToff[nv1-1].sa[2],0);*/
+            ip = InsNewInst(bp, ip, NULL, fld, -freg0, SToff[nv1-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, fld, -freg1, SToff[nv2-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, fld, -freg2, SToff[mask-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, cmov2, -freg0, -freg1, -freg2 );
+            ip = InsNewInst(bp, ip, NULL, fst, SToff[sp[i]-1].sa[2], -freg0, 0);
+            GetReg(-1);
+            break;
+         default: ;
+     }
+   }
+/*
+ * Free all the memory which is alloated for analysis
+ * NOTE: optimized the code to minimize the use of temp mem later.
+ */
+   if (sp) free(sp);
+   if (vpos) free(vpos);
+   if (isetvars) free(isetvars);
+   if (esetvars) free(esetvars);
+   if (icmvars) free(icmvars);
+   if (ecmvars) free(ecmvars);
+   if (inewvars) free(inewvars);
+   if (enewvars) free(enewvars);
+
+   KillBlockList(ifblks);
+   KillBlockList(elseblks);
+   KillBlockList(splitblks);
+   KillBlockList(mergeblks);
+   return err; 
+}
+
 int IfConvWithRedundantComp()
 {
    int err;
@@ -4694,225 +6195,3 @@ int IfConvWithRedundantComp()
 #endif
    return(err);
 }
-
-void FinalizeVectorCleanup(LOOPQ *lp, int unroll)
-/*
- * this function will finalize the vector cleanup adding instructions to test
- * for cleanup after CF_VRED_END CMPFLAG. 
- * NOTE: Need to change UnrollCleanup to identify these and update the test 
- * accordingly.
- * NOTE: loop peeling might change the loop control information. So, both
- * GenCleanupLoop and FinalizeVectorCleanup should be called before Looppeeling.
- * NOTE: need to parametrize the cleanup for larger bet unrolling... now,
- * this function and UnrollCleanup bacomes similar....
- * HERE HERE why not use the same cleanup function for both vector and unroll!!
- */
-{
-   BBLOCK *bp;
-   INSTQ *ipnext;
-   ILIST *il;
-   int FORWARDLOOP;
-   short r0, r1;
-
-   if (unroll < 1) unroll = 1;
-/*
- * Cleanup should already be generated before finalizing it
- */
-   assert(lp->CU_label > 0);
-
-   r0 = GetReg(T_INT);
-   r1 = GetReg(T_INT);
-/*
- * If flag's loop control not set, compute it, then set boolean based on flag
- * NOTE: loop peeling might change the loop control information. So, both
- * GenCleanupLoop and FinalizeVectorCleanup should be called before Looppeeling.
- */
-   SetLoopControlFlag(lp, 0);
-   FORWARDLOOP = L_FORWARDLC_BIT & lp->flag;
-   unroll *= Type2Vlen(lp->vflag);  
-/*
- * Require one and only one post-tail; later do transformation to ensure this
- * for loops where it is not natively true
- */
-   assert(lp->posttails && !lp->posttails->next);
-/*
- * put cleanup test after vector reduction
- */   
-   bp = lp->posttails->blk;
-   ipnext = FindCompilerFlag(bp, CF_VRED_END);
-   assert(ipnext);
-   ipnext = ipnext->next;
-   
-   if (FORWARDLOOP)
-   {
-/*
- *    If we've used unrolled forward loop, restore N to original value
- */
-      /*fprintf(stderr, "\n\nForward loop !!!\n");*/
-      if (!IS_CONST(STflag[lp->end-1]))
-      {
-         InsNewInst(bp, NULL, ipnext, LD, -r1, SToff[lp->end-1].sa[2], 0);
-         InsNewInst(bp, NULL, ipnext, ADD, -r1, -r1, 
-                            STiconstlookup(unroll*SToff[lp->inc-1].i));
-         InsNewInst(bp, NULL, ipnext, ST, SToff[lp->end-1].sa[2], -r1, 0);
-      }
-      InsNewInst(bp, NULL, ipnext, LD, -r0, SToff[lp->I-1].sa[2], 0);
-      if (IS_CONST(STflag[lp->end-1]))
-         InsNewInst(bp, NULL, ipnext, CMP, -ICC0, -r0, lp->end);
-      else
-         InsNewInst(bp, NULL, ipnext, CMP, -ICC0, -r0, -r1);
-   }
-   else
-   {
-      InsNewInst(bp, NULL, ipnext, LD, -r0, SToff[lp->I-1].sa[2], 0);
-      InsNewInst(bp, NULL, ipnext, SUBCC, -r0, -r0,
-                 STiconstlookup(-(FKO_abs(SToff[lp->inc-1].i)*unroll-1)));
-      InsNewInst(bp, NULL, ipnext, ST, SToff[lp->I-1].sa[2], -r0, 0);
-   }
-   InsNewInst(bp, NULL, ipnext, JNE, -PCREG, -ICC0, lp->CU_label);
-/*
- * Add label to jump back to when cleanup is done (screws up block, of course)
- */
-   InsNewInst(bp, NULL, ipnext, LABEL, lp->PTCU_label, 0, 0);
-   GetReg(-1);
-}
-
-void UnrollCleanup2(LOOPQ *lp, int unroll)
-/*
- * this is actually a modified version of previous unroll cleanup function
- * NOTE: this cleanup can be merged with FinalizeVectorCleanup function later
- */
-{    
-   BBLOCK *bp;
-   INSTQ *ipnext, *ip;
-   ILIST *il;
-   int FORWARDLOOP;
-   short r0, r1;
-
-   if (lp->CU_label == -1)
-      return;
-/*
- * Generate the actual code to do loop cleanup
- */
-   if (lp->CU_label == 0)
-      GenCleanupLoop(lp);
-
-   r0 = GetReg(T_INT);
-   r1 = GetReg(T_INT);
-/*
- * If flag's loop control not set, compute it, then set boolean based on flag
- */
-/*
- * Majedul: it is used in many places. So, I use that a function. 
- */
-   SetLoopControlFlag(lp, 0);
-   FORWARDLOOP = L_FORWARDLC_BIT & lp->flag;
-   unroll *= Type2Vlen(lp->vflag);  /* need to update Type2Vlen for AVX*/
-/*
- * Require one and only one post-tail; later do transformation to ensure this
- * for loops where it is not natively true
- */
-   assert(lp->posttails && !lp->posttails->next);
-/*
- * Put cleanup info before 1st non-label instruction in posttail, unless
- * we are doing vectorization, in which case put it after all live-out
- * vectors are reduced
- */
-   bp = lp->posttails->blk;
-   if (DO_VECT(FKO_FLAG))
-   {
-      ipnext = FindCompilerFlag(bp, CF_VRED_END);
-      assert(ipnext);
-/*
- *    Majedul: need to delete previous cleanup test instruction
- *    HERE HERE 
- *    assuming : FinalizeVectorCleanup is already called  and
- *    instructions after CF_VRED_END upto branch is just for cleanup. 
- *    NOTE: keeping track with CMPFLAG will not work as adding branch may 
- *    screw up the block structure.
- */
-#if 0
-      extern BBLOCK *bbbase;
-      fprintf(stdout, "LIL before removing the cu_tst\n");
-      PrintInst(stdout, bbbase);
-#endif      
-      ip = ipnext->next;
-      while (ip && !IS_COND_BRANCH(ip->inst[0]))
-            ip = RemoveInstFromQ(ip);
-      assert(ip && ip->inst[3] == lp->CU_label);
-      ipnext = RemoveInstFromQ(ip); /* remove the branch too */      
-   }
-   else if (bp->ainst1 && bp->ainst1->inst[0] == LABEL)
-      ipnext = bp->ainst1->next;
-   else
-      ipnext = bp->ainst1;
-   
-   if (FORWARDLOOP)
-   {
-/*
- *    If we've used unrolled forward loop, restore N to original value
- */
-      /*fprintf(stderr, "\n\nForward loop !!!\n");*/
-      if (!IS_CONST(STflag[lp->end-1]))
-      {
-         InsNewInst(bp, NULL, ipnext, LD, -r1, SToff[lp->end-1].sa[2], 0);
-         /*InsNewInst(bp, NULL, ipnext, ADD, -r1, -r1, 
-                            STiconstlookup(unroll*SToff[lp->inc-1].i-1));*/
-         InsNewInst(bp, NULL, ipnext, ADD, -r1, -r1, 
-                            STiconstlookup(unroll*SToff[lp->inc-1].i));
-         InsNewInst(bp, NULL, ipnext, ST, SToff[lp->end-1].sa[2], -r1, 0);
-      }
-      InsNewInst(bp, NULL, ipnext, LD, -r0, SToff[lp->I-1].sa[2], 0);
-      if (IS_CONST(STflag[lp->end-1]))
-         InsNewInst(bp, NULL, ipnext, CMP, -ICC0, -r0, lp->end);
-      else
-         InsNewInst(bp, NULL, ipnext, CMP, -ICC0, -r0, -r1);
-   }
-   else
-   {
-      InsNewInst(bp, NULL, ipnext, LD, -r0, SToff[lp->I-1].sa[2], 0);
-      InsNewInst(bp, NULL, ipnext, SUBCC, -r0, -r0,
-                 STiconstlookup(-(FKO_abs(SToff[lp->inc-1].i)*unroll-1)));
-      InsNewInst(bp, NULL, ipnext, ST, SToff[lp->I-1].sa[2], -r0, 0);
-   }
-   InsNewInst(bp, NULL, ipnext, JNE, -PCREG, -ICC0, lp->CU_label);
-/*
- * Add label to jump back to when cleanup is done (screws up block, of course)
- * NOTE: If FinalizeVectorCleanup is called before, it is already added.
- */
-
-   if (!DO_VECT(FKO_FLAG))
-      InsNewInst(bp, NULL, ipnext, LABEL, lp->PTCU_label, 0, 0);
-   
-   GetReg(-1);
-}
-
-int ListElemCount(BLIST *blist)
-{
-   BLIST *bl;
-   int i;
-   for (i=0, bl = blist; bl; bl = bl->next) i++;
-   return i; 
-}
-
-void PrintLoop(FILE *fpout, LOOPQ *lp)
-/*
- * Print necessary basic info for loop
- */
-{
-   BLIST *bl;
-   fprintf(fpout, "LOOP INFO: \n");
-   fprintf(fpout, "========================================================\n");
-   fprintf(fpout, "Loop #%d\n", lp->loopnum);
-   fprintf(fpout, "Depth: %d\n", lp->depth);
-   fprintf(fpout, "Duplication: %d\n", lp->ndup);
-   fprintf(fpout, "BLOCKS[%d]: %s\n",ListElemCount(lp->blocks), 
-           PrintBlockList(lp->blocks));
-   fprintf(fpout, "PreHeader: %d\n", lp->preheader->bnum);
-   fprintf(fpout, "Head: %d\n", lp->header->bnum);
-   fprintf(fpout, "Tails: %s\n", PrintBlockList(lp->tails));
-   fprintf(fpout, "PostTails: %s\n", PrintBlockList(lp->posttails));
-   fprintf(fpout, "========================================================\n");
-}
-
-
