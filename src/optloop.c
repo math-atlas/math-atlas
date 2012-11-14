@@ -5660,8 +5660,11 @@ short RemoveBranchWithMask(BBLOCK *sblk)
  */
          /*ip0->inst[1] = SToff[mask-1].sa[2];*/
          ip0->inst[1] = ip0->inst[2]; /* update value in a reg */
+         CalcThisUseSet(ip0);
+         
          ip0 = InsNewInst(sblk, ip0, NULL, fst, SToff[mask-1].sa[2], 
                           ip0->inst[1], 0);
+         CalcThisUseSet(ip0);
 #if 1 
          DelInst(ip); 
 #else
@@ -5690,6 +5693,7 @@ short *FindVarsCMOVNeeded(BBLOCK *bp0)
 /*
  * returns array of vars in standard format (N,s1,s2...) which needed the
  * CMOV for redundant vector transformation.
+ * Assumption: All the ip->set and bp->outs are already up to date.
  */
 {
    int i;
@@ -5698,18 +5702,23 @@ short *FindVarsCMOVNeeded(BBLOCK *bp0)
    INSTQ *ip;
    extern int FKO_BVTMP;
    extern short STderef;
+   extern BBLOCK *bbbase;
 
    if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
    iv = FKO_BVTMP;   /* avoiding init of temp vec rather reuse */
    SetVecAll(iv, 0);
 /*
- * Recalculate ins and outs, dead vars if not updated yet.
+ * NOTE: we can't recalculate the ins and outs as it may change the blk ptr
+ * itself. So, make sure ip->set and bp->outs are updated before calling this
+ * function.
  */
+#if 0   
    if (!CFUSETU2D )
    {
       CalcInsOuts(bbbase);
       CalcAllDeadVariables();
    }
+#endif   
 /*
  * figure out all vars and regs which is set in this blk
  * Take those which is liveout at the exiting of this blk
@@ -5743,23 +5752,44 @@ short *FindVarsSetInBlock(BBLOCK *bp0)
    INSTQ *ip;
    extern int FKO_BVTMP;
    extern short STderef;
+   extern BBLOCK *bbbase;
 
    if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
    iv = FKO_BVTMP;   /* avoiding init of temp vec rather reuse */
    SetVecAll(iv, 0);
 /*
  * Recalculate ins and outs, dead vars if not updated yet.
+ * HERE HERE CalcInsOuts may change the bp0 itself ...
+ * As we only need to check the ip->set and CalcUseSet() will not change the 
+ * blk, we can safely use CalcUseSet().
  */
+#if 0   
    if (!CFUSETU2D )
    {
       CalcInsOuts(bbbase);
       CalcAllDeadVariables();
    }
+#endif
+
+   if (!INUSETU2D)
+      CalcUseSet(bp0);
 /*
  * figure out all vars and regs which is set in this blk
  */
    for (ip = bp0->inst1; ip; ip=ip->next)
    {
+#if 0
+      if (!ip->set)
+      {
+         fprintf(stderr, "\nERROR: %s %d %d %d\n", instmnem[ip->inst[0]], 
+                 ip->inst[1], ip->inst[2], ip->inst[3] );
+         PrintThisBlockInst(stderr, bp0);
+         //CalcThisUseSet(ip);
+         assert(ip->set);
+      }
+#else
+      assert(ip->set);
+#endif
       iv = BitVecComb(iv, iv, ip->set, '|');
    }
 /*
@@ -5810,6 +5840,7 @@ void MovInstFromBlkToBlk(BBLOCK *fromblk, BBLOCK *toblk)
 int RedundantScalarComputation(LOOPQ *lp)
 /*
  * Assuming CFG is already constructed.
+ * NOTE: Works only for single if-else blk, not nested one
  */
 {
    int i, j, k, n, N;
@@ -6165,18 +6196,571 @@ int RedundantScalarComputation(LOOPQ *lp)
    return err; 
 }
 
+int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
+/*
+ * Providing Ifblk, elseblk, splitblk and mergeblk, this function will reduce
+ * If/else blk. If there is no elseblk, elseblk should be NULL.
+ * We parameterize this function so that we can use this function repeatably 
+ * to reduce nested if-else.
+ */
+{
+   int i, j, k, n, N;
+   int type, err;
+   int *vpos;
+   short iv, iv1;
+   short *sp;
+   
+   short *isetvars, *esetvars, *icmvars, *ecmvars; /* i=if, e=else */
+   short *inewvars, *enewvars;
+
+   short nv, sv, nv1, nv2, mask;
+   short freg0, freg1, freg2;
+   enum inst cmov1, cmov2, fld, fst; 
+   BBLOCK *bp, *bo0, *mergeblk;
+   INSTQ *ip, *ip0;
+   BLIST *bl;
+   extern short STderef;
+   extern int FKO_BVTMP;
+
+   isetvars = esetvars = icmvars = ecmvars = inewvars = enewvars = NULL;
+   sp = NULL;
+   err = 0;
+   assert(ifblk); /* ifblk can't be NULL */
+/*
+ * figure out the merge blk 
+ */
+   if (elseblk)
+      bp = elseblk->usucc;
+   else
+      bp = splitblk->usucc;
+   assert(bp); 
+   if (bp == ifblk->usucc)
+   {
+      mergeblk = bp;
+#if 0
+      fprintf(stderr, "mergeblk=%d\n", mergeblk->bnum);
+#endif
+   }
+   else assert(0);
+
+/*
+ * NOTE: We need to rename all the variables which are set inside the blks
+ * even if it is not a candidate for select operation: 
+ * Example: 
+ * 
+ * [using if-else]
+ *
+ * if (x < 0.0)
+ * { 
+ *    x = -x;
+ *    sum +=x;
+ * }
+ * else
+ *    sum+=x;
+ *
+ * Transformation:
+ *
+ * x = X[0];
+ * mask1 = x < 0.0 
+ *    x1 = -x;          # if x is not renamed, it doesn't work
+ *    sum1 = sum + x1;
+ *    sum2 = sum + x
+ *    sum = mask1 ? sum1: sum2
+ *
+ * RULE: rename if it is set in both blks or, it is live out
+ */
+#if 1
+   fprintf(stderr, "\nREDUCE: split=%d, if=%d, else=%d, merge=%d\n", 
+           splitblk->bnum, ifblk->bnum, elseblk?elseblk->bnum:-1, 
+           mergeblk->bnum);
+#endif   
+/*
+ * finding all the variables which are set inside blks
+ */
+   if (ifblk) isetvars = FindVarsSetInBlock(ifblk);
+   if (elseblk) esetvars = FindVarsSetInBlock(elseblk);
+/*
+ * identify all vars which need select operation
+ * 1) which is set inside if/else blks
+ * 2) which is liveout at the exit of the block
+ */
+   if (ifblk) icmvars = FindVarsCMOVNeeded(ifblk);
+   if (elseblk) ecmvars = FindVarsCMOVNeeded(elseblk);
+/*
+ * Update with new vars, return new vars' st index in corresponding location
+ * that means, if x var is in pos 2 in setvars, new var st will be found on the
+ * same index of nvars
+ */
+   if(ifblk) inewvars = UpdateBlkWithNewVar(ifblk, 1, isetvars);
+   if (elseblk) enewvars = UpdateBlkWithNewVar(elseblk, 2, esetvars);
+
+#if 0
+   sp = isetvars;
+   fprintf(stderr, "vars set [ifblk]: ");
+   for (N=sp[0], i=1; i <=N; i++)
+      fprintf(stderr, "%s[%d] ", STname[sp[i]-1], sp[i]-1);
+   fprintf(stderr, "\n");
+#endif
+
+/*
+ * Update the conditional branch of split blk with VCMPW updating a mask. 
+ * Conditional branch is deleted.
+ */
+   mask = RemoveBranchWithMask(splitblk);  
+/*
+ * copy the if/else block at end of split block but before JMP, if any
+ */
+   if (ifblk) MovInstFromBlkToBlk(ifblk, splitblk);
+   if (elseblk) MovInstFromBlkToBlk(elseblk, splitblk);
+
+/*
+ * find out the union of reguired vars form if/else blks
+ * NOTE: avoid creating new bvec rather use tmp
+ */
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
+   iv = FKO_BVTMP;   /* avoiding init of temp vec rather reuse */
+   SetVecAll(iv, 0); 
+/*
+ * NOTE: BitVec2Array returns formated array[N,s1,s2...] but Array2BitVec
+ * takes unformatted array without the count.
+ */
+   iv = BitVecCopy(iv, Array2BitVec(icmvars[0], icmvars+1, TNREG-1));
+   if (elseblk)
+      iv = BitVecComb(iv, iv, Array2BitVec(ecmvars[0], ecmvars+1, TNREG-1),'|');
+   sp = BitVec2Array(iv, 1-TNREG);
+
+#if 0
+   fprintf(stderr, "vars set [union]: ");
+   for (N=sp[0], i=1; i <=N; i++)
+      fprintf(stderr, "%s[%d] ", STname[sp[i]-1], sp[i]-1);
+   fprintf(stderr, "\n");
+#endif
+/*
+ * Figure out which var is in which blk
+ */
+   N = sp[0]; 
+   vpos = malloc(sizeof(int)*(N+1));
+   vpos[0] = N;
+   
+   for (i=1; i <= N; i++)
+   {
+      if (FindInShortList(icmvars[0], icmvars+1, sp[i]))
+      {
+         if (elseblk)
+         {
+            if (FindInShortList(ecmvars[0], ecmvars+1, sp[i]))
+               vpos[i] = 3;
+            else
+               vpos[i] = 1;
+         }
+         else
+            vpos[i] = 1;
+      }
+      else
+         vpos[i] = 2;
+   }
+
+#if 0
+   fprintf(stderr, "vars set [union]: ");
+   for (N=sp[0], i=1; i <=N; i++)
+      fprintf(stderr, "%s[%d] = %d ", STname[sp[i]-1], sp[i]-1, vpos[i]);
+   fprintf(stderr, "\n");
+#endif
+
+/*
+ * Add select operations. two cases:
+ * CASE-1: var is set in both if and else blks
+ * CASE-2: var is set either of the blks but not in both
+ *
+ * for case-1, add select instruction at the first of the common blocks.
+ * for case-2, add select inst at the end of the working blk.
+ * 
+ * NOTE: before inserting the select inst, the conditinal jump should be change
+ * update the mask variable.....!!!!!!!!!
+ *
+ * KEEP IN MIND: 
+ * convention of select: 
+ * dest = (mask==0) ? src1 : src2   
+ * that means, dest = mask? scr1: src2
+ *
+ * LIL:
+ * FCMOV1   :  dest = (mask==0) ? dest : src   # dest is aliased with src1 
+ * FCMOV2   :  dest = (mask==0) ? src : dest   # dest is aliased with src2
+ *
+ */
+
+/*
+ * NOTE: We should merge everything into single blk so that other optimization
+ * can be performed, like: AE 
+ */
+            
+   bp = splitblk;
+   ip = bp->ainstN;
+   if (ip->inst[0] == JMP) ip=ip->prev;
+
+   for (N=sp[0], i=1; i <= N; i++)
+   {
+      if (IS_FLOAT(STflag[sp[i]-1]))
+      {
+         cmov1 = FCMOV1;
+         cmov2 = FCMOV2;
+         fld = FLD;
+         fst = FST;
+         type = T_FLOAT;
+      }
+      else if (IS_DOUBLE(STflag[sp[i]-1]))
+      {
+         cmov1 = FCMOVD1;
+         cmov2 = FCMOVD2;
+         fld = FLDD;
+         fst = FSTD;
+         type = T_DOUBLE;
+      }
+      else  /* can't handle integer yet */
+      {
+         err = 1;
+         break;
+      }
+      switch(vpos[i])
+      {
+         case 1:  /* if blks*/ 
+/*
+ *          findout corrsponding new vars
+ */
+            k = FindInShortList(isetvars[0], isetvars+1, sp[i]);
+            nv1 = inewvars[k];
+/*
+ *          Now time to insert select inst
+ *          new var in if: nv1 
+ */
+            freg0 = GetReg(type);
+            freg1 = GetReg(type);
+            freg2 = GetReg(type);
+            ip = InsNewInst(bp, ip, NULL, fld, -freg0, SToff[sp[i]-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, fld, -freg1, SToff[nv1-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, fld, -freg2, SToff[mask-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, cmov1, -freg0, -freg1, -freg2 );
+            ip = InsNewInst(bp, ip, NULL, fst, SToff[sp[i]-1].sa[2], -freg0, 0);
+            GetReg(-1);
+            break;
+         case 2:  /* else blks.... only else possible??? */
+            /*bp = elseblks->blk;*/
+/*
+ *          findout corrsponding new vars
+ */
+            k = FindInShortList(esetvars[0], esetvars+1, sp[i]);
+            nv2 = inewvars[k];
+/*
+ *          Now time to insert select inst
+ *          New var in else: nv2
+ */
+            freg0 = GetReg(type);
+            freg1 = GetReg(type);
+            freg2 = GetReg(type);
+            ip = InsNewInst(bp, ip, NULL, fld, -freg0, SToff[sp[i]-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, fld, -freg1, SToff[nv2-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, fld, -freg2, SToff[mask-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, cmov1, -freg0, -freg1, -freg2 );
+            ip = InsNewInst(bp, ip, NULL, fst, SToff[sp[i]-1].sa[2], -freg0, 0);
+            GetReg(-1);
+            break;
+         case 3:  /* both in if and else blk */
+            
+            /*bp = mergeblks->blk;
+            ip = bp->ainst1;
+            if (ip->inst[0] == LABEL) ip=ip->next;
+            */
+/*
+ *          findout corrsponding new vars
+ */
+            k = FindInShortList(isetvars[0], isetvars+1, sp[i]);
+            nv1 = inewvars[k];
+            k = FindInShortList(esetvars[0], esetvars+1, sp[i]);
+            nv2 = enewvars[k];
+/*
+ *          Now time to insert select inst
+ *          new var in if: nv1, New var in else: nv2
+ */
+            freg0 = GetReg(type);
+            freg1 = GetReg(type);
+            freg2 = GetReg(type);
+            /*ip = InsNewInst(bp, NULL, ip, fld, -freg0, SToff[nv1-1].sa[2],0);*/
+            ip = InsNewInst(bp, ip, NULL, fld, -freg0, SToff[nv1-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, fld, -freg1, SToff[nv2-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, fld, -freg2, SToff[mask-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, cmov2, -freg0, -freg1, -freg2 );
+            ip = InsNewInst(bp, ip, NULL, fst, SToff[sp[i]-1].sa[2], -freg0, 0);
+            GetReg(-1);
+            break;
+         default: ;
+     }
+   }
+/*
+ * Free all the memory which is alloated for analysis
+ * NOTE: optimized the code to minimize the use of temp mem later.
+ */
+   if (sp) free(sp);
+   if (vpos) free(vpos);
+   if (isetvars) free(isetvars);
+   if (esetvars) free(esetvars);
+   if (icmvars) free(icmvars);
+   if (ecmvars) free(ecmvars);
+   if (inewvars) free(inewvars);
+   if (enewvars) free(enewvars);
+
+   return(err);
+}
+
+static BLIST *FindCondHeaders(BLIST *hblks, int iscope, BBLOCK *head, 
+                                        int tails, int visitedblks)
+{
+/*
+ * Terminating conditions
+ */
+   if (!head || !BitVecCheck(iscope, head->bnum-1)) 
+      return(hblks);
+/*
+ * add blk in the list when it has both csucc and usucc
+ * NOTE: tail blks not considered!
+ */
+   if (!BitVecCheck(tails, head->bnum-1))
+   {
+      if (head->usucc && head->csucc)
+      {
+         assert(!FindBlockInList(hblks, head));
+         hblks = AddBlockToList(hblks, head);
+      }
+   }
+/*
+ * mark the blk as visited
+ */
+   SetVecBit(visitedblks, head->bnum-1, 1);
+/*
+ * recurse the unvisited successors
+ */
+   if (head->usucc && !BitVecCheck(visitedblks, head->usucc->bnum-1))
+      hblks = FindCondHeaders(hblks, iscope, head->usucc, tails, visitedblks);
+   
+   if (head->csucc && !BitVecCheck(visitedblks, head->csucc->bnum-1))
+      hblks = FindCondHeaders(hblks, iscope, head->csucc, tails, visitedblks);
+   
+   return(hblks);
+}
+
+BLIST *FindConditionalHeaders(BBLOCK *head, int iscope, int tails)
+{
+   BLIST *headers;
+   int visitedblks;
+
+   headers = NULL;
+   visitedblks = NewBitVec(32);
+   SetVecAll(visitedblks, 0);
+   headers = FindCondHeaders(headers, iscope, head, tails, visitedblks);
+   KillBitVec(visitedblks);
+   return(headers);
+}
+
+void DelIfElseBlk(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
+/*
+ * this function deletes the if and else blk from the CFG keeping the 
+ * up, dpwn, usucc, csucc updated.
+ */
+{
+   BLIST *delblks, *dbl;
+   BBLOCK *bp;
+   extern BBLOCK *bbbase;
+/*
+ * delete the ifblk and elseblk from CFG 
+ * NOTE: 
+ * 1. Make sure if/elseblk doesn't have predecessor other  than cond header
+ *    It can only happen if irregular GOTO statement is used. Normal if/else
+ *    should not create that problem.
+ */
+   delblks = NULL;
+   delblks = AddBlockToList(delblks, ifblk);
+   if (elseblk)
+      delblks = AddBlockToList(delblks, elseblk);
+
+   for (dbl = delblks; dbl; dbl = dbl->next)
+   {
+      bp = dbl->blk;
+/*
+ *    preds of this blk should only be the cond header /splitblk
+ */
+      assert((splitblk == bp->preds->blk) && !bp->preds->next);
+/*
+ *    if it is a usucc (elseblk), make the usucc of elseblk as the usucc of 
+ *    split blk. It it is a ifblk, make the csucc of split blk as NULL
+ *    NOTE: Updating the usucc is not enough, need to change the inst also.
+ */
+      if (splitblk->usucc == bp)
+      {
+#if 0           
+         fprintf(stderr, "split=%d, bp=%d, bp->usucc=%d\n", splitblk->bnum, 
+               bp->bnum, bp->usucc->bnum);
+#endif   
+         if (splitblk->down != bp->usucc)
+         {
+/*
+ *          Normally mergeblk should have a label, otherwise how can the 
+ *          if blk jump to it
+ */
+            assert(GET_INST(bp->usucc->ainst1->inst[0]) == LABEL);
+            InsNewInst(splitblk, splitblk->ainstN, NULL, JMP, -PCREG, 
+                       bp->usucc->ainst1->inst[1], 0);
+         }
+         splitblk->usucc = bp->usucc; 
+      }
+      else
+      {
+/*
+ *       NOTE: RC already changed the conditional branch
+ */
+         splitblk->csucc = NULL;
+      }
+/*
+ *    remove blk fro CFG
+ */
+      if (bp->up)
+      {
+         bp->up->down = bp->down;
+         if (bp->down)
+            bp->down->up = bp->up;
+      }
+/*
+ *    Update the preds of other blks 
+ */
+      if (bp->usucc)
+         bp->usucc->preds = RemoveBlockFromList(bp->usucc->preds, bp);
+      if (bp->csucc)
+         bp->csucc->preds = RemoveBlockFromList(bp->csucc->preds, bp);
+/*
+ *    Now delete the blk
+ */
+      KillAllInst(bp->inst1);
+      KillBlockList(bp->preds);
+#if 0
+      fprintf(stderr, "DELBLK = %d\n", bp->bnum);
+#endif
+      free(bp);
+   }
+   KillBlockList(delblks);
+}
+
+int IterativeRedCom()
+/*
+ * Applied RC transformation repeatablely until all the conditional blks are 
+ * reduce to single blk.
+ */
+{
+   int i, err, CHANGES;
+   int ivtails;
+   char ln[128];
+   LOOPQ *lp;
+   INSTQ *ippu;
+   BLIST *bl, *splitblks;
+   BBLOCK *ifblk, *elseblk;
+   struct ptrinfo *pi0;
+   extern BBLOCK *bbbase;
+   extern LOOPQ *optloop;
+/*
+ * Apply RC until there is no conditional block inside the loop
+ * NOTE: RC xform requires variable analysis but in each iteration it would
+ * change the CFG. So, to be U2D, we must recompute the CFG and all variable
+ * analysis.
+ */
+   i = 1;
+   do
+   {
+      CHANGES = 0; 
+      lp = optloop;
+      splitblks = NULL;
+      KillLoopControl(lp);
+      ivtails = BlockList2BitVec(lp->tails); /* no need to kill ivtails */
+      splitblks = FindConditionalHeaders(lp->header, lp->blkvec, ivtails);
+      /*assert(splitblks);*/ /* must have atleast one cond header */
+/*
+ *    use the first splitblk to reduce. it would be the deepest one.
+ *    NOTE: if usucc of ifblk is the usucc of splitblk, there is no elseblk
+ */
+      if (splitblks)
+      {   
+         ifblk = splitblks->blk->csucc;
+         if (ifblk->usucc != splitblks->blk->usucc)
+            elseblk = splitblks->blk->usucc;
+         else 
+            elseblk = NULL;
+/*
+ *       call RC with this if-cond, this function may delete all inst from 
+ *       if/else blk but would not delete the blks.
+ */
+         err = ReduceBlkWithSelect(ifblk, elseblk, splitblks->blk);
+#if 0         
+         assert(!err);   
+#else
+         if (err) 
+            break;
+#endif
+         DelIfElseBlk(ifblk, elseblk, splitblks->blk); 
+         CHANGES = 1;
+         CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = CFLOOP = 0;
+      }
+/*
+ *    Update Loop control
+ */
+      pi0 = FindMovingPointers(lp->tails);
+      ippu = KillPointerUpdates(pi0,1);
+      /*OptimizeLoopControl(lp, 1, 0, NULL);*/
+      OptimizeLoopControl(lp, 1, 0, ippu);
+      KillAllPtrinfo(pi0);
+/*
+ *    Now time to update all the var analysis, next iteration will require that
+ *    NOTE: 
+ *       NewBasicBlocks       --> CFU2D 
+ *       FindLoops            --> CFDOMU2D, CFLOOP
+ *       CalcInsOuts          --> INUSETU2D, CFUSETU2D
+ *       CalcAllDeadVariables --> INDEADU2D
+ */
+      InvalidateLoopInfo();
+      bbbase = NewBasicBlocks(bbbase);
+      CheckFlow(bbbase, __FILE__, __LINE__);
+      FindLoops();
+      CheckFlow(bbbase, __FILE__, __LINE__);
+      CalcInsOuts(bbbase);
+      CalcAllDeadVariables();
+#if 0
+      fprintf(stdout, "Iteration %d: \n", i);
+      PrintInst(stdout, bbbase);
+      fflush(stdout);
+      sprintf(ln, "rc%d.dot", i);
+      i++;
+      ShowFlow(ln, bbbase);
+#endif      
+   }
+   while (CHANGES);
+#if 0
+   fprintf(stderr, "Final LIL after RC\n");
+   PrintInst(stdout, bbbase);
+#endif
+   return(err);
+}
+
+
 int IfConvWithRedundantComp()
+/*
+ * this function will kill the loop control and call the function to RC xform
+ * and add back the loopcontrol before return.
+ */
 {
    int err;
    LOOPQ *lp;
-
    INSTQ *ippu;
    struct ptrinfo *pi0;
+   extern BBLOCK *bbbase;
    
    lp = optloop;
    KillLoopControl(lp);
    err = RedundantScalarComputation(lp);
-
 #if 1
    pi0 = FindMovingPointers(lp->tails);
    ippu = KillPointerUpdates(pi0,1);
@@ -6193,5 +6777,13 @@ int IfConvWithRedundantComp()
    FindLoops();
    CheckFlow(bbbase, __FILE__, __LINE__);
 #endif
+
+#if 0
+   ShowFlow("rc.dot", bbbase);
+   fprintf(stdout,"LIL after RC\n");
+   PrintInst(stdout, bbbase);
+   exit(0);
+#endif
+
    return(err);
 }
