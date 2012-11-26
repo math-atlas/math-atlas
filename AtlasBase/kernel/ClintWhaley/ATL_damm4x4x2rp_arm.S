@@ -193,8 +193,10 @@ ATL_asmdecor(ATL_USERMM):
             fmacd rC00, rA0, rB0
                fldd rb3, [pB, #56]
             fmacd rC10, rA1, rB0
+               pld [pA, #128]
                add   pB, pB, #64
             fmacd rC20, rA2, rB0
+               pld [pB, #64]
             add   pA, pA, #64
             fmacd rC30, rA3, rB0
                fldd rB0, [pB]
