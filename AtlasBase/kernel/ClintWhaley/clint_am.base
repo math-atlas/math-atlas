@@ -4352,23 +4352,20 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
 #define KK      %rdx  /* API reg */
 #define pA      %rcx  /* API reg */
 #define pB      %rax  /* comes in as r9 */
-#define incAk   %r9   /* set after mov r9 to pC () */
-#define incBk   %r8   /* set after mov r8 to pB (rax) */
 /*
  * Then N-loop variables much less important, so use any orig regs left
  */
 #define pC      %rbx  /* set after mov rsi to nnu () */
 #define nnu     %rsi  /* comes in as rsi */
 #define r128    %rbp
-/* #define incPF   %r12 */
 #define KK0     %rdi
 /*
  * We could give a rat's ass about what registers used in outer (M-) loop
  */
-#define nmu     %r11  /* comes in as rdi */
-#define incAm   %r13
-#define nnu0    %r14
-#define pB0     %r15
+#define nmu     %r8   /* comes in as rdi */
+#define incAm   %r9 
+#define nnu0    %r10
+#define pB0     %r11
 /*
  * Prefetch definitions
  */
@@ -4390,25 +4387,29 @@ ATL_asmdecor(ATL_USERMM):
  */
    sub  $FSIZE, %rsp
    movq %rbp, (%rsp)
+   nop
+   nop
    movq %rbx, 8(%rsp)
-/*   movq %r12, 16(%rsp) */
+#if 0
+   movq %r12, 16(%rsp)
    movq %r13, 24(%rsp)
    movq %r14, 32(%rsp)
    movq %r15, 40(%rsp)
+#endif
 /*
  * Load paramaters
  */
+   mov %r8, pB
+   prefA((pA))
    mov %rdi, nmu
    mov $128, r128
-   mov %r8, pB
+   prefA(64(pA))
    mov %r9, pC
    mov nnu, nnu0
    sub $-128, pC                 /* extend range of 1-byte offsets */
 /*
  * Set constants
  */
-   mov $24, incBk               /* 24 = NU*sizeof = 3*8 = 24 */
-   mov $96, incAk               /* 96 = MU*sizeof = 12*8 = 96 */
    mov pB, pB0
 /*
  * incAm = MU*sizeof*K = 12*8*K = 3*32*K
@@ -4416,6 +4417,7 @@ ATL_asmdecor(ATL_USERMM):
    lea (KK, KK, 2), KK          /* KK = 3*K */
    shl $5, KK                   /* KK = 3*32*K = 12*8*K = MU*sizeof*K */
    mov KK, incAm                /* incAm = MU*sizeof*K */
+   prefA(128(pA))
    add KK, pA                   /* pA[-kk] will access A */
    neg KK                       /* KK = -NU*sizeof*K */
    mov KK, KK0
@@ -4618,10 +4620,12 @@ KLOOPDONE:
 /* DONE: */
    movq (%rsp), %rbp
    movq 8(%rsp), %rbx
-/*   movq 16(%rsp), %r12 */
+#if 0
+   movq 16(%rsp), %r12 
    movq 24(%rsp), %r13
    movq 32(%rsp), %r14
    movq 40(%rsp), %r15
+#endif
    add  $FSIZE, %rsp
    ret
 @ROUT ATL_damm4x4x2rp_arm.S
