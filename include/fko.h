@@ -11,7 +11,8 @@
    #define Mstr2(m) # m
    #define Mstr(m) Mstr2(m)
 /*
- * Majedul: It will create a dangling-if problem. Consider the following
+ * Majedul: It will create a dangling-if problem (if there is no braces). 
+ * Consider the following
  * example: 
  *          if (exp1) assert();
  *          else statement1;
@@ -22,7 +23,6 @@
  *             ....
  *             }
  *             else .....
- * So, I fixed this issue.             
  */
 #if 0
    #define MyAssert(arg_) \

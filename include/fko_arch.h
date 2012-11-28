@@ -20,7 +20,7 @@
 /*
  * Majedul: SIMD Vector related 
  */
-#if !defined(ARCH_VEC) && 1 
+#if !defined(ARCH_VEC) && 1
      #define AVX                    
      #define ArchHasMAC
      #define FMA4
@@ -222,10 +222,12 @@
       int  icallersave[NIR] = {0, 1,1,1,1,1,0,0, 1,1,1,1, 0,0,0,0};
       int  icalleesave[NIR] = {0, 0,0,0,0,0,1,1, 0,0,0,0, 1,1,1,1};
 /*
- *    Majedul: BUGFIXED: rdx and rcx can also be used for parameters
+ *    Majedul: rdx and rcx can also be used for parameters
+ *    NOTE: but prologue got messed up when I updated like the 2nd statement.
+ *    Figure out the details???
  */
-      /*int iparareg[NIR] = {0,0,0,0,1,1,0,0, 1,1,0,0,0,0,0,0};*/
-      int iparareg[NIR] = {0,1,1,0,1,1,0,0, 1,1,0,0,0,0,0,0};
+      int iparareg[NIR] = {0,0,0,0,1,1,0,0, 1,1,0,0,0,0,0,0};
+      /*int iparareg[NIR] = {0,1,1,0,1,1,0,0, 1,1,0,0,0,0,0,0};*/
       char *archiregs[NIR] = 
       {"@rsp", "@rdx", "@rcx", "@rax", "@rsi", "@rdi", "@rbp", "@rbx",
        "@r8", "@r9", "@r10", "@r11", "@r12", "@r13", "@r14", "@r15"};
