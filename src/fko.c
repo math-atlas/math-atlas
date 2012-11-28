@@ -2741,13 +2741,15 @@ int main(int nargs, char **args)
  */
    GenPrologueEpilogueStubs(bbbase, 0); /* rsav = 0, normal case */
    bbbase = NewBasicBlocks(bbbase);
+   //CheckFlow(bbbase,__FILE__,__LINE__);
    FindLoops();
    CheckFlow(bbbase,__FILE__,__LINE__);
 #if 0 
    fprintf(stdout, "1st LIL");
    PrintInst(stdout, bbbase);
    ShowFlow("cfg.dot", bbbase);
-   //exit(0);
+   PrintLoop(stderr,optloop);
+   exit(0);
 #endif   
 /*
  * NOTE: if there is no optloop, we can't perform transformation of 
@@ -2822,7 +2824,8 @@ int main(int nargs, char **args)
 
       if (STATE1_FLAG & IFF_ST1_RC)
       {
-         assert(!IfConvWithRedundantComp());
+         //assert(!IfConvWithRedundantComp());
+         assert(!IterativeRedCom());
 #if 0 
          fprintf(stdout, "LIL after ElimMax/MinIf\n");
          PrintInst(stdout, bbbase);
