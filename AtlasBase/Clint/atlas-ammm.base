@@ -3508,13 +3508,232 @@ ATL_mmnode_t *DecentGenCase(int verb, char pre, int nreg)
    return(GetNewGenNode(pre, 0, 0, mu, nu, 1));
 }
 
+/*
+ * This routine finds kernels to use in low-rank-K update. For 3 <= K <= 15,
+ * it tries all kernels that and chooses the best performing; In this search
+ * we consider only compile-time K kernels, since runtime kernels will be
+ * selected by general (K>15) search.
+ * (K=1 and K=2 are handled by GER and GER2).
+ * We consider only user-generated kernels; for any problem sizes that are
+ * not supported, we will use the normal K or K-clean routines.  This list
+ * is just to allow for hand-tuning small-K special cases.
+ * This routine produces outpuf file <pre>AMMLOWK.sum
+ */
+ATL_mmnode_t *GetLowRankKKernels
+(
+   int verb,            /* verbosity */
+   char pre,            /* s,d */
+   int NB,              /* default mb/nb to time with */
+   ATL_mmnode_t *inb    /* all working ukerns */
+)
+{
+   int k;
+   ATL_mmnode_t *rkKb=NULL, *mp;
+/*
+ * Get rid of all K-runtime kernels from consideration
+ */
+   while (inb && FLAG_IS_SET(inb->flag, MMF_KRUNTIME))
+      inb = KillMMNode(inb);
+   if (inb)
+   {
+      ATL_mmnode_t *prev=inb;
+      mp = inb->next;
+      while (mp)
+      {
+         if (FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+         {
+            mp = KillMMNode(mp);
+            prev->next = mp;
+         }
+         else
+         {
+            prev = mp;
+            mp = mp->next;
+         }
+      }
+   }
+   else
+      return(NULL);
+   for (k=15; k > 2; k--)
+   {
+      printf("FINDING BEST USER-PROVIDED KERNEL FOR K=%d:\n", k);
+      ATL_mmnode_t *best=NULL;
+      for (mp=inb; mp; mp = mp->next)
+      {
+         const int mu = mp->mu, nu = mp->nu, ku = mp->ku;
+         const int mb = (NB/mu)*mu, nb = (NB/nu)*nu;
+         double mf;
+
+         assert(mb && nb);
+         if (FLAG_IS_SET(mp->flag, MMF_KRUNTIME) || k%ku)
+         {
+            printf("   skipping %d. %s, KRUN=%d, ku=%d\n", mp->ID, mp->rout,
+                   FLAG_IS_SET(mp->flag, MMF_KRUNTIME), ku);
+            continue;
+         }
+         mf = TimeMMKernel(verb, 0, mp, pre, mb, nb, k, 0, 0, 0, 0, 0, -1);
+         printf("   %d. %s: mb=%d, nb=%d, MFLOP=%.2f\n", mp->ID, mp->rout,
+                mb, nb, mf);
+         if (!best)
+         {
+            best = mp;
+            mp->mflop[0] = mf;
+            mp->mbB = mb;
+            mp->nbB = nb;
+            mp->kbB = k;
+         }
+         else if (best->mflop[0] < mf)
+         {
+            best = mp;
+            mp->mflop[0] = mf;
+            mp->mbB = mb;
+            mp->nbB = nb;
+            mp->kbB = k;
+         }
+      }
+      if (best)
+      {
+         best = CloneMMNode(best);
+         best->next = rkKb;
+         rkKb = best;
+         printf("BEST FIXED-%d KERNEL: %d. %s MFLOP=%.2f\n\n", 
+                k, best->ID, best->rout, best->mflop[0]);
+      }
+      else
+         printf("NO SPECIAL CASE for K=%d\n\n", k);
+   }
+   KillAllMMNodes(inb);
+   return(rkKb);
+}
+
+/*
+ * Finds list of best run-time kernel, ranked by KU.  Higher KUs are not
+ * retained unless they beat any lower-KU kernel that divides that KU evenly
+ */
+ATL_mmnode_t *GetRuntimeKKernels
+(
+   int verb,            /* verbosity */
+   char pre,            /* s,d */
+   int NB,              /* default mb/nb to time with */
+   ATL_mmnode_t *inb    /* all working ukerns */
+)
+{
+   ATL_mmnode_t *mp;
+   int KU;
+/*
+ * Get rid of all non-K-runtime kernels from consideration
+ */
+   while (inb && !FLAG_IS_SET(inb->flag, MMF_KRUNTIME))
+      inb = KillMMNode(inb);
+   if (inb)
+   {
+      ATL_mmnode_t *prev=inb;
+      mp = inb->next;
+      while (mp)
+      {
+         if (!FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+         {
+            mp = KillMMNode(mp);
+            prev->next = mp;
+         }
+         else
+         {
+            prev = mp;
+            mp = mp->next;
+         }
+      }
+   }
+   else
+      return(NULL);
+   KU = inb->ku;
+   for (mp=inb->next; mp; mp = mp->next)
+      KU = Mylcm(KU, mp->ku);
+   if (KU > 32)
+      KU = 32;
+   else
+      KU = ((16+KU-1)/KU)*KU;
+   printf("TRYING ALL RUNTIMEK KERNS WITH NB=%d, KB=%d:\n", NB, KU);
+   for (mp=inb; mp; mp = mp->next)
+   {
+      int mu=mp->mu, nu=mp->nu, ku=mp->ku;
+      int mb = (NB/mu)*mu, nb = (NB/nu)*nu, kb = (KU/ku)*ku;
+      double mf;
+      assert(mb && nb && kb);
+      mf = TimeMMKernel(verb, 0, mp, pre, mb, nb, kb, 0, 0, 0, 0, 0, -1);
+      printf("   %d. %s: mb=%d, nb=%d, MFLOP=%.2f\n", mp->ID, mp->rout,
+             mb, nb, mf);
+      mp->mflop[0] = mf;
+      mp->mbB = mb;
+      mp->nbB = nb;
+      mp->kbB = kb;
+   }
+   printf("\n");
+   inb = ATL_SortMMNodesByMflop(0, inb);
+   if (inb->ku == 1)
+   {
+      KillAllMMNodes(inb->next);
+      inb->next = NULL;
+   }   
+   else
+   {
+      ATL_mmnode_t *p;
+/*
+ *    Go thru sorted list, and kill all slower nodes that don't add new K
+ */
+      for (p=inb; p; p = p->next)
+      {
+         ATL_mmnode_t *prev=p;
+         mp = p->next;
+         while (mp)
+         {
+            if (mp->ku % p->ku == 0)
+            {
+               mp = KillMMNode(mp);
+               prev->next = mp;
+            }
+            else
+            {
+               prev = mp;
+               mp = mp->next;
+            }
+         }
+      }
+   }
+   if (!inb)
+      printf("NO RETAINED RUNTIME KERNELS.\n\n");
+   else
+   {
+      printf("RETAINED RUNTIME KERNELS:\n");
+      for (mp=inb; mp; mp = mp->next)
+         printf("   %d. %s: ku=%d, MFLOP=%.2f\n", mp->ID, mp->rout, mp->ku,
+                mp->mflop[0]);
+      printf("DONE.\n");
+   }
+   return(inb);
+}
+ATL_mmnode_t *GetRankKKernels
+(
+   int verb,            /* verbosity */
+   char pre,            /* s,d */
+   int NB,              /* default mb/nb to time with */
+   ATL_mmnode_t *low    /* all working ukerns */
+)
+{
+   ATL_mmnode_t *run;
+   run = CloneMMQueue(low);
+   low = GetLowRankKKernels(verb, pre, 60, low);
+   run = GetRuntimeKKernels(verb, pre, 60, run);
+   KillAllMMNodes(low);
+   KillAllMMNodes(run);
+}
+
 int main(int nargs, char **args)
 {
    char pre='d';
    int verb, nregs, nb, CS, gmu, gnu;
    int *nbs;
    char *fnout;
-   ATL_mmnode_t *smmb, *mmb, *mmp, *mm3b, *gmm, *p;
+   ATL_mmnode_t *smmb, *mmb, *mmp, *mm3b, *gmm, *p, *rnkK;
 
    nbs = GetFlags(nargs, args, &pre, &verb, &nregs, &nb, &CS);
    if (verb)
@@ -3530,6 +3749,7 @@ int main(int nargs, char **args)
  * Find which kernels can compile on this platform
  */
    mmb = GetWorkingUserCases(verb, pre);
+   rnkK = CloneMMQueue(mmb);  /* clone the working kerns for rank-K search */
 /*
  * For small cases (or user specified), try all kernels with all KB for
  * user generated.  Smmb now points to these KB values that are always
@@ -3578,6 +3798,7 @@ int main(int nargs, char **args)
    ComputeKClean(verb, pre, mmb);
    KillAllMMNodes(mmb);
    FindBestKU1(verb, pre, 17);  /* create kern for use in low-rank update */
+   mmb = GetRankKKernels(verb, pre, 60, rnkK);
    free(nbs);
    exit(0);
 }
@@ -3719,7 +3940,7 @@ int Mjoin(PATL,ammmABC)
    free(vp);
    return(0);
 }
-@ROUT ATL_ammm ATL_ammm_1b
+@ROUT ATL_ammm ATL_ammm_1b ATL_ammm_rkK
 #include "atlas_misc.h"
 #include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_blk.h))
 #include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_ablk2cmat.h))
@@ -3734,13 +3955,18 @@ int Mjoin(PATL,ammmABC)
 /*
  * This routine attempt to choose which access-major GEMM to call based on dims
  */
+@ROUT ATL_ammm_rkK
+   @define rt @Mjoin(PATL,ammm_rkK)@
+/*
+ * This routine called when K <= MAXK
+ */
 @ROUT ATL_ammm_1b
    @define rt @Mjoin(PATL,ammm_1b)@
 /* 
  * This routine called in degenerate case where all dims less than max block,
  * so we can do entire operation with one kernel call
  */
-@ROUT ATL_ammm ATL_ammm_1b
+@ROUT ATL_ammm ATL_ammm_1b 
 int @(rt)
 (
    enum ATLAS_TRANS TA,
@@ -3757,12 +3983,91 @@ int @(rt)
    TYPE *C,
    ATL_CSZT ldc
 )
+@ROUT ATL_ammm_rkK
+{
+   int I, mb, nb, ku;
+   TYPE alpA=ATL_rone, alpB=ATL_rone;
+   const size_t CE = ATL_AMM_MAXMB*ATL_AMM_MAXNB*ATL_AMM_MAXKB;
+/*
+ * Find kernel that can handle this K
+ */
+   for (I=0; I < ATL_AMM_NCASES && ATL_AMM_KBs[I] < K; I++);
+   mu = ATL_AMM_MUs[i];
+   nu = ATL_AMM_NUs[i];
+   ku = ATL_AMM_KUs[i];
+   amm = (ATL_AMM_KBs[i] == K || ((K/ku)*ku == K)) ? 
+         ATL_AMM_KERN_b0[i] : ATL_AMM_KERN_K1[i];
+/*
+ * Compute mb/nb as near-square case that fits in the cache budget as our
+ * largest blocking: 2*sizeof(C) + sizeof(B) + 2*sizeof(A)
+ *    2*mb*nb + K*nb + mb*K <= CE
+ */
+   mb = mu;
+   nb = nu;
+   while (2*mb*nb + K*(nb+mb) < CE)
+   {
+      if (nb < mb && nb < N)
+         nb += nu;
+      else if (mb < M)
+         mb += mu;
+      else
+         break;
+   }
+   if (2*mb*nb + K*(nb+mb) > CE)
+   {
+      if (nb > mb && nb > nu)
+         nb -= nu;
+      else if (mb > mu)
+         mb -= mu;
+   }
+   if (beta == ATL_rone)
+      blk2c = ATL_AMM_BLK2C_a1_b1[i];
+   else if (beta == ATL_rnone)
+      blk2c = ATL_AMM_BLK2C_a1_bn[i];
+   else if (beta == ATL_rzero)
+      blk2c = ATL_AMM_BLK2C_a1_b0[i];
+   else
+      blk2c = ATL_AMM_BLK2C_a1_bX[i];
+/*
+ * If alpha is one, then we only have to worry about beta
+ */
+   if (alpha == 1.0)
+   {
+      a2blk = (TA == AtlasNoTrans) ? ATL_AMM_AT2BLK_a1[i] : ATL_AMM_A2BLK_a1[i];
+      b2blk = (TB == AtlasNoTrans) ? ATL_AMM_B2BLK_a1[i] : ATL_AMM_BT2BLK_a1[i];
+   }
+/*
+ * If A smallest matrix, apply alpha to it
+ */
+   else if (N > M)
+   {
+      alpA = alpha;
+      if (alpha == ATL_rnone)
+         a2blk = (TA == AtlasNoTrans)?ATL_AMM_AT2BLK_an[i]:ATL_AMM_A2BLK_an[i];
+      else
+         a2blk = (TA == AtlasNoTrans)?ATL_AMM_AT2BLK_aX[i]:ATL_AMM_A2BLK_aX[i];
+      b2blk = (TB == AtlasNoTrans) ? ATL_AMM_B2BLK_a1[i] : ATL_AMM_BT2BLK_a1[i];
+   }
+/* 
+ * B is smallest matrix, apply alpha to it
+ */
+   else
+   {
+      alpB = alpha;
+      a2blk = (TA == AtlasNoTrans) ? ATL_AMM_AT2BLK_a1[i] : ATL_AMM_A2BLK_a1[i];
+      if (alpha == ATL_rnone)
+         b2blk = (TB == AtlasNoTrans)?ATL_AMM_B2BLK_an[i]:ATL_AMM_BT2BLK_an[i];
+      else
+         b2blk = (TB == AtlasNoTrans)?ATL_AMM_B2BLK_aX[i]:ATL_AMM_BT2BLK_aX[i];
+   }
+
+   return(0);
+}
 @ROUT ATL_ammm_1b
 {
    int i;
    int nmu, nnu, nku, bM, bN, bK;
    int mu, nu, ku;
-   int PADK=0;
    void *vp;
    TYPE *pA, *pB, *pC, *p;
    TYPE alpA=ATL_rone, alpB=ATL_rone, alpC=ATL_rone;
@@ -3873,34 +4178,21 @@ int @(rt)
       else
          blk2c = ATL_AMM_BLK2C_a1_bX[i];
    }
-   if (bK-K > 4)
-   {
-      bK = K;
-      amm = ATL_AMM_KERN_K1[i];
-   }
-   else
-   {
-      PADK = bK-K;
-      amm = ATL_AMM_KERN_b0[i];
-   }
-   vp = malloc((bM*bN + bM*bK + bK*bN)*sizeof(TYPE) + 3*ATL_Cachelen);
+   amm = (bK == K) ? ATL_AMM_KERN_b0[i] : ATL_AMM_KERN_K1[i];
+   vp = malloc((bM*bN + bM*K + K*bN)*sizeof(TYPE) + 3*ATL_Cachelen);
    if (!vp)
       return(1);
    pB = ATL_AlignPtr(vp);
-   pA = pB + bK*bN;
+   pA = pB + K*bN;
    pA = ATL_AlignPtr(pA);
-   pC = pA + bM*bK;
+   pC = pA + bM*K;
    pC = ATL_AlignPtr(pC);
 /*
  * Copy A & B into workspace, and pad K its if necessary
  */
    a2blk(K, M, alpA, A, lda, pA);
-   if (PADK)
-      Mjoin(PATL,zero)(PADK*nmu, pA+K*bM, 1);
    b2blk(K, N, alpB, B, ldb, pB);
-   if (PADK)
-      Mjoin(PATL,zero)(PADK*nnu, pA+K*bN, 1);
-   amm(nmu, nnu, bK, pA, pB, pC, pA, pB, pC);
+   amm(nmu, nnu, K, pA, pB, pC, pA, pB, pC);
    blk2c(M, N, alpC, pC, beta, C, ldc);
 
    free(vp);
@@ -3909,7 +4201,72 @@ int @(rt)
 @ROUT ATL_ammm
 {
    int iret;
-   if (M <= ATL_AMM_MAXMB && N <= ATL_AMM_MAXNB && K <= ATL_AMM_MAXKB)
+/*
+ * Just do a scale and return
+ */
+   if (alpha == ATL_rzero)
+   {
+      if (beta == ATL_rzero)
+         Mjoin(PATL,gezero)(M, N, C, ldc);
+      else if (beta != ATL_rone)
+         Mjoin(PATL,gescal)(M, N, beta, C, ldc);
+      return(0);
+   }
+   if (K == 1)  /* really a GER */
+   {
+      if (!SCALAR_IS_ONE(beta))
+      {
+         int i;
+         ATL_CSZT incA = (TA == AtlasNoTrans) ? 1 : lda;
+         ATL_CSZT incB = (TB == AtlasNoTrans) ? ldb : 1;
+         for (i=0; i < N; i++, B += incB, C += ldc)
+            Mjoin(PATL,axpby)(M, alpha * *B,  A, incA, beta, C, 1);
+      }
+      else
+         Mjoin(PATL,ger)(M, N, alpha, A, (TA == AtlasNoTrans) ? 1 : lda, 
+                         B, (TB == AtlasNoTrans) ? ldb : 1, C, ldc);
+      return(0);
+   }
+   else if (K == 2 && SCALAR_IS_ONE(beta))  /* really a GER2 */
+   {
+      if (TA == AtlasNoTrans)
+      {
+         if (TB == AtlasNoTrans)
+            Mjoin(PATL,ger2)(M, N, alpha, A, 1, B, ldb, alpha, A+lda, 1, 
+                             B+1, ldb, C, ldc);
+         else
+            Mjoin(PATL,ger2)(M, N, alpha, A, 1, B, 1, alpha, A+lda, 1, 
+                             B+ldb, 1, C, ldc);
+      }
+      else if (TB == AtlasNoTrans)
+         Mjoin(PATL,ger2)(M, N, alpha, A, lda, B, ldb, alpha, A+1, lda, 
+                          B+1, ldb, C, ldc);
+      else
+         Mjoin(PATL,ger2)(M, N, alpha, A, lda, B, 1, alpha, A+1, lda, 
+                          B+ldb, 1, C, ldc);
+      return(0);
+   }
+   else if (N == 1)  /* Really GEMV with A as matrix, A & C as vectors */
+   {
+      if (TA == AtlasNoTrans)
+         Mjoin(PATL,gemv)(AtlasNoTrans, M, K, alpha, A, lda, B, 
+                          (TB == AtlasNoTrans) ? 1:ldb, beta, C, 1);
+      else
+         Mjoin(PATL,gemv)(AtlasTrans, K, M, alpha, A, lda, B, 
+                          (TB == AtlasNoTrans) ? 1:ldb, beta, C, 1);
+      return(0);
+   }
+   else if (M == 1)  /* Really GEMV with B as matrix, A & C as vectors */
+   {
+      if (TB == AtlasNoTrans)
+         Mjoin(PATL,gemv)(AtlasTrans, K, N, alpha, B, ldb, A, 
+                          (TA == AtlasNoTrans) ? lda:1, beta, C, ldc);
+      else
+         Mjoin(PATL,gemv)(AtlasNoTrans, N, K, alpha, B, ldb, A, 
+                          (TA == AtlasNoTrans) ? lda:1, beta, C, ldc);
+      return(0);
+   }
+   else if (M <= ATL_AMM_MAXMB && N <= ATL_AMM_MAXNB && K <= ATL_AMM_MAXKB)
       iret = Mjoin(PATL,ammm_1b)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                  beta, C, ldc);
    else if (M >= 3*ATL_AMM_MAXMB && N >= 3*ATL_AMM_MAXNB && 
