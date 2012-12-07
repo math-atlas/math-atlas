@@ -3711,18 +3711,167 @@ ATL_mmnode_t *GetRuntimeKKernels
    }
    return(inb);
 }
+/*
+ * RETURNS: 1 if mmc is slower than any kernel in mmb
+ */
+int IsSlowerThanList
+(
+   int verb,            /* verbosity */
+   char pre,            /* s,d */
+   int NB,              /* default mb/nb to time with */
+   ATL_mmnode_t *mmc,  /* candidate mmkern */
+   ATL_mmnode_t *mmb   /* kernels to time candidate against */
+)
+{
+   ATL_mmnode_t *mp;
+   double mfc, mf;
+   int mu, nu, ku;
+   int mb, nb, kb;
+
+   if (!mmb)
+      return(0);
+   kb = mmc->kbB;
+   mu = mmc->mu;
+   nu = mmc->nu;
+   mb = (NB/mu)*mu;
+   nb = (NB/nu)*nu;
+   assert(mb && nb && kb);
+   mfc = TimeMMKernel(verb, 0, mmc, pre, mb, nb, kb, 0, 0, 0, 0, 0, -1);
+   mmc->mflop[1] = mfc;
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      ku = mp->ku;
+      if (mp->kbmin && kb < mp->kbmin)
+         continue;
+      if (mp->kbmax && kb > mp->kbmax)
+         continue;
+      if (kb%ku)
+         continue;
+      if (kb%ku == 0)
+      {
+         mu = mp->mu;
+         nu = mp->nu;
+         mb = (NB/mu)*mu;
+         nb = (NB/nu)*nu;
+         assert(mb && nb);
+         mf = TimeMMKernel(verb, 0, mp, pre, mb, nb, kb, 0, 0, 0, 0, 0, -1);
+         mp->mflop[1] = mfc;
+         if (mf > mfc)
+         {
+@skip            printf("      %d. %s (%.2f) outcompeted by %d. %s (%.2f)\n",
+@skip                   mmc->ID, mmc->rout, mfc, mp->ID, mp->rout, mf);
+            return(1);
+         }
+      }
+   }
+   return(0);
+}
+
+#if 0
+ATL_mmnode_t *MergeRankKKernels
+(
+   int verb,            /* verbosity */
+   char pre,            /* s,d */
+   int NB,              /* default mb/nb to time with */
+   int maxKB,           /* largest KB to produce */
+   ATL_mmnode_t *fixb,  /* rank-K fixed-K kerenls */
+   ATL_mmnode_t *runb,  /* rank-K, runtime-K kernels */
+   ATL_mmnode_t *sqrb   /* optimized near-square kernels */
+)
+{
+   ATL_mmnode_t *rkb, *rkp;
+   int k;
+   rkp = rkb = GetMMNode();
+   for (k=3; k < maxKB; k++)
+   {
+/*
+ *    fixb & sqrb are in K-order, so we pop them off stack until we get to
+ *    one big enough to solve the problem.  We also ignore all KRUNTIME kernels
+ *    in sqrb, since they should appear in runb if they are competitive
+ */
+      while (fixb)
+      {
+         if (fixb->kuB < k)
+            fixb = KillMMNode(fixb);
+         else
+            break;
+      }
+      while (sqrb)
+      {
+         if (sqrb->kuB < k || FLAG_IS_SET(sqrb->flag, MMF_KRUNTIME))
+            sqrb = KillMMNode(sqrb);
+         else break;
+      }
+   }
+}
+#endif
+
 ATL_mmnode_t *GetRankKKernels
 (
    int verb,            /* verbosity */
    char pre,            /* s,d */
    int NB,              /* default mb/nb to time with */
+   ATL_mmnode_t *gmm,   /* generated matmul kernel */
    ATL_mmnode_t *low    /* all working ukerns */
 )
 {
    ATL_mmnode_t *run;
+
    run = CloneMMQueue(low);
-   low = GetLowRankKKernels(verb, pre, 60, low);
-   run = GetRuntimeKKernels(verb, pre, 60, run);
+   if (FLAG_IS_SET(gmm->flag, MMF_KRUNTIME))
+   {
+      if (gmm->ku != 1)
+      {
+         ATL_mmnode_t *p;
+         p = GetNewGenNode(pre, NB, gmm->lat, gmm->mu, gmm->nu, 1);
+         p->next = run;
+         run = p;
+      }
+      gmm->next = run;
+      run = gmm;
+   }
+   else
+   {
+      ATL_mmnode_t *p;
+      p = GetNewGenNode(pre, NB, gmm->lat, gmm->mu, gmm->nu, 1);
+      p->flag |= (1<<MMF_KRUNTIME);
+      p->next = run;
+      run = p;
+      gmm->next = low;
+      low = gmm;
+   }
+   low = GetLowRankKKernels(verb, pre, NB, low);
+   run = GetRuntimeKKernels(verb, pre, NB, run);
+/*
+ * Delete any fixed kernels that are slower than the runtime-K kernels
+ */
+   printf("DELETING FIXED KERNELS OUTCOMPETED BY RUNTIME KERNELS:\n");
+   while (low)
+   {
+      if (!IsSlowerThanList(verb, pre, NB, low, run));
+         break;
+      printf("   Deleting: %d. %s for K=%d\n", low->ID, low->rout, low->kbB);
+      low = KillMMNode(low);
+   }
+   if (low)
+   {
+      ATL_mmnode_t *mp=low->next, *prev=low;
+      while (mp)
+      {
+         if (IsSlowerThanList(verb, pre, NB, mp, run))
+         {
+            printf("   Deleting: %d. %s for K=%d\n", mp->ID, mp->rout, mp->kbB);
+            mp = KillMMNode(mp);
+            prev->next = mp;
+         }
+         else
+         {
+            prev = mp;
+            mp = mp->next;
+         }
+      }
+   }
+   printf("DONE.\n\n");
    KillAllMMNodes(low);
    KillAllMMNodes(run);
 }
@@ -3733,7 +3882,7 @@ int main(int nargs, char **args)
    int verb, nregs, nb, CS, gmu, gnu;
    int *nbs;
    char *fnout;
-   ATL_mmnode_t *smmb, *mmb, *mmp, *mm3b, *gmm, *p, *rnkK;
+   ATL_mmnode_t *smmb, *mmb, *mmp, *mm3b, *gmm, *p, *rnkK, *grnkK=NULL;
 
    nbs = GetFlags(nargs, args, &pre, &verb, &nregs, &nb, &CS);
    if (verb)
@@ -3778,6 +3927,7 @@ int main(int nargs, char **args)
  *    this case to default list to be searched.
  */
       gmm = DecentGenCase(verb, pre, nregs);
+      grnkK = CloneMMNode(gmm);
       gmm->next = mmb;
       mmb = gmm;
 /*
@@ -3798,7 +3948,9 @@ int main(int nargs, char **args)
    ComputeKClean(verb, pre, mmb);
    KillAllMMNodes(mmb);
    FindBestKU1(verb, pre, 17);  /* create kern for use in low-rank update */
-   mmb = GetRankKKernels(verb, pre, 60, rnkK);
+   if (!grnkK)
+      grnkK = DecentGenCase(verb, pre, nregs);
+   mmb = GetRankKKernels(verb, pre, 60, grnkK, rnkK);
    free(nbs);
    exit(0);
 }
