@@ -247,15 +247,16 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "   -i <infile> : can be repeated for multiple files\n");
    fprintf(stderr, "   -k <unique K cleanup index file> : \n");
    fprintf(stderr, "   -K <K cleanup by NB file> : \n");
+   fprintf(stderr, "   -r <rank-K kernel file> : \n");
    exit(ierr ? ierr : -1);
 }
 
 ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char **DOUT, 
-                       char **UKIN, char **KCIN)
+                       char **UKIN, char **KCIN, char **RKIN)
 {
    int i, j=0, n, k;
    char pre='d';
-   *UKIN = *KCIN = *DOUT = NULL;
+   *RKIN = *UKIN = *KCIN = *DOUT = NULL;
    ATL_mmnode_t *mmb=NULL, *mmp, *mp;
 
    for (i=1; i < nargs; i++)
@@ -280,6 +281,11 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char **DOUT,
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
         *KCIN = DupString(args[i]);
+        break;
+      case 'r':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        *RKIN = DupString(args[i]);
         break;
       case 'd':
         if (++i >= nargs)
@@ -457,7 +463,7 @@ FILE *StandHStart(char pre, ATL_mmnode_t *mmb, char *outd, char *bnam)
    return(fp);
 }
 
-void GenBlockingFile(char pre, ATL_mmnode_t *mmb, char *outd)
+void GenBlockingFile(char pre, ATL_mmnode_t *mmb, char *outd, char *nm)
 {
    ATL_mmnode_t *mp;
    char *fnam;
@@ -466,7 +472,7 @@ void GenBlockingFile(char pre, ATL_mmnode_t *mmb, char *outd)
    int i, n, maxb, maxNB, maxMB, maxKB;
    char PRE = toupper(pre), bc[3] = {'M', 'N', 'K'};
 
-   fp = StandHStart(pre, mmb, outd, "blk");
+   fp = StandHStart(pre, mmb, outd, nm);
    maxNB = maxKB = maxMB = 0;
    for (n=0,mp=mmb; mp; n++, mp = mp->next)
    {
@@ -528,13 +534,13 @@ void GenBlockingFile(char pre, ATL_mmnode_t *mmb, char *outd)
    fclose(fp);
 }
 
-void GenFlagH(char pre, ATL_mmnode_t *mmb, char *outd)
+void GenFlagH(char pre, ATL_mmnode_t *mmb, char *outd, char *nm)
 {
    FILE *fp;
    int j, n;
    ATL_mmnode_t *mp;
 
-   fp = StandHStart(pre, mmb, outd, "flag");
+   fp = StandHStart(pre, mmb, outd, nm);
 
    for (n=0,mp=mmb; mp; n++,mp = mp->next);
 
@@ -590,16 +596,30 @@ void SpewForthC2BDecl(char pre, ATL_mmnode_t *mmb, FILE *fp, char *rt,
       fprintf(fp, "};\n\n");
 }
 
-void GenC2BLK(char pre, ATL_mmnode_t *mmb, char *outd)
+void GenC2BLK(char pre, ATL_mmnode_t *mmb, char *outd, char *suff)
 {
    FILE *fp0, *fp1;
    ATL_mmnode_t *mp;
    int ia, ib;
    char ac[3] = {'1', 'n', 'X'};
    char bc[4] = {'0', '1', 'n', 'X'};
+   char *fnam;
 
-   fp0 = StandHStart(pre, mmb, outd, "ablk2cmat");
-   fp1 = StandHStart(pre, mmb, outd, "cmat2ablk");
+   if (!suff)
+   {
+      fp0 = StandHStart(pre, mmb, outd, "ablk2cmat");
+      fp1 = StandHStart(pre, mmb, outd, "cmat2ablk");
+   }
+   else
+   {
+      fnam = malloc(sizeof(char)*(strlen(suff) + 10));
+      assert(fnam);
+      strncpy(fnam, "ablk2cmat", 9);
+      strcpy(fnam+9, suff);
+      fp0 = StandHStart(pre, mmb, outd, fnam);
+      strncpy(fnam, "cmat2ablk", 9);
+      fp1 = StandHStart(pre, mmb, outd, fnam);
+   }
    fprintf(fp0, "\n");
    fprintf(fp1, "\n");
 /*
@@ -668,7 +688,7 @@ void SpewForthCpDecl(char pre, ATL_mmnode_t *mmb, FILE *fp,
       fprintf(fp, "};\n\n");
 }
 
-void GenCMAJ2AMAJ(char pre, ATL_mmnode_t *mmb, char *outd)
+void GenCMAJ2AMAJ(char pre, ATL_mmnode_t *mmb, char *outd, char *suff)
 /*
  * 3. atlas_<pre>amm_cm2am_a[1,X,n]: 
  *    defines: ATL_AMM_NCASES
@@ -681,10 +701,12 @@ void GenCMAJ2AMAJ(char pre, ATL_mmnode_t *mmb, char *outd)
    char *fnam, *sp, *np;
    ATL_mmnode_t *mp;
 
+   if (!suff)
+      suff = "";
    ia = strlen(outd) + 23;
    fnam = malloc(ia*sizeof(char));
    assert(fnam);
-   sprintf(fnam, "%s/atlas_%camm_cm2am_a1.h", outd, pre);
+   sprintf(fnam, "%s/atlas_%camm%s_cm2am_a1.h", outd, pre, suff);
    np = fnam+ia-23+12;
    assert(*np == 'c' && np[1] == 'm');
    sp = fnam+ia-4;
@@ -776,8 +798,8 @@ int ExactKernelInList(ATL_mmnode_t *mmb, ATL_mmnode_t *p)
 
 void SpewForthKernProto(FILE *fp, char pre, ATL_mmnode_t *p, char bc)
 {
-   fprintf(fp, "void ATL_%cAMMM_%d_%dx%dx%d_b%c\n", pre, p->ID, p->mu, p->nu, 
-           FLAG_IS_SET(p->flag, MMF_KRUNTIME)?p->ku:p->kbB, bc);
+   fprintf(fp, "void ATL_%cAMMM_%d_%d_%dx%dx%d_b%c\n", pre, p->ID, 
+           FLAG_IS_SET(p->flag, MMF_KRUNTIME)?0:p->kbB, p->mu, p->nu, p->ku,bc);
    fprintf(fp, 
       "   (ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,TYPE*,\n");
    fprintf(fp, 
@@ -808,8 +830,9 @@ void SpewForthKernArray(FILE *fp, char pre, ATL_mmnode_t *mmb,
    fprintf(fp, "{\n");
    for (mp=mmb; mp; mp = mp->next)
    {
-      fprintf(fp, "   ATL_%cAMMM_%d_%dx%dx%d_b%c", pre, mp->ID, mp->mu, 
-              mp->nu, FLAG_IS_SET(mp->flag, MMF_KRUNTIME)?mp->ku:mp->kbB, cbet);
+      fprintf(fp, "   ATL_%cAMMM_%d_%d_%dx%dx%d_b%c", pre, mp->ID, 
+              FLAG_IS_SET(mp->flag, MMF_KRUNTIME)?0:mp->kbB,
+              mp->mu, mp->nu, mp->ku, cbet);
       if (mp->next)
          fprintf(fp, ",\n");
    }
@@ -817,7 +840,8 @@ void SpewForthKernArray(FILE *fp, char pre, ATL_mmnode_t *mmb,
 }
 
 void GenKernH(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, 
-              ATL_mmnode_t *kcb, char *outd)
+              ATL_mmnode_t *kcb, ATL_mmnode_t *rkb, ATL_mmnode_t *urb,
+              char *outd)
 /*
  * 5. atlas_<pre>amm_kerns.h
  *    defines: ATL_AMM_NCASES
@@ -835,6 +859,8 @@ void GenKernH(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
    SpewForthKernProtos(fp, pre, mmb, 3);
    if (ukb)
       SpewForthKernProtos(fp, pre, ukb, 1);
+   if (urb)
+      SpewForthKernProtos(fp, pre, urb, 1);
    fprintf(fp, "\n");
 /*
  * Dump out kernel ptr arrays
@@ -844,13 +870,16 @@ void GenKernH(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
    SpewForthKernArray(fp, pre, mmb, "KERN_bn", 'n');
    if (kcb)
       SpewForthKernArray(fp, pre, kcb, "KERN_K1", '0');
+   if (rkb)
+      SpewForthKernArray(fp, pre, rkb, "KERN_RKK", '0');
 
    fprintf(fp, "\n#endif  /* end include file guard */\n");
    fclose(fp);
 }
 
 void GenHeaderFiles(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, 
-                    ATL_mmnode_t *kcb, char *outd)
+                    ATL_mmnode_t *kcb, ATL_mmnode_t *rkb, ATL_mmnode_t *urb,
+                    char *outd)
 /*
  * Header files required to build full gemm (no timing):
  *X1. atlas_<pre>amm_blk.h : 
@@ -880,16 +909,141 @@ void GenHeaderFiles(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
  *X   -> 3*4 = 12 indexible arrays total
  */
 {
-   GenBlockingFile(pre, mmb, outd);
-   GenFlagH(pre, mmb, outd);
-   GenCMAJ2AMAJ(pre, mmb, outd);
-   GenC2BLK(pre, mmb, outd);
-   GenKernH(pre, mmb, ukb, kcb, outd);
+   GenBlockingFile(pre, mmb, outd, "blk");
+   GenFlagH(pre, mmb, outd, "flag");
+   GenCMAJ2AMAJ(pre, mmb, outd, NULL);
+   GenC2BLK(pre, mmb, outd, NULL);
+   if (rkb)
+   {
+      GenBlockingFile(pre, rkb, outd, "rkkblk");
+      GenFlagH(pre, rkb, outd, "rkkflag");
+      GenCMAJ2AMAJ(pre, rkb, outd, "rkk");
+      GenC2BLK(pre, rkb, outd, "_rkk");
+   }
+   GenKernH(pre, mmb, ukb, kcb, rkb, urb, outd);
 }
 
-void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, char *outd)
+/*
+ * RETURNS: possibly updated list of all unique mu/nu comboes
+ */
+typedef struct mnur mnur_t;
+struct mnur {int mu; int nu; mnur_t *next;};
+mnur_t *GetUniqueMNUnrolls(ATL_mmnode_t *mmb, mnur_t *urb)
 {
-   ATL_mmnode_t *mmp, *p;
+   ATL_mmnode_t *mp;
+   mnur_t *up;
+/*
+ * For each node in mmb, add to urb if mu/nu combo not already there
+ */
+   for (mp = mmb; mp; mp = mp->next)
+   {
+      for (up=urb; up; up = up->next)
+         if (mp->mu == up->mu && mp->nu == up->nu)
+            break;
+      if (!up)
+      {
+         up = malloc(sizeof(mnur_t));
+         assert(up);
+         up->mu = mp->mu;
+         up->nu = mp->nu;
+         up->next = urb;
+         urb = up;
+      }
+   }
+   return(urb);
+}
+
+/*
+ * RETURNS: list of just unique MUs from mnb not already in mub
+ */
+mnur_t *GetUniqueMUnrolls(mnur_t *mnb, mnur_t *mub)
+{
+   mnur_t *mnp, *mup;
+   if (!mnb)
+      return(mub);
+   for (mnp=mnb; mnp; mnp = mnp->next)
+   {
+      for (mup=mub; mup; mup = mup->next)
+         if (mup->mu == mnp->mu)
+            break;
+      if (!mup)  /* a new mu */
+      {
+         mup = malloc(sizeof(mnur_t));
+         assert(mup);
+         mup->nu = mup->mu = mnp->mu;
+         mup->next = mub;
+         mub = mup;
+      }
+   }
+   return(mub);
+}
+/*
+ * RETURNS: list of just unique NUs from mnb not already in mub
+ */
+mnur_t *GetUniqueNUnrolls(mnur_t *mnb, mnur_t *mub)
+{
+   mnur_t *mnp, *mup;
+   if (!mnb)
+      return(mub);
+   for (mnp=mnb; mnp; mnp = mnp->next)
+   {
+      for (mup=mub; mup; mup = mup->next)
+         if (mup->mu == mnp->nu)
+            break;
+      if (!mup)  /* a new nu */
+      {
+         mup = malloc(sizeof(mnur_t));
+         assert(mup);
+         mup->nu = mup->mu = mnp->nu;
+         mup->next = mub;
+         mub = mup;
+      }
+   }
+   return(mub);
+}
+
+void KillUnrollList(mnur_t *b)
+{
+   mnur_t *p;
+   while (b)
+   {
+      p = b->next;
+      free(b);
+      b = p;
+   }
+}
+
+/*
+ * Splits rkb into two lists: (1) Routines with runtime K (RUNB),
+ * (2) Routines with fixed-KB (returned)
+ * NOTE: original list rkb is unchanged
+ */
+ATL_mmnode_t *SplitRankK(ATL_mmnode_t *rkb, ATL_mmnode_t **RUNB)
+{
+   ATL_mmnode_t *runb=NULL, *fixb=NULL, *p, *np;
+   for (p=rkb; p; p = p->next)
+   {
+      np = CloneMMNode(p);
+      if (FLAG_IS_SET(np->flag, MMF_KRUNTIME))
+      {
+         np->next = runb;
+         runb = np;
+      }
+      else
+      {
+         np->next = fixb;
+         fixb = np;
+      }
+   }
+   *RUNB = runb;
+   return(fixb);
+}
+
+void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, 
+                 ATL_mmnode_t *rkb, ATL_mmnode_t *urb, char *outd)
+{
+   ATL_mmnode_t *mmp, *p, *fixb, *runb;
+   mnur_t *mnurb=NULL, *allub, *up;
    FILE *fp;
    char *comp, *cflags;
    char *ln;
@@ -911,52 +1065,51 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, char *outd)
    fprintf(fp, "include ../Make.inc\n");
    fprintf(fp, "CDEFS2=$(CDEFS)\n\n");
 /*
+ * Build list of all unique MU/NU combos for copy routines
+ */
+   mnurb = GetUniqueMNUnrolls(mmb, NULL);
+   mnurb = GetUniqueMNUnrolls(urb, mnurb);
+   allub = GetUniqueMUnrolls(mnurb, NULL);
+   allub = GetUniqueNUnrolls(mnurb, allub);
+/*
  * Spew out all filenames that must be compiled
  */
    fprintf(fp, "objs =");
 /*
- * Copy2blk routines
+ * Routines to copy from MU/NU-major to column major output array
  */
-   for (mmp=mmb; mmp; mmp = mmp->next)
+   for (up=mnurb; up; up = up->next)
    {
-      const int mu=mmp->mu, nu=mmp->nu;
+      int j;
+      const int mu=up->mu, nu=up->nu;
+      for (j=0; j < 3; j++)
+      {
+         int k;
+         char *rtn[2] = {"ablk2cmat", "cmat2ablk"};
+         for (k=0; k < 2; k++)
+         {
+            fprintf(fp, " \\\n       ATL_%c%s_%dx%d_a%c_b1.o",
+                    pre, rtn[k], mu, nu, al[j]);
+            fprintf(fp, " ATL_%c%s_%dx%d_a%c_bX.o",
+                    pre, rtn[k], mu, nu, al[j]);
+            fprintf(fp, " \\\n       ATL_%c%s_%dx%d_a%c_b0.o",
+                    pre, rtn[k], mu, nu, al[j]);
+            fprintf(fp, " ATL_%c%s_%dx%d_a%c_bn.o",
+                    pre, rtn[k], mu, nu, al[j]);
+         }
+      }
+   }
 /*
- *    See if we've already made an entry for this unrolling
+ * Routines to copy back and forth from A and B
  */
-      for (p=mmb; p != mmp && (p->mu != mu || p->nu != nu); p = p->next);
-      if (p == mmp)  /* mu,nu not seen before */
-      {
-         int j;
-         for (j=0; j < 3; j++)
-         {
-            int k;
-            char *rtn[2] = {"ablk2cmat", "cmat2ablk"};
-            for (k=0; k < 2; k++)
-            {
-               fprintf(fp, " \\\n       ATL_%c%s_%dx%d_a%c_b1.o",
-                       pre, rtn[k], mu, nu, al[j]);
-               fprintf(fp, " ATL_%c%s_%dx%d_a%c_bX.o",
-                       pre, rtn[k], mu, nu, al[j]);
-               fprintf(fp, " \\\n       ATL_%c%s_%dx%d_a%c_b0.o",
-                       pre, rtn[k], mu, nu, al[j]);
-               fprintf(fp, " ATL_%c%s_%dx%d_a%c_bn.o",
-                       pre, rtn[k], mu, nu, al[j]);
-            }
-         }
-      }
-      for (i=(mu == nu); i < 2; i++)
-      {
-         const int u = (i) ? mu : nu;
-         for (p=mmb; p != mmp && p->mu != u && p->nu != u; p = p->next);
-         if (p == mmp)  /* u not seen before */
-         {
-            int j;
-            for (j=0; j < 3; j++)
-               fprintf(fp, 
-               " \\\n       ATL_%crm2am_a%c_%d.o ATL_%ccm2am_a%c_%d.o",
-                       pre, al[j], u, pre, al[j], u);
-         }
-      }
+   for (up=allub; up; up = up->next)
+   {
+      int j;
+      const int u = up->mu;
+      for (j=0; j < 3; j++)
+         fprintf(fp, 
+         " \\\n       ATL_%crm2am_a%c_%d.o ATL_%ccm2am_a%c_%d.o",
+                 pre, al[j], u, pre, al[j], u);
    }
 /*
  * AMM kernel routines
@@ -974,22 +1127,41 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, char *outd)
          for (p=mmb; p != mmp && p->ID != id; p = p->next);
          if (p != mmp)
             continue;
-         kb = mmp->ku;
+         kb = 0;
       }
 /* 
- *    ATL_<pre>AMMM_<ID>_<mu>x<nu>x<kb/ku>_b<X>
+ *    ATL_<pre>AMMM_<ID>_<kb>_<mu>x<nu>x<ku>_b<X>
  */
       for (i=0; i < 3; i++)
-         fprintf(fp, " \\\n       ATL_%cAMMM_%d_%dx%dx%d_b%c.o", pre, mmp->ID, 
-                 mmp->mu, mmp->nu, kb, be[i], mmp->rout);
+         fprintf(fp, " \\\n       ATL_%cAMMM_%d_%d_%dx%dx%d_b%c.o", 
+                 pre, mmp->ID, kb, mmp->mu, mmp->nu, mmp->ku, be[i]);
    }
 /*
  * AMM K-cleanup kernel routines are all unique, so no checking for repeats
  *    ATL_<pre>AMMM_<ID>_<mu>x<nu>x<ku>_b0
  */
    for (mmp=ukb; mmp; mmp = mmp->next)
-      fprintf(fp, " \\\n       ATL_%cAMMM_%d_%dx%dx%d_b0.o", pre, mmp->ID, 
-              mmp->mu, mmp->nu, mmp->ku, mmp->rout);
+      fprintf(fp, " \\\n       ATL_%cAMMM_%d_0_%dx%dx%d_b0.o", pre, mmp->ID, 
+              mmp->mu, mmp->nu, mmp->ku);
+/*
+ * rank-K AMM routines where KB is runtime variable
+ */
+   fixb = SplitRankK(rkb, &runb);
+   for (mmp=runb; mmp; mmp = mmp->next)
+      fprintf(fp, " \\\n       ATL_%cAMMM_%d_0_%dx%dx%d_b0.o", pre, mmp->ID, 
+              mmp->mu, mmp->nu, mmp->ku);
+/*
+ * rank-K AMM routines where KB is compile-time, need obj for each unique kbB
+ */
+   for (mmp=fixb; mmp; mmp = mmp->next)
+   {
+      for (p=rkb; p; p = p->next)
+      {
+         if (!FLAG_IS_SET(p->flag, MMF_KRUNTIME) && p->ID == mmp->ID)
+            fprintf(fp, " \\\n       ATL_%cAMMM_%d_%d_%dx%dx%d_b0.o", 
+                    pre, mmp->ID, p->kbB, mmp->mu, mmp->nu, mmp->ku);
+      }
+   }
 /*
  * library make targets
  */
@@ -1015,61 +1187,54 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, char *outd)
    fprintf(fp, "\ntsth.o : tsth.c\n");
    fprintf(fp, "\t%s %s $(CDEFS) %s -c tsth.c\n\n", dcomp, dflags, styp);
    fprintf(fp, "#\n# Data copy rules\n#\n");
-   for (mmp=mmb; mmp; mmp = mmp->next)
+/*
+ * Print out 2-D ablk2Cmat and cmat2ablk targets
+ */
+   for (up=mnurb; up; up = up->next)
    {
-      const int mu=mmp->mu, nu = mmp->nu;
-/*
- *    Print out 2-D ablk2Cmat and cmat2ablk targets
- */
-      for (p=mmb; p != mmp && (p->mu != mu || p->nu != nu); p = p->next);
-      if (p == mmp)  /* mu,nu not seen before */
+      const int mu=up->mu, nu = up->nu;
+      char cbe[4] = {'0', '1', 'n', 'X'};
+      int ibe[4] =  {0,    1,  -1,  2};
+      int i, j;
+      for (i=0; i < 4; i++)
       {
-         char cbe[4] = {'0', '1', 'n', 'X'};
-         int ibe[4] =  {0,    1,  -1,  2};
-         int i, j;
-         for (i=0; i < 4; i++)
+         for (j=0; j < 3; j++)
          {
-            for (j=0; j < 3; j++)
+            int k;
+            char *rtn[2] = {"ablk2cmat", "cmat2ablk"};
+            for (k=0; k < 2; k++)
             {
-               int k;
-               char *rtn[2] = {"ablk2cmat", "cmat2ablk"};
-               for (k=0; k < 2; k++)
-               {
-                  char rn[64];
-                  sprintf(rn, "ATL_%c%s_%dx%d_a%c_b%c",
-                          pre, rtn[k], mu, nu, al[j], cbe[i]);
-                  fprintf(fp, "%s.o : %s.c\n", rn, rn);
-                  fprintf(fp, "\t%s %s $(CDEFS) %s -c %s.c\n", 
-                          dcomp, dflags, styp, rn);
-               }
-            }
-         }
-      }
-
-      for (i=(mu == nu) ? 1:0; i < 2; i++)
-      {
-         const int u = (i) ? mu : nu;
-/*
- *       See if we've already made a rule for this unrolling
- */
-         for (p=mmb; p != mmp && p->mu != u && p->nu != u; p = p->next);
-         if (p == mmp)  /* u not seen before */
-         {
-            int j;
-            for (j=0; j < 3; j++)
-            {
-               fprintf(fp, "ATL_%crm2am_a%c_%d.o : ATL_%crm2am_a%c_%d.c\n",
-                       pre, al[j], u, pre, al[j], u);
-               fprintf(fp, "\t%s %s $(CDEFS) %s -c ATL_%crm2am_a%c_%d.c\n", 
-                       dcomp, dflags, styp, pre, al[j], u, pre, al[j], u);
-               fprintf(fp, "ATL_%ccm2am_a%c_%d.o : ATL_%ccm2am_a%c_%d.c\n",
-                       pre, al[j], u, pre, al[j], u);
-               fprintf(fp, "\t%s %s $(CDEFS) %s -c ATL_%ccm2am_a%c_%d.c\n", 
-                       dcomp, dflags, styp, pre, al[j], u, pre, al[j], u);
+               char rn[64];
+               sprintf(rn, "ATL_%c%s_%dx%d_a%c_b%c",
+                       pre, rtn[k], mu, nu, al[j], cbe[i]);
+               fprintf(fp, "%s.o : %s.c\n", rn, rn);
+               fprintf(fp, "\t%s %s $(CDEFS) %s -c %s.c\n", 
+                       dcomp, dflags, styp, rn);
             }
          }
       }
    }
+   KillUnrollList(mnurb);
+/*
+ * Print out 1-D copy-in routine rules
+ */
+   for (up=allub; up; up = up->next)
+   {
+      const int u = up->mu;
+      int j;
+      for (j=0; j < 3; j++)
+      {
+         fprintf(fp, "ATL_%crm2am_a%c_%d.o : ATL_%crm2am_a%c_%d.c\n",
+                 pre, al[j], u, pre, al[j], u);
+         fprintf(fp, "\t%s %s $(CDEFS) %s -c ATL_%crm2am_a%c_%d.c\n", 
+                 dcomp, dflags, styp, pre, al[j], u, pre, al[j], u);
+         fprintf(fp, "ATL_%ccm2am_a%c_%d.o : ATL_%ccm2am_a%c_%d.c\n",
+                 pre, al[j], u, pre, al[j], u);
+         fprintf(fp, "\t%s %s $(CDEFS) %s -c ATL_%ccm2am_a%c_%d.c\n", 
+                 dcomp, dflags, styp, pre, al[j], u, pre, al[j], u);
+      }
+   }
+   KillUnrollList(allub);
 /*
  * Print out the individual rules for each kernel compile
  */
@@ -1102,21 +1267,22 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, char *outd)
          cflags = dflags;
       }
 /* 
- *    ATL_<pre>AMMM_<ID>_<mu>x<nu>x<kb/ku>_b<X>, kerns in all 3 beta cases
+ *    ATL_<pre>AMMM_<ID>_<kb>_<mu>x<nu>x<ku>_b<X>, kerns in all 3 beta cases
  */
       for (i=0; i < 3; i++)
       {
-         const int kb=FLAG_IS_SET(mmp->flag, MMF_KRUNTIME)?mmp->ku:mmp->kbB;
-         fprintf(fp, "ATL_%cAMMM_%d_%dx%dx%d_b%c.o : %s\n", pre, mmp->ID, 
-                 mmp->mu, mmp->nu, kb, be[i], mmp->rout);
+         const int kb=FLAG_IS_SET(mmp->flag, MMF_KRUNTIME)?0:mmp->kbB;
+         fprintf(fp, "ATL_%cAMMM_%d_%d_%dx%dx%d_b%c.o : %s\n", pre, mmp->ID, 
+                 kb, mmp->mu, mmp->nu, mmp->ku, be[i], mmp->rout);
          fprintf(fp, "\t%s $(CDEFS2) %s -DBETA%s=1", comp, styp, bes[i]);
          if (!FLAG_IS_SET(mmp->flag, MMF_KRUNTIME))
             fprintf(fp, " -DMB=%d -DNB=%d, -DKB=%d", 
                     mmp->mbB, mmp->nbB, mmp->kbB);
-         fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_%dx%dx%d_b%c", pre, mmp->ID,
-                 mmp->mu, mmp->nu, kb, be[i]);
-         fprintf(fp, " %s -o ATL_%cAMMM_%d_%dx%dx%d_b%c.o -c %s\n", 
-                 cflags, pre, mmp->ID, mmp->mu, mmp->nu, kb, be[i], mmp->rout);
+         fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_%d_%dx%dx%d_b%c", pre, 
+                 mmp->ID, kb, mmp->mu, mmp->nu, mmp->ku, be[i]);
+         fprintf(fp, " %s -o ATL_%cAMMM_%d_%d_%dx%dx%d_b%c.o -c %s\n", 
+                 cflags, pre, mmp->ID, kb, mmp->mu, mmp->nu, mmp->ku, 
+                 be[i], mmp->rout);
       }
    }
 /*
@@ -1138,18 +1304,80 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, char *outd)
          comp = dcomp;
          cflags = dflags;
       }
-      fprintf(fp, "ATL_%cAMMM_%d_%dx%dx%d_b0.o : %s\n", pre, mmp->ID, 
+      fprintf(fp, "ATL_%cAMMM_%d_0_%dx%dx%d_b0.o : %s\n", pre, mmp->ID, 
               mmp->mu, mmp->nu, mmp->ku, mmp->rout);
       fprintf(fp, "\t%s $(CDEFS2) %s -DBETA0=1", comp, styp);
-      fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_%dx%dx%d_b0", pre, mmp->ID,
+      fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_0_%dx%dx%d_b0", pre, mmp->ID,
               mmp->mu, mmp->nu, mmp->ku);
-      fprintf(fp, " %s -o ATL_%cAMMM_%d_%dx%dx%d_b0.o -c %s\n", 
+      fprintf(fp, " %s -o ATL_%cAMMM_%d_0_%dx%dx%d_b0.o -c %s\n", 
               cflags, pre, mmp->ID, mmp->mu, mmp->nu, mmp->ku, mmp->rout);
+   }
+/*
+ * runtime-KB rank-K needs only one kernel compile rule
+ */
+   if (runb)
+      fprintf(fp, "#\n#  rank-K kernels with run-time K\n#\n");
+   for (mmp=runb; mmp; mmp = mmp->next)
+   {
+      if (mmp->comp)
+      {
+         comp = (mmp->comp[0] == 'g' && mmp->comp[1] == 'c' && 
+                 mmp->comp[2] == 'c' && 
+                 (mmp->comp[3] == '\0' || mmp->comp[3] == ' ')) 
+              ? "$(GOODGCC)" : mmp->comp;
+         cflags = mmp->cflags;
+      }
+      else
+      {
+         comp = dcomp;
+         cflags = dflags;
+      }
+      fprintf(fp, "ATL_%cAMMM_%d_0_%dx%dx%d_b0.o : %s\n", pre, mmp->ID, 
+              mmp->mu, mmp->nu, mmp->ku, mmp->rout);
+      fprintf(fp, "\t%s $(CDEFS2) %s -DBETA0=1", comp, styp);
+      fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_0_%dx%dx%d_b0", pre, mmp->ID,
+              mmp->mu, mmp->nu, mmp->ku);
+      fprintf(fp, " %s -o ATL_%cAMMM_%d_0_%dx%dx%d_b0.o -c %s\n", 
+              cflags, pre, mmp->ID, mmp->mu, mmp->nu, mmp->ku, mmp->rout);
+   }
+/*
+ * Compile-time rank-K must be recompiled for each kbB
+ */
+   if (fixb)
+      fprintf(fp, "#\n#  rank-K kernels with compile-time KB\n#\n");
+   for (mmp=fixb; mmp; mmp = mmp->next)
+   {
+      for (p=rkb; p; p = p->next)
+      {
+         if (p->ID != mmp->ID || FLAG_IS_SET(mmp->flag, MMF_KRUNTIME))
+            continue;
+         if (p->comp)
+         {
+            comp = (p->comp[0] == 'g' && p->comp[1] == 'c' && 
+                    p->comp[2] == 'c' && 
+                    (p->comp[3] == '\0' || p->comp[3] == ' ')) 
+                 ? "$(GOODGCC)" : p->comp;
+            cflags = p->cflags;
+         }
+         else
+         {
+            comp = dcomp;
+            cflags = dflags;
+         }
+      }
+      fprintf(fp, "ATL_%cAMMM_%d_%d_%dx%dx%d_b0.o : %s\n", pre, mmp->ID, 
+              p->kbB, mmp->mu, mmp->nu, mmp->ku, mmp->rout);
+      fprintf(fp, "\t%s $(CDEFS2) %s -DBETA0=1", comp, styp);
+      fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_%d_%dx%dx%d_b0", pre, mmp->ID,
+              p->kbB, mmp->mu, mmp->nu, mmp->ku);
+      fprintf(fp, " %s -o ATL_%cAMMM_%d_%d_%dx%dx%d_b0.o -c %s\n", cflags, pre,
+              mmp->ID, p->kbB, mmp->mu, mmp->nu, mmp->ku, mmp->rout);
    }
    fclose(fp);
 }
 
-void GenKerns(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, char *outd)
+void GenKerns(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, ATL_mmnode_t *urb,
+              char *outd)
 /*
  * Creates/copies all required matmul kernels into outd using specified names
  */
@@ -1339,15 +1567,55 @@ void GenKerns(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, char *outd)
          }
       }
    }
+/*
+ * Copy/generate rank-K kerns which are known to be unique
+ */
+   for (mmp=urb; mmp; mmp = mmp->next)
+   {
+      const int id=mmp->ID;
+/*
+ *    For generated files, just generate it using genstr
+ */
+      if (id == 0)
+      {
+         assert(mmp->genstr);
+         assert(!system(mmp->genstr));
+      }
+      else  /* user-supplied files copied from AMMCASES directory */
+      {
+         int i, ierr;
+         i = strlen(mmp->rout) + dlen + 16;
+         if (i > lnlen)
+         {
+            if (ln)
+               free(ln);
+            ln = malloc(i*sizeof(char));
+            assert(ln);
+            lnlen = i;
+         }
+         sprintf(ln, "cp AMMCASES/%s %s/.", mmp->rout, outd);
+         ierr = system(ln);
+         if (ierr)
+         {
+            fprintf(stderr, "FAILED CMND='%s'\n", ln);
+            exit(ierr);
+         }
+      }
+   }
    if (ln)
       free(ln);
 }
 void GenAllFiles(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, 
-                 ATL_mmnode_t *kcb, char *outd)
+                 ATL_mmnode_t *kcb, ATL_mmnode_t *rkb, ATL_mmnode_t *urb,
+                 char *outd)
 {
-   GenHeaderFiles(pre, mmb, ukb, kcb, outd);
-   GenMakefile(pre, mmb, ukb, outd);
-   GenKerns(pre, mmb, ukb, outd);
+/* 
+ * HERE HERE HERE
+ * Need to pass rkb to each routine, and handle correctly for each!
+ */
+   GenHeaderFiles(pre, mmb, ukb, kcb, rkb, urb, outd);
+   GenMakefile(pre, mmb, ukb, rkb, urb, outd);
+   GenKerns(pre, mmb, ukb, urb, outd);
 }
 
 int KernelIsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
@@ -1423,16 +1691,42 @@ ATL_mmnode_t *StripNonUniqueKs(ATL_mmnode_t *ukb, ATL_mmnode_t *mmb)
    }
    return(ukb);
 }
+/*
+ * RETURNS: mmb, with all repeated kernels removed
+ */
+ATL_mmnode_t *RemoveNonUniqueKernels(ATL_mmnode_t *mmb)
+{
+   ATL_mmnode_t *mp;
+   if (!mmb || !mmb->next)
+      return(mmb);
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      ATL_mmnode_t *p=mp->next, *prev=mp;
+      while (p)
+      {
+@skip    if (KernelIsSame(mp, p) && (FLAG_IS_SET(p->flag, MMF_KRUNTIME) ||
+@skip        p->kbB == mp->kbB))
+         if (KernelIsSame(mp, p))
+            prev->next = p = KillMMNode(p);
+         else
+         {
+            prev = p;
+            p = p->next;
+         }
+      }
+   }
+   return(mmb);
+}
 
 int main(int nargs, char **args)
 {
    char pre='d';
    int verb=1;
    int *nbs;
-   char *outd, *ukin, *kcin;
-   ATL_mmnode_t *mmb, *mmp, *ukb=NULL, *kcb=NULL;
+   char *outd, *ukin, *kcin, *rkin;
+   ATL_mmnode_t *mmb, *mmp, *ukb=NULL, *kcb=NULL, *rkb=NULL, *urb=NULL;
 
-   mmb = GetFlags(nargs, args, &pre, &outd, &ukin, &kcin);
+   mmb = GetFlags(nargs, args, &pre, &outd, &ukin, &kcin, &rkin);
    assert(mmb);
    if (ukin)
    {
@@ -1444,6 +1738,15 @@ int main(int nargs, char **args)
  */
       ukb = StripNonUniqueKs(ukb, mmb);
    }
+   if (rkin)
+   {
+      rkb = ReadMMFile(rkin);
+      urb = CloneMMQueue(rkb);
+      urb = RemoveNonUniqueKernels(urb);
+      urb = StripNonUniqueKs(urb, ukb);
+      urb = StripNonUniqueKs(urb, mmb);
+      free(rkin);
+   }
    if (kcin)
    {
       kcb = ReadMMFile(kcin);
@@ -1451,10 +1754,12 @@ int main(int nargs, char **args)
    }
    FillInGenStrings(pre, mmb, outd);
    FillInGenStrings(pre, ukb, outd);
-   GenAllFiles(pre, mmb, ukb, kcb, outd);
+   FillInGenStrings(pre, rkb, outd);
+   GenAllFiles(pre, mmb, ukb, kcb, rkb, urb, outd);
    KillAllMMNodes(mmb);
    KillAllMMNodes(ukb);
    KillAllMMNodes(kcb);
+   KillAllMMNodes(rkb);
    exit(0);
 }
 @ROUT ammsearch
@@ -3510,14 +3815,14 @@ ATL_mmnode_t *DecentGenCase(int verb, char pre, int nreg)
 
 /*
  * This routine finds kernels to use in low-rank-K update. For 3 <= K <= 15,
- * it tries all kernels that and chooses the best performing; In this search
+ * it tries all kernels and chooses the best performing; In this search
  * we consider only compile-time K kernels, since runtime kernels will be
  * selected by general (K>15) search.
  * (K=1 and K=2 are handled by GER and GER2).
  * We consider only user-generated kernels; for any problem sizes that are
  * not supported, we will use the normal K or K-clean routines.  This list
  * is just to allow for hand-tuning small-K special cases.
- * This routine produces outpuf file <pre>AMMLOWK.sum
+ * This routine produces output file <pre>AMMLOWK.sum
  */
 ATL_mmnode_t *GetLowRankKKernels
 (
@@ -3767,7 +4072,6 @@ int IsSlowerThanList
    return(0);
 }
 
-#if 0
 ATL_mmnode_t *MergeRankKKernels
 (
    int verb,            /* verbosity */
@@ -3782,8 +4086,11 @@ ATL_mmnode_t *MergeRankKKernels
    ATL_mmnode_t *rkb, *rkp;
    int k;
    rkp = rkb = GetMMNode();
+   printf("CHOOSING BEST KERNEL FOR EACH RANK-K:\n");
    for (k=3; k < maxKB; k++)
    {
+      ATL_mmnode_t *best=NULL, *p;
+      double mfB=0.0, mf;
 /*
  *    fixb & sqrb are in K-order, so we pop them off stack until we get to
  *    one big enough to solve the problem.  We also ignore all KRUNTIME kernels
@@ -3791,20 +4098,80 @@ ATL_mmnode_t *MergeRankKKernels
  */
       while (fixb)
       {
-         if (fixb->kuB < k)
+         if (fixb->kbB < k || (fixb->kbmin && fixb->kbmin > k) ||
+             (fixb->kbmax && fixb->kbmax < k))
             fixb = KillMMNode(fixb);
          else
             break;
       }
       while (sqrb)
       {
-         if (sqrb->kuB < k || FLAG_IS_SET(sqrb->flag, MMF_KRUNTIME))
+         if (sqrb->kbB < k || FLAG_IS_SET(sqrb->flag, MMF_KRUNTIME)
+             || (sqrb->kbmin && sqrb->kbmin > k) || 
+                (sqrb->kbmax && sqrb->kbmax < k))
             sqrb = KillMMNode(sqrb);
          else break;
       }
+      if (fixb)
+      {
+         if (fixb->kbB == k)
+         {
+            int mu = fixb->mu, nu = fixb->nu;
+            int mb = (NB/mu)*mu, nb = (NB/nu)*nu;
+            best = fixb;
+            fixb = fixb->next;
+            mfB = TimeMMKernel(verb, 0, best, pre, mb, nb, k, 0, 0, 0, 0, 0,-1);
+         }
+      }
+      if (sqrb)
+      {
+         if (sqrb->kbB == k)
+         {
+            int mu = sqrb->mu, nu = sqrb->nu;
+            int mb = (NB/mu)*mu, nb = (NB/nu)*nu;
+            mf = TimeMMKernel(verb, 0, sqrb, pre, mb, nb, k, 0, 0, 0, 0, 0, -1);
+            if (mf > mfB)
+            {
+               mfB = mf;
+               if (best)
+                  KillMMNode(best);
+               best = sqrb;
+               sqrb = sqrb->next;
+            }
+            else
+               sqrb = KillMMNode(sqrb);
+         }
+      }
+      for (p=runb; p; p = p->next)
+         if ((k % p->ku == 0) && k > p->kbmax && (!p->kbmin || p->kbmin <= k))
+            break;
+      if (p)
+      {
+         int mu = p->mu, nu = p->nu;
+         int mb = (NB/mu)*mu, nb = (NB/nu)*nu;
+         mf = TimeMMKernel(verb, 0, p, pre, mb, nb, k, 0, 0, 0, 0, 0, -1);
+         if (mf > mfB)
+         {
+            mfB = mf;
+            if (best)
+               KillMMNode(best);
+            best = CloneMMNode(p);
+         }
+      }
+      assert(best);
+      printf("   Best kernel K=%d: %d. %s (%.2f)\n",k,best->ID,best->rout,mfB);
+      best->kbB = k;
+      rkp->next = best;
+      rkp = best;
    }
+   if (sqrb)
+      KillAllMMNodes(sqrb);
+   if (fixb)
+      KillAllMMNodes(fixb);
+   rkp->next = NULL;
+   printf("DONE.\n\n");
+   return(KillMMNode(rkb));
 }
-#endif
 
 ATL_mmnode_t *GetRankKKernels
 (
@@ -3812,11 +4179,23 @@ ATL_mmnode_t *GetRankKKernels
    char pre,            /* s,d */
    int NB,              /* default mb/nb to time with */
    ATL_mmnode_t *gmm,   /* generated matmul kernel */
-   ATL_mmnode_t *low    /* all working ukerns */
+   ATL_mmnode_t *low,   /* all working ukerns */
+   ATL_mmnode_t *mmb    /* cases already chosen for square GEMM */
 )
 {
-   ATL_mmnode_t *run;
-
+   ATL_mmnode_t *run, *rkb;
+   int maxKB=128;
+   
+   rkb = ReadMMFileWithPath(pre, "res", "ARANKK.sum");
+   if (rkb)
+      return(rkb);
+   if (mmb)
+   {
+      maxKB = mmb->kbB;
+      for (run=mmb; run; run = run->next)
+         if (maxKB < run->kbB)
+            maxKB = run->kbB;
+   }
    run = CloneMMQueue(low);
    if (FLAG_IS_SET(gmm->flag, MMF_KRUNTIME))
    {
@@ -3872,8 +4251,14 @@ ATL_mmnode_t *GetRankKKernels
       }
    }
    printf("DONE.\n\n");
-   KillAllMMNodes(low);
+
+   rkb = MergeRankKKernels(verb, pre, NB, maxKB, low, run, mmb);
+   printf("RANK-K KERNELS:\n");
+   PrintMMNodes(stdout, rkb);
+   printf("\n");
    KillAllMMNodes(run);
+   WriteMMFileWithPath(pre, "res", "ARANKK.sum", rkb);
+   return(rkb);
 }
 
 int main(int nargs, char **args)
@@ -3946,11 +4331,12 @@ int main(int nargs, char **args)
       mmb = smmb;
    WriteMMFileWithPath(pre, "res", "eAMMRES.sum", mmb);
    ComputeKClean(verb, pre, mmb);
-   KillAllMMNodes(mmb);
+@skip   KillAllMMNodes(mmb);
    FindBestKU1(verb, pre, 17);  /* create kern for use in low-rank update */
    if (!grnkK)
       grnkK = DecentGenCase(verb, pre, nregs);
-   mmb = GetRankKKernels(verb, pre, 60, grnkK, rnkK);
+   mmb = GetRankKKernels(verb, pre, 60, grnkK, rnkK, mmb);
+   KillAllMMNodes(mmb);
    free(nbs);
    exit(0);
 }
