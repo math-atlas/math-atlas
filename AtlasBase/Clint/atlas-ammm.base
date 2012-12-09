@@ -703,7 +703,7 @@ void GenCMAJ2AMAJ(char pre, ATL_mmnode_t *mmb, char *outd, char *suff)
 
    if (!suff)
       suff = "";
-   ia = strlen(outd) + 23;
+   ia = strlen(outd) + strlen(suff) + 23;
    fnam = malloc(ia*sizeof(char));
    assert(fnam);
    sprintf(fnam, "%s/atlas_%camm%s_cm2am_a1.h", outd, pre, suff);
@@ -825,8 +825,10 @@ void SpewForthKernArray(FILE *fp, char pre, ATL_mmnode_t *mmb,
                         char *vnam, char cbet)
 {
    ATL_mmnode_t *mp;
+   int n;
 
-   fprintf(fp, "static ammkern_t ATL_AMM_%s[ATL_AMM_NCASES] =\n", vnam);
+   for (n=0,mp=mmb; mp; n++, mp = mp->next);
+   fprintf(fp, "static ammkern_t ATL_AMM_%s[%d] =\n", vnam, n);
    fprintf(fp, "{\n");
    for (mp=mmb; mp; mp = mp->next)
    {
@@ -862,6 +864,13 @@ void GenKernH(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
    if (urb)
       SpewForthKernProtos(fp, pre, urb, 1);
    fprintf(fp, "\n");
+/* 
+ * ==========================================================================
+ * Need to put these arrays in other header files, so that we can include the
+ * prototypes w/o declaring the arrays, or surround with ifdefs.
+ * HERE HERE HERE
+ * ==========================================================================
+ */
 /*
  * Dump out kernel ptr arrays
  */
@@ -871,7 +880,19 @@ void GenKernH(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
    if (kcb)
       SpewForthKernArray(fp, pre, kcb, "KERN_K1", '0');
    if (rkb)
+   {
+      ATL_mmnode_t *mp;
+      int n;
+      for (n=0,mp=rkb; mp; n++, mp = mp->next);
+      fprintf(fp, "#ifdef ATL_AMM_NCASES_RANKK\n");
+      fprintf(fp, "   #if ATL_AMM_NCASES_RANKK != %d\n", n);
+      fprintf(fp, "      #error \"RANK-K NCASES MISMATCH!\"\n");
+      fprintf(fp, "   #endif\n");
+      fprintf(fp, "#else\n");
+      fprintf(fp, "   #define ATL_AMM_NCASES_RANKK %d\n", n);
+      fprintf(fp, "#endif\n");
       SpewForthKernArray(fp, pre, rkb, "KERN_RKK", '0');
+   }
 
    fprintf(fp, "\n#endif  /* end include file guard */\n");
    fclose(fp);
@@ -1364,16 +1385,18 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
             comp = dcomp;
             cflags = dflags;
          }
+         fprintf(fp, "ATL_%cAMMM_%d_%d_%dx%dx%d_b0.o : %s\n", pre, mmp->ID, 
+                 p->kbB, mmp->mu, mmp->nu, mmp->ku, mmp->rout);
+         fprintf(fp, "\t%s $(CDEFS2) %s -DBETA0=1", comp, styp);
+         fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_%d_%dx%dx%d_b0", pre, mmp->ID,
+                 p->kbB, mmp->mu, mmp->nu, mmp->ku);
+         fprintf(fp, " %s -o ATL_%cAMMM_%d_%d_%dx%dx%d_b0.o -c %s\n", cflags,
+                 pre, mmp->ID, p->kbB, mmp->mu, mmp->nu, mmp->ku, mmp->rout);
       }
-      fprintf(fp, "ATL_%cAMMM_%d_%d_%dx%dx%d_b0.o : %s\n", pre, mmp->ID, 
-              p->kbB, mmp->mu, mmp->nu, mmp->ku, mmp->rout);
-      fprintf(fp, "\t%s $(CDEFS2) %s -DBETA0=1", comp, styp);
-      fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_%d_%dx%dx%d_b0", pre, mmp->ID,
-              p->kbB, mmp->mu, mmp->nu, mmp->ku);
-      fprintf(fp, " %s -o ATL_%cAMMM_%d_%d_%dx%dx%d_b0.o -c %s\n", cflags, pre,
-              mmp->ID, p->kbB, mmp->mu, mmp->nu, mmp->ku, mmp->rout);
    }
    fclose(fp);
+   KillAllMMNodes(fixb);
+   KillAllMMNodes(runb);
 }
 
 void GenKerns(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, ATL_mmnode_t *urb,
@@ -1609,10 +1632,6 @@ void GenAllFiles(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
                  ATL_mmnode_t *kcb, ATL_mmnode_t *rkb, ATL_mmnode_t *urb,
                  char *outd)
 {
-/* 
- * HERE HERE HERE
- * Need to pass rkb to each routine, and handle correctly for each!
- */
    GenHeaderFiles(pre, mmb, ukb, kcb, rkb, urb, outd);
    GenMakefile(pre, mmb, ukb, rkb, urb, outd);
    GenKerns(pre, mmb, ukb, urb, outd);
