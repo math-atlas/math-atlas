@@ -1140,12 +1140,14 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
       int kb = mmp->kbB;
 /*
  *    Kernels that take runtime K are only compiled once, so don't repeat them
- *    for every KB
+ *    for every KB.  Only generate a statement if this is the first one.
  */
       if (FLAG_IS_SET(mmp->flag, MMF_KRUNTIME))
       {
          const int id = mmp->ID;
-         for (p=mmb; p != mmp && p->ID != id; p = p->next);
+         for (p=mmb; p != mmp; p = p->next)
+            if (p->ID == id && FLAG_IS_SET(p->flag, MMF_KRUNTIME))
+               break;
          if (p != mmp)
             continue;
          kb = 0;
@@ -1168,6 +1170,8 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
  * rank-K AMM routines where KB is runtime variable
  */
    fixb = SplitRankK(rkb, &runb);
+   KillAllMMNodes(runb);
+   KillAllMMNodes(SplitRankK(urb, &runb));
    for (mmp=runb; mmp; mmp = mmp->next)
       fprintf(fp, " \\\n       ATL_%cAMMM_%d_0_%dx%dx%d_b0.o", pre, mmp->ID, 
               mmp->mu, mmp->nu, mmp->ku);
@@ -1178,7 +1182,8 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
    {
       for (p=rkb; p; p = p->next)
       {
-         if (!FLAG_IS_SET(p->flag, MMF_KRUNTIME) && p->ID == mmp->ID)
+         if (!FLAG_IS_SET(p->flag, MMF_KRUNTIME) && p->ID == mmp->ID &&
+             !ExactKernelInList(ukb, p) && !ExactKernelInList(mmb, p))
             fprintf(fp, " \\\n       ATL_%cAMMM_%d_%d_%dx%dx%d_b0.o", 
                     pre, mmp->ID, p->kbB, mmp->mu, mmp->nu, mmp->ku);
       }
@@ -1270,7 +1275,9 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
       if (FLAG_IS_SET(mmp->flag, MMF_KRUNTIME))
       {
          const int id = mmp->ID;
-         for (p=mmb; p != mmp && p->ID != id; p = p->next);
+         for (p=mmb; p != mmp; p = p->next)
+            if (p->ID == id && FLAG_IS_SET(p->flag, MMF_KRUNTIME))
+               break;
          if (p != mmp)
             continue;
       }
@@ -1372,6 +1379,10 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
       {
          if (p->ID != mmp->ID || FLAG_IS_SET(mmp->flag, MMF_KRUNTIME))
             continue;
+         if (ExactKernelInList(ukb, p))
+            continue;
+         if (ExactKernelInList(mmb, p))
+            continue;
          if (p->comp)
          {
             comp = (p->comp[0] == 'g' && p->comp[1] == 'c' && 
@@ -1406,103 +1417,62 @@ void GenKerns(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, ATL_mmnode_t *urb,
  */
 {
    ATL_mmnode_t *mmp, *p;
+   mnur_t *mnurb=NULL, *allub, *up;
    char *ln=NULL;
    int lnlen=0, dlen;
    char al[3] = {'1', 'n', 'X'};
    int ial[3] = {1,   -1,   2};
-
+/*
+ * Build list of all unique MU/NU combos for copy routines
+ */
+   mnurb = GetUniqueMNUnrolls(mmb, NULL);
+   mnurb = GetUniqueMNUnrolls(urb, mnurb);
+   allub = GetUniqueMUnrolls(mnurb, NULL);
+   allub = GetUniqueNUnrolls(mnurb, allub);
    dlen = strlen(outd);
 /*
  * Extract every unique block-copy routine
  */
-   for (mmp=mmb; mmp; mmp = mmp->next)
+   for (up=mnurb; up; up = up->next)
    {
-      int i;
-      const int mu=mmp->mu, nu=mmp->nu;
-      for (p=mmb; p != mmp && (p->mu != mu || p->nu != nu); p = p->next);
-      if (p == mmp)  /* mu,nu not seen before */
+      const int mu=up->mu, nu=up->nu;
+      char cbe[4] = {'0', '1', 'n', 'X'};
+      int ibe[4] =  {0,    1,  -1,  2};
+      int i, j;
+      j = 64+8 + strlen(outd);
+      j = (j > 128) ? j : 128;
+      if (lnlen < j)
       {
-         char cbe[4] = {'0', '1', 'n', 'X'};
-         int ibe[4] =  {0,    1,  -1,  2};
-         int i, j;
-         j = 64+8 + strlen(outd);
-         j = (j > 128) ? j : 128;
-         if (lnlen < j)
-         {
-            free(ln);
-            lnlen = j;
-            ln = malloc(j*sizeof(char));
-            assert(ln);
-         }
-         for (i=0; i < 4; i++)
-         {
-            for (j=0; j < 3; j++)
-            {
-               char rn[64];
-               int ierr;
-               int k;
-               for (k=0; k < 2; k++)
-               {
-                  if (!k)
-                     sprintf(rn, "ATL_%cablk2cmat_%dx%d_a%c_b%c.c",
-                             pre, mu, nu, al[j], cbe[i]);
-                  else
-                     sprintf(rn, "ATL_%ccmat2ablk_%dx%d_a%c_b%c.c",
-                             pre, mu, nu, al[j], cbe[i]);
-                  sprintf(ln, 
-                     "make %s pre=%c mu=%d nu=%d al=%c be=%c alpha=%d beta=%d", 
-                          rn, pre, mu, nu, al[j], cbe[i], ial[j], ibe[i]);
-                  ierr = system(ln);
-                  if (ierr)
-                  {
-                     fprintf(stderr, "FAILED CMND='%s'\n", ln);
-                     exit(ierr);
-                  }
-                  sprintf(ln, "mv %s %s/.", rn, outd);
-                  ierr = system(ln);
-                  if (ierr)
-                  {
-                     fprintf(stderr, "FAILED CMND='%s'\n", ln);
-                     exit(ierr);
-                  }
-               }
-            }
-         }
+         free(ln);
+         lnlen = j;
+         ln = malloc(j*sizeof(char));
+         assert(ln);
       }
-      for (i=0; i < 2; i++)
+      for (i=0; i < 4; i++)
       {
-         const int u = (i) ? mu : nu;
-/*
- *       See if we've extracted for this unrolling
- */
-         for (p=mmb; p != mmp && p->mu != u && p->nu != u; p = p->next);
-         if (p == mmp)  /* u not seen before */
+         for (j=0; j < 3; j++)
          {
-            int j;
-            j = 16 * 40 + (strlen(outd)<<1);
-            j = (j > 90) ? j : 90;
-            if (lnlen < j)
+            char rn[64];
+            int ierr;
+            int k;
+            for (k=0; k < 2; k++)
             {
-               free(ln);
-               lnlen = j;
-               ln = malloc(j*sizeof(char));
-               assert(ln);
-            }
-            for (j=0; j < 3; j++)
-            {
-               int ierr;
+               if (!k)
+                  sprintf(rn, "ATL_%cablk2cmat_%dx%d_a%c_b%c.c",
+                          pre, mu, nu, al[j], cbe[i]);
+               else
+                  sprintf(rn, "ATL_%ccmat2ablk_%dx%d_a%c_b%c.c",
+                          pre, mu, nu, al[j], cbe[i]);
                sprintf(ln, 
-"make ATL_%crm2am_a%c_%d.c ATL_%ccm2am_a%c_%d.c pre=%c UR=%d alpha=%d al=%c",
-                       pre, al[j], u, pre, al[j], u, pre, u, ial[j], al[j]);
+                  "make %s pre=%c mu=%d nu=%d al=%c be=%c alpha=%d beta=%d", 
+                       rn, pre, mu, nu, al[j], cbe[i], ial[j], ibe[i]);
                ierr = system(ln);
                if (ierr)
                {
                   fprintf(stderr, "FAILED CMND='%s'\n", ln);
                   exit(ierr);
                }
-               sprintf(ln, 
-                  "mv ATL_%crm2am_a%c_%d.c %s/. ;mv ATL_%ccm2am_a%c_%d.c %s/.",
-                       pre, al[j], u, outd, pre, al[j], u, outd);
+               sprintf(ln, "mv %s %s/.", rn, outd);
                ierr = system(ln);
                if (ierr)
                {
@@ -1513,6 +1483,48 @@ void GenKerns(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, ATL_mmnode_t *urb,
          }
       }
    }
+   KillUnrollList(mnurb);
+
+/*
+ * Routines to copy back and forth from A and B
+ */
+   for (up=allub; up; up = up->next)
+   {
+      const int u = up->mu;
+      int j;
+      j = 16 * 40 + (strlen(outd)<<1);
+      j = (j > 90) ? j : 90;
+      if (lnlen < j)
+      {
+         free(ln);
+         lnlen = j;
+         ln = malloc(j*sizeof(char));
+         assert(ln);
+      }
+      for (j=0; j < 3; j++)
+      {
+         int ierr;
+         sprintf(ln, 
+"make ATL_%crm2am_a%c_%d.c ATL_%ccm2am_a%c_%d.c pre=%c UR=%d alpha=%d al=%c",
+                 pre, al[j], u, pre, al[j], u, pre, u, ial[j], al[j]);
+         ierr = system(ln);
+         if (ierr)
+         {
+            fprintf(stderr, "FAILED CMND='%s'\n", ln);
+            exit(ierr);
+         }
+         sprintf(ln, 
+                 "mv ATL_%crm2am_a%c_%d.c %s/. ;mv ATL_%ccm2am_a%c_%d.c %s/.",
+                 pre, al[j], u, outd, pre, al[j], u, outd);
+         ierr = system(ln);
+         if (ierr)
+         {
+            fprintf(stderr, "FAILED CMND='%s'\n", ln);
+            exit(ierr);
+         }
+      }
+   }
+   KillUnrollList(allub);
 /*
  * Copy/generate every unique file, but only once
  */
@@ -1710,6 +1722,37 @@ ATL_mmnode_t *StripNonUniqueKs(ATL_mmnode_t *ukb, ATL_mmnode_t *mmb)
    }
    return(ukb);
 }
+ATL_mmnode_t *StripExactMatchKs(ATL_mmnode_t *ukb, ATL_mmnode_t *mmb) 
+/*
+ * Deletes any ukb node that also appears in mmb with same K-value,
+ * RETURNS: possibly shortened ukb
+ */
+{
+   ATL_mmnode_t *mp, *prev;
+/*
+ * Delete any repetitive nodes starting unique queue
+ */
+   while(ukb && ExactKernelInList(mmb, ukb))
+      ukb = KillMMNode(ukb);
+   if (!ukb)
+      return(ukb);
+/*
+ * Now, delete any internal non-unique K-cleanup
+ */
+   prev = ukb;
+   mp = ukb->next;
+   while (mp)
+   {
+      if (ExactKernelInList(mmb, mp))
+         mp = prev->next = KillMMNode(mp);
+      else
+      {
+         prev = mp;
+         mp = mp->next;
+      }
+   }
+   return(ukb);
+}
 /*
  * RETURNS: mmb, with all repeated kernels removed
  */
@@ -1757,19 +1800,19 @@ int main(int nargs, char **args)
  */
       ukb = StripNonUniqueKs(ukb, mmb);
    }
+   if (kcin)
+   {
+      kcb = ReadMMFile(kcin);
+      free(kcin);
+   }
    if (rkin)
    {
       rkb = ReadMMFile(rkin);
       urb = CloneMMQueue(rkb);
       urb = RemoveNonUniqueKernels(urb);
-      urb = StripNonUniqueKs(urb, ukb);
-      urb = StripNonUniqueKs(urb, mmb);
+      urb = StripExactMatchKs(urb, kcb);
+      urb = StripExactMatchKs(urb, mmb);
       free(rkin);
-   }
-   if (kcin)
-   {
-      kcb = ReadMMFile(kcin);
-      free(kcin);
    }
    FillInGenStrings(pre, mmb, outd);
    FillInGenStrings(pre, ukb, outd);
@@ -4497,7 +4540,17 @@ int Mjoin(PATL,ammmABC)
    free(vp);
    return(0);
 }
-@ROUT ATL_ammm ATL_ammm_1b ATL_ammm_rkK
+@ROUT ATL_amm_rkK
+#include "atlas_misc.h"
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_rkkblk.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_ablk2cmat.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_a1.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_an.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_aX.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_rkkflag.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_kern.h))
+
+@ROUT ATL_ammm ATL_ammm_1b
 #include "atlas_misc.h"
 #include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_blk.h))
 #include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_ablk2cmat.h))
@@ -4515,7 +4568,7 @@ int Mjoin(PATL,ammmABC)
 @ROUT ATL_ammm_rkK
    @define rt @Mjoin(PATL,ammm_rkK)@
 /*
- * This routine called when K <= MAXK
+ * This routine called when 2 < K <= MAXK
  */
 @ROUT ATL_ammm_1b
    @define rt @Mjoin(PATL,ammm_1b)@
@@ -4542,39 +4595,49 @@ int @(rt)
 )
 @ROUT ATL_ammm_rkK
 {
-   int I, mb, nb, ku;
+   int MM, mb, nb, ku;
    TYPE alpA=ATL_rone, alpB=ATL_rone;
-   const size_t CE = ATL_AMM_MAXMB*ATL_AMM_MAXNB*ATL_AMM_MAXKB;
-/*
- * Find kernel that can handle this K
- */
-   for (I=0; I < ATL_AMM_NCASES && ATL_AMM_KBs[I] < K; I++);
+   void *vp;
+   TYPE *pC, *pA, *pB, *pA0;
+
+   ATL_assert(K > 2 && K < ATL_AMM_NCASES_RANKK+3);
+   amm = ATL_AMM_KERN_RKK[K-3];
    mu = ATL_AMM_MUs[i];
    nu = ATL_AMM_NUs[i];
    ku = ATL_AMM_KUs[i];
-   amm = (ATL_AMM_KBs[i] == K || ((K/ku)*ku == K)) ? 
-         ATL_AMM_KERN_b0[i] : ATL_AMM_KERN_K1[i];
-/*
- * Compute mb/nb as near-square case that fits in the cache budget as our
- * largest blocking: 2*sizeof(C) + sizeof(B) + 2*sizeof(A)
- *    2*mb*nb + K*nb + mb*K <= CE
- */
-   mb = mu;
-   nb = nu;
-   while (2*mb*nb + K*(nb+mb) < CE)
+   MM = ((M+mu-1)/mu)*mu;
+
+   nb = ((nu+15)>>4)<<4;
+   mb = ((mu+15)>>4)<<4;
+   while (2*mb*nb + K*(mb+nb) <= ATL_L1elts)
    {
-      if (nb < mb && nb < N)
-         nb += nu;
-      else if (mb < M)
+      if (mb < nb)
          mb += mu;
       else
-         break;
+         nb += nu;
    }
-   if (2*mb*nb + K*(nb+mb) > CE)
+   if (nb >= mb)
+      nb -= nu;
+   else
+      mb -= mu;
+/*
+ * If this makes us use very small problems, set cache budget to size of
+ * largest supported kernel
+ */
+   if (mb < 16 || mb < mu+mu || nb < 16 || nb < nu+nu)
    {
-      if (nb > mb && nb > nu)
+      int cb = ATL_AMM_KBs[ATL_AMM_NCASES_RANKK-1];
+      cb *= cb;
+      while (2*mb*nb + K*(mb+nb) <= ATL_L1elts)
+      {
+         if (mb < nb)
+            mb += mu;
+         else
+            nb += nu;
+      }
+      if (nb >= mb)
          nb -= nu;
-      else if (mb > mu)
+      else
          mb -= mu;
    }
    if (beta == ATL_rone)
@@ -4586,7 +4649,7 @@ int @(rt)
    else
       blk2c = ATL_AMM_BLK2C_a1_bX[i];
 /*
- * If alpha is one, then we only have to worry about beta
+ * If alpha is one, just copy without scale
  */
    if (alpha == 1.0)
    {
@@ -4594,7 +4657,7 @@ int @(rt)
       b2blk = (TB == AtlasNoTrans) ? ATL_AMM_B2BLK_a1[i] : ATL_AMM_BT2BLK_a1[i];
    }
 /*
- * If A smallest matrix, apply alpha to it
+ * Otherwise, if A smallest matrix, apply alpha to it
  */
    else if (N > M)
    {
@@ -4617,7 +4680,77 @@ int @(rt)
       else
          b2blk = (TB == AtlasNoTrans)?ATL_AMM_B2BLK_aX[i]:ATL_AMM_BT2BLK_aX[i];
    }
+/*
+ * Compute dimension information
+ */
+   nmu = mb/mu;
+   nnu = nb/nu;
+/*
+ * nmb does not include first block, which is the only block of size mb0 not mb
+ */
+   nmb = M / mb;
+   Mr = M - nmb*mb;
+   if (Mr < mu+mu || Mr < 12)  /* roll into mb0 */
+   {
+      mb0 = mb + Mr;
+      if (Mr)
+         nmb--;
+   }
+   else
+      mb0 = Mr;
+   nmu0 = (mb+mu-1)/mu;
+   mb0U = nmu0*mu;
 
+   nmb = N / nb;
+   Nr = N - nnb*nb;
+   if (Nr < nu+nu || Nr < 8)  /* roll into nb0 */
+   {
+      nb0 = nb + Nr;
+      if (Nr)
+         nnb--;
+   }
+   else
+      nb0 = Nr;
+   nnu0 = (nb0+nu-1)/nu;
+   nb0U = nnu0*nu;
+/*
+ * Allocate workspace
+ */
+   i = Mmax(mb, mb0U);
+   j = Mmax(nb, nb0U);
+   vp = malloc(i*j + (j+MM)*K + 3*ATL_Cachelen);
+   if (!vp)
+      return(1);
+   pA0 = pA = ATL_AlignPtr(vp);
+   pC = pA + K*MM;
+   pC = ATL_AlignPtr(pC);
+   pB = pC + i*j;
+   pB = ATL_AlignPtr(pB);
+/*
+ * Do first nb0-wide column of C & B
+ * NOTE: Rewrite to do have mb0 be last block, and do column panels 
+ * right-to-left
+ */
+   a2blk(K, mb0, alpA, A, lda, pA0);
+   b2blk(K, nb0, alpB, B, ldb, pB0);
+   pA = pA0 + mb0U*K;
+   amm(nmuU0, nmuU0, K, pA0, pB, pC, pA, pB, pC)
+   blk2c(mb0, nb0, ATL_rone, pC, beta, C, ldc);
+   a = A;
+   for (i=0; i < nmb-1; i++)
+   {
+      TYPE *pAn = pA + mb*K;
+      a2blk(K, mb, alpA, a, lda, pA);
+      amm(nmuU0, nmu, K, pA, pB, pC, pAn, pB, pC)
+      pA = pAn;
+      a += mb;
+   }
+   a2blk(K, mb, alpA, a, lda, pA);
+   amm(nmuU0, nmu, K, pA, pB, pC, pA0, pB, pC)
+
+   for (j=0; j < N; j += nb)
+
+   free(vp);
    return(0);
 }
 @ROUT ATL_ammm_1b
