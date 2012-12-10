@@ -856,7 +856,12 @@ void Extern2Local(INSTQ *next, int rsav)
  * other than sp (because we have lost track of size of frame in forcing
  * the alignment beyond the machine's native alignment).  If so, rsav is
  * set to what amounts to the callers sp.  Otherwise, we are indexing by
- *    %sp + fsize 
+ *    %sp + fsize
+ *
+ * FIXME: 
+ *    Something is wrong for mixed type kernel here. If we use both float and 
+ *    double pointer in same kernel, this function can't keep track of this
+ *    correctly. will check and fix this later
  */
 {
    extern int NPARA, DTnzerod, DTnzero, DTabsd, DTabs; 
@@ -1764,7 +1769,7 @@ int FindUsedParaRegs(BBLOCK *bp, int *ir)
    }
    while(ip && (ip->inst[0] != CMPFLAG || ip->inst[1] != CF_PARASAVE || 
                 ip->inst[2] != 2));
-   #if IFKO_DEBUG_LEVEL > 1
+   #if IFKO_DEBUG_LEVEL > 1 
       fprintf(stderr, "\nUSED PARAREGS (%d):", ni);
       for (i=0; i < TNIR; i++)
          if (ir[i]) fprintf(stderr, "%s, ", archiregs[i]);
@@ -1772,7 +1777,15 @@ int FindUsedParaRegs(BBLOCK *bp, int *ir)
    #endif
    return(ni);
 }
-
+/*
+ * FIXME:
+ * Majedul: FinalizePrologueEpilogue is called after the repeatable 
+ * optimization. So, some param reg to stack store may be deleted. Analyzing
+ * the 1st block now may not capture those param regs and may return a param
+ * regs to save the sp. It will overwrite the value of param regs and come up
+ * with erroneous result, even segfault!
+ * I skipped this operation.
+ */
 static int GimmeRegSave(BBLOCK *bp, int *savedregs)
 /*
  * Given the bp is the BLOCK where the parameters are stored to the frame,
@@ -1935,10 +1948,8 @@ if (KeepOn)
 }
 
 /*
- * Majedul:
- * Need to check for bug again, specially when mixed data type is used! 
- * check ../test/svtst1.b, ../test/svtst4.b  
- * date: 9/18/12
+ *  NOTE: If a const is initialized but not used in body, gen invalid code
+ *  with null from GetDeref in assembly. Need to check this issue later
  */
 
 int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
@@ -2033,7 +2044,16 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
       if (i < ndr)
          for (ndr--; i < ndr; i++) dr[i] = dr[i+1];
    }
-
+#if 0
+/*
+ * print out all registers which are used
+ */
+   fprintf(stderr, "int reg used: ");
+   for (i=0; i<TNIR; i++)
+      if (ir[i])
+         fprintf(stderr, "[%d,%s] ", ir[i], archiregs[ir[i]]);
+   fprintf(stderr, "\n");
+#endif   
    #ifdef X86_64
    /* 
     * NOTE: rsp is not aligned 16 byte. rsp-8 is aligned to 16 byte
@@ -2052,6 +2072,7 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
    oldhead = ip;
 /*
  * For x86-64, save %rbp, if necessary, to the reserved location of 0(%rsp)
+ * Majedul: skip saving that. don't sure it is necessary
  */
    #if defined(X86_64) && 0 
       k = iName2Reg("@rbp"); /* FIXED: @rbp from %rbp*/
@@ -2090,7 +2111,16 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
  */
       if (maxalign > ASPALIGN)
       {
-         Loff += 8; /* must have saved rsp, keep space for it */
+         Loff += 8; /* must have saved rsp, keep space for it */ 
+/*
+ *       FIXED: need to add extra 8 byte as we will always save reg from 
+ *       8(rsp). So, if there are 4 regs (including rsp) to save, Loff = 32 
+ *       and we save the last reg at 32(rsp). We can't save vector var from 
+ *       32(rsp). We need to save that from 64(rsp). adding extra 8 byte will
+ *       ensure that.
+ */
+         Loff += 8; /* add 8 to keep space as saving position starts from 8 */
+         
          SAVESP = 8; /* always save the rsp at 1st location for X64 */
          Soff +=8; /* keep space to save old stack pointer */
 /*
@@ -2158,6 +2188,20 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
          PrintMajorComment(bbase, NULL, oldhead, 
      "To ensure greater alignment than sp, save old sp to stack and move sp");
 #if 1
+/*
+ *       Majedul: 
+ *       FIXME: GimmeRegSave only checks 1st block where parameter is stored
+ *       to identify the used param regs. But it doesn't work. this function is
+ *       called after reg asg and may be some useful reg asg is deleted. But
+ *       we should not overwrite the param regs which may be used later. 
+ *       Example: in many kernel (like: irk1amax), rsi is used to pass ptr but
+ *       deleted from 1st block!!! we should not overwrite rsi to store rsp!!
+ *       
+ *       My logic to determine the register to save sp:
+ *          find available register which is neither used parameter nor 
+ *          calleesave regs. 
+ */
+#if 0         
          if (!rsav)
          {
             rsav = GimmeRegSave(oldhead->myblk, irsav);
@@ -2178,6 +2222,22 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
                rsav++;
             assert(rsav < IREGEND);
          }
+#endif
+/*
+ * Majedul: we can safely choice a reg which is not iparareg nor calleesave 
+ * rsav is always 0 in new state implementation so far.
+ *
+ */
+         assert(!rsav);
+         rsav = GetReg(T_INT);
+         rsav = GetReg(T_INT);
+         while (iparareg[rsav-IREGBEG] || icalleesave[rsav-IREGBEG]) 
+            rsav = GetReg(T_INT);
+   #if 0
+         fprintf(stderr, "rsav = %d: %s\n", rsav, archiregs[rsav-IREGBEG]);
+         exit(0);
+   #endif
+
 #else
          rsav = GetReg(T_INT);
          rsav = GetReg(T_INT);
@@ -2185,6 +2245,7 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
 #ifdef X86_64
          assert(rsav <= NSIR);
 #endif
+
  #endif 
          rsav = -rsav;
          InsNewInst(NULL, NULL, oldhead, MOV, rsav, -REG_SP, 0);
@@ -2277,6 +2338,12 @@ void KillUnusedLocals()  /* HERE, HERE: move to symtab */
 {
 }
 
+/*
+ * Majedul:
+ * Need to check for bug again, specially when mixed data type is used! 
+ * check ../test/svtst1.b, ../test/svtst4.b  
+ * date: 9/18/12
+ */
 void GenPrologueEpilogueStubs(BBLOCK *bbase, int rsav)
 /*
  * Create partially qualified local and para derefs, and generate function
@@ -2294,6 +2361,10 @@ void GenPrologueEpilogueStubs(BBLOCK *bbase, int rsav)
    #else
       UpdateLocalDerefs(4);
    #endif
+/*
+ * FIXME: can't work with fixed data type in same kernel. If float and double
+ * ptr used in same kernel, can't keep track the parameter !!! 
+ */
    CreatePrologue(bbase, rsav);
    GetReg(-1);
    for (blk=bbase; blk->down; blk = blk->down);
