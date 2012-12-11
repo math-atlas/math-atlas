@@ -12436,6 +12436,14 @@ int Mjoin(PATL,mm_tMK)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 #ifdef FindingJITCPCE
    #define FindingCE
 #endif
+#if (defined(SREAL) || defined(DREAL)) && !defined(FindingJITCPCE) && \
+    !defined(CRBIG_MM) && !defined(SMALLK_MM) && !defined(BIG_MM) && \
+    !defined(FindingCE)
+   #define ATL_USEAMM 1
+   #include "atlas_amm.h"
+#else
+   #define ATL_USEAMM 0
+#endif
 
 ATL_VOID Cgemm__(const int M, const int N, const int K, const SCALAR alpha,
                  const TYPE *A, const int lda, const TYPE *B, const int ldb, 
@@ -12483,6 +12491,11 @@ ATL_VOID Cgemm__(const int M, const int N, const int K, const SCALAR alpha,
       }
    #endif
    if (!M  ||  !N || !K) return;  /* quick return */
+   #if ATL_USEAMM
+      if (!Mjoin(PATL,ammm)(ETA, ETB, M, N, K, alpha, A, lda, B, ldb, beta,
+                            C, ldc));
+         return;
+   #endif
    #ifdef USERGEMM
       mm1 = mm2 = Mjoin(PATU,usergemm);
       if (N >= M)
@@ -25896,6 +25909,11 @@ void time_mm(char *fnam0)
 int mmtst(void)
 @ROUT mmtst fc
 {
+   #ifdef ATL_Cachelen
+      #define ATL_AS (ATL_Cachelen/ATL_sizeof)
+   #else
+      #define ATL_AS (32/ATL_sizeof)
+   #endif
    char fnam[80];
 #if defined(LDA) && LDA != 0
       const int lda=LDA;
@@ -25994,6 +26012,7 @@ int mmtst(void)
    incA = incB = incC = nmov = 0;
    #ifdef MoveA
       incA = lda*nA;
+      incA = ((incA+ATL_AS-1)/ATL_AS)*ATL_AS;
       nmov++;
    #else
       #ifdef ATL_NEWTIME
@@ -26007,6 +26026,7 @@ int mmtst(void)
    #endif
    #ifdef MoveB
       incB = ldb*nB;
+      incB = ((incB+ATL_AS-1)/ATL_AS)*ATL_AS;
       nmov++;
    #else
       #ifdef ATL_NEWTIME
@@ -26021,6 +26041,7 @@ int mmtst(void)
    #ifdef MoveC
       assert(ldc == MB);
       incC = ldc*NB;
+      incC = ((incC+ATL_AS-1)/ATL_AS)*ATL_AS;
       nmov++;
    #else
       #ifdef ATL_NEWTIME
