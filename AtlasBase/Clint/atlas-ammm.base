@@ -226,7 +226,15 @@ typedef void (*cmat2ablk_t)(const size_t, const size_t, const SCALAR,
                             const TYPE*, const size_t, const SCALAR,TYPE*);
 typedef void (*ammkern_t)(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,
                           TYPE*, const TYPE*, const TYPE*, const TYPE*);
-
+@whiledef rt ammm ammm_1b ammm_rkK
+int Mjoin(PATL,@(rt))
+   (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,ATL_CSZT, const SCALAR,
+    const TYPE*,ATL_CSZT,const TYPE*,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT);
+@endwhile
+int Mjoin(PATL,ammmNMK)
+   (int,enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,ATL_CSZT, 
+    const SCALAR,const TYPE*,ATL_CSZT,const TYPE*,ATL_CSZT,const SCALAR,
+    TYPE*,ATL_CSZT);
 #endif  /* end include file guard */
 @ROUT emit_amm
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2012
@@ -1276,13 +1284,9 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
  */
    for (mmp=fixb; mmp; mmp = mmp->next)
    {
-      for (p=rkb; p; p = p->next)
-      {
-         if (!FLAG_IS_SET(p->flag, MMF_KRUNTIME) && p->ID == mmp->ID &&
-             !ExactKernelInList(ukb, p) && !ExactKernelInList(mmb, p))
-            fprintf(fp, " \\\n       ATL_%cAMMM_%d_%d_%dx%dx%d_b0.o", 
-                    pre, mmp->ID, p->kbB, mmp->mu, mmp->nu, mmp->ku);
-      }
+      if (!ExactKernelInList(mmb, mmp) && !ExactKernelInList(ukb, mmp))
+      fprintf(fp, " \\\n       ATL_%cAMMM_%d_%d_%dx%dx%d_b0.o",
+              pre, mmp->ID, mmp->kbB, mmp->mu, mmp->nu, mmp->ku);
    }
 /*
  * library make targets
@@ -1471,35 +1475,30 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
       fprintf(fp, "#\n#  rank-K kernels with compile-time KB\n#\n");
    for (mmp=fixb; mmp; mmp = mmp->next)
    {
-      for (p=rkb; p; p = p->next)
+      if (ExactKernelInList(ukb, mmp))
+         continue;
+      if (ExactKernelInList(mmb, mmp))
+         continue;
+      if (mmp->comp)
       {
-         if (p->ID != mmp->ID || FLAG_IS_SET(mmp->flag, MMF_KRUNTIME))
-            continue;
-         if (ExactKernelInList(ukb, p))
-            continue;
-         if (ExactKernelInList(mmb, p))
-            continue;
-         if (p->comp)
-         {
-            comp = (p->comp[0] == 'g' && p->comp[1] == 'c' && 
-                    p->comp[2] == 'c' && 
-                    (p->comp[3] == '\0' || p->comp[3] == ' ')) 
-                 ? "$(GOODGCC)" : p->comp;
-            cflags = p->cflags;
-         }
-         else
-         {
-            comp = dcomp;
-            cflags = dflags;
-         }
-         fprintf(fp, "ATL_%cAMMM_%d_%d_%dx%dx%d_b0.o : %s\n", pre, mmp->ID, 
-                 p->kbB, mmp->mu, mmp->nu, mmp->ku, mmp->rout);
-         fprintf(fp, "\t%s $(CDEFS2) %s -DBETA0=1", comp, styp);
-         fprintf(fp, " -DKB=%d -DATL_USERMM=ATL_%cAMMM_%d_%d_%dx%dx%d_b0", 
-                 p->kbB, pre, mmp->ID, p->kbB, mmp->mu, mmp->nu, mmp->ku);
-         fprintf(fp, " %s -o ATL_%cAMMM_%d_%d_%dx%dx%d_b0.o -c %s\n", cflags,
-                 pre, mmp->ID, p->kbB, mmp->mu, mmp->nu, mmp->ku, mmp->rout);
+         comp = (mmp->comp[0] == 'g' && mmp->comp[1] == 'c' && 
+                 mmp->comp[2] == 'c' && 
+                 (mmp->comp[3] == '\0' || mmp->comp[3] == ' ')) 
+              ? "$(GOODGCC)" : mmp->comp;
+         cflags = mmp->cflags;
       }
+      else
+      {
+         comp = dcomp;
+         cflags = dflags;
+      }
+      fprintf(fp, "ATL_%cAMMM_%d_%d_%dx%dx%d_b0.o : %s\n", pre, mmp->ID, 
+              mmp->kbB, mmp->mu, mmp->nu, mmp->ku, mmp->rout);
+      fprintf(fp, "\t%s $(CDEFS2) %s -DBETA0=1", comp, styp);
+      fprintf(fp, " -DKB=%d -DATL_USERMM=ATL_%cAMMM_%d_%d_%dx%dx%d_b0", 
+              mmp->kbB, pre, mmp->ID, mmp->kbB, mmp->mu, mmp->nu, mmp->ku);
+      fprintf(fp, " %s -o ATL_%cAMMM_%d_%d_%dx%dx%d_b0.o -c %s\n", cflags,
+              pre, mmp->ID, mmp->kbB, mmp->mu, mmp->nu, mmp->ku, mmp->rout);
    }
    fclose(fp);
    KillAllMMNodes(fixb);
@@ -4360,7 +4359,9 @@ ATL_mmnode_t *GetRankKKernels
       if (gmm->ku != 1)
       {
          ATL_mmnode_t *p;
-         p = GetNewGenNode(pre, NB, gmm->lat, gmm->mu, gmm->nu, 1);
+         int gmu = gmm->mu / VLEN[VECi];
+         assert(gmu);
+         p = GetNewGenNode(pre, NB, gmm->lat, gmu, gmm->nu, 1);
          p->next = run;
          run = p;
       }
@@ -4370,7 +4371,9 @@ ATL_mmnode_t *GetRankKKernels
    else
    {
       ATL_mmnode_t *p;
-      p = GetNewGenNode(pre, NB, gmm->lat, gmm->mu, gmm->nu, 1);
+      int gmu = gmm->mu / VLEN[VECi];
+      assert(gmu);
+      p = GetNewGenNode(pre, NB, gmm->lat, gmu, gmm->nu, 1);
       p->flag |= (1<<MMF_KRUNTIME);
       p->next = run;
       run = p;
@@ -4493,7 +4496,7 @@ int main(int nargs, char **args)
    FindBestKU1(verb, pre, 17);  /* create kern for use in low-rank update */
    if (!grnkK)
       grnkK = DecentGenCase(verb, pre, nregs);
-   mmb = GetRankKKernels(verb, pre, 60, grnkK, rnkK, mmb);
+   mmb = GetRankKKernels(verb, pre, pre == 'd' ? 60:80, grnkK, rnkK, mmb);
    KillAllMMNodes(mmb);
    free(nbs);
    exit(0);
@@ -4650,13 +4653,16 @@ int Mjoin(PATL,ammmABC)
 #include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_aX.h))
 #include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_flag.h))
 #include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_kern.h))
-
 @ROUT ATL_ammm
+#include "atlas_lvl2.h"
+#include "atlas_level1.h"
+
    @define rt @Mjoin(PATL,ammm)@
 /*
  * This routine attempt to choose which access-major GEMM to call based on dims
  */
 @ROUT ATL_ammm_rkK
+
    @define rt @Mjoin(PATL,ammm_rkK)@
 /*
  * This routine called when 2 < K <= MAXK
@@ -4719,7 +4725,7 @@ int @(rt)
       mb = i;
       nb = j;
    }
-   printf("MB=%d, NB=%d, K=%d, mu=%d, nu=%d\n", mb, nb, (int)K, mu, nu);
+//   printf("MB=%d, NB=%d, K=%d, mu=%d, nu=%d\n", mb, nb, (int)K, mu, nu);
    nmu = mb / mu;
    nnu = nb / nu;
 
