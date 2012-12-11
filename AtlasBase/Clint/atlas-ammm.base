@@ -841,6 +841,101 @@ void SpewForthKernArray(FILE *fp, char pre, ATL_mmnode_t *mmb,
    fprintf(fp, "\n};\n\n");
 }
 
+void GenRankKH
+(
+   char pre, 
+   ATL_mmnode_t *sqb,  /* baseptr  of square-case AMMM kernels */
+   ATL_mmnode_t *ukb,  /* rank-K kernels, one for each supported K */
+   char *outd
+)
+{
+   mnur_t *putb, *cpyb, *up;
+   ATL_mmnode_t *mp;
+   int m, n, k;
+   int ia, ib;
+   char ac[3] =  {'1', 'n', 'X'};
+   char bc[4] = {'1', 'n', '0', 'X'};
+
+   assert(sqb && ukb);
+   fp = StandHStart(pre, ukb, outd, "rankK");
+   fprintf(fp, "\n");
+
+   for (mp=sqb; mp->next; mp = mp->next);
+   fprintf(fp, "#define ATL_MAXM_RKK %d\n", mp->mbB);
+   fprintf(fp, "#define ATL_MAXN_RKK %d\n", mp->nbB);
+   fprintf(fp, "#define ATL_MAXK_RKK %d\n\n", mp->kbB);
+/*
+ * Prototype needed copy routines
+ */
+   putb = GetUniqueMNUnrolls(ukb, NULL);
+   fprintf(fp, "/*\n * cblk2mat put function prototypes\n */\n");
+   for (up=putb; up; up = up->next)
+   {
+      for (ib=0; ib < 4; ib++)
+      {
+         fprintf(fp, "void ATL_%cablk2cmat_%dx%d_a1_b%c\n", 
+                 pre, up->mu, up->nu, bc[ib]);
+         fprintf(fp, "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,const SCALAR,TYPE *,ATL_CSZT);\n");
+      }
+   }
+   KillUnrollList(putb);
+   fprintf(fp, 
+      "/*\n * Column-major to access-major copy function prototypes\n */\n");
+   cpyb = GetUniqueMUnrolls(ukb, NULL);
+   cpyb = GetUniqueNUnrolls(ukb, cpyb);
+   for (up=cpyb; up; up = up->next)
+   {
+      for (ia=0; ia < 3; ia++)
+         SpewForthCpProto(pre, fp, ac[ia], up->mu);
+   }
+   KillUnrollList(cpyb);
+/*
+ * Prototype the rank-K functions
+ */
+   fprintf(fp, "/*\n * rank-K AMMM kernel prototypes\n */\n");
+   for (mp=ukb; mp; mp = mp->next)
+   {
+/*
+ *    For runtime kernels, only prototype 1st time they are seen in list
+ */
+      if (FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+      {
+         ATL_mmnode_t *p;
+         for (p=ukb; p != mp; p = p->next)
+            if (FLAG_IS_SET(p->flag, MMF_KRUNTIME) && p->ID == mp->ID)
+               break;
+         if (mp == p)
+            SpewForthKernProto(fp, pre, mp, '0');
+      }
+/*
+ *    compile-time-K kernels get prototyped for each invocation
+ */
+      else
+         SpewForthKernProto(fp, pre, mp, '0');
+   }
+/*
+ * Now, crank out funcptr arrays
+ */
+   for (ib=0; ib < 4; ib++)
+   {
+      fprintf(fp,
+         "\nstatic ablk2cmat_t ATL_AMM_BLK2C_a1_b%c[ATL_AMM_NCASES] =\n{\n",
+              ac[ia], bc[ib]);
+      SpewForthC2BDecl(pre, rkb, fp, "ablk2cmat", '1', bc[ib]);
+   }
+   for (ia=0; ia < 3; ia++)
+   {
+      fprintf(fp, "\n");
+      SpewForthCpDecl(pre, mmb, fp, "ATL_AMM_A2BLK", "cm2am", ac[ia], 1);
+      SpewForthCpDecl(pre, mmb, fp, "ATL_AMM_AT2BLK", "rm2am", ac[ia], 1);
+      SpewForthCpDecl(pre, mmb, fp, "ATL_AMM_B2BLK", "cm2am", ac[ia], 0);
+      SpewForthCpDecl(pre, mmb, fp, "ATL_AMM_BT2BLK", "rm2am", ac[ia], 0);
+   }
+   SpewForthKernArray(fp, pre, rkb, "KERN_RKK", '0');
+   fprintf(fp, "\n#endif  /* end include file guard */\n");
+   fclose(fp);
+}
+
 void GenKernH(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, 
               ATL_mmnode_t *kcb, ATL_mmnode_t *rkb, ATL_mmnode_t *urb,
               char *outd)
@@ -862,7 +957,22 @@ void GenKernH(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
    if (ukb)
       SpewForthKernProtos(fp, pre, ukb, 1);
    if (urb)
+   {
+      ATL_mmnode_t *mp;
+      for (mp = urb; mp; mp = mp->next)
+      {
+         if (FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+            SpewForthKernProto(fp, pre, mp, '0');
+         else
+         {
+            ATL_mmnode_t *p;
+            for (p=rkb; p; p = p->next)
+               if (p->ID == mp->ID && !FLAG_IS_SET(p->flag, MMF_KRUNTIME))
+                  SpewForthKernProto(fp, pre, p, '0');
+         }
+      }
       SpewForthKernProtos(fp, pre, urb, 1);
+   }
    fprintf(fp, "\n");
 /* 
  * ==========================================================================
@@ -879,20 +989,6 @@ void GenKernH(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
    SpewForthKernArray(fp, pre, mmb, "KERN_bn", 'n');
    if (kcb)
       SpewForthKernArray(fp, pre, kcb, "KERN_K1", '0');
-   if (rkb)
-   {
-      ATL_mmnode_t *mp;
-      int n;
-      for (n=0,mp=rkb; mp; n++, mp = mp->next);
-      fprintf(fp, "#ifdef ATL_AMM_NCASES_RANKK\n");
-      fprintf(fp, "   #if ATL_AMM_NCASES_RANKK != %d\n", n);
-      fprintf(fp, "      #error \"RANK-K NCASES MISMATCH!\"\n");
-      fprintf(fp, "   #endif\n");
-      fprintf(fp, "#else\n");
-      fprintf(fp, "   #define ATL_AMM_NCASES_RANKK %d\n", n);
-      fprintf(fp, "#endif\n");
-      SpewForthKernArray(fp, pre, rkb, "KERN_RKK", '0');
-   }
 
    fprintf(fp, "\n#endif  /* end include file guard */\n");
    fclose(fp);
@@ -4595,51 +4691,65 @@ int @(rt)
 )
 @ROUT ATL_ammm_rkK
 {
-   int MM, mb, nb, ku;
+   size_t mb, nb, ku;
    TYPE alpA=ATL_rone, alpB=ATL_rone;
    void *vp;
    TYPE *pC, *pA, *pB, *pA0;
 
    ATL_assert(K > 2 && K < ATL_AMM_NCASES_RANKK+3);
    amm = ATL_AMM_KERN_RKK[K-3];
-   mu = ATL_AMM_MUs[i];
-   nu = ATL_AMM_NUs[i];
-   ku = ATL_AMM_KUs[i];
+   mu = ATL_AMM_MUs[K-3];
+   nu = ATL_AMM_NUs[K-3];
+   ku = ATL_AMM_KUs[K-3];
    MM = ((M+mu-1)/mu)*mu;
 
-   nb = ((nu+15)>>4)<<4;
-   mb = ((mu+15)>>4)<<4;
-   while (2*mb*nb + K*(mb+nb) <= ATL_L1elts)
+   mb = ((ATL_AMM_NCASES_RANKK+3)/mu)*mu;
+   i = mb = Mmin(mb, M);
+   nb = ((ATL_AMM_NCASES_RANKK+3)/nu)*nu;
+   j = nb = Mmin(nb, N);
+   while (2*i*j + K*(i+j) > ATL_L1elts)
    {
-      if (mb < nb)
-         mb += mu;
-      else
-         nb += nu;
+       if (i > j && i > 16)
+          i -= mu;
+       else if (j > 16)
+          j -= nu;
+       else break;
    }
-   if (nb >= mb)
-      nb -= nu;
-   else
-      mb -= mu;
+   if (i > 15 && j > 15 && i >= (mu<<2) && j >= (nu<<2))
+   {
+      mb = i;
+      nb = j;
+   }
+   printf("MB=%d, NB=%d, K=%d\n", mb, nb, K);
+   nmu = mb / mu;
+   nnu = nb / nu;
+
+   nmblks = M / mb;
+   mbF = M - nmblks*mb;
 /*
- * If this makes us use very small problems, set cache budget to size of
- * largest supported kernel
+ * If mbF is small, add it to last full block and make oversized block
  */
-   if (mb < 16 || mb < mu+mu || nb < 16 || nb < nu+nu)
+   if (mbF < mu+mu)
    {
-      int cb = ATL_AMM_KBs[ATL_AMM_NCASES_RANKK-1];
-      cb *= cb;
-      while (2*mb*nb + K*(mb+nb) <= ATL_L1elts)
-      {
-         if (mb < nb)
-            mb += mu;
-         else
-            nb += nu;
-      }
-      if (nb >= mb)
-         nb -= nu;
-      else
-         mb -= mu;
+      if (!mbF)
+         nmblks--;
+      mbF += mb;
    }
+   Mb = nmblks*mb;
+   nmuF = (mbF+mu-1)/mu;
+   mbFU = nmFU, *mu;
+   nnblks = N / nb;
+   nbF = N - nnblks*nb;
+   if (nbF < nu+nu)
+   {
+      if (!nbF)
+         nnblks--;
+      nbF += nb;
+   }
+   Nb = nnblks*nb;
+   nnuF = ((nbF+nu-1)/nu)*nu;
+   mbFU = nmFU*nu;
+
    if (beta == ATL_rone)
       blk2c = ATL_AMM_BLK2C_a1_b1[i];
    else if (beta == ATL_rnone)
@@ -4669,7 +4779,7 @@ int @(rt)
       b2blk = (TB == AtlasNoTrans) ? ATL_AMM_B2BLK_a1[i] : ATL_AMM_BT2BLK_a1[i];
    }
 /* 
- * B is smallest matrix, apply alpha to it
+ * Otherwise, B is smallest matrix, apply alpha to it
  */
    else
    {
@@ -4681,74 +4791,86 @@ int @(rt)
          b2blk = (TB == AtlasNoTrans)?ATL_AMM_B2BLK_aX[i]:ATL_AMM_BT2BLK_aX[i];
    }
 /*
- * Compute dimension information
- */
-   nmu = mb/mu;
-   nnu = nb/nu;
-/*
- * nmb does not include first block, which is the only block of size mb0 not mb
- */
-   nmb = M / mb;
-   Mr = M - nmb*mb;
-   if (Mr < mu+mu || Mr < 12)  /* roll into mb0 */
-   {
-      mb0 = mb + Mr;
-      if (Mr)
-         nmb--;
-   }
-   else
-      mb0 = Mr;
-   nmu0 = (mb+mu-1)/mu;
-   mb0U = nmu0*mu;
-
-   nmb = N / nb;
-   Nr = N - nnb*nb;
-   if (Nr < nu+nu || Nr < 8)  /* roll into nb0 */
-   {
-      nb0 = nb + Nr;
-      if (Nr)
-         nnb--;
-   }
-   else
-      nb0 = Nr;
-   nnu0 = (nb0+nu-1)/nu;
-   nb0U = nnu0*nu;
-/*
  * Allocate workspace
  */
-   i = Mmax(mb, mb0U);
-   j = Mmax(nb, nb0U);
-   vp = malloc(i*j + (j+MM)*K + 3*ATL_Cachelen);
+   i = Mmax(mb, mbFU);
+   j = Mmax(nb, nbFU);
+   vp = malloc(i*j + (j+Mb+mbFU)*K + 3*ATL_Cachelen);
    if (!vp)
       return(1);
    pA0 = pA = ATL_AlignPtr(vp);
-   pC = pA + K*MM;
+   pC = pA + K*(Mb+mbFU);
    pC = ATL_AlignPtr(pC);
    pB = pC + i*j;
    pB = ATL_AlignPtr(pB);
 /*
- * Do first nb0-wide column of C & B
+ * Do last nbF-wide column of C & B
  * NOTE: Rewrite to do have mb0 be last block, and do column panels 
  * right-to-left
  */
-   a2blk(K, mb0, alpA, A, lda, pA0);
-   b2blk(K, nb0, alpB, B, ldb, pB0);
-   pA = pA0 + mb0U*K;
-   amm(nmuU0, nmuU0, K, pA0, pB, pC, pA, pB, pC)
-   blk2c(mb0, nb0, ATL_rone, pC, beta, C, ldc);
-   a = A;
-   for (i=0; i < nmb-1; i++)
+   incB = (TB == AtlasNoTrans) ? ldb : 1;
+   if (TB == AtlasNoTrans)
    {
-      TYPE *pAn = pA + mb*K;
-      a2blk(K, mb, alpA, a, lda, pA);
-      amm(nmuU0, nmu, K, pA, pB, pC, pAn, pB, pC)
-      pA = pAn;
-      a += mb;
+      b = B + Nb*ldb;
+      incB = nb*ldb;
    }
-   a2blk(K, mb, alpA, a, lda, pA);
-   amm(nmuU0, nmu, K, pA, pB, pC, pA0, pB, pC)
-
-   for (j=0; j < N; j += nb)
+   else
+   {
+       b = B + Nb;
+       incB = nb;
+   }
+   C += ldc*Nb;
+   incC = ldc*nb;
+   a = A;
+   if (TA == AtlasNoTrans)
+   {
+      incAm = mb;
+   }
+   else
+   {
+      incAm = mb*lda;
+   }
+   incAw = mb*K;
+   pA = pA0;
+   b2blk(K, nbF, alpB, b, ldb, pB);
+   b -= incB;
+   c = C;
+/*
+ * Loop over all standard-sized MB blocks of A, copying as we do gemm
+ */
+   for (i=0; i < Mb; i += mb)
+   {
+      TYPE *pAn = pA + incAw;
+      a2blk(K, mb, alpA, A, lda, pA);
+      amm(nnuF, nmu, K, pA, pB, pC, pAn, pB, pC);
+      blk2c(mb, nbF, ATL_rone, pC, beta, c, ldc);
+      pA = pAn;
+      c += mb;
+   }
+   a2blk(K, mbF, alpA, A, lda, pA);
+   amm(nmuF, nnuF, K, pA, pB, pC, pA0, pB, pC);
+   blk2c(mb, nb, ATL_rone, pC, beta, c, ldc);
+   for (j=nnblks; j; j--)
+   {
+      pA = pA0;
+      c = C;
+      b2blk(K, nb, alpB, b, ldb, pB);
+/*
+ *    Loop over all standard-sized MB blocks of A, copying as we do gemm
+ */
+      for (i=nmblks; i; i--)
+      {
+         TYPE *pAn = pA + incAw;
+         amm(nnu, nmu, K, pA, pB, pC, pAn, pB, pC);
+         blk2c(mb, nb, ATL_rone, pC, beta, c, ldc);
+         pA = pAn;
+         c += mb;
+      }
+      amm(nmuF, nnu, K, pA, pB, pC, pA0, pB, pC);
+      blk2c(mbF, nb, ATL_rone, pC, beta, c, ldc);
+      b -= incB;
+      C -= incC;
+   }
 
    free(vp);
    return(0);
