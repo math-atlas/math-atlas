@@ -12346,6 +12346,7 @@ int Mjoin(PATL,mm_tMK)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 #else
    #include "atlas_cacheedge.h"
 #endif
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_use.h))
 @beginskip
 #ifdef TREAL
    #include Mstr(Mjoin(Mjoin(atlas_,PRE),rkXover.h))
@@ -12436,13 +12437,20 @@ int Mjoin(PATL,mm_tMK)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 #ifdef FindingJITCPCE
    #define FindingCE
 #endif
-#if (defined(SREAL) || defined(DREAL)) && !defined(FindingJITCPCE) && \
-    !defined(CRBIG_MM) && !defined(SMALLK_MM) && !defined(BIG_MM) && \
-    !defined(FindingCE)
-   #define ATL_USEAMM 1
+#if (!defined(SREAL) && !defined(DREAL)) || defined(FindingJITCPCE) && \
+    defined(CRBIG_MM) || defined(SMALLK_MM) || defined(BIG_MM) || \
+    defined(FindingCE)
+   #ifdef ATL_USE_AMM
+      #undef ATL_USE_AMM
+   #endif
+   #define ATL_USE_AMM 0
+#endif
+#ifndef ATL_USE_AMM
+   #define ATL_USE_AMM 0
+#endif
+
+#if ATL_USE_AMM
    #include "atlas_amm.h"
-#else
-   #define ATL_USEAMM 0
 #endif
 
 ATL_VOID Cgemm__(const int M, const int N, const int K, const SCALAR alpha,
@@ -12491,7 +12499,7 @@ ATL_VOID Cgemm__(const int M, const int N, const int K, const SCALAR alpha,
       }
    #endif
    if (!M  ||  !N || !K) return;  /* quick return */
-   #if ATL_USEAMM
+   #if ATL_USE_AMM
       if (!Mjoin(PATL,ammm)(ETA, ETB, M, N, K, alpha, A, lda, B, ldb, beta,
                             C, ldc));
          return;
@@ -31089,7 +31097,7 @@ void GoToTown(int ARCHDEF, int L1DEF, int TuneLA)
    int idU, maU, latU, muU, nuU, kuU, il1mul, pfA;
    double mfU, mf4x1, mf4x4, mf, mfp, mmmf, mfpeak[2], l1mul;
    FILE *fp, *fpsum, *fpabr;
-   ATL_mmnode_t *mmp;
+   ATL_mmnode_t *mmp, *mmb;
 
    PrintBanner("INSTALL_LOG/SUMMARY.LOG", 1, 0, 0, 0);
    fpsum = fopen("INSTALL_LOG/SUMMARY.LOG", "a");
@@ -31316,6 +31324,46 @@ void GoToTown(int ARCHDEF, int L1DEF, int TuneLA)
       sprintf(ln, "%s MMinstall pre=%c %s %s\n", fmake, pre, redir, ln2);
       fprintf(stdout, ln);
       ATL_Cassert(system(ln)==0, "BUILDING BLOCK MATMUL TUNE", ln2);
+
+      mmb = ReadMMFileWithPath(pre, "INSTALL_LOG", "eAMMRES.sum");
+      if (!mmb)
+      {
+         sprintf(ln, "%s AMMinstall pre=%c %s %s\n", fmake, pre, redir, ln2);
+         fprintf(stdout, ln);
+         ATL_Cassert(system(ln)==0, "BUILDING BLOCK AMM TUNE", ln2);
+         mmb = ReadMMFileWithPath(pre, "INSTALL_LOG", "eAMMRES.sum");
+      }
+      if (mmb)
+      {
+         for (mmp=mmb; mmp->next; mmp = mmp->next);
+         ATL_mprintf(2, fpsum, stdout, 
+ "\n      The best access-major matmul kernel was %s, MB=%d, NB=%d, KB=%d\n",
+                     mmp->rout, mmp->mbB, mmp->nbB, mmp->kbB);
+         ATL_mprintf(2, fpsum, stdout, "      written %s\n",
+                     mmp->auth ? mmp->auth : "R. Clint Whaley");
+         mf = mmp->mflop[0];
+         ATL_mprintf(2, fpsum, stdout,
+            "      Performance: %.2fMFLOPS (%.2f of block-major MM)\n",
+                     mf, (mf/mmmf)*100.0);
+         if (mf > mmmf)
+         {
+            sprintf(ln, "%s AMM_use pre=%c", fmake, pre);
+            ATL_Cassert(system(ln)==0, "BUILDING BLOCK AMM TUNE", ln2);
+         }
+         else
+         {
+            sprintf(ln, "%s AMM_disable pre=%c", fmake, pre);
+            ATL_Cassert(system(ln)==0, "BUILDING BLOCK AMM TUNE", ln2);
+         }
+         KillAllMMNodes(mmb);
+      }
+      else
+      {
+         ATL_mprintf(2, fpsum, stdout, 
+                     "\n      Access-major matmul install FAILED!\n\n");
+         sprintf(ln, "%s AMM_disable pre=%c", fmake, pre);
+         ATL_Cassert(system(ln)==0, "BUILDING BLOCK AMM TUNE", ln2);
+      }
 
       fprintf(fpsum, "\n");
 @beginskip
