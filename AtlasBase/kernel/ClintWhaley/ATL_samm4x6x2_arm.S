@@ -168,13 +168,14 @@ ATL_asmdecor(ATL_USERMM):
          fmacs rC24, rA2, rB2
          fmacs rC34, rA3, rB2
 
+         subs K, K0, #2
          fmacs rC05, rA0, rB3
          fmacs rC15, rA1, rB3
              fldmiasNE pA!, {rA0, rA1}
          fmacs rC25, rA2, rB3
          fmacs rC35, rA3, rB3
              fldmiasNE pA!, {rA2, rA3}
-         sub K, K0, #2
+         beq KDONE
 
          KLOOP:
             subs K, K, #2
@@ -261,7 +262,7 @@ ATL_asmdecor(ATL_USERMM):
                 fldmiasNE pA!, {rA2, rA3}
 
          bne KLOOP
-
+KDONE:
          fstmIAs pC!, {rC00-rC35}
 
          subs NNU, NNU, #1

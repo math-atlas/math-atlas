@@ -1,0 +1,317 @@
+#define rA0     d0
+#define rA1     d1
+#define rA2     d2
+#define rA3     d3
+#define rA4     d4
+#define rB0     d5
+#define rB1     d6
+#define rC00    d7
+#define rC10    d8
+#define rC20    d9
+#define rC30    d10
+#define rC40    d11
+#define rC01    d12
+#define rC11    d13
+#define rC21    d14
+#define rC31    d15
+#define rC41    d16
+#define rC02    d17
+#define rC12    d18
+#define rC22    d19
+#define rC32    d20
+#define rC42    d21
+#define rC03    d22
+#define rC13    d23
+#define rC23    d24
+#define rC33    d25
+#define rC43    d26
+#define rC04    d27
+#define rC14    d28
+#define rC24    d29
+#define rC34    d30
+#define rC44    d31
+
+#define NMU     r0
+#define NNU0    r1
+#define K0      r2
+#define pA0     r3
+#define pB0     r4
+#define pC      r5
+#define NNU     r6
+#define K       r7
+#define pfA     r8
+#define pfB     r9
+#define pB      r10
+#define pA      r11
+#define PTR     r12
+#define incAm   r14
+/*
+                    r0       r1      r2         r3          0         4
+void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
+                      8           12          16
+                CTYPE *pAn, CTYPE *pBn, CTYPE *pCn);
+
+ */
+#define PFBDIST 64
+#define PFBINC  128
+#define PFADIST 64
+#define PFAINC 128
+#include "atlas_asm.h"
+.code 32
+.fpu vfpv3
+#ifdef ATL_ARM_HARDFP
+.eabi_attribute 28, 1
+#endif
+.text
+.align 2
+.globl ATL_asmdecor(ATL_USERMM)
+.type  ATL_asmdecor(ATL_USERMM), %function
+ATL_asmdecor(ATL_USERMM):
+   fstmDBd SP!, {d8-d15}        /* save all fp regs */
+   stmDB SP!, {r4-r11,r14}      /* save all iregs */
+   #define FSIZE 9*4 + 8*8
+   add r12, SP, #FSIZE
+   ldmIA r12, {pB0, pC, pfA, pfB}
+
+   mov pA, pA0
+   add incAm, K0
+   mov incAm, K0, LSL #5         /* incAm = 4*K*sizeof = K*32 = K << 5*/
+   add incAm, incAm, K0, LSL #3  /* incAm = 5*K*sizeof = */
+
+   MLOOP:
+         fldd rB0, [pB0]
+      mov pB, pB0
+      mov NNU, NNU0
+      NLOOP:
+         #ifndef BETA0
+            add PTR, pC, #120
+            fldmiad pC, {rC00-rC42}
+            fldmiad PTR, {rC03-rC44}
+         #endif
+         mov pA, pA0
+         fldmiad pA, {rA0-rA4}
+         #ifdef BETA0
+            #define F1ST fmuld
+         #elif defined(BETA1)
+            #define F1ST fmacd
+         #else
+            #define F1ST fmscd
+         #endif
+/* 
+ *       1st K iteration peeled to support BETA CASES & prefetch
+ */
+         F1ST  rC00, rA0, rB0
+            fldd rB1, [pB,#8]
+         F1ST  rC10, rA1, rB0
+            pld [pB, #PFBDIST]
+         F1ST  rC20, rA2, rB0
+            pld [pB, #PFBDIST+1*PFAINC]
+         F1ST  rC30, rA3, rB0
+            pld [pB, #PFBDIST+2*PFAINC]
+         F1ST  rC40, rA4, rB0
+         fldd rB0, [pB,#16]
+
+         F1ST  rC01, rA0, rB1
+            pld [pB, #PFBDIST+3*PFAINC]
+         F1ST  rC11, rA1, rB1
+            pld [pA, #PFADIST]
+         F1ST  rC21, rA2, rB1
+            pld [pA, #PFADIST+1*PFAINC]
+         F1ST  rC31, rA3, rB1
+            pld [pA, #PFADIST+2*PFAINC]
+         F1ST  rC41, rA4, rB1
+         fldd rB1, [pB,#24]
+
+         F1ST  rC02, rA0, rB0
+            pld [pA, #PFADIST+3*PFAINC]
+         F1ST  rC12, rA1, rB0
+         F1ST  rC22, rA2, rB0
+            pld [pfA]
+         F1ST  rC32, rA3, rB0
+         F1ST  rC42, rA4, rB0
+         fldd rB0, [pB,#32]
+
+         F1ST  rC03, rA0, rB1
+            pld [pfB]
+         F1ST  rC13, rA1, rB1
+         F1ST  rC23, rA2, rB1
+         F1ST  rC33, rA3, rB1
+         F1ST  rC43, rA4, rB1
+            fldd rB1, [pB,#40]
+
+         F1ST  rC04, rA0, rB0
+            fldd rA0, [pA,#40]
+         F1ST  rC14, rA1, rB0
+            fldd rA1, [pA,#48]
+         F1ST  rC24, rA2, rB0
+            fldd rA2, [pA,#56]
+         F1ST  rC34, rA3, rB0
+            fldd rA3, [pA,#64]
+         F1ST  rC44, rA4, rB0
+            fldd rA4, [pA,#72]
+/* 
+ *       2nd peeled K iteration
+ */
+         fmacd rC00, rA0, rB1
+         fldd rB0, [pB,#48]
+         fmacd rC10, rA1, rB1
+         fmacd rC20, rA2, rB1
+            pld [pC,#128]
+         fmacd rC30, rA3, rB1
+         fmacd rC40, rA4, rB1
+         fldd rB1, [pB,#56]
+
+         fmacd rC01, rA0, rB0
+         fmacd rC11, rA1, rB0
+         nop
+         fmacd rC21, rA2, rB0
+         fmacd rC31, rA3, rB0
+         fmacd rC41, rA4, rB0
+         fldd rB0, [pB,#64]
+
+         fmacd rC02, rA0, rB1
+         fmacd rC12, rA1, rB1
+         nop
+         fmacd rC22, rA2, rB1
+         fmacd rC32, rA3, rB1
+         fmacd rC42, rA4, rB1
+         fldd rB1, [pB,#72]
+
+         fmacd rC03, rA0, rB0
+         add pB, pB, #80
+         fmacd rC13, rA1, rB0
+         add pA, pA, #80
+         fmacd rC23, rA2, rB0
+            add pfA, pfA, #64
+         fmacd rC33, rA3, rB0
+            add pfB, pfB, #64
+         fmacd rC43, rA4, rB0
+            fldd rB0, [pB]
+
+         subs K, K0, #2
+         fmacd rC04, rA0, rB1
+            flddNE rA0, [pA]
+         fmacd rC14, rA1, rB1
+            flddNE rA1, [pA,#8]
+         fmacd rC24, rA2, rB1
+            flddNE rA2, [pA,#16]
+         fmacd rC34, rA3, rB1
+            flddNE rA3, [pA,#24]
+         fmacd rC44, rA4, rB1
+            flddNE rA4, [pA,#32]
+         beq KDONE
+
+         KLOOP:
+/* 
+ *          1st K iteration
+ */
+            fmacd rC00, rA0, rB0
+               fldd rB1, [pB,#8]
+            fmacd rC10, rA1, rB0
+               pld [pB, #PFBDIST]
+            fmacd rC20, rA2, rB0
+               pld [pB, #PFBDIST+PFBINC]
+            fmacd rC30, rA3, rB0
+               pld [pB, #PFBDIST+2*PFBINC]
+            fmacd rC40, rA4, rB0
+            fldd rB0, [pB,#16]
+
+            fmacd rC01, rA0, rB1
+               pld [pB, #PFBDIST+3*PFBINC]
+            fmacd rC11, rA1, rB1
+               pld [pA, #PFADIST]
+            fmacd rC21, rA2, rB1
+               pld [pA, #PFADIST+1*PFAINC]
+            fmacd rC31, rA3, rB1
+               pld [pA, #PFADIST+2*PFAINC]
+            fmacd rC41, rA4, rB1
+            fldd rB1, [pB,#24]
+
+            fmacd rC02, rA0, rB0
+               pld [pA, #PFADIST+3*PFAINC]
+            fmacd rC12, rA1, rB0
+               pld [pA, #PFADIST+4*PFAINC]
+            fmacd rC22, rA2, rB0
+            fmacd rC32, rA3, rB0
+            fmacd rC42, rA4, rB0
+            fldd rB0, [pB,#32]
+
+            fmacd rC03, rA0, rB1
+            fmacd rC13, rA1, rB1
+            fmacd rC23, rA2, rB1
+            fmacd rC33, rA3, rB1
+            fmacd rC43, rA4, rB1
+               fldd rB1, [pB,#40]
+
+            fmacd rC04, rA0, rB0
+               fldd rA0, [pA,#40]
+            fmacd rC14, rA1, rB0
+               fldd rA1, [pA,#48]
+            fmacd rC24, rA2, rB0
+               fldd rA2, [pA,#56]
+            fmacd rC34, rA3, rB0
+               fldd rA3, [pA,#64]
+            fmacd rC44, rA4, rB0
+               fldd rA4, [pA,#72]
+
+/* 
+ *          2nd K iteration
+ */
+            fmacd rC00, rA0, rB1
+               fldd rB0, [pB,#48]
+            fmacd rC10, rA1, rB1
+            fmacd rC20, rA2, rB1
+            fmacd rC30, rA3, rB1
+            fmacd rC40, rA4, rB1
+            fldd rB1, [pB,#56]
+
+            fmacd rC01, rA0, rB0
+            fmacd rC11, rA1, rB0
+            fmacd rC21, rA2, rB0
+            fmacd rC31, rA3, rB0
+            fmacd rC41, rA4, rB0
+            fldd rB0, [pB,#64]
+
+            fmacd rC02, rA0, rB1
+            fmacd rC12, rA1, rB1
+            fmacd rC22, rA2, rB1
+            fmacd rC32, rA3, rB1
+            fmacd rC42, rA4, rB1
+            fldd rB1, [pB,#72]
+
+            fmacd rC03, rA0, rB0
+               add pB, pB, #80
+            fmacd rC13, rA1, rB0
+               add pA, pA, #80
+            fmacd rC23, rA2, rB0
+            fmacd rC33, rA3, rB0
+            fmacd rC43, rA4, rB0
+               fldd rB0, [pB]
+
+            subs K, K, #2
+            fmacd rC04, rA0, rB1
+               flddNE rA0, [pA]
+            fmacd rC14, rA1, rB1
+               flddNE rA1, [pA,#8]
+            fmacd rC24, rA2, rB1
+               flddNE rA2, [pA,#16]
+            fmacd rC34, rA3, rB1
+               flddNE rA3, [pA,#24]
+            fmacd rC44, rA4, rB1
+               flddNE rA4, [pA,#32]
+         bne KLOOP
+KDONE:
+
+         fstmIAd pC!, {rC00-rC42}
+         fstmIAd pC!, {rC03-rC44}
+
+         subs NNU, NNU, #1
+      bne NLOOP
+      add pA0, pA0, incAm
+      subs NMU, NMU, #1
+   bne MLOOP
+DONE:
+   ldmIA SP!, {r4-r11,r14}  /* restore all iregs */
+   fldmIAd SP!, {d8-d15}    /* restore all fpregs */
+   bx lr
+.size ATL_asmdecor(ATL_USERMM),.-ATL_asmdecor(ATL_USERMM)
