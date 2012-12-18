@@ -1,3 +1,6 @@
+#ifndef ATL_GAS_ARM
+   #error "This routine requires GAS/ARM assembly"
+#endif
 #define rA0     d0
 #define rA1     d1
 #define rA2     d2
@@ -78,16 +81,12 @@ ATL_asmdecor(ATL_USERMM):
          fldd rB0, [pB0]
    add incAm, incAm, K0, LSL #3  /* incAm = 5*K*sizeof = */
    pld [pB0, #64]
-
-   cmp pfA, pA
-   mov pB, pB0
-   ldrEQ pfA, [r13, #FSIZE+16]
    cmp pfB, pB
+   mov pB, pB0
+   movNE pfA, pfB
+   cmp pfA, pA
    mov NNU, NNU0
    ldrEQ pfA, [r13, #FSIZE+16]
-   cmp K0, #70
-   movGE  pfA, pfB
-
 
    MLOOP:
       NLOOP:
@@ -108,6 +107,7 @@ ATL_asmdecor(ATL_USERMM):
 /*
  *       1st K iteration peeled to support BETA CASES & prefetch
  */
+         subs K, K0, #1
          F1ST  rC00, rA0, rB0
             fldd rB1, [pB,#8]
          F1ST  rC10, rA1, rB0
@@ -117,7 +117,7 @@ ATL_asmdecor(ATL_USERMM):
          F1ST  rC30, rA3, rB0
             pld [pB,#192]
          F1ST  rC40, rA4, rB0
-         fldd rB0, [pB,#16]
+         fldd   rB0, [pB,#16]
 
          F1ST  rC01, rA0, rB1
             pld [pB,#256]
@@ -127,38 +127,33 @@ ATL_asmdecor(ATL_USERMM):
             pld [pB,#384]
          F1ST  rC31, rA3, rB1
          F1ST  rC41, rA4, rB1
-         fldd rB1, [pB,#24]
+         fldd   rB1, [pB,#24]
 
          F1ST  rC02, rA0, rB0
-            pld [pC, #200]
          F1ST  rC12, rA1, rB0
-            pld [pC, #264]
          F1ST  rC22, rA2, rB0
-            pld [pC, #328]
          F1ST  rC32, rA3, rB0
-            pld [pC, #392]
          F1ST  rC42, rA4, rB0
-         fldd rB0, [pB,#32]
+         fldd   rB0, [pB,#32]
 
          F1ST  rC03, rA0, rB1
-            pld [pfA]
          F1ST  rC13, rA1, rB1
          F1ST  rC23, rA2, rB1
-            pld [pfB]
          F1ST  rC33, rA3, rB1
          F1ST  rC43, rA4, rB1
-            fldd rB1, [pB,#40]
+            fldd   rB1, [pB,#40]
 
          F1ST  rC04, rA0, rB0
-            fldd rA0, [pA,#40]
+            flddNE rA0, [pA,#40]
          F1ST  rC14, rA1, rB0
-            fldd rA1, [pA,#48]
+            flddNE rA1, [pA,#48]
          F1ST  rC24, rA2, rB0
-            fldd rA2, [pA,#56]
+            flddNE rA2, [pA,#56]
          F1ST  rC34, rA3, rB0
-            fldd rA3, [pA,#64]
+            flddNE rA3, [pA,#64]
          F1ST  rC44, rA4, rB0
-            fldd rA4, [pA,#72]
+         bEQ KDONE2
+            fldd   rA4, [pA,#72]
 /*
  *       2nd peeled K iteration
  */
@@ -166,6 +161,7 @@ ATL_asmdecor(ATL_USERMM):
          fldd rB0, [pB,#48]
          fmacd rC10, rA1, rB1
          fmacd rC20, rA2, rB1
+            pld [pfA]
          fmacd rC30, rA3, rB1
          fmacd rC40, rA4, rB1
          fldd rB1, [pB,#56]
@@ -178,9 +174,13 @@ ATL_asmdecor(ATL_USERMM):
          fldd rB0, [pB,#64]
 
          fmacd rC02, rA0, rB1
+            pld [pC, #200]
          fmacd rC12, rA1, rB1
+            pld [pC, #264]
          fmacd rC22, rA2, rB1
+            pld [pC, #328]
          fmacd rC32, rA3, rB1
+            pld [pC, #392]
          fmacd rC42, rA4, rB1
          fldd rB1, [pB,#72]
 
@@ -191,11 +191,10 @@ ATL_asmdecor(ATL_USERMM):
          fmacd rC23, rA2, rB0
             add pfA, pfA, #64
          fmacd rC33, rA3, rB0
-            add pfB, pfB, #64
+         subs K, K, #1
          fmacd rC43, rA4, rB0
-            fldd rB0, [pB]
+            fldd   rB0, [pB]
 
-         subs K, K0, #2
          fmacd rC04, rA0, rB1
             flddNE rA0, [pA]
          fmacd rC14, rA1, rB1
@@ -206,7 +205,7 @@ ATL_asmdecor(ATL_USERMM):
             flddNE rA3, [pA,#24]
          fmacd rC44, rA4, rB1
             flddNE rA4, [pA,#32]
-         beq KDONE
+         bEQ KDONE
 
          KLOOP:
 /*
@@ -241,6 +240,7 @@ ATL_asmdecor(ATL_USERMM):
             fmacd rC22, rA2, rB0
                pld [pA,#384]
             fmacd rC32, rA3, rB0
+            subs K, K, #1
             fmacd rC42, rA4, rB0
             fldd rB0, [pB,#32]
 
@@ -249,18 +249,19 @@ ATL_asmdecor(ATL_USERMM):
             fmacd rC23, rA2, rB1
             fmacd rC33, rA3, rB1
             fmacd rC43, rA4, rB1
-               fldd rB1, [pB,#40]
+               fldd   rB1, [pB,#40]
 
             fmacd rC04, rA0, rB0
-               fldd rA0, [pA,#40]
+               flddNE rA0, [pA,#40]
             fmacd rC14, rA1, rB0
-               fldd rA1, [pA,#48]
+               flddNE rA1, [pA,#48]
             fmacd rC24, rA2, rB0
-               fldd rA2, [pA,#56]
+               flddNE rA2, [pA,#56]
             fmacd rC34, rA3, rB0
-               fldd rA3, [pA,#64]
+               flddNE rA3, [pA,#64]
             fmacd rC44, rA4, rB0
-               fldd rA4, [pA,#72]
+               flddNE rA4, [pA,#72]
+            bEQ KDONE2
 
 /*
  *          2nd K iteration
@@ -293,10 +294,10 @@ ATL_asmdecor(ATL_USERMM):
                add pA, pA, #80
             fmacd rC23, rA2, rB0
             fmacd rC33, rA3, rB0
+            subs K, K, #1
             fmacd rC43, rA4, rB0
-               fldd rB0, [pB]
+               fldd   rB0, [pB]
 
-            subs K, K, #2
             fmacd rC04, rA0, rB1
                flddNE rA0, [pA]
             fmacd rC14, rA1, rB1
@@ -325,4 +326,11 @@ DONE:
    ldmIA SP!, {r4-r11,r14}  /* restore all iregs */
    fldmIAd SP!, {d8-d15}    /* restore all fpregs */
    bx lr
+KDONE2:
+   fcpyd rB0, rB1
+   add pB, #40
+   add pA, #40
+   b KDONE
+
+
 .size ATL_asmdecor(ATL_USERMM),.-ATL_asmdecor(ATL_USERMM)

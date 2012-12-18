@@ -163,14 +163,16 @@ ATL_asmdecor(ATL_USERMM):
             sub pC, pC, #96
          #endif
          F1ST  rC14, rA1, rB0
+         subs K, K0, #1
          F1ST  rC24, rA2, rB0
          F1ST  rC34, rA3, rB0
 
          F1ST  rC05, rA0, rB1
          F1ST  rC15, rA1, rB1
-             fldmias pA!, {rA0, rA1}
+             fldmiasNE pA!, {rA0, rA1}
          F1ST  rC25, rA2, rB1
          F1ST  rC35, rA3, rB1
+         bEQ KDONE2
              fldmias pA!, {rA2, rA3}
 /* 
  *       2nd peeled K iteration
@@ -216,7 +218,7 @@ ATL_asmdecor(ATL_USERMM):
          fmacs rC34, rA3, rB2
             add pfB, pfB, #64
 
-         subs K, K0, #2
+         subs K, K, #1
          fmacs rC05, rA0, rB3
          fmacs rC15, rA1, rB3
              fldmiasNE pA!, {rA0, rA1}
@@ -226,7 +228,7 @@ ATL_asmdecor(ATL_USERMM):
          beq KDONE
 
          KLOOP:
-            subs K, K, #2
+            subs K, K, #1
 /* 
  *          1st K iteration
  */
@@ -266,13 +268,15 @@ ATL_asmdecor(ATL_USERMM):
 
             fmacs rC05, rA0, rB1
             fmacs rC15, rA1, rB1
-                fldmias pA!, {rA0, rA1}
+                fldmiasNE pA!, {rA0, rA1}
             fmacs rC25, rA2, rB1
             fmacs rC35, rA3, rB1
+            bEQ KDONE2
                 fldmias pA!, {rA2, rA3}
 /* 
  *          2nd K iteration
  */
+            subs K, K, #1
 
             fmacs rC00, rA0, rB2
                 fldmias pB!, {rB0, rB1}
@@ -325,4 +329,8 @@ KDONE:
    ldmIA SP!, {r4-r11,r14}  /* restore all iregs */
    fldmIAs SP!, {s16-s31}   /* restore all fpregs */
    bx lr
+KDONE2:
+   fcpys rB0, rB2
+   fcpys rB1, rB3
+   b KDONE
 .size ATL_asmdecor(ATL_USERMM),.-ATL_asmdecor(ATL_USERMM)
