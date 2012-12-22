@@ -7,7 +7,8 @@
 #define ATL_rzero 0.0
 #define ATL_CINT const int
 @endskip
-@ROUT ATL_cm2am ATL_rm2am ATL_ablk2cmat ATL_cmat2ablk
+@ROUT ATL_cm2am ATL_rm2am ATL_ablk2cmat ATL_cmat2ablk @\
+      ATL_ccm2am ATL_rcm2am
 #include "atlas_misc.h"
    @ifdef ! alpha
       @define alpha @1@
@@ -120,6 +121,104 @@ void Mjoin(PATL,cm2am_a@(nalp)_@(nu)) /* col-access matx to access-major blk */
    }
    @endmif
 }
+@ROUT ATL_ccm2am 
+/*
+ * This routine copies the KxN submatrix A into the KxCEIL(N/@(nu)) block b.
+ * b is stored in access-major storage, where the @(nu) unrolled accesses
+ * are assumed to come from the columns of A.
+ * More specifically, each Kx@(nu) column panel of A is copied into a
+ * @(nu)xK region of b, and if the last such column panel is partial, it
+ * is zero padded.
+ * For GEMM, this routine handles Notrans B matrices, and Trans A matrices.
+ */
+void Mjoin(PATL,cm2am_a@(nalp)_@(nu)) /* col-access matx to access-major blk */
+(
+   ATL_CSZT K,          /* number of rows in A */
+   ATL_CSZT N,          /* number of columns in A */
+   const SCALAR alpha,  /* scalar for A */
+   const TYPE *A,       /* matrix to be copied to access-major format */
+   ATL_CSZT lda,        /* stride between row elements */
+   TYPE *rA,            /* OUTPUT: access-major block holding real(A) */
+   TYPE *iA,            /* OUTPUT: access-major block holding imag(A) */
+)
+{
+   ATL_CSZT K2=K+K, lda2=lda+lda, n = (N/@(nu))*@(nu), incA = lda2*@(nu);
+   ATL_SZT i, j;
+   @mif nalp = "X
+   const register TYPE ra=(*alpha), ia=ialpha[1];
+   register TYPE rv, iv;
+   @endmif
+   @iexp nu2 @(nu) @(nu) +
+   @declare "   const TYPE " n n ";"
+      *A0=A
+      @define j @1@
+      @iwhile j < @(nu)
+         @iexp i @(j) -1 +
+         *A@(j)=A@(i)+lda2
+         @iexp j @(j) 1 +
+      @endiwhile
+   @enddeclare
+
+   for (j=0; j < n; j += @(nu))
+   {
+      for (i=0; i < K2; i += 2, rA += @(nu), iA += @(nu))
+      {
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @mif nalp = "X
+         rv = A@(j)[i];
+         iv = A@(j)[i+1];
+         rA[@(j)] = rv*ra - iv*ia;
+         iA[@(j)] = rv*ia + iv*ra;
+         @endmif
+         @mif nalp ! "X
+         rA[@(j)] = @(malp)A@(j)[i];
+         iA[@(j)] = @(malp)A@(j)[i+1];
+         @endmif
+      @iexp j @(j) 1 +
+      @endiwhile
+      }
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+      A@(j) += incA;
+      @iexp j @(j) 1 +
+      @endiwhile
+   }
+   @mif nu ! "1
+   switch(N-n)
+   {
+   @iexp n 1 0 +
+   @iwhile n < @(nu)
+      @iexp j @(n) -1 + 
+   case @(n):
+      for (i=0; i < K2; i += 2, rA += @(nu), iA += @(nu))
+      {
+      @iexp j 0 0 +
+      @iwhile j < @(n)
+         @mif nalp = "X
+         rv = A@(j)[i];
+         iv = A@(j)[i+1];
+         rA[@(j)] = rv*ra - iv*ia;
+         iA[@(j)] = rv*ia + iv*ra;
+         @endmif
+         @mif nalp ! "X
+         rA[@(j)] = @(malp)A@(j)[i];
+         iA[@(j)] = @(malp)A@(j)[i+1];
+         @endmif
+      @iexp j @(j) 1 +
+      @endiwhile
+      @iwhile j < @(nu)
+         rA[@(j)] = iA[@(j)] = ATL_rzero;
+      @iexp j @(j) 1 +
+      @endiwhile
+      }
+      break;
+   @iexp n @(n) 1 +
+   @endiwhile
+   default:;
+   }
+   @endmif
+}
 @ROUT ATL_rm2am ammmtst
 /*
  * This routine copies the MxK submatrix A into the KxCEIL(M/@(mu) block b.
@@ -166,6 +265,89 @@ void Mjoin(PATL,rm2am_a@(nalp)_@(mu)) /* row-access matrix to access-major block
          @endiwhile
          @iwhile i < @(mu)
          pp[@(i)] = ATL_rzero;
+         @iexp i @(i) 1 +
+         @endiwhile
+         break;
+      @iexp n @(n) 1 +
+      @endiwhile
+      default:;
+      }
+      @endmif
+   }
+}
+@ROUT ATL_crm2am
+/*
+ * This routine copies the MxK submatrix A into the KxCEIL(M/@(mu) blocks rA,iA.
+ * ?A are stored in access-major storage, where the @(mu) unrolled accesses
+ * are assumed to come from the rows of A.
+ * More specifically, the @(mu)xK row panel of A becomes a @(mu)xK region
+ * in b, and if the last such row panel is partial, it is zero padded.
+ * For GEMM, this routine handles Notrans A matrices, and Trans B matrices.
+ */
+void Mjoin(PATL,rm2am_a@(nalp)_@(mu)) /* row-access matrix to access-major block */
+(
+   ATL_CSZT K,          /* number of columns in A */
+   ATL_CSZT M,          /* number of rows in A */
+   const SCALAR alpha,  /* scalar for A */
+   const TYPE *A,       /* matrix to be copied to access-major format */
+   ATL_CSZT lda,        /* stride between row elements */
+   TYPE *rA,            /* OUTPUT: access-maj blk holding condensed real(A) */
+   TYPE *iA             /* OUTPUT: access-maj blk holding condensed imag(A) */
+)
+{
+   @iexp mu2 @(mu) @(mu) +
+   ATL_CSZT pansz = @(mu)*K, m = M/@(mu)*@(mu), mr = M-m, incA = (lda - m)<<1;
+   ATL_CSZT m2 = m+m;
+   ATL_SZT i, j;
+   @mif nalp = "X
+   const register TYPE ra=(*alpha), ia=alpha[1];
+   register TYPE rv, iv;
+   @endmif
+
+   for (j=0; j < K; j++, rA += @(mu), iA += @(mu), A += incA)
+   {
+      TYPE *pr = rA, *pi = iA;  /* panel ptrs */
+      for (i=0; i < m2; i += @(mu2), pr += pansz, pi += pansz, A += @(mu2))
+      {
+      @iexp i 0 0 +
+      @iwhile i < @(mu)
+         @iexp i2 @(i) @(i) +
+         @mif nalp = "X
+         rv = A[@(i2)];
+         iv = A[@(i2)+1];
+         pr[@(i)] = rv*ra - iv*ia;
+         pi[@(i)] = rv*ia + iv*ra;
+         @endmif
+         @mif nalp ! "X
+         pr[@(i)] = @(malp)A[@(i2)];
+         pi[@(i)] = @(malp)A[@(i2)+1];
+         @endmif
+      @iexp i @(i) 1 +
+      @endiwhile
+      }
+      @mif mu ! "1
+      switch(mr)
+      {
+      @iexp n 1 0 +
+      @iwhile n < @(mu)
+      case @(n):
+         @iexp i 0 0 +
+         @iwhile i < @(n)
+         @iexp i2 @(i) @(i) +
+         @mif nalp = "X
+         rv = A[@(i2)];
+         iv = A[@(i2)+1];
+         pr[@(i)] = rv*ra - iv*ia;
+         pi[@(i)] = rv*ia + iv*ra;
+         @endmif
+         @mif nalp ! "X
+         pr[@(i)] = @(malp)A[@(i2)];
+         pi[@(i)] = @(malp)A[@(i2)+1];
+         @endmif
+         @iexp i @(i) 1 +
+         @endiwhile
+         @iwhile i < @(mu)
+         pr[@(i)] = pi[@(i)] = ATL_rzero;
          @iexp i @(i) 1 +
          @endiwhile
          break;
