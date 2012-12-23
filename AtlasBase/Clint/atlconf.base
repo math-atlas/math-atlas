@@ -752,13 +752,15 @@ enum F2CNAME {f2c_NamErr=0, f2c_Add_, f2c_Add__, f2c_NoChange, f2c_UpCase};
 enum F2CINT {f2c_IntErr=0, FintCint, FintClong, FintClonglong, FintCshort};
 enum F2CSTRING {f2c_StrErr=0, fstrSun, fstrCray, fstrStructVal, fstrStructPtr};
 
-#define NISA 11
+#define NISA 14
 static char *ISAXNAM[NISA] = 
-   {"", "VSX", "AltiVec", "AVXMAC", "AVXFMA4", "AVX", "SSE3", "SSE2", "SSE1", 
-    "3DNow", "NEON"};
+   {"", "VSX", "AltiVec", 
+    "AVXMAC", "AVXFMA4", "AVX", "SSE3", "SSE2", "SSE1", "3DNow", 
+    "FPV3D2MACNEON", "FPV3D16MACNEON", "FPV3D32MAC", "FPV3D16MAC"};
 enum ISAEXT 
-   {ISA_None=0, ISA_VSX, ISA_AV, ISA_AVXMAC, ISA_AVXFMA4, ISA_AVX, 
-    ISA_SSE3, ISA_SSE2, ISA_SSE1, ISA_3DNow, ISA_NEON};
+   {ISA_None=0, ISA_VSX, ISA_AV, 
+    ISA_AVXMAC, ISA_AVXFMA4, ISA_AVX, ISA_SSE3, ISA_SSE2, ISA_SSE1, ISA_3DNow, 
+    ISA_NEON, ISA_NEON16, ISA_VFP3D32MAC, ISA_VFP3D16MAC};
 
 @ROUT atlconf.h asmconf.h
 #define NASMD 9
@@ -2332,6 +2334,19 @@ IRun_NEON :
 	$(MAKE) $(atlrun) atldir=$(mydir) exe=xprobe_neon args="$(args)" \
                 redir=config0.out
 	- cat config0.out
+@multidef pre s              s              d          d
+@multidef prb vec            vec            mac        mac
+@multidef asm FPV3D32MACNEON FPV3D16MACNEON FPV3D32MAC FPV3D16MAC
+@whiledef fpu neon           neon-fp16      vfpv3      vfpv3-fp16 
+IRun_@(asm) :
+	$(CC) $(CCFLAGS) -mfpu=@(fpu) -o xprobe_@low@(asm) $(SRCdir)/backend/probe_@(pre)@(prb).c $(SRCdir)/backend/probe_@(asm).S
+	$(MAKE) $(atlrun) atldir=$(mydir) exe=xprobe_@low@(asm) args="$(args)" \
+                redir=config0.out
+	- cat config0.out
+   @undef pre
+   @undef prb
+   @undef asm
+@endwhile
 @multidef pre s    d    s       d   s
 @whiledef asm SSE1 SSE2 AltiVec VSX 3DNow
 IRun_@(asm) :
@@ -2843,6 +2858,30 @@ int main(int nargs, char **args)
    free(vp);
    return(0);
 }
+@ROUT probe_smac
+   @define typ @float@
+@ROUT probe_dmac
+   @define typ @double@
+@ROUT probe_dmac probe_smac
+#include <stdio.h>
+#include <stdlib.h>
+int main(int nargs, char **args)
+{
+   @(typ) x=2.0, y=4.0, z=(-8.0), ans;
+   void do_fmac(@(typ)*, @(typ)*, @(typ)*);
+
+   ans = z + x*y;
+   do_fmac(&z, &x, &y);
+   if (z != ans)
+   {
+      fprintf(stderr, "wanted=%.2f, got=%.2f\n", ans, z);
+      printf("FAILURE\n");
+      exit(1);
+   }
+   printf("SUCCESS\n");
+   return(0);
+}
+   @undef typ
 @ROUT probe_dvec
 #include <stdio.h>
 #include <stdlib.h>
@@ -2942,6 +2981,77 @@ ATL_asmdecor(do_vsum):
         emms
         ret
 #endif
+@ROUT probe_fpv3D32MACNEON.S probe_fpv3D16MACNEON.S
+#include "atlas_asm.h"
+/*
+  ARM NEON assembler for:
+                     r0        r1       r2
+  void do_vsum(float* z, float* x,float* y)
+   where x, y, and z are vectors of length 4
+   RETURNS: z = x + y
+*/ 
+.code   32
+.fpu    neon
+.text
+.align 2
+.globl  ATL_asmdecor(do_vsum)
+.type   ATL_asmdecor(do_vsum), %function
+ATL_asmdecor(do_vsum):
+@ROUT probe_fpv3D16MACNEON.S
+   vldm     r1,     {d0-d1}
+   vldm     r2,     {d2-d3}
+   vadd.f32 d0,     d0,      d2
+   vadd.f32 d1,     d1,      d3
+   vstm     r0,     {d0-d1}
+@ROUT probe_fpv3D32MACNEON.S
+   vldm     r1,     {d16-d17}
+   vldm     r2,     {d18-d19}
+   vadd.f32 d16,     d16,      d18
+   vadd.f32 d17,     d17,      d19
+   vstm     r0,     {d16-d17}
+@ROUT probe_fpv3D32MACNEON.S probe_fpv3D16MACNEON.S
+.size ATL_asmdecor(do_vsum),.-ATL_asmdecor(do_vsum)
+@ROUT probe_fpv3D32MAC.S probe_fpv3D16MAC.S @\
+      probe_fpv3D32NOMAC.S probe_fpv3D16NOMAC.S
+#include "atlas_asm.h"
+/*
+  ARM vfpv3 assembler for:
+                      r0        r1       r2
+  void do_fmac(double* z, double* x,double* y)
+   RETURNS: *z += *x * *y
+*/ 
+.code   32
+.fpu    vfpv3
+.text
+.align 2
+.globl  ATL_asmdecor(do_fmac)
+.type   ATL_asmdecor(do_fmac), %function
+ATL_asmdecor(do_fmac):
+@ROUT probe_fpv3D16MAC.S probe_fpv3D16NOMAC.S
+   fldd d0, [r0]
+   fldd d1, [r1]
+   fldd d2, [r2]
+@ROUT probe_fpv3D16NOMAC.S
+   fmuld d1, d1, d2
+   faddd d0, d0, d1
+@ROUT probe_fpv3D16MAC.S
+   fmacd d0, d1, d2
+@ROUT probe_fpv3D16MAC.S probe_fpv3D16NOMAC.S
+   fstd d0, [r0]
+@ROUT probe_fpv3D32MAC.S probe_fpv3D32NOMAC.S
+   fldd d31, [r0]
+   fldd d30, [r1]
+   fldd d29, [r2]
+@ROUT probe_fpv3D32NOMAC.S
+   fmuld d30, d30, d29
+   faddd d31, d31, d30
+@ROUT probe_fpv3D32MAC.S
+   fmacd d31, d30, d29
+@ROUT probe_fpv3D32MAC.S probe_fpv3D32MAC.S
+   fstd d31, [r0]
+@ROUT probe_fpv3D32MAC.S probe_fpv3D16MAC.S
+   bx lr
+.size ATL_asmdecor(do_fmac),.-ATL_asmdecor(do_fmac)
 @ROUT probe_NEON.S
 #include "atlas_asm.h"
 #
@@ -3176,8 +3286,33 @@ int GetAllISAExt(int verb, char *targ, enum OSTYPE OS, enum ASMDIA asmb)
    }
    sprintf(ln, "-DATL_OS_%s -DATL_%s", osnam[OS], ASMNAM[asmb]);
    for (i=1; i < NISA; i++)
+   {
+      if (i >= ISA_NEON && i <= ISA_VFP3D16MAC)
+      {
+         if (asmb != gas_arm)
+         {
+            printf("   %s: SKIPPED (bad assembly)\n", ISAXNAM[i]);
+            continue;
+         }
+         #if defined(ATL_NONIEEE) && ATL_NONIEEE != 0
+            if (i >= ISA_NEON && i <= ISANEON16)
+            {
+               printf("   %s: SKIPPED (non_IEEE)\n", ISAXNAM[i]);
+               continue;
+            }
+         #endif
+      }
+      else if (i >= ISA_AVXMAC && i <= ISA_3DNow)
+      {
+         if (asmb != gas_x86_32 && asmb != gas_x86_64)
+         {
+            printf("   %s: SKIPPED (bad assembly)\n", ISAXNAM[i]);
+            continue;
+         }
+      }
       if (RunISAProbe(ISAXNAM[i], verb, targ, ln))
          iret |= (1<<i);
+   }
    return(iret);
 }
 
@@ -4545,6 +4680,14 @@ COMPNODE **GetDefaultComps(enum OSTYPE OS, enum MACHTYPE arch, int verb,
       vp = "-msse2";
    else if (vecexts & (1<<ISA_SSE1))
       vp = "-msse";
+   else if (vecexts & (1<<ISA_NEON))
+      vp = "-mfpu=neon";
+   else if (vecexts & (1<<ISA_NEON16))
+      vp = "-mfpu=neon-fp16";
+   else if (vecexts & (1<<ISA_VFP3D32MAC))
+      vp = "-mfpu=vfpv3";
+   else if (vecexts & (1<<ISA_VFP3D16MAC))
+      vp = "-mfpu=vfpv3-d16";
    comps = malloc(sizeof(COMPNODE)*NCOMP);
    q = ReadComps("atlcomp.txt");    /* get all compiler lines */
    if (verb > 1)
@@ -6851,13 +6994,13 @@ MACH=P4,PM OS=WinNT,Win64 LVL=0 COMPS=icc,dmc,smc,dkc,skc,xcc
 # ARM defaults
 #
 MACH=ARMv7 OS=ALL LVL=1000 COMPS=xcc
-   'gcc' '-mcpu=cortex-a8 -O1 -mfpu=vfpv3 -mfloat-abi=softfp '
+   'gcc' '-mcpu=cortex-a8 -O1 -mfpu=vfpv3'
 MACH=ARMv7 OS=ALL LVL=1000 COMPS=smc,skc,gcc,icc
-   'gcc' '-O1 -mcpu=cortex-a8 -mtune=cortex-a8 -mfpu=vfpv3 -mfloat-abi=softfp -fno-expensive-optimizations'
+   'gcc' '-O1 -mcpu=cortex-a8 -mtune=cortex-a8 -fno-expensive-optimizations'
 MACH=ARMv7 OS=ALL LVL=1000 COMPS=dmc,dkc
-   'gcc' '-O1 -mcpu=cortex-a8 -mtune=cortex-a8 -mfpu=vfpv3 -mfloat-abi=softfp -fno-schedule-insns2'
+   'gcc' '-O1 -mcpu=cortex-a8 -mtune=cortex-a8 -fno-schedule-insns2'
 MACH=ARMv7 OS=ALL LVL=1000 COMPS=f77
-   'gfortran' '-mcpu=cortex-a8 -mfpu=vfpv3 -mfloat-abi=softfp -O'
+   'gfortran' '-mcpu=cortex-a8 -O'
 #
 # Generic defaults
 #
