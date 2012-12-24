@@ -78,7 +78,7 @@ ID=20 MU=5 NU=5 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm5x5x1_armpf.S' \
 ID=21 MU=12 NU=4 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm12x4x1_fma3.S' \
      SSE=3 ASM=GAS_x8664 KRUNTIME=1 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -mavx -mfma'
-ID=22 MU=5 NU=5 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm3x4x1_armpf.S' \
+ID=22 MU=3 NU=4 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm3x4x1_armpf.S' \
      KBMIN=2 ASM=GAS_ARM KRUNTIME=1 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -mfpu=vfpv3-fp16'
 ID=23 MU=4 NU=2 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_amm4x2x4_kb4.c' \
@@ -4769,23 +4769,33 @@ int @(rt)
    nu = ATL_AMM_NUs[K-3];
    ku = ATL_AMM_KUs[K-3];
 
-   mb = (ATL_MAXM_RKK/mu)*mu;
-   i = mb = Mmin(mb, M);
-   nb = (ATL_MAXN_RKK/nu)*nu;
-   j = nb = Mmin(nb, N);
-   while (2*i*j + K*(i+j) > ATL_L1elts)
+   mb = nb = 0;
+   if (M < ATL_MAXM_RKK)
+      mb = M+1;
+   if (N < ATL_MAXN_RKK)
+      nb = N+1;
+   if (!mb && !nb)
    {
-       if (i > j && i > 16)
-          i -= mu;
-       else if (j > 16)
-          j -= nu;
-       else break;
+      i = mb = (ATL_MAXM_RKK/mu)*mu;
+      j = nb = (ATL_MAXN_RKK/nu)*nu;
+      while (2*i*j + K*(i+j) > ATL_L1elts)
+      {
+          if (i > j && i > 16)
+             i -= mu;
+          else if (j > 16)
+             j -= nu;
+          else break;
+      }
+      if (i > 15 && j > 15 && i >= (mu<<2) && j >= (nu<<2))
+      {
+         mb = i;
+         nb = j;
+      }
    }
-   if (i > 15 && j > 15 && i >= (mu<<2) && j >= (nu<<2))
-   {
-      mb = i;
-      nb = j;
-   }
+   else if (!mb)  /* can only increase mb */
+      mb = (ATL_MAXM_RKK/mu)*mu;
+   else if (!nb)  /* can only increase nb */
+      nb = (ATL_MAXN_RKK/nu)*nu;
 //   printf("MB=%d, NB=%d, K=%d, mu=%d, nu=%d\n", mb, nb, (int)K, mu, nu);
    nmu = mb / mu;
    nnu = nb / nu;
