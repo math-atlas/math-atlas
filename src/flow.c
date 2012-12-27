@@ -827,15 +827,60 @@ void CalcDoms(BBLOCK *bbase)
    if (bbase == bbbase)
       CFDOMU2D = 1;
 }
+#if 0
+LOOPQ *NewLoop0(int flag, int reset)
+{
+   LOOPQ *lp;
+/*
+ * loopnum needs to be updated when we consider multiple loop in grammar, 
+ * as loop_body label is generated based on this in h2l
+ * loopnum will be updated at the FindLoops() function.
+ */
+   static short lnum=0;
+
+   if(!reset)
+   {
+      lp = calloc(1, sizeof(struct loopq));
+      assert(lp);
+      lp->flag = flag;
+      lp->loopnum = lnum++; 
+/*
+ *    it should not be needed as we use calloc here. still will check.
+ */
+      lp->maxvars = NULL;
+      lp->minvars = NULL;
+      lp->se = NULL;
+      lp->ae = NULL;
+   }
+/*
+ * To keep a reset mechanism for lnum
+ */
+   else
+   {
+      lp = NULL;
+      lnum = 0;   
+   }
+
+   return(lp);
+}
 
 LOOPQ *NewLoop(int flag)
 {
-   LOOPQ *lp, *l;
+   return(NewLoop0(flag, 0));
+}
+#else
+LOOPQ *NewLoop(int flag)
+{
+   LOOPQ *lp;
    short lnum=0;
 
    lp = calloc(1, sizeof(struct loopq));
    assert(lp);
    lp->flag = flag;
+   lp->loopnum = lnum; 
+/*
+ * it should not be needed as we use calloc here. still will check.
+ */
    lp->maxvars = NULL;
    lp->minvars = NULL;
    lp->se = NULL;
@@ -843,7 +888,7 @@ LOOPQ *NewLoop(int flag)
 
    return(lp);
 }
-
+#endif
 LOOPQ *KillFullLoop(LOOPQ *lp)
 /*
  * As KillLoop function doesn't kill all element, rather preserve some element
@@ -1065,6 +1110,8 @@ void InvalidateLoopInfo(void)
       lp->end_label = optloop->end_label;
       lp->maxunroll = optloop->maxunroll;
       lp->writedd = optloop->writedd;
+      lp->LMU_flag = optloop->LMU_flag;   /* save the flag for loop markup */
+      lp->malign = optloop->malign;       /* mutually align for ... */
       lp->varrs = optloop->varrs;
       lp->vscal = optloop->vscal;
       lp->vsflag = optloop->vsflag;
@@ -1311,6 +1358,16 @@ void FinalizeLoops()
    maxdep = CalcLoopDepth();
    if (optloop)
    {
+/*
+ *    Majedul:
+ *    loopq : the queue which keeps all the loops finding out from the CFG
+ *    optloop: is the loop which is created at the parsing stage to keep track 
+ *    the loop which is the candidate of most of the optimization.
+ *    Here, optloop->next points the same optloop (matching the loop_body label)
+ *    but found out from CFG. So, the assertion means:
+ *    1. there must be an optloop found from the CFG which matches optloop.
+ *    2. optloop must be the innermost loop.
+ */
       assert(optloop->next);
       assert(optloop->next->depth == maxdep);
    }
