@@ -10,7 +10,8 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "//"[^\n]*\n    { lnno++; strcpy(yylval.str, yytext+2); return(TCOMMENT); }
 [\t \v]		{}
 [\n]    {lnno++;}
-[-]?{ICON}"."{ICON}[e,E][-+]?{ICON} { sscanf(yytext, "%f", &yylval.fnum);  return(FCONST); }
+[-]?{ICON}"."{ICON}[e,E][-+]?{ICON} { sscanf(yytext, "%f", &yylval.fnum);  
+       return(FCONST); }
 {ICON}"\."{ICON}([d,D]ICON)? { yylval.dnum = atof(yytext); 
        return(DCONST); }
 {ICON}	{ yylval.inum = atoi(yytext); return(ICONST); }
@@ -52,6 +53,8 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "NO_PREFETCH"      { yylval.sh = 4; return(LOOP_LIST_MU); }
 "MAX_UNROLL"       { yylval.sh = 0; return(LOOP_INT_MU); }
 "WRITE_DEP_DIST"   { yylval.sh = 1; return(LOOP_INT_MU); }
+"MUTUALLY_ALIGNED_FOR"   { yylval.sh = 2; return(LOOP_INT_MU); }
+"EXAMPLE_MARKUP_WITH_NO_PARAM"   { yylval.sh = 0; return(LOOP_MU); }
 "LOOP"  { return(LOOP_BEGIN); }
 "DOUBLE" { return(DOUBLE); }
 "FLOAT" { return(FLOAT); }
