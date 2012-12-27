@@ -28,7 +28,6 @@ INSTQ *KillThisInst(INSTQ *kp)
    if (kp->deads)
       KillBitVec(kp->deads);
    free(kp);
-   /*kp = NULL;*/
    return(kn);
 }
 void KillAllInst(INSTQ *base)
@@ -208,7 +207,6 @@ INSTQ *DelInst(INSTQ *del)
    if (del->deads)
       KillBitVec(del->deads);
    free(del);
-   del = NULL;
    return(ip);
 }
 
