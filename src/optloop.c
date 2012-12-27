@@ -5002,8 +5002,41 @@ void PrintLoop(FILE *fpout, LOOPQ *lp)
  * Print necessary basic info for loop
  */
 {
+   int i, nlp;
    BLIST *bl;
-   fprintf(fpout, "LOOP INFO: \n");
+   extern LOOPQ *loopq;
+   LOOPQ *lpq; 
+   
+   lpq = loopq;
+   nlp = 0;
+   while (lpq)
+   {  
+      nlp++;
+      lpq = lpq->next;
+   }
+
+   fprintf(fpout, "\nNumber of Loop: %d\n", nlp);
+   fprintf(fpout, "Optloop = LOOP-%d\n", lp->loopnum);
+   for (i=0, lpq=loopq; lpq; i++, lpq=lpq->next)
+   {
+      fprintf(fpout, "LOOP-%d:\n", i+1); 
+      fprintf(fpout, "\tloopnum = %d\n", lpq->loopnum);
+      fprintf(fpout, "\tloop depth = %d\n", lpq->depth);
+      fprintf(fpout, "\tloop_body = %s\n", 
+            STname[lpq->body_label-1]?  STname[lpq->body_label-1]: "NULL");
+      fprintf(fpout, "\tHead: %d\n", lpq->header->bnum);
+      fprintf(fpout, "\tTails: %s\n", PrintBlockList(lpq->tails));
+      fprintf(fpout, "\tPreHeader: %d\n", lpq->preheader->bnum);
+      fprintf(fpout, "\tPostTails: %s\n", PrintBlockList(lpq->posttails));
+      fprintf(fpout, "\tBLOCKS[%d]: %s\n",ListElemCount(lpq->blocks), 
+           PrintBlockList(lpq->blocks));
+
+      fprintf(fpout, "\tloop index var = %s\n", 
+            lpq->I?(STname[lpq->I-1]?  STname[lpq->I-1]: "NULL"): "0");
+
+   }
+#if 0
+   fprintf(fpout, "OPTLOOP INFO: \n");
    fprintf(fpout, "========================================================\n");
    fprintf(fpout, "Loop #%d\n", lp->loopnum);
    fprintf(fpout, "Depth: %d\n", lp->depth);
@@ -5015,6 +5048,7 @@ void PrintLoop(FILE *fpout, LOOPQ *lp)
    fprintf(fpout, "Tails: %s\n", PrintBlockList(lp->tails));
    fprintf(fpout, "PostTails: %s\n", PrintBlockList(lp->posttails));
    fprintf(fpout, "========================================================\n");
+#endif
 }
 
 
@@ -6269,7 +6303,7 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
  *
  * RULE: rename if it is set in both blks or, it is live out
  */
-#if 1
+#if 0
    fprintf(stderr, "\nREDUCE: split=%d, if=%d, else=%d, merge=%d\n", 
            splitblk->bnum, ifblk->bnum, elseblk?elseblk->bnum:-1, 
            mergeblk->bnum);
@@ -6706,7 +6740,7 @@ int IterativeRedCom()
          CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = CFLOOP = 0;
       }
 /*
- *    Update Loop control
+ *    Update Loop control with ptr update
  */
       pi0 = FindMovingPointers(lp->tails);
       ippu = KillPointerUpdates(pi0,1);
