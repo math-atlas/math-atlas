@@ -22,17 +22,19 @@ KFLAGS=-V -Ps b A 0 1 -P all 0 128 -U 2
 #KFLAGS=-V -Ps b A 0 1 -P all 0 128 
 pre=d
 rout=dot
-N=800
+#N=80000
+N=16000
 file=fko_tt.s
 URT=DOT
 FKO = ../bin/fko
 test=1
 uopt=
 #uopt="-X 1 -Y 1 -Fx 16 -Fy 16"
-#uopt="-X 1 -Y 1 -Fx 32 -Fy 32"
+#uopt="-X 1 -Y 1 -Fx 8 -Fy 8"
+uopt="-C 1 -X 1 -Y 1 -Fx 32 -Fy 32"
 
-#all: dot axpy copy swap scal iamax #asum
-all: dot axpy copy swap scal iamax 
+#all: dot axpy copy swap scal iamax asum amax
+all: dot axpy copy swap scal iamax asum #amax
 
 dot: sdot ddot
 axpy: saxpy daxpy
@@ -42,6 +44,7 @@ swap: sswap dswap
 scal: sscal dscal
 iamax: siamax diamax
 amax: samax damax
+nrm2: snrm2 dnrm2
 
 sdot : $(FKO)
 	$(MAKE) build pre=s rout=dot URT=`echo dot | tr 'a-z' 'A-Z'` \
@@ -113,6 +116,16 @@ damax: $(FKO)
 	$(MAKE) build pre=d rout=amax URT=`echo amax | tr 'a-z' 'A-Z'` \
 	   			      KFLAGS="$(KFLAGS)"
 	./TestTime.py d amax $(file) $(N) $(test) $(uopt)
+
+snrm2: $(FKO)
+	$(MAKE) build pre=s rout=nrm2 URT=`echo nrm2 | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py s nrm2 $(file) $(N) $(test) $(uopt)
+
+dnrm2: $(FKO)
+	$(MAKE) build pre=d rout=nrm2 URT=`echo nrm2 | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py d nrm2 $(file) $(N) $(test) $(uopt)
 
 go : $(FKO)
 	$(MAKE) build URT=`echo $(rout) | tr 'a-z' 'A-Z'` KFLAGS="$(KFLAGS)"
