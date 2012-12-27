@@ -672,6 +672,10 @@ LOOPQ *DoLoop(short I, short start, short end, short inc,
       else if (sinc == 3) flag |= L_MINC_BIT;
       else flag |= L_PINC_BIT;
    }
+/*
+ * Majedul: the production "loop->loop_beg loop_markups loop_body" only used 
+ * for optloop right now. 
+ */
    lp = optloop = NewLoop(flag);
    lp->I = I;
    lp->beg = start;
@@ -861,5 +865,5 @@ void DoIf(char op, short id, short avar, char *labnam)
  * That's the reason, we can't initiate regs here.
  * HERE HERE, fails for which kernels ????
  */
- /*GetReg(-1);*/ 
+ GetReg(-1); 
 }
