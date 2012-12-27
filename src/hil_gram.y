@@ -8,14 +8,25 @@
    #include "fko_arch.h"
    int WhereAt=0, lnno=1;
    static short *LMA[8] = {NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL};
+/*
+ * Majedul: To store the LOOP MU (with no param)
+ * Right now, there are two: 0. PTR_MUTUALLY_ALIGN 1. .... 
+ * Need to generalize all markups in well design. 
+ * nLMU is the number of those markup
+ */
+   static int nLMU = 2; 
+   static short LMU[2] = {0,0};
    static short *aalign=NULL;
    static uchar *balign=NULL;
    static short maxunroll=0, writedd=1;
+   static short malign=0;        /* all mutually align to any byte */
    extern short STderef;
 
    struct idlist *NewID(char *name);
    static void UpdateLoop(struct loopq *lp);
    void HandleLoopListMU(int which);
+   void HandleLoopIntMU(int which, int ival);
+   void HandleLoopMU(int which);
    void para_list();
    void declare_list(int flag);
    void ConstInit(short id, short con);
@@ -35,7 +46,7 @@
 %token ROUT_NAME ROUT_LOCALS ROUT_BEGIN ROUT_END CONST_INIT RETURN
 %token DOUBLE FLOAT INT UINT DOUBLE_PTR FLOAT_PTR INT_PTR UINT_PTR 
 %token PARAMS LST ABST ME LOOP_BEGIN LOOP_BODY LOOP_END MAX_UNROLL IF GOTO
-%token <sh> LOOP_LIST_MU LOOP_INT_MU
+%token <sh> LOOP_LIST_MU LOOP_INT_MU LOOP_MU
 %token <inum> ICONST
 %token <fnum> FCONST
 %token <dnum> DCONST
@@ -126,6 +137,7 @@ loop_beg : LOOP_BEGIN ID '=' avar loopsm ',' avar loopsm ',' avar loopsm2
 loop_markup : LOOP_LIST_MU LST idlist { HandleLoopListMU($1); }
             | LOOP_INT_MU LST icexpr  { HandleLoopIntMU($1, $3); }
  /*            | MAX_UNROLL   LST icexpr { maxunroll = $3; } */
+            | LOOP_MU { HandleLoopMU($1); }
             ;
 loop_markups : loop_markups loop_markup ';'
              |
@@ -178,6 +190,7 @@ statement : arith ';'
           | NAME ':'              {DoLabel($1);}
           | GOTO NAME ';'         {DoGoto($2);}
           | ifstate ';'
+          /*| loop*/ /* added so that loop can be nested */
 	  ;
 
 icexpr  : icexpr '+' icexpr             {$$ = $1 + $3;}
@@ -319,6 +332,7 @@ struct idlist *ReverseList(struct idlist *base0)
 
 static void UpdateLoop(struct loopq *lp)
 {
+   int i;
    lp->maxunroll = maxunroll;
    lp->writedd  = writedd;
 #if 0
@@ -333,10 +347,45 @@ static void UpdateLoop(struct loopq *lp)
    LMA[0] = LMA[1] = LMA[2] = LMA[3] = LMA[4] = aalign = NULL;
    balign = NULL;
    maxunroll = writedd = 0;
+/*
+ * Majedul: if there is a LOOP MARKUP for alignment, update the loopq 
+ * structure. check all the markup one by one. after updating re-init to 0.
+ * look into fko_types.h for the macro.
+ * alignment should be for a number of byte!!!
+ */
+/*
+   if (LMU[0])
+   {
+   }
+ */
+   lp->malign = malign; 
+   malign = 0;
+
    FinishLoop(lp);
 }
 
-HandleLoopIntMU(int which, int ival)
+void HandleLoopMU(int which)
+/*
+ * Handles loop markup that doesn't have any parameter. The markups are 
+ * encoded by which:
+ * 
+ * 0 : All_ptr_mutually_aligned
+ * 1 : ... ... ...   
+ */
+{
+   switch(which)
+   {
+   case 0: 
+      LMU[0] = 1;
+      break;
+   case 1:
+      LMU[1] = 1;
+      break;
+   default:
+      fko_error(__LINE__, "Unknown which=%d, file %s", which, __FILE__);
+   }
+}
+void HandleLoopIntMU(int which, int ival)
 /*
  * Handles loop markup involving integer scalar values.  The markups are
  * encoded by which:
@@ -344,6 +393,7 @@ HandleLoopIntMU(int which, int ival)
  * 0 : Max_unroll - maximum unrolling to try
  * 1 : Write_dep_dist - loop unroll at which a loop-carried write dependence
  *                      will be discovered (0 means there are none)
+ * 2 : mutually_aligned_for 
  */
 {
    switch(which)
@@ -353,6 +403,9 @@ HandleLoopIntMU(int which, int ival)
       break;
    case 1:
       writedd = ival;
+      break;
+   case 2:
+      malign = ival;
       break;
    default:
       fko_error(__LINE__, "Unknown which=%d, file %s", which, __FILE__);
