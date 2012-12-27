@@ -1132,7 +1132,6 @@ int IsLoopPeelOptimizable(LOOPQ *lp)
  * 2. Must be vectorized
  * 3. Simple loop format: [N, -1, 0] or, [0, 1, N]
  */
-
 /*
  * NO moving ptr !!!, not peelable 
  */
@@ -1146,9 +1145,28 @@ int IsLoopPeelOptimizable(LOOPQ *lp)
 
    if (lp->varrs[0] > 1) 
    {
-      peel = 0;  
-      fko_warn(__LINE__,"more than one moving array ptr" 
+/*
+ *    Note: if loop markup says, all ptr are mutually aligned, apply peeling
+ *    even there are multiple ptr. 
+ */
+#if 0      
+      if (lp->LMU_flag & LMU_MUTUALLY_ALIGNED_VLEN)
+      {
+         /*fprintf(stderr, "MUTUALLY ALIGNED!!!\n");*/
+      }
+#endif
+      if (lp->malign && lp->malign == type2len(lp->vflag))
+      {
+         fprintf(stderr, "MUTUALLY ALIGNED TO VECTOR LENGTH!!!\n");
+         /*fprintf(stderr, "malign = %d, vlen = %d\n", lp->malign, 
+                 type2len(lp->vflag));*/
+      }
+      else
+      {
+         peel = 0;  
+         fko_warn(__LINE__,"more than one moving array ptr" 
                " prevents align-peel!!\n");
+      }
    }
 /*
  * Always call after confirming vectorization.
@@ -1161,6 +1179,9 @@ int IsLoopPeelOptimizable(LOOPQ *lp)
       fprintf(stderr,"No Vectorizable Path for SSV, no need to align-peel!!\n");
    }
 #endif
+/*
+ * Majedul: Need to release the strickness of the condition....
+ */
    if (flag & L_NINC_BIT)
    {
       if (!IS_CONST(STflag[end-1]) || SToff[end-1].i != 0 ) 
@@ -2358,119 +2379,8 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
 
       for (i=0; i < n; i++)
       {
-#if 0         
 /*
- *       For livein variables, any access is legal, but only handled in 2 ways:
- *       If adder, init one val to 0, others to init val, if anything else
- *       (MUL or assignment), init all vals to same
- *
- */
-/*
- *       Majedul: vars can be both LIVEIN and LIVEOUT. So, in analysis phrase
- *       why not we check for both. 
- */
-         if (s[i] & VS_LIVEIN) /* skip private variable here */
-         {
-            /*fprintf(stderr,"%d(%s) : LIVEIN\n",
-                        sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");*/
-            j = FindReadUseType(lp->header->inst1, sp[i], blkvec);
-            if (j == VS_ACC)
-            {
-               s[i] |= VS_ACC;
-               sflag[i+1] |= SC_IACC;
-            }
-            else if (j == VS_MUL)
-            {
-               s[i] |= VS_MUL;
-               sflag[i+1] != SC_IMUL;
-            }
-            else
-            {
-/*
- *             HERE HERE. Is there other operator we need to check?? 
- *             check the func FIndReadUseType!!!
- */
-               fprintf(stderr, "j=%d, ACC=%d,MUL=%d\n", j, VS_ACC, VS_MUL);
-               fko_warn(__LINE__,
-                        "Mixed use of var %d(%s) prevents vectorization!!\n\n",
-                        sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
-               errcode += 64;
-               sflag[i+1] |= SC_IMIXED;
-            }
-         }
-/*
- *       Output scalars must be accumulators to vectorize
- */
-         if (s[i] & VS_LIVEOUT)
-         {
-            /*fprintf(stderr,"%d(%s) : LIVEOUT\n",
-                        sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");*/
-            SetVecAll(iv, 0);
-/*
- *          Majedul: Check this function. Need to resolved norm2
- *          for SSQ, we need to differentiate the scal and ssq as input/ouput
- *          although both are LIVEOUT at the exit of the loop
- */
-            ib = FindPrevStore(lp->posttails->blk->inst1, sp[i],blkvec, iv);
-            j = 0;
-            vsoflag[i+1] |= VS_ACC;
-            /* by default all set, will clear accordingly */
-            sflag[i+1] |= SC_OACC;
-            sflag[i+1] |= SC_OMUL;
-            sflag[i+1] |= SC_OMIXED;
-            for (il=ib; il; il = il->next)
-            {
-/*
- *             Majedul: 
- *             FIXME: Figure out the ip issue. Shouldn't be it derived from
- *             ILIST pointer il !!??
- */
-               ip = il->inst; /* FIXED */
-               if (ip->prev->inst[0] == FADD || ip->prev->inst[0] == FADDD)
-               {
-                  sflag[i+1] &= ~SC_OMUL;
-                  fprintf(stderr, "var = %s -> ACCUMULATOR\n",
-                          STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
-               }
-               else if (ip->prev->inst[0] == FMUL || ip->prev->inst[0] == FMULD)
-               {
-                  fko_warn(__LINE__,
-                "Non-add use of output var %d(%s) prevents vectorization!!\n\n",
-                           sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
-                  errcode += 128;
-                  vsoflag[i+1] &= ~VS_ACC;
-                  sflag[i+1] &= ~SC_OACC;
-               }
-               else
-               {
-                  fprintf(stderr,"var = %s : prev_inst = %s, cur_inst = %s\n", 
-                          STname[sp[i]-1] ? STname[sp[i]-1] : "NULL", 
-                          instmnem[ip->prev->inst[0]],instmnem[ip->inst[0]]);
-                  fprintf(stderr, "cur_inst_dest = %s\n",
-                          STname[STpts2[ip->inst[1]]-1] ? 
-                          STname[STpts2[ip->inst[1]]-1] : "NULL"); 
-
-                  fko_warn(__LINE__,
-                "Non-add use of output var %d(%s) prevents vectorization!!\n\n",
-                           sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
-                  errcode += 128;
-                  vsoflag[i+1] &= ~VS_ACC;
-                  sflag[i+1] &= ~SC_OACC;
-                  sflag[i+1] &= ~SC_OMUL;
-               }
-            }
-            KillIlist(ib);
-         }
-/*       Only private variables are neither livein nor liveout */               
-         if (!(s[i] & VS_LIVEIN) && ! (s[i] & VS_LIVEOUT)) 
-         {
-            /*fprintf(stderr,"%d(%s) : PRIVATE\n",
-                        sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");*/
-            sflag[i+1] |= SC_PRIVATE;
-         }
-#else
-/*
- *       Majedul: Re-write the analysis for livein/liveout var to be acc/mul
+ *       Majedul: Re-writen the analysis for livein/liveout var to be acc/mul
  *       NOTE: for livein var, we can handle both accumulator and MUL/DIV/ASSIGN
  *       for liveout, we can handle accumulator when it is reduction var and 
  *       if it is not set inside the loop/path, we can handle MUL/DIV/ASSIGN.
@@ -2483,7 +2393,9 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
  *          There are three options: 
  *          a) Accumulator: both use and set, but use only with ADD
  *          d) Max var: can be either use or set depend on path  
- *          b) Not set/ only used: used for MUL/DIV.... ADD? skip right now
+ *          b) Not set/ only used: used for MUL/DIV.... 
+ *             ADD? skip right now
+ *          NOTE: if it is only used, ADD should not create any problem!
  */
 /*
  *          NOTE: for SSV, even though a var is max/min, reduction is not
@@ -2505,7 +2417,9 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
             else
                 j = FindReadUseType(lp->header->inst1, sp[i], blkvec);
             }
-
+/*
+ *          Line in var which is set and used in vector path 
+ */
             if ( (scf[i] & SC_SET) && (scf[i] & SC_USE) ) /*mustbe used as acc*/
             {
                if (j == VS_ACC)
@@ -2529,13 +2443,17 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
                else
                {
                   fko_warn(__LINE__,
-                          "var %d(%s) must be Accumulator !!\n\n",
+                          "LIVE IN: var %d(%s) must be Accumulator !!\n\n",
                            sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
                   errcode += 64;
                   scf[i] |= SC_MIXED;
                   /*vsoflag[i+1] &= ~(VS_ACC | VS_MAX);*/
                }
             }
+/*
+ *          Live in var which is only used
+ *          NOTE: only used variable should be vectorizable
+ */
             else if (scf[i] & SC_USE)
             {
                if (j == VS_MAX) /* can be used depends on path choice */
@@ -2558,15 +2476,27 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
                }
                else
                {
+#if 0
                   fko_warn(__LINE__,
-                           "Mixed use of var %d(%s) prevents vectorization!!\n",
+                           "LIVE IN: Mixed use of var %d(%s) "
+                           "prevents vectorization!!\n",
                            sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
                   errcode += 128;
                   scf[i] |= SC_MIXED;
+#else
+/*
+ *                testing ... ... 
+ *                Only used variable can be treated like the VS_MUL
+ */
+                  s[i] |= VS_MUL;
+                  scf[i] |= SC_MUL;
+#endif
                }
             }
          }
-
+/*
+ *       Live out variables
+ */
          if (scf[i] & SC_LIVEOUT) /* if it is set, it must be acc*/
          {
             if (scf[i] & SC_SET)
@@ -2645,7 +2575,6 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
          {
             scf[i] |= SC_PRIVATE;
          }
-#endif
       }
    }
 /*
@@ -2710,15 +2639,15 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
       if (path->sflag[i] & SC_USE) fprintf(stderr, "USE ");
       if (path->sflag[i] & SC_ACC && path->sflag[i] & SC_LIVEIN) 
          fprintf(stderr, "IN_ACC ");
-      if (path->sflag[i] & SC_ACC && path->sflag & SC_LIVEOUT) 
+      if ((path->sflag[i] & SC_ACC) && (path->sflag[i] & SC_LIVEOUT)) 
          fprintf(stderr, "OUT_ACC ");
-      if (path->sflag[i] & SC_MUL && path->sflag & SC_LIVEIN) 
+      if ((path->sflag[i] & SC_MUL) && (path->sflag[i] & SC_LIVEIN)) 
          fprintf(stderr, "IN_MUL ");
-      if (path->sflag[i] & SC_MUL && path->sflag & SC_LIVEOUT) 
+      if ((path->sflag[i] & SC_MUL) && (path->sflag[i] & SC_LIVEOUT)) 
          fprintf(stderr, "OUT_MUL ");
-      if (path->sflag[i] & SC_MAX && path->sflag & SC_LIVEOUT) 
+      if ((path->sflag[i] & SC_MAX) && (path->sflag[i] & SC_LIVEOUT)) 
          fprintf(stderr, "OUT_MAX ");
-      if (path->sflag[i] & SC_MIN && path->sflag & SC_LIVEOUT) 
+      if ((path->sflag[i] & SC_MIN) && (path->sflag[i] & SC_LIVEOUT)) 
          fprintf(stderr, "OUT_MIN ");
       fprintf(stderr, "\n");
    }
@@ -2869,12 +2798,35 @@ int SpeculativeVectorAnalysis()
    }
 /*
  * NOTE: if we apply fall-thru transformation, we must apply it for vector path
+ * If default fall-thru path is not vectorization, need to apply fall-thru 
+ * transformation.
+ * It can't be applied here... see FeedBackLoopInfo()... should apply on vect!
  */
-   if (path != -1)
+#if 0   
+   if (path == -1)
+   {
+      if (VPATH)
+      {
+         fprintf(stderr, "\nDEFAULT PATH IS NOT VECTORIZABLE! " 
+                         "APPLY FALL-THRU ON VECTOR PATH\n");
+         assert(!VPATH);
+      }
+   }
+   else
    {
       /*fprintf(stderr, "Vector path=%d\n", VPATH);*/
       assert(!VPATH);
    }
+#else
+/*
+ * if fall-thru is applied, path becomes the PATH[0] or, fall-thru
+ */
+   if (path != -1)
+   {
+      assert(!VPATH);
+   }
+#endif
+
 #endif
 /*
  * free the err code
@@ -6346,8 +6298,22 @@ int SpecSIMDLoop(int SB_UR)
    INSTQ *ippu;
    struct ptrinfo *pi0;
    BLIST *bl;
+   extern int path;
 
    lp = optloop;
+/*
+ * Need to check for the VPATH. If default fall-thru is not vectorization, -p 
+ * must be applied to make the vector path fall-thru. Otherwise, can't generate
+ * valid vector code.
+ */
+   if (path == -1)
+   {
+      if (VPATH)
+      {
+         fprintf(stderr,"\nDefault path is not vectorizable, apply -p\n");
+         assert(!VPATH);
+      }
+   }
 
 #if 0
    PrintLoop(stderr, lp);
