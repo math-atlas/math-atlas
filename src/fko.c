@@ -2521,12 +2521,8 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks,
    if (!CFLOOP)
       FindLoops();
    AddBlockComments(bbbase);
-   AddLoopComments();
+   AddLoopComments();   
    i = FinalizePrologueEpilogue(bbbase,0 );
-#if 0
-   fprintf(stdout, "LIL after OPTs\n");
-   PrintInst(stdout, bbbase);
-#endif   
    KillAllLocinit(ParaDerefQ);
    ParaDerefQ = NULL;
    if (i)
@@ -2535,7 +2531,7 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks,
    DumpOptsPerformed(stderr, FKO_FLAG & IFF_VERBOSE);
    abase = lil2ass(bbbase);
    KillAllBasicBlocks(bbbase);
-   bbbase=NULL; /* whenever Kill, make it NULL */
+   bbbase=NULL;                  /* whenever Kill, make it NULL */
    dump_assembly(fpout, abase);
    KillAllAssln(abase);
 }
@@ -2741,10 +2737,10 @@ int main(int nargs, char **args)
  */
    GenPrologueEpilogueStubs(bbbase, 0); /* rsav = 0, normal case */
    bbbase = NewBasicBlocks(bbbase);
-   //CheckFlow(bbbase,__FILE__,__LINE__);
+   CheckFlow(bbbase,__FILE__,__LINE__);
    FindLoops();
    CheckFlow(bbbase,__FILE__,__LINE__);
-#if 0 
+#if 0
    fprintf(stdout, "1st LIL");
    PrintInst(stdout, bbbase);
    ShowFlow("cfg.dot", bbbase);
