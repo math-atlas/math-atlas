@@ -427,7 +427,17 @@ IGNODE *NewIGNode(BBLOCK *blk, short var)
       {
          assert(IS_VAR(STflag[var-1])); 
          new->deref = SToff[var-1].sa[2];
+#if 0         
          assert(new->deref > 0);
+#else    /* to debug ... ... */
+         if (new->deref <= 0)
+         {
+            fprintf(stderr, "\nALART ALART !!!\n");
+            fprintf(stderr, "deref=%d, var=%d, blk=%d\n", new->deref, var, 
+                    blk->bnum);
+            assert(0);
+         }
+#endif         
       }
    }
    else new->deref = 0;

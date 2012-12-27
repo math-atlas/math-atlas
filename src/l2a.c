@@ -57,6 +57,10 @@ static char *GetDeref(short id)
    mul = SToff[id].sa[2];
    con = SToff[id].sa[3];
    if (reg > 0) reg = 0;
+#if 0
+   fprintf(stdout, "[%d, %d, %d, %d]\n",ptr,reg,mul,con);
+   fflush(stdout);
+#endif
    #ifdef X86
       if (!reg)
       {
