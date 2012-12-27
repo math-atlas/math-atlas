@@ -119,7 +119,9 @@ struct blist
    BBLOCK *blk;
    void *ptr;   /* used only for ignodes */
 };
-
+/*
+ * flag for vectors
+ */
 #define VS_LIVEIN  1   /* live on loop entry */
 #define VS_LIVEOUT 2   /* live on loop exit */
 #define VS_SET     4   /* set inside loop */
@@ -129,6 +131,11 @@ struct blist
 #define VS_ABS     64  /* updated by absolute value */
 #define VS_MAX    128  /* updated as max var */
 #define VS_MIN    256  /* updated as min var */
+/*
+ * flag for Loop markups
+ */
+/*#define LMU_MUTUALLY_ALIGNED 1*/ /*all ptr are mutually aligned inside loop */
+
 typedef struct loopq LOOPQ;
 struct loopq
 {
@@ -143,8 +150,9 @@ struct loopq
    short NE_label;    /* no loop entry label */
    short loopnum;
    short maxunroll;
-   short writedd;     /* write dependence distance */
-/* In vectorization, arrays that are not incremented are still called scalars */
+   short writedd;    /* write dependence distance */
+   int LMU_flag;     /* to keep track of the loop mark up */
+/* In vectorization, arrays that are not incremented are still called scalars*/
    short *varrs;     /* vectorized arrays */
    short *vscal;     /* vectorized scalars */
    short *vsflag;    /* info array for vscal */
@@ -152,8 +160,9 @@ struct loopq
    short *vvscal;    /* vect locals used for vscal */
    short *bvvscal;   /* backup var for vvscal, needed in SV */
    short *nopf;      /* arrays which should not be prefetched */
-   short *aaligned;   /* arrays that have known alignment */
-   uchar *abalign;    /* alignments of above arrays */
+   short *aaligned;  /* arrays that have known alignment */
+   uchar *abalign;   /* alignments of above arrays */
+   short malign;     /* if mutually aligned,what it aligned for, 0 not malign */  
    short *pfarrs;     /* arrays which should be prefetched */
    short *pfdist;     /* dist in bytes to prefetch pfarrs */
    short *pfflag;     /* flag for prefetch */
