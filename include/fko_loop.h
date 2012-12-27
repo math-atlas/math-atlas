@@ -4,6 +4,15 @@
 #include "fko_types.h"
 
 #ifdef IFKO_DECLARE
+/*
+ * Majedul: 
+ * loopq : points the queue which stores all the loops in decreasing depth order
+ * (innermost as the first) but optloop as the first element.
+ * optloop : optloop is created at the parsing phase which is the candidate for
+ * most of the optimization. sometime optloop->next points the head of the queue
+ * loopq.
+ *
+ */
    struct loopq *loopq=NULL, *optloop=NULL;
 #else
    extern struct loopq *loopq, *optloop;
