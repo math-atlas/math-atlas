@@ -3,7 +3,7 @@
  * bit vectors
  */
 #include "fko.h"
-#define CHUNKSIZE 64
+#define CHUNKSIZE 512 /* should be large as the LIL increased */
 static int nvalloc=0,      /* # of slots allocated for bit vectors*/
            nvused=0,       /* # of slots presently in use */
            **bvecs=NULL,   /* ptr to individual bit vectors */
