@@ -8,7 +8,7 @@
 #define ATL_CINT const int
 @endskip
 @ROUT ATL_cm2am ATL_rm2am ATL_ablk2cmat ATL_cmat2ablk @\
-      ATL_ccm2am ATL_rcm2am
+      ATL_cablk2cmat ATL_ccm2am ATL_crm2am
 #include "atlas_misc.h"
    @ifdef ! alpha
       @define alpha @1@
@@ -27,7 +27,7 @@
          @define nalp @X@
       @endiif
    @endiif
-@ROUT ATL_ablk2cmat ATL_cmat2ablk
+@ROUT ATL_cablk2cmat ATL_ablk2cmat ATL_cmat2ablk
    @iif beta = -1
       @define nbet @n@
    @endiif
@@ -549,6 +549,385 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
                @endmif
                @iexp k @(k) 1 + 
             @iexp i @(i) 1 +
+            @endiwhile
+         @iexp j @(j) 1 +
+         @endiwhile
+         b += incb;
+         break;
+      @iexp m @(m) 1 +
+      @endiwhile
+      default:;
+      }
+      @endmif
+      break;
+   @iexp n @(n) 1 +
+   @endiwhile
+   default:;
+   }
+   @endmif
+}
+@ROUT ATL_cablk2cmat cammmtst
+/*
+ *  C <- beta*C + alpha*b,
+ *  C is an MxN matrix in column-major storage
+ *  b is a CEIL(M/@(mu))*@(mu) x CEIL(N/@(nu))*@(nu) matrix stored in
+ *    @(mu)x@(nu)-major storage
+ */
+void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
+(
+   ATL_CSZT M,          /* number of rows in A */
+   ATL_CSZT N,          /* number of columns in A */
+   const SCALAR alpha,  /* scalar for b */
+   const TYPE *rC,      /* matrix stored in @(mu)x@(nu)-major order */
+   const TYPE *iC,      /* matrix stored in @(mu)x@(nu)-major order */
+   const SCALAR beta,   /* scalar for C */
+   TYPE *C,             /* col-major array to write to */
+   ATL_CSZT ldc         /* stride between row elements */
+)
+{
+   ATL_CSZT m = (M/@(mu))*@(mu), n = (N/@(nu))*@(nu), mr = M-m, nr = N-n;
+   ATL_CSZT pansz = (nr) ? (n+@(nu))*@(mu) : n*@(mu);
+   ATL_CSZT ldc2 = ldc+ldc, incC = ldc2*@(nu), incb = @(mu)*@(nu);
+   ATL_SZT i, j;
+   @mif nbet = "X
+   const register TYPE rb=(*beta), ib=beta[1];
+   register TYPE rc, ic;
+   @endmif
+   @mif nalp = "X
+   const register TYPE ra=(*alpha), ia=alpha[1];
+   register TYPE rp, ip, rtmp;
+   @endmif
+   @declare "   TYPE " n n ";"
+      *C0=C
+      @define j @1@
+      @iwhile j < @(nu)
+         @iexp i @(j) -1 +
+         *C@(j)=C@(i)+ldc2
+         @iexp j @(j) 1 +
+      @endiwhile
+   @enddeclare
+   @iexp mu2 @(mu) @(mu) +
+
+   for (j=0; j < n; j += @(nu), rC += incb, iC += incb)
+   {
+      const TYPE *pr = rC, *pi = iC;
+      for (i=0; i < m; i += @(mu2), pr += pansz, pi += pansz)
+      {
+   @iexp k 0 0 +
+   @iexp j 0 0 +
+   @iwhile j < @(nu)
+      @iexp i 0 0 +
+      @iwhile i < @(mu2)
+         @mif nalp = "n
+            @mif nbet = "X
+            rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+         C@(j)[i+@(i)] = rc*rb - ic*ib - pr[@(k)];
+         C@(j)[i+@(i)] = rc*ib + ic*rb - pr[@(k)];
+            @endmif
+            @mif nbet = "1
+         C@(j)[i+@(i)] -= pr[@(k)];
+         C@(j)[i+@(i)+1] -= pi[@(k)];
+            @endmif
+            @mif nbet = "0
+         C@(j)[i+@(i)] = -pr[@(k)];
+         C@(j)[i+@(i)+1] = -pi[@(k)];
+            @endmif
+            @mif nbet = "n
+         C@(j)[i+@(i)] = -(pr[@(k)] + C@(j)[i+@(i)]);
+         C@(j)[i+@(i)+1] = -(pi[@(k)] + C@(j)[i+@(i)+1]);
+            @endmif
+         @endmif
+         @mif nalp = "1
+            @mif nbet = "X
+         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+         C@(j)[i+@(i)] = rc*rb - ic*ib + pr[@(k)];
+         C@(j)[i+@(i)+1] = rc*ib + ic*rb + pi[@(k)];
+            @endmif
+            @mif nbet = "1
+         C@(j)[i+@(i)] += pr[@(k)];
+         C@(j)[i+@(i)+1] += pi[@(k)];
+            @endmif
+            @mif nbet = "0
+         C@(j)[i+@(i)] = pr[@(k)];
+         C@(j)[i+@(i)+1] = pi[@(k)];
+            @endmif
+            @mif nbet = "n
+         C@(j)[i+@(i)] = pr[@(k)] - C@(j)[i+@(i)];
+         C@(j)[i+@(i)+1] = pi[@(k)] - C@(j)[i+@(i)+1];
+            @endmif
+         @endif
+         @mif nalp = "X
+         rtmp = rp = pr[@(k)];
+         ip = pi[@(k)];
+         rp = rp*ra - ip*ia;
+         ip = rtmp*ia + ip*ra;
+            @mif nbet = "X
+         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+         C@(j)[i+@(i)] = rc*rb - ic*ib + rp;
+         C@(j)[i+@(i)+1] = rc*ib + ic*rb + ip;
+            @endmif
+            @mif nbet = "1
+         C@(j)[i+@(i)] += rp;
+         C@(j)[i+@(i)+1] += ip;
+            @endmif
+            @mif nbet = "0
+         C@(j)[i+@(i)] = rp;
+         C@(j)[i+@(i)+1] = ip;
+            @endmif
+            @mif nbet = "n
+         C@(j)[i+@(i)] = rp - C@(j)[i+@(i)];
+         C@(j)[i+@(i)+1] = ip - C@(j)[i+@(i)+1];
+            @endmif
+         @endmif
+         @iexp k @(k) 1 +
+      @iexp i @(i) 2 +
+      @endiwhile
+   @iexp j @(j) 1 +
+   @endiwhile
+      }
+      @mif mu ! "1
+      switch(mr)
+      {
+      @iexp m 1 0 +
+      @iwhile m < @(mu)
+      case @(m):
+         @iexp j 0 0 +
+         @iexp m2 @(m) @(m) +
+         @iwhile j < @(nu)
+            @iexp k @(mu) @(j) *
+            @iexp i 0 0 +
+            @iwhile i < @(m2)
+         @mif nalp = "n
+            @mif nbet = "X
+            rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+         C@(j)[i+@(i)] = rc*rb - ic*ib - pr[@(k)];
+         C@(j)[i+@(i)] = rc*ib + ic*rb - pr[@(k)];
+            @endmif
+            @mif nbet = "1
+         C@(j)[i+@(i)] -= pr[@(k)];
+         C@(j)[i+@(i)+1] -= pi[@(k)];
+            @endmif
+            @mif nbet = "0
+         C@(j)[i+@(i)] = -pr[@(k)];
+         C@(j)[i+@(i)+1] = -pi[@(k)];
+            @endmif
+            @mif nbet = "n
+         C@(j)[i+@(i)] = -(pr[@(k)] + C@(j)[i+@(i)]);
+         C@(j)[i+@(i)+1] = -(pi[@(k)] + C@(j)[i+@(i)+1]);
+            @endmif
+         @endmif
+         @mif nalp = "1
+            @mif nbet = "X
+         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+         C@(j)[i+@(i)] = rc*rb - ic*ib + pr[@(k)];
+         C@(j)[i+@(i)+1] = rc*ib + ic*rb + pi[@(k)];
+            @endmif
+            @mif nbet = "1
+         C@(j)[i+@(i)] += pr[@(k)];
+         C@(j)[i+@(i)+1] += pi[@(k)];
+            @endmif
+            @mif nbet = "0
+         C@(j)[i+@(i)] = pr[@(k)];
+         C@(j)[i+@(i)+1] = pi[@(k)];
+            @endmif
+            @mif nbet = "n
+         C@(j)[i+@(i)] = pr[@(k)] - C@(j)[i+@(i)];
+         C@(j)[i+@(i)+1] = pi[@(k)] - C@(j)[i+@(i)+1];
+            @endmif
+         @endif
+         @mif nalp = "X
+         rtmp = rp = pr[@(k)];
+         ip = pi[@(k)];
+         rp = rp*ra - ip*ia;
+         ip = rtmp*ia + ip*ra;
+            @mif nbet = "X
+         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+         C@(j)[i+@(i)] = rc*rb - ic*ib + rp;
+         C@(j)[i+@(i)+1] = rc*ib + ic*rb + ip;
+            @endmif
+            @mif nbet = "1
+         C@(j)[i+@(i)] += rp;
+         C@(j)[i+@(i)+1] += ip;
+            @endmif
+            @mif nbet = "0
+         C@(j)[i+@(i)] = rp;
+         C@(j)[i+@(i)+1] = ip;
+            @endmif
+            @mif nbet = "n
+         C@(j)[i+@(i)] = rp - C@(j)[i+@(i)];
+         C@(j)[i+@(i)+1] = ip - C@(j)[i+@(i)+1];
+            @endmif
+         @endmif
+               @iexp k @(k) 1 + 
+            @iexp i @(i) 2 +
+            @endiwhile
+         @iexp j @(j) 1 +
+         @endiwhile
+         break;
+      @iexp m @(m) 1 +
+      @endiwhile
+      default:;
+      }
+      @endmif
+   @iexp j 0 0 +
+   @iwhile j < @(nu)
+      C@(j) += incC;
+      @iexp j @(j) 1 +
+   @endiwhile
+   }
+   @mif nu ! "1
+   switch(nr)
+   {
+   @iexp n 1 0 +
+   @iwhile n < @(nu)
+   case @(n):
+      for (i=0; i < m; i += @(mu), b += pansz)
+      {
+      @iexp k 0 0 +
+      @iexp j 0 0 +
+      @iwhile j < @(n)
+         @iexp i 0 0 +
+         @iwhile i < @(mu2)
+         @mif nalp = "n
+            @mif nbet = "X
+            rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+         C@(j)[i+@(i)] = rc*rb - ic*ib - pr[@(k)];
+         C@(j)[i+@(i)] = rc*ib + ic*rb - pr[@(k)];
+            @endmif
+            @mif nbet = "1
+         C@(j)[i+@(i)] -= pr[@(k)];
+         C@(j)[i+@(i)+1] -= pi[@(k)];
+            @endmif
+            @mif nbet = "0
+         C@(j)[i+@(i)] = -pr[@(k)];
+         C@(j)[i+@(i)+1] = -pi[@(k)];
+            @endmif
+            @mif nbet = "n
+         C@(j)[i+@(i)] = -(pr[@(k)] + C@(j)[i+@(i)]);
+         C@(j)[i+@(i)+1] = -(pi[@(k)] + C@(j)[i+@(i)+1]);
+            @endmif
+         @endmif
+         @mif nalp = "1
+            @mif nbet = "X
+         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+         C@(j)[i+@(i)] = rc*rb - ic*ib + pr[@(k)];
+         C@(j)[i+@(i)+1] = rc*ib + ic*rb + pi[@(k)];
+            @endmif
+            @mif nbet = "1
+         C@(j)[i+@(i)] += pr[@(k)];
+         C@(j)[i+@(i)+1] += pi[@(k)];
+            @endmif
+            @mif nbet = "0
+         C@(j)[i+@(i)] = pr[@(k)];
+         C@(j)[i+@(i)+1] = pi[@(k)];
+            @endmif
+            @mif nbet = "n
+         C@(j)[i+@(i)] = pr[@(k)] - C@(j)[i+@(i)];
+         C@(j)[i+@(i)+1] = pi[@(k)] - C@(j)[i+@(i)+1];
+            @endmif
+         @endif
+         @mif nalp = "X
+         rtmp = rp = pr[@(k)];
+         ip = pi[@(k)];
+         rp = rp*ra - ip*ia;
+         ip = rtmp*ia + ip*ra;
+            @mif nbet = "X
+         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+         C@(j)[i+@(i)] = rc*rb - ic*ib + rp;
+         C@(j)[i+@(i)+1] = rc*ib + ic*rb + ip;
+            @endmif
+            @mif nbet = "1
+         C@(j)[i+@(i)] += rp;
+         C@(j)[i+@(i)+1] += ip;
+            @endmif
+            @mif nbet = "0
+         C@(j)[i+@(i)] = rp;
+         C@(j)[i+@(i)+1] = ip;
+            @endmif
+            @mif nbet = "n
+         C@(j)[i+@(i)] = rp - C@(j)[i+@(i)];
+         C@(j)[i+@(i)+1] = ip - C@(j)[i+@(i)+1];
+            @endmif
+         @endmif
+         @iexp i @(i) 2 +
+         @endiwhile
+      @iexp j @(j) 1 +
+      @endiwhile
+      }
+      @mif mu ! "1
+      switch(mr)
+      {
+      @iexp m 1 0 +
+      @iwhile m < @(mu)
+      case @(m):
+         @iexp j 0 0 +
+         @iwhile j < @(n)
+            @iexp k @(mu) @(j) *
+            @iexp i 0 0 +
+            @iexp m2 @(m) @(m) +
+            @iwhile i < @(m2)
+         @mif nalp = "n
+            @mif nbet = "X
+            rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+         C@(j)[i+@(i)] = rc*rb - ic*ib - pr[@(k)];
+         C@(j)[i+@(i)] = rc*ib + ic*rb - pr[@(k)];
+            @endmif
+            @mif nbet = "1
+         C@(j)[i+@(i)] -= pr[@(k)];
+         C@(j)[i+@(i)+1] -= pi[@(k)];
+            @endmif
+            @mif nbet = "0
+         C@(j)[i+@(i)] = -pr[@(k)];
+         C@(j)[i+@(i)+1] = -pi[@(k)];
+            @endmif
+            @mif nbet = "n
+         C@(j)[i+@(i)] = -(pr[@(k)] + C@(j)[i+@(i)]);
+         C@(j)[i+@(i)+1] = -(pi[@(k)] + C@(j)[i+@(i)+1]);
+            @endmif
+         @endmif
+         @mif nalp = "1
+            @mif nbet = "X
+         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+         C@(j)[i+@(i)] = rc*rb - ic*ib + pr[@(k)];
+         C@(j)[i+@(i)+1] = rc*ib + ic*rb + pi[@(k)];
+            @endmif
+            @mif nbet = "1
+         C@(j)[i+@(i)] += pr[@(k)];
+         C@(j)[i+@(i)+1] += pi[@(k)];
+            @endmif
+            @mif nbet = "0
+         C@(j)[i+@(i)] = pr[@(k)];
+         C@(j)[i+@(i)+1] = pi[@(k)];
+            @endmif
+            @mif nbet = "n
+         C@(j)[i+@(i)] = pr[@(k)] - C@(j)[i+@(i)];
+         C@(j)[i+@(i)+1] = pi[@(k)] - C@(j)[i+@(i)+1];
+            @endmif
+         @endif
+         @mif nalp = "X
+         rtmp = rp = pr[@(k)];
+         ip = pi[@(k)];
+         rp = rp*ra - ip*ia;
+         ip = rtmp*ia + ip*ra;
+            @mif nbet = "X
+         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+         C@(j)[i+@(i)] = rc*rb - ic*ib + rp;
+         C@(j)[i+@(i)+1] = rc*ib + ic*rb + ip;
+            @endmif
+            @mif nbet = "1
+         C@(j)[i+@(i)] += rp;
+         C@(j)[i+@(i)+1] += ip;
+            @endmif
+            @mif nbet = "0
+         C@(j)[i+@(i)] = rp;
+         C@(j)[i+@(i)+1] = ip;
+            @endmif
+            @mif nbet = "n
+         C@(j)[i+@(i)] = rp - C@(j)[i+@(i)];
+         C@(j)[i+@(i)+1] = ip - C@(j)[i+@(i)+1];
+            @endmif
+         @endmif
+            @iexp i @(i) 2 +
             @endiwhile
          @iexp j @(j) 1 +
          @endiwhile
