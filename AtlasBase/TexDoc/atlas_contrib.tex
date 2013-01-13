@@ -249,7 +249,7 @@ to adapt it, there is more opportunity for mismatch.  At the end of
 each kernel section I give a few kernel notes to give you an idea of
 how ATLAS uses the kernel.
 
-\section{Speeding up the Level 3 BLAS}
+\section{Speeding up the Level 3 BLAS using block-major GEMM}
 
 The performance kernel for the entire Level 3 BLAS is matrix multiply.
 Matrix multiply is written in terms of a lower-level building block that
@@ -444,6 +444,1214 @@ The {\it gemmK} API may be summarized as:
 
 \noindent
 \verb+#endif+
+
+\subsubsection{{\it gemmK} description file}
+In the install process, ATLAS first searches through the {\it gemmK}
+implementations provided by the ATLAS matmul generator.  When the
+best generated code is found, the user contributed codes are timed
+to see if they can beat the generated code.  The {\tt gemmK} multiple
+implementation search
+script opens a description file for each precision 
+({\tt scases.dsc}, {\tt dcases.dsc}, {\tt ccases.dsc}, {\tt zcases.dsc})
+in the {\tt BLDdir/tune/blas/gemm/} directory,
+to see what user-contributed codes are available.  This master index
+file is actually generated based on several user-supplied files from
+{\tt ATLAS/tune/blas/gemm/CASES} (see Section~\ref{sec-index} for the
+names and definitions of these files).  The format for all these files
+is the same, and is described in the following paragraphs.
+
+The first line of each file is a comment line, and is ignored.  The next
+line indicates the number of user-contributed codes to search, and
+each subsequent line supplies information about a given user-supplied
+{\it gemmK}.  The form of these lines is:\\
+\verb+<ID> <flag> <mb> <nb> <kb> <muladd> <lat> <mu> <nu> <ku> <rout> "<author>"+
+
+\verb+<rout>+ and \verb+<author>"+ are strings, and the rest of the
+parameters are signed integers.  
+
+The meaning of these parameters are:
+\begin{itemize}
+\item {\verb+ID+}: Strictly positive integer which uniquely identifies this
+descriptor line.  ID must by unique only within a precision.
+\item {\verb+<flag>+}: flag indicating special conditions.  See table below.
+
+\item{\verb+<mb>+, \verb+<nb>+, \verb+<kb>+}: 
+   Used to indicate restriction on the input parameter $M$ ($N$, $K$ resp.),
+   and its associated blocking {\tt MB} ({\tt NB}, {\tt KB}, resp.).
+   If the value is zero, the internal routine handles any $M$; i.e.
+   the loop-limit is a runtime variable.  If the value is negative, then
+   $M$ = {\tt MB} = -\verb+<mb>+ (i.e., the blocking factor cannot be
+   varied using a macro).  If the value is positive, the blocking factor
+   can be varied by setting the appropriate macro 
+   ({\tt MB} {\tt NB}, {\tt KB}, resp.), but the blocking factor must be
+   a multiple of the value.  Therefore, setting \verb+<mb>+ = 4, indicates
+   that {\tt MB} must be a multiple of 4, while setting it to 1 indicates
+   that {\tt MB} is an arbitrary compile-time constant.
+\item{\verb+<muladd>+}:
+   Set to zero if you are using separate multiply and add instructions, 1
+   otherwise.  If you don't know the answer, put 1.
+\item{\verb+<lat>+}:
+   Set to the latency you use between floating point instructions.
+   If you don't know the answer, put 1.
+\item{\verb+<mu>+}:
+   Unrolling you are using for the $M$ loop.
+\item{\verb+<nu>+}:
+   Unrolling you are using for the $N$ loop.
+\item{\verb+<ku>+}:
+   Unrolling you are using for the $K$ loop.
+\item{\verb+<rout>+}:
+   The filename of the user-contributed routine, relative to the path
+   {\tt ATLAS/tune/blas/gemm/CASES}.  Maximum length 64 chars.
+\item{\verb+<author>+}:
+   The name of the author or authors, enclosed in quotes.  
+   Maximum length 64 chars.
+\end{itemize}
+
+Table~\ref{tab-mmflag} summarizes the presently defined {\tt flag} values.\\
+\begin{table}[h!]
+\begin{center}
+\begin{tabular}{||r|l||}\hline\hline
+FLAG & MEANING \\\hline\hline
+   0 & Normal \\\hline
+   8 & Do not consider this kernel for cleanup\\\hline
+  16 & Consider this kernel for cleanup {\em only}\\\hline 
+  32 & lda and ldb are not restricted to {\tt KB} \\\hline 
+  64 & {\tt mb} provides run-time constraint, not compile-time\\\hline 
+ 128 & {\tt nb} provides run-time constraint, not compile-time\\\hline 
+ 256 & {\tt kb} provides run-time constraint, not compile-time\\\hline 
+ 512 & This kernel needs $4 N_b \le cacheelts$\\\hline
+  \hline
+\end{tabular}
+\end{center}
+\caption{Matmul index routine flag variables\label{tab-mmflag}}
+\end{table}
+
+Here's an example:
+\begin{verbatim}
+<ID> <flag> <mb> <nb> <kb> <muladd> <lat> <mu> <nu> <ku> <rout> "<Contributer>"
+3
+ 1 0 0 0 0 1 1 1 1 1 ATL_mm1x1x1.c "R. Clint Whaley"
+ 2 0 1 1 1 1 1 1 1 1 ATL_mm1x1x1b.c "R. Clint Whaley"
+ 3 0 1 1 8 1 1 1 1 4 ATL_mm2.c "R. Clint Whaley"
+\end{verbatim}
+
+So, we have 3 user-supplied routines, all written by me.  The first loops
+over $M$, $N$, and $K$, but the following two routines loop over the cpp
+macros {\tt MB}, {\tt NB}, {\tt KB}.  The third routine insists that
+{\tt KB} be a multiple of 8.  The first two routines don't unroll
+any of the loops, while the third unrolls the K loop to a depth of 4.
+They all use a combined muladd style of programming, and don't worry
+about latency.
+
+\subsubsection{Index filenames}
+\label{sec-index}
+As previously mentioned, ATLAS builds a system and type dependent index
+file from user-supplied files in {\tt ATLAS/tune/blas/gemm/CASES}.  This
+is done so that the all routines do not need to be run on all machines
+(i.e., no need to waste time trying to run SSE-enabled assembly routines
+when on a Dec ev56).  Here is a list of description files presently queried
+by ATLAS when building the full search index:
+\begin{enumerate}
+ \item {\bf [s,d,c,z]cases.0}:  Any user-contributed kernel which is system
+       independent (i.e. doesn't require a particular compiler, etc)
+       \begin{itemize}
+       \item Convention is to choose IDs in range: $0 < ID < 100$.
+       \end{itemize}
+ \item {\bf [s,d,c,z]cases.flg}: Any user-contributed kernel requiring specific
+       compiler and/or flags
+       \begin{itemize}
+       \item Convention is to choose IDs in range: $300 \leq ID < 400$.
+       \end{itemize}
+ \item {\bf [s,c]cases.3DN}: Kernels requiring 3DNow! to run.
+       \begin{itemize}
+       \item Convention is to choose IDs in range: $100 \leq ID < 200$.
+       \end{itemize}
+ \item {\bf [s,c]cases.SSE}: Kernels requiring SSE1 to run.
+       \begin{itemize}
+       \item Convention is to choose IDs in range: $200 \leq ID < 300$.
+       \end{itemize}
+\end{enumerate}
+
+\subsection{Putting it together with some examples}
+
+Let's say we decide to cover the basics, the classical 3 do loop
+implementation of matmul would be:
+\begin{verbatim}
+void ATL_USERMM
+   (const int M, const int N, const int K, const double alpha,
+    const double *A, const int lda, const double *B, const int ldb,
+    const double beta, double *C, const int ldc)
+{
+   int i, j, k;
+   register double c00;
+
+   for (j=0; j < N; j++)
+   {
+      for (i=0; i < M; i++)
+      {
+         #ifdef BETA0
+            c00 = 0.0;
+         #elif defined(BETA1)
+            c00 = C[i+j*ldc];
+         #else
+            c00 = C[i+j*ldc] * beta;
+         #endif
+         for (k=0; k < K; k++) c00 += A[k+i*lda] * B[k+j*ldb];
+         C[i+j*ldc] = c00;
+      }
+   }
+}
+\end{verbatim}
+
+We then save this paragon of performance to 
+{\tt ATLAS/tune/blas/gemm/CASES/ATL\_mm1x1x1.c}.  
+From {\tt BLDdir/tune/blas/gemm/}, we can test that it
+gets the right answer by:
+\begin{verbatim}
+   make mmutstcase pre=d nb=40 mmrout=CASES/ATL_mm1x1x1.c beta=0
+   make mmutstcase pre=d nb=40 mmrout=CASES/ATL_mm1x1x1.c beta=1
+   make mmutstcase pre=d nb=40 mmrout=CASES/ATL_mm1x1x1.c beta=7
+\end{verbatim}
+
+We pass four arguments to mmutstcase, a precision specifier
+({\tt d} : double precision real; {\tt s} : single precision real; 
+ {\tt z} : double precision complex; {\tt c} : single precision complex),
+the size of the blocking parameter $N_B$, the beta value to test
+(0, 1, and other), and finally, the filename to test.
+
+If these messages pass the test, we can then see what kind of performance
+we get by (this is the actual output on my 266Mhz PII):
+\begin{verbatim}
+make ummcase pre=d nb=40 mmrout=CASES/ATL_mm1x1x1.c beta=1
+dNB=40, ldc=40, mu=4, nu=4, ku=1, lat=4: time=1.820000, mflop=53.731868
+dNB=40, ldc=40, mu=4, nu=4, ku=1, lat=4: time=1.810000, mflop=54.028729
+dNB=40, ldc=40, mu=4, nu=4, ku=1, lat=4: time=1.830000, mflop=53.438251
+\end{verbatim}
+
+This is the same timing repeated three times (this just tries to ensure
+timings are repeatable), and the only output of real interest is the
+MFLOP rate at the end.  The values the timer prints (mu, nu, ku, lat) are
+all defaults because we didn't specify them; specifying them has no
+effect when the timer is used in this way, so don't worry about them.
+
+Now we can trivially improve the implementation by using the macro
+constants in order to let the compiler unroll the loops:
+\begin{verbatim}
+void ATL_USERMM
+   (const int M, const int N, const int K, const double alpha,
+    const double *A, const int lda, const double *B, const int ldb,
+    const double beta, double *C, const int ldc)
+{
+   int i, j, k;
+   register double c00;
+
+   for (j=0; j < NB; j++)
+   {
+      for (i=0; i < MB; i++)
+      {
+         #ifdef BETA0
+            c00 = 0.0;
+         #elif defined(BETA1)
+            c00 = C[i+j*ldc];
+         #else
+            c00 = C[i+j*ldc] * beta;
+         #endif
+         for (k=0; k < KB; k++) c00 += A[k+i*KB] * B[k+j*KB];
+         C[i+j*ldc] = c00;
+      }
+   }
+}
+\end{verbatim}
+
+We save this to {\tt ATL\_mm1x1x1b.c}, and then time:
+\begin{verbatim}
+make ummcase pre=d nb=40 mmrout=CASES/ATL_mm1x1x1b.c beta=1
+dNB=40, ldc=40, mu=4, nu=4, ku=1, lat=4: time=1.670000, mflop=58.558084
+dNB=40, ldc=40, mu=4, nu=4, ku=1, lat=4: time=1.660000, mflop=58.910843
+dNB=40, ldc=40, mu=4, nu=4, ku=1, lat=4: time=1.670000, mflop=58.558084
+\end{verbatim}
+
+OK, maybe a little explicit loop unrolling will make things work better:
+\begin{verbatim}
+void ATL_USERMM
+   (const int M, const int N, const int K, const double alpha, const double *A, const int lda, const double *B, const int ldb, const double beta, double *C, const int ldc)
+{
+   int i, j, k;
+   register double c00, c10, b0;
+   const double *pA0, *pB=B;
+
+#if ( (KB / 8)*8 != KB ) || (MB / 2)*2 != MB
+   create syntax error!$@@&
+#endif
+   for (j=0; j < NB; j++, pB += KB)
+   {
+      pA0 = A;
+      for (i=0; i < MB; i += 2, pA0 += KB2)
+      {
+         #ifdef BETA0
+            c00 = c10 = 0.0;
+         #elif defined(BETA1)
+            c00 = C[i+j*ldc];
+            c10 = C[i+1+j*ldc];
+         #else
+            c00 = beta*C[i+j*ldc];
+            c10 = beta*C[i+1+j*ldc];
+         #endif
+         for (k=0; k < KB; k += 8)
+         {
+            b0 = pB[k];
+            c00 += pA0[k] * b0;
+            c10 += pA0[KB+k] * b0;
+            b0 = pB[k+1];
+            c00 += pA0[k+1] * b0;
+            c10 += pA0[KB+k+1] * b0;
+            b0 = pB[k+2];
+            c00 += pA0[k+2] * b0;
+            c10 += pA0[KB+k+2] * b0;
+            b0   =  pB[k+3];
+            c00 += pA0[k+3] * b0;
+            c10 += pA0[KB+k+3] * b0;
+            b0   =  pB[k+4];
+            c00 += pA0[k+4] * b0;
+            c10 += pA0[KB+k+4] * b0;
+            b0   =  pB[k+5];
+            c00 += pA0[k+5] * b0;
+            c10 += pA0[KB+k+5] * b0;
+            b0   =  pB[k+6];
+            c00 += pA0[k+6] * b0;
+            c10 += pA0[KB+k+6] * b0;
+            b0   =  pB[k+7];
+            c00 += pA0[k+7] * b0;
+            c10 += pA0[KB+k+7] * b0;
+         }
+         C[i+j*ldc] = c00;
+         C[i+1+j*ldc] = c10;
+      }
+   }
+}
+\end{verbatim}
+
+And with this ode to beauty and elegance we get (after checking that it
+still gets the right answer, of course):
+\begin{verbatim}
+make ummcase pre=d nb=40 mmrout=CASES/ATL_mm2x1x8.c beta=1
+dNB=40, ldc=40, mu=4, nu=4, ku=1, lat=4: time=0.720000, mflop=135.822222
+dNB=40, ldc=40, mu=4, nu=4, ku=1, lat=4: time=0.710000, mflop=137.735211
+dNB=40, ldc=40, mu=4, nu=4, ku=1, lat=4: time=0.710000, mflop=137.735211
+\end{verbatim}
+
+Its interesting to see the effects of differing $\beta$ on the code:
+\begin{verbatim}
+make ummcase pre=d nb=40 mmrout=CASES/ATL_mm2x1x8a.c beta=0
+dNB=40, ldc=40, mu=4, nu=4, ku=1, lat=4: time=0.700000, mflop=139.702857
+dNB=40, ldc=40, mu=4, nu=4, ku=1, lat=4: time=0.700000, mflop=139.702857
+dNB=40, ldc=40, mu=4, nu=4, ku=1, lat=4: time=0.700000, mflop=139.702857
+
+make ummcase pre=d nb=40 mmrout=CASES/ATL_mm2x1x8a.c beta=7
+dNB=40, ldc=40, mu=4, nu=4, ku=1, lat=4: time=0.720000, mflop=135.822222
+dNB=40, ldc=40, mu=4, nu=4, ku=1, lat=4: time=0.730000, mflop=133.961644
+dNB=40, ldc=40, mu=4, nu=4, ku=1, lat=4: time=0.720000, mflop=135.822222
+\end{verbatim}
+
+As well as differing blocking factors:
+\begin{verbatim}
+make ummcase pre=d mmrout=CASES/ATL_mm2x1x8a.c beta=1 nb=16
+dNB=16, ldc=16, mu=4, nu=4, ku=1, lat=4: time=0.850000, mflop=115.112056
+dNB=16, ldc=16, mu=4, nu=4, ku=1, lat=4: time=0.860000, mflop=113.773544
+dNB=16, ldc=16, mu=4, nu=4, ku=1, lat=4: time=0.850000, mflop=115.112056
+
+make ummcase pre=d mmrout=CASES/ATL_mm2x1x8a.c beta=1 nb=32
+dNB=32, ldc=32, mu=4, nu=4, ku=1, lat=4: time=0.730000, mflop=134.034586
+dNB=32, ldc=32, mu=4, nu=4, ku=1, lat=4: time=0.740000, mflop=132.223308
+dNB=32, ldc=32, mu=4, nu=4, ku=1, lat=4: time=0.730000, mflop=134.034586
+
+make ummcase pre=d mmrout=CASES/ATL_mm2x1x8a.c beta=1 nb=48
+dNB=48, ldc=48, mu=4, nu=4, ku=1, lat=4: time=0.820000, mflop=119.223571
+dNB=48, ldc=48, mu=4, nu=4, ku=1, lat=4: time=0.820000, mflop=119.223571
+dNB=48, ldc=48, mu=4, nu=4, ku=1, lat=4: time=0.820000, mflop=119.223571
+\end{verbatim}
+
+If we wanted to have ATLAS try these crappy implementations during the
+ATLAS search, we would have the following
+{\tt ATLAS/tune/blas/gemm/CASES/dcases.dsc}:
+\begin{verbatim}
+<ID> <flag> <mb> <nb> <kb> <muladd> <lat> <mu> <nu> <ku> <rout> "<Contributer>"
+3
+1 0 0 0 0 1 1 1 1 1 ATL_mm1x1x1.c    "R. Clint Whaley"
+2 0 1 1 1 1 1 1 1 1 ATL_mm1x1x1b.c   "R. Clint Whaley"
+3 0 2 1 8 1 1 2 1 8 ATL_mm2x1x8a.c   "R. Clint Whaley"
+\end{verbatim}
+
+\subsection{More timing info}
+So maybe you wonder how our big hand-tuned guy stacks up against the ATLAS
+code generator?  When ATLAS completed its search on my PII, it stored its
+best case in {\tt ATLAS/tune/blas/gemm/LINUX\_PII/res/dMMRES}:
+\begin{verbatim}
+speedy. cat res/dMMRES 
+MULADD  LAT  NB  MU  NU  KU  FFTCH  IFTCH  NFTCH    MFLOP
+     0    5  40   2   1  40      0      2      1   197.94
+16
+\end{verbatim}
+
+We generate and time this case by:
+\begin{verbatim}
+make mmcase muladd=0 lat=5 nb=40 mu=2 nu=1 ku=40 beta=1
+dNB=40, ldc=40, mu=2, nu=1, ku=40, lat=5: time=0.490000, mflop=199.575510
+dNB=40, ldc=40, mu=2, nu=1, ku=40, lat=5: time=0.500000, mflop=195.584000
+dNB=40, ldc=40, mu=2, nu=1, ku=40, lat=5: time=0.490000, mflop=199.575510
+\end{verbatim}
+
+We test that the generator isn't out of its mind by:
+\begin{verbatim}
+make mmtstcase muladd=0 lat=5 nb=40 mu=2 nu=1 ku=40 beta=1
+\end{verbatim}
+
+Note that when timing/testing the generator, varying the parameters such
+as mu, nu, ku, beta, etc., generates different codes, and thus different
+performance numbers:
+\begin{verbatim}
+make mmcase muladd=0 lat=4 nb=40 mu=2 nu=1 ku=4 beta=1
+dNB=40, ldc=40, mu=2, nu=1, ku=4, lat=4: time=0.760000, mflop=128.673684
+dNB=40, ldc=40, mu=2, nu=1, ku=4, lat=4: time=0.770000, mflop=127.002597
+dNB=40, ldc=40, mu=2, nu=1, ku=4, lat=4: time=0.770000, mflop=127.002597
+
+make mmcase muladd=0 lat=4 nb=40 mu=2 nu=1 ku=8 beta=1
+dNB=40, ldc=40, mu=2, nu=1, ku=8, lat=4: time=0.640000, mflop=152.800000
+dNB=40, ldc=40, mu=2, nu=1, ku=8, lat=4: time=0.630000, mflop=155.225397
+dNB=40, ldc=40, mu=2, nu=1, ku=8, lat=4: time=0.630000, mflop=155.225397
+
+make mmcase muladd=0 lat=4 nb=40 mu=2 nu=2 ku=40 beta=1
+dNB=40, ldc=40, mu=2, nu=2, ku=40, lat=4: time=2.550000, mflop=38.349804
+dNB=40, ldc=40, mu=2, nu=2, ku=40, lat=4: time=2.560000, mflop=38.200000
+dNB=40, ldc=40, mu=2, nu=2, ku=40, lat=4: time=2.550000, mflop=38.349804
+\end{verbatim}
+
+\subsection{Complex {\it gemmK}}
+Vainly hoping we were done, eh?  Nope, complex codes are special.  
+ATLAS actually uses the real matrix multiply generator in order to
+do complex multiplication.  It needs some tricks to do this, obviously.
+The first thing to note is that if $X_r$ denotes the real elements of $X$,
+and $X_i$ indicates the imaginary components, then complex matrix-matrix
+multiply of the form $C \leftarrow A B + \beta C$ may be accomplished by 
+the following four real matrix multiplies:
+{\samepage
+\begin{enumerate}
+\item $C_r \leftarrow A_i B_i - \beta C_r$
+\item $C_i \leftarrow A_i B_r + \beta C_i$
+\item $C_r \leftarrow A_r B_r - C_r$
+\item $C_i \leftarrow A_r B_i + C_i$
+\end{enumerate}
+}
+
+This works fine assuming $\beta$ is real, otherwise $\beta$ must be applied
+explicitly as a complex scalar, and then set $\beta=1$ in the above outline.
+
+Therefore, in order to use this trick, upon copying $A$ and $B$ to block-major
+storage, ATLAS also splits the arrays into real and imaginary components.
+The only matrix not expressed as two real matrices is then $C$, and to
+fix this problem, ATLAS demands that the complex {\it gemmK} stride $C$ by
+2.  An example will solidify the confusion.
+
+A simple 3-loop implementation of an ATLAS complex {\it gemmK} is:
+\begin{verbatim}
+void ATL_USERMM
+   (const int M, const int N, const int K, const double alpha,
+    const double *A, const int lda, const double *B, const int ldb,
+    const double beta, double *C, const int ldc)
+{
+   int i, j, k;
+   register double c00;
+
+   for (j=0; j < N; j++)
+   {
+      for (i=0; i < M; i++)
+      {
+         #ifdef BETA0
+            c00 = 0.0;
+         #else
+            c00 = C[2*(i+j*ldc)];
+            #ifdef BETAX
+               c00 *= beta;
+            #endif
+         #endif
+         for (k=0; k < K; k++) c00 += A[k+i*lda] * B[k+j*ldb];
+         C[2*(i+j*ldc)] = c00;
+      }
+   }
+}
+\end{verbatim}
+
+First we test that it produces the right answer:
+\begin{verbatim}
+make cmmutstcase pre=z nb=40 mmrout=CASES/ATL_cmm1x1x1.c beta=0
+make cmmutstcase pre=z nb=40 mmrout=CASES/ATL_cmm1x1x1.c beta=1
+make cmmutstcase pre=z nb=40 mmrout=CASES/ATL_cmm1x1x1.c beta=8
+\end{verbatim}
+
+Then we scope the awesome performance:
+\begin{verbatim}
+make cmmucase pre=z nb=40 mmrout=CASES/ATL_cmm1x1x1.c beta=1
+zNB=40, ldc=40, mu=4, nu=4, ku=1, lat=4: time=1.830000, mflop=53.438251
+zNB=40, ldc=40, mu=4, nu=4, ku=1, lat=4: time=1.830000, mflop=53.438251
+zNB=40, ldc=40, mu=4, nu=4, ku=1, lat=4: time=1.830000, mflop=53.438251
+\end{verbatim}
+
+Now, since we are clearly gluttons for punishment, we compare our
+masterwork to ATLAS's generated kernel:
+\begin{verbatim}
+speedy. cat res/zMMRES 
+MULADD  LAT  NB  MU  NU  KU  FFTCH  IFTCH  NFTCH    MFLOP
+     0    5  36   2   1  36      0      2      1   186.42
+     10
+
+speedy. make mmcase muladd=0 lat=5 nb=36 mu=2 nu=1 ku=36 beta=1
+dNB=36, ldc=36, mu=2, nu=1, ku=36, lat=5: time=0.500000, mflop=195.581952
+dNB=36, ldc=36, mu=2, nu=1, ku=36, lat=5: time=0.490000, mflop=199.573420
+dNB=36, ldc=36, mu=2, nu=1, ku=36, lat=5: time=0.490000, mflop=199.573420
+\end{verbatim}
+
+\subsection{What to do if you are writing in assembler}
+If your kernel is written in gas assembler, you can tell the tester
+and timer that by setting the appropriate compiler and flag macro on
+the command line.  For single precision types, these macros for {\it gemmK}
+are called {\tt SMC} and {\tt SMCFLAGS}, respectively, and they are
+{\tt DMC} and {\tt DMCFLAGS} for double precision routines.
+For instance, to test a {\tt DGEMM} code written in assembler, requiring
+a 16 blocking factor, you'd issue:
+\begin{verbatim}
+   make ummcase pre=d mmrout=CASES/myassembler.c nb=16 \
+        DMC=gcc DMCFLAGS="-x assembler-with-cpp"
+\end{verbatim}
+
+\subsection{Providing ATLAS with kernel cleanup code}
+As mentioned in Section~\ref{sec-buildMM}, when any problem dimension
+(eg., {\tt M}, {\tt N}, or {\tt K}) is not a multiple of $N_B$, ATLAS
+must call cleanup code to handle the remainder.  When the user-contributed
+kernel is only modestly faster than ATLAS's generated kernel, letting
+the generated code handle cleanup will probably be an adequate solution.
+However, when the user-contributed kernel is much faster than the generated
+code, using the generated cleanup may represent a significant performance
+drop for many problem sizes (see Section~\ref{sec-cleancost} for an
+analysis of the cost of cleanup), and thus it becomes necessary for the user
+to supply ATLAS with cleanup code as well.  In order to understand how
+this is done, it is necessary to discuss how ATLAS does cleanup.
+
+\subsubsection{ATLAS and cleanup}
+As we have seen, ATLAS's main performance kernel is an L1 cache contained
+matmul with fixed dimension $N_B$, and when a given problem dimension of
+the general matmul is not a multiple of $N_B$, cleanup code must be
+called.  It should be apparent that generating codes with all dimensions
+fixed at compile time, as we do with the full kernel, is not a good idea
+for cleanup, since it would result in roughly ${N_B}^3$ cleanup routines.
+Not only would this make the average executable huge, but it would also
+probably result in performance degredation due to constant instruction load.
+
+ATLAS therefore normally generates a variable number of cleanup cases,
+with the number of generated codes minimally being $7$, and the maximum
+number being $6 + N_B$.  The number of generated codes can vary because
+the $K$ cleanup routines are special, sometimes requiring $N_B$ different
+codes to handle efficiently, as we will see below.
+
+ATLAS splits the generated cleanup into these categories
+\begin{enumerate}
+\item {\bf M-cleanup} $M < N_B$ \&\& $N = K = N_B$:
+   3 routines, corresponding to {\tt BETA} = 0, 1 and arbitrary
+\item {\bf N-cleanup} $N < N_B$ \&\& $M = K = N_B$:
+   3 routines, corresponding to {\tt BETA} = 0, 1 and arbitrary
+\item {\bf K-cleanup} $K <= N_B$ \&\& $M \leq N_B$ \&\& $N \leq N_B$:
+   Only one {\tt BETA} case (arbitrary), but may compile special case for
+   each possible $K$ value, resulting in at least 1, and at most $N_B$
+   K-cleanup routines
+\end{enumerate}
+
+So we see that K-cleanup is special in several ways.  First, it is the
+most general cleanup routine, since it can handle multiple dimensions not
+being less than $N_B$, whereas the M- and N-cleanup routines can only have
+their respective dimensions less then $N_B$.  The second thing to note is
+that we compile only the most general {\tt BETA} case for K-cleanup; this
+is due to the fact that we may need $N_B$ different routines to handle
+K-cleanup efficiently, and multiplying this number of routines by three seems
+counterproductive.
+
+The final difference in the K-cleanup is the fact that it potentially requires
+$N_B$ different routines to support.  This is due to several factors.
+Firstly, in ATLAS, the innermost loop in gemm is the K-loop, making it
+very important for performance.  On systems without good loop handling,
+such as the x86, heavy K unrollings are critical.
+Secondly, the leading dimensions of the $A$ and $B$ matrices are fixed
+to {\tt KB} due to the data copy, which allows for more efficient indexing
+of these matrices.  If a routine takes run-time $K$ (rather than compile-time,
+as when the dimension is fixed to {\tt KB}), it must also take run-time 
+{\tt lda} and {\tt ldb}, and this extra indexing is too costly on
+many architectures.
+
+\subsubsection{User supplied cleanup}
+Users can supply cleanup code for the following three cases only, all of
+which come in the three {\tt BETA} variants:
+\begin{enumerate}
+\item {\bf M-cleanup} $M < N_B$ \&\& $N = K = N_B$
+\item {\bf N-cleanup} $N < N_B$ \&\& $M = K = N_B$
+\item {\bf K-cleanup} $K < N_B$ \&\& $M = N = N_B$
+\end{enumerate}
+
+The generated code handles all cleanup where more
+than one dimension is less than the blocking factor.  This simplification
+allows ATLAS to avoid having to test ${N_B}^3$ cases when selecting user
+cleanup.  Once the matrices in question are larger than $N_B$, cleanup
+with more than one dimension less than $N_B$ rapidly stops being a 
+performance factor.  Small matrices where this cleanup is a factor are
+almost certainly going to be handled by ATLAS's small-case code anyway,
+so it seems unlikely that this simplification will hurt performance in
+practice.  Section~\ref{sec-cleancost} shows this in a more formal way.
+
+Users need to be very careful when supplying cleanup, because if the user
+indicates that a dimension must be a compile-time variable, rather than
+a runtime variable, ATLAS will generate up to $N_B$ routines to handle
+user cleanup, and since user routines are compiled with all {\tt BETA}
+variants, it is possible to generate $9 N_B$ cleanup cases, in addition
+to ATLAS's generated cases.  It is therefore recommended that the user
+supply cleanup that uses run-time arguments whenever possible, and indicate
+kernels taking compile-time dimensions as not to be used for cleanup.
+
+\subsubsection{Indicating cleanup in the index file}
+Any routine that does not throw the flag value of 8 will be evaluated by
+the install as a cleanup possibility.  Flag values are very important
+for indicating opportunities for cleanup.  Here is an example from the
+release:
+\begin{verbatim}
+  1 480 4 4 1 1 1 4 4 2 ATL_mm4x4x2US.c "V. Nguyen & P. Strazdins"
+\end{verbatim}
+
+OK, as always, we can read this to see that {\tt MB} and {\tt NB}
+must be multiples of 4, and that {\tt KB} can be any value.  With
+no flag modifiers, if we wanted to use the routine for K cleanup,
+we would have to compile it into $N_B$ different routines, since
+loop dimensions are compile-time parameters by default.  However,
+this routine is modified by a flag value of 480.  What does this mean?
+Consulting table~\ref{tab-mmflag}, we see that $32 + 64 + 128 + 256 = 480$,
+which means lda and ldb are not restricted to {\tt KB} (i.e., they are
+run-time parameters to the routine), the M-loop is controlled by a run-time
+variable, the N-loop is controlled by a run-time variable, and the K-loop
+is controlled by a run-time variable.  We therefore know that we can
+use this routine for all cleanups (M-, N-, and K-cleanup), and we need only
+one routine to do so (i.e., we do not have to compile $N_B$ routines to handle
+all cases).  However, it can only be used for M- and N- cleanup cases where
+the respective dimension is a multiple of 4.  Therefore, assuming this
+kernel is superior to the generated code, it will be used for all K cleanup
+routines.  However, for M and N cleanup, there will be something corresponding
+to the following pseudocode:
+\begin{verbatim}
+   if (M % 4 == 0) call ATL_mm4x4x2US
+   else call generated M cleanup
+\end{verbatim}
+
+
+It is clear that without overloading the flag value to an even more
+ludicrous degree, that cleanup will eventually need to have it's own
+index file.  For instance, it would be nice to be able to insist that
+a particular K-cleanup code be used only when $K > 3$, for instance,
+in addition to insisting it be a multiple of a particular value.  The fact
+that cleanup does not already have such a seperate file simply represents
+a design failure on my part; it was not until I had already produced the
+system working as it does now that I saw its shortcomings, and then it
+was too late to change for the release.  Subsequent developer releases
+will probably address this shortcoming.
+
+\subsubsection{Testing and timing cleanup}
+Cleanup is tested in the same way as the normal kernel, but you need to
+supply additional parameters.  {\tt M}, {\tt N}, and {\tt K} are the problem
+dimensions, and {\tt MB}, {\tt NB}, {\tt KB} are the blocking factors.
+If the blocking factors are set to zero, that means they are run-time
+parameters to the routine.  {\tt lda}, {\tt ldb}, {\tt ldc} are the leading
+dimensions of the operand arrays, and they default to {\tt KB}, {\tt KB},
+and zero, respectively.
+
+Here is an example of testing an M-cleanup routine, insisting that
+M is a run-time argument:
+\begin{verbatim}
+make mmutstcase mmrout=CASES/ATL_mm1x1x1.c pre=d M=17 N=40 K=40 \
+     mb=0 nb=40 kb=40
+\end{verbatim}
+
+Here is timing the same routine, but insisting that the M-loop is fixed at
+compile time:
+\begin{verbatim}
+make ummcase mmrout=CASES/ATL_mm1x1x1.c pre=d M=17 N=40 K=40 \
+     mb=17 nb=40 kb=40
+\end{verbatim}
+
+Here's testing a K-cleanup routine, taking run-time K and leading dimensions:
+\begin{verbatim}
+make mmutstcase mmrout=CASES/ATL_mm1x1x1.c pre=d M=40 N=40 K=27 \
+     mb=40 nb=40 kb=0 lda=0 ldb=0
+\end{verbatim}
+
+The same test taking compile-time K and leading dimensions:
+\begin{verbatim}
+make mmutstcase mmrout=CASES/ATL_mm1x1x1.c pre=d M=40 N=40 K=27 \
+     mb=40 nb=40 kb=27 lda=27 ldb=27
+\end{verbatim}
+
+\subsubsection{Importance of cleanup}
+\label{sec-cleancost}
+In analyzing the importance of good cleanup for performance, it is necessary
+to recognize the various types that can occur.  The cleanup that user's can
+supply to ATLAS is {\em one dimensional cleanup}, i.e., only one of the three
+possible dimensions is less than $N_B$.  There is also 2 and 3 dimensional
+cleanup.  To give an idea of the relative importance of various catagories
+of computation, it is roughly true that the matmul kernel is a cubic cost,
+the one dimensional cleanup is a square cost, the two dimensional cleanup
+is a linear cost, and the three dimensional cleanup is $O(1)$.
+
+This is shown more formally below.  Define $M_r = M$ mod $N_B$, let 
+$m, n, k$ be the dimensional arguments to the {\it gemmK} and/or cleanup,
+and remember that matrix multiplication takes $2 M N K$ flops, and we see
+that the flop count for each catagory is:
+\begin{itemize}
+\item {$\bf m=n=k=N_B$}: 
+   $\Wfloor{\frac{M}{N_B}} \Wfloor{\frac{N}{N_B}} \Wfloor{\frac{K}{N_B}} 
+   2 {N_B}^3 \Longrightarrow \Wfloor{\frac{N}{N_B}}^3 ~2 {N_B}^3$
+
+\item $\bf m < N_B, n = k = N_B$:
+   $\Wfloor{\frac{N}{N_B}} \Wfloor{\frac{K}{N_B}} 2 M_r {N_B}^2
+    \Longrightarrow \Wfloor{\frac{N}{N_B}}^2 ~2 N_r {N_B}^2$
+\item $\bf n < N_B, m = k = N_B$:
+   $\Wfloor{\frac{M}{N_B}} \Wfloor{\frac{K}{N_B}} 2 N_r {N_B}^2
+    \Longrightarrow \Wfloor{\frac{N}{N_B}}^2 ~2 N_r {N_B}^2$
+\item $\bf k < N_B, m = n = N_B$:
+   $\Wfloor{\frac{M}{N_B}} \Wfloor{\frac{N}{N_B}} 2 K_r {N_B}^2
+    \Longrightarrow \Wfloor{\frac{N}{N_B}}^2 ~2 N_r {N_B}^2$
+
+\item $\bf m < N_B, n < N_B, k = N_B$:
+   $\Wfloor{\frac{K}{N_B}} 2 M_r N_r {N_B} 
+    \Longrightarrow \Wfloor{\frac{N}{N_B}} 2 {N_r}^2 N_B$
+\item $\bf m < N_B, k < N_B, n = N_B$:
+   $\Wfloor{\frac{N}{N_B}} 2 M_r K_r {N_B}
+    \Longrightarrow \Wfloor{\frac{N}{N_B}} 2 {N_r}^2 N_B$
+\item $\bf n < N_B, k < N_B, m = N_B$:
+   $\Wfloor{\frac{M}{N_B}} 2 N_r K_r {N_B}
+    \Longrightarrow \Wfloor{\frac{N}{N_B}} 2 {N_r}^2 N_B$
+\item $\bf m < N_B, n < N_B, k < N_B$:
+   $2 M_r N_r K_r \Longrightarrow 2 {N_r}^3$
+\end{itemize}
+
+Note that the simplified equations to the right of $\Longrightarrow$ 
+assume the square case, i.e. $M = K = N$.  The above analysis can now
+be grouped into the catagories of interest as in:
+\begin{itemize}
+  \item {\bf kernel} : $\Wfloor{\frac{N}{N_B}}^3 ~2 {N_B}^3$
+  \item {\bf 1D cleanup}: $3 \Wfloor{\frac{N}{N_B}}^2 ~2 N_r {N_B}^2
+     ~~~~<~~~~ 3  \Wfloor{\frac{N}{N_B}}^2 ~2 {N_B}^3$
+  \item {\bf 2D cleanup}: $\Wfloor{\frac{N}{N_B}} 2 {N_r}^2 N_B
+     ~~~~~~~~<~~~~~ 3 \Wfloor{\frac{N}{N_B}} ~2 {N_B}^3$
+  \item {\bf 3D cleanup}: $2 {N_r}^3 ~~~~~~~~~~~~~~~~~~~<~~~~~ 2 {N_B}^3$
+\end{itemize}
+The simplified equations to the right of the $<$ above provide a safe
+upper bound on cleanup cost by setting $N_r = N_B$
+(in reality, $0 < N_r < N_B$, of course).
+
+With this analysis, we can easily see why it is not important for the
+user to be able to contribute 2D and 3D cleanup cases: remember that
+all of these kernels are for ATLAS's {\em large-case} gemm.  ATLAS has a 
+seperate small-case gemm, which is invoked when the problem is so small
+that the $2 N^2$ copy cost is significant compared to the $2 N^3$ computational
+costs.  So, in the cases where the $O(N)$ 2D cleanup or $O(1)$ 3D cleanup
+costs are prohibitive, this large-case gemm will probably not be used anyway.
+
+\subsection{{\it gemmK} usage notes}
+The assumptions behind this kernel are that the input operands are
+loaded to L1 only one time (i.e., the blocking guarantees that all
+of the matrix accessed in the inner loop plus the active panel of
+the matrix in the outer loop fits in L1).  For very large caches, all
+three operands may fit into cache, but this is typically not the
+case.  Because this {\it gemmK} is called by routines that place $K$
+as the innermost loop, the output operand $C$ will typically come
+from the L2 cache (except, obviously, on the first of the 
+$\frac{K}{N_B}$ such calls).  ATLAS uses the JIK loop variant of
+on-chip multiply, and thus all of $A$ fits in cache, with nu columns
+of $B$.  To take an example, say you are using mu = nu = 4, with
+$N_B = 40$, then the idea is that the $40 \times 40$ piece of $A$,
+along with the $40 \times 4$ piece of $B$ (the active panel of $B$),
+and the $4 \times 4$ section of $C$ all fit into cache at once, with
+enough room for the load of the next step, and any junk the algorithm
+might have in L1.  That panel of $B$ is applied to all of $A$, and then
+a new panel is loaded.  Since the panel has been applied to all $A$, it
+will never be reloaded, and thus we see that $B$ is loaded to L1 only
+one time.  Since all of $A$ fits in L1, and we keep it there across all
+panels of $B$, it is also loaded to L1 only one time. 
+
+If written appropriately, loading all of $B$ with a few rows
+of $A$ should theoretically be just as efficient (i.e., the IJK variant
+of matmul).  However, the variants where $K$ is not the innermost loop
+are unlikely to work well in ATLAS, if for no other reason than the 
+transpose settings we have chosen militate against it.
+
+Note that the $\beta = 0$ case must not read $C$, since the memory may
+legally be unitialized.
+
+\subsection{Getting ATLAS to use your kernel}
+OK, so let's say you've got a kernel that is faster than what ATLAS is
+presently using, how do you get ATLAS to use it?  First, of course, you
+put the source in the CASES directory, and update the appropriate
+{\tt <pre>cases} index file.  Then, you take different steps depending on
+how you wish to do the install, as discussed in the following sections.
+In all of these discussions, {\tt <pre>} is replaced by your type/precision
+modifier (one of {\tt s}, {\tt d}, {\tt c}, {\tt z}).
+
+\subsubsection{Putting it in by hand}
+In an already-installed ATLAS, you can make ATLAS reinstall just the
+kernel.  From your {\tt BLDdir/tune/blas/gemm/} directory, issue
+these commands:
+\begin{verbatim}
+   rm res/<pre>u*
+   rm res/<pre>MMRES
+   ./xmmsearch -p <pre>
+   make <pre>install
+\end{verbatim}
+
+\subsubsection{With a fresh install}
+\label{sec-archdefModify}
+First, run config as usual.  Then, tail the created {\tt Make.inc}
+file, and see if the macro {\tt INSTFLAGS} includes {\tt -a 1}.  If so,
+ATLAS has some architectural defaults for your architecture (though
+perhaps not for your compiler, if you have forced the use of a non-default
+compiler), which won't include
+your shiny new kernel.  So, you will need to remove the files indicating
+the default {\tt gemmK} kernel for your precision.  To do this, scope
+your {\tt ARCH} setting in your {\tt Make.inc}.  For the purposes of
+this discussion, let us say it set to {\tt Core2Duo64SSE3} (i.e., in
+the below example, substitute the definition of {\tt ARCH} for
+{\tt Core2Duo64SSE3}).  Go to {\tt ATLAS/CONFIG/ARCHS}, and issue
+the following commands:
+%{\tt ARCHDEF} is set.  If so, cd to the
+%directory pointed at by {\tt ARCHDEF}, and then issue
+\begin{verbatim}
+   gunzip -c Core2Duo64SSE3.tgz | tar xvf -
+   rm Core2Duo64SSE3/gemm/gcc/<pre>u* 
+   rm Core2Duo64SSE3/gemm/gcc/<pre>MMRES
+   rm Core2Duo64SSE3.tgz
+   tar cvf Core2Duo64SSE3.tar Core2Duo64SSE3
+   gzip Core2Duo64SSE3.tar
+   mv Core2Duo64SSE3.tar.gz Core2Duo64SSE3.tgz
+\end{verbatim}
+
+Now, continue install as normal, and your kernel should be used if it beats
+what ATLAS is presently using.  Note that this assumes you are using {\tt gcc}
+as the {\tt gemmK} compiler, which is the default on most systems.  If
+you are using a different compiler, you would substitute its name instead
+of {\tt gcc} in the above lines.  If there is no subdirectory with the
+name of your compiler in the tarfile, ATLAS has no architectural defaults
+for that compiler, and thus you need to make no changes to the tarfile.
+
+\subsubsection{With an old install, but using full install command}
+When rebuilding an old install, the main trap is to avoid having
+architectural defaults make it so you don't time your new kernel.
+Follow the instructions given in Section~\ref{sec-archdefModify},
+but additionally make sure you delete any prexisting directory
+that matches your {\tt ARCH} definiton.  Therefore, in the above
+example, in the {\tt ATLAS/CONFIG/ARCHS} directory, you would
+additionally issue:
+\begin{verbatim}
+   rm -rf Core2Duo64SSE3
+\end{verbatim}
+If such a subdirectory existed.
+
+From your {\tt BLDdir} directory, then issue:
+\begin{verbatim}
+   rm bin/INSTALL_LOG/*
+   rm tune/blas/gemm/res/<pre>u*
+   rm tune/blas/gemm/res/<pre>MMRES
+   make build
+\end{verbatim}
+
+\subsection{Contributing a complete GEMM implementation}
+\textbf{
+This feature has been temporarily disabled in 3.8, though it may be
+re-enabled in the 3.9 series if there is user demand.  This section
+is therefore kept around solely historical purposes, and will need
+to be updated if the feature is added back in.
+}
+
+Contributing an L1 kernel is the prefered method of user contribution
+for Level 3 BLAS speedup, but it is not the only one supported by ATLAS.
+ATLAS also allows a user to contribute a complete system-specific
+GEMM implementation.  This method of contribution is far less desirable
+than kernel contribution, and thus the standards of acceptance are
+correspondingly higher.
+
+When only a kernel is contributed, it is only used when timings indicate
+it is superior to the best ATLAS-supplied routine for a given architecture.
+Because kernel routines are called in known ways by the ATLAS infrastructure,
+the timer can be made to accurately reflect typical usage.  A full GEMM,
+which is to all intents called directly by the user, has no ``typical''
+usage, and the timer is thus not able to ensure that the user's full
+GEMM is superior to that supplied by ATLAS in a system-independent way,
+even if the additional installation time required to choose amoung full
+GEMM implementations were allowed.  Thus, full GEMM implementations will
+be used only when ATLAS's configuration detects a known architecture where
+the ATLAS team has certified the full GEMM to be significantly better than
+ATLAS's native GEMM, across the entire spectrum of problem shapes and sizes
+(with the exception of those shapes and sizes handled by ATLAS's non-copy
+code, as explained below).
+
+As explained in Section~\ref{sec-buildMM}, ATLAS has both a small-case
+matmul, which does not copy the user's input operands, and a large-case
+code that does.  The user contributed GEMM replaces ATLAS's large-case
+GEMM, and then timings are used as normal to determine the crossover points at
+which the contributed GEMM outperforms ATLAS's small-case code.
+
+\subsubsection{Supplying ATLAS with what it needs}
+ATLAS expects that the contributed GEMM will have its own architecture-
+specific subdirectory, just as with all other ATLAS source directories.
+That directory is indicated to ATLAS by the {\tt UMMdir} macro set in
+{\tt Make.inc}.  For instance, on the alpha platform, Mr. Goto's GEMM
+is used by ATLAS, and {UMMdir} is therefore set to:
+{\tt \$(TOPdir)/src/blas/gemm/GOTO/\$(ARCH)}.
+
+In this directory, there must be a master makefile, called {\tt Makefile},
+which minimally contains the following targets:
+\begin{itemize}
+\item {\tt susermm} : builds the single precision real gemm with
+all its dependencies
+\item {\tt dusermm} : builds the double precision real gemm with
+all its dependencies
+\item {\tt cusermm} : builds the single precision complex gemm with
+all its dependencies
+\item {\tt zusermm} : builds the double precision complex gemm with
+all its dependencies
+\item {\tt sclean} : deletes all non-library files created by {\tt susermm}
+\item {\tt dclean} : deletes all non-library files created by {\tt dusermm}
+\item {\tt cclean} : deletes all non-library files created by {\tt cusermm}
+\item {\tt zclean} : deletes all non-library files created by {\tt zusermm}
+\end{itemize}
+
+For each precision, ATLAS calls the user's GEMM using this API:
+\begin{verbatim}
+int ATL_U<pre>usergemm(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+                       const int M, const int N, const int K,
+                       const SCALAR alpha, const TYPE *A, const int lda,
+                       const TYPE *B, const int ldb, const SCALAR beta,
+                       TYPE *C, const int ldc)
+\end{verbatim}
+where,\\
+\begin{tabular}{||l|l|l|l|l||}\hline\hline
+\verb+<pre>+ : & {\tt s} & {\tt d} & {\tt c} & {\tt z} \\\hline\hline
+SCALAR & {\tt float} & {\tt double} & {\tt float*} & {\tt float*} \\\hline
+TYPE   & {\tt float} & {\tt double} & {\tt float} & {\tt float} \\\hline\hline
+\end{tabular}\\\\
+
+This routine should return {\tt 0} upon successful invocation, and 
+{\tt -1} if unable to malloc enough memory.  Other errors may be
+signaled by returning a value of {\tt 2}.  On error in this routine,
+ATLAS will call the no-copy code to get the answer, so a return value
+of {\tt 1} indicates that ATLAS should do this.  If a fatal error
+occurs, or if an error occurs after operands have been modified (i.e.,
+calling the no-copy code will no longer produce the correct answer),
+then execution should be halted.
+
+ATLAS's interface routines have already done all required error checking,
+so the user need not check the input arguments in this routine, or any
+of the lower-level user contributed routines.
+
+\subsubsection{What to do if you don't supply all precisions}
+
+Remember that what ATLAS is doing is substituting your GEMM for its own
+large-case GEMM.  However, ATLAS's large-case GEMM is still compiled in
+the library, it is just not being used.  The following code will call
+ATLAS's large case code for all precisions:
+\begin{verbatim}
+#include "atlas_misc.h"
+#include "atlas_lvl3.h"
+
+int Mjoin(Mjoin(ATL_U,PRE),usergemm)
+   (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+    const int M, const int N, const int K, const SCALAR alpha,
+    const TYPE *A, const int lda, const TYPE *B, const int ldb,
+    const SCALAR beta, TYPE *C, const int ldc)
+{
+   int ierr;
+
+   if (N >= M)
+   {
+      if ( ierr = Mjoin(PATL,mmJIK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                    beta, C, ldc) )
+         ierr = Mjoin(PATL,mmIJK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                  beta, C, ldc);
+   }
+   else
+   {
+      if ( ierr = Mjoin(PATL,mmIJK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                    beta, C, ldc) )
+         ierr = Mjoin(PATL,mmJIK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                  beta, C, ldc);
+   }
+   return (ierr);
+}
+\end{verbatim}
+
+So, you can use the above code to have ATLAS call it's normal routines
+for those precisions you do not supply, and call your own otherwise.
+In order to help understand this process, ATLAS includes a 
+``user-supplied'' GEMM that simply calls ATLAS's own GEMM for all
+precisions, in {\tt ATLAS/src/blas/gemm/UMMEXAMPLE}.  If, for
+instance, you have a single precision real GEMM but nothing else,
+you can take this directory as a starting point, adding your
+own commands for single precision real in the Makefile, etc,
+and leaving everything else alone.
+
+In order to do this, you should do the following:
+%(where {\tt <arch>} is
+%replaced by the {\tt ARCH} string of your {\tt Make.<arch>}; eg, 
+%{\tt Linux\_PII}, {\tt AIX\_POWER3}, {\tt OSF\_21264}, etc.):
+\begin{enumerate}
+\item In {\tt ATLAS/src/blas/gemm/UMMEXAMPLE}:
+   \begin{itemize}
+   \item {\tt mkdir <arch>}
+   \item {\tt cp Makefile <arch>/.}
+   \item {\tt ln -s ../../../../../Make.<arch> Make.inc}
+   \item Modify {\tt <arch>/Makefile} to compile your single precision routine
+   \item Follow the instructions given in Section~\ref{sec-force},
+which discusses how to make ATLAS use a contributed GEMM that config
+has not setup for you
+   \end{itemize}
+\end{enumerate}
+
+
+\subsubsection{Forcing ATLAS to use your GEMM}
+\label{sec-force}
+
+If ATLAS detects you are on a platform where a contributed full GEMM is
+superior to ATLAS's large-case GEMM, ATLAS will automatically handle
+the details of making ATLAS call the user-contributed routine.  If,
+however, you wish to force ATLAS to use your GEMM (for instance, you
+are testing your code before contribution, or just want to utilize ATLAS
+for complete BLAS coverage with your GEMM), you should take
+the following steps, after creating the appropriate subdirectory and
+API as previously described:
+\begin{enumerate}
+\item Edit your {\tt Make.inc} file: 
+ \begin{itemize}
+ \item Change {\tt UMMdir} to point to your full GEMM's architecture
+       subdirectory
+ \item Add {\tt -DUSERGEMM} to the {\tt CDEFS} macro.
+ \end{itemize}
+\item In {\tt ATLAS/src/blas/gemm}, touch {\tt ATL\_gemmXX.c} and
+{\tt ATL\_AgemmXX.c} to force recompilation
+\item In {\tt BLDdir/src/blas/gemm/} type {\tt make lib}
+\item In {\tt BLDdir/include/}, issue 
+  \begin{itemize}
+   \item {\tt rm ?Xover.h atlas\_cacheedge.h}
+   \item {\tt touch altas\_cacheedge.h sXover.h dXover.h cXover.h zXover.h}
+  \end{itemize}
+\item In {\tt BLDdir/tune/blas/gemm/}, issue:
+  \begin{itemize}
+  \item {\tt rm res/?Xover.h res/atlas\_cacheedge.h}
+  \item {\tt make res/atlas\_cacheedge.h}
+  \item {\tt make res/sXover.h pre=s}
+  \item {\tt make res/dXover.h pre=d}
+  \item {\tt make res/cXover.h pre=c}
+  \item {\tt make res/zXover.h pre=z}
+  \end{itemize}
+\end{enumerate}
+
+
+\section{Speeding up the Level 3 BLAS using access-major GEMM}
+
+The performance kernel for the entire Level 3 BLAS is matrix multiply.
+Matrix multiply is written in terms of a lower-level building block that
+we call {\it gemmK}.  {\it gemmK} is a special matrix multiply where
+both the $M$ and $N$ dimensions are runtime variables known to be multiples
+of their respective unrolling factors ($mu$ and $nu$).  The $K$ dimension
+can be either a run-time variable or compile time constant, as specified
+by the programmer.  This kernel is always called with all dimensions set
+small enough to encourage cache blocking.
+
+ATLAS actually has two different classes of GEMM kernels: one for copied
+matrices ({\it gemmK}), and one that operates directly on the user's matrices
+without a copy.  For matrices of
+sufficient size, ATLAS copies the input matrix into {\em access-major} storage.
+In access-major storage, the $N_B \times N_B$ blocks operated on by the
+{\it gemmK} are actually contiguous, and the copy reorders them so that
+{\it gemmK} accesses all operands in strict memory order.  This optimization
+prevents unnecessary cache misses, cache conflicts, TLB problems, and ensures
+that the kernel uses the minimal constant bus traffic.  However, for
+sufficiently
+small matrices, the cost of this data copy is prohibitively expensive,
+and thus ATLAS has kernels that operate on non-copied data.  However,
+without the copy to simplify the process, there are multiple non-copy
+kernels (differing kernels for differing transpose settings, for instance).
+Since the non-copy kernels are typically only used for very small problems,
+and they are much more complex, ATLAS presently accepts contributed code
+only for the copy matmul kernel.  For most problems, well over 98\% of ATLAS
+time is spent in the copy matmul kernel, so this should not be much of 
+a problem.
+
+\subsection{Building the General Matrix Multiply From {\it gemmK}}
+\label{sec-buildMM}
+
+This section describes the code necessary to build the BLAS's general
+matrix-matrix multiply using an L1 cache-contained
+matmul (hereafter referred to as {\it gemmK}).
+
+For our present discussion, it is enough to know
+that ATLAS has at its disposal highly optimized routines for doing matrix
+multiplies whose dimensions are chosen such that cache blocking is not
+required (i.e., the hand-written code discussed in this section deals
+with cache blocking; the generated/user supplied kernel assumes things fit
+into cache).
+
+When the user calls GEMM, ATLAS must decide whether the problem
+is large enough to tolerate copying the input matrices $A$ and $B$.
+If the matrices are large enough to support this $O(N^2)$ overhead, ATLAS will
+copy $A$ and $B$
+into block-major format.  ATLAS's block-major format breaks up the input
+matrices into contiguous blocks of a fixed size $N_B$, where $N_B$ is chosen
+in order to maximize L1 cache
+reuse.  Once in block-major format, the blocks are contiguous, which
+eliminates TLB problems, minimizes cache thrashing and maximizes cache line
+use.  It also allows ATLAS to apply alpha (if alpha is not already one) to the
+smaller of $A$ or $B$, thus minimizing this cost as well.  Finally, the
+package can use the copy to transform the problem to a particular transpose
+setting, which for load and indexing optimization, is set so
+A is copied to transposed form, and B is in normal (non-transposed) form.
+This means our L1-cache contained code is of the form
+$C \leftarrow A^T B$, $C \leftarrow A^T B + C$,
+and $C \leftarrow A^T B + \beta C$,
+{\em where all dimensions, including the non-contiguous stride, are known
+to be $N_B$}.  Knowing all of the dimensions of the loops allows for
+arbitrary unrollings (i.e., if the instruction cache could support it, ATLAS
+could unroll all loops completely, so that the L1 cache-contained multiply
+had no loops at all).  Further, when the code generator knows leading dimension
+of the matrices (i.e., the row stride), all indexing can be done up front,
+without the need for expensive integer or pointer computations.
+
+If the matrices are too small, the $O(N^2)$ data copy cost can actually
+dominate the algorithm cost, even though the computation cost is $O(N^3)$.
+For these matrices, ATLAS will call an gemm kernel which operates on non-copied
+matrices (i.e. directly on the user's operands).  The non-copy matmul kernels
+will generally not be as efficient as the even the generated copy {\it gemmK};
+at this problem
+size the main drawback is the additional pointer arithmetic required in order
+to support the user-supplied leading dimension and its affect on the cost of
+the memory load (which varies according to transpose settings, as well as
+architectural features).
+
+The choice of when a copy is dictated and when it is prohibitively expensive
+is an AEOS parameter; it turns out that this crossover point depends strongly
+both on the particular architecture, and the shape of the operands
+(matrix shape effectively sets limits on which matrix dimensions can
+enjoy cache reuse).  To handle this problem, ATLAS simply compares the
+speed of the copy and non-copy matmul kernels for variously shaped matrices,
+varying the problem size until the copy code provides a speedup (on some
+platforms, and with some shapes, this point is never reached).  These
+crossover points are determined at install time, and then used to make
+this decision at runtime.  Because it is the dominant case, this paper
+describes only the copied matmul algorithm in detail.
+
+Figure~\ref{fig-GemmPanel} shows the necessary steps for computing a
+$N_B \times N_B$ section of $C$ using {\it gemmK}.
+
+\begin{figure}[hbtp]
+\begin{picture}(430,100)(-20,0)
+\put(20,15){\framebox(20,20){$C_{3,2}$}}
+\put(150,15){\framebox(20,20){$A_{3,1}$}}
+\put(170,15){\framebox(20,20){$A_{3,2}$}}
+\put(190,15){\framebox(10,20){}}
+\put(-20,37){$M$}
+\put(50,80){$N$}
+\put(0,0){\framebox(100,75){\bf C}}
+\put(120,37){$\leftarrow$}
+\put(135,37){$M$}
+\put(173,80){$K$}
+\put(150,0){\framebox(50,75){\bf A}}
+\put(280,65){$N$}
+\put(345,37){$K$}
+\put(210,36){$\times$}
+\put(230,10){\framebox(100,50){\bf B}}
+\put(250,40){\framebox(20,20){$B_{1,2}$}}
+\put(250,20){\framebox(20,20){$B_{2,2}$}}
+\put(250,10){\framebox(20,10){$B_{3,2}$}}
+\end{picture}
+\caption{One step of matrix-matrix multiply\label{fig-GemmPanel}}
+\end{figure}
+
+More formally, the following actions are performed in order to
+calculate the $N_B \times N_B$ block $C_{i,j}$, where $i$ and $j$ are in
+the range $0 \leq i < \Wceil{M/N_B}$, $0 \leq j < \Wceil{N/N_B}$:
+
+\begin{enumerate}
+ \item Call {\it gemmK} of the correct form based on user-defined $\beta$
+       (eg. if $\beta == 0$, use $C \leftarrow A B$) to multiply block $0$
+       of the row panel $i$ of $A$ with block $0$ of the column panel $j$
+       of $B$.
+ \item Call {\it gemmK} of form $C \leftarrow A B + C$
+       to multiply block $k$ of the row panel $i$ of
+       $A$ with block $k$ of the column panel $j$ of $B$,
+       $\forall k, 1 \leq k < \Wceil{K/N_B}$.
+\end{enumerate}
+
+As this example demonstrates, if a given dimension is not a multiple of
+the L1 blocking factor $N_B$, partial blocks results.  ATLAS has special
+routines that handle cases where one or more dimension is less than $N_B$;
+these routines are referred to as {\em cleanup} codes.
+
+\subsection{The Main GEMM Kernel, {\it gemmK}}
+So, there are actually three {\it gemmK} kernels (corresponding to different
+$\beta$ values), and perform the operations:
+$C \leftarrow A B$,
+$C \leftarrow A B + C$,
+$C \leftarrow A B - C$.  All input arrays ($A, B, C$) are
+access-major. 
+
+\subsubsection{{\it gemmK}  macro definitions}
+In order to make writing a {\it gemmK} easier, ATLAS defines several 
+cpp macros for programmer use.  Examples in subsequent sections should 
+illustrate the use of these macros, so we merely define them here.
+
+First, ATLAS defines the macro {\tt ATL\_USERMM}
+to the appropriate ATLAS internal kernel name.  Second, it defines one
+of  {\tt SREAL}, {\tt DREAL}, {\tt SCPLX}, {\tt DCPLX}, according to
+the data type being compiled (single precision real, double precision
+real, single precision complex, double precision complex, respectively).
+
+Similarly, ATLAS defines a macro indicating the $\beta$ case being
+compiled, {\tt BETA1} ($\beta$ should be assumed to be 1.0), {\tt BETA0}
+($\beta$ should be assumed to be 0.0), and {\tt BETAN1}
+($\beta$ should be assumed to be -1.0).
+
+Finally, if the user has called for a compile-time $K$ dimension,
+the macro {\tt KB} will be set to the required compile-time dimension.
+
+\subsubsection{{\it gemmK} API}
+The {\it gemmK} API may be summarized as:
+
+\vspace*{.1in}
+
+\noindent
+\verb+#if defined(SREAL) || defined(SCPLX)+
+\begin{routdef}{1.8}
+\rditem{~~~void ATL\_USERMM}
+{size_t nmu, size_t nnu, size_t K, const TYPE *pA, const TYPE *pB, float *pC,
+ const float *pAn, const float *pBn, const float *pCn}
+\end{routdef}
+
+\noindent
+\verb+#elif defined(DREAL) || defined(DCPLX)+
+\begin{routdef}{1.8}
+\rditem{~~~void ATL\_USERMM}
+{size_t nmu, size_t nnu, size_t K, const double *pA, const double *pB, 
+ double *pC, const double *pAn, const double *pBn, const double *pCn}
+\end{routdef}
+
+\noindent
+\verb+#endif+
+
+$nmu$ is the number of unrolled $M$ iterations, i.e. $\frac{M}{mu}$, and
+$nnu$ is the same for the $N$ dimension.  The $K$ parameter is ignored if
+the kernel uses a compile-time $K$, otherwise it specifies the $K$ dimension.
+The $pA$, $pB$ and $pC$ pointers all point to access-major arrays.
+Finally, the $pAn$, $pBn$, and $pCn$ kernels are pointers to be used for
+prefetching succeeding blocks of the named arrays.
 
 \subsubsection{{\it gemmK} description file}
 In the install process, ATLAS first searches through the {\it gemmK}
