@@ -340,7 +340,7 @@ prefetcht0 (pC)
          sub $4, KK
          jz KLOOPDONE
 
-SS0:
+// SS0:
          ALIGN16
          KLOOP:
             MOVAPD -128(pA), rA0
@@ -425,7 +425,7 @@ SS0:
 
          sub $2, KK
          jnz KLOOP
-SS1:
+//SS1:
          ALIGN16
          KLOOPDONE:
          add incPF, pfA
@@ -533,7 +533,7 @@ SS1:
    movq    40(%rsp), %r15
    add $FSIZE, %rsp
    ret
-#if 1
+#if 0
 ALIGN16
 .global findSize
 findSize:
