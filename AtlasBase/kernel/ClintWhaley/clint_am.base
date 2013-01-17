@@ -4923,4 +4923,489 @@ ATL_asmdecor(ATL_USERMM):
 @extract -b @(topd)/kernel/ClintWhaley/ATL_damm5x5x1_armpf.S
 @ROUT ATL_damm3x4x1_armpf.S
 @extract -b @(topd)/kernel/ClintWhaley/ATL_damm3x4x1_armpf.S
+@ROUT ATL_damm8x2x256_sse3.S
+@extract -b @(topd)/gen.inc what=crsetup
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2013
+#include "atlas_asm.h"
+#ifndef prefA
+   #define prefA prefetcht0
+#endif
+#ifndef prefB
+   #define prefB prefetcht2
+#endif
+#ifndef prefC
+   #ifdef ATL_3DNow
+      #define prefC prefetchw
+   #else
+      #define prefC prefetcht0
+   #endif
+#endif
+#ifdef BETAN1
+   #define BETCOP subpd
+#elif defined(BETA1)
+   #define BETCOP addpd
+#endif
+#define MOVAPD movaps
+#define UNPCKHPD movhlps
+
+#define m0      %xmm0
+#define rA0     %xmm1
+#define rA1     %xmm2
+#define rA2     %xmm3
+#define rA3     %xmm4
+#define rB0     %xmm5
+#define rB1     %xmm6
+#define rb1     %xmm7
+#define rC00    %xmm8
+#define rC10    %xmm9
+#define rC20    %xmm10
+#define rC30    %xmm11
+#define rC01    %xmm12
+#define rC11    %xmm13
+#define rC21    %xmm14
+#define rC31    %xmm15
+
+#define pA      %rcx
+#define pB      %rdx
+#define pC      %rbp
+#define pfA     %rax
+#define pfB     %rbx
+#define pfC     %rdi
+#define nnu     %rsi
+
+#define incPF   %r8
+#define incA    %r9
+#define incB    %r10
+#define pA0     %r11
+#define nnu0    %r12
+#define r256    %r13
+#define nmu     %r14
+#define pB0     %r15
+/*
+                    rdi      rsi    rdx        rcx         r8        r9
+void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
+                  8(%rsp)    16(%rsp)     24(%rsp)
+                CTYPE *pAn, CTYPE *pBn, CTYPE *pCn);
+ */
+.text
+.global ATL_asmdecor(ATL_USERMM)
+ALIGN16
+ATL_asmdecor(ATL_USERMM):
+   #define FSIZE 6*8
+/*
+ * Save callee-saved iregs
+ */
+   sub $FSIZE, %rsp
+   movq    %rbp, (%rsp)
+   movq    %rbx, 8(%rsp)
+   movq    %r12, 16(%rsp)
+   movq    %r13, 24(%rsp)
+   movq    %r14, 32(%rsp)
+/*
+ * Load parameters
+ */
+   mov  %rdi, nmu
+   mov  %rsi, nnu0
+   mov  %r8, pB
+   mov  %r9, pC
+   movq FSIZE+8(%rsp), pfA
+   movq FSIZE+16(%rsp), pfB
+   movq FSIZE+24(%rsp), pfC
+   mov  $256, r256
+   mov  $8*8*2, incPF
+/*
+ * Add 128 to ptrs to maximize unrolling range
+ */
+   add incPF, pA
+   add incPF, pB
+   mov pA, pA0
+   mov pB, pB0
+   mov nnu0, nnu
+   mov $2*KB*8, incB   /* incB = nu*KB*sizeof */
+   mov $8*KB*8, incA   /* incA = mu*KB*sizeof */
+
+#if 0
+   MLOOP:
+      mov nnu0, nnu
+      NLOOP:
+#else
+   ALIGN16
+   .local MNLOOP
+   MNLOOP:
+#endif
+/*
+ *       Unroll first iteration to avoid zeroing rCxx
+ */
+         MOVAPD -128(pB), rB1
+         movddup rB1, rB0
+         MOVAPD -128(pA), rC00
+         MOVAPD rC00, rC01
+         mulpd rB0, rC00
+         MOVAPD -112(pA), rC10
+         MOVAPD rC10, rC11
+         mulpd rB0, rC10
+         MOVAPD -96(pA), rC20
+         MOVAPD rC20, rC21
+         mulpd rB0, rC20
+         MOVAPD -80(pA), rC30
+         MOVAPD rC30, rC31
+         mulpd rB0, rC30
+
+
+         UNPCKHPD rB1, rB1
+         #if KB > 1
+            MOVAPD -112(pB), rb1
+         #endif
+         mulpd rB1, rC01
+         #if KB > 1
+            movddup rb1, rB0
+            MOVAPD -64(pA), rA0
+         #endif
+         mulpd rB1, rC11
+         #if KB > 1
+            MOVAPD -48(pA), rA1
+         #endif
+         mulpd rB1, rC21
+         #if KB > 1
+            MOVAPD -32(pA), rA2
+         #endif
+         mulpd rB1, rC31
+         #if KB > 1
+            UNPCKHPD rb1, rb1
+         #endif
+
+         #if KB > 1
+               MOVAPD -16(pA), rA3
+            MOVAPD rA0, m0
+            mulpd rB0, m0
+            addpd m0, rC00
+            #if KB > 2
+               MOVAPD -96(pB), rB1
+            #endif
+            MOVAPD rA1, m0
+            mulpd rB0, m0
+            addpd m0, rC10
+            MOVAPD rA2, m0
+            mulpd rB0, m0
+            addpd m0, rC20
+            UNPCKHPD rb1, rb1
+            mulpd rA3, rB0
+            addpd rB0, rC30
+            #if KB > 2
+               movddup rB1, rB0
+            #endif
+   
+            mulpd rb1, rA0
+            addpd rA0, rC01
+            #if KB > 2
+               MOVAPD (pA), rA0
+            #endif
+            mulpd rb1, rA1
+            addpd rA1, rC11
+            #if KB > 2
+               MOVAPD 16(pA), rA1
+            #endif
+            mulpd rb1, rA2
+            addpd rA2, rC21
+            #if KB > 2
+               MOVAPD 32(pA), rA2
+            #endif
+            mulpd rA3, rb1
+            addpd rb1, rC31
+            #if KB > 2
+               MOVAPD 48(pA), rA3
+               UNPCKHPD rB1, rB1
+            #endif
+         #endif
+
+         #if KB > 2
+            MOVAPD rA0, m0
+            mulpd rB0, m0
+            addpd m0, rC00
+            #if KB > 3
+               MOVAPD -80(pB), rb1
+            #endif
+            MOVAPD rA1, m0
+            mulpd rB0, m0
+            addpd m0, rC10
+            MOVAPD rA2, m0
+            mulpd rB0, m0
+            addpd m0, rC20
+            mulpd rA3, rB0
+            addpd rB0, rC30
+            #if KB > 3
+               movddup rb1, rB0
+            #endif
+   
+            mulpd rB1, rA0
+            addpd rA0, rC01
+            #if KB > 3
+               UNPCKHPD rb1, rb1
+               MOVAPD 64(pA), rA0
+            #endif
+            mulpd rB1, rA1
+            addpd rA1, rC11
+            #if KB > 3
+               MOVAPD 80(pA), rA1
+            #endif
+            mulpd rB1, rA2
+            addpd rA2, rC21
+            #if KB > 3
+               MOVAPD 96(pA), rA2
+            #endif
+            mulpd rA3, rB1
+            addpd rB1, rC31
+            #if KB > 3
+               MOVAPD 112(pA), rA3
+              add r256, pA
+            #endif
+         #endif
+
+         #if KB > 3
+            MOVAPD rA0, m0
+            mulpd rB0, m0
+            addpd m0, rC00
+            #if KB > 4
+               MOVAPD -64(pB), rB1
+            #endif
+            MOVAPD rA1, m0
+            mulpd rB0, m0
+            addpd m0, rC10
+            MOVAPD rA2, m0
+            mulpd rB0, m0
+            addpd m0, rC20
+            UNPCKHPD rb1, rb1
+            mulpd rA3, rB0
+            addpd rB0, rC30
+            #if KB > 4
+               movddup rB1, rB0
+            #endif
+   
+            mulpd rb1, rA0
+            addpd rA0, rC01
+            #if KB > 4
+               MOVAPD -128(pA), rA0
+               UNPCKHPD rB1, rB1
+            #endif
+            mulpd rb1, rA1
+            addpd rA1, rC11
+            #if KB > 4
+               MOVAPD -112(pA), rA1
+            #endif
+            mulpd rb1, rA2
+            addpd rA2, rC21
+            #if KB > 4
+               MOVAPD -96(pA), rA2
+            #endif
+            mulpd rA3, rb1
+            addpd rb1, rC31
+            #if KB > 4
+               MOVAPD -80(pA), rA3
+            #endif
+         #endif
+
+
+@iexp incT 1280000 0 +
+@iexp k 4 0 +
+@iexp ao -80 16 +
+@iexp bo -64 16 +
+@iwhile k < 256
+         #if KB > @(k)
+   @iexp k @(k) 1 +
+            MOVAPD rA0, m0
+            mulpd rB0, m0
+            addpd m0, rC00
+            #if KB > @(k)
+               MOVAPD @(bo)(pB), rb1
+   @iexp bo @(bo) 16 +
+   @iif @(bo) = @(incT)
+               add r256, pB
+      @iexp bo -128 0 +
+   @endiif
+            #endif
+            MOVAPD rA1, m0
+            mulpd rB0, m0
+            addpd m0, rC10
+            MOVAPD rA2, m0
+            mulpd rB0, m0
+            addpd m0, rC20
+            mulpd rA3, rB0
+            addpd rB0, rC30
+            #if KB > @(k)
+               movddup rb1, rB0
+            #endif
+   
+            mulpd rB1, rA0
+            addpd rA0, rC01
+            #if KB > @(k)
+               UNPCKHPD rb1, rb1
+               MOVAPD @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+   @iif @(ao) = @(incT)
+               add r256, pA
+      @iexp ao -128 0 +
+   @endiif
+            #endif
+            mulpd rB1, rA1
+            addpd rA1, rC11
+            #if KB > @(k)
+               MOVAPD @(ao)(pA), rA1
+   @iexp ao @(ao) 16 +
+   @iif @(ao) = @(incT)
+               add r256, pA
+      @iexp ao -128 0 +
+   @endiif
+            #endif
+            mulpd rB1, rA2
+            addpd rA2, rC21
+            #if KB > @(k) 
+               MOVAPD @(ao)(pA), rA2
+   @iexp ao @(ao) 16 +
+   @iif @(ao) = @(incT)
+               add r256, pA
+      @iexp ao -128 0 +
+   @endiif
+            #endif
+            mulpd rA3, rB1
+            addpd rB1, rC31
+            #if KB > @(k)
+               MOVAPD @(ao)(pA), rA3
+   @iexp ao @(ao) 16 +
+   @iif @(ao) = @(incT)
+               add r256, pA
+      @iexp ao -128 0 +
+   @endiif
+            #endif
+         #endif
+
+         #if KB > @(k)
+   @iexp k @(k) 1 +
+            MOVAPD rA0, m0
+            mulpd rB0, m0
+            addpd m0, rC00
+            #if KB > @(k)
+               MOVAPD @(bo)(pB), rB1
+   @iexp bo @(bo) 16 +
+   @iif @(bo) = @(incT)
+               add r256, pB
+      @iexp bo -128 0 +
+   @endiif
+            #endif
+            MOVAPD rA1, m0
+            mulpd rB0, m0
+            addpd m0, rC10
+            MOVAPD rA2, m0
+            mulpd rB0, m0
+            addpd m0, rC20
+            UNPCKHPD rb1, rb1
+            mulpd rA3, rB0
+            addpd rB0, rC30
+            #if KB > @(k)
+               movddup rB1, rB0
+            #endif
+   
+            mulpd rb1, rA0
+            addpd rA0, rC01
+            #if KB > @(k)
+               MOVAPD @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+   @iif @(ao) = @(incT)
+               add r256, pA
+      @iexp ao -128 0 +
+   @endiif
+               UNPCKHPD rB1, rB1
+            #endif
+            mulpd rb1, rA1
+            addpd rA1, rC11
+            #if KB > @(k)
+               MOVAPD @(ao)(pA), rA1
+   @iexp ao @(ao) 16 +
+   @iif @(ao) = @(incT)
+               add r256, pA
+      @iexp ao -128 0 +
+   @endiif
+            #endif
+            mulpd rb1, rA2
+            addpd rA2, rC21
+            #if KB > @(k)
+               MOVAPD @(ao)(pA), rA2
+   @iexp ao @(ao) 16 +
+   @iif @(ao) = @(incT)
+               add r256, pA
+      @iexp ao -128 0 +
+   @endiif
+            #endif
+            mulpd rA3, rb1
+            addpd rb1, rC31
+            #if KB > @(k)
+               MOVAPD @(ao)(pA), rA3
+   @iexp ao @(ao) 16 +
+   @iif @(ao) = @(incT)
+               add r256, pA
+      @iexp ao -128 0 +
+   @endiif
+            #endif
+         #endif
+@endiwhile
+/*
+ *       Write answer out to C
+ */
+         #ifdef BETCOP
+            BETCOP (pC), rC00
+         #endif
+         MOVAPD rC00, (pC)
+         #ifdef BETCOP
+            BETCOP 16(pC), rC10
+         #endif
+         MOVAPD rC10, 16(pC)
+         #ifdef BETCOP
+            BETCOP 32(pC), rC20
+         #endif
+         MOVAPD rC20, 32(pC)
+         #ifdef BETCOP
+            BETCOP 48(pC), rC30
+         #endif
+         MOVAPD rC30, 48(pC)
+         #ifdef BETCOP
+            BETCOP 64(pC), rC01
+         #endif
+         MOVAPD rC01, 64(pC)
+         #ifdef BETCOP
+            BETCOP 80(pC), rC11
+         #endif
+         MOVAPD rC11, 80(pC)
+         #ifdef BETCOP
+            BETCOP 96(pC), rC21
+         #endif
+         MOVAPD rC21, 96(pC)
+         #ifdef BETCOP
+            BETCOP 112(pC), rC31
+         #endif
+         MOVAPD rC31, 112(pC)
+         add incPF, pC
+         mov pA0, pA
+@iif @(incT) = 128
+         #if 2*KB*8 >= 256
+            sub $((2*KB*8)/256)*256, pB
+         #endif
+@endiif
+         add incB, pB
+      dec nnu
+      jnz MNLOOP
+
+      mov nnu0, nnu
+      add incA, pA0
+      mov pA0, pA
+      mov pB0, pB
+   dec nmu
+   jnz MNLOOP
+
+/* DONE: */
+   movq    (%rsp), %rbp
+   movq    8(%rsp), %rbx
+   movq    16(%rsp), %r12
+   movq    24(%rsp), %r13
+   movq    32(%rsp), %r14
+   add $FSIZE, %rsp
+   ret
 @ROUT !
