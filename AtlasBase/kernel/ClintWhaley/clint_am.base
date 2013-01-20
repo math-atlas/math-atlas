@@ -4879,9 +4879,12 @@ ATL_asmdecor(ATL_USERMM):
    jnz MLOOP
 /* DONE: */
    ret
-@ROUT ATL_damm6x3x2_sse3.S
+@ROUT ATL_damm6x3x2_sse3.S ATL_sammm8x4x2_sse.S
    @extract -b @(topd)/gen.inc what=crsetup
    @extract -b @(topd)/cw.inc lang=c -define cwdate 2013
+@ROUT ATL_sammm8x4x2_sse.S
+   @extract -b @(topd)/kernel/ClintWhaley/ATL_sammm8x4x2_sse.S
+@ROUT ATL_damm6x3x2_sse3.S
    @extract -b @(topd)/kernel/ClintWhaley/ATL_damm6x3x2_sse3.S
 @ROUT ATL_damm6x4x1_fma3.S
    @extract -b @(topd)/gen.inc what=crsetup
@@ -5486,8 +5489,8 @@ ATL_asmdecor(ATL_USERMM):
    movq    %rbx, 8(%rsp)
    movq    %r12, 16(%rsp)
    movq    %r13, 24(%rsp)
-   movq    %r14, 32(%rsp)
-   movq    %r15, 40(%rsp)
+@skip   movq    %r14, 32(%rsp)
+@skip   movq    %r15, 40(%rsp)
 /*
  * Load paramaters
  */
@@ -5564,6 +5567,9 @@ ATL_asmdecor(ATL_USERMM):
 @iexp k 1 0 +
 @iwhile k < 256
          #if KB > @(k)
+   @iif k = 48
+            nop
+   @endiif
    @iexp k @(k) 1 +
             movapd rB0, rm0
             mulpd rA0, rm0
@@ -5658,7 +5664,367 @@ ATL_asmdecor(ATL_USERMM):
    movq    8(%rsp), %rbx
    movq    16(%rsp), %r12
    movq    24(%rsp), %r13
-   movq    32(%rsp), %r14
-   movq    40(%rsp), %r15
+@skip   movq    32(%rsp), %r14
+@skip   movq    40(%rsp), %r15
+   add $FSIZE, %rsp
+   ret
+@ROUT ATL_sammm8x4x256_sse3.S
+   @define mu @4@
+   @define nu @4@
+@extract -b @(topd)/gen.inc what=crsetup
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2013
+#include "atlas_asm.h"
+#define movaps movaps
+#define nmu     %rdi
+#define nnu     %rsi
+#define nnu0    %r10
+#define pA      %rcx
+#define pB      %rax
+#define pC      %r9
+#define pf      %rbp
+#define pB0     %r12
+#define incPF   %rbx
+#define pfB     %rdx
+#define incAm   %r11 
+#define pfC     %r13
+#define r256    %r14
+
+#define rm0     %xmm0
+#define rA0     %xmm1
+#define rA1     %xmm2
+#define rB0     %xmm3
+#define rB1     %xmm4
+#define rB2     %xmm5
+#define rB3     %xmm6
+#define rb3     %xmm7
+#define rC00    %xmm8
+#define rC10    %xmm9
+#define rC01    %xmm10
+#define rC11    %xmm11
+#define rC02    %xmm12
+#define rC12    %xmm13
+#define rC03    %xmm14
+#define rC13    %xmm15
+#ifndef pref
+   #define pref prefetcht1
+#endif
+#ifndef prefB
+   #define prefB prefetcht1
+#endif
+#ifndef prefC
+   #ifdef ATL_3DNow
+      #define prefC prefetchw
+   #else
+      #define prefC prefetcht0
+   #endif
+#endif
+#ifdef BETAN1
+   #define BETCOP subps
+#else
+   #define BETCOP addps
+#endif
+#define FSIZE 6*8
+/*
+                    rdi      rsi    rdx        rcx         r8        r9  
+void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC, 
+                  8(%rsp)    16(%rsp)     24(%rsp)   
+                CTYPE *pAn, CTYPE *pBn, CTYPE *pCn);
+ */
+.text
+.global ATL_asmdecor(ATL_USERMM)
+ALIGN16
+ATL_asmdecor(ATL_USERMM):
+/*
+ * Save callee-saved iregs
+ */
+   sub $FSIZE, %rsp
+   movq    %rbp, 0(%rsp)
+   movq    %rbx, 8(%rsp)
+   movq    %r12, 16(%rsp)
+   movq    %r13, 24(%rsp)
+@skip   movq    %r14, 32(%rsp)
+@skip   movq    %r15, 40(%rsp)
+/*
+ * Load paramaters
+ */
+   movq %r8, pB
+   mov nnu, nnu0
+   movq FSIZE+16(%rsp), pf      /* pf = pBn */
+   movq FSIZE+8(%rsp), pfB      /* pfB = pAn */
+   movq FSIZE+24(%rsp), pfC    /* pfC = pCn */
+   mov $4*@(mu)*@(nu), incPF
+/*
+ * Extend range of small operands by starting at -128
+ */
+   sub $-128, pA
+   sub $-128, pB
+   mov $KB*8*4, incAm           /* incAm = KB*MU*size */
+   movq pB, pB0
+
+   ALIGN8
+   .local MNLOOP
+   MNLOOP:
+/*
+ *       Peel first iteration of K-loop to handle init of C to 0
+ */
+         movaps -128(pB), rB3
+         pshufd $0x00, rB3, rB0
+         movaps -128(pA), rC00
+
+         movaps rC00, rC01
+         mulps rB0, rC00
+         pshufd $0x55, rB3, rB1
+         movaps -112(pA), rC10
+         movaps rC10, rC11
+         mulps rB0, rC10
+
+         #if KB > 1
+            movaps -112(pB), rb3
+         #else
+            pref (pf)
+         #endif
+         movaps rC01, rC02
+         mulps rB1, rC01
+         #if KB > 1
+            movaps -96(pA), rA0
+         #else
+            pref 64(pf)
+         #endif
+         movaps rC11, rC12
+         mulps rB1, rC11
+
+         #if KB > 1
+            movaps -80(pA), rA1
+         #endif
+         pshufd $0xAA, rB3, rB2
+         movaps rC02, rC03
+         mulps rB2, rC02
+         shufps $0xFF, rB3, rB3
+         movaps rC12, rC13
+         mulps rB2, rC12
+         #if KB > 1
+            pshufd $0x00, rb3, rB0
+         #else
+            add incPF, pf
+         #endif
+
+         mulps rB3, rC03
+         prefC (pC)
+         mulps rB3, rC13
+         prefC 64(pC)
+/*
+ *       2nd peeled K iteration
+ */
+         #if KB > 1
+            #if KB > 2
+               movaps -96(pB), rB3
+            #endif
+            pshufd $0x55, rb3, rB1
+            movaps rA0, rm0
+            mulps rB0, rm0
+            addps rm0, rC00
+            pshufd $0xAA, rb3, rB2
+            movaps rA1, rm0
+            mulps rB0, rm0
+            addps rm0, rC10
+            shufps $0xFF, rb3, rb3
+            movaps rA0, rm0
+            mulps rB1, rm0
+            addps rm0, rC01
+            #if KB > 2
+               pshufd $0x00, rB3, rB0
+            #endif
+            movaps rA1, rm0
+            mulps rB1, rm0
+            addps rm0, rC11
+            #if KB > 2
+               pshufd $0x55, rB3, rB1
+            #endif
+            movaps rA0, rm0
+            mulps rB2, rm0
+            addps rm0, rC02
+            movaps rA1, rm0
+            mulps rB2, rm0
+            addps rm0, rC12
+            #if KB > 2
+               pshufd $0xAA, rB3, rB2
+            #endif
+
+            mulps rb3, rA0
+            addps rA0, rC03
+            #if KB > 2
+               movaps -64(pA), rA0
+            #endif
+            mulps rA1, rb3
+            addps rb3, rC13
+            #if KB > 2
+               movaps -48(pA), rA1
+            #endif
+         #endif
+/*
+ *       ==========================
+ *       Completely unrolled K-loop
+ *       ==========================
+ */
+@iexp ao -32 0 +
+@iexp bo -80 0 +
+@iexp k 2 0 +
+@iwhile k < 256
+         #if KB > @(k)
+   @iexp k @(k) 1 +
+            #if KB > @(k)
+               movaps @(bo)(pB), rb3
+   @iexp bo @(bo) 16 +
+            #elif KB == @(k)
+               pref (pf)
+            #endif
+            movaps rA0, rm0
+            mulps rB0, rm0
+            addps rm0, rC00
+            shufps $0xFF, rB3, rB3
+            #if KB == @(k)
+               add incPF, pf
+            #endif
+            movaps rA1, rm0
+            mulps rB0, rm0
+            addps rm0, rC10
+            #if KB > @(k)
+               pshufd $0x00, rb3, rB0
+            #elif KB == @(k)
+               pref (pfC)
+            #endif
+            movaps rA0, rm0
+            mulps rB1, rm0
+            addps rm0, rC01
+            #if KB == @(k)
+               add incPF, pfC
+            #endif
+            movaps rA1, rm0
+            mulps rB1, rm0
+            addps rm0, rC11
+            #if KB > @(k)
+               pshufd $0x55, rb3, rB1
+            #elif KB == @(k)
+               pref (pfB)
+            #endif
+            movaps rA0, rm0
+            mulps rB2, rm0
+            addps rm0, rC02
+            #if KB == @(k)
+               add incPF, pfB
+            #endif
+            movaps rA1, rm0
+            mulps rB2, rm0
+            addps rm0, rC12
+            #if KB > @(k)
+               pshufd $0xAA, rb3, rB2
+            #endif
+
+            mulps rB3, rA0
+            addps rA0, rC03
+            #if KB > @(k)
+               movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            #endif
+            mulps rA1, rB3
+            addps rB3, rC13
+            #if KB > @(k)
+               movaps @(ao)(pA), rA1
+   @iexp ao @(ao) 16 +
+            #endif
+         #endif
+         #if KB > @(k)
+   @iexp k @(k) 1 +
+            #if KB > @(k)
+               movaps @(bo)(pB), rB3
+   @iexp bo @(bo) 16 +
+            #endif
+            movaps rA0, rm0
+            mulps rB0, rm0
+            addps rm0, rC00
+            shufps $0xFF, rb3, rb3
+            movaps rA1, rm0
+            mulps rB0, rm0
+            addps rm0, rC10
+            #if KB > @(k)
+               pshufd $0x00, rB3, rB0
+            #endif
+            movaps rA0, rm0
+            mulps rB1, rm0
+            addps rm0, rC01
+            movaps rA1, rm0
+            mulps rB1, rm0
+            addps rm0, rC11
+            #if KB > @(k)
+               pshufd $0x55, rB3, rB1
+            #endif
+            movaps rA0, rm0
+            mulps rB2, rm0
+            addps rm0, rC02
+            movaps rA1, rm0
+            mulps rB2, rm0
+            addps rm0, rC12
+            #if KB > @(k)
+               pshufd $0xAA, rB3, rB2
+            #endif
+
+            mulps rb3, rA0
+            addps rA0, rC03
+            #if KB > @(k)
+               movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            #endif
+            mulps rA1, rb3
+            addps rb3, rC13
+            #if KB > @(k)
+               movaps @(ao)(pA), rA1
+   @iexp ao @(ao) 16 +
+            #endif
+         #endif
+@endiwhile
+         #if defined(BETA1) || defined(BETAN1)
+            BETCOP (pC), rC00
+            movaps rC00, (pC)
+            BETCOP 16(pC), rC10
+            movaps rC10, 16(pC)
+            BETCOP 32(pC), rC01
+            movaps rC01, 32(pC)
+            BETCOP 48(pC), rC11
+            movaps rC11, 48(pC)
+            BETCOP 64(pC), rC02
+            movaps rC02, 64(pC)
+            BETCOP 80(pC), rC12
+            movaps rC12, 80(pC)
+            BETCOP 96(pC), rC03
+            movaps rC03, 96(pC)
+            BETCOP 112(pC), rC13
+            movaps rC13, 112(pC)
+         #else
+            movaps rC00, (pC)
+            movaps rC10, 16(pC)
+            movaps rC01, 32(pC)
+            movaps rC11, 48(pC)
+            movaps rC02, 64(pC)
+            movaps rC12, 80(pC)
+            movaps rC03, 96(pC)
+            movaps rC13, 112(pC)
+         #endif
+         sub $-128, pC
+         add $KB*4*4, pB
+      sub $1, nnu
+      jnz MNLOOP
+      mov nnu0, nnu
+      mov pB0, pB
+      add incAm, pA
+   sub $1, nmu
+   jnz MNLOOP
+
+/* DONE: */
+   movq    (%rsp), %rbp
+   movq    8(%rsp), %rbx
+   movq    16(%rsp), %r12
+   movq    24(%rsp), %r13
+@skip   movq    32(%rsp), %r14
+@skip   movq    40(%rsp), %r15
    add $FSIZE, %rsp
    ret
