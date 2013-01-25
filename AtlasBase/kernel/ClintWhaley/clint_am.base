@@ -6301,13 +6301,14 @@ SS0:
 SS1:
 #endif
 
-@ROUT ATL_sammm4x12x256_sse2.S
+
+@ROUT ATL_dammm24x1x256_sse3.S
    @define mu @4@
    @define nu @4@
 @extract -b @(topd)/gen.inc what=crsetup
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2013
 #include "atlas_asm.h"
-#define movaps movaps
+#define MOVAPD movaps
 #define nmu     %rdi
 #define nnu     %rsi
 #define nnu0    %r10
@@ -6335,11 +6336,310 @@ SS1:
 #define rC09    %xmm11
 #define rC10    %xmm12
 #define rC11    %xmm13
-#ifndef pref
-   #define pref prefetcht1
+#ifndef prefA
+   #define prefA prefetcht1
 #endif
 #ifndef prefB
    #define prefB prefetcht1
+#endif
+#ifndef prefC
+   #ifdef ATL_3DNow
+      #define prefC prefetchw
+   #else
+      #define prefC prefetcht0
+   #endif
+#endif
+#ifdef BETAN1
+   #define BETCOP subpd
+#else
+   #define BETCOP addpd
+#endif
+#define FSIZE 6*8
+/*
+                    rdi      rsi    rdx        rcx         r8        r9  
+void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC, 
+                  8(%rsp)    16(%rsp)     24(%rsp)   
+                CTYPE *pAn, CTYPE *pBn, CTYPE *pCn);
+ */
+.text
+.global ATL_asmdecor(ATL_USERMM)
+ALIGN16
+ATL_asmdecor(ATL_USERMM):
+/*
+ * Save callee-saved iregs
+ */
+     prefetcht0 (pA)
+   sub $FSIZE, %rsp
+     prefetcht0 (%r8)
+   movq    %rbp, 0(%rsp)
+     prefetcht0 64(pA)
+   movq    %rbx, 8(%rsp)
+     prefetcht0 128(pA)
+   movq    %r12, 16(%rsp)
+     prefetcht0 192(pA)
+@skip   movq    %r13, 24(%rsp)
+@skip   movq    %r14, 32(%rsp)
+@skip   movq    %r15, 40(%rsp)
+/*
+ * Load paramaters
+ */
+   movq %r8, pB
+     prefetcht0 256(pA)
+   mov nnu, nnu0
+     prefetcht0 320(pA)
+   movq FSIZE+16(%rsp), pfB     /* pf = pBn */
+     prefetcht0 384(pA)
+   movq FSIZE+8(%rsp), pfA      /* pfB = pAn */
+@skip   movq FSIZE+24(%rsp), pfC    /* pfC = pCn */
+     prefetcht0 448(pA)
+   mov $24*1*8, incPF   /* incPF = MU*NU*sizeof */
+/*
+ * Maximize are small-op size by adding 128 to ptrs
+ */
+   sub $-128, pA
+     prefetcht0 512(pA)
+   sub $-128, pB
+     prefetcht0 576(pA)
+   sub $-128, pC
+     prefetcht0 640(pA)
+   sub $-128, pfA
+   sub $-128, pfB
+@skip   sub $-128, pfC
+   mov $KB*24*8, incAm           /* incAm = KB*MU*size */
+   movq pB, pB0
+
+   ALIGN16
+   .local MNLOOP
+   MNLOOP:
+/*
+ *       Peel first iteration of K-loop to handle init of C to 0
+ */
+#if 0
+         xorps rC00, rC00
+         MOVAPD rC00, rC01
+         xorps rC02, rC02
+         MOVAPD rC00, rC03
+         xorps rC04, rC04
+         MOVAPD rC00, rC05
+         xorps rC06, rC06
+         MOVAPD rC00, rC07
+         xorps rC08, rC08
+         MOVAPD rC00, rC09
+         xorps rC10, rC10
+         MOVAPD rC00, rC11
+#endif
+/*
+ *       Unroll 1st iteration for zeroing or rCxx & prefetch 
+ */
+         movddup -128(pB), rC00
+         MOVAPD rC00, rC01
+         mulpd -128(pA), rC00
+         prefC -128(pC)
+         MOVAPD rC01, rC02
+         mulpd -112(pA), rC01
+         prefC -64(pC)
+         MOVAPD rC02, rC03
+         mulpd -96(pA), rC02
+         prefC (pC)
+         MOVAPD rC03, rC04
+         mulpd -80(pA), rC03
+         prefB -128(pfB)
+         MOVAPD rC04, rC05
+         mulpd -64(pA), rC04
+         prefB -64(pfB)
+         MOVAPD rC05, rC06
+         mulpd -48(pA), rC05
+         prefB (pfB)
+         MOVAPD rC06, rC07
+         mulpd -32(pA), rC06
+         prefA -128(pfA)
+         MOVAPD rC07, rC08
+         mulpd -16(pA), rC07
+         prefA -64(pfA)
+         MOVAPD rC08, rC09
+         mulpd (pA), rC08
+         prefA (pfA)
+         MOVAPD rC09, rC10
+         mulpd 16(pA), rC09
+         MOVAPD rC10, rC11
+         mulpd 32(pA), rC10
+         mulpd 48(pA), rC11
+/*
+ *       ==========================
+ *       Completely unrolled K-loop
+ *       ==========================
+ */
+@iexp ao 64 0 +
+@iexp bo -120 0 +
+@iexp k 1 0 +
+@iwhile k < 256
+         #if KB > @(k)
+   @iexp k @(k) 1 +
+            movddup @(bo)(pB), rB0
+   @iexp bo @(bo) 8 +
+            MOVAPD @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulpd rB0, rA0
+            addpd rA0, rC00
+            MOVAPD @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulpd rB0, rA0
+            addpd rA0, rC01
+            MOVAPD @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulpd rB0, rA0
+            addpd rA0, rC02
+            MOVAPD @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulpd rB0, rA0
+            addpd rA0, rC03
+            MOVAPD @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulpd rB0, rA0
+            addpd rA0, rC04
+            MOVAPD @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulpd rB0, rA0
+            addpd rA0, rC05
+            MOVAPD @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulpd rB0, rA0
+            addpd rA0, rC06
+            MOVAPD @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulpd rB0, rA0
+            addpd rA0, rC07
+            MOVAPD @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulpd rB0, rA0
+            addpd rA0, rC08
+            MOVAPD @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulpd rB0, rA0
+            addpd rA0, rC09
+            MOVAPD @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulpd rB0, rA0
+            addpd rA0, rC10
+            mulpd @(ao)(pA), rB0
+   @iexp ao @(ao) 16 +
+            addpd rB0, rC11
+         #endif
+@endiwhile
+         #if defined(BETA1) || defined(BETAN1)
+            BETCOP -128(pC), rC00
+            MOVAPD rC00, -128(pC)
+            BETCOP -112(pC), rC01
+            MOVAPD rC01, -112(pC)
+            BETCOP -96(pC), rC02
+            MOVAPD rC02, -96(pC)
+            BETCOP -80(pC), rC03
+            MOVAPD rC03, -80(pC)
+            BETCOP -64(pC), rC04
+            MOVAPD rC04, -64(pC)
+            BETCOP -48(pC), rC05
+            MOVAPD rC05, -48(pC)
+            BETCOP -32(pC), rC06
+            MOVAPD rC06, -32(pC)
+            BETCOP -16(pC), rC07
+            MOVAPD rC07, -16(pC)
+            BETCOP (pC), rC08
+            MOVAPD rC08, (pC)
+            BETCOP 16(pC), rC09
+            MOVAPD rC09, 16(pC)
+            BETCOP 32(pC), rC10
+            MOVAPD rC10, 32(pC)
+            BETCOP 48(pC), rC11
+            MOVAPD rC11, 48(pC)
+         #else
+            MOVAPD rC00, -128(pC)
+            MOVAPD rC01, -112(pC)
+            MOVAPD rC02, -96(pC)
+            MOVAPD rC03, -80(pC)
+            MOVAPD rC04, -64(pC)
+            MOVAPD rC05, -48(pC)
+            MOVAPD rC06, -32(pC)
+            MOVAPD rC07, -16(pC)
+            MOVAPD rC08, (pC)
+            MOVAPD rC09, 16(pC)
+            MOVAPD rC10, 32(pC)
+            MOVAPD rC11, 48(pC)
+         #endif
+         add incPF, pfA
+         add incPF, pfB
+         add $192, pC
+         add $KB*1*8, pB   /* pB += KB*NU*sizeof */
+      sub $1, nnu
+      jnz MNLOOP
+      mov nnu0, nnu
+      mov pB0, pB
+      add incAm, pA
+   sub $1, nmu
+   jnz MNLOOP
+
+/* DONE: */
+   movq    (%rsp), %rbp
+   movq    8(%rsp), %rbx
+   movq    16(%rsp), %r12
+@skip   movq    24(%rsp), %r13
+@skip   movq    32(%rsp), %r14
+@skip   movq    40(%rsp), %r15
+   add $FSIZE, %rsp
+   ret
+#if 0
+.global findSize
+findSize:
+mov $SS1-SS0, %rax
+ret
+SS0:
+SS1:
+#endif
+@ROUT ATL_sammm32x1x256_sse.S
+   @define mu @48@
+   @define nu @1@
+@extract -b @(topd)/gen.inc what=crsetup
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2013
+#include "atlas_asm.h"
+#define nmu     %rdi
+#define nnu     %rsi
+#define nnu0    %r10
+#define pA      %rcx
+#define pB      %rax
+#define pC      %r9
+#define pfA     %rbp
+#define pB0     %r12
+#define incPF   %rbx
+#define pfB     %rdx
+#define incAm   %r11 
+@skip #define pfC     %r13
+
+#define rA0     %xmm0
+#define rB0     %xmm1
+#define rB1     %xmm2
+#define rB2     %xmm3
+#define rB3     %xmm4
+#define rC00    %xmm5
+#define rC01    %xmm6
+#define rC02    %xmm7
+#define rC03    %xmm8
+#define rC04    %xmm9
+#define rC05    %xmm10
+#define rC06    %xmm11
+#define rC07    %xmm12
+#define rC08    %xmm13
+#ifndef prefA
+   #if KB <= 72
+      #define prefA prefetcht1
+   #else
+      #define prefA prefetcht1
+   #endif
+#endif
+#ifndef prefB
+   #if KB <= 72
+      #define prefB prefetcht0
+   #else
+      #define prefB prefetcht1
+   #endif
 #endif
 #ifndef prefC
    #ifdef ATL_3DNow
@@ -6367,10 +6667,15 @@ ATL_asmdecor(ATL_USERMM):
 /*
  * Save callee-saved iregs
  */
+     prefetcht0 (pA)
    sub $FSIZE, %rsp
+     prefetcht0 (%r8)
    movq    %rbp, 0(%rsp)
+     prefetcht0 64(pA)
    movq    %rbx, 8(%rsp)
+     prefetcht0 128(pA)
    movq    %r12, 16(%rsp)
+     prefetcht0 192(pA)
 @skip   movq    %r13, 24(%rsp)
 @skip   movq    %r14, 32(%rsp)
 @skip   movq    %r15, 40(%rsp)
@@ -6378,39 +6683,48 @@ ATL_asmdecor(ATL_USERMM):
  * Load paramaters
  */
    movq %r8, pB
+     prefetcht0 256(pA)
    mov nnu, nnu0
+     prefetcht0 320(pA)
    movq FSIZE+16(%rsp), pfB     /* pf = pBn */
+     prefetcht0 384(pA)
    movq FSIZE+8(%rsp), pfA      /* pfB = pAn */
 @skip   movq FSIZE+24(%rsp), pfC    /* pfC = pCn */
-   mov $4*@(mu)*@(nu), incPF
+     prefetcht0 448(pA)
+   mov $48*1*4, incPF   /* incPF = MU*NU*sizeof */
 /*
  * Maximize are small-op size by adding 128 to ptrs
  */
    sub $-128, pA
+     prefetcht0 512(pA)
    sub $-128, pB
-   sub $-128, pC
-   mov $KB*4*4, incAm           /* incAm = KB*MU*size */
+     prefetcht0 576(pA)
+   sub $-128, pfA
+   sub $-128, pfB
+@skip   sub $-128, pfC
+   mov $KB*32*4, incAm           /* incAm = KB*MU*size */
    movq pB, pB0
 
-           ALIGN32
+   ALIGN16
    .local MNLOOP
    MNLOOP:
 /*
- *       Peel first iteration of K-loop to handle init of C to 0
+ *       Peel 1st iteration for zeroing or rCxx & prefetch 
  */
-#if 1
          xorps rC00, rC00
-         movaps rC00, rC01
+         xorps rC01, rC01
          xorps rC02, rC02
-         movaps rC00, rC03
+         xorps rC03, rC03
          xorps rC04, rC04
-         movaps rC00, rC05
+         xorps rC05, rC05
          xorps rC06, rC06
-         movaps rC00, rC07
-         xorps rC08, rC08
-         movaps rC00, rC09
-         xorps rC10, rC10
-         movaps rC00, rC11
+         xorps rC07, rC07
+#if 0
+         movaps -128(pB), rB3    /* fmisc */
+         pshufd $0x00, rB3, rB0  /* fadd */
+         pshufd $0x55, rB3, rB1  /* fmul */
+         pshufd $0xAA, rB3, rB2  /* fadd */
+         shufps $0xFF, rB3, rB3  /* fmul */
 #endif
 /*
  *       ==========================
@@ -6420,95 +6734,188 @@ ATL_asmdecor(ATL_USERMM):
 @iexp ao -128 0 +
 @iexp bo -128 0 +
 @iexp k 0 0 +
+            movaps @(bo)(pB), rB3   /* fmisc */
+   @iexp bo @(bo) 16 +
+         ALIGN16
 @iwhile k < 256
+         #if KB > @(k)
+   @iexp k @(k) 1 +
+            pshufd $0x00, rB3, rB0  /* fadd */
+            pshufd $0x55, rB3, rB1  /* fmul */
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            pshufd $0xAA, rB3, rB2  /* fadd */
+            shufps $0xFF, rB3, rB3  /* fmul */
+            nop
+            mulps rB0, rA0
+            addps rA0, rC00
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB0, rA0
+            addps rA0, rC01
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB0, rA0
+            addps rA0, rC02
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB0, rA0
+            addps rA0, rC03
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB0, rA0
+            addps rA0, rC04
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB0, rA0
+            addps rA0, rC05
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB0, rA0
+            addps rA0, rC06
+            mulps @(ao)(pA), rB0
+   @iexp ao @(ao) 16 +
+            addps rB0, rC07
+         #endif
          #if KB > @(k)
    @iexp k @(k) 1 +
             movaps @(ao)(pA), rA0
    @iexp ao @(ao) 16 +
-            pshufd $0x00, @(bo)(pB), rB0
-            mulps rA0, rB0
-            addps rB0, rC00
-            pshufd $0x55, @(bo)(pB), rB0
-            mulps rA0, rB0
-            addps rB0, rC01
-            pshufd $0xAA, @(bo)(pB), rB0
-            mulps rA0, rB0
-            addps rB0, rC02
-            pshufd $0xFF, @(bo)(pB), rB0
-            mulps rA0, rB0
-            addps rB0, rC03
-   @iexp bo @(bo) 16 +
-            pshufd $0x00, @(bo)(pB), rB0
-            mulps rA0, rB0
-            addps rB0, rC04
-            pshufd $0x55, @(bo)(pB), rB0
-            mulps rA0, rB0
-            addps rB0, rC05
-            pshufd $0xAA, @(bo)(pB), rB0
-            mulps rA0, rB0
-            addps rB0, rC06
-            pshufd $0xFF, @(bo)(pB), rB0
-            mulps rA0, rB0
-            addps rB0, rC07
-   @iexp bo @(bo) 16 +
-            pshufd $0x00, @(bo)(pB), rB0
-            mulps rA0, rB0
-            addps rB0, rC08
-            pshufd $0x55, @(bo)(pB), rB0
-            mulps rA0, rB0
-            addps rB0, rC09
-            pshufd $0xAA, @(bo)(pB), rB0
-            mulps rA0, rB0
-            addps rB0, rC10
-            pshufd $0xFF, @(bo)(pB), rB0
-            mulps rA0, rB0
-            addps rB0, rC11
+            mulps rB1, rA0
+            addps rA0, rC00
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB1, rA0
+            addps rA0, rC01
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB1, rA0
+            addps rA0, rC02
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB1, rA0
+            addps rA0, rC03
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB1, rA0
+            addps rA0, rC04
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB1, rA0
+            addps rA0, rC05
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB1, rA0
+            addps rA0, rC06
+            mulps @(ao)(pA), rB1
+   @iexp ao @(ao) 16 +
+            addps rB1, rC07
+         #endif
+         #if KB > @(k)
+   @iexp k @(k) 1 +
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB2, rA0
+            addps rA0, rC00
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB2, rA0
+            addps rA0, rC01
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB2, rA0
+            addps rA0, rC02
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB2, rA0
+            addps rA0, rC03
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB2, rA0
+            addps rA0, rC04
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB2, rA0
+            addps rA0, rC05
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB2, rA0
+            addps rA0, rC06
+            mulps @(ao)(pA), rB2
+   @iexp ao @(ao) 16 +
+            addps rB2, rC07
+         #endif
+         #if KB > @(k)
+   @iexp k @(k) 1 +
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB3, rA0
+            addps rA0, rC00
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB3, rA0
+            addps rA0, rC01
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB3, rA0
+            addps rA0, rC02
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB3, rA0
+            addps rA0, rC03
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB3, rA0
+            addps rA0, rC04
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB3, rA0
+            addps rA0, rC05
+            movaps @(ao)(pA), rA0
+   @iexp ao @(ao) 16 +
+            mulps rB3, rA0
+            addps rA0, rC06
+            movaps @(ao)(pA), rA0
+            mulps @(ao)(pA), rB3
+   @iexp ao @(ao) 16 +
+            addps rB3, rC07
+            #if KB > @(k)
+               movaps @(bo)(pB), rB3   /* fmisc */
+            #endif
    @iexp bo @(bo) 16 +
          #endif
 @endiwhile
          #if defined(BETA1) || defined(BETAN1)
-            BETCOP -128(pC), rC00
-            movaps rC00, -128(pC)
-            BETCOP -112(pC), rC01
-            movaps rC01, -112(pC)
-            BETCOP -96(pC), rC02
-            movaps rC02, -96(pC)
-            BETCOP -80(pC), rC03
-            movaps rC03, -80(pC)
-            BETCOP -64(pC), rC04
-            movaps rC04, -64(pC)
-            BETCOP -48(pC), rC05
-            movaps rC05, -48(pC)
-            BETCOP -32(pC), rC06
-            movaps rC06, -32(pC)
-            BETCOP -16(pC), rC07
-            movaps rC07, -16(pC)
-            BETCOP (pC), rC08
-            movaps rC08, (pC)
-            BETCOP 16(pC), rC09
-            movaps rC09, 16(pC)
-            BETCOP 32(pC), rC10
-            movaps rC10, 32(pC)
-            BETCOP 48(pC), rC11
-            movaps rC11, 48(pC)
+            BETCOP (pC), rC00
+            movaps rC00, (pC)
+            BETCOP 16(pC), rC01
+            movaps rC01, 16(pC)
+            BETCOP 32(pC), rC02
+            movaps rC02, 32(pC)
+            BETCOP 48(pC), rC03
+            movaps rC03, 48(pC)
+            BETCOP 64(pC), rC04
+            movaps rC04, 64(pC)
+            BETCOP 80(pC), rC05
+            movaps rC05, 80(pC)
+            BETCOP 96(pC), rC06
+            movaps rC06, 96(pC)
+            BETCOP 112(pC), rC07
+            movaps rC07, 112(pC)
          #else
-            movaps rC00, -128(pC)
-            movaps rC01, -112(pC)
-            movaps rC02, -96(pC)
-            movaps rC03, -80(pC)
-            movaps rC04, -64(pC)
-            movaps rC05, -48(pC)
-            movaps rC06, -32(pC)
-            movaps rC07, -16(pC)
-            movaps rC08, (pC)
-            movaps rC09, 16(pC)
-            movaps rC10, 32(pC)
-            movaps rC11, 48(pC)
+            movaps rC00, (pC)
+            movaps rC01, 16(pC)
+            movaps rC02, 32(pC)
+            movaps rC03, 48(pC)
+            movaps rC04, 64(pC)
+            movaps rC05, 80(pC)
+            movaps rC06, 96(pC)
+            movaps rC07, 112(pC)
          #endif
          add incPF, pfA
          add incPF, pfB
-         add $192, pC
-         add $KB*12*4, pB
+         add $128, pC
+         add $KB*1*4, pB   /* pB += KB*NU*sizeof */
       sub $1, nnu
       jnz MNLOOP
       mov nnu0, nnu
@@ -6534,4 +6941,3 @@ ret
 SS0:
 SS1:
 #endif
-
