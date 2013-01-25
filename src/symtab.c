@@ -822,3 +822,19 @@ void WriteSTToFile(char *fname)
    }
    fclose(fp);
 }
+
+void PrintSymtabStaticMember(FILE *fpout)
+{
+   fprintf(fpout, "\n");
+   fprintf(fpout, "INTERNAL MEMBER OF SYMTAB\n");
+   fprintf(fpout, "-------------------------\n");
+   fprintf(fpout, "N = %d\n", N);
+   fprintf(fpout, "Nalloc = %d\n", Nalloc);
+   fprintf(fpout, "niloc = %d\n", niloc);
+   fprintf(fpout, "nlloc = %d\n", nlloc);
+   fprintf(fpout, "ndloc = %d\n", ndloc);
+   fprintf(fpout, "nvfloc = %d\n", nvfloc);
+   fprintf(fpout, "nvdloc = %d\n", nvdloc);
+   fprintf(fpout, "-------------------------\n");
+}
+
