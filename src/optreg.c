@@ -410,7 +410,12 @@ IGNODE *NewIGNode(BBLOCK *blk, short var)
                  NULL;
    if (blk)
    {
+/*
+ *    FIXME: although NewBitVec() returns int, myblkvec is short. So, when 
+ *    it returns 65536, it is trancated into 0 in myblkvec.
+ */
       new->myblkvec = NewBitVec(blk->bnum);
+      assert(new->myblkvec);
       SetVecBit(new->myblkvec, blk->bnum-1, 1);
    }
    else
@@ -1313,8 +1318,9 @@ int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
             ip->inst[2] = -ig->reg;
             break;
          default:
-            fprintf(stderr,"\n\nWARNING(%s,%d): inst %d being var2reged!!\n\n",
-                    __FILE__, __LINE__, ip->inst[0]);
+            /*fprintf(stderr,"\n\nWARNING(%s,%d): inst %d being var2reged!!\n\n",
+                    __FILE__, __LINE__, ip->inst[0]);*/
+            fko_warn(__LINE__,"\n\ninst %d being var2reged!!\n\n", ip->inst[0]);
          }
          CalcThisUseSet(ip);
          CHANGE++;
@@ -1642,7 +1648,7 @@ int AsgGlobalLoopVars(LOOPQ *loop, short *iregs, short *fregs, short *dregs)
    INSTQ *ip;
    short *sa, *s;
    extern int FKO_BVTMP;
-short id;
+   short id;
 
 /*
  * Find all variables set in list
@@ -1683,6 +1689,7 @@ short id;
       {
          k = STflag[k-1-TNREG];
          k = FLAG2PTYPE(k);
+
 #if 0    /* previous implementation*/
          if (k == T_INT)
          {
@@ -1713,7 +1720,7 @@ short id;
                       STname[sa[i]-TNREG], __FILE__);
             return(1);
          }
-#endif
+#else
 /*    
  *       Majedul: for float or double variable, ST index is stored in 
  *       appropriate regs array and store -1 to block the other. for 
@@ -1751,10 +1758,24 @@ short id;
          }
          else
          {
-            fko_error(__LINE__, "Out of regs in global asg, var=%s, file=%s\n",
-                      STname[sa[i]-TNREG], __FILE__);
+            /*PrintST(stderr);*/
+#if 1
+            /*fprintf(stderr, "m=%d, n=%d, k=%d\n", m, n, k);*/
+            fprintf(stderr,"\nvariable list: \n");
+            for (j=1; j <= sa[0]; j++)
+            {
+               fprintf(stderr,"%s[%d], ", 
+                       STname[sa[j]-1-TNREG] ? STname[sa[j]-1-TNREG]: "null", 
+                       sa[j]);
+            }
+            fprintf(stderr,"\n\n");
+#endif
+            fko_error(__LINE__, 
+                      "Out of regs in global asg, id=%d, var=%s, file=%s\n",
+                      sa[i]-TNREG, STname[sa[i]-1-TNREG], __FILE__);
             return(1);
          }
+#endif
       }
    }
    free(sa);
