@@ -322,14 +322,23 @@ short FindReadUseType(INSTQ *ip, short var, int blkvec)
          while (ip->next->inst[0] == FLD || ip->next->inst[0] == FLDD)
             ip=ip->next;
          assert(ip->next);
-
+#if 0
+         fprintf(stderr, "%s : %d %d %d\n", instmnem[ip->next->inst[0]], 
+                 ip->next->inst[1], ip->next->inst[2], ip->next->inst[3]);
+#endif
       if (ip->next->inst[0] == FADD || ip->next->inst[0] == FADDD ||
           ip->next->inst[0] == FMAC || ip->next->inst[0] == FMACD)
          j |= VS_ACC;
-      else if (IS_STORE(ip->next->inst[0])&& STpts2[ip->next->inst[2]-1] == var)
+/*
+ * FIXED: inst[2] always be a register for store. 
+ * So, STpts2[ip->next->inst[2]-1] should be invalid. If inst[1] and var are
+ * same, no need to recurse again! 
+ * NOTE: logic of this recursion should be checked !
+ */
+      else if (IS_STORE(ip->next->inst[0])&& STpts2[ip->next->inst[1]-1] == var)
       {
          j |= FindReadUseType(ip->next, var, blkvec);
-         j |= FindReadUseType(ip->next, STpts2[ip->next->inst[1]-1], blkvec);
+       /*j |= FindReadUseType(ip->next, STpts2[ip->next->inst[1]-1], blkvec);*/
       }
       else 
          j |= VS_MUL; /* VS_MUL represents anything but accumulator */
