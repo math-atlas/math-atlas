@@ -663,14 +663,22 @@ char *instmnem[] =
 */
                      
 #define IS_IOPCC(i_) ((i_) == ANDCC || (i_) == SUBCC || (i_) == ANDCC)
+/*
+ * NOTE: blend operation is different with respect to mem use
+ */
 #define IS_NOMEM(i_) ((i_) == MUL || (i_) == UMUL || (i_) == DIV || \
-                      (i_) == UDIV)
-
+                      (i_) == UDIV || (i_) == FCMOV1 || (i_) == FCMOV2 || \
+                      (i_) == FCMOVD1 || (i_) == FCMOVD2 || (i_) == VFCMOV1 || \
+                      (i_) == VFCMOV2 || (i_) == VDCMOV1 || (i_) == VDCMOV2 )  
+/*
+ * NOTE: FMA4 in AMD can be re ordered, src2 can be mem. need to consider
+ * this again while implemting other FMAC like: FMA3 ... 
+ */
 #define IS_REORD(i_) ((i_) == AND || (i_) == ANDCC || (i_) == XOR || \
                       (i_) == FMUL || (i_) == FADD || \
                       (i_) == FMULD || (i_) == FADDD || \
                       (i_) == VDADD || (i_) == VDMUL || \
-                      (i_) == VFADD || (i_) == VFMUL)
+                      (i_) == VFADD || (i_) == VFMUL || IS_MAC(i_) )
 /*
  * Majedul: These are the instructions where destination is inherently used as
  * one of the sources. This is due to map 4 operands instruction into our 

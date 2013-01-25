@@ -2,7 +2,17 @@
 #define FKO_TYPES_H
 
 #define uchar unsigned char
-#define ushort unsigned short
+
+/*
+ * FIXME: After implementing SV and UNROLLING of SV, short are no longer 
+ * enough. bitvec exceeds 65535 .
+ */
+#if 1
+   #define ushort unsigned short
+#else /* doesn't work ! */
+   #define ushort unsigned int
+   typedef int short;
+#endif
 
 union valoff
 {
