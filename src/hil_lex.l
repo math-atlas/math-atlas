@@ -12,7 +12,7 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 [\n]    {lnno++;}
 [-]?{ICON}"."{ICON}[e,E][-+]?{ICON} { sscanf(yytext, "%f", &yylval.fnum);  
        return(FCONST); }
-{ICON}"\."{ICON}([d,D]ICON)? { yylval.dnum = atof(yytext); 
+[-]?{ICON}"\."{ICON}([e,E][-+]?{ICON}D)? { yylval.dnum = atof(yytext); 
        return(DCONST); }
 {ICON}	{ yylval.inum = atoi(yytext); return(ICONST); }
 {HCON}    { sscanf(yytext, "%x", &yylval.inum);  return(ICONST); }
