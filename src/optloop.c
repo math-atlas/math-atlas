@@ -3766,18 +3766,13 @@ OPTLOOP=1
             CalcInsOuts(bbbase);
             CalcAllDeadVariables();
          }
-
-         if (npaths > 2)
-         {
-            /*fprintf(fpout, "      RedCompReducesToOnePath=%d\n",0);*/
-            RC = 0;
-         }
-         else
-         {
-            /*fprintf(fpout, "      RedCompReducesToOnePath=%d\n",1);*/
-            UpdateOptLoopWithMaxMinVars1(optloop);
-            RC = !(IfConvWithRedundantComp());
-         }
+/*
+ *       Right now, VRC only can be performed if all paths are vectorizable
+ *       We will need an analyzer for RC later
+ */
+         /*fprintf(fpout, "      RedCompReducesToOnePath=%d\n",1);*/
+         UpdateOptLoopWithMaxMinVars1(optloop);
+         RC = !(IterativeRedCom());
          fprintf(fpout, "      RedCompReducesToOnePath=%d\n",RC);
          
          if (RC)
@@ -5866,8 +5861,8 @@ void MovInstFromBlkToBlk(BBLOCK *fromblk, BBLOCK *toblk)
          ip = RemoveInstFromQ(ip);
       }
       else
-         /*ip = ip->next;*/
-         ip = RemoveInstFromQ(ip); /* delete all */
+         ip = ip->next;
+         /*ip = RemoveInstFromQ(ip);*/ /* delete all */
    }
 }
 
@@ -6260,6 +6255,12 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
    sp = NULL;
    err = 0;
    assert(ifblk); /* ifblk can't be NULL */
+
+#if 0
+   fprintf(stderr, "splitblk = %d, ifblk = %d, elseblk = %d\n",
+         splitblk->bnum, ifblk->bnum, elseblk?elseblk->bnum:-1);
+#endif   
+   
 /*
  * figure out the merge blk 
  */
@@ -6329,7 +6330,9 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
    if (elseblk) enewvars = UpdateBlkWithNewVar(elseblk, 2, esetvars);
 
 #if 0
-   sp = isetvars;
+   //sp = isetvars;
+   //sp = esetvars;
+   sp = icmvars;
    fprintf(stderr, "vars set [ifblk]: ");
    for (N=sp[0], i=1; i <=N; i++)
       fprintf(stderr, "%s[%d] ", STname[sp[i]-1], sp[i]-1);
@@ -6593,7 +6596,10 @@ BLIST *FindConditionalHeaders(BBLOCK *head, int iscope, int tails)
    KillBitVec(visitedblks);
    return(headers);
 }
-
+#if 0
+/*
+ * This function is replaced by DelRcBlk() 
+ */
 void DelIfElseBlk(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
 /*
  * this function deletes the if and else blk from the CFG keeping the 
@@ -6603,6 +6609,7 @@ void DelIfElseBlk(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
    BLIST *delblks, *dbl;
    BBLOCK *bp;
    extern BBLOCK *bbbase;
+   extern LOOPQ *optloop;
 /*
  * delete the ifblk and elseblk from CFG 
  * NOTE: 
@@ -6644,6 +6651,11 @@ void DelIfElseBlk(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
                        bp->usucc->ainst1->inst[1], 0);
          }
          splitblk->usucc = bp->usucc; 
+         bp->usucc->preds = AddBlockToList(bp->usucc->preds, splitblk);
+#if 0
+         fprintf(stderr, "add %d as preds to %d\n", splitblk->bnum, 
+                 bp->usucc->bnum);
+#endif
       }
       else
       {
@@ -6664,10 +6676,24 @@ void DelIfElseBlk(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
 /*
  *    Update the preds of other blks 
  */
+#if 0
+      fprintf(stderr, "blist=%s \nbp = %d bp->usucc=%d\n", 
+              PrintBlockList(bp->usucc->preds), bp->bnum, bp->usucc->bnum);
+#endif
       if (bp->usucc)
          bp->usucc->preds = RemoveBlockFromList(bp->usucc->preds, bp);
       if (bp->csucc)
          bp->csucc->preds = RemoveBlockFromList(bp->csucc->preds, bp);
+      assert(bp->usucc->preds);
+      
+/*
+ *    delete this if it is in optloop->blocks, optloop->tails
+ *    NOTE: for a single tail of loop, tail should never be deleted
+ *    NOTE: must re-assign the list as list itself may changed.
+ *    NOTE: still looking ... whether blk ref is used any where else!
+ */
+     optloop->blocks = RemoveBlockFromList(optloop->blocks, bp); 
+     /*RemoveBlockFromList(optloop->tails, bp);*/
 /*
  *    Now delete the blk
  */
@@ -6680,20 +6706,109 @@ void DelIfElseBlk(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
    }
    KillBlockList(delblks);
 }
+#endif
+/*
+ * Generalize delblk for if/else/merge blk
+ */
+void DelRcBlk(BBLOCK *delblk, BBLOCK *splitblk)
+{
+   BBLOCK *bp;
+   BLIST *bl;
+/*
+ * there must be a delblk and splitblk 
+ */
+   if( !delblk || !splitblk) return; 
+
+#if 0
+   fprintf(stderr, "delblk = %d\n", delblk->bnum);
+#endif
+/*
+ * preds of the blk should only be cond header/ split blk
+ */
+   assert( (delblk->preds->blk == splitblk) && !delblk->preds->next );
+/*
+ * 1. update the predecessor of the delblks
+ * if delblk is usucc of its preds, change it to delblk->usucc
+ * otherwise, change the csucc to NULL. There will be no csucc after RC
+ */
+   bp = delblk->preds->blk; /* splitblk */
+/*
+ * incase of else and merge blk
+ */
+   if (bp->usucc == delblk)
+   {
+      if (bp->down != delblk->usucc)
+      {  
+/*
+ *       we assume there is a label at the delblk->usucc, otherwise we need to
+ *       create one.
+ */
+         assert(GET_INST(delblk->usucc->ainst1->inst[0]) == LABEL);
+         if (GET_INST(bp->ainstN->inst[0]) != JMP)
+         {
+            InsNewInst(bp, bp->ainstN, NULL, JMP, -PCREG, 
+                       delblk->usucc->ainst1->inst[1], 0);
+         }
+         else
+         {
+            bp->ainstN->inst[2] = delblk->usucc->ainst1->inst[1];
+         }
+      } /* else we may assume no JMP */
+      bp->usucc = delblk->usucc;
+      delblk->usucc->preds = AddBlockToList(delblk->usucc->preds, bp);
+   }
+   else /* incase of if blk */
+   {
+      bp->csucc = NULL; /* RC would already change the code */
+      assert( !IS_COND_BRANCH(bp->ainstN->inst[0]) );
+   }
+
+/*
+ * 2. Remove delblk from code 
+ */
+   if (delblk->up) /* there must be one */
+   {
+      delblk->up->down = delblk->down;
+      if (delblk->down)
+         delblk->down->up = delblk->up;
+   }
+   else assert(0);
+/*
+ * 3. update preds of other blks
+ */
+   if (delblk->usucc)
+      delblk->usucc->preds = RemoveBlockFromList(delblk->usucc->preds, delblk);
+   if (delblk->csucc)
+      delblk->csucc->preds = RemoveBlockFromList(delblk->csucc->preds, delblk);
+/*
+ * 4. update global lists 
+ */
+   optloop->blocks = RemoveBlockFromList(optloop->blocks, delblk);
+   assert(!FindBlockInList(optloop->tails, delblk));
+/*
+ * Now, it's time to delete the block
+ */
+   KillAllInst(delblk->inst1);
+   KillBlockList(delblk->preds);
+   free(delblk);
+}
 
 int IterativeRedCom()
 /*
  * Applied RC transformation repeatablely until all the conditional blks are 
  * reduce to single blk.
+ * FIXME: This xfrom can't handle  memory write inside the conditional blocks 
+ * yet. All memory writes need to be shifted at the tail of loop. 
  */
 {
    int i, err, CHANGES;
    int ivtails;
+   int isdel;
    char ln[128];
    LOOPQ *lp;
    INSTQ *ippu;
    BLIST *bl, *splitblks;
-   BBLOCK *ifblk, *elseblk;
+   BBLOCK *ifblk, *elseblk, *mergeblk;
    struct ptrinfo *pi0;
    extern BBLOCK *bbbase;
    extern LOOPQ *optloop;
@@ -6721,9 +6836,17 @@ int IterativeRedCom()
       {   
          ifblk = splitblks->blk->csucc;
          if (ifblk->usucc != splitblks->blk->usucc)
+         {
             elseblk = splitblks->blk->usucc;
+            mergeblk = elseblk->usucc;
+         }
          else 
+         {
             elseblk = NULL;
+            mergeblk = splitblks->blk->usucc;
+         }
+         assert(mergeblk == ifblk->usucc);
+
 /*
  *       call RC with this if-cond, this function may delete all inst from 
  *       if/else blk but would not delete the blks.
@@ -6735,17 +6858,70 @@ int IterativeRedCom()
          if (err) 
             break;
 #endif
-         DelIfElseBlk(ifblk, elseblk, splitblks->blk); 
+/*
+ *       NOTE: to do rc iteratively, splitblk and mergeblk should be merged into
+ *       single blk if megreblk is not successor of other blks.
+ *       NOTE: As predecessor info may not be updated after DelIfElseBlk(), 
+ *       perform checking before that.
+ */
+         isdel = 0;
+         if (!FindBlockInList(lp->tails, mergeblk)) /* if not a tail of loop */
+         {
+            isdel = 1;
+            for (bl=mergeblk->preds; bl; bl=bl->next)
+            {
+               if (bl->blk != ifblk && bl->blk != elseblk 
+                     && bl->blk != splitblks->blk)
+               {
+                  isdel = 0; /* used by other blks, can't delete */
+                  break;
+               }
+            }
+         }
+/*
+ *       delete the if/else blk.
+ *       NOTE: I will write more generalize on later
+ */
+         #if 0         
+            DelIfElseBlk(ifblk, elseblk, splitblks->blk); 
+         #else
+            DelRcBlk(ifblk, splitblks->blk);
+            DelRcBlk(elseblk, splitblks->blk);
+         #endif
+         if (isdel)
+         {
+/*
+ *          merge blk can be merged with splitblk        
+ */
+#if 0
+            fprintf(stderr, "mergeblk=%d\n", mergeblk->bnum);
+#endif
+            MovInstFromBlkToBlk(mergeblk, splitblks->blk);
+            DelRcBlk(mergeblk, splitblks->blk); /* generalize later */
+         }
+
          CHANGES = 1;
          CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = CFLOOP = 0;
       }
 /*
  *    Update Loop control with ptr update
+ *    NOTE: if there is a single tail of loop, tail never be deleted as tail 
+ *    must be a merge blk.
+ *
+ *    FIXME: Chicken and egg problem: lp->blocks no longer consistant as blk
+ *    may be deleted, but OptimizeLoopControl would use that!!! can't call
+ *    invalidate loop control before fixing the loop control!!!
  */
-      pi0 = FindMovingPointers(lp->tails);
+      lp = optloop; /* optloop info may be changed! */
+#if 0
+      PrintLoop(stderr, optloop);
+#endif      
+      //pi0 = FindMovingPointers(lp->tails);
+      pi0 = FindMovingPointers(optloop->tails);
       ippu = KillPointerUpdates(pi0,1);
       /*OptimizeLoopControl(lp, 1, 0, NULL);*/
-      OptimizeLoopControl(lp, 1, 0, ippu);
+      //OptimizeLoopControl(lp, 1, 0, ippu);
+      OptimizeLoopControl(optloop, 1, 0, ippu);
       KillAllPtrinfo(pi0);
 /*
  *    Now time to update all the var analysis, next iteration will require that
@@ -6779,7 +6955,10 @@ int IterativeRedCom()
    return(err);
 }
 
-
+/*
+ * this function is replaced by IterativeRedCom()
+ */
+#if 0
 int IfConvWithRedundantComp()
 /*
  * this function will kill the loop control and call the function to RC xform
@@ -6821,3 +7000,4 @@ int IfConvWithRedundantComp()
 
    return(err);
 }
+#endif
