@@ -1989,9 +1989,31 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
    int maxalign, ssize=0;
    int csize=0;/* call parameter area size */
    extern int LOCALIGN, LOCSIZE;
-   int userbp; /* Majedul: to keep track whether rbp is saved */
+/*
+ * FIXME: is LOCSIZE updated? considering the vectorization!!!
+ * LOCSIZE is generated before vectorization at GenPrologueEpilogueStubs. So,
+ * it only has information of the ABSVAL and salar local variable but not the 
+ * vector (neither any vector constant and vector temporary)!!!
+ * NOTE: We can solve this issue by re-counting the locals and updaeting the 
+ * deref here again.
+ */
+#if 1
+/*
+ * This is the final stage before converting assembly from LIL. So, re-count
+ * all the locals and update local derefs accordingly.
+ * NOTE: the stack is unnecessary large now. Not all locals is required to 
+ * save. need to optimize the size of stack frame.
+ */
+   extern BBLOCK *bbbase;
+   MarkUnusedLocals(bbbase);
+   NumberLocalsByType();
+   #ifdef X86_64
+      UpdateLocalDerefs(8);
+   #else
+      UpdateLocalDerefs(4);
+   #endif
+#endif 
 
-   userbp = 0;
    maxalign = align = LOCALIGN;
    lsize = LOCSIZE;
 /*
@@ -2156,6 +2178,9 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
       fprintf(stderr, "lsize = %d\n",lsize);
       fprintf(stderr, "tsize = %d\n",tsize);
       fprintf(stderr, "SAVESP = %d\n",SAVESP);
+      
+      extern void PrintSymtabStaticMember(FILE *fpout);
+      PrintSymtabStaticMember(stderr);
 #endif
 
    #else
@@ -2338,12 +2363,6 @@ void KillUnusedLocals()  /* HERE, HERE: move to symtab */
 {
 }
 
-/*
- * Majedul:
- * Need to check for bug again, specially when mixed data type is used! 
- * check ../test/svtst1.b, ../test/svtst4.b  
- * date: 9/18/12
- */
 void GenPrologueEpilogueStubs(BBLOCK *bbase, int rsav)
 /*
  * Create partially qualified local and para derefs, and generate function
@@ -2355,16 +2374,16 @@ void GenPrologueEpilogueStubs(BBLOCK *bbase, int rsav)
 
    MarkUnusedLocals(bbase); 
    CreateSysLocals();
+/*
+ * FIXME: this function is called before vectorization. So, vector locals are
+ * not considered here (but only system related vector like: ABSVAL, etc.)
+ */
    NumberLocalsByType();
    #ifdef X86_64
       UpdateLocalDerefs(8); /* parameter for integer */
    #else
       UpdateLocalDerefs(4);
    #endif
-/*
- * FIXME: can't work with fixed data type in same kernel. If float and double
- * ptr used in same kernel, can't keep track the parameter !!! 
- */
    CreatePrologue(bbase, rsav);
    GetReg(-1);
    for (blk=bbase; blk->down; blk = blk->down);
