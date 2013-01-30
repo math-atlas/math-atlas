@@ -167,32 +167,32 @@ ATL_asmdecor(ATL_USERMM):
          KLOOP:
             vbroadcastsd (pB), rB0
             FMAC rA0, rB0, rC00
+            add $32, pB
             FMAC rA1, rB0, rC10
+            add $96, pA
             FMAC rA2, rB0, rC20
 
-            vbroadcastsd 8(pB), rB0
+            vbroadcastsd 8-32(pB), rB0
             FMAC rA0, rB0, rC01
             FMAC rA1, rB0, rC11
             FMAC rA2, rB0, rC21
 
-            vbroadcastsd 16(pB), rB0
+            vbroadcastsd 16-32(pB), rB0
             FMAC rA0, rB0, rC02
             FMAC rA1, rB0, rC12
             FMAC rA2, rB0, rC22
 
-            vbroadcastsd 24(pB), rB0
+            vbroadcastsd 24-32(pB), rB0
             FMAC rA0, rB0, rC03
-               vmovapd (pA), rA0
+               vmovapd -96(pA), rA0
             FMAC rA1, rB0, rC13
-               vmovapd 32(pA), rA1
+               vmovapd 32-96(pA), rA1
             FMAC rA2, rB0, rC23
-               vmovapd 64(pA), rA2
+               vmovapd 64-96(pA), rA2
 
-            add $32, pB
-            add $96, pA
                prefetcht0 256(pB)
                prefetcht0 512(pA)
-            sub $1, KK
+            dec %edx
          jnz KLOOP
 KDONE:
          mov KK0, KK
