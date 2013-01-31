@@ -36,7 +36,7 @@
 #define KK      %rdx  /* API reg */
 #define pA      %rcx  /* API reg */
 #define pB      %rax  /* comes in as r9 */
-#define r192    %r9   /* set after mov r9 to pC () */
+#define r256    %r9   /* set after mov r9 to pC () */
 /*
  * Then N-loop variables much less important, so use any orig regs left
  */
@@ -107,7 +107,7 @@ ATL_asmdecor(ATL_USERMM):
    CMOVEq 24(%rsp), pfB
    mov KK, KK0
    sub $-128, pC
-   mov $192, r192
+   mov $256, r256
    mov pA, pA0
    mov pB, pB0
 /*
@@ -190,8 +190,8 @@ ATL_asmdecor(ATL_USERMM):
             FMAC rA2, rB0, rC23
                vmovapd 64-96(pA), rA2
 
-               prefetcht0 256(pB)
-               prefetcht0 512(pA)
+               prefetcht0 (pA,r256,2)
+               prefetcht0 (pB,r256)
             dec %edx
          jnz KLOOP
 KDONE:
