@@ -45,7 +45,7 @@
 #define nnu     %r10  /* comes in as rsi */
 #define pfA     %rbx
 #define pfB     %rbp
-#define incPF   %r12
+#define r192    %r12
 #define KK0     %rdi
 /*
  * We could give a rat's ass about what registers used in outer (M-) loop
@@ -69,16 +69,16 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
 #else
    #define prefC(m_) prefetcht0 m_
 #endif
-#define FMAC vfmadd231pd   /* FMAC m256/r256, rs1, rd */
+#define FMAC vfmadd231ps   /* FMAC m256/r256, rs1, rd */
 #if defined(BETAN) || defined(BETAn)
    #define BETAN1
 #endif
 #ifdef BETAN1
-   #define VCOP vsubpd
+   #define VCOP vsubps
 #else
-   #define VCOP vaddpd
+   #define VCOP vaddps
 #endif
-#define vmovapd vmovaps
+#define vmovaps vmovaps
 .text
 .global ATL_asmdecor(ATL_USERMM)
 ALIGN16
@@ -92,120 +92,158 @@ ATL_asmdecor(ATL_USERMM):
    movq %rbx, -16(%rsp)
    prefetcht0 64(pA)
    movq %r12, -24(%rsp)
-   prefetcht0 -128(pA,r256)
+   prefetcht0 64(%r8)
    movq %r13, -32(%rsp)
-   prefetcht0 -64(pA,r256)
    movq %r14, -40(%rsp)
-   prefetcht0 (pA,r256)
    movq %r15, -48(%rsp)
 /*
  * Load paramaters
  */
-   prefetcht0 64(pA,r256)
    mov %rdi, nmu
-   prefetcht0 64(pB)
    mov %rsi, nnu
-   prefetcht0 -128(pB,r256)
    mov %r8, pB
-   prefetcht0 -64(pB,r256)
    mov %r9, pC
-   prefetcht0 (pB,r256)
    mov nnu, nnu0
-   movq 8(%rsp), pfB      /* pfB = pAn */
-   movq 16(%rsp), pfA     /* pf = pBn */
-   cmp pfA, pB
-   CMOVE pfB, pfA
-   CMOVEq 24(%rsp), pfB
+   movq 8(%rsp), pfA      /* pfB = pAn */
+   movq 16(%rsp), pfB     /* pf = pBn */
+   cmp pfB, pB
+   CMOVE pfA, pfB
+   lea (KK, KK,2), incAm   /* incAm = 3*K */
+   shr $1, KK             /* KK = K/2 */
    mov KK, KK0
    sub $-128, pC
    mov $256, r256
+   mov $192, r192
    mov pA, pA0
    mov pB, pB0
 /*
- * incAm = 12*sizeof*K = 12*8*K = 3*4*8*K = 3*K*32
+ * incAm = 24*sizeof*K = 24*4*K = 3*4*8*K = 3*K*32
  */
-   lea (KK, KK,2), incAm   /* incAm = 3*K */
    shl $5, incAm           /* incAm = 32*3*K */
 
    ALIGN16
    MLOOP:
       NLOOP:
-#if 1
 /*
  *       First iteration peeled to handle init of rC
  */
-            vbroadcastsd (pB), rB0
-            vmovapd (pA), rA0
-            vmulpd rA0, rB0, rC00
-            vmovapd 32(pA), rA1
-            vmulpd rA1, rB0, rC10
-            vmovapd 64(pA), rA2
-            vmulpd rA2, rB0, rC20
-            add $96, pA
+            vbroadcastss (pB), rB0
+            vmovaps (pA), rA0
+            vmulps rA0, rB0, rC00
+            vmovaps 32(pA), rA1
+            vmulps rA1, rB0, rC10
+            vmovaps 64(pA), rA2
+            vmulps rA2, rB0, rC20
 
-            vbroadcastsd 8(pB), rB0
-            vmulpd rA0, rB0, rC01
-//               prefA((pfA))
-//               add $64, pfA
-            vmulpd rA1, rB0, rC11
-//               prefB((pfB))
-//               add $64, pfB
-            vmulpd rA2, rB0, rC21
+            vbroadcastss 4(pB), rB0
+            vmulps rA0, rB0, rC01
+            vmulps rA1, rB0, rC11
                prefC((pC))
+            vmulps rA2, rB0, rC21
 
-            vbroadcastsd 16(pB), rB0
-            vmulpd rA0, rB0, rC02
-            vmulpd rA1, rB0, rC12
-            vmulpd rA2, rB0, rC22
+            vbroadcastss 8(pB), rB0
+            vmulps rA0, rB0, rC02
+            vmulps rA1, rB0, rC12
+               prefB((pfA))
+            vmulps rA2, rB0, rC22
 
-            vbroadcastsd 24(pB), rB0
-            vmulpd rA0, rB0, rC03
-               vmovapd (pA), rA0
-            vmulpd rA1, rB0, rC13
-               vmovapd 32(pA), rA1
-            vmulpd rA2, rB0, rC23
-               vmovapd 64(pA), rA2
-               add $96, pA
+            vbroadcastss 12(pB), rB0
+            vmulps rA0, rB0, rC03
+               vmovaps 96(pA), rA0
+            vmulps rA1, rB0, rC13
+               vmovaps 128(pA), rA1
+            vmulps rA2, rB0, rC23
+               vmovaps 160(pA), rA2
 
-            add $32, pB
-               prefetcht0 (pB,r256)
-               prefetcht0 (pA,r256,2)
-            sub $1, KK
-            jz KDONE
-#endif
-         ALIGN16
-         KLOOP:
-            vbroadcastsd (pB), rB0
+/*
+ *       K=2 peeled iteration
+ */
+            vbroadcastss 16(pB), rB0
             FMAC rA0, rB0, rC00
-            add $32, pB
             FMAC rA1, rB0, rC10
-            add $96, pA
+               prefB((pfA,r192))
             FMAC rA2, rB0, rC20
 
-            vbroadcastsd 8-32(pB), rB0
+            vbroadcastss 20(pB), rB0
             FMAC rA0, rB0, rC01
             FMAC rA1, rB0, rC11
             FMAC rA2, rB0, rC21
 
-            vbroadcastsd 16-32(pB), rB0
+            vbroadcastss 24(pB), rB0
             FMAC rA0, rB0, rC02
             FMAC rA1, rB0, rC12
             FMAC rA2, rB0, rC22
 
-            vbroadcastsd 24-32(pB), rB0
+            vbroadcastss 28(pB), rB0
             FMAC rA0, rB0, rC03
-               vmovapd -96(pA), rA0
+               vmovaps (pA,r192), rA0
             FMAC rA1, rB0, rC13
-               vmovapd 32-96(pA), rA1
+               vmovaps 32(pA,r192), rA1
             FMAC rA2, rB0, rC23
-               vmovapd 64-96(pA), rA2
+               vmovaps 64(pA,r192), rA2
 
+            add $32, pB
+            lea 96(pA, r192), pA
+            dec %edx
+            jz KDONE
+         ALIGN16
+         KLOOP:
+            vbroadcastss (pB), rB0
+            FMAC rA0, rB0, rC00
+            FMAC rA1, rB0, rC10
                prefetcht0 (pA,r256,2)
+            FMAC rA2, rB0, rC20
+
+            vbroadcastss 4(pB), rB0
+            FMAC rA0, rB0, rC01
+            FMAC rA1, rB0, rC11
+            FMAC rA2, rB0, rC21
+
+            vbroadcastss 8(pB), rB0
+            FMAC rA0, rB0, rC02
+            FMAC rA1, rB0, rC12
                prefetcht0 (pB,r256)
+            FMAC rA2, rB0, rC22
+
+            vbroadcastss 12(pB), rB0
+            FMAC rA0, rB0, rC03
+               vmovaps (pA), rA0
+            FMAC rA1, rB0, rC13
+               vmovaps 32(pA), rA1
+            FMAC rA2, rB0, rC23
+               vmovaps 64(pA), rA2
+
+            vbroadcastss 16(pB), rB0
+            FMAC rA0, rB0, rC00
+            add $32, pB
+            FMAC rA1, rB0, rC10
+            FMAC rA2, rB0, rC20
+
+            vbroadcastss 20-32(pB), rB0
+            FMAC rA0, rB0, rC01
+            FMAC rA1, rB0, rC11
+            FMAC rA2, rB0, rC21
+
+            vbroadcastss 24-32(pB), rB0
+            FMAC rA0, rB0, rC02
+            FMAC rA1, rB0, rC12
+            FMAC rA2, rB0, rC22
+
+            vbroadcastss 28-32(pB), rB0
+            FMAC rA0, rB0, rC03
+               vmovaps 96(pA), rA0
+            FMAC rA1, rB0, rC13
+               vmovaps 128-192(pA,r192), rA1
+            FMAC rA2, rB0, rC23
+               vmovaps 160-192(pA,r192), rA2
+
+            add r192, pA
+               prefetcht0 -128(pA,r192,4)
             dec %edx
          jnz KLOOP
 KDONE:
          mov KK0, KK
+         add r192, pfA
          mov pA0, pA
          #ifdef ATL_ARCH_AMDDRIVER
             #ifndef BETA0
@@ -221,7 +259,7 @@ KDONE:
             #ifndef BETA0
                VCOP -64(pC), rC20, rC20
             #endif
-            movapd rC20x, -64(pC)
+            movaps rC20x, -64(pC)
             vextractf128 $1, rC20, -48(pC)
             #ifndef BETA0
                VCOP -32(pC), rC01, rC01
@@ -249,76 +287,76 @@ KDONE:
             movaps rC12x, 96(pC)
             vextractf128 $1, rC12, 112(pC)
             #ifndef BETA0
-               VCOP 128(pC), rC22, rC22
+               VCOP -128(pC,r256), rC22, rC22
             #endif
-            movaps rC22x, 128(pC)
-            vextractf128 $1, rC22, 144(pC)
+            movaps rC22x, -128(pC,r256)
+            vextractf128 $1, rC22, -112(pC,r256)
             #ifndef BETA0
-               VCOP 160(pC), rC03, rC03
+               VCOP -96(pC,r256), rC03, rC03
             #endif
-            movaps rC03x, 160(pC)
-            vextractf128 $1, rC03, 176(pC)
+            movaps rC03x, -96(pC,r256)
+            vextractf128 $1, rC03, -80(pC,r256)
             #ifndef BETA0
-               VCOP 192(pC), rC13, rC13
+               VCOP -64(pC,r256), rC13, rC13
             #endif
-            movaps rC13x, 192(pC)
-            vextractf128 $1, rC13, 208(pC)
+            movaps rC13x, -64(pC,r256)
+            vextractf128 $1, rC13, -48(pC,r256)
             #ifndef BETA0
-               VCOP 224(pC), rC23, rC23
+               VCOP -32(pC,r256), rC23, rC23
             #endif
-            movaps rC23x, 224(pC)
-            vextractf128 $1, rC23, 240(pC)
+            movaps rC23x, -32(pC,r256)
+            vextractf128 $1, rC23, -16(pC,r256)
          #else
             #ifndef BETA0
                VCOP -128(pC), rC00, rC00
             #endif
-            vmovapd rC00, -128(pC)
+            vmovaps rC00, -128(pC)
             #ifndef BETA0
                VCOP -96(pC), rC10, rC10
             #endif
-            vmovapd rC10, -96(pC)
+            vmovaps rC10, -96(pC)
             #ifndef BETA0
                VCOP -64(pC), rC20, rC20
             #endif
-            vmovapd rC20, -64(pC)
+            vmovaps rC20, -64(pC)
             #ifndef BETA0
                VCOP -32(pC), rC01, rC01
             #endif
-            vmovapd rC01, -32(pC)
+            vmovaps rC01, -32(pC)
             #ifndef BETA0
                VCOP (pC), rC11, rC11
             #endif
-            vmovapd rC11, (pC)
+            vmovaps rC11, (pC)
             #ifndef BETA0
                VCOP 32(pC), rC21, rC21
             #endif
-            vmovapd rC21, 32(pC)
+            vmovaps rC21, 32(pC)
             #ifndef BETA0
                VCOP 64(pC), rC02, rC02
             #endif
-            vmovapd rC02, 64(pC)
+            vmovaps rC02, 64(pC)
             #ifndef BETA0
                VCOP 96(pC), rC12, rC12
             #endif
-            vmovapd rC12, 96(pC)
+            vmovaps rC12, 96(pC)
             #ifndef BETA0
-               VCOP 128(pC), rC22, rC22
+               VCOP 128-256(pC,r256), rC22, rC22
             #endif
-            vmovapd rC22, 128(pC)
+            vmovaps rC22, 128-256(pC,r256)
             #ifndef BETA0
-               VCOP 160(pC), rC03, rC03
+               VCOP 160-256(pC,r256), rC03, rC03
             #endif
-            vmovapd rC03, 160(pC)
+            vmovaps rC03, 160-256(pC,r256)
             #ifndef BETA0
-               VCOP 192(pC), rC13, rC13
+               VCOP 192-256(pC,r256), rC13, rC13
             #endif
-            vmovapd rC13, 192(pC)
+            vmovaps rC13, 192-256(pC,r256)
             #ifndef BETA0
-               VCOP 224(pC), rC23, rC23
+               VCOP 224-256(pC,r256), rC23, rC23
             #endif
-            vmovapd rC23, 224(pC)
+            vmovaps rC23, 224-256(pC,r256)
          #endif
-         add $384, pC
+         lea (pC, r192,2), pC   /* pC += MU*NU*sizeof = 12*4*8 = 384 */
          sub $1, nnu
       jnz NLOOP
       mov nnu0, nnu
@@ -335,3 +373,12 @@ KDONE:
    movq -40(%rsp), %r14
    movq -48(%rsp), %r15
    ret
+#if 0
+.global findSize
+findSize:
+mov $SS1-SS0, %rax
+ret
+SS0:
+SS1:
+#endif
+
