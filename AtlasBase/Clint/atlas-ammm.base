@@ -3007,6 +3007,56 @@ ATL_mmnode_t *MergeCases
    return(mb);
 }
 
+#define HUGE_NB 180
+ATL_mmnode_t *WinnowHugeNB
+(
+   int imf,
+   ATL_mmnode_t *mb  /* queue of cases */
+)
+/*
+ * Removes any NB >= HUGE_NB that aren't at least 2% faster than smaller cases
+ */
+{
+   ATL_mmnode_t *mp, *p, *prev=mb;
+   double mfB;
+
+   if (!mb || !mb->next)
+      return(mb);
+   mp = mb->next;
+/*
+ * Find best-performing kernel below HUGE_NB
+ */
+   mfB = mp->mflop[imf];
+   for (mp=mb->next; mp; mp = mp->next)
+   {
+      if (mp->mbB < HUGE_NB && mp->nbB < HUGE_NB && mp->kbB < HUGE_NB)
+         mfB = Mmax(mfB, mp->mflop[imf]);
+      else
+         break;
+      prev = mp;
+   }
+/*
+ * If no kernels above threshold, return original queue
+ */
+   if (!mp)
+      return(mb);
+/* 
+ * mp points to first NB above threshold, but there is no point in deleting
+ * small NB if we leave large NB, so delete only from the end of queue
+ */
+  do
+  {
+     for (p=mp; p->next; p = p->next);
+     if (p->mflop[imf] <= 1.02*mfB)
+        mp = RemoveMMNodeFromQ(mp, p);
+     else  /* stop removing stuff */
+        break;
+  }
+  while (mp);
+  prev->next = mp;
+  return(mb);
+}
+
 ATL_mmnode_t *WinnowCases
 (
    int imf,
@@ -3022,6 +3072,7 @@ ATL_mmnode_t *WinnowCases
 
    if (!mb)
       return(NULL);
+   mb = WinnowHugeNB(imf, mb);
    mp = mb->next;
    while (mp)
    {
@@ -3087,6 +3138,7 @@ ATL_mmnode_t *MergeAndWinnowCases
    }
    KillAllMMNodes(umb);
    KillAllMMNodes(gmb);
+   mmb = WinnowHugeNB(0, mmb);
    return(mmb);
 }
 

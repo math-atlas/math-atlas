@@ -9834,3 +9834,247 @@ ret
 SS0:
 SS1:
 #endif
+@ROUT ATL_sammm16x2x256_sse2.S
+@skip @extract -b @(topd)/gen.inc what=crsetup
+@skip @extract -b @(topd)/cw.inc lang=c -define cwdate 2013
+#include "atlas_asm.h"
+
+#define rm0     %xmm0
+#define rB0     %xmm1
+#define rB1     %xmm2
+#define rA0     %xmm3
+#define rA1     %xmm4
+#define rA2     %xmm5
+#define rA3     %xmm6
+#define rC00    %xmm7
+#define rC10    %xmm8
+#define rC20    %xmm9
+#define rC30    %xmm10
+#define rC01    %xmm11
+#define rC11    %xmm12
+#define rC21    %xmm13
+#define rC31    %xmm14
+/*
+ * Prioritize original registers for inner-loop operations, but inc regs
+ * can be anything w/o changing opcode size, so use new regs for those
+ */
+#define KK      %rdx  /* API reg */
+#define pA      %rcx  /* API reg */
+#define pB      %rax  /* comes in as r9 */
+#define r24     %r9   /* set after mov r9 to pC () */
+/*
+ * Then N-loop variables much less important, so use any orig regs left
+ */
+#define pA0     %r8   /* set after mov r8 to pB (rax) */
+#define pC      %rsi  /* set after mov rsi to nnu () */
+#define nnu     %r10  /* comes in as rsi */
+#define pfA     %rbx
+#define pfB     %rbp
+#define incPF   %r12
+#define KK0     %rdi
+/*
+ * We could give a rat's ass about what registers used in outer (M-) loop
+ */
+#define nmu     %r11  /* comes in as rdi */
+#define incAm   %r13
+#define nnu0    %r14
+#define pB0     %r15
+/*
+                    rdi      rsi    rdx        rcx         r8        r9
+void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
+                  8(%rsp)    16(%rsp)     24(%rsp)
+                CTYPE *pAn, CTYPE *pBn, CTYPE *pCn);
+ */
+#define PFBDIST 128
+#define PFADIST 128
+#define prefA(m_) prefetcht2 m_
+#define prefB(m_) prefetcht2 m_
+#define prefC(m_) prefetcht0 m_
+#define FMAC vfmadd231pd   /* FMAC m256/r256, rs1, rd */
+#if defined(BETAN) || defined(BETAn)
+   #define BETAN1
+#endif
+#ifdef BETAN1
+   #define VCOP subps
+#else
+   #define VCOP addps
+#endif
+.text
+.global ATL_asmdecor(ATL_USERMM)
+ALIGN16
+ATL_asmdecor(ATL_USERMM):
+/*
+ * Save callee-saved iregs
+ */
+   movq %rbp, -8(%rsp)
+   movq %rbx, -16(%rsp)
+   movq %r12, -24(%rsp)
+   movq %r13, -32(%rsp)
+   movq %r14, -40(%rsp)
+   movq %r15, -48(%rsp)
+/*
+ * Load paramaters
+ */
+   mov %rdi, nmu
+   mov %rsi, nnu
+   mov %r8, pB
+   mov %r9, pC
+   mov nnu, nnu0
+   movq 8(%rsp), pfB      /* pfB = pAn */
+   movq 16(%rsp), pfA     /* pf = pBn */
+   cmp pfB, pB
+   CMOVE pfA, pfB
+   mov KK, KK0
+   sub $-128, pfB
+   sub $-128, pfA
+   sub $-128, pA
+   sub $-128, pB
+   mov $24, r24
+   mov pA, pA0
+   mov pB, pB0
+   mov $8*4*8, incPF
+/*
+ * incAm = MU*K*sizeof = 16*K*4 = 64*K
+ */
+   mov KK, incAm
+   shl $6, incAm           /* incAm = 64*K */
+
+   ALIGN16
+   MLOOP:
+      NLOOP:
+/*
+ *       First iteration peeled to handle init of rC
+ */
+         xorps rC00, rC00
+         movaps rC00, rC10
+         xorps rC20, rC20
+         movaps rC00, rC30
+         xorps rC01, rC01
+         movaps rC00, rC11
+         xorps rC21, rC21
+         movaps rC00, rC31
+
+         movddup -128(pB), rB0  /* rB0 = {b1, b0, b1, b0} */
+         movshdup rB0, rB1      /* rB1 = {b1, b1, b1, b1} */
+         movsldup rB0, rB0      /* rB0 = {b0, b0, b0, b0} */
+/*
+ *       ==========================
+ *       Completely unrolled K-loop
+ *       ==========================
+ */
+         ALIGN16
+@iexp ao -128 0 +
+@iexp bo -120 0 +
+@iexp k 0 0 +
+@iwhile k < 256
+         #if KB > @(k)
+   @iexp k @(k) 1 +
+            movaps @(ao)(pA), rA0
+            @iexp ao @(ao) 16 +
+            movaps rB0, rm0
+            mulps rA0, rm0
+            addps rm0, rC00
+
+            movaps @(ao)(pA), rA1
+            @iexp ao @(ao) 16 +
+            movaps rB0, rm0
+            mulps rA1, rm0
+            addps rm0, rC10
+
+            movaps @(ao)(pA), rA2
+            @iexp ao @(ao) 16 +
+            movaps rB0, rm0
+            mulps rA2, rm0
+            addps rm0, rC20
+
+            movaps @(ao)(pA), rA3
+            @iexp ao @(ao) 16 +
+            mulps rA3, rB0
+            addps rB0, rC30
+
+            mulps rB1, rA0
+            addps rA0, rC01
+            #if KB > @(k)
+               movddup @(bo)(pB), rB0
+               @iexp bo @(bo) 8 +
+            #endif
+
+            mulps rB1, rA1
+            addps rA1, rC11
+            #if KB > @(k)
+               movshdup rB0, rm0
+            #endif
+
+            mulps rB1, rA2
+            addps rA2, rC21
+            #if KB > @(k)
+               movsldup rB0, rB0
+            #endif
+
+            mulps rB1, rA3
+            addps rA3, rC31
+            #if KB > @(k)
+               movaps rm0, rB1
+            #endif
+         #endif
+@endiwhile
+
+         #ifndef BETA0
+            VCOP (pC), rC00
+         #endif
+         movaps rC00, (pC)
+         #ifndef BETA0
+            VCOP 16(pC), rC10
+         #endif
+         movaps rC10, 16(pC)
+         #ifndef BETA0
+            VCOP 32(pC), rC20
+         #endif
+         movaps rC20, 32(pC)
+         #ifndef BETA0
+            VCOP 48(pC), rC30
+         #endif
+         movaps rC30, 48(pC)
+         #ifndef BETA0
+            VCOP 64(pC), rC01
+         #endif
+         movaps rC01, 64(pC)
+         #ifndef BETA0
+            VCOP 80(pC), rC11
+         #endif
+         movaps rC11, 80(pC)
+         #ifndef BETA0
+            VCOP 96(pC), rC21
+         #endif
+         movaps rC21, 96(pC)
+         #ifndef BETA0
+            VCOP 112(pC), rC31
+         #endif
+         movaps rC31, 112(pC)
+
+         add $KB*2*4, pB
+         sub $-128, pC
+         sub $1, nnu
+      jnz NLOOP
+      mov nnu0, nnu
+      add incAm, pA0
+      mov pA0, pA
+      mov pB0, pB
+      sub $1, nmu
+   jnz MLOOP
+ DONE:
+   movq -8(%rsp), %rbp
+   movq -16(%rsp), %rbx
+   movq -24(%rsp), %r12
+   movq -32(%rsp), %r13
+   movq -40(%rsp), %r14
+   movq -48(%rsp), %r15
+   ret
+#if 0
+.global findSize
+findSize:
+mov $SS1-SS0, %rax
+ret
+SS0:
+SS1:
+#endif
