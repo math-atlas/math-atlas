@@ -1674,6 +1674,9 @@ int AsgGlobalLoopVars(LOOPQ *loop, short *iregs, short *fregs, short *dregs)
       BitVecComb(loop->outs, loop->outs, bl->blk->outs, '|');
    BitVecComb(loop->outs, loop->outs, FKO_BVTMP, '&');
    FKO_BVTMP = iv = BitVecComb(FKO_BVTMP, loop->outs, loop->header->ins, '|');
+/*
+ * we will preserve one register
+ */
    k = STstrlookup("_NONLOCDEREF");
    SetVecBit(iv, k+TNREG-1, 0);
 
@@ -1759,7 +1762,7 @@ int AsgGlobalLoopVars(LOOPQ *loop, short *iregs, short *fregs, short *dregs)
          else
          {
             /*PrintST(stderr);*/
-#if 1
+#if 0
             /*fprintf(stderr, "m=%d, n=%d, k=%d\n", m, n, k);*/
             fprintf(stderr,"\nvariable list: \n");
             for (j=1; j <= sa[0]; j++)
@@ -1769,10 +1772,14 @@ int AsgGlobalLoopVars(LOOPQ *loop, short *iregs, short *fregs, short *dregs)
                        sa[j]);
             }
             fprintf(stderr,"\n\n");
-#endif
             fko_error(__LINE__, 
                       "Out of regs in global asg, id=%d, var=%s, file=%s\n",
                       sa[i]-TNREG, STname[sa[i]-1-TNREG], __FILE__);
+#else
+            fko_warn(__LINE__, 
+                      "Out of regs in global asg, id=%d, var=%s, file=%s\n",
+                      sa[i]-TNREG, STname[sa[i]-1-TNREG], __FILE__);
+#endif
             return(1);
          }
 #endif
@@ -1974,7 +1981,15 @@ for (i=0; i < DREGEND-DREGBEG; i++)
    fprintf(stderr, " %d,", dregs[i]);
 fprintf(stderr, "\n\n");
 #endif
+
+#if 0
    assert(!AsgGlobalLoopVars(loop, iregs, fregs, dregs));
+#else 
+/*
+ * let the code continue though not all variables got a register to assign
+ */
+   AsgGlobalLoopVars(loop, iregs, fregs, dregs); 
+#endif
 /*
  * Find total number of global assignments done, and allocate space to hold
  * mapping
