@@ -27,7 +27,7 @@ ID=3 MU=6 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_dammm3x3x256_sse2.S' \
 #ID=4 MU=4 NU=1 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_dammm_nb4_sse2.S' \
 #     SSE=3 KBMIN=4 KBMAX=4 ASM=GAS_x8664 KUISKB=1 \
 #     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
-ID=5 MU=2 NU=12 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm2x12x2_sse2.S' \
+ID=5 MU=2 NU=12 KU=2 AUTH="R. Clint Whaley" ROUT='ATL_damm2x12x2_sse2.S' \
      SSE=3 ASM=GAS_x8664 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -msse3'
 ID=6 MU=2 NU=12 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm2x12x256_sse2.S' \
@@ -737,9 +737,13 @@ void GenC2BLK(char pre, ATL_mmnode_t *mmb, char *outd, char *suff)
    fclose(fp1);
 }
 
-void SpewForthCpProto(char pre, FILE *fp, char alp, int u)
+void SpewForthCpProto(char pre, FILE *fp, char alp, int u, int dup)
 {
-   fprintf(fp, "void ATL_%ccm2am_a%c_%d\n", pre, alp, u);
+   fprintf(fp, "void ATL_%ccm2am_a%c_%d", pre, alp, u);
+   if (dup > 1)
+      fprintf(fp, "d%d\n", dup);
+   else
+      fprintf(fp, "\n", dup);
    fprintf(fp,
            "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE*);\n");
    fprintf(fp, "void ATL_%crm2am_a%c_%d\n", pre, alp, u);
@@ -757,14 +761,16 @@ void SpewForthCpDecl(char pre, ATL_mmnode_t *mmb, FILE *fp,
            ATL_CountNumberOfMMNodes(mmb));
    for (j=0,mp=mmb; mp; j++,mp = mp->next)
    {
+      fprintf(fp, "   ATL_%c%s_a%c_%d", pre, rt, alp, u?mp->mu:mp->nu);
+      if (!u && mp->dupB > 1)
+         fprintf(fp, "d%d", mp->dupB);
       if (mp->next)
-         fprintf(fp, "   ATL_%c%s_a%c_%d,  /* index %d */\n", 
-                 pre, rt, alp, u?mp->mu:mp->nu, j);
+         fprintf(fp, ",");
       else
-         fprintf(fp, "   ATL_%c%s_a%c_%d   /* index %d */\n", 
-                 pre, rt, alp, u?mp->mu:mp->nu, j);
-      }
-      fprintf(fp, "};\n\n");
+         fprintf(fp, " ");
+      fprintf(fp, "  /* index %d */\n", j);
+   }
+   fprintf(fp, "};\n\n");
 }
 
 void GenCMAJ2AMAJ(char pre, ATL_mmnode_t *mmb, char *outd, char *suff)
@@ -803,21 +809,32 @@ void GenCMAJ2AMAJ(char pre, ATL_mmnode_t *mmb, char *outd, char *suff)
       PrintBegBlock(pre, mmb, np, fp);
       sp[1] = '.';
       fprintf(fp, "/*\n * mat2blk prototypes\n */\n");
-      SpewForthCpProto(pre, fp, ac[ia], mmb->mu);
-      if (mmb->nu != mmb->mu)
-         SpewForthCpProto(pre, fp, ac[ia], mmb->nu);
+      SpewForthCpProto(pre, fp, ac[ia], mmb->mu, 0);
+      if (mmb->nu != mmb->mu || mmb->dupB > 1)
+         SpewForthCpProto(pre, fp, ac[ia], mmb->nu, mmb->dupB);
       for (mp=mmb->next; mp; mp = mp->next)
       {
          ATL_mmnode_t *p;
-         int mu = mp->mu, nu = mp->nu;
-         for (p=mmb; p->mu != mu && p->nu != mu; p = p->next);
+         int mu = mp->mu, nu = mp->nu, dupB=mp->dupB;
+         for (p=mmb; p != mp; p = p->next)
+            if (mu == p->mu || (mu == p->nu && p->dupB < 2))
+               break;
          if (p == mp) /* haven't seen before */
-            SpewForthCpProto(pre, fp, ac[ia], mp->mu);
-         if (nu != mu)
+            SpewForthCpProto(pre, fp, ac[ia], mu, 0);
+         if (nu != mu || dupB > 1)
          {
-            for (p=mmb; p->nu != nu && p->mu != nu; p = p->next);
+            for (p=mmb; p != mp; p = p->next)
+            {
+               if (dupB < 2)
+               {
+                  if (p->nu == nu || p->mu == nu)
+                     break;
+               }
+               else if (p->nu == nu && p->dupB == dupB)
+                  break;
+            }
             if (p == mp) /* haven't seen before */
-               SpewForthCpProto(pre, fp, ac[ia], mp->nu);
+               SpewForthCpProto(pre, fp, ac[ia], nu, dupB);
          }
       }
       fprintf(fp, "\n");
@@ -924,7 +941,7 @@ void SpewForthKernArray(FILE *fp, char pre, ATL_mmnode_t *mmb,
  * RETURNS: possibly updated list of all unique mu/nu comboes
  */
 typedef struct mnur mnur_t;
-struct mnur {int mu; int nu; mnur_t *next;};
+struct mnur {int mu; int nu; int dupB; mnur_t *next;};
 mnur_t *GetUniqueMNUnrolls(ATL_mmnode_t *mmb, mnur_t *urb)
 {
    ATL_mmnode_t *mp;
@@ -943,6 +960,7 @@ mnur_t *GetUniqueMNUnrolls(ATL_mmnode_t *mmb, mnur_t *urb)
          assert(up);
          up->mu = mp->mu;
          up->nu = mp->nu;
+         up->dupB = 0;
          up->next = urb;
          urb = up;
       }
@@ -969,6 +987,7 @@ mnur_t *GetUniqueMUnrolls(mnur_t *mnb, mnur_t *mub)
          assert(mup);
          mup->nu = mup->mu = mnp->mu;
          mup->next = mub;
+         mup->dupB = 0;
          mub = mup;
       }
    }
@@ -985,7 +1004,7 @@ mnur_t *GetUniqueNUnrolls(mnur_t *mnb, mnur_t *mub)
    for (mnp=mnb; mnp; mnp = mnp->next)
    {
       for (mup=mub; mup; mup = mup->next)
-         if (mup->mu == mnp->nu)
+         if (mup->mu == mnp->nu && mnp->dupB == mup->dupB)
             break;
       if (!mup)  /* a new nu */
       {
@@ -993,6 +1012,7 @@ mnur_t *GetUniqueNUnrolls(mnur_t *mnb, mnur_t *mub)
          assert(mup);
          mup->nu = mup->mu = mnp->nu;
          mup->next = mub;
+         mup->dupB = mnp->dupB;
          mub = mup;
       }
    }
@@ -1056,7 +1076,7 @@ void GenRankKH
    for (up=cpyb; up; up = up->next)
    {
       for (ia=0; ia < 3; ia++)
-         SpewForthCpProto(pre, fp, ac[ia], up->mu);
+         SpewForthCpProto(pre, fp, ac[ia], up->mu, up->dupB);
    }
    KillUnrollList(cpyb);
 /*
