@@ -547,22 +547,26 @@ void GenBlockingFile(char pre, ATL_mmnode_t *mmb, char *outd, char *nm)
    char *fnam;
    FILE *fp;
    char *type = "unsigned short";
-   int i, n, maxb, maxNB, maxMB, maxKB;
+   int i, n, maxb, maxNB, maxMB, maxKB, maxdup;
    char PRE = toupper(pre), bc[3] = {'M', 'N', 'K'};
 
    fp = StandHStart(pre, mmb, outd, nm);
-   maxNB = maxKB = maxMB = 0;
+   maxdup = maxNB = maxKB = maxMB = 0;
    for (n=0,mp=mmb; mp; n++, mp = mp->next)
    {
+      maxdup = Mmax(maxdup, mp->dupB);
       maxMB = Mmax(maxMB, mp->mbB);
       maxNB = Mmax(maxNB, mp->nbB);
       maxKB = Mmax(maxKB, mp->kbB);
    }
+   if (maxdup == 1)
+      maxdup = 0;
    maxb = Mmax(maxMB, maxNB);
    maxb = Mmax(maxb, maxKB);
    fprintf(fp, "#define ATL_AMM_MAXMB %d\n", maxMB);
    fprintf(fp, "#define ATL_AMM_MAXNB %d\n", maxNB);
    fprintf(fp, "#define ATL_AMM_MAXKB %d\n", maxKB);
+   fprintf(fp, "#define ATL_AMM_MAXDUPB %d\n", maxdup);
    fprintf(fp, "\n");
 
    if (maxb <= 255)
@@ -604,6 +608,19 @@ void GenBlockingFile(char pre, ATL_mmnode_t *mmb, char *outd, char *nm)
             fprintf(fp, "%8d,  /* index %d */\n", b, j);
          else
             fprintf(fp, "%8d   /* index %d */\n", b, j);
+      }
+      fprintf(fp, "};\n\n");
+   }
+   if (maxdup)
+   {
+      int j;
+      fprintf(fp, "static unsigned short ATL_AMM_DUPBN[%d] =\n{\n", n);
+      for (j=0,mp=mmb; mp; j++,mp = mp->next)
+      {
+         if (mp->next)
+            fprintf(fp, "%2d, /* index %d */\n", mp->dupB?mp->dupB:1, j);
+         else
+            fprintf(fp, "%2d  /* index %d */\n", mp->dupB?mp->dupB:1, j);
       }
       fprintf(fp, "};\n\n");
    }
@@ -2374,10 +2391,11 @@ int *GetFlags(int nargs, char **args, char *PRE,
    return(nbs);
 }
 
-char *GenString(char pre, int lat, int nb, int mu, int nu, 
-                int ku, char *rt)
+char *GenString(char pre, int lat, int nb, int mu, int nu, int ku, 
+                int dupB, char *rt)
 {
-   char *frm="make gen_amm_%s lat=%d mu=%d nu=%d ku=%d kb=%d vlen=%d rt=%s"; 
+   char *frm=
+      "make gen_amm_%s lat=%d mu=%d nu=%d ku=%d kb=%d vlen=%d rt=%s dupB=%d"; 
    char *ln;
    int l;
    l = strlen(frm) + strlen(VECs[VECi]) + strlen(rt) + 8;
@@ -2385,31 +2403,37 @@ char *GenString(char pre, int lat, int nb, int mu, int nu,
    assert(ln);
    if (VECi != VTGV)
       sprintf(ln, frm, VECs[VECi], lat, mu*VLEN[VECi], nu, ku, nb, 
-              VLEN[VECi], rt);
+              VLEN[VECi], rt, dupB);
    else
    {
       int sz = (pre == 's') ? 4 : 8;
-      sprintf(ln, frm, VECs[VECi], lat, mu, nu, ku, nb, VLEN[VECi]*sz, rt);
+      sprintf(ln, frm, VECs[VECi], lat, mu, nu, ku, nb, VLEN[VECi]*sz, 
+              rt, dupB);
    }
    return(ln);
 }
 
-ATL_mmnode_t *GetNewGenNode(char pre, int nb, int lat, int mu, int nu, int ku)
+ATL_mmnode_t *GetNewGenNode(char pre, int nb, int lat, int mu, int nu, int ku,
+                            int dupB)
 {
    ATL_mmnode_t *np;
    char *ln;
    np = GetMMNode();
-   np->rout = malloc(sizeof(char)*24);
+   np->rout = malloc(sizeof(char)*27);
    assert(np->rout);
-   sprintf(np->rout, "ATL_%cgamm%dx%d_nb%d.c", pre, mu, nu, nb);
+   if (dupB > 1)
+      sprintf(np->rout, "ATL_%cgamm%dx%d_nb%dd%d.c", pre, mu, nu, nb, dupB);
+   else
+      sprintf(np->rout, "ATL_%cgamm%dx%d_nb%d.c", pre, mu, nu, nb);
    np->vlen = VLEN[VECi];
    np->nbB = np->mbB = np->kbB = nb;
    np->mu = mu*VLEN[VECi];
    np->nu = nu;
    np->ku = ku;
+   np->dupB = dupB;
    np->muladd = VECi;  /* stores what vector ISA to use */
    np->lat = lat;
-   np->genstr = GenString(pre, lat, nb, mu, nu, ku, np->rout);
+   np->genstr = GenString(pre, lat, nb, mu, nu, ku, dupB, np->rout);
    return(np);
 }
 
@@ -2455,7 +2479,7 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
       mmp->nu = j;
       if (mmp->genstr)
         free(mmp->genstr);
-      mmp->genstr = GenString(pre, lat, nb, i, j, ku, mmp->rout);
+      mmp->genstr = GenString(pre, lat, nb, i, j, ku, mmp->dupB, mmp->rout);
       mf = TimeMMKernel(verb, 1, mmp, pre, nb, nb, nb, nb, nb, nb, 1, 0, -1);
       printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
       if (mf > mfB)
@@ -2483,7 +2507,7 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
          mmp->nu = j;
          if (mmp->genstr)
            free(mmp->genstr);
-         mmp->genstr = GenString(pre, lat, nb, i, j, ku, mmp->rout);
+         mmp->genstr = GenString(pre, lat, nb, i, j, ku, mmp->dupB, mmp->rout);
          mf = TimeMMKernel(verb, 1, mmp, pre, nb, nb, nb, nb, nb, nb, 1, 0, -1);
          printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
          if (mf > mfB)
@@ -2497,7 +2521,7 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
          mmp->nu = j;
          if (mmp->genstr)
            free(mmp->genstr);
-         mmp->genstr = GenString(pre, lat, nb, i, j, ku, mmp->rout);
+         mmp->genstr = GenString(pre, lat, nb, i, j, ku, mmp->dupB, mmp->rout);
          mf = TimeMMKernel(verb, 1, mmp, pre, nb, nb, nb, nb, nb, nb, 1, 0, -1);
          printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
          if (mf > mfB)
@@ -2675,20 +2699,20 @@ ATL_mmnode_t *CreateGenCasesFromNBs
          {
             VECi = VTSSE;
             GetMUNUbyNB(nb, nreg, &mu, &nu);
-            p = GetNewGenNode(pre, nb, 0, mu, nu, ku);
+            p = GetNewGenNode(pre, nb, 0, mu, nu, ku, 0);
          }
          if (!p)
          {
             VECi = VTSC;
             GetMUNUbyNB(nb, nreg, &mu, &nu);
-            p = GetNewGenNode(pre, nb, 0, mu, nu, ku);
+            p = GetNewGenNode(pre, nb, 0, mu, nu, ku, 0);
          }
          VECi = vl;
       }
       else
       {
          GetMUNUbyNB(nb, nreg, &mu, &nu);
-         p = GetNewGenNode(pre, nb, 0, mu, nu, ku);
+         p = GetNewGenNode(pre, nb, 0, mu, nu, ku, 0);
       }
       if (umb)
       {
@@ -2715,7 +2739,7 @@ void SetGenVec(verb, pre)
  */
    if (VLEN[VECi] < 2)
       return;
-   mp = GetNewGenNode(pre, 32, 0, 1, 1, 1);
+   mp = GetNewGenNode(pre, 32, 0, 1, 1, 1, 0);
    if (MMKernelFailsTest(pre, 32, 32, 32, 1, mp))
    {
       printf("ERROR: VEC='%s' FAILED, genstr='%s'!\n",VECs[VECi],mp->genstr);
@@ -2727,7 +2751,7 @@ void SetGenVec(verb, pre)
       {
          VECi = VTSSE;
          KillMMNode(mp);
-         mp = GetNewGenNode(pre, 32, 0, 1, 1, 1);
+         mp = GetNewGenNode(pre, 32, 0, 1, 1, 1, 0);
          if (MMKernelFailsTest(pre, 32, 32, 32, 1, mp))
             VECi = VTSC;
       }
@@ -2744,11 +2768,11 @@ void SetGenVec(verb, pre)
       double mfA, mfS, mf;
       char *sp; 
       int vl;
-      mp = GetNewGenNode(pre, 128, 0, 1, 4, 1);
+      mp = GetNewGenNode(pre, 128, 0, 1, 4, 1, 0);
       mfA = TimeMMKernel(verb, 1, mp, pre, 128, 128, 128, 128, 128, 128,
                          1, 0, -1);
       KillMMNode(mp);
-      mp = GetNewGenNode(pre, 128, 0, 2, 2, 1);
+      mp = GetNewGenNode(pre, 128, 0, 2, 2, 1, 0);
       mf = TimeMMKernel(verb, 1, mp, pre, 128, 128, 128, 128, 128, 128,
                         1, 0, -1);
       KillMMNode(mp);
@@ -2756,11 +2780,11 @@ void SetGenVec(verb, pre)
          mfA = mf;
       vl = VECi;
       VECi = VTSSE;
-      mp = GetNewGenNode(pre, 128, 0, 1, 4, 1);
+      mp = GetNewGenNode(pre, 128, 0, 1, 4, 1, 0);
       mfS = TimeMMKernel(verb, 1, mp, pre, 128, 128, 128, 128, 128, 128,
                          1, 0, -1);
       KillMMNode(mp);
-      mp = GetNewGenNode(pre, 128, 0, 2, 2, 1);
+      mp = GetNewGenNode(pre, 128, 0, 2, 2, 1, 0);
       mf = TimeMMKernel(verb, 1, mp, pre, 128, 128, 128, 128, 128, 128,
                         1, 0, -1);
       if (mf > mfA)
@@ -2783,13 +2807,13 @@ void SetGenVec(verb, pre)
       double mfV, mfS;
       char *sp; 
       int vl;
-      mp = GetNewGenNode(pre, 128, 0, 1, 4, 1);
+      mp = GetNewGenNode(pre, 128, 0, 1, 4, 1, 0);
       mfV = TimeMMKernel(verb, 1, mp, pre, 128, 128, 128, 128, 128, 128,
                          1, 0, -1);
       KillMMNode(mp);
       vl = VECi;
       VECi = VTSC;
-      mp = GetNewGenNode(pre, 128, 0, 1, 4, 1);
+      mp = GetNewGenNode(pre, 128, 0, 1, 4, 1, 0);
       mfS = TimeMMKernel(verb, 1, mp, pre, 128, 128, 128, 128, 128, 128,
                          1, 0, -1);
       KillMMNode(mp);
@@ -3224,7 +3248,7 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
    for (mp=mmb; mp; mp = mp->next, n++)
       if (mp->ku == 1 && FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
         nd++;
-   dl = malloc(6*n*sizeof(int));
+   dl = malloc(8*n*sizeof(int));
    assert(dl);
    if (nd)
    {
@@ -3234,7 +3258,7 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
    else
       dlmm = NULL;
 
-   nl = dl + n+n+n;
+   nl = dl + (n<<2);
    nd = 0;
 /*
  * First, go back through kernels, and add kernels that can serve as K-cleaners
@@ -3244,25 +3268,26 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
    {
       if (mp->ku == 1 && FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
       {
-         const int nd3 = (nd<<1)+nd, mu=mp->mu, nu=mp->nu;
+         const int nd4 = (nd<<2), mu=mp->mu, nu=mp->nu, dupB=mp->dupB;
 /*
  *       See if pair is already in done list if so, no new entry, just update kb
  *       and cleanup kernel entry
  */
-         for (i=0; i < nd3; i += 3)
-            if (mu == dl[i] && nu == dl[i+1])
+         for (i=0; i < nd4; i += 4)
+            if (mu == dl[i] && nu == dl[i+1] && dupB == dl[i+2])
                break;
-         if (i < nd3)
+         if (i < nd4)
          {                      /* (larger NB always later) */
-            dl[i+2] = mp->kbB;  /* take largest kbB that matches mu/nu */
-            dlmm[i/3] = mp;
+            dl[i+3] = mp->kbB;  /* take largest kbB that matches mu/nu */
+            dlmm[i>>2] = mp;
             continue;           
          }
          else
          {
-            dl[nd3] = mu;
-            dl[nd3+1] = nu;
-            dl[nd3+3] = mp->kbB;
+            dl[nd4] = mu;
+            dl[nd4+1] = nu;
+            dl[nd4+2] = dupB;
+            dl[nd4+3] = mp->kbB;
             dlmm[nd++] = mp;
          }
       }
@@ -3274,10 +3299,10 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
    {
       if (FailKCleanTests(pre, dlmm[i]->kbB, dlmm[i]))
       {
-         const int i3=(i<<1)+i, nc=nd-i-1;
+         const int i4=(i<<2), nc=nd-i-1;
          if (nc > 0)
          {
-            memcpy(dl+i3, dl+i3+3, ((nc<<1)+nc)*sizeof(int));
+            memcpy(dl+i4, dl+i4+4, (nc<<2)*sizeof(int));
             memcpy(dlmm[i], dlmm[i+1], nc*sizeof(ATL_mmnode_t*));
          }
          nd--;
@@ -3285,31 +3310,32 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
    }
 
 /*
- * Find all unique (mu,nu) combos that still need to to be cleaned; there will
- * nn (# needed) of these, and we'll save (mu,nu,MAXNB) in needed list (nl)
+ * Find all unique (mu,nu,dupB) combos that still need to to be cleaned; 
+ * there will be nn (# needed) of these, and we'll save (mu,nu,MAXNB) in
+ * needed list (nl).
  * We use MAXNB for testing (large NB tests mosts cases of K).
- * Pairs that are handled by the done list (dl) aren't added to needed list.
+ * Combos that are handled by the done list (dl) aren't added to needed list.
  */
    for (mp=mmb; mp; mp = mp->next, n++)
    {
-      int mu=mp->mu, nu=mp->nu, nn3=(nn<<1)+nn, nd3=(nd<<1)+nd;
+      int mu=mp->mu, nu=mp->nu, dupB=mp->dupB, nn4=(nn<<2), nd4=(nd<<2);
 /*
  *    See if pair is already in done list or needed list, if so, no change
  */
-      for (i=0; i < nd3; i += 3)
-         if (mu == dl[i] && nu == dl[i+1])
+      for (i=0; i < nd4; i += 4)
+         if (mu == dl[i] && nu == dl[i+1] && dupB == dl[i+2])
             break;
-      if (i < nd3)    /* if it was found in the done list */
-         continue;    /* this pair is already handled */
+      if (i < nd4)    /* if it was found in the done list */
+         continue;    /* this combo is already handled */
 /*
- *    If we reach here, pair is not handled, must add to needed list 
+ *    If we reach here, combo is not handled, must add to needed list 
  */
-      for (i=0; i < nn3; i += 3)
-         if (mu == nl[i] && nu == nl[i+1])
+      for (i=0; i < nn4; i += 4)
+         if (mu == nl[i] && nu == nl[i+1] && dupB == nl[i+2])
             break;
-      if (i < nn3)            /* If already in needed list */
+      if (i < nn4)            /* If already in needed list */
       {
-         nl[i+2] = mp->kbB;   /* just update kb so we get largest for testing */
+         nl[i+3] = mp->kbB;   /* just update kb so we get largest for testing */
          continue;
       }
 /*
@@ -3317,9 +3343,10 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
  */
       else
       {
-         nl[nn3] = mu;
-         nl[nn3+1] = nu;
-         nl[nn3+2] = mp->kbB;
+         nl[nn4] = mu;
+         nl[nn4+1] = nu;
+         nl[nn4+2] = dupB;
+         nl[nn4+3] = mp->kbB;
          nn++;
       }
    }
@@ -3332,7 +3359,7 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
    for (i=0; i < nn; i++)
    {
       ATL_mmnode_t *p;
-      const int i3 = (i<<1)+i, mu=nl[i3], nu=nl[i3+1], nb=nl[i3+2];
+      const int i4 = (i<<2), mu=nl[i4], nu=nl[i4+1], dupB=nl[i4+2], nb=nl[i4+3];
       const int kb = (nb > 8) ? (nb>>2) : nb;
       int vl=VECi;
       double mf;
@@ -3343,7 +3370,7 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
          else
             VECi = VTSC;
       }
-      p = GetNewGenNode(pre, nb, 0, mu/VLEN[VECi], nu, 1);
+      p = GetNewGenNode(pre, nb, 0, mu/VLEN[VECi], nu, 1, dupB);
       p->flag |= (1<<MMF_KRUNTIME);
       VECi = vl;
       #if 0  /* by default don't waste time testing generated code */
@@ -3367,7 +3394,7 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
  */
    for (i=0; i < nd; i++)
    {
-      const int i3=3*i, mu=dl[i3], nu=dl[i3+1], nb=dl[i3+2];
+      const int i4=4*i, mu=dl[i4], nu=dl[i4+1], dupB=dl[i4+2], nb=dl[i4+3];
       ATL_mmnode_t *prev=NULL;
 /*
  *    Get a copy of done-list kern that can be added to genlist
@@ -3375,23 +3402,6 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
       np = CloneMMNode(dlmm[i]);
       np->next = gmmb;
       gmmb = np;
-@beginskip
-      if (!gmmb)
-         gmmb = np;
-      else
-      {
-/*
- *       List must stay in increasing order; find where to shove done-list item
- */
-         for (mp=gmmb; mp && mp->kbB < nb; mp = mp->next)
-            prev = mp;
-         np->next = (mp) ? mp->next : NULL;
-         if (prev)
-            prev->next = np;
-         else
-            gmmb = np;
-      }
-@endskip
    }
    if (dlmm)
       free(dlmm);
@@ -3413,8 +3423,9 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
  */
          for (i=0; i < nn; i++)
          {
-            const int i3 = (i<<1)+i, mu=nl[i3], nu=nl[i3+1], nb=nl[i3+2];
-            if (mp->mu == mu && mp->nu == nu)
+            const int i4=(i<<2), mu=nl[i4], nu=nl[i4+1], dupB=nl[i4+2], 
+                      nb=nl[i4+3];
+            if (mp->mu == mu && mp->nu == nu && mp->dupB == dupB)
             {
                if (!FailKCleanTests(pre, nb, mp))
                {
@@ -3455,16 +3466,17 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
       }
       printf("Done timing, merging lists:\n");
 /*
- *    Merge generated (gmmb) and user (ummb) kerns by selecting best performing
+ *    Merge generated (gmmb) and user (ummb) kerns by selecting best performing.
  *    gmmb is a superset of ummb, so what we will do is look through gmmb
- *    for matching (mu,nu) pairs, time them, and if ummb is faster, replace
+ *    for matching (mu,nu,dup), time them, and if ummb is faster, replace
  *    that entry in gmmb with ummb.
  */
       while (ummb)
       {
          ATL_mmnode_t *prev=NULL;
-         int mu=ummb->mu, nu=ummb->nu;
-         for (mp=gmmb; mp && (mp->mu != mu || mp->nu != nu); mp = mp->next)
+         int mu=ummb->mu, nu=ummb->nu, dupB = ummb->dupB;
+         for (mp=gmmb; mp && (mp->mu != mu || mp->nu != nu || mp->dupB != dupB);
+              mp = mp->next)
             prev = mp;
          assert(mp);  /* logic error if we haven't found it */
 /*
@@ -3654,7 +3666,7 @@ void TimeKClean(int verb, char pre, ATL_mmnode_t *mp)
 void ComputeKClean(int verb, char pre, ATL_mmnode_t *mmb)
 /*
  * This kernel generates K-cleanup for all routines present in mmb.
- * To do this, it finds all unique (mu,nu) pairs, and then finds the
+ * To do this, it finds all unique (mu,nu,dupB) triplets, and then finds the
  * best ku=1, K-runtime kernel for that pair (timing both user and generated).
  * OUTPUT: <pre>AMMKCLEAN.SUM: all unique kerns to be compiled
  *   <pre>AMMKCLEANBYNB.SUM: non-unique K-clean for each NB in mmb
@@ -4132,7 +4144,7 @@ ATL_mmnode_t *DecentGenCase(int verb, char pre, int nreg)
  * 120 = LCM(2,3,4,5,6,8), and large enough to stress mu/nu
  */
    FindDefMUNU(verb, pre, nreg, 0, 120, 1, &mu, &nu);
-   return(GetNewGenNode(pre, 0, 0, mu, nu, 1));
+   return(GetNewGenNode(pre, 0, 0, mu, nu, 1, 0));
 }
 
 /*
@@ -4526,7 +4538,7 @@ ATL_mmnode_t *GetRankKKernels
          ATL_mmnode_t *p;
          int gmu = gmm->mu / VLEN[VECi];
          assert(gmu);
-         p = GetNewGenNode(pre, NB, gmm->lat, gmu, gmm->nu, 1);
+         p = GetNewGenNode(pre, NB, gmm->lat, gmu, gmm->nu, 1, 0);
          p->next = run;
          run = p;
       }
@@ -4538,7 +4550,7 @@ ATL_mmnode_t *GetRankKKernels
       ATL_mmnode_t *p;
       int gmu = gmm->mu / VLEN[VECi];
       assert(gmu);
-      p = GetNewGenNode(pre, NB, gmm->lat, gmu, gmm->nu, 1);
+      p = GetNewGenNode(pre, NB, gmm->lat, gmu, gmm->nu, 1, 0);
       p->flag |= (1<<MMF_KRUNTIME);
       p->next = run;
       run = p;
