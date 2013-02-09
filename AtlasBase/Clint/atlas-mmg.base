@@ -46,6 +46,10 @@
    @ifdef ! dupB
       @define dupB @1@
    @endifdef
+   @iif dupB = 0
+      @undef dupB
+      @define dupB @1@
+   @endiif
    @iif dupB < 2
       @define dsuf @@
       @iexp incdup @(nu) 0 +
@@ -435,12 +439,409 @@ void Mjoin(PATL,rm2am_a@(nalp)_@(mu)) /* row-access matrix to access-major block
   @define beta @0@
   @define nbet @0@
 @ROUT ATL_ablk2cmat ammmtst
+@beginproc cploops aligned vtyp ralp rbet
+   @mif vtyp = "__m256
+      @define velts @8@
+      @define vadd @_mm256_add_ps@
+      @define vsub @_mm256_sub_ps@
+      @define vmul @_mm256_mul_ps@
+      @define vld @_mm256_load_ps@
+      @iif aligned = 0
+         @define vldu @_mm256_loadu_ps@
+         @define vstu @_mm256_storeu_ps@
+      @endiif
+      @iif aligned ! 0
+         @define vldu @_mm256_load_ps@
+         @define vstu @_mm256_store_ps@
+      @endiif
+   @endmif
+   @mif vtyp = "__m256d
+      @define velts @4@
+      @define vadd @_mm256_add_pd@
+      @define vsub @_mm256_sub_pd@
+      @define vmul @_mm256_mul_pd@
+      @define vld @_mm256_load_pd@
+      @iif aligned = 0
+         @define vldu @_mm256_loadu_pd@
+         @define vstu @_mm256_storeu_pd@
+      @endiif
+      @iif aligned ! 0
+         @define vldu @_mm256_load_pd@
+         @define vstu @_mm256_store_pd@
+      @endiif
+   @endmif
+   @mif vtyp = "__m128d
+      @define velts @2@
+      @define vadd @_mm_add_pd@
+      @define vsub @_mm_sub_pd@
+      @define vmul @_mm_mul_pd@
+      @define vld @_mm_load_pd@
+      @iif aligned = 0
+         @define vldu @_mm_loadu_pd@
+         @define vstu @_mm_storeu_pd@
+      @endiif
+      @iif aligned ! 0
+         @define vldu @_mm_load_pd@
+         @define vstu @_mm_store_pd@
+      @endiif
+   @endmif
+   @mif vtyp = "__m128
+      @define velts @4@
+      @define vadd @_mm_add_ps@
+      @define vsub @_mm_sub_ps@
+      @define vmul @_mm_mul_ps@
+      @define vld @_mm_load_ps@
+      @iif aligned = 0
+         @define vldu @_mm_loadu_ps@
+         @define vstu @_mm_storeu_ps@
+      @endiif
+      @iif aligned ! 0
+         @define vldu @_mm_load_ps@
+         @define vstu @_mm_store_ps@
+      @endiif
+   @endmif
+      for (j=0; j < n; j += @(nu), b += incb)
+      {
+         const TYPE *p = b;
+         for (i=0; i < m; i += @(mu), p += pansz)
+         {
+            register @(vtyp) rC0, rc0;
+   @iexp k 0 0 +
+   @iexp j 0 0 +
+   @iwhile j < @(nu)
+      @iexp i 0 0 +
+      @iwhile i < @(mu)
+         @iexp h 0 0 +
+            rc0 = @(vld)(p+@(k));
+         @mif nalp = "X
+            rc0 = @(vmul)(rc0, rALP);
+         @endmif
+         @mif nbet = "0
+            @mif nalp = "n
+            rc0 = @(vmul)(rc0, rALP);
+            @endmif
+            @(vstu)(C@(j)+i+@(i), rc0);
+            @iexp h 1 0 +
+         @endmif
+         @iif h = 0
+            rC0 = @(vldu)(C@(j)+i+@(i));
+            @mif nbet = "X
+            rC0 = @(vmul)(rC0, rBETA);
+            @endmif
+            @mif nalp = "n
+               @mif nbet = "0
+            rc0 = @(vmul)(rc0, rALP);
+            @(vstu)(C@(j)+i+@(i), rc0);
+                  @iexp h 1 0 +
+               @endmif
+               @mif nbet = "n
+            rC0 = @(vadd)(rC0, rc0);
+            rC0 = @(vmul)(rC0, rALP);
+            @(vstu)(C@(j)+i+@(i), rC0);
+                  @iexp h 1 0 +
+               @endmif
+               @iif h = 0
+            rC0 = @(vsub)(rC0, rc0);
+            @(vstu)(C@(j)+i+@(i), rC0);
+                  @iexp h 1 0 +
+               @endiif
+            @endmif
+            @iif h = 0
+               @mif nbet = "n
+            rc0 = @(vsub)(rc0, rC0);
+            @(vstu)(C@(j)+i+@(i), rc0);
+               @endmif
+               @mif nbet ! "n
+            rC0 = @(vadd)(rC0, rc0);
+           @(vstu)(C@(j)+i+@(i), rC0);
+               @endmif
+            @endiif
+         @endiif
+         @iexp k @(k) @(velts) +
+      @iexp i @(i) @(velts) +
+      @endiwhile
+   @iexp j @(j) 1 +
+   @endiwhile
+         }
+      @mif mu ! "1
+         switch(mr)
+         {
+      @iexp m 1 0 +
+      @iwhile m < @(mu)
+         case @(m):
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp k @(mu) @(j) *
+            @iexp i 0 0 +
+            @iwhile i < @(m)
+         @mif nalp = "n
+            @mif nbet = "X
+            C@(j)[i+@(i)] = beta*C@(j)[i+@(i)] - p[@(k)];
+            @endmif
+         @mif nbet = "1
+            C@(j)[i+@(i)] -= p[@(k)];
+            @endmif
+            @mif nbet = "0
+            C@(j)[i+@(i)] = @(malp)p[@(k)];
+            @endmif
+            @mif nbet = "n
+            C@(j)[i+@(i)] = -(p[@(k)] + C@(j)[i+@(i)]);
+            @endmif
+         @endmif
+         @mif nalp ! "n
+            @mif nbet = "X
+            C@(j)[i+@(i)] = beta*C@(j)[i+@(i)] + @(malp)p[@(k)];
+            @endmif
+         @mif nbet = "1
+            C@(j)[i+@(i)] += @(malp)p[@(k)];
+            @endmif
+            @mif nbet = "0
+            C@(j)[i+@(i)] = @(malp)p[@(k)];
+            @endmif
+            @mif nbet = "n
+            C@(j)[i+@(i)] = @(malp)p[@(k)] - C@(j)[i+@(i)];
+            @endmif
+         @endmif
+               @iexp k @(k) 1 + 
+            @iexp i @(i) 1 +
+            @endiwhile
+         @iexp j @(j) 1 +
+         @endiwhile
+            break;
+      @iexp m @(m) 1 +
+      @endiwhile
+         default:;
+         }
+      @endmif
+   @iexp j 0 0 +
+   @iwhile j < @(nu)
+         C@(j) += incC;
+      @iexp j @(j) 1 +
+   @endiwhile
+      }
+   @undef velts
+   @undef vadd
+   @undef vsub 
+   @undef vmul 
+   @undef vld 
+   @undef vldu 
+   @undef vstu 
+@endproc
 /*
  *  C <- beta*C + alpha*b,
  *  C is an MxN matrix in column-major storage
  *  b is a CEIL(M/@(mu))*@(mu) x CEIL(N/@(nu))*@(nu) matrix stored in
  *    @(mu)x@(nu)-major storage
  */
+@beginproc cpfunc vtyp
+#include <immintrin.h>
+   @mif vtyp = "__m256
+      @define andC @0x1F@
+      @define andL @7@
+      @define vtyp2 __m128
+      @define andC2 @0xF@
+      @define andL2 @3@
+      @define ibe @{beta,beta,beta,beta,beta,beta,beta,beta}@
+      @define ial @{alpha,alpha,alpha,alpha,alpha,alpha,alpha,alpha}@
+      @define in1 @{ATL_rnone,ATL_rnone,ATL_rnone,ATL_rnone,ATL_rnone,ATL_rnone,ATL_rnone,ATL_rnone}@
+      @define ib2 @{beta,beta,beta,beta}@
+      @define ia2 @{alpha,alpha,alpha,alpha}@
+      @define in2 @{ATL_rnone,ATL_rnone,ATL_rnone,ATL_rnone}@
+   @endmif
+   @mif vtyp = "__m256d
+      @define andC @0x1F@
+      @define andL @3@
+      @define vtyp2 __m128d
+      @define andC2 @0xF@
+      @define andL2 @1@
+      @define ibe @{beta,beta,beta,beta}@
+      @define ial @{alpha,alpha,alpha,alpha}@
+      @define in1 @{ATL_rnone,ATL_rnone,ATL_rnone,ATL_rnone}@
+   @endmif
+   @mif vtyp = "__m128
+      @define andC @0xF@
+      @define andL @3@
+      @define ibe @{beta,beta,beta,beta}@
+      @define ial @{alpha,alpha,alpha,alpha}@
+      @define in1 @{ATL_rnone,ATL_rnone,ATL_rnone,ATL_rnone}@
+   @endmif
+   @mif vtyp = "__m128d
+      @define andC @0xF@
+      @define andL @1@
+      @define ibe @{beta,beta}@
+      @define ial @{alpha,alpha}@
+      @define in1 @{ATL_rnone,ATL_rnone}@
+   @endmif
+
+void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
+(
+   ATL_CSZT M,          /* number of rows in A */
+   ATL_CSZT N,          /* number of columns in A */
+   const SCALAR alpha,  /* scalar for b */
+   const TYPE *b,       /* matrix stored in @(mu)x@(nu)-major order */
+   const SCALAR beta,   /* scalar for C */
+   TYPE *C,             /* matrix to be copied to access-major format */
+   ATL_CSZT ldc         /* stride between row elements */
+)
+{
+   ATL_CINT m = (M/@(mu))*@(mu), n = (N/@(nu))*@(nu), mr = M-m, nr = N-n;
+   ATL_CINT pansz = (nr) ? (n+@(nu))*@(mu) : n*@(mu);
+   ATL_CINT incC = ldc*@(nu), incb = @(mu)*@(nu);
+   ATL_INT i, j;
+   @mif nbet = "X
+   const register @(vtyp) rBETA=@(ibe);
+   @endmif
+   @mif nbet = "n
+   const register @(vtyp) rBETA=@(in1);
+   @endmif
+   @mif nalp = "X
+   const register @(vtyp) rALP=@(ial);
+   @endmif
+   @mif nalp = "n
+   const register @(vtyp) rALP=@(in1);
+   @endmif
+   @declare "   TYPE " n n ";"
+      *C0=C
+      @define j @1@
+      @iwhile j < @(nu)
+         @iexp i @(j) -1 +
+         *C@(j)=C@(i)+ldc
+         @iexp j @(j) 1 +
+      @endiwhile
+   @enddeclare
+
+/*
+ * If C is aligned, use aligned load/stores to C
+ */
+   if (((((size_t)C) & @(andC))|(ldc&@(andL))) == 0)
+   {
+      @callproc cploops 1 @(vtyp) rALP rBETA
+   }
+   @mif andC = "0x1F
+   else if (((((size_t)C) & @(andC2))|(ldc&@(andL2))) == 0)
+   {
+      @(vtyp2) ralp=(@(vtyp2)) rALP;
+      @callproc cploops 1 @(vtyp2) rALP rBETA
+   }
+   @endmif
+   @mif andC ! "0x1F
+   else
+   {
+      @callproc cploops 0 @(vtyp) rALP rBETA
+   }
+   @endmif
+   @mif nu ! "1
+   switch(nr)
+   {
+   @iexp n 1 0 +
+   @iwhile n < @(nu)
+   case @(n):
+      for (i=0; i < m; i += @(mu), b += pansz)
+      {
+      @iexp k 0 0 +
+      @iexp j 0 0 +
+      @iwhile j < @(n)
+         @iexp i 0 0 +
+         @iwhile i < @(mu)
+            @mif nbet = "X
+         C@(j)[i+@(i)] = beta*C@(j)[i+@(i)] + @(malp)b[@(k)];
+            @endmif
+            @mif nbet = "1
+         C@(j)[i+@(i)] += @(malp)b[@(k)];
+            @endmif
+            @mif nbet = "n
+         C@(j)[i+@(i)] = @(malp)b[@(k)] - C@(j)[i+@(i)];
+            @endmif
+            @mif nbet = "0
+         C@(j)[i+@(i)] = @(malp)b[@(k)];
+            @endmif
+            @iexp k @(k) 1 +
+         @iexp i @(i) 1 +
+         @endiwhile
+      @iexp j @(j) 1 +
+      @endiwhile
+      }
+      @mif mu ! "1
+      switch(mr)
+      {
+      @iexp m 1 0 +
+      @iwhile m < @(mu)
+      case @(m):
+         @iexp j 0 0 +
+         @iwhile j < @(n)
+            @iexp k @(mu) @(j) *
+            @iexp i 0 0 +
+            @iwhile i < @(m)
+               @mif nbet = "n
+         C@(j)[i+@(i)] = @(malp)b[@(k)] - C@(j)[i+@(i)];
+               @endmif
+               @mif nbet = "X
+         C@(j)[i+@(i)] = beta*C@(j)[i+@(i)] + @(malp)b[@(k)];
+               @endmif
+               @mif nbet = "1
+         C@(j)[i+@(i)] += @(malp)b[@(k)];
+               @endmif
+               @mif nbet = "0
+         C@(j)[i+@(i)] = @(malp)b[@(k)];
+               @endmif
+               @iexp k @(k) 1 + 
+            @iexp i @(i) 1 +
+            @endiwhile
+         @iexp j @(j) 1 +
+         @endiwhile
+         b += incb;
+         break;
+      @iexp m @(m) 1 +
+      @endiwhile
+      default:;
+      }
+      @endmif
+      break;
+   @iexp n @(n) 1 +
+   @endiwhile
+   default:;
+   }
+   @endmif
+}
+   @undef ial
+   @undef ibe
+   @undef in1
+   @undef andC
+   @undef andL
+@endproc
+@iexp vtst 4 @(mu) %
+@iif vtst = 0
+#if 0 && defined(ATL_AVX) && defined(DREAL)  /* AVX loses perf for unaligned */
+   @callproc cpfunc __m256d
+@endiif
+@iif vtst ! 0
+#if 0
+@endiif
+@iexp vtst 8 @(mu) %
+@iif vtst = 0
+#elif 0 && defined(ATL_AVX) && defined(SREAL) /* AVX loses perf for unaligned */
+   @callproc cpfunc __m256
+@endiif
+@iif vtst ! 0
+#elif 0
+@endiif
+@iexp vtst 2 @(mu) %
+@iif vtst = 0
+#elif defined(ATL_SSE2) && defined(DREAL) && defined(__GNUC__)
+   @callproc cpfunc __m128d
+@endiif
+@iif vtst ! 0
+#elif 0
+@endiif
+@iexp vtst 4 @(mu) %
+@iif vtst = 0
+#elif defined(SREAL) && defined(ATL_SSE1) && defined(__GNUC__)
+   @callproc cpfunc __m128
+@endiif
+@iif vtst ! 0
+#elif 0
+@endiif
+#else
 void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
 (
    ATL_CSZT M,          /* number of rows in A */
@@ -639,6 +1040,7 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
    }
    @endmif
 }
+#endif
 @ROUT ATL_cablk2cmat cammmtst
 /*
  *  C <- beta*C + alpha*b,
@@ -1045,17 +1447,15 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
 @ifdef ! dupB
    @define dupB @1@
 @endifdef
+@iif dupB = 0
+   @undef dupB
+   @define dupB @1@
+@endiif
 @ifdef ! vlen
    @define vlen @2@
 @endifdef
 @iif vlen = 2
    @define vtyp @__m128d@
-   @iif dupB = 2
-      @define bcast @_mm_load_pd@
-   @endiif
-   @ifdef ! bcast
-      @define bcast @_mm_movdup_pd@
-   @endifdef
    @define mul @_mm_mul_pd@
    @define add @_mm_add_pd@
    @define sub @_mm_sub_pd@
@@ -1064,7 +1464,7 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
    @define CL @8@
 #ifdef ATL_SSE3
    #define ATL_bcast(p_, r_) \
-      r_ = _mm_loaddup_pd(p_)
+      r_ =  _mm_loaddup_pd(p_)
 #else
    #define ATL_bcast(p_, r_) \
       r_ = _mm_load1_pd(p_)
@@ -1072,15 +1472,6 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
 @endiif
 @iif vlen = 4
    @define vtyp @__m128@
-   @iif dupB = 4
-      @define bcast @_mm_load_ps@
-   @endiif
-   @iif dupB = 2
-      @define bcast @_mm_movdup_pd@
-   @endiif
-   @ifdef ! bcast
-      @define bcast @_mm_load1_ps@
-   @endifdef
    @define mul @_mm_mul_ps@
    @define add @_mm_add_ps@
    @define sub @_mm_sub_ps@
@@ -1094,7 +1485,7 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
    @iif dupB = 2
 #ifdef ATL_SSE3
    #define ATL_bcast(p_, r_) \
-      r_ = _mm_movdup_pd((double*)p_)
+      r_ = (__m128) _mm_loaddup_pd((double*)(p_))
 #else
    #define ATL_bcast(p_, r_) \
       r_ = _mm_load1_ps(p_)
