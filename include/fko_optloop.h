@@ -6,6 +6,10 @@
 #define PTRF_CONSTINC   0x4
 #define PTRF_MIXED      0x8
 
+#ifndef INT_BVI 
+   #define INT_BVI unsigned int
+#endif
+
 void AddLoopControl(LOOPQ *lp, INSTQ *ipinit, INSTQ *ipupdate, INSTQ *ippost,
                     INSTQ *iptest);
 void KillLoopControl(LOOPQ *lp);
@@ -23,9 +27,9 @@ short *DeclareMaxE(int VEC, int ne, short STi);
 short *DeclareMinE(int VEC, int ne, short STi);
 int DoAllAccumExpansion(LOOPQ *lp, int unroll, int vec);
 short *FindAllScalarVars(BLIST *scope);
-BLIST *FindAllFallHeads(BLIST *ftheads, int iscope, BBLOCK *head, int tails,
-                        int inblks);
-BBLOCK *DupCFScope(short ivscp0, short ivscp, int dupnum, BBLOCK *head);
-BLIST *CF2BlockList(BLIST *bl, short bvblks, BBLOCK *head);
+BLIST *FindAllFallHeads(BLIST *ftheads, INT_BVI iscope, BBLOCK *head, 
+                        INT_BVI tails, INT_BVI inblks);
+BBLOCK *DupCFScope(INT_BVI ivscp0, INT_BVI ivscp, int dupnum, BBLOCK *head);
+BLIST *CF2BlockList(BLIST *bl, INT_BVI bvblks, BBLOCK *head);
 INSTQ *FindCompilerFlag(BBLOCK *bp, short flag);
 #endif

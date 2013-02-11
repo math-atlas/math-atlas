@@ -4,15 +4,15 @@
 #define uchar unsigned char
 
 /*
- * FIXME: After implementing SV and UNROLLING of SV, short are no longer 
- * enough. bitvec exceeds 65535 .
+ * FIXED: After implementing SV and UNROLLING of SV, short are no longer 
+ * enough. 
  */
-#if 1
    #define ushort unsigned short
-#else /* doesn't work ! */
-   #define ushort unsigned int
-   typedef int short;
-#endif
+/*
+ * custom types for bvec
+ */
+#define INT_BVI unsigned int
+#define INT32  int
 
 union valoff
 {
@@ -58,7 +58,11 @@ struct instq
    struct bblock *myblk;
    INSTQ *prev, *next;
    short inst[4];
+#if 0
    ushort use, set, deads;
+#else
+   INT_BVI use, set, deads;
+#endif
 };
 
 typedef struct ilist ILIST;
@@ -104,6 +108,7 @@ struct sdata  /* Structure for static data */
    struct sdata *next;
 };
 
+#if 0
 typedef struct bblock BBLOCK;
 struct bblock
 {
@@ -121,6 +126,25 @@ struct bblock
    ushort conin, conout;    /* IGnum conflicts in/out */
    ushort ignodes;          /* all of this block's ignodes */
 };
+#else
+typedef struct bblock BBLOCK;
+struct bblock
+{
+   ushort bnum;              /* block number */
+   short ilab;               /* ST entry of label of block (if any) */
+   BBLOCK *up, *down;       /* links blocks in code order */
+   BBLOCK *usucc, *csucc;   /* (un)conditional successors */
+   INSTQ  *inst1, *instN;   /* ptr to this block's 1st and last inst */
+   INSTQ  *ainst1, *ainstN; /* ptr to block's 1st and last non-comment inst */
+   struct loopq *loop;      /* set for header of loop only */
+   struct blist *preds;     /* predecessors to this block */
+   INT_BVI dom;              /* dominators of this block */
+   INT_BVI uses, defs;       /* uses and defs for this block */
+   INT_BVI ins, outs;        /* live vars coming in and leaving block */
+   INT_BVI conin, conout;    /* IGnum conflicts in/out */
+   INT_BVI ignodes;          /* all of this block's ignodes */
+};
+#endif
 
 typedef struct blist BLIST;
 struct blist
@@ -199,15 +223,22 @@ struct loopq
    BBLOCK *preheader, *header;
    BLIST *tails, *posttails;
    BLIST *blocks;     /* blocks in the loop */
+#if 0   
    ushort blkvec;     /* bitvec equivalent of blocks */
    ushort outs;       /* reg/var live on loop exit */
    ushort sets;       /* reg/var set in loop; not kept up to date (scratch)! */
+#else
+   INT_BVI blkvec;     /* bitvec equivalent of blocks */
+   INT_BVI outs;       /* reg/var live on loop exit */
+   INT_BVI sets;       /* reg/var set in loop; not kept up to date (scratch)! */
+#endif
    struct loopq *next;
 };
 
 typedef struct ignode IGNODE;
 struct ignode
 {
+   int ignum;                 /* IG index of this node */
    BLIST *blkbeg;               /* block(s) live range starts in */
    BLIST *blkend;               /* block(s) live range ends in */
    BLIST *blkspan;              /* block(s) live range completely spans */
@@ -215,12 +246,17 @@ struct ignode
    BLIST *stpush;               /* list places to push any store to */
    int nread;                   /* # of reads of var in this live range */
    int nwrite;                  /* # of writes of var in this live range */
+#if 0
    ushort myblkvec;             /* blocks live range includes as bitvec */
    ushort liveregs;             /* registers being used at this point */
    ushort conflicts;            /* IG conflicting with this one */
+#else
+   INT_BVI myblkvec;             /* blocks live range includes as bitvec */
+   INT_BVI liveregs;             /* registers being used at this point */
+   INT_BVI conflicts;            /* IG conflicting with this one */
+#endif
    short var;                   /* ST index of variable */
    short deref;                 /* deref entry of var */
-   short ignum;                 /* IG index of this node */
    short reg;                   /* register assigned to this live range */
 };
 
@@ -249,8 +285,13 @@ struct looppath    /* data structure for paths in loop */
    BLIST *blocks;               /* blocks in the path */
    BBLOCK *head;                /* head block of the path */
    BBLOCK *tail;                /* tail block of the path */
+#if 0
    ushort uses;                 /* var uses in the path */
    ushort defs;                 /* var defs in the path */
+#else
+   INT_BVI uses;                 /* var uses in the path */
+   INT_BVI defs;                 /* var defs in the path */
+#endif
    struct ptrinfo *ptrs;        /* ptr info in the path */
    short *scal;                 /* scalar vars in path, skipped integer */
    short *sflag;                /* sc flag for scalar variable */
