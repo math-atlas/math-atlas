@@ -41,7 +41,7 @@ BBLOCK *DupBlock(BBLOCK *bold)
    return(nb);
 }
 
-BLIST *DupBlockList(BLIST *scope, int ivscope)
+BLIST *DupBlockList(BLIST *scope, INT_BVI ivscope)
 /*
  * This function duplicates all block info for scope.  CF in duped code
  * that links to blocks duped scope is changed to reference duped code, while
@@ -171,8 +171,8 @@ void IndividualizeDuplicatedBlockList(int ndup, BLIST *scope)
 }
 #endif
 
-BBLOCK *GetFallPath(BBLOCK *head, int loopblks, int inblks, int tails,
-                    int fallblks)
+BBLOCK *GetFallPath(BBLOCK *head, INT_BVI loopblks, INT_BVI inblks, 
+                    INT_BVI tails, INT_BVI fallblks)
 /*
  * Starting at head, finds the fall thru path, stopping when the fall-thru
  * block is a loop tail (in tails) or succ is not fall-thru
@@ -214,7 +214,8 @@ BBLOCK *GetFallPath(BBLOCK *head, int loopblks, int inblks, int tails,
 }
 
 void InsUnrolledCode(int unroll, BLIST **dupblks, BBLOCK *head,
-                     int loopblks, int inblks, int tails, int fallblks)
+                     INT_BVI loopblks, INT_BVI inblks, INT_BVI tails, 
+                     INT_BVI fallblks)
 /*
  * Majedul: FIXME:
  * This function can't explore and copy all the blks recursively. Only works 
@@ -276,8 +277,8 @@ void InsUnrolledCode(int unroll, BLIST **dupblks, BBLOCK *head,
 }
 
 void InsUnrolledBlksInCode(int unroll, BLIST **dupblks, BBLOCK *head,
-                     int loopblks, int inblks, int tails, int fallblks, 
-                     int visitedblks)
+                     INT_BVI loopblks, INT_BVI inblks, INT_BVI tails, 
+                     INT_BVI fallblks, INT_BVI visitedblks)
 /*
  * insert duplicated blks in code. This is a modified version based on the 
  * previous function to support complex CFG like: the CFG after SV.
@@ -374,7 +375,7 @@ void InsUnrolledBlksInCode(int unroll, BLIST **dupblks, BBLOCK *head,
 
 void InsertUnrolledCode(LOOPQ *lp, int unroll, BLIST **dupblks)
 {
-   int tails, fallblks, inblks, visitedblks;
+   INT_BVI tails, fallblks, inblks, visitedblks;
 
    tails = BlockList2BitVec(lp->tails);
    fallblks = NewBitVec(32);
@@ -426,7 +427,7 @@ int UpdateIndexRef(BLIST *scope, short I, int ur)
                if (ur)
                {
                   val = SToff[k-1].i + ur; /* populate the value */
-                  //ip->next->inst[3] = STiconstlookup(val);
+                  /*ip->next->inst[3] = STiconstlookup(val);*/
                   k = STiconstlookup(val);
                   ip->next->inst[3] = k;
 /*
@@ -1399,8 +1400,8 @@ char *DupedLabelName(int dupnum, int ilab)
    return(ln);
 }
 
-BBLOCK *DupCFScope0(short ivscp0, /* original scope */
-                   short ivscp,  /* scope left to dupe */
+BBLOCK *DupCFScope0(INT_BVI ivscp0, /* original scope */
+                   INT_BVI ivscp,  /* scope left to dupe */
                    int dupnum,   /* number of duplication, starting at 1 */
                    BBLOCK *head) /* block being duplicated */
 /*
@@ -1449,8 +1450,8 @@ BBLOCK *DupCFScope0(short ivscp0, /* original scope */
    return(nhead);
 }
 
-BBLOCK *DupCFScope(short ivscp0, /* original scope */
-                   short ivscp,  /* scope left to dupe */
+BBLOCK *DupCFScope(INT_BVI ivscp0, /* original scope */
+                   INT_BVI ivscp,  /* scope left to dupe */
                    int dupnum,   /* number of duplication, starting at 1 */
                    BBLOCK *head) /* block being duplicated */
 {
@@ -1462,7 +1463,7 @@ BBLOCK *DupCFScope(short ivscp0, /* original scope */
 #endif
 }
 
-BLIST *CF2BlockList(BLIST *bl, short bvblks, BBLOCK *head)
+BLIST *CF2BlockList(BLIST *bl, INT_BVI bvblks, BBLOCK *head)
 /*
  * Given a list of blocks in control-flow headed by head, create a list of
  * Basic Blocks containing all blocks indicated in bvblks (zeroing bvblks)
@@ -1489,7 +1490,7 @@ void UpdateUnrolledIndices(BLIST *scope, short I, int UR)
    UpdateIndexRef(scope, I, UR);
 }
 
-BBLOCK *FindFallHead(BBLOCK *head, int tails, int inblks)
+BBLOCK *FindFallHead(BBLOCK *head, INT_BVI tails, INT_BVI inblks)
 /*
  * Given a header in scope, return NULL if already added to inblks, head if
  * it is indeed the head of a previously unseen fall-thru path
@@ -1516,8 +1517,9 @@ BBLOCK *FindFallHead(BBLOCK *head, int tails, int inblks)
    return(head);
 }
 
-static BLIST *FindAllFallHeads0(BLIST *ftheads, int iscope, BBLOCK *head, 
-                                int tails, int inblks, int visitedblks)
+static BLIST *FindAllFallHeads0(BLIST *ftheads, INT_BVI iscope, BBLOCK *head, 
+                                INT_BVI tails, INT_BVI inblks, 
+                                INT_BVI visitedblks)
 {
    BBLOCK *bp;
 #if 0
@@ -1592,15 +1594,15 @@ static BLIST *FindAllFallHeads0(BLIST *ftheads, int iscope, BBLOCK *head,
    return(ftheads);
 }
 
-BLIST *FindAllFallHeads(BLIST *ftheads, int iscope, BBLOCK *head, int tails,
-                        int inblks)
+BLIST *FindAllFallHeads(BLIST *ftheads, INT_BVI iscope, BBLOCK *head, 
+                        INT_BVI tails, INT_BVI inblks)
 /*
  * It's a wrapper funtion for the original function. I introduce an extra
  * parameter to manage the visited nodes like: DFS. To avoid the change in 
  * function call, this wrapper is used.
  */
 {
-   int visitedblks;
+   INT_BVI visitedblks;
    BLIST *bl;
 
    visitedblks = NewBitVec(32);
@@ -1619,10 +1621,10 @@ void GenCleanupLoop(LOOPQ *lp)
    BBLOCK *bp0, *bp, *newCF;
    LOOPQ *lpn;
    char ln[512];
-   int iv, ivtails;
+   INT_BVI iv, ivtails;
    short r0;
    extern BBLOCK *bbbase;
-   extern int FKO_BVTMP;
+   extern INT_BVI FKO_BVTMP;
 
 /*
  * If no cleanup is needed, return
@@ -1896,7 +1898,7 @@ int ListElemCount(BLIST *blist);
 
 int UnrollLoop(LOOPQ *lp, int unroll)
 {
-   short iv;
+   INT_BVI iv;
    BBLOCK *newCF;
    BLIST **dupblks, *bl, *ntails=NULL;
    ILIST *il;
@@ -1906,7 +1908,7 @@ int UnrollLoop(LOOPQ *lp, int unroll)
    enum comp_flag kbeg, kend;
    short *sp;
    int n;
-   extern int FKO_BVTMP;
+   extern INT_BVI FKO_BVTMP;
    extern BBLOCK *bbbase;
    extern int VECT_FLAG;
 /*
@@ -2388,8 +2390,8 @@ int FindUnusedIRegInList(BLIST *scope, int ir)
 {
    BLIST *bl;
    INSTQ *ip;
-   int bv;
-   extern int FKO_BVTMP;
+   INT_BVI bv;
+   extern INT_BVI FKO_BVTMP;
 /*
  * Find all regs used in this range
  */
@@ -2445,9 +2447,9 @@ void SchedPrefInLoop1(LOOPQ *lp, ILIST *ilbase, int dist, int chunk)
    BLIST *atake, *bl;
    INSTQ *ip, *ipp, *ipn, *ipf, *ipfn;
    int N, skip, sk, i, j, k, npf, ir, ir0, dt;
-   int bv;
+   INT_BVI bv;
    ILIST *il;
-   extern int FKO_BVTMP;
+   extern INT_BVI FKO_BVTMP;
 
    atake = GetSchedInfo(lp, ilbase, -1, &npf, &N);
    ir0 = -ilbase->inst->inst[1];
@@ -2557,7 +2559,7 @@ void SchedPrefInLoop2(LOOPQ *lp, ILIST *ilbase, int iskip, int chunk,
    BLIST *atake, *bl;
    INSTQ *ip, *ipp, *ipn, *ipf, *ipfn;
    int N, skip, sk, i, j, k, npf, ir, ir0, dt;
-   int bv;
+   INT_BVI bv;
    ILIST *il;
 
    if (iskip < 0)
@@ -3306,9 +3308,9 @@ short *FindAllScalarVars(BLIST *scope)
    struct ptrinfo *pbase, *p;
    short *sp, *s, *scal;
    int i, j, k, n, N;
-   int iv;
+   INT_BVI iv;
    BLIST *bl;
-   extern int FKO_BVTMP;
+   extern INT_BVI FKO_BVTMP;
    extern short STderef;
 /*
  * Find variable accessed in the path and store it in path
@@ -3397,7 +3399,7 @@ short *FindAllScalarVars(BLIST *scope)
 void PrintMovingPtrAnalysis(FILE *fpout)
 {
    int i, j, k, ns, N;
-   short set, use, var;
+   INT_BVI set, use, var;
    short *sp;
    char pre;
    struct ptrinfo *pi, *pi0;
@@ -3867,7 +3869,7 @@ void PrintLoopInfo()
    struct ptrinfo *pi, *pi0;
    FILE *fpout=stdout;
    int SimpleLC=0, UR, N, Npf, i, j, k, vect, ns;
-   int set, use, var;
+   INT_BVI set, use, var;
    char pre;
    extern FILE *fpLOOPINFO;
    extern short STderef;
@@ -5668,7 +5670,7 @@ short RemoveBranchWithMask(BBLOCK *sblk)
 /*
  *       creating mask local variable to store the result of CMP
  */
-         cmask = (char*)malloc(sizeof(char)*10);
+         cmask = (char*)malloc(sizeof(char)*128);
          assert(cmask);
          sprintf(cmask,"mask_%d",++maskid);
          mask = InsertNewLocal(cmask,type);
@@ -5726,10 +5728,10 @@ short *FindVarsCMOVNeeded(BBLOCK *bp0)
  */
 {
    int i;
-   short iv;
+   INT_BVI iv;
    short *sp;
    INSTQ *ip;
-   extern int FKO_BVTMP;
+   extern INT_BVI FKO_BVTMP;
    extern short STderef;
    extern BBLOCK *bbbase;
 
@@ -5776,10 +5778,10 @@ short *FindVarsCMOVNeeded(BBLOCK *bp0)
 short *FindVarsSetInBlock(BBLOCK *bp0)
 {
    int i;
-   short iv;
+   INT_BVI iv;
    short *sp;
    INSTQ *ip;
-   extern int FKO_BVTMP;
+   extern INT_BVI FKO_BVTMP;
    extern short STderef;
    extern BBLOCK *bbbase;
 
@@ -5875,7 +5877,7 @@ int RedundantScalarComputation(LOOPQ *lp)
    int i, j, k, n, N;
    int type, err;
    int *vpos;
-   short iv, iv1;
+   INT_BVI iv, iv1;
    short *sp;
    
    short *isetvars, *esetvars, *icmvars, *ecmvars; /* i=if, e=else */
@@ -5889,7 +5891,7 @@ int RedundantScalarComputation(LOOPQ *lp)
    BLIST *ifblks, *elseblks, *splitblks, *mergeblks;
    BLIST *bl;
    extern short STderef;
-   extern int FKO_BVTMP;
+   extern INT_BVI FKO_BVTMP;
 
    splitblks = NULL;
    ifblks = NULL;
@@ -6236,7 +6238,7 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
    int i, j, k, n, N;
    int type, err;
    int *vpos;
-   short iv, iv1;
+   INT_BVI iv, iv1;
    short *sp;
    
    short *isetvars, *esetvars, *icmvars, *ecmvars; /* i=if, e=else */
@@ -6249,7 +6251,7 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
    INSTQ *ip, *ip0;
    BLIST *bl;
    extern short STderef;
-   extern int FKO_BVTMP;
+   extern INT_BVI FKO_BVTMP;
 
    isetvars = esetvars = icmvars = ecmvars = inewvars = enewvars = NULL;
    sp = NULL;
@@ -6548,8 +6550,8 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
    return(err);
 }
 
-static BLIST *FindCondHeaders(BLIST *hblks, int iscope, BBLOCK *head, 
-                                        int tails, int visitedblks)
+static BLIST *FindCondHeaders(BLIST *hblks, INT_BVI iscope, BBLOCK *head, 
+                              INT_BVI tails, INT_BVI visitedblks)
 {
 /*
  * Terminating conditions
@@ -6584,10 +6586,10 @@ static BLIST *FindCondHeaders(BLIST *hblks, int iscope, BBLOCK *head,
    return(hblks);
 }
 
-BLIST *FindConditionalHeaders(BBLOCK *head, int iscope, int tails)
+BLIST *FindConditionalHeaders(BBLOCK *head, INT_BVI iscope, INT_BVI tails)
 {
    BLIST *headers;
-   int visitedblks;
+   INT_BVI visitedblks;
 
    headers = NULL;
    visitedblks = NewBitVec(32);

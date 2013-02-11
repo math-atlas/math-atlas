@@ -64,12 +64,12 @@ int BlockList2BitVec(BLIST *lp)
    return(iv);
 }
 #else
-int BlockList2BitVecFlagged(BLIST *lp, int init)
+INT_BVI BlockList2BitVecFlagged(BLIST *lp, int init)
 /*
  * Added the facility to initialize the static variable
  */
 {
-   static int iv=0;
+   static INT_BVI iv=0;
    if (!init)
    {
       if (!iv) iv = NewBitVec(32);
@@ -84,7 +84,7 @@ int BlockList2BitVecFlagged(BLIST *lp, int init)
    }
    return(iv);
 }
-int BlockList2BitVec(BLIST *lp)
+INT_BVI BlockList2BitVec(BLIST *lp)
 /*
  * Majedul: it's a wrapper function so that existing code can be kept unchanged 
  */
@@ -93,7 +93,7 @@ int BlockList2BitVec(BLIST *lp)
 }
 #endif
 
-BLIST *BitVec2BlockList(int iv)
+BLIST *BitVec2BlockList(INT_BVI iv)
 /*
  * Given a bitvec of block nums, return a BLIST of the appropriate blocks
  */
@@ -188,7 +188,7 @@ BLIST *MergeBlockLists(BLIST *l1, BLIST *l2)
 {
    BLIST *p;
    int iv1, iv2;
-   extern int FKO_BVTMP;
+   extern INT_BVI FKO_BVTMP;
 
    if (!l1) 
       return(l2);
@@ -281,7 +281,8 @@ BBLOCK *KillBlock(BBLOCK *base, BBLOCK *killme)
 BBLOCK *DelBlock(BBLOCK *delblk)
 /*
  * This function will not only remove a blk from CFG but also free its storage 
- * will return the down blk
+ * will return the down blk. 
+ * NOTE: not updated some ref like: optloop->tails, optloop->blocks
  */
 {
    BBLOCK *bdown;
@@ -779,10 +780,11 @@ void CalcDoms(BBLOCK *bbase)
  * Calculates dominator information for all basic blocks
  */
 {
-   int n, CHANGE, old;
+   int n, CHANGE;
+   INT_BVI old;
    BBLOCK *bp;
    BLIST *lp;
-   extern int FKO_BVTMP;
+   extern INT_BVI FKO_BVTMP;
    extern BBLOCK *bbbase;
 
    if (!bbase) return;
@@ -1277,10 +1279,10 @@ void FinalizeLoops()
 {
    LOOPQ *lp;
    int maxdep, i;
-   int phbv, iv;
+   INT_BVI phbv, iv;
    BLIST *bl;
    INSTQ *ip;
-   extern int FKO_BVTMP;
+   extern INT_BVI FKO_BVTMP;
 
    for (lp=loopq; lp; lp = lp->next)
    {

@@ -113,7 +113,7 @@ char *Int2Reg(int i)
    return(ret);
 }
 
-void SetAllTypeReg(int iv, int type)
+void SetAllTypeReg(INT_BVI iv, int type)
 /*
  * Modify regstate iv to set all registers of type type to 1, leaving the rest
  * of the state unchanged
@@ -159,7 +159,7 @@ int Reg2Regstate(int k)
  * RETURNS: bitvec with appropriate register numbers set
  */
 {
-   static int iv=0;
+   static INT_BVI iv=0;
    int i;
 
 //fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
@@ -234,8 +234,9 @@ int FindLiveregs(INSTQ *here)
  */
 {
    INSTQ *ip;
-   int i, j, k, iv;
-   static int liveregs=0, mask, vtmp;
+   int i, j, k;
+   INT_BVI iv;
+   static INT_BVI liveregs=0, mask, vtmp;
 
    if (here)
    {
@@ -310,7 +311,7 @@ int FindLiveregs(INSTQ *here)
    return(liveregs);
 }
 
-int GetRegForAsg(int type, int iv, int livereg)
+int GetRegForAsg(int type, INT_BVI iv, INT_BVI livereg)
 {
    SetVecAll(iv, 0);
    SetAllTypeReg(iv, type);
@@ -326,7 +327,7 @@ int GetRegForAsg(int type, int iv, int livereg)
    return(AnyBitsSet(iv));
 }
 
-int GetRegFindLR(int type, int iv, INSTQ *here)
+int GetRegFindLR(int type, INT_BVI iv, INSTQ *here)
 {
    return(GetRegForAsg(type, iv, FindLiveregs(here)));
 }
@@ -381,6 +382,10 @@ void KillIGTableEntries()
          IG[i] = NULL;
       }
    }
+#if 0   
+   void PrintNIG(FILE *fout);
+   PrintNIG(stderr);
+#endif   
    NIG = 0;
 }
 
@@ -392,7 +397,7 @@ void KillIGTable()
    TNIG = 0;
 }
 
-short AddIG2Table(IGNODE *node)
+int AddIG2Table(IGNODE *node)
 {
    if (NIG == TNIG)
       NewIGTable(64);
@@ -451,13 +456,13 @@ IGNODE *NewIGNode(BBLOCK *blk, short var)
    return(new);
 }
 
-ushort AllRegVec(int k)
+INT_BVI AllRegVec(int k)
 /*
  * Majedul: this func is changed to add opportunity to reset the static var
  * k is for reset the static var iv.
  */
 {
-   static int iv=0;
+   static INT_BVI iv=0;
    int i;
    if (k <= 0)
    {
@@ -478,16 +483,16 @@ ushort AllRegVec(int k)
 
 void CalcBlockIG(BBLOCK *bp)
 {
-   int i, j, n, k, iv;
+   int i, j, n, k;
    IGNODE *node;
    INSTQ *ip;
-   int liveregs;
+   INT_BVI liveregs, imask, iv;
    const int chunk = 32;
    short *vals;
    IGNODE **myIG = NULL;   /* array of this block's IGNODES */
-   int imask, igN=0, nn=0;
+   int igN=0, nn=0;
    short inst;
-   extern int FKO_BVTMP;
+   extern INT_BVI FKO_BVTMP;
    extern BBLOCK *bbbase;
 
    if (!CFUSETU2D)
@@ -549,6 +554,8 @@ void CalcBlockIG(BBLOCK *bp)
 /*
  * For all created IGNODEs, set it to conflict with all other conin,
  * and init its livereg to conin's livereg
+ * FIXME: ignum can exceed short. So, it can't be hold in vals for large code
+ * Will get seg fault from here.
  */
    vals = BitVec2StaticArray(bp->ignodes);
    for (n=vals[0], i=1; i <= n; i++)
@@ -658,6 +665,9 @@ void CalcBlockIG(BBLOCK *bp)
                   if (myIG[j])
                      SetVecBit(myIG[j]->conflicts, node->ignum, 1);
                node->conflicts = BitVecCopy(node->conflicts, bp->conout);
+#if 0
+               fprintf(stderr, "%d ", node->ignum);   
+#endif   
                SetVecBit(bp->conout, node->ignum, 1);
                node->liveregs = BitVecCopy(node->liveregs, liveregs);
                node->blkbeg = AddBlockToList(node->blkbeg, bp);
@@ -790,7 +800,7 @@ void CombineLiveRanges(BLIST *scope, BBLOCK *pred, int pig,
    KillIGNode(snode);
 }
 
-void CombineBlockIG(BLIST *scope, ushort scopeblks, BBLOCK *pred, BBLOCK *succ)
+void CombineBlockIG(BLIST *scope, INT_BVI scopeblks, BBLOCK *pred, BBLOCK *succ)
 /*
  * Attempt to combine preds IG with succ
  */
@@ -923,7 +933,7 @@ int CheckIG(int N, IGNODE **igs)
 
 int Scope2BV(BLIST *scope)
 {
-   static int iv=0;
+   static INT_BVI iv=0;
    BLIST *bl;
 
    if (scope)
@@ -949,7 +959,7 @@ int CalcScopeIG(BLIST *scope)
  * So, make sure it is not used with NULL ( adding assert ) in normal case
  */
 {
-   static ushort blkvec=0;
+   static INT_BVI blkvec=0;
    BLIST *bl, *lp;
    short *sp;
    int i, j;
@@ -965,6 +975,7 @@ int CalcScopeIG(BLIST *scope)
  */
       if (blkvec) SetVecAll(blkvec, 0);
       else blkvec = NewBitVec(32);
+      assert(blkvec);
       for (bl=scope; bl; bl = bl->next)
       {
          SetVecBit(blkvec, bl->blk->bnum-1, 1);
@@ -1107,10 +1118,11 @@ IGNODE **SortIG(int *N, int thresh)
  * be worth assigning.
  */
 {
-   int n, ncon, i, j, nref, iv;
+   int n, ncon, i, j, nref;
+   INT_BVI iv;
    IGNODE *ig;
    IGNODE **igarr;
-   extern int FKO_BVTMP;
+   extern INT_BVI FKO_BVTMP;
 
    if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(TNREG);
    iv = FKO_BVTMP;
@@ -1179,8 +1191,8 @@ int DoIGRegAsg(int N, IGNODE **igs)
    int iret = 0;
    IGNODE *ig, *ig2;
    short *sp;
-   short iv, ivused;
-   extern int FKO_BVTMP;
+   INT_BVI iv, ivused;
+   extern INT_BVI FKO_BVTMP;
 
    if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(TNREG);
    iv = FKO_BVTMP;
@@ -1643,11 +1655,12 @@ int AsgGlobalLoopVars(LOOPQ *loop, short *iregs, short *fregs, short *dregs)
  * RETURNS: 0 on success, non-zero on failure.
  */
 {
-   int iv, i, j, k, n, m;
+   int i, j, k, n, m;
    BLIST *bl;
    INSTQ *ip;
    short *sa, *s;
-   extern int FKO_BVTMP;
+   INT_BVI iv;
+   extern INT_BVI FKO_BVTMP;
    short id;
 
 /*
@@ -1797,8 +1810,9 @@ void FindInitRegUsage(BLIST *bp, short *iregs, short *fregs, short *dregs)
  */
 {
    
-   int iv, i, j, n;
-   extern int FKO_BVTMP;
+   int i, j, n;
+   INT_BVI iv;
+   extern INT_BVI FKO_BVTMP;
    short *sp;
 
 /*
@@ -1871,11 +1885,12 @@ int LoadStoreToMove(BLIST *blocks, int n, short *vars, short *regs)
  * registers indicated in regs
  */
 {
-   int i, iv, changes=0;
+   int i, changes=0;
    short is;
    BLIST *bl;
    INSTQ *ip;
-   extern int FKO_BVTMP;
+   INT_BVI iv;
+   extern INT_BVI FKO_BVTMP;
    enum inst *movs;
 
 /*
@@ -2234,7 +2249,7 @@ static int SuccIsCopyPropTarg(BBLOCK *ob, /* origin block */
    return(iret);
 }
 
-int CopyPropTrans0(int SRCLIVE, BLIST *scope, int scopeblks, BBLOCK *blk,
+int CopyPropTrans0(int SRCLIVE, BLIST *scope, INT_BVI scopeblks, BBLOCK *blk,
                    INSTQ *ipstart, short mov, short dest, short src)
 /*
  * Performs copy prop starting from ipret, where src reg is dead
@@ -2243,10 +2258,11 @@ int CopyPropTrans0(int SRCLIVE, BLIST *scope, int scopeblks, BBLOCK *blk,
  */
 {
    INSTQ *ip;
-   int ivsrc, ivdst, FoundIt, i, j, LIVEDONE=0;
+   int FoundIt, i, j, LIVEDONE=0;
    int change=0;
    BLIST *bl;
-   extern int FKO_BVTMP;
+   INT_BVI ivsrc, ivdst;
+   extern INT_BVI FKO_BVTMP;
    extern BBLOCK *bbbase;
 
    bl = FindInList(scope, blk);
@@ -2453,7 +2469,7 @@ PUTMOVEBACK:
    return(change);
 }
 
-INSTQ *CopyPropTrans(BLIST *scope, int scopeblks, BBLOCK *blk, INSTQ *ipret)
+INSTQ *CopyPropTrans(BLIST *scope, INT_BVI scopeblks, BBLOCK *blk, INSTQ *ipret)
 /*
  * Attempts to do copy prop in block blk starting at ipret
  * RETURNS: instruction following ipret after transforms or NULL if no
@@ -2462,7 +2478,8 @@ INSTQ *CopyPropTrans(BLIST *scope, int scopeblks, BBLOCK *blk, INSTQ *ipret)
 {
    INSTQ *ip;
    char *sp;
-   int i, iv;
+   int i;
+   INT_BVI iv;
    int change;
    short dest, src, mov;
 
@@ -2532,7 +2549,8 @@ int DoCopyProp(BLIST *scope)
  * Performs copy propogation on scope.
  */
 {
-   int scopeblks, CHANGE=0;
+   int CHANGE=0;
+   INT_BVI scopeblks;
    INSTQ *ip=NULL, *next, *ipnext;
    BLIST *bl, *epil=NULL, *lp;
 
@@ -2713,7 +2731,8 @@ int DoEnforceLoadStore(BLIST *scope)
    int j, ir;
    int nchanges=0;
    short op;
-   extern int FKO_BVTMP, DTabs, DTabsd, DTnzero, DTnzerod;
+   extern INT_BVI FKO_BVTMP;
+   extern int DTabs, DTabsd, DTnzero, DTnzerod;
    extern int DTabss, DTabsds, DTnzeros, DTnzerods;
 
    if (!FKO_BVTMP)
@@ -2844,10 +2863,11 @@ int DoRemoveOneUseLoads(BLIST *scope)
 {
    INSTQ *ip, *ipn, *ipuse;
    BLIST *bl;
-   int nchanges=0, iv, reg;
+   int nchanges=0, reg;
    enum inst inst;
    short k;
-   extern int FKO_BVTMP;
+   INT_BVI iv;
+   extern INT_BVI FKO_BVTMP;
 
 /*
  * Only x86 has these from-memory operations
@@ -2982,3 +3002,14 @@ int DoLastUseLoadRemoval(BLIST *scope)
       CFUSETU2D = INDEADU2D = 0;
    return(nchanges);
 }
+/*
+ * To debug: print NIG and TNIG
+ */
+void PrintNIG(FILE *fout)
+{
+   fprintf(fout,"Total IG :\n");
+   fprintf(fout, "NIG = %d\n", NIG);
+   fprintf(fout, "TNIG = %d\n", TNIG);
+}
+
+

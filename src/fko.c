@@ -1025,7 +1025,7 @@ static void ReinitAllStatic4bitvec()
  * to initialize all the static vars after Killing the bitVec entry
  */
 {
-   extern int FKO_BVTMP;
+   extern INT_BVI FKO_BVTMP;
 /*
  * Majedul: we have following functions which use local static variable for 
  * bit vectors:
@@ -1551,7 +1551,7 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
    BBLOCK *bp;
    int i, j, k, nchanges=0, nc0;
    static short nlab=0, labs[4];
-   static int iopt = 0; /* Majedul: for opt logger */
+   static int iopt = 0, bv = 0; /* Majedul: for opt logger, bv -> */
    BLIST *bl;
 /*
  * Form scope based on global setting
@@ -1601,7 +1601,16 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
          nchanges += DoLoopGlobalRegAssignment(optloop);  
          break;
       case RegAsg:
+         #if 0 
+            fprintf(stderr, "%d: \n", ++bv);
+            fprintf(stderr, "Before : ");
+            PrintBVecInfo(stderr);
+         #endif
          nchanges += DoScopeRegAsg(scope, global ? 2:1, &j);
+         #if 0 
+            fprintf(stderr, "After : ");
+            PrintBVecInfo(stderr);
+         #endif
          break;
       case CopyProp:
          nchanges += DoCopyProp(scope);
@@ -1636,13 +1645,14 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
       optrec[noptrec++] = global ? k+MaxOpt : k;
 #if 0
       PrintOptInst(stdout, ++iopt, k, scope, global, nchanges-nc0);
-      
+      fflush(stdout);  
+#if 0
       if (k == RegAsg)
       {
          ShowFlow("cfg.dot", bbbase);
          exit(0);
       }
-      
+#endif      
       /*char file[20];*/
       /*sprintf(file, "cfg/%s%d.dot", "cfg", iopt);*/
       /*ShowFlow(file,bbbase);*/
@@ -2496,7 +2506,13 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks,
 
    PerformOptN(0, optblks);
 
-#if 0 
+#if 0
+   fprintf(stderr, "BVEC after OPTN\n\n");
+   PrintBVecInfo(stderr);
+#endif   
+
+#if 0
+   PrintST(stdout);
    fprintf(stdout, "LIL after Repeatable Opt \n");
    PrintInst(stdout, bbbase);
    exit(0);
@@ -2520,14 +2536,22 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks,
       CalcAllDeadVariables();
    if (!CFLOOP)
       FindLoops();
+#if 1   
    AddBlockComments(bbbase);
    AddLoopComments();   
+#endif   
    i = FinalizePrologueEpilogue(bbbase,0 );
    KillAllLocinit(ParaDerefQ);
    ParaDerefQ = NULL;
    if (i)
       fprintf(stderr, "ERR from PrologueEpilogue\n");
    CheckFlow(bbbase, __FILE__,__LINE__);
+#if 0
+   PrintST(stdout);
+   fprintf(stdout, "Final LIL \n");
+   PrintInst(stdout, bbbase);
+   exit(0);
+#endif   
    DumpOptsPerformed(stderr, FKO_FLAG & IFF_VERBOSE);
    abase = lil2ass(bbbase);
    KillAllBasicBlocks(bbbase);
@@ -2820,10 +2844,16 @@ int main(int nargs, char **args)
 
       if (STATE1_FLAG & IFF_ST1_RC)
       {
-         //assert(!IfConvWithRedundantComp());
+#if 0 
+         fprintf(stdout, "LIL Before RC\n");
+         PrintInst(stdout, bbbase);
+         ShowFlow("cfg.dot", bbbase);
+         exit(0);
+#endif         
+         /*assert(!IfConvWithRedundantComp());*/
          assert(!IterativeRedCom());
 #if 0 
-         fprintf(stdout, "LIL after ElimMax/MinIf\n");
+         fprintf(stdout, "LIL after RC\n");
          PrintInst(stdout, bbbase);
          exit(0);
          GenerateAssemblyWithCommonOpts(fpout, optblks, abase );

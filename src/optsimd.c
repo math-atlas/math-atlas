@@ -8,6 +8,7 @@ static int NPATH = 0, TNPATH = 0, VPATH = -1;
  * Majedul: temporary flag for SSV which is needed in loop peeling to predict
  * max LABEL_id. I will manage that using special flag which indicates the type
  * of vectorization.
+ * NOTE: NO NEED NOW, SHOULD BE DELETED!
  */
 int isSSV = 0;
 
@@ -209,7 +210,7 @@ int Type2Vlen(int type)
    return(1);
 }
 
-ILIST *FindPrevStore(INSTQ *ipstart, short var, int blkvec, int ivseen)
+ILIST *FindPrevStore(INSTQ *ipstart, short var, INT_BVI blkvec, INT_BVI ivseen)
 /*
  * Finds prev store of var starting with inst ipstart, stopping search if
  * pred block is not in blkvec.
@@ -242,7 +243,7 @@ ILIST *FindPrevStore(INSTQ *ipstart, short var, int blkvec, int ivseen)
    return(il);
 }
 
-ILIST *FindNextLoad(INSTQ *ipstart, short var, int blkvec, int ivseen)
+ILIST *FindNextLoad(INSTQ *ipstart, short var, INT_BVI blkvec, INT_BVI ivseen)
 /*
  * Finds next load of var starting with inst ipstart
  * RETURNS : list of INSTQ that mark the next load of var (multiple in the
@@ -280,7 +281,7 @@ ILIST *FindNextLoad(INSTQ *ipstart, short var, int blkvec, int ivseen)
    return(il);
 }
 
-short FindReadUseType(INSTQ *ip, short var, int blkvec)
+short FindReadUseType(INSTQ *ip, short var, INT_BVI blkvec)
 /*
  * Find first use of var, including 1st use of any var it is copied to,
  * if a move is the first op
@@ -290,7 +291,7 @@ short FindReadUseType(INSTQ *ip, short var, int blkvec)
 {
    short j=0;
    ILIST *ib, *il;
-   static int iv=0;
+   static INT_BVI iv=0;
 
    if (ip)
    {
@@ -365,9 +366,9 @@ int DoLoopSimdAnal(LOOPQ *lp)
 {
    struct ptrinfo *pbase, *p;
    short *sp, *s;
-   int iv, iv1;
+   INT_BVI iv, iv1;
    int i, j, k, n, N;
-   extern int FKO_BVTMP;
+   extern INT_BVI FKO_BVTMP;
    ILIST *il, *ib;
    BLIST *bl;
    INSTQ *ip;
@@ -746,8 +747,8 @@ BLIST *AddLoopDupBlks(LOOPQ *lp, BBLOCK *up, BBLOCK *down, int lbNum)
 {
    BLIST *dupblks, *ftheads, *bl;
    BBLOCK *newCF, *bp, *bp0;
-   int iv, ivtails;
-   extern int FKO_BVTMP; 
+   INT_BVI iv, ivtails;
+   extern INT_BVI FKO_BVTMP; 
    
    bp0 = up;
 /*
@@ -840,7 +841,7 @@ void AddLoopPeeling(LOOPQ *lp, int jblabel, int falabel, short Np,
    int k, r0, r1;
    LOOPQ *lpn;
    extern BBLOCK *bbbase;
-   extern int FKO_BVTMP;
+   extern INT_BVI FKO_BVTMP;
 
 /*
  * Find last block, add loop peeling after it
@@ -922,7 +923,8 @@ void AddLoopPeeling(LOOPQ *lp, int jblabel, int falabel, short Np,
 /*
  * Add duplicated loop body
  * NOTE: assumption: lp is vectorizable, either normal or SSV
- * NOTE: if unroll is used, we need to keep space for that too. 
+ * NOTE: if unroll is used, we need to keep space for that too.
+ * NOTE: NO need now as controlled by static variable
  *
  */
    if (NPATH >  0 && isSSV) /* SSV is aplied */
@@ -1166,7 +1168,7 @@ int IsLoopPeelOptimizable(LOOPQ *lp)
 #endif
       if (lp->malign && lp->malign == type2len(lp->vflag))
       {
-         fprintf(stderr, "MUTUALLY ALIGNED TO VECTOR LENGTH!!!\n");
+         /*fprintf(stderr, "MUTUALLY ALIGNED TO VECTOR LENGTH!!!\n");*/
          /*fprintf(stderr, "malign = %d, vlen = %d\n", lp->malign, 
                  type2len(lp->vflag));*/
       }
@@ -1915,7 +1917,7 @@ int FindNumPaths(LOOPQ *lp)
 
 
 
-void PrintVars(FILE *out, char* title, ushort iv)
+void PrintVars(FILE *out, char* title, INT_BVI iv)
 /*
  * temporary for testing, will be moved to misc later 
  */ 
@@ -1946,7 +1948,7 @@ void PrintPtrInfo(FILE *out, struct ptrinfo *ptrs)
    }
 }
 
-int CheckVarInBitvec(int vid, short iv)
+int CheckVarInBitvec(int vid, INT_BVI iv)
 /*
  * check whether this var is set in the bit vector,
  * return 0 otherwise.
@@ -1985,11 +1987,11 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
  */
 {
    extern short STderef;
-   extern int FKO_BVTMP;
+   extern INT_BVI FKO_BVTMP;
    extern int VECT_FLAG;
 
    int errcode;
-   short iv, iv1, blkvec;
+   INT_BVI iv, iv1, blkvec;
    int i, j, k, n, N, vid;
    int vflag;
    LOOPQ *lp;
@@ -5492,13 +5494,13 @@ void DupBlkPathWithOpt(LOOPQ *lp, BLIST **dupblks, int islpopt, int UsesIndex,
 {
    int i, j;
    int vlen, URbase, cflag;
-   int iv;
+   INT_BVI iv;
    BBLOCK *newCF, *bp;
    INSTQ *ip, *ipn;
    BLIST *bl;
    char ln[512];
    struct ptrinfo *pi;
-   extern int FKO_BVTMP;
+   extern INT_BVI FKO_BVTMP;
    static int fid = 1;
 #if 0
    vlen = Type2Vlen(lp->vflag);
@@ -5606,7 +5608,7 @@ void DupBlkPathWithOpt(LOOPQ *lp, BLIST **dupblks, int islpopt, int UsesIndex,
 }
 
 BBLOCK *GenScalarRestartPathCode(LOOPQ *lp, int path, int dups, BLIST *ftheads, 
-                                 int ivtails)
+                                 INT_BVI ivtails)
 {
    int i, j;
    char ln[512];
@@ -6008,6 +6010,10 @@ void UpdateLoopPaths(int srlb)
       if (bp->csucc)
          bp->csucc->preds = RemoveBlockFromList(bp->csucc->preds, bp);
 /*
+ *    NOTE: need to update other global data structure like: optloop->tails,
+ *    optloop->blocks!!!
+ */
+/*
  *    now, we can delete the blk
  */
 #if 0
@@ -6030,11 +6036,11 @@ void ScalarRestart(LOOPQ *lp, int ndups)
  * ndups represents the number of duplication of main loop needed.
  */
 {
-   int iv, ivtails;
+   INT_BVI iv, ivtails;
    int srlb;
    BBLOCK *srblks;   /* will point the CFG of scalar restart */
    BLIST *ftheads;
-   extern int FKO_BVTMP;
+   extern INT_BVI FKO_BVTMP;
 
 /*
  * Generate codes for Scalar Restart
@@ -6087,14 +6093,15 @@ void ScalarRestart0(LOOPQ *lp, int dups)
  */
 {
    int i, j, k;
-   int iv, ivtails, vlen, cflag;
+   int vlen, cflag;
+   INT_BVI iv, ivtails;
    BBLOCK **bpaths; /* hold complete code structure for each path*/
    BBLOCK *bp0, *bdown, *bp;
    BLIST *ftheads, *bl, *vbl, *blFrom;
    INSTQ *ip;
    char ln[64];
    extern BBLOCK *bbbase;
-   extern int FKO_BVTMP;
+   extern INT_BVI FKO_BVTMP;
 
    assert(VPATH!=-1);
    bpaths = malloc(sizeof(BBLOCK*)*NPATH);

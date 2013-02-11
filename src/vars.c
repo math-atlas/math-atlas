@@ -3,7 +3,7 @@
 
 short STderef=0;
 
-void HandleUseSet(int iv, int iuse, int I)
+void HandleUseSet(INT_BVI iv, INT_BVI iuse, int I)
 {
    int i, flag;
    static int tnreg=0;
@@ -129,9 +129,9 @@ void CalcUseSet(BBLOCK *bp)
 
 void CalcUsesDefs(BBLOCK *bp)
 {
-   int vstmp;
+   INT_BVI vstmp;
    INSTQ *ip;
-   extern int FKO_BVTMP;
+   extern INT_BVI FKO_BVTMP;
 
    if (!INUSETU2D)
       CalcUseSet(bp);
@@ -158,8 +158,9 @@ void CalcUsesDefs(BBLOCK *bp)
 void CalcInsOuts(BBLOCK *base)
 {
    BBLOCK *bp;
-   int CHANGES, vstmp;
-   extern int FKO_BVTMP;
+   int CHANGES;
+   INT_BVI vstmp;
+   extern INT_BVI FKO_BVTMP;
    extern BBLOCK *bbbase;
 
    if (base == bbbase && !CFU2D)
@@ -206,11 +207,11 @@ void CalcBlocksDeadVariables(BBLOCK *bp)
  */
 {
    BBLOCK *bb;
-   static ushort mask=0;
-   ushort seenwrite;
+   static INT_BVI mask=0;
+   INT_BVI seenwrite;
    short inst;
    INSTQ *ip;
-   extern int FKO_BVTMP;
+   extern INT_BVI FKO_BVTMP;
    extern BBLOCK *bbbase;
 
    if (bp)
@@ -278,7 +279,7 @@ void CalcAllDeadVariables()
    INDEADU2D = 1;
 }
 
-char *BV2VarNames(int iv)
+char *BV2VarNames(INT_BVI iv)
 /*
  * Translates bitvec iv to string of var names
  */

@@ -2,21 +2,45 @@
  * This file contains the routines necessary to manipulate the basic block
  * bit vectors
  */
+/*
+ * TODO: We need to use macro for the type of nvalloc and nvused. 
+ * here int is considered 32 bit. We will change it with custom type int32 
+ * to make it sure. So, the declaration will look like it:
+ *    
+ * static INT_BVI nvalloc = 0, 
+ *               nvused = 0;
+ * static INT32 **bvecs=NULL,
+ *              *ni=NULL;
+ * static INT_BVI FKO_BVTMP = 0;
+ *
+ */
 #include "fko.h"
 #define CHUNKSIZE 512 /* should be large as the LIL increased */
+
+#if 0
 static int nvalloc=0,      /* # of slots allocated for bit vectors*/
            nvused=0,       /* # of slots presently in use */
            **bvecs=NULL,   /* ptr to individual bit vectors */
            *ni=NULL;       /* # of integers required by this bit vector */
-int FKO_BVTMP=0;
+#else
+static INT_BVI nvalloc = 0,
+               nvused = 0;
+
+static INT32 **bvecs = NULL,
+             *ni = NULL;
+#endif
+
+/*int FKO_BVTMP=0;*/
+INT_BVI FKO_BVTMP = 0;
+
 
 static void NewVecChunk(int increase)
 {
-   int i, n;
-   int **newv, *newni;
+   INT_BVI i, n;
+   INT32 **newv, *newni;
    n = nvalloc + increase;
-   newv = malloc(sizeof(int*)*n);
-   newni = malloc(sizeof(int)*n);
+   newv = malloc(sizeof(INT32*)*n);
+   newni = malloc(sizeof(INT32)*n);
    assert(newv && newni); /* Majedul: this check is added */
    for (i=0; i < nvused; i++)
    {
@@ -47,25 +71,34 @@ static void NewVecChunk(int increase)
    nvalloc = n;
 }
 
-static int GetUnusedBVI()
+static INT_BVI GetUnusedBVI()
+/*
+ * NOTE: for extreme large bit vector, this function wastes huge time
+ * FIXME: We can keep a table to point unused index to reduce time of this
+ * function. We can use fixed-size table(or, queue) for this and update the 
+ * table for each kill of bvec. When there are no unused bvec, we can search
+ * the bvec table to update this table. It should reduce the computation time.
+ */
 {
-   int i, n;
+   INT_BVI i, n;
    for (i=0; i < nvused; i++)
       if (!ni[i]) return(i);
    if (nvused == nvalloc) NewVecChunk(CHUNKSIZE);
    return(nvused++);
 }
 
-int NewBitVec(int size)
+INT_BVI NewBitVec(int size)
 /*
  * Allocates a new bit vector with space for size elements
  */
 {
-   int nv, *v, i;
+   /*int nv, *v, i;*/
+   INT_BVI i;
+   INT32 nv, *v;
 
    i = GetUnusedBVI();
    nv = (size+32) >> 5;
-   v = calloc(nv, sizeof(int));
+   v = calloc(nv, sizeof(INT32));
    assert(v);
 /*
  * Why not we free the memory if it is occupied yet
@@ -84,7 +117,7 @@ int NewBitVec(int size)
    return(i+1);
 }
 
-void KillBitVec(int iv)
+void KillBitVec(INT_BVI iv)
 {
    iv--;
    if(bvecs[iv]) free(bvecs[iv]);
@@ -98,7 +131,7 @@ void KillAllBitVec()
  * Needed when we restore the FKO state 0
  */
 {
-   int i;
+   INT_BVI i;
    for (i=0; i < nvused; i++) /* mem alloc upto nvused! */
    {
       if (bvecs[i])  /* already freed one is asigned NULL, may check ni[i]! */ 
@@ -119,7 +152,7 @@ void KillAllBitVec()
    FKO_BVTMP=0; /* need to init with 0 so that new bitvec will be allocated */
 }
 
-int *ExtendBitVec(int iv, int nwords)
+INT32 *ExtendBitVec(INT_BVI iv, INT32 nwords)
 /*
  * To increase the size of specific bitvector
  * This function increases the size by allocating new memory keeping the index
@@ -128,8 +161,9 @@ int *ExtendBitVec(int iv, int nwords)
  * using the NewBitVec function at all.
  */
 {
-   int j, k, iv0;
-   int *v;
+   INT32 j, k;
+   INT_BVI iv0;
+   INT32 *v;
    
 /*
  * FIXED: [Majedul] There was a segmentation fault assoicated with the follwoing
@@ -162,13 +196,13 @@ int *ExtendBitVec(int iv, int nwords)
    return(v);
 }
 
-void SetVecAll(int iv, int val)
+void SetVecAll(INT_BVI iv, int val)
 /*
  * sets all bits in vector depending on val
  */
 {
-   int n, i;
-   int *v;
+   INT32 n, i;
+   INT32 *v;
 
    assert(iv); /* it should be applied on existing bitvec */
 
@@ -196,14 +230,22 @@ void SetVecAll(int iv, int val)
    for (i=0; i < n; i++) v[i] = val;
 }
 
-void SetVecBit(int iv, int ibit, int val)
+void SetVecBit(INT_BVI iv, int ibit, int val)
 /*
  * Sets bit ibit in vector iv as indicated by val
  */
 {
-   int *v;
-   int i, j, k;
+   INT32 *v;
+   INT32 i, j, k;
+#if 1   
    assert(iv); /* should applied on existing one */
+#else
+   if (iv <= 0 )
+   {
+      fko_error(__LINE__,"iv=%d, ibit=%d, val=%d\n nvalloc=%d, nvused=%d\n", 
+               iv, ibit, val, nvalloc, nvused);
+   }
+#endif
    iv--;
    i = ibit >> 5;
 /*
@@ -216,12 +258,12 @@ void SetVecBit(int iv, int ibit, int val)
    else *v |= (1<<ibit);
 }
 
-int BitVecCheck(int iv, int ibit)
+int BitVecCheck(INT_BVI iv, int ibit)
 /*
  * Returns value nonzero if ibit in bit vector iv is set, zero otherwise
  */
 {
-   int n, k;
+   INT32 n, k;
 /*
  * Majedul: add additional checking! iv != 0 and iv !=nvused
  */
@@ -265,7 +307,7 @@ int BitVecCheck(int iv, int ibit)
    return(bvecs[iv][k] & (1<<ibit));
 }
 
-int BitVecComb(int ivD, int iv1, int iv2, char op)
+INT_BVI BitVecComb(INT_BVI ivD, INT_BVI iv1, INT_BVI iv2, char op)
 /*
  * ivD = iv1 | iv2; if ivD == 0, allocate new vector
  * RETURNS ivD
@@ -297,7 +339,7 @@ int BitVecComb(int ivD, int iv1, int iv2, char op)
    return(ivD+1);
 }
 
-int BitVecCheckComb(int iv1, int iv2, char op)
+int BitVecCheckComb(INT_BVI iv1, INT_BVI iv2, char op)
 /*
  * RETURNS : 0 if iv1 op iv2 is zero, nonzero otherwise
  */
@@ -333,7 +375,7 @@ int BitVecCheckComb(int iv1, int iv2, char op)
 }
 
 
-int BitVecComp(int iv1, int iv2)
+int BitVecComp(INT_BVI iv1, INT_BVI iv2)
 /*
  * RETURNS : 0 if vectors are the same, 1 otherwise
  */
@@ -352,7 +394,7 @@ int BitVecComp(int iv1, int iv2)
    return(0);
 }
 
-int BitVecDup(int ivD, int ivS, char op)
+INT_BVI BitVecDup(INT_BVI ivD, INT_BVI ivS, char op)
 /*
  * Copies ivS to ivD, allocating ivD if necessary
  */
@@ -373,18 +415,19 @@ int BitVecDup(int ivD, int ivS, char op)
    return(ivD+1);
 }
 
-int BitVecCopy(int ivD, int ivS)
+INT_BVI BitVecCopy(INT_BVI ivD, INT_BVI ivS)
 {
    return(BitVecDup(ivD, ivS, '='));
 }
-int BitVecInvert(int ivD, int ivS)
+INT_BVI BitVecInvert(INT_BVI ivD, INT_BVI ivS)
 {
    return(BitVecDup(ivD, ivS, '~'));
 }
 
-int GetSetBitX(int iv, int I)
+int GetSetBitX(INT_BVI iv, int I)
 /*
  * RETURNS ith bit that is 1
+ * NOTE: this function expends huge time for extreme large bvec table
  */
 {
    int i, j, n, v, k=0;
@@ -394,6 +437,7 @@ int GetSetBitX(int iv, int I)
    for (j=0; j < n; j++)
    {
       v = bvecs[iv][j];
+      if (!v) continue;       /*majedul: no need to check bit if v is 0 */
       for (i=0; i < 32; i++)
       {
          if (v & (1<<i))
@@ -405,7 +449,7 @@ int GetSetBitX(int iv, int I)
    return(0);
 }
 
-int CountBitsSet(int iv)
+int CountBitsSet(INT_BVI iv)
 /*
  * RETURNS: number of bits set in bitvec iv
  */
@@ -421,12 +465,12 @@ int CountBitsSet(int iv)
    return(n);
 }
 
-int AnyBitsSet(int iv)
+int AnyBitsSet(INT_BVI iv)
 /*
  * Returns : 1st bit set, 0 if none set
  */
 {
-   int i, j, k, n;
+   INT32 i, j, k, n;
    n = ni[--iv];
    for (j=0; j < n; j++)
    {
@@ -438,7 +482,7 @@ int AnyBitsSet(int iv)
    return(0);
 }
 
-char *PrintVecList(int iv, int ioff)
+char *PrintVecList(INT_BVI iv, int ioff)
 /*
  * RETURNS: ptr to string containing # of all set bits
  */
@@ -487,7 +531,7 @@ int Array2BitVec(int n, short *sp, short off)
    return(iv);
 }
 #else
-int Array2BitVecFlagged(int n, short *sp, short off, int init)
+INT_BVI Array2BitVecFlagged(int n, short *sp, short off, int init)
 {
    static int iv=0;
    int i;
@@ -507,12 +551,12 @@ int Array2BitVecFlagged(int n, short *sp, short off, int init)
    }
    return(iv);
 }
-int Array2BitVec(int n, short *sp, short off)
+INT_BVI Array2BitVec(int n, short *sp, short off)
 {
    return(Array2BitVecFlagged(n, sp, off, 0));
 }
 #endif
-short *BitVec2StaticArray(int iv)
+short *BitVec2StaticArray(INT_BVI iv)
    /*
     * Translates a bitvector to an array of shorts, where each element holds the
     * position of the set bit.  Position 0 is N, the length of the array
@@ -553,7 +597,7 @@ short *BitVec2StaticArray(int iv)
    return(vals);
 }
 
-short *BitVec2Array(int iv, int off)
+short *BitVec2Array(INT_BVI iv, int off)
 /*
  * Translates a bitvector to an array of shorts, where each element holds the
  * (position of the set bit + off)
@@ -577,4 +621,14 @@ short *BitVec2Array(int iv, int off)
       fprintf(stderr, "\n");
    #endif
    return(vals);
+}
+
+/*
+ * to print the static member of bvec
+ */
+void PrintBVecInfo(FILE *fout)
+{
+   fprintf(fout, "CHUNK_SIZE = %d\n", CHUNKSIZE);
+   fprintf(fout, "nvused = %d\n", nvused);
+   fprintf(fout, "nvalloc = %d\n", nvalloc);
 }
