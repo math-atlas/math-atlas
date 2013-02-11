@@ -3,10 +3,10 @@
 #
 #  default values for the global variable
 #
-ATLver=3.11.0
+ATLver=3.11.9
 OBJdir=Linux_X8664_AVX
 ATLASdir=/home/msujon/ATLAS
-kernels="nrm2 amax sin cos"
+kernels="nrm2 amax sin cos irk1amax irk2amax irk3amax"
 ker=
 
 usage="Usage: $0 [OPTION]... -key key_value
