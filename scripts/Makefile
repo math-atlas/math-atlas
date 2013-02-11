@@ -13,12 +13,15 @@
 #include /home/msujon/ATLAS/ATLAS3.9.67/Linux_X8632_SSE/Make.Linux_X8632_SSE
 #include /home/msujon/ATLAS/ATLAS3.9.67/Linux_X8664_SSE/Make.Linux_X8664_SSE
 
-include /home/msujon/ATLAS/ATLAS3.9.77/Linux_X8664_AVX/Make.Linux_X8664_AVX
-#include /home/msujon/ATLAS/ATLAS3.10.0/Linux_X8664_AVX/Make.Linux_X8664_AVX
+#include /home/msujon/ATLAS/ATLAS3.9.77/Linux_X8664_AVX/Make.Linux_X8664_AVX
+
+#include /home/msujon/ATLAS/ATLAS3.10.0/Linux_X8664_AVX_FMA/Make.Linux_X8664_AVX_FMA
+
+include /home/msujon/ATLAS/ATLAS3.11.5/Linux_X8664_AVX_FMA/Make.Linux_X8664_AVX_FMA
 
 
-#KFLAGS=-V 
-KFLAGS=-V -Ps b A 0 1 -P all 0 128 -U 2
+KFLAGS=-V 
+#KFLAGS=-V -Ps b A 0 1 -P all 0 128 -U 2
 #KFLAGS=-V -Ps b A 0 1 -P all 0 128 
 pre=d
 rout=dot
@@ -32,9 +35,10 @@ uopt=
 #uopt="-X 1 -Y 1 -Fx 16 -Fy 16"
 #uopt="-X 1 -Y 1 -Fx 8 -Fy 8"
 uopt="-C 1 -X 1 -Y 1 -Fx 32 -Fy 32"
+#uopt="-C 1000000 -X 1 -Y 1 -Fx 32 -Fy 32"
 
 #all: dot axpy copy swap scal iamax asum amax
-all: dot axpy copy swap scal iamax asum #amax
+all: dot axpy copy swap scal iamax asum amax sin cos
 
 dot: sdot ddot
 axpy: saxpy daxpy
@@ -45,6 +49,13 @@ scal: sscal dscal
 iamax: siamax diamax
 amax: samax damax
 nrm2: snrm2 dnrm2
+
+sin: ssin dsin
+cos: scos dcos
+
+irk1amax: sirk1amax dirk1amax
+irk2amax: sirk2amax dirk2amax
+irk3amax: sirk3amax dirk3amax
 
 sdot : $(FKO)
 	$(MAKE) build pre=s rout=dot URT=`echo dot | tr 'a-z' 'A-Z'` \
@@ -126,6 +137,57 @@ dnrm2: $(FKO)
 	$(MAKE) build pre=d rout=nrm2 URT=`echo nrm2 | tr 'a-z' 'A-Z'` \
 	   			      KFLAGS="$(KFLAGS)"
 	./TestTime.py d nrm2 $(file) $(N) $(test) $(uopt)
+
+
+ssin: $(FKO)
+	$(MAKE) build pre=s rout=sin URT=`echo sin | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py s sin $(file) $(N) $(test) $(uopt)
+
+dsin: $(FKO)
+	$(MAKE) build pre=d rout=sin URT=`echo sin | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py d sin $(file) $(N) $(test) $(uopt)
+
+scos: $(FKO)
+	$(MAKE) build pre=s rout=cos URT=`echo cos | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py s cos $(file) $(N) $(test) $(uopt)
+
+dcos: $(FKO)
+	$(MAKE) build pre=d rout=cos URT=`echo cos | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py d cos $(file) $(N) $(test) $(uopt)
+
+sirk1amax: $(FKO)
+	$(MAKE) build pre=s rout=irk1amax URT=`echo irk1amax | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py s irk1amax $(file) $(N) $(test) $(uopt)
+
+dirk1amax: $(FKO)
+	$(MAKE) build pre=d rout=irk1amax URT=`echo irk1amax | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py d irk1amax $(file) $(N) $(test) $(uopt)
+
+sirk2amax: $(FKO)
+	$(MAKE) build pre=s rout=irk2amax URT=`echo irk2amax | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py s irk2amax $(file) $(N) $(test) $(uopt)
+
+dirk2amax: $(FKO)
+	$(MAKE) build pre=d rout=irk2amax URT=`echo irk2amax | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py d irk2amax $(file) $(N) $(test) $(uopt)
+
+sirk3amax: $(FKO)
+	$(MAKE) build pre=s rout=irk3amax URT=`echo irk3amax | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py s irk3amax $(file) $(N) $(test) $(uopt)
+
+dirk3amax: $(FKO)
+	$(MAKE) build pre=d rout=irk3amax URT=`echo irk3amax | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)"
+	./TestTime.py d irk3amax $(file) $(N) $(test) $(uopt)
 
 go : $(FKO)
 	$(MAKE) build URT=`echo $(rout) | tr 'a-z' 'A-Z'` KFLAGS="$(KFLAGS)"

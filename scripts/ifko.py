@@ -12,8 +12,11 @@ import re
 
 # optT = "-X 1 1 -Y 1 1 -Fx 16 -Fy 16"
 optT = "-X 1 1 -Y 1 1 -Fx 32 -Fy 32"
+
 opt = "" ## populated with user argument 
-skipOpt = [] ## opt named as(fko cmnd): mmr,rc,v,vs,se,P,ps,par,p
+skipOpt = [] ## opt named as(fko cmnd): mmr,rc,v,sv,se,P,ps,par,p
+forceOpt = [] ## sv, vrc, vmmx : only used to force a vector method now 
+
 SB = 0 # temporary global just to test
 URF = 0 # forced UR, tuned with fixed UR
 isSV = 0 # special flag for speculation applied!
@@ -228,10 +231,20 @@ def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=64):
 
 #
 #  default max unroll, URN is 64
+#  but for now, we consider 32 for cos 
+#
+   if blas.find("cos") != -1 :
+      URN = 32;
+#
 #  if speculation is applied, max_unroll is applied to 16
-#  
+# 
    if isSV:
-      URN = 16
+      if blas.find("sin") != -1 : 
+         URN = 8;
+      elif  blas.find("cos") != -1 :
+         URN = 5;  # FIXME: bitvec exceeds the datatype limit
+      else:
+         URN = 16
 #
 #     if SB is specified, SB*UR can be MaxUnroll
 #
@@ -522,7 +535,11 @@ def ifko_PathXform(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
             t0 = t
             KFn = KF1 
    if red1p[3] :
-      if 'rc' in skipOpt:
+#
+#     skipping rc for cos kernel, there is a problem in cos!
+#
+      #if 'rc' in skipOpt or blas.find("cos") != -1 :
+      if 'rc' in skipOpt != -1 :
          print '      SKIPPING RC'
       else: 
          KF1 = ' -rc' + KF0 
@@ -585,7 +602,7 @@ def ifko_Vec(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
    KFn = KF0
    if npath > 1:
       if vm[0] or vm[1] or vm[2]:
-         if 'mmr' in skipOpt:
+         if 'mmr' in skipOpt or 'vrc' in forceOpt or 'sv' in forceOpt:
             print '      SKIPPING MMR+V'
          else:
             KF1 = ' -mmr' + KF0
@@ -598,7 +615,7 @@ def ifko_Vec(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
                t0 = t
                KFn = KF1
       if vm[3] :
-         if 'rc' in skipOpt:
+         if 'rc' in skipOpt or 'vmmr' in forceOpt or 'sv' in forceOpt:
             print '      SKIPPING RC+V'
          else:
             KF1 = ' -rc' + KF0 
@@ -614,7 +631,7 @@ def ifko_Vec(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
 #     check for speculative 
 #
       if vm[4] :
-         if 'sv' in skipOpt:
+         if 'sv' in skipOpt or 'vmmr' in forceOpt or 'vrc' in forceOpt:
             print '      SKIPPING SPECULATIVE VECTORIZATION'
          else:
             for i in range(npath):
@@ -667,8 +684,15 @@ def FindBET(ATLdir, ARCH, KF0, fko, rout, pre, blas, N):
       maxbet = 4
    if maxbet > 10:
       maxbet = 10
-   
-   URm = 16 
+#
+#  reduce tries for sine and cosine 
+#
+   if blas.find("sin") != -1:
+      URm = 8;
+   elif blas.find("cos") != -1:
+      URm = 8;
+   else:
+      URm = 16 
 #
 #  time default case 
 #
@@ -801,6 +825,7 @@ def ifko0(l1bla, pre, N):
 #
 #  Finding the best vector option with/without path reduction
 #
+   global isSV;
    if SB:
       KFv = fkocmnd.GetOptStdFlags(fko, rout, pre, 1, SB, URF)
    else:
@@ -817,6 +842,15 @@ def ifko0(l1bla, pre, N):
          if (mfv > mf0) :
             mf0 = mfv
             KF0 = KFv
+#
+#        if we have forceOpt, we will keep vec even if it's not better
+#
+         elif  'sv' in forceOpt or 'vrc' in forceOpt or 'vmmr' in forceOpt:
+            print '\n   FORCING VECTORIZATION'
+            mf0 = mfv
+            KF0 = KFv
+         else:  # no vector is selected, skip the SB too  #
+            isSV = 0
 #
 #  choose the better as the ref of later opt
 #
@@ -908,8 +942,9 @@ def ifko0(l1bla, pre, N):
 #
 #  Find best bet for over speculation
 #  FIXME: find out the -U and pass it to the function
+#  FIXME: can't apply Over Spec if there is a memory write inside the loop
 #
-   if isSV:
+   if isSV and l1bla.find("irk1amax") is -1:
       [mf,KFLAGS] = FindBET(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N)
       mflist.append(mf)
       testlist.append("OverSpec")
@@ -1173,8 +1208,8 @@ def PrintUsage():
    print 'Style4: ./ifko.py (b1,b2,..) (s,d)'
    print 'Style5: ./ifko.py (b1,b2,..) (s,d) N'
    print 'Style6: ./ifko.py (b1,b2,..) (s,d) -n val'
-   print 'Style7: ./ifko.py (b1,b2,..) (s,d) N --no <opt1,opt2,..> ',
-   print 'atlopt=\'opt-str-for-atlas\' '
+   print 'Style7: ./ifko.py (b1,b2,..) (s,d) N --no <opt1,opt2,..>'
+   print '        --force <sv, vrc, vmmx> atlopt=\'opt-str-for-atlas\' '
    print 'Style8: ./ifko.py (b1,b2,..) (s,d) -N val --no <opt1,opt2,..> ',
    print 'atlopt=\'opt-str-for-atlas\' '
    print 'note that atlopt=\'opt-str-for-atlas\' should be last argument '
@@ -1191,6 +1226,7 @@ def ParseArgv(argv):
    N = 0
    atlopt = None
    noOpt = []
+   frOpt = []
 
    nargs = len(argv)
 #
@@ -1222,6 +1258,9 @@ def ParseArgv(argv):
                if argv[i].find('--no') != -1:
                   noOpt = argv[i+1].split(',')
                   i = i + 2
+               elif argv[i].find('--force') != -1:
+                  frOpt = argv[i+1].split(',')
+                  i = i + 2
                elif argv[i].find('-n') != -1:
                   N = int(argv[i+1])
                   i = i + 2
@@ -1247,7 +1286,7 @@ def ParseArgv(argv):
 #   else:
 #      print [blas, pre, N, noOpt, atlopt]
    
-   return(blas,pre,N,noOpt,atlopt) 
+   return(blas,pre,N,noOpt,frOpt,atlopt) 
 #
 #  Majedul: create a main function to increase the readability
 #
@@ -1269,12 +1308,15 @@ def main(argv):
 #
 #  parse the commnad line argument 
 #
-   (blas, pre, N, noOpt, uopt) = ParseArgv(argv)
+   (blas, pre, N, noOpt, frOpt, uopt) = ParseArgv(argv)
 #
 #  Generate opt for altas  based on the argument 
 #
    global skipOpt
+   global forceOpt
+   
    skipOpt = noOpt
+   forceOpt = frOpt
    #print skipOpt
 
    global opt       
