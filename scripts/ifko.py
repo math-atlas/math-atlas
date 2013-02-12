@@ -944,10 +944,18 @@ def ifko0(l1bla, pre, N):
 #  FIXME: find out the -U and pass it to the function
 #  FIXME: can't apply Over Spec if there is a memory write inside the loop
 #
-   if isSV and l1bla.find("irk1amax") is -1:
-      [mf,KFLAGS] = FindBET(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N)
-      mflist.append(mf)
-      testlist.append("OverSpec")
+   
+   if isSV:
+      if l1bla.find("irk1amax") is -1:
+         print '\n   SKIPPING STRONGER BET UNROLLING for IRK1AMAX' 
+      elif l1bla.find("irk2amax") is -1:
+         print '\n   SKIPPING STRONGER BET UNROLLING for IRK2AMAX' 
+      elif l1bla.find("irk3amax") is -1:
+         print '\n   SKIPPING STRONGER BET UNROLLING for IRK3AMAX' 
+      else:
+         [mf,KFLAGS] = FindBET(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N)
+         mflist.append(mf)
+         testlist.append("OverSpec")
 
 #
 #  See if we can apply accumulator expansion
