@@ -8,7 +8,12 @@ L1Tdir = '/tune/blas/level1/'
 
 def GetDefaultBlas():
    return ['swap', 'copy', 'asum', 'axpy', 'dot', 'scal', 'iamax', 'amax', 
-           'nrm2','irk1amax', 'irk2amax', 'irk3amax']
+           'nrm2','sin','cos','irk1amax', 'irk2amax', 'irk3amax']
+
+def GetSVKernels():
+   return ['iamax', 'amax', 'nrm2', 'sin', 'cos', 'irk1amax', 
+         'irk2amax', 'irk3amax', 'asum']
+
 
 def GetDefaultRefBlas(blas):
    n = len(blas)

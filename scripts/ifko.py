@@ -1067,6 +1067,8 @@ def ifko(routs, pres, N):
    """
    if routs.find("default") != -1:
       routlist = l1cmnd.GetDefaultBlas()
+   elif routs.find("svkernels") != -1:
+      routlist = l1cmnd.GetSVKernels()
    else:
       words = routs.split(",")
       routlist = []
