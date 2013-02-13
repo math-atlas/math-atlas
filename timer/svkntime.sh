@@ -53,10 +53,10 @@ do
          tuned=$OPTARG
          ;;
       f)
-         force="--force "$OPTARG
+         force=$OPTARG
          ;;
       s)
-         skip="--skip "$OPTARG
+         skip=$OPTARG
          ;;
       n)
          N=$OPTARG
@@ -147,6 +147,17 @@ fi
 if [ "$tuned" == "tuned" ] 
 then
 #
+#  seting parameter
+#
+   if [ -n "$force" ] 
+   then
+      force="--force "$force
+   fi
+   if [ -n "$skip" ] 
+   then
+      skip="--skip "$skip
+   fi
+#
 #  applying tunning 
 #
    for pre in $precision
@@ -156,7 +167,23 @@ then
       for kn in $kernel
       do
          inputlog=$LOGPATH/$pre${kn}_${N}_${scripttime}
-         $SCRIPTdir/ifko.py $kn $pre $N $force $skip> $inputlog
+#
+#        specially handle the size for irkamax
+#
+         N1=
+         if [ $kn = irk1amax ]
+         then
+            N1=$((N/2))
+         elif [ $kn = irk2amax ]
+         then
+            N1=$((8*(N/24)))  # N/3
+         elif [ $kn = irk3amax ]
+         then
+            N1=$((8*(N/32)))   # N/4
+         else
+            N1=$N
+         fi
+         $SCRIPTdir/ifko.py $kn $pre $N1 $force $skip> $inputlog
          lflag=`tail -n 8 $inputlog | head -n 1`
          iflag=`echo $lflag | cut -d' ' -f 6- -s`
          fline=`tail -n 5 $inputlog | head -n 1`
@@ -170,7 +197,82 @@ else
 #
 # not tuned, apply without any tuning
 #
-   echo "not tuned selected"
+   path=0
+   if [ -z "$force" ]
+   then
+      echo "must speicfy option for untuned like: SV, S, VRC, VMMR "
+      exit 1
+   else
+      if [ "$force" == "sv" ]
+      then
+         force="-V"
+         path=1
+      elif [ "$force" == "vrc" ]
+      then
+         force="-rc -V"
+      elif [ "$force" == "vmmr" ]
+      then
+         force="-mmr -V"
+      elif [ "$force" == "s" ]
+      then
+         force=""
+      else
+         echo "set appropriate value for -f "
+         exit 1
+      fi
+   fi
+
+   for pre in $precision
+   do
+      echo "Untuned kernel for precision =" ${pre} " using $force ... ..."
+      echo "============================================================="
+
+      for kn in $kernel
+      do
+#
+#        set path for sv
+#
+         if [ "$path" == "1" ]
+         then
+            if [ $kn = sin ]
+            then
+               path=" -p 2"
+            else
+               path=" -p 1"
+            fi
+         else
+            path=""
+         fi
+#
+#        set appropriate N
+#
+         N1=
+         if [ $kn = irk1amax ]
+         then
+            N1=$((N/2))
+         elif [ $kn = irk2amax ]
+         then
+            N1=$((8*(N/24)))  # N/3
+         elif [ $kn = irk3amax ]
+         then
+            N1=$((8*(N/32)))   # N/4
+         else
+            N1=$N
+         fi
+
+         inputlog=$LOGPATH/$pre${kn}_${N}_${scripttime}
+         #echo 'make $pre$kn $N1 KFLAGS="'$force$path'" '
+         cd $SCRIPTdir
+         make $pre$kn $N1 KFLAGS="$force$path" > $inputlog 2> /dev/null
+         #lflag=`tail -n 2 $inputlog | head -n 1`
+         lflag=`tail -n 1 $inputlog`
+         #pref=`echo $lflag | cut -d' ' -f 4 -s`
+         #echo $pre$kn ":" $perf >> $RESULTPATH/result_$scripttime
+         echo $lflag 
+      done
+   done
+   #cat $RESULTPATH/result_$scripttime
+
 fi
 
 
