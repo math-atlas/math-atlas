@@ -197,7 +197,7 @@ else
 #
 # not tuned, apply without any tuning
 #
-   path=0
+   path=
    if [ -z "$force" ]
    then
       echo "must speicfy option for untuned like: SV, S, VRC, VMMR "
@@ -206,7 +206,6 @@ else
       if [ "$force" == "sv" ]
       then
          force="-V"
-         path=1
       elif [ "$force" == "vrc" ]
       then
          force="-rc -V"
@@ -232,7 +231,7 @@ else
 #
 #        set path for sv
 #
-         if [ "$path" == "1" ]
+         if [ "$force" == "-V" ]
          then
             if [ $kn = sin ]
             then
