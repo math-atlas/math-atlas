@@ -3774,9 +3774,17 @@ OPTLOOP=1
  */
          /*fprintf(fpout, "      RedCompReducesToOnePath=%d\n",1);*/
          UpdateOptLoopWithMaxMinVars1(optloop);
+
+#ifdef AVX
          RC = !(IterativeRedCom());
          fprintf(fpout, "      RedCompReducesToOnePath=%d\n",RC);
-         
+#else
+/*
+ *       Right now, RC is only supported in AVX 
+ */
+         RC = 0;
+         fprintf(fpout, "      RedCompReducesToOnePath=%d\n",0);
+#endif
          if (RC)
          {
             Vrc = !(SpeculativeVectorAnalysis()); /*it is the most general */
