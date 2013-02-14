@@ -139,7 +139,11 @@ void FA_free(void *ptr, int align, int misalign)
 #ifndef RAND_MAX  /* rather dangerous non-ansi workaround */
    #define RAND_MAX ((unsigned long)(1<<30))
 #endif
-#define dumb_rand() ( 0.5 - ((double)rand())/((double)RAND_MAX) )
+
+#define NA (-2271.0)
+#define PI 3.14159265358979323846
+/*#define dumb_rand() ( 0.5 - ((double)rand())/((double)RAND_MAX) )*/
+#define dumb_rand() ( ((double)rand())/((double)RAND_MAX/(2*PI)) )
 
 #if defined(WALL) || defined(PentiumCPS)
    #ifndef WALL
@@ -213,9 +217,18 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
    const int incx=Mabs(incX)SHIFT, incy=Mabs(incY)SHIFT;
    TYPE *X, *Y, *x, *y, *stX;
    double t0, t1;
+   TYPE si, y1, y2;
+   int l2ret;
+   
+   #ifdef SREAL
+   int inputf(float x, float *y1, float *y2);
+   #endif  /* DREAL, not supported complex */
+   
+   #ifdef DREAL
+   int inputd(double x, double *y1, double *y2);
+   #endif
 
    #ifdef TREAL
-      //nrep = (nkflop*1000) / (N*2); /* FIXME: num of op is more than 2 */
       nrep = (nkflop*1000) / (N*NFP); /* from original algo  */
    #else
       fprintf(stderr, "not supported complex yet!\n");
@@ -223,6 +236,8 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
       nrep = (nkflop*1000) / (N*8);
    #endif
    if (nrep < 1) nrep = 1;
+   
+#if 0   
    i = cachesize / ATL_sizeof;
    nvec = (i + 2*N) / N;
    if (nvec < 2) nvec = 2;
@@ -254,6 +269,49 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
    }
    t1 = time00() - t0;
    FA_free(X, FAx, MAx);
+#else
+   NN = nrep * N;
+   x = X = FA_malloc(ATL_sizeof*NN, FAx, MAx);
+   assert(X);
+   y = Y = FA_malloc(ATL_sizeof*NN, FAy, MAy);
+   assert(Y);
+/*
+ * generate inputs 
+ */
+   dumb_seed(NN);
+   for (i=0; i < NN; i++)
+   {
+      do
+      {
+         si = dumb_rand();
+#ifdef SREAL
+         inputf(si, &y1, &y2);
+#else
+         inputd(si, &y1, &y2);
+#endif
+      } while (y1 == NA && y2 == NA);
+      X[i] = y1;
+      Y[i] = y2;
+   }
+/*
+ * cache flushing
+ */
+   if (cachesize > 1)
+      l2ret = ATL_flushcache(cachesize);
+/*
+ * timing
+ */
+   t0 = time00();
+   for (i=nrep; i; i--)
+   {
+      TEST_KERNEL_SIN(N, x, y);
+      x += N;
+      y += N;
+   }
+   t1 = time00() - t0;
+   FA_free(X, FAx, MAx);
+   FA_free(Y, FAy, MAy);
+#endif
    return(t1/nrep);
 }
 void GetTimes(int nrep, double *tims, int N, int nkflop, int cachesize,
