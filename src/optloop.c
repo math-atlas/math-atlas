@@ -1394,7 +1394,7 @@ char *DupedLabelName(int dupnum, int ilab)
    }
    else 
       spnum[0]='\0';
-   sprintf(ln, "_IFKOCD%d_%s%s", dupnum, sp, spnum);
+   sprintf(ln, "_IFKOCD%d_%s_%s", dupnum, sp, spnum);
 #endif   
    
    return(ln);
