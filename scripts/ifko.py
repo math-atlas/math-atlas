@@ -946,11 +946,11 @@ def ifko0(l1bla, pre, N):
 #
    
    if isSV:
-      if l1bla.find("irk1amax") is -1:
+      if l1bla.find("irk1amax") != -1:
          print '\n   SKIPPING STRONGER BET UNROLLING for IRK1AMAX' 
-      elif l1bla.find("irk2amax") is -1:
+      elif l1bla.find("irk2amax") != -1:
          print '\n   SKIPPING STRONGER BET UNROLLING for IRK2AMAX' 
-      elif l1bla.find("irk3amax") is -1:
+      elif l1bla.find("irk3amax") != -1:
          print '\n   SKIPPING STRONGER BET UNROLLING for IRK3AMAX' 
       else:
          [mf,KFLAGS] = FindBET(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N)
