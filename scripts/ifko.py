@@ -952,6 +952,10 @@ def ifko0(l1bla, pre, N):
          print '\n   SKIPPING STRONGER BET UNROLLING for IRK2AMAX' 
       elif l1bla.find("irk3amax") != -1:
          print '\n   SKIPPING STRONGER BET UNROLLING for IRK3AMAX' 
+      elif l1bla.find("sin") != -1:
+         print '\n   SKIPPING STRONGER BET UNROLLING for SIN' 
+      elif l1bla.find("cos") != -1:
+         print '\n   SKIPPING STRONGER BET UNROLLING for COS' 
       else:
          [mf,KFLAGS] = FindBET(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N)
          mflist.append(mf)
