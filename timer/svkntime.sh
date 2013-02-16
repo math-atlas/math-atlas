@@ -10,8 +10,10 @@ echo "ID :" $scripttime
 #FKOPATH=/home/msujon/iFKO
 FKOPATH=/home/msujon/Research/working/iFKO-SV/iFKO
 
-kernel="amax iamax nrm2 asum sin cos irk1amax irk2amax irk3amax"
-rckernel="amax asum sin cos"
+sv_kernel="amax iamax nrm2 asum sin cos irk1amax irk2amax irk3amax"
+rc_kernel="amax asum sin cos"
+kernel=
+
 tuned="tuned"
 force=
 skip=
@@ -158,6 +160,7 @@ then
    then
       if [ "$force" == "s" ]
       then
+         kernel=$sv_kernel
          if [ -z "$skip" ]
          then
             skip="--no v"
@@ -166,8 +169,16 @@ then
             skip=$skip",v"
             force=
          fi
+      elif [ "$force" == "vrc" ]
+      then
+         force="--force "$force
+         if [ -z "$kernel" ]
+         then
+            kernel=$rc_kernel
+         fi
       else
          force="--force "$force
+         kernel=$sv_kernel
       fi
    fi
 #
