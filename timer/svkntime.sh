@@ -261,6 +261,9 @@ else
             if [ $kn = sin ]
             then
                path=" -p 2"
+            elif  [ $kn = cos ]
+            then
+               path=" -p 4"
             else
                path=" -p 1"
             fi
