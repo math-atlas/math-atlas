@@ -149,13 +149,26 @@ then
 #
 #  seting parameter
 #
-   if [ -n "$force" ] 
-   then
-      force="--force "$force
-   fi
    if [ -n "$skip" ] 
    then
-      skip="--skip "$skip
+      skip="--no "$skip
+   fi
+
+   if [ -n "$force" ] 
+   then
+      if [ "$force" == "s" ]
+      then
+         if [ -z "$skip" ]
+         then
+            skip="--no v"
+            force=
+         else
+            skip=$skip",v"
+            force=
+         fi
+      else
+         force="--force "$force
+      fi
    fi
 #
 #  applying tunning 
@@ -183,7 +196,8 @@ then
          else
             N1=$N
          fi
-         $SCRIPTdir/ifko.py $kn $pre $N1 $force $skip> $inputlog
+         echo "$SCRIPTdir/ifko.py $kn $pre $N1 $force $skip > $inputlog"
+         $SCRIPTdir/ifko.py $kn $pre $N1 $force $skip > $inputlog
          lflag=`tail -n 8 $inputlog | head -n 1`
          iflag=`echo $lflag | cut -d' ' -f 6- -s`
          fline=`tail -n 5 $inputlog | head -n 1`
