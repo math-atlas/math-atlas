@@ -246,7 +246,7 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
    assert(X);
    stX = X + NN;
    dumb_seed(NN);
-   s0 = dumb_rand()ize
+   s0 = dumb_rand();
    for (i=0, n=NN; i < n; i++) X[i] = dumb_rand();
 /*
  * not sure whether it works or not 

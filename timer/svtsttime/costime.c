@@ -214,7 +214,7 @@ double time00();
 
 #ifndef TEST_KERNEL_COS
    #define TEST_KERNEL_COS FKO_COSINE
-#endiize
+#endif
 
 #define NFP 18  /* fp count for cosine from algo!!! */
 

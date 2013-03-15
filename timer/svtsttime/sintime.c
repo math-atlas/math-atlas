@@ -138,12 +138,10 @@ void FA_free(void *ptr, int align, int misalign)
 #ifndef RAND_MAX  /* rather dangerous non-ansi workaround */
    #define RAND_MAX ((unsigned long)(1<<30))
 #endif
-cachesize
 #define NA (-2271.0)
 #define PI 3.14159265358979323846
-#define SIMPLE 1 /* use input with random 0.5 to -0.5 */
 
-#if SIMPLE
+#if 1
    #define dumb_rand() ( 0.5 - ((double)rand())/((double)RAND_MAX) )
 #else
    #define dumb_rand() ( ((double)rand())/((double)RAND_MAX/(2*PI)) )
@@ -173,7 +171,7 @@ double time00();
    #define DREAL
 #elif defined(sCPLX)
    #define SCPLX
-#elif defcachesizeined(dCPLX)
+#elif defined(dCPLX)
    #define DCPLX
 #endif
 
