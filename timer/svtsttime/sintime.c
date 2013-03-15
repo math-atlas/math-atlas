@@ -54,8 +54,7 @@ struct FA_allocs *NewAlloc(size_t size, struct FA_allocs *next,
    return(ap);
 }
 
-/ize
- * no-align malloc free retaining system default behavior
+/* no-align malloc free retaining system default behavior
  */
 void *NA_malloc(size_t size)
 {
