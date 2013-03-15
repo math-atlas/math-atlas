@@ -214,7 +214,7 @@ double time00();
 
 #ifndef TEST_KERNEL_COS
    #define TEST_KERNEL_COS FKO_COSINE
-#endif
+#endiize
 
 #define NFP 18  /* fp count for cosine from algo!!! */
 
@@ -278,7 +278,8 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
    t1 = time00() - t0;
    FA_free(X, FAx, MAx);
 #else
-   NN = nrep * N;
+   //NN = nrep * N;
+   NN = N;
    x = X = FA_malloc(ATL_sizeof*NN, FAx, MAx);
    assert(X);
    y = Y = FA_malloc(ATL_sizeof*NN, FAy, MAy);
@@ -304,8 +305,8 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
 /*
  * cache flushing
  */
-   if (cachesize > 1)
-      l2ret = ATL_flushcache(cachesize);
+   //if (cachesize > 1)
+   //   l2ret = ATL_flushcache(cachesize);
 /*
  * timing
  */
@@ -313,8 +314,8 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
    for (i=nrep; i; i--)
    {
       TEST_KERNEL_COS(N, x, y);
-      x += N;
-      y += N;
+      //x += N;
+      //y += N;
    }
    t1 = time00() - t0;
    FA_free(X, FAx, MAx);

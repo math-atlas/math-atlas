@@ -54,7 +54,7 @@ struct FA_allocs *NewAlloc(size_t size, struct FA_allocs *next,
    return(ap);
 }
 
-/*
+/ize
  * no-align malloc free retaining system default behavior
  */
 void *NA_malloc(size_t size)
@@ -139,7 +139,7 @@ void FA_free(void *ptr, int align, int misalign)
 #ifndef RAND_MAX  /* rather dangerous non-ansi workaround */
    #define RAND_MAX ((unsigned long)(1<<30))
 #endif
-
+cachesize
 #define NA (-2271.0)
 #define PI 3.14159265358979323846
 #define SIMPLE 1 /* use input with random 0.5 to -0.5 */
@@ -174,7 +174,7 @@ double time00();
    #define DREAL
 #elif defined(sCPLX)
    #define SCPLX
-#elif defined(dCPLX)
+#elif defcachesizeined(dCPLX)
    #define DCPLX
 #endif
 
@@ -248,7 +248,7 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
    if (nvec < 2) nvec = 2;
    if (nvec/2) nvec++;
    NN = (nvec/2) * N;
-   if (incx > 4) ii = (incx + 3)/4;
+cos: 583.00 [-p 1 -V -Paw 3 -U 1 -Ps b A 0 2 -P all 0 128]  if (incx > 4) ii = (incx + 3)/4;
    else ii = incx;
    if (incy > 4) jj = (incy + 3)/4;
    else jj = incy;
@@ -275,7 +275,8 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
    t1 = time00() - t0;
    FA_free(X, FAx, MAx);
 #else
-   NN = nrep * N;
+   //NN = nrep * N;
+   NN = N;
    x = X = FA_malloc(ATL_sizeof*NN, FAx, MAx);
    assert(X);
    y = Y = FA_malloc(ATL_sizeof*NN, FAy, MAy);
@@ -301,17 +302,17 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
 /*
  * cache flushing
  */
-   if (cachesize > 1)
-      l2ret = ATL_flushcache(cachesize);
-/*
+   //if (cachesize > 1)
+   //   l2ret = ATL_flushcache(cachesize);
+/*scos: 583.00 [-p 1 -V -Paw 3 -U 1 -Ps b A 0 2 -P all 0 128]
  * timing
  */
    t0 = time00();
    for (i=nrep; i; i--)
    {
       TEST_KERNEL_SIN(N, x, y);
-      x += N;
-      y += N;
+      //x += N;
+      //y += N;
    }
    t1 = time00() - t0;
    FA_free(X, FAx, MAx);
@@ -506,6 +507,7 @@ void GetFlags(int nargs, char **args, int *nN, int **Ns, int *nkflops,
 
    *incY = 1;
    *nN = -1;
+   //*nkflops = ATL_nkflop / 10;
    *nkflops = ATL_nkflop / 10;
    *cachesize = 4*L2SIZE;
    *fnam = NULL;

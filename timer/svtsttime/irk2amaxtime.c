@@ -241,8 +241,8 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
    lda = M = N ; /* N is the total of mem element here */
    lda = ((lda - 1 + tp)/tp)*tp;
    NN = 3 * lda;
-   NN *= nrep;
-#if 1
+   //NN *= nrep;
+#if 0
    fprintf(stderr, "nrep=%d, nkflops=%d, NN = %d, lda=%d, size=%d, mem=%ld\n", 
            nrep, nkflop, NN, lda, ATL_sizeof, NN*ATL_sizeof);
 #endif
@@ -255,7 +255,7 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
 /*
  * not sure whether it works or not 
  */
-   l2ret = ATL_flushcache(cachesize);
+   //l2ret = ATL_flushcache(cachesize);
 
 /*
  * Here start the timing . 
@@ -266,8 +266,8 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
    for (i=nrep; i; i--)
    {
       TEST_KERNEL(M, s0, x, lda);
-      x += ii;
-      if (x == stX) x = X;
+      //x += ii;
+      //if (x == stX) x = X;
    }
    t1 = time00() - t0;
    FA_free(X, FAx, MAx);

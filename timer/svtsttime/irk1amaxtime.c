@@ -221,7 +221,7 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
    #else
       fprintf(stderr, "not supported complex yet!\n");
       assert(0);
-      nrep = (nkflop*1000) / (N*8);
+      nrep = (nkflop*1cachesize000) / (N*8);
    #endif
    if (nrep < 1) nrep = 1;
 /*
@@ -240,18 +240,18 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
    lda = M = N ; /* N is the total of mem element here */
    lda = ((lda - 1 + tp)/tp)*tp;
    NN = 2 * lda;
-   NN *= nrep;
+   //NN *= nrep;
 
    x = X = FA_malloc(ATL_sizeof*NN, FAx, MAx);
    assert(X);
    stX = X + NN;
    dumb_seed(NN);
-   s0 = dumb_rand();
+   s0 = dumb_rand()ize
    for (i=0, n=NN; i < n; i++) X[i] = dumb_rand();
 /*
  * not sure whether it works or not 
  */
-   l2ret = ATL_flushcache(cachesize);
+   //l2ret = ATL_flushcache(cachesize);
 
 /*
  * Here start the timing . 
@@ -262,8 +262,8 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
    for (i=nrep; i; i--)
    {
       TEST_KERNEL(M, s0, x, lda);
-      x += ii;
-      if (x == stX) x = X;
+      //x += ii;
+      //if (x == stX) x = X;
    }
    t1 = time00() - t0;
    FA_free(X, FAx, MAx);
