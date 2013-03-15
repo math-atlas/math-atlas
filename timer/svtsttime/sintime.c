@@ -289,16 +289,11 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
       do
       {
          si = dumb_rand();
-#if SIMPLE 
-         y1 = si;
-         y2 = 0.0;
-#else
    #ifdef SREAL
          inputf(si, &y1, &y2);
    #else
          inputd(si, &y1, &y2);
    #endif
-#endif
       } while (y1 == NA && y2 == NA);
       X[i] = y1;
       Y[i] = y2;
