@@ -142,8 +142,13 @@ void FA_free(void *ptr, int align, int misalign)
 
 #define NA (-2271.0)
 #define PI 3.14159265358979323846
-/*#define dumb_rand() ( 0.5 - ((double)rand())/((double)RAND_MAX) )*/
-#define dumb_rand() ( ((double)rand())/((double)RAND_MAX/(2*PI)) )
+#define SIMPLE 1 /* use input with random 0.5 to -0.5 */
+
+#if SIMPLE
+   #define dumb_rand() ( 0.5 - ((double)rand())/((double)RAND_MAX) )
+#else
+   #define dumb_rand() ( ((double)rand())/((double)RAND_MAX/(2*PI)) )
+#endif
 
 #if defined(WALL) || defined(PentiumCPS)
    #ifndef WALL
@@ -284,10 +289,15 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
       do
       {
          si = dumb_rand();
-#ifdef SREAL
-         inputf(si, &y1, &y2);
+#if SIMPLE 
+         y1 = si;
+         y2 = 0.0;
 #else
+   #ifdef SREAL
+         inputf(si, &y1, &y2);
+   #else
          inputd(si, &y1, &y2);
+   #endif
 #endif
       } while (y1 == NA && y2 == NA);
       X[i] = y1;
