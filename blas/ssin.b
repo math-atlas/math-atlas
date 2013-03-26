@@ -1,12 +1,11 @@
 ROUTINE FKO_SINE;
-   PARAMS :: N, X, Y, iy;
+   PARAMS :: N, X, Y, iY;
    INT :: N;
-   FLOAT_PTR :: X, Y;
-   FLOAT :: iy;
+   FLOAT_PTR :: X, Y, iY;
 
 ROUT_LOCALS 
    INT :: i;
-   FLOAT :: x1, x, y, r, z, v;
+   FLOAT :: x1, x, y, r, z, v, iy;
    FLOAT :: t0, t1;
    FLOAT :: s1, s2, s3, s4, s5, s6, lmark, half, fzero;
    CONST_INIT :: s1 = -1.6666667163e-1, s2 = 8.3333337680e-3, 
@@ -18,6 +17,8 @@ ROUT_BEGIN
    LOOP_BODY
       x = X[0];
       y = Y[0];
+      iy = iY[0];
+
       x1 = ABS x;
       IF (x1 < lmark) GOTO IF_TRUE; 
 ELSE:
@@ -48,6 +49,7 @@ ENDOFLOOP:
       Y[0] = r;
       X += 1;
       Y += 1;
+      iY += 1;
    LOOP_END
 
    RETURN;
