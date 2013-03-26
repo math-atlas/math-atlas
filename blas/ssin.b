@@ -1,7 +1,8 @@
 ROUTINE FKO_SINE;
-   PARAMS :: N, X, Y;
+   PARAMS :: N, X, Y, iy;
    INT :: N;
    FLOAT_PTR :: X, Y;
+   FLOAT :: iy;
 
 ROUT_LOCALS 
    INT :: i;
@@ -35,14 +36,11 @@ ELSE:
       r = s2;
       r += z * t0;
 
-      IF (y != fzero) GOTO NZERO;
+      IF (iy != fzero) GOTO NZERO;
 ZEROV:
    
    t0 = s1;
    t0 += z * r;
-//   t1 = x;
-//   t1 += v * t0;
-//   Y[0] = t1;
    r = x;
    r += v * t0;
 
@@ -55,7 +53,6 @@ ENDOFLOOP:
    RETURN;
 
 IF_TRUE:
-   //Y[0] = x;
    r = x;
    GOTO ENDOFLOOP;
 
@@ -67,8 +64,6 @@ NZERO:
       t0 = t1 - y;
       t1 = v * s1;
       t1 = t0 - t1;
-//      t1 = x - t1;
-//      Y[0] = t1;
       r = x - t1;
 
    GOTO ENDOFLOOP;

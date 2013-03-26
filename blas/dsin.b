@@ -1,7 +1,8 @@
 ROUTINE FKO_SINE;
-   PARAMS :: N, X, Y;
+   PARAMS :: N, X, Y, iy;
    INT :: N;
    DOUBLE_PTR :: X, Y;
+   DOUBLE :: iy;
 
 ROUT_LOCALS 
    INT :: i;
@@ -41,7 +42,7 @@ ELSE:
       r = s2;
       r += z * t0;
 
-      IF (y != fzero) GOTO NZERO;
+      IF (iy != fzero) GOTO NZERO;
 ZEROV:
    
    t0 = s1;
