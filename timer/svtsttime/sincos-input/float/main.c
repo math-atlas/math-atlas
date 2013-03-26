@@ -17,17 +17,17 @@
 int main()
 {
    int i, n, k;
-   float x, y1, y2;
-   int inputf(float x, float *y1, float *y2);
+   float x, y1, y2, iy;
+   int inputf(float x, float *y1, float *y2, float *iy);
 
    n = 100;
    dumb_seed(n);
    for (i=0; i<n; i++)
    {
       x = dumb_rand();
-      k = inputf(x, &y1, &y2);
+      k = inputf(x, &y1, &y2, &iy);
       if (y1 != NA || y2 != NA)
-         fprintf(stdout, "%d: %lf -> %lf, %lf\n", k, x, y1, y2);
+         fprintf(stdout, "%d: %lf -> %lf, %lf, %lf\n", k, x, y1, y2, iy);
    }
    return 0;
 }

@@ -1,7 +1,7 @@
 
 #include "private.h"
 
-int inputd(double x, double *y1, double *y2)
+int inputd(double x, double *y1, double *y2, double *iy)
 {
    double y[2], z=0.0;
    int n, ix;
@@ -14,6 +14,7 @@ int inputd(double x, double *y1, double *y2)
    {
       *y1 = x;
       *y2 = z;
+      *iy = 0.0;
    }
    else if (ix >= 0x7ff00000)
    {
@@ -28,6 +29,7 @@ int inputd(double x, double *y1, double *y2)
          case 0:
             *y1 = y[0];
             *y2 = y[1];
+            *iy = 1.0;
             break;
          case 1:
             *y1 = NA;
@@ -36,6 +38,7 @@ int inputd(double x, double *y1, double *y2)
          case 2:
             *y1 = y[0];
             *y2 = y[1];
+            *iy = 1.0;
             break;
          default:
             *y1 = NA;

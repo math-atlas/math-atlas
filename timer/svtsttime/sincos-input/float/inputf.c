@@ -3,7 +3,7 @@
  * it works for for sin and cos 
  */
 
-int inputf(float x, float *y1, float *y2)
+int inputf(float x, float *y1, float *y2, float *iy)
 {
    float y[2], z=0.0;
    int n, ix;
@@ -16,6 +16,7 @@ int inputf(float x, float *y1, float *y2)
    {
       *y1 = x;
       *y2 = z;
+      *iy = 0.0;
    }
    else if (ix >= 0x7f800000)
    {
@@ -30,6 +31,7 @@ int inputf(float x, float *y1, float *y2)
          case 0:
             *y1 = y[0];
             *y2 = y[1];
+            *iy = 1.0;
             break;
          case 1:
             *y1 = NA;
@@ -38,6 +40,7 @@ int inputf(float x, float *y1, float *y2)
          case 2:
             *y1 = y[0];
             *y2 = y[1];
+            *iy = 1.0;
             break;
          default:
             *y1 = NA;

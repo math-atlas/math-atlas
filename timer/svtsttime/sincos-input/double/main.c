@@ -17,16 +17,16 @@
 int main()
 {
    int i, n, k;
-   double x, y1, y2;
-   double inputd(double x, double *y1, double *y2);
+   double x, y1, y2, iy;
+   double inputd(double x, double *y1, double *y2, double *iy);
    n = 100;
    dumb_seed(n);
    for (i=0; i<n; i++)
    {
       x = dumb_rand();
-      k = inputd(x, &y1, &y2);
+      k = inputd(x, &y1, &y2, &iy);
       if (y1 != NA || y2 != NA)
-         fprintf(stdout, "%d: %lf -> %lf, %lf\n", k, x, y1, y2);
+         fprintf(stdout, "%d: %lf -> %lf, %lf, %lf\n", k, x, y1, y2, iy);
    }
    return 0;
 }
