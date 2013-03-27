@@ -2148,7 +2148,12 @@ void UpdateNamedLoopInfo()
  *    Remove any mention of pointers that we are told not to prefetch
  *    (level == -1)
  */
+/*
+ *    FIXME: invalid read when applied following flags for sin:
+ *    -Ps b A 0 3 -P all 0 128 -P X -1 0 -P Y -1 0 -P iY -1 0 
+ */
       sp = optloop->pfflag+1;
+      n = optloop->pfflag[0]; /* added to prevent the invalid read */
       for (k=i=0; i < n; i++)
          if (sp[i] == -1)
             k++;
