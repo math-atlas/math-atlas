@@ -479,7 +479,8 @@ int main(int nargs, char **args)
    if (RUNSRCH)
    {
       fmf = FindMflop(pre, 0, 4);
-      nreg = FindNreg(pre, fmf, 0, 4);
+      if (nreg < 1)
+         nreg = FindNreg(pre, fmf, 0, 4);
       latMA = FindLat(pre, fmf, 0, nreg, &mfMA);
       latMAC = FindLat(pre, fmf, 1, nreg, &mfMAC);
       if (mfMA*1.02 > mfMAC)
@@ -31096,7 +31097,7 @@ void GetMMRES(char pre, int *muladd, int *lat, int *nb, int *pref,
 
 @extract -b @(topd)/Clint/atlas-iaux.base rout=ATL_lcm
 
-void GoToTown(int ARCHDEF, int L1DEF, int TuneLA)
+void GoToTown(int ARCHDEF, int L1DEF, int TuneLA, int NREG)
 {
    const char TR[2] = {'N','T'};
    char prec[4] = {'d', 's', 'z', 'c'}, pre, upre, *typ;
@@ -31136,7 +31137,8 @@ void GoToTown(int ARCHDEF, int L1DEF, int TuneLA)
 
    sprintf(ln2, "INSTALL_LOG/Stage1.log");
    PrintBanner("INSTALL_LOG/Stage1.log", 1, 1, 0, 0);
-   sprintf(ln, "%s IStage1 %s INSTALL_LOG/Stage1.log\n", fmake, redir);
+   sprintf(ln, "%s IStage1 nreg=%d %s INSTALL_LOG/Stage1.log\n", 
+           fmake, NREG, redir);
    ATL_Cassert(system(ln)==0, "Stage 1 install", ln2);
    fp = fopen("INSTALL_LOG/L1CacheSize", "r");
 
@@ -31207,18 +31209,6 @@ void GoToTown(int ARCHDEF, int L1DEF, int TuneLA)
       PrintStartStop(stdout, fpsum, 0, 1, 2, ip+1, 0, ln);
       PrintStartStop(stdout, fpsum, 3, 1, 2, ip+1, 1, 
                      "BUILDING BLOCK MATMUL TUNE");
-@beginskip
-      fprintf(stdout, 
-              "\n\nSTAGE 2-%d: TUNING PREC=\'%c\' (precision %d of %d)\n",
-              ip+1, pre, ip+1, nprec);
-      fprintf(fpsum , 
-              "\n\nSTAGE 2-%d: TUNING PREC=\'%c\' (precision %d of %d)\n",
-              ip+1, pre, ip+1, nprec);
-      fprintf(stdout, "\n\n   STAGE 2-%d-1 : BUILDING BLOCK MATMUL TUNE\n", 
-              ip+1);
-      fprintf(fpsum , "\n\n   STAGE 2-%d-1 : BUILDING BLOCK MATMUL TUNE\n", 
-              ip+1);
-@endskip
 /*
  *    If necessary, install matmul for this type
  */
@@ -31229,7 +31219,8 @@ void GoToTown(int ARCHDEF, int L1DEF, int TuneLA)
          PrintBanner(ln2, 1, 2, ip+1, 1);
          if (DefInstall)
          {
-            sprintf(ln, "%s IRunMMDef pre=%c %s %s\n", fmake, pre, redir, ln2);
+            sprintf(ln, "%s IRunMMDef pre=%c nreg=%d %s %s\n", 
+                    fmake, pre, NREG, redir, ln2);
             fprintf(stdout, ln);
             ATL_Cassert(system(ln)==0, "BUILDING BLOCK MATMUL TUNE", ln2);
          }
@@ -31795,11 +31786,12 @@ void PrintUsage(char *nam)
    exit(-1);
 }
 
-void GetFlags(int nargs, char *args[], int *ARCHDEF, int *L1DEF, int *TuneLA)
+void GetFlags(int nargs, char *args[], int *ARCHDEF, int *L1DEF, int *TuneLA,
+              int *NREG)
 {
    int i;
 
-   *TuneLA = *L1DEF = 0;
+   *NREG = *TuneLA = *L1DEF = 0;
    *ARCHDEF = 1;
    for (i=1; i < nargs; i++)
    {
@@ -31810,6 +31802,11 @@ void GetFlags(int nargs, char *args[], int *ARCHDEF, int *L1DEF, int *TuneLA)
          if (++i > nargs)
             PrintUsage(args[0]);
          *ARCHDEF = atoi(args[i]);
+         break;
+      case 'r':
+         if (++i > nargs)
+            PrintUsage(args[0]);
+         *NREG = atoi(args[i]);
          break;
       case 'l':
          if (++i > nargs)
@@ -31829,9 +31826,9 @@ void GetFlags(int nargs, char *args[], int *ARCHDEF, int *L1DEF, int *TuneLA)
 
 int main(int nargs, char *args[])
 {
-   int L1DEF, ARCHDEF, TuneLA;
-   GetFlags(nargs, args, &ARCHDEF, &L1DEF, &TuneLA);
-   GoToTown(ARCHDEF, L1DEF, TuneLA);
+   int L1DEF, ARCHDEF, TuneLA, NREG;
+   GetFlags(nargs, args, &ARCHDEF, &L1DEF, &TuneLA, &NREG);
+   GoToTown(ARCHDEF, L1DEF, TuneLA, NREG);
    return(0);
 }
 @ROUT fname
@@ -36784,6 +36781,20 @@ int main(int nargs, char **args)
       nregs = FindNumRegs(pre, verb, nb, ku, &MACC, &lat);
       exit(0);
    }
+/*
+ * If nregs is positive, user has overridden probe, so just write it out
+ */
+   else if (nregs > 0)
+   {
+      char nam[10] = {'r', 'e', 's', '/', 'd', 'n', 'r', 'e', 'g', '\0'};
+      FILE *fp;
+      if (pre == 's' || pre == 'c')
+         nam[4] = 's';
+      fp = fopen(nam, "w");
+      assert(fp);
+      fprintf(fp, "%d\n", nregs);
+      fclose(fp);
+   }
    mmp = ReadMMFile(outfile);
    if (mmp)
    {
@@ -36812,7 +36823,7 @@ int main(int nargs, char **args)
    }
    if (!nregs)
       nregs = FindNumRegs(pre, verb, nb, ku, &MACC, &lat);
-   else if (MACC < 0)
+   if (MACC < 0)
       ConfirmMACC(pre, verb, nregs, nb, ku, &MACC, &lat);
    mmp = FindBestGenGemm(pre, verb, nregs, MACC, lat, FNB, nb, ku);
    WriteMMFile(outfile, mmp);

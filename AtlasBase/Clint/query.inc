@@ -251,3 +251,30 @@ long long GetLastLong(char *ln)
    }
    return(iret);
 }
+
+long long GetLastLongWithRound(char *ln)
+/*
+ * Gets a long from end of line, assuming the line may be in decimal
+ * format.  If given 1.6 it will return 2.  However, if given 1e256,
+ * it will return 256!
+ */
+{
+   int i;
+   long iret=0;
+   for (i=0; ln[i]; i++);
+   if (i > 0) 
+   {
+      for (i--; i > 0 && !isdigit(ln[i]); i--);
+      if (i > 0 && ln[i] == '.')  /* allow skip of 1 decimal point */
+         for (i--; i > 0 && !isdigit(ln[i]); i--);
+   }
+   if (i > 0 || (i == 0 && (isdigit(ln[0]) || ln[0] == '.')))
+   {
+      double d;
+      while(isdigit(ln[i]) && i > 0) i--;
+      if (!isdigit(ln[i])) i++;
+      sscanf(ln+i, "%lf", &d);
+      iret = (int)(d+0.5);
+   }
+   return(iret);
+}

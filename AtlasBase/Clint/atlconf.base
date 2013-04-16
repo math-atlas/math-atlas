@@ -4,6 +4,7 @@
       @define -t @-t@
       @define -t2 @-t2@
       @define -t3 @-t3@
+      @define -r  @-r@
       @define -O @-O@
       @define -s @-s@
       @define -A @-A@
@@ -94,6 +95,14 @@ void PrintUsage(char *name, int iarg, char *arg)
    fprintf(stderr, 
            "   -t <#> : set # of threads (-1: autodect; 0: no threading)\n");
 @endifdef
+@ifdef -t3
+   fprintf(stderr, 
+           "   -tl <#> <list> : set # of threads, use list of affinity IDs\n");
+@endifdef
+@ifdef -r
+   fprintf(stderr, 
+           "   -r <#>: set the number of floating point registers to #\n");
+@endifdef
 @ifdef -m
    fprintf(stderr, "   -m <mhz> : set clock rate\n");
 @endifdef
@@ -126,10 +135,6 @@ void PrintUsage(char *name, int iarg, char *arg)
       fprintf(stderr, 
         "      -Si cputhrchk <0/1> : Ignore/heed CPU throttle probe\n");
  */
-   @endifdef
-   @ifdef -t3
-      fprintf(stderr, 
-           "   -tl <#> <list> : set # of threads, use list of affinity IDs\n");
    @endifdef
    @ifdef -t2
       fprintf(stderr, 
@@ -211,6 +216,9 @@ void GetFlags(int nargs,                /* nargs as passed into main */
    @define iflag @b@
    @define ivar @ptrbits@
               int *ptrbits             /* # of bits in ptr: -32/32/64 */,
+@endifdef
+@ifdef -r
+              int *NREGS,
 @endifdef
 @ifdef -t
 @skip   @define iflag @t@
@@ -311,6 +319,9 @@ void GetFlags(int nargs,                /* nargs as passed into main */
 @ifdef -d
    *srcdir = *bindir = NULL;
 @endifdef
+@ifdef -r
+    *NREGS = 0;
+@endifdef
 @ifdef -ad
     *bozol1 = 0;
     *IEEE = *latune = *UseArchDef = 1;
@@ -383,6 +394,13 @@ void GetFlags(int nargs,                /* nargs as passed into main */
          PrintUsage(args[0], i, args[i]);
       switch(args[i][1])
       {
+@ifdef -r
+      case 'r':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of arguments");
+         *NREGS = atoi(args[i]);
+         break;
+@endifdef
 @ifdef -t
       case 't':
          if (++i >= nargs)
@@ -695,10 +713,10 @@ enum OSTYPE {OSOther=0, OSLinux, OSSunOS, OSSunOS4, OSOSF1, OSIRIX, OSAIX,
 enum ARCHFAM {AFOther=0, AFPPC, AFSPARC, AFALPHA, AFX86, AFIA64, AFMIPS, 
               AFARM, AFS390};
 
-#define NMACH 48
+#define NMACH 49
 static char *machnam[NMACH] = 
    {"UNKNOWN", "POWER3", "POWER4", "POWER5", "PPCG4", "PPCG5", 
-    "POWER6", "POWER7", "IBMz9", "IBMz10", "IBMz196",
+    "POWER6", "POWER7", "POWERe6500", "IBMz9", "IBMz10", "IBMz196",
     "x86x87", "x86SSE1", "x86SSE2", "x86SSE3",
     "P5", "P5MMX", "PPRO", "PII", "PIII", "PM", "CoreSolo", 
     "CoreDuo", "Core2Solo", "Core2", "Corei1", "Corei2", "Atom", "P4", "P4E", 
@@ -707,7 +725,7 @@ static char *machnam[NMACH] =
     "USI", "USII", "USIII", "USIV", "UST2", "UnknownUS", 
     "MIPSR1xK", "MIPSICE9", "ARMv7"};
 enum MACHTYPE {MACHOther, IbmPwr3, IbmPwr4, IbmPwr5, PPCG4, PPCG5,
-               IbmPwr6, IbmPwr7,
+               IbmPwr6, IbmPwr7, Pwre6500,
                IbmZ9, IbmZ10, IbmZ196,  /* s390(x) in Linux */ 
                x86x87, x86SSE1, x86SSE2, x86SSE3, /* generic targets */
                IntP5, IntP5MMX, IntPPRO, IntPII, IntPIII, IntPM, IntCoreS,
@@ -1932,6 +1950,7 @@ long long GetFirstLong(char *ln);
 double GetFirstDouble(char *ln);
 int GetLastInt(char *ln);
 long long GetLastLong(char *ln);
+long long GetLastLongWithRound(char *ln);
 int fNumLines(char *fnam);
 char *GetPathEnvVar(void);
 @skip char *CmndResults(char *targ, char *cmnd);
@@ -4863,7 +4882,7 @@ char *GetPtrbitsFlag(enum OSTYPE OS, enum MACHTYPE arch, int ptrbits,
    else if (OS == OSAIX)
       sp = (ptrbits == 64) ? "-maix64" : "-maix32";
    else if ((MachIsX86(arch) || MachIsPPC(arch) || MachIsUS(arch)) ||
-            arch == IbmPwr7 || arch == IbmPwr6)
+            arch == IbmPwr7 || arch == IbmPwr6 || arch == Pwre6500)
    {
       if (ptrbits == 64)
          sp = "-m64";
@@ -7839,7 +7858,7 @@ char *ProbePmake(int verb, enum OSTYPE OS, int ncpu)
 
 
 void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
-                 enum ASMDIA asmb, int vecexts, int ptrbits, 
+                 enum ASMDIA asmb, int vecexts, int ptrbits, int nreg,
                  int ncpu, int *tids, int omp, int AntThr,
                  int l2size, char *srcdir, char *bindir, int bozol1, 
                  int archdef, int IEEE, int latune, int nof77, int lapackref,
@@ -7859,6 +7878,8 @@ void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
    i = strlen(frm) + 11*13 + strlen(srcdir) + strlen(bindir);
    if (cdefs)
       i += strlen(cdefs);
+   if (nreg)
+      i += 16;
    if (f2cdefs)
       i += strlen(f2cdefs);
    i += strlen(compsflags);
@@ -7883,6 +7904,8 @@ void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
    }
    else
       i += sprintf(ln+i, " -t %d", ncpu);
+   if (nreg)
+      i += sprintf(ln+i, " -r %d", nreg);
    if (pmake)
       ln = NewAppendedString_SFLAG(ln, "-Ss pmake", pmake);
    if (flapack)
@@ -7916,7 +7939,7 @@ int main(int nargs, char **args)
    enum OSTYPE OS;
    enum MACHTYPE mach;
    int i, verb, asmb, f2cname, f2cint, f2cstr, ncpu, nof77, nocygwin;
-   int thrchk, mhz, omp, AntThr, lapackref;
+   int thrchk, mhz, omp, AntThr, lapackref, nreg;
    int j, k, h, vecexts;
    int ptrbits, l2size, bozol1, latune, archdef, ieee;
    int *tids;
@@ -7927,10 +7950,11 @@ int main(int nargs, char **args)
 @skip   char *archdefs[NARDEF], *ad2[NARDEF];
 
    GetFlags(nargs, args, &verb, &OS, (enum ASMDIA*) &asmb, &vecexts, &mach, 
-            &mhz, &ptrbits, &ncpu, &tids, &omp, &AntThr, comps, &gccflags, 
-            &outfile, &srcdir, &bindir, &bozol1, &archdef, &ieee, &latune, 
-            &nof77, &nocygwin, &thrchk, &lapackref, &f2cdefs, &cdefs, &pmake,
-            &flapack, &smaflags, &dmaflags, &f77libs, &ADd, &l2size, &targ);
+            &mhz, &ptrbits, &nreg, &ncpu, &tids, &omp, &AntThr, comps, 
+            &gccflags, &outfile, &srcdir, &bindir, &bozol1, &archdef, &ieee, 
+            &latune, &nof77, &nocygwin, &thrchk, &lapackref, &f2cdefs, &cdefs,
+            &pmake, &flapack, &smaflags, &dmaflags, &f77libs, &ADd, 
+            &l2size, &targ);
    if (targ)
       sprintf(targarg, "-T %s", targ);
    else
@@ -8039,9 +8063,9 @@ int main(int nargs, char **args)
          dmaflags = " -O2";
    }
 @endskip
-   SpewItForth(verb, OS, mach, mhz, asmb, vecexts, ptrbits, ncpu, tids, omp, 
-               AntThr, l2size, srcdir, bindir, bozol1, archdef, ieee, latune,
-               nof77, lapackref, comps, gccflags, f2cdefs, cdefs, pmake, 
+   SpewItForth(verb, OS, mach, mhz, asmb, vecexts, ptrbits, nreg, ncpu, tids,
+               omp, AntThr, l2size, srcdir, bindir, bozol1, archdef, ieee, 
+               latune, nof77, lapackref, comps, gccflags, f2cdefs, cdefs, pmake,
                flapack, smaflags, dmaflags, f77libs, ADd);
    for (i=0; i < 3*NCOMP; i++)
       if (comps[i])
@@ -8654,6 +8678,7 @@ int main(int nargs, char **args)
    int ptrbits, l2size;
    int delay=0;  /* change this to come from "special" ints in GetFlags */
    int THREADS=0;
+   int nreg=0;
    int Use3DNow=0;  /* this needs to come from getflags */
    int ncpu, omp, AntThr, lapackref;
    int USEDEFL1, USEARCHDEF, LATUNE, USEIEEE, USEMINGW;
@@ -8668,10 +8693,10 @@ int main(int nargs, char **args)
    char *adnames[NARDEF] = {"sKERNDEF", "dKERNDEF", "sMMDEF", "dMMDEF"};
 
    GetFlags(nargs, args, &verb, &OS, (enum ASMDIA*) &asmb, &vecexts, &mach, 
-            &mhz, &ptrbits, &ncpu, &tids, &omp, &AntThr, comps, &gccflags, 
-            &outfile, &srcdir, &blddir, &USEDEFL1, &USEARCHDEF, &USEIEEE, 
-            &LATUNE, &nof77, &lapackref, &f2cdefs, &cdefs, &pmake, &flapack, 
-            &smaflags, &dmaflags, &f77lib, &ADd, &l2size, &targ);
+            &mhz, &ptrbits, &nreg, &ncpu, &tids, &omp, &AntThr, comps, 
+            &gccflags, &outfile, &srcdir, &blddir, &USEDEFL1, &USEARCHDEF, 
+            &USEIEEE, &LATUNE, &nof77, &lapackref, &f2cdefs, &cdefs, &pmake, 
+            &flapack, &smaflags, &dmaflags, &f77lib, &ADd, &l2size, &targ);
    if (ncpu > 1) THREADS = 1;
    if (!outfile)
       fpout = stdout;
@@ -9115,8 +9140,12 @@ int main(int nargs, char **args)
       fprintf(fpout, "%s\n", sp);
       free(sp);
    }
-   fprintf(fpout, "   INSTFLAGS = -1 %d -a %d -l %d\n\n", 
-           USEDEFL1, USEARCHDEF, LATUNE);
+   if (!nreg)
+      fprintf(fpout, "   INSTFLAGS = -1 %d -a %d -l %d\n\n", 
+              USEDEFL1, USEARCHDEF, LATUNE);
+   else
+      fprintf(fpout, "   INSTFLAGS = -1 %d -a %d -l %d -r %d\n\n", 
+              USEDEFL1, USEARCHDEF, LATUNE, nreg);
 @beginskip
    fprintf(fpout,
       "#  --------------------------------------------------------\n");
