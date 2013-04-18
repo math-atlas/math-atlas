@@ -141,10 +141,10 @@ void FA_free(void *ptr, int align, int misalign)
 #define NA (-2271.0)
 #define PI 3.14159265358979323846
 
-#if 1
+#if 0
    #define dumb_rand() ( 0.5 - ((double)rand())/((double)RAND_MAX) )
 #else
-   #define dumb_rand() ( ((double)rand())/((double)RAND_MAX/(2*PI)) )
+   #define dumb_rand() (((double)rand())/((double)RAND_MAX/(2*PI)) )
 #endif
 
 #if defined(WALL) || defined(PentiumCPS)
@@ -214,20 +214,21 @@ double time00();
 
 double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
 {
-   void TEST_KERNEL_SIN(const int N, const TYPE *X, TYPE *Y);
-   int nrep, i, n, nvec, NN, ix=0, iy=0, ii, jj;
+   void TEST_KERNEL_SIN(const int N, const TYPE *X, TYPE *Y, const TYPE *iy);
+   int nrep, i, n, nvec, NN, iix=0, iiy=0, ii, jj;
    const int incx=Mabs(incX)SHIFT, incy=Mabs(incY)SHIFT;
-   TYPE *X, *Y, *x, *y, *stX;
+   TYPE *X, *Y, *x, *y, *stX, *iY, *z;
    double t0, t1;
-   TYPE si, y1, y2;
+   TYPE si, y1, y2, iy;
    int l2ret;
+   FILE *in;
    
    #ifdef SREAL
-   int inputf(float x, float *y1, float *y2);
+   int inputf(float x, float *y1, float *y2, float *iy);
    #endif  /* DREAL, not supported complex */
    
    #ifdef DREAL
-   int inputd(double x, double *y1, double *y2);
+   int inputd(double x, double *y1, double *y2, double *iy);
    #endif
 
    #ifdef TREAL
@@ -278,9 +279,12 @@ cos: 583.00 [-p 1 -V -Paw 3 -U 1 -Ps b A 0 2 -P all 0 128]  if (incx > 4) ii = (
    assert(X);
    y = Y = FA_malloc(ATL_sizeof*NN, FAy, MAy);
    assert(Y);
+   z = iY = FA_malloc(ATL_sizeof*NN, FAy, MAy);
+   assert(iY);
 /*
- * generate inputs 
- */
+ * generate inputs
+ * Need to verify the input whether it has the right sequence
+ */   
    dumb_seed(NN);
    for (i=0; i < NN; i++)
    {
@@ -288,32 +292,34 @@ cos: 583.00 [-p 1 -V -Paw 3 -U 1 -Ps b A 0 2 -P all 0 128]  if (incx > 4) ii = (
       {
          si = dumb_rand();
    #ifdef SREAL
-         inputf(si, &y1, &y2);
+         inputf(si, &y1, &y2, &iy);
    #else
-         inputd(si, &y1, &y2);
+         inputd(si, &y1, &y2, &iy);
    #endif
       } while (y1 == NA && y2 == NA);
       X[i] = y1;
       Y[i] = y2;
+      iY[i] = iy;
    }
 /*
  * cache flushing
  */
    //if (cachesize > 1)
    //   l2ret = ATL_flushcache(cachesize);
-/*scos: 583.00 [-p 1 -V -Paw 3 -U 1 -Ps b A 0 2 -P all 0 128]
+/* 
  * timing
  */
    t0 = time00();
    for (i=nrep; i; i--)
    {
-      TEST_KERNEL_SIN(N, x, y);
+      TEST_KERNEL_SIN(N, x, y, z);
       //x += N;
       //y += N;
    }
    t1 = time00() - t0;
    FA_free(X, FAx, MAx);
    FA_free(Y, FAy, MAy);
+   FA_free(iY, FAy, MAy);
 #endif
    return(t1/nrep);
 }

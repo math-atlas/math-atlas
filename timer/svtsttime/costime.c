@@ -143,12 +143,7 @@ void FA_free(void *ptr, int align, int misalign)
 #define NA (-2271.0)
 #define PI 3.14159265358979323846
 
-/*#define dumb_rand() ( 0.5 - ((double)rand())/((double)RAND_MAX) )*/
-//#define dumb_rand() ( ((double)rand())/((double)RAND_MAX/(2*PI)) )
-
-#define SIMPLE 1
-
-#if SIMPLE
+#if 0
    #define dumb_rand() ( 0.5 - ((double)rand())/((double)RAND_MAX) )
 #else
    #define dumb_rand() ( ((double)rand())/((double)RAND_MAX/(2*PI)) )
