@@ -299,6 +299,8 @@ typedef void (*cmat2ablk_t)(const size_t, const size_t, const SCALAR,
                             const TYPE*, const size_t, const SCALAR,TYPE*);
 typedef void (*ammkern_t)(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,
                           TYPE*, const TYPE*, const TYPE*, const TYPE*);
+enum ATL_AMMALG {ATL_amm1b, ATL_ammrkK, ATL_NMK};
+
 @whiledef rt ammm ammm_1b ammm_rkK
 int Mjoin(PATL,@(rt))
    (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,ATL_CSZT, const SCALAR,
@@ -5002,6 +5004,7 @@ int Mjoin(PATL,ammmABC)
 @ROUT ATL_ammm
 #include "atlas_lvl2.h"
 #include "atlas_level1.h"
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_rankK.h))
 
    @define rt @Mjoin(PATL,ammm)@
 /*
@@ -5455,6 +5458,13 @@ int @(rt)
                           (TA == AtlasNoTrans) ? lda:1, beta, C, ldc);
       return(0);
    }
+   else if (M <= ATL_AMM_MAXMB && N <= ATL_AMM_MAXNB && K <= ATL_AMM_MAXKB)
+      iret = Mjoin(PATL,ammm_1b)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                 beta, C, ldc);
+   else if (K <= ATL_MAXK_RKK)
+      iret = Mjoin(PATL,ammm_rkK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                  beta, C, ldc);
+@beginskip
    else if (K <= ATL_AMM_MAXKB)
    {
       if (M <= ATL_AMM_MAXMB && N <= ATL_AMM_MAXNB)
@@ -5464,6 +5474,7 @@ int @(rt)
          iret = Mjoin(PATL,ammm_rkK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                      beta, C, ldc);
    }
+@endskip
    else if (M >= 3*ATL_AMM_MAXMB && N >= 3*ATL_AMM_MAXNB && 
             K >= 3*ATL_AMM_MAXKB)
       iret = Mjoin(PATL,ammmNMK)(ATL_AMM_NCASES-1, TA, TB, M, N, K, alpha, 
@@ -5992,4 +6003,102 @@ main(int nargs, char **args)
    else
       printf("FAILED: %d\n", ierr);
    return(ierr);
+}
+
+@ROUT ATL_GetAmmAlg.c
+#include "atlas_amm.h"
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_blk.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_ablk2cmat.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_a1.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_an.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_aX.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_flag.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_kern.h))
+
+void GetAmmNMKDetails
+(
+/*
+ * Input parameters describing problem; for now, don't use A/B/C, but might
+ * be important to find aliasing later!
+ */
+   const enum ATLAS_TRANS TA,
+   const enum ATLAS_TRANS TB,
+   ATL_CSZT M,
+   ATL_CSZT N,
+   ATL_CSZT K,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CSZT lda,
+   const TYPE *B,
+   ATL_CSZT ldb,
+   const SCALAR beta,
+   const TYPE *C,
+   ATL_CSZT ldc
+/*
+ * Output params
+ */
+   ATL_SZT *mb, ATL_SZT *nb, ATL_SZT *kb,
+   int *mu, int *nu, int *ku,
+   ammkern_t *amm_b0, ammkern_t *amm_b1, ammkern_t *amm_bn, 
+   cm2am_t *a2blk, *b2blk, ablk2cmat_t *blk2c
+)
+{
+
+   if (SCALAR_IS_ONE(alpha))
+   {
+      if (SCALAR_IS_ONE(beta))
+         *blk2c = ATL_AMM_BLK2C_a1_b1[IK];
+      else if (SCALAR_IS_NONE(beta))
+         *blk2c = ATL_AMM_BLK2C_a1_bn[IK];
+      else if (SCALAR_IS_ZERO(beta))
+         *blk2c = ATL_AMM_BLK2C_a1_b0[IK];
+      else
+         *blk2c = ATL_AMM_BLK2C_a1_bX[IK];
+   }
+   else if (alpha == ATL_rnone)
+   {
+      if (SCALAR_IS_ONE(beta))
+         *blk2c = ATL_AMM_BLK2C_an_b1[IK];
+      else if (SCALAR_IS_NONE(beta))
+         *blk2c = ATL_AMM_BLK2C_an_bn[IK];
+      else if (SCALAR_IS_ZERO(beta))
+         *blk2c = ATL_AMM_BLK2C_an_b0[IK];
+      else
+         *blk2c = ATL_AMM_BLK2C_an_bX[IK];
+   }
+   else
+   {
+      if (beta == ATL_rone)
+         *blk2c = ATL_AMM_BLK2C_aX_b1[IK];
+      else if (beta == ATL_rnone)
+         *blk2c = ATL_AMM_BLK2C_aX_bn[IK];
+      else if (beta == ATL_rzero)
+         *blk2c = ATL_AMM_BLK2C_aX_b0[IK];
+      else
+         *blk2c = ATL_AMM_BLK2C_aX_bX[IK];
+   }
+}
+enum ATL_AMMALG ATL_GetAmmAlg
+(
+   const enum ATLAS_TRANS TA,
+   const enum ATLAS_TRANS TB,
+   ATL_CSZT M,
+   ATL_CSZT N,
+   ATL_CSZT K,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CSZT lda,
+   const TYPE *B,
+   ATL_CSZT ldb,
+   const SCALAR beta,
+   const TYPE *C,
+   ATL_CSZT ldc
+{
+   enum ATL_AMMALG ret=ATL_NMK;
+
+   if (M <= ATL_AMM_MAXMB && N <= ATL_AMM_MAXNB && K <= ATL_AMM_MAXKB)
+      ret = ATL_amm1b;
+   else if (K <= ATL_RKK_MAXKB)  /* must create this! */
+      ret = ATL_ammrkK;
+   return(ret);
 }
