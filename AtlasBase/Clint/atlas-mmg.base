@@ -401,9 +401,9 @@ void Mjoin(PATL,cm2am_a@(nalp)_@(ku)x@(nu))
  * @(mu) rows of A and stored in a @(ku)x@(mu) subblock.
  * CEIL(K/ku) of these subblocks are stored together to make a K-panel.
  * The CEIL(M/mu) K-panels are stored contiguously.  If ku does not evenly
- * divide K then the last block in the K-panel will be zero padded, and
- * the same is true for the mu portion of the last K-panel if mu does not
- * evenly divide M.
+ * divide K then subblocks in some K-panels will be zero padded.
+ * If mu does not evenly divide M, then some subblocks in the last
+ * K-panel will be entirely 0.
  */
 void Mjoin(PATL,rm2am_a@(nalp)_@(ku)x@(mu)) /* row-access matrix to access-major      block */
 (
@@ -416,7 +416,7 @@ void Mjoin(PATL,rm2am_a@(nalp)_@(ku)x@(mu)) /* row-access matrix to access-major
 )
 {
    ATL_CSZT MM = ((M+@(mu)-1)/@(mu))*@(mu), KK = ((K+@(ku)-1)/@(ku))*@(ku);
-   ATL_CSZT pansz = @(mu)*KK, m = M/@(mu)*@(mu), mr = M-m, incA = lda - m;
+   ATL_CSZT pansz = @(mu)*KK, m = M/@(mu)*@(mu), mr = M-m, incA = @(ku)*lda;
    ATL_CSZT k = (K/@(ku))*@(ku);
    ATL_SZT i, j;
    @declare "   const TYPE " n n ";"
@@ -430,7 +430,7 @@ void Mjoin(PATL,rm2am_a@(nalp)_@(ku)x@(mu)) /* row-access matrix to access-major
    @enddeclare
    @iexp incb @(ku) @(mu) *
 
-   for (j=0; j < k; j += ku, b += @(incb), A += incA)
+   for (j=0; j < k; j += @(ku), b += @(incb))
    {
       TYPE *pp = b;   /* panel ptr */
 
@@ -447,9 +447,6 @@ void Mjoin(PATL,rm2am_a@(nalp)_@(ku)x@(mu)) /* row-access matrix to access-major
       @endiwhile
       @iexp i @(i) 1 +
    @endiwhile
-   @iwhile j < @(ku)
-      @iexp j @(j) 1 +
-   @endiwhile
       }
       if (m != M)
       {
@@ -458,11 +455,13 @@ void Mjoin(PATL,rm2am_a@(nalp)_@(ku)x@(mu)) /* row-access matrix to access-major
  *       Copy partial M remainder subblock
  */
          for (p=pp; i < M; i++, p += @(ku))
+         {
    @iexp j 0 0 +
    @iwhile j < @(ku)
             p[@(j)] = A@(j)[i];
       @iexp j @(j) 1 +
    @endiwhile
+         }
 /*
  *       Zero rest of M remainder subblock
  */
@@ -472,22 +471,80 @@ void Mjoin(PATL,rm2am_a@(nalp)_@(ku)x@(mu)) /* row-access matrix to access-major
             p[@(j)] = 0.0;
       @iexp j @(j) 1 +
    @endiwhile
+/*
+ * Update column-ptrs from A
+ */
+   @iwhile j < @(ku)
+      A@(j) += incA;
+      @iexp j @(j) 1 +
+   @endiwhile
    }
 /*
  * Check for final, partial K-panel that needs to be padded wt zeros
  */
    switch(K-k)
    {
-/* HERE HERE HERE */
    @iexp r @(ku) -1 +
    @iwhile r > 0
    case @(r):
+      for (j=0; j < k; j += @(ku), b += @(incb))
+      {
+         TYPE *pp = b;   /* panel ptr */
+
+         for (i=0; i < m; i += @(mu), pp += pansz)
+         {
+   @iexp i 0 0 +
+   @iwhile i < @(mu)
+      @iexp j 0 0 +
+      @iwhile j < @(r)
+         @iexp ip @(i) @(ku) *
+         @iexp ip @(ip) @(j) +
+            pp[@(ip)] = A@(j)[i+@(i)];
+         @iexp j @(j) 1 +
+      @endiwhile
+      @iwhile j < @(ku)
+         @iexp ip @(i) @(ku) *
+         @iexp ip @(ip) @(j) +
+            pp[@(ip)] = 0.0;
+         @iexp j @(j) 1 +
+      @endiwhile
+      @iexp i @(i) 1 +
+   @endiwhile
+         }
+         if (m != M)
+         {
+            TYPE *p;
+/*
+ *          Copy partial M remainder subblock
+ */
+            for (p=pp; i < M; i++, p += @(ku))
+            {
+   @iexp j 0 0 +
+   @iwhile j < @(r)
+               p[@(j)] = A@(j)[i];
+      @iexp j @(j) 1 +
+   @endiwhile
+   @iwhile j < @(ku)
+               p[@(j)] = 0.0;
+      @iexp j @(j) 1 +
+   @endiwhile
+            }
+/*
+ *          Zero rest of M remainder subblock
+ */
+            for (; i < MM; i++, p += @(ku))
+            {
+   @iexp j 0 0 +
+   @iwhile j < @(ku)
+               p[@(j)] = 0.0;
+      @iexp j @(j) 1 +
+   @endiwhile
+            }
+         }
+         break;
       @iexp r @(r) -1 +
    @endiwhile
-   0:;
-   }
-   if (k != K)
-   {
+      default:;
    }
 }
 @ROUT ammmtst
