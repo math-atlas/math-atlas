@@ -268,6 +268,228 @@ void Mjoin(PATL,cm2am_a@(nalp)_@(nu)@(dsuf)) /* col-access matx to access-major 
    }
    @endmif
 }
+@ROUT ATL_cm2bk
+/*
+ * This routine copies the KxN submatrix A into access-ku-major storage.
+ * In this storage, @(nu) vectors of @(ku) length are taken from the
+ * @(nu) columns of A and stored in a @(ku)x@(nu) subblock.
+ * CEIL(K/ku) of these subblocks are stored together to make a K-panel.
+ * The CEIL(N/nu) K-panels are stored contiguously.  If ku does not evenly
+ * divide K then the last block in the K-panel will be zero padded, and
+ * the same is true for the NU portion of the last K-panel if nu does not
+ * evenly divide N.
+ */
+void Mjoin(PATL,cm2am_a@(nalp)_@(ku)x@(nu))
+(
+   ATL_CSZT K,          /* number of rows in A */
+   ATL_CSZT N,          /* number of columns in A */
+   const SCALAR alpha,  /* scalar for A */
+   const TYPE *A,       /* matrix to be copied to access-major format */
+   ATL_CSZT lda,        /* stride between row elements */
+   TYPE *b              /* OUTPUT: access-ku-major block holding A */
+)
+{
+   ATL_CSZT n = (N/@(nu))*@(nu), k = (K/@(ku))*@(ku), incA = lda*@(nu), nr=N-n;
+   ATL_SZT i, j;
+   @declare "   const TYPE " n n ";"
+      *A0=A
+      @define j @1@
+      @iwhile j < @(nu)
+         @iexp i @(j) -1 +
+         *A@(j)=A@(i)+lda
+         @iexp j @(j) 1 +
+      @endiwhile
+   @enddeclare
+   @iexp binc @(nu) @(ku) *
+
+   for (j=0; j < n; j += @(nu))
+   {
+      for (i=0; i < k; i += @(ku), b += @(binc))
+      {
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @iexp k 0 0 +
+         @iwhile k < @(ku)
+            @iexp ib @(j) @(ku) *
+            @iexp ib @(ib) @(k) +
+            b[@(ib)] = @(malp)A@(j)[i+@(k)];
+            @iexp k @(k) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+      }
+      if (k != K)
+      {
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @iexp k 0 0 +
+         @iwhile k < @(ku)
+            @iexp ib @(j) @(ku) *
+            @iexp ib @(ib) @(k) +
+            b[@(ib)] = 
+            @iexp k @(k) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+                    0.0;
+      @endiwhile
+         for (; i < K; i++)
+         {
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @iexp ib @(j) @(ku) *
+            b[k+i+@(ib)] = @(malp)A@(j)[i];
+         @iexp j @(j) 1 +
+      @endiwhile
+         }
+         b += @(binc)
+      }
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+      A@(j) += incA;
+      @iexp j @(j) 1 +
+      @endiwhile
+   }
+   if (nr)
+   {
+      ATL_CSZT KK = k+@(ku), NN=n+@(nu);
+      for (j=0; j < nr; j++, A0 += lda)
+      {
+         TYPE *c = b + @(ku)*j;
+         for (i=0; i < k; i += @(ku), c += @(binc))
+         {
+      @iexp k 0 0 +
+      @iwhile k < @(ku)
+         @iexp ib @(ib) @(k) +
+            c[@(k)] = @(malp)A0[i+@(k)];
+         @iexp k @(k) 1 +
+      @endiwhile
+         }
+         if (k != K)
+         {
+         @iexp k 0 0 +
+         @iwhile k < @(ku)
+               c[@(k)] = 
+            @iexp k @(k) 1 +
+         @endiwhile
+                       0.0;
+      @endiwhile
+            for (; i < K; i++)
+            {
+               c[i] = @(malp)A@(j)[i];
+            }
+         }
+      }
+      for (; j < NN; j++, A0 += lda)
+      {
+         TYPE *c = b + @(ku)*j;
+         for (i=0; i < KK; i += @(ku), c += @(binc))
+         {
+      @iexp k 0 0 +
+      @iwhile k < @(ku)
+         @iexp ib @(ib) @(k) +
+            c[@(k)] = 0.0;
+         @iexp k @(k) 1 +
+      @endiwhile
+         }
+      }
+   }
+}
+@ROUT ATL_rm2bk
+/*
+ * This routine copies the MxK submatrix A into access-ku-major storage.
+ * In this storage, @(mu) vectors of @(ku) length are taken from the
+ * @(mu) rows of A and stored in a @(ku)x@(mu) subblock.
+ * CEIL(K/ku) of these subblocks are stored together to make a K-panel.
+ * The CEIL(M/mu) K-panels are stored contiguously.  If ku does not evenly
+ * divide K then the last block in the K-panel will be zero padded, and
+ * the same is true for the mu portion of the last K-panel if mu does not
+ * evenly divide M.
+ */
+void Mjoin(PATL,rm2am_a@(nalp)_@(ku)x@(mu)) /* row-access matrix to access-major      block */
+(
+   ATL_CSZT K,          /* number of columns in A */
+   ATL_CSZT M,          /* number of rows in A */
+   const SCALAR alpha,  /* scalar for A */
+   const TYPE *A,       /* matrix to be copied to access-major format */
+   ATL_CSZT lda,        /* stride between row elements */
+   TYPE *b              /* OUTPUT: access-major block holding condensed A */
+)
+{
+   ATL_CSZT MM = ((M+@(mu)-1)/@(mu))*@(mu), KK = ((K+@(ku)-1)/@(ku))*@(ku);
+   ATL_CSZT pansz = @(mu)*KK, m = M/@(mu)*@(mu), mr = M-m, incA = lda - m;
+   ATL_CSZT k = (K/@(ku))*@(ku);
+   ATL_SZT i, j;
+   @declare "   const TYPE " n n ";"
+      *A0=A
+      @iexp j 0 1 +
+      @iwhile j < @(ku)
+         @iexp i @(j) -1 +
+         *A@(j)=A@(i)+lda
+         @iexp j @(j) 1 +
+      @endiwhile
+   @enddeclare
+   @iexp incb @(ku) @(mu) *
+
+   for (j=0; j < k; j += ku, b += @(incb), A += incA)
+   {
+      TYPE *pp = b;   /* panel ptr */
+
+      for (i=0; i < m; i += @(mu), pp += pansz)
+      {
+   @iexp i 0 0 +
+   @iwhile i < @(mu)
+      @iexp j 0 0 +
+      @iwhile j < @(ku)
+         @iexp ip @(i) @(ku) *
+         @iexp ip @(ip) @(j) +
+         pp[@(ip)] = A@(j)[i+@(i)];
+         @iexp j @(j) 1 +
+      @endiwhile
+      @iexp i @(i) 1 +
+   @endiwhile
+   @iwhile j < @(ku)
+      @iexp j @(j) 1 +
+   @endiwhile
+      }
+      if (m != M)
+      {
+         TYPE *p;
+/*
+ *       Copy partial M remainder subblock
+ */
+         for (p=pp; i < M; i++, p += @(ku))
+   @iexp j 0 0 +
+   @iwhile j < @(ku)
+            p[@(j)] = A@(j)[i];
+      @iexp j @(j) 1 +
+   @endiwhile
+/*
+ *       Zero rest of M remainder subblock
+ */
+         for (; i < MM; i++, p += @(ku))
+   @iexp j 0 0 +
+   @iwhile j < @(ku)
+            p[@(j)] = 0.0;
+      @iexp j @(j) 1 +
+   @endiwhile
+   }
+/*
+ * Check for final, partial K-panel that needs to be padded wt zeros
+ */
+   switch(K-k)
+   {
+/* HERE HERE HERE */
+   @iexp r @(ku) -1 +
+   @iwhile r > 0
+   case @(r):
+      @iexp r @(r) -1 +
+   @endiwhile
+   0:;
+   }
+   if (k != K)
+   {
+   }
+}
 @ROUT ammmtst
    @define dupB @1@
 @ROUT ATL_rm2am ammmtst
