@@ -1,3 +1,9 @@
+@ifdef ! kmaj
+   @define kmaj @0@
+@endifdef
+@iif kmaj = 1
+   @iexp kmaj 0 0 +
+@endiif
 @ROUT ATL_cam2amb ATL_ram2amb ATL_muxnu2mat
 #include "atlas_misc.h"
 @beginskip
@@ -83,7 +89,12 @@
    @iexp kmaj 0 0 +
 @endiif
 @iif kmaj ! 0
-@define ku @@(vlen)@
+@ifdef vlen
+   @define ku @@(vlen)@
+@endifdef
+@ifdef ! vlen
+   @define ku @@(kmaj)@
+@endifdef
 /*
  * This routine copies the KxN submatrix A into access-k-vlen-major storage.
  * In this storage, @(nu) vectors of @(ku) length are taken from the
@@ -156,7 +167,7 @@ void Mjoin(PATL,cm2am_a@(nalp)_@(ku)x@(nu))
          @iexp j @(j) 1 +
       @endiwhile
          }
-         b += @(binc)
+         b += @(binc);
       }
       @iexp j 0 0 +
       @iwhile j < @(nu)
@@ -187,10 +198,9 @@ void Mjoin(PATL,cm2am_a@(nalp)_@(ku)x@(nu))
             @iexp k @(k) 1 +
          @endiwhile
                        0.0;
-      @endiwhile
             for (; i < K; i++)
             {
-               c[i] = @(malp)A@(j)[i];
+               c[i] = @(malp)A0[i];
             }
          }
       }
@@ -402,11 +412,13 @@ void Mjoin(PATL,cm2am_a@(nalp)_@(nu)@(dsuf)) /* col-access matx to access-major 
    @endmif
 }
 @ROUT ATL_rm2am ammmtst
-@iif kmaj = 1
-   @iexp kmaj 0 0 +
-@endiif
 @iif kmaj ! 0
-@define ku @@(vlen)@
+@ifdef vlen
+   @define ku @@(vlen)@
+@endifdef
+@ifdef ! vlen
+   @define ku @@(kmaj)@
+@endifdef
 /*
  * This routine copies the MxK submatrix A into access-k-vlen-major storage.
  * In this storage, @(mu) vectors of @(ku) length are taken from the
@@ -478,14 +490,18 @@ void Mjoin(PATL,rm2am_a@(nalp)_@(ku)x@(mu)) /* row-access matrix to access-major
  *       Zero rest of M remainder subblock
  */
          for (; i < MM; i++, p += @(ku))
+         {
    @iexp j 0 0 +
    @iwhile j < @(ku)
             p[@(j)] = 0.0;
       @iexp j @(j) 1 +
    @endiwhile
+         }
+      }
 /*
  * Update column-ptrs from A
  */
+   @iexp j 0 0 +
    @iwhile j < @(ku)
       A@(j) += incA;
       @iexp j @(j) 1 +
@@ -553,10 +569,11 @@ void Mjoin(PATL,rm2am_a@(nalp)_@(ku)x@(mu)) /* row-access matrix to access-major
    @endiwhile
             }
          }
-         break;
+      }
+      break;
       @iexp r @(r) -1 +
    @endiwhile
-      default:;
+   default:;
    }
 }
 @endiif
@@ -3213,6 +3230,12 @@ int mmtst(void)
    ATL_CINT M=@(M), N=@(N), K=@(K), lda=M, ldb=K, ldc=M+3;
    ATL_CINT MMU = ((@(M)+@(mu)-1)/@(mu))*@(mu);
    ATL_CINT NNU = ((@(N)+@(nu)-1)/@(nu))*@(nu);
+   @iif kmaj > 1
+   ATL_CINT KKU = (K+@(kmaj)-1)/@(kmaj)*@(kmaj);
+   @endiif
+   @iif kmaj < 2
+   ATL_CINT KKU = K;
+   @endiif
    TYPE ErrBound;
 
    #ifdef TREAL
@@ -3230,8 +3253,8 @@ int mmtst(void)
    B = malloc(sizeof(TYPE)*ldb*N);
    C = malloc(sizeof(TYPE)*ldc*N);
    D = malloc(sizeof(TYPE)*ldc*N);
-   va = malloc(2*sizeof(TYPE)*MMU*K + ATL_Cachelen);
-   vb = malloc(2*sizeof(TYPE)*NNU*K*@(dupB) + ATL_Cachelen);
+   va = malloc(2*sizeof(TYPE)*MMU*KKU + ATL_Cachelen);
+   vb = malloc(2*sizeof(TYPE)*NNU*KKU*@(dupB) + ATL_Cachelen);
    vc = malloc(2*sizeof(TYPE)*MMU*NNU + ATL_Cachelen);
    a = ATL_AlignPtr(va);
    b = ATL_AlignPtr(vb);
@@ -3243,8 +3266,14 @@ int mmtst(void)
    for (n=lda*K SHIFT, i=0; i < n; i++) A[i] = dumb_rand();
    for (n=ldb*N SHIFT, i=0; i < n; i++) B[i] = dumb_rand();
    for (n=ldc*N SHIFT, i=0; i < n; i++) C[i] = dumb_rand();
+   @iif kmaj < 2
    Mjoin(PATL,rm2am_a1_@(mu))(K, M, 1.0, A, lda, a);
    Mjoin(PATL,cm2am_a1_@(nu)@(dsuf))(K, N, 1.0, B, ldb, b);
+   @endiif
+   @iif kmaj > 1
+   Mjoin(PATL,rm2am_a1_@(kmaj)x@(mu))(K, M, 1.0, A, lda, a);
+   Mjoin(PATL,cm2am_a1_@(kmaj)x@(nu)@(dsuf))(K, N, 1.0, B, ldb, b);
+   @endiif
    ATL_CM2BK(M, N, @(mu), @(nu), C, ldc, c);
 /*
  * Call test routine, move output to col-major D for comparison with correct C
