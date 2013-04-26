@@ -79,198 +79,13 @@
    @define malp @@
    @define nalp @@(alpha)@
 @ROUT ATL_cm2am ammmtst
+@iif kmaj = 1
+   @iexp kmaj 0 0 +
+@endiif
+@iif kmaj ! 0
+@define ku @@(vlen)@
 /*
- * This routine copies the KxN submatrix A into the KxCEIL(N/@(nu)) block b.
- * b is stored in access-major storage, where the @(nu) unrolled accesses
- * are assumed to come from the columns of A.
- * More specifically, each Kx@(nu) column panel of A is copied into a
- * @(nu)xK region of b, and if the last such column panel is partial, it
- * is zero padded.
- * For GEMM, this routine handles Notrans B matrices, and Trans A matrices.
- */
-void Mjoin(PATL,cm2am_a@(nalp)_@(nu)@(dsuf)) /* col-access matx to access-major blk */
-(
-   ATL_CSZT K,          /* number of rows in A */
-   ATL_CSZT N,          /* number of columns in A */
-   const SCALAR alpha,  /* scalar for A */
-   const TYPE *A,       /* matrix to be copied to access-major format */
-   ATL_CSZT lda,        /* stride between row elements */
-   TYPE *b              /* OUTPUT: access-major block holding A */
-)
-{
-   ATL_CSZT n = (N/@(nu))*@(nu), incA = lda*@(nu);
-   ATL_SZT i, j;
-   @declare "   const TYPE " n n ";"
-      *A0=A
-      @define j @1@
-      @iwhile j < @(nu)
-         @iexp i @(j) -1 +
-         *A@(j)=A@(i)+lda
-         @iexp j @(j) 1 +
-      @endiwhile
-   @enddeclare
-
-   for (j=0; j < n; j += @(nu))
-   {
-      for (i=0; i < K; i++, b += @(incdup))
-      {
-      @iexp j 0 0 +
-      @iwhile j < @(nu)
-         @iexp jk @(dupB) @(j) *
-         @iexp k @(dupB) -1 +
-         @iwhile k > 0
-         b[@(jk)+@(k)] =
-            @iexp k @(k) -1 +
-         @endiwhile
-         b[@(jk)] = @(malp)A@(j)[i];
-      @iexp j @(j) 1 +
-      @endiwhile
-      }
-      @iexp j 0 0 +
-      @iwhile j < @(nu)
-      A@(j) += incA;
-      @iexp j @(j) 1 +
-      @endiwhile
-   }
-   @mif nu ! "1
-   switch(N-n)
-   {
-   @iexp n 1 0 +
-   @iwhile n < @(nu)
-      @iexp j @(n) -1 + 
-   case @(n):
-      for (i=0; i < K; i++, b += @(incdup))
-      {
-      @iexp j 0 0 +
-      @iwhile j < @(n)
-         @iexp jk @(dupB) @(j) *
-         @iexp k @(dupB) -1 +
-         @iwhile k > 0
-         b[@(jk)+@(k)] =
-            @iexp k @(k) -1 +
-         @endiwhile
-         b[@(jk)] = @(malp)A@(j)[i];
-      @iexp j @(j) 1 +
-      @endiwhile
-      @iwhile j < @(nu)
-         @iexp jk @(dupB) @(j) *
-         @iexp k @(dupB) -1 +
-         @iwhile k > 0
-         b[@(jk)+@(k)] =
-            @iexp k @(k) -1 +
-         @endiwhile
-         b[@(jk)] = ATL_rzero;
-      @iexp j @(j) 1 +
-      @endiwhile
-      }
-      break;
-   @iexp n @(n) 1 +
-   @endiwhile
-   default:;
-   }
-   @endmif
-}
-@ROUT ATL_ccm2am cammmtst
-/*
- * This routine copies the KxN submatrix A into the KxCEIL(N/@(nu)) block b.
- * b is stored in access-major storage, where the @(nu) unrolled accesses
- * are assumed to come from the columns of A.
- * More specifically, each Kx@(nu) column panel of A is copied into a
- * @(nu)xK region of b, and if the last such column panel is partial, it
- * is zero padded.
- * For GEMM, this routine handles Notrans B matrices, and Trans A matrices.
- */
-void Mjoin(PATL,cm2am_a@(nalp)_@(nu)@(dsuf)) /* col-access matx to access-major blk */
-(
-   ATL_CSZT K,          /* number of rows in A */
-   ATL_CSZT N,          /* number of columns in A */
-   const SCALAR alpha,  /* scalar for A */
-   const TYPE *A,       /* matrix to be copied to access-major format */
-   ATL_CSZT lda,        /* stride between row elements */
-   TYPE *rA,            /* OUTPUT: access-major block holding real(A) */
-   TYPE *iA             /* OUTPUT: access-major block holding imag(A) */
-)
-{
-   ATL_CSZT K2=K+K, lda2=lda+lda, n = (N/@(nu))*@(nu), incA = lda2*@(nu);
-   ATL_SZT i, j;
-   @mif nalp = "X
-   const register TYPE ra=(*alpha), ia=ialpha[1];
-   register TYPE rv, iv;
-   @endmif
-   @iexp nu2 @(nu) @(nu) +
-   @declare "   const TYPE " n n ";"
-      *A0=A
-      @define j @1@
-      @iwhile j < @(nu)
-         @iexp i @(j) -1 +
-         *A@(j)=A@(i)+lda2
-         @iexp j @(j) 1 +
-      @endiwhile
-   @enddeclare
-
-   for (j=0; j < n; j += @(nu))
-   {
-      for (i=0; i < K2; i += 2, rA += @(nu), iA += @(nu))
-      {
-      @iexp j 0 0 +
-      @iwhile j < @(nu)
-         @mif nalp = "X
-         rv = A@(j)[i];
-         iv = A@(j)[i+1];
-         rA[@(j)] = rv*ra - iv*ia;
-         iA[@(j)] = rv*ia + iv*ra;
-         @endmif
-         @mif nalp ! "X
-         rA[@(j)] = @(malp)A@(j)[i];
-         iA[@(j)] = @(malp)A@(j)[i+1];
-         @endmif
-      @iexp j @(j) 1 +
-      @endiwhile
-      }
-      @iexp j 0 0 +
-      @iwhile j < @(nu)
-      A@(j) += incA;
-      @iexp j @(j) 1 +
-      @endiwhile
-   }
-   @mif nu ! "1
-   switch(N-n)
-   {
-   @iexp n 1 0 +
-   @iwhile n < @(nu)
-      @iexp j @(n) -1 + 
-   case @(n):
-      for (i=0; i < K2; i += 2, rA += @(nu), iA += @(nu))
-      {
-      @iexp j 0 0 +
-      @iwhile j < @(n)
-         @mif nalp = "X
-         rv = A@(j)[i];
-         iv = A@(j)[i+1];
-         rA[@(j)] = rv*ra - iv*ia;
-         iA[@(j)] = rv*ia + iv*ra;
-         @endmif
-         @mif nalp ! "X
-         rA[@(j)] = @(malp)A@(j)[i];
-         iA[@(j)] = @(malp)A@(j)[i+1];
-         @endmif
-      @iexp j @(j) 1 +
-      @endiwhile
-      @iwhile j < @(nu)
-         rA[@(j)] = iA[@(j)] = ATL_rzero;
-      @iexp j @(j) 1 +
-      @endiwhile
-      }
-      break;
-   @iexp n @(n) 1 +
-   @endiwhile
-   default:;
-   }
-   @endmif
-}
-@ROUT ATL_cm2bk
-/*
- * This routine copies the KxN submatrix A into access-ku-major storage.
+ * This routine copies the KxN submatrix A into access-k-vlen-major storage.
  * In this storage, @(nu) vectors of @(ku) length are taken from the
  * @(nu) columns of A and stored in a @(ku)x@(nu) subblock.
  * CEIL(K/ku) of these subblocks are stored together to make a K-panel.
@@ -394,9 +209,206 @@ void Mjoin(PATL,cm2am_a@(nalp)_@(ku)x@(nu))
       }
    }
 }
-@ROUT ATL_rm2bk
+@endiif
+@iif kmaj = 0
 /*
- * This routine copies the MxK submatrix A into access-ku-major storage.
+ * This routine copies the KxN submatrix A into the KxCEIL(N/@(nu)) block b.
+ * b is stored in access-major storage, where the @(nu) unrolled accesses
+ * are assumed to come from the columns of A.
+ * More specifically, each Kx@(nu) column panel of A is copied into a
+ * @(nu)xK region of b, and if the last such column panel is partial, it
+ * is zero padded.
+ * For GEMM, this routine handles Notrans B matrices, and Trans A matrices.
+ */
+void Mjoin(PATL,cm2am_a@(nalp)_@(nu)@(dsuf)) /* col-access matx to access-major blk */
+(
+   ATL_CSZT K,          /* number of rows in A */
+   ATL_CSZT N,          /* number of columns in A */
+   const SCALAR alpha,  /* scalar for A */
+   const TYPE *A,       /* matrix to be copied to access-major format */
+   ATL_CSZT lda,        /* stride between row elements */
+   TYPE *b              /* OUTPUT: access-major block holding A */
+)
+{
+   ATL_CSZT n = (N/@(nu))*@(nu), incA = lda*@(nu);
+   ATL_SZT i, j;
+   @declare "   const TYPE " n n ";"
+      *A0=A
+      @define j @1@
+      @iwhile j < @(nu)
+         @iexp i @(j) -1 +
+         *A@(j)=A@(i)+lda
+         @iexp j @(j) 1 +
+      @endiwhile
+   @enddeclare
+
+   for (j=0; j < n; j += @(nu))
+   {
+      for (i=0; i < K; i++, b += @(incdup))
+      {
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @iexp jk @(dupB) @(j) *
+         @iexp k @(dupB) -1 +
+         @iwhile k > 0
+         b[@(jk)+@(k)] =
+            @iexp k @(k) -1 +
+         @endiwhile
+         b[@(jk)] = @(malp)A@(j)[i];
+      @iexp j @(j) 1 +
+      @endiwhile
+      }
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+      A@(j) += incA;
+      @iexp j @(j) 1 +
+      @endiwhile
+   }
+   @mif nu ! "1
+   switch(N-n)
+   {
+   @iexp n 1 0 +
+   @iwhile n < @(nu)
+      @iexp j @(n) -1 + 
+   case @(n):
+      for (i=0; i < K; i++, b += @(incdup))
+      {
+      @iexp j 0 0 +
+      @iwhile j < @(n)
+         @iexp jk @(dupB) @(j) *
+         @iexp k @(dupB) -1 +
+         @iwhile k > 0
+         b[@(jk)+@(k)] =
+            @iexp k @(k) -1 +
+         @endiwhile
+         b[@(jk)] = @(malp)A@(j)[i];
+      @iexp j @(j) 1 +
+      @endiwhile
+      @iwhile j < @(nu)
+         @iexp jk @(dupB) @(j) *
+         @iexp k @(dupB) -1 +
+         @iwhile k > 0
+         b[@(jk)+@(k)] =
+            @iexp k @(k) -1 +
+         @endiwhile
+         b[@(jk)] = ATL_rzero;
+      @iexp j @(j) 1 +
+      @endiwhile
+      }
+      break;
+   @iexp n @(n) 1 +
+   @endiwhile
+   default:;
+   }
+   @endmif
+}
+@endiif
+@ROUT ATL_ccm2am cammmtst
+/*
+ * This routine copies the KxN submatrix A into the KxCEIL(N/@(nu)) block b.
+ * b is stored in access-major storage, where the @(nu) unrolled accesses
+ * are assumed to come from the columns of A.
+ * More specifically, each Kx@(nu) column panel of A is copied into a
+ * @(nu)xK region of b, and if the last such column panel is partial, it
+ * is zero padded.
+ * For GEMM, this routine handles Notrans B matrices, and Trans A matrices.
+ */
+void Mjoin(PATL,cm2am_a@(nalp)_@(nu)@(dsuf)) /* col-access matx to access-major blk */
+(
+   ATL_CSZT K,          /* number of rows in A */
+   ATL_CSZT N,          /* number of columns in A */
+   const SCALAR alpha,  /* scalar for A */
+   const TYPE *A,       /* matrix to be copied to access-major format */
+   ATL_CSZT lda,        /* stride between row elements */
+   TYPE *rA,            /* OUTPUT: access-major block holding real(A) */
+   TYPE *iA             /* OUTPUT: access-major block holding imag(A) */
+)
+{
+   ATL_CSZT K2=K+K, lda2=lda+lda, n = (N/@(nu))*@(nu), incA = lda2*@(nu);
+   ATL_SZT i, j;
+   @mif nalp = "X
+   const register TYPE ra=(*alpha), ia=ialpha[1];
+   register TYPE rv, iv;
+   @endmif
+   @iexp nu2 @(nu) @(nu) +
+   @declare "   const TYPE " n n ";"
+      *A0=A
+      @define j @1@
+      @iwhile j < @(nu)
+         @iexp i @(j) -1 +
+         *A@(j)=A@(i)+lda2
+         @iexp j @(j) 1 +
+      @endiwhile
+   @enddeclare
+
+   for (j=0; j < n; j += @(nu))
+   {
+      for (i=0; i < K2; i += 2, rA += @(nu), iA += @(nu))
+      {
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @mif nalp = "X
+         rv = A@(j)[i];
+         iv = A@(j)[i+1];
+         rA[@(j)] = rv*ra - iv*ia;
+         iA[@(j)] = rv*ia + iv*ra;
+         @endmif
+         @mif nalp ! "X
+         rA[@(j)] = @(malp)A@(j)[i];
+         iA[@(j)] = @(malp)A@(j)[i+1];
+         @endmif
+      @iexp j @(j) 1 +
+      @endiwhile
+      }
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+      A@(j) += incA;
+      @iexp j @(j) 1 +
+      @endiwhile
+   }
+   @mif nu ! "1
+   switch(N-n)
+   {
+   @iexp n 1 0 +
+   @iwhile n < @(nu)
+      @iexp j @(n) -1 + 
+   case @(n):
+      for (i=0; i < K2; i += 2, rA += @(nu), iA += @(nu))
+      {
+      @iexp j 0 0 +
+      @iwhile j < @(n)
+         @mif nalp = "X
+         rv = A@(j)[i];
+         iv = A@(j)[i+1];
+         rA[@(j)] = rv*ra - iv*ia;
+         iA[@(j)] = rv*ia + iv*ra;
+         @endmif
+         @mif nalp ! "X
+         rA[@(j)] = @(malp)A@(j)[i];
+         iA[@(j)] = @(malp)A@(j)[i+1];
+         @endmif
+      @iexp j @(j) 1 +
+      @endiwhile
+      @iwhile j < @(nu)
+         rA[@(j)] = iA[@(j)] = ATL_rzero;
+      @iexp j @(j) 1 +
+      @endiwhile
+      }
+      break;
+   @iexp n @(n) 1 +
+   @endiwhile
+   default:;
+   }
+   @endmif
+}
+@ROUT ATL_rm2am ammmtst
+@iif kmaj = 1
+   @iexp kmaj 0 0 +
+@endiif
+@iif kmaj ! 0
+@define ku @@(vlen)@
+/*
+ * This routine copies the MxK submatrix A into access-k-vlen-major storage.
  * In this storage, @(mu) vectors of @(ku) length are taken from the
  * @(mu) rows of A and stored in a @(ku)x@(mu) subblock.
  * CEIL(K/ku) of these subblocks are stored together to make a K-panel.
@@ -547,9 +559,11 @@ void Mjoin(PATL,rm2am_a@(nalp)_@(ku)x@(mu)) /* row-access matrix to access-major
       default:;
    }
 }
+@endiif
 @ROUT ammmtst
    @define dupB @1@
 @ROUT ATL_rm2am ammmtst
+@iif kmaj = 0
 /*
  * This routine copies the MxK submatrix A into the KxCEIL(M/@(mu) block b.
  * b is stored in access-major storage, where the @(mu) unrolled accesses
@@ -629,6 +643,7 @@ void Mjoin(PATL,rm2am_a@(nalp)_@(mu)) /* row-access matrix to access-major block
       @endmif
    }
 }
+@endiif
 @ROUT ammmtst
    @undef dupB
 @ROUT ATL_crm2am cammmtst

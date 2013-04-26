@@ -445,8 +445,7 @@ void FillInGenStrings
  */
 {
    ATL_mmnode_t *mp;
-   char *frm=
-      "make gen_amm_%s lat=%d mu=%d nu=%d ku=%d kb=%d vlen=%d rt=%s/%s dupB=%d";
+   char *frm="make gen_amm_%s lat=%d mu=%d nu=%d ku=%d kb=%d vlen=%d rt=%s/%s dupB=%d kmaj=%d";
    int frml;
 
    frml = strlen(frm);
@@ -469,7 +468,8 @@ void FillInGenStrings
 
          sprintf(sp, frm, vec, mp->lat, mp->mu, mp->nu,
                  mp->ku, FLAG_IS_SET(mp->flag, MMF_KRUNTIME) ? 0 : mp->kbB,
-                 vlen, dir, mp->rout, mp->dupB);
+                 vlen, dir, mp->rout, mp->dupB, 
+                 FLAG_IS_SET(mp->flag, MMF_KVECAM) ? vlen : 0);
          mp->genstr = sp;
       }
    }
@@ -652,6 +652,8 @@ void GenFlagH(char pre, ATL_mmnode_t *mmb, char *outd, char *nm)
    for (j=0,mp=mmb; mp; j++,mp = mp->next)
    {
       unsigned char flag=FLAG_IS_SET(mp->flag, MMF_KRUNTIME) ? 1 : 0;
+      if (FLAG_IS_SET(mp->flag, MMF_KVECAM))
+         flag |= 2;
       if (mp->next)
          fprintf(fp, "%6d,  /* index %d */\n", flag, j);
       else
@@ -659,6 +661,7 @@ void GenFlagH(char pre, ATL_mmnode_t *mmb, char *outd, char *nm)
    }
    fprintf(fp, "};\n\n");
    fprintf(fp, "#define ATL_AMM_KRUNTIME(idx_) (ATL_AMM_KFLAG[idx_] & 1)\n");
+   fprintf(fp, "#define ATL_AMM_KVECMAJOR(idx_) (ATL_AMM_KFLAG[idx_]&2)\n");
    fprintf(fp, "\n#endif  /* end include file guard */\n");
    fclose(fp);
 }
@@ -763,7 +766,7 @@ void GenC2BLK(char pre, ATL_mmnode_t *mmb, char *outd, char *suff)
    fclose(fp1);
 }
 
-void SpewForthCpProto(char pre, FILE *fp, char alp, int u, int dup)
+void SpewForthCpProto(char pre, FILE *fp, char alp, int u, int dup, int kmaj)
 {
    fprintf(fp, "void ATL_%ccm2am_a%c_%d", pre, alp, u);
    if (dup > 1)
@@ -772,7 +775,10 @@ void SpewForthCpProto(char pre, FILE *fp, char alp, int u, int dup)
       fprintf(fp, "\n", dup);
    fprintf(fp,
            "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,ATL_CSZT,TYPE*);\n");
-   fprintf(fp, "void ATL_%crm2am_a%c_%d", pre, alp, u);
+   if (kmaj)
+      fprintf(fp, "void ATL_%crm2am_a%c_%dx%d", pre, alp, kmaj, u);
+   else
+      fprintf(fp, "void ATL_%crm2am_a%c_%d", pre, alp, u);
    if (dup > 1)
       fprintf(fp, "d%d\n", dup);
    else
@@ -791,7 +797,11 @@ void SpewForthCpDecl(char pre, ATL_mmnode_t *mmb, FILE *fp,
            ATL_CountNumberOfMMNodes(mmb));
    for (j=0,mp=mmb; mp; j++,mp = mp->next)
    {
-      fprintf(fp, "   ATL_%c%s_a%c_%d", pre, rt, alp, u?mp->mu:mp->nu);
+      if (mp->kmaj)
+         fprintf(fp, "   ATL_%c%s_a%c_%dx%d", pre, rt, alp, mp->kmaj, 
+                 u?mp->mu:mp->nu);
+      else
+         fprintf(fp, "   ATL_%c%s_a%c_%d", pre, rt, alp, u?mp->mu:mp->nu);
       if (!u && mp->dupB > 1)
          fprintf(fp, "d%d", mp->dupB);
       if (mp->next)
@@ -831,7 +841,10 @@ void GenCMAJ2AMAJ(char pre, ATL_mmnode_t *mmb, char *outd, char *suff)
    {
       char *rt[2] = {"cm2am", "rm2am"};
       FILE *fp;
+      int kmaj = FLAG_IS_SET(mmb->flag, MMF_KVECAM) ? mmb->vlen : 0;
 
+      if (kmaj == 1)
+         kmaj = 0;
       *sp = ac[ia];
       fp = fopen(fnam, "w");
       assert(fp);
@@ -839,23 +852,24 @@ void GenCMAJ2AMAJ(char pre, ATL_mmnode_t *mmb, char *outd, char *suff)
       PrintBegBlock(pre, mmb, np, fp);
       sp[1] = '.';
       fprintf(fp, "/*\n * mat2blk prototypes\n */\n");
-      SpewForthCpProto(pre, fp, ac[ia], mmb->mu, 0);
+      SpewForthCpProto(pre, fp, ac[ia], mmb->mu, 0, kmaj);
       if (mmb->nu != mmb->mu || mmb->dupB > 1)
-         SpewForthCpProto(pre, fp, ac[ia], mmb->nu, mmb->dupB);
+         SpewForthCpProto(pre, fp, ac[ia], mmb->nu, mmb->dupB, kmaj);
       for (mp=mmb->next; mp; mp = mp->next)
       {
          ATL_mmnode_t *p;
          int mu = mp->mu, nu = mp->nu, dupB=mp->dupB;
+         kmaj = FLAG_IS_SET(mp->flag, MMF_KVECAM) ? mp->vlen : 0;
          for (p=mmb; p != mp; p = p->next)
             if (mu == p->mu || (mu == p->nu && p->dupB < 2))
                break;
          if (p == mp) /* haven't seen before */
-            SpewForthCpProto(pre, fp, ac[ia], mu, 0);
+            SpewForthCpProto(pre, fp, ac[ia], mu, 0, kmaj);
          for (p=mmb; p != mp; p = p->next)
             if ((p->nu == nu && p->dupB == dupB) || (dupB == 1 && p->mu == nu))
                break;
          if (p == mp) /* haven't seen before */
-            SpewForthCpProto(pre, fp, ac[ia], nu, dupB);
+            SpewForthCpProto(pre, fp, ac[ia], nu, dupB, kmaj);
       }
       fprintf(fp, "\n");
       SpewForthCpDecl(pre, mmb, fp, "ATL_AMM_A2BLK", "cm2am", ac[ia], 1);
@@ -881,6 +895,11 @@ int KernelIsExactSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
        FLAG_IS_SET(p1->flag, MMF_KRUNTIME))
       return(0);
    if (!FLAG_IS_SET(p0->flag, MMF_KRUNTIME) && (p0->kbB != p1->kbB))
+      return(0);
+/*
+ * Kernels aren't same if one is K-veclen-major and one is not
+ */
+   if (FLAG_IS_SET(p0->flag, MMF_KVECAM) != FLAG_IS_SET(p1->flag, MMF_KVECAM))
       return(0);
 /*
  * Two generated kernels are the same if mu,nu,dupB,ku,VLEN,flag are the same.
@@ -915,12 +934,14 @@ int ExactKernelInList(ATL_mmnode_t *mmb, ATL_mmnode_t *p)
 void SpewForthKernProto(FILE *fp, char pre, ATL_mmnode_t *p, char bc)
 {
    if (p->dupB < 2)
-      fprintf(fp, "void ATL_%cAMMM_%d_%d_%dx%dx%d_b%c\n", pre, p->ID, 
+      fprintf(fp, "void ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b%c\n", pre, p->ID, 
               FLAG_IS_SET(p->flag, MMF_KRUNTIME)?0:p->kbB, 
+              FLAG_IS_SET(p->flag, MMF_KVECAM)?p->vlen:0, 
               p->mu, p->nu, p->ku,bc);
    else
-      fprintf(fp, "void ATL_%cAMMM_%d_%d_%dx%dd%dx%d_b%c\n", pre, p->ID, 
+      fprintf(fp, "void ATL_%cAMMM_%d_%d_%d_%dx%dd%dx%d_b%c\n", pre, p->ID, 
               FLAG_IS_SET(p->flag, MMF_KRUNTIME)?0:p->kbB, 
+              FLAG_IS_SET(p->flag, MMF_KVECAM)?p->vlen:0, 
               p->mu, p->nu, p->dupB, p->ku,bc);
    fprintf(fp, 
       "   (ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,TYPE*,\n");
@@ -955,8 +976,9 @@ void SpewForthKernArray(FILE *fp, char pre, ATL_mmnode_t *mmb,
    for (mp=mmb; mp; mp = mp->next)
    {
       if (mp->dupB < 2)
-         fprintf(fp, "   ATL_%cAMMM_%d_%d_%dx%dx%d_b%c", pre, mp->ID, 
+         fprintf(fp, "   ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b%c", pre, mp->ID, 
                  FLAG_IS_SET(mp->flag, MMF_KRUNTIME)?0:mp->kbB,
+                 FLAG_IS_SET(mp->flag, MMF_KVECAM)?mp->vlen:0,
                  mp->mu, mp->nu, mp->ku, cbet);
       else
          fprintf(fp, "   ATL_%cAMMM_%d_%d_%dx%dd%dx%d_b%c", pre, mp->ID, 
@@ -972,13 +994,14 @@ void SpewForthKernArray(FILE *fp, char pre, ATL_mmnode_t *mmb,
  * RETURNS: possibly updated list of all unique mu/nu comboes
  */
 typedef struct mnur mnur_t;
-struct mnur {int mu; int nu; int dupB; mnur_t *next;};
+struct mnur {int mu; int nu; int dupB; int kmaj; mnur_t *next;};
 mnur_t *GetUniqueMNUnrolls(ATL_mmnode_t *mmb, mnur_t *urb)
 {
    ATL_mmnode_t *mp;
    mnur_t *up;
 /*
  * For each node in mmb, add to urb if mu/nu combo not already there
+ * kmaj/dupB only affects A/B copy, and this is for C put, so ignore kmaj/dupB
  */
    for (mp = mmb; mp; mp = mp->next)
    {
@@ -991,7 +1014,7 @@ mnur_t *GetUniqueMNUnrolls(ATL_mmnode_t *mmb, mnur_t *urb)
          assert(up);
          up->mu = mp->mu;
          up->nu = mp->nu;
-         up->dupB = 0;
+         up->kmaj = up->dupB = 0;
          up->next = urb;
          urb = up;
       }
@@ -1011,7 +1034,7 @@ mnur_t *GetUniqueMUnrolls(ATL_mmnode_t *mnb, mnur_t *mub)
    for (mnp=mnb; mnp; mnp = mnp->next)
    {
       for (mup=mub; mup; mup = mup->next)
-         if (mup->mu == mnp->mu)
+         if (mup->mu == mnp->mu && mup->kmaj == mnp->kmaj)
             break;
       if (!mup)  /* a new mu */
       {
@@ -1019,6 +1042,7 @@ mnur_t *GetUniqueMUnrolls(ATL_mmnode_t *mnb, mnur_t *mub)
          assert(mup);
          mup->nu = mup->mu = mnp->mu;
          mup->next = mub;
+         mup->kmaj = mnp->kmaj;
          mup->dupB = 0;
          mub = mup;
       }
@@ -1037,7 +1061,8 @@ mnur_t *GetUniqueNUnrolls(ATL_mmnode_t *mnb, mnur_t *mub)
    for (mnp=mnb; mnp; mnp = mnp->next)
    {
       for (mup=mub; mup; mup = mup->next)
-         if (mup->mu == mnp->nu && mnp->dupB == mup->dupB)
+         if (mup->mu == mnp->nu && mnp->dupB == mup->dupB && 
+             mnp->kmaj == mup->kmaj)
             break;
       if (!mup)  /* a new nu */
       {
@@ -1046,6 +1071,7 @@ mnur_t *GetUniqueNUnrolls(ATL_mmnode_t *mnb, mnur_t *mub)
          mup->nu = mup->mu = mnp->nu;
          mup->next = mub;
          mup->dupB = mnp->dupB;
+         mup->kmaj = mnp->kmaj;
          mub = mup;
       }
    }
@@ -1101,15 +1127,15 @@ void GenRankKH
          fprintf(fp, "   (ATL_CSZT,ATL_CSZT,const SCALAR,const TYPE*,const SCALAR,TYPE *,ATL_CSZT);\n");
       }
    }
+   KillUnrollList(putb);
    fprintf(fp, 
       "/*\n * Column-major to access-major copy function prototypes\n */\n");
    cpyb = GetUniqueMUnrolls(rkb, NULL);
    cpyb = GetUniqueNUnrolls(rkb, cpyb);
-   KillUnrollList(putb);
    for (up=cpyb; up; up = up->next)
    {
       for (ia=0; ia < 3; ia++)
-         SpewForthCpProto(pre, fp, ac[ia], up->mu, up->dupB);
+         SpewForthCpProto(pre, fp, ac[ia], up->mu, up->dupB, up->kmaj);
    }
    KillUnrollList(cpyb);
 /*
@@ -1354,6 +1380,16 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
       int j;
       const int u = up->mu;
       for (j=0; j < 3; j++)
+      {
+         fprintf(fp, " \\\n       ATL_%crm2am_a%c_%d.o ATL_%ccm2am_a%c",
+                 pre, al[j], u, pre, al[j]);
+         if (up->kmaj)
+             fprintf(fp, "_%dx%d.o", up->kmaj, u);
+         else if if (up->dupB < 2)
+             fprintf(fp, "_%d.o", u);
+         else
+             fprintf(fp, "_%dd%d.o", u, up->dupB);
+@beginskip
          if (up->dupB < 2)
             fprintf(fp, " \\\n       ATL_%crm2am_a%c_%d.o ATL_%ccm2am_a%c_%d.o",
                     pre, al[j], u, pre, al[j], u);
@@ -1361,6 +1397,8 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
             fprintf(fp, 
             " \\\n       ATL_%crm2am_a%c_%dd%d.o ATL_%ccm2am_a%c_%dd%d.o",
                     pre, al[j], u, up->dupB, pre, al[j], u, up->dupB);
+@endskip
+      }
    }
 /*
  * AMM kernel routines
@@ -1383,27 +1421,33 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
          kb = 0;
       }
 /* 
- *    ATL_<pre>AMMM_<ID>_<kb>_<mu>x<nu>x<ku>_b<X>
+ *    ATL_<pre>AMMM_<ID>_<kb>_<kmaj>_<mu>x<nu>x<ku>_b<X>
  */
       for (i=0; i < 3; i++)
          if (mmp->dupB < 2)
-            fprintf(fp, " \\\n       ATL_%cAMMM_%d_%d_%dx%dx%d_b%c.o", 
-                    pre, mmp->ID, kb, mmp->mu, mmp->nu, mmp->ku, be[i]);
+            fprintf(fp, " \\\n       ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b%c.o", 
+                    pre, mmp->ID, kb, 
+                    FLAG_IS_SET(mmp->flag, MMF_KVECAM) ? mmp->vlen:0,
+                    mmp->mu, mmp->nu, mmp->ku, be[i]);
          else
-            fprintf(fp, " \\\n       ATL_%cAMMM_%d_%d_%dx%dd%dx%d_b%c.o", pre,
-                    mmp->ID, kb, mmp->mu, mmp->nu, mmp->dupB, mmp->ku, be[i]);
+            fprintf(fp, " \\\n       ATL_%cAMMM_%d_%d_%d_%dx%dd%dx%d_b%c.o", 
+                    pre, mmp->ID, kb, 
+                    FLAG_IS_SET(mmp->flag, MMF_KVECAM) ? mmp->vlen:0,
+                    mmp->mu, mmp->nu, mmp->dupB, mmp->ku, be[i]);
    }
 /*
  * AMM K-cleanup kernel routines are all unique, so no checking for repeats
- *    ATL_<pre>AMMM_<ID>_<mu>x<nu>[d<dupB>]x<ku>_b0
+ *    ATL_<pre>AMMM_<ID>_<kb>_<kmaj>_<mu>x<nu>[d<dupB>]x<ku>_b0
  */
    for (mmp=ukb; mmp; mmp = mmp->next)
       if (mmp->dupB < 2)
-         fprintf(fp, " \\\n       ATL_%cAMMM_%d_0_%dx%dx%d_b0.o", pre, mmp->ID, 
+         fprintf(fp, " \\\n       ATL_%cAMMM_%d_0_%d_%dx%dx%d_b0.o", pre, 
+                 mmp->ID, FLAG_IS_SET(mmp->flag, MMF_KVECAM) ? mmp->vlen:0,
                  mmp->mu, mmp->nu, mmp->ku);
       else
-         fprintf(fp, " \\\n       ATL_%cAMMM_%d_0_%dx%dd%dx%d_b0.o", 
-                 pre, mmp->ID, mmp->mu, mmp->nu, mmp->dupB, mmp->ku);
+         fprintf(fp, " \\\n       ATL_%cAMMM_%d_0_%d_%dx%dd%dx%d_b0.o", 
+                 pre, mmp->ID, FLAG_IS_SET(mmp->flag, MMF_KVECAM) ? mmp->vlen:0,
+                 mmp->mu, mmp->nu, mmp->dupB, mmp->ku);
 /*
  * rank-K AMM routines where KB is runtime variable
  */
@@ -1412,11 +1456,13 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
    KillAllMMNodes(SplitRankK(urb, &runb));
    for (mmp=runb; mmp; mmp = mmp->next)
       if (mmp->dupB < 2)
-         fprintf(fp, " \\\n       ATL_%cAMMM_%d_0_%dx%dx%d_b0.o", pre, mmp->ID, 
+         fprintf(fp, " \\\n       ATL_%cAMMM_%d_0_%d_%dx%dx%d_b0.o", pre, 
+                 mmp->ID, FLAG_IS_SET(mmp->flag, MMF_KVECAM) ? mmp->vlen:0,
                  mmp->mu, mmp->nu, mmp->ku);
       else
-         fprintf(fp, " \\\n       ATL_%cAMMM_%d_0_%dx%dxd%d%d_b0.o", 
-                 pre, mmp->ID, mmp->mu, mmp->nu, mmp->dupB, mmp->ku);
+         fprintf(fp, " \\\n       ATL_%cAMMM_%d_0_%d_%dx%dxd%d%d_b0.o", pre, 
+                 mmp->ID, FLAG_IS_SET(mmp->flag, MMF_KVECAM) ? mmp->vlen:0,
+                 mmp->mu, mmp->nu, mmp->dupB, mmp->ku);
 /*
  * rank-K AMM routines where KB is compile-time, need obj for each unique kbB
  */
@@ -1424,11 +1470,13 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
    {
       if (!ExactKernelInList(mmb, mmp) && !ExactKernelInList(ukb, mmp))
       if (mmp->dupB < 2)
-         fprintf(fp, " \\\n       ATL_%cAMMM_%d_%d_%dx%dx%d_b0.o",
-                 pre, mmp->ID, mmp->kbB, mmp->mu, mmp->nu, mmp->ku);
+         fprintf(fp, " \\\n       ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b0.o", pre, 
+                 mmp->ID, FLAG_IS_SET(mmp->flag, MMF_KVECAM) ? mmp->vlen:0,
+                 mmp->kbB, mmp->mu, mmp->nu, mmp->ku);
       else
-         fprintf(fp, " \\\n       ATL_%cAMMM_%d_%d_%dx%dd%dx%d_b0.o",
-                 pre, mmp->ID, mmp->kbB, mmp->mu, mmp->nu, mmp->dupB, mmp->ku);
+         fprintf(fp, " \\\n       ATL_%cAMMM_%d_%d_%d_%dx%dd%dx%d_b0.o", pre, 
+                 mmp->ID, FLAG_IS_SET(mmp->flag, MMF_KVECAM) ? mmp->vlen:0,
+                 mmp->kbB, mmp->mu, mmp->nu, mmp->dupB, mmp->ku);
    }
 /*
  * library make targets
@@ -1488,11 +1536,23 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
  */
    for (up=allub; up; up = up->next)
    {
-      const int u = up->mu, dupB = up->dupB;
+      const int u = up->mu, dupB = up->dupB, kmaj=up->kmaj;
       int j;
       for (j=0; j < 3; j++)
       {
-         if (dupB < 2)
+         if (kmaj > 1)
+         {
+            fprintf(fp, "ATL_%crm2am_a%c_%dx%d.o : ATL_%crm2am_a%c_%dx%d.c\n",
+                    pre, al[j], u, pre, al[j], kmaj, u);
+            fprintf(fp, "\t%s %s $(CDEFS) %s -c ATL_%crm2am_a%c_%dx%d.c\n", 
+                    dcomp, dflags, styp, pre, al[j], kmaj, u, 
+                    pre, al[j], kmaj, u);
+            fprintf(fp, "ATL_%ccm2am_a%c_%dx%d.o : ATL_%ccm2am_a%c_%dx%d.c\n",
+                    pre, al[j], u, pre, al[j], kmaj, u);
+            fprintf(fp, "\t%s %s $(CDEFS) %s -c ATL_%ccm2am_a%c_%dx%d.c\n", 
+                    dcomp, dflags, styp, pre, al[j], kmaj, u);
+         }
+         else if (dupB < 2)
          {
             fprintf(fp, "ATL_%crm2am_a%c_%d.o : ATL_%crm2am_a%c_%d.c\n",
                     pre, al[j], u, pre, al[j], u);
@@ -1552,17 +1612,20 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
          cflags = dflags;
       }
 /* 
- *    ATL_<pre>AMMM_<ID>_<kb>_<mu>x<nu>x<ku>_b<X>, kerns in all 3 beta cases
+ *    ATL_<pre>AMMM_<ID>_<kb>_<kmaj>_<mu>x<nu>x<ku>_b<X>, 
+ *    kerns in all 3 beta cases
  */
       for (i=0; i < 3; i++)
       {
          const int kb=FLAG_IS_SET(mmp->flag, MMF_KRUNTIME)?0:mmp->kbB;
+         const int kmaj = FLAG_IS_SET(mmp->flag, MMF_KVECAM) ? mmp->vlen:0;
          if (mmp->dupB < 2)
-            fprintf(fp, "ATL_%cAMMM_%d_%d_%dx%dx%d_b%c.o : %s\n", pre, mmp->ID, 
-                    kb, mmp->mu, mmp->nu, mmp->ku, be[i], mmp->rout);
+            fprintf(fp, "ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b%c.o : %s\n", pre, 
+                    mmp->ID, kmaj, kb, mmp->mu, mmp->nu, mmp->ku, be[i], 
+                    mmp->rout);
          else
-            fprintf(fp, "ATL_%cAMMM_%d_%d_%dx%dd%dx%d_b%c.o : %s\n", 
-                    pre, mmp->ID, kb, mmp->mu, mmp->nu, mmp->dupB, mmp->ku, 
+            fprintf(fp, "ATL_%cAMMM_%d_%d_%d_%dx%dd%dx%d_b%c.o : %s\n", pre, 
+                    mmp->ID, kmaj, kb, mmp->mu, mmp->nu, mmp->dupB, mmp->ku, 
                     be[i], mmp->rout);
          fprintf(fp, "\t%s $(CDEFS2) %s -DBETA%s=1", comp, styp, bes[i]);
          if (!FLAG_IS_SET(mmp->flag, MMF_KRUNTIME))
@@ -1570,18 +1633,19 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
                     mmp->mbB, mmp->nbB, mmp->kbB);
          if (mmp->dupB < 2)
          {
-            fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_%d_%dx%dx%d_b%c", pre, 
-                    mmp->ID, kb, mmp->mu, mmp->nu, mmp->ku, be[i]);
-            fprintf(fp, " %s -o ATL_%cAMMM_%d_%d_%dx%dx%d_b%c.o -c %s\n", 
-                    cflags, pre, mmp->ID, kb, mmp->mu, mmp->nu, mmp->ku, 
+            fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b%c", pre, 
+                    mmp->ID, kmaj, kb, mmp->mu, mmp->nu, mmp->ku, be[i]);
+            fprintf(fp, " %s -o ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b%c.o -c %s\n", 
+                    cflags, pre, mmp->ID, kb, kmaj, mmp->mu, mmp->nu, mmp->ku, 
                     be[i], mmp->rout);
          }
          else
          {
-            fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_%d_%dx%dd%dx%d_b%c", pre, 
-                    mmp->ID, kb, mmp->mu, mmp->nu, mmp->dupB, mmp->ku, be[i]);
-            fprintf(fp, " %s -o ATL_%cAMMM_%d_%d_%dx%dd%dx%d_b%c.o -c %s\n", 
-                    cflags, pre, mmp->ID, kb, mmp->mu, mmp->nu, mmp->dupB,
+            fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_%d_%d_%dx%dd%dx%d_b%c", 
+                    pre, mmp->ID, kb, kmaj, mmp->mu, mmp->nu, mmp->dupB, 
+                    mmp->ku, be[i]);
+            fprintf(fp, " %s -o ATL_%cAMMM_%d_%d_%d_%dx%dd%dx%d_b%c.o -c %s\n", 
+                    cflags, pre, mmp->ID, kb, kmaj, mmp->mu, mmp->nu, mmp->dupB,
                     mmp->ku, be[i], mmp->rout);
          }
       }
@@ -1592,6 +1656,7 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
    fprintf(fp, "#\n#  K-cleanup rules\n#\n");
    for (mmp=ukb; mmp; mmp = mmp->next)
    {
+      const int kmaj = FLAG_IS_SET(mmp->flag, MMF_KVECAM) ? mmp->vlen:0;
       if (mmp->comp)
       {
          comp = (mmp->comp[0] == 'g' && mmp->comp[1] == 'c' && 
@@ -1606,24 +1671,25 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
          cflags = dflags;
       }
       if (mmp->dupB < 2)
-         fprintf(fp, "ATL_%cAMMM_%d_0_%dx%dx%d_b0.o : %s\n", pre, mmp->ID, 
-                 mmp->mu, mmp->nu, mmp->ku, mmp->rout);
+         fprintf(fp, "ATL_%cAMMM_%d_0_%d_%dx%dx%d_b0.o : %s\n", pre, mmp->ID, 
+                 kmaj, mmp->mu, mmp->nu, mmp->ku, mmp->rout);
       else
-         fprintf(fp, "ATL_%cAMMM_%d_0_%dx%dd%dx%d_b0.o : %s\n", pre, mmp->ID, 
+         fprintf(fp, "ATL_%cAMMM_%d_0_0_%dx%dd%dx%d_b0.o : %s\n", pre, mmp->ID, 
                  mmp->mu, mmp->nu, mmp->dupB, mmp->ku, mmp->rout);
       fprintf(fp, "\t%s $(CDEFS2) %s -DBETA0=1", comp, styp);
       if (mmp->dupB < 2)
       {
-         fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_0_%dx%dx%d_b0", pre, mmp->ID,
-                 mmp->mu, mmp->nu, mmp->ku);
-         fprintf(fp, " %s -o ATL_%cAMMM_%d_0_%dx%dx%d_b0.o -c %s\n", 
-                 cflags, pre, mmp->ID, mmp->mu, mmp->nu, mmp->ku, mmp->rout);
+         fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_0_%d_%dx%dx%d_b0", pre, 
+                 mmp->ID, kmaj mmp->mu, mmp->nu, mmp->ku);
+         fprintf(fp, " %s -o ATL_%cAMMM_%d_0_%d_%dx%dx%d_b0.o -c %s\n", 
+                 cflags, pre, mmp->ID, kmaj, mmp->mu, mmp->nu, mmp->ku, 
+                 mmp->rout);
       }
       else
       {
-         fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_0_%dx%dd%dx%d_b0", 
+         fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_0_0_%dx%dd%dx%d_b0", 
                  pre, mmp->ID, mmp->mu, mmp->nu, mmp->dupB, mmp->ku);
-         fprintf(fp, " %s -o ATL_%cAMMM_%d_0_%dx%dd%dx%d_b0.o -c %s\n", 
+         fprintf(fp, " %s -o ATL_%cAMMM_%d_0_0_%dx%dd%dx%d_b0.o -c %s\n", 
                  cflags, pre, mmp->ID, mmp->mu, mmp->nu, mmp->dupB, mmp->ku,
                  mmp->rout);
       }
@@ -1635,6 +1701,7 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
       fprintf(fp, "#\n#  rank-K kernels with run-time K\n#\n");
    for (mmp=runb; mmp; mmp = mmp->next)
    {
+      const int kmaj = FLAG_IS_SET(mmp->flag, MMF_KVECAM) ? mmp->vlen:0;
       if (mmp->comp)
       {
          comp = (mmp->comp[0] == 'g' && mmp->comp[1] == 'c' && 
@@ -1649,24 +1716,25 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
          cflags = dflags;
       }
       if (mmp->dupB < 2)
-         fprintf(fp, "ATL_%cAMMM_%d_0_%dx%dx%d_b0.o : %s\n", pre, mmp->ID, 
-                 mmp->mu, mmp->nu, mmp->ku, mmp->rout);
+         fprintf(fp, "ATL_%cAMMM_%d_0_%d_%dx%dx%d_b0.o : %s\n", pre, mmp->ID, 
+                 kmaj, mmp->mu, mmp->nu, mmp->ku, mmp->rout);
       else
-         fprintf(fp, "ATL_%cAMMM_%d_0_%dx%dd%dx%d_b0.o : %s\n", pre, mmp->ID, 
+         fprintf(fp, "ATL_%cAMMM_%d_0_0_%dx%dd%dx%d_b0.o : %s\n", pre, mmp->ID, 
                  mmp->mu, mmp->nu, mmp->dupB, mmp->ku, mmp->rout);
       fprintf(fp, "\t%s $(CDEFS2) %s -DBETA0=1", comp, styp);
       if (mmp->dupB < 2)
       {
-         fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_0_%dx%dx%d_b0", pre, mmp->ID,
-                 mmp->mu, mmp->nu, mmp->ku);
-         fprintf(fp, " %s -o ATL_%cAMMM_%d_0_%dx%dx%d_b0.o -c %s\n", 
-                 cflags, pre, mmp->ID, mmp->mu, mmp->nu, mmp->ku, mmp->rout);
+         fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_0_%d_%dx%dx%d_b0", pre, 
+                 mmp->ID, kmaj, mmp->mu, mmp->nu, mmp->ku);
+         fprintf(fp, " %s -o ATL_%cAMMM_%d_0_%d_%dx%dx%d_b0.o -c %s\n", 
+                 cflags, pre, mmp->ID, kmaj, mmp->mu, mmp->nu, mmp->ku, 
+                 mmp->rout);
       }
       else
       {
-         fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_0_%dx%dd%dx%d_b0", 
+         fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_0_0_%dx%dd%dx%d_b0", 
                  pre, mmp->ID, mmp->mu, mmp->nu, mmp->dupB, mmp->ku);
-         fprintf(fp, " %s -o ATL_%cAMMM_%d_0_%dx%dd%dx%d_b0.o -c %s\n", 
+         fprintf(fp, " %s -o ATL_%cAMMM_%d_0_0_%dx%dd%dx%d_b0.o -c %s\n", 
                  cflags, pre, mmp->ID, mmp->mu, mmp->nu, mmp->dupB, mmp->ku, 
                  mmp->rout);
       }
@@ -1678,6 +1746,7 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
       fprintf(fp, "#\n#  rank-K kernels with compile-time KB\n#\n");
    for (mmp=fixb; mmp; mmp = mmp->next)
    {
+      const int kmaj = FLAG_IS_SET(mmp->flag, MMF_KVECAM) ? mmp->vlen:0;
       if (ExactKernelInList(ukb, mmp))
          continue;
       if (ExactKernelInList(mmb, mmp))
@@ -1696,27 +1765,29 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
          cflags = dflags;
       }
       if (mmp->dupB < 2)
-         fprintf(fp, "ATL_%cAMMM_%d_%d_%dx%dx%d_b0.o : %s\n", pre, mmp->ID, 
-                 mmp->kbB, mmp->mu, mmp->nu, mmp->ku, mmp->rout);
+         fprintf(fp, "ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b0.o : %s\n", pre, mmp->ID, 
+                 kmaj, mmp->kbB, mmp->mu, mmp->nu, mmp->ku, mmp->rout);
       else
-         fprintf(fp, "ATL_%cAMMM_%d_%d_%dx%dd%dx%d_b0.o : %s\n", pre, mmp->ID, 
+         fprintf(fp, "ATL_%cAMMM_%d_%d_0_%dx%dd%dx%d_b0.o : %s\n", pre, mmp->ID,
                  mmp->kbB, mmp->mu, mmp->nu, mmp->dupB, mmp->ku, mmp->rout);
       fprintf(fp, "\t%s $(CDEFS2) %s -DBETA0=1", comp, styp);
       if (mmp->dupB < 2)
       {
-         fprintf(fp, " -DKB=%d -DATL_USERMM=ATL_%cAMMM_%d_%d_%dx%dx%d_b0", 
-                 mmp->kbB, pre, mmp->ID, mmp->kbB, mmp->mu, mmp->nu, mmp->ku);
-         fprintf(fp, " %s -o ATL_%cAMMM_%d_%d_%dx%dx%d_b0.o -c %s\n", cflags,
-                 pre, mmp->ID, mmp->kbB, mmp->mu, mmp->nu, mmp->ku, mmp->rout);
+         fprintf(fp, " -DKB=%d -DATL_USERMM=ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b0", 
+                 mmp->kbB, pre, mmp->ID, kmaj, mmp->kbB, mmp->mu, mmp->nu, 
+                 mmp->ku);
+         fprintf(fp, " %s -o ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b0.o -c %s\n", cflags,
+                 pre, mmp->ID, kmaj, mmp->kbB, mmp->mu, mmp->nu, mmp->ku, 
+                 mmp->rout);
       }
       else
       {
-         fprintf(fp, " -DKB=%d -DATL_USERMM=ATL_%cAMMM_%d_%d_%dx%dd%dx%d_b0", 
+         fprintf(fp, " -DKB=%d -DATL_USERMM=ATL_%cAMMM_%d_%d_0_%dx%dd%dx%d_b0", 
                  mmp->kbB, pre, mmp->ID, mmp->kbB, mmp->mu, mmp->nu, 
                  mmp->dupB, mmp->ku);
-         fprintf(fp, " %s -o ATL_%cAMMM_%d_%d_%dx%dd%dx%d_b0.o -c %s\n", cflags,
-                 pre, mmp->ID, mmp->kbB, mmp->mu, mmp->nu, mmp->dupB, mmp->ku,
-                 mmp->rout);
+         fprintf(fp, " %s -o ATL_%cAMMM_%d_%d_0_%dx%dd%dx%d_b0.o -c %s\n", 
+                 cflags, pre, mmp->ID, mmp->kbB, mmp->mu, mmp->nu, mmp->dupB, 
+                 mmp->ku, mmp->rout);
       }
    }
    fclose(fp);
@@ -1724,6 +1795,7 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
    KillAllMMNodes(runb);
 }
 
+/* HERE HERE RCW */
 void GenKerns(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, ATL_mmnode_t *urb,
               char *outd)
 /*
