@@ -163,7 +163,7 @@ void Mjoin(PATL,cm2am_a@(nalp)_@(ku)x@(nu))
       @iexp j 0 0 +
       @iwhile j < @(nu)
          @iexp ib @(j) @(ku) *
-            b[k+i+@(ib)] = @(malp)A@(j)[i];
+            b[@(ib)] = @(malp)A@(j)[i];
          @iexp j @(j) 1 +
       @endiwhile
          }
@@ -515,7 +515,6 @@ void Mjoin(PATL,rm2am_a@(nalp)_@(ku)x@(mu)) /* row-access matrix to access-major
    @iexp r @(ku) -1 +
    @iwhile r > 0
    case @(r):
-      for (j=0; j < k; j += @(ku), b += @(incb))
       {
          TYPE *pp = b;   /* panel ptr */
 
@@ -3266,6 +3265,38 @@ int mmtst(void)
    for (n=lda*K SHIFT, i=0; i < n; i++) A[i] = dumb_rand();
    for (n=ldb*N SHIFT, i=0; i < n; i++) B[i] = dumb_rand();
    for (n=ldc*N SHIFT, i=0; i < n; i++) C[i] = dumb_rand();
+/*
+ * To ease debugging, make matrices easily mappable:
+ *    A counts from 1.0-M*K, col-maj
+ *    B counts from .1-K*N, col maj
+ *    C counts from 1.0 - M*N, col maj
+ */
+   #if 0
+   {
+      int i, j;
+      for (j=0; j < K; j++)
+      {
+         for (i=0; i < M; i++)
+            A[i+j*lda] = 1.0+(i+j*M);
+         for (; i < lda; i++)
+            A[i+j*lda] = 1000000.0;
+      }
+      for (j=0; j < N; j++)
+      {
+         for (i=0; i < K; i++)
+            B[i+j*ldb] = 0.1 + (i+j*M)*0.1;
+         for (; i < ldb; i++)
+            B[i+j*ldb] = 2000000.0;
+      }
+      for (j=0; j < N; j++)
+      {
+         for (i=0; i < M; i++)
+            C[i+j*ldc] = 0; // 1.0+(i+j*M);
+         for (; i < ldc; i++)
+            C[i+j*ldc] = 3000000.0;
+      }
+   }
+   #endif
    @iif kmaj < 2
    Mjoin(PATL,rm2am_a1_@(mu))(K, M, 1.0, A, lda, a);
    Mjoin(PATL,cm2am_a1_@(nu)@(dsuf))(K, N, 1.0, B, ldb, b);
@@ -3278,7 +3309,7 @@ int mmtst(void)
 /*
  * Call test routine, move output to col-major D for comparison with correct C
  */
-   ATL_USERMM(MMU/@(mu), NNU/@(nu), K, a, b, c, NULL, NULL, NULL);
+   ATL_USERMM(MMU/@(mu), NNU/@(nu), KKU, a, b, c, NULL, NULL, NULL);
    tst_mm(M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
 //   printf("c=%e,%e,%e,%e; %e,%e,%e,%e\n", c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]);
 //   printf("C=%e,%e,%e,%e; %e,%e,%e,%e\n", C[0], C[1], C[2], C[3], C[ldc], C[ldc+1], C[ldc+2], C[ldc+3]);
