@@ -6266,8 +6266,39 @@ void PrintDecl(FILE *fp)
    fprintf(fp, "                const %s *pAn, const %s *pBn, const %s *pCn)\n",
            typ, typ, typ);
 }
-void genMM(FILE *fp, char pre, vec_t vec, int kb, int mu, int nu, int ku)
+void genMM(FILE *fp, char pre, vec_t vec, int kmaj, int kb, 
+           int mu, int nu, int ku)
 {
+   int i, j;
+   fprintf(fp, "#include <atlas_simd.h>\n\n");
+   PrintDecl(fp);
+   fprintf(fp, "/*\n");
+   fprintf(fp, 
+" * Access-major matmul with: pre=%c, KMAJ=%d, kb=%d, mu=%d, nu=%d, ku=%d\n",
+           pre, kmaj,
+   fprintf(fp, " */\n");
+   fprintf(fp, "{\n");
+   fprintf(fp, "   size_t i, j, k, incPF\n");
+   fprintf(fp, "   register ATL_VTYP rA0");
+   for (j=1; j < nu; j++)
+      fprintf(fp, ", rA%d", j);
+   fprintf(fp, ";\n");
+   fprintf(fp, "   register ATL_VTYP rB0");
+   for (j=1; j < mu; j++)
+      fprintf(fp, ", rB%d", j);
+   fprintf(fp, ";\n");
+   fprintf(fp, "   register ATL_VTYP rC0_0");
+   for (j=0; j < nu; j++)
+      for (i=0; i < mu; i++)
+         if (i | j)
+            fprintf(fp, ", rC%d_%d", i, j);
+   fprintf(fp, ";\n");
+   fprintf(fp, "\n");
+   fprintf(fp, "   for (i=0; i < nmus; i++)\n   {\n");
+   fprintf(fp, "      for (j=0; j < nnus; j++)\n      {\n");
+
+   
+   fprintf(fp, "}\n");
 }
 void PrintUsage(char *name, int ierr, char *flag)
 {
@@ -6285,12 +6316,13 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "   -S [B,K]: storage bcastB/KU-major\n");
 }
 
-FILE *GetFlags(char *PRE, vec_t *VEC, int *KB, int *MU, int *NU, int *KU)
+FILE *GetFlags(char *PRE, vec_t *VEC, int *KMAJ, int *KB, 
+               int *MU, int *NU, int *KU)
 {
    FILE *fpout=stdout;
    *PRE = 'd';
    *VEC = VEC_SSE3;
-   *KB = 0;
+   *KMAJ = *KB = 0;
    *MU = *NU = 3;
    *KU = 1;
 }
@@ -6301,8 +6333,8 @@ int main(int nargs, char **args)
    FILE *fpout;
    vec_t vec;
    
-   fpout = GetFlags(&pre, &vec, &kb, &mu, &nu, &ku);
+   fpout = GetFlags(&pre, &vec, &kb, &kmaj, &mu, &nu, &ku);
    if (pre == 's')
       typ = "float";
-   genMM(pre, vec, kb, mu, nu, ku);
+   genMM(pre, vec, kmaj, kb, mu, nu, ku);
 }
