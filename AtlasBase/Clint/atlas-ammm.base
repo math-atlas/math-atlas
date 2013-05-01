@@ -6186,3 +6186,123 @@ enum ATL_AMMALG ATL_GetAmmAlg
       ret = ATL_ammrkK;
    return(ret);
 }
+@ROUT genMM
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
+enum VECEXT {VEC_None=0, VEC_VSX, VEC_AV, VEC_AVXMAC, VEC_AVXFMA4, VEC_AVX, 
+             VEC_SSE3, VEC_SSE2, VEC_SSE1}
+typedef enum VECEXT vec_t;
+enum STRG {bcastB=0, kmaj};
+typedef enum STRG strg_t;
+
+char *typ = "double", *vtyp, *bcast, *mul, *add, *sub, *vld, *vst;
+int VLEN, CL;
+strg_t STRG=bcastB;
+
+int GetVeclen(char pre, vec_t vec)
+{
+   int vlen;
+   switch(vec)
+   {
+   case VEC_AVXMAC:
+   case VEC_AVXFMA4:
+   case VEC_AVX:
+      vlen = 8;
+      break;
+   case VEC_VSX:
+   case VEC_AV:
+   case VEC_SSE3:
+   case VEC_SSE2:
+   case VEC_SSE1:
+      vlen = 4;
+      break;
+   default:
+      vlen = 1;
+   }
+   if (pre == 'd' && vlen > 1)
+      vlen >>= 1;
+}
+void SetVecInfo(char pre, vec_t vec)
+{
+   VLEN = GetVeclen(pre, vec);
+   if (pre == 'd')
+   {
+      switch(vec)
+      {
+      case VEC_AVXMAC:
+      case VEC_AVXFMA4:
+      case VEC_AVX:
+         vtyp = "__m256d";
+         bcast = "_mm256_broadcast_sd";
+         mul = "_mm256_mul_pd";
+         add = "_mm256_add_pd";
+         sub = "_mm256_sub_pd";
+         vld = "_mm256_load_pd";
+         vst = "_mm256_store_pd";
+         vlen = 4;
+         break;
+      case VEC_VSX:
+      case VEC_AV:
+      case VEC_SSE3:
+      case VEC_SSE2:
+      case VEC_SSE1:
+         vlen = 4;
+         break;
+      default:
+         vlen = 1;
+      }
+   }
+   else
+   {
+   }
+}
+void PrintDecl(FILE *fp)
+{
+   fprintf(fp, "void ATL_USERMM(ATL_CSZT nmus, ATL_CSZT nnus, ATL_CSZT K,\n");
+   fprintf(fp, "                const %s *pA, const %s *pB, %s *pC,\n",
+           typ, typ, typ);
+   fprintf(fp, "                const %s *pAn, const %s *pBn, const %s *pCn)\n",
+           typ, typ, typ);
+}
+void genMM(FILE *fp, char pre, vec_t vec, int kb, int mu, int nu, int ku)
+{
+}
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr, 
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+   fprintf(stderr, "USAGE: %s [flags]:\n", name);
+   fprintf(stderr, "   -p [s,d,c,z]: set type/precision prefix (d) \n");
+   fprintf(stderr, "   -o <outfile>: path & file to generate\n");
+   fprintf(stderr, "   -U[m,n,k]: set unrolling factor\n");
+   fprintf(stderr, "   -V [sse1,sse2,sse3,avx,fma3,fma4,ppcav,vsx]\n");
+   fprintf(stderr, "   -K # : non-zero number is fixed K loop\n");
+   fprintf(stderr, "   -S [B,K]: storage bcastB/KU-major\n");
+}
+
+FILE *GetFlags(char *PRE, vec_t *VEC, int *KB, int *MU, int *NU, int *KU)
+{
+   FILE *fpout=stdout;
+   *PRE = 'd';
+   *VEC = VEC_SSE3;
+   *KB = 0;
+   *MU = *NU = 3;
+   *KU = 1;
+}
+int main(int nargs, char **args)
+{
+   char pre='d';
+   int mu, nu, ku, kb;
+   FILE *fpout;
+   vec_t vec;
+   
+   fpout = GetFlags(&pre, &vec, &kb, &mu, &nu, &ku);
+   if (pre == 's')
+      typ = "float";
+   genMM(pre, vec, kb, mu, nu, ku);
+}
