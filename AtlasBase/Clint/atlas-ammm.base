@@ -6266,6 +6266,25 @@ void PrintDecl(FILE *fp)
    fprintf(fp, "                const %s *pAn, const %s *pBn, const %s *pCn)\n",
            typ, typ, typ);
 }
+void DoKloop(FILE *fp, char pre, vec_t vec, int kmaj, int kb, 
+             int mu, int nu, int ku)
+{
+   if (kmaj)
+   {
+      assert(kmaj == VLEN)
+      assert(ku%kmaj == 0);
+   }
+   if (kb)
+   {
+      assert(kb%ku == 0);
+      if (kb > ku)
+         fprintf(fp, "      for (k=%d; k < %d; k += %d\n", ku, kb, ku);
+   }
+   else
+      fprintf(fp, "      for (k=%d; k < K; k += %d\n", ku, ku);
+   fprintf(fp,    "      {\n");
+   fprintf(fp,    "      } /* end of K-loop */ \n");
+}
 void genMM(FILE *fp, char pre, vec_t vec, int kmaj, int kb, 
            int mu, int nu, int ku)
 {
@@ -6279,6 +6298,11 @@ void genMM(FILE *fp, char pre, vec_t vec, int kmaj, int kb,
    fprintf(fp, " */\n");
    fprintf(fp, "{\n");
    fprintf(fp, "   size_t i, j, k, incPF\n");
+   if (kb)
+      fprintf(fp, "   #define incA %d\n", mu*kb);
+   else
+      fprintf(fp, "   const size_t incA = K*%d\n", mu);
+   fprintf(fp, "   const %s *pB0=pB;\n", typ);
    fprintf(fp, "   register ATL_VTYP rA0");
    for (j=1; j < nu; j++)
       fprintf(fp, ", rA%d", j);
@@ -6294,11 +6318,18 @@ void genMM(FILE *fp, char pre, vec_t vec, int kmaj, int kb,
             fprintf(fp, ", rC%d_%d", i, j);
    fprintf(fp, ";\n");
    fprintf(fp, "\n");
-   fprintf(fp, "   for (i=0; i < nmus; i++)\n   {\n");
+   fprintf(fp, "   for (i=0; i < nmus; i++, pA += incA)\n   {\n");
+   fprintf(fp, "      const %s *a=pA;\n");
    fprintf(fp, "      for (j=0; j < nnus; j++)\n      {\n");
+   DoKloop(fp, pre, vec, kmaj, kb, mu, nu, ku);
+   fprintf(fp, "      } /* end j-loop */\n");
+   fprintf(fp, "      pB = pB0;\n");
+   fprintf(fp, "   } /* end i-loop */\n");
 
    
    fprintf(fp, "}\n");
+   if (kb)
+      fprintf(fp, "#undef incA\n");
 }
 void PrintUsage(char *name, int ierr, char *flag)
 {
