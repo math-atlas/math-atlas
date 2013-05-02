@@ -211,7 +211,9 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
    int TEST_KERNEL(const int M, const TYPE s0, TYPE *A, const int lda);
    int nrep, i, n, nvec, NN, ix=0, iy=0, ii, jj;
    const int incx=Mabs(incX)SHIFT, incy=Mabs(incY)SHIFT;
+   int cs, setsz, Nt, nset;
    TYPE *X, *Y, *x, *y, *stX;
+   TYPE *vp, *ltX;
    TYPE s0;
    double t0, t1, l2ret;
    int M, lda, tp;
@@ -231,17 +233,24 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
    assert(incY==1);
 
 #ifdef SREAL   
-   tp = sizeof(TYPE) * 8; // considering AVX right now
+   //tp = sizeof(TYPE) * 8; // considering AVX right now
+   tp =  8; // considering AVX right now
 #else
-   tp = sizeof(TYPE) * 4;
+   //tp = sizeof(TYPE) * 4;
+   tp =  4;
 #endif
 
+#if 0  
    //lda = M = N / 2; /* N is the total of mem element here */
    lda = M = N ; /* N is the total of mem element here */
-   lda = ((lda - 1 + tp)/tp)*tp;
-   NN = 2 * lda;
-   //NN *= nrep;
+   lda = ((lda - 1 + tp)/tp)*tp; /* multiple of 32 element ??? */
+/*
+ * avoid making lda power of two
+ */
+   if ( (lda & (lda-1)) == 0) 
+      lda += tp;
 
+   NN = 2 * lda;
    x = X = FA_malloc(ATL_sizeof*NN, FAx, MAx);
    assert(X);
    stX = X + NN;
@@ -256,17 +265,51 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
 /*
  * Here start the timing . 
  */
-   ii = 2*lda;
-
    t0 = time00();
    for (i=nrep; i; i--)
    {
       TEST_KERNEL(M, s0, x, lda);
-      //x += ii;
-      //if (x == stX) x = X;
    }
    t1 = time00() - t0;
    FA_free(X, FAx, MAx);
+#else
+/*
+ * lda needs to be multiple of tp but not a power of two
+ */
+   lda = N;
+   lda = ((lda - 1 + tp)/tp)*tp; 
+   if ( (lda & (lda-1)) == 0) 
+      lda += tp;
+   M = 2 * lda; /* that's the working set */
+
+   cs = cachesize / ATL_sizeof; /* incase cachesize is 0/1, nset would be 1 later */
+   setsz =  M;
+   nset = (cs + setsz -1)/setsz;
+   if (nset < 1) nset=1;
+   Nt = nset * setsz;
+   X = vp = FA_malloc(ATL_sizeof*Nt, FAx, MAx);
+   assert(X);
+   ltX = X + Nt;
+
+   dumb_seed(Nt+1);
+   for (i=0, n=Nt; i < n; i++) X[i] = dumb_rand();
+   s0 = dumb_rand();
+
+   if (cachesize > 1)
+      ATL_flushcache(cachesize);
+
+   x = vp;
+   ii = M;
+   t0 = time00();
+   for (i=nrep; i; i--)
+   {
+      TEST_KERNEL(N, s0, x, lda);
+      x += ii;
+      if (x == ltX) x = X;
+   }
+   t1 = time00() - t0;
+   FA_free(X, FAx, MAx);
+#endif
    return(t1/nrep);
 }
 void GetTimes(int nrep, double *tims, int N, int nkflop, int cachesize,

@@ -212,6 +212,7 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
    int nrep, i, n, nvec, ix=0, iy=0, ii, jj;
    long long NN;
    const int incx=Mabs(incX)SHIFT, incy=Mabs(incY)SHIFT;
+   int cs, setsz, Nt, nset;
    TYPE *X, *Y, *x, *y, *stX;
    TYPE s0;
    double t0, t1, l2ret;
@@ -237,11 +238,11 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
    tp = sizeof(TYPE) * 4;
 #endif
 
+#if 0 
    //lda = M = N / 2; /* N is the total of mem element here */
    lda = M = N ; /* N is the total of mem element here */
    lda = ((lda - 1 + tp)/tp)*tp;
    NN = 3 * lda;
-   //NN *= nrep;
 #if 0
    fprintf(stderr, "nrep=%d, nkflops=%d, NN = %d, lda=%d, size=%d, mem=%ld\n", 
            nrep, nkflop, NN, lda, ATL_sizeof, NN*ATL_sizeof);
@@ -260,17 +261,53 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
 /*
  * Here start the timing . 
  */
-   ii = 3*lda;
+   //ii = 3*lda;
 
    t0 = time00();
    for (i=nrep; i; i--)
    {
       TEST_KERNEL(M, s0, x, lda);
-      //x += ii;
-      //if (x == stX) x = X;
    }
    t1 = time00() - t0;
    FA_free(X, FAx, MAx);
+#else
+/*
+ * lda needs to be multiple of tp but not a power of two
+ */
+   lda = N;
+   lda = ((lda - 1 + tp)/tp)*tp; 
+   if ( (lda & (lda-1)) == 0) 
+      lda += tp;
+   M = 3 * lda; /* that's the working set */
+
+   cs = cachesize / ATL_sizeof; /* incase cachesize is 0/1, nset would be 1 later */
+   setsz =  M;
+   nset = (cs + setsz -1)/setsz;
+   if (nset < 1) nset=1;
+   Nt = nset * setsz;
+   X = FA_malloc(ATL_sizeof*Nt, FAx, MAx);
+   assert(X);
+   ltX = X + Nt;
+
+   dumb_seed(Nt+1);
+   for (i=0, n=Nt; i < n; i++) X[i] = dumb_rand();
+   s0 = dumb_rand();
+
+   if (cachesize > 1)
+      ATL_flushcache(cachesize);
+
+   x = X;
+   ii = M;
+   t0 = time00();
+   for (i=nrep; i; i--)
+   {
+      TEST_KERNEL(N, s0, x, lda);
+      x += ii;
+      if (x == ltX) x = X;
+   }
+   t1 = time00() - t0;
+   FA_free(X, FAx, MAx);
+#endif
    return(t1/nrep);
 }
 void GetTimes(int nrep, double *tims, int N, int nkflop, int cachesize,
