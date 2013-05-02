@@ -215,9 +215,11 @@ double time00();
 double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
 {
    void TEST_KERNEL_SIN(const int N, const TYPE *X, TYPE *Y, const TYPE *iy);
-   int nrep, i, n, nvec, NN, iix=0, iiy=0, ii, jj;
+   int nrep, i,j, n, nvec, NN, iix=0, iiy=0, ii, jj;
+   int cs, setsz, Nt, nset;
    const int incx=Mabs(incX)SHIFT, incy=Mabs(incY)SHIFT;
    TYPE *X, *Y, *x, *y, *stX, *iY, *z;
+   TYPE *vp, *ltX;
    double t0, t1;
    TYPE si, y1, y2, iy;
    int l2ret;
@@ -246,7 +248,7 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
    if (nvec < 2) nvec = 2;
    if (nvec/2) nvec++;
    NN = (nvec/2) * N;
-cos: 583.00 [-p 1 -V -Paw 3 -U 1 -Ps b A 0 2 -P all 0 128]  if (incx > 4) ii = (incx + 3)/4;
+   if (incx > 4) ii = (incx + 3)/4;
    else ii = incx;
    if (incy > 4) jj = (incy + 3)/4;
    else jj = incy;
@@ -273,6 +275,13 @@ cos: 583.00 [-p 1 -V -Paw 3 -U 1 -Ps b A 0 2 -P all 0 128]  if (incx > 4) ii = (
    t1 = time00() - t0;
    FA_free(X, FAx, MAx);
 #else
+   #if 0   
+/*
+ * NOTE: for in cache timing (without cache flush), we assume that N (elements)
+ * is as small as to fit in the cache. We will alocate memory for the N elements
+ * and repeat the computation using that. Initialization of the elements would
+ * bring the elements in cache. So, it is already in cache when kernel is called
+ */
    //NN = nrep * N;
    NN = N;
    x = X = FA_malloc(ATL_sizeof*NN, FAx, MAx);
@@ -320,6 +329,72 @@ cos: 583.00 [-p 1 -V -Paw 3 -U 1 -Ps b A 0 2 -P all 0 128]  if (incx > 4) ii = (
    FA_free(X, FAx, MAx);
    FA_free(Y, FAy, MAy);
    FA_free(iY, FAy, MAy);
+   
+   #else
+   cs = cachesize / ATL_sizeof;
+   setsz = N + N + N;            /* for x, y, iy */
+   nset = (cs + setsz-1)/setsz;  /* ceiling of cache size element*/
+   if (nset < 1) nset = 1;
+   Nt = nset * setsz;
+   X = vp = FA_malloc(ATL_sizeof*Nt, FAx, MAx);
+   assert(X);
+   ltX = X + Nt;
+
+#if 0
+   fprintf(stderr, "setsz=%d, nset=%d, N=%d, Nt=%d\n", setsz, nset, N, Nt);
+#endif
+
+/*
+ * NOTE: initialization of data. we need <x,y,iy> touple for our kernel
+ */
+   dumb_seed(N);
+   for (i=0; i<nset; i++)
+   {
+      Y = X + N;
+      iY = X + 2*N;
+      for (j=0; j<N; j++)
+      {
+         do
+         {
+            si = dumb_rand();
+         #ifdef SREAL
+            inputf(si, &y1, &y2, &iy);
+         #else
+            inputd(si, &y1, &y2, &iy);
+         #endif
+         } while (y1 == NA && y2 == NA);
+         
+         *X = y1;
+         *Y = y2;
+         *iY = iy;
+         
+         X++;
+         Y++;
+         iY++;
+      }
+      X += 2*N;
+   }
+/*
+ * if cacheflushing is instructed, flush the cache
+ */
+   if (cachesize > 1)
+      l2ret = ATL_flushcache(cachesize);
+/*
+ * start the timing ... 
+ */
+   x = vp; /* restart from X */
+   t0 = time00();
+   for (i=0; i<nrep; i++)
+   {
+      y = x + N;
+      z = x + 2*N;
+      TEST_KERNEL_SIN(N, x, y, z);
+      x = z + N;
+      if (x >= ltX) x = vp;
+   }
+   t1 = time00() - t0;
+   FA_free(vp, FAx, MAx);
+   #endif
 #endif
    return(t1/nrep);
 }
