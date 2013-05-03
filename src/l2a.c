@@ -2156,10 +2156,19 @@ struct assmln *lil2ass(BBLOCK *bbase)
 	       else
                   #ifdef AVX
 /*                   vmovss xmm1,xmm2,xmm3 #merge xmm1 and xmm2 into xmm3 */
+/*
+ *          NOTE: vmovss for reg to reg move seems extremly slow!!!!                
+ */
+#if 0                  
                      ap->next = PrintAssln("\tvmovss\t%s,%s,%s\n",
 	                                   archxmmregs[-FREGBEG-op2],
 	                                   archxmmregs[-FREGBEG-op1],
 	                                   archxmmregs[-FREGBEG-op1]);
+#else
+                     ap->next = PrintAssln("\tvmovaps\t%s,%s\n",
+	                                   archfregs[-FREGBEG-op2],
+	                                   archfregs[-FREGBEG-op1]);
+#endif
                   #else
                      ap->next = PrintAssln("\tmovss\t%s,%s\n",
 	                                   archfregs[-FREGBEG-op2], sptr);
@@ -2236,10 +2245,16 @@ struct assmln *lil2ass(BBLOCK *bbase)
 	       else
                   #ifdef AVX
 /*                   vmovsd xmm1,xmm2,xmm3 # for regs move, 3 operands */
+#if 0                  
                      ap->next = PrintAssln("\tvmovsd\t%s,%s,%s\n",
 	                                   archxmmregs[-DREGBEG-op2], 
 	                                   archxmmregs[-DREGBEG-op1], 
                                            archxmmregs[-DREGBEG-op1]);
+#else
+                     ap->next = PrintAssln("\tvmovapd\t%s,%s\n",
+	                                   archdregs[-DREGBEG-op2], 
+                                           archdregs[-DREGBEG-op1]);
+#endif
                   #else
                      ap->next = PrintAssln("\tmovsd\t%s,%s\n",
 	                                   archdregs[-DREGBEG-op2], sptr);     
@@ -2801,10 +2816,16 @@ struct assmln *lil2ass(BBLOCK *bbase)
 */  
          if (op1 != op2)
             #ifdef AVX
+#if 0            
              ap->next = PrintAssln("\tvmovsd\t%s, %s,%s\n", 
                                    archxmmregs[-VDREGBEG-op2],
                                    archxmmregs[-VDREGBEG-op1],
                                    archxmmregs[-VDREGBEG-op1]);
+#else
+             ap->next = PrintAssln("\tvmovapd\t%s, %s\n", 
+                                   archvdregs[-VDREGBEG-op2],
+                                   archvdregs[-VDREGBEG-op1]);
+#endif
             #else
                ap->next = PrintAssln("\tmovsd\t%s, %s\n",  
                                      archvdregs[-VDREGBEG-op2],
@@ -3316,10 +3337,16 @@ struct assmln *lil2ass(BBLOCK *bbase)
 */             
          if (op1 != op2)
             #ifdef AVX
+#if 0            
                ap->next = PrintAssln("\tvmovss\t%s, %s,%s\n", 
                                      archxmmregs[-VFREGBEG-op2],
                                      archxmmregs[-VFREGBEG-op1],
                                      archxmmregs[-VFREGBEG-op1]);
+#else
+               ap->next = PrintAssln("\tvmovaps\t%s, %s\n", 
+                                     archvfregs[-VFREGBEG-op2],
+                                     archvfregs[-VFREGBEG-op1]);
+#endif
             #else
                ap->next = PrintAssln("\tmovss\t%s, %s\n",  
                                      archvdregs[-VFREGBEG-op2],
