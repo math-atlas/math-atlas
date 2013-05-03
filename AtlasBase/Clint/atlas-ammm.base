@@ -6289,12 +6289,21 @@ void genMM(FILE *fp, char pre, vec_t vec, int kmaj, int kb,
            int mu, int nu, int ku)
 {
    int i, j;
+   int incb = (kmaj) ? kmaj : 1;
+   int ia=0, ib=0;
+   char *Bld = (kmaj) ? "vld" : "bcast";
+
+   if (kb && ku+ku >= kb)
+      ku = kb;
+   else
+      ku = 0;
+
    fprintf(fp, "#include <atlas_simd.h>\n\n");
    PrintDecl(fp);
    fprintf(fp, "/*\n");
    fprintf(fp, 
-" * Access-major matmul with: pre=%c, KMAJ=%d, kb=%d, mu=%d, nu=%d, ku=%d\n",
-           pre, kmaj,
+" * Access-major matmul with: pre=%c, KMAJ=%d, kb=%d, mu=%d, nu=%d\n",
+           pre, kmaj, kb, mu, nu);
    fprintf(fp, " */\n");
    fprintf(fp, "{\n");
    fprintf(fp, "   size_t i, j, k, incPF\n");
@@ -6321,7 +6330,64 @@ void genMM(FILE *fp, char pre, vec_t vec, int kmaj, int kb,
    fprintf(fp, "   for (i=0; i < nmus; i++, pA += incA)\n   {\n");
    fprintf(fp, "      const %s *a=pA;\n");
    fprintf(fp, "      for (j=0; j < nnus; j++)\n      {\n");
-   DoKloop(fp, pre, vec, kmaj, kb, mu, nu, ku);
+/*
+ * Rewrite to peel X its in order to schedule loads & prefetches, then
+ * start loop; will have specialized routines for each case
+ */
+   fprintf(fp, "/*\n *         K=0 it peeled to zero rCx_x\n */\n");
+   for (j=0; j < nu; j++)
+      fprintf(fp, "         ATL_v%s(rB%d, pB+%d);\n", Bld, j, j*incb);
+   if (!ku)
+      fprintf(fp, "         pB += %d;\n", nu*incb);
+   else 
+      ib += nu*incb;
+   for (i=0; i < mu; i++)
+      fprintf(fp, "         ATL_vld(rA%d, a+%d);\n", i, i*VLEN);
+   if (!ku)
+      fprintf(fp, "         pA += %d;\n", VLEN*mu);
+   else 
+      ia += VLEN*mu;
+
+   for (j=0; j < nu; j++)
+   {
+      for (i=0; i < mu; i++)
+      {
+         fprintf(fp, "         ATL_vmul(rC%d_%d, rA%d, rB%d);\n",
+                 i, j, i, j);
+         if (j==nu-1)
+            fprintf(fp, "         ATL_vld(rA%d, a+%d);\n", i, ia+i*VLEN);
+      }
+      if (j != nu-1)
+         fprintf(fp, "         ATL_v%s(rB%d, pB+%d);\n", Bld, j, ib+j*incb);
+   }
+   if (kb && ku+ku > kb) /* fully unrolled K loop */
+   {
+      fprintf(fp, "         ATL_v%s(rB0, pB+%d);\n", Bld, nu*incb);
+      for (k=VLEN; k < kb; k += VLEN)
+      {
+         fprintf(fp, "/*\n *         K=%d iteration\n */\n");
+      }
+   }
+   else
+   {
+      if (kmaj)
+      {
+         if (kb)
+            fprintf(fp, "         for (k=%d; k < %d; k += %d)\n         {\n",
+                    VLEN, kb, VLEN);
+         else
+            fprintf(fp, "         for (k=%d; k < K; k += %d)\n         {\n",
+                    VLEN, VLEN);
+      }
+      else
+      {
+         fprintf(fp, "         for (k=1; k < K; k++)\n         {\n");
+      }
+      fprintf(fp, "         }  /* end K-loop */\n");
+   }
+   fprintf(fp, "         a += %d;\n", mu*VLEN);
+   fprintf(fp, "         pB += %d;\n", nu*incb);
+
    fprintf(fp, "      } /* end j-loop */\n");
    fprintf(fp, "      pB = pB0;\n");
    fprintf(fp, "   } /* end i-loop */\n");
