@@ -211,6 +211,7 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
    int TEST_KERNEL(const int M, const TYPE s0, TYPE *A, const int lda);
    int nrep, i, n, nvec, NN, ix=0, iy=0, ii, jj;
    const int incx=Mabs(incX)SHIFT, incy=Mabs(incY)SHIFT;
+   int cs, setsz, Nt, nset;
    TYPE *X, *Y, *x, *y, *stX;
    TYPE s0;
    double t0, t1, l2ret;

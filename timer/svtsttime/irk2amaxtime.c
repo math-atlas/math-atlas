@@ -287,7 +287,8 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
    Nt = nset * setsz;
    X = FA_malloc(ATL_sizeof*Nt, FAx, MAx);
    assert(X);
-   ltX = X + Nt;
+   //ltX = X + Nt;
+   stX = X + Nt;
 
    dumb_seed(Nt+1);
    for (i=0, n=Nt; i < n; i++) X[i] = dumb_rand();
@@ -303,7 +304,7 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
    {
       TEST_KERNEL(N, s0, x, lda);
       x += ii;
-      if (x == ltX) x = X;
+      if (x == stX) x = X;
    }
    t1 = time00() - t0;
    FA_free(X, FAx, MAx);
