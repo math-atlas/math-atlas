@@ -3,7 +3,7 @@
 /* Majedul: to save the paths for speculative Vectorization. */
 static LOOPPATH **PATHS = NULL;
 static int NPATH = 0, TNPATH = 0, VPATH = -1;
-
+static const int MaxPaths = 256; /* threshold for paths */
 /* 
  * Majedul: temporary flag for SSV which is needed in loop peeling to predict
  * max LABEL_id. I will manage that using special flag which indicates the type
@@ -110,6 +110,7 @@ LOOPPATH *NewLoopPath(BLIST *blks)
       new->vsoflag = NULL;
    }
    new->pnum = AddPath2Table(new); /* though it is updated inside the func */
+   assert(new->pnum <= MaxPaths); /* check for threshold of path counts */
    return new;
 }
 
@@ -2744,6 +2745,7 @@ int SpeculativeVectorAnalysis()
    for (i = 0; i < NPATH; i++)
    {
       fprintf(stderr, "PATH : %d\n", i);
+      fprintf(stderr, "Blocks : %s\n",PrintBlockList(PATHS[i]->blocks));
       fprintf(stderr, "Control Flag: %d\n", PATHS[i]->lpflag);
       j = PATHS[i]->lpflag & LP_VEC;
       fprintf(stderr, "Vectorizable: %d\n",j);
