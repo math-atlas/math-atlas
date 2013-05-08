@@ -11,6 +11,7 @@ echo "ID :" $scripttime
 FKOPATH=/home/msujon/Research/working/iFKO-SV/iFKO
 
 sv_kernel="amax iamax nrm2 asum sin cos irk1amax irk2amax irk3amax"
+#sv_kernel="irk1amax irk2amax irk3amax"
 rc_kernel="amax asum sin cos"
 kernel=
 
@@ -20,6 +21,7 @@ skip=
 del=0
 precision="s d"
 N=16000 
+aopt=
 
 #
 #  commandline argument
@@ -33,6 +35,7 @@ Options:
 -s       skip to any optimization in tuner like: V, default none
 -n       number of elements to time
 -d       takes no argument. delete all log files and paths, use with caution!
+-a       opt flag for atlas like: '-C 1 -Fx 32'
 --help   display help and exit
 "
 
@@ -42,7 +45,7 @@ Options:
 #  so, d will terminate with any colon ':'
 #
 
-while getopts "p:k:t:f:s:n:d" opt 
+while getopts "p:k:t:f:s:n:a:d" opt 
 do
    case $opt in 
       p)
@@ -63,6 +66,9 @@ do
       n)
          N=$OPTARG
          ;;
+      a)
+         aopt=$OPTARG
+         ;;
       d)
          del=1
          ;;
@@ -72,6 +78,14 @@ do
          ;;
       esac
 done
+
+#echo "$aopt"
+#exit 0
+
+if [ -n "$aopt" ] 
+then
+   aopt="-atlopt '"$aopt"'"
+fi
 
 #
 #  want to delete all the results and log files!
@@ -160,7 +174,10 @@ then
    then
       if [ "$force" == "s" ]
       then
-         kernel=$sv_kernel
+         if [ -z "$kernel" ]
+         then
+            kernel=$sv_kernel
+         fi
          if [ -z "$skip" ]
          then
             skip="--no v"
@@ -178,7 +195,10 @@ then
          fi
       else
          force="--force "$force
-         kernel=$sv_kernel
+         if [ -z "$kernel" ]
+         then
+            kernel=$sv_kernel
+         fi
       fi
    fi
 #
@@ -194,21 +214,26 @@ then
 #
 #        specially handle the size for irkamax
 #
-         N1=
-         if [ $kn = irk1amax ]
+         if [ "1" == "1" ]
          then
-            N1=$((N/2))
-         elif [ $kn = irk2amax ]
-         then
-            N1=$((8*(N/24)))  # N/3
-         elif [ $kn = irk3amax ]
-         then
-            N1=$((8*(N/32)))   # N/4
-         else
             N1=$N
+         else
+            N1=
+            if [ $kn = irk1amax ]
+            then
+               N1=$((N/2))
+            elif [ $kn = irk2amax ]
+            then
+               N1=$((8*(N/24)))  # N/3
+            elif [ $kn = irk3amax ]
+            then
+               N1=$((8*(N/32)))   # N/4
+            else
+               N1=$N
+            fi
          fi
-         echo "$SCRIPTdir/ifko.py $kn $pre $N1 $force $skip > $inputlog"
-         $SCRIPTdir/ifko.py $kn $pre $N1 $force $skip > $inputlog
+         #echo "$SCRIPTdir/ifko.py $kn $pre $N1 $force $skip $aopt> $inputlog"
+         $SCRIPTdir/ifko.py $kn $pre $N1 $force $skip $aopt > $inputlog
          lflag=`tail -n 8 $inputlog | head -n 1`
          iflag=`echo $lflag | cut -d' ' -f 6- -s`
          fline=`tail -n 5 $inputlog | head -n 1`
@@ -274,21 +299,26 @@ else
 #        set appropriate N
 #
          N1=
-         if [ $kn = irk1amax ]
+         if [ "1" == "1" ]
          then
-            N1=$((N/2))
-         elif [ $kn = irk2amax ]
-         then
-            N1=$((8*(N/24)))  # N/3
-         elif [ $kn = irk3amax ]
-         then
-            N1=$((8*(N/32)))   # N/4
-         else
             N1=$N
+         else
+            if [ $kn = irk1amax ]
+            then
+               N1=$((N/2))
+            elif [ $kn = irk2amax ]
+            then
+               N1=$((8*(N/24)))  # N/3
+            elif [ $kn = irk3amax ]
+            then
+               N1=$((8*(N/32)))   # N/4
+            else
+               N1=$N
+            fi
          fi
 
-         inputlog=$LOGPATH/$pre${kn}_${N}_${scripttime}
-         #echo 'make $pre$kn $N1 KFLAGS="'$force$path'" '
+         #inputlog=$LOGPATH/$pre${kn}_${N}_${scripttime}
+         echo 'make $pre$kn $N1 KFLAGS="'$force$path'" '
          cd $SCRIPTdir
          make $pre$kn $N1 KFLAGS="$force$path" > $inputlog 2> /dev/null
          #lflag=`tail -n 2 $inputlog | head -n 1`
