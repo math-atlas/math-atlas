@@ -1557,6 +1557,7 @@ static BLIST **FindAllPathsBlks(int *np, BLIST *scope, BBLOCK *head,
 {
    int i, n;
    BLIST **new;
+   extern int FKO_MaxPaths;
 /*
  * found tail, that completes a path. So, create new paths updated with new 
  * blocklist for that path. path[0] contains the fall-thru path
@@ -1585,20 +1586,26 @@ static BLIST **FindAllPathsBlks(int *np, BLIST *scope, BBLOCK *head,
    }
    bst = AddBlockToList(bst, head);
 /*
- * NOTE: traversing usucc first provides fall-thru path as the first path
+ * limit path search if threshold is mentioned
  */
-   if (head->usucc)
+   if (!FKO_MaxPaths || (*np) < FKO_MaxPaths)  
    {
-      if (FindBlockInList(scope, head->usucc))
+/*
+ *    NOTE: traversing usucc first provides fall-thru path as the first path
+ */
+      if (head->usucc)
       {
-         paths = FindAllPathsBlks(np,scope,head->usucc,tail, paths,bst);
-      } 
-   }
-   if (head->csucc)
-   {
-      if (FindBlockInList(scope, head->csucc))
+         if (FindBlockInList(scope, head->usucc))
+         {
+            paths = FindAllPathsBlks(np,scope,head->usucc,tail, paths,bst);
+         } 
+      }
+      if (head->csucc)
       {
-         paths = FindAllPathsBlks(np,scope,head->csucc,tail, paths,bst);
+         if (FindBlockInList(scope, head->csucc))
+         {
+            paths = FindAllPathsBlks(np,scope,head->csucc,tail, paths,bst);
+         }
       }
    }
    free(bst);

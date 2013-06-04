@@ -20,6 +20,7 @@ int STATE1_FLAG=0;
 int STATE2_FLAG=0;
 int STATE3_FLAG=0;
 int path = -1; /* this is for speculation */
+int FKO_MaxPaths = 0; /*number of paths to be analyzed. default 0 means all paths*/
 
 int PFISKIP=0, PFINST=(-1), PFCHUNK=1;
 int NWNT=0, NAWNT=0;
@@ -59,6 +60,7 @@ void PrintUsageN(char *name)
    fprintf(stderr, "  -U <#> : Unroll main loop # of times\n");
    fprintf(stderr, "  -V : Vectorize (SIMD) main loop\n");
    fprintf(stderr, "  -B : Stronger Bet unrolling for SV\n");
+   fprintf(stderr, "  -M : Maximum paths to be analyzed in SV\n");
 #if 0
    fprintf(stderr, 
 "  -Vm [SSV,VRC,VEM]: Vectorize (SIMD) main loop with control flow\n");
@@ -345,6 +347,10 @@ struct optblkq *GetFlagsN(int nargs, char **args,
  */
          case 'B':
             FKO_SB = atoi(args[++i]);
+            break;
+         
+         case 'M':
+            FKO_MaxPaths = atoi(args[++i]);
             break;
 /*
  *       Majedul: To generalize the AccumExpansion with Scalar Expansion
@@ -2458,7 +2464,7 @@ void GenAssenblyApplyingOpt4SSV(FILE *fpout, struct optblkq *optblks,
       fprintf(stderr, "ERR from PrologueEpilogue\n");
    CheckFlow(bbbase, __FILE__,__LINE__);
    DumpOptsPerformed(stderr, FKO_FLAG & IFF_VERBOSE);
-   #if 0
+   #if 1
       fprintf(stdout, "Optimized LIL Before Assembly\n");
       PrintInst(stdout, bbbase);
       fprintf(stdout, "SYmbol Table\n");
@@ -2541,7 +2547,7 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks,
       CalcAllDeadVariables();
    if (!CFLOOP)
       FindLoops();
-#if 1   
+#if 0   
    AddBlockComments(bbbase);
    AddLoopComments();   
 #endif   
@@ -2688,7 +2694,7 @@ int main(int nargs, char **args)
  * Files: IG, ST, LIL, OPT 
  * Normally files saved/restored from /tmp/FKO_ST.0/2/3, /tmp/FKO_LIL.0/2/3,
  * /tmp/FKO_misc.0/2/3 
- * NOTE: I was not be able to successfully restore program state from command
+ * NOTE: I was not able to successfully restore program state from command
  * line. 
  *
  * Future Plan: 
@@ -2772,8 +2778,8 @@ int main(int nargs, char **args)
 #if 0
    fprintf(stdout, "1st LIL");
    PrintInst(stdout, bbbase);
-   ShowFlow("cfg.dot", bbbase);
-   PrintLoop(stderr,optloop);
+   //ShowFlow("cfg.dot", bbbase);
+   //PrintLoop(stderr,optloop);
    exit(0);
 #endif   
 /*
@@ -2912,7 +2918,7 @@ int main(int nargs, char **args)
          VECT_FLAG &= ~VECT_NCONTRL;
          VECT_FLAG |= VECT_SV;
          
-         SpeculativeVectorAnalysis();
+         assert(!SpeculativeVectorAnalysis());
          SpecSIMDLoop(FKO_SB);
          
          FinalizeVectorCleanup(optloop, FKO_SB);
@@ -2948,7 +2954,7 @@ int main(int nargs, char **args)
          VECT_FLAG |= VECT_NCONTRL;
          
          /*VectorAnalysis();*/
-         SpeculativeVectorAnalysis();
+         assert(!SpeculativeVectorAnalysis());
          Vectorization();
          FinalizeVectorCleanup(optloop, 1);
       }
@@ -3084,7 +3090,12 @@ int main(int nargs, char **args)
          /*fprintf(stderr, "se!\n");*/
          if (IsControlFlowInLoop(optloop->blocks, optloop->header) && 
              !( (STATE1_FLAG & IFF_ST1_RC) || (STATE1_FLAG & IFF_ST1_MMR)) )
+         {
+/*
+ *          NOTE: we need to describe why it is not allowed! 
+ */
             fprintf(stderr, "SE not Applied right now!!!\n");
+         }
          else
             DoAllScalarExpansion(optloop, FKO_UR, DO_VECT(FKO_FLAG));   
       }

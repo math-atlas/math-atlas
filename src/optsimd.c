@@ -3,7 +3,6 @@
 /* Majedul: to save the paths for speculative Vectorization. */
 static LOOPPATH **PATHS = NULL;
 static int NPATH = 0, TNPATH = 0, VPATH = -1;
-static const int MaxPaths = 256; /* threshold for paths */
 /* 
  * Majedul: temporary flag for SSV which is needed in loop peeling to predict
  * max LABEL_id. I will manage that using special flag which indicates the type
@@ -110,7 +109,6 @@ LOOPPATH *NewLoopPath(BLIST *blks)
       new->vsoflag = NULL;
    }
    new->pnum = AddPath2Table(new); /* though it is updated inside the func */
-   assert(new->pnum <= MaxPaths); /* check for threshold of path counts */
    return new;
 }
 
@@ -1770,6 +1768,8 @@ void FindPaths(BBLOCK *head, BLIST *loopblocks, LOOPQ *lp, BLIST *blkstack)
  */
 {
    BLIST *bl;
+   extern int FKO_MaxPaths;
+
    if (head == lp->tails->blk)
    {
       blkstack = AddBlockToList(blkstack,head);
@@ -1808,28 +1808,34 @@ void FindPaths(BBLOCK *head, BLIST *loopblocks, LOOPQ *lp, BLIST *blkstack)
  */
    blkstack = AddBlockToList(blkstack, head);
 /*
- * NOTE: if we choose usucc first, we will find fall through path 1st. 
- * We may use that later.
- */
-   if (head->usucc)
+ * if we have argument for a threshold of max paths
+ */   
+   if (!FKO_MaxPaths || NPATH < FKO_MaxPaths)
    {
-      if (FindBlockInList(loopblocks,head->usucc))
-      {
-         FindPaths(head->usucc, loopblocks, lp, blkstack);
-      }
-   }
-   if (head->csucc)
-   {
-      if (FindBlockInList(loopblocks,head->csucc))
-      {
-         FindPaths(head->csucc, loopblocks, lp, blkstack);
-      }
-   }
 /*
- * we create a new list (hence, allocate mem) to save the list which 
- * completes a path in reverse direction. So, when backtracks, we can free 
- * this mem. 
+ *    NOTE: if we choose usucc first, we will find fall through path 1st. 
+ *    We may use that later.
  */
+      if (head->usucc)
+      { 
+         if (FindBlockInList(loopblocks,head->usucc))
+         {
+            FindPaths(head->usucc, loopblocks, lp, blkstack);
+         }
+      }
+      if (head->csucc)
+      {
+         if (FindBlockInList(loopblocks,head->csucc))
+         {
+            FindPaths(head->csucc, loopblocks, lp, blkstack);
+         }
+      }
+   }
+   /*
+    * we create a new list (hence, allocate mem) to save the list which 
+    * completes a path in reverse direction. So, when backtracks, we can free 
+    * this mem. 
+    */
    free(blkstack);
 }
 
@@ -1929,8 +1935,9 @@ void PrintVars(FILE *out, char* title, INT_BVI iv)
    fprintf(out, "%s : ", title);
    for (N=sp[0], i=1; i <= N; i++)
    {
-      if (!STname[sp[i-1]])
-         fprintf(out,"[ST NULL] ");
+      //if (!STname[sp[i-1]])
+      if (!STname[sp[i]-1])
+         fprintf(out,"[ST NULL:%d] ",sp[i]-1);
       fprintf(out, "%s(%d) ",STname[sp[i]-1]? STname[sp[i]-1]: "NULL",sp[i]-1);
    }
    fprintf(out, "\n");
@@ -2102,6 +2109,13 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
                      "Index variable = %d is updated outside loop control\n",
                      STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
             lpflag &= ~(LP_OPT_LCONTROL);
+/*
+ *          FIXME: if loop control is updated inside loop, loop is not countable.
+ *          we cann't vectorize loop in that case. we have to return this and 
+ *          skip any kind of vectorization in that case. Right now, we just 
+ *          stop executiong the code.
+ */
+            assert(0);
          }
       }
    }   
@@ -5256,6 +5270,32 @@ void AddScalarUpdate(LOOPQ *lp, BBLOCK *bp0)
    }
 }
 
+int isVarSetInScope(short var, BLIST *scope)
+{
+   int isSet;
+   BLIST *bl;
+   BBLOCK *bp;
+   INSTQ *ip;
+
+   isSet = 0;
+   
+   for (bl=scope; bl; bl=bl->next)
+   {
+      bp = bl->blk;
+      for (ip=bp->inst1; ip; ip=ip->next)
+      {
+         if (IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]-1] == var)
+         {
+            isSet = 1;
+            break;
+         }
+      }
+      if (isSet)
+         break;
+   }
+   return isSet;
+}
+
 void AddVectorUpdate(LOOPQ *lp, BBLOCK *blk)
 /*
  * updates necessary vars for the next speculative vector iteration
@@ -5272,6 +5312,9 @@ void AddVectorUpdate(LOOPQ *lp, BBLOCK *blk)
    BBLOCK *bp;
    enum inst vsld, vshuf, vst, fst;
    short r0;
+   INT_BVI iv;
+   extern short STderef;
+   extern INT_BVI FKO_BVTMP;
 
    vp = PATHS[VPATH];
 
@@ -5343,18 +5386,15 @@ void AddVectorUpdate(LOOPQ *lp, BBLOCK *blk)
  *    HERE. If a variable is used in vector path but set in scalar path, we 
  *    need to update the appropriate vector at the update stage.
  */
-      if ( (vpsflag & SC_USE) && !(vpsflag & SC_SET)) 
+      else if ( (vpsflag & SC_USE) && !(vpsflag & SC_SET)) 
       {
 /*
  *       check the scal flag for the scalar path 
  *       If it is set here, update the appropriate vector.
  */
-         //found = 0;
-/*
- *       Need to check all the scalar paths 
- */
+#if 0
          for (k=0; k < NPATH; k++)
-         {
+         { 
             if (k == VPATH) continue;
             sp = PATHS[k];
             for (j=1, N1=sp->scal[0]; j <= N1; j++)
@@ -5368,6 +5408,21 @@ void AddVectorUpdate(LOOPQ *lp, BBLOCK *blk)
                }
             }
          }
+#else
+/* 
+ *       checking all path may become exponential. so, we just
+ *       check the loop blocks for the set info.
+ *       NOTE: don't use bvec, they may not be updated 
+ */
+         isScSet=isVarSetInScope(vscal,lp->blocks);
+         /*fprintf(stdout, "vscal = %s[%d], set=%d\n", 
+                   STname[vscal-1], vscal-1, isScSet);*/
+
+#endif
+
+/*
+ *       if it's a candidate, go ahead to add the vector update
+ */
          if (isScSet)
          {
             ip = FindCompilerFlag(blk, CF_SSV_VUPDATE);
@@ -5439,32 +5494,44 @@ void AddVectorUpdate(LOOPQ *lp, BBLOCK *blk)
 }
 
 void SetScalarRestartOptFlag(LOOPQ *lp, int *lpOpt, int *usesIndex, int *usesPtr)
+/*
+ * update flags based on the loop. if loop is not lpOpt, we don't consider other
+ * flags at all.
+ */
 {
-   int i, j;
+   int i, ptested;
    int lo, ui, up;
    ILIST *il;
-   struct ptrinfo *pi;
+   struct ptrinfo *pi, *p;
+   extern int FKO_MaxPaths;
 /*
  * by default, all are set. 
  */
    lo = 1; ui = 1; up = 1;
+   ptested = 0;
+   pi = NULL;
+
+#if 0   
 /*
  * Check all paths of the loop is optimizable for loop control and loop_mov_ptr
  * Right now, consider both yes or no. Later can be optimized for either one
+ * LP_OPT_MOVPTR = PTRF_CONTIG | PTRF_INC + Single update 
+ * LO_OPT_LCONTROL = index defs outside loop control!... loop becomes 
+ *    uncountable, hence not vectorizable at all...
  */
    for (i = 0; i< NPATH; i++ )
    {
       if ( !(PATHS[i]->lpflag & LP_OPT_LCONTROL) || 
-           !(PATHS[i]->lpflag & LP_OPT_MOVPTR) )
+               !(PATHS[i]->lpflag & LP_OPT_MOVPTR) )
       {
-         lo = 0;
-         break;
+            lo = 0;
+            break;
       }
    }
-/*
- * Check whether index is used inside the optloop
- */
-   if (lo)
+   /*
+    * Check whether index is used inside the optloop
+    */
+   if (lo) 
    {
       KillLoopControl(lp);
       il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
@@ -5478,7 +5545,69 @@ void SetScalarRestartOptFlag(LOOPQ *lp, int *lpOpt, int *usesIndex, int *usesPtr
       if (!pi)
          up = 0;
    }
-
+#else
+/*
+ * update all flags without analyzing all paths
+ * NOTE: if !LP_OPT_LCONTROL... loop becomes uncountable.. so, not vectorizable
+ * So, just consider LP_OPT_MOVPTR... it ensures that ptr update can be deleted
+ * and kept at the end of loop before loop control
+ */
+   if (!FKO_MaxPaths || NPATH < FKO_MaxPaths) /* not all paths traverse!!! */
+   {
+      for (i = 0; i< NPATH; i++ )
+      {
+         if ( !(PATHS[i]->lpflag & LP_OPT_LCONTROL) || 
+               !(PATHS[i]->lpflag & LP_OPT_MOVPTR) )
+         {
+            lo = 0;
+            break;
+         }
+      }
+   }
+   else /* check moving paths .... */
+   {
+      pi = FindMovingPointers(lp->blocks); 
+      ptested = 1;
+      for (p = pi; p; p=p->next)
+      {
+         if (IS_FP(STflag[p->ptr-1]))
+         {
+            if ((p->flag | PTRF_CONTIG | PTRF_INC) != p->flag)
+            {
+               lo = 0;
+               break;
+            }
+            else if (p->nupdate > 1)
+            {
+               lo = 0;
+               break;
+            }
+            else if (!(p->flag & PTRF_CONTIG))
+            {
+               lo = 0;
+               break;
+            }
+            else;
+         }
+         else assert(0); /* we only consider fp ptr now */
+      }
+   }
+   if (lo)
+   {
+      KillLoopControl(lp);
+      il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
+      if (il)
+      {
+         lp->flag |= L_IREF_BIT;
+         KillIlist(il);
+      }
+      else ui = 0;
+      if (!ptested)
+         pi = FindMovingPointers(lp->blocks);
+      if (!pi)
+         up = 0;
+   }
+#endif
 /*
  * Update the flags
  */
@@ -5888,7 +6017,56 @@ void AddScalarRestart(BBLOCK *base)
    bpdown->up = bp;
 }
 
-void UpdateLoopPaths(int srlb)
+int ScalarRestart(LOOPQ *lp, int ndups)
+/*
+ * This function will generate the scalar restart structure and added it at the
+ * end of Epilogue Block. ndups represents the number of duplication of main 
+ * loop needed. returns the ST index of the label
+ */
+{
+   INT_BVI iv, ivtails;
+   int srlb;
+   BBLOCK *srblks;   /* will point the CFG of scalar restart */
+   BLIST *ftheads;
+   extern INT_BVI FKO_BVTMP;
+
+/*
+ * Generate codes for Scalar Restart
+ * ----------------------------------
+ * NOTE: right now, GenScalarResartPathCode() takes a paratemer to indicate 
+ * the scalar restart index. It is not necessary now on, will change this later
+ */
+   iv = FKO_BVTMP;
+   if (!FKO_BVTMP) 
+      iv = FKO_BVTMP = NewBitVec(32);
+   else
+      SetVecAll(iv, 0);
+   ivtails = BlockList2BitVec(lp->tails);
+   ftheads = FindAllFallHeads(NULL, lp->blkvec, lp->header, ivtails, iv);
+   ftheads = ReverseBlockList(ftheads);
+   srblks = GenScalarRestartPathCode(lp, 0, ndups, ftheads, ivtails);   
+#if 0
+   fprintf(stderr, "Scalar Restart\n");
+   PrintInst(stderr, srblks);
+   exit(0);
+#endif
+
+/*
+ * Place the Scalar Restart code at the end of Epilogue blk 
+ * --------------------------------------------------------
+ */
+   AddScalarRestart(srblks);
+#if 0
+   fprintf(stderr, "From epilogue \n");
+   PrintInst(stderr, srblks->up);
+   exit(0);
+#endif
+   assert(srblks->ainst1->inst[0] == LABEL);
+   srlb = srblks->ainst1->inst[1];
+   return srlb;
+}
+
+void RepairLoopPaths(int srlb, LOOPQ* lp)
 /*
  * this function will update the loop structure by deleting all the blks of 
  * scalar paths (which is not common with vector path) and will update all 
@@ -5903,6 +6081,8 @@ void UpdateLoopPaths(int srlb)
    INSTQ *ip;
 
    delblks = NULL;
+
+#if 0   
    for (i=0; i < NPATH; i++)
    {
       if (i == VPATH) /* vector path*/
@@ -5942,6 +6122,38 @@ void UpdateLoopPaths(int srlb)
          }
       }
    }
+#else
+/*
+ * Update all destination of branches to the scalar restart in vpath    
+ */
+   for (bl=PATHS[VPATH]->blocks; bl; bl=bl->next)
+   {
+      bp = bl->blk;
+      for (ip=bp->ainst1; ip; ip=ip->next)
+      {   
+         if (IS_COND_BRANCH(ip->inst[0]))
+         {
+            ip->inst[3] = srlb;  /* jump to scalar restart */
+         }
+      }
+   }
+/*
+ * all loop blocks which are not part of vpath need to be deleted
+ */
+   for (bl=lp->blocks; bl; bl=bl->next)
+   {
+      bp = bl->blk;
+      if (!FindBlockInList(PATHS[VPATH]->blocks,bp))
+      {
+/*
+ *       if it is not already inserted in delblk lists
+ */
+         if (!FindBlockInList(delblks, bp))
+            delblks = AddBlockToList(delblks, bp);
+      }
+   }
+#endif
+
 /*
  * kill blks from delblks list
  * NOTE: need to make a complete function in flow.c to completely delete a blk
@@ -6031,284 +6243,6 @@ void UpdateLoopPaths(int srlb)
    KillBlockList(delblks);
 }
 
-void ScalarRestart(LOOPQ *lp, int ndups)
-/*
- * This function will generate the scalar restart structure and added it at the
- * end of Epilogue Block.
- * ndups represents the number of duplication of main loop needed.
- */
-{
-   INT_BVI iv, ivtails;
-   int srlb;
-   BBLOCK *srblks;   /* will point the CFG of scalar restart */
-   BLIST *ftheads;
-   extern INT_BVI FKO_BVTMP;
-
-/*
- * Generate codes for Scalar Restart
- * ----------------------------------
- * NOTE: right now, GenScalarResartPathCode() takes a paratemer to indicate 
- * the scalar restart index. It is not necessary now on, will change this later
- */
-   iv = FKO_BVTMP;
-   if (!FKO_BVTMP) 
-      iv = FKO_BVTMP = NewBitVec(32);
-   else
-      SetVecAll(iv, 0);
-   ivtails = BlockList2BitVec(lp->tails);
-   ftheads = FindAllFallHeads(NULL, lp->blkvec, lp->header, ivtails, iv);
-   ftheads = ReverseBlockList(ftheads);
-   srblks = GenScalarRestartPathCode(lp, 0, ndups, ftheads, ivtails);   
-#if 0
-   fprintf(stderr, "Scalar Restart\n");
-   PrintInst(stderr, srblks);
-   exit(0);
-#endif
-
-/*
- * Place the Scalar Restart code at the end of Epilogue blk 
- * --------------------------------------------------------
- */
-   AddScalarRestart(srblks);
-#if 0
-   fprintf(stderr, "From epilogue \n");
-   PrintInst(stderr, srblks->up);
-   exit(0);
-#endif
-/*
- * Delete all scalar blks and re-adjust the cond branch in vpath
- * ------------------------------------------------------------
- */
-   assert(srblks->ainst1->inst[0] == LABEL);
-   srlb = srblks->ainst1->inst[1];
-   UpdateLoopPaths(srlb);
-}
-
-void ScalarRestart0(LOOPQ *lp, int dups)
-/*
- * NOTE: added a new parameter to control the num of dups 
- * In new Imp: 1st generate the whole code structure for each path 
- * which can be explored by down/up pointer, then update the original code
- * NOTE: scalar restart is tested with 2 paths. I'm not sure how to place
- * scalar restart if there are morethan 2 paths. note that this implementation
- * is not tested for morethan 2 paths. 
- */
-{
-   int i, j, k;
-   int vlen, cflag;
-   INT_BVI iv, ivtails;
-   BBLOCK **bpaths; /* hold complete code structure for each path*/
-   BBLOCK *bp0, *bdown, *bp;
-   BLIST *ftheads, *bl, *vbl, *blFrom;
-   INSTQ *ip;
-   char ln[64];
-   extern BBLOCK *bbbase;
-   extern INT_BVI FKO_BVTMP;
-
-   assert(VPATH!=-1);
-   bpaths = malloc(sizeof(BBLOCK*)*NPATH);
-#if 0   
-   vlen = Type2Vlen(lp->vflag);
-#else
-   vlen = dups;
-#endif
-/*
- * Find the header of loop in the bbbase
- * NOTE: after cleanup, blocks have duplicate names. don't check anything
- * by bnum.
- */
-   for (bp0 = bbbase; bp0; bp0 = bp0->down )
-   {
-      if (bp0 == lp->header)
-         break;
-   }
-/*
- * Find all fall thru path headers in loop which will be needed at code 
- * generation
- */
-   iv = FKO_BVTMP; /* FKO_BVTMP should already be created*/
-   SetVecAll(iv, 0);
-   ivtails = BlockList2BitVec(lp->tails);
-   ftheads = FindAllFallHeads(NULL, lp->blkvec, lp->header, ivtails, iv);
-   ftheads = ReverseBlockList(ftheads);
-
-/*
- * Generate scalar restart code for each path first before any update
- */
-   for (i=0; i < NPATH; i++)
-   {
-      if ( i == VPATH)
-      {
-         bpaths[i] = NULL; /* nothing for vector path*/ 
-         continue;
-      }
-/*
- *    Generate code for Scalar Restart before any update of original code
- */
-      bpaths[i] = GenScalarRestartPathCode(lp, i, vlen, ftheads, ivtails);
-#if 0
-      fprintf(stdout, "SCALAR RESTART CODE :\n");
-      PrintInst(stdout, bpaths[i]);
-      exit(0);
-#endif           
-   }
-/*
- * NOTE: Right now, I just consider scalar restart only for those which has
- * 2 paths. Later, I will extend this limitation
- */
-   assert(NPATH==2);
-/*
- * Now check each path to figure out where to copy 
- */
-   for (i=0; i < NPATH; i++)
-   {
-      if (i == VPATH) continue;
-/*
- *    check with vector path, determine where to implement scalar restart
- *    Requirement: blocklist blocks in path must be in sequential according
- *    to control flow
- */
-      blFrom = NULL;
-      for (bl = PATHS[i]->blocks,vbl = PATHS[VPATH]->blocks; bl && vbl ;
-           bl = bl->next, vbl = vbl->next)
-      {
-         if (bl->blk != vbl->blk)
-         {
-            /*fprintf(stderr, "Split in vpath blk = %d, spath blk = %d\n",
-                    vbl->blk->bnum, bl->blk->bnum);*/
-            break;
-         }
-         blFrom = bl;
-      }
-      assert(bl); /* atleast one block which is not common in sequence*/
-      bp = bl->blk;
-/*
- *     NOTE: if bl is the common blk for both vpath and spath (may be the tail),
- *     need to create a new blk.
- *     EXAMPLE: 
- *         Path-1: 2,5,3
- *         Path-2: 2,3
- *    If we want to vectorize by speculating path-1, we need to create new blks.
- */
-/*===========================================================================
- *    Restructure the code to find appropriate location for scalar Restart.
- *    We consider 2 cases:
- *    
- *    case-1: spath consists of blks from vpath
- *       Example:
- *             vpath = 1,2,3
- *             spath = 1,3
- *       We will create new blk after the RET blk for scalar restart.
- *    
- *    case-2: spath contains a scalar blk.
- *       Example: 
- *             vpath = 1,3
- *             spath = 1,2,3
- *       
- *       assumption: this scalar path is way beyond the vector path. 
- *       NOTE: if we apply the fallthru transformation, this blk will moved 
- *       at the last anyway
- *
- *       We can start implementing scalar Restart from this scalar blk ( eg.2).
- *       
- *       If there are other scalar blk, then we can del all the scalar blk 
- *       creating a new blk for scalar restart.
- *       Example: 
- *          vpath = 1,3
- *          spath = 1, 2, 4, 3 
- *==========================================================================*/
-/*
- * checking for case-1
- */
-      if (FindBlockInList(vbl, bp))
-      {
-         /*fprintf(stderr, "common = %d From = %d\n",bl->blk->bnum, 
-                 blFrom->blk->bnum);*/
-/*
- *       HERE HERE 
- *       Right now, we only consider this would be a fall-tru... 
- *       just added a new blk... 
- *       NOTE: we need to test with different scenario.
- */
-#if 0
-         fprintf(stderr, "SCAL_RESTART: CREATE NEW BLK \n\n");
-#endif   
-/*
- *       NOTE: now we have fall-thru transformation. Still, if we only have the
- *       If-blk without any else-blk, we may have the same issue!
- *       Why not we create new blk after the RET for the scalar restart 
- *       always.
- */
-#if 0         
-         bp->up = NewBasicBlock(bp->up, bp); 
-         bp = bp->up;
-         bp->up->down = bp;
-         sprintf(ln,"_Start_Scal_%d",i);
-         cflag = STlabellookup(ln);
-         InsNewInst(bp, NULL, NULL, LABEL, cflag ,0,0);
-#else
-         bp = CreateSclResBlk(blFrom->blk, bl->blk, i);
-#endif
-      }
-/*
- *    Add duplicated blocks after this block, will delete this path later
- */
-      for ( ; bp0 != bp; bp0 = bp0->down);
-      assert(bp0); /* starting of scalar */
-/*
- *    add the generated scalar restart code at the appropriate position
- */
-#if 0
-      bdown = bp0->down;
-      ip = InsNewInstAfterLabel(bp0, CMPFLAG, CF_SCAL_RES,0,0);
-      while(ip) ip = DelInst(ip);
-      bp0->down = bpaths[i];
-      bpaths[i]->up = bp0;
-      
-      for (bp0 = bpaths[i]; bp0->down; bp0 = bp0->down);
-      bp0->down = bdown;
-      bdown->up = bp0;
-#else
-/*
- *    bp0 is the starting block. figure out the block upto which we will 
- *    kill. 
- */
-      bdown = bp0->down;
-      for (; bdown; bdown=bdown->down)
-      {
-         if (!FindInList(PATHS[VPATH]->blocks, bdown) 
-             && FindInList(lp->blocks,bdown))
-         {
-            //bdown->up = KillBlock(bdown->up, bp);
-         }
-         else
-            break;
-      }
-      assert(bdown); /* right now, it should not be NULL. atleast tail blk! */
-/*
- *    delete instruction from bp0. NOTE: don't delete bp0 itself. 
- */
-      ip = InsNewInstAfterLabel(bp0, CMPFLAG, CF_SCAL_RES,0,0);
-      while(ip) ip = DelInst(ip);
-      
-/*
- *    link blks of scalar restart
- */
-      bp0->down = bpaths[i];
-      bpaths[i]->up = bp0;
-/*
- *    link the common blks down.
- *    NOTE: There may be several special case which is not handle yet. 
- *    if there are multiple if statement, we may need to change this simple
- *    logic
- */
-      for (bp0 = bpaths[i]; bp0->down; bp0 = bp0->down);
-      bp0->down = bdown;
-      bdown->up = bp0;
-#endif
-   }
-}
-
 int SpecSIMDLoop(int SB_UR)
 {
    int unroll;    /* stronger bet unroll */
@@ -6317,29 +6251,39 @@ int SpecSIMDLoop(int SB_UR)
    struct ptrinfo *pi0;
    BLIST *bl;
    extern int path;
-
    lp = optloop;
+   int lbSclRes;
 /*
- * Need to check for the VPATH. If default fall-thru is not vectorization, -p 
- * must be applied to make the vector path fall-thru. Otherwise, can't generate
- * valid vector code.
+ * see our accepted paper in PACT'13 for steps
+ */
+
+/*==========================================================================
+ * Step 1: Speculated path formulation
+ *==========================================================================*/
+/*
+ * NOTE: this is done by calling Fall through transformation at the begining
+ * of main function. After this transformation fall-through path should always
+ * be VPATH (speculated path, spath in paper). 
+ * if fall-thru is not applied and VPATH is not fall-thru vectorization can't
+ * be applied
  */
    if (path == -1)
    {
       if (VPATH)
       {
-         fprintf(stderr,"\nDefault path is not vectorizable, apply -p\n");
+         fprintf(stderr,"\nDefault path is not vectorizable, specify path(-p)\n");
          assert(!VPATH);
       }
    }
-
 #if 0
    PrintLoop(stderr, lp);
-#endif    
+#endif
+
+/*=============================================================================
+ * Step 2 : Vectorization alignment and cleanup
+ *============================================================================*/
 
    KillLoopControl(lp);
-
-   unroll = (SB_UR < 2)? 1: SB_UR;
 /*
  * NOTE: Loop peeling must be called before cleanup, as it may chnage the loop
  * control structure of main loop, hence the cleanup loop. 
@@ -6374,21 +6318,10 @@ int SpecSIMDLoop(int SB_UR)
    PrintInst(stdout,bbbase);
    exit(0);
 #endif
-/* skip the loop controls for now*/
-#if 0
-/*
- * FIXME: LOOP_PTR_UPDATE is not introduced yet at 1st. ptr_update is located 
- * before anyother loop control flag. So, KillPtrUpdate is necessary before the
- * OptimizeLoopControl. 
- * We can kill the ptr updates for loop tails only and pass it with the func,
- * Still need to check the function.
- */
-   pi0 = FindMovingPointers(lp->tails);
-   ippu = KillPointerUpdates(pi0,1);
-   /*OptimizeLoopControl(lp, 1, 0, NULL);*/
-   OptimizeLoopControl(lp, 1, 0, ippu);
-#endif
 
+/*=============================================================================
+ * Step 3: Scalar Restart Generation
+ *============================================================================*/
 /*
  * ScalarRestart messes up the optloop and all its parameter. Still, we need to
  * call it before. So, don't update optloop yet. all work is done with the 
@@ -6402,7 +6335,8 @@ int SpecSIMDLoop(int SB_UR)
    exit(0);
 #endif
   
-   ScalarRestart(lp, Type2Vlen(lp->vflag)*unroll);
+   unroll = (SB_UR < 2)? 1: SB_UR;
+   lbSclRes = ScalarRestart(lp, Type2Vlen(lp->vflag)*unroll);
 /*
  * Consider only vector path now. Need to add some analysis for various vars
  * to implemnt backup stages.
@@ -6413,11 +6347,27 @@ int SpecSIMDLoop(int SB_UR)
    exit(0);
 #endif
 
+/*=============================================================================
+ * Step 4: Branch repair and non-speculated block removal 
+ *============================================================================*/
+   
+   RepairLoopPaths(lbSclRes, lp);
+   
+
+/*=============================================================================
+ * Step 5: path vectorization 
+ *============================================================================*/
 #if 0   
    SpeculativeVecTransform(lp);  
 #else
    SpecVecXform(lp, unroll);
 #endif
+/*
+ * It's time to kill the data structure for paths. 
+ * If path info is needed later, skip this deletion.
+ */
+   KillPathTable();
+
 #if 0
    fprintf(stdout, " LIL AFTER SSV LOOP \n");
    PrintInst(stdout, bbbase);
@@ -6443,11 +6393,6 @@ int SpecSIMDLoop(int SB_UR)
    exit(0);
 #endif
 
-/*
- * It's time to kill the data structure for paths. 
- * If path info is needed later, skip this deletion.
- */
-   KillPathTable();
 #if 0
 /*
  * Update prefetch information
