@@ -2511,6 +2511,7 @@ void ATL_USERMM
 #endif
 #undef ATL_KBCONST
 @ROUT ATL_mm@(kmaj)_@(mu)x@(nu)_1
+@iif kmaj = 0
 #include "atlas_misc.h"
 #include "atlas_prefetch.h"
 #ifndef ATL_CSZT
@@ -2728,6 +2729,202 @@ void ATL_USERMM
    #undef incAm
 #endif
 #undef ATL_KBCONST
+   @endextract
+@endiif
+#include "atlas_misc.h"
+#include "atlas_prefetch.h"
+#ifndef ATL_CSZT
+   #define ATL_CSZT const size_t
+#endif
+void ATL_USERMM
+(
+   ATL_CSZT nmus,
+   ATL_CSZT nnus,
+   ATL_CSZT K,
+   const TYPE *pA,    /* @(kmaj)*mu*nkus*nmus access-major array of A */
+   const TYPE *pB,    /* @(kmaj)*nu*nkus*nkus access-major array of A */
+   TYPE *pC,          /* @(mu)*@(nu)*nnus*nmus-length access-major array of C */
+   const TYPE *pAn,   /* next block of A */
+   const TYPE *pBn,   /* next block of B */
+   const TYPE *pCn    /* next block of C */
+)
+/*
+ * Performs a GEMM operation on a @(mu)x@(nu) jammed GEMM in simplist way
+ * possible in order to get k-major access-major framework working.
+ * Replace with real code generator once things work.
+ */
+{
+   @declare "   register TYPE " y n ";"
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         rB@(j)
+         @iexp i 0 0 +
+         @iwhile i < @(mu)
+            rC@(i)@(j)
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+      @iexp i 0 0 +
+      @iwhile i < @(mu)
+         rA@(i)
+         @iexp i @(i) 1 +
+      @endiwhile
+   @enddeclare
+   const TYPE *pB0 = pB;
+   const TYPE *pfA;
+   size_t incPF;
+   size_t i, j, k;
+   size_t incAm = @(mu)*K;
+
+   for (i=0; i < nmus; i++)
+   {
+      for (j=0; j < nnus; j++)
+      {
+/*
+ *       Peel first iteration to avoid zero of rCxx & extra add
+ */
+         rA0 = *pA;
+         rB0 = *pB;
+         @iexp i 0 1 +
+         @iwhile i < @(mu)
+            @iexp h @(i) @(kmaj) *
+         rA@(i) = pA[@(h)];
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j 0 1 +
+         @iwhile j < @(nu)
+            @iexp h @(j) @(kmaj) *
+         rB@(j) = pB[@(h)];
+            @iexp j @(j) 1 +
+         @endiwhile
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp i 0 0 +
+            @iwhile i < @(mu)
+         rC@(i)@(j) = rA@(i) * rB@(j);
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+/*
+ *       Peal remaining @(kmaj)-1 iters to start loop properly
+ */
+      @iexp k 0 1 +
+      @iwhile k < @(kmaj)
+         rA0 = pA[@(k)];
+         rB0 = pB[@(k)];
+         @iexp i 0 1 +
+         @iwhile i < @(mu)
+            @iexp h @(i) @(kmaj) *
+            @iexp h @(h) @(k) +
+         rA@(i) = pA[@(h)];
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j 0 1 +
+         @iwhile j < @(nu)
+            @iexp h @(j) @(kmaj) *
+            @iexp h @(h) @(k) +
+         rB@(j) = pB[@(h)];
+            @iexp j @(j) 1 +
+         @endiwhile
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp i 0 0 +
+            @iwhile i < @(mu)
+         rC@(i)@(j) += rA@(i) * rB@(j);
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+         @iexp k @(k) 1 +
+      @endiwhile
+/*
+ *       Increment A/B ptrs past used k-blks
+ */
+         @iexp incA @(mu) @(kmaj) *
+         @iexp incB @(nu) @(kmaj) *
+         pA += @(incA);
+         pB += @(incB);
+/*
+ *       Handle remaining K its with rolled loop (compiler can unroll easily)
+ */
+         for (k=@(kmaj); k < K; k += @(kmaj), pA += @(incA), pB += @(incB))
+         {
+      @iexp k 0 0 +
+      @iwhile k < @(kmaj)
+         rA0 = pA[@(k)];
+         rB0 = pB[@(k)];
+         @iexp i 0 1 +
+         @iwhile i < @(mu)
+            @iexp h @(i) @(kmaj) *
+            @iexp h @(h) @(k) +
+         rA@(i) = pA[@(h)];
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j 0 1 +
+         @iwhile j < @(nu)
+            @iexp h @(j) @(kmaj) *
+            @iexp h @(h) @(k) +
+         rB@(j) = pB[@(h)];
+            @iexp j @(j) 1 +
+         @endiwhile
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp i 0 0 +
+            @iwhile i < @(mu)
+         rC@(i)@(j) += rA@(i) * rB@(j);
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+         @iexp k @(k) 1 +
+      @endiwhile
+         }
+         pA -= incAm;
+         #ifdef BETA0
+         @iexp k 0 0 +
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp i 0 0 +
+            @iwhile i < @(mu)
+            pC[@(k)] = rC@(i)@(j);
+               @iexp k @(k) 1 +
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+         #elif defined(BETAN1)
+         @iexp k 0 0 +
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp i 0 0 +
+            @iwhile i < @(mu)
+            pC[@(k)] = rC@(i)@(j) - pC[@(k)];
+               @iexp k @(k) 1 +
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+         #else  /* BETA = 1 */
+         @iexp k 0 0 +
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp i 0 0 +
+            @iwhile i < @(mu)
+            pC[@(k)] += rC@(i)@(j);
+               @iexp k @(k) 1 +
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+         #endif
+         pC += @(mu)*@(nu);
+      }
+      pA += incAm;
+      pB = pB0;
+   }
+}
 @ROUT ATL_mm4x2
 void ATL_UGEMM
 (
