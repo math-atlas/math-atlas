@@ -64,7 +64,7 @@
 #define MMF_JKMAB      20  /* 1: Jam-K major A/B, column-major C */
 #define MMF_BMAB       21  /* 1: block major A/B, col-maj C */
 #define MMF_BMABC      22  /* 1: block major A/B/C */
-#define MMF_KVECAM     23  /* 1: A/B are k-vlen-access-major, C access major */
+@skip #define MMF_KVECAM     23  /* 1: A/B are k-vlen-access-major, C access major */
 
 #ifdef ATL_JKMDEF
    #define MMF_DEFAULT ( (1<<MMF_LDCTOP) | (1<<MMF_JKMABC) | (1<<MMF_AOUTER) | \
@@ -85,7 +85,7 @@ struct MMNode
    int SSE;             /* 0: no SSE, 1: SSE1 req, 2: SSE2 req, etc */
    int lat, muladd, pref, clean, fftch, iftch, nftch; /* used for gened codes */
    int vlen;            /* vector length, 0 or 1 if scalar code */
-   int dupB;            /* duplicate copied B intries if dubB > 1 */
+   int kmaj;            /* k-major access storage? */
    int mbB, nbB, kbB;  /* best blocking dims found by search */
    enum ATLAS_TRANS TA, TB;
    int asmbits;   /* bitfield indicating which assembly(ies) is required */
@@ -1061,7 +1061,7 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
 
 @endwhile
 @ROUT mmread 
-@whiledef jj mu nu ku kbmin kbmax fftch iftch nftch lat pref muladd vlen dupB
+@whiledef jj mu nu ku kbmin kbmax fftch iftch nftch lat pref muladd vlen kmaj
    sp = strstr(ln, "@up@(jj)=");
    if (sp)
       p->@(jj) = atoi(sp+@len@(jj)+1);
@@ -1203,7 +1203,7 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
 @endwhile
 
 @ROUT mmread 
-@whiledef kw mu nu ku kbmin kbmax fftch iftch nftch lat pref muladd vlen dupB
+@whiledef kw mu nu ku kbmin kbmax fftch iftch nftch lat pref muladd vlen kmaj
    if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
    i += fprintf(fpout, "@up@(kw)=%d ", np->@(kw));
 @endwhile
@@ -2485,8 +2485,8 @@ int MMKernelFailsTest
       else
          i = sprintf(ln, "make %cammmtst mmrout=%s mu=%d nu=%d ku=%d ",
                      pre, umm->rout, umm->mu, umm->nu, umm->ku);
-      if (umm->dupB > 1)
-         i += sprintf(ln+i, "dupB=%d ", umm->dupB);
+      if (umm->kmaj > 1)
+         i += sprintf(ln+i, "kmaj=%d ", umm->kmaj);
    }
    else if (pre == 'c' || pre == 'z')
       i = sprintf(ln, "make cmmutstcase mmrout=%s csC=2 ", umm->rout);
@@ -2506,8 +2506,8 @@ int MMKernelFailsTest
       else
          i += sprintf(ln+i, "beta=%d betan=\"X\" ", beta);
    }
-   if (umm->dupB > 1)
-         i += sprintf(ln+i, "dupB=%d ", umm->dupB);
+   if (umm->kmaj > 1)
+         i += sprintf(ln+i, "kmaj=%d ", umm->kmaj);
    if (umm->comp)
    {
       ch = (pre == 'c' || pre == 's') ? 'S' : 'D';
@@ -2820,11 +2820,11 @@ double TimeMMKernel
    if (FORCETIME)
       sprintf(fnam, "res/tmpout");
    else if (JKMAJOR) 
-   /*   dmmMNK%d_JMMBxNBxKB_muxnud#xku_rtK_LDTOP_vlen_pf_a1_bX_flushKB */
+   /*   dmmMNK%d_JMMBxNBxKB_muxnuk#xku_rtK_LDTOP_vlen_pf_a1_bX_flushKB */
       sprintf(fnam, 
               "res/%cmm%s%d_%dx%dd%dx%d_%dx%dx%d_rtK%d__v%d_%d_%d_a1_%s_%d",
               pre, FLAG_IS_SET(mmp->flag, MMF_AOUTER) ? "MNK" : "NMK",
-              mmp->ID, mb, nb, mmp->dupB, kb, mmp->mu, mmp->nu, mmp->ku, 
+              mmp->ID, mb, nb, mmp->kmaj, kb, mmp->mu, mmp->nu, mmp->ku, 
               FLAG_IS_SET(mmp->flag, MMF_KRUNTIME), 
               FLAG_IS_SET(mmp->flag, MMF_LDCTOP), 
               mmp->vlen, mmp->pref, be, cflush);
@@ -2849,8 +2849,8 @@ double TimeMMKernel
             i = sprintf(ln, "make mmucaseN mmrout=AMMCASES/%s ", mmp->rout);
          else
             i = sprintf(ln, "make mmucaseN mmrout=%s ", mmp->rout);
-         if (mmp->dupB > 1)
-            i += sprintf(ln+i, "dupB=%d ", mmp->dupB);
+         if (mmp->kmaj > 1)
+            i += sprintf(ln+i, "kmaj=%d ", mmp->kmaj);
       }
       else
          i = sprintf(ln, "make mmucase mmrout=%s ", mmp->rout);
