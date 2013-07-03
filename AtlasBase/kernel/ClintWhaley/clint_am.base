@@ -11992,3 +11992,191 @@ DONE:
    movq 40(%rsp), %r15
    add  $FSIZE, %rsp
    ret
+@ROUT ATL_skmmm4x2x256_avx.S
+#include "atlas_asm.h"
+
+#define rm0     %ymm0
+#define rB0     %ymm1
+#define rB1     %ymm2
+#define rA0     %ymm3
+#define rA1     %ymm4
+#define rA2     %ymm5
+#define rA3     %ymm6
+#define rC00    %ymm7
+#define rC10    %ymm8
+#define rC20    %ymm9
+#define rC30    %ymm10
+#define rC01    %ymm11
+#define rC11    %ymm12
+#define rC21    %ymm13
+#define rC31    %ymm14
+
+#define KK      %rdx   /* API register */
+#define pA      %rcx   /* API reg */
+#define pB      %rax   /* comes in as r8 */
+#define NMU     %rdi   /* API reg */
+#define NNU     %rsi   /* API reg */
+#define pC      %r9    /* API reg */
+#define pfB     %r10
+#define pfA     %r8
+
+#define NNU0    %r11
+#define incA    %r12
+#define pB0     %r13
+#define r192    %r14
+#define K0      %r15
+#define FSIZE 6*8
+
+#ifdef BETAN1
+   #define VCOP vsubps
+#elif defined(BETA1)
+   #define VCOP vaddps
+#elif defined(VCOP)
+   #undef VCOP
+#endif
+/*
+                    rdi      rsi    rdx        rcx         r8        r9
+void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
+                  8(%rsp)    16(%rsp)     24(%rsp)
+                CTYPE *pAn, CTYPE *pBn, CTYPE *pCn);
+ */
+.text
+.global ATL_asmdecor(ATL_USERMM)
+ALIGN16
+ATL_asmdecor(ATL_USERMM):
+/*
+ * Save callee-saved iregs
+ */
+   sub  $FSIZE, %rsp
+   movq %rbp, (%rsp)
+   movq %rbx, 8(%rsp)
+   movq %r12, 16(%rsp)
+   movq %r13, 24(%rsp)
+   movq %r14, 32(%rsp)
+   movq %r15, 40(%rsp)
+
+   mov %r8, pB
+   movq FSIZE+16(%rsp), pfB
+   movq FSIZE+8(%rsp), pfA
+/*
+ * Set incA = 4*K*sizeof = 4*K*4 = 16*K
+ */
+   mov KK, incA
+   shl $4, incA
+   shr $3, KK                   /* KK /= VLEN */
+   mov KK, K0
+   mov $192, r192
+   mov NNU, NNU0
+   sub $-128, pA
+   sub $-128, pB
+   mov pB, pB0
+
+   ALIGN16
+   MLOOP:
+//      NLOOP:
+         vmovaps -128(pB), rB0
+         vmovaps -128(pA), rA0
+         vmulps rB0, rA0, rC00
+         vmovaps -96(pA), rA1
+         vmovaps -64(pA), rA2
+         vmulps rB0, rA1, rC10
+         vmovaps -32(pA), rA3
+         vmovaps -96(pB), rB1
+         vmulps rB0, rA2, rC20
+         vmulps rB0, rA3, rC30
+            prefetcht0 (pC)
+         vmulps rB1, rA0, rC01
+         vmovaps -64(pB), rB0
+         vmulps rB1, rA1, rC11
+         vmulps rB1, rA2, rC21
+         vmulps rB1, rA3, rC31
+            prefetcht2 (pfB)
+
+            prefetcht2 (pfA)
+            add $32, pfB
+            add $32, pfA
+//         KLOOP:
+@iexp ao -32 32 +
+@iexp bo -64 32 +
+@iexp k 8 0 +
+@iwhile k < 256
+         #if KB > @(k)
+   @iexp k @(k) 8 +
+            vmovaps @(ao)(pA), rA0
+   @iexp ao @(ao) 32 +
+            vmulps rB0, rA0, rm0
+            vaddps rm0, rC00, rC00
+            vmovaps @(ao)(pA), rA1
+   @iexp ao @(ao) 32 +
+            vmulps rB0, rA1, rm0 
+            vaddps rm0, rC10, rC10
+            vmovaps @(ao)(pA), rA2
+   @iexp ao @(ao) 32 +
+            vmulps rB0, rA2, rm0 
+            vaddps rm0, rC20, rC20
+            vmovaps @(ao)(pA), rA3
+   @iexp ao @(ao) 32 +
+            vmulps rB0, rA3, rm0 
+            vaddps rm0, rC30, rC30
+            vmovaps @(bo)(pB), rB1
+   @iexp bo @(bo) 32 +
+            vmulps rB1, rA0, rm0 
+            vaddps rm0, rC01, rC01
+            vmulps rB1, rA1, rm0 
+            vaddps rm0, rC11, rC11
+            vmulps rB1, rA2, rm0 
+            vaddps rm0, rC21, rC21
+            vmovaps @(bo)(pB), rB0
+   @iexp bo @(bo) 32 +
+            vmulps rB1, rA3, rm0 
+            vaddps rm0, rC31, rC31
+         #endif
+@endiwhile
+            /*rC00 = {c00h,c00g,c00f,c00e,c00d,c00c,c00b,c00a}*/
+            /*rC10 = {c10h,c10g,c10f,c10e,c10d,c10c,c10b,c10a}*/
+            /*rC20 = {c20h,c20g,c20f,c20e,c20d,c20c,c20b,c20a}*/
+            /*rC30 = {c30h,c30g,c30f,c30e,c30d,c30c,c30b,c30a}*/
+KDONE:
+         vhaddps rC10, rC00, rC00 
+            /*rC00 = {c10gh,c10ef,c00gh,c00ef,c10cd,c10ab,c00cd,c00ab}*/
+         vhaddps rC30, rC20, rC20
+            /*rC20 = {c30gh,c30ef,c20gh,c20ef,c30cd,c30ab,c20cd,c20ab}*/
+         vhaddps rC20, rC00, rC00
+            /*rC00 = {c30eh,c20eh,c10eh,c00eh,c30ad,c20ad,c10ad,c00ad}*/
+
+         vhaddps rC11, rC01, rC01
+            /*rC01 = {c11gh,c11ef,c01gh,c01ef,c11cd,c11ab,c01cd,c01ab}*/
+         vhaddps rC31, rC21, rC21
+            /*rC21 = {c31gh,c31ef,c21gh,c21ef,c31cd,c31ab,c21cd,c21ab}*/
+         vhaddps rC21, rC01, rC01
+            /*rC01 = {c31eh,c21eh,c11eh,c01eh,c31ad,c21ad,c11ad,c01ad}*/
+
+         vperm2f128 $0x31, rC01, rC00, rC10  /*0011 0001 */
+            /*rC10 = {c31eh,c21eh,c11eh,c01eh,c30eh,c20eh,c10eh,c00eh}*/
+         vperm2f128 $0x20, rC01, rC00, rC00  /*0010 0000 */
+            /*rC00 = {c31ad,c21ad,c11ad,c01ad,c30ad,c20ad,c10ad,c00ad}*/
+         vaddps rC10, rC00, rC00
+            /*rC00 = {c31ah,c21ah,c11ah,c01ah,c30ah,c20ah,c10ah,c00ah}*/
+         #ifdef VCOP
+            VCOP (pC), rC00, rC00
+         #endif
+         vmovaps rC00, (pC)
+         add $KB*4*2, pB
+         add $32, pC
+         sub $1, NNU
+      jnz MLOOP
+      add incA, pA   /* pA += 4*K*sizeof */
+      mov pB0, pB
+      sub $1, NMU
+      mov NNU0, NNU
+   jnz MLOOP
+
+DONE:
+   movq (%rsp), %rbp
+   movq 8(%rsp), %rbx
+   movq 16(%rsp), %r12
+   movq 24(%rsp), %r13
+   movq 32(%rsp), %r14
+   movq 40(%rsp), %r15
+   add  $FSIZE, %rsp
+   ret

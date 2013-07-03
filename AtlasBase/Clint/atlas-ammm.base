@@ -133,6 +133,12 @@ ID=24 MU=24 NU=4 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_sammm24x4x256_fma3.S' \
 ID=25 MU=24 NU=4 KU=2 AUTH="R. Clint Whaley" ROUT='ATL_samm24x4x2_fma3.S' \
      SSE=5 ASM=GAS_x8664 KRUNTIME=1 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -mavx -mfma'
+ID=26 MU=12 NU=1 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_skmmm12x1x4_sse3.S' \
+     SSE=3 KMAJ=4 ASM=GAS_x8664 \
+     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
+ID=27 MU=12 NU=1 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_skmmm12x1x256_sse3.S' \
+     SSE=3 KMAJ=4 ASM=GAS_x8664 KRUNTIME=0 KBMIN=4 KBMAX=256 \
+     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
 #ID=26 MU=12 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_sammm12x3d2x256_sse3.S' \
 #     SSE=3 DUPB=2 KBMAX=256 ASM=GAS_x8664 \
 #     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
@@ -611,7 +617,12 @@ void GenBlockingFile(char pre, ATL_mmnode_t *mmb, char *outd, char *nm)
          else if (bc[i] == 'N')
             b = mp->nu;
          else if (bc[i] == 'K')
-            b = FLAG_IS_SET(mp->flag, MMF_KRUNTIME) ? mp->ku : mp->kbB;
+         {
+            if (FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+               b = mp->ku;
+            else
+               b = (mp->kmaj > 1) ? mp->ku : mp->kbB;
+         }
          if (mp->next)
             fprintf(fp, "%8d,  /* index %d */\n", b, j);
          else
@@ -1769,9 +1780,16 @@ void GenKerns(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, ATL_mmnode_t *urb,
          }
          if (kmaj > 1)
          {
-            sprintf(ln, 
-            "mv ATL_%crm2am_a%c_%dx%d.c %s/. ;mv ATL_%ccm2am_a%c_%dx%d.c %s/.",
-                    pre, al[j], kmaj, u, outd, pre, al[j], kmaj, u, outd);
+            sprintf(ln, "mv ATL_%crm2am_a%c_%d.c %s/ATL_%crm2am_a%c_%dx%d.c",
+                    pre, al[j], u, outd, pre, al[j], kmaj, u);
+            ierr = system(ln);
+            if (ierr)
+            {
+               fprintf(stderr, "FAILED CMND='%s'\n", ln);
+               exit(ierr);
+            }
+            sprintf(ln, "mv ATL_%ccm2am_a%c_%d.c %s/ATL_%ccm2am_a%c_%dx%d.c",
+                    pre, al[j], u, outd, pre, al[j], kmaj, u);
          }
          else
             sprintf(ln, 
@@ -4935,6 +4953,7 @@ int Mjoin(PATL,ammmABC)
 #include "atlas_misc.h"
 #include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_rankK.h))
 #include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_rkkblk.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_rkkflag.h))
 
 @ROUT ATL_ammm ATL_ammm_1b
 #include "atlas_misc.h"
@@ -5199,6 +5218,11 @@ int @(rt)
 {
    int i;
    int nmu, nnu, nku, bM, bN, bK, szB;
+   #if ATL_AMM_MAXKMAJ > 1
+      int KK;
+   #else
+      #define KK K
+   #endif
    int mu, nu, ku;
    void *vp;
    TYPE *pA, *pB, *pC, *p;
@@ -5223,6 +5247,9 @@ int @(rt)
    bM = nmu * mu;
    bN = nnu * nu;
    bK = nku * ku;
+   #if ATL_AMM_MAXKMAJ > 1
+      KK = ATL_AMM_KMAJOR(i) ? bK : K;
+   #endif
 /*
  * If alpha is one, then we only have to worry about beta
  */
@@ -5310,26 +5337,36 @@ int @(rt)
       else
          blk2c = ATL_AMM_BLK2C_a1_bX[i];
    }
-   amm = (bK == K) ? ATL_AMM_KERN_b0[i] : ATL_AMM_KERN_K1[i];
+   #if ATL_AMM_MAXKMAJ > 1
+      if (ATL_AMM_KMAJOR(i))
+      {
+         if (ATL_AMM_KRUNTIME(i))
+            amm = ATL_AMM_KERN_b0[i];
+         else 
+            amm = (ATL_AMM_KBs[i]==KK) ? ATL_AMM_KERN_b0[i]:ATL_AMM_KERN_K1[i];
+      }
+      else
+   #endif
+         amm = (bK == K) ? ATL_AMM_KERN_b0[i] : ATL_AMM_KERN_K1[i];
    #if ATL_AMM_MAXDUPB > 1
       szB = K*bN*ATL_AMM_DUPBN[i];
    #else
-      szB = K*bN;
+      szB = KK*bN;
    #endif
-   vp = malloc((bM*bN + bM*K + szB)*sizeof(TYPE) + 3*ATL_Cachelen);
+   vp = malloc((bM*bN + bM*KK + szB)*sizeof(TYPE) + 3*ATL_Cachelen);
    if (!vp)
       return(1);
    pB = ATL_AlignPtr(vp);
    pA = pB + szB;
    pA = ATL_AlignPtr(pA);
-   pC = pA + bM*K;
+   pC = pA + bM*KK;
    pC = ATL_AlignPtr(pC);
 /*
  * Copy A & B into workspace, and pad K its if necessary
  */
    a2blk(K, M, alpA, A, lda, pA);
    b2blk(K, N, alpB, B, ldb, pB);
-   amm(nmu, nnu, K, pA, pB, pC, pA, pB, pC);
+   amm(nmu, nnu, KK, pA, pB, pC, pA, pB, pC);
    blk2c(M, N, alpC, pC, beta, C, ldc);
 
    free(vp);
@@ -5580,7 +5617,7 @@ int Mjoin(PATL,ammmNMK)
             kb0 += kb;
             nkblks--;
          }
-         #if ATL_MAXKMAJ > 1
+         #if ATL_AMM_MAXKMAJ > 1
          if (!ATL_AMM_KRUNTIME(IK) && ((kb0/ku)*ku == kb0) && 
              ATL_AMM_KMAJ[IK] < 2)
          #else
@@ -5593,14 +5630,14 @@ int Mjoin(PATL,ammmNMK)
    {
       kb0 = K;
       nkblks = 0;
-      #if ATL_MAXKMAJ > 1
+      #if ATL_AMM_MAXKMAJ > 1
       if (!ATL_AMM_KRUNTIME(IK) && ((kb0/ku)*ku == kb0) && ATL_AMM_KMAJ[IK] < 2)
       #else
       if (!ATL_AMM_KRUNTIME(IK) && ((kb0/ku)*ku == kb0))
       #endif
          amm_b0 = ATL_AMM_KERN_K1[IK];
    }
-   #if ATL_MAXKMAJ > 1
+   #if ATL_AMM_MAXKMAJ > 1
       if (ATL_AMM_KMAJ[IK] > 1)
          kb0U = ((kb0+ku-1)/ku)*ku;
       else 
