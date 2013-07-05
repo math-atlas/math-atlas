@@ -107,6 +107,9 @@ ID=30 MU=12 NU=4 KU=2 AUTH="R. Clint Whaley" ROUT='ATL_damm12x4x2_fma3.S' \
 ID=31 MU=6 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_dammm6x3r2x256_sse3.S' \
      SSE=3 KBMAX=256 ASM=GAS_x8664 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -msse3'
+ID=32 MU=14 NU=1 KU=2 AUTH="R. Clint Whaley" ROUT='ATL_dkmmm14x1x256_sse3.S' \
+     SSE=3 KMAJ=2 ASM=GAS_x8664 \
+     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse3'
 @ROUT samcases.idx
 ID=1 MU=16 NU=4 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_samm16x4x1_av.c' \
      KRUNTIME=1 COMP='gcc' CFLAGS='-Os -maltivec -mabi=altivec -mcpu=970 -mtune=970 -mvrsave -fschedule-insns2 -fno-schedule-insns'
@@ -1142,9 +1145,18 @@ void GenRankKH
       if (FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
       {
          ATL_mmnode_t *p;
-         for (p=rkb; p != mp; p = p->next)
-            if (FLAG_IS_SET(p->flag, MMF_KRUNTIME) && p->ID == mp->ID)
-               break;
+         if (mp->ID > 0)
+         {
+            for (p=rkb; p != mp; p = p->next)
+               if (p->ID == mp->ID)
+                  break;
+         }
+         else
+         {
+            for (p=rkb; p != mp; p = p->next)
+               if (KernelIsSame(mp, p))
+                  break;
+         }
          if (mp == p)
             SpewForthKernProto(fp, pre, mp, '0');
       }
@@ -3494,16 +3506,28 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
       ATL_mmnode_t *p;
       const int i4 = (i<<2), mu=nl[i4], nu=nl[i4+1], kmaj=nl[i4+2], nb=nl[i4+3];
       const int kb = (nb > 8) ? (nb>>2) : nb;
-      int vl=VECi;
+      int vl=VECi, vmu;
       double mf;
-      if (mu % VLEN[VECi])
+/*
+ *    HERE HERE: Improve KMAJ when generator is extended!
+ */
+      if (kmaj > 1)
       {
-         if (VECi == VTAVX && !(mu%VLEN[VTSSE]))
-            VECi = VTSSE;
-         else
-            VECi = VTSC;
+        vmu = mu;
+        VECi = VTSC;
       }
-      p = GetNewGenNode(pre, nb, 0, mu/VLEN[VECi], nu, 1, kmaj);
+      else
+      {
+         if (mu % VLEN[VECi])
+         {
+            if (VECi == VTAVX && !(mu%VLEN[VTSSE]))
+               VECi = VTSSE;
+            else
+               VECi = VTSC;
+         }
+         vmu = mu / VLEN[VECi];
+      }
+      p = GetNewGenNode(pre, nb, 0, vmu, nu, 1, kmaj);
       p->flag |= (1<<MMF_KRUNTIME);
       VECi = vl;
       #if 0  /* by default don't waste time testing generated code */
@@ -3709,11 +3733,25 @@ ATL_mmnode_t *KCleanByNB
 
       kb = mp->kbB >> 2;
       kb = (kb >= 4) ? kb : 4;
+      if (mp->kmaj > 1)
+         kb = ((kb+mp->kmaj-1)/mp->kmaj)*mp->kmaj;
 
       p = FindMUNU(mkb, mp->mu, mp->nu);
-      assert(p);
-      p = CloneMMNode(p);
-      p->next = NULL;
+/*
+ *    If no user cleanup exists, generate one
+ */
+      if (!p)
+      {
+         if (mp->kmaj > 1)
+            p = GetNewGenNode(pre, 0, 0, mp->mu, mp->nu, mp->kmaj, mp->kmaj);
+         else
+            p = GetNewGenNode(pre, 0, 0, mp->mu, mp->nu, 1, 0);
+      }
+      else
+      {
+         p = CloneMMNode(p);
+         p->next = NULL;
+      }
       p->nbB = nb; p->mbB = mb;  p->kbB = kb;
       p->mflop[0] = TimeMMKernel(verb, 0, p, pre, mb, nb, kb, 0, 0, kb, 
                                  0, 0, -1);
@@ -4062,7 +4100,8 @@ int KernelIsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
  */
    if (p0->ID == 0 && p1->ID == 0)
       return(p0->mu == p1->mu && p0->nu == p1->nu && p0->ku == p1->ku &&
-             p0->vlen == p1->vlen && p0->flag == p1->flag);
+             p0->vlen == p1->vlen && p0->flag == p1->flag &&
+             p0->kmaj == p1->kmaj);
 /*
  * If both are user kernels, then they may be repeats.  For user kernels,
  * they are the same if both ID and flag match, else they are not.
@@ -5131,7 +5170,7 @@ int @(rt)
    KK = K;
    #if ATL_AMM_MAXKMAJ > 1
       if (ATL_AMM_KMAJOR(K-3))
-         KK = (K+ku-1)/ku;
+         KK = ((K+ku-1)/ku)*ku;
    #endif
    szB = j*KK;
    vp = malloc((i*j + szB + (Mb+mbFU)*KK)*sizeof(TYPE) + 3*ATL_Cachelen);
@@ -5501,11 +5540,10 @@ int Mjoin(PATL,ammmNMK)
 {
    ATL_CINT mu=ATL_AMM_MUs[IK], nu=ATL_AMM_NUs[IK], ku=ATL_AMM_KUs[IK];
    #if ATL_AMM_MAXKMAJ > 1
-      size_t kb0U;
-      ATL_CINT KK = (K+ku-1)/ku;
+      size_t kb0U, KK;
    #else
       #define kb0U kb0
-      ATL_CINT KK = K;
+      #define KK K
    #endif
    ATL_CINT KRUN = ATL_AMM_KRUNTIME(IK);
    ATL_CSZT mb=ATL_AMM_MBs[IK], NB=ATL_AMM_NBs[IK], kb=ATL_AMM_KBs[IK];
@@ -5518,7 +5556,7 @@ int Mjoin(PATL,ammmNMK)
    void *vp;
    cm2am_t a2blk, b2blk;
    ablk2cmat_t blk2c;
-   ammkern_t amm_b1 = ATL_AMM_KERN_b1[IK], amm_b0 = ATL_AMM_KERN_K1[IK];
+   ammkern_t amm_b1 = ATL_AMM_KERN_b1[IK], amm_b0;
 
    if (alpha == ATL_rone)
    {
@@ -5617,31 +5655,34 @@ int Mjoin(PATL,ammmNMK)
             kb0 += kb;
             nkblks--;
          }
-         #if ATL_AMM_MAXKMAJ > 1
-         if (!ATL_AMM_KRUNTIME(IK) && ((kb0/ku)*ku == kb0) && 
-             ATL_AMM_KMAJ[IK] < 2)
-         #else
-         if (!ATL_AMM_KRUNTIME(IK) && ((kb0/ku)*ku == kb0))
-         #endif
-            amm_b0 = ATL_AMM_KERN_K1[IK];
       }
    }
    else /* K < nb */
    {
       kb0 = K;
       nkblks = 0;
-      #if ATL_AMM_MAXKMAJ > 1
-      if (!ATL_AMM_KRUNTIME(IK) && ((kb0/ku)*ku == kb0) && ATL_AMM_KMAJ[IK] < 2)
-      #else
-      if (!ATL_AMM_KRUNTIME(IK) && ((kb0/ku)*ku == kb0))
-      #endif
-         amm_b0 = ATL_AMM_KERN_K1[IK];
    }
    #if ATL_AMM_MAXKMAJ > 1
-      if (ATL_AMM_KMAJ[IK] > 1)
+      if (ATL_AMM_KMAJOR(IK))
+      {
+         KK = ((K+ku-1)/ku)*ku;
          kb0U = ((kb0+ku-1)/ku)*ku;
-      else 
+         if (ATL_AMM_KRUNTIME(IK))
+            amm_b0 = ATL_AMM_KERN_b0[IK];
+         else
+            amm_b0 = (ATL_AMM_KBs[IK] == kb0U) 
+                     ?  ATL_AMM_KERN_b0[IK] : ATL_AMM_KERN_K1[IK];
+      }
+      else
+      {
+         KK = K;
          kb0U = kb0;
+         amm_b0 = (kb0==ATL_AMM_KBs[IK] || ATL_AMM_KRUNTIME(IK))
+                  ? ATL_AMM_KERN_b0[IK]:ATL_AMM_KERN_K1[IK];
+      }
+   #else
+      amm_b0 = (kb0==ATL_AMM_KBs[IK] || ATL_AMM_KRUNTIME(IK))
+               ? ATL_AMM_KERN_b0[IK]:ATL_AMM_KERN_K1[IK];
    #endif
    szA = (nmblks*mb+MBF)*KK; /* wrkspc for all of A wt M rounded up to MU*/
    j = Mmax(NB, NBF);
@@ -5729,7 +5770,7 @@ int Mjoin(PATL,ammmNMK)
             b2blk(kb0, nb, ATL_rone, B, ldb, wB);
          wAn = wA+mb*kb0U;
          wBn = (nkblks) ? wB+incwB0 : wB;
-         amm_b0(nmu, nnu, kb0, wA, wB, wC, nkblks?wAn:wA, wBn, wC);
+         amm_b0(nmu, nnu, kb0U, wA, wB, wC, nkblks?wAn:wA, wBn, wC);
          wA = wAn;
          wB = wBn;
          A += incAk0;
@@ -5784,7 +5825,7 @@ int Mjoin(PATL,ammmNMK)
             b2blk(kb0, nb, ATL_rone, B, ldb, wB);
          wAn = wA+MBF*kb0U;
          wBn = (nkblks) ? wB+incwB0 : wB;
-         amm_b0(nmuF, nnu, kb0, wA, wB, wC, nkblks?wAn:wA, wBn, wC);
+         amm_b0(nmuF, nnu, kb0U, wA, wB, wC, nkblks?wAn:wA, wBn, wC);
          wA = wAn;
          wB = wBn;
          A += incAk0;
