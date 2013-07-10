@@ -48,14 +48,14 @@
 #if KB <= 40
    #define prefB(m_) prefetcht0 m_
 #else
-   #define prefB(m_) prefetcht2 m_
+   #define prefB(m_) prefetcht1 m_
 #endif
-#if KB > 120
-   #define prefA(m_)
-#elif KB > 40
-   #define prefA(m_) prefetcht2 m_
-#else
+#if KB <= 40
    #define prefA(m_) prefetcht0 m_
+#elif KB < 120
+   #define prefA(m_) prefetcht1 m_
+#else
+   #define prefA(m_)
 #endif
 #define MOVAPD movaps
 /*
