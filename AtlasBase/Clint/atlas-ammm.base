@@ -311,15 +311,29 @@ typedef void (*cmat2ablk_t)(const size_t, const size_t, const SCALAR,
                             const TYPE*, const size_t, const SCALAR,TYPE*);
 typedef void (*ammkern_t)(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,
                           TYPE*, const TYPE*, const TYPE*, const TYPE*);
+typedef struct amminfo amminfo_t;
+struct amminfo
+{
+   cm2am_t a2blk, b2blk;
+   ablk2cmat_t Cblk2cm;
+   cmat2ablk_t cm2Cblk;
+   ammkern_t amm_b0, amm_b1, amm_bn, amm_k1_b0;
+   unsigned short IDX, mb, nb, kb;
+   unsigned char flag, mu, nu, ku;
+};
+
 enum ATL_AMMALG {ATL_amm1b, ATL_ammrkK, ATL_NMK};
 
+int Mjoin(PATL,GetAmmmInfo)
+   (amminfo_t *out, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB, ATL_CSZT M, 
+    ATL_CSZT N, ATL_CSZT K, const SCALAR alpha, const SCALAR beta);
 @whiledef rt ammm ammm_1b ammm_rkK
 int Mjoin(PATL,@(rt))
    (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,ATL_CSZT, const SCALAR,
     const TYPE*,ATL_CSZT,const TYPE*,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT);
 @endwhile
 int Mjoin(PATL,ammmNMK)
-   (int,enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,ATL_CSZT, 
+   (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,ATL_CSZT, 
     const SCALAR,const TYPE*,ATL_CSZT,const TYPE*,ATL_CSZT,const SCALAR,
     TYPE*,ATL_CSZT);
 #endif  /* end include file guard */
@@ -561,6 +575,54 @@ FILE *StandHStart(char pre, ATL_mmnode_t *mmb, char *outd, char *bnam)
    return(fp);
 }
 
+void GenAmmSum(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *rkb, char *outd)
+{
+   ATL_mmnode_t *mp;
+   char *fnam;
+   FILE *fp;
+   char *type = "unsigned short";
+   int i, n, maxb, maxNB, maxMB, maxKB, maxkmaj;
+   char PRE = toupper(pre), bc[3] = {'M', 'N', 'K'};
+
+   fp = StandHStart(pre, mmb, outd, "sum");
+   maxkmaj = maxNB = maxKB = maxMB = 0;
+   for (n=0,mp=mmb; mp; n++, mp = mp->next)
+   {
+      maxkmaj = Mmax(maxkmaj, mp->kmaj);
+      maxMB = Mmax(maxMB, mp->mbB);
+      maxNB = Mmax(maxNB, mp->nbB);
+      maxKB = Mmax(maxKB, mp->kbB);
+   }
+   if (maxkmaj == 1)
+      maxkmaj = 0;
+   maxb = Mmax(maxMB, maxNB);
+   maxb = Mmax(maxb, maxKB);
+   fprintf(fp, "\n#define ATL_AMM_MAXMB %d\n", maxMB);
+   fprintf(fp, "#define ATL_AMM_MAXNB %d\n", maxNB);
+   fprintf(fp, "#define ATL_AMM_MAXKB %d\n", maxKB);
+   fprintf(fp, "#define ATL_AMM_MAXKMAJ %d\n\n", maxkmaj);
+   assert(rkb);
+   maxkmaj = maxNB = maxKB = maxMB = 0;
+   for (n=0,mp=rkb; mp; n++, mp = mp->next)
+   {
+      maxkmaj = Mmax(maxkmaj, mp->kmaj);
+      maxMB = Mmax(maxMB, mp->mbB);
+      maxNB = Mmax(maxNB, mp->nbB);
+      maxKB = Mmax(maxKB, mp->kbB);
+   }
+   if (maxkmaj == 1)
+      maxkmaj = 0;
+   fprintf(fp, "#define ATL_MAXM_RKK %d\n", maxMB);
+   fprintf(fp, "#define ATL_MAXN_RKK %d\n", maxNB);
+   fprintf(fp, "#define ATL_MAXK_RKK %d\n", maxKB);
+   fprintf(fp, "#define ATL_MAXKMAJ_RKK %d\n\n", maxkmaj);
+
+   fprintf(fp, "#define ATL_AMMFLG_KRUNTIME(flg_) ((flg_) & 1)\n");
+   fprintf(fp, "#define ATL_AMMFLG_KMAJOR(flg_) ((flg_) & 2)\n");
+
+   fprintf(fp, "\n#endif  /* end include file guard */\n");
+   fclose(fp);
+}
 void GenBlockingFile(char pre, ATL_mmnode_t *mmb, char *outd, char *nm)
 {
    ATL_mmnode_t *mp;
@@ -1087,6 +1149,34 @@ void KillUnrollList(mnur_t *b)
    }
 }
 
+int KernelIsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
+/*
+ * RETURNS: 1 if kernels are the same except for blocking, 0 otherwise
+ */
+{
+/*
+ * Kernels aren't the same if one is being compiled with specific KB,
+ * and the other has runtime
+ */
+   if (FLAG_IS_SET(p0->flag, MMF_KRUNTIME) != 
+       FLAG_IS_SET(p1->flag, MMF_KRUNTIME))
+      return(0);
+/*
+ * Two generated kernels are the same if mu,nu,ku,VLEN,flag are the same.
+ * NOTE: if we make generator handle muladd, etc, MUST UPDATE HERE!!!
+ */
+   if (p0->ID == 0 && p1->ID == 0)
+      return(p0->mu == p1->mu && p0->nu == p1->nu && p0->ku == p1->ku &&
+             p0->vlen == p1->vlen && p0->flag == p1->flag);
+/*
+ * If both are user kernels, then they may be repeats.  For user kernels,
+ * they are the same if both ID and flag match, else they are not.
+ */
+   else if (p0->ID > 0 && p1->ID > 0)
+      return(p0->ID == p1->ID && p0->flag == p1->flag);
+   return(0);  /* Can't be the same if above criteria fails */
+}
+
 void GenRankKH
 (
    char pre, 
@@ -1276,6 +1366,8 @@ void GenHeaderFiles(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
  *X   -> 3*4 = 12 indexible arrays total
  */
 {
+   if (rkb)
+      GenAmmSum(pre, mmb, rkb, outd);
    GenBlockingFile(pre, mmb, outd, "blk");
    GenFlagH(pre, mmb, outd, "flag");
    GenCMAJ2AMAJ(pre, mmb, outd, NULL);
@@ -1943,33 +2035,6 @@ void GenAllFiles(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
    GenKerns(pre, mmb, ukb, urb, outd);
 }
 
-int KernelIsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
-/*
- * RETURNS: 1 if kernels are the same except for blocking, 0 otherwise
- */
-{
-/*
- * Kernels aren't the same if one is being compiled with specific KB,
- * and the other has runtime
- */
-   if (FLAG_IS_SET(p0->flag, MMF_KRUNTIME) != 
-       FLAG_IS_SET(p1->flag, MMF_KRUNTIME))
-      return(0);
-/*
- * Two generated kernels are the same if mu,nu,ku,VLEN,flag are the same.
- * NOTE: if we make generator handle muladd, etc, MUST UPDATE HERE!!!
- */
-   if (p0->ID == 0 && p1->ID == 0)
-      return(p0->mu == p1->mu && p0->nu == p1->nu && p0->ku == p1->ku &&
-             p0->vlen == p1->vlen && p0->flag == p1->flag);
-/*
- * If both are user kernels, then they may be repeats.  For user kernels,
- * they are the same if both ID and flag match, else they are not.
- */
-   else if (p0->ID > 0 && p1->ID > 0)
-      return(p0->ID == p1->ID && p0->flag == p1->flag);
-   return(0);  /* Can't be the same if above criteria fails */
-}
 
 int KernelInList(ATL_mmnode_t *mmb, ATL_mmnode_t *p)
 /*
@@ -4997,24 +5062,15 @@ int Mjoin(PATL,ammmABC)
 #include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_rkkblk.h))
 #include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_rkkflag.h))
 
-@ROUT ATL_ammm ATL_ammm_1b
+@ROUT ATL_ammm_1b
 #include "atlas_misc.h"
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_blk.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_ablk2cmat.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_a1.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_an.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_aX.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_flag.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_kern.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_sum.h))
 @ROUT ATL_ammm
+#include "atlas_misc.h"
 #include "atlas_lvl2.h"
 #include "atlas_level1.h"
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_rankK.h))
-
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_sum.h))
    @define rt @Mjoin(PATL,ammm)@
-/*
- * This routine attempt to choose which access-major GEMM to call based on dims
- */
 @ROUT ATL_ammm_rkK
 
    @define rt @Mjoin(PATL,ammm_rkK)@
@@ -5265,136 +5321,51 @@ int @(rt)
    #else
       #define KK K
    #endif
-   int mu, nu, ku;
+   int mu, nu, ku, appAl;
    void *vp;
    TYPE *pA, *pB, *pC, *p;
    TYPE alpA=ATL_rone, alpB=ATL_rone, alpC=ATL_rone;
    ammkern_t amm;
    ablk2cmat_t blk2c;
    cm2am_t a2blk, b2blk;
-/*
- * First, choose kernel based on KB, which often can't be varied
- */
-   for (i=0; i < ATL_AMM_NCASES && ATL_AMM_KBs[i] < K; i++);
+   amminfo_t mminfo;
+   appAl = Mjoin(PATL,GetAmmmInfo)(&mminfo, TA, TB, M, N, K, alpha, beta);
+   if (!appAl)
+      alpA = alpha;
+   else if (appAl == 1)
+      alpB = alpha;
+   else
+      alpC = alpha;
 /*
  * These kernels all take runtime M/N, and do well with near-square, so
  * blindly use this kernel with nM = CEIL(M/mu)*mu, nN = CEIL(N/nu)*nu
  */
-   mu = ATL_AMM_MUs[i];
-   nu = ATL_AMM_NUs[i];
-   ku = ATL_AMM_KUs[i];
+   mu = mminfo.mu;
+   nu = mminfo.nu;
+   ku = mminfo.ku;
    nmu = (M+mu-1)/mu;
    nnu = (N+nu-1)/nu;
    nku = (K+ku-1)/ku;
    bM = nmu * mu;
    bN = nnu * nu;
    bK = nku * ku;
+   a2blk = mminfo.a2blk;
+   b2blk = mminfo.b2blk;
+   blk2c = mminfo.Cblk2cm;
    #if ATL_AMM_MAXKMAJ > 1
-      KK = ATL_AMM_KMAJOR(i) ? bK : K;
-   #endif
-/*
- * If alpha is one, then we only have to worry about beta
- */
-   if (alpha == 1.0)
-   {
-      a2blk = (TA == AtlasNoTrans) ? ATL_AMM_AT2BLK_a1[i] : ATL_AMM_A2BLK_a1[i];
-      b2blk = (TB == AtlasNoTrans) ? ATL_AMM_B2BLK_a1[i] : ATL_AMM_BT2BLK_a1[i];
-      if (beta == ATL_rone)
-         blk2c = ATL_AMM_BLK2C_a1_b1[i];
-      else if (beta == ATL_rnone)
-         blk2c = ATL_AMM_BLK2C_a1_bn[i];
-      else if (beta == ATL_rzero)
-         blk2c = ATL_AMM_BLK2C_a1_b0[i];
-      else
-         blk2c = ATL_AMM_BLK2C_a1_bX[i];
-   }
-/*
- * If C smallest matrix, apply alpha to it
- */
-   else if (N > K && M > K)
-   {
-      alpC = alpha;
-      a2blk = (TA == AtlasNoTrans) ? ATL_AMM_AT2BLK_a1[i] : ATL_AMM_A2BLK_a1[i];
-      b2blk = (TB == AtlasNoTrans) ? ATL_AMM_B2BLK_a1[i] : ATL_AMM_BT2BLK_a1[i];
-      if (alpha == ATL_rnone)
+      KK = K;
+      if (ATL_AMMFLG_KMAJOR(mminfo.flag))
       {
-         if (beta == ATL_rone)
-            blk2c = ATL_AMM_BLK2C_an_b1[i];
-         else if (beta == ATL_rnone)
-            blk2c = ATL_AMM_BLK2C_an_bn[i];
-         else if (beta == ATL_rzero)
-            blk2c = ATL_AMM_BLK2C_an_b0[i];
-         else
-            blk2c = ATL_AMM_BLK2C_an_bX[i];
-      }
-      else
-      {
-         if (beta == ATL_rone)
-            blk2c = ATL_AMM_BLK2C_aX_b1[i];
-         else if (beta == ATL_rnone)
-            blk2c = ATL_AMM_BLK2C_aX_bn[i];
-         else if (beta == ATL_rzero)
-            blk2c = ATL_AMM_BLK2C_aX_b0[i];
-         else
-            blk2c = ATL_AMM_BLK2C_aX_bX[i];
-      }
-   }
-/*
- * If A smallest matrix, apply alpha to it
- */
-   else if (K > N && M > N)
-   {
-      alpA = alpha;
-      if (alpha == ATL_rnone)
-         a2blk = (TA == AtlasNoTrans)?ATL_AMM_AT2BLK_an[i]:ATL_AMM_A2BLK_an[i];
-      else
-         a2blk = (TA == AtlasNoTrans)?ATL_AMM_AT2BLK_aX[i]:ATL_AMM_A2BLK_aX[i];
-      b2blk = (TB == AtlasNoTrans) ? ATL_AMM_B2BLK_a1[i] : ATL_AMM_BT2BLK_a1[i];
-      if (beta == ATL_rone)
-         blk2c = ATL_AMM_BLK2C_a1_b1[i];
-      else if (beta == ATL_rnone)
-         blk2c = ATL_AMM_BLK2C_a1_bn[i];
-      else if (beta == ATL_rzero)
-         blk2c = ATL_AMM_BLK2C_a1_b0[i];
-      else
-         blk2c = ATL_AMM_BLK2C_a1_bX[i];
-   }
-/* 
- * B is smallest matrix, apply alpha to it
- */
-   else
-   {
-      alpB = alpha;
-      a2blk = (TA == AtlasNoTrans) ? ATL_AMM_AT2BLK_a1[i] : ATL_AMM_A2BLK_a1[i];
-      if (alpha == ATL_rnone)
-         b2blk = (TB == AtlasNoTrans)?ATL_AMM_B2BLK_an[i]:ATL_AMM_BT2BLK_an[i];
-      else
-         b2blk = (TB == AtlasNoTrans)?ATL_AMM_B2BLK_aX[i]:ATL_AMM_BT2BLK_aX[i];
-      if (beta == ATL_rone)
-         blk2c = ATL_AMM_BLK2C_a1_b1[i];
-      else if (beta == ATL_rnone)
-         blk2c = ATL_AMM_BLK2C_a1_bn[i];
-      else if (beta == ATL_rzero)
-         blk2c = ATL_AMM_BLK2C_a1_b0[i];
-      else
-         blk2c = ATL_AMM_BLK2C_a1_bX[i];
-   }
-   #if ATL_AMM_MAXKMAJ > 1
-      if (ATL_AMM_KMAJOR(i))
-      {
-         if (ATL_AMM_KRUNTIME(i))
-            amm = ATL_AMM_KERN_b0[i];
+         KK = bK;
+         if (ATL_AMMFLG_KRUNTIME(mminfo.flag))
+            amm = mminfo.amm_b0;
          else 
-            amm = (ATL_AMM_KBs[i]==KK) ? ATL_AMM_KERN_b0[i]:ATL_AMM_KERN_K1[i];
+            amm = (mminfo.kb==KK) ? mminfo.amm_b0 : mminfo.amm_k1_b0;
       }
       else
    #endif
-         amm = (bK == K) ? ATL_AMM_KERN_b0[i] : ATL_AMM_KERN_K1[i];
-   #if ATL_AMM_MAXDUPB > 1
-      szB = K*bN*ATL_AMM_DUPBN[i];
-   #else
-      szB = KK*bN;
-   #endif
+         amm = (bK == K) ? mminfo.amm_b0 : mminfo.amm_k1_b0;
+   szB = KK*bN;
    vp = malloc((bM*bN + bM*KK + szB)*sizeof(TYPE) + 3*ATL_Cachelen);
    if (!vp)
       return(1);
@@ -5488,44 +5459,17 @@ int @(rt)
    else if (K <= ATL_MAXK_RKK)
       iret = Mjoin(PATL,ammm_rkK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                   beta, C, ldc);
-@beginskip
-   else if (K <= ATL_AMM_MAXKB)
-   {
-      if (M <= ATL_AMM_MAXMB && N <= ATL_AMM_MAXNB)
-         iret = Mjoin(PATL,ammm_1b)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
-                                    beta, C, ldc);
-      else
-         iret = Mjoin(PATL,ammm_rkK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
-                                     beta, C, ldc);
-   }
-@endskip
-   else if (M >= 3*ATL_AMM_MAXMB && N >= 3*ATL_AMM_MAXNB && 
-            K >= 3*ATL_AMM_MAXKB)
-      iret = Mjoin(PATL,ammmNMK)(ATL_AMM_NCASES-1, TA, TB, M, N, K, alpha, 
-                                 A, lda, B, ldb, beta, C, ldc);
-   else if (K < ATL_AMM_MAXKB)
-   {
-      int i;
-      for (i=0; i < ATL_AMM_NCASES && ATL_AMM_KBs[i] < K; i++);
-      iret = Mjoin(PATL,ammmNMK)(i, TA, TB, M, N, K, alpha, A, lda,
-                                 B, ldb, beta, C, ldc);
-   }
    else
-      iret = Mjoin(PATL,ammmNMK)(ATL_AMM_NCASES-1, TA, TB, M, N, K, alpha, 
-                                 A, lda, B, ldb, beta, C, ldc);
+      iret = Mjoin(PATL,ammmNMK)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
+                                 beta, C, ldc);
    return(iret);
 }
 @ROUT ATL_ammmNMK
 #include "atlas_misc.h"
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_blk.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_ablk2cmat.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_a1.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_flag.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_kern.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_sum.h))
 
 int Mjoin(PATL,ammmNMK)
 (
-   int IK,                /* index of kernel to use */
    enum ATLAS_TRANS TA,
    enum ATLAS_TRANS TB,
    ATL_CSZT M,
@@ -5541,59 +5485,46 @@ int Mjoin(PATL,ammmNMK)
    ATL_CSZT ldc
 )
 {
-   ATL_CINT mu=ATL_AMM_MUs[IK], nu=ATL_AMM_NUs[IK], ku=ATL_AMM_KUs[IK];
+   amminfo_t mminfo;
+   ATL_INT mb, NB, kb, mu, nu, ku, KRUN;
    #if ATL_AMM_MAXKMAJ > 1
       size_t kb0U, KK;
    #else
       #define kb0U kb0
       #define KK K
    #endif
-   ATL_CINT KRUN = ATL_AMM_KRUNTIME(IK);
-   ATL_CSZT mb=ATL_AMM_MBs[IK], NB=ATL_AMM_NBs[IK], kb=ATL_AMM_KBs[IK];
-   ATL_CSZT incwA = mb*kb, nmu = mb / mu;
-   size_t nmblks, nnblks, nkblks, mbF, nbF, kb0, nmuF, MBF, NBF;
-   size_t incAk, incBk, incAk0, incBk0, incAm, incBn, incCn;
+   size_t nmblks, nnblks, nkblks, mbF, nbF, kb0, nmu, nmuF, MBF, NBF;
+   size_t incwA, incAk, incBk, incAk0, incBk0, incAm, incBn, incCn;
    size_t i, j, k, szA, szB, szC, nnu0, nnuF;
    const TYPE *B0 = B;
+   TYPE alpA=ATL_rone, alpB=ATL_rone, alpC=ATL_rone;
    TYPE *wA, *wB, *wC, *wA0, *wB0;
    void *vp;
    cm2am_t a2blk, b2blk;
    ablk2cmat_t blk2c;
-   ammkern_t amm_b1 = ATL_AMM_KERN_b1[IK], amm_b0;
+   ammkern_t amm_b1, amm_b0;
+   int appAl;
 
-   if (alpha == ATL_rone)
-   {
-      if (beta == ATL_rone)
-         blk2c = ATL_AMM_BLK2C_a1_b1[IK];
-      else if (beta == ATL_rnone)
-         blk2c = ATL_AMM_BLK2C_a1_bn[IK];
-      else if (beta == ATL_rzero)
-         blk2c = ATL_AMM_BLK2C_a1_b0[IK];
-      else
-         blk2c = ATL_AMM_BLK2C_a1_bX[IK];
-   }
-   else if (alpha == ATL_rnone)
-   {
-      if (beta == ATL_rone)
-         blk2c = ATL_AMM_BLK2C_an_b1[IK];
-      else if (beta == ATL_rnone)
-         blk2c = ATL_AMM_BLK2C_an_bn[IK];
-      else if (beta == ATL_rzero)
-         blk2c = ATL_AMM_BLK2C_an_b0[IK];
-      else
-         blk2c = ATL_AMM_BLK2C_an_bX[IK];
-   }
+   appAl = Mjoin(PATL,GetAmmmInfo)(&mminfo, TA, TB, M, N, K, alpha, beta);
+   if (!appAl)
+      alpA = alpha;
+   else if (appAl == 1)
+      alpB = alpha;
    else
-   {
-      if (beta == ATL_rone)
-         blk2c = ATL_AMM_BLK2C_aX_b1[IK];
-      else if (beta == ATL_rnone)
-         blk2c = ATL_AMM_BLK2C_aX_bn[IK];
-      else if (beta == ATL_rzero)
-         blk2c = ATL_AMM_BLK2C_aX_b0[IK];
-      else
-         blk2c = ATL_AMM_BLK2C_aX_bX[IK];
-   }
+      alpC = alpha;
+   mb = mminfo.mb;
+   NB = mminfo.nb;
+   kb = mminfo.kb;
+   KRUN = ATL_AMMFLG_KRUNTIME(mminfo.flag);
+   mu = mminfo.mu;
+   nu = mminfo.nu;
+   ku = mminfo.ku;
+   incwA = mb*kb; 
+   nmu = mb / mu;
+   amm_b1 = mminfo.amm_b1;
+   blk2c = mminfo.Cblk2cm;
+   a2blk = mminfo.a2blk;
+   b2blk = mminfo.b2blk;
 /*
  * Handle N differently than other dims: since it is outer loop, don't want
  * to peel, so just vary nb inside the main loop.  nnblks therefore includes
@@ -5666,36 +5597,29 @@ int Mjoin(PATL,ammmNMK)
       nkblks = 0;
    }
    #if ATL_AMM_MAXKMAJ > 1
-      if (ATL_AMM_KMAJOR(IK))
+      if (ATL_AMMFLG_KMAJOR(mminfo.flag))
       {
          KK = ((K+ku-1)/ku)*ku;
          kb0U = ((kb0+ku-1)/ku)*ku;
-         if (ATL_AMM_KRUNTIME(IK))
-            amm_b0 = ATL_AMM_KERN_b0[IK];
+         if (ATL_AMMFLG_KRUNTIME(mminfo.flag))
+            amm_b0 = mminfo.amm_b0;
          else
-            amm_b0 = (ATL_AMM_KBs[IK] == kb0U) 
-                     ?  ATL_AMM_KERN_b0[IK] : ATL_AMM_KERN_K1[IK];
+            amm_b0 = (mminfo.kb == kb0U) ?  mminfo.amm_b0 : mminfo.amm_k1_b0;
       }
       else
       {
          KK = K;
          kb0U = kb0;
-         amm_b0 = (kb0==ATL_AMM_KBs[IK] || ATL_AMM_KRUNTIME(IK))
-                  ? ATL_AMM_KERN_b0[IK]:ATL_AMM_KERN_K1[IK];
+         amm_b0 = (kb0==mminfo.kb || KRUN) ? mminfo.amm_b0 : mminfo.amm_k1_b0;
       }
    #else
-      amm_b0 = (kb0==ATL_AMM_KBs[IK] || ATL_AMM_KRUNTIME(IK))
-               ? ATL_AMM_KERN_b0[IK]:ATL_AMM_KERN_K1[IK];
+      amm_b0 = (kb0==mminfo.kb || KRUN) ? mminfo.amm_b0 : mminfo.amm_k1_b0;
    #endif
    szA = (nmblks*mb+MBF)*KK; /* wrkspc for all of A wt M rounded up to MU*/
    j = Mmax(NB, NBF);
    i = Mmax(MBF, mb);
    szC = i*j;
-   #if ATL_AMM_MAXDUPB < 2
-      szB = KK*j;                     /* workspace for panel of B */
-   #else
-      szB = (KK*j)*ATL_AMM_DUPBN[IK]; /* workspace for panel of B */
-   #endif
+   szB = KK*j;                     /* workspace for panel of B */
 
    vp = malloc(ATL_MulBySize(szA+szB+szC)+3*ATL_Cachelen);
    ATL_assert(vp);
@@ -5710,27 +5634,23 @@ int Mjoin(PATL,ammmNMK)
       incAm = mb;
       incAk0 = kb0*lda;
       incAk = kb*lda;
-      a2blk = ATL_AMM_AT2BLK_a1[IK];
    }
    else
    {
       incAm = mb*lda;
       incAk0 = kb0;
       incAk = kb;
-      a2blk = ATL_AMM_A2BLK_a1[IK];
    }
    if (TB == AtlasNoTrans)
    {
       incBk0 = kb0;
       incBk = kb;
-      b2blk = ATL_AMM_B2BLK_a1[IK];
       incBn = NB*ldb;
    }
    else
    {
       incBk0 = kb0*ldb;
       incBk = kb*ldb;
-      b2blk = ATL_AMM_BT2BLK_a1[IK];
       incBn = NB;
    }
    incCn = ldc*NB;
@@ -5753,10 +5673,6 @@ int Mjoin(PATL,ammmNMK)
       }
       incwB = nbsz*kb;
       incwB0 = nbsz*kb0U;
-      #if ATL_AMM_MAXDUPB > 1
-         incwB  *= ATL_AMM_DUPBN[IK];
-         incwB0 *= ATL_AMM_DUPBN[IK];
-      #endif
 /*
  *    Do all M-blocks except final one, which may be of differing size & partial
  */
@@ -5768,9 +5684,9 @@ int Mjoin(PATL,ammmNMK)
  *       Peel first K it to handle K-cleanup and set BETA=0
  */
          if (!j)
-            a2blk(kb0, mb, ATL_rone, A, lda, wA);
+            a2blk(kb0, mb, alpA, A, lda, wA);
          if (!i)
-            b2blk(kb0, nb, ATL_rone, B, ldb, wB);
+            b2blk(kb0, nb, alpB, B, ldb, wB);
          wAn = wA+mb*kb0U;
          wBn = (nkblks) ? wB+incwB0 : wB;
          amm_b0(nmu, nnu, kb0U, wA, wB, wC, nkblks?wAn:wA, wBn, wC);
@@ -5788,9 +5704,9 @@ int Mjoin(PATL,ammmNMK)
                wAn = wA+incwA;
                wBn = wB+incwB;
                if (!j)
-                  a2blk(kb, mb, ATL_rone, A, lda, wA);
+                  a2blk(kb, mb, alpA, A, lda, wA);
                if (!i)
-                  b2blk(kb, nb, ATL_rone, B, ldb, wB);
+                  b2blk(kb, nb, alpB, B, ldb, wB);
                amm_b1(nmu, nnu, kb, wA, wB, wC, wAn, wBn, wC);
                wA = wAn;
                wB = wBn;
@@ -5802,14 +5718,14 @@ int Mjoin(PATL,ammmNMK)
  */
             wAn = wA+incwA;
             if (!j)
-               a2blk(kb, mb, ATL_rone, A, lda, wA);
+               a2blk(kb, mb, alpA, A, lda, wA);
             if (!i)
-               b2blk(kb, nb, ATL_rone, B, ldb, wB);
+               b2blk(kb, nb, alpB, B, ldb, wB);
             amm_b1(nmu, nnu, kb, wA, wB, wC, wAn, wB0, wC);
             wA = wAn;
             wB = wB0;
          }
-         blk2c(mb, nb, alpha, wC, beta, C, ldc);
+         blk2c(mb, nb, alpC, wC, beta, C, ldc);
          A = An;
          B = B0;
          C += mb;
@@ -5823,9 +5739,9 @@ int Mjoin(PATL,ammmNMK)
  *       Peel first K it to handle K-cleanup and set BETA=0
  */
          if (!j)
-            a2blk(kb0, mbF, ATL_rone, A, lda, wA);
+            a2blk(kb0, mbF, alpA, A, lda, wA);
          if (!i)
-            b2blk(kb0, nb, ATL_rone, B, ldb, wB);
+            b2blk(kb0, nb, alpB, B, ldb, wB);
          wAn = wA+MBF*kb0U;
          wBn = (nkblks) ? wB+incwB0 : wB;
          amm_b0(nmuF, nnu, kb0U, wA, wB, wC, nkblks?wAn:wA, wBn, wC);
@@ -5843,9 +5759,9 @@ int Mjoin(PATL,ammmNMK)
                wAn = wA+MBF*kb;
                wBn = wB+incwB;
                if (!j)
-                  a2blk(kb, mbF, ATL_rone, A, lda, wA);
+                  a2blk(kb, mbF, alpA, A, lda, wA);
                if (!i)
-                  b2blk(kb, nb, ATL_rone, B, ldb, wB);
+                  b2blk(kb, nb, alpB, B, ldb, wB);
                amm_b1(nmuF, nnu, kb, wA, wB, wC, wAn, wBn, wC);
                wA += MBF*kb;
                wB = wBn;
@@ -5856,14 +5772,14 @@ int Mjoin(PATL,ammmNMK)
  *          Last K-block peeled to change prefetch pattern
  */
             if (!j)
-               a2blk(kb, mbF, ATL_rone, A, lda, wA);
+               a2blk(kb, mbF, alpA, A, lda, wA);
             if (!i)
-               b2blk(kb, nb, ATL_rone, B, ldb, wB);
+               b2blk(kb, nb, alpB, B, ldb, wB);
             amm_b1(nmuF, nnu, kb, wA, wB, wC, wA0, wB0, wC);
             wA = wA0;
             wB = wB0;
          }
-         blk2c(mbF, nb, alpha, wC, beta, C, ldc);
+         blk2c(mbF, nb, alpC, wC, beta, C, ldc);
       }  /* end M-peel */
       wA = wA0;
       B = B0 = Bn;
@@ -6398,4 +6314,124 @@ int main(int nargs, char **args)
    if (pre == 's')
       typ = "float";
    genMM(pre, vec, kmaj, kb, mu, nu, ku);
+}
+@ROUT ATL_GetAmmmInfo
+#include "atlas_misc.h"
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_blk.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_ablk2cmat.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_a1.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_an.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_aX.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_flag.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_kern.h))
+
+int Mjoin(PATL,GetAmmmInfo)
+(
+   amminfo_t *out,
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   ATL_CSZT M,
+   ATL_CSZT N,
+   ATL_CSZT K,
+   const SCALAR alpha,
+   const SCALAR beta
+)
+{
+   int ik=ATL_AMM_NCASES-1, appAl;  /* 0:A, 1:B, 2:C */
+/*
+ * For rank-K update, choose smallest KB that contains required K
+ */
+   if (K < ATL_AMM_MAXKB)  
+   {
+      for (ik=0; ik < ATL_AMM_NCASES && ATL_AMM_KBs[ik] < K; ik++);
+   }
+   out->IDX = ik;
+   out->mb = ATL_AMM_MBs[ik];
+   out->nb = ATL_AMM_NBs[ik];
+   out->kb = ATL_AMM_KBs[ik];
+   out->mu = ATL_AMM_MUs[ik];
+   out->nu = ATL_AMM_NUs[ik];
+   out->ku = ATL_AMM_KUs[ik];
+   out->flag = ATL_AMM_KFLAG[ik];
+   out->amm_b0 = ATL_AMM_KERN_b0[ik];
+   out->amm_b1 = ATL_AMM_KERN_b1[ik];
+   out->amm_bn = ATL_AMM_KERN_bn[ik];
+   out->amm_k1_b0 = ATL_AMM_KERN_K1[ik];
+/*
+ * Apply alpha to smallest matrix, and use alpha/beta to pick copy routines
+ */
+   if (SCALAR_IS_ONE(alpha))
+   {
+      appAl = 0;
+      out->a2blk=(TA==AtlasNoTrans)?ATL_AMM_AT2BLK_a1[ik]:ATL_AMM_A2BLK_a1[ik];
+      out->b2blk=(TB==AtlasNoTrans)?ATL_AMM_B2BLK_a1[ik]:ATL_AMM_BT2BLK_a1[ik];
+      if (SCALAR_IS_ONE(beta))
+         out->Cblk2cm = ATL_AMM_BLK2C_a1_b1[ik];
+      else if (SCALAR_IS_ZERO(beta))
+         out->Cblk2cm = ATL_AMM_BLK2C_a1_b0[ik];
+      else if (SCALAR_IS_NONE(beta))
+         out->Cblk2cm = ATL_AMM_BLK2C_a1_bn[ik];
+      else
+         out->Cblk2cm = ATL_AMM_BLK2C_a1_bX[ik];
+   }
+   else
+   {
+      if (M >= N)                  /* A is larger than B, put alpha on C or B */
+         appAl = (M >= K) ? 2 : 1;
+      else                         /* B is larger than A, put alpha on C or A */
+         appAl = (N >= K) ? 2 : 0;
+      if (appAl == 2)  /* apply alpha to C */
+      {
+         out->a2blk = (TA == AtlasNoTrans) ?
+                      ATL_AMM_AT2BLK_a1[ik] : ATL_AMM_A2BLK_a1[ik];
+         out->b2blk = (TB == AtlasNoTrans) ?
+                      ATL_AMM_B2BLK_a1[ik] : ATL_AMM_BT2BLK_a1[ik];
+         if (SCALAR_IS_ONE(beta))
+            out->Cblk2cm = SCALAR_IS_NONE(alpha) ?
+                           ATL_AMM_BLK2C_an_b1[ik] : ATL_AMM_BLK2C_aX_b1[ik];
+         else if (SCALAR_IS_ZERO(beta))
+            out->Cblk2cm = SCALAR_IS_NONE(alpha) ?
+                           ATL_AMM_BLK2C_an_b0[ik] : ATL_AMM_BLK2C_aX_b0[ik];
+         else if (SCALAR_IS_NONE(beta))
+            out->Cblk2cm = SCALAR_IS_NONE(alpha) ?
+                           ATL_AMM_BLK2C_an_bn[ik] : ATL_AMM_BLK2C_aX_bn[ik];
+         else
+            out->Cblk2cm = SCALAR_IS_NONE(alpha) ?
+                           ATL_AMM_BLK2C_an_bX[ik] : ATL_AMM_BLK2C_aX_bX[ik];
+      }
+      else  /* not applying alpha to C */
+      {
+         if (SCALAR_IS_ONE(beta))
+            out->Cblk2cm = ATL_AMM_BLK2C_a1_b1[ik];
+         else if (SCALAR_IS_ZERO(beta))
+            out->Cblk2cm = ATL_AMM_BLK2C_a1_b0[ik];
+         else if (SCALAR_IS_NONE(beta))
+            out->Cblk2cm = ATL_AMM_BLK2C_a1_bn[ik];
+         else
+            out->Cblk2cm = ATL_AMM_BLK2C_a1_bX[ik];
+         if (!appAl)  /* apply to alpha to A */
+         {
+            if (SCALAR_IS_NONE(alpha))
+               out->a2blk = (TA == AtlasNoTrans) ?
+                            ATL_AMM_AT2BLK_an[ik] : ATL_AMM_A2BLK_an[ik];
+            else
+               out->a2blk = (TA == AtlasNoTrans) ?
+                            ATL_AMM_AT2BLK_aX[ik] : ATL_AMM_A2BLK_aX[ik];
+            out->b2blk = (TB == AtlasNoTrans) ?
+                         ATL_AMM_B2BLK_a1[ik] : ATL_AMM_BT2BLK_a1[ik];
+         }
+         else /* apply alpha to B */
+         {
+            out->a2blk = (TA == AtlasNoTrans) ?
+                         ATL_AMM_AT2BLK_a1[ik] : ATL_AMM_A2BLK_a1[ik];
+            if (SCALAR_IS_NONE(alpha))
+               out->b2blk = (TB == AtlasNoTrans) ?
+                            ATL_AMM_B2BLK_an[ik] : ATL_AMM_BT2BLK_an[ik];
+            else
+               out->b2blk = (TB == AtlasNoTrans) ?
+                            ATL_AMM_B2BLK_aX[ik] : ATL_AMM_BT2BLK_aX[ik];
+         }
+      }
+   }
+   return(appAl);
 }
