@@ -140,7 +140,7 @@ ID=25 MU=24 NU=4 KU=2 AUTH="R. Clint Whaley" ROUT='ATL_samm24x4x2_fma3.S' \
      SSE=5 ASM=GAS_x8664 KRUNTIME=1 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -mavx -mfma'
 ID=26 MU=12 NU=1 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_skmmm12x1x4_sse3.S' \
-     SSE=3 KMAJ=4 ASM=GAS_x8664 \
+     SSE=3 KMAJ=4 ASM=GAS_x8664 KRUNTIME=1 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
 ID=27 MU=12 NU=1 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_skmmm12x1x256_sse3.S' \
      SSE=3 KMAJ=4 ASM=GAS_x8664 KRUNTIME=0 KBMIN=4 KBMAX=256 \
@@ -2194,7 +2194,7 @@ int main(int nargs, char **args)
 
 #define NVECS 4
 static enum VECTYPE {VTAVX=0, VTSSE=1, VTGV=2, VTSC=3} VECi=VTSC;
-static VLEN[4] = {4, 2, 2, 1};  /* assume double, fix up if necessary later */
+static int VLEN[4] = {4, 2, 2, 1};  /* assume double, fix later if nec */
 static char *VECs[4] = {"avx", "sse", "gvec", "scalar"};
 static int TSIZE=8;
 #define KRUNMUL 1.02   /* KRUNTIME speedup increase over K-compile time */
@@ -2938,7 +2938,7 @@ ATL_mmnode_t *CreateGenCasesFromNBs
    while (i < n || ap);
    return(umb);
 }
-void SetGenVec(verb, pre)
+void SetGenVec(int verb, char pre)
 /*
  * This routine uses a simple timing to be sure if vectorization helps or not
  */
@@ -4441,16 +4441,19 @@ ATL_mmnode_t *GetLowRankKKernels
       {
          const int mu = mp->mu, nu = mp->nu, ku = mp->ku;
          const int mb = (NB/mu)*mu, nb = (NB/nu)*nu;
+         const int KK = (mp->kmaj < 2) ? k : ((k+ku-1)/ku)*ku;
          double mf;
 
          assert(mb && nb);
-         if (FLAG_IS_SET(mp->flag, MMF_KRUNTIME) || k%ku)
+         if (FLAG_IS_SET(mp->flag, MMF_KRUNTIME) || KK%ku)
          {
             printf("   skipping %d. %s, KRUN=%d, ku=%d\n", mp->ID, mp->rout,
                    FLAG_IS_SET(mp->flag, MMF_KRUNTIME), ku);
             continue;
          }
-         mf = TimeMMKernel(verb, 0, mp, pre, mb, nb, k, 0, 0, 0, 0, 0, -1);
+         mf = TimeMMKernel(verb, 0, mp, pre, mb, nb, KK, 0, 0, 0, 0, 0, -1);
+         if (KK != k)
+            mf = (mf*k) / (double)KK;
          printf("   %d. %s: mb=%d, nb=%d, MFLOP=%.2f\n", mp->ID, mp->rout,
                 mb, nb, mf);
          if (!best)
@@ -4626,15 +4629,16 @@ int IsSlowerThanList
          continue;
       if (kb%ku)
          continue;
-      if (kb%ku == 0)
+      if (kb%ku == 0 || mp->kmaj > 1)
       {
+         int KK = (mp->kmaj > 1) ? ((kb+ku-1)/ku)*ku : kb;
          mu = mp->mu;
          nu = mp->nu;
          mb = (NB/mu)*mu;
          nb = (NB/nu)*nu;
          assert(mb && nb);
-         mf = TimeMMKernel(verb, 0, mp, pre, mb, nb, kb, 0, 0, 0, 0, 0, -1);
-         mp->mflop[1] = mfc;
+         mf = TimeMMKernel(verb, 0, mp, pre, mb, nb, KK, 0, 0, 0, 0, 0, -1);
+         mp->mflop[1] = (kb*mfc)/(double)KK;
          if (mf > mfc)
          {
 @skip            printf("      %d. %s (%.2f) outcompeted by %d. %s (%.2f)\n",
@@ -4690,20 +4694,24 @@ ATL_mmnode_t *MergeRankKKernels
       {
          if (fixb->kbB == k)
          {
-            int mu = fixb->mu, nu = fixb->nu;
+            int mu = fixb->mu, nu = fixb->nu, ku = fixb->ku;
             int mb = (NB/mu)*mu, nb = (NB/nu)*nu;
+            int kb = (fixb->kmaj < 2) ? k : ((k+ku-1)/ku)*ku;
             best = fixb;
             fixb = fixb->next;
-            mfB = TimeMMKernel(verb, 0, best, pre, mb, nb, k, 0, 0, 0, 0, 0,-1);
+            mfB = TimeMMKernel(verb, 0, best, pre, mb, nb, kb, 0, 0, 0, 0,0,-1);
+            mfB = (mfB*k)/(double)kb;
          }
       }
       if (sqrb)
       {
          if (sqrb->kbB == k)
          {
-            int mu = sqrb->mu, nu = sqrb->nu;
+            int mu = sqrb->mu, nu = sqrb->nu, ku = sqrb->ku;
             int mb = (NB/mu)*mu, nb = (NB/nu)*nu;
-            mf = TimeMMKernel(verb, 0, sqrb, pre, mb, nb, k, 0, 0, 0, 0, 0, -1);
+            int kb = (sqrb->kmaj < 2) ? k : ((k+ku-1)/ku)*ku;
+            mf = TimeMMKernel(verb, 0, sqrb, pre, mb, nb, kb, 0, 0, 0, 0, 0,-1);
+            mf = (mf*k)/(double)kb;
             if (mf > mfB)
             {
                mfB = mf;
@@ -4717,13 +4725,19 @@ ATL_mmnode_t *MergeRankKKernels
          }
       }
       for (p=runb; p; p = p->next)
-         if ((k % p->ku == 0) && k > p->kbmax && (!p->kbmin || p->kbmin <= k))
+         if ((k % p->ku == 0 || p->kmaj > 1) && 
+             k > p->kbmax && (!p->kbmin || p->kbmin <= k))
             break;
       if (p)
       {
-         int mu = p->mu, nu = p->nu;
+         int mu = p->mu, nu = p->nu, ku = p->ku;
          int mb = (NB/mu)*mu, nb = (NB/nu)*nu;
-         mf = TimeMMKernel(verb, 0, p, pre, mb, nb, k, 0, 0, 0, 0, 0, -1);
+         int kb = (p->kmaj < 2) ? k : ((k+ku-1)/ku)*ku;
+         if (p->kbmax && p->kbmax < kb)
+            mf = -1.0;
+         else
+            mf = TimeMMKernel(verb, 0, p, pre, mb, nb, kb, 0, 0, 0, 0, 0, -1);
+         mf = (mf*k)/(double)kb;
          if (mf > mfB)
          {
             mfB = mf;
@@ -5108,15 +5122,23 @@ int @(rt)
    ammkern_t amm;
    ablk2cmat_t blk2c;
    cm2am_t a2blk, b2blk;
-   size_t i, j, Mb, Nb, nmblks, nnblks, incAw, incC, incB, incAm, KK, szB;
+   size_t i, j, Mb, Nb, nmblks, nnblks, incAw, incC, incB, incAm, szB;
    TYPE alpA=ATL_rone, alpB=ATL_rone;
    int mb, nb, mu, nu, ku, mbF, nbF, mbFU, nbFU, nmu, nnu, nmuF, nnuF; 
+   #if ATL_AMM_MAXKMAJ > 1
+      size_t KK;
+   #else
+      #define KK K
+   #endif
 
    ATL_assert(K > 2 && K <= ATL_MAXK_RKK);
    amm = ATL_AMM_KERN_RKK[K-3];
    mu = ATL_AMM_MUs[K-3];
    nu = ATL_AMM_NUs[K-3];
    ku = ATL_AMM_KUs[K-3];
+   #if ATL_AMM_MAXKMAJ > 1
+      KK = ATL_AMM_KMAJOR(K-3) ? ((K+ku-1)/ku)*ku : K;
+   #endif
 
    mb = nb = 0;
    if (M < ATL_MAXM_RKK)
@@ -5127,7 +5149,7 @@ int @(rt)
    {
       i = mb = (ATL_MAXM_RKK/mu)*mu;
       j = nb = (ATL_MAXN_RKK/nu)*nu;
-      while (2*i*j + K*(i+j) > ATL_L1elts)
+      while (2*i*j + KK*(i+j) > ATL_L1elts)
       {
           if (i > j && i > 16)
              i -= mu;
@@ -5226,26 +5248,15 @@ int @(rt)
  */
    i = Mmax(mb, mbFU);
    j = Mmax(nb, nbFU);
-   KK = K;
-   #if ATL_AMM_MAXKMAJ > 1
-      if (ATL_AMM_KMAJOR(K-3))
-         KK = ((K+ku-1)/ku)*ku;
-   #endif
    szB = j*KK;
    vp = malloc((i*j + szB + (Mb+mbFU)*KK)*sizeof(TYPE) + 3*ATL_Cachelen);
    if (!vp)
       return(1);
    pA0 = pA = ATL_AlignPtr(vp);
-   pB = pA + K*(Mb+mbFU);
+   pB = pA + KK*(Mb+mbFU);
    pB = ATL_AlignPtr(pB);
    pC = pB + szB;
    pC = ATL_AlignPtr(pC);
-@beginskip
-   pC = pA + K*(Mb+mbFU);
-   pC = ATL_AlignPtr(pC);
-   pB = pC + i*j;
-   pB = ATL_AlignPtr(pB);
-@endskip
 /*
  * Do last nbF-wide column of C & B
  * NOTE: Rewrite to do have mb0 be last block, and do column panels 
@@ -5277,14 +5288,14 @@ int @(rt)
    {
       TYPE *pAn = pA + incAw;
       a2blk(K, mb, alpA, A, lda, pA);
-      amm(nmu, nnuF, K, pA, pB, pC, pAn, pB, pC);
+      amm(nmu, nnuF, KK, pA, pB, pC, pAn, pB, pC);
       blk2c(mb, nbF, ATL_rone, pC, beta, c, ldc);
       pA = pAn;
       A += incAm;
       c += mb;
    }
    a2blk(K, mbF, alpA, A, lda, pA);
-   amm(nmuF, nnuF, K, pA, pB, pC, pA0, pB, pC);
+   amm(nmuF, nnuF, KK, pA, pB, pC, pA0, pB, pC);
    blk2c(mbF, nbF, ATL_rone, pC, beta, c, ldc);
    C -= incC;
    for (j=nnblks; j; j--)
@@ -5298,12 +5309,12 @@ int @(rt)
       for (i=nmblks; i; i--)
       {
          TYPE *pAn = pA + incAw;
-         amm(nmu, nnu, K, pA, pB, pC, pAn, pB, pC);
+         amm(nmu, nnu, KK, pA, pB, pC, pAn, pB, pC);
          blk2c(mb, nb, ATL_rone, pC, beta, c, ldc);
          pA = pAn;
          c += mb;
       }
-      amm(nmuF, nnu, K, pA, pB, pC, pA0, pB, pC);
+      amm(nmuF, nnu, KK, pA, pB, pC, pA0, pB, pC);
       blk2c(mbF, nb, ATL_rone, pC, beta, c, ldc);
       b -= incB;
       C -= incC;
