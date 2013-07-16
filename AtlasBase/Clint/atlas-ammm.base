@@ -4406,7 +4406,7 @@ ATL_mmnode_t *GetLowRankKKernels
    ATL_mmnode_t *inb    /* all working ukerns */
 )
 {
-   int k;
+   int k, ik;
    ATL_mmnode_t *rkKb=NULL, *mp;
 /*
  * Get rid of all K-runtime kernels from consideration
@@ -4433,56 +4433,72 @@ ATL_mmnode_t *GetLowRankKKernels
    }
    else
       return(NULL);
-   for (k=15; k > 2; k--)
+   for (ik=0; ik < 2; ik++)
    {
-      printf("FINDING BEST USER-PROVIDED KERNEL FOR K=%d:\n", k);
-      ATL_mmnode_t *best=NULL;
-      for (mp=inb; mp; mp = mp->next)
+      int kbeg, kend, kinc;
+      if (!ik)
       {
-         const int mu = mp->mu, nu = mp->nu, ku = mp->ku;
-         const int mb = (NB/mu)*mu, nb = (NB/nu)*nu;
-         const int KK = (mp->kmaj < 2) ? k : ((k+ku-1)/ku)*ku;
-         double mf;
-
-         assert(mb && nb);
-         if (FLAG_IS_SET(mp->flag, MMF_KRUNTIME) || KK%ku)
-         {
-            printf("   skipping %d. %s, KRUN=%d, ku=%d\n", mp->ID, mp->rout,
-                   FLAG_IS_SET(mp->flag, MMF_KRUNTIME), ku);
-            continue;
-         }
-         mf = TimeMMKernel(verb, 0, mp, pre, mb, nb, KK, 0, 0, 0, 0, 0, -1);
-         if (KK != k)
-            mf = (mf*k) / (double)KK;
-         printf("   %d. %s: mb=%d, nb=%d, MFLOP=%.2f\n", mp->ID, mp->rout,
-                mb, nb, mf);
-         if (!best)
-         {
-            best = mp;
-            mp->mflop[0] = mf;
-            mp->mbB = mb;
-            mp->nbB = nb;
-            mp->kbB = k;
-         }
-         else if (best->mflop[0] < mf)
-         {
-            best = mp;
-            mp->mflop[0] = mf;
-            mp->mbB = mb;
-            mp->nbB = nb;
-            mp->kbB = k;
-         }
-      }
-      if (best)
-      {
-         best = CloneMMNode(best);
-         best->next = rkKb;
-         rkKb = best;
-         printf("BEST FIXED-%d KERNEL: %d. %s MFLOP=%.2f\n\n", 
-                k, best->ID, best->rout, best->mflop[0]);
+         kbeg = 96;
+         kend = 16;
+         kinc = 16;
       }
       else
-         printf("NO SPECIAL CASE for K=%d\n\n", k);
+      {
+         kbeg = 15;
+         kend = 3;
+         kinc = 1;
+      }
+      for (k=kbeg; k >= kend; k -= kinc)
+      {
+         printf("FINDING BEST USER-PROVIDED KERNEL FOR K=%d:\n", k);
+         ATL_mmnode_t *best=NULL;
+         for (mp=inb; mp; mp = mp->next)
+         {
+            const int mu = mp->mu, nu = mp->nu, ku = mp->ku;
+            const int mb = (NB/mu)*mu, nb = (NB/nu)*nu;
+            const int KK = (mp->kmaj < 2) ? k : ((k+ku-1)/ku)*ku;
+            double mf;
+   
+            assert(mb && nb);
+            if (FLAG_IS_SET(mp->flag, MMF_KRUNTIME) || KK%ku)
+            {
+               printf("   skipping %d. %s, KRUN=%d, ku=%d\n", mp->ID, mp->rout,
+                      FLAG_IS_SET(mp->flag, MMF_KRUNTIME), ku);
+               continue;
+            }
+            mf = TimeMMKernel(verb, 0, mp, pre, mb, nb, KK, 0, 0, 0, 0, 0, -1);
+            if (KK != k)
+               mf = (mf*k) / (double)KK;
+            printf("   %d. %s: mb=%d, nb=%d, MFLOP=%.2f\n", mp->ID, mp->rout,
+                   mb, nb, mf);
+            if (!best)
+            {
+               best = mp;
+               mp->mflop[0] = mf;
+               mp->mbB = mb;
+               mp->nbB = nb;
+               mp->kbB = k;
+            }
+            else if (best->mflop[0] < mf)
+            {
+               best = mp;
+               mp->mflop[0] = mf;
+               mp->mbB = mb;
+               mp->nbB = nb;
+               mp->kbB = k;
+            }
+         }
+         if (best)
+         {
+            best = CloneMMNode(best);
+            best->next = rkKb;
+            rkKb = best;
+            printf("BEST FIXED-%d KERNEL: %d. %s MFLOP=%.2f\n\n", 
+                   k, best->ID, best->rout, best->mflop[0]);
+         }
+         else
+            printf("NO SPECIAL CASE for K=%d\n\n", k);
+      }
    }
    KillAllMMNodes(inb);
    return(rkKb);
@@ -4608,7 +4624,7 @@ int IsSlowerThanList
    ATL_mmnode_t *mp;
    double mfc, mf;
    int mu, nu, ku;
-   int mb, nb, kb;
+   int mb, nb, kb, KB;
 
    if (!mmb)
       return(0);
@@ -4618,16 +4634,17 @@ int IsSlowerThanList
    mb = (NB/mu)*mu;
    nb = (NB/nu)*nu;
    assert(mb && nb && kb);
-   mfc = TimeMMKernel(verb, 0, mmc, pre, mb, nb, kb, 0, 0, 0, 0, 0, -1);
+   KB = (mmc->kmaj < 2) ? kb : ((kb+mmc->ku-1)/mmc->ku)*mmc->ku;
+   mfc = TimeMMKernel(verb, 0, mmc, pre, mb, nb, KB, 0, 0, 0, 0, 0, -1);
+   mfc = (KB*mfc)/(double)kb;
    mmc->mflop[1] = mfc;
+   kb = mmc->kbB;
    for (mp=mmb; mp; mp = mp->next)
    {
       ku = mp->ku;
       if (mp->kbmin && kb < mp->kbmin)
          continue;
       if (mp->kbmax && kb > mp->kbmax)
-         continue;
-      if (kb%ku)
          continue;
       if (kb%ku == 0 || mp->kmaj > 1)
       {
