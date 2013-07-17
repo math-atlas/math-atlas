@@ -327,6 +327,9 @@ enum ATL_AMMALG {ATL_amm1b, ATL_ammrkK, ATL_NMK};
 int Mjoin(PATL,GetAmmmInfo)
    (amminfo_t *out, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB, ATL_CSZT M, 
     ATL_CSZT N, ATL_CSZT K, const SCALAR alpha, const SCALAR beta);
+int Mjoin(PATL,ammm_rk2)
+   (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT, const SCALAR,
+    const TYPE*,ATL_CSZT,const TYPE*,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT);
 @whiledef rt ammm ammm_1b ammm_rkK
 int Mjoin(PATL,@(rt))
    (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,ATL_CSZT, const SCALAR,
@@ -3406,14 +3409,25 @@ int FailKCleanTests(char pre, int nb, ATL_mmnode_t *kp)
  *  RETURNS: 0 if kernel passes all tests, else non-zero
  */
 {
-   int i;
+   int i, beg, end, inc;
 
-   if (!FLAG_IS_SET(kp->flag, MMF_KRUNTIME) || kp->ku != 1)
+   if (!FLAG_IS_SET(kp->flag, MMF_KRUNTIME) || 
+       (kp->ku != 1 && kp->ku != kp->kmaj))
       return(-1);
    printf("TESTING ID=%d, rout='%s', nb=%d, mu=%d, nu=%d for K-cleanup:\n",
           kp->ID, kp->rout, nb, kp->mu, kp->nu);
 
-   for (i=1; i <= nb; i++)
+   if (kp->kmaj > 1)
+   {
+      inc = beg = kp->kmaj;
+      end = ((nb+inc-1)/inc)*inc;
+   }
+   else
+   {
+      beg = inc = 1;
+      end = nb;
+   }
+   for (i=beg; i <= end; i += inc)
    {
       int ierr;
       ierr = MMKernelFailsTest(pre, nb, nb, i, 0, kp);
@@ -3443,10 +3457,16 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
       printf("READING IN UNIQUE K-CLEANUP:\n");
       for (mp=gmmb; mp; mp = mp->next)
       {
-         int nb = mp->nbB, kb = (nb > 8) ? (nb>>2) : nb;
+         int nb = mp->nbB, kb = (nb > 8) ? (nb>>2) : nb, KB = kb;
+         int ku = mp->ku;
+         if (mp->kmaj > 1)
+            KB = ((kb+ku-1)/ku)*ku;
          if (mp->mflop[0] < 0.0)
-            mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, nb, nb, kb, 0, 0, nb,
+         {
+            mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, nb, nb, KB, 0, 0, nb,
                                         0, 0, -1);
+            mp->mflop[0] *= (double)kb / (double)KB;
+         }
          printf("   nb=%d,  kb=%d, mu=%d, nu=%d, MFLOP=%.2f\n", 
                 nb, kb, mp->mu, mp->nu, mp->mflop[0]);
       }
@@ -3459,7 +3479,8 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
  * we can't guarantee they are unique
  */
    for (mp=mmb; mp; mp = mp->next, n++)
-      if (mp->ku == 1 && FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+      if ((mp->ku == 1 || (mp->kmaj == mp->ku)) && 
+          FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
         nd++;
    dl = malloc(8*n*sizeof(int));
    assert(dl);
@@ -3479,11 +3500,12 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
  */
    for (mp=mmb; mp; mp = mp->next, n++)
    {
-      if (mp->ku == 1 && FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+      if (FLAG_IS_SET(mp->flag, MMF_KRUNTIME) && 
+          (mp->ku == 1 || mp->kmaj == mp->ku))
       {
          const int nd4 = (nd<<2), mu=mp->mu, nu=mp->nu, kmaj=mp->kmaj;
 /*
- *       See if pair is already in done list if so, no new entry, just update kb
+ *       See if trip is already in done list if so, no new entry, just update kb
  *       and cleanup kernel entry
  */
          for (i=0; i < nd4; i += 4)
@@ -3574,7 +3596,7 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
       ATL_mmnode_t *p;
       const int i4 = (i<<2), mu=nl[i4], nu=nl[i4+1], kmaj=nl[i4+2], nb=nl[i4+3];
       const int kb = (nb > 8) ? (nb>>2) : nb;
-      int vl=VECi, vmu;
+      int vl=VECi, vmu, KK;
       double mf;
 /*
  *    HERE HERE: Improve KMAJ when generator is extended!
@@ -3601,8 +3623,11 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
       #if 0  /* by default don't waste time testing generated code */
          assert(!FailKCleanTests(pre, nb, p));
       #endif
+      KK = (kmaj < 2) ? kb : ((kb+kmaj-1)/kmaj)*kmaj;
       p->mflop[0] = TimeMMKernel(verb, 0, p, pre, nb, nb, kb, 0, 0, nb, 
                                  0, 0, -1);
+      if (KK != kb)
+         p->mflop[0] *= (double)kb / (double)KK;
       printf("   nb=%d, kb=%d,  mu=%d, nu=%d, MFLOP=%.2f\n", 
              nb, kb, mu, nu, p->mflop[0]);
       if (gmmb)
@@ -3641,7 +3666,8 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
  */
    for (mp=ub; mp; mp = mp->next)
    {
-      if (mp->ku == 1 && FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
+      if (FLAG_IS_SET(mp->flag, MMF_KRUNTIME) && 
+          (mp->ku == 1 || mp->kmaj == mp->ku))
       {
 /*
  *       It matched our gross criteria, see if it is a required mu/nu
@@ -3684,8 +3710,11 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
       for (mp=ummb; mp; mp = mp->next)
       {
          const int nb = mp->nbB, kb = (nb > 8) ? (nb>>2) : nb;
+         const int KK = (mp->kmaj < 2) ? kb:((kb+mp->kmaj-1)/mp->kmaj)*mp->kmaj;
          mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, nb, nb, nb, 0, 0, nb, 
                                     0, 0, -1);
+         if (KK != kb)
+            mp->mflop[0] *= (double)kb / (double)KK;
          printf("   ID=%d, nb=%d, kb=%d, mu=%d, nu=%d, MFLOP=%.2f\n", 
                 mp->ID, nb, kb, mp->mu, mp->nu, mp->mflop[0]);
       }
@@ -3906,7 +3935,8 @@ void ComputeKClean(int verb, char pre, ATL_mmnode_t *mmb)
 /*
  * This kernel generates K-cleanup for all routines present in mmb.
  * To do this, it finds all unique (mu,nu,kmaj) triplets, and then finds the
- * best ku=1, K-runtime kernel for that pair (timing both user and generated).
+ * best (ku=1 || kmaj>1), K-runtime kernel for that pair (timing both user
+ * and generated).
  * OUTPUT: <pre>AMMKCLEAN.SUM: all unique kerns to be compiled
  *   <pre>AMMKCLEANBYNB.SUM: non-unique K-clean for each NB in mmb
  *      mflop[1] contains estimated time for 1 K-it using K=MAX(kb/4,4)
@@ -5442,23 +5472,10 @@ int @(rt)
                          B, (TB == AtlasNoTrans) ? ldb : 1, C, ldc);
       return(0);
    }
-   else if (K == 2 && SCALAR_IS_ONE(beta))  /* really a GER2 */
+   else if (K == 2)
    {
-      if (TA == AtlasNoTrans)
-      {
-         if (TB == AtlasNoTrans)
-            Mjoin(PATL,ger2)(M, N, alpha, A, 1, B, ldb, alpha, A+lda, 1, 
-                             B+1, ldb, C, ldc);
-         else
-            Mjoin(PATL,ger2)(M, N, alpha, A, 1, B, 1, alpha, A+lda, 1, 
-                             B+ldb, 1, C, ldc);
-      }
-      else if (TB == AtlasNoTrans)
-         Mjoin(PATL,ger2)(M, N, alpha, A, lda, B, ldb, alpha, A+1, lda, 
-                          B+1, ldb, C, ldc);
-      else
-         Mjoin(PATL,ger2)(M, N, alpha, A, lda, B, 1, alpha, A+1, lda, 
-                          B+ldb, 1, C, ldc);
+      ATL_assert(!Mjoin(PATL,ammm_rk2)(TA, TB, M, N, alpha, A, lda, B, ldb,
+                                       beta, C, ldc));
       return(0);
    }
    else if (N == 1)  /* Really GEMV with A as matrix, A & C as vectors */
@@ -5491,6 +5508,128 @@ int @(rt)
       iret = Mjoin(PATL,ammmNMK)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
                                  beta, C, ldc);
    return(iret);
+}
+@ROUT ATL_ammm_rk2
+#include "atlas_misc.h"
+#include "atlas_lvl2.h"
+#include "atlas_level1.h"
+/*
+ * This is special-case code that handles rank-2 update by calling GER
+ */
+int Mjoin(PATL,ammm_rk2)
+(
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   ATL_CSZT M,
+   ATL_CSZT N,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CSZT lda,
+   const TYPE *B,
+   ATL_CSZT ldb,
+   const SCALAR beta,
+   TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   #ifdef DREAL
+      const int MB=512, NB=32;
+   #else /* SREAL */
+      const int MB=512, NB=64;
+   #endif
+   void *vp;
+   TYPE *x, *y, *w, *z;
+   size_t j;
+   ATL_CSZT incC = NB*ldc;
+
+/*
+ * If beta is one, can handle by one call to ger2
+ */
+   if (SCALAR_IS_ONE(beta))
+   {
+      if (TA == AtlasNoTrans)
+      {
+         if (TB == AtlasNoTrans)
+            Mjoin(PATL,ger2)(M, N, alpha, A, 1, B, ldb, alpha, A+lda, 1,
+                             B+1, ldb, C, ldc);
+         else
+            Mjoin(PATL,ger2)(M, N, alpha, A, 1, B, 1, alpha, A+lda, 1,
+                             B+ldb, 1, C, ldc);
+      }
+      else if (TB == AtlasNoTrans)
+         Mjoin(PATL,ger2)(M, N, alpha, A, lda, B, ldb, alpha, A+1, lda,
+                          B+1, ldb, C, ldc);
+      else
+         Mjoin(PATL,ger2)(M, N, alpha, A, lda, B, 1, alpha, A+1, lda,
+                          B+ldb, 1, C, ldc);
+      return(0);
+   }
+/*
+ * Later on, do smart think like copy only MB/NB at a time, and don't copy
+ * at all if vectors are contiguous, but right now, always do copy up-front
+ * so loop does not have to worry about TA/TB; this is a O(N) cost in N^2 alg
+ */
+   vp = malloc(2*ATL_MulBySize(M+N)+4*ATL_Cachelen);
+   if (!vp)
+      return(1);
+   x = ATL_AlignPtr(vp);
+   y = x + M;
+   y = ATL_AlignPtr(y);
+   w = y + N;
+   w = ATL_AlignPtr(w);
+   z = w + M;
+   z = ATL_AlignPtr(z);
+   if (TA == AtlasNoTrans)
+   {
+      Mjoin(PATL,copy)(M, A, 1, x, 1);
+      Mjoin(PATL,copy)(M, A+lda, 1, w, 1);
+   }
+   else
+   {
+      Mjoin(PATL,copy)(M, A, lda, x, 1);
+      Mjoin(PATL,copy)(M, A+1, lda, w, 1);
+   }
+   if (SCALAR_IS_ONE(alpha))
+   {
+      if (TB == AtlasNoTrans)
+      {
+         Mjoin(PATL,copy)(N, B, ldb, y, 1);
+         Mjoin(PATL,copy)(N, B+1, ldb, z, 1);
+      }
+      else
+      {
+         Mjoin(PATL,copy)(N, B, 1, y, 1);
+         Mjoin(PATL,copy)(N, B+ldb, 1, z, 1);
+      }
+   }
+   else
+   {
+      if (TB == AtlasNoTrans)
+      {
+         Mjoin(PATL,cpsc)(N, alpha, B, ldb, y, 1);
+         Mjoin(PATL,cpsc)(N, alpha, B+1, ldb, z, 1);
+      }
+      else
+      {
+         Mjoin(PATL,cpsc)(N, alpha, B, 1, y, 1);
+         Mjoin(PATL,cpsc)(N, alpha, B+ldb, 1, z, 1);
+      }
+   }
+   for (j=0; j < N; j += NB, C += incC)
+   {
+      size_t i, nb = N-j;
+      nb = (nb >= NB) ? NB : nb;
+      for (i=0; i < M; i += MB)
+      {
+         size_t mb = M-i;
+         mb = (mb >= MB) ? MB : mb;
+         Mjoin(PATL,gescal)(mb, nb, beta, C+i, ldc);
+         Mjoin(PATL,ger2)(mb, nb, ATL_rone, x+i, 1, y+j, 1, ATL_rone, 
+                          w+i, 1, z+j, 1, C+i, ldc);
+      }
+   }
+   free(vp);
+   return(0);
 }
 @ROUT ATL_ammmNMK
 #include "atlas_misc.h"
