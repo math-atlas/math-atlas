@@ -318,7 +318,7 @@ struct amminfo
    ablk2cmat_t Cblk2cm;
    cmat2ablk_t cm2Cblk;
    ammkern_t amm_b0, amm_b1, amm_bn, amm_k1_b0;
-   unsigned short IDX, mb, nb, kb;
+   unsigned short IDX, mb, nb, kb, kbmin;
    unsigned char flag, mu, nu, ku;
 };
 
@@ -716,7 +716,15 @@ void GenBlockingFile(char pre, ATL_mmnode_t *mmb, char *outd, char *nm)
       }
       fprintf(fp, "};\n\n");
    }
-
+   fprintf(fp, "static %s ATL_@(UP)AMM_KBMINs[%d] =\n{\n", type, n);
+   for (i=0,mp=mmb; mp; i++,mp = mp->next)
+   {
+      if (mp->next)
+         fprintf(fp, "%8d,  /* index %d */\n", mp->kbmin, i);
+      else
+         fprintf(fp, "%8d   /* index %d */\n", mp->kbmin, i);
+   }
+   fprintf(fp, "};\n\n");
    fprintf(fp, "\n#endif  /* end include file guard */\n");
    fclose(fp);
 }
@@ -6143,10 +6151,14 @@ int Mjoin(PATL,ammmNMK)
       {
          KK = K;
          kb0U = kb0;
-         amm_b0 = (kb0==mminfo.kb || KRUN) ? mminfo.amm_b0 : mminfo.amm_k1_b0;
+         amm_b0 = (kb0 == mminfo.kb || 
+                   (KRUN && kb0 >= mminfo.kbmin && (kb0/ku)*ku == kb0)) ?  
+                  mminfo.amm_b0 : mminfo.amm_k1_b0;
       }
    #else
-      amm_b0 = (kb0==mminfo.kb || KRUN) ? mminfo.amm_b0 : mminfo.amm_k1_b0;
+      amm_b0 = (kb0 == mminfo.kb || 
+                (KRUN && kb0 >= mminfo.kbmin && (kb0/ku)*ku == kb0)) ?  
+               mminfo.amm_b0 : mminfo.amm_k1_b0;
    #endif
    szA = (nmblks*mb+MBF)*KK; /* wrkspc for all of A wt M rounded up to MU*/
    j = Mmax(NB, NBF);
@@ -6882,6 +6894,7 @@ int Mjoin(PATL,GetAmmmInfo)
    out->mb = ATL_AMM_MBs[ik];
    out->nb = ATL_AMM_NBs[ik];
    out->kb = ATL_AMM_KBs[ik];
+   out->kbmin = ATL_AMM_KBMINs[ik];
    out->mu = ATL_AMM_MUs[ik];
    out->nu = ATL_AMM_NUs[ik];
    out->ku = ATL_AMM_KUs[ik];
