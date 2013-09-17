@@ -217,19 +217,19 @@ double time00();
 double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
 {
    void TEST_KERNEL_COS(const int N, const TYPE *X, TYPE *Y);
-   int nrep, i, n, nvec, NN, ix=0, iy=0, ii, jj;
+   int nrep, i, n, nvec, NN, ii, jj;
    const int incx=Mabs(incX)SHIFT, incy=Mabs(incY)SHIFT;
    TYPE *X, *Y, *x, *y, *stX;
    double t0, t1;
-   TYPE si, y1, y2;
+   TYPE si, y1, y2, iy;
    int l2ret;
    
    #ifdef SREAL
-   int inputf(float x, float *y1, float *y2);
+   int inputf(float x, float *y1, float *y2, float *iy);
    #endif  /* DREAL, not supported complex */
    
    #ifdef DREAL
-   int inputd(double x, double *y1, double *y2);
+   int inputd(double x, double *y1, double *y2, double *iy);
    #endif
 
    #ifdef TREAL
@@ -289,9 +289,9 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
       {
          si = dumb_rand();
    #ifdef SREAL
-         inputf(si, &y1, &y2);
+         inputf(si, &y1, &y2, &iy);
    #else
-         inputd(si, &y1, &y2);
+         inputd(si, &y1, &y2, &iy);
    #endif
       } while (y1 == NA && y2 == NA);
       X[i] = y1;
@@ -300,8 +300,8 @@ double DoTiming(int N, int nkflop, int cachesize, int incX, int incY)
 /*
  * cache flushing
  */
-   //if (cachesize > 1)
-   //   l2ret = ATL_flushcache(cachesize);
+   if (cachesize > 1)
+      l2ret = ATL_flushcache(cachesize);
 /*
  * timing
  */
