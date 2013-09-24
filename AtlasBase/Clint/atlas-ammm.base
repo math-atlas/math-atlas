@@ -5065,6 +5065,9 @@ int main(int nargs, char **args)
    exit(0);
 }
 @ROUT uammsearch
+#define CON_NOKVEC 0
+#define CON_NOMVEC 1
+#define CON_NOCOMPK 2
 /*
  * RETURNS: N-length queue wt best-performing kernel for specified dims
  */
@@ -5074,13 +5077,20 @@ ATL_mmnode_t *FindBestKerns
    int verb, 
    ATL_mmnode_t *mmb,  /* candidate user-supplied kerns */
    int N,              /* number of forced block factors */
-   int *nbs, int *mbs, int *kbs  /* forced block factors */
+   int *mbs, int *nbs, int *kbs, /* forced block factors */
+   int C               /* constraints */
 )
 {
    ATL_mmnode_t *nmmb=NULL, *mp, *mpB, *mpG, *mpg;
+   const int TRYKVEC=!(C & (1<<CON_NOKVEC));
+   const int TRYMVEC=!(C & (1<<CON_NOMVEC));
    int i;
    double mfB, mf;
+/*
+ * Find basic register blocking for generated case
+ */
    mpG = DecentGenCase(verb, pre, 32);
+   assert (mpG->kmaj < 2);
 /*
  * Loop over all required blocking factors
  */
@@ -5088,21 +5098,19 @@ ATL_mmnode_t *FindBestKerns
    for (i=N-1; i >= 0; i--)
    {
       int mb=mbs[i], nb=nbs[i], kb=kbs[i];
-      int muG=mpG->mu, nuG=mpG->nu, ut=muG*nuG; 
-      int kuG, KK, veci0=VECi;
+      int kuG, KK=kb, veci0=VECi;
+      double mfK=0.0, mfM=0.0;
+      int iveci = VECi, VL=VLEN[VECi];
 
       printf("\n   FINDING KERNEL FOR MB=%d, NB=%d, KB=%d:\n", mb, nb, kb);
-      if (mpG->kmaj < 2)
-      {
-         KK = kb;
-         kuG = 1;
-      }
-      else
-      {
-         kuG = mpG->kmaj;
-         KK = ((kb+kuG-1)/kuG)*kuG;
 /*
- *       If mb not a multiple of vlen, reduce it until it is
+ *    Find best of M- or K-vectorized generated code for this problem size
+ */
+      if (TRYMVEC)
+      {
+         int muG=mpG->mu, nuG=mpG->nu, ut=muG*nuG; 
+/*
+ *       If mb not a multiple of vlen, reduce vlen until it is
  */
          if (mb%VLEN[VECi])
          {
@@ -5111,20 +5119,76 @@ ATL_mmnode_t *FindBestKerns
             else
                VECi = VTSC;
          }
-      }
 /*
- *    First time code generator for this problem size
+ *       Make register block a multiple of mandated block
  */
-      while (mb%muG)
-         muG--;
-      while(muG*(nuG+1) <= ut)
-         nuG++;
-      while (nb%nuG)
-         nuG--;
-      mpB = mpg = GetNewGenNode(pre, kb, 0, muG, nuG, kuG, mpG->kmaj);
-      mfB = TimeMMKernel(verb, 0, mpg, pre, mb, nb, KK, KK, KK, KK, 1, 0, -1);
-      printf("      Gen mu=%d, nu=%d, kmaj=%d, mf=%.2f\n", muG, nuG, mpG->kmaj,
-             mfB);
+         muG = (muG / VL)*VLEN[VECi];
+         ut = muG * nuG;
+         while (muG > 1 && mb%muG)
+            muG -= VLEN[VECi];
+         if (muG < 1)
+            muG = 1;
+         while(muG*(nuG+1) <= ut)
+            nuG++;
+         while (nb%nuG)
+            nuG--;
+         kuG = 1;
+         mpg = GetNewGenNode(pre, kb, 0, muG/VLEN[VECi], nuG, 1, 0);
+         mfM = TimeMMKernel(verb, 0, mpg, pre, mb, nb, KK, KK, KK, KK, 1, 0,-1);
+         printf("      Gen mu=%d, nu=%d, kmaj=%d, mf=%.2f\n", muG, nuG, 0, mfM);
+      }
+      VECi = iveci;
+      if (TRYKVEC)
+      {
+         int muG, nuG=mpG->nu, ut;
+
+         if (VLEN[VECi] > 1)
+            muG = mpG->mu / VLEN[VECi];
+         else
+            muG = mpG->mu;
+         ut = muG * nuG;
+/*
+ *       If kb not a multiple of vlen, reduce it until it is
+ */
+         if (kb%VLEN[VECi])
+         {
+            if (VECi == VTAVX && !(kb%VLEN[VTSSE]))
+               VECi = VTSSE;
+            else
+               VECi = VTSC;
+         }
+         kuG = VLEN[VECi];
+/*
+ *       Make register block a multiple of mandated block
+ */
+         while (mb%muG)
+            muG--;
+         while(muG*(nuG+1) <= ut)
+            nuG++;
+         while (nb%nuG)
+            nuG--;
+         if (kuG > 1)
+         {
+            mpB =  GetNewGenNode(pre, kb, 0, muG, nuG, kuG, kuG);
+            mfK = TimeMMKernel(verb, 0, mpB, pre, mb, nb, KK, KK, KK, KK,
+                               1, 0,-1);
+            printf("      Gen mu=%d, nu=%d, kmaj=%d, mf=%.2f\n", muG, nuG, kuG,
+                   mfK);
+         }
+      }
+      if (mfM >= mfK)  /* use M-vectorized gen kernel */
+      {
+         KillMMNode(mpB);
+         mpB = mpg;
+         mfB = mfM;
+      }
+      else
+      {
+         KillMMNode(mpg);
+         mpg = mpB;
+         mfB = mfK;
+      }
+      VECi = iveci;
       if (KK != kb)
          mfB *= (double)kb / (double)KK;
       mpg->mflop[0] = mfB;
@@ -5184,9 +5248,6 @@ ATL_mmnode_t *FindBestKerns
    return(nmmb);
 }
 
-#define CON_NOKVEC 0
-#define CON_NOMVEC 1
-#define CON_NOCOMPK 2
 /*
  * This routine applies the contraints C to mmb, and returns winnowed queue
  * RETURNS: Q wt all kernels failing constraints stropped out
@@ -5344,6 +5405,30 @@ int GetFlags(int nargs, char **args, char *PRE, int *VERB, int *C,
    *MBS = mbs;
    *NBS = nbs;
    *KBS = kbs;
+   if (*PRE == 's')
+   {
+      VLEN[VTAVX] = 8;
+      VLEN[VTSSE] = 4;
+      VLEN[VTGV] = 4;
+      TSIZE = 4;
+   }
+   #ifdef ATL_AVX
+      VECi = VTAVX;
+   #elif defined(ATL_SSE1)
+      if (*PRE == 's')
+         VECi = VTSSE;
+      #ifdef ATL_SSE2
+      else
+         VECi = VTSSE;
+      #endif
+   #elif (defined(ATL_AltiVec) && !defined(ATL_VSX)) || \
+         (defined(ATL_NEON) && defined(ATL_NONIEEE) && ATL_NONIEEE != 0) || \
+         (defined(ATL_3DNow) && defined(ATL_NONIEEE) && ATL_NONIEEE != 0)
+      if (pre == 's')
+         VECi = VTGV;
+   #elif defined(ATL_VSX)
+      VECi = VTGV;
+   #endif
    return(N);
 }
 
@@ -5354,13 +5439,13 @@ int main(int nargs, char **args)
    ATL_mmnode_t *mmb, *mp, *mmB;
    double mfB;
 
-   N = GetFlags(nargs, args, &pre, &verb, &C, &nbs, &mbs, &kbs);
+   N = GetFlags(nargs, args, &pre, &verb, &C, &mbs, &nbs, &kbs);
 /*
  * Get all working kernels
  */
    mmb = GetWorkingUserCases(verb, pre);
    mmb = ApplyConstraints(mmb, C);
-   mmb = FindBestKerns(pre, verb, mmb, N, nbs, mbs, kbs);
+   mmb = FindBestKerns(pre, verb, mmb, N, mbs, nbs, kbs, C);
    ComputeKClean(verb, pre, mmb);
    mmb = ATL_SortMMNodesByMflop(0, mmb);
    mmB = ReadMMFileWithPath(pre, "res", "eAMMRES.sum");
