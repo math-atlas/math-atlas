@@ -21,10 +21,10 @@
 #include <assert.h>
 #include <stdarg.h>
 
-#define NAMLEN 128
+#define NAMLEN 1024
 #define LNLEN  2048
-#define HANLEN 50
-#define SUBLEN 128
+#define HANLEN 1024
+#define SUBLEN 1024
 
 #define F_nFlags     16
 #define F_Case        0
