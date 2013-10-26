@@ -36,15 +36,18 @@
    @endifdef
    @iif alpha = 1
       @define malp @@
+      @define calp @-@
    @endiif
    @iif alpha = -1
       @define malp @-@
+      @define calp @@
       @define nalp @n@
    @endiif
    @iif alpha ! -1
       @define nalp @@(alpha)@
       @iif alpha ! 1
          @define malp @alpha*@
+         @define calp @(-alpha)*@
          @define nalp @X@
       @endiif
    @endiif
@@ -331,6 +334,243 @@ void Mjoin(PATL,cm2am_a@(nalp)_@(nu)@(dsuf)) /* col-access matx to access-major 
 }
 @endiif
 @ROUT ATL_ccm2am cammmtst
+@iif kmaj = 1
+   @iexp kmaj 0 0 +
+@endiif
+@iif kmaj ! 0
+   @define ku @@(kmaj)@
+   @iexp ku2 @(ku) @(ku) +
+/*
+ * This routine copies the KxN submatrix A into access-k-vlen-major storage.
+ * In this storage, @(nu) vectors of @(ku) length are taken from the
+ * @(nu) columns of A and stored in a @(ku)x@(nu) subblock.
+ * CEIL(K/ku) of these subblocks are stored together to make a K-panel.
+ * The CEIL(N/nu) K-panels are stored contiguously.  If ku does not evenly
+ * divide K then the last block in the K-panel will be zero padded, and
+ * the same is true for the NU portion of the last K-panel if nu does not
+ * evenly divide N.
+ */
+#ifdef Conj_
+void Mjoin(PATL,cm2am_a@(nalp)_@(ku)x@(nu)C)
+#else
+void Mjoin(PATL,cm2am_a@(nalp)_@(ku)x@(nu))
+#endif
+(
+   ATL_CSZT K,          /* number of rows in A */
+   ATL_CSZT N,          /* number of columns in A */
+   const SCALAR alpha,  /* scalar for A */
+   const TYPE *A,       /* matrix to be copied to access-major format */
+   ATL_CSZT lda,        /* stride between row elements */
+   TYPE *rA,            /* OUTPUT: access-ku-major block holding real(A) */
+   TYPE *iA             /* OUTPUT: access-ku-major block holding imag(A) */
+)
+{
+   ATL_CSZT n = (N/@(nu))*@(nu), k = (K/@(ku))*@(ku), nr=N-n;
+   ATL_CSZT KK = ((K+@(ku)-1)/@(ku))*@(ku);
+   ATL_CSZT K2=K+K, lda2 = lda+lda, incA = lda2*@(nu), k2 = k+k, KK2=KK+KK;
+   ATL_SZT i, j;
+   @mif nalp = "X
+   const register TYPE ra=(*alpha), ia=alpha[1];
+   register TYPE rv, iv;
+   @endmif
+   @declare "   const TYPE " n n ";"
+      *A0=A
+      @define j @1@
+      @iwhile j < @(nu)
+         @iexp i @(j) -1 +
+         *A@(j)=A@(i)+lda2
+         @iexp j @(j) 1 +
+      @endiwhile
+   @enddeclare
+   @iexp binc @(nu) @(ku) *
+
+   for (j=0; j < n; j += @(nu))
+   {
+      for (i=0; i < k2; i += @(ku2), rA += @(binc), iA += @(binc))
+      {
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @iexp k 0 0 +
+         @iwhile k < @(ku)
+            @iexp k2 @(k) @(k) +
+            @iexp ib @(j) @(ku) *
+            @iexp ib @(ib) @(k) +
+            @mif nalp ! "X
+         rA[@(ib)] = @(malp)A@(j)[i+@(k2)];
+         #ifdef Conj_
+            iA[@(ib)] = @(calp)A@(j)[i+@(k2)+1];
+         #else
+            iA[@(ib)] = @(malp)A@(j)[i+@(k2)+1];
+         #endif
+            @endmif
+            @mif nalp = "X
+         rv = A@(j)[i+@(k2)];
+         #ifdef Conj_
+            iv = -A@(j)[i+@(k2)+1];
+         #else
+            iv = A@(j)[i+@(k2)+1];
+         #endif
+         rA[@(ib)] = rv*ra - iv*ia;
+         iA[@(ib)] = rv*ia + iv*ra;
+            @endmif
+            @iexp k @(k) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+      }
+      if (k != KK)
+      {
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @iexp k 0 0 +
+         @iwhile k < @(ku)
+            @iexp ib @(j) @(ku) *
+            @iexp ib @(ib) @(k) +
+            iA[@(ib)] = rA[@(ib)] = 
+            @iexp k @(k) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+                    0.0;
+      @endiwhile
+         for (; i < K2; i += 2, rA++, iA++)
+         {
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @iexp ib @(j) @(ku) *
+            @mif nalp ! "X
+            rA[@(ib)] = @(malp)A@(j)[i];
+            #ifdef Conj_
+               iA[@(ib)] = @(calp)A@(j)[i+1];
+            #else
+               iA[@(ib)] = @(malp)A@(j)[i+1];
+            #endif
+            @endmif
+            @mif nalp = "X
+            rv = A@(j)[i];
+            #ifdef Conj_
+               iv = -A@(j)[i+1];
+            #else
+               iv = A@(j)[i+1];
+            #endif
+            rA[@(ib)] = rv*ra - iv*ia;
+            iA[@(ib)] = rv*ia + iv*ra;
+            @endmif
+         @iexp j @(j) 1 +
+      @endiwhile
+         }
+         rA += @(binc) - K + k;
+         iA += @(binc) - K + k;
+      }
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+      A@(j) += incA;
+      @iexp j @(j) 1 +
+      @endiwhile
+   }
+   switch(nr)
+   {
+   @iexp n 1 0 +
+   @iwhile n < @(nu)
+   case @(n):
+      for (i=0; i < k2; i += @(ku2), rA += @(binc), iA += @(binc))
+      {
+      @iexp j 0 0 +
+      @iwhile j < @(n)
+         @iexp k 0 0 +
+         @iwhile k < @(ku)
+            @iexp k2 @(k) @(k) +
+            @iexp ib @(j) @(ku) *
+            @iexp ib @(ib) @(k) +
+            @mif nalp ! "X
+            rA[@(ib)] = @(malp)A@(j)[i+@(k2)];
+            #ifdef Conj_
+               iA[@(ib)] = @(calp)A@(j)[i+@(k2)+1];
+            #else
+               iA[@(ib)] = @(malp)A@(j)[i+@(k2)+1];
+            #endif
+            @endmif
+            @mif nalp = "X
+            rv = A@(j)[i+@(k2)];
+            #ifdef Conj_
+               iv = -A@(j)[i+@(k2)+1];
+            #else
+               iv = A@(j)[i+@(k2)+1];
+            #endif
+            rA[@(ib)] = rv*ra - iv*ia;
+            iA[@(ib)] = rv*ia + iv*ra;
+            @endmif
+            @iexp k @(k) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+      @iwhile j < @(nu)
+         @iexp k 0 0 +
+         @iwhile k < @(ku)
+            @iexp ib @(j) @(ku) *
+            @iexp ib @(ib) @(k) +
+            iA[@(ib)] = rA[@(ib)] = 0.0;
+            @iexp k @(k) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+      }
+      if (k != KK)
+      {
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @iexp k 0 0 +
+         @iwhile k < @(ku)
+            @iexp k2 @(k) @(k) +
+            @iexp ib @(j) @(ku) *
+            @iexp ib @(ib) @(k) +
+            iA[@(ib)] = rA[@(ib)] = 
+            @iexp k @(k) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+                    0.0;
+      @endiwhile
+         for (; i < K2; i += 2, rA++, iA++)
+         {
+      @iexp j 0 0 +
+      @iwhile j < @(n)
+         @iexp ib @(j) @(ku) *
+         @mif nalp ! "X
+            rA[@(ib)] = @(malp)A@(j)[i];
+            #ifdef Conj_
+               iA[@(ib)] = @(calp)A@(j)[i+1];
+            #else
+               iA[@(ib)] = @(malp)A@(j)[i+1];
+            #endif
+         @endmif
+         @mif nalp = "X
+            rv = A@(j)[i];
+            #ifdef Conj_
+               iv = -A@(j)[i+1];
+            #else
+               iv = A@(j)[i+1];
+            #endif
+            rA[@(ib)] = rv*ra - iv*ia;
+            iA[@(ib)] = rv*ia + iv*ra;
+         @endmif
+         @iexp j @(j) 1 +
+      @endiwhile
+      @iwhile j < @(nu)
+         @iexp ib @(j) @(ku) *
+            iA[@(ib)] = rA[@(ib)] = 0.0;
+         @iexp j @(j) 1 +
+      @endiwhile
+         }
+         rA += @(binc) - K + k;
+         iA += @(binc) - K + k;
+      }
+      break;
+      @iexp n @(n) 1 +
+   @endiwhile
+   default:;
+   }
+}
+@endiif
+@iif kmaj = 0
 /*
  * This routine copies the KxN submatrix A into the KxCEIL(N/@(nu)) block b.
  * b is stored in access-major storage, where the @(nu) unrolled accesses
@@ -340,7 +580,11 @@ void Mjoin(PATL,cm2am_a@(nalp)_@(nu)@(dsuf)) /* col-access matx to access-major 
  * is zero padded.
  * For GEMM, this routine handles Notrans B matrices, and Trans A matrices.
  */
-void Mjoin(PATL,cm2am_a@(nalp)_@(nu)@(dsuf)) /* col-access matx to access-major blk */
+#ifdef Conj_
+void Mjoin(PATL,cm2am_a@(nalp)_@(nu)C) /* col-access matx to access-major blk */
+#else
+void Mjoin(PATL,cm2am_a@(nalp)_@(nu)) /* col-access matx to access-major blk */
+#endif
 (
    ATL_CSZT K,          /* number of rows in A */
    ATL_CSZT N,          /* number of columns in A */
@@ -354,7 +598,7 @@ void Mjoin(PATL,cm2am_a@(nalp)_@(nu)@(dsuf)) /* col-access matx to access-major 
    ATL_CSZT K2=K+K, lda2=lda+lda, n = (N/@(nu))*@(nu), incA = lda2*@(nu);
    ATL_SZT i, j;
    @mif nalp = "X
-   const register TYPE ra=(*alpha), ia=ialpha[1];
+   const register TYPE ra=(*alpha), ia=alpha[1];
    register TYPE rv, iv;
    @endmif
    @iexp nu2 @(nu) @(nu) +
@@ -376,13 +620,21 @@ void Mjoin(PATL,cm2am_a@(nalp)_@(nu)@(dsuf)) /* col-access matx to access-major 
       @iwhile j < @(nu)
          @mif nalp = "X
          rv = A@(j)[i];
-         iv = A@(j)[i+1];
+         #ifdef Conj_
+            iv = -A@(j)[i+1];
+         #else
+            iv = A@(j)[i+1];
+         #endif
          rA[@(j)] = rv*ra - iv*ia;
          iA[@(j)] = rv*ia + iv*ra;
          @endmif
          @mif nalp ! "X
          rA[@(j)] = @(malp)A@(j)[i];
-         iA[@(j)] = @(malp)A@(j)[i+1];
+         #ifdef Conj_
+            iA[@(j)] = @(calp)A@(j)[i+1];
+         #else
+            iA[@(j)] = @(malp)A@(j)[i+1];
+         #endif
          @endmif
       @iexp j @(j) 1 +
       @endiwhile
@@ -406,13 +658,21 @@ void Mjoin(PATL,cm2am_a@(nalp)_@(nu)@(dsuf)) /* col-access matx to access-major 
       @iwhile j < @(n)
          @mif nalp = "X
          rv = A@(j)[i];
-         iv = A@(j)[i+1];
+         #ifdef Conj_
+            iv = -A@(j)[i+1];
+         #else
+            iv = A@(j)[i+1];
+         #endif
          rA[@(j)] = rv*ra - iv*ia;
          iA[@(j)] = rv*ia + iv*ra;
          @endmif
          @mif nalp ! "X
          rA[@(j)] = @(malp)A@(j)[i];
-         iA[@(j)] = @(malp)A@(j)[i+1];
+         #ifdef Conj_
+            iA[@(j)] = @(calp)A@(j)[i+1];
+         #else
+            iA[@(j)] = @(malp)A@(j)[i+1];
+         #endif
          @endmif
       @iexp j @(j) 1 +
       @endiwhile
@@ -428,6 +688,7 @@ void Mjoin(PATL,cm2am_a@(nalp)_@(nu)@(dsuf)) /* col-access matx to access-major 
    }
    @endmif
 }
+@endiif
 @ROUT ATL_rm2am ammmtst
 @iif kmaj ! 0
    @define ku @@(kmaj)@
@@ -675,6 +936,245 @@ void Mjoin(PATL,rm2am_a@(nalp)_@(mu)) /* row-access matrix to access-major block
 @ROUT ammmtst
    @undef dupB
 @ROUT ATL_crm2am cammmtst
+@iif kmaj ! 0
+   @define ku @@(kmaj)@
+/*
+ * This routine copies the MxK submatrix A into access-k-vlen-major storage.
+ * In this storage, @(mu) vectors of @(ku) length are taken from the
+ * @(mu) rows of A and stored in a @(ku)x@(mu) subblock.
+ * CEIL(K/ku) of these subblocks are stored together to make a K-panel.
+ * The CEIL(M/mu) K-panels are stored contiguously.  If ku does not evenly
+ * divide K then subblocks in some K-panels will be zero padded.
+ * If mu does not evenly divide M, then some subblocks in the last
+ * K-panel will be entirely 0.
+ */
+#ifdef Conj_
+void Mjoin(PATL,rm2am_a@(nalp)_@(ku)x@(mu)C) /* row- to access-major */
+#else
+void Mjoin(PATL,rm2am_a@(nalp)_@(ku)x@(mu))  /* row- to access-major */
+#endif
+(
+   ATL_CSZT K,          /* number of columns in A */
+   ATL_CSZT M,          /* number of rows in A */
+   const SCALAR alpha,  /* scalar for A */
+   const TYPE *A,       /* matrix to be copied to access-major format */
+   ATL_CSZT lda,        /* stride between row elements */
+   TYPE *rA,            /* OUTPUT: access-maj blk holding condensed real(A) */
+   TYPE *iA             /* OUTPUT: access-maj blk holding condensed imag(A) */
+)
+{
+   @iexp mu2 @(mu) @(mu) +
+   ATL_CSZT MM = ((M+@(mu)-1)/@(mu))*@(mu), KK = ((K+@(ku)-1)/@(ku))*@(ku);
+   ATL_CSZT pansz = @(mu)*KK, m = M/@(mu)*@(mu), mr = M-m, k = (K/@(ku))*@(ku);
+   ATL_CSZT K2=K+K, m2 = m+m, lda2=lda+lda, M2 = M+M, incA = @(ku)*lda2;
+   ATL_SZT i, j;
+   @mif nalp = "X
+   const register TYPE ra=(*alpha), ia=alpha[1];
+   register TYPE rv, iv;
+   @endmif
+   @declare "   const TYPE " n n ";"
+      *A0=A
+      @iexp j 0 1 +
+      @iwhile j < @(ku)
+         @iexp i @(j) -1 +
+         *A@(j)=A@(i)+lda2
+         @iexp j @(j) 1 +
+      @endiwhile
+   @enddeclare
+   @iexp incb @(ku) @(mu) *
+
+   for (j=0; j < k; j += @(ku), rA += @(incb), iA += @(incb))
+   {
+      TYPE *pr = rA, *pi = iA;   /* panel ptrs */
+
+      for (i=0; i < m2; i += @(mu2), pr += pansz, pi += pansz)
+      {
+   @iexp i 0 0 +
+   @iwhile i < @(mu)
+      @iexp i2 @(i) @(i) +
+      @iexp j 0 0 +
+      @iwhile j < @(ku)
+         @iexp ip @(i) @(ku) *
+         @iexp ip @(ip) @(j) +
+         @mif nalp ! "X
+         pr[@(ip)] = @(malp)A@(j)[i+@(i2)];
+         #ifdef Conj_
+            pi[@(ip)] = @(calp)A@(j)[i+@(i2)+1];
+         #else
+            pi[@(ip)] = @(malp)A@(j)[i+@(i2)+1];
+         #endif
+         @endmif
+         @mif nalp = "X
+         rv = A@(j)[i+@(i2)];
+         #ifdef Conj_
+            iv = -A@(j)[i+@(i2)+1];
+         #else
+            iv = A@(j)[i+@(i2)+1];
+         #endif
+         pr[@(i)] = rv*ra - iv*ia;
+         pi[@(i)] = rv*ia + iv*ra;
+         @endmif
+         @iexp j @(j) 1 +
+      @endiwhile
+      @iexp i @(i) 1 +
+   @endiwhile
+      }
+      if (m != M)
+      {
+         TYPE *rr, *ii;
+/*
+ *       Copy partial M remainder subblock
+ */
+         for (rr=pr, ii=pi; i < M2; i += 2, rr += @(ku), ii += @(ku))
+         {
+   @iexp j 0 0 +
+   @iwhile j < @(ku)
+      @mif nalp ! "X
+            rr[@(j)] = @(malp)A@(j)[i];
+            #ifdef Conj_
+               ii[@(j)] = @(calp)A@(j)[i+1];
+            #else
+               ii[@(j)] = @(malp)A@(j)[i+1];
+            #endif
+      @endmif
+      @mif nalp = "X
+         rv = A@(j)[i];
+         #ifdef Conj_
+            iv = -A@(j)[i+1];
+         #else
+            iv = A@(j)[i+1];
+         #endif
+         rr[@(j)] = rv*ra - iv*ia;
+         ii[@(j)] = rv*ia + iv*ra;
+      @endmif
+      @iexp j @(j) 1 +
+   @endiwhile
+         }
+/*
+ *       Zero rest of M remainder subblock
+ */
+         for (i=M; i < MM; i++, rr += @(ku), ii += @(ku))
+         {
+   @iexp j 0 0 +
+   @iwhile j < @(ku)
+            ii[@(j)] = rr[@(j)] = 0.0;
+      @iexp j @(j) 1 +
+   @endiwhile
+         }
+      }
+/*
+ * Update column-ptrs from A
+ */
+   @iexp j 0 0 +
+   @iwhile j < @(ku)
+      A@(j) += incA;
+      @iexp j @(j) 1 +
+   @endiwhile
+   }
+/*
+ * Check for final, partial K-panel that needs to be padded wt zeros
+ */
+   switch(K-k)
+   {
+   @iexp r @(ku) -1 +
+   @iwhile r > 0
+   case @(r):
+      {
+         TYPE *pr = rA, *pi = iA;   /* panel ptrs */
+
+         for (i=0; i < m2; i += @(mu2), pr += pansz, pi += pansz)
+         {
+   @iexp i 0 0 +
+   @iwhile i < @(mu)
+      @iexp i2 @(i) @(i) +
+      @iexp j 0 0 +
+      @iwhile j < @(r)
+         @iexp ip @(i) @(ku) *
+         @iexp ip @(ip) @(j) +
+         @mif nalp ! "X
+            pr[@(ip)] = @(malp)A@(j)[i+@(i2)];
+            #ifdef Conj_
+               pi[@(ip)] = @(calp)A@(j)[i+@(i2)+1];
+            #else
+               pi[@(ip)] = @(malp)A@(j)[i+@(i2)+1];
+            #endif
+         @endmif
+         @mif nalp = "X
+            rv = A@(j)[i+@(i2)];
+            #ifdef Conj_
+               iv = -A@(j)[i+@(i2)+1];
+            #else
+               iv = A@(j)[i+@(i2)+1];
+            #endif
+            pr[@(ip)] = rv*ra - iv*ia;
+            pi[@(ip)] = rv*ia + iv*ra;
+         @endmif
+         @iexp j @(j) 1 +
+      @endiwhile
+      @iwhile j < @(ku)
+         @iexp ip @(i) @(ku) *
+         @iexp ip @(ip) @(j) +
+            pi[@(ip)] = pr[@(ip)] = 0.0;
+         @iexp j @(j) 1 +
+      @endiwhile
+      @iexp i @(i) 1 +
+   @endiwhile
+         }
+         if (m != M)
+         {
+            TYPE *rr, *ii;
+/*
+ *          Copy partial M remainder subblock
+ */
+            for (rr=pr, ii=pi; i < M2; i += 2, rr += @(ku), ii += @(ku))
+            {
+   @iexp j 0 0 +
+   @iwhile j < @(r)
+      @mif nalp ! "X
+               rr[@(j)] = @(malp)A@(j)[i];
+               #ifdef Conj_
+                  ii[@(j)] = @(calp)A@(j)[i+1];
+               #else
+                  ii[@(j)] = @(malp)A@(j)[i+1];
+               #endif
+      @endmif
+      @mif nalp = "X
+               rv = A@(j)[i];
+               #ifdef Conj_
+                  iv = -A@(j)[i+1];
+               #else
+                  iv = A@(j)[i+1];
+               #endif
+               rr[@(ip)] = rv*ra - iv*ia;
+               ii[@(ip)] = rv*ia + iv*ra;
+      @endmif
+      @iexp j @(j) 1 +
+   @endiwhile
+   @iwhile j < @(ku)
+               ii[@(j)] = rr[@(j)] = 0.0;
+      @iexp j @(j) 1 +
+   @endiwhile
+            }
+/*
+ *          Zero rest of M remainder subblock
+ */
+            for (i=M; i < MM; i++, rr += @(ku), ii += @(ku))
+            {
+   @iexp j 0 0 +
+   @iwhile j < @(ku)
+               ii[@(j)] = rr[@(j)] = 0.0;
+      @iexp j @(j) 1 +
+   @endiwhile
+            }
+         }
+      }
+      break;
+      @iexp r @(r) -1 +
+   @endiwhile
+   default:;
+   }
+}
+@endiif
 /*
  * This routine copies the MxK submatrix A into the KxCEIL(M/@(mu) blocks rA,iA.
  * ?A are stored in access-major storage, where the @(mu) unrolled accesses
@@ -683,7 +1183,11 @@ void Mjoin(PATL,rm2am_a@(nalp)_@(mu)) /* row-access matrix to access-major block
  * in b, and if the last such row panel is partial, it is zero padded.
  * For GEMM, this routine handles Notrans A matrices, and Trans B matrices.
  */
-void Mjoin(PATL,rm2am_a@(nalp)_@(mu)) /* row-access matrix to access-major block */
+#ifdef Conj_
+void Mjoin(PATL,rm2am_a@(nalp)_@(mu)C)
+#else
+void Mjoin(PATL,rm2am_a@(nalp)_@(mu))
+#endif
 (
    ATL_CSZT K,          /* number of columns in A */
    ATL_CSZT M,          /* number of rows in A */
@@ -713,13 +1217,21 @@ void Mjoin(PATL,rm2am_a@(nalp)_@(mu)) /* row-access matrix to access-major block
          @iexp i2 @(i) @(i) +
          @mif nalp = "X
          rv = A[@(i2)];
-         iv = A[@(i2)+1];
+         #ifdef Conj_
+            iv = -A[@(i2)+1];
+         #else
+            iv = A[@(i2)+1];
+         #endif
          pr[@(i)] = rv*ra - iv*ia;
          pi[@(i)] = rv*ia + iv*ra;
          @endmif
          @mif nalp ! "X
          pr[@(i)] = @(malp)A[@(i2)];
-         pi[@(i)] = @(malp)A[@(i2)+1];
+         #ifdef Conj_
+            pi[@(i)] = @(calp)A[@(i2)+1];
+         #else
+            pi[@(i)] = @(malp)A[@(i2)+1];
+         #endif
          @endmif
       @iexp i @(i) 1 +
       @endiwhile
@@ -735,13 +1247,21 @@ void Mjoin(PATL,rm2am_a@(nalp)_@(mu)) /* row-access matrix to access-major block
          @iexp i2 @(i) @(i) +
          @mif nalp = "X
          rv = A[@(i2)];
-         iv = A[@(i2)+1];
+         #ifdef Conj_
+            iv = -A[@(i2)+1];
+         #else
+            iv = A[@(i2)+1];
+         #endif
          pr[@(i)] = rv*ra - iv*ia;
          pi[@(i)] = rv*ia + iv*ra;
          @endmif
          @mif nalp ! "X
          pr[@(i)] = @(malp)A[@(i2)];
-         pi[@(i)] = @(malp)A[@(i2)+1];
+         #ifdef Conj_
+            pi[@(i)] = @(calp)A[@(i2)+1];
+         #else
+            pi[@(i)] = @(malp)A[@(i2)+1];
+         #endif
          @endmif
          @iexp i @(i) 1 +
          @endiwhile
@@ -1418,9 +1938,9 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
       @iwhile i < @(mu2)
          @mif nalp = "n
             @mif nbet = "X
-            rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+            rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1];
          C@(j)[i+@(i)] = rc*rb - ic*ib - pr[@(k)];
-         C@(j)[i+@(i)] = rc*ib + ic*rb - pr[@(k)];
+         C@(j)[i+@(i)+1] = rc*ib + ic*rb - pi[@(k)];
             @endmif
             @mif nbet = "1
          C@(j)[i+@(i)] -= pr[@(k)];
@@ -1437,7 +1957,7 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
          @endmif
          @mif nalp = "1
             @mif nbet = "X
-         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1];
          C@(j)[i+@(i)] = rc*rb - ic*ib + pr[@(k)];
          C@(j)[i+@(i)+1] = rc*ib + ic*rb + pi[@(k)];
             @endmif
@@ -1460,7 +1980,7 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
          rp = rp*ra - ip*ia;
          ip = rtmp*ia + ip*ra;
             @mif nbet = "X
-         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1];
          C@(j)[i+@(i)] = rc*rb - ic*ib + rp;
          C@(j)[i+@(i)+1] = rc*ib + ic*rb + ip;
             @endmif
@@ -1497,9 +2017,9 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
             @iwhile i < @(m2)
                @mif nalp = "n
                   @mif nbet = "X
-            rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+            rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1];
          C@(j)[i+@(i)] = rc*rb - ic*ib - pr[@(k)];
-         C@(j)[i+@(i)] = rc*ib + ic*rb - pr[@(k)];
+         C@(j)[i+@(i)+1] = rc*ib + ic*rb - pi[@(k)];
                   @endmif
                   @mif nbet = "1
          C@(j)[i+@(i)] -= pr[@(k)];
@@ -1516,7 +2036,7 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
                @endmif
                @mif nalp = "1
                   @mif nbet = "X
-         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1];
          C@(j)[i+@(i)] = rc*rb - ic*ib + pr[@(k)];
          C@(j)[i+@(i)+1] = rc*ib + ic*rb + pi[@(k)];
                   @endmif
@@ -1539,7 +2059,7 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
          rp = rp*ra - ip*ia;
          ip = rtmp*ia + ip*ra;
                   @mif nbet = "X
-         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1];
          C@(j)[i+@(i)] = rc*rb - ic*ib + rp;
          C@(j)[i+@(i)+1] = rc*ib + ic*rb + ip;
                   @endmif
@@ -1590,9 +2110,9 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
             @iwhile i < @(mu2)
                @mif nalp = "n
                   @mif nbet = "X
-            rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+            rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1];
          C@(j)[i+@(i)] = rc*rb - ic*ib - pr[@(k)];
-         C@(j)[i+@(i)] = rc*ib + ic*rb - pr[@(k)];
+         C@(j)[i+@(i)+1] = rc*ib + ic*rb - pi[@(k)];
                   @endmif
                   @mif nbet = "1
          C@(j)[i+@(i)] -= pr[@(k)];
@@ -1609,7 +2129,7 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
                @endmif
                @mif nalp = "1
                   @mif nbet = "X
-         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1];
          C@(j)[i+@(i)] = rc*rb - ic*ib + pr[@(k)];
          C@(j)[i+@(i)+1] = rc*ib + ic*rb + pi[@(k)];
                   @endmif
@@ -1632,7 +2152,7 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
          rp = rp*ra - ip*ia;
          ip = rtmp*ia + ip*ra;
                   @mif nbet = "X
-         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1];
          C@(j)[i+@(i)] = rc*rb - ic*ib + rp;
          C@(j)[i+@(i)+1] = rc*ib + ic*rb + ip;
                   @endmif
@@ -1669,9 +2189,9 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
                   @iwhile i < @(m2)
                      @mif nalp = "n
                         @mif nbet = "X
-            rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+            rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1];
          C@(j)[i+@(i)] = rc*rb - ic*ib - pr[@(k)];
-         C@(j)[i+@(i)] = rc*ib + ic*rb - pr[@(k)];
+         C@(j)[i+@(i)+1] = rc*ib + ic*rb - pi[@(k)];
                         @endmif
                         @mif nbet = "1
          C@(j)[i+@(i)] -= pr[@(k)];
@@ -1688,7 +2208,7 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
                      @endmif
                      @mif nalp = "1
                         @mif nbet = "X
-         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1];
          C@(j)[i+@(i)] = rc*rb - ic*ib + pr[@(k)];
          C@(j)[i+@(i)+1] = rc*ib + ic*rb + pi[@(k)];
                         @endmif
@@ -1711,7 +2231,7 @@ void Mjoin(PATL,ablk2cmat_@(mu)x@(nu)_a@(nalp)_b@(nbet))
          rp = rp*ra - ip*ia;
          ip = rtmp*ia + ip*ra;
                         @mif nbet = "X
-         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1]
+         rc = C@(j)[i+@(i)]; ic = C@(j)[i+@(i)+1];
          C@(j)[i+@(i)] = rc*rb - ic*ib + rp;
          C@(j)[i+@(i)+1] = rc*ib + ic*rb + ip;
                         @endmif
@@ -3179,10 +3699,16 @@ int mmtst(void)
    TYPE diff, tmp;
    int i, j, k, n, nerr;
    ATL_CINT M=@(M), N=@(N), K=@(K), lda=M, ldb=K, ldc=M+3;
+   @iif kmaj = 0
+   ATL_CINT KK = K;
+   @endiif
+   @iif kmaj ! 0
+   ATL_CINT KK = ((K+@(ku)-1)/@(ku))*@(ku);
+   @endiif
    ATL_CINT NMU = ((@(M)+@(mu)-1)/@(mu));
    ATL_CINT NNU = ((@(N)+@(nu)-1)/@(nu));
    ATL_CINT MM=NMU*@(mu), NN=NNU*@(nu);
-   ATL_CINT incA = MM*K, incB = K*NN*@(dupB), incC = MM*NN;
+   ATL_CINT incA = MM*KK, incB = KK*NN*@(dupB), incC = MM*NN;
    TYPE ErrBound;
 
    tmp = Mabs(*beta) + Mabs(beta[1]);
@@ -3209,14 +3735,20 @@ int mmtst(void)
    for (n=lda*K SHIFT, i=0; i < n; i++) A[i] = dumb_rand();
    for (n=ldb*N SHIFT, i=0; i < n; i++) B[i] = dumb_rand();
    for (n=ldc*N SHIFT, i=0; i < n; i++) C[i] = dumb_rand();
+   @iif kmaj = 0
    Mjoin(PATL,rm2am_a1_@(mu))(K, M, alpha, A, lda, a+incA, a);
    Mjoin(PATL,cm2am_a1_@(nu))(K, N, alpha, B, ldb, b+incB, b);
+   @endiif
+   @iif kmaj ! 0
+   Mjoin(PATL,rm2am_a1_@(ku)x@(mu))(K, M, alpha, A, lda, a+incA, a);
+   Mjoin(PATL,cm2am_a1_@(ku)x@(nu))(K, N, alpha, B, ldb, b+incB, b);
+   @endiif
 @skip   ATL_CM2BK(M, N, @(mu), @(nu), C, ldc, c);
 @skip   Mjoin(PATL,gezero)(M, N, D, ldc);
 /*
  * Call test routine, move output to col-major D for comparison with correct C
  */
-   cusermm(M, N, K, a, b, c);
+   cusermm(M, N, KK, a, b, c);
    tst_mm(M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
 //   printf("c=%e,%e,%e,%e; %e,%e,%e,%e\n", c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]);
 //   printf("C=%e,%e,%e,%e; %e,%e,%e,%e\n", C[0], C[1], C[2], C[3], C[ldc], C[ldc+1], C[ldc+2], C[ldc+3]);
@@ -3254,7 +3786,7 @@ int mmtst(void)
    return(nerr);
 }
 
-main()
+int main(void)
 {
    int ierr;
    ierr = mmtst();
