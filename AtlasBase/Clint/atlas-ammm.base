@@ -344,7 +344,7 @@ int Mjoin(PATL,@(info))
 int Mjoin(PATL,ammm_rk2)
    (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT, const SCALAR,
     const TYPE*,ATL_CSZT,const TYPE*,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT);
-@whiledef rt ammm ammm_1b ammm_rkK ammm_IP ammm_tN
+@whiledef rt ammm ammm_1b ammm_rkK ammm_IP ammm_tN ammm_aliased_rkK
 int Mjoin(PATL,@(rt))
    (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,ATL_CSZT, const SCALAR,
     const TYPE*,ATL_CSZT,const TYPE*,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT);
@@ -6257,6 +6257,126 @@ int @(rt)
    free(vp);
    return(0);
 }
+@ROUT ATL_ammm_rkK ATL_cammm_rkK
+/*
+ * This entry makes rkK safe for L3kernel aliased calls
+ * Quickly hacked together, need to rewrite to avoid double copy
+ */
+int Mjoin(PATL,ammm_aliased_rkK)
+(
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   ATL_CSZT M,
+   ATL_CSZT N,
+   ATL_CSZT K,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CSZT ldA,
+   const TYPE *B,
+   ATL_CSZT ldB,
+   const SCALAR beta,
+   TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   TYPE *a = (TYPE*)A, *b = (TYPE*)B;
+   size_t lda=ldA, ldb=ldB;
+@ROUT ATL_cammm_rkK `   const TYPE ONE[2] = {ATL_rone, ATL_rzero};`
+   void *vp=NULL;
+
+   if (K == 0 || SCALAR_IS_ZERO(alpha))
+   {
+      if (SCALAR_IS_ZERO(beta))
+         Mjoin(PATL,gezero)(M, N, C, ldc);
+      else if (!SCALAR_IS_ZERO(beta))
+         Mjoin(PATL,gescal)(M, N, beta, C, ldc);
+      return(0);
+   }
+@beginskip
+   if (K == 1)
+   {
+      TYPE *X, *Y;
+      void *vp;
+@ROUT ATL_cammm_rkK `      TYPE ONE[2] = {ATL_rone, ATL_rzero};`
+/* 
+ *    Replace this with code that copies only the array that is aliased
+ *    by scoping addresses.  Note one dim is very short, which means copy
+ *    of long vector is not free (and never needed).  Must look at @ for
+ *    aliasing, because even though one dimension is "long" by design,
+ *    in degenerate cases the "long" dim can be shorter than the long.
+ */
+      vp = malloc(ATL_MulBySize(M+N)+2*ATL_Cachelen);
+      ATL_assert(vp);
+      X = ATL_AlignPtr(vp);
+      Y = X + (M SHIFT);
+      Y = ATL_AlignPtr(Y);
+      if (TA == AtlasTrans)
+         Mjoin(PATL,copy)(M, A, lda, X, 1);
+@ROUT ATL_cammm_rkK
+      else if (TA == AtlasConjTrans)
+         Mjoin(PATL,copyConj)(M, A, lda, X, 1);
+      else if (TA == AtlasConj)
+         Mjoin(PATL,copyConj)(M, A, 1, X, 1);
+@ROUT ATL_ammm_rkK ATL_cammm_rkK
+      else /* if (TA == AtlasNoTrans) */
+         Mjoin(PATL,copy)(M, A, 1, X, 1);
+      if (SCALAR_IS_ONE(alpha))
+      {
+         if (TB == AtlasNoTrans)
+            Mjoin(PATL,copy)(N, B, ldb, Y, 1);
+@ROUT ATL_cammm_rkK
+         else if (TA == AtlasConj)
+            Mjoin(PATL,copyConj)(N, B, ldb, Y, 1);
+         else if (TA == AtlasConjTrans)
+            Mjoin(PATL,copyConj)(N, B, 1, Y, 1);
+@ROUT ATL_ammm_rkK ATL_cammm_rkK
+         else /* if (TA == AtlasTrans) */
+            Mjoin(PATL,copy)(N, B, 1, Y, 1);
+      }
+      else
+      {
+         if (TB == AtlasNoTrans)
+            Mjoin(PATL,move)(N, alpha, B, ldb, Y, 1);
+@ROUT ATL_cammm_rkK
+   @define one @ONE@
+         else if (TA == AtlasConj)
+            Mjoin(PATL,moveConj)(N, alpha, B, ldb, Y, 1);
+         else if (TA == AtlasConjTrans)
+            Mjoin(PATL,moveConj)(N, alpha, B, 1, Y, 1);
+@ROUT ATL_ammm_rkK
+   @define one @ATL_rone@
+@ROUT ATL_ammm_rkK ATL_cammm_rkK
+         else /* if (TA == AtlasTrans) */
+            Mjoin(PATL,move)(N, alpha, B, 1, Y, 1);
+      }
+      ATL_assert(!Mjoin(PATL,ammm)(AtlasNoTrans, AtlasNoTrans, M, N, K, 
+                                   @(one), X, M, Y, 1, C, ldc);
+      free(vp);
+      return(0);
+   }
+   if (K == 2)
+@endskip
+   if (K < 3)
+   {
+      lda = (TA == AtlasNoTrans || TA == AtlasConj) ? M:K;
+      ldb = (TB == AtlasNoTrans || TB == AtlasConj) ? K:N;
+      a = malloc(ATL_MulBySize((M+N)*K));
+      ATL_assert(a);
+      b = a + ((M*K)SHIFT);
+      if (lda == M)
+         Mjoin(PATL,gecopy)(M, K, A, ldA, a, lda);
+      else
+         Mjoin(PATL,gecopy)(K, M, A, ldA, a, lda);
+      if (ldb == K)
+         Mjoin(PATL,gecopy)(K, N, B, ldB, b, ldb);
+      else
+         Mjoin(PATL,gecopy)(N, K, B, ldB, b, ldb);
+   }
+   ATL_assert(!Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, a, lda, b, ldb, 
+              beta, C, ldc));
+   if (a != A)
+      free(a);
+}
 @ROUT ATL_ammm_tN
 {
    ablk2cmat_t blk2c;
@@ -7006,6 +7126,17 @@ int @(rt)
 @ROUT ATL_ammm
 {
 /*
+ * Just do a scale and return
+ */
+   if (SCALAR_IS_ZERO(alpha) || !K)
+   {
+      if (SCALAR_IS_ZERO(beta))
+         Mjoin(PATL,gezero)(M, N, C, ldc);
+      else if (!SCALAR_IS_ZERO(beta))
+         Mjoin(PATL,gescal)(M, N, beta, C, ldc);
+      return(0);
+   }
+/*
  * Scope for degenerate cases that should call Level-2 BLAS; these
  * routines assert they work, since their workspace is O(N) and so are
  * not allowed to fail.
@@ -7088,7 +7219,7 @@ int @(rt)
 /*
  * Just do a scale and return
  */
-   if (SCALAR_IS_ZERO(alpha))
+   if (SCALAR_IS_ZERO(alpha) || !K)
    {
       if (SCALAR_IS_ZERO(beta))
          Mjoin(PATL,gezero)(M, N, C, ldc);
