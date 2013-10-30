@@ -5874,15 +5874,18 @@ int Mjoin(PATL,ammmABC)
  * since the copy of A and B are of the same order as the computation.
  * It is a minimal workspace routine.
  */
-@ROUT ATL_ammm_rkK0 ATL_cammm_rkK
+@ROUT ATL_ammm_rkK0
 #include "atlas_misc.h"
 #include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_rankK.h))
 #include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_rkkblk.h))
 #include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_rkkflag.h))
-@ROUT ATL_cammm_1b ATL_ammm_rkK
+@ROUT ATL_cammm_1b ATL_ammm_rkK ATL_cammm_rkK
 #include "atlas_misc.h"
 #include "atlas_amm.h"
+#include "atlas_level1.h"
+#include "atlas_lvl2.h"
 #include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_sum.h))
+@ROUT ATL_ammm_rkK
 @ROUT ATL_ammm_1b
 #include "atlas_misc.h"
 #include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_sum.h))
@@ -6258,10 +6261,51 @@ int @(rt)
    return(0);
 }
 @ROUT ATL_ammm_rkK ATL_cammm_rkK
+static void *FixVector(enum ATLAS_TRANS TX, ATL_CSZT N, const SCALAR alpha,
+                       const TYPE *X, ATL_CSZT incX)
+{
+   void *vx;
+   TYPE *x;
+   vx = malloc(ATL_MulBySize(N)+ATL_Cachelen);
+   ATL_assert(vx);
+   x = ATL_AlignPtr(vx);
+@ROUT ATL_ammm_rkK
+   if (SCALAR_IS_ONE(alpha))
+      Mjoin(PATL,copy)(N, X, incX, x, 1);
+   else
+      Mjoin(PATL,cpsc)(N, alpha, X, incX, x, 1);
+@ROUT ATL_cammm_rkK
+   if (SCALAR_IS_ONE(alpha))
+   {
+      if (TX == AtlasTrans || TX == AtlasNoTrans)
+         Mjoin(PATL,copy)(N, X, incX, x, 1);
+      else
+         Mjoin(PATL,copyConj)(N, X, incX, x, 1);
+   }
+   else
+   {
+      if (TX == AtlasTrans || TX == AtlasNoTrans)
+         Mjoin(PATL,cpsc)(N, alpha, X, incX, x, 1);
+      else
+         Mjoin(PATL,moveConj)(N, alpha, X, incX, x, 1);
+   }
+@ROUT ATL_ammm_rkK ATL_cammm_rkK
+   return(vx);
+}
+
 /*
- * This entry makes rkK safe for L3kernel aliased calls
- * Quickly hacked together, need to rewrite to avoid double copy
+ * This entry makes rkK safe for L3kernel aliased calls.  It handles
+ * only the aliasing required by the L3kernels, namely square blocks
+ * less than ATLAS's largest blocking factor for the square dimensions,
+ * with one of A/B aliased with C, and aliased by having
+ * either A == C or B == C (i.e., not a partial overlap).  When A==C, 
+ * M=K < ATL_MAXK_RKK; when B==C, N=K < ATL_MAXK_RKK.
  */
+@ROUT ATL_ammm_rkK 
+   @define one @ATL_rone@
+@ROUT ATL_cammm_rkK
+   @define one @ONE@
+@ROUT ATL_ammm_rkK ATL_cammm_rkK
 int Mjoin(PATL,ammm_aliased_rkK)
 (
    enum ATLAS_TRANS TA,
@@ -6269,22 +6313,22 @@ int Mjoin(PATL,ammm_aliased_rkK)
    ATL_CSZT M,
    ATL_CSZT N,
    ATL_CSZT K,
-   const SCALAR alpha,
+   const SCALAR alp,
    const TYPE *A,
-   ATL_CSZT ldA,
+   ATL_CSZT lda,
    const TYPE *B,
-   ATL_CSZT ldB,
+   ATL_CSZT ldb,
    const SCALAR beta,
    TYPE *C,
    ATL_CSZT ldc
 )
 {
-   TYPE *a = (TYPE*)A, *b = (TYPE*)B;
-   size_t lda=ldA, ldb=ldB;
+@skip   TYPE *a = (TYPE*)A, *b = (TYPE*)B;
+@skip   size_t lda=ldA, ldb=ldB;
 @ROUT ATL_cammm_rkK `   const TYPE ONE[2] = {ATL_rone, ATL_rzero};`
    void *vp=NULL;
 
-   if (K == 0 || SCALAR_IS_ZERO(alpha))
+   if (K == 0 || SCALAR_IS_ZERO(alp))
    {
       if (SCALAR_IS_ZERO(beta))
          Mjoin(PATL,gezero)(M, N, C, ldc);
@@ -6292,70 +6336,163 @@ int Mjoin(PATL,ammm_aliased_rkK)
          Mjoin(PATL,gescal)(M, N, beta, C, ldc);
       return(0);
    }
-@beginskip
    if (K == 1)
    {
-      TYPE *X, *Y;
-      void *vp;
+@ROUT ATL_ammm_rkK  `      TYPE alpha = alp;`
+@ROUT ATL_cammm_rkK `      const SCALAR alpha = alp;`
+      void *xp=NULL, *yp=NULL;
+      TYPE *a = (TYPE*)A, *b = (TYPE*)B;
+      size_t ldA=lda, ldB=ldb;
+
 @ROUT ATL_cammm_rkK `      TYPE ONE[2] = {ATL_rone, ATL_rzero};`
-/* 
- *    Replace this with code that copies only the array that is aliased
- *    by scoping addresses.  Note one dim is very short, which means copy
- *    of long vector is not free (and never needed).  Must look at @ for
- *    aliasing, because even though one dimension is "long" by design,
- *    in degenerate cases the "long" dim can be shorter than the long.
- */
-      vp = malloc(ATL_MulBySize(M+N)+2*ATL_Cachelen);
-      ATL_assert(vp);
-      X = ATL_AlignPtr(vp);
-      Y = X + (M SHIFT);
-      Y = ATL_AlignPtr(Y);
-      if (TA == AtlasTrans)
-         Mjoin(PATL,copy)(M, A, lda, X, 1);
-@ROUT ATL_cammm_rkK
-      else if (TA == AtlasConjTrans)
-         Mjoin(PATL,copyConj)(M, A, lda, X, 1);
-      else if (TA == AtlasConj)
-         Mjoin(PATL,copyConj)(M, A, 1, X, 1);
-@ROUT ATL_ammm_rkK ATL_cammm_rkK
-      else /* if (TA == AtlasNoTrans) */
-         Mjoin(PATL,copy)(M, A, 1, X, 1);
-      if (SCALAR_IS_ONE(alpha))
+
+      if (A == C)
       {
-         if (TB == AtlasNoTrans)
-            Mjoin(PATL,copy)(N, B, ldb, Y, 1);
-@ROUT ATL_cammm_rkK
+         xp = FixVector(TA, M, alpha, A, 
+                        (TA == AtlasTrans || TA == AtlasConjTrans) ? lda:1);
+         a = ATL_AlignPtr(xp);
+         alpha = @(one);
+         if (TA == AtlasConjTrans || TA == AtlasTrans)
+         {
+            TA = AtlasTrans;
+            ldA = 1;
+         }
          else if (TA == AtlasConj)
-            Mjoin(PATL,copyConj)(N, B, ldb, Y, 1);
-         else if (TA == AtlasConjTrans)
-            Mjoin(PATL,copyConj)(N, B, 1, Y, 1);
-@ROUT ATL_ammm_rkK ATL_cammm_rkK
-         else /* if (TA == AtlasTrans) */
-            Mjoin(PATL,copy)(N, B, 1, Y, 1);
+            TA = AtlasNoTrans;
       }
-      else
+      if (B == C)
       {
-         if (TB == AtlasNoTrans)
-            Mjoin(PATL,move)(N, alpha, B, ldb, Y, 1);
-@ROUT ATL_cammm_rkK
-   @define one @ONE@
-         else if (TA == AtlasConj)
-            Mjoin(PATL,moveConj)(N, alpha, B, ldb, Y, 1);
-         else if (TA == AtlasConjTrans)
-            Mjoin(PATL,moveConj)(N, alpha, B, 1, Y, 1);
-@ROUT ATL_ammm_rkK
-   @define one @ATL_rone@
-@ROUT ATL_ammm_rkK ATL_cammm_rkK
-         else /* if (TA == AtlasTrans) */
-            Mjoin(PATL,move)(N, alpha, B, 1, Y, 1);
+         yp = FixVector(TB, N, alpha, A, 
+                        (TB == AtlasTrans || TB == AtlasConjTrans) ? 1:lda);
+         b = ATL_AlignPtr(yp);
+         alpha = @(one);
+         if (TB == AtlasConjTrans)
+            TB = AtlasTrans;
+         else if (TB == AtlasConj || TB == AtlasNoTrans)
+         {
+            TA = AtlasNoTrans;
+            ldB = 1;
+         }
       }
-      ATL_assert(!Mjoin(PATL,ammm)(AtlasNoTrans, AtlasNoTrans, M, N, K, 
-                                   @(one), X, M, Y, 1, C, ldc);
-      free(vp);
+      ATL_assert(!Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, a, ldA, b, ldB, 
+                                   beta, C, ldc));
+      if (xp)
+         free(xp);
+      if (yp)
+         free(yp);
       return(0);
    }
+
    if (K == 2)
-@endskip
+   {
+@ROUT ATL_ammm_rkK  `      TYPE alpha = alp;`
+@ROUT ATL_cammm_rkK `      const SCALAR alpha = alp;`
+@ROUT ATL_cammm_rkK `      TYPE ONE[2] = {ATL_rone, ATL_rzero};`
+/*
+ *    If BETA != 1, ammm_rk2 will copy all inputs and thus aliasing safe
+ */
+      if (!SCALAR_IS_ONE(beta))
+         Mjoin(PATL,ammm_rk2)(TA, TB, M, N, alpha, A, lda, B, ldb, beta, 
+                              C, ldc);
+/*
+ *    For beta = 1, copy aliased input array(s) and then call GER2
+ */
+      else
+      {
+         void *wp=NULL, *xp=NULL, *yp=NULL, *zp=NULL;
+         TYPE *w, *x, *y, *z;
+         ATL_SZT incX, incY;
+@ROUT ATL_ammm_rkK
+         if (A == C)
+         {
+            ATL_CSZT incx = (TA == AtlasTrans) ? lda:1;
+@ROUT ATL_cammm_rkK
+         if (A == C || TA == AtlasConjTrans || TA == AtlasConj)
+         {
+            ATL_CSZT incx = (TA == AtlasTrans || TA == AtlasConjTrans) ? lda:1;
+@ROUT ATL_ammm_rkK ATL_cammm_rkK
+            wp = FixVector(TA, M, alpha, A, incx);
+            xp = FixVector(TA, M, alpha, A+((incx==1 ? lda:1)SHIFT), incx);
+            alpha = @(one);
+            w = ATL_AlignPtr(wp);
+            incX = 1;
+         }
+         else  /* don't need to copy A */
+         {
+            w = (TYPE*)A;
+            if (TA == AtlasNoTrans)
+            {
+               x = (TYPE*)(A + (lda SHIFT));
+               incX = 1;
+            }
+            else /* if (TA == AtlasTrans) */
+            {
+               x = (TYPE*)(A + (1 SHIFT));
+               incX = lda;
+            }
+         }
+         if (B == C)
+         {
+            ATL_CSZT incy = (TB == AtlasTrans || TB == AtlasConjTrans) ? 1:ldb;
+            yp = FixVector(TB, N, alpha, A, incy);
+            zp = FixVector(TB, N, alpha, A+(((incy==1)?ldb:1)SHIFT), incy);
+            y = ATL_AlignPtr(yp);
+            z = ATL_AlignPtr(zp);
+@ROUT ATL_cammm_rkK
+            if (TB == AtlasConj)
+               TB = AtlasNoTrans;
+            else if (TB == AtlasConjTrans)
+               TB = AtlasTrans;
+@ROUT ATL_ammm_rkK ATL_cammm_rkK
+            incY = 1;
+            alpha = @(one);
+         
+         }
+         else  /* no need to copy B */
+         {
+            y = (TYPE*)B;
+@ROUT ATL_cammm_rkK `            if (TB == AtlasNoTrans || TB == AtlasConj)`
+@ROUT ATL_ammm_rkK `            if (TB == AtlasNoTrans)`
+            {
+               incY = ldb;
+               z = (TYPE*)(B + (1 SHIFT));
+            }
+            else
+            {
+               incY = 1;
+               z = (TYPE*)(B + (ldb SHIFT));
+            }
+         }
+@ROUT ATL_ammm_rkK
+         Mjoin(PATL,ger2)(M, N, alpha, w, incX, y, incY, @(one), 
+                          x, incX, z, incY, C, ldc);
+@ROUT ATL_cammm_rkK
+         if (TB == AtlasNoTrans || TB == AtlasTrans)
+            Mjoin(PATL,ger2u)(M, N, alpha, w, incX, y, incY, @(one), 
+                              x, incX, z, incY, C, ldc);
+         else
+            Mjoin(PATL,ger2c)(M, N, alpha, w, incX, y, incY, @(one), 
+                              x, incX, z, incY, C, ldc);
+@ROUT ATL_ammm_rkK ATL_cammm_rkK
+         if (wp)
+            free(wp);
+         if (xp)
+            free(xp);
+         if (yp)
+            free(yp);
+         if (zp)
+            free(zp);
+         return(0);
+      }
+      return(0);
+   }
+/*
+ * For K > 3, ATL_ammm_rkK is safe for these precise aliasing conditions
+ */
+   ATL_assert(!Mjoin(PATL,ammm_rkK)(TA, TB, M, N, K, alp, A, lda, B, ldb, 
+                                    beta, C, ldc));
+   return(0);
+@beginskip
    if (K < 3)
    {
       lda = (TA == AtlasNoTrans || TA == AtlasConj) ? M:K;
@@ -6376,6 +6513,7 @@ int Mjoin(PATL,ammm_aliased_rkK)
               beta, C, ldc));
    if (a != A)
       free(a);
+@endskip
 }
 @ROUT ATL_ammm_tN
 {
