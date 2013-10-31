@@ -183,6 +183,10 @@ void ATL_tDistMemTouch(size_t N, void *vp);
 @ROUT atlas_tlevel3.h
 #ifndef ATLAS_TLEVEL3_H
    #define  ATLAS_TLEVEL3_H
+   #define DMM_H 1
+   #define SMM_H 1
+   #define CMM_H 1
+   #define ZMM_H 1
 /*
  * ========================================
  * Threaded routines in all four precisions
@@ -251,6 +255,10 @@ void ATL_@(pre)therk
 @ROUT atlas_tlvl3.h
 #ifndef atlas_tlvl3_H
    #define atlas_tlvl3_H
+   #define DMM_H 1
+   #define SMM_H 1
+   #define CMM_H 1
+   #define ZMM_H 1
 
 #include "atlas_threads.h"
 #ifdef TYPE
@@ -277,14 +285,16 @@ void ATL_@(pre)therk
    #define ATL_TMMMINMBLKS 4
 #endif
 #ifndef ATL_TGEMM_THRESH_MF
-   #define ATL_TGEMM_THRESH_MF  ((((2.0*(ATL_TGEMM_XOVER))*MB)*NB)*KB)
+   #define ATL_TGEMM_THRESH_MF \
+      ((((2.0*(ATL_TGEMM_XOVER))*ATL_AMM_LLCMU)*ATL_AMM_LLCMU)*ATL_AMM_LLCMU)
 #endif
 /*
  * This is the minimal number of flops each thread requires once THRESH
  * is exceeded
  */
 #ifndef ATL_TGEMM_PERTHR_MF
-   #define ATL_TGEMM_PERTHR_MF  ((((2.0*ATL_TGEMM_ADDP)*MB)*NB)*KB)
+   #define ATL_TGEMM_PERTHR_MF \
+      ((((2.0*ATL_TGEMM_ADDP)*ATL_AMM_LLCMU)*ATL_AMM_LLCMU)*ATL_AMM_LLCMU)
 #endif
 /*
  * For debugging, can define ATL_SERIAL_COMBINE, and then it any required
@@ -3237,9 +3247,9 @@ void Mjoin(PATL,InitTMMNodes)
    }
    for (i=0; i < ATL_NTHREADS; i++)
    {
-      ptmms[i].mb = MB;
-      ptmms[i].nb = NB;
-      ptmms[i].kb = KB;
+      ptmms[i].mb = Mmin(ATL_AMM_LLCMU, ATL_AMM_MAXMB);
+      ptmms[i].nb = Mmin(ATL_AMM_LLCMU, ATL_AMM_MAXNB);
+      ptmms[i].kb = ATL_AMM_MAXKB;
       ptmms[i].gemmK = gemmK;
       ptmms[i].eltsz = ATL_sizeof;
       ptmms[i].eltsh = Mjoin(PATL,shift);
@@ -4421,7 +4431,7 @@ void Mjoin(PATL,t@(rt))
  * sizes).  Other problems will experience cancelation under the serial order,
  * so AFAIK, neither is more correct numerically.
  */
-   if (N < 3*NB && K < 3*NB)
+   if (N < 3*ATL_AMM_LLCMU && K < 3*ATL_AMM_LLCMU)
    {
 @ROUT ATL_tsyr2k
       Mjoin(PATL,syr2k)(Uplo, Trans, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
@@ -5811,7 +5821,7 @@ static int ATL_t@(rt)_M
    ATL_TSYRK_M_t syp[ATL_NTHREADS];
    int i, p;
    p = ATL_tsyrkdecomp_M(syp, Uplo, TA, N, K, alpha, A, lda, beta, C, ldc,
-                         MB, ATL_mmMU, Mjoin(PATL,shift), 
+                         ATL_AMM_LLCMU, ATL_AMM_LMU, Mjoin(PATL,shift), 
                          (TA == AtlasNoTrans) ? @(TRANS) : AtlasNoTrans,
                          ATL_TGEMM_PERTHR_MF, (TA == AtlasNoTrans) ? 
                          Mjoin(PATL,tsvgemmN@(TAC)):Mjoin(PATL,tsvgemm@(TAC)N),
@@ -5940,7 +5950,7 @@ void Mjoin(PATL,t@(rt))
       return;
    }
 
-   nb = MB;
+   nb = ATL_AMM_LLCMU;
    if (K > (N<<ATL_NTHRPOW2) && (((size_t)N)*N*sizeof(TYPE) <= ATL_PTMAXMALLOC))
    {
       Mjoin(PATL,t@(rt)_K_rec)(Uplo, Trans, N, K, alpha, A, lda, beta, 
