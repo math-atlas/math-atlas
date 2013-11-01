@@ -344,7 +344,7 @@ int Mjoin(PATL,@(info))
 int Mjoin(PATL,ammm_rk2)
    (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT, const SCALAR,
     const TYPE*,ATL_CSZT,const TYPE*,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT);
-@whiledef rt ammm ammm_1b ammm_rkK ammm_IP ammm_tN ammm_aliased_rkK
+@whiledef rt ammm ammm_1b ammm_rkK ammm_IP ammm_tN ammm_aliased_rkK ammmMNK
 int Mjoin(PATL,@(rt))
    (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,ATL_CSZT, const SCALAR,
     const TYPE*,ATL_CSZT,const TYPE*,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT);
@@ -5873,7 +5873,7 @@ int Mjoin(PATL,ammmABC)
    free(vp);
    return(0);
 }
-@ROUT ATL_ammm_IP ATL_cammm_IP ATL_ammm_tN ATL_cammm_tN
+@ROUT ATL_ammm_IP ATL_cammm_IP ATL_ammm_tN ATL_cammm_tN ATL_ammmMNK
    @define rt @Mjoin(PATL,ammm_IP)@
 #include "atlas_misc.h"
 #include "atlas_amm.h"
@@ -5897,9 +5897,9 @@ int Mjoin(PATL,ammmABC)
 #include "atlas_level1.h"
 #include "atlas_lvl2.h"
 #include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_sum.h))
-@ROUT ATL_ammm_rkK
-@ROUT ATL_ammm_1b
+@ROUT ATL_ammm_1b ATL_ammmKNM
 #include "atlas_misc.h"
+#include "atlas_amm.h"
 #include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_sum.h))
 @ROUT ATL_ammm ATL_cammm
 #include "atlas_misc.h"
@@ -5907,7 +5907,8 @@ int Mjoin(PATL,ammmABC)
 #include "atlas_level1.h"
 #include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_sum.h))
    @define rt @Mjoin(PATL,ammm)@
-@ROUT ATL_ammm_rkK ATL_cammm_rkK ATL_ammm_tN ATL_cammm_tN
+@ROUT ATL_ammm_rkK ATL_cammm_rkK ATL_ammm_tN ATL_cammm_tN ATL_ammmMNK @\
+      ATL_ammmKNM
 
 #ifdef __GNUC__
 static inline int ATL_ComputeB   /* RETURNS: selected blocking */
@@ -5945,6 +5946,123 @@ static int ATL_ComputeB           /* RETURNS: selected blocking */
    *NT = nblks;
    return(nb);
 }
+@ROUT ATL_ammmKNM
+
+static int ATL_ammm_rkK
+(
+   const size_t M,
+   const size_t nmblks,
+   const size_t nsmblks,
+   const int MB,
+   const int NMU,
+   const int mu,
+   const size_t N,
+   const size_t nnblks,
+   const size_t nsnblks,
+   const int NB,
+   const int NNU,
+   const int nu,
+   const int K,
+   const int KK,
+   const int ku,
+   const TYPE *A,      /* pts to beginning of matrix */
+   const size_t lda,
+   const size_t incAm0,
+   const size_t incAm,
+   const TYPE *B,      /* pts to 1 past END of matrix */
+   const size_t ldb,
+   const size_t incBn0,
+   const size_t incBn,
+   TYPE *C,            /* pts to 1 past END of matrix */
+   const size_t ldc,
+   const SCALAR alpA, 
+   const SCALAR alpB,
+   const SCALAR beta,
+   TYPE *pA,
+   const size_t incAw0,
+   const size_t incAw,
+   TYPE *pB,
+   TYPE *pC,
+   const ammkern_t amm,
+   const cm2am_t a2blk,
+   const cm2am_t b2blk,
+   const ablk2cmat_t blk2c
+)
+{
+   size_t n, j;
+   int mb, nb;
+   TYPE *pA0=pA;
+
+   n = N;
+   for (n=N, j=0; j < nnblks; j++)
+   {
+      int nmu, mb, nnu, nb, nn;
+      size_t i, m;
+      TYPE *c;
+      if (j < nsnblks)
+      {
+         nb = NB-nu;
+         nnu = NNU-1;
+         B -= incBn0;
+      }
+      else
+      {
+         nb = NB;
+         nnu = NNU;
+         B -= incBn;
+      }
+      nn = Mmin(n, nb);
+      C -= nn*ldc;
+      c=C;
+
+      b2blk(K, nn, alpB, B, ldb, pB);
+
+      mb = MB-mu;
+      nmu = NMU-1;
+      pA = pA0;
+      for (m=M,i=0; i < nsmblks; i++, m -= mb, c += mb)
+      {
+         const int mm = Mmin(m, mb);
+         TYPE *pAn = pA + incAw0;
+         if (!j)
+         {
+            a2blk(K, mm, alpA, A, lda, pA);
+            A += incAm0;
+         }
+         amm(nmu, nnu, KK, pA, pB, pC, pAn, pB, pC);
+         blk2c(mm, nn, ATL_rone, pC, beta, c, ldc);
+         pA = pAn;
+      }
+
+      for (mb=MB, nmu=NMU; i < nmblks; i++, m -= mb, c += mb)
+      {
+         const int mm = Mmin(m, mb);
+         TYPE *pAn = pA + incAw;
+         if (!j)
+         {
+            a2blk(K, mm, alpA, A, lda, pA);
+            A += incAm;
+         }
+         amm(nmu, nnu, KK, pA, pB, pC, pAn, pB, pC);
+         blk2c(mm, nn, ATL_rone, pC, beta, c, ldc);
+         pA = pAn;
+      }
+      n -= nb;
+   }
+   return(0);
+}
+
+@ROUT ATL_ammmKNM
+   @define rt @Mjoin(PATL,ammmKNM)@
+/*
+ * This routine called for very large matrices; requires workspace of
+ * one panel and 2 blocks at most
+ */
+@ROUT ATL_ammmMNK
+   @define rt @Mjoin(PATL,ammmMNK)@
+/*
+ * This routine called when N << M and K is large
+ */
 @ROUT ATL_ammm_rkK ATL_cammm_rkK
    @define rt @Mjoin(PATL,ammm_rkK)@
 /*
@@ -5963,11 +6081,12 @@ static int ATL_ammm
  * This routine handles N <= MAXN, K & M large (left-looking shape)
  */
 int Mjoin(PATL,ammm_tN)
-@ROUT ATL_ammm_1b  ATL_ammm_rkK ATL_cammm_1b @\
-      ATL_cammm_rkK  ATL_ammm_IP ATL_cammm_IP
+@ROUT ATL_ammm_1b  ATL_ammm_rkK ATL_cammm_1b ATL_ammmMNK @\
+      ATL_cammm_rkK  ATL_ammm_IP ATL_cammm_IP ATL_ammmKNM
 int @(rt)
-@ROUT ATL_ammm ATL_ammm_1b  ATL_ammm_rkK ATL_cammm ATL_cammm_1b @\
-      ATL_cammm_rkK  ATL_ammm_IP ATL_cammm_IP ATL_ammm_tN ATL_cammm_tN
+@ROUT ATL_ammm ATL_ammm_1b  ATL_ammm_rkK ATL_cammm ATL_cammm_1b ATL_ammmMNK @\
+      ATL_cammm_rkK  ATL_ammm_IP ATL_cammm_IP ATL_ammm_tN ATL_cammm_tN @\
+      ATL_ammmKNM
 (
    enum ATLAS_TRANS TA,
    enum ATLAS_TRANS TB,
@@ -5983,6 +6102,360 @@ int @(rt)
    TYPE *C,
    ATL_CSZT ldc
 )
+@ROUT ATL_ammmMNK
+{
+   ablk2cmat_t blk2c;
+   cm2am_t a2blk, b2blk;
+   size_t m, nsmblks, nmblks, nsnblks, nnblks, i, incAm0, incAm, incAw0;
+   size_t nkb, incAk, incAk0, mulAm, incBk, incBk0, mulBn;
+   int mu, nu, ku, MB, NB, KB, KB0, kb0, NMU, NNU, A_1TRIP;
+   void *vp;
+   TYPE *pC, *pB, *pB0, *pA, *pA0;
+   ammkern_t ammK0, amm;
+   const int B_BYCOLS = (TB == AtlasNoTrans);
+   const int A_BYROWS = (TA == AtlasNoTrans);
+   TYPE alpA=ATL_rone, alpB=ATL_rone, alpC=ATL_rone;
+   amminfo_t mminfo;
+
+   mu = Mjoin(PATL,GetAmmmInfo)(&mminfo, TA, TB, M, N, K, alpha, beta);
+   if (!mu)
+      alpA = alpha;
+   else if (mu == 1)
+      alpB = alpha;
+   else 
+      alpC = alpha;
+   mu = mminfo.mu;
+   nu = mminfo.nu;
+   ku = mminfo.ku;
+   MB = ATL_ComputeB(M, mu, ATL_AMM_MAXMB, &nsmblks, &nmblks);
+   NMU = MB / mu;
+   NB = ATL_ComputeB(N, nu, ATL_AMM_MAXNB, &nsnblks, &nnblks);
+   NNU = NB / nu;
+   KB = mminfo.kb;
+   nkb = K/KB;
+/*
+ * kb0: K remainder, KB0 is CEIL(kb0/ku)*ku for k-vector kerns, and
+ * same as kb0 for M-vector kerns
+ */
+   KB0 = kb0 = K - nkb*KB;
+   if (!kb0)
+   {
+      KB0 = kb0 = KB;
+      nkb--;
+   }
+   #if ATL_AMM_MAXKMAJ > 1
+      if (ATL_AMMFLG_KMAJOR(mminfo.flag))
+      {
+         KB0 = ((kb0+ku-1)/ku)*ku;
+         if (ATL_AMMFLG_KRUNTIME(mminfo.flag))
+            ammK0 = mminfo.amm_b0;
+         else
+            ammK0 = (mminfo.kb==KB0) ? mminfo.amm_b0 : mminfo.amm_k1_b0;
+      }
+      else
+   #endif
+   {
+      ammK0 = (kb0 == KB) ? mminfo.amm_b0 : mminfo.amm_k1_b0;
+      if (ATL_AMMFLG_KRUNTIME(mminfo.flag) && kb0 == KB0 &&
+          kb0 > mminfo.kbmin)
+         ammK0 = mminfo.amm_b0;
+   }
+   amm = mminfo.amm_b1;
+   a2blk = mminfo.a2blk;
+   b2blk = mminfo.b2blk;
+   blk2c = mminfo.Cblk2cm;
+   i = nkb*KB+KB0;
+/*
+ * Determine worspace requirements and allocate
+ */
+   {
+      size_t tsz;
+      const size_t szA=MB*i;
+      const size_t szB=i*(nsnblks*(NB-nu)+(nnblks-nsnblks)*NB);
+      const int szC = MB*NB;
+
+      tsz = ATL_MulBySize(szA + szB + szC + mu*nu*ku) + 3*ATL_Cachelen;
+      if (tsz > ATL_MaxMalloc)
+         return(2);
+      vp = malloc(tsz);
+      if (!vp)
+         return(1);
+      pC = ATL_AlignPtr(vp);
+      pA = pC + szC;
+      pA0 = pA = ATL_AlignPtr(pA);
+      pB = pA + szA;
+      pB0 = pB = ATL_AlignPtr(pB);
+   }
+   if (A_BYROWS)
+   {
+      incAk = KB*lda;
+      incAk0 = kb0*lda;
+      mulAm = 1;
+   }
+   else
+   {
+      incAk = KB;
+      incAk0 = kb0;
+      mulAm = lda;
+   }
+   if (B_BYCOLS)
+   {
+      incBk = KB;
+      incBk0 = kb0;
+      mulBn = ldb;
+   }
+   else
+   {
+      incBk = KB*ldb;
+      incBk0 = kb0*ldb;
+      mulBn = 1;
+   }
+
+   for (m=M, i=0; i < nmblks; i++)
+   {
+      size_t j, n;
+      int mb, mm, nmu, incAw;
+      TYPE *c=C;
+      if (i < nsmblks)
+      {
+         mb = MB-mu;
+         nmu = NMU-1;
+      }
+      else
+      {
+         mb = MB;
+         nmu = NMU;
+      }
+      mm = Mmin(m, mb);  /* number of A/C rows left */
+      m -= mm;
+      incAw = mb*KB;
+      for (n=N, j=0; j < nnblks; j++)
+      {
+         size_t k;
+         int nb, nn, nnu, incBw;
+         const TYPE *b=B, *a=A; 
+         TYPE *pAn, *pBn;
+
+         if (j < nsnblks)
+         {
+            nb = NB-nu;
+            nnu = NNU-1;
+         }
+         else
+         {
+            nb = NB;
+            nnu = NNU;
+         }
+         incBw = KB*nb;
+         nn = Mmin(n, nb);  /* number of B/C cols left */
+         n -= nn;
+         if (!j)
+         {
+            a2blk(kb0, mm, alpA, a, lda, pA);
+            a += incAk0;
+         }
+         if (!i)
+         {
+             b2blk(kb0, nn, alpB, b, ldb, pB);
+             b += incBk0;
+         }
+         pAn = pA + mb*KB0;
+         pAn = (nkb) ? pAn : pA0;
+         pBn = pB + KB0*nb;
+         ammK0(nmu, nnu, KB0, pA, pB, pC, pAn, pBn, pC);
+         pA = pAn;
+         pB = pBn;
+         for (k=0; k < nkb; k++)
+         {
+            if (!j)
+            {
+               a2blk(KB, mm, alpA, a, lda, pA);
+               a += incAk;
+            }
+            if (!i)
+            {
+                b2blk(KB, nn, alpB, b, ldb, pB);
+                b += incBk;
+            }
+            pAn = pA + incAw;
+            pAn = (k != nkb-1) ? pAn : pA0;
+            pBn = pB + incBw;
+            pBn = (k != nkb-1 || j != nnblks-1) ? pBn : pB0;
+            amm(nmu, nnu, KB, pA, pB, pC, pAn, pBn, pC);
+            pA = pAn;
+            pB = pBn;
+         }
+         blk2c(mm, nn, alpC, pC, beta, c, ldc);
+         c += nn*ldc;
+         B += nn*mulBn;
+      }
+      pB = pB0;
+      A += mm*mulAm;
+      C += mm;
+   }
+
+   free(vp);
+   return(0);
+}
+@ROUT ATL_ammmKNM
+{
+   ablk2cmat_t blk2c;
+   cm2am_t a2blk, b2blk;
+   size_t n, nsmblks, nmblks, nsnblks, nnblks, j, incAm0, incAm, incAw0, incAw;
+   size_t KK, incAk, incBk, incBn0, incBn, k;
+   int mu, nu, ku, MB, NB, KB, mb, nb, NMU, NNU, A_1TRIP, nkb, kb0, KB0;
+   void *vp;
+   TYPE *pC, *pB, *pA, *pA0;
+   ammkern_t ammK0, amm;
+   const int B_BYCOLS = (TB == AtlasNoTrans);
+   const int A_BYROWS = (TA == AtlasNoTrans);
+   TYPE alpA=ATL_rone, alpB=ATL_rone;
+   amminfo_t mminfo;
+
+@skip   ATL_assert(N > ATL_AMM_MAXNB & M > ATL_AMM_MAXMB & K > ATL_AMM_MAXKB);
+   mu = Mjoin(PATL,GetAmmmInfo)(&mminfo, TA, TB, M, N, K, alpha, beta);
+   if (!mu)
+      alpA = alpha;
+   else
+      alpB = alpha;
+   mu = mminfo.mu;
+   nu = mminfo.nu;
+   ku = mminfo.ku;
+   MB = ATL_ComputeB(M, mu, ATL_AMM_MAXMB, &nsmblks, &nmblks);
+   NMU = MB / mu;
+   NB = ATL_ComputeB(N, nu, ATL_AMM_MAXMB, &nsnblks, &nnblks);
+   NNU = NB / nu;
+   A_1TRIP = (nnblks < 2);
+   KB = mminfo.kb;
+   nkb = K/KB;
+/*
+ * kb0: K remainder, KB0 is CEIL(kb0/ku)*ku for k-vector kerns, and
+ * same as kb0 for M-vector kerns
+ */
+   KB0 = kb0 = K - nkb*KB;
+   if (!kb0)
+   {
+      KB0 = kb0 = KB;
+      nkb--;
+   }
+   #if ATL_AMM_MAXKMAJ > 1
+      if (ATL_AMMFLG_KMAJOR(mminfo.flag))
+      {
+         KB0 = ((kb0+ku-1)/ku)*ku;
+         if (ATL_AMMFLG_KRUNTIME(mminfo.flag))
+            ammK0 = mminfo.amm_b0;
+         else
+            ammK0 = (mminfo.kb==KB0) ? mminfo.amm_b0 : mminfo.amm_k1_b0;
+      }
+      else
+   #endif
+   {
+      ammK0 = (kb0 == KB) ? mminfo.amm_b0 : mminfo.amm_k1_b0;
+      if (ATL_AMMFLG_KRUNTIME(mminfo.flag) && kb0 == KB0 &&
+          kb0 > mminfo.kbmin)
+         ammK0 = mminfo.amm_b0;
+   }
+   a2blk = mminfo.a2blk;
+   b2blk = mminfo.b2blk;
+   blk2c = mminfo.Cblk2cm;
+   KK = nkb*KB + KB0;
+/*
+ * Do memory allocation, setup pointers
+ */
+   {
+      size_t tsz, szA;
+      const int szB = NB*KB, szC = MB*NB;
+
+      if (A_1TRIP)
+         szA = KB*MB;
+      else
+         szA = (nsmblks*(MB-mu)+(nmblks-nsmblks)*MB)*KB;
+      tsz = ATL_MulBySize(szA + szB + szC + mu*nu*ku) + 3*ATL_Cachelen;
+      if (tsz > ATL_MaxMalloc)
+         return(2);
+      vp = malloc(tsz);
+      if (!vp)
+         return(1);
+      pC = ATL_AlignPtr(vp);
+      pB = pC + szC;
+      pB = ATL_AlignPtr(pB);
+      pA = pB + szB;
+      pA = ATL_AlignPtr(pA);
+   }
+
+   if (A_BYROWS)
+   {
+      incAm0 = (MB-mu);
+      incAm = MB;
+      incAk = KB*lda;
+   }
+   else
+   {
+      incAm0 = (MB-mu)*lda;
+      incAm = MB*lda;
+      incAk = KB;
+   }
+   if (B_BYCOLS)
+   {
+      incBn0 = (NB-nu)*ldb;
+      incBn = NB*ldb;
+   }
+   else
+   {
+      incBn0 = (NB-nu);
+      incBn = NB;
+   }
+   if (A_1TRIP)
+      incAw0 = incAw = 0;
+   else
+   {
+      incAw0 = (MB-mu)*KB0;
+      incAw = MB*KB0;
+   }
+
+   C += N*ldc;
+   j = (nnblks-nsnblks)*NB + nsnblks*(NB-nu);
+   if (B_BYCOLS)
+   {
+      B += j*ldb;
+      incBk = KB;
+   }
+   else
+   {
+      B += j;
+      incBk = KB*ldb;
+   }
+/*
+ * Handle remainder/full block using the actual beta; all remaining K blks
+ * will be of size KB after this
+ */
+   ATL_ammm_rkK(M, nmblks, nsmblks, MB, NMU, mu, N, nnblks, nsnblks, NB,
+                NNU, nu, kb0, KB0, ku, A, lda, incAm0, incAm, B, ldb, 
+                incBn0, incBn, C, ldc, alpA, alpB, beta, pA, incAw0, incAw, 
+                pB, pC, ammK0, a2blk, b2blk, blk2c);
+   B += (B_BYCOLS) ? kb0 : kb0*ldb;
+   A += (A_BYROWS) ? kb0*lda : kb0;
+/* 
+ * If A workspace is entire panel, must now base increment on full KB
+ */
+   if (!A_1TRIP && KB0 != KB)
+   {
+      incAw0 = (MB-mu)*KB;
+      incAw = MB*KB;
+   }
+/*
+ * Loop over all remaining blocks using beta=1 and full KB
+ * ALSO: need to change blk2c if it is bn!
+ */
+   amm = mminfo.amm_b0;
+   for (k=0; k < nkb; k++, B += incBk, A += incAk)
+      ATL_ammm_rkK(M, nmblks, nsmblks, MB, NMU, mu, N, nnblks, nsnblks, NB,
+                   NNU, nu, KB, KB, ku, A, lda, incAm0, incAm, B, ldb, 
+                   incBn0, incBn, C, ldc, alpA, alpB, ATL_rone, 
+                   pA, incAw0, incAw, pB, pC, amm, a2blk, b2blk, blk2c);
+   free(vp);
+   return(0);
+}
 @ROUT ATL_ammm_rkK
 {
    ablk2cmat_t blk2c;
@@ -7356,6 +7829,13 @@ int Mjoin(PATL,ammm_aliased_rkK)
  */
    if (N <= ATL_AMM_MAXNB)
       return(Mjoin(PATL,ammm_tN)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                 beta, C, ldc));
+/*
+ * Next two loop orderings are general case, so use whichever uses least
+ * workspace
+ */
+   if (M <= N)
+      return(Mjoin(PATL,ammmMNK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                  beta, C, ldc));
 /*
  * This guy tries to allocate (M+NB)*K + NB^2 worskpace, so recursion
