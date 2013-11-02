@@ -6,6 +6,10 @@
 @extract -b @(topd)/gen.inc what=cw @(cw00)
 @ROUT lanbsrch
 @extract -b @(topd)/gen.inc what=cw @(cw09)
+#define DMM_H 1
+#define SMM_H 1
+#define CMM_H 1
+#define ZMM_H 1
 @ROUT ilaenvF.c lanbtst latime
 @extract -b @(topd)/gen.inc what=cw @(cw08)
 @ROUT lanbtst slvtst lanbsrch latime
@@ -4218,9 +4222,9 @@ int GetGoodNForFlopRate(int rout, double nsec, int restM, int restN)
       pre = 'd';
    #endif
    #ifdef ATL_USEPTHREADS
-      k = ((4000+NB-1)/NB)*NB;
+      k = 4000;
    #else
-      k = ((2000+NB-1)/NB)*NB;
+      k = 2000;
    #endif
    mmp = ReadMMFileWithPath(pre, "../blas/gemm/res", "MMRES.sum");
    if (!mmp)
@@ -4235,16 +4239,16 @@ int GetGoodNForFlopRate(int rout, double nsec, int restM, int restN)
    #endif
    if (floprate < 100)  /* nonsensical result */
       return(k);
-   k = (600/NB)*NB;
+   k = 600;
    do
    {
-       k += NB;
+       k += 80;
        m = (restM) ? restM : k;
        n = (restN) ? restN : k;
-       time = GetFlopCount(rout, 0, m, n, 0, 0, NB) / (floprate*1000000.0);
+       time = GetFlopCount(rout, 0, m, n, 0, 0, 80) / (floprate*1000000.0);
    }
    while (time < nsec);
-   k -= NB;
+   k -= 80;
 /*
  * Don't let K be too huge, or extremely tiny regardless of computation
  */
@@ -4291,9 +4295,9 @@ int *GetFlags(int nargs, char **args, int **nreps, int *flsizeKB, int *mflop,
    *flsizeKB = L2SIZE/1024;
 @ROUT lanbsrch
    #ifdef ATL_USEPTHREADS
-      *maxN = ((4000+NB-1)/NB)*NB;
+      *maxN = 4000;
    #else
-      *maxN = ((2000+NB-1)/NB)*NB;
+      *maxN = 2000;
    #endif
    *maxN = 0;
    *rout = LAgeqrf;
@@ -5511,6 +5515,220 @@ double GetMultSampleTimes
    return(retavg ? avgtime/i : mintime);
 }
 
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_blk.h))
+int findNB
+(
+   int rout,                    /* routine to time */
+   int nreps,                   /* # of times to repeat timing */
+   int nsecs,                   /* max # secs to spend repeating */
+   int flshszKB,                /* KB to flush */
+   int mflopF,                  /* mflops to force in one timing*/
+   int uplo, int side,
+   int M, int N, int lda,       /* prob dims */
+   int minNB, int maxNB,        /* index of smallest & largest NB to try */
+   double *tLeft,               /* % time minNB took for this problem size */
+   double *tRight               /* time maxNB took for this problem size */
+)
+/*
+ * tLeft is the time minNB took for this problem size as a percentage of
+ * the minimum time (1.02 would be 2% slower); tRight same for maxNB
+ * used to determine if the blocking factors are really different
+ */
+{
+   int i, imin;
+   double tmin, timeL, timeR;
+/*
+ * Time smallest case to compute timeL & initial tmin
+ */
+   i = ATL_AMM_KBs[minNB];
+   printf("   FINDING NB FOR M=%d, N=%d, LDA=%d:\n", M, N, lda);
+   imin = minNB;
+   printf("      nb=%d:", i);
+   tmin = GetMultSampleTimes(1, 0, nreps, nsecs, flshszKB, mflopF, rout,
+                             uplo, side, M, N, lda, i);
+   timeL = tmin;
+   printf("--> %.2f MFLOP.\n", Time2Flops(rout, uplo, M, N, tmin));
+/* 
+ * Right now, lanbsrch only use for QR, which is rank-K.  For other lapack
+ * operations, may need to use dim other than KB!
+ */
+   for (i=minNB+1; i < maxNB; i++)
+   {
+      int nb = ATL_AMM_KBs[i];
+      double t0;
+
+      if (nb > (Mmin(M,N)>>1))
+         break;
+      printf("      nb=%d:", nb);
+      t0 = GetMultSampleTimes(1, 0, nreps, nsecs, flshszKB, mflopF, rout,
+                              uplo, side, M, N, lda, nb);
+      printf("--> %.2f MFLOP.\n", Time2Flops(rout, uplo, M, N, t0));
+/*
+ *    Quit if problem has gotten noticiably slower
+ */
+      if (nb > 64 && t0 > 1.05*tmin)
+         break;
+      if (t0*1.005 < tmin || i < imin)
+      {
+         imin = i;
+         tmin = t0;
+      }
+   }
+/*
+ * Time largest case to compute timeR
+ */
+   i = ATL_AMM_KBs[maxNB];
+   if (i+i <= Mmin(M,N))
+   {
+      printf("      nb=%d:", i);
+      timeR = GetMultSampleTimes(1, 0, nreps, nsecs, flshszKB, mflopF, rout,
+                                 uplo, side, M, N, lda, i);
+      printf("--> %.2f MFLOP.\n", Time2Flops(rout, uplo, M, N, timeR));
+      if (timeR*1.005 < tmin)
+      {
+         imin = maxNB;
+         tmin = timeR;
+      }
+   }
+   else 
+      timeR = 2*tmin;
+   printf("   FOR M=%d, N=%d, LDA=%d, BEST NB=%d\n\n", 
+          M, N, lda, ATL_AMM_KBs[imin]);
+   *tLeft = timeL / tmin;
+   *tRight = timeR / tmin;
+   return(imin);
+}
+
+int *FindAllNBs
+(
+   int rout,                    /* routine to time */
+   int nreps,                   /* # of times to repeat timing */
+   int nsecs,                   /* max # secs to spend repeating */
+   int flshszKB,                /* KB to flush */
+   int mflopF,                  /* mflops to force in one timing*/
+   int uplo,
+   int side,
+   int restM,
+   int restN,
+   int ldagap,
+   int iL,                      /* index in nnb to find left case */
+   int iR,                      /* index in nnb to find right case */
+   int *nnb                     /* array of all N/NB combos found so far */
+)
+/*
+ * Recursively searches the dimension space for good NBs given two known
+ * boundary points
+ */
+{
+   int m, n, k, lda, i, iM;
+   int *tp;
+   double Lperc, Rperc;
+
+   k = (nnb[iR] + nnb[iL])>>1;
+   if (k-nnb[iL] < 40 || nnb[iR]-k < 40)
+      return(nnb);   /* don't get finer grained than 40 in search */
+   m = (restM) ? restM : k;
+   n = (restN) ? restN : k;
+   lda = m + ldagap;
+/*
+ * If nnb is too short, get roughly a double-length array and continue
+ */
+   i = nnb[1];
+   if (i+2 > nnb[0])
+   {
+      tp = malloc(sizeof(int)*(i+i));
+      ATL_assert(tp);
+      memcpy(tp, nnb, (i)*sizeof(int));
+      free(nnb);
+      nnb = tp;
+      tp[0] = i+i;
+   }
+/*
+ * Find best NB for a problem midway between left and right N's
+ */
+   iM = i;
+   nnb[iM] = k;
+   nnb[iM+1] = findNB(rout, nreps, nsecs, flshszKB, mflopF, uplo, side, 
+                      m, n, lda, nnb[iL+1], nnb[iR+1], &Lperc, &Rperc);
+   nnb[1] = i + 2;
+   printf("   M=%d, N=%d, lda=%d, NB=%d\n", m, n, lda, ATL_AMM_KBs[nnb[iM+1]]);
+/*
+ * If middle NB greater than left NB, and loss of using different NB is more
+ * than 2%, must search space between
+ */
+   if (nnb[iM+1] > nnb[iL+1] && Lperc > 1.02)
+      nnb = FindAllNBs(rout, nreps, nsecs, flshszKB, mflopF, uplo, side,
+                       restM, restN, ldagap, iL, iM, nnb);
+/*
+ * If middle NB less than right NB, and loss of using different NB is more
+ * than 2%, must search space between
+ */
+   if (nnb[iM+1] < nnb[iR+1] && Rperc > 1.02)
+      nnb = FindAllNBs(rout, nreps, nsecs, flshszKB, mflopF, uplo, side,
+                       restM, restN, ldagap, iM, iR, nnb);
+   return(nnb);
+}
+
+int *FindNBByN
+(
+   int rout,                    /* routine to time */
+   int nreps,                   /* # of times to repeat timing */
+   int nsecs,                   /* max # secs to spend repeating */
+   int flshszKB,                /* KB to flush */
+   int mflopF,                  /* mflops to force in one timing*/
+   int side,
+   int uplo,
+   int maxN,                    /* largest dimension to try */
+   int restM,                   /* 0 : vary M wt tuning dim, else fixed size */
+   int restN,                   /* 0 : vary N wt tuning dim, else fixed size */
+   int ldagap                   /* lda = ldagap+M */
+)
+/*
+ * RETURNS: integer array nnb: nnb[0] holds the array length, nnb[1] holds
+ *          the number of used entries.  For all other entries, even entries
+ *          hold a unique N, and the next entry (odd) is the best NB to use
+ *          The Ns are not sorted (will be in recursive order)
+ */
+{
+   int *nnb;
+   int i, m, n, lda;
+   double t0, tN, percL, percR;
+/*
+ * Find best NB for minimum problem (dimension 4)
+ */
+   nnb = malloc(sizeof(int)*4000);
+   nnb[2] = 25;
+   m = (restM) ? restM : 24;
+   n = (restN) ? restN : 24;
+   lda = m + ldagap;
+   nnb[3] = findNB(rout, nreps, nsecs, flshszKB, mflopF, uplo, side, 
+                   m, n, lda, 0, ATL_AMM_NCASES-1, &percL, &percR);
+/*
+ * Find best NB for maximum size problem
+ */
+   nnb[4] = maxN;
+   m = (restM) ? restM : maxN;
+   n = (restN) ? restN : maxN;
+   lda = m + ldagap;
+   nnb[5] = findNB(rout, nreps, nsecs, flshszKB, mflopF, uplo, side, m, n, lda, 
+                   nnb[3], ATL_AMM_NCASES-1, &percL, &percR);
+
+   nnb[0] = 4000;   /* length of array in pos 0 */
+   nnb[1] = 6;      /* number of entries used so far in pos 1 */
+   nnb = FindAllNBs(rout, nreps, nsecs, flshszKB, mflopF, uplo, side, 
+                    restM, restN, ldagap, 2, 4, nnb);
+/*
+ * Translate indices into actual NBs
+ */
+   for (n=nnb[1], i=3; i < n; i += 2)
+   {
+      int j = nnb[i];
+      assert(j >= 0 && j < ATL_AMM_NCASES);
+      nnb[i] = ATL_AMM_KBs[j];
+   }
+   return(nnb);
+}
+@beginskip
 int findNB
 (
    int rout,                    /* routine to time */
@@ -5794,6 +6012,7 @@ int *FindNBByN
                     restM, restN, ldagap, 2, 4, nnb);
    return(nnb);
 }
+@endskip
 
 void SortNNB(int *nnb)
 /*
