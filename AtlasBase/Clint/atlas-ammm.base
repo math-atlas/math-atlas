@@ -2890,6 +2890,34 @@ char *GenString(char pre, int lat, int nb, int mu, int nu, int ku,
    return(ln);
 }
 
+void FillInGenStrings(char pre, ATL_mmnode_t *mmb)
+{
+   ATL_mmnode_t *mp;
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      if (mp->ID == 0 && !mp->genstr)
+      {
+         const int vlen=mp->vlen, mu = (vlen) ? mp->mu/vlen : mp->mu, vl0=VECi;
+         if (!vlen || vlen == 1)
+            VECi = VTSC;
+         else if (vlen != VLEN[VECi])
+         {
+            if (vlen == 4)
+               VECi = VTAVX;
+            else if (vlen == 2 && VECi == VTAVX)
+               VECi = VTSSE;
+            else if (vlen == 2)
+               VECi = VTGV;
+            else 
+               VECi = VTSC;
+         }
+         mp->genstr = GenString(pre, mp->lat, mp->kbB, mu, mp->nu, mp->ku, 
+                                mp->kmaj, mp->rout);
+         VECi = vl0;
+      }
+   }
+}
+
 ATL_mmnode_t *GetNewGenNode(char pre, int nb, int lat, int mu, int nu, int ku,
                             int kmaj)
 {
@@ -2926,6 +2954,7 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
    mmp = ReadMMFileWithPath(pre, "res", "gAMMMUNU.sum");
    if (mmp)
    {
+      FillInGenStrings(pre, mmp);
       nb = mmp->kbB;
       if (mmp->mflop[0] < 0.0)
          mmp->mflop[0] = TimeMMKernel(verb, 1, mmp, pre, nb, nb, nb, 
@@ -3368,16 +3397,18 @@ ATL_mmnode_t *FindBestGenCases(int verb, char pre, int nreg,
    if (gmmb)
    {
       printf("Reading in generated cases for all NBs:\n");
+      FillInGenStrings(pre, gmmb);
       for (mp=gmmb; mp; mp = mp->next)
       {
          const int mu = (mp->vlen) ? mp->mu / mp->vlen : mp->mu;
-         int nb = mp->kbB;
+         int kb = mp->kbB, mb = Mmax(mp->mu,kb), nb=Mmax(mp->nu,kb);
          if (mp->mflop[0] < 0.0)
-            mp->mflop[0] = TimeMMKernel(verb, 1, mp, pre, nb, nb, nb,
-                                         nb, nb, nb, 1, 0, -1);
+            mp->mflop[0] = TimeMMKernel(verb, 1, mp, pre, mb, nb, kb,
+                                         kb, kb, mb, 1, 0, -1);
          printf("  NB=%d, MU=%d, NU=%d, vlen=%d, MFLOP=%.2f\n", 
                 nb, mu, mp->nu, mp->vlen, mp->mflop[0]);
       }
+      WriteMMFileWithPath(pre, "res", "gAMMRES.sum", gmmb);
       printf("Done.\n\n");
       return(gmmb);
    }
@@ -3775,6 +3806,7 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
    if (gmmb)
    {
       printf("READING IN UNIQUE K-CLEANUP:\n");
+      FillInGenStrings(pre, gmmb);
       for (mp=gmmb; mp; mp = mp->next)
       {
          int nb = mp->nbB, kb = (nb > 8) ? (nb>>2) : nb, KB = kb;
@@ -4128,6 +4160,7 @@ ATL_mmnode_t *KCleanByNB
    {
       KillAllMMNodes(mkb);
       printf("READING IN BY-NB K-CLEANUP:\n");
+      FillInGenStrings(pre, nkb);
       for (mp=nkb; mp; mp = mp->next)
       {
          int mb=mp->mbB, nb=mp->nbB;
@@ -4135,7 +4168,7 @@ ATL_mmnode_t *KCleanByNB
          kb = (kb >= 4) ? kb : 4;
          if (mp->mflop[0] < 0.0)
          {
-            mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, mb, nb, kb, 0, 0, kb,
+            mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, mb, nb, kb, 0, 0, mb,
                                         0, 0, -1);
             mf = (2.0*nb)*nb;  /* flop count of gemm/kits (kb) */
             mp->mflop[1] = mf / mp->mflop[0]; /* time in microsecs for 1 k-it */
@@ -4144,6 +4177,7 @@ ATL_mmnode_t *KCleanByNB
                 nb, kb, mp->mu, mp->nu, mp->mflop[0], mf);
       }
       printf("Done.\n");
+      WriteMMFileWithPath(pre, "res", "@(kpr)KCLEANBYNB.sum", nkb);
       return(nkb);
    }
 @ROUT ammsearch uammsearch
@@ -4218,6 +4252,7 @@ void TimeKClean(int verb, char pre, ATL_mmnode_t *mp)
    if (mmb)
    {
       printf("READING IN K-CLEANUP TIMINGS FOR NB=%d:\n", nb);
+      FillInGenStrings(pre, mmb);
       for (p=mmb; p; p = p->next)
       {
          int kb = p->kbB;
@@ -4682,6 +4717,7 @@ ATL_mmnode_t *FindCacheBudgetCasesByKB
    {
       int i=0;
       printf("READING IN LARGE KERNEL CASES FROM res/<pre>bAMMRES:\n");
+      FillInGenStrings(pre, mm3b);
       for (mp=mm3b; mp; mp = mp->next)
       {
          if (mp->mflop[0] <= 0.0)
@@ -5155,7 +5191,23 @@ ATL_mmnode_t *GetRankKKernels
    
    rkb = ReadMMFileWithPath(pre, "res", "ARANKK.sum");
    if (rkb)
+   {
+      ATL_mmnode_t *mp;
+      printf("Reading in RANK-K cases:\n");
+      FillInGenStrings(pre, rkb);
+      for (mp=rkb; mp; mp = mp->next)
+      {
+         const int mu = (mp->vlen) ? mp->mu / mp->vlen : mp->mu;
+         int kb = mp->kbB, mb = mp->mbB, nb=mp->nbB;
+         if (mp->mflop[0] < 0.0)
+            mp->mflop[0] = TimeMMKernel(verb, 1, mp, pre, mb, nb, kb,
+                                         kb, kb, mb, 1, 0, -1);
+         printf("  ID=%d, %s: (M,N,K)=(%d,%d,%d) mf=%.2f\n", mp->ID, 
+                mp->rout ? mp->rout:"Gennedkern", mb, nb, kb, mp->mflop[0]);
+      }
+      WriteMMFileWithPath(pre, "res", "ARANKK.sum", rkb);
       return(rkb);
+   }
    if (mmb)
    {
       maxKB = mmb->kbB;
@@ -6165,7 +6217,7 @@ int @(rt)
    #endif
    {
       ammK0 = (kb0 == KB) ? mminfo.amm_b0 : mminfo.amm_k1_b0;
-      if (ATL_AMMFLG_KRUNTIME(mminfo.flag) && kb0 == KB0 &&
+      if (ATL_AMMFLG_KRUNTIME(mminfo.flag) && kb0 == (kb0/ku)*ku &&
           kb0 > mminfo.kbmin)
          ammK0 = mminfo.amm_b0;
    }
@@ -6450,7 +6502,7 @@ int @(rt)
    #endif
    {
       ammK0 = (kb0 == KB) ? mminfo.amm_b0 : mminfo.amm_k1_b0;
-      if (ATL_AMMFLG_KRUNTIME(mminfo.flag) && kb0 == KB0 &&
+      if (ATL_AMMFLG_KRUNTIME(mminfo.flag) && kb0 == (kb0/ku)*ku &&
           kb0 > mminfo.kbmin)
          ammK0 = mminfo.amm_b0;
    }
@@ -7152,7 +7204,7 @@ int Mjoin(PATL,ammm_aliased_rkK)
    #endif
    {
       ammK0 = (kb0 == KB) ? mminfo.amm_b0 : mminfo.amm_k1_b0;
-      if (ATL_AMMFLG_KRUNTIME(mminfo.flag) && kb0 == KB0 &&
+      if (ATL_AMMFLG_KRUNTIME(mminfo.flag) && kb0 == (kb0/ku)*ku &&
           kb0 > mminfo.kbmin)
          ammK0 = mminfo.amm_b0;
    }
@@ -7621,7 +7673,7 @@ int Mjoin(PATL,ammm_aliased_rkK)
    #endif
    {
       ammK0 = (kb0 == KB) ? mminfo.amm_b0 : mminfo.amm_k1_b0;
-      if (ATL_AMMFLG_KRUNTIME(mminfo.flag) && kb0 == KB0 && 
+      if (ATL_AMMFLG_KRUNTIME(mminfo.flag) && kb0 == (kb0/ku)*ku && 
           kb0 > mminfo.kbmin)
          ammK0 = mminfo.amm_b0;
    }
