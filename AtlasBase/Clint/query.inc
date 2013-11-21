@@ -197,7 +197,7 @@ long long GetFirstLong(char *ln)
    {
       if (isdigit(ln[i]))
       {
-         sscanf(ln+i, "%ld", &iret);
+         sscanf(ln+i, "%Ld", &iret);
          break;
       }
    }

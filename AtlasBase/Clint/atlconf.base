@@ -713,7 +713,7 @@ enum OSTYPE {OSOther=0, OSLinux, OSSunOS, OSSunOS4, OSOSF1, OSIRIX, OSAIX,
 enum ARCHFAM {AFOther=0, AFPPC, AFSPARC, AFALPHA, AFX86, AFIA64, AFMIPS, 
               AFARM, AFS390};
 
-#define NMACH 50
+#define NMACH 52
 static char *machnam[NMACH] = 
    {"UNKNOWN", "POWER3", "POWER4", "POWER5", "PPCG4", "PPCG5", 
     "POWER6", "POWER7", "POWERe6500", "IBMz9", "IBMz10", "IBMz196",
@@ -724,7 +724,7 @@ static char *machnam[NMACH] =
     "Efficeon", "K7", "HAMMER", "AMD64K10h", "AMDDOZER", "AMDDRIVER", 
     "UNKNOWNx86", "IA64Itan", "IA64Itan2",
     "USI", "USII", "USIII", "USIV", "UST2", "UnknownUS", 
-    "MIPSR1xK", "MIPSICE9", "ARMv7"};
+    "MIPSR1xK", "MIPSICE9", "ARMv7", "TI_C66_BM", "XeonPHI"};
 enum MACHTYPE {MACHOther, IbmPwr3, IbmPwr4, IbmPwr5, PPCG4, PPCG5,
                IbmPwr6, IbmPwr7, Pwre6500,
                IbmZ9, IbmZ10, IbmZ196,  /* s390(x) in Linux */ 
@@ -737,7 +737,9 @@ enum MACHTYPE {MACHOther, IbmPwr3, IbmPwr4, IbmPwr5, PPCG4, PPCG5,
                SunUSI, SunUSII, SunUSIII, SunUSIV, SunUST2, SunUSX, 
                MIPSR1xK, /* includes R10K, R12K, R14K, R16K */
                MIPSICE9,  /* SiCortex ICE9 -- like MIPS5K */
-               ARMv7      /* includes Cortex A8, A9 */
+               ARMv7,     /* includes Cortex A8, A9 */
+               TI_C66_BM, /* TI accelerator */
+               IntPhi     /* build for XEON Phi */
                };
 #define MachIsX86(mach_) \
    ( (mach_) >= x86x87 && (mach_) <= x86X )
@@ -7988,7 +7990,7 @@ int main(int nargs, char **args)
       else
          ptrbits = ProbePtrbits(verb, targarg, OS, asmb);
    }
-   if (ProbeCPUThrottle(verb, targarg, OS, asmb))
+   if (mach != TI_C66_BM && ProbeCPUThrottle(verb, targarg, OS, asmb))
    {
       fprintf(stderr, 
          "It appears you have cpu throttling enabled, which makes timings\n");
@@ -8012,6 +8014,11 @@ int main(int nargs, char **args)
  * there due to incompatable ABI
  */
    if (OS == OSWin64 && ptrbits == 64)
+      asmb = ASM_None;
+/*
+ * Don't try to use assembly for TI accelerator install
+ */
+   if (mach == TI_C66_BM)
       asmb = ASM_None;
 
    sp = ProbeComp(verb, targarg, OS, mach, comps, nof77, nocygwin, ptrbits, 
@@ -8168,6 +8175,7 @@ rm $blddir/TstBld973.txt
 bitwidth=0
 rdbitwidth=0
 dylib=0
+accel=0  # 1: TI_C66_BM, 2: Xeon Phi
 for arg in "$@"
 do
    handled=0
@@ -8185,6 +8193,10 @@ do
       echo "                        Default: $prefix/include"
       echo "   --libdir=<dirname> : Installation dir for libraries"
       echo "                        Default: $prefix/lib"
+      echo "   --accel=[0/1/2] : build for accelerator:"
+      echo "     0: Don't build for accelerator"
+      echo "     1: Build for TI_C66_BM"
+      echo "     2: Build for Xeon Phi"
       echo "   --shared : same as --dylibs"
       echo "   --dylibs : build dynamic/shared libs in addition to static libs"
       echo '   --force-tids="<#> threadIDlist"'
@@ -8252,6 +8264,18 @@ do
    if test "$flag" != "$arg"
    then
       incinstdir="$flag"
+      handled=1
+   fi
+   flag=`echo "$arg" | sed -e "s/--accel=//"`
+   if test "$flag" != "$arg"
+   then
+      if test "$arg" -eq "1"
+         pass="$pass -A 50"
+         accel=1
+      elif test "$arg" -eq "2"
+         accel=2
+         pass="$pass -A 51"
+      fi
       handled=1
    fi
    flag=`echo "$arg" | sed -e "s/--force-tids=//"`

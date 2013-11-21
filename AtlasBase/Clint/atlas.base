@@ -2676,22 +2676,24 @@ void gmmsearch(char pre, int MULADD, int Fku, int nNBs, int *NBs, int nreg,
       }
    }
 @endskip
+   #ifndef ATL_NOPREFETCH
 /*
- * Now, find if prefetching helps this kernel; may want to user different
- * NB if prefetch is a win (esp., smaller NB)
+ *    Now, find if prefetching helps this kernel; may want to user different
+ *    NB if prefetch is a win (esp., smaller NB)
  */
-   mf  = SearchNBs(pre, MULADD,  Fku, nNBs, NBs, muB, nuB, 1|(ldbot<<9), 
-                   lat, &lat, &ku);
-   nbB = NBs[0];
-   if (mf > mfB)
-   {
-      fprintf(stdout, "\nPrefetch kernel %.2f faster.\n", mf/mfB);
-      mfB = mf;
-      latB = lat;
-      kuB = ku;
-      pfA = 1;
-   }
-   else fprintf(stdout, "\nNon-prefetch kernel %.2f faster.\n", mfB/mf);
+      mf  = SearchNBs(pre, MULADD,  Fku, nNBs, NBs, muB, nuB, 1|(ldbot<<9), 
+                      lat, &lat, &ku);
+      nbB = NBs[0];
+      if (mf > mfB)
+      {
+         fprintf(stdout, "\nPrefetch kernel %.2f faster.\n", mf/mfB);
+         mfB = mf;
+         latB = lat;
+         kuB = ku;
+         pfA = 1;
+      }
+      else fprintf(stdout, "\nNon-prefetch kernel %.2f faster.\n", mfB/mf);
+   #endif
 /*
  * With whatever the prefetch setting, try reversing load-C-at-top/bottom
  * After this, load-C setting stuck in pfA; give bottom preference due error
@@ -2781,13 +2783,15 @@ void gmmsearch(char pre, int MULADD, int Fku, int nNBs, int *NBs, int nreg,
  */
    ldbot = pfA & 512;
    pfA = pfA ^ ldbot;
-   mf = mms_case(pre, MULADD, nbB, muB, nuB, kuB, (!pfA)|ldbot, lat);
-   if (mf > mfB*1.01)
-   {
-      fprintf(stdout, "\n\nPREFETCH SWAPPED TO %d\n\n", pfA);
-      pfA = !pfA;
-      mfB = mf;
-   }
+   #ifndef ATL_NOPREFETCH
+      mf = mms_case(pre, MULADD, nbB, muB, nuB, kuB, (!pfA)|ldbot, lat);
+      if (mf > mfB*1.01)
+      {
+         fprintf(stdout, "\n\nPREFETCH SWAPPED TO %d\n\n", pfA);
+         pfA = !pfA;
+         mfB = mf;
+      }
+   #endif
 /*
  * Try changing load at of C from top to bottom or vice versa; give 
  * load-at-bottom benefit of doubt, since it is the least error-prone
@@ -3331,13 +3335,15 @@ int FindNoCopyNB(char pre, int nb, int mu, int nu, int ku0, int muladd,
  */
       mfB = NCcase(pre, nb, mu, nu, ku0, muladd, pfA, lat, 
                    FFetch, ifetch, nfetch);
-      mf0 = NCcase(pre, nb, mu, nu, ku0, muladd, !pfA, lat, 
-                   FFetch, ifetch, nfetch);
-      if (mf0 > mfB)
-      {
-         mfB = mf0;
-         pfA = !pfA;
-      }
+      #ifndef ATL_NOPREFETCH
+         mf0 = NCcase(pre, nb, mu, nu, ku0, muladd, !pfA, lat, 
+                      FFetch, ifetch, nfetch);
+         if (mf0 > mfB)
+         {
+            mfB = mf0;
+            pfA = !pfA;
+         }
+      #endif
       mfB *= dmul;
       mf0 = mfB;
       i = (nb>>2)<<2;
@@ -3361,13 +3367,15 @@ int FindNoCopyNB(char pre, int nb, int mu, int nu, int ku0, int muladd,
 /*
  *    For safety, check opposite of prefetch result wt new NB
  */
-      mf = NCcase(pre, nbB, mu, nu, ku, muladd, !pfA, lat, 
-                  FFetch, ifetch, nfetch);
-      if (mf > mfB)
-      {
-         mfB = mf;
-         pfA = !pfA;
-      }
+      #ifndef ATL_NOPREFETCH
+         mf = NCcase(pre, nbB, mu, nu, ku, muladd, !pfA, lat, 
+                     FFetch, ifetch, nfetch);
+         if (mf > mfB)
+         {
+            mfB = mf;
+            pfA = !pfA;
+         }
+      #endif
 
       fp = fopen(fnam, "w");
       assert(fp);
@@ -3382,13 +3390,15 @@ int FindNoCopyNB(char pre, int nb, int mu, int nu, int ku0, int muladd,
       ku = kuIsNB ? nbB : (Mmin(ku0,nbB));
       mfB = NCcase(pre, nbB, mu, nu, ku, muladd, pfA, lat, 
                    FFetch, ifetch, nfetch);
-      mf  = NCcase(pre, nbB, mu, nu, ku, muladd, !pfA, lat, 
-                   FFetch, ifetch, nfetch);
-      if (mf > mfB)
-      {
-        pfA = !pfA;
-        mfB = mf;
-      }
+      #ifndef ATL_NOPREFETCH
+         mf  = NCcase(pre, nbB, mu, nu, ku, muladd, !pfA, lat, 
+                      FFetch, ifetch, nfetch);
+         if (mf > mfB)
+         {
+           pfA = !pfA;
+           mfB = mf;
+         }
+      #endif
    }
    fclose(fp);
    fprintf(stdout, "\n%cNB = %d (%.2f), No copy %cNB = %d (%.2f)\n\n", 
@@ -3426,6 +3436,9 @@ void FindNoCopy(char pre)
    muladd = mmp->muladd;
    lat = mmp->lat;
    pfA = mmp->pref;
+   #ifndef ATL_NOPREFETCH  /* if no prefetch allowed */
+      pfA &= 512;          /* just preserve load-at-bottom flag */
+   #endif
    nb = mmp->next ? mmp->next->nbB : mmp->nbB;
    mu = mmp->mu; nu = mmp->nu;  ku = mmp->ku;
    FFetch = mmp->fftch; ifetch = mmp->iftch; nfetch = mmp->nftch;
@@ -3849,8 +3862,12 @@ void FindAllUserClean0(char pre)
 @endskip
    mmp = GetOrTransMMRES(pre);
    assert(mmp);
+   pfA = mmp->pref;
+   #ifndef ATL_NOPREFETCH  /* if no prefetch allowed */
+      pfA &= 512;          /* just preserve load-at-bottom flag */
+   #endif
    FindAllUserClean(pre, mmp->next ? mmp->next->nbB : mmp->nbB, 
-                    mmp->mu, mmp->nu, mmp->ku, mmp->muladd, mmp->pref, 
+                    mmp->mu, mmp->nu, mmp->ku, mmp->muladd, pfA, 
                     mmp->lat, mmp->fftch, mmp->iftch, mmp->nftch);
    KillAllMMNodes(mmp);
 }
@@ -7020,6 +7037,11 @@ int L1CacheSize_read(int MAXL1CACHE, double tol)
       dlen = (dlen >> 3)<<3;
       len = dlen * 8;
       d = p = malloc(len);
+      if (p == NULL)
+      {
+         fprintf(stderr, "malloc failed, len=%d\n", len);
+         assert(p);
+      }
       st = p + dlen;
 
       for (k=0; k != dlen; k += 8)
@@ -21172,7 +21194,33 @@ float SECOND(void) { return((float)time00()); }
 @ROUT ATL_cputime
 @extract -b @(topd)/gen.inc what=cw
 
-#if defined(UseClock)
+
+#if defined(ATL_ARCH_TI_C66_BM) && (!defined(ATL_USING_XCC))
+   /* The following code is used because ATL_ARCH_TI_C66_BM is defined.    */
+   /* Note: timer overhead has been measured; it is 2 cycles. TSCH, TSCL   */
+   /* are C66 registers we access directly; TSCL=0 restarts timer. It is   */
+   /* C66 specific; it cannot be used when compiling for the host, e.g.    */
+   /* ATL_Xwalltime. Also, their time.h file has the wrong CLOCKS_PER_SEC. */
+   #include <c6x.h>
+   double ATL_cputime(void)
+   {
+      static int INIT=0;                  /* First time in, reset timer. */
+      long long unsigned int now;
+      static const double CPS = 1.0 / (1000000000.0);
+      double d;
+
+      if (INIT==0)                        /* Reset timer if first run. */
+      {
+         INIT = 1;                        /* Remember we did it. */
+         TSCL = 0;                        /* Ensure hardware time is running. */
+      }
+
+      now = _itoll(TSCH, TSCL);           /* Convert timer regs to long long. */
+      d = (double) (now);                 /* get as a double. */
+      d *= CPS;                           /* Convert to seconds. */
+      return(d);                          /* Exit with answer.  */
+   } /* END ATL_cputime */
+#elif defined(UseClock)
    #include <time.h>
    double ATL_cputime(void)
    {
@@ -21244,7 +21292,32 @@ float SECOND(void) { return((float)time00()); }
 #endif
 
 @ROUT time00
-#if defined(PentiumCPS)
+#if defined(ATL_ARCH_TI_C66_BM) && (!defined(ATL_USING_XCC))
+   /* The following code is used because ATL_ARCH_TI_C66_BM is defined.    */
+   /* Note: timer overhead has been measured; it is 2 cycles. TSCH, TSCL   */
+   /* are C66 registers we access directly; TSCL=0 restarts timer. It is   */
+   /* C66 specific; it cannot be used when compiling for the host, e.g.    */
+   /* ATL_Xwalltime. Also, their time.h has wrong CLOCKS_PER_SEC.          */
+   #include <c6x.h>
+   double ATL_walltime(void)
+   {
+      static int INIT=0;                  /* First time in, reset timer. */
+      long long unsigned int now;
+      static const double CPS = 1.0 / (1000000000.0);
+      double d;
+
+      if (INIT==0)                        /* Reset timer if first run. */
+      {
+         INIT = 1;                        /* Remember we did it. */
+         TSCL = 0;                        /* Ensure hardware timer running. */
+      }
+
+      now = _itoll(TSCH, TSCL);           /* Convert timer regs to long long. */
+      d = (double) (now);                 /* get as a double. */
+      d *= CPS;                           /* Convert to seconds. */
+      return(d);                          /* Exit with answer.  */
+   } /* END ATL_walltime */
+#elif defined(PentiumCPS)
 #include <sys/time.h>
 #include <sys/types.h>
 #include <stdlib.h>
@@ -21295,7 +21368,6 @@ double time00(void)
   foo -= startu;
   return(((double)foo)/(double)CPS);
 }
-
 #elif defined(UseClock)
 
 #include <time.h>
@@ -21379,6 +21451,9 @@ double time00(void)
 #include "cblas.h"
 #ifdef ATL_USEPTHREADS
    #include "atlas_tlvl3.h"
+#endif
+#ifdef TRUST_REF
+   #include "atlas_reflevel3.h"
 #endif
 #if defined(ATL_RKXOVER) || defined(TEST_RANKK)
    #define TRUST_BIGNORK
@@ -21509,6 +21584,9 @@ static int IK0=0, IKN=0, incIK=1, IIK=0;
    #define trusted_gemm(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc) \
       Mjoin(Mjoin(cblas_,PRE),gemm) \
          (CblasColMajor, TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc)
+#elif defined(TRUST_REF)
+   #define trusted_gemm(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc) \
+      Mjoin(PATL,refgemm)(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc)
 #elif defined(ATL_NOAFFINITY) || defined(ATL_AFFINITY)
    #define trusted_gemm(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc) \
       Mjoin(PATL,tgemm)(TA, TB, m, n, k, al, A, lda, B, ldb, be, C, ldc)
@@ -26250,7 +26328,11 @@ int mmtst(void)
  *    Workaround for mystery prob Windows/icc, where first return val is
  *    always 0
  */
+#if defined(ATL_ARCH_TI_C66_BM) && (!defined(ATL_USING_XCC))
+      if (t1 != 0.0)
+#else
       if (t1 >= 0.005)
+#endif
       {
          mflop = ( (((2.0*MB)*NB)*KB)*reps ) / (t1 * 1000000.0);
          #ifdef TCPLX
@@ -29435,7 +29517,13 @@ unsigned long tloop(enum ATLAS_MATSHAPE shape, char TA, char TB,
    GetDims(shape, smallN, nb, &M, &N, &K);
    assert(mmcase(TA, TB, M, N, K, alpha, beta, &mf0, &mf1) == 0);
    Ns[0] = smallN; mfs0[0] = mf0; mfs1[0] = mf1;
-   if (mf0 < mf1) return(M*N*K);
+   if (mf0 < mf1)
+   {
+      free(Ns);
+      free(mfs0);
+      free(mfs1);
+      return(M*N*K);
+   }
 /*
  * Find crossover point
  */
@@ -36001,10 +36089,14 @@ double TryPFs
 {
    double mf0, mf1;
 
-   mf0 = TryKUs(mmp, pre, verb, MACC, lat, beta, nb, mu, nu, ku, fftch, iftch,
-                nftch, LDTOP, 0);
-   mf1 = TryKUs(mmp, pre, verb, MACC, lat, beta, nb, mu, nu, ku, fftch, iftch,
-                nftch, LDTOP, 1);
+   mf0 = TryKUs(mmp, pre, verb, MACC, lat, beta, nb, mu, nu, ku, fftch, 
+                iftch, nftch, LDTOP, 0);
+   #ifndef ATL_NOPREFETCH
+      mf1 = TryKUs(mmp, pre, verb, MACC, lat, beta, nb, mu, nu, ku, fftch, 
+                   iftch, nftch, LDTOP, 1);
+   #else
+      mf1 = 0.0;
+   #endif
    mmp->pref = (mf1 > mf0);
    return((mmp->pref) ? mf1 : mf0);
 }
