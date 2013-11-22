@@ -624,7 +624,10 @@ void GetFlags(int nargs,                /* nargs as passed into main */
          {
             if (++i >= nargs)
                PrintUsage(args[0], i, "out of arguments");
-            *gccflags = args[i];
+            if (args[i-2][1] == 'C')
+               comps[k] = args[i];
+            else
+               *gccflags = args[i];
          }
 @endifdef
          else
@@ -2242,7 +2245,6 @@ SHELL=/bin/sh
 SRCdir = $(TOPdir)/CONFIG/src
 INCdir = $(TOPdir)/CONFIG/include
 mydir = $(BLDdir)
-atlrun = atlas_run
 INCFLAGS = -I$(INCdir)
 MYFLAGS =
 CCFLAGS = $(INCFLAGS) $(MYFLAGS) $(CFLAGS)
@@ -2316,8 +2318,11 @@ xatlbench : atlbench.o atlconf_misc.o
 atlas_run :
 	cd $(atldir) ; ./$(exe) $(args) > $(redir)
 atlas_runX :
-	scp $(atldir)/$(exe) $(targ):$(rdir)/$(exe)
-	ssh $(targ) 'cd $(rdir) ; ./$(exe) $(args)' > $(redir)
+	./ATLrun.sh $BLDdir $(exe) $(args)
+#	scp $(atldir)/$(exe) $(targ):$(rdir)/$(exe)
+#	ssh $(targ) 'cd $(rdir) ; ./$(exe) $(args)' > $(redir)
+atlas_run_TI :
+	./ATLrun.sh $BLDdir $(exe) $(args)
 force_build:
 
 #
@@ -8091,6 +8096,47 @@ int main(int nargs, char **args)
    system("make confclean");
    return(0);
 }
+@ROUT ATLrun_TI.sh
+#!/bin/sh
+atldir=\$1
+shift
+atlexe=\$1
+shift
+#
+# Replace this if with your setup structure
+#
+if [ ! -e "/tmp/evm-input.fifo" ]
+then
+   pushd ~/runscript
+   ./mmsetup
+   popd
+fi
+start=\$((\$(date +%s%N)/1000000))
+echo \"[\`date -R\`] \$atldir/\$atlexe.out \$*\" >> ATLrun.log
+echo \"\$atldir/\$atlexe.out \$*\" >> ATLrun.log
+
+#
+# Replace this line with your accelerator runscript
+#
+~/runscript/mmrun \$atldir/\$atlexe.out \$*
+
+finish=\$((\$(date +%s%N)/1000000))
+echo \"[\`date -R\`] \$atldir/\$atlexe.out \$*\" >> ATLrun.log
+let z=finish-start
+duration=\`bc <<< \"scale=3; \$z/1000\"\`
+echo \"[\`date -R\`] command finished in \$duration seconds\" >> ATLrun.log
+@ROUT ATLrun_ssh.sh
+#!/bin/sh
+# This script is for machines with shared filesystems.
+#
+#
+# User should replace this macro def with the name of target machine
+#
+mach=MyMach
+
+atldir=$1
+shift
+ssh $mach "cd $atldir ; ./$exe $*"
 @ROUT ATLrun.sh
 #!/bin/sh
 atldir=$1
@@ -8176,6 +8222,8 @@ bitwidth=0
 rdbitwidth=0
 dylib=0
 accel=0  # 1: TI_C66_BM, 2: Xeon Phi
+irtarg=0
+rtarg=
 for arg in "$@"
 do
    handled=0
@@ -8193,6 +8241,7 @@ do
       echo "                        Default: $prefix/include"
       echo "   --libdir=<dirname> : Installation dir for libraries"
       echo "                        Default: $prefix/lib"
+      echo "   --rtarg=<mach> : remote cross-compile target machine"
       echo "   --accel=[0/1/2] : build for accelerator:"
       echo "     0: Don't build for accelerator"
       echo "     1: Build for TI_C66_BM"
@@ -8246,6 +8295,7 @@ do
       rdbitwidth=1
    fi
 #
+#
    flag=`echo "$arg" | sed -e "s/--prefix=//"`
    if test "$flag" != "$arg"
    then
@@ -8260,6 +8310,14 @@ do
       handled=1
    fi
 #
+   flag=`echo "$arg" | sed -e "s/--rtarg=//"`
+   if test "$flag" != "$arg"
+   then
+      irtarg=1
+      rtarg="$flag"
+      handled=1
+   fi
+#
    flag=`echo "$arg" | sed -e "s/--incdir=//"`
    if test "$flag" != "$arg"
    then
@@ -8270,9 +8328,11 @@ do
    if test "$flag" != "$arg"
    then
       if test "$arg" -eq "1"
-         pass="$pass -A 50"
+      then
+         pass="$pass -A 50 -D c -DATL_NOPREFETCH=1"
          accel=1
       elif test "$arg" -eq "2"
+      then
          accel=2
          pass="$pass -A 51"
       fi
@@ -8430,6 +8490,23 @@ then
    libinstdir='$(DESTDIR)/lib'
 fi
 #
+# Copy the correct ATLrun.sh over
+#
+if test $accel -eq 1
+then
+   cp "$path"/CONFIG/src/ATLrun_TI.sh ATLrun.sh
+elif test $irtarg -ne 0
+then
+   echo "#!/bin/sh" > ATLrun.sh
+   echo "rtarg=$rtarg" >> ATLrun.sh
+   echo "atldir=\$1" >> ATLrun.sh
+   echo "shift"  >> ATLrun.sh
+   echo "ssh $mach \"cd $atldir ; ./$exe $*\"" >> ATLrun.sh
+   chmod u+x ATLrun.sh
+else
+   cp "$path"/CONFIG/src/ATLrun.sh ATLrun.sh
+fi
+#
 # Create the Makefile and copy the compiler info file
 #
 echo BLDdir="$blddir" > Makefile
@@ -8439,6 +8516,15 @@ echo INCINSTdir="$incinstdir" >> Makefile
 echo LIBINSTdir="$libinstdir" >> Makefile
 echo CC="$cc" >> Makefile
 echo CFLAGS="$cflags" >> Makefile
+if test $accel -eq 1
+then
+   echo atlrun = atlas_runTI >> Makefile
+elif test $accel -eq 2
+then
+   echo atlrun = atlas_runX >> Makefile
+else
+   echo atlrun = atlas_run >> Makefile
+fi
 if test $f77 -eq 0
 then
    fulllapack=0
@@ -8863,7 +8949,7 @@ int main(int nargs, char **args)
 "#  Name and location of scripts for running executables during tuning\n");
    fprintf(fpout,
 "#  ---------------------------------------------------------------------\n");
-   fprintf(fpout, "   ATLRUN = $(BLDdir)/bin/ATLrun.sh\n");
+   fprintf(fpout, "   ATLRUN = $(BLDdir)/ATLrun.sh\n");
    fprintf(fpout, "   ATLFWAIT = $(BLDdir)/bin/xatlas_waitfile\n\n");
 
    fprintf(fpout, "#  ---------------------\n");
@@ -9086,6 +9172,8 @@ int main(int nargs, char **args)
       fprintf(fpout, " -nofor_main");
    if (USEMINGW)
       fprintf(fpout, "\n   ARCHIVER = $(BLDdir)/mgwar\n");
+   else if (mach == TI_C66_BM)
+      fprintf(fpout, "\n   ARCHIVER = ar6x # For TI_C66_BM.\n");
    else
       fprintf(fpout, "\n   ARCHIVER = ar\n");
    fprintf(fpout, "   ARFLAGS  = r\n");
@@ -10031,6 +10119,230 @@ int main(int nargs, char **args)
    KillWords(wbase);
    return(ierr);
 }
+@ROUT run_cl6x
+#!/bin/sh
+# Note: the shell language lets us extract substrings; see the following page for help:
+# http://tldp.org/LDP/abs/html/string-manipulation.html.
+# short version: ${string:start:len} is a substring; ${string:(-n)} takes last n chars, 
+# ${string:position} takes all of string from position on, ${string#pattern} takes shortest
+# match of 'pattern' off the front, ${string##pattern} takes longest match of pattern off
+# the front; % and %% delete shortest / longest match of pattern from the END of string.
+# The position is zero relative; so ${arg:0:2} is first two characters of string. A negative
+# number must be enclosed in parens and counts back from the end of the string.
+#
+# This is our interface to the cl6x compiler, for ATLAS. We just prefix the list of args, $*, 
+# with the necessary parameters for a compile and/or link. We rebuild the parameters as we 
+# go, so we can do replacements as needed. 
+# Replacement: for compile only, '-o' is replaced with '--output_file'.
+# Replacement: the flag '-fomit-frame-pointer' is deleted.
+# Replacement: The flag '-On' (n=0,1,2,3) is deleted and replaced with '--opt_level=n'.
+# HIJACK: If we see --version or -qversion, we execute cl6x with just --compiler_revision and exit.
+LINKARGS="-x -c /home/tony/C6678_unified.cmd --args=512 --search_path=/opt/ti/TI_CGT_C6000_7.4.2/lib/"
+# -x means re-read libraries, -c means link using ROM initialization. 
+# --args=N allows N bytes for argument passing.
+# The C6678_unified.cmd is a linker command file, sets stack size, heap size, memory map.
+# /home/tony/C6678_unified.cmd: Obviously, change directory to your source of the cmd file.
+
+COMPARGS="-mv6600 -q --gcc --openmp -I=/opt/ti/TI_CGT_C6000_7.4.2/include/"
+# -mv6600 forces the compiler to our C6678 architecture.
+# -q is just quiet.
+# --gcc enables (some?) GCC extensions that are available in cl6x.
+# --openmp means enable openmp hooks.
+# -I is the include files like stdio.h, you must use the TI C6678 versions.
+# --opt_level=n is the optimization level; We have to translate any gcc style -On used by ATLAS,
+# because cl6x mistakes any "-O" as an alternative to their --output_file.
+# This script restricts optimization level to 2. 
+
+OPTLEVEL="--opt_level=2"
+COMPILE_ONLY=0 
+EXENAME=""
+GETNAME=0
+OPTZERO=0
+OBJNAME=""
+SRCNAME=""
+FORCEO3=0
+pass=""
+passobj=""
+
+# Loop through all variables, see if '-c' is present.
+echo "Start run_cl6x:" >> run_cl6x.log
+for arg in $*
+do 
+   echo "Arg: $arg" >> run_cl6x.log
+   if test "$arg" = "--version" -o "$arg" = "-qversion"
+   then
+      echo "Hijacked to cl6x --compiler_revision." >> run_cl6x.log
+      cl6x --compiler_revision
+      exit
+   fi
+
+   if test "$arg" = "-c"
+   then
+      COMPILE_ONLY=1
+   fi
+done
+
+# We have to do this in two passes; '-o' in a link is
+# correct, -o in a compile only is not. 
+# Compile only loop: we change -o to --output_file.
+# Compile only loop: we change -On to --opt_level=n.
+# Compile only loop: we delete -fomit-frame-pointer.
+if test $COMPILE_ONLY -eq 1
+then 
+for arg in $*
+do 
+   if test $GETNAME -eq 1
+   then
+      OBJNAME="$arg"
+      pass="$pass $arg"
+      GETNAME=2               # Say we do not NEED --output_file.
+   elif test "$arg" = "-o"
+   then 
+      pass="$pass --output_file"
+      GETNAME=1
+   elif test "${arg:(-2)}" = ".c"  # if a C file, get obj name.
+   then
+      SRCNAME="$arg"               # collect source name.
+      pass="$pass $arg"            # add to passed parameters.
+      FileLines=`wc -l <$SRCNAME`  # Executes cmd, puts in var.
+      if test $FileLines -gt 1000  # If more than 1000 lines,
+      then
+         OPTZERO=1                 # Remember to downgrade optim.
+      fi
+
+      if test "$OBJNAME" = "" #If no OBJNAME yet, set default.
+      then
+         OBJNAME="${arg##*/}"  #Kill any leading directory info.
+         OBJNAME="${OBJNAME%.c}.o" #Strip final .c, add .o.
+      fi
+   elif test "$arg" = "-O0"
+   then 
+      OPTLEVEL="--opt_level=0"
+   elif test "$arg" = "-O1"
+   then 
+      OPTLEVEL="--opt_level=1"
+   elif test "$arg" = "-O2" -o "$arg" = "-O"
+   then 
+      OPTLEVEL="--opt_level=2"
+   elif test "$arg" = "-O3"
+   then 
+      OPTLEVEL="--opt_level=2"
+   elif test "$arg" = "--FORCE-O3"
+   then 
+      FORCEO3=1
+   elif test "$arg" = "--opt_level=3"
+   then 
+      OPTLEVEL="--opt_level=2"
+   elif test "${arg:0:11}" = "--opt_level" # If not 3, use as is.
+   then
+      OPTLEVEL="$arg"         # strip out so only passed once.
+   elif test "$arg" != "-fomit-frame-pointer"
+   then 
+      pass="$pass $arg"
+   fi
+done
+
+# Compile and LINK: We do not change -o, we have to find
+# a '.c' file, and compile it separately, and build a separate
+# list of '.o' files and '.a' files and '-l' commands.
+else  # We are going to compile AND link.
+for arg in $*
+do 
+   if test $GETNAME -eq 1 #If this arg is EXE NAME,
+   then
+      EXENAME="$arg"
+      GETNAME=0      #Don't need it.
+   elif test "$arg" = "-o"
+   then
+      GETNAME=1
+   elif test "${arg:(-2)}" = ".o"  # If an object file,
+   then
+      passobj="$passobj $arg"
+   elif test "${arg:(-2)}" = ".a"  # If a library file,
+   then
+      passobj="$passobj $arg"
+   elif test "$arg" = "-lm"        # If a library flag,
+   then
+      echo "-lm flag ignored." >>run_cl6x.log
+   elif test "${arg:(-2)}" = ".c"  # if a C file, get obj name.
+   then
+      SRCNAME="$arg"
+      OBJNAME="${arg##*/}"  #Kill any leading directory info.
+      OBJNAME="${OBJNAME%.c}.o" #Strip final .c, add .o.
+      FileLines=`wc -l <$SRCNAME`  # Executes cmd, puts in var.
+      if test $FileLines -gt 1000  # If more than 1000 lines,
+      then
+         OPTZERO=1                 # Remember to downgrade optim.
+      fi
+   elif test "$arg" = "-O0"
+   then 
+      OPTLEVEL="--opt_level=0"
+   elif test "$arg" = "-O1"
+   then 
+      OPTLEVEL="--opt_level=1"
+   elif test "$arg" = "-O2" -o "$arg" = "-O"
+   then 
+      OPTLEVEL="--opt_level=2"
+   elif test "$arg" = "-O3"
+   then 
+      OPTLEVEL="--opt_level=2"
+   elif test "$arg" = "--FORCE-O3"
+   then 
+      FORCEO3=1
+   elif test "$arg" = "--opt_level=3"
+   then 
+      OPTLEVEL="--opt_level=2"
+   elif test "${arg:0:11}" = "--opt_level"
+   then
+      OPTLEVEL="$arg"         # strip out so only passed once.
+   elif test "$arg" != "-fomit-frame-pointer"
+   then 
+      pass="$pass $arg"       # Just pass through to compile.
+   elif test "$arg" = "ATL_sger1k.c"   # if THIS file,
+   then  
+      echo "Forcing ATL_sger1k.c to --opt_level=0 to avoid opt6x v. 7.4.2 Out-Of-Memory bug." >> run_cl6x.log
+      OPTZERO=1                        # opt6x (v 7.4.2) sometimes runs out of memory.
+   fi
+done
+fi
+
+if test $OPTZERO -eq 1        # If we have reason to zero optimization,
+then
+   OPTLEVEL="--opt_level=0"   # Do not try to optimize.
+fi
+
+if test $FORCEO3 -eq 1        # If we forcing o3 anyway,
+then
+   echo "Changing --FORCE-O3 to --opt_level=2." >> run_cl6x.log
+   OPTLEVEL="--opt_level=2"   # Optimize it.
+fi
+
+if test $COMPILE_ONLY -eq 0
+then
+   if test "$SRCNAME" != ""             # If we have a source, compile.
+   then
+      echo "Compile with Link." >> run_cl6x.log
+      echo cl6x $COMPARGS $OPTLEVEL -c $SRCNAME $pass --output_file $OBJNAME >> run_cl6x.log
+      cl6x $COMPARGS $OPTLEVEL -c $SRCNAME $pass --output_file $OBJNAME
+   else                                 # No Source, so we only link.
+      echo "No source; Link alone." >> run_cl6x.log
+   fi
+
+   echo lnk6x -o $EXENAME.out ${OBJNAME} -m ${EXENAME}.map $LINKARGS $passobj >> run_cl6x.log
+   lnk6x -o $EXENAME.out ${OBJNAME} -m ${EXENAME}.map $LINKARGS $passobj
+
+else # We are doing a compile only; assume $pass contains file names we need.
+   echo "Compile Only." >> run_cl6x.log
+   if test $GETNAME -eq 2                 # If we already have --output_file in $pass... 
+   then
+      echo cl6x $COMPARGS $OPTLEVEL $pass >> run_cl6x.log
+      cl6x $COMPARGS $OPTLEVEL $pass
+   else                                   # Need to add --output_file.
+      echo cl6x $COMPARGS $OPTLEVEL $pass --output_file $OBJNAME >> run_cl6x.log
+      cl6x $COMPARGS $OPTLEVEL $pass --output_file $OBJNAME
+   fi
+fi # end handle compile and link vs. compile only.
+ 
 @ROUT atlas_sys.h
 #ifndef ATLAS_SYS_H
    #define ATLAS_SYS_H
