@@ -167,7 +167,7 @@ void ATL_mprintf(int np, ...)
          vsprintf(ln, form, argptr);
          assert(strlen(ln) < 1024);/* sanity test only, will not stop overrun */
          va_end(argptr);
-         for (i=0; i < np; i++) if (fp[i]) fprintf(fp[i], ln);
+         for (i=0; i < np; i++) if (fp[i]) fprintf(fp[i], "%s", ln);
       #else
          for (i=0; i < np; i++) if (fp[i]) vfprintf(fp[i], form, argptr);
          va_end(argptr);
