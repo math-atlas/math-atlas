@@ -1,3 +1,6 @@
+#ifndef ATL_ARM_SOFTFP
+   #define ATL_ARM_HARDFP 1
+#endif
 /*
  * This routine is a simple 4x4 register blocked routine, with two iterations
  * of software pipelining on the load/use of A and B for the arm.
