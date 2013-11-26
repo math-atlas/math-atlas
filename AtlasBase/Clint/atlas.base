@@ -31023,8 +31023,11 @@ static void ATL_Cassert0(size_t cond, char *exp, char *logfile, int line)
          "directory.  Be sure to include this file in any help request.\n");
    }
    if (fperr) fclose(fperr);
-   system("cat ../../CONFIG/error.txt >> INSTALL_LOG/ERROR.LOG");
-   system("cat ../../CONFIG/error.txt");
+/*
+ * Ignore ifs: fucking gcc/glibc forces me to make code less maintainable
+ */
+   if(system("cat ../../CONFIG/error.txt >> INSTALL_LOG/ERROR.LOG"));
+   if(system("cat ../../CONFIG/error.txt"));
    exit(-1);
 }
 #define ATL_Cassert(cond_, exp_, logfile_) \
@@ -31074,9 +31077,10 @@ void GetInstLogFile(char *nam, int pre, int *muladd, int *pf, int *lat,
    fp = fopen(nam, "r");
    if (fp == NULL) fprintf(stderr, "file %s not found!!\n\n", nam);
    assert(fp);
-   fgets(ln, 128, fp);
-   fscanf(fp, " %d %d %d %d %d %d %d %d %d %d %lf\n",
-          muladd, lat, pf, nb, mu, nu, ku, ForceFetch, ifetch, nfetch, mflop);
+   assert(fgets(ln, 128, fp));
+   assert(fscanf(fp, " %d %d %d %d %d %d %d %d %d %d %lf\n",
+          muladd, lat, pf, nb, mu, nu, ku, ForceFetch, ifetch, nfetch, mflop)
+          == 11);
    fclose(fp);
 }
 
@@ -31163,8 +31167,8 @@ void GetuMMRES(char pre, int ID, int *muladd, int *lat,
    sprintf(ln, "../tune/blas/gemm/%ccases.dsc", pre);
    fp = fopen(ln, "r");
    assert(fp);
-   fgets(ln, 1024, fp);  /* skip comment line */
-   fgets(ln, 1024, fp);  /* get number of user cases line */
+   assert(fgets(ln, 1024, fp));  /* skip comment line */
+   assert(fgets(ln, 1024, fp));  /* get number of user cases line */
    assert(sscanf(ln, " %d", &n) == 1);
 /*
  * Now search file for ID
@@ -31197,11 +31201,11 @@ void GetMMRES(char pre, int *muladd, int *lat, int *nb, int *pref,
    sprintf(ln, "INSTALL_LOG/%cMMRES", pre);
    fp = fopen(ln, "r");
    assert(fp);
-   fgets(ln, 256, fp);
-   fgets(ln, 256, fp);
+   assert(fgets(ln, 256, fp));
+   assert(fgets(ln, 256, fp));
    assert(sscanf(ln, " %d %d %d %d %d %d %d %d %d %d %lf", muladd, lat, pref, 
                  nb, mu, nu, ku, ff, iff, nf, mf) == 11);
-   fgets(ln, 256, fp);
+   assert(fgets(ln, 256, fp));
    if ( fgets(ln, 256, fp) )  /* user-supplied GEMM was best */
    {
       assert(fscanf(fp, " %d %d %lf \"%[^\"]\" \"%[^\"]", 
@@ -31550,18 +31554,6 @@ void GoToTown(int ARCHDEF, int L1DEF, int TuneLA, int NREG)
       else i = 0;
       fprintf(fpsum, "      CacheEdge set to %d bytes\n", i);
       fclose(fp);
-      PrintStartStop(stdout, fpsum, 3, 1, 2, ip+1, 2, 
-                     "COMPLEX AMM NB REFINEMENT");
-      sprintf(ln2, "INSTALL_LOG/atlas_%camm_sum.h", pre);
-      if (!FileExists(ln2))
-      {
-         sprintf(ln2, "INSTALL_LOG/%cAMMNBTUNE.LOG", pre);
-         PrintBanner(ln2, 1, 2, ip+1, 2);
-         sprintf(ln, "%s cAMMinstall pre=%c %s %s\n", fmake, pre, redir, ln2);
-         fprintf(stdout, "%s", ln);
-         ATL_Cassert(system(ln)==0, "COMPLEX AMM NB REFINEMENT", ln2);
-         PrintBanner(ln2, 0, 2, ip+1, 2);
-      }
 /*
  *    Determine [ZD,CS]NKB, if necessary
  */
@@ -31755,6 +31747,22 @@ void GoToTown(int ARCHDEF, int L1DEF, int TuneLA, int NREG)
    PrintBanner(ln2, 0, 3, 1, 1);
    PrintStartStop(stdout, fpsum, 0, 0, 3, 0, 0, "GENERAL LIBRARY BUILD");
 
+   for (ip=2; ip < 4; ip++)
+   {
+      char pre=prec[ip];
+      PrintStartStop(stdout, fpsum, 3, 1, 3, ip-1, 2, 
+                     "COMPLEX AMM NB REFINEMENT");
+      sprintf(ln2, "INSTALL_LOG/atlas_%camm_sum.h", pre);
+      if (!FileExists(ln2))
+      {
+         sprintf(ln2, "INSTALL_LOG/%cAMMNBTUNE.LOG", pre);
+         PrintBanner(ln2, 1, 3, ip-1, 2);
+         sprintf(ln, "%s cAMMinstall pre=%c %s %s\n", fmake, pre, redir, ln2);
+         fprintf(stdout, "%s", ln);
+         ATL_Cassert(system(ln)==0, "COMPLEX AMM NB REFINEMENT", ln2);
+         PrintBanner(ln2, 0, 3, ip-1, 2);
+      }
+   }
    PrintStartStop(stdout, fpsum, 0, 1, 4, 0, 0, "POST-BUILD TUNING");
 @skip   ATL_mprintf(2, fpsum, stdout,"\n\nSTAGE 4: POST-BUILD TUNING\n");
    sprintf(ln2, "INSTALL_LOG/POSTTUNE.LOG");
