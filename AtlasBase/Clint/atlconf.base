@@ -776,13 +776,13 @@ enum F2CNAME {f2c_NamErr=0, f2c_Add_, f2c_Add__, f2c_NoChange, f2c_UpCase};
 enum F2CINT {f2c_IntErr=0, FintCint, FintClong, FintClonglong, FintCshort};
 enum F2CSTRING {f2c_StrErr=0, fstrSun, fstrCray, fstrStructVal, fstrStructPtr};
 
-#define NISA 14
+#define NISA 15
 static char *ISAXNAM[NISA] = 
-   {"", "VSX", "AltiVec", 
+   {"", "VSX", "AltiVec", "AVXZ",
     "AVXMAC", "AVXFMA4", "AVX", "SSE3", "SSE2", "SSE1", "3DNow", 
     "FPV3D2MACNEON", "FPV3D16MACNEON", "FPV3D32MAC", "FPV3D16MAC"};
 enum ISAEXT 
-   {ISA_None=0, ISA_VSX, ISA_AV, 
+   {ISA_None=0, ISA_VSX, ISA_AV, ISA_AVXZ,
     ISA_AVXMAC, ISA_AVXFMA4, ISA_AVX, ISA_SSE3, ISA_SSE2, ISA_SSE1, ISA_3DNow, 
     ISA_NEON, ISA_NEON16, ISA_VFP3D32MAC, ISA_VFP3D16MAC};
 
@@ -1312,7 +1312,9 @@ enum ARCHFAM ProbeArchFam(char *targ)
       else if (strstr(res, "s390")) fam = AFS390;
       else if ( strstr(res, "i686") || strstr(res, "i586") ||
                 strstr(res, "i486") || strstr(res, "i386") ||
-                strstr(res, "x86") || strstr(res, "x86_64") ) fam = AFX86;
+                strstr(res, "x86") || strstr(res, "x86_64")  ||
+                strstr(res, "k1om")
+               ) fam = AFX86;
       free(res);
    }
 /*
@@ -2238,6 +2240,7 @@ int main(int nargs, char **args)
    return(asmd == ASM_None);
 }
 @ROUT Makefile
+@beginskip
 SHELL=/bin/sh
 @skip TOPdir = /home/whaley/TEST
 @skip CC = gcc
@@ -2250,6 +2253,7 @@ MYFLAGS =
 CCFLAGS = $(INCFLAGS) $(MYFLAGS) $(CFLAGS)
 XCC = $(CC)
 XCFLAGS = $(CCFLAGS)
+@endskip
 LIBS =
 args =
 rdir = /tmp
@@ -2318,7 +2322,7 @@ xatlbench : atlbench.o atlconf_misc.o
 atlas_run :
 	cd $(atldir) ; ./$(exe) $(args) > $(redir)
 atlas_runX :
-	./ATLrun.sh $BLDdir $(exe) $(args)
+	./ATLrun.sh $(BLDdir) $(exe) $(args)
 #	scp $(atldir)/$(exe) $(targ):$(rdir)/$(exe)
 #	ssh $(targ) 'cd $(rdir) ; ./$(exe) $(args)' > $(redir)
 atlas_run_TI :
@@ -2386,6 +2390,12 @@ IRun_@(asm) :
 IRun_SSE3 :
 	$(CC) $(CCFLAGS) -o xprobe_sse3 $(SRCdir)/backend/probe_dSSE3.c $(SRCdir)/backend/probe_SSE3.S
 	$(MAKE) $(atlrun) atldir=$(mydir) exe=xprobe_sse3 args="$(args)" \
+                redir=config0.out
+	- cat config0.out
+IRun_AVXZ :
+	$(CC) $(CCFLAGS) -o xprobe_avxz $(SRCdir)/backend/probe_dAVXZ.c \
+              $(SRCdir)/backend/probe_AVXZ.S
+	$(MAKE) $(atlrun) atldir=$(mydir) exe=xprobe_avxz args="$(args)" \
                 redir=config0.out
 	- cat config0.out
 IRun_AVXFMA4 :
@@ -2461,6 +2471,12 @@ IRunCComp :
 	- rm -f xctest comptestC.o config0.out
 	$(CC) $(CCFLAGS) -o xctest $(SRCdir)/backend/comptestC.c
 	$(MAKE) $(atlrun) atldir=$(mydir) exe=xctest args="$(args)" \
+                redir=config0.out
+	- cat config0.out
+IRunXCComp :
+	- rm -f xctest comptestC.o config0.out
+	$(CC) $(CCFLAGS) -o xctest $(SRCdir)/backend/comptestC.c
+	$(MAKE) atlas_run atldir=$(mydir) exe=xctest args="$(args)" \
                 redir=config0.out
 	- cat config0.out
 
@@ -2866,6 +2882,44 @@ int main(int nargs, char **args)
    free(vp);
    return(0);
 }
+@ROUT probe_dAVXZ
+#include <stdio.h>
+#include <stdlib.h>
+int main(int nargs, char **args)
+{
+   double *x, *y, *z, ans[8];
+   void *vp;
+   void do_vmacc(double *z, double *x, double *y); 
+   int i;
+
+   vp = malloc(8*3*sizeof(double) + 64);
+   x = (double*) ( 64 + ((((size_t)(vp))>>6)<<6) );
+   y = x + 8;
+   z = y + 8;
+   x[0] = 1.0; x[1] = 2.0; x[2] = 4.0; x[3] = 8.0;
+   x[4] = 16.0; x[5] = 32.0; x[6] = 64.0; x[7] = 128.0;
+   y[0] = -4.0; y[1] = -8.0; y[2] = -16.0; y[3] = -32.0;
+   y[4] = -64.0; y[5] = -128.0; y[6] = -256.0; y[7] = -512.0;
+   z[0] = 0.0; z[1] = 1.0; z[2] = -1.0; z[3] = -4.0;
+   z[4] = 4.0; z[5] = -8.0; z[6] = 8.0; z[7] = -16.0;
+   for (i=0; i < 8; i++)
+      ans[i] = z[i] + x[i] * y[i];
+   do_vmacc(z, x, y);   /* z += x * y */
+   if (z[0] != ans[0] || z[1] != ans[1] || z[2] != ans[2] || z[3] != ans[3] ||
+       z[4] != ans[4] || z[5] != ans[5] || z[6] != ans[6] || z[7] != ans[7])
+   {
+      fprintf(stderr, "wanted={%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f}\n",
+              ans[0],ans[1],ans[2],ans[3],ans[4],ans[5],ans[6],ans[7]);
+      fprintf(stderr, "got   ={%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f}\n",
+              z[0],z[1],z[2],z[3],z[4],z[5],z[6],z[7]);
+      printf("FAILURE\n");
+      free(vp);
+      exit(1);
+   }
+   printf("SUCCESS\n");
+   free(vp);
+   return(0);
+}
 @ROUT probe_dAVX
 #include <stdio.h>
 #include <stdlib.h>
@@ -3193,6 +3247,33 @@ ATL_asmdecor(do_vsum):
         movupd  %xmm1, 0(%eax)
         ret
 #endif
+@ROUT probe_AVXZ.S
+#include "atlas_asm.h"
+#
+# x86 assembler for:
+# void do_vmacc(z, x, y)
+# RETURNS: z[0:7] += x[0:7] *  y[0:7];
+#
+.text
+.globl ATL_asmdecor(do_vmacc)
+ATL_asmdecor(do_vmacc):
+   #ifdef ATL_GAS_x8664
+      vmovapd 0(%rdi), %zmm0                  /* load z */
+      vmovapd 0(%rsi), %zmm1                  /* load x */
+      vmovapd 0(%rdx), %zmm2                  /* load y */
+      vfmadd231pd %zmm2, %zmm1, %zmm0         /* z += x*y */
+      vmovapd %zmm0, (%rdi)                   /* store z */
+   #else
+      movl    12(%esp), %eax
+      vmovapd (%eax), %zmm2                   /* load y */
+      movl    8(%esp), %eax
+      vmovapd  (%eax), %zmm1                  /* load x */
+      movl    4(%esp), %eax
+      vmovapd (%eax), %zmm0                   /* load z */
+      vfmadd231pd %zmm2, %zmm1, %zmm0         /* z += x*y */
+      vmovapd %zmm0, (%eax)                   /* store z */
+   #endif
+   ret
 @ROUT probe_AVX.S probe_AVXMAC.S probe_AVXFMA4.S
 #include "atlas_asm.h"
 #
@@ -3343,7 +3424,7 @@ int GetAllISAExt(int verb, char *targ, enum OSTYPE OS, enum ASMDIA asmb)
             }
          #endif
       }
-      else if (i >= ISA_AVXMAC && i <= ISA_3DNow)
+      else if (i >= ISA_AVXZ && i <= ISA_3DNow)
       {
          if (asmb != gas_x86_32 && asmb != gas_x86_64)
          {
@@ -3938,6 +4019,7 @@ int GetFlags(int nargs, char **args, int *CacheLevel, enum OSTYPE *OS,
          if (++i >= nargs)
             PrintUsage(args[0], i);
          *targ = args[i];
+          break;
       case 's':
          if (++i >= nargs)
             PrintUsage(args[0], i);
@@ -4800,10 +4882,13 @@ int CompTest(int verb, char *targ, int icomp, char *comp, char *flag)
       assert(trg);
       trg[0] = '\0';
    }
-   if (icomp == ICC_)
-      targ = NULL;
    if (icomp == F77_)
       frm = "make IRunF77Comp F77='%s' F77FLAGS='%s' %s | fgrep SUCCESS";
+   else if (icomp == XCC_)
+   {
+      targ = NULL;
+      frm = "make IRunXCComp CC='%s' CCFLAGS='%s' %s | fgrep SUCCESS";
+   }
    else
       frm = "make IRunCComp CC='%s' CCFLAGS='%s' %s | fgrep SUCCESS";
    i = 1 + strlen(frm) + strlen(comp) + strlen(flag) + strlen(trg);
@@ -6246,8 +6331,11 @@ int main(int nargs, char **args)
    #else
       if (usrcomps[GCC_])
          goodgcc = NewStringCopy(usrcomps[GCC_]);
+      else if (mach == IntPhi)
+         goodgcc = NewStringCopy("icc");
       else
          goodgcc = FindGoodGcc(OS, mach,  verb, targ);
+
    #endif
    GetComps(OS, mach, verb, targ, ptrbits, usrcomps, nof77, nocygwin, vecexts, 
             goodgcc, bindir);
@@ -7045,6 +7133,15 @@ MACH=ARMv7 OS=ALL LVL=1000 COMPS=dmc,dkc
    'gcc' '-O2 -fno-schedule-insns -fno-schedule-insns2 -fprefetch-loop-arrays'
 MACH=ARMv7 OS=ALL LVL=1000 COMPS=f77
    'gfortran' '-O2'
+#
+# Untuned flags for XeonPHI
+#
+MACH=XeonPHI OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
+   'icc' '-fomit-frame-pointer -O2 -mmic'
+MACH=XeonPHI OS=ALL LVL=1000 COMPS=xcc
+   'icc' '-fomit-frame-pointer -O2 -g'
+MACH=XeonPHI OS=ALL LVL=1000 COMPS=f77
+   'ifort' '-fomit-frame-pointer -O2 -mmic'
 #
 # Generic defaults
 #
@@ -8327,11 +8424,11 @@ do
    flag=`echo "$arg" | sed -e "s/--accel=//"`
    if test "$flag" != "$arg"
    then
-      if test "$arg" -eq "1"
+      if test "$flag" -eq "1"
       then
          pass="$pass -A 50 -D c -DATL_NOPREFETCH=1"
          accel=1
-      elif test "$arg" -eq "2"
+      elif test "$flag" -eq "2"
       then
          accel=2
          pass="$pass -A 51"
@@ -8501,7 +8598,9 @@ then
    echo "rtarg=$rtarg" >> ATLrun.sh
    echo "atldir=\$1" >> ATLrun.sh
    echo "shift"  >> ATLrun.sh
-   echo "ssh $mach \"cd $atldir ; ./$exe $*\"" >> ATLrun.sh
+   echo "exe=\$1" >> ATLrun.sh
+   echo "shift"  >> ATLrun.sh
+   echo "ssh \$rtarg \"cd \$atldir ; ./\$exe \$*\"" >> ATLrun.sh
    chmod u+x ATLrun.sh
 else
    cp "$path"/CONFIG/src/ATLrun.sh ATLrun.sh
@@ -8509,17 +8608,32 @@ fi
 #
 # Create the Makefile and copy the compiler info file
 #
-echo BLDdir="$blddir" > Makefile
+echo SHELL=/bin/sh > Makefile
+echo BLDdir="$blddir" >> Makefile
 echo TOPdir="$topdir" >> Makefile
+echo "SRCdir = \$(TOPdir)/CONFIG/src" >> Makefile
+echo "INCdir = \$(TOPdir)/CONFIG/include" >> Makefile
+echo "mydir = \$(BLDdir)" >> Makefile
+echo XCC="$cc" >> Makefile
+echo CFLAGS="$cflags" >> Makefile
+echo "INCFLAGS = -I\$(INCdir)" >> Makefile
+echo "MYFLAGS =" >> Makefile
+echo "XCFLAGS = \$(INCFLAGS) \$(MYFLAGS) \$(CFLAGS)" >> Makefile
+if test $accel -eq 2
+then
+   echo "CC = icc" >> Makefile
+   echo "CCFLAGS = \$(XCFLAGS) -mmic" >> Makefile
+else
+   echo "CCC = \$(XCC)" >> Makefile
+   echo "CCFLAGS = \$(XCFLAGS)" >> Makefile
+fi
 echo DESTDIR="$prefix" >> Makefile
 echo INCINSTdir="$incinstdir" >> Makefile
 echo LIBINSTdir="$libinstdir" >> Makefile
-echo CC="$cc" >> Makefile
-echo CFLAGS="$cflags" >> Makefile
 if test $accel -eq 1
 then
    echo atlrun = atlas_runTI >> Makefile
-elif test $accel -eq 2
+elif test $irtarg -ne 0
 then
    echo atlrun = atlas_runX >> Makefile
 else
