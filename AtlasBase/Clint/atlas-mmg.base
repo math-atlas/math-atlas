@@ -2655,7 +2655,8 @@ void Mjoin(PATL,cmat2ablk_@(mu)x@(nu)_a@(nalp)_b@(nbet))
    }
    @endmif
 }
-@ROUT ATL_mm@(kmaj)_@(mu)x@(nu)_1_avx ATL_mm@(kmaj)_@(mu)x@(nu)_1_sse
+@ROUT ATL_mm@(kmaj)_@(mu)x@(nu)_1_avx ATL_mm@(kmaj)_@(mu)x@(nu)_1_sse @\
+      ATL_mm@(kmaj)_@(mu)x@(nu)_1_avxz
 #include <immintrin.h>
 #include "atlas_misc.h"
 #include "atlas_prefetch.h"
@@ -2730,6 +2731,36 @@ void Mjoin(PATL,cmat2ablk_@(mu)x@(nu)_a@(nalp)_b@(nbet))
    #define ATL_bcast(p_, r_) \
       r_ = _mm_load_ps(p_)
    @endiif
+@endiif
+@iexp vmu @(vlen) @(mu) /
+@iexp i @(vmu) @(vlen) *
+@iif i ! @(mu)
+   @error "@(mu) must be a multiple of @(vlen)!"
+@endiif
+@ROUT ATL_mm@(kmaj)_@(mu)x@(nu)_1_avxz
+@ifdef ! vlen
+   @define vlen @8$
+@endifdef
+@iif vlen = 8
+   @define vtyp @__m512d@
+   @define bcast @_mm512_broadcast_sd@
+   @define fma @_mm512_fmadd_pd@
+   @define mul @_mm512_mul_pd@
+   @define add @_mm512_add_pd@
+   @define sub @_mm512_sub_pd@
+   @define ld  @_mm512_load_pd@
+   @define store @_mm512_store_pd@
+   @define CL @8@
+@endiif
+@iif vlen = 16
+   @define vtyp @__m512@
+   @define bcast @_mm512_broadcast_ss@
+   @define mul @_mm512_mul_ps@
+   @define add @_mm512_add_ps@
+   @define sub @_mm512_sub_ps@
+   @define ld  @_mm512_load_ps@
+   @define store @_mm512_store_ps@
+   @define CL @16@
 @endiif
 @iexp vmu @(vlen) @(mu) /
 @iexp i @(vmu) @(vlen) *
@@ -2835,6 +2866,157 @@ void ATL_USERMM
       pfA = pA + nmus*@(mu)*(K>>1);
       incPF = (nmus*@(mu)*K) / (nmus * nnus);
    }
+@ROUT ATL_mm@(kmaj)_@(mu)x@(nu)_1_avxz
+   for (i=0; i < nmus; i++)
+   {
+      for (j=0; j < nnus; j++)
+      {
+/*
+ *       Peel K=1 iteration to avoid zero of rCxx and extra add 
+ */
+         rA0 = @(ld)(pA);
+         rB0 = @(bcast)(pB);
+         @iexp k 0 @(vlen) +
+         @iexp i 0 1 +
+         @iwhile i < @(vmu)
+         rA@(i) = @(ld)(pA+@(k));
+            @iexp k @(k) @(vlen) +
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j 0 1 +
+         @iwhile j < @(nu)
+         rB@(j) = @(bcast)(pB+@(j));
+            @iexp j @(j) 1 +
+         @endiwhile
+         @iexp k 0 0 +
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp i 0 0 +
+            @iwhile i < @(vmu)
+         rC@(i)@(j) = @(mul)(rA@(i), rB@(j));
+            @iif k = 0
+               ATL_pfl1W(pC);
+            @endiif
+            @iif k = 1
+               ATL_pfl1W(pC+@(CL));
+            @endiif
+            @iif k = 2
+               ATL_pfl1R(pfA);
+            @endiif
+            @iif k = 3
+               ATL_pfl1R(pfA+@(CL));
+            @endiif
+            @iif k = 4
+               pfA += incPF;
+            @endiif
+            @iif k = 5
+               pA += @(mu);
+            @endiif
+            @iif k = 6
+               pB += @(nu);
+            @endiif
+               @iexp k @(k) 1 +
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+         @iif k < 1
+               ATL_pfl1W(pC+@(CL));
+         @endiif
+         @iif k < 2
+               ATL_pfl1R(pfA);
+         @endiif
+         @iif k < 3
+               ATL_pfl1R(pfA+@(CL));
+         @endiif
+         @iif k < 4
+               pfA += incPF;
+         @endiif
+         @iif k < 5
+               pA += @(mu);
+         @endiif
+         @iif k < 6
+               pB += @(nu);
+         @endiif
+/*
+ *       Handle remaining K its with rolled loop (compiler can unroll easily)
+ */
+         for (k=1; k < ATL_MM_KB; k++)
+         {
+            rA0 = @(ld)(pA);
+            rB0 = @(bcast)(pB);
+            @iexp k 0 @(vlen) +
+            @iexp i 0 1 +
+            @iwhile i < @(vmu)
+            rA@(i) = @(ld)(pA+@(k));
+               @iexp k @(k) @(vlen) +
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j 0 1 +
+            @iwhile j < @(nu)
+            rB@(j) = @(bcast)(pB+@(j));
+               @iexp j @(j) 1 +
+            @endiwhile
+            @iexp j 0 0 +
+            @iwhile j < @(nu)
+               @iexp i 0 0 +
+               @iwhile i < @(vmu)
+            rC@(i)@(j) = @(fma)(rA@(i), rB@(j), rC@(i)@(j));
+                  @iexp i @(i) 1 +
+               @endiwhile
+               @iexp j @(j) 1 +
+            @endiwhile
+            pA += @(mu);
+            pB += @(nu);
+         }
+         pA -= incAm;
+         #ifdef BETA0
+         @iexp k 0 0 +
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp i 0 0 +
+            @iwhile i < @(vmu)
+            @(store)(pC+@(k), rC@(i)@(j));
+               @iexp k @(k) @(vlen) +
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+         #elif defined(BETAN1)
+         @iexp k 0 0 +
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp i 0 0 +
+            @iwhile i < @(vmu)
+            m0 = @(ld)(pC+@(k));
+            rC@(i)@(j) = @(sub)(rC@(i)@(j), m0);
+            @(store)(pC+@(k), rC@(i)@(j));
+               @iexp k @(k) @(vlen) +
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+         #else  /* BETA = 1 */
+         @iexp k 0 0 +
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp i 0 0 +
+            @iwhile i < @(vmu)
+            m0 = @(ld)(pC+@(k));
+            rC@(i)@(j) = @(add)(rC@(i)@(j), m0);
+            @(store)(pC+@(k), rC@(i)@(j));
+               @iexp k @(k) @(vlen) +
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+         #endif
+         pC += @(mu)*@(nu);
+      }
+      pA += incAm;
+      pB = pB0;
+   }
+}
 @ROUT ATL_mm@(kmaj)_@(mu)x@(nu)_1_avx
    for (i=0; i < nmus; i++)
    {
@@ -3142,7 +3324,8 @@ void ATL_USERMM
       pB = pB0;
    }
 }
-@ROUT ATL_mm@(kmaj)_@(mu)x@(nu)_1_sse ATL_mm@(kmaj)_@(mu)x@(nu)_1_avx
+@ROUT ATL_mm@(kmaj)_@(mu)x@(nu)_1_sse ATL_mm@(kmaj)_@(mu)x@(nu)_1_avx @\
+      ATL_mm@(kmaj)_@(mu)x@(nu)_1_avxz
 #if ATL_KBCONST != 0
    #undef incAm
 #endif

@@ -174,6 +174,16 @@ ID=27 MU=12 NU=1 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_skmmm12x1x256_sse3.S' \
       #else
          #define ATL_VLEN 2
       #endif
+   #elif defined(ATL_AVXZ)
+      #define ATL_NVREG 32
+      #define ATL_VLENb 64
+      #if defined(SREAL) || defined (SCPLX)
+         #define ATL_VLEN 16
+      #else
+         #define ATL_VLEN 8
+      #endif
+      #define ATL_gvbcast(ptr_, v_) \
+         (v_) = __builtin_ia32_vbroadcastsd512((void*)(ptr_));
    #elif defined(ATL_AVXMAC) || defined(ATL_AVXFMA4) || defined(ATL_AVX)
       #ifdef ATL_GAS_x8664
          #define ATL_NVREG 16
@@ -2687,9 +2697,9 @@ int main(int nargs, char **args)
 #include "atlas_mmtesttime.h"
 
 #define NVECS 4
-static enum VECTYPE {VTAVX=0, VTSSE=1, VTGV=2, VTSC=3} VECi=VTSC;
-static int VLEN[4] = {4, 2, 2, 1};  /* assume double, fix later if nec */
-static char *VECs[4] = {"avx", "sse", "gvec", "scalar"};
+static enum VECTYPE {VTAVXZ=0, VTAVX=1, VTSSE=2, VTGV=3, VTSC=4} VECi=VTSC;
+static int VLEN[5] = {8, 4, 2, 2, 1};  /* assume double, fix later if nec */
+static char *VECs[5] = {"avxz", "avx", "sse", "gvec", "scalar"};
 static int TSIZE=8;
 #define KRUNMUL 1.02   /* KRUNTIME speedup increase over K-compile time */
 
@@ -2986,12 +2996,17 @@ int *GetFlags(int nargs, char **args, char *PRE,
    *PRE = pre;
    if (pre == 's')
    {
+      VLEN[VTAVXZ] = 16;
       VLEN[VTAVX] = 8;
       VLEN[VTSSE] = 4;
       VLEN[VTGV] = 4;
       TSIZE = 4;
    }
-   #ifdef ATL_AVX
+   #ifdef ATL_AVXZ
+      if (*NREG == 0)
+         *NREG = ATL_NVREG;
+      VECi = VTAVXZ;
+   #ifif defined(ATL_AVX)
       if (*NREG == 0)
          *NREG = ATL_NVREG;
       VECi = VTAVX;
@@ -3082,14 +3097,32 @@ void FillInGenStrings(char pre, ATL_mmnode_t *mmb)
             VECi = VTSC;
          else if (vlen != VLEN[VECi])
          {
-            if (vlen == 4)
-               VECi = VTAVX;
-            else if (vlen == 2 && VECi == VTAVX)
-               VECi = VTSSE;
-            else if (vlen == 2)
-               VECi = VTGV;
-            else 
-               VECi = VTSC;
+            if (pre == 's' || pre == 'c')
+            {
+               if (vlen == 16)
+                  VECi = VTAVXZ;
+               else if (vlen == 8)
+                  VECi = VTAVX;
+               else if (vlen == 4 && VECi == VTAVX)
+                  VECi = VTSSE;
+               else if (vlen == 4)
+                  VECi = VTGV;
+               else 
+                  VECi = VTSC;
+            }
+            else
+            {
+               if (vlen == 8)
+                  VECi = VTAVXZ;
+               else if (vlen == 4)
+                  VECi = VTAVX;
+               else if (vlen == 2 && VECi == VTAVX)
+                  VECi = VTSSE;
+               else if (vlen == 2)
+                  VECi = VTGV;
+               else 
+                  VECi = VTSC;
+            }
          }
          mp->genstr = GenString(pre, mp->lat, mp->kbB, mu, mp->nu, mp->ku, 
                                 mp->kmaj, mp->rout);
@@ -3231,7 +3264,7 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
  * For x86, try 1-D cases since older machines are 2-operand assemblies
  */
    #if defined(ATL_GAS_x8664) || defined(ATL_GAS_x8632) 
-   if (VECi != VTAVX)  /* AVX is 3-operand */
+   if (VECi != VTAVX && VECi != VTAVXZ)  /* AVX is 3-operand */
    {
       printf("BEST NEAR-SQUARE CASE IS MU=%d, NU=%d, MFLOP=%.2f\n\n", 
              muB, nuB, mfB);
@@ -5909,12 +5942,15 @@ int GetFlags(int nargs, char **args, char *PRE, int *VERB, int *C,
    *KBS = kbs;
    if (*PRE == 's')
    {
+      VLEN[VTAVXZ] = 16;
       VLEN[VTAVX] = 8;
       VLEN[VTSSE] = 4;
       VLEN[VTGV] = 4;
       TSIZE = 4;
    }
-   #ifdef ATL_AVX
+   #ifdef ATL_AVXZ
+      VECi = VTAVXZ;
+   #elif defined(ATL_AVX)
       VECi = VTAVX;
    #elif defined(ATL_SSE1)
       if (*PRE == 's')
