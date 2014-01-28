@@ -2655,8 +2655,7 @@ void Mjoin(PATL,cmat2ablk_@(mu)x@(nu)_a@(nalp)_b@(nbet))
    }
    @endmif
 }
-@ROUT ATL_mm@(kmaj)_@(mu)x@(nu)_1_avx ATL_mm@(kmaj)_@(mu)x@(nu)_1_sse @\
-      ATL_mm@(kmaj)_@(mu)x@(nu)_1_avxz
+@ROUT ATL_mm@(kmaj)_@(mu)x@(nu)_1_avx ATL_mm@(kmaj)_@(mu)x@(nu)_1_sse ATL_mm@(kmaj)_@(mu)x@(nu)_1_avxz
 #include <immintrin.h>
 #include "atlas_misc.h"
 #include "atlas_prefetch.h"
@@ -2743,7 +2742,7 @@ void Mjoin(PATL,cmat2ablk_@(mu)x@(nu)_a@(nalp)_b@(nbet))
 @endifdef
 @iif vlen = 8
    @define vtyp @__m512d@
-   @define bcast @_mm512_broadcast_sd@
+   @define bcast @my_mm512_broadcast_sd@
    @define fma @_mm512_fmadd_pd@
    @define mul @_mm512_mul_pd@
    @define add @_mm512_add_pd@
@@ -2751,16 +2750,20 @@ void Mjoin(PATL,cmat2ablk_@(mu)x@(nu)_a@(nalp)_b@(nbet))
    @define ld  @_mm512_load_pd@
    @define store @_mm512_store_pd@
    @define CL @8@
+   #define ATL_bcast(p_, r_) \
+      r_ = _mm512_extload_pd(pB, _MM_UPCONV_PD_NONE, _MM_BROADCAST_1X8, 0);
 @endiif
 @iif vlen = 16
    @define vtyp @__m512@
-   @define bcast @_mm512_broadcast_ss@
+   @define bcast @my__mm512_broadcast_ss@
    @define mul @_mm512_mul_ps@
    @define add @_mm512_add_ps@
    @define sub @_mm512_sub_ps@
    @define ld  @_mm512_load_ps@
    @define store @_mm512_store_ps@
    @define CL @16@
+   #define ATL_bcast(p_, r_) \
+      r_ = _mm512_extload_ps(pB, _MM_UPCONV_PS_NONE, _MM_BROADCAST_1X16, 0);
 @endiif
 @iexp vmu @(vlen) @(mu) /
 @iexp i @(vmu) @(vlen) *
@@ -2875,7 +2878,7 @@ void ATL_USERMM
  *       Peel K=1 iteration to avoid zero of rCxx and extra add 
  */
          rA0 = @(ld)(pA);
-         rB0 = @(bcast)(pB);
+         ATL_bcast(pB, rB0);
          @iexp k 0 @(vlen) +
          @iexp i 0 1 +
          @iwhile i < @(vmu)
@@ -2885,7 +2888,7 @@ void ATL_USERMM
          @endiwhile
          @iexp j 0 1 +
          @iwhile j < @(nu)
-         rB@(j) = @(bcast)(pB+@(j));
+         ATL_bcast(pB+@(j), rB@(j));
             @iexp j @(j) 1 +
          @endiwhile
          @iexp k 0 0 +
@@ -2944,7 +2947,7 @@ void ATL_USERMM
          for (k=1; k < ATL_MM_KB; k++)
          {
             rA0 = @(ld)(pA);
-            rB0 = @(bcast)(pB);
+            ATL_bcast(pB, rB0);
             @iexp k 0 @(vlen) +
             @iexp i 0 1 +
             @iwhile i < @(vmu)
@@ -2954,7 +2957,7 @@ void ATL_USERMM
             @endiwhile
             @iexp j 0 1 +
             @iwhile j < @(nu)
-            rB@(j) = @(bcast)(pB+@(j));
+            ATL_bcast(pB+@(j),rB@(j));
                @iexp j @(j) 1 +
             @endiwhile
             @iexp j 0 0 +
