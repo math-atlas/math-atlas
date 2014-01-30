@@ -175,15 +175,20 @@ ID=27 MU=12 NU=1 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_skmmm12x1x256_sse3.S' \
          #define ATL_VLEN 2
       #endif
    #elif defined(ATL_AVXZ)
+      #include "immintrin.h"
       #define ATL_NVREG 32
       #define ATL_VLENb 64
       #if defined(SREAL) || defined (SCPLX)
          #define ATL_VLEN 16
+         #define ATL_gvbcast(ptr_, v_) \
+            v_ = _mm512_extload_ps((void*)(ptr_), _MM_UPCONV_PS_NONE, \
+                                   _MM_BROADCAST_1X16, 0)
       #else
          #define ATL_VLEN 8
+         #define ATL_gvbcast(ptr_, v_) \
+            v_ = _mm512_extload_pd((void*)(ptr_), _MM_UPCONV_PD_NONE, \
+                                   _MM_BROADCAST_1X8, 0)
       #endif
-      #define ATL_gvbcast(ptr_, v_) \
-         (v_) = __builtin_ia32_vbroadcastsd512((void*)(ptr_));
    #elif defined(ATL_AVXMAC) || defined(ATL_AVXFMA4) || defined(ATL_AVX)
       #ifdef ATL_GAS_x8664
          #define ATL_NVREG 16
@@ -3186,72 +3191,25 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
    mmp->lat = lat;
    mmp->rout = DupString("amm_munu.c");
    mmp->mbB = mmp->nbB = mmp->kbB = nb;
-@beginskip
-/*
- * For SSE (the only generator that supports dupB at the moment), see if
- * using dupB gives strong advantage.  use mu=nu=2 as safe nreg.
- */
-   mmp->dupB = 0;
-   if (VECi == VTSSE)
-   {
-      int dupB=0;
-      double mf1;
-      printf("Estimating best dupB setting:\n");
-      mmp->mu = 2 * VLEN[VECi];
-      mmp->nu = 2;
-      mmp->dupB = 0;
-      if (mmp->genstr)
-        free(mmp->genstr);
-      mmp->genstr = GenString(pre, lat, nb, 2, 2, ku, mmp->dupB, mmp->rout);
-      mfB = TimeMMKernel(verb, 1, mmp, pre, nb, nb, nb, nb, nb, nb, 1, 0, -1);
-      mf1 = mfB;
-      printf("   dupB=0, MU=2, NU=2, MFLOP=%.2f\n", mfB);
-      free(mmp->genstr);
-      mmp->dupB = 2;
-      mmp->genstr = GenString(pre, lat, nb, 2, 2, ku, mmp->dupB, mmp->rout);
-      mf = TimeMMKernel(verb, 1, mmp, pre, nb, nb, nb, nb, nb, nb, 1, 0, -1);
-      printf("   dupB=2, MU=2, NU=2, MFLOP=%.2f\n", mf);
-      if (mf > 1.04*mfB)
-      {
-         dupB = 2;
-         mfB = mf;
-      }
-
-      if (VLEN[VECi] == 4)
-      {
-         free(mmp->genstr);
-         mmp->dupB = 4;
-         mmp->genstr = GenString(pre, lat, nb, 2, 2, ku, mmp->dupB, mmp->rout);
-         mf = TimeMMKernel(verb, 1, mmp, pre, nb, nb, nb, nb, nb, nb, 1, 0, -1);
-         printf("   dupB=4, MU=2, NU=2, MFLOP=%.2f\n", mf);
-         if (mf > 1.04*mfB)
-         {
-            dupB = 4;
-            mfB = mf;
-         }
-      }
-      if (!dupB)
-         printf("Using unduplicated kernel speedup=%.2f.\n\n", mf1/mf);
-      else
-         printf("Using kernel with dupB=%d speedup=%.2f.\n\n", dupB, mfB/mf1);
-   }
-@endskip
 /*
  * Try all near-square register blocking cases
  */
    printf("Finding best MUxNU case for nb=%d\n", nb);
    for (n=4; n < nreg; n++)
    {
+      int mbu, nbu, mu, nu;
       for (j=1; j*j < n; j++);
       i = n / j;
       if (nb%i || nb%j)
          continue;
-      mmp->mu = i * VLEN[VECi];
-      mmp->nu = j;
+      mu = mmp->mu = i * VLEN[VECi];
+      nu = mmp->nu = j;
       if (mmp->genstr)
         free(mmp->genstr);
+      mbu = (nb >= mu) ? (nb/mu)*mu : mu;
+      nbu = (nb >= nu) ? (nb/nu)*nu : nu;
       mmp->genstr = GenString(pre, lat, nb, i, j, ku, mmp->kmaj, mmp->rout);
-      mf = TimeMMKernel(verb, 1, mmp, pre, nb, nb, nb, nb, nb, nb, 1, 0, -1);
+      mf = TimeMMKernel(verb, 1, mmp, pre, mbu, nbu, nb, nb, nb, nb, 1, 0, -1);
       printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
       if (mf > mfB)
       {
@@ -3271,15 +3229,19 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
       printf("Finding best 1-D outer loop unrolling for nb=%d\n", nb);
       for (n=2; n < nreg; n++)
       {
+         int mbu, nbu, mu, nu;
          i = 1; j = n;
          if (nb % n)
             continue;
-         mmp->mu = i*VLEN[VECi];
-         mmp->nu = j;
+         mu = mmp->mu = i*VLEN[VECi];
+         nu = mmp->nu = j;
          if (mmp->genstr)
            free(mmp->genstr);
          mmp->genstr = GenString(pre, lat, nb, i, j, ku, mmp->kmaj, mmp->rout);
-         mf = TimeMMKernel(verb, 1, mmp, pre, nb, nb, nb, nb, nb, nb, 1, 0, -1);
+         mbu = (nb >= mu) ? (nb/mu)*mu : mu;
+         nbu = (nb >= nu) ? (nb/nu)*nu : nu;
+         mf = TimeMMKernel(verb, 1, mmp, pre, mbu, nbu, nb, nb, nb, nb, 
+                           1, 0, -1);
          printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
          if (mf > mfB)
          {
@@ -3288,12 +3250,15 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
             mfB = mf;
          }
          i = n; j = 1;
-         mmp->mu = i * VLEN[VECi];
-         mmp->nu = j;
+         mu = mmp->mu = i * VLEN[VECi];
+         nu = mmp->nu = j;
+         mbu = (nb >= mu) ? (nb/mu)*mu : mu;
+         nbu = (nb >= nu) ? (nb/nu)*nu : nu;
          if (mmp->genstr)
            free(mmp->genstr);
          mmp->genstr = GenString(pre, lat, nb, i, j, ku, mmp->kmaj, mmp->rout);
-         mf = TimeMMKernel(verb, 1, mmp, pre, nb, nb, nb, nb, nb, nb, 1, 0, -1);
+         mf = TimeMMKernel(verb, 1, mmp, pre, mbu, nbu, nb, nb, nb, nb, 
+                           1, 0, -1);
          printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
          if (mf > mfB)
          {
@@ -4022,13 +3987,15 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
       FillInGenStrings(pre, gmmb);
       for (mp=gmmb; mp; mp = mp->next)
       {
-         int nb = mp->nbB, kb = (nb > 8) ? (nb>>2) : nb, KB = kb;
+         int mb = (mp->nbB > mp->mu) ? (mp->nbB/mp->mu)*mp->mu : mp->mu;
+         int nb = (mp->nbB > mp->nu) ? (mp->nbB/mp->nu)*mp->nu : mp->nu;
+         int kb = (nb > 8) ? (nb>>2) : nb, KB = kb;
          int ku = mp->ku;
          if (mp->kmaj > 1)
             KB = ((kb+ku-1)/ku)*ku;
          if (mp->mflop[0] < 0.0)
          {
-            mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, nb, nb, KB, 0, 0, nb,
+            mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, mb, nb, KB, 0, 0, nb,
                                         0, 0, -1);
             mp->mflop[0] *= (double)kb / (double)KB;
          }
@@ -4161,7 +4128,7 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
    {
       ATL_mmnode_t *p;
       const int i4 = (i<<2), mu=nl[i4], nu=nl[i4+1], kmaj=nl[i4+2];
-      int nb = Mmax(nl[i4+3],nu), mb = Mmax(nb, mu);
+      int nb = Mmax(nl[i4+3],nu), mb = (nb > mu) ? (nb/mu)*mu : mu;
       const int kb = (nb > 8) ? (nb>>2) : nb;
       int vl=VECi, vmu, KK;
       double mf;
@@ -4622,7 +4589,7 @@ void GetBlkFromBudget_one(double thresh, size_t CS,
    do
    {
       size_t nn=nb+nu, mn=(nn/mu)*mu, mn1 = ((nn+mu-1)/mu)*mu, kn=kb+ku;
-      if (mn1 - nn <= nn - mn)
+      if (mn1 - nn <= nn - mn || !mn)
          mn = mn1;
       NGROW = nn < MAXNB && (CacheRatio_one(CS, mn, nn, kb, mu, nu) <= thresh);
       KGROW = kn < MAXNB && (CacheRatio_one(CS, mb, nb, kn, mu, nu) <= thresh);
@@ -4648,7 +4615,7 @@ void GetBlkFromBudget_ws(double thresh, size_t CS,
    int KGROW;
    do
    {
-      size_t kn=kb+ku, mn=(kn/mu)*mu, nn=(kn/nu)*nu;
+      size_t kn=kb+ku, mn=(kn > mu)?(kn/mu)*mu:mu, nn=(kn>nu)?(kn/nu)*nu:nu;
       KGROW = kn < MAXNB && (CacheRatio_ws(CS, mn, nn, kn, mu, nu) <= thresh);
       if (KGROW)
       {
