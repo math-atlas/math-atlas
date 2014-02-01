@@ -3777,14 +3777,34 @@ void PrintResults
          int i, stride;
          fprintf(fpout, "#define ATL_AFF_NUMID %d\n", IDs[0]);
          fprintf(fpout, "static int ATL_affinityIDs[%d]\n", IDs[0]);
-         fprintf(fpout, "   = {%d", IDs[1]);
-         stride = IDs[2] - IDs[1];
-         for (i=1; i < IDs[0]; i++)
+/*
+ *       Special MIC code maximizes # of physical cores as long as possible.
+ *       This minimizes cache thrashing due to competing contexts
+ */
+         #ifdef ATL_ARCH_XeonPHI
          {
-            fprintf(fpout, ", %d", IDs[i+1]);
-            if (IDs[i+1] - IDs[i] != stride)
-               stride = 0;
+            int p = IDs[0]/4;
+            assert(p*4 == IDs[0] && IDs[1] == 0 && IDs[2] == 1);
+            fprintf(fpout, "   = {0");
+            for (i=1; i < p; i++)
+               fprintf(fpout, ", %d", i*4);
+            for (i=0; i < p; i++)
+               fprintf(fpout, ", %d", i*4+1);
+            for (i=0; i < p; i++)
+               fprintf(fpout, ", %d", i*4+2);
+            for (i=0; i < p; i++)
+               fprintf(fpout, ", %d", i*4+3);
          }
+         #else
+            fprintf(fpout, "   = {%d", IDs[1]);
+            stride = IDs[2] - IDs[1];
+            for (i=1; i < IDs[0]; i++)
+            {
+               fprintf(fpout, ", %d", IDs[i+1]);
+               if (IDs[i+1] - IDs[i] != stride)
+                  stride = 0;
+            }
+         #endif
          fprintf(fpout, "};\n");
          if (stride)
             fprintf(fpout, "#define ATL_IDSTRIDE %d\n", stride);

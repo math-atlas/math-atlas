@@ -11775,6 +11775,15 @@ ret
 SS0:
 SS1:
 #endif
+@ROUT ATL_damm24x8x1_avxz.S ATL_damm32x4x2rp_avxz.S ATL_damm32x6x1_avxz.S
+@extract -b @(topd)/gen.inc what=crsetup
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2014
+@ROUT ATL_damm24x8x1_avxz.S
+@extract -b @(topd)/kernel/ClintWhaley/ATL_damm24x8x1_avxz.S
+@ROUT ATL_damm32x4x2rp_avxz.S
+@extract -b @(topd)/kernel/ClintWhaley/ATL_damm32x4x2rp_avxz.S
+@ROUT ATL_damm32x6x1_avxz.S
+@extract -b @(topd)/kernel/ClintWhaley/ATL_damm32x6x1_avxz.S
 @ROUT ATL_skmmm12x1x4_sse3.S ATL_skmmm12x1x256_sse3.S ATL_dkmmm14x1x2_sse3.S
 @extract -b @(topd)/gen.inc what=crsetup
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2013
@@ -12452,7 +12461,7 @@ DONE:
    movq 40(%rsp), %r15
    add  $FSIZE, %rsp
    ret
-@ROUT ATL_amm32x4x256_avxz.S
+@ROUT ATL_damm32x4x256_avxz.S
 @extract -b @(topd)/gen.inc what=crsetup
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2014
 #ifndef ATL_GAS_x8664
@@ -12529,9 +12538,9 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
  */
 #define PFBDIST 128
 #define PFADIST 128
-#define prefA(m_) vprefetche2 m_
-#define prefB(m_) vprefetche2 m_
-#define prefC(m_) vprefetche1 m_
+#define prefA(m_) vprefetch2 m_
+#define prefB(m_) vprefetch2 m_
+#define prefC(m_) vprefetch1 m_
 #define FMAC vfmadd231pd   /* FMAC m256/r256, rs1, rd */
 #if defined(BETAN) || defined(BETAn)
    #define BETAN1
@@ -12567,16 +12576,22 @@ ATL_USERMM:
    movq 16(%rsp), pfB     /* pfB = pBn */
 /*   cmp pfB, pB */
 /*   CMOVE pfA, pfB */
+   vprefetch0 (pB)
    mov KK, incAm
+   vprefetch0 64(pB)
    shr $1, KK             /* KK = K/2 */
    mov KK, KK0
+   vprefetch0 128(pB)
    sub $-128, pC
    sub $-128, pA
+   vprefetch0 192(pB)
    sub $-128, pB
    sub $-128, pfA
+   vprefetch0 256-128(pB)
    sub $-128, pfB
    mov $256, r256
    mov $192, r192
+   vprefetch0 320-128(pB)
    mov pA, pA0
    mov pB, pB0
 /*
@@ -12700,6 +12715,9 @@ ATL_USERMM:
 @iexp ao 832 64 +
 @iexp bo -16 8 +
 @iexp k 1 1 +
+@iexp fo -128 0 +
+@multidef pi B A C
+@multidef pf pfB pfA pC
 @iwhile k < 320
          #if KB > @(k)
    @iexp k @(k) 1 +
@@ -12717,6 +12735,15 @@ ATL_USERMM:
    @iexp bo @(bo) 8 +
 
             FMAC rA0, rB1, rC01
+            @ifdef pf
+               pref@(pi)(@(fo)(@(pf)))
+               @iexp fo @(fo) 64 +
+               @iif fo > 1408
+                  @undef pf 
+                  @undef pi
+                  @iexp fo -128 0 +
+               @endiif
+            @endifdef
             FMAC rA1, rB1, rC11
             FMAC rA2, rB1, rC21
             FMAC rA3, rB1, rC31
@@ -12726,6 +12753,15 @@ ATL_USERMM:
    @iexp bo @(bo) 8 +
 
             FMAC rA0, rB2, rC02
+            @ifdef pf
+               pref@(pi)(@(fo)(@(pf)))
+               @iexp fo @(fo) 64 +
+               @iif fo > 1408
+                  @undef pf 
+                  @undef pi
+                  @iexp fo -128 0 +
+               @endiif
+            @endifdef
             FMAC rA1, rB2, rC12
             FMAC rA2, rB2, rC22
             FMAC rA3, rB2, rC32
@@ -12759,9 +12795,7 @@ ATL_USERMM:
          #if KB > @(k)
    @iexp k @(k) 1 +
             FMAC ra0, rb0, rC00
-            #if KB > @(k)
                vbroadcastsd @(bo)(pB), rB3
-            #endif
    @iexp bo @(bo) 8 +
             FMAC ra1, rb0, rC10
             FMAC ra2, rb0, rC20
@@ -12771,6 +12805,15 @@ ATL_USERMM:
             #endif
    @iexp bo @(bo) 8 +
             FMAC ra0, rb1, rC01
+            @ifdef pf
+               pref@(pi)(@(fo)(@(pf)))
+               @iexp fo @(fo) 64 +
+               @iif fo > 1408
+                  @undef pf 
+                  @undef pi
+                  @iexp fo -128 0 +
+               @endiif
+            @endifdef
             FMAC ra1, rb1, rC11
             FMAC ra2, rb1, rC21
             FMAC ra3, rb1, rC31
@@ -12781,6 +12824,15 @@ ATL_USERMM:
 
 
             FMAC ra0, rb2, rC02
+            @ifdef pf
+               pref@(pi)(@(fo)(@(pf)))
+               @iexp fo @(fo) 64 +
+               @iif fo > 1408
+                  @undef pf 
+                  @undef pi
+                  @iexp fo -128 0 +
+               @endiif
+            @endifdef
             FMAC ra1, rb2, rC12
             FMAC ra2, rb2, rC22
             FMAC ra3, rb2, rC32

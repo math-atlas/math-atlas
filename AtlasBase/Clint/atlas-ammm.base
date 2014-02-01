@@ -113,6 +113,14 @@ ID=32 MU=14 NU=1 KU=2 AUTH="R. Clint Whaley" ROUT='ATL_dkmmm14x1x256_sse3.S' \
 ID=33 MU=14 NU=1 KU=2 AUTH="R. Clint Whaley" ROUT='ATL_dkmmm14x1x2_sse3.S' \
      SSE=3 KMAJ=2 ASM=GAS_x8664 KRUNTIME=1 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -msse3'
+ID=34 MU=24 NU=8 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm24x8x1_avxz.S' \
+      ASM=GAS_x8664 KRUNTIME=1 COMP='icc' CFLAGS='-x assembler-with-cpp -mmic'
+ID=35 MU=32 NU=4 KU=2 AUTH="R. Clint Whaley" ROUT='ATL_damm32x4x2rp_avxz.S' \
+      ASM=GAS_x8664 KRUNTIME=1 COMP='icc' CFLAGS='-x assembler-with-cpp -mmic'
+ID=36 MU=32 NU=4 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm32x4x256_avxz.S' \
+      ASM=GAS_x8664 KBMAX=320 COMP='icc' CFLAGS='-x assembler-with-cpp -mmic'
+ID=37 MU=32 NU=6 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm32x6x1_avxz.S' \
+      ASM=GAS_x8664 KRUNTIME=1 COMP='icc' CFLAGS='-x assembler-with-cpp -mmic'
 @ROUT samcases.idx
 ID=1 MU=16 NU=4 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_samm16x4x1_av.c' \
      KRUNTIME=1 COMP='gcc' CFLAGS='-Os -maltivec -mabi=altivec -mcpu=970 -mtune=970 -mvrsave -fschedule-insns2 -fno-schedule-insns'
@@ -148,6 +156,14 @@ ID=27 MU=12 NU=1 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_skmmm12x1x256_sse3.S' \
 #ID=26 MU=12 NU=3 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_sammm12x3d2x256_sse3.S' \
 #     SSE=3 DUPB=2 KBMAX=256 ASM=GAS_x8664 \
 #     COMP='gcc' CFLAGS='-x assembler-with-cpp -msse2'
+ID=34 MU=48 NU=8 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm24x8x1_avxz.S' \
+      ASM=GAS_x8664 KRUNTIME=1 COMP='icc' CFLAGS='-x assembler-with-cpp -mmic'
+ID=35 MU=64 NU=4 KU=2 AUTH="R. Clint Whaley" ROUT='ATL_damm32x4x2rp_avxz.S' \
+      ASM=GAS_x8664 KRUNTIME=1 COMP='icc' CFLAGS='-x assembler-with-cpp -mmic'
+#ID=36 MU=64 NU=4 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm32x4x256_avxz.S' \
+#      ASM=GAS_x8664 KBMAX=320 COMP='icc' CFLAGS='-x assembler-with-cpp -mmic'
+ID=37 MU=64 NU=6 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm32x6x1_avxz.S' \
+      ASM=GAS_x8664 KRUNTIME=1 COMP='icc' CFLAGS='-x assembler-with-cpp -mmic'
 @ROUT atlas_gnuvec.h
 #ifndef ATLAS_GNUVEC
    #define ATLAS_GNUVEC 1
@@ -3011,6 +3027,7 @@ int *GetFlags(int nargs, char **args, char *PRE,
       if (*NREG == 0)
          *NREG = ATL_NVREG;
       VECi = VTAVXZ;
+      VECi = VTSC;  /* turn off due to errors */
    #elif defined(ATL_AVX)
       if (*NREG == 0)
          *NREG = ATL_NVREG;
@@ -3639,12 +3656,12 @@ ATL_mmnode_t *GetWorkingUserCases(int verb, char pre)
       else
       {
          int m = Mylcm(mmp->mu, mmp->nu);
-         m = (60/m)*m;
-         if (mmp->kbmin)
-            m = Mmax(m, mmp->kbmin);
-         if (mmp->kbmax)
-            m = Mmin(m, mmp->kbmax);
+         m = ((60+m-1)/m)*m;
          mmp->mbB = mmp->nbB = mmp->kbB = m;
+         if (mmp->kbmin)
+            mmp->kbB = Mmax(mmp->kbB, mmp->kbmin);
+         if (mmp->kbmax)
+            mmp->kbB = Mmin(mmp->kbB, mmp->kbmax);
       }
    }
    mmb = DelBadMMKernels(pre, verb, mmb);
@@ -4153,6 +4170,9 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
       }
 /* HERE HERE */
       p = GetNewGenNode(pre, nb, 0, vmu, nu, 1, kmaj);
+      p->mbB = mb;
+      p->nbB = nb;
+      p->kbB = kb;
       p->flag |= (1<<MMF_KRUNTIME);
       VECi = vl;
       #if 0  /* by default don't waste time testing generated code */
@@ -4218,7 +4238,9 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
                   ATL_mmnode_t *p;
                   p = CloneMMNode(mp);
                   p->next = NULL;
-                  p->nbB = p->kbB = p->mbB = nb;
+                  p->nbB = ((nb+nu-1)/nu)*nu;
+                  p->mbB = ((nb+mu-1)/mu)*mu;
+                  p->kbB = nb;
                   if (ummb)
                   {
                      np->next = p;
@@ -4246,8 +4268,8 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
       {
          const int nb = mp->nbB, kb = (nb > 8) ? (nb>>2) : nb;
          const int KK = (mp->kmaj < 2) ? kb:((kb+mp->kmaj-1)/mp->kmaj)*mp->kmaj;
-         mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, nb, nb, nb, 0, 0, nb, 
-                                    0, 0, -1);
+         mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, mp->mbB, nb, KK, 0, 0, 
+                                     KK, 0, 0, -1);
          if (KK != kb)
             mp->mflop[0] *= (double)kb / (double)KK;
          printf("   ID=%d, nb=%d, kb=%d, mu=%d, nu=%d, MFLOP=%.2f\n", 
