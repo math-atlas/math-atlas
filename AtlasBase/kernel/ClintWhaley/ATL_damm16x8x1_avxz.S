@@ -79,9 +79,9 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
  */
 #define PFBDIST 128
 #define PFADIST 128
-#define prefA(m_) vprefetche2 m_
-#define prefB(m_) vprefetche2 m_
-#define prefC(m_) vprefetche1 m_
+#define prefA(m_) vprefetch2 m_
+#define prefB(m_) vprefetch2 m_
+#define prefC(m_) vprefetche0 m_
 #define FMAC vfmadd231pd   /* FMAC m256/r256, rs1, rd */
 #if defined(BETAN) || defined(BETAn)
    #define BETAN1
@@ -120,19 +120,21 @@ ATL_asmdecor(ATL_USERMM):
    mov KK, KK0
    sub $-128, pC
    sub $-128, pA
+   sub $-128, pB
+   sub $-128, pfA
+   sub $-128, pfB
    mov $256, r256
    mov $192, r192
    mov pA, pA0
    mov pB, pB0
 /*
- * incAm = MU*sizeof*K = 24*8*K = 64*3*K
+ * incAm = MU*sizeof*K = 16*8*K = 128*K
  */
-   lea (KK, KK, 2), incAm  /* incAm = 3*K */
-   shl $6, incAm           /* incAm = 64*3*K */
+   shl $7, incAm           /* incAm = 128*K */
 
    ALIGN16
    MLOOP:
-         vbroadcastsd (pB), rB0
+         vbroadcastsd -128(pB), rB0
       NLOOP:
 /*
  *       Peel K=1 to zero rCxx
@@ -142,166 +144,300 @@ ATL_asmdecor(ATL_USERMM):
             vmovapd -64(pA), rA1a
          vmulpd rA1a, rB0, rC10
 
-            vbroadcastsd SZ(pB), rB1
+            vbroadcastsd SZ-128(pB), rB1
          vmulpd rA0a, rB1, rC01
-            vbroadcastsd 2*SZ(pB), rB2
+            vbroadcastsd 2*SZ-128(pB), rB2
          vmulpd rA1a, rB1, rC11
 
-            vbroadcastsd 3*SZ(pB), rB3
+            vbroadcastsd 3*SZ-128(pB), rB3
          vmulpd rA0a, rB2, rC02
-            vbroadcastsd 4*SZ(pB), rB4
+            vbroadcastsd 4*SZ-128(pB), rB4
          vmulpd rA1a, rB2, rC12
 
-            vbroadcastsd 5*SZ(pB), rB5
+            vbroadcastsd 5*SZ-128(pB), rB5
          vmulpd rA0a, rB3, rC03
-           vbroadcastsd 6*SZ(pB), rB6
+           vbroadcastsd 6*SZ-128(pB), rB6
          vmulpd rA1a, rB3, rC13
 
-           vbroadcastsd 7*SZ(pB), rB7
+           vbroadcastsd 7*SZ-128(pB), rB7
          vmulpd rA0a, rB4, rC04
-           vmovapd (pA), rA0b
+           vbroadcastsd 8*SZ-128(pB), rB0
          vmulpd rA1a, rB4, rC14
 
-           vmovapd 64(pA), rA1b
+           vmovapd (pA), rA0b
          vmulpd rA0a, rB5, rC05
-           vmovapd 128(pA), rA0c
+           vmovapd 64(pA), rA1b
          vmulpd rA1a, rB5, rC15
 
-           vmovapd 192(pA), rA1c
+           vbroadcastsd 9*SZ-128(pB), rB1
          vmulpd rA0a, rB6, rC06
-           vmovapd 256(pA), rA0d
+           vbroadcastsd 10*SZ-128(pB), rB2
          vmulpd rA1a, rB6, rC16
 
-           vmovapd 320(pA), rA1d
+           vbroadcastsd 11*SZ-128(pB), rB3
          vmulpd rA0a, rB7, rC07
+           vbroadcastsd 12*SZ-128(pB), rB4
          vmulpd rA1a, rB7, rC17
 
 
-            add r192, pA
+           vbroadcastsd 13*SZ-128(pB), rB5
+         FMAC rA0b, rB0, rC00
+           vbroadcastsd 14*SZ-128(pB), rB6
+         FMAC rA1b, rB0, rC10
+           vbroadcastsd 15*SZ-128(pB), rB7
+         FMAC rA0b, rB1, rC01
+           vmovapd 128(pA), rA0c
+         FMAC rA1b, rB1, rC11
+           vmovapd 192(pA), rA1c
+         FMAC rA0b, rB2, rC02
+           vbroadcastsd 16*SZ-128(pB), rB0
+         FMAC rA1b, rB2, rC12
+           vbroadcastsd 17*SZ-128(pB), rB1
+         FMAC rA0b, rB3, rC03
+           vbroadcastsd 18*SZ-128(pB), rB2
+         FMAC rA1b, rB3, rC13
+           vbroadcastsd 19*SZ-128(pB), rB3
+         FMAC rA0b, rB4, rC04
+           vmovapd 256(pA), rA0d
+         FMAC rA1b, rB4, rC14
+           vbroadcastsd 20*SZ-128(pB), rB4
+         FMAC rA0b, rB5, rC05
+           vmovapd 320(pA), rA1d
+         FMAC rA1b, rB5, rC15
+           vbroadcastsd 21*SZ-128(pB), rB5
+         FMAC rA0b, rB6, rC06
+            lea (pA,r256,2),pA
+         FMAC rA1b, rB6, rC16
+           vbroadcastsd 22*SZ-128(pB), rB6
+         FMAC rA0b, rB7, rC07
+           vmovapd -128(pA), rA0a
+         FMAC rA1b, rB7, rC17
+           vbroadcastsd 23*SZ-128(pB), rB7
 
+         FMAC rA0c, rB0, rC00
+           vmovapd -64(pA), rA1a
+         FMAC rA1c, rB0, rC10
+           vbroadcastsd 24*SZ-128(pB), rB0
+         FMAC rA0c, rB1, rC01
+           vmovapd (pA), rA0b
+         FMAC rA1c, rB1, rC11
+           vbroadcastsd 25*SZ-128(pB), rB1
+         FMAC rA0c, rB2, rC02
+           vmovapd 64(pA), rA1b
+         FMAC rA1c, rB2, rC12
+           vbroadcastsd 26*SZ-128(pB), rB2
+         FMAC rA0c, rB3, rC03
+            prefC(-128(pC))
+         FMAC rA1c, rB3, rC13
+           vbroadcastsd 27*SZ-128(pB), rB3
+         FMAC rA0c, rB4, rC04
+            prefC(-64(pC))
+         FMAC rA1c, rB4, rC14
+           vbroadcastsd 28*SZ-128(pB), rB4
+         FMAC rA0c, rB5, rC05
+            prefC((pC))
+         FMAC rA1c, rB5, rC15
+           vbroadcastsd 29*SZ-128(pB), rB5
+         FMAC rA0c, rB6, rC06
+            prefC(64(pC))
+         FMAC rA1c, rB6, rC16
+           vbroadcastsd 30*SZ-128(pB), rB6
+         FMAC rA0c, rB7, rC07
+           vmovapd 128(pA), rA0c
+         FMAC rA1c, rB7, rC17
+           vbroadcastsd 31*SZ-128(pB), rB7
+
+         FMAC rA0d, rB0, rC00
+            add r256, pB
+         FMAC rA1d, rB0, rC10
+           vbroadcastsd -128(pB), rB0
+         FMAC rA0d, rB1, rC01
+           vmovapd 192(pA), rA1c
+         FMAC rA1d, rB1, rC11
+           vbroadcastsd SZ-128(pB), rB1
+         FMAC rA0d, rB2, rC02
+            prefC(128(pC))
+         FMAC rA1d, rB2, rC12
+           vbroadcastsd 2*SZ-128(pB), rB2
+         FMAC rA0d, rB3, rC03
+            prefC(192(pC))
+         FMAC rA1d, rB3, rC13
+           vbroadcastsd 3*SZ-128(pB), rB3
+         FMAC rA0d, rB4, rC04
+            prefC(256(pC))
+         FMAC rA1d, rB4, rC14
+           vbroadcastsd 4*SZ-128(pB), rB4
+         FMAC rA0d, rB5, rC05
+            prefC(320(pC))
+         FMAC rA1d, rB5, rC15
+           vbroadcastsd 5*SZ-128(pB), rB5
+         FMAC rA0d, rB6, rC06
+            prefC(384(pC))
+         FMAC rA1d, rB6, rC16
+           vbroadcastsd 6*SZ-128(pB), rB6
+         FMAC rA0d, rB7, rC07
+           vmovapd 256(pA), rA0d
+         FMAC rA1d, rB7, rC17
+
+         sub $4, KK
+            vbroadcastsd 7*SZ-128(pB), rB7
          jz KDONE
-           vmovapd (pA), rA2
-           vbroadcastsd 11*SZ(pB), rB3
 
          KLOOP:
-            FMAC rA0, rB0, rC00
-               add $8*SZ, pB
-            FMAC rA1, rB0, rC10
-               add r192, pA
-            FMAC rA2, rB0, rC20
-               vbroadcastsd 4*SZ(pB), rB0
+            FMAC rA0a, rB0, rC00
+               vmovapd 320(pA), rA1d
+            FMAC rA1a, rB0, rC10
+               vbroadcastsd  8*SZ-128(pB), rB0
+            FMAC rA0a, rB1, rC01
+               lea (pA,r256,2),pA
+            FMAC rA1a, rB1, rC11
+               vbroadcastsd  9*SZ-128(pB), rB1
+            FMAC rA0a, rB2, rC02
+               prefA(-128(pfA))
+            FMAC rA1a, rB2, rC12
+               vbroadcastsd 10*SZ-128(pB), rB2
+            FMAC rA0a, rB3, rC03
+               prefA(64(pfA))
+            FMAC rA1a, rB3, rC13
+               vbroadcastsd 11*SZ-128(pB), rB3
+            FMAC rA0a, rB4, rC04
+               prefA((pfA))
+            FMAC rA1a, rB4, rC14
+               vbroadcastsd 12*SZ-128(pB), rB4
+            FMAC rA0a, rB5, rC05
+               prefA(64(pfA))
+            FMAC rA1a, rB5, rC15
+               vbroadcastsd 13*SZ-128(pB), rB5
+            FMAC rA0a, rB6, rC06
+               add r256, pfA
+            FMAC rA1a, rB6, rC16
+               vbroadcastsd 14*SZ-128(pB), rB6
+            FMAC rA0a, rB7, rC07
+               vmovapd -128(pA), rA0a
+            FMAC rA1a, rB7, rC17
+               vbroadcastsd 15*SZ-128(pB), rB7
 
-            FMAC rA0, rB1, rC01
-            FMAC rA1, rB1, rC11
-            FMAC rA2, rB1, rC21
-               vbroadcastsd 5*SZ(pB), rB1
+            FMAC rA0b, rB0, rC00
+               vmovapd -64(pA), rA1a
+            FMAC rA1b, rB0, rC10
+               vbroadcastsd 16*SZ-128(pB), rB0
+            FMAC rA0b, rB1, rC01
+            FMAC rA1b, rB1, rC11
+               vbroadcastsd 17*SZ-128(pB), rB1
+            FMAC rA0b, rB2, rC02
+            FMAC rA1b, rB2, rC12
+               vbroadcastsd 18*SZ-128(pB), rB2
+            FMAC rA0b, rB3, rC03
+            FMAC rA1b, rB3, rC13
+               vbroadcastsd 19*SZ-128(pB), rB3
+            FMAC rA0b, rB4, rC04
+            FMAC rA1b, rB4, rC14
+               vbroadcastsd 20*SZ-128(pB), rB4
+            FMAC rA0b, rB5, rC05
+            FMAC rA1b, rB5, rC15
+               vbroadcastsd 21*SZ-128(pB), rB5
+            FMAC rA0b, rB6, rC06
+            FMAC rA1b, rB6, rC16
+               vbroadcastsd 22*SZ-128(pB), rB6
+            FMAC rA0b, rB7, rC07
+               vmovapd (pA), rA0b
+            FMAC rA1b, rB7, rC17
+               vbroadcastsd 23*SZ-128(pB), rB7
 
-            FMAC rA0, rB2, rC02
-            FMAC rA1, rB2, rC12
-            FMAC rA2, rB2, rC22
-               vbroadcastsd 6*SZ(pB), rB2
+            FMAC rA0c, rB0, rC00
+               vmovapd 64(pA), rA1b
+            FMAC rA1c, rB0, rC10
+               vbroadcastsd 24*SZ-128(pB), rB0
+            FMAC rA0c, rB1, rC01
+            FMAC rA1c, rB1, rC11
+               vbroadcastsd 25*SZ-128(pB), rB1
+            FMAC rA0c, rB2, rC02
+            FMAC rA1c, rB2, rC12
+               vbroadcastsd 26*SZ-128(pB), rB2
+            FMAC rA0c, rB3, rC03
+            FMAC rA1c, rB3, rC13
+               vbroadcastsd 27*SZ-128(pB), rB3
+            FMAC rA0c, rB4, rC04
+            FMAC rA1c, rB4, rC14
+               vbroadcastsd 28*SZ-128(pB), rB4
+            FMAC rA0c, rB5, rC05
+            FMAC rA1c, rB5, rC15
+               vbroadcastsd 29*SZ-128(pB), rB5
+            FMAC rA0c, rB6, rC06
+            FMAC rA1c, rB6, rC16
+               vbroadcastsd 30*SZ-128(pB), rB6
+            FMAC rA0c, rB7, rC07
+               vmovapd 128(pA), rA0c
+            FMAC rA1c, rB7, rC17
+               vbroadcastsd 31*SZ-128(pB), rB7
 
-            FMAC rA0, rB3, rC03
-//               vprefetch2 (pfA)
-            FMAC rA1, rB3, rC13
-            FMAC rA2, rB3, rC23
-              vbroadcastsd 7*SZ(pB), rB3
-
-            FMAC rA0, rB0, rC04
-//               add $64, pfA
-            FMAC rA1, rB0, rC14
-            FMAC rA2, rB0, rC24
-              vbroadcastsd 8*SZ(pB), rB0
-
-            FMAC rA0, rB1, rC05
-            FMAC rA1, rB1, rC15
-            FMAC rA2, rB1, rC25
-              vbroadcastsd 9*SZ(pB), rB1
-
-            FMAC rA0, rB2, rC06
-            FMAC rA1, rB2, rC16
-            FMAC rA2, rB2, rC26
-              vbroadcastsd 10*SZ(pB), rB2
-
-            FMAC rA0, rB3, rC07
-              vmovapd -128(pA), rA0
-            FMAC rA1, rB3, rC17
-              vmovapd -64(pA), rA1
-            FMAC rA2, rB3, rC27
-              vmovapd (pA), rA2
-
-            sub $1, %rdx
-              vbroadcastsd 11*SZ(pB), rB3
+            FMAC rA0d, rB0, rC00
+               vmovapd 192(pA), rA1c
+            FMAC rA1d, rB0, rC10
+               add r256, pB
+            FMAC rA0d, rB1, rC01
+               vbroadcastsd -128(pB), rB0
+            FMAC rA1d, rB1, rC11
+               vbroadcastsd SZ-128(pB), rB1
+            FMAC rA0d, rB2, rC02
+            FMAC rA1d, rB2, rC12
+               vbroadcastsd 2*SZ-128(pB), rB2
+            FMAC rA0d, rB3, rC03
+            FMAC rA1d, rB3, rC13
+               vbroadcastsd 3*SZ-128(pB), rB3
+            FMAC rA0d, rB4, rC04
+            FMAC rA1d, rB4, rC14
+               vbroadcastsd 4*SZ-128(pB), rB4
+            FMAC rA0d, rB5, rC05
+            FMAC rA1d, rB5, rC15
+               vbroadcastsd 5*SZ-128(pB), rB5
+            FMAC rA0d, rB6, rC06
+               sub $4, KK
+            FMAC rA1d, rB6, rC16
+               vbroadcastsd 6*SZ-128(pB), rB6
+            FMAC rA0d, rB7, rC07
+               vmovapd 256(pA), rA0d
+            FMAC rA1d, rB7, rC17
+               vbroadcastsd 7*SZ-128(pB), rB7
          jnz KLOOP
 KDONE:
-         mov KK0, KK
          #ifndef BETA0
             VCOP -128(pC), rC00, rC00
             VCOP -64(pC), rC10, rC10
-            VCOP (pC), rC20, rC20
+            VCOP (pC), rC01, rC01
+            VCOP 64(pC), rC11, rC11
+            VCOP 128-256(pC,r256), rC02, rC02
+            VCOP 192-256(pC,r256), rC12, rC12
+            VCOP (pC,r256), rC03, rC03
+            VCOP 320-256(pC,r256), rC13, rC13
+            VCOP 384-512(pC,r256,2), rC04, rC04
+            VCOP 448-512(pC,r256,2), rC14, rC14
+            VCOP (pC,r256,2), rC05, rC05
+            VCOP 576-512(pC,r256,2), rC15, rC15
+            VCOP 640-768(pC,r192,4), rC06, rC06
+            VCOP 704-768(pC,r192,4), rC16, rC16
+            VCOP (pC,r192,4), rC07, rC07
+            VCOP 832-768(pC,r192,4), rC17, rC17
          #endif
          vmovapd rC00, -128(pC)
          vmovapd rC10, -64(pC)
-         vmovapd rC20, (pC)
-         #ifndef BETA0
-            VCOP 64(pC), rC01, rC01
-            VCOP 128-256(pC,r256), rC11, rC11
-            VCOP 192-256(pC,r256), rC21, rC21
-         #endif
-         vmovapd rC01, 64(pC)
-         vmovapd rC11, 128-256(pC,r256)
-         vmovapd rC21, 192-256(pC,r256)
-         #ifndef BETA0
-            VCOP (pC,r256), rC02, rC02
-            VCOP 320-256(pC,r256), rC12, rC12
-            VCOP 384-512(pC,r256,2), rC22, rC22
-         #endif
-         vmovapd rC02, (pC,r256)
-         vmovapd rC12, 320-256(pC,r256)
-         vmovapd rC22, 384-512(pC,r256,2)
-         #ifndef BETA0
-            VCOP 448-512(pC,r256,2), rC03, rC03
-            VCOP (pC,r256,2), rC13, rC13
-            VCOP 576-512(pC,r256,2), rC23, rC23
-         #endif
-         vmovapd rC03, 448-512(pC,r256,2)
-         vmovapd rC13, (pC,r256,2)
-         vmovapd rC23, 576-512(pC,r256,2)
-         #ifndef BETA0
-            VCOP 640-768(pC,r192,4), rC04, rC04
-            VCOP 704-768(pC,r192,4), rC14, rC14
-            VCOP (pC,r192,4), rC24, rC24
-         #endif
-         vmovapd rC04, 640-768(pC,r192,4)
-         vmovapd rC14, 704-768(pC,r192,4)
-         vmovapd rC24, (pC,r192,4)
-         #ifndef BETA0
-            VCOP 832-768(pC,r192,4), rC05, rC05
-            VCOP 896-1024(pC,r256,4), rC15, rC15
-            VCOP 960-1024(pC,r256,4), rC25, rC25
-         #endif
-         vmovapd rC05, 832-768(pC,r192,4)
-         vmovapd rC15, 896-1024(pC,r256,4)
-         vmovapd rC25, 960-1024(pC,r256,4)
-         #ifndef BETA0
-            VCOP (pC,r256,4), rC06, rC06
-            VCOP 1088-1024(pC,r256,4), rC16, rC16
-            VCOP 1152(pC), rC26, rC26
-         #endif
-         vmovapd rC06, (pC,r256,4)
-         vmovapd rC16, 1088-1024(pC,r256,4)
-         vmovapd rC26, 1152(pC)
-         #ifndef BETA0
-            VCOP 1216(pC), rC07, rC07
-            VCOP 1280(pC), rC17, rC17
-            VCOP 1344(pC), rC27, rC27
-         #endif
-         vmovapd rC07, 1216(pC)
-         vmovapd rC17, 1280(pC)
-         vmovapd rC27, 1344(pC)
+         vmovapd rC01, (pC)
+         vmovapd rC11, 64(pC)
+         vmovapd rC02, 128-256(pC,r256)
+         vmovapd rC12, 192-256(pC,r256)
+         vmovapd rC03, (pC,r256)
+         vmovapd rC13, 320-256(pC,r256)
+         vmovapd rC04, 384-512(pC,r256,2)
+         vmovapd rC14, 448-512(pC,r256,2)
+         vmovapd rC05, (pC,r256,2)
+         vmovapd rC15, 576-512(pC,r256,2)
+         vmovapd rC06, 640-768(pC,r192,4)
+         vmovapd rC16, 704-768(pC,r192,4)
+         vmovapd rC07, (pC,r192,4)
+         vmovapd rC17, 832-768(pC,r192,4)
 
-         add $8*SZ, pB
-         lea (pC, r192,8), pC /* pC += MU*NU*sizeof = 24*8*8 = 1536 = 192*8 */
+         mov KK0, KK
+         lea (pC,r256,4), pC /* pC += MU*NU*sizeof = 16*8*8 = 1024*/
          sub $1, nnu
          mov pA0, pA
       jnz NLOOP
