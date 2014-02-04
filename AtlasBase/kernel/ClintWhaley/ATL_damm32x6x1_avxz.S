@@ -59,7 +59,7 @@
 #define pC      %rsi  /* set after mov rsi to nnu () */
 #define nnu     %r10  /* comes in as rsi */
 #define pfA     %rbx
-#define pfB     %rbp
+#define incB    %rbp
 #define r192    %r12
 #define KK0     %rdi
 /*
@@ -77,9 +77,9 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
  */
 #define PFBDIST 128
 #define PFADIST 128
-#define prefA(m_) vprefetche2 m_
-#define prefB(m_) vprefetche2 m_
-#define prefC(m_) vprefetche1 m_
+#define prefA(m_) vprefetch0 m_
+#define prefB(m_) vprefetch0 m_
+#define prefC(m_) vprefetche0 m_
 #define FMAC vfmadd231pd   /* FMAC m256/r256, rs1, rd */
 #if defined(BETAN) || defined(BETAn)
    #define BETAN1
@@ -106,30 +106,37 @@ ATL_asmdecor(ATL_USERMM):
  * Load paramaters
  */
    mov %rdi, nmu
+     prefA((pA))
    mov %rsi, nnu
    mov %r8, pB
+     prefA(64(pA))
    mov %r9, pC
+     prefA(128(pA))
    mov nnu, nnu0
-      vprefetch0 (pB)
    movq 8(%rsp), pfA      /* pfA = pAn */
-   movq 16(%rsp), pfB     /* pfB = pBn */
-/*   cmp pfB, pB */
-/*   CMOVE pfA, pfB */
    mov KK, incAm
+      prefB((pB))
    mov KK, KK0
    sub $-128, pC
    sub $-128, pA
 //   sub $-128, pfA
-//   sub $-128, pfB
    mov $256, r256
+      prefA(192-128(pA))
    mov $192, r192
    mov pA, pA0
+      prefA(-128(pA,r256))
    mov pB, pB0
 /*
  * incAm = MU*sizeof*K = 32*8*K = 256*K
+ * incB = NU*sizeof*K = 6*8*K = 16*3*K
  */
    shl $8, incAm           /* incAm = 256*K */
-//               vbroadcastsd -128(pB), rB0
+   lea (KK,KK,2), incB     /* incB = 3*K */
+   #ifdef SREAL
+      shl $3, incB
+   #else
+      shl $4, incB
+   #endif
 
    ALIGN16
    MLOOP:
@@ -151,6 +158,7 @@ ATL_asmdecor(ATL_USERMM):
          vmulpd rA0, rB1, rC01
             vbroadcastsd 2*SZ(pB), rB0
          vmulpd rA1, rB1, rC11
+            prefB(64(pB))
          vmulpd rA2, rB1, rC21
          vmulpd rA3, rB1, rC31
            vbroadcastsd 3*SZ(pB), rB1
@@ -188,37 +196,42 @@ ATL_asmdecor(ATL_USERMM):
          jz KDONE
            vmovapd 64(pA), rA3
            vbroadcastsd 7*SZ(pB), rB1
-
+#define PFDISTB 256
+#define PFDISTA 384
          KLOOP:
             FMAC rA0, rB0, rC00
-               add $6*SZ, pB
+               prefB(PFDISTB(pB))
             FMAC rA1, rB0, rC10
-               add r256, pA
+               add $6*SZ, pB
             FMAC rA2, rB0, rC20
+               add r256, pA
             FMAC rA3, rB0, rC30
               vbroadcastsd 2*SZ(pB), rB0
 
             FMAC rA0, rB1, rC01
+               prefA(PFDISTA(pA))
             FMAC rA1, rB1, rC11
+               prefA(64+PFDISTA(pA))
             FMAC rA2, rB1, rC21
             FMAC rA3, rB1, rC31
               vbroadcastsd 3*SZ(pB), rB1
 
             FMAC rA0, rB0, rC02
             FMAC rA1, rB0, rC12
+               prefA(128+PFDISTA(pA))
             FMAC rA2, rB0, rC22
             FMAC rA3, rB0, rC32
               vbroadcastsd 4*SZ(pB), rB0
 
             FMAC rA0, rB1, rC03
-               vprefetch2 (pfA)
+               prefA(192+PFDISTA(pA))
             FMAC rA1, rB1, rC13
             FMAC rA2, rB1, rC23
-               add $48, pfA
             FMAC rA3, rB1, rC33
               vbroadcastsd 5*SZ(pB), rB1
 
             FMAC rA0, rB0, rC04
+               vprefetch1 -128(pB,incB)
             FMAC rA1, rB0, rC14
             FMAC rA2, rB0, rC24
             sub $1, %rdx

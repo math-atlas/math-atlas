@@ -60,8 +60,8 @@
 #define pA0     %r8   /* set after mov r8 to pB (rax) */
 #define pC      %rsi  /* set after mov rsi to nnu () */
 #define nnu     %r10  /* comes in as rsi */
-#define pfA     %rbx
-#define pfB     %rbp
+#define incB    %rbx
+/* #define pfB     %rbp */
 #define r192    %r12
 #define KK0     %rdi
 /*
@@ -77,10 +77,10 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
                   8(%rsp)    16(%rsp)     24(%rsp)
                 CTYPE *pAn, CTYPE *pBn, CTYPE *pCn);
  */
-#define PFBDIST 128
-#define PFADIST 128
-#define prefA(m_) vprefetch2 m_
-#define prefB(m_) vprefetch2 m_
+#define PFDISTA 448
+#define PFDISTB 512
+#define prefA(m_) vprefetch0 m_
+#define prefB(m_) vprefetch0 m_
 #define prefC(m_) vprefetche0 m_
 #define FMAC vfmadd231pd   /* FMAC m256/r256, rs1, rd */
 #if defined(BETAN) || defined(BETAn)
@@ -114,23 +114,26 @@ ATL_asmdecor(ATL_USERMM):
    mov %r9, pC
    mov nnu, nnu0
       vprefetch0 (pB)
-   movq 8(%rsp), pfA      /* pfA = pAn */
-   movq 16(%rsp), pfB     /* pfB = pBn */
    mov KK, incAm
    mov KK, KK0
    sub $-128, pC
    sub $-128, pA
    sub $-128, pB
-   sub $-128, pfA
-   sub $-128, pfB
    mov $256, r256
    mov $192, r192
    mov pA, pA0
    mov pB, pB0
 /*
  * incAm = MU*sizeof*K = 16*8*K = 128*K
+ * incBm = NU*sizeof*K = 8*8*K = 64*K 
  */
    shl $7, incAm           /* incAm = 128*K */
+   mov KK, incB
+   #ifdef SREAL
+      shl $5, incB
+   #else
+      shl $6, incB
+   #endif
 
    ALIGN16
    MLOOP:
@@ -293,23 +296,23 @@ ATL_asmdecor(ATL_USERMM):
             FMAC rA1a, rB1, rC11
                vbroadcastsd  9*SZ-128(pB), rB1
             FMAC rA0a, rB2, rC02
-               prefA(-128(pfA))
+               prefB(PFDISTB(pB))
             FMAC rA1a, rB2, rC12
                vbroadcastsd 10*SZ-128(pB), rB2
             FMAC rA0a, rB3, rC03
-               prefA(64(pfA))
+               prefB(64+PFDISTB(pB))
             FMAC rA1a, rB3, rC13
                vbroadcastsd 11*SZ-128(pB), rB3
             FMAC rA0a, rB4, rC04
-               prefA((pfA))
+               prefB(128+PFDISTB(pB))
             FMAC rA1a, rB4, rC14
                vbroadcastsd 12*SZ-128(pB), rB4
             FMAC rA0a, rB5, rC05
-               prefA(64(pfA))
+               prefB(192+PFDISTB(pB))
             FMAC rA1a, rB5, rC15
                vbroadcastsd 13*SZ-128(pB), rB5
             FMAC rA0a, rB6, rC06
-               add r256, pfA
+               prefB(256+PFDISTB(pB))
             FMAC rA1a, rB6, rC16
                vbroadcastsd 14*SZ-128(pB), rB6
             FMAC rA0a, rB7, rC07
@@ -322,21 +325,27 @@ ATL_asmdecor(ATL_USERMM):
             FMAC rA1b, rB0, rC10
                vbroadcastsd 16*SZ-128(pB), rB0
             FMAC rA0b, rB1, rC01
+               prefA(PFDISTA(pA))
             FMAC rA1b, rB1, rC11
                vbroadcastsd 17*SZ-128(pB), rB1
             FMAC rA0b, rB2, rC02
+               prefA(64+PFDISTA(pA))
             FMAC rA1b, rB2, rC12
                vbroadcastsd 18*SZ-128(pB), rB2
             FMAC rA0b, rB3, rC03
+               prefA(128+PFDISTA(pA))
             FMAC rA1b, rB3, rC13
                vbroadcastsd 19*SZ-128(pB), rB3
             FMAC rA0b, rB4, rC04
+               prefA(192+PFDISTA(pA))
             FMAC rA1b, rB4, rC14
                vbroadcastsd 20*SZ-128(pB), rB4
             FMAC rA0b, rB5, rC05
+               prefA(256+PFDISTA(pA))
             FMAC rA1b, rB5, rC15
                vbroadcastsd 21*SZ-128(pB), rB5
             FMAC rA0b, rB6, rC06
+               prefA(320+PFDISTA(pA))
             FMAC rA1b, rB6, rC16
                vbroadcastsd 22*SZ-128(pB), rB6
             FMAC rA0b, rB7, rC07
@@ -386,9 +395,11 @@ ATL_asmdecor(ATL_USERMM):
             FMAC rA1d, rB3, rC13
                vbroadcastsd 3*SZ-128(pB), rB3
             FMAC rA0d, rB4, rC04
+               vprefetch1 (pB,incB)
             FMAC rA1d, rB4, rC14
                vbroadcastsd 4*SZ-128(pB), rB4
             FMAC rA0d, rB5, rC05
+               vprefetch2 -128(pA,incAm)
             FMAC rA1d, rB5, rC15
                vbroadcastsd 5*SZ-128(pB), rB5
             FMAC rA0d, rB6, rC06
