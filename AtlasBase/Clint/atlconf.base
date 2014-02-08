@@ -3775,16 +3775,20 @@ void PrintResults
       else
       {
          int i, stride;
-         fprintf(fpout, "#define ATL_AFF_NUMID %d\n", IDs[0]);
-         fprintf(fpout, "static int ATL_affinityIDs[%d]\n", IDs[0]);
 /*
  *       Special MIC code maximizes # of physical cores as long as possible.
- *       This minimizes cache thrashing due to competing contexts
+ *       This minimizes cache thrashing due to competing contexts. 
+ *       For now, reduce the scale to the number of physical cores, simply
+ *       because we can't use all that scale with the small problems that
+ *       can fit on the card.
  */
          #ifdef ATL_ARCH_XeonPHI
          {
             int p = IDs[0]/4;
+
             assert(p*4 == IDs[0] && IDs[1] == 0 && IDs[2] == 1);
+            fprintf(fpout, "#define ATL_AFF_NUMID %d\n", IDs[0]/4-1);
+            fprintf(fpout, "static int ATL_affinityIDs[%d]\n", IDs[0]);
             fprintf(fpout, "   = {0");
             for (i=1; i < p; i++)
                fprintf(fpout, ", %d", i*4);
@@ -3794,8 +3798,11 @@ void PrintResults
                fprintf(fpout, ", %d", i*4+2);
             for (i=0; i < p; i++)
                fprintf(fpout, ", %d", i*4+3);
+            stride = 4;
          }
          #else
+            fprintf(fpout, "#define ATL_AFF_NUMID %d\n", IDs[0]);
+            fprintf(fpout, "static int ATL_affinityIDs[%d]\n", IDs[0]);
             fprintf(fpout, "   = {%d", IDs[1]);
             stride = IDs[2] - IDs[1];
             for (i=1; i < IDs[0]; i++)
@@ -5820,6 +5827,9 @@ char *FindGoodGcc(enum OSTYPE OS, enum MACHTYPE arch, int verb, char *targ)
    FILE *fp;
    int i, lnlen=1024;
    int GMAJOR, GMINOR, GPATCH;
+
+   if (arch == IntPhi)  /* Xeon PHI uses icc for everything, inc gcc */
+      return(NewStringCopy("icc"));
 
    GetBestGccVers(OS, arch, &GMAJOR, &GMINOR, &GPATCH);
    ln = malloc(lnlen*sizeof(char));
@@ -8958,7 +8968,7 @@ int main(int nargs, char **args)
    if (!l2size) 
    {
       if (mach == IntPhi)
-         l2size = 512*1024;
+         l2size = 1024*1024;
       else if (ptrbits == 64)
          l2size = 32*1024*1024;
       else
@@ -9190,7 +9200,15 @@ int main(int nargs, char **args)
 
    sprintf(ln, "%s/CONFIG/src/CompMake.txt", srcdir);
    DisplayFile(ln, fpout, 0);
-   fprintf(fpout, "   NPROC=%d\n", ncpu);
+/*
+ * For PHI, have plenty of cores, so don't press luck by using core that
+ * may be busy communicating with host; presently ATLAS can't use all that
+ * scale, so only count the physical cores
+ */
+   if (mach == IntPhi && ncpu > 4)
+      fprintf(fpout, "   NPROC=%d\n", (ncpu-4)/4);
+   else
+      fprintf(fpout, "   NPROC=%d\n", ncpu);
    fprintf(fpout, "   CDEFS = $(L2SIZE) $(INCLUDES) $(F2CDEFS) $(ARCHDEFS)");
    if (!USEIEEE)
       fprintf(fpout, " -DATL_NONIEEE=1");
@@ -9257,7 +9275,10 @@ int main(int nargs, char **args)
          break;
    }
    goodgcc = (i < NCOMP) ? comps[i] : "gcc";
-   fprintf(fpout, "   GOODGCC = %s", goodgcc);
+   if (mach == IntPhi)
+      fprintf(fpout, "   GOODGCC = icc");
+   else
+      fprintf(fpout, "   GOODGCC = %s", goodgcc);
    if (gccflags)
       fprintf(fpout, " %s", gccflags);
    GetGccVers(goodgcc, &i, &j, &k, &k);
