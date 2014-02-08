@@ -100,38 +100,48 @@ ATL_asmdecor(ATL_USERMM):
  * Save callee-saved iregs
  */
    movq %rbp, -8(%rsp)
+      vprefetch0 (pA)
    movq %rbx, -16(%rsp)
+      vprefetch0 64(pA)
    movq %r12, -24(%rsp)
+      vprefetch0 128(pA)
    movq %r13, -32(%rsp)
+      vprefetch0 192(pA)
    movq %r14, -40(%rsp)
+      vprefetch0 256(pA)
    movq %r15, -48(%rsp)
+      vprefetch0 320(pA)
 /*
  * Load paramaters
  */
    mov %rdi, nmu
-     prefA((pA))
+      vprefetch0 384(pA)
    mov %rsi, nnu
+      vprefetch0 448(pA)
    mov %r8, pB
-     prefA(64(pA))
+      vprefetch0 512(pA)
    mov %r9, pC
-     prefA(128(pA))
+      vprefetch0 (pB)
    mov nnu, nnu0
-   movq 8(%rsp), pfA      /* pfA = pAn */
+      vprefetch0 576(pA)
    mov KK, incB
-      prefB((pB))
+      vprefetch0 640(pA)
    sub $-128, pC
+      vprefetch0 704(pA)
    sub $-128, pA
-//   sub $-128, pfA
+      vprefetch0 64(pB)
    mov $256, r256
-      prefA(192-128(pA))
+      vprefetch0 768(pA)
    mov $192, r192
+      vprefetch0 832(pA)
    mov pA, pA0
-      prefA(-128(pA,r256))
+      vprefetch0 896(pA)
 /*
  * incAm = MU*sizeof*K = 48*8*K = 128*3*K
  * incB = NU*sizeof*K = 4*8*K = 32*K
  */
    lea (KK,KK,2), incAm       /* incAm = 3*K */
+      vprefetch0 960(pA)
    shl $7, incAm              /* incAm = 128*3*K */
    #ifdef SREAL
       shl $4, incB            /* incB = 16*K */
@@ -144,6 +154,28 @@ ATL_asmdecor(ATL_USERMM):
    mov pB, pB0
    mov KK, KK0
 
+            vprefetche0 -128(pC)
+            vprefetche0 -64(pC)
+            vprefetche0 (pC)
+            vprefetche0 64(pC)
+            vprefetche0 128(pC)
+            vprefetche0 192(pC)
+            vprefetche0 256(pC)
+            vprefetche0 320(pC)
+            vprefetche0 384(pC)
+            vprefetche0 448(pC)
+            vprefetche0 512(pC)
+            vprefetche0 576(pC)
+            vprefetche0 640(pC)
+            vprefetche0 704(pC)
+            vprefetche0 768(pC)
+            vprefetche0 832(pC)
+            vprefetche0 896(pC)
+            vprefetche0 960(pC)
+            vprefetche0 1024(pC)
+            vprefetche0 1088(pC)
+            vprefetche0 1152(pC)
+            vprefetche0 1216(pC)
    ALIGN16
    MLOOP:
       vbroadcastsd (pB,KK), rB0
@@ -167,18 +199,28 @@ ATL_asmdecor(ATL_USERMM):
             vbroadcastsd 2*SZ(pB,KK), rB0
 
          vmulpd rA0, rB1, rC01
+            vprefetch0 64(pB,KK)
          vmulpd rA1, rB1, rC11
+               vprefetch2 512(pB,KK)
          vmulpd rA2, rB1, rC21
+               vprefetch0 1024(pA)
          vmulpd rA3, rB1, rC31
+               vprefetch0 1084(pA)
          vmulpd rA4, rB1, rC41
+               vprefetch0 1152(pA)
          vmulpd rA5, rB1, rC51
             vbroadcastsd 3*SZ(pB,KK), rB1
 
          vmulpd rA0, rB0, rC02
+               vprefetch0 1216(pA)
          vmulpd rA1, rB0, rC12
+               vprefetch0 1280(pA)
          vmulpd rA2, rB0, rC22
+               vprefetch0 1344(pA)
          vmulpd rA3, rB0, rC32
+               vprefetch0 1408(pA)
          vmulpd rA4, rB0, rC42
+               vprefetch1 1472(pA)
          vmulpd rA5, rB0, rC52
             vbroadcastsd 4*SZ(pB,KK), rB0
 
@@ -200,14 +242,20 @@ ATL_asmdecor(ATL_USERMM):
          FMAC rA0, rB0, rC00
             vbroadcastsd 5*SZ(pB,KK), rB1
          FMAC rA1, rB0, rC10
+               vprefetch1 1536(pA)
          FMAC rA2, rB0, rC20
+               vprefetch1 1600(pA)
          FMAC rA3, rB0, rC30
+               vprefetch1 1664(pA)
          FMAC rA4, rB0, rC40
+               vprefetch2 1728(pA)
          FMAC rA5, rB0, rC50
             vbroadcastsd 6*SZ(pB,KK), rB0
 
          FMAC rA0, rB1, rC01
+               vprefetch2 1792(pA)
          FMAC rA1, rB1, rC11
+               vprefetch2 1856(pA)
          FMAC rA2, rB1, rC21
          FMAC rA3, rB1, rC31
          FMAC rA4, rB1, rC41
@@ -236,6 +284,8 @@ ATL_asmdecor(ATL_USERMM):
             vmovapd 896-1152(pA), rA4
          FMAC rA5, rB1, rC53
             vmovapd 960-1152(pA), rA5
+//            vprefetche0 1280(pC)
+//            vprefetche0 1344(pC)
          jz KDONE
 
          KLOOP:
