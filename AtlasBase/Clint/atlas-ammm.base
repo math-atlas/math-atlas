@@ -123,6 +123,8 @@ ID=37 MU=32 NU=6 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm32x6x1_avxz.S' \
       ASM=GAS_x8664 KRUNTIME=1 COMP='icc' CFLAGS='-x assembler-with-cpp -mmic'
 ID=38 MU=16 NU=8 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_damm16x8x4_avxz.S' \
       ASM=GAS_x8664 KRUNTIME=1 COMP='icc' CFLAGS='-x assembler-with-cpp -mmic'
+ID=39 MU=48 NU=4 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm48x4x1_avxz.S' \
+      ASM=GAS_x8664 KRUNTIME=1 COMP='icc' CFLAGS='-x assembler-with-cpp -mmic'
 @ROUT samcases.idx
 ID=1 MU=16 NU=4 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_samm16x4x1_av.c' \
      KRUNTIME=1 COMP='gcc' CFLAGS='-Os -maltivec -mabi=altivec -mcpu=970 -mtune=970 -mvrsave -fschedule-insns2 -fno-schedule-insns'
@@ -167,6 +169,8 @@ ID=35 MU=64 NU=4 KU=2 AUTH="R. Clint Whaley" ROUT='ATL_damm32x4x2rp_avxz.S' \
 ID=37 MU=64 NU=6 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm32x6x1_avxz.S' \
       ASM=GAS_x8664 KRUNTIME=1 COMP='icc' CFLAGS='-x assembler-with-cpp -mmic'
 ID=38 MU=32 NU=8 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_damm16x8x1_avxz.S' \
+      ASM=GAS_x8664 KRUNTIME=1 COMP='icc' CFLAGS='-x assembler-with-cpp -mmic'
+ID=39 MU=96 NU=4 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_damm48x4x1_avxz.S' \
       ASM=GAS_x8664 KRUNTIME=1 COMP='icc' CFLAGS='-x assembler-with-cpp -mmic'
 @ROUT atlas_gnuvec.h
 #ifndef ATLAS_GNUVEC
@@ -709,6 +713,16 @@ void GenAmmSum(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *rkb, char *outd)
    fprintf(fp, "#define ATL_@(UP)AMM_66MB %d\n", mp->nbB);
    fprintf(fp, "#define ATL_@(UP)AMM_66KB %d\n", mp->kbB);
    fprintf(fp, "#define ATL_@(UP)AMM_66RATIO %1.4lf\n\n", mp->mflop[0]/mfB);
+/*
+ * Find smallest case achieving 98% of maximal performance
+ */
+   for (i=0, mp-mmb; mp && mp->mflop[0] >= 0.98*mfB; i++, mp=mp->next);
+   assert(mp);
+   fprintf(fp, "#define ATL_@(UP)AMM_98IDX %d\n", i);
+   fprintf(fp, "#define ATL_@(UP)AMM_98NB %d\n", mp->mbB);
+   fprintf(fp, "#define ATL_@(UP)AMM_98MB %d\n", mp->nbB);
+   fprintf(fp, "#define ATL_@(UP)AMM_98KB %d\n", mp->kbB);
+   fprintf(fp, "#define ATL_@(UP)AMM_98RATIO %1.4lf\n\n", mp->mflop[0]/mfB);
 @ROUT emit_uamm
    assert(rkb == NULL);
 @ROUT emit_amm
@@ -10357,6 +10371,67 @@ int Mjoin(PATL,GetAmmmInfo)
 @ROUT ATL_GetAmmmInfo  ATL_GetRankKInfo 
    }
    return(appAl);
+}
+@ROUT ATL_GetRankKInfo0000 
+/*
+ * This function provides an estimate on max number of threads to use to
+ * perform a rank-K update.
+ */
+size_t GetRankKNthr(ATL_CSZT M, ATL_CSZT N, ATL_CSZT K)
+{
+   size_t nnblks=N/ATL_MAXN_RKK, nmblks=M/ATL_MAXM_RKK;
+/*
+ * For degenerate cases, require 32 blocks to pay for parallel overhead
+ */
+   if (N <= ATL_MAXN_RKK)
+      return(nmblks>>5);
+   if (M <= ATL_MAXM_RKK)
+      return(nnblks>>5);
+/*
+ * In general case, rank-K is bus noisy, so ask that all threads have at least
+ * 4 big blocks of C.  On some systems where memory scales poorly this will
+ * vastly overestimate, and will underestimate on very good scaling, but
+ * very good memory scaling should only occur for low number of cores, where
+ * this won't hurt.
+ */
+   return((nnblks*nmblks)>>2);
+}
+@ROUT ATL_GetAmmmInfo00
+/*
+ * This function provides an estimate on max number of threads to use to
+ * perform a access-major GEMM.
+ */
+size_t GetAmmmNthr(ATL_CSZT M, ATL_CSZT N, ATL_CSZT K)
+{
+   int GetRankNthr(ATL_CSZT M, ATL_CSZT N, ATL_CSZT K);
+   size_t nnblks, nmblks, nkblks, p;
+
+   nmblks = (M >= ATL_AMM_66MB) ? M/ATL_AMM_66MB : 1;
+   nnblks = (N >= ATL_AMM_66NB) ? N/ATL_AMM_66NB : 1;
+   nkblks = (K >= ATL_AMM_66KB) ? K/ATL_AMM_66KB : 1;
+/*
+ * Any shape with two degenerate dimensions causes a lot of bus traffic,
+ * with very little computation to overcome threading overheads,
+ * so demand at least 32 blocks before parallelizing
+ */
+   if ((nmblks==1 && nnblks==1) || (nmblks==1 && nkblks==1) || 
+       (nnblks==1 && nkblks==1))
+      return((nnblks*nmblks*nkblks)>>5)
+/*
+ * If it is a rank-K update, ask to have 4 big blocks of C
+ */
+   if (K <= ATL_MAXM_RKK)
+   {
+      nnblks=N/ATL_MAXN_RKK, nmblks=M/ATL_MAXM_RKK;
+      return((nnblks*nmblks)>>2);
+   }
+   
+/*
+ * By default, give everyone 32 blocks to compute; for square problems,
+ * the number of blocks is cubic, so this should not meaningfully restrict
+ * parallelism.
+ */
+   return((nmblks*nnblks*nkblks)>>5);
 }
 @ROUT cnbtune
 #include "atlas_misc.h"
