@@ -210,7 +210,7 @@ enum inst
    VFSUB,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 - vr2 */
    VFMUL,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
    VFDIV,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
-   VFMAC,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
+   VFMAC,                      /* [vr0], [vr1], [vr2] : vr0 += vr1 * vr2 */
    VFABS,                      /* [vr0], [vr1] : vr0 = abs(vr1) */
    VFNEG,                      /* [vr0], [vr1] : vr0 = -(vr1) */
    VFMAX,                      /* vr0 = max(vr1,vr2) */
@@ -235,6 +235,36 @@ enum inst
    FCMPWD,   /* iconst -- 0 : ==;  1 : < ;  2 : <= */
    CVTBFI,   /* ireg, freg    x86 only movmskps -> bit move (no conversion) */
    CVTBDI,   /* ireg, dreg    x86 only movmskpd */
+/*
+ * Majedul: some special instruction for Integer. 
+ */
+   CMOV1,
+   CMOV2,
+   VCMOV1,
+   VCMOV2,
+/*
+ * Majedul: Vector int inst... V_INT type
+ */
+   VMOV,
+   VMOVS,
+   VLD,
+   VLDS,
+   VST,
+   VSTS,
+   VISHUF,
+   VCVTMASKFI,
+   VCVTMASKDI,
+   MASKTEST,      /* fcc, [fr0]  : set [cc] by (fr0 - 0xFFFF....) */
+   VGR2VR32,
+   VADD,
+   VSUB,
+   VMAX,
+   VMIN,
+   VIZERO,
+/*
+ * special instrcution to update conditional code EFLAGS... 
+ */
+   BTC,          /* transfer a bit to CF flag:  ICC0, ireg, $position */
 /*
  * vector cmp instructions
  */
@@ -291,6 +321,11 @@ enum inst
    CVTSF,
    CVTDS,
    CVTSD,
+/*
+ * Majedul: this is to convert mask into INT
+ */
+   CVTMASKFI,
+   CVTMASKDI,
 /*
  * Dummy CMP instruction which are needed for ReductionVector translation.
  * I don't find their implementation yet.
@@ -503,6 +538,36 @@ char *instmnem[] =
    "CVTBFI",
    "CVTBDI",
 /*
+ * Majedul: some special integer instruction
+ */ 
+   "CMOV1",
+   "CMOV2",
+   "VCMOV1",
+   "VCMOV2",
+/*
+ * Majedul: instruction for V_INT
+ */
+   "VMOV",
+   "VMOVS",
+   "VLD",
+   "VLDS",
+   "VST",
+   "VSTS",
+   "VISHUF",
+   "VCVTMASKFI",
+   "VCVTMASKDI",
+   "MASKTEST",
+   "VGR2VR32",
+   "VADD",
+   "VSUB",
+   "VMAX",
+   "VMIN",
+   "VIZERO",
+/*
+ * special instrcution to update conditional code EFLAGS... 
+ */
+   "BTC",
+/*
  * vector cmp intructions
  */
 #if 0   
@@ -558,6 +623,12 @@ char *instmnem[] =
    "CVTSF",
    "CVTDS",
    "CVTSD",
+/*
+ * Majedul: experimental... to convert mask from floating point to Int
+ */
+   "CVTMASKFI",
+   "CVTMASKDI",
+
 /*
  * Dummy inst for redundant vector transformation
  */
@@ -621,7 +692,8 @@ char *instmnem[] =
                       (i_) == VFLD || (i_) == VDLD || (i_) == LDS || \
                       (i_) == VFLDS || (i_) == VDLDS || \
                       (i_) == VFLDL || (i_) == VFLDH || \
-                      (i_) == VDLDL || (i_) == VDLDH)
+                      (i_) == VDLDL || (i_) == VDLDH || \
+                      (i_) == VLD || (i_) == VLDS )
 #define IS_MOVE(i_) ((i_) == MOV || (i_) == FMOV || (i_) == FMOVD || \
                      (i_) == VFMOV || (i_) == VDMOV)
 #define IS_MAC(i_) ((i_) == FMAC || (i_) == FMACD || (i_) == VFMAC || \
@@ -629,7 +701,8 @@ char *instmnem[] =
 #define IS_STORE(i_)  ((i_) == ST || (i_) == FST || (i_) == FSTD || \
                        (i_) == VFST || (i_) == VDST || (i_) == STS || \
                        (i_) == VFSTS || (i_) == VDSTS || \
-                       (i_) == VFSTNT || (i_) == VDSTNT)
+                       (i_) == VFSTNT || (i_) == VDSTNT || \
+                       (i_) == VST || (i_) == VSTS )
 
 #define IS_CMPW(i_)  ((i_) == FCMPDWEQ || (i_) == FCMPDWNE || \
                       (i_) == FCMPDWLT || (i_) == FCMPDWLE || \
@@ -669,7 +742,9 @@ char *instmnem[] =
 #define IS_NOMEM(i_) ((i_) == MUL || (i_) == UMUL || (i_) == DIV || \
                       (i_) == UDIV || (i_) == FCMOV1 || (i_) == FCMOV2 || \
                       (i_) == FCMOVD1 || (i_) == FCMOVD2 || (i_) == VFCMOV1 || \
-                      (i_) == VFCMOV2 || (i_) == VDCMOV1 || (i_) == VDCMOV2 )  
+                      (i_) == VFCMOV2 || (i_) == VDCMOV1 || (i_) == VDCMOV2 || \
+                      (i_) == CMOV1 || (i_) == CMOV2 || (i_) == VCMOV1 || \
+                      (i_) == VCMOV2)
 /*
  * NOTE: FMA4 in AMD can be re ordered, src2 can be mem. need to consider
  * this again while implemting other FMAC like: FMA3 ... 
@@ -689,7 +764,13 @@ char *instmnem[] =
                                       (i_) == FCMOV1 || (i_) == FCMOV2 || \
                                       (i_) == FCMOVD1 || (i_) == FCMOVD2 || \
                                       (i_) == VFCMOV1 || (i_) == VFCMOV2 || \
-                                      (i_) == VDCMOV1 || (i_) == VDCMOV2) 
+                                      (i_) == VDCMOV1 || (i_) == VDCMOV2 || \
+                                      (i_) == CMOV1 || (i_) == CMOV2 || \
+                                      (i_) == VCMOV1 || (i_) == VCMOV2) 
+
+#define IS_SELECT_OP(i_) ((i_) == CMOV1   || (i_) == CMOV2  || \
+                          (i_) == FCMOV1  || (i_) == FCMOV2 || \
+                          (i_) == FCMOVD1 || (i_) == FCMOVD2 )
 
 INSTQ *NewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,
                short dest, short src1, short src2);

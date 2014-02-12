@@ -21,9 +21,13 @@
  * Majedul: SIMD Vector related 
  */
 #if !defined(ARCH_VEC) && 1
-     #define AVX                    
+     #define AVX2       /* avx2 is needed for VINT operations */                   
      #define ArchHasMAC
-     #define FMA4
+     //#define FMA4
+     #define FMA3
+#endif
+#ifdef AVX2
+   #define AVX
 #endif
 /*
  * Majedul: as VLEN depends on the system, this is shifted here. Otherwise, we
@@ -32,9 +36,11 @@
 #ifdef AVX
    #define FKO_DVLEN 4  
    #define FKO_SVLEN 8  
+   #define FKO_IVLEN 8  
 #else
    #define FKO_DVLEN 2  
    #define FKO_SVLEN 4  
+   #define FKO_IVLEN 4  
 #endif
 
 #if defined(FKO_ANSIC32) || defined(FKO_ANSIC64)
@@ -161,6 +167,13 @@
    #define DREGBEG  (FREGBEG+TNFR)
    #define VFREGBEG (DREGBEG+TNDR)
    #define VDREGBEG (VFREGBEG+NVFR)
+#if 1
+/*
+ * Majedul: adding VIR (vector Int reg bank)
+ */
+   #define NVIR 8
+   #define VIREGBEG (VDREGBEG+NVDR)
+#endif
    #define IRETREG 4
    #define FRETREG (TNFR+FREGBEG-1)
    #define DRETREG (TNDR+DREGBEG-1)
@@ -192,6 +205,9 @@
    #define archvfregs archfregs
    #define archvdregs archfregs
    #define archdregs archfregs
+#if 1
+   #define archviregs archfregs
+#endif
    #define dcallersave fcallersave
    #define dcalleesave fcalleesave
 #endif
@@ -213,6 +229,13 @@
    #define DREGBEG  (FREGBEG+NFR)
    #define VFREGBEG (DREGBEG+NDR)
    #define VDREGBEG (VFREGBEG+NVFR)
+#if 1
+/*
+ * Majedul: adding VIR (vector Int reg bank)
+ */
+   #define NVIR 16
+   #define VIREGBEG (VDREGBEG+NVDR)
+#endif
    #define IRETREG 4
    #define FRETREG FREGBEG
    #define DRETREG DREGBEG
@@ -254,6 +277,12 @@
    #define archvdregs archfregs
    #define archvfregs archfregs
    #define archdregs archfregs
+#if 1
+/*
+ * Majedul: adding VIR (vector Int reg bank)
+ */
+   #define archviregs archfregs
+#endif
    #define dcallersave fcallersave
    #define dcalleesave fcalleesave
 #endif
@@ -387,7 +416,9 @@
    #define NFCC 1
 #endif
 #ifndef LASTREG
-   #ifdef VDREGBEG
+   #ifdef VIREGBEG   /* added at last to support T_VINT */
+      #define LASTREG (VIREGBEG+NVIR)
+   #elif defined(VDREGBEG)
       #define LASTREG (VDREGBEG+NVDR)
    #elif defined(VFREGBEG)
       #define LASTREG (VFREGBEG+NVFR)
@@ -421,6 +452,10 @@
 #endif
 #if defined(VDREGBEG) && !defined(VDREGEND)
    #define VDREGEND (VDREGBEG + NVDR)
+#endif
+/* added to support VINT */      
+#if defined(VIREGBEG) && !defined(VIREGEND)
+   #define VIREGEND (VIREGBEG + NVIR)
 #endif
 #ifndef ICCBEG
    #define ICCBEG ICC0

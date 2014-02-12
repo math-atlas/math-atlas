@@ -165,6 +165,9 @@ struct blist
 #define VS_ABS     64  /* updated by absolute value */
 #define VS_MAX    128  /* updated as max var */
 #define VS_MIN    256  /* updated as min var */
+#define VS_SELECT 512  /* updated as select operation */
+#define VS_SHADOW 1024 /* for shadowing with index */
+#define VS_VLEN   2048 /* for extra vlen value in shadowing  */
 /*
  * flag for Loop markups
  */
@@ -277,6 +280,7 @@ struct ignode
 #define SC_MIXED 512
 #define SC_MAX 1024
 #define SC_MIN 2048
+#define SC_SELECT 4096
 
 typedef struct looppath LOOPPATH;
 struct looppath    /* data structure for paths in loop */

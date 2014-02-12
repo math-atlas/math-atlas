@@ -9,6 +9,13 @@
 #ifndef INT_BVI 
    #define INT_BVI unsigned int
 #endif
+/*
+ * Majedul: used in RC transformation
+ */
+#define IN_IF_ONLY 0x1
+#define IN_ELSE_ONLY 0x2
+#define IN_BOTH_IF_ELSE 0x3
+
 
 void AddLoopControl(LOOPQ *lp, INSTQ *ipinit, INSTQ *ipupdate, INSTQ *ippost,
                     INSTQ *iptest);

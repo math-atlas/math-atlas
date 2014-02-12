@@ -10,6 +10,7 @@
 #define T_VFLOAT     0x6
 #define T_VDOUBLE    0x7
 
+#if 0
 #define IS_INT(flag_)  (((flag_) & 0x7) == T_INT)
 #define IS_SHORT(flag_)  (((flag_) & 0x7) == T_SHORT)
 #define IS_FLOAT(flag_)  (((flag_) & 0x7) == T_FLOAT)
@@ -21,6 +22,25 @@
 #define IS_FUNC(flag_)  (((flag_) & 0x7) == T_FUNC)
 #define FLAG2TYPE(flag_) ((flag_) & 0x7)
 #define IS_VEC(flag_)  (IS_VFLOAT(flag_) | IS_VDOUBLE(flag_))
+#endif
+/*
+ * Majedul: adding new vector type for int: V_INT. we need to use 4 bits to 
+ * track type which changes previous definition
+ */
+#define T_VINT       0x8
+#define IS_INT(flag_)  (((flag_) & 0xF) == T_INT)
+#define IS_SHORT(flag_)  (((flag_) & 0xF) == T_SHORT)
+#define IS_FLOAT(flag_)  (((flag_) & 0xF) == T_FLOAT)
+#define IS_DOUBLE(flag_)  (((flag_) & 0xF) == T_DOUBLE)
+#define IS_FP(flag_)      (((flag_) & 0xF) & (T_DOUBLE | T_FLOAT))
+#define IS_VFLOAT(flag_)  (((flag_) & 0xF) == T_VFLOAT)
+#define IS_VDOUBLE(flag_)  (((flag_) & 0xF) == T_VDOUBLE)
+#define IS_VINT(flag_)  (((flag_) & 0xF) == T_VINT)
+#define IS_CHAR(flag_)  (((flag_) & 0xF) == T_CHAR)
+#define IS_FUNC(flag_)  (((flag_) & 0xF) == T_FUNC)
+#define FLAG2TYPE(flag_) ((flag_) & 0xF) /* 9-15 not defined yet */
+#define IS_VEC(flag_)  (IS_VFLOAT(flag_) | IS_VDOUBLE(flag_) | IS_VINT(flag_))
+
 
 #define PTR_BIT      0x10
 #define CONST_BIT    0x20
@@ -45,7 +65,12 @@
 
 #define IS_SETUSE(flag_) (IS_LOCAL(flag_))
 
+#if 0
 #define FLAG2PTYPE(flag_) ( IS_PTR(flag_) ? T_INT : ((flag_) & 0x7) )
+#endif
+#define FLAG2PTYPE(flag_) ( IS_PTR(flag_) ? T_INT : ((flag_) & 0xF) )
+
+
 
 #define REG_SP   1
 /*
