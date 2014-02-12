@@ -298,6 +298,14 @@ short FindReadUseType(INSTQ *ip, short var, INT_BVI blkvec)
          iv = NewBitVec(32);
       else
          SetVecAll(iv, 0);
+/*
+ *    finds first use of loads of the var.
+ *    for examble: 
+ *    1. Not vectorizable: (first use of sum is not ACC)
+ *       x1 = sum;
+ *       sum += x;
+ *
+ */
       ib = FindNextLoad(ip, var, blkvec, iv);
       for (il=ib; il; il = il->next)
       {
@@ -319,7 +327,8 @@ short FindReadUseType(INSTQ *ip, short var, INT_BVI blkvec)
  *          FST sum, reg0
  *    So, I have added this while loop to skip all the lds      
  */
-         while (ip->next->inst[0] == FLD || ip->next->inst[0] == FLDD)
+         /*while (ip->next->inst[0] == FLD || ip->next->inst[0] == FLDD)*/
+         while(IS_LOAD(ip->next->inst[0])) /* consider int ld too */
             ip=ip->next;
          assert(ip->next);
 #if 0
@@ -335,6 +344,14 @@ short FindReadUseType(INSTQ *ip, short var, INT_BVI blkvec)
  * same, no need to recurse again! 
  * NOTE: logic of this recursion should be checked !
  */
+      else if (IS_SELECT_OP(ip->next->inst[0])) /* is cmov instruction ? */
+      {
+#if 0
+         fprintf(stderr, "%s : %d %d %d\n", instmnem[ip->next->inst[0]], 
+                 ip->next->inst[1], ip->next->inst[2], ip->next->inst[3]);
+#endif
+         j |= VS_SELECT;  /* SC_SELECT */
+      }
       else if (IS_STORE(ip->next->inst[0])&& STpts2[ip->next->inst[1]-1] == var)
       {
          j |= FindReadUseType(ip->next, var, blkvec);
@@ -2061,7 +2078,7 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
    iv = BitVecComb(iv, path->uses, path->defs, '|');
 /*
  * right now, skip all the regs from uses, defs
- * NOTE: Need to check why there are redundent vars with diff ST index 
+ * NOTE: Need to check why there are redundant vars with diff ST index 
  */
    for (i=0; i < TNREG; i++)
       SetVecBit(iv, i, 0);
@@ -2073,7 +2090,7 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
 #endif
 
 /*
- * Skip all non-fp variables, valid entires upto n (included) 
+ * Skip all non-fp variables, valid entries upto n (included) 
  * NOTE: No action for INT var in vector but need to consider complex case 
  * with index var update later!!!
  * NOTE: As our vector path never uses/sets integer variable (except index)
@@ -3964,9 +3981,10 @@ static enum inst
       #endif
       vst = VDST;
    }
+/*
    r0 = GetReg(FLAG2TYPE(lp->vflag));
    r1 = GetReg(FLAG2TYPE(lp->vflag));
-
+*/
 /*
  * If Loop control is already not killed, kill all controls in optloop 
  * We will put back the appropriate loop control at the end of the function.
@@ -4021,6 +4039,10 @@ static enum inst
  */
    j = 0;
    k = STiconstlookup(0);
+   
+   r0 = GetReg(FLAG2TYPE(lp->vflag));
+   r1 = GetReg(FLAG2TYPE(lp->vflag));
+   
    for (n=lp->vscal[0],i=0; i < n; i++)
    {
       if (VS_LIVEIN & lp->vsflag[i+1])
@@ -4464,8 +4486,6 @@ int RedundantVectorTransform(LOOPQ *lp)
       #endif
       vst = VDST;
    }
-   r0 = GetReg(FLAG2TYPE(lp->vflag));
-   r1 = GetReg(FLAG2TYPE(lp->vflag));
 /*
  * Remove loop control logic from loop, and disallow simdification if
  * index is used in loop
@@ -4539,6 +4559,10 @@ int RedundantVectorTransform(LOOPQ *lp)
  */
    j = 0;
    k = STiconstlookup(0);
+   
+   r0 = GetReg(FLAG2TYPE(lp->vflag));
+   r1 = GetReg(FLAG2TYPE(lp->vflag));
+   
    for (n=lp->vscal[0],i=0; i < n; i++)
    {
       if (VS_LIVEIN & lp->vsflag[i+1])
@@ -6757,7 +6781,9 @@ int VectorAnalysis()
       return(1);
    }
 }
-
+/*
+ * Normal vectorization with single path
+ */
 int Vectorization()
 /*
  * So far RedundantVectorTransform is the most general vector Transform. 
@@ -6769,4 +6795,2430 @@ int Vectorization()
    assert(!RedundantVectorTransform(lp));
    KillPathTable();
    return (0);
+}
+
+/*=============================================================================
+ *                            RC VECTORIZATION 
+ *                            ----------------
+ * NOTE: what's new: special support for integer 
+ *============================================================================*/ 
+
+
+/*
+ * Another vector analyzer for the scalar after RC applied.
+ * Right now, we assumed there would be single path after RC applied.
+ */
+int RcPathVectorAnalysis(LOOPPATH *path)
+/*
+ * Analyze single path of loop and stores all the info in paths data structure,
+ * returns error code if failed, otherwise 0.
+ * NOTE: it doesn't change the original code but assume loopcontrol is killed.
+ * NOTE: don't stop the analysis when error is found, rather complete all
+ * the analysis, save the data structure and return error code at last
+ */
+{
+   extern short STderef;
+   extern INT_BVI FKO_BVTMP;
+   extern int VECT_FLAG;
+
+   int errcode;
+   INT_BVI iv, iv1, blkvec;
+   int i, j, k, n, N, vid;
+   int vflag;
+   LOOPQ *lp;
+   BLIST *scope, *bl, *blTmp;
+   ILIST *il, *ib;
+   INSTQ *ip;
+   char ln[1024];
+   struct ptrinfo *pbase, *p;
+/*
+ * all these arrays element count is at position 0.
+ */
+   short *sp, *s, *scf;        /* temporary ptrs */
+/*
+ * temporary for paths 
+ */
+   short *scal;         /* store all fp variable, N arr format */
+   short *sflag;          /* store all moving pointers, N arr format */
+   short lpflag;
+/*
+ * for vector analysis 
+ */
+   short *varrs, *vscal, *vsflag, *vsoflag ; /* either save or free mem */
+/* 
+ * initialize neccessary locals 
+ */
+   errcode = 0; /* by default vectorizable */
+   lpflag = 0;
+   lp = optloop;
+   assert(path);
+   scope = path->blocks;
+   assert(scope);
+/*
+ * Find variable accessed in the path and store it in path
+ */
+   /*iv = NewBitVec(32);*/
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
+   iv = FKO_BVTMP;
+   SetVecAll(iv, 0);
+
+   if (!CFUSETU2D )
+   {
+      CalcInsOuts(bbbase);
+      CalcAllDeadVariables();
+   }
+#if 0
+   fprintf(stderr, "[p:%d] p->uses=%d, p->defs=%d\n", path->pnum, 
+           path->uses, path->defs);
+#endif   
+   for (bl=scope; bl; bl=bl->next)
+   {
+#if 0
+      fprintf(stderr, "[b:%d] b->uses=%d, b->defs=%d\n", bl->blk->bnum, 
+              bl->blk->uses, bl->blk->defs);
+#endif      
+      path->uses = BitVecComb(path->uses, path->uses, bl->blk->uses, '|');
+      path->defs = BitVecComb(path->defs, path->defs, bl->blk->defs, '|');
+   }
+   
+   iv = BitVecComb(iv, path->uses, path->defs, '|');
+/*
+ * right now, skip all the regs from uses, defs
+ * NOTE: Need to check why there are redundant vars with diff ST index 
+ */
+   for (i=0; i < TNREG; i++)
+      SetVecBit(iv, i, 0);
+   SetVecBit(iv, STderef+TNREG-1, 0);
+
+#if 0
+   fprintf(stderr,"Vars of path %d \n", path->pnum);
+   PrintVars(stderr, "ALL VARS",iv);
+#endif
+
+/*
+ * Skip all non-fp variables, valid entries upto n (included) 
+ * NOTE: No action for INT var in vector but need to consider complex case 
+ * with index var update later!!!
+ * NOTE: As our vector path never uses/sets integer variable (except index)
+ * we don't have to worry about this in Backup/Recovery stage. So, we just 
+ * skip int here.
+ */
+   sp = BitVec2Array(iv, 1-TNREG);
+   lpflag |= LP_OPT_LCONTROL; /* by default optimizable */
+   for (N=sp[0],n=0,i=1; i <= N; i++)
+   {
+      if (IS_FP(STflag[sp[i]-1]))
+         sp[n++] = sp[i];
+/*
+ *    For non-fp var, if it's not the index var, avoid vectorization
+ */
+      else if (sp[i] != lp->I && sp[i] != lp->end &&
+               sp[i] != lp->inc && sp[i] != lp->beg)
+      {
+/*
+ *       NOTE: need to support integer scalars too. like: fp, we will support 
+ *       ACC/MUL. special case: assigned by lp->I or, lp->end, lp->inc. But 
+ *       of course after RC.
+ *       Right now, we will only support special case... 
+ *       Example: 
+ *       --------
+ *                imax_1 = N - i; // imax_1 = i;
+ *                imask_1 = CVT(mask_1);
+ *                imax = select(imax, imax_1, imask_1);
+ */
+#if 1
+         sp[n++] = sp[i];
+#endif
+         fko_warn(__LINE__, "NON FP Scalar: %d,%s\n",
+                  sp[i],STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
+         //fko_warn(__LINE__, "Bailing out Path%d on vect due to var %d,%s\n",
+         //         path->pnum,sp[i],STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
+         //errcode += 1;
+      }
+/*
+ *    Use of index variable [need to check by condtion? ]
+ *    NOTE: need to check the index var variable whether it is set outside
+ *    of the loop control. Make sure loop control is killed before.
+ */
+      else /* lp->I or, lp->end, lp->inc, lp->beg */ 
+      {
+         if (CheckVarInBitvec(sp[i]-1, path->defs))
+         {
+            fko_warn(__LINE__,
+                     "Index variable = %d is updated outside loop control\n",
+                     STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
+            lpflag &= ~(LP_OPT_LCONTROL);
+/*
+ *          FIXME: if loop control is updated inside loop, loop is not countable.
+ *          we cann't vectorize loop in that case. we have to return this and 
+ *          skip any kind of vectorization in that case. Right now, we just 
+ *          stop executiong the code.
+ */
+            assert(0);
+         }
+      }
+   }   
+   if (!n) 
+   {
+      fko_warn(__LINE__,"No fp var, Nothing to vectorize");
+      errcode += 2;
+   }
+#if 0
+/*
+ * HERE HERE, format of sp is changed. skip the element count 
+ */
+   if (lpflag)
+      fprintf(stderr, "Loop control optimizable\n");
+   fprintf(stderr, "Vars: ");
+   for (i=0; i < n ; i++)
+   {
+      fprintf(stderr,"%s[%d] ",STname[sp[i]-1],sp[i]-1);
+   }
+   fprintf(stderr, "\n");
+#endif
+
+/*
+ * Make sure all the vars are of same type; will reconsider this limitation
+ * later
+ */
+   i = 0;
+   j = FLAG2TYPE(STflag[sp[i]-1]); /* this is element, not element-count now*/
+/*
+ * skip INT type here.
+ */
+   while (!IS_FP(j) && i < n)
+   {
+      i++;
+      j = FLAG2TYPE(STflag[sp[i]-1]); /* this is element, not element-count now*/
+   }
+
+   for (; i < n; i++)
+   {
+      k = FLAG2TYPE(STflag[sp[i]-1]);
+      if (k != j && !IS_INT(k)) /* permit INT type */
+      {
+         fko_warn(__LINE__,
+               "Mixed floating point type %d(%s), %d(%s) prevents " 
+               "vectorization!\n\n",
+               j, STname[sp[0]-1] ? STname[sp[0]-1] : "NULL",
+               FLAG2TYPE(sp[i]-1), STname[sp[i]-1] ? STname[sp[i]-1]
+               : "NULL");
+         errcode += 4;
+         break;
+      }
+   }
+/*
+ * Stored the required type for vectorization, may need later
+ * NOTE: we will support vectorization with multiple types... just need to 
+ * keep same type in a single instruction (except conversion instruction). 
+ * Just kept as it is for now.
+ */
+   if (i == n )
+   {
+      if (j == T_FLOAT)
+         vflag = T_VFLOAT;
+      else if (j == T_DOUBLE)
+         vflag = T_VDOUBLE;
+   }
+
+/*
+ * Moving pointer analysis for path
+ */
+   pbase = FindMovingPointers(scope);
+   lpflag |= LP_OPT_MOVPTR;      /* by default optimizable*/
+   for (N=0,p = pbase; p; p = p->next)
+   {
+      if (IS_FP(STflag[p->ptr-1]))
+      {
+         N++;
+         if ((p->flag | PTRF_CONTIG | PTRF_INC) != p->flag)
+         {
+            fko_warn(__LINE__, "Ptr movement prevents vectorization!!\n");
+            errcode += 8;
+            lpflag &= ~LP_OPT_MOVPTR;
+         }
+      }
+      if (p->nupdate > 1)
+      {
+         fko_warn(__LINE__, "Multiple ptr updates prevent vectorization!!\n");
+         errcode += 16;
+         lpflag &= ~LP_OPT_MOVPTR;
+      }
+      if (!(p->flag & PTRF_CONTIG))
+      {
+         fko_warn(__LINE__,
+                  "Non-contiguous ptr updates prevent vectorization!!\n");
+         errcode += 32;
+         lpflag &= ~LP_OPT_MOVPTR;
+      }
+   }
+/*
+ * Copy all moving pointers to varrs
+ */
+   s = malloc(sizeof(short)*(N+1));
+   assert(s);
+   s[0] = N;
+   for (j=0,i=1,p=pbase; p; p = p->next)
+      if (IS_FP(STflag[p->ptr-1]))
+         s[i++] = p->ptr;
+   varrs = s; /* do we need varrs later??? */
+
+#if 0
+   fprintf(stderr,"MOV PTR: ");
+   for (i=1, j=varrs[0]; i <=j; i++)
+      fprintf(stderr,"%s[%d] ",STname[varrs[i]-1],varrs[i]-1);
+   fprintf(stderr,"\n");
+#endif
+
+/*
+ * Remove the moving arrays from scalar vals.
+ * NOTE: array ptr which not changed, considered as scal
+ * FIXME: number of vscal is not correct always: corrected the condition 
+ */
+#if 0
+   for (i=0; i <= n; i++)
+   {
+      fprintf(stderr, "sp = %d, s = %d\n",sp[i], s[i]);
+   }
+#endif 
+   for (k=0,i=1; i < n; i++) /* BUG: why n is included??? changed to < n */
+   {
+      for (j=1; j <= N && s[j] != sp[i]; j++);
+      if (j > N)
+      {
+         sp[k++] = sp[i]; /*sp elem starts with 0 pos*/
+      }
+   }
+   n = k;   /* n is k+1 */
+
+/*
+ * Store the scals for path->scals. we will update the flags later. 
+ */
+   scal = malloc(sizeof(short)*(n+1));
+   sflag = calloc(n+1,sizeof(short)); /* initialize by 0 */
+   assert(scal && sflag);
+   scal[0] = sflag[0] = n;
+   for (i=1; i <= n; i++)
+      scal[i] = sp[i-1];
+/*
+ * Set flags for those variables which are used, 
+ * flags wil be set for for defs later along with vscal analysis
+ */
+   for (i=1; i <=n; i++)
+   {
+      if (CheckVarInBitvec(scal[i]-1, path->uses))
+         sflag[i] |= SC_USE;
+   }
+   
+/*
+ * Here start the analysis for vector scalars 
+ * copy for the vector analysis  
+ */
+   vscal = malloc(sizeof(short)*(n+1)); 
+   assert(vscal);
+/*
+ * save scalar vars and flags 
+ * n = number of scal vars
+ */
+   if (n)
+   {
+      vsflag = calloc(n+1, sizeof(short));
+      vsoflag = calloc(n+1, sizeof(short));
+      assert(vsflag && vsoflag);
+   }
+   vscal[0] = vsflag[0] = vsoflag[0] = n;
+   for (i=1; i <= n; i++)
+      vscal[i] = sp[i-1];
+
+   free(sp);
+   sp = vscal+1;
+   
+#if 0 
+   fprintf(stderr, "Scal Vars: ");
+   for (i=1, N=vscal[0]; i <= N ; i++)
+   {
+      fprintf(stderr,"%s[%d]",STname[vscal[i]-1],vscal[i]-1);
+   }
+   fprintf(stderr,"\n");
+#endif
+
+/*
+ * Sort scalar vals into livein,liveout, and tmp
+ */
+   if (n)
+   {
+/*
+ *    Find fp scalars set inside path
+ */
+      iv1 = Array2BitVec(n, sp, TNREG-1);
+      SetVecAll(iv, 0);
+      for (bl=scope; bl; bl = bl->next)
+      {
+         for (ip=bl->blk->ainst1; ip; ip = ip->next)
+            if (ACTIVE_INST(ip->inst[0]))
+               BitVecComb(iv, iv, ip->set, '|');
+      }
+      BitVecComb(iv, iv, iv1, '&');  /* filter out */
+      s = BitVec2StaticArray(iv);
+      for (i=1; i <= s[0]; i++)
+      {
+         k = s[i] - TNREG + 1;
+         for (j=0; j < n; j++)
+         {
+            if (sp[j] == k)
+            {
+               vsflag[j+1] |= VS_SET;
+               sflag[j+1] |= SC_SET;
+               break;
+            }
+         }
+      }
+/*
+ *    Find fp scalars live on loop input
+ */
+      iv1 = Array2BitVec(n, sp, TNREG-1);
+      BitVecComb(iv1, iv1, lp->header->ins, '&');
+      s = BitVec2StaticArray(iv1);
+      for (i=1; i <= s[0]; i++)
+      {
+         k = s[i] - TNREG + 1;
+         for (j=0; j < n; j++)
+         {
+            if (sp[j] == k)
+            {
+               vsflag[j+1] |= VS_LIVEIN;
+               sflag[j+1] |= SC_LIVEIN;
+               break;
+            }
+         }
+      }
+/*
+ *    Find vars live on loop exit, that are also accessed in post-tail
+ *          but later phase of dead assignment elim can clean this up
+ *
+ */
+      SetVecAll(iv1, 0);
+      SetVecAll(iv, 0);
+      for (bl=lp->tails; bl; bl = bl->next)
+      {
+         BitVecDup(iv1, bl->blk->outs, '=');
+         if (bl->blk->usucc &&
+             !BitVecCheck(lp->blkvec, bl->blk->usucc->bnum-1))
+            BitVecComb(iv1, iv1, bl->blk->usucc->ins, '&');
+         else
+         {
+            assert(bl->blk->csucc &&
+                   !BitVecCheck(lp->blkvec, bl->blk->csucc->bnum-1));
+            BitVecComb(iv1, iv1, bl->blk->csucc->ins, '&');
+         }
+         BitVecComb(iv, iv, iv1, '|');
+      }
+      iv1 = Array2BitVec(n, sp, TNREG-1);
+      BitVecComb(iv, iv, iv1, '&');     /* filter out for this path*/
+      s =  BitVec2StaticArray(iv);
+      for (i=1; i <= s[0]; i++)
+      {
+         k = s[i] - TNREG + 1;
+         for (j=0; j < n; j++)
+         {
+            if (sp[j] == k)
+            {
+               vsflag[j+1] |= VS_LIVEOUT;
+               sflag[j+1] |= SC_LIVEOUT;
+               break;
+            }
+         }
+      }
+/*
+ *    Special treatment for max/min vars
+ */
+   /*lp = optloop; */
+#if 0
+   if (lp->maxvars)
+   {
+      N = lp->mmaxvars[0];
+      for (i=1; i <= N; i++)
+      {
+         k = FindInShortList(vscal[0], vscal+1, lp->maxvars[i]);
+         vsflag[k] |= VS_MAX;
+         sflag[k]  |= SC_MAX;
+      }
+   }
+#endif
+
+/*
+ *    convert blocks of scope into bvec
+ */
+      blTmp = scope; /* need to copy pointer as the function changes pointer */
+      blkvec = BlockList2BitVec(blTmp);
+/*
+ *    Find out how to init livein and reduce liveout vars
+ */
+      s = vsflag+1;
+      scf = sflag+1;
+
+      for (i=0; i < n; i++)
+      {
+/*
+ *       Majedul: Re-writen the analysis for livein/liveout var to be acc/mul
+ *       NOTE: for livein var, we can handle both accumulator and MUL/DIV/ASSIGN
+ *       for liveout, we can handle accumulator when it is reduction var and 
+ *       if it is not set inside the loop/path, we can handle MUL/DIV/ASSIGN.
+ *       NOTE: Right now, we consider VS_ACC and VS_MAX both are LIVEIN and 
+ *       LIVEOUT
+ */
+         if (scf[i] & SC_LIVEIN) /* need to check for the vector init */
+         {
+/*
+ *          There are three options: 
+ *          a) Accumulator: both use and set, but use only with ADD
+ *          d) Max var: can be either use or set depend on path  
+ *          b) Not set/ only used: used for MUL/DIV.... 
+ *             ADD? skip right now
+ *          NOTE: if it is only used, ADD should not create any problem!
+ */
+/*
+ *          NOTE: for SSV, even though a var is max/min, reduction is not
+ *          dependent on that. Reduction is dependant on the analysis of 
+ *          vector path.
+ */
+            if (VECT_FLAG & VECT_SV)  /* not consider max/min for SSV */
+            {
+                j = FindReadUseType(lp->header->inst1, sp[i], blkvec);
+            }
+            else /* consider max/min var for reduction otherwise */
+            {
+               if (lp->maxvars && 
+                   FindInShortList(lp->maxvars[0], lp->maxvars+1, sp[i]))
+                  j = VS_MAX;
+               else if (lp->minvars && 
+                        FindInShortList(lp->minvars[0], lp->minvars+1, sp[i]))
+                  j = VS_MIN;
+            else
+                j = FindReadUseType(lp->header->inst1, sp[i], blkvec);
+            }
+/*
+ *          Line in var which is set and used in vector path 
+ */
+            if ( (scf[i] & SC_SET) && (scf[i] & SC_USE) ) /*mustbe used as acc*/
+            {
+               if (j == VS_ACC)
+               {
+                  s[i] |= VS_ACC;
+                  scf[i] |= SC_ACC;
+                  /*vsoflag[i+1] |= VS_ACC;*/
+               }
+               else if (j == VS_SELECT) /* recognizing CMOV operation */
+               {
+                  s[i] |= VS_SELECT;
+                  scf[i] |= SC_SELECT;
+               }
+               else if (j == VS_MAX)
+               {
+                  s[i] |= VS_MAX;
+                  scf[i] |= SC_MAX;
+                  /*vsoflag[i+1] |= VS_MAX;*/
+               }
+               else if (j == VS_MIN)
+               {
+                  s[i] |= VS_MIN;
+                  scf[i] |= SC_MIN;
+                  /*vsoflag[i+1] |= VS_MIN;*/
+               }
+               else
+               {
+                  fko_warn(__LINE__,
+                          "LIVE IN: var %d(%s) must be Accumulator !!\n\n",
+                           sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
+                  errcode += 64;
+                  scf[i] |= SC_MIXED;
+                  /*vsoflag[i+1] &= ~(VS_ACC | VS_MAX);*/
+               }
+            }
+/*
+ *          Live in var which is only used
+ *          NOTE: only used variable should be vectorizable
+ */
+            else if (scf[i] & SC_USE)
+            {
+               if (j == VS_MAX) /* can be used depends on path choice */
+               {
+                  s[i] |= VS_MAX;
+                  scf[i] |= SC_MAX;
+                  /*vsoflag[i+1] |= VS_MAX;*/
+               }
+               else if (j == VS_MIN) /* can be used depends on path choice */
+               {
+                  s[i] |= VS_MIN;
+                  scf[i] |= SC_MIN;
+                  /*vsoflag[i+1] |= VS_MIN;*/
+               }
+               else if (j == VS_MUL) /*includes div */
+               {
+                  s[i] |= VS_MUL;
+                  scf[i] |= SC_MUL;
+                  /*vsoflag[i+1] |= VS_MUL;*/
+               }
+               else
+               {
+#if 0
+                  fko_warn(__LINE__,
+                           "LIVE IN: Mixed use of var %d(%s) "
+                           "prevents vectorization!!\n",
+                           sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
+                  errcode += 128;
+                  scf[i] |= SC_MIXED;
+#else
+/*
+ *                testing ... ... 
+ *                Only used variable can be treated like the VS_MUL
+ */
+                  s[i] |= VS_MUL;
+                  scf[i] |= SC_MUL;
+#endif
+               }
+            }
+         }
+/*
+ *       Live out variables
+ */
+         if (scf[i] & SC_LIVEOUT) /* if it is set, it must be acc*/
+         {
+            if (scf[i] & SC_SET)
+            {
+/*
+ *             Now, we need to check whether it is used as accumulator!
+ *             it is already checked in LIVEIN part as accumulator must also
+ *             be LIVEIN... right now
+ *             NOTE: we consider that all liveout must be also livein here.
+ */   
+               if (s[i] & VS_ACC)
+                  vsoflag[i+1] |= VS_ACC;
+               else if (s[i] & VS_SELECT)
+                  vsoflag[i+1] |= VS_SELECT;
+               else if (s[i] & VS_MAX)
+               {
+                  vsoflag[i+1] |= VS_MAX;
+                  /*fprintf(stderr, "%s is a max var which is set in path: %d\n",
+                          STname[sp[i]-1], path->pnum);*/
+               }
+               else if (s[i] & VS_MIN)
+               {
+                  vsoflag[i+1] |= VS_MIN;
+                  /*fprintf(stderr, "%s is a max var which is set in path: %d\n",
+                          STname[sp[i]-1], path->pnum);*/
+               }
+               else
+               {
+/*
+ *                HERE HERE
+ *                NOTE: for speculative vectorization, a global max var may
+ *                not be considered as max at all!
+ */
+                  fko_warn(__LINE__, "Liveout var %d(%s) must be Accumulator/"
+                           "max(nonSV)/select(RC) when set!\n", sp[i], 
+                           STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
+                  errcode +=256;
+               }
+
+            }
+            else if (scf[i] & SC_USE)
+            {
+/*
+ *             if the variable is only used, it can be vectorized. 
+ *             Need to check whether it is only used for MUL/DIV
+ *             NOTE: not consider yet!!!
+ */
+               if (s[i] & VS_MUL)
+                  vsoflag[i+1] |= VS_MUL;
+               else if (s[i] & VS_MAX)
+               {
+                  vsoflag[i+1] |= VS_MAX;
+                  /*fprintf(stderr, 
+                        "%s is a max var which is only used in path:%d\n",
+                          STname[sp[i]-1], path->pnum);*/
+               }
+               else if (s[i] & VS_MIN)
+               {
+                  vsoflag[i+1] |= VS_MIN;
+                  /*fprintf(stderr, 
+                        "%s is a min var which is only used in path:%d\n",
+                          STname[sp[i]-1], path->pnum);*/
+               }
+               else
+               {
+                  fko_warn(__LINE__,
+                     "Liveout var %d(%s) must be mul/max when only use!!\n",
+                           sp[i], STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
+                  errcode +=512;
+               }
+
+            }
+         }
+/*
+ *       Private vars, nothing to worry
+ */
+         if (!(scf[i] & SC_LIVEIN) && ! (scf[i] & SC_LIVEOUT)) 
+         {
+            scf[i] |= SC_PRIVATE;
+         }
+      }
+   }
+/*
+ * Update path data structure 
+ */
+   if (!errcode)
+   {
+      lpflag |= LP_VEC;
+      path->lpflag = lpflag;
+      path->ptrs = pbase;
+      path->scal = scal;
+      path->sflag = sflag;
+/*
+ *    update data for vector path
+ *    NOTE: VVSCAL is updated when vector path is finalized 
+ */
+      path->vflag = vflag;
+      path->varrs = varrs;
+      path->vscal = vscal;
+      path->vsflag = vsflag;
+      path->vsoflag = vsoflag;
+   }
+   else /* Scalar Path */
+   {
+      lpflag &= ~LP_VEC; /* look here, don't confuse ~ with ! */
+      path->lpflag = lpflag;
+      path->ptrs = pbase;
+      path->scal = scal;
+      path->sflag = sflag;
+      path->vflag = 0;
+/*
+ *    free all data for vector path 
+ */
+      free(varrs);
+      free(vscal);
+      free(vsflag);
+      free(vsoflag);
+   }
+
+/*
+ * Time to check all the information
+ */
+#if 1
+   fprintf(stderr, "RC VECTOR ANALYSIS\n");
+   fprintf(stderr, "====================\n");
+   fprintf(stderr, "PATH = %d \n", path->pnum);
+   fprintf(stderr, "--------------\n");
+   fprintf(stderr, "Control Flag : %d\n", path->lpflag);
+   fprintf(stderr, "SCALARS(FLAG) : ");
+   for (N=scal[0],i=1; i <= N; i++)
+   {
+      //fprintf(stderr, "%s(%d) ",STname[scal[i]-1],sflag[i]);
+      fprintf(stderr, "%s(%d) ",STname[path->scal[i]-1],path->sflag[i]);
+   }
+   fprintf(stderr, "\n");
+/*  print flags of each scalar*/
+   for (N=scal[0], i=1; i <= N; i++)
+   {
+      fprintf(stderr, "%s : ",STname[path->scal[i]-1]);
+      if (path->sflag[i] & SC_LIVEIN) fprintf(stderr, "LIVEIN ");
+      if (path->sflag[i] & SC_LIVEOUT) fprintf(stderr, "LIVEOUT ");
+      if (path->sflag[i] & SC_PRIVATE) fprintf(stderr, "PRIVATE ");
+      if (path->sflag[i] & SC_SET) fprintf(stderr, "SET ");
+      if (path->sflag[i] & SC_USE) fprintf(stderr, "USE ");
+      if (path->sflag[i] & SC_MAX) fprintf(stderr, "MAX ");
+      if (path->sflag[i] & SC_SELECT) fprintf(stderr, "SELECT ");
+      if (path->sflag[i] & SC_ACC && path->sflag[i] & SC_LIVEIN) 
+         fprintf(stderr, "IN_ACC ");
+      if ((path->sflag[i] & SC_ACC) && (path->sflag[i] & SC_LIVEOUT)) 
+         fprintf(stderr, "OUT_ACC ");
+      if ((path->sflag[i] & SC_MUL) && (path->sflag[i] & SC_LIVEIN)) 
+         fprintf(stderr, "IN_MUL ");
+      if ((path->sflag[i] & SC_MUL) && (path->sflag[i] & SC_LIVEOUT)) 
+         fprintf(stderr, "OUT_MUL ");
+      if ((path->sflag[i] & SC_MAX) && (path->sflag[i] & SC_LIVEOUT)) 
+         fprintf(stderr, "OUT_MAX ");
+      if ((path->sflag[i] & SC_MIN) && (path->sflag[i] & SC_LIVEOUT)) 
+         fprintf(stderr, "OUT_MIN ");
+      fprintf(stderr, "\n");
+   }
+   fprintf(stderr, "ERR CODE: %d\n",errcode);
+   fprintf(stderr, "====================\n");
+#endif 
+return errcode;
+}
+
+int RcVectorAnalysis()
+{
+   int i, j, k, n;
+   int errcode;
+   char ln[512];
+   short *sp;
+   LOOPPATH *vpath;
+   LOOPQ *lp;
+   extern LOOPQ *optloop;
+   extern BBLOCK *bbbase;
+
+
+   lp = optloop;
+/*
+ * redo data flow analysis
+ */
+   CalcInsOuts(bbbase);
+   CalcAllDeadVariables();
+/*
+ * find paths
+ */
+   FindLoopPaths(lp);
+/*
+ * NOTE: currently we only consider only one path for RC vectorization 
+ */
+   assert(NPATH==1);
+/*
+ * Kill loop control for vector analysis
+ */
+   KillLoopControl(lp);
+   CalcInsOuts(bbbase);
+   CalcAllDeadVariables();
+/*
+ * apply analysis
+ */
+   errcode = RcPathVectorAnalysis(PATHS[0]);
+/*
+ * if path is vectorizable, save analysis
+ */
+   if (!errcode) 
+   {
+/*
+ *    Update optloop with the vector path 
+ */
+      VPATH = 0;
+      vpath = PATHS[VPATH];
+      n = vpath->varrs[0];
+      lp->varrs = malloc(sizeof(short)*(n+1));
+      assert(lp->varrs);
+      for (i=0; i <=n; i++)
+      {
+         lp->varrs[i] = vpath->varrs[i];
+      }
+
+      n = vpath->vscal[0];
+      lp->vscal = malloc(sizeof(short)*(n+1));
+      lp->vvscal = malloc(sizeof(short)*(n+1));
+      lp->vsflag = malloc(sizeof(short)*(n+1));
+      lp->vsoflag = malloc(sizeof(short)*(n+1));
+      assert(lp->vscal && lp->vvscal && lp->vsflag && lp->vsoflag);
+      for (i=0; i <= n; i++)
+      {
+         lp->vscal[i] = vpath->vscal[i];
+         lp->vsflag[i] = vpath->vsflag[i];
+         lp->vsoflag[i] = vpath->vsoflag[i];
+      }
+/*
+ * Create vector local for all vector scalars in loop
+ */
+      lp->vflag = vpath->vflag;
+      //k = LOCAL_BIT | FLAG2TYPE(vpath->vflag);
+      lp->vvscal[0] = n;
+      sp = vpath->vscal + 1;
+      for (i=0; i < n; i++)
+      {
+         sprintf(ln, "_V%d_%s", i, STname[sp[i]-1] ? STname[sp[i]-1] : "");
+#if 0
+         fprintf(stderr, "....%s->%s\n", STname[sp[i]-1], ln);
+#endif
+         //j = lp->vvscal[i+1] = STdef(ln, k, 0);
+         //SToff[j-1].sa[2] = AddDerefEntry(-REG_SP, j, -j, 0, j);
+         if (IS_INT(STflag[sp[i]-1]))
+            k = T_VINT;
+         else  /* mixed fp is not allowed. */
+            k = FLAG2TYPE(vpath->vflag);
+         lp->vvscal[i+1] = InsertNewLocal(ln,k);
+      }
+      
+   }
+/*
+ * return error code 
+ */
+   return(errcode);
+}
+short FindReadVarCMOV(BLIST *scope, short var)
+/*
+ * provided a destination var of select operation and block list, this func 
+ * returns other var which is used in select/cmov op
+ */
+{
+   short reg, rdvar;
+   INSTQ *ip, *ip0;
+   BLIST *bl;
+   BBLOCK *bp;
+
+   rdvar = 0;  /* init with no var */
+   for (bl = scope; bl; bl = bl->next)
+   {
+      for (ip = bl->blk->ainst1; ip; ip = ip->next)
+      {
+         if (ip->inst[0] == CMOV1 || ip->inst[0] == CMOV2)
+         {
+            assert(ip->inst[2] < 0); /* 2nd opn is reg*/
+            reg = ip->inst[2];
+            ip0 = ip->prev; /* check backward */
+            while (IS_LOAD(ip0->inst[0]))
+            {
+               if (ip0->inst[1] == reg)
+               {
+                  rdvar = STpts2[ip0->inst[2]-1];
+                  break;
+               }
+               ip0 = ip0->prev;
+            }
+         }
+         if (rdvar) break;
+      }
+      if (rdvar) break;
+   }
+   return (rdvar);
+}
+int isUpByInduction(LOOPQ *lp, BLIST *scope, short var)
+{
+   int check;
+   BLIST *bl;
+   INSTQ *ip, *ip0;
+   
+   //check =1;
+   for (bl = scope; bl; bl = bl->next)
+   {
+      for (ip = bl->blk->ainst1; ip; ip = ip->next)
+      {
+         if (IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]-1] == var)
+         {
+            //PrintThisInst(stderr, 0, ip);
+            ip0 = ip->prev;
+            while(!IS_STORE(ip0->inst[0]) && !IS_BRANCH(ip0->inst[0]))
+            {
+               if (IS_LOAD(ip0->inst[0]) && STpts2[ip0->inst[2]-1] != var)
+               {
+                  if ( !IS_CONST(STflag[lp->beg-1]) 
+                        && STpts2[ip0->inst[2]-1] == lp->beg 
+                     || !IS_CONST(STflag[lp->end-1]) 
+                        && STpts2[ip0->inst[2]-1] == lp->end 
+                     || !IS_CONST(STflag[lp->I-1]) 
+                        && STpts2[ip0->inst[2]-1] == lp->I )
+                  {
+                     //fprintf(stderr, "INDUCTION!!!\n");
+                     //check = 1
+                  }
+                  else
+                  {
+                     //fprintf(stderr, "NOT INDUCTION\n!!!");
+                     //check = 0;
+                     //break;
+                     return(0);
+                  }
+               }
+               ip0 = ip0->prev;
+            }
+         }
+      }
+   }
+   return 1;
+}
+int isShadowPossible(LOOPQ *lp)
+/*
+ * identify the shadow element (imax = i or N-i) and update lp->vvscal 
+ * accordingly: Vimax_1, Vvlen. it will only work when we have max cmp like: 
+ * x > amax
+ */
+{
+/*
+ * NOTE: we need to recognize pattern for shadowing...
+ *       
+ *       RESTRICTION: if there is a variable which is asigned with 
+ *       index/induction variable and used in CMOV operation.. we can use 
+ *       shadow trick. No other integer operation is supported inside loop 
+ *       right now - (relax it later!)
+ *
+ *       CONDITION:
+ *          1. an integer variable is live out (imax)
+ *          2. an integer variable is assigned with index/induction varible (imax_1)
+ *          3. first variable is updated with a CMOV operation using these two
+ *             varaible ....
+ *          4. No other integer operations!!! (without updating loop index)
+ */
+   int i,j,n;
+   int isPos, count;
+   short scal, rdvar;
+
+   isPos = 1; count = 0;
+   for (n=lp->vscal[0],i=0; i < n; i++)
+   {
+      scal = lp->vscal[i+1];
+      if (IS_INT(STflag[scal-1]))
+      {
+         count++;
+         if (lp->vsflag[i+1] & VS_LIVEOUT) /* var liveout ? */
+         {
+            //fprintf(stderr, "Live Out scal = %s\n", STname[scal-1]);
+            if (lp->vsflag[i+1] & VS_SELECT) /* updated in select/cmov inst ? */
+            {
+               //fprintf(stderr, "SEL scal = %s\n", STname[scal-1]);
+               rdvar = FindReadVarCMOV(lp->blocks, scal); /* find other src */
+               assert(rdvar);
+               //fprintf(stderr, "RDVAR = %s\n", STname[rdvar-1]);
+               if (!FindInShortList(lp->vscal[0], lp->vscal+1, rdvar))
+                  isPos = 0;
+               else /* if exist, must be updated by induction variable */
+               {
+                  if (!isUpByInduction(lp, lp->blocks, rdvar))
+                     isPos = 0;
+                  else /* rdvar is our shadow variable */
+                  {
+                     j = FindInShortList(lp->vscal[0], lp->vscal+1, rdvar);
+                     lp->vsflag[j] = lp->vsflag[j] | VS_SHADOW;
+                  }
+                  /*else fprintf(stderr, "possible by induction check!!\n");*/
+               }
+            }
+         }
+      }
+   }
+/*
+ * don't expect more than 2 int vars
+ */
+   if (count > 2)
+      isPos = 0;
+
+   return(isPos);
+}
+
+
+void AddCodeAdjustment(LOOPQ *lp)
+/*
+ * in this function, we will change scalar code so that our vectorizer can
+ * vectorize it directly. scalar code after the adjustment will not produce 
+ * correct result. so, use it directly inside the vectorizer.
+ */
+{
+   int i,n,count;
+   INSTQ *ip, *ip0;
+   BLIST *bl;
+   short sivlen, cvlen, dt;
+   short svar, vlen; /* shadow int var */
+   short reg0, reg1;
+   short *vscal, *vvscal, *vsflag, *vsoflag;
+   char ln[512];
+   extern struct locinit *LIhead; 
+/*
+ * checking for shadow variable, there should be only one such variable
+ */
+   count = 0;
+   for (i=0, n=lp->vscal[0]; i < n; i++)
+   {
+      if (lp->vsflag[i+1] & VS_SHADOW)
+      {
+         svar = lp->vscal[i+1];
+         count++;
+      }
+   }
+#if 0
+   fprintf(stderr, "shadow variable = %s, count = %d\n", STname[svar-1], count);
+#endif
+   assert(count==1);
+/*
+ *    Format: 
+ *    imax_1 = N-i //i
+ *
+ *    MASKTEST fcc0, mask
+ *    imax = CMOV(imax, imax_1, fcc0)
+ *
+ *    converted:
+ *    imax_1 = imax_1 + vlen; // add imax_1 AS LIVE _IN shadow & , init vlen
+ *
+ *    MASKTEST fcc0, mask
+ *    imax = CMOV(imax, imax_1, fcc0)
+ */
+/*
+ * insert new constant variable vlen with the appropriate vlen value  
+ * need to investigate whether it can be added using NewLI() function!!!
+ * FIXME: doesn't work like this !!!!! 
+ */
+   sivlen = InsertNewLocal("_vlen", T_INT);
+
+   //if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+   //   cvlen = STiconstlookup(8); // it's ok to use this for const directly
+   //else
+   //   cvlen = STiconstlookup(4);
+/*
+ * update const initialization sothat it would be created at the begining
+ */
+   //LIhead = NewLI(sivlen,cvlen,LIhead);  
+
+
+   for (bl = lp->blocks; bl; bl = bl->next)
+   {
+      for (ip = bl->blk->inst1; ip; ip = ip->next)
+      {
+         if (IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]-1] == svar)
+         {
+/*
+ *          delete the code backward until it hit another st/br assuming
+ *          that there are no other update for this variable here
+ */
+            ip0 = ip->prev;
+            while (!IS_STORE(ip0->inst[0]) && !IS_BRANCH(ip0->inst[0]) )
+            {
+               ip0 = ip0->prev;
+               DelInst(ip0->next);
+            }
+            ip = DelInst(ip0->next);
+            //PrintThisInst(stderr, 0, ip); 
+/*
+ *          insert new instruction for this candidate
+ *          imax_1 = imax_1 + vlen
+ */
+            ip = ip->prev; /* point back and inst after this*/
+            //PrintThisInst(stderr, 0, ip);
+            reg0 = GetReg(T_INT);
+            reg1 = GetReg(T_INT);
+            //assert(FLAG2TYPE(STflag[svar-1]) & (T_INT | T_VINT));
+                    //SToff[lp->vvscal[i+1]-1].sa[2], -r0, 0);
+            ip = InsNewInst(bl->blk,ip, NULL, LD, -reg0, SToff[svar-1].sa[2], 0);
+            ip = InsNewInst(bl->blk, ip, NULL, LD, -reg1, SToff[sivlen-1].sa[2],
+                            0);
+            ip = InsNewInst(bl->blk, ip, NULL,  ADD, -reg0, -reg0, -reg1);
+            ip = InsNewInst(bl->blk, ip, NULL,  ST, SToff[svar-1].sa[2], -reg0,
+                            0);
+            GetReg(-1);
+/*
+ *          Now imax_1 is live in.. so, update the flag to VS_LIVEIN
+ */
+            i = FindInShortList(lp->vscal[0], lp->vscal+1, svar);
+            lp->vsflag[i] = lp->vsflag[i] | VS_LIVEIN;
+/*
+ *          ADD vlen as a int scal 
+ */
+#if 1            
+            n = lp->vscal[0];
+            vscal = lp->vscal;
+            vvscal = lp->vvscal;
+            vsflag = lp->vsflag;
+            vsoflag = lp->vsoflag;
+            
+            lp->vscal = calloc(n+2, sizeof(short));
+            lp->vvscal = calloc(n+2, sizeof(short));
+            lp->vsflag = calloc(n+2, sizeof(short));
+            lp->vsoflag = calloc(n+2, sizeof(short));
+            assert(lp->vscal && lp->vvscal && lp->vsflag && lp->vsoflag);
+            //fprintf(stderr, "%p -> %p\n\n", vscal, lp->vscal);
+            lp->vscal[0] = n+1;
+            lp->vvscal[0] = n+1;
+            lp->vsflag[0] = n+1;
+            lp->vsoflag[0] = n+1;
+            
+            for (i=1; i < n+1; i++)
+            {
+               lp->vscal[i]=vscal[i];
+               lp->vvscal[i]=vvscal[i];
+               lp->vsflag[i]=vsflag[i];
+               lp->vsoflag[i]=vsoflag[i];
+            }
+            lp->vscal[n+1] = sivlen;
+            lp->vsflag[n+1] = VS_LIVEIN | VS_VLEN;
+            sprintf(ln, "_V%d_%s", n+2, STname[sivlen-1] );
+            //fprintf(stderr, "%s\n", ln);
+            lp->vvscal[n+1] = InsertNewLocal(ln,T_VINT);
+            
+            free(vscal);
+            free(vvscal);
+            free(vsflag);
+            free(vsoflag);
+#endif
+         }
+      }
+   }
+}
+
+INSTQ *AddIntShadowPrologue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iph, short scal, 
+      int index)
+/*
+ * generate instructions for vector initialization for index
+ */
+{
+/*
+ * Format of shadowing...
+ *             imax_1 = N-i
+ *             MASKTEST fcc0, mask
+ *             imax = CMOV(imax, imax_1, fcc0)  // mask type??
+ *         ----------------------------------------------
+ *         Vimax_1 = Vimax_1 + Vvlen
+ *         Vimax = VCMOV(Vimax, Vimax_1, Vmask)
+ *    
+ *  NOTE: imax_1 is not live in but Vimax_1 is!!! 
+ *        need to add Vvlen as live too
+ *
+ *    
+ *
+ *    INITIALIZATION: live_in : Vimax_1, Vimax, Vvlen  
+ *    ================================================   
+ *       Vimax_1 = [i, i+1, i+2 ....]   ====> special initialization 
+ *   FIXED: 
+ *          Vimax_1 = Vimax_1 + Vvlen executes before the slect inside loop
+ *          we need to initiate Vimax_1 = [i-4, i-3, i-2, .... ]
+ *
+ *       Vimax = [imax, imax, imax, ....]
+ *       Vvlen = [vlen, vlen, vlen, ...]
+ */
+   int i;
+   short flag;
+   short ireg, sireg, r1, r2 ;
+
+   flag = lp->vsflag[index];
+#if 0         
+         fprintf(stderr, "LIVEIN : %s : %d", 
+                 STname[scal-1], flag);
+         if (flag & VS_ACC) fprintf(stderr, " VS_ACC");
+         if (flag & VS_MAX) fprintf(stderr, " VS_MAX");
+         if (flag & VS_SHADOW) fprintf(stderr, " VS_SHADOW");
+         if (flag & VS_SELECT) fprintf(stderr, " VS_SELECT");
+         if (flag & VS_VLEN) fprintf(stderr, " VS_VLEN");
+         fprintf(stderr, "\n");
+#endif  
+
+   ireg = GetReg(T_INT);
+   r1 = GetReg(T_VINT);
+   r2 = GetReg(T_VINT);
+
+   if (flag & (VS_SELECT | VS_VLEN)) /* use in select operation, do it like MUL*/
+   {
+      
+      PrintComment(bp0, NULL, iph, 
+                   "Init vector equiv of %s", STname[lp->vscal[index]-1]);
+      if (flag & VS_VLEN)
+      {
+         if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+            InsNewInst(bp0, NULL, iph, MOV, -ireg, STiconstlookup(8), 0);
+         else
+            InsNewInst(bp0, NULL, iph, MOV, -ireg, STiconstlookup(4), 0);
+      }
+      else
+         InsNewInst(bp0, NULL, iph, LD, -ireg,
+                    SToff[lp->vscal[index]-1].sa[2], 0);
+      
+      InsNewInst(bp0, NULL, iph, VGR2VR32, -r1, -ireg, STiconstlookup(0));
+      InsNewInst(bp0, NULL, iph, VISHUF, -r1, -r1, STiconstlookup(0));
+      InsNewInst(bp0, NULL, iph, VST, SToff[lp->vvscal[index]-1].sa[2], -r1, 0);
+
+   }
+   else if (flag & VS_SHADOW) /* shadow variable */
+   {
+      /* Vimax1 = [i,i,i+1,i+1,i+2,i+2,i+3,i+3] */
+/*
+ *    FIXME: for double, replace vlen by 4, otherwise by 8 
+ *          Vimax1 = [i-vlen, i-vlen, i-vlen+1, i-vlen+1, ... ... ]
+ */
+      //sireg = GetReg(T_SHORT);
+      PrintComment(bp0, NULL, iph, 
+                   "Init vector equiv of %s", STname[lp->vscal[index]-1]);
+/*
+ *    FIXME: LDS is not supported by the current register assignment algorithm!!!
+ *    assuming down cast is always OK
+ */
+      InsNewInst(bp0, NULL, iph, LD, -ireg, SToff[lp->I-1].sa[2], 0);
+      //InsNewInst(bp0, NULL, iph, CVTIS, -sireg, -ireg, 0);
+#ifdef AVX
+      if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+         InsNewInst(bp0, NULL, iph, SUB, -ireg, -ireg, STiconstlookup(8));
+      else
+         InsNewInst(bp0, NULL, iph, SUB, -ireg, -ireg, STiconstlookup(4));
+/*
+ *    FIXME: VGR2VR32 only supports 32 bit regs...
+ */
+      InsNewInst(bp0, NULL, iph, VGR2VR32, -r1, -ireg, STiconstlookup(0));
+      InsNewInst(bp0, NULL, iph, ADD, -ireg, -ireg, STiconstlookup(1));
+      InsNewInst(bp0, NULL, iph, VGR2VR32, -r1, -ireg, STiconstlookup(1));
+      
+      InsNewInst(bp0, NULL, iph, ADD, -ireg, -ireg, STiconstlookup(1));
+      InsNewInst(bp0, NULL, iph, VGR2VR32, -r2, -ireg, STiconstlookup(0));
+      InsNewInst(bp0, NULL, iph, ADD, -ireg, -ireg, STiconstlookup(1));
+      InsNewInst(bp0, NULL, iph, VGR2VR32, -r2, -ireg, STiconstlookup(1));
+
+      InsNewInst(bp0, NULL, iph, VISHUF, -r1, -r2, STiconstlookup(0xBA983210));
+      InsNewInst(bp0, NULL, iph, VISHUF, -r1, -r1, STiconstlookup(0xD5C49180));
+#else
+      //InsNewInst(bp0, NULL, iph, VISHUF, -r1, -r1, STiconstlookup(0x5140));
+      assert(0); // will implement later
+#endif
+      InsNewInst(bp0, NULL, iph, VST, SToff[lp->vvscal[index]-1].sa[2], -r1, 0);
+   }
+   else
+      assert(0); /* no other integer operation is supported now */
+   GetReg(-1);
+
+   return iph;
+}
+INSTQ *AddIntShadowEpilogue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iptp, INSTQ *iptn, 
+      short scal, int index)
+{
+/*
+ *    REDUCTION : live out imax
+ *    =========================
+ *    1. amax = HMAX(Vamax)  ==> based on max/min
+ *    2. Vmask2 = Vamax == [amax, amax, amax,....]
+ *    3. Vimax = CMOV(Vimax, VmaxInt, Vmask)  ==> based on amax .. max/min
+ *    4. imax = HMIN(Vimax)  ===> based on PTR movement, index, condition..
+ */
+   int i, n;
+   short flag;
+   short mvar, vmvar, vmask; 
+   short r0, r1, ireg, vireg0, vireg1,vireg2, type;
+   enum inst mfinst, rminst, vld, vst, vsld, vsst, vshuf, cmov1, vfcmpweq;
+
+   flag = lp->vsflag[index];
+/*
+ * select inst according to type
+ */
+   if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+   {
+      vsld = VFLDS;
+      vsst = VFSTS;
+      vld = VFLD;
+      vst = VFST;
+      vshuf = VFSHUF;
+      //cmov1 = FCMOV1;
+      vfcmpweq = VFCMPWEQ;
+      type = T_VFLOAT;
+   }
+   else
+   {
+      vsld = VDLDS;
+      vsst = VDSTS;
+      vld = VDLD;
+      vst = VDST;
+      vshuf = VDSHUF;
+      //cmov1 = FCMOVD1;
+      vfcmpweq = VDCMPWEQ;
+      type = T_VDOUBLE;
+   }
+
+/*
+ * find the max var
+ */
+   for (i=0, n=lp->vscal[0]; i < n; i++)
+   {
+      if (lp->vsflag[i+1] & VS_MAX)
+      {
+         mvar = lp->vscal[i+1];
+         vmvar = lp->vvscal[i+1];
+         if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+            mfinst = VFMAX;
+         else
+            mfinst = VDMAX;
+      }
+      else if (lp->vsflag[i+1] & VS_MIN)
+      {
+         mvar = lp->vscal[i+1];
+         vmvar = lp->vvscal[i+1];
+         if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+            mfinst = VFMIN;
+         else
+            mfinst = VDMIN;
+      }
+   }
+#if 0   
+   fprintf(stderr, "Max var = %s, Vmax = %s\n", 
+         STname[mvar-1], STname[vmvar-1]);
+#endif
+   
+   r0 = GetReg(FLAG2TYPE(lp->vflag));
+   r1 = GetReg(FLAG2TYPE(lp->vflag));
+
+   if (flag & VS_SELECT) /* only sel scal should be liveout */
+   {
+      //r0 = GetReg(FLAG2TYPE(lp->vflag));
+      //r1 = GetReg(FLAG2TYPE(lp->vflag));
+      iptp = PrintComment(lp->posttails->blk, iptp, iptn,
+                          "Reduce vector for %s", 
+                           STname[scal-1]);
+/*   step : 1  amax = HMAX(Vamax) --- floating point */
+      if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag) ) 
+      {
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFLD, -r0,
+                                 SToff[vmvar-1].sa[2], 0); 
+      #if defined(X86) && defined(AVX)
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+              -r1, -r0, STiconstlookup(0x7654FEDC));
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, mfinst,
+              -r0,-r0,-r1);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+              -r1, -r0, STiconstlookup(0x765432BA));
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, mfinst,
+              -r0,-r0,-r1);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+              -r1, -r0, STiconstlookup(0x76CD3289));
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, mfinst,
+              -r0,-r0,-r1);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSTS,
+              SToff[mvar-1].sa[2], -r0, 0);
+      #else
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+              -r1, -r0, STiconstlookup(0x3276));
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, mfinst,
+              -r0,-r0,-r1);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+              -r1, -r0, STiconstlookup(0x5555));
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, mfinst,
+              -r0,-r0,-r1);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSTS,
+              SToff[mvar-1].sa[2], -r0, 0);
+      #endif
+      }
+      else 
+      {
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDLD, -r0,
+                                 SToff[vmvar-1].sa[2], 0); 
+      #if defined(X86) && defined(AVX)
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
+              -r0, STiconstlookup(0x3276));
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, mfinst,-r0,-r0,
+              -r1);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
+              -r0, STiconstlookup(0x3715));
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, mfinst,-r0,-r0,
+              -r1);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS,
+              SToff[mvar-1].sa[2], -r0, 0);
+      #else
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
+              -r0, STiconstlookup(0x33));
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, mfinst,-r0,-r0,
+              -r1);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS,
+              SToff[mvar-1].sa[2], -r0, 0);
+      #endif
+      }
+      //GetReg(-1);
+/*    step : 2   Vmask2 = Vamax == [amax, amax, amax,....] ---floating point */
+/*    3. Vimax = CMOV(Vimax, VmaxInt, Vmask2)  ==> based on amax ..max/min -vint
+ */
+      vmask = InsertNewLocal("_r_vmask", type);
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vsld, -r0,
+                        SToff[mvar-1].sa[2], 0);
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vld, -r1,
+                        SToff[vmvar-1].sa[2], 0); 
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vshuf, -r0, 
+                        -r0, STiconstlookup(0));     
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vfcmpweq, -r0, -r0,-r1);  
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vst,
+                        SToff[vmask-1].sa[2], -r0, 0);
+
+/*
+ *    generating VmaxInt ... Normally compiler generates this by storing the 
+ *    value into stack!!!
+ *    NOTE: here we need to use 
+ *             VCMOV2: dest = (mask==0)? src: dest
+ *    FIXME: consider both max and min 
+ */
+      ireg = GetReg(T_INT);
+      vireg0 = GetReg(T_VINT); /* not used but keep space for r0*/
+      vireg1 = GetReg(T_VINT);
+      vireg2 = GetReg(T_VINT);
+
+      iptp = InsNewInst(bp0, iptp, NULL, vld, -r0, SToff[vmask-1].sa[2], 0);
+      iptp = InsNewInst(bp0, iptp, NULL, VLD, -vireg1, 
+                        SToff[lp->vvscal[index]-1].sa[2], 0);
+      iptp = InsNewInst(bp0, iptp, NULL, MOV, -ireg, 
+                        STiconstlookup(0x7FFFFFFF), 0);
+      iptp = InsNewInst(bp0, iptp, NULL, VGR2VR32, -vireg2, -ireg, 
+                        STiconstlookup(0));
+      iptp = InsNewInst(bp0, iptp, NULL, VISHUF, -vireg2, -vireg2, 
+                        STiconstlookup(0));
+      iptp = InsNewInst(bp0, iptp, NULL, VCMOV2, -vireg1, -vireg2, -r0); /* hybrid inst */
+      iptp = InsNewInst(bp0, iptp, NULL, VST, SToff[lp->vvscal[index]-1].sa[2], 
+                 -vireg1, 0);
+/*
+ *    step 4: imax = HMIN(Vimax) ... vint 
+ *    FIXME: need to check the condition... whether it is > or >=
+ */
+      if (mfinst == VFMAX || mfinst == VDMAX)
+      {
+         rminst = VMIN;
+      }
+      else
+      {
+         rminst = VMAX;
+      }
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VLD, -vireg1,
+                                 SToff[lp->vvscal[index]-1].sa[2], 0); 
+   #if defined(X86) && defined(AVX)
+/*
+ *    NOTE: 
+ *    Here is the actual shuffle for reduction (X means don't care):
+ *          0x XXXXFEDC
+ *          0x XXXXXXBA
+ *          0x XXXXXXX9
+ *    To implement that in AVX easily, I choose following sequence:
+ *          0x 7654 FEDC
+ *          0x 7654 BABA
+ *          0x 7654 BA99
+ */
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VISHUF,
+              -vireg2, -vireg1, STiconstlookup(0x7654FEDC));
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, rminst,
+              -vireg1,-vireg1,-vireg2);
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VISHUF,
+              -vireg2, -vireg1, STiconstlookup(0x7654BABA)); //0x 7654 32BA
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, rminst,
+              -vireg1,-vireg1,-vireg2);
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VISHUF,
+              -vireg2, -vireg1, STiconstlookup(0x7654BA99)); // 0x 76CD 3289
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, rminst,
+              -vireg1,-vireg1,-vireg2);
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VSTS,
+              SToff[lp->vscal[index]-1].sa[2], -vireg1, 0);
+   #else
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VISHUF,
+              -vireg2, -vireg1, STiconstlookup(0x3276));
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, rminst,
+              -vireg1,-vireg1,-vireg2);
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VISHUF,
+              -vireg2, -vireg1, STiconstlookup(0x5555));
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, rminst,
+              -vireg1,-vireg1,-vireg2);
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VSTS,
+              SToff[vscal[index]-1].sa[2], -vireg1, 0);
+   #endif
+       
+
+   }
+   else assert(0);
+   GetReg(-1);
+
+   return iptp;
+}
+
+void AddVectorPrologueEpilogue(LOOPQ *lp)
+{
+   int i, j, k, n;
+   int vlen;
+   INSTQ *iph, *iptp, *iptn;
+   short r0, r1;
+   enum inst inst;
+   enum inst vld, vst, vsld, vsst, vshuf;
+   
+/*
+ * Figure out what type of insts to translate
+ */
+   if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+   {
+      #if defined(X86) && defined(AVX)
+         vlen = 8;
+      #else
+         vlen = 4;
+      #endif
+      vsld = VFLDS;
+      vsst = VFSTS;
+      vshuf = VFSHUF;
+      vld = VFLD;
+      vst = VFST;
+   }
+   else
+   {
+      vsld = VDLDS;
+      vsst = VDSTS;
+      vshuf = VDSHUF;
+      vld = VDLD;
+      #if defined(X86) && defined(AVX)
+         vlen = 4;
+      #else
+         vlen = 2;
+      #endif
+      vst = VDST;
+   }
+/* 
+ * Find inst in preheader to insert scalar init before; want it inserted last
+ * unless last instruction is a jump, in which case put it before the jump.
+ * As long as loads don't reset condition codes, this should be safe
+ * (otherwise, need to move before compare as well as jump)
+ */
+   iph = lp->preheader->ainstN;
+   if (iph && IS_BRANCH(iph->inst[0]))
+      iph = iph->prev;
+   else
+      iph = NULL;
+/*
+ * Find inst in posttail to insert reductions before; if 1st active inst
+ * is not a label, insert at beginning of block, else insert after label
+ */
+   if (lp->posttails->blk->ilab)
+   {
+      iptp = lp->posttails->blk->ainst1;
+      iptn = NULL;
+   }
+   else
+   {
+      iptp = NULL;
+      iptn = lp->posttails->blk->ainst1;
+      if (!iptn)
+         iptn = lp->posttails->blk->inst1;
+   }
+
+/*
+ * Insert scalar-to-vector initialization in preheader for vars live on entry
+ * and vector-to-scalar reduction in post-tail for vars live on exit
+ */
+   j = 0;
+   k = STiconstlookup(0);
+
+   for (n=lp->vscal[0],i=0; i < n; i++)
+   {
+#if 0
+      fprintf(stderr, "%s->%s \t Type=%d\n", STname[lp->vscal[i+1]-1], 
+              STname[lp->vvscal[i+1]-1], STflag[lp->vscal[i+1]-1]);
+#endif
+      if (VS_LIVEIN & lp->vsflag[i+1])
+      {
+/*
+ *       ADD-updated vars set v[0] = scalar, v[1:N] = 0
+ */
+#if 0    
+         int flag;
+         flag = lp->vsflag[i+1];
+         fprintf(stderr, "LIVEIN : %s : %d", 
+                 STname[lp->vscal[i+1]-1], flag);
+         if (flag & VS_ACC) fprintf(stderr, " VS_ACC");
+         if (flag & VS_MAX) fprintf(stderr, " VS_MAX");
+         if (flag & VS_SHADOW) fprintf(stderr, " VS_SHADOW");
+         if (flag & VS_SELECT) fprintf(stderr, " VS_SELECT");
+         if (flag & VS_VLEN) fprintf(stderr, " VS_VLEN");
+         fprintf(stderr, "\n");
+#endif  
+         if (IS_INT(FLAG2TYPE(STflag[lp->vscal[i+1]]))) /* special case */ 
+         {
+            iph = AddIntShadowPrologue(lp, lp->preheader, iph, lp->vscal[i+1], i+1);
+         }
+         else 
+         {
+            r0 = GetReg(FLAG2TYPE(lp->vflag));
+            r1 = GetReg(FLAG2TYPE(lp->vflag));
+/*
+ *          Majedul: FIXME: for accumulator init, shouldn't we need an Xor
+ *          though most of the time it works as vmoss/vmosd automatically
+ *          zerod the upper element. but what if the optimization transforms it
+ *          into reg-reg move. vmovss/vmosd for reg-reg doesn't make the upper
+ *          element zero!!! 
+ *          NOTE: so far, it works. as temp reg normally uses a move from mem
+ *          before reg-reg move, which makes the upper element zero.
+ */
+            if (VS_ACC & lp->vsflag[i+1])
+               PrintComment(lp->preheader, NULL, iph, 
+                     "Init accumulator vector for %s", STname[lp->vscal[i+1]-1]);
+            else
+               PrintComment(lp->preheader, NULL, iph, 
+                     "Init vector equiv of %s", STname[lp->vscal[i+1]-1]);
+            InsNewInst(lp->preheader, NULL, iph, vsld, -r0,
+                  SToff[lp->vscal[i+1]-1].sa[2], 0);
+            if (!(VS_ACC & lp->vsflag[i+1]))
+               InsNewInst(lp->preheader, NULL, iph, vshuf, -r0, -r0, k);
+            InsNewInst(lp->preheader, NULL, iph, vst, 
+                  SToff[lp->vvscal[i+1]-1].sa[2], -r0, 0);
+            GetReg(-1);
+         }
+      }
+/*
+ *    Output vars are known to be updated only by ADD
+ */
+      if (VS_LIVEOUT & lp->vsflag[i+1])
+      {
+         j++;
+         /*assert((lp->vsoflag[i+1] & (VS_MUL | VS_EQ | VS_ABS)) == 0);*/
+         if (IS_INT(FLAG2TYPE(STflag[lp->vscal[i+1]]))) 
+         {
+            iptp = AddIntShadowEpilogue(lp, lp->posttails->blk, iptp, iptn, 
+                                 lp->vscal[i+1], i+1);
+            //fprintf(stderr, "LIVEOUT INT!!!\n");
+         }
+         else
+         {
+            r0 = GetReg(FLAG2TYPE(lp->vflag));
+            r1 = GetReg(FLAG2TYPE(lp->vflag));
+            if (lp->vsoflag[i+1] & VS_ACC || lp->vsoflag[i+1] & VS_MAX || 
+                lp->vsoflag[i+1] & VS_MIN)
+            {
+               if (lp->vsoflag[i+1] & VS_ACC)
+               {
+                  iptp = PrintComment(lp->posttails->blk, iptp, iptn,
+                                      "Reduce accumulator vector for %s", 
+                                      STname[lp->vscal[i+1]-1]);
+               }
+               else if (lp->vsoflag[i+1] & VS_MAX)
+               {
+                  iptp = PrintComment(lp->posttails->blk, iptp, iptn,
+                        "Reduce max vector for %s", STname[lp->vscal[i+1]-1]);
+
+               }
+               else if (lp->vsoflag[i+1] & VS_MIN)
+               {
+                  iptp = PrintComment(lp->posttails->blk, iptp, iptn,
+                                      "Reduce min vector for %s", 
+                                      STname[lp->vscal[i+1]-1]);
+               }
+               else assert(0);
+
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vld, -r0,
+                                 SToff[lp->vvscal[i+1]-1].sa[2], 0); 
+               if (vld == VDLD)
+               {
+                  if (lp->vsoflag[i+1] & VS_ACC)
+                     inst = VDADD;
+                  else if (lp->vsoflag[i+1] & VS_MAX)
+                     inst = VDMAX;
+                  else if (lp->vsoflag[i+1] & VS_MIN)
+                     inst = VDMIN;
+                  else
+                     assert(0);
+
+               #if defined(X86) && defined(AVX)
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
+                                    -r0, STiconstlookup(0x3276));
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,-r0,-r0,
+                                    -r1);
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
+                                    -r0, STiconstlookup(0x3715));
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,-r0,-r0,
+                                    -r1);
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS,
+                                    SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+               #else
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
+                                    -r0, STiconstlookup(0x33));
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,-r0,-r0,
+                                    -r1);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS,
+                                    SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+               #endif
+               }
+               else
+               {
+                  if (lp->vsoflag[i+1] & VS_ACC)
+                     inst = VFADD;
+                  else if (lp->vsoflag[i+1] & VS_MAX)
+                     inst = VFMAX;
+                  else if (lp->vsoflag[i+1] & VS_MIN)
+                     inst = VFMIN;
+                  else
+                     assert(0);
+
+               #if defined(X86) && defined(AVX)
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                    -r1, -r0, STiconstlookup(0x7654FEDC));
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,
+                                    -r0,-r0,-r1);
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                    -r1, -r0, STiconstlookup(0x765432BA));
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,
+                                    -r0,-r0,-r1);
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                    -r1, -r0, STiconstlookup(0x76CD3289));
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,
+                                    -r0,-r0,-r1);
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSTS,
+                                    SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+               #else
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                    -r1, -r0, STiconstlookup(0x3276));
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,
+                                    -r0,-r0,-r1);
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+                                    -r1, -r0, STiconstlookup(0x5555));
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, inst,
+                                    -r0,-r0,-r1);
+                  iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSTS,
+                                    SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+               #endif
+               }
+            }
+            else /* VS_MUL/ VS_DIV*/
+            {
+               iptp = PrintComment(lp->posttails->blk, iptp, iptn,
+                     "Reduce vector for %s", STname[lp->vscal[i+1]-1]);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vld, -r0,
+                     SToff[lp->vvscal[i+1]-1].sa[2], 0);
+               iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vsst,
+                     SToff[lp->vscal[i+1]-1].sa[2], -r0, 0);
+            }
+            GetReg(-1);
+         }
+      }
+   }
+   iptp = InsNewInst(lp->posttails->blk, iptp, NULL, CMPFLAG, CF_VRED_END,
+            0, 0);
+
+}
+
+int FindInstIndex(int N, enum inst *inst, enum inst ainst )
+{
+   int i, index;
+   for (i=0; i < N; i++)
+   {
+      if (inst[i] == ainst)
+         break;
+   }
+   if (i == N)
+      index = -1;
+   else
+      index = i;
+
+   return index;
+}
+int RcVecTransform(LOOPQ *lp)
+/*
+ * NOTE: This is similar of normal vector transformation DoSimdLoop except max
+ * is need to be recognized. As I have changes lot in vector analysis in 
+ * Path based analysis, I will create separate vector xform here. 
+ * NOTE: this vector transform can be and will be merge with Speculative vector
+ * transfer later. 
+ */
+{
+   short *sp;
+   BLIST *bl;
+   static enum inst 
+     sfinsts[] = {FLD,      FST,      FMUL,     FMAC,     FADD,     FSUB,    
+                  FABS,     FMOV,     FZERO,    FNEG,     FCMOV1,   FCMOV2, 
+                  FCMPWEQ,  FCMPWNE,  FCMPWLT,  FCMPWLE,  FCMPWGT,  FCMPWGE,
+                  FMAX,     FMIN },
+
+     vfinsts[] = {VFLD,     VFST,     VFMUL,    VFMAC,    VFADD,    VFSUB,   
+                  VFABS,    VFMOV,    VFZERO,   VFNEG,    VFCMOV1,  VFCMOV2,
+                  VFCMPWEQ, VFCMPWNE, VFCMPWLT, VFCMPWLE, VFCMPWGT, VFCMPWGE,
+                  VFMAX,    VFMIN },
+
+     sdinsts[] = {FLDD,     FSTD,     FMULD,    FMACD,    FADDD,    FSUBD, 
+                  FABSD,    FMOVD,    FZEROD,   FNEGD,    FCMOVD1,  FCMOVD2, 
+                  FCMPDWEQ, FCMPDWNE, FCMPDWLT, FCMPDWLE, FCMPDWGT, FCMPDWGE,
+                  FMAXD,    FMIND },
+
+     vdinsts[] = {VDLD,     VDST,     VDMUL,    VDMAC,    VDADD,    VDSUB, 
+                  VDABS,    VDMOV,    VDZERO,   VDNEG,    VDCMOV1,  VDCMOV2,
+                  VDCMPWEQ, VDCMPWNE, VDCMPWLT, VDCMPWLE, VDCMPWGT, VDCMPWGE,
+                  VDMAX,    VDMIN };
+/*
+ *    Majedul: instruction selection for V_INT
+ */
+   static enum inst
+      siinsts[] = {LD, ST, ADD, SUB, CMOV1, CMOV2, MASKTEST, CVTBDI,CVTBFI,BTC},
+      viinsts[] = {VLD, VST, VADD, VSUB, VCMOV1, VCMOV2, MASKTEST, CVTBDI, 
+                   CVTFI, BTC};
+   /*assert(0);*/
+
+   const int nvinst=20;
+   const int nivinst = 10;
+   enum inst sld, vld, sst, vst, smul, vmul, smac, vmac, sadd, vadd, ssub, vsub, 
+             sabs, vabs, smov, vmov, szero, vzero, inst;
+   short r0, r1, op;
+   short vmask;
+   enum inst *sinst, *vinst;
+   int i, j, n, k, nfr=0, nir=0;
+   char ln[512];
+   struct ptrinfo *pi0, *pi;
+   INSTQ *ip, *ip0, *ippu, *iph, *iptp, *iptn;
+   short vlen;
+   short sregs[TNFR], vregs[TNFR];
+   short siregs[TNIR], viregs[TNIR];
+   short ldvir1, ldvir2, ldvir3;
+
+   if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+   {
+      sinst = sfinsts;
+      vinst = vfinsts;
+#if defined (X86) && defined(AVX)
+      vlen = 8;
+#else
+      veln = 4;
+#endif
+   }
+   else
+   {
+      sinst = sdinsts;
+      vinst = vdinsts;
+#if defined (X86) && defined(AVX)
+      vlen = 4;
+#else
+      veln = 2;
+#endif
+   }
+/*
+ * Remove loop control logic from loop, and disallow simdification if
+ * index is used in loop
+ * NOTE: could allow index ref, but then need special case of non-vectorized
+ *       op, so don't.  Can transform loops that use I to loops that use
+ *       ptr arith instead.
+ */
+   KillLoopControl(lp);
+#if 0
+   fprintf(stdout, "LIL before Peeling\n");
+   PrintInst(stdout, bbbase);
+#endif
+/*
+ * Loop peeling for single moving ptr alignment 
+ */
+
+#if 1
+   if (IsLoopPeelOptimizable(lp))
+      GenForceAlignedPeeling(lp);
+#endif   
+
+#if 0
+   fprintf(stdout, "LIL After Peeling\n");
+   PrintInst(stdout, bbbase);
+#endif
+/*
+ * Generate scalar cleanup loop before simdifying loop
+ */
+   GenCleanupLoop(lp);
+
+#if 0
+   fprintf(stdout, "LIL After cleanup\n");
+   PrintInst(stdout, bbbase);
+   ShowFlow("cfg.dot",bbbase);
+   //exit(0);
+#endif
+
+/*
+ * code adjustment for shadow trick. As it will invalidate the code, we should 
+ * add this after clean up and loop alignment 
+ */
+   AddCodeAdjustment(lp);
+   
+/**************************************************************************/
+/* separating vector prologue and epilogue...... these are going to be more 
+ * and more complex considering the RC for index var...... 
+ */
+#if 0
+   PrintInst(stdout, bbbase);
+#endif
+/* 
+ * Find all pointer updates, and remove them from body of loop (leaving only
+ * vectorized instructions for analysis); will put them back in loop after
+ * vectorization is done.
+ */
+
+   pi0 = FindMovingPointers(lp->blocks);
+   ippu = KillPointerUpdates(pi0, vlen);
+/*
+ * Add prologue epilogue for vectorization
+ */
+   AddVectorPrologueEpilogue(lp);
+
+/*
+ * Translate body of loop
+ */
+#if 1
+/*
+ * Re-organized the implementation 
+ */
+   for (bl=lp->blocks; bl; bl = bl->next)
+   {
+      for (ip=bl->blk->ainst1; ip; ip = ip->next)
+      {
+         inst = GET_INST(ip->inst[0]);
+         if (ACTIVE_INST(inst))
+         {
+/*
+ *          check whether it is integer operations
+ */
+            if ( ( i = FindInstIndex(nivinst, siinsts, inst)) != -1)
+            {
+               switch(inst)
+               {
+#if 0
+                  case MASKTEST:
+                     vmask = STpts2[ip->prev->inst[2]-1];
+                     DelInst(ip->prev);
+                     break;
+#else
+                  case CVTBDI: case CVTBFI:
+                     assert(ip->next->inst[0] == BTC);
+                     vmask = STpts2[ip->prev->inst[2]-1];
+                     DelInst(ip->prev);
+                     break;
+                  case BTC:
+                     assert(ip->prev->inst[0] == CVTBFI || 
+                            ip->prev->inst[0] == CVTBDI);
+                     DelInst(ip->prev);
+                     break;
+#endif
+                  case LD: case ST:
+
+                     if (inst == LD)
+                        k = STpts2[ip->inst[2]-1]; 
+                     else
+                        k = STpts2[ip->inst[1]-1]; 
+
+                     if (!FindInShortList(lp->varrs[0], lp->varrs+1, k))
+                     { 
+                        //fprintf(stderr, "Not arr = %s\n", STname[k-1]);
+                        if (inst == LD)
+                           ip->inst[0] = VLD;
+                        else
+                           ip->inst[0] = VST;
+                        for (j=1; j < 4; j++)
+                        {
+                           op = ip->inst[j];
+                           if (!op) continue;
+                           else if (op < 0) // register
+                           {
+                              op = -op;
+                              k = FindInShortList(nir, siregs, op);
+                              if (!k)
+                              {
+                                 nir = AddToShortList(nir, siregs, op);
+                                 k = FindInShortList(nir, siregs, op);
+                                 viregs[k-1] = GetReg(T_VINT);
+                              }
+                              ip->inst[j] = -viregs[k-1];
+                           }
+                           else // scalars 
+                           {
+                              op = STpts2[op-1];
+                              k = FindInShortList(lp->vscal[0], lp->vscal+1, op);
+                              assert(k);
+                              //ip->inst[j] = lp->vvscal[k];
+                              ip->inst[j] = SToff[lp->vvscal[k]-1].sa[2];
+                           }
+                        }
+                     }
+                     break;
+
+                  case CMOV1: case CMOV2:
+                     ip0 = ip->prev;
+#if 0                     
+                     while (ip0->inst[0] != MASKTEST) ip0 = ip0->prev;
+#else
+                     while (ip0->inst[0] != BTC) ip0 = ip0->prev;
+#endif
+                     assert(ip0);
+                     DelInst(ip0);
+/*
+ *                   updates cmov with vcmov
+ *                   new to load mask and use it in cmov
+ */   
+                     assert(IS_LOAD(ip->prev->inst[0]) && 
+                        IS_LOAD(ip->prev->prev->inst[0]));
+                     ldvir2 = ip->prev->inst[1]; 
+                     ldvir1 = ip->prev->prev->inst[1]; 
+
+                     if (FLAG2TYPE(STflag[vmask-1]) == T_FLOAT 
+                        || FLAG2TYPE(STflag[vmask-1]) == T_VFLOAT )
+                     { 
+                        k = GetReg(T_VFLOAT);
+                        InsNewInst(bl->blk, NULL, ip, VFLD, -k, 
+                                   SToff[vmask-1].sa[2], 0);
+                     }
+                     else
+                     {
+                        k = GetReg(T_VDOUBLE);
+                        InsNewInst(bl->blk, NULL, ip, VDLD, -k, 
+                              SToff[vmask-1].sa[2], 0);
+                     }
+                     ip->inst[0] = VCMOV1;
+                     ip->inst[1] = ldvir1; 
+                     ip->inst[2] = ldvir2; 
+                     ip->inst[3] = -k;
+                     assert(ip->next->inst[0] == ST);
+                     ip->next->inst[0] = VST;
+                     k = STpts2[ip->next->inst[1]-1];
+                     k = FindInShortList(lp->vscal[0],lp->vscal+1,k);
+                     assert(k);
+                     ip->next->inst[1] = SToff[lp->vvscal[k]-1].sa[2];
+                     ip->next->inst[2] = ldvir1;
+                     ip= ip->next; 
+                     break;
+
+                  default:
+                     if (siinsts[i] == inst)
+                     { 
+                        ip->inst[0] = viinsts[i];
+                        for (j=1; j < 4; j++)
+                        {
+                           op = ip->inst[j];
+                           if (!op) continue;
+                           else if (op < 0)
+                           {
+                              op = -op;
+                              k = FindInShortList(nir, siregs, op);
+                              if (!k)
+                              {
+                                 nir = AddToShortList(nir, siregs, op);
+                                 k = FindInShortList(nir, siregs, op);
+                                 viregs[k-1] = GetReg(FLAG2TYPE(T_VINT));
+                              }
+                              ip->inst[j] = -viregs[k-1];
+                           }
+                           else
+                           {
+                              if (IS_DEREF(STflag[op-1]))
+                              {
+                                 k = STpts2[op-1];
+                                 if (!FindInShortList(lp->varrs[0],
+                                          lp->varrs+1,k))
+                                 {
+                                    k = FindInShortList(lp->vscal[0],lp->vscal+1,
+                                          k);
+                                    assert(k);
+                                    ip->inst[j] = SToff[lp->vvscal[k]-1].sa[2];
+                                    assert(ip->inst[j] > 0);
+                                 }
+                              }
+                              else if (!FindInShortList(lp->varrs[0],
+                                       lp->varrs+1,op))
+                              {
+                                 k = FindInShortList(lp->vscal[0], 
+                                       lp->vscal+1, op);
+                                 assert(k);
+                                 ip->inst[j] = lp->vvscal[k]; /* ???? */
+                              }
+                           }
+                        }
+                     }
+                     break;
+               }
+            }
+            else if ( ( i = FindInstIndex(nvinst, sinst, inst)) != -1) 
+            {
+/*
+ *             If the inst is scalar fp, translate to vector fp, and insist
+ *             all fp ops become vector ops
+ */
+               if (sinst[i] == inst)
+               {
+                  ip->inst[0] = vinst[i];
+/*
+ *                Change scalar ops to vector ops
+ */
+                  for (j=1; j < 4; j++)
+                  {
+                     op = ip->inst[j];
+                     if (!op) continue;
+                     else if (op < 0)
+                     {
+                        op = -op;
+                        k = FindInShortList(nfr, sregs, op);
+                        if (!k)
+                        {
+                           nfr = AddToShortList(nfr, sregs, op);
+                           k = FindInShortList(nfr, sregs, op);
+                           vregs[k-1] = GetReg(FLAG2TYPE(lp->vflag));
+                        }
+                        ip->inst[j] = -vregs[k-1];
+                     }
+                     else
+                     {
+                        if (IS_DEREF(STflag[op-1]))
+                        {
+                           k = STpts2[op-1];
+                           if (!FindInShortList(lp->varrs[0],lp->varrs+1,k))
+                           {
+                              k = FindInShortList(lp->vscal[0],lp->vscal+1,k);
+                              assert(k);
+                              ip->inst[j] = SToff[lp->vvscal[k]-1].sa[2];
+                              assert(ip->inst[j] > 0);
+                           }
+                        }
+                        else if (!FindInShortList(lp->varrs[0],lp->varrs+1,op))
+                        {
+                           k = FindInShortList(lp->vscal[0], lp->vscal+1, op);
+                           assert(k);
+                           ip->inst[j] = lp->vvscal[k];
+                        }
+                     }
+                  }
+               }
+
+            }
+            else if ( IS_BRANCH(inst) || inst == LABEL)
+            {
+               // do nothing !
+            }
+            else 
+            {
+               PrintThisInst(stderr, 0, ip);
+               assert(0);
+            }
+         }
+      }
+   }
+#else
+   for (bl=lp->blocks; bl; bl = bl->next)
+   {
+      for (ip=bl->blk->ainst1; ip; ip = ip->next)
+      {
+         inst = GET_INST(ip->inst[0]);
+         if (ACTIVE_INST(inst))
+         {
+#if 0
+            PrintThisInst(stderr, 0, ip);
+#endif
+/*
+ *          For integer instructions
+ */
+            if (inst == MASKTEST)
+            {
+               vmask = STpts2[ip->prev->inst[2]-1];
+#if 0               
+               fprintf(stderr, "mask...= %s\n", STname[vmask-1]);
+#endif
+               DelInst(ip->prev);
+            }
+/*
+ *          there can be two type of load, scal load or arr load 
+ *          Need to transform only the scalar load here 
+ */
+            else if (inst == LD || inst == ST)
+            {
+               k = STpts2[ip->inst[2]-1]; 
+               if (!FindInShortList(lp->varrs[0], lp->varrs+1, k))
+               {
+                  //fprintf(stderr, "Not arr = %s\n", STname[k-1]);
+                  if (inst == LD)
+                     ip->inst[0] = VLD;
+                  else
+                     ip->inst[0] = VST;
+
+                  for (j=1; j < 4; j++)
+                  {
+                     op = ip->inst[j];
+                     if (!op) continue;
+                     else if (op < 0) // register
+                     {
+                        op = -op;
+                        k = FindInShortList(nir, siregs, op);
+                        if (!k)
+                        {
+                           nir = AddToShortList(nir, siregs, op);
+                           k = FindInShortList(nir, siregs, op);
+                           viregs[k-1] = GetReg(T_VINT);
+                        }
+                        ip->inst[j] = -viregs[k-1];
+                     }
+                     else // scalars 
+                     {
+                        op = STpts2[op-1];
+                        k = FindInShortList(lp->vscal[0], lp->vscal+1, op);
+                        assert(k);
+                        ip->inst[j] = lp->vvscal[k];
+                     }
+                  }
+               }
+            }
+            else if (inst == CMOV1 || inst == CMOV2)
+            {
+#if 0               
+               fprintf(stderr, "using mask...= %s\n", STname[vmask-1]);
+#endif
+                 
+               ip0 = ip->prev;
+               while (ip0->inst[0] != MASKTEST) ip0 = ip0->prev;
+               assert(ip0);
+               DelInst(ip0);
+/*
+ *             updates cmov with vcmov
+ *             new to load mask and use it in cmov
+ */   
+               assert(IS_LOAD(ip->prev->inst[0]) && 
+                      IS_LOAD(ip->prev->prev->inst[0]));
+               ldvir2 = ip->prev->inst[1]; 
+               ldvir1 = ip->prev->prev->inst[1]; 
+
+               if (FLAG2TYPE(STflag[vmask-1]) == T_FLOAT 
+                   || FLAG2TYPE(STflag[vmask-1]) == T_VFLOAT )
+               {
+                  k = GetReg(T_VFLOAT);
+                  InsNewInst(bl->blk, NULL, ip, VFLD, -k, SToff[vmask-1].sa[2],
+                              0);
+               }
+               else
+               {
+                  k = GetReg(T_VDOUBLE);
+                  InsNewInst(bl->blk, NULL, ip, VDLD, -k, SToff[vmask-1].sa[2],
+                              0);
+               }
+               ip->inst[0] = VCMOV1;
+               ip->inst[1] = ldvir1; 
+               ip->inst[2] = ldvir2; 
+               ip->inst[3] = -k;
+               assert(ip->next->inst[0] == ST);
+               ip->next->inst[0] = VST;
+               k = STpts2[ip->next->inst[1]-1];
+               k = FindInShortList(lp->vscal[0],lp->vscal+1,k);
+               assert(k);
+               ip->next->inst[1] = SToff[lp->vvscal[k]-1].sa[2];
+               ip->next->inst[2] = ldvir1;
+               ip= ip->next; 
+            }
+            else
+            { 
+               for (i=0; i < nivinst; i++)
+               {
+                  if (siinsts[i] == inst)
+                  {
+                     ip->inst[0] = viinsts[i];
+/*
+ *                   change the regs from scalar to vector  
+ */
+                     for (j=1; j < 4; j++)
+                     {
+                        op = ip->inst[j];
+                        if (!op) continue;
+                        else if (op < 0)
+                        {
+                           op = -op;
+                           k = FindInShortList(nir, siregs, op);
+                           if (!k)
+                           {
+                              nir = AddToShortList(nir, siregs, op);
+                              k = FindInShortList(nir, siregs, op);
+                              viregs[k-1] = GetReg(FLAG2TYPE(T_VINT));
+                           }
+                           ip->inst[j] = -viregs[k-1];
+                        }
+                        else
+                        {
+                           if (IS_DEREF(STflag[op-1]))
+                           {
+                              k = STpts2[op-1];
+                              if (!FindInShortList(lp->varrs[0],lp->varrs+1,k))
+                              {
+                                 k = FindInShortList(lp->vscal[0],lp->vscal+1,k);
+                                 assert(k);
+                                 ip->inst[j] = SToff[lp->vvscal[k]-1].sa[2];
+                                 assert(ip->inst[j] > 0);
+                              }
+                           }
+                           else if (!FindInShortList(lp->varrs[0],lp->varrs+1,op))
+                           {
+                              k = FindInShortList(lp->vscal[0], lp->vscal+1, op);
+                              assert(k);
+                              ip->inst[j] = lp->vvscal[k];
+                           }
+                        }
+                     }
+                     //PrintThisInst(stderr, 0, ip);
+                     break;
+                  }
+               }
+            }
+/*
+ *          for floating point instructions
+ */
+            for (i=0; i < nvinst; i++)
+            {
+/*
+ *             If the inst is scalar fp, translate to vector fp, and insist
+ *             all fp ops become vector ops
+ */
+               if (sinst[i] == inst)
+               {
+                  ip->inst[0] = vinst[i];
+/*
+ *                Change scalar ops to vector ops
+ */
+                  for (j=1; j < 4; j++)
+                  {
+                     op = ip->inst[j];
+                     if (!op) continue;
+                     else if (op < 0)
+                     {
+                        op = -op;
+                        k = FindInShortList(nfr, sregs, op);
+                        if (!k)
+                        {
+                           nfr = AddToShortList(nfr, sregs, op);
+                           k = FindInShortList(nfr, sregs, op);
+                           vregs[k-1] = GetReg(FLAG2TYPE(lp->vflag));
+                        }
+                        ip->inst[j] = -vregs[k-1];
+                     }
+                     else
+                     {
+                        if (IS_DEREF(STflag[op-1]))
+                        {
+                           k = STpts2[op-1];
+                           if (!FindInShortList(lp->varrs[0],lp->varrs+1,k))
+                           {
+                              k = FindInShortList(lp->vscal[0],lp->vscal+1,k);
+                              assert(k);
+                              ip->inst[j] = SToff[lp->vvscal[k]-1].sa[2];
+                              assert(ip->inst[j] > 0);
+                           }
+                        }
+                        else if (!FindInShortList(lp->varrs[0],lp->varrs+1,op))
+                        {
+                           k = FindInShortList(lp->vscal[0], lp->vscal+1, op);
+                           assert(k);
+                           ip->inst[j] = lp->vvscal[k];
+                        }
+                     }
+                  }
+                  break;
+               }
+            }
+         }
+      }
+   }
+#endif
+
+
+   GetReg(-1);
+   /*
+    * Put back loop control and pointer updates
+    */
+   OptimizeLoopControl(lp, vlen, 0, ippu);
+   CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = CFLOOP = 0;
+#if 0
+   InvalidateLoopInfo();
+   NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   FindLoops();
+   CheckFlow(bbbase, __FILE__, __LINE__);
+#endif
+   return(0);
+}
+
+int RcVectorization()
+{
+   LOOPQ *lp;
+   extern LOOPQ *optloop;
+
+   lp = optloop;
+#if 0
+   //PrintLoopInfo();
+   fprintf(stdout, "Before RC VEC\n");
+   PrintInst(stdout,bbbase);
+   //exit(0);
+#endif
+#if 0   
+   assert(!RcVecTransform(lp));
+#else
+   //KillLoopControl(lp);
+   isShadowPossible(lp); /*need check whether the condition is to find max/min too*/
+   assert(!RcVecTransform(lp));
+#endif
+   KillPathTable();
+#if 0
+/*
+ * To print code here, should call FinalizeVectorCleanup first
+ */
+   FinalizeVectorCleanup(lp, 1);
+   InvalidateLoopInfo();
+   bbbase = NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__,__LINE__);
+   FindLoops();
+   CheckFlow(bbbase, __FILE__, __LINE__);
+   //PrintST(stdout);
+   PrintInst(stdout,bbbase);
+   //fprintf(stderr, "\n\n OL_NEINC=%d\n", Get_OL_NEINC());
+
+   exit(0);
+#endif
+   return(0);
 }

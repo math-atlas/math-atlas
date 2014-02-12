@@ -1603,10 +1603,21 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
       switch(k)
       {
       case GlobRegAsg:
+/*
+ *       NOTE: it is normally not used !!!!!!  
+ */
          assert(!global);
+         fprintf(stderr, "\n\n Global Reg ASg used!!!\n\n");
          nchanges += DoLoopGlobalRegAssignment(optloop);  
          break;
       case RegAsg:
+
+         fprintf(stderr, "IG REG ASG: ");
+         if (global)
+            fprintf(stderr, " GLOBAL\n");
+         else
+            fprintf(stderr, " LOCAL\n");
+
          #if 0 
             fprintf(stderr, "%d: \n", ++bv);
             fprintf(stderr, "Before : ");
@@ -2491,6 +2502,11 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks,
 
    CalcInsOuts(bbbase);
    CalcAllDeadVariables();
+#if 0
+   fprintf(stdout, "LIL before Reveal ARCH MEM  \n");
+   PrintInst(stdout, bbbase);
+   //exit(0);
+#endif  
    
    RevealArchMemUses(); /* to handle ABS in X86 */
    if (!CFUSETU2D)
@@ -2512,7 +2528,7 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks,
 #if 0
    fprintf(stdout, "LIL before Repeatable Opt \n");
    PrintInst(stdout, bbbase);
-   exit(0);
+   //exit(0);
 #endif  
 
    PerformOptN(0, optblks);
@@ -2523,7 +2539,7 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks,
 #endif   
 
 #if 0
-   PrintST(stdout);
+   //PrintST(stdout);
    fprintf(stdout, "LIL after Repeatable Opt \n");
    PrintInst(stdout, bbbase);
    exit(0);
@@ -2674,9 +2690,14 @@ int main(int nargs, char **args)
    struct optblkq *optblks;
    BBLOCK *bp;
    int i;
+   int RCapp;
    extern FILE *yyin;
    extern BBLOCK *bbbase;
-
+/*
+ * Later: will keep a flag to figure out how many and what opt is applied so far
+ * now, just kept a flag to keep status of RC 
+ */
+   RCapp = 0;  /* RC applied? not yet */
 /*
  * Update flags using command line options and create Optimization block 
  * structures. Note: It's not CFG block, it's block for opts and will be used
@@ -2770,6 +2791,9 @@ int main(int nargs, char **args)
 /*
  * Get code into standard form for analysis
  */
+#if 0
+   PrintInst(stdout, bbbase);
+#endif
    GenPrologueEpilogueStubs(bbbase, 0); /* rsav = 0, normal case */
    bbbase = NewBasicBlocks(bbbase);
    CheckFlow(bbbase,__FILE__,__LINE__);
@@ -2778,6 +2802,7 @@ int main(int nargs, char **args)
 #if 0
    fprintf(stdout, "1st LIL");
    PrintInst(stdout, bbbase);
+   PrintST(stdout);
    //ShowFlow("cfg.dot", bbbase);
    //PrintLoop(stderr,optloop);
    exit(0);
@@ -2845,6 +2870,7 @@ int main(int nargs, char **args)
  *       for determing the max/min. We will extend this to figure out the 
  *       max/min var and strip it out from the loop. 
  */
+         //MovMaxMinVarsOut();
          ElimMaxMinIf();
 #if 0 
          fprintf(stdout, "LIL after ElimMax/MinIf\n");
@@ -2860,9 +2886,24 @@ int main(int nargs, char **args)
          PrintInst(stdout, bbbase);
          ShowFlow("cfg.dot", bbbase);
          exit(0);
-#endif         
-         /*assert(!IfConvWithRedundantComp());*/
+#endif   
+         /*assert(!IterativeRedCom());*/
+/*
+ *       testing.... for iamax
+ */
+         MovMaxMinVarsOut();
+#if 0
+         fprintf(stdout, "LIL after MaxMin\n");
+         PrintInst(stdout, bbbase);
+         fflush(stdout);
+#endif
          assert(!IterativeRedCom());
+#if 0
+         fprintf(stdout, "LIL after RC\n");
+         PrintInst(stdout, bbbase);
+         exit(0);
+#endif
+         RCapp = 1;
 #if 0 
          fprintf(stdout, "LIL after RC\n");
          PrintInst(stdout, bbbase);
@@ -2948,11 +2989,31 @@ int main(int nargs, char **args)
  */
                  /* FKO_UR = 1;*/  /* forced to unroll factor 1*/
       }
+      else if(RCapp)
+      {
+         VECT_FLAG &= ~VECT_SV;
+         VECT_FLAG |= VECT_NCONTRL;
+         /*VectorAnalysis();*/
+         assert(!RcVectorAnalysis());
+         RcVectorization();
+         FinalizeVectorCleanup(optloop, 1);
+#if 0
+         InvalidateLoopInfo();
+         bbbase = NewBasicBlocks(bbbase);
+         CheckFlow(bbbase, __FILE__,__LINE__);
+         FindLoops();
+         CheckFlow(bbbase, __FILE__, __LINE__);
+        
+         PrintLoop(stderr, optloop);
+         fprintf(stdout, "After RC Vec with finalized cleanup\n");
+         PrintInst(stdout, bbbase);
+         exit(0);
+#endif
+      }
       else
       {
          VECT_FLAG &= ~VECT_SV;
          VECT_FLAG |= VECT_NCONTRL;
-         
          /*VectorAnalysis();*/
          assert(!SpeculativeVectorAnalysis());
          Vectorization();

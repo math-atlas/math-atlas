@@ -23,6 +23,10 @@ int ireg2type(int ireg)
    else if (ireg >= VDREGBEG && ireg < VDREGEND)
       iret = T_VDOUBLE;
 #endif
+#ifdef VIREGBEG
+   else if (ireg >= VIREGBEG && ireg < VIREGEND)
+      iret = T_VINT;
+#endif
    return(iret);
 }
 short Reg2Int(char *regname)
@@ -48,6 +52,10 @@ short Reg2Int(char *regname)
 #ifdef VDREGBEG
    for (i=VDREGBEG; i < VDREGEND; i++)
       if (!strcmp(archvdregs[i-VDREGBEG], regname)) return(-i);
+#endif
+#ifdef VIREGBEG
+   for (i=VIREGBEG; i < VIREGEND; i++)
+      if (!strcmp(archviregs[i-VIREGBEG], regname)) return(-i);
 #endif
    for (i=ICC0; i < NICC; i++)
       if (!strcmp(ICCREGS[i], regname)) return(-i);
@@ -89,6 +97,10 @@ char *Int2Reg0(int i)
 #ifdef VDREGBEG
    else if (i >= VDREGBEG && i < VDREGEND)
       sprintf(ln, "%s", archvdregs[i-VDREGBEG]);
+#endif
+#ifdef VIREGBEG
+   else if (i >= VIREGBEG && i < VIREGEND)
+      sprintf(ln, "%s", archviregs[i-VIREGBEG]);
 #endif
    else
       ret = NULL;
@@ -145,6 +157,10 @@ void SetAllTypeReg(INT_BVI iv, int type)
       ibeg = VDREGBEG;
       iend = VDREGEND;
       break;
+   case T_VINT:
+      ibeg = VIREGBEG;
+      iend = VIREGEND;
+      break;
    default:
       fko_error(__LINE__, "unknown type %d, file=%s\n", type, __FILE__);
    }
@@ -180,6 +196,9 @@ int Reg2Regstate(int k)
             #ifdef X86
                SetVecBit(iv, k-FREGBEG+VDREGBEG-1, 1);
                SetVecBit(iv, k-FREGBEG+VFREGBEG-1, 1);
+               #ifdef VIREGBEG
+                  SetVecBit(iv, k-FREGBEG+VIREGBEG-1, 1);   
+               #endif
             #endif
          #elif defined(SPARC)
             SetVecBit(iv, ((k-FREGBEG)>>1)+DREGBEG-1, 1);
@@ -192,6 +211,9 @@ int Reg2Regstate(int k)
             #ifdef X86
                SetVecBit(iv, k-DREGBEG+VDREGBEG-1, 1);
                SetVecBit(iv, k-DREGBEG+VFREGBEG-1, 1);
+               #ifdef VIREGBEG
+                  SetVecBit(iv, k-DREGBEG+VIREGBEG-1, 1);   
+               #endif
             #endif
          #elif defined(SPARC)
             i = k - DREGBEG;
@@ -208,13 +230,28 @@ int Reg2Regstate(int k)
          SetVecBit(iv, k-VFREGBEG+VDREGBEG-1, 1);
          SetVecBit(iv, k-VFREGBEG+FREGBEG-1, 1);
          SetVecBit(iv, k-VFREGBEG+DREGBEG-1, 1);
+         #ifdef VIREGBEG
+            SetVecBit(iv, k-VFREGBEG+VIREGBEG-1, 1);   
+         #endif
       }
       else if (k >= VDREGBEG && k < VDREGEND)
       {
          SetVecBit(iv, k-VDREGBEG+VFREGBEG-1, 1);
          SetVecBit(iv, k-VDREGBEG+FREGBEG-1, 1);
          SetVecBit(iv, k-VDREGBEG+DREGBEG-1, 1);
+         #ifdef VIREGBEG
+            SetVecBit(iv, k-VDREGBEG+VIREGBEG-1, 1);   
+         #endif
       }
+      #ifdef VIREGBEG
+      else if (k >= VIREGBEG && k < VIREGEND) /* for new type V_INT*/
+      {
+         SetVecBit(iv, k-VIREGBEG+VDREGBEG-1, 1);
+         SetVecBit(iv, k-VIREGBEG+VFREGBEG-1, 1);
+         SetVecBit(iv, k-VIREGBEG+FREGBEG-1, 1);
+         SetVecBit(iv, k-VIREGBEG+DREGBEG-1, 1);
+      }
+      #endif
    #endif
    }
 #if 0
@@ -254,11 +291,13 @@ int FindLiveregs(INSTQ *here)
          SetAllTypeReg(mask, T_DOUBLE);
          SetAllTypeReg(mask, T_VFLOAT);
          SetAllTypeReg(mask, T_VDOUBLE);
+#ifdef VIREGBEG         
+         SetAllTypeReg(mask, T_VINT);
+#endif
          SetVecBit(mask, REG_SP-1, 0);
          #ifdef X86_32
 /*
- *          FIXME:  Reg2Int always return -ve index!!! How can we use this!!!
- *          FIXED but not fully tested!
+ *          FIXED:  Reg2Int always return -ve index!!! -- Majedul 
  */
             #if 0
                SetVecBit(mask, Reg2Int("@st")-1, 0);
@@ -274,12 +313,17 @@ int FindLiveregs(INSTQ *here)
  *    Add all regs live on block entry to liveregs by adding regs from ins to lr
  */
       BitVecComb(vtmp, here->myblk->ins, mask, '&');
+/*
+ *    FIXME: Reg2Regstate() always set all the alias regs
+ */
       for (i=1; k = GetSetBitX(vtmp, i); i++)
          BitVecComb(liveregs, liveregs, Reg2Regstate(k), '|');
       for (ip=here->myblk->inst1; ip != here; ip = ip->next)
       {
 /*
  *       Remove all dead regs from livereg
+ *       FIXME: Creates problem when we have more than one alias regs is live. 
+ *       one of them is dead but still it should not be leased. 
  */
          if (ip->deads)
          {
@@ -630,7 +674,10 @@ void CalcBlockIG(BBLOCK *bp)
          }
 /*
  *       If it is a register that's dead, delete it from liveregs
- * HERE HERE NOTE: shouldn't we use Reg2RegState here?
+ *       HERE HERE NOTE: shouldn't we use Reg2RegState here?
+ *
+ *       FIXME: we can't release all alias registers when more than one alias
+ *       register is live !!!
  */
          else
             BitVecComb(liveregs, liveregs, Reg2Regstate(k+1), '-');
@@ -1290,6 +1337,10 @@ int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
             ip->inst[3] = -ig->reg;
          switch(GET_INST(ip->inst[0]))
          {
+/*
+ *       FIXME: nothing about LDS! not works by mov. We will need something to 
+ *       convert into 32 bit int reg
+ */
          case LD:
             ip->inst[0] = MOV;
             break;
@@ -1305,6 +1356,11 @@ int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
          case VDLD:
             ip->inst[0] = VDMOV;
             break;
+      #ifdef VIREGBEG
+         case VLD:
+            ip->inst[0] = VMOV;
+            break;
+      #endif
          case VDLDS:
             #ifdef X86
                k = ig->reg;
@@ -1329,6 +1385,20 @@ int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
             ip->inst[0] = VFMOVS;
             ip->inst[2] = -ig->reg;
             break;
+      #ifdef VIREGBEG 
+         case VLDS:
+            #ifdef X86
+               k = ig->reg;
+               if (k >= IREGBEG && k < IREGEND)
+                  k = k - IREGBEG + VIREGBEG;
+               if (k != -ip->inst[1])
+                  CalcThisUseSet(InsNewInst(NULL, NULL, ip, VIZERO, 
+                                    ip->inst[1], 0, 0));
+            #endif
+            ip->inst[0] = VMOVS;
+            ip->inst[2] = -ig->reg;
+            break;
+      #endif
          default:
             /*fprintf(stderr,"\n\nWARNING(%s,%d): inst %d being var2reged!!\n\n",
                     __FILE__, __LINE__, ip->inst[0]);*/
@@ -1395,6 +1465,13 @@ int DoRegAsgTransforms(IGNODE *ig)
       ld  = VFLD;
       st  = VFST;
       break;
+#if 1
+   case T_VINT:
+      mov = VMOV;
+      ld  = VLD;
+      st  = VST;
+      break;
+#endif
    default:
       fko_error(__LINE__, "Unknown type %d (flag=%d) in %s\n", FLAG2TYPE(i),
                 i, __FILE__);
@@ -1409,7 +1486,7 @@ int DoRegAsgTransforms(IGNODE *ig)
  *    NOTE: we have no memory-output instructions, so assert set is ST
  */
       ip = bl->ptr;
-/*    Majedul: lets check ip got NULL ??! */
+/*    Majedul: let's check ip to NULL ??! */
       assert(ip);
       if (ip && BitVecCheck(ip->set, ig->var+TNREG-1))
       {
@@ -2814,6 +2891,11 @@ int DoEnforceLoadStore(BLIST *scope)
                   case T_VDOUBLE:
                      inst = VDLD;
                      break;
+               #ifdef VIREGBEG
+                  case T_VINT:
+                     inst = VLD;
+                     break;
+               #endif
                   }
                   ipN = InsNewInst(NULL, NULL, ip, inst, -ir, op, 0);
                   if (op == ip->inst[3])
@@ -2934,6 +3016,11 @@ static enum inst type2move(int type)
    case T_VDOUBLE:
       mov = VDMOV;
       break;
+#ifdef VIREGBEG
+   case T_VINT:
+      mov = VMOV;
+      break;
+#endif
    default:
       fko_error(__LINE__, "Unknown type %d, file=%s\n", type, __FILE__);
    }

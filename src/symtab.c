@@ -21,6 +21,11 @@ short *STpts2;
 
 static int N=0, Nalloc=0;
 static int niloc=0, nlloc=0, nfloc=0, ndloc=0, nvfloc=0, nvdloc=0;
+
+#if 1
+static int nviloc=0;
+#endif
+
 int    LOCSIZE=0, LOCALIGN=0, NPARA=0;
 
 #define STCHUNK 1024    /* increased for safety ...*/
@@ -357,6 +362,11 @@ void NumberLocalsByType()
          case T_DOUBLE:
             SToff[k].sa[1] = ndloc++;
             break;
+#if 1
+         case T_VINT:
+            SToff[k].sa[1] = nviloc++;
+            break;
+#endif
          }
          #if IFKO_DEBUG_LEVEL > 1
             fprintf(stderr, "%c: %s gets slot %d\n", IS_PARA(fl) ? 'P' : 'L', 
@@ -401,7 +411,11 @@ void UpdateLocalDerefs(int isize)
 {
    short k, off, h, i;
    int fl;
+#if 1
+   int GetArchAlign(int nvd, int nvf, int nvi, int nd, int nf, int nl, int ni);
+#else
    int GetArchAlign(int nvd, int nvf, int nd, int nf, int nl, int ni);
+#endif
 
    for (k=0; k != N; k++)
    {
@@ -409,25 +423,56 @@ void UpdateLocalDerefs(int isize)
       if ((IS_PARA(fl) || IS_LOCAL(fl)) && SToff[SToff[k].sa[2]-1].sa[0])
       {
 /* fprintf(stderr, "Updating local %s\n", STname[k]); */
+/*
+ *       NOTE: this is the structure
+ *
+ *          VDOUBLE
+ *          VFLOAT
+ *          VINT
+ *          double
+ *          int
+ *          float
+ *       
+ */
          switch(FLAG2PTYPE(fl))
          {
+         case T_VFLOAT:
+            off = SToff[k].sa[1]*FKO_SVLEN*4 + nvdloc*FKO_DVLEN*8;
+            break;
+         case T_VDOUBLE:
+            off = SToff[k].sa[1]*FKO_DVLEN*8;
+            break;
+#if 1
+         case T_VINT:
+            off = SToff[k].sa[1]*FKO_IVLEN*4 + nvdloc*FKO_DVLEN*8 + 
+                  nvfloc*FKO_SVLEN*4;
+            break;
+         case T_DOUBLE:
+            off = SToff[k].sa[1]*8 + nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4 +
+                  nviloc*FKO_IVLEN*4 ;
+            break;
+         case T_INT:
+            off = SToff[k].sa[1]*isize + ndloc*8 + 
+                  nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4 + nviloc*FKO_IVLEN*4;
+            break;
+         case T_FLOAT:
+            off = SToff[k].sa[1]*4 + nvdloc*FKO_DVLEN*8 + 
+                  nvfloc*FKO_SVLEN*4 + nviloc*FKO_IVLEN*4 + ndloc*8 + 
+                  niloc*isize;
+            break;
+#else
+         case T_DOUBLE:
+            off = SToff[k].sa[1]*8 + nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4;
+            break;
          case T_INT:
             off = SToff[k].sa[1]*isize + ndloc*8 + 
                   nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4;
-            break;
-         case T_VFLOAT:
-            off = SToff[k].sa[1]*FKO_SVLEN*4 + nvdloc*FKO_DVLEN*8;
             break;
          case T_FLOAT:
             off = SToff[k].sa[1]*4 + nvdloc*FKO_DVLEN*8 + 
                   nvfloc*FKO_SVLEN*4 + ndloc*8 + niloc*isize;
             break;
-         case T_VDOUBLE:
-            off = SToff[k].sa[1]*FKO_DVLEN*8;
-            break;
-         case T_DOUBLE:
-            off = SToff[k].sa[1]*8 + nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4;
-            break;
+#endif
          default:
             fprintf(stderr, "%d: Unknown type %d!\n", __LINE__, FLAG2PTYPE(fl));
             exit(-1);
@@ -435,9 +480,15 @@ void UpdateLocalDerefs(int isize)
          SToff[SToff[k].sa[2]-1].sa[3] = off;
       }
    }
+#if 1
+   LOCALIGN = GetArchAlign(nvdloc, nvfloc, nviloc, ndloc, nfloc, nlloc, niloc);
+   LOCSIZE = nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4 + nviloc*FKO_IVLEN*4 + 
+             ndloc*8 + niloc*isize + nfloc*4;
+#else
    LOCALIGN = GetArchAlign(nvdloc, nvfloc, ndloc, nfloc, nlloc, niloc);
    LOCSIZE = nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4 + 
              ndloc*8 + niloc*isize + nfloc*4;
+#endif   
 }
 
 void CorrectLocalOffsets(int ldist)
@@ -513,6 +564,9 @@ void MarkUnusedLocals(BBLOCK *bbase)
          for (k=1; k <= 3; k++)
          {
             i = ip->inst[k]-1;
+#if 0
+            fprintf(stdout, "i=%d, k=%d\n",i,k);
+#endif            
             if (i >= 0 && IS_DEREF(STflag[i]) && !SToff[i].sa[0] && 
                 SToff[i].sa[2] < 0)
             {

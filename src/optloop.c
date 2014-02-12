@@ -1153,9 +1153,10 @@ void AddLoopControl(LOOPQ *lp, INSTQ *ipinit, INSTQ *ipupdate, INSTQ *ippost,
          assert(lp->preheader && lp->preheader->preds && 
                 !lp->preheader->preds->next);
          ipl = FindCompilerFlag(lp->preheader->preds->blk, CF_LOOP_INIT);
-         assert(ipl);
+         //assert(ipl);
       }
 #endif      
+      assert(ipl);
       for (ip = ipinit; ip; ip = ip->next)
          ipl = InsNewInst(NULL, ipl, NULL, ip->inst[0], ip->inst[1], 
                           ip->inst[2], ip->inst[3]);
@@ -1337,9 +1338,17 @@ void OptimizeLoopControl(LOOPQ *lp, /* Loop whose control should be opt */
    }
    else
    {
-/*      fprintf(stderr, "\nLoop good for SimpleLC!!!\n\n"); */
+      /*fprintf(stderr, "\nLoop good for SimpleLC!!!\n\n");*/
       SimpleLC(lp, unroll, &ipinit, &ipupdate, &iptest);
    }
+#if 0
+   fprintf(stderr, "Loop init:\n");
+   if(ipinit) PrintThisInstQ(stderr, ipinit);
+   fprintf(stderr, "Loop test:\n");
+   if(iptest) PrintThisInstQ(stderr, iptest);
+   else 
+      fprintf(stderr, "NO Loop test!!!\n");
+#endif
    AddLoopControl(lp, lp->preheader ? ipinit : NULL, ipupdate, ippost, iptest);
    KillAllInst(ipinit);
    KillAllInst(ipupdate);
@@ -1870,11 +1879,18 @@ void UnrollCleanup(LOOPQ *lp, int unroll)
                             STiconstlookup(unroll*SToff[lp->inc-1].i));
          InsNewInst(bp, NULL, ipnext, ST, SToff[lp->end-1].sa[2], -r1, 0);
       }
+/*
+ *    FIXME: 
+ */
+      else assert(0); /* not considering const !!!!*/
       InsNewInst(bp, NULL, ipnext, LD, -r0, SToff[lp->I-1].sa[2], 0);
       if (IS_CONST(STflag[lp->end-1]))
          InsNewInst(bp, NULL, ipnext, CMP, -ICC0, -r0, lp->end);
       else
+      {
+         InsNewInst(bp, NULL, ipnext, LD, -r1, SToff[lp->end-1].sa[2], 0);
          InsNewInst(bp, NULL, ipnext, CMP, -ICC0, -r0, -r1);
+      }
    }
    else
    {
@@ -4863,11 +4879,15 @@ void FinalizeVectorCleanup(LOOPQ *lp, int unroll)
                             STiconstlookup(unroll*SToff[lp->inc-1].i));
          InsNewInst(bp, NULL, ipnext, ST, SToff[lp->end-1].sa[2], -r1, 0);
       }
+      else assert(0); /* FIXME: need to consider const too */
       InsNewInst(bp, NULL, ipnext, LD, -r0, SToff[lp->I-1].sa[2], 0);
       if (IS_CONST(STflag[lp->end-1]))
          InsNewInst(bp, NULL, ipnext, CMP, -ICC0, -r0, lp->end);
       else
+      {
+         InsNewInst(bp, NULL, ipnext, LD, -r1, SToff[lp->end-1].sa[2], 0);
          InsNewInst(bp, NULL, ipnext, CMP, -ICC0, -r0, -r1);
+      }
    }
    else
    {
@@ -5480,7 +5500,9 @@ int ElimMaxMinIf()
 
    changes = 0;
    lp = optloop;
-   
+/*
+ * NOTE: find all fp scalar variables
+ */
    scal = FindAllScalarVars(lp->blocks);   
    for (N = scal[0], i=1; i <= N; i++)
    {
@@ -5515,6 +5537,302 @@ int ElimMaxMinIf()
    }
 
    return (0);  
+}
+/*
+ * mov max/min var from if condition, useful when their are some other vars
+ * and if-conditinal can't be moved
+ */
+void AddMaxInst(BBLOCK *bp, INSTQ *ipnext, short MaxVar, short xvar)
+{
+   int type;
+   short reg0, reg1;
+   enum inst ld, st, max;
+   INSTQ *ip;
+
+   type = FLAG2TYPE(STflag[MaxVar-1]);
+   switch(type)
+   {
+   case T_FLOAT:
+      ld = FLD;
+      st = FST;
+      max = FMAX;
+      break;
+   case T_DOUBLE:
+      ld = FLDD;
+      st = FSTD;
+      max = FMAXD;
+      break;
+   default:
+   case T_VFLOAT:
+   case T_VDOUBLE:
+      fko_error(__LINE__,"Unknown type=%d, file=%s. Should be done before Vect",
+                type, __FILE__);
+   }
+   
+   reg0 = GetReg(type);
+   reg1 = GetReg(type);
+  
+   assert(ipnext);
+#if 0
+   ip = InsNewInst(bp, NULL, ipnext, ld, -reg0, 
+         SToff[MaxVar-1].sa[2], 0); 
+   ip = InsNewInst(bp, NULL, ipnext, ld, -reg1, 
+         SToff[xvar-1].sa[2], 0);
+   ip = InsNewInst(bp, NULL, ipnext, max, -reg0, -reg0, -reg1);
+   ip = InsNewInst(bp, NULL, ipnext, st, SToff[MaxVar-1].sa[2],
+         -reg0, 0);
+#else
+   InsNewInst(bp, NULL, ipnext, ld, -reg0, 
+         SToff[MaxVar-1].sa[2], 0); 
+   InsNewInst(bp, NULL, ipnext, ld, -reg1, 
+         SToff[xvar-1].sa[2], 0);
+   InsNewInst(bp, NULL, ipnext, max, -reg0, -reg0, -reg1);
+   InsNewInst(bp, NULL, ipnext, st, SToff[MaxVar-1].sa[2],
+         -reg0, 0);
+#endif
+   GetReg(-1);
+
+}
+
+void RemoveIfMaxVar(BBLOCK *ifblk, short MaxVar)
+{
+   int used;
+   INSTQ *ip, *ip1, *ip2;
+
+   used = 0;
+   for (ip = ifblk->ainst1; ip; ip = ip->next)
+   {
+      if (IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]-1] == MaxVar)
+      {
+/* 
+ *       Just a plain assignment, no other operation
+ */
+         assert(IS_LOAD(ip->prev->inst[0]));
+         //assert(IS_LOAD(ip->prev->prev->inst[0]));
+         //assert(!IS_LOAD(ip->prev->prev->prev->inst[0]));
+         ip1 = ip->prev;
+         while (IS_LOAD(ip1->inst[0]))
+         {
+            ip2 = ip1->prev;
+            RemoveInstFromQ(ip1);
+            ip1 = ip2;
+         }
+/*
+ *       remove this assignment inst
+ */
+         ip = RemoveInstFromQ(ip);
+/*
+ *       should have only one instance
+ */
+         break;
+      }
+   }
+/*
+ * NOTE: Right now,  use a tight restriction here is simplify the implementation:
+ * Restriction: maxvar shouldn't be used any here in any where inside if-blk 
+ * so that we can mov max inst before/after the blk.
+ * Later, we will relax the restriction
+ */
+   for (ip = ifblk->ainst1; ip; ip = ip->next)
+   {
+      if (IS_LOAD(ip->inst[0]) && ( ip->inst[1] > 0 && 
+                                    STpts2[ip->inst[1]-1] == MaxVar ) )
+      {
+         fprintf(stderr, "Can't perform the reduction" 
+                         " if maxvar is used for other purpose");
+         assert(0);
+      }
+   }
+}
+
+int MovMaxVarOut(short MaxVar, BLIST *scope)
+{
+   int i, j;
+   int type;
+   short reg0, reg1, regv, regx;
+   short xvar, label;
+   enum inst inst, ld, st, br, cmp, max;
+   BBLOCK *bp, *splitblk, *ifblk, *elseblk, *mergeblk;
+   INSTQ *ip, *ip0, *ip1, *ipprev;
+   BLIST *bl;
+
+   type = FLAG2TYPE(STflag[MaxVar-1]);
+   switch(type)
+   {
+   case T_FLOAT:
+      ld = FLD;
+      st = FST;
+      cmp = FCMP;
+      max = FMAX;
+      break;
+   case T_DOUBLE:
+      ld = FLDD;
+      st = FSTD;
+      cmp = FCMPD;
+      max = FMAXD;
+      break;
+   default:
+   case T_VFLOAT:
+   case T_VDOUBLE:
+      fko_error(__LINE__,"Unknown type=%d, file=%s. Should be done before Vect",
+                i, __FILE__);
+   }
+   
+   for (bl = scope; bl; bl = bl->next)
+   {
+      bp = bl->blk;
+      for (ip = bp-> ainst1; ip; ip = ip->next)
+      {
+/*
+ *       FORMAT: cmp fcc, reg0, reg1
+ *               JLT/JGT PC, fcc, LABEL
+ *       There would be exactly two ld of 2 vars/const
+ */
+         if (IS_COND_BRANCH(ip->inst[0]) && (ip->prev->inst[0]== cmp))
+         {
+            reg0 = ip->prev->inst[2];
+            reg1 = ip->prev->inst[3];
+            br = ip->inst[0];
+
+            ip0 = ip->prev->prev->prev;     /* 1st ld */
+            assert((ip0->inst[0] == ld));
+            ip1 = ip->prev->prev;           /* 2nd ld */
+            assert((ip1->inst[0] == ld));
+/*
+ *          for load, inst[2] must be a var 
+ */
+            if (STpts2[ip0->inst[2]-1] == MaxVar)
+            {
+               regv = ip0->inst[1];
+               xvar = ip1->inst[2];
+               regx = ip1->inst[1];
+            }
+            else if (STpts2[ip1->inst[2]-1] == MaxVar)
+            {
+               regv = ip1->inst[1];
+               xvar = ip0->inst[2];
+               regx = ip0->inst[1];
+            }
+            else 
+               regv = 0;
+            if ( ((regv == reg0) && (br == JLT)) ||  
+                 ((regv == reg1) && (br == JGT)) )
+            {
+               label = ip->inst[3];
+               /* check for single set inside if-blk and not set where else*/
+/*
+ *             There are two checks:
+ *                1. Max/Min var is only set inside the ifblk, nowhere else. It
+ *                   needed for the reduction at posttails
+ *             not needed here ...2. No other var but max/min is set inside ifblk
+ */
+               if (CheckMaxMinConstraints(scope, MaxVar, label) )
+               {
+                  // Now, it's time to mov instruction ..
+                  /*fprintf(stderr, "elim blks for max var = %s\n", 
+                          STname[maxvar-1]);*/
+                  assert(ip0->prev->inst[0] != ld);
+/*
+ *                find conditinal blk structure 
+ */
+                  splitblk = bp;
+                  ifblk = splitblk->csucc;
+                  if (ifblk->usucc != splitblk->usucc)
+                  {
+                     elseblk = splitblk->usucc;
+                     mergeblk = elseblk->usucc;
+                  }
+                  else 
+                  {
+                     elseblk = NULL;
+                     mergeblk = splitblk->usucc;
+                  }
+                  assert(mergeblk == ifblk->usucc);
+/*
+ *                Remove Max var set instruciton from if-blk
+ */
+                  RemoveIfMaxVar(ifblk, MaxVar);
+/*
+ *                Add vmax instruction at merge blk... we assume that max var
+ *                is not used and xvar is not set in if-blk before the max  is 
+ *                set inside ... not tested for xvar!!! 
+ */
+#if 0
+                  fprintf(stderr, "maxvar=%s, xvar=%s\n", STname[MaxVar-1],
+                        STname[STpts2[xvar-1]-1]);
+                  PrintThisBlockInst(stderr, mergeblk);
+#endif
+                  AddMaxInst(mergeblk, 
+                     (mergeblk->ainst1->inst[0]==LABEL)?
+                     mergeblk->ainst1->next : mergeblk->ainst1 , 
+                        MaxVar, STpts2[xvar-1]);
+#if 0
+                  PrintInst(stderr, bbbase);
+#endif
+                  return 1;                         
+               }
+            }
+         }
+      }
+   }
+   return (0);
+}
+
+int MovMinVarOut(short MinVar, BLIST *scope)
+{
+   return 0;
+}
+
+int MovMaxMinVarsOut()
+{
+   int i, j, N;
+   short *scal;
+   LOOPQ *lp;
+   int changes;
+
+   changes = 0;
+   lp = optloop;
+   
+   scal = FindAllScalarVars(lp->blocks);   
+   for (N = scal[0], i=1; i <= N; i++)
+   {
+      if (VarIsMax(lp->blocks, scal[i]))
+      {
+         #if 0
+            fprintf(stderr, "Max var = %s\n", STname[scal[i]-1]);  
+         #endif
+         changes += MovMaxVarOut(scal[i],lp->blocks);
+      }
+      else if (VarIsMin(lp->blocks, scal[i]))
+      {
+         #if 0
+            fprintf(stderr, "Min var = %s\n", STname[scal[i]-1]);
+         #endif
+         changes += MovMinVarOut(scal[i], lp->blocks);
+      }
+   }
+   if (scal) free(scal);
+/*
+ * re-construct the CFG 
+ */
+   if (changes)
+   {
+      CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = CFLOOP = 0;
+      InvalidateLoopInfo();
+      bbbase = NewBasicBlocks(bbbase);
+      CheckFlow(bbbase, __FILE__, __LINE__);
+      FindLoops();
+      CheckFlow(bbbase, __FILE__, __LINE__);
+#if 0
+      fprintf(stderr, "LIL: \n");
+      PrintInst(stderr, bbbase);
+      ShowFlow("cfg.dot", bbbase);
+#endif
+      return (changes);
+   }
+
+   return (0);  
+
 }
 
 /*=============================================================================
@@ -5767,6 +6085,15 @@ short *FindVarsCMOVNeeded(BBLOCK *bp0)
    {
       iv = BitVecComb(iv, iv, ip->set, '|');
    }
+#if 0
+   fprintf(stderr, "bp0 = %d, bp0->outs=%d\n", bp0->bnum, bp0->outs);
+   PrintThisBlockInst(stderr, bp0);
+#endif
+/*
+ * NOTE: never bypass a bug like this, always find the cause of it
+ */
+   /*if(bp0->outs)
+      iv = BitVecComb(iv, iv, bp0->outs, '&');*/
    iv = BitVecComb(iv, iv, bp0->outs, '&');
 /*
  * clear all the regs in bvec to find out vars only
@@ -5876,6 +6203,28 @@ void MovInstFromBlkToBlk(BBLOCK *fromblk, BBLOCK *toblk)
    }
 }
 
+int CreateIMaskVar(int Mask)
+/*
+ * this function creates integer mask variable from original mask 
+ */
+{
+   int imask;
+   char *cmask, *stmask;
+   int type;
+#if 0
+   fprintf(stderr, "mask = %d: %s\n", Mask, STname[Mask-1]);
+#endif
+   type = T_INT;
+   stmask = STname[Mask-1];
+   assert(stmask);
+   cmask = (char*)malloc(sizeof(char)*(strlen(stmask)+2));
+   assert(cmask);
+   sprintf(cmask,"i%s",stmask);
+   imask = InsertNewLocal(cmask,type);
+   free(cmask); /* string copied and stored in ST */
+   return(imask);
+}
+#if 0
 int RedundantScalarComputation(LOOPQ *lp)
 /*
  * Assuming CFG is already constructed.
@@ -6227,13 +6576,13 @@ int RedundantScalarComputation(LOOPQ *lp)
    if (ecmvars) free(ecmvars);
    if (inewvars) free(inewvars);
    if (enewvars) free(enewvars);
-
-   KillBlockList(ifblks);
+0   KillBlockList(ifblks);
    KillBlockList(elseblks);
    KillBlockList(splitblks);
    KillBlockList(mergeblks);
    return err; 
 }
+#endif
 
 int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
 /*
@@ -6252,9 +6601,9 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
    short *isetvars, *esetvars, *icmvars, *ecmvars; /* i=if, e=else */
    short *inewvars, *enewvars;
 
-   short nv, sv, nv1, nv2, mask;
-   short freg0, freg1, freg2;
-   enum inst cmov1, cmov2, fld, fst; 
+   short nv, sv, nv1, nv2, mask, imask, codemask;
+   short reg0, reg1, reg2, ireg;
+   enum inst cmov1, cmov2, ld, st, cvtmask, mskld, movmsk; 
    BBLOCK *bp, *bo0, *mergeblk;
    INSTQ *ip, *ip0;
    BLIST *bl;
@@ -6369,7 +6718,7 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
    SetVecAll(iv, 0); 
 /*
  * NOTE: BitVec2Array returns formated array[N,s1,s2...] but Array2BitVec
- * takes unformatted array without the count.
+ * takes unformatted array without the count (first element).
  */
    iv = BitVecCopy(iv, Array2BitVec(icmvars[0], icmvars+1, TNREG-1));
    if (elseblk)
@@ -6384,6 +6733,7 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
 #endif
 /*
  * Figure out which var is in which blk
+ * NOTE: 1 => if only blk  2=> else only blk    3=> in both blks
  */
    N = sp[0]; 
    vpos = malloc(sizeof(int)*(N+1));
@@ -6391,20 +6741,20 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
    
    for (i=1; i <= N; i++)
    {
-      if (FindInShortList(icmvars[0], icmvars+1, sp[i]))
+      if (FindInShortList(icmvars[0], icmvars+1, sp[i])) /* in if blk */
       {
-         if (elseblk)
+         if (elseblk) /* is else blk*/
          {
-            if (FindInShortList(ecmvars[0], ecmvars+1, sp[i]))
-               vpos[i] = 3;
+            if (FindInShortList(ecmvars[0], ecmvars+1, sp[i])) /* in else blk*/
+               vpos[i] = IN_BOTH_IF_ELSE;
             else
-               vpos[i] = 1;
+               vpos[i] = IN_IF_ONLY;
          }
          else
-            vpos[i] = 1;
+            vpos[i] = IN_IF_ONLY;
       }
       else
-         vpos[i] = 2;
+         vpos[i] = IN_ELSE_ONLY;
    }
 
 #if 0
@@ -6412,6 +6762,7 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
    for (N=sp[0], i=1; i <=N; i++)
       fprintf(stderr, "%s[%d] = %d ", STname[sp[i]-1], sp[i]-1, vpos[i]);
    fprintf(stderr, "\n");
+   exit(0);
 #endif
 
 /*
@@ -6422,7 +6773,7 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
  * for case-1, add select instruction at the first of the common blocks.
  * for case-2, add select inst at the end of the working blk.
  * 
- * NOTE: before inserting the select inst, the conditinal jump should be change
+ * NOTE: before inserting the select inst, the conditinal jump should be changed
  * update the mask variable.....!!!!!!!!!
  *
  * KEEP IN MIND: 
@@ -6451,26 +6802,129 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
       {
          cmov1 = FCMOV1;
          cmov2 = FCMOV2;
-         fld = FLD;
-         fst = FST;
+         ld = mskld = FLD;
+         st = FST;
          type = T_FLOAT;
+         codemask = mask;
       }
       else if (IS_DOUBLE(STflag[sp[i]-1]))
       {
          cmov1 = FCMOVD1;
          cmov2 = FCMOVD2;
-         fld = FLDD;
-         fst = FSTD;
+         ld = mskld = FLDD;
+         st = FSTD;
          type = T_DOUBLE;
+         codemask = mask;
       }
       else  /* can't handle integer yet */
       {
+/*
+ *       statement with index variable can be 
+ *       new int inst needed: CMOV1, CMOV2
+ */
+#if 0
          err = 1;
          break;
+#else
+         cmov1 = CMOV1;
+         cmov2 = CMOV2;
+         ld = LD;
+         st = ST;
+         type = T_INT;
+
+   #if 0         
+/*
+ *       we need to convert mask into imask (something like: vmovmskps in X86)
+ *       so that it can be used in CMOV instruction.... need to find out 
+ *       suitable implementation of CNOV instruction too.
+ */
+/*
+ *       STEPS:
+ *       1. find type of mask variable
+ *       2. create a new mask for integer
+ *       3. load orginal mask into appropriate reg
+ *       4. covert to imask 
+ *       5. st the imask ... use this mask to operate cmov for integer
+ *
+ *       FIXME: it would create problem for scalar version. Scalar cmov inst
+ *       does depend on EFLAGS, not any reg/var in X86. converting the mask is 
+ *       another issue... it would be complicated
+ */
+         imask = CreateIMaskVar(mask);
+         codemask = imask;
+/*
+ *       insert inst to convert mask to imask
+ */
+         reg0 = GetReg(type);
+         if (IS_FLOAT(STflag[mask-1]))
+         {
+            reg1 = GetReg(T_FLOAT);
+            cvtmask = CVTMASKFI;
+         }
+         else if (IS_DOUBLE(STflag[mask-1]))
+         {
+            reg1 = GetReg(T_DOUBLE);
+            cvtmask = CVTMASKDI; 
+         }
+         else assert(0);
+         
+         /*ip = InsNewInst(bp, ip, NULL, ld, -reg0, SToff[codemask-1].sa[2],0);*/
+         ip = InsNewInst(bp, ip, NULL, ld, -reg1, SToff[mask-1].sa[2], 0);
+         ip = InsNewInst(bp, ip, NULL, cvtmask, -reg0, -reg1, 0 );
+         ip = InsNewInst(bp, ip, NULL, st, SToff[codemask-1].sa[2], -reg0, 0);
+         GetReg(-1);
+         //assert(0);
+/*
+ *       NOTE: Alternative idea: we have cmov for integer depending on EFLAGS
+ *       in X86. The CMP of original scalar code already effects the EFLAGS. So,
+ *       we can use the same CMP and CMOV instrcution.... problem then, if there 
+ *       exists other CMP which also effects the EFLAGS... where should we place
+ *       the code!!!
+ */
+   #else
+/*
+ *       Without converting the mask at all
+ */
+         if (IS_FLOAT(STflag[mask-1]))
+         {
+            reg0 = GetReg(T_FLOAT);
+            mskld = FLD;
+            movmsk = CVTBFI;
+         }
+         else if (IS_DOUBLE(STflag[mask-1]))
+         {
+            reg0 = GetReg(T_DOUBLE);
+            mskld = FLDD;
+            movmsk = CVTBDI;
+         }
+         else assert(0);
+         codemask = mask;
+/*
+ *       insert mask test which updates FCC0
+ *       FIXME: right now, we use following cmp instruction for each int var 
+ *       update. But we can and should use only one cmp instruction for all the
+ *       updates; will update so later.
+ */
+         ip = InsNewInst(bp, ip, NULL, mskld, -reg0, SToff[mask-1].sa[2], 0);
+#if 0
+         ip = InsNewInst(bp, ip, NULL, MASKTEST, -FCC0, -reg0, 0 );
+#else
+/*
+ *       CVTBFI / CVTBDI ireg, freg/dreg 
+ *       BT ireg, $0
+ *       CMOV1/CMOV2 ireg1, ireg2, ireg3
+ */
+         ireg = GetReg(T_INT);
+         ip = InsNewInst(bp, ip, NULL, movmsk, -ireg, -reg0, 0);
+         ip = InsNewInst(bp, ip, NULL, BTC, -ICC0, -ireg, STiconstlookup(0) );
+#endif
+         GetReg(-1); 
+   #endif
+#endif
       }
       switch(vpos[i])
       {
-         case 1:  /* if blks*/ 
+         case IN_IF_ONLY:  /* if blks*/ 
 /*
  *          findout corrsponding new vars
  */
@@ -6480,17 +6934,22 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
  *          Now time to insert select inst
  *          new var in if: nv1 
  */
-            freg0 = GetReg(type);
-            freg1 = GetReg(type);
-            freg2 = GetReg(type);
-            ip = InsNewInst(bp, ip, NULL, fld, -freg0, SToff[sp[i]-1].sa[2], 0);
-            ip = InsNewInst(bp, ip, NULL, fld, -freg1, SToff[nv1-1].sa[2], 0);
-            ip = InsNewInst(bp, ip, NULL, fld, -freg2, SToff[mask-1].sa[2], 0);
-            ip = InsNewInst(bp, ip, NULL, cmov1, -freg0, -freg1, -freg2 );
-            ip = InsNewInst(bp, ip, NULL, fst, SToff[sp[i]-1].sa[2], -freg0, 0);
+            reg0 = GetReg(type);
+            reg1 = GetReg(type);
+            reg2 = GetReg(type);
+            ip = InsNewInst(bp, ip, NULL, ld, -reg0, SToff[sp[i]-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, ld, -reg1, SToff[nv1-1].sa[2], 0);
+            if (IS_INT(type))
+               ip = InsNewInst(bp, ip, NULL, cmov1, -reg0, -reg1, -ICC0 );
+            else
+            {
+               ip = InsNewInst(bp, ip, NULL, mskld, -reg2, SToff[codemask-1].sa[2], 0);
+               ip = InsNewInst(bp, ip, NULL, cmov1, -reg0, -reg1, -reg2 );
+            }
+            ip = InsNewInst(bp, ip, NULL, st, SToff[sp[i]-1].sa[2], -reg0, 0);
             GetReg(-1);
             break;
-         case 2:  /* else blks.... only else possible??? */
+         case IN_ELSE_ONLY:  /* else blks....*/
             /*bp = elseblks->blk;*/
 /*
  *          findout corrsponding new vars
@@ -6501,17 +6960,22 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
  *          Now time to insert select inst
  *          New var in else: nv2
  */
-            freg0 = GetReg(type);
-            freg1 = GetReg(type);
-            freg2 = GetReg(type);
-            ip = InsNewInst(bp, ip, NULL, fld, -freg0, SToff[sp[i]-1].sa[2], 0);
-            ip = InsNewInst(bp, ip, NULL, fld, -freg1, SToff[nv2-1].sa[2], 0);
-            ip = InsNewInst(bp, ip, NULL, fld, -freg2, SToff[mask-1].sa[2], 0);
-            ip = InsNewInst(bp, ip, NULL, cmov1, -freg0, -freg1, -freg2 );
-            ip = InsNewInst(bp, ip, NULL, fst, SToff[sp[i]-1].sa[2], -freg0, 0);
+            reg0 = GetReg(type);
+            reg1 = GetReg(type);
+            reg2 = GetReg(type);
+            ip = InsNewInst(bp, ip, NULL, ld, -reg0, SToff[sp[i]-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, ld, -reg1, SToff[nv2-1].sa[2], 0);
+            if (IS_INT(type))
+               ip = InsNewInst(bp, ip, NULL, cmov1, -reg0, -reg1, -ICC0 );
+            else
+            {
+               ip = InsNewInst(bp, ip, NULL, mskld, -reg2, SToff[codemask-1].sa[2], 0);
+               ip = InsNewInst(bp, ip, NULL, cmov1, -reg0, -reg1, -reg2 );
+            }
+            ip = InsNewInst(bp, ip, NULL, st, SToff[sp[i]-1].sa[2], -reg0, 0);
             GetReg(-1);
             break;
-         case 3:  /* both in if and else blk */
+         case IN_BOTH_IF_ELSE:  /* both in if and else blk */
             
             /*bp = mergeblks->blk;
             ip = bp->ainst1;
@@ -6528,15 +6992,20 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
  *          Now time to insert select inst
  *          new var in if: nv1, New var in else: nv2
  */
-            freg0 = GetReg(type);
-            freg1 = GetReg(type);
-            freg2 = GetReg(type);
-            /*ip = InsNewInst(bp, NULL, ip, fld, -freg0, SToff[nv1-1].sa[2],0);*/
-            ip = InsNewInst(bp, ip, NULL, fld, -freg0, SToff[nv1-1].sa[2], 0);
-            ip = InsNewInst(bp, ip, NULL, fld, -freg1, SToff[nv2-1].sa[2], 0);
-            ip = InsNewInst(bp, ip, NULL, fld, -freg2, SToff[mask-1].sa[2], 0);
-            ip = InsNewInst(bp, ip, NULL, cmov2, -freg0, -freg1, -freg2 );
-            ip = InsNewInst(bp, ip, NULL, fst, SToff[sp[i]-1].sa[2], -freg0, 0);
+            reg0 = GetReg(type);
+            reg1 = GetReg(type);
+            reg2 = GetReg(type);
+            /*ip = InsNewInst(bp, NULL, ip, ld, -reg0, SToff[nv1-1].sa[2],0);*/
+            ip = InsNewInst(bp, ip, NULL, ld, -reg0, SToff[nv1-1].sa[2], 0);
+            ip = InsNewInst(bp, ip, NULL, ld, -reg1, SToff[nv2-1].sa[2], 0);
+            if (IS_INT(type))
+               ip = InsNewInst(bp, ip, NULL, cmov2, -reg0, -reg1, -ICC0 );
+            else
+            {
+               ip = InsNewInst(bp, ip, NULL, mskld, -reg2, SToff[codemask-1].sa[2], 0);
+               ip = InsNewInst(bp, ip, NULL, cmov2, -reg0, -reg1, -reg2 );
+            }
+            ip = InsNewInst(bp, ip, NULL, st, SToff[sp[i]-1].sa[2], -reg0, 0);
             GetReg(-1);
             break;
          default: ;
@@ -6823,6 +7292,14 @@ int IterativeRedCom()
    extern BBLOCK *bbbase;
    extern LOOPQ *optloop;
 /*
+ * use set needs to be updated as we use those in this transformation.
+ */
+   if (!CFUSETU2D)
+   {
+      CalcInsOuts(bbbase);
+      CalcAllDeadVariables();
+   }
+/*
  * Apply RC until there is no conditional block inside the loop
  * NOTE: RC xform requires variable analysis but in each iteration it would
  * change the CFG. So, to be U2D, we must recompute the CFG and all variable
@@ -7011,3 +7488,8 @@ int IfConvWithRedundantComp()
    return(err);
 }
 #endif
+
+int Get_OL_NEINC()
+{
+   return OL_NEINC;
+}

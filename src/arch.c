@@ -293,8 +293,11 @@ int GetRegSaveList(int rstart, int nr, int *regs)
    }
    return(j);
 }
-
+#if 1
+int GetArchAlign(int nvd, int nvf, int nvi, int nd, int nf, int nl, int ni)
+#else
 int GetArchAlign(int nvd, int nvf, int nd, int nf, int nl, int ni)
+#endif
 /*
  *  Returns required architectural alignment given the number of
  *  vector double, vector float, double, float, long, and ints you
@@ -311,6 +314,9 @@ int GetArchAlign(int nvd, int nvf, int nd, int nf, int nl, int ni)
          int align = 0;
          if (nvd) align = FKO_DVLEN*8;
          else if (nvf) align = FKO_SVLEN*4;
+#if 1
+         else if (nvi) align = FKO_IVLEN*4;
+#endif
          else align = 16;
          return (align);
       #else
@@ -320,6 +326,9 @@ int GetArchAlign(int nvd, int nvf, int nd, int nf, int nl, int ni)
    int align = 0;
    if (nvd) align = FKO_DVLEN*8;
    else if (nvf) align = FKO_SVLEN*4;
+#if 1
+   else if (nvi) align = FKO_IVLEN*4;
+#endif
    #ifdef X86_32
       else if (nd || nf || nl || ni) align = 4;
    #else
@@ -356,7 +365,7 @@ short GetReg(short type)
  * NOTE: no handling of long so far
  */
 {
-   static int dr=0, fr=0, ir=1;
+   static int dr=0, fr=0, ir=1, vir=0;
    int iret=0;
    extern int lnno;
    if (type == T_DOUBLE)
@@ -401,6 +410,14 @@ short GetReg(short type)
       if (++ir > NIR)
          fko_error(__LINE__, "Out of integer registers on line %d", lnno);
    }
+#ifdef X86
+   else if (type == T_VINT)
+   {
+      iret = VIREGBEG + vir;
+      if (++vir > NVIR)
+         fko_error(__LINE__, "Out of vec integer registers on line %d", lnno);
+   }
+#endif
 #ifdef X86_64
    else if (type == T_SHORT)
    {
@@ -413,6 +430,7 @@ short GetReg(short type)
    {
       assert(type == -1);
       dr = fr = 0;
+      vir = 0;
       ir = 1;
    }
    return(iret);
