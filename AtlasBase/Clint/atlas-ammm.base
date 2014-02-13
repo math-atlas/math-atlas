@@ -3212,6 +3212,14 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
                                       nb, nb, nb, 1, 0, -1);
       printf("READ IN BEST GENNED MU=%d, NU=%d, MFLOP=%.2f\n\n", 
              mmp->mu, mmp->nu, mmp->mflop[0]);
+/*
+ *    See if there is a mismatch between vector settings
+ */
+      if (mmp->vlen != VLEN[VECi])
+      {
+         printf("\n\n!!! WARNING: TURNING OFF VECTORIZATION DUE TO MISMATCHED VLEN IN 'res/%cAMMMUNU.sum!!!!\n\n", pre);
+         VECi = VTSC;
+      }
       *MU = mmp->mu / VLEN[VECi];
       assert(*MU);
       *NU = mmp->nu;
@@ -3224,6 +3232,7 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
    mmp->lat = lat;
    mmp->rout = DupString("amm_munu.c");
    mmp->mbB = mmp->nbB = mmp->kbB = nb;
+   mmp->vlen = VLEN[VECi];
 /*
  * Try all near-square register blocking cases
  */
@@ -4993,7 +5002,8 @@ ATL_mmnode_t *DecentGenCase(int verb, char pre, int nreg)
  * 120 = LCM(2,3,4,5,6,8), and large enough to stress mu/nu
  */
    FindDefMUNU(verb, pre, nreg, 0, 120, 1, &mu, &nu);
-   return(GetNewGenNode(pre, 0, 0, mu, nu, 1, 0));
+   return(ReadMMFileWithPath(pre, "res", "gAMMMUNU.sum"));
+@skip   return(GetNewGenNode(pre, 0, 0, mu, nu, 1, 0));
 }
 
 /*
@@ -5630,6 +5640,8 @@ ATL_mmnode_t *FindBestKerns
  * Find basic register blocking for generated case
  */
    mpG = DecentGenCase(verb, pre, 32);
+   if (mpG->vlen != VLEN[VECi])
+      VECi = VTSC;
    assert (mpG->kmaj < 2);
 /*
  * Loop over all required blocking factors
@@ -5646,6 +5658,7 @@ ATL_mmnode_t *FindBestKerns
 /*
  *    Find best of M- or K-vectorized generated code for this problem size
  */
+      mpg = mpB = NULL;
       if (TRYMVEC)
       {
          int muG=mpG->mu, nuG=mpG->nu, ut=muG*nuG; 
@@ -5718,13 +5731,15 @@ ATL_mmnode_t *FindBestKerns
       }
       if (mfM >= mfK)  /* use M-vectorized gen kernel */
       {
-         KillMMNode(mpB);
+         if (mpB)
+            KillMMNode(mpB);
          mpB = mpg;
          mfB = mfM;
       }
       else
       {
-         KillMMNode(mpg);
+         if (mpg)
+            KillMMNode(mpg);
          mpg = mpB;
          mfB = mfK;
       }
@@ -5735,6 +5750,7 @@ ATL_mmnode_t *FindBestKerns
 /*
  *    Search through all user kernels, and take best performing
  */
+      mpB = mpg;
       for (mp=mmb; mp; mp = mp->next)
       {
          const int mu=mp->mu, nu=mp->nu, ku=mp->ku, kmaj=mp->kmaj;
@@ -5783,6 +5799,7 @@ ATL_mmnode_t *FindBestKerns
    }
    KillAllMMNodes(mmb);
    KillMMNode(mpG);
+@skip   PrintMMNodes(stderr, nmmb);
    WriteMMFileWithPath(pre, "res", "uAMMFRC.sum", nmmb);
    printf("DONE.\n");
    return(nmmb);
