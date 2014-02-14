@@ -7,7 +7,7 @@
    @define cb @* @
 @LANG !
 @ifdef ! ver
-   @define ver @3.11.25@
+   @define ver @3.11.26@
 @endifdef
 @ifdef ! cwauth
    @define cwauth @R. Clint Whaley@

@@ -9,6 +9,7 @@
    #define vfmadd231pd vfmadd231ps
    #define vbroadcastsd vbroadcastss
    #define MOVC vmovnraps
+   #define vbroadcastf64x4 vbroadcastf32x4
 #else
    #define SZ 8
    #define MOVC vmovnrapd
@@ -176,7 +177,7 @@ ATL_asmdecor(ATL_USERMM):
 #define PFDB3 2*PFDB2
    MLOOP:
          vbroadcastf64x4 (pB,KK), rB0    /* {b3,b2,b1,b0,b3,b2,b1,b0} */
-         vbroadcastf64x4 32(pB,KK), rB1  /* {b7,b6,b5,b4,b7,b6,b5,b4} */
+         vbroadcastf64x4 4*SZ(pB,KK), rB1  /* {b7,b6,b5,b4,b7,b6,b5,b4} */
       NLOOP:
          vmovapd (pA), rA0
          vmovapd 64(pA), rA1
@@ -207,7 +208,7 @@ ATL_asmdecor(ATL_USERMM):
          vmulpd rB0{dddd}, rA1, rC13
             vprefetch1 3*64+PFDA2(pA)
          vmulpd rB0{dddd}, rA2, rC23
-            vbroadcastf64x4 64(pB,KK), rB0  /* {b3,b2,b1,b0,b3,b2,b1,b0} */
+            vbroadcastf64x4 8*SZ(pB,KK), rB0  /* {b3,b2,b1,b0,b3,b2,b1,b0} */
          vmulpd rB1{aaaa}, rA0, rC04
             vprefetch1 4*64+PFDA2(pA)
          vmulpd rB1{aaaa}, rA1, rC14
@@ -230,7 +231,7 @@ ATL_asmdecor(ATL_USERMM):
          vmulpd rB1{dddd}, rA1, rC17
             vmovapd 448(pA), rA1
          vmulpd rB1{dddd}, rA2, rC27
-            vbroadcastf64x4 96(pB,KK), rB1/* {b11,b10,b9,b8,b11,b10,b9,b8} */
+            vbroadcastf64x4 12*SZ(pB,KK), rB1/* {b11,b10,b9,b8,b11,b10,b9,b8} */
 /*
  *       2nd peeled iteration
  */
@@ -247,7 +248,7 @@ ATL_asmdecor(ATL_USERMM):
          FMAC rB0{dddd}, ra0, rC03
          FMAC rB0{dddd}, ra1, rC13
          FMAC rB0{dddd}, ra2, rC23
-            vbroadcastf64x4 128(pB,KK), rB0  /* {b3,b2,b1,b0,b3,b2,b1,b0} */
+            vbroadcastf64x4 16*SZ(pB,KK), rB0  /* {b3,b2,b1,b0,b3,b2,b1,b0} */
          FMAC rB1{aaaa}, ra0, rC04
          FMAC rB1{aaaa}, ra1, rC14
          FMAC rB1{aaaa}, ra2, rC24
@@ -264,7 +265,7 @@ ATL_asmdecor(ATL_USERMM):
          FMAC rB1{dddd}, ra1, rC17
             vmovapd -128(pA), ra1
          FMAC rB1{dddd}, ra2, rC27
-            vbroadcastf64x4 32(pB,KK), rB1  /* {b7,b6,b5,b4,b7,b6,b5,b4} */
+            vbroadcastf64x4 4*SZ(pB,KK), rB1  /* {b7,b6,b5,b4,b7,b6,b5,b4} */
          jz KDONE
          KLOOP:
                vmovapd -64(pA), ra2
@@ -290,7 +291,7 @@ ATL_asmdecor(ATL_USERMM):
                vprefetch1 5*64+PFDA2(pA)
             FMAC rB0{dddd}, rA1, rC13
             FMAC rB0{dddd}, rA2, rC23
-               vbroadcastf64x4 64(pB,KK), rB0  /* {b3,b2,b1,b0,b3,b2,b1,b0} */
+               vbroadcastf64x4 8*SZ(pB,KK), rB0  /* {b3,b2,b1,b0,b3,b2,b1,b0} */
             FMAC rB1{aaaa}, rA0, rC04
                vprefetch0 PFDA0(pA)
             FMAC rB1{aaaa}, rA1, rC14
@@ -314,7 +315,7 @@ ATL_asmdecor(ATL_USERMM):
             FMAC rB1{dddd}, rA1, rC17
                vmovapd 64(pA), rA1
             FMAC rB1{dddd}, rA2, rC27
-               vbroadcastf64x4 96(pB,KK), rB1/* {b11,b10,b9,b8,b11,b10,b9,b8} */
+               vbroadcastf64x4 12*SZ(pB,KK), rB1/* {b11,b10,b9,b8,b11,b10,b9,b8} */
 /*
  *          2nd iteration
  */
@@ -331,7 +332,7 @@ ATL_asmdecor(ATL_USERMM):
             FMAC rB0{dddd}, ra0, rC03
             FMAC rB0{dddd}, ra1, rC13
             FMAC rB0{dddd}, ra2, rC23
-               vbroadcastf64x4 128(pB,KK), rB0  /* {b3,b2,b1,b0,b3,b2,b1,b0} */
+               vbroadcastf64x4 16*SZ(pB,KK), rB0  /* {b3,b2,b1,b0,b3,b2,b1,b0} */
             FMAC rB1{aaaa}, ra0, rC04
             FMAC rB1{aaaa}, ra1, rC14
             FMAC rB1{aaaa}, ra2, rC24
@@ -348,7 +349,7 @@ ATL_asmdecor(ATL_USERMM):
             FMAC rB1{dddd}, ra1, rC17
                vmovapd 256-384(pA), ra1
             FMAC rB1{dddd}, ra2, rC27
-               vbroadcastf64x4 160-128(pB,KK), rB1  /* {b7,b6,b5,b4,b7,b6,b5,b4} */
+               vbroadcastf64x4 4*SZ(pB,KK), rB1  /* {b7,b6,b5,b4,b7,b6,b5,b4} */
          jnz KLOOP
          KDONE:
          #ifndef BETA0
