@@ -704,6 +704,7 @@ void GenAmmSum(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *rkb, char *outd)
    fprintf(fp, "#define ATL_AMM_LMU %d\n", mp->mu);
    fprintf(fp, "#define ATL_AMM_LNU %d\n", mp->nu);
    fprintf(fp, "#define ATL_AMM_LKU %d\n", mp->ku);
+   fprintf(fp, "#define ATL_AMM_LLCMMN %d\n\n", Mylcm(mp->mu, mp->nu));
    fprintf(fp, "#define ATL_AMM_LLCMU %d\n\n", 
            Mylcm(Mylcm(mp->mu, mp->nu),mp->ku));
 /*
@@ -715,16 +716,22 @@ void GenAmmSum(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *rkb, char *outd)
    fprintf(fp, "#define ATL_@(UP)AMM_66NB %d\n", mp->mbB);
    fprintf(fp, "#define ATL_@(UP)AMM_66MB %d\n", mp->nbB);
    fprintf(fp, "#define ATL_@(UP)AMM_66KB %d\n", mp->kbB);
+   fprintf(fp, "#define ATL_AMM_66LCMMN %d\n\n", Mylcm(mp->mu, mp->nu));
+   fprintf(fp, "#define ATL_AMM_66LCMU %d\n\n", 
+           Mylcm(Mylcm(mp->mu, mp->nu),mp->ku));
    fprintf(fp, "#define ATL_@(UP)AMM_66RATIO %1.4lf\n\n", mp->mflop[0]/mfB);
 /*
  * Find smallest case achieving 98% of maximal performance
  */
-   for (i=0, mp-mmb; mp && mp->mflop[0] >= 0.98*mfB; i++, mp=mp->next);
+   for (i=0,mp=mmb; mp && mp->mflop[0] < 0.98*mfB; i++, mp = mp->next);
    assert(mp);
    fprintf(fp, "#define ATL_@(UP)AMM_98IDX %d\n", i);
    fprintf(fp, "#define ATL_@(UP)AMM_98NB %d\n", mp->mbB);
    fprintf(fp, "#define ATL_@(UP)AMM_98MB %d\n", mp->nbB);
    fprintf(fp, "#define ATL_@(UP)AMM_98KB %d\n", mp->kbB);
+   fprintf(fp, "#define ATL_AMM_98LCMMN %d\n\n", Mylcm(mp->mu, mp->nu));
+   fprintf(fp, "#define ATL_AMM_98LCMU %d\n\n", 
+           Mylcm(Mylcm(mp->mu, mp->nu),mp->ku));
    fprintf(fp, "#define ATL_@(UP)AMM_98RATIO %1.4lf\n\n", mp->mflop[0]/mfB);
 @ROUT emit_uamm
    assert(rkb == NULL);
@@ -10886,4 +10893,257 @@ int main(int nargs, char **args)
    TuneCplxNB(fpout, M, N, K, A, B, C);
    free(vp);
    return(0);
+}
+@ROUT ATL_GetSqMNAmmmInfo
+#include "atlas_misc.h"
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_blk.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_ablk2cmat.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_a1.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_an.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_aX.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_flag.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_kern.h))
+
+/*
+ * Chooses good square M & N blocking; starts from size that gets 98% of
+ * performance, since smaller produces less wasted flops for triangular and
+ * symmetric operations, which are what usually demand square M/N blocking
+ */
+int Mjoin(PATL,GetSqMNAmmmInfo)
+(
+   amminfo_t *out,
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   ATL_CSZT M,
+   ATL_CSZT N,
+   ATL_CSZT K,
+   const SCALAR alpha,
+   const SCALAR beta
+)
+{
+   #ifdef ATL_CAMM_MAXINDX
+      int mb, nb, u, ik=ATL_CAMM_MAXINDX;
+   #else
+      int ik=ATL_AMM_98IDX;
+   #endif
+   int appAl;  /* 0:A, 1:B, 2:C */
+/*
+ * For rank-K update, choose smallest KB that contains required K
+ */
+   if (K < ATL_AMM_MAXKB)
+   {
+      for (ik=0; ik < ATL_AMM_NCASES && ATL_AMM_KBs[ik] < K; ik++);
+   }
+   out->IDX = ik;
+   u = ATL_98LCMMN;
+   mb = ATL_AMM_MBs[ik];
+   nb = ATL_AMM_NBs[ik];
+   out->kb = ATL_AMM_KBs[ik];
+   #ifdef ATL_CAMM_MAXINDX
+      if (ik >= ATL_CAMM_MAXINDX)
+      {
+         ik = ATL_CAMM_MAXINDX
+         u = ATL_CAMM_LCMMN;
+         mb = ATL_CAMM_MAXMB;
+         nb = ATL_CAMM_MAXMB;
+         out->kb = ATL_CAMM_MAXKB;
+      } 
+   #endif
+   if(mb != nb)
+      nb = (mb > u) ? (mb/u)*u : u;
+   out->mb = mb = out->nb = nb;
+   out->kbmin = ATL_AMM_KBMINs[ik];
+   out->mu = ATL_AMM_MUs[ik];
+   out->nu = ATL_AMM_NUs[ik];
+   out->ku = ATL_AMM_KUs[ik];
+   out->flag = ATL_AMM_KFLAG[ik];
+   out->amm_b0 = ATL_AMM_KERN_b0[ik];
+   out->amm_b1 = ATL_AMM_KERN_b1[ik];
+   out->amm_bn = ATL_AMM_KERN_bn[ik];
+   out->amm_k1_b0 = ATL_AMM_KERN_K1[ik];
+   out->amm_k1_b1 = ATL_AMM_KERN_K1_b1[ik];
+   out->amm_k1_bn = ATL_AMM_KERN_K1_bn[ik];
+/*
+ * Apply alpha to smallest matrix, and use alpha/beta to pick copy routines
+ */
+   if (SCALAR_IS_ONE(alpha))
+   {
+      appAl = 0;
+      #ifdef TCPLX
+         if (TA == AtlasNoTrans)
+            out->a2blk = ATL_AMM_AT2BLK_a1[ik];
+         else if (TA == AtlasTrans)
+            out->a2blk = ATL_AMM_A2BLK_a1[ik];
+         else if (TA == AtlasConjTrans)
+            out->a2blk = ATL_AMM_AC2BLK_a1[ik];
+         else
+            out->a2blk = ATL_AMM_AH2BLK_a1[ik];
+         if (TB == AtlasNoTrans)
+             out->b2blk = ATL_AMM_B2BLK_a1[ik];
+         else if (TB == AtlasTrans)
+             out->b2blk = ATL_AMM_BT2BLK_a1[ik];
+         else if (TB == AtlasConjTrans)
+             out->b2blk = ATL_AMM_BH2BLK_a1[ik];
+         else
+             out->b2blk = ATL_AMM_BC2BLK_a1[ik];
+      #else
+         out->a2blk = (TA == AtlasNoTrans) ?
+            ATL_AMM_AT2BLK_a1[ik]:ATL_AMM_A2BLK_a1[ik];
+         out->b2blk = (TB == AtlasNoTrans) ?
+            ATL_AMM_B2BLK_a1[ik]:ATL_AMM_BT2BLK_a1[ik];
+      #endif
+      if (SCALAR_IS_ONE(beta))
+         out->Cblk2cm = ATL_AMM_BLK2C_a1_b1[ik];
+      else if (SCALAR_IS_ZERO(beta))
+         out->Cblk2cm = ATL_AMM_BLK2C_a1_b0[ik];
+      else if (SCALAR_IS_NONE(beta))
+         out->Cblk2cm = ATL_AMM_BLK2C_a1_bn[ik];
+      else
+         out->Cblk2cm = ATL_AMM_BLK2C_a1_bX[ik];
+   }
+   else  /* alpha is not one */
+   {
+      if (M >= N)                  /* A is larger than B, put alpha on C or B */
+         appAl = (M >= K) ? 2 : 1;
+      else                         /* B is larger than A, put alpha on C or A */
+         appAl = (N >= K) ? 2 : 0;
+      if (appAl == 2)  /* apply alpha to C */
+      {
+         #ifdef TCPLX
+            if (TA == AtlasNoTrans)
+               out->a2blk = ATL_AMM_AT2BLK_a1[ik];
+            else if (TA == AtlasTrans)
+               out->a2blk = ATL_AMM_A2BLK_a1[ik];
+            else if (TA == AtlasConjTrans)
+               out->a2blk = ATL_AMM_AC2BLK_a1[ik];
+            else
+               out->a2blk = ATL_AMM_AH2BLK_a1[ik];
+            if (TB == AtlasNoTrans)
+                out->b2blk = ATL_AMM_B2BLK_a1[ik];
+            else if (TB == AtlasTrans)
+                out->b2blk = ATL_AMM_BT2BLK_a1[ik];
+            else if (TB == AtlasConjTrans)
+                out->b2blk = ATL_AMM_BH2BLK_a1[ik];
+            else
+                out->b2blk = ATL_AMM_BC2BLK_a1[ik];
+         #else
+            out->a2blk = (TA == AtlasNoTrans) ?
+                         ATL_AMM_AT2BLK_a1[ik] : ATL_AMM_A2BLK_a1[ik];
+            out->b2blk = (TB == AtlasNoTrans) ?
+                         ATL_AMM_B2BLK_a1[ik] : ATL_AMM_BT2BLK_a1[ik];
+         #endif
+         if (SCALAR_IS_ONE(beta))
+            out->Cblk2cm = SCALAR_IS_NONE(alpha) ?
+                           ATL_AMM_BLK2C_an_b1[ik] : ATL_AMM_BLK2C_aX_b1[ik];
+         else if (SCALAR_IS_ZERO(beta))
+            out->Cblk2cm = SCALAR_IS_NONE(alpha) ?
+                           ATL_AMM_BLK2C_an_b0[ik] : ATL_AMM_BLK2C_aX_b0[ik];
+         else if (SCALAR_IS_NONE(beta))
+            out->Cblk2cm = SCALAR_IS_NONE(alpha) ?
+                           ATL_AMM_BLK2C_an_bn[ik] : ATL_AMM_BLK2C_aX_bn[ik];
+         else
+            out->Cblk2cm = SCALAR_IS_NONE(alpha) ?
+                           ATL_AMM_BLK2C_an_bX[ik] : ATL_AMM_BLK2C_aX_bX[ik];
+      }
+      else  /* not applying alpha to C */
+      {
+         if (SCALAR_IS_ONE(beta))
+            out->Cblk2cm = ATL_AMM_BLK2C_a1_b1[ik];
+         else if (SCALAR_IS_ZERO(beta))
+            out->Cblk2cm = ATL_AMM_BLK2C_a1_b0[ik];
+         else if (SCALAR_IS_NONE(beta))
+            out->Cblk2cm = ATL_AMM_BLK2C_a1_bn[ik];
+         else
+            out->Cblk2cm = ATL_AMM_BLK2C_a1_bX[ik];
+         if (!appAl)  /* apply to alpha to A */
+         {
+            #ifdef TCPLX
+               if (TB == AtlasNoTrans)
+                   out->b2blk = ATL_AMM_B2BLK_a1[ik];
+               else if (TB == AtlasTrans)
+                   out->b2blk = ATL_AMM_BT2BLK_a1[ik];
+               else if (TB == AtlasConjTrans)
+                   out->b2blk = ATL_AMM_BH2BLK_a1[ik];
+               else
+                   out->b2blk = ATL_AMM_BC2BLK_a1[ik];
+               if (SCALAR_IS_NONE(alpha))
+               {
+                  if (TA == AtlasNoTrans)
+                     out->a2blk = ATL_AMM_AT2BLK_an[ik];
+                  else if (TA == AtlasTrans)
+                     out->a2blk = ATL_AMM_A2BLK_an[ik];
+                  else if (TA == AtlasConjTrans)
+                     out->a2blk = ATL_AMM_AC2BLK_an[ik];
+                  else
+                     out->a2blk = ATL_AMM_AH2BLK_an[ik];
+               }
+               else
+               {
+                  if (TA == AtlasNoTrans)
+                     out->a2blk = ATL_AMM_AT2BLK_aX[ik];
+                  else if (TA == AtlasTrans)
+                     out->a2blk = ATL_AMM_A2BLK_aX[ik];
+                  else if (TA == AtlasConjTrans)
+                     out->a2blk = ATL_AMM_AC2BLK_aX[ik];
+                  else
+                     out->a2blk = ATL_AMM_AH2BLK_aX[ik];
+               }
+            #else
+               if (SCALAR_IS_NONE(alpha))
+                  out->a2blk = (TA == AtlasNoTrans) ?
+                               ATL_AMM_AT2BLK_an[ik] : ATL_AMM_A2BLK_an[ik];
+               else
+                  out->a2blk = (TA == AtlasNoTrans) ?
+                               ATL_AMM_AT2BLK_aX[ik] : ATL_AMM_A2BLK_aX[ik];
+               out->b2blk = (TB == AtlasNoTrans) ?
+                            ATL_AMM_B2BLK_a1[ik] : ATL_AMM_BT2BLK_a1[ik];
+            #endif
+         }
+         else /* apply alpha to B */
+         {
+            #ifdef TCPLX
+               if (TA == AtlasNoTrans)
+                  out->a2blk = ATL_AMM_AT2BLK_a1[ik];
+               else if (TA == AtlasTrans)
+                  out->a2blk = ATL_AMM_A2BLK_a1[ik];
+               else if (TA == AtlasConjTrans)
+                  out->a2blk = ATL_AMM_AC2BLK_a1[ik];
+               else
+                  out->a2blk = ATL_AMM_AH2BLK_a1[ik];
+               if (SCALAR_IS_NONE(alpha))
+               {
+                  if (TB == AtlasNoTrans)
+                      out->b2blk = ATL_AMM_B2BLK_an[ik];
+                  else if (TB == AtlasTrans)
+                      out->b2blk = ATL_AMM_BT2BLK_an[ik];
+                  else if (TB == AtlasConjTrans)
+                      out->b2blk = ATL_AMM_BH2BLK_an[ik];
+                  else
+                      out->b2blk = ATL_AMM_BC2BLK_an[ik];
+               }
+               else
+               {
+                  if (TB == AtlasNoTrans)
+                      out->b2blk = ATL_AMM_B2BLK_aX[ik];
+                  else if (TB == AtlasTrans)
+                      out->b2blk = ATL_AMM_BT2BLK_aX[ik];
+                  else if (TB == AtlasConjTrans)
+                      out->b2blk = ATL_AMM_BH2BLK_aX[ik];
+                  else
+                      out->b2blk = ATL_AMM_BC2BLK_aX[ik];
+               }
+            #else
+               out->a2blk = (TA == AtlasNoTrans) ?
+                            ATL_AMM_AT2BLK_a1[ik] : ATL_AMM_A2BLK_a1[ik];
+               if (SCALAR_IS_NONE(alpha))
+                  out->b2blk = (TB == AtlasNoTrans) ?
+                               ATL_AMM_B2BLK_an[ik] : ATL_AMM_BT2BLK_an[ik];
+               else
+                  out->b2blk = (TB == AtlasNoTrans) ?
+                               ATL_AMM_B2BLK_aX[ik] : ATL_AMM_BT2BLK_aX[ik];
+            #endif
+         }
+      }
+   }
+   return(appAl);
 }
