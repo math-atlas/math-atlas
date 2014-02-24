@@ -9590,3 +9590,116 @@ void ATL_tDistMemTouch  /* use first-touch policy to force cyclic page distro */
    pd.mem = vp;
    ATL_goparallel(ATL_NTHREADS, ATL_dmt_DOWORK, &pd, NULL);
 }
+@ROUT amm
+struct amm
+{
+   int ntexp;     /* # of threads who must at least call before return */
+   int ntactive;  /* # of threads who've checked in for work */
+   int ntcomp;    /* # of threads presently doing computations */
+   int ntdone;    /* # of threads idling for finish of computation */
+   int ngcntK;    /* # of glocal counters used for K dims */
+   int mb, nb, kb;/* blocking for kernel */
+   int mr, nr, kr;/* size of partial last block.  if 0, size is full block */
+   int nfmblks, nfnblks, nfkblks;  /* CEIL(N/NB) for each dim */
+   int nmblks, nnblks, nkblks;  /* FLOOR(N/NB) for each dim */
+   int nAcp, nBcp;             /* # of panels of A/B copied so far */
+   int *bvA, *bvB; /* bitvecs for tracking copy of A/B, one bit per K-panel */
+   int *bvC;  /* bitvec for blocks of C, which are our compute tasks */
+   void **Mstart;  /* nmblks different counters for perf copy of panels of A */
+   void **Nstart;  /* nnblks different counters for perf copy of panels of B */
+   void **Mdone;   /* nmblks different counters for finishing copy of A */
+   void **Ndone;   /* nmblks different counters for finishing copy of B */
+}
+
+void setuptAMM()
+{
+   int int ncnt, i, nfmblks, nfnblks, nfkblks;
+   nfmblks = ap->nfmblks = M/mb;
+   nfnblks = ap->nfnblks = N/nb;
+   nfkblks = ap->nfkblks = K/kb;
+   ap->mr = M - nfmblks*mb;
+   ap->nr = N - nfnblks*nb;
+   ap->kr = K - nfkblks*kb;
+   ap->nmblks = ap->mr ? nfmblks+1 : nfmblks;
+   ap->nnblks = ap->nr ? nfnblks+1 : nfnblks;
+   ap->nkblks = ap->kr ? nfkblks+1 : nfkblks;
+   ap->Mstart = malloc(sizeof(void*)*2*(nfnblks+nfmblks));
+   ATL_assert(ap->Mstart);
+   ap->Mdone = ap->Mstart + nfmblks;
+   ap->Nstart = ap->Mdone + nfmblks;
+   ap->Ndone = ap->Nstart + nfnblks;
+   ncnt = (nfkblks > 64) ? nfkblks >> 5 : 1;
+   #if ATL_NTHREADS > 8
+      if (ncnt > (ATL_NTHREADS>>3))
+         ncnt = ATL_NTHREADS>>3;
+      ncnt = (ncnt > 8) ? 8 : ncnt;
+   #else
+      ncnt = 1;
+   #endif
+   ap->ngcntK = ncnt;
+   for (i=0; i < nfmblks; i++)
+   {
+      ap->Mstart[i] = ATL_SetGlobalAtomicCount(ncnt, nfkblks, 0);
+      ap->Mdone[i] = ATL_SetGlobalAtomicCount(ncnt, nfkblks, 0);
+   }
+   for (i=0; i < nfnblks; i++)
+   {
+      ap->Nstart[i] = ATL_SetGlobalAtomicCount(ncnt, nfkblks, 0);
+      ap->Ndone[i] = ATL_SetGlobalAtomicCount(ncnt, nfkblks, 0);
+   }
+}
+void FreetAMM()
+{
+   for (i=0; i < nfmblks; i++)
+   {
+      ATL_FreeGlobalAtomicCount(ap->Mstart[i]);
+      ATL_FreeGlobalAtomicCount(ap->Mdone[i]);
+   }
+   for (i=0; i < nfnblks; i++)
+   {
+      ATL_FreeGlobalAtomicCount(ap->Nstart[i]);
+      ATL_FreeGlobalAtomicCount(ap->Ndone[i]);
+   }
+   free(ap->Mstart);
+}
+
+{
+   SELECTOR:
+      TRY_TO_COMPUTE:
+/*
+ *       If the number computing equals the number of available jobs,
+ *       I cannot do any computation yet
+ */
+         if (tp->njobs == tp->ncomp)
+         {
+            if (tp->njobs < tp->ntasks)  /* if possible, go enable more jobs */
+               goto TRY_TO_COPY;
+            else                         /* otherwise await completion */
+               goto DONE;
+         }
+         else /* Looks like there's a job I can grab */
+         {
+            LOCK 
+            if njobs == ncomp
+            {
+               UNLOCK
+               bail as before;
+            }
+            get job, update data
+            UNLOCK
+            call job
+         }
+      TRY_TO_COPY:
+/*
+ *       If we've copied everything, can only do computation or finish
+ */
+         if (tp->nAcp == tp->nmblks && tp->nBcp == tp->nnblks)
+            goto TRY_TO_COMPUTE;
+   goto SELECTOR
+DONE:
+   LOCK
+     tp->ntdone++;
+   UNLOCK
+   while(tp->ntdone < tp->ntexp)
+      ATL_thread_yield();
+}

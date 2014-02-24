@@ -2247,3 +2247,109 @@ TYPE Mjoin(PATL,gemaxnrm)
 #ifndef TCPLX
    #undef lda2
 #endif
+@ROUT ATL_NewBV
+/*
+ * A bitvector consists of an integer array.  The first element of the
+ * array indicates the number of full BVs required, and the 2nd elt stores the
+ * number the remainder.
+ * Assume 32 bits per int for portability
+ */
+int *ATL_NewBV
+(
+   int nmax    /* max # of bits to store */
+)
+{
+   int *bv;
+   int nelt, nrem;
+   ATL_assert(sizeof(int) >= 4);
+   nelt = (nmax+31) >> 5;
+   nrem = nmax - (nmax>>5);
+   bv = calloc(nelt+2, sizeof(int));
+   ATL_assert(bv);
+   *bv = (nrem) ? nelt-1 : nelt;
+   bv[1] = nrem;
+   return(bv);
+}
+
+void ATL_FreeBV(int *bv)
+{
+   free(bv);
+}
+
+void ATL_SetBitBV
+(
+   int *bv,   /* bitvector to use */
+   int bpos   /* which bit to set */
+)
+{
+   int iv, i, k;
+   iv = bpos >> 5;
+   i = bpos - (iv<<5);
+   bv[iv+2] |= 1<<i;
+}
+
+void ATL_UnsetBitBV
+(
+   int *bv,   /* bitvector to use */
+   int bpos   /* which bit to set */
+)
+{
+   int iv, i, k;
+   iv = bpos >> 5;
+   i = bpos - (iv<<5);
+   bv[iv+2] &= ~(1<<i);
+}
+
+/*
+ * RETURNS: bit at position bpos
+ */
+void ATL_IsBitSetBV
+(
+   int *bv,   /* bitvector to use */
+   int bpos   /* which bit to set */
+)
+{
+   int iv = bpos>>5, i = bpos-(iv<<5);
+   return(bv[iv+2] & (1<<i));
+}
+
+/*
+ * Returns smallest bit position that has not yet been set, -1 if all set
+ */
+int ATL_FindFirstUnsetBitBV
+(
+   int *bv    /* bitvector to use */
+)
+{
+   const int nfbv = bv[0], nr=bv[1];
+/*
+ * Find first bitvec with any unset values
+ */
+   for (i=0; i < nfbv; i++)
+   {
+      const int v=bv[i+2], base=i<<5;
+      int k, kbeg, kend;
+      if (v == 0xFFFFFFFF)
+         continue
+      if (v != (v|0xFF)) /* gap in first byte */
+         kbeg = 0;
+      else if (v != (v|0xFF00)) /* gap in 2nd byte */
+         kbeg = 8;
+      else  /* gap in 3rd or 4th byte */
+         kbeg = ((v != (v|0xFF0000)) ? 16 : 24;
+      kend = kbeg + 8;
+      for (k=kbeg; k < kend; k++)
+      {
+         if ((v|(1<<k)) != v)
+            return(base+k);
+      }
+   }
+   if (nr)
+   {
+      const int v = bv[nfbv+2], base=nfbv<<5;
+      for (i=0; i < nr; i++)
+         if ((v|(1<<i)) != v)
+            return(base+i);
+   }
+   return(-1); /* all bits are set */
+}
