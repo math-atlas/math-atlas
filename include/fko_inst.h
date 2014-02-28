@@ -238,13 +238,59 @@ enum inst
 /*
  * Majedul: some special instruction for Integer. 
  */
+#if 0   
    CMOV1,
    CMOV2,
    VCMOV1,
    VCMOV2,
+#endif
+   CMOV1,
+   CMOV2,
+/* 32 bit version */   
+   VSCMOV1,
+   VSCMOV2,
+/* 64 bit version */   
+   VICMOV1,
+   VICMOV2,
+
 /*
  * Majedul: Vector int inst... V_INT type
+ * We consider 2 versions 32 bit and 64 bit integer
  */
+/* 32bit or long word version */   
+   /*VSMOV,*/
+   VSMOVS,
+   /*VSLD,*/
+   VSLDS,
+   /*VSST,*/
+   VSSTS,
+   VSSHUF,
+   VGR2VR32,
+   VSADD,
+   VSSUB,
+   VSMAX,
+   VSMIN,
+   VSZERO,
+/* 64 bit version */
+   /*VIMOV,*/
+   VIMOVS,
+   /*VILD,*/
+   VILDS,
+   /*VIST,*/
+   VISTS,
+   VISHUF,
+   VGR2VR64,
+   VIADD,
+   VISUB,
+   VIMAX,
+   VIMIN,
+   VIZERO,
+   VICMPWGT,
+/* common for 32 and 64 bit */   
+   VMOV,
+   VLD,
+   VST,
+#if 0   
    VMOV,
    VMOVS,
    VLD,
@@ -261,6 +307,7 @@ enum inst
    VMAX,
    VMIN,
    VIZERO,
+#endif   
 /*
  * special instrcution to update conditional code EFLAGS... 
  */
@@ -324,7 +371,7 @@ enum inst
 /*
  * Majedul: this is to convert mask into INT
  */
-   CVTMASKFI,
+   CVTMASKFI, /* diff CVTBDI ??? */
    CVTMASKDI,
 /*
  * Dummy CMP instruction which are needed for ReductionVector translation.
@@ -539,14 +586,58 @@ char *instmnem[] =
    "CVTBDI",
 /*
  * Majedul: some special integer instruction
- */ 
+ */
+#if 0   
    "CMOV1",
    "CMOV2",
    "VCMOV1",
    "VCMOV2",
+#endif
+   "CMOV1",
+   "CMOV2",
+/* 32 bit version */   
+   "VSCMOV1",
+   "VSCMOV2",
+/* 64 bit version */   
+   "VICMOV1",
+   "VICMOV2",
 /*
  * Majedul: instruction for V_INT
  */
+/* 32bit or long word version */   
+   //"VSMOV",
+   "VSMOVS",
+   //"VSLD",
+   "VSLDS",
+   //"VSST",
+   "VSSTS",
+   "VSSHUF",
+   "VGR2VR32",
+   "VSADD",
+   "VSSUB",
+   "VSMAX",
+   "VSMIN",
+   "VSZERO",
+/* 64 bit version */
+   //"VIMOV",
+   "VIMOVS",
+   //"VILD",
+   "VILDS",
+   //"VIST",
+   "VISTS",
+   "VISHUF",
+   "VGR2VR64",
+   "VIADD",
+   "VISUB",
+   "VIMAX",
+   "VIMIN",
+   "VIZERO",
+   "VICMPWGT",
+/* common for 64 and 32 bit */   
+   "VMOV",
+   "VLD",
+   "VST",
+#if 0   
    "VMOV",
    "VMOVS",
    "VLD",
@@ -563,6 +654,7 @@ char *instmnem[] =
    "VMAX",
    "VMIN",
    "VIZERO",
+#endif   
 /*
  * special instrcution to update conditional code EFLAGS... 
  */
@@ -693,16 +785,21 @@ char *instmnem[] =
                       (i_) == VFLDS || (i_) == VDLDS || \
                       (i_) == VFLDL || (i_) == VFLDH || \
                       (i_) == VDLDL || (i_) == VDLDH || \
-                      (i_) == VLD || (i_) == VLDS )
+                      (i_) == VLD  || (i_) == VSLDS || \
+                      (i_) == VILDS )
+                      
 #define IS_MOVE(i_) ((i_) == MOV || (i_) == FMOV || (i_) == FMOVD || \
-                     (i_) == VFMOV || (i_) == VDMOV)
+                     (i_) == VFMOV || (i_) == VDMOV || \
+                     (i_) == VMOV)
+
 #define IS_MAC(i_) ((i_) == FMAC || (i_) == FMACD || (i_) == VFMAC || \
                     (i_) == VDMAC)
 #define IS_STORE(i_)  ((i_) == ST || (i_) == FST || (i_) == FSTD || \
                        (i_) == VFST || (i_) == VDST || (i_) == STS || \
                        (i_) == VFSTS || (i_) == VDSTS || \
                        (i_) == VFSTNT || (i_) == VDSTNT || \
-                       (i_) == VST || (i_) == VSTS )
+                       (i_) == VST || (i_) == VSSTS || \
+                       (i_) == VISTS )
 
 #define IS_CMPW(i_)  ((i_) == FCMPDWEQ || (i_) == FCMPDWNE || \
                       (i_) == FCMPDWLT || (i_) == FCMPDWLE || \
@@ -715,7 +812,8 @@ char *instmnem[] =
                       (i_) == VDCMPWGT || (i_) == VDCMPWGE || \
                       (i_) == VFCMPWEQ || (i_) == VFCMPWNE || \
                       (i_) == VFCMPWLT || (i_) == VFCMPWLE || \
-                      (i_) == VFCMPWGT || (i_) == VFCMPWGE )
+                      (i_) == VFCMPWGT || (i_) == VFCMPWGE || \
+                      (i_) == VICMPWGT)
 
                       /*(i_) == FCMPDWNLT || (i_) == FCMPDWNLE || \
                       (i_) == FCMPDWNGT || (i_) == FCMPDWNGE || \
@@ -743,8 +841,8 @@ char *instmnem[] =
                       (i_) == UDIV || (i_) == FCMOV1 || (i_) == FCMOV2 || \
                       (i_) == FCMOVD1 || (i_) == FCMOVD2 || (i_) == VFCMOV1 || \
                       (i_) == VFCMOV2 || (i_) == VDCMOV1 || (i_) == VDCMOV2 || \
-                      (i_) == CMOV1 || (i_) == CMOV2 || (i_) == VCMOV1 || \
-                      (i_) == VCMOV2)
+                      (i_) == CMOV1 || (i_) == CMOV2 || (i_) == VSCMOV1 || \
+                      (i_) == VSCMOV2 || (i_) == VICMOV1 || (i_) == VICMOV2 )
 /*
  * NOTE: FMA4 in AMD can be re ordered, src2 can be mem. need to consider
  * this again while implemting other FMAC like: FMA3 ... 
@@ -766,7 +864,8 @@ char *instmnem[] =
                                       (i_) == VFCMOV1 || (i_) == VFCMOV2 || \
                                       (i_) == VDCMOV1 || (i_) == VDCMOV2 || \
                                       (i_) == CMOV1 || (i_) == CMOV2 || \
-                                      (i_) == VCMOV1 || (i_) == VCMOV2) 
+                                      (i_) == VSCMOV1 || (i_) == VSCMOV2 || \
+                                      (i_) == VICMOV1 || (i_) == VICMOV2) 
 
 #define IS_SELECT_OP(i_) ((i_) == CMOV1   || (i_) == CMOV2  || \
                           (i_) == FCMOV1  || (i_) == FCMOV2 || \
