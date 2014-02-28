@@ -1050,6 +1050,7 @@ ret
 #include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_kern.h))
 #include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_ablk2cmat.h))
 
+static int quitTHR=0;
 typedef struct ammjob ammjob_t;
 struct ammjob
 {
@@ -1082,6 +1083,7 @@ void PrintUsage(char *exe, int iarg, char *arg)
    printf("   -n[m,n,k]: set number of blks along given dim\n");
    printf("   -N # : nblks each dim = #\n");
    printf("   -I <#>: use AMM kernel index #\n");
+   printf("   -Q <#>: threads rank%%4 > # quit\n");
    exit(-1);
 }
 
@@ -1100,6 +1102,11 @@ ammjob_t *GetFlags(int nargs, char **args)
          PrintUsage(args[0], i, args[i]);
       switch(args[i][1])
       {
+      case 'Q':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of arguments");
+         quitTHR = atoi(args[i]);
+         break;
       case 'I':
          if (++i >= nargs)
             PrintUsage(args[0], i, "out of arguments");
@@ -1216,6 +1223,14 @@ void *DoAmm(void *vp)
       printf("core=%d\n", sched_getcpu());
    #endif
    tp->tstart = ATL_walltime();
+   if (quitTHR)
+   {
+      if (tp->rank - (((tp->rank)>>2)<<2) >= quitTHR)
+      {
+         tp->tend = ATL_walltime();
+         pthread_exit(NULL);
+      }
+   }
    vp = malloc(2*ATL_MulBySize(blkCsz)+ATL_Cachelen);
    assert(vp);
    w = ATL_AlignPtr(vp);
@@ -1289,7 +1304,7 @@ void TimeOnCores(ammjob_t *aj)
    const int mb=aj->mb, nb=aj->nb, kb=aj->kb;
    const int nmblks=aj->nmblks, nnblks=aj->nnblks, nkblks=aj->nkblks;
    const int nblksA=nmblks*nkblks, nblksB=nkblks*nnblks, nblksC=nmblks*nnblks;
-   size_t szA=nblksA*kb*mb, szB=nblksA*kb*nb, szC=nblksC*mb*nb;
+   size_t szA=nblksA*kb*mb, szB=nblksB*kb*nb, szC=nblksC*mb*nb;
    int i, nctrs;
    TYPE *A, *B, *C;
    void *vp;
