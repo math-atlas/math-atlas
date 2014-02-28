@@ -7504,7 +7504,7 @@ int RcPathVectorAnalysis(LOOPPATH *path)
 /*
  * Time to check all the information
  */
-#if 1
+#if 0
    fprintf(stderr, "RC VECTOR ANALYSIS\n");
    fprintf(stderr, "====================\n");
    fprintf(stderr, "PATH = %d \n", path->pnum);
@@ -7945,6 +7945,161 @@ INSTQ *AddIntShadowPrologue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iph, short scal,
  */
 {
 /*
+ * New Plan: 
+ * ==========
+ *          We will consider double and single implementation seperately. We 
+ *          will need two set of vector-integer instruction instructionss 
+ * Double: 
+ *         For double, we consider integer as 64 bit inside vector. FKO 
+ *         treats integer as 64 bit anyway. 
+         
+   Initialization:  
+      Vimax_1 = [i-4, i-3, i-2, i-1] // as we update vimax before cmov
+      Vimax = [imax, imax, imax, imax]
+      Vvlen = [4, 4, 4, 4]
+            
+ * Single: 
+ *       For single precision, we will consider integer as 32 bit. Since FKO 
+ *       considers integer as 64 bit in X64, we will need some conversion. 
+ *       We will use CVTSI at the epilogue of the vector to reduce the Vimax
+ *       into imax.
+       
+   Initialization: (we need to use archsregs here ) 
+      Vimax_1 = [i-8, i-7, i-6, i-5, i-4, i-3, i-2, i-1]
+      Vimax = [imax, imax, imax, imax, imax, imax, imax, imax]
+      Vvlen = [8, 8, 8, 8, 8, 8, 8, 8]
+ *
+ */
+   int i, vlen;
+   short flag;
+   short ireg, sireg, r1, r2 ;
+   enum inst vld, vst, vgr2vr, vshuf;
+
+   if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+   {
+      //vld = VSLD;
+      //vst = VSST;
+      vld = VLD;
+      vst = VST;
+      vshuf = VSSHUF;
+      vgr2vr = VGR2VR32;
+      vlen = 8;
+   }
+   else if (IS_DOUBLE(lp->vflag) || IS_VDOUBLE(lp->vflag))
+   {
+      //vld = VSLD;
+      //vst = VSST;
+      vld = VLD;
+      vst = VST;
+      vshuf = VISHUF;
+      vgr2vr = VGR2VR64;
+      vlen = 4;
+   }
+   else
+      fko_error(__LINE__,"Unsupported type for vectorization!\n");
+  /*
+   *  vector init based on variable type
+   */
+   
+   flag = lp->vsflag[index];
+
+#if 0         
+         fprintf(stderr, "LIVEIN : %s : %d", 
+                 STname[scal-1], flag);
+         if (flag & VS_ACC) fprintf(stderr, " VS_ACC");
+         if (flag & VS_MAX) fprintf(stderr, " VS_MAX");
+         if (flag & VS_SHADOW) fprintf(stderr, " VS_SHADOW");
+         if (flag & VS_SELECT) fprintf(stderr, " VS_SELECT");
+         if (flag & VS_VLEN) fprintf(stderr, " VS_VLEN");
+         fprintf(stderr, "\n");
+#endif  
+
+   ireg = GetReg(T_INT);
+   r1 = GetReg(T_VINT);
+   r2 = GetReg(T_VINT);
+
+   if (flag & (VS_SELECT | VS_VLEN)) 
+   {
+      
+      PrintComment(bp0, NULL, iph, 
+                   "Init vector equiv of %s", STname[lp->vscal[index]-1]);
+      if (flag & VS_VLEN)
+      {
+            InsNewInst(bp0, NULL, iph, MOV, -ireg, STiconstlookup(vlen), 0);
+      }
+      else
+         InsNewInst(bp0, NULL, iph, LD, -ireg,
+                    SToff[lp->vscal[index]-1].sa[2], 0);
+      
+      InsNewInst(bp0, NULL, iph, vgr2vr, -r1, -ireg, STiconstlookup(0));
+      InsNewInst(bp0, NULL, iph, vshuf, -r1, -r1, STiconstlookup(0));
+      InsNewInst(bp0, NULL, iph, vst, SToff[lp->vvscal[index]-1].sa[2], -r1, 0);
+
+   }
+   else if (flag & VS_SHADOW) /* shadow variable */
+   {
+/*
+ *    FIXED: for double, replace vlen by 4, otherwise by 8 
+ *          Vimax1 = [i-vlen, i-vlen, i-vlen+1, i-vlen+1, ... ... ]
+ */
+      PrintComment(bp0, NULL, iph, 
+                   "Init vector equiv of %s", STname[lp->vscal[index]-1]);
+      InsNewInst(bp0, NULL, iph, LD, -ireg, SToff[lp->I-1].sa[2], 0);
+#ifdef AVX2
+/*
+ *    vpinsrw/q ==> VGR2VR32/64 only works on XMM register. So, we populate
+ *    2 XMM register and combine them later in YMM
+ */
+/*
+ *    populate the 1st XMM register
+ */
+      InsNewInst(bp0, NULL, iph, SUB, -ireg, -ireg, STiconstlookup(vlen));
+      InsNewInst(bp0, NULL, iph, vgr2vr, -r1, -ireg, STiconstlookup(0));
+      InsNewInst(bp0, NULL, iph, ADD, -ireg, -ireg, STiconstlookup(1));
+      InsNewInst(bp0, NULL, iph, vgr2vr, -r1, -ireg, STiconstlookup(1));
+      if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+      {
+         InsNewInst(bp0, NULL, iph, ADD, -ireg, -ireg, STiconstlookup(1));
+         InsNewInst(bp0, NULL, iph, vgr2vr, -r1, -ireg, STiconstlookup(2));
+         InsNewInst(bp0, NULL, iph, ADD, -ireg, -ireg, STiconstlookup(1));
+         InsNewInst(bp0, NULL, iph, vgr2vr, -r1, -ireg, STiconstlookup(3));
+      }
+/*
+ *    populate the 2nd XMM register
+ */     
+      InsNewInst(bp0, NULL, iph, ADD, -ireg, -ireg, STiconstlookup(1));
+      InsNewInst(bp0, NULL, iph, vgr2vr, -r2, -ireg, STiconstlookup(0));
+      InsNewInst(bp0, NULL, iph, ADD, -ireg, -ireg, STiconstlookup(1));
+      InsNewInst(bp0, NULL, iph, vgr2vr, -r2, -ireg, STiconstlookup(1));
+      if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+      {
+         InsNewInst(bp0, NULL, iph, ADD, -ireg, -ireg, STiconstlookup(1));
+         InsNewInst(bp0, NULL, iph, vgr2vr, -r2, -ireg, STiconstlookup(2));
+         InsNewInst(bp0, NULL, iph, ADD, -ireg, -ireg, STiconstlookup(1));
+         InsNewInst(bp0, NULL, iph, vgr2vr, -r2, -ireg, STiconstlookup(3));
+      }
+/*
+ *    combine the two XMM into YMM
+ */
+      if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+         InsNewInst(bp0, NULL, iph, VSSHUF, -r1, -r2, 
+                    STiconstlookup(0xBA983210));
+      else
+         InsNewInst(bp0, NULL, iph, VISHUF, -r1, -r2, 
+                    STiconstlookup(0x5410));
+#else
+      assert(0); // will implement later
+#endif
+      InsNewInst(bp0, NULL, iph, VST, SToff[lp->vvscal[index]-1].sa[2], -r1, 0);
+   }
+   else
+      assert(0); /* no other integer operation is supported now */
+   GetReg(-1);
+
+   return iph;
+
+#if 0
+/*
  * Format of shadowing...
  *             imax_1 = N-i
  *             MASKTEST fcc0, mask
@@ -8055,6 +8210,7 @@ INSTQ *AddIntShadowPrologue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iph, short scal,
    GetReg(-1);
 
    return iph;
+#endif   
 }
 INSTQ *AddIntShadowEpilogue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iptp, INSTQ *iptn, 
       short scal, int index)
@@ -8071,7 +8227,9 @@ INSTQ *AddIntShadowEpilogue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iptp, INSTQ *iptn,
    short flag;
    short mvar, vmvar, vmask; 
    short r0, r1, ireg, vireg0, vireg1,vireg2, type;
-   enum inst mfinst, rminst, vld, vst, vsld, vsst, vshuf, cmov1, vfcmpweq;
+   enum inst mfinst, rminst, vld, vst, vsld, vsst, vshuf, vfcmpweq;
+   enum inst vild, vilds, vist, vists, vgr2vr, vishuf, vicmov1, vicmov2, vimin,
+             vimax;
 
    flag = lp->vsflag[index];
 /*
@@ -8084,9 +8242,23 @@ INSTQ *AddIntShadowEpilogue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iptp, INSTQ *iptn,
       vld = VFLD;
       vst = VFST;
       vshuf = VFSHUF;
-      //cmov1 = FCMOV1;
       vfcmpweq = VFCMPWEQ;
       type = T_VFLOAT;
+/*
+ *    for float, we will consider 32 bit INT inside vector
+ */
+      //vild = VSLD;
+      vild = VLD;
+      vilds = VSLDS;
+      //vist = VSST;
+      vist = VST;
+      vists = VSSTS;
+      vishuf = VSSHUF;
+      vgr2vr = VGR2VR32;
+      vimin = VSMIN;
+      vimax = VSMAX;
+      vicmov1 = VSCMOV1;
+      vicmov2 = VSCMOV2;
    }
    else
    {
@@ -8095,9 +8267,23 @@ INSTQ *AddIntShadowEpilogue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iptp, INSTQ *iptn,
       vld = VDLD;
       vst = VDST;
       vshuf = VDSHUF;
-      //cmov1 = FCMOVD1;
       vfcmpweq = VDCMPWEQ;
       type = T_VDOUBLE;
+/*
+ *    for float, we will consider 32 bit INT inside vector
+ */
+      //vild = VILD;
+      vild = VLD;
+      vilds = VILDS;
+      //vist = VIST;
+      vist = VST;
+      vists = VISTS;
+      vishuf = VISHUF;
+      vgr2vr = VGR2VR64;
+      vimin = VIMIN;
+      vimax = VIMAX;
+      vicmov1 = VICMOV1;
+      vicmov2 = VICMOV2;
    }
 
 /*
@@ -8129,6 +8315,215 @@ INSTQ *AddIntShadowEpilogue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iptp, INSTQ *iptn,
          STname[mvar-1], STname[vmvar-1]);
 #endif
    
+   r0 = GetReg(FLAG2TYPE(lp->vflag));
+   r1 = GetReg(FLAG2TYPE(lp->vflag));
+
+   if (flag & VS_SELECT) /* only sel scal should be liveout */
+   {
+      iptp = PrintComment(lp->posttails->blk, iptp, iptn,
+                          "Reduce vector for %s", 
+                           STname[scal-1]);
+/*   step : 1  amax = HMAX(Vamax) --- floating point */
+      if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag) ) 
+      {
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFLD, -r0,
+                                 SToff[vmvar-1].sa[2], 0); 
+      #if defined(X86) && defined(AVX)
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+              -r1, -r0, STiconstlookup(0x7654FEDC));
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, mfinst,
+              -r0,-r0,-r1);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+              -r1, -r0, STiconstlookup(0x765432BA));
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, mfinst,
+              -r0,-r0,-r1);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+              -r1, -r0, STiconstlookup(0x76CD3289));
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, mfinst,
+              -r0,-r0,-r1);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSTS,
+              SToff[mvar-1].sa[2], -r0, 0);
+      #else
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+              -r1, -r0, STiconstlookup(0x3276));
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, mfinst,
+              -r0,-r0,-r1);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSHUF,
+              -r1, -r0, STiconstlookup(0x5555));
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, mfinst,
+              -r0,-r0,-r1);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VFSTS,
+              SToff[mvar-1].sa[2], -r0, 0);
+      #endif
+      }
+      else 
+      {
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDLD, -r0,
+                                 SToff[vmvar-1].sa[2], 0); 
+      #if defined(X86) && defined(AVX)
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
+              -r0, STiconstlookup(0x3276));
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, mfinst,-r0,-r0,
+              -r1);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
+              -r0, STiconstlookup(0x3715));
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, mfinst,-r0,-r0,
+              -r1);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS,
+              SToff[mvar-1].sa[2], -r0, 0);
+      #else
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSHUF, -r1,
+              -r0, STiconstlookup(0x33));
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, mfinst,-r0,-r0,
+              -r1);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VDSTS,
+              SToff[mvar-1].sa[2], -r0, 0);
+      #endif
+      }
+      //GetReg(-1);
+/*    step : 2   Vmask2 = Vamax == [amax, amax, amax,....] ---floating point */
+/*    3. Vimax = CMOV(Vimax, VmaxInt, Vmask2)  ==> based on amax ..max/min -vint
+ */
+      vmask = InsertNewLocal("_r_vmask", type);
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vsld, -r0,
+                        SToff[mvar-1].sa[2], 0);
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vld, -r1,
+                        SToff[vmvar-1].sa[2], 0); 
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vshuf, -r0, 
+                        -r0, STiconstlookup(0));     
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vfcmpweq, -r0, -r0,-r1);  
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vst,
+                        SToff[vmask-1].sa[2], -r0, 0);
+
+/*
+ *    generating VmaxInt ... Normally compiler generates this by storing the 
+ *    value into stack!!!
+ *    NOTE: here we need to use 
+ *             VCMOV2: dest = (mask==0)? src: dest
+ *    FIXME: consider both max and min 
+ */
+      ireg = GetReg(T_INT);
+      vireg0 = GetReg(T_VINT); /* not used but keep space for r0*/
+      vireg1 = GetReg(T_VINT);
+      vireg2 = GetReg(T_VINT);
+#if 0
+      fprintf(stderr, "r0=%d, r1=%d, ireg=%d, vireg0=%d, vireg1=%d, vreg2=%d\n",
+              r0, r1, ireg, vireg0, vireg1, vireg2);
+#endif
+      iptp = InsNewInst(bp0, iptp, NULL, vld, -r0, SToff[vmask-1].sa[2], 0);
+      iptp = InsNewInst(bp0, iptp, NULL, vild, -vireg1, 
+                        SToff[lp->vvscal[index]-1].sa[2], 0);
+/*
+ *    HERE HERE, should we change the constatnt for 64 bit int???
+ */
+      iptp = InsNewInst(bp0, iptp, NULL, MOV, -ireg, 
+                        STiconstlookup(0x7FFFFFFF), 0);
+
+      iptp = InsNewInst(bp0, iptp, NULL, vgr2vr, -vireg2, -ireg, 
+                        STiconstlookup(0));
+      iptp = InsNewInst(bp0, iptp, NULL, vishuf, -vireg2, -vireg2, 
+                        STiconstlookup(0));
+      iptp = InsNewInst(bp0, iptp, NULL, vicmov2, -vireg1, -vireg2, -r0); 
+      iptp = InsNewInst(bp0, iptp, NULL, vist, SToff[lp->vvscal[index]-1].sa[2], 
+                 -vireg1, 0);
+/*
+ *    step 4: imax = HMIN(Vimax) ... vint 
+ *    FIXME: need to check the condition... whether it is > or >=
+ */
+      if (mfinst == VFMAX || mfinst == VDMAX)
+      {
+         rminst = vimin;
+      }
+      else
+      {
+         rminst = vimax;
+      }
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VLD, -vireg1,
+                                 SToff[lp->vvscal[index]-1].sa[2], 0); 
+   #if defined(X86) && defined(AVX2)
+   
+      if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
+      {      
+/*
+ *    NOTE: 
+ *    Here is the actual shuffle for reduction (X means don't care):
+ *          0x XXXXFEDC
+ *          0x XXXXXXBA
+ *          0x XXXXXXX9
+ *    To implement that in AVX easily, I choose following sequence:
+ *          0x 7654 FEDC
+ *          0x 7654 BABA
+ *          0x 7654 BA99
+ */
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vishuf,
+                 -vireg2, -vireg1, STiconstlookup(0x7654FEDC));
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, rminst,
+                 -vireg1,-vireg1,-vireg2);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vishuf,
+                 -vireg2, -vireg1, STiconstlookup(0x7654BABA)); //0x 7654 32BA
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, rminst,
+                 -vireg1,-vireg1,-vireg2);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vishuf,
+                 -vireg2, -vireg1, STiconstlookup(0x7654BA99)); // 0x 76CD 3289
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, rminst,
+                 -vireg1,-vireg1,-vireg2);
+/*
+ *    FIXED: all integer vars/regs are 64 bit in FKO. But we treated the 
+ *    vector integer 8x32 bit. So, before storing, we need to upgarde the single
+ *    element into 64 bit
+ */
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VSMOVS,
+                 -ireg,-vireg1,0);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, CVTSI,
+                 -ireg,-ireg,0);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, ST,
+                 SToff[lp->vscal[index]-1].sa[2], -ireg, 0);
+      /*iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VSTS,
+              SToff[lp->vscal[index]-1].sa[2], -vireg1, 0);*/
+      }
+      else /* double */
+      {
+/*
+ *    NOTE: 
+ *    Here is the actual shuffle for reduction (X means don't care):
+ *          0x XX76
+ *          0x XXX5
+ *    To implement that in AVX easily, I choose following sequence:
+ *          0x 7676
+ *          0x 7655
+ *    FIXED: we don't have max/min instruction for 64 bit int, not even in
+ *    avx2. so, we have to simulate that using vcmp and cmov instruction!!
+ *    don't find VICMPWLT... using VICMPGT.
+ *    FIXME: VICMOV expects floating point mask!!!
+ */
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vishuf,
+                 -vireg2, -vireg1, STiconstlookup(0x7676));
+         
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VICMPWGT,
+                 -vireg0, -vireg1, -vireg2);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VICMOV1,
+                 -vireg1, -vireg2, -vireg0);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vishuf,
+                 -vireg2, -vireg1, STiconstlookup(0x7655)); 
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VICMPWGT,
+                 -vireg0, -vireg1, -vireg2);
+         iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VICMOV1,
+                 -vireg1, -vireg2, -vireg0);
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, vists,
+              SToff[lp->vscal[index]-1].sa[2], -vireg1, 0);         
+      }
+   #else
+/*
+ *    will need AVX2 anyway
+ */
+      fko_error(__LINE__, "need avx2 for int vector arithmatic!!!\n");
+   #endif
+       
+
+   }
+   else assert(0);
+   GetReg(-1);
+#if 0
    r0 = GetReg(FLAG2TYPE(lp->vflag));
    r1 = GetReg(FLAG2TYPE(lp->vflag));
 
@@ -8273,8 +8668,19 @@ INSTQ *AddIntShadowEpilogue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iptp, INSTQ *iptn,
               -vireg2, -vireg1, STiconstlookup(0x7654BA99)); // 0x 76CD 3289
       iptp = InsNewInst(lp->posttails->blk, iptp, NULL, rminst,
               -vireg1,-vireg1,-vireg2);
-      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VSTS,
-              SToff[lp->vscal[index]-1].sa[2], -vireg1, 0);
+/*
+ *    FIXED: all integer vars/regs are 64 bit in FKO. But we treated the 
+ *    vector integer 8x32 bit. So, before storing, we need to upgarde the single
+ *    element into 64 bit
+ */
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VMOVS,
+              -ireg,-vireg1,0);
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, CVTSI,
+              -ireg,-ireg,0);
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, ST,
+              SToff[lp->vscal[index]-1].sa[2], -ireg, 0);
+      /*iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VSTS,
+              SToff[lp->vscal[index]-1].sa[2], -vireg1, 0);*/
    #else
       iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VISHUF,
               -vireg2, -vireg1, STiconstlookup(0x3276));
@@ -8284,14 +8690,27 @@ INSTQ *AddIntShadowEpilogue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iptp, INSTQ *iptn,
               -vireg2, -vireg1, STiconstlookup(0x5555));
       iptp = InsNewInst(lp->posttails->blk, iptp, NULL, rminst,
               -vireg1,-vireg1,-vireg2);
-      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VSTS,
-              SToff[vscal[index]-1].sa[2], -vireg1, 0);
+/*
+ *    FIXED: all integer vars/regs are 64 bit in FKO. But we treated the 
+ *    vector integer 8x32 bit. So, before storing, we need to upgarde the single
+ *    element into 64 bit
+ */
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VMOVS,
+              -ireg,-vireg1,0);
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, CVTSI,
+              -ireg,-ireg,0);
+      iptp = InsNewInst(lp->posttails->blk, iptp, NULL, ST,
+              SToff[lp->vscal[index]-1].sa[2], -ireg, 0);
+
+      /*iptp = InsNewInst(lp->posttails->blk, iptp, NULL, VSTS,
+              SToff[vscal[index]-1].sa[2], -vireg1, 0);*/
    #endif
        
 
    }
    else assert(0);
    GetReg(-1);
+#endif
 
    return iptp;
 }
@@ -8605,18 +9024,20 @@ int RcVecTransform(LOOPQ *lp)
  *    Majedul: instruction selection for V_INT
  */
    static enum inst
-      siinsts[] = {LD, ST, ADD, SUB, CMOV1, CMOV2, MASKTEST, CVTBDI,CVTBFI,BTC},
-      viinsts[] = {VLD, VST, VADD, VSUB, VCMOV1, VCMOV2, MASKTEST, CVTBDI, 
+      siinsts[] = {LD, ST, ADD, SUB, CMOV1, CMOV2, CVTBDI,CVTBFI,BTC},
+      vs_insts[] = {VLD, VST, VSADD, VSSUB, VSCMOV1, VSCMOV2, CVTBDI, 
+                   CVTFI, BTC},
+      vi_insts[] = {VLD, VST, VIADD, VISUB, VICMOV1, VICMOV2, CVTBDI, 
                    CVTFI, BTC};
    /*assert(0);*/
 
    const int nvinst=20;
    const int nivinst = 10;
    enum inst sld, vld, sst, vst, smul, vmul, smac, vmac, sadd, vadd, ssub, vsub, 
-             sabs, vabs, smov, vmov, szero, vzero, inst;
+             sabs, vabs, smov, vmov, szero, vzero, inst, vcmov1, vcmov2;
    short r0, r1, op;
    short vmask;
-   enum inst *sinst, *vinst;
+   enum inst *sinst, *vinst, *viinsts;
    int i, j, n, k, nfr=0, nir=0;
    char ln[512];
    struct ptrinfo *pi0, *pi;
@@ -8630,6 +9051,9 @@ int RcVecTransform(LOOPQ *lp)
    {
       sinst = sfinsts;
       vinst = vfinsts;
+      viinsts = vs_insts;
+      vcmov1 = VSCMOV1;
+      vcmov2 = VSCMOV2;
 #if defined (X86) && defined(AVX)
       vlen = 8;
 #else
@@ -8640,6 +9064,9 @@ int RcVecTransform(LOOPQ *lp)
    {
       sinst = sdinsts;
       vinst = vdinsts;
+      viinsts = vi_insts;
+      vcmov1 = VICMOV1;
+      vcmov2 = VICMOV2;
 #if defined (X86) && defined(AVX)
       vlen = 4;
 #else
@@ -8708,7 +9135,11 @@ int RcVecTransform(LOOPQ *lp)
  * Add prologue epilogue for vectorization
  */
    AddVectorPrologueEpilogue(lp);
-
+#if 0
+   fprintf(stdout, "LIL After Prologue epilogue\n");
+   PrintInst(stdout, bbbase);
+   exit(0);
+#endif
 /*
  * Translate body of loop
  */
@@ -8820,7 +9251,8 @@ int RcVecTransform(LOOPQ *lp)
                         InsNewInst(bl->blk, NULL, ip, VDLD, -k, 
                               SToff[vmask-1].sa[2], 0);
                      }
-                     ip->inst[0] = VCMOV1;
+                     /*ip->inst[0] = VCMOV1;*/
+                     ip->inst[0] = vcmov1;
                      ip->inst[1] = ldvir1; 
                      ip->inst[2] = ldvir2; 
                      ip->inst[3] = -k;
@@ -9200,7 +9632,7 @@ int RcVectorization()
    assert(!RcVecTransform(lp));
 #else
    //KillLoopControl(lp);
-   isShadowPossible(lp); /*need check whether the condition is to find max/min too*/
+   isShadowPossible(lp); /*check whether the condition is to find max/min too*/
    assert(!RcVecTransform(lp));
 #endif
    KillPathTable();

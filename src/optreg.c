@@ -1385,8 +1385,13 @@ int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
             ip->inst[0] = VFMOVS;
             ip->inst[2] = -ig->reg;
             break;
-      #ifdef VIREGBEG 
-         case VLDS:
+      #ifdef VIREGBEG
+/*
+ *       We should not use VSLDS directly in LIL. It will always be replaced 
+ *       with VSMOVS and CVTSI. 
+ */
+
+         /*case VLDS:
             #ifdef X86
                k = ig->reg;
                if (k >= IREGBEG && k < IREGEND)
@@ -1396,6 +1401,21 @@ int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
                                     ip->inst[1], 0, 0));
             #endif
             ip->inst[0] = VMOVS;
+            ip->inst[2] = -ig->reg;
+            break;*/
+         case VSLDS:
+            assert(0);
+            break;
+         case VILDS:
+            #ifdef X86
+               k = ig->reg;
+               if (k >= IREGBEG && k < IREGEND)
+                  k = k - IREGBEG + VIREGBEG;
+               if (k != -ip->inst[1])
+                  CalcThisUseSet(InsNewInst(NULL, NULL, ip, VIZERO, 
+                                    ip->inst[1], 0, 0));
+            #endif
+            ip->inst[0] = VIMOVS;
             ip->inst[2] = -ig->reg;
             break;
       #endif

@@ -158,7 +158,10 @@ static char *GetSregOrDeref(short id)
  */
 {
    if (id < 0)
+   {
+      //fprintf(stderr, "id = %d\n", id);
       return(archsregs[-IREGBEG-id]);
+   }
    else if (id)
       return(GetDeref(id));
 }
@@ -1243,11 +1246,11 @@ struct assmln *lil2ass(BBLOCK *bbase)
 /*         ap->next = PrintAssln("\tcdqe\n"); */
    #else
          if (op1 < 0)
-            ap->next = PrintAssln("\tmovslq\t%d, %s\n", 
+            ap->next = PrintAssln("\tmovslq\t%s, %s\n", 
                                   GetSregOrDeref(op2),  
                                   archiregs[-IREGBEG-op1]);
          else
-            ap->next = PrintAssln("\tmovslq\t%d, %s\n", 
+            ap->next = PrintAssln("\tmovslq\t%s, %s\n", 
                                    archsregs[-IREGBEG-op2], 
                                    GetIregOrDeref(op1));  
 
@@ -2777,6 +2780,34 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #endif
          break;
 /*
+ *    vpinsrq works on 32 bit ireg like: eax instead of rax...
+ */
+      case VGR2VR64:
+         op1 = -op1;
+         if (op1 >= VDREGBEG && op1 < VDREGEND)
+            op1 = op1 - VDREGBEG + DREGBEG;
+         else if (op1 >= VFREGBEG && op1 < VFREGEND)
+            op1 = op1 - VFREGBEG + DREGBEG;
+         else if (op1 >= FREGBEG && op1 < FREGEND)
+            op1 = op1 - FREGBEG + DREGBEG;
+         else if (op1 >= VIREGBEG && op1 < VIREGEND)
+            op1 = op1 - VIREGBEG + DREGBEG;
+         op1 = -op1;
+         #ifdef AVX
+            /*ap->next = PrintAssln("\tpinsrw\t%s,%s,%s\n", GetIregOrConst(op3),
+                                  archiregs[-IREGBEG-op2],
+                                  archxmmregs[-DREGBEG-op1]);*/
+            ap->next = PrintAssln("\tvpinsrq\t%s,%s,%s,%s\n", 
+                                  GetIregOrConst(op3),
+                                  archiregs[-IREGBEG-op2],
+                                  archxmmregs[-DREGBEG-op1],
+                                  archxmmregs[-DREGBEG-op1]);
+         #else
+            ap->next = PrintAssln("\tpinsrq\t%s,%s,%s\n", GetIregOrConst(op3),
+                               archiregs[-IREGBEG-op2],archdregs[-DREGBEG-op1]);
+         #endif
+         break;
+/*
  * Only x86 has double precision SIMD inst
  */
    #ifdef X86
@@ -4010,7 +4041,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
  *       cp represents the position of destination:
  *       cp7,cp6,cp5,cp4,cp3,cp2,cp1,cp0   rd[7,6,5,4,3,2,1,0]
  *       value of cp can be 0~15: 0~7 represents float of rd; 
- *       7~15 represents float of rs.
+ *       8~15 represents float of rs.
  *       Right now we need following combination:
  */      
          #ifdef AVX
@@ -4214,7 +4245,596 @@ struct assmln *lil2ass(BBLOCK *bbase)
          break;
 /*
  * Majedul: some instruction for V_INT type operation
+ * NOTE: implementing two versions of int vector instructions 
  */
+/* NOTE: affectively VSMOV and VIMOV are same as they mov the whole vector
+ * I use VMOV for that
+ */        
+      /*case VSMOV: case VIMOV:*/
+   case VMOV:
+/*
+ *       Majedul: although double quadword means 128 bit, vmovdqa can mov 256bit
+ *       packed integer. unaligned version of this instrucion is vmovdqu 
+ */
+         #ifdef AVX
+            ap->next = PrintAssln("\tvmovdqa\t%s, %s\n", 
+                                  archviregs[-VIREGBEG-op2],
+                                  archviregs[-VIREGBEG-op1]);
+         #else
+            ap->next = PrintAssln("\tmovdqa\t%s, %s\n", 
+                                  archviregs[-VIREGBEG-op2],
+                                  archviregs[-VIREGBEG-op1]);
+         #endif
+         break;
+
+   case VSMOVS: /* 32 bit int */
+         assert (op1 < 0 && op2 < 0);
+         op1 = -op1;
+         op2 = -op2;
+         if ( (op1 >= IREGBEG && op1 < IREGEND) 
+               && (op2 >= VIREGBEG && op2 < VIREGEND) ) /* vireg to ireg */
+         {
+            op1 = -op1;
+            op2 = -op2;
+         #ifdef AVX
+            ap->next = PrintAssln("\tvmovd\t%s, %s\n", 
+                                  archxmmregs[-VIREGBEG-op2],
+                                  archsregs[-IREGBEG-op1]);
+         #else
+            ap->next = PrintAssln("\tmovd\t%s, %s\n", 
+                                  archviregs[-VIREGBEG-op2],
+                                  archsregs[-IREGBEG-op1]);
+         #endif
+         }
+         else if ( (op1 >= VIREGBEG && op1 < VIREGEND) 
+               && (op2 >= IREGBEG && op2 < IREGEND) ) /* ireg to vireg, why? */
+         {
+            op1 = -op1;
+            op2 = -op2;
+         #ifdef AVX
+            ap->next = PrintAssln("\tvmovd\t%s, %s\n", 
+                                  archsregs[-IREGBEG-op2],
+                                  archxmmregs[-VIREGBEG-op1]);
+         #else
+            ap->next = PrintAssln("\tmovd\t%s, %s\n", 
+                                  archsregs[-IREGBEG-op2],
+                                  archviregs[-VIREGBEG-op1]);
+         #endif
+         }
+         else 
+            fko_error(__LINE__, "Undefined operands for VMOVS inst!!\n");
+
+         break;
+   
+   case VIMOVS:
+         assert (op1 < 0 && op2 < 0);
+         op1 = -op1;
+         op2 = -op2;
+         if ( (op1 >= IREGBEG && op1 < IREGEND) 
+               && (op2 >= VIREGBEG && op2 < VIREGEND) ) /* vireg to ireg */
+         {
+            op1 = -op1;
+            op2 = -op2;
+         #ifdef AVX
+            ap->next = PrintAssln("\tvmovq\t%s, %s\n", 
+                                  archxmmregs[-VIREGBEG-op2],
+                                  archiregs[-IREGBEG-op1]);
+         #else
+            ap->next = PrintAssln("\tmovq\t%s, %s\n", 
+                                  archviregs[-VIREGBEG-op2],
+                                  archiregs[-IREGBEG-op1]);
+         #endif
+         }
+         else if ( (op1 >= VIREGBEG && op1 < VIREGEND) 
+               && (op2 >= IREGBEG && op2 < IREGEND) ) /* ireg to vireg */
+         {
+            op1 = -op1;
+            op2 = -op2;
+         #ifdef AVX
+            ap->next = PrintAssln("\tvmovq\t%s, %s\n", 
+                                  archiregs[-IREGBEG-op2],
+                                  archxmmregs[-VIREGBEG-op1]);
+         #else
+            ap->next = PrintAssln("\tmovd\t%s, %s\n", 
+                                  archiregs[-IREGBEG-op2],
+                                  archviregs[-VIREGBEG-op1]);
+         #endif
+         }
+         else 
+            fko_error(__LINE__, "Undefined operands for VMOVS inst!!\n");
+         break;
+/*
+ * VSLD and VILD affectively same for avx2. so, we use one instruction
+ */
+   /*case VSLD: case VILD:*/
+   case VLD:
+         fprintf(stderr, "op1=%d, op2=%d\n", op1, op2);
+         assert(op1 < 0 && op2 >= 0);
+         #ifdef AVX
+            ap->next = PrintAssln("\tvmovdqa\t%s, %s\n", GetDeref(op2),
+                                  archviregs[-VIREGBEG-op1]);
+         #else
+            ap->next = PrintAssln("\tmovdqa\t%s, %s\n", GetDeref(op2),
+                                  archviregs[-VIREGBEG-op1]);
+         #endif
+         break;
+   case VSLDS:
+         assert(op1 < 0 && op2 >= 0);
+         #ifdef AVX
+            ap->next = PrintAssln("\tvmovd\t%s, %s\n", GetDeref(op2),
+                                  archxmmregs[-VIREGBEG-op1]); 
+         #else
+            ap->next = PrintAssln("\tmovd\t%s, %s\n", GetDeref(op2),
+                                  archviregs[-VIREGBEG-op1]);
+         #endif
+         break;
+   case VILDS:
+         assert(op1 < 0 && op2 >= 0);
+         #ifdef AVX
+            ap->next = PrintAssln("\tvmovq\t%s, %s\n", GetDeref(op2),
+                                  archxmmregs[-VIREGBEG-op1]); 
+         #else
+            ap->next = PrintAssln("\tmovq\t%s, %s\n", GetDeref(op2),
+                                  archviregs[-VIREGBEG-op1]);
+         #endif
+         break;
+   /*case VSST: case VIST:*/
+   case VST:
+         assert(op2 < 0 && op1 >= 0);
+         #ifdef AVX
+            ap->next = PrintAssln("\tvmovdqa\t%s, %s\n", 
+                  archviregs[-VIREGBEG-op2], GetDeref(op1) );
+         #else
+            ap->next = PrintAssln("\tmovdqa\t%s, %s\n", 
+                  archviregs[-VIREGBEG-op2], GetDeref(op1) );
+         #endif
+         break;
+   case VSSTS:
+         assert(op2 < 0 && op1 >= 0);
+         #ifdef AVX
+            ap->next = PrintAssln("\tvmovd\t%s, %s\n",
+                  archxmmregs[-VIREGBEG-op2], GetDeref(op1)); 
+         #else
+            ap->next = PrintAssln("\tmovd\t%s, %s\n",
+                  archviregs[-VIREGBEG-op2], GetDeref(op1) );
+         #endif
+         break;
+   case VISTS:
+         assert(op2 < 0 && op1 >= 0);
+         #ifdef AVX
+            ap->next = PrintAssln("\tvmovq\t%s, %s\n",
+                  archxmmregs[-VIREGBEG-op2], GetDeref(op1)); 
+         #else
+            ap->next = PrintAssln("\tmovq\t%s, %s\n",
+                  archviregs[-VIREGBEG-op2], GetDeref(op1) );
+         #endif
+         break;
+   case VSZERO : case VIZERO:
+/*
+ *       For AVX: intel manual said, it would zerod the upper 128 bit of 
+ *       destination!!!
+ *       ref: inter(R) 64 and IA-32 Architecures s/w developer's manual, 
+ *       june 2011, page 1652 ... ... ... ... ..... 
+ *       But supported in AVX2 .................. 
+ */
+         #ifdef AVX
+            #ifdef AVX2 /* need AVX2 */
+            ap->next = PrintAssln("\tvpxor\t%s,%s, %s\n", 
+                                  archviregs[-VIREGBEG-op1],
+                                  archviregs[-VIREGBEG-op1],
+                                  archviregs[-VIREGBEG-op1]); 
+            #else
+            ap->next = PrintAssln("\tvpxor\t%s,%s, %s\n", 
+                                  archxmmregs[-VIREGBEG-op1],
+                                  archxmmregs[-VIREGBEG-op1],
+                                  archxmmregs[-VIREGBEG-op1]); 
+            #endif
+         #else
+            ap->next = PrintAssln("\tpxor\t%s,%s\n", archviregs[-VIREGBEG-op1],
+                                  archviregs[-VIREGBEG-op1]);
+         #endif   
+         break;
+   case VSADD:
+/*
+ *       Note: need to use AVX2 for this functionality to operate on 256 bit 
+ */
+         #if defined(AVX) && !defined(AVX2)
+            fko_error(__LINE__, "vadd is not supported in AVX, AVX2 needed!!\n"); 
+         #elif defined (AVX2)
+            ap->next = PrintAssln("\tvpaddd\t%s,%s,%s\n", 
+                                  GetDregOrDeref(op3),
+                                  archviregs[-VIREGBEG-op2], 
+                                  archviregs[-VIREGBEG-op1]); 
+         #else
+            assert(op1 == op2);
+            ap->next = PrintAssln("\tpaddd\t%s, %s\n", GetDregOrDeref(op3),
+                                  archviregs[-VIREGBEG-op1]);
+         #endif
+         break;
+   case VIADD:
+/*
+ *       Note: need to use AVX2 for this functionality to operate on 256 bit 
+ */
+         #if defined(AVX) && !defined(AVX2)
+            fko_error(__LINE__, "vadd is not supported in AVX, AVX2 needed!!\n"); 
+         #elif defined (AVX2)
+            ap->next = PrintAssln("\tvpaddq\t%s,%s,%s\n", 
+                                  GetDregOrDeref(op3),
+                                  archviregs[-VIREGBEG-op2], 
+                                  archviregs[-VIREGBEG-op1]); 
+         #else
+            assert(op1 == op2);
+            ap->next = PrintAssln("\tpaddq\t%s, %s\n", GetDregOrDeref(op3),
+                                  archviregs[-VIREGBEG-op1]);
+         #endif
+         break;
+   case VSSUB:
+/*
+ *       Note: need to use AVX2 for this functionality to operate on 256 bit 
+ */
+         #if defined(AVX) && !defined(AVX2)
+            fko_error(__LINE__, "vsub is not supported in AVX, AVX2 needed!!\n"); 
+         #elif defined (AVX2)
+            ap->next = PrintAssln("\tvpsubd\t%s,%s,%s\n", 
+                                  GetDregOrDeref(op3),
+                                  archviregs[-VIREGBEG-op2], 
+                                  archviregs[-VIREGBEG-op1]); 
+         #else
+            assert(op1 == op2);
+            ap->next = PrintAssln("\tpsubd\t%s, %s\n", GetDregOrDeref(op3),
+                                  archviregs[-VIREGBEG-op1]);
+         #endif
+         break;
+   case VISUB:
+/*
+ *       Note: need to use AVX2 for this functionality to operate on 256 bit 
+ */
+         #if defined(AVX) && !defined(AVX2)
+            fko_error(__LINE__, "vsub is not supported in AVX, AVX2 needed!!\n"); 
+         #elif defined (AVX2)
+            ap->next = PrintAssln("\tvpsubq\t%s,%s,%s\n", 
+                                  GetDregOrDeref(op3),
+                                  archviregs[-VIREGBEG-op2], 
+                                  archviregs[-VIREGBEG-op1]); 
+         #else
+            assert(op1 == op2);
+            ap->next = PrintAssln("\tpsubq\t%s, %s\n", GetDregOrDeref(op3),
+                                  archviregs[-VIREGBEG-op1]);
+         #endif
+         break;
+   case VSMAX: /* signed max */
+/*
+ *       condidering max on packed signed integers 
+ */
+         #if defined(AVX) && !defined(AVX2)
+            fko_error(__LINE__, "vmax is not supported in AVX, AVX2 needed!!\n"); 
+         #elif defined (AVX2)
+            ap->next = PrintAssln("\tvpmaxsd\t%s,%s,%s\n", 
+                                  GetDregOrDeref(op3),
+                                  archviregs[-VIREGBEG-op2], 
+                                  archviregs[-VIREGBEG-op1]); 
+         #else
+            assert(op1 == op2);
+            ap->next = PrintAssln("\tpmaxsd\t%s, %s\n", GetDregOrDeref(op3),
+                                  archviregs[-VIREGBEG-op1]);
+         #endif
+         break;
+   case VIMAX: /*???? AVX2 doesn't have max inst for 64bit?????? */
+         assert(0);
+         break;
+   case VSMIN:
+/*
+ *       condidering max on packed signed integers 
+ */
+         #if defined(AVX) && !defined(AVX2)
+            fko_error(__LINE__, "vmax is not supported in AVX, AVX2 needed!!\n"); 
+         #elif defined (AVX2)
+            ap->next = PrintAssln("\tvpminsd\t%s,%s,%s\n", 
+                                  GetDregOrDeref(op3),
+                                  archviregs[-VIREGBEG-op2], 
+                                  archviregs[-VIREGBEG-op1]); 
+         #else
+            assert(op1 == op2);
+            ap->next = PrintAssln("\tpminsd\t%s, %s\n", GetDregOrDeref(op3),
+                                  archviregs[-VIREGBEG-op1]);
+         #endif
+         break;
+   case VIMIN: /*???? AVX2 doesn't have max inst for 64bit?????? */
+         assert(0);
+         break;
+   case VSSHUF:
+/*
+ *       Need to implement following options:
+ *       
+ *          AVX: 0, 7654FEDC, 765432BA/7654BABA, 76CD3289/7654BA99, B3A29180, 
+ *          SSE: 0, 3276, 5555, 5140
+ *          FIXME
+ */
+         cp = imap2cmap(SToff[op3-1].i); /* return hex char */
+#if 0
+         fprintf(stderr, "%x%x%x%x%x%x%x%x\n",cp[7],cp[6],cp[5],cp[4],cp[3],
+                 cp[2],cp[1],cp[0]);
+         //fflush(stderr);
+#endif
+         #if defined(AVX) && !defined(AVX2)
+            fko_error(__LINE__, "vishuf is not implemented in AVX,AVX2 needed!\n"); 
+         
+         #elif defined(AVX2)   
+            if (!SToff[op3-1].i)
+            {
+               assert(op1==op2);
+               ap->next = PrintAssln("\tvperm2i128\t$%d,%s,%s,%s\n", 0,
+                                     archviregs[-VIREGBEG-op1], 
+                                     archviregs[-VIREGBEG-op1], 
+                                     archviregs[-VIREGBEG-op1]);
+               ap=ap->next;
+                  ap->next = PrintAssln("\tvpshufd\t$%d,%s,%s\n", 0,
+                                        archviregs[-VIREGBEG-op1], 
+                                        archviregs[-VIREGBEG-op1]);
+            }
+/*
+ *          0x7654 FEDC
+ *          0x7654 BABA
+ *          0x7654 BA99
+ */
+            else if(cp[7] == 7 && cp[6] == 6 && cp[5] == 5 && cp[4] == 4)    
+            {
+               if (cp[3] == 15 && cp[2] == 14 && cp[1] == 13 && cp[0] == 12)
+               {
+                  ap->next = PrintAssln("\tvperm2i128\t$0x31,%s,%s,%s\n",
+                                        archviregs[-VIREGBEG-op1], /* src2*/ 
+                                        archviregs[-VIREGBEG-op2], 
+                                        archviregs[-VIREGBEG-op1]);
+               }
+               else if (cp[3] == 11 && cp[2] == 10 && cp[1] == 11 && cp[0] == 10)
+               {
+                  ap->next = PrintAssln("\tpshufd\t$%d,%s,%s\n", 0xEE,
+                                        archxmmregs[-VIREGBEG-op2], 
+                                        archxmmregs[-VIREGBEG-op1]);
+               }
+               else if (cp[3] == 11 && cp[2] == 10 && cp[1] == 9 && cp[0] == 9)
+               {
+                  ap->next = PrintAssln("\tpshufd\t$%d,%s,%s\n", 0xE5,
+                                        archxmmregs[-VIREGBEG-op2], 
+                                        archxmmregs[-VIREGBEG-op1]);
+               }
+               else
+                fko_error(__LINE__, "Not implemented this VISHUF yet");
+            }
+/*
+ *          0xBA98 3210
+ *          0xD5C4 9180
+ */
+            else if(cp[7] == 11 && cp[6] == 10 && cp[5] == 9 && cp[4] == 8)    
+            {
+               if (cp[3] == 3 && cp[2] == 2 && cp[1] == 1 && cp[0] == 0)
+               {
+                  ap->next = PrintAssln("\tvperm2i128\t$0x20,%s,%s,%s\n",
+                                        archviregs[-VIREGBEG-op2], /*src2==dest*/ 
+                                        archviregs[-VIREGBEG-op1], 
+                                        archviregs[-VIREGBEG-op1]);
+               }
+            }
+            else if(cp[7] == 13 && cp[6] == 5 && cp[5] == 12 && cp[4] == 4)    
+            {
+               if (cp[3] == 9 && cp[2] == 1 && cp[1] == 8 && cp[0] == 0)
+               {
+                  ap->next = PrintAssln("\tvpunpckldq\t%s,%s,%s\n",
+                                        archviregs[-VIREGBEG-op2], /* src2*/ 
+                                        archviregs[-VIREGBEG-op1], 
+                                        archviregs[-VIREGBEG-op1]);
+               }
+            }
+            else
+            fko_error(__LINE__, "Not implemented this vishuf yet!\n"); 
+
+         #else
+/*
+ *       SSE: 0, 3276, 5555, 5140
+ *       NOTE: not implemented for SSE... need to explore later
+ */
+            fko_error(__LINE__, "Not implemented VISHUF for SSE yet");
+         #endif
+         break;
+      
+      case VISHUF:
+         cp = imap2cmap(SToff[op3-1].i);
+         #if defined(AVX) && !defined(AVX2)
+            fko_error(__LINE__, "AVX2 is needed !!!\n"); 
+/*
+ *          Generalized combination :
+ *          cp represents the position of destination:
+ *          cp3,cp2,cp1,cp0   rd[3,2,1,0]
+ *          value of cp can be 0~7: 0~3 represents int64 of rd; 
+ *          4~7 represents double of rs.
+ *          NOTE: we are using permute operation which permutes source and 
+ *          stores it in destination.
+ *
+ *          Right now we need following combination (X means don't care):
+ *             0x 0000
+ *             0x XX76
+ *             0x XXX5
+ *          NOTE: we don't have shuffle instruction for 64 bit int in avx2. So,
+ *          we will use vpermq instruction. We can implement following 
+ *          combination: 
+ *             0x 7676
+ *             0x 7655
+ *
+ */         
+         #elif defined(AVX2)   
+            if (!SToff[op3-1].i) /* ox0000 */
+            {
+               assert(op1==op2);
+               /*
+               ap->next = PrintAssln("\tvperm2i128\t$%d,%s,%s,%s\n", 0,
+                                     archviregs[-VIREGBEG-op1], 
+                                     archviregs[-VIREGBEG-op1], 
+                                     archviregs[-VIREGBEG-op1]);
+               ap=ap->next;
+                  ap->next = PrintAssln("\tvpshufq\t$%d,%s,%s\n", 0,
+                                        archviregs[-VIREGBEG-op1], 
+                                        archviregs[-VIREGBEG-op1]);
+               */
+               ap->next = PrintAssln("\tvpermq\t$%d,%s,%s\n", 0,
+                                     archviregs[-VIREGBEG-op2], 
+                                     archviregs[-VIREGBEG-op1]);
+
+            }
+            else if (cp[3] == 7 && cp[2] == 6 && cp[1] == 7 && cp[0] == 6)
+            {
+               ap->next = PrintAssln("\tvpermq\t$%d,%s,%s\n", 0xEE,
+                                     archviregs[-VIREGBEG-op2], 
+                                     archviregs[-VIREGBEG-op1]);
+            }
+            else if (cp[3] == 7 && cp[2] == 6 && cp[1] == 5 && cp[0] == 5)
+            {      
+               ap->next = PrintAssln("\tvpermq\t$%d,%s,%s\n", 0xE5,
+                                     archviregs[-VIREGBEG-op2], 
+                                     archviregs[-VIREGBEG-op1]);
+            }
+            else if (cp[3] == 5 && cp[2] == 4 && cp[1] == 1 && cp[0] == 0)
+            {
+               ap->next = PrintAssln("\tvperm2i128\t$%d,%s,%s,%s\n", 0x20,
+                                     archviregs[-VIREGBEG-op2], 
+                                     archviregs[-VIREGBEG-op1], 
+                                     archviregs[-VIREGBEG-op1]);
+            }
+            else
+               fko_error(__LINE__, "No such shuffle inst, imap=%d,%d,%d,%d!\n",
+                         cp[0], cp[1], cp[2], cp[3]);
+         #endif
+         break;
+/*
+ *    special instruction to set conditional codes in X86
+ *    BTC : bit test and update CF flag
+ */
+      case BTC:   
+         op1 = -op1;
+         assert( op1>=ICCBEG && op1<ICCEND);
+         ap->next = PrintAssln("\tbt\t%s,%s\n", 
+                                 GetIregOrConst(op3),
+	                         archiregs[-IREGBEG-op2]);
+          
+         break;
+/*
+ *    Majedul: CMOV1 / CMOV2 ... conditional mov for integer based on 
+ *    conditional codes. we need to apply BT before it.
+ */
+      case CMOV1:  /* dest = (mask==0)? dest: src */
+         op3 = -op3;
+         assert(op3 >= ICCBEG && op3 < ICCEND);
+         ap->next = PrintAssln("\tcmovc\t%s, %s\n", GetIregOrDeref(op2), 
+                              archiregs[-IREGBEG-op1]);
+         break;
+      case CMOV2:  /* dest = (mask==0)? src: dest */
+         op3 = -op3;
+         assert(op3 >= ICCBEG && op3 < ICCEND);
+         ap->next = PrintAssln("\tcmovnc\t%s, %s\n", GetIregOrDeref(op2), 
+                              archiregs[-IREGBEG-op1]);
+         break;
+/* --------------------------------------------------------------------*/      
+#ifdef AVX2  
+/*
+ * Read this note before using following two instructions
+ * =========================== NOTE ===========================================
+ *    Majedul: hybrid inst using mask from floating point comparison! 
+ *    in AVX/SSE, we can do it as the mask value has all 1 or zero for each 
+ *    element. 
+ *    Need to consider following issue carefully:
+ *    1. For single precision float, we will consider mask 32 bit 
+ *    2. for double precision, we will consider mask 64 bit
+ *    3. as long as we prepare right mask value, vpblendvb works for both
+ * ============================================================================
+ */
+      case VSCMOV1: case VICMOV1:  /* Hybrid .... dest = (mask==0)? dest: src */
+         op3 = -op3;
+/*
+ *       NOTE: we are implementing this using vpblendvb (AVX2) but use imm!!
+ *       let's use vpblendvb... should work with the mask
+ *       this inst selecls byte values from mask specified in the high bit of 
+ *       each byte. Here, we use mask with all 1's or 0's in each 32bit/64bit. 
+ *       so, it should work.
+ *       NOTE: we support no memory operation now.
+ */
+         if (op3 >= VFREGBEG && op3 < VFREGEND)
+         {
+            op3 = -op3;
+            ap->next = PrintAssln("\tvpblendvb\t%s,%s,%s,%s\n", 
+	                          archvfregs[-VFREGBEG-op3],
+                                  archviregs[-VIREGBEG-op2],
+	                          archviregs[-VIREGBEG-op1],
+	                          archviregs[-VIREGBEG-op1]); 
+         }
+         else if (op3 >= VDREGBEG && op3 < VDREGEND)
+         {
+            op3 = -op3;
+            ap->next = PrintAssln("\tvpblendvb\t%s,%s,%s,%s\n", 
+	                          archvdregs[-VDREGBEG-op3],
+                                  archviregs[-VIREGBEG-op2],
+	                          archviregs[-VIREGBEG-op1],
+	                          archviregs[-VIREGBEG-op1]); 
+         }
+/*
+ *       NOTE: we don't have vmax/vmin instruction, not even in avx2. So, we
+ *       need to use vcmov to simulate the vmax instruction. In that case, 
+ *       mask can be T_VINT type!!!
+ *
+ */
+         else if (op3 >= VIREGBEG && op3 < VIREGEND)
+         {
+            /*fko_error(__LINE__,"Expecting Mask on floating point regs:%d"
+                      " VFREG[%d,%d], VDREG[%d,%d], VIREG[%d,%d]\n",
+                      op3, VFREGBEG, VFREGEND, VDREGBEG, VDREGEND, VIREGBEG,
+                      VIREGEND);*/
+            op3 = -op3;
+            ap->next = PrintAssln("\tvpblendvb\t%s,%s,%s,%s\n", 
+	                          archvdregs[-VIREGBEG-op3],
+                                  archviregs[-VIREGBEG-op2],
+	                          archviregs[-VIREGBEG-op1],
+	                          archviregs[-VIREGBEG-op1]); 
+            
+         }
+         else
+            fko_error(__LINE__,"Expecting Mask on floating point regs:%d"
+                      " VFREG[%d,%d], VDREG[%d,%d], VIREG[%d,%d]\n",
+                      op3, VFREGBEG, VFREGEND, VDREGBEG, VDREGEND, VIREGBEG,
+                      VIREGEND);
+         
+         break;
+      case VSCMOV2: case VICMOV2:  /* dest = (mask==0)? src: dest */
+         op3 = -op3;
+         if (op3 >= VFREGBEG && op3 < VFREGEND)
+         {
+            op3 = -op3;
+            ap->next = PrintAssln("\tvpblendvb\t%s,%s,%s,%s\n", 
+	                          archvfregs[-VFREGBEG-op3],
+                                  archviregs[-VIREGBEG-op1],
+	                          archviregs[-VIREGBEG-op2],
+	                          archviregs[-VIREGBEG-op1]); 
+         }
+         else if (op3 >= VDREGBEG && op3 < VDREGEND)
+         {
+            op3 = -op3;
+            ap->next = PrintAssln("\tvpblendvb\t%s,%s,%s,%s\n", 
+	                          archvdregs[-VDREGBEG-op3],
+                                  archviregs[-VIREGBEG-op1],
+	                          archviregs[-VIREGBEG-op2],
+	                          archviregs[-VIREGBEG-op1]); 
+         }
+         else
+            fko_error(__LINE__, "Expecting Mask value on floating point regs\n");
+         
+         break;
+
+      case VICMPWGT:
+            ap->next = PrintAssln("\tvpcmpgtq\t%s,%s,%s\n", 
+	                          archviregs[-VIREGBEG-op3],
+                                  archviregs[-VIREGBEG-op2],
+	                          archviregs[-VIREGBEG-op1]); 
+         break;
+#endif         
+
+#if 0         
       case VMOV:
 /*
  *       Majedul: although double quadword means 128 bit, vmovdqa can mov 256bit
@@ -4230,40 +4850,42 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archviregs[-VIREGBEG-op1]);
          #endif
          break;
-      case VMOVS:
+
+      case VMOVS: /* this is for 32 bit int */
 /*
  *       Majedul: I implement it for both ways: vireg-to-ireg and ireg-to-vireg
+ *       FIXME: vmovd works only on 32 bit register
  */
          assert (op1 < 0 && op2 < 0);
          op1 = -op1;
          op2 = -op2;
          if ( (op1 >= IREGBEG && op1 < IREGEND) 
-               && (op2 >= VIREGBEG && op2 < VIREGBEG) ) /* vireg to ireg */
+               && (op2 >= VIREGBEG && op2 < VIREGEND) ) /* vireg to ireg */
          {
             op1 = -op1;
             op2 = -op2;
          #ifdef AVX
             ap->next = PrintAssln("\tvmovd\t%s, %s\n", 
                                   archxmmregs[-VIREGBEG-op2],
-                                  archiregs[-IREGBEG-op1]);
+                                  archsregs[-IREGBEG-op1]);
          #else
             ap->next = PrintAssln("\tmovd\t%s, %s\n", 
                                   archviregs[-VIREGBEG-op2],
-                                  archiregs[-IREGBEG-op1]);
+                                  archsregs[-IREGBEG-op1]);
          #endif
          }
          else if ( (op1 >= VIREGBEG && op1 < VIREGEND) 
-               && (op2 >= IREGBEG && op2 < IREGBEG) ) /* ireg to vireg */
+               && (op2 >= IREGBEG && op2 < IREGEND) ) /* ireg to vireg */
          {
             op1 = -op1;
             op2 = -op2;
          #ifdef AVX
             ap->next = PrintAssln("\tvmovd\t%s, %s\n", 
-                                  archiregs[-IREGBEG-op2],
+                                  archsregs[-IREGBEG-op2],
                                   archxmmregs[-VIREGBEG-op1]);
          #else
             ap->next = PrintAssln("\tmovd\t%s, %s\n", 
-                                  archiregs[-IREGBEG-op2],
+                                  archsregs[-IREGBEG-op2],
                                   archviregs[-VIREGBEG-op1]);
          #endif
          }
@@ -4299,6 +4921,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
          #endif
          break;
       case VSTS:
+/*
+ *       FIXME: vmovd works only on 32 bit int but 64 bit in FKO
+ */
          #ifdef AVX
             ap->next = PrintAssln("\tvmovd\t%s, %s\n",
                   archxmmregs[-VIREGBEG-op2], GetDeref(op1)); 
@@ -4407,8 +5032,6 @@ struct assmln *lil2ass(BBLOCK *bbase)
  *       Need to implement following options:
  *       
  *          AVX: 0, 7654FEDC, 765432BA/7654BABA, 76CD3289/7654BA99, B3A29180, 
- *          SSE: 0, 3276, 5555, 5140
- *          FIXME
  */
          cp = imap2cmap(SToff[op3-1].i); /* return hex char */
 #if 0
@@ -4601,7 +5224,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
           
          break;
 #endif         
-         
+   
+#endif
 /*
  *  HERE HERE HERE:
  */
@@ -4631,8 +5255,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
       default:
          ap->next = PrintAssln("ERROR:\t%d %d %d %d\n", 
                                ip->inst[0], op1, op2, op3);
-        fko_error(__LINE__, "Unknown instruction %d after %s\n", ip->inst[0],
-                  ap->ln);
+        fko_error(__LINE__, "Unknown instruction %d[%s] after %s\n", 
+                  ip->inst[0],instmnem[ip->inst[0]], ap->ln);
       }
 /*      fprintf(stderr, "%s", ap->ln); */
       ap = ap->next;
