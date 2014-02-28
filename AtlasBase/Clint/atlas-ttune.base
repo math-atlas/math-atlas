@@ -1042,10 +1042,13 @@ ret
 #define __USE_GNU   1 /* what you actually have to set on linuxes I've seen */
 #include <sched.h>    /* must include this before pthreads */
 #include <pthread.h>
+#include <assert.h>
 #include "atlas_misc.h"
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),_amm_sum.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),_amm_blk.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),_amm_kern.h))
+#include "atlas_threads.h"
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_sum.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_blk.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_kern.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_ablk2cmat.h))
 
 typedef struct ammjob ammjob_t;
 struct ammjob
@@ -1063,6 +1066,7 @@ struct thrstruct
 {
    pthread_t pthr;
    int tid;
+   int rank;
    void *vp;
    double tstart, tend;
 };
@@ -1078,6 +1082,7 @@ void PrintUsage(char *exe, int iarg, char *arg)
    printf("   -n[m,n,k]: set number of blks along given dim\n");
    printf("   -N # : nblks each dim = #\n");
    printf("   -I <#>: use AMM kernel index #\n");
+   exit(-1);
 }
 
 ammjob_t *GetFlags(int nargs, char **args)
@@ -1156,6 +1161,8 @@ ammjob_t *GetFlags(int nargs, char **args)
             PrintUsage(args[0], i, "out of arguments");
          P = atoi(args[i]);
          break;
+      default :
+         PrintUsage(args[0], i, args[i]);
       }
    }
    if (!mb)
@@ -1172,7 +1179,7 @@ ammjob_t *GetFlags(int nargs, char **args)
          tids[i] = i;
    }
 
-   aj.P = P
+   aj.P = P;
    aj.tids = tids;
    aj.mb = mb;
    aj.nb = nb;
@@ -1188,36 +1195,40 @@ ammjob_t *GetFlags(int nargs, char **args)
 void *DoAmm(void *vp)
 {
    thr_t *tp = vp;
-   ammjob_t *aj=tp->aj;
+   ammjob_t *aj=tp->vp;
    const int nmblks=aj->nmblks, nnblks=aj->nnblks, nkblks=aj->nkblks;
-   const int nblksC=nmblks*nnblks;
+   const int nblksC=nmblks*nnblks, rank=tp->rank;
    const int mb=aj->mb, nb=aj->nb, kb=aj->kb;
    const size_t panAsz=kb*mb*nkblks, panBsz=kb*nb*nkblks; 
    const int blkAsz=mb*kb, blkBsz=kb*nb, blkCsz=mb*nb;
    const int M=mb*nmblks, N=nb*nnblks, K=kb*nkblks;
+   const int IX=aj->INDX; 
+   const int mu=ATL_AMM_MUs[IX], nu=ATL_AMM_NUs[IX], ku=ATL_AMM_KUs[IX]; 
+   const int nmu = mb/mu, nnu = nb/nu;
    int I;
-   ammkern_t *amm;
+   ammkern_t amm;
+   ablk2cmat_t blk2c;
    const TYPE *A=aj->A, *B=aj->B;
    TYPE *C = aj->C, *w;
-   TYPE *vp;
    double t0;
 
    #ifdef PRINT_COREID
       printf("core=%d\n", sched_getcpu());
    #endif
-   aj->tstart = ATL_walltime();
-   vp = malloc(2*blkCsz+ATL_Cachelen);
+   tp->tstart = ATL_walltime();
+   vp = malloc(2*ATL_MulBySize(blkCsz)+ATL_Cachelen);
    assert(vp);
    w = ATL_AlignPtr(vp);
-   amm = ATL_AMM_KERN_b1[aj->INDX];
-   while (I = ATL_GetGlobalAtomicCount(aj->Cctr));
+   amm = ATL_AMM_KERN_b1[IX];
+   blk2c = ATL_AMM_BLK2C_an_b1[IX];
+   while (I = ATL_DecGlobalAtomicCount(aj->Cctr, rank))
    {
       size_t i, j;
       int k;
       TYPE *c;
       const TYPE *a, *b;
 
-      I -= nblksC+1;
+      I = nblksC-I;
       j = I / nmblks;
       i = I - j*nmblks;
       c = C + j*M+i;
@@ -1225,30 +1236,66 @@ void *DoAmm(void *vp)
       b = B + j*panBsz;
       for (k=0; k < nkblks; k++)
       {
-         amm(nmu, nnu, kb, a, b, w);
-         a += blkAsz;
-         b += blkBsz;
+         const TYPE *an = a+blkAsz, *bn = b+blkBsz;
+         amm(nmu, nnu, kb, a, b, w, an, bn, w);
+         a = an;
+         b = bn;
       }
       blk2c(mb, nb, -1.0, w, 1.0, c, M);
    }
    free(vp);
-   aj->tend = ATL_walltime();
+   tp->tend = ATL_walltime();
    return(NULL);
 }
+
+void *DoSpawn(void *vp)
+{
+   ammjob_t *aj=vp;
+   cpu_set_t cpuset;
+   pthread_attr_t attr;
+   thr_t *tp;
+   const int P=aj->P;
+   int i;
+
+   assert(!pthread_attr_init(&attr));
+   tp = malloc(P*sizeof(thr_t));
+   assert(tp);
+   for (i=1; i < P; i++)
+   {
+      tp[i].rank = i;
+      tp[i].vp = aj;
+      tp[i].tid = aj->tids[i];
+      CPU_ZERO(&cpuset);
+      CPU_SET(aj->tids[i], &cpuset);
+      assert(!pthread_attr_setaffinity_np(&attr, sizeof(cpuset), &cpuset));
+      pthread_create(&(tp[i].pthr), &attr, DoAmm, tp+i);
+   }
+   tp[0].rank = 0;
+   tp[0].vp = aj;
+   tp[0].tid = aj->tids[0];
+   DoAmm(tp);
+   for (i=1; i < P; i++)
+      pthread_join(tp[i].pthr, NULL);
+   return(tp);
+}
+
 void TimeOnCores(ammjob_t *aj)
 {
-   const int int P=aj->P; 
+   const int P=aj->P; 
    const int mb=aj->mb, nb=aj->nb, kb=aj->kb;
    const int nmblks=aj->nmblks, nnblks=aj->nnblks, nkblks=aj->nkblks;
    const int nblksA=nmblks*nkblks, nblksB=nkblks*nnblks, nblksC=nmblks*nnblks;
    size_t szA=nblksA*kb*mb, szB=nblksA*kb*nb, szC=nblksC*mb*nb;
-   int nctrs;
+   int i, nctrs;
    TYPE *A, *B, *C;
    void *vp;
    thr_t *tp;
-   pthread_t *threads;
    pthread_attr_t attr;
+   pthread_t pthr0;
    cpu_set_t cpuset;
+   double beg, end, mf;
+
+   beg = ATL_walltime();
 /*
  * Get space, init to 0 so we can just use
  */
@@ -1271,19 +1318,22 @@ void TimeOnCores(ammjob_t *aj)
       nctrs = 1;
    aj->Cctr = ATL_SetGlobalAtomicCount(nctrs, nmblks*nnblks, 0);
 /*
- * Spawn the threads to the specified tids
+ * Create thr0, which will then spawn everything else and then do problem
  */
-   tp = malloc(P*sizeof(thr_t));
-   assert(tp);
-   for (i=0; i < P; i++)
+   CPU_ZERO(&cpuset);
+   CPU_SET(aj->tids[0], &cpuset);
+   assert(!pthread_attr_init(&attr));
+   if (i=pthread_attr_setaffinity_np(&attr, sizeof(cpuset), &cpuset))
    {
-      tp[i].vp = aj;
-      CPU_ZERO(&cpuset);
-      CPU_SET(aj->tids[i], &cpuset);
-      assert(!pthread_attr_setaffinity_np(&attr, sizeof(cpuset), &cpuset));
-      pthread_create(&(tp[i].pthr), &attr, DoAmm, tp+i);
+      fprintf(stderr, "CANNOT SET AFFINITY TO %d, error=%d\n", aj->tids[0], i);
+      exit(-1);
    }
-
+   pthread_create(&pthr0, &attr, DoSpawn, (void*)aj);
+   pthread_join(pthr0, (void**)&tp);
+   end = ATL_walltime();
+   mf = (2.0*nmblks)*nnblks*nkblks*mb*nb*kb;
+   mf /= (end-beg) * 1000000.0;
+   printf("\nMFLOP = %.2f, TOTAL TIME=%e\n", mf, end-beg);
 
    free(vp);
 }
