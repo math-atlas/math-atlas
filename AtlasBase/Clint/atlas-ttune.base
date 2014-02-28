@@ -1068,7 +1068,7 @@ struct thrstruct
    int tid;
    int rank;
    void *vp;
-   double tstart, tend;
+   double tstart, tend, ts1, te1, ts2, te2;
 };
 
 void PrintUsage(char *exe, int iarg, char *arg)
@@ -1256,9 +1256,12 @@ void *DoSpawn(void *vp)
    thr_t *tp;
    const int P=aj->P;
    int i;
+   double t0;
 
+   t0 = ATL_walltime();
    assert(!pthread_attr_init(&attr));
    tp = malloc(P*sizeof(thr_t));
+   tp->ts1 = t0;
    assert(tp);
    for (i=1; i < P; i++)
    {
@@ -1276,6 +1279,7 @@ void *DoSpawn(void *vp)
    DoAmm(tp);
    for (i=1; i < P; i++)
       pthread_join(tp[i].pthr, NULL);
+   tp->te1 = ATL_walltime();
    return(tp);
 }
 
@@ -1310,12 +1314,15 @@ void TimeOnCores(ammjob_t *aj)
 /*
  * Compute # of global ctrs to use, get global atomic counter
  */
+   i = nmblks*nnblks;
    if (P > 16)
       nctrs = 8;
    else if (P > 3)
       nctrs = 2;
    else
       nctrs = 1;
+   if (nctrs > (i>>5))
+      nctrs = (i > 32) ? (i>>5) : 1;
    aj->Cctr = ATL_SetGlobalAtomicCount(nctrs, nmblks*nnblks, 0);
 /*
  * Create thr0, which will then spawn everything else and then do problem
@@ -1333,6 +1340,11 @@ void TimeOnCores(ammjob_t *aj)
    end = ATL_walltime();
    mf = (2.0*nmblks)*nnblks*nkblks*mb*nb*kb;
    mf /= (end-beg) * 1000000.0;
+   printf("Special thread-0 timings:\n");
+   printf("   startup    = %e\n", tp->ts1-beg);
+   printf("   spawn time = %e\n", tp->tstart-tp->ts1);
+   printf("   compute    = %e\n", tp->tend-tp->tstart);
+   printf("   join  time = %e\n", tp->te1-tp->tend);
    printf("\nMFLOP = %.2f, TOTAL TIME=%e\n", mf, end-beg);
 
    free(vp);
