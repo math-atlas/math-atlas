@@ -933,6 +933,8 @@ LOOPQ *KillFullLoop(LOOPQ *lp)
          free(lp->vvscal);
       if (lp->bvvscal)
          free(lp->bvvscal);
+      if (lp->vvinit)
+         free(lp->vvinit);
       if (lp->pfarrs)
          free(lp->pfarrs);
       if (lp->pfdist)
@@ -1120,6 +1122,7 @@ void InvalidateLoopInfo(void)
       lp->vsoflag = optloop->vsoflag;
       lp->vvscal = optloop->vvscal;
       lp->bvvscal = optloop->bvvscal;
+      lp->vvinit = optloop->vvinit;
       lp->vflag = optloop->vflag;
       lp->pfarrs = optloop->pfarrs;
       lp->pfdist = optloop->pfdist;
@@ -1142,6 +1145,7 @@ void InvalidateLoopInfo(void)
       optloop->vsflag = optloop->vsoflag = optloop->vscal = optloop->varrs = 
          optloop->ae = optloop->ne = optloop->nopf = optloop->aaligned = NULL;
       optloop->bvvscal = NULL;
+      optloop->vvinit = NULL;
       optloop->aes = NULL;
       optloop->abalign = NULL;
       optloop->maxvars = NULL;     /* sothat killloop not freed prev space */
