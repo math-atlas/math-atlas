@@ -196,6 +196,19 @@ struct loopq
    short *vsoflag;   /* info array for output vscal */
    short *vvscal;    /* vect locals used for vscal */
    short *bvvscal;   /* backup var for vvscal, needed in SV */
+/*
+ * NOTE: vvinit keeps special const/var STindex which may be needed to adjust 
+ * initialization of a vector. 0 means vector is initialized normally with 
+ * only the associated scalar;
+ * meaning of other value depends on the special vectors. 
+ * In shadow VRC, we need to initialize shadow vector, for example vimax on 
+ * iamax, specially according to the whole instruction. Example:
+ * imax = i + 1;  initialization of Vimax would be [i+1, i+1+1, i+1+2...]
+ * vvinit will keep the const part.
+ * NOTE: I keep it here to have this facility. There may be other case in future
+ * where we would need this adjustment.
+ */
+   short *vvinit;    /* sometime special adjustment is needed to init a vector*/
    short *nopf;      /* arrays which should not be prefetched */
    short *aaligned;  /* arrays that have known alignment */
    uchar *abalign;   /* alignments of above arrays */
