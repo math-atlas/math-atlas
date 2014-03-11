@@ -3790,7 +3790,9 @@ OPTLOOP=1
  */
          /*fprintf(fpout, "      RedCompReducesToOnePath=%d\n",1);*/
          UpdateOptLoopWithMaxMinVars1(optloop);
-
+/*
+ *       NOTE: we can apply shadow VRC for AVX2.
+ */
 #ifdef AVX
          RC = !(IterativeRedCom());
          fprintf(fpout, "      RedCompReducesToOnePath=%d\n",RC);
@@ -3803,7 +3805,8 @@ OPTLOOP=1
 #endif
          if (RC)
          {
-            Vrc = !(SpeculativeVectorAnalysis()); /*it is the most general */
+            //Vrc = !(SpeculativeVectorAnalysis()); /*it is the most general */
+            Vrc = !(RcVectorAnalysis()); /* checking for shadow RC too */
             KillPathTable();
          }
       }

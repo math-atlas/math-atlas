@@ -7547,11 +7547,13 @@ int RcPathVectorAnalysis(LOOPPATH *path)
 #endif 
 return errcode;
 }
-
+/*
+ * Need to make this Vector analysis general for all VRC
+ */
 int RcVectorAnalysis()
 {
    int i, j, k, n;
-   int errcode;
+   int errcode, isIscal;
    char ln[512];
    short *sp;
    LOOPPATH *vpath;
@@ -7561,6 +7563,7 @@ int RcVectorAnalysis()
 
 
    lp = optloop;
+   isIscal = 0; /* is there any INT scalar for vectorization */
 /*
  * redo data flow analysis
  */
@@ -7631,13 +7634,33 @@ int RcVectorAnalysis()
          //j = lp->vvscal[i+1] = STdef(ln, k, 0);
          //SToff[j-1].sa[2] = AddDerefEntry(-REG_SP, j, -j, 0, j);
          if (IS_INT(STflag[sp[i]-1]))
+         {
             k = T_VINT;
+            isIscal = 1;
+         }
          else  /* mixed fp is not allowed. */
             k = FLAG2TYPE(vpath->vflag);
          lp->vvscal[i+1] = InsertNewLocal(ln,k);
       }
       
    }
+/*
+ * check whether integer scalar meets the required constrain for shadow VRC
+ * AVX2 is required for shadow VRC
+ */
+#if defined(AVX2)
+   if (isIscal && !isShadowPossible(lp))
+   {
+      errcode = 1024; /* code for unmanagable Int Scalar */
+   }
+#elif defined(AVX)
+   if (isIscal)
+   {
+      errcode = 1024;
+   }
+#else
+   //errcode = 1024;
+#endif
 /*
  * return error code 
  */
@@ -8758,6 +8781,23 @@ int FindInstIndex(int N, enum inst *inst, enum inst ainst )
 
    return index;
 }
+int isCodeAdjustmentNeeded(LOOPQ *lp)
+/*
+ * if there is some integer scalar other than loop control variable, we will 
+ * need code adjustment.
+ */
+{
+   int i, n;
+
+   for (i=0, n=lp->vscal[0]; i < n; i++)
+   {
+      if (IS_INT(STflag[lp->vscal[i+1]-1]))
+      {
+         return(1);
+      }
+   }
+   return(0);
+}
 int RcVecTransform(LOOPQ *lp)
 /*
  * NOTE: This is similar of normal vector transformation DoSimdLoop except max
@@ -8773,22 +8813,22 @@ int RcVecTransform(LOOPQ *lp)
      sfinsts[] = {FLD,      FST,      FMUL,     FMAC,     FADD,     FSUB,    
                   FABS,     FMOV,     FZERO,    FNEG,     FCMOV1,   FCMOV2, 
                   FCMPWEQ,  FCMPWNE,  FCMPWLT,  FCMPWLE,  FCMPWGT,  FCMPWGE,
-                  FMAX,     FMIN },
+                  FMAX,     FMIN,     FDIV },
 
      vfinsts[] = {VFLD,     VFST,     VFMUL,    VFMAC,    VFADD,    VFSUB,   
                   VFABS,    VFMOV,    VFZERO,   VFNEG,    VFCMOV1,  VFCMOV2,
                   VFCMPWEQ, VFCMPWNE, VFCMPWLT, VFCMPWLE, VFCMPWGT, VFCMPWGE,
-                  VFMAX,    VFMIN },
+                  VFMAX,    VFMIN,    VFDIV },
 
      sdinsts[] = {FLDD,     FSTD,     FMULD,    FMACD,    FADDD,    FSUBD, 
                   FABSD,    FMOVD,    FZEROD,   FNEGD,    FCMOVD1,  FCMOVD2, 
                   FCMPDWEQ, FCMPDWNE, FCMPDWLT, FCMPDWLE, FCMPDWGT, FCMPDWGE,
-                  FMAXD,    FMIND },
+                  FMAXD,    FMIND,    FDIVD },
 
      vdinsts[] = {VDLD,     VDST,     VDMUL,    VDMAC,    VDADD,    VDSUB, 
                   VDABS,    VDMOV,    VDZERO,   VDNEG,    VDCMOV1,  VDCMOV2,
                   VDCMPWEQ, VDCMPWNE, VDCMPWLT, VDCMPWLE, VDCMPWGT, VDCMPWGE,
-                  VDMAX,    VDMIN };
+                  VDMAX,    VDMIN,    VDDIV };
 /*
  *    Majedul: instruction selection for V_INT
  */
@@ -8800,7 +8840,7 @@ int RcVecTransform(LOOPQ *lp)
                    CVTFI, BTC};
    /*assert(0);*/
 
-   const int nvinst=20;
+   const int nvinst=21;
    const int nivinst = 10;
    enum inst sld, vld, sst, vst, smul, vmul, smac, vmac, sadd, vadd, ssub, vsub, 
              sabs, vabs, smov, vmov, szero, vzero, inst, vcmov1, vcmov2;
@@ -8883,7 +8923,8 @@ int RcVecTransform(LOOPQ *lp)
  * code adjustment for shadow trick. As it will invalidate the code, we should 
  * add this after clean up and loop alignment 
  */
-   AddCodeAdjustment(lp);
+   if (isCodeAdjustmentNeeded(lp))
+      AddCodeAdjustment(lp);
    
 /**************************************************************************/
 /* separating vector prologue and epilogue...... these are going to be more 
@@ -9142,6 +9183,9 @@ int RcVecTransform(LOOPQ *lp)
             }
             else 
             {
+/*
+ *             FIXED: VDIVD instruction added for cos/sin ... ... ... 
+ */
                PrintThisInst(stderr, 0, ip);
                assert(0);
             }
@@ -9397,16 +9441,7 @@ int RcVectorization()
    PrintInst(stdout,bbbase);
    //exit(0);
 #endif
-#if 0   
    assert(!RcVecTransform(lp));
-#else
-   //KillLoopControl(lp);
-   if (!isShadowPossible(lp))
-   {
-      fko_error(__LINE__, "Shadow VRC is not possible!\n");
-   }
-   assert(!RcVecTransform(lp));
-#endif
    KillPathTable();
 #if 0
 /*
