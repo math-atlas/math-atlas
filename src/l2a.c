@@ -2753,6 +2753,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
 #endif
 /*
  *    FIXME: vpinsrd works on 32 bit ireg like: eax instead of rax...
+ *    Only 8 of the 16 IREG has 32 bit version. If we don't make SREG visible,
+ *    it will eventually cause problem. 
+ *    sirk3amax => -rc -V -Ps b A 0 4 -P all 0 128 -U 2 
  */
       case VGR2VR32:
          op1 = -op1;
@@ -2765,6 +2768,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
          else if (op1 >= VIREGBEG && op1 < VIREGEND)
             op1 = op1 - VIREGBEG + DREGBEG;
          op1 = -op1;
+         assert((-op2) >= IREGBEG && (-op2) < (IREGBEG + NSR) );
          #ifdef AVX
             /*ap->next = PrintAssln("\tpinsrw\t%s,%s,%s\n", GetIregOrConst(op3),
                                   archiregs[-IREGBEG-op2],
