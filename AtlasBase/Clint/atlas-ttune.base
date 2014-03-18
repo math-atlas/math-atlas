@@ -1038,6 +1038,17 @@ ATL_asmdecor(DoFlops):
 
 ret
 @ROUT ammtim
+/*
+ * Set quitTHR to have some threads within the 4 contexts not be actice.
+ * Compile with MANAGE_NODES defined to get code that explicitly manages
+ * multiple threads per core.  It will then look at NPA for the number
+ * of active partners within the node (# of threads/core to explicitly
+ * manage).  This number should be [2-4] (1 should just use unmanaged
+ * code).
+ * Set KSYNC to get threads that proceed in lockstep for k-loop as well.
+ * KSYNC will have extra idle time to enforce lack of cache thrashing.
+ *
+ */
 #define _GNU_SOURCE 1 /* what manpage says you need to get CPU_SET */
 #define __USE_GNU   1 /* what you actually have to set on linuxes I've seen */
 #include <sched.h>    /* must include this before pthreads */
@@ -1050,7 +1061,13 @@ ret
 #include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_kern.h))
 #include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_ablk2cmat.h))
 
-static int quitTHR=0;
+#ifdef ATL_ARCH_XeonPHI
+   #define ATL_tyield __asm__ __volatile__ ("delay %0" :: "r"(4) : "0" )
+#else
+   #define ATL_tyield pthread_yield()
+#endif
+
+static int quitTHR=0, NPA=4;
 typedef struct ammjob ammjob_t;
 struct ammjob
 {
@@ -1070,6 +1087,9 @@ struct thrstruct
    int rank;
    void *vp;
    double tstart, tend, ts1, te1, ts2, te2;
+   #ifdef MANAGE_NODES
+      volatile int chk[5];
+   #endif
 };
 
 void PrintUsage(char *exe, int iarg, char *arg)
@@ -1178,6 +1198,11 @@ ammjob_t *GetFlags(int nargs, char **args)
       nb = ATL_AMM_NBs[I];
    if (!kb)
       kb = ATL_AMM_KBs[I];
+   NPA = Mmin(4,P);
+   if (quitTHR)
+      NPA = 4 - quitTHR;
+   if (P < NPA)
+      NPA = P;
    if (!tids)
    {
       tids = malloc(sizeof(int)*P);
@@ -1199,6 +1224,7 @@ ammjob_t *GetFlags(int nargs, char **args)
 }
 
 
+#ifndef MANAGE_NODES
 void *DoAmm(void *vp)
 {
    thr_t *tp = vp;
@@ -1262,6 +1288,145 @@ void *DoAmm(void *vp)
    tp->tend = ATL_walltime();
    return(NULL);
 }
+#else
+void *DoAmm(void *vp)
+{
+   thr_t *tp = vp;
+   ammjob_t *aj=tp->vp;
+   const int nmblks=aj->nmblks, nnblks=aj->nnblks, nkblks=aj->nkblks;
+   const int nblksC=nmblks*nnblks, rank=tp->rank;
+   const int mb=aj->mb, nb=aj->nb, kb=aj->kb;
+   const size_t panAsz=kb*mb*nkblks, panBsz=kb*nb*nkblks; 
+   const int blkAsz=mb*kb, blkBsz=kb*nb, blkCsz=mb*nb;
+   const int M=mb*nmblks, N=nb*nnblks, K=kb*nkblks;
+   const int IX=aj->INDX; 
+   const int mu=ATL_AMM_MUs[IX], nu=ATL_AMM_NUs[IX], ku=ATL_AMM_KUs[IX]; 
+   const int nmu = mb/mu, nnu = nb/nu;
+   const int myd = rank%NPA;
+   int I;
+   volatile int *chk;
+   ammkern_t amm;
+   ablk2cmat_t blk2c;
+   const TYPE *A=aj->A, *B=aj->B;
+   TYPE *C = aj->C, *w;
+   double t0;
+
+   #ifdef PRINT_COREID
+      printf("core=%d\n", sched_getcpu());
+   #endif
+   tp->tstart = ATL_walltime();
+   if (quitTHR)
+   {
+      if (tp->rank - (((tp->rank)>>2)<<2) >= quitTHR)
+      {
+         tp->tend = ATL_walltime();
+         pthread_exit(NULL);
+      }
+   }
+   vp = malloc(2*ATL_MulBySize(blkCsz)+ATL_Cachelen);
+   assert(vp);
+   w = ATL_AlignPtr(vp);
+   amm = ATL_AMM_KERN_b1[IX];
+   blk2c = ATL_AMM_BLK2C_an_b1[IX];
+/*
+ * Active partner awaits for everyone else to check in
+ */
+   if (!myd)
+   {
+      int p;
+      chk = tp->chk;
+   }
+   else
+   {
+      thr_t *ta = tp - myd;
+      chk = ta->chk;
+   }
+   while (1)
+   {
+      size_t i, j;
+      int k;
+      TYPE *c;
+      const TYPE *a, *b;
+
+      if (!myd)
+      {
+         int p;
+         const int ov=chk[0];
+         I = ATL_DecGlobalAtomicCount(aj->Cctr, rank);
+         if (!I)
+         {
+            chk[4] = -4;
+            (*chk)++;
+            break;
+         }
+         chk[4] = I = nblksC-I*NPA;
+         for (p=1; p < NPA; p++)
+              while(chk[p] <= ov)
+                 ATL_tyield;
+         (*chk)++;
+      }
+      else
+      {
+         const int ov=chk[myd]++;
+         while (*chk <= ov)
+            ATL_tyield;
+         I = chk[4];
+         if (I == -4)
+            break;
+      }
+      j = I / nmblks;
+      i = I - j*nmblks + myd;
+      c = C + j*M+i;
+      a = A + i*panAsz;
+      b = B + j*panBsz;
+      for (k=0; k < nkblks; k++)
+      {
+         const TYPE *an = a+blkAsz, *bn = b+blkBsz;
+         amm(nmu, nnu, kb, a, b, w, an, bn, w);
+         #ifdef KSYNC
+@skip         if (k != nkblks-1)
+@skip         {
+            if (!myd)
+            {
+               int p;
+               const int ov = *chk;
+               for (p=1; p < NPA; p++)
+                  while (chk[p] <= ov)
+                     ATL_tyield;
+               (*chk)++;
+            }
+            else
+            {
+               const int ov = chk[myd]++;
+               while (*chk <= ov)
+                  ATL_tyield;
+            }
+@skip         }
+         #endif
+         a = an;
+         b = bn;
+      }
+      blk2c(mb, nb, -1.0, w, 1.0, c, M);
+/*
+ *    If we aren't doing K-sync, then master thread must await workers
+ */
+      #ifndef KSYNC
+      if (!myd)
+      {
+         const int ov = *chk;
+         int p;
+         for (p=1; p < NPA; p++)
+            while(chk[p] < ov)
+               ATL_tyield;
+      }
+      #endif
+   }
+   DONE:
+   free(vp);
+   tp->tend = ATL_walltime();
+   return(NULL);
+}
+#endif
 
 void *DoSpawn(void *vp)
 {
@@ -1283,6 +1448,9 @@ void *DoSpawn(void *vp)
       tp[i].rank = i;
       tp[i].vp = aj;
       tp[i].tid = aj->tids[i];
+      #ifdef MANAGE_NODES
+         tp[i].chk[0] = tp[i].chk[1] = tp[i].chk[2] = tp[i].chk[3] = -2;
+      #endif
       CPU_ZERO(&cpuset);
       CPU_SET(aj->tids[i], &cpuset);
       assert(!pthread_attr_setaffinity_np(&attr, sizeof(cpuset), &cpuset));
@@ -1329,7 +1497,12 @@ void TimeOnCores(ammjob_t *aj)
 /*
  * Compute # of global ctrs to use, get global atomic counter
  */
-   i = nmblks*nnblks;
+   #ifdef MANAGE_NODES
+      assert(nmblks%NPA == 0);
+      i = (nmblks/NPA)*nnblks;
+   #else
+      i = nmblks*nnblks;
+   #endif
    if (P > 16)
       nctrs = 8;
    else if (P > 3)
@@ -1338,7 +1511,7 @@ void TimeOnCores(ammjob_t *aj)
       nctrs = 1;
    if (nctrs > (i>>5))
       nctrs = (i > 32) ? (i>>5) : 1;
-   aj->Cctr = ATL_SetGlobalAtomicCount(nctrs, nmblks*nnblks, 0);
+   aj->Cctr = ATL_SetGlobalAtomicCount(nctrs, i, 0);
 /*
  * Create thr0, which will then spawn everything else and then do problem
  */

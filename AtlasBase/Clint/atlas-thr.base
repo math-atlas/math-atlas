@@ -9703,3 +9703,152 @@ DONE:
    while(tp->ntdone < tp->ntexp)
       ATL_thread_yield();
 }
+@ROUT ATL_tsyrk_amm
+#ifdef __GNUC__
+static inline int ATL_EstNctr    /* RETURNS: good # of global ctrs */
+#else
+static int ATL_EstNctr           /* RETURNS: good # of global ctrs */
+#endif
+(
+   int N,   /* Total count you are going to use */
+   int P    /* nthreads to be used */
+)
+{
+   int ncnt, ncntP;
+/*
+ * Want at least 32 elements per counter
+ */
+   ncnt = (ndiag > 64) ? (ndiag >> 5) : 1;
+/*
+ * allow up to 8-way contention
+ */
+   if (P >= 16)
+      cntP = (P>>3);
+   else 
+      cntP = (P >= 4) ? (P>>1) : 1;
+   return(Mmin(ncnt,cntP));
+}
+
+typedef struct ATL_tsyrk_amm ATL_tsyrk_ammN_t;
+struct ATL_tsyrk_ammN
+{
+   int ndiag;    /* # of diagonal blocks */
+   int ncblks;   /* # of non-diagonal blocks */
+   int nb;       /* blocking used for all but remainder block */
+   int nbf;      /* N%nb, if 0, nb */
+   int mu, nu;   /* M/N blocking of amm kernel */
+   int Mf;       /* ((nbf+mu-1)/mu)*mu */
+   int Nf;       /* ((nbf+nu-1)/nu)*nu */
+   void *dCtr;   /* AtomicCtr for diagonal blocks */
+   void *cCtr;   /* counter for non-diagonal C blks */
+   void **dKCtr;  /* K-counters for diagonal blocks */
+   void **Cmuts;   /* mutex locks for each diagonal block of C */
+};
+#include "atlas_misc.h"
+#include "atlas_lvl3.h"
+/*
+ * Performs SYRK on diagonal blocks of C, while doing the copy of the input
+ * matrix.
+void DoSYRKDiag
+(
+   ATL_thread_t *tp,      /* thread structure */
+   ATL_tsyrk_ammN_t *pd,  /* prob def struct */
+)
+{
+}
+/*
+ * SYRK where all parallelism comes from blocks of N, built atop amm directly
+ *    if (TA == AtlasNoTrans) 
+ *       C = alpha * A*A' + beta*C
+ *    else
+ *       C = alpha * A'*A + beta*C
+ *    C is an upper or lower symmetric NxN matrix, 
+ *    A is a dense rectangular NxK (NoTrans) or KxN (Trans) matrix
+ * RETURNS: 0 if operation performed, non-zero otherwise.
+ *   This routine assumes it can copy all of A up-front to simplify parallelism.
+ *   Will return non-zero if memory cannot be allocated, on the assumption
+ *   it is called from recursive implementation that can recur until malloc
+ *   succeeds.
+ */
+int Mjoin(PATL,tsyrk_amm_N)
+(
+   const enum ATLAS_UPLO Uplo,
+   const enum ATLAS_TRANS Trans,
+   ATL_CINT N,
+   ATL_CINT K,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CINT lda,
+   const SCALAR beta,
+   TYPE *C,
+   ATL_CINT ldc
+)
+{
+   int iret=0;
+   int NB, nb, mu, nu, nfdiag, ndiag, kb, nkblks, ncnt, nkcnt;
+   ATL_tsyrk_ammN_t pd;
+
+   kb = ATL_AMM_98KB;
+   nb = (ATL_AMM_98NB / ATL_AMM_98LCMMN)*ATL_AMM_98LCMMN;
+/*
+ * Have amm_sum get these values generated eventually
+ */
+   mu = ATL_AMM_MUs[ATL_AMM_98IDX];
+   nu = ATL_AMM_NUs[ATL_AMM_98IDX];
+
+   nfdiag = N/nb;
+   nbf = N - nfdiag*nb;
+   ndiag = (nbf) ? nfdiag+1 : nfdiag;
+   ncblks = ((ndiag-1)*ndiag)>>1;
+   if (ncblks < ATL_NTHREADS)
+   {
+      kb = ATL_AMM_66KB;
+      nb = (ATL_AMM_66NB / ATL_AMM_66LCMMN)*ATL_AMM_66LCMMN;
+      mu = ATL_AMM_MUs[ATL_AMM_66IDX];
+      nu = ATL_AMM_NUs[ATL_AMM_66IDX];
+      nbf = N - nfdiag*nb;
+      ndiag = (nbf) ? nfdiag+1 : nfdiag;
+      ncblks = ((ndiag-1)*ndiag)>>1;
+   }
+/*
+ * Set up parallel data structure
+ */
+   pd.ndiag = ndiag;
+   pd.ncblks = ncblks;
+   pd.nb = nb;
+   if (nbf)
+   {
+      pd.nbf = nbf;
+      pd.Mf = ((nbf+mu-1)/mu)*mu;
+      pd.Nf = ((nbf+nu-1)/nu)*nu;
+   }
+   else
+      pd.nbf = pd.Mf = pd.Nf = nb;
+   pd.cCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(ncblks, ATL_NTHREADS), 
+                                      ncblks, 0);
+   pd.dCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(ndiag, ATL_NTHREADS), 
+                                      ndiag, 0);
+   nkcnt = ATL_EstNctr(nkblks, ATL_NTHREADS);
+   pd.dKCtr = malloc((ndiag+ndiag)*(void*));
+   if (!pd.dKCtr)
+      return(2);
+   Cmuts = pd.dKCtr + ndiag;
+   for (i=0; i < ndiag; i++)
+   {
+      pd.dKCtr[i] = ATL_SetGlobalAtomicCount(nkcnt, nkblks, 0);
+      pd.CMuts[i] = ATL_mutex_init();
+   }
+
+/*
+ * Free allocated structures and return
+ */
+   ATL_FreeGlobalAtomicCount(pd.cCtr);
+   ATL_FreeGlobalAtomicCount(pd.dCtr);
+   for (i=0; i < ndiag; i++)
+   {
+      ATL_FreeGlobalAtomicCount(pd.dKCtr[i]);
+      ATL_mutex_free(pd.CMuts[i]);
+   }
+   free(pd.dKCtr);
+   return(iret);
+}
