@@ -407,6 +407,24 @@ struct ATL_SyrkK
    enum ATLAS_TRANS Trans, TB;
 };
 /*
+ * This structure used by dynamic access-major SYRK during the copying of A
+ */
+typedef struct ATL_tsyrk_amm ATL_tsyrk_ammN_t;
+struct ATL_tsyrk_ammN
+{
+   int ndiag;    /* # of diagonal blocks */
+   int ncblks;   /* # of non-diagonal blocks */
+   int nb;       /* blocking used for all but remainder block */
+   int nbf;      /* N%nb, if 0, nb */
+   int mu, nu;   /* M/N blocking of amm kernel */
+   int Mf;       /* ((nbf+mu-1)/mu)*mu */
+   int Nf;       /* ((nbf+nu-1)/nu)*nu */
+   void *dCtr;   /* AtomicCtr for diagonal blocks */
+   void *cCtr;   /* counter for non-diagonal C blks */
+   void **dKCtr;  /* K-counters for diagonal blocks */
+   void **Cmuts;   /* mutex locks for each diagonal block of C */
+};
+/*
  * This data structure used when we divide N only, and NTHREAD is a power of 2
  */
 typedef struct 
@@ -9729,23 +9747,8 @@ static int ATL_EstNctr           /* RETURNS: good # of global ctrs */
    return(Mmin(ncnt,cntP));
 }
 
-typedef struct ATL_tsyrk_amm ATL_tsyrk_ammN_t;
-struct ATL_tsyrk_ammN
-{
-   int ndiag;    /* # of diagonal blocks */
-   int ncblks;   /* # of non-diagonal blocks */
-   int nb;       /* blocking used for all but remainder block */
-   int nbf;      /* N%nb, if 0, nb */
-   int mu, nu;   /* M/N blocking of amm kernel */
-   int Mf;       /* ((nbf+mu-1)/mu)*mu */
-   int Nf;       /* ((nbf+nu-1)/nu)*nu */
-   void *dCtr;   /* AtomicCtr for diagonal blocks */
-   void *cCtr;   /* counter for non-diagonal C blks */
-   void **dKCtr;  /* K-counters for diagonal blocks */
-   void **Cmuts;   /* mutex locks for each diagonal block of C */
-};
 #include "atlas_misc.h"
-#include "atlas_lvl3.h"
+#include "atlas_tlvl3.h"
 /*
  * Performs SYRK on diagonal blocks of C, while doing the copy of the input
  * matrix.
@@ -9838,6 +9841,13 @@ int Mjoin(PATL,tsyrk_amm_N)
       pd.dKCtr[i] = ATL_SetGlobalAtomicCount(nkcnt, nkblks, 0);
       pd.CMuts[i] = ATL_mutex_init();
    }
+/*
+ * Now, we will do a three step process:
+ * 1. DoSYRKDiag: Copy all of A while computing answer diagonal blocks of C
+ *    OUTPUT: Abv: bitvector where 1 means that row/col of A has been copied
+ * 2. MakeWork: Use Abv to generate cases to work on
+ * 3. DoCblks: Compute blocks of C according to jobs given out by MakeWork
+ */
 
 /*
  * Free allocated structures and return

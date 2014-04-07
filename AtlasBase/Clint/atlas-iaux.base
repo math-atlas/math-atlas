@@ -5,7 +5,8 @@
 @ROUT ! ATL_trscal ATL_hescal ATL_xerbla ATL_lcm ATL_buildinfo @\
         ATL_flushcache ATL_ptflushcache ATL_gecollapse ATL_trcollapse @\
         ATL_flushCacheByAddr ATL_syApAt ATL_syApAt_NB ATL_geApBt_NB @\
-        ATL_sqtrans ATL_geswapT ATL_trsetU ATL_trsetL ATL_geset ATL_gemaxnrm
+        ATL_sqtrans ATL_geswapT ATL_trsetU ATL_trsetL ATL_geset ATL_gemaxnrm @\
+        atlas_bitvec.h ATL_bitvec
 @extract -b @(topd)/gen.inc what=cw @(cw99)
 #include "atlas_misc.h"
 
@@ -2247,7 +2248,11 @@ TYPE Mjoin(PATL,gemaxnrm)
 #ifndef TCPLX
    #undef lda2
 #endif
-@ROUT ATL_bitvec.h
+@ROUT atlas_bitvec.h
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2014
+#ifndef ATLAS_BITVEC_H
+   #define ATLAS_BITVEC_H
+   #include "atlas_misc.h"
 /*
  * A bitvector consists of an integer array.  The first element of the
  * array indicates the number of full BVs required, and the 2nd elt stores the
@@ -2259,10 +2264,14 @@ TYPE Mjoin(PATL,gemaxnrm)
 int *ATL_NewBV(int nmax);
 void ATL_SetBitBV(int *bv, int bpos);
 void ATL_UnsetBitBV(int *bv, int bpos);
-void ATL_IsBitSetBV(int *bv, int bpos);
+int ATL_IsBitSetBV(int *bv, int bpos);
 int ATL_FindFirstUnsetBitBV(int *bv);
+int ATL_FindFirstSetBitBV(int *bv, int bs);
 
+#endif
 @ROUT ATL_bitvec
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2014
+#include "atlas_bitvec.h"
 /*
  * A bitvector consists of an integer array.  The first element of the
  * array indicates the number of full BVs required, and the 2nd elt stores
@@ -2331,7 +2340,7 @@ void ATL_UnsetBitBV
 /*
  * RETURNS: bit at position bpos
  */
-void ATL_IsBitSetBV
+int ATL_IsBitSetBV
 (
    int *bv,   /* bitvector to use */
    int bpos   /* which bit to set */
@@ -2350,6 +2359,7 @@ int ATL_FindFirstUnsetBitBV
 )
 {
    const int nbv = bv[1] ? bv[0]+1:bv[0];
+   int i;
 /*
  * Find first bitvec with any unset values
  */
@@ -2358,15 +2368,15 @@ int ATL_FindFirstUnsetBitBV
       const int v=bv[i+2], base=i<<5;
       int k, kbeg, kend;
       if (v == 0xFFFFFFFF)
-         continue
+         continue;
       if (v != (v|0xFF)) /* gap in first byte */
          kbeg = (v != (v|0xF)) ? 0 : 4;
       else if (v != (v|0xFF00)) /* gap in 2nd byte */
          kbeg = (v != (v|0x0F00)) ? 8 : 12;
-      else if (v != (v|0xFF0000) /* gap in 3rd byte */
-         kbeg = (v != (v|0xF0000) ? 16 : 20;
+      else if (v != (v|0xFF0000)) /* gap in 3rd byte */
+         kbeg = (v != (v|0xF0000)) ? 16 : 20;
       else /* gap in 4th byte */
-         kbeg = (v != (v|0xF000000) ? 24 : 28;
+         kbeg = (v != (v|0xF000000)) ? 24 : 28;
       if (v != (v|(1<<kbeg)))
          return(base+kbeg);
       else if (v != (v|(1<<(kbeg+1))))
@@ -2394,4 +2404,95 @@ int ATL_FindFirstUnsetBitBV
    }
 @endskip
    return(-1); /* all bits are set */
+}
+/*
+ * Find the first set bit, after skipping first bs bits
+ */
+int ATL_FindFirstSetBitBV
+(
+   int *bv,   /* bitvector to use */
+   int bs     /* bit to start at (0 means beginning) */
+)
+{
+   int iv = bs>>5, is=bs-(iv<<5);
+   const int nbv = bv[1] ? bv[0]+1:bv[0];
+/*
+ * If first vector to check is partial
+ */
+   if (is)
+   {
+      const unsigned int v = bv[iv+2];
+      if (v & ((0xFFFFFFFF)<<is))
+      {
+         int i;
+         for (i=is; i < 32; i++)
+            if (v & (1<<i))
+               return(bs+i);
+      }
+      iv++;  /* no unset bits in initial bv checked */
+   }
+   for (; iv < nbv; iv++)
+   {
+      const unsigned int v = bv[iv+2], base=iv<<5;
+      int kbeg;
+      if (!v)                /* if no bits set */
+         continue;           /* skip to next bitvec */
+/*
+ *    Establish start of 4-bit area where first set bit occurs
+ */
+      if (v&0xFF)             /* set bit in first 8 bits! */
+          kbeg = (v&0xF) ? 0:4;
+      else if (v&0xFF00)
+          kbeg = (v&0xF00) ? 8:12;
+      else if (v&0xFF0000)
+          kbeg = (v&0xF0000) ? 16:20;
+      else
+          kbeg = (v&0xF000000) ? 24:28;
+/*
+ *    Ret 1st set in 4-bit area starting at kbeg where at least one bit is set
+ */
+      if (v & (1<<kbeg))
+         return(base+kbeg);
+      else if (v & 1<<(kbeg+1))
+         return(base+kbeg+1);
+      else if (v & 1<<(kbeg+2))
+         return(base+kbeg+2);
+      else
+         return(base+kbeg+3);
+
+   }
+/*
+ * If we have a partial bitvector at end, check it after masking off
+ * unneeded bits
+ */
+   if (bv[1])
+   {
+      const unsigned int v = bv[iv+2]&(0x7FFFFFFF>>(31-bv[1])), base=iv<<5;
+      int kbeg;
+      if (!v)
+         return(-1);
+/*
+ *    Establish start of 4-bit area where first set bit occurs
+ */
+      if (v&0xFF)             /* set bit in first 8 bits! */
+          kbeg = (v&0xF) ? 0:4;
+      else if (v&0xFF00)
+          kbeg = (v&0xF00) ? 8:12;
+      else if (v&0xFF0000)
+          kbeg = (v&0xF0000) ? 16:20;
+      else
+          kbeg = (v&0xF000000) ? 24:28;
+/*
+ *    Ret 1st set in 4-bit area starting at kbeg where at least one bit is set
+ */
+      if (v & (1<<kbeg))
+         return(base+kbeg);
+      else if (v & 1<<(kbeg+1))
+         return(base+kbeg+1);
+      else if (v & 1<<(kbeg+2))
+         return(base+kbeg+2);
+      else
+         return(base+kbeg+3);
+   }
+   return(-1);  /* no bits after bs are set */
 }
