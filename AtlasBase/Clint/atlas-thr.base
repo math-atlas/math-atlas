@@ -406,6 +406,50 @@ struct ATL_SyrkK
    enum ATLAS_UPLO Uplo;
    enum ATLAS_TRANS Trans, TB;
 };
+#if 0
+/*
+ * This structure used by dynamic access-major SYRK
+ */
+typedef struct ATL_tsyrk_ammN ATL_tsyrk_ammN_t;
+struct ATL_tsyrk_ammN
+{
+   ATL_tsyrk_ammN_diag_t dip;  /* data struct for diagonal blks */
+   ATL_tsyrk_ammN_nd_t ndp;    /* data struct for non-diag blks */
+   ammkern_t amm_b0, amm_b1, ammK;
+   int nb;       /* N blocking used for all but remainder block */
+   int nbf;      /* N%nb, if 0, nb */
+   int kb;       /* blocking used for K */
+   int kb0;      /* partial block of K for first guy */
+   int mu, nu, ku; /* M/N/K unrolling of amm kernel */
+   int Mf;       /* ((nbf+mu-1)/mu)*mu */
+   int Nf;       /* ((nbf+nu-1)/nu)*nu */
+   int K; 
+};
+typedef struct ATL_tsyrk_ammN_diag ATL_tsyrk_ammN_diag_t;
+struct ATL_tsyrk_ammN_diag
+{
+   cm2am_t a2blk;    /* no-transpose copy */
+   cm2am_t b2blk;    /* transpose copy */
+   int ndiag;        /* # of diagonal blocks */
+   int NOWORK;       /* set to 1 by first thread to find all work started */
+   void *dCtr;       /* AtomicCtr for dealing out diagonal blocks */
+   void **KbegCtr;   /* K-counters for dealing out diagonal blocks */
+   void **KdonCtr;   /* K-counters for completed diagonal blocks */
+   void **Cmuts;     /* mutex locks for each diagonal block of C */
+   int *cpydonBV;    /* when KdonCtr is zero, we set bitvec showing it */
+   void *cdmut;      /* mutex protecting cpydonBV */
+};
+/*
+ * This structure is for handling the non-diagonal blocks, and will not
+ * be entered until threads have taken all diagonal work
+ */
+typedef struct ATL_tsyrk_ammN_nd ATL_tsyrk_ammN_nd_t;
+struct ATL_tsyrk_ammN_nd
+{
+   int nblks;       /* # of non-diagonal blocks left to be assigned */
+   void *CdonCtr;   /* computation finished when we reach 0 */
+};
+#else
 /*
  * This structure used by dynamic access-major SYRK
  */
@@ -424,6 +468,7 @@ struct ATL_tsyrk_ammN
    void **dKCtr;  /* K-counters for diagonal blocks */
    void **Cmuts;   /* mutex locks for each diagonal block of C */
 };
+#endif
 /*
  * This data structure used when we divide N only, and NTHREAD is a power of 2
  */
@@ -9722,9 +9767,6 @@ DONE:
       ATL_thread_yield();
 }
 @ROUT ATL_tsyrk_amm
-(3,0,4) --> ((4+4-0-1)*0)/2 - 0 + 3 - 1 = 2;
-(2,1,4) --> ((4+4-1-1)*1)/2 - 1 + 2 - 1 = (6/2) + 0 = 3;
-(3,2,4) --> ((4+4-2-1)*2)/2 - 2 + 3 - 1 = (5*2)/2 + 0 = 5;
 /* 
  * Translates C coordinate in lower triangular matrix to Cblk #.
  * nm is the number of Mblocks, 
@@ -9732,11 +9774,19 @@ DONE:
  */
 #define Mcoord2cblk(i_, j_, nm_) ((((nm_)+(nm_)-j-1)*j)>>1 - (j_) + (i_) - 1)
 /*
- * Now, need way to translate b# to i,j coord w/o using loop!
+ * Translates block number b_ to (i,j) coordinates assuming first panel
+ * has nm_ blocks in it (including diagonal block)
  */
 #define Mcblk2coord(nm_, b_, i_, j_) \
-{ \
-   
+{ \ 
+   register int n = (nm_)-1, b=(b_), j; \
+   for (j=0; b < n; j++) \
+   { \
+      b -= n; \
+      n--; \
+   } \
+   (j_) = j; \
+   (i_) = b; \
 }
 #ifdef __GNUC__
 static inline int ATL_EstNctr    /* RETURNS: good # of global ctrs */
