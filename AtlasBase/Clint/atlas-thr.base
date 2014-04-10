@@ -472,18 +472,20 @@ struct ATL_tsyrk_ammN
    void **KbegCtr;   /* K-counters for dealing out diagonal blocks */
    void **KdonCtr;   /* K-counters for completed diagonal blocks */
    void **Cdmuts;    /* mutex locks for each diagonal block of C */
-   void *CdonCtr;    /* non-diag computation finished when we reach 0 */
+@skip   void *CdonCtr;    /* non-diag computation finished when we reach 0 */
    VINT cpydone;     /* set when all A/A' copying complete */
    int LOWER;        /* set true if lower triangular C */
-   int TA;           /* set true if doing NoTrans case */
+   int TA;           /* 0: noTrans; 1: Trans */
    int ndiag;        /* # of diagonal blocks */
    int ncblks;       /* # of non-diagonal blocks left to be assigned */
    int nkblks;       /* # of k blocks, including any partial block */
    int NODWORK;      /* set to 1 by first thread to find all work started */
    int nb;           /* N blocking used for all but remainder block */
+   int nmu;          /* nb/mu */
    int nnu;          /* nb/nu */
    int nbf;          /* N%nb, if 0, nb */
-   int nnuf;         /* nbf/nu */
+   int nnuf;         /* CEIL(nbf/nu) */
+   int nmuf;         /* CEIL(nbf/mu) */
    int kb;           /* blocking used for K */
    int kb0;          /* K%kb, if 0, kb */
    int KB0;          /* if kmajor, it is CEIL(kb0/ku)*ku, else kb0 */
@@ -491,7 +493,6 @@ struct ATL_tsyrk_ammN
    int panszA;       /* nkblks * blkszA */
    int Mf;           /* ((nbf+mu-1)/mu)*mu */
    int Nf;           /* ((nbf+nu-1)/nu)*nu */
-   int TA;           /* 0: noTrans; 1: Trans */
    int lda;          /* leading dim of A */
    int ldc;          /* leading dim of C */
 };
@@ -9862,19 +9863,16 @@ static int ATL_EstNctr           /* RETURNS: good # of global ctrs */
 static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd)
 {
 }
-/*
- * Need to rewrite this to handle fact that nnu/mnu are diff, and that
- * we must copy only nbf elts in last block, etc.
- */
+
 static void DoBlkWtCpy
 (
    unsigned const int rank,   /* my thread rank */
    ATL_tsyrk_ammN_t *pd,      /* problem def structure */
    unsigned const int dblk,   /* diagonal block of C to compute */
    unsigned const int kblk,   /* kblk to compute */
-   unsigned const int m,      /* mb for this C blk  */
-   unsigned const int n,      /* nb for this C blk  */
-   unsigned const int nnu,    /* nb/nu for this C blk */
+   unsigned const int b,      /* actual size of block w/o padding */
+   unsigned const int nmu,    /* m/mu for this C blk */
+   unsigned const int nnu,    /* n/nu for this C blk */
    ammkern_t amm,             /* kern to use for all non-kb0 blocks */
    TYPE *wC                   /* my private workspace */
 )
@@ -9898,8 +9896,8 @@ static void DoBlkWtCpy
    wB = pd->wAt + dblk*(pd->panszA) + k*nb;
    if (kblk)
    {
-      pd->a2blk(kb, n, ATL_rone, A, pd->lda, wA);
-      pd->b2blk(kb, n, ATL_rone, A, pd->lda, wB);
+      pd->a2blk(kb, b, ATL_rone, A, pd->lda, wA);
+      pd->b2blk(kb, b, ATL_rone, A, pd->lda, wB);
 /*
  *    If there are any off-diag blks awaiting the copy, signal copy of this
  *    K-panel of A/A' is complete iff I just copied the last block
@@ -9913,12 +9911,12 @@ static void DoBlkWtCpy
             ATL_mutex_unlock(pd->cdmut);
          }
       }
-      pd->amm_b1(nnu, nnu, kb, pA, pB, pC, pA, pB, pC);
+      pd->amm_b1(nmu, nnu, kb, pA, pB, pC, pA, pB, pC);
    }
    else
    {
-      pd->a2blk(pd->kb0, n, ATL_rone, A, pd->lda, wA);
-      pd->b2blk(pd->kb0, n, ATL_rone, A, pd->lda, wB);
+      pd->a2blk(pd->kb0, b, ATL_rone, A, pd->lda, wA);
+      pd->b2blk(pd->kb0, b, ATL_rone, A, pd->lda, wB);
 /*
  *    If there are any off-diag blks awaiting the copy, signal copy of this
  *    K-panel of A/A' is complete iff I just copied the last block
@@ -9932,7 +9930,7 @@ static void DoBlkWtCpy
             ATL_mutex_unlock(pd->cdmut);
          }
       }
-      pd->ammK(nnu, nnu, pd->KB0, pA, pB, pC, pA, pB, pC);
+      pd->ammK(nmu, nnu, pd->KB0, pA, pB, pC, pA, pB, pC);
    }
 }
 
@@ -9947,22 +9945,25 @@ static void DoBlksWtCpy
 {
    const int TRANS = (pd->TA == AtlasTrans);
    int kblk = pd->nkblks - kctr;
-   const int n = (dblk == pd->ndiag-1) ? pd->Nf : pd->nb;
+   const int b = (dblk == pd->ndiag-1) ? pd->nbf : pd->nb;
+@skip   const int m = (dblk == pd->ndiag-1) ? pd->Mf : pd->nb;
+@skip   const int n = (dblk == pd->ndiag-1) ? pd->Nf : pd->nb;
+   const int nmu = (dblk == pd->ndiag-1) ? pd->nmuf : pd->nmu;
    const int nnu = (dblk == pd->ndiag-1) ? pd->nnuf : pd->nnu;
    TYPE *wA, *wB, *w, *c;
    TYPE beta = ATL_rone;
-   DoBlkWtCpy(rank, pd, dblk, kblk, n, nnu, amm_b0, wC);
+   DoBlkWtCpy(rank, pd, dblk, kblk, b, nmu, nnu, amm_b0, wC);
    while (kctr = DecGlobalAtomicCount((pd->KbegCtr)[dblk], rank))
    {
       kblk = pd->nkblks - kctr;
-      DoBlkWtCpy(rank, pd, dblk, kblk, n, nnu, amm_b1, wC);
+      DoBlkWtCpy(rank, pd, dblk, kblk, b, nmu, nnu, amm_b1, wC);
    }
 /*
  * Since I'm done with this blk of C, copy it to block-major storage, and
  * scale by alpha (blk2c won't access only triangle, so must cpy first)
  */
    w = wC + nb*nb;
-   pd->blk2c(n, n, pd->alpha, wC, ATL_rzero, w, n);
+   pd->blk2c(b, b, pd->alpha, wC, ATL_rzero, w, b);
 /*
  * Now, seize mutex for diagonal block of original C, and copy back out
  * only above/below diagonal
@@ -9976,13 +9977,13 @@ static void DoBlksWtCpy
    }
    if (pd->LOWER)
    {
-      for (j=0; j < n; j++, c += pd->ldc+1, w += n+1)
+      for (j=0; j < n; j++, c += pd->ldc+1, w += b+1)
           Mjoin(PATL,axpby)(n-j, ATL_rone, w, 1, beta, c, 1);
    }
    else
    {
-      for (j=0; j < n; j++, c += pd->ldc, w++)
-          Mjoin(PATL,axpby)(j+1, ATL_rone, w, n, beta, c, 1);
+      for (j=0; j < n; j++, c += pd->ldc, w += b)
+          Mjoin(PATL,axpby)(j+1, ATL_rone, w, 1, beta, c, 1);
    }
    ATL_mutex_unlock(pd->Cmuts[dblk]);
 }
@@ -10055,17 +10056,14 @@ static void DoDiag(const int rank, ATL_tsyrk_ammN_t *pd)
 /*
  *     If I reach here, I've got a valid d & k;  and I'll call a routine
  *     that continues to grab blocks from this diag along K until all K
- *     is done; it will then right the answer back to the original C, and
+ *     is done; it will then write the answer back to the original C, and
  *     return to this loop to see if it can help with another diag.
  */
        FOUNDDK:
           DoBlksWtCpy(rank, pd, pd->ndiag-d, k, myC);
    }
 }
-/*
- * Performs SYRK on diagonal blocks of C, while doing the copy of the input
- * matrix.
- */
+
 void DoWork_syrk_amm(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
    ATL_thread_t *tp = vp;
@@ -10103,7 +10101,6 @@ int Mjoin(PATL,tsyrk_amm_N)
    ATL_CINT ldc
 )
 {
-   int iret=0;
    int NB, nb, mu, nu, nfdiag, ndiag, kb, nkblks, ncnt, nkcnt, blkszA;
    int nkblks;
    size_t sz, szA;
@@ -10180,6 +10177,8 @@ int Mjoin(PATL,tsyrk_amm_N)
             pd.ammK = mminfo.amm_b0;
       }
    }
+   pd.amm_b0 = mminfo.amm_b0;
+   pd.amm_b1 = mminfo.amm_b1;
    blkszA = kb * nb;
    szA = ATL_MulBySize(ndiag)*nkblks*blkszA;
    sz = (ndiag+ndiag+ndiag)*sizeof(void*);  /* space for Ctr & mut arrays */
@@ -10200,6 +10199,8 @@ int Mjoin(PATL,tsyrk_amm_N)
    pd.kb = kb;
    pd.kb0 = kb0;
    pd.KB0 = KB0;
+   pd.nnu = nb / nu;
+   pd.nmu = mb / mu;
 @beginskip
    pd.mu = mu;
    pd.nu = nu;
@@ -10208,11 +10209,17 @@ int Mjoin(PATL,tsyrk_amm_N)
    if (nbf)
    {
       pd.nbf = nbf;
-      pd.Mf = ((nbf+mu-1)/mu)*mu;
-      pd.Nf = ((nbf+nu-1)/nu)*nu;
+      pd.nmuf = (nbf+mu-1)/mu;
+      pd.nnuf = (nbf+nu-1)/nu;
+      pd.Mf = pd.nmuf*mu;
+      pd.Nf = pd.nnuf*nu;
    }
    else
+   {
       pd.nbf = pd.Mf = pd.Nf = nb;
+      pd.nmuf = pd.nmu;
+      pd.nnuf = pd.nnu;
+   }
       
    pd.cpydone = pd.NODWORK = 0;
    pd.dCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(ndiag, ATL_NTHREADS), 
@@ -10242,26 +10249,25 @@ int Mjoin(PATL,tsyrk_amm_N)
    pd.dbetaBV = ATL_NewBV(ndiag);
    pd.cblkBV = ATL_NewBV(ncblks);
    pd.cbetaBV = ATL_NewBV(ncblks);
-/*
- * Now, we will do a three step process:
- * 1. DoSYRKDiag: Copy all of A while computing answer diagonal blocks of C
- *    OUTPUT: Abv: bitvector where 1 means that row/col of A has been copied
- * 2. MakeWork: Use Abv to generate cases to work on
- * 3. DoCblks: Compute blocks of C according to jobs given out by MakeWork
- */
+
    ATL_goparallel(ATL_NTHREADS, DoWork_syrk_amm, &pd, NULL);
 
 /*
  * Free allocated structures and return; 
- * OUT-OF-DATE: update after we finish setting up phase
  */
-   ATL_FreeGlobalAtomicCount(pd.cCtr);
+   ATL_FreeBV(cpydonBV);
+   ATL_FreeBV(cblkBV);
+   ATL_FreeBV(dbetaBV);
+   ATL_FreeBV(cbetaBV);
+   ATL_mutex_free(pd.cdmut);
+   ATL_mutex_free(pd.cwmut);
    ATL_FreeGlobalAtomicCount(pd.dCtr);
    for (i=0; i < ndiag; i++)
    {
-      ATL_FreeGlobalAtomicCount(pd.dKCtr[i]);
-      ATL_mutex_free(pd.CMuts[i]);
+      ATL_FreeGlobalAtomicCount(pd.KbegCtr[i]);
+      ATL_FreeGlobalAtomicCount(pd.KdonCtr[i]);
+      ATL_mutex_free(pd.Cdmuts[i]);
    }
-   free(pd.dKCtr);
-   return(iret);
+   free(vp);
+   return(0);
 }
