@@ -406,69 +406,95 @@ struct ATL_SyrkK
    enum ATLAS_UPLO Uplo;
    enum ATLAS_TRANS Trans, TB;
 };
-#if 0
 /*
  * This structure used by dynamic access-major SYRK
+ * In the first phase, we work only on diagonal blocks, while copying both
+ * A & A'.  For diag work, we parallelize both N & K dims so that the copy
+ * is done as quickly as possible.  Threads coming in first choose differing
+ * diag blks; diagonal blocks are dealt out cheaply using the dCtr global
+ * counter (which starts at nnblks == ndiag).
+ * Once all diagonal blocks are dealt out, new threads will start using
+ * the atomic ctr array KbegCtr array to share K work for each diagonal.
+ * both KbegCtr & KdonCtr are nnblk-len arrays of atomic counters.  Each
+ * counter starts at nkblks.  Once the block pointed to by KbegCtr is
+ * completely copied, the copying array increments the KdonCtr.  Only one
+ * core per diag will get KdonCtr == 0 after doing his copy, and this
+ * core will seize cdmut mutex in order to set the appropriate bit in
+ * cpydonBV, which is a nnblks-length bit vector.  If the kth bit is set,
+ * that means the ith row of A & jth col of A' has been copied.
+ * Once a thread gets KbegCtr for a particular diag of 0, it means there's
+ * no more work for this block of C, and so it will seize the appropriate
+ * Cdmuts mutex which protects each diagonal block of C, and write its
+ * finished contribution out to C.  The first such thread to ever seize
+ * the mutex will scope dbetaBV to find this diagonal block needs beta applied;
+ * while later threads will use beta=1.
+ * Eventually, all diagonal work is finished, and the first processor to
+ * get 0 for all dCtr & KbegCtr requests will set NODWORK=1, so later
+ * threads don't have to query all the counters to know they should proceed
+ * to non-diagonal work.
+ *
+ * For non-diagonal work, we count the number of non-diagonal blocks of C,
+ * which is initially stored in the ncblks variable, which is protected
+ * the cwmut mutex, which also protects the cblkBV, which is a ncblk-len BV.
+ * A unset bit means that particular non-diagonal block has not yet been 
+ * assigned to a thread, while a 1 means it has.  The mutex also protects
+ * the cpydone variable, which is set to 1 when cpydonBV has all bits set.
+ * So, threads wanting to do non-diagonal work will find the first unset
+ * bit in cblkBV, and then translate that to a (i,j) C block coordinate.
+ * If the ith & jth bits are both set in cpydonBV (or cpydone is set), then
+ * they will take that block as their own to do (in this phase, each thread
+ * gets an individual block of C to do) by setting the bit in cblkBV.
+ * When all bits are set in cblkBV, then all work has been dealt out, and
+ * threads will exit once they say there is no more work to do.
+ * The master process joins all created threads, and can delete data structures
+ * safely after all joins succeed.
  */
+#define VINT volatile int
 typedef struct ATL_tsyrk_ammN ATL_tsyrk_ammN_t;
 struct ATL_tsyrk_ammN
 {
-   ATL_tsyrk_ammN_diag_t dip;  /* data struct for diagonal blks */
-   ATL_tsyrk_ammN_nd_t ndp;    /* data struct for non-diag blks */
    ammkern_t amm_b0, amm_b1, ammK;
-   int nb;       /* N blocking used for all but remainder block */
-   int nbf;      /* N%nb, if 0, nb */
-   int kb;       /* blocking used for K */
-   int kb0;      /* partial block of K for first guy */
-   int mu, nu, ku; /* M/N/K unrolling of amm kernel */
-   int Mf;       /* ((nbf+mu-1)/mu)*mu */
-   int Nf;       /* ((nbf+nu-1)/nu)*nu */
-   int K; 
-};
-typedef struct ATL_tsyrk_ammN_diag ATL_tsyrk_ammN_diag_t;
-struct ATL_tsyrk_ammN_diag
-{
    cm2am_t a2blk;    /* no-transpose copy */
    cm2am_t b2blk;    /* transpose copy */
-   int ndiag;        /* # of diagonal blocks */
-   int NOWORK;       /* set to 1 by first thread to find all work started */
+   ablk2cmat_t blk2d;/* copy for diagonal blocks */
+   ablk2cmat_t blk2c;/* copy for non-diagonal blocks */
+   const TYPE *A;    /* input matrix */
+   TYPE *C;          /* output matrix */
+   TYPE *wC;         /* ATL_NTHREADS thread-local nb*nb workspaces */
+   TYPE *wA, wAt;    /* workspaces for storing A & A' */
+   VINT *cpydonBV;   /* nnblks BV set means A & A' copy is done */
+   VINT *cblkBV;     /* ncblks BV for dealing out cblks */
+   VINT *dbetaBV;    /* nnblks BV: unset means beta not yet applied */
+   VINT *cbetaBV;    /* ncblks BV: unset means beta not yet applied */
+   void *cdmut;      /* mutex protecting cpydonBV */
+   void *cwmut;      /* mutex protecting non-diag work */
    void *dCtr;       /* AtomicCtr for dealing out diagonal blocks */
    void **KbegCtr;   /* K-counters for dealing out diagonal blocks */
    void **KdonCtr;   /* K-counters for completed diagonal blocks */
-   void **Cmuts;     /* mutex locks for each diagonal block of C */
-   int *cpydonBV;    /* when KdonCtr is zero, we set bitvec showing it */
-   void *cdmut;      /* mutex protecting cpydonBV */
+   void **Cdmuts;    /* mutex locks for each diagonal block of C */
+   void *CdonCtr;    /* non-diag computation finished when we reach 0 */
+   VINT cpydone;     /* set when all A/A' copying complete */
+   int LOWER;        /* set true if lower triangular C */
+   int TA;           /* set true if doing NoTrans case */
+   int ndiag;        /* # of diagonal blocks */
+   int ncblks;       /* # of non-diagonal blocks left to be assigned */
+   int nkblks;       /* # of k blocks, including any partial block */
+   int NODWORK;      /* set to 1 by first thread to find all work started */
+   int nb;           /* N blocking used for all but remainder block */
+   int nnu;          /* nb/nu */
+   int nbf;          /* N%nb, if 0, nb */
+   int nnuf;         /* nbf/nu */
+   int kb;           /* blocking used for K */
+   int kb0;          /* K%kb, if 0, kb */
+   int KB0;          /* if kmajor, it is CEIL(kb0/ku)*ku, else kb0 */
+   int blkszA;       /* nb*kb */
+   int panszA;       /* nkblks * blkszA */
+   int Mf;           /* ((nbf+mu-1)/mu)*mu */
+   int Nf;           /* ((nbf+nu-1)/nu)*nu */
+   int TA;           /* 0: noTrans; 1: Trans */
+   int lda;          /* leading dim of A */
+   int ldc;          /* leading dim of C */
 };
-/*
- * This structure is for handling the non-diagonal blocks, and will not
- * be entered until threads have taken all diagonal work
- */
-typedef struct ATL_tsyrk_ammN_nd ATL_tsyrk_ammN_nd_t;
-struct ATL_tsyrk_ammN_nd
-{
-   int nblks;       /* # of non-diagonal blocks left to be assigned */
-   void *CdonCtr;   /* computation finished when we reach 0 */
-};
-#else
-/*
- * This structure used by dynamic access-major SYRK
- */
-typedef struct ATL_tsyrk_amm ATL_tsyrk_ammN_t;
-struct ATL_tsyrk_ammN
-{
-   int ndiag;    /* # of diagonal blocks */
-   int ncblks;   /* # of non-diagonal blocks */
-   int nb;       /* blocking used for all but remainder block */
-   int nbf;      /* N%nb, if 0, nb */
-   int mu, nu;   /* M/N blocking of amm kernel */
-   int Mf;       /* ((nbf+mu-1)/mu)*mu */
-   int Nf;       /* ((nbf+nu-1)/nu)*nu */
-   void *dCtr;   /* AtomicCtr for diagonal blocks */
-   void *cCtr;   /* counter for non-diagonal C blks */
-   void **dKCtr;  /* K-counters for diagonal blocks */
-   void **Cmuts;   /* mutex locks for each diagonal block of C */
-};
-#endif
 /*
  * This data structure used when we divide N only, and NTHREAD is a power of 2
  */
@@ -9815,15 +9841,239 @@ static int ATL_EstNctr           /* RETURNS: good # of global ctrs */
 
 #include "atlas_misc.h"
 #include "atlas_tlvl3.h"
+
+/*
+ * For non-diagonal work, we count the number of non-diagonal blocks of C,
+ * which is initially stored in the ncblks variable, which is protected
+ * the cwmut mutex, which also protects the cblkBV, which is a ncblk-len BV.
+ * A unset bit means that particular non-diagonal block has not yet been
+ * assigned to a thread, while a 1 means it has.  The mutex also protects
+ * the cpydone variable, which is set to 1 when cpydonBV has all bits set.
+ * So, threads wanting to do non-diagonal work will find the first unset
+ * bit in cblkBV, and then translate that to a (i,j) C block coordinate.
+ * If the ith & jth bits are both set in cpydonBV (or cpydone is set), then
+ * they will take that block as their own to do (in this phase, each thread
+ * gets an individual block of C to do) by setting the bit in cblkBV.
+ * When all bits are set in cblkBV, then all work has been dealt out, and
+ * threads will exit once they say there is no more work to do.
+ * The master process joins all created threads, and can delete data structures
+ * safely after all joins succeed.
+ */
+static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd)
+{
+}
+/*
+ * Need to rewrite this to handle fact that nnu/mnu are diff, and that
+ * we must copy only nbf elts in last block, etc.
+ */
+static void DoBlkWtCpy
+(
+   unsigned const int rank,   /* my thread rank */
+   ATL_tsyrk_ammN_t *pd,      /* problem def structure */
+   unsigned const int dblk,   /* diagonal block of C to compute */
+   unsigned const int kblk,   /* kblk to compute */
+   unsigned const int m,      /* mb for this C blk  */
+   unsigned const int n,      /* nb for this C blk  */
+   unsigned const int nnu,    /* nb/nu for this C blk */
+   ammkern_t amm,             /* kern to use for all non-kb0 blocks */
+   TYPE *wC                   /* my private workspace */
+)
+{
+   const int nb=pd->nb, kb=pd->kb;
+   TYPE *A;                   /* ptr to original matrix */
+   TYPE *wA, *wB;             /* ptr to copy space */
+   size_t i, k;
+   int kk;
+   i = dblk * nb;
+   k = kblk * kb;
+   if (pd->TA)  /* A is transposed */
+   {
+      A = pd->A + k + i*pd->lda;
+   }
+   else        /* A is Notranspose */
+   {
+      A = pd->A + k*pd->lda + i;
+   }
+   wA = pd->wA + dblk*(pd->panszA) + k*nb;
+   wB = pd->wAt + dblk*(pd->panszA) + k*nb;
+   if (kblk)
+   {
+      pd->a2blk(kb, n, ATL_rone, A, pd->lda, wA);
+      pd->b2blk(kb, n, ATL_rone, A, pd->lda, wB);
+/*
+ *    If there are any off-diag blks awaiting the copy, signal copy of this
+ *    K-panel of A/A' is complete iff I just copied the last block
+ */
+      if (pd->ncblks)
+      {
+         if (DecGlobalAtomicCount((pd->KdonCtr)[dblk], rank) == 1)
+         {
+            ATL_mutex_lock(pd->cdmut);
+            ATL_SetBitBV(pd->cpydonBV, dblk);
+            ATL_mutex_unlock(pd->cdmut);
+         }
+      }
+      pd->amm_b1(nnu, nnu, kb, pA, pB, pC, pA, pB, pC);
+   }
+   else
+   {
+      pd->a2blk(pd->kb0, n, ATL_rone, A, pd->lda, wA);
+      pd->b2blk(pd->kb0, n, ATL_rone, A, pd->lda, wB);
+/*
+ *    If there are any off-diag blks awaiting the copy, signal copy of this
+ *    K-panel of A/A' is complete iff I just copied the last block
+ */
+      if (pd->ncblks)
+      {
+         if (DecGlobalAtomicCount((pd->KdonCtr)[dblk], rank) == 1)
+         {
+            ATL_mutex_lock(pd->cdmut);
+            ATL_SetBitBV(pd->cpydonBV, dblk);
+            ATL_mutex_unlock(pd->cdmut);
+         }
+      }
+      pd->ammK(nnu, nnu, pd->KB0, pA, pB, pC, pA, pB, pC);
+   }
+}
+
+static void DoBlksWtCpy
+(
+   unsigned const int rank,   /* my thread rank */
+   ATL_tsyrk_ammN_t *pd,      /* problem def structure */
+   unsigned const int dblk,   /* diagonal block of C to compute */
+   unsigned int kctr,         /* non-zero Kbeg ctr */
+   TYPE *wC                   /* my private workspace */
+)
+{
+   const int TRANS = (pd->TA == AtlasTrans);
+   int kblk = pd->nkblks - kctr;
+   const int n = (dblk == pd->ndiag-1) ? pd->Nf : pd->nb;
+   const int nnu = (dblk == pd->ndiag-1) ? pd->nnuf : pd->nnu;
+   TYPE *wA, *wB, *w, *c;
+   TYPE beta = ATL_rone;
+   DoBlkWtCpy(rank, pd, dblk, kblk, n, nnu, amm_b0, wC);
+   while (kctr = DecGlobalAtomicCount((pd->KbegCtr)[dblk], rank))
+   {
+      kblk = pd->nkblks - kctr;
+      DoBlkWtCpy(rank, pd, dblk, kblk, n, nnu, amm_b1, wC);
+   }
+/*
+ * Since I'm done with this blk of C, copy it to block-major storage, and
+ * scale by alpha (blk2c won't access only triangle, so must cpy first)
+ */
+   w = wC + nb*nb;
+   pd->blk2c(n, n, pd->alpha, wC, ATL_rzero, w, n);
+/*
+ * Now, seize mutex for diagonal block of original C, and copy back out
+ * only above/below diagonal
+ */
+   c = pd->C + dblk*nb*(pd->ldc+1);
+   ATL_mutex_lock(pd->Cdmuts[dblk]);
+   if (!ATL_IsBitSetBV(pd->dbetaBV, dblk)) /* if I apply beta */
+   {
+      ATL_SetBitBV(pd->dbetaBV, dblk); /* tell rest of thrs don't apply beta */
+      beta = pd->beta;                 /* because I'm going to do it */
+   }
+   if (pd->LOWER)
+   {
+      for (j=0; j < n; j++, c += pd->ldc+1, w += n+1)
+          Mjoin(PATL,axpby)(n-j, ATL_rone, w, 1, beta, c, 1);
+   }
+   else
+   {
+      for (j=0; j < n; j++, c += pd->ldc, w++)
+          Mjoin(PATL,axpby)(j+1, ATL_rone, w, n, beta, c, 1);
+   }
+   ATL_mutex_unlock(pd->Cmuts[dblk]);
+}
+
+/*
+ * In the first phase, we work only on diagonal blocks, while copying both
+ * A & A'.  For diag work, we parallelize both N & K dims so that the copy
+ * is done as quickly as possible.  Threads coming in first choose differing
+ * diag blks; diagonal blocks are dealt out cheaply using the dCtr global
+ * counter (which starts at nnblks == ndiag).
+ * Once all diagonal blocks are dealt out, new threads will start using
+ * the atomic ctr array KbegCtr array to share K work for each diagonal.
+ * both KbegCtr & KdonCtr are nnblk-len arrays of atomic counters.  Each
+ * counter starts at nkblks.  Once the block pointed to by KbegCtr is
+ * completely copied, the copying array increments the KdonCtr.  Only one
+ * core per diag will get KdonCtr == 0 after doing his copy, and this
+ * core will seize cdmut mutex in order to set the appropriate bit in
+ * cpydonBV, which is a nnblks-length bit vector.  If the kth bit is set,
+ * that means the ith row of A & jth col of A' has been copied.
+ * Once a thread gets KbegCtr for a particular diag of 0, it means there's
+ * no more work for this block of C, and so it will seize the appropriate
+ * Cdmuts mutex which protects each diagonal block of C, and write its
+ * finished contribution out to C.  The first such thread to ever seize
+ * the mutex will scope dbetaBV to find this diagonal block needs beta applied;
+ * while later threads will use beta=1.
+ * Eventually, all diagonal work is finished, and the first processor to
+ * get 0 for all dCtr & KbegCtr requests will set NODWORK=1, so later
+ * threads don't have to query all the counters to know they should proceed
+ * to non-diagonal work.
+ */
+static void DoDiag(const int rank, ATL_tsyrk_ammN_t *pd)
+{
+   int DIAG=1;
+   TYPE *myC = pd->wC + (rank+rank)*nb*nb;
+   while (!(pd->NODWORK))
+   {
+       int d=0;
+       
+/*
+ *     Find which diagonal block to work on, and then which k blk to use
+ */
+       if (DIAG)
+       {
+          d = DecGlobalAtomicCount(pd->dCtr, rank);
+          if (d)
+          {
+             k = DecGlobalAtomicCount((pd->KbegCtr)[pd->ndiag - d], rank);
+             if (!k)     /* if no more K work to do */
+                d = 0;   /* can't work on this diag after all */
+          }
+       }
+/*
+ *     If all diagonal blocks currently being worked on by threads, find
+ *     one that I can help with.
+ */
+       if (!d)
+       {
+          unsigned int i, n=pd->ndiag;
+          DIAG = 0;
+          for (i=0; i < n; i++)
+          {
+             unsigned int j = (i+iam)%n;
+             k = DecGlobalAtomicCount((pd->KbegCtr)[j], rank);
+             if (k)
+                goto FOUNDDK;
+          }
+          pd->NODWORK = 1;    /* no work left to assign */
+          return;             /* so done with copy of A/A' & this func */
+       }
+/*
+ *     If I reach here, I've got a valid d & k;  and I'll call a routine
+ *     that continues to grab blocks from this diag along K until all K
+ *     is done; it will then right the answer back to the original C, and
+ *     return to this loop to see if it can help with another diag.
+ */
+       FOUNDDK:
+          DoBlksWtCpy(rank, pd, pd->ndiag-d, k, myC);
+   }
+}
 /*
  * Performs SYRK on diagonal blocks of C, while doing the copy of the input
  * matrix.
-void DoSYRKDiag
-(
-   ATL_thread_t *tp,      /* thread structure */
-   ATL_tsyrk_ammN_t *pd,  /* prob def struct */
-)
+ */
+void DoWork_syrk_amm(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
+   ATL_thread_t *tp = vp;
+   ATL_tsyrk_ammN_t *pd = lp->vp;
+   if (!(pd->NODWORK))
+      DoDiag(tp->rank, pd);
+   if (pd.ncblks)
+      DoNonDiag(rp->rank, pd);
 }
 /*
  * SYRK where all parallelism comes from blocks of N, built atop amm directly
@@ -9854,9 +10104,14 @@ int Mjoin(PATL,tsyrk_amm_N)
 )
 {
    int iret=0;
-   int NB, nb, mu, nu, nfdiag, ndiag, kb, nkblks, ncnt, nkcnt;
+   int NB, nb, mu, nu, nfdiag, ndiag, kb, nkblks, ncnt, nkcnt, blkszA;
+   int nkblks;
+   size_t sz, szA;
    ATL_tsyrk_ammN_t pd;
+   amminfo_t mminfo;
+   void *vp;
 
+#if 0
    kb = ATL_AMM_98KB;
    nb = (ATL_AMM_98NB / ATL_AMM_98LCMMN)*ATL_AMM_98LCMMN;
 /*
@@ -9879,12 +10134,77 @@ int Mjoin(PATL,tsyrk_amm_N)
       ndiag = (nbf) ? nfdiag+1 : nfdiag;
       ncblks = ((ndiag-1)*ndiag)>>1;
    }
+   #else
+      pd.blk2d = Mjoin(PATL,tGetSyammInfo)(&mminfo, ATL_NTHREADS, TA, N, K, 
+                                           alpha, beta);
+      pd.blk2c = mminfo.blk2c;
+      pd.a2blk = mminfo.a2blk;
+      pd.b2blk = mminfo.b2blk;
+      nb = mminfo.nb;
+      kb = mminfo.kb;
+      mu = mminfo.mu;
+      nu = mminfo.nu;
+      nfdiag = N/nb;
+      nbf = N - nfdiag*nb;
+      ndiag = (nbf) ? nfdiag+1 : nfdiag;
+      ATL_assert(ndiag == 1);  /* just for this testing */
+      ncblks = ((ndiag-1)*ndiag)>>1;
+   #endif
 /*
  * Set up parallel data structure
  */
+   nkblks = (K+kb-1)/kb;
+   kb0 = K - (K/kb)*kb;
+   if (!kb0)
+   {
+      kb0 = KB0 = kb;
+      pd.ammK = mminfo.amm_b0;
+   }
+   else
+   {
+      #if ATL_AMM_MAXKMAJ > 1
+         if (ATL_AMMFLG_KMAJOR(mminfo.flag))
+         {
+            KB0 = ((kb0+ku-1)/ku)*ku;
+            if (ATL_AMMFLG_KRUNTIME(mminfo.flag))
+               pd.ammK = mminfo.amm_b0;
+            else
+               pd.ammK = mminfo.amm_k1_b0;
+         }
+         else
+      #endif
+      {
+         pd.ammK = mminfo.amm_k1_b0;
+         if (ATL_AMMFLG_KRUNTIME(mminfo.flag) && kb0 == (kb0/ku)*ku &&
+             kb0 > mminfo.kbmin)
+            pd.ammK = mminfo.amm_b0;
+      }
+   }
+   blkszA = kb * nb;
+   szA = ATL_MulBySize(ndiag)*nkblks*blkszA;
+   sz = (ndiag+ndiag+ndiag)*sizeof(void*);  /* space for Ctr & mut arrays */
+   sz += ATL_MulBySize(nb)*nb*2*ATL_NTHREADS; /* local C wrkspc */
+   sz += szA+szA;                           /* A/At workspace */
+   sz += 3*ATL_Cachelen;                    /* room for alignment */
+   pd.TA = (Trans == AtlasNoTrans);
+   pd.LOWER = (Uplo == AtlasLower);
+   pd.KbegCtr = vp = malloc(sz);
+   if (!vp);
+      return(2);
    pd.ndiag = ndiag;
    pd.ncblks = ncblks;
+   pd.blkszA = blkszA
+   pd.panszA = nkblks*blkszA;
+   pd.nkblks = nkblks;
    pd.nb = nb;
+   pd.kb = kb;
+   pd.kb0 = kb0;
+   pd.KB0 = KB0;
+@beginskip
+   pd.mu = mu;
+   pd.nu = nu;
+   pd.ku = ku;
+@endskip
    if (nbf)
    {
       pd.nbf = nbf;
@@ -9893,20 +10213,35 @@ int Mjoin(PATL,tsyrk_amm_N)
    }
    else
       pd.nbf = pd.Mf = pd.Nf = nb;
-   pd.cCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(ncblks, ATL_NTHREADS), 
-                                      ncblks, 0);
+      
+   pd.cpydone = pd.NODWORK = 0;
    pd.dCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(ndiag, ATL_NTHREADS), 
                                       ndiag, 0);
    nkcnt = ATL_EstNctr(nkblks, ATL_NTHREADS);
-   pd.dKCtr = malloc((ndiag+ndiag)*(void*));
-   if (!pd.dKCtr)
-      return(2);
-   Cmuts = pd.dKCtr + ndiag;
+   pd.KdonCtr = pd.KbegCtr + ndiag;
+   pd.Cdmuts = pd.KdonCtr + ndiag;
+   pd.wA = (TYPE*)(pd.Cdmuts+ndiag);
+   pd.wA = ATL_AlignPtr(pd.wA);
+   pd.wAt = pd.wA + szA;
+   pd.wAt = ATL_AlignPtr(pd.wAt);
+   pd.wC = pd.wAt + szA;
+   pd.wC = ATL_AlignPtr(pd.wC);
+   pd.A = A;
+   pd.lda = lda;
+   pd.C = C;
+   pd.ldc = ldc;
    for (i=0; i < ndiag; i++)
    {
-      pd.dKCtr[i] = ATL_SetGlobalAtomicCount(nkcnt, nkblks, 0);
-      pd.CMuts[i] = ATL_mutex_init();
+      pd.KbegCtr[i] = ATL_SetGlobalAtomicCount(nkcnt, nkblks, 0);
+      pd.KdonCtr[i] = ATL_SetGlobalAtomicCount(nkcnt, nkblks, 0);
+      pd.Cdmuts[i] = ATL_mutex_init();
    }
+   pd.cdmut = ATL_mutex_init();
+   pd.cwmut = ATL_mutex_init();
+   pd.cpydonBV = ATL_NewBV(ndiag);
+   pd.dbetaBV = ATL_NewBV(ndiag);
+   pd.cblkBV = ATL_NewBV(ncblks);
+   pd.cbetaBV = ATL_NewBV(ncblks);
 /*
  * Now, we will do a three step process:
  * 1. DoSYRKDiag: Copy all of A while computing answer diagonal blocks of C
@@ -9914,9 +10249,11 @@ int Mjoin(PATL,tsyrk_amm_N)
  * 2. MakeWork: Use Abv to generate cases to work on
  * 3. DoCblks: Compute blocks of C according to jobs given out by MakeWork
  */
+   ATL_goparallel(ATL_NTHREADS, DoWork_syrk_amm, &pd, NULL);
 
 /*
- * Free allocated structures and return
+ * Free allocated structures and return; 
+ * OUT-OF-DATE: update after we finish setting up phase
  */
    ATL_FreeGlobalAtomicCount(pd.cCtr);
    ATL_FreeGlobalAtomicCount(pd.dCtr);
