@@ -9904,8 +9904,9 @@ static void DoBlkWtCpy
    TYPE *wA, *wB;             /* ptr to copy space */
    size_t i, k;
    int kk;
+// fprintf(stderr, "%d: dblk=%d, kblk=%d\n", rank, dblk, kblk);
    i = dblk * nb;
-   k = kblk * kb;
+   k = (kblk) ? pd->kb0 + (kblk-1) * kb : 0;
    if (pd->TA)  /* A is transposed */
    {
       A = pd->A + k + i*pd->lda;
@@ -10081,6 +10082,7 @@ static void DoDiag(const int rank, ATL_tsyrk_ammN_t *pd)
           {
              unsigned int j = (i+rank)%n;
              k = ATL_DecGlobalAtomicCount((pd->KbegCtr)[j], rank);
+             d = n+j;
              if (k)
                 goto FOUNDDK;
           }
@@ -10101,7 +10103,7 @@ static void DoDiag(const int rank, ATL_tsyrk_ammN_t *pd)
 void DoWork_syrk_amm(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
    ATL_thread_t *tp = vp;
-   ATL_tsyrk_ammN_t *pd = lp->vp;
+   ATL_tsyrk_ammN_t *pd = lp->opstruct;
    if (!(pd->NODWORK))
       DoDiag(tp->rank, pd);
    if (pd->ncblks)
@@ -10291,14 +10293,13 @@ int Mjoin(PATL,tsyrk_amm_N)
    pd.cblkBV = ATL_NewBV(ncblks);
    pd.cbetaBV = ATL_NewBV(ncblks);
 
-   #define DEBUG1
    #ifdef DEBUG1
    {
       ATL_LAUNCHSTRUCT_t ls;
       ATL_thread_t ts;
       ts.rank = 0;
       ts.P = 1;
-      ls.vp = &pd;
+      ls.opstruct = &pd;
       DoWork_syrk_amm(&ls, &ts);
    }
    #else
