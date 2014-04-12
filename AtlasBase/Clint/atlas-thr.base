@@ -9933,7 +9933,7 @@ static void DoBlkWtCpy
             ATL_mutex_unlock(pd->cdmut);
          }
       }
-      pd->amm_b1(nmu, nnu, kb, wA, wB, wC, wA, wB, wC);
+      amm(nmu, nnu, kb, wA, wB, wC, wA, wB, wC);
    }
    else
    {
@@ -9952,7 +9952,17 @@ static void DoBlkWtCpy
             ATL_mutex_unlock(pd->cdmut);
          }
       }
-      pd->ammK(nmu, nnu, pd->KB0, wA, wB, wC, wA, wB, wC);
+      if (amm == pd->amm_b0)   /* ammK works for beta=0, so OK */
+         pd->ammK(nmu, nnu, pd->KB0, wA, wB, wC, wA, wB, wC);
+/*
+ *    If using ammK in middle of operation, it handles only beta=0, so do
+ *    operation in extra workspace and then add result into running sum
+ */
+      else
+      {
+         pd->ammK(nmu, nnu, pd->KB0, wA, wB, wC+pd->nbnb, wA, wB, wC+pd->nbnb);
+         Mjoin(PATL,axpy)(pd->nbnb, ATL_rone, wC+pd->nbnb, 1, wC, 1);
+      }
    }
 }
 
@@ -9984,8 +9994,8 @@ static void DoBlksWtCpy
  * Since I'm done with this blk of C, copy it to block-major storage, and
  * scale by alpha (blk2c won't access only triangle, so must cpy first)
  */
-   w = wC + b*b;
-   pd->blk2c(b, b, *(pd->alpha), wC, ATL_rzero, w, b);
+   w = wC + pd->nbnb;
+   pd->blk2d(b, b, *(pd->alpha), wC, ATL_rzero, w, b);
 /*
  * Now, seize mutex for diagonal block of original C, and copy back out
  * only above/below diagonal
@@ -10208,11 +10218,11 @@ int Mjoin(PATL,tsyrk_amm_N)
    pd.amm_b0 = mminfo.amm_b0;
    pd.amm_b1 = mminfo.amm_b1;
    blkszA = kb * nb;
-   szA = ATL_MulBySize(ndiag)*nkblks*blkszA;
-   sz = (ndiag+ndiag+ndiag)*sizeof(void*);  /* space for Ctr & mut arrays */
+   szA = ndiag*nkblks*blkszA;                 /* space for A & A' */
+   sz = (ndiag+ndiag+ndiag)*sizeof(void*);    /* space for Ctr & mut arrays */
    sz += ATL_MulBySize(nb)*nb*2*ATL_NTHREADS; /* local C wrkspc */
-   sz += szA+szA;                           /* A/At workspace */
-   sz += 3*ATL_Cachelen;                    /* room for alignment */
+   sz += ATL_MulBySize(szA+szA);              /* A/At workspace */
+   sz += 3*ATL_Cachelen;                      /* room for alignment */
    pd.alpha = &alpha;
    pd.beta = &beta;
    pd.TA = (Trans == AtlasTrans);
