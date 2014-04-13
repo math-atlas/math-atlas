@@ -2265,7 +2265,7 @@ int *ATL_NewBV(int nmax);
 void ATL_SetBitBV(int *bv, int bpos);
 void ATL_UnsetBitBV(int *bv, int bpos);
 int ATL_IsBitSetBV(int *bv, int bpos);
-int ATL_FindFirstUnsetBitBV(int *bv);
+int ATL_FindFirstUnsetBitBV(int *bv, int bs);
 int ATL_FindFirstSetBitBV(int *bv, int bs);
 
 #endif
@@ -2287,7 +2287,7 @@ int *ATL_NewBV
    int nelt, nrem;
    ATL_assert(sizeof(int) >= 4);
    nelt = (nmax+31) >> 5;
-   nrem = nmax - (nmax>>5);
+   nrem = nmax - ((nmax>>5)<<5);
    bv = calloc(nelt+2, sizeof(int));
    ATL_assert(bv);
    *bv = (nrem) ? nelt-1 : nelt;
@@ -2297,12 +2297,7 @@ int *ATL_NewBV
  * others in ATL_FindFirstUnsetBitBV
  */
    if (nrem)
-   {
-      int i, v=0;
-      for (i=31; i >= nrem; i--)
-         v |= 1<<i;
-      bv[nelt+1] = v;
-   }
+      bv[nelt+1] = ~((1<<nrem)-1);
    return(bv);
 }
 
@@ -2352,31 +2347,56 @@ int ATL_IsBitSetBV
 
 /*
  * Returns smallest bit position that has not yet been set, -1 if all set
+ * Unused bits in last bv are set to make this search fast.
  */
 int ATL_FindFirstUnsetBitBV
 (
-   int *bv    /* bitvector to use */
+   int *bv,   /* bitvector to use */
+   int bs     /* bit to start at (0 means beginning) */
 )
 {
    const int nbv = bv[1] ? bv[0]+1:bv[0];
+   int iv = bs>>5, is=bs-(iv<<5);
    int i;
 /*
- * Find first bitvec with any unset values
+ * No match if start is beyond end of bits
  */
-   for (i=0; i < nbv; i++)
+   if (bs >= (bv[0]<<5) + bv[1])
+      return(-1);
+/*
+ * If first vector to check is partial
+ */
+   if (is)
    {
-      const int v=bv[i+2], base=i<<5;
-      int k, kbeg, kend;
-      if (v == 0xFFFFFFFF)
-         continue;
-      if (v != (v|0xFF)) /* gap in first byte */
-         kbeg = (v != (v|0xF)) ? 0 : 4;
-      else if (v != (v|0xFF00)) /* gap in 2nd byte */
-         kbeg = (v != (v|0x0F00)) ? 8 : 12;
-      else if (v != (v|0xFF0000)) /* gap in 3rd byte */
-         kbeg = (v != (v|0xF0000)) ? 16 : 20;
-      else /* gap in 4th byte */
-         kbeg = (v != (v|0xF000000)) ? 24 : 28;
+      const unsigned int v = bv[iv+2], base=iv<<5;
+      if ((v|(0xFFFFFFFF<<is)) != v)
+      {
+         const unsigned int nb=(bv[1] && iv == nbv-1) ? bv[1]:32;
+         for (i=is; i < nb; i++)
+            if ((v|(1<<i)) != v)
+               return(base+i);
+      }
+   }
+   for (; iv < nbv; iv++)
+   {
+      const unsigned int v = bv[iv+2], base=iv<<5;
+      int kbeg;
+      if (v == 0xFFFFFFFF)   /* if all bits are set */
+          continue;          /* skip to next bitvec */
+/*
+ *    Find start of 4-bit area where first unset bit occurs
+ */
+      if (v != (v|0xFF))   /* unset bit in first 8 bits */
+         kbeg = (v != (v|0xF)) ? 0:4;
+      else if (v != (v|0xFF00))
+         kbeg = (v != (v|0xF00)) ? 8:12;
+      else if (v != (v|0xFF0000))
+         kbeg = (v != (v|0xF0000)) ? 16:20;
+      else
+         kbeg = (v != (v|0xF000000)) ? 24:28;
+/*
+ *    Return 1st unset bit in 4-bit area starting at kbeg: at least 1 unset!
+ */
       if (v != (v|(1<<kbeg)))
          return(base+kbeg);
       else if (v != (v|(1<<(kbeg+1))))
@@ -2385,24 +2405,7 @@ int ATL_FindFirstUnsetBitBV
          return(base+kbeg+2);
       else
          return(base+kbeg+3);
-@beginskip
-      kend = kbeg + 4;
-      for (k=kbeg; k < kend; k++)
-      {
-         if ((v|(1<<k)) != v)
-            return(base+k);
-      }
-@endskip
    }
-@beginskip
-   if (nr)
-   {
-      const int v = bv[nfbv+2], base=nfbv<<5;
-      for (i=0; i < nr; i++)
-         if ((v|(1<<i)) != v)
-            return(base+i);
-   }
-@endskip
    return(-1); /* all bits are set */
 }
 /*
@@ -2415,21 +2418,26 @@ int ATL_FindFirstSetBitBV
 )
 {
    int iv = bs>>5, is=bs-(iv<<5);
-   const int nbv = bv[1] ? bv[0]+1:bv[0];
+   const int nbv = bv[0];
+/*
+ * No match if start is beyond end of bits
+ */
+   if (bs >= (bv[0]<<5) + bv[1])
+      return(-1);
 /*
  * If first vector to check is partial
  */
    if (is)
    {
-      const unsigned int v = bv[iv+2];
+      const unsigned int v = bv[iv+2], nchk=(iv==nbv) ? bv[1] : 32;
       if (v & ((0xFFFFFFFF)<<is))
       {
          int i;
-         for (i=is; i < 32; i++)
+         for (i=is; i < nchk; i++)
             if (v & (1<<i))
                return(bs+i);
       }
-      iv++;  /* no unset bits in initial bv checked */
+      iv++;  /* no set bits in initial bv checked */
    }
    for (; iv < nbv; iv++)
    {
