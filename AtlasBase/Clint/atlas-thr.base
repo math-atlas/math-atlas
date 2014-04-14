@@ -407,6 +407,44 @@ struct ATL_SyrkK
    enum ATLAS_UPLO Uplo;
    enum ATLAS_TRANS Trans, TB;
 };
+#ifdef TYPE
+   #define VINT volatile int
+/*
+ * This structure used when N <= MIN(MAXNB,MAXMB), so we deal out only
+ * K blocks using the global counter KbCtr.  
+ */
+typedef struct ATL_tsyrk_ammN ATL_tsyrk_ammK_t;
+struct ATL_tsyrk_ammK
+{
+   ammkern_t amm_b0, amm_b1, ammK_b0, ammK_b1;
+   cm2am_t a2blk;        /* no-transpose copy */
+   cm2am_t b2blk;        /* transpose copy */
+   ablk2cmat_t blk2c_b0;/* copy for beta=0 */
+   ablk2cmat_t blk2c_b1;/* copy for beta=1 */
+   const TYPE *A;       /* input matrix */
+   TYPE *C;             /* output matrix */
+   TYPE *w;             /* 2*ATL_NTHREADS thread-local mb*nb workspaces */
+   const TYPE *alpha;   /* ptr to alpha */
+   const TYPE *beta;    /* ptr to beta */
+   void *KbCtr;         /* which k block */
+   void *Cmut;          /* mutex lock for block of C */
+   size_t lda;          /* leading dim of A */
+   size_t ldc;          /* leading dim of C */
+   size_t wsz;          /* size of local workspace */
+   VINT BETA_APPLIED;
+   int LOWER;           /* set true if lower triangular C */
+   int TA;              /* 0: noTrans; 1: Trans */
+   int nkblks;          /* # of k blocks, including any partial block */
+   int N;               /* total size of C, known to be <= MAXNB */
+   int mb;              /* ((N+mu-1)/mu)*mu */
+   int nb;              /* ((N+nu-1)/nu)*nu */
+   int mbnb;            /* mb * nb */
+   int nmu;             /* CEIL(N/mu) */
+   int nnu;             /* CEIL(N/nu) */
+   int kb;              /* blocking used for K */
+   int kb0;             /* K%kb, if 0, kb */
+   int KB0;             /* if kmajor, it is CEIL(kb0/ku)*ku, else kb0 */
+};
 /*
  * This structure used by dynamic access-major SYRK
  * In the first phase, we work only on diagonal blocks, while copying both
@@ -450,8 +488,6 @@ struct ATL_SyrkK
  * The master process joins all created threads, and can delete data structures
  * safely after all joins succeed.
  */
-#ifdef TYPE
-   #define VINT volatile int
 typedef struct ATL_tsyrk_ammN ATL_tsyrk_ammN_t;
 struct ATL_tsyrk_ammN
 {
@@ -1961,8 +1997,8 @@ void ATL_goparallel
  * {
  *    ATL_thread_t *tp = vp;
  *    const int myrank = tp->rank;
- *    my_prob_def_t *pd = lp->vp;
- *    ... do work based on info in struct pointed to by lp->vp ...
+ *    my_prob_def_t *pd = lp->opstruct;
+ *    ... do work based on info in struct pointed to by lp->opstruct ...
  * }
  * Your DoWork should perform any needed combine before finishing execution,
  * and any return values can be passed in the problem definition structure
@@ -2014,6 +2050,36 @@ void ATL_goparallel
    if (DoComb)
       for (i=1; i < P; i++)
          ls.DoComb(ls.opstruct, 0, i);
+/*
+ * If we are using a thread pool, this function only launches threads on
+ * the first invocation
+ */
+#elif ATL_USE_THREADPOOL
+/*
+ * If thread pool not currently active, must spawn it
+ */
+   if (!ATL_TP_ACTIVE)
+   {
+      ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
+      if (!ATL_TP_ACTIVE)
+      {
+         tp = ATL_TP_THREADS;
+         ATL_thread_start(tp, 0, 0, ATL_threadpool_launch, tp);
+      }
+      ATL_TP_ACTIVE = 1;
+      ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
+   }
+/*
+ * Threads have started, so this routine awaits completion of task
+ */
+   ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
+   while (ATL_TP_NTHR > ATL_TP_NTHR_DONE)
+      ATL_assert(!pthread_cond_wait(&ATL_TP_MCOND, &ATL_TP_MUT));
+   ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
+   
+/*
+ * Otherwise, I'm using explicit launch & join paradigm of some type
+ */
 #else
    #if ATL_USE_DYNAMIC
       ls.acounts = &lc;
@@ -3148,6 +3214,16 @@ void ATL_DoWorkMM(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 size_t Mjoin(PATL,GetAmmmNthr)(ATL_CSZT M, ATL_CSZT N, ATL_CSZT K)
 {
    size_t nnblks, nmblks, nkblks, p;
+
+/*
+ * On the XeonPHI, threads take a huge time to start up, so don't try
+ * threading until we have a big problem.  We can hopefully fix this
+ * later by changing to a thread pool model on the PHI.
+ */
+   #ifdef ATL_ARCH_XeonPHI
+      if ((M*1e-6)*N*K < 64.0)
+         return(1);
+   #endif
 
    nmblks = (M >= ATL_AMM_66MB) ? M/ATL_AMM_66MB : 1;
    nnblks = (N >= ATL_AMM_66NB) ? N/ATL_AMM_66NB : 1;
@@ -6103,11 +6179,27 @@ void Mjoin(PATL,t@(rt))
    }
 @ROUT ATL_tsyrk
    #ifdef TREAL
-      #if defined(ATL_AMM_66MB) && defined (ATL_AMM_98MB)
-      if (N >= (ATL_AMM_66MB<<3) && N >= ATL_AMM_98MB)
+   {
+   @beginskip
+      #ifdef ATL_AMM_98MB
+         size_t nd = N / ATL_AMM_98MB;
       #else
-      if (N > 120)
+         size_t nd = N / ATL_AMM_MAXMB;
       #endif
+      nd = (nd*(nd-1))>>1;
+      if (nd > ATL_NTHREADS)
+   @endskip
+      #ifdef ATL_AMM_98MB
+         #define MY_MB ATL_AMM_98MB
+      #else
+         #define MY_MB ATL_AMM_MAXMB
+      #endif
+      #if ATL_NTHREADS > 8
+          #define MY_NTHR 8
+      #else
+          #define MY_NTHR ATL_NTHREADS
+      #endif
+      if (N >= (MY_MB<<2))
       {
          void Mjoin(PATL,tsyrk_amm)
             (const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CINT N,
@@ -6116,6 +6208,7 @@ void Mjoin(PATL,t@(rt))
          Mjoin(PATL,tsyrk_amm)(Uplo, Trans, N, K, alpha, A, lda, beta, C, ldc);
          return;
       }
+   }
    #endif
 @ROUT ATL_tsyrk ATL_therk
 
@@ -9842,6 +9935,7 @@ DONE:
    (J_) = j_; \
    (I_) = j_ + b_ + 1; \
 }
+
 #ifdef __GNUC__
 static inline int ATL_EstNctr    /* RETURNS: good # of global ctrs */
 #else
@@ -9867,8 +9961,211 @@ static int ATL_EstNctr           /* RETURNS: good # of global ctrs */
    return(Mmin(ncnt,ncntP));
 }
 
-#include "atlas_misc.h"
-#include "atlas_tlvl3.h"
+static void DoSyrkK(unsigned int rank, ATL_tsyrk_ammK_t *pd)
+{
+   TYPE *wA, *wB, *wC;
+   mmkern_t amm = pd->amm_b0;
+   const cm2am_t a2blk=pd->a2blk, b2blk=pd->b2blk;
+   const unsigned int mb=pd->mb, nb=pd->nb, kb=pd->kb, nkblks=pd->nkblks, 
+      N=pd->N;
+   const size_t mulA = (TA) ? pd->lda : 1;
+   int lda=pd->lda;
+   int kctr;
+   wA = pd->w + pd->wsz*rank;
+   wB = wA + mb*kb;
+   wC = wB + nb*kb;
+
+   while ((kctr = ATL_DecGlobalAtomicCount(pd->KbCtr))
+   {
+      const int kblk = pd->kctr - nkblks;
+      TYPE *a = pd->A + k*mulA*kb;
+      if (kblk != nkblks-1)  /* normal full-kb operation */
+      {
+         a2blk(kb, N, ATL_rone, A, lda, wA);
+         b2blk(kb, N, ATL_rone, A, lda, wB);
+         amm(nmu, nnu, kb, wA, wB, wC, wA, wB, wC);
+      }
+      else /* last block of size kb0 */
+      {
+         a2blk(pd->kb0, N, ATL_rone, A, lda, wA);
+         b2blk(pd->kb0, N, ATL_rone, A, lda, wB);
+         if (amm == pd->amm_b0)
+            pd->ammK_b0(nmu, nnu, pd->KB0, wA, wB, wC, wA, wB, wC);
+         else
+            pd->ammK_b1(nmu, nnu, pd->KB0, wA, wB, wC, wA, wB, wC);
+      }
+      amm = pd->amm_b1;
+   }
+/*
+ * If I did any work at all, must now write answer back to C
+ */
+   if (amm == pd->amm_b1)
+   {
+      TYPE *w = wC + mb*nb, *c = pd->C;
+      TYPE beta=ATL_rone;
+      pd->blk2c_b0(N, N, ATL_rone, wC, ATL_rzero, w, N);
+/*
+ *    Now, seize C mutex, and copy out only upper/lower portion
+ */
+      ATL_mutex_lock(pd->Cmut);
+      if (!BETA_APPLIED)
+      {
+         BETA_APPLIED = 1;
+         beta = *(pd->beta);
+      }
+      if (pd->LOWER)
+      {
+         int j;
+         for (j=0; j < b; j++, c += pd->ldc+1, w += b+1)
+             Mjoin(PATL,axpby)(b-j, *(pd->alpha), w, 1, beta, c, 1);
+      }
+      else
+      {
+         int j;
+         for (j=0; j < b; j++, c += pd->ldc, w += b)
+             Mjoin(PATL,axpby)(j+1, *(pd->alpha), w, 1, beta, c, 1);
+      }
+      ATL_mutex_unlock(pd->Cmut);
+   }
+}
+
+void Mjoin(PATL,DoWork_syrk_amm_K)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   ATL_thread_t *tp = vp;
+   DoSyrkK(tp->rank, lp->opstruct);
+}
+int Mjoin(PATL,tsyrk_amm_K)
+(
+   const enum ATLAS_UPLO Uplo,
+   const enum ATLAS_TRANS Trans,
+   ATL_CINT N,
+   ATL_CINT K,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CINT lda,
+   const SCALAR beta,
+   TYPE *C,
+   ATL_CINT ldc
+)
+{
+   amminfo_t mminfo;
+   ATL_tsyrk_ammK_t pd;
+   ablk2cmat_t Mjoin(PATL,tGetSyammInfo_K)
+      (amminfo_t *out, const int P, enum ATLAS_TRANS TA, ATL_CSZT N,ATL_CSZT K);
+   int kb=ATL_AMM_MAXKB, nkb = K / ATL_AMM_MAXKB, P = ATL_NTHREADS;
+   int ku, kr, mb, nb;
+   size_t sz;
+   void *vp=NULL;
+
+   if (nkb < P)
+   {
+      kb = ATL_AMM_98KB;
+      nkb = K / ATL_AMM_98KB;
+      if (nkb < P)
+      {
+         nkb = K / ATL_AMM_66KB;
+         kb = ATL_AMM_66KB;
+      }
+   }
+   if (P < nkb)
+   {
+      if (nkb < 2)
+      {
+          Mjoin(PATL,syrk)(Uplo, Trans, N, K, alpha, A, lda, beta, C, ldc);
+          return(0);
+      }
+      P = nkb;
+   }
+   pd.blk2c_b0 = Mjoin(PATL,tGetSyammInfo_K)(&mminfo, P, TA, N, kb);
+   ATL_assert(kb == mminfo.kb);
+
+   mb = pd.mb = mminfo.mb;
+   nb = pd.nb = mminfo.nb
+   pd.kb = mminfo.kb;
+   sz = ((((size_t)mb)*nb)<<1) + (mb+nb)*kb;
+   pd.wsz = sz;
+   sz = ATL_MulBySize(sz)*P;
+   vp = malloc(sz+ATL_Cachelen);
+   if (!vp)
+      return(1);
+   pd.w = ATL_AlignPtr(vp);
+   kr = K - nkb*kb;
+   pd.kb0 = pd.KB0 = kr;
+   ku = mminfo.ku;
+   if (!kr)
+   {
+      pd.ammK_b0 = mminfo.amm_b0;
+      pd.ammK_b1 = mminfo.amm_b1;
+   }
+   else
+   {
+      #if ATL_AMM_MAXKMAJ > 1
+         if (ATL_AMMFLG_KMAJOR(mminfo.flag))
+         {
+            pd.KB0 = ((kr+ku-1)/ku)*ku;
+            if (ATL_AMMFLG_KRUNTIME(mminfo.flag))
+            {
+               pd.ammK_b0 = mminfo.amm_b0;
+               pd.ammK_b1 = mminfo.amm_b1;
+            }
+            else
+            {
+               pd.ammK_b0 = mminfo.amm_k1_b0;
+               pd.ammK_b1 = mminfo.amm_k1_b1;
+            }
+         }
+         else
+      #endif
+      {
+         if (ATL_AMMFLG_KRUNTIME(mminfo.flag) && kr == (kr/ku)*ku &&
+             kr > mminfo.kbmin)
+         {
+               pd.ammK_b0 = mminfo.amm_b0;
+               pd.ammK_b1 = mminfo.amm_b1;
+         }
+         else
+         {
+               pd.ammK_b0 = mminfo.amm_k1_b0;
+               pd.ammK_b1 = mminfo.amm_k1_b1;
+         }
+      }
+   }
+   pd.blk2c_b1 = mminfo.Cblk2cm;
+   pd.a2blk = mminfo.a2blk;
+   pd.b2blk = mminfo.b2blk;
+   pd.A = A;
+   pd.C = C;
+   pd.alpha = &alpha;
+   pd.beta = &beta;
+   pd.nkblks = (kr) ? nkb+1 : nkb;
+   pd.KbCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(pd.nkblks, P), pd.nkblks, 0);
+   pd.Cmut = ATL_mutex_init();
+   pd.BETA_APPLIED=0;
+   pd.LOWER = (Uplo == AtlasLower);
+   pd.TA = (Trans == AtlasTrans);
+   pd.N = N;
+   pd.lda = lda;
+   pd.ldc = ldc;
+   pd.nmu = mb / mu;
+   pd.nnu = nb / nu;
+
+//   #define DEBUG1
+   #ifdef DEBUG1
+   {
+      ATL_LAUNCHSTRUCT_t ls;
+      ATL_thread_t ts;
+      ts.rank = 0;
+      ts.P = 1;
+      ls.opstruct = &pd;
+      Mjoin(PATL,DoWork_syrk_amm_K)(&ls, &ts);
+   }
+   #else
+      ATL_goparallel(P, Mjoin(PATL,DoWork_syrk_amm_K), &pd, NULL);
+   #endif
+   free(vp);
+   ATL_mutex_free(pd.Cmut);
+   ATL_FreeGlobalAtomicCount(pd.KbCtr);
+}
 
 static int GetCBlk(const int rank, ATL_tsyrk_ammN_t *pd)
 {
@@ -10238,7 +10535,7 @@ static void DoDiag(const int rank, ATL_tsyrk_ammN_t *pd)
    }
 }
 
-void DoWork_syrk_amm(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+void Mjoin(PATL,DoWork_syrk_amm)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
    ATL_thread_t *tp = vp;
    ATL_tsyrk_ammN_t *pd = lp->opstruct;
@@ -10279,7 +10576,7 @@ int Mjoin(PATL,tsyrk_amm_N)
 )
 {
    int NB, nb, mu, nu, ku, nfdiag, ndiag, nkblks, ncnt, nkcnt, blkszA, nbf;
-   int ncblks, kb, kb0, KB0, i;
+   int ncblks, kb, kb0, KB0, i, P;
    size_t sz, szA;
    ATL_tsyrk_ammN_t pd;
    amminfo_t mminfo;
@@ -10288,8 +10585,19 @@ int Mjoin(PATL,tsyrk_amm_N)
       (amminfo_t *out, const int P, enum ATLAS_TRANS TA, ATL_CSZT N, 
        ATL_CSZT K, const SCALAR alpha, const SCALAR beta);
 
-   pd.blk2d = Mjoin(PATL,tGetSyammInfo)(&mminfo, ATL_NTHREADS, Trans, N, K, 
-                                        alpha, beta);
+   #ifdef ATL_AMM_98NB
+      ncblks = N / ATL_AMM_98NB;
+   #else
+      ncblks = N / ATL_AMM_MAXNB;
+   #endif
+   ncblks = (ncblks*(ncblks-1))>>1;
+   P = (ncblks < ATL_NTHREADS) ? ncblks : ATL_NTHREADS;
+   if (P < 2)
+   {
+      Mjoin(PATL,syrk)(Uplo, Trans, N, K, alpha, A, lda, beta, C, ldc);
+      return(0);
+   }
+   pd.blk2d = Mjoin(PATL,tGetSyammInfo)(&mminfo, P, Trans, N, K, alpha, beta);
    pd.blk2c = mminfo.Cblk2cm;
    pd.a2blk = mminfo.a2blk;
    pd.b2blk = mminfo.b2blk;
@@ -10337,7 +10645,7 @@ int Mjoin(PATL,tsyrk_amm_N)
    blkszA = kb * nb;
    szA = ndiag*nkblks*blkszA;                 /* space for A & A' */
    sz = (ndiag+ndiag+ndiag)*sizeof(void*);    /* space for Ctr & mut arrays */
-   sz += ATL_MulBySize(nb)*nb*2*ATL_NTHREADS; /* local C wrkspc */
+   sz += ATL_MulBySize(nb)*nb*2*P; /* local C wrkspc */
    sz += ATL_MulBySize(szA+szA);              /* A/At workspace */
    sz += 3*ATL_Cachelen;                      /* room for alignment */
    if (sz > ATL_NTHREADS*ATL_PTMAXMALLOC)     /* if I'm over malloc limit */
@@ -10382,9 +10690,8 @@ int Mjoin(PATL,tsyrk_amm_N)
    }
       
    pd.cpydone = pd.NODWORK = 0;
-   pd.dCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(ndiag, ATL_NTHREADS), 
-                                      ndiag, 0);
-   nkcnt = ATL_EstNctr(nkblks, ATL_NTHREADS);
+   pd.dCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(ndiag, P), ndiag, 0);
+   nkcnt = ATL_EstNctr(nkblks, P);
    pd.KdonCtr = pd.KbegCtr + ndiag;
    pd.Cdmuts = pd.KdonCtr + ndiag;
    pd.wA = (TYPE*)(pd.Cdmuts+ndiag);
@@ -10419,10 +10726,10 @@ int Mjoin(PATL,tsyrk_amm_N)
       ts.rank = 0;
       ts.P = 1;
       ls.opstruct = &pd;
-      DoWork_syrk_amm(&ls, &ts);
+      Mjoin(PATL,DoWork_syrk_amm)(&ls, &ts);
    }
    #else
-      ATL_goparallel(ATL_NTHREADS, DoWork_syrk_amm, &pd, NULL);
+      ATL_goparallel(P, Mjoin(PATL,DoWork_syrk_amm), &pd, NULL);
    #endif
 
 /*
@@ -10472,4 +10779,113 @@ void Mjoin(PATL,tsyrk_amm)
        Mjoin(PATL,tsyrk_amm)(Uplo, Trans, N, kR, alpha, a, lda, 
                              ATL_rone, C, ldc);
     }
+}
+@ROUT ATL_workpool
+int ATL_TP_ACTIVE=0;   /* 0: workers not started; 1: workers already started */
+pthread_mutex_t ATL_TP_INLCK=PTHREAD_MUTEX_INITIALIZER;/* lock for WP_ACTIVE */
+#ifndef ATL_WB_ACT_SLEEP
+   #define ATL_TP_ACT_SLEEP 0
+   #define ATL_TP_ACT_EXIT  1
+   #define ATL_TP_ACT_POLL  2
+   #define ATL_TP_ACT_SYRK  3
+#endif
+void *ATL_TP_PD;          /* pointer to problem definition */
+int ATL_TP_ACTION=0;
+int ATL_TP_NTHR=0;        /* number of total threads in pool */
+int ATL_TP_NTHR_AWAKE=0;  /* # of threads currently awake */
+int ATL_TP_NTHR_POLL=0;   /* # of thr doing active polling */
+int ATL_TP_NTHR_DONE=0;   /* # of threads who've finished job */
+volatile int ATL_TP_POLL=0;  /* set to 0 to stop polling */
+pthread_mutex_t ATL_TP_MUT; /* protects above info */
+pthread_cond_t ATL_TP_COND; /* condition variable for work pool sleep/wake */
+pthread_cond_t ATL_TP_MCOND; /* cond for master process */
+ATL_thread_t ATL_TP_THREADS[ATL_NTHREADS];
+
+#ifdef ATL_ARCH_XeonPHI
+   #define ATL_tyield __asm__ __volatile__ ("delay %0" :: "r"(64) : "0" )
+#else
+   #define ATL_tyield pthread_yield()
+#endif
+
+
+void *ATL_threadpool(void *tp)
+{
+   ATL_thread_t *tp=vp;
+   const unsigned int rank=tp->rank, NTHR=tp->P;
+
+   ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
+   ATL_TP_NTHR++;
+   ATL_TP_NTHR_AWAKE++;
+   ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
+   while(1)
+   {
+      switch(ATL_TP_ACTION)
+      {
+      case ATL_TP_ACT_EXIT:
+         return(NULL);
+      case ATL_TP_ACT_SLEEP:
+          goto SLEEP_WAIT;
+      case ATL_TP_ACT_POLL:
+         goto POLL_WAIT;
+      case ATL_TP_ACT_SYRK:
+         Mjoin(PATL,tDoSyrk)(tp, ATL_TP_PD);
+         break;
+      default:
+         fprintf(stderr, "%d: UNKNOWN ACTION: %d\n", rank,  ATL_TP_ACTION);
+         exit(-1);
+      }
+      if (ATL_TP_POLL)
+         goto POLL_WAIT;
+/*
+ *    Sleep for next task
+ */
+SLEEP_WAIT:
+      ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
+      ATL_TP_NTHR_AWAKE--;
+      ATL_TP_NTHR_DONE--;
+      while(!ATL_TP_ACTION)
+         ATL_assert(!pthread_cond_wait(&ATL_TP_COND, &ATL_TP_MUT));
+      ATL_TP_NTHR_AWAKE++;
+      ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
+      continue;
+
+POLL_WAIT:
+      ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
+      ATL_TP_NTHR_POLL++;
+      ATL_TP_NTHR_DONE--;
+      ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
+      while (ATL_TP_POLL)
+         ATL_tyield;
+      ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
+      ATL_TP_NTHR_POLL--;
+      ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
+   }
+   return(NULL);
+}
+
+void *ATL_threadpool_launch(void *tp)
+{
+   ATL_thread_t *tp = vp;
+   ATL_LAUNCHSTRUCT_t *lp;
+   const int P = tp->P;
+   int i;
+/*
+ * Set my affinity if I haven't already
+ */
+   #ifdef ATL_PAFF_SELF
+      if (!tp->paff_set)
+          ATL_setmyaffinity(tp);
+   #endif
+/*
+ * Spawn DoWork to all nodes
+ */
+   lp = tp->vp;
+   for (i=1; i < P; i++)
+   {
+      ATL_thread_start(tp+i, i, 0, ATL_threadpool, tp+i);
+   }
+/*
+ * Thread 0 must also do the operation
+ */
+   return(ATL_threadpool(tp));
 }
