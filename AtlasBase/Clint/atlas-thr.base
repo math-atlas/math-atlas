@@ -2,6 +2,7 @@
 #ifndef ATLAS_THREADS_H
    #define ATLAS_THREADS_H
 
+#define ATL_USE_THREADPOOL 1
 #ifndef ATL_PTMAXMALLOC
    #ifndef ATL_PTMAXMALLOC_MB
       #define ATL_PTMAXMALLOC_MB 128
@@ -28,38 +29,6 @@
       #define ATL_WINTHREADS 1
    #endif
 #endif
-@beginskip
-/*
- * The following defaults should be probed for, not defined
- * NOTE: OS X & FreeBSD lack the ability to set processor affinity.
- */
-#ifdef ATL_OS_WinNT
-   #define ATL_WINTHREADS
-#elif !defined(ATL_PAFF_LAUNCH) && !defined(ATL_PAFF_SELF)
-   #if defined(ATL_OS_Linux)
-      #define ATL_PAFF_LAUNCH
-      #define ATL_PAFF_SETAFFNP
-   #elif defined(ATL_OS_HPUX)
-      #define ATL_PAFF_LAUNCH
-      #define ATL_PAFF_SETPROCNP
-/*
- *  UltraSPARC T2 gets much better || perf w/o affinity;  need to test USIV
- */
-   #elif defined(ATL_OS_SunOS) && !defined(ATL_ARCH_UST2)
-      #define ATL_PAFF_SELF
-      #define ATL_PAFF_PBIND
-   #elif defined(ATL_OS_IRIX)
-      #define ATL_PAFF_SELF
-      #define ATL_PAFF_RUNON
-   #elif defined(ATL_OS_AIX)
-      #define ATL_PAFF_SELF
-      #define ATL_PAFF_BINDP
-   #endif
-   #ifndef ATL_RANK_IS_PROCESSORID
-      #define ATL_RANK_IS_PROCESSORID 1
-   #endif
-#endif
-@endskip
 #include "atlas_pthreads.h" /* gened file defs ATL_NTHREADS & ATL_NTHRPOW2 */
 #ifdef ATL_WINTHREADS
    #include <windows.h>
@@ -70,16 +39,6 @@
       int rank;      /* my rank */
       int P;         /* # of processors in this call */
    } ATL_thread_t;
-@beginskip
-   #include <windef.h>
-   #include <winnt.h>
-   typedef struct
-   {
-      DWORD thrID;
-      HANDLE thrH;
-   } ATL_thread_t;
-   #define ATL_thread_t HANDLE
-@endskip
    #ifndef CREATE_SUSPENDED
       #define CREATE_SUSPENDED 0x00000004
    #endif
@@ -110,7 +69,6 @@
       int P;         /* # of processors in this call */
       int paff_set;  /* have I set my process affinity yet? */
    } ATL_thread_t;
-@skip   #define ATL_thread_t pthread_t
 #endif
 
 typedef struct ATL_LaunchStruct ATL_LAUNCHSTRUCT_t;
@@ -121,9 +79,9 @@ struct ATL_LaunchStruct
    int (*OpStructIsInit)(void*);        /* Query to see if struct is valid */
    void (*DoWork)(ATL_LAUNCHSTRUCT_t*, void*);
    void (*DoComb)(void*, const int, const int);  /* combine func */
+   void *vp;                            /* misc. extra info ptr */
    volatile int *chkin;                 /* nthr-len checkin array */
    void **acounts;                      /* var-len array of atomic counters */
-   void *vp;                            /* misc. extra info ptr */
 };
 
 /*
@@ -132,6 +90,58 @@ struct ATL_LaunchStruct
 #define ATL_CHK_DONE_OP   -2048
 #define ATL_CHK_DONE_COMB -2049
 
+/*
+ * The following info is all for when a thread pool is being used, rather
+ * than launch & join paradigm.
+ */
+#ifdef ATL_USE_THREADPOOL
+   #define ATL_TP_ACT_SLEEP 0
+   #define ATL_TP_ACT_EXIT  1
+   #define ATL_TP_ACT_POLL  2
+   #define ATL_TP_ACT_GEMM  4
+   #define ATL_TP_ACT_SYMM  5
+   #define ATL_TP_ACT_HEMM  6
+   #define ATL_TP_ACT_SYRK  7
+   #define ATL_TP_ACT_HERK  8
+   #define ATL_TP_ACT_SYR2K 9
+   #define ATL_TP_ACT_HER2K 10
+   #define ATL_TP_ACT_TRMM  11
+   #define ATL_TP_ACT_TRSM  12
+/*
+ * Declare the beautiful global variables used by thread pool
+ */
+   #define VUINT volatile unsigned int
+   #ifdef ATL_TP_DECL
+      int ATL_TP_ACTIVE=0;   /* 0: thr not started; 1: thr already started */
+      pthread_mutex_t ATL_TP_INMUT=PTHREAD_MUTEX_INITIALIZER;/*for TP_ACTIVE */
+      void *ATL_TP_PD;            /* pointer to problem definition */
+      VUINT ATL_TP_ACTION=0;      /* which ATL_TP_ACT should thr perform? */
+      VUINT ATL_TP_NTHR=0;        /* number of total threads in pool */
+      VUINT ATL_TP_NTHR_SLEEP=0;  /* # of threads currently waiting on cond */
+      VUINT ATL_TP_NTHR_POLL=0;   /* # of thr doing active polling */
+      VUINT ATL_TP_POLL=0;        /* set to 0 to stop polling */
+      pthread_mutex_t ATL_TP_MUT; /* protects above info */
+      pthread_cond_t ATL_TP_COND; /* cond var for work pool sleep/wake */
+      pthread_cond_t ATL_TP_MCOND; /* cond for master process */
+      ATL_thread_t ATL_TP_THREADS[ATL_NTHREADS];  /* array of thread ptrs */
+      void *ATL_combmut;     /* mutex for doing optional combine op */
+      int *ATL_combReadyBV;  /* 1: thr of that rank is ready to do combine */
+      int *ATL_combDoneBV;   /* 1: thr of that rank's data already combined */
+   #else
+      extern pthread_cond_t ATL_TP_COND, ATL_TP_MCOND;
+      extern pthread_mutex_t ATL_TP_INMUT, ATL_TP_MUT;
+      extern ATL_thread_t ATL_TP_THREADS[ATL_NTHREADS];
+      extern void *ATL_TP_PD;
+      extern VUINT ATL_TP_ACTION, ATL_TP_NTHR, ATL_TP_NTHR_SLEEP, 
+                   ATL_TP_NTHR_POLL;
+      extern volatile int ATL_TP_POLL;
+      etern void *ATL_combmut;
+      extern int *ATL_combReadyBV, *ATL_combDoneBV;
+   #endif
+   void *ATL_threadpool(void *tp);
+   void *ATL_threadpool_launch(void *tp);
+#endif
+   #undef VUINT
 /* Sets up ATL_LAUNCHSTRUCT_t var and ATL_thread_t array & starts threads*/
 void ATL_thread_launch(void *opstruct, int opstructstride, void *OpStructIsInit,
                        void *DoWork, void *CombineOpStructs);
@@ -413,7 +423,7 @@ struct ATL_SyrkK
  * This structure used when N <= MIN(MAXNB,MAXMB), so we deal out only
  * K blocks using the global counter KbCtr.  
  */
-typedef struct ATL_tsyrk_ammN ATL_tsyrk_ammK_t;
+typedef struct ATL_tsyrk_ammK ATL_tsyrk_ammK_t;
 struct ATL_tsyrk_ammK
 {
    ammkern_t amm_b0, amm_b1, ammK_b0, ammK_b1;
@@ -428,8 +438,6 @@ struct ATL_tsyrk_ammK
    const TYPE *beta;    /* ptr to beta */
    void *KbCtr;         /* which k block */
    void *Cmut;          /* mutex lock for block of C */
-   size_t lda;          /* leading dim of A */
-   size_t ldc;          /* leading dim of C */
    size_t wsz;          /* size of local workspace */
    VINT BETA_APPLIED;
    int LOWER;           /* set true if lower triangular C */
@@ -444,6 +452,8 @@ struct ATL_tsyrk_ammK
    int kb;              /* blocking used for K */
    int kb0;             /* K%kb, if 0, kb */
    int KB0;             /* if kmajor, it is CEIL(kb0/ku)*ku, else kb0 */
+   int lda;             /* leading dim of A */
+   int ldc;             /* leading dim of C */
 };
 /*
  * This structure used by dynamic access-major SYRK
@@ -837,6 +847,8 @@ void ATL_thread_yield(void)
 {
    #ifdef ATL_WINTHREADS
       Sleep(0);
+   #elif defined(ATL_ARCH_XeonPHI)
+       __asm__ __volatile__ ("delay %0" :: "r"(64) : "0" )
    #else
       sched_yield();
    #endif
@@ -2055,25 +2067,27 @@ void ATL_goparallel
  * the first invocation
  */
 #elif ATL_USE_THREADPOOL
+   unsigned volatile int *uvp;
 /*
  * If thread pool not currently active, must spawn it
  */
    if (!ATL_TP_ACTIVE)
    {
-      ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
+      ATL_assert(!pthread_mutex_lock(&ATL_TP_INMUT));
       if (!ATL_TP_ACTIVE)
       {
          tp = ATL_TP_THREADS;
          ATL_thread_start(tp, 0, 0, ATL_threadpool_launch, tp);
       }
       ATL_TP_ACTIVE = 1;
-      ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
+      ATL_assert(!pthread_mutex_unlock(&ATL_TP_INMUT));
    }
 /*
  * Threads have started, so this routine awaits completion of task
  */
    ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
-   while (ATL_TP_NTHR > ATL_TP_NTHR_DONE)
+   uvp = (ATL_TP_POLL) ? &ATL_TP_NTHR_POLL : &ATL_TP_NTHR_SLEEP;
+   while (*uvp != ATL_TP_NTHR)
       ATL_assert(!pthread_cond_wait(&ATL_TP_MCOND, &ATL_TP_MUT));
    ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
    
@@ -6199,7 +6213,8 @@ void Mjoin(PATL,t@(rt))
       #else
           #define MY_NTHR ATL_NTHREADS
       #endif
-      if (N >= (MY_MB<<2))
+      if (N >= (MY_MB<<2) || 
+          (N <= ATL_MAXNB && K > ATL_NTHREADS*(((size_t)ATL_AMM_MAXKB)<<8)))
       {
          void Mjoin(PATL,tsyrk_amm)
             (const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CINT N,
@@ -9964,31 +9979,31 @@ static int ATL_EstNctr           /* RETURNS: good # of global ctrs */
 static void DoSyrkK(unsigned int rank, ATL_tsyrk_ammK_t *pd)
 {
    TYPE *wA, *wB, *wC;
-   mmkern_t amm = pd->amm_b0;
+   ammkern_t amm = pd->amm_b0;
    const cm2am_t a2blk=pd->a2blk, b2blk=pd->b2blk;
    const unsigned int mb=pd->mb, nb=pd->nb, kb=pd->kb, nkblks=pd->nkblks, 
-      N=pd->N;
-   const size_t mulA = (TA) ? pd->lda : 1;
+      N=pd->N, nmu=pd->nmu, nnu=pd->nnu;
+   const size_t mulA = (pd->TA) ? 1 : pd->lda;
    int lda=pd->lda;
    int kctr;
    wA = pd->w + pd->wsz*rank;
    wB = wA + mb*kb;
    wC = wB + nb*kb;
 
-   while ((kctr = ATL_DecGlobalAtomicCount(pd->KbCtr))
+   while ((kctr = ATL_DecGlobalAtomicCount(pd->KbCtr, rank)))
    {
-      const int kblk = pd->kctr - nkblks;
-      TYPE *a = pd->A + k*mulA*kb;
+      const int kblk = nkblks - kctr;
+      const TYPE *a = pd->A + ((size_t)kblk)*mulA*kb;
       if (kblk != nkblks-1)  /* normal full-kb operation */
       {
-         a2blk(kb, N, ATL_rone, A, lda, wA);
-         b2blk(kb, N, ATL_rone, A, lda, wB);
+         a2blk(kb, N, ATL_rone, a, lda, wA);
+         b2blk(kb, N, ATL_rone, a, lda, wB);
          amm(nmu, nnu, kb, wA, wB, wC, wA, wB, wC);
       }
       else /* last block of size kb0 */
       {
-         a2blk(pd->kb0, N, ATL_rone, A, lda, wA);
-         b2blk(pd->kb0, N, ATL_rone, A, lda, wB);
+         a2blk(pd->kb0, N, ATL_rone, a, lda, wA);
+         b2blk(pd->kb0, N, ATL_rone, a, lda, wB);
          if (amm == pd->amm_b0)
             pd->ammK_b0(nmu, nnu, pd->KB0, wA, wB, wC, wA, wB, wC);
          else
@@ -10008,21 +10023,21 @@ static void DoSyrkK(unsigned int rank, ATL_tsyrk_ammK_t *pd)
  *    Now, seize C mutex, and copy out only upper/lower portion
  */
       ATL_mutex_lock(pd->Cmut);
-      if (!BETA_APPLIED)
+      if (!pd->BETA_APPLIED)
       {
-         BETA_APPLIED = 1;
+         pd->BETA_APPLIED = 1;
          beta = *(pd->beta);
       }
       if (pd->LOWER)
       {
          int j;
-         for (j=0; j < b; j++, c += pd->ldc+1, w += b+1)
-             Mjoin(PATL,axpby)(b-j, *(pd->alpha), w, 1, beta, c, 1);
+         for (j=0; j < N; j++, c += pd->ldc+1, w += N+1)
+             Mjoin(PATL,axpby)(N-j, *(pd->alpha), w, 1, beta, c, 1);
       }
       else
       {
          int j;
-         for (j=0; j < b; j++, c += pd->ldc, w += b)
+         for (j=0; j < N; j++, c += pd->ldc, w += N)
              Mjoin(PATL,axpby)(j+1, *(pd->alpha), w, 1, beta, c, 1);
       }
       ATL_mutex_unlock(pd->Cmut);
@@ -10067,7 +10082,7 @@ int Mjoin(PATL,tsyrk_amm_K)
          kb = ATL_AMM_66KB;
       }
    }
-   if (P < nkb)
+   if (nkb < P)
    {
       if (nkb < 2)
       {
@@ -10076,11 +10091,13 @@ int Mjoin(PATL,tsyrk_amm_K)
       }
       P = nkb;
    }
-   pd.blk2c_b0 = Mjoin(PATL,tGetSyammInfo_K)(&mminfo, P, TA, N, kb);
-   ATL_assert(kb == mminfo.kb);
+   pd.blk2c_b0 = Mjoin(PATL,tGetSyammInfo_K)(&mminfo, P, Trans, N, kb);
+   kb = mminfo.kb;
+   nkb = K / kb;
+@skip   ATL_assert(kb == mminfo.kb);
 
    mb = pd.mb = mminfo.mb;
-   nb = pd.nb = mminfo.nb
+   nb = pd.nb = mminfo.nb;
    pd.kb = mminfo.kb;
    sz = ((((size_t)mb)*nb)<<1) + (mb+nb)*kb;
    pd.wsz = sz;
@@ -10094,6 +10111,7 @@ int Mjoin(PATL,tsyrk_amm_K)
    ku = mminfo.ku;
    if (!kr)
    {
+      pd.kb0 = pd.KB0 = kb;
       pd.ammK_b0 = mminfo.amm_b0;
       pd.ammK_b1 = mminfo.amm_b1;
    }
@@ -10130,6 +10148,8 @@ int Mjoin(PATL,tsyrk_amm_K)
          }
       }
    }
+   pd.amm_b0 = mminfo.amm_b0;
+   pd.amm_b1 = mminfo.amm_b1;
    pd.blk2c_b1 = mminfo.Cblk2cm;
    pd.a2blk = mminfo.a2blk;
    pd.b2blk = mminfo.b2blk;
@@ -10140,16 +10160,16 @@ int Mjoin(PATL,tsyrk_amm_K)
    pd.nkblks = (kr) ? nkb+1 : nkb;
    pd.KbCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(pd.nkblks, P), pd.nkblks, 0);
    pd.Cmut = ATL_mutex_init();
-   pd.BETA_APPLIED=0;
+   pd.BETA_APPLIED = SCALAR_IS_ONE(beta);
    pd.LOWER = (Uplo == AtlasLower);
    pd.TA = (Trans == AtlasTrans);
    pd.N = N;
    pd.lda = lda;
    pd.ldc = ldc;
-   pd.nmu = mb / mu;
-   pd.nnu = nb / nu;
+   pd.nmu = mb / mminfo.mu;
+   pd.nnu = nb / mminfo.nu;
 
-//   #define DEBUG1
+//   #define DEBUG1 1
    #ifdef DEBUG1
    {
       ATL_LAUNCHSTRUCT_t ls;
@@ -10165,6 +10185,7 @@ int Mjoin(PATL,tsyrk_amm_K)
    free(vp);
    ATL_mutex_free(pd.Cmut);
    ATL_FreeGlobalAtomicCount(pd.KbCtr);
+   return(0);
 }
 
 static int GetCBlk(const int rank, ATL_tsyrk_ammN_t *pd)
@@ -10758,6 +10779,12 @@ void Mjoin(PATL,tsyrk_amm)
     const SCALAR beta, TYPE *C, ATL_CINT ldc)
 
 {
+   if (N <= Mmax(ATL_AMM_MAXMB,ATL_AMM_MAXNB))
+   {
+      if (!Mjoin(PATL,tsyrk_amm_K)(Uplo, Trans, N, K, alpha, A, lda, 
+                                   beta, C, ldc))
+         return;
+   }
 /*
  *  Recur on K until tsyrk_amm can allocate enough space 
  */
@@ -10780,55 +10807,47 @@ void Mjoin(PATL,tsyrk_amm)
                              ATL_rone, C, ldc);
     }
 }
-@ROUT ATL_workpool
-int ATL_TP_ACTIVE=0;   /* 0: workers not started; 1: workers already started */
-pthread_mutex_t ATL_TP_INLCK=PTHREAD_MUTEX_INITIALIZER;/* lock for WP_ACTIVE */
-#ifndef ATL_WB_ACT_SLEEP
-   #define ATL_TP_ACT_SLEEP 0
-   #define ATL_TP_ACT_EXIT  1
-   #define ATL_TP_ACT_POLL  2
-   #define ATL_TP_ACT_SYRK  3
-#endif
-void *ATL_TP_PD;          /* pointer to problem definition */
-int ATL_TP_ACTION=0;
-int ATL_TP_NTHR=0;        /* number of total threads in pool */
-int ATL_TP_NTHR_AWAKE=0;  /* # of threads currently awake */
-int ATL_TP_NTHR_POLL=0;   /* # of thr doing active polling */
-int ATL_TP_NTHR_DONE=0;   /* # of threads who've finished job */
-volatile int ATL_TP_POLL=0;  /* set to 0 to stop polling */
-pthread_mutex_t ATL_TP_MUT; /* protects above info */
-pthread_cond_t ATL_TP_COND; /* condition variable for work pool sleep/wake */
-pthread_cond_t ATL_TP_MCOND; /* cond for master process */
-ATL_thread_t ATL_TP_THREADS[ATL_NTHREADS];
+@ROUT ATL_threadpool
+#define ATL_TP_DECL 1
+#include "atlas_threads.h"
+#include "atlas_misc.h"
+#include "atlas_bitvec.h"
 
-#ifdef ATL_ARCH_XeonPHI
-   #define ATL_tyield __asm__ __volatile__ ("delay %0" :: "r"(64) : "0" )
-#else
-   #define ATL_tyield pthread_yield()
-#endif
+#define DEBUG 1
+#ifdef ATL_USE_THREADPOOL
 
-
-void *ATL_threadpool(void *tp)
+void *ATL_threadpool(void *vp)
 {
    ATL_thread_t *tp=vp;
-   const unsigned int rank=tp->rank, NTHR=tp->P;
+   ATL_LAUNCHSTRUCT_t *lp;
+   const unsigned int rank=tp->rank, P=tp->P;
 
+   #ifdef DEBUG
+      fprintf(stderr, "%d: WORKER START\n", rank);
+   #endif
    ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
    ATL_TP_NTHR++;
-   ATL_TP_NTHR_AWAKE++;
    ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
    while(1)
    {
       switch(ATL_TP_ACTION)
       {
       case ATL_TP_ACT_EXIT:
-         return(NULL);
+         goto DONE;
       case ATL_TP_ACT_SLEEP:
           goto SLEEP_WAIT;
       case ATL_TP_ACT_POLL:
          goto POLL_WAIT;
+      case ATL_TP_ACT_GEMM:
+      case ATL_TP_ACT_SYMM:
+      case ATL_TP_ACT_HEMM:
       case ATL_TP_ACT_SYRK:
-         Mjoin(PATL,tDoSyrk)(tp, ATL_TP_PD);
+      case ATL_TP_ACT_HERK:
+      case ATL_TP_ACT_SYR2K:
+      case ATL_TP_ACT_HER2K:
+      case ATL_TP_ACT_TRMM:
+      case ATL_TP_ACT_TRSM:
+         lp->DoWork(lp, tp);
          break;
       default:
          fprintf(stderr, "%d: UNKNOWN ACTION: %d\n", rank,  ATL_TP_ACTION);
@@ -10837,33 +10856,112 @@ void *ATL_threadpool(void *tp)
       if (ATL_TP_POLL)
          goto POLL_WAIT;
 /*
+ *    If the calling routine has requested it, perform dynamic combine
+ */
+      if (lp->DoComb)
+      {
+         ATL_mutex_lock(ATL_combmut);
+         ATL_SetBitBV(ATL_combReadyBV, rank);
+         ATL_mutex_unlock(ATL_combmut);
+/*
+ *       Now participate in combine until everything is done, or someone
+ *       combines my stuff, and thus ends my participation
+ */
+         while(ATL_FindFirstUnsetBitBV(ATL_combDoneBV, 0) != -1)
+         {
+            int d;
+/*
+ *          If my combDone bit is set, somone has combined my results,
+ *          so I'm finished
+ */
+            if (ATL_IsBitSetBV(ATL_combDoneBV, rank))
+                break;
+/*
+ *          Otherwise, look for work ready for combining other than my own
+ */
+            d = ATL_FindFirstSetBitBV(ATL_combReadyBV, 0);
+            if (d == rank && rank != P-1)
+               d = ATL_FindFirstSetBitBV(ATL_combReadyBV, rank+1);
+            if (d == -1)
+            {
+               ATL_thread_yield();
+               continue;
+            }
+/*
+ *          Seize mutex lock and do the work if still there & I'm still in game
+ */
+            ATL_mutex_lock(ATL_combmut);
+            if (ATL_IsBitSetBV(ATL_combDoneBV, rank)) /* I'm done */
+            {
+               ATL_mutex_unlock(ATL_combmut);
+               break;
+            }
+            d = ATL_FindFirstSetBitBV(ATL_combReadyBV, 0);
+            if (d == rank && rank != P-1)
+               d = ATL_FindFirstSetBitBV(ATL_combReadyBV, rank+1);
+            if (d != -1)  /* work still needs to be done */
+            {
+               ATL_SetBitBV(ATL_combDoneBV, d);
+               ATL_UnsetBitBV(ATL_combReadyBV, d);
+               ATL_UnsetBitBV(ATL_combReadyBV, rank);  /* not avail, working */
+               ATL_mutex_unlock(ATL_combmut);
+               lp->DoComb(lp->opstruct, rank, d);
+               ATL_mutex_lock(ATL_combmut);
+               ATL_SetBitBV(ATL_combReadyBV, rank);    /* now avail again */
+            }
+            ATL_mutex_unlock(ATL_combmut);
+         }
+      }
+/*
  *    Sleep for next task
  */
 SLEEP_WAIT:
       ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
-      ATL_TP_NTHR_AWAKE--;
-      ATL_TP_NTHR_DONE--;
+/*
+ *    If I'm the last guy, signal master process we're done
+ */
+      if (++ATL_TP_NTHR_SLEEP == ATL_TP_NTHR)
+      {
+         ATL_assert(!pthread_cond_signal(&ATL_TP_MCOND));
+      }
       while(!ATL_TP_ACTION)
+      {
          ATL_assert(!pthread_cond_wait(&ATL_TP_COND, &ATL_TP_MUT));
-      ATL_TP_NTHR_AWAKE++;
+      }
+      ATL_TP_NTHR_SLEEP--;
       ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
       continue;
 
 POLL_WAIT:
       ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
-      ATL_TP_NTHR_POLL++;
-      ATL_TP_NTHR_DONE--;
+/*
+ *    If I'm the last guy, signal master process we're done
+ */
+      if (++ATL_TP_NTHR_POLL == ATL_TP_NTHR)
+      {
+         ATL_assert(!pthread_cond_signal(&ATL_TP_MCOND));
+      }
       ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
       while (ATL_TP_POLL)
-         ATL_tyield;
+         ATL_thread_yield();
       ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
       ATL_TP_NTHR_POLL--;
       ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
    }
+/*
+ * When a thread exits, decrement thread count
+ */
+DONE:
+   ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
+   ATL_TP_NTHR--;
+   ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
+   #ifdef DEBUG
+      fprintf(stderr, "%d: WORKER DONE\n", rank);
+   #endif
    return(NULL);
 }
 
-void *ATL_threadpool_launch(void *tp)
+void *ATL_threadpool_launch(void *vp)
 {
    ATL_thread_t *tp = vp;
    ATL_LAUNCHSTRUCT_t *lp;
@@ -10877,7 +10975,17 @@ void *ATL_threadpool_launch(void *tp)
           ATL_setmyaffinity(tp);
    #endif
 /*
- * Spawn DoWork to all nodes
+ * Set up global variables
+ */
+   ATL_TP_NTHR_POLL = ATL_TP_NTHR_SLEEP = ATL_TP_NTHR = 0;
+   ATL_assert(!pthread_mutex_init(&ATL_TP_MUT, NULL));
+   ATL_assert(!pthread_cond_init(&ATL_TP_COND, NULL));
+   ATL_assert(!pthread_cond_init(&ATL_TP_MCOND, NULL));
+   ATL_combmut = ATL_mutex_init();
+   ATL_combReadyBV = ATL_NewBV(ATL_NTHREADS);
+   ATL_combDoneBV = ATL_NewBV(ATL_NTHREADS);
+/*
+ * Thread 0 spawns threadpool to all cores
  */
    lp = tp->vp;
    for (i=1; i < P; i++)
@@ -10885,7 +10993,21 @@ void *ATL_threadpool_launch(void *tp)
       ATL_thread_start(tp+i, i, 0, ATL_threadpool, tp+i);
    }
 /*
- * Thread 0 must also do the operation
+ * Thread 0 now participates in pool
  */
-   return(ATL_threadpool(tp));
+   ATL_threadpool(tp);
+/*
+ * After pool exits, thread 0 cleans up before exiting himself
+ */
+   while (ATL_TP_NTHR)
+       ATL_thread_yield();
+   ATL_FreeBV(ATL_combReadyBV);
+   ATL_FreeBV(ATL_combDoneBV);
+   ATL_mutex_free(ATL_combmut);
+   ATL_assert(!pthread_cond_destroy(&ATL_TP_COND));
+   ATL_assert(!pthread_cond_destroy(&ATL_TP_MCOND));
+   ATL_assert(!pthread_mutex_destroy(&ATL_TP_MUT));
+   ATL_TP_NTHR_POLL = ATL_TP_NTHR_SLEEP = ATL_TP_NTHR = 0;
+   ATL_TP_POLL = ATL_TP_ACTION = ATL_TP_ACTIVE = 0;
 }
+#endif
