@@ -105,6 +105,7 @@ struct ATL_LaunchStruct
       pthread_mutex_t ATL_TP_INMUT=PTHREAD_MUTEX_INITIALIZER;/*for TP_ACTIVE */
       void *ATL_TP_PD;            /* pointer to problem definition */
       VUINT ATL_TP_NWORK=0;       /* # of threads to work on this task */
+      VUINT ATL_TP_NWDONE=0;      /* # of workers who have finished task */
       VUINT ATL_TP_WCNT=0;        /* 1st NWORK threads do the work */
       VUINT ATL_TP_NTHR=0;        /* number of total threads in pool */
       VUINT ATL_TP_NTHR_SLEEP=0;  /* # of threads currently waiting on cond */
@@ -124,8 +125,8 @@ struct ATL_LaunchStruct
       extern pthread_mutex_t ATL_TP_INMUT, ATL_TP_MUT;
       extern ATL_thread_t ATL_TP_THREADS[ATL_NTHREADS];
       extern void *ATL_TP_PD;
-      extern VUINT ATL_TP_NTHR, ATL_TP_NTHR_SLEEP, ATL_TP_NTHR_POLL,
-                   ATL_TP_WCNT, ATL_TP_NWORK, ATL_TP_CNT, ATL_TP_WDONE;
+      extern VUINT ATL_TP_NTHR, ATL_TP_NTHR_SLEEP, ATL_TP_NTHR_POLL, 
+         ATL_TP_NWDONE, ATL_TP_WCNT, ATL_TP_NWORK, ATL_TP_CNT, ATL_TP_WDONE;
       extern volatile int ATL_TP_POLL;
       extern void *ATL_combmut;
       extern int *ATL_combReadyBV, *ATL_combDoneBV;
@@ -2083,7 +2084,7 @@ void ATL_goparallel
          ATL_assert(!pthread_mutex_init(&ATL_TP_MUT, NULL));
          ATL_assert(!pthread_cond_init(&ATL_TP_MCOND, NULL));
          ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
-         ATL_TP_WDONE = 0;
+         ATL_TP_NWDONE = ATL_TP_WDONE = 0;
          ATL_thread_start(tp, 0, 0, ATL_threadpool_launch, tp);
          do
          {
@@ -2097,6 +2098,7 @@ void ATL_goparallel
          }
          while (!ATL_TP_WDONE);
          ATL_TP_ACTIVE = 1;
+         ATL_TP_NWORK = 0;
          ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
       }
       ATL_assert(!pthread_mutex_unlock(&ATL_TP_INMUT));
@@ -2111,7 +2113,7 @@ void ATL_goparallel
    ATL_TP_NWORK = P;
    ATL_TP_PD = &ls;
    ATL_TP_WCNT = 0;
-   ATL_TP_WDONE = 0;
+   ATL_TP_NWDONE = ATL_TP_WDONE = 0;
    ATL_TP_CNT--;
    #ifdef DEBUG
      fprintf(stderr, "MASTER WAKES WORKERS\n");
@@ -2134,6 +2136,7 @@ void ATL_goparallel
    #ifdef DEBUG
      fprintf(stderr, "MASTER DONE WAITING, nsleep=%u\n", *uvp);
    #endif
+   ATL_TP_NWORK = 0;     /* make sure spurious wakeup will go back to sleep */
    ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
    
 /*
@@ -10911,19 +10914,25 @@ void *ATL_threadpool(void *vp)
       }
       if (DOPOLL)
       {
-         ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
-         while (cnt == ATL_TP_CNT)
+         do
          {
-            ATL_thread_yield();
+            ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
+            do
+            {
+               ATL_thread_yield();
+            }
+            while (cnt == ATL_TP_CNT);
+            ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
          }
-         ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
+         while (ATL_TP_WCNT >= ATL_TP_NWORK);
       }
       else  /* sleeping instead of polling */
       {
-         while (cnt == ATL_TP_CNT)
+         do
          {
             ATL_assert(!pthread_cond_wait(&ATL_TP_COND, &ATL_TP_MUT));
          }
+         while (cnt == ATL_TP_CNT || ATL_TP_WCNT >= ATL_TP_NWORK);
       }
       (*psc)--;             /* signal I've woken up */
       iam = ATL_TP_WCNT++;  /* find out my order of awakening */
@@ -10939,13 +10948,24 @@ void *ATL_threadpool(void *vp)
 /*
  *    Now, do work based on launchstructure
  */
+      ATL_assert(iam < ATL_TP_NWORK);
       if (!lp)   /* NULL ptr means */
          break;  /* completely quit */
       if (iam < ATL_TP_NWORK)   /* If I'm working */
       {
+         if (!iam)
+         {
+            int k;
+            ATL_mutex_lock(ATL_combmut);
+            for (k=ATL_TP_NWORK; k < ATL_NTHREADS; k++)
+               ATL_SetBitBV(ATL_combDoneBV, k);
+            ATL_mutex_unlock(ATL_combmut);
+         }
+         tp->P = ATL_TP_NWORK;
          tp->rank = iam;
          lp->DoWork(lp, tp);    /* do the required task */
          tp->rank = rank;
+         tp->P = P;
       }
       else if (lp->DoComb) /* I'm not participating, so tell combine about it */
       {
@@ -11023,8 +11043,17 @@ void *ATL_threadpool(void *vp)
  *    This should not be a huge cost since the master needs everyone
  *    asleep before preceeding.
  */
-      while (ATL_TP_WCNT != ATL_NTHREADS)
+      ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
+      ATL_TP_NWDONE++;
+      ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
+      #ifdef DEBUG
+         fprintf(stderr, "%d,%d: START WBARRIER,  ND=%u, cnt=%u\n", rank, iam, ATL_TP_NWDONE, cnt);
+      #endif
+      while (ATL_TP_NWDONE != ATL_TP_NWORK)
          ATL_thread_yield();
+      #ifdef DEBUG
+         fprintf(stderr, "%d,%d: DONE WBARRIER,  ND=%u, cnt=%u\n", rank, iam, ATL_TP_NWDONE, cnt);
+      #endif
    }           /* end loop over tasks */
 /*
  * When a thread exits, decrement thread count
