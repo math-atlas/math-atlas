@@ -10988,10 +10988,15 @@ void *ATL_threadpool(void *vp)
          } 
 /*
  *       Let everyone know my data is ready for combining
+ *       Thread 0's work is not available because some combines expect
+ *       thread 0 to have the answer
  */
-         ATL_mutex_lock(ATL_combmut);
-         ATL_SetBitBV(ATL_combReadyBV, rank);
-         ATL_mutex_unlock(ATL_combmut);
+         if (iam)
+         {
+            ATL_mutex_lock(ATL_combmut);
+            ATL_SetBitBV(ATL_combReadyBV, rank);
+            ATL_mutex_unlock(ATL_combmut);
+         }
 /*
  *       Now participate in combine until everything is done, or someone
  *       combines my stuff, and thus ends my participation
@@ -11034,10 +11039,10 @@ void *ATL_threadpool(void *vp)
                lp->DoComb(lp->opstruct, iam, partner);
                ATL_TP_THREADS[d].rank = d;  /* put finished partner's thread */
                ATL_TP_THREADS[d].P = P;     /* info back to global values */
-               ATL_mutex_lock(ATL_combmut);
 /*
  *             Check if I'm the last guy left, if so, combine is complete
  */
+               ATL_mutex_lock(ATL_combmut);
                if (ATL_FindFirstUnsetBitBV(ATL_combDoneBV, 0) == rank)
                {
                   if (rank != P-1)
@@ -11054,9 +11059,10 @@ void *ATL_threadpool(void *vp)
                      break;
                   }
                }
-               ATL_SetBitBV(ATL_combReadyBV, rank);    /* now avail again */
+	       if (iam)  /* 0 is never avail to force him to have result */
+                  ATL_SetBitBV(ATL_combReadyBV, rank);    /* now avail again */
             }
-            else  /* No work to do, leave to avoid lock contention */
+            else if (iam)  /* No work to do, leave to avoid lock contention */
             {
                ATL_mutex_unlock(ATL_combmut);
                break;
