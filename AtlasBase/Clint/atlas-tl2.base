@@ -1779,7 +1779,7 @@ typedef struct
    #endif
    const TYPE *A, *X;
    TYPE *Y;
-   TYPE *CY;   /* ptr to combined Y at end */
+   TYPE **ys;
 } ATL_TGEMV_t;
 
 void Mjoin(PATL,DOMVNWORK_cols)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
@@ -1791,7 +1791,7 @@ void Mjoin(PATL,DOMVNWORK_cols)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    ATL_CINT nr = pd->nr;
    const int vrank = (!nr || (pd->flg & 1)) ? tp->rank : (P + tp->rank+nr-1)%P;
    ATL_INT n = pd->n;
-   TYPE *y = pd->Y + (tp->rank)*((pd->M SHIFT)+ATL_Cachelen/sizeof(TYPE));
+   TYPE *y = pd->ys[tp->rank];
    const TYPE *a = pd->A + (lda SHIFT)*vrank;
    #ifdef TCPLX
       TYPE one[2] = {ATL_rone, ATL_rzero}, zero[2] = {ATL_rzero, ATL_rzero};
@@ -1802,7 +1802,6 @@ void Mjoin(PATL,DOMVNWORK_cols)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
       #define zero ATL_rzero
    #endif
 
-   y = ATL_Align2Ptr(y, a);
    if (vrank < nr)
       n++;
 
@@ -1850,10 +1849,7 @@ void Mjoin(PATL,CombineMVN)
                      (P + myrank+pd->nr-1)%P;
    const int hvrank = (!pd->nr || (pd->flg & 1)) ?  hisrank : 
                       (P + hisrank+pd->nr-1)%P;
-   const TYPE *a = pd->A + (pd->lda SHIFT)*vrank;
-   const TYPE *ha = pd->A + (pd->lda SHIFT)*hvrank;
-   TYPE *y = pd->Y + (myrank)*((M SHIFT)+ATL_Cachelen/sizeof(TYPE));
-   TYPE *hy = pd->Y + (hisrank)*((M SHIFT)+ATL_Cachelen/sizeof(TYPE));
+   TYPE *y = pd->ys[myrank], *hy = pd->ys[hisrank];
    #ifdef TCPLX
       ATL_CINT M2 = M+M;
       const TYPE one[2] = {ATL_rone, ATL_rzero};
@@ -1861,8 +1857,7 @@ void Mjoin(PATL,CombineMVN)
       #define one ATL_rone
    #endif
 
-   y = ATL_Align2Ptr(y, a);
-   hy = ATL_Align2Ptr(hy, ha);
+   pd->ys[hisrank] = NULL;     /* his vec does not have final answer */
 
 #ifdef TCPLX
    for (i=0; i < M2; i++)
@@ -1951,15 +1946,37 @@ void Mjoin(PATL,tgemv)
       {
          int vrank;
          const TYPE *a;
-         TYPE *y, *y0;
+         void *vp;
+         TYPE *y;
+         const size_t vlen = ATL_Cachelen + ATL_MulBySize(M);
          #ifdef TCPLX
             TYPE one[2] = {ATL_rone, ATL_rzero};
             TYPE zero[2] = {ATL_rzero, ATL_rzero};
          #endif
 
-         y0 = y = malloc(P*(ATL_Cachelen+ATL_MulBySize(M)));
-         ATL_assert(y);
-         pd.Y = y;
+         vp = malloc(P*(sizeof(TYPE*)+vlen));
+         ATL_assert(vp);
+         pd.ys = vp;
+         y = (TYPE*)(pd.ys + P);
+         if (!pd.nr || (pd.flg & 1))  /* use actual rank */
+         {
+            for (n=0; n < P; n++)
+            {
+               a = A + ((size_t)lda SHIFT)*n;
+               pd.ys[n] = y + n*((M SHIFT)+ATL_Cachelen/sizeof(TYPE));
+               pd.ys[n] = ATL_Align2Ptr(pd.ys[n], a);
+            }
+         }
+         else
+         {
+            for (n=0; n < P; n++)
+            {
+               vrank = (P + n + pd.nr-1)%P;
+               a = A + ((size_t)lda SHIFT)*vrank;
+               pd.ys[n] = y + n*((M SHIFT)+ATL_Cachelen/sizeof(TYPE));
+               pd.ys[n] = ATL_Align2Ptr(pd.ys[n], a);
+            }
+         }
          pd.incY = 1;
          #ifdef TREAL
             pd.alpha = ATL_rone;
@@ -1971,15 +1988,14 @@ void Mjoin(PATL,tgemv)
          ATL_goparallel(P, Mjoin(PATL,DOMVNWORK_cols), &pd, 
                         Mjoin(PATL,CombineMVN));
 /*
- *       goparallel reduces all node's Ys to node 0's.  Extract his from the
- *       work array, and combine it with input array, applying both alpha
- *       and beta in the process
+ *       goparallel reduces all core's Ys to one core's y, and nullifies the
+ *       rest of the ys array.  Extract the result vector from ys, combine it
+ *       with input array, applying both alpha and beta in the process
  */
-         vrank = (!pd.nr || (pd.flg & 1)) ? 0 : pd.nr-1;
-         a = A + (lda SHIFT)*vrank;
-         y = ATL_Align2Ptr(y, a);
+         for (n=0; pd.ys[n] == NULL; n++);
+         y = pd.ys[n];
          Mjoin(PATL,axpby)(M, alpha, y, 1, beta, Y, incY);
-         free(y0);
+         free(vp);
          return;
       }
    }

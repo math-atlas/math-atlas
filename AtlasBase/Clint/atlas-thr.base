@@ -108,10 +108,7 @@ struct ATL_LaunchStruct
       VUINT ATL_TP_NWDONE=0;      /* # of workers who have finished task */
       VUINT ATL_TP_WCNT=0;        /* 1st NWORK threads do the work */
       VUINT ATL_TP_NTHR=0;        /* number of total threads in pool */
-      VUINT ATL_TP_NTHR_SLEEP=0;  /* # of threads currently waiting on cond */
-      VUINT ATL_TP_NTHR_POLL=0;   /* # of thr doing active polling */
       VUINT ATL_TP_POLL=0;        /* 0: sleep wt cond var, 1: active polling */
-      VUINT ATL_TP_CNT=UINT_MAX;  /* countdown of number of tasks */
       VUINT ATL_TP_WDONE=0;       /* set to 1 when last worker finishes */
       VUINT ATL_TP_DWKUP=0;       /* set to 1 to have thr 0 wake threads */
       pthread_mutex_t ATL_TP_MUT; /* protects above info */
@@ -128,9 +125,8 @@ struct ATL_LaunchStruct
       extern ATL_thread_t ATL_TP_THREADS[ATL_NTHREADS];
       extern volatile int ATL_TP_ICOMM[ATL_NTHREADS];
       extern void *ATL_TP_PD;
-      extern VUINT ATL_TP_NTHR, ATL_TP_NTHR_SLEEP, ATL_TP_NTHR_POLL, 
-         ATL_TP_NWDONE, ATL_TP_WCNT, ATL_TP_NWORK, ATL_TP_CNT, ATL_TP_WDONE,
-         ATL_TP_DWKUP;
+      extern VUINT ATL_TP_NTHR, ATL_TP_NWDONE, ATL_TP_WCNT, ATL_TP_NWORK, 
+             ATL_TP_WDONE, ATL_TP_DWKUP;
       extern volatile int ATL_TP_POLL;
       extern void *ATL_combmut;
       extern int *ATL_combReadyBV, *ATL_combDoneBV;
@@ -2065,8 +2061,6 @@ void ATL_goparallel
  * the first invocation
  */
 #elif ATL_USE_THREADPOOL
-   unsigned volatile int *uvp = (ATL_TP_POLL) ? 
-      &ATL_TP_NTHR_POLL : &ATL_TP_NTHR_SLEEP;
 /*
  * If thread pool not currently active, must spawn it
  */
@@ -2088,7 +2082,6 @@ void ATL_goparallel
          ATL_assert(!pthread_mutex_init(&ATL_TP_MUT, NULL));
          ATL_assert(!pthread_cond_init(&ATL_TP_MCOND, NULL));
          ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
-         ATL_TP_NWDONE = ATL_TP_WDONE = 0;
          ATL_thread_start(tp, 0, 0, ATL_threadpool_launch, tp);
          do
          {
@@ -2123,7 +2116,6 @@ void ATL_goparallel
    ATL_TP_PD = &ls;
    ATL_TP_WCNT = 0;
    ATL_TP_NWDONE = ATL_TP_WDONE = 0;
-   ATL_TP_CNT--;
    #ifdef DEBUG
      fprintf(stderr, "MASTER WAKES WORKERS\n");
    #endif
@@ -2140,18 +2132,9 @@ void ATL_goparallel
  */
    do
    {
-   #ifdef DEBUG
-     fprintf(stderr, "MASTER WAITING, nsleep=%u\n", *uvp);
-   #endif
       ATL_assert(!pthread_cond_wait(&ATL_TP_MCOND, &ATL_TP_MUT));
-   #ifdef DEBUG
-     fprintf(stderr, "MASTER WAITING, nsleep=%u\n", *uvp);
-   #endif
    }
    while (!ATL_TP_WDONE);
-   #ifdef DEBUG
-     fprintf(stderr, "MASTER DONE WAITING, nsleep=%u\n", *uvp);
-   #endif
    ATL_TP_NWORK = 0;     /* make sure spurious wakeup will go back to sleep */
    ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
    
@@ -10884,13 +10867,12 @@ void *ATL_threadpool(void *vp)
    ATL_thread_t *tp=vp;
    ATL_LAUNCHSTRUCT_t *lp;
    const unsigned int rank=tp->rank, P=tp->P;
-   unsigned int cnt=UINT_MAX;
-   int DOPOLL = ATL_TP_POLL;
-   volatile int *psc = (DOPOLL) ? &ATL_TP_NTHR_POLL : &ATL_TP_NTHR_SLEEP;
+   int DOPOLL = ATL_TP_POLL, IAMDONE;
 
    #ifdef DEBUG
       fprintf(stderr, "%d: WORKER START\n", rank);
    #endif
+   @beginskip
    ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
    ATL_TP_NTHR++;
    ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
@@ -10899,6 +10881,7 @@ void *ATL_threadpool(void *vp)
  */
    while (ATL_TP_NTHR != ATL_NTHREADS)
       ATL_thread_yield();
+   @endskip
 /*
  * Infinite loop over tasks.  Loop has 3 phases:
  * (1) Wait for orders - can wait by polling or condition variable
@@ -10910,22 +10893,12 @@ void *ATL_threadpool(void *vp)
       unsigned int iam;
 /*
  *    Threads go to sleep or poll for work before each job
- */
-      ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
-      #ifdef DEBUG
-         fprintf(stderr, "%d: WORKER going to sleep, cnt=%u, nsleep=%d\n", 
-                 rank, cnt, *psc);
-      #endif
-/*
  *    If I'm the last guy, signal master process we're done
  */
-      if (++(*psc) == ATL_NTHREADS)
+      ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
+      if (++ATL_TP_NWDONE == ATL_TP_NWORK)
       {
          ATL_TP_WDONE = 1;
-         #ifdef DEBUG
-            fprintf(stderr, "%d: WORKER SIGNALLING, cnt=%u, nsleep=%d\n", 
-                    rank, cnt, *psc);
-         #endif
          ATL_assert(!pthread_cond_signal(&ATL_TP_MCOND));
       }
       if (DOPOLL)
@@ -10937,10 +10910,10 @@ void *ATL_threadpool(void *vp)
             {
                ATL_thread_yield();
             }
-            while (cnt == ATL_TP_CNT);
+            while (ATL_TP_WDONE || ATL_TP_WCNT >= ATL_TP_NWORK);
             ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
          }
-         while (ATL_TP_WCNT >= ATL_TP_NWORK);
+         while (ATL_TP_WDONE || ATL_TP_WCNT >= ATL_TP_NWORK);
       }
       else  /* sleeping instead of polling */
       {
@@ -10948,25 +10921,28 @@ void *ATL_threadpool(void *vp)
          {
             ATL_assert(!pthread_cond_wait(&ATL_TP_COND, &ATL_TP_MUT));
          }
-         while (cnt == ATL_TP_CNT || ATL_TP_WCNT >= ATL_TP_NWORK);
+         while (ATL_TP_WDONE || ATL_TP_WCNT >= ATL_TP_NWORK);
       }
-      (*psc)--;             /* signal I've woken up */
       lp = ATL_TP_PD;
 /*
- *    Each thread sets his bit saying he's done, and then we will reverse
- *    bit vector before use.
+ *    Each thread sets his bit saying he's done, then last guy to wake up
+ *    reverses them so all non-participating threads are shown as done.
  */
       if (lp->DoComb && ATL_TP_NWORK != ATL_NTHREADS)
       {
+         iam = ATL_TP_WCNT;  /* find out my order of awakening */
          ATL_mutex_lock(ATL_combmut);
          ATL_SetBitBV(ATL_combDoneBV, rank);
+         if (iam == ATL_TP_NWORK-1) 
+            ATL_ReverseAllBitsBV(ATL_combDoneBV);
          ATL_mutex_unlock(ATL_combmut);
          ATL_TP_ICOMM[ATL_TP_WCNT] = rank;
       }
-      iam = ATL_TP_WCNT++;  /* find out my order of awakening */
-      cnt = ATL_TP_CNT;     /* set my count to this iteration */
+      else
+         iam = (ATL_TP_NWORK == ATL_NTHREADS) ? rank : ATL_TP_WCNT;
+      ATL_TP_WCNT++;
       DOPOLL = ATL_TP_POLL; /* remember wait type */
-      psc = (DOPOLL) ? &ATL_TP_NTHR_POLL : &ATL_TP_NTHR_SLEEP;  /* wait type */
+      ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
 /*
  *    If DoWakeup set, thread awakened by master signals other workers
  */
@@ -10976,11 +10952,6 @@ void *ATL_threadpool(void *vp)
          for (k=1; k < ATL_TP_NWORK; k++)
             pthread_cond_signal(&ATL_TP_COND);
       }
-      ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
-      #ifdef DEBUG
-         fprintf(stderr, "%d,%d: WORKER awake, NWORK=%u, cnt=%u\n", 
-                 rank, iam, ATL_TP_NWORK, cnt);
-      #endif
 /*
  *    Now, do work based on launchstructure
  */
@@ -11001,32 +10972,26 @@ void *ATL_threadpool(void *vp)
  */
          if (ATL_TP_NWORK != ATL_NTHREADS)
          {
-            while (ATL_TP_WCNT != ATL_TP_NWORK)
-               ATL_thread_yield();
-         }
-         fprintf(stderr, "%d,%d: WORKER COMB START, cnt=%u\n", rank, iam, cnt);
-         ATL_mutex_lock(ATL_combmut);
-      fprintf(stderr, "%d,%d: HAVE combLOCK\n", rank, iam);
-/*
- *       First thread to lock combmut reverses bits in combDoneBV, so that
- *       only the actually participating nodes are set.
- */
-         if (ATL_TP_NWORK != ATL_NTHREADS)
-         {
-            if (ATL_FindFirstSetBitBV(ATL_combReadyBV, 0) == -1)
+            int KEEPON;
+            do
             {
-               ATL_ReverseAllBitsBV(ATL_combDoneBV);
-               fprintf(stderr, "%d,%d:reversing combDone\n", rank, iam);
+               while (ATL_TP_WCNT != ATL_TP_NWORK)
+                  ATL_thread_yield();
+/*
+ *             Verify that mutex of guy who incremented TP_WCNT is really done!
+ */
+               ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
+               KEEPON = (ATL_TP_WCNT != ATL_TP_NWORK);
+               ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
             }
-         }
-         fprintf(stderr, "%d,%d: DoneBV=%d\n", rank, iam,
-            (ATL_combDoneBV[2]) & (0x7FFFFFFF>>(31-ATL_combDoneBV[1])));
-
+            while (KEEPON);
+         } 
+/*
+ *       Let everyone know my data is ready for combining
+ */
+         ATL_mutex_lock(ATL_combmut);
          ATL_SetBitBV(ATL_combReadyBV, rank);
-         fprintf(stderr, "%d,%d: readyBV=%d\n",  rank, iam,
-            (ATL_combReadyBV[2]) & (0x7FFFFFFF>>(31-ATL_combDoneBV[1])));
          ATL_mutex_unlock(ATL_combmut);
-         fprintf(stderr, "%d,%d: %d cnt=%u\n", rank, iam, __LINE__, cnt);
 /*
  *       Now participate in combine until everything is done, or someone
  *       combines my stuff, and thus ends my participation
@@ -11039,10 +11004,7 @@ void *ATL_threadpool(void *vp)
  *          so I'm finished
  */
             if (ATL_IsBitSetBV(ATL_combDoneBV, rank))
-            {
-   fprintf(stderr, "%d,%d: I've been combined, leaving!\n", rank, iam);
                 break;
-            }
 /*
  *          Seize mutex lock and do the work if still there & I'm still in game
  */
@@ -11050,7 +11012,6 @@ void *ATL_threadpool(void *vp)
             if (ATL_IsBitSetBV(ATL_combDoneBV, rank)) /* I'm done */
             {
                ATL_mutex_unlock(ATL_combmut);
-   fprintf(stderr, "%d,%d: I've been combined, leaving!\n", rank, iam);
                break;
             }
             d = ATL_FindFirstSetBitBV(ATL_combReadyBV, 0);
@@ -11070,23 +11031,23 @@ void *ATL_threadpool(void *vp)
                   for (k=0; ATL_TP_ICOMM[k] != d; k++);
                   partner = k;
                }
-fprintf(stderr, "%d,%d: COMBING: me=%d, him=%d, partner=%d, readyBV=%d, doneBV=%d\n", rank, iam, rank, d, partner,ATL_combReadyBV[2]&0xF,ATL_combDoneBV[2]&0xF);
                lp->DoComb(lp->opstruct, iam, partner);
+               ATL_TP_THREADS[d].rank = d;  /* put finished partner's thread */
+               ATL_TP_THREADS[d].P = P;     /* info back to global values */
                ATL_mutex_lock(ATL_combmut);
 /*
  *             Check if I'm the last guy left, if so, combine is complete
  */
-fprintf(stderr, "%d,%d: combDoneBV=%d\n", rank, iam, ATL_combDoneBV[2]&0xf);
                if (ATL_FindFirstUnsetBitBV(ATL_combDoneBV, 0) == rank)
                {
                   if (rank != P-1)
                      d = ATL_FindFirstUnsetBitBV(ATL_combDoneBV, rank+1);
                   else
                      d = -1;
-fprintf(stderr, "%d,%d: d=%d, combDoneBV=%d\n", rank, iam, d, ATL_combDoneBV[2]&0xf);
                   if (d == -1)  /* I was the last guy, so it's done! */
                   {
-fprintf(stderr, "%d,%d: COMBINE COMPLETE!!\n", rank, iam);
+                     tp->rank = rank;  /* put my thr info back */
+                     tp->P = P;        /* to global values */
                      ATL_SetBitBV(ATL_combDoneBV, rank);  /* I'm done */
                      ATL_UnsetBitBV(ATL_combReadyBV, rank); /* so not ready */
                      ATL_mutex_unlock(ATL_combmut);
@@ -11098,34 +11059,26 @@ fprintf(stderr, "%d,%d: COMBINE COMPLETE!!\n", rank, iam);
             else  /* No work to do, leave to avoid lock contention */
             {
                ATL_mutex_unlock(ATL_combmut);
-fprintf(stderr, "%d,%d: BORED, LEAVING, doneBV=%d\n", rank, iam, ATL_combDoneBV[2]&0x4);
                break;
             }
             ATL_mutex_unlock(ATL_combmut);
          }     /* end combine loop */
-      #ifdef DEBUG
-         fprintf(stderr, "%d,%d: WORKER COMB DONE,  cnt=%u\n", rank, iam, cnt);
-      #endif
       }        /* end combine if */
+      else  /* If I don't combine, reset my tp info */
+      {
+         tp->rank = rank;  /* put my thr info back */
+         tp->P = P;        /* to global values */
+      }
 /*
  *    All threads must agree we are done with computation before going
  *    to sleep to avoid iterations messing up the sleep count
  *    This should not be a huge cost since the master needs everyone
  *    asleep before preceeding.
  */
-      ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
-      ATL_TP_NWDONE++;
-      ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
-      #ifdef DEBUG
-         fprintf(stderr, "%d,%d: START WBARRIER,  ND=%u, cnt=%u\n", rank, iam, ATL_TP_NWDONE, cnt);
-      #endif
+@beginskip
       while (ATL_TP_NWDONE != ATL_TP_NWORK)
          ATL_thread_yield();
-      tp->rank = rank;
-      tp->P = P;
-      #ifdef DEBUG
-         fprintf(stderr, "%d,%d: DONE WBARRIER,  ND=%u, cnt=%u\n", rank, iam, ATL_TP_NWDONE, cnt);
-      #endif
+@endskip
    }           /* end loop over tasks */
 /*
  * When a thread exits, decrement thread count
@@ -11155,13 +11108,14 @@ void *ATL_threadpool_launch(void *vp)
 /*
  * Set up global variables
  */
-   ATL_TP_NWORK = ATL_TP_WCNT = ATL_TP_NTHR_POLL = ATL_TP_NTHR_SLEEP = 
-                  ATL_TP_NTHR = 0;
-   ATL_TP_CNT = UINT_MAX;
+   ATL_assert(!pthread_mutex_lock(&ATL_TP_MUT));
+   ATL_TP_NTHR = ATL_TP_NWORK = ATL_NTHREADS;
+   ATL_TP_NWDONE = ATL_TP_WCNT = ATL_TP_WDONE = 0;
    ATL_assert(!pthread_cond_init(&ATL_TP_COND, NULL));
    ATL_combmut = ATL_mutex_init();
    ATL_combReadyBV = ATL_NewBV(ATL_NTHREADS);
    ATL_combDoneBV = ATL_NewBV(ATL_NTHREADS);
+   ATL_assert(!pthread_mutex_unlock(&ATL_TP_MUT));
 /*
  * Thread 0 spawns threadpool to all cores
  */
@@ -11185,7 +11139,7 @@ void *ATL_threadpool_launch(void *vp)
    ATL_assert(!pthread_cond_destroy(&ATL_TP_COND));
    ATL_assert(!pthread_cond_destroy(&ATL_TP_MCOND));
    ATL_assert(!pthread_mutex_destroy(&ATL_TP_MUT));
-   ATL_TP_NTHR_POLL = ATL_TP_NTHR_SLEEP = ATL_TP_NTHR = 0;
+   ATL_TP_NTHR = 0;
    ATL_TP_POLL = ATL_TP_ACTIVE = 0;
 }
 #endif
