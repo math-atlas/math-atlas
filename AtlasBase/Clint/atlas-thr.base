@@ -103,7 +103,7 @@ struct ATL_LaunchStruct
 /*
  * Thread pool flag macros
  */
-@whiledef nm ZEROWAKES POLL WDONE
+@whiledef nm DYNCOMB ZEROWAKES POLL WDONE
 #define ATL_TPF_@(nm)(p_) ((p_)->pflag & @(ib))
 #define ATL_TPF_SET_@(nm)(p_) ((p_)->pflag |= @(ib))
 #define ATL_TPF_UNSET_@(nm)(p_) ((p_)->pflag &= ~@(ib))
@@ -433,6 +433,43 @@ struct ATL_SyrkK
 };
 #ifdef TYPE
    #define VINT volatile int
+/*
+ * This structure used when N <= MAXNB && K <= MAXKB
+ */
+typedef struct ATL_tamm_tNK ATL_tamm_tNK_t;
+struct ATL_tamm_tNK
+{
+   ammkern_t amm_b0;
+   cm2am_t a2blk;       /* block copy for A */
+   cm2am_t b2blk;       /* block copy for B, applies alpha */
+   ablk2cmat_t blk2c;   /* copy for beta=1, applies beta  */
+   const TYPE *A;       /* input A matrix */
+   const TYPE *B;       /* input A matrix */
+   TYPE *C;             /* output matrix */
+   TYPE *w;             /* ATL_NTHREADS wsz-len thread-local workspaces */
+   const TYPE *alpha;   /* ptr to alpha */
+   const TYPE *beta;    /* ptr to beta */
+   void *MbCtr;         /* which M block */
+   void *BassgCtr;      /* 1 means must be copied, 0 assigned */
+   void *BdoneCtr;      /* 0 means must be copied, 1 not ready */
+   size_t wsz;          /* size of local workspace */
+   int bsz;             /* size of common workspace for B */
+   int TA;              /* 0: noTrans; 1: Trans */
+   int TB;              /* 0: noTrans; 1: Trans */
+   int N;               /* # cols of C; N <= MAXNB */
+   int K;               /* common dim A&B; K <= MAXKB */
+   int nmblks;          /* # of M blocks, including any partial block */
+   int mr;              /* M%mu */
+   int nmu;             /* CEIL(mb/mu) */
+   int nmuL;            /* # of mus in final block */
+   int mb;              /* block size for all blocks but last */
+   int mbL;             /* block size for last block */
+   int nnu;             /* CEIL(N/nu) */
+   int KB0;             /* if kmajor, it is CEIL(K/ku)*ku, else K */
+   int lda;             /* leading dim of A */
+   int ldb;             /* leading dim of B */
+   int ldc;             /* leading dim of C */
+};
 /*
  * This structure used when N <= MIN(MAXNB,MAXMB), so we deal out only
  * K blocks using the global counter KbCtr.  
@@ -794,6 +831,33 @@ void Mjoin(PATL,tsvgemm@(TA)@(TB))
    @endwhile
 @endwhile
 #endif  /* end ifdef TYPE */
+
+#ifdef ATL_ESTNCTR
+   #ifdef __GNUC__
+   static inline int ATL_EstNctr    /* RETURNS: good # of global ctrs */
+   #else
+   static int ATL_EstNctr           /* RETURNS: good # of global ctrs */
+   #endif
+   (
+      int N,   /* Total count you are going to use */
+      int P    /* nthreads to be used */
+   )
+   {
+      int ncnt, ncntP;
+/*
+ *    Want at least 32 elements per counter
+ */
+      ncnt = (N > 64) ? (N >> 5) : 1;
+/*
+ *    allow up to 8-way contention
+ */
+      if (P >= 16)
+         ncntP = (P>>3);
+      else 
+         ncntP = (P >= 4) ? (P>>1) : 1;
+      return(Mmin(ncnt,ncntP));
+   }
+#endif
 
 #endif
 @ROUT ATL_set_ucnt
@@ -3961,6 +4025,21 @@ int Mjoin(PATL,tgemm_@(ds))(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB
 @ROUT ATL_tgemm ATL_tgemm_rec ATL_tgemm_M ATL_tgemm_N ATL_tgemm_K ATL_tgemm_p
    }
 @ROUT ATL_tgemm
+#ifdef TREAL
+   if (N <= ATL_AMM_MAXMB && K <= ATL_AMM_MAXKB && M >= (ATL_AMM_MAXMB<<1)
+       && K > 2)
+  if (N <= ATL_AMM_MAXMB && K <= ATL_AMM_MAXKB &&  K > 2 &&
+      M >= (ATL_AMM_MAXMB<<2)*Mmin(ATL_NTHREADS,8))
+   {
+      int Mjoin(PATL,tammm)(enum ATLAS_TRANS TA, enum ATLAS_TRANS TB,
+         ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, const SCALAR alpha,
+         const TYPE *A, ATL_CSZT lda, const TYPE *B, ATL_CSZT ldb,
+         const SCALAR beta, TYPE *C, ATL_CSZT ldc);
+      if (!Mjoin(PATL,tammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
+                             beta, C, ldc))
+         return;
+   }
+#endif
 /*
  * See if we are in a case where we've implemented a dynamically scheduled
  * code.  Performance of the dynamically scheduled operations varies:
@@ -10063,8 +10142,239 @@ DONE:
    while(tp->ntdone < tp->ntexp)
       ATL_thread_yield();
 }
+@ROUT ATL_tgemm_amm
+#include "atlas_misc.h"
+#define ATL_ESTNCTR 1
+#include "atlas_tlvl3.h"
+#include "atlas_bitvec.h"
+
+void Mjoin(PATL,DoWork_tamm_tNK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
+{
+   ATL_thread_t *tp = vp;
+   ATL_tamm_tNK_t *pd = lp->opstruct;  /* problem definition structure */
+   const unsigned int rank = tp->rank, mb=pd->mb, kb=pd->KB0, K=pd->K,
+      N=pd->N, nmblks = pd->nmblks, nmbm1=nmblks-1, nmu=pd->nmu, nnu=pd->nnu,
+      lda=pd->lda, ldc=pd->ldc;
+   TYPE *pB, *pA, *pC, *C = pd->C;
+   const TYPE *A = pd->A;
+   int BCOPIED=0;
+   int imtr;
+   const TYPE beta = *pd->beta;
+   const size_t incA = (pd->TA) ? lda : 1;
+   cm2am_t a2blk = pd->a2blk;
+   ablk2cmat_t blk2c = pd->blk2c;
+   ammkern_t amm = pd->amm_b0;
+
+@skip printf("%d: started tamm_K\n", rank);
+   pB = pd->w;
+/*
+ * First guy here starts to copy B
+ */
+   if (ATL_DecAtomicCount(pd->BassgCtr))
+   {
+      pd->b2blk(K, N, *pd->alpha, pd->B, pd->ldb, pB);
+/*
+ *    Let waiting threads know B is ready for use
+ */
+      BCOPIED = ATL_DecAtomicCount(pd->BdoneCtr);
+      ATL_assert(BCOPIED);
+   }
+   pA = pB + pd->bsz + rank*(pd->wsz);
+   pA = ATL_AlignPtr(pA);
+   pC = pA + mb*kb;
+   pC = ATL_AlignPtr(pC);
+/*
+ * For first block I work on, I must await B to be copied
+ */
+   if (!BCOPIED)
+   {
+      int iblk;
+      size_t ii;
+
+      imtr = ATL_DecGlobalAtomicCount(pd->MbCtr, rank);
+      if (imtr)
+      {
+         iblk = nmblks - imtr;
+         ii = mb*iblk;
+         if (iblk != nmbm1)
+            a2blk(K, mb, ATL_rone, A+incA*ii, lda, pA);
+         else
+            a2blk(K, pd->mr, ATL_rone, A+incA*ii, lda, pA);
+         while (ATL_GetAtomicCount(pd->BdoneCtr))  /* await B cpy finish */
+            ATL_thread_yield();
+         if (iblk != nmbm1)
+         {
+            amm(nmu, nnu, kb, pA, pB, pC, pA, pB, pC);
+            blk2c(mb, N, ATL_rone, pC, beta, C+ii, ldc);
+         }
+         else
+         {
+            amm(pd->nmuL, nnu, kb, pA, pB, pC, pA, pB, pC);
+            blk2c(pd->mr, N, ATL_rone, pC, beta, C+ii, ldc);
+         }
+      }
+   }
+/*
+ * Now, B is ready, so just go to town on remaining blocks
+ */
+   while ((imtr = ATL_DecGlobalAtomicCount(pd->MbCtr, rank)))
+   {
+      const int iblk = nmblks - imtr;
+      const size_t ii = mb*iblk;
+
+      if (iblk != nmbm1)
+      {
+         a2blk(K, mb, ATL_rone, A+incA*ii, lda, pA);
+         amm(nmu, nnu, kb, pA, pB, pC, pA, pB, pC);
+         blk2c(mb, N, ATL_rone, pC, beta, C+ii, ldc);
+      }
+      else
+      {
+         a2blk(K, pd->mr, ATL_rone, A+incA*ii, lda, pA);
+         amm(pd->nmuL, nnu, kb, pA, pB, pC, pA, pB, pC);
+         blk2c(pd->mr, N, ATL_rone, pC, beta, C+ii, ldc);
+      }
+   }
+}
+/*
+ * This routine handles the case where N <= maxNB && K <= maxKB, so B is
+ * only one block.  It is particularly important for the panel factorizations
+ * of both LU and QR.
+ */
+int Mjoin(PATL,tammm_tNK)
+(
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   ATL_CSZT M,
+   ATL_CSZT N,
+   ATL_CSZT K,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CSZT lda,
+   const TYPE *B,
+   ATL_CSZT ldb,
+   const SCALAR beta,
+   TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   ATL_SZT nmblks;
+   amminfo_t mminfo;
+   unsigned int i, mb, nb, kb, mu, nu, ku, P, mr;
+   ATL_tamm_tNK_t pd;  /* problem definition structure */
+   void *vp;
+
+/*
+ * Special case for tiny N&K, and large M
+ */
+   if (N >= ATL_AMM_MAXNB || K >= ATL_AMM_MAXKB || M < ATL_AMM_MAXMB || 
+       M < Mmin(8,ATL_NTHREADS)*ATL_AMM_MAXMB)
+      return(1);
+   Mjoin(PATL,GetRankKInfo)(&mminfo, TA, TB, M, N, K, alpha, beta);
+   pd.a2blk = mminfo.a2blk;
+   pd.b2blk = mminfo.b2blk;
+   pd.blk2c = mminfo.Cblk2cm;
+   pd.amm_b0 = mminfo.amm_b0;
+   pd.TA = (TA == AtlasTrans);
+   pd.TB = (TB == AtlasTrans);
+   pd.N = N;
+   pd.K = K;
+   pd.A = A;
+   pd.B = B;
+   pd.C = C;
+   pd.lda = lda;
+   pd.ldb = ldb;
+   pd.ldc = ldc;
+   pd.alpha = &alpha;
+   pd.beta  = &beta;
+   mu = mminfo.mu;
+   nu = mminfo.nu;
+   ku = mminfo.ku;
+   pd.mb = mb = mminfo.mb;
+   pd.nmu = mb / mu;
+   pd.nnu = (N+nu-1)/nu;
+   nb = pd.nnu * nu;
+   kb = mminfo.kb;
+   nmblks = M / mb;
+   mr = M - nmblks*mb;
+   if (!mr)
+   {
+      pd.mbL = mr = mb;
+      pd.nmuL = pd.nmu;
+   }
+   else
+   {
+      nmblks++;
+      pd.nmuL = (mr+mu-1)/mu; 
+      pd.mbL = pd.nmuL * mu;
+   }
+   pd.mr = mr;
+   pd.nmblks = nmblks;
+   pd.KB0 = K;
+   #if ATL_MAXKMAJ_RKK > 1
+      if (ATL_AMMFLG_KMAJOR(mminfo.flag))
+         pd.KB0 = ((K+ku-1)/ku)*ku;
+   #endif
+/*
+ * Maximum scale is limited by NTHREADS or max number of M-blocks
+ */
+   P = (ATL_NTHREADS <= nmblks) ? ATL_NTHREADS : nmblks;
+/*
+ * We have a common B wrk of size KB0*nb, then
+ * for each node, we need workspace: sz(A,C) = mb*K, K*nb, mb*N, laid out
+ * in memory as A,C, then we add safety margin mu*nu*ku so advance loads don't
+ * seg fault, and we add space for aligning the ptrs
+ */
+   pd.bsz = pd.KB0*nb;
+   pd.wsz = mb*(pd.nnu*nu + pd.bsz) + 2*ATL_DivBySize(ATL_Cachelen);
+
+   vp = malloc(ATL_MulBySize(pd.wsz*P + pd.bsz+mu*nu*ku) + ATL_Cachelen);
+   if (!vp) 
+      return(2);
+   pd.w = ATL_AlignPtr(vp);
+   pd.MbCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(nmblks, P), nmblks, 0);
+   pd.BassgCtr = ATL_SetAtomicCount(1);
+   pd.BdoneCtr = ATL_SetAtomicCount(1);
+   #ifdef DEBUG1
+   {
+      ATL_LAUNCHSTRUCT_t ls;
+      ATL_thread_t ts;
+      ts.rank = 0;
+      ts.P = 1;
+      ls.opstruct = &pd;
+      Mjoin(PATL,DoWork_tamm_tNK)(&ls, &ts);
+   }
+   #else
+      ATL_goparallel(P, Mjoin(PATL,DoWork_tamm_tNK), &pd, NULL);
+   #endif
+
+   free(vp);
+   return(0);
+}
+
+int Mjoin(PATL,tammm)
+(
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   ATL_CSZT M,
+   ATL_CSZT N,
+   ATL_CSZT K,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CSZT lda,
+   const TYPE *B,
+   ATL_CSZT ldb,
+   const SCALAR beta,
+   TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   return(Mjoin(PATL,tammm_tNK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                            beta, C, ldc));
+}
 @ROUT ATL_tsyrk_amm
 #include "atlas_misc.h"
+#define ATL_ESTNCTR 1
 #include "atlas_tlvl3.h"
 #include "atlas_bitvec.h"
 /* 
@@ -10089,29 +10399,20 @@ DONE:
    (I_) = j_ + b_ + 1; \
 }
 
-#ifdef __GNUC__
-static inline int ATL_EstNctr    /* RETURNS: good # of global ctrs */
-#else
-static int ATL_EstNctr           /* RETURNS: good # of global ctrs */
-#endif
+void Mjoin(PATL,CombSyrk_ammK)
 (
-   int N,   /* Total count you are going to use */
-   int P    /* nthreads to be used */
+   void *vp,          /* void ptr to ATL_GEMV_t struct given to threads */
+   const int myrank,  /* my processor rank */
+   const int hisrank  /* rank entry to be combined into mine */
 )
 {
-   int ncnt, ncntP;
-/*
- * Want at least 32 elements per counter
- */
-   ncnt = (N > 64) ? (N >> 5) : 1;
-/*
- * allow up to 8-way contention
- */
-   if (P >= 16)
-      ncntP = (P>>3);
-   else 
-      ncntP = (P >= 4) ? (P>>1) : 1;
-   return(Mmin(ncnt,ncntP));
+   ATL_tsyrk_ammK_t *pd=vp;
+   TYPE *myC, *hisC;
+   const unsigned int incW = pd->kb*(pd->mb+pd->nb), N = pd->nb * pd->mb;
+
+   myC = pd->w + pd->wsz*myrank + incW;
+   hisC = pd->w + pd->wsz*hisrank + incW;
+   Mjoin(PATL,axpy)(N, ATL_rone, hisC, 1, myC, 1);
 }
 
 static void DoSyrkK(unsigned int rank, ATL_tsyrk_ammK_t *pd)
@@ -10150,6 +10451,12 @@ static void DoSyrkK(unsigned int rank, ATL_tsyrk_ammK_t *pd)
       amm = pd->amm_b1;
    }
 /*
+ * If I did no work, zero my wrkspace so I don't screw up combine!
+ */
+   if (amm != pd->amm_b1)
+      Mjoin(PATL,zero)(mb*nb, wC, 1);
+@beginskip
+/*
  * If I did any work at all, must now write answer back to C
  */
    if (amm == pd->amm_b1)
@@ -10180,6 +10487,7 @@ static void DoSyrkK(unsigned int rank, ATL_tsyrk_ammK_t *pd)
       }
       ATL_mutex_unlock(pd->Cmut);
    }
+@endskip
 }
 
 void Mjoin(PATL,DoWork_syrk_amm_K)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
@@ -10318,8 +10626,34 @@ int Mjoin(PATL,tsyrk_amm_K)
       Mjoin(PATL,DoWork_syrk_amm_K)(&ls, &ts);
    }
    #else
-      ATL_goparallel(P, Mjoin(PATL,DoWork_syrk_amm_K), &pd, NULL);
+      ATL_goparallel(P, Mjoin(PATL,DoWork_syrk_amm_K), &pd, 
+                     Mjoin(PATL,CombSyrk_ammK));
    #endif
+/*
+ * Answer is written back to rank0's workspace, extract it & write to C
+ */
+   {
+      TYPE *wC = pd.w+kb*(mb+nb), *w = wC + mb*nb, *c = C;
+/*
+ *    Put it into block-major storage in w 
+ */
+      pd.blk2c_b0(N, N, ATL_rone, wC, ATL_rzero, w, N);
+/*
+ *    Now copy out only upper or lower portion
+ */
+      if (pd.LOWER)
+      {
+         int j;
+         for (j=0; j < N; j++, c += ldc+1, w += N+1)
+             Mjoin(PATL,axpby)(N-j, alpha, w, 1, beta, c, 1);
+      }
+      else
+      {
+         int j;
+         for (j=0; j < N; j++, c += ldc, w += N)
+             Mjoin(PATL,axpby)(j+1, alpha, w, 1, beta, c, 1);
+      }
+   }
    free(vp);
    ATL_mutex_free(pd.Cmut);
    ATL_FreeGlobalAtomicCount(pd.KbCtr);
@@ -11239,6 +11573,221 @@ void *ATL_threadpool_launch(void *vp)
 }
 @endskip
 
+/*
+ * Fully dynamic combine with restriction that iam=0 gets final answer
+ * NOTE: assumed that during operation, have change tp->P and tp->rank
+ *       to local values.  They will be restored to true rank & P here.
+ */
+static void ATL_dyncomb
+   (ATL_tpool_t *pp, ATL_thread_t *tp, ATL_LAUNCHSTRUCT_t *lp, 
+    const unsigned int P, const unsigned int rank, const unsigned int iam)
+{
+/*
+ * Let everyone know my data is ready for combining
+ * Thread 0's work is not available because some combines expect
+ * thread 0 to have the answer
+ */
+   if (iam)
+   {
+      ATL_mutex_lock(pp->combmut);
+      ATL_SetBitBV(pp->combReadyBV, rank);
+      ATL_mutex_unlock(pp->combmut);
+   }
+/*
+ * Now participate in combine until everything is done, or someone
+ * combines my stuff, and thus ends my participation
+ */
+   do
+   {
+      int d;
+/*
+ *    If my combDone bit is set, somone has combined my results, so I'm finished
+ */
+      if (ATL_IsBitSetBV(pp->combDoneBV, rank))
+         return;
+/*
+ *    Seize mutex lock and do the work if still there & I'm still in game
+ */
+      ATL_mutex_lock(pp->combmut);
+      if (ATL_IsBitSetBV(pp->combDoneBV, rank)) /* I'm done */
+      {
+         ATL_mutex_unlock(pp->combmut);
+         return;
+      }
+      d = ATL_FindFirstSetBitBV(pp->combReadyBV, 0);
+      if (d == rank)
+         d = (rank != P-1) ?  
+            ATL_FindFirstSetBitBV(pp->combReadyBV, rank+1) : -1;
+      if (d != -1)  /* work still needs to be done */
+      {
+         int partner=d;
+         ATL_SetBitBV(pp->combDoneBV, d);
+         ATL_UnsetBitBV(pp->combReadyBV, d);
+         ATL_UnsetBitBV(pp->combReadyBV, rank);  /* not avail, working */
+         ATL_mutex_unlock(pp->combmut);
+         if (pp->nworkers != pp->nthr)  /* need to translate rank */
+         {
+            int k ;
+            for (k=0; pp->icomm[k] != d; k++);
+            partner = k;
+         }
+         lp->DoComb(lp->opstruct, iam, partner);
+         pp->threads[d].rank = d;  /* put finished partner's thread */
+         pp->threads[d].P = P;     /* info back to global values */
+/*
+ *       After finishing my combine, my buffer ready for other's use
+ */
+         if (iam)
+         {
+            ATL_mutex_lock(pp->combmut);
+            ATL_SetBitBV(pp->combReadyBV, rank);    /* now avail again */
+         }
+/*
+ *       Check if I'm the last guy left, if so, combine is complete
+ *       Only iam=0 allowed to be last guy (0's buff has final answer)
+ */
+         else  /* I'm 0, so see if combine is done */
+         {
+            ATL_mutex_lock(pp->combmut);
+            if (ATL_FindFirstUnsetBitBV(pp->combDoneBV, 0) == rank)
+            {
+               if (rank != P-1)
+                  d = ATL_FindFirstUnsetBitBV(pp->combDoneBV, rank+1);
+               else
+                  d = -1;
+               if (d == -1)  /* I was the last guy, so it's done! */
+               {
+                  tp->rank = rank;  /* put my thr info back */
+                  tp->P = P;        /* to global values */
+                  ATL_SetBitBV(pp->combDoneBV, rank);  /* I'm done */
+                  ATL_UnsetBitBV(pp->combReadyBV, rank); /* so not ready */
+                  ATL_mutex_unlock(pp->combmut);
+                  return;
+               }
+            }
+         }
+      }
+      else if (iam)  /* No work to do, leave to avoid lock contention */
+      {
+         ATL_mutex_unlock(pp->combmut);
+         return;
+      }
+      ATL_mutex_unlock(pp->combmut);
+   }     
+   while(1);   /* end combine loop */
+}
+/*
+ * This combine is for routines that require only leftward combination,
+ * so that you can add results only from vranks greater (to the right)
+ * than yourself, and then only if you have already added in all the
+ * ranks in between yourself and the candidate.  This type of result
+ * is naturally enforced by log2 reduction and linear sum-to-zero, which
+ * some of the earlier tblas assume.
+ */
+static void ATL_leftcomb
+   (ATL_tpool_t *pp, ATL_thread_t *tp, ATL_LAUNCHSTRUCT_t *lp, 
+    const unsigned int P, const unsigned int rank, const unsigned int iam)
+{
+   unsigned int *i2r = (unsigned int*) pp->icomm;
+   const unsigned int nw = pp->nworkers;
+/*
+ * Let everyone know my data is ready for combining
+ * Thread 0's work is not available because some combines expect
+ * thread 0 to have the answer
+ */
+   if (iam)
+   {
+      ATL_mutex_lock(pp->combmut);
+      ATL_SetBitBV(pp->combReadyBV, rank);
+      ATL_mutex_unlock(pp->combmut);
+   }
+/*
+ * Now participate in combine until everything is done, or someone
+ * combines my stuff, and thus ends my participation
+ */
+   do
+   {
+      int i, d;
+/*
+ *    If my combDone bit is set, somone has combined my results, so I'm finished
+ */
+      if (ATL_IsBitSetBV(pp->combDoneBV, rank))
+         return;
+/*
+ *    If everyone to right of me is finished, there's nothing left for me to do
+ */
+      for (i=iam+1; i < nw && ATL_IsBitSetBV(pp->combDoneBV, i2r[i]); i++);
+      if (i == nw)
+         return;
+/*
+ *    Sieze mutex lock and do the work if I'm still in the game
+ */
+      ATL_mutex_lock(pp->combmut);
+      if (ATL_IsBitSetBV(pp->combDoneBV, rank)) /* I'm done */
+      {
+         ATL_mutex_unlock(pp->combmut);
+         return;
+      }
+/*
+ *    Take buffers from as far right as possible, as they have least to do
+ */
+      for (i=nw-1; i > iam; i--)
+      {
+/*
+ *       If target is ready, there must be no unfinished nodes between us
+ */
+         if (ATL_IsBitSetBV(pp->combReadyBV, i2r[i])) /* got a candidate */
+         {
+            int j;
+            for (j=iam+1; j < i; j++)
+               if (!ATL_IsBitSetBV(pp->combDoneBV, i2r[j])) 
+                  break;
+            if (j == i)  /* he's a legal partner */
+               break;
+         }
+      }
+      if (i != iam)  /* work still needs to be done */
+      {
+         int partner=i;
+         d = i2r[i];
+         ATL_SetBitBV(pp->combDoneBV, d);        /* he's done, can quit */
+         ATL_UnsetBitBV(pp->combReadyBV, d);     /* he's not avail, done  */
+         ATL_UnsetBitBV(pp->combReadyBV, rank);  /* I'm not avail, working */
+         ATL_mutex_unlock(pp->combmut);
+         lp->DoComb(lp->opstruct, iam, partner);
+         pp->threads[d].rank = d;  /* put finished partner's thread */
+         pp->threads[d].P = P;     /* info back to global values */
+/*
+ *       After finishing my combine, my buffer ready for other's use
+ */
+         if (iam)
+         {
+            ATL_mutex_lock(pp->combmut);
+            ATL_SetBitBV(pp->combReadyBV, rank);    /* now avail again */
+         }
+/*
+ *       Check if I'm the last guy left, if so, combine is complete
+ *       Only iam=0 allowed to be last guy (0's buff has final answer)
+ */
+         else  /* I'm 0, so see if combine is done */
+         {
+            ATL_mutex_lock(pp->combmut);
+            if (ATL_FindFirstUnsetBitBV(pp->combDoneBV, 1) == -1)
+            {
+               tp->rank = rank;                       /* put my thr info back */
+               tp->P = P;                             /* to global values */
+               ATL_SetBitBV(pp->combDoneBV, rank);    /* I'm done */
+               ATL_UnsetBitBV(pp->combReadyBV, rank); /* so not ready */
+               ATL_mutex_unlock(pp->combmut);
+               return;
+            }
+         }                             /* end else I'm 0 */
+      }                                /* end work still to be done */
+      ATL_mutex_unlock(pp->combmut);
+   }     
+   while(1);   /* end combine loop */
+}
+
 void *ATL_threadpool(void *vp)
 {
    ATL_thread_t *tp=vp;
@@ -11303,23 +11852,32 @@ void *ATL_threadpool(void *vp)
       #ifdef DEBUG
          fprintf(stderr, "%d,%d: WOKE UP\n", rank, pp->wcnt);
       #endif
+      lp = tp->vp;
+/*
+ *    leftcomb needs mapping array even if same as rank.  Having first waker
+ *    fill it now avoids having to barrier later.
+ */
+      if (!pp->wcnt && !ATL_TPF_DYNCOMB(pp) && pp->nthr == pp->nworkers)
+      {
+         int i;
+         for (i=pp->nthr-1; i >= 0; i--)
+            pp->icomm[i] = i;
+      }
 /*
  *    Each thread sets his bit saying he's done, then last guy to wake up
  *    reverses them so all non-participating threads are shown as done.
+ *    We only need to this if nworkers != nthr, since otherwise DoneBV is 0
  */
-      lp = tp->vp;
+      iam = (pp->nworkers == pp->nthr) ? rank : pp->wcnt;
       if (lp->DoComb && pp->nworkers != pp->nthr)
       {
-         iam = pp->wcnt;              /* find out my order of awakening */
          ATL_mutex_lock(pp->combmut);
          ATL_SetBitBV(pp->combDoneBV, rank);
          if (iam == pp->nworkers-1) 
             ATL_ReverseAllBitsBV(pp->combDoneBV);
          ATL_mutex_unlock(pp->combmut);
-         pp->icomm[pp->wcnt] = rank;
+         pp->icomm[iam] = rank;
       }
-      else
-         iam = (pp->nworkers == pp->nthr) ? rank : pp->wcnt;
       DOPOLL = ATL_TPF_POLL(pp); /* remember wait type */
       pp->wcnt++;
       ATL_mutex_unlock(pp->tpmut);
@@ -11368,90 +11926,11 @@ void *ATL_threadpool(void *vp)
             }
             while (KEEPON);
          } 
-/*
- *       Let everyone know my data is ready for combining
- *       Thread 0's work is not available because some combines expect
- *       thread 0 to have the answer
- */
-         if (iam)
-         {
-            ATL_mutex_lock(pp->combmut);
-            ATL_SetBitBV(pp->combReadyBV, rank);
-            ATL_mutex_unlock(pp->combmut);
-         }
-/*
- *       Now participate in combine until everything is done, or someone
- *       combines my stuff, and thus ends my participation
- */
-         while(1)
-         {
-            int d;
-/*
- *          If my combDone bit is set, somone has combined my results,
- *          so I'm finished
- */
-            if (ATL_IsBitSetBV(pp->combDoneBV, rank))
-                break;
-/*
- *          Seize mutex lock and do the work if still there & I'm still in game
- */
-            ATL_mutex_lock(pp->combmut);
-            if (ATL_IsBitSetBV(pp->combDoneBV, rank)) /* I'm done */
-            {
-               ATL_mutex_unlock(pp->combmut);
-               break;
-            }
-            d = ATL_FindFirstSetBitBV(pp->combReadyBV, 0);
-            if (d == rank)
-               d = (rank != P-1) ?  
-                  ATL_FindFirstSetBitBV(pp->combReadyBV, rank+1) : -1;
-            if (d != -1)  /* work still needs to be done */
-            {
-               int partner=d;
-               ATL_SetBitBV(pp->combDoneBV, d);
-               ATL_UnsetBitBV(pp->combReadyBV, d);
-               ATL_UnsetBitBV(pp->combReadyBV, rank);  /* not avail, working */
-               ATL_mutex_unlock(pp->combmut);
-               if (pp->nworkers != pp->nthr)  /* need to translate rank */
-               {
-                  int k ;
-                  for (k=0; pp->icomm[k] != d; k++);
-                  partner = k;
-               }
-               lp->DoComb(lp->opstruct, iam, partner);
-               pp->threads[d].rank = d;  /* put finished partner's thread */
-               pp->threads[d].P = P;     /* info back to global values */
-/*
- *             Check if I'm the last guy left, if so, combine is complete
- */
-               ATL_mutex_lock(pp->combmut);
-               if (ATL_FindFirstUnsetBitBV(pp->combDoneBV, 0) == rank)
-               {
-                  if (rank != P-1)
-                     d = ATL_FindFirstUnsetBitBV(pp->combDoneBV, rank+1);
-                  else
-                     d = -1;
-                  if (d == -1)  /* I was the last guy, so it's done! */
-                  {
-                     tp->rank = rank;  /* put my thr info back */
-                     tp->P = P;        /* to global values */
-                     ATL_SetBitBV(pp->combDoneBV, rank);  /* I'm done */
-                     ATL_UnsetBitBV(pp->combReadyBV, rank); /* so not ready */
-                     ATL_mutex_unlock(pp->combmut);
-                     break;
-                  }
-               }
-	       if (iam)  /* 0 is never avail to force him to have result */
-                  ATL_SetBitBV(pp->combReadyBV, rank);    /* now avail again */
-            }
-            else if (iam)  /* No work to do, leave to avoid lock contention */
-            {
-               ATL_mutex_unlock(pp->combmut);
-               break;
-            }
-            ATL_mutex_unlock(pp->combmut);
-         }     /* end combine loop */
-      }        /* end combine if */
+         if (ATL_TPF_DYNCOMB(pp))
+            ATL_dyncomb(pp, tp, lp, P, rank, iam);
+         else
+            ATL_leftcomb(pp, tp, lp, P, rank, iam);
+      }     /* end combine if */
       else  /* If I don't combine, reset my tp info */
       {
          tp->rank = rank;  /* put my thr info back */
