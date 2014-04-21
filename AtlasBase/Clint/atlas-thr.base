@@ -110,7 +110,7 @@ struct ATL_LaunchStruct
 /*
  * Function pointer taking the pool as an argument that does the work.
  */
-typedef void (*ATL_tpjfunc_t)(void *pp, int rank);
+typedef void (*ATL_tpjfunc_t)(void *pp, int rank, int vrank);
 /*
  * A thread pool takes can combine results at end of run if needed.
  * It takes everything the jobfunc does, + the vranks to combine
@@ -166,9 +166,10 @@ struct ATL_ThreadPool
                         void *PD, void *extra);
    ATL_tpool_t *ATL_NewThreadPool(const int P, int ICOM, void *vp);
    void ATL_FreeThreadPool(ATL_tpool_t *pp);
-   void ATL_oldjobwrap(void *vpp, int rank);
-   void ATL_oldcombwrap(void *vpp, int rank, int me, int him);
-   int ATL_tpool_dojob(ATL_tpool_t *pp, int rank);
+   void ATL_oldjobwrap(void *vpp, int rank, int vrank);
+   void ATL_oldcombwrap(void *vpp, int rank, int vrank, 
+                        int hisrank, int vhisrank);
+   int ATL_tpool_dojob(ATL_tpool_t *pp, const int rank, const int CallFrWrk);
    void *ATL_threadpool(void *vp);
 #endif
    #undef VUINT
@@ -459,6 +460,50 @@ struct ATL_SyrkK
 };
 #ifdef TYPE
    #define VINT volatile int
+/*
+ * This structure used when K <= MAXKB, and M and N are large
+ */
+typedef struct ATL_tamm_tNK ATL_tamm_rkK_t;
+struct ATL_tamm_tNK
+{
+   ammkern_t amm_b0;
+   cm2am_t a2blk;       /* block copy for A */
+   cm2am_t b2blk;       /* block copy for B, applies alpha */
+   ablk2cmat_t blk2c;   /* copy that applies beta  */
+   const TYPE *A;       /* input A matrix */
+   const TYPE *B;       /* input B matrix */
+   TYPE *C;             /* output matrix */
+   TYPE *w;             /* nthr wsz-len thread-local workspaces */
+   const TYPE *alpha;   /* ptr to alpha */
+   const TYPE *beta;    /* ptr to beta */
+   void *B1cpyAsgCtr;   /* 1: 1st B blk not assgnd, caller copies,0: cpy done */
+   void *B1cpyDonCtr;   /* 1: 1st B blk not copied yet, 0: cpy done */
+   void *AcpyCtr;       /* when 0, all of A has been copied */
+   void **MbCtr;        /* nnblk-len array of Mblk ctrs */
+   void *BAssgBV;       /* 1 means being copied, 0: not assigned */
+   void *BDoneBV;       /* 1 means already copied, 0: not yet copied */
+   void *cpBmut;        /* protects B[assg,done]BV */
+   size_t wsz;          /* size of local workspace */
+   int BCPYDONE;        /* if 1, all of B has been copied */
+   int ACPYDONE;        /* if 1, all of A has been copied */
+   int bsz;             /* size of common workspace for B */
+   int TA;              /* 0: noTrans; 1: Trans */
+   int TB;              /* 0: noTrans; 1: Trans */
+   int N;               /* # cols of C; N <= MAXNB */
+   int K;               /* common dim A&B; K <= MAXKB */
+   int nmblks;          /* # of M blocks, including any partial block */
+   int mr;              /* M%mu */
+   int nbm;             /* # of M blocks 1 MbCtr gives out (1st col always 1) */
+   int nmu;             /* CEIL(mb/mu) */
+   int nmuL;            /* # of mus in final block */
+   int mb;              /* block size for all blocks but last */
+   int mbL;             /* block size for last block */
+   int nnu;             /* CEIL(N/nu) */
+   int KB0;             /* if kmajor, it is CEIL(K/ku)*ku, else K */
+   int lda;             /* leading dim of A */
+   int ldb;             /* leading dim of B */
+   int ldc;             /* leading dim of C */
+};
 /*
  * This structure used when N <= MAXNB && K <= MAXKB
  */
@@ -2176,7 +2221,7 @@ void *ATL_log2tlaunch(void *vp)
 void *ATL_threadpool_launch(void *vp)
 {
    ATL_thread_t *tp = vp;
-   ATL_tpool_t *pp = tp->vp;
+   ATL_tpool_t *pp = ATL_TP_PTR;
    const int P = pp->nthr;
    int i;
 /*
@@ -2193,7 +2238,7 @@ void *ATL_threadpool_launch(void *vp)
 /*
  * Thread 0 now participates in pool
  */
-   ATL_thread_pool(tp);
+   ATL_threadpool(tp);
 /*
  * When pool finished, await everyone to quit, then free the pool
  */
@@ -12201,23 +12246,24 @@ void *ATL_threadpool_launch(void *vp)
  * as the problem definition, and DoWork expects to get a pointer to my entry
  * in the thread array
  */
-void ATL_oldjobwrap(void *vpp, int rank)
+void ATL_oldjobwrap(void *vpp, int rank, int vrank)
 {
    ATL_tpool_t *pp = vpp;
    ATL_LAUNCHSTRUCT_t *lp = pp->PD;
+   void *vp = pp->threads[rank].vp;
 
    pp->threads[rank].vp = lp;
    lp->DoWork(lp, pp->threads+rank);
-   pp->threads[rank].vp = NULL;
+   pp->threads[rank].vp = vp;
 }
 
-void ATL_oldcombwrap(void *vpp, int rank, int me, int him)
+void ATL_oldcombwrap(void *vpp, int rank, int vrank, int hisrank, int vhisrank)
 {
    ATL_tpool_t *pp = vpp;
    ATL_LAUNCHSTRUCT_t *lp = pp->PD;
 
    if (lp->DoComb)
-      lp->DoComb(lp->opstruct, me, him);
+      lp->DoComb(lp->opstruct, vrank, vhisrank);
 }
 
 /*
@@ -12228,7 +12274,7 @@ void ATL_oldcombwrap(void *vpp, int rank, int me, int him)
 static void ATL_dyncomb(ATL_tpool_t *pp, const int rank, const int vrank)
 {
    const unsigned int P=pp->nworkers;
-   ATL_thread_t tp = pp->threads;
+   ATL_thread_t *tp = pp->threads + rank;
 /*
  * Let everyone know my data is ready for combining
  * Thread 0's work is not available because some combines expect
@@ -12337,6 +12383,7 @@ static void ATL_leftcomb(ATL_tpool_t *pp, const int rank, const int vrank)
    const unsigned P = pp->nthr;
    unsigned int *i2r = (unsigned int*) pp->icomm;
    const unsigned int nw = pp->nworkers;
+   ATL_thread_t *tp = pp->threads + rank;
 /*
  * Let everyone know my data is ready for combining
  * Thread 0's work is not available because some combines expect
@@ -12438,15 +12485,22 @@ static void ATL_leftcomb(ATL_tpool_t *pp, const int rank, const int vrank)
 /*
  * Do a task using thread pool pp; RETURNS: virtual rank (0...nworkers-1)
  */
-int ATL_tpool_dojob(ATL_tpool_t *pp, const int rank)
+int ATL_tpool_dojob
+(
+   ATL_tpool_t *pp,    /* thread pool to use */
+   const int rank,     /* actual rank, my tp found at pp->threads+rank */
+   const int CFWTHR    /* 1: worker thr called, 0: ATL_threadpool loop called */
+)
 {
    const int nworkers=pp->nworkers, nthr = pp->nthr, SUBSET=(nworkers != nthr);
-   int vrank;
+   int vrank, iwrk;
    void *tpmut = pp->tpmut;
+   ATL_thread_t *tp = pp->threads+rank;
 /*
  * Enroll thread in working pool
  */
-   ATL_mutex_lock(tpmut);
+   if (CFWTHR)
+      ATL_mutex_lock(tpmut);
 /*
  * leftcomb needs mapping array even if vrank==rank.  Having first worker
  * fill it out now avoids having to barrier later.
@@ -12493,14 +12547,48 @@ int ATL_tpool_dojob(ATL_tpool_t *pp, const int rank)
          pp->icomm[vrank] = rank;                 /* create map vrank->rank */
       }
    }
-   pp->wcnt++;               /* inc count of participating workers */
+   iwrk = pp->wcnt++;        /* inc count of participating workers */
    ATL_mutex_unlock(tpmut);  /* let other threads enroll in job */
+/*
+ * If this was called from threadloop, I may need to wake other workers
+ * Only if I'm the first worker to get here (!iwrk) & called from tl (!CFWTHR)
+ */
+   if (!(CFWTHR+iwrk) && ATL_TPF_ZEROWAKES(pp))
+   #if defined(ATL_ARCH_XeonPHI) && ATL_NTHREADS%4 == 0
+   {
+      if (ATL_TPF_MICSORTED(pp))
+      {
+         int k, nw=pp->nworkers-1;
+         const int p4 = (pp->nthr >> 2);
+
+         n = pp->nworkers>>2;
+         n = Mmin(n, p4);
+         for (k=1; k < p4 && nw; k++, nw--)
+            ATL_cond_signal(pp->wcond);
+         for (k=0; nw && k < p4; k++, nw--)
+            ATL_cond_signal(pp->wcond2);
+         for (k=0; nw && k < p4; k++, nw--)
+            ATL_cond_signal(pp->wcond3);
+         for (k=0; nw && k < p4; k++, nw--)
+            ATL_cond_signal(pp->wcond4);
+      }
+      else
+   #else
+      {
+         int k;
+         for (k=1; k < pp->nworkers; k++)
+            ATL_cond_signal(pp->wcond);
+      }
+   #endif
+   #if defined(ATL_ARCH_XeonPHI) && ATL_NTHREADS%4 == 0
+   }
+   #endif
 /*
  * Now, do work based on PD; change thread info to use virtual rank info
  */
    tp->P = pp->nworkers;         /* make jobf think only nworkers thrs */
    tp->rank = vrank;             /* and use virtual rank */
-   pp->jobf(pp, rank);           /* do the required task */
+   pp->jobf(pp, rank, vrank);    /* do the required task */
 /*
  * If the calling routine has requested it, perform dynamic combine
  */
@@ -12542,10 +12630,9 @@ int ATL_tpool_dojob(ATL_tpool_t *pp, const int rank)
 void *ATL_threadpool(void *vp)
 {
    ATL_thread_t *tp=vp;
-   ATL_tpool_t *pp=tp->vp;
+   ATL_tpool_t *pp = ATL_TP_PTR;
    const unsigned int rank=tp->rank;
-   int DOPOLL = ATL_TPF_POLL(pp), IAMDONE;
-   void *tpmut=pp->tpmut;
+   void *tpmut = pp->tpmut;
 
    #ifdef DEBUG
       fprintf(stderr, "%d: WORKER START POLL=%d, P=%d\n", rank, DOPOLL, P);
@@ -12565,9 +12652,8 @@ void *ATL_threadpool(void *vp)
  */
       if (pp->jobf)
       {
-         ATL_mutex_unlock(tpmut);
-         vrank = ATL_tpool_dojob(pp, rank);
-         ATL_mutex_lock(tpmut);
+         vrank = ATL_tpool_dojob(pp, rank, 0);
+         ATL_mutex_lock(tpmut); 
 /*
  *       Threads go to sleep or poll for work after each job
  *       If I'm the last guy, signal master process we're done
@@ -12604,6 +12690,7 @@ void *ATL_threadpool(void *vp)
          ATL_cond_wait(pp->wcond, tpmut);
       }
       while (ATL_TPF_WDONE(pp) || pp->wcnt >= pp->nworkers);
+@beginskip
 /*
  *    If DoWakeup set, thread awakened by master wakes other workers wt signal
  */
@@ -12641,6 +12728,7 @@ void *ATL_threadpool(void *vp)
       #if defined(ATL_ARCH_XeonPHI) && ATL_NTHREADS%4 == 0
       }
       #endif
+@endskip
    }  /* end loop over tasks */
 /*
  * When a thread exits, decrement thread count
@@ -12673,7 +12761,7 @@ void ATL_InitThreadPoolStartup(int P, void *pd, void *extra)
    ATL_assert(!ATL_TP_PTR);
 
 
-   ATL_TP_PTR = pp = ATL_NewThreadPool(ATL_NTHREADS, 1, pp);
+   ATL_TP_PTR = pp = ATL_NewThreadPool(ATL_NTHREADS, 1, pd);
    ATL_mutex_lock(pp->tpmut);
    pp->nworkers = P;
    pp->PD = pd;
@@ -12716,13 +12804,11 @@ void ATL_goParallel
          ATL_InitThreadPoolStartup(P, PD, extra);
       }
    }
+   pp = ATL_TP_PTR;
 
    if (!JUST_STARTED)
    {
       ATL_mutex_lock(pp->tpmut);
-/*
- *    If I'm using a new context
- */
       pp->PD = PD;
       pp->extra = extra;
       pp->jobf = DoWork;
@@ -12805,7 +12891,7 @@ ATL_tpool_t *ATL_NewThreadPool
       pp->threads = malloc(P*sizeof(ATL_thread_t));
       ATL_assert(pp->threads);
       if (!vp)
-         vp = pp->threads;
+         vp = pp;
       for (i=0; i < P; i++)
       {
          pp->threads[i].rank = i;
