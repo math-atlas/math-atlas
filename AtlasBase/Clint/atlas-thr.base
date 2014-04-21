@@ -168,7 +168,7 @@ struct ATL_ThreadPool
    void ATL_FreeThreadPool(ATL_tpool_t *pp);
    void ATL_oldjobwrap(void *vpp, int rank);
    void ATL_oldcombwrap(void *vpp, int rank, int me, int him);
-   int ATL_tpool_dojob(ATL_tpool_t *pp);
+   int ATL_tpool_dojob(ATL_tpool_t *pp, int rank);
    void *ATL_threadpool(void *vp);
 #endif
    #undef VUINT
@@ -1249,6 +1249,7 @@ int ATL_@(op)GlobalAtomicCount(void *vp, int rank)
    return(j);
 }
 @ROUT ATL_IsFirstThreadedCall
+#include "atlas_threads.h"
 /*
  * A kludge for initializing thread pool related stuff on first call
  * in portable fashion.  
@@ -2339,7 +2340,7 @@ void ATL_goparallel
  * If using threadpool, use invoke the newer goParallel with old-skool wrappers
  */
 #elif ATL_USE_THREADPOOL
-   ATL_goParallel(P, ATL_odjobwrap, ATL_oldcombwrap, &ls, NULL);
+   ATL_goParallel(P, ATL_oldjobwrap, ATL_oldcombwrap, &ls, NULL);
 @beginskip
    ATL_tpool_t *pp;
    int n, *ip;
@@ -11407,11 +11408,11 @@ void Mjoin(PATL,tsyrk_amm)
     }
 }
 @ROUT ATL_threadpool_old
-#ifdef ATL_USE_THREADPOOL
 #define ATL_TP_DECL 1
 #include "atlas_threads.h"
 #include "atlas_misc.h"
 #include "atlas_bitvec.h"
+#ifdef ATL_USE_THREADPOOL
 
 @beginskip
 void *ATL_threadpool(void *vp)
@@ -12191,10 +12192,10 @@ void *ATL_threadpool_launch(void *vp)
 }
 #endif
 @ROUT ATL_threadpool
-#ifdef ATL_USE_THREADPOOL
 #include "atlas_threads.h"
 #include "atlas_misc.h"
 #include "atlas_bitvec.h"
+#ifdef ATL_USE_THREADPOOL
 /*
  * These are wrapperf for original codes, which expect to get a launchstruct
  * as the problem definition, and DoWork expects to get a pointer to my entry
@@ -12226,7 +12227,8 @@ void ATL_oldcombwrap(void *vpp, int rank, int me, int him)
  */
 static void ATL_dyncomb(ATL_tpool_t *pp, const int rank, const int vrank)
 {
-   const unsigned int P=pp->nworkers
+   const unsigned int P=pp->nworkers;
+   ATL_thread_t tp = pp->threads;
 /*
  * Let everyone know my data is ready for combining
  * Thread 0's work is not available because some combines expect
@@ -12399,7 +12401,7 @@ static void ATL_leftcomb(ATL_tpool_t *pp, const int rank, const int vrank)
          ATL_UnsetBitBV(pp->combReadyBV, d);     /* he's not avail, done  */
          ATL_UnsetBitBV(pp->combReadyBV, rank);  /* I'm not avail, working */
          ATL_mutex_unlock(pp->combmut);
-         lp->DoComb(lp->opstruct, vrank, partner);
+         pp->combf(pp, rank, vrank, d, partner);
          pp->threads[d].rank = d;  /* put finished partner's thread */
          pp->threads[d].P = P;     /* info back to global values */
 /*
@@ -12436,7 +12438,7 @@ static void ATL_leftcomb(ATL_tpool_t *pp, const int rank, const int vrank)
 /*
  * Do a task using thread pool pp; RETURNS: virtual rank (0...nworkers-1)
  */
-int ATL_tpool_dojob(ATL_tpool_t *pp)
+int ATL_tpool_dojob(ATL_tpool_t *pp, const int rank)
 {
    const int nworkers=pp->nworkers, nthr = pp->nthr, SUBSET=(nworkers != nthr);
    int vrank;
@@ -12481,7 +12483,7 @@ int ATL_tpool_dojob(ATL_tpool_t *pp)
       vrank = pp->wcnt;
       if (vrank >= nworkers)   /* If I don't participate in this job */
          return(vrank);        /* get out of here now */
-      if (combf)               /* If I need to do a combine after job */
+      if (pp->combf)           /* If I need to do a combine after job */
       {
          ATL_mutex_lock(pp->combmut);
          ATL_SetBitBV(pp->combDoneBV, rank);      /* tmp done wt combine */
@@ -12498,7 +12500,7 @@ int ATL_tpool_dojob(ATL_tpool_t *pp)
  */
    tp->P = pp->nworkers;         /* make jobf think only nworkers thrs */
    tp->rank = vrank;             /* and use virtual rank */
-   pp->jobf(pp, PD, vp, extra);  /* do the required task */
+   pp->jobf(pp, rank);           /* do the required task */
 /*
  * If the calling routine has requested it, perform dynamic combine
  */
@@ -12564,7 +12566,7 @@ void *ATL_threadpool(void *vp)
       if (pp->jobf)
       {
          ATL_mutex_unlock(tpmut);
-         vrank = ATL_tpool_dojob(pp);
+         vrank = ATL_tpool_dojob(pp, rank);
          ATL_mutex_lock(tpmut);
 /*
  *       Threads go to sleep or poll for work after each job
@@ -12606,7 +12608,7 @@ void *ATL_threadpool(void *vp)
  *    If DoWakeup set, thread awakened by master wakes other workers wt signal
  */
       if (ATL_TPF_ZEROWAKES(pp) && pp->wcnt == 0)
-      #ifdef ATL_ARCH_XeonPHI && ATL_NTHREADS%4 == 0
+      #if defined(ATL_ARCH_XeonPHI) && ATL_NTHREADS%4 == 0
       {
          if (ATL_TPF_MICSORTED(pp))
          {
@@ -12636,7 +12638,7 @@ void *ATL_threadpool(void *vp)
             ATL_mutex_lock(tpmut);
          }
       #endif
-      #ifdef ATL_ARCH_XeonPHI && ATL_NTHREADS%4 == 0
+      #if defined(ATL_ARCH_XeonPHI) && ATL_NTHREADS%4 == 0
       }
       #endif
    }  /* end loop over tasks */
@@ -12676,11 +12678,11 @@ void ATL_InitThreadPoolStartup(int P, void *pd, void *extra)
    pp->nworkers = P;
    pp->PD = pd;
    pp->extra = extra;
-   #ifdef ATL_ARCH_XeonPHI && ATL_NTHREADS%4 == 0
+   #if defined(ATL_ARCH_XeonPHI) && ATL_NTHREADS%4 == 0
       ATL_TPF_SET_MICSORTED(pp);
    #endif
 
-   ATL_thread_start(pp->threads, 0, 0, ATL_threadpool_launch, tp);
+   ATL_thread_start(pp->threads, 0, 0, ATL_threadpool_launch, pp->threads);
 /*
  * We leave function still holding the lock, so that master can go to sleep
  * awaiting job completion before spawned threads are able to complete
@@ -12722,10 +12724,9 @@ void ATL_goParallel
  *    If I'm using a new context
  */
       pp->PD = PD;
-      pd->extra = extra;
-      pd->jobf = DoWork;
-      pd->combf = DoComb;
-      tp = pp->threads;
+      pp->extra = extra;
+      pp->jobf = DoWork;
+      pp->combf = DoComb;
       if (DoComb)
       {
          ATL_UnsetAllBitsBV(pp->combReadyBV);
@@ -12750,14 +12751,14 @@ void ATL_goParallel
  *    Wake threads up to do the new job
  */
       if (ATL_TPF_ZEROWAKES(pp))
-         ATL_cond_signal(ATL_TP_WCOND);
+         ATL_cond_signal(pp->wcond);
       else
-         ATL_cond_bcast(ATL_TP_WCOND);
+         ATL_cond_bcast(pp->wcond);
    }
    else /* thread pool just started up, I have both locks */
    {
-      pd->jobf = DoWork;
-      pd->combf = DoComb;
+      pp->jobf = DoWork;
+      pp->combf = DoComb;
    }
 /*
  * Threads have started, so this routine awaits completion of task
@@ -12794,6 +12795,7 @@ ATL_tpool_t *ATL_NewThreadPool
    void *vp      /* what to initialize thread arrays vp to */
 )
 {
+   ATL_tpool_t *pp;
    pp = calloc(1, sizeof(ATL_tpool_t));
    ATL_assert(pp);
    if (P)
@@ -12802,6 +12804,8 @@ ATL_tpool_t *ATL_NewThreadPool
       pp->nthr = P;
       pp->threads = malloc(P*sizeof(ATL_thread_t));
       ATL_assert(pp->threads);
+      if (!vp)
+         vp = pp->threads;
       for (i=0; i < P; i++)
       {
          pp->threads[i].rank = i;
@@ -12816,7 +12820,7 @@ ATL_tpool_t *ATL_NewThreadPool
       ATL_assert(pp->threads);
    }
    pp->combmut = ATL_mutex_init();
-   pp->mtmut = ATL_mutex_init();
+   pp->tpmut = ATL_mutex_init();
    pp->mcond = ATL_cond_init();
    pp->wcond = ATL_cond_init();
    #ifdef ATL_ARCH_XeonPHI
@@ -12826,7 +12830,6 @@ ATL_tpool_t *ATL_NewThreadPool
    #endif
    pp->combReadyBV = ATL_NewBV(P);
    pp->combDoneBV = ATL_NewBV(P);
-   pp->tp
    return(pp);
 }
 
@@ -12835,7 +12838,7 @@ void ATL_FreeThreadPool(ATL_tpool_t *pp)
    if (!pp)
       return;
    if (pp->icomm)
-      free(pp->icomm);
+      free((void*)pp->icomm);
    if (pp->threads)
       free(pp->threads);
    if (pp->combmut)
