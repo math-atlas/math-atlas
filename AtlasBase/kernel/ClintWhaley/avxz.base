@@ -9,11 +9,13 @@
    #define vaddpd vaddps
    #define vfmadd231pd vfmadd231ps
    #define vbroadcastsd vbroadcastss
-   #define MOVC vmovnraps
+@skip   #define MOVC vmovnraps
+   #define MOVC vmovaps
    #define vbroadcastf64x4 vbroadcastf32x4
 #else
    #define SZ 8
-   #define MOVC vmovnrapd
+@skip   #define MOVC vmovntpd
+   #define MOVC vmovapd
 #endif
 #if !defined(KB) || KB == 0
    #ifdef KB
@@ -93,6 +95,9 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
 ALIGN16
 .globl ATL_asmdecor(ATL_USERMM)
 ATL_asmdecor(ATL_USERMM):
+   #define PFDA 384
+   #define PFDB 384
+   @iexp sz 4608 0 +
    @iexp off -8192 0 +
    @iexp ia @(off) 0 +
    @iexp ib 0 0 +
@@ -104,15 +109,13 @@ ATL_asmdecor(ATL_USERMM):
       vprefetch0 (pA)
    lea -1(%rsi), jb    /* 0 if nnu == 1 */
    or ia, jb
-      prefC((pC))
    jnz GENCASE
-      prefC(64(pC))
    mov $KB*24*8, ia    /* ia = incA = KB*mu*sz */
    mov $KB*8*SZ, jb    /* ib = incB = kb*nu*sz */
    mov $24*8*8, ic     /* ic = incC = mu*nu*sz */
+      sub $@(off), pC              /* extend 7-byte operand range */
 
    vbroadcastf64x4 (pB), rB0      /* {b3, b2, b1, b0, b3, b2,  b1, b0} */
-      sub $@(off), pC              /* extend 7-byte operand range */
       @iexp ib @(ib) 4 +
    vbroadcastf64x4 @(ib)*SZ(pB), rB1  /* {b7, b6, b5, b4, b7, b6,  b5, b4} */
       @iexp ib @(ib) 4 +
@@ -121,21 +124,18 @@ ATL_asmdecor(ATL_USERMM):
       sub $@(off), pB              /* extend 7-byte operand range */
    vmovapd 64(pA), rA1            /* {a15,a14,a13,a12,a11,a10, a9, a8} */
    vmovapd 128(pA), rA2           /* {a23,a22,a21,a20,a19,a18,a17,a16} */
+      vmovapd 3*64(pA), ra0
+      vmovapd 4*64(pA), ra1
+      @iexp ia @(ia) 320
+      sub $@(off), pA              /* extend 7-byte operand range */
 /*
  * First K-iteration peeled to allow zeroing of rCxx
  */
    vmulpd rB0{aaaa}, rA0, rC00
-   #if KB > 1
-      vmovapd 192(pA), ra0
-   #endif
+      vmovapd @(ia)(pA), ra2
+      @iexp ia @(ia) 64 +
    vmulpd rB0{aaaa}, rA1, rC10
-   #if KB > 1
-      vmovapd 256(pA), ra1
-   #endif
    vmulpd rB0{aaaa}, rA2, rC20
-   #if KB > 1
-      vmovapd 320(pA), ra2
-   #endif
    vmulpd rB0{bbbb}, rA0, rC01
    vmulpd rB0{bbbb}, rA1, rC11
    vmulpd rB0{bbbb}, rA2, rC21
@@ -145,10 +145,8 @@ ATL_asmdecor(ATL_USERMM):
    vmulpd rB0{dddd}, rA0, rC03
    vmulpd rB0{dddd}, rA1, rC13
    vmulpd rB0{dddd}, rA2, rC23
-   #if KB > 1
       vbroadcastf64x4 @(ib)*SZ@(off)(pB), rB0
       @iexp ib @(ib) 4 +
-   #endif
    vmulpd rB1{aaaa}, rA0, rC04
    vmulpd rB1{aaaa}, rA1, rC14
    vmulpd rB1{aaaa}, rA2, rC24
@@ -159,122 +157,18 @@ ATL_asmdecor(ATL_USERMM):
    vmulpd rB1{cccc}, rA1, rC16
    vmulpd rB1{cccc}, rA2, rC26
    vmulpd rB1{dddd}, rA0, rC07
-   #if KB > 1
-      vmovapd 384(pA), rA0
-   #endif
+      vmovapd @(ia)(pA), rA0
+      @iexp ia @(ia) 64 +
    vmulpd rB1{dddd}, rA1, rC17
-   #if KB > 1
-      vmovapd 448(pA), rA1
-   #endif
+      vmovapd @(ia)(pA), rA1
+      @iexp ia @(ia) 64 +
    vmulpd rB1{dddd}, rA2, rC27
-   #if KB > 1
       vbroadcastf64x4 @(ib)*SZ@(off)(pB), rB1
       @iexp ib @(ib) 4 +
-   #endif
 /*
  * 2nd peeled iteration
  */
    #if KB > 1
-      FMAC rB0{aaaa}, ra0, rC00
-         vmovapd 512(pA), rA2
-         @iexp ia @(ia) 576 +
-      FMAC rB0{aaaa}, ra1, rC10
-      FMAC rB0{aaaa}, ra2, rC20
-      #if KB > 2
-         sub $@(off), pA              /* extend 7-byte operand range */
-      #endif
-      FMAC rB0{bbbb}, ra0, rC01
-      FMAC rB0{bbbb}, ra1, rC11
-      FMAC rB0{bbbb}, ra2, rC21
-      FMAC rB0{cccc}, ra0, rC02
-      FMAC rB0{cccc}, ra1, rC12
-      FMAC rB0{cccc}, ra2, rC22
-      FMAC rB0{dddd}, ra0, rC03
-      FMAC rB0{dddd}, ra1, rC13
-      FMAC rB0{dddd}, ra2, rC23
-      #if KB > 2
-         vbroadcastf64x4 @(ib)*SZ@(off)(pB), rB0
-         @iexp ib @(ib) 4 +
-      #endif
-      FMAC rB1{aaaa}, ra0, rC04
-      FMAC rB1{aaaa}, ra1, rC14
-      FMAC rB1{aaaa}, ra2, rC24
-      FMAC rB1{bbbb}, ra0, rC05
-      FMAC rB1{bbbb}, ra1, rC15
-      FMAC rB1{bbbb}, ra2, rC25
-      FMAC rB1{cccc}, ra0, rC06
-      FMAC rB1{cccc}, ra1, rC16
-      FMAC rB1{cccc}, ra2, rC26
-      FMAC rB1{dddd}, ra0, rC07
-      #if KB > 2
-         vmovapd @(ia)(pA), ra0
-         @iexp ia @(ia) 64 +
-      #endif
-      FMAC rB1{dddd}, ra1, rC17
-      #if KB > 2
-         vmovapd @(ia)(pA), ra1
-         @iexp ia @(ia) 64 +
-      #endif
-      FMAC rB1{dddd}, ra2, rC27
-      #if KB > 2
-         vbroadcastf64x4 @(ib)*SZ@(off)(pB), rB1
-         @iexp ib @(ib) 4 +
-      #endif
-   #endif
-/* 
- * Remaining iterations all use FMAC and standard addressing
- */
-   @iexp ikb 2 0 +
-   #if KB > @(ikb)
-      @iexp ikb @(ikb) 1 +
-         vmovapd @(ia)(pA), ra2
-         @iexp ia @(ia) 64 +
-      FMAC rB0{aaaa}, rA0, rC00
-      FMAC rB0{aaaa}, rA1, rC10
-      FMAC rB0{aaaa}, rA2, rC20
-      FMAC rB0{bbbb}, rA0, rC01
-      FMAC rB0{bbbb}, rA1, rC11
-      FMAC rB0{bbbb}, rA2, rC21
-      FMAC rB0{cccc}, rA0, rC02
-      FMAC rB0{cccc}, rA1, rC12
-      FMAC rB0{cccc}, rA2, rC22
-      FMAC rB0{dddd}, rA0, rC03
-      FMAC rB0{dddd}, rA1, rC13
-      FMAC rB0{dddd}, rA2, rC23
-      #if KB > @(ikb)
-         vbroadcastf64x4 @(ib)*SZ@(off)(pB), rB0
-         @iexp ib @(ib) 4 +
-      #endif
-      FMAC rB1{aaaa}, rA0, rC04
-      FMAC rB1{aaaa}, rA1, rC14
-      FMAC rB1{aaaa}, rA2, rC24
-      FMAC rB1{bbbb}, rA0, rC05
-      FMAC rB1{bbbb}, rA1, rC15
-      FMAC rB1{bbbb}, rA2, rC25
-      FMAC rB1{cccc}, rA0, rC06
-      FMAC rB1{cccc}, rA1, rC16
-      FMAC rB1{cccc}, rA2, rC26
-      FMAC rB1{dddd}, rA0, rC07
-      #if KB > @(ikb)
-         vmovapd @(ia)(pA), rA0
-         @iexp ia @(ia) 64 +
-      #endif
-      FMAC rB1{dddd}, rA1, rC17
-      #if KB > @(ikb)
-         vmovapd @(ia)(pA), rA1
-         @iexp ia @(ia) 64 +
-      #endif
-      FMAC rB1{dddd}, rA2, rC27
-      #if KB > @(ikb)
-         vbroadcastf64x4 @(ib)*SZ@(off)(pB), rB1
-         @iexp ib @(ib) 4 +
-      #endif
-   #endif
-/*
- *    2nd iteration
- */
-   #if KB > @(ikb)
-      @iexp ikb @(ikb) 1 +
       FMAC rB0{aaaa}, ra0, rC00
          vmovapd @(ia)(pA), rA2
          @iexp ia @(ia) 64 +
@@ -289,7 +183,7 @@ ATL_asmdecor(ATL_USERMM):
       FMAC rB0{dddd}, ra0, rC03
       FMAC rB0{dddd}, ra1, rC13
       FMAC rB0{dddd}, ra2, rC23
-      #if KB > @(ikb)
+      #if KB > 2
          vbroadcastf64x4 @(ib)*SZ@(off)(pB), rB0
          @iexp ib @(ib) 4 +
       #endif
@@ -302,6 +196,806 @@ ATL_asmdecor(ATL_USERMM):
       FMAC rB1{cccc}, ra0, rC06
       FMAC rB1{cccc}, ra1, rC16
       FMAC rB1{cccc}, ra2, rC26
+      FMAC rB1{dddd}, ra0, rC07
+      #if KB > 2
+         vmovapd @(ia)(pA), ra0
+         @iexp ia @(ia) 64 +
+      #endif
+      FMAC rB1{dddd}, ra1, rC17
+      #if KB > 2
+         vmovapd @(ia)(pA), ra1
+         @iexp ia @(ia) 64 +
+      #endif
+      FMAC rB1{dddd}, ra2, rC27
+      #if KB > 2
+         vbroadcastf64x4 @(ib)*SZ@(off)(pB), rB1
+         @iexp ib @(ib) 4 +
+      #endif
+   #endif
+   @define prefA @vprefetche0@
+   @define prefB @vprefetche0@
+   @iexp n 0 0 +
+   @iwhile n < 3
+/* 
+ * Remaining iterations all use FMAC and standard addressing
+ */
+   @iexp pfA 0 0 +
+   @iexp pfB 0 0 +
+   @iexp ikb 2 0 +
+   @iexp ikC 18 0 +
+   @iwhile ikb < 24
+      @iif ikb ! ikC
+         @iexp nf 0 0 +
+      @endiif
+      @iif ikb = ikC
+         @iexp nf 1 0 +
+      @endiif
+   #if KB > @(ikb)
+      @iexp ikb @(ikb) 1 +
+         vmovapd @(ia)(pA), ra2
+         @iexp ia @(ia) 64 +
+      FMAC rB0{aaaa}, rA0, rC00
+      @iif ikb == ikC
+         prefC(@(ic)(pC)) 
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB0{aaaa}, rA1, rC10
+      @iif ikb == ikC
+         prefC(@(ic)+64(pC)) 
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB0{aaaa}, rA1, rC10
+      @iif ikb == ikC
+         prefC(@(ic)+64*2(pC)) 
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB0{aaaa}, rA2, rC20
+      @iif ikb == ikC
+         prefC(@(ic)+64*3(pC)) 
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB0{aaaa}, rA1, rC10
+      @iif ikb == ikC
+         prefC(@(ic)+64*4(pC)) 
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB0{aaaa}, rA1, rC10
+      @iif ikb == ikC
+         prefC(@(ic)+64*5(pC)) 
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB0{bbbb}, rA0, rC01
+      @iif ikb == ikC
+         prefC(@(ic)+64*6(pC)) 
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB0{bbbb}, rA1, rC11
+      @iif ikb == ikC
+         prefC(@(ic)+64*7(pC)) 
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB0{bbbb}, rA2, rC21
+      @iif ikb == ikC
+         prefC(@(ic)+64*8(pC)) 
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB0{cccc}, rA0, rC02
+      @iif ikb == ikC
+         prefC(@(ic)+64*9(pC)) 
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB0{cccc}, rA1, rC12
+      @iif ikb == ikC
+         prefC(@(ic)+64*10(pC)) 
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB0{cccc}, rA2, rC22
+      @iif ikb == ikC
+         prefC(@(ic)+64*11(pC)) 
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB0{dddd}, rA0, rC03
+      @iif ikb == ikC
+         prefC(@(ic)+64*12(pC)) 
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB0{dddd}, rA1, rC13
+      @iif ikb == ikC
+         prefC(@(ic)+64*13(pC)) 
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB0{dddd}, rA2, rC23
+         vbroadcastf64x4 @(ib)*SZ@(off)(pB), rB0
+         @iexp ib @(ib) 4 +
+      FMAC rB1{aaaa}, rA0, rC04
+      @iif ikb == ikC
+         prefC(@(ic)+64*14(pC)) 
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB1{aaaa}, rA1, rC14
+      @iif ikb == ikC
+         prefC(@(ic)+64*15(pC)) 
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB1{aaaa}, rA2, rC24
+      @iif ikb == ikC
+         prefC(@(ic)+64*16(pC)) 
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB1{bbbb}, rA0, rC05
+      @iif ikb == ikC
+         prefC(@(ic)+64*17(pC)) 
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB1{bbbb}, rA1, rC15
+      @iif ikb == ikC
+         prefC(@(ic)+64*18(pC)) 
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB1{bbbb}, rA2, rC25
+      @iif ikb == ikC
+         prefC(@(ic)+64*19(pC)) 
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB1{cccc}, rA0, rC06
+      @iif ikb == ikC
+         prefC(@(ic)+64*20(pC)) 
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB1{cccc}, rA1, rC16
+      @iif ikb == ikC
+         prefC(@(ic)+64*21(pC))
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB1{cccc}, rA2, rC26
+      @iif ikb == ikC
+         prefC(@(ic)+64*22(pC))
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB1{dddd}, rA0, rC07
+         vmovapd @(ia)(pA), rA0
+         @iexp ia @(ia) 64 +
+      FMAC rB1{dddd}, rA1, rC17
+         vmovapd @(ia)(pA), rA1
+         @iexp ia @(ia) 64 +
+      FMAC rB1{dddd}, rA2, rC27
+         vbroadcastf64x4 @(ib)*SZ@(off)(pB), rB1
+         @iexp ib @(ib) 4 +
+   #endif
+/*
+ *    K%2 == 1 iteration
+ */
+   #if KB > @(ikb)
+      @iexp ikb @(ikb) 1 +
+      FMAC rB0{aaaa}, ra0, rC00
+         vmovapd @(ia)(pA), rA2
+         @iexp ia @(ia) 64 +
+      FMAC rB0{aaaa}, ra1, rC10
+      @iif ikb == ikC
+         prefC(@(ic)+64*23(pC))
+      @endiif
+      @iif nf = 0
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      @endiif
+      FMAC rB0{aaaa}, ra2, rC20
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      FMAC rB0{bbbb}, ra0, rC01
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      FMAC rB0{bbbb}, ra1, rC11
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      FMAC rB0{bbbb}, ra2, rC21
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      FMAC rB0{cccc}, ra0, rC02
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      FMAC rB0{cccc}, ra1, rC12
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      FMAC rB0{cccc}, ra2, rC22
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      FMAC rB0{dddd}, ra0, rC03
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      FMAC rB0{dddd}, ra1, rC13
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      FMAC rB0{dddd}, ra2, rC23
+      #if KB > @(ikb)
+         vbroadcastf64x4 @(ib)*SZ@(off)(pB), rB0
+         @iexp ib @(ib) 4 +
+      #endif
+      FMAC rB1{aaaa}, ra0, rC04
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      FMAC rB1{aaaa}, ra1, rC14
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      FMAC rB1{aaaa}, ra2, rC24
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      FMAC rB1{bbbb}, ra0, rC05
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      FMAC rB1{bbbb}, ra1, rC15
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      FMAC rB1{bbbb}, ra2, rC25
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      FMAC rB1{cccc}, ra0, rC06
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
+      FMAC rB1{cccc}, ra1, rC16
+      FMAC rB1{cccc}, ra2, rC26
+         @iexp it 4 @(pfA) /
+         @iif pfA < @(sz)
+            @iif pfB > it
+               @(prefA) PFDA+@(pfA)@(off)(pA)
+               @iexp pfA @(pfA) 64 +
+            @endiif
+         @endiif
+         @iif pfB < @(sz)
+            @iexp it @(it) 1 +
+            @iif pfB < it
+               @(prefB) PFDB+@(pfB)@(off)(pB)
+               @iexp pfB @(pfB) 64 +
+            @endiif
+         @endiif
       FMAC rB1{dddd}, ra0, rC07
       #if KB > @(ikb)
          vmovapd @(ia)(pA), ra0
@@ -318,6 +1012,7 @@ ATL_asmdecor(ATL_USERMM):
          @iexp ib @(ib) 4 +
       #endif
    #endif
+   @endiwhile
    #ifndef BETA0
       VCOP @(ic)(pC), rC00, rC00
       VCOP @(ic)+64(pC), rC10, rC10
@@ -372,7 +1067,9 @@ ATL_asmdecor(ATL_USERMM):
    MOVC rC07, @(ic)+21*64(pC)
    MOVC rC17, @(ic)+22*64(pC)
    MOVC rC27, @(ic)+23*64(pC)
-   @iexp ic @(ic) 1536 +
+      @iexp ic @(ic) 1536 +
+      @iexp n @(n) 1 +
+   @endiwhile
 ret
 #undef pA
 #undef pB
