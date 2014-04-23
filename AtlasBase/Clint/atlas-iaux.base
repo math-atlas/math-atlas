@@ -2270,11 +2270,27 @@ int ATL_FindFirstSetBitBV(int *bv, int bs);
 void ATL_ReverseAllBitsBV(int *bv);
 void ATL_SetAllBitsBV(int *bv);
 void ATL_UnsetAllBitsBV(int *bv);
+int ATL_IsBitRangeSetBV(int *bv, int b0, int bN);
 
 #endif
 @ROUT ATL_bitvec
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2014
 #include "atlas_bitvec.h"
+/*
+ **************************************************************************
+ * These guys used a lot in parallel programming.  When swimming through  *
+ * a sea of race conditions, it can be very easy to doubt whether these   *
+ * optimized routines are working correctly.  So, if you define BV_DEBUG  *
+ * most of the optimized routines will check themselves against much      *
+ * simpler implementations.  Debug option is nice if you want to further  *
+ * optimize or add routines, so I keep it around.                         *
+ * IMPORTANT: ATLAS does a lot of bit checking without mutex locks, so    *
+ *    a difference in answers while running in parallel does not mean a BV*
+ *    function is broken!  So, do this testing with the bitvector locked  *
+ *    or in serial!                                                       *
+ * #define BV_DEBUG 1                                                     *
+ **************************************************************************
+ */
 /*
  * A bitvector consists of an integer array.  The first element of the
  * array indicates the number of full BVs required, and the 2nd elt stores
@@ -2349,10 +2365,115 @@ int ATL_IsBitSetBV
 }
 
 /*
+ * Returns 1 if all bits in range [b0,bn] are set, 0 otherwise
+ */
+#ifdef BV_DEBUG
+static int ATL_IsBitRangeSetBV00
+#else
+int ATL_IsBitRangeSetBV
+#endif
+(
+   int *bv,   /* bitvector to use */
+   int b0,    /* first bit that must be set */
+   int bN     /* last bit that must be set */
+)
+{
+   int iv = b0>>5, i = b0-(iv<<5), nchk=0, nfvec, nr;
+/*
+ * False if range include bits that don't exist
+ */
+   if (b0 < 0 || bN < b0 || bN >= (bv[0]<<5)+bv[1])
+      return(0);
+    nr = bN-b0+1;   /* # of bits remaining to check */
+/*
+ * If we index past beginning of first bitvec, must ignore low bits.
+ * No problem if partial on high end, since we store 1s in partial high end
+ */
+   if (i)
+   {
+      int v = bv[2+iv];
+      int mask = (0xFFFFFFFF << i);  /* i bits at bottom are unset */
+      if (nr <= 32-i) /* all bits needing to be checked are in this BV! */
+      {
+         int n = 32-i-nr;  /* # of bits to ignore at top */
+         if (n)
+            mask &= 0x7FFFFFFFF >> (n-1);  
+         return((v|mask) == v);
+      }
+/*
+ *    If we get here, we are checking all upper bits in this vector
+ */
+      if ((v | mask) != v)
+         return(0);
+      nr -= 32-i;    /* we checked 32-i bits, so dec num remaining */
+      if (nr < 1)
+         return(1);
+      iv++;          /* done checking this BV, go to next */
+   }
+/*
+ * Remaining vectors can be compared with 0xFFFFFFFF, since we store 1s above
+ * end of last partial vector
+ */
+   nfvec = (nr>>5);         /* # of full vectors in remaining range */
+   nr -= (nfvec<<5);        /* # of bits to check in last partial vector */
+/*
+ * All full vectors checked wt 0xFFFFFFFF
+ */
+   for(i=0; i < nfvec; i++)
+   {
+      int v = bv[i+iv];
+      if ((v|0xFFFFFFFF) != v)
+         return(0);
+   }
+/*
+ * Now, just check that last nr bits are set in any remaining vector
+ */
+   if (nr)
+   {
+      int v = bv[nfvec+iv];
+      unsigned mask = ~((1<<nr)-1);  /* mask has lower nr bits set */
+      if ((v|mask) != v)
+         return(0);
+   }
+   return(1);
+}
+#ifdef BV_DEBUG
+int ATL_IsBitRangeSetBV
+(
+   int *bv,   /* bitvector to use */
+   int b0,    /* first bit that must be set */
+   int bN     /* last bit that must be set */
+)
+{
+   int i, iret=1;
+   for (i=b0; i <= bN; i++)
+   {
+      if (!ATL_IsBitSetBV(bv,i))
+      {
+         iret = 0;
+         break;
+      }
+   }
+   if (iret)
+   {
+      ATL_assert(ATL_IsBitRangeSetBV00(bv, b0, bN));
+   }
+   else
+   {
+      ATL_assert(!ATL_IsBitRangeSetBV00(bv, b0, bN));
+   }
+}
+#endif
+
+/*
  * Returns smallest bit position that has not yet been set, -1 if all set
  * Unused bits in last bv are set to make this search fast.
  */
+#ifdef BV_DEBUG
+static int ATL_FindFirstUnsetBitBV00
+#else
 int ATL_FindFirstUnsetBitBV
+#endif
 (
    int *bv,   /* bitvector to use */
    int bs     /* bit to start at (0 means beginning) */
@@ -2412,10 +2533,39 @@ int ATL_FindFirstUnsetBitBV
    }
    return(-1); /* all bits are set */
 }
+#ifdef BV_DEBUG
+int ATL_FindFirstUnsetBitBV
+(
+   int *bv,   /* bitvector to use */
+   int bs     /* bit to start at (0 means beginning) */
+)
+{
+   int iret=-1, i;
+   const int n = (bv[0]<<5) + bv[1];
+   for (i=bs; i < n; i++)
+   {
+      if (!ATL_IsBitSetBV(bv, i))
+      {
+         iret = i;
+         break;
+      }
+   }
+   i = ATL_FindFirstUnsetBitBV00(bv, bs);
+   if (i != iret)
+   {
+      fprintf(stderr, "BV: good=%d, bad=%d, bs=%d, n=%d\n", iret, i, bs, n);
+      ATL_assert(0);
+   }
+}
+#endif
 /*
  * Find the first set bit, after skipping first bs bits
  */
+#ifdef BV_DEBUG
+static int ATL_FindFirstSetBitBV00
+#else
 int ATL_FindFirstSetBitBV
+#endif
 (
    int *bv,   /* bitvector to use */
    int bs     /* bit to start at (0 means beginning) */
@@ -2508,6 +2658,26 @@ int ATL_FindFirstSetBitBV
    }
    return(-1);  /* no bits after bs are set */
 }
+#ifdef BV_DEBUG
+int ATL_FindFirstSetBitBV
+(
+   int *bv,   /* bitvector to use */
+   int bs     /* bit to start at (0 means beginning) */
+)
+{
+   int iret=-1, i;
+   const int n = (bv[0]<<5) + bv[1];
+   for (i=0; i < n; i++)
+   {
+      if (ATL_IsBitSetBV(bv, i))
+      {
+         iret = i;
+         break;
+      }
+   }
+   ATL_assert(iret = ATL_FindFirstSetBitBV00(bv, bs));
+}
+#endif
 
 void ATL_UnsetAllBitsBV(int *bv)
 {
