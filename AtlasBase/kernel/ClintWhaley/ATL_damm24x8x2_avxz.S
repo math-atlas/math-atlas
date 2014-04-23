@@ -1,19 +1,5 @@
 #include "atlas_asm.h"
 
-#ifdef SREAL
-   #define SZ 4
-   #define movapd movaps
-   #define vmulpd vmulps
-   #define vsubpd vsubps
-   #define vaddpd vaddps
-   #define vfmadd231pd vfmadd231ps
-   #define vbroadcastsd vbroadcastss
-   #define MOVC vmovnraps
-   #define vbroadcastf64x4 vbroadcastf32x4
-#else
-   #define SZ 8
-   #define MOVC vmovnrapd
-#endif
 #if !defined(KB) || KB == 0
    #ifdef KB
       #undef KB
@@ -24,6 +10,28 @@
       #define KB MB
    #else
       #define KB 48
+   #endif
+#endif
+#ifdef SREAL
+   #define SZ 4
+   #define movapd movaps
+   #define vmulpd vmulps
+   #define vsubpd vsubps
+   #define vaddpd vaddps
+   #define vfmadd231pd vfmadd231ps
+   #define vbroadcastsd vbroadcastss
+   #if KB > 48
+      #define MOVC vmovnraps
+   #else
+      #define MOVC vmovaps
+   #endif
+   #define vbroadcastf64x4 vbroadcastf32x4
+#else
+   #define SZ 8
+   #if KB > 48
+      #define MOVC vmovnrapd
+   #else
+      #define MOVC vmovapd
    #endif
 #endif
 #define FMAC vfmadd231pd   /* FMAC m256/r256, rs1, rd */
