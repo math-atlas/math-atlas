@@ -660,6 +660,10 @@ struct ATL_tsyrk_ammN
    void **Cdmuts;    /* mutex locks for each diagonal block of C */
 @skip   void *CdonCtr;    /* non-diag computation finished when we reach 0 */
    size_t panszA;    /* nkblks * blkszA */
+   #ifdef ATL_PHI_SORTED
+      VINT *chkin;   /* ncores*ATL_Cachelen check-in array */
+      int ncores;    /* ncores, on PHI it is nthr/4 */
+   #endif
    VINT cpydone;     /* set when all A/A' copying complete */
    int LOWER;        /* set true if lower triangular C */
    int TA;           /* 0: noTrans; 1: Trans */
@@ -10847,6 +10851,101 @@ int Mjoin(PATL,tsyrk_amm_K)
    return(0);
 }
 
+/*
+ * On PHI, we deal out 4 Cblks at once, so that contexts on same core share
+ * either A (Upper) or B (Lower)
+ */
+#ifdef ATL_PHI_SORTED
+static int GetCBlk(const int rank, ATL_tsyrk_ammN_t *pd)
+{
+   int ib, bb=0;
+   const unsigned int ndiag=pd->ndiag, ncblks=pd->ncblks;
+   do
+   {
+      int i, j, k;
+/*
+ *    If all copying has finished, we just take the first available block, ib
+ */
+      if (ATL_FindFirstUnsetBitBV(pd->cpydonBV, 0) == -1)
+         pd->cpydone = 1;
+      if (pd->cpydone)
+      {
+         bb = ATL_FindFirstUnsetBitBV(pd->cblkBV, 0);
+         if (bb == -1)
+            return(-1);
+         ATL_mutex_lock(pd->cwmut);
+         ib = ATL_FindFirstUnsetBitBV(pd->cblkBV, bb);
+         if (ib != -1)
+         {
+            int k;
+            ATL_SetBitBV(pd->cblkBV, ib);
+            Mcblk2coord(ndiag, ib, i, j);
+/*
+ *          Lower deals out blks from column panel, Upper from row panel;
+ *          Get 4 of them in a row, unless we reach end of panel; in this case
+ *          1-3 contexts will be inactive during the computation of the cblk
+ *          to avoid pollution of the cache
+ */
+            k = (pd->LOWER) ? i : j;
+            if (k+1 < ndiag)
+               ATL_SetBitBV(pd->cblkBV, ib+1);
+            if (k+2 < ndiag)
+               ATL_SetBitBV(pd->cblkBV, ib+2);
+            if (k+3 < ndiag)
+               ATL_SetBitBV(pd->cblkBV, ib+3);
+            ATL_mutex_unlock(pd->cwmut);
+            return(ib);
+         }
+      }
+/*
+ *    Otherwise, we must prove dependent rows of A and cols of B have been
+ *    copied before dealing out particular blocks
+ *    HERE HERE HERE:
+ *     Write 2 funcs, one for Upper, Lower, that check contig blks in panel
+ *     have dep ready, and only check multiples of 4 starting from first in
+ *     panel.
+ */
+      ib = ATL_FindFirstUnsetBitBV(pd->cblkBV, bb);
+      if (ib == -1)
+      {
+         if (!bb)
+            return(-1);
+         else
+            bb = 0;
+         continue;
+      }
+      bb = ib+1;          /* don't check this again until we cycle */
+      if (bb == ncblks)   /* if at end of bitvec */
+         bb = 0;          /* start looking again at beginning */
+/*
+ *    There's an unassigned block, check if it's A & A' blks have been copied
+ */
+      Mcblk2coord(ndiag, ib, i, j);
+//      fprintf(stderr, "%d:ib=%d, i=%d, j=%d\n", rank, ib, i, j);
+      if (!ATL_IsBitSetBV(pd->cpydonBV, i))
+         continue;
+      if (!ATL_IsBitSetBV(pd->cpydonBV, j))
+         continue;
+/*
+ *    Dep look good, now seize mutex and take it for real
+ */
+      ATL_mutex_lock(pd->cwmut);
+      k = ATL_FindFirstUnsetBitBV(pd->cblkBV, ib);
+/*
+ *    If nobody else got the proven-good block before me, take it
+ */
+      if (k == ib)
+      {
+         ATL_SetBitBV(pd->cblkBV, ib);  /* I take it */
+         ATL_mutex_unlock(pd->cwmut);   /* unlock mutex protecting cblkBV */
+         return(ib);                    /* caller can compute this block */
+      }
+      ATL_mutex_unlock(pd->cwmut);
+   }
+   while(1);
+   return(-1);
+}
+#else
 static int GetCBlk(const int rank, ATL_tsyrk_ammN_t *pd)
 {
    int ib, bb=0;
@@ -10911,6 +11010,7 @@ static int GetCBlk(const int rank, ATL_tsyrk_ammN_t *pd)
    while(1);
    return(-1);
 }
+#endif
 /*
  * computes (i,j) non-diagonal block of C
  */
