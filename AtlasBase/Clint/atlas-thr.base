@@ -10856,7 +10856,10 @@ int Mjoin(PATL,tsyrk_amm_K)
  * either A (Upper) or B (Lower)
  */
 #ifdef ATL_PHI_SORTED
-static int GetContextChunkC(ATL_tysrk_ammN_t)
+/*
+ * RETURNS: >=0 : block to work on, -1: no work left, -2, no work avail
+ */
+static int FindContextChunkC(ATL_tysrk_ammN_t *pd)
 {
 /*
  * While we haven't finished copying all of A, must check dependencies
@@ -10864,26 +10867,50 @@ static int GetContextChunkC(ATL_tysrk_ammN_t)
  */
    if (ATL_FindFirstUnsetBitBV(pd->cpydonBV, 0) != -1)
    {
-      while(!pd->cpydone)
+      const unsigned int ndiag=pd->ndiag, ncblks=pd->ncblks, LOWER=pd->LOWER;
+      int ib = -1, bb=0, i, j, k;
+
+      do
       {
-         int ib = -1, bb=0;
-         while (1)
+         ib = ATL_FindFirstUnsetBitBV(pd->cblkBV, bb);
+         if (ib == -1)
+            return((bb) ? -2 : -1);
+         Mcblk2coord(ndiag, ib, i, j);
+         k = (LOWER) ? i : j;
+
+         if (!(k&3) && ATL_IsBitSetBV(pd->cpydonBV, i) &&
+             ATL_IsBitSetBV(pd->cpydonBV, j))
          {
-            int i, j;
-            ib = ATL_FindFirstUnsetBitBV(pd->cblkBV, bb);
-            if (ib != -1)
+            int  nl = ndiag-k-1;
+/*
+ *          If only one row/col left in dir of context, then OK
+ */
+            if (nl == 1)
+               return(ib);
+/*
+ *          If >1 left, must check of 2nd context's operand ready as well
+ */
+            else
             {
-               Mcblk2coord(ndiag, ib, i, j);
-//               HERE HERE HERE
+               if (ATL_IsBitSetBV(pd->cpydonBV, ++k))
+               {
+                  if (nl == 2)
+                     return(ib);
+                  if (ATL_IsBitSetBV(pd->cpydonBV, ++k))
+                  {
+                     if (nl == 3)
+                        return(ib);
+                     if (ATL_IsBitSetBV(pd->cpydonBV, ++k))
+                        return(ib);
+                  }
+               }
             }
-         }
-         while (ib != -1 && ib&3)
-         if (ATL_FindFirstUnsetBitBV(pd->cpydonBV, 0) == -1)
-            pd->cpydone = 1;
+         }     /* end ifs checking if A/B blocks have been copied */
+         bb = ib + 1;
       }
-   }
-   else
-      pd->cpydone = 1;
+      while (bb < ncblks);
+      return(-2);
+   }  /* end if I still am copying A */
 /*
  * If everything has been copied, then just take the first available
  * chunk.  Since we have dealt out all other blocks in chunks, we know
@@ -10895,90 +10922,50 @@ static int GetCBlk(const int rank, ATL_tsyrk_ammN_t *pd)
 {
    int ib, bb=0;
    const unsigned int ndiag=pd->ndiag, ncblks=pd->ncblks;
-   do
+/*
+ *  We will exit loop when we run out of panels (ib=-1), or we get a valid
+ *  block (ib >= 0).  If we have a valid block, we'll also have cwmut locked.
+ */
+   while(ib = FindContextChunkC(pd) != -1)
    {
-      int i, j, k;
-/*
- *    If all copying has finished, we just take the first available block, ib
- */
-      if (ATL_FindFirstUnsetBitBV(pd->cpydonBV, 0) == -1)
-         pd->cpydone = 1;
-      if (pd->cpydone)
+      if (ib == -2)
       {
-         bb = ATL_FindFirstUnsetBitBV(pd->cblkBV, 0);
-         if (bb == -1)
-            return(-1);
-         ATL_mutex_lock(pd->cwmut);
-         ib = ATL_FindFirstUnsetBitBV(pd->cblkBV, bb);
-         if (ib != -1)
-         {
-            int k;
-            ATL_SetBitBV(pd->cblkBV, ib);
-            Mcblk2coord(ndiag, ib, i, j);
-/*
- *          Lower deals out blks from column panel, Upper from row panel;
- *          Get 4 of them in a row, unless we reach end of panel; in this case
- *          1-3 contexts will be inactive during the computation of the cblk
- *          to avoid pollution of the cache
- */
-            k = (pd->LOWER) ? i : j;
-            if (k+1 < ndiag)
-               ATL_SetBitBV(pd->cblkBV, ib+1);
-            if (k+2 < ndiag)
-               ATL_SetBitBV(pd->cblkBV, ib+2);
-            if (k+3 < ndiag)
-               ATL_SetBitBV(pd->cblkBV, ib+3);
-            ATL_mutex_unlock(pd->cwmut);
-            return(ib);
-         }
+         ATL_thread_yield();
+         continue;
       }
 /*
- *    Otherwise, we must prove dependent rows of A and cols of B have been
- *    copied before dealing out particular blocks
- *    HERE HERE HERE:
- *     Write 2 funcs, one for Upper, Lower, that check contig blks in panel
- *     have dep ready, and only check multiples of 4 starting from first in
- *     panel.
- */
-      ib = ATL_FindFirstUnsetBitBV(pd->cblkBV, bb);
-      if (ib == -1)
-      {
-         if (!bb)
-            return(-1);
-         else
-            bb = 0;
-         continue;
-      }
-      bb = ib+1;          /* don't check this again until we cycle */
-      if (bb == ncblks)   /* if at end of bitvec */
-         bb = 0;          /* start looking again at beginning */
-/*
- *    There's an unassigned block, check if it's A & A' blks have been copied
- */
-      Mcblk2coord(ndiag, ib, i, j);
-//      fprintf(stderr, "%d:ib=%d, i=%d, j=%d\n", rank, ib, i, j);
-      if (!ATL_IsBitSetBV(pd->cpydonBV, i))
-         continue;
-      if (!ATL_IsBitSetBV(pd->cpydonBV, j))
-         continue;
-/*
- *    Dep look good, now seize mutex and take it for real
+ *    OK, there's a potential panel, so lock the data structure and if there
+ *    is still a panel to be had, take it
  */
       ATL_mutex_lock(pd->cwmut);
-      k = ATL_FindFirstUnsetBitBV(pd->cblkBV, ib);
-/*
- *    If nobody else got the proven-good block before me, take it
- */
-      if (k == ib)
-      {
-         ATL_SetBitBV(pd->cblkBV, ib);  /* I take it */
-         ATL_mutex_unlock(pd->cwmut);   /* unlock mutex protecting cblkBV */
-         return(ib);                    /* caller can compute this block */
-      }
+      ib = GetContextChunkC(pd);
+      if (ib >= 0)
+         break;
       ATL_mutex_unlock(pd->cwmut);
-   }
-   while(1);
-   return(-1);
+   }   /* exit loop wt valid ib & cwmut
+/*
+ * If we are out of C blocks, inform thread
+ */
+   if (ib == -1)  
+      return(-1);
+/*
+ * Otherwise, we exited loop with ib>=0 and the cwmut locked
+ * Lower deals out blks from column panel, Upper from row panel;
+ * Get 4 of them in a row, unless we reach end of panel; in this case
+ * 1-3 contexts will be inactive during the computation of the cblk
+ * to avoid pollution of the cache
+ */
+   Mcblk2coord(ndiag, ib, i, j);
+   k = (pd->LOWER) ? i : j;
+   ATL_SetBitBV(pd->cblkBV, ib);
+   if (k+1 < ndiag)
+      ATL_SetBitBV(pd->cblkBV, ib+1);
+   if (k+2 < ndiag)
+      ATL_SetBitBV(pd->cblkBV, ib+2);
+   if (k+3 < ndiag)
+      ATL_SetBitBV(pd->cblkBV, ib+3);
+   ATL_mutex_unlock(pd->cwmut);
+   return(ib);
 }
 #else
 static int GetCBlk(const int rank, ATL_tsyrk_ammN_t *pd)
@@ -11102,6 +11089,66 @@ static void DoCblk(const int rank, ATL_tsyrk_ammN_t *pd, TYPE *wC, int i, int j)
    pd->blk2c(mb, nb, *(pd->alpha), wC, *(pd->beta), 
              pd->C+ NB*(j*(size_t)(pd->ldc) + i), pd->ldc);
 }
+#ifdef ATL_PHI_SORTED
+static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd)
+{
+   const unsigned int ndiag = pd->ndiag, LOWER=pd->LOWER;
+   const unsigned crank = rank / pd->ncores;  /* my context rank */
+   int ic;
+
+   TYPE *wC = pd->wC + (rank+rank)*(pd->nbnb);
+   volatile int *chkin;
+
+   ic = rank - crank*pd->ncores;  /* What core am I on? */
+   chkin = (volatile int*) (((volatile char *)pd->chkin)+ATL_Cachelen*ic);
+/*
+ * Each core waits for all its contexts to show up before doing work, so that
+ * we don't grab work well in advance of all contexts arriving
+ */
+   if (!crank)
+   {
+      while (chkin[1] != -1 || chkin[2] |= -1 || chkin[3] != -1)
+         ATL_thread_yield();
+      *chkin = -1;
+   }
+   else
+   {
+      ic = chkin[crank] = -1;
+      while (chkin[0] != -1)
+         ATL_thread_yield();
+   }
+
+//   fprintf(stderr, "%d: START DoNonDiag: ndiag=%d, ncblks=%d\n", 
+//           rank, ndiag, pd->ncblks);
+   while (1)
+   {
+      int i, j;
+
+      if (!crank)
+      {
+         *chkin = ic = GetCBlk(rank, pd);
+         while (chkin[1] != ic || chkin[2] != ic || chkin[3] != ic)
+            ATL_thread_yield();
+      }
+      else
+      {
+         while (chkin[0] == ic)
+            ATL_thread_yield();
+         chkin[crank] = ic = chkin[0];
+      }
+      if (ic == -1)
+         return;
+      Mcblk2coord(ndiag, ic, i, j);
+//      fprintf(stderr, "%d: ic=%d, i=%d, j=%d\n", rank, ic, i, j);
+      if (LOWER)
+         i += crank;
+      else 
+         j += crank;
+      if (i < ndiag && j < ndiag)
+         DoCblk(rank, pd, wC, i, j);
+   }
+}
+#else
 /*
  * For non-diagonal work, we count the number of non-diagonal blocks of C,
  * which is initially stored in the ncblks variable, which is protected
@@ -11135,6 +11182,7 @@ static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd)
       DoCblk(rank, pd, wC, i, j);
    }
 }
+#endif
 
 static void DoBlkWtCpy
 (
