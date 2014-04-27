@@ -688,6 +688,79 @@ struct ATL_tsyrk_ammN
    int lda;          /* leading dim of A */
    int ldc;          /* leading dim of C */
 };
+/*
+ * This data structure for doing access-major threaded gemm for moderately
+ * sized problems where no dimension is <= to the blocking factor, and
+ * the problem is not too large to prevent us from copying all of A & B
+ * up front.  Copying up front allows us to compute the blocks of C 
+ * in any order.  For large problems, will have to recur (mainly on K) to
+ * get workspace down to reasonable levels.  This case will not work well
+ * if the number of C blocks is not quite a bit larger than the nthreads.
+ */
+
+typedef struct ATL_tgemm_ammG ATL_tgemm_ammG_t;
+struct ATL_tgemm_ammG
+{
+   ammkern_t amm_b0, amm_b1, ammK_b0, ammK_b1;
+   cm2am_t a2blk;    /* copy/transpose for A */
+   cm2am_t b2blk;    /* copy/tranpose for B */
+   ablk2cmat_t blk2c;/* access-major to column-major copy/scale for C */
+   const TYPE *A;    /* input matrix */
+   const TYPE *B;    /* input matrix */
+   TYPE *C;          /* output matrix */
+   TYPE *wC;         /* ATL_NTHREADS thread-local mb*nb workspaces */
+   TYPE *wA, *wB;    /* workspaces for storing A & B */
+   SCALAR beta;      /* beta */
+   SCALAR alpA;      /* alpha to apply to A */
+   SCALAR alpB;      /* alpha to apply to B */
+   SCALAR alpC;      /* alpha to apply to C */
+   int *cpyAdBV;     /* nmblks BV, set means K-panel of A has been copied */
+   int *cpyBdBV;     /* nnblks BV, set means K-panel of A has been copied */
+   int *cCblkBV;     /* nMNblks BV for dealing C blks while copying */
+   int *cbetaBV;     /* nMNblks BV: unset means beta not yet applied */
+   void *cpmut;      /* mutex protecting cpyA/BdBV */
+   void *cwmut;      /* mutex protecting non-copy work */
+   void *ccCtr;      /* nMNblks ctr for dealing out (diagonal) blocks wt copy */
+   void *cCtr;       /* ncblks ctr for dealing out blocks w/o copy */
+   void **KbegCtr;   /* counters for dealing out K blocks for copying */
+   void **KdonCtr;   /* K-counters for copied blocks */
+   void **Cmuts;     /* MNblks mutex locks for copy-blocks of C */
+   size_t panszA;    /* nkblks * blkszA */
+   size_t panszB;    /* nkblks * blkszB */
+   size_t lda;       /* leading dim of A */
+   size_t ldb;       /* leading dim of B */
+   size_t ldc;       /* leading dim of C */
+   #ifdef ATL_PHI_SORTED
+      VINT *chkin;   /* ncores*ATL_Cachelen check-in array */
+      int ncores;    /* ncores, on PHI it is nthr/4 */
+      int ncntxts;   /* ncontexts to use per core */
+   #endif
+   VINT cpyAdone;    /* set when all of A has been copied */
+   VINT cpyBdone;    /* set when all of B has been copied */
+   VINT NOCPWORK;    /* set to 1 by 1st thread to find all copy work started */
+   int TA;           /* 0: noTrans; 1: Trans */
+   int TB;           /* 0: noTrans; 1: Trans */
+   int nCblks;       /* nmblks * nnblks */
+   int nMNblks;      /* MAX(nmblks,nnblks) */
+   int nmblks;       /* CEIL(M/mb) */
+   int nnblks;       /* CEIL(N/nb) */
+   int nkblks;       /* CEIL(K/kb) */
+   int ncblks;       /* # of non-diagonal blocks left to be assigned */
+   int mb;           /* M blocking used for all but remainder block */
+   int nb;           /* N blocking used for all but remainder block */
+   int nmu;          /* mb/mu */
+   int nnu;          /* nb/nu */
+   int mbf;          /* M%mb, if 0, mb */
+   int nbf;          /* N%nb, if 0, nb */
+   int nmuf;         /* CEIL(mbf/mu) */
+   int nnuf;         /* CEIL(nbf/nu) */
+   int kb;           /* blocking used for K */
+   int kb0;          /* K%kb, if 0, kb */
+   int KB0;          /* if kmajor, it is CEIL(kb0/ku)*ku, else kb0 */
+   int blkszA;       /* mb*kb */
+   int blkszB;       /* nb*kb */
+   int blkszC;       /* mb*nb */
+};
    #undef VINT
 #endif
 /*
@@ -10540,6 +10613,356 @@ int Mjoin(PATL,tammm_tNK)
       ATL_goparallel(P, Mjoin(PATL,DoWork_tamm_tNK), &pd, NULL);
    #endif
 
+   free(vp);
+   return(0);
+}
+
+static void DoBlkWtCpy
+(
+   ATL_tgemm_ammG_t *pd,             /* problem definition */
+   unsigned const int rank,          /* my (virtual) rank */
+   unsigned const int dblk,          /* CpyBlk of C to compute */
+   unsigned int kblk,                /* kblk to compute */
+   unsigned const int mb,            /* actual sz of M w/o padding */
+   unsigned const int nb,            /* actual sz of N w/o padding */
+   unsigned const int nmu,           /* CEIL(mb/mu) */
+   unsigned const int nnu,           /* CEIL(nb/nu) */
+   ammkern_t amm,                    /* kern to use for all non-kb0 blocks */
+   TYPE *wC                          /* my private C workspace */
+)
+{
+}
+/*
+ * This routine computes one block of C, and writes answer back out to C
+ */
+static void DoBlksWtCpy
+(
+   ATL_tgemm_ammG_t *pd,             /* problem definition */
+   unsigned const int rank,          /* my (virtual) rank */
+   unsigned const int dblk,          /* CpyBlk of C to compute */
+   unsigned int kctr,                /* non-zero KbegCtr */
+   TYPE *wC                          /* my private C workspace */
+)
+{
+   const int nmblks=pd->nmblks, nnblks=nnblks, nkblks=pd->nkblks; 
+   const int nblks = pd->nMNblks;
+   const int mb = (dblk >= nmblks-1) ? pd->mbf : pd->mb;
+   const int nb = (dblk >= nnblks-1) ? pd->nbf : pd->nb;
+   const int nmu = (dblk >= nmblks-1) ? pd->nmuf : pd->nmu;
+   const int nnu = (dblk >= nnblks-1) ? pd->nnuf : pd->nnu;
+   unsigned int kblk = pd->nkblks - kctr, i, j;
+   TYPE *wA, *wB, *c;
+   TYPE beta = ATL_rone;
+   DoBlkWtCpy(pd, rank, dblk, kblk, mb, nb, nmu, nnu, pd->amm_b0, wC);
+   while (kctr = ATL_DecGlobalAtomicCount((pd->KbegCtr)[dblk], rank))
+   {
+      kblk = nkblks - kctr;
+      DoBlkWtCpy(pd, rank, dblk, kblk, mb, nb, nmu, nnu, pd->amm_b1, wC);
+   }
+/*
+ * Seize mutex for block of original C, and add my part out
+ */
+   i = (dblk < nmblks) ? dblk : nmblks-1;
+   j = (dblk < nnblks) ? dblk : nnblks-1;
+   c = pd->C + ((size_t)j)*pd->nb*pd->ldc + i*pd->mb;
+   ATL_mutex_lock(pd->Cmuts[dblk]);
+   if (!ATL_IsBitSetBV(pd->cbetaBV, dblk)) /* if I apply beta */
+   {
+      ATL_SetBitBV(pd->cbetaBV, dblk); /* tell rest of thrs don't apply beta */
+      beta = pd->beta;                 /* because I'm going to do it */
+   }
+/*
+ * HERE HERE: this needs to handle beta=0,1,2, so will need blk2d!
+ */
+   pd->blk2c(mb, nb, pd->alpC, wC, beta, c, pd->ldc);
+
+   ATL_mutex_unlock(pd->Cmuts[dblk]);
+}
+
+static void DoCopyBlksG(ATL_tgemm_ammG_t *pd, int rank, int vrank, TYPE *wC)
+{
+   int NEWBLK=1;
+   const int ND = pd->nMNblks;
+/*
+ * Keep going as long as there is copy work to be done
+ */
+   while (!pd->NOCPWORK)
+   {
+       int d=0, k;
+
+/*
+ *     Find which diagonal block to work on, and then which k blk to use
+ */
+       if (NEWBLK)
+       {
+          d = ATL_DecGlobalAtomicCount(pd->ccCtr, vrank);
+          if (d)
+          {
+             k = ATL_DecGlobalAtomicCount((pd->KbegCtr)[ND-d], rank);
+             if (!k)     /* if no more K work to do */
+                d = 0;   /* can't work on this diag after all */
+          }
+       }
+/*
+ *     If all diagonal blocks currently being worked on by threads, find
+ *     one that I can help with.
+ */
+       if (!d)
+       {
+          unsigned int i;
+          NEWBLK = 0;
+          for (i=0; i < ND; i++)
+          {
+             unsigned int j = (i+vrank)%ND;
+             k = ATL_DecGlobalAtomicCount((pd->KbegCtr)[j], vrank);
+             d = ND-j;
+             if (k)
+                goto FOUNDDK;
+          }
+          pd->NOCPWORK = 1;   /* no work left to assign */
+          return;             /* so done with copy of A&B and this func */
+       }
+/*
+ *     If I reach here, I've got a valid d & k;  and I'll call a routine
+ *     that continues to grab blocks from this diag along K until all K
+ *     is done; it will then write the answer back to the original C, and
+ *     return to this loop to see if it can help with another diag.
+ */
+       FOUNDDK:
+          DoBlksWtCpy(pd, vrank, ND-d, k, wC);
+   }
+}
+
+static void DoNoCopyBlksG(ATL_tgemm_ammG_t *pd, int rank, int vrank, TYPE *wC)
+{
+}
+
+void Mjoin(PATL,DoWork_ammG)(void *vpp, int rank, int vrank)
+{
+   ATL_tpool_t *pp=vpp;
+   ATL_tgemm_ammG_t *pd = pp->PD;
+   TYPE *myC = pd->wC + vrank*pd->blkszC;
+   if (!pd->NOCPWORK)
+      DoCopyBlksG(pd, rank, vrank, myC);
+   DoNoCopyBlksG(pd, rank, vrank, myC);
+}
+/*
+ * This one can be used anytime C is large enough to provide parallelism.
+ * It tries to copy all of A & B up front, so recursion may be needed to
+ * use it for large matrices.
+ * RETURNS: 0 if it did the operation, non-zero if it did not
+ */
+int Mjoin(PATL,tgemm_amm_G)
+(
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   ATL_CSZT M,
+   ATL_CSZT N,
+   ATL_CSZT K,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CSZT lda,
+   const TYPE *B,
+   ATL_CSZT ldb,
+   const SCALAR beta,
+   TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   int ncblks, nmblks, nnblks, nkblks, nMNblks, mb, nb, kb, mu, nu, ku; 
+   int kb0, KB0, P, nkcnt, i;
+   size_t sz, szA, szB;
+   ATL_tgemm_ammG_t pd;
+   amminfo_t mminfo;
+   void *vp;
+
+   nmblks = M / ATL_AMM_66MB;
+   nnblks = N / ATL_AMM_66NB;
+   ncblks = sz = ((size_t)nmblks) * nnblks;
+   if (ncblks != sz)   /* too many blocks to safely count */
+      return(1);       /* so tell caller to recur or call something else */
+/*
+ * Quick exit for problems too small to thread
+ */
+   if (ncblks < 8)
+      return(Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
+                              beta, C, ldc));
+   mb = Mjoin(PATL,tGetAmmmInfo)(&mminfo, Mmin(ncblks, ATL_NTHREADS), TA,
+                                 TB, M, N, K, alpha, beta);
+   pd.alpA = pd.alpB = pd.alpC = ATL_rone;
+   if (!mb)
+      pd.alpA = alpha;
+   else if (mb == 1)
+      pd.alpB = alpha;
+   else
+      pd.alpC = alpha;
+   pd.beta = beta;
+   pd.blk2c = mminfo.Cblk2cm;
+   pd.a2blk = mminfo.a2blk;
+   pd.b2blk = mminfo.b2blk;
+   pd.mb = mb = mminfo.mb;
+   pd.nb = nb = mminfo.nb;
+   pd.kb = kb = mminfo.kb;
+   mu = mminfo.mu;
+   nu = mminfo.nu;
+   ku = mminfo.ku;
+   pd.nmu = mb/mu;
+   pd.nnu = nb/nu;
+   pd.nmblks = nmblks = (M+mb-1)/mb;
+   pd.nnblks = nnblks = (N+nb-1)/nb;
+   pd.nkblks = nkblks = (K+kb-1)/kb;
+   pd.nCblks = sz = ((size_t)nmblks)*nnblks;
+   if (pd.nCblks != sz)
+      return(1);
+   P = Mmin(ATL_NTHREADS,pd.nCblks);
+   pd.nMNblks = nMNblks = Mmax(nmblks, nnblks);
+   sz = nmblks * mb;
+   pd.mbf = (sz == M) ? mb : M+mb-sz;
+   sz = nnblks * nb;
+   pd.nbf = (sz == N) ? nb : N+nb-sz;
+   pd.nmuf = (pd.mbf+mu-1)/mu;
+   pd.nnuf = (pd.nbf+nu-1)/nu;
+   pd.blkszA = mb * kb;
+   pd.blkszB = nb * kb;
+   pd.blkszC = mb * nb;
+   KB0 = kb0 = K - (K/kb)*kb;
+   if (!kb0)
+   {
+      kb0 = KB0 = kb;
+      pd.ammK_b0 = mminfo.amm_b0;
+      pd.ammK_b1 = mminfo.amm_b1;
+   }
+   else
+   {
+      #if ATL_AMM_MAXKMAJ > 1
+         if (ATL_AMMFLG_KMAJOR(mminfo.flag))
+         {
+            KB0 = ((kb0+ku-1)/ku)*ku;
+            if (ATL_AMMFLG_KRUNTIME(mminfo.flag))
+            {
+               pd.ammK_b0 = mminfo.amm_b0;
+               pd.ammK_b1 = mminfo.amm_b1;
+            }
+            else
+            {
+               pd.ammK_b0 = mminfo.amm_k1_b0;
+               pd.ammK_b1 = mminfo.amm_k1_b1;
+            }
+         }
+         else
+      #endif
+      {
+         if (ATL_AMMFLG_KRUNTIME(mminfo.flag) && kb0 == (kb0/ku)*ku &&
+             kb0 > mminfo.kbmin)
+         {
+            pd.ammK_b0 = mminfo.amm_b0;
+            pd.ammK_b1 = mminfo.amm_b1;
+         }
+         else
+         {
+            pd.ammK_b0 = mminfo.amm_k1_b0;
+            pd.ammK_b1 = mminfo.amm_k1_b1;
+         }
+      }
+   }
+   pd.kb0 = kb0;
+   pd.KB0 = KB0;
+   pd.amm_b0 = mminfo.amm_b0;
+   pd.amm_b1 = mminfo.amm_b1;
+   szA = nmblks*nkblks*pd.blkszA;
+   szB = nnblks*nkblks*pd.blkszB;
+   sz = nMNblks*3*sizeof(void*);    /* for K[beg,don]Ctr & Cmuts arrays */
+   sz += ATL_MulBySize(pd.blkszC)*P;   /* local C wrkspc */
+   sz += ATL_MulBySize(szA+szB);              /* A/B workspace */
+   sz += 3*ATL_Cachelen;                      /* room for alignment */
+   #ifdef ATL_PHI_SORTED
+      if (pd.ncntxts > 1)
+         sz += ATL_Cachelen*(pd.ncores+1);
+   #endif
+   if ((sz>>20) > ATL_PTMAXMALLOC_MB)
+      return(2);
+   vp = malloc(sz);
+   if (!vp)
+      return(2);
+   #ifdef ATL_PHI_SORTED
+   if (pd.ncntxts > 1)
+   {
+      pd.chkin = (volatile int*)ATL_AlignPtr(vp);
+      pd.KbegCtr = (void*)(((char*)pd.chkin)+pd.ncores*ATL_Cachelen);
+      for (i=0; i < pd.ncores; i++)
+      {
+         int *ip;
+         char *cp = (char*)pd.chkin;
+
+         cp += i*ATL_Cachelen;
+         ip = (int*) cp;
+         *ip = ip[1] = ip[2] = ip[3] = -2;
+      }
+   }
+   else
+   #endif
+      pd.KbegCtr = vp;
+   pd.cpyAdone = pd.cpyBdone = pd.NOCPWORK = 0;
+   pd.TA = (TA == AtlasTrans);
+   pd.TB = (TB == AtlasTrans);
+   pd.panszA = nkblks*pd.blkszA;
+   pd.panszB = nkblks*pd.blkszB;
+   pd.ccCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(nMNblks, P),nMNblks, 0);
+   pd.cCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(pd.ncblks, P),pd.ncblks, 0);
+   nkcnt = ATL_EstNctr(nkblks, P);
+   pd.KdonCtr = pd.KbegCtr + nMNblks;
+   pd.Cmuts = pd.KdonCtr + nMNblks;
+   pd.wA = (TYPE*)(pd.Cmuts+nMNblks);
+   pd.wA = ATL_AlignPtr(pd.wA);
+   pd.wB = pd.wA + szA;
+   pd.wB = ATL_AlignPtr(pd.wB);
+   pd.wC = pd.wB + szB;
+   pd.wC = ATL_AlignPtr(pd.wC);
+   pd.A = A;
+   pd.B = B;
+   pd.lda = lda;
+   pd.ldb = ldb;
+   pd.C = C;
+   pd.ldc = ldc;
+   for (i=0; i < nMNblks; i++)
+   {
+      pd.KbegCtr[i] = ATL_SetGlobalAtomicCount(nkcnt, nkblks, 0);
+      pd.KdonCtr[i] = ATL_SetGlobalAtomicCount(nkcnt, nkblks, 0);
+      pd.Cmuts[i] = ATL_mutex_init();
+   }
+   pd.cpmut = ATL_mutex_init();
+   pd.cwmut = ATL_mutex_init();
+   pd.cpyAdBV = ATL_NewBV(nmblks);
+   pd.cpyBdBV = ATL_NewBV(nnblks);
+   pd.cCblkBV = ATL_NewBV(nMNblks);
+   pd.cbetaBV = ATL_NewBV(nMNblks);
+
+//   #define DEBUG1
+   #ifdef DEBUG1
+   {
+      ATL_assert(ATL_TP_PTR);
+      Mjoin(PATL,DoWork_ammG)(ATL_TP_PTR, 0, 0);
+   }
+   #else
+      ATL_goParallel(P, Mjoin(PATL,DoWork_ammG), NULL, &pd, NULL);
+   #endif
+/*
+ * Free allocated structures and return;
+ */
+   ATL_FreeBV(pd.cpyAdBV);
+   ATL_FreeBV(pd.cpyBdBV);
+   ATL_FreeBV(pd.cCblkBV);
+   ATL_FreeBV(pd.cbetaBV);
+   ATL_mutex_free(pd.cpmut);
+   ATL_mutex_free(pd.cwmut);
+   ATL_FreeGlobalAtomicCount(pd.cCtr);
+   ATL_FreeGlobalAtomicCount(pd.ccCtr);
+   for (i=0; i < nMNblks; i++)
+   {
+      ATL_FreeGlobalAtomicCount(pd.KbegCtr[i]);
+      ATL_FreeGlobalAtomicCount(pd.KdonCtr[i]);
+      ATL_mutex_free(pd.Cmuts[i]);
+   }
    free(vp);
    return(0);
 }
