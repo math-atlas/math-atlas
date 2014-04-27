@@ -8,7 +8,7 @@
  * next context 1, and so on.  This is the default sorting by ATLAS, and
  * we'll presently assume it true as long as the NTHR%4 == 0
  */
-//      #define ATL_PHI_SORTED 1
+#define ATL_PHI_SORTED 1
 #if !defined(ATL_PHI_SORTED) && !defined(ATL_PHI_UNSORTED)
    #if defined(ATL_ARCH_XeonPHI) && ATL_NTHREADS%4 == 0
       #define ATL_PHI_SORTED 1
@@ -663,6 +663,7 @@ struct ATL_tsyrk_ammN
    #ifdef ATL_PHI_SORTED
       VINT *chkin;   /* ncores*ATL_Cachelen check-in array */
       int ncores;    /* ncores, on PHI it is nthr/4 */
+      int ncntxts;   /* ncontexts to use per core */
    #endif
    VINT cpydone;     /* set when all A/A' copying complete */
    int LOWER;        /* set true if lower triangular C */
@@ -10705,7 +10706,7 @@ int Mjoin(PATL,tsyrk_amm_K)
    ablk2cmat_t Mjoin(PATL,tGetSyammInfo_K)
       (amminfo_t *out, const int P, enum ATLAS_TRANS TA, ATL_CSZT N,ATL_CSZT K);
    int kb=ATL_AMM_MAXKB, nkb = K / ATL_AMM_MAXKB, P = ATL_NTHREADS;
-   int ku, kr, mb, nb;
+   int ku, kr, mb, nb, mu, nu;
    size_t sz;
    void *vp=NULL;
 
@@ -10733,8 +10734,12 @@ int Mjoin(PATL,tsyrk_amm_K)
    nkb = K / kb;
 @skip   ATL_assert(kb == mminfo.kb);
 
-   mb = pd.mb = mminfo.mb;
-   nb = pd.nb = mminfo.nb;
+   mu = mminfo.mu;
+   nu = mminfo.nu;
+   pd.nmu = (N+mu-1) / mu;
+   pd.nnu = (N+nu-1) / nu;
+   pd.mb = mb = pd.nmu*mu;
+   pd.nb = nb = pd.nnu*nu;
    pd.kb = mminfo.kb;
    sz = ((((size_t)mb)*nb)<<1) + (mb+nb)*kb;
    pd.wsz = sz;
@@ -10803,8 +10808,6 @@ int Mjoin(PATL,tsyrk_amm_K)
    pd.N = N;
    pd.lda = lda;
    pd.ldc = ldc;
-   pd.nmu = mb / mminfo.mu;
-   pd.nnu = nb / mminfo.nu;
 
 //   #define DEBUG1 1
    #ifdef DEBUG1
@@ -10856,10 +10859,11 @@ int Mjoin(PATL,tsyrk_amm_K)
  * either A (Upper) or B (Lower)
  */
 #ifdef ATL_PHI_SORTED
+   #define DEBUG2 1
 /*
  * RETURNS: >=0 : block to work on, -1: no work left, -2, no work avail
  */
-static int FindContextChunkC(ATL_tysrk_ammN_t *pd)
+static int FindContextChunkC(ATL_tsyrk_ammN_t *pd)
 {
 /*
  * While we haven't finished copying all of A, must check dependencies
@@ -10867,8 +10871,9 @@ static int FindContextChunkC(ATL_tysrk_ammN_t *pd)
  */
    if (ATL_FindFirstUnsetBitBV(pd->cpydonBV, 0) != -1)
    {
-      const unsigned int ndiag=pd->ndiag, ncblks=pd->ncblks, LOWER=pd->LOWER;
-      int ib = -1, bb=0, i, j, k;
+      const unsigned int ndiag=pd->ndiag, ncblks=pd->ncblks, LOWER=pd->LOWER,
+                         ncntxts=pd->ncntxts;
+      int ib = -1, bb=0, i, j, k, mul;
 
       do
       {
@@ -10876,12 +10881,17 @@ static int FindContextChunkC(ATL_tysrk_ammN_t *pd)
          if (ib == -1)
             return((bb) ? -2 : -1);
          Mcblk2coord(ndiag, ib, i, j);
-         k = (LOWER) ? i : j;
+         k = i-j-1;
 
-         if (!(k&3) && ATL_IsBitSetBV(pd->cpydonBV, i) &&
+         if (ncntxts != 3)
+            mul = !(k&(ncntxts-1));
+         else 
+            mul = (k == (k/3)*3);
+         if (mul && ATL_IsBitSetBV(pd->cpydonBV, i) &&
              ATL_IsBitSetBV(pd->cpydonBV, j))
          {
-            int  nl = ndiag-k-1;
+            int  nl = ndiag-i;
+            nl = Mmin(nl, ncntxts);
 /*
  *          If only one row/col left in dir of context, then OK
  */
@@ -10892,15 +10902,15 @@ static int FindContextChunkC(ATL_tysrk_ammN_t *pd)
  */
             else
             {
-               if (ATL_IsBitSetBV(pd->cpydonBV, ++k))
+               if (ATL_IsBitSetBV(pd->cpydonBV, i+1))
                {
                   if (nl == 2)
                      return(ib);
-                  if (ATL_IsBitSetBV(pd->cpydonBV, ++k))
+                  if (ATL_IsBitSetBV(pd->cpydonBV, i+2))
                   {
                      if (nl == 3)
                         return(ib);
-                     if (ATL_IsBitSetBV(pd->cpydonBV, ++k))
+                     if (ATL_IsBitSetBV(pd->cpydonBV, i+3))
                         return(ib);
                   }
                }
@@ -10918,15 +10928,16 @@ static int FindContextChunkC(ATL_tysrk_ammN_t *pd)
  */
    return(ATL_FindFirstUnsetBitBV(pd->cblkBV, 0));
 }
-static int GetCBlk(const int rank, ATL_tsyrk_ammN_t *pd)
+
+static int GetCBlkChunk(const int rank, ATL_tsyrk_ammN_t *pd)
 {
-   int ib, bb=0;
-   const unsigned int ndiag=pd->ndiag, ncblks=pd->ncblks;
+   int ib, bb=0, i, j, k;
+   const unsigned int ndiag=pd->ndiag, ncblks=pd->ncblks, ncntxts=pd->ncntxts;
 /*
  *  We will exit loop when we run out of panels (ib=-1), or we get a valid
  *  block (ib >= 0).  If we have a valid block, we'll also have cwmut locked.
  */
-   while(ib = FindContextChunkC(pd) != -1)
+   while((ib = FindContextChunkC(pd)) != -1)
    {
       if (ib == -2)
       {
@@ -10938,13 +10949,13 @@ static int GetCBlk(const int rank, ATL_tsyrk_ammN_t *pd)
  *    is still a panel to be had, take it
  */
       ATL_mutex_lock(pd->cwmut);
-      ib = GetContextChunkC(pd);
+      ib = FindContextChunkC(pd);
       if (ib >= 0)
          break;
       ATL_mutex_unlock(pd->cwmut);
    }   /* exit loop wt valid ib & cwmut
 /*
- * If we are out of C blocks, inform thread
+ * If we are out of C blocks, inform thread (cwmut is not locked!)
  */
    if (ib == -1)  
       return(-1);
@@ -10956,18 +10967,38 @@ static int GetCBlk(const int rank, ATL_tsyrk_ammN_t *pd)
  * to avoid pollution of the cache
  */
    Mcblk2coord(ndiag, ib, i, j);
-   k = (pd->LOWER) ? i : j;
+@skip   fprintf(stderr, "%d[%d]: ib=%d, i=%d, j=%d, cBV=%x\n", rank, __LINE__, ib, i, j, pd->cblkBV[2]);
+   #ifdef DEBUG2
+      ATL_assert(!ATL_IsBitSetBV(pd->cblkBV,ib));
+   #endif
    ATL_SetBitBV(pd->cblkBV, ib);
-   if (k+1 < ndiag)
+   if (i+1 < ndiag)
+   {
+      #ifdef DEBUG2
+         ATL_assert(!ATL_IsBitSetBV(pd->cblkBV,ib+1));
+      #endif
       ATL_SetBitBV(pd->cblkBV, ib+1);
-   if (k+2 < ndiag)
-      ATL_SetBitBV(pd->cblkBV, ib+2);
-   if (k+3 < ndiag)
-      ATL_SetBitBV(pd->cblkBV, ib+3);
+      if (i+2 < ndiag && ncntxts > 2)
+      {
+         #ifdef DEBUG2
+            ATL_assert(!ATL_IsBitSetBV(pd->cblkBV,ib+2));
+         #endif
+         ATL_SetBitBV(pd->cblkBV, ib+2);
+         if (i+3 < ndiag && ncntxts > 3)
+         {
+            #ifdef DEBUG2
+               ATL_assert(!ATL_IsBitSetBV(pd->cblkBV,ib+3));
+            #endif
+            ATL_SetBitBV(pd->cblkBV, ib+3);
+         }
+      }
+   }
+@skip   fprintf(stderr, "%d[%d]: ib=%d, i=%d, j=%d, cBV=%x\n", rank, __LINE__, ib, i, j, pd->cblkBV[2]);
    ATL_mutex_unlock(pd->cwmut);
    return(ib);
 }
-#else
+#endif
+
 static int GetCBlk(const int rank, ATL_tsyrk_ammN_t *pd)
 {
    int ib, bb=0;
@@ -11032,7 +11063,7 @@ static int GetCBlk(const int rank, ATL_tsyrk_ammN_t *pd)
    while(1);
    return(-1);
 }
-#endif
+
 /*
  * computes (i,j) non-diagonal block of C
  */
@@ -11077,6 +11108,12 @@ static void DoCblk(const int rank, ATL_tsyrk_ammN_t *pd, TYPE *wC, int i, int j)
    wB = pd->wAt + j*pd->panszA;
    wAn = wA + bs;
    wBn = wB + bs;
+   #ifdef DEBUG2
+      if (!ATL_IsBitSetBV(pd->cpydonBV, i) || !ATL_IsBitSetBV(pd->cpydonBV, j))
+          fprintf(stderr, "%d: ndiag=%d, i=%d, j=%d\n", rank, pd->ndiag, i, j);
+      ATL_assert(ATL_IsBitSetBV(pd->cpydonBV, i));
+      ATL_assert(ATL_IsBitSetBV(pd->cpydonBV, j));
+   #endif
    pd->ammK(nmu, nnu, pd->KB0, wA, wB, wC, wAn, wBn, wC);
    for (k=1; k < nkblks; k++)
    {
@@ -11089,10 +11126,11 @@ static void DoCblk(const int rank, ATL_tsyrk_ammN_t *pd, TYPE *wC, int i, int j)
    pd->blk2c(mb, nb, *(pd->alpha), wC, *(pd->beta), 
              pd->C+ NB*(j*(size_t)(pd->ldc) + i), pd->ldc);
 }
+
 #ifdef ATL_PHI_SORTED
-static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd)
+static void DoNonDiagChunk(const int rank, ATL_tsyrk_ammN_t *pd)
 {
-   const unsigned int ndiag = pd->ndiag, LOWER=pd->LOWER;
+   const unsigned int ndiag = pd->ndiag, LOWER=pd->LOWER, ncntxts=pd->ncntxts;
    const unsigned crank = rank / pd->ncores;  /* my context rank */
    int ic;
 
@@ -11104,18 +11142,43 @@ static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd)
 /*
  * Each core waits for all its contexts to show up before doing work, so that
  * we don't grab work well in advance of all contexts arriving
+ * 0 makes sure everyone reads the initial chkin[0] before proceeding, since
+ * the following sync switches who writes first
  */
    if (!crank)
    {
-      while (chkin[1] != -1 || chkin[2] |= -1 || chkin[3] != -1)
-         ATL_thread_yield();
-      *chkin = -1;
+      chkin[4] = chkin[5] = chkin[6] = -1;
+      if (ncntxts == 4)
+      {
+         while (chkin[1] != -1 || chkin[2] != -1 || chkin[3] != -1)
+            ATL_thread_yield();
+         *chkin = -1;
+         while (chkin[4] != -8 || chkin[5] != -8 || chkin[6] != -8)
+            ATL_thread_yield();
+      }
+      else if (ncntxts == 3)
+      {
+         while (chkin[1] != -1 || chkin[2] != -1)
+            ATL_thread_yield();
+         *chkin = -1;
+         while (chkin[4] != -8 || chkin[5] != -8)
+            ATL_thread_yield();
+      }
+      else /* if (ncntxts == 2) */
+      {
+         while (chkin[1] != -1)
+            ATL_thread_yield();
+         *chkin = -1;
+         while (chkin[4] != -8)
+            ATL_thread_yield();
+      }
    }
    else
    {
       ic = chkin[crank] = -1;
       while (chkin[0] != -1)
          ATL_thread_yield();
+      chkin[crank+3] = -8;
    }
 
 //   fprintf(stderr, "%d: START DoNonDiag: ndiag=%d, ncblks=%d\n", 
@@ -11126,9 +11189,24 @@ static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd)
 
       if (!crank)
       {
-         *chkin = ic = GetCBlk(rank, pd);
-         while (chkin[1] != ic || chkin[2] != ic || chkin[3] != ic)
-            ATL_thread_yield();
+         ic = GetCBlkChunk(rank, pd);
+//         fprintf(stderr, "\n%d: NEW ic=%d\n", rank, ic);
+         *chkin = ic;
+         if (ncntxts == 4)
+         {
+            while (chkin[1] != ic || chkin[2] != ic || chkin[3] != ic)
+               ATL_thread_yield();
+         }
+         else if (ncntxts == 3)
+         {
+            while (chkin[1] != ic || chkin[2] != ic)
+               ATL_thread_yield();
+         }
+         else /* if (ncntxts == 3) */
+         {
+            while (chkin[1] != ic)
+               ATL_thread_yield();
+         }
       }
       else
       {
@@ -11139,16 +11217,16 @@ static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd)
       if (ic == -1)
          return;
       Mcblk2coord(ndiag, ic, i, j);
-//      fprintf(stderr, "%d: ic=%d, i=%d, j=%d\n", rank, ic, i, j);
-      if (LOWER)
-         i += crank;
-      else 
-         j += crank;
-      if (i < ndiag && j < ndiag)
+      #ifdef DEBUG2
+         ATL_assert(ATL_IsBitSetBV(pd->cblkBV, ic));
+      #endif
+      i += crank;
+      if (i < ndiag)
          DoCblk(rank, pd, wC, i, j);
    }
 }
-#else
+#endif
+
 /*
  * For non-diagonal work, we count the number of non-diagonal blocks of C,
  * which is initially stored in the ncblks variable, which is protected
@@ -11182,7 +11260,6 @@ static void DoNonDiag(const int rank, ATL_tsyrk_ammN_t *pd)
       DoCblk(rank, pd, wC, i, j);
    }
 }
-#endif
 
 static void DoBlkWtCpy
 (
@@ -11407,7 +11484,14 @@ void Mjoin(PATL,DoWork_syrk_amm)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
    if (pd->ncblks)
    {
       if (ATL_FindFirstUnsetBitBV(pd->cblkBV, 0) != -1)
+      {
+         #ifdef ATL_PHI_SORTED
+         if (pd->ncntxts > 1)
+            DoNonDiagChunk(tp->rank, pd);
+         else
+         #endif
          DoNonDiag(tp->rank, pd);
+      }
    }
 }
 /*
@@ -11454,7 +11538,33 @@ int Mjoin(PATL,tsyrk_amm_N)
       ncblks = N / ATL_AMM_MAXNB;
    #endif
    ncblks = (ncblks*(ncblks-1))>>1;
-   P = (ncblks < ATL_NTHREADS) ? ncblks : ATL_NTHREADS;
+   #ifdef ATL_PHI_SORTED
+      if (ncblks >= ATL_NTHREADS)
+      {
+         P = ATL_NTHREADS;
+         pd.ncores = ATL_NTHREADS>>2;
+         pd.ncntxts = 4;
+      }
+      else if (ncblks+8 >= 3*(ATL_NTHREADS>>2))
+      {
+         P = 3*(ATL_NTHREADS>>2);
+         pd.ncores = ATL_NTHREADS>>2;
+         pd.ncntxts = 3;
+      }
+      else if (ncblks+4 >= (ATL_NTHREADS>>1))
+      {
+         P = ATL_NTHREADS>>1;
+         pd.ncores = ATL_NTHREADS>>2;
+         pd.ncntxts = 2;
+      }
+      else
+      {
+         pd.ncores = P = ncblks;
+         pd.ncntxts = 1;
+      }
+   #else
+      P = (ncblks < ATL_NTHREADS) ? ncblks : ATL_NTHREADS;
+   #endif
    if (P < 2)
    {
       Mjoin(PATL,syrk)(Uplo, Trans, N, K, alpha, A, lda, beta, C, ldc);
@@ -11511,11 +11621,33 @@ int Mjoin(PATL,tsyrk_amm_N)
    sz += ATL_MulBySize(nb)*nb*2*P; /* local C wrkspc */
    sz += ATL_MulBySize(szA+szA);              /* A/At workspace */
    sz += 3*ATL_Cachelen;                      /* room for alignment */
-   if (sz > ATL_NTHREADS*ATL_PTMAXMALLOC)     /* if I'm over malloc limit */
-      return(2);                              /* return and recur on K */
-   pd.KbegCtr = vp = malloc(sz);
+   #ifdef ATL_PHI_SORTED
+      if (pd.ncntxts > 1)
+         sz += ATL_Cachelen*(pd.ncores+1);
+   #endif
+@skip   if (sz > ATL_NTHREADS*ATL_PTMAXMALLOC)     /* if I'm over malloc limit */
+@skip      return(2);                              /* return and recur on K */
+   vp = malloc(sz);
    if (!vp)
       return(2);
+   #ifdef ATL_PHI_SORTED
+   if (pd.ncntxts > 1)
+   {
+      pd.chkin = (volatile int*)ATL_AlignPtr(vp);
+      pd.KbegCtr = (void*)(((char*)pd.chkin)+pd.ncores*ATL_Cachelen);
+      for (i=0; i < pd.ncores; i++)
+      {
+         int *ip;
+         char *cp = (char*)pd.chkin;
+
+         cp += i*ATL_Cachelen;
+         ip = (int*) cp;
+         *ip = ip[1] = ip[2] = ip[3] = -2;
+      }
+   }
+   else
+   #endif
+      pd.KbegCtr = vp;
    pd.alpha = &alpha;
    pd.beta = &beta;
    pd.TA = (Trans == AtlasTrans);
@@ -11593,6 +11725,9 @@ int Mjoin(PATL,tsyrk_amm_N)
    }
    #else
       ATL_goparallel(P, Mjoin(PATL,DoWork_syrk_amm), &pd, NULL);
+   #endif
+   #ifdef DEBUG2
+      ATL_assert(ATL_FindFirstUnsetBitBV(pd.cblkBV, 0) == -1);
    #endif
 
 /*
