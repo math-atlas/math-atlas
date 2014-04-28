@@ -8,7 +8,6 @@
  * next context 1, and so on.  This is the default sorting by ATLAS, and
  * we'll presently assume it true as long as the NTHR%4 == 0
  */
-#define ATL_PHI_SORTED 1
 #if !defined(ATL_PHI_SORTED) && !defined(ATL_PHI_UNSORTED)
    #if defined(ATL_ARCH_XeonPHI) && ATL_NTHREADS%4 == 0
       #define ATL_PHI_SORTED 1
@@ -217,6 +216,13 @@ void  ATL_ResetGlobalAtomicCount(void *vp, int cnt, int percLoc);
 int   ATL_DecGlobalAtomicCount(void *vp, int rank); 
 int   ATL_GetGlobalAtomicCount(void *vp, int rank);
 void  ATL_FreeGlobalAtomicCount(void *vp);
+/*
+ * Countdown funcs: same as above Glob, but guarantee 1 is last non-zero # ret
+ */
+void *ATL_SetGlobalAtomicCountDown(int P, int cnt);
+int ATL_DecGlobalAtomicCountDown(void *vp, int rank);
+void ATL_FreeGlobalAtomicCountDown(void *vp);
+
 /*
  * If using pthreads, just wrapper around pthread mutex funcs, else written
  * in terms of the AtomicCount funcs with init value set to 1
@@ -1248,6 +1254,63 @@ void *ATL_SetAtomicCount(int cnt)
 #endif
 }
 
+@ROUT ATL_SetGlobalAtomicCountDown ATL_DecGlobalAtomicCountDown @\
+      ATL_FreeGlobalAtomicCountDown
+#include "atlas_misc.h"
+#include "atlas_threads.h"
+/*
+ * GlobalAtomicCountDowns are same as GlobalAtomicCount, except that they
+ * guarantee that their last non-zero value is 1 (they don't guarantee 
+ * a sequential count down, despite the name).  They are used over Counts
+ * when it is vital that the someone atomically knows they are the last
+ * non-zero return (i.e. the last worker frees resources, etc).
+ */
+@ROUT ATL_SetGlobalAtomicCountDown 
+void *ATL_SetGlobalAtomicCountDown
+(
+   int P,               /* # of Local counters to use to make global ctr */
+   int cnt              /* total count to start global count at */
+)
+{
+   void **va;
+   va = malloc(2*sizeof(void*));
+   ATL_assert(va);
+   if (cnt > 2 && P > 1)
+   {
+      va[0] = ATL_SetGlobalAtomicCount(P, cnt-1, 0);
+      va[1] = ATL_SetAtomicCount(1);
+   }
+   else
+   {
+      va[0] = NULL;
+      va[1] = ATL_SetAtomicCount(cnt);
+   }
+   return(va);
+}
+
+@ROUT ATL_DecGlobalAtomicCountDown
+int ATL_DecGlobalAtomicCountDown(void *vp, int rank)
+{
+   void **va=vp;
+   if (va[0])
+   {
+      int i;
+      i = ATL_DecGlobalAtomicCount(va[0], rank);
+      if (i)
+         return(i+1);
+   }
+   return(ATL_DecAtomicCount(va[1]));
+}
+
+@ROUT ATL_FreeGlobalAtomicCountDown
+void ATL_FreeGlobalAtomicCountDown(void *vp)
+{
+   void **va=vp;
+   if (va[0])
+      ATL_FreeGlobalAtomicCount(va[0]);
+   ATL_FreeAtomicCount(va[1]);
+   free(vp);
+}
 @ROUT ATL_SetGlobalAtomicCount ATL_ResetGlobalAtomicCount
 #include "atlas_misc.h"
 #include "atlas_threads.h"
@@ -10662,7 +10725,7 @@ static void DoCpy
 /*
  * If I just finished copying the K-panel for A or B, let folks know
  */
-   if (ATL_DecGlobalAtomicCount((pd->KdonCtr)[dblk], rank) == 1)
+   if (ATL_DecGlobalAtomicCountDown((pd->KdonCtr)[dblk], rank) == 1)
    {
       ATL_mutex_lock(pd->cpmut);
       if (CPYA)
@@ -10728,7 +10791,7 @@ static void DoBlkWtCpy
 /*
  * If I just finished copying the K-panel for both A & B, let folks know
  */
-   if (ATL_DecGlobalAtomicCount((pd->KdonCtr)[dblk], rank) == 1)
+   if (ATL_DecGlobalAtomicCountDown((pd->KdonCtr)[dblk], rank) == 1)
    {
       ATL_mutex_lock(pd->cpmut);
       ATL_SetBitBV(pd->cpyAdBV, dblk);
@@ -11210,7 +11273,7 @@ int Mjoin(PATL,tammm_G)
  *    This blows up contention, but needed for correctness until we add
  *    ability to have last non-zero be 1!
  */
-      pd.KdonCtr[i] = ATL_SetGlobalAtomicCount(/* nkcnt */ 1, nkblks, 0);
+      pd.KdonCtr[i] = ATL_SetGlobalAtomicCountDown(nkcnt, nkblks);
       pd.Cmuts[i] = ATL_mutex_init();
    }
    pd.cpmut = ATL_mutex_init();
@@ -11255,10 +11318,83 @@ int Mjoin(PATL,tammm_G)
    for (i=0; i < nMNblks; i++)
    {
       ATL_FreeGlobalAtomicCount(pd.KbegCtr[i]);
-      ATL_FreeGlobalAtomicCount(pd.KdonCtr[i]);
+      ATL_FreeGlobalAtomicCountDown(pd.KdonCtr[i]);
       ATL_mutex_free(pd.Cmuts[i]);
    }
    free(vp);
+   return(0);
+}
+
+/*
+ * recurs on any standard GEMM interface routine, passed as a function
+ * pointer in vp.
+ */
+int Mjoin(PATL,ammm_REC)
+(
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   ATL_CSZT M,
+   ATL_CSZT N,
+   ATL_CSZT K,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CSZT lda,
+   const TYPE *B,
+   ATL_CSZT ldb,
+   const SCALAR beta,
+   TYPE *C,
+   ATL_CSZT ldc,
+   int (*amm)(enum ATLAS_TRANS,enum ATLAS_TRANS, ATL_CSZT, ATL_CSZT, ATL_CSZT,
+              const SCALAR, const TYPE*, ATL_CSZT,  const TYPE*, ATL_CSZT, 
+              const SCALAR, TYPE*, ATL_CSZT)
+)
+{
+   if (amm(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc))
+   {
+/*
+ *    Stopping criteria in case something is horribly wrong
+ */
+      if (K <= ATL_AMM_MAXKB && M <= ATL_AMM_MAXMB && N <= ATL_AMM_MAXNB)
+         return(Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
+                                 beta, C, ldc));
+/*
+ *    Divide K first: it cuts space from both A & B
+ */
+      if (K+K >= Mmax(M,N))
+      {
+         const int KL = K>>1, KR = K-KL;
+         ATL_assert(!Mjoin(PATL,ammm_REC)(TA, TB, M, N, KL, alpha, A, lda, 
+                                          B, ldb, beta, C, ldc, amm));
+         A += (TA == AtlasNoTrans) ? KL*lda : KL;
+         B += (TB == AtlasNoTrans) ? KL : KL*ldb;
+         return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, KR, alpha, A, lda, 
+                                     B, ldb, ATL_rone, C, ldc, amm));
+      }
+/*
+ *    If M largest dim (twice K), cut it instead
+ */
+      else if (M >= N)
+      {
+         const int ML = M>>1, MR = M-ML;
+         ATL_assert(!Mjoin(PATL,ammm_REC)(TA, TB, ML, N, K, alpha, A, lda, 
+                                          B, ldb, beta, C, ldc, amm));
+         A += (TA == AtlasNoTrans) ? ML : ML*lda;
+         return(Mjoin(PATL,ammm_REC)(TA, TB, MR, N, K, alpha, A, lda, 
+                                     B, ldb, beta, C+ML, ldc, amm));
+      }
+/*
+ *    Otherwise, cut N
+ */
+      else
+      {
+         const int NL = N>>1, NR = N-NL;
+         ATL_assert(!Mjoin(PATL,ammm_REC)(TA, TB, M, NL, K, alpha, A, lda, 
+                                          B, ldb, beta, C, ldc, amm));
+         B += (TB == AtlasNoTrans) ? NL*ldb : NL;
+         return(Mjoin(PATL,ammm_REC)(TA, TB, M, NR, K, alpha, A, lda, 
+                                     B, ldb, beta, C+NL*ldc, ldc, amm));
+      }
+   }
    return(0);
 }
 
@@ -11283,8 +11419,8 @@ int Mjoin(PATL,tammm)
       return(Mjoin(PATL,tammm_tNK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                    beta, C, ldc));
    else if (M > ATL_AMM_MAXMB && K >= 16 && N > ATL_AMM_MAXNB)
-      return(Mjoin(PATL,tammm_G)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
-                                 beta, C, ldc));
+      return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                  beta, C, ldc, Mjoin(PATL,tammm_G)));
    return(1);
 }
 @ROUT ATL_tsyrk_amm
@@ -12025,7 +12161,7 @@ static void DoBlkWtCpy
  */
       if (pd->ncblks)
       {
-         if (ATL_DecGlobalAtomicCount((pd->KdonCtr)[dblk], rank) == 1)
+         if (ATL_DecGlobalAtomicCountDown((pd->KdonCtr)[dblk], rank) == 1)
          {
             ATL_mutex_lock(pd->cdmut);
             ATL_SetBitBV(pd->cpydonBV, dblk);
@@ -12044,7 +12180,7 @@ static void DoBlkWtCpy
  */
       if (pd->ncblks)
       {
-         if (ATL_DecGlobalAtomicCount((pd->KdonCtr)[dblk], rank) == 1)
+         if (ATL_DecGlobalAtomicCountDown((pd->KdonCtr)[dblk], rank) == 1)
          {
             ATL_mutex_lock(pd->cdmut);
             ATL_SetBitBV(pd->cpydonBV, dblk);
@@ -12430,7 +12566,7 @@ int Mjoin(PATL,tsyrk_amm_N)
  *    This blows up contention, but needed for correctness until we add
  *    ability to have last non-zero be 1!
  */
-      pd.KdonCtr[i] = ATL_SetGlobalAtomicCount(/* nkcnt */ 1, nkblks, 0);
+      pd.KdonCtr[i] = ATL_SetGlobalAtomicCountDown(nkcnt, nkblks);
       pd.Cdmuts[i] = ATL_mutex_init();
    }
    pd.cdmut = ATL_mutex_init();
@@ -12470,7 +12606,7 @@ int Mjoin(PATL,tsyrk_amm_N)
    for (i=0; i < ndiag; i++)
    {
       ATL_FreeGlobalAtomicCount(pd.KbegCtr[i]);
-      ATL_FreeGlobalAtomicCount(pd.KdonCtr[i]);
+      ATL_FreeGlobalAtomicCountDown(pd.KdonCtr[i]);
       ATL_mutex_free(pd.Cdmuts[i]);
    }
    free(vp);
