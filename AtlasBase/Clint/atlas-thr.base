@@ -4913,6 +4913,46 @@ void Mjoin(PATL,DoWork@up@(rt))(ATL_LAUNCHSTRUCT_t *lp, void *vp)
                     SVVAL((TYPE*)tp->alpha), tp->A, tp->lda, tp->B, tp->ldb);
 }
 
+@ROUT ATL_ttrsm00
+/*
+ * Simple recursion for Left, Lower, Notrans case (used in LU)
+ */
+static void trsmREC_LLN(const enum ATLAS_DIAG diag, ATL_CSZT M, ATL_CSZT N,
+                        const SCALAR alpha, const TYPE *A, ATL_CSZT lda, 
+                        TYPE *B, ATL_CSZT ldb)
+{
+   ATL_CSZT Ml=M>>1, Mr = M-Ml;
+   TYPE *B1=B+(Ml SHIFT);
+   const TYPE *A10=A+(Ml SHIFT), *L11=A10+Ml*(lda SHIFT);
+   #ifdef TCPLX
+      #define STOPM 48
+      TYPE ONE[2] = {ATL_rone, ATL_rzero};
+      TYPE NONE[2] = {ATL_rnone, ATL_rzero};
+   #else
+      #define STOPM ATL_AMM_MAXMB
+      #define ONE ATL_rone
+      #define NONE ATL_rnone
+   #endif
+/*
+ * For now, just call serial at bottom of recursion, make parallel case later
+ */
+   if (M <= STOPM)
+   {
+      Mjoin(PATL,ttrsm)(AtlasLeft, AtlasLower, AtlasNoTrans, diag, M, N, alpha,
+                        A, lda, B, ldb);
+      return;
+   }
+   trsmREC_LLN(diag, Ml, N, alpha, A, lda, B, ldb);
+   Mjoin(PATL,tgemm)(AtlasNoTrans, AtlasNoTrans, Mr, N, Ml, NONE, A10, lda,
+                     B, ldb, alpha, B1, ldb);
+   trsmREC_LLN(diag, Mr, N, ONE, L11, lda, B1, ldb);
+}
+#ifndef TCPLX
+   #undef ONE
+   #undef NONE
+#endif
+#undef STOPM
+@ROUT ATL_ttrsm ATL_ttrmm
 #ifndef ATL_TTRSM_XOVER
    #define ATL_TTRSM_XOVER 4   /* want 4 total blocks before adding proc */
 #endif
@@ -4937,6 +4977,16 @@ void Mjoin(PATL,t@(rt))(const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
       Mjoin(PATL,gezero)(M, N, B, ldb);
       return;
    }
+   @beginskip
+   #ifdef TREAL
+   if (side == AtlasLeft && uplo == AtlasLower && TA == AtlasNoTrans
+       && M > 400)
+   {
+     trsmREC_LLN(diag, M, N, alpha, A, lda, B, ldb);
+     return;
+   }
+   #endif
+   @endskip
 /*
  * Distribute RHS over the processors
  */
