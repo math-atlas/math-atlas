@@ -525,6 +525,38 @@ struct ATL_tamm_rkK
    int ldc;             /* leading dim of C */
 };
 /*
+ * This structure used when M <= MAXMB && N <= MAXNB (K large)
+ */
+typedef struct ATL_tamm_tMN ATL_tamm_tMN_t;
+struct ATL_tamm_tMN
+{
+   ammkern_t amm_b0, amm_b1, ammK_b0, ammK_b1;
+   cm2am_t a2blk;       /* block copy for A */
+   cm2am_t b2blk;       /* block copy for B */
+   const TYPE *A;       /* input A matrix */
+   const TYPE *B;       /* input B matrix */
+   TYPE *C;             /* output matrix */
+   TYPE *w;             /* ATL_NTHREADS wsz-len thread-local workspaces */
+   void *KbCtr;         /* which K block */
+   int TA;              /* 0: noTrans; 1: Trans */
+   int TB;              /* 0: noTrans; 1: Trans */
+   int nC;              /* nmu*nnu*mu*nu */
+   int M;               /* # of rows of C; M <= MAXMB */
+   int N;               /* # cols of C; N <= MAXNB */
+   int nmu;             /* CEIL(M/mu) */
+   int nnu;             /* CEIL(N/nu) */
+   int kb;              /* K blocking factor for all but first block */
+   int kb0;             /* K blocking factor for first block */
+   int KB0;             /* if k-vectorized, it is CEIL(kb0/ku)*ku, else  */
+   int szA, szB;        /* mb*kb, nb*kb */
+   size_t szW;          /* size of local workspace */
+   size_t K;            /* common dim A&B; K is large & is parallelized */
+   size_t nkblks;       /* # of K blocks, including any partial block */
+   size_t lda;          /* leading dim of A */
+   size_t ldb;          /* leading dim of B */
+   size_t ldc;          /* leading dim of C */
+};
+/*
  * This structure used when N <= MAXNB && K <= MAXKB
  */
 typedef struct ATL_tamm_tNK ATL_tamm_tNK_t;
@@ -963,6 +995,22 @@ void Mjoin(PATL,tvgemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
                         ATL_CINT M, ATL_CINT N, ATL_CINT K, const void *alpha,
                         const void *A, ATL_CINT lda, const void *B,ATL_CINT ldb,
                         const void *beta, void *C, ATL_CINT ldc);
+int Mjoin(PATL,ammm_REC)
+   (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, 
+    ATL_CINT M, ATL_CINT N, ATL_CINT K, const SCALAR alpha,
+    const TYPE *A, ATL_CINT lda, const TYPE *B, ATL_CINT ldb,
+    const SCALAR beta, TYPE *C, ATL_CINT ldc,
+    int (*amm)(enum ATLAS_TRANS,enum ATLAS_TRANS, ATL_CINT, ATL_CINT, ATL_CINT,
+               const SCALAR, const TYPE*, ATL_CINT,  const TYPE*, ATL_CINT,
+               const SCALAR, TYPE*, ATL_CINT));
+@whiledef rt tammm_G tammm_tNK tammm_tMN
+int Mjoin(PATL,@(rt))
+   (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, 
+    ATL_CINT M, ATL_CINT N, ATL_CINT K, const SCALAR alpha,
+    const TYPE *A, ATL_CINT lda, const TYPE *B, ATL_CINT ldb,
+    const SCALAR beta, TYPE *C, ATL_CINT ldc);
+@endwhile
+
 @whiledef ds rec rkK bigMN_Kp
 int Mjoin(PATL,tgemm_@(ds))
    (const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB, 
@@ -10517,12 +10565,255 @@ DONE:
    while(tp->ntdone < tp->ntexp)
       ATL_thread_yield();
 }
-@ROUT ATL_tgemm_amm
+@ROUT ATL_tammm_tMN
+#include "atlas_misc.h"
+#define ATL_ESTNCTR 1
+#include "atlas_level1.h"
+#include "atlas_tlvl3.h"
+void Mjoin(PATL,DoWork_amm_tMN)(void *vpp, int rank, int vrank)
+{
+   ATL_tpool_t *pp=vpp;
+   ATL_tamm_tMN_t *pd = pp->PD;
+   cm2am_t a2blk = pd->a2blk, b2blk = pd->b2blk;
+   ammkern_t amm = pd->amm_b0;
+   TYPE *wA = pd->w + vrank*pd->szW;
+   TYPE *wB;
+   TYPE *wC;
+   const int nkblks = pd->nkblks, kb=pd->kb, KB0=pd->KB0, kb0=pd->kb0,
+             M=pd->M, N=pd->N;
+   const size_t incA = (pd->TA) ? 1:pd->lda;
+   const size_t incB = (pd->TB) ? pd->ldb:1;
+   int kctr;
+
+   wA = ATL_AlignPtr(wA);
+   wB = wA + pd->szA;
+   wC = wB + pd->szB;
+   while ((kctr = ATL_DecGlobalAtomicCount(pd->KbCtr, vrank)))
+   {
+      const int kblk = nkblks - kctr;
+      size_t k;
+@skip printf("%d,%d: nkblks=%d, kblk=%d\n", vrank,rank, nkblks, kblk);
+/*
+ *    Normal case, doing full K blocks
+ */
+      if (kblk)
+      {
+         size_t k = kb0 + kb*(kblk-1);
+         const TYPE *a = pd->A + k*incA, *b = pd->B + k*incB;
+         a2blk(kb, M, ATL_rone, a, pd->lda, wA);
+         b2blk(kb, N, ATL_rone, b, pd->ldb, wB);
+         amm(pd->nmu, pd->nnu, kb, wA, wB, wC, wA, wB, wC);
+      }
+/*
+ *    Doing possibly partial kb0 at beginning
+ */
+      else
+      {
+         amm = (amm == pd->amm_b1) ? pd->ammK_b1 : pd->ammK_b0;
+         a2blk(kb0, M, ATL_rone, pd->A, pd->lda, wA);
+         b2blk(kb0, N, ATL_rone, pd->B, pd->ldb, wB);
+         amm(pd->nmu, pd->nnu, KB0, wA, wB, wC, wA, wB, wC);
+      }
+      amm = pd->amm_b1;
+   }
+/*
+ * If I did no work, zero my wC so combine isn't messed up!
+ */
+   if (amm == pd->amm_b0)
+      Mjoin(PATL,zero)(pd->nC, wC, 1);
+}
+
+void Mjoin(PATL,DoComb_amm_tMN)
+   (void *vpp, int rank, int vrank, int hisrank, int hisvrank)
+{
+   ATL_tpool_t *pp=vpp;
+   ATL_tamm_tMN_t *pd = pp->PD;
+   TYPE *mC, *hC;
+
+   mC = pd->w + vrank*pd->szW;
+   mC = ATL_AlignPtr(mC);
+   mC += pd->szA + pd->szB;
+
+   hC = pd->w + hisvrank*pd->szW;
+   hC = ATL_AlignPtr(hC);
+   hC += pd->szA + pd->szB;
+   Mjoin(PATL,axpy)(pd->nC, ATL_rone, hC, 1, mC, 1);
+}
+
+/*
+ * This routine handles the case where M <= maxMB && N <= maxNB so C is
+ * only one block.  It gets its own case because it requires minimal
+ * workspace.  K will need to fairly long, and due to streaming A & B
+ * through the cache with only intra-kernel reuse, its parallel efficiency
+ * tends to be limited by bus speed.
+ */
+int Mjoin(PATL,tammm_tMN)
+(
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   ATL_CINT M,
+   ATL_CINT N,
+   ATL_CINT K,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CINT lda,
+   const TYPE *B,
+   ATL_CINT ldb,
+   const SCALAR beta,
+   TYPE *C,
+   ATL_CINT ldc
+)
+{
+   ATL_SZT nmblks;
+   amminfo_t mminfo;
+   unsigned int i, mb, nb, kb, kb0, KB0, nmu, nnu, mu, nu, ku, P, mr;
+   ATL_INT nkblks;
+   ATL_tamm_tMN_t pd;  /* problem definition structure */
+   void *vp;
+   TYPE *wC;
+
+/*
+ * Special case for tiny N&K, and large M
+ */
+   if (N > ATL_AMM_MAXNB || M > ATL_AMM_MAXMB ||
+       K < Mmin(8,ATL_NTHREADS)*ATL_AMM_MAXKB)
+      return(1);
+/*
+ * Not uncommon to recur and hit this degenerate case that's a dot product
+ */
+   if (M == 1 && N == 1)
+   {
+      TYPE dot;
+      dot = Mjoin(PATL,dot)(K, A, (TA == AtlasNoTrans)?lda:1, 
+                            B, (TB == AtlasNoTrans) ? 1:ldb);
+      if (SCALAR_IS_ZERO(beta))
+         *C = alpha * dot;
+      else
+         *C = alpha * dot + beta * (*C);
+      return(0);
+   }
+   nkblks = K / ATL_AMM_66KB;
+   mb = Mjoin(PATL,tGetAmmmInfo)(&mminfo, Mmin(nkblks, ATL_NTHREADS), TA,
+                                 TB, M, N, K, alpha, beta);
+
+   if (!SCALAR_IS_ONE(alpha)) { ATL_assert(mb == 2); }
+   pd.a2blk = mminfo.a2blk;
+   pd.b2blk = mminfo.b2blk;
+   pd.amm_b0 = mminfo.amm_b0;
+   pd.amm_b1 = mminfo.amm_b1;
+   pd.TA = (TA == AtlasTrans);
+   pd.TB = (TB == AtlasTrans);
+   pd.M = M;
+   pd.N = N;
+   pd.K = K;
+   pd.A = A;
+   pd.B = B;
+   pd.C = C;
+   pd.lda = lda;
+   pd.ldb = ldb;
+   pd.ldc = ldc;
+   mu = mminfo.mu;
+   nu = mminfo.nu;
+   ku = mminfo.ku;
+   pd.nmu = nmu = (M+mu-1)/mu;
+   pd.nnu = nnu = (N+nu-1)/nu;
+   kb = pd.kb = mminfo.kb;
+   nkblks = K / kb;
+   KB0 = kb0 = K - nkblks*kb;
+   if (!kb0)
+   {
+      kb0 = KB0 = kb;
+      pd.ammK_b0 = mminfo.amm_b0;
+      pd.ammK_b1 = mminfo.amm_b1;
+   }
+   else
+   {
+      nkblks++;
+      #if ATL_AMM_MAXKMAJ > 1
+         if (ATL_AMMFLG_KMAJOR(mminfo.flag))
+         {
+            KB0 = ((kb0+ku-1)/ku)*ku;
+            if (ATL_AMMFLG_KRUNTIME(mminfo.flag))
+            {
+               pd.ammK_b0 = mminfo.amm_b0;
+               pd.ammK_b1 = mminfo.amm_b1;
+            }
+            else
+            {
+               pd.ammK_b0 = mminfo.amm_k1_b0;
+               pd.ammK_b1 = mminfo.amm_k1_b1;
+            }
+         }
+         else
+      #endif
+      {
+         if (ATL_AMMFLG_KRUNTIME(mminfo.flag) && kb0 == (kb0/ku)*ku &&
+             kb0 > mminfo.kbmin)
+         {
+            pd.ammK_b0 = mminfo.amm_b0;
+            pd.ammK_b1 = mminfo.amm_b1;
+         }
+         else
+         {
+            pd.ammK_b0 = mminfo.amm_k1_b0;
+            pd.ammK_b1 = mminfo.amm_k1_b1;
+         }
+      }
+   }
+   pd.nkblks = nkblks;
+   pd.KB0 = KB0;
+   pd.kb0 = kb0;
+/*
+ * Maximum scale is limited by NTHREADS or max number of K-blocks
+ */
+   P = (ATL_NTHREADS <= nkblks) ? ATL_NTHREADS : nkblks;
+   mb = nmu * mu;
+   nb = nnu * nu;
+   pd.nC = mb*nb;
+   pd.szA = mb*kb;
+   pd.szB = nb*kb;
+   pd.szW = pd.szA + pd.szB + pd.nC + ATL_Cachelen;
+
+   vp = malloc(ATL_MulBySize(pd.szW*P + mu*nu*ku));
+   if (!vp)
+      return(2);
+   pd.w = vp;
+   pd.KbCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(nkblks, P), nkblks, 0);
+
+/*   #define DEBUG1 */
+   #ifdef DEBUG1
+   {
+      ATL_tpool_t *pp=ATL_TP_PTR;
+      if (!pp)
+         pp = ATL_NewThreadPool(1, 0, NULL);
+      ATL_assert(pp);
+      pp->PD = &pd;
+      Mjoin(PATL,DoWork_amm_tMN)(pp, 0, 0);
+      if (pp != ATL_TP_PTR)
+         ATL_FreeThreadPool(pp);
+   }
+   #else
+      ATL_goParallel(P, Mjoin(PATL,DoWork_amm_tMN), Mjoin(PATL,DoComb_amm_tMN),
+                     &pd, NULL);
+   #endif
+   ATL_FreeGlobalAtomicCount(pd.KbCtr);
+/*
+ * Copy answer back out while scaling by alpha and beta
+ */
+   wC = ATL_AlignPtr(pd.w);
+   wC += pd.szA + pd.szB;
+   mminfo.Cblk2cm(M, N, alpha, wC, beta, C, ldc);
+
+   free(vp);
+   return(0);
+}
+@ROUT ATL_tgemm_amm ATL_tammm_tNK ATL_tammm_G
 #include "atlas_misc.h"
 #define ATL_ESTNCTR 1
 #include "atlas_tlvl3.h"
 #include "atlas_bitvec.h"
 
+@ROUT ATL_tammm_tNK
 void Mjoin(PATL,DoWork_tamm_tNK)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
    ATL_thread_t *tp = vp;
@@ -10620,17 +10911,17 @@ int Mjoin(PATL,tammm_tNK)
 (
    enum ATLAS_TRANS TA,
    enum ATLAS_TRANS TB,
-   ATL_CSZT M,
-   ATL_CSZT N,
-   ATL_CSZT K,
+   ATL_CINT M,
+   ATL_CINT N,
+   ATL_CINT K,
    const SCALAR alpha,
    const TYPE *A,
-   ATL_CSZT lda,
+   ATL_CINT lda,
    const TYPE *B,
-   ATL_CSZT ldb,
+   ATL_CINT ldb,
    const SCALAR beta,
    TYPE *C,
-   ATL_CSZT ldc
+   ATL_CINT ldc
 )
 {
    ATL_SZT nmblks;
@@ -10723,10 +11014,14 @@ int Mjoin(PATL,tammm_tNK)
       ATL_goparallel(P, Mjoin(PATL,DoWork_tamm_tNK), &pd, NULL);
    #endif
 
+   ATL_FreeAtomicCount(pd.BdoneCtr);
+   ATL_FreeAtomicCount(pd.BassgCtr);
+   ATL_FreeGlobalAtomicCount(pd.MbCtr);
+
    free(vp);
    return(0);
 }
-
+@ROUT ATL_tammm_G
 static void DoCpy
 (
    ATL_tgemm_ammG_t *pd,             /* problem definition */
@@ -11147,17 +11442,17 @@ int Mjoin(PATL,tammm_G)
 (
    enum ATLAS_TRANS TA,
    enum ATLAS_TRANS TB,
-   ATL_CSZT M,
-   ATL_CSZT N,
-   ATL_CSZT K,
+   ATL_CINT M,
+   ATL_CINT N,
+   ATL_CINT K,
    const SCALAR alpha,
    const TYPE *A,
-   ATL_CSZT lda,
+   ATL_CINT lda,
    const TYPE *B,
-   ATL_CSZT ldb,
+   ATL_CINT ldb,
    const SCALAR beta,
    TYPE *C,
-   ATL_CSZT ldc
+   ATL_CINT ldc
 )
 {
    int ncblks, nmblks, nnblks, nkblks, nMNblks, mb, nb, kb, mu, nu, ku; 
@@ -11374,29 +11669,29 @@ int Mjoin(PATL,tammm_G)
    free(vp);
    return(0);
 }
-
+@ROUT ATL_tgemm_amm
 /*
  * recurs on any standard GEMM interface routine, passed as a function
- * pointer in vp.
+ * pointer in amm.
  */
 int Mjoin(PATL,ammm_REC)
 (
    enum ATLAS_TRANS TA,
    enum ATLAS_TRANS TB,
-   ATL_CSZT M,
-   ATL_CSZT N,
-   ATL_CSZT K,
+   ATL_CINT M,
+   ATL_CINT N,
+   ATL_CINT K,
    const SCALAR alpha,
    const TYPE *A,
-   ATL_CSZT lda,
+   ATL_CINT lda,
    const TYPE *B,
-   ATL_CSZT ldb,
+   ATL_CINT ldb,
    const SCALAR beta,
    TYPE *C,
-   ATL_CSZT ldc,
-   int (*amm)(enum ATLAS_TRANS,enum ATLAS_TRANS, ATL_CSZT, ATL_CSZT, ATL_CSZT,
-              const SCALAR, const TYPE*, ATL_CSZT,  const TYPE*, ATL_CSZT, 
-              const SCALAR, TYPE*, ATL_CSZT)
+   ATL_CINT ldc,
+   int (*amm)(enum ATLAS_TRANS,enum ATLAS_TRANS, ATL_CINT, ATL_CINT, ATL_CINT,
+              const SCALAR, const TYPE*, ATL_CINT,  const TYPE*, ATL_CINT, 
+              const SCALAR, TYPE*, ATL_CINT)
 )
 {
    if (amm(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc))
@@ -11467,6 +11762,9 @@ int Mjoin(PATL,tammm)
 {
    if (N < ATL_AMM_MAXNB && K <= ATL_AMM_MAXKB && K > 2)
       return(Mjoin(PATL,tammm_tNK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                   beta, C, ldc));
+   else if (M <= ATL_AMM_MAXMB && N <= ATL_AMM_MAXNB)
+      return(Mjoin(PATL,tammm_tMN)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                    beta, C, ldc));
    else if (M > ATL_AMM_MAXMB && K >= 16 && N > ATL_AMM_MAXNB)
       return(Mjoin(PATL,ammm_REC)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
