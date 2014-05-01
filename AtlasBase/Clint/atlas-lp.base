@@ -1156,6 +1156,7 @@ void ATL_laswp(const int N, TYPE *A, const int lda0, const int K1,
 #ifdef ATL_USEPTHREADS
    #include "atlas_pthreads.h"
    #include "atlas_tcacheedge.h"
+   #include "atlas_pca.h"
 #else
    #include "atlas_cacheedge.h"
 #endif
@@ -1273,7 +1274,7 @@ int ATL_getrfR(const int M, const int N, TYPE *A, const int lda, int *ipiv)
    return(ierr);
 }
 @ROUT ATL_getrfC
-#ifdef TREAL
+#if defined(TREAL)
 
 static int LU2(const int M, TYPE *A, const int lda, int *ipiv)
 /*
@@ -1496,8 +1497,18 @@ int ATL_getrfC(const int M, const int N, TYPE *A, const int lda, int *ipiv)
    if (((size_t)M)*N <= ATL_L1elts)
       return(Mjoin(PATL,getf2)(M, N, A, lda, ipiv));
    #if defined(ATL_USEPTHREADS) && defined(ATL_USEPCA)
+/*
+ *    For large core-counts, use tgetf2 for parallelism even if
+ *    problems are too large to fit in cache: Amdahl's law says this
+ *    must be parallelized or it becomes a bottlneck wt increasing scale.
+ */
+      #if ATL_NTHREADS < 8
       if (N <= (NB<<2) && N >= 16 && M-N >= ATL_PCAMin && 
           ((size_t)ATL_MulBySize(M)*N) <= CacheEdge*ATL_NTHREADS)
+      #else
+      if (M-N > ATL_PCAMin && ((N > 1 && N < 12) || 
+          ((size_t)ATL_MulBySize(M)*N) <= CacheEdge*ATL_NTHREADS))
+      #endif
       {
          if (N >= 16)
             ierr = Mjoin(PATL,tgetf2)(M, N, A, lda, ipiv);
@@ -1531,7 +1542,12 @@ int ATL_getrfC(const int M, const int N, TYPE *A, const int lda, int *ipiv)
       for (i=Nleft; i != MN; i++) ipiv[i] += Nleft;
       ATL_laswp(Nleft, A, lda, Nleft, MN, ipiv, 1);
    }
-#ifdef TREAL
+/*
+ * Don't use LU2 for threaded code: it is serial, and will become costly
+ * due to Amdahl's law for large-scale problems.  Recur to 1 and use BLAS
+ * for parallelism
+ */
+#if defined(TREAL) && !defined(ATL_USEPTHREADS)
    else if (MN == 2)
    {
       Nleft = 2;
