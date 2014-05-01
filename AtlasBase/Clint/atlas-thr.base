@@ -629,6 +629,27 @@ struct ATL_tsyrk_ammK
    int lda;             /* leading dim of A */
    int ldc;             /* leading dim of C */
 };
+@beginskip
+/*
+ * This data structure for trsm where all the parallelism comes from splitting
+ * up the RHS matrix B.  If they run in lock-step and all work on one row panel,
+ * this results in pure top-looking algorithm.  However, of the row panel
+ * doesn't have enough blocks, cores will work on later row panels of B,
+ * resulting in look-ahead.
+ */
+typedef struct ATL_ttrsm_ammB ATL_tsyrk_ammB_t;
+struct ATL_ttrsm_ammB_t
+{
+   int nmblks;    /* number of row panels B is split into */
+   int nnblks;    /* number of AMM blocks in a row panel */
+   int mb;        /* row & col blocking of A (mb & kb of amm) */
+   int nb;        /* column blocking of X/B/C (nb of amm) */
+   int actpan;    /* Panel currently being solved, [0-(nmblks-1)] */
+   void *CblkCtr; /* deals out ownership of X/B/C blocks row-wise */
+   void *AblkCtr; /* deals out copy of A blocks column-wise */
+   void *BcpyBV;  /* nmblks*nnblks-len BV; 0: X blk not yet copied to B */
+};
+@endskip
 /*
  * This structure used by dynamic access-major SYRK
  * In the first phase, we work only on diagonal blocks, while copying both
@@ -10812,6 +10833,34 @@ int Mjoin(PATL,tammm_tMN)
 
    free(vp);
    return(0);
+}
+@ROUT  ATL_ttrsm_ammB
+#include "atlas_misc.h"
+#define ATL_ESTNCTR 1
+#include "atlas_tlvl3.h"
+#include "atlas_bitvec.h"
+
+static int ttrsm_ammLL
+   (const enum ATLAS_TRANS TA, const enum ATLAS_DIAG diag,
+    ATL_CINT M, ATL_CINT N, const SCALAR alpha,
+    const TYPE *A, ATL_CINT lda, TYPE *B, ATL_CINT ldb)
+{
+   ATL_ttrsm_ammB_t pd;
+/*
+ * Knows that we need cblk2cm_b[0,1], alpha==-1 for A, alpha=1 for B, TB=NoTrans
+ */
+   Mjoin(PATL,tGetTRSMAmmmInfo)(&mminfo, TA, M, N, M);
+}
+
+int Mjoin(PATL,ttrsm_amm)
+   (const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
+    const enum ATLAS_TRANS TA, const enum ATLAS_DIAG diag,
+    ATL_CINT M, ATL_CINT N, const SCALAR alpha,
+    const TYPE *A, ATL_CINT lda, TYPE *B, ATL_CINT ldb)
+{
+   if (side == AtlasLeft && uplo == AtlasLower)
+      return(ttrsm_ammLL(TA, diag, M, N, alpha, A, lda, B, ldb));
+   return(1);
 }
 @ROUT ATL_tgemm_amm ATL_tammm_tNK ATL_tammm_G
 #include "atlas_misc.h"
