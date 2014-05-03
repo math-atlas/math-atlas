@@ -10701,23 +10701,25 @@ int Mjoin(PATL,tGetAmmmInfo)
    }
    return(appAl);
 }
+#ifdef TREAL
 /*
  * For TRSM, we're going to get our main parellelism from the N dimension
  * We know that mb==kb, but nb is independent.  alpha for A will be -1,
  * and for B it will 1.  Cblk2cm will be beta=0, while Cbk2cm_b1 will be 1.
  * RETURNS: upper bound on useful nthreads to use
  */
-#include "atlas_tlvl3.h"
+#include "atlas_ttypes.h"
 int Mjoin(PATL,tGetTrsmInfo)
 (
    ATL_ttrsm_amm_t *pd,
+   int P,
    enum ATLAS_TRANS TA,
    ATL_CSZT M,
    ATL_CSZT N,
    const SCALAR beta
 )
 {
-   int ik = ATL_MAXIDX, P = (ATL_TP_PTR) ? ATL_TP_PTR->nthr : ATL_NTHREADS;
+   int ik = ATL_MAXIDX;
    int mu, nu, ku, nb, nnblks, mb, nmblks, mb0;
 
    #ifdef TREAL
@@ -10762,9 +10764,27 @@ int Mjoin(PATL,tGetTrsmInfo)
    }
 // ik=0;   /* FOR TESTING!!!!! */
    pd->mb = mb = ATL_AMM_KBs[ik];
-   pd->nb = nb = ATL_AMM_NBs[ik];
-   mu = ATL_AMM_MUs[ik];
+   nb = ATL_AMM_NBs[ik];
    nu = ATL_AMM_NUs[ik];
+/*
+ * Restrict either nb or P in order to split up RHS
+ */
+   if (nb*P > N)
+   {
+      if (nb > (nu<<2))  /* try reducing large NB to 4*nu,  */
+      {                  /* still allows A reuse by factor 4 */
+         int k = N / (nu<<2);
+         if (k <= P)
+         {
+            nb = (nu<<2);
+            P = (k*nb != N) ? k+1 : k;
+         }
+      }
+      else
+         P = (N+nb-1) / nb;
+   }
+   pd->nb = nb;
+   mu = ATL_AMM_MUs[ik];
    ku = ATL_AMM_KUs[ik];
    pd->nmu = mb / mu;
    pd->nnu = nb / nu;
@@ -10834,7 +10854,7 @@ int Mjoin(PATL,tGetTrsmInfo)
       pd->blk2c = ATL_AMM_BLK2C_a1_bn[ik];
    else
       pd->blk2c = ATL_AMM_BLK2C_a1_bX[ik];
-printf("ik=%d, mb=%d(%d), nb=%d(%d), MB0=%d\n", ik, pd->mb, pd->mb0, pd->nb, pd->nbf, pd->MB0);
+// printf("ik=%d, mb=%d(%d), nb=%d(%d), MB0=%d\n", ik, pd->mb, pd->mb0, pd->nb, pd->nbf, pd->MB0);
    return(P);
 }
 
@@ -10982,6 +11002,7 @@ ablk2cmat_t Mjoin(PATL,tGetSyammInfo_K)
    out->Cblk2cm = ATL_AMM_BLK2C_a1_b1[ik];
    return(ATL_AMM_BLK2C_a1_b0[ik]);
 }
+#endif
 
 @ROUT ATL_GetRankKInfo0000 
 /*
