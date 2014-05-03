@@ -10701,6 +10701,142 @@ int Mjoin(PATL,tGetAmmmInfo)
    }
    return(appAl);
 }
+/*
+ * For TRSM, we're going to get our main parellelism from the N dimension
+ * We know that mb==kb, but nb is independent.  alpha for A will be -1,
+ * and for B it will 1.  Cblk2cm will be beta=0, while Cbk2cm_b1 will be 1.
+ * RETURNS: upper bound on useful nthreads to use
+ */
+#include "atlas_tlvl3.h"
+int Mjoin(PATL,tGetTrsmInfo)
+(
+   ATL_ttrsm_amm_t *pd,
+   enum ATLAS_TRANS TA,
+   ATL_CSZT M,
+   ATL_CSZT N,
+   const SCALAR beta
+)
+{
+   int ik = ATL_MAXIDX, P = (ATL_TP_PTR) ? ATL_TP_PTR->nthr : ATL_NTHREADS;
+   int mu, nu, ku, nb, nnblks, mb, nmblks, mb0;
+
+   #ifdef TREAL
+      nb = ATL_AMM_NBs[ik];
+      nnblks = N / nb;
+      if (nnblks > P && ik > ATL_AMM_98IDX)
+      {
+         ik = ATL_AMM_98IDX;
+      }
+   #endif
+/*
+ * Get a KB smaller than M
+ */
+   for (; ik > 0 && ATL_AMM_KBs[ik] > M; ik--);
+
+/*
+ * Find a kernel where mb can be set to kb; we know these exist, since we insist
+ * on square problems of moderate size
+ */
+   for (; ik > 0; ik--)
+   {
+      mu = ATL_AMM_MUs[ik];
+      mb = ATL_AMM_KBs[ik];
+      if (mb > M)
+         continue;
+/*
+ *    Any kernel can be used if it can be called with MB = KB
+ */
+      if ((mb/mu)*mu == mb)       /* it is legal to call wt MB=KB */
+         break;                   /* so use this kernel */
+/*
+ *    KRUNTIME kernels can vary their KB, and thus be made legal
+ */
+      if (ATL_AMM_KRUNTIME(ATL_AMM_KFLAG[ik]))
+      {
+         ku = ATL_AMM_KUs[ik];
+         ku = ATL_lcm(ku, mu);
+         mb = (mb/ku)*ku;
+         if (mb)
+            break;
+      }
+   }
+// ik=0;   /* FOR TESTING!!!!! */
+   pd->mb = mb = ATL_AMM_KBs[ik];
+   pd->nb = nb = ATL_AMM_NBs[ik];
+   mu = ATL_AMM_MUs[ik];
+   nu = ATL_AMM_NUs[ik];
+   ku = ATL_AMM_KUs[ik];
+   pd->nmu = mb / mu;
+   pd->nnu = nb / nu;
+   nnblks = N / nb;
+   pd->nbf = N - nb*nnblks;
+   if (!pd->nbf)
+   {
+      pd->nbf = nb;
+      pd->nnuf = pd->nnu;
+   }
+   else
+   {
+      nnblks++;
+      pd->nnuf = (pd->nbf+nu-1)/nu;
+   }
+   pd->nnblks = nnblks;
+   pd->amm_b0 = ATL_AMM_KERN_b0[ik];
+   pd->amm_b1 = ATL_AMM_KERN_b1[ik];
+   nmblks = M/mb;
+   mb0 = (M - nmblks*mb);
+   if (!mb0)
+   {
+      pd->MB0 = mb0 = mb;
+      pd->nmu0 = pd->nmu;
+   }
+   else
+   {
+      nmblks++;
+      if (ATL_AMM_KMAJOR(ik))
+      {
+         pd->MB0 = ((mb0+ku-1)/ku)*ku;
+         if (!ATL_AMM_KRUNTIME(ik))
+            pd->amm_b0 = ATL_AMM_KERN_K1[ik];
+      }
+      else if (!ATL_AMM_KRUNTIME(ik) || mb0 != (mb0/ku)*ku ||
+               mb0 < ATL_AMM_KBMINs[ik])
+      {
+         pd->amm_b0 = ATL_AMM_KERN_K1[ik];
+         pd->MB0 = mb0;
+      }
+      pd->nmu0 = (mb0+mu-1)/mu;
+   }
+   pd->mb0 = mb0;
+   pd->nmblks = nmblks;
+   pd->nxblks = nnblks * nmblks;
+   if (P > pd->nxblks)
+      P = pd->nxblks;
+   pd->mu = mu;
+   pd->nu = nu;
+   pd->ku = ATL_AMM_KUs[ik];
+   #ifdef TCPLX
+      if (TA == AtlasConjTrans)
+         pd->a2blk = ATL_AMM_AC2BLK_an[ik];
+      else if (TA == AtlasConj)
+         pd->a2blk = ATL_AMM_AH2BLK_an[ik];
+      else
+   #endif
+   pd->a2blk = (TA == AtlasNoTrans) ? 
+               ATL_AMM_AT2BLK_an[ik] : ATL_AMM_A2BLK_an[ik];
+   pd->b2blk = ATL_AMM_B2BLK_a1[ik];
+/*
+ * beta != 0, because then trsm simply zeros X and returns
+ */
+   if (SCALAR_IS_ONE(beta))
+      pd->blk2c = ATL_AMM_BLK2C_a1_b1[ik];
+   else if (SCALAR_IS_NONE(beta))
+      pd->blk2c = ATL_AMM_BLK2C_a1_bn[ik];
+   else
+      pd->blk2c = ATL_AMM_BLK2C_a1_bX[ik];
+printf("ik=%d, mb=%d(%d), nb=%d(%d), MB0=%d\n", ik, pd->mb, pd->mb0, pd->nb, pd->nbf, pd->MB0);
+   return(P);
+}
 
 ablk2cmat_t Mjoin(PATL,tGetSyammInfo)
 (
@@ -10824,7 +10960,7 @@ ablk2cmat_t Mjoin(PATL,tGetSyammInfo_K)
    out->mb = ((N+mu-1)/mu)*mu;
    out->nb = ((N+nu-1)/nu)*nu;
    out->kb = ATL_AMM_KBs[ik];
-/*   printf("tGetSyAMM_K, mb=%d, nb=%d, kb=%d, ik=%d\n", mb, nb, out->kb, ik); */
+/*  printf("tGetSyAMM_K, mb=%d, nb=%d, kb=%d, ik=%d\n", mb, nb, out->kb, ik); */
    out->kbmin = ATL_AMM_KBMINs[ik];
    out->flag = ATL_AMM_KFLAG[ik];
    out->amm_b0 = ATL_AMM_KERN_b0[ik];

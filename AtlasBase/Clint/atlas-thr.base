@@ -636,17 +636,48 @@ struct ATL_tsyrk_ammK
  * doesn't have enough blocks, cores will work on later row panels of B,
  * resulting in look-ahead.
  */
-typedef struct ATL_ttrsm_ammB ATL_tsyrk_ammB_t;
-struct ATL_ttrsm_ammB_t
+typedef struct ATL_ttrsm_amm ATL_ttrsm_amm_t;
+struct ATL_ttrsm_amm
 {
-   int nmblks;    /* number of row panels B is split into */
-   int nnblks;    /* number of AMM blocks in a row panel */
-   int mb;        /* row & col blocking of A (mb & kb of amm) */
-   int nb;        /* column blocking of X/B/C (nb of amm) */
-   int actpan;    /* Panel currently being solved, [0-(nmblks-1)] */
-   void *CblkCtr; /* deals out ownership of X/B/C blocks row-wise */
-   void *AblkCtr; /* deals out copy of A blocks column-wise */
-   void *BcpyBV;  /* nmblks*nnblks-len BV; 0: X blk not yet copied to B */
+   ammkern_t amm_b0, amm_b1;
+   ablk2cmat_t blk2c;
+   cm2am_t a2blk, b2blk;
+   void *XblkCtr;      /* deals out ownership of X/B/C blocks row-wise */
+   void *AblkCtr;      /* deals out copy of A blocks column-wise */
+   int *BcpyBV;        /* nmblks*nnblks-len BV; 0: X blk not yet copied to B */
+   int *AcpyBV;        /* nablks-len BV; 0: A blk not yet copied */
+   void *Bcpymut;      /* mutex protecting BcpyBV */
+   void *Acpymut;      /* mutex protecting AcpyBV */
+   TYPE *wA;           /* ptr to start of shared A workspace */
+   TYPE *wB;           /* ptr to shared B workspace */
+   TYPE *wCs;          /* ptr to start of nthr C workspaces */
+   const TYPE *A;      /* M-order triangular matrix */
+   TYPE *X;            /* MxN matrix of right hand sides (RHS) */
+   size_t lda, ldx;
+   size_t blkszC;      /* mb*nb, use size_t so P*szC is promoted */
+   size_t blkszA;      /* mb*mb */
+   size_t panszB;      /* size of col panel of B : (nmblks-1)*blkszC */
+   TYPE alpha;         /* scale to apply to X before access */
+   ATL_INT M, N;       /* M: size of A, N: NRHS */
+   VINT AcpyDone;      /* set to 1 when copy of entire A complete */
+   int nmblks;         /* number of row panels B is split into */
+   int nnblks;         /* number of AMM blocks in a row panel */
+   int nablks;         /* # of non-diagonal blocks in A */
+   int nxblks;         /* # of blocks in X, B/C have nnblks less */
+   int nbf;            /* N%nb, if 0, nb */
+   int nnuf;           /* (nbf+nu-1)/nu */
+   int mb0;            /* size of 1st diag blk: M%mb, if 0, mb */
+   int MB0;            /* for k-vector kernels, (mb0+ku-1)/ku*ku, else mb0 */
+   int mb;             /* row & col blocking of A (mb & kb of amm) */
+   int nb;             /* column blocking of X/B/C (nb of amm) */
+   int mu;             /* M unrolling for amm kernel */
+   int nu;             /* N unrolling for amm kernel */
+   int ku;             /* K unrolling for amm kernel */
+   int nnu, nmu, nmu0;
+   int actpan;         /* Panel currently being solved, [0-(nmblks-1)] */
+   enum ATLAS_TRANS TA; 
+   enum ATLAS_DIAG uplo;
+   enum ATLAS_DIAG diag;
 };
 /*
  * This structure used by dynamic access-major SYRK
@@ -951,6 +982,33 @@ typedef struct
    enum ATLAS_TRANS Trans;
 } ATL_TSYRK_t;
 @endskip
+/*
+ * Block to bit-mapping macros
+ */
+/*
+ * Translates (i,j) coordinate of lower triangular matrix to number between
+ * 0 and the number of non-diagonal blocks. 
+ * nm is the number of blocks in the first column panel, including the diagonal.
+ * (i,j) is the coordinate of the block
+ */
+#define Mcoord2tblk(nm_, i_, j_) \
+   ((nm_)*(j_) - (((1+(j_))*(j_))>>1) + (i_)-(j_)-1)
+/*
+ * Translates non-diag block number b_ to (i,j) coordinates assuming first panel
+ * has nm_ blocks in it (including diagonal block)
+ */
+#define Mtblk2coord(NM_, B_, I_, J_) \
+{ \
+   register int n_ = (NM_)-1, b_=(B_), j_; \
+   for (j_=0; b_ >= n_; j_++) \
+   { \
+      b_ -= n_; \
+      n_--; \
+   } \
+   (J_) = j_; \
+   (I_) = j_ + b_ + 1; \
+}
+
 /*
  * =============================================================================
  * Function prototypes
@@ -5044,16 +5102,21 @@ void Mjoin(PATL,t@(rt))(const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
       Mjoin(PATL,gezero)(M, N, B, ldb);
       return;
    }
-   @beginskip
+@ROUT ATL_ttrsm
    #ifdef TREAL
-   if (side == AtlasLeft && uplo == AtlasLower && TA == AtlasNoTrans
-       && M > 400)
+   if (1)
    {
-     trsmREC_LLN(diag, M, N, alpha, A, lda, B, ldb);
-     return;
+      int Mjoin(PATL,ttrsm_amm)
+         (const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
+          const enum ATLAS_TRANS TA, const enum ATLAS_DIAG diag,
+          ATL_CINT M, ATL_CINT N, const SCALAR alpha,
+          const TYPE *A, ATL_CINT lda, TYPE *B, ATL_CINT ldb);
+     if (!Mjoin(PATL,ttrsm_amm)(side, uplo, TA, diag, M, N, alpha, 
+                                A, lda, B, ldb))
+        return;
    }
    #endif
-   @endskip
+@ROUT ATL_ttrsm ATL_ttrmm
 /*
  * Distribute RHS over the processors
  */
@@ -10832,32 +10895,271 @@ int Mjoin(PATL,tammm_tMN)
    free(vp);
    return(0);
 }
-@ROUT  ATL_ttrsm_ammB
+@ROUT ATL_ttrsm_amm
 #include "atlas_misc.h"
 #define ATL_ESTNCTR 1
 #include "atlas_tlvl3.h"
 #include "atlas_bitvec.h"
 
+static void cpyAblk(ATL_ttrsm_amm_t *pd)
+{
+   const int mb=pd->mb;
+   int actr, ablk, kb;
+   size_t i, j;
+   const TYPE *a=pd->A;
+   TYPE *wA;
+
+   actr = ATL_DecAtomicCount(pd->AblkCtr);
+   if (!actr)
+      return;
+   ablk = pd->nablks - actr;
+   wA = pd->wA + ablk*pd->blkszA;
+   Mtblk2coord(pd->nmblks, ablk, i, j);
+   i = pd->mb0 + (i-1)*mb;
+   if (j)
+   {
+      j = pd->mb0 + (j-1)*mb;
+      kb = mb;
+   }
+   else
+      kb = pd->mb0;
+   if (pd->uplo == AtlasLower)
+      a += j*pd->lda + i;
+   else
+      a += i*pd->lda + j;
+   pd->a2blk(kb, mb, ATL_rnone, a, pd->lda, wA);
+   ATL_mutex_lock(pd->Acpymut);
+   ATL_SetBitBV(pd->AcpyBV, ablk);
+   if (ATL_FindFirstUnsetBitBV(pd->AcpyBV, 0) == -1)
+      pd->AcpyDone = 1;
+   ATL_mutex_unlock(pd->Acpymut);
+}
+
+#include "atlas_reflevel3.h"
+#define trsmK Mjoin(PATL,reftrsm)
+
+static void SolveAllRemainingRows(ATL_ttrsm_amm_t *pd, int vrank, int xctr)
+{
+   const int mb=pd->mb, mb0=pd->mb0, nnblks=pd->nnblks, nxblks=pd->nxblks,
+      nmu=pd->nmu, blkszA=pd->blkszA, blkszB=pd->blkszC,
+      panszB=pd->panszB, nmblks=pd->nmblks, Bn=pd->nb;
+   TYPE *X, *C = pd->wCs + vrank*pd->blkszC;
+   ammkern_t amm=pd->amm_b1;
+   ablk2cmat_t blk2c=pd->blk2c;
+
+   do
+   {
+      const int xblk = nxblks - xctr, i = xblk / nnblks, j = xblk - i*nnblks;
+      const int nb  =(j < nnblks-1) ? Bn : pd->nbf, 
+                nnu =(j < nnblks-1) ? pd->nnu : pd->nnuf;
+      int k, bb;
+      const TYPE *a;
 /*
- * This routine does Lower, no-transpose case, or Upper, Transpose case
+ *    Loop over all row panels I'm waiting on to come into B
  */
-static int ttrsm_ammLL
-   (const enum ATLAS_TRANS TA, const enum ATLAS_DIAG diag,
-    ATL_CINT M, ATL_CINT N, const SCALAR alpha,
+      for (bb=k=0; k < i; k++, bb += nnblks)
+      {
+         int ba, ibn = bb+j+nnblks;
+/*
+ *       Wait until B(k,j) is available, and copy A while waiting
+ */
+         while(!ATL_IsBitSetBV(pd->BcpyBV, bb+j))
+         {
+            if (!pd->AcpyDone)
+               cpyAblk(pd);
+            else
+               ATL_thread_yield();
+         }
+/*
+ *       If the block of A I need hasn't been copied, copy until it is
+ *       We get the lock to force memory barrier on weakly-ordered caches,
+ *       so that we don't waste time copying A while waiting for the BV
+ *       to be updated
+ */
+         ba = Mcoord2tblk(nmblks, i, k);
+         if (!pd->AcpyDone)
+         {
+            ATL_mutex_lock(pd->Acpymut);
+            while(!ATL_IsBitSetBV(pd->AcpyBV, ba))
+            {
+               ATL_mutex_unlock(pd->Acpymut);
+               cpyAblk(pd);
+               ATL_mutex_lock(pd->Acpymut);
+            }
+            ATL_mutex_unlock(pd->Acpymut);
+         }
+/*
+ *       I've got both A & B I need, so time to put the solved equation
+ *       subtractions into C for later updating of my RHS
+ */
+         if (k)
+         {
+            TYPE *a = pd->wA + ba*blkszA;
+            TYPE *b = pd->wB + j*panszB + k*blkszB, *bn=b;
+            if (ibn < nxblks-nnblks && ATL_IsBitSetBV(pd->BcpyBV, ibn))
+               bn = b + blkszB;
+            amm(nmu, nnu, mb, a, b, C, a+blkszA, bn, C);
+         }
+         else /* first row-panel of size mb0, may require special kernel */
+         {
+            TYPE *a = pd->wA + ba*blkszA;
+            TYPE *b = pd->wB + j*panszB, *bn=b;
+            if (ibn < nxblks-nnblks && ATL_IsBitSetBV(pd->BcpyBV, bb+j+nnblks))
+               bn = b + blkszB;
+            pd->amm_b0(nmu, nnu, pd->MB0, a, b, C, a+blkszA, bn, C);
+         }
+      }  /* end loop over B blocks I need to subtract from my RHS */
+/* 
+ *    OK, I've got all updates in C, apply them and original alpha to my RHS,
+ *    then do solve with diagonal block to produce final X
+ */
+      X = pd->X + pd->mb0 + (i-1)*mb + pd->ldx*Bn*j;
+      a = pd->A + (pd->lda+1)*(pd->mb0 + (i-1)*mb);
+      blk2c(mb, nb, ATL_rone, C, pd->alpha, X, pd->ldx);
+      trsmK(AtlasLeft, pd->uplo, pd->TA, pd->diag, mb, nb, ATL_rone, 
+            a, pd->lda, X, pd->ldx);
+/*
+ *    If I'm not the last row panel, copy my final X to C for updates
+ */
+      if (i != nmblks-1)
+      {
+         TYPE *b = pd->wB + j*panszB + i*blkszB;
+         pd->b2blk(mb, nb, ATL_rone, X, pd->ldx, b);
+         ATL_mutex_lock(pd->Bcpymut);
+         ATL_SetBitBV(pd->BcpyBV, bb+j);
+         ATL_mutex_unlock(pd->Bcpymut);
+      }
+   }
+   while ((xctr = ATL_DecAtomicCount(pd->XblkCtr)));
+}
+
+void Mjoin(PATL,DoTrsm_amm)(void *vpp, int rank, int vrank)
+{
+   ATL_tpool_t *pp=vpp;
+   ATL_ttrsm_amm_t *pd = pp->PD;
+   int xctr;
+   const int nnblks=pd->nnblks, nxblks=pd->nxblks;
+
+   xctr = ATL_DecAtomicCount(pd->XblkCtr);
+   if (xctr)
+   {
+      unsigned int xblk = nxblks - xctr;
+      unsigned int i = xblk / nnblks;
+/*
+ *    Doing first mb0 row panel! 
+ */
+      while (!i)
+      {
+         const unsigned int j = xblk - i*nnblks;
+         const int nb = (j == nnblks-1) ? pd->nbf : pd->nb, mb0 = pd->mb0;
+         TYPE *x, *b;
+/*
+ *       Solve X0 = inv(L00) * B0
+ */
+         x = pd->X + pd->ldx*j*pd->nb;
+         trsmK(AtlasLeft, pd->uplo, pd->TA, pd->diag, mb0, nb, pd->alpha, 
+               pd->A, pd->lda, x, pd->ldx);
+/*
+ *       Move X into GEMM B storage for updates, and report ready to update
+ */
+         if (pd->nmblks > 1)
+         {
+            b = pd->wB + xblk*pd->panszB;
+            pd->b2blk(mb0, nb, ATL_rone, x, pd->ldx, b);
+            ATL_mutex_lock(pd->Bcpymut);
+            ATL_SetBitBV(pd->BcpyBV, xblk);
+            ATL_mutex_unlock(pd->Bcpymut);
+         }
+         xctr = ATL_DecAtomicCount(pd->XblkCtr);
+         xblk = nxblks - xctr;
+         i = xblk / nnblks;
+      }   /* end while(working on 1st row panel) */
+      if (xctr)
+         SolveAllRemainingRows(pd, vrank, xctr);
+   }     /* end if (xctr) */
+/*
+ * If all work on RHS has been claimed, finish up any A copying
+ */
+   while (!pd->AcpyDone)
+      cpyAblk(pd);
+}
+
+/*
+ * This routine handles case where A is on left of B, A X = B
+ */
+static int ttrsm_ammL
+   (const enum ATLAS_UPLO uplo, const enum ATLAS_TRANS TA, 
+    const enum ATLAS_DIAG diag, ATL_CINT M, ATL_CINT N, const SCALAR alpha,
     const TYPE *A, ATL_CINT lda, TYPE *B, ATL_CINT ldb)
 {
-   ATL_ttrsm_ammB_t pd;
-   int mb, nb;
-/*
- * Knows that we need cblk2cm_b[0,1], alpha==-1 for A, alpha=1 for B, TB=NoTrans
- * Returns mb=kb, nb free
- */
-   Mjoin(PATL,tGetTRSMAmmmInfo)(&mminfo, TA, M, N, M);
-   mb = pd.mb = mminfo.mb;
-   nb = pd.nb = mminfo.nb;
+   ATL_ttrsm_amm_t pd;
+   int P;
+   size_t sz, szA, szB;
+   void *vp;
+
+   P = Mjoin(PATL,tGetTrsmInfo)(&pd, TA, M, N, M, alpha);
    pd.actpan = 0;
-   nmblks = (M+mb-1) / mb;
-   nnblks = (N+nb-1) / nb;
+   pd.nablks = sz = ((pd.nmblks-1)*pd.nmblks)>>1;
+   if (sz != pd.nablks)    /* if # of blocks overflow ints */
+      return(1);              /* tell caller to recur until it doesn't */
+   if (((size_t)pd.nmblks)*pd.nnblks != pd.nxblks)
+      return(1);
+   pd.TA = TA;
+   pd.uplo = uplo;
+   pd.diag = diag;
+   pd.M = M;
+   pd.N = N;
+   pd.alpha = alpha;
+   pd.lda = lda;
+   pd.ldx = ldb;
+   pd.A = A;
+   pd.X = B;
+   pd.blkszC = pd.mb * pd.nb;
+   pd.blkszA = pd.mb * pd.mb;
+   pd.panszB = (pd.nmblks-1) * pd.blkszC;
+   szA = pd.nablks * pd.blkszA;
+   szB = pd.panszB * pd.nnblks;
+   sz = szA + szB;
+   sz += P * pd.blkszC + pd.mu*pd.nu*pd.ku;  /* 1 C block per thread */
+   sz = ATL_MulBySize(sz) + ATL_Cachelen;
+   if ((sz>>20) > ATL_PTMAXMALLOC_MB)
+      return(2);
+   vp = malloc(sz);
+   if (!vp)
+      return(2);
+   pd.AcpyDone = (pd.mb >= M);
+   pd.wA = ATL_AlignPtr(vp);
+   pd.wB = pd.wA + szA;
+   pd.wCs = pd.wB + szB;
+   pd.XblkCtr = ATL_SetAtomicCount(pd.nxblks);  /* w/o glob, is in-order */
+   pd.AblkCtr = ATL_SetAtomicCount(pd.nablks); 
+   pd.BcpyBV = ATL_NewBV(pd.nxblks-pd.nnblks);
+   pd.AcpyBV = ATL_NewBV(pd.nablks);
+   pd.Bcpymut = ATL_mutex_init();
+   pd.Acpymut = ATL_mutex_init();
+//   #define DEBUG1 
+   #ifdef DEBUG1
+   {
+      ATL_tpool_t *pp=ATL_TP_PTR;
+      if (!pp)
+         pp = ATL_NewThreadPool(1, 0, NULL);
+      ATL_assert(pp);
+      pp->PD = &pd;
+      Mjoin(PATL,DoTrsm_amm)(pp, 0, 0);
+      if (pp != ATL_TP_PTR)
+         ATL_FreeThreadPool(pp);
+   }
+   #else
+      ATL_goParallel(P, Mjoin(PATL,DoTrsm_amm), NULL, &pd, NULL);
+   #endif
+   ATL_FreeAtomicCount(pd.XblkCtr);
+   ATL_FreeAtomicCount(pd.AblkCtr);
+   ATL_FreeBV(pd.BcpyBV);
+   ATL_FreeBV(pd.AcpyBV);
+   ATL_mutex_free(pd.Bcpymut);
+   ATL_mutex_free(pd.Acpymut);
+   free(vp);
+   return(0);
 }
 
 int Mjoin(PATL,ttrsm_amm)
@@ -10867,7 +11169,7 @@ int Mjoin(PATL,ttrsm_amm)
     const TYPE *A, ATL_CINT lda, TYPE *B, ATL_CINT ldb)
 {
    if (side == AtlasLeft && uplo == AtlasLower)
-      return(ttrsm_ammLL(TA, diag, M, N, alpha, A, lda, B, ldb));
+      return(ttrsm_ammL(uplo, TA, diag, M, N, alpha, A, lda, B, ldb));
    return(1);
 }
 @ROUT ATL_tgemm_amm ATL_tammm_tNK ATL_tammm_G
