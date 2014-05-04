@@ -4,9 +4,9 @@
  * any specific thread info so that they can be safely included prior to
  * building & tuning the threading system
  */
+#ifdef TYPE
 #ifndef ATLAS_TTYPES_H
    #define ATLAS_TTYPES_H
-#ifdef TYPE
 #include "atlas_amm.h"
 typedef volatile int VINT;
 typedef struct ATL_ttrsm_amm ATL_ttrsm_amm_t;
@@ -49,6 +49,11 @@ struct ATL_ttrsm_amm
    enum ATLAS_DIAG uplo;
    enum ATLAS_DIAG diag;
 };
+/*
+ * Function prototypes 
+ */
+int Mjoin(PATL,tGetTrsmInfo)(ATL_ttrsm_amm_t *pd, int P, enum ATLAS_TRANS TA, 
+                             ATL_CSZT M, ATL_CSZT N, const SCALAR beta);
 #endif
 #endif
 @rout atlas_threads.h
@@ -683,58 +688,6 @@ struct ATL_tsyrk_ammK
    int lda;             /* leading dim of A */
    int ldc;             /* leading dim of C */
 };
-@beginskip
-/*
- * This data structure for trsm where all the parallelism comes from splitting
- * up the RHS matrix B.  If they run in lock-step and all work on one row panel,
- * this results in pure top-looking algorithm.  However, of the row panel
- * doesn't have enough blocks, cores will work on later row panels of B,
- * resulting in look-ahead.
- */
-typedef struct ATL_ttrsm_amm ATL_ttrsm_amm_t;
-struct ATL_ttrsm_amm
-{
-   ammkern_t amm_b0, amm_b1;
-   ablk2cmat_t blk2c;
-   cm2am_t a2blk, b2blk;
-   void *XblkCtr;      /* deals out ownership of X/B/C blocks row-wise */
-   void *AblkCtr;      /* deals out copy of A blocks column-wise */
-   int *BcpyBV;        /* nmblks*nnblks-len BV; 0: X blk not yet copied to B */
-   int *AcpyBV;        /* nablks-len BV; 0: A blk not yet copied */
-   void *Bcpymut;      /* mutex protecting BcpyBV */
-   void *Acpymut;      /* mutex protecting AcpyBV */
-   TYPE *wA;           /* ptr to start of shared A workspace */
-   TYPE *wB;           /* ptr to shared B workspace */
-   TYPE *wCs;          /* ptr to start of nthr C workspaces */
-   const TYPE *A;      /* M-order triangular matrix */
-   TYPE *X;            /* MxN matrix of right hand sides (RHS) */
-   size_t lda, ldx;
-   size_t blkszC;      /* mb*nb, use size_t so P*szC is promoted */
-   size_t blkszA;      /* mb*mb */
-   size_t panszB;      /* size of col panel of B : (nmblks-1)*blkszC */
-   TYPE alpha;         /* scale to apply to X before access */
-   ATL_INT M, N;       /* M: size of A, N: NRHS */
-   VINT AcpyDone;      /* set to 1 when copy of entire A complete */
-   int nmblks;         /* number of row panels B is split into */
-   int nnblks;         /* number of AMM blocks in a row panel */
-   int nablks;         /* # of non-diagonal blocks in A */
-   int nxblks;         /* # of blocks in X, B/C have nnblks less */
-   int nbf;            /* N%nb, if 0, nb */
-   int nnuf;           /* (nbf+nu-1)/nu */
-   int mb0;            /* size of 1st diag blk: M%mb, if 0, mb */
-   int MB0;            /* for k-vector kernels, (mb0+ku-1)/ku*ku, else mb0 */
-   int mb;             /* row & col blocking of A (mb & kb of amm) */
-   int nb;             /* column blocking of X/B/C (nb of amm) */
-   int mu;             /* M unrolling for amm kernel */
-   int nu;             /* N unrolling for amm kernel */
-   int ku;             /* K unrolling for amm kernel */
-   int nnu, nmu, nmu0;
-   int actpan;         /* Panel currently being solved, [0-(nmblks-1)] */
-   enum ATLAS_TRANS TA; 
-   enum ATLAS_DIAG uplo;
-   enum ATLAS_DIAG diag;
-};
-@endskip
 /*
  * This structure used by dynamic access-major SYRK
  * In the first phase, we work only on diagonal blocks, while copying both
@@ -5119,25 +5072,6 @@ void Mjoin(PATL,t@(rt))(const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
       Mjoin(PATL,gezero)(M, N, B, ldb);
       return;
    }
-@ROUT ATL_ttrsm
-/* 
- * This code seems to only have advantage for large problems, and is not
- * fully debugged, so leave it out for now
- */
-   #ifdef TREAL00
-   if (0)
-   {
-      int Mjoin(PATL,ttrsm_amm)
-         (const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
-          const enum ATLAS_TRANS TA, const enum ATLAS_DIAG diag,
-          ATL_CINT M, ATL_CINT N, const SCALAR alpha,
-          const TYPE *A, ATL_CINT lda, TYPE *B, ATL_CINT ldb);
-     if (!Mjoin(PATL,ttrsm_amm)(side, uplo, TA, diag, M, N, alpha, 
-                                A, lda, B, ldb))
-        return;
-   }
-   #endif
-@ROUT ATL_ttrsm ATL_ttrmm
 /*
  * Distribute RHS over the processors
  */
@@ -5150,6 +5084,26 @@ void Mjoin(PATL,t@(rt))(const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
       p = (tblks+ATL_TTRSM_XOVER-1)/ATL_TTRSM_XOVER;
       p = Mmin(p, ATL_NTHREADS);
       p = p ? p : 1;
+@ROUT ATL_ttrsm
+/*
+ * This guy is not fast for small probs, and for large most of its benefit
+ * seems to come from the recursion (tgemm), so don't use it now.  May be
+ * worth something on PHI or similar scale.
+ */
+   #ifdef TREAL00
+   if (p > 1)
+   {
+      int Mjoin(PATL,ttrsm_amm)
+         (const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
+          const enum ATLAS_TRANS TA, const enum ATLAS_DIAG diag,
+          ATL_CINT M, ATL_CINT N, const SCALAR alpha,
+          const TYPE *A, ATL_CINT lda, TYPE *B, ATL_CINT ldb);
+     if (!Mjoin(PATL,ttrsm_amm)(side, uplo, TA, diag, M, N, alpha, 
+                                A, lda, B, ldb))
+        return;
+   }
+   #endif
+@ROUT ATL_ttrsm ATL_ttrmm
 
       b = B;
       minblks = nblks / p;
@@ -11091,7 +11045,13 @@ static int ttrsm_ammL
    size_t sz, szA, szL;
    void *vp;
 
-   P = Mjoin(PATL,tGetTrsmInfo)(&pd, P, TA, M, N, M, alpha);
+   P = Mjoin(PATL,tGetTrsmInfo)(&pd, P, TA, M, N, alpha);
+   if (P < 2)
+   {
+      Mjoin(PATL,trsm)(AtlasLeft, uplo, TA, diag, M, N, alpha, A, lda, B, ldb);
+      return(0);
+   }
+// printf("M=%d, N=%d, P=%d, mb=%d, nb=%d\n", M, N, P, pd.mb, pd.nb);
    pd.nablks = sz = ((pd.nmblks-1)*pd.nmblks)>>1;
    if (sz != pd.nablks)    /* if # of blocks overflow ints */
       return(1);              /* tell caller to recur until it doesn't */
@@ -11166,9 +11126,13 @@ static int ttrsm_ammL
  * Simple recursion for Left, Lower, Notrans case (used in LU)
  */
 #include "atlas_tcacheedge.h"
+#if CacheEdge > ATL_PTMAXMALLOC_MB*1024*1024
+   #undef CacheEdge
+#endif
 #ifndef CacheEdge
    #define CacheEdge 524288
 #endif
+
 static void trsmREC_LLN(const enum ATLAS_DIAG diag, ATL_CSZT M, ATL_CSZT N,
                         const SCALAR alpha, const TYPE *A, ATL_CSZT lda, 
                         TYPE *B, ATL_CSZT ldb)
@@ -11205,6 +11169,7 @@ static void trsmREC_LLN(const enum ATLAS_DIAG diag, ATL_CSZT M, ATL_CSZT N,
    #undef ONE
    #undef NONE
 #endif
+
 int Mjoin(PATL,ttrsm_amm)
    (const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
     const enum ATLAS_TRANS TA, const enum ATLAS_DIAG diag,
