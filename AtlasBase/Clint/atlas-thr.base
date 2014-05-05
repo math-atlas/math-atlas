@@ -9,6 +9,32 @@
    #define ATLAS_TTYPES_H
 #include "atlas_amm.h"
 typedef volatile int VINT;
+/*
+ * This structure is for a TRSM that uses ATL_trsm as its compute kernel,
+ * and only divides N (RHS) matrix.  Works best for tiny TRiangular matrix.
+ */
+typedef struct ATL_ttrsm_tTR_t ATL_ttrsm_tTR_t;
+struct ATL_ttrsm_tTR_t
+{
+   void *rhsBlkCtr;        /* deals out RHS, [1-nrblks] */
+   size_t lda, ldb;        /* leading dims of A & B */
+   const TYPE *A;          /* triangular matrix */
+   TYPE *B;                /* MxN input/output matrix of right-hand sides */
+   #ifdef TREAL
+      TYPE alpha;          /* scalar for B */
+   #else
+      const TYPE *alpha;   /* scalar for B */
+   #endif
+   enum ATLAS_SIDE side;   /* Whether B on Left or Right of A */
+   enum ATLAS_TRANS TA;    /* Whether A is transposed or not */
+   enum ATLAS_DIAG uplo;   /* Whether triangle stored Upper of Lower */
+   enum ATLAS_DIAG diag;   /* Unit or non-unit diagonal */
+   ATL_INT M, N;           /* rows (cols) of array B */
+   ATL_INT rb;             /* # of RHS to solve in a given parallel job */
+   int rbF;                /* last chunk or RHS dealt out (can be partial) */
+   int nrblks;             /* number of RHS blocks dealt out */
+};
+
 typedef struct ATL_ttrsm_amm ATL_ttrsm_amm_t;
 struct ATL_ttrsm_amm
 {
@@ -5025,7 +5051,127 @@ SERIAL:
 #include "atlas_misc.h"
 @skip #define ATL_LAUNCHORDER         /* we want static ATL_launchorder array */
 #include "atlas_threads.h"
+#define ATL_ESTNCTR 1
 #include "atlas_tlvl3.h"
+#include "atlas_ttypes.h"
+
+@ROUT ATL_ttrsm
+void Mjoin(PATL,tDoTrsm_tTR)(void *vpp, int rank, int vrank)
+{
+   ATL_tpool_t *pp=vpp;
+   ATL_ttrsm_tTR_t *pd = pp->PD;
+   const unsigned int rb=pd->rb, rbF=pd->rbF, nrblks=pd->nrblks;
+   const enum ATLAS_SIDE side = pd->side;
+   enum ATLAS_TRANS TA=pd->TA;
+   enum ATLAS_DIAG uplo=pd->uplo;
+   enum ATLAS_DIAG diag=pd->diag;
+   ATL_CINT M=pd->M, N=pd->N;
+   const size_t lda=pd->lda, ldb=pd->ldb;
+   int rcnt, rblk;
+   TYPE *X = pd->B;
+   const TYPE *A = pd->A;
+   void *rhsBlkCtr = pd->rhsBlkCtr;
+   const SCALAR alpha = pd->alpha;
+
+   while ((rcnt = ATL_DecGlobalAtomicCount(rhsBlkCtr, vrank)))
+   {
+      const int rblk = nrblks - rcnt;
+      const int nrhs = (rcnt != 1) ? rb : rbF;
+      if (side == AtlasRight)
+         Mjoin(PATL,trsm)(side, uplo, TA, diag, nrhs, N, alpha, 
+                          A, lda, X+rblk*(rb SHIFT), ldb);
+      else
+         Mjoin(PATL,trsm)(side, uplo, TA, diag, M, nrhs, alpha,
+                          A, lda, X+rblk*rb*(ldb SHIFT), ldb);
+   }
+}
+
+/*
+ * This routine specialized for small triangular matrix
+ */
+void Mjoin(PATL,ttrsm_tTR)
+   (const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
+    const enum ATLAS_TRANS TA, const enum ATLAS_DIAG diag,
+    ATL_CINT M, ATL_CINT N, const SCALAR alpha,
+    const TYPE *A, ATL_CINT lda, TYPE *B, ATL_CINT ldb)
+{
+   ATL_ttrsm_tTR_t pd;
+   ATL_INT nrhs = (side == AtlasLeft) ? N : M;
+   ATL_INT nrblks;
+   int rb, rbF, P;
+   size_t tblks;
+
+   tblks = (((size_t)M)*N)>>6;
+   tblks = (tblks+3)>>1;
+   P = Mmin(ATL_NTHREADS,tblks);
+   rb = nrhs>>1;
+   P = Mmin(P, rb);
+   if (P < 2)
+   {
+      Mjoin(PATL,trsm)(side, uplo, TA, diag, M, N, alpha, A, lda, B, ldb);
+      return;
+   }
+   if (nrhs < (P<<6))
+   {
+      if (nrhs >= (P<<2))
+         rb = (nrhs / (P<<2))<<2;
+      else
+         rb = nrhs / P;
+   }
+   else
+   {
+
+/*
+ *    Try block being a multple of 60 (LCM(1,2,3,4,5), so good for NU of amm)
+ */
+      rb = nrhs/60;
+
+      if (rb >= (P<<4))                  /* we've got enough to give everyone */
+         rb = ((rb+P+P-1)/(P<<1))*60;    /* 2 full jobs for load balancing */
+      else                               /* we've got enough to give everyone */
+         rb = ((rb+P-1)/P)*60;           /* 1 job: screw load balancing */
+   }
+   nrblks = nrhs / rb;
+   rbF = nrhs - nrblks*rb;
+   if (!rbF)
+      rbF = rb;
+   else
+      nrblks++;
+//printf("M=%d, N=%d, P=%d, nrblks=%d, rb=%d, rbF=%d, R=%d \n", 
+//       M, N, P, nrblks, rb, rbF, rb*(nrblks-1)+rbF);
+   pd.side = side;
+   pd.uplo = uplo;
+   pd.TA = TA;
+   pd.diag = diag;
+   pd.M = M;
+   pd.N = N;
+   pd.alpha = alpha;
+   pd.A = A;
+   pd.lda = lda;
+   pd.B = B;
+   pd.ldb = ldb;
+   pd.nrblks = nrblks;
+   pd.rb = rb;
+   pd.rbF = rbF;
+   pd.rhsBlkCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(nrblks, P), nrblks, 0);
+   #ifdef DEBUG1
+   {
+      ATL_tpool_t *pp=ATL_TP_PTR;
+      if (!pp)
+         pp = ATL_NewThreadPool(1, 0, NULL);
+      ATL_assert(pp);
+      pp->PD = &pd;
+      Mjoin(PATL,tDoTrsm_tTR)(pp, 0, 0);
+      if (pp != ATL_TP_PTR)
+         ATL_FreeThreadPool(pp);
+   }
+   #else
+      ATL_goParallel(P, Mjoin(PATL,tDoTrsm_tTR), NULL, &pd, NULL);
+   #endif
+   ATL_FreeGlobalAtomicCount(pd.rhsBlkCtr);
+}
+
+@ROUT ATL_ttrsm ATL_ttrmm
 int Mjoin(PATL,StructIsInit@up@(rt))(void *vp)
 {
    return(((ATL_TTRSM_t*)vp)->B != NULL);
@@ -5072,26 +5218,14 @@ void Mjoin(PATL,t@(rt))(const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
       Mjoin(PATL,gezero)(M, N, B, ldb);
       return;
    }
-/*
- * Distribute RHS over the processors
- */
-   if (!nb) nb = Mjoin(PATL,GetNB)();
-   if (side == AtlasLeft)
-   {
-      nblks = N/nb;
-      nr = N - nblks*nb;
-      tblks = ((double)(M*N)) / ( (double)nb * nb );
-      p = (tblks+ATL_TTRSM_XOVER-1)/ATL_TTRSM_XOVER;
-      p = Mmin(p, ATL_NTHREADS);
-      p = p ? p : 1;
 @ROUT ATL_ttrsm
-/*
- * This guy is not fast for small probs, and for large most of its benefit
- * seems to come from the recursion (tgemm), so don't use it now.  May be
- * worth something on PHI or similar scale.
- */
+   if (1)
+   {
+      Mjoin(PATL,ttrsm_tTR)(side, uplo, TA, diag, M, N, alpha, A, lda, B, ldb);
+      return;
+   }
    #ifdef TREAL00
-   if (p > 1)
+   if (0)
    {
       int Mjoin(PATL,ttrsm_amm)
          (const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
@@ -5104,6 +5238,18 @@ void Mjoin(PATL,t@(rt))(const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
    }
    #endif
 @ROUT ATL_ttrsm ATL_ttrmm
+/*
+ * Distribute RHS over the processors
+ */
+   if (!nb) nb = Mjoin(PATL,GetNB)();
+   if (side == AtlasLeft)
+   {
+      nblks = N/nb;
+      nr = N - nblks*nb;
+      tblks = ((double)(M*N)) / ( (double)nb * nb );
+      p = (tblks+ATL_TTRSM_XOVER-1)/ATL_TTRSM_XOVER;
+      p = Mmin(p, ATL_NTHREADS);
+      p = p ? p : 1;
 
       b = B;
       minblks = nblks / p;
@@ -11133,9 +11279,9 @@ static int ttrsm_ammL
    #define CacheEdge 524288
 #endif
 
-static void trsmREC_LLN(const enum ATLAS_DIAG diag, ATL_CSZT M, ATL_CSZT N,
-                        const SCALAR alpha, const TYPE *A, ATL_CSZT lda, 
-                        TYPE *B, ATL_CSZT ldb)
+static void trsmREC_LLN
+   (const int STOP_EARLY, const enum ATLAS_DIAG diag, ATL_CSZT M, ATL_CSZT N,
+    const SCALAR alpha, const TYPE *A, ATL_CSZT lda, TYPE *B, ATL_CSZT ldb)
 {
    ATL_CSZT Ml=M>>1, Mr = M-Ml;
    TYPE *B1=B+(Ml SHIFT);
@@ -11153,16 +11299,25 @@ static void trsmREC_LLN(const enum ATLAS_DIAG diag, ATL_CSZT M, ATL_CSZT N,
  */
    sz = ((M*M)>>1) + M*(ATL_AMM_98KB<<1);
    sz = ATL_MulBySize(sz);
-   if (sz <= 1024*1024)
+   if (STOP_EARLY || sz < CacheEdge)
    {
-      ATL_assert(!ttrsm_ammL(AtlasLower, AtlasNoTrans, diag, M, N, alpha, 
-                             A, lda, B, ldb));
-      return;
+      if (!ttrsm_ammL(AtlasLower, AtlasNoTrans, diag, M, N, alpha, 
+                      A, lda, B, ldb))
+         return;
+/*
+ *    If we can't allocate any space, call serial & hope it can work
+ */
+      if (M < 80)
+      {
+         Mjoin(PATL,trsm)(AtlasLeft, AtlasLower, AtlasNoTrans, diag, M, N, 
+                          alpha, A, lda, B, ldb);
+         return;
+      }
    }
-   trsmREC_LLN(diag, Ml, N, alpha, A, lda, B, ldb);
+   trsmREC_LLN(STOP_EARLY, diag, Ml, N, alpha, A, lda, B, ldb);
    Mjoin(PATL,tgemm)(AtlasNoTrans, AtlasNoTrans, Mr, N, Ml, NONE, A10, lda,
                      B, ldb, alpha, B1, ldb);
-   trsmREC_LLN(diag, Mr, N, ONE, L11, lda, B1, ldb);
+   trsmREC_LLN(STOP_EARLY, diag, Mr, N, ONE, L11, lda, B1, ldb);
 }
 
 #ifndef TCPLX
@@ -11170,6 +11325,11 @@ static void trsmREC_LLN(const enum ATLAS_DIAG diag, ATL_CSZT M, ATL_CSZT N,
    #undef NONE
 #endif
 
+#ifdef ATL_ARCH_XeonPHI
+  #define ATL_SE 1
+#else
+  #define ATL_SE 0
+#endif
 int Mjoin(PATL,ttrsm_amm)
    (const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
     const enum ATLAS_TRANS TA, const enum ATLAS_DIAG diag,
@@ -11178,9 +11338,8 @@ int Mjoin(PATL,ttrsm_amm)
 {
    if (side == AtlasLeft && uplo == AtlasLower && TA == AtlasNoTrans)
    {
-      trsmREC_LLN(diag, M, N, alpha, A, lda, B, ldb);
+      trsmREC_LLN(ATL_SE, diag, M, N, alpha, A, lda, B, ldb);
       return(0);
-/*      return(ttrsm_ammL(uplo, TA, diag, M, N, alpha, A, lda, B, ldb)); */
    }
    return(1);
 }
@@ -11412,6 +11571,10 @@ static int ttrsm_ammL
    free(vp);
    return(0);
 }
+
+
+@beginskip
+@endskip
 
 int Mjoin(PATL,ttrsm_amm)
    (const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
