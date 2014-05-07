@@ -253,9 +253,9 @@ struct ATL_ThreadPool
  * Declare the beautiful global variables used by thread pool
  */
    #ifdef ATL_TP_DECL
-      ATL_tpool_t *ATL_TP_PTR=NULL;
+      ATL_tpool_t *ATL_TP_PTR=NULL, *ATL_TP1_PTR=NULL;
    #else
-      extern ATL_tpool_t *ATL_TP_PTR;
+      extern ATL_tpool_t *ATL_TP_PTR, *ATL_TP1_PTR;
    #endif
    void *ATL_threadpool(void *tp);
    void *ATL_threadpool_launch(void *tp);
@@ -1018,20 +1018,83 @@ typedef struct
 } ATL_TSYRK_t;
 @endskip
 /*
- * Block to bit-mapping macros
+ * For triangular matrices, diagonal blocks are handled specially, but we
+ * get dense square blocks above/below the diagonal.  We consider Upper
+ * triangular the transpose of Lower, allowing us to only handle Lower.
+ * Our AtomicCtr routines are 1-D counters, not 2-D, so we linearize the
+ * blocks beneath the diagonal by counting them column-wise.  So, a 4x4
+ * matrix of blocks would look like:
+ *    |X X X X|
+ *    |1 X X X|
+ *    |2 4 X X|
+ *    |3 5 7 X|
  */
 /*
  * Translates (i,j) coordinate of lower triangular matrix to number between
- * 0 and the number of non-diagonal blocks. 
- * nm is the number of blocks in the first column panel, including the diagonal.
- * (i,j) is the coordinate of the block
+ * [0,n), where n = number of non-diagonal block.  nm_ is the number of
+ * diagonal blocks in the matrix (4 in example above).  
  */
 #define Mcoord2tblk(nm_, i_, j_) \
    ((nm_)*(j_) - (((1+(j_))*(j_))>>1) + (i_)-(j_)-1)
+
 /*
- * Translates non-diag block number b_ to (i,j) coordinates assuming first panel
- * has nm_ blocks in it (including diagonal block)
+ * In a lower matrix of with NB_ diagonal blocks, translate the linearized
+ * block number B_ back into rectangular (I,J) coordinates.  The difficulty
+ * is finding J.  Would like to do it with an equation, like we do when
+ * converting from coordinates to block number.  Tony Castaldo came up with
+ *    J = (int)((nm-0.5-0.5*sqrt(4*nm*nm-4*nm+1-8*b)))
+ * but sqrt is a function call which does a Newtonian iteration on floats
+ * (therefore, has a relatively slow loop).  Finding the J column is indeed
+ * the hard part, and in theory we can use binary search to find in 
+ * O(log_2(NB_)) time.  However, this algorithm requires multiplication
+ * inside the loop, and so it is never competitive for the range we are
+ * interested in (NB_ usually < 10, and almost never larger than 2000).
+ * So instead do a linear search to find j, but optimize by first
+ * constraining j to a 128-column region, then a 8-column region, and
+ * then find the actual column.  So worst-case loop counts are
+ *  CEIL(NB_/128) + 16 + 8
+ *
+ * nblkC = # of blocks in a [128,8]-column Chunk
  */
+#define Mtblk2coord(NB_, B_, I_, J_) \
+{ \
+   unsigned int j_=0; \
+   unsigned int n_ = (NB_), b_=(B_), nblksC_; \
+   KEEP_LOOKING128: /* find 128-col region where J is */ \
+      nblksC_ = (n_<<7)-8256; \
+      if (b_ < nblksC_ || n_ < 128) \
+         goto FOUND128; \
+      b_ -= nblksC_; \
+      n_ -= 128; \
+      j_ += 128; \
+   goto KEEP_LOOKING128; \
+   FOUND128: \
+   KEEP_LOOKING8: /* find 8-col region where J is */ \
+      nblksC_ = (n_<<3)-36; \
+      if (b_ < nblksC_ || n_ < 8) \
+         goto FOUND8; \
+      b_ -= nblksC_; \
+      n_ -= 8; \
+      j_ += 8; \
+   goto KEEP_LOOKING8; \
+   FOUND8: \
+      for (n_--; b_ >= n_; j_++) \
+         b_ -= n_--; \
+   (J_) = j_; \
+   (I_) = j_ + b_ + 1; \
+}
+@beginskip
+/*
+ * buffer i, j in case they aren't type int; hopefully compiler will eliminate
+ * when they are through copy propogation
+ */
+#define Mtblk2coord(NM_, B_, I_, J_) \
+{ \
+   int i_, j_; \ 
+   ATL_tblk2coord(NM_, B_,  &(i_), &(j_)); \
+   I_ = i_; \
+   I_ = i_; \
+}
 #define Mtblk2coord(NM_, B_, I_, J_) \
 { \
    register int n_ = (NM_)-1, b_=(B_), j_; \
@@ -1043,6 +1106,7 @@ typedef struct
    (J_) = j_; \
    (I_) = j_ + b_ + 1; \
 }
+@endskip
 
 /*
  * =============================================================================
@@ -2561,6 +2625,11 @@ void *ATL_threadpool_launch(void *vp)
    
    ATL_TP_PTR = NULL;
    ATL_FreeThreadPool(pp);
+   if (ATL_TP1_PTR)
+   {
+      ATL_FreeThreadPool(ATL_TP1_PTR);
+      ATL_TP1_PTR = NULL;
+   }
 }
 
 @beginskip
@@ -5056,6 +5125,30 @@ SERIAL:
 #include "atlas_ttypes.h"
 
 @ROUT ATL_ttrsm
+/*
+ * For very small problems, use static scheduling to avoid dynamic overheads
+ * Since we currently wait for all the threads to go to sleep before returning,
+ * static scheduling essentially cannot be slower for tiny problems.
+ */
+void Mjoin(PATL,tDoTrsm_tTRs)(void *vpp, int rank, int vrank)
+{
+   ATL_tpool_t *pp=vpp;
+   ATL_ttrsm_tTR_t *pd = pp->PD;
+   const enum ATLAS_SIDE side = pd->side;
+   const size_t ldb=pd->ldb;
+   const int rb=pd->rb;
+   const int nrhs = (vrank != pp->nworkers-1) ? rb : pd->rbF;
+   TYPE *X = pd->B;
+
+printf("%d: P=%d, rb=%d, rbF=%d\n", vrank, pp->nworkers, rb, pd->rbF);
+   if (side == AtlasRight)
+      Mjoin(PATL,trsm)(side, pd->uplo, pd->TA, pd->diag, nrhs, pd->N, pd->alpha,
+                       pd->A, pd->lda, X+vrank*(rb SHIFT), ldb);
+   else
+      Mjoin(PATL,trsm)(side, pd->uplo, pd->TA, pd->diag, pd->M, nrhs, pd->alpha,
+                       pd->A, pd->lda, X+vrank*rb*(ldb SHIFT), ldb);
+}
+
 void Mjoin(PATL,tDoTrsm_tTR)(void *vpp, int rank, int vrank)
 {
    ATL_tpool_t *pp=vpp;
@@ -5099,6 +5192,7 @@ void Mjoin(PATL,ttrsm_tTR)
    ATL_INT nrhs = (side == AtlasLeft) ? N : M;
    ATL_INT nrblks;
    int rb, rbF, P;
+   ATL_tpjfunc_t DoWork = Mjoin(PATL,tDoTrsm_tTR);
    size_t tblks;
 
    tblks = (((size_t)M)*N)>>6;
@@ -5113,10 +5207,13 @@ void Mjoin(PATL,ttrsm_tTR)
    }
    if (nrhs < (P<<6))
    {
+      nrblks = P;
       if (nrhs >= (P<<2))
          rb = (nrhs / (P<<2))<<2;
       else
          rb = nrhs / P;
+      rbF = rb + nrhs - nrblks*rb;
+      DoWork = Mjoin(PATL,tDoTrsm_tTRs);
    }
    else
    {
@@ -5130,13 +5227,13 @@ void Mjoin(PATL,ttrsm_tTR)
          rb = ((rb+P+P-1)/(P<<1))*60;    /* 2 full jobs for load balancing */
       else                               /* we've got enough to give everyone */
          rb = ((rb+P-1)/P)*60;           /* 1 job: screw load balancing */
+      nrblks = nrhs / rb;
+      rbF = nrhs - nrblks*rb;
+      if (!rbF)
+         rbF = rb;
+      else
+         nrblks++;
    }
-   nrblks = nrhs / rb;
-   rbF = nrhs - nrblks*rb;
-   if (!rbF)
-      rbF = rb;
-   else
-      nrblks++;
 //printf("M=%d, N=%d, P=%d, nrblks=%d, rb=%d, rbF=%d, R=%d \n", 
 //       M, N, P, nrblks, rb, rbF, rb*(nrblks-1)+rbF);
    pd.side = side;
@@ -5154,20 +5251,7 @@ void Mjoin(PATL,ttrsm_tTR)
    pd.rb = rb;
    pd.rbF = rbF;
    pd.rhsBlkCtr = ATL_SetGlobalAtomicCount(ATL_EstNctr(nrblks, P), nrblks, 0);
-   #ifdef DEBUG1
-   {
-      ATL_tpool_t *pp=ATL_TP_PTR;
-      if (!pp)
-         pp = ATL_NewThreadPool(1, 0, NULL);
-      ATL_assert(pp);
-      pp->PD = &pd;
-      Mjoin(PATL,tDoTrsm_tTR)(pp, 0, 0);
-      if (pp != ATL_TP_PTR)
-         ATL_FreeThreadPool(pp);
-   }
-   #else
-      ATL_goParallel(P, Mjoin(PATL,tDoTrsm_tTR), NULL, &pd, NULL);
-   #endif
+   ATL_goParallel(P, DoWork, NULL, &pd, NULL);
    ATL_FreeGlobalAtomicCount(pd.rhsBlkCtr);
 }
 
@@ -14307,6 +14391,23 @@ void ATL_goParallel
    int n, *ip;
    int JUST_STARTED=0;
    unsigned int P;
+/*
+ * Don't wakeup/create threads if being called for serial execution: just
+ * do work on master process to save overhead & ease debugging
+ */
+   if (P0 < 2)
+   {
+      if (!ATL_TP_PTR)
+         ATL_TP1_PTR = ATL_NewThreadPool(1, 0, NULL);
+      pp = ATL_TP1_PTR;
+      pp->nworkers = 1;
+      pp->PD = PD;
+      pp->extra = extra;
+      pp->jobf = DoWork;
+      pp->combf = DoComb;
+      pp->jobf(pp, 0, 0);
+      return;
+   }
 /*
  * If thread pool not currently active, must spawn it.
  */
