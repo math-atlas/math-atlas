@@ -5124,32 +5124,37 @@ SERIAL:
 #include "atlas_tlvl3.h"
 #include "atlas_ttypes.h"
 
-@ROUT ATL_ttrsm
 /*
  * For very small problems, use static scheduling to avoid dynamic overheads
  * Since we currently wait for all the threads to go to sleep before returning,
  * static scheduling essentially cannot be slower for tiny problems.
  */
-void Mjoin(PATL,tDoTrsm_tTRs)(void *vpp, int rank, int vrank)
+void Mjoin(PATL,tDo@up@(rt)_tTRs)(void *vpp, int rank, int vrank)
 {
    ATL_tpool_t *pp=vpp;
    ATL_ttrsm_tTR_t *pd = pp->PD;
    const enum ATLAS_SIDE side = pd->side;
    const size_t ldb=pd->ldb;
-   const int rb=pd->rb;
-   const int nrhs = (vrank != pp->nworkers-1) ? rb : pd->rbF;
+   const int rb=pd->rb, rbF = pd->rbF;
+   const int nrhs = (vrank) ? rb : rbF;
    TYPE *X = pd->B;
 
-printf("%d: P=%d, rb=%d, rbF=%d\n", vrank, pp->nworkers, rb, pd->rbF);
+//printf("%d: P=%d, nrhsL=%d, rbF=%d\n", vrank, pp->nworkers, nrhs, pd->rbF);
    if (side == AtlasRight)
-      Mjoin(PATL,trsm)(side, pd->uplo, pd->TA, pd->diag, nrhs, pd->N, pd->alpha,
-                       pd->A, pd->lda, X+vrank*(rb SHIFT), ldb);
+   {
+      X += (vrank) ? ((rbF + (vrank-1)*rb)SHIFT) : 0;
+      Mjoin(PATL,@(rt))(side, pd->uplo, pd->TA, pd->diag, nrhs, pd->N, 
+                       pd->alpha, pd->A, pd->lda, X, ldb);
+   }
    else
-      Mjoin(PATL,trsm)(side, pd->uplo, pd->TA, pd->diag, pd->M, nrhs, pd->alpha,
-                       pd->A, pd->lda, X+vrank*rb*(ldb SHIFT), ldb);
+   {
+      X += (vrank) ? (((rbF + (vrank-1)*rb)*ldb)SHIFT) : 0;
+      Mjoin(PATL,@(rt))(side, pd->uplo, pd->TA, pd->diag, pd->M, nrhs, 
+                       pd->alpha, pd->A, pd->lda, X, ldb);
+   }
 }
 
-void Mjoin(PATL,tDoTrsm_tTR)(void *vpp, int rank, int vrank)
+void Mjoin(PATL,tDo@up@(rt)_tTR)(void *vpp, int rank, int vrank)
 {
    ATL_tpool_t *pp=vpp;
    ATL_ttrsm_tTR_t *pd = pp->PD;
@@ -5171,14 +5176,15 @@ void Mjoin(PATL,tDoTrsm_tTR)(void *vpp, int rank, int vrank)
       const int rblk = nrblks - rcnt;
       const int nrhs = (rcnt != 1) ? rb : rbF;
       if (side == AtlasRight)
-         Mjoin(PATL,trsm)(side, uplo, TA, diag, nrhs, N, alpha, 
+         Mjoin(PATL,@(rt))(side, uplo, TA, diag, nrhs, N, alpha, 
                           A, lda, X+rblk*(rb SHIFT), ldb);
       else
-         Mjoin(PATL,trsm)(side, uplo, TA, diag, M, nrhs, alpha,
+         Mjoin(PATL,@(rt))(side, uplo, TA, diag, M, nrhs, alpha,
                           A, lda, X+rblk*rb*(ldb SHIFT), ldb);
    }
 }
 
+@ROUT ATL_ttrsm
 /*
  * This routine specialized for small triangular matrix
  */
@@ -5192,7 +5198,7 @@ void Mjoin(PATL,ttrsm_tTR)
    ATL_INT nrhs = (side == AtlasLeft) ? N : M;
    ATL_INT nrblks;
    int rb, rbF, P;
-   ATL_tpjfunc_t DoWork = Mjoin(PATL,tDoTrsm_tTR);
+   ATL_tpjfunc_t DoWork = Mjoin(PATL,tDoTRSM_tTR);
    size_t tblks;
 
    tblks = (((size_t)M)*N)>>6;
@@ -5213,7 +5219,7 @@ void Mjoin(PATL,ttrsm_tTR)
       else
          rb = nrhs / P;
       rbF = rb + nrhs - nrblks*rb;
-      DoWork = Mjoin(PATL,tDoTrsm_tTRs);
+      DoWork = Mjoin(PATL,tDoTRSM_tTRs);
    }
    else
    {
@@ -5254,20 +5260,20 @@ void Mjoin(PATL,ttrsm_tTR)
    ATL_goParallel(P, DoWork, NULL, &pd, NULL);
    ATL_FreeGlobalAtomicCount(pd.rhsBlkCtr);
 }
+@ROUT ATL_ttrsm ATL_ttrmm
 
 @ROUT ATL_ttrsm ATL_ttrmm
+@beginskip
 int Mjoin(PATL,StructIsInit@up@(rt))(void *vp)
 {
    return(((ATL_TTRSM_t*)vp)->B != NULL);
 }
 
-@beginskip
 void Mjoin(PATL,tvtrsm)(ATL_TTRSM_t *tp)
 {
    Mjoin(PATL,trsm)(tp->side, tp->uplo, tp->TA, tp->diag, tp->M, tp->N,
                     SVVAL((TYPE*)tp->alpha), tp->A, tp->lda, tp->B, tp->ldb);
 }
-@endskip
 
 void Mjoin(PATL,DoWork@up@(rt))(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
@@ -5277,6 +5283,7 @@ void Mjoin(PATL,DoWork@up@(rt))(ATL_LAUNCHSTRUCT_t *lp, void *vp)
                     SVVAL((TYPE*)tp->alpha), tp->A, tp->lda, tp->B, tp->ldb);
 }
 
+@endskip
 @ROUT ATL_ttrsm ATL_ttrmm
 #ifndef ATL_TTRSM_XOVER
    #define ATL_TTRSM_XOVER 4   /* want 4 total blocks before adding proc */
@@ -5286,14 +5293,11 @@ void Mjoin(PATL,t@(rt))(const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
                        ATL_CINT M, ATL_CINT N, const SCALAR alpha,
                        const TYPE *A, ATL_CINT lda, TYPE *B, ATL_CINT ldb)
 {
-@skip   ATL_thread_t tp[ATL_NTHREADS];
-   ATL_TTRSM_t trsms[ATL_NTHREADS];
-@skip   ATL_LAUNCHSTRUCT_t ls;
-   TYPE *b;
-   ATL_INT n, nblks, minblks;
-   double tblks;
-   int nr, p, i, j, extrablks;
-   static int nb=0;
+   ATL_ttrsm_tTR_t pd;
+   ATL_INT nrhs = (side == AtlasLeft) ? N : M;
+   ATL_INT nrblks;
+   int rb, rbF, P;
+   size_t tblks;
 
    if (M < 1 || N < 1)
       return;
@@ -5303,13 +5307,14 @@ void Mjoin(PATL,t@(rt))(const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
       return;
    }
 @ROUT ATL_ttrsm
-   if (1)
+   #if 0
+   if (0)
    {
       Mjoin(PATL,ttrsm_tTR)(side, uplo, TA, diag, M, N, alpha, A, lda, B, ldb);
       return;
    }
-   #ifdef TREAL00
-   if (0)
+   #endif
+   #if defined(ATL_ARCH_XeonPHI) && defined(TREAL)
    {
       int Mjoin(PATL,ttrsm_amm)
          (const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
@@ -5322,109 +5327,38 @@ void Mjoin(PATL,t@(rt))(const enum ATLAS_SIDE side, const enum ATLAS_UPLO uplo,
    }
    #endif
 @ROUT ATL_ttrsm ATL_ttrmm
-/*
- * Distribute RHS over the processors
- */
-   if (!nb) nb = Mjoin(PATL,GetNB)();
-   if (side == AtlasLeft)
-   {
-      nblks = N/nb;
-      nr = N - nblks*nb;
-      tblks = ((double)(M*N)) / ( (double)nb * nb );
-      p = (tblks+ATL_TTRSM_XOVER-1)/ATL_TTRSM_XOVER;
-      p = Mmin(p, ATL_NTHREADS);
-      p = p ? p : 1;
-
-      b = B;
-      minblks = nblks / p;
-      extrablks = nblks - minblks*p;
-      for (i=0; i < p; i++)
-      {
-         if (i < extrablks)
-            n = (minblks+1)*nb;
-         else if (i == extrablks)
-            n = minblks*nb + nr;
-         else 
-            n = minblks*nb;
-@skip         j = ATL_launchorder[i];
-@skip         trsms[j].eltsh = Mjoin(PATL,shift);
-@skip         trsms[j].trsmK = Mjoin(PATL,tvtrsm);
-         trsms[i].A = A;
-         trsms[i].M = M;
-         trsms[i].N = n;
-         trsms[i].lda = lda;
-         trsms[i].ldb = ldb;
-         trsms[i].B = b;
-         trsms[i].alpha = SADD alpha;
-         trsms[i].side = side;
-         trsms[i].uplo = uplo;
-         trsms[i].TA   = TA;
-         trsms[i].diag = diag;
-         n *= (ldb << Mjoin(PATL,shift));
-         b = MindxT(b, n);
-      }
-   }
-   else /* Side == AtlasRight */
-   {
-      nblks = M/nb;
-      nr = M - nblks*nb;
-      tblks = (N/nb)*nblks;
-      p = (tblks+ATL_TTRSM_XOVER-1)/ATL_TTRSM_XOVER;
-      p = Mmin(p, ATL_NTHREADS);
-      p = p ? p : 1;
-
-      b = B;
-      minblks = nblks / p;
-      extrablks = nblks - minblks*p;
-      for (i=0; i < p; i++)
-      {
-         if (i < extrablks)
-            n = (minblks+1)*nb;
-         else if (i == extrablks)
-            n = minblks*nb + nr;
-         else 
-            n = minblks*nb;
-@skip         j = ATL_launchorder[i];
-@skip         trsms[j].eltsh = Mjoin(PATL,shift);
-@skip         trsms[j].trsmK = Mjoin(PATL,tvtrsm);
-         trsms[i].A = A;
-         trsms[i].M = n;
-         trsms[i].N = N;
-         trsms[i].lda = lda;
-         trsms[i].ldb = ldb;
-         trsms[i].B = b;
-         trsms[i].alpha = SADD alpha;
-         trsms[i].side = side;
-         trsms[i].uplo = uplo;
-         trsms[i].TA   = TA;
-         trsms[i].diag = diag;
-         n <<= Mjoin(PATL,shift);
-         b = MindxT(b, n);
-      }
-   }
-   if (p < 2)
+   tblks = (((size_t)M)*N)>>6;
+   tblks = (tblks+3)>>2;
+   P = Mmin(ATL_NTHREADS,tblks);
+   rb = nrhs>>1;
+   P = Mmin(P, rb);
+   if (P < 2)
    {
       Mjoin(PATL,@(rt))(side, uplo, TA, diag, M, N, alpha, A, lda, B, ldb);
       return;
    }
-   for (; i < ATL_NTHREADS; i++)  /* flag rest of struct as uninitialized */
-      trsms[i].B = NULL;  
-   ATL_goparallel(p, Mjoin(PATL,DoWork@up@(rt)), trsms, NULL);
-@beginskip
-   ls.opstruct = (char*) trsms;
-   ls.opstructstride = (int) ( ((char*)(trsms+1)) - (char*)(trsms) );
-   ls.CombineOpStructs = NULL;
-   ls.OpStructIsInit = Mjoin(PATL,StructIsInit@up@(rt));
-   ls.DoWork = Mjoin(PATL,DoWork@up@(rt));
-   ls.rank2thr = tp;
-   for (i=0; i < ATL_NTHREADS; i++)
-   {
-      tp[i].vp = &ls;
-      tp[i].rank = i;
-   }
-   ATL_thread_start(tp, 0, 1, ATL_tlaunch, tp);
-   ATL_thread_join(tp);
-@endskip
+   nrblks = P;
+   if (nrhs >= (P<<2))
+      rb = (nrhs / (P<<2))<<2;
+   else
+      rb = nrhs / P;
+   rbF = rb + nrhs - nrblks*rb;
+   pd.side = side;
+   pd.uplo = uplo;
+   pd.TA = TA;
+   pd.diag = diag;
+   pd.M = M;
+   pd.N = N;
+   pd.alpha = alpha;
+   pd.A = A;
+   pd.lda = lda;
+   pd.B = B;
+   pd.ldb = ldb;
+   pd.nrblks = nrblks;
+   pd.rb = rb;
+   pd.rbF = rbF;
+   pd.rhsBlkCtr = NULL;
+   ATL_goParallel(P, Mjoin(PATL,tDo@up@(rt)_tTRs), NULL, &pd, NULL);
 }
 @ROUT ATL_Xtsyr2k
 #include "atlas_misc.h"
