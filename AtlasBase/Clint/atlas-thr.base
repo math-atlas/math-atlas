@@ -197,7 +197,7 @@ struct ATL_LaunchStruct
 /*
  * Thread pool flag macros
  */
-@whiledef nm MICSORTED DIE DYNCOMB ZEROWAKES POLL WDONE
+@whiledef nm MICSORTED DIE DYNCOMB ZEROWAKES POLL
 #define ATL_TPF_@(nm)(p_) ((p_)->pflag & @(ib))
 #define ATL_TPF_SET_@(nm)(p_) ((p_)->pflag |= @(ib))
 #define ATL_TPF_UNSET_@(nm)(p_) ((p_)->pflag &= ~@(ib))
@@ -221,6 +221,9 @@ typedef void (*ATL_tpjcomb_t)
 typedef struct ATL_ThreadPool ATL_tpool_t;
 struct ATL_ThreadPool
 {
+   VUINT jobID;           /* count of jobs, wraps at top of uint range */
+   VUINT WORKDONE;        /* zeroed to start job, set by last worker done */
+   VUINT NOWORK;          /* optionally set when all work dealt out */
    VUINT nthr;            /* # of threads total in this thread pool */
    VUINT nsleep;          /* # of threads that have gone to sleep at start */
    VUINT nworkers;        /* # of thr supposed to wake up and work */
@@ -253,8 +256,10 @@ struct ATL_ThreadPool
  * Declare the beautiful global variables used by thread pool
  */
    #ifdef ATL_TP_DECL
+      double ATL_POLLTIME=0.001;  /* poll for 1 millisecond */
       ATL_tpool_t *ATL_TP_PTR=NULL, *ATL_TP1_PTR=NULL;
    #else
+      extern double ATL_POLLTIME;
       extern ATL_tpool_t *ATL_TP_PTR, *ATL_TP1_PTR;
    #endif
    void *ATL_threadpool(void *tp);
@@ -2661,14 +2666,14 @@ ATL_tpool_t *ATL_TP_start(int P, ATL_LAUNCHSTRUCT_t *lp)
    do
    {
       #ifdef DEBUG
-          fprintf(stderr, "MASTER SLEEPING WD=%u\n", ATL_TPF_WDONE(pp));
+          fprintf(stderr, "MASTER SLEEPING WD=%u\n", pp->WORKDONE);
       #endif
       ATL_cond_wait(pp->mcond, pp->tpmut);
       #ifdef DEBUG
-          fprintf(stderr, "MASTER SLEEPING WD=%u\n", ATL_TPF_WDONE(pp));
+          fprintf(stderr, "MASTER SLEEPING WD=%u\n", pp->WORKDONE);
       #endif
    }
-   while (!ATL_TPF_WDONE(pp));
+   while (!pp->WORKDONE);
    pp->nworkers = 0;
    ATL_mutex_unlock(pp->tpmut);
    return(pp);
@@ -2803,7 +2808,7 @@ void ATL_goparallel
       }
       pp->nworkers = P;
       pp->nwdone = pp->wcnt = 0;
-      ATL_TPF_UNSET_WDONE(pp);
+      pp->WORKDONE = pp->NOWORK = 0;
       #ifdef DEBUG
         fprintf(stderr, "MASTER WAKES WORKERS\n");
       #endif
@@ -2834,7 +2839,7 @@ void ATL_goparallel
       ATL_cond_wait(ATL_TP_MCOND, ATL_TP_MUT);
       ATL_mutex_lock(pp->tpmut);   /* allow threads to mess wt tpool */
    }
-   while (!ATL_TPF_WDONE(pp));
+   while (!pp->WORKDONE);
    pp->nworkers = 0;     /* make sure spurious wakeup will go back to sleep */
    ATL_mutex_unlock(pp->tpmut);
    ATL_mutex_unlock(ATL_TP_MUT);
@@ -14113,32 +14118,43 @@ int ATL_tpool_dojob
  * Only if I'm the first worker to get here (!iwrk) & called from tl (!CFWTHR)
  */
    if (!(CFWTHR+iwrk) && ATL_TPF_ZEROWAKES(pp))
-   #ifdef ATL_PHI_SORTED
    {
+   #ifdef ATL_PHI_SORTED
       if (ATL_TPF_MICSORTED(pp))
       {
          int k, nw=pp->nworkers-1;
          const int p4 = (pp->nthr >> 2);
 
-         for (k=1; k < p4 && nw; k++, nw--)
-            ATL_cond_signal(pp->wcond);
-         for (k=0; nw && k < p4; k++, nw--)
-            ATL_cond_signal(pp->wcond2);
-         for (k=0; nw && k < p4; k++, nw--)
-            ATL_cond_signal(pp->wcond3);
-         for (k=0; nw && k < p4; k++, nw--)
-            ATL_cond_signal(pp->wcond4);
+         if (pp->nworkers == pp->nthr)
+         {
+            ATL_cond_bcast(pp->wcond);
+            ATL_cond_bcast(pp->wcond2);
+            ATL_cond_bcast(pp->wcond3);
+            ATL_cond_bcast(pp->wcond4);
+         }
+         else
+         {
+            for (k=1; k < p4 && nw; k++, nw--)
+               ATL_cond_signal(pp->wcond);
+            for (k=0; nw && k < p4; k++, nw--)
+               ATL_cond_signal(pp->wcond2);
+            for (k=0; nw && k < p4; k++, nw--)
+               ATL_cond_signal(pp->wcond3);
+            for (k=0; nw && k < p4; k++, nw--)
+               ATL_cond_signal(pp->wcond4);
+         }
       }
       else
    #endif
+      if (pp->nthr == pp->nworkers)
+         ATL_cond_bcast(pp->wcond);
+      else
       {
          int k;
          for (k=1; k < pp->nworkers; k++)
             ATL_cond_signal(pp->wcond);
       }
-   #ifdef ATL_PHI_SORTED
    }
-   #endif
 /*
  * Now, do work based on PD; change thread info to use virtual rank info
  */
@@ -14192,36 +14208,62 @@ void *ATL_threadpool(void *vp)
       const unsigned int p4 = pp->nthr>>2;
    #endif
    void *tpmut = pp->tpmut;
+   unsigned int jobID=0;  /* starts at 1, so never a match */
 
    #ifdef DEBUG
-      fprintf(stderr, "%d: WORKER START POLL=%d, P=%d\n", rank, DOPOLL, P);
+      fprintf(stderr, "%d: WORKER START P=%d\n", rank, pp->nthr);
    #endif
 /*
- * Infinite loop over tasks.  Loop has 2 phases:
+ * Infinite loop over tasks.  Loop has 3 phases:
  * (1) Do work if commanded, including optional combine
- * (2) Wait for orders - can wait by polling or condition variable
+ * (2) Poll for a period of time bounded by ATL_POLLTIME.  During this
+ *     period the worker actively pools for work.  If a new job is requested
+ *     for time expires, worker gets started on next job w/o th everhead
+ *     of going to sleep & waking up.  
+ *     If ATL_POLLTIME <= 0, this phase is skipped.
+ * (3) Sleep until master wakes up for new work
  * Have lock at top of loop.
  */
    ATL_mutex_lock(tpmut);  /* force wait until pp set up */
    while(1)
    {
       unsigned int vrank;
+      int DIDWORK=0;
 /*
  *    If I've got work to do
  */
       if (pp->jobf)
       {
-         vrank = ATL_tpool_dojob(pp, rank, 0);
-         ATL_mutex_lock(tpmut); 
+         #ifdef DEBUG
+            fprintf(stderr, "%d: start job, nwrk=%d\n", rank, pp->nworkers);
+         #endif
 /*
- *       Threads go to sleep or poll for work after each job
- *       If I'm the last guy, signal master process we're done
+ *       Don't re-enter dojob unless I'm not doing combine
  */
-         if (vrank < pp->nworkers)
+         if (jobID != pp->jobID)
+         {
+            vrank = ATL_tpool_dojob(pp, rank, 0);
+            DIDWORK = (vrank < pp->nworkers);
+         }
+         jobID = pp->jobID;  /* signal I've worked on this job */
+         #ifdef DEBUG
+            fprintf(stderr, "%d,%d: done job\n", rank, vrank);
+         #endif
+         ATL_mutex_lock(tpmut); 
+         #ifdef DEBUG
+            fprintf(stderr, "%d,%d: got lock done job\n", rank, vrank);
+         #endif
+/*
+ *       If I'm the last worker, signal master process we're done
+ */
+         if (DIDWORK)
          {
             if (++pp->nwdone == pp->nworkers)
             {
-               ATL_TPF_SET_WDONE(pp);
+               #ifdef DEBUG
+                  fprintf(stderr, "%d,%d: SIGNAL MASTER\n", rank, vrank);
+               #endif
+               pp->NOWORK = pp->WORKDONE = 1;
                ATL_cond_signal(pp->mcond);
             }
          }
@@ -14241,10 +14283,41 @@ void *ATL_threadpool(void *vp)
  *    Sleep for next job; nsleep only examined during startup
  */
       pp->nsleep++;  /* don't care if this rolls over */
-      do
+/*
+ *    Poll until time elapses. If we are doing a combine, we always poll
+ *    until nworkers workers are awake: the combines expect nworkers
+ *    *unique* workers, and if we allow a thread to go back to sleep when
+ *    we are only signalling X cores, we can wind up not having X unique
+ *    cores ever awake.
+ */
+      if (ATL_POLLTIME > 0.0 || 
+          (jobID == pp->jobID && pp->wcnt < pp->nworkers))
+      {
+         double t0, t1=0.0;
+         t0 = ATL_walltime();
+         #ifdef DEBUG
+            fprintf(stderr, "%d,%d: START POLL\n", rank, vrank);
+         #endif
+         while ((pp->wcnt >= pp->nworkers && t1 < ATL_POLLTIME) ||
+                (jobID == pp->jobID && pp->wcnt < pp->nworkers))
+         {
+            ATL_mutex_unlock(tpmut);
+            while ((pp->wcnt >= pp->nworkers && t1 < ATL_POLLTIME) ||
+                   (jobID == pp->jobID && pp->wcnt < pp->nworkers))
+            {
+               ATL_thread_yield();
+               t1 = ATL_walltime() - t0;
+            }
+            ATL_mutex_lock(tpmut);
+         }
+         #ifdef DEBUG
+            fprintf(stderr, "%d,%d: DONE  POLL %e\n", rank, vrank, t1);
+         #endif
+      }
+      while (pp->WORKDONE || pp->wcnt >= pp->nworkers)
       {
          #ifdef DEBUG
-            fprintf(stderr, "%d: go to sleep\n", rank);
+            fprintf(stderr, "%d,%d: go to sleep\n", rank, vrank);
          #endif
          #ifndef ATL_PHI_SORTED
             ATL_cond_wait(pp->wcond, tpmut);
@@ -14258,9 +14331,8 @@ void *ATL_threadpool(void *vp)
             else
                ATL_cond_wait(pp->wcond4, tpmut);
          #endif
-      }
-      while (ATL_TPF_WDONE(pp) || pp->wcnt >= pp->nworkers);
-   }  /* end loop over tasks */
+      }  /* end sleep loop */
+   }     /* end loop over tasks */
 /*
  * When a thread exits, decrement thread count
  */
@@ -14359,6 +14431,7 @@ void ATL_goParallel
    if (!JUST_STARTED)
    {
       ATL_mutex_lock(pp->tpmut);
+      pp->jobID++;
       pp->PD = PD;
       pp->extra = extra;
       pp->jobf = DoWork;
@@ -14370,7 +14443,7 @@ void ATL_goParallel
       }
       pp->nworkers = P;
       pp->nwdone = pp->wcnt = 0;
-      ATL_TPF_UNSET_WDONE(pp);
+      pp->WORKDONE = pp->NOWORK = 0;
       #ifdef ATL_TP_FORCEBCAST
          #if (ATL_TP_FORCEBCAST)
             ATL_TPF_UNSET_ZEROWAKES(pp);
@@ -14404,7 +14477,7 @@ void ATL_goParallel
          ATL_cond_bcast(pp->wcond);
       #endif
    }
-   else /* thread pool just started up, I have both locks */
+   else /* thread pool just started up, I have tpmut */
    {
       pp->jobf = DoWork;
       pp->combf = DoComb;
@@ -14414,9 +14487,19 @@ void ATL_goParallel
  */
    do
    {
+      #ifdef DEBUG
+         fprintf(stderr, "master sleeps WD=%d, P=%d, comb=%p\n",
+                 pp->WORKDONE, pp->nworkers, pp->combf);
+      #endif
       ATL_cond_wait(pp->mcond, pp->tpmut);
+      #ifdef DEBUG
+         fprintf(stderr, "master awake  WD=%d\n", pp->WORKDONE);
+      #endif
    }
-   while (!ATL_TPF_WDONE(pp));
+   while (!pp->WORKDONE);
+   #ifdef DEBUG
+      fprintf(stderr, "MASTER AWAKE FINAL WD=%d\n", pp->WORKDONE);
+   #endif
    pp->nworkers = 0;     /* make sure spurious wakeup will go back to sleep */
 /*
  * For first launch, it is critical that we ensure all threads have slept
@@ -14447,6 +14530,7 @@ ATL_tpool_t *ATL_NewThreadPool
    ATL_tpool_t *pp;
    pp = calloc(1, sizeof(ATL_tpool_t));
    ATL_assert(pp);
+   pp->jobID = 1;
    if (P)
    {
       int i;
