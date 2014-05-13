@@ -14125,23 +14125,34 @@ int ATL_tpool_dojob
          int k, nw=pp->nworkers-1;
          const int p4 = (pp->nthr >> 2);
 
-         if (pp->nworkers == pp->nthr)
-         {
-            ATL_cond_bcast(pp->wcond);
-            ATL_cond_bcast(pp->wcond2);
-            ATL_cond_bcast(pp->wcond3);
-            ATL_cond_bcast(pp->wcond4);
-         }
-         else
-         {
+         if (pp->nworkers < p4)
             for (k=1; k < p4 && nw; k++, nw--)
                ATL_cond_signal(pp->wcond);
-            for (k=0; nw && k < p4; k++, nw--)
-               ATL_cond_signal(pp->wcond2);
-            for (k=0; nw && k < p4; k++, nw--)
-               ATL_cond_signal(pp->wcond3);
-            for (k=0; nw && k < p4; k++, nw--)
-               ATL_cond_signal(pp->wcond4);
+         else
+         {
+            ATL_cond_bcast(pp->wcond);
+            nw -= p4;
+            if (nw < p4)
+               for (k=0; nw && k < p4; k++, nw--)
+                  ATL_cond_signal(pp->wcond2);
+            else
+            {
+               ATL_cond_bcast(pp->wcond2);
+               nw -= p4;
+               if (nw < p4)
+                  for (k=0; nw && k < p4; k++, nw--)
+                     ATL_cond_signal(pp->wcond3);
+               else
+               {
+                  ATL_cond_bcast(pp->wcond3);
+                  nw -= p4;
+                  if (nw <  p4)
+                     for (; nw; nw--)
+                        ATL_cond_signal(pp->wcond4);
+                  else
+                     ATL_cond_bcast(pp->wcond4);
+               }
+            }
          }
       }
       else
@@ -14199,6 +14210,16 @@ int ATL_tpool_dojob
    return(vrank);
 }
 
+#ifdef ATL_POLLTPOOL
+/*
+ * In this version of threadpool, worker threads restart master process once
+ * job is done, but threads may still be awake and polling for work.  Since
+ * the master process is not bound to a thread, this may cause contention
+ * with the serial portion of the algorithm (if any), and so cause a slowdown.
+ * However, it might be the right thing to do on systems where condition
+ * variables are very expensive, or if the number of cores is very large,
+ * or if polling does not interfere with the serial process for some reason.
+ */
 void *ATL_threadpool(void *vp)
 {
    ATL_thread_t *tp=vp;
@@ -14345,6 +14366,102 @@ void *ATL_threadpool(void *vp)
    #endif
    return(NULL);
 }
+#else
+/*
+ * In this version of threadpool, all worker threads go to sleep before
+ * control is returned to the master process
+ */
+void *ATL_threadpool(void *vp)
+{
+   ATL_thread_t *tp=vp;
+   ATL_tpool_t *pp = ATL_TP_PTR;
+   const unsigned int rank=tp->rank;
+   #ifdef ATL_PHI_SORTED
+      const unsigned int p4 = pp->nthr>>2;
+   #endif
+   void *tpmut = pp->tpmut;
+
+   #ifdef DEBUG
+      fprintf(stderr, "%d: WORKER START POLL=%d, P=%d\n", rank, DOPOLL, P);
+   #endif
+/*
+ * Infinite loop over tasks.  Loop has 2 phases:
+ * (1) Do work if commanded, including optional combine
+ * (2) Wait for orders - can wait by polling or condition variable
+ * Have lock at top of loop.
+ */
+   ATL_mutex_lock(tpmut);  /* force wait until pp set up */
+   while(1)
+   {
+      unsigned int vrank;
+/*
+ *    If I've got work to do
+ */
+      if (pp->jobf)
+      {
+         vrank = ATL_tpool_dojob(pp, rank, 0);
+         ATL_mutex_lock(tpmut);
+/*
+ *       Threads go to sleep or poll for work after each job
+ *       If I'm the last guy, signal master process we're done
+ */
+         if (vrank < pp->nworkers)
+         {
+            if (++pp->nwdone == pp->nworkers)
+            {
+               pp->WORKDONE = 1;
+               ATL_cond_signal(pp->mcond);
+            }
+         }
+      }
+/*
+ *    If no work, scope flag to see if I should sleep, or quit
+ */
+      else
+      {
+         if (ATL_TPF_DIE(pp))
+         {
+            ATL_mutex_unlock(tpmut);
+            return(NULL);
+         }
+      }
+/*
+ *    Sleep for next job; nsleep only examined during startup
+ */
+      pp->nsleep++;  /* don't care if this rolls over */
+      do
+      {
+         #ifdef DEBUG
+            fprintf(stderr, "%d: go to sleep\n", rank);
+         #endif
+         #ifndef ATL_PHI_SORTED
+            ATL_cond_wait(pp->wcond, tpmut);
+         #else
+            if (rank < p4)
+               ATL_cond_wait(pp->wcond, tpmut);
+            else if (rank < p4+p4)
+               ATL_cond_wait(pp->wcond2, tpmut);
+            else if (rank < p4+p4+p4)
+               ATL_cond_wait(pp->wcond3, tpmut);
+            else
+               ATL_cond_wait(pp->wcond4, tpmut);
+         #endif
+      }
+      while (pp->WORKDONE || pp->wcnt >= pp->nworkers);
+   }  /* end loop over tasks */
+/*
+ * When a thread exits, decrement thread count
+ */
+
+   ATL_mutex_lock(tpmut);
+   pp->nthr--;
+   ATL_mutex_unlock(tpmut);
+   #ifdef DEBUG
+      fprintf(stderr, "%d: WORKER DONE\n", rank);
+   #endif
+   return(NULL);
+}
+#endif
 #endif
 @ROUT ATL_threadpool_misc
 #define ATL_TP_DECL 1
