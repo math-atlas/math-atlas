@@ -11343,6 +11343,47 @@ static void trsmREC_LLN
    trsmREC_LLN(STOP_EARLY, diag, Mr, N, ONE, L11, lda, B1, ldb);
 }
 
+static void trsmREC_LUT
+   (const int STOP_EARLY, const enum ATLAS_DIAG diag, ATL_CSZT M, ATL_CSZT N,
+    const SCALAR alpha, const TYPE *A, ATL_CSZT lda, TYPE *B, ATL_CSZT ldb)
+{
+   ATL_CSZT Ml=M>>1, Mr = M-Ml;
+   TYPE *B1=B+(Ml SHIFT);
+   const TYPE *A10=A+(Ml*lda SHIFT), *L11=A10+(Ml SHIFT);
+   #ifdef TCPLX
+      TYPE ONE[2] = {ATL_rone, ATL_rzero};
+      TYPE NONE[2] = {ATL_rnone, ATL_rzero};
+   #else
+      #define ONE ATL_rone
+      #define NONE ATL_rnone
+   #endif
+   size_t sz;  /* size(A) + 2*pan(B) */
+/*
+ * Stop recursion when A & panel of B fit in cache
+ */
+   sz = ((M*M)>>1) + M*(ATL_AMM_98KB<<1);
+   sz = ATL_MulBySize(sz);
+   if (STOP_EARLY || sz < CacheEdge)
+   {
+      if (!ttrsm_ammL(AtlasUpper, AtlasTrans, diag, M, N, alpha, 
+                      A, lda, B, ldb))
+         return;
+/*
+ *    If we can't allocate any space, call serial & hope it can work
+ */
+      if (M < 80)
+      {
+         Mjoin(PATL,trsm)(AtlasLeft, AtlasUpper, AtlasTrans, diag, M, N, 
+                          alpha, A, lda, B, ldb);
+         return;
+      }
+   }
+   trsmREC_LUT(STOP_EARLY, diag, Ml, N, alpha, A, lda, B, ldb);
+   Mjoin(PATL,tgemm)(AtlasTrans, AtlasNoTrans, Mr, N, Ml, NONE, A10, lda,
+                     B, ldb, alpha, B1, ldb);
+   trsmREC_LUT(STOP_EARLY, diag, Mr, N, ONE, L11, lda, B1, ldb);
+}
+
 #ifndef TCPLX
    #undef ONE
    #undef NONE
@@ -11359,10 +11400,18 @@ int Mjoin(PATL,ttrsm_amm)
     ATL_CINT M, ATL_CINT N, const SCALAR alpha,
     const TYPE *A, ATL_CINT lda, TYPE *B, ATL_CINT ldb)
 {
-   if (side == AtlasLeft && uplo == AtlasLower && TA == AtlasNoTrans)
+   if (side == AtlasLeft)
    {
-      trsmREC_LLN(ATL_SE, diag, M, N, alpha, A, lda, B, ldb);
-      return(0);
+      if (uplo == AtlasLower && TA == AtlasNoTrans)
+      {
+         trsmREC_LLN(ATL_SE, diag, M, N, alpha, A, lda, B, ldb);
+         return(0);
+      }
+      if (uplo == AtlasUpper && TA == AtlasTrans)
+      {
+         trsmREC_LUT(ATL_SE, diag, M, N, alpha, A, lda, B, ldb);
+         return(0);
+      }
    }
    return(1);
 }
