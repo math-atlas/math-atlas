@@ -857,6 +857,7 @@ struct ATL_tgemm_ammG
    int *cCblkBV;     /* nMNblks BV for dealing C blks while copying */
    int *cbetaBV;     /* nMNblks BV: unset means beta not yet applied */
    void *cpmut;      /* mutex protecting cpyA/BdBV & cCblkBV */
+   void *cbetamut;   /* mutex protecting cbetaBV */
    void *ccCtr;      /* nMNblks ctr for dealing out (diagonal) blocks wt copy */
    void *cCtr;       /* ncblks ctr for dealing out blocks w/o copy */
    void **KbegCtr;   /* counters for dealing out K blocks for copying */
@@ -5532,7 +5533,7 @@ static int ATL_tsyr2kK(ATL_SYR2K_t *syp, ATL_CINT N, ATL_CINT K,
  * RETURNS: 0 on success, nonzero if unable to allocate memory
  */
 {
-   void *v, *W;
+   void *v=NULL, *W;
    ATL_INT ldw;
    int i;
    size_t sz;
@@ -5555,7 +5556,7 @@ static int ATL_tsyr2kK(ATL_SYR2K_t *syp, ATL_CINT N, ATL_CINT K,
    }
 @endskip
    sz = (ldw*N)<<eltsh;
-   if (sz <= ATL_NTHREADS*ATL_PTMAXMALLOC)
+   if ((sz>>20) <= ATL_PTMAXMALLOC_MB)
       v = malloc(sz + ATL_Cachelen);
    if (!v)
       return(1);  /* signal we can't get memory */
@@ -12200,15 +12201,24 @@ static void DoBlksWtCpy
  */
    if (dblk < minblks)
    {
+      int COPIED=0;
       c = pd->C + j*pd->ldc + i;
       ATL_mutex_lock(pd->Cmuts[dblk]);
-      if (ATL_IsBitSetBV(pd->cbetaBV, dblk))
-         pd->blk2c_b1(mb, nb, pd->alpC, wC, ATL_rone, c, pd->ldc);
-      else  /* I need to apply beta */
+      if (!ATL_IsBitSetBV(pd->cbetaBV, dblk))
       {
-         ATL_SetBitBV(pd->cbetaBV, dblk); /* other thrs shouldn't apply beta */
-         pd->blk2c(mb, nb, pd->alpC, wC, pd->beta, c, pd->ldc);
+         ATL_mutex_lock(pd->cbetamut);
+         if (!ATL_IsBitSetBV(pd->cbetaBV, dblk))
+         {
+            ATL_SetBitBV(pd->cbetaBV, dblk); 
+            ATL_mutex_unlock(pd->cbetamut);
+            pd->blk2c(mb, nb, pd->alpC, wC, pd->beta, c, pd->ldc);
+            COPIED = 1;
+         }
+         else
+            ATL_mutex_unlock(pd->cbetamut);
       }
+      if (!COPIED)
+         pd->blk2c_b1(mb, nb, pd->alpC, wC, ATL_rone, c, pd->ldc);
       ATL_mutex_unlock(pd->Cmuts[dblk]);
    }
 }
@@ -12465,6 +12475,10 @@ int Mjoin(PATL,tammm_G)
    ATL_tgemm_ammG_t pd;
    amminfo_t mminfo;
    void *vp;
+   #ifdef ATL_PHI_SORTED
+      const unsigned int nthr = ATL_TP_PTR ? ATL_TP_PTR->nthr : ATL_NTHREADS,
+                         p4 = nthr>>2, p4_2 = nthr+nthr, p4_3 = p4_2+p4;
+   #endif
 
    nmblks = M / ATL_AMM_66MB;
    nnblks = N / ATL_AMM_66NB;
@@ -12567,6 +12581,16 @@ int Mjoin(PATL,tammm_G)
    sz += ATL_MulBySize(szA+szB);              /* A/B workspace */
    sz += 3*ATL_Cachelen;                      /* room for alignment */
    #ifdef ATL_PHI_SORTED
+      pd.ncntxts = 1;
+      pd.ncores = p4;
+      if (P == p4_2)
+         pd.ncntxts = 2;
+      else if (P == p4_3)
+         pd.ncntxts = 3;
+      else if (P == nthr)
+         pd.ncntxts = 4;
+      else
+         pd.ncores = P;
       if (pd.ncntxts > 1)
          sz += ATL_Cachelen*(pd.ncores+1);
    #endif
@@ -12626,6 +12650,7 @@ int Mjoin(PATL,tammm_G)
       pd.Cmuts[i] = ATL_mutex_init();
    }
    pd.cpmut = ATL_mutex_init();
+   pd.cbetamut = ATL_mutex_init();
    pd.cpyAdBV = ATL_NewBV(nmblks);
    pd.cpyBdBV = ATL_NewBV(nnblks);
    pd.cCblkBV = ATL_NewBV(pd.nCblks);
@@ -12662,6 +12687,7 @@ int Mjoin(PATL,tammm_G)
    ATL_FreeBV(pd.cCblkBV);
    ATL_FreeBV(pd.cbetaBV);
    ATL_mutex_free(pd.cpmut);
+   ATL_mutex_free(pd.cbetamut);
    ATL_FreeGlobalAtomicCount(pd.cCtr);
    ATL_FreeGlobalAtomicCount(pd.ccCtr);
    for (i=0; i < nMNblks; i++)
@@ -14232,7 +14258,7 @@ int ATL_tpool_dojob
    const int CFWTHR    /* 1: worker thr called, 0: ATL_threadpool loop called */
 )
 {
-   const int nworkers=pp->nworkers, nthr = pp->nthr, SUBSET=(nworkers != nthr);
+   const int nworkers=pp->nworkers, nthr = pp->nthr;
    int vrank, iwrk;
    void *tpmut = pp->tpmut;
    ATL_thread_t *tp = pp->threads+rank;
@@ -14251,10 +14277,10 @@ int ATL_tpool_dojob
    else
    #endif
    vrank = pp->wcnt;
-   if (vrank >= nworkers)            /* If I don't participate in this job */
+   if (vrank >= nworkers || pp->wcnt >= nworkers) /* If I'm not a worker */
    {
-      ATL_mutex_unlock(tpmut);       /* release mutex and */
-      return(vrank);                 /* get out of here now */
+      ATL_mutex_unlock(tpmut);                    /* release mutex and */
+      return(vrank);                              /* get out of here now */
    }
    iwrk = pp->wcnt++;        /* inc count of participating workers */
    ATL_mutex_unlock(tpmut);  /* let other threads enroll in job */
@@ -14355,10 +14381,10 @@ void *ATL_threadpool(void *vp)
    ATL_tpool_t *pp = ATL_TP_PTR;
    const unsigned int rank=tp->rank;
    #ifdef ATL_PHI_SORTED
-      const unsigned int p4 = pp->nthr>>2;
+      const unsigned int nthr=pp->nthr, p4=nthr>>2, p4_2=p4+p4, p4_3=p4_2+p4;
    #endif
    void *tpmut = pp->tpmut;
-@skip   unsigned int jobID=0;  /* starts at 1, so never a match */
+   unsigned int jobID=0;
 
    #ifdef DEBUG
       fprintf(stderr, "%d: WORKER START P=%d\n", rank, pp->nthr);
@@ -14425,10 +14451,13 @@ void *ATL_threadpool(void *vp)
  *    mandatory worker, go back to job and pretend to be a new worker,
  *    as long as we are allowed to work on problem
  */
-      #ifndef ATL_PHI_SORTED
-         if (pp->wcnt < pp->nworkers && vrank < pp->nworkers)
-            continue;
+      #ifdef ATL_PHI_SORTED
+         if (pp->wcnt < pp->nworkers && pp->nworkers != nthr &&
+             pp->nworkers != p4_2 && pp->nworkers != p4_3)
+      #else
+         if (pp->wcnt < pp->nworkers)
       #endif
+            continue;
 /*
  *    Sleep for next job; nsleep only examined during startup
  */
@@ -14436,28 +14465,22 @@ void *ATL_threadpool(void *vp)
 /*
  *    Poll until time elapses or a new job is available.
  */
-      if (ATL_POLLTIME > 0.0 && pp->wcnt >= pp->nworkers)
+      if (ATL_POLLTIME > 0.0 && jobID == pp->jobID)
       {
          double t0, t1=0.0;
+         ATL_mutex_unlock(tpmut);
          t0 = ATL_walltime();
-         #ifdef DEBUG
-            fprintf(stderr, "%d,%d: START POLL\n", rank, vrank);
-         #endif
-         while ((pp->wcnt >= pp->nworkers && t1 < ATL_POLLTIME))
+         while (jobID == pp->jobID && t1 < ATL_POLLTIME)
          {
-            ATL_mutex_unlock(tpmut);
-            while ((pp->wcnt >= pp->nworkers && t1 < ATL_POLLTIME))
-            {
-               ATL_thread_yield();
-               t1 = ATL_walltime() - t0;
-            }
-            ATL_mutex_lock(tpmut);
+            ATL_thread_yield();
+            t1 = ATL_walltime() - t0;
          }
-         #ifdef DEBUG
-            fprintf(stderr, "%d,%d: DONE  POLL %e\n", rank, vrank, t1);
-         #endif
+         ATL_mutex_lock(tpmut);
       }
-      while (pp->WORKDONE || pp->wcnt >= pp->nworkers)
+/*
+ *    If no new job available, go to sleep
+ */
+      while (pp->jobID == jobID)
       {
          #ifdef DEBUG
             fprintf(stderr, "%d,%d: go to sleep\n", rank, vrank);
@@ -14467,14 +14490,15 @@ void *ATL_threadpool(void *vp)
          #else
             if (rank < p4)
                ATL_cond_wait(pp->wcond, tpmut);
-            else if (rank < p4+p4)
+            else if (rank < p4_2)
                ATL_cond_wait(pp->wcond2, tpmut);
-            else if (rank < p4+p4+p4)
+            else if (rank < p4_3)
                ATL_cond_wait(pp->wcond3, tpmut);
             else
                ATL_cond_wait(pp->wcond4, tpmut);
          #endif
       }  /* end sleep loop */
+      jobID = pp->jobID;
    }     /* end loop over tasks */
 /*
  * When a thread exits, decrement thread count
@@ -14499,7 +14523,7 @@ void *ATL_threadpool(void *vp)
    ATL_tpool_t *pp = ATL_TP_PTR;
    const unsigned int rank=tp->rank;
    #ifdef ATL_PHI_SORTED
-      const unsigned int p4 = pp->nthr>>2;
+      const unsigned int nthr=pp->nthr, p4=nthr>>2, p4_2=p4+p4, p4_3=p4_2+p4;
    #endif
    void *tpmut = pp->tpmut;
 
@@ -14552,9 +14576,12 @@ void *ATL_threadpool(void *vp)
  *    a new worker as long as we're allowed to work on problem
  */
       #ifndef ATL_PHI_SORTED
+         if (pp->wcnt < pp->nworkers && pp->nworkers != nthr &&
+             pp->nworkers != p4_2 && pp->nworkers != p4_3)
+      #else
          if (pp->wcnt < pp->nworkers)
-            continue;
       #endif
+            continue;
 /*
  *    Sleep for next job; nsleep only examined during startup
  */
@@ -14798,7 +14825,7 @@ ATL_tpool_t *ATL_NewThreadPool
    ATL_tpool_t *pp;
    pp = calloc(1, sizeof(ATL_tpool_t));
    ATL_assert(pp);
-   pp->jobID = 1;
+   pp->jobID = 0;
    if (P)
    {
       int i;
