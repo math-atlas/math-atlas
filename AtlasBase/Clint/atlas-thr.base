@@ -13784,8 +13784,8 @@ int Mjoin(PATL,tsyrk_amm_N)
       }
       else if (ncblks+8 >= 3*(ATL_NTHREADS>>2))
       {
-         P = 3*(ATL_NTHREADS>>2);
          pd.ncores = ATL_NTHREADS>>2;
+         P = 3*pd.ncores;
          pd.ncntxts = 3;
       }
       else if (ncblks+4 >= (ATL_NTHREADS>>1))
@@ -14465,12 +14465,14 @@ void *ATL_threadpool(void *vp)
 /*
  *    Poll until time elapses or a new job is available.
  */
-      if (ATL_POLLTIME > 0.0 && jobID == pp->jobID)
+      if (ATL_POLLTIME > 0.0 && 
+         (jobID == pp->jobID || pp->wcnt >= pp->nworkers))
       {
          double t0, t1=0.0;
          ATL_mutex_unlock(tpmut);
          t0 = ATL_walltime();
-         while (jobID == pp->jobID && t1 < ATL_POLLTIME)
+         while (t1 < ATL_POLLTIME && 
+                (jobID == pp->jobID || pp->wcnt >= pp->nworkers))
          {
             ATL_thread_yield();
             t1 = ATL_walltime() - t0;
@@ -14480,7 +14482,7 @@ void *ATL_threadpool(void *vp)
 /*
  *    If no new job available, go to sleep
  */
-      while (pp->jobID == jobID)
+      while (pp->jobID == jobID || pp->wcnt >= pp->nworkers)
       {
          #ifdef DEBUG
             fprintf(stderr, "%d,%d: go to sleep\n", rank, vrank);
@@ -14575,7 +14577,7 @@ void *ATL_threadpool(void *vp)
  *    If the job is still waiting on workers, go back up and pretend to be
  *    a new worker as long as we're allowed to work on problem
  */
-      #ifndef ATL_PHI_SORTED
+      #ifdef ATL_PHI_SORTED
          if (pp->wcnt < pp->nworkers && pp->nworkers != nthr &&
              pp->nworkers != p4_2 && pp->nworkers != p4_3)
       #else
