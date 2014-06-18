@@ -245,6 +245,9 @@ struct ATL_ThreadPool
       void *wcond2;       /* cond vars 2nd context sleeps on */
       void *wcond3;       /* cond vars 3rd context sleeps on */
       void *wcond4;       /* cond vars 4th context sleeps on */
+   #elif defined(ATL_PHI_SORTED2)
+      int ncntxts;
+      void **wconds;
    #endif
    void *mcond;           /* cond for master process sleep/wake */
    ATL_thread_t *threads; /* array of thread ptrs */
@@ -797,10 +800,15 @@ struct ATL_tsyrk_ammN
    void **Cdmuts;    /* mutex locks for each diagonal block of C */
 @skip   void *CdonCtr;    /* non-diag computation finished when we reach 0 */
    size_t panszA;    /* nkblks * blkszA */
-   #ifdef ATL_PHI_SORTED
+   #if defined(ATL_PHI_SORTED) || defined(ATL_PHI_SORTED2)
       VINT *chkin;   /* ncores*ATL_Cachelen check-in array */
       int ncores;    /* ncores, on PHI it is nthr/4 */
       int ncntxts;   /* ncontexts to use per core */
+   #endif
+   #ifdef ATL_PHI_SORTED2
+      int nnuC;
+      int CoffC;
+      int BoffC;
    #endif
    VINT cpydone;     /* set when all A/A' copying complete */
    int LOWER;        /* set true if lower triangular C */
@@ -13841,7 +13849,27 @@ int Mjoin(PATL,tsyrk_amm_N)
       ncblks = N / ATL_AMM_MAXNB;
    #endif
    ncblks = (ncblks*(ncblks-1))>>1;
-   #ifdef ATL_PHI_SORTED
+   #ifdef ATL_PHI_SORTED2
+      P = (ncblks >= ATL_NTHREADS>>2) ? ATL_NTHREADS : (ATL_NTHREADS>>1);
+      pd.blk2d = Mjoin(PATL,tGetSyammInfo)(&mminfo, P, Trans, N, K, alpha,beta);
+      nb = mminfo.nb;
+      nu = mminfo.nu;
+      pd.nnu = nb / nu;
+      ncblks = N / nb;
+      ncblks = (ncblks*(ncblks-1))>>1;
+      if (ncblks >= ATL_NTHREADS>>2)
+      {
+         pd.ncores = ATL_NTHREADS>>2;
+         pd.ncntxts = (pd.nnu >= 4) ? 4 : pd.nnu;
+      }
+      P = ncblks<<2;
+      if (P
+      if (ncblks <
+      pd.ncores = ATL_NTHREADS>>2;
+      if (P >= ATL_NTHREADS>>2)
+         pd.ncntxts = 4;
+      else if (P >= ATL_NTHREADS
+   #elif defined(ATL_PHI_SORTED)
       if (ncblks >= ATL_NTHREADS)
       {
          P = ATL_NTHREADS;
@@ -14341,8 +14369,28 @@ int ATL_tpool_dojob
        nworkers == (nthr>>2)+(nthr>>1))
       vrank = rank;
    else
+/*
+ * For PHI_SORTED2, we always use all contexts, and only context 3 is awoken
+ * by the usual process.  Context 3 then awakens contexts 0-2 on its node.
+ */
+   #elif defined(ATL_PHI_SORTED2)
+      if (pp->ncntxts)
+      {
+         if (rank < ATL_NTHREADS>>2)
+            vrank = rank<<2;
+         else if (rank < ATL_NTHREADS>>1)
+            vrank = (rank - (ATL_NTHREADS>>2))<<2 + 1;
+         else if (rank < 3*(ATL_NTHREADS>>2))
+            vrank = (rank - (ATL_NTHREADS>>1))<<2 + 2;
+         else
+         {
+            iwrk = rank - 3*(ATL_NTHREADS>>2);  /* core number */
+            vrank = iwrk<<2 + 3;
+         }
+      }
+      else
    #endif
-   vrank = pp->wcnt;
+      vrank = pp->wcnt;
    if (vrank >= nworkers || pp->wcnt >= nworkers) /* If I'm not a worker */
    {
       ATL_mutex_unlock(tpmut);                    /* release mutex and */
@@ -14393,6 +14441,7 @@ int ATL_tpool_dojob
          }
       }
       else
+   #elif defined(ATL_PHI_SORTED2)
    #endif
       if (nthr == nworkers)
          ATL_cond_bcast(pp->wcond);
@@ -14403,6 +14452,13 @@ int ATL_tpool_dojob
             ATL_cond_signal(pp->wcond);
       }
    }
+/*
+ * Wake up rest of threads on my core if contexts are called for
+ */
+   #ifdef ATL_PHI_SORTED2
+      if (vrank & 3 == 3 && pp->ncntxts > 1)
+         ATL_cond_bcast(pp->wconds[vrank>>2]);
+   #endif
 /*
  * Now, do work based on PD; change thread info to use virtual rank info
  */
@@ -14475,17 +14531,8 @@ void *ATL_threadpool(void *vp)
  */
       if (pp->jobf)
       {
-         #ifdef DEBUG
-            fprintf(stderr, "%d: start job, nwrk=%d\n", rank, pp->nworkers);
-         #endif
          vrank = ATL_tpool_dojob(pp, rank, 0);
-         #ifdef DEBUG
-            fprintf(stderr, "%d,%d: done job\n", rank, vrank);
-         #endif
          ATL_mutex_lock(tpmut); 
-         #ifdef DEBUG
-            fprintf(stderr, "%d,%d: got lock done job\n", rank, vrank);
-         #endif
 /*
  *       If I'm the last worker, signal master process we're done
  */
@@ -14517,6 +14564,7 @@ void *ATL_threadpool(void *vp)
  *    mandatory worker, go back to job and pretend to be a new worker,
  *    as long as we are allowed to work on problem
  */
+      #ifndef ATL_PHI_SORTED2
       #ifdef ATL_PHI_SORTED
          if (pp->wcnt < pp->nworkers && pp->nworkers != nthr &&
              pp->nworkers != p4_2 && pp->nworkers != p4_3)
@@ -14524,6 +14572,7 @@ void *ATL_threadpool(void *vp)
          if (pp->wcnt < pp->nworkers)
       #endif
             continue;
+      #endif
 /*
  *    Sleep for next job; nsleep only examined during startup
  */
@@ -14553,9 +14602,8 @@ void *ATL_threadpool(void *vp)
          #ifdef DEBUG
             fprintf(stderr, "%d,%d: go to sleep\n", rank, vrank);
          #endif
-         #ifndef ATL_PHI_SORTED
+         #ifdef ATL_PHI_SORTED
             ATL_cond_wait(pp->wcond, tpmut);
-         #else
             if (rank < p4)
                ATL_cond_wait(pp->wcond, tpmut);
             else if (rank < p4_2)
@@ -14564,6 +14612,17 @@ void *ATL_threadpool(void *vp)
                ATL_cond_wait(pp->wcond3, tpmut);
             else
                ATL_cond_wait(pp->wcond4, tpmut);
+         #elif defined(ATL_PHI_SORTED2)
+            if (rank >= p4_3)
+               ATL_cond_wait(pp->wcond, tpmut)
+            else if (rank < p4)
+               ATL_cond_wait(pp->wconds[rank, tpmut]);
+            else if (rank < p4_2)
+               ATL_cond_wait(pp->wconds[rank-p4, tpmut]);
+            else
+               ATL_cond_wait(pp->wconds[rank-p4_2, tpmut]);
+         #else
+            ATL_cond_wait(pp->wcond, tpmut)
          #endif
       }  /* end sleep loop */
       jobID = pp->jobID;
@@ -14643,6 +14702,7 @@ void *ATL_threadpool(void *vp)
  *    If the job is still waiting on workers, go back up and pretend to be
  *    a new worker as long as we're allowed to work on problem
  */
+      #ifndef ATL_PHI_SORTED2
       #ifdef ATL_PHI_SORTED
          if (pp->wcnt < pp->nworkers && pp->nworkers != nthr &&
              pp->nworkers != p4_2 && pp->nworkers != p4_3)
@@ -14650,6 +14710,7 @@ void *ATL_threadpool(void *vp)
          if (pp->wcnt < pp->nworkers)
       #endif
             continue;
+      #endif
 /*
  *    Sleep for next job; nsleep only examined during startup
  */
@@ -14659,9 +14720,7 @@ void *ATL_threadpool(void *vp)
          #ifdef DEBUG
             fprintf(stderr, "%d: go to sleep\n", rank);
          #endif
-         #ifndef ATL_PHI_SORTED
-            ATL_cond_wait(pp->wcond, tpmut);
-         #else
+         #ifdef ATL_PHI_SORTED
             if (rank < p4)
                ATL_cond_wait(pp->wcond, tpmut);
             else if (rank < p4+p4)
@@ -14670,6 +14729,9 @@ void *ATL_threadpool(void *vp)
                ATL_cond_wait(pp->wcond3, tpmut);
             else
                ATL_cond_wait(pp->wcond4, tpmut);
+         #elif defined(ATL_PHI_SORTED2) // HERE HERE HERE
+         #else
+            ATL_cond_wait(pp->wcond, tpmut);
          #endif
       }
       while (pp->WORKDONE || pp->wcnt >= pp->nworkers);
