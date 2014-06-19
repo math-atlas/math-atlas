@@ -14793,7 +14793,7 @@ void ATL_InitThreadPoolStartup(int P, void *pd, void *extra)
    pp->nworkers = P;
    pp->PD = pd;
    pp->extra = extra;
-   #ifdef ATL_PHI_SORTED
+   #if defined(ATL_PHI_SORTED) || defined(ATL_PHI_SORTED2)
       ATL_TPF_SET_MICSORTED(pp);
    #endif
 
@@ -15005,6 +15005,16 @@ ATL_tpool_t *ATL_NewThreadPool
       pp->wcond2 = ATL_cond_init();
       pp->wcond3 = ATL_cond_init();
       pp->wcond4 = ATL_cond_init();
+   #elif defined(ATL_PHI_SORTED2)
+   {
+      int i, n;
+      pp->ncntxts = 0;
+      n = ATL_NTHREADS >> 2;
+      pp->wconds = malloc(sizeof(void*)*n);
+      ATL_assert(pp->wconds);
+      for (i=0; i < n; i++)
+         pp->wconds[i] = ATL_cond_init();
+   }
    #endif
    pp->combReadyBV = ATL_NewBV(P);
    pp->combDoneBV = ATL_NewBV(P);
@@ -15027,6 +15037,19 @@ void ATL_FreeThreadPool(ATL_tpool_t *pp)
       ATL_cond_free(pp->mcond);
    if (pp->wcond)
       ATL_cond_free(pp->wcond);
+   #if defined(ATL_PHI_SORTED)
+      if (pp->mcond2)
+         ATL_cond_free(pp->mcond2);
+      if (pp->mcond3)
+         ATL_cond_free(pp->mcond3);
+   #elif defined(ATL_PHI_SORTED2)
+   {
+      int i, n = pp->nthr>>2;
+      for (i=0; i < n; i++)
+         ATL_cond_free(pp->mconds[i]);
+      free(pp->mconds);
+   }
+   #endif
    if (pp->combReadyBV)
       ATL_FreeBV(pp->combReadyBV);
    if (pp->combDoneBV)
