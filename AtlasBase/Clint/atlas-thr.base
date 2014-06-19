@@ -14349,7 +14349,8 @@ int ATL_tpool_dojob
 (
    ATL_tpool_t *pp,    /* thread pool to use */
    const int rank,     /* actual rank, my tp found at pp->threads+rank */
-   const int CFWTHR    /* 1: worker thr called, 0: ATL_threadpool loop called */
+   const int CFWTHR,   /* 1: worker thr called, 0: ATL_threadpool loop called */
+   int icore           /* for PHI: core # we are on */
 )
 {
    const int nworkers=pp->nworkers, nthr = pp->nthr;
@@ -14374,19 +14375,18 @@ int ATL_tpool_dojob
  * by the usual process.  Context 3 then awakens contexts 0-2 on its node.
  */
    #elif defined(ATL_PHI_SORTED2)
-      if (pp->ncntxts)
+      if (pp->ncntxts > 1)
       {
-         if (rank < ATL_NTHREADS>>2)
-            vrank = rank<<2;
-         else if (rank < ATL_NTHREADS>>1)
-            vrank = (rank - (ATL_NTHREADS>>2))<<2 + 1;
-         else if (rank < 3*(ATL_NTHREADS>>2))
-            vrank = (rank - (ATL_NTHREADS>>1))<<2 + 2;
+         volatile int *chkin = (volatile int*) 
+                      (((volatile char *)pd->chkin)+ATL_Cachelen*icore);
+/*
+ *       context 3 increments vrank count by ncontexts
+ */
+         if (rank & 3 == 3)
+            chkin[3] = -pp->wcnt;
          else
-         {
-            iwrk = rank - 3*(ATL_NTHREADS>>2);  /* core number */
-            vrank = iwrk<<2 + 3;
-         }
+            while (chkin[3] < ATL_NTHREADS);
+         vrank = (rank&3) - chkin[3];
       }
       else
    #endif
@@ -14396,6 +14396,14 @@ int ATL_tpool_dojob
       ATL_mutex_unlock(tpmut);                    /* release mutex and */
       return(vrank);                              /* get out of here now */
    }
+   #if defined(ATL_PHI_SORTED2)
+      if (pp->ncntxts > 1)
+      {
+         iwrk = pp->wcnt; 
+         pp->wcnt += pp->ncntxts;
+      }
+      else
+   #endif
    iwrk = pp->wcnt++;        /* inc count of participating workers */
    ATL_mutex_unlock(tpmut);  /* let other threads enroll in job */
 /*
@@ -14441,13 +14449,20 @@ int ATL_tpool_dojob
          }
       }
       else
-   #elif defined(ATL_PHI_SORTED2)
    #endif
       if (nthr == nworkers)
          ATL_cond_bcast(pp->wcond);
       else
       {
          int k;
+         #ifdef ATL_PHI_SORTED2
+         if (pp->ncntxts > 1)
+         {
+            for (k=nworkers-4; k > 0; k -= 4)
+               ATL_cond_signal(pp->wcond);
+         }
+         else
+         #endif
          for (k=1; k < nworkers; k++)
             ATL_cond_signal(pp->wcond);
       }
@@ -14456,8 +14471,8 @@ int ATL_tpool_dojob
  * Wake up rest of threads on my core if contexts are called for
  */
    #ifdef ATL_PHI_SORTED2
-      if (vrank & 3 == 3 && pp->ncntxts > 1)
-         ATL_cond_bcast(pp->wconds[vrank>>2]);
+      if (rank & 3 == 3 && pp->ncntxts > 1)
+         ATL_cond_bcast(pp->wconds[icore]);
    #endif
 /*
  * Now, do work based on PD; change thread info to use virtual rank info
@@ -14649,8 +14664,9 @@ void *ATL_threadpool(void *vp)
    ATL_thread_t *tp=vp;
    ATL_tpool_t *pp = ATL_TP_PTR;
    const unsigned int rank=tp->rank;
-   #ifdef ATL_PHI_SORTED
+   #if defined(ATL_PHI_SORTED) || defined(ATL_PHI_SORTED2)
       const unsigned int nthr=pp->nthr, p4=nthr>>2, p4_2=p4+p4, p4_3=p4_2+p4;
+      const int icore = rank % (ATL_NTHREADS>>2);
    #endif
    void *tpmut = pp->tpmut;
 
@@ -14729,7 +14745,11 @@ void *ATL_threadpool(void *vp)
                ATL_cond_wait(pp->wcond3, tpmut);
             else
                ATL_cond_wait(pp->wcond4, tpmut);
-         #elif defined(ATL_PHI_SORTED2) // HERE HERE HERE
+         #elif defined(ATL_PHI_SORTED2)
+            if (rank >= p4_3)
+               ATL_cond_wait(pp->wcond, tpmut);
+            else
+               ATL_cond_wait(pp->wconds[icore], tpmut);
          #else
             ATL_cond_wait(pp->wcond, tpmut);
          #endif
