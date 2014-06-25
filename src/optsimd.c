@@ -1104,9 +1104,28 @@ void GenForceAlignedPeeling(LOOPQ *lp)
 /*
  * find the location to add checking of alignment. 
  */
-   bp = bbbase;
-   ip = FindCompilerFlag(bp, CF_LOOP_INIT);
+   /*bp = bbbase;*/
+/*
+ * FIXED: we need to traverse all the blocks to findout the flag  
+ */
+   for (bp = bbbase; bp; bp=bp->down)
+   {
+      ip = FindCompilerFlag(bp, CF_LOOP_INIT);
+      if (ip) break;
+   }
+   assert(bp);
+#if 1
    assert(ip); 
+#else
+   if (!ip)
+   {
+      fprintf(stdout, "LIL before alignment check\n");
+      PrintInst(stdout, bbbase);
+      //PrintST(stdout);
+      ShowFlow("cfg-ag.dot", bbbase);
+      fko_error(__LINE__, "Error in file = %s, line = %d\n",__FILE__,__LINE__);
+   }
+#endif
    jBlabel = STlabellookup("_FKO_ALIGNED");
    fAlabel = STlabellookup("_FKO_FORCE_ALIGN");
    ip = InsNewInst(bp, NULL, ip, CMPFLAG, CF_FORCE_ALIGN, 0, 0);
@@ -2236,7 +2255,7 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
 /*
  * Remove the moving arrays from scalar vals.
  * NOTE: array ptr which not changed, considered as scal
- * FIXME: number of vscal is not correct always: corrected the condition 
+ * FIXED: number of vscal is not correct always: corrected the condition 
  */
 #if 0
    for (i=0; i <= n; i++)
@@ -2244,9 +2263,9 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
       fprintf(stderr, "sp = %d, s = %d\n",sp[i], s[i]);
    }
 #endif 
-   for (k=0,i=1; i < n; i++) /* BUG: why n is included??? changed to < n */
+   for (k=0,i=0; i < n; i++) /* sp starts from 0  */
    {
-      for (j=1; j <= N && s[j] != sp[i]; j++);
+      for (j=1; j <= N && s[j] != sp[i]; j++); /* s[0] has the count */
       if (j > N)
       {
          sp[k++] = sp[i]; /*sp elem starts with 0 pos*/
@@ -6907,8 +6926,15 @@ int RcPathVectorAnalysis(LOOPPATH *path)
    lpflag |= LP_OPT_LCONTROL; /* by default optimizable */
    for (N=sp[0],n=0,i=1; i <= N; i++)
    {
+#if 0
+      fprintf(stderr,
+            " variable = %s \n",
+                     STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
+#endif
       if (IS_FP(STflag[sp[i]-1]))
+      {
          sp[n++] = sp[i];
+      }
 /*
  *    For non-fp var, if it's not the index var, avoid vectorization
  */
@@ -6945,7 +6971,7 @@ int RcPathVectorAnalysis(LOOPPATH *path)
          if (CheckVarInBitvec(sp[i]-1, path->defs))
          {
             fko_warn(__LINE__,
-                     "Index variable = %d is updated outside loop control\n",
+                     "Index variable = %s is updated outside loop control\n",
                      STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
             lpflag &= ~(LP_OPT_LCONTROL);
 /*
@@ -6991,7 +7017,6 @@ int RcPathVectorAnalysis(LOOPPATH *path)
       i++;
       j = FLAG2TYPE(STflag[sp[i]-1]); /* this is element, not element-count now*/
    }
-
    for (; i < n; i++)
    {
       k = FLAG2TYPE(STflag[sp[i]-1]);
@@ -7073,17 +7098,19 @@ int RcPathVectorAnalysis(LOOPPATH *path)
 /*
  * Remove the moving arrays from scalar vals.
  * NOTE: array ptr which not changed, considered as scal
- * FIXME: number of vscal is not correct always: corrected the condition 
+ * FIXED: number of vscal is not correct always: corrected the condition
+ * Source of the problem: 
+ *    here, var starts from 0 index for sp but for s, it starts form 1!!!
  */
 #if 0
    for (i=0; i <= n; i++)
    {
-      fprintf(stderr, "sp = %d, s = %d\n",sp[i], s[i]);
+      fprintf(stderr, "sp = %s(%d), s = %d\n",STname[sp[i]-1],i, s[i]);
    }
-#endif 
-   for (k=0,i=1; i < n; i++) /* BUG: why n is included??? changed to < n */
+#endif
+   for (k=0,i=0; i < n; i++) /* i,k is for sp which starts from 0 index  */
    {
-      for (j=1; j <= N && s[j] != sp[i]; j++);
+      for (j=1; j <= N && s[j] != sp[i]; j++); /* s[0] has the count */
       if (j > N)
       {
          sp[k++] = sp[i]; /*sp elem starts with 0 pos*/
@@ -7635,8 +7662,14 @@ int RcVectorAnalysis()
          //SToff[j-1].sa[2] = AddDerefEntry(-REG_SP, j, -j, 0, j);
          if (IS_INT(STflag[sp[i]-1]))
          {
+/*
+ *    FIXME: we skip index variable. So, we will not get that here. But this
+ *    will create problem in vectorization. We need a way to manage the use of 
+ *    integer variable.
+ */
             k = T_VINT;
             isIscal = 1;
+            //fprintf(stdout, "Use of int variable=%s!!!\n", STname[sp[i]-1]);
          }
          else  /* mixed fp is not allowed. */
             k = FLAG2TYPE(vpath->vflag);
@@ -9022,7 +9055,21 @@ int RcVecTransform(LOOPQ *lp)
                            {
                               op = STpts2[op-1];
                               k = FindInShortList(lp->vscal[0], lp->vscal+1, op);
-                              assert(k);
+                              #if 0
+                                 assert(k);
+                              #else
+/*
+ * FIXME: if we use index variable inside loop, we don't know how to vectorize 
+ * that. So, memory access like: a0 = A[i] can't be vectorize which should be
+ * easily vectorizable. Right now, we may consider to rewrite the kernel...
+ */
+                                 if (!k)
+                                 {
+                                    fprintf(stderr, "scalar = %s[%d] not a vscal\n",
+                                           STname[op-1], op);
+                                    fko_error(__LINE__, "unknown scalar!!\n");
+                                 }
+                              #endif
                               //ip->inst[j] = lp->vvscal[k];
                               ip->inst[j] = SToff[lp->vvscal[k]-1].sa[2];
                            }
@@ -9161,7 +9208,16 @@ int RcVecTransform(LOOPQ *lp)
                            if (!FindInShortList(lp->varrs[0],lp->varrs+1,k))
                            {
                               k = FindInShortList(lp->vscal[0],lp->vscal+1,k);
-                              assert(k);
+/*
+ *                            not found in vscal!!!
+ */
+                              if (!k)
+                              {
+                                 PrintST(stderr);
+                                 fprintf(stderr, "NOT FOUND = (%d)!!!\n",
+                                          op);
+                                 assert(k);
+                              }
                               ip->inst[j] = SToff[lp->vvscal[k]-1].sa[2];
                               assert(ip->inst[j] > 0);
                            }
