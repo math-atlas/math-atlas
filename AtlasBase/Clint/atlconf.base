@@ -695,26 +695,27 @@ enum OSTYPE {OSOther=0, OSLinux, OSSunOS, OSSunOS4, OSOSF1, OSIRIX, OSAIX,
 enum ARCHFAM {AFOther=0, AFPPC, AFSPARC, AFALPHA, AFX86, AFIA64, AFMIPS, 
               AFARM, AFS390};
 
-#define NMACH 47
+#define NMACH 51
 static char *machnam[NMACH] = 
    {"UNKNOWN", "POWER3", "POWER4", "POWER5", "PPCG4", "PPCG5", 
-    "POWER6", "POWER7", "IBMz9", "IBMz10", "IBMz196",
+    "POWER6", "POWER7", "POWERe6500", "IBMz9", "IBMz10", "IBMz196",
     "x86x87", "x86SSE1", "x86SSE2", "x86SSE3",
     "P5", "P5MMX", "PPRO", "PII", "PIII", "PM", "CoreSolo", 
-    "CoreDuo", "Core2Solo", "Core2", "Corei1", "Corei2", "Atom", "P4", "P4E", 
-    "Efficeon", "K7", "HAMMER", "AMD64K10h", "AMDDOZER", "UNKNOWNx86", 
-    "IA64Itan", "IA64Itan2",
+    "CoreDuo", "Core2Solo", "Core2", "Corei1", "Corei2", "Corei3",
+    "Atom", "P4", "P4E",
+    "Efficeon", "K7", "HAMMER", "AMD64K10h", "AMDLLANO", "AMDDOZER","AMDDRIVER",
+    "UNKNOWNx86", "IA64Itan", "IA64Itan2",
     "USI", "USII", "USIII", "USIV", "UST2", "UnknownUS", 
     "MIPSR1xK", "MIPSICE9", "ARMv7"};
 enum MACHTYPE {MACHOther, IbmPwr3, IbmPwr4, IbmPwr5, PPCG4, PPCG5,
-               IbmPwr6, IbmPwr7,
+               IbmPwr6, IbmPwr7, Pwre6500,
                IbmZ9, IbmZ10, IbmZ196,  /* s390(x) in Linux */ 
                x86x87, x86SSE1, x86SSE2, x86SSE3, /* generic targets */
                IntP5, IntP5MMX, IntPPRO, IntPII, IntPIII, IntPM, IntCoreS,
                IntCoreDuo, IntCore2Solo, IntCore2, IntCorei1, IntCorei2,
-               IntAtom, IntP4, IntP4E, TMEff, 
-               AmdAthlon, AmdHammer, Amd64K10h, AmdDozer, x86X, 
-               IA64Itan, IA64Itan2,
+               IntCorei3, IntAtom, IntP4, IntP4E, TMEff, 
+               AmdAthlon, AmdHammer, Amd64K10h, AmdLlano, AmdDozer, AmdDriver,
+               x86X, IA64Itan, IA64Itan2,
                SunUSI, SunUSII, SunUSIII, SunUSIV, SunUST2, SunUSX, 
                MIPSR1xK, /* includes R10K, R12K, R14K, R16K */
                MIPSICE9,  /* SiCortex ICE9 -- like MIPS5K */
@@ -1927,6 +1928,7 @@ int FileIsThere(char *nam);
 void ATL_mprintf(int np, ...);
 int GetFirstInt(char *ln);
 long long GetFirstLong(char *ln);
+long long GetLastLongWithRound(char *ln);
 double GetFirstDouble(char *ln);
 int GetLastInt(char *ln);
 long long GetLastLong(char *ln);
@@ -3830,6 +3832,7 @@ int GetFlags(int nargs, char **args, int *CacheLevel, enum OSTYPE *OS,
          if (++i >= nargs)
             PrintUsage(args[0], i);
          *targ = args[i];
+         break;
       case 's':
          if (++i >= nargs)
             PrintUsage(args[0], i);
@@ -4597,6 +4600,10 @@ COMPNODE **GetDefaultComps(enum OSTYPE OS, enum MACHTYPE arch, int verb,
 
    if ((vecexts & (1<<ISA_AVXFMA4)) && arch == AmdDozer)
       vp = "-msse4.2 -mfma4";
+   else if ((vecexts & (1<<ISA_AVXMAC)) && arch == AmdDriver)
+      vp = "-mavx -mno-sse2avx -mfma";
+   else if ((vecexts & (1<<ISA_AVXMAC)))
+      vp = "-mavx2 -mfma";
    else if (vecexts & (1<<ISA_VSX))
       vp = "-mvsx";
    else if (vecexts & (1<<ISA_AV))
@@ -4770,11 +4777,11 @@ char *GetPtrbitsFlag(enum OSTYPE OS, enum MACHTYPE arch, int ptrbits,
    else if (OS == OSAIX)
       sp = (ptrbits == 64) ? "-maix64" : "-maix32";
    else if ((MachIsX86(arch) || MachIsPPC(arch) || MachIsUS(arch)) ||
-            arch == IbmPwr7 || arch == IbmPwr6)
+            arch == IbmPwr7 || arch == IbmPwr6 || arch == Pwre6500)
    {
       if (ptrbits == 64)
          sp = "-m64";
-       else if (ptrbits == 32)
+      else if (ptrbits == 32)
          sp = "-m32";
    }
    return(sp);
@@ -5577,6 +5584,7 @@ void GetBestGccVers(enum OSTYPE OS, enum MACHTYPE arch,
    case IntCore2:
    case IntCorei1:
    case IntCorei2:
+   case IntCorei3:
    case Amd64K10h:
    case ARMv7:
    default:
@@ -6691,7 +6699,9 @@ int main(int nargs, char **args)
 # All non-core x86 like these params for MMFLAGS (probably want -O3 for
 # Level 1 & 2, but must confirm)
 #
-# Core2/Corei1/Corei2
+# Core2/Corei1/Corei2/Corei3
+MACH=Corei3 OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc,xcc
+   'gcc' '-fomit-frame-pointer -mfpmath=sse -O2'
 MACH=Corei2 OS=Win9x,WinNT,Win64 LVL=1005 COMPS=smc,dmc,skc,dkc,icc
    'gcc-4' '-fomit-frame-pointer -mfpmath=sse -O2 -fno-schedule-insns2'
 MACH=Corei2 OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc,xcc
@@ -6769,6 +6779,8 @@ MACH=AMD64K10h OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc' '-fomit-frame-pointer -mfpmath=sse -O2'
 MACH=AMD64K10h OS=Win9x,WinNT,Win64 LVL=1005 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc' '-fomit-frame-pointer -mfpmath=sse -O2'
+MACH=AMDDRIVER OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
+   'gcc' '-Os -fomit-frame-pointer'
 MACH=AMDDOZER OS=ALL LVL=1000 COMPS=smc,dmc,skc,dkc,icc,gcc
    'gcc' '-fomit-frame-pointer -mfpmath=sse -mfma4 -O2 -fno-tree-loop-optimize'
 # UltraSPARC T2

@@ -167,7 +167,7 @@ void ATL_mprintf(int np, ...)
          vsprintf(ln, form, argptr);
          assert(strlen(ln) < 1024);/* sanity test only, will not stop overrun */
          va_end(argptr);
-         for (i=0; i < np; i++) if (fp[i]) fprintf(fp[i], ln);
+         for (i=0; i < np; i++) if (fp[i]) fprintf(fp[i], "%s", ln);
       #else
          for (i=0; i < np; i++) if (fp[i]) vfprintf(fp[i], form, argptr);
          va_end(argptr);
@@ -197,7 +197,7 @@ long long GetFirstLong(char *ln)
    {
       if (isdigit(ln[i]))
       {
-         sscanf(ln+i, "%ld", &iret);
+         sscanf(ln+i, "%Ld", &iret);
          break;
       }
    }
@@ -248,6 +248,33 @@ long long GetLastLong(char *ln)
       while(isdigit(ln[i]) && i > 0) i--;
       if (!isdigit(ln[i])) i++;
       sscanf(ln+i, "%ld", &iret);
+   }
+   return(iret);
+}
+
+long long GetLastLongWithRound(char *ln)
+/*
+ * Gets a long from end of line, assuming the line may be in decimal
+ * format.  If given 1.6 it will return 2.  However, if given 1e256,
+ * it will return 256!
+ */
+{
+   int i;
+   long iret=0;
+   for (i=0; ln[i]; i++);
+   if (i > 0) 
+   {
+      for (i--; i > 0 && !isdigit(ln[i]); i--);
+      if (i > 0 && ln[i] == '.')  /* allow skip of 1 decimal point */
+         for (i--; i > 0 && !isdigit(ln[i]); i--);
+   }
+   if (i > 0 || (i == 0 && (isdigit(ln[0]) || ln[0] == '.')))
+   {
+      double d;
+      while(isdigit(ln[i]) && i > 0) i--;
+      if (!isdigit(ln[i])) i++;
+      sscanf(ln+i, "%lf", &d);
+      iret = (int)(d+0.5);
    }
    return(iret);
 }
