@@ -1320,7 +1320,7 @@ MLOOPU:
    #endif
 	vmaddfp	vC01, vA0, vB1, vC01
    #ifdef BETAX
-	dcbtst	0, pBETA, 0
+	dcbtst	0, pBETA
    #endif
 	vmaddfp	vC11, vA1, vB1, vC11
 	vmaddfp	vC21, vA2, vB1, vC21
