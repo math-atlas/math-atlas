@@ -875,11 +875,6 @@ void Extern2Local(INSTQ *next, int rsav)
  * the alignment beyond the machine's native alignment).  If so, rsav is
  * set to what amounts to the callers sp.  Otherwise, we are indexing by
  *    %sp + fsize
- *
- * FIXME: 
- *    Something is wrong for mixed type kernel here. If we use both float and 
- *    double pointer in same kernel, this function can't keep track of this
- *    correctly. will check and fix this later
  */
 {
    extern int NPARA, DTnzerod, DTnzero, DTabsd, DTabs; 
@@ -970,6 +965,14 @@ void Extern2Local(INSTQ *next, int rsav)
    #ifdef X86_64
       reg1 = GetReg(T_INT);
       while (iparareg[reg1-IREGBEG]) reg1 = GetReg(T_INT);
+/*
+ *    NOTE: must be a register with short version in X64
+ */
+      assert(reg1 <= NSR);
+            
+#if 0
+         fprintf(stderr, "\n\nreg1 = %d, rsav = %d\n\n", reg1, rsav);
+#endif
       #ifdef AVX   
          fnam[0] = '@';
          fnam[1] = 'y';
@@ -1028,9 +1031,17 @@ void Extern2Local(INSTQ *next, int rsav)
  */
             if (USED && !IS_UNSIGNED(flag))
             {
+            #if 1               
                k = STiconstlookup(32);
                InsNewInst(NULL, NULL, next, SHL, -ir, -ir, k);
                InsNewInst(NULL, NULL, next, SAR, -ir, -ir, k);
+            #else
+/*
+ *             FIXME: this won't work. we can't use 32 bit of r8-r15 register
+ *             in X64. 
+ */
+               InsNewInst(NULL, NULL, next, CVTSI, -ir, -ir, 0);
+            #endif
             }
 /*
  *          Store 64-bit integer
@@ -1815,7 +1826,10 @@ static int GimmeRegSave(BBLOCK *bp, int *savedregs)
 {
    int ir[TNIR], ni;
    int i;
-
+/*
+ * FIXME: need to skip the used parameter too. Following function doesn't 
+ * ensure to scope out all 
+ */
    ni = FindUsedParaRegs(bp, ir);
    for (i=1; i < TNIR; i++)
       if (!ir[i] && !icalleesave[i])
@@ -1965,11 +1979,168 @@ if (KeepOn)
    return(k);
 }
 
+int FindRegToSaveSP(BBLOCK *blk)
+/*
+ * Given the blk is the BLOCK where the parameters are stored to the frame,
+ * RETURNS: 
+ *          ireg  : reg to save old SP
+ *          0     : no available register
+ * Main idea: 
+ *    We need a register which will save the old SP and save it until the last
+ *    parameter is copied to the stack to avoid loading it back and forth (to 
+ *    load from old position of parameter). So, this register will be live on 
+ *    at least untill then. Now, to find this available register, we need to 
+ *    satisfy following three conditions:
+ *    1. Not a register which has live parameter passed from caller: they are
+ *       live at the very beginning of the program
+ *    2. Not a callee-saved register
+ *    3. Not in conflict with the registers used upto the last copying of 
+ *       parameter in to the new stack.
+ */
+{
+   int i, j, k, n;
+   int rsav = 0;
+   INSTQ *ip;
+   INT_BVI liveregs, iv;
+   short *vals;
+   struct locinit *li;
+   extern INT_BVI FKO_BVTMP;
+   extern BBLOCK *bbbase;
+/*
+ * Methodology, Find the last parameter load to copy parameter in stack which 
+ * uses stack pointer, skip all live-in register and select a caller-saved one
+ * which is not live
+ */
+/*
+ * Step 1: find the last use of stack pointer to copy parameter in 1st block
+ * NOTE: checking 1st block is enough, should be. It should be enough to check
+ * upto the end of the function prologue 
+ */
+   if (!CFUSETU2D)
+      CalcInsOuts(bbbase);
+   if (!INDEADU2D)
+      CalcAllDeadVariables();
+
+   if (FKO_BVTMP)
+   {
+      liveregs = FKO_BVTMP;
+      SetVecAll(liveregs,0);
+   }
+/*
+ * mask of the SP register itsel out from the analysis 
+ */
+   iv = NewBitVec(TNREG);
+   SetVecBit(iv, REG_SP-1, 1);
+#if 0
+   SetVecBit(iv, PCREG-1, 1);
+   for (k=ICCBEG; k < ICCEND; k++)
+      SetVecBit(iv, k-1, 1);
+   for (k=FCCBEG; k < FCCEND; k++)
+      SetVecBit(iv, k-1, 1);
+   #ifdef X86_32
+      SetVecBit(iv, -Reg2Int("@st")-1, 1);
+   #endif
+#endif
+/*
+ * 1. figure out the registers used to pass live parameters: unused/dead 
+ *    parameters on register won't be live at the beginning of the function
+ */         
+   iv = BitVecComb(iv, iv , blk->ins, '|');
+/*
+ * 2. marked all callee saved registers
+ * NOTE: in bit vec, int reg starts from IREGBEG
+ */
+   for (i=0; i < NIR; i++)
+   {
+      if (icalleesave[i]) 
+         SetVecBit(iv, IREGBEG+i-1, 1);
+   }
+#if 0 
+   vals = BitVec2StaticArray(iv);
+   for (n=vals[0], i=1; i <= n; i++)
+   {
+      k = vals[i] + 1; /* bvec stores it as i-1*/
+      if (k >= IREGBEG && k < IREGEND)
+      {
+         fprintf(stderr, "%s(%d) ", archiregs[k-IREGBEG], k-IREGBEG );
+      }
+   }
+   fprintf(stderr, "\n");
+   exit(0);
+#endif
+/*
+ * 3. findout conflicting registers upto the last SP access for the parameter 
+ * (recopying to new stack) in 1st block
+ * NOTE: as rsav has to be live upto the last use of old SP reg, so any reg used
+ * in this interval must be conflited with rsav and must not be used
+ */
+   for (ip=blk->ainst1; ip; ip=ip->next)
+   {
+      for (j=1; j <=3; j++)
+      {
+         k = ip->inst[j];
+         if ( k < 0 ) /* a register */
+         {
+            k = -k;
+            if (k >= IREGBEG && k < IREGEND) /* int reg */
+            {
+               /*fprintf(stderr, "reg[%d] = %s\n", j, archiregs[k-IREGBEG]);*/
+               SetVecBit(liveregs, k-1, 1);
+            }
+         }
+         else if (k > 0 && IS_DEREF(STflag[k-1])) /* DT, skip k==0 */
+         {
+            for (li=ParaDerefQ; li; li=li->next)
+            {
+               if (k == li->id) /* so, now this an inst which loads param */
+               {
+                  /*PrintThisInst(stderr, ip);*/
+                  iv = BitVecComb(iv, iv , liveregs, '|');
+                  SetVecAll(liveregs, 0);
+               }
+            }
+         }
+      }
+   }
+   /*
+    * rsav is the 1st available register
+    */
+   for (i=IREGBEG; i < IREGEND; i++)
+   {
+      if (!BitVecCheck(iv, i-1))
+      {
+         rsav = i;
+         break;
+      }
+   }
+#if 0 
+   fprintf(stderr, "***************rsav = %s\n", archiregs[rsav-IREGBEG]);
+   vals = BitVec2StaticArray(iv);
+   fprintf(stderr, "Regs live-in at the beginning: ");
+   for (n=vals[0], i=1; i <= n; i++)
+   {
+      k = vals[i] + 1;
+      if (k >= IREGBEG && k < IREGEND)
+      {
+         fprintf(stderr, "%s(%d) ", archiregs[k-IREGBEG], k-IREGBEG );
+      }
+   }
+   fprintf(stderr, "\n");
+#endif
+/*
+ * time to kill the bit vec
+ */
+   KillBitVec(iv);
+/*
+ * return rsav    
+ */
+   return (rsav); 
+}
+
 /*
  *  NOTE: If a const is initialized but not used in body, gen invalid code
  *  with null from GetDeref in assembly. Need to check this issue later
  */
-
 int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
 /*
  * Calculates required frame size, corrects local and parameter offsets
@@ -2086,12 +2257,12 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
    }
 #if 0
 /*
- * print out all registers which are used
+ * print out all registers that need to save 
  */
-   fprintf(stderr, "int reg used: ");
-   for (i=0; i<TNIR; i++)
+   fprintf(stderr, "int regs that need to used: ");
+   for (i=0; i<nir; i++)
       if (ir[i])
-         fprintf(stderr, "[%d,%s] ", ir[i], archiregs[ir[i]]);
+         fprintf(stderr, "[%d,%s] ", ir[i]-IREGBEG, archiregs[ir[i]-IREGBEG]);
    fprintf(stderr, "\n");
 #endif   
    #ifdef X86_64
@@ -2230,7 +2401,7 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
       {
          PrintMajorComment(bbase, NULL, oldhead, 
      "To ensure greater alignment than sp, save old sp to stack and move sp");
-#if 1
+#if 0
 /*
  *       Majedul: 
  *       FIXME: GimmeRegSave only checks 1st block where parameter is stored
@@ -2242,12 +2413,17 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
  *       
  *       My logic to determine the register to save sp:
  *          find available register which is neither used parameter nor 
- *          calleesave regs. 
+ *          calleesave regs.
+ *       FIXME: when we have morethan 5 int params, it fails!!! because same 
+ *       logic is used to determine the available regs to fetch params! e.g.-
+ *       rax is used as availbale reg to store the params in stack, but same 
+ *       reg is holding the stack value!!!!!!
  */
-#if 0         
+   #if 1         
          if (!rsav)
          {
             rsav = GimmeRegSave(oldhead->myblk, irsav);
+            fprintf(stderr, "rsav = %d: %s\n", rsav, archiregs[rsav-IREGBEG]);
             if (!rsav)
             {
                rsav = DammitGimmeRegSave(oldhead->myblk);
@@ -2265,30 +2441,46 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
                rsav++;
             assert(rsav < IREGEND);
          }
-#endif
+      #if 1 
+         fprintf(stderr, "rsav = %d: %s\n", rsav, archiregs[rsav-IREGBEG]);
+         exit(0);
+      #endif
+   #else
+         rsav = GetReg(T_INT);
+         rsav = GetReg(T_INT);
+         while (iparareg[rsav-IREGBEG]) rsav = GetReg(T_INT);
+      #ifdef X86_64
+         assert(rsav <= NSIR);
+      #endif
+   #endif
+#else 
+   #if 0          
 /*
  * Majedul: we can safely choice a reg which is not iparareg nor calleesave 
  * rsav is always 0 in new state implementation so far.
- *
+ * FIXME: same logic is used for reg1 to fetch params in case of params > 5
  */
          assert(!rsav);
          rsav = GetReg(T_INT);
          rsav = GetReg(T_INT);
          while (iparareg[rsav-IREGBEG] || icalleesave[rsav-IREGBEG]) 
             rsav = GetReg(T_INT);
+/*
+ *       FIXED: To skip the register which may be used to load the parameter 
+ *       when int params > 5. It's a temporary fixed, not tested for all 
+ *       cases ... ... ... 
+ *       r10 reg is used!!!
+ */
+         rsav = GetReg(T_INT);
+         while (iparareg[rsav-IREGBEG] || icalleesave[rsav-IREGBEG]) 
+            rsav = GetReg(T_INT);
+   #endif
+   
+   rsav = FindRegToSaveSP(oldhead->myblk);
+   assert(rsav); /* must be available */
    #if 0
          fprintf(stderr, "rsav = %d: %s\n", rsav, archiregs[rsav-IREGBEG]);
-         exit(0);
    #endif
-
-#else
-         rsav = GetReg(T_INT);
-         rsav = GetReg(T_INT);
-         while (iparareg[rsav-IREGBEG]) rsav = GetReg(T_INT);
-#ifdef X86_64
-         assert(rsav <= NSIR);
-#endif
-
  #endif 
          rsav = -rsav;
          InsNewInst(NULL, NULL, oldhead, MOV, rsav, -REG_SP, 0);
@@ -2313,8 +2505,14 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
       InsNewInst(NULL, NULL, oldhead, SHL, -REG_SP, -REG_SP, i);
       spderef = AddDerefEntry(-REG_SP, 0, 0, SAVESP, 0);
       InsNewInst(NULL, NULL, oldhead, ST, spderef, rsav, 0);
+#if 0
+/*
+ *    NOTE: we don't consider this case anymore. this is when we have available
+ *    callee-saved registers 
+ */
       if (LOAD1)
          rsav = -LOAD1;
+#endif
    }
    PrintMajorComment(bbase, NULL, oldhead, "Save registers");
    CorrectLocalOffsets(Loff);
@@ -2341,8 +2539,10 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
 /*
  * If we need old stack pointer in register that must be saved, load it here
  */
+#if 0  /* skipped this */ 
    if (LOAD1)
       InsNewInst(NULL, NULL, oldhead, LD, rsav, spderef, 0);
+#endif
    GetReg(-1);
    FinalizeEpilogue(bbase, tsize, Soff, SAVESP, nir, ir, nfr, fr, ndr, dr);
    CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = 0;
@@ -2393,7 +2593,7 @@ void GenPrologueEpilogueStubs(BBLOCK *bbase, int rsav)
    MarkUnusedLocals(bbase); 
    CreateSysLocals();
 /*
- * FIXME: this function is called before vectorization. So, vector locals are
+ * NOTE: this function is called before vectorization. So, vector locals are
  * not considered here (but only system related vector like: ABSVAL, etc.)
  */
    NumberLocalsByType();
