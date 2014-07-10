@@ -592,10 +592,12 @@ enum MACHTYPE ProbeArch()
       res = atlsys_1L(NULL, "/usr/sbin/psrinfo -pv | fgrep UltraSPARC", 0, 0);
       if (res)
       {
-         if (strstr(res, "UltraSPARC-IV"))
-            mach = SunUSIV;
-         else if (strstr(res, "UltraSPARC-T2"))
+         if (strstr(res, "UltraSPARC-T2"))
             mach = SunUST2;
+         else if (strstr(res, "UltraSPARC-T1"))
+            mach = SunUST1;
+         else if (strstr(res, "UltraSPARC-IV"))
+            mach = SunUSIV;
          else if (strstr(res, "UltraSPARC-III"))
             mach = SunUSIII;
          else if (strstr(res, "UltraSPARC-II"))
@@ -811,12 +813,22 @@ enum MACHTYPE ProbeArch()
          res = NULL;
       }
       if (!res)
+      {
+         res = atlsys_1L(NULL, "fgrep 'IA-64' /proc/cpuinfo", 0, 0);
+         if (res && res[0] == '\0')
+         {
+            free(res);
+            res = NULL;
+         }
+      }
+      if (!res)
          res = atlsys_1L(NULL, "fgrep \"model name\" /proc/cpuinfo", 0, 0);
       if (res)
       {
          if (res[0] != '\0')
          {
-            if (strstr(res, "Itanium 2") || strstr(res, "McKinley")) 
+            if (strstr(res, "Itanium 2") || strstr(res, "McKinley") ||
+                strstr(res, "IA-64")) 
                mach = IA64Itan2;
             else if (strstr(res, "Itanium")) mach = IA64Itan;
          }
@@ -908,7 +920,9 @@ enum MACHTYPE ProbeArch()
       res = atlsys_1L(NULL, "fgrep cpu /proc/cpuinfo", 0, 0);
       if (res)
       {
-         if (strstr(res, "UltraSparc IV")) mach = SunUSIV;
+         if (strstr(res, "UltraSparc T2")) mach = SunUST2;
+         else if (strstr(res, "UltraSparc T1")) mach = SunUST1;
+         else if (strstr(res, "UltraSparc IV")) mach = SunUSIV;
          else if (strstr(res, "UltraSparc III")) mach = SunUSIII;
          else if (strstr(res, "UltraSparc II")) mach = SunUSII;
          else if (strstr(res, "UltraSparc I")) mach = SunUSI;
@@ -1045,6 +1059,15 @@ int ProbeNCPU()
          fclose(fpres);
       }
    }
+   if (!ncpu)
+   {
+      res = atlsys_1L(NULL, "grep 'ncpus active' /proc/cpuinfo", 0, 0);
+      if (res)
+      {
+         ncpu = GetFirstInt(res);
+         free(res);
+      }
+   }
 @ROUT archinfo_linux archinfo_freebsd archinfo_sunos archinfo_irix archinfo_aix
    return(ncpu);
 }
@@ -1142,6 +1165,11 @@ int ProbeMhz()
       mhz = GetFirstDouble(res) / 1000000;
       free(res);
    }
+   else if ((res=atlsys_1L(NULL, "sysctl hw.clockrate", 0, 0)))
+   {
+      mhz = GetFirstDouble(res);
+      free(res);
+   }
 @ROUT archinfo_linux archinfo_win
    res = atlsys_1L(NULL, "fgrep 'cpu MHz' /proc/cpuinfo", 0, 0);
    if (res)
@@ -1157,6 +1185,18 @@ int ProbeMhz()
       {
 @skip         mhz = GetLastInt(res);
          mhz = GetLastLongWithRound(res);
+         free(res);
+      }
+   }
+/*
+ * Try Linux/SPARC lookup
+ */
+   if (!mhz)
+   {
+      res = atlsys_1L(NULL, "fgrep 'ClkTck' /proc/cpuinfo", 0, 0);
+      if (res)
+      {
+         mhz = GetLastHex(res) / 1000000;
          free(res);
       }
    }

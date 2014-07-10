@@ -189,6 +189,20 @@ int GetFirstInt(char *ln)
    return(iret);
 }
 
+int GetFirstHex(char *ln)
+{
+   int i, iret=0;
+   for (i=0; ln[i]; i++)
+   {
+      if (isxdigit(ln[i]))
+      {
+         sscanf(ln+i, "%x", &iret);
+         break;
+      }
+   }
+   return(iret);
+}
+
 long long GetFirstLong(char *ln)
 {
    int i; 
@@ -198,6 +212,20 @@ long long GetFirstLong(char *ln)
       if (isdigit(ln[i]))
       {
          sscanf(ln+i, "%Ld", &iret);
+         break;
+      }
+   }
+   return(iret);
+}
+long long GetFirstLongHex(char *ln)
+{
+   int i; 
+   long long iret=0;
+   for (i=0; ln[i]; i++)
+   {
+      if (isxdigit(ln[i]))
+      {
+         sscanf(ln+i, "%lx", &iret);
          break;
       }
    }
@@ -236,6 +264,19 @@ int GetLastInt(char *ln)
    }
    return(iret);
 }
+int GetLastHex(char *ln)
+{
+   int i, iret=0;
+   for (i=0; ln[i]; i++);
+   if (i > 0) for (i--; i > 0 && !isxdigit(ln[i]); i--);
+   if (i > 0 || (i == 0 && isxdigit(ln[0])))
+   {
+      while(isxdigit(ln[i]) && i > 0) i--;
+      if (!isxdigit(ln[i])) i++;
+      sscanf(ln+i, "%x", &iret);
+   }
+   return(iret);
+}
 
 long long GetLastLong(char *ln)
 {
@@ -248,6 +289,20 @@ long long GetLastLong(char *ln)
       while(isdigit(ln[i]) && i > 0) i--;
       if (!isdigit(ln[i])) i++;
       sscanf(ln+i, "%ld", &iret);
+   }
+   return(iret);
+}
+long long GetLastLongHex(char *ln)
+{
+   int i;
+   long iret=0;
+   for (i=0; ln[i]; i++);
+   if (i > 0) for (i--; i > 0 && !isxdigit(ln[i]); i--);
+   if (i > 0 || (i == 0 && isxdigit(ln[0])))
+   {
+      while(isxdigit(ln[i]) && i > 0) i--;
+      if (!isxdigit(ln[i])) i++;
+      sscanf(ln+i, "%lx", &iret);
    }
    return(iret);
 }
