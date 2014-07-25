@@ -240,16 +240,21 @@ struct ATL_ThreadPool
    VUINT wcnt;            /* count incremented as workers wake up */
    VUINT nwdone;          /* # of workers that have completed the task */
    VUINT pflag;           /* bitvector of options */
-   void *wcond;           /* cond var for work pool sleep/wake */
-   #ifdef ATL_PHI_SORTED
-      void *wcond2;       /* cond vars 2nd context sleeps on */
-      void *wcond3;       /* cond vars 3rd context sleeps on */
-      void *wcond4;       /* cond vars 4th context sleeps on */
-   #elif defined(ATL_PHI_SORTED2)
-      int ncntxts;
-      void **wconds;
+   #ifdef ATL_PHI_POLL
+      VUINT wdone, wready;
+      volatile short *chkin; /* nthr-len check-in array */
+   #else
+      void *wcond;           /* cond var for work pool sleep/wake */
+      #ifdef ATL_PHI_SORTED
+         void *wcond2;       /* cond vars 2nd context sleeps on */
+         void *wcond3;       /* cond vars 3rd context sleeps on */
+         void *wcond4;       /* cond vars 4th context sleeps on */
+      #elif defined(ATL_PHI_SORTED2)
+         int ncntxts;
+         void **wconds;
+      #endif
+      void *mcond;           /* cond for master process sleep/wake */
    #endif
-   void *mcond;           /* cond for master process sleep/wake */
    ATL_thread_t *threads; /* array of thread ptrs */
    volatile int *icomm;   /* nthr-long integer communication array */
    void *combmut;         /* mutex for doing optional combine op */
@@ -14502,7 +14507,74 @@ int ATL_tpool_dojob
    return(vrank);
 }
 
-#ifdef ATL_POLLTPOOL
+#ifdef ATL_PHI_POLL
+/*
+ * This version of threadpool expects master process is bound to a non-used
+ * core, and all workers area always polling on volatile variables for whether
+ * to work.  Since cache coherence is orders of magnitude faster than cond
+ * vars or mutexes, this should always win unless it causes contention with
+ * non-ATLAS threads.  For instance, on a 56-core PHI, the last thread to wake
+ * up using cond vars (mutexes) is 2835 (87) times slower than waking up
+ * with cache coherence!
+ */
+void *ATL_threadpool(void *vp)
+{
+   ATL_thread_t *tp=vp;
+   ATL_tpool_t *pp = ATL_TP_PTR;
+   const unsigned int rank=tp->rank;
+   const unsigned int nthr=pp->nthr, p4=nthr>>2, p4_2=p4+p4, p4_3=p4_2+p4;
+   const unsigned int mycontext = rank / p4;
+   void *tpmut = pp->tpmut;
+   unsigned int jobID=0;
+
+   #ifdef DEBUG
+      fprintf(stderr, "%d: WORKER START P=%d\n", rank, pp->nthr);
+   #endif
+/*
+ * Infinite loop over tasks.  Loop has 2 phases:
+ * (1) Do work if commanded, including optional combine
+ * (2) Poll for new work
+ * Have lock at top of loop.
+ */
+   ATL_mutex_lock(tpmut);   /* force wait until pp set up */
+   ATL_mutex_unlock(tpmut); /* pp is set up, can continue */
+   while(1)
+   {
+/*
+ *    If there's work and I've got work to do
+ */
+      if (pp->wready && rank < pp->nworkers)
+      {
+         vrank = ATL_tpool_dojob(pp, rank, 0);
+         pp->chkin[rank] = 1;
+      }
+/*
+ *    If no job, scope flag to see if I should sleep, or quit
+ */
+      else
+      {
+         if (ATL_TPF_DIE(pp))
+         {
+            ATL_mutex_unlock(tpmut);
+            return(NULL);
+         }
+      }
+      while (pp->chkin[rank] || !pp->wready || rank >= pp->nworkers)
+         ATL_thread_yield();
+   }     /* end loop over tasks */
+/*
+ * When a thread exits, decrement thread count
+ */
+
+   ATL_mutex_lock(tpmut);
+   pp->nthr--;
+   ATL_mutex_unlock(tpmut);
+   #ifdef DEBUG
+      fprintf(stderr, "%d: WORKER DONE\n", rank);
+   #endif
+   return(NULL);
+}
+#elif defined(ATL_POLLTPOOL)
 /*
  * In this version of threadpool, worker threads restart master process once
  * job is done, but threads may still be awake and polling for work.  Since
@@ -14789,7 +14861,9 @@ void ATL_InitThreadPoolStartup(int P, void *pd, void *extra)
 
 
    ATL_TP_PTR = pp = ATL_NewThreadPool(ATL_NTHREADS, 1, pd);
+   #ifndef ATL_PHI_POLL
    ATL_mutex_lock(pp->tpmut);
+   #endif
    pp->nworkers = P;
    pp->PD = pd;
    pp->extra = extra;
@@ -14801,7 +14875,7 @@ void ATL_InitThreadPoolStartup(int P, void *pd, void *extra)
 /*
  * We leave function still holding the lock, so that master can go to sleep
  * awaiting job completion before spawned threads are able to complete
- * and thus mess up timing
+ * and thus mess up timing; ATL_PHI_POLL never gets the lock.
  */
 }
 
@@ -14992,6 +15066,10 @@ ATL_tpool_t *ATL_NewThreadPool
          pp->threads[i].vp = vp;
       }
    }
+   #ifdef ATL_PHI_POLL
+      pp->chkin = calloc(P, sizeof(short));
+      pp->wdone = pp->wready = 0;
+   #endif
    if (ICOM)
    {
       pp->icomm = calloc(P, sizeof(int));
