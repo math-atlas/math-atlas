@@ -241,7 +241,7 @@ struct ATL_ThreadPool
    VUINT nwdone;          /* # of workers that have completed the task */
    VUINT pflag;           /* bitvector of options */
    #ifdef ATL_PHI_POLL
-      VUINT wdone, wready;
+      VUINT wdone, wready, ncores, ncntxts, nwcores;
       volatile short *chkin; /* nthr-len check-in array */
    #else
       void *wcond;           /* cond var for work pool sleep/wake */
@@ -14347,6 +14347,7 @@ static void ATL_leftcomb(ATL_tpool_t *pp, const int rank, const int vrank)
    while(1);   /* end combine loop */
 }
 
+#ifndef ATL_PHI_POLL
 /*
  * Do a task using thread pool pp; RETURNS: virtual rank (0...nworkers-1)
  */
@@ -14507,7 +14508,67 @@ int ATL_tpool_dojob
    return(vrank);
 }
 
-#ifdef ATL_PHI_POLL
+#else /* ifdef ATL_PHI_POLL */
+/*
+ * Do a task using thread pool pp; RETURNS: virtual rank (0...ncores*4-1)
+ */
+int ATL_tpool_dojob
+(
+   ATL_tpool_t *pp,    /* thread pool to use */
+   const int rank,     /* actual rank, my tp found at pp->threads+rank */
+   const int CFWTHR,   /* 1: worker thr called, 0: ATL_threadpool loop called */
+   int coreid          /* for PHI: core # we are on */
+)
+{
+   const int nworkers=pp->nworkers, nthr = pp->nthr;
+   const int mycont = rank / ncores;
+   int vrank, iwrk;
+   void *tpmut = pp->tpmut;
+   ATL_thread_t *tp = pp->threads+rank;
+
+/*
+ * Map ranks sorted by cores (0...ncores-1, ncores...ncores*2-1,...) to one
+ * where all 4 cores are sequential
+ */
+   
+   if (pp->ncntxts > 1)
+   {
+      vrank = (coreid<<2) + mycont;
+      if (coreid > ncores || mycont > pp->ncntxts)
+         return(vrank);
+   }
+   else
+   {
+      if (rank >= nworkers)
+         return(rank);
+   }
+/*
+ * Now, do work based on PD; change thread info to use virtual rank info
+ */
+   tp->P = nworkers<<2;          /* make jobf think only nworkers thrs */
+   tp->rank = vrank;             /* and use virtual rank */
+   pp->jobf(pp, rank, vrank);    /* do the required task */
+/*
+ * If the calling routine has requested it, perform dynamic combine
+ */
+   if (pp->combf)
+   {
+/*
+ *    Do combine using virtial ranks stored in pp->icomm
+ */
+      if (ATL_TPF_DYNCOMB(pp))
+         ATL_dyncomb(pp, rank, vrank);
+      else
+         ATL_leftcomb(pp, rank, vrank);
+   }     /* end combine if */
+/*
+ * Return thread values to their global values
+ */
+   tp->rank = rank;
+   tp->P = nthr;
+
+   return(vrank);
+}
 /*
  * This version of threadpool expects master process is bound to a non-used
  * core, and all workers area always polling on volatile variables for whether
@@ -14524,8 +14585,10 @@ void *ATL_threadpool(void *vp)
    const unsigned int rank=tp->rank;
    const unsigned int nthr=pp->nthr, p4=nthr>>2, p4_2=p4+p4, p4_3=p4_2+p4;
    const unsigned int mycontext = rank / p4;
+   const unsigned int mycore = rank % pp->ncores;
+   const unsigned int crank = (pp->ncntxts > 1) ? (mycore<<2) + mycontext;
+   unsigned int vrank (pp->ncntxts > 1) ? crank : rank;
    void *tpmut = pp->tpmut;
-   unsigned int jobID=0;
 
    #ifdef DEBUG
       fprintf(stderr, "%d: WORKER START P=%d\n", rank, pp->nthr);
@@ -14538,34 +14601,33 @@ void *ATL_threadpool(void *vp)
  */
    ATL_mutex_lock(tpmut);   /* force wait until pp set up */
    ATL_mutex_unlock(tpmut); /* pp is set up, can continue */
-   while(1)
-   {
+   WORKLOOP:
 /*
  *    If there's work and I've got work to do
  */
-      if (pp->wready && rank < pp->nworkers)
+      if (pp->wready)
       {
-         vrank = ATL_tpool_dojob(pp, rank, 0);
-         pp->chkin[rank] = 1;
+         ATL_tpool_dojob(pp, rank, mycore);
+         pp->chkin[vrank] = 1;
       }
 /*
  *    If no job, scope flag to see if I should sleep, or quit
  */
-      else
-      {
-         if (ATL_TPF_DIE(pp))
-         {
-            ATL_mutex_unlock(tpmut);
-            return(NULL);
-         }
-      }
-      while (pp->chkin[rank] || !pp->wready || rank >= pp->nworkers)
+      else if (ATL_TPF_DIE(pp))
+         goto QUIT;
+/*
+ *    Wait for work to be posted.
+ */
+      POLLWAIT:
+         vrank = (pp->ncntxts > 1) ? crank : rank;
+         if (pp->wready && vrank < pp->nworkers && !pp->chkin[vrank])
+            goto WORKLOOP;
          ATL_thread_yield();
-   }     /* end loop over tasks */
+      goto POLLWAIT;
 /*
  * When a thread exits, decrement thread count
  */
-
+QUIT:
    ATL_mutex_lock(tpmut);
    pp->nthr--;
    ATL_mutex_unlock(tpmut);
@@ -14900,6 +14962,7 @@ void ATL_goParallel
  * do work on master process to save overhead & ease debugging
  */
    if (P0 < 2)
+
    {
       if (!ATL_TP_PTR)
          ATL_TP1_PTR = ATL_NewThreadPool(1, 0, NULL);
