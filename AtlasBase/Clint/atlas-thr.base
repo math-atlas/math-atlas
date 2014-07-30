@@ -229,6 +229,36 @@ typedef void (*ATL_tpjcomb_t)
  * Definition of an ATLAS thread pool
  */
 typedef struct ATL_ThreadPool ATL_tpool_t;
+#ifdef ATL_TP_FULLPOLL
+struct ATL_ThreadPool
+{
+   VUINT wready;          /* 0: worker keep polling, else: start work */
+   VUINT nthr;            /* # of threads total in this thread pool */
+   VUINT pflag;           /* bitvector of options */
+   #ifdef ATL_PHI_SORTED
+      VUINT ncores, cntxts, nwcores;
+   #endif
+   volatile short *chkin; /* nthr-len chkin array wt meaning:
+      /* 0: keep polling, 1: start, 2: have started, 3: finished */
+      /* 0&1 written by master, 2&3 written by worker */
+   volatile int *icomm;   /* nthr-long integer communication array */
+/*
+ * Variables below set only when doing a combine, and protected by tpmut
+ * (which need only be set when doing a combine)
+ */
+   void *combmut;         /* mutex for doing optional combine op */
+   int *combReadyBV;      /* 1: thr of that rank is ready to do combine */
+   int *combDoneBV;       /* 1: thr of that rank's data already combined */
+   void *tpmut;           /* mutex protecting above pool info */
+/*
+ * variables below here manipulated only when threads known to be polling
+ */
+   ATL_tpjfunc_t jobf;    /* ptr to job function to execute */
+   ATL_tpjcomb_t combf;   /* NULL: don't combine, else combine func */
+   void *PD;              /* problem def to give to jobf & combf */
+   void *extra;           /* extra info for jobf & combf */
+}
+#else
 struct ATL_ThreadPool
 {
    VUINT jobID;           /* count of jobs, wraps at top of uint range */
@@ -240,19 +270,15 @@ struct ATL_ThreadPool
    VUINT wcnt;            /* count incremented as workers wake up */
    VUINT nwdone;          /* # of workers that have completed the task */
    VUINT pflag;           /* bitvector of options */
-   #ifdef ATL_PHI_POLL
-      VUINT wdone, wready, ncores, ncntxts, nwcores;
-      volatile short *chkin; /* nthr-len check-in array */
-   #else
-      void *wcond;           /* cond var for work pool sleep/wake */
-      #ifdef ATL_PHI_SORTED
-         void *wcond2;       /* cond vars 2nd context sleeps on */
-         void *wcond3;       /* cond vars 3rd context sleeps on */
-         void *wcond4;       /* cond vars 4th context sleeps on */
-      #elif defined(ATL_PHI_SORTED2)
-         int ncntxts;
-         void **wconds;
-      #endif
+   void *wcond;           /* cond var for work pool sleep/wake */
+   #ifdef ATL_PHI_SORTED
+      void *wcond2;       /* cond vars 2nd context sleeps on */
+      void *wcond3;       /* cond vars 3rd context sleeps on */
+      void *wcond4;       /* cond vars 4th context sleeps on */
+   #elif defined(ATL_PHI_SORTED2)
+      int ncntxts;
+      void **wconds;
+   #endif
       void *mcond;           /* cond for master process sleep/wake */
    #endif
    ATL_thread_t *threads; /* array of thread ptrs */
@@ -293,6 +319,7 @@ struct ATL_ThreadPool
    void *ATL_threadpool(void *vp);
 #endif
    #undef VUINT
+int ATL_setmyaffinity(const int); /* sets affinity of already-running thread */
 /* Sets up ATL_LAUNCHSTRUCT_t var and ATL_thread_t array & starts threads*/
 void ATL_thread_launch(void *opstruct, int opstructstride, void *OpStructIsInit,
                        void *DoWork, void *CombineOpStructs);
@@ -2043,7 +2070,211 @@ void ATL_thread_launch
        free((void*)ls.chkin);
    #endif
 }
+@ROUT ATL_launch_threads
+#include "atlas_misc.h"
+#include "atlas_threads.h"
+
+void *ATL_tDoStart(void *vp)
+{
+   ATL_thread_t *tp = vp;
+   void (*DoWork)(void *);
+/*
+ * Set my affinity if I haven't already
+ */
+   #ifdef ATL_PAFF_SELF
+      if (tp->affID < 0)
+      {
+          tp->affID = 1 - tp->affID;
+          ATL_assert(!ATL_setmyaffinity(tp->affID));
+      }
+   #endif
+   DoWork = tp->vp;
+   DoWork(tp);
+}
+
+void *ATL_tDoSpawn0(void *vp)
+{
+   ATL_thread_t *tp = vp;
+   static int P = tp->P;
+   int i;
+
+   for (i=1; i < P; i++)
+   {
+      ATL_assert(!ATL_thread_start(tp+i, i, 0, ATL_tDoStart, tp+i);
+   }
+}
+ATL_thread_t *ATL_launch_threads(int P, void *vp)
+/*
+ * Start P threads (with affinity if called for).  vp should be a void-return
+ * function pointer that takes the ATL_thread_t of the starting thread
+ * as its only argument (as a void*).  This means the function takes only
+ * the thread info as arguments, including P, rank, affID.
+ * RETURNS: P-length array of started threads
+ */
+{
+   ATL_thread_t *tp;
+   int i;
+
+   tp = malloc(p*sizeof(ATL_thread_t));
+   ATL_assert(tp);
+   for (i=0; i < P; i++)
+   {
+      tp[i].rank = i;
+      tp[i].P = P;
+      tp[i].affID = -1;
+      tp[i].vp = vp;
+   }
+/*
+ * If the master process has already been tied to core 0, just spawn threads
+ * to other cores, then call thread work function myself
+ */
+   #ifdef ATL_TP_ACTIVE_MASTER
+      for (i-1; i < P; i++)
+      {
+         ATL_assert(!ATL_thread_start(tp+i, i, 0, ATL_tDoStart, tp+i);
+      }
+      ATL_tDoStart(tp);
+   #else
+      ATL_assert(!ATL_thread_start(tp, i, 0, ATL_tDoSpawn0, tp);
+   #endif
+   return(tp);
+}
 @ROUT ATL_thread_start
+#ifdef ATL_WINTHREADS
+   #include <windows.h>
+#endif
+#if defined(ATL_NOAFFINITY)
+   #ifndef ATL_WINTHREADS
+      #include <pthread.h>
+   #endif
+   #ifdef ATL_TUNING
+      #define ATL_thread_start ATL_thread_start_noaff
+   #endif
+#elif
+   #if defined(ATL_PAFF_SETAFFNP)
+      #define _GNU_SOURCE 1 /* what manpage says you need to get CPU_SET */
+      #define __USE_GNU   1 /* what actually works on linuxes I've seen */
+      #include <sched.h>    /* must be inced wt above defs before pthread.h */
+      #include <pthread.h>
+   #elif defined(ATL_PAFF_SETPROCNP)
+      #include <pthread.h>
+   #else
+      #define ATL_PAFF_SELF
+   #endif
+#endif
+#include "atlas_misc.h"
+#include "atlas_threads.h"
+int ATL_thread_start(ATL_thread_t *thr, int proc, int JOINABLE,
+                     void *(*rout)(void*), void *arg)
+/*
+ * Creates a thread that will run only on processor proc.
+ * RETURNS: 0 on success, non-zero on error
+ * NOTE: present implementation dies on error, so 0 is always returned.
+ */
+{
+#ifdef ATL_WINTHREADS
+   #ifdef ATL_WIN32THREADS
+      DWORD thrID;
+   #else
+      unsigned thrID;
+   #endif
+
+   #ifdef ATL_NOAFFINITY
+      #ifdef ATL_WIN32THREADS
+         thr->thrH = CreateThread(NULL, 0, rout, arg, 0, &thrID);
+      #else
+         thr->thrH = (HANDLE)_beginthreadex(NULL, 0, rout, arg, 0, &thrID);
+      #endif
+      ATL_assert(thr->thrH);
+   #else
+      thr->rank = proc;
+      #ifdef ATL_WIN32THREADS
+         thr->thrH = CreateThread(NULL, 0, rout, arg, CREATE_SUSPENDED, &thrID);
+      #else
+         thr->thrH = (HANDLE)_beginthreadex(NULL, 0, rout, arg,
+                                            CREATE_SUSPENDED, &thrID);
+      #endif
+      ATL_assert(thr->thrH);
+      #ifdef ATL_RANK_IS_PROCESSORID
+         ATL_assert(SetThreadAffinityMask(thr->thrH, ((long long)1)<<proc)));
+         thr->affID = proc;
+      #else
+         thr->affID = ATL_affinityIDs[proc%ATL_AFF_NUMID];
+         ATL_assert(SetThreadAffinityMask(thr->thrH,
+                    (((long long)1)<<(thr->affID))));
+      #endif
+      ATL_assert(ResumeThread(thr->thrH) == 1);
+   #endif
+#elif defined(ATL_OMP_THREADS)
+   fprintf(stderr, "Should not call thread_start when using OpenMP!");
+   ATL_assert(0);
+#elif 0 && defined(ATL_OS_OSX)  /* unchecked special OSX code */
+/* http://developer.apple.com/library/mac/#releasenotes/Performance/RN-AffinityAPI/_index.html */
+   pthread_attr_t attr;
+   #define ATL_OSX_AFF_SETS 2       /* should be probed for */
+   thread_affinity_policy ap;
+
+   ap.affinity_tag = proc % ATL_OSX_AFF_SETS;
+   ATL_assert(!pthread_attr_init(&attr));
+   if (JOINABLE)
+      ATL_assert(!pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE));
+   else
+      ATL_assert(!pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED));
+   pthread_attr_setscope(&attr, PTHREAD_SCOPE_SYSTEM); /* no chk, OK to fail */
+
+   ATL_assert(!pthread_create(&thr->thrH, &attr, rout, arg));
+   ATL_assert(!thread_policy_set(thr->thrH, THREAD_AFFINITY_POLICY,
+                                 (integer_t*)&ap,
+                                 THREAD_AFFINITY_POLICY_COUNT));
+   ATL_assert(!pthread_attr_destroy(&attr));
+#else
+   pthread_attr_t attr;
+   #ifndef ATL_NOAFFINITY
+      #if defined(ATL_PAFF_SETAFFNP) || defined(ATL_PAFF_SCHED)
+         cpu_set_t cpuset;
+      #elif defined(ATL_PAFF_PLPA)
+         plpa_cpu_set_t cpuset;
+      #elif defined(ATL_PAFF_CPUSET) /* untried FreeBSD code */
+         cpuset_t mycpuset;
+      #endif
+      #ifdef ATL_RANK_IS_PROCESSORID
+         const int affID = proc;
+      #else
+         const int affID = ATL_affinityIDs[proc%ATL_AFF_NUMID];
+      #endif
+      #ifdef ATL_PAFF_SELF
+         thr->affID = -affID-1; /* affinity must be set by created thread */
+      #endif
+   #endif
+   thr->rank = proc;
+   ATL_assert(!pthread_attr_init(&attr));
+   if (JOINABLE)
+   {
+      #ifdef IBM_PT_ERROR
+         ATL_assert(!pthread_attr_setdetachstate(&attr,
+                                                 PTHREAD_CREATE_UNDETACHED));
+      #else
+         ATL_assert(!pthread_attr_setdetachstate(&attr,
+                                                 PTHREAD_CREATE_JOINABLE));
+      #endif
+   }
+   else
+      ATL_assert(!pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED));
+   pthread_attr_setscope(&attr, PTHREAD_SCOPE_SYSTEM); /* no chk, OK to fail */
+   #ifdef ATL_PAFF_SETAFFNP
+      CPU_ZERO(&cpuset);
+      CPU_SET(affID, &cpuset);
+      ATL_assert(!pthread_attr_setaffinity_np(&attr, sizeof(cpuset), &cpuset));
+   #elif defined(ATL_PAFF_SETPROCNP)
+      ATL_assert(!pthread_attr_setprocessor_np(&attr, (pthread_spu_t)affID,
+                                               PTHREAD_BIND_FORCED_NP));
+   #endif
+   ATL_assert(!pthread_create(&thr->thrH, &attr, rout, arg));
+   ATL_assert(!pthread_attr_destroy(&attr));
+#endif
+   return(0);
+}
+@ROUT ATL_thread_start00
 #ifndef ATL_NOAFFINITY
    #include "atlas_taffinity.h"  /* include this file first! */
 #elif defined(ATL_TUNING)
@@ -2207,25 +2438,135 @@ void ATL_thread_exit(void *retval)
 @ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch ATL_goparallel
 #ifndef ATL_NOAFFINITY
    #include "atlas_taffinity.h"  /* include this file first! */
+   @whiledef aff WIN64 WIN PBIND BINDP RUNON SCHED PLPA CPUSET
+   #if defined(ATL_SPAFF_@(aff) && ATL_SPAFF_@(aff) && \
+       !defined(ATL_PAFF_@(aff))
+       #define ATL_PAFF_@(aff)  ATL_SPAFF_@(aff) 
+   #endif
+   @endwhile
 #endif
 #include "atlas_misc.h"
 #include "atlas_threads.h"
 
 @ROUT ATL_setmyaffinity
-#if defined(ATL_PAFF_PLPA) || defined(ATL_PAFF_PBIND) || \
-    defined(ATL_PAFF_SCHED) || definedATL_PAFF_RUNON) || \
-    defined(ATL_PAFF_BINDP) || defined(ATL_PAFF_CPUSET)
 #include "atlas_taffinity.h"  /* include this file first! */
+/*
+ * Cases handled before thread creation / start running:
+ *    ATL_WINTHREADS, ATL_PAFF_SETAFFNP, ATL_PAFF_SETPROCNP
+ * Cases for post-creation binding done by spawner:
+ *    ATL_PAFF_PBIND, ATL_PAFF_BINDP, ATL_PAFF_CPUSET
+ * all of these cases provide self-setting as well.
+ * Cases that work only for self-setting:
+ *   ATL_PAFF_SCHED, ATL_PAFF_PLPA
+ */
+
+#ifdef ATL_WINTHREADS
+   #include <windows.h>
+#elif defined(ATL_NOAFFINITY)
+   #ifndef ATL_OMP_THREADS
+      #include <pthread.h>
+   #endif
+#elif defined(ATL_SPAFF_PLPA)
+   #include <pthread.h>
+   #include <plpa.h>
+#elif defined(ATL_SPAFF_PBIND)
+   #include <pthread.h>
+   #include <sys/types.h>
+   #include <sys/processor.h>
+   #include <sys/procset.h>
+#elif defined(ATL_SPAFF_SCHED)
+   #define _GNU_SOURCE 1 /* what manpage says you need to get CPU_SET */
+   #define __USE_GNU   1 /* what works on linuxes that I've seen */
+   #include <sched.h>    /* must include this before pthreads */
+   #include <pthread.h>
+#elif defined(ATL_SPAFF_RUNON)
+   #include <pthread.h>
+#elif defined(ATL_SPAFF_BINDP)
+   #include <pthread.h>
+   #include <sys/thread.h>      /* thread_self header */
+   #include <sys/processor.h>   /* bindprocessor header */
+#elif defined(ATL_SPAFF_CPUSET)
+   #include <pthread.h>
+   #include <sys/param.h>
+   #include <sys/cpuset.h>
+#endif
 #include "atlas_misc.h"
 #include "atlas_threads.h"
 int ATL_setmyaffinity(const int rank)
+/*
+ * Attempts to sets the affinity of an already-running thread.  The
+ * aff_set flag is set to true whether we succeed or not (no point in
+ * trying multiple times).
+ * RETURNS: 0 on success, non-zero error code on error
+ */
+{
+   #if !defined(ATL_AFF_NUMID)
+      const int bindID=rank;
+   #elif defined(ATL_RANK_IS_PROCESSORID)
+      const int bindID = rank % ATL_AFF_NUMID;
+   #else
+      const int bindID = ATL_affinityIDs[rank%ATL_AFF_NUMID];
+   #endif
+   #ifdef ATL_RANK_IS_PROCESSORID
+      const int bindID = me->rank % ATL_AFF_NUMID;
+   #else
+      const int bindID = ATL_affinityIDs[me->rank%ATL_AFF_NUMID];
+   #endif
+#ifdef ATL_WINTHREADS  /* Windows */
+      ATL_assert(SetThreadAffinityMask(GetCurrentThreadId(),
+                                       (((long long)1)<<bindID)));
+#elif defined(ATL_SPAFF_PLPA)  /* affinity wrapper package */
+   plpa_cpu_set_t cpuset;
+   PLPA_CPU_ZERO(&cpuset);
+   PLPA_CPU_SET(bindID, &cpuset);
+   if (me->affID >= 0)
+      return(0);
+   me->affID = bindID;
+   return(plpa_sched_setaffinity((pid_t)0, sizeof(cpuset), &cpuset));
+#elif defined(ATL_SPAFF_PBIND)
+   return(processor_bind(P_LWPID, P_MYID, bindID, NULL));
+#elif defined(ATL_SPAFF_SCHED)  /* linux */
+   cpu_set_t cpuset;
+   CPU_ZERO(&cpuset);
+   CPU_SET(bindID, &cpuset);
+   if (me->affID >= 0)
+      return(0);
+   me->affID = bindID;
+   return(sched_setaffinity(0, sizeof(cpuset), &cpuset));
+#elif defined (ATL_SPAFF_RUNON)  /* IRIX: this will not work for process! */
+   if (me->affID >= 0)
+      return(0);
+   me->affID = bindID;
+   return(pthread_setrunon_np(bindID));
+#elif defined(ATL_SPAFF_BINDP)  /* AIX */
+   if (me->affID >= 0)
+      return(0);
+   me->affID = bindID;
+   return(bindprocessor(BINDTHREAD, thread_self(), bindID));
+#elif defined(ATL_SPAFF_CPUSET)  /* untried FreeBSD code */
+   cpuset_t mycpuset;
+   CPU_ZERO(&mycpuset);         /* no manpage, so guess works like linux */
+   CPU_SET(bindID, &mycpuset);
+   if (me->affID >= 0)
+      return(0);
+   me->affID = bindID;
+   return(cpuset_setaffinity(CPU_LEVEL_WHICH, CPU_WHICH_TID, -1,
+                             sizeof(mycpuset), &mycpuset));
+#elif defined(ATL_NOAFFINITY)
+   return(0);   /* no-affinity override says not setting is not error */
+#else
+   return(1);  /* Don't know how to set affinity, return error */
+#endif
+   return(0);
+}
+#endif
 @ROUT ATL_goparallel
 #if !defined(ATL_NOAFFINITY) && defined(ATL_PAFF_SELF) && defined(ATL_USEOPENMP)
-static int ATL_setmyaffinity()
+static int ATL_setmyaffinity8()
 @ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch
 #if !defined(ATL_NOAFFINITY) && defined(ATL_PAFF_SELF)
-static int ATL_setmyaffinity(ATL_thread_t *me)
-@ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch ATL_goparallel ATL_setmyaffinity
+static int ATL_setmyaffinity8(ATL_thread_t *me)
+@ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch ATL_goparallel
 /*
  * Attempts to sets the affinity of an already-running thread.  The 
  * aff_set flag is set to true whether we succeed or not (no point in
@@ -2241,22 +2582,17 @@ static int ATL_setmyaffinity(ATL_thread_t *me)
    #else
       bindID = ATL_affinityIDs[bindID%ATL_AFF_NUMID];
    #endif
-@ROUT ATL_setmyaffinity
-   #if !defined(ATL_AFF_NUMID)
-      const int bindID=rank;
-   #elif defined(ATL_RANK_IS_PROCESSORID)
-      const int bindID = rank % ATL_AFF_NUMID;
-   #else
-      const int bindID = ATL_affinityIDs[rank%ATL_AFF_NUMID];
-   #endif
 @ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch ATL_setmyaffinity
    #ifdef ATL_RANK_IS_PROCESSORID
       const int bindID = me->rank % ATL_AFF_NUMID;
    #else
       const int bindID = ATL_affinityIDs[me->rank%ATL_AFF_NUMID];
    #endif
-@ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch ATL_goparallel ATL_setmyaffinity
-#ifdef ATL_PAFF_PLPA
+@ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch ATL_goparallel
+#ifdef ATL_WINTHREADS  /* Windows */
+      ATL_assert(SetThreadAffinityMask(GetCurrentThreadId(), 
+                                       (((long long)1)<<bindID)));
+#elif defined(ATL_PAFF_PLPA)  /* affinity wrapper package */
    plpa_cpu_set_t cpuset;
    PLPA_CPU_ZERO(&cpuset);
    PLPA_CPU_SET(bindID, &cpuset);
@@ -2266,7 +2602,7 @@ static int ATL_setmyaffinity(ATL_thread_t *me)
    return(plpa_sched_setaffinity((pid_t)0, sizeof(cpuset), &cpuset));
 #elif defined(ATL_PAFF_PBIND)
    return(processor_bind(P_LWPID, P_MYID, bindID, NULL));
-#elif defined(ATL_PAFF_SCHED)
+#elif defined(ATL_PAFF_SCHED)  /* linux */
    cpu_set_t cpuset;
    CPU_ZERO(&cpuset);
    CPU_SET(bindID, &cpuset);
@@ -2274,12 +2610,12 @@ static int ATL_setmyaffinity(ATL_thread_t *me)
       return(0);
    me->affID = bindID;
    return(sched_setaffinity(0, sizeof(cpuset), &cpuset));
-#elif defined (ATL_PAFF_RUNON)
+#elif defined (ATL_PAFF_RUNON)  /* IRIX: this will not work for process! */
    if (me->affID >= 0)
       return(0);
    me->affID = bindID;
    return(pthread_setrunon_np(bindID));
-#elif defined(ATL_PAFF_BINDP)
+#elif defined(ATL_PAFF_BINDP)  /* AIX */
    if (me->affID >= 0)
       return(0);
    me->affID = bindID;
@@ -2324,7 +2660,12 @@ void *ATL_lin0tlaunch(void *vp)
  */
    #ifdef ATL_PAFF_SELF
       if (tp->affID < 0)
-          ATL_setmyaffinity(tp);
+      {
+         tp->affID = 1 - tp->affID;
+         ATL_setmyaffinity(tp->affID);
+      }
+@skip      if (tp->affID < 0)
+@skip          ATL_setmyaffinity(tp);
    #endif
 /*
  * Spawn DoWork to all nodes
@@ -2370,7 +2711,11 @@ void *ATL_dyntlaunch(void *vp)
  */
    #ifdef ATL_PAFF_SELF
       if (tp->affID < 0)
-          ATL_setmyaffinity(tp);
+      {
+         tp->affID = 1 - tp->affID;
+         ATL_setmyaffinity(tp->affID);
+      }
+@skip          ATL_setmyaffinity(tp);
    #endif
    dest = ATL_DecGlobalAtomicCount(acnt, iam);
    while(dest)
@@ -2585,7 +2930,10 @@ void *ATL_log2tlaunch(void *vp)
  */
    #ifdef ATL_PAFF_SELF
       if (tp->affID < 0)
-          ATL_setmyaffinity(tp);
+      {
+         tp->affID = 1 - tp->affID;
+         ATL_setmyaffinity(tp->affID);
+      }
    #endif
    btp = tp - iam;
    lp = tp->vp;
@@ -2635,90 +2983,6 @@ void *ATL_log2tlaunch(void *vp)
    return(NULL);
 }
 @ROUT ATL_goparallel
-#if ATL_USE_THREADPOOL
-/*
- * Started wt pthread_create on affID==0, this guy will create the
- * rest of the work queue
- */
-void *ATL_threadpool_launch(void *vp)
-{
-   ATL_thread_t *tp = vp;
-   ATL_tpool_t *pp = ATL_TP_PTR;
-   const int P = pp->nthr;
-   int i;
-/*
- * Set my affinity if I haven't already
- */
-   #ifdef ATL_PAFF_SELF
-      if (tp->affID < 0)
-          ATL_setmyaffinity(tp);
-   #endif
-   for (i=1; i < P; i++)
-   {
-      ATL_thread_start(tp+i, i, 0, ATL_threadpool, tp+i);
-   }
-/*
- * Thread 0 now participates in pool
- */
-   ATL_threadpool(tp);
-/*
- * When pool finished, await everyone to quit, then free the pool
- */
-   while(pp->nthr)
-      ATL_thread_yield();
-   
-   ATL_TP_PTR = NULL;
-   ATL_FreeThreadPool(pp);
-   if (ATL_TP1_PTR)
-   {
-      ATL_FreeThreadPool(ATL_TP1_PTR);
-      ATL_TP1_PTR = NULL;
-   }
-}
-
-@beginskip
-ATL_tpool_t *ATL_TP_start(int P, ATL_LAUNCHSTRUCT_t *lp)
-{
-   ATL_tpool_t *pp;
-   ATL_thread_t *tp;
-   int i;
-
-   pp = calloc(1, sizeof(ATL_tpool_t));
-   ATL_assert(pp);
-   tp = pp->threads = malloc(P*sizeof(ATL_thread_t));
-   pp->icomm = calloc(P, sizeof(int));
-   ATL_assert(tp && pp->icomm);
-   for (i=0; i < P; i++)
-   {
-        tp[i].vp = lp;
-        tp[i].rank = i;
-        tp[i].P = P;
-   }
-   lp->vp = pp;
-   #ifdef DEBUG
-     fprintf(stderr, "MASTER LAUNCHING\n");
-   #endif
-   pp->tpmut = ATL_mutex_init();
-   pp->mcond = ATL_cond_init();
-   ATL_mutex_lock(pp->tpmut);
-   ATL_thread_start(tp, 0, 0, ATL_threadpool_launch, tp);
-   do
-   {
-      #ifdef DEBUG
-          fprintf(stderr, "MASTER SLEEPING WD=%u\n", pp->WORKDONE);
-      #endif
-      ATL_cond_wait(pp->mcond, pp->tpmut);
-      #ifdef DEBUG
-          fprintf(stderr, "MASTER SLEEPING WD=%u\n", pp->WORKDONE);
-      #endif
-   }
-   while (!pp->WORKDONE);
-   pp->nworkers = 0;
-   ATL_mutex_unlock(pp->tpmut);
-   return(pp);
-}
-@endskip
-#endif
 #if defined(ATL_TUNING) && defined(ATL_NOAFFINITY)
    void *ATL_log2tlaunch_noaff(void *vp);
    #define ATL_goparallel ATL_goparallel_noaff
@@ -2796,10 +3060,11 @@ void ATL_goparallel
  *    Make sure we got the requested nodes, and set affinity if supported
  */
       ATL_assert(omp_get_num_threads() == P);
-      #ifdef ATL_PAFF_SELF
-         ATL_setmyaffinity();
-      #endif
       i = omp_get_thread_num();
+      tp[i].affID = i;
+      #ifdef ATL_PAFF_SELF
+         ATL_setmyaffinity(i);
+      #endif
       ls.DoWork(&ls, tp+i);
    }
 /*
@@ -14363,7 +14628,7 @@ static void ATL_leftcomb(ATL_tpool_t *pp, const int rank, const int vrank)
    while(1);   /* end combine loop */
 }
 
-#ifndef ATL_PHI_POLL
+#ifndef ATL_TP_FULLPOLL
 /*
  * Do a task using thread pool pp; RETURNS: virtual rank (0...nworkers-1)
  */
@@ -14524,7 +14789,7 @@ int ATL_tpool_dojob
    return(vrank);
 }
 
-#else /* ifdef ATL_PHI_POLL */
+#else /* ifdef ATL_TP_FULLPOLL */
 /*
  * Do a task using thread pool pp; RETURNS: virtual rank (0...ncores*4-1)
  */
@@ -14922,10 +15187,53 @@ void *ATL_threadpool(void *vp)
 #endif
 @ROUT ATL_threadpool_misc
 #define ATL_TP_DECL 1
+#include "atlas_taffinity.h"
 #include "atlas_threads.h"
 #include "atlas_misc.h"
 #include "atlas_bitvec.h"
 
+/*
+ * Started wt pthread_create on affID==0, this guy will create the
+ * rest of the work queue
+ */
+void *ATL_threadpool_launch(void *vp)
+{
+   ATL_thread_t *tp = vp;
+   ATL_tpool_t *pp = ATL_TP_PTR;
+   const int P = pp->nthr;
+   int i;
+/*
+ * Set my affinity if I haven't already
+ */
+   #ifdef ATL_PAFF_SELF
+      if (tp->affID < 0)
+      {
+         tp->affID = 1 - tp->affID;
+         ATL_setmyaffinity(tp->affID);
+      }
+   #endif
+   for (i=1; i < P; i++)
+   {
+      ATL_thread_start(tp+i, i, 0, ATL_threadpool, tp+i);
+   }
+/*
+ * Thread 0 now participates in pool
+ */
+   ATL_threadpool(tp);
+/*
+ * When pool finished, await everyone to quit, then free the pool
+ */
+   while(pp->nthr)
+      ATL_thread_yield();
+   
+   ATL_TP_PTR = NULL;
+   ATL_FreeThreadPool(pp);
+   if (ATL_TP1_PTR)
+   {
+      ATL_FreeThreadPool(ATL_TP1_PTR);
+      ATL_TP1_PTR = NULL;
+   }
+}
 /*
  * This function is called only by one thread, and is unsafe if called
  * by more than one.  It is protected ty ATL_IsFirstThreadedCall, which
@@ -14939,7 +15247,7 @@ void ATL_InitThreadPoolStartup(int P, void *pd, void *extra)
 
 
    ATL_TP_PTR = pp = ATL_NewThreadPool(ATL_NTHREADS, 1, pd);
-   #ifndef ATL_PHI_POLL
+   #ifndef ATL_TP_FULLPOLL
    ATL_mutex_lock(pp->tpmut);
    #endif
    pp->nworkers = P;
@@ -14953,7 +15261,7 @@ void ATL_InitThreadPoolStartup(int P, void *pd, void *extra)
 /*
  * We leave function still holding the lock, so that master can go to sleep
  * awaiting job completion before spawned threads are able to complete
- * and thus mess up timing; ATL_PHI_POLL never gets the lock.
+ * and thus mess up timing; ATL_TP_FULLPOLL never gets the lock.
  */
 }
 
@@ -15145,7 +15453,7 @@ ATL_tpool_t *ATL_NewThreadPool
          pp->threads[i].vp = vp;
       }
    }
-   #ifdef ATL_PHI_POLL
+   #ifdef ATL_TP_FULLPOLL
       pp->chkin = calloc(P, sizeof(short));
       pp->wdone = pp->wready = 0;
    #endif
@@ -15213,8 +15521,10 @@ void ATL_FreeThreadPool(ATL_tpool_t *pp)
       ATL_FreeBV(pp->combDoneBV);
    free(pp);
 }
+@beginskip
 /*
  * NOTE:
  *    void *ATL_threadpool_launch(void *vp)
  * is defined in ATL_goparallel.c, so it can use  ATL_setmyaffinity
  */
+@beginskip
