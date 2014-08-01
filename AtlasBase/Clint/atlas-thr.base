@@ -215,6 +215,7 @@ struct ATL_LaunchStruct
 @endwhile
 
 #define VUINT volatile unsigned int
+#define ATL_TP_FULLPOLL 1
 /*
  * Function pointer taking the pool as an argument that does the work.
  */
@@ -232,16 +233,17 @@ typedef struct ATL_ThreadPool ATL_tpool_t;
 #ifdef ATL_TP_FULLPOLL
 struct ATL_ThreadPool
 {
-   VUINT wready;          /* 0: worker keep polling, else: start work */
    VUINT nthr;            /* # of threads total in this thread pool */
    VUINT pflag;           /* bitvector of options */
+   VUINT nworkers;        /* # of thr supposed to wake up and work */
    #ifdef ATL_PHI_SORTED
       VUINT ncores, cntxts, nwcores;
    #endif
    volatile short *chkin; /* nthr-len chkin array wt meaning:
-      /* 0: keep polling, 1: start, 2: have started, 3: finished */
-      /* 0&1 written by master, 2&3 written by worker */
+      /* 0: keep polling, 1: start, 2: have started, 3: finished 4: exited */
+      /* 0&1 written by master, 2-4 written by worker */
    volatile int *icomm;   /* nthr-long integer communication array */
+   ATL_thread_t *threads; /* array of thread ptrs */
 /*
  * Variables below set only when doing a combine, and protected by tpmut
  * (which need only be set when doing a combine)
@@ -257,7 +259,7 @@ struct ATL_ThreadPool
    ATL_tpjcomb_t combf;   /* NULL: don't combine, else combine func */
    void *PD;              /* problem def to give to jobf & combf */
    void *extra;           /* extra info for jobf & combf */
-}
+};
 #else
 struct ATL_ThreadPool
 {
@@ -278,7 +280,6 @@ struct ATL_ThreadPool
    #elif defined(ATL_PHI_SORTED2)
       int ncntxts;
       void **wconds;
-   #endif
       void *mcond;           /* cond for master process sleep/wake */
    #endif
    ATL_thread_t *threads; /* array of thread ptrs */
@@ -295,6 +296,7 @@ struct ATL_ThreadPool
    void *PD;              /* problem def to give to jobf & combf */
    void *extra;           /* extra info for jobf & combf */
 };
+#endif
 
 /*
  * Declare the beautiful global variables used by thread pool
@@ -317,8 +319,8 @@ struct ATL_ThreadPool
    void ATL_oldcombwrap(void *vpp, int rank, int vrank, int vhisrank);
    int ATL_tpool_dojob(ATL_tpool_t *pp, const int rank, const int CallFrWrk);
    void *ATL_threadpool(void *vp);
-#endif
    #undef VUINT
+#endif  /* end #ifdef ATL_USE_THREADPOOL */
 int ATL_setmyaffinity(const int); /* sets affinity of already-running thread */
 /* Sets up ATL_LAUNCHSTRUCT_t var and ATL_thread_t array & starts threads*/
 void ATL_thread_launch(void *opstruct, int opstructstride, void *OpStructIsInit,
@@ -2140,6 +2142,7 @@ ATL_thread_t *ATL_launch_threads(int P, void *vp)
    return(tp);
 }
 @ROUT ATL_thread_start
+#include "atlas_taffinity.h"
 #ifdef ATL_WINTHREADS
    #include <windows.h>
 #endif
@@ -2150,17 +2153,15 @@ ATL_thread_t *ATL_launch_threads(int P, void *vp)
    #ifdef ATL_TUNING
       #define ATL_thread_start ATL_thread_start_noaff
    #endif
-#elif
-   #if defined(ATL_PAFF_SETAFFNP)
-      #define _GNU_SOURCE 1 /* what manpage says you need to get CPU_SET */
-      #define __USE_GNU   1 /* what actually works on linuxes I've seen */
-      #include <sched.h>    /* must be inced wt above defs before pthread.h */
-      #include <pthread.h>
-   #elif defined(ATL_PAFF_SETPROCNP)
-      #include <pthread.h>
-   #else
-      #define ATL_PAFF_SELF
-   #endif
+#elif defined(ATL_PAFF_SETAFFNP)
+   #define _GNU_SOURCE 1 /* what manpage says you need to get CPU_SET */
+   #define __USE_GNU   1 /* what actually works on linuxes I've seen */
+   #include <sched.h>    /* must be inced wt above defs before pthread.h */
+   #include <pthread.h>
+#elif defined(ATL_PAFF_SETPROCNP)
+   #include <pthread.h>
+#else
+   #define ATL_PAFF_SELF
 #endif
 #include "atlas_misc.h"
 #include "atlas_threads.h"
@@ -2436,15 +2437,6 @@ void ATL_thread_exit(void *retval)
 #endif
 }
 @ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch ATL_goparallel
-#ifndef ATL_NOAFFINITY
-   #include "atlas_taffinity.h"  /* include this file first! */
-   @whiledef aff WIN64 WIN PBIND BINDP RUNON SCHED PLPA CPUSET
-   #if defined(ATL_SPAFF_@(aff) && ATL_SPAFF_@(aff) && \
-       !defined(ATL_PAFF_@(aff))
-       #define ATL_PAFF_@(aff)  ATL_SPAFF_@(aff) 
-   #endif
-   @endwhile
-#endif
 #include "atlas_misc.h"
 #include "atlas_threads.h"
 
@@ -2507,11 +2499,6 @@ int ATL_setmyaffinity(const int rank)
    #else
       const int bindID = ATL_affinityIDs[rank%ATL_AFF_NUMID];
    #endif
-   #ifdef ATL_RANK_IS_PROCESSORID
-      const int bindID = me->rank % ATL_AFF_NUMID;
-   #else
-      const int bindID = ATL_affinityIDs[me->rank%ATL_AFF_NUMID];
-   #endif
 #ifdef ATL_WINTHREADS  /* Windows */
       ATL_assert(SetThreadAffinityMask(GetCurrentThreadId(),
                                        (((long long)1)<<bindID)));
@@ -2519,9 +2506,6 @@ int ATL_setmyaffinity(const int rank)
    plpa_cpu_set_t cpuset;
    PLPA_CPU_ZERO(&cpuset);
    PLPA_CPU_SET(bindID, &cpuset);
-   if (me->affID >= 0)
-      return(0);
-   me->affID = bindID;
    return(plpa_sched_setaffinity((pid_t)0, sizeof(cpuset), &cpuset));
 #elif defined(ATL_SPAFF_PBIND)
    return(processor_bind(P_LWPID, P_MYID, bindID, NULL));
@@ -2529,19 +2513,10 @@ int ATL_setmyaffinity(const int rank)
    cpu_set_t cpuset;
    CPU_ZERO(&cpuset);
    CPU_SET(bindID, &cpuset);
-   if (me->affID >= 0)
-      return(0);
-   me->affID = bindID;
    return(sched_setaffinity(0, sizeof(cpuset), &cpuset));
 #elif defined (ATL_SPAFF_RUNON)  /* IRIX: this will not work for process! */
-   if (me->affID >= 0)
-      return(0);
-   me->affID = bindID;
    return(pthread_setrunon_np(bindID));
 #elif defined(ATL_SPAFF_BINDP)  /* AIX */
-   if (me->affID >= 0)
-      return(0);
-   me->affID = bindID;
    return(bindprocessor(BINDTHREAD, thread_self(), bindID));
 #elif defined(ATL_SPAFF_CPUSET)  /* untried FreeBSD code */
    cpuset_t mycpuset;
@@ -2559,84 +2534,7 @@ int ATL_setmyaffinity(const int rank)
 #endif
    return(0);
 }
-#endif
-@ROUT ATL_goparallel
-#if !defined(ATL_NOAFFINITY) && defined(ATL_PAFF_SELF) && defined(ATL_USEOPENMP)
-static int ATL_setmyaffinity8()
-@ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch
-#if !defined(ATL_NOAFFINITY) && defined(ATL_PAFF_SELF)
-static int ATL_setmyaffinity8(ATL_thread_t *me)
 @ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch ATL_goparallel
-/*
- * Attempts to sets the affinity of an already-running thread.  The 
- * aff_set flag is set to true whether we succeed or not (no point in
- * trying multiple times).
- * RETURNS: 0 on success, non-zero error code on error
- */
-{
-@ROUT ATL_goparallel
-   int bindID;
-   bindID = omp_get_thread_num();
-   #ifdef ATL_RANK_IS_PROCESSORID
-      bindID = bindID % ATL_AFF_NUMID;
-   #else
-      bindID = ATL_affinityIDs[bindID%ATL_AFF_NUMID];
-   #endif
-@ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch ATL_setmyaffinity
-   #ifdef ATL_RANK_IS_PROCESSORID
-      const int bindID = me->rank % ATL_AFF_NUMID;
-   #else
-      const int bindID = ATL_affinityIDs[me->rank%ATL_AFF_NUMID];
-   #endif
-@ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch ATL_goparallel
-#ifdef ATL_WINTHREADS  /* Windows */
-      ATL_assert(SetThreadAffinityMask(GetCurrentThreadId(), 
-                                       (((long long)1)<<bindID)));
-#elif defined(ATL_PAFF_PLPA)  /* affinity wrapper package */
-   plpa_cpu_set_t cpuset;
-   PLPA_CPU_ZERO(&cpuset);
-   PLPA_CPU_SET(bindID, &cpuset);
-   if (me->affID >= 0)
-      return(0);
-   me->affID = bindID;
-   return(plpa_sched_setaffinity((pid_t)0, sizeof(cpuset), &cpuset));
-#elif defined(ATL_PAFF_PBIND)
-   return(processor_bind(P_LWPID, P_MYID, bindID, NULL));
-#elif defined(ATL_PAFF_SCHED)  /* linux */
-   cpu_set_t cpuset;
-   CPU_ZERO(&cpuset);
-   CPU_SET(bindID, &cpuset);
-   if (me->affID >= 0)
-      return(0);
-   me->affID = bindID;
-   return(sched_setaffinity(0, sizeof(cpuset), &cpuset));
-#elif defined (ATL_PAFF_RUNON)  /* IRIX: this will not work for process! */
-   if (me->affID >= 0)
-      return(0);
-   me->affID = bindID;
-   return(pthread_setrunon_np(bindID));
-#elif defined(ATL_PAFF_BINDP)  /* AIX */
-   if (me->affID >= 0)
-      return(0);
-   me->affID = bindID;
-   return(bindprocessor(BINDTHREAD, thread_self(), bindID));
-#elif defined(ATL_PAFF_CPUSET)  /* untried FreeBSD code */
-   cpuset_t mycpuset;
-   CPU_ZERO(&mycpuset);         /* no manpage, so guess works like linux */
-   CPU_SET(bindID, &mycpuset);
-   if (me->affID >= 0)
-      return(0);
-   me->affID = bindID;
-   return(cpuset_setaffinity(CPU_LEVEL_WHICH, CPU_WHICH_TID, -1,
-                             sizeof(mycpuset), &mycpuset));
-#endif
-   return(0);
-}
-#endif
-@ROUT ATL_lin0tlaunch
-#ifdef ATL_NOAFFINITY
-   #define ATL_tDoWorkWrap ATL_tDoWorkWrap_noaff
-#endif
 void *ATL_tDoWorkWrap(void *vp)
 {
    ATL_thread_t *tp = vp;
@@ -13603,6 +13501,7 @@ static void DoCblk(const int rank, ATL_tsyrk_ammN_t *pd, TYPE *wC, int i, int j)
 #else
 static void DoCblk(const int rank, ATL_tsyrk_ammN_t *pd, TYPE *wC, int i, int j,
                    cont int crank)
+#endif
 {
    const ammkern_t amm = pd->amm_b1;
    const unsigned int nkblks=pd->nkblks, bs=pd->blkszA, kb=pd->kb, NB=pd->nb;
@@ -14636,8 +14535,7 @@ int ATL_tpool_dojob
 (
    ATL_tpool_t *pp,    /* thread pool to use */
    const int rank,     /* actual rank, my tp found at pp->threads+rank */
-   const int CFWTHR,   /* 1: worker thr called, 0: ATL_threadpool loop called */
-   int icore           /* for PHI: core # we are on */
+   const int CFWTHR    /* 1: worker thr called, 0: ATL_threadpool loop called */
 )
 {
    const int nworkers=pp->nworkers, nthr = pp->nthr;
@@ -14788,8 +14686,9 @@ int ATL_tpool_dojob
 
    return(vrank);
 }
+#endif
 
-#else /* ifdef ATL_TP_FULLPOLL */
+#ifdef ATL_TP_FULLPOLL
 /*
  * Do a task using thread pool pp; RETURNS: virtual rank (0...ncores*4-1)
  */
@@ -14797,37 +14696,47 @@ int ATL_tpool_dojob
 (
    ATL_tpool_t *pp,    /* thread pool to use */
    const int rank,     /* actual rank, my tp found at pp->threads+rank */
-   const int CFWTHR,   /* 1: worker thr called, 0: ATL_threadpool loop called */
-   int coreid          /* for PHI: core # we are on */
+   const int CFWTHR    /* 1: worker thr called, 0: ATL_threadpool loop called */
 )
 {
-   const int nworkers=pp->nworkers, nthr = pp->nthr;
-   const int mycont = rank / ncores;
-   int vrank, iwrk;
-   void *tpmut = pp->tpmut;
    ATL_thread_t *tp = pp->threads+rank;
+   const int nworkers=pp->nworkers, nthr = pp->nthr;
+   #ifdef ATL_PHI_SORTED
+      const int mycont = rank / ncores;
+      int vrank, iwrk;
+   #else
+      #define vrank rank
+   #endif
 
 /*
  * Map ranks sorted by cores (0...ncores-1, ncores...ncores*2-1,...) to one
  * where all 4 cores are sequential
  */
    
-   if (pp->ncntxts > 1)
-   {
-      vrank = (coreid<<2) + mycont;
-      if (coreid > ncores || mycont > pp->ncntxts)
-         return(vrank);
-   }
-   else
-   {
+   #if ATL_PHI_SORTED
+      if (pp->ncntxts > 1)
+      {
+         vrank = (coreid<<2) + mycont;
+         if (coreid > ncores || mycont > pp->ncntxts)
+            return(vrank);
+         tp->P = nworkers<<2;          /* make jobf think only nworkers thrs */
+         tp->rank = vrank;             /* and use virtual rank */
+      }
+      else
+      {
+         if (rank >= nworkers)
+            return(rank);
+         vrank = rank;
+         tp->P = nworkers;
+      }
+   #else
       if (rank >= nworkers)
-         return(rank);
-   }
+         return;
+      tp->P = nworkers;
+   #endif
 /*
  * Now, do work based on PD; change thread info to use virtual rank info
  */
-   tp->P = nworkers<<2;          /* make jobf think only nworkers thrs */
-   tp->rank = vrank;             /* and use virtual rank */
    pp->jobf(pp, rank, vrank);    /* do the required task */
 /*
  * If the calling routine has requested it, perform dynamic combine
@@ -14845,11 +14754,16 @@ int ATL_tpool_dojob
 /*
  * Return thread values to their global values
  */
-   tp->rank = rank;
+   #ifdef ATL_PHI_SORTED
+      tp->rank = rank;
+   #endif
    tp->P = nthr;
 
    return(vrank);
 }
+   #ifndef ATL_PHI_SORTED
+      #undef vrank
+   #endif
 /*
  * This version of threadpool expects master process is bound to a non-used
  * core, and all workers area always polling on volatile variables for whether
@@ -14864,54 +14778,55 @@ void *ATL_threadpool(void *vp)
    ATL_thread_t *tp=vp;
    ATL_tpool_t *pp = ATL_TP_PTR;
    const unsigned int rank=tp->rank;
-   const unsigned int nthr=pp->nthr, p4=nthr>>2, p4_2=p4+p4, p4_3=p4_2+p4;
+   const unsigned int nthr=pp->nthr; 
+   @beginskip
+   const unsigned int p4=nthr>>2, p4_2=p4+p4, p4_3=p4_2+p4;
    const unsigned int mycontext = rank / p4;
    const unsigned int mycore = rank % pp->ncores;
    const unsigned int crank = (pp->ncntxts > 1) ? (mycore<<2) + mycontext;
    unsigned int vrank (pp->ncntxts > 1) ? crank : rank;
    void *tpmut = pp->tpmut;
+   @endskip
 
    #ifdef DEBUG
       fprintf(stderr, "%d: WORKER START P=%d\n", rank, pp->nthr);
    #endif
 /*
  * Infinite loop over tasks.  Loop has 2 phases:
- * (1) Do work if commanded, including optional combine
- * (2) Poll for new work
- * Have lock at top of loop.
+ * (1) Poll for new work
+ * (2) Do work if commanded, including optional combine
  */
-   ATL_mutex_lock(tpmut);   /* force wait until pp set up */
-   ATL_mutex_unlock(tpmut); /* pp is set up, can continue */
-   WORKLOOP:
+   while (1)
+   {
+/*
+ *    Wait for work to be posted.
+ */
+      pp->chkin[rank] = 3;  /* tell master in polling loop */
+      do
+      {
+         ATL_thread_yield();
+      }
+      while (pp->chkin[rank] != 1);  /* await signal to do work */
+/*
+ *    If no job is set, means I should quit
+ */
+      if (!pp->jobf)
+         break;
 /*
  *    If there's work and I've got work to do
  */
-      if (pp->wready)
+      if (pp->chkin[rank] == 1)
       {
-         ATL_tpool_dojob(pp, rank, mycore);
-         pp->chkin[vrank] = 1;
+         pp->chkin[rank] = 2;
+         ATL_tpool_dojob(pp, rank, 0);
       }
 /*
  *    If no job, scope flag to see if I should sleep, or quit
  */
       else if (ATL_TPF_DIE(pp))
-         goto QUIT;
-/*
- *    Wait for work to be posted.
- */
-      POLLWAIT:
-         vrank = (pp->ncntxts > 1) ? crank : rank;
-         if (pp->wready && vrank < pp->nworkers && !pp->chkin[vrank])
-            goto WORKLOOP;
-         ATL_thread_yield();
-      goto POLLWAIT;
-/*
- * When a thread exits, decrement thread count
- */
-QUIT:
-   ATL_mutex_lock(tpmut);
-   pp->nthr--;
-   ATL_mutex_unlock(tpmut);
+         break;
+   }
+   pp->chkin[rank] = 4;  /* tell master I'm completely done */
    #ifdef DEBUG
       fprintf(stderr, "%d: WORKER DONE\n", rank);
    #endif
@@ -15052,7 +14967,7 @@ void *ATL_threadpool(void *vp)
             else
                ATL_cond_wait(pp->wconds[rank-p4_2, tpmut]);
          #else
-            ATL_cond_wait(pp->wcond, tpmut)
+            ATL_cond_wait(pp->wcond, tpmut);
          #endif
       }  /* end sleep loop */
       jobID = pp->jobID;
@@ -15212,14 +15127,9 @@ void *ATL_threadpool_launch(void *vp)
          ATL_setmyaffinity(tp->affID);
       }
    #endif
-   for (i=1; i < P; i++)
-   {
-      ATL_thread_start(tp+i, i, 0, ATL_threadpool, tp+i);
-   }
-/*
- * Thread 0 now participates in pool
- */
+
    ATL_threadpool(tp);
+@beginskip
 /*
  * When pool finished, await everyone to quit, then free the pool
  */
@@ -15233,6 +15143,7 @@ void *ATL_threadpool_launch(void *vp)
       ATL_FreeThreadPool(ATL_TP1_PTR);
       ATL_TP1_PTR = NULL;
    }
+@endskip
 }
 /*
  * This function is called only by one thread, and is unsafe if called
@@ -15242,6 +15153,7 @@ void *ATL_threadpool_launch(void *vp)
 void ATL_InitThreadPoolStartup(int P, void *pd, void *extra)
 {
    ATL_tpool_t *pp;
+   int i;
 
    ATL_assert(!ATL_TP_PTR);
 
@@ -15257,14 +15169,122 @@ void ATL_InitThreadPoolStartup(int P, void *pd, void *extra)
       ATL_TPF_SET_MICSORTED(pp);
    #endif
 
-   ATL_thread_start(pp->threads, 0, 0, ATL_threadpool_launch, pp->threads);
+   for (i=1; i < P; i++)
+   {
+      ATL_thread_start(pp->threads+i, i, 0, ATL_threadpool_launch, 
+                       pp->threads+i);
+   }
 /*
  * We leave function still holding the lock, so that master can go to sleep
  * awaiting job completion before spawned threads are able to complete
- * and thus mess up timing; ATL_TP_FULLPOLL never gets the lock.
+ * and thus mess up timing; ATL_TP_FULLPOLL never gets the lock, and will
+ * have to call dojob() manually after allowing threads to proceed 
  */
 }
 
+#ifdef ATL_TP_FULLPOLL
+/*
+ * This version uses cache to communicate with polling cores.
+ */
+void ATL_goParallel
+(
+   const unsigned int P0,  /* # of worker threads to use on job */
+   void *DoWork,           /* ptr to function doing the job */
+   void *DoComb,           /* ptr to func doing combine; NULL: don't combine */
+   void *PD,               /* ptr to problem definition (work queue, etc) */
+   void *extra             /* extra ptr that is passed to DoWork/DoComb */
+)
+{
+   ATL_tpool_t *pp;
+   int i, n, *ip;
+   int JUST_STARTED=0;
+   unsigned int P;
+/*
+ * Don't wakeup/create threads if being called for serial execution: just
+ * do work on master process to save overhead & ease debugging
+ */
+   if (P0 < 2)
+
+   {
+      if (!ATL_TP_PTR)
+         ATL_TP1_PTR = ATL_NewThreadPool(1, 0, NULL);
+      pp = ATL_TP1_PTR;
+      pp->nworkers = 1;
+      pp->PD = PD;
+      pp->extra = extra;
+      pp->jobf = DoWork;
+      pp->combf = DoComb;
+      pp->jobf(pp, 0, 0);
+      return;
+   }
+/*
+ * If thread pool not currently active, must spawn it.
+ */
+   if (!ATL_TP_PTR)
+   {
+      if (ATL_IsFirstThreadedCall())
+      {
+         JUST_STARTED = 1;
+         ATL_setmyaffinity(0);
+         ATL_InitThreadPoolStartup(Mmin(P0,ATL_NTHREADS), PD, extra);
+      }
+   }
+   pp = ATL_TP_PTR;
+   P = Mmin(P0, pp->nthr);
+   pp->PD = PD;
+   pp->extra = extra;
+   pp->jobf = DoWork;
+   pp->combf = DoComb;
+   pp->nworkers = P;
+/*
+ * If I'm doing a combine, setup combine bitvectors based on nworkers
+ */
+   if (DoComb)
+   {
+      ATL_UnsetAllBitsBV(pp->combReadyBV);
+      if (P == pp->nthr)
+         ATL_UnsetAllBitsBV(pp->combDoneBV);
+      else if (P >= pp->nthr - P) /* participating threads outnumber idle */
+      {
+         int i;
+         ATL_UnsetAllBitsBV(pp->combDoneBV);
+         for (i=P; i < pp->nthr; i++)
+            ATL_SetBitBV(pp->combDoneBV, i);
+      }
+      else /* idle threads outnumber participating */
+      {
+         int i;
+         ATL_SetAllBitsBV(pp->combDoneBV);
+         for (i=0; i < P; i++)
+            ATL_UnsetBitBV(pp->combDoneBV, i);
+      }
+   }
+/*
+ * Tell workers to start working
+ */
+   for (i=1; i < P; i++)
+   {
+/*
+ *    Wait for thread to get into busy-loop
+ */
+      while (pp->chkin[i] != 3)
+         ATL_thread_yield();
+/*
+ *    Tell ready thread to start working
+ */
+      pp->chkin[i] = 1;
+   }
+   ATL_tpool_dojob(pp, 0, 0);
+/*
+ * Wait for all threads to complete
+ */
+   for (i=1; i < P; i++)
+   {
+      while (pp->chkin[i] != 3)
+         ATL_thread_yield();
+   }
+}
+#else
 /*
  * Main way parallel jobs are spawned to workpool
  */
@@ -15425,6 +15445,7 @@ void ATL_goParallel
    #endif
    ATL_mutex_unlock(pp->tpmut);
 }
+#endif
 
 ATL_tpool_t *ATL_NewThreadPool
 (
@@ -15436,7 +15457,6 @@ ATL_tpool_t *ATL_NewThreadPool
    ATL_tpool_t *pp;
    pp = calloc(1, sizeof(ATL_tpool_t));
    ATL_assert(pp);
-   pp->jobID = 0;
    if (P)
    {
       int i;
@@ -15455,7 +15475,10 @@ ATL_tpool_t *ATL_NewThreadPool
    }
    #ifdef ATL_TP_FULLPOLL
       pp->chkin = calloc(P, sizeof(short));
-      pp->wdone = pp->wready = 0;
+   #else
+      pp->jobID = 0;
+      pp->mcond = ATL_cond_init();
+      pp->wcond = ATL_cond_init();
    #endif
    if (ICOM)
    {
@@ -15464,8 +15487,6 @@ ATL_tpool_t *ATL_NewThreadPool
    }
    pp->combmut = ATL_mutex_init();
    pp->tpmut = ATL_mutex_init();
-   pp->mcond = ATL_cond_init();
-   pp->wcond = ATL_cond_init();
    #ifdef ATL_PHI_SORTED
       pp->wcond2 = ATL_cond_init();
       pp->wcond3 = ATL_cond_init();
@@ -15498,10 +15519,14 @@ void ATL_FreeThreadPool(ATL_tpool_t *pp)
       ATL_mutex_free(pp->combmut);
    if (pp->tpmut)
       ATL_mutex_free(pp->tpmut);
+   #ifdef ATL_TP_FULLPOLL
+      free(pp->chkin);
+   #else
    if (pp->mcond)
       ATL_cond_free(pp->mcond);
    if (pp->wcond)
       ATL_cond_free(pp->wcond);
+   #endif
    #if defined(ATL_PHI_SORTED)
       if (pp->mcond2)
          ATL_cond_free(pp->mcond2);
