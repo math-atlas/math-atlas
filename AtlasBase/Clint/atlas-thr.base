@@ -14527,7 +14527,39 @@ static void ATL_leftcomb(ATL_tpool_t *pp, const int rank, const int vrank)
    while(1);   /* end combine loop */
 }
 
-#ifndef ATL_TP_FULLPOLL
+#ifdef ATL_OMP_THREADS
+/*
+ * Do a task using thread pool pp; RETURNS: virtual rank (0...nworkers-1)
+ */
+int ATL_tpool_dojob
+(
+   ATL_tpool_t *pp,    /* thread pool to use */
+   const int rank,     /* actual rank, my tp found at pp->threads+rank */
+   const int CFWTHR    /* unused in OpenMP version */
+)
+{
+/*
+ * Do work based on PD
+ */
+   pp->jobf(pp, rank, rank);     /* do the required task */
+/*
+ * If the calling routine has requested it, perform dynamic combine
+ */
+   if (pp->combf)
+   {
+/*
+ *    Do combine using virtial ranks stored in pp->icomm
+ */
+      if (ATL_TPF_DYNCOMB(pp))
+         ATL_dyncomb(pp, rank, rank);
+      else
+         ATL_leftcomb(pp, rank, rank);
+   }     /* end combine if */
+
+   return(vrank);
+}
+
+#elif !defined(ATL_TP_FULLPOLL)
 /*
  * Do a task using thread pool pp; RETURNS: virtual rank (0...nworkers-1)
  */
@@ -15159,7 +15191,7 @@ void ATL_InitThreadPoolStartup(int P, void *pd, void *extra)
 
 
    ATL_TP_PTR = pp = ATL_NewThreadPool(ATL_NTHREADS, 1, pd);
-   #ifndef ATL_TP_FULLPOLL
+   #if !defined(ATL_TP_FULLPOLL) && !defined(ATL_OMP_THREADS)
    ATL_mutex_lock(pp->tpmut);
    #endif
    pp->nworkers = P;
@@ -15169,11 +15201,13 @@ void ATL_InitThreadPoolStartup(int P, void *pd, void *extra)
       ATL_TPF_SET_MICSORTED(pp);
    #endif
 
+   #ifdef (ATL_TP_FULLPOLL)
    for (i=1; i < P; i++)
    {
       ATL_thread_start(pp->threads+i, i, 0, ATL_threadpool_launch, 
                        pp->threads+i);
    }
+   #endif
 /*
  * We leave function still holding the lock, so that master can go to sleep
  * awaiting job completion before spawned threads are able to complete
@@ -15182,7 +15216,7 @@ void ATL_InitThreadPoolStartup(int P, void *pd, void *extra)
  */
 }
 
-#ifdef ATL_TP_FULLPOLL
+#if defined(ATL_TP_FULLPOLL) || defined(ATL_OMP_THREADS)
 /*
  * This version uses cache to communicate with polling cores.
  */
@@ -15259,6 +15293,22 @@ void ATL_goParallel
             ATL_UnsetBitBV(pp->combDoneBV, i);
       }
    }
+#ifdef ATL_OMP_THREADS
+   omp_set_num_threads(P);
+   #pragma omp parallel
+   {
+      int r;
+      ATL_assert(omp_get_num_threads() == P);
+      r = omp_get_thread_num();
+      pp->threads[r].rank = r;
+      pp->threads[r].P = P;
+      #ifdef ATL_PAFF_SELF
+         if (JUST_STARTED)
+            ATL_setmyaffinity(r);
+      #endif
+      ATL_tpool_dojob(pp, r, 0);
+   }
+#else
 /*
  * Tell workers to start working
  */
@@ -15283,6 +15333,7 @@ void ATL_goParallel
       while (pp->chkin[i] != 3)
          ATL_thread_yield();
    }
+#endif
 }
 #else
 /*
@@ -15469,7 +15520,7 @@ ATL_tpool_t *ATL_NewThreadPool
       {
          pp->threads[i].rank = i;
          pp->threads[i].P = P;
-         pp->threads[i].affID = -1;
+         pp->threads[i].affID = -i-1;
          pp->threads[i].vp = vp;
       }
    }
