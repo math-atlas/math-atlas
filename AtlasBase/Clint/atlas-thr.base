@@ -87,6 +87,7 @@ int Mjoin(PATL,tGetTrsmInfo)(ATL_ttrsm_amm_t *pd, int P, enum ATLAS_TRANS TA,
 #ifndef ATLAS_THREADS_H
    #define ATLAS_THREADS_H
 #include "atlas_ttypes.h"
+#include "atlas_taffinity.h"
 /*
  * Unless told otherwise, use the polling threadpool.  This makes parallel
  * operations faster, but may slow down serial operations due to polling on
@@ -165,9 +166,6 @@ int Mjoin(PATL,tGetTrsmInfo)(ATL_ttrsm_amm_t *pd, int P, enum ATLAS_TRANS TA,
    } ATL_thread_t;
 #else
    #define ATL_USE_POSIXTHREADS 1
-   #ifndef ATL_USE_THREADPOOL
-      #define ATL_USE_THREADPOOL 1 /* by default pthreads uses thread pool*/
-   #endif
    #include <pthread.h>
    typedef struct
    {
@@ -202,7 +200,6 @@ struct ATL_LaunchStruct
  * The following info is all for when a thread pool is being used, rather
  * than launch & join paradigm.
  */
-#ifdef ATL_USE_THREADPOOL
 @iexp ib 0 1 +
 /*
  * Thread pool flag macros
@@ -215,7 +212,9 @@ struct ATL_LaunchStruct
 @endwhile
 
 #define VUINT volatile unsigned int
-#define ATL_TP_FULLPOLL 1
+#if defined(ATL_HAS_AFFINITY) && ATL_HAS_AFFINITY && !defined(ATL_OMP_THREADS)
+   #define ATL_TP_FULLPOLL 1
+#endif
 /*
  * Function pointer taking the pool as an argument that does the work.
  */
@@ -260,6 +259,33 @@ struct ATL_ThreadPool
    void *PD;              /* problem def to give to jobf & combf */
    void *extra;           /* extra info for jobf & combf */
 };
+#elif defined(ATL_OMP_THREADS)
+struct ATL_ThreadPool
+{
+   VUINT nthr;            /* # of threads total in this thread pool */
+   VUINT pflag;           /* bitvector of options */
+   VUINT nworkers;        /* # of thr supposed to wake up and work */
+   #ifdef ATL_PHI_SORTED
+      VUINT ncores, cntxts, nwcores;
+   #endif
+   volatile int *icomm;   /* nthr-long integer communication array */
+   ATL_thread_t *threads; /* array of thread ptrs */
+/*
+ * Variables below set only when doing a combine, and protected by tpmut
+ * (which need only be set when doing a combine)
+ */
+   void *combmut;         /* mutex for doing optional combine op */
+   int *combReadyBV;      /* 1: thr of that rank is ready to do combine */
+   int *combDoneBV;       /* 1: thr of that rank's data already combined */
+   void *tpmut;           /* mutex protecting above pool info */
+/*
+ * variables below here manipulated only when threads known to be polling
+ */
+   ATL_tpjfunc_t jobf;    /* ptr to job function to execute */
+   ATL_tpjcomb_t combf;   /* NULL: don't combine, else combine func */
+   void *PD;              /* problem def to give to jobf & combf */
+   void *extra;           /* extra info for jobf & combf */
+};
 #else
 struct ATL_ThreadPool
 {
@@ -280,8 +306,8 @@ struct ATL_ThreadPool
    #elif defined(ATL_PHI_SORTED2)
       int ncntxts;
       void **wconds;
-      void *mcond;           /* cond for master process sleep/wake */
    #endif
+   void *mcond;           /* cond for master process sleep/wake */
    ATL_thread_t *threads; /* array of thread ptrs */
    volatile int *icomm;   /* nthr-long integer communication array */
    void *combmut;         /* mutex for doing optional combine op */
@@ -301,26 +327,25 @@ struct ATL_ThreadPool
 /*
  * Declare the beautiful global variables used by thread pool
  */
-   #ifdef ATL_TP_DECL
-      double ATL_POLLTIME=0.01;  /* poll for 10 millisecond */
-      ATL_tpool_t *ATL_TP_PTR=NULL, *ATL_TP1_PTR=NULL;
-   #else
-      extern double ATL_POLLTIME;
-      extern ATL_tpool_t *ATL_TP_PTR, *ATL_TP1_PTR;
-   #endif
-   void *ATL_threadpool(void *tp);
-   void *ATL_threadpool_launch(void *tp);
-   void ATL_InitThreadPoolStartup(int P, void *pd, void *extra);
-   void ATL_goParallel (const unsigned int P, void *DoWork, void *DoComb,
-                        void *PD, void *extra);
-   ATL_tpool_t *ATL_NewThreadPool(const int P, int ICOM, void *vp);
-   void ATL_FreeThreadPool(ATL_tpool_t *pp);
-   void ATL_oldjobwrap(void *vpp, int rank, int vrank);
-   void ATL_oldcombwrap(void *vpp, int rank, int vrank, int vhisrank);
-   int ATL_tpool_dojob(ATL_tpool_t *pp, const int rank, const int CallFrWrk);
-   void *ATL_threadpool(void *vp);
-   #undef VUINT
-#endif  /* end #ifdef ATL_USE_THREADPOOL */
+#ifdef ATL_TP_DECL
+   double ATL_POLLTIME=0.01;  /* poll for 10 millisecond */
+   ATL_tpool_t *ATL_TP_PTR=NULL, *ATL_TP1_PTR=NULL;
+#else
+   extern double ATL_POLLTIME;
+   extern ATL_tpool_t *ATL_TP_PTR, *ATL_TP1_PTR;
+#endif
+void *ATL_threadpool(void *tp);
+void *ATL_threadpool_launch(void *tp);
+void ATL_InitThreadPoolStartup(int P, void *pd, void *extra);
+void ATL_goParallel (const unsigned int P, void *DoWork, void *DoComb,
+                     void *PD, void *extra);
+ATL_tpool_t *ATL_NewThreadPool(const int P, int ICOM, void *vp);
+void ATL_FreeThreadPool(ATL_tpool_t *pp);
+void ATL_oldjobwrap(void *vpp, int rank, int vrank);
+void ATL_oldcombwrap(void *vpp, int rank, int vrank, int vhisrank);
+int ATL_tpool_dojob(ATL_tpool_t *pp, const int rank, const int CallFrWrk);
+void *ATL_threadpool(void *vp);
+#undef VUINT
 int ATL_setmyaffinity(const int); /* sets affinity of already-running thread */
 /* Sets up ATL_LAUNCHSTRUCT_t var and ATL_thread_t array & starts threads*/
 void ATL_thread_launch(void *opstruct, int opstructstride, void *OpStructIsInit,
@@ -373,13 +398,11 @@ void ATL_thread_yield(void);      /* gives up time slice */
  * Condition variables only used for thread pool, not implemented yet on
  * anything but pthreads (Windows & OpenMP missing)
  */
-#if ATL_USE_THREADPOOL
-   void *ATL_cond_init(void);
-   void ATL_cond_free(void *vp);
-   void ATL_cond_signal(void *cond);
-   void ATL_cond_bcast(void *cond);
-   void ATL_cond_wait(void *cond, void *mut);
-#endif
+void *ATL_cond_init(void);
+void ATL_cond_free(void *vp);
+void ATL_cond_signal(void *cond);
+void ATL_cond_bcast(void *cond);
+void ATL_cond_wait(void *cond, void *mut);
 
 #define MindxT(A_,i_) ((void*)( ((char*)(A_)) + ((size_t)i_) ))
 #define ATL_tlaunch ATL_log2tlaunch   /* may want linear launch later */
@@ -1383,42 +1406,67 @@ void ATL_thread_yield(void)
 @ROUT ATL_cond_init ATL_cond_free ATL_cond_signal ATL_cond_bcast ATL_cond_wait
 #include "atlas_misc.h"
 #include "atlas_threads.h"
-#if ATL_USE_THREADPOOL
-   #if defined(ATL_WINTHREADS) || defined(ATL_OMP_THREADS)
-      #error "Thread pool stuff not yet written for non-pthreads!"
-   #endif
+/*
+ * condition variable funcs are used in some threadpool implementations, but
+ * parallel section sync handles this for OpenMP,
+ * On Windows we do not presently support (must use locks or FULLPOLL),
+ * so simply issue runtime assert(0) for these implementations so we can
+ * find bad calls on Windows or OpenMP.
+ */
+#if defined(ATL_OMP_THREADS) || defined(ATL_WINTHREADS)
+   #define ATL_DIE 1
+#endif
 @ROUT ATL_cond_init
 void *ATL_cond_init(void)
 {
-   void *vp;
-   vp = malloc(sizeof(pthread_cond_t));
-   ATL_assert(vp);
-   ATL_assert(!pthread_cond_init(vp, NULL));
-   return(vp);
+   #ifdef ATL_DIE
+      ATL_assert(0);
+      return(NULL);
+   #else
+      void *vp;
+      vp = malloc(sizeof(pthread_cond_t));
+      ATL_assert(vp);
+      ATL_assert(!pthread_cond_init(vp, NULL));
+      return(vp);
+   #endif
 }
 @ROUT ATL_cond_free
 void ATL_cond_free(void *vp)
 {
-   ATL_assert(!pthread_cond_destroy(vp));
-   free(vp);
+   #ifdef ATL_DIE
+      ATL_assert(0);
+   #else
+      ATL_assert(!pthread_cond_destroy(vp));
+      free(vp);
+   #endif
 }
 @ROUT ATL_cond_bcast
 void ATL_cond_bcast(void *cond)
 {
-   ATL_assert(!pthread_cond_broadcast(cond));
+   #ifdef ATL_DIE
+      ATL_assert(0);
+   #else
+      ATL_assert(!pthread_cond_broadcast(cond));
+   #endif
 }
 @ROUT ATL_cond_signal
 void ATL_cond_signal(void *cond)
 {
-   ATL_assert(!pthread_cond_signal(cond));
+   #ifdef ATL_DIE
+      ATL_assert(0);
+   #else
+      ATL_assert(!pthread_cond_signal(cond));
+   #endif
 }
 @ROUT ATL_cond_wait
 void ATL_cond_wait(void *cond, void *mut)
 {
-   ATL_assert(!pthread_cond_wait(cond, mut));
+   #ifdef ATL_DIE
+      ATL_assert(0);
+   #else
+      ATL_assert(!pthread_cond_wait(cond, mut));
+   #endif
 }
-@ROUT ATL_cond_init ATL_cond_free ATL_cond_signal ATL_cond_bcast ATL_cond_wait
-#endif
 @ROUT ATL_mutex_init
 #include "atlas_misc.h"
 #include "atlas_threads.h"
@@ -1730,15 +1778,17 @@ int ATL_@(op)GlobalAtomicCount(void *vp, int rank)
 }
 @ROUT ATL_IsFirstThreadedCall
 #include "atlas_threads.h"
+#ifdef ATL_OMP_THREADS
+   #include "atlas_misc.h"
+#endif
 /*
  * A kludge for initializing thread pool related stuff on first call
  * in portable fashion.  
  * OpenMP just uses the OpenMP thread pool, so should not call here.
  * pthreads uses standard initializer.
  * Otherwise, I assume Windows, where DecAtomicCtr should work.
+ * Note that this assumption is wrong for Windows on ARM (god help us).
  */
-#ifdef ATL_USE_THREADPOOL
-
 #if ATL_USE_POSIXTHREADS
    static pthread_mutex_t initlock=PTHREAD_MUTEX_INITIALIZER;
    static int atlinit=1;
@@ -1750,9 +1800,7 @@ int ATL_@(op)GlobalAtomicCount(void *vp, int rank)
 int ATL_IsFirstThreadedCall(void)
 {
 #ifdef ATL_OMP_THREADS
-   fprintf(stderr, "%s: OpenMP should never call this, ATLAS dying!\n", 
-   __FILE__);
-   ATL_assert(0);
+   ATL_assert(0);  /* OpenMP should never call this! */
 #elif ATL_USE_POSIXTHREADS
    int iret;
    pthread_mutex_lock(&initlock);
@@ -1777,7 +1825,6 @@ void ATL_ResetThreadPoolInit(void)
    ATL_ResetAtomicCount((void*)ilck, 1);
 #endif
 }
-#endif
 @ROUT ATL_FreeAtomicCount_mut
 #include <stdlib.h>
 #ifdef ATL_OMP_THREADS
@@ -2142,7 +2189,9 @@ ATL_thread_t *ATL_launch_threads(int P, void *vp)
    return(tp);
 }
 @ROUT ATL_thread_start
+#ifndef ATL_NOAFFINITY
 #include "atlas_taffinity.h"
+#endif
 #ifdef ATL_WINTHREADS
    #include <windows.h>
 #endif
@@ -2534,7 +2583,7 @@ int ATL_setmyaffinity(const int rank)
 #endif
    return(0);
 }
-@ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch ATL_goparallel
+@ROUT ATL_log2tlaunch ATL_lin0tlaunch ATL_dyntlaunch
 void *ATL_tDoWorkWrap(void *vp)
 {
    ATL_thread_t *tp = vp;
@@ -2881,6 +2930,7 @@ void *ATL_log2tlaunch(void *vp)
    return(NULL);
 }
 @ROUT ATL_goparallel
+@beginskip
 #if defined(ATL_TUNING) && defined(ATL_NOAFFINITY)
    void *ATL_log2tlaunch_noaff(void *vp);
    #define ATL_goparallel ATL_goparallel_noaff
@@ -2904,6 +2954,7 @@ void *ATL_log2tlaunch(void *vp)
 #else
    #define ATL_USE_DYNAMIC 1
 #endif
+@endskip
 void ATL_goparallel
 /*
  * This function is used when you pass a single opstruct to all threads;  
@@ -2941,6 +2992,7 @@ void ATL_goparallel
    ls.DoWork = DoWork;
    ls.DoComb = DoComb;
    ls.opstruct = opstruct;
+@beginskip
 #ifdef ATL_OMP_THREADS
    tp = malloc(sizeof(ATL_thread_t)*P);
    ATL_assert(tp);
@@ -2975,90 +3027,12 @@ void ATL_goparallel
  * If using threadpool, use invoke the newer goParallel with old-skool wrappers
  */
 #elif ATL_USE_THREADPOOL
+@endskip
    if (DoComb)
       ATL_goParallel(P, ATL_oldjobwrap, ATL_oldcombwrap, &ls, NULL);
    else
       ATL_goParallel(P, ATL_oldjobwrap, NULL, &ls, NULL);
 @beginskip
-   ATL_tpool_t *pp;
-   int n, *ip;
-   int JUST_STARTED=0;
-/*
- * If thread pool not currently active, must spawn it. 
- */
-   if (!ATL_TP_PTR)
-   {
-      if (ATL_IsFirstThreadedCall())
-      {
-         JUST_STARTED = 1;
-         ATL_InitThreadPoolStartup(P, void *pd, void *extra)
-      }
-   }
-   pp = ATL_TP_PTR;
-   if (!JUST_STARTED)
-   {
-/*
- *    Tell the threads the job is in this launchstruct, wake them up
- */
-      ATL_mutex_lock(ATL_TP_MUT);
-      ATL_mutex_lock(pp->tpmut);
-      tp = pp->threads;
-      pp->PD = &ls;
-      pp->jobf = ATL_oldjobwrap;
-      if (DoComb)
-      {
-         pp->combf = ATL_oldcombwrap;
-         ATL_UnsetAllBitsBV(pp->combReadyBV);
-         ATL_UnsetAllBitsBV(pp->combDoneBV);
-      }
-      pp->nworkers = P;
-      pp->nwdone = pp->wcnt = 0;
-      pp->WORKDONE = pp->NOWORK = 0;
-      #ifdef DEBUG
-        fprintf(stderr, "MASTER WAKES WORKERS\n");
-      #endif
-      #ifdef ATL_TP_FORCEBCAST
-         #if (ATL_TP_FORCEBCAST)
-            ATL_TPF_UNSET_ZEROWAKES(pp);
-         #else
-            ATL_TPF_SET_ZEROWAKES(pp);
-         #endif
-      #else
-         if (P == pp->nthr)
-            ATL_TPF_UNSET_ZEROWAKES(pp);
-         else
-            ATL_TPF_SET_ZEROWAKES(pp);
-      #endif
-   
-      if (ATL_TPF_ZEROWAKES(pp))
-         ATL_cond_signal(ATL_TP_WCOND);
-      else
-         ATL_cond_bcast(ATL_TP_WCOND);
-   }
-/*
- * Threads have started, so this routine awaits completion of task
- */
-   do
-   {
-      ATL_mutex_unlock(pp->tpmut);   /* allow threads to mess wt tpool */
-      ATL_cond_wait(ATL_TP_MCOND, ATL_TP_MUT);
-      ATL_mutex_lock(pp->tpmut);   /* allow threads to mess wt tpool */
-   }
-   while (!pp->WORKDONE);
-   pp->nworkers = 0;     /* make sure spurious wakeup will go back to sleep */
-   ATL_mutex_unlock(pp->tpmut);
-   ATL_mutex_unlock(ATL_TP_MUT);
-/*
- * For first launch, it is critical that we ensure all threads have started
- * before returning, to avoid threads awake when they shouldn't be
- */
-   if (JUST_STARTED)
-   {
-      while(pp->nthr != ATL_NTHREADS)
-         ATL_thread_yield();
-   }
-   
-@endskip
 /*
  * Otherwise, I'm using explicit launch & join paradigm of some type
  */
@@ -3096,6 +3070,7 @@ void ATL_goparallel
    #endif
    free(vp);
 #endif
+@endskip
 }
 @ROUT ATL_goparallel_prank
 #include "atlas_misc.h"
@@ -7599,6 +7574,13 @@ typedef struct
 #ifndef ATLAS_PCA_H
    #define ATLAS_PCA_H
 /*
+ * OpenMP provides horrible performance in general, but it is worse than serial
+ * for PCA panel factorizations, so turn it off if the user has demanded OpenMP
+ */
+#ifdef ATL_OMP_THREADS
+/*      #define ATL_USEPCA 1 */
+
+/*
  * PowerPCs, POWERs and ARMs are weakly ordered, meaning that a given
  * processor's writes  may appear out-of-order to other processors, 
  * which breaks PCA's syncs since PCA depends on in-order writes.
@@ -7617,7 +7599,7 @@ typedef struct
  * PowerPC and ARM syncs do not fix problem, so don't allow PCA on machines
  * with out-of-order write schemes.
  */
-#if defined(ATL_ARCH_PPCG4) || defined(ATL_ARCH_PPCG5)
+#elif defined(ATL_ARCH_PPCG4) || defined(ATL_ARCH_PPCG5)
    #ifdef __GNUC__
       #define ATL_membarrier __asm__ __volatile__ ("sync")
 /*      #define ATL_USEPCA 1 */
@@ -14308,7 +14290,6 @@ void Mjoin(PATL,tsyrk_amm)
 #include "atlas_threads.h"
 #include "atlas_misc.h"
 #include "atlas_bitvec.h"
-#ifdef ATL_USE_THREADPOOL
 /*
  * These are wrapperf for original codes, which expect to get a launchstruct
  * as the problem definition, and DoWork expects to get a pointer to my entry
@@ -14556,9 +14537,13 @@ int ATL_tpool_dojob
          ATL_leftcomb(pp, rank, rank);
    }     /* end combine if */
 
-   return(vrank);
+   return(rank);
 }
 
+void *ATL_threadpool(void *vp)
+{
+   ATL_assert(0);
+}
 #elif !defined(ATL_TP_FULLPOLL)
 /*
  * Do a task using thread pool pp; RETURNS: virtual rank (0...nworkers-1)
@@ -14720,7 +14705,7 @@ int ATL_tpool_dojob
 }
 #endif
 
-#ifdef ATL_TP_FULLPOLL
+#if defined(ATL_TP_FULLPOLL) && !defined(ATL_OMP_THREADS)
 /*
  * Do a task using thread pool pp; RETURNS: virtual rank (0...ncores*4-1)
  */
@@ -14864,7 +14849,7 @@ void *ATL_threadpool(void *vp)
    #endif
    return(NULL);
 }
-#elif defined(ATL_POLLTPOOL)
+#elif defined(ATL_POLLTPOOL) && !defined(ATL_OMP_THREADS)
 /*
  * In this version of threadpool, worker threads restart master process once
  * job is done, but threads may still be awake and polling for work.  Since
@@ -15016,7 +15001,7 @@ void *ATL_threadpool(void *vp)
    #endif
    return(NULL);
 }
-#else
+#elif !defined(ATL_OMP_THREADS)
 /*
  * In this version of threadpool, all worker threads go to sleep before
  * control is returned to the master process
@@ -15131,7 +15116,6 @@ void *ATL_threadpool(void *vp)
    return(NULL);
 }
 #endif
-#endif
 @ROUT ATL_threadpool_misc
 #define ATL_TP_DECL 1
 #include "atlas_taffinity.h"
@@ -15158,6 +15142,11 @@ void *ATL_threadpool_launch(void *vp)
          tp->affID = 1 - tp->affID;
          ATL_setmyaffinity(tp->affID);
       }
+   #endif
+   #ifndef ATL_TP_FULLPOLL
+   if (!tp->rank)
+      for (i=1; i < P; i++)
+         ATL_thread_start(tp+i, i, 0, ATL_threadpool_launch, tp+i);
    #endif
 
    ATL_threadpool(tp);
@@ -15192,7 +15181,7 @@ void ATL_InitThreadPoolStartup(int P, void *pd, void *extra)
 
    ATL_TP_PTR = pp = ATL_NewThreadPool(ATL_NTHREADS, 1, pd);
    #if !defined(ATL_TP_FULLPOLL) && !defined(ATL_OMP_THREADS)
-   ATL_mutex_lock(pp->tpmut);
+      ATL_mutex_lock(pp->tpmut);
    #endif
    pp->nworkers = P;
    pp->PD = pd;
@@ -15201,12 +15190,16 @@ void ATL_InitThreadPoolStartup(int P, void *pd, void *extra)
       ATL_TPF_SET_MICSORTED(pp);
    #endif
 
-   #ifdef ATL_TP_FULLPOLL
-   for (i=1; i < P; i++)
-   {
-      ATL_thread_start(pp->threads+i, i, 0, ATL_threadpool_launch, 
-                       pp->threads+i);
-   }
+   #ifndef ATL_OMP_THREADS
+      #ifdef ATL_TP_FULLPOLL
+      for (i=1; i < P; i++)
+      {
+         ATL_thread_start(pp->threads+i, i, 0, ATL_threadpool_launch, 
+                          pp->threads+i);
+      }
+      #else
+         ATL_thread_start(pp->threads, i, 0, ATL_threadpool_launch,pp->threads);
+      #endif
    #endif
 /*
  * We leave function still holding the lock, so that master can go to sleep
@@ -15256,7 +15249,11 @@ void ATL_goParallel
  */
    if (!ATL_TP_PTR)
    {
+      #ifdef ATL_OMP_THREADS
+      #pragma omp single
+      #else
       if (ATL_IsFirstThreadedCall())
+      #endif
       {
          JUST_STARTED = 1;
          ATL_setmyaffinity(0);
@@ -15375,7 +15372,11 @@ void ATL_goParallel
  */
    if (!ATL_TP_PTR)
    {
+      #ifdef ATL_OMP_THREADS
+      #pragma omp single
+      #else
       if (ATL_IsFirstThreadedCall())
+      #endif
       {
          JUST_STARTED = 1;
          ATL_InitThreadPoolStartup(Mmin(P0,ATL_NTHREADS), PD, extra);
@@ -15526,7 +15527,7 @@ ATL_tpool_t *ATL_NewThreadPool
    }
    #ifdef ATL_TP_FULLPOLL
       pp->chkin = calloc(P, sizeof(short));
-   #else
+   #elif !defined(ATL_OMP_THREADS) && !defined(ATL_WINTHREADS)
       pp->jobID = 0;
       pp->mcond = ATL_cond_init();
       pp->wcond = ATL_cond_init();
@@ -15572,7 +15573,7 @@ void ATL_FreeThreadPool(ATL_tpool_t *pp)
       ATL_mutex_free(pp->tpmut);
    #ifdef ATL_TP_FULLPOLL
       free(pp->chkin);
-   #else
+   #elif !defined(ATL_OMP_THREADS) && !defined(ATL_WINTHREADS)
    if (pp->mcond)
       ATL_cond_free(pp->mcond);
    if (pp->wcond)
