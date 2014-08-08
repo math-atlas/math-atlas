@@ -399,14 +399,14 @@ int main(int nargs, char **args)
    }
    exit(0);
 }
-@ROUT negflt getcols stattime atl2tvec
+@ROUT negflt getcols stattime atl2tvec atlcat2tvec
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <string.h>
 #include <assert.h>
 
-@ROUT atl2tvec stattime `static char *SEPSTR = ",";`
+@ROUT atlcat2tvec atl2tvec stattime `static char *SEPSTR = ",";`
 typedef struct wOrDs WORDS;
 struct wOrDs
 {
@@ -529,7 +529,7 @@ int WordIsFloat(char *wrd)
    return ( (GotDot == 1) && (GotDigit) && (GotExp==1 || GotExp==0) );
 }
 
-@ROUT atl2tvec
+@ROUT atl2tvec atlcat2tvec
 int WordIsInt(char *wrd)
 /*
  * Returns 0 if wrd is not a valid integer.
@@ -542,7 +542,7 @@ int WordIsInt(char *wrd)
          return(0);
    return(1);
 }
-@ROUT stattime atl2tvec
+@ROUT stattime atl2tvec atlcat2tvec
 void UpCaseWords(WORDS *wb)
 {
    int i;
@@ -819,7 +819,7 @@ int main(int nargs, char **args)
    free(cols);
    exit(0);
 }
-@ROUT stattime atl2tvec
+@ROUT stattime atl2tvec atlcat2tvec
 typedef struct wOrDQ WORDQ;
 struct wOrDQ
 {
@@ -897,6 +897,10 @@ WORDQ *GetWordQTrans(WORDQ *wqN)
    return(wqT);
 }
 
+@ROUT atlcat2tvec
+static char *ESUFF=NULL;
+static int ENREP=0;
+@ROUT stattime atl2tvec atlcat2tvec
 WORDQ *ReadTimerFile(FILE* fpin)
 /*
  * This routine scans an ATLAS timer output file and returns a queue of
@@ -929,6 +933,25 @@ WORDQ *ReadTimerFile(FILE* fpin)
    ln = ln0;
    while (fgets(ln, 1024, fpin))
    {
+@ROUT atlcat2tvec
+      if (!strncmp(ln, "*** END LABEL=", 14))
+      {
+         char *sp;
+         sp = strstr(ln+14, " NREP=");
+         if (sp)
+         {
+            int i, j;
+            for (i=14; !isspace(ln[i]); i++);
+            ESUFF = malloc((i-13)*sizeof(char));
+            assert(ESUFF);
+            for (j=14; j < i; j++)
+               ESUFF[j-14] = ln[j];
+            ESUFF[i-14] = '\0';
+            assert(sscanf(sp+6, "%d", &ENREP) == 1);
+            return(wbase);
+         }
+      }
+@ROUT stattime atl2tvec atlcat2tvec
       wrds = GetWords(ln);
       if (wrds)
       {
@@ -936,6 +959,10 @@ WORDQ *ReadTimerFile(FILE* fpin)
          wq = wq->next;
       }
    }
+@ROUT atlcat2tvec
+   ESUFF = NULL;
+   ENREP = 0;
+@ROUT stattime atl2tvec atlcat2tvec
    return(wbase);
 }
 
@@ -1407,14 +1434,16 @@ FILE *OpenOutputFile(char *file)
    return(fp);
 }
 
-@ROUT atl2tvec
+@ROUT atl2tvec atlcat2tvec
 void PrintUsage(char *name, char *arg, int i)
 {
    if (i > 0)
       fprintf(stderr, "BAD ARG '%s' ON %dth FLAG\n", arg, i);
    fprintf(stderr, "USAGE: %s <flags> ; flags include:\n", name);
+@ROUT atl2tvec
    fprintf(stderr, 
            "   -# : # of reps of each timing consecutive output\n");
+@ROUT atl2tvec atlcat2tvec
    fprintf(stderr, 
            "   -i <file> : input file for processed results [stdin]\n");
    fprintf(stderr, 
@@ -1735,7 +1764,7 @@ double *GetConfidences(int n,            /* # of unique problems */
    return(conf);
 }
 
-@ROUT atl2tvec stattime
+@ROUT atl2tvec stattime atlcat2tvec
 double *GetMaxMinAvgSample(int n, int nrep, double *mf0)
 /*
  * Takes an n*nrep length nrep-major array, and returns an 3*n-length array
@@ -1889,6 +1918,8 @@ WORDQ *GetMassagedQ(FILE *fpin, int start, int stride, int verb)
    WORDQ *wqb, *wq;    /* base and general ptr, resp. */
 
    wqb = ReadTimerFile(fpin);
+   if (!wqb)
+      return(NULL);
    UpCaseWords(wqb->wlist);        /* upcase labels for ease of strcmp */
    wqb = KillBadLines(wqb, verb);
    if (start == 1 && stride == 1)
@@ -2140,7 +2171,7 @@ int main (int nargs, char **args)
 
    exit(0);
 }
-@ROUT atl2tvec
+@ROUT atl2tvec atlcat2tvec
 int WordNumberInList
 (
    WORDS *wl,           /* list of words to search through */
@@ -2235,6 +2266,7 @@ char GetStringType  /* returns c for char, s for string */
    return('c');
 }
 
+@ROUT atl2tvec
 void PrintOutVectors
 (
    int N,               /* # of vectors */
@@ -2246,13 +2278,13 @@ void PrintOutVectors
 /*
  * Prints all vectors to fpout.  The output looks like:
  * #<cmnt>
- * <nvec> <nrep>      # # of vectors, and repititions
+ * <nvec>      # number of vectors
  * <vec1>
  * <vec2>
  *
  * Each vector consists of:
  * <name>
- * <len> [i,d,s,c]      # char gives data type (int, double, string, char)
+ * <len> <nrep> [i,d,s,c]    # char gives data type (int, double, string, char)
  * <elt1>
  * <elt2>
  */
@@ -2262,7 +2294,7 @@ void PrintOutVectors
    WORDQ *wq=wqb;
 
    fprintf(fpout, "#%s\n", cmnt);
-   fprintf(fpout, "%d %d\n", N, nrep);
+   fprintf(fpout, "%d\n", N);
    for (j=0; j < N; j++)
    {
       WORDS *wp = wq->wlist;
@@ -2272,7 +2304,8 @@ void PrintOutVectors
          pre = 'i';
       else
          pre = GetStringType(wp->next);
-      fprintf(fpout, "%s\n%d %c\n", wp->word, CountWords(wp->next), pre);
+      fprintf(fpout, "%s\n%d %d %c\n", wp->word, CountWords(wp->next), 
+              nrep, pre);
       for (wp=wp->next; wp; wp = wp->next)
           fprintf(fpout, "%s\n", wp->word);
       wq = wq->next;
@@ -2302,6 +2335,102 @@ int main (int nargs, char **args)
    KillAllWordQ(wqb);             /* into only selected column-major queues */
    PrintOutVectors(ncols, nrep, wq, fpout, cmnt);
    KillAllWordQ(wq);
+   if (fpin != stdin)
+      fclose(fpin);
+   free(cols);
+   return(0);
+}
+@ROUT atlcat2tvec
+typedef struct tvecq tvecq_t;
+struct tvecq
+{
+   char *suff;
+   int nrep;
+   WORDQ *wq;
+   tvecq_t *next;
+};
+
+void PrintOutVectors
+(
+   int N,               /* # of vectors */
+   tvecq_t *tb,         /* queue of tvectors */
+   FILE *fpout,         /* stream to print to */
+   char *cmnt           /* comment to stick as 1st line of file */
+)
+/*
+ * Prints all vectors to fpout.  The output looks like:
+ * #<cmnt>
+ * <nvec>      # number of vectors
+ * <vec1>
+ * <vec2>
+ *
+ * Each vector consists of:
+ * <name>
+ * <len> <nrep> [i,d,s,c]    # char gives data type (int, double, string, char)
+ * <elt1>
+ * <elt2>
+ */
+{
+   int j;
+   char pre;
+
+   fprintf(fpout, "#%s\n", cmnt);
+   fprintf(fpout, "%d\n", N);
+   while (tb)
+   {
+      WORDQ *wq=tb->wq;
+      WORDS *wp = wq->wlist;
+      tvecq_t *tn = tb->next;
+      if (WordIsFloat(wp->next->word))
+         pre = 'd';
+      else if (WordIsInt(wp->next->word))
+         pre = 'i';
+      else
+         pre = GetStringType(wp->next);
+      fprintf(fpout, "%s%s\n%d %d %c\n", wp->word, tb->suff, 
+              CountWords(wp->next), tb->nrep, pre);
+      for (wp=wp->next; wp; wp = wp->next)
+          fprintf(fpout, "%s\n", wp->word);
+      free(tb->suff);
+      KillAllWordQ(tb->wq);
+      free(tb);
+      tb = tn;
+   }
+}
+int main (int nargs, char **args)
+{
+   int dw, nrep, start, stride, ncols, ntvec=0;
+   int *cols;
+   FILE *fpin, *fpout;
+   char *cmnt, **colnams, ln[4096];
+   WORDQ *wqb, *wq;
+   tvecq_t *tb=NULL, *tp;
+
+   dw = GetFlags(nargs, args, &fpin, &fpout, &cmnt, &nrep, &start, &stride,
+                 &ncols, &cols, &colnams);
+   while (1)
+   {
+      wqb = GetMassagedQ(fpin, start, stride, 0);
+      if (!ENREP || !wqb)
+         break;
+      if (!cols)
+      {
+         cols = ColNames2ColNums(wqb->wlist, ncols, colnams);
+         free(colnams);
+         colnams = NULL;
+      }
+      wq = GetColumnsByNums(wqb, ncols, cols);
+      KillAllWordQ(wqb);     /* into only selected column-major queues */
+      ntvec++;
+      tp = malloc(sizeof(tvecq_t));
+      assert(tp);
+      tp->nrep = ENREP;
+      tp->suff = ESUFF;
+      tp->wq = wq;
+      tp->next = tb;
+      tb = tp;
+   }
+   PrintOutVectors(ncols*ntvec, tb, fpout, cmnt);
    if (fpin != stdin)
       fclose(fpin);
    free(cols);
@@ -2974,7 +3103,7 @@ int main(int nargs, char **args)
  * Grab only the vectors to be combined, in order user has specified from
  * both lists, and free all unused vectors 
  */
-   t1 = ATL_ReadTvecFile(fp1, &cmnt, &N, &nrep);
+   t1 = ATL_ReadTvecFile(fp1, &cmnt, &N);
    if (fp1 != stdin)
       fclose(fp1);
    tp = ATL_PullNamedVecsFromList(Nc, combarr, &t1);
@@ -2982,7 +3111,7 @@ int main(int nargs, char **args)
       ATL_KillAllTvecs(t1);
    t1 = tp;
 
-   t2 = ATL_ReadTvecFile(fp2, &cmnt, &i, &j);
+   t2 = ATL_ReadTvecFile(fp2, &cmnt, &j);
    if (fp2 != stdin)
       fclose(fp2);
    tp = ATL_PullNamedVecsFromList(Nc, combarr, &t2);
@@ -3013,7 +3142,7 @@ int main(int nargs, char **args)
    }
    ATL_KillAllTvecs(t1);
    ATL_KillAllTvecs(t2);
-   ATL_WriteTvecFile(fpout, cmnt, Nc, nrep, cb);
+   ATL_WriteTvecFile(fpout, cmnt, Nc, cb);
    ATL_KillAllTvecs(cb);
    free(cmnt);
 #if 0
@@ -3142,7 +3271,7 @@ int main(int nargs, char **args)
 {
    FILE *fpin, *fpout;
    char **redarr, **combarr, *cmnt;
-   int N, Nc, Nr, i, j, RNGINC=0, nrep;
+   int N, Nc, Nr, i, j, RNGINC=0;
    ATL_tvec_t *tr, *tc, *tp, *np, *nb=NULL;
 
    combarr = GetFlags(nargs, args, &Nc, &Nr, &fpin, &fpout);
@@ -3153,7 +3282,7 @@ int main(int nargs, char **args)
  * has specified) from list, and free all unused vectors 
  */
 
-   np = ATL_ReadTvecFile(fpin, &cmnt, &N, &nrep);
+   np = ATL_ReadTvecFile(fpin, &cmnt, &N);
    if (fpin != stdin)
       fclose(fpin);
    tc = ATL_PullNamedVecsFromList(Nc, combarr, &np);
@@ -3200,7 +3329,7 @@ int main(int nargs, char **args)
    }
    ATL_KillAllTvecs(tr);
 
-   ATL_WriteTvecFile(fpout, cmnt, ATL_CountTVecsInList(nb), 1, nb);
+   ATL_WriteTvecFile(fpout, cmnt, ATL_CountTVecsInList(nb), nb);
    ATL_KillAllTvecs(nb);
    free(cmnt);
    if (fpout != stdout && fpout != stderr)
@@ -3291,7 +3420,7 @@ int main(int nargs, char **args)
 {
    FILE *fpin, *fpout;
    char **vnams, *cmnt;
-   int N, i, j, RNGINC=0, nrep;
+   int N, i, j, RNGINC=0;
    ATL_tvec_t *tp, *np, *nb=NULL;
 
    vnams = GetFlags(nargs, args, &N, &fpin, &fpout);
@@ -3301,7 +3430,7 @@ int main(int nargs, char **args)
  * from list, and free all unused vectors
  */
 
-   tp = ATL_ReadTvecFile(fpin, &cmnt, &i, &nrep);
+   tp = ATL_ReadTvecFile(fpin, &cmnt, &i);
    if (fpin != stdin)
       fclose(fpin);
    free(cmnt);
@@ -3445,7 +3574,7 @@ int main(int nargs, char **args)
 {
    FILE *fpin, *fpout;
    char **vnams1, **vnamsr, *cmnt;
-   int Nf, N1, Nr, N, i, j, RNGINC=0, nrep;
+   int Nf, N1, Nr, N, i, j, RNGINC=0;
    ATL_tvec_t *tp, *np, *nb=NULL, *rb=NULL;
 
    vnams1 = GetFlags(nargs, args, &Nf, &N1, &Nr, &fpin, &fpout);
@@ -3454,7 +3583,7 @@ int main(int nargs, char **args)
 /*
  * Grab one copy of all vectors from output
  */
-   tp = ATL_ReadTvecFile(fpin, &cmnt, &N, &nrep);
+   tp = ATL_ReadTvecFile(fpin, &cmnt, &N);
    N = N1 + Nr;
    nb = ATL_PullNamedVecsFromList(N, vnams1, &tp);
    assert(nb);
@@ -3467,7 +3596,7 @@ int main(int nargs, char **args)
    {
       char suff[16];
 
-      tp = ATL_ReadTvecFile(fpin, &cmnt, &N, &nrep);
+      tp = ATL_ReadTvecFile(fpin, &cmnt, &N);
       np = ATL_PullNamedVecsFromList(Nr, vnamsr, &tp);
       if (!np) 
          break;
@@ -3482,7 +3611,7 @@ int main(int nargs, char **args)
 /*
  * Write them out, and we are done
  */
-   ATL_WriteTvecFile(fpout, cmnt, ATL_CountTVecsInList(nb), 1, nb);
+   ATL_WriteTvecFile(fpout, cmnt, ATL_CountTVecsInList(nb), nb);
    ATL_KillAllTvecs(nb);
    free(cmnt);
    if (fpout != stdout && fpout != stderr)
@@ -3646,7 +3775,7 @@ int main(int nargs, char **args)
  * has specified) from list, and free all unused vectors
  */
 
-   np = ATL_ReadTvecFile(fpin, &cmnt, &i, &nrep);
+   np = ATL_ReadTvecFile(fpin, &cmnt, &i);
    if (fpin != stdin)
       fclose(fpin);
    if (basev)
@@ -3685,12 +3814,340 @@ int main(int nargs, char **args)
  */
    ATL_FindLastVecInList(tr)->next = tb;
    ATL_FindLastVecInList(tk)->next = tr;
-   ATL_WriteTvecFile(fpout, cmnt, ATL_CountTVecsInList(tk), 1, tk);
+   ATL_WriteTvecFile(fpout, cmnt, ATL_CountTVecsInList(tk), tk);
    ATL_KillAllTvecs(tk);
    free(cmnt);
    free(--keeparr);
    if (fpout != stdout && fpout != stderr)
       fclose(fpout);
+   return(0);
+}
+@ROUT renametvecs
+#include "atlas_tvec.h"
+
+void PrintUsage(char *name, char *arg, int i)
+{
+   fprintf(stderr, 
+      "This routine renames tvecs given by -R; other vecs left alone\n");
+   fprintf(stderr, 
+      "If -s is used, all tvecs (incl -R) are suffixed\n");
+   if (i > 0)
+      fprintf(stderr, "BAD ARG '%s' ON %dth FLAG\n", arg, i);
+   fprintf(stderr, "USAGE: %s <flags> ; flags include:\n", name);
+   fprintf(stderr, "   -i <file> : (stdin) input file\n");
+   fprintf(stderr, "   -o <file>  : (stdout) output file\n");
+   fprintf(stderr, "   -s <suff> : append suffix to all names in file\n");
+   fprintf(stderr, 
+           "   -R # <nam1> <rep1>... <nam#> <rep#>: orig & new names\n");
+   exit (i ? i : -1);
+}
+
+char **GetFlags         /* RETURNS: array of orig & new names */
+(
+   int nargs,
+   char **args,
+   int *nrname,         /* # of vecs to rename */
+   char **suff,
+   FILE **fpin,         /* input stream */
+   FILE **fpout         /* output stream */
+)
+{
+   char **vr=NULL, **vv, *sp;
+   int i, j, n, nk=0, nr=0;
+   FILE *fp;
+
+   *fpin = stdin;
+   *fpout = stdout;
+   *suff = NULL;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], "no '-' preceeding flag!", i);
+      switch(args[i][1])
+      {
+      case 'i':    /* -i <file> */
+         if (++i >= nargs)
+            PrintUsage(args[0], "out of flags in -i ", i-1);
+         *fpin = fopen(args[i], "r");
+         assert(*fpin);
+         break;
+      case 'o':    /* -o <file> */
+         if (++i >= nargs)
+            PrintUsage(args[0], "out of flags in -i ", i-1);
+         fp = fopen(args[i], "w");
+         assert(fp);
+         *fpout = fp;
+         break;
+      case 's': /* os <suffix> */
+         if (++i >= nargs)
+            PrintUsage(args[0], "out of flags in -s ", i-1);
+         *suff = args[i];
+         break;
+      case 'R':    /* -R # <nam1> <rep1> ... <nam#> <rep#> */
+         if (++i >= nargs)
+            PrintUsage(args[0], "out of flags in -R ", i-1);
+         nr = atoi(args[i]);
+         assert(nr > 0 && nr < 2048);
+         vr = malloc(sizeof(char*)*(nr+nr));
+         assert(vr);
+         for (j=0; j < nr; j++)
+         {
+            if (++i >= nargs)
+               PrintUsage(args[0], "out of flags in -R ", i-1);
+            vr[j] = args[i];
+            if (++i >= nargs)
+               PrintUsage(args[0], "out of flags in -R ", i-1);
+            vr[j+nr] = args[i];
+         }
+         break;
+      default :
+         PrintUsage(args[0], args[i], i);
+      }                                         /* end switch over flags */
+   }                                            /* end for over flags */
+   if (nr < 1 && *suff == NULL)
+   {
+      fprintf(stderr, "Must rename at least one vector!\n");
+      exit(-1);
+   }
+   *nrname = nr;
+   return(vr);
+}
+
+int main(int nargs, char **args)
+{
+   FILE *fpin, *fpout;
+   char **renarr, *cmnt, *suff;
+   int N, Nr, nrep, i, sL=0;
+   ATL_tvec_t *tp, *tb;
+
+   renarr = GetFlags(nargs, args, &Nr, &suff, &fpin, &fpout);
+   if (suff)
+      sL = strlen(suff);
+/*
+ * Read in all vectors in file
+ */
+   tb = ATL_ReadTvecFile(fpin, &cmnt, &N);
+   if (fpin != stdin)
+      fclose(fpin);
+/*
+ * Rename all targeted vectors
+ */
+   for (tp=tb; tp; tp = tp->next)
+   {
+      for (i=0; i < Nr; i++)
+      {
+         char *sp = renarr[i];
+         if (sp && !strcmp(sp, tp->name))
+         {
+            int L;
+            L = strlen(renarr[Nr+i])+1;
+            if (tp->name)
+               free(tp->name);
+            tp->name = malloc(L);
+            assert(tp->name);
+            strcpy(tp->name, renarr[Nr+i]);
+            renarr[i] = NULL;
+         }
+      }
+      if (sL)
+      {
+         int L;
+         char *sp = tp->name;
+         L = strlen(sp);
+         tp->name = malloc(L+sL+1);
+         assert(tp->name);
+         strcpy(tp->name, sp);
+         strcpy(tp->name+L, suff);
+         free(sp);
+      }
+   }
+/*
+ * Write the renamed vectors out, and we're done
+ */
+   ATL_WriteTvecFile(fpout, cmnt, N, tb);
+   ATL_KillAllTvecs(tb);
+   if (fpout != stdout && fpout != stderr)
+      fclose(fpout);
+   if (cmnt)
+      free(cmnt);
+   free(renarr);
+   return(0);
+}
+@ROUT atl2tvecd
+#include "atlas_tvec.h"
+
+void PrintUsage(char *name, char *arg, int i)
+{
+   fprintf(stderr, 
+      "This routine takes an arbitrary # of ATL output files separated by\n");
+   fprintf(stderr, "label lines and creates one massive tvec file\n");
+   fprintf(stderr, "Assumes bin/ runs separated by label lines.\n);
+   if (i > 0)
+      fprintf(stderr, "BAD ARG '%s' ON %dth FLAG\n", arg, i);
+   fprintf(stderr, "USAGE: %s <flags> ; flags include:\n", name);
+   fprintf(stderr, "   -i <file> : input file\n");
+   fprintf(stderr, "   -o <file>  : (stdout) output file\n");
+   fprintf(stderr, "   -E <endstr> : (*** END LABEL=<lab>)\n");
+   fprintf(stderr, "   -T <tmpf1> <tmpf2> (/tmp/tvecd[1,2].txt)\n");
+   exit (i ? i : -1);
+}
+
+char *GetFlags         /* RETURNS: relative path to tool directory */
+(
+   int nargs,
+   char **args,
+   char **endstr,       /* sentinal string indicating end of given run */
+   FILE **fpin,         /* input stream */
+   FILE **fpout         /* output stream */
+   FILE **fpt1,         /* first temporary file */
+   FILE **fpt2          /* STOPPED HERE HERE */
+)
+{
+   char *path, *sp, *s;
+   int i, j, n, nk=0, nr=0;
+   FILE *fp;
+
+   *fpin = NULL;
+   *fpout = stdout;
+   *endstr = NULL;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], "no '-' preceeding flag!", i);
+      switch(args[i][1])
+      {
+      case 'i':    /* -i <file> */
+         if (++i >= nargs)
+            PrintUsage(args[0], "out of flags in -i ", i-1);
+         *fpin = fopen(args[i], "r");
+         assert(*fpin);
+         break;
+      case 'o':    /* -o <file> */
+         if (++i >= nargs)
+            PrintUsage(args[0], "out of flags in -o ", i-1);
+         fp = fopen(args[i], "w");
+         assert(fp);
+         *fpout = fp;
+         break;
+      case 'E':   /* -E <string>;  LABEL=<lab> is added*/
+         if (++i >= nargs)
+            PrintUsage(args[0], "out of flags in -E ", i-1);
+         *endstr = args[i];
+         break;
+      default :
+         PrintUsage(args[0], args[i], i);
+      }                                         /* end switch over flags */
+   }                                            /* end for over flags */
+   if (*fpin == NULL)
+   {
+      fprintf(stderr, "Must provide intput filename!\n");
+      exit(-1);
+   }
+/*
+ * If not specified, take default end string of *** END, and suffix LABEL=
+ */
+   sp = *endstr;
+   if (sp == NULL)
+      *sp = "*** END";
+   j = strlen(sp);
+   s = malloc((j+8)*sizeof(char));
+   assert(s);
+   strcpy(s, sp);
+   strcpy(s+j, " LABEL=");
+   *endstr = s;
+/* 
+ * Get path to this tool to get relative path to tool directory
+ */
+   for (sp=args[0], i=0; sp[i]; i++);
+   for (i--; i && sp[i] != '/'; i--);
+   if (sp[i] != '/')  /* path is current dir */
+   {
+      path = malloc(3*sizeof(char));
+      assert(path);
+      path[0] = '.';
+      path[1] = '/';
+      path[2] = '\0';
+   }
+   else
+   {
+      path = malloc((i+1)*sizeof(char));
+      assert(path);
+      for (j=0; j <= i; j++)
+         path[j] = sp[j];
+      path[j] = '\0';
+   }
+   return(path);
+}
+
+int main(int nargs, char **args)
+{
+   FILE *fpin, *fpout;
+   char *tpath, *cmnt, *endstr;
+   int nrep, i, eL, nruns;
+   int nruns;
+   ATL_tvec_t *tp, *tb;
+   char ln[4096];
+
+   path = GetFlags(nargs, args, &endstr, &fpin, &fpout, &fpt1, &fpt2);
+/*
+ * Count the number of runs in the file
+ */
+   eL = strlen(endstr);
+   nruns = 0;
+   while(fgets(ln, 4096, fpin);
+   {
+      if (!strncmp(ln, endstr, eL))
+         nruns++;
+   }
+   rewind(fpin);
+/*
+ * Read in all vectors in file
+ */
+   tb = ATL_ReadTvecFile(fpin, &cmnt, &N, &nrep);
+   if (fpin != stdin)
+      fclose(fpin);
+/*
+ * Rename all targeted vectors
+ */
+   for (tp=tb; tp; tp = tp->next)
+   {
+      for (i=0; i < Nr; i++)
+      {
+         char *sp = renarr[i];
+         if (sp && !strcmp(sp, tp->name))
+         {
+            int L;
+            L = strlen(renarr[Nr+i])+1;
+            if (tp->name)
+               free(tp->name);
+            tp->name = malloc(L);
+            assert(tp->name);
+            strcpy(tp->name, renarr[Nr+i]);
+            renarr[i] = NULL;
+         }
+      }
+      if (sL)
+      {
+         int L;
+         char *sp = tp->name;
+         L = strlen(sp);
+         tp->name = malloc (L+sL+1);
+         assert(tp->name);
+         strcpy(tp->name, sp);
+         strcpy(tp->name+L, suff);
+         free(sp);
+      }
+   }
+/*
+ * Write the renamed vectors out, and we're done
+ */
+   ATL_WriteTvecFile(fpout, cmnt, N, nrep, tb);
+   ATL_KillAllTvecs(tb);
+   if (fpout != stdout && fpout != stderr)
+      fclose(fpout);
+   if (cmnt)
+      free(cmnt);
+   free(renarr);
    return(0);
 }
 @ROUT !
