@@ -3494,6 +3494,80 @@ void ATL_SuffixTvecNames
       tp->name = sp;
    }
 }
+
+ATL_tvec_t *ATL_DupTvec(ATL_tvec_t *t0)
+{
+   ATL_tvec_t *tp;
+   const int N = t0->N;
+   int i;
+
+   tp = ATL_GetTvec(t0->name, N, t0->nrep, t0->pre);
+   tp->next = NULL;
+   if (t0->pre == 'd')
+   {
+      double *d0 = t0->vp, *d=tp->vp;
+      for (i=0; i < N; i++)
+         d[i] = d0[i];
+   }
+   else if (t0->pre == 'i')
+   {
+      int *d0 = t0->vp, *d=tp->vp;
+      for (i=0; i < N; i++)
+         d[i] = d0[i];
+   }
+   else /* pre == 'c' */
+   {
+      char *d0 = t0->vp, *d=tp->vp;
+      assert(t0->pre == 'c');
+      for (i=0; i < N; i++)
+         d[i] = d0[i];
+   }
+   return(tp);
+}
+
+ATL_tvec_t *ATL_ReverseVecList  /* RETURNS: reversed list base */
+(
+   ATL_tvec_t *tb0              /* base of list to reverse */
+)
+{
+   ATL_tvec_t *tb=NULL;
+   while (tb0)
+   {
+      ATL_tvec_t *tp;
+      tp = tb0;
+      tb0 = tb0->next;
+      tp->next = tb;
+      tb = tp;
+   }
+   return(tb);
+}
+
+ATL_tvec_t *ATL_DupNamedVecsFromList  /* returns list of duped vecs */
+(
+   int N,               /* # of vectors to dup from list to */
+   char **names,        /* names of vectors to duplicate */
+   ATL_tvec_t *tb0,     /* original list unchanged */
+   int order            /* 0: unordered, else: keep in same order as names */
+)
+{
+   ATL_tvec_t *tb=NULL, *tp;
+   int i;
+
+   if (!tb0 || N < 1)
+      return(NULL);
+
+   for (i=0; i < N; i++)
+   {
+      tp = ATL_FindTvecByName(tb0, names[i]);
+      assert(tp);
+      tp = ATL_DupTvec(tp);
+      tp->next = tb;
+      tb = tp;
+   }
+   if (order)
+      tb = ATL_ReverseVecList(tb);
+   return(tb);
+}
 ATL_tvec_t *ATL_PullNamedVecsFromList  /* returns list of pulled vecs */
 (
    int N,               /* # of vectors to remove from list to */
@@ -3655,7 +3729,7 @@ void ATL_PrintTVecElt
    else if (tp->pre == 'i')
    {
       int *p = tp->vp;
-      fprintf(fpout, "%d", p[idx]);
+      fprintf(fpout, "%12d", p[idx]);
    }
    else if (tp->pre == 'c')
    {
@@ -3673,7 +3747,8 @@ void ATL_PrintTVecsInRow
 (
    FILE *fpout,         /* stream to print to */
    ATL_tvec_t *tb,      /* list of vectors to print (rowwise) */
-   char *sep            /* string to print between elements */
+   char *sep,           /* string to print between elements */
+   int head             /* should we print headers? */
 )
 {
    ATL_tvec_t *tp;
@@ -3685,6 +3760,10 @@ void ATL_PrintTVecsInRow
    for (tp=tb->next; tp; tp = tp->next)
       assert(tp->N >= N);
 
+   if (head)
+      for (tp=tb; tp; tp = tp->next)      /* loop over columns  */
+         printf("%12.12s%s", tp->name, sep);
+   fprintf(fpout, "%s\n", sep);
    for (i=0; i < N; i++)                        /* loop over rows of vectors */
    {
       for (tp=tb; tp->next; tp = tp->next)      /* loop over columns  */
@@ -3758,8 +3837,8 @@ ATL_tvec_t *ATL_GetStatVecsDOUBLE  /* returns Q of stat vectors: <,+,> */
 
    n = strlen(tin->name) + 5;
    name = malloc(sizeof(char)*n);
-   N = tin->N / tin->nrep;
    assert(name);
+   N = tin->N / tin->nrep;
 
    sprintf(name, "%s_min", tin->name);
    tmin = ATL_GetTvec(name, N, 1, tin->pre);
@@ -3767,6 +3846,7 @@ ATL_tvec_t *ATL_GetStatVecsDOUBLE  /* returns Q of stat vectors: <,+,> */
    tavg = ATL_GetTvec(name, N, 1, tin->pre);
    sprintf(name, "%s_max", tin->name);
    tmax = ATL_GetTvec(name, N, 1, tin->pre);
+   free(name);
    dmin = tmin->vp;
    dmax = tmax->vp;
    davg = tavg->vp;
