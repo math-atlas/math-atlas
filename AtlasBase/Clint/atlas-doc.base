@@ -1632,7 +1632,86 @@ DESCRIPTION
    In such a case, either store the tvecs separately and only combine after
    processing using tveccat(1) at end, or move all output files to a
    workstation, and do the processing there.
+
+EXAMPLE
+ 1. Time ATLAS's Upper Cholesky (UtU) factorization for various sizes:
    
+  ./xdslatime_al_ab -R 1 potrf -U 1 u -N 20 100 20 -# 8 \\
+      > res/tutu.out
+  ./xdslatime_al_ab -R 1 potrf -U 1 u -N 200 2000 200 -# 3 \\
+      > res/mutu.out
+   ./xdslatime_al_ab -R 1 potrf -U 1 u -N 4000 6000 2000 -# 2 \\
+      > res/lutu.out
+
+ 2. Translate timings to tvecs:
+
+  cat res/[l,t,m]utu.out | ./tvecget -c "test me!" -H 2 N MFLOP \\
+                                     -o t0.tv
+
+ 3. Calculate statistics on all repeated timings, and compute simple stat
+ vectors like max/min/average. This reduces each MFLOP vector to one entry
+ per problem size:
+
+  ./tvecreduce -i t0.tv -o t1.tv -R 3 N_tuu N_muu N_luu \\
+               -C 3 MFLOP_tuu MFLOP_muu MFLOP_luu
+
+ 4. Get rid of all tvecs except N_luu and MFLOP_luu_max, but join them
+ into vectors that span the entire (small-medium-large) range first:
+
+  ./tvecjoin -i t1.tv -o t0.tv \\
+      -J 3 N_luu MFLOP_luu_max N_tuu MFLOP_tuu_max N_muu MFLOP_muu_max
+
+ 5. Change MFLOP value to percentage of machine peak on my 26.4 GFLOP desktop:
+  
+  ./tvecscale -i t0.tv -o t1.tv -B 26400 -m 100.0 \\
+              -C 1 N_luu -R 1 MFLOP_luu_max
+
+ 6. Change vector names to make more sense and reflect changes:
+
+  ./tvecrename -i t1.tv -o t0.tv \\
+               -R 2 N_luu N MFLOP_luu_max percPeak_UtU
+
+ 7. Print out table with headers:
+
+  ./tvecprint -i t0.tv -C 2 N percPeak_UtU -h 1
+
+EXAMPLE WITH PIPES
+ Steps 2-7 can be done with one command:
+
+  cat res/[l,t,m]utu.out | ./tvecget -c "test me!" -H 2 N MFLOP | \\
+   ./tvecreduce -R 3 N_tuu N_muu N_luu \\
+                -C 3 MFLOP_tuu MFLOP_muu MFLOP_luu | \\
+   ./tvecjoin -J 3 N_luu MFLOP_luu_max N_tuu MFLOP_tuu_max \\
+                 N_muu MFLOP_muu_max | \\
+   ./tvecscale -B 26400 -m 100.0 -C 1 N_luu -R 1 MFLOP_luu_max | \\
+   ./tvecrename -i tst.tv -R 2 N_luu N MFLOP_luu_max percPeak_UtU | \\
+   ./tvecprint -C 2 N percPeak_UtU -h 1
+
+EXAMPLE OUTPUT
+ On my machine, I get (ignore the first line):
+
+  Line that exists to make man format correctly
+           N    percPeak_UtU            
+          20    2.858106e+00    
+          40    7.340076e+00    
+          60    1.187788e+01    
+          80    1.561064e+01    
+         100    1.803848e+01    
+         200    3.227731e+01    
+         400    4.720000e+01    
+         600    5.552538e+01    
+         800    6.126848e+01    
+        1000    6.538731e+01    
+        1200    6.827523e+01    
+        1400    7.051701e+01    
+        1600    7.182420e+01    
+        1800    7.356534e+01    
+        2000    7.491045e+01    
+        4000    8.214818e+01    
+        6000    8.508492e+01    
+
+ * I got 85% of peak for N=6000, and only 28.5% for N=200
+
 SEE ALSO
   tvecget(1) tveccat(1) tvecjoin(1) tvecscale(1) tvecreduce(1) 
   tvecrename(1) tvecprint(1)
@@ -1667,7 +1746,7 @@ SYNOPSIS
   tveccat [-i infile] [-o outfile] [-# #]
           [-C N nam1 ... namN] [-c N nam1 ... namN]
 @ROUT tvecjoin 
-  tvecjoin [-i infile] [-o outfile] [-J N rangv1 joinv1 ... rangvN joinvN]
+  tvecjoin [-i infile] [-o outfile] [-J N rngv1 joiv1 ... rngvN joivN]
 @ROUT tvecscale 
   tvecscale [-i infile] [-o outfile] [-b denV] [-B denS] [-m num]
             [-R # nam1 ... namN] [-C # nam1 ... namN]
@@ -1748,7 +1827,7 @@ can be optionally printed; the default is to print the bare data
 OPTIONS
    -i infile                         Take input from infile, rather than stdin.
    -o outfile                        Write tvecs to outfile, rather than stdout.
-   -J # rngv1 joiv1 ... rngv# joiv#  List of all vectors to join, and the
+   -J N rngv1 joiv1 ... rngvN joivN  List of all vectors to join, and the
                                      range vectors that allow them to be sorted.
 @ROUT @peek
 @ROUT - tvecjoin
