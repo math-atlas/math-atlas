@@ -15025,7 +15025,218 @@ int main( int NARGS, char **ARGS )
 @ROUT l3time
 #include "atlas_genparse.h"
 
-/* HERE HERE */
+#ifdef TCPLX
+   #define NBLAS 9
+#else
+   #define NBLAS 6
+#endif
+enum eblas {Bgemm, Bsymm, Bsyrk, Bsyr2k, Btrmm, Btrsm, Bhemm, Bherk, Bher2k};
+char **nblas={"gemm", "symm", "syrk", "syr2k", "trmm", "trsm", "hemm", 
+              "herk", "her2k"};
+int *RoutNames2IntList(int nargs, char **args, int i)
+{
+   int n, *iarr, k;
+
+   if (++i >= nargs)
+      PrintUsage(args[0], i, NULL);
+   n = atoi(args[i]);
+   ATL_assert(n > 0);
+   iarr = malloc(sizeof(int)*(n+1));
+   ATL_assert(iarr);
+
+   iarr[0] = n;
+   for (k=0; k < n; k++)
+   {
+      int b;
+      if (++i >= nargs)
+         PrintUsage(args[0], i, NULL);
+      for (b=0; b < NBLAS; b++)
+      {
+         if (!strcmp(args[i], nblas[b])
+         {
+            iarr[k+1] = b;
+            break;
+         }
+      }
+      if (b == NBLAS)
+         PrintUsage(args[0], i, args[i]);
+   }
+   return(iarr);
+}
+
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n",
+              ierr, flag ? flag : "Not enough arguments");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+
+   fprintf(stderr, "USAGE: %s [flags]:\n", name);
+   fprintf(stderr, "   -R <#> <rout1> ... <rout#>\n");
+   fprintf(stderr, 
+   "      routs: gemm, symm, syr2k hemm, her2k, syrk, trmm, trsm, herk\n");
+   fprintf(stderr, "   -F <mflop> : force <mflops> of timed computation\n");
+   fprintf(stderr, "   -# <#> : repeat each timing # times\n");
+   fprintf(stderr, "   -n <#> <N1> ... <N#>\n");
+   fprintf(stderr, "   -N <Nstart> <Nend> <Ninc>\n");
+   fprintf(stderr, "   -m <#> <M1> ... <M#>\n");
+   fprintf(stderr, "   -M <Mstart> <Mend> <Minc>\n");
+   fprintf(stderr, "   -k <#> <K1> ... <K#>\n");
+   fprintf(stderr, "   -K <Kstart> <Kend> <Kinc>\n");
+   fprintf(stderr, "   -a <ldagap> : lda = M + <ldagap> foreach M\n");
+   fprintf(stderr, "   -f <flushKB> : flush at least this mem in LRU timers\n");
+   fprintf(stderr, "   -S <#> <side1> ... <side#>\n");
+   fprintf(stderr, "   -U <nuplo> <up1> ... <upN> : Vals: [u,l,q,g]\n");
+   exit(ierr ? ierr : -1);
+}
+
+void GetFlags(int nargs, char **args, int **nreps, int *flsizeKB, int *mflop,
+              int **ROUTs, int *ldagap, int **Ns, int **Ms, int **Ks, 
+              int **UPLOs, int **SDs)
+{
+   int *NBs=NULL, *ns=NULL, *ms=NULL, *ks=NULL, *ups=NULL, *sds=NULL, *ip;
+   int i, k, n;
+
+   *ROUTs = NULL;
+   *ldagap = 0;
+   *flsizeKB = L2SIZE/1024;
+   *nreps = NULL;
+   *mflop = 0;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+      switch(args[i][1])
+      {
+      case 'n':         /* -n  or -nb */
+         ns = GF_GetIntList(nargs, args, i, 1);
+         i += ns[0] + 1;
+         break;
+      case 'm':         /* -m # <M1> ... <M#> */
+         ms = GF_GetIntList(nargs, args, i, 1);
+         i += ms[0] + 1;
+         break;
+      case 'K':         /* -N or -NB */
+      case 'N':         /* -N or -NB */
+      case 'M':                         /* -M <Mstart> <Mend> <Minc>\n"); */
+         if (i+3 >= nargs)
+            PrintUsage(args[0], i, NULL);
+         ip = GF_IntRange2IntList(atoi(args[i+1]), atoi(args[i+2]),
+                                  atoi(args[i+3]));
+         if (args[i][0] == 'M')
+            ms = ip;
+         else if (args[i][0] == 'N')    /* -N <Nstart> <Nend> <Ninc>\n"); */
+            ns = ip;
+         else
+            ks = ip;
+         i += 3;
+         break;
+      case 'R':        /* -R # <rout1> ... <routN#>  */
+         *ROUTs = RoutNames2IntList(nargs, args, i);
+         i += (*ROUTs)[0] + 1;
+         break;
+      case '#':                         /* set nreps */
+         if (args[i][2] == 't')         /* -#t N1 reps1 ... Nt repst */
+         {
+            *nreps = GetIntList(nargs, args, i, 2);
+            i += ((*nreps)[0] << 1) + 1;
+         }
+         else                           /* -# <reps> */
+         {
+            if (++i >= nargs)
+               PrintUsage(args[0], i, NULL);
+            *nreps = GetIntList2(0, atoi(args[i]));
+         }
+         break;
+      case 'f':                         /* -f <flushKB> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         *flsizeKB = atoi(args[i]);
+         break;
+      case 'F':                         /* -F <mflop> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         *mflop = atoi(args[i]);
+         break;
+      case 'U':                         /* -U <nup> <u1> ... <uN>;[u,l,q,g] */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         n = atoi(args[i]);
+         ATL_assert(n > 0);
+         ups = malloc(sizeof(int)*(n+1));
+         ups[0] = n;
+         for (k=0; k < n; k++)
+         {
+            if (++i >= nargs)
+               PrintUsage(args[0], i, NULL);
+            switch(args[i][0])
+            {
+            case 'U':
+            case 'u':
+               ups[k+1] = LAUpper;
+               break;
+            case 'l':
+            case 'L':
+            default:
+               ups[k+1] = LALower;
+               break;
+            }
+         }
+         break;
+      case 'S':                         /* -S <#> <side1> ... <sideN> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         n = atoi(args[i]);
+         ATL_assert(n > 0);
+         sds = malloc(sizeof(int)*(n+1));
+         sds[0] = n;
+         for (k=0; k < n; k++)
+         {
+            if (++i >= nargs)
+               PrintUsage(args[0], i, NULL);
+            switch(args[i][0])
+            {
+            case 'L':
+            case 'l':
+               sds[k+1] = LALeft;
+               break;
+            default:
+               sds[k+1] = LARight;
+               break;
+            }
+         }
+         break;
+      case 'a':                         /* -a <ldagap> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         *ldagap = atoi(args[i]);
+         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+/*
+ * Take default values
+ */
+   if (!(*ROUTs))
+      *ROUTs = GetIntList1(LAgeqrf);
+   if (!(*nreps))
+      *nreps = GetIntList2(0, 1);
+   if (!ns)
+      ns = GetIntList1(1000);
+   if (!ms)
+      ms = GetIntList1(0);
+   if (!ups)
+      ups = GetIntList1(LAUpper);
+   if (!sds)
+      sds = GetIntList1(LARight);
+
+   *Ns = ns;
+   *Ms = ms;
+   *UPLOs = ups;
+   *SDs = sds;
+}
 @rout l3blastst_old
 @extract -b @(topd)/gen.inc what=cw -def author "Jeff Horner" -def contrib "R. Clint Whaley" -def cdate 1998
 @define rname @l3blastst@
