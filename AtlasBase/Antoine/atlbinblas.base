@@ -15023,6 +15023,8 @@ int main( int NARGS, char **ARGS )
    return( 0 );
 } 
 @ROUT l3time
+void PrintUsage(char*, int, char*);
+#define ATL_GETFLAGS 1
 #include "atlas_genparse.h"
 
 #ifdef TCPLX
@@ -15031,8 +15033,239 @@ int main( int NARGS, char **ARGS )
    #define NBLAS 6
 #endif
 enum eblas {Bgemm, Bsymm, Bsyrk, Bsyr2k, Btrmm, Btrsm, Bhemm, Bherk, Bher2k};
-char **nblas={"gemm", "symm", "syrk", "syr2k", "trmm", "trsm", "hemm", 
+char *nblas[]={"gemm", "symm", "syrk", "syr2k", "trmm", "trsm", "hemm", 
               "herk", "her2k"};
+
+void DoTiming(int nreps, int flszKB, int MFF, int ldaG, int ldbG, int ldcG,
+              int ibl, int SD, int UP, int DI, int TA, int TB,
+              const SCALAR alpha, const SCALAR beta, int M, int N, int K,
+              double *time, double *mflop)
+{
+   *time = *mflop = 0.0;
+   switch(ibl)
+   {
+      double dtmp;
+      int lda, ldb, ldc, ib=0;
+   case Bgemm:
+      lda = ldaG + (TA == AtlasNoTrans) ? M : K;
+      ldb = ldbG + (TB == AtlasNoTrans) ? K : N;
+      gemmcase(flszKB, 0, 0, MFF, TA, TB, M, N, K, alpha, lda, M+ldbG, beta,
+               M+ldcG, 0.0, time, &dtmp, mflop, &dtmp);
+      break;
+   case Bhemm:
+   case Bsymm:
+      ib = (ibl==Bsymm)?SYMM:1;
+      lda = ldaG + (SD == AtlasLeft) ? M : N;
+      symmcase(flszKB, ib, 0, MFF, SD, UP, M, N, alpha, lda, M+ldbG, beta,
+               M+ldcG, 0.0, time, &dtmp, mflop, &dtmp);
+      break;
+   case Bherk:
+   case Bsyrk:
+      ib = (ibl==Bsyrk)?SYRK:2;
+      lda = ldaG + (TA == AtlasNoTrans) ? N : K;
+      syrkcase(flszKB, ib, 0, MFF, UP, TA, N, K, alpha, lda, beta, M+ldcG, 0.0,
+               time, &dtmp, mflop, &dtmp);
+      break;
+   case Bher2k:
+   case Bsyr2k:
+      ib = (ibl==Bsyr2k)?SYR2K:3;
+      lda = ldaG + (TA == AtlasNoTrans) ? N : K;
+      ldb = ldbG + (TA == AtlasNoTrans) ? N : K;
+      syr2kcase(flszKB, ib, 0, MFF, UP, TA, N, K, alpha, lda, ldb, beta,
+                N+ldcG, 0.0, time, &dtmp, mflop, &dtmp);
+      break;
+   case Btrmm:
+   case Btrsm:
+      ib = (ibl==Btrsm)?TRSM:TRMM;
+      lda = ldaG + (SD == AtlasLeft) ? M : N;
+      trxmcase(flszKB, ib, 0, MFF, SD, UP, TA, DI, M, N,
+               alpha, lda, M+ldbG, 0.0, time, &dtmp, mflop, &dtmp);
+      break;
+   }
+}
+
+void RunAllTimings(int nreps, int flszKB, int MFF, int ldaG, int ldbG, int ldcG,
+                   int *ROUTs, int *SDs, int *UPs, int *DIs, int *TAs, int *TBs,
+                   int nalp, TYPE *alps, int nbet, TYPE *bets, 
+                   int *Ms, int *Ns, int *Ks)
+{
+   const int nrt = ROUTs[0];
+   const char *frm="%6d  %c  %c  %c  %c  %c  %c  %c %7d %7d %7d  %12e %10.0f\n";
+   int ir, it=0;
+
+   for (ir=1; ir <= nrt; ir++)
+   {
+      const int nm = Ms[0];
+      int rt = ROUTs[ir], im;
+      const int HAS_SD = (rt==Bsymm || rt==Bhemm || rt==Btrmm || rt==Btrsm);
+      const int HAS_UP = (rt==Bsyr2k || rt==Bher2k || rt==Bsyrk || rt==Bherk ||
+                          rt==Btrmm || rt==Btrsm);
+      const int HAS_DI = (rt==Btrmm || rt==Btrsm);
+      const int HAS_TA = (rt != Bsymm && rt != Bhemm);
+      const int HAS_TB = (rt == Bgemm);
+      char cTA='-', cTB='-', cSD='-', cUP='-', cDI='-';
+
+@skip      printf("\n               ************************************\n");
+      printf("\n               ********  TIMING FOR %s%-5s ********\n", 
+             Mstr(PRE), nblas[rt]);
+@skip      printf("               ************************************\n");
+      printf("  TEST SD UP DI TA TB AL BE  "
+             "     M       N       K          Time      MFLOP\n");
+      printf("====== == == == == == == ==  "
+             "======  ======  ======  ============  =========\n");
+      for (im=1; im <= nm; im++)
+      {
+         const int nn=Ns[0];
+         int in;
+         for (in=1; in <= nn; in++)
+         {
+            const int nk = Ks[0];
+            const int N = Ns[in], M = (Ms[im]) ? Ms[im] : N;
+            int ik;
+            for (ik=1; ik <= nk; ik++)
+            {
+               const int K = (Ks[ik]) ? Ks[ik] : N, ns = SDs[0];
+               int is;
+               for (is=1; is <= ns; is++)
+               {
+                  const int SD=SDs[is], nu = UPs[0];
+                  int iu;
+
+                  if (HAS_SD)
+                     cSD = (AtlasRight) ? 'R' : 'L';
+                  for (iu=1; iu <= nu; iu++)
+                  {
+                     const int UP=UPs[iu];
+                     const int nd=DIs[0];
+                     int id;
+
+                     if (HAS_UP)
+                        cUP = (AtlasLower) ? 'L' : 'U';
+                     for (id=1; id <= nd; id++)
+                     {
+                        const int DI=DIs[id];
+                        const int nta=TAs[0];
+                        int ita;
+
+                        if (HAS_DI)
+                           cDI = (AtlasUnit) ? 'U' : 'N';
+                        for (ita=1; ita <= nta; ita++)
+                        {
+                           const int TA=TAs[ita];
+                           const int ntb=TBs[0];
+                           int itb;
+
+                           if (HAS_TA)
+                           {
+                              if (TA == AtlasConjTrans)
+                                 cTA = 'C';
+                              else
+                                 cTA = (TA == AtlasTrans) ? 'T' : 'N';
+                           }
+                           for (itb=1; itb <= ntb; itb++)
+                           {
+                              const int TB=TBs[itb];
+                              int ia;
+
+                              if (HAS_TB)
+                              {
+                                 if (TB == AtlasConjTrans)
+                                    cTB = 'C';
+                                 else
+                                    cTB = (TB == AtlasTrans) ? 'T' : 'N';
+                              }
+                              for (ia=0; ia < nalp; ia++)
+                              {
+                                 #ifdef TREAL
+                                    const TYPE alpha = alps[ia];
+                                 #else
+                                    const TYPE *alpha = alps+ia+ia;
+                                 #endif
+                                 int ib;
+                                 char cALP;
+
+                                 #ifdef TREAL
+                                    if (alpha == 0.0)
+                                       cALP = '0';
+                                    else if (alpha == 1.0)
+                                       cALP = '1';
+                                    else if (alpha == -1.0)
+                                       cALP = 'N';
+                                    else
+                                       cALP = 'X';
+                                 #else
+                                    if (alpha[1] == 0.0)
+                                    {
+                                       if (*alpha == 0.0)
+                                          cALP = '0';
+                                       else if (*alpha == 1.0)
+                                          cALP = '1';
+                                       else if (*alpha == -1.0)
+                                          cALP = 'N';
+                                       else
+                                          cALP = 'R';
+                                    }
+                                    else
+                                       cALP = 'X';
+                                 #endif
+                                 for (ib=0; ib < nbet; ib++)
+                                 {
+                                    #ifdef TREAL
+                                       const TYPE beta = bets[ia];
+                                    #else
+                                       const TYPE *beta = bets+ib+ib;
+                                    #endif
+                                    int r;
+                                    char cBET;
+
+                                    #ifdef TREAL
+                                       if (beta == 0.0)
+                                          cBET = '0';
+                                       else if (beta == 1.0)
+                                          cBET = '1';
+                                       else if (beta == -1.0)
+                                          cBET = 'N';
+                                       else
+                                          cBET = 'X';
+                                    #else
+                                       if (beta[1] == 0.0)
+                                       {
+                                          if (*beta == 0.0)
+                                             cBET = '0';
+                                          else if (*beta == 1.0)
+                                             cBET = '1';
+                                          else if (*beta == -1.0)
+                                             cBET = 'N';
+                                          else
+                                             cBET = 'R';
+                                       }
+                                       else
+                                          cBET = 'X';
+                                    #endif
+                                    for (r=0; r < nreps; r++)
+                                    {
+                                       double time=0.0, mf=0.0;
+
+                                       DoTiming(nreps, flszKB, MFF, ldaG, ldbG,
+                                                ldcG, rt, SD, UP, DI, TA, TB,
+                                                alpha, beta, M, N, K, 
+                                                &time, &mf);
+                                       printf(frm, ++it, cSD, cUP, cDI, cTA,cTB,
+                                              cALP, cBET, M, N, K, time, mf);
+                                    }
+                                 }
+                              }
+                           }
+                        }
+                     }
+                  }
+               }
+            }
+         }
+      }
+   }
+}
+
 int *RoutNames2IntList(int nargs, char **args, int i)
 {
    int n, *iarr, k;
@@ -15052,7 +15285,7 @@ int *RoutNames2IntList(int nargs, char **args, int i)
          PrintUsage(args[0], i, NULL);
       for (b=0; b < NBLAS; b++)
       {
-         if (!strcmp(args[i], nblas[b])
+         if (!strcmp(args[i], nblas[b]))
          {
             iarr[k+1] = b;
             break;
@@ -15084,27 +15317,36 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "   -M <Mstart> <Mend> <Minc>\n");
    fprintf(stderr, "   -k <#> <K1> ... <K#>\n");
    fprintf(stderr, "   -K <Kstart> <Kend> <Kinc>\n");
-   fprintf(stderr, "   -a <ldagap> : lda = M + <ldagap> foreach M\n");
+   fprintf(stderr, "   -G[a,bc] <ldxgap> : ldx = N + <ldxgap> foreach N\n");
    fprintf(stderr, "   -f <flushKB> : flush at least this mem in LRU timers\n");
    fprintf(stderr, "   -S <#> <side1> ... <side#>\n");
-   fprintf(stderr, "   -U <nuplo> <up1> ... <upN> : Vals: [u,l,q,g]\n");
+   fprintf(stderr, "   -U <#> <up1> ... <up#> : Vals: [u,l,q,g]\n");
+   fprintf(stderr, "   -D <#> <dia1> ... <dia#> : Vals: [u,n]\n");
+   fprintf(stderr, "   -A <#> <ta1> ... <ta#> : Vals: [n,t,c]\n");
+   fprintf(stderr, "   -B <#> <tb1> ... <tb#> : Vals: [n,t,c]\n");
+   fprintf(stderr, "   -a <#> <alpha1> ... <alphaN> : real/complex floats\n");
+   fprintf(stderr, "   -b <#> <beta1> ... <betaN> : real/complex floats\n");
    exit(ierr ? ierr : -1);
 }
 
-void GetFlags(int nargs, char **args, int **nreps, int *flsizeKB, int *mflop,
-              int **ROUTs, int *ldagap, int **Ns, int **Ms, int **Ks, 
-              int **UPLOs, int **SDs)
+void GetFlags(int nargs, char **args, int *nreps, int *flsizeKB, int *mflop,
+              int *ldaG, int *ldbG, int *ldcG, int **ROUTs, int **Ns, int **Ms,
+              int **Ks, int **UPLOs, int **SDs, int **DIs, int **TAs, int **TBs,
+              int *nalphas, TYPE **alphas, int *nbetas, TYPE **betas)
 {
-   int *NBs=NULL, *ns=NULL, *ms=NULL, *ks=NULL, *ups=NULL, *sds=NULL, *ip;
-   int i, k, n;
+   int *NBs=NULL, *ns=NULL, *ms=NULL, *ks=NULL, *ups=NULL, *sds=NULL, 
+       *dis=NULL, *tas=NULL, *tbs=NULL, *ip;
+   int i, j, k, n;
 
    *ROUTs = NULL;
-   *ldagap = 0;
+   *ldbG = *ldcG = *ldaG = 0;
    *flsizeKB = L2SIZE/1024;
-   *nreps = NULL;
    *mflop = 0;
+   *nreps = 1;
+   *alphas = *betas = NULL;
    for (i=1; i < nargs; i++)
    {
+      int WH=0;
       if (args[i][0] != '-')
          PrintUsage(args[0], i, args[i]);
       switch(args[i][1])
@@ -15118,36 +15360,30 @@ void GetFlags(int nargs, char **args, int **nreps, int *flsizeKB, int *mflop,
          i += ms[0] + 1;
          break;
       case 'K':         /* -N or -NB */
+         WH++;
       case 'N':         /* -N or -NB */
+         WH++;
       case 'M':                         /* -M <Mstart> <Mend> <Minc>\n"); */
          if (i+3 >= nargs)
             PrintUsage(args[0], i, NULL);
          ip = GF_IntRange2IntList(atoi(args[i+1]), atoi(args[i+2]),
                                   atoi(args[i+3]));
-         if (args[i][0] == 'M')
-            ms = ip;
-         else if (args[i][0] == 'N')    /* -N <Nstart> <Nend> <Ninc>\n"); */
+         if (WH == 2)
+            ks = ip;
+         else if (WH == 1)
             ns = ip;
          else
-            ks = ip;
+            ms = ip;
          i += 3;
          break;
       case 'R':        /* -R # <rout1> ... <routN#>  */
          *ROUTs = RoutNames2IntList(nargs, args, i);
          i += (*ROUTs)[0] + 1;
          break;
-      case '#':                         /* set nreps */
-         if (args[i][2] == 't')         /* -#t N1 reps1 ... Nt repst */
-         {
-            *nreps = GetIntList(nargs, args, i, 2);
-            i += ((*nreps)[0] << 1) + 1;
-         }
-         else                           /* -# <reps> */
-         {
-            if (++i >= nargs)
-               PrintUsage(args[0], i, NULL);
-            *nreps = GetIntList2(0, atoi(args[i]));
-         }
+      case '#':                          /* -# <reps> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         *nreps = atoi(args[i]);
          break;
       case 'f':                         /* -f <flushKB> */
          if (++i >= nargs)
@@ -15158,6 +15394,39 @@ void GetFlags(int nargs, char **args, int **nreps, int *flsizeKB, int *mflop,
          if (++i >= nargs)
             PrintUsage(args[0], i, NULL);
          *mflop = atoi(args[i]);
+         break;
+      case 'A':                         /* -A <nta> <ta1> ... <taN> */
+         WH = 1;
+      case 'B':                         /* -B <ntb> <tb1> ... <tbN> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         n = atoi(args[i]);
+         ATL_assert(n > 0);
+         ip = malloc(sizeof(int)*(n+1));
+         ip[0] = n;
+         for (k=0; k < n; k++)
+         {
+            if (++i >= nargs)
+               PrintUsage(args[0], i, NULL);
+            switch(args[i][0])
+            {
+            case 'C':
+            case 'c':
+               ip[k+1] = AtlasConjTrans;
+               break;
+            case 't':
+            case 'T':
+               ip[k+1] = AtlasTrans;
+               break;
+            default:
+               ip[k+1] = AtlasNoTrans;
+               break;
+            }
+         }
+         if (WH)
+            tas = ip;
+         else
+            tbs = ip;
          break;
       case 'U':                         /* -U <nup> <u1> ... <uN>;[u,l,q,g] */
          if (++i >= nargs)
@@ -15174,12 +15443,12 @@ void GetFlags(int nargs, char **args, int **nreps, int *flsizeKB, int *mflop,
             {
             case 'U':
             case 'u':
-               ups[k+1] = LAUpper;
+               ups[k+1] = AtlasUpper;
                break;
             case 'l':
             case 'L':
             default:
-               ups[k+1] = LALower;
+               ups[k+1] = AtlasLower;
                break;
             }
          }
@@ -15199,18 +15468,72 @@ void GetFlags(int nargs, char **args, int **nreps, int *flsizeKB, int *mflop,
             {
             case 'L':
             case 'l':
-               sds[k+1] = LALeft;
+               sds[k+1] = AtlasLeft;
                break;
             default:
-               sds[k+1] = LARight;
+               sds[k+1] = AtlasRight;
                break;
             }
          }
          break;
-      case 'a':                         /* -a <ldagap> */
+      case 'D':                         /* -D <#> <diag1> ... <diagN> */
          if (++i >= nargs)
             PrintUsage(args[0], i, NULL);
-         *ldagap = atoi(args[i]);
+         n = atoi(args[i]);
+         ATL_assert(n > 0);
+         dis = malloc(sizeof(int)*(n+1));
+         dis[0] = n;
+         for (k=0; k < n; k++)
+         {
+            if (++i >= nargs)
+               PrintUsage(args[0], i, NULL);
+            switch(args[i][0])
+            {
+            case 'U':
+            case 'u':
+               sds[k+1] = AtlasUnit;
+               break;
+            default:
+               sds[k+1] = AtlasNonUnit;
+               break;
+            }
+         }
+         break;
+      case 'G':                         /* -a <ldagap> */
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         if (args[i-1][2] == 'b')
+            *ldbG = atoi(args[i]);
+         else if (args[i-1][2] == 'c')
+            *ldcG = atoi(args[i]);
+         else
+            *ldaG = atoi(args[i]);
+         break;
+      case 'a':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of flags in -a");
+         *nalphas = atoi(args[i]);
+         *alphas = malloc(ATL_MulBySize(*nalphas));
+         assert(*alphas);
+         for (j=0; j < *nalphas SHIFT; j++) 
+         {
+            if (++i >= nargs)
+               PrintUsage(args[0], i, "out of flags in -a");
+            (*alphas)[j] = atof(args[i]);
+         }
+         break;
+      case 'b':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of flags in -b");
+         *nbetas  = atoi(args[i]);
+         *betas  = malloc(ATL_MulBySize(*nbetas ));
+         assert(*betas );
+         for (j=0; j < *nbetas SHIFT; j++)
+         {
+            if (++i >= nargs)
+               PrintUsage(args[0], i, "out of flags in -b");
+            (*betas)[j] = atof(args[i]);
+         }
          break;
       default:
          PrintUsage(args[0], i, args[i]);
@@ -15219,23 +15542,75 @@ void GetFlags(int nargs, char **args, int **nreps, int *flsizeKB, int *mflop,
 /*
  * Take default values
  */
+   if (!(*alphas))
+   {
+      *nalphas = 1;
+      *alphas = malloc(sizeof(double)SHIFT);
+      **alphas = 1.0;
+      #ifdef TCPLX
+         alphas[1] = 0.0;
+      #endif
+   }
+   if (!(*betas))
+   {
+      *nbetas = 1;
+      *betas = malloc(sizeof(double)SHIFT);
+      **betas = 1.0;
+      #ifdef TCPLX
+         betas[1] = 0.0;
+      #endif
+   }
    if (!(*ROUTs))
-      *ROUTs = GetIntList1(LAgeqrf);
-   if (!(*nreps))
-      *nreps = GetIntList2(0, 1);
+      *ROUTs = GF_GetIntList1(Bgemm);
    if (!ns)
-      ns = GetIntList1(1000);
+      ns = GF_GetIntList1(1000);
    if (!ms)
-      ms = GetIntList1(0);
+      ms = GF_GetIntList1(0);
+   if (!ks)
+      ks = GF_GetIntList1(0);
    if (!ups)
-      ups = GetIntList1(LAUpper);
+      ups = GF_GetIntList1(AtlasUpper);
    if (!sds)
-      sds = GetIntList1(LARight);
+      sds = GF_GetIntList1(AtlasRight);
+   if (!dis)
+      dis = GF_GetIntList1(AtlasRight);
+   if (!tas)
+      tas = GF_GetIntList1(AtlasNoTrans);
+   if (!tbs)
+      tbs = GF_GetIntList1(AtlasNoTrans);
 
    *Ns = ns;
    *Ms = ms;
+   *Ks = ks;
    *UPLOs = ups;
    *SDs = sds;
+   *DIs = dis;
+   *TAs = tas;
+   *TBs = tbs;
+}
+
+int main(int nargs, char **args)
+{
+   int nreps, flszKB, MF, ldaG, ldbG, ldcG, nalp, nbet; 
+   int *ROUTs, *Ns, *Ms, *Ks, *UPs, *SDs, *DIs, *TAs, *TBs;
+   TYPE *alps, *bets;
+   GetFlags(nargs, args, &nreps, &flszKB, &MF, &ldaG, &ldbG, &ldcG, 
+            &ROUTs, &Ns, &Ms, &Ks, &UPs, &SDs, &DIs, &TAs, &TBs,
+            &nalp, &alps, &nbet, &bets);
+   RunAllTimings(nreps, flszKB, MF, ldaG, ldbG, ldcG, ROUTs, SDs, UPs, DIs, 
+                 TAs, TBs, nalp, alps, nbet, bets, Ms, Ns, Ks);
+   free(ROUTs);
+   free(Ms);
+   free(Ns);
+   free(Ks);
+   free(UPs);
+   free(SDs);
+   free(DIs);
+   free(TAs);
+   free(TBs);
+   free(alps);
+   free(bets);
+   return(0);
 }
 @rout l3blastst_old
 @extract -b @(topd)/gen.inc what=cw -def author "Jeff Horner" -def contrib "R. Clint Whaley" -def cdate 1998
