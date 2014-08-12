@@ -1634,14 +1634,20 @@ DESCRIPTION
    workstation, and do the processing there.
 
 EXAMPLE
- 1. Time ATLAS's Upper Cholesky (UtU) factorization for various sizes:
+ Here's an example showing everything from running the timers to getting
+ human (or machine)-readable output using the majority of the atltvec tools.
+ 1. Time ATLAS's Upper Cholesky (UtU) factorization for various sizes,
+ and modify the output with a line to tell tvecget(1) when to stop reading:
    
   ./xdslatime_al_ab -R 1 potrf -U 1 u -N 20 100 20 -# 8 \\
       > res/tutu.out
+  echo "*** END LABEL=_tuu NREP=8" >> res/tutu.out
   ./xdslatime_al_ab -R 1 potrf -U 1 u -N 200 2000 200 -# 3 \\
       > res/mutu.out
+   echo "*** END LABEL=_muu NREP=3" >> res/mutu.out
    ./xdslatime_al_ab -R 1 potrf -U 1 u -N 4000 6000 2000 -# 2 \\
       > res/lutu.out
+   echo "*** END LABEL=_luu NREP=2" >> res/lutu.out
 
  2. Translate timings to tvecs:
 
@@ -1684,7 +1690,7 @@ EXAMPLE WITH PIPES
    ./tvecjoin -J 3 N_luu MFLOP_luu_max N_tuu MFLOP_tuu_max \\
                  N_muu MFLOP_muu_max | \\
    ./tvecscale -B 26400 -m 100.0 -C 1 N_luu -R 1 MFLOP_luu_max | \\
-   ./tvecrename -i tst.tv -R 2 N_luu N MFLOP_luu_max percPeak_UtU | \\
+   ./tvecrename -R 2 N_luu N MFLOP_luu_max percPeak_UtU | \\
    ./tvecprint -C 2 N percPeak_UtU -h 1
 
 EXAMPLE OUTPUT
@@ -1713,12 +1719,13 @@ EXAMPLE OUTPUT
  * I got 85% of peak for N=6000, and only 28.5% for N=200
 
 SEE ALSO
-  tvecget(1) tveccat(1) tvecjoin(1) tvecscale(1) tvecreduce(1) 
+  tvecget(1) tveccat(1) tvecunify(1) tvecjoin(1) tvecscale(1) tvecreduce(1) 
   tvecrename(1) tvecprint(1)
 
 AUTHOR
    R. Clint Whaley
-@ROUT tvecget tveccat tvecjoin tvecscale tvecreduce tvecrename tvecprint
+@ROUT tvecget tveccat tvecjoin tvecscale tvecreduce tvecrename tvecprint @\
+      tvecunify
 @ROUT @push
 
 NAME
@@ -1726,6 +1733,8 @@ NAME
   tvecget - convert a multiple bin/ timing runs to tvec form
 @ROUT tveccat 
   tveccat - take selected tvecs from multiple tvec files
+@ROUT tvecunify
+  tvecunify - unify all tvecs with the same name into one tvec
 @ROUT tvecjoin 
    tvecjoin - Join non-interlapping ranges into extended vectors
 @ROUT tvecscale 
@@ -1742,6 +1751,8 @@ SYNOPSIS
 @ROUT tvecget
   tvecget [-i infile] [-o outfile] [-c "commentln"] [-s sepstr]
           [-H # h1 ... hN] [-C # c1 ... cN] [-S begln stride]
+@ROUT tvecunify
+  tvecunify [-i infile] [-o outfile] [-r 0/1]
 @ROUT tveccat 
   tveccat [-i infile] [-o outfile] [-# #]
           [-C N nam1 ... namN] [-c N nam1 ... namN]
@@ -1774,13 +1785,24 @@ ended by (the first * should occur in the first column):
 
   *** END LABEL=suff NREP=#
 @ROUT tveccat 
-@(@rout) takes selected tvecs from multiple files and puts them into one.
+@(@rout) takes selected tvecs originally from multiple files and puts
+them into one.
 For vectors named with the -c command, @(@rout) just takes the first found
 tvec of that name, and ignores the rest. For vectors named with -C,
 @(@rout) will create a vector of that name for each file. The vector from
 the first file will get the original name, while the vector from the second
 file will be suffixed with _1, the third file's name will be suffixed
 with _2, etc.
+@ROUT tvecunify
+@(@rout) searches the input for tvecs that have the same name. Any that do
+are combined together by replacing all same-named tvecs with a new one
+long enough to hold them all. The tvec values are concatonated starting
+with the earliest entry in the stream.
+If the -r 1 flag is flown, this process is done in reverse-tvec-order
+(so the last tvec of with a particular name starts the accretion).
+tvecs without repeated names pass through unchanged.
+tvecprint will die if two vectors with the same name have different types
+or number of repetitions.
 @ROUT tvecjoin 
 tvecjoin is used to combine timings of differing ranges into one large tvec.
 This is often advantageous because you want to run small problems with
@@ -1810,7 +1832,23 @@ However, if the -b flag is thrown instead, the denominator of the scaling
 factor comes from the provided tvec. This allows us to compute 
 speedup (-m 1.0) or percentage performance (-m 100.0) of two different tvecs.
 @ROUT tvecreduce 
-Reduces repetitions to one, prints out statistics while retaining everything.
+tvecreduce is used to remove repetitions from tvecs, while getting some
+simple statistics. It will output two types of nrep=1 tvecs: collapsed (-C)
+and reduced (-R). Collapsed vectors are formed by simply taking only the
+first entry of each repetition, and on output they will have the same
+name as they had before collapsing.
+
+For each reduced tvec, tvecreduce creates several new nrep=1 tvecs, that
+have standard suffixes added to their names in order to
+distinguish them (if you don't like these suffixes, see tvecrename(1)).
+Most interesting, it creates vectors suffixed with _max, _min, and _avg
+which contains the maximum, minumum or average of all the repetitions.
+It also creates a separate vector for each repetition location
+(i.e. _0 will have the first timing for each entry, _1 will have the second,
+etc). Therefore, no information is lost in this step for reducec tvecs. 
+Other tools like
+tveccat(1), tvecjoin(1), tvecscale(1) and tvecprint(1) can then be used 
+to get rid of any unneeded tvecs.
 @ROUT tvecrename 
 tvecrename renames tvecs given as arguments to -R, while leaving other
 tvecs in the input alone.
@@ -1818,11 +1856,20 @@ tvecs in the input alone.
 tvecprint prints all tvecs in the input out into tabular form with tvecs
 in columns separated by tabs, which is a format accepted by office as CSV,
 as well as ploticus. Columns are typically 12 spaces wide. tvec names
-can be optionally printed; the default is to print the bare data
+can be optionally printed; the default is not to print the names
 (ploticus likes that).
 @ROUT @peek
 @endindent
 
+@ROUT tvecrename 
+OPTIONS
+   -i infile                     Take input from infile, rather than stdin.
+   -o outfile                    Write tvecs to outfile, rather than stdout.
+   -R N nam1 rep1 ... namN repN  Vectors with names namI are replaced with
+                                 the associated repI string.
+   -s suff                       all vectors get suff suffixed to their names
+                                 (including the renamed vectors!). By default
+                                 no suffix is added to any name.
 @ROUT tvecjoin
 OPTIONS
    -i infile                         Take input from infile, rather than stdin.
@@ -1830,7 +1877,7 @@ OPTIONS
    -J N rngv1 joiv1 ... rngvN joivN  List of all vectors to join, and the
                                      range vectors that allow them to be sorted.
 @ROUT @peek
-@ROUT - tvecjoin
+@ROUT - tvecjoin tvecrename
 OPTIONS
    -i infile            Take input from infile, rather than stdin.
    -o outfile           Write tvecs to outfile, rather than stdout.
@@ -1846,6 +1893,8 @@ OPTIONS
                         row, before skipping stride - 1 rows to get to the
                         next line. Settings of 1 1 causes normal behavior,
                         while -S 2 2 would grab only the the even lines.
+@ROUT tvecunify
+   -r 0/1               Unify tvecs in normal or reverse order
 @ROUT tveccat 
    -# N                 The number of tvec files you are concatonating.
    -C N nam1 ... namN   Name of vectors that can be found in multiple files.
@@ -1868,7 +1917,8 @@ OPTIONS
    -R # nam1 ... namN   vectors to scale.
    -C # nam1 ... namN   vectors to keep unchanged.
 @ROUT tvecreduce 
-@ROUT tvecrename 
+   -R # nam1 ... namN   vectors to reduce.
+   -C # nam1 ... namN   vectors to collapse.
 @ROUT tvecprint
    -C # nam1 ... namN   vectors in the order in which they become tabular
                         columns
@@ -1887,6 +1937,8 @@ EXAMPLE
    tvecget -i time.out -H 2 MFLOP N
 @ROUT tveccat 
    cat LU.tvec QR.tvec MM.tvec | tveccat -# 3 -H 2 MFLOP N
+@ROUT tvecunify
+   tvecunify -r 1 -i in.tv
 @ROUT tvecjoin 
    tvecjoin -i small_med_lrg.tvec -J 3 N_lrg MFLOP_lrg N_sm MFLOP_sm N_med MFLOP_med
 @ROUT tvecscale 
@@ -1899,7 +1951,7 @@ EXAMPLE
    tvecprint -h 1 -i comb.tvec -C 4 N MFLOP_lu MFLOP_qr MFLOP_mm
 @ROUT @pop
 SEE ALSO
-  atltvecs(7) tvecget(1)
+  atltvecs(7) tvecget(1) tvecunify()
   tveccat(1) tvecjoin(1) tvecscale(1) tvecreduce(1) tvecrename(1) tvecprint(1)
 
 AUTHOR
