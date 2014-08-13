@@ -15042,6 +15042,7 @@ void DoTiming(int nreps, int flszKB, int MFF, int ldaG, int ldbG, int ldcG,
               double *time, double *mflop)
 {
    *time = *mflop = 0.0;
+   flszKB *= 1024;
    switch(ibl)
    {
       double dtmp;
@@ -15307,6 +15308,7 @@ void PrintUsage(char *name, int ierr, char *flag)
 
    fprintf(stderr, "USAGE: %s [flags]:\n", name);
    fprintf(stderr, "   -R <#> <rout1> ... <rout#>\n");
+   fprintf(stderr, "   -R <rout1/all>\n");
    fprintf(stderr, 
    "      routs: gemm, symm, syr2k hemm, her2k, syrk, trmm, trsm, herk\n");
    fprintf(stderr, "   -F <mflop> : force <mflops> of timed computation\n");
@@ -15377,8 +15379,25 @@ void GetFlags(int nargs, char **args, int *nreps, int *flsizeKB, int *mflop,
          i += 3;
          break;
       case 'R':        /* -R # <rout1> ... <routN#>  */
-         *ROUTs = RoutNames2IntList(nargs, args, i);
-         i += (*ROUTs)[0] + 1;
+         if (i+1 >= nargs)
+            PrintUsage(args[0], i, "out of args to -R");
+         if (isdigit(args[i+1][0]))
+         {
+            *ROUTs = RoutNames2IntList(nargs, args, i);
+            i += (*ROUTs)[0] + 1;
+         }
+         else if (!strcmp(args[++i], "all"))  /* want them all */
+            *ROUTs = GF_IntRange2IntList(Bgemm, NBLAS-1, 1);
+         else  /* only giving one name */
+         {
+            for (k=0; k < NBLAS; k++)
+               if (!strcmp(args[i], nblas[k]))
+                  break;
+            if (k == NBLAS)
+              PrintUsage(args[0], i, 
+                         "Unknown blas name to -R: is it lower case?");
+            *ROUTs = GF_GetIntList1(k);
+         }
          break;
       case '#':                          /* -# <reps> */
          if (++i >= nargs)
@@ -15548,7 +15567,7 @@ void GetFlags(int nargs, char **args, int *nreps, int *flsizeKB, int *mflop,
       *alphas = malloc(sizeof(double)SHIFT);
       **alphas = 1.0;
       #ifdef TCPLX
-         alphas[1] = 0.0;
+         (*alphas)[1] = 0.0;
       #endif
    }
    if (!(*betas))
@@ -15557,7 +15576,7 @@ void GetFlags(int nargs, char **args, int *nreps, int *flsizeKB, int *mflop,
       *betas = malloc(sizeof(double)SHIFT);
       **betas = 1.0;
       #ifdef TCPLX
-         betas[1] = 0.0;
+         (*betas)[1] = 0.0;
       #endif
    }
    if (!(*ROUTs))
