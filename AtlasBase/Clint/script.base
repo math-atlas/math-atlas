@@ -3777,7 +3777,11 @@ int main(int nargs, char **args)
    for (tp=tc; tp; tp = tp->next)
    {
       ATL_tvec_t *p;
-      assert(tp->pre == 'd');         /* relax this later if needed */
+      if (tp->pre != 'd')
+      {
+         fprintf(stderr, "%s is %c!\n", tp->name, tp->pre);
+         assert(tp->pre == 'd');         /* relax this later if needed */
+      }
       p = ATL_GetStatTvecsDOUBLE(tp);
       p->next->next->next = nb;
       nb = p;
@@ -4742,7 +4746,7 @@ int main(int nargs, char **args)
    free(renarr);
    return(0);
 }
-@ROUT tpkget.sh
+@ROUT tpkget.sh tpkeval.sh
 #!/bin/sh
 pre=d
 la=_al
@@ -4776,6 +4780,7 @@ do
         ;;
    esac
 done
+@ROUT tpkget.sh
 
 for rt in ${lrts}
 do
@@ -4799,6 +4804,41 @@ then
    echo "\nRunning ${N0}-${NN} ${rt} with ${reps} reps"
    ./tvrun_rng.sh x${pre}tl3time${bl} ${rt} $N0 $NN $Ni _${rt} $reps
 fi
+@ROUT tpkeval.sh
+BINdir=../bin
+t0=ttpk0.tv
+t1=ttpk1.tv
+rm -f $t1 $t2
+if [ $N0 -gt 6000 ]
+then
+   eb=res/t${pre}gemm${bl}_${N0}_${NN}_${Ni}.out 
+   el=res/t${pre}getrf${la}${bl}_${N0}_${NN}_${Ni}.out \
+      res/t${pre}potrf${la}${bl}_${N0}_${NN}_${Ni}.out \
+      res/t${pre}geqrf${la}${bl}_${N0}_${NN}_${Ni}.out
+else
+   eb=
+   el=
+fi
+cat res/t${pre}gemm${bl}_200_2000_200_20.out \
+    res/t${pre}gemm${bl}_3000_6000_1000_4.out ${eb} \
+    | $BINdir/tvecget -H 2 N MFLOP \
+    | $BINdir/tvecreduce -R 1 N_gemm -C 1 MFLOP_gemm -o $t0
+cat res/t${pre}getrf${la}${bl}_200_2000_200_20.out \
+    res/t${pre}potrf${la}${bl}_200_2000_200_20.out \
+    res/t${pre}geqrf${la}${bl}_200_2000_200_20.out \
+    res/t${pre}getrf${la}${bl}_3000_6000_1000_4.out \
+    res/t${pre}potrf${la}${bl}_3000_6000_1000_4.out \
+    res/t${pre}geqrf${la}${bl}_3000_6000_1000_4.out ${el} \
+    | $BINdir/tvecget -H 2 N MFLOP \
+    | $BINdir/tvecreduce -C 3 MFLOP_getrf MFLOP_potrf MFLOP_geqrf -o $t1 
+cat $t0 $t1 | $BINdir/tvecselect -# 2 \
+    -S 2 N_gemm MFLOP_gemm_avg -R 2 N_gemm N MFLOP_gemm_avg MFLOP_gemm \
+    -S 3 MFLOP_getrf_avg MFLOP_potrf_avg MFLOP_geqrf_avg \
+    -R 3 MFLOP_getrf_avg MFLOP_getrf MFLOP_potrf_avg MFLOP_potrf \
+         MFLOP_geqrf_avg MFLOP_geqrf \
+    | $BINdir/tvecunify -r 1 \
+    | $BINdir/tvecprint -h 1 \
+    -C 5 N MFLOP_gemm MFLOP_getrf MFLOP_potrf MFLOP_geqrf
 @ROUT tvrun_rng.sh tvrun_lst.sh
 #!/bin/sh
 @ROUT tvrun_lst.sh
