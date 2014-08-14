@@ -3385,7 +3385,7 @@ int main(int nargs, char **args)
    {
       tp = ATL_ReadTvecFile(fpin, &cmnt0, &n);
       /* select the tvecs */
-      nb = ATL_PullNamedVecsFromList(Ns[0], snames[0], &tp);
+      nb = ATL_PullNamedVecsFromListWithDups(Ns[0], snames[0], &tp);
       assert(nb);
       if (tp) ATL_KillAllTvecs(tp);
       /* rename the tvecs */
@@ -3401,7 +3401,7 @@ int main(int nargs, char **args)
       if (Ns[ci] > 0)
       {
          tp = ATL_ReadTvecFile(fpin, &cmnt, &n);
-         np = ATL_PullNamedVecsFromList(Ns[ci], snames[ci], &tp);
+         np = ATL_PullNamedVecsFromListWithDups(Ns[ci], snames[ci], &tp);
          if (!np) break;
          if (tp) ATL_KillAllTvecs(tp);
          if (cmnt)
@@ -4106,7 +4106,7 @@ int main(int nargs, char **args)
       fclose(fpout);
    return(0);
 }
-@ROUT perctvecs
+@ROUT perctvecs tvecscale
 #include "atlas_tvec.h"
 
 void PrintUsage(char *name, char *arg, int i)
@@ -4259,15 +4259,18 @@ int main(int nargs, char **args)
    redarr = keeparr + Nk;
 
 /*
- * Grab only the vectors to be combined and reduced (in the order the user
+ * Grab only the vectors to be scaled (tr) and kept (tk) (in the order the user
  * has specified) from list, and free all unused vectors
  */
-
    np = ATL_ReadTvecFile(fpin, &cmnt, &i);
    if (fpin != stdin)
       fclose(fpin);
    if (basev)
+@ROUT tvecscale
+      tb = ATL_DupNamedVecsFromList(1, &basev, np, 1);
+@ROUT perctvecs
       tb = ATL_PullNamedVecsFromList(1, &basev, &np);
+@ROUT perctvecs tvecscale
    else
       tb = NULL;
    tr = ATL_PullNamedVecsFromList(Nr, redarr, &np);
@@ -4300,10 +4303,22 @@ int main(int nargs, char **args)
 /*
  * Link lists back up, and write to file
  */
+@ROUT tvecscale
+   if (tk)
+      ATL_FindLastTvecInList(tk)->next = tr;
+   else
+      tk = tr;
+   if (tk)
+   {
+      ATL_WriteTvecFile(fpout, cmnt, ATL_CountTvecsInList(tk), tk);
+      ATL_KillAllTvecs(tk);
+   }
+@ROUT perctvecs
    ATL_FindLastTvecInList(tr)->next = tb;
    ATL_FindLastTvecInList(tk)->next = tr;
    ATL_WriteTvecFile(fpout, cmnt, ATL_CountTvecsInList(tk), tk);
    ATL_KillAllTvecs(tk);
+@ROUT perctvecs tvecscale
    free(cmnt);
    free(--keeparr);
    if (fpout != stdout && fpout != stderr)
@@ -4837,8 +4852,12 @@ cat $t0 $t1 | $BINdir/tvecselect -# 2 \
     -R 3 MFLOP_getrf_avg MFLOP_getrf MFLOP_potrf_avg MFLOP_potrf \
          MFLOP_geqrf_avg MFLOP_geqrf \
     | $BINdir/tvecunify -r 1 \
+    | $BINdir/tvecscale -m 1.0 -b MFLOP_gemm -C 1 MFLOP_gemm \
+    -R 3 MFLOP_getrf MFLOP_potrf MFLOP_geqrf \
+    | $BINdir/tvecrename \
+    -R 3 MFLOP_getrf GETRFpcMM MFLOP_potrf POTRFpcMM MFLOP_geqrf GEQRFpcMM \
     | $BINdir/tvecprint -h 1 \
-    -C 5 N MFLOP_gemm MFLOP_getrf MFLOP_potrf MFLOP_geqrf
+    -C 5 N MFLOP_gemm GETRFpcMM POTRFpcMM GEQRFpcMM
 @ROUT tvrun_rng.sh tvrun_lst.sh
 #!/bin/sh
 @ROUT tvrun_lst.sh
