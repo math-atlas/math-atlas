@@ -3005,6 +3005,7 @@ int main(int nargs, char **args)
    return(0);
 }
 @ROUT tvecjoin
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2014
 #include "atlas_tvec.h"
 
 void PrintUsage(char *name, char *arg, int i)
@@ -3218,6 +3219,244 @@ int main(int nargs, char **args)
    while (jb)
       jb = ATL_tvj_kill(jb);
    if (fpout != stdout && fpout != stderr)
+      fclose(fpout);
+   return(0);
+}
+@ROUT tvecselect
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2014 -def cwauth "Md Rakib Hasan" -def contrib "R. Clint Whaley"
+#include "atlas_tvec.h"
+
+void PrintUsage(char *name, char *arg, int i)
+{
+   fprintf(stderr, "This routine takes tvecs in one or more files and outputs"
+                   " the \nselected ones, while optionally renaming them.\n");
+   if (i > 0)
+      fprintf(stderr, "BAD ARG '%s' ON %dth FLAG\n", arg, i);
+   fprintf(stderr, "USAGE: %s <flags> ; flags include:\n", name);
+   fprintf(stderr, "   -i <file> : (stdin) file with vecs to read.\n");
+   fprintf(stderr, "   -o <file> : (stdout) output file for all tvecs.\n");
+   fprintf(stderr, "   -# <#> : # of tvec files concatonated in the input; "
+                   "MUST be specified\n");
+   fprintf(stderr, "      before -S or -R.\n");
+   fprintf(stderr, "   -S # <nam1> ... <nam#> : vectors to select from 1st "
+                   "file.\n      Repeat for later files.\n");
+   fprintf(stderr, "   -R # <oldnam1> <newnam1> ... <oldnam#> <newnam#> : "
+                   "name pairs from 1st file.\n      Used with -S. Repeat flag "
+                   "for later files.\n");
+   fprintf(stderr, "   -s # <nam1> ... <nam#> : vectors to select from all "
+                   "files.\n      Can be used once. Cannot be used with "
+                   "-S or -R.\n");
+   fprintf(stderr, "   -r # <oldnam1> <newnam1> ... <oldnam#> <newnam#> : "
+                   " rename list\n      for all files. "
+                   "Can be used once and only with -s.\n");
+   fprintf(stderr, "\n");
+   exit (i ? i : -1);
+}
+
+void GetFlags
+(
+   int nargs, 
+   char **args, 
+   int *Nfiles,         /* # of tvec files in input stream */
+   char *Mode,          /* S or s for -S/R or -s/r */
+   int **Nselect,       /* array holding # of tvecs to select for each file */
+   char ****sel_names,  /* array holding names of tvecs for each file */
+   int **Nrename,       /* array holding # of tvecs to rename for each file */
+   char ****ren_names,  /* array holding names of tvecs for each file */
+   FILE **fpin,         /* input stream */
+   FILE **fpout         /* output stream */
+)
+{
+   int i, j, k, n;
+   int si, ri;
+
+   si = ri = 0;
+   *fpin = stdin;
+   *fpout = stdout;
+   *Nfiles = 1;
+   *Mode = 0; /* initially no mode */
+   *Nselect = malloc(*Nfiles * sizeof(int));
+   *sel_names = malloc(*Nfiles * sizeof(char**));
+   *Nrename = malloc(*Nfiles * sizeof(int));
+   *ren_names = malloc(*Nfiles * sizeof(char**));
+   for (k=0; k<*Nfiles; k++)
+   {
+      (*Nselect)[k] = 0;
+      (*Nrename)[k] = 0;
+   }
+   for (i=1; i<nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], "no '-' preceeding flag!", i);
+
+      switch(args[i][1])
+      {
+         case '#':   /* -# <# files> */
+            if (++i >= nargs)
+               PrintUsage(args[0], "out of flags in -# ", i-1);
+            *Nfiles = atoi(args[i]);
+            free(*Nselect);
+            free(*sel_names);
+            free(*Nrename);
+            free(*ren_names);
+            *Nselect = malloc(*Nfiles * sizeof(int));
+            *sel_names = malloc(*Nfiles * sizeof(char**));
+            *Nrename = malloc(*Nfiles * sizeof(int));
+            *ren_names = malloc(*Nfiles * sizeof(char**));
+            for (k=0; k<*Nfiles; k++)
+            {
+               (*Nselect)[k] = 0;
+               (*Nrename)[k] = 0;
+            }
+            break;
+         case 'i':   /* -i <file> */
+            if (++i >= nargs)
+               PrintUsage(args[0], "out of flags in -i ", i-1);
+            *fpin = fopen(args[i], "r");
+            assert(*fpin);
+            break;
+         case 'o':   /* -o <file> */
+            if (++i >= nargs)
+               PrintUsage(args[0], "out of flags in -o ", i-1);
+            *fpout = fopen(args[i], "w");
+            assert(*fpout);
+            break;
+         case 'S':   /* -S # <nam1> ... <nam#> */
+         case 's':   /* -s # <nam1> ... <nam#> */
+            if (++i >= nargs)
+               PrintUsage(args[0], "out of flags in -S/s ", i-1);
+            assert(*Mode == 0 || *Mode == args[i-1][1]);
+            *Mode = args[i-1][1];
+            if (*Mode == 's') assert(si == 0);
+            (*Nselect)[si] = n = atoi(args[i]);
+            if (n > 0)
+            {
+               (*sel_names)[si] = malloc(n * sizeof(char*));
+               assert((*sel_names)[si]);
+               for (j=0; j<n; j++)
+               {
+                  if (++i >= nargs)
+                     PrintUsage(args[0], "out of flags in -S/s ", i-1);
+                  (*sel_names)[si][j] = args[i];
+               }
+            }
+            si++;
+            break;
+         case 'R':   /* -R # <oldnam1> <newnam1> ... <oldnam#> <newnam#> */
+         case 'r':   /* -r # <oldnam1> <newnam1> ... <oldnam#> <newnam#> */
+            if (++i >= nargs)
+               PrintUsage(args[0], "out of flags in -R/r ", i-1);
+            assert(*Mode == 0 || *Mode == (args[i-1][1]+1));
+@skip            *Mode = (char)((int)(args[i-1][1])+1); /* mode s/S */
+            *Mode = args[i-1][1]+1;  /* mode s/S */
+            if (*Mode == 'r') assert(ri == 0);
+            (*Nrename)[ri] = n = atoi(args[i]);
+            if (n > 0)
+            {
+               (*ren_names)[ri] = malloc(n*2 * sizeof(char*));
+               assert((*ren_names)[ri]);
+               for (j=0; j<n*2; j++) /* pair of names */
+               {
+                  if (++i >= nargs)
+                     PrintUsage(args[0], "out of flags in -R/r ", i-1);
+                  (*ren_names)[ri][j] = args[i];
+               }
+            }
+            ri++;
+            break;
+         default:
+            PrintUsage(args[0], args[i], i);
+      }
+   }
+}
+
+int main(int nargs, char **args)
+{
+   FILE *fpin, *fpout;
+   int Nf, *Ns=NULL, *Nr=NULL;
+   int i, j, n, ci;
+   char mode = 0;
+   char ***snames=NULL, ***rnames=NULL, *cmnt0=NULL, *cmnt=NULL;
+   ATL_tvec_t *tp, *np, *nb, *ft;
+
+   GetFlags(nargs, args, &Nf, &mode, &Ns, &snames, &Nr, &rnames, &fpin, &fpout);
+
+   if (Ns[0] > 0)
+   {
+      tp = ATL_ReadTvecFile(fpin, &cmnt0, &n);
+      /* select the tvecs */
+      nb = ATL_PullNamedVecsFromList(Ns[0], snames[0], &tp);
+      assert(nb);
+      if (tp) ATL_KillAllTvecs(tp);
+      /* rename the tvecs */
+      for (j=0; j<Nr[0]; j++)
+      {
+         tp = ATL_FindTvecByName(nb, rnames[0][j*2]);
+         if (tp) strcpy(tp->name, rnames[0][j*2+1]);
+      }
+   }
+   for (i=1; i<Nf; i++)
+   {
+      ci = ((mode == 'S') ? i : 0);
+      if (Ns[ci] > 0)
+      {
+         tp = ATL_ReadTvecFile(fpin, &cmnt, &n);
+         np = ATL_PullNamedVecsFromList(Ns[ci], snames[ci], &tp);
+         if (!np) break;
+         if (tp) ATL_KillAllTvecs(tp);
+         if (cmnt)
+         {
+            free(cmnt);
+            cmnt = NULL;
+         }
+
+         /* rename the tvecs */
+         for (j=0; j<Nr[ci]; j++)
+         {
+            tp = ATL_FindTvecByName(np, rnames[ci][j*2]);
+            if (tp) strcpy(tp->name, rnames[ci][j*2+1]);
+         }
+
+         /* append the current list to the base list */
+         ATL_FindLastTvecInList(nb)->next = np;
+      }
+   }
+   if (mode == 's') /* -s/r mode, remove duplicates */
+   {
+      for (j=0; j<Nr[0]; j++)
+      {
+         for (i=0; i<Ns[0]; i++)
+         {
+            if (!strcmp(rnames[0][j*2], snames[0][i]))
+            {
+               strcpy(snames[0][i], rnames[0][j*2+1]);
+            }
+         }
+      }
+      tp = ATL_PullNamedVecsFromList(Ns[0], snames[0], &nb);
+      ATL_KillAllTvecs(nb);
+      nb = tp;
+   }
+
+   /*
+    * Write them out, and we are done
+    */
+   ATL_WriteTvecFile(fpout, cmnt0, ATL_CountTvecsInList(nb), nb);
+   ATL_KillAllTvecs(nb);
+
+   /* free the args */
+   for (i=0; i<Nf; i++)
+   {
+      if (Ns && Ns[i] > 0) free(snames[i]);
+      if (Nr && Nr[i] > 0) free(rnames[i]);
+   }
+   if (cmnt0) free(cmnt0);
+   if (snames) free(snames);
+   if (rnames) free(rnames);
+   if (Ns) free(Ns);
+   if (Nr) free(Nr);
+   if (fpin != stdin) fclose(fpin);
+   if (fpout != NULL && fpout != stdout && fpout != stderr)
       fclose(fpout);
    return(0);
 }
@@ -4503,6 +4742,63 @@ int main(int nargs, char **args)
    free(renarr);
    return(0);
 }
+@ROUT tpkget.sh
+#!/bin/sh
+pre=d
+la=_al
+bl=_ab
+N0=0
+lrts="getrf potrf geqrf"
+while [ $# -gt 0 ]
+do
+   case $1 in
+   -p)  pre=$2
+        shift 2
+        ;;
+   -B)  bl=$2
+        shift 2
+        ;;
+   -L)  la=$2
+        shift 2
+        ;;
+   -N)  NS=$2
+        NN=$3
+        Ni=$4
+        reps=$5
+        shift 5
+        ;;
+   *)   echo "USAGE: $0 [-N N0 NN Ni reps] [-p <pre>] [-L <lapack>] -B [<blas>]"
+        echo "   N params & reps are for timings > 6000, by default not done"
+        echo "   lapack : _al or _sl"
+        echo "   blas   : _ab or _sb"
+        echo "   pre    : z, c, d or s"
+        exit 1
+        ;;
+   esac
+done
+
+for rt in ${lrts}
+do
+   echo "\nRunning 200-2000 ${rt} with 20 reps"
+   ./tvrun_rng.sh x${pre}tlatime${la}${bl} ${rt} 200 2000 200 20 _${rt}
+   echo "\nRunning 3000-6000 ${rt} with 4 reps"
+   ./tvrun_rng.sh x${pre}tlatime${la}${bl} ${rt} 3000 6000 1000 4 _${rt}
+   if [ $N0 -gt 6000 ]
+   then
+      echo "\nRunning ${N0}-${NN} ${rt} with ${reps} reps"
+      ./tvrun_rng.sh x${pre}tlatime${la}${bl} ${rt} $N0 $NN $Ni _${rt} $reps
+   fi
+done
+rt=gemm
+echo "\nRunning 200-2000 ${rt} with 20 reps"
+./tvrun_rng.sh x${pre}tl3time${bl} ${rt} 200 2000 200 20 _${rt}
+echo "\nRunning 3000-6000 ${rt} with 4 reps"
+./tvrun_rng.sh x${pre}tl3time${bl} ${rt} 3000 6000 1000 4 _${rt}
+if [ $N0 -gt 6000 ]
+then
+   echo "\nRunning ${N0}-${NN} ${rt} with ${reps} reps"
+   ./tvrun_rng.sh x${pre}tl3time${bl} ${rt} $N0 $NN $Ni _${rt} $reps
+fi
 @ROUT tvrun_rng.sh tvrun_lst.sh
 #!/bin/sh
 @ROUT tvrun_lst.sh
@@ -4587,14 +4883,14 @@ then
 fi
 if [ ! -f $outf ]
 then
-   echo "---> running . . ."
+   echo "  -> running . . ."
 @ROUT tvrun_lst.sh
    if $BINdir/$tmr -R 1 $RT $EF -n $lst -# $NREP > $outf
 @ROUT tvrun_rng.sh
    if $BINdir/$tmr -R 1 $RT $EF -N $N1 $N2 $Ni -# $NREP > $outf
 @ROUT tvrun_rng.sh tvrun_lst.sh
    then
-      echo "---> run finished, output in: ${outf}\n"
+      echo "  -> run finished, output in: ${outf}\n"
       echo "*** END LABEL=$lab NREP=$NREP" >> $outf
    else
       echo "\nERROR in RUN!\n"
@@ -4602,6 +4898,6 @@ then
       exit $i
    fi
 else
-   echo "----> output already available in: ${outf}!\n"
+   echo "   -> output already available in: ${outf}!\n"
 fi
 @ROUT !

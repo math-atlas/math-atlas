@@ -1719,18 +1719,20 @@ EXAMPLE OUTPUT
  * I got 85% of peak for N=6000, and only 28.5% for N=200
 
 SEE ALSO
-  tvecget(1) tveccat(1) tvecunify(1) tvecjoin(1) tvecscale(1) tvecreduce(1) 
-  tvecrename(1) tvecprint(1)
+  tvecget(1) tvecselect(1) tveccat(1) tvecunify(1) tvecjoin(1) tvecscale(1) 
+  tvecreduce(1) tvecrename(1) tvecprint(1)
 
 AUTHOR
    R. Clint Whaley
 @ROUT tvecget tveccat tvecjoin tvecscale tvecreduce tvecrename tvecprint @\
-      tvecunify
+      tvecunify tvecselect
 @ROUT @push
 
 NAME
 @ROUT tvecget
   tvecget - convert a multiple bin/ timing runs to tvec form
+@ROUT tvecselect
+  tvecselect - selects (wt rename) specified tvecs from multiple files
 @ROUT tveccat 
   tveccat - take selected tvecs from multiple tvec files
 @ROUT tvecunify
@@ -1753,6 +1755,10 @@ SYNOPSIS
           [-H # h1 ... hN] [-C # c1 ... cN] [-S begln stride]
 @ROUT tvecunify
   tvecunify [-i infile] [-o outfile] [-r 0/1]
+@ROUT tvecselect
+tvecselect [-i infile] [-o outfile] [-# Nf] [-S N nam1 ... namN] 
+           [-R N nam1 rep1 ...namN repN]  [-s N nam1 ... namN]
+           [-r N nam1 rep1 ... namN repN]
 @ROUT tveccat 
   tveccat [-i infile] [-o outfile] [-# #]
           [-C N nam1 ... namN] [-c N nam1 ... namN]
@@ -1784,6 +1790,42 @@ average or max/min times, etc). In the input, each individual timing run is
 ended by (the first * should occur in the first column):
 
   *** END LABEL=suff NREP=#
+@ROUT tvecselect
+@(@rout) takes selected tvecs originally from multiple files and puts
+then into one. It has two modes of operation, global and local.
+Regardless of mode, tvecselect requires the mandatory
+flag [-# Nf], where Nf is the number of tvec files that have
+been concatonated in the input.
+
+If the global option is selected (using -s), 
+tvecselect takes the same tvec names from all input files.
+It is not necessary for the named tvecs to exist in all files:
+if we are taking 3 input tvec files, only two of which have a given
+tvec name, then the output will get two tvecs of that name (assuming
+no renaming), whereas a tvec appearing in all files would result
+in 3 output tvecs. If multiple tvecs
+have the same name in an input file, then only the first one of a given
+mode will be taken in global mode. 
+
+The -s flag can optionally be coupled with the -r flag, which tells
+select to rename a series of vectors that have already been selected
+by -s. For example, -s 2 M MFLOP -r 1 MFLOP MFLOP_QR results in taking
+two vectors from the specified file, but renaming only MFLOP to MFLOP_QR.
+
+Local mode is selected using -S, which tells tvecselect to take possibly
+different tvecs from each input file. Therefore, in local mode
+tvecselect will expect the user to supply exactly Nf different -S
+invocations, each of which provides the number of tvecs to take from
+the respective tvec input. Multiple tvecs with the same name can be
+selected by tvecselect by simply repeating the names multiple times in
+the appropriate -S statement.
+
+To rename tvecs in local mode, the -R flag is used.
+Note that -S must appear exactly Nf times in tvecselect's arguments, but if -R
+appears only once, it means that we are renaming only vectors in the first
+file. Therefore, in order rename vectors only in the second input file,
+-R 0 must be specified before our second input file's -R, 
+to indicate no tvec is renamed from the first input file.
 @ROUT tveccat 
 @(@rout) takes selected tvecs originally from multiple files and puts
 them into one.
@@ -1861,10 +1903,31 @@ can be optionally printed; the default is not to print the names
 @ROUT @peek
 @endindent
 
-@ROUT tvecrename 
+@ROUT tvecrename tvecselect
 OPTIONS
    -i infile                     Take input from infile, rather than stdin.
    -o outfile                    Write tvecs to outfile, rather than stdout.
+@ROUT tvecselect
+   -# Nf                         The number of tvec files concatonated in input.
+   -S N nam1 ... namN            tvec namelist to take from each respective
+                                 file.  -S must appear exactly Nf times,
+                                 can optionally be combined with -J,
+                                 and may not used with either -s or -r.
+   -R N nam1 rep1 ... namN repN  Vectors with names namI are replaced with
+                                 the associated repI string. -R can be used
+                                 with -S, but not -s or -r. -R can legally 
+                                 appear 0 to Nf times when -S is used, with
+                                 each -R renaming tvecs for the associated
+                                 tvec input file.  N may be supplied as 0,
+                                 indicating no renaming for a particular file.
+   -s N nam1 ... namN            Name of tvecs that are looked for in all files.
+                                 Should appear only once in tvecselect's 
+                                 arguments, and cannot be mixed with -R or -S.
+   -r N nam1 rep1 ... namN repN  Vectors with names namI are replaced with
+                                 associated repI string.
+                                 Should appear only once in tvecselect's 
+                                 arguments, and cannot be mixed with -R or -S.
+@ROUT tvecrename
    -R N nam1 rep1 ... namN repN  Vectors with names namI are replaced with
                                  the associated repI string.
    -s suff                       all vectors get suff suffixed to their names
@@ -1877,7 +1940,7 @@ OPTIONS
    -J N rngv1 joiv1 ... rngvN joivN  List of all vectors to join, and the
                                      range vectors that allow them to be sorted.
 @ROUT @peek
-@ROUT - tvecjoin tvecrename
+@ROUT - tvecjoin tvecrename tvecselect
 OPTIONS
    -i infile            Take input from infile, rather than stdin.
    -o outfile           Write tvecs to outfile, rather than stdout.
@@ -1935,6 +1998,16 @@ EXAMPLE
    echo "*** LABEL=_lu NREP=3" >> time.out
 
    tvecget -i time.out -H 2 MFLOP N
+@ROUT tvecselect
+   The following are roughly equivalent:
+
+    cat lu.tv QR.tv | \\
+       tvecselect -# 2 -S 2 N MFLOP_LU -R 1 MFLOP_LU LU \\
+                  -S 1 MFLOP_QR -R 1 MFLOP_QR QR
+
+    cat lu.tv QR.tv | \\
+        tvecselect -# 2 -s 3 N MFLOP_LU MFLOP_QR \\
+                        -r 2 MFLOP_LU LU MFLOP_QR QR
 @ROUT tveccat 
    cat LU.tvec QR.tvec MM.tvec | tveccat -# 3 -H 2 MFLOP N
 @ROUT tvecunify
@@ -1950,10 +2023,16 @@ EXAMPLE
 @ROUT tvecprint
    tvecprint -h 1 -i comb.tvec -C 4 N MFLOP_lu MFLOP_qr MFLOP_mm
 @ROUT @pop
+BUGS
+   http://math-atlas.sourceforge.net/faq.html#help
+
 SEE ALSO
-  atltvecs(7) tvecget(1) tvecunify()
-  tveccat(1) tvecjoin(1) tvecscale(1) tvecreduce(1) tvecrename(1) tvecprint(1)
+  atltvecs(7) tvecget(1) tvecunify() tveccat(1) tvecselect(1)
+  tvecjoin(1) tvecscale(1) tvecreduce(1) tvecrename(1) tvecprint(1)
 
 AUTHOR
+@ROUT - tvecselect
    R. Clint Whaley
+@ROUT tvecselect
+   Md Rakib Hasan
 @ROUT !
