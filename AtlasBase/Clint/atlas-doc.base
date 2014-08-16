@@ -1718,14 +1718,8 @@ EXAMPLE OUTPUT
 
  * I got 85% of peak for N=6000, and only 28.5% for N=200
 
-SEE ALSO
-  tvecget(1) tvecselect(1) tveccat(1) tvecunify(1) tvecjoin(1) tvecscale(1) 
-  tvecreduce(1) tvecrename(1) tvecprint(1)
-
-AUTHOR
-   R. Clint Whaley
 @ROUT tvecget tveccat tvecjoin tvecscale tvecreduce tvecrename tvecprint @\
-      tvecunify tvecselect
+      tvecunify tvecselect tvecratio
 @ROUT @push
 
 NAME
@@ -1741,6 +1735,8 @@ NAME
    tvecjoin - Join non-interlapping ranges into extended vectors
 @ROUT tvecscale 
    tvecscal - Scale tvecs by a num / den; num: scalar, den: scalar or tvec
+@ROUT tvecratio
+   tvecratio - show ratio of tvecs of the same name from 2 tvec files
 @ROUT tvecreduce 
    tvecreduce - Gets combines or collapses repetitions within vectors.
 @ROUT tvecrename 
@@ -1759,6 +1755,49 @@ SYNOPSIS
 tvecselect [-i infile] [-o outfile] [-# Nf] [-S N nam1 ... namN] 
            [-R N nam1 rep1 ...namN repN]  [-s N nam1 ... namN]
            [-r N nam1 rep1 ... namN repN]
+@ROUT tvecratio
+  tvecratio [-i infile] [-o outfile] [-S N nam1 ... namN] 
+              [-c N nam1 ... namN]
+@ROUT tveccatN
+  tveccat [-i infile] [-o outfile] [-# #] [-S suff1 ... suff#]
+          [-C N nam1 ... namN] [-c N nam1 ... namN] [-f N nam1 ... namN]
+
+tveccat takes multiple tvec files that have been concatonated into the input,
+and outputs selected (or all) vectors as one tvec file.  The number of files in
+the input is given by the optional parameter -#; if it is not specified,
+tveccat assumes the number of input files to be two.  Additional tvec
+files in the input stream beyond # will be ignored.  As long as -# is
+the only flag used, tveccat will simply merge all tvecs
+into one file without any changes.  Be aware that this can result in
+duplicate vectors of the same name.  For instance, given two tvec files
+in the input stream, if the first file contains two vectors named MFLOP
+and the second file contains one, the merged file will have three tvecs
+with the name MFLOP.  They will be kept in input order, so the first MFLOP
+from the first file, then the second MFLOP from the first file, and third
+in the output will be the first MFLOP from the second file.
+
+You can make tvec names from different files distinct in the merged output by
+specifying the
+-S flag, which takes a suffix string to add to every tvec in each input
+file.  So, given flags -# 3 -S _1 _2 _3, tveccat will suffix all tvecs
+in file 1 with _1, all tvecs in file 2 with _2, and all tvecs coming
+from file 3 with _3.  So, if we assume the tvec M is available in all
+files, but MFLOP is available only in files 2 and 3, the output stream
+would posses: M_1 M_2 MFLOP_2 M_3 MFLOP_3.
+
+If -C, -c, or -f are used, then tveccat takes only selected vectors from the
+input stream.  For all tvecs named in the -c list, tveccat will output only
+the first instance of that tvec found in all files, while for those
+named in the -C list, it will output all tvecs of that name found in all
+files.  Finally, for any tvecs in the -f list, tveccat will only output
+the first such tvec found (if any) in each file.  When combining these
+flags with the -S flag, they take the original (not suffixed) names as
+arguments.  A given name should appear as an argument to only one of these
+flags (i.e. -c MFLOP -f MFLOP is not legal).
+
+For a command that allows more flexibility in selecting only certain
+vectors from multiple files, or in arbitrarily renaming tvecs,
+see the related tvecselect(1).
 @ROUT tveccat 
   tveccat [-i infile] [-o outfile] [-# #]
           [-C N nam1 ... namN] [-c N nam1 ... namN]
@@ -1877,6 +1916,26 @@ specified vectors being scaled by the ratio of the -m and -B arguments.
 However, if the -b flag is thrown instead, the denominator of the scaling
 factor comes from the provided tvec. This allows us to compute 
 speedup (-m 1.0) or percentage performance (-m 100.0) of two different tvecs.
+@ROUT tvecratio
+tvecratio takes two concatonated tvec files as input.
+For every tvec
+name given in the -c list, tvecratio will simply output the first tvec
+of that name found in the input stream, and ignore any others. Every
+tvec name given in the -R list must appear in both files, and only
+the first instance of that name will be taken from each file. 
+The taken
+tvec names must be of type double, with the same length and nreps.
+These tvecs from the two separate files will be output as a ratio
+of file1 / file2. 
+The tvec ordering of their removal from the input lists, and their
+output will be first all -c tvecs followed by all -R tvecs.
+Within a given name list, they will be in the order given on the command line.
+
+So, given the flags -R MFLOP -c M, the first tvec
+with name M will be output without change, while MFLOP will become
+the ratio of file 1 over file 2 (so values < 1 indicate file1's
+data is smaller than file2's). tvecratio can help to determine
+the impact of a proposed code change on performance.
 @ROUT tvecreduce 
 tvecreduce is used to remove repetitions from tvecs, while getting some
 simple statistics. It will output two types of nrep=1 tvecs: collapsed (-C)
@@ -1972,6 +2031,12 @@ OPTIONS
                         vector retained will come from the first file that
                         contains the selected name (later tvecs of same
                         name will be ignored).
+@ROUT tvecratio
+   -c N nam1 ... namN   Output will include only the first tvec found
+                        in the stream of a given name, and it will
+                        by unchanged.
+   -R N nam1 ... namN   Named tvecs must appear in both tvec files, and
+                        the output tvec will be file1/file2
 @ROUT tvecscale 
    -m mul               Numerator of scaling factor. Set to 100.0 for
                         percentages, and 1.0 for speedup.
@@ -2002,6 +2067,9 @@ EXAMPLE
    echo "*** LABEL=_lu NREP=3" >> time.out
 
    tvecget -i time.out -H 2 MFLOP N
+@ROUT tvecratio
+
+   cat LU_new.tv LU_old.tv | tvecratio -c 1 M -R 1 MFLOP
 @ROUT tvecselect
    The following are roughly equivalent:
 
@@ -2027,13 +2095,14 @@ EXAMPLE
 @ROUT tvecprint
    tvecprint -h 1 -i comb.tvec -C 4 N MFLOP_lu MFLOP_qr MFLOP_mm
 @ROUT @pop
+@ROUT + atltvecs
 BUGS
    http://math-atlas.sourceforge.net/faq.html#help
 
 SEE ALSO
-  atltvecs(7) tvecget(1) tvecunify() tveccat(1) tvecselect(1)
+  atltvecs(7) tvecget(1) tvecunify() tveccat(1) tvecselect(1) tvecratio(1)
   tvecjoin(1) tvecscale(1) tvecreduce(1) tvecrename(1) tvecprint(1)
-
+ 
 AUTHOR
 @ROUT - tvecselect
    R. Clint Whaley
