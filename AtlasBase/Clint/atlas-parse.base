@@ -3235,6 +3235,7 @@ static char *ATL_tmpnam(char *s)
 
 #include "atlas_genparse.h"
 
+
 typedef struct ATL_Tvec ATL_tvec_t;
 struct ATL_Tvec
 {
@@ -3245,6 +3246,143 @@ struct ATL_Tvec
    int nrep;            /* # of repititions in timings */
    char pre;            /* double (d), string (s), char (c), integer (i) */
 };
+
+typedef struct ATL_tvstrq ATL_tvstrq_t;
+struct ATL_tvstrq
+{
+   char *sp;
+   ATL_tvstrq_t *next;
+   int len;
+};
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+@define tvr @ATL_tvstrq_t *ATL_GetStrNode(char *name)@
+@define tve @Allocates node & new string dup, returns node ptr@
+ATL_tvstrq_t *ATL_GetStrNode(char *name)
+{
+   ATL_tvstrq_t *np;
+   np = malloc(sizeof(ATL_tvstrq_t));
+   assert(np);
+   np->sp = DupString(name);
+   assert(np->sp);
+   np->len = strlen(name);
+   strncpy(np->sp, name, np->len+1);
+   np->next = NULL;
+   return(np);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+@define tvr @ATL_tvstrq_t *ATL_KillStrNode(ATL_tvstrq_t *kp)@
+@define tve @Deallocates node & string, returns next@
+ATL_tvstrq_t *ATL_KillStrNode(ATL_tvstrq_t *kp)
+{
+   ATL_tvstrq_t *kn=NULL;
+   if (kp)
+   {
+      kn = kp->next;
+      if (kp->sp)
+         free(kp->sp);
+      free(kp);
+   }
+   return(kn);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+@define tvr @void ATL_KillStrQ(ATL_tvstrq_t *kb)@
+@define tve @Deallocates entire string queue@
+void ATL_KillStrQ(ATL_tvstrq_t *kb)
+{
+   while (kb)
+      kb = ATL_KillStrNode(kb);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+@define tvr @ATL_tvstrq_t *RemoveStrNodeFromQ(ATL_tvstrq_t *b, ATL_tvstrq_t *p)@
+@define tve @removes p from Q b, sets p->next=NULL, returns new b@
+ATL_tvstrq_t *RemoveStrNodeFromQ(ATL_tvstrq_t *b, ATL_tvstrq_t *p)
+/*
+ * Safely removes p from queue b, returns possibly changed b
+ */
+{
+   if (!b)
+      return(NULL);
+   if (!p)
+      return(b);
+   if (p == b)
+      b = b->next;
+   else
+   {
+      ATL_tvstrq_t *prev=b, *qp;
+      for (qp=b->next; qp; qp = qp->next)
+         prev=qp;
+      prev->next = p->next;
+   }
+   p->next = NULL;
+   return(b);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+@define tvr @char **ATL_StrQ2Arr(ATL_tvstrq_t *qb, int *N)@
+@define tve @Kills qb to make N+1-length NULL-term array of strings instead@
+char **ATL_StrQ2Arr(ATL_tvstrq_t *qb, int *N)
+/*
+ * translates qb to a NULL-term array of strings, destroying qb in process
+ */
+{
+   int n, i;
+   char **sarr;
+   ATL_tvstrq_t *qp;
+
+   n = *N = ATL_CountStrNodes(qb);
+   sarr = malloc((n+1)*sizeof(char*));
+   assert(sarr);
+
+   sarr[n] = NULL;
+   for (i=0,qp=qb; qp; i++,qp = qp->next)
+   {
+      sarr[i] = qp->sp;
+      qp->sp = NULL;
+   }
+   ATL_KillStrQ(qb);
+   return(sarr);
+}
+
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+@define tvr @int ATL_CountStrNodes(ATL_tvstrq_t *qb)@
+@define tve @Returns number of nodes in qb@
+int ATL_CountStrNodes(ATL_tvstrq_t *qb)
+{
+   int i;
+   ATL_tvstrq_t *qp;
+   for (i=0,qp=qb; qp; i++, qp=qp->next);
+   return(i);
+}
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+@define tvr @ATL_tvstrq_t *ATL_ReverseStrQ(ATL_tvstrq_t *oq)@
+@define tve @Returns oq in reverse order@
+ATL_tvstrq_t *ATL_ReverseStrQ(ATL_tvstrq_t *oq)
+/*
+ * RETURNS: Reversed order queue of strings (original is reordered)
+ */
+{
+   ATL_tvstrq_t *nq=NULL, *qp;
+   while (oq)
+   {
+      qp = oq;
+      oq = oq->next;
+      qp->next = nq;
+      nq = qp;
+   }
+   return(nq);
+}
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
@@ -3411,7 +3549,8 @@ ATL_tvec_t *ATL_ReadTvecFile(FILE *fpin, char **cmnt, int *nvec)
    char ln[512];
    ATL_tvec_t *tb, *tp;
 
-   assert(fgets(ln, 512, fpin));
+   if (!fgets(ln, 512, fpin))
+      return(NULL);
    n = strlen(ln);
    while (n > 0 && isspace(ln[n-1]))
       ln[--n] = '\0';;
