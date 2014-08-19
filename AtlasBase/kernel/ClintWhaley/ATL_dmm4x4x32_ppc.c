@@ -233,7 +233,7 @@ Mjoin(.,ATL_USERMM):
 	.globl  Mjoin(_,ATL_USERMM)
 Mjoin(_,ATL_USERMM):
    #else
-      #if defined(ATL_USE64BITS)
+      #if defined(ATL_USE64BITS) && _CALL_ELF != 2
 /*
  *      Official Program Descripter section, seg fault w/o it on Linux/PPC64
  */

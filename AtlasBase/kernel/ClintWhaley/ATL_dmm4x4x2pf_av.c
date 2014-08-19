@@ -249,7 +249,18 @@ void ATL_USERMM(const int M, const int N, const int K, const TYPE alpha,
 #endif
 .text
 #ifdef ATL_GAS_LINUX_PPC
-   #if defined(ATL_USE64BITS)
+   #if defined(ATL_USE64BITS) && _CALL_ELF != 2
+    /*
+      *      Official Program Descripter section, seg fault w/o it on Linux/PPC64
+        */
+        @@ -199,6 +199,12 @@ Mjoin(.,ATL_USERMM):
+            #else
+                .globl  ATL_USERMM
+                 ATL_USERMM:
+                 +   #if _CALL_ELF == 2
+                 +      .type ATL_USERMM,@function
+                 +0:    addis 2,12,.TOC.-0b@ha
+
 /* 
  *       No idea what this does, but seg fault without it (I think it is
  *       partially resp for making code callable from both static & PIC code)

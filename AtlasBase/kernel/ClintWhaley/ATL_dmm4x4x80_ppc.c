@@ -140,12 +140,20 @@ void ATL_USERMM(const int M, const int N, const int K, const TYPE alpha,
                 const TYPE beta, TYPE *C, const int ldc)
                                   (r10)    8(r1)
 *******************************************************************************
-64 bit ABIs:
+64 bit ABIv1s:
                          r3           r4           r5             r6/f1
 void ATL_USERMM(const int M, const int N, const int K, const TYPE alpha,
                            r7             r8             r9            r10
                 const TYPE *A, const int lda, const TYPE *B, const int ldb,
                              f2   120(r1)        128(r1)
+                const TYPE beta, TYPE *C, const int ldc)
+*******************************************************************************
+64 bit ABIv2s:
+                         r3           r4           r5             r6/f1
+void ATL_USERMM(const int M, const int N, const int K, const TYPE alpha,
+                           r7             r8             r9            r10
+                const TYPE *A, const int lda, const TYPE *B, const int ldb,
+                             f2   104(r1)        112(r1)
                 const TYPE beta, TYPE *C, const int ldc)
 #endif
 #ifdef ATL_AS_AIX_PPC
@@ -172,7 +180,7 @@ Mjoin(.,ATL_USERMM):
 	.globl  Mjoin(_,ATL_USERMM)
 Mjoin(_,ATL_USERMM):
    #else
-      #if defined(ATL_USE64BITS)
+      #if defined(ATL_USE64BITS) && _CALL_ELF != 2
 /*
  *      Official Program Descripter section, seg fault w/o it on Linux/PPC64
  */
@@ -228,8 +236,13 @@ ATL_USERMM:
 #endif
 
 #if defined (ATL_USE64BITS)
+   #if _CALL_ELF == 2   /* ABIv2 */
+        ld      pC0, 104(r1)
+        ld      incCn, 112(r1)
+   #else                /* ABIv1 */
         ld      pC0, 120(r1)
         ld      incCn, 128(r1)
+   #endif
 #elif defined(ATL_AS_OSX_PPC) || defined(ATL_AS_AIX_PPC)
         lwz     pC0, 68(r1)
         lwz     incCn,  72(r1)
