@@ -1,0 +1,172 @@
+#!/bin/sh
+@ifdef ! chksum
+   @define chksum @cksum@
+@endifdef
+@ifdef ! @type
+   @addkeys type=list
+@endifdef
+# This script should be run in BLDdir/timing, where it was generated
+# It assumes: shell: echo, test; env: @(chksum), cut
+chksum=@(chksum)
+t0=tmp0.tv
+t1=tmp1.tv
+to=tmp.tv
+efs=0
+EF=
+BINdir=../bin
+mydir=`pwd`
+scr=$0
+tmr=$1
+PRE=`echo "$tmr" | cut -c 2`
+PT=`echo "$tmr" | cut -c 3`
+LIBS=`echo "$tmr" | cut -c 11-`
+@ROUT tvcmprep
+   @iexp narg 4 0 +
+@ROUT tvrun
+   @TYPE LIST
+      @iexp narg 4 0 +
+   @TYPE RNG
+      @iexp narg 6 0 +
+   @TYPE !
+@ROUT !
+if [ $# -lt @(narg) ]
+then
+@ROUT tvrun
+   echo "This shell script times N-indexed LAPACK or BLAS problems."
+   @TYPE LIST
+    echo "USAGE: $0 timer rout "list" reps [-L lab] [-E EF]"
+   @TYPE RNG
+   echo "USAGE: $0 timer rout N1 NN incN reps [-L lab] [-E EF]"
+   @TYPE !
+@ROUT tvcmprep
+   echo "This shell script computes ratio of different nreps runs."
+   echo "USAGE: $0 timer repN repD "list" [-R rout] [-L lab] [-E EF]"
+@ROUT !
+   echo "   timer: x[z,c,d,s][t,s]latime_[a,s]l_[a,s]b, x[z,c,d,s][t,s]l3time__[a,s]b"
+@ROUT tvcmprep
+   echo "   repN    : repitition count to be numerator"
+   echo "   repD    : repitition count to be denominator"
+   echo "   list    : # N1 ... N#, eg. \"4 200 2000 4000 8000\""
+   echo "   -R rout : time rout as below; default potrf"
+@ROUT !
+   echo "   rout(la): getrf, potrf, geqrf"
+   echo "   rout(l3): gemm, trsm, trmm, syrk, syr2k, hemm, herk, her2k"
+   @TYPE LIST
+   echo "   list    : # N1 ... N#, eg. \"4 200 2000 4000 8000\""
+   @TYPE RNG
+   echo "   N1      : start of problem size range"
+   echo "   NN      : end of problem size range"
+   echo "   incN    : increment between problem sizes"
+   @TYPE !
+@ROUT tvrun `   echo "   reps    : number of times each problem should be timed"`
+   echo "   -L lab  : LABEL for run (default DEF)"
+   echo "   -E EF   : extra flags to pass to timer (eg, -E \"-U 1 L\") (default none)"
+   exit 1
+fi
+@ROUT tvcmprep
+NR1=$2
+NR2=$3
+lst=$4
+RT=potrf
+@ROUT tvrun
+RT=$2
+   @TYPE LIST
+lst=$3
+NREP=$4
+   @TYPE RNG
+N1=$3
+N2=$4
+Ni=$5
+NREP=$6
+   @TYPE !
+@ROUT !
+shift @(narg)
+while [ $# -gt 0 ]
+do
+   case $1 in 
+@ROUT tvcmprep
+   -R)  RT=$2
+        shift 2
+        ;;
+@ROUT !
+   -L)  lab=$2
+        shift 2
+        ;;
+   -E)  EF=$2
+        efs=`echo "${EF}" | ${chksum} | cut -d ' ' -f 1`
+        shift 2
+        ;;
+   *)   echo "\nIllegal flag ${1}\n"
+        $scr
+        exit 1
+        ;;
+   esac
+done
+
+@ROUT tvrun
+   @TYPE RNG
+resf=res/${PT}${PRE}${RT}_${LIBS}_${N1}_${N2}_${Ni}_${NREP}_${efs}.out
+   @TYPE LIST
+lchk=`echo "${lst}" | ${chksum} | cut -d ' ' -f 1`
+resf=res/${PT}${PRE}${RT}_${LIBS}_${lchk}_${NREP}_${efs}.out
+   @TYPE !
+@ROUT tvrun
+if [ ! -x $BINdir/$tmr ]
+then
+   cd $BINdir ; make $tmr
+   cd $mydir
+fi
+if [ ! -d res ]
+then
+   mkdir res
+fi
+if [ ! -f $resf ]
+then
+   echo "  -> running . . ."
+@TYPE LIST `   if $BINdir/$tmr -R 1 $RT $EF -n $lst -# $NREP > $resf`
+@TYPE RNG  `   if $BINdir/$tmr -R 1 $RT $EF -N $N1 $N2 $Ni -# $NREP > $resf`
+   then
+      echo "  -> run finished, output in: ${resf}\n"
+      echo "*** END LABEL=$lab NREP=$NREP" >> $resf
+   else
+      echo "\nERROR in RUN!\n"
+      cat $resf
+      mv -f $resf BAD.OUT
+      exit $i
+   fi
+else
+   echo "   -> output already available in: ${resf}!\n"
+fi
+@ROUT tvcmprep
+if [ -n "$EF" ]
+then
+   ea="-E $EF"
+else
+   ea=
+fi
+lchk=`echo "${lst}" | ${chksum} | cut -d ' ' -f 1`
+res1f=res/${PT}${PRE}${RT}_${LIBS}_${lchk}_${NR1}_${efs}.out
+res2f=res/${PT}${PRE}${RT}_${LIBS}_${lchk}_${NR2}_${efs}.out
+./tvrun_lst.sh $tmr $RT "${lst}" $NR1 -L _${RT} $ea
+if [ $NR1 -eq $NR2 ] 
+then
+   mv -f $res1f ${res1f}_0
+   res1F=${res1f}_0
+else
+   res1F=${res1f}
+fi
+./tvrun_lst.sh $tmr $RT "${lst}" $NR2 -L _${RT} $ea
+
+$BINdir/tvecget -i $res1F -H 2 N MFLOP \
+   | $BINdir/tvecreduce -R 1 N_${RT} -C 1 MFLOP_${RT} -o $t0
+$BINdir/tvecget -i $res2f -H 2 N MFLOP \
+   | $BINdir/tvecreduce -R 1 N_${RT} -C 1 MFLOP_${RT} -o $t1
+
+echo "Ratio of ${RT}; nrep=${NR1} / nrep=${NR2} (ideally 1.0):"
+cat $t0 $t1 | $BINdir/tvecratio -c 1 N_${RT} \
+   -R 3 MFLOP_${RT}_max MFLOP_${RT}_min MFLOP_${RT}_avg \
+   | $BINdir/tvecrename -R 3 MFLOP_${RT}_avg AVG MFLOP_${RT}_max MAX \
+     MFLOP_${RT}_min MIN \
+   | $BINdir/tvecprint -h 1 -C 4 N_${RT} AVG MAX MIN
+@skip   -C 4 N_${RT} MFLOP_${RT}_max MFLOP_${RT}_min MFLOP_${RT}_avg
+@ROUT !
