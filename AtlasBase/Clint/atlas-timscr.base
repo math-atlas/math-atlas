@@ -1,3 +1,6 @@
+@beginproc getresname rnam rti lbs nrep efs
+   @define rnam @res/${PT}${PRE}@(rti)_@(lbs)_${lchk}_${@(nrep)}_${@(efs)}.out@
+@endproc
 #!/bin/sh
 @ifdef ! chksum
    @define chksum @cksum@
@@ -13,9 +16,115 @@ t1=tmp1.tv
 to=tmp.tv
 efs=0
 EF=
+FRC=0
 BINdir=../bin
 mydir=`pwd`
 scr=$0
+@ROUT tvgenmf
+   @ifdef ! rkK
+      @iexp rkK 0 0 +
+   @endifdef
+   @ifdef ! blas
+      @ifdef ! lapack
+         @abort "You must define blas or lapack to time!"
+      @endifdef
+      @define blas @@
+   @endifdef
+   @ifdef ! lapack
+      @define lapack @@
+   @endifdef
+   @mif blas = "all
+      @undef blas
+      @define blas @gemm trsm trmm syrk syr2k@
+   @endmif
+   @mif lapack = "all
+      @undef lapack
+      @define lapack @potrf getrf geqrf@
+   @endmif
+   @TYPE LIST
+      @define tvrun @tvrun_lst.sh@
+      @define Nargs @"${lst}"@
+      @iexp narg 2 0 +
+   @TYPE RNG
+      @define tvrun @tvrun_rng.sh@
+      @define Nargs @$N1 $NN $Ni@
+      @iexp narg 4 0 +
+   @TYPE !
+@ifdef ! narg
+   @error narg not defined!
+@endifdef
+PRE=d
+PT=t
+BL=a
+LL=a
+if [ $# -lt @(narg) ]
+then
+   echo "This shell script computes MFLOP rates for lapack & BLAS or order N"
+   @TYPE LIST
+   echo "USAGE: $0 "list" reps [-P t/s] [-p d/s/c/z] [-L a/s] [-B a/s]"
+   echo "   list    : # N1 ... N#, eg. \"4 200 2000 4000 8000\""
+   @TYPE RNG
+   echo "USAGE: $0 N1 NN Ni reps [-P t/s] -p [d,s,c,z]"
+   echo "   N1:1st N, NN:lastN, Ni:increment between Ns"
+   @TYPE !
+   echo "   -P t/s : threaded or serial timings"
+   echo "   -p [d,s,c,z]: precision prefix"
+   echo "   -B [a,s]    : which blas library to use"
+   echo "   -L [a,s]    : which lapack library to use"
+   exit 1
+fi
+   @TYPE list
+lst=$1
+NREP=$2
+shift 2
+   @TYPE RNG
+N1=$1
+NN=$2
+Ni=$3
+NREP=$4
+shift 4
+   @TYPE !
+while [ $# -gt 0 ]
+do
+   case $1 in 
+   -P)  PT=$2
+        shift 2
+        ;;
+   -p)  PRE=$2
+        shift 2
+        ;;
+   -B)  BL=$2
+        shift 2
+        ;;
+   -L)  LL=$2
+        shift 2
+        ;;
+   *)   echo "\nIllegal flag ${1}\n"
+        $scr
+        exit 1
+        ;;
+   esac
+done
+
+bls="\
+@declare "     " y n "\"
+   @whiledef rt @(blas)
+      @(rt)
+   @endwhile
+@enddeclare
+    "
+btmr=x${PRE}${PT}l3time_${BL}b
+ltmr=x${PRE}${PT}latime_${LL}l_${BL}b
+
+for bl in ${bls}
+do
+   ./@(tvrun) $btmr $bl @(Nargs) $NREP
+done
+@iif rkK > 0
+./@(tvrun) $btmr gemm @(Nargs) $NREP -E "-k 1 @(rkK)"
+@endiif
+@endextract
+@ROUT ! tvgenmf
 tmr=$1
 PRE=`echo "$tmr" | cut -c 2`
 PT=`echo "$tmr" | cut -c 3`
@@ -61,6 +170,7 @@ then
 @ROUT tvrun `   echo "   reps    : number of times each problem should be timed"`
    echo "   -L lab  : LABEL for run (default DEF)"
    echo "   -E EF   : extra flags to pass to timer (eg, -E \"-U 1 L\") (default none)"
+   echo "   -F 0/1  : don't/do force retiming (default don't)"
    exit 1
 fi
 @ROUT tvcmprep
@@ -68,6 +178,7 @@ NR1=$2
 NR2=$3
 lst=$4
 RT=potrf
+FRC=0
 @ROUT tvrun
 RT=$2
    @TYPE LIST
@@ -96,6 +207,9 @@ do
         efs=`echo "${EF}" | ${chksum} | cut -d ' ' -f 1`
         shift 2
         ;;
+   -F)  FRC=$2
+        shift 2
+        ;;
    *)   echo "\nIllegal flag ${1}\n"
         $scr
         exit 1
@@ -110,7 +224,10 @@ resf=res/${PT}${PRE}${RT}_${LIBS}_${N1}_${N2}_${Ni}_${NREP}_${efs}.out
 lchk=`echo "${lst}" | ${chksum} | cut -d ' ' -f 1`
 resf=res/${PT}${PRE}${RT}_${LIBS}_${lchk}_${NREP}_${efs}.out
    @TYPE !
-@ROUT tvrun
+if [ $FRC -ne 0 ] && [ -f $resf ]
+then
+   rm -f $resf
+fi
 if [ ! -x $BINdir/$tmr ]
 then
    cd $BINdir ; make $tmr
@@ -147,7 +264,7 @@ fi
 lchk=`echo "${lst}" | ${chksum} | cut -d ' ' -f 1`
 res1f=res/${PT}${PRE}${RT}_${LIBS}_${lchk}_${NR1}_${efs}.out
 res2f=res/${PT}${PRE}${RT}_${LIBS}_${lchk}_${NR2}_${efs}.out
-./tvrun_lst.sh $tmr $RT "${lst}" $NR1 -L _${RT} $ea
+./tvrun_lst.sh $tmr $RT "${lst}" $NR1 -L _${RT} $ea -F $FRC
 if [ $NR1 -eq $NR2 ] 
 then
    mv -f $res1f ${res1f}_0
@@ -155,7 +272,7 @@ then
 else
    res1F=${res1f}
 fi
-./tvrun_lst.sh $tmr $RT "${lst}" $NR2 -L _${RT} $ea
+./tvrun_lst.sh $tmr $RT "${lst}" $NR2 -L _${RT} $ea -F $FRC
 
 $BINdir/tvecget -i $res1F -H 2 N MFLOP \
    | $BINdir/tvecreduce -R 1 N_${RT} -C 1 MFLOP_${RT} -o $t0
