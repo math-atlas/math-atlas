@@ -1,6 +1,3 @@
-@beginproc getresname rnam rti lbs nrep efs
-   @define @(rnam) @res/${PT}${PRE}@(rti)_@(lbs)_${lchk}_${@(nrep)}_${@(efs)}.out@
-@endproc
 #!/bin/sh
 @ifdef ! chksum
    @define chksum @cksum@
@@ -110,38 +107,49 @@ done
 lchk=`echo "${lst}" | ${chksum} | cut -d ' ' -f 1`
 @TYPE !
 
+@iexp nbl 0 0 +
 bls="\
 @declare "     " y n "\"
    @whiledef rt @(blas)
+      @iexp nbl @(nbl) 1 +
+      @ifdef ! N_BL
+         @define N_BL @@(rt)@
+      @endifdef
       @(rt)
    @endwhile
 @enddeclare
     "
-resfs="\
-@declare "       " y n "\"
-   @whiledef rt @(blas)
-      @callproc getresname rtn @(rt) BL NREP efs
-      @(rtn)
-      @undef rtn
-   @endwhile
-@enddeclare
-      "
+
 btmr=x${PRE}${PT}l3time_${BL}b
 ltmr=x${PRE}${PT}latime_${LL}l_${BL}b
 
 @iif rkK > 0
-./@(tvrun) $btmr gemm @(Nargs) $NREP -E "-k 1 @(rkK)"
+   @iexp nmf @(nbl) 1 +
+mfs="MFLOP_rk@(rkK)"
+resfs=`./@(tvrun) $btmr gemm @(Nargs) $NREP -E "-k 1 @(rkK)" -L _rk@(rkK) -O 1`
+./@(tvrun) $btmr gemm @(Nargs) $NREP -E "-k 1 @(rkK)" -L _rk@(rkK)
+@endiif
+@iif rkK < 1
+   @iexp nmf @(nbl) 0 +
+mfs=""
+resfs=""
 @endiif
 for bl in ${bls}
 do
-   ./@(tvrun) $btmr $bl @(Nargs) $NREP
+   fo=`./@(tvrun) $btmr $bl @(Nargs) $NREP -O 1`
+   resfs="${resfs} ${fo}"
+   mfs="${mfs} MFLOP_${bl}"
+   ./@(tvrun) $btmr $bl @(Nargs) $NREP -L _$bl
 done
+cat $resfs | $BINdir/tvecget -H 2 N MFLOP \
+   | $BINdir/tvecreduce -R 1 N_@(N_BL) -C @(nmf) $mfs
 @endextract
 @ROUT ! tvgenmf
 tmr=$1
 PRE=`echo "$tmr" | cut -c 2`
 PT=`echo "$tmr" | cut -c 3`
 LIBS=`echo "$tmr" | cut -c 11-`
+PROUT=0
 @ROUT tvcmprep
    @iexp narg 4 0 +
 @ROUT tvrun
@@ -156,9 +164,9 @@ then
 @ROUT tvrun
    echo "This shell script times N-indexed LAPACK or BLAS problems."
    @TYPE LIST
-    echo "USAGE: $0 timer rout "list" reps [-L lab] [-E EF]"
+    echo "USAGE: $0 timer rout "list" reps [-L lab] [-E EF] [-O 0/1]"
    @TYPE RNG
-   echo "USAGE: $0 timer rout N1 NN incN reps [-L lab] [-E EF]"
+   echo "USAGE: $0 timer rout N1 NN incN reps [-L lab] [-E EF] [-O 0/1]"
    @TYPE !
 @ROUT tvcmprep
    echo "This shell script computes ratio of different nreps runs."
@@ -180,7 +188,11 @@ then
    echo "   NN      : end of problem size range"
    echo "   incN    : increment between problem sizes"
    @TYPE !
-@ROUT tvrun `   echo "   reps    : number of times each problem should be timed"`
+@ROUT tvrun
+   echo "   reps    : number of times each problem should be timed"
+   echo  \
+   "   -O 0/1  : if non-zero, do nothing but echo Output timing file to stdout"
+@ROUT !
    echo "   -L lab  : LABEL for run (default DEF)"
    echo "   -E EF   : extra flags to pass to timer (eg, -E \"-U 1 L\") (default none)"
    echo "   -F 0/1  : don't/do force retiming (default don't)"
@@ -212,6 +224,10 @@ do
    -R)  RT=$2
         shift 2
         ;;
+@ROUT tvrun
+   -O)  PROUT=$2
+        shift 2
+        ;;
 @ROUT !
    -L)  lab=$2
         shift 2
@@ -237,6 +253,11 @@ resf=res/${PT}${PRE}${RT}_${LIBS}_${N1}_${N2}_${Ni}_${NREP}_${efs}.out
 lchk=`echo "${lst}" | ${chksum} | cut -d ' ' -f 1`
 resf=res/${PT}${PRE}${RT}_${LIBS}_${lchk}_${NREP}_${efs}.out
    @TYPE !
+if [ $PROUT -ne 0 ]
+then
+   echo $resf
+   exit 0
+fi
 if [ $FRC -ne 0 ] && [ -f $resf ]
 then
    rm -f $resf
@@ -275,9 +296,10 @@ else
    ea=
 fi
 lchk=`echo "${lst}" | ${chksum} | cut -d ' ' -f 1`
-res1f=res/${PT}${PRE}${RT}_${LIBS}_${lchk}_${NR1}_${efs}.out
-res2f=res/${PT}${PRE}${RT}_${LIBS}_${lchk}_${NR2}_${efs}.out
+@skip res1f=res/${PT}${PRE}${RT}_${LIBS}_${lchk}_${NR1}_${efs}.out
+@skip res2f=res/${PT}${PRE}${RT}_${LIBS}_${lchk}_${NR2}_${efs}.out
 ./tvrun_lst.sh $tmr $RT "${lst}" $NR1 -L _${RT} $ea -F $FRC
+res1f=`./tvrun_lst.sh $tmr $RT "${lst}" $NR1 -L _${RT} $ea -F $FRC -O 1`
 if [ $NR1 -eq $NR2 ] 
 then
    mv -f $res1f ${res1f}_0
@@ -286,6 +308,7 @@ else
    res1F=${res1f}
 fi
 ./tvrun_lst.sh $tmr $RT "${lst}" $NR2 -L _${RT} $ea -F $FRC
+res2f=`./tvrun_lst.sh $tmr $RT "${lst}" $NR2 -L _${RT} $ea -F $FRC -O 1`
 
 $BINdir/tvecget -i $res1F -H 2 N MFLOP \
    | $BINdir/tvecreduce -R 1 N_${RT} -C 1 MFLOP_${RT} -o $t0
