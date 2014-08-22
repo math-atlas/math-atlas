@@ -8,9 +8,9 @@
 # This script should be run in BLDdir/timing, where it was generated
 # It assumes: shell: echo, test; env: @(chksum), cut
 chksum=@(chksum)
-t0=tmp0.tv
-t1=tmp1.tv
-to=tmp.tv
+t0=res/tmp0.tv
+t1=res/tmp1.tv
+tvo=res/tmp.tv
 efs=0
 EF=
 FRC=0
@@ -18,26 +18,6 @@ BINdir=../bin
 mydir=`pwd`
 scr=$0
 @ROUT tvgenmf
-   @ifdef ! rkK
-      @iexp rkK 0 0 +
-   @endifdef
-   @ifdef ! blas
-      @ifdef ! lapack
-         @abort "You must define blas or lapack to time!"
-      @endifdef
-      @define blas @@
-   @endifdef
-   @ifdef ! lapack
-      @define lapack @@
-   @endifdef
-   @mif blas = "all
-      @undef blas
-      @define blas @gemm trsm trmm syrk syr2k@
-   @endmif
-   @mif lapack = "all
-      @undef lapack
-      @define lapack @potrf getrf geqrf@
-   @endmif
    @TYPE LIST
       @define tvrun @tvrun_lst.sh@
       @define Nargs @"${lst}"@
@@ -54,20 +34,31 @@ PRE=d
 PT=t
 BL=a
 LL=a
+rkK=0
+las="potrf getrf geqrf"
+stat=
+fout="res/out.csv"
 if [ $# -lt @(narg) ]
 then
    echo "This shell script computes MFLOP rates for lapack & BLAS or order N"
    @TYPE LIST
-   echo "USAGE: $0 "list" reps [-P t/s] [-p d/s/c/z] [-L a/s] [-B a/s]"
+   echo "USAGE: $0 \"list\" reps [-P t/s] [-p d/s/c/z] [-L a/s] [-B a/s]"
    echo "   list    : # N1 ... N#, eg. \"4 200 2000 4000 8000\""
    @TYPE RNG
    echo "USAGE: $0 N1 NN Ni reps [-P t/s] -p [d,s,c,z]"
    echo "   N1:1st N, NN:lastN, Ni:increment between Ns"
    @TYPE !
+   echo "   -b "blalst" : list of blas routs to time (default: all)"
+   echo "   -l "lalist" : list of lapack routs to time (def: potrf,getrf,geqrf)"
+   echo "      for -l -b, use none to eliminate those timings entirely"
    echo "   -P t/s : threaded or serial timings"
    echo "   -p [d,s,c,z]: precision prefix"
    echo "   -B [a,s]    : which blas library to use"
    echo "   -L [a,s]    : which lapack library to use"
+   echo "   -K k        : nonzero: time rank-K update with K=k"
+   echo "   -t file.tv  : final tvec file containing N and all MFLOP"
+   echo "   -o out.csv  : (def:res/out.csv) human-readable CSV file"
+   echo "   -S [min/max/avg] : what statvec to grab (def:serial-max;par-avg)"
    exit 1
 fi
    @TYPE list
@@ -90,10 +81,28 @@ do
    -p)  PRE=$2
         shift 2
         ;;
+   -K)  rkK=$2
+        shift 2
+        ;;
    -B)  BL=$2
         shift 2
         ;;
    -L)  LL=$2
+        shift 2
+        ;;
+   -S)  stat=$2
+        shift 2
+        ;;
+   -b)  bls=$2
+        shift 2
+        ;;
+   -l)  las=$2
+        shift 2
+        ;;
+   -o)  fout=$2
+        shift 2
+        ;;
+   -t)  tvo=$2
         shift 2
         ;;
    *)   echo "\nIllegal flag ${1}\n"
@@ -103,46 +112,146 @@ do
    esac
 done
 
-@TYPE LIST
-lchk=`echo "${lst}" | ${chksum} | cut -d ' ' -f 1`
-@TYPE !
-
-@iexp nbl 0 0 +
-bls="\
-@declare "     " y n "\"
-   @whiledef rt @(blas)
-      @iexp nbl @(nbl) 1 +
-      @ifdef ! N_BL
-         @define N_BL @@(rt)@
-      @endifdef
-      @(rt)
-   @endwhile
-@enddeclare
-    "
+if [ ! -n "$stat" ]
+then
+   if [ "$PT" = "t" ]
+   then
+      stat=avg
+   else
+      stat=max
+   fi
+fi
+if [ ! -n "$bls" ]
+then
+   if [ "$PRE" = "z" ] || [ "$PRE" = "c" ]
+   then
+      bls="gemm trsm trmm syrk syr2k hemm herk her2k"
+   else
+      bls="gemm trsm trmm syrk syr2k"
+   fi
+elif [ "$bls" = "none" ]
+then
+   bls=
+fi
+if [ "$las" = "none" ]
+then
+   las=
+fi
 
 btmr=x${PRE}${PT}l3time_${BL}b
 ltmr=x${PRE}${PT}latime_${LL}l_${BL}b
 
-@iif rkK > 0
-   @iexp nmf @(nbl) 1 +
-mfs="MFLOP_rk@(rkK)"
-resfs=`./@(tvrun) $btmr gemm @(Nargs) $NREP -E "-k 1 @(rkK)" -L _rk@(rkK) -O 1`
-./@(tvrun) $btmr gemm @(Nargs) $NREP -E "-k 1 @(rkK)" -L _rk@(rkK)
-@endiif
-@iif rkK < 1
-   @iexp nmf @(nbl) 0 +
-mfs=""
-resfs=""
-@endiif
+if [ $rkK -gt 0 ]
+then
+   nbl=1
+   nmf=1
+   bmfs="MFLOP_rk${rkK}"
+   brnm="MFLOP_rk${rkK}_${stat} ${PRE}rank${rkK}"
+   bsel="MFLOP_rk${rkK}_${stat}"
+   N_NM="rk${rkK}"
+   rts="${PRE}rank${rkK}"
+   resfs=`./@(tvrun) $btmr gemm @(Nargs) $NREP -E "-k 1 ${rkK}" -L _rk${rkK} -O 1`
+   ./@(tvrun) $btmr gemm @(Nargs) $NREP -E "-k 1 ${rkK}" -L _rk${rkK}
+else
+   nbl=0
+   nmf=0
+   rts=""
+   bmfs=""
+   brnm=""
+   resfs=""
+   rts=""
+   N_NM=
+fi
 for bl in ${bls}
 do
+   if [ ! -n "$N_NM" ]
+   then
+      N_NM="$bl"
+   fi
+   nmf=$(( nmf + 1 ))
+   nbl=$(( nbl + 1 ))
    fo=`./@(tvrun) $btmr $bl @(Nargs) $NREP -O 1`
    resfs="${resfs} ${fo}"
-   mfs="${mfs} MFLOP_${bl}"
+   bmfs="${bmfs} MFLOP_${bl}"
+   bsel="${bsel} MFLOP_${bl}_${stat}"
+   brnm="${brnm} MFLOP_${bl}_${stat} ${PRE}${bl}"
+   rts="${rts} ${PRE}${bl}"
    ./@(tvrun) $btmr $bl @(Nargs) $NREP -L _$bl
 done
-cat $resfs | $BINdir/tvecget -H 2 N MFLOP \
-   | $BINdir/tvecreduce -R 1 N_@(N_BL) -C @(nmf) $mfs
+nla=0
+lresfs=
+lmfs=""
+lsel=""
+lrnm=""
+LN_NM=""
+for la in ${las}
+do
+   if [ ! -n "$N_NM" ]
+   then
+      N_NM="$la"
+   fi
+   if [ ! -n "$LN_NM" ]
+   then
+      LN_NM="$la"
+   fi
+   nmf=$(( nmf + 1 ))
+   nla=$(( nla + 1 ))
+   fo=`./@(tvrun) $ltmr $la @(Nargs) $NREP -O 1`
+   lresfs="${lresfs} ${fo}"
+   lmfs="${lmfs} MFLOP_${la}"
+   lsel="${lsel} MFLOP_${la}_${stat}"
+   lrnm="${lrnm} MFLOP_${la}_${stat} ${PRE}${la}"
+   rts="${rts} ${PRE}${la}"
+   ./@(tvrun) $ltmr $la @(Nargs) $NREP -L _$la
+done
+#
+# Get the problem order and MFLOP rates from all runs.  Must be done in two
+# steps because latime produces different output than l3time
+#
+if [ $nbl -gt 0 ]
+then
+   cat $resfs | $BINdir/tvecget -H 2 N MFLOP \
+      | $BINdir/tvecreduce -R 1 N_${N_NM} -C $nbl $bmfs -o $t0
+   if [ $nla -gt 0 ]
+   then
+      cat $lresfs | $BINdir/tvecget -H 2 N MFLOP \
+         | $BINdir/tvecreduce -R 1 N_${LN_NM} -C $nla $lmfs -o $t1
+   fi
+elif [ $nla -gt 0 ]
+then
+   cat $lresfs | $BINdir/tvecget -H 2 N MFLOP \
+      | $BINdir/tvecreduce -R 1 N_${N_NM} -C $nla $lmfs -o $t1
+fi
+#
+# Grab only needed vectors, and rename them so they just get precision and
+# routine, since all columns but N will be MFLOP.  Create final tvec file
+# that can be further processes by higher level scripts if required, or
+# overwritten by next run if user doesn't use -t
+#
+if [ $nla -gt 0 ] && [ $nbl -gt 0 ]
+then
+   n1=$(( nbl + 1 ))
+   cat $t0 $t1 | $BINdir/tvecselect -# 2 -S $n1 N_${N_NM} $bsel \
+       -R $n1 N_${N_NM} N $brnm -S $nla $lsel -R $nla $lrnm -o $tvo
+elif [ $nbl -gt 0 ]
+then
+   n1=$(( nbl + 1 ))
+   $BINdir/tvecselect -i $t0 -# 1 -S $n1 N_${N_NM} $bsel \
+       -R $n1 N_${N_NM} N $brnm -o $tvo
+elif [ $nla -gt 0 ]
+then
+   n1=$(( nla + 1 ))
+   $BINdir/tvecselect -i $t1 -# 1 -S $n1 N_${N_NM} $lsel \
+       -R $n1 N_${N_NM} N $lrnm -o $tvo
+else
+   exit 0
+fi
+#
+# Print in CSV format, and echo to screen
+#
+n1=$(( nla + nbl + 1 ))
+$BINdir/tvecprint -i $tvo -h 1 -C $n1 N $rts -o $fout
+cat $fout
 @endextract
 @ROUT ! tvgenmf
 tmr=$1

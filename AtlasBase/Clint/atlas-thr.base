@@ -89,14 +89,21 @@ int Mjoin(PATL,tGetTrsmInfo)(ATL_ttrsm_amm_t *pd, int P, enum ATLAS_TRANS TA,
 #include "atlas_ttypes.h"
 #include "atlas_taffinity.h"
 /*
- * Unless told otherwise, use the polling threadpool.  This makes parallel
- * operations faster, but may slow down serial operations due to polling on
- * same core.  Systems where the ATLAS threadpool is distinct from other
- * threadpools will want to make sure ATLAS does not poll, and so will
- * set ATL_SLEEPTPOOL (or make ATLAS to use the shared pool)
+ * Unless told otherwise, use the less-intrusive conditional variable-based
+ * thread pool, unless we're on the PHI, where that scale and slow OS make
+ * that prohibitive.
+ * NOTE: right now, always use sleep, as there may be a race condition in
+ *       polling thread pool.
  */
 #if !defined(ATL_POLLTPOOL) && !defined(ATL_SLEEPTPOOL)
-   #define ATL_POLLTPOOL 1
+@beginskip
+   #ifdef ATL_ARCH_XeonPHI
+      #define ATL_POLLTPOOL 1
+   #else
+      #define ATL_SLEEPTPOOL 1
+   #endif
+@endskip
+   #define ATL_SLEEPTPOOL 1
 #endif
 /*
  * Need to fix this later by using a probe.  ATL_PHI_SORTED being defined
