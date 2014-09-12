@@ -273,6 +273,9 @@ void DoArrayLoad(short id, short ptr)
          InsNewInst(NULL, NULL, NULL, LDS, -areg, ptr, 0);
          if (!IS_UNSIGNED(STflag[id-1]))
          {
+/*
+ *          FIXME: should use CVTSI (movslq) instruction to upgrade
+ */
             k = STiconstlookup(31);
             InsNewInst(NULL, NULL, NULL, SHL, -areg, -areg, k);
             InsNewInst(NULL, NULL, NULL, SAR, -areg, -areg, k);
@@ -297,6 +300,29 @@ void DoArrayLoad(short id, short ptr)
    LocalStore(id, areg);
    GetReg(-1);
 }
+void HandlePtrArithNoSizeofUpate(short dest, short src0, char op, short src1)
+/*
+ * this function is similar to HandlePtrArith but doesn't multiply lda with 
+ * size to fix the offset. 
+ */
+{
+   short rd, rs0, rs1, flag, type, dflag, k;
+   if (op != '+' && op != '-')
+      yyerror("pointers may take only + and - operators");
+   if (!IS_PTR(STflag[src0-1]))
+      yyerror("Expecting <ptr> = <ptr> + <int>");
+      
+   rs0 = LocalLoad(src0); /* load src0 */ 
+   flag = STflag[src1-1];
+   if (!IS_CONST(flag))
+      rs1 = LocalLoad(src1); /* load src1 */
+   else
+      yyerror("expecting var as 2nd src as a special case");
+
+   InsNewInst(NULL, NULL, NULL, op == '+' ? ADD : SUB, -rs0, -rs0, -rs1);
+   LocalStore(dest, rs0);
+   GetReg(-1);
+}
 
 void HandlePtrArith(short dest, short src0, char op, short src1)
 /*
@@ -304,20 +330,35 @@ void HandlePtrArith(short dest, short src0, char op, short src1)
  */
 {
    short rd, rs0, rs1, flag, type, dflag, k;
+   short nvar;
 
    if (op != '+' && op != '-')
       yyerror("pointers may take only + and - operators");
    if (!IS_PTR(STflag[src0-1]))
       yyerror("Expecting <ptr> = <ptr> + <int>");
+   
+/*
+ * Majedul: The concept of LIL as three address code violets here. We have 
+ * multiple operations in single load-store block. For example:
+ *    A1 = A0  + lda is actually treated as 
+ *    A1 = A0 + (lda * size)
+ * So, we have addition and shift in same load-store block. This would create
+ * redundant computation. We eliminate the redundant computation of (lda*size),
+ * we need to split this expression out and treated this as two HIL instruction
+ * while converting this into LIL, like:
+ *    _lda = lda * size
+ *    A1 = A0 + _lda
+ * NOTE: All variables starting with '_' are compiler's internal variables, 
+ * should not be used as variable name in HIL
+ */
 
    dflag = STflag[dest-1];
    type = FLAG2TYPE(dflag);
-   rs0 = LocalLoad(src0);
    flag = STflag[src1-1];
-
 
    if (IS_CONST(flag))
    {
+      rs0 = LocalLoad(src0); /* load src0 */
       if (IS_INT(flag))
       #ifdef X86_64
       {
@@ -332,6 +373,13 @@ void HandlePtrArith(short dest, short src0, char op, short src1)
    }
    else
    {
+/*
+ *    Majedul: 2nd source is variable. So, need extra variable to calculate
+ *    the actual offset value to be added with ptr
+ *    should be safe to use same var over and over again.
+ */
+#if 0
+      nvar = InsertNewLocal("_T_var_lda", flag);
       rs1 = LocalLoad(src1);
       #ifdef X86_64
          if (IS_INT(dflag)) k = STiconstlookup(2);
@@ -341,11 +389,63 @@ void HandlePtrArith(short dest, short src0, char op, short src1)
          InsNewInst(NULL, NULL, NULL, SHL, -rs1, -rs1, 
                     STiconstlookup(type2shift(type)));
       #endif
+      LocalStore(nvar, rs1);
+      GetReg(-1);
+/*
+ *    Majedul: now, we will load new variable 
+ */
+      rs0 = LocalLoad(src0); /* load src0 */
+      rs1 = LocalLoad(nvar);
+#else
+/*
+ *    Equivalent code for old strategy 
+ */
+      rs0 = LocalLoad(src0); /* load src0 */
+      rs1 = LocalLoad(src1);
+      #ifdef X86_64
+         if (IS_INT(dflag)) k = STiconstlookup(2);
+         else k = STiconstlookup(type2shift(type));
+         InsNewInst(NULL, NULL, NULL, SHL, -rs1, -rs1, k);
+      #else
+         InsNewInst(NULL, NULL, NULL, SHL, -rs1, -rs1, 
+                    STiconstlookup(type2shift(type)));
+      #endif
+#endif
    }
    InsNewInst(NULL, NULL, NULL, op == '+' ? ADD : SUB, -rs0, -rs0, -rs1);
    LocalStore(dest, rs0);
    GetReg(-1);
 }
+
+void Handle2dArrayPtrArith(short dest, short src0, char op, short src1)
+/*
+ * ptr arithmatic for 2D array
+ */
+{
+   int i;
+   short arrid, lda, ur, arrN;
+/*
+ * only supported where src0 and dest are same....
+ */
+   if (dest != src0 )
+      fko_error(__LINE__, "dest and src0 should be same for 2D array arith");
+
+   arrid = SToff[dest-1].sa[3];
+#if 0   
+   ur = STarr[arrid-1].urlist[0];
+   ur = SToff[ur-1].i;
+   for (i=0; i < ur; i++)
+   {
+#else
+   ur = STarr[arrid-1].colptrs[0];
+   for (i=1; i<=ur; i++)
+   {
+#endif
+      arrN = STarr[arrid-1].colptrs[i];
+      HandlePtrArith(arrN, arrN, op, src1);
+   }
+}
+
 
 void DoArith(short dest, short src0, char op, short src1)
 {
@@ -355,7 +455,12 @@ void DoArith(short dest, short src0, char op, short src1)
 
    if (IS_PTR(STflag[dest-1]))
    {
-      HandlePtrArith(dest, src0, op, src1);
+#if 1
+      if (SToff[dest-1].sa[3]) /* 2D array pointer? */
+         Handle2dArrayPtrArith(dest, src0, op, src1);
+      else
+#endif
+         HandlePtrArith(dest, src0, op, src1);
       return;
    }
    type = FLAG2TYPE(STflag[dest-1]);
@@ -867,3 +972,303 @@ void DoIf(char op, short id, short avar, char *labnam)
  */
  GetReg(-1); 
 }
+
+/*=============================================================================
+ *       To Manage 2D array access
+ *
+ *============================================================================*/
+short AddOpt2dArrayDeref(short base, short hdm, short ldm, int unroll)
+/*
+ * special for optimized 2d array access, depends on the unroll factor
+ * base = STarr index of the base array ptr,
+ * hdm = st index of high dimension
+ * ldm = st index of low dimension
+ * unroll = unroll factor
+ */
+{
+   int i;
+   int hdmi, ldmi;
+   short dt, ptr1, ptr2, ptr3;
+   short ldaS, nldaS, m3ldaS;
+/*
+ * assuming both indice of the array are const
+ */
+   assert(IS_CONST(STflag[hdm-1]) && IS_CONST(STflag[ldm-1]));
+   assert(STarr[base-1].colptrs && STarr[base-1].colptrs[0]);
+
+   hdmi = SToff[hdm-1].i;
+   ldmi = SToff[ldm-1].i;
+/*
+ * init ptr and lda
+ */
+   ptr1 = STarr[base-1].colptrs[1]; /* atleast one ptr is needed in all cases */
+   ldaS = STarr[base-1].cldas[1];
+/*
+ * special ldas 
+ */
+   if (unroll >= 3)
+      nldaS = STarr[base-1].cldas[2];
+   
+   if (unroll==6 || unroll==7 || unroll==13 || unroll==14 )
+      m3ldaS = STarr[base-1].cldas[3];
+/*
+ * extra pointer 
+ */
+   if (unroll >= 8)
+      ptr2 = STarr[base-1].colptrs[2];
+
+   if (unroll >= 15)
+      ptr3 =  STarr[base-1].colptrs[3];
+/*
+ * figure out the DT reference for specific column and unroll factor 
+ * Assumption: hdm <= unroll which is already verified while parsing the 
+ * grammar for prederef in hil_gram.y
+ */
+   if (unroll==1 || unroll==2)
+   {
+      switch(hdmi)
+      {
+         case 0:
+            dt = AddDerefEntry(ptr1, 0, 1, ldmi, ptr1);
+            break;
+         case 1:
+            dt = AddDerefEntry(ptr1, ldaS, 1, ldmi, ptr1);
+            break;
+      }
+   }
+   else if (unroll >=3 && unroll <=16)
+   {
+/*
+ *    hdmi 0-4 are same for all unroll factor
+ */
+      switch(hdmi)
+      {
+         case 0:
+            dt = AddDerefEntry(ptr1, nldaS, 2, ldmi, ptr1);
+            break;
+         case 1:
+            dt = AddDerefEntry(ptr1, nldaS, 1, ldmi, ptr1);
+            break;
+         case 2:
+            dt = AddDerefEntry(ptr1, 0, 1, ldmi, ptr1);
+            break;
+         case 3:
+            dt = AddDerefEntry(ptr1, ldaS, 1, ldmi, ptr1);
+            break;
+         case 4:
+            dt = AddDerefEntry(ptr1, ldaS, 2, ldmi, ptr1);
+            break;
+      }
+/*
+ *    for unroll fatcor 6 and 7, index 5 and 6 are different 
+ */
+      if (unroll==6 || unroll==7)
+      {
+         switch(hdmi)
+         {
+            case 5:
+               dt = AddDerefEntry(ptr1, m3ldaS, 1, ldmi, ptr1);
+               break;
+            case 6:
+               dt = AddDerefEntry(ptr1, ldaS, 4, ldmi, ptr1);
+               break;
+         }
+      }
+/*
+ *    symmetrical unroll factor 8~12 and 15~16 
+ */
+      else if( (unroll >= 8 && unroll <= 12) || 
+               (unroll >=15 && unroll <= 16) )
+      {
+         switch(hdmi)
+         {
+            case 5:
+               dt = AddDerefEntry(ptr2, nldaS, 2, ldmi, ptr2);
+               break;
+            case 6:
+               dt = AddDerefEntry(ptr2, nldaS, 1, ldmi, ptr2);
+               break;
+            case 7:
+               dt = AddDerefEntry(ptr2, 0, 1, ldmi, ptr2);
+               break;
+            case 8:
+               dt = AddDerefEntry(ptr2, ldaS, 1, ldmi, ptr2);
+               break;
+            case 9:
+               dt = AddDerefEntry(ptr2, ldaS, 2, ldmi, ptr2);
+               break;
+            case 10:
+               dt = AddDerefEntry(ptr1, ldaS, 8, ldmi, ptr1);
+               break;
+            case 11:
+               dt = AddDerefEntry(ptr2, ldaS, 4, ldmi, ptr2);
+               break;
+            case 12:
+               dt = AddDerefEntry(ptr3, 0, 1, ldmi, ptr3);
+               break;
+            case 13:
+               dt = AddDerefEntry(ptr3, ldaS, 1, ldmi, ptr3);
+               break;
+            case 14:
+               dt = AddDerefEntry(ptr3, ldaS, 2, ldmi, ptr3);
+               break;
+            case 15:
+               dt = AddDerefEntry(ptr2, ldaS, 8, ldmi, ptr2);
+               break;
+         }
+      }
+      else if (unroll == 13 || unroll == 14)
+      {
+         switch(hdmi)
+         {
+            case 5:
+               dt = AddDerefEntry(ptr2, nldaS, 4, ldmi, ptr2);
+               break;
+            case 6:
+               dt = AddDerefEntry(ptr1, ldaS, 4, ldmi, ptr1);
+               break;
+            case 7:
+               dt = AddDerefEntry(ptr2, nldaS, 2, ldmi, ptr2);
+               break;
+            case 8:
+               dt = AddDerefEntry(ptr2, nldaS, 1, ldmi, ptr2);
+               break;
+            case 9:
+               dt = AddDerefEntry(ptr2, 0, 1, ldmi, ptr2);
+               break;
+            case 10:
+               dt = AddDerefEntry(ptr2, ldaS, 1, ldmi, ptr2);
+               break;
+            case 11:
+               dt = AddDerefEntry(ptr2, ldaS, 2, ldmi, ptr2);
+               break;
+            case 12:
+               dt = AddDerefEntry(ptr2, m3ldaS, 1, ldmi, ptr2);
+               break;
+            case 13:
+               dt = AddDerefEntry(ptr2, ldaS, 4, ldmi, ptr2);
+               break;
+         }
+      }
+   }
+   else
+      fko_error(__LINE__, "unroll fatcor not supported yet");
+
+#if 0
+   switch(unroll)
+   {
+      case 1:     /* unroll factor is 1, access each column at once */
+         dt = AddDerefEntry(ptr, 0, 1, ldmi, ptr);
+         break;
+
+      case 2:
+         if (!hdmi)
+            dt = AddArrayDeref(ptr, 0, ldmi);
+         else if (hdmi==1)
+            dt = AddDerefEntry(ptr, ldaS, 1, ldmi, ptr);
+         else
+            fko_error(__LINE__, "wrong index !!!");
+         break;
+
+      case 3:
+         if (!hdmi)
+            dt = AddDerefEntry(ptr, nldaS, 1, ldmi, ptr);
+         else if (hdmi==1)
+            dt = AddDerefEntry(ptr, 0, 1, ldmi, ptr);
+         else if (hdmi == 2)
+            dt = AddDerefEntry(ptr, ldaS, 1, ldmi, ptr);
+         else
+            fko_error(__LINE__, "wrong index !!!");
+         break;
+
+      case 4:
+         if (!hdmi)
+            dt = AddDerefEntry(ptr, nldaS, 1, ldmi, ptr);
+         else if (hdmi==1)
+            dt = AddDerefEntry(ptr, 0, 1, ldmi, ptr);
+         else if (hdmi == 2)
+            dt = AddDerefEntry(ptr, ldaS, 1, ldmi, ptr);
+         else if (hdmi == 3)
+            dt = AddDerefEntry(ptr, ldaS, 2, ldmi, ptr);
+         else
+            fko_error(__LINE__, "wrong index !!!");
+         break;
+
+      case 5:
+         if (!hdmi)
+            dt = AddDerefEntry(ptr, nldaS, 2, ldmi, ptr);
+         else if (hdmi==1)
+            dt = AddDerefEntry(ptr, nldaS, 1, ldmi, ptr);
+         else if (hdmi == 2)
+            dt = AddDerefEntry(ptr, 0, 1, ldmi, ptr);
+         else if (hdmi == 3)
+            dt = AddDerefEntry(ptr, ldaS, 1, ldmi, ptr);
+         else if (hdmi == 4)
+            dt = AddDerefEntry(ptr, ldaS, 2, ldmi, ptr);
+         else
+            fko_error(__LINE__, "wrong index !!!");
+         break;
+
+      case 6:
+         if (!hdmi)
+            dt = AddDerefEntry(ptr, nldaS, 2, ldmi, ptr);
+         else if (hdmi==1)
+            dt = AddDerefEntry(ptr, nldaS, 1, ldmi, ptr);
+         else if (hdmi == 2)
+            dt = AddDerefEntry(ptr, 0, 1, ldmi, ptr);
+         else if (hdmi == 3)
+            dt = AddDerefEntry(ptr, ldaS, 1, ldmi, ptr);
+         else if (hdmi == 4)
+            dt = AddDerefEntry(ptr, ldaS, 2, ldmi, ptr);
+         else if (hdmi == 5)
+            dt = AddDerefEntry(ptr, m3ldaS, 1, ldmi, ptr);
+         else
+            fko_error(__LINE__, "wrong index !!!");
+         break;
+      
+      case 7:
+         if (!hdmi)
+            dt = AddDerefEntry(ptr, nldaS, 2, ldmi, ptr);
+         else if (hdmi==1)
+            dt = AddDerefEntry(ptr, nldaS, 1, ldmi, ptr);
+         else if (hdmi == 2)
+            dt = AddDerefEntry(ptr, 0, 1, ldmi, ptr);
+         else if (hdmi == 3)
+            dt = AddDerefEntry(ptr, ldaS, 1, ldmi, ptr);
+         else if (hdmi == 4)
+            dt = AddDerefEntry(ptr, ldaS, 2, ldmi, ptr);
+         else if (hdmi == 5)
+            dt = AddDerefEntry(ptr, m3ldaS, 1, ldmi, ptr);
+         else if (hdmi == 6)
+            dt = AddDerefEntry(ptr, ldaS, 4, ldmi, ptr);
+         else
+            fko_error(__LINE__, "wrong index !!!");
+         break;
+
+      case 8: 
+         if (!hdmi)
+            dt = AddDerefEntry(ptr, nldaS, 2, ldmi, ptr);
+         else if (hdmi==1)
+            dt = AddDerefEntry(ptr, nldaS, 1, ldmi, ptr);
+         else if (hdmi == 2)
+            dt = AddDerefEntry(ptr, 0, 1, ldmi, ptr);
+         else if (hdmi == 3)
+            dt = AddDerefEntry(ptr, ldaS, 1, ldmi, ptr);
+         else if (hdmi == 4)
+            dt = AddDerefEntry(ptr, ldaS, 2, ldmi, ptr);
+         else if (hdmi == 5)
+            dt = AddDerefEntry(ptr, m3ldaS, 1, ldmi, ptr);
+         else if (hdmi == 6)
+            dt = AddDerefEntry(ptr, ldaS, 4, ldmi, ptr);
+         else
+            fko_error(__LINE__, "wrong index !!!");
+         break;
+
+      default:
+         fko_error(__LINE__, "unroll fatcor not supported yet");
+         break;
+   }
+#endif   
+   return dt;
+}
+
