@@ -4,7 +4,7 @@
 /* 
  * for archiregs: 
  * (1) first entry is always stack pointer
- * (2) Second entry is scratch register that can be modified without saving
+ * (2) Second entry is scratch register that can be modified without savin
  *     (for use in prologue)
  */
 #if !defined(LINUX_PPC) && !defined(OSX_PPC) && !defined(LINUX_X86_32) && \
@@ -21,11 +21,15 @@
  * Majedul: SIMD Vector related 
  */
 #if !defined(ARCH_VEC) && 1
-     #define AVX2       /* avx2 is needed for VINT operations */                   
+     #define AVX2       /* avx2 is needed for VINT operations */ 
      #define ArchHasMAC
      //#define FMA4
      #define FMA3
 #endif
+/*
+ * NOTE: avx2 supports everything of AVX plus extra functionality for integer 
+ * vector. So, to minimize the code change, we use following definition.  
+ */
 #ifdef AVX2
    #define AVX
 #endif
