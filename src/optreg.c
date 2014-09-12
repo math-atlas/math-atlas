@@ -368,6 +368,9 @@ int GetRegForAsg(int type, INT_BVI iv, INT_BVI livereg)
       SetVecBit(iv, FRETREG-1, 0);
       SetVecBit(iv, DRETREG-1, 0);
    #endif
+#if 1
+      fprintf(stderr, "available regs = %s\n", BV2VarNames(iv));
+#endif
    return(AnyBitsSet(iv));
 }
 
@@ -929,6 +932,11 @@ fprintf(stderr, "succ->conin=%s\n", PrintVecList(pred->conin, 0));
          if (pred->ainstN)
          {
             k = GET_INST(pred->ainstN->inst[0]);
+/*
+ *          FIXME: if the predecessor has any successor other than this blk,
+ *          adding load host before branch would create problem: to load hoist,
+ *          we shouldn't use live register on this blk!!!! 
+ */
             node->ldhoist->ptr = IS_BRANCH(k) ? pred->ainstN->prev : 
                                                 pred->ainstN;
          }
@@ -1247,7 +1255,9 @@ int DoIGRegAsg(int N, IGNODE **igs)
    for (i=0; i < N; i++)
    {
       ig = igs[i];
-#if 1
+#if 0
+      fprintf(stderr, "**********reg assignment for: %s\n", STname[ig->var-1]);
+      fprintf(stderr, "liveregs = %s\n", BV2VarNames(ig->liveregs));
       ig->reg = GetRegForAsg(FLAG2PTYPE(STflag[ig->var-1]), iv, ig->liveregs);
 #else
       SetVecAll(iv, 0);
@@ -1288,7 +1298,15 @@ int DoIGRegAsg(int N, IGNODE **igs)
          iret++;
       }
       else
-         fko_warn(__LINE__, "NO FREE REGISTER FOR LR %d!!!\n", ig->ignum);
+#if 1         
+         fko_warn(__LINE__, "NO FREE REGISTER FOR LR %d of VAR %s!!!\n", 
+               ig->ignum, STname[ig->var-1]);
+#else
+      {
+         fprintf(stderr, "No Free Reg for LR %d of var %s!!!\n", ig->ignum, 
+                 STname[ig->var-1]);
+      }
+#endif
    }
    return(iret);
 }
@@ -1639,6 +1657,10 @@ int DoScopeRegAsg(BLIST *scope, int thresh, int *tnig)
    int i, N, nret;
    extern FILE *fpIG, *fpLIL, *fpST;
    extern BBLOCK *bbbase;
+#if 0   
+   static int nc = 0; /* just to debug ... diff cfg */
+   char file[256];
+#endif
 /*
  * Majedul: 
  * scope can't be NULL, it shouldn't be. NULL is used to re-init the static 
@@ -1647,11 +1669,19 @@ int DoScopeRegAsg(BLIST *scope, int thresh, int *tnig)
    assert(scope);
    *tnig = CalcScopeIG(scope);
    igs = SortIG(&N, thresh);
+#if 0
+   fprintf(stderr, "NIG=%d N=%d\n", *tnig, N);
+#endif
    nret = DoIGRegAsg(N, igs);
    CheckIG(N, igs);
 #if 0
-   fprintf(stderr,"IG ");
-   DumpIG(stderr,N,igs);
+   //fprintf(stderr,"IG ");
+   //DumpIG(stderr,N,igs);
+   sprintf(file, "ig-cfg-%d.dot", ++nc);
+   //ShowFlow(file, bbbase);
+   ShowFlow("ig-cfg.dot", bbbase);
+   fprintf(stdout,"IG ");
+   DumpIG(stdout,N,igs);
 #endif 
    if (fpIG)
    {
@@ -1707,9 +1737,16 @@ void DumpIG(FILE *fpout, int N, IGNODE **igs)
    {
       ig = igs[i];
       if (!ig) continue;
+#if 0
       fprintf(fpout, 
          "*** IG# = %5d, VAR = %5d, REG = %5d, NREAD = %6d, NWRITE = %3d\n",
               ig->ignum, ig->var, ig->reg, ig->nread, ig->nwrite);
+#else
+      fprintf(fpout, 
+         "*** IG# = %5d, VAR = %5d(%s), REG = %5d, NREAD = %6d, NWRITE = %3d\n",
+              ig->ignum, ig->var, STname[ig->var-1], ig->reg, ig->nread, 
+              ig->nwrite);
+#endif
       fprintf(fpout, "    begblks : ");
       PrintBlockWithNum(fpout, ig->blkbeg);
       fprintf(fpout, "    spanblk : ");
@@ -2415,6 +2452,9 @@ fprintf(stderr, ", src=%s\n", Int2Reg(-src));
                else
                   goto PUTMOVEBACK;
          }
+/*
+ *       FIXME: what if ip is an inst with DEST_IN_USE
+ */
          else if (ip->inst[1] == -dest)
          {
             ip->inst[1] = -src;
@@ -2424,6 +2464,15 @@ fprintf(stderr, ", src=%s\n", Int2Reg(-src));
             {
                BitVecComb(ip->deads, ip->deads, ivdst, '-');
                BitVecComb(ip->deads, ip->deads, ivsrc, '|');
+            }
+/*
+ *          NOTE: for instructions where destination is also in-use (like: FMA)
+ *          we need to update the ip->use with dst too.
+ */
+            if (IS_DEST_INUSE_IMPLICITLY(ip->inst[0]))
+            {
+               BitVecComb(ip->use, ip->use, ivdst, '-');
+               BitVecComb(ip->use, ip->use, ivsrc, '|');   
             }
             change++;
           }
@@ -2460,23 +2509,6 @@ fprintf(stderr, ", src=%s\n", Int2Reg(-src));
                   return(change);
                }
             }
-/*
- *          Majedul: for MAC inst, may not found but is in use, need to update
- *          same for all inst where dest is in use implicitly
- */
-#if 0            
-            else if (IS_MAC(ip->inst[0]))
-            {
-               BitVecComb(ip->use, ip->use, ivdst, '-');
-               BitVecComb(ip->use, ip->use, ivsrc, '|');   
-            }
-#else
-            else if (IS_DEST_INUSE_IMPLICITLY(ip->inst[0]))
-            {
-               BitVecComb(ip->use, ip->use, ivdst, '-');
-               BitVecComb(ip->use, ip->use, ivsrc, '|');   
-            }
-#endif
             else /* not found, is implicit use, put move back & stop */
                goto PUTMOVEBACK;
          }
@@ -2738,12 +2770,25 @@ int DoRevCopyPropTrans(INSTQ *ipsrc,  /* inst where src is set */
             }
          }
          CalcThisUseSet(ip);
+#if 0
+         fprintf(stderr, "UP: ");
+         PrintThisInst(stderr, ip);
+         fprintf(stderr, "UP-USE: %s\n",BV2VarNames(ip->use));
+#endif
          nseen++;
       }
+   }
 //      ipdst->inst[2] = -dest;
 //      CalcThisUseSet(ipdst);
+//      
+#if 0
+      fprintf(stderr, "DEL:[%p] ",ipdst);
+      PrintThisInst(stderr, ipdst);
+      //CalcInsOuts(bbbase);
+      //CalcAllDeadVariables();
+#endif
       DelInst(ipdst);
-   }
+   //}
    return(1);
 }
 
@@ -2753,7 +2798,7 @@ int DoReverseCopyProp(BLIST *scope)
  */
 {
    BLIST *bl;
-   INSTQ *ip, *ipp, *ips;
+   INSTQ *ip, *ipp, *ips, *ipps;
    int nchanges=0, nuse;
    enum inst inst;
    short src, dest;
@@ -2769,9 +2814,16 @@ int DoReverseCopyProp(BLIST *scope)
       {
          ipp = ip->prev;
          inst = ip->inst[0];
+/*
+ *       FIXED: dest is not defined yet!!!
+ *       FIXME: need to check for the short int instruction not to use 
+ *       r8 to r15 instruciton
+ */
+         /*if (IS_MOVE(inst) && ip->inst[1] < 0 && ip->inst[2] < 0 &&
+             ireg2type(-ip->inst[1]) == ireg2type(-dest)) */
          if (IS_MOVE(inst) && ip->inst[1] < 0 && ip->inst[2] < 0 &&
-             ireg2type(-ip->inst[1]) == ireg2type(-dest))
-         {
+             ireg2type(-ip->inst[1]) == ireg2type(-ip->inst[2]))
+         {            
 /*
  *          If src reg is dead on reg2reg move, possible reverseCP candidate
  *          NOTE: leave src==dest moves for CP to clean up
@@ -2786,10 +2838,33 @@ int DoReverseCopyProp(BLIST *scope)
  *              Look for inst that set src
  */
                 nuse = 0;
-                for (ips=ip->prev; ips; ips = ips->next)
+/*
+ *              FIXED: why don't we traverse toward to find out the set of src!
+ *              We only check previous inst and go to the next .... !!!!
+ */
+                //for (ips=ip->prev; ips; ips = ips->next)
+                for (ips=ip->prev; ips; ips = ipps)
                 {
+                   ipps = ips->prev;
                    if (!ips->set)
                       continue;
+/*
+ *                 NOTE: We can't update operands of short integer (32 bit in 
+ *                 64 bit arch) inst with register likes : R8~R15. Specially
+ *                 in the prologue of the function.
+ */
+               #if defined (X86_64)                   
+                   if (IS_SHORT_INT_OP(ips->inst[0]))
+                   {
+                      if (dest > (IREGBEG+NSR) && 
+                            (BitVecCheck(ips->set, src-1) || 
+                            BitVecCheck(ips->use, src-1)) )
+                      {
+                         ips = NULL;
+                         break;
+                      }
+                   }
+               #endif
                    if (BitVecCheck(ips->set, src-1) && 
                        !BitVecCheck(ips->use, src-1))
                       break;
@@ -2801,9 +2876,34 @@ int DoReverseCopyProp(BLIST *scope)
                       ips = NULL;
                       break;
                    }
+/*
+ *                 NOTE: no need to handle this case specially, since 
+ *                 BitVecCheck(ips->use, src-1) would catch that
+ */
+#if 0
+                   if (BitVecCheck(ips->set, src-1) && 
+                        IS_DEST_INUSE_IMPLICITLY(ips->inst[0]))
+                   {
+                      nuse++;
+                   }
+#endif
                 }
                 if (ips && ips->inst[1] == -src)
-                   nchanges += DoRevCopyPropTrans(ips, ip, nuse);
+                {
+/*
+ *                all inst of DEST_INUSE_IMPLICITLY should be catched by 
+ *                BitVecCheck(ips->use, src-1) conditionals
+ */               
+#if 0                  
+                  if (IS_DEST_INUSE_IMPLICITLY(ips->inst[0]))
+                  {
+                     //   fprintf(stderr, "AFTER in use\n");
+                  }
+                  else
+#endif   
+                  assert(!IS_DEST_INUSE_IMPLICITLY(ips->inst[0]));
+                  nchanges += DoRevCopyPropTrans(ips, ip, nuse);
+                }
              }
          }
       }
