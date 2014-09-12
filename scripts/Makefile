@@ -17,7 +17,7 @@
 
 #include /home/msujon/ATLAS/ATLAS3.10.0/Linux_X8664_AVX_FMA/Make.Linux_X8664_AVX_FMA
 
-include /home/msujon/ATLAS/ATLAS3.11.5/Linux_X8664_AVX_FMA/Make.Linux_X8664_AVX_FMA
+include /home/msujon/ATLAS/ATLAS3.11.14/Linux_X8664_AVX_FMA/Make.Linux_X8664_AVX_FMA
 
 
 KFLAGS=-V 
@@ -27,6 +27,10 @@ pre=d
 rout=dot
 #N=80000
 N=16000
+M=16000
+lda=$M
+NB=64
+beta=1
 file=fko_tt.s
 URT=DOT
 FKO = ../bin/fko
@@ -35,7 +39,12 @@ uopt=
 #uopt="-X 1 -Y 1 -Fx 16 -Fy 16"
 #uopt="-X 1 -Y 1 -Fx 8 -Fy 8"
 uopt="-C 1 -X 1 -Y 1 -Fx 32 -Fy 32"
+opt="-Fx 32 -Fy 32 -Fa 32"
+optn="-Fa 32 -Fy 32"
 #uopt="-C 1000000 -X 1 -Y 1 -Fx 32 -Fy 32"
+
+# target directory.. by default level1 
+Tdir=$(L1Tdir)
 
 #all: dot axpy copy swap scal iamax asum amax
 all: dot axpy copy swap scal iamax asum amax sin cos
@@ -56,6 +65,9 @@ cos: scos dcos
 irk1amax: sirk1amax dirk1amax
 irk2amax: sirk2amax dirk2amax
 irk3amax: sirk3amax dirk3amax
+
+gemvt: sgemvt dgemvt
+
 
 sdot : $(FKO)
 	$(MAKE) build pre=s rout=dot URT=`echo dot | tr 'a-z' 'A-Z'` \
@@ -189,11 +201,91 @@ dirk3amax: $(FKO)
 	   			      KFLAGS="$(KFLAGS)"
 	./TestTime.py d irk3amax $(file) $(N) $(test) $(uopt)
 
+dgemvt: $(FKO)
+	$(MAKE) build pre=d rout=gemvt URT=`echo mvtcases | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)" Tdir="$(MVTdir)"
+	./TestTime2.py d gemvt $(file) $(N) $(M) $(lda) $(test) $(opt)
+dgemvn: $(FKO)
+	$(MAKE) build pre=d rout=gemvn URT=`echo mvncases | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)" Tdir="$(MVTdir)"
+	./TestTime2.py d gemvn $(file) $(N) $(M) $(lda) $(test) $(opt)
+
+dgemvt_2d: $(FKO)
+	$(MAKE) build pre=d rout=gemvt_2d URT=`echo mvtcases | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)" Tdir="$(MVTdir)"
+	./TestTime2.py d gemvt $(file) $(N) $(M) $(lda) $(test) $(opt)
+
+dgemvt2: $(FKO)
+	$(MAKE) build pre=d rout=gemvt2 URT=`echo mvtcases | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)" Tdir="$(MVTdir)"
+	./TestTime2.py d gemvt $(file) $(N) $(M) $(lda) $(test) $(opt)
+
+dgemvt2_2d: $(FKO)
+	$(MAKE) build pre=d rout=gemvt2_2d URT=`echo mvtcases | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)" Tdir="$(MVTdir)"
+	./TestTime2.py d gemvt $(file) $(N) $(M) $(lda) $(test) $(opt)
+
+dgemvt4: $(FKO)
+	$(MAKE) build pre=d rout=gemvt4 URT=`echo mvtcases | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)" Tdir="$(MVTdir)"
+	./TestTime2.py d gemvt $(file) $(N) $(M) $(lda) $(test) $(opt)
+
+dgemvt4_2d: $(FKO)
+	$(MAKE) build pre=d rout=gemvt4_2d URT=`echo mvtcases | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)" Tdir="$(MVTdir)"
+	./TestTime2.py d gemvt $(file) $(N) $(M) $(lda) $(test) $(opt)
+
+dgemvt6: $(FKO)
+	$(MAKE) build pre=d rout=gemvt6 URT=`echo mvtcases | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)" Tdir="$(MVTdir)"
+	./TestTime2.py d gemvt $(file) $(N) $(M) $(lda) $(test) $(opt)
+
+dgemvt6_2d: $(FKO)
+	$(MAKE) build pre=d rout=gemvt6_2d URT=`echo mvtcases | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)" Tdir="$(MVTdir)"
+	./TestTime2.py d gemvt $(file) $(N) $(M) $(lda) $(test) $(opt)
+
+dgemvt7: $(FKO)
+	$(MAKE) build pre=d rout=gemvt7 URT=`echo mvtcases | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)" Tdir="$(MVTdir)"
+	./TestTime2.py d gemvt $(file) $(N) $(M) $(lda) $(test) $(opt)
+
+dgemvt8: $(FKO)
+	$(MAKE) build pre=d rout=gemvt8 URT=`echo mvtcases | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)" Tdir="$(MVTdir)"
+	./TestTime2.py d gemvt $(file) $(N) $(M) $(lda) $(test) $(opt)
+
+dger1: $(FKO)
+	$(MAKE) build pre=d rout=ger1 URT=`echo r1cases | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)" Tdir="$(R1Tdir)"
+	./TestTime2.py d ger1 $(file) $(N) $(M) $(lda) $(test) $(opt)
+
+dger2: $(FKO)
+	$(MAKE) build pre=d rout=ger2 URT=`echo r2cases | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)" Tdir="$(R1Tdir)"
+	./TestTime2.py d ger2 $(file) $(N) $(M) $(lda) $(test) $(opt)
+
+dgemm: $(FKO)
+	$(MAKE) build pre=d rout=gemm URT=`echo cases | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)" Tdir="$(MMTdir)"
+	./TestTime3.py d gemm $(file) $(NB) $(beta) $(test) 
+
+dgemm4x1: $(FKO)
+	$(MAKE) build pre=d rout=gemm4x1 URT=`echo cases | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)" Tdir="$(MMTdir)"
+	./TestTime3.py d gemm $(file) $(NB) $(beta) $(test) 
+
+dgemm2x2: $(FKO)
+	$(MAKE) build pre=d rout=gemm2x2 URT=`echo cases | tr 'a-z' 'A-Z'` \
+	   			      KFLAGS="$(KFLAGS)" Tdir="$(MMTdir)"
+	./TestTime3.py d gemm $(file) $(NB) $(beta) $(test) 
+
 go : $(FKO)
 	$(MAKE) build URT=`echo $(rout) | tr 'a-z' 'A-Z'` KFLAGS="$(KFLAGS)"
-	./TestTime.py $(pre) $(rout) $(file) $(N) $(test) $(uopt)
+	./TestTime.py $(pre) $(rout) $(file) $(test) $(uopt)
+
 build :
-	$(FKO) $(KFLAGS) -o $(L1Tdir)/$(URT)/$(file) \
+	$(FKO) $(KFLAGS) -o $(Tdir)/$(URT)/$(file) \
                ../blas/$(pre)$(rout).b
 	
 build_comp : 
