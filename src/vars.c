@@ -345,3 +345,141 @@ void AddDeadComments(BBLOCK *base)
       }
    }
 }
+
+void FindThisInstUseSet(INSTQ *ip, INT_BVI use, INT_BVI set)
+{
+   short inst, except;
+
+   inst = ip->inst[0];
+   except = inst >> 14; /* ???? */
+   inst &= 0x3FFF;
+
+   if (ACTIVE_INST(inst))
+   {
+#ifdef X86
+      if (inst == DIV || inst == UDIV)
+      {
+#ifdef X86_64
+         HandleUseSet(set, use, Reg2Int("@rax"));
+         HandleUseSet(set, use, Reg2Int("@rdx"));
+         HandleUseSet(use, use, Reg2Int("@rax"));
+         HandleUseSet(use, use, Reg2Int("@rdx"));
+         HandleUseSet(use, use, ip->inst[3]);
+#else
+         HandleUseSet(set, use, Reg2Int("@eax"));
+         HandleUseSet(set, use, Reg2Int("@edx"));
+         HandleUseSet(use, use, Reg2Int("@eax"));
+         HandleUseSet(use, use, Reg2Int("@edx"));
+         HandleUseSet(use, use, ip->inst[3]);
+#endif
+      }
+      else
+      {
+#endif
+/*
+ *    Majedul: for FMAC type instruction, dest is also use before set. 
+ *    it should be reflected here. So, handled MAC specially.
+ *    NOTE: There are other instruction like: FCMOV1 
+ */
+         if (IS_DEST_INUSE_IMPLICITLY(inst))
+            HandleUseSet(use, use, ip->inst[1]);
+         HandleUseSet(set, use, ip->inst[1]);
+         /*
+          *    A XOR op with src1 == src2 does not really use the src
+          */
+         if (inst != XOR && inst != XORS || ip->inst[2] != ip->inst[3])
+         {
+            HandleUseSet(use, use, ip->inst[2]);
+            HandleUseSet(use, use, ip->inst[3]);
+         }
+         if (except == 1 || except == 3)
+            HandleUseSet(set, use, ip->inst[2]);
+         if (except == 2 || except == 3)
+            HandleUseSet(set, use, ip->inst[3]);
+
+      #ifdef X86
+         }
+         if (inst >= OR && inst <= NEG)
+            HandleUseSet(set, use, -ICC0);
+         else if (inst == VGR2VR16)
+            HandleUseSet(use, use, ip->inst[1]);
+      #else
+         if (IS_IOPCC(inst))
+            HandleUseSet(set, use, -ICC0);
+      #endif
+         }
+   #if IFKO_DEBUG_LEVEL >= 1
+      assert(use > 0 && set > 0);
+   #endif
+}
+
+
+void CheckUseSet()
+/*
+ * this function checks whether the use/set of instruction is correct. 
+ * In many transformations (such as, copy propagation, reverse copy propagation)
+ * we manually compute use/set of updated inst. This function will check whether
+ * they are Okay., 
+ */
+{
+   int check;
+   BBLOCK *bp;
+   BLIST *bl;
+   INSTQ *ip; 
+   short inst, except;
+   INT_BVI use, set;
+   extern BBLOCK *bbbase;
+   extern INT_BVI FKO_BVTMP; 
+
+
+   if (!FKO_BVTMP)
+      FKO_BVTMP = NewBitVec(32);   
+   SetVecAll(FKO_BVTMP,0);
+   use = NewBitVec(32);
+   set = NewBitVec(32);
+
+   for (bp=bbbase; bp; bp=bp->down)
+   {
+      for (ip=bp->ainst1; ip; ip=ip->next)
+      {
+         inst = ip->inst[0];
+         except = inst >> 14;
+         inst &= 0x3FFF;
+
+         SetVecAll(use, 0);
+         SetVecAll(set, 0);
+         if (inst == LABEL) 
+            continue;
+
+         FindThisInstUseSet(ip, use, set);
+         if (ip->use)
+         {
+            check = BitVecCheckComb(ip->use, use, '-');
+            if (check)
+            {
+               PrintThisInst(stderr, ip);
+               fprintf(stderr, "USE=%s\n", BV2VarNames(use));
+               fprintf(stderr, "IP->USE=%s\n", BV2VarNames(ip->use));
+               assert(!check);
+            }
+         }
+         if (ip->set)
+         {
+            check = BitVecCheckComb(ip->set, set, '-');
+            if (check)
+            {
+               fprintf(stderr, "set??");
+               assert(!check);
+            }
+         }
+#if 0
+      PrintThisInst(stderr, ip);
+      fprintf(stderr, "SET=%s\n", BV2VarNames(set));
+      fprintf(stderr, "USE=%s\n", BV2VarNames(use));
+#endif      
+         
+      }
+   }
+   KillBitVec(use);
+   KillBitVec(set);
+}
