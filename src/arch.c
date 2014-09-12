@@ -1996,6 +1996,14 @@ int FindRegToSaveSP(BBLOCK *blk)
  *    2. Not a callee-saved register
  *    3. Not in conflict with the registers used upto the last copying of 
  *       parameter in to the new stack.
+ * 
+ * KNOWN ISSUES:
+ * =============
+ *
+ * 1. If we have variables which are inconnectly used before defined, it may 
+ * treat them as live in at the beginning of the function and hence may return 0
+ * indicating no available registers!!! 
+ *    Currently, this is no way to catch them in compile time. like: 
  */
 {
    int i, j, k, n;
@@ -2066,6 +2074,7 @@ int FindRegToSaveSP(BBLOCK *blk)
       }
    }
    fprintf(stderr, "\n");
+   PrintInst(stdout, bbbase);
    exit(0);
 #endif
 /*
@@ -2283,7 +2292,12 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
    oldhead = ip;
 /*
  * For x86-64, save %rbp, if necessary, to the reserved location of 0(%rsp)
- * Majedul: skip saving that. don't sure it is necessary
+ * Majedul: FIXME: I skipped that now. We don't use rbp as base pointer to 
+ * keep it free to use inside the routine. 'rbp' is treated like any general 
+ * purpose register here. But convensionally, rbp is saved right after the 
+ * 'return address' that means at 0%(rsp) position and the value of rsp is 
+ * saved in rbp when it is used as base pointer. and it is both for x86-32 and
+ * x86-64. 
  */
    #if defined(X86_64) && 0 
       k = iName2Reg("@rbp"); /* FIXED: @rbp from %rbp*/
