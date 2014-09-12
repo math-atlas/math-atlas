@@ -26,8 +26,14 @@
 /*
  * Majedul: adding new vector type for int: V_INT. we need to use 4 bits to 
  * track type which changes previous definition
+ * .... Should we have two different types like: V_SHORT, V_INT !!!!
+ * NOTE: normally, we don't use V_SHORT and V_INT together. So, I decided to
+ * use only one type V_INT in my implementation.
  */
 #define T_VINT       0x8
+/*#define T_VSHORT       0x8
+#define T_VINT       0x9*/
+
 #define IS_INT(flag_)  (((flag_) & 0xF) == T_INT)
 #define IS_SHORT(flag_)  (((flag_) & 0xF) == T_SHORT)
 #define IS_FLOAT(flag_)  (((flag_) & 0xF) == T_FLOAT)
@@ -92,6 +98,7 @@
    extern union valoff *SToff;
    extern int          *STflag;
    extern short        *STpts2;
+   extern  struct arrayinfo *STarr; 
 #endif
 
 short FindDerefEntry(short ptr, short ireg, short mul, short con);
@@ -115,5 +122,7 @@ void MarkUnusedLocals(BBLOCK *bbase);
 void CorrectParamDerefs(struct locinit *libase, int rsav, int fsize);
 short FindLocalFromDT(short dt);
 short FindVarFromName(char *name);
-
+short InsertNewLocal(char *name, int type );
+short STarrlookup(short id);
+short STarrlookupByname(char *name);
 #endif
