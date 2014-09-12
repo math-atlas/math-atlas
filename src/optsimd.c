@@ -735,7 +735,10 @@ INSTQ *AddAlignTest(LOOPQ *lp, BBLOCK *bp, INSTQ *ip, int fa_label)
 
    return ip;   
 }
-
+#if 0
+/*
+ * NOTE: this function is shifted to symtab.c file
+ */
 short InsertNewLocal(char *name, int type )
 /*
  * add new local var in symbol table. We should always use this function 
@@ -754,7 +757,7 @@ short InsertNewLocal(char *name, int type )
    SToff[k-1].sa[2] = j;
    return k;
 }
-
+#endif
 BLIST *AddLoopDupBlks(LOOPQ *lp, BBLOCK *up, BBLOCK *down, int lbNum)
 /*
  * Returns pointer of block list of duplicated blocks, adding duplicated 
