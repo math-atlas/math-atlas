@@ -1213,21 +1213,21 @@ struct assmln *lil2ass(BBLOCK *bbase)
    #ifdef X86_64
       case NEGS:
          assert(op1 == op2);
-         ap->next = PrintAssln("\tnegl\t%s", GetIregOrDeref(op1));
+         ap->next = PrintAssln("\tnegl\t%s\n", GetIregOrDeref(op1));
          break;
    #endif
       case NEG:
          #ifdef X86_64
             assert(op1 == op2);
-            ap->next = PrintAssln("\tnegq\t%s", GetIregOrDeref(op1));
+            ap->next = PrintAssln("\tnegq\t%s\n", GetIregOrDeref(op1));
          #elif defined(X86)
             assert(op1 == op2);
-            ap->next = PrintAssln("\tnegl\t%s", GetIregOrDeref(op1));
+            ap->next = PrintAssln("\tnegl\t%s\n", GetIregOrDeref(op1));
          #elif defined(SPARC)
-            ap->next = PrintAssln("\tneg\t%s, %s", archiregs[-IREGBEG-op2],
+            ap->next = PrintAssln("\tneg\t%s, %s\n", archiregs[-IREGBEG-op2],
                                   archiregs[-IREGBEG-op1]);
          #elif defined(PPC)
-            ap->next = PrintAssln("\tneg\t%s, %s", archiregs[-IREGBEG-op1],
+            ap->next = PrintAssln("\tneg\t%s, %s\n", archiregs[-IREGBEG-op1],
                                   archiregs[-IREGBEG-op2]);
          #elif defined(FKO_ANSIC)
             ap->next = PrintAssln("   %s = -%s;\n", archiregs[-IREGBEG-op1],
@@ -2713,7 +2713,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
 
       case COMMENT:
          #ifdef X86
-            continue; /* skip comments temporary for testing with ATLAS*/
+            //continue; /* skip comments temporary for testing with ATLAS*/
             ap->next = PrintAssln("#%s\n", op1 ? STname[op1-1] : "");
          #elif defined(SPARC)
             ap->next = PrintAssln("!%s\n", op1 ? STname[op1-1] : "");
@@ -4281,6 +4281,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
             op1 = -op1;
             op2 = -op2;
          #ifdef AVX
+            assert((-op1) <= (IREGBEG+NSR));
             ap->next = PrintAssln("\tvmovd\t%s, %s\n", 
                                   archxmmregs[-VIREGBEG-op2],
                                   archsregs[-IREGBEG-op1]);
