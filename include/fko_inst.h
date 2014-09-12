@@ -871,6 +871,22 @@ char *instmnem[] =
                           (i_) == FCMOV1  || (i_) == FCMOV2 || \
                           (i_) == FCMOVD1 || (i_) == FCMOVD2 )
 
+/*
+ * Majedul: 32 bit integer instruction (in X64), may need some special treat
+ * since all int registers don't support 32 bit version (like: r8-r15 in X64)
+ */
+#define IS_SHORT_INT_OP(i_) ( (i_) == LDS    || (i_) == STS || \
+                              (i_) == ORS    || (i_) == XORS || \
+                              (i_) == NOTS   || (i_) == SHLS || \
+                              (i_) == SHLCCS || (i_) == SHRS || \
+                              (i_) == SHRCCS || (i_) == SARS || \
+                              (i_) == ADDS   || (i_) == ADDCCS || \
+                              (i_) == SUBS   || (i_) == SUBCCS || \
+                              (i_) == MULS   || (i_) == UMULS || \
+                              (i_) == DIVS   || (i_) == UDIVS || \
+                              (i_) == CMPS   || (i_) == MOVS || \
+                              (i_) == NEGS   || (i_) == ABSS )
+
 INSTQ *NewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,
                short dest, short src1, short src2);
 INSTQ *InsNewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,
