@@ -109,6 +109,7 @@
 #define IFF_3DNOWR       0x100 /* use 3DNow! for L1 read prefetch */
 #define IFF_3DNOWW       0x200 /* use 3DNow! for L1 write prefetch */
 #define IFF_VERBOSE      0x400 /* verbose output */
+#define IFF_OPT2DPTR     0x800 /* optimize 2d array access with min reg & ptr */
 /*
  * Majedul: 
  *    As we will introduce more and more new optimizations, I will keep 
@@ -129,6 +130,7 @@
 #define DO_VECT(flg_) ((flg_) & IFF_VECTORIZE)
 
 #define IOPT_GLOB 0x1
+#define IOPT_SCOP 0x2
 
 #define FKO_abs(x_) (((x_) >= 0) ? (x_) : -(x_))
 /*
