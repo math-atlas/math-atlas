@@ -64,7 +64,12 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "FLOAT_PTR" { return(FLOAT_PTR); }
 "INT_PTR" { return(INT_PTR); }
 "UINT_PTR" { return(UINT_PTR); }
+"DOUBLE_ARRAY" { return(DOUBLE_ARRAY); }
+"FLOAT_ARRAY" { return(FLOAT_ARRAY); }
+"INT_ARRAY" { return(INT_ARRAY); }
+"UINT_ARRAY" { return(UINT_ARRAY); }
 "ROUTINE" { return(ROUT_NAME); }
+"UNROLL_ARRAY" { return(UNROLL_ARRAY); }
 "ROUT_LOCALS" { return(ROUT_LOCALS); }
 "CONST_INIT" { return(CONST_INIT); }
 "ROUT_BEGIN" { return(ROUT_BEGIN); }
