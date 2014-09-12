@@ -18,10 +18,16 @@ char **STname;
 union valoff *SToff;
 int *STflag;
 short *STpts2;
+struct arrayinfo *STarr; /* to save information of multi-dim array*/
 
-static int N=0, Nalloc=0;
+
+static int N=0, Nalloc=0; /* for Symbol table */
+static int Narr=0, TNarr=0; /* for array table */
+
+/*int opt2d = 0;*/  /* omitted by FKO_OPT2DPTR */
+
+
 static int niloc=0, nlloc=0, nfloc=0, ndloc=0, nvfloc=0, nvdloc=0;
-
 #if 1
 static int nviloc=0;
 #endif
@@ -30,6 +36,91 @@ int    LOCSIZE=0, LOCALIGN=0, NPARA=0;
 
 #define STCHUNK 1024    /* increased for safety ...*/
 #define DTCHUNK 1024
+
+
+static void NewArrTable(int chunk)
+/*
+ * NOTE: In the arrtable, we keep the structure, not the struction pointer.
+ * so, keep the chunk small. otherwise (TNarr - Narr) would be wasted
+ */
+{
+   struct arrayinfo *new;
+   int i,n;
+   n = Narr + chunk;
+   new = malloc(n*sizeof(struct arrayinfo));
+   assert(new);
+   if (TNarr > 0)
+   {
+      for (i=0; i < N; i++)
+      {
+         new[i].ptr = STarr[i].ptr;
+         new[i].ndim = STarr[i].ndim;
+         new[i].ldas = STarr[i].ldas; /* copy the list pointer */
+         new[i].urlist = STarr[i].urlist;
+         STarr[i].ldas = NULL;
+         STarr[i].urlist = NULL;
+      }
+      free(STarr);
+   }
+   STarr = new;
+   TNarr = n;
+}
+
+short AddSTarr(short ptr, short ndim, short *ldas)
+/*
+ * This function adds array info in the table and returns the index of the 
+ * table. 
+ * ptr = st index of base ptr
+ * ndim = dimension of the array
+ * ldas = list of STindex of lda (st entry can be integer variable or const) 
+ *        number of element in the list is exactly ndim-1
+ */
+{
+   int i;
+   short *ls;
+
+   if (Narr == TNarr) NewArrTable(8);
+   
+   ls = malloc((ndim-1)*sizeof(short));
+   assert(ls);
+   for (i=0; i < (ndim-1); i++)
+      ls[i] = ldas[i];
+   
+   
+   STarr[Narr].ptr = ptr;
+   STarr[Narr].ndim = ndim;
+   STarr[Narr].ldas = ls;
+   STarr[Narr].urlist = NULL; /* unroll factor not updated at first */ 
+/*
+ * these list are to handle 2D array, wll be updated later
+ */
+   STarr[Narr].cldas = NULL; 
+   STarr[Narr].colptrs = NULL; 
+   return (++Narr);
+}
+
+int UpdateSTarrUnroll(short id, short *ulist)
+/*
+ * our initial plan is to make unroll factor optional. so, we update 
+ * unroll factor of each dimension for an array separately. 
+ * returns 1 if successful, otherwise 0
+ * NOTE: ulist is the list of unroll factor (ST id of const now) for each 
+ * dimension : from higer dimension to lower dimension. 
+ */
+{
+   int i;
+   short ndim;
+   short *urlist;
+   if (id > Narr || id <= 0)  /* invalid index */
+      return (0); 
+   ndim = STarr[id-1].ndim;
+   urlist = malloc(ndim*sizeof(short));
+   assert(urlist);
+   for (i=0; i < ndim; i++)
+      urlist[i] = ulist[i];
+   STarr[id-1].urlist = urlist;
+   return(1);
+}
 
 static void GetNewSymtab(int chunk)
 {
@@ -213,6 +304,35 @@ short STstrlookup(char *str)
    return(0);
 }
 
+short STarrlookup(short ptr)
+/*
+ * searches for the ST id in STarr table, returns STarr index+1 if found,
+ * if not, returns 0
+ */
+{
+   short i;
+   for (i=0; i != Narr; i++)
+   {
+      if (STarr[i].ptr == ptr)
+         return (i+1);
+   }
+   return(0);
+}
+
+short STarrlookupByname(char *name)
+/*
+ * searches for the array from STarr table, returns STarr index+1 if found, 
+ * 0 if not
+ */
+{
+   int id;
+   assert(name);
+   id = STstrlookup(name);
+   if (id) 
+      return(STarrlookup(id));
+   return(0);
+}
+
 short STFindLabel(char *str)
 {
    short i;
@@ -253,6 +373,7 @@ short STstrconstlookup(char *str)
    return(STdef(str, CONST_BIT | T_CHAR, 0));
 }
 
+
 char *STi2str(short i)
 {
    #if IFKO_DEBUG_LEVEL > 0
@@ -283,6 +404,103 @@ void STsetoffi(short i, int off)
 void STsetflag(short i, int flag)
 {
     STflag[i-1] = flag;
+}
+
+void STsetArray(short ptr, short ndim, short *ldas)
+/*
+ * setup additional info about the array: update STarr data structure  
+ * NOTE: we can't keep the index in ST entry yet (SToff) but we can do it
+ * inside CreateLocalDerefs() function as sa[3] will be available then. 
+ */
+{
+   AddSTarr(ptr, ndim, ldas); 
+}
+void PrintSTarr(FILE *fpout)
+{
+   int i, j, dim, count;
+   short lda, ur;
+   char ln[64];
+   assert(fpout);
+   fprintf(fpout, "   PTR        DIMENSION          LDA              UNROLL");
+   fprintf(fpout, "                NEWPTR    \n");
+   fprintf(fpout, "==========   ===========   ==================="
+                  " =================  =================\n");
+   for (i=0; i < Narr; i++)
+   {
+      dim = STarr[i].ndim;
+      fprintf(fpout, "   %s    %10d           ", STname[STarr[i].ptr-1], dim);
+#if 0
+      for (j=0; j < dim-1; j++)
+      {
+         lda = STarr[i].ldas[j];
+         if (IS_CONST(STflag[lda-1]))
+            fprintf(fpout, "%d,", SToff[lda-1].i);
+         else
+            fprintf(fpout, "%s,", STname[lda-1]);
+      }
+#else
+      count = STarr[i].cldas[0];
+      for (j=1; j <= count; j++)
+      {
+         lda = STarr[i].cldas[j];
+         if (IS_CONST(STflag[lda-1]))
+            fprintf(fpout, "%d,", SToff[lda-1].i);
+         else
+            fprintf(fpout, "%s,", STname[lda-1]);
+      }
+#endif
+      fprintf(fpout, "\t\t  ");
+      if (!STarr[i].urlist) 
+         fprintf(fpout, " %d", 0);
+      else
+      {
+         for (j=0; j < dim; j++)
+         {
+            ur = STarr[i].urlist[j];
+            fprintf(fpout, "%d,", SToff[ur-1].i);
+         }
+         ur = STarr[i].urlist[0]; /* use the first ur only */
+         ur = SToff[ur-1].i;
+         if (STarr[i].colptrs)
+         {
+            count = STarr[i].colptrs[0];
+            fprintf(fpout, "\t\t  ");
+            for (j=1; j <= count; j++)
+               fprintf(fpout, "%s, ", STname[STarr[i].colptrs[j]-1]);
+         }
+      }
+      fprintf(fpout,"\n");
+   }
+}
+
+short InsertNewLocal(char *name, int type )
+/*
+ * add new local var in symbol table. We should always use this function 
+ * to insert any var for compiler's internal purpose, rather than manually 
+ * update symbol table directly from outside. 
+ */
+{
+   short k, j;
+/*
+ * NOTE: name string is copied and stored in Symbol Table
+ * So, free the string from the caller function
+ * FIXED: SToff is a global pointer and it can be updated from AddDerefEntry()
+ * so, it's vary risky to use : SToff[k-1].sa[2] = AddDerefEntry(... ... );
+ * which will ends up with invalid memory access!!!
+ */
+   k = STdef(name, type | LOCAL_BIT, 0);
+   j =  AddDerefEntry(-REG_SP, k, -k, 0, k);
+   SToff[k-1].sa[2] = j;
+   return k;
+}
+
+short InsertNewLocalPtr(char *name, int type)
+{
+   short k, j;
+   k = STdef(name, type | LOCAL_BIT | PTR_BIT, 0);
+   j =  AddDerefEntry(-REG_SP, k, -k, 0, k);
+   SToff[k-1].sa[2] = j;
+   return k;
 }
 
 void CreateFPLocals()
@@ -385,7 +603,7 @@ void CreateLocalDerefs()
  */
 {
    short k;
-   int fl, nl=0;
+   int fl, nl=0, i;
    extern int NPARA;
    for (k=0; k != N; k++)
    {
@@ -394,6 +612,24 @@ void CreateLocalDerefs()
       {
          SToff[k].sa[0] = SToff[k].i;
          SToff[k].sa[2] = AddDerefEntry(-REG_SP, k+1, -k-1, 0, k+1);
+         SToff[k].sa[3] = 0; /* by default 0, remain 0 for 1D array */
+/*
+ *       NOTE: after creating deref entry for each parameter, sa[3] is 
+ *       available. we use this sa[3] ST entry to point the STarr
+ *       shifted to CreateArrayLdas() function.
+ */
+#if 0
+         if (IS_PTR(STflag[k]))
+         {
+            for (i=0; i < Narr; i++)
+            {
+               if (STarr[i].ptr == k+1)
+               {
+                  SToff[k].sa[3] = i+1;
+               }
+            }
+         }
+#endif
       }
       else if (IS_LOCAL(fl))
          SToff[k].sa[2] = AddDerefEntry(-REG_SP, k+1, -k-1, 0, k+1);
@@ -891,4 +1127,450 @@ void PrintSymtabStaticMember(FILE *fpout)
    fprintf(fpout, "nvdloc = %d\n", nvdloc);
    fprintf(fpout, "-------------------------\n");
 }
+
+/*=============================================================================
+ *                TO MANAGE 2D ARRAY ACCESS 
+ *
+ *===========================================================================*/
+short NewLDAS(short lda, short ptr, int mul)
+/*
+ * create new varibale _lda_s=lda*mul*size generating the statement/expression
+ * return ST index of new variable
+ */
+{
+   short ldas, sz;
+   char ln[512];
+
+   if (mul == 1) /* _lda_s = lda*size */
+   {
+/*
+ *    create new variable _lda_S
+ */
+      sprintf(ln, "_%s_s", STname[lda-1]); 
+      ldas = InsertNewLocal(ln, STflag[lda-1]);
+/*
+ *    findout the value to shift to generate ldas 
+ */
+      sz = STiconstlookup(type2shift(FLAG2TYPE(STflag[ptr-1])));
+/*
+ *    add instrucitons to calc ldas = lda * sizeof
+ */
+      DoArith(ldas, lda, '<', sz);
+   }
+   else if (mul == -1)
+   {
+      sprintf(ln, "_n_%s_s", STname[lda-1]); 
+      ldas = InsertNewLocal(ln, STflag[lda-1]);
+      sz = STiconstlookup(type2shift(FLAG2TYPE(STflag[ptr-1])));
+      DoArith(ldas, lda, '<', sz);
+      DoArith(ldas, ldas, 'n', 0);
+   }
+   else if (mul == 3)
+   {
+      sprintf(ln, "_3_%s_s", STname[lda-1]); 
+      ldas = InsertNewLocal(ln, STflag[lda-1]);
+      sz = STiconstlookup(type2len(FLAG2TYPE(STflag[ptr-1]))*mul);
+      DoArith(ldas, lda, '*', sz);
+   }
+   else
+      fko_error(__LINE__, "unknown mul, not implemented yet! ");
+   return ldas;
+}
+
+short *CreateLDAs(short *ldas, short ptr)
+/*
+ * to create lda*size as new variable for non-optimized mode of 2D array
+ */
+{
+   short lda0;
+   short *cldas;     /* new generated ldas */
+
+   lda0 = ldas[0]; /* for 2D array, we will have lda here */
+   if (!IS_CONST(STflag[lda0-1]))
+   {
+/*
+ *    create new list with ldas to update STarr
+ */
+      cldas = malloc(2*sizeof(short)); /* always one lda on non optimized arr */
+      assert(cldas);
+      cldas[0] = 1; /* lda count is one */
+      cldas[1] = NewLDAS(lda0, ptr, 1); /* lda*sizeof */
+   }
+   else 
+      fko_error(__LINE__, "No support for const array yet!");
+   return cldas;
+}
+
+short *CreateOptLDAs(short *ldas, short ptr, short unroll)
+/*
+ * will create several ldas for optimized 2D array access, like; lda, -lda,
+ * lda*3 , etc.this is to optimize pointer update for 2D access
+ * 
+ */
+{
+   int i, nl;
+   short *cldas;
+   char ln[512];
+
+   switch(unroll)
+   {
+      case 1: 
+      case 2:
+         nl = 1; /* number of lda to be created */
+         cldas = malloc((nl+1)*sizeof(short));
+         assert(cldas);
+         cldas[0] = nl;
+         cldas[1] = NewLDAS(ldas[0], ptr, 1);
+         break;
+      case 3: 
+      case 4: 
+      case 5: 
+      case 8: 
+      case 9: 
+      case 10: 
+      case 11: 
+      case 12: 
+      case 15: 
+      case 16: 
+         nl = 2; /* number of lda to be created: lda, -lda */
+         cldas = malloc((nl+1)*sizeof(short));
+         assert(cldas);
+         cldas[0] = nl;
+         cldas[1] = NewLDAS(ldas[0], ptr, 1); /*  lda*sizeof */
+         cldas[2] = NewLDAS(ldas[0], ptr, -1); /* -lda*sizeof */
+         break;
+      case 6: 
+      case 7: 
+      case 13: 
+      case 14: 
+         nl = 3; /* number of lda to be created: lda, -lda, 3*lda */
+         cldas = malloc((nl+1)*sizeof(short));
+         assert(cldas);
+         cldas[0] = nl;
+         cldas[1] = NewLDAS(ldas[0], ptr, 1); /*  lda*sizeof */
+         cldas[2] = NewLDAS(ldas[0], ptr, -1); /* -lda*sizeof */
+         cldas[3] = NewLDAS(ldas[0], ptr, 3); /*  3*lda*sizeof */
+         break;
+      default: 
+         fko_error(__LINE__, "Unknown unroll for 2D array!");
+   }
+   return cldas;
+
+}
+
+short *CreateAllColPtrs(short base, short lda, int unroll)
+/*
+ * create all column pointers according to the unroll factor (non optimized),
+ * note: lda is actually lda*sizeof here
+ * return list of the colptrs
+ */   
+{
+   int i;
+   short *colptrs;
+   char ln[512];
+   
+   assert(unroll);
+   colptrs = malloc((unroll+1)*sizeof(short));
+   assert(colptrs);
+   colptrs[0] = unroll;
+/*
+ * time to create new pointers for unroll factor of the column
+ */
+   for (i=0; i<unroll; i++)
+   {
+      sprintf(ln, "_%s_%d", STname[base-1], i);
+      colptrs[i+1] = InsertNewLocalPtr(ln, FLAG2TYPE(STflag[base-1]));
+      if (!i)
+         DoMove(colptrs[i+1], base); 
+      else
+         HandlePtrArithNoSizeofUpate(colptrs[i+1], colptrs[i], '+', lda); 
+   }
+   return colptrs;
+}
+
+short *CreateOptColPtrs(short base, short lda, short unroll)
+/*
+ * create column pointers needed for optimized 2D array access,
+ * note: lda is actually lda*sizeof here
+ * returns list of colptrs
+ */
+{
+   int i, np;
+   short *colptrs;
+   short tmlda;
+   char ln[512];
+
+   switch(unroll)
+   {
+      case 1:
+      case 2:  /* create P0 */
+         np = 1;
+         colptrs = malloc((np+1)*sizeof(short));
+         assert(colptrs);
+         colptrs[0] = np;
+         sprintf(ln, "_%s_0", STname[base-1]);
+         colptrs[1] = InsertNewLocalPtr(ln, FLAG2TYPE(STflag[base-1]));
+         DoMove(colptrs[1], base); 
+         break;
+      case 3:
+      case 4:
+      case 5:
+      case 6:
+      case 7:  /* create P2 */         
+         np = 1;
+         colptrs = malloc((np+1)*sizeof(short));
+         assert(colptrs);
+         colptrs[0] = np;
+         sprintf(ln, "_%s_2", STname[base-1]);
+         colptrs[1] = InsertNewLocalPtr(ln, FLAG2TYPE(STflag[base-1]));
+/*
+ *       create tmp lda, tmlda = lda * 2 
+ */
+         sprintf(ln, "_tm%s_2", STname[lda-1]);
+         tmlda = InsertNewLocal(ln, FLAG2TYPE(STflag[lda-1]));
+         DoArith(tmlda, lda, '<', STiconstlookup(1));
+         HandlePtrArithNoSizeofUpate(colptrs[1], base, '+', tmlda); 
+         break;
+      case 8:
+      case 9:
+      case 10:
+      case 11:
+      case 12:  /* create P2, P7 */
+         np = 2;
+         colptrs = malloc((np+1)*sizeof(short));
+         assert(colptrs);
+         colptrs[0] = np;
+         
+         sprintf(ln, "_%s_2", STname[base-1]);
+         colptrs[1] = InsertNewLocalPtr(ln, FLAG2TYPE(STflag[base-1]));
+         
+         sprintf(ln, "_%s_7", STname[base-1]);
+         colptrs[2] = InsertNewLocalPtr(ln, FLAG2TYPE(STflag[base-1]));
+/*
+ *       create tmp lda, tmlda = lda * 2 
+ */
+         sprintf(ln, "_tm%s_2_7", STname[lda-1]);
+         tmlda = InsertNewLocal(ln, FLAG2TYPE(STflag[lda-1]));
+
+         DoArith(tmlda, lda, '<', STiconstlookup(1));
+         HandlePtrArithNoSizeofUpate(colptrs[1], base, '+', tmlda); 
+
+         DoArith(tmlda, lda, '*', STiconstlookup(7));
+         HandlePtrArithNoSizeofUpate(colptrs[2], base, '+', tmlda); 
+         break;
+      case 13:
+      case 14:  /* create P2, P9 */
+         np = 2;
+         colptrs = malloc((np+1)*sizeof(short));
+         assert(colptrs);
+         colptrs[0] = np;
+         
+         sprintf(ln, "_%s_2", STname[base-1]);
+         colptrs[1] = InsertNewLocalPtr(ln, FLAG2TYPE(STflag[base-1]));
+         
+         sprintf(ln, "_%s_9", STname[base-1]);
+         colptrs[2] = InsertNewLocalPtr(ln, FLAG2TYPE(STflag[base-1]));
+/*
+ *       create tmp lda, tmlda = lda * 2 
+ */
+         sprintf(ln, "_tm%s_2_9", STname[lda-1]);
+         tmlda = InsertNewLocal(ln, FLAG2TYPE(STflag[lda-1]));
+
+         DoArith(tmlda, lda, '<', STiconstlookup(1));
+         HandlePtrArithNoSizeofUpate(colptrs[1], base, '+', tmlda); 
+
+         DoArith(tmlda, lda, '*', STiconstlookup(9));
+         HandlePtrArithNoSizeofUpate(colptrs[2], base, '+', tmlda); 
+         break;
+
+      case 15:
+      case 16:    /* create p2, P7, P12 */
+         np = 3;
+         colptrs = malloc((np+1)*sizeof(short));
+         assert(colptrs);
+         colptrs[0] = np;
+         
+         sprintf(ln, "_%s_2", STname[base-1]);
+         colptrs[1] = InsertNewLocalPtr(ln, FLAG2TYPE(STflag[base-1]));
+         
+         sprintf(ln, "_%s_7", STname[base-1]);
+         colptrs[2] = InsertNewLocalPtr(ln, FLAG2TYPE(STflag[base-1]));
+         
+         sprintf(ln, "_%s_9", STname[base-1]);
+         colptrs[2] = InsertNewLocalPtr(ln, FLAG2TYPE(STflag[base-1]));
+/*
+ *       create tmp lda, tmlda = lda * 2 
+ */
+         sprintf(ln, "_tm%s_2_7_9", STname[lda-1]);
+         tmlda = InsertNewLocal(ln, FLAG2TYPE(STflag[lda-1]));
+
+         DoArith(tmlda, lda, '<', STiconstlookup(1));
+         HandlePtrArithNoSizeofUpate(colptrs[1], base, '+', tmlda); 
+
+         DoArith(tmlda, lda, '*', STiconstlookup(7));
+         HandlePtrArithNoSizeofUpate(colptrs[2], base, '+', tmlda); 
+         
+         DoArith(tmlda, lda, '*', STiconstlookup(12));
+         HandlePtrArithNoSizeofUpate(colptrs[3], base, '+', tmlda); 
+         break;
+      default:
+         fko_error(__LINE__, "unknown unroll factor for 2D array access");
+   }
+   return colptrs;
+}
+
+void CreateArrColPtrs()
+/*
+ * this function creates new ldas=lda*size and updates the STarr with
+ * new lda and also updates sa[3] ST entry to point the STarr
+ * NOTE: it must be called after calling CreateLocalDerefs(), because 
+ * sa[3] for parameter only be available after this function!!!
+ */
+{
+   int i, j;
+   short ptr, nd;
+   short *lda;
+   short ldaS, con;
+   char ln[512];
+   short ur;
+   extern BBLOCK *bbbase;
+   extern int FKO_FLAG;
+#if 0
+   PrintST(stderr);
+   InsNewInst(NULL, NULL, NULL, COMMENT, STstrconstlookup("CREATE LDAS"),0,0);
+   if(bbbase) PrintInst(stderr,bbbase);
+   exit(0);
+#endif
+   DoComment("Create ldas = lda * sizeof ");
+   for (i=0; i < Narr; i++)
+   {
+      ptr = STarr[i].ptr;
+      nd = STarr[i].ndim;
+      lda = STarr[i].ldas;
+      if (STarr[i].urlist)
+      {
+         ur = STarr[i].urlist[0];
+         ur = SToff[ur-1].i; /* unroll factor */
+      }
+      else
+         ur = 0;
+      SToff[ptr-1].sa[3] = i+1; /* sa[3] of ST should be free now */
+#if 0
+      for (j=0; j < nd-1; j++)
+      {
+         lda0 = ldas[j];
+         if (!IS_CONST(STflag[lda0-1]))
+         {
+            sprintf(ln, "_%s_s", STname[lda0-1]); 
+            ldaN = InsertNewLocal(ln, STflag[lda0-1]);
+            con = STiconstlookup(type2shift(FLAG2TYPE(STflag[ptr-1])));
+/*
+ *          add instrucitons to calc ldas = lda * sizeof
+ */
+            DoArith(ldaN, lda0, '<', con);
+/*
+ *          update STarr table with new lda
+ *          NOTE: all ref to the old lda variable is lost, do we need them 
+ *          later??? if we need them, I will extend the table to keep both 
+ *          lda0 and ldaN. For now, I overwrite with new lda
+ */
+            ldas[j] = ldaN;
+         }
+      }
+#else
+/*
+ *    depending on the optimization scheme, we will create various ldas. we will
+ *    parameterize this later
+ */
+   #ifdef X86
+      if (FKO_FLAG & IFF_OPT2DPTR)
+      {
+         STarr[i].cldas = CreateOptLDAs(lda, ptr, ur);
+         ldaS = STarr[i].cldas[1]; /* always lda*size first */
+         STarr[i].colptrs = CreateOptColPtrs(ptr,ldaS, ur);
+      }
+      else
+      {
+         STarr[i].cldas = CreateLDAs(lda, ptr);
+         ldaS = STarr[i].cldas[1]; /* always lda*size first */
+         STarr[i].colptrs = CreateAllColPtrs(ptr,ldaS, ur);
+      }  
+   #else /* no optimized scheme for non-x86 based system */
+         STarr[i].cldas = CreateLDAs(ldas, ptr);
+         ldaS = STarr[i].cldas[1]; /* always lda*size first */
+         STarr[i].colptrs = CreateAllColPtrs(ptr,ldaS, ur);
+   #endif
+#if 0
+         fprintf(stderr, "%d : ptr=%s ldas = %s\n", ur, STname[ptr-1],
+                 STname[ldaS-1]);
+         fprintf(stderr, "colptr # %d\n", STarr[i].colptrs[0]);
+         for (j=1; j<= STarr[i].colptrs[0]; j++)
+            fprintf(stderr, "%s \n", STname[STarr[i].colptrs[j]-1]);
+#endif
+
+#endif      
+/*
+ *    now, we will create column pointers to access 2D array. We don't support
+ *    anything other than 2D array right now. 
+ */
+#if 0         
+      if (nd != 2)
+         fko_error(__LINE__, "Only 2D array is supported now!\n");
+      else
+      {
+/*
+ *       NOTE: FIXME: for rest of the operations in this function, we will 
+ *       consider only 2D array for now. 
+ *       NOTE: for 2D array, lda and unroll factor should be at the beginning 
+ *       element. 
+ *       NOTE: we don't consider const lda for unrolling rigth now
+ */
+         if (STarr[i].urlist) /* note: unroll fact is optional */
+         {
+            lda = STarr[i].ldas[0];
+            if (IS_CONST(STflag[lda-1]))
+               fko_error(__LINE__, "Not supported unrolling for const lda!!");
+            ur = STarr[i].urlist[0];
+            ur = SToff[ur-1].i; /* unroll factor */
+#if 1            
+            fprintf(stderr, "%s :  %s, %d\n", STname[STarr[i].ptr-1], 
+                    STname[lda-1], ur);
+#endif
+/*
+ *          time to create new pointers for unroll factor of the column
+ */
+            STarr[i].colptrs = malloc(ur*sizeof(short));
+            assert(STarr[i].colptrs);
+            for (j=0; j<ur; j++)
+            {
+               sprintf(ln, "_%s_%d", STname[ptr-1], j);
+               STarr[i].colptrs[j] = InsertNewLocalPtr(ln, 
+                                                FLAG2TYPE(STflag[ptr-1]));
+               if (!j)
+                  DoMove(STarr[i].colptrs[j], ptr); 
+               else
+                  HandlePtrArithNoSizeofUpate(STarr[i].colptrs[j], 
+                        STarr[i].colptrs[j-1], '+', lda); 
+            }
+         }
+      }
+#endif      
+
+   }
+   DoComment("End ldas creation");
+/*
+ * based on unroll factor, we will create pointers to point the columns 
+ * NOTE: we only support 2D array to create column pointers ... 
+ */
+#if 0
+   //PrintST(stderr);
+   PrintInst(stderr, bbbase);
+   PrintSTarr(stderr);
+   //exit(0);
+#endif
+}
+
+
+
+
 
