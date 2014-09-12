@@ -2,7 +2,8 @@
 
 import sys
 import fkocmnd
-import l1cmnd
+import cmnd
+import kernels
 import re
 
 #
@@ -10,8 +11,8 @@ import re
 # optT is for tester and opt is for timer
 #
 
-# optT = "-X 1 1 -Y 1 1 -Fx 16 -Fy 16"
-optT = "-X 1 1 -Y 1 1 -Fx 32 -Fy 32"
+#optT = "-X 1 1 -Y 1 1 -Fx 32 -Fy 32"
+optT = "-Fx 32 -Fy 32 -Fa 32"
 
 opt = "" ## populated with user argument 
 skipOpt = [] ## opt named as(fko cmnd): mmr,rc,v,sv,se,P,ps,par,p
@@ -25,19 +26,19 @@ isSV = 0 # special flag for speculation applied!
 # Given set of arrs that are write-only (no uses), tries using non-temporal
 # writes
 #
-def ifko_writeNT(ATLdir, ARCH, KF0, fko, rout, pre, l1bla, N, wnt):
+def ifko_writeNT(ATLdir, ARCH, KF0, fko, rout, pre, l1bla, N, M, lda, wnt):
 #
 #  Time the default case
 #
    warrs = []
    fkocmnd.callfko(fko, KF0)
-   [t0,m0] = l1cmnd.time(ATLdir, ARCH, pre, l1bla, N, "fkorout.s", 
+   [t0,m0] = cmnd.time(ATLdir, ARCH, pre, l1bla, N, M, lda, "fkorout.s", 
                          "gcc", "-x assembler-with-cpp", opt=opt)
    print "WNT none : %.2f" % (m0)
    for wa in wnt:
       KFN = KF0 + " -W " + wa
       fkocmnd.callfko(fko, KFN)
-      [tN,mN] = l1cmnd.time(ATLdir, ARCH, pre, l1bla, N, "fkorout.s", 
+      [tN,mN] = cmnd.time(ATLdir, ARCH, pre, l1bla, N, M,lda, "fkorout.s", 
                             "gcc", "-x assembler-with-cpp", opt=opt)
       print "WNT %s : %2.f" % (wa, mN)
       if mN > m0:
@@ -49,13 +50,13 @@ def ifko_writeNT(ATLdir, ARCH, KF0, fko, rout, pre, l1bla, N, wnt):
 #
 #  Given a set of flags, try differing pf inst for read & write arrays
 #
-def ifko_pftype(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
+def ifko_pftype(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N, M, lda, 
                 info, pfarrs, pfsets):
 #
 #  Time the default case
 #
    fkocmnd.callfko(fko, KF0)
-   [t0,m0] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+   [t0,m0] = cmnd.time(ATLdir, ARCH, pre, blas, N, M,lda, "fkorout.s", 
                          "gcc", "-x assembler-with-cpp", opt=opt)
    assert(t0 > 0.0)
    print "   base mf = %f.2" % m0
@@ -75,7 +76,7 @@ def ifko_pftype(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
 #
       KF = KF0 + " -Paw 3"
       fkocmnd.callfko(fko, KF)
-      [t1,m1] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+      [t1,m1] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                             "gcc", "-x assembler-with-cpp", opt=opt)
       if (m1 > 0.0):
          print "   prefetchw speedup: %.3f !" %  (m1/m0)
@@ -84,7 +85,7 @@ def ifko_pftype(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
 #
       KF1 = KF0 + " -Paw 0"
       fkocmnd.callfko(fko, KF1)
-      [t2,m2] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+      [t2,m2] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                             "gcc", "-x assembler-with-cpp", opt=opt)
       print "   prefetchw speedup: %.3f !" %  (m2/m0)
 
@@ -105,7 +106,7 @@ def ifko_pftype(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
    if READO:
       KF = KF0 + " -Par 0"
       fkocmnd.callfko(fko, KF)
-      [t1,m1] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+      [t1,m1] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                             "gcc", "-x assembler-with-cpp", opt=opt)
       print "   prefetchr speedup: %.3f !" %  (m1/m0)
       if m1 > m0:
@@ -123,7 +124,7 @@ def ifko_pftype(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
          KF = " -P %s %d %d" % (arr, j, LS[j])
          KF = KF0 + KF
          fkocmnd.callfko(fko, KF)
-         [t1,m1] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+         [t1,m1] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                                "gcc", "-x assembler-with-cpp", opt=opt)
          print "   lvl %d %s speedup: %.3f !" %  (j, arr, m1/m0)
          if m1 > m0:
@@ -135,7 +136,7 @@ def ifko_pftype(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
 #
 # attempt to find best prefetch distance for given array
 #
-def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr,
+def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, M, lda, info, arr,
             pfd0=0, pfdN=2048, pfdinc=0):
 #
 #  Figure out the prefetch cache level
@@ -183,7 +184,7 @@ def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr,
       while pfd <= LS:
          KFn = KF0 + " -P %s %d %d" % (arr, pflvl, pfd)
          fkocmnd.callfko(fko, KFn)
-         [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+         [t,mf] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                               "gcc", "-x assembler-with-cpp", opt=opt)
          print "      %s : PFD = %d mflop = %.2f" % (arr, pfd, mf)
          if mf > mfM*1.0001:
@@ -195,7 +196,7 @@ def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr,
    while pfd <= pfdN:
       KFn = KF0 + " -P %s %d %d" % (arr, pflvl, pfd)
       fkocmnd.callfko(fko, KFn)
-      [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+      [t,mf] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                            "gcc", "-x assembler-with-cpp", opt=opt)
 #      mfs.append(mf)
       print "      %s : PFD = %d mflop = %.2f" % (arr, pfd, mf)
@@ -213,7 +214,7 @@ def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr,
    KFn = KF0 + " -P %s -1 0" % (arr)
 #   print KFn
    fkocmnd.callfko(fko, KFn)
-   [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+   [t,mf] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                         "gcc", "-x assembler-with-cpp", opt=opt)
    print "      %s : NO PREFETCH:   mflop = %.2f" % (arr, mf)
    if mf >= mfM:
@@ -223,7 +224,7 @@ def FindPFD(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, arr,
       KF0 = KF0 + " -P %s %d %d" % (arr, pflvl, pfdM)
    return [mfM,KF0]
 
-def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=64):
+def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, M, lda, info, UR0=1, URN=64):
 
    print "   Finding best unroll:"
 #
@@ -281,7 +282,7 @@ def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=64):
    while UR <= URN:
       KFn = KF0 + " -U %d" % (UR)
       fkocmnd.callfko(fko, KFn)
-      [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+      [t,mf] = cmnd.time(ATLdir, ARCH, pre, blas, N, M,lda, "fkorout.s", 
                            "gcc", "-x assembler-with-cpp", opt=opt)
       print "      UR=%d, mflop=%.2f" % (UR, mf)
 #
@@ -303,7 +304,7 @@ def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, info, UR0=1, URN=64):
    print "\n   BEST Unroll Factor = %d" %URB
    return [mf0,KF0]
 
-def FindSE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=6):
+def FindSE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, M, lda, acc, maxlen=6):
    """ Exactly same as FindAE but the fko command is changed 
    """
 #
@@ -312,7 +313,7 @@ def FindSE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=6):
 #  one, restore the default flag
 #
    fkocmnd.callfko(fko, KF0)
-   [t0,m0] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+   [t0,m0] = cmnd.time(ATLdir, ARCH, pre, blas, N, M,lda, "fkorout.s", 
                          "gcc", "-x assembler-with-cpp", opt=opt)
    mf0 = m0
 #
@@ -339,7 +340,7 @@ def FindSE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=6):
          if ur >= i :
             KFLAG = KFN + " -U %d -SE %s %d" % (ur, ac, i)
             fkocmnd.callfko(fko, KFLAG)
-            [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+            [t,mf] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                                  "gcc", "-x assembler-with-cpp", opt=opt)
             print "      '%s' SE=%d, UR=%d, mflop= %.2f" % (ac, i, ur, mf)
             if mf > mfB:
@@ -351,7 +352,7 @@ def FindSE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=6):
             if j != ur:
                KFLAG = KFN + " -U %d -SE %s %d" % (j, ac, i)
                fkocmnd.callfko(fko, KFLAG)
-               [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+               [t,mf] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                                     "gcc", "-x assembler-with-cpp", opt=opt)
                print "      '%s' SE=%d, UR=%d, mflop= %.2f" % (ac, i, j, mf)
                if mf > mfB:
@@ -363,7 +364,7 @@ def FindSE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=6):
             if j  and j != ur:
                KFLAG = KFN + " -U %d -SE %s %d" % (j, ac, i)
                fkocmnd.callfko(fko, KFLAG)
-               [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+               [t,mf] = cmnd.time(ATLdir, ARCH, pre, blas, N,M,lda, "fkorout.s", 
                                     "gcc", "-x assembler-with-cpp", opt=opt)
                print "      '%s' SE=%d, UR=%d, mflop= %.2f" % (ac, i, j, mf)
             if mf > mfB:
@@ -389,12 +390,12 @@ def FindSE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=6):
       print "   KFN = KF0 = %s" % KFN
    return[mfB, KFN]
 
-def FindAE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=6):
+def FindAE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, M, lda, acc, maxlen=6):
 #
 #  Time the default case
 #
    fkocmnd.callfko(fko, KF0)
-   [t0,m0] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+   [t0,m0] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                          "gcc", "-x assembler-with-cpp", opt=opt)
    mf0 = m0
 #
@@ -420,7 +421,7 @@ def FindAE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=6):
          if ur >= i :
             KFLAG = KFN + " -U %d -AE %s %d" % (ur, ac, i)
             fkocmnd.callfko(fko, KFLAG)
-            [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+            [t,mf] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                                  "gcc", "-x assembler-with-cpp", opt=opt)
             print "      '%s' AE=%d, UR=%d, mflop= %.2f" % (ac, i, ur, mf)
             if mf > mfB:
@@ -432,7 +433,7 @@ def FindAE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=6):
             if j != ur:
                KFLAG = KFN + " -U %d -AE %s %d" % (j, ac, i)
                fkocmnd.callfko(fko, KFLAG)
-               [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+               [t,mf] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                                     "gcc", "-x assembler-with-cpp", opt=opt)
                print "      '%s' AE=%d, UR=%d, mflop= %.2f" % (ac, i, j, mf)
                if mf > mfB:
@@ -444,7 +445,7 @@ def FindAE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, acc, maxlen=6):
             if j  and j != ur:
                KFLAG = KFN + " -U %d -AE %s %d" % (j, ac, i)
                fkocmnd.callfko(fko, KFLAG)
-               [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+               [t,mf] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                                     "gcc", "-x assembler-with-cpp", opt=opt)
                print "      '%s' AE=%d, UR=%d, mflop= %.2f" % (ac, i, j, mf)
             if mf > mfB:
@@ -479,7 +480,7 @@ def FindMatchList(st0, st1):
    return(matches)
 
 
-def ifko_PathXform(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
+def ifko_PathXform(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N, M, lda,
                    npath, red1p):
    """ This function will apply some basic transformation on scalar code 
        like: fall-thru xform, rc, mmr etc
@@ -490,7 +491,7 @@ def ifko_PathXform(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
 #
    #print KF0 
    fkocmnd.callfko(fko, KF0)
-   [t0,m0] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+   [t0,m0] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                          "gcc", "-x assembler-with-cpp", opt=opt)
 #
 #  must have multiple paths 
@@ -507,7 +508,7 @@ def ifko_PathXform(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
    for i in range(npath):
       KF1 = ' -p %d' %(i+1) + KF0
       fkocmnd.callfko(fko, KF1)
-      [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+      [t,mf] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                            "gcc", "-x assembler-with-cpp", opt=opt)
       print "      Path = %d, mflop = %.2f" % (i+1, mf)
       if mf > m0:
@@ -527,7 +528,7 @@ def ifko_PathXform(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
       else:
          KF1 = ' -mmr' + KF0
          fkocmnd.callfko(fko, KF1)
-         [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+         [t,mf] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                               "gcc", "-x assembler-with-cpp", opt=opt)
          print "      MMR, mflop = %.2f" % ( mf)
          if mf > m0:
@@ -544,7 +545,7 @@ def ifko_PathXform(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
       else: 
          KF1 = ' -rc' + KF0 
          fkocmnd.callfko(fko, KF1)
-         [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+         [t,mf] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                               "gcc", "-x assembler-with-cpp", opt=opt)
          print "      RC,  mflop = %.2f" % ( mf)
          if mf > m0:
@@ -556,7 +557,7 @@ def ifko_PathXform(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
    return [m0, KF0]
 
 
-def ifko_Vec(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N, 
+def ifko_Vec(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N, M, lda,  
              npath, vm, vpath):
    """ This function will try all vectorization methods incorporating other
    """
@@ -607,7 +608,7 @@ def ifko_Vec(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
          else:
             KF1 = ' -mmr' + KF0
             fkocmnd.callfko(fko, KF1)
-            [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+            [t,mf] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                                 "gcc", "-x assembler-with-cpp", opt=opt)
             print "      MMR+V, mflop = %.2f" % ( mf)
             if mf > m0:
@@ -620,7 +621,7 @@ def ifko_Vec(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
          else:
             KF1 = ' -rc' + KF0 
             fkocmnd.callfko(fko, KF1)
-            [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+            [t,mf] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                                 "gcc", "-x assembler-with-cpp", opt=opt)
             print "      RC+V,  mflop = %.2f" % ( mf)
             if mf > m0:
@@ -640,7 +641,7 @@ def ifko_Vec(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
                   if SB:
                      KF1 = ' -B %d ' %(SB) + KF1
                   fkocmnd.callfko(fko, KF1)
-                  [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+                  [t,mf] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                                       "gcc", "-x assembler-with-cpp", opt=opt)
                   if SB:
                      print "      V+SP%d SB=%d, mflop = %.2f" % (i+1, SB, mf)
@@ -653,7 +654,7 @@ def ifko_Vec(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
                      isSV = 1  ## SV is superior, so is applied from now
    else:    ## no path to reduce 
       fkocmnd.callfko(fko, KF0)
-      [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+      [t,mf] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                            "gcc", "-x assembler-with-cpp", opt=opt)
       print "      V, mflop = %.2f" % (mf)
       if mf > m0:
@@ -664,7 +665,7 @@ def ifko_Vec(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N,
    KF0 = KFn
    return [m0,KFn]
 
-def FindBET(ATLdir, ARCH, KF0, fko, rout, pre, blas, N):
+def FindBET(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, M, lda):
 #
 #  figure out the UR factor from flag
 #
@@ -697,7 +698,7 @@ def FindBET(ATLdir, ARCH, KF0, fko, rout, pre, blas, N):
 #  time default case 
 #
    fkocmnd.callfko(fko, KF0)
-   [t0,m0] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+   [t0,m0] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                          "gcc", "-x assembler-with-cpp", opt=opt)
    KFn = KF0
    KF1 = KF0
@@ -733,7 +734,7 @@ def FindBET(ATLdir, ARCH, KF0, fko, rout, pre, blas, N):
          KFn = '-U %d ' %j + KFn
       
          fkocmnd.callfko(fko, KFn)
-         [t,mf] = l1cmnd.time(ATLdir, ARCH, pre, blas, N, "fkorout.s", 
+         [t,mf] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                            "gcc", "-x assembler-with-cpp", opt=opt)
          
          print "      SB=%d, UR=%d, mflop= %.2f" % (i, j, mf)
@@ -755,11 +756,12 @@ def FindBET(ATLdir, ARCH, KF0, fko, rout, pre, blas, N):
 
    return [mf1, KFn]
 
-def ifko0(l1bla, pre, N):
+def ifko0(l1bla, pre, N, M=None, lda=None):
    (IFKOdir, fko) = fkocmnd.GetFKOinfo()
    (ATLdir, ARCH) = fkocmnd.FindAtlas(IFKOdir)
    rout =  IFKOdir + '/blas/' + pre + l1bla + '.b'
-   outf =  ATLdir + '/tune/blas/level1/' + l1bla.upper() + '/fkorout.s'
+   #outf =  ATLdir + '/tune/blas/level1/' + l1bla.upper() + '/fkorout.s'
+   outf =  ATLdir + kernels.GetBlasPath(l1bla) + '/fkorout.s'
 #
 #  Majedul: calling new info func, info represents the old list
 #  new data: [npath, red2onePath, vecMethod, vpathinfo, arrtypes] at the end
@@ -779,6 +781,7 @@ def ifko0(l1bla, pre, N):
 #
    #KFLAGS = fkocmnd.GetStandardFlags(fko, rout, pre) 
    KFLAGS = fkocmnd.GetOptStdFlags(fko, rout, pre, 1, URF) 
+   #print "\n   Default Flag = " + KFLAGS 
    KFLAGS = KFLAGS + " -o " + str(outf) + " " + rout
    mflist = []
    testlist = []
@@ -806,17 +809,18 @@ def ifko0(l1bla, pre, N):
 #
    KF0 = KFn
    fkocmnd.callfko(fko, KF0)
-   [t0,mf0] = l1cmnd.time(ATLdir, ARCH, pre, l1bla, N, "fkorout.s", 
+   [t0,mf0] = cmnd.time(ATLdir, ARCH, pre, l1bla, N, M, lda, "fkorout.s", 
                         "gcc", "-x assembler-with-cpp", opt=opt)
    mflist.append(mf0)
    testlist.append("default") ## this is using std flags
+   print "\n   Default Flag = " + KF0 
 
 #
 #  Finding the best path reduction option
 #
    if npath > 1:
       [mfs, KFs] = ifko_PathXform(ATLdir, ARCH, KFn, ncache, fko, rout, pre,
-                                 l1bla, N, npath, red1path)
+                                 l1bla, N, M, lda,  npath, red1path)
       mflist.append(mfs)
       testlist.append("PathXform")
       if (mfs > mf0) :
@@ -836,7 +840,7 @@ def ifko0(l1bla, pre, N):
          print '\n   SKIPPING VECTORIZATION'
       else:
          [mfv, KFv] =  ifko_Vec(ATLdir, ARCH, KFv, ncache, fko, rout, pre, 
-                                l1bla, N, npath, vecm, vpath)
+                                l1bla, N, M, lda, npath, vecm, vpath)
          mflist.append(mfv)
          testlist.append("vect")
          if (mfv > mf0) :
@@ -905,7 +909,7 @@ def ifko0(l1bla, pre, N):
          i += 1
       if len(wnt) > 0:
          [mf,KFLAGS,wnt] = ifko_writeNT(ATLdir, ARCH, KFLAGS, fko, rout, pre,
-                                     l1bla, N, wnt)
+                                     l1bla, N, M, lda, wnt)
       mflist.append(mf)
       testlist.append("writeNT") 
 #
@@ -914,7 +918,7 @@ def ifko0(l1bla, pre, N):
    pfarrs = fparrs
    pfsets = fpsets
    for arr in pfarrs:
-      [mf,KFLAGS] = FindPFD(ATLdir, ARCH, KFLAGS, fko, rout, pre,l1bla, N, 
+      [mf,KFLAGS] = FindPFD(ATLdir, ARCH, KFLAGS, fko, rout, pre,l1bla, N,M,lda,
                             info, arr)
    mflist.append(mf)
    testlist.append("pfdist")
@@ -923,7 +927,7 @@ def ifko0(l1bla, pre, N):
 #  Find best pf type
 #
    [mf,KFLAGS] = ifko_pftype(ATLdir, ARCH, KFLAGS, ncache, fko, rout, pre, 
-                             l1bla, N, info, pfarrs, pfsets)
+                             l1bla, N, M, lda, info, pfarrs, pfsets)
    mflist.append(mf)
    testlist.append("pftype")
    print "\n   FLAGS so far =", fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS)
@@ -934,8 +938,8 @@ def ifko0(l1bla, pre, N):
    if URF:
       print '\n   SKIPPING UNROLL TUNNING : FORCED TO %d' %URF
    else:
-      [mf,KFLAGS] = FindUR(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N,
-                           info)
+      [mf,KFLAGS] = FindUR(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N, M, 
+                            lda, info)
       mflist.append(mf)
       testlist.append("unroll")
 
@@ -957,7 +961,8 @@ def ifko0(l1bla, pre, N):
       elif l1bla.find("cos") != -1:
          print '\n   SKIPPING STRONGER BET UNROLLING for COS' 
       else:
-         [mf,KFLAGS] = FindBET(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N)
+         [mf,KFLAGS] = FindBET(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N, 
+                               M, lda)
          mflist.append(mf)
          testlist.append("OverSpec")
 
@@ -983,7 +988,7 @@ def ifko0(l1bla, pre, N):
    else:
       if nacc > 0 and nacc < 3:
          [mf,KFLAGS] = FindSE(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N, 
-                              acc)
+                              M, lda, acc)
       mflist.append(mf)
       testlist.append("sclexp")
 #
@@ -1037,8 +1042,8 @@ def ifko0(l1bla, pre, N):
    #print "default PFD: ", KFLAGS
    print "\n   TUNING PFD AGAIN: "
    for arr in pfarrs:
-      [mf,KFLAGS] = FindPFD(ATLdir, ARCH, KFLAGS, fko, rout, pre,l1bla, N, 
-                            info, arr)
+      [mf,KFLAGS] = FindPFD(ATLdir, ARCH, KFLAGS, fko, rout, pre,l1bla, N, M, 
+                            lda, info, arr)
    KFLAGS = fkocmnd.RemoveRedundantPrefFlags(KFLAGS, pfarrs)
 #
 # FIXME: it will create problem for the calculaton of % of improvement
@@ -1065,7 +1070,7 @@ def ifko0(l1bla, pre, N):
    print "\n\n   BEST FLAGS FOUND (%.2f) = %s" % (mf,
          fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS))
    res = fkocmnd.GetOptVals(KFLAGS, pfarrs, pfsets, acc)
-   tst = l1cmnd.test(ATLdir, ARCH, pre, l1bla, N, "fkorout.s",
+   tst = cmnd.test(ATLdir, ARCH, pre, l1bla, N, M, lda, "fkorout.s",
                      cc="gcc", ccf="-x assembler-with-cpp", opt=optT)
    #tst = l1cmnd.silent_test(ATLdir, ARCH, pre, l1bla, N, "fkorout.s",
    #                     cc="gcc", ccf="-x assembler-with-cpp", opt=optT)
@@ -1073,21 +1078,32 @@ def ifko0(l1bla, pre, N):
    return(res, KFLAGS, mf, tst, testlist, mflist)
 
 
-def ifko(routs, pres, N):
+def ifko(routs, pres, N, M=None, lda=None):
    """ This function figures out the best parameter after tunning and print this
        out.
    """
    if routs.find("default") != -1:
-      routlist = l1cmnd.GetDefaultBlas()
+      #routlist = l1cmnd.GetDefaultBlas()
+      routlist = kernels.GetDefaultBlas()
+   elif routs.find("all") != -1:
+      routlist = kernels.GetAllKernels()
    elif routs.find("svkernels") != -1:
-      routlist = l1cmnd.GetSVKernels()
+      #routlist = l1cmnd.GetSVKernels()
+      routlist = kernels.GetSVKernels()
+   elif routs.find("l1blas") != -1:
+      routlist = kernels.GetLevel1Blas()
+   elif routs.find("l2blas") != -1:
+      routlist = kernels.GetLevel2Blas()
+   elif routs.find("l3blas") != -1:
+      routlist = kernels.GetLevel3Blas()
    else:
       words = routs.split(",")
       routlist = []
       for word in words:
           routlist.append(word)
    if pres.find("default") != -1:
-      prelist = l1cmnd.GetDefaultPre()
+      #prelist = l1cmnd.GetDefaultPre()
+      prelist = kernels.GetDefaultPre()
    else:
       words = pres.split(",")
       prelist = []
@@ -1103,7 +1119,7 @@ def ifko(routs, pres, N):
    for l1bla in routlist:
       for pre in prelist:
          print "\niFKO TUNING %s" % (pre + l1bla)
-         (res,flags,mf,tst,dec,decmf) = ifko0(l1bla, pre, N)
+         (res,flags,mf,tst,dec,decmf) = ifko0(l1bla, pre, N, M, lda)
          reslist.append(res)
          blalist.append(pre + l1bla)
          mflist.append(mf)
@@ -1225,8 +1241,8 @@ def PrintUsage():
    print 'Style7: ./ifko.py (b1,b2,..) (s,d) N --no <opt1,opt2,..>'
    print '        --force <sv, vrc, vmmx> atlopt=\'opt-str-for-atlas\' '
    print 'Style8: ./ifko.py (b1,b2,..) (s,d) -N val --no <opt1,opt2,..> ',
-   print 'atlopt=\'opt-str-for-atlas\' '
-   print 'note that atlopt=\'opt-str-for-atlas\' should be last argument '
+   print '-atlopt \'opt-str-for-atlas\' '
+   print 'note that -atlopt \'opt-str-for-atlas\' should be last argument '
    return
 
 def ParseArgv(argv):
@@ -1251,6 +1267,8 @@ def ParseArgv(argv):
    pre = 's'
    #N = 80000
    N = 16000
+   M = 16000
+   lda = 16000
 #
 #  tmp for SB testing, force UR
 #
@@ -1278,6 +1296,12 @@ def ParseArgv(argv):
                elif argv[i].find('-n') != -1:
                   N = int(argv[i+1])
                   i = i + 2
+               elif argv[i].find('-m') != -1:
+                  M = int(argv[i+1])
+                  i = i + 2
+               elif argv[i].find('-lda') != -1:
+                  lda = int(argv[i+1])
+                  i = i + 2
                elif argv[i].find('-s') != -1:
                   SB = int(argv[i+1])
                   i = i + 2
@@ -1285,10 +1309,17 @@ def ParseArgv(argv):
                   URF = int(argv[i+1])
                   i = i + 2
                elif argv[i].find('-atlopt') != -1:
+                  print argv
+                  #print argv[j]
                   atlopt = ' '.join([argv[j] for j in range(i+1, nargs)])
             #argument with ' ' behave differently with system to system
+                  print atlopt
                   if atlopt.find('\'') != -1:
                      atlopt = atlopt.split('\'')[1]
+                     i = i + 2
+                  else:
+                     #print "Error in atlopt format!"
+                     #system.exit(1)
                      #else:
                         #atlopt = atlopt[atlopt.find('=')+1:]
                      break; ## stop checking any other argment
@@ -1300,7 +1331,7 @@ def ParseArgv(argv):
 #   else:
 #      print [blas, pre, N, noOpt, atlopt]
    
-   return(blas,pre,N,noOpt,frOpt,atlopt) 
+   return(blas,pre,N,M,lda,noOpt,frOpt,atlopt) 
 #
 #  Majedul: create a main function to increase the readability
 #
@@ -1322,7 +1353,7 @@ def main(argv):
 #
 #  parse the commnad line argument 
 #
-   (blas, pre, N, noOpt, frOpt, uopt) = ParseArgv(argv)
+   (blas, pre, N, M, lda, noOpt, frOpt, uopt) = ParseArgv(argv)
 #
 #  Generate opt for altas  based on the argument 
 #
@@ -1333,26 +1364,31 @@ def main(argv):
    forceOpt = frOpt
    #print skipOpt
 
-   global opt       
-   if uopt is None:
-      opt = "-C 1 -X 1 -Y 1 -Fx 32 -Fy 32"  ## default opt
+   global opt      
+   if blas == 'l3blas' or blas in kernels.GetLevel3Blas():
+      opt = ""
+   elif uopt is None:
+      #opt = "-C 1 -X 1 -Y 1 -Fx 32 -Fy 32 -Fa 32"  ## default opt
+      opt = "-C 1 -Fx 32 -Fy 32 -Fa 32"  ## default opt
    else:
-      if uopt.find('-X') is -1:  ## returns -1 if not found, otherwise index
-         opt +='-X 1 '
-      if uopt.find('-Y') is -1:
-         opt +='-Y 1 '
+      #if uopt.find('-X') is -1:  ## returns -1 if not found, otherwise index
+      #   opt +='-X 1 '
+      #if uopt.find('-Y') is -1:
+      #   opt +='-Y 1 '
       if uopt.find('-C') is -1:
          opt +='-C 1 '           ## no cache flushing by default 
       if uopt.find('-Fx') is -1:
          opt +='-Fx 32 '         ## default for AVX 
       if uopt.find('-Fy') is -1:
          opt +='-Fy 32 '
+      if uopt.find('-Fa') is -1:
+         opt +='-Fa 32 '
       opt += uopt
    
    #print [blas, pre, N, noOpt, opt]
    #sys.exit(0)
-   print N, opt
-   ifko(blas, pre, N)
+   print N, M, lda, opt
+   ifko(blas, pre, N, M, lda)
 
 #
 # Majedul: If the program is being run by itself and not imported by others, 
