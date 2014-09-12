@@ -30,6 +30,11 @@
    void para_list();
    void declare_list(int flag);
    void ConstInit(short id, short con);
+   void AddDim2List(short id);
+   void AddUnroll2List(short id);
+   void declare_array(int flag, short dim, char *name);
+   short HandleArrayAccess(short id, short dim);
+   void HandleUnrollFactor(short ptr, int ndim);
 %}
 %union
 {
@@ -45,6 +50,7 @@
 
 %token ROUT_NAME ROUT_LOCALS ROUT_BEGIN ROUT_END CONST_INIT RETURN
 %token DOUBLE FLOAT INT UINT DOUBLE_PTR FLOAT_PTR INT_PTR UINT_PTR 
+%token DOUBLE_ARRAY FLOAT_ARRAY INT_ARRAY UINT_ARRAY UNROLL_ARRAY
 %token PARAMS LST ABST ME LOOP_BEGIN LOOP_BODY LOOP_END MAX_UNROLL IF GOTO
 %token <sh> LOOP_LIST_MU LOOP_INT_MU LOOP_MU
 %token <inum> ICONST
@@ -71,6 +77,9 @@
 %type <sh> loopsm loopsm2
 %type <lq> loop_beg
 %type <c> IFOP
+%type <inum> arraydim
+%type <inum> array_access
+%type <inum> unrollfactor
 
 %%
 
@@ -109,6 +118,7 @@ stateflag: ROUT_NAME NAME
                yyerror("Improper ROUT_BEGIN statement");
             
             CreateLocalDerefs();
+            CreateArrColPtrs(); /* can't be called before CreateLocalDerefs() */
             WhereAt = 3;
          }
          | ROUT_END
@@ -155,7 +165,38 @@ typedec : INT LST idlist              { declare_list(T_INT); }
         | INT_PTR LST idlist          { declare_list(T_INT    | PTR_BIT); }
         | FLOAT_PTR LST idlist        { declare_list(T_FLOAT  | PTR_BIT); }
         | DOUBLE_PTR LST idlist      { declare_list(T_DOUBLE | PTR_BIT); }
-	;
+	| DOUBLE_ARRAY arraydim LST NAME {declare_array(T_DOUBLE|PTR_BIT,$2,$4); }
+	| FLOAT_ARRAY arraydim LST NAME {declare_array(T_FLOAT|PTR_BIT,$2,$4); }
+        | UNROLL_ARRAY LST unrollarraylist {}
+        ;
+
+/*        | DOUBLE_ARRAY LST arraylist {fprintf(stderr, "DOUBLE_ARRAY :: arraylist\n");}
+	| FLOAT_ARRAY LST arraylist {fprintf(stderr, "FLOAT_ARRAY :: arraylist\n");}
+        ;*/
+/*NOTE: declaration for array, will handle later */
+/*arraylist : arraylist ',' arraydec {fprintf(stderr, "arraylist->arraylist , array\n");}
+          | arraydec               {fprintf(stderr, "arraylist -> array\n");}
+          ;*/
+/*arraydec : ID arraydim { fprintf(stderr, "array -> ID arraydim\n");}
+      ;*/
+
+arraydim : '[' ID ']' arraydim {$$=$4+1; AddDim2List($2);} 
+         | '[' iconst ']' arraydim { $$=$4+1; AddDim2List($2);} 
+         | '[' '*' ']' { $$=1; }
+         | '[' ']' { $$=1; }
+         ;
+/*arrayid : NAME  {fprintf(stderr, "arrayid->NAME\n");}
+        ;*/
+
+unrollarraylist : unrollarray ',' unrollarraylist 
+        | unrollarray
+        ;
+unrollarray : ID '(' unrollfactor ')' {HandleUnrollFactor($1, $3);} 
+            ;
+unrollfactor : iconst ',' unrollfactor {$$=$3+1; AddUnroll2List($1);}
+             | iconst   { $$=1; AddUnroll2List($1);}
+             | '*'      { $$=1; AddUnroll2List(STiconstlookup(1));}
+             ;
 paradec : PARAMS LST idlist          { para_list(); } 
         ;
 constinit : CONST_INIT LST initlist
@@ -242,11 +283,22 @@ const   : fpconst	{$$ = $1; }
 fpconst : fconst	{$$ = $1; }
         | dconst	{$$ = $1; }
 	;
-ptrderef : ID '[' icexpr ']' { $$ = AddArrayDeref($1, 0, $3); }
+/*ptrderef : ID '[' icexpr ']' { $$ = AddArrayDeref($1, 0, $3); }
          | ID '[' ID ']'    { $$ = AddArrayDeref($1, $3, 0); }
          | ID '[' ID '+' icexpr ']' { $$ = AddArrayDeref($1, $3, $5); }
          | ID '[' ID '-' icexpr ']' { $$ = AddArrayDeref($1, $3, -$5); }
          ;
+*/
+ptrderef : ID array_access { $$ = HandleArrayAccess($1, $2);}
+         | ID '[' ID '+' icexpr ']' { $$ = AddArrayDeref($1, $3, $5); }
+         | ID '[' ID '-' icexpr ']' { $$ = AddArrayDeref($1, $3, -$5); }
+         ;
+array_access : '[' ID ']' array_access {$$=$4+1; AddDim2List($2);} 
+         | '[' iconst ']' array_access { $$=$4+1; AddDim2List($2);} 
+         | '[' ID ']' { $$=1; AddDim2List($2);}
+         | '[' iconst ']' { $$=1; AddDim2List($2);}
+         ;
+
 fconst : fcexpr         {$$ = STfconstlookup($1);} ;
 dconst : dcexpr         {$$ = STdconstlookup($1);} ;
 iconst : icexpr         {$$ = STiconstlookup($1);} ;
@@ -287,6 +339,7 @@ arith : ID '=' ID '+' avar {DoArith($1, $3, '+', $5); }
 %%
 
 static struct idlist *idhead=NULL, *paras=NULL;
+static struct slist *shead=NULL;
 
 struct idlist *NewID(char *name)
 {
@@ -315,6 +368,57 @@ void KillIDs(void)
    }
 }
 
+struct slist *AddST2List(short stid)
+{
+   struct slist *new;
+   new = malloc(sizeof(struct slist));
+   assert(new);
+   new->id = stid;
+   new->next = shead;
+   shead = new;
+   return(new);
+
+}
+
+void KillSlist(void)
+{
+   struct slist *next;
+   while(shead)
+   {
+      next = shead->next;
+      free(shead);
+      shead = next;
+   }
+}
+
+void AddDim2List(short id)
+/*
+ * taking ST index this function add lda into list
+ */
+{
+   int flag;
+   flag = STflag[id-1];
+
+   if (IS_LOCAL(flag) || IS_CONST(flag) || IS_PARA(flag))
+   {
+      if (!IS_INT(FLAG2TYPE(STflag[id-1])))
+         fko_error(__LINE__, "ARRAY dimension var/const must be integer\n");
+   }
+   else
+      fko_error(__LINE__, "UNKNOWN ARRAY DIMENSION\n");
+
+   AddST2List(id);
+}
+
+void AddUnroll2List(short id)
+{
+   if (!IS_CONST(STflag[id-1]) || !IS_INT(FLAG2TYPE(STflag[id-1])))
+   {
+      fko_error(__LINE__, "UNROLL FACTOR MUST BE INTEGER\n");
+   }
+   AddST2List(id);
+}
+
 #if 0
 struct idlist *ReverseList(struct idlist *base0)
 {
@@ -329,6 +433,147 @@ struct idlist *ReverseList(struct idlist *base0)
    return(base);
 }
 #endif
+
+short HandleArrayAccess(short ptr, short dim)
+{
+   int i, val, ur;
+   struct slist *sl;
+   short rt, hdm, ldm, arrid;
+   short ptr1d;
+   extern int FKO_FLAG; /* global flag for opt array access */
+/*
+ * access array with 1D indexing, like: A[2]
+ */
+   if (dim == 1) /* execute old code to access the 1D array */
+   {
+/*
+ *    we don't support pointer assignment for 2D array yet, but can be 
+ *    supported later, like:  
+ *    DOUBLE_ARRAY :: A[lda][*];
+ *    DOUBLE_PTR :: Pa;
+ *    pa = A[1]; ==> pa = _A1_S ; 
+ */
+/*
+ *    NOTE: 1D array doesn't have entry in STarr table and sa[3] of ST entry
+ *    should be zero(0) .
+ *    FIXME: we will eventually support pointer assignment for 2D array, like:
+ *             a = A[1]; 
+ *           if A is a 2D pointer, then it will copy the column pointer, like:
+ *             a = A1;
+ */
+      if (SToff[ptr-1].sa[3] && STarr[SToff[ptr-1].sa[3]-1].ndim != dim)
+         fko_error(__LINE__,"Access of array %s doesn't match declaration\n", 
+                 STname[ptr-1]);         
+/*
+ *    Handle 1D array just like the old way 
+ */
+      if (IS_CONST(STflag[shead->id-1]))
+      {
+         /*ptrderef : ID '[' icexpr ']' { $$ = AddArrayDeref($1, 0, $3); }*/
+         val = SToff[shead->id-1].i;
+         rt = AddArrayDeref(ptr, 0, val);     
+      }
+      else
+      {
+         /*| ID '[' ID ']'    { $$ = AddArrayDeref($1, $3, 0); } */
+         rt = AddArrayDeref(ptr, shead->id, 0);
+      }
+   }
+/*
+ * here comes the 2D array access. higher dimension will be translated as 
+ * a pointer (created and stored in STarr) so that we can call same 
+ * AddArrayDeref function
+ */
+   else if (dim == 2) /* access fo 2D array */
+   {
+      hdm = shead->id;        /* higher dimension 1st */
+      ldm = shead->next->id;  /* lower diumension */
+/*
+ *    should match the dimension of array access with its declaration
+ */
+      if (STarr[SToff[ptr-1].sa[3]-1].ndim != dim)
+         fko_error(__LINE__,"Access of 2D array %s doesn't match declaration\n", 
+                 STname[ptr-1]);        
+/*
+ *    we only support constant indexing now, will extend to support index 
+ *    variable later
+ */
+      if (IS_CONST(STflag[hdm-1]) && IS_CONST(STflag[ldm-1]))
+      {
+         arrid = SToff[ptr-1].sa[3];
+         if (!STarr[arrid-1].urlist)
+            fko_error(__LINE__, "Unroll factor not defined!!!");
+         ur = STarr[arrid-1].urlist[0];
+         ur = SToff[ur-1].i;
+         if ( SToff[hdm-1].i <= ur)
+         {
+         #ifdef X86         
+            if (FKO_FLAG & IFF_OPT2DPTR) /* applying optimization */
+            {
+               rt = AddOpt2dArrayDeref(arrid, hdm, ldm, ur);   
+            }
+            else
+            {
+               ptr1d = STarr[arrid-1].colptrs[SToff[hdm-1].i+1];
+#if 0      
+               fprintf(stderr, "%s [%d][%d] ==> ", STname[ptr-1], SToff[hdm-1].i, 
+                       SToff[ldm-1].i);
+               fprintf(stderr, "%s [%d]\n", STname[ptr1d-1], SToff[ldm-1].i);
+#endif
+               rt = AddArrayDeref(ptr1d, 0, SToff[ldm-1].i);      
+            }
+         #else
+            ptr1d = STarr[arrid-1].colptrs[SToff[hdm-1].i+1];
+            rt = AddArrayDeref(ptr1d, 0, SToff[ldm-1].i);      
+         #endif
+         }
+         else
+            fko_error(__LINE__, 
+                     "Unroll factor is smaller than the index accessed");
+
+      }
+      else
+         fko_error(__LINE__, "only const index is supported for 2D array");
+   }
+   else
+      fko_error(__LINE__, "NOT SUPPORTED DIMENSION MORE THAN 2 FOR ARRAY!\n");
+
+   KillSlist();
+
+   return rt;
+}
+
+void HandleUnrollFactor(short ptr, int ndim)
+{
+   int i;
+   short id;
+   struct slist *sl;
+   short *url;
+#if 0
+   fprintf(stderr, "%s#%d: ", STname[ptr-1], ndim);
+   for (sl=shead; sl; sl=sl->next)
+   {
+      fprintf(stderr, "%d ", SToff[sl->id-1].i);
+   }
+   fprintf(stderr, "\n");
+#endif
+   id = STarrlookup(ptr);
+   if (!id) 
+      fko_error(__LINE__,"ARRAY %s NOT DEFINED YET\n", STname[ptr-1]); 
+   else if (STarr[id-1].ndim != ndim)
+      fko_error(__LINE__,"DIMENSION OF ARRAY %s NOT MATCH WITH UNROLL FACTOR\n", 
+                STname[ptr-1]); 
+
+   url = malloc(ndim*sizeof(short));
+   assert(url);
+   for (i=0, sl=shead; sl && i<ndim; sl=sl->next, i++)
+   {
+         url[i] = sl->id;    
+   }
+   UpdateSTarrUnroll(id, url );
+   free(url);
+   KillSlist();
+}
 
 static void UpdateLoop(struct loopq *lp)
 {
@@ -488,8 +733,13 @@ void declare_list(int flag)
    unsigned short si;
    struct idlist *id;
    int i, n;
+/*
+ * FIXME: if a variable is in param list but not declare in typedec, there is
+ * no way to ctach this in existing implementation, will get seg fault in 
+ * later stage (like: create prologue )
+ */
 
-   if (WhereAt == 1)
+   if (WhereAt == 1) /* declared as parameter */
    {
       for (id=idhead, n=0; id; id=id->next, n++);
       while(idhead)
@@ -500,7 +750,7 @@ void declare_list(int flag)
          idhead = idhead->next;
       }
    }
-   else
+   else /* declared as local */
    {
       while(idhead)
       {
@@ -509,6 +759,61 @@ void declare_list(int flag)
       }
    }
    KillIDs();
+}
+
+void declare_array(int flag, short dim, char *name)
+{
+   int i;
+   struct slist *sl;
+   unsigned short si;
+   short *ldas;
+/*
+ * NOTE: 1D array is always treated as PTR as we avoid array declaration for
+ * 1D array right now.
+ */
+   if (dim==1)
+      fko_error(__LINE__, "1D array should be treated as pointer\n");
+
+   if (WhereAt == 1) /* inside parameter declaration */
+   {
+      si = STstrlookup(name); 
+      if (!si) yyerror("Undeclared parameter");
+      STsetflag(si, PARA_BIT | flag);
+      ldas = malloc((dim-1)*sizeof(short));
+      assert(ldas);
+      for (i=0, sl=shead; sl && i<(dim-1); sl=sl->next, i++)
+      {
+         ldas[i] = sl->id;    
+      }
+      STsetArray(si, dim, ldas);
+      free(ldas);
+#if 0
+      fprintf(stderr,"ARRAY = %s: ",name);
+      fprintf(stderr, "dim=%d ,",dim);
+      fprintf(stderr, "lda=");
+      for (sl=shead; sl; sl=sl->next)
+      {
+         if (IS_CONST(STflag[sl->id-1]))
+            fprintf(stderr, "%d, ", SToff[sl->id-1].i);
+         else
+            fprintf(stderr, "%s, ", STname[sl->id-1]);
+      }
+      fprintf(stderr, "\n");
+#endif      
+      KillSlist();
+   }
+   else /* inside local declaration */
+   { 
+      si = STstrlookup(name); 
+      if (si) fko_error(__LINE__,"Variable=%s already exists\n", name);
+      for (sl=shead; sl; sl=sl->next)
+      {
+         if (!IS_CONST(STflag[sl->id-1]))
+            fko_error(__LINE__, "dimension can't be variable for local array\n");
+      }
+      KillSlist();
+      fko_error(__LINE__, "Local array not supported yet!");
+   }
 }
 
 void ConstInit(short id, short con)
@@ -522,6 +827,7 @@ void ConstInit(short id, short con)
    }
    LIhead = NewLI(id, con, LIhead);
 }
+
 yyerror(char *msg)
 {
    fprintf(stderr, "\n\nERROR: Line %d: %s\n\n", lnno, msg);
