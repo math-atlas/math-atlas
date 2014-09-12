@@ -3831,7 +3831,8 @@ OPTLOOP=1
       else
       {
          Vspec = 0;
-         Vn = !(SpeculativeVectorAnalysis()); /*it is the most general */ 
+         Vn = !(RcVectorAnalysis()); /* checking for shadow RC too */
+         /*Vn = !(SpeculativeVectorAnalysis());*/ /*it is the most general */ 
          KillPathTable();
       }
       

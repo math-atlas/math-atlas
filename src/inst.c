@@ -364,7 +364,8 @@ void PrintThisInst(FILE *fpout, int i, INSTQ *ip)
 /*
  *    This is to print LIL without live-vars. To enable live-vars prints,
  *    enable the #if and enable header prints in PrintInst function
- */      
+ */   
+      //fprintf(stderr,"%d->%s\n",inst,instmnem[inst]);
       fprintf(fpout, shortform, i, instmnem[inst], op1, op2str(op1),
               op2, op2str(op2), op3, op2str(op3));
 #endif
@@ -548,9 +549,9 @@ void PrintOptInst(FILE *fpout, int iopt, int op, BLIST *scope,
    fprintf(fpout,"Number of optimization done so far = %d\n",iopt);
    fprintf(fpout,"Last Optimization Done = %s\n",optmnem[op]);
    if (global)
-      fprintf(fpout,"Last Optimization is a GLOBAL optimization\n",iopt);
+      fprintf(fpout,"Last Optimization is a GLOBAL optimization\n");
    else
-      fprintf(fpout,"Last Optimization is a LOCAL optimization\n",iopt);
+      fprintf(fpout,"Last Optimization is a LOCAL optimization\n");
    
    switch(op)
    {
