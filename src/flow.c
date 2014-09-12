@@ -180,6 +180,20 @@ BLIST *ReverseBlockList(BLIST *list)
    return(ln);
 }
 
+BLIST *CopyBlockList(BLIST *list)
+/*
+ * Given a blocklist, this function duplicates the list by keeping the order same
+ * and return the new list without killing the original one.
+ * NOTE: unlike DupBlockList in optloop.c, this function copies only the list, 
+ * not the blocks.
+ */
+{
+   BLIST *ln = NULL; 
+   ln = NewReverseBlockList(list);
+   ln = ReverseBlockList(ln);
+   return(ln);
+}
+
 BLIST *MergeBlockLists(BLIST *l1, BLIST *l2)
 /*
  * Adds list l2 to list l1, making sure not to duplicate entries, and
@@ -209,6 +223,20 @@ BLIST *MergeBlockLists(BLIST *l1, BLIST *l2)
    KillBlockList(l2);
    return(l1);
 }
+BLIST *RemoveBlksFromList(BLIST *l1, BLIST *l2)
+/*
+ * remove blocks of l2 from blist l1 and return the updated l1
+ * assumption:  no duplicated copies of blocks
+ */
+{
+   BLIST *bl;
+   for (bl=l2; bl; bl=bl->next)
+   {
+      l1 = RemoveBlockFromList(l1, bl->blk);
+   }
+   return (l1);
+}
+
 
 BBLOCK *NewBasicBlock(BBLOCK *up, BBLOCK *down)
 /*
@@ -219,7 +247,7 @@ BBLOCK *NewBasicBlock(BBLOCK *up, BBLOCK *down)
    bp = malloc(sizeof(BBLOCK));
    assert(bp);
 /*
- * Majedul: FIXME: creating new block with 0 would complicate the bvec checking
+ * Majedul: FIXED: creating new block with 0 would complicate the bvec checking
  * as bvec is used for bnum-1!!!
  */
 #if 0   
@@ -1203,13 +1231,23 @@ int CalcLoopDepth()
    LOOPQ *loop;
    BLIST *lp;
    short maxdep=0, dep;
-
+/*
+ * Majedul: How it works:
+ * Only the header block of a loop holds the loop information (blk->loop). For 
+ * all other blocks, it is NULL. So, when traversing the blocks of a loop, if 
+ * we find a block which is not the header of this loop but header of other 
+ * loop, then there must be a loop inside this loop. So, in this case, the 
+ * depth of this loop is increased. 
+ */
    for (loop=loopq; loop; loop = loop->next)
    {
-      for (lp=loopq->blocks; lp; lp = lp->next)
+      /*for (lp=loopq->blocks; lp; lp = lp->next)*/ /* Fixed below */
+      for (lp=loop->blocks; lp; lp = lp->next) /* lp is a blist here */
       {
          if (lp->blk != loop->header && lp->blk->loop)
+         {
             dep = ++(lp->blk->loop->depth);
+         }
          else if (lp->blk->loop) dep = lp->blk->loop->depth;
          else dep = 0;
          if (dep > maxdep) maxdep = dep;
