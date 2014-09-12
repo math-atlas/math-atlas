@@ -23,33 +23,16 @@ union valoff
    long l;
 };
 
-#ifdef IFKO_DECLARE
-   char *optmnem[] = {"Do Nothing", "IG Reg Asg", "Copy Prop", "LP Reg Asg",
-                      "Useless Jump Elim", "Useless Label Elim", 
-                      "Branch Chaining", "Enforce Load Store", 
-                      "Remove One Use Loads", "Last Use Load Removal",
-                      "ReverseCopyProp", "NONE"};
-   char *optabbr[] = {"DN", "ra", "cp", "gr", "uj", "ul", "bc", "ls", "u1", 
-                      "lu", "rc", "00"};
-#else
-   extern char *optmnem[], *optabbr[];
-#endif
-enum FKOOPT {DoNothing, RegAsg, CopyProp, GlobRegAsg, UselessJmpElim, 
-             UselessLabElim, BranchChain, EnforceLoadStore, 
-             RemoveOneUseLoads, LastUseLoadRemoval, ReverseCopyProp, MaxOpt};
-struct optblkq
+typedef struct arrayinfo ARRAYINFO;
+struct arrayinfo
 {
-   enum FKOOPT *opts;    /* list of ordered opts to perform                  */
-   struct optblkq *down; /* opts included in while(change)                   */
-   struct optblkq *next; /* succeeding opts not in while(change)             */
-   struct optblkq *ifblk;/* if non-null, this is conditional block, and      *
-                          * down is applied if ifblk produces changes, and   *
-                          * next is applied if not                           */
-   ushort nopt;          /* # of opt in opts                                 */
-   ushort maxN;          /* if zero, do not do while(change)                 *
-                          * if nonzero, do at most that many applications    */
-   ushort bnum;          /* number of this block                             */
-   ushort flag;
+   short ptr;     /* ST index of the array ptr */
+   short ndim;    /* dimension of the array */
+   short *ldas;   /* list of ST index of lda (higher to lower dim), size dim-1*/
+   short *urlist; /* unroll factor for array (higher to lower dim), size dim */
+/* special list to manage 2D array only; for higher dimension need to expand */
+   short *colptrs; /* column pointers only supported for 2D array now */
+   short *cldas;  /* custom ldas like: lda, -lda, 3*lda to optimize in X86 */
 };
 
 typedef struct instq INSTQ;
@@ -99,6 +82,12 @@ struct locinit
    struct locinit *next;
 };
 
+struct slist /* general list of short data, can be used as ST list */
+{
+   short id;
+   struct slist *next;
+};
+
 struct sdata  /* Structure for static data */
 {
    char *name;           /* global variable name */
@@ -141,6 +130,7 @@ struct bblock
    INT_BVI dom;              /* dominators of this block */
    INT_BVI uses, defs;       /* uses and defs for this block */
    INT_BVI ins, outs;        /* live vars coming in and leaving block */
+   INT_BVI RDins, RDouts;    /* reaching defs coming in and leaving block */
    INT_BVI conin, conout;    /* IGnum conflicts in/out */
    INT_BVI ignodes;          /* all of this block's ignodes */
 };
@@ -329,5 +319,40 @@ struct iglist
    struct iglist *next;
 };
 #endif
+/*
+ * NOTE: Following definitions are for applying repeatable optimizations.
+ * shifted below, because : now we are using BLIST... need to declare after 
+ * the declaration of BLIST
+ */
+#ifdef IFKO_DECLARE
+   char *optmnem[] = {"Do Nothing", "IG Reg Asg", "Copy Prop", "LP Reg Asg",
+                      "Useless Jump Elim", "Useless Label Elim", 
+                      "Branch Chaining", "Enforce Load Store", 
+                      "Remove One Use Loads", "Last Use Load Removal",
+                      "ReverseCopyProp", "NONE"};
+   char *optabbr[] = {"DN", "ra", "cp", "gr", "uj", "ul", "bc", "ls", "u1", 
+                      "lu", "rc", "00"};
+#else
+   extern char *optmnem[], *optabbr[];
+#endif
+enum FKOOPT {DoNothing, RegAsg, CopyProp, GlobRegAsg, UselessJmpElim, 
+             UselessLabElim, BranchChain, EnforceLoadStore, 
+             RemoveOneUseLoads, LastUseLoadRemoval, ReverseCopyProp, MaxOpt};
+struct optblkq
+{
+   enum FKOOPT *opts;    /* list of ordered opts to perform                  */
+   struct optblkq *down; /* opts included in while(change)                   */
+   struct optblkq *next; /* succeeding opts not in while(change)             */
+   struct optblkq *ifblk;/* if non-null, this is conditional block, and      *
+                          * down is applied if ifblk produces changes, and   *
+                          * next is applied if not                           */
+   ushort nopt;          /* # of opt in opts                                 */
+   ushort maxN;          /* if zero, do not do while(change)                 *
+                          * if nonzero, do at most that many applications    */
+   ushort bnum;          /* number of this block                             */
+   ushort flag;
+   BLIST *blocks;         /* added this to specify the scope, an optimization 
+                            is applied.. only used when flag is 0            */
+};
 
 #endif
