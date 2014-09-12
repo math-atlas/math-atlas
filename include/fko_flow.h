@@ -6,6 +6,7 @@ BLIST *NewBlockList(BBLOCK *blk, BLIST *next);
 BLIST *AddBlockToList(BLIST *list, BBLOCK *blk);
 static BLIST *KillBlockListEntry(BLIST *lp);
 BLIST *RemoveBlockFromList(BLIST *list, BBLOCK *blk);
+BLIST *RemoveBlksFromList(BLIST *l1, BLIST *l2); /* delete l2 from l1 */
 INT_BVI BlockList2BitVec(BLIST *lp);
 BLIST *BitVec2BlockList(INT_BVI iv);
 BLIST *FindInList(BLIST *lp, BBLOCK *blk);
@@ -18,10 +19,10 @@ LOOPQ *KillFullLoop(LOOPQ *lp);
 void KillAllLoops();
 BLIST *ReverseBlockList(BLIST *list);
 BLIST *NewReverseBlockList(BLIST *list);
+BLIST *CopyBlockList(BLIST *list);
 BLIST *MergeBlockLists(BLIST *l1, BLIST *l2);
 BLIST *FindBlockListWithLabel(BLIST *list, int ilab);
 BLIST *GetGlobalScope();
-
 BBLOCK *NewBasicBlock(BBLOCK *up, BBLOCK *down);
 void KillAllBasicBlocks(BBLOCK *base);
 BBLOCK *FindBasicBlocks(BBLOCK *base0);
