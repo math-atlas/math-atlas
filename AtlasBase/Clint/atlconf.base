@@ -721,7 +721,7 @@ enum ARCHFAM {AFOther=0, AFPPC, AFSPARC, AFALPHA, AFX86, AFIA64, AFMIPS,
  * Corei2: ivy bridge, sandy bridge: AVX
  * Corei3: haswell: AVXMAC
  */
-#define NMACH 53
+#define NMACH 54
 static char *machnam[NMACH] = 
    {"UNKNOWN", "POWER3", "POWER4", "POWER5", "PPCG4", "PPCG5", 
     "POWER6", "POWER7", "POWERe6500", "IBMz9", "IBMz10", "IBMz196",
@@ -732,7 +732,7 @@ static char *machnam[NMACH] =
     "Efficeon", "K7", "HAMMER", "AMD64K10h", "AMDLLANO", "AMDDOZER","AMDDRIVER",
     "UNKNOWNx86", "IA64Itan", "IA64Itan2",
     "USI", "USII", "USIII", "USIV", "UST2", "UnknownUS", 
-    "MIPSR1xK", "MIPSICE9", "ARMv7", "TI_C66_BM", "XeonPHI"};
+    "MIPSR1xK", "MIPSICE9", "ARMv7", "ARM64", "TI_C66_BM", "XeonPHI"};
 enum MACHTYPE {MACHOther, IbmPwr3, IbmPwr4, IbmPwr5, PPCG4, PPCG5,
                IbmPwr6, IbmPwr7, Pwre6500,
                IbmZ9, IbmZ10, IbmZ196,  /* s390(x) in Linux */ 
@@ -746,6 +746,7 @@ enum MACHTYPE {MACHOther, IbmPwr3, IbmPwr4, IbmPwr5, PPCG4, PPCG5,
                MIPSR1xK, /* includes R10K, R12K, R14K, R16K */
                MIPSICE9,  /* SiCortex ICE9 -- like MIPS5K */
                ARMv7,     /* includes Cortex A8, A9 */
+               ARM64,     /* includes ARMv8 */
                TI_C66_BM, /* TI accelerator */
                IntPhi     /* build for XEON Phi */
                };
@@ -766,6 +767,8 @@ enum MACHTYPE {MACHOther, IbmPwr3, IbmPwr4, IbmPwr5, PPCG4, PPCG5,
    ( (mach_) >= PPCG4 && (mach_) <= PPCG5 )
 #define MachIsARM(mach_) \
    ( (mach_) == ARMv7 )
+#define MachIsARM64(mach_) \
+   ( (mach_) == ARM64 )
 #define MachIsS390(mach_) \
    ( (mach_) >= IbmZ9 && (mach_) <= IbmZ196 )
 
@@ -792,13 +795,13 @@ enum ISAEXT
     ISA_NEON, ISA_NEON16, ISA_VFP3D32MAC, ISA_VFP3D16MAC};
 
 @ROUT atlconf.h asmconf.h
-#define NASMD 9
+#define NASMD 10
 enum ASMDIA 
    {ASM_None=0, gas_x86_32, gas_x86_64, gas_sparc, gas_ppc, gas_parisc, 
     gas_mips, gas_arm, gas_s390};
 static char *ASMNAM[NASMD] =
    {"",     "GAS_x8632", "GAS_x8664", "GAS_SPARC", "GAS_PPC", "GAS_PARISC",
-    "GAS_MIPS", "GAS_ARM", "GAS_S390"};
+    "GAS_MIPS", "GAS_ARM", "GAS_ARM64", "GAS_S390"};
 @ROUT atlconf.h
 
 /*
@@ -1314,6 +1317,7 @@ enum ARCHFAM ProbeArchFam(char *targ)
       else if (strstr(res, "ia64")) fam = AFIA64;
       else if (strstr(res, "mips")) fam = AFMIPS;
       else if (strstr(res, "arm")) fam = AFARM;
+      else if (strstr(res, "aarch64")) fam = AFARM;
       else if (strstr(res, "s390")) fam = AFS390;
       else if ( strstr(res, "i686") || strstr(res, "i586") ||
                 strstr(res, "i486") || strstr(res, "i386") ||
@@ -1341,6 +1345,7 @@ enum ARCHFAM ProbeArchFam(char *targ)
                    strstr(res, "x86_64") ) fam = AFX86;
          else if (strstr(res, "mips")) fam = AFMIPS;
          else if (strstr(res, "arm")) fam = AFARM;
+         else if (strstr(res, "aarch64")) fam = AFARM;
          else if (strstr(res, "s390")) fam = AFS390;
          free(res);
       }
@@ -2430,7 +2435,7 @@ IRun_@(aff) :
 	- cat config0.out
 @endwhile
 
-@whiledef asm GAS_x8632 GAS_x8664 GAS_PPC GAS_PARISC GAS_SPARC GAS_ARM GAS_S390
+@whiledef asm GAS_x8632 GAS_x8664 GAS_PPC GAS_PARISC GAS_SPARC GAS_ARM GAS_ARM64 GAS_S390
 IRun_@(asm) :
 	$(CC) $(CCFLAGS) -o xprobe_@low@(asm) $(SRCdir)/backend/probe_this_asm.c $(SRCdir)/backend/probe_@low@(asm).S
 	$(MAKE) $(atlrun) atldir=$(mydir) exe=xprobe_@low@(asm) args="$(args)" \
@@ -2729,6 +2734,21 @@ int main(int nargs, char **args)
    fprintf(stdout, "SUCCESS\n");
    return(0);
 }
+@ROUT probe_gas_arm64.S
+#include "atlas_asm.h"
+#
+# Linux ARM assembly for:
+# int asm_probe(int i)
+# RETURNS: i*3
+#
+
+.text
+.globl  ATL_asmdecor(asm_probe)
+.type   ATL_asmdecor(asm_probe), %function
+ATL_asmdecor(asm_probe):
+        add     x0, x0, x0, LSL #1
+        ret
+.size ATL_asmdecor(asm_probe),.-ATL_asmdecor(asm_probe)
 @ROUT probe_gas_arm.S
 #define ATL_GAS_ARM
 #include "atlas_asm.h"
@@ -5864,6 +5884,9 @@ void GetBestGccVers(enum OSTYPE OS, enum MACHTYPE arch,
    case IntAtom:
       *GMINOR = 6;
       *GPATCH = 2;
+   case ARM64:
+      *GMINOR = 9;
+      *GPATCH = 1;
    case x86SSE1:
    case x86SSE2:
    case x86SSE3:
@@ -7223,6 +7246,19 @@ MACH=ARMv7 OS=ALL LVL=1000 COMPS=smc,skc,gcc,icc
 MACH=ARMv7 OS=ALL LVL=1000 COMPS=dmc,dkc
    'gcc' '-O2 -fno-schedule-insns -fno-schedule-insns2 -fprefetch-loop-arrays'
 MACH=ARMv7 OS=ALL LVL=1000 COMPS=f77
+   'gfortran' '-O2'
+#
+# ARM64 defaults
+#
+MACH=ARM64 OS=ALL LVL=1000 COMPS=xcc
+   'gcc' '-O3 -ggdb'
+MACH=ARM64 OS=ALL LVL=1000 COMPS=icc
+   'gcc' '-O2'
+MACH=ARM64 OS=ALL LVL=1000 COMPS=smc,skc,gcc
+   'gcc' '-O3  -ftree-vect-loop-version -ftree-vectorize'
+MACH=ARM64 OS=ALL LVL=1000 COMPS=dmc,dkc
+   'gcc' '-O3  -ftree-vect-loop-version -ftree-vectorize'
+MACH=ARM64 OS=ALL LVL=1000 COMPS=f77
    'gfortran' '-O2'
 #
 # Untuned flags for XeonPHI
@@ -8715,7 +8751,7 @@ then
    echo "CC = icc" >> Makefile
    echo "CCFLAGS = \$(XCFLAGS) -mmic" >> Makefile
 else
-   echo "CCC = \$(XCC)" >> Makefile
+   echo "CC = \$(XCC)" >> Makefile
    echo "CCFLAGS = \$(XCFLAGS)" >> Makefile
 fi
 echo DESTDIR="$prefix" >> Makefile
@@ -9247,7 +9283,7 @@ int main(int nargs, char **args)
          fprintf(fpout, " %d", tids[k]);
    }
    else
-      fprintf(fpout, "TIDLIST=");
+      fprintf(fpout, "   TIDLIST=");
    fprintf(fpout, "\n\n");
 
    fprintf(fpout,

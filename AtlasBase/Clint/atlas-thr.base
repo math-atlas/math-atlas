@@ -1961,6 +1961,52 @@ ATL_asmdecor(ATL_ResetAtomicCount):
    jmp ATOMIC_LOOP            /* ZF=0 means cmpxch failed, try again */
 DONE:
    ret
+@ROUT ATL_DecAtomicCount_arm64.S
+#include "atlas_asm.h"
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2014 -def author "Dave Nuechterlein" -contrib "R. Clint Whaley"
+/* w0                           x0  */
+/* int ATL_DecAtomicCount(void *vp) */
+.global ATL_asmdecor(ATL_DecAtomicCount)
+ATL_asmdecor(ATL_DecAtomicCount):
+/*
+ * x0 is aptr to a cnt structure. 128 bytes in, there is an int (acnt)
+ * that we want to decrement.
+ * IN LOOP: attempt to get exclusive access to acnt, dec it, and return 0
+ * if acnt <= 1, and acnt-1 otherwise 
+ */
+   add  x0,x0,128
+   ATOMIC_LOOP:
+      ldxr w1, [x0]
+      subs w2, w1,1
+      b.lt   ZERO_RET
+      stxr w3,w2,[x0]
+   cbnz w3, ATOMIC_LOOP
+
+   sxtw x0,w1
+   ret
+
+ZERO_RET:
+   eor x0,x0,x0
+   ret
+
+@ROUT ATL_ResetAtomicCount_arm64.S
+#include "atlas_asm.h"
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2014 -def author "Dave Nuechterlein" -contrib "R. Clint Whaley"
+/*
+ * w0                        x1          w2 
+ * int ATL_ResetAtomicCount(void *vp, int cnt)
+ * Sets vp's acnt=cnt.
+ * RETURNS: acnt before the reset
+ */
+ATL_asmdecor(ATL_ResetAtomicCount):
+   add x0,x0,128
+   ATOMIC_LOOP:
+      ldxr w2,[X0]
+      stxr w2,w1,[x0]
+   cbnz w2, ATOMIC_LOOP
+   mov w0, w1
+@skip   sxtw x0,w1
+   ret
 @ROUT ATL_DecAtomicCount_amd64 ATL_DecAtomicCount_ia32 ATL_DecAtomicCount_win64
 #include "atlas_asm.h"
 /* rax                  %rdi/rcx/4  */
@@ -5094,7 +5140,7 @@ static void ATL_@(rt)R_rec
    }
    else
    {
-      A01 = A + (syp->lda SHIFT);
+      A01 = A + (syp->lda * (nL SHIFT));
       Mjoin(PATL,tgemm)(AtlasNoTrans, @(trans), syp->M, nL, nR, 
                         SVVAL((TYPE*)syp->alpha), B01, syp->ldb, A01, syp->lda, 
                         ONE, C, syp->ldc);
@@ -5240,7 +5286,7 @@ void Mjoin(PATL,t@(rt))
       nr = M - nblks*nb;
       tblks = ((double)(M*N)) / ( (double)nb * nb );
       p = (nblks+ATL_TSYMM_ADDP-1)/ATL_TSYMM_ADDP;
-      if (p < ATL_NTHREADS)  /* N not big enough to give blk to each proc */
+      if (p < ATL_NTHREADS)  /* M not big enough to give blk to each proc */
       {
 /*
  *       If I can't split M, and N is the dominant cost, use recursion to
@@ -7634,6 +7680,11 @@ typedef struct
  * Unfortunately, none of the memory fence instructions seems to work
  * adequately on ARM
  */
+#elif defined(ATL_ARCH_ARM64)
+   #ifdef __GNUC__
+      #define ATL_membarrier __asm__ __volatile__ ("dmb sy" : : : "memory")
+/*      #define ATL_USEPCA 1 */  
+   #endif
 #elif defined(ATL_ARCH_ARMv7)
    #ifdef __GNUC__
       #define ATL_membarrier __asm__ __volatile__ ("dmb")
