@@ -128,6 +128,13 @@ ID=40 MU=24 NU=8 KU=2 AUTH="R. Clint Whaley" ROUT='ATL_damm24x8x2_avxz.S' \
 ID=41 MU=8 NU=8 KU=8 AUTH="R. Clint Whaley" ROUT='ATL_amm8x8x8_avxz.S' \
       KRUNTIME=0 KBMAX=8 KBMIN=8 ASM=GAS_x8664 \
       COMP='icc' CFLAGS='-x assembler-with-cpp -mmic'
+ID=42 MU=5 NU=5 KU=2 AUTH="Whaley & Nuechterlein" \
+      ROUT='ATL_damm5x5x2_aarch64.S' \
+      KBMIN=2 ASM=GAS_ARM64 KRUNTIME=1 \
+      COMP='gcc' CFLAGS='-x assembler-with-cpp'
+ID=43 MU=4 NU=3 KU=6 AUTH="R. Clint Whaley" ROUT='ATL_dammm4x3x6_arm64.S' \
+      KRUNTIME=1 KBMIN=12 ASM=GAS_ARM64 \
+      COMP='gcc' CFLAGS='-x assembler-with-cpp'
 @ROUT samcases.idx
 ID=1 MU=16 NU=4 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_samm16x4x1_av.c' \
      KRUNTIME=1 COMP='gcc' CFLAGS='-Os -maltivec -mabi=altivec -mcpu=970 -mtune=970 -mvrsave -fschedule-insns2 -fno-schedule-insns'
@@ -175,6 +182,11 @@ ID=38 MU=32 NU=8 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_damm16x8x4_avxz.S' \
       ASM=GAS_x8664 KRUNTIME=1 COMP='icc' CFLAGS='-x assembler-with-cpp -mmic'
 ID=40 MU=48 NU=8 KU=2 AUTH="R. Clint Whaley" ROUT='ATL_damm24x8x2_avxz.S' \
       ASM=GAS_x8664 KRUNTIME=1 COMP='icc' CFLAGS='-x assembler-with-cpp -mmic'
+ID=42 MU=4 NU=6 KU=2 AUTH="Nuechterlein & Whaley" \
+      ROUT='ATL_samm4x6x2b_aarch64.S' \
+      ASM=GAS_ARM64 KRUNTIME=1 KBMIN=4 \
+      COMP='gcc' CFLAGS='-x assembler-with-cpp'
+
 @ROUT atlas_gnuvec.h
 #ifndef ATLAS_GNUVEC
    #define ATLAS_GNUVEC 1
@@ -3253,7 +3265,8 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
    mmp->ku = ku;
    mmp->muladd = (lat != 0);
    mmp->lat = lat;
-   mmp->rout = DupString("amm_munu.c");
+   mmp->rout = DupString("ATL_Xamm_munu.c");
+   mmp->rout[4] = pre;
    mmp->mbB = mmp->nbB = mmp->kbB = nb;
    mmp->vlen = VLEN[VECi];
 /*
@@ -3336,11 +3349,23 @@ void FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
    #endif
    mmp->mu = muB * VLEN[VECi];
    mmp->nu = nuB;
-   mmp->mflop[0] = mfB;
+   mmp->mbB = (nb >= muB) ? (nb/muB)*muB : muB;
+   mmp->nbB = (nb >= nuB) ? (nb/nuB)*nuB : nuB;
+   mmp->kbB = nb;
+/*
+ * This second timing is necessary to force best case to be generated to
+ * output file, for later use in timing in search, so don't take out even
+ * though it seems redundant. 
+ */
+   if (mmp->genstr)
+     free(mmp->genstr);
+   mmp->genstr = GenString(pre, lat, nb, muB, nuB, ku, mmp->kmaj, mmp->rout);
+   mf = TimeMMKernel(verb, 1, mmp, pre, mmp->mbB, mmp->nbB, nb, 
+                     nb, nb, mmp->mbB, 1, 0, -1);
    WriteMMFileWithPath(pre, "res", "gAMMMUNU.sum", mmp);
    KillMMNode(mmp);
-   printf("BEST CASE IS MU=%d, NU=%d, MFLOP=%.2f\n\n", 
-          muB, nuB, mfB);
+   printf("BEST CASE IS MU=%d, NU=%d, MFLOP=%.2f (%.2f)\n\n", 
+          muB, nuB, mf, mfB);
    *MU = muB;
    *NU = nuB;
 }
