@@ -646,6 +646,9 @@ void CalcBlockIG(BBLOCK *bp)
  *          Find ignode associated with var
  */
             k += 1 - TNREG;
+#if 0
+            fprintf(stderr, "dead var = %s\n", STname[k-1]);
+#endif
             for (j=nn-1; j >= 0; j--)
                if (myIG[j] && myIG[j]->var == k) break;
             assert(j >= 0);
@@ -696,6 +699,9 @@ void CalcBlockIG(BBLOCK *bp)
          if (k >= TNREG) /* variable is being set */
          {
             k += 1 - TNREG;
+#if 0
+            fprintf(stderr, "set var = %s\n", STname[k-1]);
+#endif
             for (j=nn-1; j >= 0; j--)
                if (myIG[j] && myIG[j]->var == k) break;
 /*
@@ -724,6 +730,9 @@ void CalcBlockIG(BBLOCK *bp)
                node->blkbeg->ptr = ip;
                SetVecBit(bp->ignodes, node->ignum, 1);
                node->nwrite++;
+#if 0
+            fprintf(stderr, "nwrite var = %s\n", STname[k-1]);
+#endif
             }
          }
 /*
@@ -862,11 +871,11 @@ void CombineBlockIG(BLIST *scope, INT_BVI scopeblks, BBLOCK *pred, BBLOCK *succ)
 /*
  * If both blocks are in scope, attempt to combine their live ranges
  */
-/*
-fprintf(stderr, "scoping pred=%d, succ=%d\n", pred->bnum, succ->bnum);
-fprintf(stderr, "pred->conout=%s\n", PrintVecList(pred->conout, 0));
-fprintf(stderr, "succ->conin=%s\n", PrintVecList(pred->conin, 0));
-*/
+
+//fprintf(stderr, "scoping pred=%d, succ=%d\n", pred->bnum, succ->bnum);
+//fprintf(stderr, "pred->conout=%s\n", PrintVecList(pred->conout, 0));
+//fprintf(stderr, "succ->conin=%s\n", PrintVecList(pred->conin, 0));
+
    if (BitVecCheck(scopeblks, succ->bnum-1) && 
        BitVecCheck(scopeblks, pred->bnum-1) )
    {
@@ -905,8 +914,29 @@ fprintf(stderr, "succ->conin=%s\n", PrintVecList(pred->conin, 0));
       for (n=pig[0], i=1; i <= n; i++)
       {
          node = IG[pig[i]];
-         if (node->nwrite && BitVecCheck(succ->ins, node->var+TNREG-1) )
+#if 0
+         //PrintIGNode(stderr, node);
+
+         if (BitVecCheck(succ->ins, node->var+TNREG-1))
+            fprintf(stderr, "liveout var = %s\n", STname[node->var-1]);
+         
+         //if (node->nwrite)
+         //   fprintf(stderr, "nwrite var = %s\n", STname[node->var-1]);
+#endif
+/*
+ *       FIXME: nwrite doesn't reflect the whole scope but just the combining 
+ *       blks... so, may provide wrong result!!!
+ *       But if a variable is not set inside the scope, we don't need to 
+ *       push it outside as the variable is not changed at all!
+ *       NOTE: we can consider it for stpush now but scope out after combining
+ *       all the IG nodes!!!
+ */
+         //if (node->nwrite && BitVecCheck(succ->ins, node->var+TNREG-1) )
+         if (BitVecCheck(succ->ins, node->var+TNREG-1))
          {
+#if 0
+         fprintf(stderr, "############## stpush = %s\n", STname[node->var-1]);
+#endif
             node->stpush = AddBlockToList(node->stpush, succ);
             if (succ->ainst1)
             {
@@ -935,7 +965,10 @@ fprintf(stderr, "succ->conin=%s\n", PrintVecList(pred->conin, 0));
 /*
  *          FIXME: if the predecessor has any successor other than this blk,
  *          adding load host before branch would create problem: to load hoist,
- *          we shouldn't use live register on this blk!!!! 
+ *          we shouldn't use live register on this blk!!!!
+ *          NOTE: if we always consider scope as a loop, only head of the loop
+ *          has a predecessor which is pre-header. pre-header can never have a 
+ *          successor other than the head blk of the loop.
  */
             node->ldhoist->ptr = IS_BRANCH(k) ? pred->ainstN->prev : 
                                                 pred->ainstN;
@@ -1021,6 +1054,12 @@ int CalcScopeIG(BLIST *scope)
 
    if (scope)
    {
+#if 0
+/*
+ * just testing ... ... ...
+ */
+      scope = NewReverseBlockList(scope);
+#endif
       if (!INDEADU2D)
          CalcAllDeadVariables();
       else if (!CFUSETU2D || !CFU2D || !INUSETU2D)
@@ -1045,15 +1084,38 @@ int CalcScopeIG(BLIST *scope)
          if (bl->blk->usucc)
             CombineBlockIG(scope, blkvec, bl->blk, bl->blk->usucc);
 /*
- *       Majedul: need to check!!! 
+ *       Majedul: 
+ *       NOTE: should not assume any order of execution!!! 
+ *       stpush depends on the nwrite... which may not be seen in a 
+ *       specific order!!!
  */
          if (bl->blk->csucc)
             CombineBlockIG(scope, blkvec, bl->blk, bl->blk->csucc);
          for (lp=bl->blk->preds; lp; lp = lp->next)
+         {
             if (!BitVecCheck(blkvec, lp->blk->bnum-1) &&
                   lp->blk != bl->blk->usucc && lp->blk != bl->blk->csucc)
                CombineBlockIG(scope, blkvec, lp->blk, bl->blk);
+         }
       }
+/*
+ *       only !nwrite should have stpush!! 
+ *       variable those are not updated inside the scope, not a candidate for
+ *       stpush, but we can't have updated nwrite until all blks are explored. 
+ *       so, check for the updated nwrite here... It will solved all issues 
+ *       related with the missing stpush for some cases!!! 
+ */
+#if 1
+      for (i=0; i < NIG; i++)
+      {
+
+         if (IG[i] && !IG[i]->nwrite && IG[i]->stpush)
+         {
+            KillBlockList(IG[i]->stpush);
+            IG[i]->stpush = NULL;
+         }
+      }
+#endif
       for (j=i=0; i < NIG; i++)
          if (IG[i]) j++;
       return(j);
@@ -1625,10 +1687,13 @@ int DoRegAsgTransforms(IGNODE *ig)
       #endif
       ip = InsNewInst(bl->blk, NULL, bl->ptr, st, ig->deref, -ig->reg, 0);
 /*
- *    Majedul: 
+ *    Majedul:
  *    V0_sum should be a candidate for stpush for the modified dasum where
  *    fall-thru path is used as scalar_restart path when speculative 
- *    vectorization is applied !!! 
+ *    vectorization is applied !!!
+ *    imax also should be the candidate for stpush when -p 2 is 
+ *    applied
+ *    FIXED: see CalcScopeIG
  */
 #if 0
       PrintThisInst(stderr,ip);
@@ -1675,11 +1740,12 @@ int DoScopeRegAsg(BLIST *scope, int thresh, int *tnig)
    nret = DoIGRegAsg(N, igs);
    CheckIG(N, igs);
 #if 0
-   //fprintf(stderr,"IG ");
+   /*fprintf(stderr,"IG ");
    //DumpIG(stderr,N,igs);
    sprintf(file, "ig-cfg-%d.dot", ++nc);
    //ShowFlow(file, bbbase);
-   ShowFlow("ig-cfg.dot", bbbase);
+   ShowFlow("ig-cfg.dot", bbbase);*/
+   DumpIG(stderr, N, igs);
    fprintf(stdout,"IG ");
    DumpIG(stdout,N,igs);
 #endif 
@@ -1722,6 +1788,36 @@ static void PrintBlockWithNum(FILE *fpout, BLIST *bl)
       fprintf(fpout, ", %4d(%5d)", bl->blk->bnum, 
               FindInstNum(bl->blk, bl->ptr));
    fprintf(fpout, "\n");
+}
+
+void PrintIGNode (FILE *fpout, IGNODE *ig)
+{
+   BLIST *bl;
+
+   fprintf(fpout, 
+    "*** IG# = %5d, VAR = %5d(%s), REG = %5d, NREAD = %6d, NWRITE = %3d\n",
+              ig->ignum, ig->var, STname[ig->var-1], ig->reg, ig->nread, 
+              ig->nwrite);
+   fprintf(fpout, "    begblks : ");
+   PrintBlockWithNum(fpout, ig->blkbeg);
+   fprintf(fpout, "    spanblk : ");
+   if (!ig->blkspan)
+      fprintf(fpout, " NONE\n");
+   else
+   {
+      fprintf(fpout, " %5d", ig->blkspan->blk->bnum);
+      for (bl=ig->blkspan->next; bl; bl = bl->next)
+         fprintf(fpout, ", %5d", bl->blk->bnum);
+      fprintf(fpout, "\n");
+   }
+   fprintf(fpout, "    endblks : ");
+   PrintBlockWithNum(fpout, ig->blkend);
+   fprintf(fpout, "    ldhoist : ");
+   PrintBlockWithNum(fpout, ig->ldhoist);
+   fprintf(fpout, "    stpush  : ");
+   PrintBlockWithNum(fpout, ig->stpush);
+   fprintf(fpout, "    conflict: %s\n", PrintVecList(ig->conflicts, 0));
+   fprintf(fpout, "\n\n"); 
 }
 
 void DumpIG(FILE *fpout, int N, IGNODE **igs)
@@ -2807,7 +2903,9 @@ int DoReverseCopyProp(BLIST *scope)
       CalcAllDeadVariables();
    else if (!CFUSETU2D || !CFU2D || !INUSETU2D)
       CalcInsOuts(bbbase);
-
+#if 0
+   fprintf(stderr, "%s\n",PrintBlockList(scope));
+#endif
    for (bl=scope; bl; bl = bl->next)
    {
       for (ip=bl->blk->ainstN; ip; ip = ipp)
@@ -2839,7 +2937,7 @@ int DoReverseCopyProp(BLIST *scope)
  */
                 nuse = 0;
 /*
- *              FIXED: why don't we traverse toward to find out the set of src!
+ *              FIXED: why don't we traverse upward to find out the set of src!
  *              We only check previous inst and go to the next .... !!!!
  */
                 //for (ips=ip->prev; ips; ips = ips->next)
@@ -2853,10 +2951,10 @@ int DoReverseCopyProp(BLIST *scope)
  *                 64 bit arch) inst with register likes : R8~R15. Specially
  *                 in the prologue of the function.
  */
-               #if defined (X86_64)                   
+               #if defined (X86_64)   
                    if (IS_SHORT_INT_OP(ips->inst[0]))
                    {
-                      if (dest > (IREGBEG+NSR) && 
+                      if (dest >= (IREGBEG+NSR) && 
                             (BitVecCheck(ips->set, src-1) || 
                             BitVecCheck(ips->use, src-1)) )
                       {
@@ -2920,6 +3018,8 @@ int DoEnforceLoadStore(BLIST *scope)
  * NOTE: presently can't do this, because then reg asg deletes store of
  *       absval to mem, which is needed for cleanup; you wind up with
  *       illegal reg move (from VFREG to FREG)
+ * FIXED: called RevealArchMemUses() before starting of any repeatable 
+ * optimizations
  */
 {
    BLIST *bl;
@@ -2954,7 +3054,7 @@ int DoEnforceLoadStore(BLIST *scope)
                op = 0;
 /*
  *          Majedul: Right now, I skipped the update of the 2nd src operand
- *          from here, add a new function to reveal this kind of arch event
+ *          from here, added a new function to reveal this kind of arch event
  */
             #if defined(X86) && 0 
                if (ip->inst[3] >= 0)
@@ -3009,7 +3109,7 @@ int DoEnforceLoadStore(BLIST *scope)
                      inst = VFLD;
                      break;
                   case T_VDOUBLE:
-                     inst = VDLD;
+                     inst = VDLD; 
                      break;
                #ifdef VIREGBEG
                   case T_VINT:
@@ -3091,7 +3191,11 @@ int DoRemoveOneUseLoads(BLIST *scope)
       {
          ipn = ip->next;
          inst = ip->inst[0];
-         if (IS_LOAD(inst) && inst != VFLDS && inst != VDLDS)
+/*
+ *       FIXED: we can't combine unaligned vector load
+ */
+         if (IS_LOAD(inst) && inst != VFLDS && inst != VDLDS
+               && !IS_UNALIGNED_VLOAD(inst))
          {
             k = -ip->inst[1];
             ipuse = FindNextUseInBlock(ip, k-1);
@@ -3174,7 +3278,13 @@ int DoLastUseLoadRemoval(BLIST *scope)
       {
          ipn = ipld->next;
          inst = ipld->inst[0];
-         if (IS_LOAD(inst) && inst != VFLDS && inst != VDLDS)
+/*
+ *       Majedul: we can't skip unaligned vector load and combine them
+ *       so, we can't do it with unaligned load
+ *       FIXED.
+ */
+         if (IS_LOAD(inst) && inst != VFLDS && inst != VDLDS 
+               && !IS_UNALIGNED_VLOAD(inst))
          {
             k = -ipld->inst[1];
             for (ip=ipld->next; ip; ip = ip->next)
