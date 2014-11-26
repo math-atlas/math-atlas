@@ -36,7 +36,9 @@ int DoAllAccumExpansion(LOOPQ *lp, int unroll, int vec);
 short *FindAllScalarVars(BLIST *scope);
 BLIST *FindAllFallHeads(BLIST *ftheads, INT_BVI iscope, BBLOCK *head, 
                         INT_BVI tails, INT_BVI inblks);
-BBLOCK *DupCFScope(INT_BVI ivscp0, INT_BVI ivscp, int dupnum, BBLOCK *head);
+/*BBLOCK *DupCFScope(INT_BVI ivscp0, INT_BVI ivscp, int dupnum, BBLOCK *head);*/
+BBLOCK *DupCFScope(INT_BVI ivscp0, INT_BVI ivscp, BBLOCK *head);
 BLIST *CF2BlockList(BLIST *bl, INT_BVI bvblks, BBLOCK *head);
 INSTQ *FindCompilerFlag(BBLOCK *bp, short flag);
+BBLOCK *DupBlock(BBLOCK *bold);
 #endif
