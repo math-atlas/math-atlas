@@ -2082,9 +2082,24 @@ int FindRegToSaveSP(BBLOCK *blk)
  * (recopying to new stack) in 1st block
  * NOTE: as rsav has to be live upto the last use of old SP reg, so any reg used
  * in this interval must be conflited with rsav and must not be used
+ * FIXME: how to findout the last recopying of param??? 1st block may contain 
+ * some additonal statement which uses the param??? 
+ * we are checking upto the 'done param' flag... should be a better way to do 
+ * so.
  */
    for (ip=blk->ainst1; ip; ip=ip->next)
    {
+/*
+ *    NOTE: right now, we only check upto CF_PARASAVE flag. If, by any chance, 
+ *    CMPFLAG gets dislocated, it will fail. 
+ *    CMPFLAG CF_PARASAVE 2 (1 means start, 2 means end)
+ */
+      if (ip->inst[0]==CMPFLAG && 
+          ip->inst[1]==CF_PARASAVE && ip->inst[2]==2)
+      {
+         //PrintThisInst(stderr, ip);
+         break;
+      }
       for (j=1; j <=3; j++)
       {
          k = ip->inst[j];
@@ -2094,6 +2109,7 @@ int FindRegToSaveSP(BBLOCK *blk)
             if (k >= IREGBEG && k < IREGEND) /* int reg */
             {
                /*fprintf(stderr, "reg[%d] = %s\n", j, archiregs[k-IREGBEG]);*/
+               //fprintf(stderr, "reg[%d] = %s\n", j, archiregs[k-IREGBEG]);
                SetVecBit(liveregs, k-1, 1);
             }
          }
@@ -2104,6 +2120,7 @@ int FindRegToSaveSP(BBLOCK *blk)
                if (k == li->id) /* so, now this an inst which loads param */
                {
                   /*PrintThisInst(stderr, ip);*/
+                 // PrintThisInst(stderr, ip);
                   iv = BitVecComb(iv, iv , liveregs, '|');
                   SetVecAll(liveregs, 0);
                }
@@ -2145,6 +2162,46 @@ int FindRegToSaveSP(BBLOCK *blk)
  */
    return (rsav); 
 }
+void FixParamLoad(BBLOCK *headblk, int rsav, int spderef)
+/*
+ * This function load old SP using spderef and replaces invalid rsav register
+ * with the register which is used to load the paramater itself. 
+ * only examines the parameter save area.
+ * NOTE: it's not the best way to solve the issue, but it will obviously work
+ * for all cases. Moreover, this case doesn't occur frequently.  
+ */
+{
+   int i;
+   short ireg;
+   INSTQ *ip;
+/*
+ * find out the starting of the parameter save zone
+ */
+   for (ip=headblk->ainst1; ip; ip=ip->next)
+      if (ip->inst[0]==CMPFLAG && 
+          ip->inst[1]==CF_PARASAVE && ip->inst[2]==1)
+         break;
+   assert(ip);
+   for ( ; ip; ip=ip->next)
+   {
+/*
+ *    check until the end of the parameter save zone reached
+ */   
+      if (ip->inst[0]==CMPFLAG && 
+          ip->inst[1]==CF_PARASAVE && ip->inst[2]==2)
+         break;
+      if (IS_LOAD(ip->inst[0]))
+      {
+         if (SToff[ip->inst[2]-1].sa[0] == rsav)
+         {
+            ireg = ip->inst[1];
+            SToff[ip->inst[2]-1].sa[0] = ireg;
+            InsNewInst(headblk, NULL, ip, LD, ireg, spderef, 0 );
+         }
+      }
+   }
+}
+
 
 /*
  *  NOTE: If a const is initialized but not used in body, gen invalid code
@@ -2297,7 +2354,12 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
  * purpose register here. But convensionally, rbp is saved right after the 
  * 'return address' that means at 0%(rsp) position and the value of rsp is 
  * saved in rbp when it is used as base pointer. and it is both for x86-32 and
- * x86-64. 
+ * x86-64.
+ * But I got an idea that it is optional and as we always omit frame pointer to
+ * have one extra register, I skipped that here. A wonderful discussion can be
+ * found here: 
+ * http://eli.thegreenplace.net/2011/09/06/stack-frame-layout-on-x86-64/
+ *
  */
    #if defined(X86_64) && 0 
       k = iName2Reg("@rbp"); /* FIXED: @rbp from %rbp*/
@@ -2455,10 +2517,6 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
                rsav++;
             assert(rsav < IREGEND);
          }
-      #if 1 
-         fprintf(stderr, "rsav = %d: %s\n", rsav, archiregs[rsav-IREGBEG]);
-         exit(0);
-      #endif
    #else
          rsav = GetReg(T_INT);
          rsav = GetReg(T_INT);
@@ -2467,8 +2525,9 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
          assert(rsav <= NSIR);
       #endif
    #endif
-#else 
-   #if 0          
+#endif
+
+#if 0         
 /*
  * Majedul: we can safely choice a reg which is not iparareg nor calleesave 
  * rsav is always 0 in new state implementation so far.
@@ -2488,19 +2547,29 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
          rsav = GetReg(T_INT);
          while (iparareg[rsav-IREGBEG] || icalleesave[rsav-IREGBEG]) 
             rsav = GetReg(T_INT);
-   #endif
+#endif
    
-   rsav = FindRegToSaveSP(oldhead->myblk);
-   assert(rsav); /* must be available */
-   #if 0
-         fprintf(stderr, "rsav = %d: %s\n", rsav, archiregs[rsav-IREGBEG]);
-   #endif
- #endif 
-         rsav = -rsav;
-         InsNewInst(NULL, NULL, oldhead, MOV, rsav, -REG_SP, 0);
+      rsav = FindRegToSaveSP(oldhead->myblk);
+/*
+ * FIXED: there still may not be any available register, because of the 
+ * conflict. But there will always be availabke registers if we only consider
+ * to save the SP and reload the old SP when we need to copy the parameters!!!
+ * If we don't have available register which is not in conflict, just use 
+ * a register which is neither callee-saved and used as parameter, like: rax
+ */
+      /*assert(rsav);*/  /* must be available */
+      if (!rsav)
+      {
+         fko_warn(__LINE__, "No registers to preserve old SP, loaded in place");
+         LOAD1 = -(IREGEND+1); /* mark with an invalid one */
+         rsav = GetReg(T_INT);
+         while (iparareg[rsav-IREGBEG] || icalleesave[rsav-IREGBEG]) 
+            rsav = GetReg(T_INT);
       }
-      else
-/*   #endif */
+      rsav = -rsav;
+      InsNewInst(NULL, NULL, oldhead, MOV, rsav, -REG_SP, 0);
+   }
+   else
    {
       PrintMajorComment(bbase, NULL, oldhead, "Adjust sp");
    }
@@ -2519,21 +2588,17 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
       InsNewInst(NULL, NULL, oldhead, SHL, -REG_SP, -REG_SP, i);
       spderef = AddDerefEntry(-REG_SP, 0, 0, SAVESP, 0);
       InsNewInst(NULL, NULL, oldhead, ST, spderef, rsav, 0);
-#if 0
 /*
- *    NOTE: we don't consider this case anymore. this is when we have available
- *    callee-saved registers 
+ *    NOTE: mark as an invalid one... correct letter!! 
  */
       if (LOAD1)
          rsav = -LOAD1;
-#endif
    }
    PrintMajorComment(bbase, NULL, oldhead, "Save registers");
    CorrectLocalOffsets(Loff);
 /*
- * Majedul: does it make anysense if the new sp is forced aligned using shift
- * operation? the distance of new sp from old one may not be tsize then. 
- * I guess, it is not used later as parameters are copied into the local area.
+ * NOTE: when the SP is forced aligned, rsav must be something else 0. 
+ * Aoff represents the distance of parameter from the old SP (frame pointer). 
  */
    CorrectParamDerefs(ParaDerefQ, rsav ? rsav : -REG_SP, 
                       rsav ? Aoff : tsize+Aoff);
@@ -2553,10 +2618,11 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
 /*
  * If we need old stack pointer in register that must be saved, load it here
  */
-#if 0  /* skipped this */ 
    if (LOAD1)
-      InsNewInst(NULL, NULL, oldhead, LD, rsav, spderef, 0);
-#endif
+   {
+      //InsNewInst(NULL, NULL, oldhead, LD, rsav, spderef, 0);
+      FixParamLoad(oldhead->myblk, rsav, spderef);
+   }
    GetReg(-1);
    FinalizeEpilogue(bbase, tsize, Soff, SAVESP, nir, ir, nfr, fr, ndr, dr);
    CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = 0;
