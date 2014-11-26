@@ -164,11 +164,13 @@ enum inst
  */
    VDZERO,                     /* [vr0]        : vr0[0:N] = 0.0 */
    VDLD,                       /* [vr0], [memA]  : vr0 = mem */
+   VDLDU,                      /* [vr0], [memU]  : vr0 = unaligned mem */
    VDLDS,                      /* [vr0], [mem]  :  vr0[0] = mem; vr0[1] = 0 */
    VDLDL,                      /* [vr], [mem]   : vr[0] = mem; vr[1] = vr[1] */
    VDLDH,                      /* [vr], [mem]   : vr[0] = vr[0]; vr[1] = mem */
    VDSTNT,                     /* [memA], vr0    : mem = vr0 */
    VDST,                       /* [memA], vr0    : mem = vr0 */
+   VDSTU,                      /* [memU], vr0    : unaligned mem = vr0 */
    VDSTS,                      /* [mem], [vr0]  :  mem = vr[0] */
    VDMOV,                      /* [vr0], [vr1]   : vr0 = vr1 */
    VDMOVS,                     /* [vr0], [vr1]   : vr0[0] = vr1[0] */
@@ -198,11 +200,13 @@ enum inst
  */
    VFZERO,                     /* [vr0]        : vr0[0:N] = 0.0 */
    VFLD,                       /* [vr0], [memA]  : vr0 = mem */
+   VFLDU,                      /* [vr0], [memU]  : vr0 = unaligned mem */
    VFLDS,                      /* [vr0], [mem]  :  vr0[0] = mem; vr0[1] = 0 */
    VFLDL,                      /* [vr], [mem]   : vr[0] = mem; vr[1] = vr[1] */
    VFLDH,                      /* [vr], [mem]   : vr[0] = vr[0]; vr[1] = mem */
    VFSTNT,                     /* [memA], vr0    : mem = vr0; no cache read */
    VFST,                       /* [memA], vr0    : mem = vr0 */
+   VFSTU,                      /* [memU], vr0    : unaligned mem = vr0 */
    VFSTS,                      /* [mem], [vr0]  :  mem = vr[0] */
    VFMOV,                      /* [vr0], [vr1]   : vr0 = vr1 */
    VFMOVS,                     /* [vr0], [vr1]   : vr0[0] = vr1[0] */
@@ -288,8 +292,10 @@ enum inst
    VICMPWGT,
 /* common for 32 and 64 bit */   
    VMOV,
-   VLD,
+   VLD,                     /* [vr0], [memA]  : vr0 = mem */
+   VLDU,                    /* [vr0], [memA]  : vr0 = unaligned mem */
    VST,
+   VSTU,                    /* [memU], vr0    : unaligned mem = vr0 */
 #if 0   
    VMOV,
    VMOVS,
@@ -531,11 +537,13 @@ char *instmnem[] =
  */
    "VDZERO",
    "VDLD",
+   "VDLDU",
    "VDLDS",
    "VDLDL",
    "VDLDH",
    "VDSTNT",
    "VDST",
+   "VDSTU",
    "VDSTS",
    "VDMOV",
    "VDMOVS",
@@ -556,11 +564,13 @@ char *instmnem[] =
  */
    "VFZERO",
    "VFLD",
+   "VFLDU",
    "VFLDS",
    "VFLDL",
    "VFLDH",
    "VFSTNT",
    "VFST",
+   "VFSTU",
    "VFSTS",
    "VFMOV",
    "VFMOVS",
@@ -636,7 +646,9 @@ char *instmnem[] =
 /* common for 64 and 32 bit */   
    "VMOV",
    "VLD",
+   "VLDU",
    "VST",
+   "VSTU",
 #if 0   
    "VMOV",
    "VMOVS",
@@ -785,9 +797,13 @@ char *instmnem[] =
                       (i_) == VFLDS || (i_) == VDLDS || \
                       (i_) == VFLDL || (i_) == VFLDH || \
                       (i_) == VDLDL || (i_) == VDLDH || \
-                      (i_) == VLD  || (i_) == VSLDS || \
-                      (i_) == VILDS )
-                      
+                      (i_) == VLD  ||  (i_) == VSLDS || \
+                      (i_) == VILDS || (i_) == VFLDU || \
+                      (i_) == VDLDU || (i_) == VLDU )
+
+#define IS_UNALIGNED_VLOAD(i_) ((i_) == VFLDU || (i_) == VDLDU || \
+                               (i_) == VLDU )
+
 #define IS_MOVE(i_) ((i_) == MOV || (i_) == FMOV || (i_) == FMOVD || \
                      (i_) == VFMOV || (i_) == VDMOV || \
                      (i_) == VMOV)
@@ -799,7 +815,11 @@ char *instmnem[] =
                        (i_) == VFSTS || (i_) == VDSTS || \
                        (i_) == VFSTNT || (i_) == VDSTNT || \
                        (i_) == VST || (i_) == VSSTS || \
-                       (i_) == VISTS )
+                       (i_) == VISTS || (i_) == VFSTU || \
+                       (i_) == VDSTU || (i_) == VSTU )
+
+#define IS_UNALIGNED_VSTORE(i_) ((i_) == VFSTU || (i_) == VDSTU || \
+                                 (i_) == VSTU )
 
 #define IS_CMPW(i_)  ((i_) == FCMPDWEQ || (i_) == FCMPDWNE || \
                       (i_) == FCMPDWLT || (i_) == FCMPDWLE || \
@@ -856,6 +876,8 @@ char *instmnem[] =
  * Majedul: These are the instructions where destination is inherently used as
  * one of the sources. This is due to map 4 operands instruction into our 
  * three operand LIL instruction.
+ * NOTE: SHUFFLE and ireg2vreg instructions may keep the destination unchanged
+ * at certain positions. So, destination is also implicitly used for them
  */
 #define IS_DEST_INUSE_IMPLICITLY(i_) ((i_) == FMAC || (i_) == FMACD || \
                                       (i_) == VFMAC || (i_) == VDMAC || \
@@ -865,7 +887,8 @@ char *instmnem[] =
                                       (i_) == VDCMOV1 || (i_) == VDCMOV2 || \
                                       (i_) == CMOV1 || (i_) == CMOV2 || \
                                       (i_) == VSCMOV1 || (i_) == VSCMOV2 || \
-                                      (i_) == VICMOV1 || (i_) == VICMOV2) 
+                                      (i_) == VICMOV1 || (i_) == VICMOV2 || \
+                                      IS_SHUFFLE_OP(i_) || IS_IREG2VREG_OP(i_) ) 
 
 #define IS_SELECT_OP(i_) ((i_) == CMOV1   || (i_) == CMOV2  || \
                           (i_) == FCMOV1  || (i_) == FCMOV2 || \
@@ -886,6 +909,12 @@ char *instmnem[] =
                               (i_) == DIVS   || (i_) == UDIVS || \
                               (i_) == CMPS   || (i_) == MOVS || \
                               (i_) == NEGS   || (i_) == ABSS )
+
+#define IS_SHUFFLE_OP(i_)   ( (i_) == VFSHUF   || (i_) == VDSHUF || \
+                              (i_) == VSSHUF   || (i_) == VISHUF )
+
+#define IS_IREG2VREG_OP(i_) ( (i_) == VGR2VR16 || (i_) == VGR2VR32 || \
+                              (i_) == VGR2VR64 )
 
 INSTQ *NewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,
                short dest, short src1, short src2);
