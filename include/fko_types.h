@@ -162,7 +162,12 @@ struct blist
  * flag for Loop markups
  */
 /*#define LMU_MUTUALLY_ALIGNED 1*/ /*all ptr are mutually aligned inside loop */
-
+/*
+ * NOTE: when even we add/update any element of this data structure, we need to
+ * check following functions whether it affects or not:
+ * InvalidateLoopInfo, KillFullLoop, 
+ * WriteState0MiscToFile, ReadState0MiscFromFile
+ */
 typedef struct loopq LOOPQ;
 struct loopq
 {
@@ -199,10 +204,25 @@ struct loopq
  * where we would need this adjustment.
  */
    short *vvinit;    /* sometime special adjustment is needed to init a vector*/
+/*
+ * alignment related.
+ * Note: mbalign indicate mutual alignmnet byte. Same value of the arrays in 
+ * this list indicate mutual alignment among themselves
+ * NOTE NOTE NOTE:
+ * we support '*' for all ptrs/arrays in markup and there is no way to find out
+ * moving ptr without analyis at that stage. So, we keep ptr as NULL and byte as
+ * the aligned value to indicate that case. e.g., 
+ * aaligned == NULL and abalign !=NULL (abalign[0] == 1) indicate that all 
+ * arrays are aligned to the spicific byte found in abaligned[1]. 
+ */
+   short *aaligned;   /* arrays that have known alignment */
+   short *abalign;    /* alignments of above arrays */
+   short *maaligned;    /* arrays which are mutually aligned with other arrays */
+   short *mbalign;    /* mutual alignment byte of the above array */
+   short *faalign;    /* arrays need to be force aligned */
+   short *fbalign;    /* alignments of the above arrays */
+
    short *nopf;      /* arrays which should not be prefetched */
-   short *aaligned;  /* arrays that have known alignment */
-   uchar *abalign;   /* alignments of above arrays */
-   short malign;     /* if mutually aligned,what it aligned for, 0 not malign */  
    short *pfarrs;     /* arrays which should be prefetched */
    short *pfdist;     /* dist in bytes to prefetch pfarrs */
    short *pfflag;     /* flag for prefetch */
