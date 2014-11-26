@@ -114,7 +114,6 @@ void DoMove(short dest, short src)
    int sflag, type;
    enum inst mov;
    sflag = STflag[src-1];
-
    if (IS_CONST(sflag))
    {
       type = FLAG2PTYPE(sflag);
@@ -987,8 +986,9 @@ short AddOpt2dArrayDeref(short base, short hdm, short ldm, int unroll)
  */
 {
    int i;
-   int hdmi, ldmi;
+   int hdmi, ldmi, dsize;
    short dt, ptr1, ptr2, ptr3;
+   short flag;
    short ldaS, nldaS, m3ldaS;
 /*
  * assuming both indice of the array are const
@@ -998,6 +998,18 @@ short AddOpt2dArrayDeref(short base, short hdm, short ldm, int unroll)
 
    hdmi = SToff[hdm-1].i;
    ldmi = SToff[ldm-1].i;
+#if 1
+/*
+ * FIXED: lower dimension will be used as offset. It should be multiplied by
+ * the datatype 
+ */
+   dsize = 4;
+   flag = STflag[STarr[base-1].ptr-1];
+   if (IS_DOUBLE(flag)) dsize = 8;
+   else if (IS_CHAR(flag)) dsize =1;
+   assert(!IS_VEC(flag));
+   ldmi = ldmi * dsize;
+#endif
 /*
  * init ptr and lda
  */
