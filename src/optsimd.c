@@ -9,7 +9,7 @@ static int NPATH = 0, TNPATH = 0, VPATH = -1;
  * of vectorization.
  * NOTE: NO NEED NOW, SHOULD BE DELETED!
  */
-int isSSV = 0;
+/*int isSSV = 0;*/
 
 void NewPathTable(int chunk)
 {
@@ -704,7 +704,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
    return(0);
 }
 
-INSTQ *AddAlignTest(LOOPQ *lp, BBLOCK *bp, INSTQ *ip, int fa_label)
+INSTQ *AddAlignTest(LOOPQ *lp, BBLOCK *bp, INSTQ *ip, short fptr, int fa_label)
 {
    int k;
    int r0, r1;
@@ -727,7 +727,7 @@ INSTQ *AddAlignTest(LOOPQ *lp, BBLOCK *bp, INSTQ *ip, int fa_label)
  * NOTE: in X8664, reg is 64 bit but int is 32 bit. As we use constant
  * the CMPAND should not create any problem.
  */
-   ip = InsNewInst(bp, ip, NULL, LD, -r0, SToff[lp->varrs[1]-1].sa[2], 0);
+   ip = InsNewInst(bp, ip, NULL, LD, -r0, SToff[fptr-1].sa[2], 0);
    ip = InsNewInst(bp, ip, NULL, CMPAND, -ICC0, -r0, k );
    ip = InsNewInst(bp, ip, NULL, JNE, -PCREG, -ICC0, fa_label);
    
@@ -758,10 +758,12 @@ short InsertNewLocal(char *name, int type )
    return k;
 }
 #endif
-BLIST *AddLoopDupBlks(LOOPQ *lp, BBLOCK *up, BBLOCK *down, int lbNum)
+BLIST *AddLoopDupBlks(LOOPQ *lp, BBLOCK *up, BBLOCK *down)
 /*
  * Returns pointer of block list of duplicated blocks, adding duplicated 
  * loop blocks between up and down blocks using lbNum label index extension
+ * NOTE: lbNum is not used anymore. A static variable is kept inside DupCFScope
+ * to manage the label. so, it's deleted
  */
 {
    BLIST *dupblks, *ftheads, *bl;
@@ -773,15 +775,32 @@ BLIST *AddLoopDupBlks(LOOPQ *lp, BBLOCK *up, BBLOCK *down, int lbNum)
 /*
  * Duplicate original loop body
  */
+#if 0
    SetVecBit(lp->blkvec, lp->header->bnum-1, 0);
    if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
    FKO_BVTMP = iv = BitVecCopy(FKO_BVTMP, lp->blkvec);
-   newCF = DupCFScope(lp->blkvec, iv, lbNum, lp->header); 
+   /*newCF = DupCFScope(lp->blkvec, iv, lbNum, lp->header);*/
+   newCF = DupCFScope(lp->blkvec, iv, lp->header); 
    assert(newCF->ilab);
+   SetVecBit(lp->blkvec, lp->header->bnum-1, 1);
+#else
+/*
+ * NOTE: first blk scope should include the header, because ivscp0 in 
+ * DupScope0 only is used to change the branch target. It was not necessary 
+ * before as we always duplicate the loop after killing the loop control. 
+ * But we may need to duplicate the loop with the loop control. In that case,
+ * it won't change the target of back edge of the loop. 
+ * Here, we want to add the header as the ivscp0 but skip that in ivscp
+ */
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
+   FKO_BVTMP = iv = BitVecCopy(FKO_BVTMP, lp->blkvec);
+   SetVecBit(iv, lp->header->bnum-1, 0);
+   newCF = DupCFScope(lp->blkvec, iv, lp->header); 
+   assert(newCF->ilab);
+#endif
 /*
  * Use CF to produce a block list of duped blocks
  */
-   SetVecBit(lp->blkvec, lp->header->bnum-1, 1);
    iv = BitVecCopy(iv, lp->blkvec);
    dupblks = CF2BlockList(NULL, iv, newCF);
 
@@ -826,7 +845,7 @@ BLIST *AddLoopDupBlks(LOOPQ *lp, BBLOCK *up, BBLOCK *down, int lbNum)
 }
 
 void AddLoopPeeling(LOOPQ *lp, int jblabel, int falabel, short Np, 
-                    short Nv)
+                    short Nv, short fptr)
 /*
  * original loop, lp = [N, -1, 0] or, [0, 1, N]
  * 
@@ -881,7 +900,7 @@ void AddLoopPeeling(LOOPQ *lp, int jblabel, int falabel, short Np,
    k = type2shift(lp->vflag);
    r0 = GetReg(T_INT);
    r1 = GetReg(T_INT);
-   ip = InsNewInst(bp, ip, NULL, LD, -r0, SToff[lp->varrs[1]-1].sa[2], 0);
+   ip = InsNewInst(bp, ip, NULL, LD, -r0, SToff[fptr-1].sa[2], 0);
    ip = InsNewInst(bp, ip, NULL, MOV, -r1, -r0, 0);
    ip = InsNewInst(bp, ip, NULL, ADD, -r0, -r0, STiconstlookup((1<<k)-1));
    ip = InsNewInst(bp, ip, NULL, SHR, -r0, -r0, STiconstlookup(k));
@@ -946,6 +965,7 @@ void AddLoopPeeling(LOOPQ *lp, int jblabel, int falabel, short Np,
  * NOTE: NO need now as controlled by static variable
  *
  */
+#if 0
    if (NPATH >  0 && isSSV) /* SSV is aplied */
    {
       lnum = (NPATH -1) * Type2Vlen(lp->vflag) + 1; /* keep space for SSV*/
@@ -954,8 +974,8 @@ void AddLoopPeeling(LOOPQ *lp, int jblabel, int falabel, short Np,
    { 
       lnum = FKO_UR + 1;  /* need to reserve label for unroll */
    }
-   
-   dupblks = AddLoopDupBlks(lp, bp0, bp0->down, lnum );
+#endif   
+   dupblks = AddLoopDupBlks(lp, bp0, bp0->down);
 /*
  * Create new loop structure for peel loop
  * loop structure: [ N, -1, N-Np]
@@ -1052,6 +1072,42 @@ void AddLoopPeeling(LOOPQ *lp, int jblabel, int falabel, short Np,
    KillLoop(lpn); 
 }
 
+short FindPtrToForceAlign(LOOPQ *lp)
+/*
+ * return ST index of ptr to force align
+ */
+{
+   int i;
+   short *sp;
+/*
+ * if there exist a ptr from FORCE_ALIGN markup
+ */
+   if (lp->faalign)  /* if exist, return the 1st one */
+      return (lp->faalign[1]);
+   else if (!lp->faalign && lp->fbalign)
+      return (lp->varrs[1]);
+/*
+ * if no ptr is specified in markup, find out best candidate
+ * here is strategy to do that:
+ * 1. ptr which has max read/write access
+ * 2. ptr which is mutually aligned with other ptr
+ */   
+   sp = lp->varrs;
+   if (lp->maaligned)
+      sp = lp->maaligned;
+   /*else if (!lp->maaligned && lp->mbalign)
+      sp = lp->varrs;*/
+/*
+ * Here Here... choose a ptr which is access more from sp !!!
+ * FIXME: 
+ */
+         
+/*
+ * by default, first available moving ptr
+ */
+   return(lp->varrs[1]);
+}
+
 void GenForceAlignedPeeling(LOOPQ *lp)
 /*
  * Generate code of loop peeling for force aligned. works only with single 
@@ -1066,6 +1122,7 @@ void GenForceAlignedPeeling(LOOPQ *lp)
    BBLOCK *bp;
    INSTQ *ip;
    short Np, Nv;
+   short fptr;    /* array which needs to be forced aligned */
    int r0, r1;
    LOOPQ *lpn;
    extern BBLOCK *bbbase;
@@ -1074,36 +1131,6 @@ void GenForceAlignedPeeling(LOOPQ *lp)
  */
    Np = InsertNewLocal("_Np", T_INT ); /* actually save, N-Np or Np value */
    Nv = InsertNewLocal("_Nv", T_INT ); /* 1st, N then changed to N-Np or N*/
-#if 0
-/*
- * Create new loop structure for peel loop
- * loop structure: [ N, -1, N-Np]
- * main loop: now [N, -1, 0] will be: [N-Np, -1, 0]
- */
-   lpn = NewLoop(lp->flag);
-   lpn->I = lp->I;
-   if (lp->flag | L_NINC_BIT )
-   {
-      assert(IS_CONST(STflag[lp->end-1]) && (SToff[lp->end-1].i == 0));
-      assert(IS_CONST(STflag[lp->inc-1]) && SToff[lp->inc-1].i == -1);
-      
-      lpn->beg = Np;
-      lpn->end = lp->end;
-      lpn->inc = lp->inc;
-   }
-   else if (lp->flag | L_PINC_BIT )
-   {
-      assert(IS_CONST(STflag[lp->beg-1]) && (SToff[lp->beg-1].i == 0));
-      assert(IS_CONST(STflag[lp->inc-1]) && SToff[lp->inc-1].i == 1);
-      
-      lpn->beg = lp->beg;
-      lpn->end = Np;
-      lpn->inc = lp->inc;
-   }
-   else
-      assert(0);
-#endif
-
 /*
  * find the location to add checking of alignment. 
  */
@@ -1151,123 +1178,133 @@ void GenForceAlignedPeeling(LOOPQ *lp)
    }
    GetReg(-1);
 /*
+ * find out the array which needs to be forced aligned
+ * FIXME: apply new design!!
+ */
+#if 0  
+   if (lp->faalign) 
+     fptr = lp->faalign[1];    /* the ptr which is specified in markup */
+  else
+     fptr = lp->varrs[1];     /* 1st availbale ptr */
+#else
+  fptr = FindPtrToForceAlign(lp);
+#endif
+/*
  * Add the checking of alignment. it is always related with the vector length
  * the system supports, eg.- for SSE vlen 128bit, for AVX, 256 bit.
  */
-   ip = AddAlignTest(lp, bp, ip, fAlabel); 
+   ip = AddAlignTest(lp, bp, ip, fptr, fAlabel); 
    ip = InsNewInst(bp, ip, NULL, LABEL, jBlabel,0,0);   
 
 /*
  * Add loop peeling at the end of the code after cleanup (if this function is 
  * called after cleanup, otherwise after ret)
  */
-   AddLoopPeeling(lp, jBlabel, fAlabel, Np, Nv);
+   AddLoopPeeling(lp, jBlabel, fAlabel, Np, Nv, fptr);
   /* KillLoop(lpn); */
 }
 
-int IsLoopPeelOptimizable(LOOPQ *lp)
+int IsSIMDalignLoopPeelable(LOOPQ *lp)
 {
-   int peel, flag;
+   int i, k, n;
+   int flag;
    short beg, end, inc;
 
-   peel = 1;
    beg = lp->beg;
    end = lp->end;
    inc = lp->inc;
    flag = lp->flag;
 /*
- * For now, the necessary conditions:
- * 1. Only one Moving array ptr
+ * Redesigned: For now, the necessary conditions:
+ * 
+ * 1. Must have atleast one moving ptr 
  * 2. Must be vectorized
- * 3. Simple loop format: [N, -1, 0] or, [0, 1, N]
+ * 3. optloop must be in simple format: [N,-1,0] or, [0,1,N]
+ * 4. Not all array ptr are aligned to vector length
+ *    a) using markup : ALIGNED(32) :: *;
+ *    b) no array/ptr which is not aligned
  */
 /*
- * NO moving ptr !!!, not peelable 
+ * 1. NO moving ptr !!!, not peelable 
  */
    if (!lp->varrs) 
    {
-#if 1
-      fprintf(stderr, "NO moving ptr!!! \n");
-#endif
+      fko_warn(__LINE__, "NOT PEELABLE: NO moving ptr!!! \n");
       return 0; 
    }
-
-   if (lp->varrs[0] > 1) 
-   {
 /*
- *    Note: if loop markup says, all ptr are mutually aligned, apply peeling
- *    even there are multiple ptr. 
+ * 2. Must be vectorized
+ * Note: This is normally called inside vectorization itself; so, by default 
+ * vectorization flag is on. Now, let's see whether any vectorizable path 
+ * exists as we call the same analyzer for all type of vectorization 
  */
-#if 0      
-      if (lp->LMU_flag & LMU_MUTUALLY_ALIGNED_VLEN)
-      {
-         /*fprintf(stderr, "MUTUALLY ALIGNED!!!\n");*/
-      }
-#endif
-      if (lp->malign && lp->malign == type2len(lp->vflag))
-      {
-         /*fprintf(stderr, "MUTUALLY ALIGNED TO VECTOR LENGTH!!!\n");*/
-         /*fprintf(stderr, "malign = %d, vlen = %d\n", lp->malign, 
-                 type2len(lp->vflag));*/
-      }
-      else
-      {
-         peel = 0;  
-         fko_warn(__LINE__,"more than one moving array ptr" 
-               " prevents align-peel!!\n");
-      }
-   }
-/*
- * Always call after confirming vectorization.
- */
-
-#if 0  
    if (VPATH == -1)
    {
-      peel = 0;
-      fprintf(stderr,"No Vectorizable Path for SSV, no need to align-peel!!\n");
+      fko_warn(__LINE__,"NOT PEELABLE: No Vectorizable Path exists!!!\n");
+      return 0;
    }
-#endif
 /*
- * Majedul: Need to release the strickness of the condition....
+ * 3. optloop must be in simple format: [N,-1,0] or [0,1,N]
+ * NoTE: N can be variable or const, but make sure it has sufficient iterations
  */
-   if (flag & L_NINC_BIT)
+   if (flag & L_NINC_BIT) // should be [N,-1,0]
    {
-      if (!IS_CONST(STflag[end-1]) || SToff[end-1].i != 0 ) 
+      if (!IS_CONST(STflag[end-1]) || SToff[end-1].i != 0 || 
+            !IS_CONST(STflag[inc-1]) || SToff[inc-1].i != -1)
       {
-         peel = 0;
+         fko_warn(__LINE__, "NOT PEELABLE: NINC not in [N,-1,0] format");
+         return 0;
       }
-      if (!IS_CONST(STflag[inc-1]) || SToff[inc-1].i != -1 ) 
-      {
-         peel = 0;
-      }
-      if (!peel) fko_warn(__LINE__, "NINC: must be [N, 0, -1] format \n");
    }
-   else if (flag & L_PINC_BIT)
+   else if (flag & L_PINC_BIT) // should be [0,1,N]
    {
-      if ( !(IS_CONST(STflag[beg-1]) && SToff[beg-1].i == 0) ) 
+      if (!IS_CONST(STflag[beg-1]) || SToff[beg-1].i != 0 || 
+            !IS_CONST(STflag[inc-1]) || SToff[inc-1].i != 1 )
       {
-         peel = 0;
-         fko_warn(__LINE__,"beg = %d, Const?=%d !!\n", SToff[beg-1].i, 
-                 IS_CONST(STflag[lp->beg-1]));
+         fko_warn(__LINE__, "NOT PEELABLE: PINC not in [0,1,N] format(%d,%d)",
+                  SToff[beg-1].i, SToff[inc-1].i);
+         return 0;
       }
-      if (!(IS_CONST(STflag[inc-1]) && SToff[inc-1].i == 1) ) 
-      {
-         peel = 0;
-         fko_warn(__LINE__,"inc = %d, Const?=%d !!\n", SToff[inc-1].i, 
-                 IS_CONST(STflag[lp->inc-1]));
-      }
-      if (!peel) fko_warn(__LINE__,"PINC: must be [0, N, 1] format:[%d,%d]!!\n",
-                         SToff[beg-1].i, SToff[inc-1].i);
    }
-   else 
+   else
    {
-      peel = 0;
-      fko_warn(__LINE__, "Neither NINC nor PINC, no align-peel!! \n");
+      fko_warn(__LINE__, "NOT PEELABLE: Unknown optloop control format!!!");
+      return 0;
    }
-   
-   return peel;
+/*
+ * 4. Not all array ptr are aligned to vector length
+ *    a) using markup : ALIGNED(32) :: *;
+ *    b) no array/ptr which is not aligned
+ */
+   if (!lp->aaligned && lp->abalign)  
+   {
+
+      if (lp->abalign[1] >= type2len(lp->vflag)) // ALIGNED(VB) :: *;
+      {
+         fko_warn(__LINE__, "NO PEELING: all are aligned to vlen or greater");
+         return 0;
+      }
+   }
+   else if (lp->aaligned) /* alignment is specified for some ptr */
+   {
+      for (n=lp->varrs[0], i=1; i <= n; i++)
+      {
+         k = lp->varrs[i];
+         if (!(k = FindInShortList(lp->aaligned[0], lp->aaligned+1, k)))
+            break;
+         else if (lp->abalign[k] < type2len(lp->vflag)) /*k = index of aptr */
+            break;
+      }
+      if (i>n) /* no moving ptr which is not aligned to vlen */
+      {
+         fko_warn(__LINE__, "NO PEELING: all are aligned to vlen or greater");
+         return 0;
+      }
+   }
+
+   return(1); /* no known case which prohibits loop peeling; so do it */
 }
+
 int SimdLoop(LOOPQ *lp)
 {
    short *sp;
@@ -1350,7 +1387,7 @@ int SimdLoop(LOOPQ *lp)
  */
 
 #if 1
-   if (IsLoopPeelOptimizable(lp))
+   if (IsSIMDalignLoopPeelable(lp))
       GenForceAlignedPeeling(lp);
 #endif   
 /*
@@ -2109,6 +2146,9 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
 #if 0
    fprintf(stderr,"Vars of path %d \n", path->pnum);
    PrintVars(stderr, "ALL VARS",iv);
+   PrintInst(stdout,bbbase);
+   PrintLoop(stderr, loopq);
+   exit(0);
 #endif
 
 /*
@@ -3190,12 +3230,20 @@ void SpecVecPathXform(BLIST *scope, LOOPQ *lp)
                          VFCMPWGE},
          vdcmpinsts[] = {VDCMPWEQ, VDCMPWNE, VDCMPWLT, VDCMPWLE, VDCMPWGT, 
                          VDCMPWGE};
+/*
+ * vector memory aligned and unaligned load/store
+ */
+   static enum inst 
+      valign[] = {VFLD, VDLD, VLD, VFST, VDST, VST},
+      vualign[] = {VFLDU, VDLDU, VLDU, VFSTU, VDSTU, VSTU};
+
    enum inst inst, binst, mskinst;
    short sregs[TNFR], vregs[TNFR];
    short op, ir, vrd;
    enum inst *sinst, *vinst, *vcmpinst;
    const int nbr = 6;
    const int nvinst = 11;
+   const int nvalign = 6; /* number of align/unalign inst */
 
    nfr = 0;
 /*
@@ -3412,6 +3460,30 @@ void SpecVecPathXform(BLIST *scope, LOOPQ *lp)
                                  ip->inst[j] = SToff[lp->vvscal[k]-1].sa[2];
                                  assert(ip->inst[j] > 0);
                               }
+#if 0                              
+/*
+ *                         otherwise, it is a memory load/store
+ *                         check for appropriate alignment using alignment 
+ *                         markups
+ *                         NOTE: if we have markup for force aligned, rest of
+ *                         the arrays are unaligned... we may still have no 
+ *                         force aligned array by the markup mutually unaligned 
+ *                         is specifies that they are not mutually aligned. We
+ *                         use 1st array in varrs to align in loop peeling..
+ */
+                              else
+                              {  
+                                 if ((lp->falign && k != lp->falign[1]) || 
+                                     (lp->malign == -1 && !lp->falign && 
+                                        k != lp->varrs[1]) )
+                                 {
+                                    k = FindInstIndex(nvalign, valign, 
+                                                      ip->inst[0]);
+                                    if (k != -1)
+                                       ip->inst[0] = vualign[k];
+                                 }
+                              }
+#endif                              
                            }
                            else if (!FindInShortList(lp->varrs[0],lp->varrs+1,
                                     op))
@@ -4526,7 +4598,7 @@ int RedundantVectorTransform(LOOPQ *lp)
  */
 
 #if 1
-   if (IsLoopPeelOptimizable(lp))
+   if (IsSIMDalignLoopPeelable(lp))
       GenForceAlignedPeeling(lp);
 #endif   
 
@@ -5692,7 +5764,8 @@ void DupBlkPathWithOpt(LOOPQ *lp, BLIST **dupblks, int islpopt, int UsesIndex,
    {
       SetVecBit(lp->blkvec, lp->header->bnum-1, 0);
       FKO_BVTMP = iv = BitVecCopy(FKO_BVTMP, lp->blkvec);
-      newCF = DupCFScope(lp->blkvec, iv, fid++, lp->header);
+      /*newCF = DupCFScope(lp->blkvec, iv, fid++, lp->header);*/
+      newCF = DupCFScope(lp->blkvec, iv, lp->header);
       assert(newCF->ilab);
       SetVecBit(lp->blkvec, lp->header->bnum-1,1);
       iv = BitVecCopy(iv, lp->blkvec);
@@ -6335,9 +6408,9 @@ int SpecSIMDLoop(int SB_UR)
  * control structure of main loop, hence the cleanup loop. 
  * all the loop control should be killed before loop peeling or, cleanup loop.
  */
-   isSSV = 1;
+   /*isSSV = 1;*/
 #if 1   
-   if (IsLoopPeelOptimizable(lp))
+   if (IsSIMDalignLoopPeelable(lp))
       GenForceAlignedPeeling(lp);
 #endif
 
@@ -6954,6 +7027,9 @@ int RcPathVectorAnalysis(LOOPPATH *path)
  *                imax_1 = N - i; // imax_1 = i;
  *                imask_1 = CVT(mask_1);
  *                imax = select(imax, imax_1, imask_1);
+ *
+ *       NOTE: we don't need to vectorize index variable of any DT entry
+ *       This is scoped out lated  
  */
 #if 1
          sp[n++] = sp[i];
@@ -6965,7 +7041,7 @@ int RcPathVectorAnalysis(LOOPPATH *path)
          //errcode += 1;
       }
 /*
- *    Use of index variable [need to check by condtion? ]
+ *    set of index variable [need to check by condtion? ]
  *    NOTE: need to check the index var variable whether it is set outside
  *    of the loop control. Make sure loop control is killed before.
  */
@@ -7577,12 +7653,86 @@ int RcPathVectorAnalysis(LOOPPATH *path)
 #endif 
 return errcode;
 }
+
+int IsOnlyUseAsDTindex(short var, short flag, BLIST *scope)
+{
+   int i, ret;
+   short op, fl;
+   INSTQ *ip, *ipDT;
+   BLIST *bl;
+   BBLOCK *bp;
+
+   ret = 0;
+#if 0   
+   fprintf(stderr, "%s [%d] : ", 
+                    STname[var-1], flag);
+            if (flag & SC_SET) fprintf(stderr, "SET ");
+            if (flag & SC_USE) fprintf(stderr, "USE ");
+            if (flag & SC_MAX) fprintf(stderr, "MAX ");
+            if (flag & SC_SELECT) fprintf(stderr, "SELECT ");
+            fprintf(stderr, "\n");
+   
+#endif
+/*
+ * if the integer variable is set, it can't be skipped as DT index
+ */
+   if (flag & SC_SET)
+      return (0);
+/*
+ * Analyze the instructions, check whether it is only used as DT index 
+ * variable
+ */
+   for (bl=scope; bl; bl=bl->next)
+   {
+      bp = bl->blk;
+      for (ip=bp->ainst1; ip; ip=ip->next)
+      {
+         if (IS_LOAD(ip->inst[0]) && STpts2[ip->inst[2]-1] == var )
+         {
+            /*PrintThisInst(stderr, ip);*/
+            ipDT = ip->next;
+            while (IS_LOAD(ipDT->inst[0]))
+            {
+               if (ipDT->inst[0] == FLD || ipDT->inst[0] == FLDD) 
+               {
+                  op = ipDT->inst[2];
+                  fl = STflag[op-1];
+                  if (IS_DEREF(fl) && !IS_LOCAL(fl))
+                  {
+/*
+ *                   FIXME: there should be a way to check the DT entry 
+ *                   whether it uses the var as index
+ */
+                     /*fprintf(stderr, "DT: %d [%d, %d, %d, %d]\n", op, 
+                             SToff[op-1].sa[0], SToff[op-1].sa[1],
+                             SToff[op-1].sa[2], SToff[op-1].sa[3] );*/
+                     ret = 1;
+                  }
+
+               }
+               ipDT=ipDT->next;
+            }
+/*
+ *          if the variable is used in any arithmatic operation, but not just
+ *          load of any float/double, it doesn't meet the constrain
+ */
+            if (!IS_STORE(ipDT->inst[0]))
+               return(0);
+            /*else
+               ret = 1;*/
+         }
+      }
+   }
+
+   return ret;
+}
 /*
  * Need to make this Vector analysis general for all VRC
  */
 int RcVectorAnalysis()
 {
    int i, j, k, n;
+   int *vpindx;
    int errcode, isIscal;
    char ln[512];
    short *sp;
@@ -7590,6 +7740,7 @@ int RcVectorAnalysis()
    LOOPQ *lp;
    extern LOOPQ *optloop;
    extern BBLOCK *bbbase;
+   extern int VECT_FLAG;
 
 
    lp = optloop;
@@ -7634,7 +7785,57 @@ int RcVectorAnalysis()
       {
          lp->varrs[i] = vpath->varrs[i];
       }
+/*
+ *    skip all integer variables which are used as DT index
+ *    vpidx saves the vpath->vscal index of other variables 
+ */
+      vpindx = malloc(sizeof(int)*(vpath->vscal[0]+1));
+      assert(vpindx);
+      j=1;
+      sp = vpath->vscal;
+      for (i=1; i<=sp[0]; i++)
+      {
+         if (IS_INT(STflag[sp[i]-1]) && 
+             IsOnlyUseAsDTindex(sp[i],vpath->sflag[i], lp->blocks))
+         {
+/*
+ *          skip the variable, not need to vectorize it
+ *          NOTE: vpindx saves the index of the list
+ */
+            //fprintf(stderr, "USE only as DT index\n");
 
+         }
+         else
+            vpindx[j++] = i;
+      }
+      n = j-1;
+      vpindx[0]=n;
+#if 0      
+      fprintf(stderr, "n(%d)=%d\n",vpath->vscal[0],n);
+      for (i=0; i<=n; i++)
+         fprintf(stderr, " %d ", vpindx[i]);
+      fprintf(stderr, "\n");
+      exit(0);
+#endif
+      lp->vscal = malloc(sizeof(short)*(n+1));
+      lp->vvscal = malloc(sizeof(short)*(n+1));
+      lp->vsflag = malloc(sizeof(short)*(n+1));
+      lp->vsoflag = malloc(sizeof(short)*(n+1));
+      lp->vvinit = calloc((n+1), sizeof(short)); /* for special vector init  */
+      assert(lp->vscal && lp->vvscal && lp->vsflag && lp->vsoflag && lp->vvinit);
+/*
+ *    set the count
+ */
+      lp->vscal[0] = lp->vvscal[0] = lp->vsflag[0] = lp->vsoflag[0] 
+                   = lp->vvinit[0] = n;
+      for (i=1; i <= n; i++)
+      {
+         lp->vscal[i] = vpath->vscal[vpindx[i]];
+         lp->vsflag[i] = vpath->vsflag[vpindx[i]];
+         lp->vsoflag[i] = vpath->vsoflag[vpindx[i]];
+      }
+   
+#if 0
       n = vpath->vscal[0];
       lp->vscal = malloc(sizeof(short)*(n+1));
       lp->vvscal = malloc(sizeof(short)*(n+1));
@@ -7648,46 +7849,46 @@ int RcVectorAnalysis()
          lp->vsflag[i] = vpath->vsflag[i];
          lp->vsoflag[i] = vpath->vsoflag[i];
       }
+#endif 
 /*
  * Create vector local for all vector scalars in loop
  */
       lp->vflag = vpath->vflag;
-      //k = LOCAL_BIT | FLAG2TYPE(vpath->vflag);
       lp->vvscal[0] = n;
-      sp = vpath->vscal + 1;
+      sp = lp->vscal + 1;
       for (i=0; i < n; i++)
       {
          sprintf(ln, "_V%d_%s", i, STname[sp[i]-1] ? STname[sp[i]-1] : "");
 #if 0
          fprintf(stderr, "....%s->%s\n", STname[sp[i]-1], ln);
 #endif
-         //j = lp->vvscal[i+1] = STdef(ln, k, 0);
-         //SToff[j-1].sa[2] = AddDerefEntry(-REG_SP, j, -j, 0, j);
          if (IS_INT(STflag[sp[i]-1]))
          {
 /*
- *    FIXME: we skip index variable. So, we will not get that here. But this
- *    will create problem in vectorization. We need a way to manage the use of 
- *    integer variable.
+ *          FIXME: we skip index variable. So, we will not get that here. use of
+ *          index variable may complicated the vectorization itself. We only 
+ *          support certain pattern for vectorization. use of index variable 
+ *          even as DT index prohibits vectorization now, which is caught later
  */
             k = T_VINT;
             isIscal = 1;
-            //fprintf(stdout, "Use of int variable=%s!!!\n", STname[sp[i]-1]);
          }
          else  /* mixed fp is not allowed. */
             k = FLAG2TYPE(vpath->vflag);
          lp->vvscal[i+1] = InsertNewLocal(ln,k);
       }
-      
    }
 /*
  * check whether integer scalar meets the required constrain for shadow VRC
  * AVX2 is required for shadow VRC
  */
 #if defined(AVX2)
-   if (isIscal && !isShadowPossible(lp))
+   if (isIscal) 
    {
-      errcode = 1024; /* code for unmanagable Int Scalar */
+      if (isShadowPossible(lp))
+         VECT_FLAG |= VECT_SHADOW_VRC;  /* shadow vrc will be applied */
+      else
+         errcode = 1024; /* code for unmanagable Int Scalar */
    }
 #elif defined(AVX)
    if (isIscal)
@@ -7884,12 +8085,12 @@ int isShadowPossible(LOOPQ *lp)
       }
    }
 /*
- * don't expect more than 2 int vars
+ * expect exactly 2 int vars
  */
-   if (count > 2)
+   if (count != 2)
    {
       fko_warn(__LINE__, "Shadow VRC not possible: "
-               "Morethan two integer in RC \n");
+               "must have two integers in RC \n");
       isPos = 0;
    }
 
@@ -8874,10 +9075,17 @@ int RcVecTransform(LOOPQ *lp)
                    CVTFI, BTC},
       vi_insts[] = {VLD, VST, VIADD, VISUB, VICMOV1, VICMOV2, CVTBDI, 
                    CVTFI, BTC};
+/*
+ *    vector memory aligned and unaligned memory load
+ */
+   static enum inst 
+      valign[] = {VFLD, VDLD, VLD, VFST, VDST, VST},
+      vualign[] = {VFLDU, VDLDU, VLDU, VFSTU, VDSTU, VSTU};
    /*assert(0);*/
 
-   const int nvinst=21;
+   const int nvinst=21;   /* number of scalar to vector float inst */
    const int nivinst = 10;
+   const int nvalign = 6; /* number of align/unalign inst */
    enum inst sld, vld, sst, vst, smul, vmul, smac, vmac, sadd, vadd, ssub, vsub, 
              sabs, vabs, smov, vmov, szero, vzero, inst, vcmov1, vcmov2;
    short r0, r1, op;
@@ -8935,7 +9143,7 @@ int RcVecTransform(LOOPQ *lp)
  */
 
 #if 1
-   if (IsLoopPeelOptimizable(lp))
+   if (IsSIMDalignLoopPeelable(lp))
       GenForceAlignedPeeling(lp);
 #endif   
 
@@ -9034,6 +9242,7 @@ int RcVecTransform(LOOPQ *lp)
                      if (!FindInShortList(lp->varrs[0], lp->varrs+1, k))
                      { 
                         //fprintf(stderr, "Not arr = %s\n", STname[k-1]);
+#if 0                        
                         if (inst == LD)
                            ip->inst[0] = VLD;
                         else
@@ -9077,6 +9286,46 @@ int RcVecTransform(LOOPQ *lp)
                               ip->inst[j] = SToff[lp->vvscal[k]-1].sa[2];
                            }
                         }
+#else
+/*
+ *    new policy: if a int variable is not found in vscal, it must be a DT 
+ *    index. So, skip that. we can add additional checking here too
+ */                     
+                        k = FindInShortList(lp->vscal[0], lp->vscal+1, k);
+                        if (k)
+                        {
+                           if (inst == LD)
+                           {
+                              ip->inst[0] = VLD;
+                              ip->inst[2] = SToff[lp->vvscal[k]-1].sa[2];
+                              op = -ip->inst[1];
+                              j = 1;
+                           }
+                           else /* ST */
+                           {
+                              ip->inst[0] = VST;
+                              ip->inst[1] = SToff[lp->vvscal[k]-1].sa[2];
+                              op = -ip->inst[2];
+                              j = 2;
+                           }
+                           k = FindInShortList(nir, siregs, op);
+                           if (!k)
+                           {
+                              nir = AddToShortList(nir, siregs, op);
+                              k = FindInShortList(nir, siregs, op);
+                              viregs[k-1] = GetReg(T_VINT);
+                           }
+                           ip->inst[j] = -viregs[k-1];
+                        }
+                        else /* do we need to check again for DT index */
+                        {
+                           if (lp->I == STpts2[ip->inst[2]-1])
+                              fko_error(__LINE__, "use of index variable " 
+                                       "prohibits vectorization\n");
+                           /*fprintf(stderr, "######### %s \n", 
+                                 STname[STpts2[ip->inst[2]-1]-1]);*/
+                        }
+#endif
                      }
                      break;
 
@@ -9175,6 +9424,9 @@ int RcVecTransform(LOOPQ *lp)
                      break;
                }
             }
+/*
+ *          Floating point operation
+ */
             else if ( ( i = FindInstIndex(nvinst, sinst, inst)) != -1) 
             {
 /*
@@ -9208,6 +9460,9 @@ int RcVecTransform(LOOPQ *lp)
                         if (IS_DEREF(STflag[op-1]))
                         {
                            k = STpts2[op-1];
+/*
+ *                         variable load/store, not a memory load/store
+ */
                            if (!FindInShortList(lp->varrs[0],lp->varrs+1,k))
                            {
                               k = FindInShortList(lp->vscal[0],lp->vscal+1,k);
@@ -9224,6 +9479,29 @@ int RcVecTransform(LOOPQ *lp)
                               ip->inst[j] = SToff[lp->vvscal[k]-1].sa[2];
                               assert(ip->inst[j] > 0);
                            }
+#if 0
+/*
+ *                         otherwise, it is a memory load/store
+ *                         check for appropriate alignment using alignment 
+ *                         markups
+ *                         NOTE: if we have markup for force aligned, rest of
+ *                         the arrays are unaligned... we may still have no 
+ *                         force aligned array by the markup mutually unaligned 
+ *                         is specifies that they are not mutually aligned. We
+ *                         use 1st array in varrs to align in loop peeling..
+ */
+                           else
+                           {
+                              if ((lp->falign && k != lp->falign[1]) || 
+                                  (lp->malign == -1 && !lp->falign && 
+                                     k != lp->varrs[1]) )
+                              {
+                                 k = FindInstIndex(nvalign, valign, ip->inst[0]);
+                                 if (k != -1)
+                                    ip->inst[0] = vualign[k];
+                              }
+                           }
+#endif
                         }
                         else if (!FindInShortList(lp->varrs[0],lp->varrs+1,op))
                         {
@@ -9312,7 +9590,7 @@ int RcVecTransform(LOOPQ *lp)
                         ip->inst[j] = lp->vvscal[k];
                      }
                   }
-               }
+               } /* no support for vector integer unaligned mem yet */
             }
             else if (inst == CMOV1 || inst == CMOV2)
             {

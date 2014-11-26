@@ -754,8 +754,8 @@ void CheckFlow(BBLOCK *bbase, char *file, int line)
       }
       else if (IS_BRANCH(in) && in != RET && in != JMP)
       {
-         fprintf(stderr, "Block %d: no cond succ but last inst = %d\n", 
-                 bp->bnum, in);
+         fprintf(stderr, "Block %d: no cond succ but last inst = %d(%s)\n", 
+                 bp->bnum, in, (in==-1)?"null": instmnem[in]);
          error = i+1;
       }
 /*
@@ -922,8 +922,8 @@ LOOPQ *NewLoop(int flag)
 LOOPQ *KillFullLoop(LOOPQ *lp)
 /*
  * As KillLoop function doesn't kill all element, rather preserve some element
- * which will be used in InvalidateLoop, we a function which will kill the Loop
- * Completely
+ * which will be used in InvalidateLoop, we need a function which will kill 
+ * the Loop Completely
  */
 {
    int i, N;
@@ -931,6 +931,177 @@ LOOPQ *KillFullLoop(LOOPQ *lp)
    if (lp)
    {
       ln = lp->next;
+      if (lp->vsflag)
+         free(lp->vsflag);
+      if (lp->vsoflag)
+         free(lp->vsoflag);
+      if (lp->vscal)
+         free(lp->vscal);
+      if (lp->varrs)
+         free(lp->varrs);
+      if (lp->nopf)
+         free(lp->nopf);
+      if (lp->aaligned)
+         free(lp->aaligned);
+      if (lp->abalign)
+         free(lp->abalign);
+      if (lp->faalign)
+         free(lp->faalign);
+      if (lp->fbalign)
+         free(lp->fbalign);
+      if (lp->maaligned)
+         free(lp->maaligned);
+      if (lp->mbalign)
+         free(lp->mbalign);
+      if (lp->outs)
+         KillBitVec(lp->outs);
+      if (lp->sets)
+         KillBitVec(lp->sets);
+      if (lp->blocks)
+         KillBlockList(lp->blocks);
+      if (lp->tails)
+         KillBlockList(lp->tails);
+      if (lp->blkvec)
+         KillBitVec(lp->blkvec);
+      if (lp->posttails)
+         KillBlockList(lp->posttails);
+      if (lp->vvscal)
+         free(lp->vvscal);
+      if (lp->bvvscal)
+         free(lp->bvvscal);
+      if (lp->vvinit)
+         free(lp->vvinit);
+      if (lp->pfarrs)
+         free(lp->pfarrs);
+      if (lp->pfdist)
+         free(lp->pfdist);
+      if (lp->pfflag)
+         free(lp->pfflag);
+      if (lp->ae)
+      {
+         for (N=lp->ae[0],i=0; i < N; i++)
+            free(lp->aes[i]);
+         free(lp->aes);
+      }
+      if (lp->ae)
+         free(lp->ae);
+      if (lp->ne)
+         free(lp->ne);
+      if (lp->se)
+      {
+         for (N=lp->se[0],i=0; i < N; i++)
+            free(lp->ses[i]);
+         free(lp->ses);
+      }
+      if (lp->se)
+         free(lp->se);
+      if (lp->nse)
+         free(lp->nse);
+      if (lp->seflag)
+         free(lp->seflag);
+      
+      if (lp->maxvars)
+         free(lp->maxvars);
+      if (lp->minvars)
+         free(lp->minvars);
+
+      free(lp);
+   }
+   return(ln);
+}
+
+LOOPQ *KillLoop(LOOPQ *lp)
+/*
+ * this loop killing is for invalidating the loop, not complete killing  
+ */
+{
+   LOOPQ *ln=NULL;
+
+   if (lp)
+   {
+      ln = lp->next;
+      if (lp->vsflag)
+         free(lp->vsflag);
+      if (lp->vsoflag)
+         free(lp->vsoflag);
+      if (lp->vscal)
+         free(lp->vscal);
+      if (lp->varrs)
+         free(lp->varrs);
+      if (lp->nopf)
+         free(lp->nopf);
+      if (lp->aaligned)
+         free(lp->aaligned);
+      if (lp->abalign)
+         free(lp->abalign);
+      if (lp->outs)
+         KillBitVec(lp->outs);
+      if (lp->sets)
+         KillBitVec(lp->sets);
+      if (lp->blocks)
+         KillBlockList(lp->blocks);
+      if (lp->tails)
+         KillBlockList(lp->tails);
+      if (lp->blkvec)
+         KillBitVec(lp->blkvec);
+      if (lp->posttails)
+         KillBlockList(lp->posttails);
+/*
+ *    Majedul: this free list is not updated, we need to kill other elements
+ *    NOTE: can't free them, need to check in details ... ...
+ */
+/*      
+      if (lp->vvscal)
+         free(lp->vvscal);
+      if (lp->pfarrs)
+         free(lp->pfarrs);
+      if (lp->pfdist)
+         free(lp->pfdist);
+      if (lp->pfflag)
+         free(lp->pfflag);
+      if (lp->ae)
+         free(lp->ae);
+      if (lp->ne)
+         free(lp->ne);
+      if (lp->maxvars)
+         free(lp->maxvars);
+      if (lp->minvars)
+         free(lp->minvars);
+*/
+/*
+ *    FIXME: need to free space for shadow acc : short **aes
+ */
+      free(lp);
+   }
+   return(ln);
+}
+
+#if 0
+LOOPQ *KillOptLoop(LOOPQ *lp)
+/*
+ * This loop killing function only kill optloop but doesn't free the elements
+ * which is from markup generated while parsing... like: falign ptrs
+ * FIXME: need to synchronous and keep commented on this loop killers:
+ *       KillLoop
+ *       KillFullLoop
+ *       KillOptLoop
+ *       InvalidateLoop
+ *       KillAllLoopComplete
+ */
+{
+   int i, N;
+   LOOPQ *ln=NULL;
+
+   if (lp)
+   {
+      ln = lp->next;
+/*
+ * not deleted memory : falign
+ */
+      /*lp->falign)*/
+/*
+ * deeletd elements 
+ */ 
       if (lp->vsflag)
          free(lp->vsflag);
       if (lp->vsoflag)
@@ -1001,69 +1172,7 @@ LOOPQ *KillFullLoop(LOOPQ *lp)
    }
    return(ln);
 }
-
-LOOPQ *KillLoop(LOOPQ *lp)
-{
-   LOOPQ *ln=NULL;
-
-   if (lp)
-   {
-      ln = lp->next;
-      if (lp->vsflag)
-         free(lp->vsflag);
-      if (lp->vsoflag)
-         free(lp->vsoflag);
-      if (lp->vscal)
-         free(lp->vscal);
-      if (lp->varrs)
-         free(lp->varrs);
-      if (lp->nopf)
-         free(lp->nopf);
-      if (lp->aaligned)
-         free(lp->aaligned);
-      if (lp->abalign)
-         free(lp->abalign);
-      if (lp->outs)
-         KillBitVec(lp->outs);
-      if (lp->sets)
-         KillBitVec(lp->sets);
-      if (lp->blocks)
-         KillBlockList(lp->blocks);
-      if (lp->tails)
-         KillBlockList(lp->tails);
-      if (lp->blkvec)
-         KillBitVec(lp->blkvec);
-      if (lp->posttails)
-         KillBlockList(lp->posttails);
-/*
- *    Majedul: this free list is not updated, we need to kill other elements
- *    NOTE: can't free them, need to check in details ... ...
- */
-/*      
-      if (lp->vvscal)
-         free(lp->vvscal);
-      if (lp->pfarrs)
-         free(lp->pfarrs);
-      if (lp->pfdist)
-         free(lp->pfdist);
-      if (lp->pfflag)
-         free(lp->pfflag);
-      if (lp->ae)
-         free(lp->ae);
-      if (lp->ne)
-         free(lp->ne);
-      if (lp->maxvars)
-         free(lp->maxvars);
-      if (lp->minvars)
-         free(lp->minvars);
-*/
-/*
- *    FIXME: need to free space for shadow acc : short **aes
- */
-      free(lp);
-   }
-   return(ln);
-}
+#endif
 
 void KillAllLoopsComplete(void)
 /*
@@ -1107,6 +1216,9 @@ LOOPQ *InsNewLoop(LOOPQ *prev, LOOPQ *next, int flag)
 void InvalidateLoopInfo(void)
 /*
  * Retains optloop info that comes from front-end, throws rest away
+ * NOTE: this function is used in different stages of execution, not just 
+ * before restoring from saved stage. So, we may need to save computed 
+ * information from steps to steps.... 
  */
 {
    LOOPQ *lp;
@@ -1143,7 +1255,14 @@ void InvalidateLoopInfo(void)
       lp->maxunroll = optloop->maxunroll;
       lp->writedd = optloop->writedd;
       lp->LMU_flag = optloop->LMU_flag;   /* save the flag for loop markup */
-      lp->malign = optloop->malign;       /* mutually align for ... */
+      
+      lp->aaligned = optloop->aaligned;
+      lp->abalign = optloop->abalign;
+      lp->maaligned = optloop->maaligned;       /* mutually align for ... */
+      lp->mbalign = optloop->mbalign;       /* mutually align for ... */
+      lp->faalign = optloop->faalign;       /* need to be force aligned */
+      lp->fbalign = optloop->fbalign;       /* need to be force aligned */
+      
       lp->varrs = optloop->varrs;
       lp->vscal = optloop->vscal;
       lp->vsflag = optloop->vsflag;
@@ -1165,17 +1284,20 @@ void InvalidateLoopInfo(void)
       lp->ses = optloop->ses;
       lp->seflag = optloop->seflag;
       lp->nopf = optloop->nopf;
-      lp->aaligned = optloop->aaligned;
-      lp->abalign = optloop->abalign;
       lp->CU_label = optloop->CU_label;
       lp->NE_label = optloop->NE_label;
       lp->PTCU_label = optloop->PTCU_label;
+/*
+ *    make the list of original optloop NULL so that killloop function
+ *    won't delete/free the allolcated memory
+ */
       optloop->vsflag = optloop->vsoflag = optloop->vscal = optloop->varrs = 
-         optloop->ae = optloop->ne = optloop->nopf = optloop->aaligned = NULL;
+         optloop->ae = optloop->ne = optloop->nopf = NULL;
       optloop->bvvscal = NULL;
       optloop->vvinit = NULL;
       optloop->aes = NULL;
-      optloop->abalign = NULL;
+      optloop->aaligned = optloop->abalign = optloop->maaligned = 
+         optloop->mbalign = optloop->faalign = optloop->fbalign = NULL;
       optloop->maxvars = NULL;     /* sothat killloop not freed prev space */
       optloop->minvars = NULL;     /* sothat killloop not freed prev space */
       optloop->se = optloop->nse = NULL;

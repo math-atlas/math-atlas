@@ -10,22 +10,35 @@
    static short *LMA[8] = {NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL};
 /*
  * Majedul: To store the LOOP MU (with no param)
- * Right now, there are two: 0. PTR_MUTUALLY_ALIGN 1. .... 
+ * Right now, there are two: 0. MUTUALLY_UNALIGNED 1. .... 
  * Need to generalize all markups in well design. 
  * nLMU is the number of those markup
  */
    static int nLMU = 2; 
    static short LMU[2] = {0,0};
+/*
+ * For markup which has both list and an int, we keep 2 separate array of ptr
+ * NOTE: following array of ptr stores ptr with element count at position 0,
+ * unlike LMA
+ */
+   static short *LMAA[3] = {NULL,NULL,NULL};
+   static short *LMAB[3] = {NULL,NULL,NULL};
+/*   
    static short *aalign=NULL;
-   static uchar *balign=NULL;
+   static short *balign=NULL;
+   static short *faalign=NULL;
+   static short *fbalign=NULL;
+   static short *maalign=NULL;
+   static short *mbalign=NULL;
+*/
    static short maxunroll=0, writedd=1;
-   static short malign=0;        /* all mutually align to any byte */
    extern short STderef;
 
    struct idlist *NewID(char *name);
    static void UpdateLoop(struct loopq *lp);
    void HandleLoopListMU(int which);
    void HandleLoopIntMU(int which, int ival);
+   void HandleLoopListIntMU(int which, int ival);
    void HandleLoopMU(int which);
    void para_list();
    void declare_list(int flag);
@@ -35,6 +48,7 @@
    void declare_array(int flag, short dim, char *name);
    short HandleArrayAccess(short id, short dim);
    void HandleUnrollFactor(short ptr, int ndim);
+   void HandleMove(short dest, short src);
 %}
 %union
 {
@@ -52,7 +66,7 @@
 %token DOUBLE FLOAT INT UINT DOUBLE_PTR FLOAT_PTR INT_PTR UINT_PTR 
 %token DOUBLE_ARRAY FLOAT_ARRAY INT_ARRAY UINT_ARRAY UNROLL_ARRAY
 %token PARAMS LST ABST ME LOOP_BEGIN LOOP_BODY LOOP_END MAX_UNROLL IF GOTO
-%token <sh> LOOP_LIST_MU LOOP_INT_MU LOOP_MU
+%token <sh> LOOP_LIST_MU LOOP_INT_MU LOOP_MU LOOP_LIST_INT_MU
 %token <inum> ICONST
 %token <fnum> FCONST
 %token <dnum> DCONST
@@ -146,6 +160,10 @@ loop_beg : LOOP_BEGIN ID '=' avar loopsm ',' avar loopsm ',' avar loopsm2
          ;
 loop_markup : LOOP_LIST_MU LST idlist { HandleLoopListMU($1); }
             | LOOP_INT_MU LST icexpr  { HandleLoopIntMU($1, $3); }
+            | LOOP_LIST_INT_MU '(' icexpr ')' LST idlist { HandleLoopListIntMU($1,
+                                                           $3); }
+            | LOOP_LIST_INT_MU '(' icexpr ')' LST '*' {HandleLoopListIntMU($1, 
+                                                       $3); }
  /*            | MAX_UNROLL   LST icexpr { maxunroll = $3; } */
             | LOOP_MU { HandleLoopMU($1); }
             ;
@@ -165,8 +183,10 @@ typedec : INT LST idlist              { declare_list(T_INT); }
         | INT_PTR LST idlist          { declare_list(T_INT    | PTR_BIT); }
         | FLOAT_PTR LST idlist        { declare_list(T_FLOAT  | PTR_BIT); }
         | DOUBLE_PTR LST idlist      { declare_list(T_DOUBLE | PTR_BIT); }
-	| DOUBLE_ARRAY arraydim LST NAME {declare_array(T_DOUBLE|PTR_BIT,$2,$4); }
-	| FLOAT_ARRAY arraydim LST NAME {declare_array(T_FLOAT|PTR_BIT,$2,$4); }
+	| DOUBLE_ARRAY arraydim LST NAME {declare_array(T_DOUBLE|PTR_BIT|ARRAY_BIT
+        ,$2,$4); }
+	| FLOAT_ARRAY arraydim LST NAME {declare_array(T_FLOAT|PTR_BIT|ARRAY_BIT
+        ,$2,$4); }
         | UNROLL_ARRAY LST unrollarraylist {}
         ;
 
@@ -224,8 +244,10 @@ statement : arith ';'
           | comment
           | ptrderef '=' ID ';'   {DoArrayStore($1, $3);}
           | ID '=' ptrderef ';'   {DoArrayLoad($1, $3);}
-          | ID '=' ID       ';'   {DoMove($1, $3);}
-	  | ID '=' const ';'	  {DoMove($1, $3);}
+          /*| ID '=' ID       ';'   {DoMove($1, $3);}
+	  | ID '=' const ';'	  {DoMove($1, $3);}*/
+          | ID '=' ID ';'         {HandleMove($1, $3);}
+          | ID '=' const ';'      {HandleMove($1, $3);}
           | RETURN avar  ';'      {DoReturn($2);}
           | RETURN ';'            {DoEmptyReturn();}
           | NAME ':'              {DoLabel($1);}
@@ -434,6 +456,18 @@ struct idlist *ReverseList(struct idlist *base0)
 }
 #endif
 
+void HandleMove(short dest, short src)
+/*
+ * this func acts as a wrapper to call DoMove(). It provides an extra checking
+ * for Array 
+ */
+{
+   if (IS_ARRAY(STflag[dest-1]) || IS_ARRAY(STflag[src-1]))
+      fko_error(__LINE__, "Array assignment not yet supoorted in HIL!");
+   else
+      DoMove(dest,src);
+}
+
 short HandleArrayAccess(short ptr, short dim)
 {
    int i, val, ur;
@@ -505,7 +539,7 @@ short HandleArrayAccess(short ptr, short dim)
             fko_error(__LINE__, "Unroll factor not defined!!!");
          ur = STarr[arrid-1].urlist[0];
          ur = SToff[ur-1].i;
-         if ( SToff[hdm-1].i <= ur)
+         if ( SToff[hdm-1].i < ur)
          {
          #ifdef X86         
             if (FKO_FLAG & IFF_OPT2DPTR) /* applying optimization */
@@ -577,9 +611,33 @@ void HandleUnrollFactor(short ptr, int ndim)
 
 static void UpdateLoop(struct loopq *lp)
 {
-   int i;
+   int i, j, k, n, m;
+   /*short *fptrs, *maptrs;*/
+   short *spa, *spb;
+/*
+ * Handle markup with param  
+ * ========================
+ * Right now, we don't have meaningful markup with empty param
+ */
+   LMU[0] = LMU[1] = 0;
+/*
+ * Handle markup with ival param    
+ */
    lp->maxunroll = maxunroll;
    lp->writedd  = writedd;
+   maxunroll = writedd = 0;
+/*
+ * Handle markup with list.
+ * ========================
+ * Following markups are in this category but most of them are not 
+ * implemented/active yet:
+ *    0. LIVE_SCALARS_IN
+ *    1. LIVE_SCALARS_OUT
+ *    2. DEAD_ARRAYS_IN
+ *    3. DEAD_ARRAYS_OUT
+ *    4. NO_PREFETCH
+ * only NO_PREFETCH markup is active
+ */
 #if 0
    lp->vslivein  = LMA[0];
    lp->vsliveout = LMA[1];
@@ -587,25 +645,140 @@ static void UpdateLoop(struct loopq *lp)
    lp->varrs = LMA[3];
 #endif
    lp->nopf     = LMA[4];
-   lp->aaligned = aalign;
-   lp->abalign  = balign;
-   LMA[0] = LMA[1] = LMA[2] = LMA[3] = LMA[4] = aalign = NULL;
-   balign = NULL;
-   maxunroll = writedd = 0;
+   LMA[0] = LMA[1] = LMA[2] = LMA[3] = LMA[4] = NULL;
+
+/*
+ * Handle markup which has a list ids and a value; 
+ * ==============================================
+ * Note: that value is saved as list representing value for each id.
+ * LMAA[] : list of ids
+ * LMAB[] : list of byte; this value would be same for all ids if the markup
+ * is used only once; otherwise, may differ. 
+ * LMAA[0] => aaligned
+ * LMAA[1] => maaligned
+ * LMAA[2] => faalign
+ * LMAB[0] => abalign
+ * LMAB[1] => mbalign
+ * LMAB[2] => fbalign
+ */
+   lp->aaligned = LMAA[0];
+   lp->abalign = LMAB[0];
+   lp->maaligned = LMAA[1];
+   lp->mbalign = LMAB[1];
+   lp->faalign = LMAA[2];
+   lp->fbalign = LMAB[2];
+   LMAA[0] = LMAA[1] = LMAA[2] = NULL;
+   LMAB[0] = LMAB[1] = LMAB[2] = NULL;
+#if 0
+   //spa = lp->faalign;
+   //spb = lp->fbalign;
+   //spa = lp->maaligned;
+   //spb = lp->mbalign;
+   spa = lp->aaligned;
+   spb = lp->abalign;
+   if (spa)
+   {
+      fprintf(stderr, "ptrs=");
+      for (i=1,n=spa[0]; i<=n; i++)
+      {
+         fprintf(stderr, " %s[%d]", STname[spa[i]-1], spb[i]);
+      }
+      fprintf(stderr, "\n");
+   }
+   else if (spb)
+   {
+      fprintf(stderr, " *[%d]\n", spb[1]);
+   }
+#endif
+
+#if 0
 /*
  * Majedul: if there is a LOOP MARKUP for alignment, update the loopq 
  * structure. check all the markup one by one. after updating re-init to 0.
  * look into fko_types.h for the macro.
  * alignment should be for a number of byte!!!
  */
-/*
-   if (LMU[0])
-   {
-   }
- */
-   lp->malign = malign; 
-   malign = 0;
 
+   if (LMA[5]) /* force align ptr */
+   {
+      fptrs = LMA[5];
+      if (fptrs[0] != 1)
+         fko_error(__LINE__, "More than one ptr to force align!");
+      /*fprintf(stderr, "Force Align (%d) = %s\n", 
+                fptrs[0], STname[fptrs[1]-1]);*/
+      lp->falign = fptrs;
+   }
+   LMA[5] = NULL;
+
+   if (LMU[1]) /* mutually not aligned!! */
+   {
+      /*fprintf(stderr, "mutually unaligned!!!\n");*/
+      if (lp->malign)
+        fko_error(__LINE__, "Inconsistancy in malign declaration!\n"); 
+      lp->malign = -1;
+   }
+/*
+ * mutually_aligned has the higest priority... I may skip mutually unaligned 
+ * later
+ */
+   if (LMAU[0])  /* mutually_aligned (byte ) :: id, id */
+   {
+      /*lp->malign = malign */
+      fptrs = LMAU[0];
+      if (lp->falign) /* we have a ptr to force */
+      {
+         for (n=fptrs[0],i=1; i<=n; i++)
+         {
+            if (lp->falign[1] == fptrs[i])
+               break;
+         }
+         if (i<=n ) /* found force ptr in mutually align ptrs */
+         {
+/*
+ *          add all the mutually aligned ptrs in falign but place force ptr in 
+ *          fligned[1] position
+ */
+            maptrs = malloc(sizeof(short)*(n+1));
+            maptrs[0] = n;
+            m = 1;
+            maptrs[m++] = lp->falign[1];
+            for (j=1; j < i; j++) /* add first set of ptrs */
+            {
+               maptrs[m++] = fptrs[j];
+            }
+            for (k=i+1; k <=n; k++) /* last set of ptrs */
+            {
+               maptrs[m++] = fptrs[k];
+            }
+            free(fptrs);
+            lp->falign = maptrs;
+         }
+      }
+      else /* no ptr to force */
+      {
+         /*lp->falign = fptrs;*/ // the list is reserved 
+         n = fptrs[0];
+         maptrs = malloc(sizeof(short)*(n+1));
+         maptrs[0] = n;
+         for (i=n,j=1; i >= 1; i--,j++)
+            maptrs[j] = fptrs[i];
+         free(fptrs);
+         lp->falign = maptrs;
+      }
+#if 0
+      fprintf(stderr, "maptrs=");
+      for (i=1,n=lp->falign[0]; i<=n; i++)
+         fprintf(stderr, " %s", STname[lp->falign[i]-1]);
+      fprintf(stderr, "\n");
+#endif
+   }
+/*
+ * If Mutually_aligned (32) :: * is specify, lp->malign is updated with byte 
+ * size; though it doesn't change the lp->falign
+ */
+   /*else*/
+   LMAU[0] = NULL;
+#endif   
    FinishLoop(lp);
 }
 
@@ -614,7 +787,8 @@ void HandleLoopMU(int which)
  * Handles loop markup that doesn't have any parameter. The markups are 
  * encoded by which:
  * 
- * 0 : All_ptr_mutually_aligned
+ * 0 : mutually_unaligned ... that means, all ptr can't be aligned with simple 
+       loop peeling ---- not used anymore
  * 1 : ... ... ...   
  */
 {
@@ -630,6 +804,7 @@ void HandleLoopMU(int which)
       fko_error(__LINE__, "Unknown which=%d, file %s", which, __FILE__);
    }
 }
+
 void HandleLoopIntMU(int which, int ival)
 /*
  * Handles loop markup involving integer scalar values.  The markups are
@@ -649,9 +824,11 @@ void HandleLoopIntMU(int which, int ival)
    case 1:
       writedd = ival;
       break;
+/*
    case 2:
       malign = ival;
       break;
+*/      
    default:
       fko_error(__LINE__, "Unknown which=%d, file %s", which, __FILE__);
    }
@@ -665,15 +842,17 @@ void HandleLoopListMU(int which)
  *   2: Dead_arrays_in
  *   3: Dead_arrays_in
  *   4: No_prefetch
- * 100: Array_aligned
+ *   following are not used anymore
+ *   //5: Force_aligned
+ *   //100: Array_aligned
  */
 {
    int i, n;
    short *sp;
-   char *cp;
+   short *cp;
    struct idlist *id;
    for (id=idhead,n=0; id; id=id->next) n++;
-
+#if 0
    if (which == 100)
    {
       assert(!aalign && !balign);
@@ -695,6 +874,7 @@ void HandleLoopListMU(int which)
       balign = cp;
    }
    else
+#endif   
    {
       assert(!LMA[which]);
       sp = malloc(sizeof(short)*(n+1));
@@ -706,10 +886,127 @@ void HandleLoopListMU(int which)
          if (!sp[i])
             fko_error(__LINE__, "Unknown ID: %s which=%d\n", id->name, which);
       }
-      LMA[which] = sp - 1;
+      LMA[which] = sp - 1; /* list of id with count at position 0 */
    }
    KillIDs();
 }
+
+void HandleLoopListIntMU(int which, int ival)
+/*
+ * Handles loop markup consisting of simple lists and a value.  The markups are 
+ * encoded by which:
+ * 0 : Aligned array list with byte 
+ * 1 : Mutually_aligned array list with byte as alignment
+ * 2 : force align array list with byte of alignmnet
+ */
+{
+   int i, n, n0;
+   struct idlist *id;
+   short *spa, *spb;
+   for (id=idhead,n=0; id; id=id->next) n++;
+/*
+ * alignment of all the arrays would be the ival
+ */
+   if (LMAA[which]) /* already exists */
+   {
+      n0 = LMAA[which][0]; 
+      spa = malloc(sizeof(short)*(n+n0+1));
+      spb = malloc(sizeof(short)*(n+n0+1));
+      assert(spa && spb);
+      spa[0] = spb[0] = n + n0;
+      
+      for (i=1; i<=n0; i++)
+      {
+         spa[i] = LMAA[which][i];
+         spb[i] = LMAB[which][i];
+      }
+      for (id=idhead; i <= (n+n0); i++,id=id->next)
+      {
+         spa[i] = STstrlookup(id->name);
+         if (!spa[i])
+            fko_error(__LINE__, "Unknown ID: %s which=%d\n", id->name, which);
+         spb[i] = ival;
+      }
+/*
+ *    we save the spa and spb without excluding the count at the position 0
+ */
+      /*LMAU[which] = spa - 1;*/
+      free(LMAA[which]);
+      free(LMAB[which]);
+      LMAA[which] = spa;
+      LMAB[which] = spb;
+   }
+   else /* new list */
+   {
+      if (n)
+      {
+         spa = malloc(sizeof(short)*(n+1));
+         spb = malloc(sizeof(short)*(n+1));
+         assert(spa && spb);
+         spa[0] = spb[0] = n;
+         for (i=1,id=idhead; i <= n; i++, id=id->next)
+         {
+            spa[i] = STstrlookup(id->name);
+            if (!spa[i])
+               fko_error(__LINE__, "Unknown ID: %s which=%d\n", id->name, which);
+            spb[i] = ival; 
+         }
+         LMAA[which] = spa;
+         LMAB[which] = spb;
+      }
+/*
+ *    '*' is used in markup, which indicates all ptrs/array; But there is no
+ *    way to identify array without analysis here. So, mark the LMAA[] as NULL 
+ *    but set LMAB[].  
+ */
+      else /* using * as list which set empty list */
+      {
+         if (!LMAB[which]) /* not set yet */
+         {
+            spb = malloc(sizeof(short)*2);
+            spb[0] = 1;
+            spb[1] = ival;
+            LMAB[which] = spb;
+         }
+         else /* we have already set one, overwrite it with larger value*/
+         {
+            assert(LMAB[which][0]==1); 
+            LMAB[which][1] = (LMAB[which][1] >= ival)? LMAB[which][1] : ival;
+         }
+      }
+   }
+   KillIDs();
+
+#if 0
+   if (which == 0)
+   {
+      if (idhead)
+      {
+         malign = ival;    
+         assert(!LMAU[which]);
+         sp = malloc(sizeof(short)*(n+1));
+         assert(sp);
+         *sp++ = n;
+         for (i=0,id=idhead; i != n; i++, id=id->next)
+         {
+            sp[i] = STstrlookup(id->name);
+            if (!sp[i])
+               fko_error(__LINE__, "Unknown ID: %s which=%d\n", id->name, which);
+         }
+         LMAU[which] = sp - 1; /* list of id with count at position 0 */
+         KillIDs();
+      }
+      else /* all ptr are mutually aligned, MUTUALLY_ALIGNED(INT):: * */
+      {
+         LMAU[which] = NULL;
+         malign = ival;
+      }
+   }
+   else
+      fko_error(__LINE__, "Unknown markup (which=%d)\n", which);
+#endif
+}
+
 
 void para_list()
 {

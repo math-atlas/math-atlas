@@ -1409,13 +1409,21 @@ char *DupedLabelName(int dupnum, int ilab)
    return(ln);
 }
 
-BBLOCK *DupCFScope0(INT_BVI ivscp0, /* original scope */
-                   INT_BVI ivscp,  /* scope left to dupe */
-                   int dupnum,   /* number of duplication, starting at 1 */
+static BBLOCK *DupCFScope0(INT_BVI ivscp0, /* original scope */
+                   INT_BVI ivscp,   /* scope left to dupe */
+                   int dupnum,  /* number of duplication, starting at 1 */
                    BBLOCK *head) /* block being duplicated */
 /*
  * Duplicates CF starting at head.  Any block outside ivscp is not duplicated
  * NOTE: actual head of loop should not be in ivscop0, even though we dup it
+ * FIXED: Majedul: it only works when we don't have loop control in tail blk.
+ * But if we have back edge as the loop control, it won't change the branch 
+ * traget of the loop control.
+ * So, if you want to copy the loop control too (means not kill the loop control
+ * before calling this function, you may want to call this function with ivscp0
+ * and ivscp where ivscp0 is included the header but ivscp is not. It doesn't 
+ * hurt the case of loop without loop control because, in that case we don't 
+ * have the branch for back edge to change too.
  */
 {
    BBLOCK *nhead, *bp;
@@ -1442,6 +1450,10 @@ BBLOCK *DupCFScope0(INT_BVI ivscp0, /* original scope */
    if (IS_BRANCH(head->ainstN->inst[0]))
    {
       bp = head->csucc ? head->csucc : head->usucc;
+/*
+ *    NOTE: majedul: it only works with loop control when ivscp0 has header of 
+ *    loop included.
+ */
       if (BitVecCheck(ivscp0, bp->bnum-1))
       {
          assert(bp->ilab);
@@ -1461,7 +1473,7 @@ BBLOCK *DupCFScope0(INT_BVI ivscp0, /* original scope */
 
 BBLOCK *DupCFScope(INT_BVI ivscp0, /* original scope */
                    INT_BVI ivscp,  /* scope left to dupe */
-                   int dupnum,   /* number of duplication, starting at 1 */
+                   /*int dupnum,*/   /* number of duplication, starting at 1 */
                    BBLOCK *head) /* block being duplicated */
 {
 #if 1
@@ -1721,7 +1733,8 @@ void GenCleanupLoop(LOOPQ *lp)
  */
    SetVecBit(lp->blkvec, lp->header->bnum-1, 0);
    FKO_BVTMP = iv = BitVecCopy(FKO_BVTMP, lp->blkvec);
-   newCF = DupCFScope(lp->blkvec, iv, 0, lp->header);
+   /*newCF = DupCFScope(lp->blkvec, iv, 0, lp->header);*/
+   newCF = DupCFScope(lp->blkvec, iv, lp->header);
    assert(newCF->ilab);
 /*
  * Use CF to produce a block list of duped blocks
@@ -2004,16 +2017,13 @@ int UnrollLoop(LOOPQ *lp, int unroll)
  */
       FKO_BVTMP = iv = BitVecCopy(FKO_BVTMP, lp->blkvec);
 /*
- *    FIXME: need to provide appropriate dupnum. 
+ *    FIXED: need to provide appropriate dupnum. 
  *    DupCFScope is already called in several places: cleanup, loop peeling,
  *    speculative vect!!
- *    Why don't use a static variable inside DupCFScope!!!
+ *    Why don't use a static variable inside DupCFScope!!! done!
  */
-#if 0      
-      newCF = DupCFScope(lp->blkvec, iv, i, lp->header);
-#else
-      newCF = DupCFScope(lp->blkvec, iv, 100+i, lp->header);
-#endif      
+      /*newCF = DupCFScope(lp->blkvec, iv, 100+i, lp->header);*/
+      newCF = DupCFScope(lp->blkvec, iv, lp->header);
       iv = BitVecCopy(iv, lp->blkvec);
 /*
  *    Use CF to produce a block list of duped blocks

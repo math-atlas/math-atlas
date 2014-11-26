@@ -53,8 +53,10 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "NO_PREFETCH"      { yylval.sh = 4; return(LOOP_LIST_MU); }
 "MAX_UNROLL"       { yylval.sh = 0; return(LOOP_INT_MU); }
 "WRITE_DEP_DIST"   { yylval.sh = 1; return(LOOP_INT_MU); }
-"MUTUALLY_ALIGNED_FOR"   { yylval.sh = 2; return(LOOP_INT_MU); }
-"EXAMPLE_MARKUP_WITH_NO_PARAM"   { yylval.sh = 0; return(LOOP_MU); }
+"ALIGNED"          { yylval.sh = 0; return(LOOP_LIST_INT_MU); }
+"MUTUALLY_ALIGNED" { yylval.sh = 1; return(LOOP_LIST_INT_MU); }
+"FORCE_ALIGN"      { yylval.sh = 2; return(LOOP_LIST_INT_MU); }
+"DUMMY_MARKUP_WITH_NOPARAM"   { yylval.sh = 0; return(LOOP_MU); }
 "LOOP"  { return(LOOP_BEGIN); }
 "DOUBLE" { return(DOUBLE); }
 "FLOAT" { return(FLOAT); }

@@ -2824,6 +2824,15 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archvdregs[-VDREGBEG-op1]);
          #endif
          break;
+      case VDLDU:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvmovupd\t%s,%s\n", GetDeref(op2),
+                                  archvdregs[-VDREGBEG-op1]);       
+         #else
+            ap->next = PrintAssln("\tmovupd\t%s,%s\n", GetDeref(op2),
+                                  archvdregs[-VDREGBEG-op1]);
+         #endif
+         break;
       case VDLDS:
          #ifdef AVX
             ap->next = PrintAssln("\tvmovsd\t%s,%s\n", GetDeref(op2),
@@ -2874,6 +2883,17 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   GetDeref(op1));
          #else
             ap->next = PrintAssln("\tmovapd\t%s, %s\n", 
+                                  archvdregs[-VDREGBEG-op2],
+                                  GetDeref(op1));
+         #endif   
+         break;
+      case VDSTU:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvmovupd\t%s, %s\n", 
+                                  archvdregs[-VDREGBEG-op2],
+                                  GetDeref(op1));
+         #else
+            ap->next = PrintAssln("\tmovupd\t%s, %s\n", 
                                   archvdregs[-VDREGBEG-op2],
                                   GetDeref(op1));
          #endif   
@@ -3358,6 +3378,15 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archvfregs[-VFREGBEG-op1]);
          #endif
          break;
+      case VFLDU:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvmovups\t%s, %s\n", GetDeref(op2),
+                                  archvfregs[-VFREGBEG-op1]);
+         #else
+            ap->next = PrintAssln("\tmovups\t%s, %s\n", GetDeref(op2),
+                                  archvfregs[-VFREGBEG-op1]);
+         #endif
+         break;
       case VFLDS:
          #ifdef AVX
             ap->next = PrintAssln("\tvmovss\t%s, %s\n", GetDeref(op2),
@@ -3405,6 +3434,17 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   GetDeref(op1));
          #else
             ap->next = PrintAssln("\tmovaps\t%s, %s\n", 
+                                  archvfregs[-VFREGBEG-op2],
+                                  GetDeref(op1));
+         #endif
+         break;
+      case VFSTU:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvmovups\t%s, %s\n", 
+                                  archvfregs[-VFREGBEG-op2],
+                                  GetDeref(op1));
+         #else
+            ap->next = PrintAssln("\tmovups\t%s, %s\n", 
                                   archvfregs[-VFREGBEG-op2],
                                   GetDeref(op1));
          #endif
@@ -4353,13 +4393,24 @@ struct assmln *lil2ass(BBLOCK *bbase)
  */
    /*case VSLD: case VILD:*/
    case VLD:
-         fprintf(stderr, "op1=%d, op2=%d\n", op1, op2);
+         /*fprintf(stderr, "op1=%d, op2=%d\n", op1, op2);*/
          assert(op1 < 0 && op2 >= 0);
          #ifdef AVX
             ap->next = PrintAssln("\tvmovdqa\t%s, %s\n", GetDeref(op2),
                                   archviregs[-VIREGBEG-op1]);
          #else
             ap->next = PrintAssln("\tmovdqa\t%s, %s\n", GetDeref(op2),
+                                  archviregs[-VIREGBEG-op1]);
+         #endif
+         break;
+   case VLDU:
+         /*fprintf(stderr, "op1=%d, op2=%d\n", op1, op2);*/
+         assert(op1 < 0 && op2 >= 0);
+         #ifdef AVX
+            ap->next = PrintAssln("\tvmovdqu\t%s, %s\n", GetDeref(op2),
+                                  archviregs[-VIREGBEG-op1]);
+         #else
+            ap->next = PrintAssln("\tmovdqu\t%s, %s\n", GetDeref(op2),
                                   archviregs[-VIREGBEG-op1]);
          #endif
          break;
@@ -4391,6 +4442,16 @@ struct assmln *lil2ass(BBLOCK *bbase)
                   archviregs[-VIREGBEG-op2], GetDeref(op1) );
          #else
             ap->next = PrintAssln("\tmovdqa\t%s, %s\n", 
+                  archviregs[-VIREGBEG-op2], GetDeref(op1) );
+         #endif
+         break;
+   case VSTU:
+         assert(op2 < 0 && op1 >= 0);
+         #ifdef AVX
+            ap->next = PrintAssln("\tvmovdqu\t%s, %s\n", 
+                  archviregs[-VIREGBEG-op2], GetDeref(op1) );
+         #else
+            ap->next = PrintAssln("\tmovdqu\t%s, %s\n", 
                   archviregs[-VIREGBEG-op2], GetDeref(op1) );
          #endif
          break;
