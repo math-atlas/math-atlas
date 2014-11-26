@@ -801,7 +801,11 @@ void MarkUnusedLocals(BBLOCK *bbase)
          {
             i = ip->inst[k]-1;
 #if 0
-            fprintf(stdout, "i=%d, k=%d\n",i,k);
+            if (i==1)
+            {
+               fprintf(stderr, "i=%d, k=%d\n",i,k);
+               PrintST(stderr);
+            }
 #endif            
             if (i >= 0 && IS_DEREF(STflag[i]) && !SToff[i].sa[0] && 
                 SToff[i].sa[2] < 0)
@@ -1396,12 +1400,12 @@ short *CreateOptColPtrs(short base, short lda, short unroll)
          sprintf(ln, "_%s_7", STname[base-1]);
          colptrs[2] = InsertNewLocalPtr(ln, FLAG2TYPE(STflag[base-1]));
          
-         sprintf(ln, "_%s_9", STname[base-1]);
-         colptrs[2] = InsertNewLocalPtr(ln, FLAG2TYPE(STflag[base-1]));
+         sprintf(ln, "_%s_12", STname[base-1]);
+         colptrs[3] = InsertNewLocalPtr(ln, FLAG2TYPE(STflag[base-1]));
 /*
  *       create tmp lda, tmlda = lda * 2 
  */
-         sprintf(ln, "_tm%s_2_7_9", STname[lda-1]);
+         sprintf(ln, "_tm%s_2_7_12", STname[lda-1]);
          tmlda = InsertNewLocal(ln, FLAG2TYPE(STflag[lda-1]));
 
          DoArith(tmlda, lda, '<', STiconstlookup(1));
@@ -1435,12 +1439,7 @@ void CreateArrColPtrs()
    short ur;
    extern BBLOCK *bbbase;
    extern int FKO_FLAG;
-#if 0
-   PrintST(stderr);
-   InsNewInst(NULL, NULL, NULL, COMMENT, STstrconstlookup("CREATE LDAS"),0,0);
-   if(bbbase) PrintInst(stderr,bbbase);
-   exit(0);
-#endif
+   
    DoComment("Create ldas = lda * sizeof ");
    for (i=0; i < Narr; i++)
    {
@@ -1455,29 +1454,6 @@ void CreateArrColPtrs()
       else
          ur = 0;
       SToff[ptr-1].sa[3] = i+1; /* sa[3] of ST should be free now */
-#if 0
-      for (j=0; j < nd-1; j++)
-      {
-         lda0 = ldas[j];
-         if (!IS_CONST(STflag[lda0-1]))
-         {
-            sprintf(ln, "_%s_s", STname[lda0-1]); 
-            ldaN = InsertNewLocal(ln, STflag[lda0-1]);
-            con = STiconstlookup(type2shift(FLAG2TYPE(STflag[ptr-1])));
-/*
- *          add instrucitons to calc ldas = lda * sizeof
- */
-            DoArith(ldaN, lda0, '<', con);
-/*
- *          update STarr table with new lda
- *          NOTE: all ref to the old lda variable is lost, do we need them 
- *          later??? if we need them, I will extend the table to keep both 
- *          lda0 and ldaN. For now, I overwrite with new lda
- */
-            ldas[j] = ldaN;
-         }
-      }
-#else
 /*
  *    depending on the optimization scheme, we will create various ldas. we will
  *    parameterize this later
@@ -1500,62 +1476,6 @@ void CreateArrColPtrs()
          ldaS = STarr[i].cldas[1]; /* always lda*size first */
          STarr[i].colptrs = CreateAllColPtrs(ptr,ldaS, ur);
    #endif
-#if 0
-         fprintf(stderr, "%d : ptr=%s ldas = %s\n", ur, STname[ptr-1],
-                 STname[ldaS-1]);
-         fprintf(stderr, "colptr # %d\n", STarr[i].colptrs[0]);
-         for (j=1; j<= STarr[i].colptrs[0]; j++)
-            fprintf(stderr, "%s \n", STname[STarr[i].colptrs[j]-1]);
-#endif
-
-#endif      
-/*
- *    now, we will create column pointers to access 2D array. We don't support
- *    anything other than 2D array right now. 
- */
-#if 0         
-      if (nd != 2)
-         fko_error(__LINE__, "Only 2D array is supported now!\n");
-      else
-      {
-/*
- *       NOTE: FIXME: for rest of the operations in this function, we will 
- *       consider only 2D array for now. 
- *       NOTE: for 2D array, lda and unroll factor should be at the beginning 
- *       element. 
- *       NOTE: we don't consider const lda for unrolling rigth now
- */
-         if (STarr[i].urlist) /* note: unroll fact is optional */
-         {
-            lda = STarr[i].ldas[0];
-            if (IS_CONST(STflag[lda-1]))
-               fko_error(__LINE__, "Not supported unrolling for const lda!!");
-            ur = STarr[i].urlist[0];
-            ur = SToff[ur-1].i; /* unroll factor */
-#if 1            
-            fprintf(stderr, "%s :  %s, %d\n", STname[STarr[i].ptr-1], 
-                    STname[lda-1], ur);
-#endif
-/*
- *          time to create new pointers for unroll factor of the column
- */
-            STarr[i].colptrs = malloc(ur*sizeof(short));
-            assert(STarr[i].colptrs);
-            for (j=0; j<ur; j++)
-            {
-               sprintf(ln, "_%s_%d", STname[ptr-1], j);
-               STarr[i].colptrs[j] = InsertNewLocalPtr(ln, 
-                                                FLAG2TYPE(STflag[ptr-1]));
-               if (!j)
-                  DoMove(STarr[i].colptrs[j], ptr); 
-               else
-                  HandlePtrArithNoSizeofUpate(STarr[i].colptrs[j], 
-                        STarr[i].colptrs[j-1], '+', lda); 
-            }
-         }
-      }
-#endif      
-
    }
    DoComment("End ldas creation");
 /*
@@ -1569,8 +1489,5 @@ void CreateArrColPtrs()
    //exit(0);
 #endif
 }
-
-
-
 
 
