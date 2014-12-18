@@ -1,0 +1,1024 @@
+@ROUT atlas_cbc.h
+#ifndef ATLAS_CBC_H
+#define ATLAS_CBC_H
+/*
+ * This file prototypes cache-based communication (CBC) routines.  CBC
+ * exploits cache coherence protocols for synchronization and communication
+ * that runs at the speed of hardware, rather than the speed of software
+ * that you potentially get when calling OS-provided functions like mutex, etc.
+ * CBC requires strongly-ordred cache choerence to work correctly.  In
+ * a strongly ordered cache, if a given core writes memory two memory
+ * locations A and B in that sequence, the coherence protocal guarantees
+ * that other cores only "see" the change in B *after* they can "see"
+ * the change in A.  In weakly ordered caches, the core may "see" the
+ * changes in any order (so seeing B change does not guarantee you won't
+ * get a stale value if you then read A).  In general, x86 architectures
+ * have strongly ordered caches, while non-x86 (eg., ARM and PowerPC) have
+ * weakly-ordered caches.  Therefore, most CBC routines should not be used
+ * on non-x86 platforms unless they are combined with memory fences of some
+ * sort.  On x86 at least, CBC is critical to driving down communication costs
+ * on extreme parallel architectures like the Xeon PHI.
+ */
+#if 0
+   #include "atlas_threads.h"
+   #include "atlas_lapack.h"
+#endif
+#include <assert.h>
+#include <malloc.h>
+#include <stdio.h>
+#include <unistd.h>
+#include "atlas_misc.h"
+
+#if 1
+#ifndef TYPE
+   #define ATL_INT int
+   #define TYPE double
+#endif
+#endif
+
+#if 1 && defined(ATL_ARCH_XeonPHI)
+   #define ATL_tyield __asm__ __volatile__ ("delay %0" :: "r"(64) : "0" )
+#elif 1 && defined(USE_YIELD)
+   #define ATL_tyield pthread_yield()
+#else
+   #define ATL_tyield 
+#endif
+
+enum ATL_SYNC_SCOPE { ATL_SYNC_GRID=0, ATL_SYNC_ROW=1, ATL_SYNC_COL=2 };
+enum ATL_CBC_OP { ATL_CBC_SUM, ATL_CBC_MAX, ATL_CBC_MIN, ATL_CBC_MAXLOC };
+enum ATL_CBC_TYPE { ATL_CBC_INT=0, 
+                    ATL_CBC_FLOAT=1, 
+                    ATL_CBC_DOUBLE=2,
+                    ATL_CBC_FLOAT_INT=3, 
+                    ATL_CBC_DOUBLE_INT=4
+                  };
+
+static int ATL_CBC_TYPE_SIZE[5] = { sizeof(int), sizeof(float), sizeof(double),
+                              sizeof(int)+sizeof(float), 
+                              sizeof(int)+sizeof(double) 
+                           };
+
+typedef struct
+{
+   unsigned int rankG;      /* global rank */
+   unsigned int rankR;      /* row rank */
+   unsigned int rankC;      /* column rank */
+   //int ierr;
+   void *workspace;  /* ptr to array of pointers */
+   int *ldws;
+   void *progs;      /* ptr to array of pointers for progress */
+
+   /* Following data shouldn't be accessed by user code, only CBC */
+   volatile int Next[3];    /* 3 scopes, grid, row, column */
+   volatile int NextMsg[3];   /* 3 scopes, these will be incremented */
+
+#if 0
+   enum ATL_CBC_TYPE ctype;   /* data type for combine */
+   void *cdata_in;            /* input data for combine */
+   ATL_INT clen_in;           /* data length for combine */
+   void *cdata_out;           /* output data for combine */
+   ATL_INT clen_out;          /* output data length */
+#endif
+
+   volatile TYPE mdata;
+   volatile int mindx;
+   volatile int mOwner;
+
+   void *cta_args;            /* context-aware args */
+   volatile int cta_state[1]; /* context-aware state */
+   void *cbc_bar;             /* local CBC variable */
+   //void *pt_bar;            /* pthread_barrier for now */
+
+   char space[128 
+      - sizeof(void*)            /* cta_args */
+      - sizeof(volatile int)*1   /* cta_state */
+      - sizeof(unsigned int) /* syncCount */
+      - 3*sizeof(unsigned int) 
+      //- sizeof(int)
+      /*
+      - sizeof(ATL_INT)*2 
+      - sizeof(void *)*2
+      - sizeof(enum ATL_CBC_TYPE)
+      */
+      - sizeof(void*)
+      - sizeof(int*)
+      - sizeof(void*)
+      - 3*sizeof(volatile int) 
+      - 3*sizeof(volatile int) 
+      - sizeof(TYPE)
+      - 2*sizeof(int)];/* Available space...to fill cache line */
+} ATL_CBC_TDATA;
+
+typedef struct
+{
+   float fdata;   /* data that needs to be compared */
+   ATL_INT index; /* index for that data */
+} ATL_CBC_FLOAT_INT_t;
+
+typedef struct
+{
+   double fdata;   /* data that needs to be compared */
+   ATL_INT index; /* index for that data */
+} ATL_CBC_DOUBLE_INT_t;
+
+typedef struct
+{
+   ATL_INT P;
+   ATL_INT Q;
+   ATL_INT Nt;
+   ATL_CBC_TDATA *tdata;
+   volatile ATL_INT Master;
+   volatile ATL_INT *RowMasters;
+   volatile ATL_INT *ColMasters;
+   void *vp;
+   volatile ATL_INT MallocOwner;
+} ATL_CBC_t;
+
+void ATL_CBC_barrier_init(ATL_CBC_t*, int, int);
+void ATL_CBC_barrier_destroy(ATL_CBC_t*);
+void ATL_CBC_gbarrier(ATL_CBC_t*, int);
+
+void ATL_CBC_init(ATL_CBC_t*, ATL_INT, ATL_INT, ATL_CBC_TDATA*);
+void ATL_CBC_destroy(ATL_CBC_t*);
+void ATL_WAIT(enum ATL_SYNC_SCOPE, ATL_CBC_t*, ATL_INT, ATL_INT, ATL_INT);
+void ATL_CBC_barrier_internal(enum ATL_SYNC_SCOPE, ATL_CBC_t*, ATL_INT, 
+                     ATL_INT, ATL_INT);
+void ATL_CBC_barrier(enum ATL_SYNC_SCOPE, ATL_CBC_t*, ATL_INT);
+void ATL_CBC_LUschedWork(enum ATL_SYNC_SCOPE, ATL_CBC_t*, 
+      ATL_INT,ATL_INT*,ATL_INT);
+
+void ATL_Send(ATL_CBC_t*, ATL_INT, ATL_INT, void*, ATL_INT);
+void ATL_Recv(ATL_CBC_t*, ATL_INT, ATL_INT, void*, ATL_INT);
+
+void ATL_Combine(enum ATL_SYNC_SCOPE, ATL_CBC_t*, ATL_INT, ATL_INT, ATL_INT, 
+                 enum ATL_CBC_TYPE, enum ATL_CBC_OP, void*, ATL_INT, void*);
+
+void ATL_iTMaxForLU(enum ATL_SYNC_SCOPE, ATL_CBC_t*, ATL_INT, ATL_INT, ATL_INT,
+                    const TYPE, const int, TYPE*, int*, int*);
+
+void ATL_CBC_Malloc_Lock(ATL_CBC_t*, ATL_INT);
+void ATL_CBC_Malloc_UnLock(ATL_CBC_t*, ATL_INT);
+/*
+ * For updating the counter, a regular counter will casue overflow after a
+ * few billion syncs. So, we will use boolean and toggle for each POST.
+ */
+/* void ATL_POST(enum ATL_SYNC_SCOPE, ATL_CBC_t*, ATL_INT); */
+#define ATL_POST(scope, cbc, rankG)   (cbc->tdata[rankG]).Next[scope] ^= 1
+
+#endif
+@ROUT ATL_cbc_barrier
+/*
+ * This file implements barrier primitives using CBC 
+ * (see atlas_cbc.h for details).
+ *
+ * Originally it was done using a counter but to avoid overflow we used
+ * boolean state here. There was a race condition when using == and != rather
+ * than using >= and > . To avoid this, Anthony Castaldo suggested the idea
+ * of changing the masters.
+ *
+ * NOTE: We also tried to use the xor of rank aka virtual rank to implement
+ * the barrier. But this has the similar issue as before but this time the 
+ * problem occurs when the master is not changing.
+ */
+
+#include "atlas_cbc.h"
+#include <string.h>
+
+#define ATL_ROW_RANK(cbc, rankG) ((cbc->tdata[rankG]).rankR)
+#define ATL_COL_RANK(cbc, rankG) ((cbc->tdata[rankG]).rankC)
+
+#define ATL_GRID_RANK(cbc, rankR, rankC) (cbc->Q*rankR + rankC)
+
+#define ATL_NEXT(cbc, rankG, scope) ((cbc->tdata[rankG]).Next[scope])
+
+#define ATL_TDATA(rankG) (cbc->tdata[rankG])
+
+#ifndef Mabs
+   #define Mabs(a) ((a) < 0 ? -(a) : (a))
+#endif
+
+#if 0
+   #define USE_ASSERT
+#endif
+
+void ATL_CBC_barrier_init(ATL_CBC_t *cbc, int pt, int qt)
+{
+   const int nt = pt * qt;
+   int i, j, k;
+
+   ATL_CBC_TDATA* tdata = malloc(sizeof(ATL_CBC_TDATA)*nt);
+   for (i=0, k=0; i<pt; i++)
+   {
+      for (j=0; j<qt; j++)
+      {
+         tdata[k].Next[0] = 0;
+         tdata[k].Next[1] = 0;
+         tdata[k].Next[2] = 0;
+         tdata[k].NextMsg[0] = 0;
+         tdata[k].NextMsg[1] = 0;
+         tdata[k].NextMsg[2] = 0;
+         tdata[k].rankR = i;
+         tdata[k].rankC = j;
+         tdata[k].rankG = k++;
+      }
+   }
+   ATL_CBC_init(cbc, pt, qt, tdata);
+}
+
+void ATL_CBC_barrier_destroy(ATL_CBC_t *cbc)
+{
+   if (cbc && cbc->tdata)
+   {
+      free(cbc->tdata);
+      cbc->tdata = NULL;
+   }
+   ATL_CBC_destroy(cbc);
+}
+
+void ATL_CBC_barrier_internal(enum ATL_SYNC_SCOPE scope, ATL_CBC_t *cbc, 
+                              ATL_INT rankG, ATL_INT waitOn, ATL_INT newMaster)
+{
+   if (rankG == waitOn)
+   {
+      int i, j, k, first, limit;
+      k = 1;                     /* for grid and column scope, increment 1 */
+      first = 0;                 /* for grid, start from 0 */
+      limit = cbc->Nt;           /* how many threads to check, for grid, all */
+      
+      if (scope == ATL_SYNC_COL) /* if column scope */
+      {
+         #ifdef USE_ASSERT
+            ATL_assert(waitOn == cbc->ColMasters[ATL_TDATA(rankG).rankC]);
+         #endif
+         k = cbc->Q;             /* increment is number of columns */
+         limit = cbc->P;         /* no. of threads to check is no. of rows */
+         first = (cbc->tdata[rankG]).rankC;  /* first is just column rank */
+      }
+      else if (scope == ATL_SYNC_ROW) /* if row scope */
+      {
+         #ifdef USE_ASSERT
+            ATL_assert(waitOn == cbc->RowMasters[ATL_TDATA(rankG).rankR]);
+         #endif
+         limit = cbc->Q;         /* no. of threads to check is no. of cols */
+         
+         /* first is the first of that row */
+         first = (cbc->tdata[rankG]).rankR * cbc->Q;
+      }
+      else
+      {
+         #ifdef USE_ASSERT
+            ATL_assert(waitOn == cbc->Master);
+         #endif
+      }
+
+      /* now wait for all required threads to finish */
+      for (i=0, j=first; i<limit; i++, j+=k)
+      {
+         if (j != rankG)      /* if it's not me, wait for it */
+         {
+            while ((cbc->tdata[rankG]).Next[scope] == 
+                     (cbc->tdata[j]).Next[scope])
+            {
+               ATL_tyield;
+            }
+         }
+      }
+      /* All threads done, now I can post. */
+      ATL_POST(scope, cbc, rankG);
+
+      /* if I am not the new Master, wait for new master to take over */
+      if (waitOn != newMaster)
+         ATL_WAIT(scope, cbc, rankG, waitOn, newMaster);
+   }
+   else  /* I am not the master */
+   {
+      ATL_POST(scope, cbc, rankG);  /* post my update */
+      
+      /* wait for old to post update or new master to take over */
+      ATL_WAIT(scope, cbc, rankG, waitOn, newMaster); 
+   }
+}
+
+void ATL_CBC_barrier(enum ATL_SYNC_SCOPE scope, ATL_CBC_t *cbc, ATL_INT rankG)
+{
+   int m;
+   //_T("T%d: entering barrier ...\n", rankG);
+   switch (scope)
+   {
+      case ATL_SYNC_GRID:
+         ATL_CBC_barrier_internal(scope, cbc, rankG, cbc->Master, cbc->Master);
+         break;
+      case ATL_SYNC_ROW:
+         m = cbc->tdata[rankG].rankR; /* get my col rank */
+         m = cbc->RowMasters[m];
+         ATL_CBC_barrier_internal(scope, cbc, rankG, m, m);
+         break;
+      case ATL_SYNC_COL:
+         m = cbc->tdata[rankG].rankC; /* get my col rank */
+         m = cbc->ColMasters[m];
+         ATL_CBC_barrier_internal(scope, cbc, rankG, m, m);
+         break;
+   }
+   //_T("T%d: exiting barrier ...\n", rankG);
+}
+void ATL_CBC_gbarrier(ATL_CBC_t *cbc, int rankG)
+{
+   ATL_CBC_barrier(ATL_SYNC_GRID, cbc, rankG);
+}
+
+@ROUT ATL_cbc_misc
+#include <atlas_cbc.h>
+
+void ATL_CBC_init(ATL_CBC_t *cbc, ATL_INT P, ATL_INT Q, ATL_CBC_TDATA *tdata)
+{
+   int i, k;
+   assert(cbc);   /* check whether cbc is valid */
+   assert(tdata); /* check whether tdata is valid */
+   cbc->P = P;    /* number of rows in the thread grid */
+   cbc->Q = Q;    /* number of columns in the thread grid */
+   cbc->Nt = P*Q; /* total number of threads */
+   cbc->tdata = tdata;  /* thread data that stores sync variables and ranks */
+
+   cbc->Master = 0;     /* indicates who is the master for the grid */
+   cbc->MallocOwner = 0;
+   cbc->vp = malloc(sizeof(ATL_INT)*(P+Q)); /* memory for scoped masters */
+   assert(cbc->vp);
+
+   cbc->RowMasters = cbc->vp;       /* masters for each row */
+   cbc->ColMasters = cbc->RowMasters + P; /* masters for each column */
+   
+   /* initialize the row masters to default */
+   for (i=0, k=0; i<P; i++, k+=Q)
+   {
+      cbc->RowMasters[i] = k; /* row masters are threads of first column */
+   }
+   /* initialize the column masters to default */
+   for (i=0; i<Q; i++)
+   {
+      cbc->ColMasters[i] = i; /* column masters are threads of first row */
+   }
+}
+
+void ATL_CBC_destroy(ATL_CBC_t *cbc)
+{
+   if (cbc->vp)   /* if vp has not been freed yet, free the memory */
+   {
+      free((void *)cbc->vp);
+      cbc->vp = NULL;   /* set vp to NULL to indicate that it's been freed. */
+   }
+}
+
+void ATL_WaitForPartner(enum ATL_SYNC_SCOPE scope, ATL_CBC_t *cbc, 
+                        ATL_INT rankG, ATL_INT partner)
+{
+   while (cbc->tdata[rankG].NextMsg[scope] 
+            <= cbc->tdata[partner].NextMsg[scope]);
+}
+
+void ATL_PostNewMsg(enum ATL_SYNC_SCOPE scope, ATL_CBC_t *cbc, 
+                    ATL_INT rankG, ATL_INT msg)
+{
+   cbc->tdata[rankG].NextMsg[scope] = msg;
+}
+
+void ATL_WAIT(enum ATL_SYNC_SCOPE scope, ATL_CBC_t *cbc, ATL_INT rankG,
+              ATL_INT waitOn, ATL_INT newMaster)
+{
+   if (waitOn == newMaster) /* No change in master. */
+   {
+      /* wait for master to finish. */
+      while ((cbc->tdata[rankG]).Next[scope] != 
+            (cbc->tdata[waitOn].Next[scope]))
+            {
+               ATL_tyield;
+            }
+   }
+   else     /* Master will change. */
+   {
+      if (rankG == newMaster)  /* if I am the new master */
+      {
+      
+         /* wait for old master to finish. */
+         while ((cbc->tdata[rankG]).Next[scope] != 
+            (cbc->tdata[waitOn]).Next[scope])
+            {
+               ATL_tyield;
+            }
+         
+         /* Now update the master */
+         if (scope == ATL_SYNC_GRID)   /* if whole grid */
+         {
+            cbc->Master = rankG;       /* update grid master */
+         }
+         else if (scope == ATL_SYNC_ROW)  /* if only a row */
+         {
+            int r = cbc->tdata[rankG].rankR; /* get my row rank */
+            /* update the row master of my row to me */
+            cbc->RowMasters[r] = rankG;
+         }
+         else if (scope == ATL_SYNC_COL)  /* if only a column */
+         {
+            int c = cbc->tdata[rankG].rankC; /* get my col rank */
+            /* update the row master of my row to me */
+            cbc->ColMasters[c] = rankG;
+         }
+      }
+      else /* I'm not the new master,wait for the new master to take control. */
+      {
+         if (scope == ATL_SYNC_GRID)   /* if whole grid */
+         {
+            /* wait for grid master to change */
+            while (cbc->Master != newMaster)
+            {
+               ATL_tyield;
+            }
+         }
+         else if (scope == ATL_SYNC_ROW)  /* if only a row */
+         {
+            int r = cbc->tdata[rankG].rankR; /* get my row rank */
+            /* wait for row master to change */
+            while (cbc->RowMasters[r] != newMaster)
+            {
+               ATL_tyield;
+            }
+         }
+         else if (scope == ATL_SYNC_COL)  /* if only a column */
+         {
+            int c = cbc->tdata[rankG].rankC; /* get my col rank */
+            /* wait for colum master to change */
+            while (cbc->ColMasters[c] != newMaster)
+            {
+               ATL_tyield;
+            }
+         }
+      }
+   }
+}
+
+@beginskip
+/*
+ * For updating the counter, a regular counter will casue overflow after a
+ * few billion syncs. So, we will use boolean and toggle for each POST.
+ */
+/*void ATL_POST(enum ATL_SYNC_SCOPE scope, ATL_CBC_t *cbc, ATL_INT rankG)
+{*/
+   /* toggles the value */
+#define ATL_POST(scope, cbc, rankG)   (cbc->tdata[rankG]).Next[scope] ^= 1
+/*}*/
+@endskip
+
+@ROUT ATL_cbc_LU
+#include "atlas_cbc.h"
+void ATL_CBC_LUschedWork(enum ATL_SYNC_SCOPE scope, ATL_CBC_t *cbc, 
+                         ATL_INT rankG, ATL_INT *next_val, ATL_INT atSwitch)
+{
+#if 1
+   int m_val = *next_val + 1;
+   int i, m_val2, _needToWait;
+   int rid = cbc->tdata[rankG].rankR;
+   int cid = cbc->tdata[rankG].rankC;
+   //_T("T%d: Trying barrier on %d\n", rankG, m_val);
+   cbc->tdata[rankG].NextMsg[scope] = m_val;
+   if (scope == ATL_SYNC_COL)
+   {
+      for (i=cid; i<cbc->Nt; i+=cbc->Q)
+      {
+         if (i != rankG)
+         {
+            while(cbc->tdata[i].NextMsg[scope] <= 0)
+            {
+               ATL_tyield;
+            }
+            cbc->tdata[rankG].NextMsg[scope] = 
+               Mmin(cbc->tdata[rankG].NextMsg[scope], 
+                  cbc->tdata[i].NextMsg[scope]);
+         }
+      }
+      if (m_val > cbc->tdata[rankG].NextMsg[scope]) /* i was in wrong column */
+      {
+         *next_val = cbc->tdata[rankG].NextMsg[scope] - 1;
+         //_T("T%d: Exiting wrong barrier on %d\n", rankG, m_val);
+         return; /* return and come back with correct column */
+      }
+      else
+      {
+         ATL_CBC_barrier(scope, cbc, rankG);
+      }
+   }
+   //_T("T%d: Exiting barrier on %d\n", rankG, m_val);
+   cbc->tdata[rankG].NextMsg[scope] = -1;
+   ATL_CBC_barrier(scope, cbc, rankG);
+#else
+   int m_val = *next_val + m_val + 1;
+   int i,  m_val2, _needToWait;
+   int rid = cbc->tdata[rankG].rankR;
+   int cid = cbc->tdata[rankG].rankC;
+   while (1)
+   {
+      cbc->tdata[rankG].NextMsg[scope] = m_val;
+      _needToWait = 0;
+      if (scope == ATL_SYNC_COL)
+      {
+         for (i=cid; i<cbc->Nt; i+=cbc->Q)
+         {
+            if (i != rankG)
+            {
+               while(cbc->tdata[i].NextMsg[scope] <= 0);
+               if (cbc->tdata[rankG].NextMsg[scope] > 
+                     cbc->tdata[i].NextMsg[scope])
+               {
+                  /* i am in wrong column */
+                  cbc->tdata[rankG].NextMsg[scope] = 
+                     cbc->tdata[i].NextMsg[scope];
+               }
+               else if (cbc->tdata[rankG].NextMsg[scope] < 
+                     cbc->tdata[i].NextMsg[scope])
+               {
+                  _needToWait = 1; /* someone else was in wrong column */
+               }
+            }
+         }
+         m_val2 = cbc->tdata[rankG].NextMsg[scope];
+         ATL_CBC_barrier(scope, cbc, rankG);
+         cbc->tdata[rankG].NextMsg[scope] = -1;
+         ATL_CBC_barrier(scope, cbc, rankG);
+         if (m_val > m_val2) /* i was in wrong column */
+         {
+            *next_val = m_val2 - 1;
+            //_T("T%d: Exiting wrong barrier on %d\n", rankG, m_val);
+            return; /* return and come back with correct column */
+         }
+         else if (_needToWait)
+            /* someone else was in wrong panel, need to wait for them */
+         {
+            continue;
+         }
+         break;
+      }
+   }
+#endif
+}
+
+
+@beginskip
+#if 0
+void ATL_DoCombine(ATL_CBC_t *cbc, ATL_INT rankG, ATL_INT partner, 
+                   enum ATL_CBC_TYPE type, enum ATL_CBC_OP op, 
+                   void *data, ATL_INT count)
+{
+   switch (op)    /* switch on operation */
+   {
+      case ATL_CBC_MAXLOC: /* case for finding max location */
+      {
+         switch (type) /* switch on type */
+         {
+            case ATL_CBC_FLOAT_INT: /* case for data with float and int */
+            {
+               /* get my own data and index */
+               ATL_CBC_FLOAT_INT_t mine = 
+                  *((ATL_CBC_FLOAT_INT_t*)ATL_TDATA(rankG).cdata_out);
+
+               /* get other's data and index */
+               ATL_CBC_FLOAT_INT_t his = 
+                  *((ATL_CBC_FLOAT_INT_t*)ATL_TDATA(partner).cdata_out);
+
+               /* if other's is larger, save those */
+               if (mine.fdata < his.fdata)
+               {
+                  *((ATL_CBC_FLOAT_INT_t*)ATL_TDATA(rankG).cdata_out) =
+                     *((ATL_CBC_FLOAT_INT_t*)ATL_TDATA(partner).cdata_out);
+               }
+               break;
+            }
+            case ATL_CBC_DOUBLE_INT: /* case for data with float and int */
+            {
+               /* get my own data and index */
+               ATL_CBC_DOUBLE_INT_t mine = 
+                  *((ATL_CBC_DOUBLE_INT_t*)ATL_TDATA(rankG).cdata_out);
+
+               /* get other's data and index */
+               ATL_CBC_DOUBLE_INT_t his = 
+                  *((ATL_CBC_DOUBLE_INT_t*)ATL_TDATA(partner).cdata_out);
+
+               /* if other's is larger, save those */
+               if (mine.fdata < his.fdata)
+               {
+                  *((ATL_CBC_DOUBLE_INT_t*)ATL_TDATA(rankG).cdata_out) =
+                     *((ATL_CBC_DOUBLE_INT_t*)ATL_TDATA(partner).cdata_out);
+               }
+               break;
+            }
+            default:
+            {
+               /* ERROR!!! MAXLOC can't support any other type */
+               fprintf(stderr, "MAXLOC can't support the provided type.\n");
+            }
+         } /* end switch on type */
+         break;
+      } /* case ends for MAXLOC */
+      
+      case ATL_CBC_SUM: /* Combine for sum operation */
+      {
+         switch (type) /* switch on data type */
+         {
+            case ATL_CBC_INT:
+            {
+               *((int*)ATL_TDATA(rankG).cdata_out) +=
+                     *((int*)ATL_TDATA(partner).cdata_out);
+               break;
+            }
+            case ATL_CBC_FLOAT:
+            {
+               *((float*)ATL_TDATA(rankG).cdata_out) +=
+                     *((float*)ATL_TDATA(partner).cdata_out);
+               break;
+            }
+            case ATL_CBC_DOUBLE:
+            {
+               *((double*)ATL_TDATA(rankG).cdata_out) +=
+                     *((double*)ATL_TDATA(partner).cdata_out);
+               break;
+            }
+         } /* switch on data type ends here */
+      } /* case ends for SUM */
+      
+      case ATL_CBC_MAX: /* Combine for max operation */
+      {
+         switch (type) /* switch on data type */
+         {
+            case ATL_CBC_INT:
+            {
+               if (*((int*)ATL_TDATA(rankG).cdata_out) <
+                     *((int*)ATL_TDATA(partner).cdata_out))
+               {
+                  *((int*)ATL_TDATA(rankG).cdata_out) =
+                        *((int*)ATL_TDATA(partner).cdata_out);
+               }
+               break;
+            }
+            case ATL_CBC_FLOAT:
+            {
+               if (*((float*)ATL_TDATA(rankG).cdata_out) <
+                     *((float*)ATL_TDATA(partner).cdata_out))
+               {
+                  *((float*)ATL_TDATA(rankG).cdata_out) =
+                        *((float*)ATL_TDATA(partner).cdata_out);
+               }
+               break;
+            }
+            case ATL_CBC_DOUBLE:
+            {
+               if (*((double*)ATL_TDATA(rankG).cdata_out) <
+                     *((double*)ATL_TDATA(partner).cdata_out))
+               {
+                  *((double*)ATL_TDATA(rankG).cdata_out) +=
+                        *((double*)ATL_TDATA(partner).cdata_out);
+               }
+               break;
+            }
+         } /* switch on data type ends here */
+      } /* case ends for MAX */
+      
+      case ATL_CBC_MIN: /* Combine for min operation */
+      {
+         switch (type) /* switch on data type */
+         {
+            case ATL_CBC_INT:
+            {
+               if (*((int*)ATL_TDATA(rankG).cdata_out) >
+                     *((int*)ATL_TDATA(partner).cdata_out))
+               {
+                  *((int*)ATL_TDATA(rankG).cdata_out) =
+                        *((int*)ATL_TDATA(partner).cdata_out);
+               }
+               break;
+            }
+            case ATL_CBC_FLOAT:
+            {
+               if (*((float*)ATL_TDATA(rankG).cdata_out) >
+                     *((float*)ATL_TDATA(partner).cdata_out))
+               {
+                  *((float*)ATL_TDATA(rankG).cdata_out) =
+                        *((float*)ATL_TDATA(partner).cdata_out);
+               }
+               break;
+            }
+            case ATL_CBC_DOUBLE:
+            {
+               if (*((double*)ATL_TDATA(rankG).cdata_out) >
+                     *((double*)ATL_TDATA(partner).cdata_out))
+               {
+                  *((double*)ATL_TDATA(rankG).cdata_out) +=
+                        *((double*)ATL_TDATA(partner).cdata_out);
+               }
+               break;
+            }
+         } /* switch on data type ends here */
+      } /* case ends for MIN */
+
+   } /* end switch on operation */
+}
+
+void ATL_Combine(enum ATL_SYNC_SCOPE scope, ATL_CBC_t *cbc, ATL_INT rankG,
+                 ATL_INT master, ATL_INT newMaster, enum ATL_CBC_TYPE type, 
+                 enum ATL_CBC_OP op, void *data, ATL_INT count, void *out)
+{
+   /* copy input to output as first result */
+   memcpy(out, data, ATL_CBC_TYPE_SIZE[type] * count);
+   
+   cbc->tdata[rankG].ctype = type;  /* set the output to data pointer */
+   cbc->tdata[rankG].cdata_out = out;  /* in thread data structure so that */
+   cbc->tdata[rankG].clen_out = count; /* parent can read my output */
+
+   if (scope == ATL_SYNC_GRID)   /* Combine is for whole grid */
+   {
+      int d = 1, partner, vrankG;        /* d is the partner distance */
+      vrankG = rankG - master + cbc->Nt;   /* find the virtual rank : shift */
+      vrankG = vrankG - (vrankG / cbc->Nt) * cbc->Nt; /* vrankG %= Nt */
+      while ((vrankG & d) == 0 &&   /* if I need to wait on someone and that */
+            (vrankG + d) < cbc->Nt) /* someone exists, enter this loop */
+      {
+         partner = vrankG + d + master;      /* get partner's real rank */
+         partner = partner - (partner / cbc->Nt) * cbc->Nt; /* partner %= Nt */
+         /* wait for partner to finish */
+         while (ATL_NEXT(cbc, rankG, scope) == ATL_NEXT(cbc, partner, scope));
+
+         /* do the combine */
+         ATL_DoCombine(cbc, rankG, partner, type, op, data, count);
+
+         d <<= 1;                   /* increase partner distance */
+      } /* end of while loop of binary combine */
+   } /* if statement for grid scope is done */
+   
+   else if (scope == ATL_SYNC_ROW) /* for row scope */
+   {
+      int d = 1, partner, vrankC;
+      #ifdef USE_ASSERT
+         ATL_assert(ATL_ROW_RANK(cbc, rankG) == ATL_ROW_RANK(cbc, master));
+         ATL_assert(ATL_ROW_RANK(cbc, newMaster) == ATL_ROW_RANK(cbc, master));
+      #endif
+      vrankC = ATL_COL_RANK(cbc, rankG) - ATL_COL_RANK(cbc, master) 
+               + cbc->Q;
+      vrankC = vrankC - (vrankC / cbc->Q) * cbc->Q;
+      while ((vrankC &d) == 0 &&
+            (vrankC + d) < cbc->Q)
+      {
+         partner = vrankC + d + ATL_COL_RANK(cbc, master); /* real column */
+         partner = partner - (partner / cbc->Q) * cbc->Q;
+         partner = ATL_GRID_RANK(cbc, 
+               ATL_ROW_RANK(cbc, master), partner); /*grid rank*/
+         
+         /* wait for partner to finish */
+         while (ATL_NEXT(cbc, rankG, scope) == ATL_NEXT(cbc, partner, scope));
+
+         /* do the combine */
+         ATL_DoCombine(cbc, rankG, partner, type, op, data, count);
+
+         d <<= 1;                   /* increase partner distance */
+      } /* end of while loop of binary combine */
+   } /* if statement for row scope is done */
+
+   else  /* for column scope */
+   {
+      int d = 1, partner, vrankR;
+      #ifdef USE_ASSERT
+         ATL_assert(ATL_COL_RANK(cbc, rankG) == ATL_COL_RANK(cbc, master));
+         ATL_assert(ATL_COL_RANK(cbc, newMaster) == ATL_COL_RANK(cbc, master));
+      #endif
+      vrankR = ATL_ROW_RANK(cbc, rankG) - ATL_ROW_RANK(cbc, master) 
+               + cbc->Q;
+      vrankR = vrankR - (vrankR / cbc->P) * cbc->P;
+      while ((vrankR &d) == 0 &&
+            (vrankR + d) < cbc->P)
+      {
+         partner = vrankR + d + ATL_ROW_RANK(cbc, master); /* real row */
+         partner = partner - (partner / cbc->P) * cbc->P;
+         partner = ATL_GRID_RANK(cbc, partner,  
+               ATL_COL_RANK(cbc, master)); /*grid rank*/
+         
+         /* wait for partner to finish */
+         while (ATL_NEXT(cbc, rankG, scope) == ATL_NEXT(cbc, partner, scope));
+
+         /* do the combine */
+         ATL_DoCombine(cbc, rankG, partner, type, op, data, count);
+
+         d <<= 1;                   /* increase partner distance */
+      } /* end of while loop of binary combine */
+   } /* if statement for colum scope is done */
+   
+   /* All done with binary combine, now update state */
+   if (rankG == master) /* if I am master */
+   {
+   #if 1    /* leave on all, set to 0 if leave on only the master */
+
+      int i, j, k, first, limit;
+      k = 1;                     /* for grid and column scope, increment 1 */
+      first = 0;                 /* for grid, start from 0 */
+      limit = cbc->Nt;           /* how many threads to check, for grid, all */
+      
+      if (scope == ATL_SYNC_COL) /* if column scope */
+      {
+         k = cbc->Q;             /* increment is number of columns */
+         limit = cbc->P;         /* no. of threads to check is no. of rows */
+         first = (cbc->tdata[rankG]).rankC;  /* first is just column rank */
+      }
+      else if (scope == ATL_SYNC_ROW) /* if row scope */
+      {
+         limit = cbc->Q;         /* no. of threads to check is no. of cols */
+         
+         /* first is the first of that row */
+         first = (cbc->tdata[rankG]).rankR * cbc->Q;
+      }
+
+      /* now copy my result to everyone else */
+      for (i=0, j=first; i<limit; i++, j+=k)
+      {
+         if (j != rankG)      /* if it's not me, copy result */
+         {
+            memcpy(cbc->tdata[j].cdata_out, out, ATL_CBC_TYPE_SIZE[type]*
+                                                 cbc->tdata[j].clen_out);
+         }
+      }
+      #endif
+
+      /* POST so that the everyone knows that I am done. */
+      ATL_POST(scope, cbc, rankG);
+      if (master != newMaster) /* I am not the new master */
+         /* wait for new master*/
+         ATL_WAIT(scope, cbc, rankG, master, newMaster);
+   }
+   else /* I am not old master */
+   {
+      /* done my part of combine */
+      ATL_POST(scope, cbc, rankG);  /* let others know that I am done */
+      ATL_WAIT(scope, cbc, rankG, master, newMaster); /* wait for newMaster */
+   }
+}
+#endif
+@endskip
+
+void ATL_iTMaxForLU(enum ATL_SYNC_SCOPE scope, ATL_CBC_t *cbc, ATL_INT rankG,
+                    ATL_INT master, ATL_INT newMaster, const TYPE in_data,
+                    const int in_indx, TYPE *out_data, int *out_indx, int *ownr)
+{
+   ATL_TDATA(rankG).mdata = in_data;
+   ATL_TDATA(rankG).mindx = in_indx;
+   ATL_TDATA(rankG).mOwner = rankG;
+   
+   if (scope == ATL_SYNC_GRID)   /* Combine is for whole grid */
+   {
+      int d = 1, partner, vrankG;        /* d is the partner distance */
+      #ifdef USE_ASSERT
+         ATL_assert(master == cbc->Master);
+      #endif
+      vrankG = rankG - master + cbc->Nt;   /* find the virtual rank : shift */
+      vrankG = vrankG - (vrankG / cbc->Nt) * cbc->Nt; /* vrankG %= Nt */
+      while ((vrankG & d) == 0 &&   /* if I need to wait on someone and that */
+            (vrankG + d) < cbc->Nt) /* someone exists, enter this loop */
+      {
+         partner = vrankG + d + master;      /* get partner's real rank */
+         partner = partner - (partner / cbc->Nt) * cbc->Nt; /* partner %= Nt */
+         /* wait for partner to finish */
+         while (ATL_NEXT(cbc, rankG, scope) == ATL_NEXT(cbc, partner, scope));
+
+         /* do the combine (max loc for this case) */
+         if (Mabs(ATL_TDATA(rankG).mdata) < Mabs(ATL_TDATA(partner).mdata))
+         {
+            ATL_TDATA(rankG).mdata = ATL_TDATA(partner).mdata;
+            ATL_TDATA(rankG).mindx = ATL_TDATA(partner).mindx;
+            ATL_TDATA(rankG).mOwner = ATL_TDATA(partner).mOwner;
+         }
+
+         d <<= 1;                   /* increase partner distance */
+      } /* end of while loop of binary combine */
+   } /* if statement for grid scope is done */
+   
+   else if (scope == ATL_SYNC_ROW) /* for row scope */
+   {
+      int d = 1, partner, vrankC;
+      #ifdef USE_ASSERT
+      ATL_assert(master == cbc->RowMasters[ATL_TDATA(rankG).rankR]);
+      ATL_assert(ATL_ROW_RANK(cbc, rankG) == ATL_ROW_RANK(cbc, master));
+      ATL_assert(ATL_ROW_RANK(cbc, newMaster) == ATL_ROW_RANK(cbc, master));
+      #endif
+      vrankC = ATL_COL_RANK(cbc, rankG) - ATL_COL_RANK(cbc, master) 
+               + cbc->Q;
+      vrankC = vrankC - (vrankC / cbc->Q) * cbc->Q;
+      while ((vrankC &d) == 0 &&
+            (vrankC + d) < cbc->Q)
+      {
+         partner = vrankC + d + ATL_COL_RANK(cbc, master); /* real column */
+         partner = partner - (partner / cbc->Q) * cbc->Q;
+         partner = ATL_GRID_RANK(cbc, 
+               ATL_ROW_RANK(cbc, master), partner); /*grid rank*/
+         
+         /* wait for partner to finish */
+         while (ATL_NEXT(cbc, rankG, scope) == ATL_NEXT(cbc, partner, scope));
+
+         /* do the combine (max loc for this case) */
+         if (Mabs(ATL_TDATA(rankG).mdata) < Mabs(ATL_TDATA(partner).mdata))
+         {
+            ATL_TDATA(rankG).mdata = ATL_TDATA(partner).mdata;
+            ATL_TDATA(rankG).mindx = ATL_TDATA(partner).mindx;
+            ATL_TDATA(rankG).mOwner = ATL_TDATA(partner).mOwner;
+         }
+
+         d <<= 1;                   /* increase partner distance */
+      } /* end of while loop of binary combine */
+   } /* if statement for row scope is done */
+
+   else  /* for column scope */
+   {
+      int d = 1, partner, vrankR;
+      #ifdef USE_ASSERT
+         ATL_assert(master == cbc->ColMasters[ATL_TDATA(rankG).rankC]);
+         ATL_assert(ATL_COL_RANK(cbc, rankG) == ATL_COL_RANK(cbc, master));
+         ATL_assert(ATL_COL_RANK(cbc, newMaster) == ATL_COL_RANK(cbc, master));
+      #endif
+      vrankR = ATL_ROW_RANK(cbc, rankG) - ATL_ROW_RANK(cbc, master) 
+               + cbc->P;
+      vrankR = vrankR - (vrankR / cbc->P) * cbc->P;
+      while ((vrankR &d) == 0 &&
+            (vrankR + d) < cbc->P)
+      {
+         partner = vrankR + d + ATL_ROW_RANK(cbc, master); /* real row */
+         partner = partner - (partner / cbc->P) * cbc->P;
+         partner = ATL_GRID_RANK(cbc, partner,  
+               ATL_COL_RANK(cbc, master)); /*grid rank*/
+         
+         /* wait for partner to finish */
+         while (ATL_NEXT(cbc, rankG, scope) == ATL_NEXT(cbc, partner, scope));
+
+         /* do the combine (max loc for this case) */
+         if (Mabs(ATL_TDATA(rankG).mdata) < Mabs(ATL_TDATA(partner).mdata))
+         {
+            ATL_TDATA(rankG).mdata = ATL_TDATA(partner).mdata;
+            ATL_TDATA(rankG).mindx = ATL_TDATA(partner).mindx;
+            ATL_TDATA(rankG).mOwner = ATL_TDATA(partner).mOwner;
+         }
+
+         d <<= 1;                   /* increase partner distance */
+      } /* end of while loop of binary combine */
+   } /* if statement for colum scope is done */
+   
+   /* All done with binary combine, now update state */
+   if (rankG == master) /* if I am master */
+   {
+#if 1    /* leave on all, set to 0 if leave on only the master */
+
+      int i, j, k, first, limit;
+      k = 1;                     /* for grid and column scope, increment 1 */
+      first = 0;                 /* for grid, start from 0 */
+      limit = cbc->Nt;           /* how many threads to check, for grid, all */
+      
+      if (scope == ATL_SYNC_COL) /* if column scope */
+      {
+         k = cbc->Q;             /* increment is number of columns */
+         limit = cbc->P;         /* no. of threads to check is no. of rows */
+         first = (cbc->tdata[rankG]).rankC;  /* first is just column rank */
+      }
+      else if (scope == ATL_SYNC_ROW) /* if row scope */
+      {
+         limit = cbc->Q;         /* no. of threads to check is no. of cols */
+         
+         /* first is the first of that row */
+         first = (cbc->tdata[rankG]).rankR * cbc->Q;
+      }
+
+      /* now copy my result to everyone else */
+      for (i=0, j=first; i<limit; i++, j+=k)
+      {
+         ATL_TDATA(j).mdata = ATL_TDATA(rankG).mdata;
+         ATL_TDATA(j).mindx = ATL_TDATA(rankG).mindx;
+         ATL_TDATA(j).mOwner = ATL_TDATA(rankG).mOwner;
+      }
+#endif
+
+      /* POST so that the everyone knows that I am done. */
+      ATL_POST(scope, cbc, rankG);
+      if (master != newMaster) /* I am not the new master */
+         /* wait for new master*/
+         ATL_WAIT(scope, cbc, rankG, master, newMaster);
+   }
+   else /* I am not old master */
+   {
+      /* done my part of combine */
+      ATL_POST(scope, cbc, rankG);  /* let others know that I am done */
+      ATL_WAIT(scope, cbc, rankG, master, newMaster); /* wait for newMaster */
+   }
+   *out_data = ATL_TDATA(rankG).mdata;
+   *out_indx = ATL_TDATA(rankG).mindx;
+   *ownr = ATL_TDATA(rankG).mOwner;
+}
+
+void ATL_CBC_Malloc_Lock(ATL_CBC_t *cbc, ATL_INT rankG)
+{
+   while (cbc->MallocOwner != rankG);
+}
+
+void ATL_CBC_Malloc_UnLock(ATL_CBC_t *cbc, ATL_INT rankG)
+{
+   assert(cbc->MallocOwner == rankG);
+   cbc->MallocOwner = (cbc->MallocOwner+1)%cbc->Nt;
+}
+@ROUT !
