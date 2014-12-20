@@ -362,14 +362,18 @@ ID=42 MU=4 NU=6 KU=2 AUTH="Nuechterlein & Whaley" \
 #endif
 #ifdef TREAL
    typedef void (*cm2am_t)(const size_t, const size_t, const SCALAR,
-                          const TYPE*, const size_t, TYPE*);
+                           const TYPE*, const size_t, TYPE*);
+   typedef void (*am2cm_t)(const size_t, const size_t, const SCALAR,
+                           TYPE*, const size_t, const TYPE*);
    typedef void (*ablk2cmat_t)(const size_t, const size_t, const SCALAR,
                                const TYPE*, const SCALAR, TYPE *, const size_t);
    typedef void (*cmat2ablk_t)(const size_t, const size_t, const SCALAR,
                                const TYPE*, const size_t, const SCALAR,TYPE*);
 #else
    typedef void (*cm2am_t)(const size_t, const size_t, const SCALAR,
-                          const TYPE*, const size_t, TYPE*, TYPE*);
+                           const TYPE*, const size_t, TYPE*, TYPE*);
+   typedef void (*am2cm_t)(const size_t, const size_t, const SCALAR,
+                           TYPE*, const size_t, const TYPE*, const TYPE*);
    typedef void (*ablk2cmat_t)(const size_t, const size_t, const SCALAR,
                                const TYPE*, const TYPE*, const SCALAR, 
                                TYPE *, const size_t);
@@ -1033,6 +1037,41 @@ void GenC2BLK(char pre, ATL_mmnode_t *mmb, char *outd, char *suff)
    fclose(fp1);
 }
 
+void SpewForthRevCpProto(char pre, FILE *fp, char alp, int u, int kmaj)
+{
+@ROUT emit_amm
+   assert(0);
+@ROUT emit_uamm
+   const int G = (pre == 'c' || pre == 'z') ? 2 : 1;
+   const char *cst[2] = {"", "C"};
+   int g;
+
+   for (g=0; g < G; g++)
+   {
+      if (kmaj > 1)
+         fprintf(fp, "void ATL_%cu%dam2cm_a%c_%dx%d%s\n", 
+                 pre, UID, alp, kmaj, u, cst[g]);
+      else
+         fprintf(fp, "void ATL_%cu%dam2cm_a%c_%d%s\n",pre, UID, alp, u, cst[g]);
+      if (pre == 'z' || pre == 'c')
+         fprintf(fp, "   (ATL_CSZT,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT,const TYPE*,const TYPE*);\n");
+      else
+         fprintf(fp,
+         "   (ATL_CSZT,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT,const TYPE*);\n");
+      if (kmaj > 1)
+         fprintf(fp, "void ATL_%cu%dam2rm_a%c_%dx%d%s\n", 
+                 pre, UID, alp, kmaj, u, cst[g]);
+      else
+         fprintf(fp, "void ATL_%cu%dam2rm_a%c_%d%s\n",pre, UID, alp, u, cst[g]);
+      if (pre == 'z' || pre == 'c')
+         fprintf(fp, "   (ATL_CSZT,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT,const TYPE*,const TYPE*);\n");
+      else
+         fprintf(fp,
+         "   (ATL_CSZT,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT,const TYPE*);\n");
+   }
+@ROUT emit_uamm emit_amm
+}
+
 void SpewForthCpProto(char pre, FILE *fp, char alp, int u, int kmaj)
 {
    const int G = (pre == 'c' || pre == 'z') ? 2 : 1;
@@ -1082,14 +1121,14 @@ void SpewForthCpProto(char pre, FILE *fp, char alp, int u, int kmaj)
    }
 }
 
-void SpewForthCpConjDecl(char pre, ATL_mmnode_t *mmb, FILE *fp, 
+void SpewForthCpConjDecl(char pre, int REVERSE, ATL_mmnode_t *mmb, FILE *fp, 
                          char *arr, char *rt, char alp, int u)
 {
    ATL_mmnode_t *mp;
    int j;
 
-   fprintf(fp, "static cm2am_t %s_a%c[%d] =\n{\n", arr, alp, 
-           ATL_CountNumberOfMMNodes(mmb));
+   fprintf(fp, "static %s_t %s_a%c[%d] =\n{\n",
+           REVERSE?"am2cm":"cm2am", arr, alp,  ATL_CountNumberOfMMNodes(mmb));
    for (j=0,mp=mmb; mp; j++,mp = mp->next)
    {
       const int kmaj = mp->kmaj;
@@ -1116,14 +1155,14 @@ void SpewForthCpConjDecl(char pre, ATL_mmnode_t *mmb, FILE *fp,
    fprintf(fp, "};\n\n");
 }
 
-void SpewForthCpDecl(char pre, ATL_mmnode_t *mmb, FILE *fp, 
+void SpewForthCpDecl(char pre, int REVERSE, ATL_mmnode_t *mmb, FILE *fp, 
                      char *arr, char *rt, char alp, int u)
 {
    ATL_mmnode_t *mp;
    int j;
 
-   fprintf(fp, "static cm2am_t %s_a%c[%d] =\n{\n", arr, alp, 
-           ATL_CountNumberOfMMNodes(mmb));
+   fprintf(fp, "static %s_t %s_a%c[%d] =\n{\n", 
+           REVERSE?"am2cm":"cm2am", arr, alp, ATL_CountNumberOfMMNodes(mmb));
    for (j=0,mp=mmb; mp; j++,mp = mp->next)
    {
       const int kmaj = mp->kmaj;
@@ -1155,6 +1194,90 @@ void SpewForthCpDecl(char pre, ATL_mmnode_t *mmb, FILE *fp,
 @ROUT emit_uamm
    @define len @24+UIL@
 @ROUT emit_amm emit_uamm
+void GenAMAJ2CMAJ(char pre, ATL_mmnode_t *mmb, char *outd, char *suff)
+/*
+ * 3. atlas_<pre>amm_am2cm_a[1,X,n]: 
+ *    defines: ATL_AMM_NCASES
+ *    prototypes all am2rm & am2cm routines
+ *    1 indexible array giving which to use for each block factor
+ */
+{
+   char ac[3] = {'1', 'n', 'X'};
+   int ia, j;
+   char *fnam, *sp, *np;
+   ATL_mmnode_t *mp;
+
+   if (!suff)
+      suff = "";
+   ia = strlen(outd) + strlen(suff) + @(len);
+   fnam = malloc(ia*sizeof(char));
+   assert(fnam);
+@ROUT emit_amm
+   sprintf(fnam, "%s/atlas_%camm%s_am2cm_a1.h", outd, pre, suff);
+@ROUT emit_uamm
+   sprintf(fnam, "%s/atlas_%cu%damm%s_am2cm_a1.h", outd, pre, UID, suff);
+@ROUT emit_amm emit_uamm
+   np = fnam+ia-23+12;
+   assert(*np == 'a' && np[1] == 'm');
+   sp = fnam+ia-4;
+   assert(*sp == '1');
+
+   for (ia=0; ia < 3; ia++)
+   {
+      char *rt[2] = {"am2cm", "am2rm"};
+      FILE *fp;
+      int kmaj = mmb->kmaj;
+
+      if (kmaj == 1)
+         kmaj = 0;
+      *sp = ac[ia];
+      fp = fopen(fnam, "w");
+      assert(fp);
+      sp[1] = '\0';
+      PrintBegBlock(pre, mmb, np, fp);
+      sp[1] = '.';
+      fprintf(fp, "/*\n * mat2blk prototypes\n */\n");
+      SpewForthRevCpProto(pre, fp, ac[ia], mmb->mu, kmaj);
+      if (mmb->nu != mmb->mu || kmaj > 1)
+         SpewForthRevCpProto(pre, fp, ac[ia], mmb->nu, kmaj);
+      for (mp=mmb->next; mp; mp = mp->next)
+      {
+         ATL_mmnode_t *p;
+         int mu = mp->mu, nu = mp->nu, kmaj=mp->kmaj;
+         for (p=mmb; p != mp; p = p->next)
+            if (mu == p->mu && p->kmaj == kmaj)
+               break;
+         if (p == mp) /* haven't seen before */
+            SpewForthRevCpProto(pre, fp, ac[ia], mu, kmaj);
+         for (p=mmb; p != mp; p = p->next)
+            if ((p->nu == nu && p->kmaj == kmaj) || 
+                (p->kmaj == kmaj && p->mu == nu))
+               break;
+         if (p == mp) /* haven't seen before */
+            SpewForthRevCpProto(pre, fp, ac[ia], nu, kmaj);
+      }
+      fprintf(fp, "\n");
+      SpewForthCpDecl(pre,1,mmb, fp, "ATL_@(UP)AMM_BLK2A", "am2cm", ac[ia], 1);
+      SpewForthCpDecl(pre,1,mmb, fp, "ATL_@(UP)AMM_BLK2AT", "am2rm", ac[ia], 1);
+      SpewForthCpDecl(pre,1,mmb, fp, "ATL_@(UP)AMM_BLK2B", "am2cm", ac[ia], 0);
+      SpewForthCpDecl(pre,1,mmb, fp, "ATL_@(UP)AMM_BLK2BT", "am2rm", ac[ia], 0);
+      if (pre == 'c' || pre == 'z')
+      {
+         SpewForthCpConjDecl(pre, 1, mmb, fp, "ATL_@(UP)AMM_BLKC2A", 
+                             "am2cm", ac[ia], 1);
+         SpewForthCpConjDecl(pre, 1, mmb, fp, "ATL_@(UP)AMM_BLKH2A", 
+                             "am2rm", ac[ia], 1);
+         SpewForthCpConjDecl(pre, 1, mmb, fp, "ATL_@(UP)AMM_BLKC2B", 
+                             "am2cm", ac[ia], 0);
+         SpewForthCpConjDecl(pre, 1, mmb, fp, "ATL_@(UP)AMM_BLKH2B", 
+                             "am2rm", ac[ia], 0);
+      }
+      fprintf(fp, "\n#endif  /* end include file guard */\n");
+      fclose(fp);
+   }
+   free(fnam);
+}
+@ROUT emit_amm emit_uamm
 void GenCMAJ2AMAJ(char pre, ATL_mmnode_t *mmb, char *outd, char *suff)
 /*
  * 3. atlas_<pre>amm_cm2am_a[1,X,n]: 
@@ -1168,6 +1291,7 @@ void GenCMAJ2AMAJ(char pre, ATL_mmnode_t *mmb, char *outd, char *suff)
    char *fnam, *sp, *np;
    ATL_mmnode_t *mp;
 
+@ROUT emit_uamm `GenAMAJ2CMAJ(pre, mmb, outd, suff);`
    if (!suff)
       suff = "";
    ia = strlen(outd) + strlen(suff) + @(len);
@@ -1218,19 +1342,19 @@ void GenCMAJ2AMAJ(char pre, ATL_mmnode_t *mmb, char *outd, char *suff)
             SpewForthCpProto(pre, fp, ac[ia], nu, kmaj);
       }
       fprintf(fp, "\n");
-      SpewForthCpDecl(pre, mmb, fp, "ATL_@(UP)AMM_A2BLK", "cm2am", ac[ia], 1);
-      SpewForthCpDecl(pre, mmb, fp, "ATL_@(UP)AMM_AT2BLK", "rm2am", ac[ia], 1);
-      SpewForthCpDecl(pre, mmb, fp, "ATL_@(UP)AMM_B2BLK", "cm2am", ac[ia], 0);
-      SpewForthCpDecl(pre, mmb, fp, "ATL_@(UP)AMM_BT2BLK", "rm2am", ac[ia], 0);
+      SpewForthCpDecl(pre,0,mmb, fp, "ATL_@(UP)AMM_A2BLK", "cm2am", ac[ia], 1);
+      SpewForthCpDecl(pre,0,mmb, fp, "ATL_@(UP)AMM_AT2BLK", "rm2am", ac[ia], 1);
+      SpewForthCpDecl(pre,0,mmb, fp, "ATL_@(UP)AMM_B2BLK", "cm2am", ac[ia], 0);
+      SpewForthCpDecl(pre,0,mmb, fp, "ATL_@(UP)AMM_BT2BLK", "rm2am", ac[ia], 0);
       if (pre == 'c' || pre == 'z')
       {
-         SpewForthCpConjDecl(pre, mmb, fp, "ATL_@(UP)AMM_AC2BLK", 
+         SpewForthCpConjDecl(pre, 0, mmb, fp, "ATL_@(UP)AMM_AC2BLK", 
                              "cm2am", ac[ia], 1);
-         SpewForthCpConjDecl(pre, mmb, fp, "ATL_@(UP)AMM_AH2BLK", 
+         SpewForthCpConjDecl(pre, 0, mmb, fp, "ATL_@(UP)AMM_AH2BLK", 
                              "rm2am", ac[ia], 1);
-         SpewForthCpConjDecl(pre, mmb, fp, "ATL_@(UP)AMM_BC2BLK", 
+         SpewForthCpConjDecl(pre, 0, mmb, fp, "ATL_@(UP)AMM_BC2BLK", 
                              "cm2am", ac[ia], 0);
-         SpewForthCpConjDecl(pre, mmb, fp, "ATL_@(UP)AMM_BH2BLK", 
+         SpewForthCpConjDecl(pre, 0, mmb, fp, "ATL_@(UP)AMM_BH2BLK", 
                              "rm2am", ac[ia], 0);
       }
       fprintf(fp, "\n#endif  /* end include file guard */\n");
@@ -1611,16 +1735,16 @@ void GenRankKH
    for (ia=0; ia < 3; ia++)
    {
       fprintf(fp, "\n");
-      SpewForthCpDecl(PRE, rkb, fp, "ATL_RKK_A2BLK", "cm2am", ac[ia], 1);
-      SpewForthCpDecl(PRE, rkb, fp, "ATL_RKK_AT2BLK", "rm2am", ac[ia], 1);
-      SpewForthCpDecl(PRE, rkb, fp, "ATL_RKK_B2BLK", "cm2am", ac[ia], 0);
-      SpewForthCpDecl(PRE, rkb, fp, "ATL_RKK_BT2BLK", "rm2am", ac[ia], 0);
+      SpewForthCpDecl(PRE, 0, rkb, fp, "ATL_RKK_A2BLK", "cm2am", ac[ia], 1);
+      SpewForthCpDecl(PRE, 0, rkb, fp, "ATL_RKK_AT2BLK", "rm2am", ac[ia], 1);
+      SpewForthCpDecl(PRE, 0, rkb, fp, "ATL_RKK_B2BLK", "cm2am", ac[ia], 0);
+      SpewForthCpDecl(PRE, 0, rkb, fp, "ATL_RKK_BT2BLK", "rm2am", ac[ia], 0);
       if (PRE == 'z' || PRE == 'c')
       {
-         SpewForthCpConjDecl(PRE, rkb, fp, "ATL_RKK_AC2BLK", "cm2am",ac[ia],1);
-         SpewForthCpConjDecl(PRE, rkb, fp, "ATL_RKK_AH2BLK", "rm2am",ac[ia],1);
-         SpewForthCpConjDecl(PRE, rkb, fp, "ATL_RKK_BC2BLK", "cm2am",ac[ia],0);
-         SpewForthCpConjDecl(PRE, rkb, fp, "ATL_RKK_BH2BLK", "rm2am",ac[ia],0);
+         SpewForthCpConjDecl(PRE,0,rkb, fp, "ATL_RKK_AC2BLK", "cm2am",ac[ia],1);
+         SpewForthCpConjDecl(PRE,0,rkb, fp, "ATL_RKK_AH2BLK", "rm2am",ac[ia],1);
+         SpewForthCpConjDecl(PRE,0,rkb, fp, "ATL_RKK_BC2BLK", "cm2am",ac[ia],0);
+         SpewForthCpConjDecl(PRE,0,rkb, fp, "ATL_RKK_BH2BLK", "rm2am",ac[ia],0);
       }
    }
    SpewForthKernArray(fp, pre, rkb, "KERN_RKK", '0');
@@ -1863,9 +1987,9 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
          const int u = up->mu;
          for (j=0; j < 3; j++)
          {
+@ROUT emit_amm
             if (up->kmaj > 1)
                fprintf(fp, 
-@ROUT emit_amm
  " \\\n       ATL_%crm2am_a%c_%dx%d.o ATL_%ccm2am_a%c_%dx%d.o",
                        pre, al[j], up->kmaj, u, pre, al[j], up->kmaj, u);
             else
@@ -1881,20 +2005,44 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
                   fprintf(fp, " \\\n       ATL_%crm2am_a%c_%dC.o ATL_%ccm2am_a%c_%dC.o",
                           pre, al[j], u, pre, al[j], u);
 @ROUT emit_uamm
+            if (up->kmaj > 1)
+            {
+               fprintf(fp, 
  " \\\n       ATL_%cu%drm2am_a%c_%dx%d.o ATL_%cu%dcm2am_a%c_%dx%d.o",
               pre, UID, al[j], up->kmaj, u, pre, UID, al[j], up->kmaj, u);
+               fprintf(fp, 
+ " \\\n       ATL_%cu%dam2rm_a%c_%dx%d.o ATL_%cu%dam2cm_a%c_%dx%d.o",
+              pre, UID, al[j], up->kmaj, u, pre, UID, al[j], up->kmaj, u);
+            }
             else
-               fprintf(fp, " \\\n       ATL_%cu%drm2am_a%c_%d.o ATL_%cu%dcm2am_a%c_%d.o",
+            {
+               fprintf(fp, 
+                  " \\\n       ATL_%cu%drm2am_a%c_%d.o ATL_%cu%dcm2am_a%c_%d.o",
                        pre, UID, al[j], u, pre, UID, al[j], u);
+               fprintf(fp, 
+                  " \\\n       ATL_%cu%dam2rm_a%c_%d.o ATL_%cu%dam2cm_a%c_%d.o",
+                       pre, UID, al[j], u, pre, UID, al[j], u);
+            }
             if (pre == 'c' || pre == 'z')
             {
                if (up->kmaj > 1)
+               {
                   fprintf(fp, 
  " \\\n       ATL_%cu%drm2am_a%c_%dx%dC.o ATL_%cu%dcm2am_a%c_%dx%dC.o",
                   pre, UID, al[j], up->kmaj, u, pre, UID, al[j], up->kmaj, u);
+                  fprintf(fp, 
+ " \\\n       ATL_%cu%dam2rm_a%c_%dx%dC.o ATL_%cu%dam2cm_a%c_%dx%dC.o",
+                  pre, UID, al[j], up->kmaj, u, pre, UID, al[j], up->kmaj, u);
+               }
                else
-                  fprintf(fp, " \\\n       ATL_%cu%drm2am_a%c_%dC.o ATL_%cu%dcm2am_a%c_%dC.o",
+               {
+                  fprintf(fp, 
+               " \\\n       ATL_%cu%drm2am_a%c_%dC.o ATL_%cu%dcm2am_a%c_%dC.o",
                           pre, UID, al[j], u, pre, UID, al[j], u);
+                  fprintf(fp, 
+               " \\\n       ATL_%cu%dam2rm_a%c_%dC.o ATL_%cu%dam2cm_a%c_%dC.o",
+                          pre, UID, al[j], u, pre, UID, al[j], u);
+               }
 @ROUT emit_amm emit_uamm
             }
          }
@@ -2060,12 +2208,15 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
             {
                int kk;
 @ROUT emit_amm
+               const int nmI = 5;
                char rout[32];
                if (kmaj > 1)
                   sprintf(rout, "ATL_%crm2am_a%c_%dx%d", pre, al[j], kmaj, u);
                else
                   sprintf(rout, "ATL_%crm2am_a%c_%d", pre, al[j], u);
 @ROUT emit_uamm
+               int nmI, nmI0=5;
+               char *sp;
                char rout[32], rt0[32];
                if (kmaj > 1)
                {
@@ -2078,12 +2229,28 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
                   sprintf(rout, "ATL_%cu%drm2am_a%c_%d", pre, UID, al[j], u);
                   sprintf(rt0, "ATL_%crm2am_a%c_%d", pre, al[j], u);
                }
-@ROUT emit_amm emit_uamm
+               sp = strstr(rout, "rm2am");
+               nmI = sp - rout;
+@ROUT emit_uamm
+               for (kk=0; kk < 4; kk++)
+@ROUT emit_amm
                for (kk=0; kk < 2; kk++)
+@ROUT emit_amm emit_uamm
                {
                   if (kk == 1)
-@ROUT emit_amm  `                  rout[5] = 'c';`
-@ROUT emit_uamm `                  rt0[5] = rout[6+UIL] = 'c';`
+@ROUT emit_amm  
+                     rout[5] = 'c';
+@ROUT emit_uamm 
+                     rt0[5] = rout[6+UIL] = 'c';
+                  else if (kk == 2)
+                  {
+                     rt0[5] = rout[6+UIL] = 'a';
+                     rt0[8] = rout[9+UIL] = 'r';
+                  }
+                  else if (kk == 3)
+                      rt0[8] = rout[9+UIL] = 'c';
+
+@ROUT emit_uamm emit_amm
                   fprintf(fp, "%s%s.o : %s.c\n", rout, cst[g], rout);
 @ROUT emit_amm
                   fprintf(fp, "\t%s %s $(CDEFS) %s%s -o %s%s.o -c %s.c\n", 
@@ -2401,70 +2568,53 @@ void GenKerns(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, ATL_mmnode_t *urb,
          {
             int ierr;
             char pre = pres[h];
-            sprintf(ln, "make ATL_%crm2am_a%c_%d.c ATL_%ccm2am_a%c_%d.c pre=%c UR=%d alpha=%d al=%c kmaj=%d",
+@ROUT emit_amm
+            sprintf(ln, "make ATL_%crm2am_a%c_%d.c ATL_%ccm2am_a%c_%d.c "
+                    "pre=%c UR=%d alpha=%d al=%c kmaj=%d",
                     pre, al[j], u, pre, al[j], u, pre, u, ial[j], al[j], kmaj);
+@ROUT emit_uamm
+            sprintf(ln, 
+                    "make ATL_%crm2am_a%c_%d.c ATL_%ccm2am_a%c_%d.c " 
+                    "ATL_%cam2rm_a%c_%d.c ATL_%cam2cm_a%c_%d.c "
+                    "pre=%c UR=%d alpha=%d al=%c kmaj=%d",
+                    pre, al[j], u, pre, al[j], u,
+                    pre, al[j], u, pre, al[j], u,
+                    pre, u, ial[j], al[j], kmaj);
+@ROUT emit_amm emit_uamm
             ierr = system(ln);
             if (ierr)
             {
                fprintf(stderr, "FAILED CMND='%s'\n", ln);
                exit(ierr);
             }
+@ROUT emit_amm `@multidef rt cm2am rm2am`
+@ROUT emit_uamm `@multidef rt am2cm am2rm cm2am rm2am`
+   @whiledef rt
             if (kmaj > 1)
-            {
                sprintf(ln, 
-@ROUT emit_amm
-                  "mv ATL_%crm2am_a%c_%d.c %s/ATL_%crm2am_a%c_%dx%d.c",
+      @ROUT emit_amm
+                       "mv ATL_%c@(rt)_a%c_%d.c %s/ATL_%c@(rt)_a%c_%dx%d.c",
                        pre, al[j], u, outd, pre, al[j], kmaj, u);
-@ROUT emit_uamm
-                  "mv ATL_%crm2am_a%c_%d.c %s/ATL_%cu%drm2am_a%c_%dx%d.c",
+      @ROUT emit_uamm
+                       "mv ATL_%c@(rt)_a%c_%d.c %s/ATL_%cu%d@(rt)_a%c_%dx%d.c",
                        pre, al[j], u, outd, pre, UID, al[j], kmaj, u);
-@ROUT emit_amm emit_uamm
-               ierr = system(ln);
-               if (ierr)
-               {
-                  fprintf(stderr, "FAILED CMND='%s'\n", ln);
-                  exit(ierr);
-               }
-               sprintf(ln, 
-@ROUT emit_amm
-                    "mv ATL_%ccm2am_a%c_%d.c %s/ATL_%ccm2am_a%c_%dx%d.c",
-                       pre, al[j], u, outd, pre, al[j], kmaj, u);
-@ROUT emit_uamm
-                    "mv ATL_%ccm2am_a%c_%d.c %s/ATL_%cu%dcm2am_a%c_%dx%d.c",
-                       pre, al[j], u, outd, pre, UID, al[j], kmaj, u);
-@ROUT emit_amm emit_uamm
-            }
+      @ROUT emit_amm emit_uamm
             else
-            {
                sprintf(ln, 
 @ROUT emit_amm
-                       "mv ATL_%crm2am_a%c_%d.c %s/ATL_%crm2am_a%c_%d.c",
+                       "mv ATL_%c@(rt)_a%c_%d.c %s/ATL_%c@(rt)_a%c_%d.c",
                        pre, al[j], u, outd, pre, al[j], u);
 @ROUT emit_uamm
-                       "mv ATL_%crm2am_a%c_%d.c %s/ATL_%cu%drm2am_a%c_%d.c",
+                       "mv ATL_%c@(rt)_a%c_%d.c %s/ATL_%cu%d@(rt)_a%c_%d.c",
                        pre, al[j], u, outd, pre, UID, al[j], u);
 @ROUT emit_amm emit_uamm
-               ierr = system(ln);
-               if (ierr)
-               {
-                  fprintf(stderr, "FAILED CMND='%s'\n", ln);
-                  exit(ierr);
-               }
-               sprintf(ln, 
-@ROUT emit_amm
-                       "mv ATL_%ccm2am_a%c_%d.c %s/ATL_%ccm2am_a%c_%d.c",
-                       pre, al[j], u, outd, pre, al[j], u);
-@ROUT emit_uamm
-                       "mv ATL_%ccm2am_a%c_%d.c %s/ATL_%cu%dcm2am_a%c_%d.c",
-                       pre, al[j], u, outd, pre, UID, al[j], u);
-@ROUT emit_amm emit_uamm
-            }
             ierr = system(ln);
             if (ierr)
             {
                fprintf(stderr, "FAILED CMND='%s'\n", ln);
                exit(ierr);
             }
+   @endwhile
          }
       }
    }
