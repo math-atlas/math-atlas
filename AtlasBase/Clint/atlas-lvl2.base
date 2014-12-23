@@ -11555,7 +11555,7 @@ void ExhaustiveTime(char pre, char *fin, char *fout, int lvl)
    WriteMflopExp(fpout);
    fclose(fpout);
 }
-@ROUT r1ksearch0000
+@ROUT r1ksearch
 void GetCEDims
 (
    ATL_r1node_t *r1L2,     /* best L2-cache contained rank-1 update */
@@ -11571,6 +11571,8 @@ void GetCEDims
    m = (CE-n) / (n+1);
    m = (m/mu)*mu;
    assert(m >= r1L2->minM);
+   *M = m;
+   *N = n;
 }
 /*
  * Should only be called for pre='d'
@@ -11586,21 +11588,26 @@ void FindCacheEdge
  */
    size_t elt0 = (L1CacheElts >= 16384) ? 16384 : L1CacheElts;
    const size_t maxSZ = 16*1024*1024;
+   double mf;
+   int i;
+
    printf("     M       N  Cache Size   footprint      MFLOPS\n");
-   printf("======  ======  ==========  ==========  ==========\n")
+   printf("======  ======  ==========  ==========  ==========\n");
 
    r1L2 = CloneR1Node(r1L2);  /* get local copy, don't mess up original */
 
    for (i=0; i < 24; i++)
    {
       size_t Ne = (elt0 << i);
-      int M, N;
+      unsigned int M, N;
 
       if (Ne*sizeof(double) > maxSZ)
          break;
       GetCEDims(r1L2, Ne, &M, &N);
-      mf = TimeMyKernel(0, 1, r1L2, d, M, N, M, 0, 5, 0, 0);
-      printf("%6u %7u %11u %11%.2f", M, N, Ne, (M*N+M+N)*sizeof(double), mf);
+      mf = TimeMyKernel(0, 1, r1L2, 'd', M, N, M, 0, 5, 0, 0);
+      printf("%6u %7u %11u %11u %10.1f\n", M, N, 
+             (unsigned int)(Ne*sizeof(double)), 
+             (unsigned int)((M*N+M+N)*sizeof(double)), mf);
    }
    KillR1Node(r1L2);        /* delete local copy */
 }
@@ -11666,6 +11673,12 @@ int main(int nargs, char **args)
  *       Retime in-L2 timings
  */
          TimeAllKernelsForContext(L1CacheElts, 3, pre, NREP, i2b);
+         if (pre == 'd')
+         {
+            r1bestL2r = i2b->next;
+            r1bestL2r = (r1bestL2r) ? r1bestL2r : i2b;
+            FindCacheEdge(r1bestL2r, L1CacheElts);
+         }
 /* 
  *       Retime in-L1 timings
  */
