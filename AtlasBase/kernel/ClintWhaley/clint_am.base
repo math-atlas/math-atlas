@@ -5476,12 +5476,11 @@ ATL_asmdecor(ATL_USERMM):
 #define rC12    %xmm12
 #define rC03    %xmm13
 #define rC13    %xmm14
-#define unpckhpd movhlps
 #ifndef pref
-   #define pref prefetcht1
+   #define pref prefetcht2
 #endif
 #ifndef prefB
-   #define prefB prefetcht1
+   #define prefB prefetcht2
 #endif
 #ifndef prefC
    #ifdef ATL_3DNow
@@ -5491,11 +5490,11 @@ ATL_asmdecor(ATL_USERMM):
    #endif
 #endif
 #ifdef BETAN1
-   #define BETCOP subpd
+   #define BETCOP subps
 #else
-   #define BETCOP addpd
+   #define BETCOP addps
 #endif
-#define FSIZE 6*8
+#define FSIZE 4*8
 /*
                     rdi      rsi    rdx        rcx         r8        r9  
 void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC, 
@@ -5530,7 +5529,7 @@ ATL_asmdecor(ATL_USERMM):
  */
    sub $-128, pA
    sub $-128, pB
-   mov $KB*@(mu)*8, incAm           /* incAm = KB*MU*size */
+   mov $KB*@(mu)*4, incAm           /* incAm = KB*MU*size */
    movq pB, pB0
 
    ALIGN8
@@ -5539,126 +5538,145 @@ ATL_asmdecor(ATL_USERMM):
 /*
  *       Peel first iteration of K-loop to handle init of C to 0
  */
-         movsldup -128(pB), rB2    /* {b2, b2, b0, b0} */
-         movshdup -128(pB), rB3    /* {b3, b3, b1, b1} */
-         movddup rB2, rB0          /* {b0, b0, b0, b0} */
-         movhlps rB2, rB2          /* {b2, b2, b2, b2 */
-         movddup rB3, rB1          /* {b1, b1, b1, b1} */
-         movhlps rB3, rB3          /* {b3, b3, b3, b3} */
+         movsldup -128(pB), rC02  /* port2, {b2, b2, b0, b0} */
+         movddup rC02, rC00       /* port5, {b0, b0, b0, b0} */
 
-         movaps   -128(pA), rC00   /* {a3, a2, a1, a0} */
-         movaps   -112(pA), rC10   /* {a3, a2, a1, a0} */
+         movaps -128(pA), rA0     /* port2, {a3, a2, a1, a0} */
+         movaps rC00, rC10        /* port5 */
+         mulps rA0, rC00          /* port0 */
 
-         movaps rC00, rC02
-         mulps rB0, rC00
-         movaps rC02, rC01
-         mulps rB2, rC02
-         movaps rC01, rC03
-         mulps rB1, rC01
-         mulps rB3, rC03
+         movaps -112(pA), rA1     /* port2 */
+         mulps rA1, rC10          /* port0 */
+         movhlps rC02, rC02       /* port5, {b2, b2, b2, b2} */
 
-         movaps rC10, rC12
-         mulps rB0, rC00
-         movaps rC12, rC11
-         mulps rB2, rC02
-         movaps rC11, rC13
-         mulps rB1, rC01
-         mulps rB3, rC03
+         movaps rC02, rC12        /* port5 */
+         mulps rA0, rC02          /* port0 */
+         movshdup -128(pB), rC03  /* port2, {b3, b3, b1, b1} */
+
+         movddup rC03, rC01       /* port5, {b1, b1, b1, b1} */
+         mulps rA1, rC12          /* port0 */
+         #if KB > 1
+            movsldup -112(pB), rB2/* port2, {b2, b2, b0, b0} */
+         #else
+            pref (pf)
+         #endif
+
+         movaps rC01, rC11        /* port5 */
+         mulps rA0, rC01          /* port0 */
+         #if KB > 1
+            movshdup -112(pB), rB3/* port2, {b3, b3, b1, b1} */
+         #else
+            pref 64(pf)
+         #endif
+
+         movhlps rC03, rC03      /* port5, {b3, b3, b3, b3} */
+         mulps rA1, rC11         /* port0 */
+
+         movaps rC03, rC13       /* port5 */
+         mulps rA0, rC03         /* port0 */
+
+         #if KB > 1
+            .byte 0x3e
+            movddup rB2, rB0     /* port5 */
+         #endif
+         mulps rA1, rC13         /* port0 */
+         #if KB == 1
+            add incPF, pf        /* port[0,1,5] */
+         #endif
 
 /*
  *       ==========================
  *       Completely unrolled K-loop
  *       ==========================
  */
-@iexp ao -80 0 +
-@iexp bo -80 0 +
+@iexp ao -96 0 +
+@iexp bo -96 0 +
 @iexp k 1 0 +
-@iwhile k < 0
+@iwhile k < 256
          #if KB > @(k)
-   @iif k = 48
-            nop
-   @endiif
    @iexp k @(k) 1 +
-            movaps rB0, rm0
-            mulps rA0, rm0
-            addps rm0, rC00
-            movaps @(ao)(pA), rA1
+            movaps @(ao)(pA), rA0         /* port 2, 7 bytes  7 */
    @iexp ao @(ao) 16 +
-            mulps rA1, rB0
-            addps rB0, rC10
-            unpckhps rB1, rB1
+            movaps rA0, rm0             /* port 5, 3 bytes 10 */
+            mulps  rB0, rm0             /* port 0, 3 bytes 13 */
+            addps  rm0, rC00            /* port 1, 3 bytes 16 */
 
-            movaps rB1, rm0
-            mulps rA0, rm0
-            addps rm0, rC01
-            movaps @(bo)(pB), rB3
-   @iexp bo @(bo) 16 +
-            mulps rA1, rB1
-            addps rB1, rC11
-            movddup rB3, rB2
-
-            movaps rB2, rm0
-            mulps rA0, rm0
-            addps rm0, rC02
-            unpckhps rB3, rB3
-            mulps rA1, rB2
-            addps rB2, rC12
-
-            #if KB > @(k)
-               movaps @(bo)(pB), rB1
-   @iexp bo @(bo) 16 +
-            #elif KB == @(k)
-               pref (pf)
-            #endif
-            mulps rB3, rA0
-            addps rA0, rC03
-            #if KB > @(k)
-               movaps @(ao)(pA), rA0
+            movaps @(ao)(pA), rA1         /* port 2, 7 bytes  7 */
    @iexp ao @(ao) 16 +
-            #elif KB == @(k)
-               pref (pfC)
-               add incPF, pfC
+            mulps  rA1, rB0             /* port 0, 3 bytes 10 */
+            addps  rB0, rC10            /* port 1, 3 bytes 13 */
+            movaps rA0, rm0             /* port 5, 3 bytes 16 */
+
+            movhlps rB2, rB2            /* port 5, {b2, b2, b2, b2} */
+            mulps  rB2, rm0             /* port 0, 3 bytes  8 */
+            addps  rm0, rC02            /* port 1, 4 bytes 12 */
+            #if KB == @(k)
+               pref (pf)                /* port 2 */
             #endif
-            mulps rA1, rB3
-            addps rB3, rC13
+
+            mulps  rA1, rB2             /* port 0 */
+            addps  rB2, rC12            /* port 1 */
             #if KB > @(k)
-               movddup rB1, rB0
+               movsldup @(bo)(pB), rB2    /* port 2 */
             #elif KB == @(k)
-               prefetcht1 64(pfB)
-               add incPF, pfB
-               add incPF, pf
+               prefB 64(pfB)            /* port 2 */
             #endif
-         #endif   
+            movaps rA0, rm0             /* port 5 */
+
+            movddup rB3, rB1            /* port 5 */
+            mulps  rB1, rm0             /* port 0 */
+            addps  rm0, rC01            /* port 1 */
+
+            movhlps rB3, rB3            /* port 5 */
+            mulps  rA1, rB1             /* port 0 */
+            addps  rB1, rC11            /* port 1 */
+
+            #if KB > @(k)
+               movddup rB2, rB0         /* port 5, {b0, b0, b0, b0} */
+            #endif
+            mulps rB3, rA0              /* port 0 */
+            addps rA0, rC03             /* port 1 */
+
+            mulps rB3, rA1              /* port 0 */
+            addps rA1, rC13             /* port 1 */
+            #if KB > @(k)
+               movshdup @(bo)(pB), rB3    /* port 2 */
+            #elif KB == @(k)
+               add incPF, pf            /* port5 */
+               add incPF, pfB           /* port0/1/5 */
+            #endif
+   @iexp bo @(bo) 16 +
+         #endif
 @endiwhile
          #if defined(BETA1) || defined(BETAN1)
             BETCOP (pC), rC00
-            movapd rC00, (pC)
+            movaps rC00, (pC)
             BETCOP 16(pC), rC10
-            movapd rC10, 16(pC)
+            movaps rC10, 16(pC)
             BETCOP 32(pC), rC01
-            movapd rC01, 32(pC)
+            movaps rC01, 32(pC)
             BETCOP 48(pC), rC11
-            movapd rC11, 48(pC)
+            movaps rC11, 48(pC)
             BETCOP 64(pC), rC02
-            movapd rC02, 64(pC)
+            movaps rC02, 64(pC)
             BETCOP 80(pC), rC12
-            movapd rC12, 80(pC)
+            movaps rC12, 80(pC)
             BETCOP 96(pC), rC03
-            movapd rC03, 96(pC)
+            movaps rC03, 96(pC)
             BETCOP 112(pC), rC13
-            movapd rC13, 112(pC)
+            movaps rC13, 112(pC)
          #else
-            movapd rC00, (pC)
-            movapd rC10, 16(pC)
-            movapd rC01, 32(pC)
-            movapd rC11, 48(pC)
-            movapd rC02, 64(pC)
-            movapd rC12, 80(pC)
-            movapd rC03, 96(pC)
-            movapd rC13, 112(pC)
+            movaps rC00, (pC)
+            movaps rC10, 16(pC)
+            movaps rC01, 32(pC)
+            movaps rC11, 48(pC)
+            movaps rC02, 64(pC)
+            movaps rC12, 80(pC)
+            movaps rC03, 96(pC)
+            movaps rC13, 112(pC)
          #endif
          sub $-128, pC
-         add $KB*4*8, pB
+         add $KB*4*4, pB
       sub $1, nnu
       jnz MNLOOP
       mov nnu0, nnu
