@@ -5440,6 +5440,280 @@ ATL_asmdecor(ATL_USERMM):
    add $FSIZE, %rsp
    ret
 @ROUT !
+@ROUT ATL_sammm8x4x256_sdupA.S
+   @define mu @8@
+   @define nu @4@
+@extract -b @(topd)/gen.inc what=crsetup
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2014
+/*
+ * This manually-aligned Corei1 code sucks, and I don't know why
+ */
+#include "atlas_asm.h"
+#define movapd movaps
+#define nmu     %rdi
+#define nnu     %rsi
+#define nnu0    %r10
+#define pA      %rcx
+#define pB      %rax
+#define pC      %r9
+#define pf      %rbp
+#define pB0     %r12
+#define incPF   %rbx
+#define pfB     %rdx
+#define incAm   %r11 
+@skip #define pfC     %r13
+#define r16     %r13
+
+#define rm0     %xmm0
+#define rA0     %xmm1
+#define rA1     %xmm2
+#define rB0     %xmm3
+#define rB1     %xmm4
+#define rB2     %xmm5
+#define rB3     %xmm8
+#define rC00    %xmm7
+#define rC10    %xmm6
+#define rC01    %xmm10
+#define rC11    %xmm11
+#define rC02    %xmm12
+#define rC12    %xmm13
+#define rC03    %xmm14
+#define rC13    %xmm15
+#ifndef pref
+   #define pref prefetcht2
+#endif
+#ifndef prefB
+   #define prefB prefetcht2
+#endif
+#ifndef prefC
+   #ifdef ATL_3DNow
+      #define prefC prefetchw
+   #else
+      #define prefC prefetcht0
+   #endif
+#endif
+#ifdef BETAN1
+   #define BETCOP subps
+#else
+   #define BETCOP addps
+#endif
+#define FSIZE 4*8
+/*
+                    rdi      rsi    rdx        rcx         r8        r9  
+void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC, 
+                  8(%rsp)    16(%rsp)     24(%rsp)   
+                CTYPE *pAn, CTYPE *pBn, CTYPE *pCn);
+ */
+.text
+.global ATL_asmdecor(ATL_USERMM)
+ALIGN16
+ATL_asmdecor(ATL_USERMM):
+/*
+ * Save callee-saved iregs
+ */
+   sub $FSIZE, %rsp
+   movq    %rbp, 0(%rsp)
+   movq    %rbx, 8(%rsp)
+   movq    %r12, 16(%rsp)
+   movq    %r13, 24(%rsp)
+@skip   movq    %r14, 32(%rsp)
+@skip   movq    %r15, 40(%rsp)
+/*
+ * Load paramaters
+ */
+   movq %r8, pB
+   mov nnu, nnu0
+   movq FSIZE+16(%rsp), pf      /* pf = pBn */
+   movq FSIZE+8(%rsp), pfB      /* pfB = pAn */
+@skip   movq FSIZE+24(%rsp), pfC    /* pfC = pCn */
+   mov $8*@(mu)*@(nu), incPF
+   sub $96, pA    /* make loop offsets all > 1 byte */
+   sub $-16, pB   /* get pB to 0 offset in loop by predec by 16 */
+   mov $KB*@(mu)*4, incAm           /* incAm = KB*MU*size */
+   movq pB, pB0
+   mov $16, r16
+
+   ALIGN16
+   .local MNLOOP
+   MNLOOP:
+/*
+ *       Peel first iteration of K-loop to handle init of C to 0
+ */
+         movsldup -16(pB), rC02   /* port2, 6 bytes 6 {b2, b2, b0, b0} */
+         movddup rC02, rC00       /* port5, 5 bytes 11 {b0, b0, b0, b0} */
+         .byte 0x3e               /* no prt,1 bytes 12 */
+         movaps 96(pA), rA0       /* port2, 4 bytes 16 {a3, a2, a1, a0} */
+
+         movaps rC00, rC10        /* port5, 3 bytes 3 */
+         mulps rA0, rC00          /* port0, 3 bytes 6 */
+         .byte 0x3e               /* no prt,1 bytes 7  */
+         movaps 112(pA), rA1      /* port2, 4 bytes 11 */
+         .byte 0x3e               /* no prt,1 bytes 12 */
+         movhlps rC02, rC02       /* port5, 4 bytes 16 {b2, b2, b2, b2} */
+
+         mulps rA1, rC10          /* port0, 3 bytes 3 */
+         movaps rC02, rC12        /* port5, 4 bytes 7  */
+         mulps rA0, rC02          /* port0  4 bytes 11 */
+         .byte 0x3e               /* no prt,1 bytes 12 */
+         prefetcht0 (pC)          /* port2, 4 bytes 16 */
+
+         .byte 0x3e               /* no prt,1 bytes  1 */
+         movshdup -16(pB), rC03  /* port2, 6 bytes  7 {b3, b3, b1, b1} */
+         movddup rC03, rC01       /* port5, 5 bytes 12 {b1, b1, b1, b1} */
+         mulps rA1, rC12          /* port0, 4 bytes 16 */
+
+         #if KB > 1
+            movsldup (pB), rB2    /* port2, 4 bytes 4 {b2, b2, b0, b0} */
+         #else
+            pref (pf)             /* port2, 4 bytes 4 */
+         #endif
+         movaps rC01, rC11        /* port5, 4 bytes 8 */
+         mulps rA0, rC01          /* port0, 4 bytes 12 */
+         add $16, pB              /* port1, 4 bytes 16 */
+
+         #if KB > 1
+            movshdup -16(pB),rB3/* port2, 6 bytes 6 {b3, b3, b1, b1} */
+         #else
+            .byte 0x3e           /* noprt, 1 bytes 1 */
+            .byte 0x3e           /* noprt, 1 bytes 2 */
+            pref 64(pf)          /* port2, 4 bytes 6 */
+         #endif
+         .byte 0x3e              /* noprt, 1 bytes 7 */
+         movhlps rC03, rC03      /* port5, 4 bytes 11 {b3, b3, b3, b3} */
+         .byte 0x3e              /* noprt, 1 bytes 12 */
+         mulps rA1, rC11         /* port0, 4 bytes 16 */
+
+         movaps rC03, rC13       /* port5, 4 bytes 4 */
+         mulps rA0, rC03         /* port0, 4 bytes 8 */
+         #if KB > 1
+            movddup rB2, rB0     /* port5, 4 bytes 12 */
+         #endif
+         mulps rA1, rC13         /* port0, 4 bytes 16 */
+         #if KB == 1
+            add incPF, pf        /* port[0,1,5] */
+         #endif
+
+/*
+ *       ==========================
+ *       Completely unrolled K-loop
+ *       ==========================
+ */
+@iexp ao 128 0 +
+@iexp bo -128 0 +
+@iexp k 1 0 +
+@iwhile k < 256
+         #if KB > @(k)
+   @iexp k @(k) 1 +
+            movaps @(ao)(pA), rA0         /* port 2, 7 bytes  7 */
+   @iexp ao @(ao) 16 +
+            movaps rA0, rm0             /* port 5, 3 bytes 10 */
+            mulps  rB0, rm0             /* port 0, 3 bytes 13 */
+            addps  rm0, rC00            /* port 1, 3 bytes 16 */
+
+            movaps @(ao)(pA), rA1         /* port 2, 7 bytes  7 */
+   @iexp ao @(ao) 16 +
+            mulps  rA1, rB0             /* port 0, 3 bytes 10 */
+            addps  rB0, rC10            /* port 1, 4 bytes 14 */
+            movaps rA0, rm0             /* port 5, 3 bytes 16 */
+
+            .byte 0x3e                  /* no prt, 1 bytes  1 */
+            movhlps rB2, rB2            /* port 5, 3 bytes  4 */
+            .byte 0x3e                  /* no prt, 1 bytes  5 */
+            mulps  rB2, rm0             /* port 0, 3 bytes  8 */
+            addps  rm0, rC02            /* port 1, 4 bytes 12 */
+            #if KB == @(k)
+               pref (pf)                /* port 2, 4 bytes 16 */
+            #else
+               prefetcht0 (pC)          /* port 2, 4 bytes 16 */
+            #endif
+ 
+            .byte 0x3e                  /* no prt, 1 bytes 1 */
+            mulps  rA1, rB2             /* port 0, 3 bytes 4 */
+            addps  rB2, rC12            /* port 1, 4 bytes 8 */
+            .byte 0x3e                  /* no prt, 1 bytes 9 */
+            #if KB > @(k)
+               movsldup (pB), rB2       /* port 2, 4 bytes 13 */
+            #elif KB == @(k)
+               prefB 64(pfB)            /* port 2, 4 bytes 13 */
+            #endif
+            movaps rA0, rm0             /* port 5, 3 bytes 16 */
+
+            movddup rB3, rB1            /* port 5, 5 bytes 5 */
+            mulps  rB1, rm0             /* port 0, 3 bytes 8 */
+            addps  rm0, rC01            /* port 1, 4 bytes 12 */
+            prefetcht0 -1(pB)           /* port 2, 4 bytes 16 */
+
+            movhlps rB3, rB3            /* port 5, 4 bytes 4 */
+            mulps  rA1, rB1             /* port 0, 3 bytes 7 */
+            addps  rB1, rC11            /* port 1, 4 bytes 11 */
+            .byte 0x3e                  /* no prt, 1 bytes 12 */
+            prefetcht0  63(pB)          /* port 2, 4 bytes 16 */
+
+            #if KB > @(k)
+               movddup rB2, rB0         /* port 5, 4 bytes 4 {b0, b0, b0, b0} */
+            #endif
+            mulps rB3, rA0              /* port 0, 4 bytes 8 */
+            addps rA0, rC03             /* port 1, 4 bytes 12 */
+            prefetcht0 127(pB)          /* port 2, 4 bytes 16 */
+
+            mulps rB3, rA1              /* port 0, 4 bytes 4 */
+            addps rA1, rC13             /* port 1, 4 bytes 8 */
+            #if KB > @(k)
+               movshdup (pB), rB3       /* port 2, 5 bytes 13 */
+   @iexp bo @(bo) 16 +
+            #elif KB == @(k)
+               add incPF, pf            /* port 5, 3 bytes 11 */
+               add incPF, pfB           /* port0/1/5, 3 bytes, 14 */
+            #endif
+            add r16, pB                 /* port0/1/5, 3 bytes 16 */
+         #endif
+@endiwhile
+         #if defined(BETA1) || defined(BETAN1)
+            BETCOP (pC), rC00
+            movaps rC00, (pC)
+            BETCOP 16(pC), rC10
+            movaps rC10, 16(pC)
+            BETCOP 32(pC), rC01
+            movaps rC01, 32(pC)
+            BETCOP 48(pC), rC11
+            movaps rC11, 48(pC)
+            BETCOP 64(pC), rC02
+            movaps rC02, 64(pC)
+            BETCOP 80(pC), rC12
+            movaps rC12, 80(pC)
+            BETCOP 96(pC), rC03
+            movaps rC03, 96(pC)
+            BETCOP 112(pC), rC13
+            movaps rC13, 112(pC)
+         #else
+            movaps rC00, (pC)
+            movaps rC10, 16(pC)
+            movaps rC01, 32(pC)
+            movaps rC11, 48(pC)
+            movaps rC02, 64(pC)
+            movaps rC12, 80(pC)
+            movaps rC03, 96(pC)
+            movaps rC13, 112(pC)
+         #endif
+         sub $-128, pC
+@skip         add $KB*4*4, pB
+      sub $1, nnu
+      jnz MNLOOP
+      mov nnu0, nnu
+      mov pB0, pB
+      add incAm, pA
+   sub $1, nmu
+   jnz MNLOOP
+
+/* DONE: */
+   movq    (%rsp), %rbp
+   movq    8(%rsp), %rbx
+   movq    16(%rsp), %r12
+   movq    24(%rsp), %r13
+@skip   movq    32(%rsp), %r14
+@skip   movq    40(%rsp), %r15
+   add $FSIZE, %rsp
+   ret
 @ROUT ATL_sammm8x4x256_sdup.S
    @define mu @8@
    @define nu @4@
