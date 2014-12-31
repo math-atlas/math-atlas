@@ -13488,3 +13488,296 @@ ATL_USERMM:
    .align 16,0x90
 	.type	ATL_USERMM,@function
 	.size	ATL_USERMM,.-ATL_USERMM
+@ROUT ATL_kmmm4x2x256_sse3.S
+@extract -b @(topd)/gen.inc what=crsetup
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2015
+/*
+ * This computational kernel was created using a code fragment demonstrating a
+ * Core2Duo-friendly 2-D x86 register block sent to me by Yevgen Voronenko 
+ * of the CMU/SPIRAL group as a template.  Here is original the code fragment
+ * that Yevgen sent me:
+ *      movapd    (%rdi), %xmm9                
+ *      movapd    %xmm9, %xmm6                                  
+ *      movapd    48(%rdi), %xmm8                               
+ *      mulpd     %xmm8, %xmm6                                  
+ *      addpd     %xmm6, %xmm5                                  
+ *      movapd    16(%rdi), %xmm10                              
+ *      movapd    %xmm10, %xmm7                                 
+ *      mulpd     %xmm8, %xmm7                                  
+ *      addpd     %xmm7, %xmm4                                  
+ *      movapd    32(%rdi), %xmm12                              
+ *      mulpd     %xmm12, %xmm8                                 
+ *      addpd     %xmm8, %xmm3                                  
+ *      movapd    64(%rdi), %xmm11                              
+ *      mulpd     %xmm11, %xmm9                                 
+ *      mulpd     %xmm11, %xmm10                                
+ *      mulpd     %xmm11, %xmm12                                
+ *      addpd     %xmm9, %xmm2                                  
+ *      addpd     %xmm10, %xmm1                                 
+ *      addpd     %xmm12, %xmm0                                 
+ */
+
+
+#if !defined(ATL_GAS_x8664)
+   #error "This kernel requires x86-64 assembly!"
+#endif
+
+#if !defined(KB) || (KB == 0)
+   #error "KB must be a compile-time constant!"
+#endif
+#if KB > 256
+   #error "KB can at most be 256!"
+#endif
+#if (KB/2)*2 != KB
+   #error "KB must be a multiple of 2!"
+#endif
+
+#include "atlas_asm.h"
+#define movapd movaps
+#define nmu     %rdi
+#define nnu     %rsi
+#define nnu0    %r10
+#define pA      %rcx
+#define pB      %rax
+#define pC      %r9
+#define pfA     %rbp
+#define pB0     %r12
+#define pf0     %rbx
+#define pfB     %rdx
+#define incAm   %r11
+#define pfC     %r13
+#define incBn   %r14
+
+#define rA0 	%xmm0
+#define rA1 	%xmm1
+#define rA2 	%xmm2
+#define rA3 	%xmm3
+#define rB0 	%xmm4
+#define ra0 	%xmm5
+#define ra1 	%xmm6
+#define ra2 	%xmm7
+#define rC00 	%xmm8
+#define rC10 	%xmm9
+#define rC20 	%xmm10
+#define rC30 	%xmm11
+#define rC01 	%xmm12
+#define rC11 	%xmm13
+#define rC21 	%xmm14
+#define rC31 	%xmm15
+
+/*
+ * Save some inst space by using short version of instructions
+ */
+#if defined(SREAL) || defined(SCPLX)
+   #define movapd movaps
+   #define subpd subps
+   #define addpd addps
+   #define mulpd mulps
+   #define addpd addps
+   #define kmul 2
+   #define SZ 4
+#else
+   #define movapd movaps
+   #define kmul 1
+   #define SZ 8
+#endif
+#ifdef BETAN1
+   #define VOP subpd
+#elif defined(BETA1)
+   #define VOP addpd
+#elif defined(VOP)
+   #undef VOP
+#endif
+#ifdef ATL_3DNow
+   #define prefC prefetchw
+#else
+   #define prefC prefetcht0
+#endif
+#define FSIZE 48
+/*
+                    rdi      rsi    rdx        rcx         r8        r9
+void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
+                  8(%rsp)    16(%rsp)     24(%rsp)
+                CTYPE *pAn, CTYPE *pBn, CTYPE *pCn);
+ */
+.text
+.global ATL_asmdecor(ATL_USERMM)
+ALIGN16
+ATL_asmdecor(ATL_USERMM):
+/*
+ * Save callee-saved iregs
+ */
+   sub $FSIZE, %rsp
+   movq    %rbp, 0(%rsp)
+   movq    %rbx, 8(%rsp)
+   movq    %r12, 16(%rsp)
+   movq    %r13, 24(%rsp)
+   movq    %r14, 32(%rsp)
+      prefetcht0 (pA)
+/*
+ * Load paramaters
+ */
+   movq %r8, pB
+      prefetcht0 (pB)
+   mov nnu, nnu0
+   movq FSIZE+16(%rsp), pfB     /* pfB = pBn */
+   movq FSIZE+8(%rsp), pfA      /* pfA = pAn */
+   movq FSIZE+24(%rsp), pfC     /* pfC = pCn */
+      prefetcht0 64(pA)
+/*
+ * Extend range of small operands by starting at -128
+ */
+   sub $-128, pA
+      prefetcht0 (pA)
+   sub $-128, pB
+      prefetcht0 64(pA)
+   mov $KB*4*SZ, incAm         /* incAm = KB*MU*size */
+      prefetcht0 -64(pB)
+   mov $KB*2*SZ, incBn         /* incBn = KB*NU*size */
+      prefetcht0 (pB)
+   movq pB, pB0
+   lea (pA, incAm), pf0
+
+   ALIGN16
+   .local MNLOOP
+   MNLOOP:
+/*
+ *       Peel first iteration to zero registers
+ */
+         movapd -128(pA), rC00
+         movapd -128(pB), rB0
+         movapd rC00, rC01
+         mulpd  rB0, rC00
+         movapd -112(pA), rC10
+         movapd rC10, rC11
+         mulpd  rB0, rC10
+         movapd -96(pA), rC20
+         movapd rC20, rC21
+         mulpd  rB0, rC20
+         movapd -80(pA), rC30
+         movapd rC30, rC31
+         mulpd  rB0, rC30
+         movapd -112(pB), ra0
+         mulpd  ra0, rC01
+         mulpd  ra0, rC11
+         #if KB > 2*kmul
+            movapd -96(pB), rB0
+         #endif
+         #if KB < 14*kmul
+            prefetcht0 (pC)
+         #endif
+         mulpd  ra0, rC21
+         mulpd  ra0, rC31
+            prefetcht0 (pf0)
+            add $64, pf0
+@iexp k 0 2 +
+@iexp bo -96 16 +
+@iexp ao -80 16 +
+@iwhile k < 256
+         #if KB > @(k)*kmul
+   @iexp k 2 @(k) +
+            movapd @(ao)(pA), rA0 
+   @iexp ao @(ao) 16 +
+            movapd rA0, ra0 
+            mulpd  rB0, rA0 
+            addpd  rA0, rC00 
+            movapd @(ao)(pA), rA1 
+   @iexp ao @(ao) 16 +
+            movapd rA1, ra1 
+            mulpd  rB0, rA1 
+            addpd  rA1, rC10 
+            movapd @(ao)(pA), rA2 
+   @iexp ao @(ao) 16 +
+            movapd rA2, ra2 
+            mulpd  rB0, rA2 
+            addpd  rA2, rC20 
+            movapd @(ao)(pA), rA3 
+   @iexp ao @(ao) 16 +
+            mulpd  rA3, rB0 
+            addpd  rB0, rC30 
+            movapd @(bo)(pB), rB0 
+   @iexp bo @(bo) 16 +
+            mulpd  rB0, ra0 
+            mulpd  rB0, ra1 
+            mulpd  rB0, ra2 
+            mulpd  rB0, rA3 
+            #if KB > @(k)*kmul
+               movapd @(bo)(pB), rB0 
+   @iexp bo @(bo) 16 +
+            #endif
+            #if kmul*(@(k)+12) == KB
+                prefetcht0 (pC)
+            #endif
+            addpd  ra0, rC01 
+            addpd  ra1, rC11 
+            addpd  ra2, rC21 
+            addpd  rA3, rC31 
+         #endif
+@endiwhile
+            prefetcht2 (pfA)
+            add $64, pfA
+            prefetcht2 (pfB)
+            add $64, pfB
+
+/* KDONE: */
+/*
+ *       Sum up rCx regs, apply original C, and write C out
+ */
+         #ifdef SREAL
+            haddps rC10, rC00  /* rC00 = {c1cd,c1ab,c0cd,c0ab} */
+            haddps rC30, rC20  /* rC20 = {c3cd,c3ab,c2cd,c0ab} */
+            haddps rC20, rC00  /* rC00 = {c3,c2,c1,c0} */
+            #ifdef VOP
+               VOP (pC), rC00
+            #endif
+            movaps rC00, (pC)
+
+            haddps rC11, rC01  /* rC01 = {c1cd,c1ab,c0cd,c0ab} */
+            haddps rC31, rC21  /* rC21 = {c3cd,c3ab,c2cd,c0ab} */
+            haddps rC21, rC01  /* rC01 = {c3,c2,c1,c0} */
+            #ifdef VOP
+               VOP 16(pC), rC01
+            #endif
+            movaps rC01, 16(pC)
+            add $32, pC
+         #else
+            haddpd rC10, rC00  /* rC00 = {c10ab,c0ab} */
+            #ifdef VOP
+               VOP (pC), rC00
+            #endif
+            movapd rC00, (pC)
+            haddpd rC30, rC20  /* rC20 = {c30ab,c2ab} */
+            #ifdef VOP
+               VOP 16(pC), rC20
+            #endif
+            movapd rC20, 16(pC)
+   
+            haddpd rC11, rC01
+            #ifdef VOP
+               VOP 32(pC), rC01
+            #endif
+            movapd rC01, 32(pC)
+            haddpd rC31, rC21
+            #ifdef VOP
+               VOP 48(pC), rC21
+            #endif
+            movapd rC21, 48(pC)
+            add $64, pC
+         #endif
+         add incBn, pB   /* KB*vlen*NU*sizeof */
+      sub $1, nnu
+      jnz MNLOOP
+      mov nnu0, nnu
+      mov pB0, pB
+      add incAm, pA
+   sub $1, nmu
+   jnz MNLOOP
+
+/* DONE: */
+   movq    (%rsp), %rbp
+   movq    8(%rsp), %rbx
+   movq    16(%rsp), %r12
+   movq    24(%rsp), %r13
+   movq    32(%rsp), %r14
+   add $FSIZE, %rsp
+   ret
