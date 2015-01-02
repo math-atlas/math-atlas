@@ -121,9 +121,9 @@ ATL_asmdecor(ATL_USERMM):
  */
    shl $5, incAm           /* incAm = 32*3*K */
 
-   ALIGN16
-   MLOOP:
-      NLOOP:
+   .local MNLOOP
+   ALIGN32
+   MNLOOP:
 /*
  *       First iteration peeled to handle init of rC
  */
@@ -358,13 +358,13 @@ KDONE:
          #endif
          lea (pC, r192,2), pC   /* pC += MU*NU*sizeof = 12*4*8 = 384 */
          sub $1, nnu
-      jnz NLOOP
+      jnz MNLOOP
       mov nnu0, nnu
       add incAm, pA0
       mov pA0, pA
       mov pB0, pB
       sub $1, nmu
-   jnz MLOOP
+   jnz MNLOOP
  DONE:
    movq -8(%rsp), %rbp
    movq -16(%rsp), %rbx
