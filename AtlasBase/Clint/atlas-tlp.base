@@ -6148,3 +6148,165 @@ int main(int nargs, char **args)
    free(flags);
    return(0);
 }
+@ROUT luflops
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#include <math.h>
+
+double GetMMFlopCount(int CPLX, int M, int N, int K)
+{
+   double ops = ((double)M)*N*K;
+   if (CPLX)
+      return(6.0*ops + 2.0*ops);
+   return(ops+ops);
+}
+
+double GetSMFlopCount(int CPLX, int N, int R)
+{
+   double r=R, n=N, muls, adds;
+   muls = r * n * ( n + 1.0 ) / 2.0 -r*n;
+   adds = r * n * ( n - 1.0 ) / 2.0;
+   if (CPLX)
+      return(6.0*muls + 2.0*adds);
+   return(muls+adds);
+}
+double CompLUFlopCount(int CPLX, int M, int N)
+{
+   int j;
+   double fl=0.0;
+   const int MN = (M <= N) ? M : N;
+   assert(!CPLX);
+   for (j=0; j < MN; j++)
+   {
+      const int m=M-j, n = N-j;
+//      fl += m;                         /* iamax */
+      fl += m-1;                       /* scale */
+      fl += 2.0*((double)(m-1))*(n-1); /* ger */
+   }
+   return(fl);
+}
+
+double GetLUFlopCount(int CPLX, int M, int N)
+{
+   const double m=M, n=N;
+   const double mn = (M>N) ? n:m;  /* mn= MIN(M,N) */
+   double adds, muls;
+
+   adds = mn * ( m*n-(m+n)*(mn+1.0)/2.0 + (mn+1.0)*(2.0*mn+1.0)/6.0 );
+   muls = adds + mn * ( m-(mn+1.0)/2.0 );
+
+   if (CPLX)
+      return(6.0*muls + 2.0*adds);
+   return(muls+adds);
+}
+
+double CountLUFlops  /* RETURNS: total flops actually done */
+(
+   int CPLX,       /* 0: real, else complex data type */
+   int m,          /* # of rows in LU's A */
+   int n,          /* # of cols in LU's A */
+   int B,          /* blocking factor used in gemm updates of LU */
+   int mu,         /* M-unrolling from gemm kernel */
+   int nu,         /* N-unrolling from gemm kernel */
+   double *TUflop, /* total unblocked flops */
+   double *PNflop, /* total flops done by panel fact */
+   double *SMflop, /* total flops done in trsm (+piv) */
+   double *MMflop  /* total flops done in GEMM */
+)
+{
+   int j, M, N;
+
+   double tuflop, tflop, aflop, pnflop=0, mmflop=0.0, smflop=0.0;
+
+   M = ((m+mu-1)/mu)*mu;
+   N = ((n+nu-1)/nu)*nu;
+   printf("M=%d, N=%d, B=%d, mu=%d, nu=%d\n", M, N, B, mu, nu);
+   tuflop = GetLUFlopCount(CPLX, m, n);
+   tflop =  GetLUFlopCount(CPLX, M, N);
+   for (j=0; j < N; j += B)
+   {
+      int Mt, Nt;             /* rows/cols in trailing matrix */
+      int b = N-j;
+      b = (b >= B) ? B : b;   /* number of rows in column panel */
+
+      Mt = M-j-b;
+      Nt = N-j-b;
+      pnflop += GetLUFlopCount(CPLX, Mt+b, b);
+/*
+ *    For parallel model, want to split into critical & non-critical?
+ */
+      smflop += GetSMFlopCount(CPLX, b, Nt);
+      mmflop += GetMMFlopCount(CPLX, Mt, Nt, b);
+   }
+   aflop = pnflop+smflop+mmflop;
+   if (fabs(aflop - tflop) > 0.5)
+   {
+      printf("ERROR: LUflop=%.0f, computed=%.0f, diff=%.2f, perc=%.2f\n", 
+             tflop, aflop, fabs(aflop-tflop), (fabs(aflop-tflop)/tflop)*100.0);
+
+      printf("tfl=(%f,%f), pan=%f, slv=%f, gmm=%f\n", 
+             tuflop, aflop, pnflop, smflop, mmflop);
+   }
+   printf("dopla=%f, comp=%f, blas=%f\n", tflop, CompLUFlopCount(0, M, N),
+          aflop);
+   *TUflop = tuflop;
+   *PNflop = pnflop;
+   *MMflop = mmflop;
+   *SMflop = smflop;
+   return(tflop);
+}
+
+void PrintUsage(char *name, int i, char *str)
+{
+   if (str)
+      fprintf(stderr, "ERROR: arg %d, '%s'\n", i, str);
+   else
+      fprintf(stderr, "ERROR around argument %d\n", i);
+   fprintf(stderr, "USAGE: %s -[M/N/b] <dim> -[m/n] <unrolling> -c [0:real]\n",
+           name);
+   exit(-1);
+}
+void GetFlags(int nargs, char **args, int *cplx, int *m, int *n, int *b,
+              int *mu, int *nu)
+{
+   int i;
+
+   *cplx = 0;
+   *m = *n = *b = 0;
+   *mu = *nu = 1;
+   for (i=1; i < nargs; i++)
+   {
+      assert(args[i][0] == '-');
+      switch(args[i][1])
+      {
+@multidef st  m n mu nu b cplx
+@whiledef flg M N m n b c
+      case '@(flg)':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, "out of args");
+         *@(st) = atoi(args[i]);
+         break;
+   @undef st
+@endwhile
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   assert(*m && *n && *b);
+}
+
+int main(int nargs, char **args)
+{
+   int m, n, nu, mu, cplx, b;
+   double tfl, tufl, pnfl, smfl, mmfl, pcpn, pcsm, pcmm, pcex;
+   GetFlags(nargs, args, &cplx, &m, &n, &b, &mu, &nu);
+   tfl = CountLUFlops(cplx, m, n, b, mu, nu, &tufl, &pnfl, &smfl, &mmfl);
+   pcpn = (pnfl/tfl)*100.0;
+   pcsm = (smfl/tfl)*100.0;
+   pcmm = (mmfl/tfl)*100.0;
+   printf("MFLOP=%.4f, pan=%.2f, slv=%.2f, gmm=%.2f (=%.2f), extra=%.2f\n",
+          tfl*1.0e-6, pcpn, pcsm, pcmm, (pcpn+pcsm+pcmm),
+          ((tfl-tufl)/tufl)*100.0);
+   return(0);
+}
