@@ -1802,6 +1802,12 @@ double time00();
    #define Cgetrf Mjoin(Mjoin(clapack_,PRE),getrf)
    #define test_getrf(Major_, M_, N_, A_, lda_, ipiv_) \
       ATL_assert(Cgetrf(Major_, M_, N_, A_, lda_, ipiv_) == 0)
+#elif defined(AMMIDX)
+   #define ATL_getrf_amm Mjoin(PATL,getrf_amm)
+   int ATL_getrfC_amm(const int M, const int N, TYPE *A, const int lda, 
+                      int *ipiv, int IAMM);
+   #define test_getrf(Major_, M_, N_, A_, lda_, ipiv_) \
+      ATL_assert(ATL_getrf_amm(M_, N_, A_, lda_, ipiv_, AMMIDX) == 0)
 #else
    #define test_getrf(Major_, M_, N_, A_, lda_, ipiv_) \
       ATL_assert(ATL_getrf(Major_, M_, N_, A_, lda_, ipiv_) == 0)
@@ -2005,6 +2011,9 @@ static TYPE lutestC(int CacheSize, int M, int N, int lda, int *npiv,
 
    Mjoin(PATL,gegen)(M, N, A, lda, M*N+lda);
    normA = Mjoin(PATL,genrm1)(M, N, A, lda);
+   #ifdef DEBUG
+      Mjoin(PATL,geprint)("A0", M, N, A, lda);
+   #endif
 
    t0 = ATL_flushcache(-1);
 @beginskip
@@ -2024,7 +2033,13 @@ static TYPE lutestC(int CacheSize, int M, int N, int lda, int *npiv,
 @skip   if (flush) free(flush);
 @skip   else *tim = 0.0;
 
+   #ifdef DEBUG
+      Mjoin(PATL,geprint)("LU", M, N, A, lda);
+   #endif
    LmU = ATL_LmulUC(M, N, A, lda);  /* LmU contains L * U */
+   #ifdef DEBUG
+      Mjoin(PATL,geprint)("L*U", M, N, LmU, M);
+   #endif
    Mjoin(PATL,gegen)(M, N, A, lda, M*N+lda);  /* regenerate A, overwriting LU */
    ATL_laswp(N, A, lda, 0, MN, ipiv, 1);  /* apply swaps to A */
    resid = Mjoin(PATL,gediffnrm1)(M, N, A, lda, LmU, M);
@@ -6209,18 +6224,33 @@ double CountLUFlops  /* RETURNS: total flops actually done */
    int B,          /* blocking factor used in gemm updates of LU */
    int mu,         /* M-unrolling from gemm kernel */
    int nu,         /* N-unrolling from gemm kernel */
+   double *PNblks, /* total # of blks in nb-wide panel facts */
+   double *SMblks, /* total # of blk in nb-high trsm */
+   double *MMblks, /* total # of blks to compute all gemms */
    double *TUflop, /* total unblocked flops */
    double *PNflop, /* total flops done by panel fact */
    double *SMflop, /* total flops done in trsm (+piv) */
    double *MMflop  /* total flops done in GEMM */
 )
 {
-   int j, M, N;
-
+   int j, M, N, nnb, nr, nmb, mr;
+   double pnb=0.0, pmb=0.0, pnblks=0, smblks=0, mmblks=0;
    double tuflop, tflop, aflop, pnflop=0, mmflop=0.0, smflop=0.0;
 
    M = ((m+mu-1)/mu)*mu;
    N = ((n+nu-1)/nu)*nu;
+   nmb = (m/B)*B;
+   if (nmb*B != m)
+   {
+      mr = ((m - nmb*B+mu-1)/mu)*mu;
+      pmb = ((double)(mr)) / (double)(B);
+   }
+   nnb = (n/B)*B;
+   if (nnb*B != n)
+   {
+      nr = ((n - nnb*B+nu-1)/nu)*nu;
+      pnb = ((double)(nr)) / (double)(B);
+   }
    printf("M=%d, N=%d, B=%d, mu=%d, nu=%d\n", M, N, B, mu, nu);
    tuflop = GetLUFlopCount(CPLX, m, n);
    tflop =  GetLUFlopCount(CPLX, M, N);
@@ -6233,23 +6263,34 @@ double CountLUFlops  /* RETURNS: total flops actually done */
       Mt = M-j-b;
       Nt = N-j-b;
       pnflop += GetLUFlopCount(CPLX, Mt+b, b);
+      pnblks += nmb + pmb;
+      nmb--;
+      nnb--;
 /*
  *    For parallel model, want to split into critical & non-critical?
  */
-      smflop += GetSMFlopCount(CPLX, b, Nt);
-      mmflop += GetMMFlopCount(CPLX, Mt, Nt, b);
+      if (j+B < N)
+      {
+         smflop += GetSMFlopCount(CPLX, b, Nt);
+         smblks += nnb + pnb;
+         mmflop += GetMMFlopCount(CPLX, Mt, Nt, b);
+         mmblks += (nmb+pmb) * (nnb+pnb);
+      }
    }
    aflop = pnflop+smflop+mmflop;
-   if (fabs(aflop - tflop) > 0.5)
+   if (fabs(aflop - tflop) > 0.5 || fabs(CompLUFlopCount(0,M,N)-tflop)>0.5)
    {
       printf("ERROR: LUflop=%.0f, computed=%.0f, diff=%.2f, perc=%.2f\n", 
              tflop, aflop, fabs(aflop-tflop), (fabs(aflop-tflop)/tflop)*100.0);
 
       printf("tfl=(%f,%f), pan=%f, slv=%f, gmm=%f\n", 
              tuflop, aflop, pnflop, smflop, mmflop);
+      printf("dopla=%f, comp=%f, blas=%f\n", tflop, CompLUFlopCount(0, M, N),
+             aflop);
    }
-   printf("dopla=%f, comp=%f, blas=%f\n", tflop, CompLUFlopCount(0, M, N),
-          aflop);
+   *PNblks = pnblks;
+   *MMblks = mmblks;
+   *SMblks = smblks;
    *TUflop = tuflop;
    *PNflop = pnflop;
    *MMflop = mmflop;
@@ -6300,11 +6341,14 @@ int main(int nargs, char **args)
 {
    int m, n, nu, mu, cplx, b;
    double tfl, tufl, pnfl, smfl, mmfl, pcpn, pcsm, pcmm, pcex;
+   double pnblks, smblks, mmblks;
    GetFlags(nargs, args, &cplx, &m, &n, &b, &mu, &nu);
-   tfl = CountLUFlops(cplx, m, n, b, mu, nu, &tufl, &pnfl, &smfl, &mmfl);
+   tfl = CountLUFlops(cplx, m, n, b, mu, nu, &pnblks, &smblks, &mmblks, 
+                      &tufl, &pnfl, &smfl, &mmfl);
    pcpn = (pnfl/tfl)*100.0;
    pcsm = (smfl/tfl)*100.0;
    pcmm = (mmfl/tfl)*100.0;
+   printf("pnblks=%0.1f, smblks=%0.1f, mmblks=%0.1f\n", pnblks, smblks, mmblks);
    printf("MFLOP=%.4f, pan=%.2f, slv=%.2f, gmm=%.2f (=%.2f), extra=%.2f\n",
           tfl*1.0e-6, pcpn, pcsm, pcmm, (pcpn+pcsm+pcmm),
           ((tfl-tufl)/tufl)*100.0);
