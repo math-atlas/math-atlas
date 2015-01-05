@@ -6358,6 +6358,7 @@ int main(int nargs, char **args)
 #include "atlas_misc.h"
 #include "atlas_tst.h"
 #include "atlas_level1.h"
+#include "atlas_lapack.h"
 #define ATL_GETFLAGS 1
 #include "atlas_genparse.h"
 #include "atlas_bitvec.h"
@@ -6376,18 +6377,87 @@ int main(int nargs, char **args)
 #define GRD_a 7.777777777e15
 #define GRD_b 3.333333333e15
 
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n",
+              ierr, flag ? flag : "Not enough arguments");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+
+   fprintf(stderr, "USAGE: %s [flags]:\n", name);
+   fprintf(stderr, "   -v [1/0/2]: verbosity (1 stops 1st err)\n");
+   fprintf(stderr, "   -i <#> <I1> ... <I#>\n");
+   fprintf(stderr, "   -I <Istart> <Iend> <Iinc>\n");
+   fprintf(stderr, "   -n <#> <N1> ... <N#>\n");
+   fprintf(stderr, "   -N <Nstart> <Nend> <Ninc>\n");
+   fprintf(stderr, "   -m <#> <M1> ... <M#>\n");
+   fprintf(stderr, "   -M <Mstart> <Mend> <Minc>\n");
+   fprintf(stderr, "   -L <Lstart> <Lend> <Linc>\n");
+   fprintf(stderr, "   -l <#> <lda1> ... <lda#>\n");
+   exit(ierr ? ierr : -1);
+}
+
+int GetFlags(int nargs, char **args, int **Is, int **Ls, int **Ms, int **Ns)
+{
+   int i;
+   int verb=1;
+   
+   *Is = *Ls = *Ms = *Ns = NULL;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+      switch(args[i][1])
+      {
+      case 'v':
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         verb = atoi(args[i]);
+         break;
+@multidef ls Ns Ms Ls Is
+@whiledef fl n m l i
+      case '@(fl)':
+         *@(ls) = GF_GetIntList(nargs, args, i, 1);
+         i += (*@(ls))[0] + 1;
+         break;
+      case '@up@(fl)':
+         if (i+3 >= nargs)
+            PrintUsage(args[0], i, NULL);
+         *@(ls) = GF_IntRange2IntList(atoi(args[i+1]),atoi(args[i+2]),
+                                   atoi(args[i+3]));
+         i += 3;
+         break;
+   @undef ls
+@endwhile
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   if (!(*Ns))
+      *Ns = GF_IntRange2IntList(24, 64, 8);
+   if (!(*Ms))
+      *Ms = GF_IntRange2IntList(111, 555, 111);
+   if (!(*Ls))
+      *Ls = GF_DupIntList(*Ms);
+   if (!(*Is))
+      *Is = GF_GetIntList2(0, ATL_UAMM_NCASES-1);
+      
+   return(verb);
+}
+
 double matinit(int M, int N, TYPE *A, int lda)
 {
    int i, j;
    double scale;
 
    for (j=10; j < N; j *= 10);
-   scale = i;
+   scale = j;
 
    for (j=0; j < N; j++, A += lda)
    {
       for (i=0; i < M; i++)
-         A[i] = scale*i+j;
+         A[i] = scale*i+j+1;
       for (; i < lda; i++)
          A[i] = GRD_A;
    }
@@ -6427,7 +6497,7 @@ void printbv(int M, int N, int *bv)
    }
 }
 
-int chkmat(int M, int N, TYPE *A, int lda, double scale)
+int chkmat(int verb, int M, int N, TYPE *A, int lda, double scale)
 {
    int i, j, nerr=0, MN=M*N;
    int *bv;
@@ -6436,147 +6506,126 @@ int chkmat(int M, int N, TYPE *A, int lda, double scale)
    {
       for (i=0; i < M; i++)
       {
-         if (scale*i+j != A[i])
+         double exp = scale*i+j+1;
+         if (exp != A[i])
          {
-            ATL_SetBitBV(bv, i*N+j);
+            if (verb > 1)
+               printf("A(%d,%d): got=%f, expected=%f\n", i, j, exp, A[i]);
+            ATL_SetBitBV(bv, i*N+j+1);
             nerr++;
          }
       }
    }
    if (nerr && N <= 240)
-      printbv(M, N, bv);
-   free(bv);
+      ATL_print2dBV(M, N, bv);
+   ATL_FreeBV(bv);
    return(nerr);
 }
 
-@beginskip
-void pivinit(ATL_UINT N, int *ipiv)
+void blkcpy(int cmnd, int IDX, int mb, int nb, int M, int N, int ldm, 
+            const TYPE *S, TYPE *D)
 {
    int i;
-   srand(N);
-   for (i=0; i < N; i++)
+   const int mu = ATL_UAMM_MUs[IDX], nu = ATL_UAMM_NUs[IDX];
+   const int mbnb=mb*nb;
+   TYPE one = ATL_rone;
+
+   if (cmnd==0)        /* copy from col-major to C-format */
    {
-      const unsigned int n = N-i;
-      ipiv[i] = i + rand()%n;
+      cmat2ablk_t cmat2blk = ATL_UAMM_C2BLK_a1_b0[IDX];
+      for (i=0; i < M; i += mb)
+      {
+         int b = M-i;
+         b = (mb < b) ? mb : b;
+         cmat2blk(b, N, one, S+i, ldm, one, D+i*nb);
+      }
    }
+   else if (cmnd == 1) /* copy from C-format to col-major */
+   {
+      ablk2cmat_t blk2cmat = ATL_UAMM_BLK2C_a1_b0[IDX];
+      for (i=0; i < M; i += mb)
+      {
+         int b = M-i;
+         b = (mb < b) ? mb : b;
+         blk2cmat(b, N, one, S+i*nb, one, D+i, ldm);
+      }
+   }
+   else
+      assert(0);
 }
 
-int *getIpiv(ATL_UINT N, int *ipiv)
-{
-   int *ip;
-   ip = malloc(N*sizeof(int));
-   ATL_assert(ip);
-   pivinit(N, ip);
-   return(ip);
-}
-@endskip
+void ATL_blkIpiv_amm(int N, int nb, int mu, int *ipiv, int iadj,
+                     int*bb, int*sb, int*rb);
+void ATL_unblkIpiv_amm(int n, int*ipiv, int nb, int mu, int, int, int);
 
-#if 0
 int laswptst(int verb, int IDX, int m, int n, int lda)
 {
-   size_t szA, szB, szP, pansz, nbnb;
-   int mu, nu, M, nb, u, nmb, nerr;
-   int *ipiv, *ip;
+   size_t szA, szB, szP, pansz;
+   int nb, nbnb, u, nmb, nerr=0, bb, sb, rb;
+   int *ipiv, *ipB;
+   int *errBV=NULL;
    void *vp;
    TYPE *A, *a, *b;
    double scale;
+   const int mu = ATL_UAMM_MUs[IDX], nu = ATL_UAMM_NUs[IDX];
 
-   mu = ATL_UAMM_MUs[IDX];
-   nu = ATL_UAMM_NUs[IDX];
    u = ATL_lcm(mu, nu);
-   nb = ((n+u-1)/nu)*nu;
+   nb = ((n+u-1)/u)*u;
    nbnb = nb * nb;
-   nmb = (M+nb-1)/nb;
+   nmb = (m+nb-1)/nb;
 
    pansz = nmb*nbnb;
    szA = lda*n;
-   vp = malloc(ATL_MulBySize(2*szA + pansz)+2*sizeof(int)*m+ATL_Cachelen*4);
+   vp = malloc(ATL_MulBySize(2*szA + pansz)+ATL_Cachelen*3);
    ATL_assert(vp);
-   ipiv = vp;
-   ip = ipiv + m;
-   A = (TYPE*)(ip+m);
-   A = ATL_AlignPtr(A);
+   A = ATL_AlignPtr(vp);
    a = A + szA;
-   a = ATL_AlignPtr(A);
+   a = ATL_AlignPtr(a);
    b = a + szA;
    b = ATL_AlignPtr(b);
 
    Mjoin(PATL,geset)(lda, n, GRD_a, GRD_a, a, lda);
    Mjoin(PATL,set)(pansz, GRD_b, b, 1);
    scale = matinit(m, n, A, lda);
-   ATL_pivinit(m, ipiv);
-   chkmat(m, n, A, lda, scale);
-   free(vp);
-   return(nerr);
-}
-#endif
-
-void PrintUsage(char *name, int ierr, char *flag)
-{
-   if (ierr > 0)
-      fprintf(stderr, "Bad argument #%d: '%s'\n",
-              ierr, flag ? flag : "Not enough arguments");
-   else if (ierr < 0)
-      fprintf(stderr, "ERROR: %s\n", flag);
-
-   fprintf(stderr, "USAGE: %s [flags]:\n", name);
-   fprintf(stderr, "   -v [1/0/2]: verbosity (1 stops 1st err)\n");
-   fprintf(stderr, "   -i <#> <I1> ... <I#>\n");
-   fprintf(stderr, "   -I <Istart> <Iend> <Iinc>\n");
-   fprintf(stderr, "   -n <#> <N1> ... <N#>\n");
-   fprintf(stderr, "   -N <Nstart> <Nend> <Ninc>\n");
-   fprintf(stderr, "   -m <#> <M1> ... <M#>\n");
-   fprintf(stderr, "   -M <Mstart> <Mend> <Minc>\n");
-   fprintf(stderr, "   -L <Lstart> <Lend> <Linc>\n");
-   fprintf(stderr, "   -l <#> <lda1> ... <lda#>\n");
-   exit(ierr ? ierr : -1);
-}
-
-int GetFlags(int nargs, char **args, int **Is, int **Ls, int **Ms, int **Ns)
-{
-   int i;
-   int verb=1;
-   
-   *Is = *Ls = *Ms = *Ns = NULL;
-   for (i=1; i < nargs; i++)
+   ipiv = ATL_getIpiv(m, m|(n<<12));
+   ipB = ATL_getIpiv(m, m|(n<<12));
+/*
+ * Copy to block format, and check that C copy routs working before proceeding!
+ */
+   blkcpy(0, IDX, nb, nb, m, n, lda, A, b);
+   blkcpy(1, IDX, nb, nb, m, n, lda, b, a);
+   errBV = Mjoin(PATL,cmpmatBV)(verb, 0.0, m, n, A, lda, a, lda);
+   nerr = ATL_FindFirstSetBitBV(errBV, 0);
+   if (nerr != -1)
    {
-      if (args[i][0] != '-')
-         PrintUsage(args[0], i, args[i]);
-      switch(args[i][1])
+      if (verb)
       {
-      case 'v':
-         if (++nargs >= nargs)
-            PrintUsage(args[0], i, NULL);
-         verb = atoi(args[i]);
-         break;
-@multidef ls Ns Ms Ls Is
-@whiledef fl n m l i
-      case '@(fl)':
-         *@(ls) = GF_GetIntList(nargs, args, i, 1);
-         i += (*@(ls))[0] + 1;
-         break;
-      case '@up@(fl)':
-         if (i+3 >= nargs)
-            PrintUsage(args[0], i, NULL);
-         *@(ls) = GF_IntRange2IntList(atoi(args[i+1]),atoi(args[i+2]),
-                                   atoi(args[i+3]));
-         i += 3;
-         break;
-@endwhile
-      default:
-         PrintUsage(args[0], i, args[i]);
+         printf("ERROR: CMAT copy not working!");
+         if ((verb == 1) && n < 80 || verb > 1)
+            ATL_print2dBV(m, n, errBV);
+         if (verb < 3)
+            exit(nerr);
       }
    }
-   if (!(*Ns))
-      *Ns = GF_IntRange2IntList(24, 64, 8);
-   if (!(*Ms))
-      *Ms = GF_IntRange2IntList(111, 555, 111);
-   if (!(*Ls))
-      *Ls = GF_DupIntList(*Ms);
-   if (!(*Is))
-      *Is = GF_GetIntList2(0, ATL_UAMM_NCASES-1);
-      
-   return(verb);
+   else
+      nerr = 0;
+   if (!nerr)
+      nerr = chkmat(verb, m, n, A, lda, scale);
+/*
+ * OK, now we have A in A & a in column-major, and in b in C-form.  We can
+ * now pivot A with ipiv/laswp, and pivot the top block of a and rest of
+ * the blocks from b.  We can then copy the lower blocks b --> a, and
+ * check to see if a == b.  If so, new swap is working!
+ */
+   ATL_blkIpiv_amm(m, nb, mu, ipB, 0, &bb, &sb, &rb);
+   ATL_laswp(n, A, lda, 0, m, ipiv, 1);
+
+   if (errBV)
+      ATL_FreeBV(errBV);
+   free(vp);
+   free(ipiv);
+   free(ipB);
+   return(nerr);
 }
 
 int piv2blks(int verb, int IDX, int N)
@@ -6585,18 +6634,15 @@ int piv2blks(int verb, int IDX, int N)
    int i, bb, sb, rb;
    int nfail=0;
    const int nb = ATL_UAMM_MBs[IDX], mu = ATL_UAMM_MUs[IDX];
-   void ATL_blkIpiv_amm(int nb, int mu, int N, int *ipiv, int iadj,
-                        int*bb, int*sb, int*rb);
-   void ATL_unblkIpiv_amm(int n, int*ipiv, int nb, int mu, int, int, int);
 
    ip = ATL_getIpiv(N, N|(IDX<<12));
-   ipB = ATL_getIpiv(N, 0);
+   ipB = ATL_getIpiv(N, N|(IDX<<12));
    for (i=0; i < N; i += nb)
    {
       int b = N-i;
       if (b > nb)
          b = nb;
-      ATL_blkIpiv_amm(b, mu, N+N, ipB+i, 5, &bb, &sb, &rb);
+      ATL_blkIpiv_amm(b, nb, mu, ipB+i, 5, &bb, &sb, &rb);
    }
    ATL_unblkIpiv_amm(N, ipB, nb, mu, bb, sb, rb);
    for (i=0; i < N; i++)
@@ -6610,40 +6656,39 @@ int piv2blks(int verb, int IDX, int N)
    }
    free(ip);
    free(ipB);
-   if (nfail && verb == 1)
-      exit(nfail);
    return(nfail);
 }
 
 int runTests(int verb, int *Is, int *Ns, int *Ms, int *Ls)
 {
-   int i, n, m, ntst=0, nerr=0;
+   int i, n, m, fail, ntst=0, nerr=0;
    printf("\n");
-   printf(" TST#      TST NAME  AIDX        M        N      LDA  PASS\n");
-   printf("=====  ============  ====  =======  =======  =======  ====\n");
+   printf(" TST#      TST NAME  IDX   NB        M        N      LDA  PASS\n");
+   printf("=====  ============  ===  ===  =======  =======  =======  ====\n");
    for (i=1; i <= Is[0]; i++)
    {
-      int IDX=Is[i];
+      int nb, IDX=Is[i];
       if (IDX >= ATL_UAMM_NCASES)
          continue;
+      nb = ATL_UAMM_NBs[IDX];
       for (m=1; m <= Ms[0]; m++)
       {
          int M = Ms[m], lda=Ls[m];
+         fail = piv2blks(verb, IDX, M);
+         if (fail)
+            nerr++;
+         printf("%5u  %12.12s %4u %4u %8u %8u %8u  %4.4s\n", 
+                ++ntst, "PIV2BLKS", IDX, nb, M, 0, 0, fail ? "FAIL":"PASS");
          for (n=1; n <= Ns[0]; n++)
          {
-            int N = Ns[n], fail;
-            fail = piv2blks(verb, IDX, N);
-            if (fail)
-               nerr++;
-            printf("%5u  %12.12s %4u %8u %8u %8u %4.4s\n", 
-                   ++ntst, "PIV2BLKS", IDX, M, N, lda, fail ? "FAIL":"PASS");
-            #if 0
+            int N = Ns[n];
             fail = laswptst(verb, IDX, M, N, lda);
             if (fail)
                nerr++;
-            printf("%5u  %12.12s %4u %8u %8u %8u %4.4s\n", 
-                   ++ntst, "AMMSWP", IDX, M, N, lda, fail ? "FAIL":"PASS");
-            #endif
+            printf("%5u  %12.12s %4u %4u %8u %8u %8u  %4.4s\n", 
+                   ++ntst, "AMMSWP", IDX, nb, M, N, lda, fail ? "FAIL":"PASS");
+            if (fail && verb < 3)  /* fail on first error unless user forces*/
+               exit(fail);         /* all tests to run (verb > 2) */
          }
       }
    }
