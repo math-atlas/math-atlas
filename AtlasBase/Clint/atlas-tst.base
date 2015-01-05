@@ -3074,7 +3074,12 @@ double time00();
 
 @multidef styp double@^* float@^* double@^ float@^
 @multidef typ double float double float
+int *ATL_getIpiv(ATL_UINT N, ATL_UINT seed);
+void ATL_ipivinit(ATL_UINT N, int *ipiv);
+void ATL_print2dBV(int M, int N, int *bv);
+void ATL_print1dBV(int COL, int N, int *bv);
 @whiledef pre z c d s
+int *ATL_@(pre)cmpmatBV(int,int,const @(typ)*,int,const @(typ)*,int,double);
 void ATL_@(pre)tstsqtran(const int N, @(typ) *A, const int lda);
 void ATL_@(pre)geprint
    (char *mat, const int M, const int N, const @(typ) *A, const int lda);
@@ -5649,5 +5654,148 @@ TYPE Mjoin(PATL,hediffnrm)
       }
    }
    return(max);
+}
+@ROUT ATL_cmpmatBV ATL_print2dBV ATL_print1dBV
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2015
+#include "atlas_misc.h"
+#include "atlas_bitvec.h"
+@ROUT ATL_print1dBV
+void ATL_print1dBV(int col, int N, int *bv)
+{
+   int i, ierr;
+   printf("\n\nBITVEC MAP:\n");
+   ierr = ATL_FindFirstSetBitBV(bv, 0);
+   if (ierr == -1)
+      ierr = N;
+   if (col)
+   {
+      for (i=0; i < N; i++)
+      {
+         if (i != ierr)
+            printf("%d .\n", i%10);
+         else
+         {
+            printf("%d X\n", i%10);
+            if (i < N-1)
+               ierr = ATL_FindFirstSetBitBV(bv, i+1);
+         }
+      }
+   }
+   else
+   {
+      for (i=0; i < N; i++)
+         printf("%d", i%10);
+      printf("\n");
+      for (i=0; i < N; i++)
+      {
+         if (i != ierr)
+            printf(".");
+         else
+         {
+            printf("X");
+            if (i < N-1)
+               ierr = ATL_FindFirstSetBitBV(bv, i+1);
+         }
+      }
+      printf("\n");
+   }
+}
+@ROUT ATL_print2dBV
+void ATL_print2dBV(int M, int N, int *bv)
+{
+   int i, j, k, K=M*N, ierr = -1;
+
+   printf("\n\nBITVEC MAP:\n");
+   printf(" ");
+   for (j=0; j < N; j++)
+      printf("%d",j%10);
+   printf("\n");
+   ierr = ATL_FindFirstSetBitBV(bv, 0);
+   if (ierr == -1)
+      ierr = K;
+   for (k=i=0; i < M; i++)
+   {
+      printf("%d", i%10);
+      for (j=0; j < N; j++)
+      {
+         if (k != ierr)
+            printf(".");
+         else
+         {
+            printf("X");
+            if (ierr+1 < K)
+               ierr = ATL_FindFirstSetBitBV(bv, ierr+1);
+            else
+               ierr = K;
+         }
+         k++;
+      }
+      printf("\n");
+   }
+}
+
+@ROUT ATL_cmpmatBV
+/*
+ * Returns a bitvec where set bits are errors above tolerance tol.
+ * Entries are ordered row-major for ease of printing
+ * Combine with ATL_print2dBV for pictoral error report.
+ */
+int *Mjoin(PATL,cmpmatBV)
+   (int M, int N, const TYPE *A, int lda, const TYPE *B, int ldb, double tol)
+{
+   int i, j, *bv;
+   size_t lda2=lda SHIFT, ldb2=ldb SHIFT;
+
+   bv = ATL_NewBV(M*N);
+   if (tol < 0.0)
+      tol = -tol;
+   for (j=0; j < N; j++, A += lda2, B += ldb2)
+   {
+      for (i=0; i < M; i++)
+      {
+         #ifdef TCPLX
+            const int I = i+i;
+            double diff = A[I] - B[I], idiff = A[I+1] - B[I+1];
+            if (diff < 0.0)
+               diff = -diff;
+            if (idiff < 0.0)
+               idiff = 0.0;
+            if (diff > tol || idiff > tol)
+               ATL_SetBitBV(bv, i*N+j);
+         #else
+            double diff = A[i] - B[i];
+            if (diff < 0.0)
+               diff = -diff;
+
+            if (diff > tol)
+               ATL_SetBitBV(bv, i*N+j);
+         #endif
+
+      }
+   }
+   return(bv);
+}
+@rout ATL_getIpiv
+#include <stdlib.h>
+#include "atlas_misc.h"
+
+void ATL_ipivinit(ATL_UINT N, int *ipiv)
+{
+   int i;
+   for (i=0; i < N; i++)
+   {
+      const unsigned int n = N-i;
+      ipiv[i] = i + rand()%n;
+   }
+}
+
+int *ATL_getIpiv(ATL_UINT N, ATL_UINT seed)
+{
+   int *ip;
+   srand(seed);
+   ip = malloc(N*sizeof(int));
+   ATL_assert(ip);
+   ATL_ipivinit(N, ip);
+   return(ip);
 }
 @ROUT !

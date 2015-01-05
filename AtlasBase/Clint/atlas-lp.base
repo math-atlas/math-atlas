@@ -5447,16 +5447,133 @@ int Mjoin(PATL,tgetrfC_PCA)
    #endif
    P = 1; Q = ATL_NTHREADS;   /* until we get debugged */
 }
-@ROUT ATL_getrf_amm
+@ROUT ATL_lapiv_amm ATL_blkIpiv_amm ATL_unblkIpiv_amm
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2015
 #include "atlas_misc.h"
-#include "atlas_amm.h"
 #include "atlas_lapack.h"
+@ROUT ATL_blkIpiv_amm 
+static void GetPivBitCount
+(
+   int nb,   /* block factor to use */
+   int mu,   /* mu used by amm kernel */
+   int *BB,  /* number of bits to encode block number */
+   int *SB,  /* number of bits to encode subblock number */
+   int *RB   /* number of bits to encode row index in sub-block */
+)
+{
+   int bb, sb, rb, nmu;
+
+
+   if (mu > 1)
+      for (rb=0; (1<<rb) < mu; rb++);
+   else
+      rb = 1;
+
+   nmu = nb / mu;
+   if (nmu > 1)
+      for (sb=0; (1<<sb) < nmu; sb++);
+   else
+      sb = 1;
+
+   bb = (sizeof(int)<<3) - rb - sb;
+   *RB = rb;
+   *SB = sb;
+   *BB = bb;
+}
+
+/*
+ * Split row index (I) into 3 bit patterns: (sbr,sbn,mbn) where:
+ * + (subblock row, subblock number, main block number)
+ * + For column major we compute:
+ *     I = r + sbn*mu + bn*nb:
+ * + For C-format we compute:
+ *     panoff = bn * nbnb;
+ *     blkoff = sbn*mu*nu;
+ *     rowoff = r;
+ * Bad news, is now both indices must be computed using * and +, but in
+ * col-major encoding, C-format computation requires in-the-loop division, 
+ * so this seems better.
+ *
+ *       mbn = i / nb
+ *       sbn = (i-mbn*nb) / mu;
+ *       sbr = (i - mbn*nb - sbn*mu);
+ *
+ *    We will lose at most 2 bits of range, which should never be a problem
+ *    in practice, since this algorithm will fail malloc long before we are
+ *    using all but two bits of the integer range 
+ *
+ *    Always adjusts nb entries starting from ipiv.
+ */
+void ATL_blkIpiv_amm
+(
+   int nb,
+   int mu,
+   int N,      /* max pivot; M for LU */
+   int *ipiv,  /* INPUT/OUTPUT: pivot array to encode wt block bit patterns */
+   int iadj,   /* offset to add to entries prior to encoding */
+   int *BB,
+   int *SB,
+   int *RB 
+)
+{
+   unsigned int k, bb_sb;
+   int bb, sb, rb;   /* bits to encode block #, subblk#, row in subblk */
+
+   GetPivBitCount(nb, mu, BB, SB, RB);
+   bb = *BB; sb = *SB; rb = *RB;
+   ATL_assert(N/nb < (1<<bb));
+   bb_sb = bb + sb;
+
+   for (k=0; k < nb; k++)
+   {
+      unsigned int i, mbn, sbn, sbr;
+      i = ipiv[k] + iadj;
+      mbn = i / nb;
+      i -= mbn*nb;
+      sbn = i / mu;
+      sbr = i - sbn*mu;
+      ipiv[k] = (sbr << bb_sb) | (sbn << bb) | mbn;
+   }
+}
+
+@ROUT ATL_unblkIpiv_amm 
+/*
+ * Takes ipiv split in (mbn,sbn,sbr) bitpattern, and translates it back
+ * to standar getrf row coordinates.  See ATL_blkIPiv_amm for more detail
+ */
+void ATL_unblkIpiv_amm
+(
+   int n,      /* number of pivot entries to unblock */
+   int *ipiv,  /* pivot array to encode wt block bit patterns */
+   const int nb,
+   const int mu,
+   const int bb,
+   const int sb,
+   const int rb 
+)
+{
+   unsigned int k;
+   const unsigned int bmsk=(1<<bb)-1, smsk=(1<<sb)-1, bb_sb=bb+sb;
+   for (k=0; k < n; k++)
+   {
+      const unsigned int i = ipiv[k];
+      unsigned int mbn, sbn, sbr;
+      mbn = i & bmsk;
+      sbn = (i>>bb) & smsk;
+      sbr = (i>>bb_sb);
+      ipiv[k] = sbr + sbn*mu + mbn*nb;
+   }
+}
+@ROUT ATL_getrf_amm
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2015
+#include "atlas_misc.h"
+#include "atlas_lapack.h"
+#include "atlas_amm.h"
 
 #ifndef UAMMID
-   #define PRID Mjoin(Mjoin(atlas_,PRE),u25amm_)
-#else
-   #define PRID Mjoin(Mjoin(atlas_,PRE),Mjoin(Mjoin(u,UAMMID),amm_))
+   #define UAMMID 0
 #endif
+#define PRID Mjoin(Mjoin(atlas_,PRE),Mjoin(Mjoin(u,UAMMID),amm_))
 #include Mstr(Mjoin(PRID,blk.h))
 #include Mstr(Mjoin(PRID,cm2am_an.h))
 #include Mstr(Mjoin(PRID,cm2am_a1.h))
@@ -5468,6 +5585,8 @@ int Mjoin(PATL,tgetrfC_PCA)
    #define none ATL_rnone
    #define zero ATL_rzero
 #endif
+
+
 int Mjoin(PATL,getrf_amm)
   (const int M, const int N, TYPE *A, const int lda, int *ipiv, int IAMM)
 {
@@ -5502,7 +5621,7 @@ int Mjoin(PATL,getrf_amm)
    blksz = nb*nb;
    pansz = NMB*blksz;
    sz = NNB*ATL_MulBySize(pansz);
-   if (sz < ATL_MaxMalloc)
+//   if (sz < ATL_MaxMalloc)
       vp = malloc(sz + ATL_Cachelen);
    if (!vp)
       return(-1);
@@ -5549,6 +5668,8 @@ int Mjoin(PATL,getrf_amm)
  */
 /*
  *    Apply j*nb pivots to active panel
+ *    ERROR HERE.  Can only apply nb at a time, must intermix pivots wt
+ *    trsm, I think.
  */
       ATL_laswp(nb, Ac, lda, 0, j*nb, ipiv, 1);
 /*
@@ -5672,11 +5793,15 @@ int Mjoin(PATL,getrf_amm)
  */
       for (k=i, ie=i+nb; k < ie; k++)
          ipiv[k] += i;
-      ATL_laswp(i, A, lda, i, ie, ipiv, 1);
+      ATL_laswp(i, A, lda, i, ie-1, ipiv, 1);
       m -= nb;
       Ac += csz;
    }
    free(vp);
+   #if 1
+   for (j=N-nb-nb; j >= 0; j-=nb)
+      ATL_laswp(nb, A+j*nb, lda, j+nb, N, ipiv, 1);
+   #endif
    return(ierr);
 }
 #ifndef TCPLX

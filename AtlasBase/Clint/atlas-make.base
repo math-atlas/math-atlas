@@ -41,6 +41,7 @@ $atldir/$*
    src/blas/level3 
    src/blas/level3/rblas 
    src/blas/level3/kernel 
+   src/lapack/amm
    src/lapack 
    src/threads/blas/level3
    src/threads/blas/level2
@@ -304,6 +305,7 @@ refresh :
 	cp $(SRCdir)/makes/Make.l1src src/blas/level1/Makefile
 	cp $(SRCdir)/makes/Make.l2 src/blas/level2/Makefile
 	cp $(SRCdir)/makes/Make.l2aux src/blas/level2/kernel/Makefile
+	cp $(SRCdir)/makes/Make.lpamm src/lapack/amm/Makefile
 	cp $(SRCdir)/makes/Make.lpsrc src/lapack/Makefile
 	cp $(SRCdir)/makes/Make.l3tune tune/blas/level3/Makefile
 	cp $(SRCdir)/makes/Make.mmtune tune/blas/gemm/Makefile
@@ -540,6 +542,61 @@ ATL_@(pre)@(rout).o : $(mySRCdir)/ATL_@(p2)@(rout).c $(incdep)
    @killkeys ptyp
    @undef typ
    @undef p2
+@endwhile
+@ROUT Make.lpamm
+include Make.inc
+mySRCdir = $(SRCdir)/src/lapack/amm
+
+AMMID=0
+all : lib ptlib
+lib : dlib slib zlib clib ilib
+clean : sclean dclean cclean zclean iclean
+
+tlib : ptlib
+ptlib : dtlib stlib ztlib ctlib itlib
+incdep = $(INCSdir)/atlas_lapack.h $(INCAdir)/atlas_du$(AMMID)amm_blk.h \
+         $(INCAdir)/atlas_du$(AMMID)amm_swp.h \
+         $(INCAdir)/atlas_du$(AMMID)amm_kern.h 
+@whiledef pre i z c d s
+@(pre)lib : 
+	$(PMAKE) @(pre)lib.grd
+@(pre)tlib : 
+@endwhile
+@multidef typ TINT32 DCPLX SCPLX DREAL SREAL
+@whiledef pre i z c d s
+   @addkeys ptyp=@(pre)
+   @ptyp d s
+      @multidef rtf getrf_amm
+   @ptyp i
+      @multidef rti blkIpiv_amm unblkIpiv_amm
+   @ptyp !
+   @declare "@(pre)obj = " y y
+      @whiledef rtf
+         @define rtf1 @@(rtf)@
+         ATL_@(pre)@(rtf).o
+      @endwhile
+      @whiledef rti
+         @define rti1 @@(rti)@
+         ATL_@(rti).o
+      @endwhile
+   @enddeclare
+
+@(pre)lib.grd : $(@(pre)obj)
+	$(ARCHIVER) $(ARFLAGS) $(LAPACKlib) $(@(pre)obj)
+	$(RANLIB) $(LAPACKlib)
+	touch @(pre)lib.grd
+
+@whiledef rtf1
+ATL_@(pre)@(rtf1).o : $(mySRCdir)/ATL_@(rtf1).c $(incdep)
+	$(@up@(pre)KC) $(@(pre)KCFLAGS) -c -o ATL_@(pre)@(rtf1).o -D@(typ)=1 \
+              $(mySRCdir)/ATL_@(rtf1).c
+@endwhile
+@whiledef rti1
+ATL_@(rti1).o : $(mySRCdir)/ATL_@(rti1).c $(incdep)
+	$(KC) $(KCFLAGS) -c -o ATL_@(rti1).o \
+           $(mySRCdir)/ATL_@(rti1).c
+@endwhile
+
 @endwhile
 @ROUT Make.lpsrc
 include Make.inc
@@ -3766,6 +3823,14 @@ x@(pre)tlatime_fl_sb : @(pre)tlatimeF.o @(pre)tlapack @(pre)ttstlib \
 	$(KC) -o $@ -c $(KCFLAGS) -DATL_USEPTHREADS=1 -D@(typ) \
                  $(mySRCdir)/latime.c
 
+@(pre)swptst_amm.o : $(mySRCdir)/ammswptst.c $(INCSdir)/atlas_misc.h \
+                    $(INCSdir)/atlas_lvl3.h
+	$(KC) -o $@ -c $(KCFLAGS)  $(intf) -DAMMIDX=$(ammidx) -D@(typ) \
+               $(mySRCdir)/ammswptst.c
+x@(pre)swptst_amm : @(pre)swptst_amm.o
+	$(FLINKER) $(FCLINKFLAGS) -o $@ @(pre)swptst_amm.o \
+                   $(TESTlib) $(LAPACKlib) $(CBLASlib) \
+                   $(F77BLASlib) $(UAMMlib) $(ATLASlib) $(LIBS)
 @(pre)lutst_amm.o : $(mySRCdir)/lutst.c $(INCSdir)/atlas_misc.h \
                     $(INCSdir)/atlas_lvl3.h
 	$(KC) -o $@ -c $(KCFLAGS)  $(intf) -DAMMIDX=$(ammidx) -D@(typ) \
@@ -6669,7 +6734,7 @@ INCdep = $(INCSdir)/atlas_misc.h $(INCSdir)/atlas_f77.h \
          $(INCSdir)/atlas_tst.h
 INCdep1 = $(INCSdir)/atlas_misc.h $(INCSdir)/atlas_tst.h
 
-obj = ATL_rand.o
+obj = ATL_rand.o ATL_print2dBV.o ATL_print1dBV.o ATL_getIpiv.o
 
 @whiledef pre z c d s
    @(pre)f77wobjs = ATL_@(pre)f77wrap.o
@@ -6727,6 +6792,7 @@ clean : dclean sclean zclean cclean
             ATL_@(pre)epsilon.o ATL_@(pre)gediff.o ATL_@(pre)genrm1.o \
             ATL_@(pre)gediffnrm1.o ATL_@(pre)infnrm.o ATL_@(pre)vdiff.o \
             ATL_@(pre)trgen.o ATL_@(pre)trnrm1.o ATL_@(pre)gbnrm1.o \
+            ATL_@(pre)cmpmatBV.o \
 @PTYP Z C
             ATL_@(pre)hbnrm.o ATL_@(pre)hpnrm.o ATL_@(pre)henrm.o \
 @PTYP !
@@ -6767,6 +6833,7 @@ ATL_@(pre)f77@(rout).o : $(mySRCdir)/ATL_f77@(rout).c $(INCdep)
       trgen trnrm1 gbnrm1 tbnrm1 tpnrm1 sbnrm spnrm synrm tstsqtran
       gegen geprint gediff epsilon genrm1 gediffnrm1 infnrm vdiff
       hediffnrm
+      cmpmatBV
    @endmultidef
    @whiledef rout
 ATL_@(pre)@(rout).o : $(mySRCdir)/ATL_@(rout).c $(INCSdir)/atlas_misc.h
@@ -6780,7 +6847,7 @@ ATL_dsf77dot.o        : $(mySRCdir)/ATL_f77dsdot.c $(INCdep)
 ATL_sdsf77dot.o       : $(mySRCdir)/ATL_f77sdsdot.c $(INCdep)
 	$(@up@(pre)KC) -o $@ -c $(@(pre)KCFLAGS) -DSREAL $(mySRCdir)/ATL_f77sdsdot.c
 @endskip
-@whiledef rout rand dsf77dot sdsf77dot
+@whiledef rout  getIpiv print2dBV print1dBV rand dsf77dot sdsf77dot
 ATL_@(rout).o : $(mySRCdir)/ATL_@(rout).c $(INCSdir)/atlas_misc.h
 	$(DKC) -o $@ -c $(dKCFLAGS) -DSREAL $(mySRCdir)/ATL_@(rout).c
 @endwhile
@@ -6799,7 +6866,8 @@ ATL_@(rout).o : $(mySRCdir)/ATL_@(rout).c $(INCSdir)/atlas_misc.h
 ATL_@(pre)f77@(rout).o : $(mySRCdir)/ATL_f77@(rout).c $(INCdep)
 	$(@up@(pre)KC) -o $@ -c $(@(pre)KCFLAGS) -D@(typ) $(mySRCdir)/ATL_f77@(rout).c
    @endwhile
-   @multidef rout sbnrm spnrm synrm hbnrm hpnrm henrm tstsqtran
+      
+   @multidef rout sbnrm spnrm synrm hbnrm hpnrm henrm tstsqtran cmpmatBV
    @multidef rout trnrm1 gbnrm1 tbnrm1 tpnrm1 trgen hediffnrm
    @whiledef rout gegen geprint gediff epsilon genrm1 gediffnrm1 infnrm vdiff
 ATL_@(pre)@(rout).o : $(mySRCdir)/ATL_@(rout).c $(INCdep1)

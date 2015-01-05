@@ -6354,3 +6354,317 @@ int main(int nargs, char **args)
           ((tfl-tufl)/tufl)*100.0);
    return(0);
 }
+@ROUT ammswptst
+#include "atlas_misc.h"
+#include "atlas_tst.h"
+#include "atlas_level1.h"
+#define ATL_GETFLAGS 1
+#include "atlas_genparse.h"
+#include "atlas_bitvec.h"
+#ifndef UID
+   #define UID 0
+#endif
+@skip #define apref Mjoin(Mjoin(Mjoin(Mjoin(Mjoin(atlas_,PRE),u)),UID),amm)
+#define apref Mjoin(Mjoin(Mjoin(Mjoin(atlas_,PRE),u),UID),amm)
+#include Mstr(Mjoin(apref,_swp.h))
+#include Mstr(Mjoin(apref,_blk.h))
+#include Mstr(Mjoin(apref,_cmat2ablk.h))
+#include Mstr(Mjoin(apref,_ablk2cmat.h))
+#include Mstr(Mjoin(apref,_swp.h))
+
+#define GRD_A 5.555555555e15
+#define GRD_a 7.777777777e15
+#define GRD_b 3.333333333e15
+
+double matinit(int M, int N, TYPE *A, int lda)
+{
+   int i, j;
+   double scale;
+
+   for (j=10; j < N; j *= 10);
+   scale = i;
+
+   for (j=0; j < N; j++, A += lda)
+   {
+      for (i=0; i < M; i++)
+         A[i] = scale*i+j;
+      for (; i < lda; i++)
+         A[i] = GRD_A;
+   }
+   return(scale);
+}
+
+void printbv(int M, int N, int *bv)
+{
+   int i, j, k, K=M*N, ierr = -1;
+   printf("\n\nERROR MAP:\n");
+
+   printf(" ");
+   for (j=0; j < N; j++)
+      printf("%d",j%10);
+   printf("\n");
+   ierr = ATL_FindFirstSetBitBV(bv, 0);
+   if (ierr == -1)
+      ierr = K;
+   for (k=i=0; i < M; i++)
+   {
+      printf("%d", i%10);
+      for (j=0; j < N; j++)
+      {
+         if (k != ierr)
+            printf(".");
+         else
+         {
+            printf("X");
+            if (ierr+1 < K)
+               ierr = ATL_FindFirstSetBitBV(bv, ierr+1);
+            else
+               ierr = K;
+         }
+         k++;
+      }
+      printf("\n");
+   }
+}
+
+int chkmat(int M, int N, TYPE *A, int lda, double scale)
+{
+   int i, j, nerr=0, MN=M*N;
+   int *bv;
+   bv = ATL_NewBV(MN);
+   for (j=0; j < N; j++, A += lda)
+   {
+      for (i=0; i < M; i++)
+      {
+         if (scale*i+j != A[i])
+         {
+            ATL_SetBitBV(bv, i*N+j);
+            nerr++;
+         }
+      }
+   }
+   if (nerr && N <= 240)
+      printbv(M, N, bv);
+   free(bv);
+   return(nerr);
+}
+
+@beginskip
+void pivinit(ATL_UINT N, int *ipiv)
+{
+   int i;
+   srand(N);
+   for (i=0; i < N; i++)
+   {
+      const unsigned int n = N-i;
+      ipiv[i] = i + rand()%n;
+   }
+}
+
+int *getIpiv(ATL_UINT N, int *ipiv)
+{
+   int *ip;
+   ip = malloc(N*sizeof(int));
+   ATL_assert(ip);
+   pivinit(N, ip);
+   return(ip);
+}
+@endskip
+
+#if 0
+int laswptst(int verb, int IDX, int m, int n, int lda)
+{
+   size_t szA, szB, szP, pansz, nbnb;
+   int mu, nu, M, nb, u, nmb, nerr;
+   int *ipiv, *ip;
+   void *vp;
+   TYPE *A, *a, *b;
+   double scale;
+
+   mu = ATL_UAMM_MUs[IDX];
+   nu = ATL_UAMM_NUs[IDX];
+   u = ATL_lcm(mu, nu);
+   nb = ((n+u-1)/nu)*nu;
+   nbnb = nb * nb;
+   nmb = (M+nb-1)/nb;
+
+   pansz = nmb*nbnb;
+   szA = lda*n;
+   vp = malloc(ATL_MulBySize(2*szA + pansz)+2*sizeof(int)*m+ATL_Cachelen*4);
+   ATL_assert(vp);
+   ipiv = vp;
+   ip = ipiv + m;
+   A = (TYPE*)(ip+m);
+   A = ATL_AlignPtr(A);
+   a = A + szA;
+   a = ATL_AlignPtr(A);
+   b = a + szA;
+   b = ATL_AlignPtr(b);
+
+   Mjoin(PATL,geset)(lda, n, GRD_a, GRD_a, a, lda);
+   Mjoin(PATL,set)(pansz, GRD_b, b, 1);
+   scale = matinit(m, n, A, lda);
+   ATL_pivinit(m, ipiv);
+   chkmat(m, n, A, lda, scale);
+   free(vp);
+   return(nerr);
+}
+#endif
+
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n",
+              ierr, flag ? flag : "Not enough arguments");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+
+   fprintf(stderr, "USAGE: %s [flags]:\n", name);
+   fprintf(stderr, "   -v [1/0/2]: verbosity (1 stops 1st err)\n");
+   fprintf(stderr, "   -i <#> <I1> ... <I#>\n");
+   fprintf(stderr, "   -I <Istart> <Iend> <Iinc>\n");
+   fprintf(stderr, "   -n <#> <N1> ... <N#>\n");
+   fprintf(stderr, "   -N <Nstart> <Nend> <Ninc>\n");
+   fprintf(stderr, "   -m <#> <M1> ... <M#>\n");
+   fprintf(stderr, "   -M <Mstart> <Mend> <Minc>\n");
+   fprintf(stderr, "   -L <Lstart> <Lend> <Linc>\n");
+   fprintf(stderr, "   -l <#> <lda1> ... <lda#>\n");
+   exit(ierr ? ierr : -1);
+}
+
+int GetFlags(int nargs, char **args, int **Is, int **Ls, int **Ms, int **Ns)
+{
+   int i;
+   int verb=1;
+   
+   *Is = *Ls = *Ms = *Ns = NULL;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+      switch(args[i][1])
+      {
+      case 'v':
+         if (++nargs >= nargs)
+            PrintUsage(args[0], i, NULL);
+         verb = atoi(args[i]);
+         break;
+@multidef ls Ns Ms Ls Is
+@whiledef fl n m l i
+      case '@(fl)':
+         *@(ls) = GF_GetIntList(nargs, args, i, 1);
+         i += (*@(ls))[0] + 1;
+         break;
+      case '@up@(fl)':
+         if (i+3 >= nargs)
+            PrintUsage(args[0], i, NULL);
+         *@(ls) = GF_IntRange2IntList(atoi(args[i+1]),atoi(args[i+2]),
+                                   atoi(args[i+3]));
+         i += 3;
+         break;
+@endwhile
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   if (!(*Ns))
+      *Ns = GF_IntRange2IntList(24, 64, 8);
+   if (!(*Ms))
+      *Ms = GF_IntRange2IntList(111, 555, 111);
+   if (!(*Ls))
+      *Ls = GF_DupIntList(*Ms);
+   if (!(*Is))
+      *Is = GF_GetIntList2(0, ATL_UAMM_NCASES-1);
+      
+   return(verb);
+}
+
+int piv2blks(int verb, int IDX, int N)
+{
+   int *ip, *ipB, *ipL;
+   int i, bb, sb, rb;
+   int nfail=0;
+   const int nb = ATL_UAMM_MBs[IDX], mu = ATL_UAMM_MUs[IDX];
+   void ATL_blkIpiv_amm(int nb, int mu, int N, int *ipiv, int iadj,
+                        int*bb, int*sb, int*rb);
+   void ATL_unblkIpiv_amm(int n, int*ipiv, int nb, int mu, int, int, int);
+
+   ip = ATL_getIpiv(N, N|(IDX<<12));
+   ipB = ATL_getIpiv(N, 0);
+   for (i=0; i < N; i += nb)
+   {
+      int b = N-i;
+      if (b > nb)
+         b = nb;
+      ATL_blkIpiv_amm(b, mu, N+N, ipB+i, 5, &bb, &sb, &rb);
+   }
+   ATL_unblkIpiv_amm(N, ipB, nb, mu, bb, sb, rb);
+   for (i=0; i < N; i++)
+   {
+      if (ip[i]+5 != ipB[i])
+      {
+         nfail++;
+         if (verb)
+            printf("IPIV[%d] = %d; expected=%d!\n", i, ipB[i], ip[i]+5);
+      }
+   }
+   free(ip);
+   free(ipB);
+   if (nfail && verb == 1)
+      exit(nfail);
+   return(nfail);
+}
+
+int runTests(int verb, int *Is, int *Ns, int *Ms, int *Ls)
+{
+   int i, n, m, ntst=0, nerr=0;
+   printf("\n");
+   printf(" TST#      TST NAME  AIDX        M        N      LDA  PASS\n");
+   printf("=====  ============  ====  =======  =======  =======  ====\n");
+   for (i=1; i <= Is[0]; i++)
+   {
+      int IDX=Is[i];
+      if (IDX >= ATL_UAMM_NCASES)
+         continue;
+      for (m=1; m <= Ms[0]; m++)
+      {
+         int M = Ms[m], lda=Ls[m];
+         for (n=1; n <= Ns[0]; n++)
+         {
+            int N = Ns[n], fail;
+            fail = piv2blks(verb, IDX, N);
+            if (fail)
+               nerr++;
+            printf("%5u  %12.12s %4u %8u %8u %8u %4.4s\n", 
+                   ++ntst, "PIV2BLKS", IDX, M, N, lda, fail ? "FAIL":"PASS");
+            #if 0
+            fail = laswptst(verb, IDX, M, N, lda);
+            if (fail)
+               nerr++;
+            printf("%5u  %12.12s %4u %8u %8u %8u %4.4s\n", 
+                   ++ntst, "AMMSWP", IDX, M, N, lda, fail ? "FAIL":"PASS");
+            #endif
+         }
+      }
+   }
+   if (!nerr)
+      printf("%d TESTS PASSED.\n", ntst);
+   else 
+      printf("%d TESTS, %d FAILED!\n", ntst, nerr);
+   return(nerr);
+}
+
+int main(int nargs, char **args)
+{
+   int *Ls, *Ms, *Ns, *Is, nerr;
+   int verb;
+
+   verb = GetFlags(nargs, args, &Is, &Ls, &Ms, &Ns);
+   assert(Ls[0] == Ms[0]);
+   nerr = runTests(verb, Is, Ns, Ms, Ls);
+   free(Ls);
+   free(Ms);
+   free(Ns);
+   free(Is);
+   return(nerr);
+}

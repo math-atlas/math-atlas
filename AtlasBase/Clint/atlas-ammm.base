@@ -384,6 +384,7 @@ ID=44 MU=4 NU=2 KU=4 AUTH="Whaley & Voronenko" ROUT='ATL_kmmm4x2x256_sse3.S' \
                                const TYPE*, const SCALAR, TYPE *, const size_t);
    typedef void (*cmat2ablk_t)(const size_t, const size_t, const SCALAR,
                                const TYPE*, const size_t, const SCALAR,TYPE*);
+   typedef void (*ammswp_t)(ATL_CINT, TYPE*,ATL_CSZT,TYPE*);
 #else
    typedef void (*cm2am_t)(const size_t, const size_t, const SCALAR,
                            const TYPE*, const size_t, TYPE*, TYPE*);
@@ -395,6 +396,7 @@ ID=44 MU=4 NU=2 KU=4 AUTH="Whaley & Voronenko" ROUT='ATL_kmmm4x2x256_sse3.S' \
    typedef void (*cmat2ablk_t)(const size_t, const size_t, const SCALAR,
                                const TYPE*, const size_t, const SCALAR,
                                TYPE*,TYPE*);
+   typedef void (*ammswp_t)(ATL_CINT, TYPE*,ATL_CSZT,TYPE*,TYPE*);
 #endif
 typedef void (*ammkern_t)(ATL_CSZT,ATL_CSZT,ATL_CSZT,const TYPE*,const TYPE*,
                           TYPE*, const TYPE*, const TYPE*, const TYPE*);
@@ -1204,6 +1206,7 @@ void SpewForthCpDecl(char pre, int REVERSE, ATL_mmnode_t *mmb, FILE *fp,
    fprintf(fp, "};\n\n");
 }
 
+
 @ROUT emit_amm
    @define len @23@
 @ROUT emit_uamm
@@ -1582,6 +1585,133 @@ void KillUnrollList(mnur_t *b)
       b = p;
    }
 }
+@ROUT emit_uamm
+void PrintSwapProto(FILE *fp, char pre, int mu, int nu)
+{
+   fprintf(fp, "void Mjoin(PATL,ammswp%dx%d)", mu, nu);
+   if (pre == 'd' || pre == 's')
+      fprintf(fp, "(ATL_CINT nnu, TYPE *A, ATL_CSZT lda, TYPE *b);\n");
+   else
+      fprintf(fp, "(ATL_CINT nnu, TYPE *A, ATL_CSZT lda, TYPE *r, TYPE *i);\n");
+}
+
+
+void zGenAmmSwp(char pre, FILE *fp, int mu, int nu)
+{
+}
+
+void GenAmmSwp(char pre, FILE *fp, int mu, int nu)
+{
+   const int munu=mu*nu;
+   int i, j, ib;
+
+   if (pre == 'z' || pre == 'c')
+   {
+      zGenAmmSwp(pre, fp, mu, nu);
+      return;
+   }
+
+   fprintf(fp, "#include \"atlas_misc.h\"\n");
+   fprintf(fp, "void Mjoin(PATL,ammswp%dx%d)\n", mu, nu);
+   fprintf(fp, "(\n");
+   fprintf(fp, "   ATL_CINT nnu,   /* CEIL(rowlen / nu) */\n");
+   fprintf(fp, "   TYPE *A,        /* col-maj matrix to swap wt b */\n");
+   fprintf(fp, "   ATL_CSZT lda1,  /* stride between row elts in A */\n");
+   fprintf(fp, 
+           "   TYPE *b         /* %dx%d C-format row ptr to be swapped */\n", 
+           mu, nu);
+   fprintf(fp, ")\n{\n");
+
+   fprintf(fp, "   register unsigned int j;\n");
+   if (nu > 1)
+   {
+      fprintf(fp, "   const size_t lda2=lda1+lda1");
+      for (i=3; i <= nu; i++)
+         fprintf(fp, ", lda%d=lda1+lda%d", i, i-1);
+      fprintf(fp, ";\n");
+   }
+
+   fprintf(fp, "   for (j=nnu; j; j--)\n   {\n");
+
+   fprintf(fp, "      register TYPE a0");
+   for (i=1; i < nu; i++)
+      fprintf(fp, ", a%d", i);
+   fprintf(fp, ";\n");
+
+   fprintf(fp, "      a0 = *A;\n");
+   for (i=1; i < nu; i++)
+      fprintf(fp, "      a%d = A[lda%d];\n", i, i);
+   fprintf(fp, "      *A = *b;\n");
+   for (i=1; i < nu; i++)
+      fprintf(fp, "      A[lda%d] = b[%d];\n", i, i*nu);
+   fprintf(fp, "      *b = a0;\n");
+   for (i=1; i < nu; i++)
+      fprintf(fp, "      b[%d] = a%d;\n", i*mu, i);
+   fprintf(fp, "      b += %d;\n", mu*nu);
+   fprintf(fp, "      A += lda%d;\n", nu);
+
+   fprintf(fp, "   }\n");
+
+   fprintf(fp, "}\n");
+}
+
+void GenAmmSwapFiles(char pre, ATL_mmnode_t *mmb, char *outd)
+{
+   mnur_t *ub, *up;
+   char *fnam;
+   int ia;
+
+   if (pre == 's')
+      GenAmmSwapFiles('c', mmb, outd);
+   else if (pre == 'd')
+      GenAmmSwapFiles('z', mmb, outd);
+   ia = strlen(outd) + 24+UIL;
+   fnam = malloc(ia);
+   assert(fnam);
+   ub = GetUniqueMNUnrolls(mmb, NULL);
+   for (up=ub; up; up = up->next)
+   {
+      FILE *fp;
+      assert(up->mu < 100 && up->nu < 100);
+      sprintf(fnam, "%s/ATL_%cammswp%dx%d.c", outd, pre, up->mu, up->nu);
+      fp = fopen(fnam, "w");
+      assert(fp);
+      GenAmmSwp(pre, fp, up->mu, up->nu);
+      fclose(fp);
+   }
+   KillUnrollList(ub);
+   free(fnam);
+}
+void GenAmmSwapH(char pre, ATL_mmnode_t *mmb, char *outd)
+{
+   mnur_t *ub, *up;
+   ATL_mmnode_t *mp;
+   FILE *fp;
+   int i;
+
+   fp = StandHStart(pre, mmb, outd, "swp");
+
+   fprintf(fp, "\n");
+   ub = GetUniqueMNUnrolls(mmb, NULL);
+   for (up=ub; up; up = up->next)
+      PrintSwapProto(fp, pre, up->mu, up->nu);
+   KillUnrollList(ub);
+   fprintf(fp, "\n");
+
+   fprintf(fp, "static ammswp_t ATL_UAMM_SWP[ATL_UAMM_NCASES] =\n{\n");
+   for (i=0, mp=mmb; mp; mp = mp->next, i++)
+      if (mp->next)
+         fprintf(fp, "   ATL_%cammswp%dx%d,  /* index %d */\n", 
+                 pre, mp->mu, mp->nu, i);
+     else
+         fprintf(fp, "   ATL_%cammswp%dx%d   /* index %d */\n", 
+                 pre, mp->mu, mp->nu, i);
+
+   fprintf(fp, "};\n\n");
+   fprintf(fp, "\n#endif  /* end include file guard */\n");
+   fclose(fp);
+}
+@ROUT emit_amm emit_uamm
 
 int KernelIsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
 /*
@@ -1852,6 +1982,7 @@ void GenHeaderFiles(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
 {
    if (rkb)
       GenAmmSum(pre, mmb, rkb, outd);
+@ROUT emit_uamm `   GenAmmSwapH(pre, mmb, outd);`
    GenBlockingFile(pre, mmb, outd, "blk");
    GenFlagH(pre, mmb, outd, "flag");
    GenCMAJ2AMAJ(pre, mmb, outd, NULL);
@@ -1956,6 +2087,7 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
    {
       int j;
       const int mu=up->mu, nu=up->nu;
+
       for (j=0; j < 3; j++)
       {
          int k;
@@ -1976,6 +2108,8 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
                fprintf(fp, " ATL_%c%s_%dx%d_a%c_bn.o",
                        pre, rtn[k], mu, nu, al[j]);
 @ROUT emit_uamm
+               if (j == 0)
+                  fprintf(fp, " \\\n       ATL_%cammswp%dx%d.o", pre, mu, nu);
                fprintf(fp, " \\\n       ATL_%cu%d%s_%dx%d_a%c_b1.o",
                        pre, UID, rtn[k], mu, nu, al[j]);
                fprintf(fp, " ATL_%cu%d%s_%dx%d_a%c_bX.o",
@@ -2159,7 +2293,7 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
    fprintf(fp, "\t%s %s $(CDEFS) %s -c tsth.c\n\n", dcomp, dflags, styp);
    fprintf(fp, "#\n# Data copy rules\n#\n");
 /*
- * Print out 2-D ablk2Cmat and cmat2ablk targets
+ * Print out 2-D ablk2Cmat, cmat2ablk and ammswp targets
  */
    for (up=mnurb; up; up = up->next)
    {
@@ -2167,6 +2301,7 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
       char cbe[4] = {'0', '1', 'n', 'X'};
       int ibe[4] =  {0,    1,  -1,  2};
       int i, j;
+
       for (i=0; i < 4; i++)
       {
          int h;
@@ -2174,6 +2309,15 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
          {
             char pre=pres[h];
             char *styp=styps[h];
+@ROUT emit_uamm
+            if (i == 0)
+            {
+               fprintf(fp, "ATL_%cammswp%dx%d.o : ATL_%cammswp%dx%d.c\n", 
+                       pre, mu, nu, pre, mu, nu);
+               fprintf(fp, "\t%s %s %s $(CDEFS) -c ATL_%cammswp%dx%d.c\n",
+                       dcomp, dflags, styp, pre, mu, nu);
+            }
+@ROUT emit_amm emit_uamm
             for (j=0; j < 3; j++)
             {
                int k;
@@ -2489,6 +2633,8 @@ void GenKerns(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, ATL_mmnode_t *urb,
    char pres[2];
    pres[0] = pre;
    pres[1] = (pre == 's') ? 'c' : 'z';
+
+@ROUT emit_uamm `    GenAmmSwapFiles(pre, mmb, outd);`
 /*
  * Build list of all unique MU/NU combos for copy routines
  */
