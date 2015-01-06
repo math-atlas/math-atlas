@@ -6561,7 +6561,7 @@ void ATL_unblkIpiv_amm(int n, int*ipiv, int nb, int mu, int, int, int);
 int laswptst(int verb, int IDX, int m, int n, int lda)
 {
    size_t szA, szB, szP, pansz;
-   int nb, nbnb, u, nmb, nerr=0, bb, sb, rb;
+   int nb, nbnb, u, nmb, ierr, nerr=0, bb, sb, rb;
    int *ipiv, *ipB;
    int *errBV=NULL;
    void *vp;
@@ -6595,20 +6595,20 @@ int laswptst(int verb, int IDX, int m, int n, int lda)
    blkcpy(0, IDX, nb, nb, m, n, lda, A, b);
    blkcpy(1, IDX, nb, nb, m, n, lda, b, a);
    errBV = Mjoin(PATL,cmpmatBV)(verb, 0.0, m, n, A, lda, a, lda);
-   nerr = ATL_FindFirstSetBitBV(errBV, 0);
-   if (nerr != -1)
+   ierr = ATL_FindFirstSetBitBV(errBV, 0);
+   if (ierr != -1)
    {
+      nerr++;
       if (verb)
       {
          printf("ERROR: CMAT copy not working!");
          if ((verb == 1) && n < 80 || verb > 1)
             ATL_print2dBV(m, n, errBV);
          if (verb < 3)
-            exit(nerr);
+            exit(ierr);
       }
    }
-   else
-      nerr = 0;
+   ATL_FreeBV(errBV);
    if (!nerr)
       nerr = chkmat(verb, m, n, A, lda, scale);
 /*
@@ -6617,11 +6617,27 @@ int laswptst(int verb, int IDX, int m, int n, int lda)
  * the blocks from b.  We can then copy the lower blocks b --> a, and
  * check to see if a == b.  If so, new swap is working!
  */
-   ATL_blkIpiv_amm(m, nb, mu, ipB, 0, &bb, &sb, &rb);
-   ATL_laswp(n, A, lda, 0, m, ipiv, 1);
+   ATL_blkIpiv_amm(nb, nb, mu, ipB, 0, &bb, &sb, &rb);
+   Mjoin(PATL,laswp_amm)(nb, a, lda, 0, nb, ipB, 1, nb, mu, nu, bb, sb, rb, 
+                         b, NULL);
+   ATL_laswp(n, A, lda, 0, nb, ipiv, 1);
+   blkcpy(1, IDX, nb, nb, m-nb, n, lda, b+nbnb, a+nb);
+   errBV = Mjoin(PATL,cmpmatBV)(verb, 0.0, m, n, A, lda, a, lda);
+   ierr = ATL_FindFirstSetBitBV(errBV, 0);
+   if (ierr != -1)
+   {
+      nerr++;
+      if (verb)
+      {
+         printf("ERROR: laswp_amm not working!");
+         if ((verb == 1) && n < 80 || verb > 1)
+            ATL_print2dBV(m, n, errBV);
+         if (verb < 3)
+            exit(ierr);
+      }
+   }
+   ATL_FreeBV(errBV);
 
-   if (errBV)
-      ATL_FreeBV(errBV);
    free(vp);
    free(ipiv);
    free(ipB);
