@@ -6202,6 +6202,8 @@ void PrintUsage(char *name, int ierr, char *flag)
    else if (ierr < 0)
       fprintf(stderr, "ERROR: %s\n", flag);
    fprintf(stderr, "USAGE: %s [flags]:\n", name);
+   fprintf(stderr, 
+   "   -S <file> : take kerns from sum file, force square sizes\n");
    fprintf(stderr, "   -p [s,d,c,z]: set type/precision prefix (d) \n");
    fprintf(stderr, "   -b # nb1 ... nb# : square NBs to force\n");
    fprintf(stderr, "   -B # mb1 nb1 kb1 ... mb# nb# kb#: dims to force\n");
@@ -6213,9 +6215,10 @@ void PrintUsage(char *name, int ierr, char *flag)
    exit(ierr ? ierr : -1);
 }
 
-int GetFlags(int nargs, char **args, char *PRE, int *VERB, int *C,
-             int **MBS, int **NBS, int **KBS)
+ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, int *VERB, int *NN,
+                       int *C, int **MBS, int **NBS, int **KBS)
 {
+   ATL_mmnode_t *mmb;
    int *mbs=NULL, *nbs=NULL, *kbs=NULL;
    int i, k, N=0;
    char *cs;
@@ -6231,6 +6234,11 @@ int GetFlags(int nargs, char **args, char *PRE, int *VERB, int *C,
 
       switch(args[i][1])
       {
+      case 'S':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         mmb = ReadMMFile(args[i]);
+         break;
       case 'v':
          if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
@@ -6322,8 +6330,8 @@ int GetFlags(int nargs, char **args, char *PRE, int *VERB, int *C,
          PrintUsage(args[0], i, args[i]);
       }
    }
-   if (!nbs)
-      PrintUsage(args[0], -1, "Dimensional flag (-b or -B) required!");
+   if (!nbs && !mmb)
+      PrintUsage(args[0], -1, "Dimensional flag (-b or -B) or -S required!");
    *MBS = mbs;
    *NBS = nbs;
    *KBS = kbs;
@@ -6354,7 +6362,82 @@ int GetFlags(int nargs, char **args, char *PRE, int *VERB, int *C,
    #elif defined(ATL_VSX)
       VECi = VTGV;
    #endif
-   return(N);
+   *NN = N;
+   return(mmb);
+}
+
+/*
+ * ASSUMES: mmb comes in ordered from smallest blocking to largest.  
+ * Kills any kernel that is not faster than a smaller-NB kernel.
+ */
+ATL_mmnode_t *HarshPrune(ATL_mmnode_t *mmb)
+{
+   ATL_mmnode_t *mmp=mmb;
+   while (mmp)
+   {
+      if (!mmp->next)
+         return(mmb);
+      do
+      {
+         if (!mmp->next)
+            return(mmb);
+         if (mmp->mflop[0] > mmp->next->mflop[0])
+            mmp->next = KillMMNode(mmp->next);
+         else
+            mmp = mmp->next;
+      }
+      while (mmp);
+   }
+}
+/*
+ * Finds best-performing square cases from input list of good kernels, which
+ * are first pruned of any losers (any kernel that is not faster than a
+ * kernel with a smaller NB).
+ */
+ATL_mmnode_t *FindBestSquareKern(char pre, int verb, ATL_mmnode_t *mmb)
+{
+   ATL_mmnode_t *mmp, *mmSQ=NULL, *prev=NULL;
+   int maxNB=0, maxU=0, i;
+
+   mmb = HarshPrune(mmb);  /* kill uncompetitive kernels */
+   assert(mmb);
+
+   for (mmp=mmb; mmp; mmp = mmp->next)
+   {
+      if (mmp->mu > maxU)
+         maxU = mmp->mu;
+      if (mmp->nu > maxU)
+         maxU = mmp->nu;
+      if (mmp->nbB > maxNB)
+         maxNB = mmp->nbB;
+      if (mmp->mbB > maxNB)
+         maxNB = mmp->mbB;
+      if (mmp->kbB > maxNB)
+         maxNB = mmp->kbB;
+   }
+   maxNB = ((maxNB+maxU-1) / maxU)*maxU;
+
+   for (i=4; i < maxNB; i++)
+   {
+      mmp = BestForThisNB(verb, pre, mmb, i, i-1, i+1, 1);
+      if (mmSQ)
+      {
+         if (prev->mflop[0] >= mmp->mflop[0])
+            KillMMNode(mmp);
+         else
+         {
+            prev->next = mmp;
+            prev = mmp;
+         }
+      }
+      else
+         mmSQ = prev = mmp;
+   }
+   assert(mmSQ);
+   KillAllMMNodes(mmb);
+   WriteMMFileWithPath(pre, "res", "uAMMFRC.sum", mmSQ);
+   printf("DONE.\n");
+   return(mmSQ);
 }
 
 int main(int nargs, char **args)
@@ -6364,13 +6447,26 @@ int main(int nargs, char **args)
    ATL_mmnode_t *mmb, *mp, *mmB;
    double mfB;
 
-   N = GetFlags(nargs, args, &pre, &verb, &C, &mbs, &nbs, &kbs);
+   mmb = GetFlags(nargs, args, &pre, &verb, &N, &C, &mbs, &nbs, &kbs);
 /*
- * Get all working kernels
+ * If -S is thrown, we take kernels from prior search, and just retune with
+ * requirement that the kernels be square
  */
-   mmb = GetWorkingUserCases(verb, pre);
-   mmb = ApplyConstraints(mmb, C);
-   mmb = FindBestKerns(pre, verb, mmb, N, mbs, nbs, kbs, C);
+   if (mmb)
+   {
+      mmb = ApplyConstraints(mmb, C);
+      assert(mmb);
+      mmb = FindBestSquareKern(pre, verb, mmb);
+   }
+   else
+   {
+/*
+ *    Get all working kernels
+ */
+      mmb = GetWorkingUserCases(verb, pre);
+      mmb = ApplyConstraints(mmb, C);
+      mmb = FindBestKerns(pre, verb, mmb, N, mbs, nbs, kbs, C);
+   }
    ComputeKClean(verb, pre, mmb);
    mmb = ATL_SortMMNodesByMflop(0, mmb);
    mmB = ReadMMFileWithPath(pre, "res", "eAMMRES.sum");
