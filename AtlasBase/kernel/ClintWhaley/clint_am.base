@@ -13852,13 +13852,6 @@ ATL_asmdecor(ATL_USERMM):
 #if KB == 0
    #error "KB must be compile time constant!"
 #endif
-#ifdef BETAN1
-   #define VOP subpd
-#elif defined(BETA1)
-   #define VOP addpd
-#elif defined(VOP)
-   #undef VOP
-#endif
 /*
  *Register usage
  */
@@ -13882,39 +13875,62 @@ ATL_asmdecor(ATL_USERMM):
 #define rC05    %xmm7
 #define rC06    %xmm8
 #define rC07    %xmm9
-@beginskip
 #define rC0     %xmm10
 #define rC2     %xmm11
 #define rC4     %xmm12
 #define rC6     %xmm13
-@endskip
 
-#ifdef SREAL
+#if defined(SREAL) || defined(SCPLX)
    #define movapd movaps
-   #define addps addps
-   #define mulps mulps
+   #define addpd addps
+   #define mulpd mulps
+   #define SZ 4
+   #define SZSH 2
+   #define IMUL 2
+#else
+   #define SZ 8
+   #define SZSH 3
+   #define IMUL 1
+#endif
+#ifdef BETAN1
+   #define VOP subpd
+#elif defined(BETA1)
+   #define VOP addpd
+#elif defined(VOP)
+   #undef VOP
 #endif
 /*
  * Prefetch defines
  */
-#if 1
-   #define pref2(mem) prefetcht0        mem
-   #define prefB(mem) prefetcht0        mem
-   #define prefC(mem) prefetchw         mem
+#ifdef ATL_3DNow
+   #if defined(ATL_UAMMID) && ATL_UAMMID == 0
+      #define pref2(mem) prefetchw mem
+   #else
+      #define pref2(mem) prefetch mem
+   #endif
+   #define prefB(mem) prefetch  mem
+   #define prefC(mem) prefetchw mem
 #else
-   #define pref2(mem)
-   #define prefB(mem)
-   #define prefC(mem)
+   #define pref2(mem) prefetcht0 mem
+   #define prefB(mem) prefetcht0 mem
+   #define prefC(mem) prefetcht0 mem
+#endif
+#if KB == 8
+   #define KBSH 3
+#elif KB == 16
+   #define KBSH 4
+#elif KB == 32
+   #define KBSH 5
+#elif KB == 64
+   #define KBSH 6
+#elif KB == 128
+   #define KBSH 7
+#elif defined(KBSH)
+   #undef KBSH
 #endif
 
-#define PFAINC -64
-#define PFBINC -64
-
-#ifdef DCPLX
-   #define CMUL(arg_) 2*arg_
-#else
-   #define CMUL(arg_) arg_
-#endif
+#define PFAINC -8*SZ
+#define PFBINC -8*SZ
 
 /*
                     rdi      rsi    rdx        rcx         r8        r9
@@ -13940,12 +13956,25 @@ ATL_asmdecor(ATL_USERMM):
    mov  %rsi, NN
    mov  %r8, pB0
    mov  %r9, pC0
-   mov MM, pfA
-   imul $KB*8*8, pfA
-   mov NN, pfB
-   imul $KB*8, pfB
+   mov MM, pfB
+   #ifdef KBSH
+      shl $KBSH+3+SZSH, pfB
+   #else
+      imul $KB*8*SZ, pfB
+   #endif
+   mov NN, pfA
+   #ifdef KBSH
+      shl $KBSH+SZSH, pfA
+   #else
+      imul $KB*SZ, pfA
+   #endif
+   mov FSIZE+16(%rsp), pB
+   mov FSIZE+24(%rsp), NN0
+   cmp pB, pB0
+   cmovE NN0, pB
+   add pB, pfA
 
-   addq FSIZE+16(%rsp), pfA
+//   addq FSIZE+16(%rsp), pfA
    addq FSIZE+8(%rsp), pfB
 /*
  * pA0 += 128, pB0 += 128
@@ -13982,7 +14011,7 @@ ATL_asmdecor(ATL_USERMM):
 @define i @2@
 @define j @-112@
 @iwhile i < 256
-            #if KB > @(i)
+            #if KB > @(i)*IMUL
                movapd @(j)(pB0), rB0 
                movapd @(ia)(pA0), rA0 
       @iexp ia @(ia) 16 +
@@ -14022,45 +14051,89 @@ ATL_asmdecor(ATL_USERMM):
 @undef i
 @undef j
             /* KLOOP end */
+         /* rC00, rC01, rC02 .. rC07 */
+         #if defined(SREAL) || defined(SCPLX)
+            haddps rC01, rC00    /* rC00 = {c1cd,c1ab,c0cd,c0ab} */
+            haddps rC03, rC02    /* rC20 = {c3cd,c3ab,c2cd,c2ab} */
+            haddps rC02, rC00    /* rC00 = {c3, c2, c1, c0} */
+            #ifdef VOP
+               VOP (pC0), rC00
+            #endif
+            movaps rC00, (pC0)
 
+            haddps rC05, rC04    /* rC04 = {c5cd,c5ab,c4cd,c4ab} */
+            haddps rC07, rC06    /* rC26 = {c7cd,c7ab,c6cd,c6ab} */
+            haddps rC06, rC04    /* rC04 = {c7, c6, c1, c0} */
+            #ifdef VOP
+               VOP 16(pC0), rC04
+            #endif
+            movaps rC04, 16(pC0)
+         #elif !defined(ATL_SSE3) && defined(DREAL)
+            movapd rC00, rC0     /* rC0  = {c0b, c0a} */
+            movapd rC02, rC2     /* rC2  = {c2b, c2a} */
+            unpcklpd rC01, rC00  /* rC00 = {c1a, c0a} */
+            unpcklpd rC03, rC02  /* rC02 = {c3a, c2a} */
+            unpckhpd rC01, rC0   /* rC0  = {c1b, c0b} */
+            unpckhpd rC03, rC2   /* rC2  = {c3b, c2b} */
+            addpd    rC0, rC00   /* rC00 = {c1ab, c0ab} */
+            addpd    rC2, rC02   /* rC02 = {c3ab, c2ab} */
+
+            movapd rC04, rC4     /* rC4  = {c4b, c4a} */
+            movapd rC06, rC6     /* rC6  = {c6b, c6a} */
+            unpcklpd rC05, rC04  /* rC04 = {c5a, c4a} */
+            unpcklpd rC07, rC06  /* rC06 = {c7a, c6a} */
+            unpckhpd rC05, rC4   /* rC4  = {c5b, c4b} */
+            unpckhpd rC07, rC6   /* rC6  = {c7b, c6b} */
+            addpd    rC4, rC04   /* rC04 = {c5ab, c4ab} */
+            addpd    rC6, rC06   /* rC06 = {c7ab, c6ab} */
+            #ifdef VOP
+               VOP (pC0), rC00
+               VOP 16(pC0), rC02
+               VOP 32(pC0), rC04
+               VOP 48(pC0), rC06
+            #endif
+            movapd rC00, (pC0)
+            movapd rC02, 16(pC0)
+            movapd rC04, 32(pC0)
+            movapd rC06, 48(pC0)
+         #else
 /*
- *       pC[0-8] = rC[0-8]
+ *          pC[0-8] = rC[0-8]
  */
-         haddpd  rC01,rC00
-               prefB((pfB))
-               add     $PFBINC, pfB
-         #ifdef VOP
-            VOP (pC0), rC00
+            haddpd  rC01,rC00
+                  prefB((pfB))
+                  add     $PFBINC, pfB
+            #ifdef VOP
+               VOP (pC0), rC00
+            #endif
+            movapd rC00, (pC0)
+   
+            haddpd  rC03,rC02
+            #ifdef VOP
+               VOP 16(pC0), rC02
+            #endif
+            movapd  rC02, 16(pC0)
+   
+            haddpd  rC05,rC04
+            #ifdef VOP
+               VOP 32(pC0), rC04
+            #endif
+            movapd  rC04, 32(pC0)
+   
+            haddpd  rC07,rC06
+            #ifdef VOP
+               VOP 48(pC0), rC06
+            #endif
+            movapd  rC06, 48(pC0)
          #endif
-         movapd rC00, (pC0)
 
-         haddpd  rC03,rC02
-         #ifdef VOP
-            VOP 16(pC0), rC02
-         #endif
-         movapd  rC02, 16(pC0)
-
-         haddpd  rC05,rC04
-         #ifdef VOP
-            VOP 32(pC0), rC04
-         #endif
-         movapd  rC04, 32(pC0)
-
-         haddpd  rC07,rC06
-         #ifdef VOP
-            VOP 48(pC0), rC06
-         #endif
-         movapd  rC06, 48(pC0)
-
-         add $KB*8, pB0
-         add $64, pC0
-@skip         sub $1,  NN
+         add $KB*SZ, pB0
+         add $8*SZ, pC0
          dec NN
       jnz MNLOOP
-      add $8*KB*8, pA0
+      add $8*KB*SZ, pA0
       mov pB, pB0
       movq NN0, NN
-@skip      sub  $1, MM
       dec MM
    jnz     MNLOOP
 
