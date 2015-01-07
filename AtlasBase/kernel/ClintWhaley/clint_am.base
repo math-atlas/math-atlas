@@ -12881,11 +12881,11 @@ ATL_asmdecor(ATL_USERMM):
 
    movq FSIZE+16(%rsp), pfB
    mov %r8, pB
-   cmp pfB, pB
-   cmovEQ FSIZE+24(%rsp), pfB
+@skip   cmp pfB, pB
+@skip   cmovEQ FSIZE+24(%rsp), pfB
    movq FSIZE+8(%rsp), pfA
-   cmp pfA, pA
-   cmovEQ FSIZE+24(%rsp), pfA
+@skip   cmp pfA, pA
+@skip   cmovEQ FSIZE+24(%rsp), pfA
    sub $-128, pA
    sub $-128, pB
    mov pB, pB0
@@ -13822,5 +13822,250 @@ ATL_asmdecor(ATL_USERMM):
    movq    16(%rsp), %r12
    movq    24(%rsp), %r13
    movq    32(%rsp), %r14
+   add $FSIZE, %rsp
+   ret
+@ROUT ATL_kmmm8x1x256_L1pf.S
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2008 -define cwdate 2015
+/*
+ * This routine hastily adapted to the 3rd gen Opteron from the Core2 kernel,
+ * ATL_dmm8x1x120.c.  Main difference is the prefetch strategy, which fetches
+ * to the L1 on the Opt3rdGen, and the handling of loads, where MOVUPD
+ * is preferred over MOVLPD/MOVHPD pair.  We also turn on unaligned mem 
+ * MULPD/ADDPD.  This all makes the kernal about 8% faster, and allows us
+ * to use a smaller block factor (for better application performance).
+ * This kernel does not do well for complex.
+ * Later adapted to access-major in 2015
+ */
+#include "atlas_asm.h"
+#ifndef ATL_GAS_x8664
+   #error "This kernel requires x86-64 assembly!"
+#endif
+#if !defined(MB)
+   #define MB 0
+#endif
+#if !defined(NB)
+   #define NB 0
+#endif
+#if !defined(KB)
+   #define KB 0
+#endif
+#if KB == 0
+   #error "KB must be compile time constant!"
+#endif
+#ifdef BETAN1
+   #define VOP subpd
+#elif defined(BETA1)
+   #define VOP addpd
+#elif defined(VOP)
+   #undef VOP
+#endif
+/*
+ *Register usage
+ */
+#define pA0     %rcx
+#define NN0     %rbx
+#define pB      %rdx
+#define pB0     %rax
+#define pC0     %rsi
+#define pfB     %rbp
+#define pfA     %rdi
+#define MM      %r10
+#define NN      %r11
+
+#define rA0     %xmm0
+#define rB0     %xmm1
+#define rC00    %xmm2
+#define rC01    %xmm3
+#define rC02    %xmm4
+#define rC03    %xmm5
+#define rC04    %xmm6
+#define rC05    %xmm7
+#define rC06    %xmm8
+#define rC07    %xmm9
+@beginskip
+#define rC0     %xmm10
+#define rC2     %xmm11
+#define rC4     %xmm12
+#define rC6     %xmm13
+@endskip
+
+#ifdef SREAL
+   #define movapd movaps
+   #define addps addps
+   #define mulps mulps
+#endif
+/*
+ * Prefetch defines
+ */
+#if 1
+   #define pref2(mem) prefetcht0        mem
+   #define prefB(mem) prefetcht0        mem
+   #define prefC(mem) prefetchw         mem
+#else
+   #define pref2(mem)
+   #define prefB(mem)
+   #define prefC(mem)
+#endif
+
+#define PFAINC -64
+#define PFBINC -64
+
+#ifdef DCPLX
+   #define CMUL(arg_) 2*arg_
+#else
+   #define CMUL(arg_) arg_
+#endif
+
+/*
+                    rdi      rsi    rdx        rcx         r8        r9
+void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
+                  8(%rsp)    16(%rsp)     24(%rsp)
+                CTYPE *pAn, CTYPE *pBn, CTYPE *pCn);
+ */
+        .text
+.global ATL_asmdecor(ATL_USERMM)
+ALIGN64
+ATL_asmdecor(ATL_USERMM):
+/*
+ *  Save callee-saved iregs
+ */
+   #define FSIZE 16
+   sub $FSIZE, %rsp
+   movq %rbp, (%rsp)
+   movq %rbx, 8(%rsp)
+/*
+ * Setup input parameters
+ */
+   mov  %rdi, MM
+   mov  %rsi, NN
+   mov  %r8, pB0
+   mov  %r9, pC0
+   mov MM, pfA
+   imul $KB*8*8, pfA
+   mov NN, pfB
+   imul $KB*8, pfB
+
+   addq FSIZE+16(%rsp), pfA
+   addq FSIZE+8(%rsp), pfB
+/*
+ * pA0 += 128, pB0 += 128
+ */
+   sub     $-128, pA0
+   sub     $-128, pB0
+   mov pB0, pB
+   mov NN, NN0
+   .local MNLOOP
+   ALIGN32
+   MNLOOP:
+            /*KLOOP: */
+            movapd -128(pB0), rB0
+                                        pref2((pfA))
+                                        add     $PFAINC, pfA
+            movapd -128(pA0), rC00
+            mulpd rB0,rC00
+            movapd -112(pA0), rC01
+            mulpd rB0,rC01
+            movapd -96(pA0), rC02
+            mulpd rB0,rC02
+            movapd -80(pA0), rC03
+            mulpd rB0,rC03
+            movapd -64(pA0), rC04
+            mulpd rB0,rC04
+            movapd -48(pA0), rC05
+            mulpd rB0,rC05
+            movapd -32(pA0), rC06
+            mulpd rB0,rC06
+            movapd -16(pA0), rC07
+            mulpd rB0,rC07
+
+@iexp ia -16 16 +
+@define i @2@
+@define j @-112@
+@iwhile i < 256
+            #if KB > @(i)
+               movapd @(j)(pB0), rB0 
+               movapd @(ia)(pA0), rA0 
+      @iexp ia @(ia) 16 +
+               mulpd rB0,rA0
+               addpd rA0,rC00
+               movapd @(ia)(pA0), rA0
+      @iexp ia @(ia) 16 +
+               mulpd rB0,rA0
+               addpd rA0,rC01
+               movapd @(ia)(pA0), rA0
+      @iexp ia @(ia) 16 +
+               mulpd rB0,rA0
+               addpd rA0,rC02
+               movapd @(ia)(pA0), rA0
+      @iexp ia @(ia) 16 +
+               mulpd rB0,rA0
+               addpd rA0,rC03
+               movapd @(ia)(pA0), rA0
+      @iexp ia @(ia) 16 +
+               mulpd rB0,rA0
+               addpd rA0,rC04
+               movapd @(ia)(pA0), rA0
+      @iexp ia @(ia) 16 +
+               mulpd rB0,rA0
+               addpd rA0,rC05
+               movapd @(ia)(pA0), rA0
+      @iexp ia @(ia) 16 +
+               mulpd rB0,rA0
+               addpd rA0,rC06
+               mulpd @(ia)(pA0), rB0
+      @iexp ia @(ia) 16 +
+               addpd rB0,rC07
+            #endif
+   @iexp i 2 @(i) +
+   @iexp j 16 @(j) +
+@endiwhile
+@undef i
+@undef j
+            /* KLOOP end */
+
+/*
+ *       pC[0-8] = rC[0-8]
+ */
+         haddpd  rC01,rC00
+               prefB((pfB))
+               add     $PFBINC, pfB
+         #ifdef VOP
+            VOP (pC0), rC00
+         #endif
+         movapd rC00, (pC0)
+
+         haddpd  rC03,rC02
+         #ifdef VOP
+            VOP 16(pC0), rC02
+         #endif
+         movapd  rC02, 16(pC0)
+
+         haddpd  rC05,rC04
+         #ifdef VOP
+            VOP 32(pC0), rC04
+         #endif
+         movapd  rC04, 32(pC0)
+
+         haddpd  rC07,rC06
+         #ifdef VOP
+            VOP 48(pC0), rC06
+         #endif
+         movapd  rC06, 48(pC0)
+
+         add $KB*8, pB0
+         add $64, pC0
+@skip         sub $1,  NN
+         dec NN
+      jnz MNLOOP
+      add $8*KB*8, pA0
+      mov pB, pB0
+      movq NN0, NN
+@skip      sub  $1, MM
+      dec MM
+   jnz     MNLOOP
+
+/* DONE: */
+   movq (%rsp), %rbp
+   movq 8(%rsp), %rbx
    add $FSIZE, %rsp
    ret
