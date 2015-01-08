@@ -45,6 +45,7 @@ $atldir/$*
    src/lapack 
    src/threads/blas/level3
    src/threads/blas/level2
+   src/threads/lapack/amm
    src/threads/lapack
    src/threads/cbc
    src/threads
@@ -327,6 +328,7 @@ refresh :
 @skip	cp $(SRCdir)/makes/Make.l3omp src/threads/blas/level3/omp/Makefile
 	cp $(SRCdir)/makes/Make.l3thr src/threads/blas/level3/Makefile
 	cp $(SRCdir)/makes/Make.l2thr src/threads/blas/level2/Makefile
+	cp $(SRCdir)/makes/Make.tlpamm src/threads/lapack/amm/Makefile
 	cp $(SRCdir)/makes/Make.cbc src/threads/cbc/Makefile
 @skip	cp $(SRCdir)/makes/Make.pkl3 src/blas/pklevel3/Makefile
 @skip	cp $(SRCdir)/makes/Make.gpmm src/blas/pklevel3/gpmm/Makefile
@@ -598,6 +600,67 @@ ATL_@(rti1).o : $(mySRCdir)/ATL_@(rti1).c $(incdep)
 @endwhile
 
    @undef typ
+@endwhile
+@ROUT Make.tlpamm
+include Make.inc
+mySRCdir = $(SRCdir)/src/threads/lapack/amm
+
+all : lib
+lib : dlib slib zlib clib ilib
+clean : sclean dclean cclean zclean iclean
+
+tlib : lib
+ptlib : lib
+
+@beginproc tdef nm
+   @multidef @(nm)
+      getrf_CBC bcL2G_blkcpy bcAblk2cmat bcRm2am bcG2L_cpy bcL2G_cpy bcAm2rm
+   @endmultidef
+@endproc
+
+deps = $(INCSdir)/atlas_lapack.h $(INCSdir)/atlas_pca.h 
+@declare "iobj = " y y
+   @whiledef irt bcIpivDecode bcIpivEncode bcIpivInit
+      ATL_@(irt).o
+      @define irt1 @@(irt)@
+   @endwhile
+@enddeclare
+
+@whiledef pre z c d s
+@(pre)deps = $(INCAdir)/atlas_@(pre)u0amm_blk.h
+   @callproc tdef rt
+   @declare "@(pre)obj = " y y
+      @whiledef rt
+         ATL_@(pre)@(rt).o
+      @endwhile
+   @enddeclare
+
+@endwhile
+@whiledef pre i z c d s
+@(pre)lib : 
+	$(PMAKE) @(pre)lib.grd
+@(pre)lib.grd : $(@(pre)obj)
+	$(ARCHIVER) $(ARFLAGS) $(PTLAPACKlib) $(@(pre)obj)
+	$(RANLIB) $(PTLAPACKlib)
+	touch @(pre)lib.grd
+
+@endwhile
+
+@whiledef irt1
+ATL_@(irt1).o : $(deps) $(mySRCdir)/ATL_@(irt1).c
+	$(KC) $(KCFLAGS) -I./ -o $@ -c $(mySRCdir)/ATL_@(irt1).c
+@endwhile
+
+@multidef typ DCPLX SCPLX DREAL SREAL
+@whiledef pre z c d s
+   @callproc tdef rt
+   @whiledef rt
+ATL_@(pre)@(rt).o : $(mySRCdir)/ATL_@(rt).c $(deps) $(@(pre)dep)
+	$(@up@(pre)KC) $(@(pre)KCFLAGS) -c -o ATL_@(pre)@(rt).o -D@(typ) \
+              $(mySRCdir)/ATL_@(rt).c
+   @endwhile
+   @undef typ
+
 @endwhile
 @ROUT Make.lpsrc
 include Make.inc
@@ -7214,25 +7277,25 @@ all : lib
 ptlib : lib
 tlib : lib
 lib : dlib slib zlib clib
-clean : sclean dclean cclean zclean iclean
+clean : sclean dclean cclean zclean
 
 deps = $(INCSdir)/atlas_misc.h $(INCAdir)/atlas_type.h \
        $(INCSdir)/atlas_lvl3.h $(INCSdir)/atlas_tlvl3.h \
        $(INCAdir)/atlas_pthreads.h $(INCSdir)/atlas_threads.h
 
-iobj = ATL_bcIpivDecode.o
+@skip iobj = ATL_bcIpivDecode.o
 @whiledef pre z c d s
 @(pre)obj = ATL_@(pre)tgetf2.o ATL_@(pre)tlaswp.o \
        ATL_@(pre)tgeqr2.o ATL_@(pre)tgeql2.o \
        ATL_@(pre)tgerq2.o ATL_@(pre)tgelq2.o
 @endwhile
 
-ilib : ilib.grd
-dlib : dlib.grd ilib.grd
-slib : slib.grd ilib.grd
-clib : clib.grd ilib.grd
-zlib : zlib.grd ilib.grd
-@whiledef pre i z c d s
+@skip ilib : ilib.grd
+dlib : dlib.grd
+slib : slib.grd
+clib : clib.grd
+zlib : zlib.grd
+@whiledef pre z c d s
 @(pre)tlib : @(pre)lib
 @(pre)lib.grd : $(@(pre)obj)
 	$(ARCHIVER) $(ARFLAGS) $(PTLAPACKlib) $(@(pre)obj)
@@ -7242,7 +7305,7 @@ zlib : zlib.grd ilib.grd
 	rm -f $(@(pre)obj) @(pre)lib.grd
 
 @endwhile
-@whiledef rt bcIpivDecode
+@whiledef rt
 ATL_@(rt).o : $(deps) $(mySRCdir)/ATL_@(rt).c
 	$(KC) $(KCFLAGS) -I./ -o $@ -c $(mySRCdir)/ATL_@(rt).c
 @endwhile
