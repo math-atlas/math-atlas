@@ -6362,6 +6362,7 @@ int main(int nargs, char **args)
 #define ATL_GETFLAGS 1
 #include "atlas_genparse.h"
 #include "atlas_bitvec.h"
+#include "atlas_pca.h"
 #ifndef UID
    #define UID 0
 #endif
@@ -6387,6 +6388,8 @@ void PrintUsage(char *name, int ierr, char *flag)
 
    fprintf(stderr, "USAGE: %s [flags]:\n", name);
    fprintf(stderr, "   -v [1/0/2]: verbosity (1 stops 1st err)\n");
+   fprintf(stderr, "   -p <#> <I1> ... <I#>\n");
+   fprintf(stderr, "   -P <Pstart> <Pend> <Pinc>\n");
    fprintf(stderr, "   -i <#> <I1> ... <I#>\n");
    fprintf(stderr, "   -I <Istart> <Iend> <Iinc>\n");
    fprintf(stderr, "   -n <#> <N1> ... <N#>\n");
@@ -6398,12 +6401,13 @@ void PrintUsage(char *name, int ierr, char *flag)
    exit(ierr ? ierr : -1);
 }
 
-int GetFlags(int nargs, char **args, int **Is, int **Ls, int **Ms, int **Ns)
+int GetFlags(int nargs, char **args, int **Is, int **Ls, int **Ms, int **Ns,
+             int **Ps)
 {
    int i;
    int verb=1;
    
-   *Is = *Ls = *Ms = *Ns = NULL;
+   *Ps = *Is = *Ls = *Ms = *Ns = NULL;
    for (i=1; i < nargs; i++)
    {
       if (args[i][0] != '-')
@@ -6415,8 +6419,8 @@ int GetFlags(int nargs, char **args, int **Is, int **Ls, int **Ms, int **Ns)
             PrintUsage(args[0], i, NULL);
          verb = atoi(args[i]);
          break;
-@multidef ls Ns Ms Ls Is
-@whiledef fl n m l i
+@multidef ls Ns Ms Ls Is Ps
+@whiledef fl n m l i p
       case '@(fl)':
          *@(ls) = GF_GetIntList(nargs, args, i, 1);
          i += (*@(ls))[0] + 1;
@@ -6675,7 +6679,45 @@ int piv2blks(int verb, int IDX, int N)
    return(nfail);
 }
 
-int runTests(int verb, int *Is, int *Ns, int *Ms, int *Ls)
+int piv2blks_bc(int verb, int IDX, int P, int N)
+{
+   int *ip, *ipB, *ipL;
+   int i, bb, sb, rb;
+   int nfail=0;
+   const int nb = ATL_UAMM_MBs[IDX], mu = ATL_UAMM_MUs[IDX];
+   void *bp;
+   double **lptrs;
+   lptrs = calloc(P, sizeof(double*));
+   assert(lptrs);
+
+   ip = ATL_getIpiv(N, N|(IDX<<12));
+   ipB = ATL_getIpiv(N, N|(IDX<<12));
+   bp = ATL_bcIpivInit(ipB, P, N, nb, mu, lptrs, 1);
+   free(lptrs);
+   assert(bp);
+   for (i=0; i < N; i += nb)
+   {
+      ATL_UINT b = N-i;
+      b = (b > nb) ? nb : b;
+      ATl_bcIpivEncode(bp, b, i+5);
+   }
+
+   ATL_bcIpivDecode(bp, N, 0);
+   for (i=0; i < N; i++)
+   {
+      if (ip[i]+5 != ipB[i])
+      {
+         nfail++;
+         if (verb)
+            printf("IPIV[%d] = %d; expected=%d!\n", i, ipB[i], ip[i]+5);
+      }
+   }
+   free(ip);
+   free(ipB);
+   return(nfail);
+}
+
+int runTests(int verb, int *Is, int *Ps, int *Ns, int *Ms, int *Ls)
 {
    int i, n, m, fail, ntst=0, nerr=0;
    printf("\n");
@@ -6697,7 +6739,7 @@ int runTests(int verb, int *Is, int *Ns, int *Ms, int *Ls)
                 ++ntst, "PIV2BLKS", IDX, nb, M, 0, 0, fail ? "FAIL":"PASS");
          for (n=1; n <= Ns[0]; n++)
          {
-            int N = Ns[n];
+            int p, N = Ns[n];
             fail = laswptst(verb, IDX, M, N, lda);
             if (fail)
                nerr++;
@@ -6705,6 +6747,17 @@ int runTests(int verb, int *Is, int *Ns, int *Ms, int *Ls)
                    ++ntst, "AMMSWP", IDX, nb, M, N, lda, fail ? "FAIL":"PASS");
             if (fail && verb < 3)  /* fail on first error unless user forces*/
                exit(fail);         /* all tests to run (verb > 2) */
+            for (p=1; p <= Ps[0]; p++)
+            {
+               int P = Ps[p];
+
+               if (n != 1) continue;  /* tests below here don't take N */
+               fail = piv2blks_bc(verb, IDX, P, M);
+               if (fail)
+                  nerr++;
+               printf("%5u  %12.12s %4u %4u %8u %8u %8u  %4.4s\n", ++ntst, 
+                      "PIV2BLKS_bc", IDX, nb, M, 0, P, fail ? "FAIL":"PASS");
+            }
          }
       }
    }
@@ -6720,9 +6773,9 @@ int main(int nargs, char **args)
    int *Ls, *Ms, *Ns, *Is, nerr;
    int verb;
 
-   verb = GetFlags(nargs, args, &Is, &Ls, &Ms, &Ns);
+   verb = GetFlags(nargs, args, &Is, &Ls, &Ms, &Ns, &Ps);
    assert(Ls[0] == Ms[0]);
-   nerr = runTests(verb, Is, Ns, Ms, Ls);
+   nerr = runTests(verb, Is, Ps, Ns, Ms, Ls);
    free(Ls);
    free(Ms);
    free(Ns);

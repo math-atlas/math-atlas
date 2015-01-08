@@ -7657,6 +7657,10 @@ struct ATL_bcpiv
    ATL_UINT *ipiv; /* ptr to pivot array being localized */
    void **larrs;   /* ptrs to beginning of local arrays */
 };
+
+void *ATL_bcIpivInit(int *ipiv, int P, int N, int B, int U, void**w, int incw);
+void ATL_bcIpivEncode(ATL_bcpiv_t *bp, int n, int I, int iadj);
+void ATL_bcIpivDecode(ATL_bcpiv_t *bp, int n, int I);
 #define ATL_Free_bcpiv_t(m_) free(m_)
 
 
@@ -7729,7 +7733,7 @@ struct ATL_bcpiv
 #endif
 
 #endif
-@ROUT ATL_bcpiv_init
+@ROUT ATL_bcIpivInit
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2015
 #include "atlas_pca.h"
 
@@ -7772,8 +7776,9 @@ static ATL_UINT GetBits(ATL_UINT n)
  * will for non-square.  If called with very highly non-square above this
  * range, just use ATLAS's native code rather than calling these amm routs.
  */
-void *ATL_bcpiv_init
+void *ATL_bcIpivInit
 (
+   int *ipiv,      /* getrf's ipiv array */
    int P,          /* max # of procs in distribution dimension of pgrid */
    int N,          /* dimension of distributed data */
    int B,          /* size of block for distributed dimension */
@@ -7811,6 +7816,89 @@ void *ATL_bcpiv_init
    for (n=0; n < P; n++, w += incw)
       bp->larrs[n] = w;
    return(bp);
+}
+@ROUT ATL_bcIpivEncode
+@extract -b @(topd)/cw.inc lang=c -define cwdate 2015
+#include "atlas_misc.h"
+#include "atlas_pca.h"
+/*
+ * ===========================================================================
+ * Takes ipiv with lapack-style global row indices, and translates it into
+ * block-cyclic friendly tuple  (rank,lbn,sbn,sbr):
+ *   rank: prow owning the row the max was found at
+ *   lbn: local block number the row is found in
+ *   sbn: sub-block in C-major storage row is found in
+ *   sbr: sub-block row offset 
+ * With this tuple, we can compute indxl2g by:
+ *   lbn*P*B + rank*B + sbn*mu+sbr
+ * And we can determine this local location in the C-format column by:
+ *   start = workspace of rank
+ *   li = lbn*mb*nb + sbn*mu*nu+sbr
+ * Note P (# of procs), B (nb=mb), mu, nu are all stored in bcipiv_t struct.
+ *
+ * After encoding, ipiv looks like (low order bits on right):
+ *   {lbn,sbn,sbr,rank} --> of len --> {32-x, nbSBN, nbSBR, nbRNK}
+ *
+ *
+ * NOTE ON SAFETY OF STORING TUPLE IN ORIGINAL IPIV:
+ * -------------------------------------------------
+ * For now we store this back in the original ipiv.  In the future we may
+ * need to copy it to an N-length 64-bit array, but it should be safe for
+ * now.  Note that lbn, sbn, sbr are all indexing the same range as N,
+ * so at most we would lose 2 bits of range from this subpartioning
+ * (we lose no bits of range if all parts are powers-of-two).  However,
+ * the owner rank bits are extra storage, so this is not safe in theory,
+ * but it should be in practice.
+ * In practice, roughly 1024 cores is the right order to assume for
+ * reasonably short term, and this routine is specifically for LU, where
+ * we want R<<C (RxC pgrid).  So, this would suggest 32 or 5 bits as 
+ * a worst-case range loss.  We gain one bit by making unsigned, which
+ * gives us 32-5-2+1 = 26 bits of range.  This yields a max N of 65,536
+ * for the reasonably foreseeable future.  On current machines with O(100)
+ * cores, more like : 32-3-1= 28 = 26,843,546 which is far larger than
+ * we can malloc (we have to copy the matrix for this algorithm).
+ * So, for now we will return NULL if out of bits (allowing us to safely use
+ * ATLAS recursive algorithm, which should be fine performance-wise for
+ * asymptotically large problems).  Running out of range is not likely to be
+ * a problem before machine evolution forces another threading rewrite.
+ * ===========================================================================
+ */
+/*
+ * NOTES:
+ * (1) Assumes that all n pivots are in the same block as I.  In practice:
+ *     n == nb (< nb for partial blk at end)
+ *     I%nb == 0
+ * (2) Only the nb rows of IPIV starting at I are encoded.  The destination
+ *     rows must be given global index to avoid double encoding!
+ */
+void ATL_bcIpivEncode
+(
+   ATL_bcpiv_t *bp,/* block-cyclic pivot ptr returned by init */
+   int n,          /* number of pivot entries to encode */
+   int I,          /* ipiv index to start the encoding at */
+   int iadj        /* amount to adjust pivot entries by */
+)
+{
+   ATL_UINT nprior, k;
+   ATL_UINT *ipiv = bp->ipiv + I;
+   ATL_CUINT P=bp->P, U=bp->U, B=bp->B;
+   ATL_CUINT nbSBR=bp->nbSBR, nbRNK=bp->nbRNK, nbSBN=bp->nbSBN;
+   ATL_CUINT nb2 = nbSBR+nbRNK, nb3=nb2+nbSBN;
+   
+   for (k=0; k < n; k++)
+   {
+      ATL_CUINT d = ipiv[k]+iadj;    /* global destination row index */
+      ATL_CUINT gbn = d/B;           /* global blk num for d'th elt (dst row) */
+      ATL_CUINT lbn =  gbn/P;        /* local block # of dest row */
+      ATL_CUINT rank = gbn-(lbn)*P;  /* prow of Ith mat row */
+      ATL_CUINT boff = d - gbn*B;    /* row within block we want */
+      ATL_CUINT sbn = boff/U;        /* sub-block number of dest row */
+      ATL_CUINT sbr = boff - sbn*U;  /* row indx within sub-block of dest row */
+/*
+ *    Encoding:{lbn,sbn,sbr,rank} --> of len --> {32-x, nbSBN, nbSBR, nbRNK}
+ */
+      ipiv[k] = (lbn<<nb3) | (sbn<<nb2) | (sbr<<nbRNK) | rank;
+   }
 }
 @ROUT ATL_bcIpivDecode
 @extract -b @(topd)/cw.inc lang=c -define cwdate 2015
