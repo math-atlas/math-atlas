@@ -6368,7 +6368,7 @@ int main(int nargs, char **args)
 #endif
 @skip #define apref Mjoin(Mjoin(Mjoin(Mjoin(Mjoin(atlas_,PRE),u)),UID),amm)
 #define apref Mjoin(Mjoin(Mjoin(Mjoin(atlas_,PRE),u),UID),amm)
-#include Mstr(Mjoin(apref,_swp.h))
+@skip #include Mstr(Mjoin(apref,_swp.h))
 #include Mstr(Mjoin(apref,_blk.h))
 #include Mstr(Mjoin(apref,_cmat2ablk.h))
 #include Mstr(Mjoin(apref,_ablk2cmat.h))
@@ -6404,7 +6404,7 @@ void PrintUsage(char *name, int ierr, char *flag)
 int GetFlags(int nargs, char **args, int **Is, int **Ls, int **Ms, int **Ns,
              int **Ps)
 {
-   int i;
+   int i, I0, IN, Iinc;
    int verb=1;
    
    *Ps = *Is = *Ls = *Ms = *Ns = NULL;
@@ -6421,6 +6421,7 @@ int GetFlags(int nargs, char **args, int **Is, int **Ls, int **Ms, int **Ns,
          break;
 @multidef ls Ns Ms Ls Is Ps
 @whiledef fl n m l i p
+   @addkeys flg=@(fl)
       case '@(fl)':
          *@(ls) = GF_GetIntList(nargs, args, i, 1);
          i += (*@(ls))[0] + 1;
@@ -6428,11 +6429,18 @@ int GetFlags(int nargs, char **args, int **Is, int **Ls, int **Ms, int **Ns,
       case '@up@(fl)':
          if (i+3 >= nargs)
             PrintUsage(args[0], i, NULL);
-         *@(ls) = GF_IntRange2IntList(atoi(args[i+1]),atoi(args[i+2]),
-                                   atoi(args[i+3]));
+         I0 = atoi(args[i+1]);
+         IN = atoi(args[i+2]);
+         Iinc = atoi(args[i+3]);
+      @FLG i
+         if (IN == -1)
+            IN = ATL_UAMM_NCASES-1;
+      @FLG !
+         *@(ls) = GF_IntRange2IntList(I0, IN, Iinc);
          i += 3;
          break;
    @undef ls
+   @killkeys flg
 @endwhile
       default:
          PrintUsage(args[0], i, args[i]);
@@ -6446,6 +6454,8 @@ int GetFlags(int nargs, char **args, int **Is, int **Ls, int **Ms, int **Ns,
       *Ls = GF_DupIntList(*Ms);
    if (!(*Is))
       *Is = GF_GetIntList2(0, ATL_UAMM_NCASES-1);
+   if (!(*Ps))
+      *Ps = GF_GetIntList1(1);
       
    return(verb);
 }
@@ -6699,7 +6709,7 @@ int piv2blks_bc(int verb, int IDX, int P, int N)
    {
       ATL_UINT b = N-i;
       b = (b > nb) ? nb : b;
-      ATl_bcIpivEncode(bp, b, i+5);
+      ATL_bcIpivEncode(bp, b, i, 5);
    }
 
    ATL_bcIpivDecode(bp, N, 0);
@@ -6716,6 +6726,94 @@ int piv2blks_bc(int verb, int IDX, int P, int N)
    free(ipB);
    return(nfail);
 }
+@beginskip
+int laswptst_bc(int verb, int IDX, int P, int m, int n, int lda)
+{
+   size_t szA, szB, szP, pansz;
+   int nb, nbnb, u, nmb, ierr, nerr=0, bb, sb, rb;
+   int *ipiv, *ipB;
+   int *errBV=NULL;
+   void *vp, *bp;
+   TYPE *A, *a, *b, **lwrks;
+   double scale;
+   const int mu = ATL_UAMM_MUs[IDX], nu = ATL_UAMM_NUs[IDX];
+
+   u = ATL_lcm(mu, nu);
+   nb = ((n+u-1)/u)*u;
+   nbnb = nb * nb;
+   nmb = (m+nb-1)/nb;
+
+   pansz = nmb*nbnb;
+   szA = lda*n;
+   vp = malloc(ATL_MulBySize(2*szA + pansz)+ATL_Cachelen*3);
+   ATL_assert(vp);
+   A = ATL_AlignPtr(vp);
+   a = A + szA;
+   a = ATL_AlignPtr(a);
+   b = a + szA;
+   b = ATL_AlignPtr(b);
+
+   Mjoin(PATL,geset)(lda, n, GRD_a, GRD_a, a, lda);
+   Mjoin(PATL,set)(pansz, GRD_b, b, 1);
+   scale = matinit(m, n, A, lda);
+   ipiv = ATL_getIpiv(m, m|(n<<12));
+   ipB = ATL_getIpiv(m, m|(n<<12));
+   bp = ATL_bcIpivInit(ipB, P, M, nb, mu, lwrks, 1);
+/*
+ * Copy to block format, and check that C copy routs working before proceeding!
+ */
+   blkcpy(0, IDX, nb, nb, m, n, lda, A, b);
+   blkcpy(1, IDX, nb, nb, m, n, lda, b, a);
+   errBV = Mjoin(PATL,cmpmatBV)(verb, 0.0, m, n, A, lda, a, lda);
+   ierr = ATL_FindFirstSetBitBV(errBV, 0);
+   if (ierr != -1)
+   {
+      nerr++;
+      if (verb)
+      {
+         printf("ERROR: CMAT copy not working!");
+         if ((verb == 1) && n < 80 || verb > 1)
+            ATL_print2dBV(m, n, errBV);
+         if (verb < 3)
+            exit(ierr);
+      }
+   }
+   ATL_FreeBV(errBV);
+   if (!nerr)
+      nerr = chkmat(verb, m, n, A, lda, scale);
+/*
+ * OK, now we have A in A & a in column-major, and in b in C-form.  We can
+ * now pivot A with ipiv/laswp, and pivot the top block of a and rest of
+ * the blocks from b.  We can then copy the lower blocks b --> a, and
+ * check to see if a == b.  If so, new swap is working!
+ */
+   ATL_blkIpiv_amm(nb, nb, mu, ipB, 0, &bb, &sb, &rb);
+   Mjoin(PATL,laswp_amm)(nb, a, lda, 0, nb, ipB, 1, nb, mu, nu, bb, sb, rb, 
+                         b, NULL);
+   ATL_laswp(n, A, lda, 0, nb, ipiv, 1);
+   blkcpy(1, IDX, nb, nb, m-nb, n, lda, b+nbnb, a+nb);
+   errBV = Mjoin(PATL,cmpmatBV)(verb, 0.0, m, n, A, lda, a, lda);
+   ierr = ATL_FindFirstSetBitBV(errBV, 0);
+   if (ierr != -1)
+   {
+      nerr++;
+      if (verb)
+      {
+         printf("ERROR: laswp_amm not working!");
+         if ((verb == 1) && n < 80 || verb > 1)
+            ATL_print2dBV(m, n, errBV);
+         if (verb < 3)
+            exit(ierr);
+      }
+   }
+   ATL_FreeBV(errBV);
+
+   free(vp);
+   free(ipiv);
+   free(ipB);
+   return(nerr);
+}
+@endskip
 
 int runTests(int verb, int *Is, int *Ps, int *Ns, int *Ms, int *Ls)
 {
@@ -6740,6 +6838,7 @@ int runTests(int verb, int *Is, int *Ps, int *Ns, int *Ms, int *Ls)
          for (n=1; n <= Ns[0]; n++)
          {
             int p, N = Ns[n];
+@beginskip
             fail = laswptst(verb, IDX, M, N, lda);
             if (fail)
                nerr++;
@@ -6747,6 +6846,7 @@ int runTests(int verb, int *Is, int *Ps, int *Ns, int *Ms, int *Ls)
                    ++ntst, "AMMSWP", IDX, nb, M, N, lda, fail ? "FAIL":"PASS");
             if (fail && verb < 3)  /* fail on first error unless user forces*/
                exit(fail);         /* all tests to run (verb > 2) */
+@endskip
             for (p=1; p <= Ps[0]; p++)
             {
                int P = Ps[p];
@@ -6770,8 +6870,8 @@ int runTests(int verb, int *Is, int *Ps, int *Ns, int *Ms, int *Ls)
 
 int main(int nargs, char **args)
 {
-   int *Ls, *Ms, *Ns, *Is, nerr;
-   int verb;
+   int *Ls, *Ms, *Ns, *Is, *Ps;
+   int nerr, verb;
 
    verb = GetFlags(nargs, args, &Is, &Ls, &Ms, &Ns, &Ps);
    assert(Ls[0] == Ms[0]);
@@ -6780,5 +6880,6 @@ int main(int nargs, char **args)
    free(Ms);
    free(Ns);
    free(Is);
+   free(Ps);
    return(nerr);
 }
