@@ -1,3 +1,49 @@
+@ROUT atlas_bcamm.h
+#ifndef ATLAS_BCAMM_H
+   #define ATLAS_BCAMM_H 1
+
+#include "atlas_misc.h"
+#include "atlas_amm.h"
+int Mjoin(PATL,tgetrf_bcAMM)
+   (ATL_CINT major, ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT lda, int *ipiv);
+void Mjoin(PATL,bcAblk2cmat)
+   (int m, int n, TYPE *W, int nb, TYPE *A, int lda, int nt, ablk2cmat_t ca2cc);
+void Mjoin(PATL,bcAm2rm)
+   (int m, int n, TYPE *W, int nb, TYPE *A, int lda, int nt, am2cm_t a2rn);
+void Mjoin(PATL,bcG2L_cpy)
+   (int m, int n, TYPE* A, int lda, TYPE* W, int ldw, int nb, int nt);
+void Mjoin(PATL,bcL2G_blkcpy)
+   ( int m, int n, TYPE *W, int nb, TYPE *A, int lda, int nt);
+void Mjoin(PATL,bcL2G_cpy)
+   (int m, int n, TYPE* W, int ldw, TYPE* A, int lda, int nb, int nt);
+void Mjoin(PATL,bcRm2am)
+   (int m, int n, TYPE *A, int lda, TYPE *W, int nb, int nt, cm2am_t r2an);
+/*
+ * This structure is used to encode block-cyclic index info in ipiv using
+ * bitfields.  See src/threads/lapack/amm for routines that use it.
+ */
+typedef struct ATL_bcpiv ATL_bcpiv_t;
+struct ATL_bcpiv
+{
+   ATL_UINT P;       /* # of procs matrix dim distributed over */
+   ATL_UINT N;       /* Size of matrix dimension being distributed over P */
+   ATL_UINT B;       /* block factor used to distribute N over P */
+   ATL_UINT U;       /* amm's unrolling along the N dim (M for row-piv LU) */
+   ATL_UINT nbRNK;   /* # of bits encoding prank of local block owner */
+   ATL_UINT nbSBN;   /* # of bits encoding subblock number */
+   ATL_UINT nbSBR;   /* # of bits encoding subblock row index */
+   ATL_UINT *ipiv;   /* ptr to pivot array being localized */
+   ATL_UINT neSB;    /* # of elts in subblock (mu*nu) */
+   ATL_UINT neMB;    /* # elts in major block (B*B) */
+   void **larrs;     /* ptrs to beginning of local arrays */
+};
+void *ATL_bcIpivInit(int *ipiv, int P, int N, int B, int mu, int nu, 
+                     void *w, int incw);
+void ATL_bcIpivEncode(ATL_bcpiv_t *bp, int n, int I, int iadj);
+void ATL_bcIpivDecode(ATL_bcpiv_t *bp, int n, int I);
+#define ATL_Free_bcpiv_t(m_) free(m_)
+
+#endif
 @ROUT !
 @define cwn @lang=c -define cwdate 2015 -define cwauth "Md Rakib Hasan" -define contrib "R. Clint Whaley"@
 @ROUT ATL_getrf_CBC
@@ -20,8 +66,9 @@
 @ROUT ATL_getrf_CBC ATL_bcL2G_blkcpy ATL_bcAblk2cmat ATL_bcRm2am ATL_bcG2L_cpy ATL_bcL2G_cpy ATL_bcAm2rm
 @extract -b @(topd)/cw.inc @(cwn)
 #include "atlas_misc.h"
-@ROUT ATL_getrf_CBC ATL_bcAblk2cmat ATL_bcRm2am ATL_bcAm2rm
-#include "atlas_amm.h"
+#include "atlas_bcamm.h"
+@skip @ROUT ATL_getrf_CBC ATL_bcAblk2cmat ATL_bcRm2am ATL_bcAm2rm
+@skip #include "atlas_amm.h"
 @ROUT ATL_getrf_CBC
 
 @beginskip
@@ -2245,7 +2292,7 @@ static void ATL_getrf_CBC_bk_tp(void *vpp, int rank, int vrank)
 }
 
 #ifdef ATL_CBC_NAME
-   int Mjoin(PATL, tgetrf_CBC)(ATL_CINT major, ATL_CINT M, ATL_CINT N, 
+   int Mjoin(PATL, tgetrf_bcAMM)(ATL_CINT major, ATL_CINT M, ATL_CINT N, 
                      TYPE *A, ATL_CINT lda, int *ipiv)
 #else
    int Mjoin(PATL, tgetrf)(ATL_CINT major, ATL_CINT M, ATL_CINT N, 
