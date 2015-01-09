@@ -879,13 +879,24 @@ void GenPerfFile(char pre, ATL_mmnode_t *mmb, char *outd, char *nm)
    }
    fprintf(fp, "\n");
 
-   fprintf(fp, "static float ATL_@(UP)AMM_PERF[%d] =\n{\n", n);
+   fprintf(fp, "static const float ATL_@(UP)AMM_PERF[%d] =", n);
+   fprintf(fp, "   /* %% of performance of best kernel */\n{\n");
    for (j=0,mp=mmb; mp; j++,mp = mp->next)
-      fprintf(fp, "   %f%c  /* IDX=%d, KB=%d */\n", mp->mflop[0]/mfMax, 
+      fprintf(fp, "   %f%c  /* IDX=%d, KB=%d */\n", mp->mflop[0]/mfMax,
               (mp->next)?',':' ', j, mp->kbB);
    fprintf(fp, "};\n\n");
 
-   fprintf(fp, "\n#endif  /* end include file guard */\n");
+   fprintf(fp, "static const float ATL_@(UP)AMM_SPDUPNXT[%d] =", n);
+   fprintf(fp, "   /* speedup of next higher NB */\n{\n");
+   for (j=0,mp=mmb; mp; j++,mp = mp->next)
+   {
+      double mf = (mp->next) ? mp->next->mflop[0] : mp->mflop[0];
+      fprintf(fp, "   %f%c  /* IDX=%d, KB=%d vs. %d */\n", mf/mp->mflop[0],
+              (mp->next)?',':' ', j, mp->kbB, mp->next?mp->next->kbB:mp->kbB);
+   }
+   fprintf(fp, "};\n\n");
+
+   fprintf(fp, "#endif  /* end include file guard */\n");
    fclose(fp);
 }
 
@@ -922,7 +933,8 @@ void GenBlockingFile(char pre, ATL_mmnode_t *mmb, char *outd, char *nm)
    for (i=0; i < 3; i++)
    {
       int j;
-      fprintf(fp, "static %s ATL_@(UP)AMM_%cBs[%d] =\n{\n", type, bc[i], n);
+      fprintf(fp, "static const %s ATL_@(UP)AMM_%cBs[%d] =\n{\n", 
+              type, bc[i], n);
       for (j=0,mp=mmb; mp; j++,mp = mp->next)
       {
          int b;
@@ -942,7 +954,8 @@ void GenBlockingFile(char pre, ATL_mmnode_t *mmb, char *outd, char *nm)
    for (i=0; i < 3; i++)
    {
       int j;
-      fprintf(fp, "static %s ATL_@(UP)AMM_%cUs[%d] =\n{\n", type, bc[i], n);
+      fprintf(fp, "static const %s ATL_@(UP)AMM_%cUs[%d] =\n{\n", 
+              type, bc[i], n);
       for (j=0,mp=mmb; mp; j++,mp = mp->next)
       {
          int b;
@@ -964,7 +977,7 @@ void GenBlockingFile(char pre, ATL_mmnode_t *mmb, char *outd, char *nm)
       }
       fprintf(fp, "};\n\n");
    }
-   fprintf(fp, "static %s ATL_@(UP)AMM_KBMINs[%d] =\n{\n", type, n);
+   fprintf(fp, "static const %s ATL_@(UP)AMM_KBMINs[%d] =\n{\n", type, n);
    for (i=0,mp=mmb; mp; i++,mp = mp->next)
    {
       if (mp->next)
@@ -987,7 +1000,7 @@ void GenFlagH(char pre, ATL_mmnode_t *mmb, char *outd, char *nm)
 
    for (n=0,mp=mmb; mp; n++,mp = mp->next);
 
-   fprintf(fp, "static unsigned char ATL_@(UP)AMM_KFLAG[%d] =\n{\n", n);
+   fprintf(fp, "static const unsigned char ATL_@(UP)AMM_KFLAG[%d] =\n{\n", n);
    for (j=0,mp=mmb; mp; j++,mp = mp->next)
    {
       unsigned char flag=FLAG_IS_SET(mp->flag, MMF_KRUNTIME) ? 1 : 0;
@@ -1112,11 +1125,11 @@ void GenC2BLK(char pre, ATL_mmnode_t *mmb, char *outd, char *suff)
       for (ib=0; ib < 4; ib++)
       {
          fprintf(fp0, 
-            "static ablk2cmat_t ATL_@(UP)AMM_BLK2C_a%c_b%c[ATL_@(UP)AMM_NCASES] =\n{\n",
+            "static const ablk2cmat_t ATL_@(UP)AMM_BLK2C_a%c_b%c[ATL_@(UP)AMM_NCASES] =\n{\n",
                  ac[ia], bc[ib]);
          SpewForthC2BDecl(pre, mmb, fp0, "ablk2cmat", ac[ia], bc[ib]);
          fprintf(fp1, 
-            "static cmat2ablk_t ATL_@(UP)AMM_C2BLK_a%c_b%c[ATL_@(UP)AMM_NCASES] =\n{\n",
+            "static const cmat2ablk_t ATL_@(UP)AMM_C2BLK_a%c_b%c[ATL_@(UP)AMM_NCASES] =\n{\n",
                  ac[ia], bc[ib]);
          SpewForthC2BDecl(pre, mmb, fp1, "cmat2ablk", ac[ia], bc[ib]);
       }
@@ -1217,7 +1230,7 @@ void SpewForthCpConjDecl(char pre, int REVERSE, ATL_mmnode_t *mmb, FILE *fp,
    ATL_mmnode_t *mp;
    int j;
 
-   fprintf(fp, "static %s_t %s_a%c[%d] =\n{\n",
+   fprintf(fp, "static const %s_t %s_a%c[%d] =\n{\n",
            REVERSE?"am2cm":"cm2am", arr, alp,  ATL_CountNumberOfMMNodes(mmb));
    for (j=0,mp=mmb; mp; j++,mp = mp->next)
    {
@@ -1251,7 +1264,7 @@ void SpewForthCpDecl(char pre, int REVERSE, ATL_mmnode_t *mmb, FILE *fp,
    ATL_mmnode_t *mp;
    int j;
 
-   fprintf(fp, "static %s_t %s_a%c[%d] =\n{\n", 
+   fprintf(fp, "static const %s_t %s_a%c[%d] =\n{\n", 
            REVERSE?"am2cm":"cm2am", arr, alp, ATL_CountNumberOfMMNodes(mmb));
    for (j=0,mp=mmb; mp; j++,mp = mp->next)
    {
@@ -1542,7 +1555,7 @@ void SpewForthKernArray(FILE *fp, char pre, ATL_mmnode_t *mmb,
    int n;
 
    for (n=0,mp=mmb; mp; n++, mp = mp->next);
-   fprintf(fp, "static ammkern_t ATL_@(UP)AMM_%s[%d] =\n", vnam, n);
+   fprintf(fp, "static const ammkern_t ATL_@(UP)AMM_%s[%d] =\n", vnam, n);
    fprintf(fp, "{\n");
    for (mp=mmb; mp; mp = mp->next)
    {
@@ -1771,7 +1784,7 @@ void GenAmmSwapH(char pre, ATL_mmnode_t *mmb, char *outd)
    KillUnrollList(ub);
    fprintf(fp, "\n");
 
-   fprintf(fp, "static ammswp_t ATL_UAMM_SWP[ATL_UAMM_NCASES] =\n{\n");
+   fprintf(fp, "static const ammswp_t ATL_UAMM_SWP[ATL_UAMM_NCASES] =\n{\n");
    for (i=0, mp=mmb; mp; mp = mp->next, i++)
       if (mp->next)
          fprintf(fp, "   ATL_%cammswp%dx%d,  /* index %d */\n", 
@@ -1946,7 +1959,7 @@ void GenRankKH
    for (ib=0; ib < 4; ib++)
    {
       fprintf(fp,
-         "\nstatic ablk2cmat_t ATL_RKK_BLK2C_a1_b%c[%d] =\n{\n",
+         "\nstatic const ablk2cmat_t ATL_RKK_BLK2C_a1_b%c[%d] =\n{\n",
               bc[ib], ATL_CountNumberOfMMNodes(rkb));
       SpewForthC2BDecl(PRE, rkb, fp, "ablk2cmat", '1', bc[ib]);
    }
