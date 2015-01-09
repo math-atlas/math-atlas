@@ -7647,18 +7647,21 @@ typedef struct
 typedef struct ATL_bcpiv ATL_bcpiv_t;
 struct ATL_bcpiv
 {
-   ATL_UINT P;     /* # of procs matrix dim distributed over */
-   ATL_UINT N;     /* Size of matrix dimension being distributed over P */
-   ATL_UINT B;     /* block factor used to distribute N over P */
-   ATL_UINT U;     /* amm's unrolling along the N dim (M for row-pivoted LU) */
-   ATL_UINT nbRNK; /* # of bits encoding prank of local block owner */
-   ATL_UINT nbSBN; /* # of bits encoding subblock number */
-   ATL_UINT nbSBR; /* # of bits encoding subblock row index */
-   ATL_UINT *ipiv; /* ptr to pivot array being localized */
-   void **larrs;   /* ptrs to beginning of local arrays */
+   ATL_UINT P;       /* # of procs matrix dim distributed over */
+   ATL_UINT N;       /* Size of matrix dimension being distributed over P */
+   ATL_UINT B;       /* block factor used to distribute N over P */
+   ATL_UINT U;       /* amm's unrolling along the N dim (M for row-piv LU) */
+   ATL_UINT nbRNK;   /* # of bits encoding prank of local block owner */
+   ATL_UINT nbSBN;   /* # of bits encoding subblock number */
+   ATL_UINT nbSBR;   /* # of bits encoding subblock row index */
+   ATL_UINT *ipiv;   /* ptr to pivot array being localized */
+   ATL_UINT neSB;    /* # of elts in subblock (mu*nu) */
+   ATL_UINT neMB;    /* # elts in major block (B*B) */
+   void **larrs;     /* ptrs to beginning of local arrays */
 };
 
-void *ATL_bcIpivInit(int *ipiv, int P, int N, int B, int U, void *w, int incw);
+void *ATL_bcIpivInit(int *ipiv, int P, int N, int B, int mu, int nu, 
+                     void *w, int incw);
 void ATL_bcIpivEncode(ATL_bcpiv_t *bp, int n, int I, int iadj);
 void ATL_bcIpivDecode(ATL_bcpiv_t *bp, int n, int I);
 #define ATL_Free_bcpiv_t(m_) free(m_)
@@ -7782,7 +7785,8 @@ void *ATL_bcIpivInit
    int P,          /* max # of procs in distribution dimension of pgrid */
    int N,          /* dimension of distributed data */
    int B,          /* size of block for distributed dimension */
-   int U,          /* amm unrolling in distributed dim (mu) */
+   int mu,         /* amm unrolling in distributed dim (mu) */
+   int nu,         /* amm unrolling in non-dist dim (nu) */
    void *w,        /* array containing P ptrs to start of local worskspace */
    int incw        /* stride between the P entries of w */
 )
@@ -7815,7 +7819,9 @@ void *ATL_bcIpivInit
    bp->P = P;
    bp->N = N;
    bp->B = B;
-   bp->U = U;
+   bp->U = mu;
+   bp->neSB = mu*nu;
+   bp->neMB = B*B;
    bp->ipiv = ipiv;
    bp->nbSBR = nbSBR;
    bp->nbRNK = nbRNK;
@@ -7965,7 +7971,7 @@ void Mjoin(PATL,laswp_amm)
    void **larrs = bp->larrs;
    ATL_CUINT P=bp->P, B=bp->B, U=bp->U; 
    ATL_CUINT nbRNK=bp->nbRNK, nbSBN=bp->nbSBN, nbSBR=bp->nbSBR;
-   ATL_CUINT BB=B*B, UU = U*U, PB = P*B;
+   ATL_CUINT BB=bp->neMB, UU = bp->neSB, PB = P*B;
    ATL_CUINT mskSBR=(1<<nbSBR)-1, mskRNK=(1<<nbRNK)-1, mskSBN=(1<<nbSBN)-1;
    #ifdef TCPLX
       ATL_CUINT lda2 = lda+lda;
@@ -8008,7 +8014,7 @@ void Mjoin(PATL,laswp_amm)
          w = larrs[rank];
          w += k;
          #ifdef TCPLX
-            Mjoin(PATL,swap_cplx2real)(N, A+i+i, lda, w+UU, U, w);
+            Mjoin(PATL,swap_cplx2real)(N, A+i+i, lda, w+UU, U, w, U);
          #else
             Mjoin(PATL,swap)(N, A+i, lda, w, U);
          #endif

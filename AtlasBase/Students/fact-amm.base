@@ -216,7 +216,10 @@ void PrintProfilingInfo_pt(int nthreads, int ntimers,
 }
 #endif
 
-static void SelectGenKernels(int *nb, int *mu, int *nu,
+/*
+ * RCW: added IAMM param
+ */
+static void SelectGenKernels(int IDXAMM, int *nb, int *mu, int *nu,
                         cm2am_t *r2a_an, cm2am_t *c2a_a1,
                         am2cm_t *a2r_an, am2cm_t *a2c_a1,
                         ablk2cmat_t *ca2cc, cmat2ablk_t *cc2ca,
@@ -224,21 +227,26 @@ static void SelectGenKernels(int *nb, int *mu, int *nu,
                         )
 {
    int i, index = -1, i2, ik1=-1;
-   for (i=0; i<ATL_UAMM_NCASES; i++)
+   if (IDXAMM < 0 || IDXAMM > ATL_UAMM_NCASES)
    {
-      if (ATL_UAMM_KBs[i] == *nb)
+      for (i=0; i<ATL_UAMM_NCASES; i++)
       {
-         index = i;
-         break;
+         if (ATL_UAMM_KBs[i] == *nb)
+         {
+            index = i;
+            break;
+         }
+         else if (*nb < ATL_UAMM_KBs[i] && i>0 && *nb > ATL_UAMM_KBs[i-1])
+         {
+            index = ik1;
+            break;
+         }
+         if (ATL_UAMM_KFLAG[i]==1)
+            ik1 = i; /* store the largest KB kernel with KU=1 */
       }
-      else if (*nb < ATL_UAMM_KBs[i] && i>0 && *nb > ATL_UAMM_KBs[i-1])
-      {
-         index = ik1;
-         break;
-      }
-      if (ATL_UAMM_KFLAG[i]==1)
-         ik1 = i; /* store the largest KB kernel with KU=1 */
    }
+   else
+      index = IDXAMM;
    /* if (*nb > ATL_UAMM_KBs[ATL_UAMM_NCASES-1]) index = ATL_UAMM_NCASES-1; */
    ATL_assert(index >= 0);
    #ifdef ATL_LAPROF
@@ -2277,7 +2285,7 @@ static void ATL_getrf_CBC_bk_tp(void *vpp, int rank, int vrank)
    if (M < N) return CASE_NOT_HANDLED;
 
    SelectBlockAndGrid(M, N, &nb, &nbi, &pt, &qt);
-   SelectGenKernels(&nb, &mu, &nu, &r2a, &c2a, &a2r, &a2c, 
+   SelectGenKernels(-1, &nb, &mu, &nu, &r2a, &c2a, &a2r, &a2c, 
                     &ca2cc, &cc2ca, &amm_b1, &amm_bn);
 
 @beginskip
@@ -2433,5 +2441,17 @@ static void ATL_getrf_CBC_bk_tp(void *vpp, int rank, int vrank)
       PrintProfilingInfo_pt(nt, NTimers, Timers, TimerNames, -1);
    #endif
    return (ierr);
+}
+@ROUT ATL_bcCBC_getrf_params
+int ATL_bcCBC_getrf_params   /* RETURNS: suggested amm index */
+(
+   ATL_INT M,  /* rows of matrix */
+   ATL_INT N,  /* columns of matrix */
+   int *R,     /* OUTPUT: suggested R of RxC process grid */
+   int *C
+)
+{
+   idx = 0;
+   return(idx);
 }
 @ROUT !

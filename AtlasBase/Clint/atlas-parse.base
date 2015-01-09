@@ -93,6 +93,7 @@ struct MMNode
    char *str;                   /* tmp string used in generation */
    char *genstr;                /* system(genstr) will generate gened kernel */
    char *exflags;               /* extra flags to pass test/time call */
+   char *moves;                 /* -DMove[A,B,C] to use, NULL default */
    int flag;
    ATL_mmnode_t *next;
 };
@@ -682,6 +683,9 @@ static ATL_@(rt)node_t *Clone@up@(rt)Node(ATL_@(rt)node_t *dup)
       p->genstr = DupString(dup->genstr);
    if (dup->exflags)
       p->exflags = DupString(dup->exflags);
+@ROUT mmread
+   if (dup->moves)
+      p->moves = DupString(dup->moves);
 @ROUT r1read mvread
    if (dup->kname)
       p->kname = DupString(dup->kname);
@@ -764,6 +768,9 @@ static ATL_@(rt)node_t *Kill@up@(rt)Node(ATL_@(rt)node_t *die)
          free(die->genstr);
       if (die->exflags)
          free(die->exflags);
+@ROUT mmread
+      if (die->moves)
+         free(die->moves);
 @ROUT r1read mvread
       if (die->kname)
          free(die->kname);
@@ -2869,10 +2876,21 @@ double TimeMMKernel
    const char *LO = FLAG_IS_SET(mmp->flag, MMF_AOUTER) ? "IJK": "JIK";
    const int JKMAJOR = FLAG_IS_SET(mmp->flag, MMF_JKMABC), ku=mmp->ku;
    const int KB = (mmp->kmaj < 2) ? kb : ((kb+ku-1)/ku)*ku;
+   int MV=3;  /* bit pattern on move CBA (C=4, B=2, A=1) */
    char *be;
    int i, j;
    char ch;
    double *dp;
+   if (mmp->moves)
+   {
+      MV=0;
+      if (strstr(mmp->moves, "MoveA"))
+         MV += 1;
+      else if (strstr(mmp->moves, "MoveB"))
+         MV += 2;
+      else if (strstr(mmp->moves, "MoveC"))
+         MV += 4;
+   }
 /*
  * If it's a emit_mm generated file w/o the genstring, create the genstring
  * assuming it is a mmK
@@ -2924,24 +2942,24 @@ double TimeMMKernel
    if (FORCETIME)
       sprintf(fnam, "res/tmpout");
    else if (JKMAJOR) 
-   /*   dmmMNK%d_JMMBxNBxKB_muxnuk#xku_rtK_LDTOP_vlen_pf_a1_bX_flushKB */
+   /*   dmmMNK%d_JMMBxNBxKB_muxnuk#xku_rtK_LDTOP_vlen_pf_a1_bX_MV_flushKB */
       sprintf(fnam, 
-              "res/%cmm%s%d_%dx%dd%dx%d_%dx%dx%d_rtK%d__v%d_%d_%d_a1_%s_%d",
+              "res/%cmm%s%d_%dx%dd%dx%d_%dx%dx%d_rtK%d__v%d_%d_%d_a1_%s_%d_%d",
               pre, FLAG_IS_SET(mmp->flag, MMF_AOUTER) ? "MNK" : "NMK",
               mmp->ID, mb, nb, mmp->kmaj, kb, mmp->mu, mmp->nu, mmp->ku, 
               FLAG_IS_SET(mmp->flag, MMF_KRUNTIME), 
               FLAG_IS_SET(mmp->flag, MMF_LDCTOP), 
-              mmp->vlen, mmp->pref, be, cflush);
+              mmp->vlen, mmp->pref, be, MV, cflush);
 
-   else /*   dmm%d_TNMBxNBxKB_muxnuxku_ldc_rtMxrtNxrtK_LDTOP_pf_a1_bX_flushKB */
+   else /*dmm%d_TNMBxNBxKB_muxnuxku_ldc_rtMxrtNxrtK_LDTOP_pf_a1_bX_MV_flushKB */
       sprintf(fnam, 
-              "res/%cmm%s%d_%c%c%dx%dx%d_%dx%dx%d_%d_%dx%dx%d_%d_%d_a1_%s_%d",
+         "res/%cmm%s%d_%c%c%dx%dx%d_%dx%dx%d_%d_%dx%dx%d_%d_%d_a1_%s_%d_%d",
               pre, FLAG_IS_SET(mmp->flag, MMF_AOUTER) ? "MNK" : "NMK",
               mmp->ID, 'T', 'N', mb, nb, kb, mmp->mu, mmp->nu, mmp->ku, ldc, 
               FLAG_IS_SET(mmp->flag, MMF_MRUNTIME), 
               FLAG_IS_SET(mmp->flag, MMF_NRUNTIME), 
               FLAG_IS_SET(mmp->flag, MMF_KRUNTIME), 
-              FLAG_IS_SET(mmp->flag, MMF_LDCTOP), mmp->pref, be, cflush);
+              FLAG_IS_SET(mmp->flag, MMF_LDCTOP), mmp->pref, be, MV, cflush);
 
    if (FORCETIME || !FileExists(fnam))
    {
@@ -2968,6 +2986,8 @@ double TimeMMKernel
          ch = (pre == 'c' || pre == 's') ? 'S' : 'D';
          i += sprintf(ln+i, "%cMC=\"%s\" ", ch, mmp->comp);
       }
+      if (mmp->moves)
+         i += sprintf(ln+i, " moves=\"%s\" ", mmp->moves);
       if (mmp->exflags)
          i += sprintf(ln+i, " %s ", mmp->exflags);
          

@@ -612,6 +612,9 @@ clean : sclean dclean cclean zclean iclean
 tlib : lib
 ptlib : lib
 
+@skip sumd :
+@skip 	mkdir sumd
+@skip 
 @beginproc tdef nm
    @multidef @(nm)
       bcLaswp_amm
@@ -627,8 +630,10 @@ deps = $(INCSdir)/atlas_lapack.h $(INCSdir)/atlas_pca.h
    @endwhile
 @enddeclare
 
+@multidef upr d s d s
 @whiledef pre z c d s
-@(pre)deps = $(INCAdir)/atlas_@(pre)u0amm_blk.h
+@(pre)deps = $(INCAdir)/atlas_@(pre)u0amm_cmat2ablk.h sumd/@(upr)uAMMFRC.sum \
+        sumd/@(upr)UMMKCLEANBYNB.sum  sumd/@(upr)UMMKCLEAN.sum
    @callproc tdef rt
    @declare "@(pre)obj = " y y
       @whiledef rt
@@ -636,17 +641,23 @@ deps = $(INCSdir)/atlas_lapack.h $(INCSdir)/atlas_pca.h
       @endwhile
    @enddeclare
 
+   @undef upr
 @endwhile
+@whiledef upr X d s d s
 @whiledef pre i z c d s
 @(pre)lib : 
+	cd $(BLDdir)/src/threads/cbc ; $(PMAKE) lib
+   @mif pre ! "i
+	$(MAKE) sumd/@(upr)uAMMFRC.sum
+   @endmif
 	$(PMAKE) @(pre)lib.grd
-@(pre)lib.grd : $(@(pre)obj)
+@(pre)lib.grd : $(@(pre)deps) $(@(pre)obj)
 	$(ARCHIVER) $(ARFLAGS) $(PTLAPACKlib) $(@(pre)obj)
 	$(RANLIB) $(PTLAPACKlib)
 	touch @(pre)lib.grd
 @(pre)clean :
 	rm $(@(pre)obj)
-
+   @undef upr
 @endwhile
 
 @whiledef irt1
@@ -654,6 +665,18 @@ ATL_@(irt1).o : $(deps) $(mySRCdir)/ATL_@(irt1).c
 	$(KC) $(KCFLAGS) -I./ -o $@ -c $(mySRCdir)/ATL_@(irt1).c
 @endwhile
 
+$(INCAdir)/atlas_du0amm_cmat2ablk.h : sumd/duAMMFRC.sum
+$(INCAdir)/atlas_su0amm_cmat2ablk.h : sumd/suAMMFRC.sum
+$(INCAdir)/atlas_cu0amm_cmat2ablk.h : sumd/suAMMFRC.sum
+$(INCAdir)/atlas_zu0amm_cmat2ablk.h : sumd/duAMMFRC.sum
+   @whiledef rt uAMMFRC UMMKCLEANBYNB UMMKCLEAN
+sumd/s@(rt).sum :
+	$(MAKE) sumd
+	cd $(MMTdir) ; make suamm_getrf
+sumd/d@(rt).sum :
+	$(MAKE) sumd
+	cd $(MMTdir) ; make duamm_getrf
+   @endwhile
 @multidef typ DCPLX SCPLX DREAL SREAL
 @whiledef pre z c d s
    @callproc tdef rt
@@ -2446,6 +2469,9 @@ xemit_fmm : emit_fmm.o
 xhcsearch : hcsearch.o
 	$(XCC) $(XCCFLAGS) -o xhcsearch hcsearch.o
 
+$(BLDdir)/src/threads/lapack/amm/sumd :
+	mkdir $(BLDdir)/src/threads/lapack/amm/sumd
+
 RunHCtest : xhcsearch
 	rm -f $(INCAdir)/$(pre)mmcase.h
 	touch $(INCAdir)/$(pre)mmcase.h
@@ -2461,6 +2487,7 @@ $(pre)killMM : $(pre)killclean $(pre)killNC
 xvmmf_gccsub : $(mySRCdir)/vmmf_gccsub.c
 	$(XCC) $(XCCFLAGS) -o xvmmf_gccsub $(mySRCdir)/vmmf_gccsub.c
 
+@multidef upr d 
 @multidef typ DCPLX SCPLX QREAL DREAL SREAL
 @whiledef pre z c q d s
    @addkeys ptyp=@(pre)
@@ -2492,6 +2519,18 @@ res/@(pre)nreg : xgmmsearch
 res/@(pre)@(rt) : xammsearch
 	./xammsearch -p @(pre)
 @endwhile
+@(pre)save_uamm : $(usaved)
+	cp res/@(pre)uAMMFRC.sum $(usaved)/.
+	cp res/@(pre)UMMKCLEAN.sum $(usaved)/.
+	cp res/@(pre)UMMKCLEANBYNB.sum $(usaved)/.
+@(pre)restore_uamm : $(usaved)
+	cp $(usaved)/@(pre)uAMMFRC.sum res/.
+	cp $(usaved)/@(pre)UMMKCLEAN.sum res/.
+	cp $(usaved)/@(pre)UMMKCLEANBYNB.sum res/.
+@(pre)uamm_getrf : xuammsearch $(BLDdir)/src/threads/lapack/amm/sumd
+	./xuammsearch -p @(pre) -b -1 -M 2 a c -P 1
+	make @(pre)install_uamm ID=0
+	make @(pre)save_uamm usaved=$(BLDdir)/src/threads/lapack/amm/sumd
 @(pre)install_uamm: res/@(pre)uAMMFRC.sum res/@(pre)UMMKCLEAN.sum \
               res/@(pre)UMMKCLEANBYNB.sum xemit_uamm
 @skip	- cd $(GMMdir)/../ammm/UKERNEL ; $(PMAKE) -f @(pre)Make_amm @(pre)killall
@@ -3804,6 +3843,16 @@ x@(pre)tlatime : @(pre)tlatime.o @(pre)tlapack @(pre)ttstlib \
                    $(TESTlib) $(PTLAPACKlib) $(PTCBLASlib) \
                    $(PTF77BLASlib) $(ATLASlib) $(LIBS)
 #
+# latime for timing Rakib's PCA/CBC LU
+#
+@(pre)cbc :
+	cd $(BLDdir)/src/threads/lapack/amm ; $(MAKE) @(pre)lib
+x@(pre)tlatime_CBC : @(pre)tlatime.o @(pre)tlapack @(pre)ttstlib \
+      @(pre)tl3lib @(pre)tl2lib @(pre)tl1lib @(pre)tfblas @(pre)cbc
+	$(FLINKER) $(FCLINKFLAGS) -o $@ @(pre)tlatimeCBC.o \
+                   $(TESTlib) $(PTLAPACKlib) $(LAPACKlib) $(CBLASlib) \
+                   $(F77BLASlib) $(UAMMlib) $(ATLASlib) $(LIBS)
+#
 # Targets for building latime with the F77 iface, using ATLAS, system,
 # or F77 BLAS and LAPACK in serial and parallel
 #
@@ -3888,6 +3937,10 @@ x@(pre)tlatime_fl_sb : @(pre)tlatimeF.o @(pre)tlapack @(pre)ttstlib \
 @(pre)tlatime.o : $(mySRCdir)/latime.c $(INCSdir)/atlas_misc.h \
                    $(INCAdir)/smm.h $(INCSdir)/atlas_lvl3.h 
 	$(KC) -o $@ -c $(KCFLAGS) -DATL_USEPTHREADS=1 -D@(typ) \
+                 $(mySRCdir)/latime.c
+@(pre)tlatimeCBC.o : $(mySRCdir)/latime.c $(INCSdir)/atlas_misc.h \
+                   $(INCAdir)/smm.h $(INCSdir)/atlas_lvl3.h 
+	$(KC) -o $@ -c $(KCFLAGS) -DTimeCBC  -DATL_USEPTHREADS=1 -D@(typ) \
                  $(mySRCdir)/latime.c
 
 @(pre)ammlp:
