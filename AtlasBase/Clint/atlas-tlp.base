@@ -6254,12 +6254,13 @@ double CountLUFlops  /* RETURNS: total flops actually done */
    double *MMflop  /* total flops done in GEMM */
 )
 {
-   int j, M, N, nnb, nr, nmb, mr;
+   int j, M, N, nnb, nr, nmb, mr, MN;
    double pnb=0.0, pmb=0.0, pnblks=0, smblks=0, mmblks=0;
    double tuflop, tflop, aflop, pnflop=0, mmflop=0.0, smflop=0.0;
 
    M = ((m+mu-1)/mu)*mu;
    N = ((n+nu-1)/nu)*nu;
+   MN = (N <= M) ? N : M;
    nmb = (m/B)*B;
    if (nmb*B != m)
    {
@@ -6275,7 +6276,7 @@ double CountLUFlops  /* RETURNS: total flops actually done */
 /*   printf("M=%d, N=%d, B=%d, mu=%d, nu=%d\n", M, N, B, mu, nu); */
    tuflop = GetLUFlopCount(CPLX, m, n);
    tflop =  GetLUFlopCount(CPLX, M, N);
-   for (j=0; j < N; j += B)
+   for (j=0; j < MN; j += B)
    {
       int Mt, Nt;             /* rows/cols in trailing matrix */
       int b = N-j;
@@ -6365,9 +6366,11 @@ int GetFlags(int nargs, char **args, int **Is, int **Ps, int **Ms, int **Ns,
       case 'e':
          *MFs = GF_GetNDoubleArgs(nargs, args, i, 3);
          (*MFs)[0] = -((*MFs)[0]);
+         i += 3;
          break;
       case 'E':
          *MFs = GF_GetNDoubleArgs(nargs, args, i, 3);
+         i += 3;
          break;
       case 'c':  
          if (++i >= nargs)
@@ -6421,6 +6424,8 @@ void ComputeIt(int cplx, int P, int m, int n, int b, double *MFs)
    double tfl, tufl, pnfl, smfl, mmfl, pcpn, pcsm, pcmm, pcex, pct;
    double pnblks, smblks, mmblks;
    int mu=1, nu=1;
+
+/* "%4d %4d %5d %5d %3d %2.0f %2.0f %2.0f  %e  %5.2f %5.2f %5.2f\n" */
    tfl = CountLUFlops(cplx, m, n, b, mu, nu, &pnblks, &smblks, &mmblks, 
                       &tufl, &pnfl, &smfl, &mmfl);
    pcpn = (pnfl/tfl)*100.0;
@@ -6446,6 +6451,24 @@ void DoIt(int CPLX, int *Is, int *Ps, int *Ms, int *Ns, int *Bs, double *MFs)
              "%%GEMM  %%TOTL\n");
       printf("====  ======  ======  ===  ================  =====  =====  "
              "=====  =====\n");
+   }
+   else
+   {
+      if (MFs[0] > 0.0) /* have direct MFLOP measurements/estimates */
+         printf("\nMFLOP RATES:  PANL=%.1f, TRSM=%.1f, AMM=%.1f \n\n",
+                MFs[0], MFs[1], MFs[2]);
+      else              /* TRSM/PNL estimates as % of AMM */
+      #if USEH
+         printf("\nAMM taken from perf.h, PANL=%.3famm, TRSM=%.3famm.\n\n",
+                -MFs[0], MFs[1]);
+      #else
+         printf("\nAMM=%.1f;  PANL=%.3f*am=%.1f, TRSM=%.3fm=%.1f.\n\n",
+                MFs[2], -MFs[0], -MFs[0]*MFs[2], MFs[1], MFs[1]*MFs[2]);
+      #endif
+      printf("   R    C      M      N  NB PN TR MM          TIME    PNL"
+             "TRS   AMM\n");
+      printf("==== ==== ====== ====== === == == ==  ============  ====="
+             "===== =====\n");
    }
 
    for (p=1; p <= Ps[0]; p++)
