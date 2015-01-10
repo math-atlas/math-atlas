@@ -6236,6 +6236,11 @@ double GetLUFlopCount(int CPLX, int M, int N)
       return(6.0*muls + 2.0*adds);
    return(muls+adds);
 }
+#ifdef CHECK_CONSIST
+@beginindent 1 3
+@extract -b @(basd)/../Students/fact-amm.base rout=chkconst
+@endindent
+#endif
 
 double CountLUFlops  /* RETURNS: total flops actually done */
 (
@@ -6419,6 +6424,59 @@ int GetFlags(int nargs, char **args, int **Is, int **Ps, int **Ms, int **Ns,
    return(cplx);
 }
 
+
+#ifdef CHECK_CONSIST
+void ComputeIt(int cplx, int P, int m, int n, int b, double *MFs)
+{
+   double tfl, tufl, pnfl, smfl, mmfl, pcpn, pcsm, pcmm, pcex, pct;
+   double pnblks, smblks, mmblks;
+   int mu=1, nu=1;
+
+   tfl = CountLUFlops(cplx, m, n, b, mu, nu, &pnblks, &smblks, &mmblks, 
+                      &tufl, &pnfl, &smfl, &mmfl);
+   pct = pcpn + pcsm + pcmm;
+   printf("%4d %7d %7d %4d %17.0f %6.1f %6.1f %6.1f %6.1f\n",
+          P, m, n, b, tfl, pcpn, pcsm, pcmm, pct);
+@beginskip
+   printf("pnblks=%0.1f, smblks=%0.1f, mmblks=%0.1f\n", pnblks, smblks, mmblks);
+   printf("MFLOP=%.4f, pan=%.2f, slv=%.2f, gmm=%.2f (=%.2f), extra=%.2f\n",
+          tfl*1.0e-6, pcpn, pcsm, pcmm, (pcpn+pcsm+pcmm),
+          ((tfl-tufl)/tufl)*100.0);
+@endskip
+}
+void DoIt(int CPLX, int *Is, int *Ps, int *Ms, int *Ns, int *Bs, double *MFs)
+{
+   int p;
+   printf(
+   printf(
+"     M       N   NB             FLOPS  %%PANL  %%TRSM  %%GEMM  %%TOTL\n"
+"======  ======  ===  ================  =====  =====  =====  =====\n");
+
+   for (p=1; p <= Ps[0]; p++)
+   {
+      int n, P=Ps[p];
+      for (n=1; n <= Ms[0]; n++)
+      {
+         int i, N=Ns[n], M;
+         if (Ms && Ms[0] == Ns[0])
+            M = Ms[n];
+         else
+            M = N;
+         #if USEH
+         for (i=1; i <= Is[0]; i++)
+         {
+            int B = ATL_UAMM_NBs[Is[i]];
+         #else
+         for (i=1; i <= Bs[0]; i++)
+         {
+            int B = Bs[i];
+         #endif
+            ComputeIt(CPLX, P, M, N, B, MFs);
+         }
+      }
+   }
+}
+#else
 void ComputeIt(int cplx, int P, int m, int n, int b, double *MFs)
 {
    double tfl, tufl, pnfl, smfl, mmfl, pcpn, pcsm, pcmm, pcex, pct;
@@ -6441,7 +6499,6 @@ void ComputeIt(int cplx, int P, int m, int n, int b, double *MFs)
           ((tfl-tufl)/tufl)*100.0);
 @endskip
 }
-
 void DoIt(int CPLX, int *Is, int *Ps, int *Ms, int *Ns, int *Bs, double *MFs)
 {
    int p;
@@ -6495,6 +6552,7 @@ void DoIt(int CPLX, int *Is, int *Ps, int *Ms, int *Ns, int *Bs, double *MFs)
       }
    }
 }
+#endif
 
 int main(int nargs, char **args)
 {
