@@ -6096,6 +6096,36 @@ ATL_mmnode_t *HarshPrune(ATL_mmnode_t *mmb)
       while (mmp);
    }
 }
+/*
+ * ASSUMES: mmb comes in ordered from smallest blocking to largest.  
+ * Kills any kernel that is not faster than a smaller-NB kernel.
+ */
+ATL_mmnode_t *TolerantPrune
+(
+   ATL_mmnode_t *mmb,   /* list of kernels to prune */
+   double tol           /* set > 1 to allow slow kernels to stay */
+)
+{
+   ATL_mmnode_t *mmp=mmb;
+   double mfB = (mmb) ? mmb->mflop[0] : 0.0;
+   while (mmp)
+   {
+      if (mmp->mflop[0] > mfB)
+         mfB = mmp->mflop[0];
+      if (!mmp->next)
+         return(mmb);
+      do
+      {
+         if (!mmp->next)
+            return(mmb);
+         if (mfB > tol*mmp->next->mflop[0])
+            mmp->next = KillMMNode(mmp->next);
+         else
+            mmp = mmp->next;
+      }
+      while (mmp);
+   }
+}
 #define CON_NOKVEC 0
 #define CON_NOMVEC 1
 #define CON_NOCOMPK 2
@@ -6283,7 +6313,7 @@ ATL_mmnode_t *FindBestKerns
    KillMMNode(mpG);
 @skip   PrintMMNodes(stderr, nmmb);
    if (PRUNE)
-      nmmb = HarshPrune(nmmb);
+      nmmb = TolerantPrune(nmmb, 1.01);
    WriteMMFileWithPath(pre, "res", "uAMMFRC.sum", nmmb);
    printf("DONE.\n");
    return(nmmb);
