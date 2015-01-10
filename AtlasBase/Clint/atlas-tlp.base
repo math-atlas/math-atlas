@@ -6172,10 +6172,23 @@ int main(int nargs, char **args)
    return(0);
 }
 @ROUT luflops
+#define ATL_GETFLAGS 1
+#ifndef USEH
+   #define USEH 0
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <math.h>
+#include "atlas_genparse.h"
+#if USEH
+   #ifndef UID
+      #define UID 0
+   #endif
+   #include "atlas_misc.h"
+   #define apref Mjoin(Mjoin(Mjoin(Mjoin(atlas_,UPR),u),UID),amm)
+   #include Mstr(Mjoin(apref,_blk.h))
+#endif
 
 double GetMMFlopCount(int CPLX, int M, int N, int K)
 {
@@ -6259,7 +6272,7 @@ double CountLUFlops  /* RETURNS: total flops actually done */
       nr = ((n - nnb*B+nu-1)/nu)*nu;
       pnb = ((double)(nr)) / (double)(B);
    }
-   printf("M=%d, N=%d, B=%d, mu=%d, nu=%d\n", M, N, B, mu, nu);
+/*   printf("M=%d, N=%d, B=%d, mu=%d, nu=%d\n", M, N, B, mu, nu); */
    tuflop = GetLUFlopCount(CPLX, m, n);
    tflop =  GetLUFlopCount(CPLX, M, N);
    for (j=0; j < N; j += B)
@@ -6306,60 +6319,169 @@ double CountLUFlops  /* RETURNS: total flops actually done */
    return(tflop);
 }
 
-void PrintUsage(char *name, int i, char *str)
-{
-   if (str)
-      fprintf(stderr, "ERROR: arg %d, '%s'\n", i, str);
-   else
-      fprintf(stderr, "ERROR around argument %d\n", i);
-   fprintf(stderr, "USAGE: %s -[M/N/b] <dim> -[m/n] <unrolling> -c [0:real]\n",
-           name);
-   exit(-1);
-}
-void GetFlags(int nargs, char **args, int *cplx, int *m, int *n, int *b,
-              int *mu, int *nu)
-{
-   int i;
 
-   *cplx = 0;
-   *m = *n = *b = 0;
-   *mu = *nu = 1;
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n",
+              ierr, flag ? flag : "Not enough arguments");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+
+   fprintf(stderr, "USAGE: %s [flags]:\n", name);
+   fprintf(stderr, "   -c <0/1> real or complex numbers\n");
+   fprintf(stderr, "   -E <pan> <trsm> <gemm> : mflop estimates\n");
+   fprintf(stderr, 
+      "   -e <amm> <pan> <trsm> : amm & fraction of amm to assume op gets\n");
+   fprintf(stderr, "   -p <#> <I1> ... <I#>\n");
+   fprintf(stderr, "   -P <Pstart> <Pend> <Pinc>\n");
+   fprintf(stderr, "   -i <#> <I1> ... <I#>\n");
+   fprintf(stderr, "   -I <Istart> <Iend> <Iinc>\n");
+   fprintf(stderr, "   -n <#> <N1> ... <N#>\n");
+   fprintf(stderr, "   -N <Nstart> <Nend> <Ninc>\n");
+   fprintf(stderr, "   -m <#> <M1> ... <M#>\n");
+   fprintf(stderr, "   -M <Mstart> <Mend> <Minc>\n");
+   fprintf(stderr, "   -b <#> <B1> ... <B#>\n");
+   fprintf(stderr, "   -B <Bstart> <Bend> <Binc>\n");
+   exit(ierr ? ierr : -1);
+}
+
+#ifndef ATL_UAMM_NCASES
+   #define ATL_UAMM_NCASES -1
+#endif
+int GetFlags(int nargs, char **args, int **Is, int **Ps, int **Ms, int **Ns, 
+             int **Bs, double **MFs)
+{
+   int i, I0, IN, Iinc, cplx=0;
+   
+   *MFs = NULL;
+   *Is = *Ps = *Bs = *Ms = *Ns = NULL;
    for (i=1; i < nargs; i++)
    {
-      assert(args[i][0] == '-');
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
       switch(args[i][1])
       {
-@multidef st  m n mu nu b cplx
-@whiledef flg M N m n b c
-      case '@(flg)':
-         if (++i >= nargs)
-            PrintUsage(args[0], i, "out of args");
-         *@(st) = atoi(args[i]);
+      case 'e':
+         *MFs = GF_GetNDoubleArgs(nargs, args, i, 3);
+         (*MFs)[0] = -((*MFs)[0]);
          break;
-   @undef st
+      case 'E':
+         *MFs = GF_GetNDoubleArgs(nargs, args, i, 3);
+         break;
+      case 'c':  
+         if (++i >= nargs)
+            PrintUsage(args[0], i, NULL);
+         cplx = atoi(args[i]);
+         break;
+@multidef ls Ns Ms Is Ps Bs
+@whiledef fl n m i p b
+      case '@(fl)':
+         *@(ls) = GF_GetIntList(nargs, args, i, 1);
+         i += (*@(ls))[0] + 1;
+         break;
+      case '@up@(fl)':
+         if (i+3 >= nargs)
+            PrintUsage(args[0], i, NULL);
+         I0 = atoi(args[i+1]);
+         IN = atoi(args[i+2]);
+         Iinc = atoi(args[i+3]);
+   @mif ls = "Is
+         if (IN == -1)
+            IN = ATL_UAMM_NCASES-1;
+   @endmif
+         *@(ls) = GF_IntRange2IntList(I0, IN, Iinc);
+         i += 3;
+         break;
+   @undef ls
 @endwhile
       default:
          PrintUsage(args[0], i, args[i]);
       }
    }
-   assert(*m && *n && *b);
+   if (!(*Ns))
+      *Ns = GF_GetIntList1(1000);
+   if (!(*Ms))
+      *Ms = GF_DupIntList(*Ns);
+   #if USEH
+      if (!(*Is))
+         *Is = GF_GetIntList2(0, ATL_UAMM_NCASES-1);
+   #else
+      if (!(*Bs))
+         *Bs = GF_IntRange2IntList(8, 64, 8);
+   #endif
+   if (!(*Ps))
+      *Ps = GF_GetIntList1(8);
+      
+   return(cplx);
 }
 
-int main(int nargs, char **args)
+void ComputeIt(int cplx, int P, int m, int n, int b, double *MFs)
 {
-   int m, n, nu, mu, cplx, b;
-   double tfl, tufl, pnfl, smfl, mmfl, pcpn, pcsm, pcmm, pcex;
+   double tfl, tufl, pnfl, smfl, mmfl, pcpn, pcsm, pcmm, pcex, pct;
    double pnblks, smblks, mmblks;
-   GetFlags(nargs, args, &cplx, &m, &n, &b, &mu, &nu);
+   int mu=1, nu=1;
    tfl = CountLUFlops(cplx, m, n, b, mu, nu, &pnblks, &smblks, &mmblks, 
                       &tufl, &pnfl, &smfl, &mmfl);
    pcpn = (pnfl/tfl)*100.0;
    pcsm = (smfl/tfl)*100.0;
    pcmm = (mmfl/tfl)*100.0;
+   pct = pcpn + pcsm + pcmm;
+   printf("%4d %7d %7d %4d %17.0f %6.1f %6.1f %6.1f %6.1f\n",
+          P, m, n, b, tfl, pcpn, pcsm, pcmm, pct);
+@beginskip
    printf("pnblks=%0.1f, smblks=%0.1f, mmblks=%0.1f\n", pnblks, smblks, mmblks);
    printf("MFLOP=%.4f, pan=%.2f, slv=%.2f, gmm=%.2f (=%.2f), extra=%.2f\n",
           tfl*1.0e-6, pcpn, pcsm, pcmm, (pcpn+pcsm+pcmm),
           ((tfl-tufl)/tufl)*100.0);
+@endskip
+}
+
+void DoIt(int CPLX, int *Is, int *Ps, int *Ms, int *Ns, int *Bs, double *MFs)
+{
+   int p;
+   if (!MFs)
+   {
+      printf("   P       M       N   NB             FLOPS  %%PANL  %%TRSM  "
+             "%%GEMM  %%TOTL\n");
+      printf("====  ======  ======  ===  ================  =====  =====  "
+             "=====  =====\n");
+   }
+
+   for (p=1; p <= Ps[0]; p++)
+   {
+      int n, P=Ps[p];
+      for (n=1; n <= Ms[0]; n++)
+      {
+         int i, N=Ns[n], M;
+         if (Ms && Ms[0] == Ns[0])
+            M = Ms[n];
+         else
+            M = N;
+         #if USEH
+         for (i=1; i <= Is[0]; i++)
+         {
+            int B = ATL_UAMM_NBs[Is[i]];
+         #else
+         for (i=1; i <= Bs[0]; i++)
+         {
+            int B = Bs[i];
+         #endif
+            ComputeIt(CPLX, P, M, N, B, MFs);
+         }
+      }
+   }
+}
+
+int main(int nargs, char **args)
+{
+   int m, n, nu, mu, cplx, b;
+   int *Is, *Ps, *Ms, *Ns, *Bs;
+   double *MFs;
+
+   cplx = GetFlags(nargs, args, &Is, &Ps, &Ms, &Ns, &Bs, &MFs);
+   DoIt(cplx, Is, Ps, Ms, Ns, Bs, MFs);
+
    return(0);
 }
 @ROUT ammswptst
