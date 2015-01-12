@@ -6237,8 +6237,35 @@ double GetLUFlopCount(int CPLX, int M, int N)
    return(muls+adds);
 }
 #ifdef CHECK_CONSIST
+#include "atlas_misc.h"
 @beginindent 1 3
-@extract -b @(basd)/../Students/fact-amm.base rout=chkconst
+@extract -b @(basd)/../Students/fact-amm.base rout=chkconsist
+
+double FormulaLUFlops(int CPLX, ATL_CUINT M, ATL_CUINT N, ATL_CUINT B, 
+                      double *FFL, double *SFL, double *MFL)
+{
+   int MN = M < N ? M : N; 
+   double m = M;
+   double n = N;
+   double b = B;
+   double MNb = (MN / B); 
+   double MNr = MN - MNb*B; 
+   double bmnb = b * MNb;
+   double bb = b * b;
+   
+   *MFL = bmnb*(bb + 6*m*n - 3*b*(m+n) +
+         3*bmnb*(b-m-n) + 2*bmnb*bmnb) / 3;
+   *SFL = (1-b)*bmnb*(b-2*n+bmnb)/2 +
+      MNr*(MNr-1)*(n-bmnb-MNr); /* for remainder */
+   if (CPLX)
+   {
+      *SFL *= 4; /* 4 * real flops */
+      *MFL *= 4; /* 4 * real flops */
+   }
+   *FFL = GetLUFlopCount(CPLX, M, N) - *SFL - *MFL;
+   return (*FFL + *SFL + *MFL);
+}
+
 @endindent
 #endif
 
@@ -6284,7 +6311,7 @@ double CountLUFlops  /* RETURNS: total flops actually done */
    for (j=0; j < MN; j += B)
    {
       int Mt, Nt;             /* rows/cols in trailing matrix */
-      int b = N-j;
+      int b = MN-j;
       b = (b >= B) ? B : b;   /* number of rows in column panel */
 
       Mt = M-j-b;
@@ -6296,7 +6323,7 @@ double CountLUFlops  /* RETURNS: total flops actually done */
 /*
  *    For parallel model, want to split into critical & non-critical?
  */
-      if (j+B < N)
+      if (j+b < N)
       {
          smflop += GetSMFlopCount(CPLX, b, Nt);
          smblks += nnb + pnb;
@@ -6426,32 +6453,57 @@ int GetFlags(int nargs, char **args, int **Is, int **Ps, int **Ms, int **Ns,
 
 
 #ifdef CHECK_CONSIST
-void ComputeIt(int cplx, int P, int m, int n, int b, double *MFs)
+int ComputeIt(int cplx, int P, int m, int n, int b, double *MFs)
 {
    double tfl, tufl, pnfl, smfl, mmfl, pcpn, pcsm, pcmm, pcex, pct;
    double pnblks, smblks, mmblks;
+   double fpnfl, fsmfl, fmmfl, ftfl;
+   double bpnfl, bsmfl, bmmfl, btfl;
    int mu=1, nu=1;
+   int fpassed = 1, bpassed = 1;
 
    tfl = CountLUFlops(cplx, m, n, b, mu, nu, &pnblks, &smblks, &mmblks, 
                       &tufl, &pnfl, &smfl, &mmfl);
+   ftfl = FormulaLUFlops(cplx, m, n, b, &fpnfl, &fsmfl, &fmmfl);
+   SumL3Flops(m, n, b, &bmmfl, &bsmfl);
+   /* for now, handle complex here */
+   if (cplx) { bmmfl *= 4.0; bsmfl *= 4.0; }
+   bpnfl = GetLUFlopCount(cplx, m, n) - bmmfl - bsmfl;
+   fpassed &= !(Mabs(fpnfl - pnfl) > 0);
+   fpassed &= !(Mabs(fsmfl - smfl) > 0);
+   fpassed &= !(Mabs(fmmfl - mmfl) > 0);
+   bpassed &= !(Mabs(bpnfl - pnfl) > 0);
+   bpassed &= !(Mabs(bsmfl - smfl) > 0);
+   bpassed &= !(Mabs(bmmfl - mmfl) > 0);
+   printf("%6d  %6d  %4d  %14.0f  %14.0f  %16.0f  %6s\n", 
+            m, n, b, pnfl, smfl, mmfl, (fpassed && bpassed) ? "PASS" : "FAIL!");
+   if (!fpassed || !bpassed)
+   {
+      printf("%20s  %14.0f  %14.0f  %16.0f  %6s\n", 
+         "Closed Formula", fpnfl, fsmfl, fmmfl, fpassed ? "PASS" : "FAIL!");
+      printf("%20s  %14.0f  %14.0f  %16.0f  %6s\n", 
+         "With SumL3Blas", bpnfl, bsmfl, bmmfl, bpassed ? "PASS" : "FAIL!");
+   }
+@beginskip
    pct = pcpn + pcsm + pcmm;
    printf("%4d %7d %7d %4d %17.0f %6.1f %6.1f %6.1f %6.1f\n",
           P, m, n, b, tfl, pcpn, pcsm, pcmm, pct);
-@beginskip
    printf("pnblks=%0.1f, smblks=%0.1f, mmblks=%0.1f\n", pnblks, smblks, mmblks);
    printf("MFLOP=%.4f, pan=%.2f, slv=%.2f, gmm=%.2f (=%.2f), extra=%.2f\n",
           tfl*1.0e-6, pcpn, pcsm, pcmm, (pcpn+pcsm+pcmm),
           ((tfl-tufl)/tufl)*100.0);
 @endskip
+   return (fpassed && bpassed);
 }
 void DoIt(int CPLX, int *Is, int *Ps, int *Ms, int *Ns, int *Bs, double *MFs)
 {
-   int p;
+   int p, nc, np;
    printf(
-   printf(
-"     M       N   NB             FLOPS  %%PANL  %%TRSM  %%GEMM  %%TOTL\n"
-"======  ======  ===  ================  =====  =====  =====  =====\n");
+"     M       N    NB           PANEL            TRSM              GEMM    TEST\n"
+"======  ======  ====  ==============  ==============  ================  ======\n"
+);
 
+   nc = np = 0;
    for (p=1; p <= Ps[0]; p++)
    {
       int n, P=Ps[p];
@@ -6471,10 +6523,15 @@ void DoIt(int CPLX, int *Is, int *Ps, int *Ms, int *Ns, int *Bs, double *MFs)
          {
             int B = Bs[i];
          #endif
-            ComputeIt(CPLX, P, M, N, B, MFs);
+            nc++;
+            if (ComputeIt(CPLX, P, M, N, B, MFs)) np++;
          }
       }
    }
+   if (nc == np)
+      printf("ALL CASES PASSED!!\n");
+   else
+      printf("RAN %d CASES: %d CASES FAILED!!!\n", nc, nc-np);
 }
 #else
 void ComputeIt(int cplx, int P, int m, int n, int b, double *MFs)
