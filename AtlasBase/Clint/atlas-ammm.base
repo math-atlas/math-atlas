@@ -4891,7 +4891,7 @@ ATL_mmnode_t *KCleanByNB
          p->next = NULL;
       }
       p->nbB = nb; p->mbB = mb;  p->kbB = kb;
-      p->mflop[0] = TimeMMKernel(verb, 0, p, pre, mb, nb, kb, 0, 0, kb, 
+      p->mflop[0] = TimeMMKernel(verb, 0, p, pre, mb, nb, kb, 0, 0, mb, 
                                  0, 0, -1);
       mf = mb*nb;
       p->mflop[1] = mf / p->mflop[0];   /* time in microseconds for 1 k it */
@@ -6104,7 +6104,7 @@ ATL_mmnode_t *TolerantPrune
 (
    ATL_mmnode_t *mmb,   /* list of kernels to prune */
    double tol           /* set > 1 to allow slow kernels to stay */
-)
+)                       /* < 1 to make pruning harsher */
 {
    ATL_mmnode_t *mmp=mmb;
    double mfB = 0.0;
@@ -6140,7 +6140,7 @@ ATL_mmnode_t *FindBestKerns
    int N,                        /* number of forced block factors */
    int *mbs, int *nbs, int *kbs, /* forced block factors */
    int C,                        /* constraints */
-   int PRUNE                     /* get rid of slow kerns? */
+   float tol                     /* tolerance in getting rid of slow kerns */
 )
 {
    ATL_mmnode_t *nmmb=NULL, *mp, *mpB, *mpG, *mpg;
@@ -6312,8 +6312,8 @@ ATL_mmnode_t *FindBestKerns
    KillAllMMNodes(mmb);
    KillMMNode(mpG);
 @skip   PrintMMNodes(stderr, nmmb);
-   if (PRUNE)
-      nmmb = TolerantPrune(nmmb, 1.02);
+   if (tol > 0.0)
+      nmmb = TolerantPrune(nmmb, tol);
    WriteMMFileWithPath(pre, "res", "uAMMFRC.sum", nmmb);
    printf("DONE.\n");
    return(nmmb);
@@ -6353,7 +6353,13 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "USAGE: %s [flags]:\n", name);
    fprintf(stderr, 
    "   -S <file> : take kerns from sum file, force square sizes\n");
-   fprintf(stderr, "   -P 0/1: don't/do prune slow kernels\n");
+   fprintf(stderr, "   -T #  : set pruning tolerance for slower kernels:\n");
+   fprintf(stderr, 
+   "      # <= 0.0 : keep all legal kernel sizes regardless of performance\n");
+   fprintf(stderr, 
+   "      # >=0.0 : delete all kerns wt perf*# < maxSmallerPerf\n");
+   fprintf(stderr, 
+   "                maxSmallerPerf= max perf found in smaller-sized kern\n");
    fprintf(stderr, "   -p [s,d,c,z]: set type/precision prefix (d) \n");
    fprintf(stderr, "   -b # nb1 ... nb# : square NBs to force\n");
    fprintf(stderr, "   -B # mb1 nb1 kb1 ... mb# nb# kb#: dims to force\n");
@@ -6368,7 +6374,7 @@ void PrintUsage(char *name, int ierr, char *flag)
 }
 
 ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, int *VERB, int *NN,
-                       int *C, int **MBS, int **NBS, int **KBS, int *PRUNE)
+                       int *C, int **MBS, int **NBS, int **KBS, float *TOL)
 {
    ATL_mmnode_t *mmb=NULL;
    int *mbs=NULL, *nbs=NULL, *kbs=NULL;
@@ -6376,9 +6382,10 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, int *VERB, int *NN,
    char *cs;
 
    MOVES = NULL;
+   *TOL = 0.0;
    *VERB = 1;
    *PRE = 'd';
-   *PRUNE = *C = 0;
+   *C = 0;
    for (i=1; i < nargs; i++)
    {
       int n;
@@ -6387,10 +6394,12 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, int *VERB, int *NN,
 
       switch(args[i][1])
       {
-      case 'P':
+      case 'T':
          if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
-         *PRUNE = atoi(args[i]);
+         *TOL = atof(args[i]);
+         if (*TOL < 0.0)
+            *TOL = 0.0;
          break;
       case 'M':
          if (++i >= nargs)
@@ -6424,10 +6433,10 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, int *VERB, int *NN,
          else if (n == 2)
          {
             MOVES = DupString("-DMoveA -DMoveB");
-            if (MV&1 == 0)
-               (MOVES)[6] = 'C';
-            if (MV&2 == 0)
-               (MOVES)[14] = 'C';
+            if ((MV&1) == 0)
+               MOVES[6] = 'C';
+            else if ((MV&2) == 0)
+               MOVES[14] = 'C';
          }
          else
             MOVES = DupString("-DMoveA -DMoveB -DMoveC");
@@ -6661,12 +6670,13 @@ ATL_mmnode_t *FindBestSquareKern(char pre, int verb, ATL_mmnode_t *mmb)
 
 int main(int nargs, char **args)
 {
-   int *nbs, *mbs, *kbs, verb, N, C=0, PRUNE;
+   int *nbs, *mbs, *kbs, verb, N, C=0;
+   float tol;
    char pre;
    ATL_mmnode_t *mmb, *mp, *mmB;
    double mfB;
 
-   mmb = GetFlags(nargs, args, &pre, &verb, &N, &C, &mbs, &nbs, &kbs, &PRUNE);
+   mmb = GetFlags(nargs, args, &pre, &verb, &N, &C, &mbs, &nbs, &kbs, &tol);
 /*
  * If -S is thrown, we take kernels from prior search, and just retune with
  * requirement that the kernels be square
@@ -6694,7 +6704,7 @@ int main(int nargs, char **args)
          for (mp=mmb; mp; mp = mp->next)
             mp->moves = DupString(MOVES);
       }
-      mmb = FindBestKerns(pre, verb, mmb, N, mbs, nbs, kbs, C, PRUNE);
+      mmb = FindBestKerns(pre, verb, mmb, N, mbs, nbs, kbs, C, tol);
    }
    ComputeKClean(verb, pre, mmb);
    mmb = ATL_SortMMNodesByMflop(0, mmb);
