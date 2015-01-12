@@ -1157,6 +1157,8 @@ static void ATL_getf2s(int id, int Jb, int m, int n, TYPE *W,
    const int nb = pd->nb;
    const int nbnb = nb * nb;
    const int active = Mmod(Jb,pt);
+   ATL_GETRF_2D_t *pda, *pdb;
+   int terr = 0;
    ATL_CBC_t *cbc = pd->cbc;
    TYPE *Ac = Aj + Jb*(nb SHIFT); /* Ac points to the diagonal block now */
    if (rid < active)
@@ -1174,11 +1176,17 @@ static void ATL_getf2s(int id, int Jb, int m, int n, TYPE *W,
    
    if (rid == active)
    {
-      pd->info2 = Mjoin(PATL, getrf)(CblasColMajor, pd->M-Jb*nb, n, 
+      terr = Mjoin(PATL, getrf)(CblasColMajor, pd->M-Jb*nb, n, 
                                        Ac, lda, ipiv);
+      if (terr && !pd->info2) pd->info2 = terr;
    }
 
    if (pt > 1) ATL_CBC_barrier(ATL_SYNC_COL, cbc, id);
+
+   /* everyone read the error code from active guy */
+   pdb = pd - id;
+   pda = pdb + GID(active, cid, pt, qt);
+   pd->info2 = pda->info2;
    
    if (Jb) W-=(nbnb SHIFT); /* for later panels, blocks are shifted */
    if (rid == active)
@@ -2609,7 +2617,6 @@ int SumL3Flops(ATL_CUINT M, ATL_CUINT N, ATL_CUINT NB, double *MFL, double *SFL)
             GetGEMMflops(mfl, m, n, jb);
       }
    }
-   printf("mfl=%e, sfl=%e\n", mfl, sfl);
    *MFL = mfl;
    *SFL = sfl;
    return(np);
