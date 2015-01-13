@@ -2566,6 +2566,12 @@ void GenMakefile(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
          if (!FLAG_IS_SET(mmp->flag, MMF_KRUNTIME))
             fprintf(fp, " -DMB=%d -DNB=%d, -DKB=%d", 
                     mmp->mbB, mmp->nbB, mmp->kbB);
+         if (FLAG_IS_SET(mmp->flag, MMF_MVA))
+            fprintf(fp, " -DATL_MOVEA");
+         if (FLAG_IS_SET(mmp->flag, MMF_MVB))
+            fprintf(fp, " -DATL_MOVEB");
+         if (FLAG_IS_SET(mmp->flag, MMF_MVC))
+            fprintf(fp, " -DATL_MOVEC");
 @ROUT emit_amm
          fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b%c", pre,
                  mmp->ID, kb, kmaj, mmp->mu, mmp->nu, mmp->ku, be[i]);
@@ -4425,6 +4431,31 @@ ATL_mmnode_t *MergeAndWinnowCases
    return(mmb);
 }
 
+void ApplyMoves2Flag   /* overwrites MV bits according to string */
+(
+   ATL_mmnode_t *mmb,  /* queue of kernels to set MMF_MV[A,B,C] flag bits */
+   char *mvs           /* string passed to timer wt moves */
+)
+{
+   ATL_mmnode_t *mmp;
+   const unsigned int NOMV = ~MMF_MVSET;
+   unsigned int DOMV;
+   if (!mvs)
+      DOMV = ((1<<MMF_MVA) | (1<<MMF_MVB));
+   else
+   {
+      DOMV = 0;
+      if (strstr(mvs, "MoveA"))
+         DOMV |= (1<<MMF_MVA);
+      if (strstr(mvs, "MoveB"))
+         DOMV |= (1<<MMF_MVB);
+      if (strstr(mvs, "MoveC"))
+         DOMV |= (1<<MMF_MVC);
+   }
+   for (mmp=mmb; mmp; mmp = mmp->next)
+      mmp->flag = (((mmp->flag) & NOMV) | DOMV);
+}
+
 int FailKCleanTests(char pre, int nb, ATL_mmnode_t *kp)
 /*
  *  This routine tests if a kernel is suitable for use in K-cleanup by
@@ -4803,6 +4834,7 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
    else
       printf("NO VALID USER-SUBMITTED K-CLEANUP KERNELS\n\n");
    free(dl);
+   ApplyMoves2Flag(gmmb, MOVES);  /* gen must know operand movement pattern */
    WriteMMFileWithPath(pre, "res", "@(kpr)KCLEAN.sum", gmmb);
    return(gmmb);
 }
@@ -6314,6 +6346,7 @@ ATL_mmnode_t *FindBestKerns
 @skip   PrintMMNodes(stderr, nmmb);
    if (tol > 0.0)
       nmmb = TolerantPrune(nmmb, tol);
+   ApplyMoves2Flag(nmmb, MOVES);  /* gen must know operand movement pattern */
    WriteMMFileWithPath(pre, "res", "uAMMFRC.sum", nmmb);
    printf("DONE.\n");
    return(nmmb);
@@ -6370,11 +6403,13 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "      k : don't allow K-vectorized storage\n");
    fprintf(stderr, "      m : don't allow M-vectorized storage\n");
    fprintf(stderr, "      c : don't allow compile-time K kernels\n");
+   fprintf(stderr, "   -K <1/0> : do/don't generate K cleanup\n");
    exit(ierr ? ierr : -1);
 }
 
 ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, int *VERB, int *NN,
-                       int *C, int **MBS, int **NBS, int **KBS, float *TOL)
+                       int *C, int **MBS, int **NBS, int **KBS, float *TOL,
+                       int *KCLEAN)
 {
    ATL_mmnode_t *mmb=NULL;
    int *mbs=NULL, *nbs=NULL, *kbs=NULL;
@@ -6386,6 +6421,7 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, int *VERB, int *NN,
    *VERB = 1;
    *PRE = 'd';
    *C = 0;
+   *KCLEAN = 1;
    for (i=1; i < nargs; i++)
    {
       int n;
@@ -6445,6 +6481,11 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, int *VERB, int *NN,
          if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
          mmb = ReadMMFile(args[i]);
+         break;
+      case 'K':
+         if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         *KCLEAN = atoi(args[i]);
          break;
       case 'v':
          if (++i >= nargs)
@@ -6663,6 +6704,7 @@ ATL_mmnode_t *FindBestSquareKern(char pre, int verb, ATL_mmnode_t *mmb)
    }
    assert(mmSQ);
    KillAllMMNodes(mmb);
+   ApplyMoves2Flag(mmSQ, MOVES);  /* gen must know operand movement pattern */
    WriteMMFileWithPath(pre, "res", "uAMMFRC.sum", mmSQ);
    printf("DONE.\n");
    return(mmSQ);
@@ -6670,13 +6712,14 @@ ATL_mmnode_t *FindBestSquareKern(char pre, int verb, ATL_mmnode_t *mmb)
 
 int main(int nargs, char **args)
 {
-   int *nbs, *mbs, *kbs, verb, N, C=0;
+   int *nbs, *mbs, *kbs, verb, N, C=0, KCLEAN;
    float tol;
    char pre;
    ATL_mmnode_t *mmb, *mp, *mmB;
    double mfB;
 
-   mmb = GetFlags(nargs, args, &pre, &verb, &N, &C, &mbs, &nbs, &kbs, &tol);
+   mmb = GetFlags(nargs, args, &pre, &verb, &N, &C, &mbs, &nbs, &kbs, &tol,
+                  &KCLEAN);
 /*
  * If -S is thrown, we take kernels from prior search, and just retune with
  * requirement that the kernels be square
@@ -6706,7 +6749,8 @@ int main(int nargs, char **args)
       }
       mmb = FindBestKerns(pre, verb, mmb, N, mbs, nbs, kbs, C, tol);
    }
-   ComputeKClean(verb, pre, mmb);
+   if (KCLEAN)
+      ComputeKClean(verb, pre, mmb);
    mmb = ATL_SortMMNodesByMflop(0, mmb);
    mmB = ReadMMFileWithPath(pre, "res", "eAMMRES.sum");
    mmB = ATL_SortMMNodesByMflop(0, mmB);
@@ -6715,8 +6759,12 @@ int main(int nargs, char **args)
       printf("YOUR BEST CASE: %d-%s, BLK=%d,%d,%d  %.2f\n", 
              mmb->ID, mmb->rout, mmb->mbB, mmb->nbB, mmb->kbB, mmb->mflop[0]);
    if (mmB)
-      printf("ATLAS BEST CASE: %d-%s, BLK=%d,%d,%d  %.2f\n", 
-             mmB->ID, mmB->rout, mmB->mbB, mmB->nbB, mmB->kbB, mmB->mflop[0]);
+   {
+      printf("ATLAS BEST CASE: %d-%s, BLK=%d,%d,%d  %.2f\n", mmB->ID, 
+             mmB->rout, mmB->mbB, mmB->nbB, mmB->kbB, mmB->mflop[0]);
+      if (mmb)
+         printf("   RATIO=%0.4f\n", mmb->mflop[0] / mmB->mflop[0]);
+   }
 
    KillAllMMNodes(mmb);
    KillAllMMNodes(mmB);

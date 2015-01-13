@@ -64,17 +64,25 @@
 #define MMF_JKMAB      20  /* 1: Jam-K major A/B, column-major C */
 #define MMF_BMAB       21  /* 1: block major A/B, col-maj C */
 #define MMF_BMABC      22  /* 1: block major A/B/C */
+#define MMF_MVA        23  /* 1: A expected to change between calls */
+#define MMF_MVB        24  /* 1: B expected to change between calls */
+#define MMF_MVC        25  /* 1: C expected to change between calls */
 @skip #define MMF_KVECAM     23  /* 1: A/B are k-vlen-access-major, C access major */
 
+#define MMF_MVSET  ( (1<<MMF_MVA) | (1<<MMF_MVB) | (1<<MMF_MVC) )
+#define MMF_MVDEF  ( (1<<MMF_MVA) | (1<<MMF_MVB) )
 #ifdef ATL_JKMDEF
    #define MMF_DEFAULT ( (1<<MMF_LDCTOP) | (1<<MMF_JKMABC) | (1<<MMF_AOUTER) | \
-                         (1<<MMF_NRUNTIME) | (1<<MMF_MRUNTIME) )
+                         (1<<MMF_NRUNTIME) | (1<<MMF_MRUNTIME) | MMF_MVDEF )
 #else
-   #define MMF_DEFAULT ( (1<<MMF_LDISKB) | (1<<MMF_LDAB) )
+   #define MMF_DEFAULT ( (1<<MMF_LDISKB) | (1<<MMF_LDAB) | MMF_MVDEF )
 #endif
 #ifndef  FLAG_IS_SET
    #define FLAG_IS_SET(field_, bit_) ( ((field_) & (1<<(bit_))) != 0 )
 #endif
+#define ATL_MMF_MVGET(field_) (((field_) >> MMF_MVA) & 7)
+#define ATL_MMF_MVPUT(field_, v_) \
+   (field_) = ( ((field_) & ~MMF_MVSET) | (((v_) & 7) << MMF_MVA) )
 
 typedef struct MMNode ATL_mmnode_t;
 struct MMNode
@@ -94,7 +102,7 @@ struct MMNode
    char *genstr;                /* system(genstr) will generate gened kernel */
    char *exflags;               /* extra flags to pass test/time call */
    char *moves;                 /* -DMove[A,B,C] to use, NULL default */
-   int flag;
+   unsigned int flag;
    ATL_mmnode_t *next;
 };
 
@@ -1247,6 +1255,13 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
 
 @endwhile
 @ROUT mmread
+   sp = strstr(ln, "OPMV=");
+   if (sp)
+   {
+      int imv;
+      imv = atoi(sp+5);
+      ATL_MMF_MVPUT(p->flag, imv);
+   }
 @multidef fl 
    X87 LDCTOP MRUNTIME NRUNTIME KRUNTIME KUISKB LDISKB BETAN1 LDAB AOUTER
    LDFLOAT STFLOAT PFACOLS PFABLK PFBCOLS PFCELTS L14NB JKMABC JKMAB BMAB BMABC
@@ -1362,6 +1377,8 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
 @endwhile
 
 @ROUT mmread 
+   if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
+   i += fprintf(fpout, "OPMV=%d ", ATL_MMF_MVGET(np->flag));
 @whiledef kw mu nu ku kbmin kbmax fftch iftch nftch lat pref muladd vlen kmaj
    if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
    i += fprintf(fpout, "@up@(kw)=%d ", np->@(kw));
