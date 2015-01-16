@@ -16,10 +16,10 @@
 #ifndef NTIM
    #define NTIM 3
 #endif
-#if defined(PentiumCPS) || defined(WALL)
-   #define time00 ATL_walltime
-#else
+#ifdef CPUTIME
    #define time00 ATL_cputime
+#else
+   #define time00 ATL_walltime
 #endif
 double time00();
 double macase(int nrep, volatile TYPE *dum);
@@ -6965,7 +6965,7 @@ int main(int nargs, char *args)
 #define REPS 4096
 
 #ifndef time00
-   #define time00 ATL_cputime
+   #define time00 ATL_walltime
 #endif
 double time00();
 
@@ -20175,10 +20175,10 @@ int cblas_errprn(int ierr, int info, char *form, ...);
    #define WALL
 #endif
 #ifndef time00
-   #if defined(WALL)
-      #define time00 ATL_walltime
-   #else
+   #if defined(CPUTIME)
       #define time00 ATL_cputime
+   #else
+      #define time00 ATL_walltime
    #endif
 #endif
 #define Mabs(x) ( (x) >= 0 ? (x) : -(x) )
@@ -35677,20 +35677,23 @@ double GetKmmMflop
       CINT mblks = mb/mu, nblks = nb/nu;
    #endif
    const int NOMOVE = !(movA|movB|movC);
-   int ldc, setsz, nset, i, j, incA, incB, incC, n, extra;
+   int ldc, setsz, nset, i, j, incA, incB, incC, n, extra, EXTRA=0;
    TYPE *C, *A, *B, *a, *b, *c;
    double t0, t1, mf;
    const TYPE alpha=1.0;
    TYPE beta=1.0;
    void *vp=NULL;
    unsigned int seed = mb*kb + (nb<<14);
+   #ifdef ATL_NEWTIME
+      EXTRA = 4*mu*nu;
+   #endif
 
    
    if (NOMOVE)
    {
       ldc = (LDC) ? LDC : mb;
       setsz = (ldc * nb + kb*(mb+nb));
-      vp = malloc(ATL_Cachelen + ATL_MulBySize(setsz));
+      vp = malloc(ATL_Cachelen + ATL_MulBySize(setsz+EXTRA));
       ATL_assert(vp);
       A =  ATL_AlignPtr(vp);
       B = A + mb*kb;
@@ -35706,7 +35709,7 @@ double GetKmmMflop
          nset = (FLSIZE+setsz-1)/setsz;
          FLSIZE = nset*setsz;
          setsz = mb*nb+kb*(mb+nb);
-         vp = malloc(ATL_Cachelen + ATL_MulBySize(setsz));
+         vp = malloc(ATL_Cachelen + ATL_MulBySize(nset*setsz+EXTRA));
          ATL_assert(vp);
          A = ATL_AlignPtr(vp);
          B = A + kb*mb*nset;
@@ -35746,7 +35749,7 @@ double GetKmmMflop
          i = ATL_MulBySize(setsz);
          nset = (FLSIZE+i-1)/i;
          FLSIZE = nset * i;
-         vp = malloc(ATL_Cachelen + ATL_MulBySize(FLSIZE+extra));
+         vp = malloc(ATL_Cachelen + ATL_MulBySize(FLSIZE+extra+EXTRA));
          ATL_assert(vp);
          A = ATL_AlignPtr(vp);
          if (movC)
@@ -35940,7 +35943,7 @@ struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
    #endif
    kp->movA = kp->movB = kp->movC = 0;
    kp->FLSIZE = L2SIZE;
-   kp->reps = 200;
+   kp->reps = 0;
    kp->LDC = 0;
    for (i=1; i < nargs; i++)
    {
@@ -36044,6 +36047,8 @@ struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
          PrintUsage(args[0], i, args[i]);
       }
    }
+   if (!kp->reps)
+      kp->reps = 200;
    if (!kp->pids)
    {
       kp->pids = malloc(sizeof(int)*kp->p);
@@ -38138,10 +38143,10 @@ int main(int nargs, char **args)
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
-#if defined(PentiumCPS) || defined(WALL)
-   #define time00 ATL_walltime
-#else
+#if defined(CPUTIME)
    #define time00 ATL_cputime
+#else
+   #define time00 ATL_walltime
 #endif
 double time00();
 
