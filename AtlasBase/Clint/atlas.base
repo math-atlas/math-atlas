@@ -35621,7 +35621,7 @@ gemm(...)
 #include "atlas_ptmisc.h"
 #include <assert.h>
 #include <string.h>
-#define dumb_rand() ( 0.5 - ((double)rand())/((double)RAND_MAX) )
+#define dumb_prand(is_) ( 0.5 - ((double)rand_r(is_))/((double)RAND_MAX) )
 
 #ifndef KMM 
    #define KMM ATL_USERMM
@@ -35651,6 +35651,7 @@ struct kmm_struct{
    int p;                               /* total number of threads */
    int *pids;                           /* IDs of processors for affinity */
    double mf;                           /* mflop returned by timing */
+   volatile unsigned char *chkin;       /* P-len array to signal start/done */
 };
 
 double GetKmmMflop
@@ -35682,7 +35683,9 @@ double GetKmmMflop
    const TYPE alpha=1.0;
    TYPE beta=1.0;
    void *vp=NULL;
+   unsigned int seed = mb*kb + (nb<<14);
 
+   
    if (NOMOVE)
    {
       ldc = (LDC) ? LDC : mb;
@@ -35692,7 +35695,7 @@ double GetKmmMflop
       A =  ATL_AlignPtr(vp);
       B = A + mb*kb;
       C = B + kb*nb;
-      for (i=0; i < setsz; i++) A[i] = 0.0; /* dumb_rand(); */
+      for (i=0; i < setsz; i++) A[i] = dumb_prand(&seed);
       incA = incB = incC = 0;
    }
    else
@@ -35709,7 +35712,7 @@ double GetKmmMflop
          B = A + kb*mb*nset;
          C = B + kb*nb*nset;
          ldc = (LDC) ? mb*nset : mb;
-         for (n=setsz*nset,i=0; i < n; i++) A[i] = 0.0;  /* dumb_rand(); */
+         for (n=setsz*nset,i=0; i < n; i++) A[i] = dumb_prand(&seed);
          incA = mb*kb; 
          incB = kb*nb;
          incC = mb*nb;
@@ -35757,7 +35760,7 @@ double GetKmmMflop
             B = A + mb*kb*nset;
             C = B + kb*nb*nset;
          }
-         for (n=setsz*nset+extra,i=0; i < n; i++) A[i] = 0.0; /* dumb_rand(); */
+         for (n=setsz*nset+extra,i=0; i < n; i++) A[i] = dumb_prand(&seed);
       }
    }
    a = A; b = B; c = C;
@@ -35791,7 +35794,7 @@ double GetKmmMflop
    return(mf);
 }
 
-#define PRINT_COREID
+@skip #define PRINT_COREID
 #ifdef PRINT_COREID
    #include <utmpx.h>
 #endif
@@ -35804,6 +35807,9 @@ double GetKmmMflop
 void *TimeOnCore(void *vp)
 {
    struct kmm_struct *kp = vp;
+   const int P = kp->p;
+   int i;
+   volatile unsigned char *chkin = kp->chkin;
    #ifdef PRINT_COREID
       printf("core=%d\n", sched_getcpu());
    #endif
@@ -35812,7 +35818,16 @@ void *TimeOnCore(void *vp)
     syscall(SYS_getcpu, &cpu, &node, NULL);
     printf("cpu=%u, node=%u\n", cpu, node);
 #endif
-
+/*
+ * First we barrier, so that all cores are active.  Otherwise, 1st core to
+ * start may run with bus to himself, and not give us a measure of true
+ * parallel performance.  Want full-on contention as in perfect parallel code.
+ * We wait on chkin array to have all non-zero entries.  Even on weakly-ordered
+ * caches this should work, though the delay may be long.
+ */
+   chkin[kp->iam] = 1;
+   for (i=0; i < P; i++)
+      while(!chkin[i]);
    #ifdef ATL_NEWTIME
       kp->mf = GetKmmMflop(kp->mb, kp->nb, kp->kb, kp->mu, kp->nu, kp->ku, 
                            kp->movA, kp->movB, kp->movC,
@@ -35834,16 +35849,21 @@ double *TimeOnCores(struct kmm_struct *kb)
    cpu_set_t cpuset;
    double *mflops;
    int i, p;
+   unsigned char *chkin;
 
    p = kb->p;
    kp = malloc(sizeof(struct kmm_struct)*p);
    threads = malloc(sizeof(pthread_t)*p);
    attr = malloc(sizeof(pthread_attr_t)*p);
    mflops = malloc(sizeof(double)*p);
-   ATL_assert(kp && threads && attr && mflops);
+   chkin = malloc(sizeof(char)*p);
+   ATL_assert(kp && threads && attr && mflops && chkin);
+   for (i=0; i < p; i++)   /* init chkin to 0 before starting any threads */
+      chkin[i] = 0;        /* when all entries non-zero, all thrds started */
    for (i=0; i < p; i++)
    {
       memcpy(kp+i, kb, sizeof(struct kmm_struct));
+      kp[i].chkin = (volatile char*)chkin;
       kp[i].iam = i;
 @beginskip
       cpuset = (((long long)1)<<(kp->pids[i]));
