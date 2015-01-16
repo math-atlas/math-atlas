@@ -3182,7 +3182,8 @@ static enum VECTYPE {VTAVXZ=0, VTAVX=1, VTSSE=2, VTGV=3, VTSC=4} VECi=VTSC;
 static int VLEN[5] = {8, 4, 2, 2, 1};  /* assume double, fix later if nec */
 static char *VECs[5] = {"avxz", "avx", "sse", "gvec", "scalar"};
 static int TSIZE=8;
-static char *MOVES=NULL;
+@skip static char *MOVES=NULL;
+static int IMVS=3;     /* move ptrs in timing encoded in last 3 bits: CBA */
 #define KRUNMUL 1.02   /* KRUNTIME speedup increase over K-compile time */
 
 @extract -b @(basd)/atlas.base rout=Mylcm
@@ -3545,6 +3546,26 @@ int *GetFlags(int nargs, char **args, char *PRE,
    return(nbs);
 }
 @ROUT ammsearch uammsearch
+static INLINE void ApplyMoves2Flag
+(
+   ATL_mmnode_t *mmp,  /* kernel to set MMF_MV[A,B,C] flag bits */
+   int mvBits          /* last 3 bits: MOVE_[CBA] */
+)
+{
+   int flag = mmp->flag & (~MMF_MVSET);         /* zero existing move bits */
+   mmp->flag = flag | ((mvBits & 7)<<MMF_MVA); /* put new move bits in */
+}
+static void ApplyMoves2Flags
+(
+   ATL_mmnode_t *mmb,  /* kernel to set MMF_MV[A,B,C] flag bits */
+   int mvBits          /* last 3 bits: MOVE_[CBA] */
+)
+{
+   const unsigned int mvMSK = ~MMF_MVSET, mvSET = (mvBits&7)<<MMF_MVA;
+   ATL_mmnode_t *mmp;
+   for (mmp=mmb; mmp; mmp = mmp->next)
+      mmp->flag = ((mmp->flag) & mvMSK) | mvSET;
+}
 
 char *GenString(char pre, int lat, int nb, int mu, int nu, int ku, 
                 int kmaj, char *rt)
@@ -3638,8 +3659,9 @@ ATL_mmnode_t *GetNewGenNode(char pre, int nb, int lat, int mu, int nu, int ku,
    np->lat = lat;
    np->kmaj = kmaj;
    np->genstr = GenString(pre, lat, nb, mu, nu, ku, kmaj, np->rout);
-   if (MOVES)
-      np->moves = DupString(MOVES);
+   ApplyMoves2Flag(np, IMVS);
+@skip   if (MOVES)
+@skip      np->moves = DupString(MOVES);
    return(np);
 }
 
@@ -4431,7 +4453,9 @@ ATL_mmnode_t *MergeAndWinnowCases
    return(mmb);
 }
 
-void ApplyMoves2Flag   /* overwrites MV bits according to string */
+
+@beginskip
+void ApplyMoves2Flags  /* overwrites MV bits according to string */
 (
    ATL_mmnode_t *mmb,  /* queue of kernels to set MMF_MV[A,B,C] flag bits */
    char *mvs           /* string passed to timer wt moves */
@@ -4455,6 +4479,7 @@ void ApplyMoves2Flag   /* overwrites MV bits according to string */
    for (mmp=mmb; mmp; mmp = mmp->next)
       mmp->flag = (((mmp->flag) & NOMV) | DOMV);
 }
+@endskip
 
 int FailKCleanTests(char pre, int nb, ATL_mmnode_t *kp)
 /*
@@ -4834,7 +4859,7 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
    else
       printf("NO VALID USER-SUBMITTED K-CLEANUP KERNELS\n\n");
    free(dl);
-   ApplyMoves2Flag(gmmb, MOVES);  /* gen must know operand movement pattern */
+@skip   ApplyMoves2Flags(gmmb, MOVES);  /* gen must know operand movement pattern */
    WriteMMFileWithPath(pre, "res", "@(kpr)KCLEAN.sum", gmmb);
    return(gmmb);
 }
@@ -6346,7 +6371,7 @@ ATL_mmnode_t *FindBestKerns
 @skip   PrintMMNodes(stderr, nmmb);
    if (tol > 0.0)
       nmmb = TolerantPrune(nmmb, tol);
-   ApplyMoves2Flag(nmmb, MOVES);  /* gen must know operand movement pattern */
+@skip   ApplyMoves2Flags(nmmb, MOVES);  /* gen must know operand movement pattern */
    WriteMMFileWithPath(pre, "res", "uAMMFRC.sum", nmmb);
    printf("DONE.\n");
    return(nmmb);
@@ -6416,7 +6441,7 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, int *VERB, int *NN,
    int i, k, j, N=0, ALL=0, MV;
    char *cs;
 
-   MOVES = NULL;
+@skip   MOVES = NULL;
    *TOL = 0.0;
    *VERB = 1;
    *PRE = 'd';
@@ -6454,6 +6479,8 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, int *VERB, int *NN,
             else
                PrintUsage(args[0], -i, "UNKNOWN MATRIX FOR -M");
          }
+         IMVS = MV;
+@beginskip
          n=0;
          if (MV&1) n++;
          if (MV&2) n++;
@@ -6476,6 +6503,7 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, int *VERB, int *NN,
          }
          else
             MOVES = DupString("-DMoveA -DMoveB -DMoveC");
+@endskip
          break;
       case 'S':
          if (++i >= nargs)
@@ -6704,7 +6732,7 @@ ATL_mmnode_t *FindBestSquareKern(char pre, int verb, ATL_mmnode_t *mmb)
    }
    assert(mmSQ);
    KillAllMMNodes(mmb);
-   ApplyMoves2Flag(mmSQ, MOVES);  /* gen must know operand movement pattern */
+@skip   ApplyMoves2Flags(mmSQ, MOVES);  /* gen must know operand movement pattern */
    WriteMMFileWithPath(pre, "res", "uAMMFRC.sum", mmSQ);
    printf("DONE.\n");
    return(mmSQ);
@@ -6728,11 +6756,14 @@ int main(int nargs, char **args)
    {
       mmb = ApplyConstraints(mmb, C);
       assert(mmb);
+      ApplyMoves2Flags(mmb, IMVS);
+@beginskip
       if (MOVES)
       {
          for (mp=mmb; mp; mp = mp->next)
             mp->moves = DupString(MOVES);
       }
+@endskip
       mmb = FindBestSquareKern(pre, verb, mmb);
    }
    else
@@ -6742,11 +6773,14 @@ int main(int nargs, char **args)
  */
       mmb = GetWorkingUserCases(verb, pre);
       mmb = ApplyConstraints(mmb, C);
+      ApplyMoves2Flags(mmb, IMVS);
+@beginskip
       if (MOVES)
       {
          for (mp=mmb; mp; mp = mp->next)
             mp->moves = DupString(MOVES);
       }
+@endskip
       mmb = FindBestKerns(pre, verb, mmb, N, mbs, nbs, kbs, C, tol);
    }
    if (KCLEAN)
@@ -6771,8 +6805,8 @@ int main(int nargs, char **args)
    free(mbs);
    free(nbs);
    free(kbs);
-   if (MOVES)
-      free(MOVES);
+@skip   if (MOVES)
+@skip      free(MOVES);
    return(0);
 }
 @ROUT ATL_ammmABC
