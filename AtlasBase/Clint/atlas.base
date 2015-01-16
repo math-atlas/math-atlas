@@ -35677,7 +35677,7 @@ double GetKmmMflop
       CINT mblks = mb/mu, nblks = nb/nu;
    #endif
    const int NOMOVE = !(movA|movB|movC);
-   int ldc, setsz, nset, i, j, incA, incB, incC, n, extra, EXTRA=0;
+   size_t ldc, setsz, nset, i, j, incA, incB, incC, n, extra, EXTRA=0;
    TYPE *C, *A, *B, *a, *b, *c;
    double t0, t1, mf;
    const TYPE alpha=1.0;
@@ -35693,11 +35693,12 @@ double GetKmmMflop
    {
       ldc = (LDC) ? LDC : mb;
       setsz = (ldc * nb + kb*(mb+nb));
-      vp = malloc(ATL_Cachelen + ATL_MulBySize(setsz+EXTRA));
+      vp = malloc(2*ATL_Cachelen + ATL_MulBySize(setsz+EXTRA));
       ATL_assert(vp);
-      A =  ATL_AlignPtr(vp);
+      A = ATL_AlignPtr(vp);
       B = A + mb*kb;
       C = B + kb*nb;
+      C = ATL_AlignPtr(C);
       for (i=0; i < setsz; i++) A[i] = dumb_prand(&seed);
       incA = incB = incC = 0;
    }
@@ -35707,13 +35708,14 @@ double GetKmmMflop
       {
          setsz = ATL_MulBySize(mb*nb+kb*(mb+nb));
          nset = (FLSIZE+setsz-1)/setsz;
-         FLSIZE = nset*setsz;
-         setsz = mb*nb+kb*(mb+nb);
+         FLSIZE = nset*(setsz+ATL_Cachelen);
+         setsz = mb*nb + kb*(mb+nb) + ATL_DivBySize(ATL_Cachelen);
          vp = malloc(ATL_Cachelen + ATL_MulBySize(nset*setsz+EXTRA));
          ATL_assert(vp);
          A = ATL_AlignPtr(vp);
          B = A + kb*mb*nset;
          C = B + kb*nb*nset;
+         C = ATL_AlignPtr(B);
          ldc = (LDC) ? mb*nset : mb;
          for (n=setsz*nset,i=0; i < n; i++) A[i] = dumb_prand(&seed);
          incA = mb*kb; 
@@ -35749,7 +35751,7 @@ double GetKmmMflop
          i = ATL_MulBySize(setsz);
          nset = (FLSIZE+i-1)/i;
          FLSIZE = nset * i;
-         vp = malloc(ATL_Cachelen + ATL_MulBySize(FLSIZE+extra+EXTRA));
+         vp = malloc(2*ATL_Cachelen + ATL_MulBySize(extra+EXTRA) + FLSIZE);
          ATL_assert(vp);
          A = ATL_AlignPtr(vp);
          if (movC)
@@ -35757,11 +35759,13 @@ double GetKmmMflop
             C = A + mb*kb*nset;
             ldc = (LDC) ? mb*nset : mb;
             B = C + mb*nb*nset;
+            B = ATL_AlignPtr(B);
          }
          else
          {
             B = A + mb*kb*nset;
             C = B + kb*nb*nset;
+            C = ATL_AlignPtr(C);
          }
          for (n=setsz*nset+extra,i=0; i < n; i++) A[i] = dumb_prand(&seed);
       }
