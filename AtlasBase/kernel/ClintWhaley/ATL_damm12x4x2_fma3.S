@@ -79,10 +79,24 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
    #define VCOP vaddpd
 #endif
 #define vmovapd vmovaps
+/*
+ * Corei3 (Haswell) has twice the throughput using MACC as wt FADD (Agner Fog)
+ */
+#ifdef ATL_ARCH_Corei3
+   #define FORCE_MACC
+#endif
 .text
 .global ATL_asmdecor(ATL_USERMM)
 ALIGN16
 ATL_asmdecor(ATL_USERMM):
+   #if !defined(BETA0) && defined(FORCE_MACC)
+      #define BETAOFF -56
+      fld1         /* st = {1.0} */
+      #ifdef BETAN1
+         fchs      /* st = {-1.0} */
+      #endif
+      fstpl BETAOFF(%rsp)   /* st = {} */
+  #endif
 /*
  * Save callee-saved iregs
  */
@@ -137,12 +151,22 @@ ATL_asmdecor(ATL_USERMM):
 
             vbroadcastsd 8(pB), rB0
             vmulpd rA0, rB0, rC01
+            #ifdef ATL_MOVEC
+               prefC(-128(pC))
+            #endif
             vmulpd rA1, rB0, rC11
+            #ifndef ATL_MOVEC
                prefC((pC))
+            #else
+               prefC(-64(pC))
+            #endif
             vmulpd rA2, rB0, rC21
 
             vbroadcastsd 16(pB), rB0
             vmulpd rA0, rB0, rC02
+            #ifdef ATL_MOVEC
+               prefC((pC))
+            #endif
             vmulpd rA1, rB0, rC12
                prefB((pfA))
             vmulpd rA2, rB0, rC22
@@ -160,17 +184,29 @@ ATL_asmdecor(ATL_USERMM):
  */
             vbroadcastsd 32(pB), rB0
             FMAC rA0, rB0, rC00
+            #ifdef ATL_MOVEC
+               prefC(64(pC))
+            #endif
             FMAC rA1, rB0, rC10
                prefB((pfA,r192))
             FMAC rA2, rB0, rC20
 
             vbroadcastsd 40(pB), rB0
             FMAC rA0, rB0, rC01
+            #ifdef ATL_MOVEC
+               prefC(128-256(pC,r256))
+            #endif
             FMAC rA1, rB0, rC11
+            #ifdef ATL_MOVEC
+               prefC(192-256(pC,r256))
+            #endif
             FMAC rA2, rB0, rC21
 
             vbroadcastsd 48(pB), rB0
             FMAC rA0, rB0, rC02
+            #ifdef ATL_MOVEC
+               prefC(224-256(pC,r256))
+            #endif
             FMAC rA1, rB0, rC12
             FMAC rA2, rB0, rC22
 
@@ -306,6 +342,32 @@ KDONE:
             #endif
             movaps rC23x, -32(pC,r256)
             vextractf128 $1, rC23, -16(pC,r256)
+         #elif defined(FORCE_MACC) && !defined(BETA0)
+            vbroadcastsd BETAOFF(%rsp), rB0
+               FMAC -128(pC), rB0, rC00
+            vmovapd rC00, -128(pC)
+               FMAC -96(pC), rB0, rC10
+            vmovapd rC10, -96(pC)
+               FMAC -64(pC), rB0, rC20
+            vmovapd rC20, -64(pC)
+               FMAC -32(pC), rB0, rC01
+            vmovapd rC01, -32(pC)
+               FMAC (pC), rB0, rC11
+            vmovapd rC11, (pC)
+               FMAC 32(pC), rB0, rC21
+            vmovapd rC21, 32(pC)
+               FMAC 64(pC), rB0, rC02
+            vmovapd rC02, 64(pC)
+               FMAC 96(pC), rB0, rC12
+            vmovapd rC12, 96(pC)
+               FMAC 128-256(pC,r256), rB0, rC22
+            vmovapd rC22, 128-256(pC,r256)
+               FMAC 160-256(pC,r256), rB0, rC03
+            vmovapd rC03, 160-256(pC,r256)
+               FMAC 192-256(pC,r256), rB0, rC13
+            vmovapd rC13, 192-256(pC,r256)
+               FMAC 224-256(pC,r256), rB0, rC23
+            vmovapd rC23, 224-256(pC,r256)
          #else
             #ifndef BETA0
                VCOP -128(pC), rC00, rC00
