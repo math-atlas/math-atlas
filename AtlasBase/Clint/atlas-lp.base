@@ -57,9 +57,16 @@ int ATL_getriR(const int N, TYPE *A, const int lda, const int *ipiv,
  *    Find largest NB we can use with our provided workspace
  */
     jb = lwrk / N;
-    if (jb >= NB) nb = ATL_MulByNB(ATL_DivByNB(jb));
-    else if (jb >= ATL_mmMU) nb = (jb/ATL_mmMU)*ATL_mmMU;
-    else nb = jb;
+    nb = Mjoin(PATL,laGetB)(N, 0, N, 0);
+    if (jb < nb) 
+    {
+       if (jb >= ATL_AMM_98LCMMN)
+          nb = (jb/ATL_AMM_98LCMMN)*ATL_AMM_98LCMMN;
+       else if (jb >= 4)
+          nb = 4;
+       else
+          nb = jb;
+    }
     if (!nb) return(-6);  /* need at least 1 row of workspace */
 /*
  *    Only first iteration will have partial block, unroll it
@@ -143,9 +150,16 @@ int ATL_getriC(const int N, TYPE *A, const int lda, const int *ipiv,
  *    Find largest NB we can use with our provided workspace
  */
       jb = lwrk / N;
-      if (jb >= NB) nb = ATL_MulByNB(ATL_DivByNB(jb));
-      else if (jb >= ATL_mmNU) nb = (jb/ATL_mmNU)*ATL_mmNU;
-      else nb = jb;
+      nb = Mjoin(PATL,laGetB)(N, 0, N, 0);
+      if (jb < nb) 
+      {
+         if (jb >= ATL_AMM_98LCMMN)
+            nb = (jb/ATL_AMM_98LCMMN)*ATL_AMM_98LCMMN;
+         else if (jb >= 4)
+            nb = 4;
+         else
+            nb = jb;
+      }
       if (!nb) return(-6);  /* need at least 1 col of workspace */
 /*
  *    Only first iteration will have partial block, unroll it
@@ -198,7 +212,7 @@ int ATL_getri(const enum CBLAS_ORDER Order, const int N, TYPE *A, const int lda,
          ierr = ATL_getriR(N, A, lda, ipiv, wrk, *lwrk);
       else ierr = ATL_getriC(N, A, lda, ipiv, wrk, *lwrk);
    }
-   else *lwrk = ATL_MulByNB(N);
+   else *wrk = N*ATL_AMM_98KB;
    return(ierr);
 }
 @ROUT ATL_lauumL ATL_lauumU
@@ -236,8 +250,9 @@ void ATL_lauumL(const int N, TYPE *A, const int lda)
    if (N > 1)
    {
       Nleft = N >> 1;
-      #ifdef NB
-         if (Nleft > NB) Nleft = ATL_MulByNB(ATL_DivByNB(Nleft));
+      #ifdef ATL_AMM_98LCMMN
+         if (Nleft > ATL_AMM_98LCMMN) 
+            Nleft = (Nleft/ATL_AMM_98LCMMN)*ATL_AMM_98LCMMN;
       #endif
       Nright = N - Nleft;
       #ifdef RowMajor_
@@ -270,8 +285,9 @@ void ATL_lauumU(const int N, TYPE *A, const int lda)
    if (N > 1)
    {
       Nleft = N >> 1;
-      #ifdef NB
-         if (Nleft > NB) Nleft = ATL_MulByNB(ATL_DivByNB(Nleft));
+      #ifdef ATL_AMM_98LCMMN
+         if (Nleft > ATL_AMM_98LCMMN) 
+            Nleft = (Nleft/ATL_AMM_98LCMMN)*ATL_AMM_98LCMMN;
       #endif
       Nright = N - Nleft;
       #ifdef RowMajor_
@@ -359,11 +375,9 @@ int ATL_potrf(const enum ATLAS_ORDER Order, const enum ATLAS_UPLO Uplo,
  * HERK actually uses real gemm, so use real blocking factors
  */
 #ifdef SCPLX
-   #define CMM_H
-   #include "smm.h"
+   #include "atlas_samm_sum.h"
 #elif defined(DCPLX)
-   #define ZMM_H
-   #include "zmm.h"
+   #include "atlas_damm_sum.h"
 #endif
 #include "atlas_misc.h"
 #include "atlas_lvl3.h"
@@ -384,8 +398,9 @@ int ATL_potrfRU(const int N, TYPE *A, const int lda)
    if (N > 1)
    {
       Nleft = N >> 1;
-      #ifdef NB
-         if (Nleft > NB<<1) Nleft = ATL_MulByNB(ATL_DivByNB(Nleft));
+      #ifdef ATL_AMM_98LCMMN
+         if (Nleft > ATL_AMM_98LCMMN<<1) 
+            Nleft = (Nleft/ATL_AMM_98LCMMN)*ATL_AMM_98LCMMN;
       #endif
       Nright = N - Nleft;
       ierr = ATL_potrfRU(Nleft, A, lda);
@@ -425,8 +440,9 @@ int ATL_potrfRL(const int N, TYPE *A, const int lda)
    if (N > 1)
    {
       Nleft = N >> 1;
-      #ifdef NB
-         if (Nleft > NB<<1) Nleft = ATL_MulByNB(ATL_DivByNB(Nleft));
+      #ifdef ATL_AMM_98LCMMN
+         if (Nleft > ATL_AMM_98LCMMN<<1) 
+            Nleft = (Nleft/ATL_AMM_98LCMMN)*ATL_AMM_98LCMMN;
       #endif
       Nright = N - Nleft;
       ierr = ATL_potrfRL(Nleft, A, lda);
@@ -459,11 +475,9 @@ int ATL_potrfRL(const int N, TYPE *A, const int lda)
  * HERK actually uses real gemm, so use real blocking factors
  */
 #ifdef SCPLX
-   #define CMM_H
-   #include "smm.h"
+   #include "atlas_samm_sum.h"
 #elif defined(DCPLX)
-   #define ZMM_H
-   #include "zmm.h"
+   #include "atlas_damm_sum.h"
 #endif
 #include "atlas_misc.h"
 #include "atlas_lvl3.h"
@@ -662,7 +676,6 @@ int ATL_potrfU(const int N, TYPE *A, const int lda)
       static const TYPE ONE[2] = {ATL_rone, ATL_rzero}; 
    #endif
 
-@skip   if (N > NB)
    #ifdef TREAL
       if (N > 4)
    #else
@@ -670,8 +683,9 @@ int ATL_potrfU(const int N, TYPE *A, const int lda)
    #endif
    {
       Nleft = N >> 1;
-      #ifdef NB
-         if (Nleft > NB<<1) Nleft = ATL_MulByNB(ATL_DivByNB(Nleft));
+      #ifdef ATL_AMM_98LCMMN
+         if (Nleft > ATL_AMM_98LCMMN<<1) 
+            Nleft = (Nleft/ATL_AMM_98LCMMN)*ATL_AMM_98LCMMN;
       #endif
       Nright = N - Nleft;
       ierr = ATL_potrfU(Nleft, A, lda);
@@ -897,7 +911,6 @@ int ATL_potrfL(const int N, TYPE *A, const int lda)
       static const TYPE ONE[2] = {ATL_rone, ATL_rzero}; 
    #endif
 
-@skip   if (N > NB)
 #ifdef TREAL
    if (N > 4)
 #else
@@ -905,8 +918,9 @@ int ATL_potrfL(const int N, TYPE *A, const int lda)
 #endif
    {
       Nleft = N >> 1;
-      #ifdef NB
-         if (Nleft > NB<<1) Nleft = ATL_MulByNB(ATL_DivByNB(Nleft));
+      #ifdef ATL_AMM_98LCMMN
+         if (Nleft > ATL_AMM_98LCMMN<<1) 
+            Nleft = (Nleft/ATL_AMM_98LCMMN)*ATL_AMM_98LCMMN;
       #endif
       Nright = N - Nleft;
       ierr = ATL_potrfL(Nleft, A, lda);
@@ -1169,13 +1183,6 @@ void ATL_laswp(const int N, TYPE *A, const int lda0, const int K1,
 #endif
 
 
-@beginskip
-#if (ATL_mmMU > ATL_mmNU)
-   #define ATL_luMmin ATL_mmMU
-#else
-   #define ATL_luMmin ATL_mmNU
-#endif
-@endskip
 #ifdef TREAL
    #define ATL_luMmin 2
    #define ATL_PCAMin 1500
@@ -1218,8 +1225,8 @@ int ATL_getrfR(const int M, const int N, TYPE *A, const int lda, int *ipiv)
    if (MN > 1)
    {
       Nup = MN >> 1;
-      #ifdef NB
-         if (Nup > NB) Nup = ATL_MulByNB(ATL_DivByNB(Nup));
+      #ifdef ATL_AMM_98LCMMN
+         if (Nup > ATL_AMM_98LCMMN) Nup = (Nup/ATL_AMM_98LCMMN)*ATL_AMM_98LCMMN;
       #endif
       Ndown = M - Nup;
       i = ATL_getrfR(Nup, N, A, lda, ipiv);
@@ -1518,8 +1525,9 @@ int ATL_getrfC(const int M, const int N, TYPE *A, const int lda, int *ipiv)
    if (MN > ATL_luMmin)
    {
       Nleft = MN >> 1;
-      #ifdef NB
-         if (Nleft > NB) Nleft = ATL_MulByNB(ATL_DivByNB(Nleft));
+      #ifdef ATL_AMM_98LCMMN
+         if (Nleft > ATL_AMM_98LCMMN) 
+            Nleft = (Nleft/ATL_AMM_98LCMMN)*ATL_AMM_98LCMMN;
       #endif
       Nright = N - Nleft;
       i = ATL_getrfC(M, Nleft, A, lda, ipiv);  /* factor left to L & U */
@@ -1908,8 +1916,9 @@ int ATL_trtriCU(const enum ATLAS_DIAG Diag, const int N, TYPE *A, const int lda)
 #endif
    {
       Nleft = N >> 1;
-      #ifdef NB
-         if (Nleft > NB) Nleft = ATL_MulByNB(ATL_DivByNB(Nleft));
+      #ifdef ATL_AMM_98LCMMN
+         if (Nleft > ATL_AMM_98LCMMN) 
+            Nleft = (Nleft/ATL_AMM_98LCMMN)*ATL_AMM_98LCMMN;
       #endif
       Nright = N - Nleft;
 
@@ -1984,8 +1993,9 @@ int ATL_trtriRU(const enum ATLAS_DIAG Diag, const int N, TYPE *A, const int lda)
 #endif
    {
       Nleft = N >> 1;
-      #ifdef NB
-         if (Nleft > NB) Nleft = ATL_MulByNB(ATL_DivByNB(Nleft));
+      #ifdef ATL_AMM_98LCMMN
+         if (Nleft > ATL_AMM_98LCMMN) 
+            Nleft = (Nleft/ATL_AMM_98LCMMN)*ATL_AMM_98LCMMN;
       #endif
       Nright = N - Nleft;
 
@@ -2130,8 +2140,9 @@ int ATL_trtriCL(const enum ATLAS_DIAG Diag, const int N, TYPE *A, const int lda)
 #endif
    {
       Nleft = N >> 1;
-      #ifdef NB
-         if (Nleft > NB) Nleft = ATL_MulByNB(ATL_DivByNB(Nleft));
+      #ifdef ATL_AMM_98LCMMN
+         if (Nleft > ATL_AMM_98LCMMN) 
+            Nleft = (Nleft/ATL_AMM_98LCMMN)*ATL_AMM_98LCMMN;
       #endif
       Nright = N - Nleft;
 
@@ -2276,8 +2287,9 @@ int ATL_trtriRL(const enum ATLAS_DIAG Diag, const int N, TYPE *A, const int lda)
 #endif
    {
       Nleft = N >> 1;
-      #ifdef NB
-         if (Nleft > NB) Nleft = ATL_MulByNB(ATL_DivByNB(Nleft));
+      #ifdef ATL_AMM_98LCMMN
+         if (Nleft > ATL_AMM_98LCMMN) 
+            Nleft = (Nleft/ATL_AMM_98LCMMN)*ATL_AMM_98LCMMN;
       #endif
       Nright = N - Nleft;
 
@@ -2358,6 +2370,94 @@ int ATL_trtri(const enum ATLAS_ORDER Order, const enum ATLAS_UPLO Uplo,
       }
    }
    return(0);
+}
+@ROUT ATL_laGetB
+#include "atlas_misc.h"
+@skip #include Mstr(Mjoin(AMM_UPR,_perf.h))
+#include Mstr(Mjoin(AMM_UPR,_blk.h))
+#include Mstr(Mjoin(AMM_PRE,_sum.h))
+#include "atlas_lapack.h"
+/*
+ * Take a wild-ass guess as to a good blocking factor.
+ * M, N, K dim GEMM called wt, 0 means that dim is blocked.
+ * Type of operation is given in the HINT:
+ *    0 : panel op is fast (eg. L3-BLAS based) w/o extra flops (eg. LU)
+ *    1 : panel op is slow (eg, L1/2-BLAS based) without extra flops
+ *    2 : panel op is fast, with extra flops (eg. QR)
+ *    4 : panel op is slow (eg, L1/2-BLAS based) with extra flops
+ * Right now, this guys assumes a rank-K update shape regardless of input;
+ * it should be replaced with something smarter once we've finalized the
+ * amm blocking strategy.  All the computation shouldn't disguise the fact
+ * there is no real intelligence here.
+ */
+#ifdef ATL_CAMM_MAXINDX
+   #define MAXIDX ATL_CAMM_MAXINDX-1
+#else
+   #define MAXIDX ATL_AMM_NCASES-1
+#endif
+int Mjoin(PATL,laGetB)
+(
+   int M, /* 0 if dim is blocked, else max size of rows of C in GEMM call */
+   int N, /* 0 if dim is blocked, else max size of cols of C in GEMM call */
+   int K, /* 0 if dim is blked, else max size of common A/B dim in GEMM call */
+   int HINT   /* type of operation to be blocked */
+)
+{
+   #ifdef DCPLX
+      const int maxB = (HINT < 2) ? ATL_AMM_KBs[MAXIDX] : 44;
+   #elif defined(SCPLX) || defined(DREAL)
+      const int maxB = (HINT < 2) ? ATL_AMM_KBs[MAXIDX] : 60;
+   #else /* SREAL */
+      const int maxB = (HINT < 2) ? ATL_AMM_KBs[MAXIDX] : 80;
+   #endif
+   int minblks, majSH, minSH=0, D = (M) ? M : N; 
+   int B, i;
+
+   D = (D) ? D : K;
+   B = ATL_AMM_KBs[0];
+   if ((B<<majSH)+(B<<minSH) >= D)  /* quick exit for tiny problem */
+   {
+      if ((B<<2) < D)
+         return(1);
+      return(B);
+   }
+   if (HINT == 4)       /* slow, extra flops */
+   {
+      minblks = 48;    /* (32+16) */
+      majSH = 5;
+      minSH = 4;
+   }
+   else if (HINT == 1)  /* slow, no extra flops */
+   {
+      minblks = 24;    /* 16+8 */
+      majSH = 4;
+      minSH = 3;
+   }
+   else if (HINT == 2)  /* fast, extra flops */
+   {
+      minblks = 12;
+      majSH = 3;
+      minSH = 2;
+   }
+   else                 /* fast, no extra flops */
+   {
+      minblks = 9;
+      majSH = 3;
+      minSH = 1;
+   }
+   for (i=MAXIDX; i > 0; i--)
+      if (B <= maxB)
+         break;
+   if ((B<<majSH)+(B<<minSH) <= D)  /* large problem, can use maxB */
+      return(B);
+
+   for (i--; i > 0; i--)
+   {
+      B = ATL_AMM_KBs[i];
+      if ((B<<majSH)+(B<<minSH) <= D)  
+         return(B);
+   }
+   return(ATL_AMM_KBs[0]);
 }
 @ROUT ATL_ilaenv
 #if !defined(ATL_USEPTHREADS) || (defined(ATL_NCPU) && ATL_NCPU > 1)
@@ -2621,21 +2721,19 @@ int ATL_ilaenv(enum ATL_ISPEC ISPEC, enum ATL_LAROUT ROUT, unsigned int OPTS,
    @undef else
 @endwhile
 /*
- *       For ORMQR, do not except really small nb, since it doesn't have
+ *       For ORMQR, do not accept really small nb, since it doesn't have
  *       cost of QR2 dragging it down
  */
          if (ROUT & LAormqr)
          {
             if (OPTS & LADreal)
-               ns = ATL_dGetNB();
+               nb = ATL_dlaGetB(mindim, mindim, 0, 2);
             else if (OPTS & LASreal)
-               ns = ATL_sGetNB();
+               nb = ATL_slaGetB(mindim, mindim, 0, 2);
             else if (OPTS & LAScplx)
-               ns = ATL_cGetNB();
+               nb = ATL_claGetB(mindim, mindim, 0, 2);
             else
-               ns = ATL_zGetNB();
-            if (nb < ns)
-               nb = 0;
+               nb = ATL_zlaGetB(mindim, mindim, 0, 2);
          }
       }
 @beginskip
@@ -2693,45 +2791,22 @@ int ATL_ilaenv(enum ATL_ISPEC ISPEC, enum ATL_LAROUT ROUT, unsigned int OPTS,
  */
       if (!nb)
       {
-@skip         if (ROUT == LAunknown)
-@skip            nb = 1;
-         if (OPTS & LADreal)
-            nb = ATL_dGetNB();
-         else if (OPTS & LASreal)
-            nb = ATL_sGetNB();
-         else if (OPTS & LADcplx)
-            nb = ATL_zGetNB();
-         else
-            nb = ATL_cGetNB();
-         if (mindim < 8)
-            nb = 1;
-         else if (nb < (mindim>>1))
-            nb = (mindim>>1);
-/*
- *       Routines that do extra flops based on NB need to constrain NB
- */
-         if ((LAgeqrf | LAormqr | LAgehrd | LAgebrd | 
+
+         int hint = 1;
+         if ((LAgeqrf | LAormqr | LAgehrd | LAgebrd |
               LAsytrd | LAhetrd | LArorgen | LAcungen) & ROUT)
-         {
-            if (OPTS & LADreal)
-            {
-               if (nb > 64)
-                 nb = 60;
-            }
-            else if (OPTS & LASreal)
-            {
-               if (nb > 80)
-                  nb = 80;
-            }
-            else
-            {
-               if (nb > 64)
-                  nb = 40;
-            }
-         }
+            hint = 2;
+         if (ROUT & LAstebz)
+            nb = 1;
+         else if (OPTS & LADreal)
+            nb = ATL_dlaGetB(mindim, mindim, 0, hint);
+         else if (OPTS & LASreal)
+            nb = ATL_slaGetB(mindim, mindim, 0, hint);
+         else if (OPTS & LAScplx)
+            nb = ATL_claGetB(mindim, mindim, 0, hint);
+         else
+            nb = ATL_zlaGetB(mindim, mindim, 0, hint);
       }
-      else if (ROUT & LAstebz)
-         nb = 1;
       return(nb);
    case LAIS_MIN_NB:  /* changed from LAPACK to require 4 rather than 2 cols */
       nb = 4;    /* most GEMMs need at least one MU/NU of 4 */
@@ -3077,7 +3152,7 @@ int ATL_@(pre)trtriCL(const enum CBLAS_DIAG Diag, const int N, @(typ) *A,
 int ATL_@(pre)lascl
    (const enum ATL_LAMATTYPE mtyp, ATL_CINT KL, ATL_CINT KU, const @(typ) den0,
     const @(typ) num0, ATL_CINT M, ATL_CINT N, @(typ) *A, ATL_CINT lda);
-
+int ATL_@(pre)laGetB(int M, int N, int K, int HINT);
 
    @undef typ
    @killkeys ptyp

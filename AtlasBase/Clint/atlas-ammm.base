@@ -437,11 +437,13 @@ ablk2cmat_t Mjoin(PATL,tGetSyammInfo_K)
    (amminfo_t *out, const int P, enum ATLAS_TRANS TA, ATL_CSZT N, ATL_CSZT K);
 
 
+void Mjoin(PATL,ammm)
+   (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,ATL_CSZT, const SCALAR,
+    const TYPE*,ATL_CSZT,const TYPE*,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT);
 int Mjoin(PATL,ammm_rk2)
    (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT, const SCALAR,
     const TYPE*,ATL_CSZT,const TYPE*,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT);
-@multidef rt ammmREC
-@whiledef rt ammm ammm_1b ammm_rkK ammm_IP ammm_tN ammm_aliased_rkK ammmMNK
+@whiledef rt ammm_1b ammm_rkK ammm_IP ammm_tN ammm_aliased_rkK ammmMNK ammmREC
 int Mjoin(PATL,@(rt))
    (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,ATL_CSZT, const SCALAR,
     const TYPE*,ATL_CSZT,const TYPE*,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT);
@@ -8078,8 +8080,7 @@ int Mjoin(PATL,ammm_aliased_rkK)
             ldB = 1;
          }
       }
-      ATL_assert(!Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, a, ldA, b, ldB, 
-                                   beta, C, ldc));
+      Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, a, ldA, b, ldB, beta, C, ldc);
       if (xp)
          free(xp);
       if (yp)
@@ -9274,7 +9275,7 @@ int Mjoin(PATL,ammm_aliased_rkK)
  * This routine uses recursion to cut the dimensions of the matrices until
  * workspace requirements are low enough that a call to ATL_ammm succeeds
  */
-int Mjoin(PATL,ammm)
+void Mjoin(PATL,ammm)
 (
    enum ATLAS_TRANS TA,
    enum ATLAS_TRANS TB,
@@ -9291,23 +9292,27 @@ int Mjoin(PATL,ammm)
    ATL_CSZT ldc
 )
 {
+   if (!M || !N)
+      return;
 /*
  * Cases where all we must do is possibly scale and return
  */
-   if (SCALAR_IS_ZERO(alpha))
+   if (SCALAR_IS_ZERO(alpha) || !K)
    {
       if (SCALAR_IS_ZERO(beta))
          Mjoin(PATL,gezero)(M, N, C, ldc);
       else if (!SCALAR_IS_ONE(beta))
          Mjoin(PATL,gescal)(M, N, beta, C, ldc);
-      return(0);
+      return;
    }
 /*
- * Our stopping criteria is if ATL_ammm signals success
+ * Our stopping criteria is if ATL_ammm signals success in mallocing mem
  */
    if (K <= ATL_MAX_RK)
-      if (!ATL_ammm(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc))
-         return(0);
+   {
+      if(!ATL_ammm(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc))
+         return;
+   }
 /*
  * =========================================================================
  * Otherwise, problem too large, so we'll recursively divide its largest dim
@@ -9357,9 +9362,15 @@ int Mjoin(PATL,ammm)
       C += mL SHIFT;
       Mjoin(PATL,ammm)(TA, TB, mR, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
    }
-   return(0);
 }
 
+void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
+                      const int M, const int N, const int K, const SCALAR alpha,
+                      const TYPE *A, const int lda, const TYPE *B, 
+                      const int ldb, const SCALAR beta, TYPE *C, const int ldc)
+{
+   Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+}
 @ROUT atlas_simd.h
 #ifndef ATLAS_SIMD_H
    #define  ATLAS_SIMD_H 1
@@ -12994,8 +13005,8 @@ double GetMflops(ATL_CINT M, ATL_CINT N, ATL_CINT K, TYPE *A, TYPE *B, TYPE *C)
    return(Time2Mflops(M, N, K, t0));
 }
 
-void TuneBlocking(int M, int N, int K, TYPE *A, TYPE *B, TYPE *C, 
-              int *MB_, int *NB_, int *KB_)
+double TuneBlocking(int M, int N, int K, TYPE *A, TYPE *B, TYPE *C, 
+                    int *MB_, int *NB_, int *KB_)
 {
    int mbB=ATL_AMM_MBs[IK], nbB=ATL_AMM_NBs[IK], kbB=ATL_AMM_KBs[IK];
    int mb=mbB, nb=nbB, kb=kbB, m, n, k;
@@ -13036,6 +13047,7 @@ void TuneBlocking(int M, int N, int K, TYPE *A, TYPE *B, TYPE *C,
    *MB_ = mbB;
    *NB_ = nbB;
    *KB_ = kbB;
+   return(mfB);
 }
 
 int TuneIndx(int M, int N, int K, TYPE *A, TYPE *B, TYPE *C)
@@ -13069,15 +13081,17 @@ int TuneIndx(int M, int N, int K, TYPE *A, TYPE *B, TYPE *C)
 void TuneCplxNB(FILE *fpout, int M, int N, int K, TYPE *A, TYPE *B, TYPE *C)
 {
    int ik, mb, nb, kb;
+   double mfB;
    ik = TuneIndx(M, N, K, A, B, C);
    IK = ik;
-   TuneBlocking(M, N, K, A, B, C, &mb, &nb, &kb);
+   mfB = TuneBlocking(M, N, K, A, B, C, &mb, &nb, &kb);
    fprintf(fpout, "#ifndef ATL_%cAMM_SUM_H\n   #define ATLAS_%cAMM_SUM_H\n\n",
            MY_PRE2, MY_PRE2);
    fprintf(fpout, "   #define ATL_CAMM_MAXINDX %d\n", IK);
    fprintf(fpout, "   #define ATL_CAMM_MAXMB %d\n", mb);
    fprintf(fpout, "   #define ATL_CAMM_MAXNB %d\n", nb);
    fprintf(fpout, "   #define ATL_CAMM_MAXKB %d\n", kb);
+   fprintf(fpout, "   #define ATL_CAMM_APERF %e\n", 4.0*mfB);
    fprintf(fpout, "\n#endif\n");
    fclose(fpout);
 }
