@@ -1196,7 +1196,7 @@ void GetEnter(FILE *fpout)
 {
    char ln[128];
    fprintf(fpout, "---------- PRESS ENTER TO CONTINUE ---------- ");
-   fgets(ln, 128, stdin);
+   assert(fgets(ln, 128, stdin));
 }
 
 int DisplayFile(char *fnam, FILE *fpout, int nlines)
@@ -2518,7 +2518,7 @@ make_subdirs:
 	cd src ; mkdir testing auxil blas lapack pthreads threads
 	cd src/lapack ; mkdir amm
 	cd src/blas ; \
-           mkdir f77reference reference gemv ger gemm ammm kbmm \
+           mkdir f77reference reference gemv ger ammm kbmm \
                  level1 level2 level3 pklevel3
 	cd src/blas/reference ; mkdir level1 level2 level3
 	cd src/blas/level2 ; mkdir kernel
@@ -9580,19 +9580,20 @@ fprintf(fpout,
 /*
  * The number of results, and their ordering (this must match the file).
  */
-#define NBENCH 8
-#define SELKMM 0
-#define GENKMM 1
-#define KMM_NT 2
-#define KMM_TN 3
-#define KMV_N  4
-#define KMV_T  5
-#define KGER   6
-#define MM_BIG 7
-#define CLKRATE 8
+#define NBENCH 6
+#define KMV_N  0
+#define KMV_T  1
+#define KGER   2
+#define KGER2  3
+#define SELKMM 4
+#define MM_BIG 5
+#define CLKRATE 6
+
+@skip #define KMM_NT 2
+@skip #define KMM_TN 3
 
 char *BNCHNAMES[NBENCH] = 
-   {"kSelMM", "kGenMM", "kMM_NT", "kMM_TN", "kMV_N", "kMV_T", "kGER", "BIG_MM"};
+   {"kMV_N", "kMV_T", "kGER", "kGER2", "kgemm", "BIG_MM"};
 
 void PrintUsage(char *name, int iarg, char *flag)
 {
@@ -9677,7 +9678,8 @@ double RunBigMM(char pre, double clkrate, int *N)
    double mf0, mf1;
    FILE *fpin;
 
-   offset = (pre == 's' || pre == 'd') ? 50 : 61;
+   offset = 67;
+@skip   offset = (pre == 's' || pre == 'd') ? 67 : 61;
 @skip   sprintf(cmnd, "cd bin ; make x%cmmtst_big", pre);
 @skip   syschk(cmnd);
 /*
@@ -9702,8 +9704,8 @@ double RunBigMM(char pre, double clkrate, int *N)
    while(system(cmnd));
    *N = n + 200;
 /*
- * This section parses xdmmtst output to get mflop; note that it is fragile,
- * so if we change the formatting of xdmmtst, we must change this!
+ * This section parses xdsl3time_ab output to get mflop; note it is fragile,
+ * so if we change the formatting of xdsl3time, we must change this!
  */
    fpin = fopen("big.out", "r");
    assert(fpin);
@@ -9714,7 +9716,7 @@ double RunBigMM(char pre, double clkrate, int *N)
       assert(fgets(res, 2048, fpin));
    mf0 = atof(res+offset);
    fprintf(stderr, "res+off=%s\n", res+offset);
-   assert(fgets(res, 2048, fpin));
+@skip   assert(fgets(res, 2048, fpin));
    mf1 = atof(res+offset);
    fclose(fpin);
    fprintf(stderr, "BIG_MM N=%d, mf=%.2f,%.2f!\n", *N, mf0, mf1);
@@ -9823,14 +9825,12 @@ void PrintNameDefs(FILE *fpout)
    fprintf(fpout, 
 "\nThe times labeled Reference are for ATLAS as installed by the authors.\n");
    fprintf(fpout, "NAMING ABBREVIATIONS:\n");
-   fprintf(fpout, "   kSelMM : selected matmul kernel (may be hand-tuned)\n");
-   fprintf(fpout, "   kGenMM : generated matmul kernel\n");
-   fprintf(fpout, "   kMM_NT : worst no-copy kernel\n");
-   fprintf(fpout, "   kMM_TN : best no-copy kernel\n");
-   fprintf(fpout, "   BIG_MM : large GEMM timing (usually N=1600); estimate of asymptotic peak\n");
    fprintf(fpout, "   kMV_N  : NoTranspose matvec kernel\n");
    fprintf(fpout, "   kMV_T  : Transpose matvec kernel\n");
    fprintf(fpout, "   kGER   : GER (rank-1 update) kernel\n");
+   fprintf(fpout, "   kGER2  : GER2 (rank-2 update) kernel\n");
+   fprintf(fpout, "   kSelMM : selected matmul kernel (may be hand-tuned)\n");
+   fprintf(fpout, "   BIG_MM : large GEMM timing (usually N=1600); estimate of asymptotic peak\n");
    fprintf(fpout, 
            "Kernel routines are not called by the user directly, and their\n");
    fprintf(fpout, "performance is often somewhat different than the total\n");
@@ -10867,9 +10867,10 @@ static FILE *atlsys(char *targ, char *cmnd, int verb, int IgnoreErr)
       fprintf(stderr, "\nierr=%d in command='%s'!\n\n", i, cmnd);
       if (verb > 1)
       {
+         int gccsucks;
          fprintf(stderr, "OUTPUT:\n=======\n");
          sprintf(sp, "cat %s", tnam);
-         system(sp);
+         gccsucks = system(sp);
       }
    }
    free(sp);

@@ -6,10 +6,6 @@
 @extract -b @(topd)/gen.inc what=cw @(cw00)
 @ROUT lanbsrch
 @extract -b @(topd)/gen.inc what=cw @(cw09)
-#define DMM_H 1
-#define SMM_H 1
-#define CMM_H 1
-#define ZMM_H 1
 @ROUT ilaenvF.c lanbtst latime
 @extract -b @(topd)/gen.inc what=cw @(cw08)
 @ROUT lanbtst slvtst lanbsrch latime
@@ -2120,7 +2116,7 @@ int RunCase(int CacheSize, TYPE thresh, int MFLOP, enum ATLAS_ORDER Order,
    if (tim > 0.0) mflop = mflops / tim;
    else mflop = 0.0;
    fprintf(stdout, "%5d  %3s   %6d %6d %6d %6d %9.3f %9.3f %9.3e\n",
-           nreps, cord, M, N, lda, npiv, tim, mflop, resid);
+           (int)nreps, cord, M, N, lda, npiv, tim, mflop, resid);
    return(resid <= thresh);
 }
 
@@ -2971,26 +2967,33 @@ static void geinv
    (const enum CBLAS_ORDER Order, const int N, TYPE *A, const int lda)
 {
    int *ipiv;
-   TYPE *wrk;
+   TYPE *wrk, WQ;
    int lwrk;
 
    ipiv = malloc(sizeof(int)*N);
    ATL_assert(ipiv);
    #ifdef TimeF77
-      lwrk = N * Mjoin(PATL,GetNB)();
-      wrk = malloc(ATL_MulBySize(lwrk));
       if (Order == AtlasRowMajor) Mjoin(PATL,tstsqtran)(N, A, lda);
       ATL_assert(Mjoin(PATL,f77getrf)(AtlasColMajor, N, N, A, lda, ipiv) == 0);
-      ATL_assert(Mjoin(PATL,f77getri)
-         (AtlasColMajor, N, A, lda, ipiv, wrk, &lwrk) == 0);
-      if (Order == AtlasRowMajor) Mjoin(PATL,tstsqtran)(N, A, lda);
+      lwrk = -1;
+      ATL_assert(Mjoin(PATL,f77getri)(AtlasColMajor, N, A, lda, ipiv, 
+                                      &WQ, lwrk) == 0);
+      lwrk = WQ;
+      wrk = malloc(ATL_MulBySize(lwrk));
+      ATL_assert(wrk);
+      ATL_assert(Mjoin(PATL,f77getri)(AtlasColMajor, N, A, lda, ipiv, 
+                                      wrk, lwrk) == 0);
       free(wrk);
+      if (Order == AtlasRowMajor) Mjoin(PATL,tstsqtran)(N, A, lda);
    #elif defined(TimeC)
       ATL_assert(Mjoin(CLP,getrf)(Order, N, N, A, lda, ipiv) == 0);
       ATL_assert(Mjoin(CLP,getri)(Order, N, A, lda, ipiv) == 0);
   #else
-      lwrk = N * Mjoin(PATL,GetNB)();
+      lwrk = -1;
+      ATL_assert(Mjoin(PATL,getri)(Order, N, A, lda, ipiv, &WQ, &lwrk) == 0);
+      lwrk = WQ;
       wrk = malloc(ATL_MulBySize(lwrk));
+      ATL_assert(wrk);
       ATL_assert(Mjoin(PATL,getrf)(Order, N, N, A, lda, ipiv) == 0);
       ATL_assert(Mjoin(PATL,getri)(Order, N, A, lda, ipiv, wrk, &lwrk) == 0);
       free(wrk);
@@ -3590,24 +3593,12 @@ main(int nargs, char **args)
 @ROUT atlas_trsmNB.h
 #ifndef ATLAS_TRSMNB_H
 #define ATLAS_TRSMNB_H
+#include "atlas_misc.h"
+#include Mstr(Mjoin(AMM_UPR,_sum.h))
 
 #ifndef TRSM_NB
    #ifdef TREAL
-      #ifdef ATL_ARCH_ATHLON
-         #ifdef DREAL
-            #define TRSM_NB NB
-         #else
-            #define TRSM_NB (NB/4)
-         #endif
-      #elif defined(ATL_ARCH_HAMMER64) || defined(ATL_ARCH_HAMMER32)
-         #ifdef DREAL
-            #define TRSM_NB (NB/3)
-         #else
-            #define TRSM_NB (NB/2)
-         #endif
-      #else
-         #define TRSM_NB NB
-      #endif
+      #define TRSM_NB ATL_AMM_66KB
 /*
  *    For larger NB than 8, the intel compiler screws up the TRSM kernel,
  *    so force 8 as our largest stopping factor.  This is OK performance-
