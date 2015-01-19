@@ -253,8 +253,10 @@ n1=$(( nla + nbl + 1 ))
 $BINdir/tvecprint -i $tvo -h 1 -C $n1 N $rts -o $fout
 cat $fout
 @endextract
+@ROUT tvcmpver
+   @iexp narg 4 0 +
+tmr=$2
 @ROUT ! tvgenmf
-tmr=$1
 PRE=`echo "$tmr" | cut -c 2`
 PT=`echo "$tmr" | cut -c 3`
 LIBS=`echo "$tmr" | cut -c 11-`
@@ -277,14 +279,21 @@ then
    @TYPE RNG
    echo "USAGE: $0 timer rout N1 NN incN reps [-L lab] [-E EF] [-O 0/1]"
    @TYPE !
+@ROUT tvcmpver
+   echo "This shell script computes ratio of different ATLAS installs."
+   echo "USAGE: $0 other_bin timer reps "list" [-R rout] [-L lab] [-E EF]"
 @ROUT tvcmprep
    echo "This shell script computes ratio of different nreps runs."
    echo "USAGE: $0 timer repN repD "list" [-R rout] [-L lab] [-E EF]"
 @ROUT !
    echo "   timer: x[z,c,d,s][t,s]latime_[a,s]l_[a,s]b, x[z,c,d,s][t,s]l3time__[a,s]b"
+@ROUT tvcmpver
+   echo "   other_bin: path to the other BLDdir/bin directory to compare."
+   echo "   reps     : repitition count "
 @ROUT tvcmprep
    echo "   repN    : repitition count to be numerator"
    echo "   repD    : repitition count to be denominator"
+@ROUT tvcmprep tvcmpver
    echo "   list    : # N1 ... N#, eg. \"4 200 2000 4000 8000\""
    echo "   -R rout : time rout as below; default potrf"
 @ROUT !
@@ -307,6 +316,13 @@ then
    echo "   -F 0/1  : don't/do force retiming (default don't)"
    exit 1
 fi
+@ROUT tvcmpver
+BINdir2=$1
+mydir2=$BINdir2/../timing
+NREP=$3
+lst=$4
+RT=potrf
+FRC=0
 @ROUT tvcmprep
 NR1=$2
 NR2=$3
@@ -329,7 +345,7 @@ shift @(narg)
 while [ $# -gt 0 ]
 do
    case $1 in 
-@ROUT tvcmprep
+@ROUT tvcmprep tvcmpver
    -R)  RT=$2
         shift 2
         ;;
@@ -397,7 +413,7 @@ then
 else
    echo "   -> output already available in: ${resf}!\n"
 fi
-@ROUT tvcmprep
+@ROUT tvcmprep tvcmpver
 if [ -n "$EF" ]
 then
    ea="-E $EF"
@@ -405,6 +421,7 @@ else
    ea=
 fi
 lchk=`echo "${lst}" | ${chksum} | cut -d ' ' -f 1`
+@ROUT tvcmprep
 @skip res1f=res/${PT}${PRE}${RT}_${LIBS}_${lchk}_${NR1}_${efs}.out
 @skip res2f=res/${PT}${PRE}${RT}_${LIBS}_${lchk}_${NR2}_${efs}.out
 ./tvrun_lst.sh $tmr $RT "${lst}" $NR1 -L _${RT} $ea -F $FRC
@@ -432,77 +449,6 @@ cat $t0 $t1 | $BINdir/tvecratio -c 1 N_${RT} \
    | $BINdir/tvecprint -h 1 -C 4 N_${RT} AVG MAX MIN
 @skip   -C 4 N_${RT} MFLOP_${RT}_max MFLOP_${RT}_min MFLOP_${RT}_avg
 @ROUT tvcmpver
-#!/bin/sh
-# This script should be run in BLDdir/timing, where it was generated
-# It assumes: shell: echo, test; env: cksum, cut
-chksum=cksum
-t0=res/tmp0.tv
-t1=res/tmp1.tv
-tvo=res/tmp.tv
-efs=0
-EF=
-FRC=0
-BINdir=../bin
-BINdir2=$1
-mydir=`pwd`
-mydir2=$BINdir2/../timing
-scr=$0
-tmr=$2
-PRE=`echo "$tmr" | cut -c 2`
-PT=`echo "$tmr" | cut -c 3`
-LIBS=`echo "$tmr" | cut -c 11-`
-PROUT=0
-if [ $# -lt 4 ]
-then
-   echo "This shell script computes ratio of different ATLAS installs."
-   echo "USAGE: $0 other_bin timer reps "list" [-R rout] [-L lab] [-E EF]"
-   echo "   other_bin: path to the other BLDdir/bin directory to compare."
-   echo "   timer    : x[z,c,d,s][t,s]latime_[a,s]l_[a,s]b, x[z,c,d,s][t,s]l3time__[a,s]b"
-   echo "   reps     : repitition count "
-   echo "   list     : # N1 ... N#, eg. \"4 200 2000 4000 8000\""
-   echo "   -R rout  : time rout as below; default potrf"
-   echo "   rout(la) : getrf, potrf, geqrf"
-   echo "   rout(l3) : gemm, trsm, trmm, syrk, syr2k, hemm, herk, her2k"
-   echo "   -L lab   : LABEL for run (default DEF)"
-   echo "   -E EF    : extra flags to pass to timer (eg, -E \"-U 1 L\") (default none)"
-   echo "   -F 0/1   : don't/do force retiming (default don't)"
-   exit 1
-fi
-NREP=$3
-lst=$4
-RT=potrf
-FRC=0
-shift 4
-while [ $# -gt 0 ]
-do
-   case $1 in 
-   -R)  RT=$2
-        shift 2
-        ;;
-   -L)  lab=$2
-        shift 2
-        ;;
-   -E)  EF=$2
-        efs=`echo "${EF}" | ${chksum} | cut -d ' ' -f 1`
-        shift 2
-        ;;
-   -F)  FRC=$2
-        shift 2
-        ;;
-   *)   echo "\nIllegal flag ${1}\n"
-        $scr
-        exit 1
-        ;;
-   esac
-done
-
-if [ -n "$EF" ]
-then
-   ea="-E $EF"
-else
-   ea=
-fi
-lchk=`echo "${lst}" | ${chksum} | cut -d ' ' -f 1`
 
 ./tvrun_lst.sh $tmr $RT "${lst}" $NREP -L _${RT} $ea -F $FRC
 res1f=`./tvrun_lst.sh $tmr $RT "${lst}" $NREP -L _${RT} $ea -F $FRC -O 1`
