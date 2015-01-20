@@ -6243,11 +6243,19 @@ double FormulaLUFlops(int CPLX, ATL_CUINT M, ATL_CUINT N, ATL_CUINT B,
    double MNr = MN - MNb*B; 
    double bmnb = b * MNb;
    double bb = b * b;
+   double MNb_ = ((MN-1) / B);
+   double bmnb_ = b * MNb_;
+   double acpy=0.0, bcpy=0.0, ccpy=0.0;
    
    *MFL = bmnb*(bb + 6*m*n - 3*b*(m+n) +
          3*bmnb*(b-m-n) + 2*bmnb*bmnb) / 3;
    *SFL = (1-b)*bmnb*(b-2*n+bmnb)/2 +
       MNr*(MNr-1)*(n-bmnb-MNr); /* for remainder */
+   acpy = b*MNb_*(2*M-b-b*MNb_)/2;
+   bcpy = b*MNb_*(2*N-b-b*MNb_)/2;
+   ccpy = MNb_*(bb + 6*M*N - 3*b*(M+N) +
+         3*bmnb_*(b-M-N) + 2*bmnb_*bmnb_)/6;
+   //printf("Formula : %.lf %.lf %.lf\n", acpy, bcpy, ccpy);
    if (CPLX)
    {
       *SFL *= 4; /* 4 * real flops */
@@ -6280,6 +6288,7 @@ double CountLUFlops  /* RETURNS: total flops actually done */
    int j, M, N, nnb, nr, nmb, mr, MN;
    double pnb=0.0, pmb=0.0, pnblks=0, smblks=0, mmblks=0;
    double tuflop, tflop, aflop, pnflop=0, mmflop=0.0, smflop=0.0;
+   double acpy=0.0, bcpy=0.0, ccpy=0.0;
 
    M = ((m+mu-1)/mu)*mu;
    N = ((n+nu-1)/nu)*nu;
@@ -6320,9 +6329,13 @@ double CountLUFlops  /* RETURNS: total flops actually done */
          smblks += nnb + pnb;
          mmflop += GetMMFlopCount(CPLX, Mt, Nt, b);
          mmblks += (nmb+pmb) * (nnb+pnb);
+         acpy += (1.0*Mt)*b;
+         if (j+b < M) bcpy += (1.0*Nt)*b;
+         ccpy += (1.0*Mt)*Nt;
       }
    }
    aflop = pnflop+smflop+mmflop;
+   //printf("Computed: %.lf %.lf %.lf\n", acpy, bcpy, ccpy);
    if (fabs(aflop - tflop) > 0.5 || fabs(CompLUFlopCount(0,M,N)-tflop)>0.5)
    {
       printf("ERROR: LUflop=%.0f, computed=%.0f, diff=%.2f, perc=%.2f\n", 
@@ -6622,6 +6635,7 @@ int main(int nargs, char **args)
 #include "atlas_genparse.h"
 #include "atlas_bitvec.h"
 #include "atlas_pca.h"
+#include "atlas_bcamm.h"
 #ifndef UID
    #define UID 0
 #endif
@@ -6953,7 +6967,8 @@ int piv2blks_bc(int verb, int IDX, int P, int N)
    int *ip, *ipB, *ipL;
    int i, bb, sb, rb;
    int nfail=0;
-   const int nb = ATL_UAMM_MBs[IDX], mu = ATL_UAMM_MUs[IDX];
+   const int nb = ATL_UAMM_MBs[IDX];
+   const int mu = ATL_UAMM_MUs[IDX], nu = ATL_UAMM_NUs[IDX];
    void *bp;
    double **lptrs;
    lptrs = calloc(P, sizeof(double*));
@@ -6961,7 +6976,7 @@ int piv2blks_bc(int verb, int IDX, int P, int N)
 
    ip = ATL_getIpiv(N, N|(IDX<<12));
    ipB = ATL_getIpiv(N, N|(IDX<<12));
-   bp = ATL_bcIpivInit(ipB, P, N, nb, mu, lptrs, 1);
+   bp = ATL_bcIpivInit(ipB, P, N, nb, mu, nu, lptrs, 1);
    free(lptrs);
    assert(bp);
    for (i=0; i < N; i += nb)
