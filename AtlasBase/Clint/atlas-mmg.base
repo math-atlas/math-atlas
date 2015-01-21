@@ -5240,12 +5240,413 @@ int ATL_ChooseNB(ATL_CINT M, ATL_CINT N, ATL_CINT K)
 #define ATL_BT2blk_a@(al) Mjoin(Mjoin(PATL,rm2am_a@(al)_),ATL_MM_NU)
 @endwhile
 @ROUT ATL_cmat2ablk
+@beginproc pcloops aligned vtyp ralp rbet
+   @mif vtyp = "__m256
+      @define velts @8@
+      @define vadd @_mm256_add_ps@
+      @define vsub @_mm256_sub_ps@
+      @define vmul @_mm256_mul_ps@
+      @define vld @_mm256_load_ps@
+      @define vst @_mm256_store_ps@
+      @iif aligned = 0
+         @define vldu @_mm256_loadu_ps@
+         @define vstu @_mm256_storeu_ps@
+      @endiif
+      @iif aligned ! 0
+         @define vldu @_mm256_load_ps@
+         @define vstu @_mm256_store_ps@
+      @endiif
+   @endmif
+   @mif vtyp = "__m256d
+      @define velts @4@
+      @define vadd @_mm256_add_pd@
+      @define vsub @_mm256_sub_pd@
+      @define vmul @_mm256_mul_pd@
+      @define vld @_mm256_load_pd@
+      @define vst @_mm256_store_pd@
+      @iif aligned = 0
+         @define vldu @_mm256_loadu_pd@
+         @define vstu @_mm256_storeu_pd@
+      @endiif
+      @iif aligned ! 0
+         @define vldu @_mm256_load_pd@
+         @define vstu @_mm256_store_pd@
+      @endiif
+   @endmif
+   @mif vtyp = "__m128d
+      @define velts @2@
+      @define vadd @_mm_add_pd@
+      @define vsub @_mm_sub_pd@
+      @define vmul @_mm_mul_pd@
+      @define vld @_mm_load_pd@
+      @define vst @_mm_store_pd@
+      @iif aligned = 0
+         @define vldu @_mm_loadu_pd@
+         @define vstu @_mm_storeu_pd@
+      @endiif
+      @iif aligned ! 0
+         @define vldu @_mm_load_pd@
+         @define vstu @_mm_store_pd@
+      @endiif
+   @endmif
+   @mif vtyp = "__m128
+      @define velts @4@
+      @define vadd @_mm_add_ps@
+      @define vsub @_mm_sub_ps@
+      @define vmul @_mm_mul_ps@
+      @define vld @_mm_load_ps@
+      @define vst @_mm_store_ps@
+      @iif aligned = 0
+         @define vldu @_mm_loadu_ps@
+         @define vstu @_mm_storeu_ps@
+      @endiif
+      @iif aligned ! 0
+         @define vldu @_mm_load_ps@
+         @define vstu @_mm_store_ps@
+      @endiif
+   @endmif
+      for (j=0; j < n; j += @(nu), b += incb)
+      {
+         TYPE *p = b;
+         for (i=0; i < m; i += @(mu), p += pansz)
+         {
+            register @(vtyp) rP0, rp0;
+   @iexp k 0 0 +
+   @iexp j 0 0 +
+   @iwhile j < @(nu)
+      @iexp i 0 0 +
+      @iwhile i < @(mu)
+         @iexp h 0 0 +
+            rp0 = @(vldu)(C@(j)+i+@(i));
+         @mif nalp = "X
+            rp0 = @(vmul)(rp0, rALP);
+         @endmif
+         @mif nbet = "0
+            @mif nalp = "n
+            rp0 = @(vmul)(rp0, rALP);
+            @endmif
+            @(vst)(p+@(k), rp0);
+            @iexp h 1 0 +
+         @endmif
+         @iif h = 0
+            rP0 = @(vld)(p+@(k));
+            @mif nbet = "X
+            rP0 = @(vmul)(rP0, rBETA);
+            @endmif
+            @mif nalp = "n
+               @mif nbet = "0
+            rp0 = @(vmul)(rp0, rALP);
+            @(vst)(p+@(k), rp0);
+                  @iexp h 1 0 +
+               @endmif
+               @mif nbet = "n
+            rP0 = @(vadd)(rP0, rp0);
+            rP0 = @(vmul)(rP0, rALP);
+            @(vst)(p+@(k), rP0);
+                  @iexp h 1 0 +
+               @endmif
+               @iif h = 0
+            rP0 = @(vsub)(rP0, rp0);
+            @(vst)(p+@(k), rP0);
+                  @iexp h 1 0 +
+               @endiif
+            @endmif
+            @iif h = 0
+               @mif nbet = "n
+            rp0 = @(vsub)(rp0, rP0);
+            @(vst)(p+@(k), rp0);
+               @endmif
+               @mif nbet ! "n
+            rP0 = @(vadd)(rP0, rp0);
+           @(vst)(p+@(k), rP0);
+               @endmif
+            @endiif
+         @endiif
+         @iexp k @(k) @(velts) +
+      @iexp i @(i) @(velts) +
+      @endiwhile
+   @iexp j @(j) 1 +
+   @endiwhile
+         }
+      @mif mu ! "1
+      switch(mr)
+      {
+      @iexp m 1 0 +
+      @iwhile m < @(mu)
+      case @(m):
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp k @(mu) @(j) *
+            @iexp i 0 0 +
+            @iwhile i < @(m)
+         @mif nalp = "n
+            @mif nbet = "X
+         p[@(k)] = beta*p[@(k)] - C@(j)[i+@(i)];
+            @endmif
+            @mif nbet = "1
+         p[@(k)] -= C@(j)[i+@(i)];
+            @endmif
+            @mif nbet = "0
+         p[@(k)] = @(malp)C@(j)[i+@(i)];
+            @endmif
+            @mif nbet = "n
+         p[@(k)] = -(p[@(k)] + C@(j)[i+@(i)]);
+            @endmif
+         @endmif
+         @mif nalp ! "n
+            @mif nbet = "X
+         p[@(k)] = @(malp)C@(j)[i+@(i)] + beta*p[@(k)];
+            @endmif
+            @mif nbet = "1
+         p[@(k)] += @(malp)C@(j)[i+@(i)];
+            @endmif
+            @mif nbet = "0
+         p[@(k)] = @(malp)C@(j)[i+@(i)];
+            @endmif
+            @mif nbet = "n
+         p[@(k)] = @(malp)C@(j)[i+@(i)] - p[@(k)];
+            @endmif
+         @endmif
+               @iexp k @(k) 1 + 
+            @iexp i @(i) 1 +
+            @endiwhile
+         @iexp j @(j) 1 +
+         @endiwhile
+         break;
+      @iexp m @(m) 1 +
+      @endiwhile
+      default:;
+      }
+      @endmif
+   @iexp j 0 0 +
+   @iwhile j < @(nu)
+         C@(j) += incC;
+      @iexp j @(j) 1 +
+   @endiwhile
+      }
+   @undef velts
+   @undef vadd
+   @undef vsub 
+   @undef vmul 
+   @undef vld 
+   @undef vldu 
+   @undef vstu 
+@endproc
 /*
  *  b <- alpha*C + beta*b,
  *  C is an MxN matrix in column-major storage
  *  b is a CEIL(M/@(mu))*@(mu) x CEIL(N/@(nu))*@(nu) matrix stored in
  *    @(mu)x@(nu)-major storage
  */
+@beginproc pcfunc vtyp
+#include <immintrin.h>
+   @mif vtyp = "__m256
+      @define andC @0x1F@
+      @define andL @7@
+      @define vtyp2 @__m128@
+      @define andC2 @0xF@
+      @define andL2 @3@
+      @define ibe @{beta,beta,beta,beta,beta,beta,beta,beta}@
+      @define ial @{alpha,alpha,alpha,alpha,alpha,alpha,alpha,alpha}@
+      @define in1 @{ATL_rnone,ATL_rnone,ATL_rnone,ATL_rnone,ATL_rnone,ATL_rnone,ATL_rnone,ATL_rnone}@
+      @define ib2 @{beta,beta,beta,beta}@
+      @define ia2 @{alpha,alpha,alpha,alpha}@
+      @define in2 @{ATL_rnone,ATL_rnone,ATL_rnone,ATL_rnone}@
+   @endmif
+   @mif vtyp = "__m256d
+      @define andC @0x1F@
+      @define andL @3@
+      @define vtyp2 @__m128d@
+      @define andC2 @0xF@
+      @define andL2 @1@
+      @define ibe @{beta,beta,beta,beta}@
+      @define ial @{alpha,alpha,alpha,alpha}@
+      @define in1 @{ATL_rnone,ATL_rnone,ATL_rnone,ATL_rnone}@
+   @endmif
+   @mif vtyp = "__m128
+      @define andC @0xF@
+      @define andL @3@
+      @define ibe @{beta,beta,beta,beta}@
+      @define ial @{alpha,alpha,alpha,alpha}@
+      @define in1 @{ATL_rnone,ATL_rnone,ATL_rnone,ATL_rnone}@
+   @endmif
+   @mif vtyp = "__m128d
+      @define andC @0xF@
+      @define andL @1@
+      @define ibe @{beta,beta}@
+      @define ial @{alpha,alpha}@
+      @define in1 @{ATL_rnone,ATL_rnone}@
+   @endmif
+
+void Mjoin(PATL,cmat2ablk_@(mu)x@(nu)_a@(nalp)_b@(nbet))
+(
+   ATL_CSZT M,          /* number of rows in A */
+   ATL_CSZT N,          /* number of columns in A */
+   const SCALAR alpha,  /* scalar for C */
+   const TYPE *C,       /* matrix to be copied to access-major format */
+   ATL_CSZT ldc,        /* stride between row elements */
+   const SCALAR beta,   /* scalar for b */
+   TYPE *b              /* matrix stored in @(mu)x@(nu)-major order */
+)
+{
+   ATL_CINT m = (M/@(mu))*@(mu), n = (N/@(nu))*@(nu), mr = M-m, nr = N-n;
+   ATL_CINT pansz = (nr) ? (n+@(nu))*@(mu) : n*@(mu);
+   ATL_CINT incC = ldc*@(nu), incb = @(mu)*@(nu);
+   ATL_INT i, j;
+   @mif nbet = "X
+   const register @(vtyp) rBETA=@(ibe);
+   @endmif
+   @mif nbet = "n
+   const register @(vtyp) rBETA=@(in1);
+   @endmif
+   @mif nalp = "X
+   const register @(vtyp) rALP=@(ial);
+   @endmif
+   @mif nalp = "n
+   const register @(vtyp) rALP=@(in1);
+   @endmif
+   @declare "   const TYPE " n n ";"
+      *C0=C
+      @define j @1@
+      @iwhile j < @(nu)
+         @iexp i @(j) -1 +
+         *C@(j)=C@(i)+ldc
+         @iexp j @(j) 1 +
+      @endiwhile
+   @enddeclare
+
+/*
+ * If C is aligned, use aligned load/stores to C
+ */
+   if (((((size_t)C) & @(andC))|(ldc&@(andL))) == 0)
+   {
+      @callproc pcloops 1 @(vtyp) rALP rBETA
+   }
+   @mif andC = "0x1F
+   else if (((((size_t)C) & @(andC2))|(ldc&@(andL2))) == 0)
+   {
+      @(vtyp2) ralp=(@(vtyp2)) rALP;
+      @callproc pcloops 1 @(vtyp2) rALP rBETA
+   }
+   @endmif
+   @mif andC ! "0x1F
+   else
+   {
+      @callproc pcloops 0 @(vtyp) rALP rBETA
+   }
+   @endmif
+   @mif nu ! "1
+   switch(nr)
+   {
+   @iexp n 1 0 +
+   @iwhile n < @(nu)
+   case @(n):
+      for (i=0; i < m; i += @(mu), b += pansz)
+      {
+      @iexp k 0 0 +
+      @iexp j 0 0 +
+      @iwhile j < @(n)
+         @iexp i 0 0 +
+         @iwhile i < @(mu)
+            @mif nbet = "X
+         b[@(k)] = @(malp)C@(j)[i+@(i)] + beta*b[@(k)];
+            @endmif
+            @mif nbet = "1
+         b[@(k)] += @(malp)C@(j)[i+@(i)];
+            @endmif
+            @mif nbet = "n
+         b[@(k)] = @(malp)C@(j)[i+@(i)] - b[@(k)];
+            @endmif
+            @mif nbet = "0
+         b[@(k)] = @(malp)C@(j)[i+@(i)];
+            @endmif
+            @iexp k @(k) 1 +
+         @iexp i @(i) 1 +
+         @endiwhile
+      @iexp j @(j) 1 +
+      @endiwhile
+      }
+      @mif mu ! "1
+      switch(mr)
+      {
+      @iexp m 1 0 +
+      @iwhile m < @(mu)
+      case @(m):
+         @iexp j 0 0 +
+         @iwhile j < @(n)
+            @iexp k @(mu) @(j) *
+            @iexp i 0 0 +
+            @iwhile i < @(m)
+               @mif nbet = "n
+         b[@(k)] = @(malp)C@(j)[i+@(i)] - b[@(k)];
+               @endmif
+               @mif nbet = "X
+         b[@(k)] = @(malp)C@(j)[i+@(i)] + beta*b[@(k)];
+               @endmif
+               @mif nbet = "1
+         b[@(k)] += @(malp)C@(j)[i+@(i)];
+               @endmif
+               @mif nbet = "0
+         b[@(k)] = @(malp)C@(j)[i+@(i)];
+               @endmif
+               @iexp k @(k) 1 + 
+            @iexp i @(i) 1 +
+            @endiwhile
+         @iexp j @(j) 1 +
+         @endiwhile
+         b += incb;
+         break;
+      @iexp m @(m) 1 +
+      @endiwhile
+      default:;
+      }
+      @endmif
+      break;
+   @iexp n @(n) 1 +
+   @endiwhile
+   default:;
+   }
+   @endmif
+}
+   @undef ial
+   @undef ibe
+   @undef in1
+   @undef andC
+   @undef andL
+@endproc
+@iexp vtst 4 @(mu) %
+@iif vtst = 0
+#if 0 && defined(ATL_AVX) && defined(DREAL)  /* AVX loses perf for unaligned */
+   @callproc pcfunc __m256d
+@endiif
+@iif vtst ! 0
+#if 0
+@endiif
+@iexp vtst 8 @(mu) %
+@iif vtst = 0
+#elif 0 && defined(ATL_AVX) && defined(SREAL) /* AVX loses perf for unaligned */
+   @callproc pcfunc __m256
+@endiif
+@iif vtst ! 0
+#elif 0
+@endiif
+@iexp vtst 2 @(mu) %
+@iif vtst = 0
+#elif defined(ATL_SSE2) && defined(DREAL) && defined(__GNUC__)
+   @callproc pcfunc __m128d
+@endiif
+@iif vtst ! 0
+#elif 0
+@endiif
+@iexp vtst 4 @(mu) %
+@iif vtst = 0
+#elif defined(SREAL) && defined(ATL_SSE1) && defined(__GNUC__)
+   @callproc pcfunc __m128
+@endiif
+@iif vtst ! 0
+#elif 0
+@endiif
+#else
 void Mjoin(PATL,cmat2ablk_@(mu)x@(nu)_a@(nalp)_b@(nbet))
 (
    ATL_CSZT M,          /* number of rows in A */
@@ -5444,3 +5845,4 @@ void Mjoin(PATL,cmat2ablk_@(mu)x@(nu)_a@(nalp)_b@(nbet))
    }
    @endmif
 }
+#endif
