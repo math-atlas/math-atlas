@@ -3488,291 +3488,23 @@ void AddOptWithOptimizeLC(LOOPQ *lp)
  */
    OptimizeLoopControl(lp, 1, 0, NULL); /* lc is already killed */
 }
-/*
- * to manage the alignment issue
- * Note: will be shifted to another file  after completing the implementation
-      ConvertAlign2Unalign(optloop->falign[1], optloop->blocks);
- */
-void ConvertAlign2Unalign(short aptr, BLIST *scope)
-{
-   static enum inst
-      valign[] = {VFLD, VDLD, VLD, VFST, VDST, VST},
-      vualign[] = {VFLDU, VDLDU, VLDU, VFSTU, VDSTU, VSTU}; 
-   enum inst inst;
-   const int nvalign = 6;
-   int i,j,k;
-   short op;
-   INSTQ *ip;
-   BBLOCK *bp;
-   BLIST *bl;
-   LOOPQ *lp;
-   extern LOOPQ *optloop;
-
-   assert(aptr); /* there should be one ptr force in our implemetation */
-   lp = optloop;
-
-   for (bl=scope; bl; bl=bl->next)
-   {
-      for (ip=bl->blk->inst1; ip; ip=ip->next)
-      {
-         inst = ip->inst[0];
-         if ((j = FindInstIndex(nvalign, valign, inst)) != -1) /*vload/vstore*/
-         {
-            for (i=1; i<4; i++)
-            {
-               op = ip->inst[i];
-               if (op > 0 && IS_DEREF(STflag[op-1]))
-               {
-                  k = STpts2[op-1];
-                  if (k!= aptr && FindInShortList(lp->varrs[0],lp->varrs+1, k))
-                  {
-                     ip->inst[0] = vualign[j];
-                  }
-               }
-            }
-         }
-      }
-   }
-
-}
-void UnalignLoopSpecialization(LOOPQ *lp)
-/*
- * this function will add an extra vectorized loop with unaligned loads/stores
- * to manage the alignment in case all arrays are not mutually aligned
- */
-{
-   int i,k,n;
-   int halign;
-   short reg0, reg1;
-   short lsAlabel,jBlabel; 
-   short faptr, ptr;
-   short rvar;
-   INSTQ *ip;
-   BBLOCK *bp0, *bp, *bpN;
-   BLIST *bl, *dupblks, *tails;
-   LOOPQ *lpn;
-   extern BBLOCK *bbbase;
-/*
- * ptr which is already been aligned
- */
-   if (lp->faalign)
-      faptr = lp->faalign[1];
-   else
-      faptr = lp->varrs[1];
-/*
- * for any loop specialization, we need to consider following issues:
- * 1. where from: need to figure out the condition to switch to this new loop
- * 2. duplicate: need to duplicate loop with necessary changes
- * 3. where to: jump back to appropriate location
- */
-/*
- *                step 1
- * ===========================================================================
- * 1. where from: need to figure out the condition to switch to this new loop
- * NOTE: it doesn't work if we place the condition in preheader... register 
- * assignment also assumes preheader and posttail not share with loops..
- * So, place test at the end of each predecessor of the header of loop..
- */
-#ifdef AVX
-   halign = 0x1F;
-#else
-   halign = 0x0F;
-#endif
-   k = STiconstlookup(halign);
-   lsAlabel = STlabellookup("_FKO_LOOP_SPEC_ALIGN"); 
-   rvar = InsertNewLocal("_RES_ALIGN",T_INT);
-   //bp = lp->preheader;
-   for (bl=lp->preheader->preds; bl; bl=bl->next)
-   {
-      bp = bl->blk;
-      ip = bp->ainstN;
-   /* add extra checking for the alignment */
-      for (i=1,n=lp->varrs[0]; i <= n; i++)
-      {
-         if (lp->varrs[i] == faptr) continue;
-         ptr = lp->varrs[i]; 
-         ip = PrintComment(bp, ip, NULL, "Checking for alignment for" 
-                     " loop specialization");
-         reg0 = GetReg(T_INT);
-         reg1 = GetReg(T_INT);
-         ip = InsNewInst(bp, ip, NULL, LD, -reg0, SToff[ptr-1].sa[2], 0);
-         /*ip = InsNewInst(bp, ip, NULL, LD, -reg1, SToff[rvar-1].sa[2], 0);*/
-         ip = InsNewInst(bp, ip, NULL, AND , -reg0, -reg0, k);
-         ip = InsNewInst(bp, ip, NULL, ST, SToff[rvar-1].sa[2], -reg0, 0);
-         GetReg(-1);
-         break; /* 1 iteration peeling */
-      }
-      for (i=i+1; i <=n; i++)
-      {
-         if (lp->varrs[i] == faptr) continue;
-         ptr = lp->varrs[i]; 
-         reg0 = GetReg(T_INT);
-         reg1 = GetReg(T_INT);
-         ip = InsNewInst(bp, ip, NULL, LD, -reg0, SToff[ptr-1].sa[2], 0);
-         ip = InsNewInst(bp, ip, NULL, LD, -reg1, SToff[rvar-1].sa[2], 0);
-         ip = InsNewInst(bp, ip, NULL, AND , -reg0, -reg0, k);
-         ip = InsNewInst(bp, ip, NULL, OR , -reg1, -reg1, -reg0);
-         ip = InsNewInst(bp, ip, NULL, ST, SToff[rvar-1].sa[2], -reg1, 0);
-         GetReg(-1); 
-      } 
-      reg0 = GetReg(T_INT);
-      ip = InsNewInst(bp, ip, NULL, LD, -reg0, SToff[rvar-1].sa[2], 0);
-      ip = InsNewInst(bp, ip, NULL, CMP, -ICC0, -reg0, STiconstlookup(0));
-      ip = InsNewInst(bp, ip, NULL, JNE, -PCREG, -ICC0 ,lsAlabel);
-      GetReg(-1);
-   }
-#if 0
-      fprintf(stderr, "alignment checkingi blk:");
-      PrintThisBlockInst(stderr, bp);
-      //exit(0);
-#endif
-/*
- *                step 2
- * ===========================================================================
- * 2. duplicate: need to duplicate loop with necessary changes
- * NOTE: need to copy the preheader and post tails to
- */
-/*
- * find the last block, add loop specialization after that
- */
-   for (bp0=bbbase; bp0->down; bp0=bp0->down);
-   bp = NewBasicBlock(bp0, NULL);
-   bp0->down = bp;
-   bp->up = bp0;
-   bp0 = bp;
-/*
- * Start new block with a  label
- */
-   ip = InsNewInst(bp, NULL, NULL, LABEL, lsAlabel , 0, 0);
-/*
- * duplicate the preheader
- */
-   bp = DupBlock(lp->preheader);
-   if (bp->ainst1->inst[0] == LABEL) /* delete the label */
-   {
-      DelInst(bp->ainst1);
-   }
-   bp0->down = bp;
-   //bp->up = bp0;
-   bp0 = bp;
-/*
- * duplicate the loop 
- */
-   dupblks = AddLoopDupBlks(lp, bp0, bp0->down);
-/*
- * convert the loop for unaligned access 
- */
-   ConvertAlign2Unalign(faptr, dupblks);
-/*
- * create new loop and populate it with our new loop
- */
-#if 0   
-   lpn = NewLoop(lp->flag);
-   lpn->I = lp->I;
-   lpn->beg = lp->beg;
-   lpn->end = lp->end;
-   lpn->inc = lp->inc;
-   lpn->preheader = bp;
-   bp = FindBlockInListByNumber(dupblks, lp->header->bnum);
-   lpn->head = bp;
-   lpn->body_label = bp->ilab;
-   for (bl=lp->tails; bl; bl=bl->next)
-   {
-      bp = FindBlockInListByNumber(dupblks, bl->blk->bnum);
-      lpn->tails = AddBlockToList(lpn->tails, bp);
-   }
-   lpn->blocks = dupblks;
-#endif
-/*
- * duplicate the posttails
- * NOTE: to minimize the complexity, we consider only one posttail here
- * we need to extend it for multiple posttails later.
- */
-   assert(lp->posttails && !lp->posttails->next);
-   bp0 = FindBlockInListByNumber(dupblks, lp->tails->blk->bnum);
-   bp = DupBlock(lp->posttails->blk);
-#if 0
-   fprintf(stderr, "copy of posttail blk\n");
-   PrintThisBlockInst(stderr, bp);
-#endif
-   bp0->down = bp;
-   //bp->up = bp0;
-   bp0 = bp;
-/*
- * jump to the usucc of posttail 
- */
-   bp = NewBasicBlock(bp0, NULL);
-   bp0->down = bp;
-
-   bpN = lp->posttails->blk->usucc;
-   if (bpN->ainst1->inst[0] == LABEL)
-      jBlabel = bpN->ainst1->inst[1];
-   else
-   {
-      jBlabel =  STlabellookup("_FKO_LOOP_POSTTAIL"); 
-      InsNewInst(bpN, NULL, bpN->ainst1, LABEL, jBlabel, 0,0);
-   }
-   InsNewInst(bp, NULL, NULL, JMP, -PCREG, jBlabel, 0);
-
-#if 0   
-/*
- *                step 3
- * ===========================================================================
- * 3. where to: jump back to appropriate location
- */
-   tails = NULL;
-   k=0;
-   for (bl=lp->tails; bl; bl=bl->next)
-   {
-      bp0 = FindBlockInListByNumber(dupblks, bl->blk->bnum);
-      //tails = AddBlockToList(tails, bp);
-      assert(bp0);
-      //fprintf(stderr, "tail=%d, tail->down=%d\n", bp0->bnum, bp0->down->bnum);
-      bp = NewBasicBlock(bp0, bp0->down);
-      bp0->down = bp;
-      //fprintf(stderr, "tail=%d, tail->down=%d\n", bp0->bnum, bp0->down->bnum);
-/*
- *    NOTE: for multiple tails and posttails, we need to know which posttail is
- *    for which tail. Right now, we skip this out
- */
-      assert(lp->posttails && !lp->posttails->next);
-      if (lp->posttails->blk->ainst1->inst[0] == LABEL)
-         jBlabel = lp->posttails->blk->ainst1->inst[1];
-      else
-      {
-         jBlabel =  STlabellookup("_FKO_LOOP_POSTTAIL"); 
-      }
-      ip = InsNewInst(bp, NULL, NULL, JMP, -PCREG, jBlabel, 0);
-   }
-#endif   
-#if 0
-   for(bl=dupblks; bl; bl=bl->next)
-   {
-      PrintThisBlockInst(stderr, bl->blk);
-   }
-   PrintThisBlockInst(stderr, bp);
-#endif
-
-   InvalidateLoopInfo();
-   bbbase = NewBasicBlocks(bbbase);
-   CheckFlow(bbbase, __FILE__,__LINE__);
-   FindLoops();
-   CheckFlow(bbbase, __FILE__,__LINE__); 
-   //ShowFlow("lscfg.dot",bbbase);
-#if 0
-   fprintf(stdout, "LIL after loop specialiazation\n");
-   PrintInst(stdout, bbbase);
-   PrintST(stdout);
-   ShowFlow("lscfg.dot",bbbase);
-   exit(0);
-#endif
-}
 
 int IsAlignLoopSpecNeeded(LOOPQ *lp)
 {
    int i,j,k,n;
    short *spa[2], *spb[2];
    const int na = 2;
+/*
+ * we don't need loop specialization for alignment if there is only one ptr
+ * loop peeling would make it aligned to vlen
+ */
+   if (lp->varrs[0] < 2)
+   {
+      fko_warn(__LINE__, "NO SPECIALIZATION FOR ALIGNMENT: "
+                     "we only have one PTR to manage");
+      return 0;
+   }
+
 /*
  * no need of loop specialization for alignment if:
  * 1. All moving ptrs are aligned to atleast vlen
@@ -4371,30 +4103,14 @@ int main(int nargs, char **args)
       }
    }
 /*
- * special stage: duplicate the optloop with unaligned load to handle all the
+ * special stage: loop specialization for memory alignment for SIMD 
+ * duplicate the optloop with unaligned load to handle all the
  * memory alignment. 
  * NOTE: this is done after all the fundamental optimizations sothat we can 
  * keep them too in the duplicated loop. 
  */
-
-   //if (VECT_FLAG && (optloop->faalign )) // need to redesign the condition!!!
    if (VECT_FLAG && IsAlignLoopSpecNeeded(optloop))
-   {
-/*
- *    if forced aligned PTR is not speicafied in markup, use the 1st  
- *    ptr in varrs to force... it is also done in loop peeling (see optsimd.c) 
- */
-#if 0      
-      if (optloop->falign)
-         ConvertAlign2Unalign(optloop->falign[1], optloop->blocks);
-      else
-         ConvertAlign2Unalign(optloop->varrs[1], optloop->blocks);
-#else
       UnalignLoopSpecialization(optloop);
-#endif
-
-   }
-
 /*
  * Now, it's time to apply repeatable optimizations 
  */
