@@ -221,6 +221,11 @@ struct loopq
    short *mbalign;    /* mutual alignment byte of the above array */
    short *faalign;    /* arrays need to be force aligned */
    short *fbalign;    /* alignments of the above arrays */
+/*
+ * depending on the markup, loop peeling select a ptr to forced align to veclen.
+ * it is used in loop speicalization later. 
+ */
+   short fa2vlen;     /* forced align to vector length in loop peeling */ 
 
    short *nopf;      /* arrays which should not be prefetched */
    short *pfarrs;     /* arrays which should be prefetched */
