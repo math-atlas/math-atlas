@@ -1072,40 +1072,126 @@ void AddLoopPeeling(LOOPQ *lp, int jblabel, int falabel, short Np,
    KillLoop(lpn); 
 }
 
+short FindMostAccessedPtr(short *ptrs, BLIST *scope)
+{
+   int i, k, n;
+   int maxA;
+   short op;
+   INSTQ *ip;
+   BLIST *bl;
+   short ptm;   /* most accessed*/
+   short *ptar; /* number of read access inside loop */
+   short *ptaw; /* number of write access inside loop */
+/*
+ * allocate pta to track the number of access. pta[0] = number of ptr
+ * position of each element represents each ptr in ptrs
+ */
+   n = ptrs[0];
+   ptar = calloc((n+1),sizeof(short)); /* calloc can be used*/
+   ptaw = calloc((n+1),sizeof(short)); /* calloc can be used*/
+   assert(ptar && ptaw);
+   ptar[0] = ptaw[0] = n;
+/*
+ * findout the read and write access of the ptr inside the scope
+ * NOTE: for each memory access, the ptr may be read 2 times in initial LIL
+ * it will result more number of access but it doesn't hurt; because it is
+ * true for all ptrs.
+ */
+   for (bl=scope; bl; bl=bl->next)
+   {
+      for (ip=bl->blk->ainst1; ip; ip=ip->next)
+      {
+         for (i=1; i<4; i++) 
+         {
+            op = ip->inst[i];
+            if (op > 0)
+            {
+               k = STpts2[op-1];
+               k = FindInShortList(ptrs[0], ptrs+1, k);
+               if (k)
+               {
+                  if (i==1) /* destination*/
+                  {
+                     ptaw[k]++;
+                  }
+                  else
+                  {
+                     ptar[k]++;
+                  }
+               }
+            }
+         }
+      }
+   }
+#if 0
+   for (n=ptrs[0], i=1; i<=n; i++)
+   {
+      fprintf(stderr, "%s: ", STname[ptrs[i]-1]);
+      fprintf(stderr, "read=%d write=%d\n", ptar[i], ptaw[i]);
+   }
+   exit(0);
+#endif
+/*
+ * find max read+write access; 
+ * NOTE: if they are same, we should consider  max write. not implemented yet
+ */
+   maxA=0;
+   ptm=1;
+   for (n=ptrs[0],i=1; i<=n; i++)
+   {
+      if ((ptar[i]+ptaw[i]) > maxA)
+      {
+         maxA = ptar[i]+ptaw[i];
+         ptm = i;
+      }
+   }
+   ptm = ptrs[ptm];
+#if 0  
+   fprintf(stderr, "%s is selected\n", STname[ptm-1]);
+   exit(0);
+#endif
+   return ptm;  
+}
+
 short FindPtrToForceAlign(LOOPQ *lp)
 /*
  * return ST index of ptr to force align
  */
 {
    int i;
-   short *sp;
+   short ptr;
 /*
  * if there exist a ptr from FORCE_ALIGN markup
  */
    if (lp->faalign)  /* if exist, return the 1st one */
-      return (lp->faalign[1]);
+   {
+      lp->fa2vlen = lp->faalign[1];
+      /*return (lp->faalign[1]);*/
+   }
    else if (!lp->faalign && lp->fbalign)
-      return (lp->varrs[1]);
+   {
+      lp->fa2vlen = lp->varrs[1];
+      /*return (lp->varrs[1]);*/
+   }
 /*
  * if no ptr is specified in markup, find out best candidate
  * here is strategy to do that:
- * 1. ptr which has max read/write access
- * 2. ptr which is mutually aligned with other ptr
+ * 1. ptr which is mutually aligned with other ptr
+ * 2. ptr which has max read/write access
  */   
-   sp = lp->varrs;
-   if (lp->maaligned)
-      sp = lp->maaligned;
-   /*else if (!lp->maaligned && lp->mbalign)
-      sp = lp->varrs;*/
-/*
- * Here Here... choose a ptr which is access more from sp !!!
- * FIXME: 
- */
-         
-/*
- * by default, first available moving ptr
- */
-   return(lp->varrs[1]);
+   else
+   {
+      ptr = lp->varrs[1];
+      if (lp->maaligned)
+         ptr = lp->maaligned[1];
+      else if (!lp->maaligned && lp->mbalign) /* all malign, select anyone */
+         ptr = lp->varrs[1];
+      else /* no falign and no malign ptr, find the most accessed one */
+         ptr = FindMostAccessedPtr(lp->varrs, lp->blocks);
+      lp->fa2vlen = ptr;
+   }
+
+   return(lp->fa2vlen);
 }
 
 void GenForceAlignedPeeling(LOOPQ *lp)
@@ -1188,6 +1274,9 @@ void GenForceAlignedPeeling(LOOPQ *lp)
      fptr = lp->varrs[1];     /* 1st availbale ptr */
 #else
   fptr = FindPtrToForceAlign(lp);
+#if 0
+  fprintf(stderr, "FPTR=%s\n", STname[fptr-1]);
+#endif
 #endif
 /*
  * Add the checking of alignment. it is always related with the vector length
@@ -9798,3 +9887,335 @@ int RcVectorization()
 #endif
    return(0);
 }
+
+/*============================================================================
+ * Loop specialization for memory alignment after SIMD vectorization
+ *    
+ *===========================================================================*/
+
+static void ConvertAlign2Unalign(short *aptrs, BLIST *scope)
+/*
+ * provided list of aligned ptr and the loop scope, this function converts 
+ * aligned instruction into unaligned for those who are not in aptrs list.
+ */
+{
+   static enum inst
+      valign[] = {VFLD, VDLD, VLD, VFST, VDST, VST},
+      vualign[] = {VFLDU, VDLDU, VLDU, VFSTU, VDSTU, VSTU}; 
+   enum inst inst;
+   const int nvalign = 6;
+   int i,j,k;
+   short op;
+   INSTQ *ip;
+   BBLOCK *bp;
+   BLIST *bl;
+   LOOPQ *lp;
+   extern LOOPQ *optloop;
+
+   assert(aptrs);
+   lp = optloop;
+   for (bl=scope; bl; bl=bl->next)
+   {
+      for (ip=bl->blk->inst1; ip; ip=ip->next)
+      {
+         inst = ip->inst[0];
+         if ((j = FindInstIndex(nvalign, valign, inst)) != -1) /*vload/vstore*/
+         {
+            for (i=1; i<4; i++)
+            {
+               op = ip->inst[i];
+               if (op > 0 && IS_DEREF(STflag[op-1]))
+               {
+                  k = STpts2[op-1];
+                  if (!FindInShortList(aptrs[0], aptrs+1, k)
+                        && FindInShortList(lp->varrs[0],lp->varrs+1, k))
+                  {
+                     ip->inst[0] = vualign[j];
+                  }
+               }
+            }
+         }
+      }
+   }
+}
+void UnalignLoopSpecialization(LOOPQ *lp)
+/*
+ * this function will add an extra vectorized loop with unaligned loads/stores
+ * to manage the alignment in case all arrays are not mutually aligned
+ */
+{
+   int i,k,n;
+   int halign;
+   short reg0, reg1;
+   short lsAlabel,jBlabel; 
+   short faptr, ptr;
+   short *aptrs;
+   short rvar;
+   INSTQ *ip;
+   BBLOCK *bp0, *bp, *bpN;
+   BLIST *bl, *dupblks, *tails;
+   LOOPQ *lpn;
+   extern BBLOCK *bbbase;
+/*
+ * ptr which is already been aligned
+ * FIXME: logic for fptr is changed. We marked the most accessed ptr as fptr
+ * in case it is not specified through markup!
+ * NOTE: we updated optloop->fa2vlen in loop peeling to be that.
+ */
+#if 0   
+   if (lp->faalign)
+      faptr = lp->faalign[1];
+   else
+      faptr = lp->varrs[1];
+#else
+   faptr = lp->fa2vlen;
+   assert(faptr);
+#endif
+/*
+ * If there are ptrs which are mutually aligned with faptr, there are also
+ * aligned after aplying loop peeling. make a list of them
+ */
+#if 0
+/* no need to consider this case, it is checked by IsAlignLoopSpecNeeded()
+   if (!lp->maaligned && lp->mbaligned) /* means all ptrs are malign */
+      aptrs = lp->varrs; 
+   else 
+#endif      
+   if (lp->maaligned)
+   {
+      for (n=lp->maaligned[0],i=1; i <= n; i++)
+         if (lp->maaligned[i] == faptr)
+            break;
+      if (i<=n)   /* faptr is also in maaligned ptr */
+         aptrs = lp->maaligned;
+   }
+   if (!lp->maaligned || i > n) /* not maligned or not matched with faptr */
+   {
+      aptrs = malloc(2*sizeof(short));
+      assert(aptrs);
+      aptrs[0] = 1;
+      aptrs[1] = faptr;
+   }
+#if 0
+   fprintf(stderr, "Aligned PTR=");
+   for (n=aptrs[0], i=1; i <= n; i++)
+      fprintf(stderr, "%s ", STname[aptrs[i]-1]);
+   fprintf(stderr, "\n");
+#endif
+/*
+ * for any loop specialization, we need to consider following issues:
+ * 1. where from: need to figure out the condition to switch to this new loop
+ * 2. duplicate: need to duplicate loop with necessary changes
+ * 3. where to: jump back to appropriate location
+ */
+/*
+ *                step 1
+ * ===========================================================================
+ * 1. where from: need to figure out the condition to switch to this new loop
+ * NOTE: it doesn't work if we place the condition in preheader... register 
+ * assignment also assumes preheader and posttail not share with loops..
+ * So, place test at the end of each predecessor of the header of loop..
+ */
+#ifdef AVX
+   halign = 0x1F;
+#else
+   halign = 0x0F;
+#endif
+   k = STiconstlookup(halign);
+   lsAlabel = STlabellookup("_FKO_LOOP_SPEC_ALIGN"); 
+   rvar = InsertNewLocal("_RES_ALIGN",T_INT);
+   //bp = lp->preheader;
+   for (bl=lp->preheader->preds; bl; bl=bl->next)
+   {
+      bp = bl->blk;
+      ip = bp->ainstN;
+   /* add extra checking for the alignment */
+      for (i=1,n=lp->varrs[0]; i <= n; i++)
+      {
+         if (FindInShortList(aptrs[0], aptrs+1, lp->varrs[i])) 
+            continue;
+         ptr = lp->varrs[i]; 
+#if 0
+         fprintf(stderr, "Check PTR=%s\n", STname[ptr-1]);
+#endif
+         ip = PrintComment(bp, ip, NULL, "Checking for alignment for" 
+                     " loop specialization");
+         reg0 = GetReg(T_INT);
+         reg1 = GetReg(T_INT);
+         ip = InsNewInst(bp, ip, NULL, LD, -reg0, SToff[ptr-1].sa[2], 0);
+         /*ip = InsNewInst(bp, ip, NULL, LD, -reg1, SToff[rvar-1].sa[2], 0);*/
+         ip = InsNewInst(bp, ip, NULL, AND , -reg0, -reg0, k);
+         ip = InsNewInst(bp, ip, NULL, ST, SToff[rvar-1].sa[2], -reg0, 0);
+         GetReg(-1);
+         break; /* 1 iteration peeling */
+      }
+      for (i=i+1; i <=n; i++)
+      {
+         if (FindInShortList(aptrs[0], aptrs+1, lp->varrs[i])) 
+            continue;
+         ptr = lp->varrs[i]; 
+#if 0
+         fprintf(stderr, "Check PTR=%s\n", STname[ptr-1]);
+#endif
+         reg0 = GetReg(T_INT);
+         reg1 = GetReg(T_INT);
+         ip = InsNewInst(bp, ip, NULL, LD, -reg0, SToff[ptr-1].sa[2], 0);
+         ip = InsNewInst(bp, ip, NULL, LD, -reg1, SToff[rvar-1].sa[2], 0);
+         ip = InsNewInst(bp, ip, NULL, AND , -reg0, -reg0, k);
+         ip = InsNewInst(bp, ip, NULL, OR , -reg1, -reg1, -reg0);
+         ip = InsNewInst(bp, ip, NULL, ST, SToff[rvar-1].sa[2], -reg1, 0);
+         GetReg(-1); 
+      } 
+      reg0 = GetReg(T_INT);
+      ip = InsNewInst(bp, ip, NULL, LD, -reg0, SToff[rvar-1].sa[2], 0);
+      ip = InsNewInst(bp, ip, NULL, CMP, -ICC0, -reg0, STiconstlookup(0));
+      ip = InsNewInst(bp, ip, NULL, JNE, -PCREG, -ICC0 ,lsAlabel);
+      GetReg(-1);
+   }
+#if 0
+      fprintf(stderr, "alignment checkingi blk:");
+      PrintThisBlockInst(stderr, bp);
+      //exit(0);
+#endif
+/*
+ *                step 2
+ * ===========================================================================
+ * 2. duplicate: need to duplicate loop with necessary changes
+ * NOTE: need to copy the preheader and post tails to
+ */
+/*
+ * find the last block, add loop specialization after that
+ */
+   for (bp0=bbbase; bp0->down; bp0=bp0->down);
+   bp = NewBasicBlock(bp0, NULL);
+   bp0->down = bp;
+   bp->up = bp0;
+   bp0 = bp;
+/*
+ * Start new block with a  label
+ */
+   ip = InsNewInst(bp, NULL, NULL, LABEL, lsAlabel , 0, 0);
+/*
+ * duplicate the preheader
+ */
+   bp = DupBlock(lp->preheader);
+   if (bp->ainst1->inst[0] == LABEL) /* delete the label */
+   {
+      DelInst(bp->ainst1);
+   }
+   bp0->down = bp;
+   //bp->up = bp0;
+   bp0 = bp;
+/*
+ * duplicate the loop 
+ */
+   dupblks = AddLoopDupBlks(lp, bp0, bp0->down);
+/*
+ * convert the loop for unaligned access 
+ */
+   ConvertAlign2Unalign(aptrs, dupblks);
+/*
+ * create new loop and populate it with our new loop
+ */
+#if 0   
+   lpn = NewLoop(lp->flag);
+   lpn->I = lp->I;
+   lpn->beg = lp->beg;
+   lpn->end = lp->end;
+   lpn->inc = lp->inc;
+   lpn->preheader = bp;
+   bp = FindBlockInListByNumber(dupblks, lp->header->bnum);
+   lpn->head = bp;
+   lpn->body_label = bp->ilab;
+   for (bl=lp->tails; bl; bl=bl->next)
+   {
+      bp = FindBlockInListByNumber(dupblks, bl->blk->bnum);
+      lpn->tails = AddBlockToList(lpn->tails, bp);
+   }
+   lpn->blocks = dupblks;
+#endif
+/*
+ * duplicate the posttails
+ * NOTE: to minimize the complexity, we consider only one posttail here
+ * we need to extend it for multiple posttails later.
+ */
+   assert(lp->posttails && !lp->posttails->next);
+   bp0 = FindBlockInListByNumber(dupblks, lp->tails->blk->bnum);
+   bp = DupBlock(lp->posttails->blk);
+#if 0
+   fprintf(stderr, "copy of posttail blk\n");
+   PrintThisBlockInst(stderr, bp);
+#endif
+   bp0->down = bp;
+   //bp->up = bp0;
+   bp0 = bp;
+/*
+ * jump to the usucc of posttail 
+ */
+   bp = NewBasicBlock(bp0, NULL);
+   bp0->down = bp;
+
+   bpN = lp->posttails->blk->usucc;
+   if (bpN->ainst1->inst[0] == LABEL)
+      jBlabel = bpN->ainst1->inst[1];
+   else
+   {
+      jBlabel =  STlabellookup("_FKO_LOOP_POSTTAIL"); 
+      InsNewInst(bpN, NULL, bpN->ainst1, LABEL, jBlabel, 0,0);
+   }
+   InsNewInst(bp, NULL, NULL, JMP, -PCREG, jBlabel, 0);
+
+#if 0   
+/*
+ *                step 3
+ * ===========================================================================
+ * 3. where to: jump back to appropriate location
+ */
+   tails = NULL;
+   k=0;
+   for (bl=lp->tails; bl; bl=bl->next)
+   {
+      bp0 = FindBlockInListByNumber(dupblks, bl->blk->bnum);
+      //tails = AddBlockToList(tails, bp);
+      assert(bp0);
+      //fprintf(stderr, "tail=%d, tail->down=%d\n", bp0->bnum, bp0->down->bnum);
+      bp = NewBasicBlock(bp0, bp0->down);
+      bp0->down = bp;
+      //fprintf(stderr, "tail=%d, tail->down=%d\n", bp0->bnum, bp0->down->bnum);
+/*
+ *    NOTE: for multiple tails and posttails, we need to know which posttail is
+ *    for which tail. Right now, we skip this out
+ */
+      assert(lp->posttails && !lp->posttails->next);
+      if (lp->posttails->blk->ainst1->inst[0] == LABEL)
+         jBlabel = lp->posttails->blk->ainst1->inst[1];
+      else
+      {
+         jBlabel =  STlabellookup("_FKO_LOOP_POSTTAIL"); 
+      }
+      ip = InsNewInst(bp, NULL, NULL, JMP, -PCREG, jBlabel, 0);
+   }
+#endif   
+#if 0
+   for(bl=dupblks; bl; bl=bl->next)
+   {
+      PrintThisBlockInst(stderr, bl->blk);
+   }
+   PrintThisBlockInst(stderr, bp);
+#endif
+
+   InvalidateLoopInfo();
+   bbbase = NewBasicBlocks(bbbase);
+   CheckFlow(bbbase, __FILE__,__LINE__);
+   FindLoops();
+   CheckFlow(bbbase, __FILE__,__LINE__); 
+   //ShowFlow("lscfg.dot",bbbase);
+#if 0
+   fprintf(stdout, "LIL after loop specialiazation\n");
+   PrintInst(stdout, bbbase);
+   PrintST(stdout);
+   ShowFlow("lscfg.dot",bbbase);
+   exit(0);
+#endif
+}
+
