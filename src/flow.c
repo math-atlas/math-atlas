@@ -1256,9 +1256,10 @@ void InvalidateLoopInfo(void)
       lp->writedd = optloop->writedd;
       lp->LMU_flag = optloop->LMU_flag;   /* save the flag for loop markup */
       
+      lp->fa2vlen = optloop->fa2vlen;     /* fptr calculated in vect*/
       lp->aaligned = optloop->aaligned;
       lp->abalign = optloop->abalign;
-      lp->maaligned = optloop->maaligned;       /* mutually align for ... */
+      lp->maaligned = optloop->maaligned;    /* mutually align for ... */
       lp->mbalign = optloop->mbalign;       /* mutually align for ... */
       lp->faalign = optloop->faalign;       /* need to be force aligned */
       lp->fbalign = optloop->fbalign;       /* need to be force aligned */
