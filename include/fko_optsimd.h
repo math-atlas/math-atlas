@@ -15,4 +15,5 @@
 
 int Type2Vlen(int type);
 BLIST *AddLoopDupBlks(LOOPQ *lp, BBLOCK *up, BBLOCK *down);
+void UnalignLoopSpecialization(LOOPQ *lp);
 #endif
