@@ -6911,6 +6911,7 @@ SS1:
 #define incPF   %rbx
 #define pfB     %rdx
 #define incAm   %r11 
+#define r256    %r8
 @skip #define pfC     %r13
 
 #define rA0     %xmm0
@@ -6927,18 +6928,43 @@ SS1:
 #define rC09    %xmm11
 #define rC10    %xmm12
 #define rC11    %xmm13
-#ifndef prefA
-   #define prefA prefetcht1
-#endif
-#ifndef prefB
-   #define prefB prefetcht1
-#endif
-#ifndef prefC
+/*
+ * Small problems on AMD can be prefetched to L1
+ */
+#if KB < 45
    #ifdef ATL_3DNow
-      #define prefC prefetchw
+      #ifdef ATL_MOVEB
+         #define prefA(m_)
+         #define prefB(m_) prefetcht0 m_
+      #elif defined(ATL_MOVEA)
+         #define prefA(m_) prefetcht0 m_
+         #define prefB(m_)
+      #endif
    #else
-      #define prefC prefetcht0
+      #define prefA(m_) prefetcht1 m_
+      #define prefB(m_) prefetcht1 m_
    #endif
+#else
+   #if KB > 78  /* very large problems should only pref 1 block */
+      #ifdef ATL_MOVEB
+         #define prefB(m_) prefetcht2 m_
+         #define prefA(m_)
+      #else
+         #define prefA(m_) prefetcht2 m_
+         #define prefB(m_)
+      #endif
+   #else
+      #define prefA(m_) prefetcht2 m_
+      #define prefB(m_) prefetcht2 m_
+   #endif
+#endif
+#ifdef ATL_3DNow
+   #define prefC(m_) prefetchw m_
+#else
+   #define prefC(m_) prefetcht0 m_
+#endif
+#if defined(BETAN) || defined(BETAn)
+   #define BETAN1
 #endif
 #ifdef BETAN1
    #define BETCOP subpd
@@ -6998,6 +7024,7 @@ ATL_asmdecor(ATL_USERMM):
 @skip   sub $-128, pfC
    mov $KB*24*8, incAm           /* incAm = KB*MU*size */
    movq pB, pB0
+   mov $256, r256
 
    ALIGN16
    .local MNLOOP
@@ -7025,31 +7052,43 @@ ATL_asmdecor(ATL_USERMM):
          movddup -128(pB), rC00
          MOVAPD rC00, rC01
          mulpd -128(pA), rC00
-         prefC -128(pC)
+         prefC(-128(pC))
          MOVAPD rC01, rC02
          mulpd -112(pA), rC01
-         prefC -64(pC)
+         prefC(-64(pC))
          MOVAPD rC02, rC03
          mulpd -96(pA), rC02
-         prefC (pC)
+         prefC((pC))
          MOVAPD rC03, rC04
          mulpd -80(pA), rC03
-         prefB -128(pfB)
+         #ifdef ATL_MOVEB
+            prefB(-128(pfB))
+         #else
+            prefC(64(pC))
+         #endif
          MOVAPD rC04, rC05
          mulpd -64(pA), rC04
-         prefB -64(pfB)
+         #ifdef ATL_MOVEB
+            prefB(-64(pfB))
+         #else
+            prefC(-128(pC,r256))
+         #endif
          MOVAPD rC05, rC06
          mulpd -48(pA), rC05
-         prefB (pfB)
+         #ifdef ATL_MOVEB
+            prefB((pfB))
+         #else
+            prefC(-64(pC,r256))
+         #endif
          MOVAPD rC06, rC07
          mulpd -32(pA), rC06
-         prefA -128(pfA)
+         prefA(-128(pfA))
          MOVAPD rC07, rC08
          mulpd -16(pA), rC07
-         prefA -64(pfA)
+         prefA(-64(pfA))
          MOVAPD rC08, rC09
          mulpd (pA), rC08
-         prefA (pfA)
+         prefA((pfA))
          MOVAPD rC09, rC10
          mulpd 16(pA), rC09
          MOVAPD rC10, rC11
@@ -11829,9 +11868,11 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
    #endif
    #define prefB(m_) prefetcht2 m_
 #endif
-//#define prefC(m_) prefetcht0 m_
-#define prefC(m_) prefetchw m_
-#define FMAC vfmadd231pd   /* FMAC m256/r256, rs1, rd */
+#ifdef ATL_3DNow
+   #define prefC(m_) prefetchw m_
+#else
+   #define prefC(m_) prefetcht0 m_
+#endif
 #if defined(BETAN) || defined(BETAn)
    #define BETAN1
 #endif
@@ -11840,7 +11881,7 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
 #else
    #define VCOP addpd
 #endif
-#define movapd movaps
+/* #define movapd movaps */
 .text
 .global ATL_asmdecor(ATL_USERMM)
 ALIGN16
@@ -11862,10 +11903,19 @@ ATL_asmdecor(ATL_USERMM):
    mov %r8, pB
    mov %r9, pC
    mov nnu, nnu0
-   movq 8(%rsp), pfA       /* pfA = pAn */
-   movq 16(%rsp), pfB      /* pfB = pBn */
-   cmp pfB, pB
-   CMOVE pfA, pfB
+   #if KB > 78  /* only pfB is prefetched, so put most imp mat in it */
+      #if defined(ATL_MOVEB)
+         lea KB*6*8(pB), pfB
+      #else
+         lea KB*12*8(pA), pfB
+      #endif
+   #else
+      movq 8(%rsp), pfA       /* pfA = pAn */
+      movq 16(%rsp), pfB      /* pfB = pBn */
+      cmp pfB, pB
+      CMOVE pfA, pfB
+      CMOVE pA, pfA
+   #endif
    mov KK, KK0
    sub $-128, pC
    sub $-128, pA
@@ -11940,10 +11990,20 @@ ATL_asmdecor(ATL_USERMM):
             movapd rA0, rm0
             mulpd rB0, rm0
             addpd rm0, rC00
+   @iif k = 2
+            #if defined(ATL_MOVEC)
+               prefC(128-192(pC,r24))
+            #endif
+   @endiif
 
             movapd rA1, rm0
             mulpd rB0, rm0
             addpd rm0, rC10
+   @iif k = 2
+            #if defined(ATL_MOVEC)
+               prefC((pC,r24))
+            #endif
+   @endiif
 
             mulpd @(ao)(pA), rB0
             addpd rB0, rC20

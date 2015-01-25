@@ -31484,6 +31484,7 @@ void GoToTown(int ARCHDEF, int L1DEF, int TuneLA, int NREG)
       PrintStartStop(stdout, fpsum, 3, 1, 2, ip+1, @(ssn), "GEMM TUNE");
       if (pre == 'd' || pre == 's')
       {
+         sprintf(ln2, "INSTALL_LOG/%cAMMTUNE.LOG", pre);
          sprintf(ln, "%s AMMinstall pre=%c %s %s\n", fmake, pre, redir, ln2);
          fprintf(stdout, "%s", ln);
          ATL_Cassert(system(ln)==0, "GEMM TUNE", ln2);
@@ -35860,6 +35861,30 @@ double GetKmmMflop
          incB = 0;
          incC = mb*nb;
       }
+      else if (movA && !movB && !movC) /* used to det cost of B/C access */
+      {
+         incA = mb*kb;
+         incB = incC = 0;
+         setsz = incA;
+         ldc = (LDC) ? LDC : mb;
+         extra = ldc*nb + kb*nb;
+      }
+      else if (!movA && movB && !movC) /* used to det cost of ld A/C access */
+      {
+         incB = nb*kb;
+         incA = incC = 0;
+         setsz = incB;
+         ldc = (LDC) ? LDC : mb;
+         extra = ldc*nb + mb*kb;
+      }
+      else if (!movA && !movB && movC) /* used to det cost of ld A/B access */
+      {
+         incC = mb*nb;
+         incA = incB = 0;
+         setsz = incC;
+         assert(!LDC || (LDC == mb));
+         extra = kb*(mb+nb);
+      }
       else
       {
          fprintf(stderr, "%s,%d: What case are you wanting?\n", 
@@ -35868,26 +35893,44 @@ double GetKmmMflop
       }
       if (!vp)
       {
+         TYPE *dp, *ep;
          i = ATL_MulBySize(setsz);
          nset = (FLSIZE+i-1)/i;
          FLSIZE = nset * i;
-         vp = malloc(2*ATL_Cachelen + ATL_MulBySize(extra+EXTRA) + FLSIZE);
+         vp = malloc(6*ATL_Cachelen + ATL_MulBySize(extra+EXTRA) + FLSIZE);
          ATL_assert(vp);
-         A = ATL_AlignPtr(vp);
-         if (movC)
+         ep = ATL_AlignPtr(vp);
+         dp = (double*)(((char*)ep) + 2*ATL_Cachelen + ATL_MulBySize(extra));
+         dp = ATL_AlignPtr(dp);
+         if (movA)
          {
-            C = A + mb*kb*nset;
-            ldc = (LDC) ? mb*nset : mb;
-            B = C + mb*nb*nset;
-            B = ATL_AlignPtr(B);
+            A = ATL_AlignPtr(dp);
+            dp = A + mb*kb*nset;
+            dp = ATL_AlignPtr(dp);
          }
          else
          {
-            B = A + mb*kb*nset;
-            C = B + kb*nb*nset;
-            C = ATL_AlignPtr(C);
+            A = ep;
+            ep += mb*kb;
+            ep = ATL_AlignPtr(ep);
          }
-         for (n=setsz*nset+extra,i=0; i < n; i++) A[i] = dumb_prand(&seed);
+         if (movB)
+         {
+            B = ATL_AlignPtr(dp);
+            dp = B + nb*kb*nset;
+            dp = ATL_AlignPtr(dp);
+         }
+         else
+         {
+            B = ep;
+            ep += mb*kb;
+            ep = ATL_AlignPtr(ep);
+         }
+         C = (movC) ? dp : ep;
+         dp = ATL_AlignPtr(vp);
+         n = setsz*nset+extra;
+         for (i=0; i < n; i++) 
+            dp[i] = dumb_prand(&seed);
       }
    }
    a = A; b = B; c = C;
@@ -36218,11 +36261,10 @@ int main(int nargs, char **args)
    dp = TimeOnCores(kp);
    free(kp);
    GetStat(p, dp, &min, &max, &avg);
-   printf("ALL CORES: min=%le, max=%le, avg=%le\n", min, max, avg);
    printf("PER-CORE: %le", dp[0]);
    for (i=1; i < p; i++)
       printf(", %le", dp[i]);
-   printf("\n\n%.2f\n", avg);
+   printf("\nALL CORES: min=%.2f, max=%.2f, avg=%.2f\n", min, max, avg);
    if (fpout)
    {
       fprintf(fpout, "%d 1\n", p);

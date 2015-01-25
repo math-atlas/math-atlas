@@ -22,6 +22,6 @@ if *srcdir* is not given the *Makefile* creates a directory *TEST* in the
 
 # **Extract**: Read all about 
 `extract
-<http://www.cs.utsa.edu/~whaley/extract/Extract.html>`__
+<http://www.csc.lsu.edu/~whaley/extract/Extract.html>`__
 in order to understand why I use basefiles, and what extract
 is doing when creating your source tree.
