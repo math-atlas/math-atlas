@@ -7783,20 +7783,23 @@ static ATL_UINT GetBits(ATL_UINT n)
  */
 void *ATL_bcIpivInit
 (
+   int MN,         /* length of ipiv array */
    int *ipiv,      /* getrf's ipiv array */
-   int P,          /* max # of procs in distribution dimension of pgrid */
+   int inci,       /* piv stride; If inci<0, pivs applied in reverse order */
+   int R,          /* max # of procs in row dimension of pgrid */
+   int C,          /* max # of procs in column dimension of pgrid */
    int N,          /* dimension of distributed data */
    int B,          /* size of block for distributed dimension */
    int mu,         /* amm unrolling in distributed dim (mu) */
-   int nu,         /* amm unrolling in non-dist dim (nu) */
-   void *w,        /* array containing P ptrs to start of local worskspace */
-   int incw        /* stride between the P entries of w */
+   int nu          /* amm unrolling in non-dist dim (nu) */
 )
 {
    ATL_UINT nbSBR, nbRNK, nbSBN, n;
    ATL_bcpiv_t *bp;
-   void **wrks = w;
    void *vp;
+   void **lwrks;
+   ATL_INT *lldps;
+   int i;
 
 /*
  * Return failure if there is not room to safely encode rank in pivot array
@@ -7804,7 +7807,7 @@ void *ATL_bcIpivInit
  * to 32-bit ipiv at end of computation during decode step.
  */
    nbSBR = GetBits(mu);
-   nbRNK = GetBits(P);
+   nbRNK = GetBits(R);
    nbSBN = GetBits(B/mu);
    n = 32 - nbSBR - nbRNK - nbSBN;
    if ((1<<n) < N)
@@ -7812,24 +7815,33 @@ void *ATL_bcIpivInit
 /*
  * Get required space, initialize it, and return
  */
-   bp = malloc(sizeof(ATL_bcpiv_t) + P*sizeof(void*)+ATL_Cachelen);
+   bp = malloc(C*sizeof(ATL_bcpiv_t) + MN*sizeof(int) + 
+                  R*C*(sizeof(void*)+sizeof(int))+ATL_Cachelen);
    if (!bp)
       return(NULL);
-   vp = bp+1;
-   bp->larrs = ATL_AlignPtr(vp);
+   bp->ipiv = (ATL_UINT*)(bp+C); /* for local copy of ipiv0 */
+   vp = bp->ipiv + MN;
+   lwrks = ATL_AlignPtr(vp);
+   lldps = (ATL_INT*)(lwrks+(R*C));
 
-   bp->P = P;
-   bp->N = N;
-   bp->B = B;
-   bp->U = mu;
-   bp->neSB = mu*nu;
-   bp->neMB = B*B;
-   bp->ipiv = ipiv;
-   bp->nbSBR = nbSBR;
-   bp->nbRNK = nbRNK;
-   bp->nbSBN = nbSBN;
-   for (n=0; n < P; n++, wrks += incw)
-      bp->larrs[n] = *wrks;
+   for (i=0; i<C; i++)
+   {
+      bp[i].R = R;
+      bp[i].C = C;
+      bp[i].B = B;
+      bp[i].MU = mu;
+      bp[i].NU = nu;
+      bp[i].neSB = mu*nu;
+      bp[i].neMB = B*B;
+      bp[i].ipiv = bp->ipiv;
+      bp[i].ipiv0 = ipiv;
+      bp[i].inci = inci;
+      bp[i].nbSBR = nbSBR;
+      bp[i].nbRNK = nbRNK;
+      bp[i].nbSBN = nbSBN;
+      bp[i].larrs = lwrks + (i*R);
+      bp[i].lldps = lldps + (i*R);
+   }
    return(bp);
 }
 @ROUT ATL_bcIpivEncode
@@ -7896,20 +7908,21 @@ void ATL_bcIpivEncode
 )
 {
    ATL_UINT nprior, k;
+   ATL_UINT *ipiv0 = bp->ipiv0 + I;
    ATL_UINT *ipiv = bp->ipiv + I;
-   ATL_CUINT P=bp->P, U=bp->U, B=bp->B;
+   ATL_CUINT P=bp->R, MU=bp->MU, B=bp->B;
    ATL_CUINT nbSBR=bp->nbSBR, nbRNK=bp->nbRNK, nbSBN=bp->nbSBN;
    ATL_CUINT nb2 = nbSBR+nbRNK, nb3=nb2+nbSBN;
    
    for (k=0; k < n; k++)
    {
-      ATL_CUINT d = ipiv[k]+iadj;    /* global destination row index */
+      ATL_CUINT d = ipiv0[k]+iadj;    /* global destination row index */
       ATL_CUINT gbn = d/B;           /* global blk num for d'th elt (dst row) */
       ATL_CUINT lbn =  gbn/P;        /* local block # of dest row */
       ATL_CUINT rank = gbn-(lbn)*P;  /* prow of Ith mat row */
       ATL_CUINT boff = d - gbn*B;    /* row within block we want */
-      ATL_CUINT sbn = boff/U;        /* sub-block number of dest row */
-      ATL_CUINT sbr = boff - sbn*U;  /* row indx within sub-block of dest row */
+      ATL_CUINT sbn = boff/MU;       /* sub-block number of dest row */
+      ATL_CUINT sbr = boff - sbn*MU; /* row indx within sub-block of dest row */
 /*
  *    Encoding:{lbn,sbn,sbr,rank} --> of len --> {32-x, nbSBN, nbSBR, nbRNK}
  */
@@ -7934,7 +7947,7 @@ void ATL_bcIpivDecode
 {
    ATL_UINT nprior, k;
    ATL_UINT *ipiv = bp->ipiv + I;
-   ATL_CUINT P=bp->P, U=bp->U, B=bp->B;
+   ATL_CUINT P=bp->R, MU=bp->MU, B=bp->B;
    ATL_CUINT nbSBR=bp->nbSBR, nbRNK=bp->nbRNK, nbSBN=bp->nbSBN;
    ATL_CUINT mskSBR=(1<<nbSBR)-1, mskRNK=(1<<nbRNK)-1, mskSBN=(1<<nbSBN)-1;
    
@@ -7950,7 +7963,7 @@ void ATL_bcIpivDecode
 /*
  *    Scalapack's indxl2g with srcproc=0
  */
-      ipiv[k] = lbn*P*B + rank*B + sbn*U+sbr;
+      ipiv[k] = lbn*P*B + rank*B + sbn*MU+sbr;
    }
 }
 @ROUT ATL_bcLaswp_amm
@@ -7958,26 +7971,30 @@ void ATL_bcIpivDecode
 #include "atlas_misc.h"
 #include "atlas_pca.h"
 #include "atlas_bcamm.h"
-void Mjoin(PATL,laswp_amm)
+void Mjoin(PATL,bcLaswp_amm)
 (
    ATL_bcpiv_t *bp,
    ATL_CINT N,     /* row-length to swap */
+   ATL_CINT coff,  /* column offset to enable partial swap */
    TYPE *A,        /* column-major matrix holding top block */
    ATL_CINT lda,   /* stride between row elts in A */
    ATL_CINT K1,    /* First elt of ipiv for which a swap will be done */
    ATL_CINT K2,    /* Last elt of ipiv for which a row intrchg will be done */
-   int *ipiv,      /* Vector of pivot indices.  Only K1-K2 are accessed. */
-   ATL_CINT inci,  /* piv stride; If inci<0, pivs applied in reverse order */
-   TYPE *b,      /* block-major panel wt non-diagonal blocks */
-   TYPE *bi      /* cplx only: imaginary panel */
+   ATL_CINT lpj,   /* local panel no. to apply pivots on */
+   ATL_CINT nnu,   /* no. of nus in current panel */
+   ATL_CINT ZOFF   /* offset for complex block from real */
 )
 {
-   int i, i1, i2, KeepOn;
+   int i, i1, i2, KeepOn, ii;
    void **larrs = bp->larrs;
-   ATL_CUINT P=bp->P, B=bp->B, U=bp->U; 
+   int* lldps = bp->lldps;
+   ATL_UINT *ipiv = bp->ipiv;
+   ATL_CINT inci = bp->inci;
+   ATL_CUINT P=bp->R, B=bp->B, MU=bp->MU; 
    ATL_CUINT nbRNK=bp->nbRNK, nbSBN=bp->nbSBN, nbSBR=bp->nbSBR;
-   ATL_CUINT BB=bp->neMB, UU = bp->neSB, PB = P*B;
+   ATL_CUINT BB=bp->neMB, PB = P*B, NN=nnu*bp->neSB;
    ATL_CUINT mskSBR=(1<<nbSBR)-1, mskRNK=(1<<nbRNK)-1, mskSBN=(1<<nbSBN)-1;
+   ATL_CUINT cmaj_off = coff*MU;
    #ifdef TCPLX
       ATL_CUINT lda2 = lda+lda;
    #endif
@@ -7995,10 +8012,12 @@ void Mjoin(PATL,laswp_amm)
       i1 = K2-1;
       i2 = K1;
    }
+   A += coff*lda;    /* adjust for partial block swap */
    i = i1;
+   ii = 0;
    do
    {
-      ATL_UINT rank, sbn, sbr, lbn = ipiv[i];
+      ATL_UINT rank, sbn, sbr, lbn = ipiv[0];
       ATL_SZT k;
 /*
  *    Decode ipiv entry
@@ -8009,22 +8028,25 @@ void Mjoin(PATL,laswp_amm)
       lbn >>= nbSBR;
       sbn = lbn & mskSBN;    /* subblock number */
       lbn >>= nbSBN;         /* local block number */
-      k = lbn*PB + rank*B + sbn*U+sbr;  /* indxl2g wt psrc=0 */
+      k = lbn*PB + rank*B + sbn*MU+sbr;  /* indxl2g wt psrc=0 */
       if (k < K2)
-         Mjoin(PATL,swap)(N, A+(i SHIFT), lda, A+(k SHIFT), lda);
+         Mjoin(PATL,swap)(N, A+(ii SHIFT), lda, A+((k-K1) SHIFT), lda);
       else  /* (rank,lbn,sbn,sbr) */
       {
          TYPE *w;
-         k = lbn*BB+sbn*UU+sbr;
+         k = lbn*BB+sbn*NN+sbr;
          w = larrs[rank];
+         w += lpj*lldps[rank];   /* move to the correct panel */
+         w += cmaj_off;          /* adjust for partial block */
          w += k;
          #ifdef TCPLX
-            Mjoin(PATL,swap_cplx2real)(N, A+i+i, lda, w+UU, U, w, U);
+            Mjoin(PATL,swap_cplx2real)(N, A+ii+ii, lda, w+ZOFF, MU, w, MU);
          #else
-            Mjoin(PATL,swap)(N, A+i, lda, w, U);
+            Mjoin(PATL,swap)(N, A+ii, lda, w, MU);
          #endif
       }
       ipiv += inci;
+      ii++;
       if (inci >=0)
          KeepOn = (++i <= i2);
       else
