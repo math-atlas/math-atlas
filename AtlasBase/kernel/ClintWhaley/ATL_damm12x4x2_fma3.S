@@ -60,11 +60,31 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
                   8(%rsp)    16(%rsp)     24(%rsp)
                 CTYPE *pAn, CTYPE *pBn, CTYPE *pCn);
  */
-#define PFBDIST 128
-#define PFADIST 128
-#define prefA(m_) prefetcht2 m_
-#define prefB(m_) prefetcht2 m_
-#ifdef ATL_ARCH_AMDDRIVER
+#ifdef ATL_ARCH_Corei3EP
+   #define PFLSZ 128
+   #if !defined(KB) || KB > 80
+      #define PFNEXT 0
+   #else
+      #define PFNEXT 1
+   #endif
+   #define PFBDIST 640
+   #define PFADIST 512
+#else
+   #define PFLSZ 64
+   #if !defined(KB) || KB <= 80
+      #define PFNEXT 1
+   #else
+      #define PFNEXT 0
+   #endif
+#endif
+#if PFNEXT
+   #define prefA(m_) prefetcht2 m_
+   #define prefB(m_) prefetcht2 m_
+#else
+   #define prefA(m_)
+   #define prefB(m_)
+#endif
+#ifdef ATL_3DNow
    #define prefC(m_) prefetchw m_
 #else
    #define prefC(m_) prefetcht0 m_
@@ -118,10 +138,12 @@ ATL_asmdecor(ATL_USERMM):
    mov %r8, pB
    mov %r9, pC
    mov nnu, nnu0
-   movq 8(%rsp), pfA      /* pfB = pAn */
-   movq 16(%rsp), pfB     /* pf = pBn */
-   cmp pfB, pB
-   CMOVE pfA, pfB
+   #if PFNEXT
+      movq 8(%rsp), pfA      /* pfB = pAn */
+      movq 16(%rsp), pfB     /* pf = pBn */
+      cmp pfB, pB
+      CMOVE pfA, pfB
+   #endif
    lea (KK, KK,2), incAm   /* incAm = 3*K */
    shr $1, KK             /* KK = K/2 */
    mov KK, KK0
@@ -151,11 +173,11 @@ ATL_asmdecor(ATL_USERMM):
 
             vbroadcastsd 8(pB), rB0
             vmulpd rA0, rB0, rC01
-            #ifdef ATL_MOVEC
+            #ifdef defined(ATL_MOVEC) || PFLSZ==128
                prefC(-128(pC))
             #endif
             vmulpd rA1, rB0, rC11
-            #ifndef ATL_MOVEC
+            #ifndef ATL_MOVEC || PFLSZ==128
                prefC((pC))
             #else
                prefC(-64(pC))
@@ -164,11 +186,17 @@ ATL_asmdecor(ATL_USERMM):
 
             vbroadcastsd 16(pB), rB0
             vmulpd rA0, rB0, rC02
-            #ifdef ATL_MOVEC
+            #if PFLSZ == 128
+               prefC(128(pC))
+            #elif defined(ATL_MOVEC)
                prefC((pC))
             #endif
             vmulpd rA1, rB0, rC12
+            #if PFLSZ == 128
+               prefC(256(pC))
+            #else
                prefB((pfA))
+            #endif
             vmulpd rA2, rB0, rC22
 
             vbroadcastsd 24(pB), rB0
@@ -184,8 +212,10 @@ ATL_asmdecor(ATL_USERMM):
  */
             vbroadcastsd 32(pB), rB0
             FMAC rA0, rB0, rC00
-            #ifdef ATL_MOVEC
+            #if defined(ATL_MOVEC) && PFLSZ != 128
                prefC(64(pC))
+            #elif PFNEXT && PFLSZ == 128
+               prefB((pfA))
             #endif
             FMAC rA1, rB0, rC10
                prefB((pfA,r192))
@@ -193,18 +223,18 @@ ATL_asmdecor(ATL_USERMM):
 
             vbroadcastsd 40(pB), rB0
             FMAC rA0, rB0, rC01
-            #ifdef ATL_MOVEC
+            #if defined(ATL_MOVEC) && PFLSZ != 128
                prefC(128-256(pC,r256))
             #endif
             FMAC rA1, rB0, rC11
-            #ifdef ATL_MOVEC
+            #if defined(ATL_MOVEC) && PFLSZ != 128
                prefC(192-256(pC,r256))
             #endif
             FMAC rA2, rB0, rC21
 
             vbroadcastsd 48(pB), rB0
             FMAC rA0, rB0, rC02
-            #ifdef ATL_MOVEC
+            #if defined(ATL_MOVEC) && PFLSZ != 128
                prefC(224-256(pC,r256))
             #endif
             FMAC rA1, rB0, rC12
@@ -238,7 +268,11 @@ ATL_asmdecor(ATL_USERMM):
             vbroadcastsd 16(pB), rB0
             FMAC rA0, rB0, rC02
             FMAC rA1, rB0, rC12
+            #if PFLSZ == 128
+               prefetcht0 PFBDIST(pB)
+            #else
                prefetcht0 (pB,r256)
+            #endif
             FMAC rA2, rB0, rC22
 
             vbroadcastsd 24(pB), rB0
@@ -279,7 +313,9 @@ ATL_asmdecor(ATL_USERMM):
          jnz KLOOP
 KDONE:
          mov KK0, KK
-         add r192, pfA
+         #if PFNEXT
+            add r192, pfA
+         #endif
          mov pA0, pA
          #ifdef ATL_ARCH_AMDDRIVER
             #ifndef BETA0
