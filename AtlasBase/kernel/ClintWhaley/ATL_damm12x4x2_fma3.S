@@ -62,7 +62,7 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
  */
 #ifdef ATL_ARCH_Corei3EP
    #define PFLSZ 128
-   #if !defined(KB) || KB > 80
+   #if !defined(ATL_MOVEB) && (!defined(KB) || KB > 80)
       #define PFNEXT 0
    #else
       #define PFNEXT 1
@@ -139,10 +139,10 @@ ATL_asmdecor(ATL_USERMM):
    mov %r9, pC
    mov nnu, nnu0
    #if PFNEXT
-      movq 8(%rsp), pfA      /* pfB = pAn */
-      movq 16(%rsp), pfB     /* pf = pBn */
-      cmp pfB, pB
-      CMOVE pfA, pfB
+      movq 8(%rsp), pfA      /* pfA = pAn */
+      movq 16(%rsp), pfB     /* pfB = pBn, not used for prefetch since */
+      cmp pfA, pA            /* we only prefetch 1 extra block */
+      CMOVE pfB, pfA         /* but use it if A is not moving */
    #endif
    lea (KK, KK,2), incAm   /* incAm = 3*K */
    shr $1, KK             /* KK = K/2 */
@@ -173,11 +173,11 @@ ATL_asmdecor(ATL_USERMM):
 
             vbroadcastsd 8(pB), rB0
             vmulpd rA0, rB0, rC01
-            #ifdef defined(ATL_MOVEC) || PFLSZ==128
+            #if defined(ATL_MOVEC) || PFLSZ==128
                prefC(-128(pC))
             #endif
             vmulpd rA1, rB0, rC11
-            #ifndef ATL_MOVEC || PFLSZ==128
+            #if defined(ATL_MOVEC) || PFLSZ==128
                prefC((pC))
             #else
                prefC(-64(pC))
