@@ -4421,6 +4421,9 @@ ATL_mmnode_t *FindBestGenCases(int verb, char pre, int nreg,
 ATL_mmnode_t *GetWorkingUserCases(int verb, char pre)
 {
    ATL_mmnode_t *mmb, *mmp;
+   mmb = ReadMMFileWithPath(pre, "res", "AMMFRCLST.sum");
+   if (mmb)
+      return(mmb);
    mmb = ReadMMFileWithPath(pre, "res", "WORKING.sum");
    if (mmb)
       return(mmb);
@@ -5598,6 +5601,43 @@ int KernelIsUnique(ATL_mmnode_t *mmb, ATL_mmnode_t *mmp)
          return(0);
    return(1);  /* didn't find it, must be first time in list */
 }
+/*
+ * Returns a non-repetitive list of user kernels (ID>0) found in rb.  Note that
+ * differing compilations of the same kernel are reduced to one entry.
+ * rb is left unchanged.
+ */
+ATL_mmnode_t *GetUniqueUserKerns(ATL_mmnode_t *rb)
+{
+   ATL_mmnode_t *ub=NULL, *p;
+
+   if (!rb)
+      return(NULL);
+   for (p=rb; p; p = p->next)
+      if (p->ID > 0) 
+         break;
+   if (!p)
+      return(NULL);
+   ub = CloneMMNode(p);
+   for (p=p->next; p; p = p->next)
+   {
+       if (p->ID > 0)
+       {
+          ATL_mmnode_t *np;
+          int ID = p->ID;
+
+          for (np=ub; np; np = np->next)
+             if (np->ID == ID)
+                break;
+          if (!np)
+          {
+             np = CloneMMNode(p);
+             np->next = ub;
+             ub = np;
+          }
+       }
+   }
+   return(ub);
+}
 
 ATL_mmnode_t *TimeKBRegion
 (
@@ -6237,6 +6277,9 @@ ATL_mmnode_t *MergeRankKKernels
    return(KillMMNode(rkb));
 }
 
+/*
+ * low & gmm are freed.
+ */
 ATL_mmnode_t *GetRankKKernels
 (
    int verb,            /* verbosity */
@@ -6481,7 +6524,7 @@ int main(int nargs, char **args)
    int verb, nregs, nb, CS, gmu, gnu;
    int *nbs;
    char *fnout;
-   ATL_mmnode_t *mmb, *rnkK, *grnkK;
+   ATL_mmnode_t *mmb, *rnkK, *grnkK, *mp;
 
    nbs = GetFlags(nargs, args, &pre, &verb, &nregs, &nb, &CS);
    if (pre == 'c' || pre == 'z')
@@ -6564,9 +6607,19 @@ int main(int nargs, char **args)
  */
    grnkK = DecentGenCase(verb, pre, nregs);
    rnkK = GetWorkingUserCases(verb, pre);
-   mmb = GetRankKKernels(verb, pre, pre == 'd' ? 60:80, grnkK, rnkK, mmb);
-
+   rnkK = GetRankKKernels(verb, pre, pre == 'd' ? 60:80, grnkK, rnkK, mmb);
+/*
+ * Join mmb & rnkK to make master list of all kernels required in this search
+ */
+   if (rnkK)
+   {
+      for (mp=mmb; mp->next; mp = mp->next);
+      mp->next = rnkK;
+   }
+   mp = GetUniqueUserKerns(mmb);
    KillAllMMNodes(mmb);
+   WriteMMFileWithPath(pre, "res", "AMMFRCLST.sum", mp);
+   KillAllMMNodes(mp);
    free(nbs);
    exit(0);
 }
