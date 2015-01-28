@@ -3332,6 +3332,101 @@ double TimeMMKernel_KB
    }
    return(mf);
 }
+/*
+ * Finds best blocking factors for kernel mmp trying all legal values
+ * between [b0, bN]
+ */
+ATL_mmnode_t *BestBlocking_BFI
+(
+   int verb, 
+   char pre, 
+   ATL_mmnode_t *mmp, 
+   int b0,
+   int bN,
+   int minInc,  /* minimum increment to use */
+   int FORCE
+)
+/*
+ * Times all legal block factors in all dims between [b0,bN].
+ * RETURNS: ptr to best performing kernel, NULL if no legal block factors
+ */
+{
+   ATL_mmnode_t *mp;
+   int mbB=0, nbB=0, kbB=0;
+   int mu = mmp->mu, nu = mmp->nu, ku = mmp->ku;
+   int k0, kn, m0, mn, n0, nn, m, n, k;
+   double mfB=0.0;
+
+   if (!mmp)
+      return(NULL);
+   if (minInc > mu)
+      mu = ((minInc+mu-1)/mu)*mu;
+   if (minInc > nu)
+      nu = ((minInc+nu-1)/nu)*nu;
+   if (minInc > ku)
+      ku = ((minInc+ku-1)/ku)*ku;
+   m0 = ((b0+mu-1)/mu)*mu;
+   n0 = ((b0+nu-1)/nu)*nu;
+   k0 = ((b0+ku-1)/ku)*ku;
+   mn = ((bN+mu-1)/mu)*mu;
+   nn = ((bN+nu-1)/nu)*nu;
+   kn = ((bN+ku-1)/ku)*ku;
+   mp = CloneMMNode(mmp);
+   if (mp->kbmax && mp->kbmax < kn)
+      kn = mp->kbmax;
+   if (mp->kbmin && mp->kbmin > k0)
+      k0 = mp->kbmin;
+
+
+   printf("SEARCH BLKING [%d - %d] for %d.%s:\n\n", b0, bN, mp->ID, mp->rout);
+   printf("  MB    NB    KB        MFLOP    mbB  nbB  kbB      mflopB\n");
+   printf("====  ====  ====  ===========   ==== ==== ==== ===========\n");
+   for (m=m0; m <= mn; m += mu)
+   {
+      for (n=m0; n <= nn; n += nu)
+      {
+         for (k=k0; k <= kn; k += ku)
+         {
+            double mf;
+            mf = TimeMMKernel(verb, FORCE, mp, pre, m, n, k, k, k, m, 1, 0, -1);
+            printf("%4d %5d %5d %11.1f %4d %4d %4d %11.1f\n", 
+                   m, n, k, mf, mbB, nbB, kbB, mfB);
+            if (mf > mfB)
+            {
+               mfB = mf;
+               mbB = m;
+               nbB = n;
+               kbB = k;
+            }
+         }
+      }
+   }
+   if (mfB == 0)
+   {
+      printf("NO KERNEL POSSIBLE FOR RANGE=[%d,%d]\n", b0, bN);
+      KillMMNode(mp);
+      return(NULL);
+   }
+   mp->mbB = mbB;
+   mp->nbB = nbB;
+   mp->kbB = kbB;
+   mp->mflop[0] = mfB;
+   printf("FOR %d.'%s': MB=%d, NB=%d, KB=%d, MFLOPS=%.1f\n",
+          mp->ID, mp->rout, mbB, nbB, kbB, mfB);
+   k = MMKernelFailsTest(pre, mbB, nbB, kbB, 0, mp);
+   if (!k)
+      k = MMKernelFailsTest(pre, mbB, nbB, kbB, 1, mp);
+   if (!k)
+      k = MMKernelFailsTest(pre, mbB, nbB, kbB, -1, mp);
+   if (k)
+   {
+      printf("KERNEL FAILS TESTER FOR [M,N,K]B=%d,%d,%d\n", mbB, nbB, kbB);
+      exit(k);
+   }
+   mp->next = NULL;
+   return(mp);
+}
+
 ATL_mmnode_t *BestForThisNB
 (
    int verb, 
@@ -3510,6 +3605,12 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "   -N # nb1 ... nb# : force exact NBs in search\n");
    fprintf(stderr, "   -r <nreg> : set max # of registers to try\n");
    fprintf(stderr, "   -b <nb>   : set initial block factor to try\n");
+   fprintf(stderr, 
+      "   -B <b0> <bN> <idx> <rfn>: brute-force blocking search:\n");
+   fprintf(stderr, "       b0: smallest value to try for all dims\n");
+   fprintf(stderr, "       b1: largest value to try for all dims\n");
+   fprintf(stderr, "      idx: index in rfn to use; -1 means last\n");
+   fprintf(stderr, "      rfn: search result file name to read kern from\n");
    fprintf(stderr, "   -v <verb> : set verbosity (1)\n");
    exit(ierr ? ierr : -1);
 }
@@ -3517,6 +3618,8 @@ void PrintUsage(char *name, int ierr, char *flag)
 int *GetFlags(int nargs, char **args, char *PRE, 
               int *verb, int *NREG, int *NB, int *CS)
 {
+   ATL_mmnode_t *mmb=NULL;
+   int B0, BN;
    int i, j=0, n, k;
    char pre='d';
    int *nbs=NULL;
@@ -3530,6 +3633,30 @@ int *GetFlags(int nargs, char **args, char *PRE,
       
       switch(args[i][1])
       {
+      case 'B':  /* <b0> <bN> <idx> <rfn> */
+         if (i+4 >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         else
+         {
+            int I, k;
+            ATL_mmnode_t *mp;
+
+            B0 = atoi(args[i+1]);
+            BN = atoi(args[i+2]);
+            I = atoi(args[i+3]);
+            mmb = ReadMMFile(args[i+4]);
+            assert(mmb);
+            if (I < 0)
+               for (mp=mmb; mp->next; mp = mp->next);
+            else
+               for (k=0, mp=mmb; k < I && mp; k++, mp = mp->next);
+            assert(mp);
+            mp = CloneMMNode(mp);
+            KillAllMMNodes(mmb);
+            mmb = mp;
+         }
+         i += 4;
+         break;
       case 'p':
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
@@ -3647,6 +3774,14 @@ int *GetFlags(int nargs, char **args, char *PRE,
    }
    if (*CS == 0)
       *CS = GetL1CacheElts(pre);
+   if (mmb)
+   {
+      ATL_mmnode_t *mp;
+      mp = BestBlocking_BFI(1, pre, mmb, B0, BN, 4, 0);
+      KillMMNode(mmb);
+      KillMMNode(mp);
+      exit(0);
+   }
    return(nbs);
 }
 @ROUT ammsearch uammsearch
@@ -6704,6 +6839,14 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "      m : don't allow M-vectorized storage\n");
    fprintf(stderr, "      c : don't allow compile-time K kernels\n");
    fprintf(stderr, "   -K <1/0> : do/don't generate K cleanup\n");
+
+   fprintf(stderr,
+      "   -F <b0> <bN> <KI> <idx> <rfn>: brute-force blocking search:\n");
+   fprintf(stderr, "       b0: smallest value to try for all dims\n");
+   fprintf(stderr, "       b1: largest value to try for all dims\n");
+   fprintf(stderr, "       KI: min K increment\n");
+   fprintf(stderr, "      idx: index in rfn to use; -1 means last\n");
+   fprintf(stderr, "      rfn: search result file name to read kern from\n");
    exit(ierr ? ierr : -1);
 }
 
@@ -6712,6 +6855,7 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, int *VERB, int *NN,
                        int *KCLEAN)
 {
    ATL_mmnode_t *mmb=NULL;
+   int B0=0, BN, KI;
    int *mbs=NULL, *nbs=NULL, *kbs=NULL;
    int i, k, j, N=0, ALL=0, MV;
    char *cs;
@@ -6736,6 +6880,31 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, int *VERB, int *NN,
          *TOL = atof(args[i]);
          if (*TOL < 0.0)
             *TOL = 0.0;
+         break;
+      case 'F':  /* <b0> <bN> <KI> <idx> <rfn> */
+         if (i+5 >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         else
+         {
+            int I, k;
+            ATL_mmnode_t *mp;
+
+            B0 = atoi(args[i+1]);
+            BN = atoi(args[i+2]);
+            KI = atoi(args[i+3]);
+            I = atoi(args[i+4]);
+            mmb = ReadMMFile(args[i+5]);
+            assert(mmb);
+            if (I < 0)
+               for (mp=mmb; mp->next; mp = mp->next);
+            else
+               for (k=0, mp=mmb; k < I && mp; k++, mp = mp->next);
+            assert(mp);
+            mp = CloneMMNode(mp);
+            KillAllMMNodes(mmb);
+            mmb = mp;
+         }
+         i += 5;
          break;
       case 'M':
          if (++i >= nargs)
@@ -6924,6 +7093,14 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, int *VERB, int *NN,
       default:
          PrintUsage(args[0], i, args[i]);
       }
+   }
+   if (B0 && mmb)
+   {
+      ATL_mmnode_t *mp;
+      mp = BestBlocking_BFI(1, *PRE, mmb, B0, BN, KI, 0);
+      KillMMNode(mmb);
+      KillMMNode(mp);
+      exit(0);
    }
    if (!nbs && !mmb)
       PrintUsage(args[0], -1, "Dimensional flag (-b or -B) or -S required!");
