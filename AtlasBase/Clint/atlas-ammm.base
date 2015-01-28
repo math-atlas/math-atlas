@@ -3353,9 +3353,10 @@ ATL_mmnode_t *BestBlocking_BFI
 {
    ATL_mmnode_t *mp;
    int mbB=0, nbB=0, kbB=0;
+   int mbS=0, nbS=0, kbS=0;
    int mu = mmp->mu, nu = mmp->nu, ku = mmp->ku;
    int k0, kn, m0, mn, n0, nn, m, n, k;
-   double mfB=0.0;
+   double mfB=0.0, mfS=0.0;
 
    if (!mmp)
       return(NULL);
@@ -3398,6 +3399,16 @@ ATL_mmnode_t *BestBlocking_BFI
                nbB = n;
                kbB = k;
             }
+            if (m == n && m == k)
+            {
+               if (mf > mfS)
+               {
+                  mfS = mf;
+                  mbS = m;
+                  nbS = n;
+                  kbS = k;
+               }
+            }
          }
       }
    }
@@ -3423,7 +3434,27 @@ ATL_mmnode_t *BestBlocking_BFI
       printf("KERNEL FAILS TESTER FOR [M,N,K]B=%d,%d,%d\n", mbB, nbB, kbB);
       exit(k);
    }
-   mp->next = NULL;
+   if (mbS == 0)
+      mp->next = NULL;
+   else
+   {
+      k = MMKernelFailsTest(pre, mbS, nbS, kbS, 0, mp);
+      if (!k)
+         k = MMKernelFailsTest(pre, mbS, nbS, kbS, 1, mp);
+      if (!k)
+         k = MMKernelFailsTest(pre, mbS, nbS, kbS, -1, mp);
+      if (k)
+         mp->next = NULL;
+      else
+      {
+         mp->next = CloneMMNode(mp);
+         mp->next->mbB = mbS;
+         mp->next->nbB = nbS;
+         mp->next->kbB = kbS;
+         mp->next->mflop[0] = mfS;
+      }
+   }
+   WriteMMFileWithPath(pre, "res", "AMMEXBLKS.sum", mp);
    return(mp);
 }
 
