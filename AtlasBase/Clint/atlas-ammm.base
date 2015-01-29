@@ -3458,6 +3458,34 @@ ATL_mmnode_t *BestBlocking_BFI
    return(mp);
 }
 
+ATL_mmnode_t *TimeExtraBlockings(char pre, int verb)
+{
+   ATL_mmnode_t *eb;
+   eb = ReadMMFileWithPath(pre, "res", "AMMEXBLKS.sum");
+   if (!eb)
+      return(eb);
+   if (eb->mflop[0] < 0)
+   {
+      ATL_mmnode_t *mp;
+      printf("EXTRA BLOCKING FACTOR TIMINGS:\n\n");
+      if (verb)
+      {
+         printf("  MB    NB    KB        MFLOP\n");
+         printf("====  ====  ====  ===========\n");
+      }
+      for (mp=eb; mp; mp = mp->next)
+      {
+         mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB,
+                                     mp->kbB, 0, 0, mp->mbB, 1, 0, -1);
+         if (verb)
+            printf("%4d %5d %5d %11.1f\n", 
+                   mp->mbB, mp->nbB, mp->kbB, mp->mflop[0]);
+      }
+      WriteMMFileWithPath(pre, "res", "AMMEXBLKS.sum", eb);
+   }
+   return(eb);
+}
+
 ATL_mmnode_t *BestForThisNB
 (
    int verb, 
@@ -3595,7 +3623,7 @@ int DeleteBadBigNBs(ATL_mmnode_t *mmb, int *nbs)
 
 ATL_mmnode_t *FindBestForEachNB(int verb, char pre, ATL_mmnode_t *mmb, int *nbs)
 {
-   int i, n, FORCE;
+   int i, n, FORCE=0;
    ATL_mmnode_t *best, *bp;
 /*
  * If # of nbs is negative, then each nb is required and that exact size
@@ -4725,7 +4753,8 @@ ATL_mmnode_t *MergeAndWinnowCases
    }
    KillAllMMNodes(umb);
    KillAllMMNodes(gmb);
-   mmb = WinnowHugeNB(0, mmb);
+   mmb = WinnowCases(0, mmb);
+@skip   mmb = WinnowHugeNB(0, mmb);
    return(mmb);
 }
 
@@ -5182,14 +5211,12 @@ ATL_mmnode_t *KCleanByNB
          kb = mp->kbB >> 2;
          kb = (kb >= 4) ? kb : 4;
          if (mp->mflop[0] < 0.0)
-         {
             mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, mb, nb, kb, 0, 0, mb,
                                         0, 0, -1);
-            mf = (2.0*nb)*nb;  /* flop count of gemm/kits (kb) */
-            mp->mflop[1] = mf / mp->mflop[0]; /* time in microsecs for 1 k-it */
-         }
+         mf = (2.0*nb)*nb;  /* flop count of gemm/kits (kb) */
+         mp->mflop[1] = mf / mp->mflop[0]; /* time in microsecs for 1 k-it */
          printf("   nb=%d, kb=%d, mu=%d, nu=%d, mf=%.2f (%e Usec/Kit)\n", 
-                nb, kb, mp->mu, mp->nu, mp->mflop[0], mf);
+                nb, kb, mp->mu, mp->nu, mp->mflop[0], mp->mflop[1]);
       }
       printf("Done.\n");
       WriteMMFileWithPath(pre, "res", "@(kpr)KCLEANBYNB.sum", nkb);
@@ -6311,8 +6338,9 @@ ATL_mmnode_t *GetRankKKernels
       }
       WriteMMFileWithPath(pre, "res", "ARANKK.sum", rkb);
       KillAllMMNodes(low);
+      KillAllMMNodes(gmm);
+      KillAllMMNodes(mmb);
       return(rkb);
-      return(gmm);
    }
    if (mmb)
    {
@@ -6526,12 +6554,22 @@ int main(int nargs, char **args)
    int verb, nregs, nb, CS, gmu, gnu;
    int *nbs;
    char *fnout;
-   ATL_mmnode_t *mmb, *rnkK, *grnkK, *mp;
+   ATL_mmnode_t *mmb, *rnkK, *grnkK, *emb, *mp;
 
    nbs = GetFlags(nargs, args, &pre, &verb, &nregs, &nb, &CS);
    if (pre == 'c' || pre == 'z')
       return(DoComplex(pre, verb));
    mmb = DoMainMM(pre, verb, nregs, CS, nbs);
+   emb = TimeExtraBlockings(pre, verb);
+   if (emb)
+   {
+      emb = SortMMQByIntVal(emb, &(emb->kbB));
+      mp = MergeCases(0, mmb, emb);
+      KillAllMMNodes(mmb);
+      KillAllMMNodes(emb);
+      mmb = WinnowCases(0, mp);
+      WriteMMFileWithPath(pre, "res", "eAMMRES.sum", mmb);
+   }
 @beginskip
    if (verb)
    {
