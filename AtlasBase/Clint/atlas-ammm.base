@@ -5873,7 +5873,8 @@ ATL_mmnode_t *GetLowRankKKernels
 (
    int verb,            /* verbosity */
    char pre,            /* s,d */
-   int NB,              /* default mb/nb to time with */
+   int MB,              /* default mb to time with */
+   int NB,              /* default nb to time with */
    ATL_mmnode_t *inb    /* all working ukerns */
 )
 {
@@ -5926,7 +5927,7 @@ ATL_mmnode_t *GetLowRankKKernels
          for (mp=inb; mp; mp = mp->next)
          {
             const int mu = mp->mu, nu = mp->nu, ku = mp->ku;
-            const int mb = (NB/mu)*mu, nb = (NB/nu)*nu;
+            const int mb = (MB/mu)*mu, nb = (NB/nu)*nu;
             const int KK = (mp->kmaj < 2) ? k : ((k+ku-1)/ku)*ku;
             double mf;
    
@@ -5989,7 +5990,8 @@ ATL_mmnode_t *GetRuntimeKKernels
 (
    int verb,            /* verbosity */
    char pre,            /* s,d */
-   int NB,              /* default mb/nb to time with */
+   int MB,              /* default mb to time with */
+   int NB,              /* default nb to time with */
    ATL_mmnode_t *inb    /* all working ukerns */
 )
 {
@@ -6030,11 +6032,11 @@ ATL_mmnode_t *GetRuntimeKKernels
       KU = 32;
    else
       KU = ((16+KU-1)/KU)*KU;
-   printf("TRYING ALL RUNTIMEK KERNS WITH NB=%d, KB=%d:\n", NB, KU);
+   printf("TRYING ALL RUNTIMEK KERNS WITH MB=%d, NB=%d, KB=%d:\n", MB, NB, KU);
    for (mp=inb; mp; mp = mp->next)
    {
       int mu=mp->mu, nu=mp->nu, ku=mp->ku;
-      int mb = (NB/mu)*mu, nb = (NB/nu)*nu, kb = (KU/ku)*ku;
+      int mb = (MB/mu)*mu, nb = (NB/nu)*nu, kb = (KU/ku)*ku;
       double mf;
       assert(mb && nb && kb);
       mf = TimeMMKernel(verb, 0, mp, pre, mb, nb, kb, 0, 0, 0, 0, 0, -1);
@@ -6193,11 +6195,24 @@ ATL_mmnode_t *FindBestSquareCases(char pre, int verb, ATL_mmnode_t *mmb)
    return(mmSQ);
 }
 @ROUT ammsearch
+/*
+ * Sets all MV[A,B,C] bits in mmb to those provided in low 3 bits of bits
+ */
+void ResetMoveBitsInQ(ATL_mmnode_t *mmb, int bits)
+{
+   while (mmb)
+   {
+      ATL_MMF_MVPUT(mmb->flag, bits);
+      mmb = mmb->next;
+   }
+}
+
 ATL_mmnode_t *MergeRankKKernels
 (
    int verb,            /* verbosity */
    char pre,            /* s,d */
-   int NB,              /* default mb/nb to time with */
+   int MB,              /* default mb to time with */
+   int NB,              /* default nb to time with */
    int maxKB,           /* largest KB to produce */
    ATL_mmnode_t *fixb,  /* rank-K fixed-K kerenls */
    ATL_mmnode_t *runb,  /* rank-K, runtime-K kernels */
@@ -6207,7 +6222,7 @@ ATL_mmnode_t *MergeRankKKernels
    ATL_mmnode_t *rkb, *rkp;
    int k;
    rkp = rkb = GetMMNode();
-   printf("CHOOSING BEST KERNEL FOR EACH RANK-K:\n");
+   printf("CHOOSING BEST KERNEL FOR EACH RANK-K (3 <= K <= %d):\n", maxKB);
    for (k=3; k <= maxKB; k++)
    {
       ATL_mmnode_t *best=NULL, *p;
@@ -6251,7 +6266,7 @@ ATL_mmnode_t *MergeRankKKernels
          if (sqrb->kbB == k)
          {
             int mu = sqrb->mu, nu = sqrb->nu, ku = sqrb->ku;
-            int mb = (NB/mu)*mu, nb = (NB/nu)*nu;
+            int mb = (MB/mu)*mu, nb = (NB/nu)*nu;
             int kb = (sqrb->kmaj < 2) ? k : ((k+ku-1)/ku)*ku;
             mf = TimeMMKernel(verb, 0, sqrb, pre, mb, nb, kb, 0, 0, 0, 0, 0,-1);
             mf = (mf*k)/(double)kb;
@@ -6319,7 +6334,7 @@ ATL_mmnode_t *GetRankKKernels
 {
    ATL_mmnode_t *run, *rkb;
    int maxKB=128;
-   
+   int mb, nb;
    rkb = ReadMMFileWithPath(pre, "res", "ARANKK.sum");
    if (rkb)
    {
@@ -6342,13 +6357,26 @@ ATL_mmnode_t *GetRankKKernels
       KillAllMMNodes(mmb);
       return(rkb);
    }
+   ResetMoveBitsInQ(mmb, 5);
+   ResetMoveBitsInQ(gmm, 5);
+   ResetMoveBitsInQ(low, 5);
    if (mmb)
    {
+      mb = mmb->mbB;
+      nb = mmb->nbB;
       maxKB = mmb->kbB;
       for (run=mmb; run; run = run->next)
+      {
          if (maxKB < run->kbB)
+         {
             maxKB = run->kbB;
+            mb = run->mbB;
+            nb = run->nbB;
+         }
+      }
    }
+   else
+      mb = nb = NB;
    run = CloneMMQueue(low);
    if (FLAG_IS_SET(gmm->flag, MMF_KRUNTIME))
    {
@@ -6357,7 +6385,7 @@ ATL_mmnode_t *GetRankKKernels
          ATL_mmnode_t *p;
          int gmu = (gmm->kmaj > 1) ? gmm->mu : gmm->mu / VLEN[VECi];
          assert(gmu);
-         p = GetNewGenNode(pre, NB, gmm->lat, gmu, gmm->nu, 1, 0);
+         p = GetNewGenNode(pre, maxKB, gmm->lat, gmu, gmm->nu, 1, 0);
          p->next = run;
          run = p;
       }
@@ -6369,15 +6397,15 @@ ATL_mmnode_t *GetRankKKernels
       ATL_mmnode_t *p;
       int gmu = (gmm->kmaj > 1) ? gmm->mu : gmm->mu / VLEN[VECi];
       assert(gmu);
-      p = GetNewGenNode(pre, NB, gmm->lat, gmu, gmm->nu, 1, 0);
+      p = GetNewGenNode(pre, maxKB, gmm->lat, gmu, gmm->nu, 1, 0);
       p->flag |= (1<<MMF_KRUNTIME);
       p->next = run;
       run = p;
       gmm->next = low;
       low = gmm;
    }
-   low = GetLowRankKKernels(verb, pre, NB, low);
-   run = GetRuntimeKKernels(verb, pre, NB, run);
+   low = GetLowRankKKernels(verb, pre, mb, nb, low);
+   run = GetRuntimeKKernels(verb, pre, mb, nb, run);
 /*
  * Delete any fixed kernels that are slower than the runtime-K kernels
  */
@@ -6409,7 +6437,7 @@ ATL_mmnode_t *GetRankKKernels
    }
    printf("DONE.\n\n");
 
-   rkb = MergeRankKKernels(verb, pre, NB, maxKB, low, run, mmb);
+   rkb = MergeRankKKernels(verb, pre, mb, nb, maxKB, low, run, mmb);
    printf("RANK-K KERNELS:\n");
    PrintMMNodes(stdout, rkb);
    printf("\n");
@@ -6462,7 +6490,9 @@ ATL_mmnode_t *DoSquare(char pre, int verb, ATL_mmnode_t *mmb)
    }
    else
    {
+      mmb = CloneMMQueue(mmb);
       mmSQ = FindBestSquareCases(pre, verb, mmb);
+      KillAllMMNodes(mmb);
       WriteMMFileWithPath(pre, "res", "sqAMMRES.sum", mmSQ);
    }
    return(mmSQ);
@@ -6570,69 +6600,6 @@ int main(int nargs, char **args)
       mmb = WinnowCases(0, mp);
       WriteMMFileWithPath(pre, "res", "eAMMRES.sum", mmb);
    }
-@beginskip
-   if (verb)
-   {
-      int i;
-      const int n = (nbs[0] >= 0) ? nbs[0]+1 : 1-nbs[0];
-      printf("NBs = %3d", nbs[1]);
-      for (i=2; i < n; i++)
-         printf(", %3d", nbs[i]);
-      printf("\n");
-   }
-/*
- * Find which kernels can compile on this platform
- */
-   mmb = GetWorkingUserCases(verb, pre);
-   rnkK = CloneMMQueue(mmb);  /* clone the working kerns for rank-K search */
-/*
- * For small cases (or user specified), try all kernels with all KB for
- * user generated.  Smmb now points to these KB values that are always
- * retained, and will simply be added to eventual list of large KB kernels
- * that we generate in the next step.
- */
-   if (mmb)
-   {
-      mmp = CloneMMQueue(mmb);
-      smmb = FindBestUserCases(verb, pre, nbs, mmp);
-      mmp = FindBestGenCases(verb, pre, nregs, nbs, smmb);
-      if (nbs[0] >= 0)
-         smmb = MergeAndWinnowCases(verb, pre, smmb, mmp);
-      else  /* forced nbs are all kept, so just merge */
-         smmb = MergeCases(0, smmb, mmp);
-   }
-   else
-     smmb = FindBestGenCases(verb, pre, nregs, nbs, NULL);
-/*
- * If nbs aren't being forced, then try larger ranges using cache budgets
- */
-   if (nbs[0] >= 0)
-   {
-/*
- *    Find decent generator case and find correct vectorization settings, add
- *    this case to default list to be searched.
- */
-      gmm = DecentGenCase(verb, pre, nregs);
-      grnkK = CloneMMNode(gmm);
-      gmm->next = mmb;
-      mmb = gmm;
-/*
- *    Find the best user-supplied cases for the three common cache blking cases
- */
-      mmb = FindCacheBudgetCasesByKB(verb, pre, CS, mmb);
-/*
- *    Now add small-case kernels back in, and write it out
- */
-      mmb = MergeAndWinnowCases(verb, pre, smmb, mmb);
-@skip      p = MergeCases(0, mmb, smmb);
-@skip      KillAllMMNodes(smmb);
-@skip      KillAllMMNodes(mmb);
-@skip      mmb = p;
-   }
-   else /* when we force nbs, we just blindly use the provided list */
-      mmb = smmb;
-   WriteMMFileWithPath(pre, "res", "eAMMRES.sum", mmb);
-@endskip
 /*
  * Create list of square cases for use in symmetric operations, etc.
  */
