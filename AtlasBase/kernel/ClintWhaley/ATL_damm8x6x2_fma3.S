@@ -357,7 +357,7 @@ ATL_asmdecor(ATL_USERMM):
    movq -40(%rsp), %r14
    movq -48(%rsp), %r15
    ret
-#if 1
+#if 0
 .global findSize
 findSize:
 mov $SS1-SS0, %rax
