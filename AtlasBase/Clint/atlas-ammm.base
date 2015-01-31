@@ -1498,6 +1498,11 @@ int KernelIsExactSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
    if (p0->kmaj != p1->kmaj)
       return(0);
 /*
+ * Kernels aren't same if the -DATL_MOVE bits don't match
+ */
+   if (ATL_MMF_MVGET(p0->flag) != ATL_MMF_MVGET(p1->flag))
+      return(0);
+/*
  * Two generated kernels are the same if mu,nu,kmaj,ku,VLEN,flag are the same.
  * NOTE: if we make generator handle muladd, etc, MUST UPDATE HERE!!!
  */
@@ -1513,6 +1518,19 @@ int KernelIsExactSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
    return(0);  /* Can't be the same if above criteria fails */
 }
 
+/*
+ * RETURNS: flags that necessitate recompilation, not including KRUNTIME,
+ * which is encoded in kb
+ */
+int GetCompTimeFlags(ATL_mmnode_t *mp)
+{
+   int iflg;
+   iflg = ATL_MMF_MVGET(mp->flag);  /* MVbits change kern at comp time */
+   iflg |=  (((mp->flag) & 1)<<3);  /* LDTOP/BOT could be compile-time dec */
+   if (mp->kmaj > 1)
+      iflg |= 1<<4;
+   return(iflg);
+}
 int ExactKernelInList(ATL_mmnode_t *mmb, ATL_mmnode_t *p)
 /*
  * RETURNS: 1 if p is duplicated in mmb, else 0
@@ -1530,12 +1548,12 @@ int ExactKernelInList(ATL_mmnode_t *mmb, ATL_mmnode_t *p)
 void SpewForthKernProto(FILE *fp, char pre, ATL_mmnode_t *p, char bc)
 {
 @ROUT emit_amm
-   fprintf(fp, "void ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b%c\n", pre, p->ID, 
-           FLAG_IS_SET(p->flag, MMF_KRUNTIME)?0:p->kbB, p->kmaj,
+   fprintf(fp, "void ATL_%cAMMM_%d_%d_%x_%dx%dx%d_b%c\n", pre, p->ID, 
+           FLAG_IS_SET(p->flag, MMF_KRUNTIME)?0:p->kbB, GetCompTimeFlags(p),
            p->mu, p->nu, p->ku,bc);
 @ROUT emit_uamm
-   fprintf(fp, "void ATL_%cu%dAMMM_%d_%d_%d_%dx%dx%d_b%c\n", pre, UID, p->ID, 
-           FLAG_IS_SET(p->flag, MMF_KRUNTIME)?0:p->kbB, p->kmaj,
+   fprintf(fp, "void ATL_%cu%dAMMM_%d_%d_%x_%dx%dx%d_b%c\n", pre, UID, p->ID, 
+           FLAG_IS_SET(p->flag, MMF_KRUNTIME)?0:p->kbB, GetCompTimeFlags(p),
            p->mu, p->nu, p->ku,bc);
 @ROUT emit_amm emit_uamm
    fprintf(fp, 
@@ -1571,13 +1589,13 @@ void SpewForthKernArray(FILE *fp, char pre, ATL_mmnode_t *mmb,
    for (mp=mmb; mp; mp = mp->next)
    {
 @ROUT emit_amm
-      fprintf(fp, "   ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b%c", pre, mp->ID, 
-              FLAG_IS_SET(mp->flag, MMF_KRUNTIME)?0:mp->kbB, mp->kmaj,
-              mp->mu, mp->nu, mp->ku, cbet);
+      fprintf(fp, "   ATL_%cAMMM_%d_%d_%x_%dx%dx%d_b%c", pre, mp->ID, 
+              FLAG_IS_SET(mp->flag, MMF_KRUNTIME)?0:mp->kbB, 
+              GetCompTimeFlags(mp), mp->mu, mp->nu, mp->ku, cbet);
 @ROUT emit_uamm
-      fprintf(fp, "   ATL_%cu%dAMMM_%d_%d_%d_%dx%dx%d_b%c", pre, UID, mp->ID, 
-              FLAG_IS_SET(mp->flag, MMF_KRUNTIME)?0:mp->kbB, mp->kmaj,
-              mp->mu, mp->nu, mp->ku, cbet);
+      fprintf(fp, "   ATL_%cu%dAMMM_%d_%d_%x_%dx%dx%d_b%c", pre, UID, mp->ID, 
+              FLAG_IS_SET(mp->flag, MMF_KRUNTIME)?0:mp->kbB, 
+              GetCompTimeFlags(mp), mp->mu, mp->nu, mp->ku, cbet);
 @ROUT emit_amm emit_uamm
       if (mp->next)
          fprintf(fp, ",\n");
@@ -2188,13 +2206,13 @@ void PrintKernComp
 )
 {
    const int kb = FLAG_IS_SET(mmp->flag, MMF_KRUNTIME)?0:mmp->kbB;
-   const int kmaj = mmp->kmaj;
+   const int flg = GetCompTimeFlags(mmp);
 @ROUT emit_amm
-   fprintf(fp, "ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b%c.o : %s\n", pre, 
-           mmp->ID, kb, kmaj, mmp->mu, mmp->nu, mmp->ku, cbet, mmp->rout);
+   fprintf(fp, "ATL_%cAMMM_%d_%d_%x_%dx%dx%d_b%c.o : %s\n", pre, 
+           mmp->ID, kb, flg, mmp->mu, mmp->nu, mmp->ku, cbet, mmp->rout);
 @ROUT emit_uamm
-   fprintf(fp, "ATL_%cu%dAMMM_%d_%d_%d_%dx%dx%d_b%c.o : %s\n", pre, 
-           UID, mmp->ID, kb, kmaj, mmp->mu, mmp->nu, mmp->ku, cbet, mmp->rout);
+   fprintf(fp, "ATL_%cu%dAMMM_%d_%d_%x_%dx%dx%d_b%c.o : %s\n", pre, 
+           UID, mmp->ID, kb, flg, mmp->mu, mmp->nu, mmp->ku, cbet, mmp->rout);
 @ROUT emit_amm emit_uamm
    fprintf(fp, "\t%s $(CDEFS2) %s -DBETA%s=1", comp, styp, sbet);
    if (!FLAG_IS_SET(mmp->flag, MMF_KRUNTIME))
@@ -2206,18 +2224,18 @@ void PrintKernComp
    if (FLAG_IS_SET(mmp->flag, MMF_MVC))
       fprintf(fp, " -DATL_MOVEC");
 @ROUT emit_amm
-         fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b%c", pre,
-                 mmp->ID, kb, kmaj, mmp->mu, mmp->nu, mmp->ku, cbet);
-         fprintf(fp, " %s -o ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b%c.o -c %s\n", 
-                 cflags, pre, mmp->ID, kb, kmaj, mmp->mu, mmp->nu, mmp->ku, 
+         fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_%d_%x_%dx%dx%d_b%c", pre,
+                 mmp->ID, kb, flg, mmp->mu, mmp->nu, mmp->ku, cbet);
+         fprintf(fp, " %s -o ATL_%cAMMM_%d_%d_%x_%dx%dx%d_b%c.o -c %s\n", 
+                 cflags, pre, mmp->ID, kb, flg, mmp->mu, mmp->nu, mmp->ku, 
                  cbet, mmp->rout);
 @ROUT emit_uamm
          fprintf(fp, 
-         " -DATL_USERMM=ATL_%cu%dAMMM_%d_%d_%d_%dx%dx%d_b%c -DATL_UAMMID=%d", 
-                 pre, UID, mmp->ID, kb, kmaj, mmp->mu, mmp->nu, mmp->ku, cbet,
+         " -DATL_USERMM=ATL_%cu%dAMMM_%d_%d_%x_%dx%dx%d_b%c -DATL_UAMMID=%d", 
+                 pre, UID, mmp->ID, kb, flg, mmp->mu, mmp->nu, mmp->ku, cbet,
                  UID);
-         fprintf(fp, " %s -o ATL_%cu%dAMMM_%d_%d_%d_%dx%dx%d_b%c.o -c %s\n", 
-                 cflags, pre, UID, mmp->ID, kb, kmaj, mmp->mu, mmp->nu, 
+         fprintf(fp, " %s -o ATL_%cu%dAMMM_%d_%d_%x_%dx%dx%d_b%c.o -c %s\n", 
+                 cflags, pre, UID, mmp->ID, kb, flg, mmp->mu, mmp->nu, 
                  mmp->ku, cbet, mmp->rout);
 @ROUT emit_amm emit_uamm
 }
@@ -2425,30 +2443,33 @@ void GenMakefile
          kb = 0;
       }
 /* 
- *    ATL_<pre>@(UP)AMMM_<ID>_<kb>_<kmaj>_<mu>x<nu>x<ku>_b<X>
+ *    ATL_<pre>@(UP)AMMM_<ID>_<kb>_<flg>_<mu>x<nu>x<ku>_b<X>
  */
       for (i=0; i < 3; i++)
 @ROUT emit_amm
-         fprintf(fp, " \\\n       ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b%c.o", 
-                 pre, mmp->ID, kb, mmp->kmaj, mmp->mu, mmp->nu, mmp->ku, be[i]);
+         fprintf(fp, " \\\n       ATL_%cAMMM_%d_%d_%x_%dx%dx%d_b%c.o", 
+                 pre, mmp->ID, kb, GetCompTimeFlags(mmp), mmp->mu, mmp->nu, 
+                 mmp->ku, be[i]);
 @ROUT emit_uamm
-         fprintf(fp, " \\\n       ATL_%cu%dAMMM_%d_%d_%d_%dx%dx%d_b%c.o", 
-                 pre, UID, mmp->ID, kb, mmp->kmaj, mmp->mu, mmp->nu, mmp->ku, 
-                 be[i]);
+         fprintf(fp, " \\\n       ATL_%cu%dAMMM_%d_%d_%x_%dx%dx%d_b%c.o", 
+                 pre, UID, mmp->ID, kb, GetCompTimeFlags(mmp), 
+                 mmp->mu, mmp->nu, mmp->ku, be[i]);
 @ROUT emit_amm emit_uamm
    }
 /*
  * AMM K-cleanup kernel routines are all unique, so no checking for repeats
- *    ATL_<pre>@(UP)AMMM_<ID>_<kb>_<kmaj>_<mu>x<nu>x<ku>_b0
+ *    ATL_<pre>@(UP)AMMM_<ID>_<kb>_<flg>_<mu>x<nu>x<ku>_b0
  */
    for (mmp=ukb; mmp; mmp = mmp->next)
       for (i=0; i < 3; i++)
 @ROUT emit_amm
-         fprintf(fp, " \\\n       ATL_%cAMMM_%d_0_%d_%dx%dx%d_b%c.o", pre, 
-                 mmp->ID, mmp->kmaj, mmp->mu, mmp->nu, mmp->ku, be[i]);
+         fprintf(fp, " \\\n       ATL_%cAMMM_%d_0_%x_%dx%dx%d_b%c.o", pre, 
+                 mmp->ID, GetCompTimeFlags(mmp), mmp->mu, mmp->nu, mmp->ku,
+                 be[i]);
 @ROUT emit_uamm
-         fprintf(fp, " \\\n       ATL_%cu%dAMMM_%d_0_%d_%dx%dx%d_b%c.o", pre, 
-                 UID, mmp->ID, mmp->kmaj, mmp->mu, mmp->nu, mmp->ku, be[i]);
+         fprintf(fp, " \\\n       ATL_%cu%dAMMM_%d_0_%x_%dx%dx%d_b%c.o", pre, 
+                 UID, mmp->ID, GetCompTimeFlags(mmp), mmp->mu, mmp->nu, 
+                 mmp->ku, be[i]);
 @ROUT emit_amm
 /*
  * Ask to build any unique square cases.  
@@ -2458,8 +2479,9 @@ void GenMakefile
    {
       assert(!FLAG_IS_SET(mmp->flag, MMF_KRUNTIME));
       for (i=0; i < 3; i++)
-         fprintf(fp, " \\\n       ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b%c.o", pre, 
-                 mmp->ID, mmp->kmaj, mmp->kbB, mmp->mu, mmp->nu, mmp->ku,be[i]);
+         fprintf(fp, " \\\n       ATL_%cAMMM_%d_%d_%x_%dx%dx%d_b%c.o", pre, 
+                 mmp->ID, GetCompTimeFlags(mmp), mmp->kbB, mmp->mu, 
+                 mmp->nu, mmp->ku, be[i]);
    }
 /*
  * rank-K AMM routines where KB is runtime variable
@@ -2469,8 +2491,8 @@ void GenMakefile
    KillAllMMNodes(SplitRankK(urb, &runb));
    for (mmp=runb; mmp; mmp = mmp->next)
       for (i=0; i < 3; i++)
-         fprintf(fp, " \\\n       ATL_%cAMMM_%d_0_%d_%dx%dx%d_b%c.o", pre, 
-                 mmp->ID, mmp->kmaj, mmp->mu, mmp->nu, mmp->ku, be[i]);
+         fprintf(fp, " \\\n       ATL_%cAMMM_%d_0_%x_%dx%dx%d_b%c.o", pre, 
+                 mmp->ID, GetCompTimeFlags(mmp),mmp->mu,mmp->nu,mmp->ku,be[i]);
 /*
  * rank-K AMM routines where KB is compile-time, need obj for each unique kbB
  */
@@ -2479,9 +2501,9 @@ void GenMakefile
       if (!ExactKernelInList(mmb, mmp) && !ExactKernelInList(ukb, mmp))
       {
          for (i=0; i < 3; i++)
-            fprintf(fp, " \\\n       ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b%c.o", 
-                    pre, mmp->ID, mmp->kbB, mmp->kmaj, mmp->mu, mmp->nu, 
-                    mmp->ku, be[i]);
+            fprintf(fp, " \\\n       ATL_%cAMMM_%d_%d_%x_%dx%dx%d_b%c.o", 
+                    pre, mmp->ID, mmp->kbB, GetCompTimeFlags(mmp), 
+                    mmp->mu, mmp->nu, mmp->ku, be[i]);
       }
    }
 @ROUT emit_amm emit_uamm
@@ -2666,50 +2688,11 @@ void GenMakefile
       }
       comp = GetKernComp(mmp, dcomp, dflags, &cflags);
 /* 
- *    ATL_<pre>@(UP)AMMM_<ID>_<kb>_<kmaj>_<mu>x<nu>x<ku>_b<X>, 
+ *    ATL_<pre>@(UP)AMMM_<ID>_<kb>_<flg>_<mu>x<nu>x<ku>_b<X>, 
  *    kerns in all 3 beta cases
  */
       for (i=0; i < 3; i++)
          PrintKernComp(fp, pre, mmp, @(uid), comp, cflags, styp, be[i], bes[i]);
-@beginskip
-      {
-         const int kb=FLAG_IS_SET(mmp->flag, MMF_KRUNTIME)?0:mmp->kbB;
-         const int kmaj = mmp->kmaj;
-@ROUT emit_amm
-         fprintf(fp, "ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b%c.o : %s\n", pre, 
-                 mmp->ID,kb, kmaj, mmp->mu, mmp->nu, mmp->ku, be[i], mmp->rout);
-@ROUT emit_uamm
-         fprintf(fp, "ATL_%cu%dAMMM_%d_%d_%d_%dx%dx%d_b%c.o : %s\n", pre, 
-                 UID, mmp->ID, kb, kmaj, mmp->mu, mmp->nu, mmp->ku, 
-                 be[i], mmp->rout);
-@ROUT emit_amm emit_uamm
-         fprintf(fp, "\t%s $(CDEFS2) %s -DBETA%s=1", comp, styp, bes[i]);
-         if (!FLAG_IS_SET(mmp->flag, MMF_KRUNTIME))
-            fprintf(fp, " -DMB=%d -DNB=%d, -DKB=%d", 
-                    mmp->mbB, mmp->nbB, mmp->kbB);
-         if (FLAG_IS_SET(mmp->flag, MMF_MVA))
-            fprintf(fp, " -DATL_MOVEA");
-         if (FLAG_IS_SET(mmp->flag, MMF_MVB))
-            fprintf(fp, " -DATL_MOVEB");
-         if (FLAG_IS_SET(mmp->flag, MMF_MVC))
-            fprintf(fp, " -DATL_MOVEC");
-@ROUT emit_amm
-         fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b%c", pre,
-                 mmp->ID, kb, kmaj, mmp->mu, mmp->nu, mmp->ku, be[i]);
-         fprintf(fp, " %s -o ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b%c.o -c %s\n", 
-                 cflags, pre, mmp->ID, kb, kmaj, mmp->mu, mmp->nu, mmp->ku, 
-                 be[i], mmp->rout);
-@ROUT emit_uamm
-         fprintf(fp, 
-         " -DATL_USERMM=ATL_%cu%dAMMM_%d_%d_%d_%dx%dx%d_b%c -DATL_UAMMID=%d", 
-                 pre, UID, mmp->ID, kb, kmaj, mmp->mu, mmp->nu, mmp->ku, be[i],
-                 UID);
-         fprintf(fp, " %s -o ATL_%cu%dAMMM_%d_%d_%d_%dx%dx%d_b%c.o -c %s\n", 
-                 cflags, pre, UID, mmp->ID, kb, kmaj, mmp->mu, mmp->nu, 
-                 mmp->ku, be[i], mmp->rout);
-@ROUT emit_amm emit_uamm
-      }
-@endskip
    }
 @ROUT emit_amm
 /*
@@ -2728,33 +2711,9 @@ void GenMakefile
    fprintf(fp, "#\n#  K-cleanup rules\n#\n");
    for (mmp=ukb; mmp; mmp = mmp->next)
    {
-      const int kmaj = mmp->kmaj;
       comp = GetKernComp(mmp, dcomp, dflags, &cflags);
       for (i=0; i < 3; i++)
          PrintKernComp(fp, pre, mmp, @(uid), comp, cflags, styp, be[i], bes[i]);
-@beginskip
-      {
-@ROUT emit_amm
-         fprintf(fp, "ATL_%cAMMM_%d_0_%d_%dx%dx%d_b%c.o : %s\n", pre, 
-                 mmp->ID, kmaj, mmp->mu, mmp->nu, mmp->ku, be[i], mmp->rout);
-         fprintf(fp, "\t%s $(CDEFS2) %s -DBETA%s=1", comp, styp, bes[i]);
-         fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_0_%d_%dx%dx%d_b%c", pre,
-                 mmp->ID, kmaj, mmp->mu, mmp->nu, mmp->ku, be[i]);
-         fprintf(fp, " %s -o ATL_%cAMMM_%d_0_%d_%dx%dx%d_b%c.o -c %s\n", 
-                 cflags, pre, mmp->ID, kmaj, mmp->mu, mmp->nu, mmp->ku, 
-                 be[i], mmp->rout);
-@ROUT emit_uamm
-         fprintf(fp, "ATL_%cu%dAMMM_%d_0_%d_%dx%dx%d_b%c.o : %s\n", pre, UID,
-                 mmp->ID, kmaj, mmp->mu, mmp->nu, mmp->ku, be[i], mmp->rout);
-         fprintf(fp, "\t%s $(CDEFS2) %s -DBETA%s=1", comp, styp, bes[i]);
-         fprintf(fp, " -DATL_USERMM=ATL_%cu%dAMMM_%d_0_%d_%dx%dx%d_b%c", pre,
-                 UID, mmp->ID, kmaj, mmp->mu, mmp->nu, mmp->ku, be[i]);
-         fprintf(fp, " %s -o ATL_%cu%dAMMM_%d_0_%d_%dx%dx%d_b%c.o -c %s\n", 
-                 cflags, pre, UID, mmp->ID, kmaj, mmp->mu, mmp->nu, mmp->ku, 
-                 be[i], mmp->rout);
-@ROUT emit_amm emit_uamm
-      }
-@endskip
    }
 @ROUT emit_amm
 /*
@@ -2764,22 +2723,9 @@ void GenMakefile
       fprintf(fp, "#\n#  rank-K kernels with run-time K\n#\n");
    for (mmp=runb; mmp; mmp = mmp->next)
    {
-      const int kmaj = mmp->kmaj;
       comp = GetKernComp(mmp, dcomp, dflags, &cflags);
       for (i=0; i < 3; i++)
          PrintKernComp(fp, pre, mmp, @(uid), comp, cflags, styp, be[i], bes[i]);
-@beginskip
-      {
-         fprintf(fp, "ATL_%cAMMM_%d_0_%d_%dx%dx%d_b%c.o : %s\n", pre, mmp->ID, 
-                 kmaj, mmp->mu, mmp->nu, mmp->ku, be[i], mmp->rout);
-         fprintf(fp, "\t%s $(CDEFS2) %s -DBETA%s=1", comp, styp, bes[i]);
-         fprintf(fp, " -DATL_USERMM=ATL_%cAMMM_%d_0_%d_%dx%dx%d_b%c", pre, 
-                 mmp->ID, kmaj, mmp->mu, mmp->nu, mmp->ku, be[i]);
-         fprintf(fp, " %s -o ATL_%cAMMM_%d_0_%d_%dx%dx%d_b%c.o -c %s\n", 
-                 cflags, pre, mmp->ID, kmaj, mmp->mu, mmp->nu, mmp->ku, 
-                 be[i], mmp->rout);
-      }
-@endskip
    }
    
 /*
@@ -2800,16 +2746,17 @@ void GenMakefile
          int kbG = mmp->kbB;
          if (kmaj)
             kbG = ((mmp->kbB + kmaj-1)/kmaj)*kmaj;
-         fprintf(fp, "ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b%c.o : %s\n", pre, mmp->ID, 
-                 mmp->kbB, kmaj, mmp->mu, mmp->nu, mmp->ku, be[i], mmp->rout);
+         fprintf(fp, "ATL_%cAMMM_%d_%d_%x_%dx%dx%d_b%c.o : %s\n", pre, mmp->ID, 
+                 mmp->kbB, GetCompTimeFlags(mmp), mmp->mu, mmp->nu, mmp->ku,
+                 be[i], mmp->rout);
          fprintf(fp, "\t%s $(CDEFS2) %s -DBETA%s=1", comp, styp, bes[i]);
-         fprintf(fp, " -DKB=%d -DATL_USERMM=ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b%c", 
-                 kbG, pre, mmp->ID, mmp->kbB, kmaj, mmp->mu, mmp->nu, 
-                 mmp->ku, be[i]);
+         fprintf(fp, " -DKB=%d -DATL_USERMM=ATL_%cAMMM_%d_%d_%x_%dx%dx%d_b%c", 
+                 kbG, pre, mmp->ID, mmp->kbB, GetCompTimeFlags(mmp), mmp->mu,
+                 mmp->nu, mmp->ku, be[i]);
          fprintf(fp, " -DATL_MOVEA -DATL_MOVEC");
-         fprintf(fp, " %s -o ATL_%cAMMM_%d_%d_%d_%dx%dx%d_b%c.o -c %s\n", 
-                 cflags, pre, mmp->ID, mmp->kbB, kmaj, mmp->mu, mmp->nu, 
-                 mmp->ku, be[i], mmp->rout);
+         fprintf(fp, " %s -o ATL_%cAMMM_%d_%d_%x_%dx%dx%d_b%c.o -c %s\n", 
+                 cflags, pre, mmp->ID, mmp->kbB, GetCompTimeFlags(mmp), 
+                 mmp->mu, mmp->nu, mmp->ku, be[i], mmp->rout);
       }
    }
    KillAllMMNodes(fixb);
