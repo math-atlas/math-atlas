@@ -7766,7 +7766,10 @@ static int ATL_ammm_rkK
 /*
  * This routine called when N < M and K is large
  */
+@ROUT ATL_ammm_rkK
+ #include Mstr(Mjoin(Mjoin(atlas_,PRE),sysinfo.h))
 @ROUT ATL_ammm_rkK ATL_cammm_rkK
+
    @define rt @Mjoin(PATL,ammm_rkK)@
 /*
  * This routine called when 2 < K <= MAXK
@@ -8291,9 +8294,22 @@ int @(rt)
    mu = mminfo.mu;
    nu = mminfo.nu;
    ku = mminfo.ku;
-   MB = ATL_ComputeB(M, mu, ATL_MAXM_RKK, &nsmblks, &nmblks);
+/*
+ * If 4 operands (C, wC, A, B) all fit in L1, use small, near-square shapes.
+ * otherwise, use MB/NB from largest KB, which we know fits in some level
+ * of cache.  Using larger M/N will tend to minimize function call overhead,
+ * and shouldn't have much negative effect when in-cache.
+ */
+   MB = mminfo.mb+mu;
+   NB = mminfo.nb+nu;
+   if ((((MB*NB)<<1) + (MB+NB)*K) >= ATL_L1elts)
+   {
+      MB = ATL_MAXM_RKK;
+      NB = ATL_MAXN_RKK;
+   }
+   MB = ATL_ComputeB(M, mu, MB, &nsmblks, &nmblks);
    NMU = MB / mu;
-   NB = ATL_ComputeB(N, nu, ATL_MAXN_RKK, &nsnblks, &nnblks);
+   NB = ATL_ComputeB(N, nu, NB, &nsnblks, &nnblks);
    NNU = NB / nu;
    A_1TRIP = (nnblks < 2);
    #if ATL_MAXKMAJ_RKK > 1
