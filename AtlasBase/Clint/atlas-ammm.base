@@ -4406,9 +4406,11 @@ ATL_mmnode_t *FindBestGenCases(int verb, char pre, int nreg,
 ATL_mmnode_t *GetWorkingUserCases(int verb, char pre)
 {
    ATL_mmnode_t *mmb, *mmp;
+@ROUT ammsearch00
    mmb = ReadMMFileWithPath(pre, "res", "AMMFRCLST.sum");
    if (mmb)
       return(mmb);
+@ROUT ammsearch uammsearch
    mmb = ReadMMFileWithPath(pre, "res", "WORKING.sum");
    if (mmb)
       return(mmb);
@@ -5960,7 +5962,7 @@ ATL_mmnode_t *GetRuntimeKKernels
    while (inb && !FLAG_IS_SET(inb->flag, MMF_KRUNTIME))
       inb = KillMMNode(inb);
 /* 
- * Got rid of any at base, not get rid of non-K-runtime from internal nodes
+ * Got rid of any at base, now get rid of non-K-runtime from internal nodes
  */
    if (inb)
    {
@@ -6055,6 +6057,7 @@ int IsSlowerThanList
 (
    int verb,            /* verbosity */
    char pre,            /* s,d */
+   int MB,
    int NB,              /* default mb/nb to time with */
    ATL_mmnode_t *mmc,  /* candidate mmkern */
    ATL_mmnode_t *mmb   /* kernels to time candidate against */
@@ -6070,7 +6073,7 @@ int IsSlowerThanList
    kb = mmc->kbB;
    mu = mmc->mu;
    nu = mmc->nu;
-   mb = (NB/mu)*mu;
+   mb = (MB/mu)*mu;
    nb = (NB/nu)*nu;
    assert(mb && nb && kb);
    KB = (mmc->kmaj < 2) ? kb : ((kb+mmc->ku-1)/mmc->ku)*mmc->ku;
@@ -6090,7 +6093,7 @@ int IsSlowerThanList
          int KK = (mp->kmaj > 1) ? ((kb+ku-1)/ku)*ku : kb;
          mu = mp->mu;
          nu = mp->nu;
-         mb = (NB/mu)*mu;
+         mb = (MB/mu)*mu;
          nb = (NB/nu)*nu;
          assert(mb && nb);
          mf = TimeMMKernel(verb, 0, mp, pre, mb, nb, KK, 0, 0, 0, 0, 0, -1);
@@ -6317,6 +6320,7 @@ ATL_mmnode_t *GetRankKKernels
    ResetMoveBitsInQ(mmb, 5);
    ResetMoveBitsInQ(gmm, 5);
    ResetMoveBitsInQ(low, 5);
+@beginskip
    if (mmb)
    {
       mb = mmb->mbB;
@@ -6334,6 +6338,15 @@ ATL_mmnode_t *GetRankKKernels
    }
    else
       mb = nb = NB;
+@endskip
+   if (mmb)
+   {
+      maxKB = mmb->kbB;
+      for (run=mmb->next; run; run = run->next)
+         if (maxKB < run->kbB)
+            maxKB = run->kbB;
+   }
+   mb = nb = NB;
    run = CloneMMQueue(low);
    if (FLAG_IS_SET(gmm->flag, MMF_KRUNTIME))
    {
@@ -6342,7 +6355,7 @@ ATL_mmnode_t *GetRankKKernels
          ATL_mmnode_t *p;
          int gmu = (gmm->kmaj > 1) ? gmm->mu : gmm->mu / VLEN[VECi];
          assert(gmu);
-         p = GetNewGenNode(pre, maxKB, gmm->lat, gmu, gmm->nu, 1, 0);
+         p = GetNewGenNode(pre, NB, gmm->lat, gmu, gmm->nu, 1, 0);
          p->next = run;
          run = p;
       }
@@ -6354,7 +6367,7 @@ ATL_mmnode_t *GetRankKKernels
       ATL_mmnode_t *p;
       int gmu = (gmm->kmaj > 1) ? gmm->mu : gmm->mu / VLEN[VECi];
       assert(gmu);
-      p = GetNewGenNode(pre, maxKB, gmm->lat, gmu, gmm->nu, 1, 0);
+      p = GetNewGenNode(pre, NB, gmm->lat, gmu, gmm->nu, 1, 0);
       p->flag |= (1<<MMF_KRUNTIME);
       p->next = run;
       run = p;
@@ -6369,7 +6382,7 @@ ATL_mmnode_t *GetRankKKernels
    printf("DELETING FIXED KERNELS OUTCOMPETED BY RUNTIME KERNELS:\n");
    while (low)
    {
-      if (!IsSlowerThanList(verb, pre, NB, low, run));
+      if (!IsSlowerThanList(verb, pre, mb, nb, low, run));
          break;
       printf("   Deleting: %d. %s for K=%d\n", low->ID, low->rout, low->kbB);
       low = KillMMNode(low);
@@ -6379,7 +6392,7 @@ ATL_mmnode_t *GetRankKKernels
       ATL_mmnode_t *mp=low->next, *prev=low;
       while (mp)
       {
-         if (IsSlowerThanList(verb, pre, NB, mp, run))
+         if (IsSlowerThanList(verb, pre, mb, nb, mp, run))
          {
             printf("   Deleting: %d. %s for K=%d\n", mp->ID, mp->rout, mp->kbB);
             mp = KillMMNode(mp);
@@ -6504,6 +6517,7 @@ ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS, int *nbs)
          smmb = MergeAndWinnowCases(verb, pre, smmb, mmp);
       else  /* forced nbs are all kept, so just merge */
          smmb = MergeCases(0, smmb, mmp);
+@skip         WriteMMFileWithPath(pre, "./", "win0.sum", smmb);
    }
    else
      smmb = FindBestGenCases(verb, pre, nregs, nbs, NULL);
@@ -6527,7 +6541,10 @@ ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS, int *nbs)
 /*
  *    Now add small-case kernels back in, and write it out
  */
-      mmb = MergeAndWinnowCases(verb, pre, smmb, mmb);
+      mp = MergeCases(0, mmb, smmb);
+      KillAllMMNodes(smmb);
+      KillAllMMNodes(mmb);
+      mmb = WinnowCases(0, mp);
    }
    else /* when we force nbs, we just blindly use the provided list */
       mmb = smmb;
