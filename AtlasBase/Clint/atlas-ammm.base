@@ -6552,6 +6552,104 @@ ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS, int *nbs)
    return(mmb);
 }
 
+int KernHandlesThisKB(ATL_mmnode_t *mp, int kb)
+{
+   int ku;
+   if (kb < mp->kbmin)
+      return(0);
+   if (mp->kbmax && kb > mp->kbmax)
+      return(0);
+   ku = mp->ku;
+   if ((kb/ku)*ku != kb)
+      return(0);
+   return(1);
+}
+
+/*
+ * This routine tries all kernels in mmb, with K=KB, M=CEIL(KB/MU)*MU,
+ * N=CEIL(KB/NU)*NU.  Kernels that can't handle KB are rejected
+ * RETURNS: new mmnode ptr for best case for this KB; cannot be NULL, because
+ *          1st param of mmb must be a generated kernel that works for any KB
+ */
+ATL_mmnode_t *BestKernForKB(int verb, char pre, ATL_mmnode_t *mmb, int KB)
+{
+   ATL_mmnode_t *mp, *mpB=NULL;
+   double mfB=0.0;
+   assert(mmb);
+/*
+ * Make sure first entry of mmb is a generated kernel wt runtime K & KU==1
+ */
+   assert(mmb->ID == 0);
+   assert(mmb->genstr);
+   assert(mmb->rout);
+   assert(mmb->ku == 1);
+   mmb->flag |=  (1 << MMF_KRUNTIME);  /* force genned case to runtime K */
+   printf("   FINDING BEST NEAR-SQUARE KERNEL WT KB=%d:\n", KB);
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      const int mu=mp->mu, nu=mp->nu, ku=mp->ku, ID=mp->ID;
+      const int mb=((KB+mu-1)/mu)*mu, nb=((KB+nu-1)/nu)*nu;
+      const char *rt=mp->rout;
+      double mf;
+
+      if (!KernHandlesThisKB(mp, KB))
+      {
+         printf("      %d-%s: skipped, cannot handle KB=%d\n", ID, rt, KB);
+         continue;
+      }
+      mf = TimeMMKernel(verb, 0, mp, pre, mb, nb, KB, 0, 0, mb, 0,  0, -1);
+      if (mf > mfB)
+      {
+         mfB = mf;
+         mpB = mp;
+      }
+      printf("      %d-%s, M=%d, N=%d, K=%d: %.1f\n", ID, rt, mb, nb, KB, mf);
+   }
+   assert(mpB);
+   printf("   BEST FOR KB=%d: %d-%s (%.1f MFLOPS)\n", 
+          KB, mpB->ID, mpB->rout, mfB);
+   mpB = CloneMMNode(mpB);
+   mpB->mflop[0] = mfB;
+   mpB->kbB = KB;
+   mpB->mbB = ((KB+mpB->mu-1)/mpB->mu)*mpB->mu;
+   mpB->nbB = ((KB+mpB->nu-1)/mpB->nu)*mpB->nu;
+   return(mpB);
+}
+
+ATL_mmnode_t *DoRankK(char pre, int verb, int nregs, const ATL_mmnode_t *mainb)
+{
+   ATL_mmnode_t *rkb=NULL, *mp, *mmb;
+   const ATL_mmnode_t *cmp;
+   int maxB=0, b;
+/*
+ * Find largest KB used by main kernels; we will time all near-square kernels
+ * of this size and below
+ */
+   for (cmp=mainb; cmp; cmp = cmp->next)
+      if (cmp->kbB > maxB)
+         maxB = cmp->kbB;
+   if (!maxB)
+      maxB = 256;
+/*
+ * All we need main kerns for is to find maxB, so now reuse the ptr to hold
+ * all user cases that work on this platform
+ */
+   mmb = GetWorkingUserCases(verb, pre);
+   mp = DecentGenCase(verb, pre, nregs);
+   assert(mp);
+   mp->next = mmb;
+   mmb = mp;
+   ResetMoveBitsInQ(rkb, 5);
+   printf("TUNING RANK-K, 3 <= K <= %d:\n", maxB);
+   for (b = maxB; b > 2; b--)
+   {
+      mp = BestKernForKB(verb, pre, mmb, b);
+      mp->next = rkb;
+      rkb = mp;
+   }
+   WriteMMFileWithPath(pre, "res", "ARANKK.sum", rkb);
+}
+
 int main(int nargs, char **args)
 {
    char pre='d';
@@ -6574,6 +6672,7 @@ int main(int nargs, char **args)
       mmb = WinnowCases(0, mp);
       WriteMMFileWithPath(pre, "res", "eAMMRES.sum", mmb);
    }
+   rnkK = DoRankK(pre, verb, nregs, mmb);
 /*
  * Create list of square cases for use in symmetric operations, etc.
  */
@@ -6582,7 +6681,8 @@ int main(int nargs, char **args)
  * Handle K-cleanup
  */
    ComputeKClean(verb, pre, mmb);
-   FindBestKU1(verb, pre, 17);  /* create kern for use in low-rank update */
+@skip   FindBestKU1(verb, pre, 17);  /* create kern for use in low-rank update */
+@beginskip
 /*
  * Find best rank-K update kernels
  */
@@ -6591,6 +6691,7 @@ int main(int nargs, char **args)
    mp = GetUniqueUserKerns(mmb);
    rnkK = GetRankKKernels(verb, pre, pre == 'd' ? 60:80, grnkK, rnkK, mmb);
    mmb = mp;
+@endskip
 /*
  * Join mmb & rnkK to make master list of all kernels required in this search
  */
