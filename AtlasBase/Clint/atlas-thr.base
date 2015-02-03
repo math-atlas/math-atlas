@@ -13283,6 +13283,94 @@ int Mjoin(PATL,tammm_G)
    free(vp);
    return(0);
 }
+@ROUT ATL_tammm_smNK
+typedef struct ATL_tamm_smNK ATL_tamm_smNK_t;
+struct ATL_tamm_smNK
+{
+   ammkern_t amm_k1;   /* kernel to use on kb0 */
+   ammkern_t amm;      /* kernel to use remaining kb */
+   cm2am_t a2blk;      /* block copy for A */
+   cm2am_t b2blk;      /* block copy for B, applies alpha */
+   ablk2cmat_t blk2c;   /* copy that applies beta  */
+   const TYPE *A;       /* input A matrix */
+   const TYPE *B;       /* input A matrix */
+   TYPE *C;             /* output matrix */
+   TYPE *w;             /* ATL_NTHREADS wsz-len thread-local workspaces */
+   const TYPE *alpha;   /* ptr to alpha */
+   const TYPE *beta;    /* ptr to beta */
+   void *BcpCtr;        /* which blk of B should I copy? */
+   void *BdnCtr;        /* while != 0, B is still being copied */
+   void *MbCtr;         /* which M block can I work on? */
+   size_t wsz;          /* size of local workspace */
+   int bsz;             /* size of common workspace for B */
+   int TA;              /* 0: noTrans; 1: Trans */
+   int TB;              /* 0: noTrans; 1: Trans */
+   int nkblks;          /* (K-1)/kb */
+   int kb;
+   int kb0;             /* K%ku;  if 0, kb */
+   int KB0;             /* if kmajor, it is CEIL(kb0/ku)*ku, else kb0 */
+   int nmblks;          /* CEIL(M/mb) */
+   int mb;              /* block factor along M */
+   int mbL;             /* M - (nmblks-1)*mb */
+   int nmu;             /* mb / mu */
+   int nmuL;            /* CEIL(mbL/mu) */
+   int nb;              /* block factor along N */
+   int nbL;             /* N - (nnblks-1)*nb */
+   int nnu;             /* nb / nu */
+   int nnuL;            /* CEIL(nbL/nu) */
+   int lda;             /* leading dim of A */
+   int ldb;             /* leading dim of B */
+   int ldc;             /* leading dim of C */
+};
+
+/*
+ * This routine is specialized for the case where both N & K are relatively
+ * small, and M is at least large enough to provide full parallelism
+ */
+int Mjoin(PATL,tammm_smNK)
+(
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   ATL_CINT M,
+   ATL_CINT N,
+   ATL_CINT K,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CINT lda,
+   const TYPE *B,
+   ATL_CINT ldb,
+   const SCALAR beta,
+   TYPE *C,
+   ATL_CINT ldc
+)
+{
+   amminfo_t mmi;
+   unsigned int i, mb, nb, kb, nmblks, nnblks, nkblks;
+/*
+ * Smallest operand should always be B; if it is not, tell caller we decline
+ * to work on this problem shape
+ */
+   if(Mjoin(PATL,tGetAmmmInfo)(&mmi, ATL_NTHREADS, TA, TB, M, N, K, alpha, beta)
+      != 1)
+      return(10);
+   mb = mmi.mb;
+   nmblks = M / mb;
+   mbL = M - nmblks*mb;
+   if (mbL)
+   {
+      nmblks++;
+      pd.nmuL = (mbL+mu-1) / mu;
+      pd.mbL = mbL;
+   }
+   else
+   {
+      pd.nmuL = nmu;
+      pd.mbL = mb;
+   }
+   if (nmb < ATL_NTHREADS+ATL_NTHREADS)
+      return(11);
+
+}
 @ROUT ATL_tgemm_amm
 /*
  * recurs on any standard GEMM interface routine, passed as a function
