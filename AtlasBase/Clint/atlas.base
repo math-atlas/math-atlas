@@ -35443,26 +35443,72 @@ gemm(...)
 #include <string.h>
 #define dumb_prand(is_) ( 0.5 - ((double)rand_r(is_))/((double)RAND_MAX) )
 
-#ifndef KMM 
-   #define KMM ATL_USERMM
-#endif
 
 #define CINT const int
 
-#ifdef ATL_NEWTIME
+#ifdef TCPLX
+   size_t rszA, rszB, rszC;
+   void CAMM_b0(ATL_CSZT mblks, ATL_CSZT nblks, ATL_CSZT K, const TYPE *A,
+                const TYPE *B, TYPE *C, const TYPE *pAn, const TYPE *pBn,
+                const TYPE *pCn);
+   void CAMM_b1(ATL_CSZT mblks, ATL_CSZT nblks, ATL_CSZT K, const TYPE *A,
+                const TYPE *B, TYPE *C, const TYPE *pAn, const TYPE *pBn,
+                const TYPE *pCn);
+   void CAMM_bn(ATL_CSZT mblks, ATL_CSZT nblks, ATL_CSZT K, const TYPE *A,
+                 const TYPE *B, TYPE *C, const TYPE *pAn, const TYPE *pBn,
+                 const TYPE *pCn);
+   #ifdef BETA0
+      void KMM(ATL_CSZT mblks, ATL_CSZT nblks, ATL_CSZT K, const TYPE *Ai,
+               const TYPE *Bi, TYPE *Ci, const TYPE *pAn, const TYPE *pBn,
+               const TYPE *pCn)
+      {
+         extern size_t rszA, rszB, rszC;
+         const TYPE *Ar=Ai+rszA, *Br=Bi+rszB;
+         TYPE *Cr = Ci + rszC;
+         CAMM_b0(mblks, nblks, K, Ai, Bi, Cr, Ai, Br, Ci);
+         CAMM_b0(mblks, nblks, K, Ai, Br, Ci, Ar, Br, Cr);
+         CAMM_bn(mblks, nblks, K, Ar, Br, Cr, Ar, Bi, Ci);
+         CAMM_b1(mblks, nblks, K, Ar, Bi, Ci, pAn, pBn, pCn);
+      }
+   #elif defined(BETA1)
+      void KMM(ATL_CSZT mblks, ATL_CSZT nblks, ATL_CSZT K, const TYPE *Ai,
+               const TYPE *Bi, TYPE *Ci, const TYPE *pAn, const TYPE *pBn,
+               const TYPE *pCn)
+      {
+         extern size_t rszA, rszB, rszC;
+         const TYPE *Ar=Ai+rszA, *Br=Bi+rszB;
+         TYPE *Cr = Ci + rszC;
+         CAMM_bn(mblks, nblks, K, Ai, Bi, Cr, Ai, Br, Ci);
+         CAMM_b1(mblks, nblks, K, Ai, Br, Ci, Ar, Br, Cr);
+         CAMM_bn(mblks, nblks, K, Ar, Br, Cr, Ar, Bi, Ci);
+         CAMM_b1(mblks, nblks, K, Ar, Bi, Ci, pAn, pBn, pCn);
+      }
+   #else
+      void KMM(ATL_CSZT mblks, ATL_CSZT nblks, ATL_CSZT K, const TYPE *Ai,
+               const TYPE *Bi, TYPE *Ci, const TYPE *pAn, const TYPE *pBn,
+               const TYPE *pCn)
+      {
+         extern size_t rszA, rszB, rszC;
+         const TYPE *Ar=Ai+rszA, *Br=Bi+rszB;
+         TYPE *Cr = Ci + rszC;
+         CAMM_b1(mblks, nblks, K, Ai, Bi, Cr, Ai, Br, Ci);
+         CAMM_bn(mblks, nblks, K, Ai, Br, Ci, Ar, Br, Cr);
+         CAMM_b1(mblks, nblks, K, Ar, Br, Cr, Ar, Bi, Ci);
+         CAMM_bn(mblks, nblks, K, Ar, Bi, Ci, pAn, pBn, pCn);
+      }
+   #endif
+#else
+   #ifndef KMM 
+      #define KMM ATL_USERMM
+   #endif
    void KMM(ATL_CSZT mblks, ATL_CSZT nblks, ATL_CSZT K, const TYPE *A,
             const TYPE *B, TYPE *C, const TYPE *pAn, const TYPE *pBn,
             const TYPE *pCn);
-#else
-   void KMM(const int, const int, const int, const SCALAR, const TYPE*,
-            const int, const TYPE*, const int, const SCALAR, TYPE*, const int);
 #endif
 
 struct kmm_struct{
    int mb, nb, kb;                      /* C: mbxnb, At: kbxmb, B: kbXnb */
-   #ifdef ATL_NEWTIME
    int mu, nu, ku;                      /* needed to compute mblks/nblks */
-   #endif
    int movA, movB, movC;                /* which mat move in flush array? */
    int FLSIZE;                          /* min area to move in in bytes */
    int reps;                            /* # calls to kmm in one timing */
@@ -35477,9 +35523,7 @@ struct kmm_struct{
 double GetKmmMflop
 (
    CINT mb, CINT nb, CINT kb,           /* C: mbxnb, At: kbxmb, B: kbXnb */
-   #ifdef ATL_NEWTIME
-      CINT mu, CINT nu, CINT ku,
-   #endif
+   CINT mu, CINT nu, CINT ku,
    CINT movA, CINT movB, CINT movC,     /* which mat move in flush array? */
    int FLSIZE,                          /* min area to move in in bytes */
    CINT reps,                           /* # calls to kmm in one timing */
@@ -35493,9 +35537,7 @@ double GetKmmMflop
  * 
  */
 {
-   #ifdef ATL_NEWTIME
-      CINT mblks = mb/mu, nblks = nb/nu;
-   #endif
+   CINT mblks = mb/mu, nblks = nb/nu;
    const int NOMOVE = !(movA|movB|movC);
    size_t ldc, setsz, nset, i, j, incA, incB, incC, n, extra, EXTRA=0;
    TYPE *C, *A, *B, *a, *b, *c;
@@ -35504,21 +35546,21 @@ double GetKmmMflop
    TYPE beta=1.0;
    void *vp=NULL;
    unsigned int seed = mb*kb + (nb<<14);
-   #ifdef ATL_NEWTIME
-      EXTRA = 4*mu*nu;
-   #endif
+   EXTRA = 4*mu*nu;
 
    
    if (NOMOVE)
    {
-      ldc = (LDC) ? LDC : mb;
-      setsz = (ldc * nb + kb*(mb+nb));
+      setsz = (mb * nb + kb*(mb+nb));
       vp = malloc(2*ATL_Cachelen + ATL_MulBySize(setsz+EXTRA));
       ATL_assert(vp);
       A = ATL_AlignPtr(vp);
-      B = A + mb*kb;
-      C = B + kb*nb;
+      B = A + (mb*kb SHIFT);
+      C = B + (kb*nb SHIFT);
       C = ATL_AlignPtr(C);
+      #ifdef TCPLX
+         setsz += setsz;
+      #endif
       for (i=0; i < setsz; i++) A[i] = dumb_prand(&seed);
       incA = incB = incC = 0;
    }
@@ -35532,56 +35574,51 @@ double GetKmmMflop
          setsz = mb*nb + kb*(mb+nb) + ATL_DivBySize(ATL_Cachelen);
          vp = malloc(ATL_Cachelen + ATL_MulBySize(nset*setsz+EXTRA));
          ATL_assert(vp);
+         setsz = setsz SHIFT;
          A = ATL_AlignPtr(vp);
-         B = A + kb*mb*nset;
-         C = B + kb*nb*nset;
+         B = A + (kb*mb*nset SHIFT);
+         C = B + (kb*nb*nset SHIFT);
          C = ATL_AlignPtr(B);
-         ldc = (LDC) ? mb*nset : mb;
          for (n=setsz*nset,i=0; i < n; i++) A[i] = dumb_prand(&seed);
-         incA = mb*kb; 
-         incB = kb*nb;
-         incC = mb*nb;
+         incA = mb*kb SHIFT;
+         incB = kb*nb SHIFT;
+         incC = mb*nb SHIFT;
       }
       else if (movA && movB && !movC)   /* square-case ATLAS behavior */
       {
          setsz = kb*(mb+nb);
-         ldc = (LDC) ? LDC : mb;
-         ATL_assert(ldc >= mb);
-         extra = ldc*nb;
-         incA = mb*kb; 
-         incB = kb*nb;
+         extra = mb*nb;
+         incA = mb*kb SHIFT;
+         incB = kb*nb SHIFT;
          incC = 0;
       }
       else if (!movB && movA && movC)   /* rank-K behavior */
       {
          setsz = mb*(kb+nb);
          extra = kb*nb;
-         incA = mb*kb; 
+         incA = mb*kb SHIFT; 
          incB = 0;
-         incC = mb*nb;
+         incC = mb*nb SHIFT;
       }
       else if (movA && !movB && !movC) /* used to det cost of B/C access */
       {
-         incA = mb*kb;
+         setsz = mb*kb;
+         incA = setsz SHIFT;
          incB = incC = 0;
-         setsz = incA;
-         ldc = (LDC) ? LDC : mb;
-         extra = ldc*nb + kb*nb;
+         extra = mb*nb + kb*nb;
       }
       else if (!movA && movB && !movC) /* used to det cost of ld A/C access */
       {
-         incB = nb*kb;
+         incB = nb*kb SHIFT;
          incA = incC = 0;
          setsz = incB;
-         ldc = (LDC) ? LDC : mb;
-         extra = ldc*nb + mb*kb;
+         extra = mb*(nb+kb);
       }
       else if (!movA && !movB && movC) /* used to det cost of ld A/B access */
       {
-         incC = mb*nb;
+         incC = mb*nb SHIFT;
          incA = incB = 0;
          setsz = incC;
-         assert(!LDC || (LDC == mb));
          extra = kb*(mb+nb);
       }
       else
@@ -35590,6 +35627,11 @@ double GetKmmMflop
                  __FILE__, __LINE__);
          exit(-1);
       }
+      #ifdef TCPLX
+         rszA = mb*kb;
+         rszB = kb*nb;
+         rszC = mb*nb;
+      #endif
       if (!vp)
       {
          TYPE *dp, *ep;
@@ -35604,30 +35646,31 @@ double GetKmmMflop
          if (movA)
          {
             A = ATL_AlignPtr(dp);
-            dp = A + mb*kb*nset;
+            dp = A + (mb*kb*nset SHIFT);
             dp = ATL_AlignPtr(dp);
          }
          else
          {
             A = ep;
-            ep += mb*kb;
+            ep += (mb*kb SHIFT);
             ep = ATL_AlignPtr(ep);
          }
          if (movB)
          {
             B = ATL_AlignPtr(dp);
-            dp = B + nb*kb*nset;
+            dp = B + (nb*kb*nset SHIFT);
             dp = ATL_AlignPtr(dp);
          }
          else
          {
             B = ep;
-            ep += mb*kb;
+            ep += (mb*kb SHIFT);
             ep = ATL_AlignPtr(ep);
          }
          C = (movC) ? dp : ep;
          dp = ATL_AlignPtr(vp);
-         n = setsz*nset+extra;
+         setsz = setsz SHIFT;
+         n = setsz*nset + (extra SHIFT);
          for (i=0; i < n; i++) 
             dp[i] = dumb_prand(&seed);
       }
@@ -35636,12 +35679,8 @@ double GetKmmMflop
    t0 = ATL_walltime();
    for (j=0,i=reps; i; i--)
    {
-      #ifdef ATL_NEWTIME
-         KMM(mblks, nblks, kb, a, b, c, movA ? a+incA : a, 
-             movB ? b+incB : b, movC ? c+incC : c);
-      #else
-         KMM(mb, nb, kb, alpha, a, kb, b, kb, beta, c, ldc);
-      #endif
+      KMM(mblks, nblks, kb, a, b, c, movA ? a+incA : a, 
+          movB ? b+incB : b, movC ? c+incC : c);
       if (++j != nset)
       {
          a += incA;
@@ -35650,15 +35689,15 @@ double GetKmmMflop
       }
       else
       {
-         #ifndef ATL_NEWTIME
-            beta = (beta != 0.0) ? -beta : 0.0;
-         #endif
          j = 0;
          a = A; b = B; c = C;
       }
    }
    t1 = ATL_walltime() - t0;
    mf = (2.0*reps*mb*nb*kb) / (t1*1000000.0);
+   #ifdef TCPLX
+      mf *= 4.0;
+   #endif
    free(vp);
    return(mf);
 }
@@ -35697,14 +35736,8 @@ void *TimeOnCore(void *vp)
    chkin[kp->iam] = 1;
    for (i=0; i < P; i++)
       while(!chkin[i]);
-   #ifdef ATL_NEWTIME
-      kp->mf = GetKmmMflop(kp->mb, kp->nb, kp->kb, kp->mu, kp->nu, kp->ku, 
-                           kp->movA, kp->movB, kp->movC,
-                           kp->FLSIZE, kp->reps, 0);
-   #else
-      kp->mf = GetKmmMflop(kp->mb, kp->nb, kp->kb, kp->movA, kp->movB, kp->movC,
-                           kp->FLSIZE, kp->reps, kp->LDC);
-   #endif
+   kp->mf = GetKmmMflop(kp->mb, kp->nb, kp->kb, kp->mu, kp->nu, kp->ku, 
+                        kp->movA, kp->movB, kp->movC, kp->FLSIZE, kp->reps, 0);
    return(NULL);
 }
 
@@ -35782,12 +35815,10 @@ void PrintUsage(char *name, int iarg, char *arg)
    fprintf(stderr, "   -m <#> : mb = #\n");
    fprintf(stderr, "   -n <#> : nb = #\n");
    fprintf(stderr, "   -k <#> : kb = #\n");
-   #ifdef ATL_NEWTIME
    fprintf(stderr, "   -u[mnk] <#> : M/N/K loop unrolling is #\n");
-   #endif
    fprintf(stderr, "   -r <#> : set the # of times to call KMM\n");
    fprintf(stderr, "   -F <kb> : set flush size in kilobytes\n");
-   fprintf(stderr, "   -C <#> : set ldc; 0 means mb\n");
+@skip   fprintf(stderr, "   -C <#> : set ldc; 0 means mb\n");
    fprintf(stderr, "   -M[a,b,c] <#> : mov[A,B,C] = #\n");
    exit(iarg ? iarg : -1);
 }
@@ -35803,10 +35834,8 @@ struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
    kp->pids = NULL;
    kp->p = 1;
    kp->mb = kp->nb = kp->kb = 40;
-   #ifdef ATL_NEWTIME
-      kp->mu = kp->nu = 4;
-      kp->ku = 1;
-   #endif
+   kp->mu = kp->nu = 4;
+   kp->ku = 1;
    kp->movA = kp->movB = kp->movC = 0;
    kp->FLSIZE = L2SIZE;
    kp->reps = 0;
@@ -35832,7 +35861,6 @@ struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
             PrintUsage(args[0], i, "out of arguments");
          kp->LDC = atoi(args[i]);
          break;
-      #ifdef ATL_NEWTIME
       case 'u':
          if (++i >= nargs)
             PrintUsage(args[0], i, "out of arguments");
@@ -35844,7 +35872,6 @@ struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
          else
             kp->mu = j;
          break;
-      #endif
       case 'r':
          if (++i >= nargs)
             PrintUsage(args[0], i, "out of arguments");
