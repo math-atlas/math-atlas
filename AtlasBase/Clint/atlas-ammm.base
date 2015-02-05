@@ -224,31 +224,38 @@ ID=45 MU=8 NU=1 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_kmmm8x1x256_L1pf.S' \
    #endif
    #ifdef ATL_VSX
       #define ATL_NVREG 64
-      #define ATL_VLENb 16
-      #if defined(SREAL) || defined (SCPLX)
-         #define ATL_VLEN 4
-      #else
-         #define ATL_VLEN 2
+      #ifndef ATL_VLEN
+         #define ATL_VLENb 16
+         #if defined(SREAL) || defined (SCPLX)
+            #define ATL_VLEN 4
+         #else
+            #define ATL_VLEN 2
+         #endif
       #endif
    #elif defined(ATL_AltiVec)
       #define ATL_NVREG 32
-      #define ATL_VLENb 16
-      #if defined(SREAL) || defined (SCPLX)
-         #define ATL_VLEN 4
-      #else
-         #define ATL_VLEN 2
+      #ifndef ATL_VLEN
+         #define ATL_VLENb 16
+         #if defined(SREAL) || defined (SCPLX)
+            #define ATL_VLEN 4
+         #else
+            #define ATL_VLEN 2
+         #endif
       #endif
    #elif defined(ATL_AVXZ)
       #include "immintrin.h"
       #define ATL_NVREG 32
       #define ATL_VLENb 64
       #if defined(SREAL) || defined (SCPLX)
-         #define ATL_VLEN 16
+          #define ATL_VLEN 16
+      #else
+          #define ATL_VLEN 8
+      #endif
+      #if defined(SREAL) || defined (SCPLX)
          #define ATL_gvbcast(ptr_, v_) \
             v_ = _mm512_extload_ps((void*)(ptr_), _MM_UPCONV_PS_NONE, \
                                    _MM_BROADCAST_1X16, 0)
       #else
-         #define ATL_VLEN 8
          #define ATL_gvbcast(ptr_, v_) \
             v_ = _mm512_extload_pd((void*)(ptr_), _MM_UPCONV_PD_NONE, \
                                    _MM_BROADCAST_1X8, 0)
@@ -259,14 +266,21 @@ ID=45 MU=8 NU=1 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_kmmm8x1x256_L1pf.S' \
       #else
          #define ATL_NVREG 8
       #endif
-      #define ATL_VLENb 32
-      #if defined(SREAL) || defined (SCPLX)
-         #define ATL_VLEN 8
-      #else
-         #define ATL_VLEN 4
+      #ifndef ATL_VLEN
+         #define ATL_VLENb 32
+         #if defined(SREAL) || defined (SCPLX)
+            #define ATL_VLEN 8
+         #else
+            #define ATL_VLEN 4
+         #endif
       #endif
-      #define ATL_gvbcast(ptr_, v_) \
-         (v_) = __builtin_ia32_vbroadcastsd256((void*)(ptr_));
+      #if ATL_VLENb == 32
+         #define ATL_gvbcast(ptr_, v_) \
+            (v_) = __builtin_ia32_vbroadcastsd256((void*)(ptr_));
+      #elif ATL_VLENb == 16 && defined(ATL_SSE3)
+         #define ATL_gvbcast(ptr_, v_) \
+            (v_) = __builtin_ia32_loaddup(ptr_);
+      #endif
    #elif defined(ATL_SSE3) || defined(ATL_SSE2)
       #ifdef ATL_GAS_x8664
          #define ATL_NVREG 16
@@ -286,25 +300,33 @@ ID=45 MU=8 NU=1 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_kmmm8x1x256_L1pf.S' \
    #elif defined(SREAL) || defined(SCPLX)   /* single-only stuff */
       #ifdef ATL_AltiVec
          #define ATL_NVREG 32
-         #define ATL_VLENb 16
-         #define ATL_VLEN 4
+         #ifndef ATL_VLEN
+            #define ATL_VLENb 16
+            #define ATL_VLEN 4
+         #endif
       #elif defined(ATL_SSE1)
          #ifdef ATL_GAS_x8664
             #define ATL_NVREG 16
          #else
             #define ATL_NVREG 8
          #endif
-         #define ATL_VLENb 16
-         #define ATL_VLEN 4
+         #ifndef ATL_VLEN
+            #define ATL_VLENb 16
+            #define ATL_VLEN 4
+         #endif
       #elif defined(ATL_NONIEEE) && ATL_NONIEEE != 0
          #ifdef ATL_NEON
             #define ATL_NVREG 16
-            #define ATL_VLENb 8
-            #define ATL_VLEN 2
+            #ifndef ATL_VLEN
+               #define ATL_VLENb 8
+               #define ATL_VLEN 2
+            #endif
          #elif defined(ATL_3DNow)
             #define ATL_NVREG 8
-            #define ATL_VLENb 16
-            #define ATL_VLEN 4
+            #ifndef ATL_VLEN
+               #define ATL_VLENb 16
+               #define ATL_VLEN 4
+            #endif
          #endif
       #endif
    #endif
@@ -2139,7 +2161,7 @@ void GenHeaderFiles(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
    GenCMAJ2AMAJ(pre, mmb, outd, NULL);
    GenC2BLK(pre, mmb, outd, NULL);
    GenKernH(pre, mmb, ukb, kcb, outd);
-   GenCmplxHeaders(pre=='s'?'c':'z', mmb, rkb, outd);
+@ROUT emit_amm `   GenCmplxHeaders(pre=='s'?'c':'z', mmb, rkb, outd);`
    if (rkb)
    {
       GenBlockingFile(pre, rkb, outd, "rkkblk");
@@ -2218,6 +2240,10 @@ void PrintKernComp
    fprintf(fp, "ATL_%cAMMM_%d_%d_%x_%dx%dx%d_b%c.o : %s\n", pre, 
            mmp->ID, kb, flg, mmp->mu, mmp->nu, mmp->ku, cbet, mmp->rout);
 @ROUT emit_uamm
+   if (pre == 'z')
+      styp = "-DDREAL=1";
+   else if (pre == 'c')
+      styp = "-DSREAL=1";
    fprintf(fp, "ATL_%cu%dAMMM_%d_%d_%x_%dx%dx%d_b%c.o : %s\n", pre, 
            UID, mmp->ID, kb, flg, mmp->mu, mmp->nu, mmp->ku, cbet, mmp->rout);
 @ROUT emit_amm emit_uamm
@@ -2278,15 +2304,21 @@ void GenMakefile
    char dflags[12] = {'$', '(', 'D', 'M', 'C', 'F', 'L', 'A', 'G', 'S', 
                      ')', '\0'};
    char *styps[2] = {"-DDREAL", "-DDCPLX"};
-   char *styp = (pre == 'd') ? "-DDREAL" : "-DSREAL";
+   char *styp = (pre == 'd' || pre == 'z') ? "-DDREAL" : "-DSREAL";
 
    pres[0] = pre;
-   if (pre == 's')
+   if (pre == 's' || pre == 'c')
    {
       styps[0] = "-DSREAL";
       styps[1] = "-DSCPLX";
       pres[1] = 'c';
    }
+@ROUT emit_uamm00
+   else if (pre == 'c')
+      styps[0] = "-DSCPLX";
+   else if (pre == 'z')
+      styps[0] = "-DDCPLX";
+@ROUT emit_amm emit_uamm
    else
       pres[1] = 'z';
 
@@ -2298,6 +2330,18 @@ void GenMakefile
    free(ln);
    fprintf(fp, "include ../Make.inc\n");
    fprintf(fp, "CDEFS2=$(CDEFS)\n\n");
+   if (pre == 'c')
+   {
+      fprintf(fp, "CMC=$(SMC)\n");
+      fprintf(fp, "CKCFLAGS=$(SKCFLAGS)\n");
+      fprintf(fp, "CMCFLAGS=$(SMCFLAGS)\n");
+   }
+   else if (pre == 'z')
+   {
+      fprintf(fp, "ZMC=$(DMC)\n");
+      fprintf(fp, "ZKCFLAGS=$(DKCFLAGS)\n");
+      fprintf(fp, "ZMCFLAGS=$(DMCFLAGS)\n");
+   }
 /*
  * Build list of all unique MU/NU combos for copy routines
  * Square cases built from mmb, so they are all represented in mmb
@@ -2329,8 +2373,8 @@ void GenMakefile
             int h;
             for (h=0; h < 2; h++)
             {
-               char pre = pres[h];
 @ROUT emit_amm
+               char pre = pres[h];
                fprintf(fp, " \\\n       ATL_%c%s_%dx%d_a%c_b1.o",
                        pre, rtn[k], mu, nu, al[j]);
                fprintf(fp, " ATL_%c%s_%dx%d_a%c_bX.o",
@@ -2340,6 +2384,8 @@ void GenMakefile
                fprintf(fp, " ATL_%c%s_%dx%d_a%c_bn.o",
                        pre, rtn[k], mu, nu, al[j]);
 @ROUT emit_uamm
+               if (pre != pres[h])
+                  continue;
                if (j == 0)
                   fprintf(fp, " \\\n       ATL_%cammswp%dx%d.o", pre, mu, nu);
                fprintf(fp, " \\\n       ATL_%cu%d%s_%dx%d_a%c_b1.o",
@@ -2363,7 +2409,8 @@ void GenMakefile
       int h;
       for (h=0; h < 2; h++)
       {
-         char pre=pres[h];
+@ROUT emit_uamm `        if (pre != pres[h]) continue;`
+@ROUT emit_amm `         char pre=pres[h];`
          int j;
          const int u = up->mu;
          for (j=0; j < 3; j++)
@@ -2554,9 +2601,9 @@ void GenMakefile
          int h;
          for (h=0; h < 2; h++)
          {
-            char pre=pres[h];
-            char *styp=styps[h];
 @ROUT emit_uamm
+            if (pre != pres[h])
+               continue;
             if (i == 0)
             {
                fprintf(fp, "ATL_%cammswp%dx%d.o : ATL_%cammswp%dx%d.c\n", 
@@ -2565,6 +2612,8 @@ void GenMakefile
                        dcomp, dflags, styp, pre, mu, nu);
             }
 @ROUT emit_amm emit_uamm
+            char pre=pres[h];
+            char *styp=styps[h];
             for (j=0; j < 3; j++)
             {
                int k;
@@ -2604,7 +2653,8 @@ void GenMakefile
          int h;
          for (h=0; h < 2; h++)
          {
-            char pre=pres[h];
+@ROUT emit_uamm `            if (pre != pres[h]) continue;`
+@ROUT emit_amm `            char pre=pres[h];`
             char *styp=styps[h];
             char *cst[2] = {"", "C"};
             char *cdef[2] = {"", "-DConj_=1 "};
@@ -2826,10 +2876,14 @@ void GenKerns(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, ATL_mmnode_t *urb,
             int k;
             for (k=0; k < 2; k++)
             {
+@ROUT emit_uamm
+               int h=0;
+@ROUT emit_amm
                int h;
                for (h=0; h < 2; h++)
                {
                   char pre = pres[h];
+@ROUT emit_amm emit_uamm
                   if (!k)
                      sprintf(rn, "ATL_%cablk2cmat_%dx%d_a%c_b%c.c",
                              pre, mu, nu, al[j], cbe[i]);
@@ -2856,7 +2910,9 @@ void GenKerns(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, ATL_mmnode_t *urb,
                      fprintf(stderr, "FAILED CMND='%s'\n", ln);
                      exit(ierr);
                   }
+@ROUT emit_amm
                }
+@ROUT emit_amm emit_uamm
             }
          }
       }
@@ -2885,12 +2941,14 @@ void GenKerns(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, ATL_mmnode_t *urb,
          for (h=0; h < 2; h++)
          {
             int ierr;
-            char pre = pres[h];
 @ROUT emit_amm
+            char pre = pres[h];
             sprintf(ln, "make ATL_%crm2am_a%c_%d.c ATL_%ccm2am_a%c_%d.c "
                     "pre=%c UR=%d alpha=%d al=%c kmaj=%d",
                     pre, al[j], u, pre, al[j], u, pre, u, ial[j], al[j], kmaj);
 @ROUT emit_uamm
+            if (h)
+               continue;
             sprintf(ln, 
                     "make ATL_%crm2am_a%c_%d.c ATL_%ccm2am_a%c_%d.c " 
                     "ATL_%cam2rm_a%c_%d.c ATL_%cam2cm_a%c_%d.c "
@@ -3179,10 +3237,12 @@ int main(int nargs, char **args)
 
    mmb = GetFlags(nargs, args, &pre, &outd, &ukin, &kcin, &rkin, &sqin);
    assert(mmb);
+@ROUT emit_amm
    if (pre == 'c')
       pre = 's';
    else if (pre == 'z')
       pre = 'd';
+@ROUT emit_amm emit_uamm
    if (ukin)
    {
       ukb = ReadMMFile(ukin);
