@@ -278,8 +278,10 @@ ID=45 MU=8 NU=1 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_kmmm8x1x256_L1pf.S' \
          #define ATL_gvbcast(ptr_, v_) \
             (v_) = __builtin_ia32_vbroadcastsd256((void*)(ptr_));
       #elif ATL_VLENb == 16 && defined(ATL_SSE3)
+         #include "immintrin.h"
          #define ATL_gvbcast(ptr_, v_) \
-            (v_) = __builtin_ia32_loaddup(ptr_);
+            (v_) = _mm_loaddup_pd(ptr_);
+@skip            (v_) = __builtin_ia32_movddup(ptr_);
       #endif
    #elif defined(ATL_SSE3) || defined(ATL_SSE2)
       #ifdef ATL_GAS_x8664
@@ -287,14 +289,20 @@ ID=45 MU=8 NU=1 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_kmmm8x1x256_L1pf.S' \
       #else
          #define ATL_NVREG 8
       #endif
-      #define ATL_VLENb 16
-      #if defined(SREAL) || defined (SCPLX)
-         #define ATL_VLEN 4
-      #else
-         #define ATL_VLEN 2
-         #ifdef ATL_SSE3
+      #ifndef ATL_VLEN
+         #define ATL_VLENb 16
+         #if defined(SREAL) || defined (SCPLX)
+            #define ATL_VLEN 4
+         #else
+            #define ATL_VLEN 2
+         #endif
+      #endif
+      #if defined(DREAL) || defined(DCPLX)
+         #if defined(ATL_SSE3) && ATL_VLEN == 2
+         #include "immintrin.h"
             #define ATL_gvbcast(ptr_, v_) \
-               (v_) = __builtin_ia32_loaddup(ptr_);
+            (v_) = _mm_loaddup_pd(ptr_);
+@skip               (v_) = __builtin_ia32_movddup(ptr_);
          #endif
       #endif
    #elif defined(SREAL) || defined(SCPLX)   /* single-only stuff */
@@ -328,6 +336,27 @@ ID=45 MU=8 NU=1 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_kmmm8x1x256_L1pf.S' \
                #define ATL_VLEN 4
             #endif
          #endif
+      #endif
+   #endif
+   #if defined(ATL_VLEN) && !defined(ATL_VLENb)
+      #if defined(SREAL) || defined (SCPLX)
+         @iexp i 0 2 +
+         @iwhile i < 32
+            @iexp j @(i) 4 *
+         #if ATL_VLEN == @(i)
+            #define ATL_VLENb @(j)
+         #endif
+            @iexp i @(i) 2 *
+         @endiwhile
+      #else
+         @iexp i 0 2 +
+         @iwhile i < 64
+            @iexp j @(i) 8 *
+         #if ATL_VLEN == @(i)
+            #define ATL_VLENb @(j)
+         #endif
+            @iexp i @(i) 2 *
+         @endiwhile
       #endif
    #endif
    #ifndef ATL_VLENb
@@ -665,8 +694,8 @@ void FillInGenStrings
          assert(sp);
 
          vec = GetVecStr(pre, mp->vlen);
-         if (vec[0] == 'g' && vec[1] == 'v' && vec[2] == 'e' && vlen != 1)
-            vlen *= (pre == 'd') ? 8:4;
+@skip         if (vec[0] == 'g' && vec[1] == 'v' && vec[2] == 'e' && vlen != 1)
+@skip            vlen *= (pre == 'd') ? 8:4;
 
          sprintf(sp, frm, vec, mp->lat, mp->mu, mp->nu,
                  mp->ku, FLAG_IS_SET(mp->flag, MMF_KRUNTIME) ? 0 : mp->kbB,
@@ -10040,8 +10069,16 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 #if defined(ATL_AVXMAC) || defined(ATL_AVX)
    #include <immintrin.h>
    #if defined(SREAL) || defined(SCPLX)
-      #define ATL_VTYPE __m256
-      #define ATL_VLEN 8
+      #if defined(ATL_VLEN) && ATL_VLEN != 8  /* VLEN OVERRIDE! */
+         #if ATL_VLEN == 4
+            #define ATL_VTYPE __m128
+         #else
+            #error "Only VLEN==4 or 8 supported for single precision AVX!"
+         #endif
+      #else
+         #define ATL_VTYPE __m256
+         #define ATL_VLEN 8
+      #endif
       #define ATL_vbcast(v_, p_) \
          v_ =  _mm256_broadcast_ss(p_);
       #define ATL_vuld(v_, p_) v_ = _mm256_loadu_ps(p_)
@@ -10060,9 +10097,17 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
             d_ = _mm256_add_ps(t_, d_); \
          }
       #endif
-   #else
-      #define ATL_VTYPE __m256d
-      #define ATL_VLEN 4
+   #else        /* double precision */
+      #if defined(ATL_VLEN) && ATL_VLEN != 4  /* VLEN OVERRIDE! */
+         #if (ATL_VLEN == 2)
+            #define ATL_VTYPE __m128d
+         #else
+            #error "Only VLEN==2 or 4 supported for double precision AVX!"
+         #endif
+      #else
+         #define ATL_VTYPE __m256d
+         #define ATL_VLEN 4
+      #endif
       #define ATL_vbcast(v_, p_) v_ =  _mm256_broadcast_sd(p_)
       #define ATL_vuld(v_, p_) v_ = _mm256_loadu_pd(p_)
       #define ATL_vld(v_, p_) v_ = _mm256_load_pd(p_)
@@ -10084,7 +10129,11 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 #elif defined(ATL_SSE2) && (defined(DREAL) || defined(DCPLX))
    #include <xmmintrin.h>
    #define ATL_VTYPE __m128d
-   #define ATL_VLEN 2
+   #if defined(ATL_VLEN) && ATL_VLEN != 2
+      #error "VLEN == 2 only supported size for double precision SSE!"
+   #elif !defined(ATL_VLEN)
+      #define ATL_VLEN 2
+   #endif
    #define ATL_vbcast(v_, p_) v_ =  _mm_load1_pd(p_)
    #define ATL_vuld(v_, p_) v_ = _mm_loadu_pd(p_)
    #define ATL_vld(v_, p_) v_ = _mm_load_pd(p_)
@@ -10100,7 +10149,11 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 #elif defined(ATL_SSE1)
    #include <xmmintrin.h>
    #define ATL_VTYPE __m128
-   #define ATL_VLEN 4
+   #if defined(ATL_VLEN) && ATL_VLEN != 4
+      #error "VLEN == 4 only supported size for single precision SSE!"
+   #elif !defined(ATL_VLEN)
+      #define ATL_VLEN 4
+   #endif
    #define ATL_vbcast(v_, p_) v_ =  _mm_load1_ps(p_)
    #define ATL_vuld(v_, p_) v_ = _mm_loadu_ps(p_)
    #define ATL_vld(v_, p_) v_ = _mm_load_ps(p_)
@@ -10114,7 +10167,11 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       d_ = _mm_add_ps(t_, d_); \
    }
 #else
-   #define ATL_VLEN 1
+   #if defined(ATL_VLEN) && ATL_VLEN != 1
+      #error "For systems without vector support, only ATL_VLEN=1 supported!"
+   #elif !defined(ATL_VLEN)
+      #define ATL_VLEN 1
+   #endif
    #define ATL_VTYPE TYPE
    #define ATL_vbcast(v_, p_) v_ =  *(p_)
    #define ATL_vuld(v_, p_) v_ = *(p_)
