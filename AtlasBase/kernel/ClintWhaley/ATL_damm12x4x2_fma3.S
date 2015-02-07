@@ -84,10 +84,16 @@ void ATL_USERMM(SZT nmu, SZT nnu, SZT K, CTYPE *pA, CTYPE *pB, TYPE *pC,
    #define prefA(m_)
    #define prefB(m_)
 #endif
-#ifdef ATL_3DNow
-   #define prefC(m_) prefetchw m_
+#ifdef BETA0
+   #define VSTOREC vmovntpd
+   #define prefC(m_)
 #else
-   #define prefC(m_) prefetcht0 m_
+   #define VSTOREC vmovapd
+   #if defined(ATL_3DNow)
+      #define prefC(m_) prefetchw m_
+   #else
+      #define prefC(m_) prefetchnta m_
+   #endif
 #endif
 #define FMAC vfmadd231pd   /* FMAC m256/r256, rs1, rd */
 #if defined(BETAN) || defined(BETAn)
@@ -381,78 +387,78 @@ KDONE:
          #elif defined(FORCE_MACC) && !defined(BETA0)
             vbroadcastsd BETAOFF(%rsp), rB0
                FMAC -128(pC), rB0, rC00
-            vmovapd rC00, -128(pC)
+            VSTOREC rC00, -128(pC)
                FMAC -96(pC), rB0, rC10
-            vmovapd rC10, -96(pC)
+            VSTOREC rC10, -96(pC)
                FMAC -64(pC), rB0, rC20
-            vmovapd rC20, -64(pC)
+            VSTOREC rC20, -64(pC)
                FMAC -32(pC), rB0, rC01
-            vmovapd rC01, -32(pC)
+            VSTOREC rC01, -32(pC)
                FMAC (pC), rB0, rC11
-            vmovapd rC11, (pC)
+            VSTOREC rC11, (pC)
                FMAC 32(pC), rB0, rC21
-            vmovapd rC21, 32(pC)
+            VSTOREC rC21, 32(pC)
                FMAC 64(pC), rB0, rC02
-            vmovapd rC02, 64(pC)
+            VSTOREC rC02, 64(pC)
                FMAC 96(pC), rB0, rC12
-            vmovapd rC12, 96(pC)
+            VSTOREC rC12, 96(pC)
                FMAC 128-256(pC,r256), rB0, rC22
-            vmovapd rC22, 128-256(pC,r256)
+            VSTOREC rC22, 128-256(pC,r256)
                FMAC 160-256(pC,r256), rB0, rC03
-            vmovapd rC03, 160-256(pC,r256)
+            VSTOREC rC03, 160-256(pC,r256)
                FMAC 192-256(pC,r256), rB0, rC13
-            vmovapd rC13, 192-256(pC,r256)
+            VSTOREC rC13, 192-256(pC,r256)
                FMAC 224-256(pC,r256), rB0, rC23
-            vmovapd rC23, 224-256(pC,r256)
+            VSTOREC rC23, 224-256(pC,r256)
          #else
             #ifndef BETA0
                VCOP -128(pC), rC00, rC00
             #endif
-            vmovapd rC00, -128(pC)
+            VSTOREC rC00, -128(pC)
             #ifndef BETA0
                VCOP -96(pC), rC10, rC10
             #endif
-            vmovapd rC10, -96(pC)
+            VSTOREC rC10, -96(pC)
             #ifndef BETA0
                VCOP -64(pC), rC20, rC20
             #endif
-            vmovapd rC20, -64(pC)
+            VSTOREC rC20, -64(pC)
             #ifndef BETA0
                VCOP -32(pC), rC01, rC01
             #endif
-            vmovapd rC01, -32(pC)
+            VSTOREC rC01, -32(pC)
             #ifndef BETA0
                VCOP (pC), rC11, rC11
             #endif
-            vmovapd rC11, (pC)
+            VSTOREC rC11, (pC)
             #ifndef BETA0
                VCOP 32(pC), rC21, rC21
             #endif
-            vmovapd rC21, 32(pC)
+            VSTOREC rC21, 32(pC)
             #ifndef BETA0
                VCOP 64(pC), rC02, rC02
             #endif
-            vmovapd rC02, 64(pC)
+            VSTOREC rC02, 64(pC)
             #ifndef BETA0
                VCOP 96(pC), rC12, rC12
             #endif
-            vmovapd rC12, 96(pC)
+            VSTOREC rC12, 96(pC)
             #ifndef BETA0
                VCOP 128-256(pC,r256), rC22, rC22
             #endif
-            vmovapd rC22, 128-256(pC,r256)
+            VSTOREC rC22, 128-256(pC,r256)
             #ifndef BETA0
                VCOP 160-256(pC,r256), rC03, rC03
             #endif
-            vmovapd rC03, 160-256(pC,r256)
+            VSTOREC rC03, 160-256(pC,r256)
             #ifndef BETA0
                VCOP 192-256(pC,r256), rC13, rC13
             #endif
-            vmovapd rC13, 192-256(pC,r256)
+            VSTOREC rC13, 192-256(pC,r256)
             #ifndef BETA0
                VCOP 224-256(pC,r256), rC23, rC23
             #endif
-            vmovapd rC23, 224-256(pC,r256)
+            VSTOREC rC23, 224-256(pC,r256)
          #endif
          lea (pC, r192,2), pC   /* pC += MU*NU*sizeof = 12*4*8 = 384 */
          sub $1, nnu
