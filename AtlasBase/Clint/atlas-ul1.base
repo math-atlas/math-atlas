@@ -2502,10 +2502,11 @@ gcc
 
 <ID> <incX> <incY> <rout> <auth>
 @ROUT scases.scal dcases.scal
-3
+4
  1  2  0  scal1_x0.c          "R. Clint Whaley"
  2  2  1  scal1_x1.c          "R. Clint Whaley"
  3  2  1  scal4p48_x1.c       "R. Clint Whaley"
+ 4  2  1  scal1_simd.c        "R. Clint Whaley"
 @ROUT zcases.scal ccases.scal
 2
  1  2  0  cscal1_x0.c         "R. Clint Whaley"
@@ -2518,6 +2519,43 @@ void ATL_USCAL(const int N, const SCALAR alpha, TYPE *X, const int incX)
 {
    int i;
    for (i=N; i; i--, X += incX) *X *= alpha;
+}
+@ROUT scal1_simd
+#include "atlas_misc.h"
+#include "atlas_simd.h"
+#include "atlas_prefetch.h"
+#define XDIST 128
+void ATL_USCAL(const int N, const SCALAR alpha, TYPE *X, const int incX)
+{
+   ATL_VTYPE valp;
+   ATL_CSZT vlmskb = (ATL_VLENb-1);
+   int i;
+   int nr, nv;
+
+   ATL_vbcast(valp, &alpha);
+/*
+ * Peel loop until aligned to VLEN
+ */
+   for (i=0; i < N && ((size_t)(X)&vlmskb); i++) 
+      *X++ *= alpha;
+
+   nr = N-i;
+   nv = nr & (~(ATL_VLEN-1));
+   if (nv)
+   {
+      nr -= nv;
+      nv += i;
+      for (; i < nv; i += ATL_VLEN, X += ATL_VLEN)
+      {
+         ATL_VTYPE x0;
+         ATL_vld(x0, X);
+         ATL_vmul(x0, x0, valp);
+            ATL_pfl1R(X+XDIST);
+         ATL_vst(X, x0);
+      }
+   }
+   for (; i < N; i++) 
+      *X++ *= alpha;
 }
 @ROUT scal1_x1
 #include "atlas_misc.h"

@@ -4558,3 +4558,97 @@ int Mjoin(PATL,trsmKR_rk2)
    free(vp);
    return(0);
 }
+@ROUT ATL_trsmK_LLNU_a1
+#include "atlas_misc.h"
+#include "atlas_simd.h"
+
+#if defined(ATL_VLEN) && ATL_VLEN > 1
+void Mjoin(PATL,trsmK_LLNU_a1)
+(
+   int N,         /* size of lower triangular matrix A */
+   int R,         /* NRHS */
+   const TYPE *L, /* NxN lower triangular array to solve with */
+   ATL_CSZT ldl,
+   TYPE *B,       /* NxR array of X on input, solved to B on output */
+   ATL_CSZT ldb
+)
+{
+   int j, i, r;
+   const int ldt = ldl+1;
+   ATL_CSZT vlmskb = (ATL_VLENb-1);
+   TYPE *Bc = B;
+   ATL_VTYPE vnone;
+   const double none=ATL_rnone;
+   ATL_vbcast(vnone, &none);
+  
+   for (r=0; r < R; r++, Bc += ldb)   /* loop over RHS */
+   {
+      const TYPE *t=L;
+      int nr, nv;
+/*
+ *    Peel to align b
+ */
+      for (j=0; j < N-ATL_VLEN; j++, t += ldl)
+      {
+         int nv;
+         const register TYPE b0 = -Bc[j];
+         for (i=j+1; i < N && ((size_t)(Bc+i)&vlmskb); i++)
+             Bc[i] += b0 * t[i];
+         nr = N-i;
+         nv = nr & (~(ATL_VLEN-1));
+/*
+ *       Do the vectorized iterations
+ */
+         if (nv)
+         {
+            ATL_VTYPE b0, t0, x0;
+            ATL_vbcast(b0, Bc+j);
+            ATL_vmul(b0, b0, vnone);
+            nr -= nv;
+            nv += i;
+            for (; i < nv; i += ATL_VLEN)
+            {
+                ATL_vuld(t0, t+i);
+                ATL_vld(x0, Bc+i);
+                ATL_vmac(x0, b0, t0);
+                ATL_vst(Bc+i, x0);
+            }
+         }
+         for (; i < N; i++)
+             Bc[i] += b0 * t[i];
+      }
+      for (; j < N; j++, t += ldl)
+      {
+         const register TYPE b0 = -Bc[j];
+         for (i=j+1; i < N; i++)
+             Bc[i] += b0 * t[i];
+      }
+   }
+}
+#else
+void Mjoin(PATL,trsmK_LLNU_a1)
+(
+   int N,         /* size of lower triangular matrix A */
+   int R,         /* NRHS */
+   const TYPE *L, /* NxN lower triangular array to solve with */
+   ATL_CSZT ldl,
+   TYPE *B,       /* NxR array of X on input, solved to B on output */
+   ATL_CSZT ldb
+)
+{
+   int j, i, r;
+   ATL_CSZT ldt = ldl+1;
+   TYPE *Bc = B;
+  
+   for (r=0; r < R; r++, Bc += ldb)   /* loop over RHS */
+   {
+      const TYPE *t=L;
+      for (j=0; j < N; j++, t += ldl)
+      {
+         const register TYPE b0 = -Bc[j];
+         for (i=j+1; i < N; i++)
+             Bc[i] += b0 * t[i];
+      }
+   }
+}
+#endif
