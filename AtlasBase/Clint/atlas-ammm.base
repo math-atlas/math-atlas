@@ -6870,7 +6870,7 @@ ATL_mmnode_t *FindBestKerns
    ATL_mmnode_t *nmmb=NULL, *mp, *mpB, *mpG, *mpg;
    const int TRYKVEC=!(C & (1<<CON_NOKVEC));
    const int TRYMVEC=!(C & (1<<CON_NOMVEC));
-   int i;
+   int i, mbB=0;
    double mfB, mf;
 /*
  * Find basic register blocking for generated case
@@ -6885,11 +6885,13 @@ ATL_mmnode_t *FindBestKerns
    printf("SEARCHING %d USER BLOCKINGS:\n", N);
    for (i=N-1; i >= 0; i--)
    {
-      int mb=mbs[i], nb=nbs[i], kb=kbs[i];
+      int mb=mbs[i], nb=nbs[i], kb=kbs[i], MB=mbs[i];
       int kuG, KK=kb, veci0=VECi;
       double mfK=0.0, mfM=0.0;
       int iveci = VECi, VL=VLEN[VECi];
-
+/*
+ *    If mb not specified, choose one near specified KB
+ */
       printf("\n   FINDING KERNEL FOR MB=%d, NB=%d, KB=%d:\n", mb, nb, kb);
 /*
  *    Find best of M- or K-vectorized generated code for this problem size
@@ -6899,9 +6901,21 @@ ATL_mmnode_t *FindBestKerns
       {
          int muG=mpG->mu, nuG=mpG->nu, ut=muG*nuG; 
 /*
- *       If mb not a multiple of vlen, reduce vlen until it is
+ *       If mb is not specified, make it a multiple of mu & vlen
  */
-         if (mb%VLEN[VECi])
+         if (!MB)
+         {
+            int mb0;
+            mb = Mylcm(muG, VL);
+            mb0 = (kb/mb)*mb;
+            mb = ((kb+mb-1)/mb)*mb;
+            if (mb0 && mb-kb > kb-mb0)
+               mb = mb0;
+         }
+/*
+ *       If specified mb not a multiple of vlen, reduce vlen until it is
+ */
+         else if (mb%VL)
          {
             if (VECi == VTAVX && !(mb%VLEN[VTSSE]))
                VECi = VTSSE;
@@ -6923,6 +6937,7 @@ ATL_mmnode_t *FindBestKerns
             nuG--;
          kuG = 1;
          mpg = GetNewGenNode(pre, kb, 0, muG/VLEN[VECi], nuG, 1, 0);
+         mpg->mbB = mb;
          mfM = TimeMMKernel(verb, 0, mpg, pre, mb, nb, KK, KK, KK, mb, 1, 0,-1);
          printf("      Gen mu=%d, nu=%d, kmaj=%d, mf=%.2f\n", muG, nuG, 0, mfM);
       }
@@ -6962,6 +6977,7 @@ ATL_mmnode_t *FindBestKerns
          if (kuG > 1)
          {
             mpB =  GetNewGenNode(pre, kb, 0, muG, nuG, kuG, kuG);
+            mpg->mbB = mb;
             mfK = TimeMMKernel(verb, 0, mpB, pre, mb, nb, KK, KK, KK, mb,
                                1, 0,-1);
             printf("      Gen mu=%d, nu=%d, kmaj=%d, mf=%.2f\n", muG, nuG, kuG,
@@ -6990,14 +7006,28 @@ ATL_mmnode_t *FindBestKerns
  *    Search through all user kernels, and take best performing
  */
       mpB = mpg;
+      mbB = mpg->mbB;
       for (mp=mmb; mp; mp = mp->next)
       {
          const int mu=mp->mu, nu=mp->nu, ku=mp->ku, kmaj=mp->kmaj;
          const int KB = (kmaj < 2) ? kb : ((kb+ku-1)/ku)*ku;
          int SKIP=0;
-         if (mb%mu || nb%nu || KB%ku)
+         if (!MB)
+         {
+            if (nb%nu || KB%ku)
+               SKIP=1;
+            else
+            {
+               int mb0;
+               mb0 = (kb/mu)*mu;
+               mb = ((kb+mu-1)/mu)*mu;
+               if (mb0 && (mb-kb > kb-mb0))
+                  mb = mb0;
+            }
+         }
+         else if (mb%mu || nb%nu || KB%ku)
             SKIP=1;
-         else if (mp->kbmin && mp->kbmin > kb)
+         if (mp->kbmin && mp->kbmin > kb)
             SKIP=1;
          else if (mp->kbmax && mp->kbmax < kb)
             SKIP=1;
@@ -7014,9 +7044,10 @@ ATL_mmnode_t *FindBestKerns
          {
             mfB = mf;
             mpB = mp;
+            mbB = mb;
          }
       }
-      printf("    [M,N,K]B=%d,%d,%d BEST: %d-%s %.2f\n", mb, nb, kb,
+      printf("    [M,N,K]B=%d,%d,%d BEST: %d-%s %.2f\n", mbB, nb, kb,
              mpB->ID, mpB->rout, mfB);
       if (mpB == mpg)
       {
@@ -7031,7 +7062,7 @@ ATL_mmnode_t *FindBestKerns
          nmmb = mp;
       }
       nmmb->mflop[0] = mfB;
-      nmmb->mbB = mb;
+      nmmb->mbB = mbB;
       nmmb->nbB = nb;
       nmmb->kbB = kb;
       VECi = veci0;
@@ -7292,8 +7323,11 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, int *VERB, int *NN,
          if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
          N = atoi(args[i]);
-         if (N == -1)
-            ALL = N = 36;
+         if (N < 0)
+         {
+            ALL = (N == -2) ? 32 : -1;  /* -2: don't force MB */
+            N = 36;
+         }
          assert(N > 0);
          nbs = malloc(N*sizeof(int));
          assert(nbs);
@@ -7339,6 +7373,8 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, int *VERB, int *NN,
             mbs[33]=nbs[33]=kbs[33]=192;
             mbs[34]=nbs[34]=kbs[34]=216;
             mbs[35]=nbs[35]=kbs[35]=240;
+            for (k=0; k < ALL; k++)     /* don't force any particular */
+               mbs[k] = 0;              /* MB during search */
          }
          else
          {
