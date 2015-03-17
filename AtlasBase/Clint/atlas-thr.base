@@ -1974,9 +1974,9 @@ ATL_asmdecor(ATL_ResetAtomicCount):
    jmp ATOMIC_LOOP            /* ZF=0 means cmpxch failed, try again */
 DONE:
    ret
-@ROUT ATL_DecAtomicCount_arm64.S
+@ROUT ATL_DecAtomicCount_arm64
 #include "atlas_asm.h"
-@extract -b @(topd)/cw.inc lang=C -def cwdate 2014 -def author "Dave Nuechterlein" -contrib "R. Clint Whaley"
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2015 -def contrib "Dave Nuechterlein" -def author "R. Clint Whaley"
 /* w0                           x0  */
 /* int ATL_DecAtomicCount(void *vp) */
 .global ATL_asmdecor(ATL_DecAtomicCount)
@@ -1987,24 +1987,25 @@ ATL_asmdecor(ATL_DecAtomicCount):
  * IN LOOP: attempt to get exclusive access to acnt, dec it, and return 0
  * if acnt <= 1, and acnt-1 otherwise 
  */
-   add  x0,x0,128
+   add  x1,x0,128        /* move to storage loc in memory */
    ATOMIC_LOOP:
-      ldxr w1, [x0]
-      subs w2, w1,1
-      b.lt   ZERO_RET
-      stxr w3,w2,[x0]
-   cbnz w3, ATOMIC_LOOP
+      ldxr w0, [x1]      /* exclusive read of cnt into return reg (w0) */
+      subs w2, w0, 1     /* dec cnt, set cond codes */
+      b.lt   ZERO_RET    /* return 0 if count already below 1 */
+      stxr w3, w2, [x1]  /* store decremented val, w3 0 on exclusive success */
+   cbnz w3, ATOMIC_LOOP  /* if (w3 != 0) try again */
 
-   sxtw x0,w1
+@skip   sxtw x0,w1
    ret
 
 ZERO_RET:
-   eor x0,x0,x0
+@skip   eor x0,x0,x0
+   eor w0, w0, w0
    ret
 
-@ROUT ATL_ResetAtomicCount_arm64.S
+@ROUT ATL_ResetAtomicCount_arm64
 #include "atlas_asm.h"
-@extract -b @(topd)/cw.inc lang=C -def cwdate 2014 -def author "Dave Nuechterlein" -contrib "R. Clint Whaley"
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2015 -def contrib "Dave Nuechterlein" -def author "R. Clint Whaley"
 /*
  * w0                        x1          w2 
  * int ATL_ResetAtomicCount(void *vp, int cnt)
@@ -2012,12 +2013,12 @@ ZERO_RET:
  * RETURNS: acnt before the reset
  */
 ATL_asmdecor(ATL_ResetAtomicCount):
-   add x0,x0,128
+   add x1, x0, 128
    ATOMIC_LOOP:
-      ldxr w2,[X0]
-      stxr w2,w1,[x0]
-   cbnz w2, ATOMIC_LOOP
-   mov w0, w1
+      ldxr w0, [x1]         /* load exlusive into ret reg */
+      stxr w2, w0, [x1]     /* w2 == 0 on exclusive success */
+   cbnz w2, ATOMIC_LOOP     /* if (w2 != 0) failed; try again */
+@skip   mov w0, w1
 @skip   sxtw x0,w1
    ret
 @ROUT ATL_DecAtomicCount_amd64 ATL_DecAtomicCount_ia32 ATL_DecAtomicCount_win64
