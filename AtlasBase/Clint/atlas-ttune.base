@@ -72,6 +72,32 @@ void ATL_cbc_barrier
       while (*bchk != newv);
 }
 
+void ATL_cbc_barrlinGap
+(
+   ATL_CUINT P,    /* # of threads to barrier */
+   ATL_CUINT iam   /* rank of calling thread in barrier */
+)
+{
+   ATL_CUINT II = iam << 7;
+   const char newv = !bchk[II];
+
+   if (iam)
+   {
+      bchk[II] = newv;
+      while (*bchk != newv);
+   }
+   else
+   {
+      int i;
+      for (i=1; i < P; i++)
+      {
+         ATL_CUINT d = i<<7;
+         while (bchk[d] != newv);
+      }
+      *bchk = newv;
+   }
+}
+
 void ATL_cbc_barrlin
 (
    ATL_CUINT P,    /* # of threads to barrier */
@@ -130,6 +156,19 @@ void DoCBC_lin(void *vpp, int rank, int vrank)
    }
    timearr[rank] = ATL_walltime() - t0;
 }
+
+void DoCBC_gap(void *vpp, int rank, int vrank)
+{
+   ATL_tpool_t *pp = vpp;
+   int i;
+   double t0;
+   t0 = ATL_walltime();
+   for (i=0; i < NREP; i++)
+   {
+      ATL_cbc_barrlinGap(pp->nthr, vrank);
+   }
+   timearr[rank] = ATL_walltime() - t0;
+}
 void DoStart(void *vpp, int rank, int vrank)
 {
    ATL_tpool_t *pp = vpp;
@@ -155,9 +194,10 @@ double PrintTimes()
 }
 int main(int nargs, char **args)
 {
-   int reps=100000;
+   int i, reps=100000;
    int nthr=ATL_NTHREADS;
-   double tlin, tlog, tpt=0;
+   ATL_CUINT nthr128 = nthr<<7;
+   double tlin, tlog, tpt=0, tgap;
    if (nargs > 1)
    {
       nthr = atoi(args[1]);
@@ -168,7 +208,7 @@ int main(int nargs, char **args)
    NREP = reps;
    timearr = malloc(sizeof(double)*nthr);
    assert(timearr);
-   bchk = calloc(nthr, sizeof(char));
+   bchk = calloc(nthr128, sizeof(char));
    assert(bchk);
 /*
  * Start up ATLAS's threadpool by doing single barrier; we don't want spawn cost
@@ -184,6 +224,14 @@ int main(int nargs, char **args)
           "lin(CBC)", nthr, reps);
    ATL_goParallel(nthr, DoCBC_lin, NULL, NULL, NULL);
    tlin = PrintTimes();
+
+   for (i=0; i < nthr; i++)
+      bchk[i] = 0;
+   printf("FINDING SPEED OF %s BARRIER USING %d THREADS AND %d REPS\n", 
+          "linCL(CBC)", nthr, reps);
+   ATL_goParallel(nthr, DoCBC_gap, NULL, NULL, NULL);
+   tgap = PrintTimes();
+
    #ifdef TimePT
       assert(pthread_barrier_init(&ptb, NULL, nthr) == 0);
       printf("FINDING SPEED OF %s BARRIER USING %d THREADS AND %d REPS\n", 
@@ -193,6 +241,7 @@ int main(int nargs, char **args)
       assert(pthread_barrier_destroy(&ptb) == 0);
    #endif
    printf("LIN/LOG = %0.2f, LOG/LIN = %0.2f\n", tlin/tlog, tlog/tlin);
+   printf("compressed/seperated = %0.2f\n", tlin/tgap);
    if (tpt != 0.0)
       printf("PTHREAD/LINCBC = %0.2f, LINCBC/PTHREAD = %0.2f\n", 
              tpt/tlin, tlin/tpt);
