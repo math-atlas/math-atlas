@@ -88,6 +88,8 @@ int Mjoin(PATL,tGetTrsmInfo)(ATL_ttrsm_amm_t *pd, int P, enum ATLAS_TRANS TA,
    #define ATLAS_THREADS_H
 #include "atlas_ttypes.h"
 #include "atlas_taffinity.h"
+#define ATL_chkgap 128
+#define ATL_chksh  7
 /*
  * Unless told otherwise, use the less-intrusive conditional variable-based
  * thread pool, unless we're on the PHI, where that scale and slow OS make
@@ -269,6 +271,8 @@ struct ATL_ThreadPool
    #ifdef ATL_PHI_SORTED
       VUINT ncores, cntxts, nwcores;
    #endif
+   volatile char *bchkin0;/* original ptr to free bchkin */
+   volatile char *bchkin; /* nthr*ATL_chkgap-len boolean checkin array */
    volatile short *chkin; /* nthr-len chkin array wt meaning:
       /* 0: keep polling, 1: start, 2: have started, 3: finished 4: exited */
       /* 0&1 written by master, 2-4 written by worker */
@@ -299,6 +303,8 @@ struct ATL_ThreadPool
    #ifdef ATL_PHI_SORTED
       VUINT ncores, cntxts, nwcores;
    #endif
+   volatile char *bchkin0;/* original ptr to free bchkin */
+   volatile char *bchkin; /* nthr*128-len boolean checkin array */
    volatile int *icomm;   /* nthr-long integer communication array */
    ATL_thread_t *threads; /* array of thread ptrs */
 /*
@@ -340,6 +346,8 @@ struct ATL_ThreadPool
    #endif
    void *mcond;           /* cond for master process sleep/wake */
    ATL_thread_t *threads; /* array of thread ptrs */
+   volatile char *bchkin0;/* original ptr to free bchkin */
+   volatile char *bchkin; /* nthr*128-len boolean checkin array */
    volatile int *icomm;   /* nthr-long integer communication array */
    void *combmut;         /* mutex for doing optional combine op */
    int *combReadyBV;      /* 1: thr of that rank is ready to do combine */
@@ -16048,8 +16056,13 @@ ATL_tpool_t *ATL_NewThreadPool
          pp->threads[i].vp = vp;
       }
    }
+   pp->bchkin0 = calloc((P+1)<<ATL_chksh, sizeof(char));
+   ATL_assert(pp->bchkin0);
+   pp->bchkin = (volatile char*) ATL_chkgap +
+                (((size_t)pp->bchkin0) & ~(((size_t)ATL_chkgap)-1));
    #ifdef ATL_TP_FULLPOLL
       pp->chkin = calloc(P, sizeof(short));
+      ATL_assert(pp->chkin);
    #elif !defined(ATL_OMP_THREADS) && !defined(ATL_WINTHREADS)
       pp->jobID = 0;
       pp->mcond = ATL_cond_init();
@@ -16058,7 +16071,7 @@ ATL_tpool_t *ATL_NewThreadPool
    if (ICOM)
    {
       pp->icomm = calloc(P, sizeof(int));
-      ATL_assert(pp->threads);
+      ATL_assert(pp->icomm);
    }
    pp->combmut = ATL_mutex_init();
    pp->tpmut = ATL_mutex_init();
@@ -16086,6 +16099,8 @@ void ATL_FreeThreadPool(ATL_tpool_t *pp)
 {
    if (!pp)
       return;
+   if (pp->bchkin0)
+      free((void*)pp->bchkin0);
    if (pp->icomm)
       free((void*)pp->icomm);
    if (pp->threads)
@@ -16193,52 +16208,199 @@ void ATL_FreeThreadPool(ATL_tpool_t *pp)
 #endif
 
 #endif /* end ifndef ATL_CBC_H */
-@ROUT ATL_cbc_barrier
+@ROUT ATL_barrier
+#include "atlas_threads.h"
 #include "atlas_misc.h"
-#include "altas_cbc.h"
 /*
- * Perform a CEIL(log2(P)) barrier using a boolean array chkin.  
- * This code should provide a safe and fast barrier on all systems.
- *
- * However, if the barrier is to enforce memory access (i.e. barrier until
- * some structure is filled in), then you need to either be on a platform
- * with strongly-ordered caches (x86), or on a platform where we define
- * a usuable membarrier (ARM64).  Otherwise, the barrier is correct, but
- * it doesn't mean that values of other memory locations aren't "stale".
- *
- * It should run at the speed of cache coherence, and thus be much faster
- * than mutex-based barrier.
+ * Use cache-based communication to perform a barrier for P threads.
+ * This code works on any system with coherent caches (weakly-ordered OK).
+ * For weakly-ordered caches, if this barrier is protecting memory, it
+ * should be followed by a memory fence to avoid OOE advancing loads.
  */
-void ATL_cbc_barrier
+void ATL_barrier
 (
-   ATL_CUINT P,    /* # of threads to barrier */
-   ATL_CUINT iam   /* rank of calling thread in barrier */
+   ATL_CUINT P,     /* # of threads to barrier */
+   ATL_CUINT iam    /* rank of calling thread in barrier */
 )
 {
-   volatile char *chkin;
-   const char newv = !chkin[iam];
-/*
- * Any thread that did not participate in this job, simply updates
- * its entry to match what the active threads will change to, and
- * returns w/o waiting on barrier (they are not part of barrier!).
- * NOTE: all cores must call this routine to avoid having the boolean array
- *       get out of sync, or this array must be reset manually during serial
- *       execution.
- *       
- */
-   if (iam > P)
-   {
-      chkin[iam] = newv;
-      return;
-   }
-   for (d=1; iam+d < P; d <<= 1)
-   {
-      if ((iam>>(d-1))&1) /* partner on right is done */
-         break;
-      while (chkin[iam+d] != newv); /* await partner signal */
-   }
-   chkin[iam] = newv;
+   volatile char *bchk = ATL_TP_PTR->bchkin;
+   ATL_CUINT II = iam<<ATL_chksh;
+   const char newv = !bchk[II];
+
    if (iam)
-      while (*chkin != newv);
-   ATL_membarrier();
+   {
+      bchk[II] = newv;
+      while (*bchk != newv);
+   }
+   else
+   {
+      int i;
+      for (i=1; i < P; i++)
+      {
+         ATL_CUINT d = i<<ATL_chksh;
+         while (bchk[d] != newv);
+      }
+      *bchk = newv;
+   }
+}
+@ROUT ATL_comb_iamax
+#include "atlas_threads.h"
+#include "atlas_misc.h"
+/*
+ * Use cache-based comm to perform a scalar combine for P threads.
+ * This code works on any system with coherent caches (weakly-ordered OK)
+ * because the data and boolean sync variables are on the same cache line.
+ * We guarantee this by separating each region by ATL_chkgap, which should
+ * always be >= cache line size (default value 128).  Then, as long as
+ * we can fit all data being combined into the same cache line, coherence
+ * will guarantee we have the sync boolean and the data regardless of
+ * weakly- or strongly-ordered caches.  At least on the ARM, however,
+ * we must memory barrier to prevent OOE from advancing loads above the
+ * sync.
+ */
+int Mjoin(PATL,comb_iamax)
+(
+   ATL_CUINT P,     /* # of threads in combine
+   ATL_CUINT iam    /* rank of calling thread in combine */
+   ATL_INT idx,     /* index for iamax */
+   TYPE *valp       /* input: local max, output: global max */
+)
+{
+   volatile char *bchk = ATL_TP_PTR->bchkin;
+   volatile char *mybool = bchk + (iam<<ATL_chksh);
+   #if ATL_isize <= ATL_size
+      volatile TYPE *myval = (volatile TYPE*)(mybool + ATL_sizeof);
+      volatile ATL_INT *myidx = (volatile ATL_INT*)
+         (mybool + ATL_sizeof+ATL_sizeof);
+   #else /* ints longer than type */
+      volatile ATL_INT *myidx = (volatile ATL_INT*)(mybool + ATL_isize);
+      volatile TYPE *myval = (volatile TYPE*)(mybool+ATL_isize+ATL_isize);
+   #endif
+   const TYPE val = *valp;
+   TYPE maxval;
+   ATL_INT maxidx;
+   const char newv = !(*mybool);
+
+   if (iam)
+   {
+      *myidx = idx;
+      *myval = val;
+      *mybool = newv;
+      while (*bchk != newv);
+   }
+   else
+   {
+      int i;
+      TYPE aval = (val >= 0) ? val : -val;
+      TYPE maxaval = aval;
+
+      maxval = val;
+      maxidx = idx;
+      for (i=1; i < P; i++)
+      {
+         ATL_CUINT d = i<<ATL_chksh;
+         TYPE hisv;
+         #if ATL_isize <= ATL_size
+            volatile TYPE *hisval = (volatile TYPE*)(bchk + d + ATL_sizeof);
+            volatile ATL_INT *hisidx = (volatile ATL_INT*)
+                                       (bchk + d + ATL_sizeof+ATL_sizeof);
+         #else               /* ints longer than type */
+            volatile ATL_INT *hisidx = (volatile ATL_INT*)(bchk+d+ATL_isize);
+            volatile TYPE *hisval = (volatile TYPE*)
+                                    (bchk+d+ATL_isize+ATL_isize);
+         #endif
+         while (bchk[d] != newv);
+         hisv = *hival
+         aval = (hisv >= 0) ? hisv : -hisv;
+         if (aval > maxaval)
+         {
+            maxaval = aval;
+            maxval = hisv;
+            maxidx = *hisidx
+         }
+         else if (aval == maxaval)
+         {
+            const ATL_INT hidx = *hisidx;
+            if (hidx < maxidx)
+            {
+               maxidx = hidx;
+               maxval = hisv;
+            }
+         }
+      }
+      *bchk = newv;
+   }
+}
+@ROUT ATL_comb1
+#include "atlas_threads.h"
+#include "atlas_misc.h"
+/*
+ * Use cache-based comm to perform a scalar combine for P threads.
+ * This code works on any system with coherent caches (weakly-ordered OK)
+ * because the data and boolean sync variables are on the same cache line.
+ * We guarantee this by separating each region by ATL_chkgap, which should
+ * always be >= cache line size (default value 128).  Then, as long as
+ * we can fit all data being combined into the same cache line, coherence
+ * will guarantee we have the sync boolean and the data regardless of
+ * weakly- or strongly-ordered caches.  At least on the ARM, however,
+ * we must memory barrier to prevent OOE from advancing loads above the
+ * sync.
+ */
+if defined(COMBMIN)
+   #define combvals(v1_, v2_) ((v1_) <= (v2_)) ? (v1_) : (v2_)
+Mjoin(PATL,comb_min)
+(
+   ATL_CUINT P,     /* # of threads in combine
+   ATL_CUINT iam    /* rank of calling thread in combine */
+   TYPE val         /* local min */
+)
+#elif defined(COMBMAX)
+   #define combvals(v1_, v2_) ((v1_) >= (v2_)) ? (v1_) : (v2_)
+Mjoin(PATL,comb_max)
+(
+   ATL_CUINT P,     /* # of threads in combine
+   ATL_CUINT iam    /* rank of calling thread in combine */
+   TYPE val         /* local max */
+)
+#elif defined(COMBSUM)
+   #define combvals(v1_, v2_) (v1_) + (v2_)
+Mjoin(PATL,comb_sum)
+(
+   ATL_CUINT P,     /* # of threads in combine
+   ATL_CUINT iam    /* rank of calling thread in combine */
+   TYPE val         /* local portion of sum */
+)
+#else
+   #error "Unknown combine!"
+#endif
+{
+   volatile char *bchk = ATL_TP_PTR->bchkin;
+   volatile char *mybool = bchk + (iam<<ATL_chksh);
+   volatile TYPE *myval = (volatile TYPE*)(mybool + ATL_sizeof);
+   const char newv = !(*mybool);
+
+   if (iam)
+   {
+      volatile TYPE *ans = bchk + ATL_sizeof;
+      *myval = val;
+      *mybool = newv;
+      while (*bchk != newv);
+      val = *ans;
+   }
+   else
+   {
+      int i;
+      for (i=1; i < P; i++)
+      {
+         ATL_CUINT d = i<<ATL_chksh;
+         volatile TYPE *hisval = (bchk+d+ATL_sizeof);
+         const TYPE hv = *hisval
+
+         while (bchk[d] != newv);  /* wait for his answer to appear */
+         val = combval(val, hv);
+      }
+      *myval = val;  /* provide global answer */
+      *bchk = newv;  /* signal answer is ready */
+   }
+   return(val);
 }
