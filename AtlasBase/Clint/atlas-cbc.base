@@ -1,0 +1,282 @@
+@ROUT atlas_cbc.h
+#ifndef ATLAS_CBC_H
+#define ATLAS_CBC_H
+/*
+ ******************************************************************************
+ * This file prototypes cache-based communication (CBC) routines.  CBC
+ * exploits cache coherence protocols for synchronization and communication
+ * that runs at the speed of hardware, rather than the speed of software
+ * that you potentially get when calling OS-provided functions like mutex, etc.
+ * CBC requires strongly-ordred cache coherence to work correctly.  In
+ * a strongly ordered cache, if a given core writes memory two memory
+ * locations A and B in that sequence, the coherence protocal guarantees
+ * that other cores only "see" the change in B *after* they can "see"
+ * the change in A.  In weakly ordered caches, the core may "see" the
+ * changes in any order (so seeing B change does not guarantee you won't
+ * get a stale value if you then read A).  In general, x86 architectures
+ * have strongly ordered caches, while non-x86 (eg., ARM and PowerPC) have
+ * weakly-ordered caches.  Therefore, most CBC routines should not be used
+ * on non-x86 platforms unless they are combined with memory fences of some
+ * sort.  On x86 at least, CBC is critical to driving down communication costs
+ * on extreme parallel architectures like the Xeon PHI.
+ * For weakly-ordered systems, we must use a memory barrier in order to
+ * force the fact that we've seen A change to imply that we can see the change
+ * to B.  So, on weakly-ordered cache systems where we support CBC (eg. ARM64),
+ * we will defined the macro ATL_membarrier to call a system-specific
+ * memory barrier.  On Strongly-ordered caches, ATL_membarrier will be empty.
+ * NOTE: for correctness, mutexes must be doing memory barriers on weakly-
+ * ordered systems, so all CBC routines that are required for correct
+ * operation must provide a mutex (very slow) version  that will work
+ * for unknown systems.
+ ******************************************************************************
+ */
+/*
+ * All known x86 use strongly-ordered caches, so CBC is safe.  
+ * There are some instructions on the PHI that seem to violate strong ordering,
+ * but ATLAS does not presently use them.  If these inst become important,
+ * we may need to define a barrier
+ */
+#if defined(ATL_GAS_x8664) || defined(ATL_GAS_x8632)
+   #define ATL_CBC_HANDLED 1
+   #define ATL_USE_CBC 1
+   #define ATL_membarrier
+/*
+ * ARM64 has weakly-ordered cache, so CBC must use explicit membarrier to work.
+ * This memory barrier code provided by David Nuechterlein, who has gotten
+ * CBC-based codes to work based on it.
+ */
+#elif defined ATL_ARCH_ARM64
+   #if __GNUC__
+      #define ATL_CBC_HANDLED 1
+      #define ATL_USE_CBC 1
+      #define ATL_membarrier __asm__ __volatile__ ("dmb sy" : : : "memory")
+   #endif
+/*
+ * CBC came about after Itanium was essentially dead, so it has never been
+ * tested there, so don't enable it.  We have this code here in case Itanium
+ * becomes important enough to test.
+ */
+#elif defined(ATL_ARCH_IA64Itan) || defined(ATL_ARCH_IA64Itan2)
+   #ifdef __GNUC__
+      #define ATL_membarrier __asm__ __volatile__ ("mf")
+   #endif
+/*
+ * On PowerPC and POWER I've never succeeded in getting any memory barrier
+ * to work correctly.  IBM docs I've seen essentially say "here's how it should
+ * work, but it doesn't, and we aren't going to tell you how it does work".
+ * So, this code is just as a starting point if we find some docs or want
+ * to do some experimentation later.
+ */
+#elif defined(ATL_ARCH_PPCG4) || defined(ATL_ARCH_PPCG5)
+   #ifdef __GNUC__
+      #define ATL_membarrier __asm__ __volatile__ ("sync")
+   #endif
+#elif defined(ATL_ARCH_POWER3) || defined(ATL_ARCH_POWER4) || \
+      defined(ATL_ARCH_POWER5) || defined(ATL_ARCH_POWER6) || \
+      defined(ATL_ARCH_POWER7)
+   #ifdef __GNUC__
+      #define ATL_membarrier __asm__ __volatile__ ("dcs")
+   #endif
+#endif
+#ifdef ATL_CBC_HANDLED
+   #undef ATL_CBC_HANDLED
+#else
+   #ifdef ATL_USE_CBC
+      #undef ATL_USE_CBC
+   #endif
+   #ifdef ATL_membarrier
+      #undef ATL_membarrier
+   #endif
+   #define ATL_membarrier
+#endif
+
+#endif /* end ifndef ATL_CBC_H */
+@ROUT ATL_barrier
+#include "atlas_threads.h"
+#include "atlas_cbc.h"
+#include "atlas_misc.h"
+/*
+ * Use cache-based communication to perform a barrier for P threads.
+ * This code works on any system with coherent caches (weakly-ordered OK).
+ * For weakly-ordered caches, if this barrier is protecting memory, it
+ * should be followed by a memory fence to avoid OOE advancing loads.
+ */
+void ATL_barrier
+(
+   ATL_CUINT P,     /* # of threads to barrier */
+   ATL_CUINT iam    /* rank of calling thread in barrier */
+)
+{
+   volatile char *bchk = ATL_TP_PTR->bchkin;
+   ATL_CUINT II = iam<<ATL_chksh;
+   const char newv = !bchk[II];
+
+   if (iam)
+   {
+      bchk[II] = newv;
+      while (*bchk != newv);
+   }
+   else
+   {
+      int i;
+      for (i=1; i < P; i++)
+      {
+         ATL_CUINT d = i<<ATL_chksh;
+         while (bchk[d] != newv);
+      }
+      *bchk = newv;
+   }
+}
+@ROUT ATL_comb_iamax
+#include "atlas_threads.h"
+#include "atlas_cbc.h"
+#include "atlas_misc.h"
+/*
+ * Use cache-based comm to perform a scalar combine for P threads.
+ * This code works on any system with coherent caches (weakly-ordered OK)
+ * because the data and boolean sync variables are on the same cache line.
+ * We guarantee this by separating each region by ATL_chkgap, which should
+ * always be >= cache line size (default value 128).  Then, as long as
+ * we can fit all data being combined into the same cache line, coherence
+ * will guarantee we have the sync boolean and the data regardless of
+ * weakly- or strongly-ordered caches.  At least on the ARM, however,
+ * we must memory barrier to prevent OOE from advancing loads above the
+ * sync.
+ */
+int Mjoin(PATL,comb_iamax)
+(
+   ATL_CUINT P,     /* # of threads in combine
+   ATL_CUINT iam    /* rank of calling thread in combine */
+   ATL_INT idx,     /* index for iamax */
+   TYPE *valp       /* input: local max, output: global max */
+)
+{
+   volatile char *bchk = ATL_TP_PTR->bchkin;
+   volatile char *mybool = bchk + (iam<<ATL_chksh);
+   #if ATL_isize <= ATL_size
+      volatile TYPE *myval = (volatile TYPE*)(mybool + ATL_sizeof);
+      volatile ATL_INT *myidx = (volatile ATL_INT*)
+         (mybool + ATL_sizeof+ATL_sizeof);
+   #else /* ints longer than type */
+      volatile ATL_INT *myidx = (volatile ATL_INT*)(mybool + ATL_isize);
+      volatile TYPE *myval = (volatile TYPE*)(mybool+ATL_isize+ATL_isize);
+   #endif
+   const TYPE val = *valp;
+   TYPE maxval;
+   ATL_INT maxidx;
+   const char newv = !(*mybool);
+
+   if (iam)
+   {
+      *myidx = idx;
+      *myval = val;
+      *mybool = newv;
+      while (*bchk != newv);
+   }
+   else
+   {
+      int i;
+      TYPE aval = (val >= 0) ? val : -val;
+      TYPE maxaval = aval;
+
+      maxval = val;
+      maxidx = idx;
+      for (i=1; i < P; i++)
+      {
+         ATL_CUINT d = i<<ATL_chksh;
+         TYPE hisv;
+         #if ATL_isize <= ATL_size
+            volatile TYPE *hisval = (volatile TYPE*)(bchk + d + ATL_sizeof);
+            volatile ATL_INT *hisidx = (volatile ATL_INT*)
+                                       (bchk + d + ATL_sizeof+ATL_sizeof);
+         #else               /* ints longer than type */
+            volatile ATL_INT *hisidx = (volatile ATL_INT*)(bchk+d+ATL_isize);
+            volatile TYPE *hisval = (volatile TYPE*)
+                                    (bchk+d+ATL_isize+ATL_isize);
+         #endif
+         while (bchk[d] != newv);
+         hisv = *hival
+         aval = (hisv >= 0) ? hisv : -hisv;
+         if (aval > maxaval)
+         {
+            maxaval = aval;
+            maxval = hisv;
+            maxidx = *hisidx
+         }
+         else if (aval == maxaval)
+         {
+            const ATL_INT hidx = *hisidx;
+            if (hidx < maxidx)
+            {
+               maxidx = hidx;
+               maxval = hisv;
+            }
+         }
+      }
+      *bchk = newv;
+   }
+}
+@ROUT ATL_comb1
+#include "atlas_threads.h"
+#include "atlas_misc.h"
+/*
+ * Use cache-based comm to perform a scalar combine for P threads.
+ * This code works on any system with coherent caches (weakly-ordered OK)
+ * because the data and boolean sync variables are on the same cache line.
+ * We guarantee this by separating each region by ATL_chkgap, which should
+ * always be >= cache line size (default value 128).  Then, as long as
+ * we can fit all data being combined into the same cache line, coherence
+ * will guarantee we have the sync boolean and the data regardless of
+ * weakly- or strongly-ordered caches.  At least on the ARM, however,
+ * we must memory barrier to prevent OOE from advancing loads above the
+ * sync.
+ */
+#if defined(COMBMIN)
+   #define COMB Mjoin(PATL,comb_min)
+   #define combvals(v1_, v2_) ((v1_) <= (v2_)) ? (v1_) : (v2_)
+#elif defined(COMBMAX)
+   #define COMB Mjoin(PATL,comb_max)
+   #define combvals(v1_, v2_) ((v1_) >= (v2_)) ? (v1_) : (v2_)
+#elif defined(COMBSUM)
+   #define COMB Mjoin(PATL,comb_sum)
+   #define combvals(v1_, v2_) (v1_) + (v2_)
+#else
+   #error "Unknown combine!"
+#endif
+TYPE COMB
+(
+   ATL_CUINT P,     /* # of threads in combine */
+   ATL_CUINT iam,   /* rank of calling thread in combine */
+   TYPE val         /* local min */
+)
+{
+   volatile char *bchk = ATL_TP_PTR->bchkin;
+   volatile char *mybool = bchk + (iam<<ATL_chksh);
+   volatile TYPE *myval = (volatile TYPE*)(mybool + ATL_sizeof);
+   const char newv = !(*mybool);
+
+   if (iam)
+   {
+      volatile TYPE *ans = (volatile TYPE*) (bchk + ATL_sizeof);
+      *myval = val;
+      *mybool = newv;
+      while (*bchk != newv);
+      val = *ans;
+   }
+   else
+   {
+      int i;
+      for (i=1; i < P; i++)
+      {
+         ATL_CUINT d = i<<ATL_chksh;
+         volatile TYPE *hisval = (volatile TYPE*)(bchk+d+ATL_sizeof);
+         const TYPE hv = *hisval;
+
+         while (bchk[d] != newv);  /* wait for his answer to appear */
+         val = combval(val, hv);
+      }
+      *myval = val;  /* provide global answer */
+      *bchk = newv;  /* signal answer is ready */
+   }
+   return(val);
+}
