@@ -8078,8 +8078,157 @@ void Mjoin(PATL,bcLaswp_amm)
 }
 @ROUT ATL_tgetf2
 #include "atlas_tlapack.h"
-#include "atlas_pca.h"
 #include "atlas_level2.h"
+#include "atlas_cbc.h"
+#ifdef TCPLX
+   #define GER Mjoin(PATL,geru)
+#else
+   #define GER Mjoin(PATL,ger)
+#endif
+int Mjoin(PATL,tgetf2C)
+(
+   ATL_CUINT P,   /* number of threads working on this problem */
+   ATL_CUINT rank,/* rank of this thread */
+   void *vchk,    /* boolean sync array */
+   ATL_CUINT M,   /* number of rows in A;  M >= P*N for parallelism! */
+   ATL_CUINT N,   /* number of cols in A */
+   TYPE *A,       /* IN: matrix to factor; OUT: LU */
+   size_t lda1, /* element stride between cols of A */
+   int *ipiv      /* pivot array */
+)
+{
+   #ifdef TCPLX
+      const TYPE none[2] = {ATL_rnone, ATL_rzero};
+      size_t lda2 = lda1+lda1;
+   #else
+      #define none ATL_rnone
+      #define lda2 lda1
+   #endif
+   int info=0;
+/*
+ * Rank 0 owns the diagonal, so these cores will just perform updates as
+ * driven by rank 0
+ */
+   ATL_INT j, mp, mr;
+   ATL_CUINT Mp = M / P;     /* # of rows all cores get */
+   ATL_CUINT Mr = M - Mp*P;  /* extra rows left over */
+/*
+ * Quick return if no work to do
+ */
+   if (M < 1 || N < 1)
+      return(0);
+/*
+ * For parallism, the least number of local rows must be larger than N; i.e.
+ * i.e., the whole diagonal block must be owned by the rank 0.
+ */
+   if (Mp < N)
+      return(Mjoin(PATL,getf2)(M, N, A, lda1, ipiv));
+/*
+ * All ranks except 0 have only trailing matrix to worry about, so their
+ * local row count never changes, they don't have a diagonal, etc.  
+ */
+   if (rank)
+   {
+      ATL_CUINT Mprev = Mp*rank + Mmin(rank-1, Mr);
+      TYPE *Ac=A+(Mprev SHIFT);
+      ATL_CUINT ML = (rank <= Mr) ? Mp+1 : Mp;
+
+      for (j=0; j < N; j++, Ac += lda2)
+      {
+         #ifdef TCPLX
+            TYPE pv[2];
+         #else
+            TYPE pv;
+         #endif
+         int pivL, pivG;
+         pivL = cblas_iamax(ML, Ac, 1);
+         pivG = pivL + Mprev;
+         #ifdef TCPLX
+            pv[0] = Ac[pivL+pivL];
+            pv[1] = Ac[pivL+pivL+1];
+            Mjoin(PATL,comb_iamax_nopost0)(P, rank, &pivG, pv, vchk);
+         #else
+            pv = Ac[pivL];
+            Mjoin(PATL,comb_iamax_nopost0)(P, rank, &pivG, &pv, vchk);
+         #endif
+         #ifdef TCPLX
+            if (pv[0] != ATL_rzero || pv[1] != ATL_rzero)
+            {
+               Mjoin(PATL,cplxinvert)(1, pv, 1, pv, 1);
+               cblas_scal(ML, pv, Ac, 1);
+            }
+         #else
+            if (pv != ATL_rzero)
+               cblas_scal(ML, ATL_rone/pv, Ac, 1);
+         #endif
+            else if (!info)
+               info = j+1;
+         GER(ML, N-j-1, none, Ac,1, A+(((j+1)*lda1+j)SHIFT),lda1, Ac+lda2,lda1);
+      }
+   }
+/*
+ * Rank 0 owsn the diagonal block and so it will drive the algorithm,
+ * and do pivoting and solving.
+ */
+   else
+   {
+      size_t ldap1 = (lda1+1)SHIFT;
+      TYPE *Ac=A, *Ad=A;
+      int m = Mp;
+
+      for (j=0; j < N; j++, Ac += lda2, Ad += ldap1)
+      {
+         #ifdef TCPLX
+            TYPE pv[2];
+         #else
+            TYPE pv;
+         #endif
+         int pivL, pivG;
+         int bval;
+         pivL = cblas_iamax(m--, Ad, 1);
+         pivG = j + pivL;
+         #ifdef TCPLX
+            pv[0] = Ad[pivL+pivL];
+            pv[1] = Ad[pivL+pivL+1];
+            bval = Mjoin(PATL,comb_iamax_nopost0)(P, 0, &pivG, pv, vchk);
+         #else
+            pv = Ad[pivL];
+            bval = Mjoin(PATL,comb_iamax_nopost0)(P, 0, &pivG, &pv, vchk);
+         #endif
+//         printf("pivG=%d\n", pivG);
+         ipiv[j] = pivG;
+         if (pivG != j)
+            cblas_swap(N, A+(j SHIFT), lda1, A+(pivG SHIFT), lda1);
+         ATL_cbc_post(0, vchk);  /* allow other cores to leave iamax! */
+         #ifdef TCPLX
+            if (pv[0] != ATL_rzero || pv[1] != ATL_rzero)
+            {
+               Mjoin(PATL,cplxinvert)(1, pv, 1, pv, 1);
+               cblas_scal(m, pv, Ad+2, 1);
+            }
+         #else
+            if (pv != ATL_rzero)
+               cblas_scal(m, ATL_rone/pv, Ad+1, 1);
+         #endif
+            else if (!info)
+               info = j+1;
+         GER(m, N-j-1, none, Ad+(1 SHIFT), 1, Ad+lda2, lda1, Ad+ldap1, lda1);
+      }
+   }
+   return(info);
+}
+#undef GER
+#ifdef none
+   #undef none
+#endif
+#ifdef lda2
+   #undef lda2
+#endif
+@ROUT ATL_tgetf2
+@skip #include "atlas_tlapack.h"
+#include "atlas_pca.h"
+@skip #include "atlas_level2.h"
+@skip #include "atlas_cbc.h"
 
 void Mjoin(PATL,DoWorkGETF2_nowrk)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
 {
@@ -8106,6 +8255,16 @@ void Mjoin(PATL,DoWorkGETF2_nowrk)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
                   const TYPE *X, const int incX, 
                   const TYPE *Y, const int incY, TYPE *A, const int lda);
 
+   #if 1
+      if (M >= N*p && p > 1)
+      {
+         int ierr;
+         ierr = Mjoin(PATL,tgetf2C)(p, rank, NULL, M, N, lup->A, lda, ipiv);
+         if (ierr)
+            lup->info = ierr;
+         return;
+      }
+   #endif
    #ifdef TCPLX
       my_ger = Mjoin(PATL,geru);
    #else
@@ -8144,6 +8303,7 @@ void Mjoin(PATL,DoWorkGETF2_nowrk)(ATL_LAUNCHSTRUCT_t *lp, void *vp)
             maxindx[i] = -1;
          }
          ipiv[j] = globpiv;
+//         printf("globpiv=%d\n", globpiv);
          if (globpiv != j)
             cblas_swap(N, A+(j SHIFT), lda, A+(globpiv SHIFT), lda);
          ATL_membarrier;
@@ -8421,7 +8581,7 @@ int Mjoin(PATL,tgetf2@(pf))(ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT lda, int *
    }
    for (; i < ATL_NTHREADS; i++)
       lu2s[i].M = 0;
-   ATL_goparallel(p, Mjoin(PATL,DoWorkGETF2), lu2s, NULL);
+   ATL_goparallel(p, @(trt), lu2s, NULL);
 @beginskip
    ls.opstruct = (char*) lu2s;
    ls.opstructstride = (int) ( ((char*)(lu2s+1)) - (char*)(lu2s) );

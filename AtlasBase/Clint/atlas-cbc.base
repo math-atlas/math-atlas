@@ -103,9 +103,20 @@
    @whiledef cmb min max sum
 void ATL_@(pre)comb_@(cmb)(ATL_CUINT P, ATL_CUINT IAM, @(typ) *val, void*);
    @endwhile
-
    @undef pre
 @endwhile
+
+@multidef pre      z     c      d    s
+@whiledef typ double float double float
+int ATL_@(pre)comb_iamax(ATL_CUINT P, ATL_CUINT iam, int idx, 
+                    @(typ) *val, void *vchk);
+int ATL_@(pre)comb_iamax_nopost0(ATL_CUINT P, ATL_CUINT iam, int *idx, 
+                            @(typ) *val, void *vchk);
+   @undef pre
+@endwhile
+
+char ATL_cbc_post(ATL_CUINT rank, void *vchk);
+void ATL_cbc_wait(ATL_CUINT hisrank, const char val, void *vchk);
 #endif /* end ifndef ATL_CBC_H */
 @ROUT ATL_barrier
 #include "atlas_threads.h"
@@ -144,16 +155,16 @@ void ATL_barrier
       *bchk = newv;
    }
 }
-@ROUT ATL_comb1 ATL_comb_iamax
+@ROUT ATL_comb1 ATL_comb_iamax ATL_comb_iamax_nopost0
 #include "atlas_threads.h"
 #include "atlas_misc.h"
 @ROUT ATL_comb1
 #if defined(TCPLX) && (defined(COMBMIN) || defined(COMBMAX))
    #include <math.h>  /* for fabs */
 #endif
-@ROUT ATL_comb_iamax
+@ROUT ATL_comb_iamax ATL_comb_iamax_nopost0
 #include <math.h>  /* for fabs */
-@ROUT ATL_comb1 ATL_comb_iamax
+@ROUT ATL_comb1 ATL_comb_iamax ATL_comb_iamax_nopost0
 /*
  * Use cache-based comm to perform a scalar combine for P threads.
  * This code works on any system with coherent caches (weakly-ordered OK)
@@ -268,6 +279,26 @@ void ATL_barrier
       return(val);
    #endif
 }
+@ROUT ATL_comb_iamax_nopost0
+/*
+ * This routine is used in LU, and it is different from comb_iamax in that
+ * rank==0 does post its "we're done" to its sync array before exiting.
+ * This means all threads except 0 remain blocked in this routine while 0
+ * exits it with the global answer.  In this way we can keep other cores
+ * waiting until after core 0 performs pivoting, which avoids doubling the
+ * number of syncs required for unblkd LU.
+ *
+ * It is also different in that we return the global index using a pointer,
+ * and the function return is the value to post to the sync array
+ */
+int Mjoin(PATL,comb_iamax_nopost0)  /* RETURNS: global sync post value */
+(
+   ATL_CUINT P,     /* # of threads in combine */
+   ATL_CUINT iam,   /* rank of calling thread in combine */
+   int *IDX,        /* INPUT: local index, OUTPUT: global idx */
+   TYPE *val,       /* INPUT: local max, OUTPUT: global max */
+   void *vchk
+)
 @ROUT ATL_comb_iamax
 int Mjoin(PATL,comb_iamax)  /* RETURNS: global index */
 (
@@ -277,6 +308,7 @@ int Mjoin(PATL,comb_iamax)  /* RETURNS: global index */
    TYPE *val,       /* INPUT: local max, OUTPUT: global max */
    void *vchk
 )
+@ROUT ATL_comb_iamax ATL_comb_iamax_nopost0
 {
    volatile char *bchk = vchk ? (volatile char*) vchk : ATL_TP_PTR->bchkin;
    volatile char *mybool = bchk + (iam<<ATL_chksh);
@@ -284,6 +316,7 @@ int Mjoin(PATL,comb_iamax)  /* RETURNS: global index */
    volatile TYPE *myval = (volatile TYPE*)(mybool + mysize);
    volatile int *myidx = (volatile int*)(mybool + mysize + (mysize SHIFT));
    const char newv = !(*mybool);
+@ROUT ATL_comb_iamax_nopost0 `   int idx = *IDX;`
 
    if (iam)
    {
@@ -339,7 +372,43 @@ int Mjoin(PATL,comb_iamax)  /* RETURNS: global index */
       #ifdef TCPLX
          myval[1] = val[1];  /* and for imaginary value */
       #endif
+@ROUT ATL_comb_iamax
       *bchk = newv;          /* signal answer is ready */
    }
    return(idx);
+@ROUT ATL_comb_iamax_nopost0
+   }
+   *IDX = idx;
+   return(newv);
+@ROUT ATL_comb_iamax ATL_comb_iamax_nopost0
+}
+@ROUT ATL_cbc_post
+#include "atlas_cbc.h"
+#include "atlas_threads.h"
+/*
+ * Used to post done to boolean sync array, by reversing present condition.
+ * should only be called by the thread given by rank.
+ * RETURNS: new value of post variable
+ */
+char ATL_cbc_post(ATL_CUINT rank, void *vchk)
+{
+   volatile char *bchk = (vchk) ? (volatile char*)vchk : ATL_TP_PTR->bchkin;
+   ATL_CUINT II = rank<<ATL_chksh;
+   const char newv = !bchk[II];
+   bchk[II] = newv;
+   return(newv);
+}
+@ROUT ATL_cbc_wait
+#include "atlas_cbc.h"
+#include "atlas_threads.h"
+void ATL_cbc_wait
+(
+   ATL_CUINT hisrank,  /* rank to wait on */
+   const char val,     /* value he will write to signal end of wait */
+   void *vchk          /* optional boolean sync array */
+)
+{
+   volatile char *bchk = (vchk) ? (volatile char*)vchk : ATL_TP_PTR->bchkin;
+   ATL_CUINT ih = hisrank<<ATL_chksh;
+   while (bchk[ih] != val);
 }
