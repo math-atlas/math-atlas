@@ -217,7 +217,7 @@ int main(int nargs, char **args)
       printf("FAILED %d TESTS\n", nerr);
    return(nerr);
 }
-@ROUT tune_barrier
+@ROUT tune_barrier tune_comb1
 #include "atlas_threads.h"
 #include "atlas_misc.h"
 #include <assert.h>
@@ -256,6 +256,63 @@ void ATL_mut_barrier(ATL_CUINT P, ATL_CUINT rank)
    }
 }
 @endskip
+@ROUT tune_comb1
+void *dneBV=NULL, *rdyBV=NULL;
+void *cmbMX=NULL;
+volatile int IRET=0;
+int ATL_mut_comb1(ATL_CUINT P, ATL_CUINT rank, volatile int *vals)
+{
+   int src, dst, iret;
+   if (rank)
+   {
+      ATL_mutex_lock(cmbMX);
+      ATL_SetBitBV(rdyBV, rank);
+      ATL_mutex_unlock(cmbMX);
+      if (rank == P-1)
+         return;
+   }
+   do
+   {
+/*
+ *    Is there work to the right of me to do?
+ */
+      if (ATL_FindFirstSetBitBV(rdyBV, rank+1) != -1)
+      {
+         ATL_mutex_lock(cmbMX);
+         if (rank && ATL_IsBitSetBV(dneBV, rank))  /* if my data has been */
+         {                                         /* combined by someone */
+            ATL_mutex_unlock(cmbMX);               /* unlock the mutex */
+            return;                                /* and I'm done */
+         }
+/*
+ *       If work to right still available, do it
+ */
+         src = ATL_FindFirstSetBitBV(rdyBV, rank+1);
+         if (src != -1)
+         {
+         }
+         ATL_mutex_unlock(cmbMX);
+      }
+      while (ATL_FindFirstUnsetBitBV(rdyBV, rank+1) == -1);
+/*
+ *    If someone has combined my data, I'm done
+ */
+      if (rank && ATL_IsBitSetBV(dneBV, rank))
+         goto DONE;
+   }
+   while (1);
+DONE:
+/*
+ *       Weakly ordered systems w/o reliable mem barrier must use mutex to
+ *       ensure result is available
+ */
+   #ifndef ATL_USE_CBC
+      ATL_mutex_lock(cmbMX);
+      ATL_mutex_unlock(cmbMX);
+   #endif
+   return;
+}
+@ROUT tune_barrier
 void ATL_cbc_barrier
 (
    ATL_CUINT P,    /* # of threads to barrier */
