@@ -8224,6 +8224,131 @@ int Mjoin(PATL,tgetf2C)
 #ifdef lda2
    #undef lda2
 #endif
+#if 0  /* untested code! */
+int Mjoin(PATL,tgetf2CR)
+(
+   ATL_CUINT P,   /* number of threads working on this problem */
+   ATL_CUINT rank,/* rank of this thread */
+   void *vchk,    /* boolean sync array */
+   ATL_CUINT M,   /* number of rows in A;  M >= P*N for parallelism! */
+   ATL_CUINT N,   /* number of cols in A */
+   TYPE *A,       /* IN: matrix to factor; OUT: LU */
+   size_t lda,    /* element stride between cols of A */
+   int *ipiv      /* pivot array */
+)
+{
+   #ifdef TCPLX
+      const TYPE none[2] = {ATL_rnone, ATL_rzero};
+      const TYPE one[2]  = {ATL_rone, ATL_rzero};
+      size_t lda2 = lda+lda;
+   #else
+      #define one ATL_rone
+      #define none ATL_rnone
+      #define lda2 lda
+   #endif
+   int ierr=0;
+   ATL_CUINT Nleft = (N>>2)<<1;
+   if (Nleft)
+   {
+       ATL_CUINT Nright=N-Nleft, NRp = Nright/P, NRpr = Nright-NRp*P;
+       ATL_CUINT nrp = (rank < NRpr) ? NRp+1: NRp;
+       ATL_CUINT nrprev = (NRp*rank + Mmin(rank, NRpr)) SHIFT;
+       ATL_CUINT MN = Mmin(M,N);
+       ATL_INT MM, Mp;
+       TYPE *Ac, *An;
+       int i;
+/*
+ *     Factor left portion, the apply pivots to right, then sync so we
+ *     we know it is save to start writing TRSM on pivoted matrix
+ */
+       ierr = Mjoin(PATL,tgetf2CR)(P, rank, vchk, M, N, A, lda, ipiv);
+       Ac = A + Nleft*lda2;
+       if (nrp)
+          ATL_laswp(nrp, Ac+nrprev, lda, 0, Nleft, ipiv, 1);
+       An = Ac + (Nleft SHIFT);
+       ATL_barrier();
+       ATL_membarrier;   /* core must 'see' all changes made above! */
+/*
+ *     If local NRHS < 4, reduce parellism to avoid L1BLAS perf with contention
+ */
+       if (NRp < 4)
+       {
+          ATL_CUINT p4 = (Nright > 4) ? (Nright>>2) : 1;
+          if (rank < p4)
+          {
+             if (p4 > 1)
+             {
+                ATL_CUINT np = Nright/p4, nr = Nright-np*p4;
+                ATL_CUINT n = (rank < nr) ? np+1: np;
+                ATL_CUINT prev = (np*rank + Mmin(rank, nr)) SHIFT;
+                cblas_trsm(CblasColMajor, CblasLeft, CblasLower, CblasNoTrans, 
+                           CblasUnit, Nleft, n, one, A, lda, Ac+prev, lda);
+             }
+             else
+                cblas_trsm(CblasColMajor, CblasLeft, CblasLower, CblasNoTrans, 
+                           CblasUnit, Nleft, Nright, one, A, lda, Ac, lda);
+          }
+       }
+       else
+          cblas_trsm(CblasColMajor, CblasLeft, CblasLower, CblasNoTrans, 
+                     CblasUnit, Nleft, nrp, one, A, lda, Ac+nrprev, lda);
+/*
+ *     Await completion of solve, and update with GEMM by splitting M.
+ *     This algorithm really designed for panel factorization, where M
+ *     dominates N.  Would not be good for problems where M is very small,
+ *     and N very large!  Can add case to that affect if it becomes important.
+ */
+       MM = M - Nleft;
+       Mp = MM / P;
+       ATL_barrier();
+       ATL_membarrier;   /* core must 'see' all changes made above! */
+       if (Mp >= 4)
+       {
+          ATL_CUINT mr = M-Mp*P, m = (rank < mr) ? Mp+1: Mp;
+          ATL_CUINT prev = (Mp*rank + Mmin(rank, mr)) SHIFT;
+          cblas_gemm(CblasColMajor, CblasNoTrans, CblasNoTrans, m, Nright,
+                     Nleft, none, A+prev+(Nleft SHIFT), lda, 
+                     Ac+prev, lda, one, An, lda);
+       }
+       else if (rank == P-1)
+          cblas_gemm(CblasColMajor, CblasNoTrans, CblasNoTrans, MM, Nright,
+                     Nleft, none, A+(Nleft SHIFT), lda, Ac, lda, one, An, lda);
+/*
+ *     Await completion of GEMM and then factor the right
+ */
+       ATL_barrier();
+       ATL_membarrier;   /* core must 'see' all changes made above! */
+       i = Mjoin(PATL,tgetf2CR)(P, rank, vchk, MM, Nright, An, lda, ipiv+Nleft);
+/*
+ *     Must use a special laswp rout that adds 1st arg to all piv entries.
+ *     this avoids having a sync for update of ipiv, which is handled last,
+ *     when we are forced to sync anyway
+ */
+
+       ATL_laswp_off(Nleft, A, lda, Nleft, MN, ipiv, 1);
+       if (i) if (!ierr) ierr = i + Nleft;
+       if (rank == P-1)
+          for (i=Nleft; i != MN; i++)
+             ipiv[i] += Nleft;
+   }
+   else ierr = Mjoin(PATL,tgetf2C)(P, rank, vchk, M, N, A, lda, ipiv);
+/*
+ * Not safe to use data until everybody sees changes, so don't ret until done!
+ */
+   ATL_barrier();
+   ATL_membarrier;   /* core must 'see' all changes before returning */
+   return(ierr);
+}
+#ifdef one
+   #undef one
+#endif
+#ifdef none
+   #undef none
+#endif
+#ifdef lda2
+   #undef lda2
+#endif
+#endif
 @ROUT ATL_tgetf2
 @skip #include "atlas_tlapack.h"
 #include "atlas_pca.h"
