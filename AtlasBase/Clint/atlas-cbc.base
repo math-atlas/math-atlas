@@ -4,43 +4,90 @@
 #include "atlas_misc.h"
 /*
  ******************************************************************************
- * This file prototypes cache-based communication (CBC) routines.  CBC
- * exploits cache coherence protocols for synchronization and communication
- * that runs at the speed of hardware, rather than the speed of software
- * that you potentially get when calling OS-provided functions like mutex, etc.
- * CBC requires strongly-ordred cache coherence to work correctly.  In
- * a strongly ordered cache, if a given core writes memory two memory
- * locations A and B in that sequence, the coherence protocal guarantees
- * that other cores only "see" the change in B *after* they can "see"
- * the change in A.  In weakly ordered caches, the core may "see" the
- * changes in any order (so seeing B change does not guarantee you won't
- * get a stale value if you then read A).  In general, x86 architectures
- * have strongly ordered caches, while non-x86 (eg., ARM and PowerPC) have
- * weakly-ordered caches.  Therefore, most CBC routines should not be used
- * on non-x86 platforms unless they are combined with memory fences of some
- * sort.  On x86 at least, CBC is critical to driving down communication costs
- * on extreme parallel architectures like the Xeon PHI.
- * For weakly-ordered systems, we must use a memory barrier in order to
- * force the fact that we've seen A change to imply that we can see the change
- * to B.  So, on weakly-ordered cache systems where we support CBC (eg. ARM64),
- * we will defined the macro ATL_membarrier to call a system-specific
- * memory barrier.  On Strongly-ordered caches, ATL_membarrier will be empty.
- * NOTE: for correctness, mutexes must be doing memory barriers on weakly-
- * ordered systems, so all CBC routines that are required for correct
- * operation must provide a mutex (very slow) version  that will work
- * for unknown systems.
+ * This file prototypes cache-based communication (CBC) routines.
+ * The idea is exploit cache coherence mechanisms for thread synchronization
+ * (barrier operations) and communication (combine/reduction operations).
+ * In the best case, this improves performance from software levels to hardware.
+ * If the call being replaced doesn't require real OS intervention (eg., mutex)
+ * and is implemented by a reasonable intelligent OS (eg., Linux, not OS X),
+ * then the speed improvement is still large due to the difference between
+ * cache coherence speed and the speed of explicit mutex calls.
+ * 
+ * The routines prototyped in this file come into two classes:
+ * (1) Those with _cbc_ in the name enforce strong memory ordering in order
+ *     to allow the primitive to guarantee that at the end of the sync, all
+ *     cores have seen all the writes that preceeded the sync.
+ * (2) Those without the _cbc_ just perform the sync/combine, but don't
+ *     use a memory fence.
+ *
+ * Imagine you have a set of threads copying some data into a new format,
+ * and another (possibly overlapping) set of threads that need to wait
+ * until this copy is complete before they use the produced/copied data.
+ * In this case, the sync will need to guarantee that the writes done by
+ * the producing (copying) threads can be seen by consuming threads, so
+ * the _cbc_ version of the routine must be used.
+ *
+ * Imagine a producing core copies a large amount of data, and then posts
+ * to a boolean sync variable that he has produced the required data.  If
+ * the data and sync variable are on the same cacheline, then as far as I
+ * know this works correctly on all systems (this is how the scalar combines
+ * work without using memory fences).
+ *
+ * In the more general case where the produced data is on independent cache
+ * lines, then the sync will not work on systems with weakly-ordered caches.
+ * Coherence protocols can be split into two types:
+ * (1) STRONGLY ORDERED CACHES: guarantee that if a thread writes to cachelines
+ *     A and then B, no other core can "see" the write of B before they see
+ *     the write of A, since that's the order the producing thread wrote them.
+ * (2) WEAKLY ORDERED CACHES: if a producing thread writes A and then B,
+ *     other cores may see these writes in any order.  This means the fact
+ *     that you have seen the change of B (eg. our sync variable saying we are
+ *     are done producing data) does not mean it is safe to begin reading A!
+ *
+ * Weak ordering allows caches to retain data in private write buffers until
+ * another core *writes* them (who cares if they read the stale value?), which
+ * allows for less delays on write buffer flushes.
+ * 
+ * In order to make CBC work when the data and sync variable are on separate
+ * cachelines, weakly-ordered systems must use memory barriers to ensure that
+ * seeing the change in B ensures that all prior writes can be seen.
+ *
+ * AMD64/IA32 have strongly-ordered caches, as long as you don't use the
+ * special weakly-ordered stores.  I believe ATLAS does not use weakly-ordered
+ * stores on x86 (I think this instructions were brought in with the PHI),
+ * so presently the _cbc_ routines are simply aliased to their non-cbc
+ * brethren on x86
+ *
+ * POWERPC/ARM64 feature weakly-ordered cache systems, and so we need _cbc_
+ * routs with the correct memory and OOE fences to guarantee correct behavior.
+ *
+ * This file also provides macros for barriers that can be used:
+ * ATL_membar : force all prior local stores globally visible before executing 
+ *              any following local stores, and do not allow any local loads 
+ *              to be hoisted above membar.
+ * ATL_rmembar: do not allow any local loads to be hoisted above rmembar
+ * ATL_wmembar: force all prior local stores globally visible before executing
+ *              any following local stores
+ *
  ******************************************************************************
  */
 /*
  * All known x86 use strongly-ordered caches, so CBC is safe.  
  * There are some instructions on the PHI that seem to violate strong ordering,
  * but ATLAS does not presently use them.  If these inst become important,
- * we may need to define a barrier
+ * we may need to define the barriers
  */
 #if defined(ATL_GAS_x8664) || defined(ATL_GAS_x8632)
    #define ATL_CBC_HANDLED 1
    #define ATL_USE_CBC 1
-   #define ATL_membarrier
+   #define ATL_ALIAS_CBC 1
+   #ifdef ATL_ALIAS_CBC
+      #define ATL_membar
+   #else
+      #define ATL_membar __asm__ __volatile__ ("mfence" : : : "memory")
+      #define ATL_rmembar __asm__ __volatile__ ("lfence" : : : "memory")
+      #define ATL_wmembar __asm__ __volatile__ ("sfence" : : : "memory")
+   #endif
 /*
  * ARM64 has weakly-ordered cache, so CBC must use explicit membarrier to work.
  * This memory barrier code provided by David Nuechterlein, who has gotten
@@ -50,7 +97,9 @@
    #if __GNUC__
       #define ATL_CBC_HANDLED 1
       #define ATL_USE_CBC 1
-      #define ATL_membarrier __asm__ __volatile__ ("dmb sy" : : : "memory")
+      #define ATL_membar __asm__ __volatile__ ("dmb sy" : : : "memory")
+      #define ATL_rmembar __asm__ __volatile__ ("isb sy" : : : "memory")
+      #define ATL_wmembar __asm__ __volatile__ ("dmb st" : : : "memory")
    #endif
 /*
  * CBC came about after Itanium was essentially dead, so it has never been
@@ -90,6 +139,24 @@
    #endif
    #define ATL_membarrier
 #endif
+/*
+ * If read/write membarrier not defined, defined them as global membarrier
+ */
+#ifndef ATL_rmembar
+   #define ATL_rmembar ATL_membar
+#endif
+#ifndef ATL_wmembar
+   #define ATL_wmembar ATL_membar
+#endif
+void ATL_barrier(ATL_CUINT P, ATL_CUINT IAM, void*);
+void ATL_barrier_nopost0(ATL_CUINT P, ATL_CUINT IAM, void*);
+#ifdef ATL_ALIAS_CBC
+   #define ATL_cbc_barrier ATL_barrier
+   #define ATL_cbc_barrier_npost0 ATL_barrier_nopost0
+#else
+   void ATL_cbc_barrier(ATL_CUINT P, ATL_CUINT IAM, void*);
+   void ATL_cbc_barrier_nopost0(ATL_CUINT P, ATL_CUINT IAM, void*);
+#endif
 @multidef pre d      s     i
 @whiledef typ double float int
    @whiledef cmb min max sum
@@ -112,11 +179,25 @@ int ATL_@(pre)comb_iamax(ATL_CUINT P, ATL_CUINT iam, int idx,
                     @(typ) *val, void *vchk);
 int ATL_@(pre)comb_iamax_nopost0(ATL_CUINT P, ATL_CUINT iam, int *idx, 
                             @(typ) *val, void *vchk);
+#ifdef ATL_ALIAS_CBC
+   #define ATL_@(pre)cbc_comb_iamax_nopost0 ATL_@(pre)comb_iamax_nopost0
+#else
+   int ATL_@(pre)cbc_comb_iamax_nopost0(ATL_CUINT P, ATL_CUINT iam, int *idx, 
+                                   @(typ) *val, void *vchk);
+#endif
    @undef pre
 @endwhile
 
-char ATL_cbc_post(ATL_CUINT rank, void *vchk);
-void ATL_cbc_wait(ATL_CUINT hisrank, const char val, void *vchk);
+/*
+ * Reverse my entry in boolean sync array: RETURNS: new boolean value
+ */
+char ATL_post(ATL_CUINT rank, void *vchk);
+#ifdef ATL_ALIAS_CBC
+   #define ATL_cbc_post ATL_post
+#else
+   char ATL_cbc_post(ATL_CUINT rank, void *vchk);
+#endif
+@skip void ATL_cbc_wait(ATL_CUINT hisrank, const char val, void *vchk);
 #endif /* end ifndef ATL_CBC_H */
 @ROUT ATL_barrier
 #include "atlas_threads.h"
@@ -125,10 +206,26 @@ void ATL_cbc_wait(ATL_CUINT hisrank, const char val, void *vchk);
 /*
  * Use cache-based communication to perform a barrier for P threads.
  * This code works on any system with coherent caches (weakly-ordered OK).
- * For weakly-ordered caches, if this barrier is protecting memory, it
- * should be followed by a memory fence to avoid OOE advancing loads.
+ * For weakly-ordered caches, if this barrier is protecting memory, you
+ * need to use the DOFENCE (cbc_) variant.
  */
-void ATL_barrier
+#ifdef DOFENCE
+   #ifdef ATL_cbc_barrier
+      #undef ATL_cbc_barrier
+   #endif
+   #ifdef DOPOST
+      #define mybarr ATL_cbc_barrier
+   #else
+      #define mybarr ATL_cbc_barrier_nopost0
+   #endif
+#else
+   #ifdef DOPOST
+      #define mybarr ATL_barrier
+   #else
+      #define mybarr ATL_barrier_nopost0
+   #endif
+#endif
+void mybarr
 (
    ATL_CUINT P,     /* # of threads to barrier */
    ATL_CUINT iam,   /* rank of calling thread in barrier */
@@ -142,6 +239,9 @@ void ATL_barrier
    if (iam)
    {
       bchk[II] = newv;
+      #ifdef DOFENCE
+         ATL_membar;
+      #endif
       while (*bchk != newv);
    }
    else
@@ -152,12 +252,18 @@ void ATL_barrier
          ATL_CUINT d = i<<ATL_chksh;
          while (bchk[d] != newv);
       }
-      *bchk = newv;
+      #ifdef DOPOST
+         #ifdef DOFENCE
+            ATL_membar;
+         #endif
+         *bchk = newv;
+      #endif
    }
 }
 @ROUT ATL_comb1 ATL_comb_iamax ATL_comb_iamax_nopost0
 #include "atlas_threads.h"
 #include "atlas_misc.h"
+#include "atlas_cbc.h"
 @ROUT ATL_comb1
 #if defined(TCPLX) && (defined(COMBMIN) || defined(COMBMAX))
    #include <math.h>  /* for fabs */
@@ -291,7 +397,17 @@ void ATL_barrier
  * It is also different in that we return the global index using a pointer,
  * and the function return is the value to post to the sync array
  */
-int Mjoin(PATL,comb_iamax_nopost0)  /* RETURNS: global sync post value */
+#ifdef DOFENCE
+   #ifdef ATL_dcbc_comb_iamax_nopost0
+      #undef ATL_dcbc_comb_iamax_nopost0
+      #undef ATL_scbc_comb_iamax_nopost0
+      #undef ATL_ccbc_comb_iamax_nopost0
+      #undef ATL_zcbc_comb_iamax_nopost0
+   #endif
+   int Mjoin(PATL,cbc_comb_iamax_nopost0)/* RETURNS: global sync post value */
+#else
+   int Mjoin(PATL,comb_iamax_nopost0)    /* RETURNS: global sync post value */
+#endif
 (
    ATL_CUINT P,     /* # of threads in combine */
    ATL_CUINT iam,   /* rank of calling thread in combine */
@@ -327,6 +443,9 @@ int Mjoin(PATL,comb_iamax)  /* RETURNS: global index */
          myval[1] = val[1];
       #endif
       *myval = *val;
+      #ifdef DOFENCE
+         ATL_membar;
+      #endif
       *mybool = newv;
       while (*bchk != newv);
       *val = *ans;
@@ -382,7 +501,7 @@ int Mjoin(PATL,comb_iamax)  /* RETURNS: global index */
    return(newv);
 @ROUT ATL_comb_iamax ATL_comb_iamax_nopost0
 }
-@ROUT ATL_cbc_post
+@ROUT ATL_post
 #include "atlas_cbc.h"
 #include "atlas_threads.h"
 /*
@@ -390,11 +509,20 @@ int Mjoin(PATL,comb_iamax)  /* RETURNS: global index */
  * should only be called by the thread given by rank.
  * RETURNS: new value of post variable
  */
-char ATL_cbc_post(ATL_CUINT rank, void *vchk)
+#ifdef DOFENCE
+   #undef ATL_cbc_post
+   char ATL_cbc_post(ATL_CUINT rank, void *vchk)
+#else
+   char ATL_post(ATL_CUINT rank, void *vchk)
+#endif
+@ROUT ATL_post
 {
    volatile char *bchk = (vchk) ? (volatile char*)vchk : ATL_TP_PTR->bchkin;
    ATL_CUINT II = rank<<ATL_chksh;
    const char newv = !bchk[II];
+   #ifdef DOFENCE
+      ATL_membar;
+   #endif
    bchk[II] = newv;
    return(newv);
 }
