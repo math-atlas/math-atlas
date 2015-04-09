@@ -45,7 +45,10 @@
 #endif
 
 enum ATL_SYNC_SCOPE { ATL_SYNC_GRID=0, ATL_SYNC_ROW=1, ATL_SYNC_COL=2 };
-enum ATL_CBC2D_OP { ATL_CBC2D_SUM, ATL_CBC2D_MAX, ATL_CBC2D_MIN, ATL_CBC2D_MAXLOC };
+enum ATL_CBC2D_OP { 
+                     ATL_CBC2D_SUM, ATL_CBC2D_MAX, 
+                     ATL_CBC2D_MIN, ATL_CBC2D_MAXLOC 
+                  };
 enum ATL_CBC2D_TYPE { ATL_CBC2D_INT=0, 
                     ATL_CBC2D_FLOAT=1, 
                     ATL_CBC2D_DOUBLE=2,
@@ -53,10 +56,12 @@ enum ATL_CBC2D_TYPE { ATL_CBC2D_INT=0,
                     ATL_CBC2D_DOUBLE_INT=4
                   };
 
-static int ATL_CBC2D_TYPE_SIZE[5] = { sizeof(int), sizeof(float), sizeof(double),
-                              sizeof(int)+sizeof(float), 
-                              sizeof(int)+sizeof(double) 
-                           };
+static int ATL_CBC2D_TYPE_SIZE[5] = 
+                  { 
+                     sizeof(int), sizeof(float), sizeof(double),
+                     sizeof(int)+sizeof(float), 
+                     sizeof(int)+sizeof(double) 
+                  };
 
 typedef struct
 {
@@ -145,7 +150,8 @@ void ATL_CBC2D_barrier_internal(enum ATL_SYNC_SCOPE, ATL_CBC2D_t*, ATL_INT,
                      ATL_INT, ATL_INT);
 void ATL_CBC2D_barrier(enum ATL_SYNC_SCOPE, ATL_CBC2D_t*, ATL_INT);
 void ATL_CBC2D_LUschedWork(enum ATL_SYNC_SCOPE, ATL_CBC2D_t*, 
-      ATL_INT,ATL_INT*,ATL_INT);
+                           ATL_INT,ATL_INT*,ATL_INT);
+void ATL_CBC2D_min(enum ATL_SYNC_SCOPE, ATL_CBC2D_t*, ATL_INT, ATL_INT*);
 
 void ATL_Send(ATL_CBC2D_t*, ATL_INT, ATL_INT, void*, ATL_INT);
 void ATL_Recv(ATL_CBC2D_t*, ATL_INT, ATL_INT, void*, ATL_INT);
@@ -153,8 +159,8 @@ void ATL_Recv(ATL_CBC2D_t*, ATL_INT, ATL_INT, void*, ATL_INT);
 void ATL_Combine(enum ATL_SYNC_SCOPE, ATL_CBC2D_t*, ATL_INT, ATL_INT, ATL_INT, 
                  enum ATL_CBC2D_TYPE, enum ATL_CBC2D_OP, void*, ATL_INT, void*);
 
-void ATL_iTMaxForLU(enum ATL_SYNC_SCOPE, ATL_CBC2D_t*, ATL_INT, ATL_INT, ATL_INT,
-                    const TYPE, const int, TYPE*, int*, int*);
+void ATL_iTMaxForLU(enum ATL_SYNC_SCOPE, ATL_CBC2D_t*, ATL_INT, ATL_INT, 
+                    ATL_INT, const TYPE, const int, TYPE*, int*, int*);
 
 void ATL_CBC2D_Malloc_Lock(ATL_CBC2D_t*, ATL_INT);
 void ATL_CBC2D_Malloc_UnLock(ATL_CBC2D_t*, ATL_INT);
@@ -296,14 +302,15 @@ void ATL_CBC2D_barrier_internal(enum ATL_SYNC_SCOPE scope, ATL_CBC2D_t *cbc,
    }
 }
 
-void ATL_CBC2D_barrier(enum ATL_SYNC_SCOPE scope, ATL_CBC2D_t *cbc, ATL_INT rankG)
+void ATL_CBC2D_barrier(enum ATL_SYNC_SCOPE scope, ATL_CBC2D_t *cbc, 
+                       ATL_INT rankG)
 {
    int m;
    //_T("T%d: entering barrier ...\n", rankG);
    switch (scope)
    {
       case ATL_SYNC_GRID:
-         ATL_CBC2D_barrier_internal(scope, cbc, rankG, cbc->Master, cbc->Master);
+         ATL_CBC2D_barrier_internal(scope, cbc, rankG,cbc->Master,cbc->Master);
          break;
       case ATL_SYNC_ROW:
          m = cbc->tdata[rankG].rankR; /* get my col rank */
@@ -323,10 +330,48 @@ void ATL_CBC2D_gbarrier(ATL_CBC2D_t *cbc, int rankG)
    ATL_CBC2D_barrier(ATL_SYNC_GRID, cbc, rankG);
 }
 
+void ATL_CBC2D_min(enum ATL_SYNC_SCOPE scope, ATL_CBC2D_t *cbc, 
+                   ATL_INT rankG, ATL_INT *next_val)
+{
+   int m_val = *next_val;
+   int rid = cbc->tdata[rankG].rankR;
+   int cid = cbc->tdata[rankG].rankC;
+   if (scope == ATL_SYNC_COL)
+   {
+      int m = cbc->ColMasters[cid];
+      if (rankG == m)
+      {
+         int i, my_next = cbc->tdata[rankG].Next[scope];
+         for (i=cid; i<cbc->Nt; i+=cbc->Q)
+         {
+            if (i != rankG)
+            {
+               while (cbc->tdata[i].Next[scope] == my_next)
+               {
+                  ATL_tyield;
+               }
+               m_val = Mmin(m_val, cbc->tdata[i].NextMsg[scope]);
+            }
+         }
+         cbc->tdata[rankG].NextMsg[scope] = m_val;
+         ATL_POST(scope, cbc, rankG);
+      }
+      else
+      {
+         cbc->tdata[rankG].NextMsg[scope] = m_val;
+         ATL_POST(scope, cbc, rankG);
+         ATL_WAIT(scope, cbc, rankG, m, m);
+         cbc->tdata[rankG].NextMsg[scope] = cbc->tdata[m].NextMsg[scope];
+      }
+   }
+   *next_val = cbc->tdata[rankG].NextMsg[scope];
+}
+
 @ROUT ATL_cbc2d_misc
 #include <atlas_cbc2d.h>
 
-void ATL_CBC2D_init(ATL_CBC2D_t *cbc, ATL_INT P, ATL_INT Q, ATL_CBC2D_TDATA *tdata)
+void ATL_CBC2D_init(ATL_CBC2D_t *cbc, ATL_INT P, ATL_INT Q, 
+                    ATL_CBC2D_TDATA *tdata)
 {
    int i, k;
    assert(cbc);   /* check whether cbc is valid */
