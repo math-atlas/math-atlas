@@ -2273,6 +2273,83 @@ void Mjoin(PATL,swap_cplx2real)(ATL_CUINT N, TYPE *C, ATL_CINT incc,
       *R = rv; *I = iv;
    }
 }
+@ROUT ATL_trcpypad4U
+/*
+ * c = upper(A), and pads A with identity to make N a multiple 4.  
+ * NOTE: padding is at TOP of upper triangular matrix (TRSM starts at bottom)!
+ * This makes c safe for use with rank-4 update that assumes N%4 == 0.
+ * Sets diagonal to 1.0 if Diag==Unit, else inverts diagonal entries.
+ * This routine is used for trsmKL_rk4 (ATLAS/src/blas/level3/kernel).
+ */
+void Mjoin(PATL,trcpypad4L)
+(
+   enum ATLAS_DIAG Diag,
+   ATL_CINT N,                  /* size of triangular matrix A */
+   const TYPE *A,               /* NxN upper triangular matrix */
+   ATL_CINT lda,                /* leading dim of A */
+   TYPE *c,                     /* N4xN4 cpy of A, padded to N4 with I */
+   ATL_CINT ldc                 /* leading dim of A */
+)
+{
+   ATL_UINT i, j;
+   ATL_CUINT N4=(N+3)&(~3);  /* N4 = CEIL(N/4)*4 */
+   const int mr = N4-N;
+
+   for (j=0; j < mr; j++, c += ldc)
+   {
+      for (i=0; i < N4; i++)
+         c[i] = ATL_rzero;
+      c[j] = ATL_rone;
+   }
+   for (; j < N4; j++, c += ldc, A += lda)
+   {
+      for (i=0; i < mr; i++)
+         c[i] = ATL_rzero;
+      for (; i < j; i++)
+         c[i] = A[i-mr];
+      c[j] = (Diag == AtlasNonUnit) ? 1.0 / A[j-mr] : ATL_rone;
+   }
+}
+@ROUT ATL_trUt2Lpad4
+@ROUT ATL_trLt2Upad4
+@ROUT ATL_trcpypad4L
+/*
+ * c = lower(A), and pads A with identity to make N a multiple 4.  This is
+ * used to make c safe for use with rank-4 update that assumes N mul of 4.
+ * Sets diagonal to 1.0 if Diag==Unit, else inverts diagonal entried.
+ * This routine is used for trsmKL_rk4 (ATLAS/src/blas/level3/kernel).
+ */
+void Mjoin(PATL,trcpypad4L)
+(
+   enum ATLAS_DIAG Diag,
+   ATL_CINT N,                  /* size of triangular matrix A */
+   const TYPE *A,               /* NxN lower triangular matrix */
+   ATL_CINT lda,                /* leading dim of A */
+   TYPE *c,                     /* N4xN4 cpy of A, padded to N4 with I */
+   ATL_CINT ldc                 /* leading dim of A */
+)
+{
+   ATL_UINT i, j;
+   ATL_CUINT N4=(N+3)&(~3);  /* N4 = CEIL(N/4)*4 */
+
+   for (j=0; j < N; j++, c += ldc, A += lda)
+   {
+      if (Diag == AtlasUnit)
+         c[j] = 1.0;
+      else
+         c[j] = 1.0 / A[j];
+      for (i=j+1; i < N; i++)
+         c[i] = A[i];
+      for (; i < N4; i++)
+         c[i] = ATL_rzero;
+   }
+   for (; j < N4; j++, c += N4)
+   {
+      for (i=0; i < N4; i++)
+         c[i] = ATL_rzero;
+      c[j] = ATL_rone;
+   }
+}
 @ROUT atlas_bitvec.h
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2014
 #ifndef ATLAS_BITVEC_H
