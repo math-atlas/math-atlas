@@ -4654,9 +4654,13 @@ void Mjoin(PATL,trsmK_LLNU_a1)
 }
 #endif
 @ROUT ATL_trsmKL_amm
+   #define DEBUG 1
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2015
 #include "atlas_misc.h"
 #include "atlas_amm.h"
+#ifdef DEBUG
+   #include "atlas_tst.h"
+#endif
 /*
  * Handles Left version of trsm for Lower,NoTrans or Upper,Trans
  *
@@ -4700,8 +4704,8 @@ int Mjoin(PATL,trsmKL_amm)
    amminfo_t *mmp,      /* chosen amm kernel info */
    enum ATLAS_DIAG Diag,
    ATL_CUINT mb0,       /* sizeof first triangular block */
-   ATL_CUINT nmmu0,     /* CEIL(mb0/mu) */
-   ATL_CUINT nmblks,    /* (M-mb0)/mb (remainder is 0) */
+   ATL_CUINT nmu0,      /* CEIL(mb0/mu) */
+   ATL_CUINT nmblks,    /* CEIL(M/mb); M = (nmblks-1)*b+mb0 */
    ATL_CUINT nnblks,    /* FLOOR(N/nb) */
    ATL_CUINT nr,        /* mod(N/nb) */
    const SCALAR alpha,  /* scale factor for rhs */
@@ -4709,7 +4713,7 @@ int Mjoin(PATL,trsmKL_amm)
    size_t incL,         /* distance between blocks in L */
    TYPE *R,             /* ptr to col-major rhs (B on input, X on output */
    size_t ldr,          /* leading dim of RHS matrix R */
-   ATL_CUINT nmu,       /* nmu = mb/mu, assume mod(mb/mu) == 0 */
+   ATL_CUINT NMU,       /* nmu = mb/mu, assume mod(mb/mu) == 0 */
    ATL_CUINT nnu,       /* nnu = NB/nu, assume mod(NB/nu) == 0 */
    TYPE *c,             /* bxNB with trailing readable space for amm */
    TYPE *W,             /* aligned workspace for amm's B blocks */
@@ -4717,7 +4721,7 @@ int Mjoin(PATL,trsmKL_amm)
 )
 {
    const int b=mmp->mb, NB=mmp->nb;
-   const size_t incR = ldr*NB - (mb0+nmblks*b);
+   const size_t incR = ldr*NB - (mb0+(nmblks-1)*b);
    ATL_CUINT ku=mmp->ku, ldl0=(mb0+3)&(~3);
    ATL_UINT kb0;
    ATL_UINT r;
@@ -4732,14 +4736,14 @@ int Mjoin(PATL,trsmKL_amm)
    }
    else
       kb0 = b;
-  if (mb0 != kb0)
+  if (mb0 != kb0 && nmblks > 1)
      Mjoin(PATL,zero)(kb0*b, W, 1);
 /*
  * Loop over the full column-panels of RHS
  */
    for (r=0; r < nnblks; r++, pR += incR)
    {
-      ATL_INT i, mb=mb0;
+      ATL_INT i, mb=mb0, nmu=nmu0;
       const TYPE *pLb = L+incL;  /* ptr to L's block, loops along rowpan */
 /*
  *    First row-panel has no gemm updates
@@ -4748,7 +4752,8 @@ int Mjoin(PATL,trsmKL_amm)
    Mjoin(PATL,geprint)("L0", i, i, L, i);
       trsmK(Diag, mb0, NB, alpha, L, pR, ldr, c);
    Mjoin(PATL,geprint)("B~", mb0, NB, pR, ldr);
-      b2blk(mb0, NB, ATL_rone, pR, ldr, W); /* put B0 in amm's B storage */
+      if (nmblks > 1)
+         b2blk(mb0, NB, ATL_rone, pR, ldr, W); /* put B0 in amm's B storage */
       pR += mb0;
       for (i=1; i < nmblks; i++)     /* loop over rowpans of L and */
       {                              /* the colpan of B they update */
@@ -4765,6 +4770,7 @@ int Mjoin(PATL,trsmKL_amm)
             w = wN;
             amm = amm_b1;
             mb = b;
+            nmu = NMU;
          }
 /*
  *       Subtract all solved co-efficients from RHSs using accumulated GEMM
@@ -4814,7 +4820,6 @@ static void L2blk
    const size_t incL = ldl*b;
    ATL_UINT i;
 
-   #define DEBUG 1
    #ifdef DEBUG
       ATL_assert(incW >= ldW0*ldW0 && incW >= ldW*ldW);
    #endif
@@ -4924,13 +4929,15 @@ int Mjoin(PATL,trsmL_amm)
    else
       mb0 = M - i + b;
    nmu = b / mu;
-   nmu0 = mb0 / mu;
+   nmu0 = (mb0+mu-1) / mu;
    nnu = nb / nu;
    L2blk(Diag, mb0, b, nmblks, T, ldt, L, incL, mminf.a2blk);
    ATL_assert(!Mjoin(PATL,trsmKL_amm)(&mminf, Diag, mb0, nmu0, nmblks, nnblks,
                                       nr, alpha, L, incL, R, ldr, nmu, nnu,
                                       pC, W, incW));
    #ifdef DEBUG
+      ATL_assert(nmu*mu == b);
+      ATL_assert(b*(nmblks-1)+mb0 == M);
       i = (M+3)&(~3);
       eBV = Mjoin(PATL,cmpmatBV)(0, (1.0*M)*M*1e-15, M, N, myB, M, R, ldr);
       Mjoin(PATL,geprint)("Xc", M, N, R, ldr);
