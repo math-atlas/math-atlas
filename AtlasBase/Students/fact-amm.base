@@ -9,9 +9,17 @@ int Mjoin(PATL,getrf_bcAmm_info)(ATL_INT M, ATL_INT N, int *B, int *R, int *C);
 int Mjoin(PATL,tgetrf_bcAMM)
    (ATL_CINT major, ATL_CINT M, ATL_CINT N, TYPE *A, ATL_CINT lda, int *ipiv);
 void Mjoin(PATL,bcAblk2cmat)
-   (int m, int n, TYPE *W, int nb, TYPE *A, int lda, int nt, ablk2cmat_t ca2cc);
+   (int,int, TYPE*, ATL_CSZT, 
+   #ifdef TCPLX 
+      TYPE*, ATL_CSZT, 
+   #endif
+   TYPE*, int,int,int, ablk2cmat_t);
 void Mjoin(PATL,bcAm2rm)
-   (int m, int n, TYPE *W, int nb, TYPE *A, int lda, int nt, am2cm_t a2rn);
+   (int, int, TYPE*, ATL_CSZT, 
+   #ifdef TCPLX 
+      TYPE*, ATL_CSZT, 
+   #endif
+   TYPE*, int, int, int, am2cm_t);
 void Mjoin(PATL,bcG2L_cpy)
    (int m, int n, TYPE* A, int lda, TYPE* W, int ldw, int nb, int nt);
 void Mjoin(PATL,bcL2G_blkcpy)
@@ -19,7 +27,11 @@ void Mjoin(PATL,bcL2G_blkcpy)
 void Mjoin(PATL,bcL2G_cpy)
    (int m, int n, TYPE* W, int ldw, TYPE* A, int lda, int nb, int nt);
 void Mjoin(PATL,bcRm2am)
-   (int m, int n, TYPE *A, int lda, TYPE *W, int nb, int nt, cm2am_t r2an);
+   (int, int, TYPE*, int, TYPE*, ATL_CSZT, 
+   #ifdef TCPLX 
+      TYPE*, ATL_CSZT, 
+   #endif
+   int, int, cm2am_t);
 #endif
 /*
  * This structure is used to encode block-cyclic index info in ipiv using
@@ -72,7 +84,8 @@ void Mjoin(PATL,bcLaswp_amm)(ATL_bcpiv_t *bp, ATL_CINT N, ATL_CINT coff,
  * #define ATL_COLAFF - Not verified. To use column-major affinity.
  * #define DEBUG - Just adds some assert that helps debug race conditions.
  */
-#define ATL_CBC_NAME /* to use the tgetrf_CBC name to be included in ATLAS.*/
+#define ATL_CBC_NAME /* to use the tgetrf_CBC name to be included in ATLAS. */
+#define USE_BCSWP    /* to use ATLAS's block-cyclic amm swap routines. */
 
 
 @ROUT ATL_getrf_bcAmm ATL_bcL2G_blkcpy ATL_bcAblk2cmat ATL_bcRm2am ATL_bcG2L_cpy ATL_bcL2G_cpy ATL_bcAm2rm
@@ -95,7 +108,7 @@ void Mjoin(PATL,bcLaswp_amm)(ATL_bcpiv_t *bp, ATL_CINT N, ATL_CINT coff,
 #include <math.h>
 @endskip
 
-#include "atlas_cbc.h"
+#include "atlas_cbc2d.h"
 
 #include "atlas_threads.h"
 #include "atlas_tlapack.h"
@@ -105,15 +118,15 @@ void Mjoin(PATL,bcLaswp_amm)(ATL_bcpiv_t *bp, ATL_CINT N, ATL_CINT coff,
 #include "atlas_lvl2.h"
 #include "atlas_lamch.h"
 
-#define AMM_VER u0
+#define UAMM_VER u0
 
-#define UAMM_PRE Mjoin(Mjoin(atlas_,PRE),AMM_VER)
-#define UAMM_UPR Mjoin(Mjoin(atlas_,PRE),AMM_VER)
+#define UAMM_PRE Mjoin(Mjoin(atlas_,PRE),UAMM_VER)
+#define UAMM_UPR Mjoin(Mjoin(atlas_,UPR),UAMM_VER)
 
-#include Mstr(Mjoin(UAMM_UPR,amm_blk.h))
-#include Mstr(Mjoin(UAMM_UPR,amm_flag.h))
-#include Mstr(Mjoin(UAMM_UPR,amm_kern.h))
-#include Mstr(Mjoin(UAMM_UPR,amm_perf.h))
+#include Mstr(Mjoin(UAMM_PRE,amm_blk.h))
+#include Mstr(Mjoin(UAMM_PRE,amm_flag.h))
+#include Mstr(Mjoin(UAMM_PRE,amm_kern.h))
+#include Mstr(Mjoin(UAMM_PRE,amm_perf.h))
 
 #include Mstr(Mjoin(UAMM_PRE,amm_ablk2cmat.h))
 #include Mstr(Mjoin(UAMM_PRE,amm_cmat2ablk.h))
@@ -163,30 +176,147 @@ enum error_codes {NOT_ENOUGH_MEMORY=-1, CASE_NOT_HANDLED=-2};
    #define my_swap Mjoin(PATL, swap)
 #endif
 
-#ifdef TCPLX
-   #define c2a1(m, n, alp, A, lda, W) \
-      c2a1((m), (n), (alp), (A), (lda), (W), (W)+nb*nb)
-   #define a2c1(m, n, alp, A, lda, W) \
-      a2c1((m), (n), (alp), (A), (lda), (W), (W)+nb*nb)
-   #define ca2cc(m, n, alp, W, beta, A, lda) \
-      ca2cc((m), (n), (alp), (W), (W)+nb*nb, (beta), (A), (lda))
-   #define cc2ca(m, n, alp, A, lda, beta, W) \
-      cc2ca((m), (n), (alp), (A), (lda), (beta), (W), (W)+nb*nb)
+#define myRBS (nbnb SHIFT) /* stride of real blks */
+#define myIBS (myRBS)      /* stride of imag blks */
 
-   #define camm(nmu, nnu, kb, A0, B0, C0, amm_b1, amm_bn, nbnb) \
-   { \
-      TYPE *rA, *iA, *rB, *iB, *rC, *iC; \
-      rB = B0; \
-      iB = B0 + nbnb; \
-      rA = A0; \
-      iA = A0 + nbnb; \
-      rC = C0; \
-      iC = C0 + nbnb; \
-      amm_bn(nmu, nnu, nb, iA, iB, rC, rA, iB, iC); \
-      amm_b1(nmu, nnu, nb, rA, iB, iC, rA, rB, rC); \
-      amm_bn(nmu, nnu, nb, rA, rB, rC, iA, rB, iC); \
-      amm_b1(nmu, nnu, nb, iA, rB, iC, iA+(nbnb SHIFT), iB, iC+nbnb); \
-   }
+#ifdef TCPLX
+   #if !defined(CAMM_USEA) && !defined(CAMM_USEB) && !defined(CAMM_USEC)
+      #define CAMM_USEA /* provides better performance than USEC on opt32 */
+   #endif
+   #define ca2cc(m, n, alp, W, beta, A, lda) \
+      ca2cc((m), (n), (alp), (W), (W)+nbnb, (beta), (A), (lda))
+   #define cc2ca(m, n, alp, A, lda, beta, W) \
+      cc2ca((m), (n), (alp), (A), (lda), (beta), (W), (W)+nbnb)
+
+   #ifdef REALbIMAG    /* if defined, stores real before imag, no big effect */
+      #define myROFF 0
+      #define myIOFF nbnb
+      #define c2a1(m, n, alp, A, lda, W) \
+         c2a1((m), (n), (alp), (A), (lda), (W), (W)+myIOFF)
+      #define a2c1(m, n, alp, A, lda, W) \
+         a2c1((m), (n), (alp), (A), (lda), (W), (W)+myIOFF)
+
+      #ifdef CAMM_USEA
+         #define camm(nmu, nnu, kb, A0, B0, C0, amm_b1, amm_bn, nbnb, pfd) \
+         { \
+            TYPE *rA, *iA, *rB, *iB, *rC, *iC; \
+            rB = B0; \
+            iB = B0 + nbnb; \
+            rA = A0; \
+            iA = A0 + nbnb; \
+            rC = C0; \
+            iC = C0 + nbnb; \
+            amm_bn(nmu, nnu, nb, iA, iB, rC, iA, rB, iC); \
+            amm_b1(nmu, nnu, nb, iA, rB, iC, rA, rB, rC); \
+            amm_bn(nmu, nnu, nb, rA, rB, rC, rA, iB, iC); \
+            amm_b1(nmu, nnu, nb, rA, iB, iC, iA+((pfd) SHIFT), \
+                   iB, rC+((pfd) SHIFT)); \
+         }
+      #elif defined (CAMM_USEB)
+         #define camm(nmu, nnu, kb, A0, B0, C0, amm_b1, amm_bn, nbnb, pfd) \
+         { \
+            TYPE *rA, *iA, *rB, *iB, *rC, *iC; \
+            rB = B0; \
+            iB = B0 + nbnb; \
+            rA = A0; \
+            iA = A0 + nbnb; \
+            rC = C0; \
+            iC = C0 + nbnb; \
+            amm_bn(nmu, nnu, nb, iA, iB, rC, rA, iB, iC); \
+            amm_b1(nmu, nnu, nb, rA, iB, iC, rA, rB, rC); \
+            amm_bn(nmu, nnu, nb, rA, rB, rC, iA, rB, iC); \
+            amm_b1(nmu, nnu, nb, iA, rB, iC, iA+((pfd) SHIFT), \
+                   iB, rC+((pfd) SHIFT)); \
+         }
+      #elif defined(CAMM_USEC)
+         #define camm(nmu, nnu, kb, A0, B0, C0, amm_b1, amm_bn, nbnb, pfd) \
+         { \
+            TYPE *rA, *iA, *rB, *iB, *rC, *iC; \
+            rB = B0; \
+            iB = B0 + nbnb; \
+            rA = A0; \
+            iA = A0 + nbnb; \
+            rC = C0; \
+            iC = C0 + nbnb; \
+            amm_bn(nmu, nnu, nb, iA, iB, rC, rA, rB, rC); \
+            amm_bn(nmu, nnu, nb, rA, rB, rC, rA, iB, iC); \
+            amm_b1(nmu, nnu, nb, rA, iB, iC, iA, rB, iC); \
+            amm_b1(nmu, nnu, nb, iA, rB, iC, iA+((pfd) SHIFT), \
+                   iB, rC+((pfd) SHIFT)); \
+         }
+      #endif
+   #else /* using imag, then real storage */
+      #define myROFF nbnb
+      #define myIOFF (-nbnb)
+      #define c2a1(m, n, alp, A, lda, W) \
+         c2a1((m), (n), (alp), (A), (lda), (W)+myROFF, (W))
+      #define a2c1(m, n, alp, A, lda, W) \
+         a2c1((m), (n), (alp), (A), (lda), (W)+myROFF, (W))
+
+      #ifdef CAMM_USEA
+         #define camm(nmu, nnu, kb, A0, B0, C0, amm_b1, amm_bn, nbnb, pfd) \
+         { \
+            TYPE *rA, *iA, *rB, *iB, *rC, *iC; \
+            iB = B0; \
+            rB = B0 + nbnb; \
+            iA = A0; \
+            rA = A0 + nbnb; \
+            rC = C0; \
+            iC = C0 + nbnb; \
+            amm_bn(nmu, nnu, nb, iA, iB, rC, iA, rB, iC); \
+            amm_b1(nmu, nnu, nb, iA, rB, iC, rA, rB, rC); \
+            amm_bn(nmu, nnu, nb, rA, rB, rC, rA, iB, iC); \
+            amm_b1(nmu, nnu, nb, rA, iB, iC, iA+((pfd) SHIFT), \
+                   iB, rC+((pfd) SHIFT)); \
+         }
+      #elif defined (CAMM_USEB)
+         #define camm(nmu, nnu, kb, A0, B0, C0, amm_b1, amm_bn, nbnb, pfd) \
+         { \
+            TYPE *rA, *iA, *rB, *iB, *rC, *iC; \
+            iB = B0; \
+            rB = B0 + nbnb; \
+            iA = A0; \
+            rA = A0 + nbnb; \
+            rC = C0; \
+            iC = C0 + nbnb; \
+            amm_bn(nmu, nnu, nb, iA, iB, rC, rA, iB, iC); \
+            amm_b1(nmu, nnu, nb, rA, iB, iC, rA, rB, rC); \
+            amm_bn(nmu, nnu, nb, rA, rB, rC, iA, rB, iC); \
+            amm_b1(nmu, nnu, nb, iA, rB, iC, iA+((pfd) SHIFT), \
+                   iB, rC+((pfd) SHIFT)); \
+         }
+      #elif defined(CAMM_USEC)
+         #define camm(nmu, nnu, kb, A0, B0, C0, amm_b1, amm_bn, nbnb, pfd) \
+         { \
+            TYPE *rA, *iA, *rB, *iB, *rC, *iC; \
+            iB = B0; \
+            rB = B0 + nbnb; \
+            iA = A0; \
+            rA = A0 + nbnb; \
+            rC = C0; \
+            iC = C0 + nbnb; \
+            amm_bn(nmu, nnu, nb, iA, iB, rC, rA, rB, rC); \
+            amm_bn(nmu, nnu, nb, rA, rB, rC, rA, iB, iC); \
+            amm_b1(nmu, nnu, nb, rA, iB, iC, iA, rB, iC); \
+            amm_b1(nmu, nnu, nb, iA, rB, iC, iA+((pfd) SHIFT), \
+                   iB, rC+((pfd) SHIFT)); \
+         }
+      #endif
+   #endif
+   #define bcAm2rm(N, M, rW, rBS, A, lda, nb, nt, a2r) \
+      Mjoin(PATL, bcAm2rm)((N), (M), (rW), (rBS), (rW)+(myIOFF), myIBS, \
+                           (A), (lda), (nb), (nt), (a2r))
+   #define bcRm2am(N, M, A, lda, rW, rBS, nb, nt, r2a) \
+      Mjoin(PATL, bcRm2am)((N), (M), (A), (lda), (rW), (rBS), \
+                           (rW)+(myIOFF), myIBS, (nb), (nt), (r2a))
+   #define bcAblk2cmat(M, N, rW, rBS, A, lda, nb, nt, ca2cc) \
+      Mjoin(PATL, bcAblk2cmat)((M), (N), (rW), (rBS), (rW)+nbnb, myIBS, \ 
+                               (A), (lda), (nb), (nt), (ca2cc))
+#else
+   #define myROFF 0
+   #define bcAm2rm Mjoin(PATL, bcAm2rm)
+   #define bcRm2am Mjoin(PATL, bcRm2am)
+   #define bcAblk2cmat Mjoin(PATL, bcAblk2cmat)
 #endif
 
 typedef struct
@@ -197,6 +327,7 @@ typedef struct
    int nb, nbi;
    int mu, nu;
    int NMu, NNu, RMu, RNu;
+   int rmu;
 
    cm2am_t r2a;
    cm2am_t c2a;
@@ -223,7 +354,7 @@ typedef struct
 
    int *PROG;
    int *JB;
-   ATL_CBC_t *cbc;
+   ATL_CBC2D_t *cbc;
    int info;
 
    ATL_TGETF2_M_t *lups;
@@ -232,6 +363,9 @@ typedef struct
    ATL_INT *ldws2;
    ATL_INT ldw2;
    int info2;
+   #ifdef USE_BCSWP
+      ATL_bcpiv_t *bp;
+   #endif
 
    char space[256 - (28)*sizeof(int) - 14*sizeof(void*)];
 } ATL_GETRF_2D_t;
@@ -242,6 +376,51 @@ typedef struct
 #endif
 
 #ifdef SHOW_PROF
+void PrintAverageProfiling(int nthreads, int ntimers, int tstart, int tend, 
+                           long long timers[ATL_NTHREADS][ntimers],
+                           char** timerNames, int ignore)
+{
+   long long ltsc, ctsc, ttsc;
+   double ttime, ctime;
+   int k, t;
+   fprintf(stdout, "GEMM MFLOPs : ");
+   for (k=0; k<nthreads; k++)
+   {
+      if (timers[k][GEMM] <= 0 || timers[k][MMFLOP] <= 0) continue;
+      fprintf(stdout, "%.4lf ", 
+            timers[k][MMFLOP]*1e-9/Tick2Sec(timers[k][GEMM]));
+      timers[k][MMFLOP] = 0;
+   }
+   fprintf(stdout, "\n");
+   ttsc = 0;
+   for (t=tstart; t<tend; t++)
+   {
+      ctsc = 0;
+      for (k=0; k<nthreads; k++)
+      {
+         ctsc += Timers[k][t];
+      }
+      ctsc /= nthreads;
+      ttsc += ctsc;
+   }
+   ttime = Tick2Sec(ttsc)*1e3;
+   fprintf(stdout, "Total time : %lf ms\n", ttime);
+   fprintf(stdout, "--------------------------------------\n");
+   for (t=tstart; t<tend; t++)
+   {
+      ctsc = 0;
+      for (k=0; k<nthreads; k++)
+      {
+         ctsc += Timers[k][t];
+      }
+      ctsc /= nthreads;
+      if (ctsc <= 0) continue;
+      ctime = Tick2Sec(ctsc)*1e3;
+      fprintf(stdout, "%15s : %lf ms (%.2lf%%)\n", timerNames[t],
+                  ctime, ctime*100.0/ttime);
+   }
+}
+
 void PrintProfilingInfo_pt(int nthreads, int ntimers,
                            long long timers[ATL_NTHREADS][ntimers],
                            char** timerNames, int ignore)
@@ -617,7 +796,12 @@ static void ApplySwapTRSM(int cjb, int kb, int nnu, int cn, ATL_GETRF_2D_t *pd)
          A0 += (((kb/pt)*nbnb) SHIFT);
          B0 = WRKS[id] + ((cjb*nb*((size_t)(ldws[id]))) SHIFT);
          B0 += ((TRSM_BLK(kb, active, pt)*nbnb + nbnb) SHIFT);
-         ATL_amlaswp(id, 0, nnu*nu, nnu*nu, cjb, kb, B0, pd);
+         #ifdef USE_BCSWP
+            Mjoin(PATL,bcLaswp_amm)(pd->bp, nnu*nu, 0, B0, nb, kb*nb, kb*nb+nb,
+                                    cjb, nnu, nbnb);
+         #else
+            ATL_amlaswp(id, 0, nnu*nu, nnu*nu, cjb, kb, B0, pd);
+         #endif
          my_trsm(CblasLeft, CblasLower, CblasNoTrans, CblasUnit, 
                   nb, cn, one, A0, nb, B0, nb);
          
@@ -638,7 +822,12 @@ static void ApplySwapTRSM(int cjb, int kb, int nnu, int cn, ATL_GETRF_2D_t *pd)
       B0 = WRKS[partner] + ((cjb*nb*((size_t)(ldws[partner]))) SHIFT);
       B0 += ((TRSM_BLK(kb, active, pt)*nbnb + nbnb) SHIFT);
 
-      ATL_amlaswp(partner, ts, nnu*nu, tn, cjb, kb, B0, pd);
+      #ifdef USE_BCSWP
+         Mjoin(PATL,bcLaswp_amm)(pd->bp, tn, ts, B0, nb, kb*nb, kb*nb+nb,
+                                 cjb, nnu, nbnb);
+      #else
+         ATL_amlaswp(partner, ts, nnu*nu, tn, cjb, kb, B0, pd);
+      #endif
 
       Bu = B0 + ts*nb; /* needed for complex B-major block */
       B0 = B0 + ((ts*nb) SHIFT);
@@ -653,27 +842,62 @@ static void ApplySwapTRSM(int cjb, int kb, int nnu, int cn, ATL_GETRF_2D_t *pd)
  * Applies GEMM, if provided the correct pointers.
  * sb: starting block number for GEMM.
  */
-static void ApplyGEMM(int sb, int m_b, int nmu, int rmu, int nnu, 
+static void ApplyGEMM(int kb, int sb, int m_b, int nmu, int rmu, int nnu, 
                TYPE* A0, TYPE* B0, TYPE* C0, const int nb, 
                ammkern_t amm_b1, ammkern_t amm_bn)
 {
+   #ifndef FWD_GEMM
+      #define FWD_GEMM 0
+   #endif
    const nbnb = nb*nb;
-   int ib;
-   for (ib=sb; ib<m_b; ib++, A0+=(nbnb SHIFT), C0+=(nbnb SHIFT))
+   int ib, mb = m_b - sb;
+   if (FWD_GEMM || (kb&1)) /* do top-down gemm */
    {
-      #ifdef TCPLX
-         camm(nmu, nnu, nb, A0, B0, C0, amm_b1, amm_bn, nbnb);
-      #else
-         amm_b1(nmu, nnu, nb, A0, B0, C0, A0+nbnb, B0, C0+nbnb);
-      #endif
+      if (nmu)
+      {
+         for (ib=0; ib<mb; ib++, A0+=(nbnb SHIFT), C0+=(nbnb SHIFT))
+         {
+            #ifdef TCPLX
+               camm(nmu, nnu, nb, A0, B0, C0, amm_b1, amm_bn, nbnb, nbnb);
+            #else
+               amm_b1(nmu, nnu, nb, A0, B0, C0, A0+nbnb, B0, C0+nbnb);
+            #endif
+         }
+      }
+      if (rmu)
+      {
+         #ifdef TCPLX
+            camm(rmu, nnu, nb, A0, B0, C0, amm_b1, amm_bn, nbnb, nbnb);
+         #else
+            amm_b1(rmu, nnu, nb, A0, B0, C0, A0+nbnb, B0, C0+nbnb);
+         #endif
+      }
    }
-   if (rmu)
+   else /* do bottom-up gemm */
    {
-      #ifdef TCPLX
-         camm(rmu, nnu, nb, A0, B0, C0, amm_b1, amm_bn, nbnb);
-      #else
-         amm_b1(rmu, nnu, nb, A0, B0, C0, A0+nbnb, B0, C0+nbnb);
-      #endif
+      A0 += mb*(nbnb SHIFT);
+      C0 += mb*(nbnb SHIFT);
+      if (rmu)
+      {
+         #ifdef TCPLX
+            camm(rmu, nnu, nb, A0, B0, C0, amm_b1, amm_bn, nbnb, -nbnb);
+         #else
+            amm_b1(rmu, nnu, nb, A0, B0, C0, A0-nbnb, B0, C0-nbnb);
+         #endif
+      }
+      A0-=(nbnb SHIFT);
+      C0-=(nbnb SHIFT);
+      if (nmu)
+      {
+         for (ib=mb; ib; ib--, A0-=(nbnb SHIFT), C0-=(nbnb SHIFT))
+         {
+            #ifdef TCPLX
+               camm(nmu, nnu, nb, A0, B0, C0, amm_b1, amm_bn, nbnb, -nbnb);
+            #else
+               amm_b1(nmu, nnu, nb, A0, B0, C0, A0-nbnb, B0, C0-nbnb);
+            #endif
+         }
+      }
    }
 }
 
@@ -693,7 +917,7 @@ static void ApplyOneUpdate(int cjb, int cJb, int kb, int nnu, int cn,
    const int nb = pd->nb;
    const int nu = pd->nu;
    const int nbnb = nb * nb;
-   ATL_CBC_t *cbc = pd->cbc;
+   ATL_CBC2D_t *cbc = pd->cbc;
    TYPE **WRKS = pd->WRKS;
    int *ldws = pd->ldws;
    int sb, partner;
@@ -712,7 +936,7 @@ static void ApplyOneUpdate(int cjb, int cJb, int kb, int nnu, int cn,
    ApplySwapTRSM(cjb, kb, nnu, cn, pd);
 
    /* sync to confirm that everyone is done with TRSM */
-   if (pt > 1) ATL_CBC_barrier(ATL_SYNC_COL, cbc, id);
+   if (pt > 1) ATL_CBC2D_barrier(ATL_SYNC_COL, cbc, id);
    #ifdef ATL_LAPROF
       gettime(ltsc, ctsc, Timers[id][SWSM], ttsc);
    #endif
@@ -729,7 +953,7 @@ static void ApplyOneUpdate(int cjb, int cJb, int kb, int nnu, int cn,
    B0 = WRKS[partner] + ((cjb*nb*((size_t)(ldws[partner]))) SHIFT);
    B0 += ((TRSM_BLK(kb, active, pt)*nbnb) SHIFT);
    
-   ApplyGEMM(sb, pd->m_bs[id], pd->NMu, pd->RMu, nnu, 
+   ApplyGEMM(kb, sb, pd->m_bs[id], pd->NMu, pd->RMu, nnu, 
                A0, B0, C0, nb, pd->amm_b1, pd->amm_bn);
    #ifdef ATL_LAPROF
       gettime(ltsc, ctsc, Timers[id][GEMM], ttsc);
@@ -746,7 +970,6 @@ static void ApplyOneUpdate(int cjb, int cJb, int kb, int nnu, int cn,
             B0 = B0 + (nbnb SHIFT);
             Mjoin(PATL, gecopy)(nb, cn, B0, nb, A0, pd->lda);
          }
-         pd->PROG[cJb] = kb + 1;
    }
    #ifdef ATL_LAPROF
       gettime(ltsc, ctsc, Timers[id][Copy2GU], ttsc);
@@ -762,15 +985,21 @@ static void ApplyOneUpdate(int cjb, int cJb, int kb, int nnu, int cn,
       gettime(ltsc, ctsc, Timers[id][CopyS], ttsc);
    #endif
    /* sync before next phase of update */
-   if (pt > 1) ATL_CBC_barrier(ATL_SYNC_COL, cbc, id);
+   if (pt > 1) ATL_CBC2D_barrier(ATL_SYNC_COL, cbc, id);
    #ifdef ATL_LAPROF
-      gettime(ltsc, ctsc, Timers[id][GEMM], ttsc);
+      gettime(ltsc, ctsc, Timers[id][CSync2M], ttsc);
+   #endif
+   if (rid == active)
+      pd->PROG[cJb] = kb; /* kb already incremented */
+   if (pt > 1) ATL_CBC2D_barrier(ATL_SYNC_COL, cbc, id);
+   #ifdef ATL_LAPROF
+      gettime(ltsc, ctsc, Timers[id][CSync2M], ttsc);
    #endif
 }
 
 static void ApplyLeftPivots(ATL_GETRF_2D_t *pd)
 {
-   const int id = pd->id;
+   const int id = pd->id, rid=pd->rid, cid=pd->cid;
    const int pt = pd->pt, qt = pd->qt, nt = pd->nt;
    const int nb = pd->nb;
    int *JB = pd->JB;
@@ -781,31 +1010,91 @@ static void ApplyLeftPivots(ATL_GETRF_2D_t *pd)
    volatile int *PROG = (volatile int *)pd->PROG;
    const int oNb = pd->oNb;
    const int aNb = oNb-1;
-   const int ntnb = nt * nb;
-   const size_t ntnblda = ntnb * lda;
-   int cJB = *JB;
-   int mn = cJB * nb;
+   const int nbnt = nb * nt;
+   const int nbpt = nb * pt;
+   const int nbqt = nb * qt;
+   const size_t nbntlda = nbnt * lda;
+   const size_t nbptlda = nbpt * lda;
+   const size_t nbqtlda = nbqt * lda;
+   int cJB, mn;
+   const int ts = rid*nb/pt;
+   const int tn = (rid+1)*nb/pt - ts;
+   const int tslda = ts * lda;
    int j, Jb;
    TYPE *A0;
-   mn = Mmin(mn, MN);
-   j = id*nb;
-   if (j+nb > mn) mn = j+nb;
-   A0 = A + ((j*((size_t)(lda))) SHIFT);
-   for (Jb=id; Jb<aNb; Jb+=nt, j+=ntnb, A0+=(ntnblda SHIFT))
-   {
-      if (PROG[Jb]*nb < mn)
-         ATL_laswp(nb, A0, lda, j+nb, mn, ipiv, 1);
-   }
-   if (mn < MN)
-   {
-      while (PROG[aNb] < oNb);
-      j = id*nb;
+   #ifdef ATL_LAPROF
+      long long ltsc=0, ctsc=0, ttsc=0;
+      rdtsc(ltsc);
+   #endif
+   #if 0
+      cJB = *JB;
+      mn = cJB * nb;
+      mn = Mmin(mn, MN);
+      j = cid*nb;
+      if (j+nb > mn) mn = j+nb;
       A0 = A + ((j*((size_t)(lda))) SHIFT);
-      for (Jb=id; Jb<aNb; Jb+=nt, A0+=(ntnblda SHIFT))
+      A0 += (tslda SHIFT);
+      for (Jb=cid; Jb<aNb; Jb+=qt, j+=nbqt, A0+=(nbqtlda SHIFT))
       {
-         ATL_laswp(nb, A0, lda, mn, MN, ipiv, 1);
+         if (PROG[Jb]*nb < mn)
+            ATL_laswp(tn, A0, lda, j+nb, mn, ipiv, 1);
       }
-   }
+      #ifdef ATL_LAPROF
+         gettime(ltsc, ctsc, Timers[id][LSWP], ttsc);
+      #endif
+      if (mn < MN)
+      {
+         while (PROG[aNb] < oNb);
+         #ifdef ATL_LAPROF
+            gettime(ltsc, ctsc, Timers[id][CSync2S], ttsc);
+         #endif
+         j = cid*nb;
+         A0 = A + ((j*((size_t)(lda))) SHIFT);
+         A0 += (tslda SHIFT);
+         for (Jb=cid; Jb<aNb; Jb+=qt, A0+=(nbqtlda SHIFT))
+         {
+            ATL_laswp(tn, A0, lda, mn, MN, ipiv, 1);
+         }
+      }
+      #ifdef ATL_LAPROF
+         gettime(ltsc, ctsc, Timers[id][LSWP], ttsc); 
+      #endif
+   #else /* new kind of lswp, doesn't work well with zero drain */
+      /* first pass by first last pcol threads */
+      int flpcol = Mmod(oNb, qt);
+      cJB = oNb - qt + 1;
+      mn = cJB * nb;
+      mn = Mmin(mn, MN);
+      if (flpcol == cid)
+      {
+         j = rid*nb;
+         if (j+nb > mn) mn = j+nb;
+         A0 = A + ((j*((size_t)(lda))) SHIFT);
+         for (Jb=rid; Jb<cJB; Jb+=pt, j+=nbpt, A0+=(nbptlda SHIFT))
+         {
+            if (j+nb < mn) ATL_laswp(nb, A0, lda, j+nb, mn, ipiv, 1);
+         }
+      }
+      #ifdef ATL_LAPROF
+         gettime(ltsc, ctsc, Timers[id][LSWP], ttsc);
+      #endif
+      /* wait for last panel */
+      ATL_CBC2D_barrier(ATL_SYNC_GRID, pd->cbc, id);
+      #ifdef ATL_LAPROF
+         gettime(ltsc, ctsc, Timers[id][CSync2S], ttsc);
+      #endif
+      /* second pass by all threads */
+      j = id * nb;
+      A0 = A + ((j*((size_t)(lda))) SHIFT);
+      for (Jb=id; Jb<aNb; Jb+=nt, j+=nbnt, A0+=(nbntlda SHIFT))
+      {
+         if (Mmax(mn, j+nb) < MN)
+            ATL_laswp(nb, A0, lda, Mmax(mn, j+nb), MN, ipiv, 1);
+      }
+      #ifdef ATL_LAPROF
+         gettime(ltsc, ctsc, Timers[id][LSWP], ttsc);
+      #endif
+   #endif
 }
 
 /*
@@ -971,49 +1260,55 @@ void Mjoin(PATL, bcL2G_blkcpy)
    }
 }
 @ROUT ATL_bcAblk2cmat
-#ifdef TCPLX
-   #define ca2cc(m, n, alp, W, beta, A, lda) \
-      ca2cc((m), (n), (alp), (W), (W)+nb*nb, (beta), (A), (lda))
-#endif
 
 /* copy a panel from C-access-major to cyclic-column major */
 void Mjoin(PATL, bcAblk2cmat)
 (
    int m, 
    int n, 
-   TYPE *W, 
-   int nb, 
+   TYPE *rW, 
+   ATL_CSZT rbs, 
+   #ifdef TCPLX
+      TYPE *iW, 
+      ATL_CSZT ibs, 
+   #endif
    TYPE *A, 
    int lda, 
+   int nb, 
    int nt, 
    ablk2cmat_t ca2cc
 )
 {
-   const int nbnb = nb * nb;
    const int nbnt = nb * nt;
    const int m_ = (m/nb)*nb;
    const int mr = m - m_;
-   TYPE *Ac, *Wc;
+   TYPE *Ac, *rWc;
+   int i;
    #ifdef TREAL
       TYPE one=ATL_rone, zero=ATL_rzero;
+      for (i=0, rWc=rW, Ac=A; i<m_; i+=nb, rWc+=rbs, Ac+=nbnt)
+      {
+         ca2cc(nb, n, one, rWc, zero, Ac, lda);
+      }
+      if (mr)
+      {
+         ca2cc(mr, n, one, rWc, zero, Ac, lda);
+      }
    #elif defined(TCPLX)
+      TYPE *iWc;
       const TYPE one[2]={ATL_rone,ATL_rzero}, zero[2]={ATL_rzero,ATL_rzero};
+      for (i=0, rWc=rW, iWc=iW, Ac=A; i<m_; 
+            i+=nb, rWc+=rbs, iWc+=ibs, Ac+=(nbnt SHIFT))
+      {
+         ca2cc(nb, n, one, rWc, iWc, zero, Ac, lda);
+      }
+      if (mr)
+      {
+         ca2cc(mr, n, one, rWc, iWc, zero, Ac, lda);
+      }
    #endif
-   int i;
-   for (i=0, Wc=W, Ac=A; i<m_; i+=nb, Wc+=(nbnb SHIFT), Ac+=(nbnt SHIFT))
-   {
-      ca2cc(nb, n, one, Wc, zero, Ac, lda);
-   }
-   if (mr)
-   {
-      ca2cc(mr, n, one, Wc, zero, Ac, lda);
-   }
 }
 @ROUT ATL_bcRm2am
-#ifdef TCPLX
-   #define r2an(n, m, alp, A, lda, W) \
-      r2an((n), (m), (alp), (A), (lda), (W), (W)+nb*nb)
-#endif
 
 /* copy a panel from cyclic-column major to contiguous access-major A */
 void Mjoin(PATL, bcRm2am)
@@ -1022,31 +1317,45 @@ void Mjoin(PATL, bcRm2am)
    int n, 
    TYPE *A, 
    int lda, 
-   TYPE *W, 
+   TYPE *rW, 
+   ATL_CSZT rbs, 
+   #ifdef TCPLX
+      TYPE *iW, 
+      ATL_CSZT ibs, 
+   #endif
    int nb, 
    int nt, 
    cm2am_t r2an
 )
 {
-   const int nbnb = nb * nb;
    const int nbnt = nb * nt;
    const int m_ = (m/nb)*nb;
    const int mr = m - m_;
-   TYPE *Ac, *Wc;
+   TYPE *Ac, *rWc;
+   int i;
    #ifdef TREAL
       TYPE none=ATL_rnone;
+      for (i=0, rWc=rW, Ac=A; i<m_; i+=nb, rWc+=rbs, Ac+=nbnt)
+      {
+         r2an(n, nb, none, Ac, lda, rWc);
+      }
+      if (mr)
+      {
+         r2an(n, mr, none, Ac, lda, rWc);
+      }
    #elif defined(TCPLX)
+      TYPE *iWc;
       const TYPE none[2] = {ATL_rnone, ATL_rzero};
+      for (i=0, rWc=rW, iWc=iW, Ac=A; i<m_; 
+            i+=nb, rWc+=rbs, iWc+=ibs, Ac+=(nbnt SHIFT))
+      {
+         r2an(n, nb, none, Ac, lda, rWc, iWc);
+      }
+      if (mr)
+      {
+         r2an(n, mr, none, Ac, lda, rWc, iWc);
+      }
    #endif
-   int i;
-   for (i=0, Wc=W, Ac=A; i<m_; i+=nb, Wc+=(nbnb SHIFT), Ac+=(nbnt SHIFT))
-   {
-      r2an(n, nb, none, Ac, lda, Wc);
-   }
-   if (mr)
-   {
-      r2an(n, mr, none, Ac, lda, Wc);
-   }
 }
 @ROUT ATL_bcG2L_cpy
 
@@ -1117,45 +1426,56 @@ void Mjoin(PATL, bcL2G_cpy)
    }
 }
 @ROUT ATL_bcAm2rm
-#ifdef TCPLX
-   #define a2rn(n, m, alp, A, lda, W) \
-      a2rn((n), (m), (alp), (A), (lda), (W), (W)+nb*nb)
-#endif
 
 /* copy a panel from access-major A to cyclic column major */
 void Mjoin(PATL, bcAm2rm)
 (
    int m, 
    int n, 
-   TYPE *W, 
-   int nb, 
+   TYPE *rW, 
+   ATL_CSZT rbs, 
+   #ifdef TCPLX
+      TYPE *iW, 
+      ATL_CSZT ibs, 
+   #endif
    TYPE *A, 
    int lda, 
+   int nb, 
    int nt, 
    am2cm_t a2rn
 )
 {
    /* copy back data from A-major to Col-major original storage */
    const int nbnt = nb * nt;
-   const int nbnb = nb * nb;
    int m_ = (m/nb)*nb;
    int mr = m - m_;
-   TYPE *Wc, *Ac=A;
+   TYPE *rWc, *Ac;
+   int i;
    #ifdef TREAL
       TYPE none=ATL_rnone;
+      if (m <= 0) return;
+      for (i=0, rWc=rW, Ac=A; i<m_; i+=nb, rWc+=rbs, Ac+=nbnt)
+      {
+         a2rn(n, nb, none, Ac, lda, rWc);
+      }
+      if (mr)
+      {
+         a2rn(n, mr, none, Ac, lda, rWc);
+      }
    #elif defined(TCPLX)
+      TYPE *iWc;
       const TYPE none[2] = {ATL_rnone, ATL_rzero};
+      if (m <= 0) return;
+      for (i=0, rWc=rW, iWc=iW, Ac=A; i<m_; 
+            i+=nb, rWc+=rbs, iWc+=ibs, Ac+=(nbnt SHIFT))
+      {
+         a2rn(n, nb, none, Ac, lda, rWc, iWc);
+      }
+      if (mr)
+      {
+         a2rn(n, mr, none, Ac, lda, rWc, iWc);
+      }
    #endif
-   int i;
-   if (m <= 0) return;
-   for (i=0, Wc=W, Ac=A; i<m_; i+=nb, Wc+=(nbnb SHIFT), Ac+=(nbnt SHIFT))
-   {
-      a2rn(n, nb, none, Ac, lda, Wc);
-   }
-   if (mr)
-   {
-      a2rn(n, mr, none, Ac, lda, Wc);
-   }
 }
 @ROUT ATL_getrf_bcAmm
 
@@ -1169,20 +1489,20 @@ static void ATL_getf2s(int id, int Jb, int m, int n, TYPE *W,
    const int active = Mmod(Jb,pt);
    ATL_GETRF_2D_t *pda, *pdb;
    int terr = 0;
-   ATL_CBC_t *cbc = pd->cbc;
+   ATL_CBC2D_t *cbc = pd->cbc;
    TYPE *Ac = Aj + Jb*(nb SHIFT); /* Ac points to the diagonal block now */
    if (rid < active)
       Ac += (pt+rid-active)*(nb SHIFT);
    else
       Ac += (rid-active)*(nb SHIFT);
    if (Jb)
-      Mjoin(PATL, bcAblk2cmat)(m, n, W, nb, Ac, lda, pt, pd->ca2cc);
+      bcAblk2cmat(m, n, W, myRBS, Ac, lda, nb, pt, pd->ca2cc);
    #if !defined(USE_SGETF2)
    else
       Mjoin(PATL, bcL2G_blkcpy)(m, n, W, nb, Ac, lda, pt);
    #endif
 
-   if (pt > 1) ATL_CBC_barrier(ATL_SYNC_COL, cbc, id);
+   if (pt > 1) ATL_CBC2D_barrier(ATL_SYNC_COL, cbc, id);
    
    if (rid == active)
    {
@@ -1191,7 +1511,7 @@ static void ATL_getf2s(int id, int Jb, int m, int n, TYPE *W,
       if (terr && !pd->info2) pd->info2 = terr;
    }
 
-   if (pt > 1) ATL_CBC_barrier(ATL_SYNC_COL, cbc, id);
+   if (pt > 1) ATL_CBC2D_barrier(ATL_SYNC_COL, cbc, id);
 
    /* everyone read the error code from active guy */
    pdb = pd - id;
@@ -1202,14 +1522,13 @@ static void ATL_getf2s(int id, int Jb, int m, int n, TYPE *W,
    if (rid == active)
    {
       Mjoin(PATL, gecopy)(Mmin(m, nb), n, Ac, lda, W-(nbnb SHIFT), nb);
-      Mjoin(PATL, bcRm2am)(m-Mmin(m,nb), n, Ac+nb*(pt SHIFT), lda, 
-                                   W, nb, pt, pd->r2a);
+      bcRm2am(m-Mmin(m,nb), n, Ac+nb*(pt SHIFT), lda, 
+              W+myROFF, myRBS, nb, pt, pd->r2a);
    }
    else
-      Mjoin(PATL, bcRm2am)(m, n, Ac, lda, W-(nbnb SHIFT), nb, 
-                                   pt, pd->r2a);
+      bcRm2am(m, n, Ac, lda, W-(nbnb SHIFT)+myROFF, myRBS, nb, pt, pd->r2a);
    
-   if (pt > 1) ATL_CBC_barrier(ATL_SYNC_COL, cbc, id);
+   if (pt > 1) ATL_CBC2D_barrier(ATL_SYNC_COL, cbc, id);
 }
 
 @beginskip
@@ -1222,7 +1541,7 @@ static void FactorPanelUsingTgetf2(int id, int Jb, int m, int n, TYPE *W,
    const int nb = pd->nb;
    const int nbnb = nb * nb;
    const int active = Mmod(Jb,pt);
-   ATL_CBC_t *cbc = pd->cbc;
+   ATL_CBC2D_t *cbc = pd->cbc;
    const int M0 = pd->M - Jb*nb;
    TYPE *Ac, *Ac0 = Aj + Jb*(nb SHIFT); /* Ac0 points to the diag blk now */
    ATL_thread_t tp;
@@ -1234,7 +1553,7 @@ static void FactorPanelUsingTgetf2(int id, int Jb, int m, int n, TYPE *W,
    else
       Ac = Ac0 + (rid-active)*(nb SHIFT);
    if (Jb)
-      Mjoin(PATL, bcAblk2cmat)(m, n, W, nb, Ac, lda, pt, pd->ca2cc);
+      bcAblk2cmat(m, n, W, myRBS, Ac, lda, nb, pt, pd->ca2cc);
    #if !defined(USE_SGETF2)
    else
       Mjoin(PATL, bcL2G_blkcpy)(m, n, W, nb, Ac, lda, pt);
@@ -1243,12 +1562,12 @@ static void FactorPanelUsingTgetf2(int id, int Jb, int m, int n, TYPE *W,
    p = Mmin(pt, M0/n);
    if (p < 2) /* not enough row blocks */
    {
-      if (pt > 1) ATL_CBC_barrier(ATL_SYNC_COL, cbc, id);
+      if (pt > 1) ATL_CBC2D_barrier(ATL_SYNC_COL, cbc, id);
       if (rid == active)
       {
          Mjoin(PATL, getrf)(CblasColMajor, M0, n, Ac0, lda, ipiv);
       }
-      if (pt > 1) ATL_CBC_barrier(ATL_SYNC_COL, cbc, id);
+      if (pt > 1) ATL_CBC2D_barrier(ATL_SYNC_COL, cbc, id);
    }
    else /* call ATL_tgetf2 */
    {
@@ -1271,25 +1590,24 @@ static void FactorPanelUsingTgetf2(int id, int Jb, int m, int n, TYPE *W,
       lup->stage[rid] = -1;
       lup->info = 0;
 
-      if (pt > 1) ATL_CBC_barrier(ATL_SYNC_COL, cbc, id);
+      if (pt > 1) ATL_CBC2D_barrier(ATL_SYNC_COL, cbc, id);
 
       if (rid < p) Mjoin(PATL, DoWorkGETF2)(&lp, &tp);
 
-      if (pt > 1) ATL_CBC_barrier(ATL_SYNC_COL, cbc, id);
+      if (pt > 1) ATL_CBC2D_barrier(ATL_SYNC_COL, cbc, id);
    }
    
    if (Jb) W-=(nbnb SHIFT); /* for later panels, blocks are shifted */
    if (rid == active)
    {
       Mjoin(PATL, gecopy)(Mmin(m, nb), n, Ac, lda, W-(nbnb SHIFT), nb);
-      Mjoin(PATL, bcRm2am)(m-Mmin(m,nb), n, Ac+nb*(pt SHIFT), lda, 
-                                   W, nb, pt, pd->r2a);
+      bcRm2am(m-Mmin(m,nb), n, Ac+nb*(pt SHIFT), lda, 
+              W+myROFF, myRBS, nb, pt, pd->r2a);
    }
    else
-      Mjoin(PATL, bcRm2am)(m, n, Ac, lda, W-(nbnb SHIFT), nb, 
-                                  pt, pd->r2a);
+      bcRm2am(m, n, Ac, lda, W-(nbnb SHIFT)+myROFF, myRBS, nb, pt, pd->r2a);
    
-   if (pt > 1) ATL_CBC_barrier(ATL_SYNC_COL, cbc, id);
+   if (pt > 1) ATL_CBC2D_barrier(ATL_SYNC_COL, cbc, id);
 }
 #else
 static void FactorPanelUsingTgetf2(int id, int Jb, int m00, int n, TYPE *W0, 
@@ -1343,13 +1661,13 @@ static void FactorPanelUsingTgetf2(int id, int Jb, int m00, int n, TYPE *W0,
    #endif
    w = W = WRKS[rank];
    ldws2[rank] = ldw;
-   if (pt > 1) ATL_CBC_barrier(ATL_SYNC_COL, pd->cbc, id);
+   if (pt > 1) ATL_CBC2D_barrier(ATL_SYNC_COL, pd->cbc, id);
    if (rank >= p) return;
 
    /* everything is setup, now copy, then factorize */
    if (Jb) /* copy from C-major */
    {
-      Mjoin(PATL, bcAblk2cmat)(m, n, W0, nb, W, ldw, 1, pd->ca2cc);
+      bcAblk2cmat(m, n, W0, myRBS, W, ldw, nb, 1, pd->ca2cc);
    }
    else /* copy from original column-major */
    {
@@ -1373,9 +1691,9 @@ static void FactorPanelUsingTgetf2(int id, int Jb, int m00, int n, TYPE *W0,
    for (j=0; j < MN; j++, w += (ldw SHIFT))
    {
       locpiv = cblas_iamax(m, w, 1);
-/*
- *    Combine local pivot into global
- */
+      /*
+       * Combine local pivot into global
+       */
       if (!rank)
       {
          globpiv = IDXL2G(j+locpiv, rank, nb, p);
@@ -1477,11 +1795,11 @@ static void FactorPanelUsingTgetf2(int id, int Jb, int m00, int n, TYPE *W0,
    {
       /* blk-maj for TRSM */
       Mjoin(PATL, gecopy)(nb, n, W, ldw, W0-(nbnb SHIFT), nb); 
-      Mjoin(PATL, bcRm2am)(m-nb, n, W+(nb SHIFT), ldw, W0, nb, 1, pd->r2a);
+      bcRm2am(m-nb, n, W+(nb SHIFT), ldw, W0+myROFF, myRBS, nb, 1, pd->r2a);
    }
    else
    {
-      Mjoin(PATL, bcRm2am)(m, n, W, ldw, W0-(nbnb SHIFT), nb, 1, pd->r2a);
+      bcRm2am(m, n, W, ldw, W0-(nbnb SHIFT)+myROFF, myRBS, nb, 1, pd->r2a);
    }
    /* now copy back the result */
    Mjoin(PATL, bcL2G_cpy)(m,n, W, ldw, Aj+(((Jb+rank)*nb) SHIFT), lda, nb, pt);
@@ -1511,9 +1829,9 @@ static void ATL_subtgetf2(int rank, int m00, int n, int j00, int p,
    for (j=0; j < n; j++, w += (ldw SHIFT))
    {
       locpiv = cblas_iamax(m, w, 1);
-/*
- *    Combine local pivot into global
- */
+      /*
+       * Combine local pivot into global
+       */
       if (!rank)
       {
          globpiv = IDXL2G(j+locpiv+j00, rank, nb, p); /* adjust for subpanel */
@@ -1611,7 +1929,8 @@ static void ATL_subtgetf2(int rank, int m00, int n, int j00, int p,
 }
 
 static void ATL_laswp_blk(int m, int n, int rs, int cs, TYPE *W, int ldw, 
-                   TYPE **WRKS, int *ldws, int *ipiv, ATL_GETRF_2D_t *pd)
+                          TYPE **WRKS, int *ldws, int *ipiv, 
+                          ATL_GETRF_2D_t *pd)
 {
    const int nb = pd->nb;
    const int pt = pd->pt;
@@ -1641,7 +1960,7 @@ static void ATL_laswp_blk(int m, int n, int rs, int cs, TYPE *W, int ldw,
  * m: won't change during calls, need to call tgetf2 and gemm accordingly.
  */
 static void ATL_rtgetf2(int rank, int Jb, int m, int n, int p, int j, 
-                           TYPE *W, int ldw, int *ipiv, ATL_GETRF_2D_t *pd)
+                        TYPE *W, int ldw, int *ipiv, ATL_GETRF_2D_t *pd)
 {
    TYPE *A0, *B0, *C0;
    #ifdef TCPLX
@@ -1669,7 +1988,7 @@ static void ATL_rtgetf2(int rank, int Jb, int m, int n, int p, int j,
          my_trsm(CblasLeft, CblasLower, CblasNoTrans, CblasUnit, 
                  nl, nr, one, A0, ldw, B0, ldw);
       }
-      ATL_CBC_barrier(ATL_SYNC_COL, pd->cbc, pd->id);
+      ATL_CBC2D_barrier(ATL_SYNC_COL, pd->cbc, pd->id);
       /* gemm */
       nm = m;
       off = 0;
@@ -1698,10 +2017,10 @@ static void ATL_rtgetf2(int rank, int Jb, int m, int n, int p, int j,
       pd->maxindx[rank] = -1;
       pd->stage[rank] = -1;
       A0 = W + ((j*ldw + off) SHIFT);
-      ATL_CBC_barrier(ATL_SYNC_COL, pd->cbc, pd->id);
+      ATL_CBC2D_barrier(ATL_SYNC_COL, pd->cbc, pd->id);
       if (rank < p) 
          ATL_subtgetf2(rank, m-off, n, j, p, A0, ldw, ipiv+j, pd);
-      ATL_CBC_barrier(ATL_SYNC_COL, pd->cbc, pd->id);
+      ATL_CBC2D_barrier(ATL_SYNC_COL, pd->cbc, pd->id);
    }
 }
 
@@ -1763,13 +2082,13 @@ static void ATL_btgetf2(int id, int Jb, int m00, int n, TYPE *W0,
    w = W = WRKS[rank];
    ldws2[rank] = ldw;
    nbildw = nbi * ldw;
-   if (pt > 1) ATL_CBC_barrier(ATL_SYNC_COL, pd->cbc, id);
+   if (pt > 1) ATL_CBC2D_barrier(ATL_SYNC_COL, pd->cbc, id);
    /* if (rank >= p) return; */
 
    /* everything is setup, now copy, then factorize */
    if (Jb) /* copy from C-major */
    {
-      Mjoin(PATL, bcAblk2cmat)(m, n, W0, nb, W, ldw, 1, pd->ca2cc);
+      bcAblk2cmat(m, n, W0, myRBS, W, ldw, nb, 1, pd->ca2cc);
    }
    else /* copy from original column-major */
    {
@@ -1786,7 +2105,7 @@ static void ATL_btgetf2(int id, int Jb, int m00, int n, TYPE *W0,
          /* getrfi */
          maxindx[rank] = -1;
          stage[rank] = -1;
-         ATL_CBC_barrier(ATL_SYNC_COL, pd->cbc, id);
+         ATL_CBC2D_barrier(ATL_SYNC_COL, pd->cbc, id);
          if (rank < p) 
             ATL_subtgetf2(rank, m-pj, nbi,j,p, w+(pj SHIFT), ldw, ipiv+j, pd);
          /* lswp */
@@ -1802,14 +2121,14 @@ static void ATL_btgetf2(int id, int Jb, int m00, int n, TYPE *W0,
             if (rank == 0)
             {
                ATL_laswp_blk(nbi, N-j-nbi, j, j+nbi, W, ldw, 
-                     WRKS, ldws2, ipiv+j, pd);
+                             WRKS, ldws2, ipiv+j, pd);
                B0 = w + ((nbildw+j) SHIFT);
                A0 = w + (j SHIFT);
                my_trsm(CblasLeft, CblasLower, CblasNoTrans, CblasUnit, 
                   nbi, N-j-nbi, one, A0, ldw, B0, ldw);
                pj += nbi;
             }
-            ATL_CBC_barrier(ATL_SYNC_COL, pd->cbc, id);
+            ATL_CBC2D_barrier(ATL_SYNC_COL, pd->cbc, id);
             /* gemm */
             A0 = w + (pj SHIFT);
             B0 = WRKS[0] + (((j+nbi)*ldws2[0] + j) SHIFT);
@@ -1824,7 +2143,7 @@ static void ATL_btgetf2(int id, int Jb, int m00, int n, TYPE *W0,
          /* getrfi */
          maxindx[rank] = -1;
          stage[rank] = -1;
-         ATL_CBC_barrier(ATL_SYNC_COL, pd->cbc, id);
+         ATL_CBC2D_barrier(ATL_SYNC_COL, pd->cbc, id);
          if (rank < p) 
             ATL_subtgetf2(rank, m-pj, nr, j, p, w+(pj SHIFT), ldw, ipiv+j, pd);
          /* lswp */
@@ -1836,7 +2155,7 @@ static void ATL_btgetf2(int id, int Jb, int m00, int n, TYPE *W0,
          }
       }
    #endif
-   ATL_CBC_barrier(ATL_SYNC_COL, pd->cbc, id);
+   ATL_CBC2D_barrier(ATL_SYNC_COL, pd->cbc, id);
 
    m = m00;
    /* copy to A-major */
@@ -1845,11 +2164,11 @@ static void ATL_btgetf2(int id, int Jb, int m00, int n, TYPE *W0,
    {
       /* blk-maj for TRSM */
       Mjoin(PATL, gecopy)(nb, n, W, ldw, W0-(nbnb SHIFT), nb); 
-      Mjoin(PATL, bcRm2am)(m-nb, n, W+(nb SHIFT), ldw, W0, nb, 1, pd->r2a);
+      bcRm2am(m-nb, n, W+(nb SHIFT), ldw, W0+myROFF, myRBS, nb, 1, pd->r2a);
    }
    else
    {
-      Mjoin(PATL, bcRm2am)(m, n, W, ldw, W0-(nbnb SHIFT), nb, 1, pd->r2a);
+      bcRm2am(m, n, W, ldw, W0-(nbnb SHIFT)+myROFF, myRBS, nb, 1, pd->r2a);
    }
    #ifdef EARLY_A_COPY
       Ac = Aj + ((Jb*nb + rank*nb) SHIFT);
@@ -1867,7 +2186,7 @@ static void ATL_btgetf2(int id, int Jb, int m00, int n, TYPE *W0,
  * ipiv: already adjusted for current panel.
  */
 static void ATL_getf2_CBC(int id, int Jb, int m, int n, TYPE *W, 
-                  TYPE *Aj, int lda, int *ipiv, ATL_GETRF_2D_t *pd)
+                          TYPE *Aj, int lda, int *ipiv, ATL_GETRF_2D_t *pd)
 {
    #if defined(USE_SGETF2)
       ATL_getf2s(id, Jb, m, n, W, Aj, lda, ipiv, pd);
@@ -1908,7 +2227,7 @@ static void ATL_getrf_bcAmm_bk_2D(int id, ATL_GETRF_2D_t *pd)
    TYPE **WRKS = pd->WRKS;
    int *ldws = pd->ldws;
    volatile int *PROG = (volatile int *)pd->PROG;
-   ATL_CBC_t *cbc = pd->cbc;
+   ATL_CBC2D_t *cbc = pd->cbc;
    cm2am_t r2an = pd->r2a;
    cm2am_t c2a1 = pd->c2a;
    am2cm_t a2rn = pd->a2r;
@@ -1921,12 +2240,12 @@ static void ATL_getrf_bcAmm_bk_2D(int id, ATL_GETRF_2D_t *pd)
    const int nbpt = nb * pt;
    const size_t nblda = nb*lda;
    const size_t nbqtlda = nblda *qt;
-   int m, n, m_b, n_b;
+   int m, n, m_b, n_b, m0;
    void *vp;
    int nmu, nnu, rmu, rm, cn;
    int i, j, k;
    int ib, jb, kb, cjb, jbn, pcjb;
-   int cJB, Jb, cJb, Jbn;
+   int cJB, Jb, cJb, Jbn, Jbp;
    int pnl_selected;
 
    TYPE *W0, *Wj0, *Wj, *Wi, *Wk, *Wc;
@@ -1947,47 +2266,66 @@ static void ATL_getrf_bcAmm_bk_2D(int id, ATL_GETRF_2D_t *pd)
    /* Distribute rows and columns */
    NUMROC(m_b, rid, oMb, pt);
    NUMROC(n_b, cid, oNb, qt);
-   m = m_b*nb;
+   m0 = m = m_b*nb;
    n = n_b*nb;
    ldws[id] = ldw = m + (3*nb);
    vp = malloc(ATL_MulBySize(((size_t)ldw)*n)+ATL_Cachelen);
    if (!vp) pd->info = NOT_ENOUGH_MEMORY;
-   ATL_CBC_barrier(ATL_SYNC_GRID, cbc, id);
+   ATL_CBC2D_barrier(ATL_SYNC_GRID, cbc, id);
    if (id == 0)
    {
       for (i=0; i<nt; i++) if (pd[i].info) break;
       if (i < nt) for (j=0; j<nt; j++) pd[j].info = NOT_ENOUGH_MEMORY;
    }
-   ATL_CBC_barrier(ATL_SYNC_GRID, cbc, id);
+   ATL_CBC2D_barrier(ATL_SYNC_GRID, cbc, id);
    if (pd->info) return;
    WRKS[id] = W0 = ATL_AlignPtr(vp);
    pd->m_bs[id] = m_b;
    pd->n_b = n_b;
    nbldw = nb * ldw;
+   #ifdef USE_BCSWP
+      pd->bp->larrs[rid] = W0 + ((nbnb + nbnb) SHIFT);
+      pd->bp->lldps[rid] = (m_b+3)*nbnb;
+   #endif
 
    nmu = NMu;
-   rmu = 0;
+   pd->rmu = rmu = 0;
    rm = 0;
    if (Rm && (rid == Mmod(aMb,pt)))
    {
       rm = Rm;
-      rmu = RMu;
+      pd->rmu = rmu = RMu;
       m_b--;
+      pd->m_bs[id]--;
+      m0 = m0 + rm - nb;
    }
 
    /* Wj0 points to left-most panel's 1st block */
    for (jb=0, Jb=cid, Wj0=W0, Aj0=A+((cid*nblda) SHIFT); jb<n_b; 
          jb++, Jb+=qt, Wj0+=(nbldw SHIFT), Aj0+=(nbqtlda SHIFT))
    {
-      cjb = jb; /* jb:i left-most panel, cjb: current panel */
-      pnl_selected = 0;
-      cJB = *JB;     /* cJB: buffer the current active panel */
-
-      while(1)
+      int active;
+      while (1)
       {
-         jbn = cjb+1;   /* jbn: next panel for lookahead */
-         cJb = BLKL2G(cjb, cid, qt);   /* global panel index */
-         Jbn = BLKL2G(jbn, cid, qt);   /* global panel index */
+         cjb = jb;
+         cJb = Jb;
+         cJB = *JB;
+         /* find work */
+         while ((cjb<n_b) && (PROG[cJb] >= 0) && (PROG[cJb] >= PROG[PROG[cJb]]))
+         {
+         #ifndef DISABLE_LOOKAHEAD
+            cjb++;
+            cJb += qt;
+         #endif
+         } /* found work */
+         if (cjb >= n_b)
+         {
+            cjb = jb;
+            cJb = Jb;
+            while (PROG[cJb] >= PROG[PROG[cJb]]);
+         }
+         ATL_CBC2D_min(ATL_SYNC_COL, cbc, id, &cjb);
+         cJb = BLKL2G(cjb, cid, qt);
          Wj = Wj0 + (((cjb-jb)*nbldw) SHIFT); /* Wj: points to current lpanel */
          Aj = Aj0 + (((cJb-Jb)*nblda) SHIFT); /* Aj: points to current gpanel */
 
@@ -2006,245 +2344,119 @@ static void ATL_getrf_bcAmm_bk_2D(int id, ATL_GETRF_2D_t *pd)
             #ifdef ATL_LAPROF
                gettime(ltsc, ctsc, Timers[id][CopyWait], ttsc);
             #endif
-               CopyInPanel(cJb, m, rm, cn, Aj, lda, Wj, pd);
+            CopyInPanel(cJb, m, rm, cn, Aj, lda, Wj, pd);
             #ifdef ATL_LAPROF
                gettime(ltsc, ctsc, Timers[id][Copy2L], ttsc);
             #endif
             if (pt > 1)
-               ATL_CBC_barrier(ATL_SYNC_COL, cbc, id);
+               ATL_CBC2D_barrier(ATL_SYNC_COL, cbc, id);
             if (PROG[cJb] < 0) PROG[cJb] = 0; /* race but same value */
          }
-
-         if(cjb == jb) /* i am on my leftmost panel */
+         else if (PROG[cJb] < PROG[PROG[cJb]]) /* we have more updates */
          {
-            int active = Mmod(PROG[cJb], pt);
-            for (kb=PROG[cJb]; kb<cJb; )
+            ApplyOneUpdate(cjb, cJb, PROG[cJb], nnu, cn, Wj, Aj, pd);
+         }
+         if (PROG[cJb] == cJb) /* time to do getf2 */
+         {
+            break; /* exit from this loop and apply getf2 */
+         }
+      } /* end of while(1) */
+      /* now do the panel factorization */
+      if (cJb)
+      {
+         ib = NEXT_GEMM_BLK(cJb-1, rid, pt);
+         Wk = Wj + ((ib*nbnb + nbnb) SHIFT);
+      }
+      else
+      {
+         ib = 0;
+         Wk = Wj;
+      }
+      i = ib*nb;
+      active = Mmod(cJb, pt);
+      #ifndef NO_GETF2
+         ATL_getf2_CBC(id, cJb, m_b*nb+rm-i, cn, Wk, Aj, lda, ipiv+cJb*nb, pd);
+         if (pd->info2) pd->info2 += cJb*nb;
+      #else
+         if (rid == active)
+         {
+            int I = cJb*nb;
+            int tn = MN - I;
+            tn = Mmin(tn, nb);
+            for (i=0; i<tn; i++) ipiv[I+i] = i;
+         }
+      #endif
+      #ifdef ATL_LAPROF
+         gettime(ltsc, ctsc, Timers[id][F2], ttsc);
+      #endif
+      /* sync to confirm panel is factorized */
+      if (pt > 1)
+         ATL_CBC2D_barrier(ATL_SYNC_COL, cbc, id);
+      #ifdef ATL_LAPROF
+         gettime(ltsc, ctsc, Timers[id][CSync2], ttsc);
+      #endif
+      if (rid == active)
+      {
+         /* adjust ipiv if needed */
+         int I = cJb*nb;
+         int tn = MN - I;
+         tn = Mmin(tn, nb);
+         #ifdef USE_BCSWP
+            ATL_bcIpivEncode(pd->bp, tn, I, I);
+         #endif
+         for (i=0; i<tn; i++) ipiv[I+i] += I;
+         *JB = cJb+1;
+         PROG[cJb] = *JB;
+      }
+      #if !defined(EARLY_A_COPY) \
+         && !defined(NO_GETF2) && !defined(USE_SGETF2)
+         if (pt > 1 && (aM-cJb*nb) > nb) /* copy wasn't done */
+         {
+            TYPE *tA = Aj + ((cJb*nb) SHIFT);
+            int rank = rid - active;
+            if (rank < 0) rank += pt;
+            tA += ((rank*nb) SHIFT);
+            if (cJb) Wk -= (nbnb SHIFT);
+            i = ib*nb;
+            if (rid == active)
             {
-               if (PROG[kb] > kb) /* there is work to do on this panel */
-               {
-                  #ifdef ATL_LAPROF
-                     gettime(ltsc, ctsc, Timers[id][IDLE], ttsc);
-                  #endif
-                  if (pt > 1)
-                  {
-                     pcjb = cjb; /* now agree with others to work on cjb */
-                     ATL_CBC_LUschedWork(ATL_SYNC_COL, cbc, id, &cjb, 0);
-                     #ifdef ATL_LAPROF
-                        gettime(ltsc, ctsc, Timers[id][CSync3], ttsc);
-                     #endif
-                     #ifdef DEBUG
-                        ATL_assert(pcjb == cjb); /* i am on critical */
-                     #endif
-                  }
-                  /* apply update for panel kb */
-                  ApplyOneUpdate(cjb, cJb, kb, nnu, cn, Wj, Aj, pd);
-                  if (++active == pt) active = 0;
-                  kb++;
-                  #ifdef ATL_LAPROF
-                     rdtsc(ltsc);
-                  #endif
-               }
-               #if 1 && !defined(DISABLE_LOOKAHEAD) /* NOTE!!! */
-               else if (jbn <n_b && PROG[Jbn] < PROG[cJb]) /* go lookahead */
-               {
-                  cjb = jbn;
-                  break; /* break kb-loop */
-               }
-               #endif
-            } /* end kb-loop */
-            if (kb < cJb) /* loop ended to lookahead */
-            {
-               if (pt > 1)
-               {
-                  pcjb = cjb; /* now agree with others to work on jbn */
-                  ATL_CBC_LUschedWork(ATL_SYNC_COL, cbc, id, &cjb, 1);
-                  #ifdef ATL_LAPROF
-                     gettime(ltsc, ctsc, Timers[id][CSync3], ttsc);
-                  #endif
-               }
-               continue; /* while loop */
-            }
-            #ifdef DEBUG
-               ATL_assert(cJb == *JB);
-            #endif
-            /* sync before factoring the panel */
-            if (pt > 1)  ATL_CBC_barrier(ATL_SYNC_COL, cbc, id);
-            #ifdef ATL_LAPROF
-               gettime(ltsc, ctsc, Timers[id][CSync2], ttsc);
-            #endif
-
-            if (cJb)
-            {
-               ib = NEXT_GEMM_BLK(cJb-1, rid, pt);
-               Wk = Wj + ((ib*nbnb + nbnb) SHIFT);
+               int tm = Mmin(m_b*nb+rm-i, nb);
+               Mjoin(PATL, gecopy)(tm, cn, Wk-(nbnb SHIFT), nb, 
+                                   tA, lda); 
+               bcAm2rm(m_b*nb+rm-i-tm, cn, Wk+myROFF, myRBS, 
+                       tA+(nbpt SHIFT), lda, nb, pt, pd->a2r);
             }
             else
             {
-               ib = 0;
-               Wk = Wj;
+               bcAm2rm(m_b*nb+rm-i, cn, Wk-(nbnb SHIFT)+myROFF, myRBS, 
+                       tA, lda, nb, pt, pd->a2r);
             }
-            i = ib*nb;
-            #ifndef NO_GETF2
-               ATL_getf2_CBC(id, cJb, m_b*nb+rm-i, cn, Wk, Aj, lda, 
-                           ipiv+cJb*nb, pd);
-               if (pd->info2) pd->info2 += cJb*nb;
-            #else /* for debugging */
-               if (rid == active)
-               {
-                  int I = cJb*nb;
-                  int tn = MN - I;
-                  tn = Mmin(tn, nb);
-                  for (i=0; i<tn; i++) ipiv[I+i] = i;
-               }
-            #endif
-            #ifdef ATL_LAPROF
-               gettime(ltsc, ctsc, Timers[id][F2], ttsc);
-            #endif
-            /* sync to confirm panel is factorized */
-            if (pt > 1)
-               ATL_CBC_barrier(ATL_SYNC_COL, cbc, id);
-            #ifdef ATL_LAPROF
-               gettime(ltsc, ctsc, Timers[id][CSync2], ttsc);
-            #endif
-            if (rid == active)
-            {
-               /* adjust ipiv if needed */
-               int I = cJb*nb;
-               int tn = MN - I;
-               tn = Mmin(tn, nb);
-               for (i=0; i<tn; i++) ipiv[I+i] += I;
-               *JB = cJb+1;
-               PROG[cJb] = *JB;
-            }
-            #if !defined(EARLY_A_COPY) \
-                     && !defined(NO_GETF2) && !defined(USE_SGETF2)
-               if (pt > 1 && (aM-cJb*nb) > nb) /* copy wasn't done */
-               {
-                  TYPE *tA = Aj + ((cJb*nb) SHIFT);
-                  int rank = rid - active;
-                  if (rank < 0) rank += pt;
-                  tA += ((rank*nb) SHIFT);
-                  if (cJb) Wk -= (nbnb SHIFT);
-                  i = ib*nb;
-                  if (rid == active)
-                  {
-                     int tm = Mmin(m_b*nb+rm-i, nb);
-                     Mjoin(PATL, gecopy)(tm, cn, Wk-(nbnb SHIFT), nb, 
-                                         tA, lda); 
-                     Mjoin(PATL, bcAm2rm)(m_b*nb+rm-i-tm, cn, Wk, nb, 
-                                       tA+(nbpt SHIFT), lda, pt, pd->a2r);
-                  }
-                  else
-                  {
-                     Mjoin(PATL, bcAm2rm)(m_b*nb+rm-i, cn, Wk-(nbnb SHIFT), 
-                                       nb, tA, lda, pt, pd->a2r);
-                  }
-               }
-               #ifdef ATL_LAPROF
-                  gettime(ltsc, ctsc, Timers[id][Copy2G], ttsc);
-               #endif
-            #endif
-            #ifndef EARLY_B_COPY
-               if (cJb) /* for later panels */
-               {
-                  int last_active = active - 1;
-                  if (last_active < 0) last_active += pt;
-                  if (last_active == rid)
-                  {
-                     A0 = Aj + (((cJb-1)*nb) SHIFT);
-                     B0 = Wj + (((((cJb-1)/pt)-1)*nbnb) SHIFT);
-                     a2c1(nb, cn, one, A0, lda, B0);
-                  }
-               }
-               #ifdef ATL_LAPROF
-                  gettime(ltsc, ctsc, Timers[id][Copy2GU], ttsc);
-               #endif
-            #endif
-            if (pt > 1)
-               ATL_CBC_barrier(ATL_SYNC_COL, cbc, id);
-            #ifdef ATL_LAPROF
-               gettime(ltsc, ctsc, Timers[id][CSync2], ttsc);
-            #endif
-            break; /* break while loop to move on to next panel */
          }
-         else /* i am on a lookahead panel */
+         #ifdef ATL_LAPROF
+            gettime(ltsc, ctsc, Timers[id][Copy2G], ttsc);
+         #endif
+      #endif
+      #ifndef EARLY_B_COPY
+         if (cJb) /* for later panels */
          {
-            int active = Mmod(PROG[cJb], pt);
-            for (kb=PROG[cJb]; kb<cJb; )
+            int last_active = active - 1;
+            if (last_active < 0) last_active += pt;
+            if (last_active == rid)
             {
-               if (!pnl_selected && PROG[Jb] < PROG[PROG[Jb]]) /* chk left */
-               {
-                  cjb = jb;
-                  break; /* break kb-loop */
-               }
-               else if (PROG[kb] > kb) /* there is work to do on this panel */
-               {
-                  #ifdef ATL_LAPROF
-                     gettime(ltsc, ctsc, Timers[id][IDLE], ttsc);
-                  #endif
-                  pnl_selected = 0;
-                  if (pt > 1)
-                  {
-                     pcjb = cjb; /* now agree with others to work on cjb */
-                     ATL_CBC_LUschedWork(ATL_SYNC_COL, cbc, id, &cjb, 0);
-                     #ifdef ATL_LAPROF
-                        gettime(ltsc, ctsc, Timers[id][CSync3], ttsc);
-                     #endif
-                     if (pcjb !=  cjb) /* entered wrong path, break and fix */
-                     {
-                        break; /* break kb-loop */
-                     }
-                  }
-                  /* apply update for panel kb */
-                  ApplyOneUpdate(cjb, cJb, kb, nnu, cn, Wj, Aj, pd);
-                  if (++active == pt) active = 0;
-                  kb++;
-                  #ifdef ATL_LAPROF
-                     rdtsc(ltsc);
-                  #endif
-               }
-               else if (jbn < n_b && PROG[Jbn] < PROG[cJb]) /* chk right */
-               {
-                  cjb = jbn;
-                  break; /* break kb-loop */
-               }
-               else /* no more work left, go back to leftmost active */
-               {
-                  cjb = jb;
-                  break; /* break kb-loop */
-               }
-            } /* end kb-loop */
-            if (kb < cJb) /* loop terminated to switch */
-            {
-               if (pt > 1)
-               {
-                  pcjb = cjb; /* now agree with others to work on jbn */
-                  ATL_CBC_LUschedWork(ATL_SYNC_COL, cbc, id, &cjb, 1);
-                  #ifdef ATL_LAPROF
-                     gettime(ltsc, ctsc, Timers[id][CSync3], ttsc);
-                  #endif
-                  /* this is a tricky section to agree on the same path */
-                  if (pcjb != cjb) /* someone else found more critical work */
-                  {
-                     if (cjb != jb) /* someone else found work on current */
-                        pnl_selected = 1;
-                     else /* work available on leftmost active */
-                     {
-                        pcjb = cjb;
-                        ATL_CBC_LUschedWork(ATL_SYNC_COL, cbc, id, &cjb, 1);
-                        #ifdef ATL_LAPROF
-                           gettime(ltsc, ctsc, Timers[id][CSync3], ttsc);
-                        #endif
-                        #ifdef DEBUG
-                           ATL_assert(pcjb == cjb);
-                        #endif
-                     }
-                  }
-               }
-               continue; /* while loop */
+               A0 = Aj + (((cJb-1)*nb) SHIFT);
+               B0 = Wj + (((((cJb-1)/pt)-1)*nbnb) SHIFT);
+               a2c1(nb, cn, one, A0, lda, B0);
             }
-         } /* end of if for left or right path */
-      } /* end of while loop */
+         }
+         #ifdef ATL_LAPROF
+            gettime(ltsc, ctsc, Timers[id][Copy2GU], ttsc);
+         #endif
+      #endif
+      if (pt > 1)
+         ATL_CBC2D_barrier(ATL_SYNC_COL, cbc, id);
+      #ifdef ATL_LAPROF
+         gettime(ltsc, ctsc, Timers[id][CSync2], ttsc);
+      #endif
    } /* end of jb loop */
    ApplyLeftPivots(pd);
    #ifdef ATL_LAPROF
@@ -2252,7 +2464,7 @@ static void ATL_getrf_bcAmm_bk_2D(int id, ATL_GETRF_2D_t *pd)
    #endif
    /* wait for everyone to finish before freeing memory */
    if (pt > 1)
-      ATL_CBC_barrier(ATL_SYNC_COL, cbc, id);
+      ATL_CBC2D_barrier(ATL_SYNC_COL, cbc, id);
    free(vp);
 }
 
@@ -2314,10 +2526,10 @@ static void ATL_getrf_bcAmm_bk_tp(void *vpp, int rank, int vrank)
 
 #ifdef ATL_CBC_NAME
    int Mjoin(PATL, tgetrf_bcAmm)(ATL_CINT major, ATL_CINT M, ATL_CINT N, 
-                     TYPE *A, ATL_CINT lda, int *ipiv)
+                                 TYPE *A, ATL_CINT lda, int *ipiv)
 #else
    int Mjoin(PATL, tgetrf)(ATL_CINT major, ATL_CINT M, ATL_CINT N, 
-               TYPE *A, ATL_CINT lda, int *ipiv)
+                           TYPE *A, ATL_CINT lda, int *ipiv)
 #endif
 {
    int ierr = 0, terr = 0;
@@ -2341,23 +2553,27 @@ static void ATL_getrf_bcAmm_bk_tp(void *vpp, int rank, int vrank)
    int *m_bs;
    int *PROG;
    int JB = 0;
-   int IDX;
-   ATL_CBC_t cbc;
+   int IDX = -1;
+   ATL_CBC2D_t cbc;
 
    ATL_TGETF2_M_t *lups;
    ATL_INT *maxindx, *stage;
    TYPE **wrks2;
    int *ldws2;
-   int ldw2;
+   size_t ldw2, pan2sz;
    TYPE *T;
    void *vp2;
+   int *ipiv2;
+   #ifdef USE_BCSWP
+      ATL_bcpiv_t *bp;
+   #endif
    if (M < N) return CASE_NOT_HANDLED;
 
-#if 0
-   SelectBlockAndGrid(M, N, &nb, &nbi, &pt, &qt);
-#else
-   IDX = Mjoin(PATL,getrf_bcAmm_info)(M, N, &nb, &pt, &qt);
-#endif
+   #if 0
+      SelectBlockAndGrid(M, N, &nb, &nbi, &pt, &qt);
+   #else
+      IDX = Mjoin(PATL,getrf_bcAmm_info)(M, N, &nb, &pt, &qt);
+   #endif
    SelectGenKernels(IDX, &nb, &mu, &nu, &r2a, &c2a, &a2r, &a2c, 
                     &ca2cc, &cc2ca, &amm_b1, &amm_bn);
 
@@ -2399,25 +2615,32 @@ static void ATL_getrf_bcAmm_bk_tp(void *vpp, int rank, int vrank)
    PROG = ATL_AlignPtr((int*)(m_bs + nt));
    for(i=0; i<oNb; i++) PROG[i] = -1;
 
-   ATL_CBC_barrier_init(&cbc, pt, qt);
+   ATL_CBC2D_barrier_init(&cbc, pt, qt);
 
    ldw2 = ((oMb + pt + pt - 1) / pt) * pt * nb; /* 1 xtra blk for all */
-   vp2 = malloc( (sizeof(ATL_TGETF2_M_t) + sizeof(ATL_INT)*2
-                  + sizeof(TYPE*) ) * pt 
-                  + (ATL_MulBySize(ldw2*(nb SHIFT))  /* for wrks2 */
-                  + sizeof(ATL_INT))*pt );   /* for ldws2 */
+   pan2sz = ( sizeof(ATL_TGETF2_M_t)       /* for the struct */
+            + sizeof(ATL_INT)*2           /* for 2 state vars */
+            + sizeof(TYPE*) ) * pt        /* for wrks2 ptrs */
+            + (ATL_MulBySize(((size_t)(ldw2))*nb)   /* for wrks2 data */
+            + sizeof(ATL_INT)             /* for ldws2 */
+            + ATL_Cachelen ) * pt;
+   vp2 = malloc(pan2sz*qt + sizeof(int)*nb);
+   ipiv2 = (int*)(vp2+qt*pan2sz);
    if (!vp2) return NOT_ENOUGH_MEMORY;
-   T = vp2;
-   wrks2 = (TYPE**)(T + pt*ldw2*(nb SHIFT));
-   ldws2 = (ATL_INT*)(wrks2 + pt);
-   lups = (ATL_TGETF2_M_t*)(ldws2 + pt);
-   maxindx = (ATL_INT*)(lups + pt);
-   stage = (ATL_INT*)(maxindx + pt);
-   for (i=0; i<pt; i++) wrks2[i] = T + i*ldw2*(nb SHIFT);
+   #ifdef USE_BCSWP
+      bp = ATL_bcIpivInit(MN, ipiv, 1, pt, qt, oM, nb, mu, nu);
+   #endif
 
-   for (i=0, k=0; i<pt; i++)
+   for (j=0; j<qt; j++)
    {
-      for (j=0; j<qt; j++, k++)
+      wrks2 = (TYPE**)(vp2 + j*pan2sz);
+      ldws2 = (ATL_INT*)(wrks2 + pt);
+      lups = (ATL_TGETF2_M_t*)(ldws2 + pt);
+      maxindx = (ATL_INT*)(lups + pt);
+      stage = (ATL_INT*)(maxindx + pt);
+      T = (TYPE*)(stage + pt);
+
+      for (i=0, k=j; i<pt; i++, k+=qt)
       {
          pd[k].rid = i;
          pd[k].cid = j;
@@ -2474,6 +2697,11 @@ static void ATL_getrf_bcAmm_bk_tp(void *vpp, int rank, int vrank)
          pd[k].ldw2 = ldw2;
          pd[k].ldws2 = ldws2;
          pd[k].info2 = 0;
+         wrks2[i] = ATL_AlignPtr(T + 
+               i*(((size_t)(ldw2))*(nb SHIFT) + (ATL_Cachelen/sizeof(TYPE))));
+         #ifdef USE_BCSWP
+            pd[k].bp = bp+j;
+         #endif
       }
    }
 
@@ -2486,7 +2714,7 @@ static void ATL_getrf_bcAmm_bk_tp(void *vpp, int rank, int vrank)
 #endif
 @endskip
 
-   ATL_CBC_barrier_destroy(&cbc);
+   ATL_CBC2D_barrier_destroy(&cbc);
    /* first check for malloc error */
    ierr = pd[0].info;
    if (!ierr) /* no malloc error */
@@ -2501,6 +2729,9 @@ static void ATL_getrf_bcAmm_bk_tp(void *vpp, int rank, int vrank)
       }
       ierr = terr;
    }
+   #ifdef USE_BCSWP
+      free(bp);
+   #endif
 
    free(vp);
    free(vp2);
