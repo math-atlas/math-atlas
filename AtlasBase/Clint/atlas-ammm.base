@@ -5664,6 +5664,25 @@ int KernelIsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
    return(0);  /* Can't be the same if above criteria fails */
 }
 
+int KernelCompIsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
+/*
+ * RETURNS: 1 if kernels are the same except for blocking, 0 otherwise
+ */
+{
+/*
+ * Kernels are not the same if one has compile-time K and other runtime
+ */
+   if (FLAG_IS_SET(p0->flag, MMF_KRUNTIME) != 
+       FLAG_IS_SET(p1->flag, MMF_KRUNTIME))
+      return(0);
+/*
+ * Kernels not same if both compilet-time K with differing KB
+ */
+   if (!FLAG_IS_SET(p0->flag, MMF_KRUNTIME) && p0->kbB != p1->kbB)
+      return(0);
+   return(KernelIsSame(p0, p1));
+}
+
 int KernelIsUnique(ATL_mmnode_t *mmb, ATL_mmnode_t *mmp)
 /*
  * Determines if mmp is the first mention of a unique kernel in mmb, or not.
@@ -5681,6 +5700,19 @@ int KernelIsUnique(ATL_mmnode_t *mmb, ATL_mmnode_t *mmp)
          return(0);
    return(1);  /* didn't find it, must be first time in list */
 }
+
+int KernelCompIsPresent(ATL_mmnode_t *mmb, ATL_mmnode_t *mmp)
+/*
+ * RETURNS: 1 if kernel compilation matching mmp is in list mmb, 0 otherwise
+ */
+{
+   ATL_mmnode_t *mp;
+   for (mp=mmb; mp; mp = mp->next)
+      if (KernelCompIsSame(mmp, mp))
+         return(1);
+   return(0);
+}
+
 /*
  * Returns a non-repetitive list of user kernels (ID>0) found in rb.  Note that
  * differing compilations of the same kernel are reduced to one entry.
@@ -6532,6 +6564,123 @@ int DoComplex(char pre, int verb)
 
 }
 
+/*
+ * Creates two lists from original, which is left unchanged.
+ * A list of all unique runtime kernels is RETURNED, 
+ * while a list of all unique KB compile kernels is provided by CBAS
+ */
+ATL_mmnode_t *SplitRunCompKB(ATL_mmnode_t *orig, ATL_mmnode_t **CBAS)
+{
+   ATL_mmnode_t *comp=NULL, *run, *bp;
+   for (bp=orig; bp; bp = bp->next)
+   {
+      if (FLAG_IS_SET(bp->flag, MMF_KRUNTIME))
+      {
+         if (!KernelCompIsPresent(run, bp))
+         {
+            ATL_mmnode_t *tp;
+            tp = CloneMMQueue(bp);
+            tp->next = run;
+            run = tp;
+         }
+      }
+      else  /* candidate for compile-time K list */
+      {
+         if (!KernelCompIsPresent(comp, bp))
+         {
+            ATL_mmnode_t *tp;
+            tp = CloneMMQueue(bp);
+            tp->next = comp;
+            comp = tp;
+         }
+      }
+   }
+/*
+ * Put them back in original order, they were produced backwards from orig
+ */
+   if (comp)
+      comp = ReverseMMQ(comp);
+   if (run)
+      run = ReverseMMQ(run);
+
+   *CBAS = comp;
+   return(run);
+}
+/*
+ * Deletes all kernels in mmb with kbB that are not a multiple of mu
+ */
+ATL_mmnode_t *KillIncompatible_MK(ATL_mmnode_t *mmb)
+{
+   while (mmb && (mmb->kbB/mmb->mu)*mmb->mu != mmb->kbB)
+      mmb = KillMMNode(mmb);
+   if (mmb)
+   {
+      ATL_mmnode_t *mp=mmb->next, *prev=mmb;
+
+      while (mp)
+      {
+         if ((mp->kbB/mp->mu)*mp->mu != mp->kbB)
+             mp = prev->next = KillMMNode(mp);
+         else
+         {
+            prev = mp;
+            mp = mp->next;
+         }
+      }
+   }
+   return(mmb);
+}
+/*
+ * Given a list of kernels being already being used by GEMM, find best
+ * performing cases with MB=KB, and NB allowed to vary.  These blockings
+ * of already-existing kernels will be used to build triangular & symmetric
+ * amm-based routines 
+ */
+ATL_mmnode_t *DoMKB_findNB(char pre, int verb, ATL_mmnode_t *mmb)
+{
+   ATL_mmnode_t *mmSQ, *run, *comp, *mp;
+   mmSQ = ReadMMFileWithPath(pre, "res", "mkbAMMRES.sum");
+   if (mmSQ)
+   {
+      FillInGenStrings(pre, mmSQ);
+      if (mmSQ->mflop[0] < 0.0)
+      {
+         for (mp=mmSQ; mp; mp = mp->next)
+         {
+            int nb=mp->kbB;
+            if (mp->mflop[0] < 0.0)
+               mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, nb, nb, nb, 
+                                           nb, nb, nb, 1, 0, -1);
+         }
+         WriteMMFileWithPath(pre, "res", "mkbAMMRES.sum", mmSQ);
+      }
+      return(mmSQ);
+   }
+   run = SplitRunCompKB(mmb, &comp);
+   comp = KillIncompatible_MK(comp);
+/*
+ * Add all K-cleanup kernels to list of candidates
+ */
+   mp = ReadMMFileWithPath(pre, "res", "AMMKCLEAN.sum");
+   if (mp)
+   {
+      ATL_mmnode_t *r, *c;
+      r = SplitRunCompKB(mp, &c);
+      KillAllMMNodes(mp);
+      c = KillIncompatible_MK(c);
+      mp = MergeCases(-1, run, r);
+      KillAllMMNodes(run);
+      KillAllMMNodes(r);
+      run = mp;
+      mp = MergeCases(-1, comp, c);
+      KillAllMMNodes(comp);
+      KillAllMMNodes(c);
+      comp = mp;
+   }
+/*
+ * HERE HERE HERE
+ */
+}
 ATL_mmnode_t *DoSquare(char pre, int verb, ATL_mmnode_t *mmb)
 {
    ATL_mmnode_t *mmSQ;
@@ -12897,6 +13046,7 @@ int Mjoin(PATL,GetAmmmInfo)
  * RETURNS: upper bound on useful nthreads to use
  */
 #include "atlas_ttypes.h"
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_perf.h))
 int Mjoin(PATL,GetTrsmInfo)
 (
    amminfo_t *out,
@@ -12908,56 +13058,129 @@ int Mjoin(PATL,GetTrsmInfo)
 )
 {
    #ifdef ATL_CAMM_MAXINDX
-      int ik = ATL_CAMM_MAXINDX;
+      #define MAXIDX ATL_CAMM_MAXINDX
    #else
-      int ik = ATL_AMM_NCASES-1;
+      #define MAXIDX ATL_AMM_NCASES-1
    #endif
-   int mu, nu, ku, nb, nnblks, mb, nmblks, mb0;
+   int ik = MAXIDX;
+   int mu, nu, ku, nb, nnblks, mb, nmblks, mb0, ibest=0, bbest=4;
+   const double spd4 = ATL_AMM_PERF[0];
+   double trk4;   /* predicted time for rk-4 based TRSM */
+   double tbest;  /* start it at time using nb=4 (ik=0) */
 
+   trk4 = M;
+   tbest = trk4 = (trk4*trk4*N) / spd4;
 /*
- * Get a KB smaller than M/3
+ * Get a KB <= M/2
  */
-   if (M <= 12)
-      ik = 0;
-   else
+   if (M >= 12)
    {
-      for (; ik > 0; ik--)
-      {
-         int kb = ATL_AMM_KBs[ik];
-         if (kb+kb+kb < M)
+      for (; ik > 0; ik--)   /* skip kernels that are too large */
+      {                      /* to provide square blocks! */
+         const int kb = ATL_AMM_KBs[ik];
+         if (kb+kb <= M)
             break;
       }
+      if (ik)
+      {
+         ATL_INT ntr, nsq;
+
+         
+/*
+ *       Find a kernel where mb can be set to kb; we know these exist, since we 
+ *       insist on square problems of moderate size
+ */
+         for (; ik > 0; ik--)
+         {
+            int kb, GOOD, ndi, nsq;
+            double tfl, gfl, tim;
+            kb = ATL_AMM_KBs[ik];
+            mu = ATL_AMM_MUs[ik];
+            mb = ATL_AMM_MBs[ik];
 
 /*
- *    Find a kernel where mb can be set to kb; we know these exist, since we 
- *    insist on square problems of moderate size
+ *          Skip if kernel can't be used with MB == KB;
+ *          If mb == kb already, then skip MB testing and go to time computing
  */
-      for (; ik > 0; ik--)
-      {
-         mu = ATL_AMM_MUs[ik];
-         mb = ATL_AMM_KBs[ik];
+            GOOD = (mb == kb);
+            if (!GOOD)
+               GOOD = ((kb/mu)*mu == kb);
 /*
- *       Any kernel can be used if it can be called with MB = KB
+ *          Must try more expensive test to find workable kb
  */
-         if ((mb/mu)*mu == mb)       /* it is legal to call wt MB=KB */
-            break;                   /* so use this kernel */
+#if ATL_AMM_MAXMB > ATL_AMM_MAXKB
+   #define MAXB ATL_AMM_MAXKB
+#else
+   #define MAXB ATL_AMM_MAXMB
+#endif
+            if (!GOOD)
+            {
+               int b, u;
 /*
- *       KRUNTIME kernels can vary their KB, and thus be made legal
+ *             Only KRUNTIME kerns can vary their KB, and thus be made legal
  */
-         if (ATL_AMM_KRUNTIME(ATL_AMM_KFLAG[ik]))
-         {
-            ku = ATL_AMM_KUs[ik];
-            ku = ATL_lcm(ku, mu);
-            mb = (mb/ku)*ku;
-            if (mb && mb >= ATL_AMM_KBMINs[ik])
-               break;
-         }
+               if (!ATL_AMM_KRUNTIME(ATL_AMM_KFLAG[ik]))
+                  continue;
+               u = ATL_AMM_KUs[ik];
+               u = ATL_lcm(ku, mu);  /* all b must be a mul of this */
+               kb = 0;
+               b = ((mb+u-1)/ku)*ku;
+               if (b < MAXB && b+b <= M)
+                  kb = b;
+               else
+               {
+                  b = ((nb+u-1)/ku)*ku;
+                  if (b < MAXB && b+b <= M)
+                     kb = b;
+                  else
+                  {
+                     kb = (mb/ku)*ku;
+                     if (!kb)
+                        kb = (nb/ku)*ku;
+                  }
+               }
+               if (!kb || kb < ATL_AMM_KBMINs[ik])
+                  continue;
+            }
+            ndi = M/kb;
+            nsq = ((ndi-1)*ndi)>>1;  /* full blocks */
+            mb = M - ndi*kb;
+            tfl = kb;
+            tfl = tfl*kb*N;
+            if (!mb)
+            {
+               tim = (ndi*tfl)/spd4 +                   /* solve time */
+                     (nsq*(tfl+tfl))/ATL_AMM_PERF[ik];  /* gemm time */
+            }
+            else
+            {
+               tim = mb;
+               tim *= kb*N;     /* # of flops in partial blocks */
+               tim = (ndi*tfl+tim)/spd4 + 
+                     (nsq*(tfl+tfl)+ndi*(tim+tim))/ATL_AMM_PERF[ik];
+            }
+@beginskip
+            gfl = tfl+tfl;
+            ndi = (M+kb-1)/kb;
+            nsq = ((ndi-1)*ndi)>>1;
+            tim = (ndi*tfl)/spd4 + (nsq*(tfl+tfl))/ATL_AMM_PERF[ik];
+@endskip
+//          printf("idx=%d, kb=%d(%d), spdup=%e\n", ik, kb, ATL_AMM_KBs[ik], 
+//                 trk4/tim);
+            if (tim <= tbest)
+            {
+               tbest = tim;
+               ibest = ik;
+               bbest = kb;
+            }
+         }  /* end for over candidate blocking factors */
       }
    }
-// ik=0;   /* FOR TESTING!!!!! */
+// best=0;   /* FOR TESTING!!!!! */
+   ik = ibest;
 
    out->IDX = ik;
-   out->mb = mb = out->kb = ATL_AMM_MBs[ik];
+   out->mb = mb = out->kb = bbest;
    out->nb = nb = ATL_AMM_NBs[ik];
    out->mu = mu = ATL_AMM_MUs[ik];
    out->nu = nu = ATL_AMM_NUs[ik];
@@ -12984,7 +13207,8 @@ int Mjoin(PATL,GetTrsmInfo)
       out->Cblk2cm = (ialp) ? ATL_AMM_BLK2C_a1_bX[ik]:ATL_AMM_BLK2C_a1_b0[ik];
    out->Cblk2cm_b1 = ATL_AMM_BLK2C_a1_b1[ik];
    out->cm2Cblk = NULL;
-   printf("ik=%d, mb=%d, nb=%d\n", ik, out->mb, out->nb);
+   printf("ik=%d, mb=%d, nb=%d, pred spdup=%.2f\n", ik, out->mb, out->nb,
+          trk4/tbest);
    return(mb);
 }
 #endif
