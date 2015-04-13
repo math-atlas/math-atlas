@@ -13043,10 +13043,16 @@ int Mjoin(PATL,GetAmmmInfo)
  * For TRSM, we need a kernel with mb == kb, but nb can differ.
  * Alpha for A will be -1, for B it will 1,  and Cblk2cm will be for beta=alpha,
  * while Cbk2cm_b1 will be for beta=1.0.
- * RETURNS: upper bound on useful nthreads to use
+ * RETURNS: mb to use, 0 if ATL_trsmKL_rk4 should be called instead.
  */
 #include "atlas_ttypes.h"
 #include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_perf.h))
+/*
+ * Need to time to detect this.  It is the best perf gotten by directly
+ * calling ATL_trsmKL_rk4
+ */
+#define ATL_SMRK4_MFLOP 13056
+@skip #define ATL_SMRK4_PERC (ATL_SMRK4_MFLOP / ATL_AMM_MAXMFLOP)   
 int Mjoin(PATL,GetTrsmInfo)
 (
    amminfo_t *out,
@@ -13067,9 +13073,12 @@ int Mjoin(PATL,GetTrsmInfo)
    const double spd4 = ATL_AMM_PERF[0];
    double trk4;   /* predicted time for rk-4 based TRSM */
    double tbest;  /* start it at time using nb=4 (ik=0) */
+   double smrk4;
 
    trk4 = M;
-   tbest = trk4 = (trk4*trk4*N) / spd4;
+   smrk4 = trk4 = trk4*trk4*N;
+   tbest = trk4 = trk4 / spd4;
+   smrk4 = (smrk4*ATL_AMM_MAXMFLOP) / ATL_SMRK4_MFLOP;
 /*
  * Get a KB <= M/2
  */
@@ -13125,12 +13134,12 @@ int Mjoin(PATL,GetTrsmInfo)
                u = ATL_lcm(ku, mu);  /* all b must be a mul of this */
                kb = 0;
                b = ((mb+u-1)/ku)*ku;
-               if (b < MAXB && b+b <= M)
+               if (b < MAXB && b+b+b <= M)
                   kb = b;
                else
                {
                   b = ((nb+u-1)/ku)*ku;
-                  if (b < MAXB && b+b <= M)
+                  if (b < MAXB && b+b+b <= M)
                      kb = b;
                   else
                   {
@@ -13142,6 +13151,8 @@ int Mjoin(PATL,GetTrsmInfo)
                if (!kb || kb < ATL_AMM_KBMINs[ik])
                   continue;
             }
+            if (kb+kb >= M)  /* Don't use huge blocks w/o significant amm */
+               continue;
             ndi = M/kb;
             nsq = ((ndi-1)*ndi)>>1;  /* full blocks */
             mb = M - ndi*kb;
@@ -13149,14 +13160,14 @@ int Mjoin(PATL,GetTrsmInfo)
             tfl = tfl*kb*N;
             if (!mb)
             {
-               tim = (ndi*tfl)/spd4 +                   /* solve time */
-                     (nsq*(tfl+tfl))/ATL_AMM_PERF[ik];  /* gemm time */
+               tim = (ndi*tfl*ATL_AMM_MAXMFLOP)/ATL_SMRK4_MFLOP + /* slv time */
+                     (nsq*(tfl+tfl))/ATL_AMM_PERF[ik];            /* amm time */
             }
             else
             {
                tim = mb;
                tim *= kb*N;     /* # of flops in partial blocks */
-               tim = (ndi*tfl+tim)/spd4 + 
+               tim = (ndi*tfl+tim*ATL_AMM_MAXMFLOP)/ATL_SMRK4_MFLOP + 
                      (nsq*(tfl+tfl)+ndi*(tim+tim))/ATL_AMM_PERF[ik];
             }
 @beginskip
@@ -13207,8 +13218,10 @@ int Mjoin(PATL,GetTrsmInfo)
       out->Cblk2cm = (ialp) ? ATL_AMM_BLK2C_a1_bX[ik]:ATL_AMM_BLK2C_a1_b0[ik];
    out->Cblk2cm_b1 = ATL_AMM_BLK2C_a1_b1[ik];
    out->cm2Cblk = NULL;
-   printf("ik=%d, mb=%d, nb=%d, pred spdup=%.2f\n", ik, out->mb, out->nb,
-          trk4/tbest);
+   if (smrk4 < tbest)
+       mb = 0;
+   printf("ik=%d, mb=%d(%d), nb=%d, pred spdup=%.2f,%.2f\n", ik, out->mb, mb, 
+          out->nb, trk4/tbest, smrk4/tbest);
    return(mb);
 }
 #endif
