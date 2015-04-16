@@ -1667,6 +1667,59 @@ void SpewForthKernArray(FILE *fp, char pre, ATL_mmnode_t *mmb,
 }
 
 /*
+ * RETURNS: new list of K-cleanup kernels for mmb taken from mmk; 
+ * mmb & mmk not changed
+ */
+ATL_mmnode_t *GetUniqueK1Kerns
+(
+   char pre,            /* z,c,d,s */
+   ATL_mmnode_t *mmb,   /* list of kernels requiring K-cleanup */
+   ATL_mmnode_t *mmk,   /* list of K-cleanup kernels */
+   char *outd
+)
+{
+   ATL_mmnode_t *kcb=NULL, *prev, *mp;
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      ATL_mmnode_t *kc;
+      for (kc=mmk; kc; kc = kc->next) /* search for matching cleanup routine */
+         if (kc->mu == mp->mu && kc->nu == mp->nu && kc->kmaj == mp->kmaj)
+            break;
+      if (!kc)  /* cleanup routine must be in original list! */
+      {
+         if (mp->ku == 1 && FLAG_IS_SET(mp->flag, MMF_KRUNTIME) &&
+             (!mp->kbmin || mp->kbmin == 1))
+            kc = mp;
+         else
+         {
+            for (kc=mmb; kc; kc = kc->next)
+               if (kc->mu == mp->mu && kc->nu == mp->nu && kc->kmaj == mp->kmaj
+                   && kc->ku == 1 && FLAG_IS_SET(kc->flag, MMF_KRUNTIME) &&
+                   (!kc->kbmin || kc->kbmin == 1) && 
+                   (!kc->kbmax || kc->kbmax >= mp->kbB))
+                  break;
+            assert(kc);
+         }
+      }
+      assert(kc);
+      kc = CloneMMNode(kc);
+      kc->mbB = mp->mbB;
+      kc->nbB = mp->nbB;
+      kc->kbB = mp->kbB;
+      if (kcb)
+      {
+         prev->next = kc;
+         prev = prev->next;
+      }
+      else
+         prev = kcb = kc;
+      
+   }
+   FillInGenStrings(pre, kcb, outd);
+   return(kcb);
+}
+
+/*
  * RETURNS: possibly updated list of all unique mu/nu comboes
  */
 typedef struct mnur mnur_t;
@@ -2105,10 +2158,10 @@ void GenSquareKH(char pre, ATL_mmnode_t *mmb, char *outd)
    fclose(fp);
 }
 
-void GenKernH(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, 
+void GenKernH(char pre, char *pfx, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, 
               ATL_mmnode_t *kcb, char *outd)
 /*
- * 5. atlas_<pre>amm_kerns.h
+ * 5. atlas_<pre>_<pfx>kern.h
  *    defines: ATL_AMM_NCASES
  *    prototypes all kernels, including K-cleanup
  *    1 indexible array gives kernel to use for each case as func ptr
@@ -2119,7 +2172,12 @@ void GenKernH(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
 /*
  * Dump out standard header start and kernel prototypes
  */
-   fp = StandHStart(pre, mmb, outd, "kern");
+   if (pfx)
+      pfx = NewMergedString(pfx, "kern");
+   else
+      pfx = DupString("kern");
+   fp = StandHStart(pre, mmb, outd, pfx);
+   free(pfx);
    fprintf(fp, "\n");
    SpewForthKernProtos(fp, pre, mmb, 3);
    if (ukb)
@@ -2155,8 +2213,7 @@ void GenCmplxHeaders(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *rkb, char *outd)
 }
 
 void GenHeaderFiles(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb, 
-                    ATL_mmnode_t *kcb, ATL_mmnode_t *rkb, ATL_mmnode_t *urb,
-                    ATL_mmnode_t *sqb, ATL_mmnode_t *usb, char *outd)
+                    ATL_mmnode_t *rkb, ATL_mmnode_t *sqb, char *outd)
 /*
  * Header files required to build full gemm (no timing):
  *X1. atlas_<pre>amm_blk.h : 
@@ -2186,6 +2243,7 @@ void GenHeaderFiles(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
  *X   -> 3*4 = 12 indexible arrays total
  */
 {
+   ATL_mmnode_t *mp;
    if (rkb)
       GenAmmSum(pre, mmb, rkb, outd);
 @ROUT emit_uamm `   GenAmmSwapH(pre, mmb, outd);`
@@ -2194,7 +2252,9 @@ void GenHeaderFiles(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
    GenFlagH(pre, mmb, outd, "flag");
    GenCMAJ2AMAJ(pre, mmb, outd, NULL);
    GenC2BLK(pre, mmb, outd, NULL);
-   GenKernH(pre, mmb, ukb, kcb, outd);
+   mp = GetUniqueK1Kerns(pre, mmb, ukb, outd);
+   GenKernH(pre, NULL, mmb, ukb, mp, outd);
+   KillAllMMNodes(mp);
 @ROUT emit_amm `   GenCmplxHeaders(pre=='s'?'c':'z', mmb, rkb, outd);`
    if (rkb)
    {
@@ -2206,11 +2266,16 @@ void GenHeaderFiles(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
    }
    if (sqb)
    {
-      GenBlockingFile(pre, rkb, outd, "sqblk");
-      GenFlagH(pre, rkb, outd, "sqflag");
-      GenCMAJ2AMAJ(pre, rkb, outd, "sq");
-      GenC2BLK(pre, rkb, outd, "_sq");
-      GenSquareKH(pre, sqb, outd);
+      GenBlockingFile(pre, sqb, outd, "sqblk");
+      GenPerfFile(pre, sqb, outd, "sqperf");
+      GenFlagH(pre, sqb, outd, "sqflag");
+      GenCMAJ2AMAJ(pre, sqb, outd, "sq");
+      GenC2BLK(pre, sqb, outd, "_sq");
+      mp = GetUniqueK1Kerns(pre, sqb, ukb, outd);
+      GenKernH(pre, "sq", mmb, ukb, mp, outd);
+      KillAllMMNodes(mp);
+
+@skip      GenSquareKH(pre, sqb, outd);
    }
 }
 
@@ -2568,7 +2633,7 @@ void GenMakefile
       assert(!FLAG_IS_SET(mmp->flag, MMF_KRUNTIME));
       for (i=0; i < 3; i++)
          fprintf(fp, " \\\n       ATL_%cAMMM_%d_%d_%x_%dx%dx%d_b%c.o", pre, 
-                 mmp->ID, GetCompTimeFlags(mmp), mmp->kbB, mmp->mu, 
+                 mmp->ID, mmp->kbB, GetCompTimeFlags(mmp), mmp->mu, 
                  mmp->nu, mmp->ku, be[i]);
    }
 /*
@@ -3151,9 +3216,19 @@ void GenAllFiles(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
                  ATL_mmnode_t *sqb, ATL_mmnode_t *usb,
                  char *outd)
 {
-   GenHeaderFiles(pre, mmb, ukb, kcb, rkb, urb, sqb, usb, outd);
+   ATL_mmnode_t *mp;
+   GenHeaderFiles(pre, mmb, ukb, rkb, sqb, outd);
+@beginskip
+   if (sqb)
+   {
+      for (mp=mmb; mp->next; mp = mp->next);
+      mp->next = sqb;
+   }
+@endskip
    GenMakefile(pre, mmb, ukb, rkb, urb, usb, outd);
    GenKerns(pre, mmb, ukb, urb, outd);
+   if (sqb)
+      mp->next = NULL;
 }
 
 
@@ -3322,6 +3397,8 @@ int main(int nargs, char **args)
    KillAllMMNodes(ukb);
    KillAllMMNodes(kcb);
    KillAllMMNodes(rkb);
+   KillAllMMNodes(sqb);
+   KillAllMMNodes(usb);
    exit(0);
 }
 @ROUT ammsearch uammsearch
@@ -5393,26 +5470,29 @@ void ComputeKClean(int verb, char pre, ATL_mmnode_t *mmb)
  * best (ku=1 || kmaj>1), K-runtime kernel for that pair (timing both user
  * and generated).
  * OUTPUT: <pre>@(kpr)KCLEAN.sum: all unique kerns to be compiled
- *   <pre>@(kpr)KCLEANBYNB.sum: non-unique K-clean for each NB in mmb
+ *   <pre>2(kpr)KCLEANBYNB.sum: non-unique K-clean for each NB in mmb
  *      mflop[1] contains estimated time for 1 K-it using K=MAX(kb/4,4)
  *   <pre>@(kpr)KCLEAN_<nb>.TIM: timing of K-clean for nb=<nb>; there are
  *   i=nb-1 timings, mflop[0] contains time to do NB-i K its.  Will use
  *   these times to get completely accurate estimate of total time for
  *   large problems (use estimated time in CLBYNB for small probs).
  * 
- * NOTE: we will gen/time K-cleanup kernels only in BETA=0 case, and peel
+ * NOTE: we will time K-cleanup kernels only in BETA=0 case, and peel
  *    the first K-block rather than the last.  This will minimize the C cost,
- *    which is more appreciable for short-K.
+ *    which is more appreciable for short-K.  We will actually generate all
+ *    beta cases, since sometimes you need other betas (in complex, or if
+ *    you can't peel first partial for some reason).
  */
 {
    ATL_mmnode_t *mkb, *mp;
+
    mkb = GetUniqueKClean(verb, pre, mmb);
-   mkb = KCleanByNB(verb, pre, mmb, mkb);
 /*
  * For now, skip the timing until we have things working and know better 
  * what timings we'll need
  */
    #if 0
+   mkb = KCleanByNB(verb, pre, mmb, mkb);
 /*
  * Now, create NB detailed K-cleanup files
  */
@@ -6242,6 +6322,7 @@ int IsSlowerThanList
  * RETURNS: new list of all square cases that got best performance from
  *          original mmb.
  */
+@ROUT uammsearch
 ATL_mmnode_t *FindBestSquareCases(char pre, int verb, ATL_mmnode_t *mmb)
 {
    ATL_mmnode_t *mmp, *mmSQ=NULL, *prev=NULL;
@@ -6262,7 +6343,7 @@ ATL_mmnode_t *FindBestSquareCases(char pre, int verb, ATL_mmnode_t *mmb)
    }
    maxNB = ((maxNB+maxU-1) / maxU)*maxU;
 
-   for (i=4; i < maxNB; i++)
+   for (i=4; i <= maxNB; i++)
    {
       mmp = BestForThisNB(verb, pre, mmb, i, i-1, i+1, 1);
       if (mmSQ)
@@ -6280,6 +6361,51 @@ ATL_mmnode_t *FindBestSquareCases(char pre, int verb, ATL_mmnode_t *mmb)
    }
    return(mmSQ);
 }
+@ROUT ammsearch
+ATL_mmnode_t *FindBestSquareCases(char pre, int verb, int nregs, int maxNB, 
+                                  ATL_mmnode_t *mmb)
+{
+   ATL_mmnode_t *mmp, *mmSQ=NULL, *prev=NULL, *gmm;
+   int maxU=0, i;
+
+   for (mmp=mmb; mmp; mmp = mmp->next)
+   {
+      if (mmp->mu > maxU)
+         maxU = mmp->mu;
+      if (mmp->nu > maxU)
+         maxU = mmp->nu;
+@beginskip
+      if (mmp->nbB > maxNB)
+         maxNB = mmp->nbB;
+      if (mmp->mbB > maxNB)
+         maxNB = mmp->mbB;
+      if (mmp->kbB > maxNB)
+         maxNB = mmp->kbB;
+@endskip
+   }
+   maxNB = ((maxNB+maxU-1) / maxU)*maxU;
+   gmm = DecentGenCase(verb, pre, nregs);
+   gmm->next = mmb;
+
+   for (i=4; i <= maxNB; i++)
+   {
+      mmp = BestForThisNB(verb, pre, gmm, i, i-1, i+1, 1);
+      if (mmSQ)
+      {
+         if (prev->mflop[0] >= mmp->mflop[0])
+            KillMMNode(mmp);
+         else
+         {
+            prev->next = mmp;
+            prev = mmp;
+         }
+      }
+      else
+         mmSQ = prev = mmp;
+   }
+   return(mmSQ);
+}
+@ROUT ammsearch uammsearch
 @ROUT ammsearch
 /*
  * Sets all MV[A,B,C] bits in mmb to those provided in low 3 bits of bits
@@ -6681,7 +6807,7 @@ ATL_mmnode_t *DoMKB_findNB(char pre, int verb, ATL_mmnode_t *mmb)
  * HERE HERE HERE
  */
 }
-ATL_mmnode_t *DoSquare(char pre, int verb, ATL_mmnode_t *mmb)
+ATL_mmnode_t *DoSquare(char pre, int verb, int nregs, ATL_mmnode_t *mmb)
 {
    ATL_mmnode_t *mmSQ;
    mmSQ = ReadMMFileWithPath(pre, "res", "sqAMMRES.sum");
@@ -6703,8 +6829,19 @@ ATL_mmnode_t *DoSquare(char pre, int verb, ATL_mmnode_t *mmb)
    }
    else
    {
+      int maxNB=0;
+      ATL_mmnode_t *mp;
+      for (mp=mmb; mp; mp = mp->next)
+      {
+          if (mp->kbB > maxNB)
+             maxNB = mp->kbB;
+          if (mp->mbB > maxNB)
+             maxNB = mp->mbB;
+          if (mp->nbB > maxNB)
+             maxNB = mp->nbB;
+      }
       mmb = GetUniqueUserKerns(mmb);
-      mmSQ = FindBestSquareCases(pre, verb, mmb);
+      mmSQ = FindBestSquareCases(pre, verb, nregs, maxNB, mmb);
       KillAllMMNodes(mmb);
       WriteMMFileWithPath(pre, "res", "sqAMMRES.sum", mmSQ);
    }
@@ -6899,7 +7036,7 @@ int main(int nargs, char **args)
    int verb, nregs, nb, CS, gmu, gnu;
    int *nbs;
    char *fnout;
-   ATL_mmnode_t *mmb, *rnkK, *grnkK, *emb, *mp;
+   ATL_mmnode_t *mmb, *rnkK, *grnkK, *emb, *mp, *mmSQ;
 
    nbs = GetFlags(nargs, args, &pre, &verb, &nregs, &nb, &CS);
    if (pre == 'c' || pre == 'z')
@@ -6919,11 +7056,15 @@ int main(int nargs, char **args)
 /*
  * Create list of square cases for use in symmetric operations, etc.
  */
-   KillAllMMNodes(DoSquare(pre, verb, mmb));
+   mmSQ = DoSquare(pre, verb, nregs, mmb);
+   for (mp=mmSQ; mp->next; mp = mp->next);
+   mp->next = mmb;
 /*
  * Handle K-cleanup
  */
-   ComputeKClean(verb, pre, mmb);
+   ComputeKClean(verb, pre, mmSQ);
+   mp->next = NULL;
+   KillAllMMNodes(mmSQ);
 @skip   FindBestKU1(verb, pre, 17);  /* create kern for use in low-rank update */
 @beginskip
 /*
@@ -7596,6 +7737,7 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, int *VERB, int *NN,
 ATL_mmnode_t *FindBestSquareKern(char pre, int verb, ATL_mmnode_t *mmb)
 {
    ATL_mmnode_t *mmp, *mmSQ=NULL, *prev=NULL;
+   int maxNB=0;
 
    mmb = HarshPrune(mmb);  /* kill uncompetitive kernels */
    assert(mmb);
