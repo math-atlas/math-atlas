@@ -5298,6 +5298,137 @@ ATL_mmnode_t *GetUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
    WriteMMFileWithPath(pre, "res", "@(kpr)KCLEAN.sum", gmmb);
    return(gmmb);
 }
+@ROUT ammsearch
+ATL_mmnode_t *CanKClean(ATL_mmnode_t *krn, ATL_mmnode_t *cln)
+/*
+ * RETURNS: NULL if cln/krn cannot provide K-cleanup for krn, else ptr
+ *          to krn if it can do its own K-cleanup, else ptr to cln
+ */
+{
+/*
+ * First, determine if kernel can perform its own cleaning
+ */
+   if (FLAG_IS_SET(krn->flag, MMF_KRUNTIME))
+   {
+      if (krn->kmaj > 1)
+      {
+         if (krn->ku == krn->kmaj && krn->kbmin == krn->kmaj)
+            return(krn);
+      }
+      else if (krn->ku == 1 && krn->kbmin < 2)
+         return(krn);
+   }
+/*
+ * Cleaner must share same mu/nu, have runtime K, and handle long enough K
+ */
+   if (krn->mu == cln->mu && krn->nu == cln->nu && 
+       FLAG_IS_SET(cln->flag, MMF_KRUNTIME) &&
+      (!cln->kbmax || cln->kbmax >= krn->kbB))
+   {
+      if (krn->kmaj > 1)
+      {
+         if (cln->kmaj == krn->kmaj && cln->kbmin == krn->kmaj)
+            return(cln);
+      }
+      else if (cln->ku == 1 && cln->kbmin < 2 && cln->kmaj < 2)
+         return(cln);
+   }
+   return(NULL);
+}
+
+ATL_mmnode_t *FindKCleaner(ATL_mmnode_t *clnb, ATL_mmnode_t *kp)
+/*
+ * RETURNS: kp if kp provides its own K cleanup, 
+ *          else NULL if no K-cleaner for kp is found in clnb, 
+ *          else a ptr to the first such valid K-cleaner found in clnb
+ */
+{
+   ATL_mmnode_t *mp, *cln;
+   for (mp=clnb; mp; mp = mp->next)
+   {
+      ATL_mmnode_t *cln;
+      cln = CanKClean(kp, mp);
+      if (cln)
+         return(cln);
+   }
+   return(NULL);
+}
+
+ATL_mmnode_t *FindAllKCleaners(ATL_mmnode_t *clnb, ATL_mmnode_t *kp)
+/*
+ * RETURNS: if kp provides its own K-cleaning, then kp is returned.
+ *          otherwise a queue cloned nodes of all kernels in clnb that 
+ *          could be used to clean kp is return.
+ * Cloned nodes have their blocking values set to match kp
+ */
+{
+   ATL_mmnode_t *gdb=NULL, *mp;
+
+   gdb = FindKCleaner(clnb, kp);
+   if (gdb == kp)
+      return(kp);
+   else if (gdb)
+   {
+      mp = gdb;
+      gdb = CloneMMNode(gdb);
+      gdb->mbB = kp->mbB;
+      gdb->nbB = kp->nbB;
+      gdb->kbB = kp->kbB;
+      while ((mp = FindKCleaner(mp->next, kp)))
+      {
+         mp = CloneMMNode(mp);
+         mp->mbB = kp->mbB;
+         mp->nbB = kp->nbB;
+         mp->kbB = kp->kbB;
+         mp->next = gdb;
+         gdb = mp;
+      }
+      return(gdb);
+   }
+   return(NULL);
+}
+
+void FindAllUniqueKClean(int verb, char pre, ATL_mmnode_t *mmGE, 
+                         ATL_mmnode_t *mmSQ)
+/*
+ * Finds a way to clean up all kernels in mmGE and mmSQ
+ * RETURNS: list of all unique kernels required to do K-cleanup
+ */
+{
+   ATL_mmnode_t *clnb=NULL, *mmb, *kp;
+/*
+ * mmb is the list of all candidate cleanup codes
+ */
+   mmb = GetWorkingUserCases(verb, pre);
+   for (kp=mmGE; kp; kp = kp->next)
+   {
+      ATL_mmnode_t *cp;
+      cp = FindAllKCleaners(mmb, kp);
+/*
+ *    For kernels that serve as their own K-cleanup, just use them wt no need
+ *    to time anything else
+ */
+      if (cp == kp)
+      {
+         cp = CloneMMNode(kp);
+         cp->mflop[2] = 1.0;
+         if (KernelIsUnique(clnb, cp)) /* if this cleanup rout not present */
+         {
+            cp->next = clnb;
+            clnb = cp;
+         }
+      }
+/*
+ *    For kernels that must be cleaned by other kernels, we must time all
+ *    candidate kernels and use the best!
+ */
+      else /* HERE HERE HERE */
+      {
+         
+      }
+   }
+}
+@ROUT ammsearch uammsearch
 
 ATL_mmnode_t *FindMUNU(ATL_mmnode_t *mb, int mu, int nu)
 {
@@ -5463,16 +5594,30 @@ void TimeKClean(int verb, char pre, ATL_mmnode_t *mp)
    printf("Done.\n");
 }
 
-void ComputeKClean(int verb, char pre, ATL_mmnode_t *mmb)
+void ComputeKClean(int verb, char pre)
 /*
- * This kernel generates K-cleanup for all routines present in mmb.
+ * This kernel finds K-cleanup for all routines present in <pre>eAMMRES.sum
+ * and <pre>sqAMMRES.sum.
+ *
+ * It will overwrite mf[2] of both these files with the ratio of the main
+ * kernel mflop over the K-cleanup kernel.  In this way, we have an estimate
+ * of how much slower the cleanup routine is when making choices about 
+ * blocking factors to use.  Note that we don't measure all K values, which
+ * will mean this estimate is not very precise, but it gives us some clue
+ * if the cleanup is terrible (i.e. unvectorized) or OK, without having
+ * to time all K-values (install time might cause user revolt).
+ *
  * To do this, it finds all unique (mu,nu,kmaj) triplets, and then finds the
  * best (ku=1 || kmaj>1), K-runtime kernel for that pair (timing both user
  * and generated).
  * OUTPUT: <pre>@(kpr)KCLEAN.sum: all unique kerns to be compiled
+ *         <pre>eAMMRES.sum:  MFLOP[2] = cleanup slowdown
+ *         <pre>sqAMMRES.sum: MFLOP[2] = cleanup slowdown
+@beginskip
  *   <pre>2(kpr)KCLEANBYNB.sum: non-unique K-clean for each NB in mmb
  *      mflop[1] contains estimated time for 1 K-it using K=MAX(kb/4,4)
  *   <pre>@(kpr)KCLEAN_<nb>.TIM: timing of K-clean for nb=<nb>; there are
+@endskip
  *   i=nb-1 timings, mflop[0] contains time to do NB-i K its.  Will use
  *   these times to get completely accurate estimate of total time for
  *   large problems (use estimated time in CLBYNB for small probs).
@@ -5484,23 +5629,15 @@ void ComputeKClean(int verb, char pre, ATL_mmnode_t *mmb)
  *    you can't peel first partial for some reason).
  */
 {
-   ATL_mmnode_t *mkb, *mp;
+   ATL_mmnode_t *mkb, *mmb, *mmSQ, *mmRK, *mp;
 
-   mkb = GetUniqueKClean(verb, pre, mmb);
-/*
- * For now, skip the timing until we have things working and know better 
- * what timings we'll need
- */
-   #if 0
-   mkb = KCleanByNB(verb, pre, mmb, mkb);
-/*
- * Now, create NB detailed K-cleanup files
- */
-   for (mp=mkb; mp; mp = mp->next)
-      TimeKClean(verb, pre, mp);
-   printf("\n");
-   #endif
-   KillAllMMNodes(mkb);
+   mmb = ReadMMFileWithPath(pre, "res", "eAMMRES.sum");
+   mmSQ = ReadMMFileWithPath(pre, "res", "sqAMMRES.sum");
+   mmRK = ReadMMFileWithPath(pre, "res", "RANKK.sum");
+   assert(mmb && mmSQ);
+   FindAllUniqueKClean(verb, pre, mmb, mmSQ);
+   WriteMMFileWithPath(pre, "res", "eAMMRES.sum", mmb);
+   WriteMMFileWithPath(pre, "res", "sqAMMRES.sum", mmb);
 }
 
 void FindBestKU1
@@ -6840,7 +6977,8 @@ ATL_mmnode_t *DoSquare(char pre, int verb, int nregs, ATL_mmnode_t *mmb)
           if (mp->nbB > maxNB)
              maxNB = mp->nbB;
       }
-      mmb = GetUniqueUserKerns(mmb);
+      mmb = GetWorkingUserCases(verb, pre);
+@skip      mmb = GetUniqueUserKerns(mmb);
       mmSQ = FindBestSquareCases(pre, verb, nregs, maxNB, mmb);
       KillAllMMNodes(mmb);
       WriteMMFileWithPath(pre, "res", "sqAMMRES.sum", mmSQ);
@@ -6848,6 +6986,56 @@ ATL_mmnode_t *DoSquare(char pre, int verb, int nregs, ATL_mmnode_t *mmb)
    return(mmSQ);
 }
 
+/*
+ * Finds main amm kernels
+ */
+ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS)
+{
+   ATL_mmnode_t *mmb, *sqmmb, *mp;
+   mmb = ReadMMFileWithPath(pre, "res", "eAMMRES.sum");
+   if (mmb)
+   {
+      FillInGenStrings(pre, mmb);
+      if (mmb->mflop[0] < 0.0)
+      {
+         ATL_mmnode_t *mp;
+         for (mp=mmb; mp; mp = mp->next)
+            mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB,
+                                        mp->kbB, 0, 0, mp->mbB, 1, 0, -1);
+         WriteMMFileWithPath(pre, "res", "eAMMRES.sum", mmb);
+      }
+      return(mmb);
+   }
+/*
+ * Find which kernels can compile on this platform
+ */
+   mmb = GetWorkingUserCases(verb, pre);
+/*
+ * Find decent generator case and find correct vectorization settings, add
+ * this case to default list to be searched.
+ */
+   mp = DecentGenCase(verb, pre, nregs);
+   mp->next = mmb;
+   mmb = mp;
+/*
+ * Find the best user-supplied cases for the three common cache blking cases
+ */
+   mmb = FindCacheBudgetCasesByKB(verb, pre, CS, mmb);
+/*
+ * Now find best square cases
+ */
+   sqmmb = DoSquare(pre, verb, nregs, mmb);
+/*
+ * Now add small-case kernels back in, and write it out
+ */
+   mp = MergeCases(0, mmb, sqmmb);
+   KillAllMMNodes(sqmmb);
+   KillAllMMNodes(mmb);
+   mmb = WinnowCases(0, mp);
+   WriteMMFileWithPath(pre, "res", "eAMMRES.sum", mmb);
+   return(mmb);
+}
+@beginskip
 /*
  * Finds main amm kernels
  */
@@ -6931,6 +7119,7 @@ ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS, int *nbs)
    WriteMMFileWithPath(pre, "res", "eAMMRES.sum", mmb);
    return(mmb);
 }
+@endskip
 
 int KernHandlesThisKB(ATL_mmnode_t *mp, int kb)
 {
@@ -7041,7 +7230,7 @@ int main(int nargs, char **args)
    nbs = GetFlags(nargs, args, &pre, &verb, &nregs, &nb, &CS);
    if (pre == 'c' || pre == 'z')
       return(DoComplex(pre, verb));
-   mmb = DoMainMM(pre, verb, nregs, CS, nbs);
+   mmb = DoMainMM(pre, verb, nregs, CS);
    emb = TimeExtraBlockings(pre, verb);
    if (emb)
    {
@@ -7054,28 +7243,10 @@ int main(int nargs, char **args)
    }
    rnkK = DoRankK(pre, verb, nregs, mmb);
 /*
- * Create list of square cases for use in symmetric operations, etc.
- */
-   mmSQ = DoSquare(pre, verb, nregs, mmb);
-   for (mp=mmSQ; mp->next; mp = mp->next);
-   mp->next = mmb;
-/*
  * Handle K-cleanup
  */
-   ComputeKClean(verb, pre, mmSQ);
+   ComputeKClean(verb, pre);
    mp->next = NULL;
-   KillAllMMNodes(mmSQ);
-@skip   FindBestKU1(verb, pre, 17);  /* create kern for use in low-rank update */
-@beginskip
-/*
- * Find best rank-K update kernels
- */
-   grnkK = DecentGenCase(verb, pre, nregs);
-   rnkK = GetWorkingUserCases(verb, pre);
-   mp = GetUniqueUserKerns(mmb);
-   rnkK = GetRankKKernels(verb, pre, pre == 'd' ? 60:80, grnkK, rnkK, mmb);
-   mmb = mp;
-@endskip
 /*
  * Join mmb & rnkK to make master list of all kernels required in this search
  */
