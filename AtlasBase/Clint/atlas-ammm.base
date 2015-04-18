@@ -523,20 +523,17 @@ int Mjoin(PATL,ammmNMK)
    @define up @u@
    @define UP @U@
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2013
-@ROUT emit_amm
-   @define up @@
-   @define UP @@
-@extract -b @(topd)/cw.inc lang=C -def cwdate 2012 -def cwdate 2013
-@ROUT emit_amm emit_uamm
 #include "atlas_misc.h"
 #define ATL_JKMDEF 1
 #include "atlas_mmparse.h"
 #include "atlas_sys.h"
-@ROUT emit_uamm `   static int UID=0, UIL=1;`
+
+static int UID=0, UIL=1;
+
 void PrintUsage(char *name, int ierr, char *flag)
 {
    if (ierr > 0)
-      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr, 
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
               flag?flag:"OUT-OF_ARGUMENTS");
    else if (ierr < 0)
       fprintf(stderr, "ERROR: %s\n", flag);
@@ -548,14 +545,13 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "   -K <K cleanup by NB file> \n");
    fprintf(stderr, "   -r <rank-K kernel file> \n");
    fprintf(stderr, "   -s <square-case kernel file>\n");
-@ROUT emit_uamm `
-   fprintf(stderr, 
+
+   fprintf(stderr,
       "   -I <ID> : unique non-negative ID for header/kern files\n");
-@ROUT emit_amm emit_uamm
    exit(ierr ? ierr : -1);
 }
 
-ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char **DOUT, 
+ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char **DOUT,
                        char **UKIN, char **KCIN, char **RKIN, char **SQIN)
 {
    int i, j=0, n, k;
@@ -567,7 +563,7 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char **DOUT,
    {
       if (args[i][0] != '-')
          PrintUsage(args[0], i, args[i]);
-      
+
       switch(args[i][1])
       {
       case 'p':
@@ -591,7 +587,6 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char **DOUT,
             PrintUsage(args[0], i-1, NULL);
         *KCIN = DupString(args[i]);
         break;
-@ROUT emit_uamm
       case 'I':
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
@@ -599,13 +594,6 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char **DOUT,
         for (k=10; k <= UID; k *= 10)
            UIL++;
         break;
-@ROUT emit_amm
-      case 'r':
-        if (++i >= nargs)
-            PrintUsage(args[0], i-1, NULL);
-        *RKIN = DupString(args[i]);
-        break;
-@ROUT emit_amm emit_uamm
       case 'd':
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
@@ -636,6 +624,137 @@ ATL_mmnode_t *GetFlags(int nargs, char **args, char *PRE, char **DOUT,
    }
    return(mmb);
 }
+
+@ROUT emit_amm
+   @define up @@
+   @define UP @@
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2012 -def cwdate 2013 -def cwdate 2015
+#include "atlas_misc.h"
+#define ATL_JKMDEF 1
+#include "atlas_mmparse.h"
+#include "atlas_sys.h"
+
+void PrintUsage(char *name, int ierr, char *flag)
+{
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr, 
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+   fprintf(stderr, "USAGE: %s [flags]:\n", name);
+   fprintf(stderr, "   -p [s,d,c,z]: set type/precision prefix (d) \n");
+   fprintf(stderr, "   -d <outdir>: directory to dump files to\n");
+   fprintf(stderr, "   -g <rect kern file> <geKCleanFile>\n");
+   fprintf(stderr, "   -r <rank-K kernel file> \n");
+   fprintf(stderr, "   -s <square-case kernel file> <sqKCleanFile>\n");
+   exit(ierr ? ierr : -1);
+}
+
+/*
+ * RETURNS: precision prefix [s,d,c,z]
+ */
+char GetFlags(int nargs, char **args, char **DOUT, 
+              ATL_mmnode_t **GEMM, ATL_mmnode_t **GEK1,
+              ATL_mmnode_t **SQMM, ATL_mmnode_t **SQK1,
+              ATL_mmnode_t **RKMM)
+{
+   int i, j=0, n, k;
+   char pre='d';
+   ATL_mmnode_t *gemm=NULL, *gek1=NULL, *sqmm=NULL, *sqk1=NULL, *rkmm=NULL;
+   ATL_mmnode_t *mmb=NULL, *mmp, *mp;
+
+   *DOUT = NULL;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+      
+      switch(args[i][1])
+      {
+      case 'p':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        pre = tolower(args[i][0]);
+        assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+        break;
+      case 'g':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        gemm = ReadMMFile(args[i]);
+        assert(gemm);
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        gek1 = ReadMMFile(args[i]);
+        assert(gek1);
+        break;
+      case 's':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        sqmm = ReadMMFile(args[i]);
+        assert(sqmm);
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        sqk1 = ReadMMFile(args[i]);
+        assert(sqk1);
+        break;
+      case 'r':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        rkmm = ReadMMFile(args[i]);
+        break;
+      case 'd':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        *DOUT = DupString(args[i]);
+        break;
+      case 'i':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        mmp = ReadMMFile(args[i]);
+        if (mmb)
+        {
+           ATL_mmnode_t *mp;
+           for (mp=mmb; mp->next; mp = mp->next);
+           mp->next = mmp;
+        }
+        else
+           mmb = mmp;
+        break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   if (!gemm)
+   {
+      assert(!gek1);
+      gemm = ReadMMFileWithPath(pre, "res", "eAMMRES.sum");
+      assert(gemm);
+      gek1 = ReadMMFileWithPath(pre, "res", "geAMMKCLEAN.sum");
+      assert(gek1);
+   }
+   if (!sqmm)
+   {
+      assert(!sqk1);
+      sqmm = ReadMMFileWithPath(pre, "res", "sqAMMRES.sum");
+      assert(sqmm);
+      sqk1 = ReadMMFileWithPath(pre, "res", "sqAMMKCLEAN.sum");
+      assert(sqk1);
+   }
+   if (!rkmm)
+   {
+      rkmm = ReadMMFileWithPath(pre, "res", "ARANKK.sum");
+      assert(rkmm);
+   }
+   if (!(*DOUT))
+      *DOUT = DupString("KERNEL");
+   *GEMM = gemm;
+   *GEK1 = gek1;
+   *SQMM = sqmm;
+   *SQK1 = sqk1;
+   *RKMM = rkmm;
+   return(pre);
+}
+@ROUT emit_amm emit_uamm
 
 char *GetVecStr(char pre, int vlen)
 {
@@ -4092,54 +4211,44 @@ ATL_mmnode_t *GetNewGenNode(char pre, int nb, int lat, int mu, int nu, int ku,
 }
 
 ATL_mmnode_t *GetNewKCleanGenNode
-   (char pre, int mb, int nb, int kb, int mu, int nu, int ku, int kmaj)
+(
+   char pre, 
+   ATL_mmnode_t *kp,  /* kernel we are generating K-cleanup for */
+   int mb, 
+   int nb, 
+   int kb
+)
 {
-   ATL_mmnode_t *np;
-   char *ln;
-   int vmu;
-   if (kmaj < 2)
-      kmaj = 0;
-   np = GetMMNode();
-   np->rout = malloc(sizeof(char)*27);
-   assert(np->rout);
-   sprintf(np->rout, "ATL_%cgamm%d_%dx%d_nb0.c", pre, kmaj, mu, nu);
-   np->mbB = mb;
-   np->nbB = nb;
-   np->kbB = kb;
-   np->vlen = VLEN[VECi];
-   np->muladd = VECi;  /* stores what vector ISA to use */
-   vmu = mu / np->vlen;
+   ATL_mmnode_t *p;
+   const int mu=kp->mu, nu=kp->nu, kmaj=(kp->kmaj < 2) ? 0 : kp->kmaj;
+   int vl=VECi, vmu;
+/*
+ * Right now, we don't have a generator for K-vectorized kernels, must fix
+ * this when we add that
+ */
    if (kmaj)
    {
       vmu = mu;
-      if (ku % np->vlen)
-      {
-         fprintf(stderr, "\n\nWARNING: vector K-cleanup using scalar code:"
-                 "B(%d,%d,%d) UR(%d,%d,%d), kvec=%d\n\n", mb, nb, kb,
-                 mu, nu, ku, kmaj);
-         np->vlen = 1;
-         np->muladd = VTSC;
-      }
+      VECi = VTSC;
    }
-   else if (vmu*np->vlen != mu)
+   else
    {
-      fprintf(stderr, "\n\nWARNING: vector K-cleanup using scalar code:"
-              "B(%d,%d,%d) UR(%d,%d,%d), kvec=%d\n\n", mb, nb, kb, 
-              mu, nu, ku, kmaj);
-      vmu = mu;
-      np->vlen = 1;
-      np->muladd = VTSC;
+      if (mu % VLEN[VECi])
+      {
+         if (VECi = VTAVX && !(mu%VLEN[VTSSE]))
+            VECi = VTSSE;
+         else
+            VECi = VTSC;
+      }
+      vmu = mu / VLEN[VECi];
    }
-   np->mu = vmu;
-   np->nu = nu;
-   np->ku = ku;
-   np->lat = 0;
-   np->kmaj = kmaj;
-   np->genstr = GenString(pre, 0, nb, mu, nu, ku, kmaj, np->rout);
-   ApplyMoves2Flag(np, IMVS);
-@skip   if (MOVES)
-@skip      np->moves = DupString(MOVES);
-   return(np);
+   p = GetNewGenNode(pre, 0, 0, vmu, nu, 1, kmaj);
+   p->flag |= (1<<MMF_KRUNTIME);
+   VECi = vl;
+   p->mbB = mb;
+   p->nbB = nb;
+   p->kbB = kb;
+   return(p);
 }
 
 ATL_mmnode_t *FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
@@ -5495,7 +5604,7 @@ ATL_mmnode_t *CanKClean(ATL_mmnode_t *krn, ATL_mmnode_t *cln)
    {
       if (krn->kmaj > 1)
       {
-         if (cln->kmaj == krn->kmaj && cln->kbmin == krn->kmaj)
+         if (cln->kmaj == krn->kmaj && cln->kbmin <= krn->kmaj)
             return(cln);
       }
       else if (cln->ku == 1 && cln->kbmin < 2 && cln->kmaj < 2)
@@ -5572,6 +5681,8 @@ ATL_mmnode_t *FindAllUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
    for (kp=mmb; kp; kp = kp->next)
    {
       ATL_mmnode_t *cp;
+      if (FindKCleaner(clnb, kp))  /* if we've already got a K-cleaner */
+         continue;                 /* for this case, skip! */
       cp = FindAllKCleaners(mkb, kp);
       if (cp)
          printf("   %s --> %s!\n", kp->rout, cp->rout);
@@ -5583,12 +5694,9 @@ ATL_mmnode_t *FindAllUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
  */
       if (cp == kp)
       {
-         if (KernelIsUnique(clnb, kp))   /* if we already have a cleanup kern */
-         {
-            cp = CloneMMNode(kp);
-            cp->next = clnb;
-            clnb = cp;
-         }
+         cp = CloneMMNode(kp);
+         cp->next = clnb;
+         clnb = cp;
       }
 /*
  *    For kernels that must be cleaned by other kernels, we must time all
@@ -5598,46 +5706,65 @@ ATL_mmnode_t *FindAllUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
       {
          ATL_mmnode_t *mp;
          const int mb=kp->mbB, nb=kp->nbB, kb=kp->kbB;
+         int ntim;
 /*
  *       Add generated case to any user cases that work
  */
-         if (kp->kmaj > 1)
-            mp = GetNewKCleanGenNode(pre, mb, nb, kb, kp->mu, kp->nu, 
-                                     kp->kmaj, kp->kmaj);
-         else
-            mp = GetNewKCleanGenNode(pre, mb, nb, kb, kp->mu, kp->nu, 1, 0);
+         mp = GetNewKCleanGenNode(pre, kp, mb, nb, kb);
          if (!CanKClean(kp, mp))
          {
+            fprintf(stderr, "KU=(%d,%d,%d), KV=%d, MU=(%d,%d,%d), MV=%d\n",
+                    kp->mu, kp->nu, kp->ku, kp->kmaj,
+                    mp->mu, mp->nu, mp->ku, mp->kmaj);
             assert(CanKClean(kp,mp));
          }
          mp->next = cp;
          cp = mp;
-         for (cp=mp; mp; mp = mp->next)
+         ntim = ATL_CountNumberOfMMNodes(cp);
+         if (ntim > 1)
          {
+/*
+ *          Now time all kernels, and choose the fastest for cleanup.
+ *          We'll use kbB as kb, even though this is larger than the code
+ *          will ever be used for.  However, it will allow us to directly
+ *          compare kernel and cleanup performance.
+ *          A better strategy would be to time many different K cases, but
+ *          I don't want to spend that amount of install time tuning and timing
+ *          low-order cleanup!
+ */
+            printf("   CHOOSING BETWEEN %d KB=%d K-CLEANERS WITH TIMINGS:\n", 
+                   ntim, kb);
+            for (mp=cp; mp; mp = mp->next)
+            {
+               double mf;
+               if (mp->mbB != mb || mp->nbB != nb || mp->kbB != kb || 
+                   mp->mflop[0] <= 0.0)
+               {
+                  mp->mbB = mb;
+                  mp->nbB = nb;
+                  mp->kbB = kb;
+                  mf = TimeMMKernel(0, 1, mp, pre, mb, nb, kb, 0, 0, mb, 
+                                    0, 0, -1);
+                  mp->mflop[0] = mf;
+               }
+               else
+                  mf = mp->mflop[0];
+               printf("      %d-%s: %.2f\n", mp->ID, mp->rout?mp->rout:"", mf);
+            }
+            mp = FindMaxMflopMMQ(cp, 0);
+            printf("   USING %d-%s\n", mp->ID, mp->rout? mp->rout:"");
+            cp = RemoveMMNodeFromQ(cp, mp);
+            KillAllMMNodes(cp);
+         }
+         else
+         {
+            mp = cp;
             mp->mbB = mb;
             mp->nbB = nb;
             mp->kbB = kb;
          }
-/*
- *       Now time all kernels, and choose the fastest for cleanup.
- *       We'll use kbB as kb, even though this is larger than the code
- *       will ever be used for.  However, it will allow us to directly
- *       compare kernel and cleanup performance.
- *       A better strategy would be to time many different K cases, but
- *       I don't want to spend that amount of install time tuning and timing
- *       low-order cleanup!
- */
-         TimeAllMMKernels(0, verb, 0, cp, pre, 0, 0, mb, 0, 0, -1);
-         mp = FindMaxMflopMMQ(cp, 0);
-         cp = RemoveMMNodeFromQ(cp, mp);
-         KillAllMMNodes(cp);
-         if (KernelIsUnique(clnb, mp))
-         {
-            mp->next = clnb;
-            clnb = mp;
-         }
-         else
-            KillMMNode(mp);
+         mp->next = clnb;
+         clnb = mp;
       }
    }
    KillAllMMNodes(mkb);
@@ -5811,6 +5938,48 @@ void TimeKClean(int verb, char pre, ATL_mmnode_t *mp)
    printf("Done.\n");
 }
 
+/*
+ * Specialize the K cleanup routs in mkb to the kernels in mmb by changing
+ * their block factors, and timing them.
+ */
+ATL_mmnode_t *SpecializeKClean
+   (int verb, char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *mkb)
+{
+   ATL_mmnode_t *mp, *b=NULL;
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      ATL_mmnode_t *kp;
+      if (SelfKClean(mp))
+      {
+         kp = CloneMMNode(mp);
+         kp->mflop[2] = 1.0;
+      }
+      else
+      {
+         const int mb=mp->mbB, nb=mp->nbB, kb=mp->kbB;
+         kp = FindKCleaner(mkb, mp);
+         if (!kp)
+            fprintf(stderr, "UR(%d,%d,%d), %s: NO KCLEAN", 
+                    mp->mu, mp->nu, mp->ku, mp->rout);
+         assert(kp);
+         kp = CloneMMNode(kp);
+         if (kp->mbB != mb || kp->nbB != nb || kp->kbB != kb || 
+             kp->mflop[0] <= 0.0)
+         {
+            kp->mbB = mb;
+            kp->nbB = nb;
+            kp->kbB = kb;
+            kp->mflop[0] = TimeMMKernel(verb, 0, kp, pre, mb, nb, kb, 0, 0, mb,
+                                        0, 0, -1);
+            kp->mflop[2] = kp->mflop[0] / mp->mflop[0];
+         }
+      }
+      printf("   KB=%d KCLEAN SPEEDUP: %.4f\n", kp->kbB, kp->mflop[2]);
+      kp->next = b;
+      b = kp;
+   }
+   return(b);
+}
 void ComputeKClean(int verb, char pre)
 /*
  * This kernel finds K-cleanup for all routines present in <pre>eAMMRES.sum
@@ -5874,46 +6043,26 @@ void ComputeKClean(int verb, char pre)
  * order due to the way we build them
  */
    if (verb)
-      printf("SPECIALIZING K-CLEANERS FOR RECTANGULAR BLOCKINGS:");
-   for (mp=mmGE; mp; mp = mp->next)
-   {
-      ATL_mmnode_t *kp;
-      if (SelfKClean(mp))
-         kp = CloneMMNode(mp);
-      else
-      {
-         const int mb=mp->mbB, nb=mp->nbB, kb=mp->kbB;
-         kp = FindKCleaner(mkb, mp);
-         if (!kp)
-            fprintf(stderr, "UR(%d,%d,%d), %s: NO KCLEAN", 
-                    mp->mu, mp->nu, mp->ku, mp->rout);
-         assert(kp);
-         kp = CloneMMNode(kp);
-         if (kp->mbB != mb || kp->nbB != nb || kp->kbB != kb)
-         {
-            kp->mbB = mb;
-            kp->nbB = nb;
-            kp->kbB = kb;
-            kp->mflop[0] = TimeMMKernel(verb, 0, kp, pre, mb, nb, kb, 0, 0, mb,
-                                        0, 0, -1);
-         }
-      }
-      kp->next = mmGEk;
-      mmGEk = kp;
-   }
+      printf("SPECIALIZING K-CLEANERS FOR RECTANGULAR BLOCKINGS:\n");
+   mmGEk = SpecializeKClean(verb, pre, mmGE, mkb);
    if (verb)
-      printf("DONE SPECIALIZING K-CLEANERS FOR RECTANGULAR BLOCKINGS.");
+      printf("DONE SPECIALIZING K-CLEANERS FOR RECTANGULAR BLOCKINGS.\n");
    KillAllMMNodes(mmGE);
    WriteMMFileWithPath(pre, "res", "geAMMKCLEAN.sum", mmGEk);
    KillAllMMNodes(mmGEk);
 /*
  * Now do same for square kernels
  */
+   if (verb)
+      printf("SPECIALIZING K-CLEANERS FOR SQUARE BLOCKINGS:\n");
+   mmSQk = SpecializeKClean(verb, pre, mmSQ, mkb);
+   if (verb)
+      printf("DONE SPECIALIZING K-CLEANERS FOR SQUARE BLOCKINGS.\n");
    KillAllMMNodes(mmSQ);
    WriteMMFileWithPath(pre, "res", "sqAMMKCLEAN.sum", mmSQk);
    KillAllMMNodes(mmSQk);
    if (verb)
-      printf("DONE FINDING K-CLEANUP FOR EACH KB.");
+      printf("\nDONE FINDING K-CLEANUP FOR EACH KB.\n");
 }
 
 void FindBestKU1
@@ -7413,7 +7562,6 @@ int main(int nargs, char **args)
  * Handle K-cleanup
  */
    ComputeKClean(verb, pre);
-   mp->next = NULL;
 /*
  * Join mmb & rnkK to make master list of all kernels required in this search
  */
