@@ -3130,7 +3130,7 @@ char GetFlags(int nargs, char **args, char **DOUT,
    if (!gemm)
    {
       assert(!gek1);
-      gemm = ReadMMFileWithPath(pre, "res", "eAMMRES.sum");
+      gemm = ReadMMFileWithPath(pre, "res", "geAMMRES.sum");
       assert(gemm);
       gek1 = ReadMMFileWithPath(pre, "res", "geAMMKCLEAN.sum");
       assert(gek1);
@@ -3145,7 +3145,7 @@ char GetFlags(int nargs, char **args, char **DOUT,
    }
    if (!rkmm)
    {
-      rkmm = ReadMMFileWithPath(pre, "res", "ARANKK.sum");
+      rkmm = ReadMMFileWithPath(pre, "res", "rkAMMRES.sum");
       assert(rkmm);
    }
    if (!(*DOUT))
@@ -7809,33 +7809,24 @@ ATL_mmnode_t *SpecializeKClean
    }
    return(b);
 }
+@ROUT uammsearch
+void ComputeKClean(int verb, char pre)
+{
+}
+@ROUT ammsearch
 void ComputeKClean(int verb, char pre)
 /*
- * This kernel finds K-cleanup for all routines present in <pre>eAMMRES.sum
+ * This kernel finds K-cleanup for all routines present in <pre>geAMMRES.sum
  * and <pre>sqAMMRES.sum.
  *
- * It will overwrite mf[2] of both these files with the ratio of the main
- * kernel mflop over the K-cleanup kernel.  In this way, we have an estimate
- * of how much slower the cleanup routine is when making choices about 
- * blocking factors to use.  Note that we don't measure all K values, which
- * will mean this estimate is not very precise, but it gives us some clue
- * if the cleanup is terrible (i.e. unvectorized) or OK, without having
- * to time all K-values (install time might cause user revolt).
- *
- * To do this, it finds all unique (mu,nu,kmaj) triplets, and then finds the
- * best (ku=1 || kmaj>1), K-runtime kernel for that pair (timing both user
- * and generated).
  * OUTPUT: <pre>@(kpr)KCLEAN.sum: all unique kerns to be compiled
- *         <pre>eAMMRES.sum:  MFLOP[2] = cleanup slowdown
- *         <pre>sqAMMRES.sum: MFLOP[2] = cleanup slowdown
+ *         <pre>geAMMKCLEAN.sum:  MFLOP[2] = cleanup slowdown
+ *         <pre>sqAMMKCLEAN.sum: MFLOP[2] = cleanup slowdown
 @beginskip
- *   <pre>2(kpr)KCLEANBYNB.sum: non-unique K-clean for each NB in mmb
- *      mflop[1] contains estimated time for 1 K-it using K=MAX(kb/4,4)
- *   <pre>@(kpr)KCLEAN_<nb>.TIM: timing of K-clean for nb=<nb>; there are
-@endskip
  *   i=nb-1 timings, mflop[0] contains time to do NB-i K its.  Will use
  *   these times to get completely accurate estimate of total time for
  *   large problems (use estimated time in CLBYNB for small probs).
+@endskip
  * 
  * NOTE: we will time K-cleanup kernels only in BETA=0 case, and peel
  *    the first K-block rather than the last.  This will minimize the C cost,
@@ -7853,7 +7844,7 @@ void ComputeKClean(int verb, char pre)
  * reverse the list order so that the larger block factors choose cleanup for
  * smaller, rather than reverse.
  */
-   mmGE = ReverseMMQ(ReadMMFileWithPath(pre, "res", "eAMMRES.sum"));
+   mmGE = ReverseMMQ(ReadMMFileWithPath(pre, "res", "geAMMRES.sum"));
    mmSQ = ReverseMMQ(ReadMMFileWithPath(pre, "res", "sqAMMRES.sum"));
    assert(mmGE && mmSQ);
 /*
@@ -7893,6 +7884,7 @@ void ComputeKClean(int verb, char pre)
    if (verb)
       printf("\nDONE FINDING K-CLEANUP FOR EACH KB.\n");
 }
+@ROUT ammsearch uammsearch
 
 void FindBestKU1
 (
@@ -8829,7 +8821,7 @@ ATL_mmnode_t *GetRankKKernels
    ATL_mmnode_t *run, *rkb;
    int maxKB=128;
    int mb, nb;
-   rkb = ReadMMFileWithPath(pre, "res", "ARANKK.sum");
+   rkb = ReadMMFileWithPath(pre, "res", "rkAMMRES.sum");
    if (rkb)
    {
       ATL_mmnode_t *mp;
@@ -8845,7 +8837,7 @@ ATL_mmnode_t *GetRankKKernels
          printf("  ID=%d, %s: (M,N,K)=(%d,%d,%d) mf=%.2f\n", mp->ID, 
                 mp->rout ? mp->rout:"Gennedkern", mb, nb, kb, mp->mflop[0]);
       }
-      WriteMMFileWithPath(pre, "res", "ARANKK.sum", rkb);
+      WriteMMFileWithPath(pre, "res", "rkAMMRES.sum", rkb);
       KillAllMMNodes(low);
       KillAllMMNodes(gmm);
       KillAllMMNodes(mmb);
@@ -8946,7 +8938,7 @@ ATL_mmnode_t *GetRankKKernels
    PrintMMNodes(stdout, rkb);
    printf("\n");
    KillAllMMNodes(run);
-   WriteMMFileWithPath(pre, "res", "ARANKK.sum", rkb);
+   WriteMMFileWithPath(pre, "res", "rkAMMRES.sum", rkb);
    return(rkb);
 }
 
@@ -8962,12 +8954,12 @@ int DoComplex(char pre, int verb)
    ATL_mmnode_t *mmb;
    char upr = (pre == 'z') ? 'd' : 's';
    exit(-1);
-   mmb = ReadMMFileWithPath(pre, "res", "eAMMRES.sum");
+   mmb = ReadMMFileWithPath(pre, "res", "geAMMRES.sum");
    if (!mmb)
    {
-      mmb = ReadMMFileWithPath(upr, "res", "eAMMRES.sum");
+      mmb = ReadMMFileWithPath(upr, "res", "geAMMRES.sum");
       assert(mmb);
-      WriteMMFileWithPath(pre, "res", "eAMMRES.sum", mmb);
+      WriteMMFileWithPath(pre, "res", "geAMMRES.sum", mmb);
    }
 
 }
@@ -9137,7 +9129,7 @@ ATL_mmnode_t *DoSquare(char pre, int verb, int nregs, ATL_mmnode_t *mmb)
 ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS)
 {
    ATL_mmnode_t *mmb, *sqmmb, *mp;
-   mmb = ReadMMFileWithPath(pre, "res", "eAMMRES.sum");
+   mmb = ReadMMFileWithPath(pre, "res", "geAMMRES.sum");
    if (mmb)
    {
       FillInGenStrings(pre, mmb);
@@ -9147,7 +9139,7 @@ ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS)
          for (mp=mmb; mp; mp = mp->next)
             mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB,
                                         mp->kbB, 0, 0, mp->mbB, 1, 0, -1);
-         WriteMMFileWithPath(pre, "res", "eAMMRES.sum", mmb);
+         WriteMMFileWithPath(pre, "res", "geAMMRES.sum", mmb);
       }
       return(mmb);
    }
@@ -9177,7 +9169,7 @@ ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS)
    KillAllMMNodes(sqmmb);
    KillAllMMNodes(mmb);
    mmb = WinnowCases(0, mp);
-   WriteMMFileWithPath(pre, "res", "eAMMRES.sum", mmb);
+   WriteMMFileWithPath(pre, "res", "geAMMRES.sum", mmb);
    return(mmb);
 }
 @beginskip
@@ -9187,7 +9179,7 @@ ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS)
 ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS, int *nbs)
 {
    ATL_mmnode_t *mmb, *smmb;
-   mmb = ReadMMFileWithPath(pre, "res", "eAMMRES.sum");
+   mmb = ReadMMFileWithPath(pre, "res", "geAMMRES.sum");
    if (mmb)
    {
       FillInGenStrings(pre, mmb);
@@ -9197,7 +9189,7 @@ ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS, int *nbs)
          for (mp=mmb; mp; mp = mp->next)
             mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB,
                                         mp->kbB, 0, 0, mp->mbB, 1, 0, -1);
-         WriteMMFileWithPath(pre, "res", "eAMMRES.sum", mmb);
+         WriteMMFileWithPath(pre, "res", "geAMMRES.sum", mmb);
       }
       return(mmb);
    }
@@ -9261,7 +9253,7 @@ ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS, int *nbs)
    }
    else /* when we force nbs, we just blindly use the provided list */
       mmb = smmb;
-   WriteMMFileWithPath(pre, "res", "eAMMRES.sum", mmb);
+   WriteMMFileWithPath(pre, "res", "geAMMRES.sum", mmb);
    return(mmb);
 }
 @endskip
@@ -9361,7 +9353,7 @@ ATL_mmnode_t *DoRankK(char pre, int verb, int nregs, const ATL_mmnode_t *mainb)
       mp->next = rkb;
       rkb = mp;
    }
-   WriteMMFileWithPath(pre, "res", "ARANKK.sum", rkb);
+   WriteMMFileWithPath(pre, "res", "rkAMMRES.sum", rkb);
 }
 
 int main(int nargs, char **args)
@@ -9384,7 +9376,7 @@ int main(int nargs, char **args)
       KillAllMMNodes(mmb);
       KillAllMMNodes(emb);
       mmb = WinnowCases(0, mp);
-      WriteMMFileWithPath(pre, "res", "eAMMRES.sum", mmb);
+      WriteMMFileWithPath(pre, "res", "geAMMRES.sum", mmb);
    }
    rnkK = DoRankK(pre, verb, nregs, mmb);
 /*
@@ -10109,7 +10101,7 @@ int main(int nargs, char **args)
    if (KCLEAN)
       ComputeKClean(verb, pre, mmb);
    mmb = ATL_SortMMNodesByMflop(0, mmb);
-   mmB = ReadMMFileWithPath(pre, "res", "eAMMRES.sum");
+   mmB = ReadMMFileWithPath(pre, "res", "geAMMRES.sum");
    mmB = ATL_SortMMNodesByMflop(0, mmB);
    printf("\n");
    if (mmb)
@@ -10274,7 +10266,7 @@ int Mjoin(PATL,ammmABC)
    @define rt @Mjoin(PATL,ammm_IP)@
 #include "atlas_misc.h"
 #include "atlas_amm.h"
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_sum.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_sum.h))
 @ROUT ATL_ammm_IP ATL_cammm_IP
 /*
  * This routine handles M <= MAXM && N <= MAXN && very long K, or
@@ -10285,27 +10277,27 @@ int Mjoin(PATL,ammmABC)
  */
 @ROUT ATL_ammm_rkK0
 #include "atlas_misc.h"
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_rankK.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_rkkblk.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_rkkflag.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),rkamm_kern.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),rkamm_blk.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),rkamm_flag.h))
 @ROUT ATL_cammm_1b ATL_ammm_rkK ATL_cammm_rkK
 #include "atlas_misc.h"
 #include "atlas_amm.h"
 #include "atlas_level1.h"
 #include "atlas_lvl2.h"
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_sum.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_sum.h))
 @ROUT ATL_ammm_1b ATL_ammmKNM
 #include "atlas_misc.h"
 #include "atlas_amm.h"
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_sum.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_sum.h))
 @ROUT ATL_ammm ATL_cammm
 #include "atlas_misc.h"
 #include "atlas_lvl2.h"
 #include "atlas_level1.h"
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_sum.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_sum.h))
    @define rt @Mjoin(PATL,ammm)@
 @ROUT ATL_cammm_rkK ATL_cammm_tN ATL_cammmMNK
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_sum.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_sum.h))
 #ifdef ATL_CAMM_MAXMB
    #define MY_MAXMB ATL_CAMM_MAXMB
    #define MY_MAXNB ATL_CAMM_MAXNB
@@ -13485,7 +13477,7 @@ int Mjoin(PATL,ammm_rk2)
 }
 @ROUT ATL_ammmREC
 #include "atlas_misc.h"
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_sum.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_sum.h))
 
 typedef struct ammrec ammrec_t;
 struct ammrec
@@ -13968,7 +13960,7 @@ int Mjoin(PATL,ammmREC)
 }
 @ROUT ATL_ammmNMK
 #include "atlas_misc.h"
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_sum.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_sum.h))
 
 int Mjoin(PATL,ammmNMK)
 (
@@ -14300,7 +14292,7 @@ int Mjoin(PATL,ammmNMK)
 }
 @ROUT ATL_cammmNMK
 #include "atlas_misc.h"
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_sum.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_sum.h))
 
 int Mjoin(PATL,ammmNMK)
 (
@@ -14854,13 +14846,13 @@ main(int nargs, char **args)
 
 @ROUT ATL_GetAmmAlg.c
 #include "atlas_amm.h"
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_blk.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_ablk2cmat.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_a1.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_an.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_aX.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_flag.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_kern.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_blk.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_ablk2cmat.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_a1.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_an.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_aX.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_flag.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_kern.h))
 
 void GetAmmNMKDetails
 (
@@ -15202,9 +15194,9 @@ int main(int nargs, char **args)
 #define ATL_NOAMM 1
 #include "atlas_misc.h"
 #undef ATL_NOAMM
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_rankK.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_rkkblk.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_rkkflag.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),rkamm_kern.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),rkamm_blk.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),rkamm_flag.h))
 
 int Mjoin(PATL,GetRankKInfo)
 (
@@ -15223,13 +15215,13 @@ int Mjoin(PATL,GetRankKInfo)
    ATL_assert(K > 2 && K <= ATL_MAXK_RKK);
 @ROUT ATL_GetAmmmInfo
 #include "atlas_misc.h"
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_blk.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_ablk2cmat.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_a1.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_an.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_aX.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_flag.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_kern.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_blk.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_ablk2cmat.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_a1.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_an.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_aX.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_flag.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_kern.h))
 
 int Mjoin(PATL,GetAmmmInfo)
 (
@@ -15485,7 +15477,7 @@ int Mjoin(PATL,GetAmmmInfo)
 /*
  * Following routines help pick NB for parallel routines
  */
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_sum.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_sum.h))
 #ifdef ATL_CAMM_MAXINDX
    #define ATL_MAXIDX ATL_CAMM_MAXINDX
 #elif defined(ATL_AMM_98IDX) && !defined(ATL_AMM_66IDX)
@@ -15503,7 +15495,7 @@ int Mjoin(PATL,GetAmmmInfo)
  * RETURNS: mb to use, 0 if ATL_trsmKL_rk4 should be called instead.
  */
 #include "atlas_ttypes.h"
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_perf.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_perf.h))
 /*
  * Need to time to detect this.  It is the best perf gotten by directly
  * calling ATL_trsmKL_rk4
@@ -16305,13 +16297,13 @@ size_t GetAmmmNthr(ATL_CSZT M, ATL_CSZT N, ATL_CSZT K)
 }
 @ROUT cnbtune
 #include "atlas_misc.h"
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_blk.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_ablk2cmat.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_a1.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_an.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_aX.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_flag.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_kern.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_blk.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_ablk2cmat.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_a1.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_an.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_aX.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_flag.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_kern.h))
 
 static int IK=ATL_AMM_NCASES-1, MB=0, NB=0, KB=0;
 #ifdef DCPLX
@@ -16714,13 +16706,13 @@ int main(int nargs, char **args)
 }
 @ROUT ATL_GetSqMNAmmmInfo
 #include "atlas_misc.h"
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_blk.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_ablk2cmat.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_a1.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_an.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),amm_cm2am_aX.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_flag.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),amm_kern.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_blk.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_ablk2cmat.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_a1.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_an.h))
+#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_aX.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_flag.h))
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_kern.h))
 
 /*
  * Chooses good square M & N blocking; starts from size that gets 98% of
