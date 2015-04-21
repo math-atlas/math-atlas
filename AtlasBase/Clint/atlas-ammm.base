@@ -4011,9 +4011,9 @@ int ExactKernelInList(ATL_mmnode_t *mmb, ATL_mmnode_t *p)
     return(0);
 }
 
-void SpewForthKernProto(FILE *fp, char pre, ATL_mmnode_t *p, char bc)
+void SpewForthKernProto(FILE *fp, char pre, char *nm, ATL_mmnode_t *p, char bc)
 {
-   fprintf(fp, "void ATL_%cAMMM_%d_%d_%x_%dx%dx%d_b%c\n", pre, p->ID, 
+   fprintf(fp, "void ATL_%c%s_%d_%d_%x_%dx%dx%d_b%c\n", pre, nm, p->ID, 
            FLAG_IS_SET(p->flag, MMF_KRUNTIME)?0:p->kbB, GetCompTimeFlags(p),
            p->mu, p->nu, p->ku,bc);
    fprintf(fp, 
@@ -4022,18 +4022,16 @@ void SpewForthKernProto(FILE *fp, char pre, ATL_mmnode_t *p, char bc)
       "    const TYPE*,const TYPE*,const TYPE*);\n");
 }
 
-void SpewForthKernProtos(FILE *fp, char pre, ATL_mmnode_t *mmb, int nbet)
+void SpewForthKernProtos(FILE *fp, char pre, char *nm, ATL_mmnode_t *mmb, 
+                         int nbet)
 {
    ATL_mmnode_t *mp;
    for (mp=mmb; mp; mp = mp->next)
    {
-      if (!ExactKernelInList(mp->next, mp))
-      {
-         char bc[3] = {'0', '1', 'n'};  /* 0 must come first */
-         int ib;
-         for (ib=0; ib < nbet; ib++)
-            SpewForthKernProto(fp, pre, mp, bc[ib]);
-      }
+      char bc[3] = {'0', '1', 'n'};  /* 0 must come first */
+      int ib;
+      for (ib=0; ib < nbet; ib++)
+         SpewForthKernProto(fp, pre, nm, mp, bc[ib]);
    }
 }
 
@@ -4042,13 +4040,14 @@ void SpewForthKernArray(FILE *fp, char pre, ATL_mmnode_t *mmb,
 {
    ATL_mmnode_t *mp;
    int n;
+   char *nm = (vnam[5] == 'R' && vnam[6] == 'K') ? "AMRK":"AMMM";
 
    for (n=0,mp=mmb; mp; n++, mp = mp->next);
    fprintf(fp, "static const ammkern_t ATL_AMM_%s[%d] =\n", vnam, n);
    fprintf(fp, "{\n");
    for (mp=mmb; mp; mp = mp->next)
    {
-      fprintf(fp, "   ATL_%cAMMM_%d_%d_%x_%dx%dx%d_b%c", pre, mp->ID, 
+      fprintf(fp, "   ATL_%c%s_%d_%d_%x_%dx%dx%d_b%c", pre, nm, mp->ID, 
               FLAG_IS_SET(mp->flag, MMF_KRUNTIME)?0:mp->kbB, 
               GetCompTimeFlags(mp), mp->mu, mp->nu, mp->ku, cbet);
       if (mp->next)
@@ -4328,7 +4327,7 @@ void GenRankKH
    for (mp=rkb; mp; mp = mp->next)
    {
 /*
- *    For runtime kernels, only prototype 1st time they are seen in list
+ *    For runtime-K kernels, only prototype 1st time they are seen in list
  */
       if (FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
       {
@@ -4347,9 +4346,9 @@ void GenRankKH
          }
          if (mp == p)
          {
-            SpewForthKernProto(fp, pre, mp, '0');
-            SpewForthKernProto(fp, pre, mp, '1');
-            SpewForthKernProto(fp, pre, mp, 'n');
+            SpewForthKernProto(fp, pre, "AMRK", mp, '0');
+            SpewForthKernProto(fp, pre, "AMRK", mp, '1');
+            SpewForthKernProto(fp, pre, "AMRK", mp, 'n');
          }
       }
 /*
@@ -4357,9 +4356,9 @@ void GenRankKH
  */
       else
       {
-         SpewForthKernProto(fp, pre, mp, '0');
-         SpewForthKernProto(fp, pre, mp, '1');
-         SpewForthKernProto(fp, pre, mp, 'n');
+         SpewForthKernProto(fp, pre, "AMRK", mp, '0');
+         SpewForthKernProto(fp, pre, "AMRK", mp, '1');
+         SpewForthKernProto(fp, pre, "AMRK", mp, 'n');
       }
    }
 /*
@@ -4419,10 +4418,9 @@ void GenKernH
  * For prototyping, create a list of all full and cleanup kerns, and get
  * rid of duplicates
  */
-   ukb = CloneMMQueue(mmb);
-   ATL_LastMMNode(ukb)->next = CloneMMQueue(k1b);
-   ukb = RemoveNonUniqueKernels(ukb);
-   SpewForthKernProtos(fp, pre, ukb, 3);
+   ukb = AddUniqueMMKernCompList(NULL, mmb);
+   ukb = AddUniqueMMKernCompList(ukb, k1b);
+   SpewForthKernProtos(fp, pre, "AMMM", ukb, 3);
    fprintf(fp, "\n");
    KillAllMMNodes(ukb);
 /*
@@ -4626,15 +4624,14 @@ void GenMakefile
    char *styps[2] = {"-DDREAL", "-DDCPLX"};
    char *styp = (pre == 'd' || pre == 'z') ? "-DDREAL" : "-DSREAL";
 /*
- * square & rect kernels handled same way, so combine them & their cleanup
- * into one big queue, and eliminate any kernel that isn't different once
- * compiled (i.e. same kernel compiled with diff KB may be repeated)
+ * Square & rect kernels handled same way: going to be compiled once for
+ * each compile-time K, and once if runtime, so combine them into one big
+ * queue for Make generation, w/o repeating same compile-time kernel
  */
-   mmb = CloneMMQueue(geb);
-   ATL_LastMMNode(mmb)->next = CloneMMQueue(sqb);
-   ATL_LastMMNode(mmb)->next = CloneMMQueue(gek1b);
-   ATL_LastMMNode(mmb)->next = CloneMMQueue(sqk1b);
-   mmb = RemoveNonUniqueKernels(mmb);
+   mmb = AddUniqueMMKernCompList(NULL, geb);
+   mmb = AddUniqueMMKernCompList(mmb, gek1b);
+   mmb = AddUniqueMMKernCompList(mmb, sqk1b);
+   mmb = AddUniqueMMKernCompList(mmb, sqb);
 
    pres[0] = pre;
    if (pre == 's' || pre == 'c')
@@ -4756,7 +4753,7 @@ void GenMakefile
       {
          const int id = mmp->ID;
          for (p=mmb; p != mmp; p = p->next)
-            if (p->ID == id && FLAG_IS_SET(p->flag, MMF_KRUNTIME))
+            if (MMKernsSame(mmp, p))
                break;
          if (p != mmp)
             continue;
@@ -4904,7 +4901,7 @@ void GenMakefile
       {
          const int id = mmp->ID;
          for (p=mmb; p != mmp; p = p->next)
-            if (p->ID == id && FLAG_IS_SET(p->flag, MMF_KRUNTIME))
+            if (MMKernsSame(mmp, p))
                break;
          if (p != mmp)
             continue;
