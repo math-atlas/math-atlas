@@ -2086,6 +2086,131 @@ static void SortByTrans
    *bNC0 = bNC;
    *bTC0 = bTC;
 }
+@ROUT mmread
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int MMKernsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
+/*
+ * RETURNS: 1 if kernels are the same except for blocking, 0 otherwise
+ */
+{
+/*
+ * Two generated kernels are the same if mu,nu,ku,VLEN,flag are the same.
+ * NOTE: if we make generator handle muladd, etc, MUST UPDATE HERE!!!
+ */
+   if (p0->ID == 0 && p1->ID == 0)
+      return(p0->mu == p1->mu && p0->nu == p1->nu && p0->ku == p1->ku &&
+             p0->vlen == p1->vlen && p0->flag == p1->flag &&
+             p0->kmaj == p1->kmaj);
+/*
+ * If both are user kernels, then they may be repeats.  For user kernels,
+ * they are the same if both ID and flag match, else they are not.
+ */
+   else if (p0->ID > 0 && p1->ID > 0)
+      return(p0->ID == p1->ID && p0->flag == p1->flag);
+   return(0);  /* Can't be the same if above criteria fails */
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int MMKernCompsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
+/*
+ * RETURNS: 1 if kernels are the same including KB, else 0
+ */
+{
+/*
+ * Kernels are not the same if one has compile-time K and other runtime
+ */
+   if (FLAG_IS_SET(p0->flag, MMF_KRUNTIME) != 
+       FLAG_IS_SET(p1->flag, MMF_KRUNTIME))
+      return(0);
+/*
+ * Kernels not same if both compile-time K with differing KB
+ */
+   if (!FLAG_IS_SET(p0->flag, MMF_KRUNTIME) && p0->kbB != p1->kbB)
+      return(0);
+   return(MMKernsSame(p0, p1));
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int MMKernIsPresent(ATL_mmnode_t *mmb, ATL_mmnode_t *mmp)
+/*
+ * RETURNS: 1 if kernel compilation matching mmp is in list mmb, 0 otherwise
+ */
+{
+   ATL_mmnode_t *mp;
+   for (mp=mmb; mp; mp = mp->next)
+      if (MMKernsSame(mmp, mp))
+         return(1);
+   return(0);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static int MMKernCompIsPresent(ATL_mmnode_t *mmb, ATL_mmnode_t *mmp)
+/*
+ * RETURNS: 1 if kernel compilation matching mmp is in list mmb, 0 otherwise
+ */
+{
+   ATL_mmnode_t *mp;
+   for (mp=mmb; mp; mp = mp->next)
+      if (MMKernCompsSame(mmp, mp))
+         return(1);
+   return(0);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static ATL_mmnode_t *AddUniqueMMKernsToList
+   (ATL_mmnode_t *mmb, ATL_mmnode_t *newb)
+/*
+ * RETURNS: mmb with any kernels present in newb that aren't in mmb added to it
+ * (1) changes mmb, does not change newb
+ * (2) new nodes are added to BEGINNING of mmb (leaving mmb unsorted)!
+ */
+{
+   ATL_mmnode_t *mp;
+      
+   for (mp=newb; mp; mp = mp->next)
+   {
+      if (!MMKernIsPresent(mmb, mp))
+      {
+         ATL_mmnode_t *p;
+         p = CloneMMNode(mp);
+         p->next = mmb;
+         mmb = p;
+      }
+   }
+   return(mmb);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static ATL_mmnode_t *AddUniqueMMKernCompList
+   (ATL_mmnode_t *mmb, ATL_mmnode_t *newb)
+/*
+ * RETURNS: mmb with any kerncomps present in newb that aren't in mmb added 
+ *          to it
+ * (1) changes mmb, does not change newb
+ * (2) new nodes are added to BEGINNING of mmb (leaving mmb unsorted)!
+ */
+{
+   ATL_mmnode_t *mp;
+   for (mp=newb; mp; mp = mp->next)
+   {
+      if (!MMKernCompIsPresent(mmb, mp))
+      {
+         ATL_mmnode_t *p;
+         p = CloneMMNode(mp);
+         mp->next = newb;
+         mmb = mp;
+      }
+   }
+   return(mmb);
+}
+
 @ROUT mvread r1read mmread
 #endif  /* end atlas_@(rt)parse.h guard */
 @ROUT atlas_mvtesttime.h
