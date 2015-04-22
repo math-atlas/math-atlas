@@ -171,7 +171,7 @@ enum inst
    VDSTNT,                     /* [memA], vr0    : mem = vr0 */
    VDST,                       /* [memA], vr0    : mem = vr0 */
    VDSTU,                      /* [memU], vr0    : unaligned mem = vr0 */
-   VDSTS,                      /* [mem], [vr0]  :  mem = vr[0] */
+   VDSTS,                      /* [mem], [vr0]  :  mem = vr[0] */   
    VDMOV,                      /* [vr0], [vr1]   : vr0 = vr1 */
    VDMOVS,                     /* [vr0], [vr1]   : vr0[0] = vr1[0] */
    VDADD,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 + vr2 */
@@ -183,6 +183,12 @@ enum inst
    VDNEG,                      /* [vr0], [vr1] : vr0 = -(vr1) */
    VDMAX,                      /* vr0 = max(vr1,vr2) */
    VDMIN,                      /* vr0 = min(vr1,vr2) */
+/*
+ * Majedul: intorducing special load instruction with broadcast ability
+ * NOTE: it will only be used to load data. repeatble optimizations skip it
+ * it doesn't have corresponding move instruction to optimize
+ */
+   VDLDSB,                     /* vr, mem : vr[0] = vr[1] = ...= [mem] */
 /*
  * Majedul: 
  * NOTE: SSE -> 3 operand, AVX -> 4 operand
@@ -219,6 +225,11 @@ enum inst
    VFNEG,                      /* [vr0], [vr1] : vr0 = -(vr1) */
    VFMAX,                      /* vr0 = max(vr1,vr2) */
    VFMIN,                      /* vr0 = min(vr1,vr2) */
+/*
+ * Majedul: intorducing special load instruction with broadcast ability
+ * NOTE: it will only be used to load data. repeatble optimizations skip it
+ */
+   VFLDSB,                     /* vr, mem: vr[0] = vr[1] =...=[mem] */
 /*
  * Majedul: 
  * NOTE: SSE -> 3 operand, AVX -> 4 operand
@@ -556,6 +567,13 @@ char *instmnem[] =
    "VDNEG",
    "VDMAX",
    "VDMIN",
+/*
+ * Majedul: intorducing special load instruction with broadcast ability
+ */
+   "VDLDSB"
+/*
+ * blend operation
+ */
    "VDCMOV1",
    "VDCMOV2",
    "VDSHUF",
@@ -583,6 +601,13 @@ char *instmnem[] =
    "VFNEG",
    "VFMAX",
    "VFMIN",
+/*
+ * Majedul: intorducing special load instruction with broadcast ability
+ */
+   "VFLDSB",
+/*
+ * blend operation
+ */
    "VFCMOV1",
    "VFCMOV2",
    "VFSHUF",
@@ -799,10 +824,22 @@ char *instmnem[] =
                       (i_) == VDLDL || (i_) == VDLDH || \
                       (i_) == VLD  ||  (i_) == VSLDS || \
                       (i_) == VILDS || (i_) == VFLDU || \
-                      (i_) == VDLDU || (i_) == VLDU )
+                      (i_) == VDLDU || (i_) == VLDU  || \
+                      (i_) == VFLDSB || (i_) == VDLDSB )
 
 #define IS_UNALIGNED_VLOAD(i_) ((i_) == VFLDU || (i_) == VDLDU || \
                                (i_) == VLDU )
+/*
+ * Although VFLDSB/VDLDSB loads into vector register, they are essentially 
+ * scalar load
+ */
+#define IS_VLOAD(i_)  ((i_) == VFLD || (i_) == VDLD || \
+                      (i_) == VFLDS || (i_) == VDLDS || \
+                      (i_) == VFLDL || (i_) == VFLDH || \
+                      (i_) == VDLDL || (i_) == VDLDH || \
+                      (i_) == VLD  ||  (i_) == VSLDS || \
+                      (i_) == VILDS || (i_) == VFLDU || \
+                      (i_) == VDLDU || (i_) == VLDU )
 
 #define IS_MOVE(i_) ((i_) == MOV || (i_) == FMOV || (i_) == FMOVD || \
                      (i_) == VFMOV || (i_) == VDMOV || \
