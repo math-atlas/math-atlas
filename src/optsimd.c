@@ -10219,3 +10219,118 @@ void UnalignLoopSpecialization(LOOPQ *lp)
 #endif
 }
 
+void UpdateVecLoop(LOOPQ *lp)
+/*
+ * this function updates data for HIL intrinsic-vectorized loop  
+ */
+{
+   int i, j, n, N;
+   struct ptrinfo *pbase, *p;
+   INT_BVI iv;
+   BLIST *bl;
+   short *sp, *s;
+   int vflag;
+   extern INT_BVI FKO_BVTMP;
+   extern short STderef;
+   extern BBLOCK *bbbase;
+/*
+ * what to update:
+ * 1. vflag
+ * 2. varrs
+ * 3. vvscal
+ */
+/*
+ * finding all variables use and set inside loop
+ */
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
+   iv = FKO_BVTMP;
+   SetVecAll(iv, 0);
+
+   if (!CFUSETU2D)
+   {
+      CalcInsOuts(bbbase);
+      CalcAllDeadVariables();
+   }
+   for (bl=lp->blocks; bl; bl=bl->next)
+   {
+      iv = BitVecComb(iv, iv, bl->blk->uses, '|');
+      iv = BitVecComb(iv, iv, bl->blk->defs, '|');
+   }
+   for (i=0; i < TNREG; i++)
+      SetVecBit(iv, i, 0);
+   SetVecBit(iv, STderef+TNREG-1, 0);
+   
+   sp = BitVec2Array(iv, 1-TNREG);
+#if 0
+   for ( i=1, N=sp[0]; i <= N; i++)
+   {
+         fprintf(stderr,"%s[%d] ",STname[sp[i]-1],STflag[sp[i]-1]);
+   }
+   fprintf(stderr, "\n");
+#endif
+   vflag = 0;
+   for (N=sp[0],n=0,i=1; i <= N; i++)
+   {
+      if (IS_VDOUBLE(STflag[sp[i]-1]))
+      {
+         vflag = T_VDOUBLE;
+         sp[n++] = sp[i];
+      }
+      else if ( IS_VFLOAT(STflag[sp[i]-1]))
+      {
+         vflag = T_VDOUBLE;
+         sp[n++] = sp[i];
+      }
+   }
+   if (IS_VDOUBLE(vflag) && IS_VFLOAT(vflag))
+      fko_error(__LINE__, "Mixed vector type in intrinsic\n");
+   lp->vflag = vflag;
+
+   s = malloc(sizeof(short)*(n+1));
+   assert(s);
+   s[0] = n;
+   for (i=1; i <= n; i++)
+      s[i] = sp[i-1];
+   lp->vvscal = s;
+#if 0  
+   fprintf(stderr, "vflag=%d\n", lp->vflag);
+   if (n)
+   {
+      fprintf(stderr, "Vars: ");
+      for (i=0; i < n ; i++)
+      {
+         fprintf(stderr,"%s[%d] ",STname[sp[i]-1],sp[i]-1);
+      }
+      fprintf(stderr, "\n");
+   }
+   else
+      fprintf(stderr, "No Var!\n");
+#endif
+/*
+ * finding moving pointer
+ */
+   pbase = FindMovingPointers(lp->blocks);
+   for (N=0, p=pbase; p; p=p->next) N++;
+   s = malloc(sizeof(short)*(N+1));
+   assert(s);
+   s[0] = N;
+   for (i=1, p=pbase; p; p=p->next, i++)
+      s[i] = p->ptr;
+   lp->varrs = s;
+#if 0  
+   if (N)
+   {
+      fprintf(stderr, "Varrays: ");
+      for (i=1; i <= N ; i++)
+      {
+         fprintf(stderr,"%s[%d] ",STname[s[i]-1],s[i]-1);
+      }
+      fprintf(stderr, "\n");
+   }
+   else
+      fprintf(stderr, "No Var!\n");
+#endif
+
+   if (sp) free(sp);
+}
+
