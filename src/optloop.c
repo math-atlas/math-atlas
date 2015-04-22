@@ -3968,7 +3968,7 @@ OPTLOOP=1
       exit(0);
    }
 }
-
+#if 0
 void PrintLoopInfo()
 /*
  * Figures out Loop info needed for info file, always starting from stage 2
@@ -4175,6 +4175,7 @@ void PrintLoopInfo()
    if (fpLOOPINFO)
       exit(0);
 }
+#endif
 
 short *DeclareAE(int VEC, int ne, short STi)
 /*
