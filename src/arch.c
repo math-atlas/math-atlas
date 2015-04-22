@@ -53,6 +53,28 @@ short type2shift(int type)
       #endif
    return(len);
 }
+short vtype2elem(int type)
+/*
+ * returns element count in vector depending on the vector type
+ */
+{
+   short nelem;
+#if defined(AVX)
+   if (type == T_VDOUBLE)
+      nelem = 4;
+   else if (type == T_VFLOAT) 
+      nelem = 8;
+#else
+   if (type == T_VDOUBLE)
+      nelem = 2;
+   else if (type == T_VFLOAT) 
+      nelem = 4;
+#endif
+   else
+      fko_error(__LINE__, "Must be a vector type!");
+   return nelem;
+}
+
 int RevealArchMemUses(void)
 /*
  * reveals all the mem uses for DTabs/DTnzeros, 
