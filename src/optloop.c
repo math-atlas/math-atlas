@@ -527,6 +527,18 @@ struct ptrinfo *FindMovingPointers(BLIST *scope)
                         j = ip->prev->inst[3];
                         if (j > 0 && IS_CONST(STflag[j-1]))
                         {
+/*
+ *                         save the ST index of the const updated by
+ *                         NOTE: here we keep track of the element count, not
+ *                         the actual distance (mulitplying with data size).
+ */
+#if 1                           
+                           k = SToff[j-1].i 
+                                 >> type2shift(FLAG2TYPE(STflag[p->ptr-1]));
+                           /*fprintf(stderr, "i=%d, p->upst=%d\n", 
+                                              SToff[j-1].i, k);*/
+#endif
+                           p->upst = STiconstlookup(k);;
                            p->flag |= PTRF_CONSTINC;
                            if (SToff[j-1].i == type2len(FLAG2TYPE(flag)))
                               p->flag |= PTRF_CONTIG;
@@ -603,6 +615,16 @@ INSTQ *KillPointerUpdates(struct ptrinfo *pbase, int UR)
       inc = type2len(FLAG2TYPE(STflag[pi->ptr-1]));
       ipN = NewInst(NULL, NULL, NULL, LD, ip->prev->prev->inst[1], 
                     ip->prev->prev->inst[2], 0);
+#if 1
+/*
+ *    we need to increment the ptr by the const. it is updated multiplying with
+ *    data type:  HIL: ptr = ptr + val; 
+ *                inc = val * type
+ */
+      inc = inc * SToff[pi->upst-1].i;
+      /*fprintf(stderr, "inc=%d, UR=%d, udst=%d\n", inc, UR, 
+                        SToff[pi->upst-1].i);*/
+#endif
       ipN->next = NewInst(NULL, NULL, NULL, ip->prev->inst[0], 
                           ip->prev->inst[1], ip->prev->inst[2], 
                           STiconstlookup(inc*UR));
@@ -716,13 +738,32 @@ void UpdatePointerLoads(BLIST *scope, struct ptrinfo *pbase, int UR)
             if (i == n) continue;
 /*
  *          Now that we've got a moving pointer, determing unrolling increment
+ *          NOTE: we are updating the inc with actual unroll factor * pi->upst
+ *          the correctness of this code depeneds on the correct value of 'uri'
+ *          parameter. 
+ *          1) In unrolling, we have correct upst value. so, we need to use 
+ *          unroll factor uri (not URmul)
+ *          2) But during vectorization, we don't have correct pi->upst (which 
+ *          is updated at the end of the process). So, uri should be dependent 
+ *          of vlen.
+ *          BTW, it doesn't depend on the load operation of vector-intrinsic 
+ *          code. At the end, we will have correct 'upst' to multiply with
  */
             inc = UR * type2len(FLAG2TYPE(STflag[k-1]));
 /*
- *          NOTE: i can be 0 ...
+ *          NOTE: i can be 0, then pi = pbase
  */
             for (pi=pbase; i && pi->ptr != k; pi=pi->next,i--);
             assert(pi);
+#if 1
+/*
+ *          unrolling increment also depends on the const, the Ptr is updated
+ *          by
+ */   
+            assert(pi->flag & PTRF_CONSTINC); /* haven't implemented other yet*/
+            if (pi->flag & PTRF_CONSTINC)
+               inc = inc * SToff[pi->upst-1].i;
+#endif
             if (!(pi->flag & PTRF_INC))
                inc = -inc;
 /*
@@ -924,7 +965,8 @@ static void ForwardLoop(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
  *    loop. Look into the code of GenCleanupLoop. 
  */
       /*SToff[OL_NEINC-1].i = unroll-1;*/
-      SToff[OL_NEINC-1].i = unroll; /* it works. */
+      if (!(lp->LMU_flag & LMU_NO_CLEANUP) ) /* no need if no cleanup */
+         SToff[OL_NEINC-1].i = unroll; /* it works. */
    }
    if (IS_CONST(STflag[lp->beg-1]))
       *ipinit = ip = NewInst(NULL, NULL, NULL, MOV, -r0, lp->beg, 0);
@@ -954,7 +996,8 @@ static void ForwardLoop(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
  * 
  * FIXME: consider MAIN LOOP with vector/unroll and NINC format...
  */
-   if (unroll > 1 && !IS_CONST(STflag[lp->end-1]))
+   if (unroll > 1 && !IS_CONST(STflag[lp->end-1]) 
+         && !(lp->LMU_flag & LMU_NO_CLEANUP) )
    {
       ip = ip->next;
       ip->next = NewInst(NULL, NULL, NULL, LD, -r0, SToff[lp->end-1].sa[2], 0);
@@ -1095,7 +1138,11 @@ static void SimpleLC(LOOPQ *lp, int unroll, INSTQ **ipinit, INSTQ **ipupdate,
          ip = ip->next;
       }
    }
-   if (unroll < 2)
+/*
+ * NOTE: if NO_CLEANUP is used, we don't need the checking; but we need to init
+ * the index variable
+ */
+   if (unroll < 2 || (lp->LMU_flag & LMU_NO_CLEANUP) )
       ip->next = NewInst(NULL, NULL, NULL, ST, Ioff, -r0, 0);
    else
    {
@@ -1349,7 +1396,18 @@ void OptimizeLoopControl(LOOPQ *lp, /* Loop whose control should be opt */
    else 
       fprintf(stderr, "NO Loop test!!!\n");
 #endif
-   AddLoopControl(lp, lp->preheader ? ipinit : NULL, ipupdate, ippost, iptest);
+/*
+ * NOTE: this function is used both for main loop and cleanup loop. 
+ * So far, cleanup loop doesn't have preheader yet and that's the way to
+ * skip the ipinit
+ * FIXME: if user throughs NO_CLEANUP markup, we need to skip the cleanup 
+ * test too. but need initialization of index variable. 
+ * need to formalize the whole process!!!
+ */
+   /*if (lp->LMU_flag & LMU_NO_CLEANUP)
+      AddLoopControl(lp, NULL, ipupdate, ippost, iptest);
+   else*/
+      AddLoopControl(lp, lp->preheader ? ipinit : NULL, ipupdate, ippost, iptest);
    KillAllInst(ipinit);
    KillAllInst(ipupdate);
    KillAllInst(iptest);
@@ -1697,7 +1755,7 @@ void GenCleanupLoop(LOOPQ *lp)
 /*
  *    OL_NEINC will be changed to real unrolling when known
  *    ========================================================================
- *    FIXME: OL_NEINC can be updated multiple time as we may call the cleanup
+ *    NOTE: OL_NEINC can be updated multiple time as we may call the cleanup
  *    several times. It would create problem if other inst use this entry as
  *    a const. We need to consider this as special purpose constant entry and
  *    prevent the search of symbol table to return this entry for others.
@@ -1954,7 +2012,10 @@ int UnrollLoop(LOOPQ *lp, int unroll)
    if (FKO_SB && (VECT_FLAG & VECT_SV) )
       URmul *= FKO_SB;
 #endif
-   UR = lp->vflag ? URmul*unroll : unroll;
+   if (VECT_FLAG & VECT_INTRINSIC)
+      UR = unroll;
+   else
+      UR = lp->vflag ? URmul*unroll : unroll;
 #if 0
    fprintf(stdout, "\nAfter killing lp \n");
    PrintInst(stdout, bbbase);
@@ -1968,6 +2029,7 @@ int UnrollLoop(LOOPQ *lp, int unroll)
    il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
    if (il) KillIlist(il);
    else UsesIndex = 0;
+   
    pi0 = FindMovingPointers(lp->blocks);
    if (!pi0)
       UsesPtrs = 0;
@@ -1994,12 +2056,21 @@ int UnrollLoop(LOOPQ *lp, int unroll)
 /*
  * Majedul: in new program states, logic of unroll cleanup is changed. 
  * So, need to use new UnrollCleanup function.
+ * NOTE: We may skip cleanup if markup says so
  */
    /*UnrollCleanup(lp, unroll);*/
-   if (FKO_SB && (VECT_FLAG & VECT_SV) )
-      UnrollCleanup2(lp, unroll*FKO_SB);
-   else 
-      UnrollCleanup2(lp, unroll);
+   if ( !(lp->LMU_flag & LMU_NO_CLEANUP) )
+   {
+      if (FKO_SB && (VECT_FLAG & VECT_SV) )
+         UnrollCleanup2(lp, unroll*FKO_SB);
+      else 
+         UnrollCleanup2(lp, unroll);
+   }
+   else
+   {
+      OL_NEINC = STdef("OL_NEINC", CONST_BIT | T_INT, 1);
+      fprintf(stderr, "Force no cleanup!\n");
+   }
 
    URbase = (lp->flag & L_FORWARDLC_BIT) ? 0 : UR-1;
 
@@ -2056,7 +2127,8 @@ int UnrollLoop(LOOPQ *lp, int unroll)
 /*
  *       Find all lds of moving ptrs, and add unrolling factor to them
  */
-         UpdatePointerLoads(dupblks[i-1], pi, i*URmul);
+         /*UpdatePointerLoads(dupblks[i-1], pi, i*URmul);*/
+         UpdatePointerLoads(dupblks[i-1], pi, i);
          KillAllPtrinfo(pi);
       }
 /*
@@ -2106,7 +2178,8 @@ int UnrollLoop(LOOPQ *lp, int unroll)
                             
    if (pi0)
    {
-      ippost = KillPointerUpdates(pi0, UR);
+      /*ippost = KillPointerUpdates(pi0, UR);*/
+      ippost = KillPointerUpdates(pi0, unroll);
       KillAllPtrinfo(pi0);
       assert(ippost);
    }
@@ -2141,6 +2214,8 @@ int UnrollLoop(LOOPQ *lp, int unroll)
    lp->tails = ntails;
 /*
  * Put unrolled & optimized loop control back in loop
+ * FIXME: outer loop unrolled vector-intrinsic code, UR should not be used.
+ * should multiply previous increment with unroll factor "unroll"
  */
    OptimizeLoopControl(lp, UR, 0, ippost);
 /*
@@ -4929,6 +5004,7 @@ void UnrollCleanup2(LOOPQ *lp, int unroll)
    ILIST *il;
    int FORWARDLOOP;
    short r0, r1;
+   extern int VECT_FLAG;
 
    if (lp->CU_label == -1)
       return;
@@ -4948,7 +5024,9 @@ void UnrollCleanup2(LOOPQ *lp, int unroll)
  */
    SetLoopControlFlag(lp, 0);
    FORWARDLOOP = L_FORWARDLC_BIT & lp->flag;
-   unroll *= Type2Vlen(lp->vflag);  /* need to update Type2Vlen for AVX*/
+   
+   if (!(VECT_FLAG & VECT_INTRINSIC))
+      unroll *= Type2Vlen(lp->vflag);  /* need to update Type2Vlen for AVX*/
 /*
  * Require one and only one post-tail; later do transformation to ensure this
  * for loops where it is not natively true
