@@ -5,7 +5,7 @@
 
 /*
  * FIXED: After implementing SV and UNROLLING of SV, short are no longer 
- * enough. 
+ * enough to index bit vector 
  */
    #define ushort unsigned short
 /*
@@ -54,7 +54,10 @@ struct ilist
    INSTQ *inst;
    ILIST *next;
 };
-
+/*
+ * NOTE: upst is added to keep track of the value of a ptr updated by
+ * by keep tracking this, we can unroll any PTRF_CONSTINC
+ */
 struct ptrinfo
 {
    ILIST *ilist;          /* ptrs to nupdate store inst */
@@ -62,6 +65,7 @@ struct ptrinfo
    short ptr;
    short flag;            /* see PTRF_* defined in fko_optloop.h */
    short nupdate;         /* # of times updated */
+   short upst;            /* ST index of the const  val: ptr = ptr + val; */
 };
 
 struct idlist
@@ -161,7 +165,7 @@ struct blist
 /*
  * flag for Loop markups
  */
-/*#define LMU_MUTUALLY_ALIGNED 1*/ /*all ptr are mutually aligned inside loop */
+#define LMU_NO_CLEANUP  0x1
 /*
  * NOTE: when even we add/update any element of this data structure, we need to
  * check following functions whether it affects or not:
@@ -290,12 +294,15 @@ struct ignode
    short deref;                 /* deref entry of var */
    short reg;                   /* register assigned to this live range */
 };
-
+/*
+ * flag for path analysis
+ */
 #define LP_VEC 1                /* Loop Path vectorizable */
 #define LP_OPT_LCONTROL 2       /* Loop Path loop control optimizable */
 #define LP_OPT_MOVPTR 4         /* Loop Path Moving Ptr optimizable */
-
-
+/*
+ * flag for scalar variable analysis
+ */
 #define SC_SET 1
 #define SC_USE 2
 #define SC_PRIVATE 4
