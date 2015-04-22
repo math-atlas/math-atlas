@@ -368,7 +368,7 @@ int GetRegForAsg(int type, INT_BVI iv, INT_BVI livereg)
       SetVecBit(iv, FRETREG-1, 0);
       SetVecBit(iv, DRETREG-1, 0);
    #endif
-#if 1
+#if 0
       fprintf(stderr, "available regs = %s\n", BV2VarNames(iv));
 #endif
    return(AnyBitsSet(iv));
@@ -1160,6 +1160,69 @@ void SortUnconstrainedIG(int N, IGNODE **igarr)
       }
    }
 }
+
+
+void KeepVarTogether(int N, IGNODE **igarr)
+/*
+ * Assumption: igarr is already sorted based on nref (nread + nwrite). 
+ * this function will keep the live ranges of same variable with same nref
+ * together; this helps register assignment to avoid register spilling for
+ * unrolled code
+ */
+{
+   int i, j, k, nref;
+   IGNODE *igp;
+   short var;
+   
+   i = 0;
+   while (i < N-1)
+   {
+      nref = igarr[i]->nread + igarr[i]->nwrite;
+      var = igarr[i]->var;
+/*
+ *    skip if ignode of live range is for same var (and same nref) 
+ */
+      k = i + 1;
+      while (k < N && igarr[k]->var == var 
+             && nref == (igarr[k]->nread + igarr[k]->nwrite) )  
+         k++;
+      i = k - 1;
+/*
+ *    find node for same var with same nref and swap it to the next position 
+ */
+      j = i + 1;
+      while(j < N)
+      {
+/*
+ *       ignodes are sorted based on nref.check until number of ref becomes less
+ */
+         if ( nref > (igarr[j]-> nread + igarr[j]->nwrite) )
+         {
+            break;
+         }
+/*
+ *       because of previous condition, no need to check the nref
+ */
+         else if (igarr[j]->var == var) // && nref == igarr[j]->nread + ig...
+         {
+/*
+ *          swap with next node if not the same
+ */
+            if (j != i + 1)
+            {
+               igp = igarr[i+1];
+               igarr[i+1] = igarr[j];
+               igarr[j] = igp;
+               i++;  /* var & nref are same for this position too */
+            }
+         }
+         j++;
+      }
+      i++;
+   }
+
+}
+
 void SortConstrainedIG(int N, IGNODE **igs)
 /*
  * Right now, this routine just calls the unconstrained sort, but eventually
@@ -1291,7 +1354,16 @@ IGNODE **SortIG(int *N, int thresh)
         igarr[ncon++] = ig;
      }
    }
+#if 0
+   fprintf(stderr, "SORT IG: ncon=%d, uncon=%d\n", ncon, n-ncon);
+#endif
    SortConstrainedIG(ncon, igarr);
+#if 1
+/*
+ * keep live ranges of same variable (which access count are same) together
+ */
+   KeepVarTogether(ncon, igarr);
+#endif
    SortUnconstrainedIG(n-ncon, igarr+ncon);
    *N = n;
    return(igarr);
@@ -1317,9 +1389,9 @@ int DoIGRegAsg(int N, IGNODE **igs)
    for (i=0; i < N; i++)
    {
       ig = igs[i];
-#if 0
-      fprintf(stderr, "**********reg assignment for: %s\n", STname[ig->var-1]);
-      fprintf(stderr, "liveregs = %s\n", BV2VarNames(ig->liveregs));
+#if 1
+      /*fprintf(stderr, "**********reg assignment for: %s\n", STname[ig->var-1]);*/
+      /*fprintf(stderr, "liveregs = %s\n", BV2VarNames(ig->liveregs));*/
       ig->reg = GetRegForAsg(FLAG2PTYPE(STflag[ig->var-1]), iv, ig->liveregs);
 #else
       SetVecAll(iv, 0);
@@ -1358,9 +1430,13 @@ int DoIGRegAsg(int N, IGNODE **igs)
          }
          ig->reg++;
          iret++;
+#if 0
+         if (ig->reg >= VDREGBEG && ig->reg < VDREGEND)
+         fprintf(stderr, "REG ASSIGNED = %d\n", ig->reg-VDREGBEG );
+#endif
       }
       else
-#if 1         
+#if 0         
          fko_warn(__LINE__, "NO FREE REGISTER FOR LR %d of VAR %s!!!\n", 
                ig->ignum, STname[ig->var-1]);
 #else
@@ -1733,12 +1809,17 @@ int DoScopeRegAsg(BLIST *scope, int thresh, int *tnig)
  */
    assert(scope);
    *tnig = CalcScopeIG(scope);
-   igs = SortIG(&N, thresh);
 #if 0
-   fprintf(stderr, "NIG=%d N=%d\n", *tnig, N);
+   fprintf(stderr, "\nIG without sorting: \n");
+   DumpIG(stderr, NIG, IG);
 #endif
+   igs = SortIG(&N, thresh);
    nret = DoIGRegAsg(N, igs);
    CheckIG(N, igs);
+#if 0
+   fprintf(stderr, "NIG=%d N=%d\n", *tnig, N);
+   DumpIG(stderr, N, igs);
+#endif
 #if 0
    /*fprintf(stderr,"IG ");
    //DumpIG(stderr,N,igs);
@@ -2567,6 +2648,15 @@ fprintf(stderr, ", src=%s\n", Int2Reg(-src));
  */
             if (IS_DEST_INUSE_IMPLICITLY(ip->inst[0]))
             {
+/*
+ *             FIXED: if we have same register as source and destination too;
+ *             updating ip->use would prevent the source to change it later.
+ *             so, change the op2 here before updating the liverange
+ */
+               if (ip->inst[2] == -dest) /* op1 == op2*/ 
+                  ip->inst[2] = -src;
+               if (ip->inst[3] == -dest) /* op1 == op3*/ 
+                  ip->inst[3] = -src;
                BitVecComb(ip->use, ip->use, ivdst, '-');
                BitVecComb(ip->use, ip->use, ivsrc, '|');   
             }
@@ -2805,8 +2895,8 @@ int DoCopyProp(BLIST *scope)
                }
 /*
  *             Majedul: Invalid read reported by valgrind!
- *             FIXED: CopyPropTrans() may change the ip itself but return NULL!
- *             What if DelInst() delete ip itself!!!! 
+ *             FIXED: CopyPropTrans() may change the ip itself but 
+ *             returning NULL! What if DelInst() delete ip itself!!!! 
  *             use ipnext to keep track previous one.
  *             NOTE: if ip->next is deleted and CopyPropTrans returns NULL as
  *             the next inst of ip->next is NULL !!! 
@@ -3194,7 +3284,8 @@ int DoRemoveOneUseLoads(BLIST *scope)
 /*
  *       FIXED: we can't combine unaligned vector load
  */
-         if (IS_LOAD(inst) && inst != VFLDS && inst != VDLDS
+         if (IS_LOAD(inst) && inst != VFLDS && inst != VDLDS 
+               && inst != VFLDSB && inst != VDLDSB
                && !IS_UNALIGNED_VLOAD(inst))
          {
             k = -ip->inst[1];
@@ -3283,7 +3374,8 @@ int DoLastUseLoadRemoval(BLIST *scope)
  *       so, we can't do it with unaligned load
  *       FIXED.
  */
-         if (IS_LOAD(inst) && inst != VFLDS && inst != VDLDS 
+         if (IS_LOAD(inst) && inst != VFLDS && inst != VDLDS
+               && inst != VFLDSB && inst != VDLDSB
                && !IS_UNALIGNED_VLOAD(inst))
          {
             k = -ipld->inst[1];
