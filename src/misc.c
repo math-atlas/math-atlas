@@ -144,6 +144,7 @@ struct ptrinfo *NewPtrinfo(short ptr, short flag, struct ptrinfo *next)
    p->ptr = ptr;
    p->flag = flag;
    p->nupdate = 0;
+   p->upst = 0;
    return(p);
 }
 
