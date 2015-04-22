@@ -2864,6 +2864,21 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archvdregs[-VDREGBEG-op1]);
          #endif
          break;
+/*
+ *    special load which broadcast the value
+ */
+      case VDLDSB:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvbroadcastsd\t%s,%s\n", GetDeref(op2),
+                                  archvdregs[-VDREGBEG-op1]);
+         #else
+/* 
+ *          movddup only supported in SSE3... !!!
+ */
+            ap->next = PrintAssln("\tmovddup\t%s,%s\n", GetDeref(op2),
+                                  archvdregs[-VDREGBEG-op1]);
+         #endif
+         break;
       case VDSTNT:
          #ifdef AVX
             ap->next = PrintAssln("\tvmovntpd\t%s,%s\n", 
@@ -2898,7 +2913,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   GetDeref(op1));
          #endif   
          break;
-      case VDSTS: 
+      case VDSTS:
          #ifdef AVX 
             ap->next = PrintAssln("\tvmovsd\t%s, %s\n", 
                                   archxmmregs[-VDREGBEG-op2],
@@ -2965,7 +2980,13 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                      archvdregs[-VDREGBEG-op2],
                                      archvdregs[-VDREGBEG-op1]);
             #endif
+/*
+ *          In X86, scalar and vector registers are aliased. 
+ *          So, we don't need to emit the move instruction with same
+ *          source and destination.
+ */
          else
+#if 0            
             #ifdef AVX
                ap->next = PrintAssln("\tvmovapd\t%s, %s\n", 
                                      archvdregs[-VDREGBEG-op2],
@@ -2975,7 +2996,10 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                      archvdregs[-VDREGBEG-op2],
                                      archvdregs[-VDREGBEG-op1]);
             #endif
-
+#else
+               continue;
+#endif
+               
          break;
       case VDMUL:
          #ifdef AVX
@@ -3220,8 +3244,33 @@ struct assmln *lil2ass(BBLOCK *bbase)
  * NOTE: can use PSHUFD for case where dest is output only
  */
       case VDSHUF:
+         cp = imap2cmap(SToff[op3-1].i);
+         #ifdef AVX2
+         if (op1 == op2 || (cp[3] > 3 && cp[2] > 3 && cp[1] > 3 && cp[0] > 3)) 
+         {
+            for (i=0; i < 4; i++) 
+               if (cp[i] > 3) cp[i] -= 4;
+            j = 0;
+            for (i=0; i < 4; i++)
+               j |= cp[i] << (i*2);
+            ap->next = PrintAssln("\tvpermpd\t$0x%x,%s,%s\n",
+                    j, archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
+         }
+#if 0
+         else if (op1 == op2)
+         {
+            for (i=0; i < 4; i++)
+               if (cp[i] > 3) cp[i] -= 4;
+            j = 0;
+            for (i=0; i < 4; i++)
+               j |= cp[i] << (i*2);
+            ap->next = PrintAssln("\tvpermpd\t$0x%x,%s,%s\n",
+                    j, archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
+         }
+#endif         
+         else 
+         #endif
          #ifdef AVX
-            cp = imap2cmap(SToff[op3-1].i);
 /*
  *          Generalized combination :
  *          cp represents the position of destination:
@@ -3253,7 +3302,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                      archvdregs[-VDREGBEG-op1], 
                                      archvdregs[-VDREGBEG-op1], 
                                      archvdregs[-VDREGBEG-op1]);
-            }  
+            } 
             else if (cp[3] == 2 && cp[2] == 2 && cp[1] == 0 && cp[0] ==0)
             {
                assert(op1==op2);
@@ -3268,8 +3317,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                      archvdregs[-VDREGBEG-op1]);
             else if (cp[3] == 3 && cp[2] == 2 && cp[1] == 1 && cp[0] == 5)
             {
-               ap->next = PrintAssln("ERROR:\t%d %d %d %d\n", 
-                                     ip->inst[0], op1, op2, op3);
+               ap->next = PrintAssln("ERROR:\t%s %d %d %d\n", 
+                                     instmnem[ip->inst[0]], op1, op2, op3);
                fko_warn(__LINE__, "Not implemented this VDSHUF for AVX yet!");         
             }
             else if (cp[3] == 3 && cp[2] == 7 && cp[1] == 1 && cp[0] == 5)
@@ -3287,16 +3336,70 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                      archvdregs[-VDREGBEG-op2], /* src2 */
                                      archvdregs[-VDREGBEG-op1],
                                      archvdregs[-VDREGBEG-op1]);
+#if 1
+/*
+ *          if op1 == op2 and the upper half are same as destination
+ *          FIXME: Although in HIL, we use same operand: op1==op2
+ *          repeateable optimization may change it to a diff src than dest
+ *          NOTE: V[F/D]SHUF instruciton is a inst of dest_inuse_implecitly
+ *          If 2nd operand is also dest, it is kind of redundant... no way to
+ *          manage that !!!
+ */
+            else if ( (op1 == op2) && cp[3] == 3 && cp[2] == 2)
+            {
+               for (i=0; i < 2; i++)   /* dest & src are same*/
+                  if (cp[0] > 4) cp[0] -= 4;
+               if (cp[0] > 1 && cp[1] > 1) /* shift the upper half to lower*/
+               {
+                  ap->next = PrintAssln("\tvperm2f128\t$%d,%s,%s,%s\n", 0x11,
+                                        archvdregs[-VDREGBEG-op1], 
+                                        archvdregs[-VDREGBEG-op1], 
+                                        archvdregs[-VDREGBEG-op1]);
+                  ap=ap->next;
+                  cp[0] -= 2;
+                  cp[1] -= 2;
+               }
+               
+               if (cp[0] > 1 || cp[1] > 1)
+                  fko_error(__LINE__, "Not implemented VDHSUF: %x",
+                           SToff[op3-1].i); 
+
+               if (cp[0] == 0)
+               {
+                  if (cp[1] == 0)
+                     ap->next = PrintAssln("\tunpcklpd\t%s,%s\n",
+                                           archxmmregs[-VDREGBEG-op1], 
+                                           archxmmregs[-VDREGBEG-op1]);
+                  else
+                     fko_warn(__LINE__, "Useless VDSHUF");
+               }
+               else /* cp[0] == 1*/
+               {
+                  if (cp[1] == 0)
+                     ap->next = PrintAssln("\tshufpd\t%d,%s,%s\n",1,
+                                           archxmmregs[-VDREGBEG-op1], 
+                                           archxmmregs[-VDREGBEG-op1]);
+                  else /* cp[0] == 1 && cp[1] == 1*/
+                  {
+                     ap->next = PrintAssln("\tunpckhpd\t%s,%s\n",
+                                           archxmmregs[-VDREGBEG-op1], 
+                                           archxmmregs[-VDREGBEG-op1]);
+                  }
+               }    
+            }
+
+#endif
             else 
             {
-               ap->next = PrintAssln("ERROR:\t%d %d %d %d\n", 
-                                     ip->inst[0], op1, op2, op3);
-               fko_warn(__LINE__, "Not implemented the VDSHUF for AVX yet!");    
+               /*ap->next = PrintAssln("ERROR:\t%d %d %d %d\n", 
+                                     ip->inst[0], op1, op2, op3);*/
+               fko_error(__LINE__, "Not implemented VDSHUF %d, %d, 0x%x for AVX!",
+                         op1, op2, SToff[op3-1].i);    
             }
 
          #else
 
-         cp = imap2cmap(SToff[op3-1].i);
+         /*cp = imap2cmap(SToff[op3-1].i);*/
          if (cp[0] == 0 && cp[1] == 2)
             ap->next = PrintAssln("\tunpcklpd\t%s,%s\n", 
                archvdregs[-VDREGBEG-op2], archvdregs[-VDREGBEG-op1]);
@@ -3416,6 +3519,27 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                   archvfregs[-VFREGBEG-op1]);
          #endif
          break;
+/*
+ *    special load which can broadcast
+ */
+      case VFLDSB:
+         #ifdef AVX
+            ap->next = PrintAssln("\tvbroadcastss\t%s, %s\n", GetDeref(op2),
+                                  archvfregs[-VFREGBEG-op1]);
+         #else
+/*
+ *          SSE doesn't have any broadcast instruction. So, we are using
+ *          multiple instruction to implement that
+ */
+            ap->next = PrintAssln("\tmovss\t%s, %s\n", GetDeref(op2),
+                                  archvfregs[-VFREGBEG-op1]);
+            ap = ap->next;                           
+            ap->next = PrintAssln("\tshufps\t$%d, %s, %s\n", 0, 
+                                  archvfregs[-VFREGBEG-op1], 
+                                  archvfregs[-VFREGBEG-op1]);
+
+         #endif
+         break;
       case VFSTNT:
          #ifdef AVX
             ap->next = PrintAssln("\tvmovntps\t%s, %s\n", 
@@ -3502,6 +3626,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                archvfregs[-VFREGBEG-op1]);
 */             
          if (op1 != op2)
+         {
             #ifdef AVX
 #if 0           
 /*
@@ -3521,7 +3646,14 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                      archvfregs[-VFREGBEG-op2],
                                      archvfregs[-VFREGBEG-op1]);
             #endif
+         }
+/*
+ *          In X86, scalar and vector registers are aliased. 
+ *          So, we don't need to emit the move instruction with same
+ *          source and destination.
+ */
          else
+#if 0               
             #ifdef AVX
                ap->next = PrintAssln("\tvmovaps\t%s, %s\n", 
                                      archvfregs[-VFREGBEG-op2],
@@ -3531,6 +3663,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                      archvfregs[-VFREGBEG-op2],
                                      archvfregs[-VFREGBEG-op1]);
             #endif
+#else
+            continue;
+#endif
          break;
       case VFMUL:
          #ifdef AVX
@@ -4093,11 +4228,14 @@ struct assmln *lil2ass(BBLOCK *bbase)
             {
                j=0;
                for (i=0; i<8; i++)
-                  if(cp[i])
+               { 
+                  if (cp[i])
                   {
                      j=1;
-                     break;
+                     if(cp[i] > 7) /* no need to consider src */
+                        cp[i] -= 8;
                   }
+               }
                if (!j)
                {
                   ap->next = PrintAssln("\tvperm2f128\t$%d,%s,%s,%s\n", 0,
@@ -4110,6 +4248,32 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                         archvfregs[-VFREGBEG-op1], 
                                         archvfregs[-VFREGBEG-op1]);
                }
+#if 1               
+               else if (cp[7] == 7 && cp[6] == 6 && cp[5] == 5 && cp[4] == 4)
+               {
+                  if (cp[3] > 3 && cp[2] > 3 && cp[1] > 3 && cp[0] > 3)  
+                  {
+                     ap->next = PrintAssln("\tvperm2f128\t$%d,%s,%s,%s\n", 0x11,
+                                           archvfregs[-VFREGBEG-op1], 
+                                           archvfregs[-VFREGBEG-op1], 
+                                           archvfregs[-VFREGBEG-op1]);
+                     ap=ap->next;
+                     cp[0] -= 4;
+                     cp[1] -= 4;
+                     cp[2] -= 4;
+                     cp[3] -= 4;
+                  }
+                  if (cp[3] > 3 || cp[2] > 3 || cp[1] > 3 || cp[0] > 3) 
+                     fko_error(__LINE__, "not implemented VFSHUF: %x", 
+                               SToff[op3-1].i);
+
+                  i = cp[0] | (cp[1]<<2) | (cp[2]<<4) | (cp[3]<<6); 
+                  ap->next = PrintAssln("\tshufps\t$%d,%s,%s\n", i,
+                                        archxmmregs[-VFREGBEG-op1], 
+                                        archxmmregs[-VFREGBEG-op1]);
+
+               }
+#endif
             }
             else
             {
