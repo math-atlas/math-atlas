@@ -14,7 +14,6 @@ int VECT_FLAG=0;  /* Majedul: for different vectorization methods */
  * Majedul: 
  *    As we will introduce more and more new optimizations, I will keep 
  *    flag according to program states. 
- *    STATE1 has two optimization, hence 2 flag: 
  */
 int STATE1_FLAG=0;
 int STATE2_FLAG=0;
@@ -31,7 +30,7 @@ char **SES=NULL;    /* Majedul: this is for generalizing the Scalar Expansion */
 static char fST[1024], fLIL[1024], fmisc[1024];
 static short *PFDST=NULL, *PFLVL=NULL;
 static char **PFARR=NULL;
-int  USEALLIREG=0;
+int  USEALLIREG=0; /* not used anymore */
 
 int noptrec=0;
 enum FKOOPT optrec[512];
@@ -294,10 +293,8 @@ struct optblkq *OptBlockQtoTree(struct optblkq *head)
       op->opts[4] = LastUseLoadRemoval;
    }
 #endif
-   
-   //PrintOptTree(root);
-
 #if 0
+   //PrintOptTree(root);
    fprintf(stderr, "\n head = %d\n", head->bnum);
    PrintOptTree(head);
    fprintf(stderr, "\n root = %d\n", root->bnum);
@@ -2740,7 +2737,7 @@ struct optblkq *DefaultOptBlocks(void)
  * op->blocks keeps the scope ... 
  */
    
-   op->next = NewOptBlock(id++, 10, 5, 0); /* this is for optloop */
+   op->next = NewOptBlock(id++, 20, 5, 0); /* this is for optloop */
    op = op->next;
    op->opts[0] = RegAsg;
    op->opts[1] = CopyProp;
@@ -2800,7 +2797,7 @@ struct optblkq *DefaultOptBlocks(void)
          if (scopes[i]) /* scopes[i] may be NULL if no blks in between 2 loops */
          {
             bl = CopyBlockList(scopes[i]); /* copy the list */
-            op->next = NewOptBlock(id++, 10, 5, IOPT_SCOP); 
+            op->next = NewOptBlock(id++, 20, 5, IOPT_SCOP); 
             op = op->next;
             op->blocks = bl;
             op->opts[0] = RegAsg;
@@ -2950,6 +2947,9 @@ void UpdateNamedLoopInfo()
          for (i=1; i < n; i++)
          {
             k = FindNameMatch(optloop->varrs[0],optloop->varrs+1,PFARR[i-1]);
+#if 1
+            fprintf(stderr, "match: %d, %s\n", optloop->varrs[0], PFARR[i-1]);
+#endif
             assert(k);
             optloop->pfarrs[i] = k;
          }
@@ -3038,7 +3038,7 @@ void UpdateNamedLoopInfo()
       }
    }
 }
-
+#if 0
 void DoStage2(int SAVESP, int SVSTATE)
 /*
  * Assumes stage 0 has been achieved, writes files for stage 1
@@ -3088,7 +3088,9 @@ void DoStage2(int SAVESP, int SVSTATE)
    PrintInst(stdout, bbbase);
 #endif
 }
+#endif
 
+#if 0
 void AddOptSTEntries()
 /*
  * Some optimizations require additional locals to be allocated.  This routine
@@ -3123,8 +3125,8 @@ void AddOptSTEntries()
       optloop->aes = asp;
    }
 }
+#endif
 
-/*void AddOptSTEntries1()*/
 void AddOptST4SE()
 /*
  * Majedul: This is for generalizing the scalar expansion. 
@@ -3236,7 +3238,7 @@ void AddOptST4SE()
 }
 
 
-
+#if 0
 void GenAssenblyApplyingOpt4SSV(FILE *fpout, struct optblkq *optblks, 
                                 struct assmln *abase)
 /*
@@ -3332,6 +3334,7 @@ void GenAssenblyApplyingOpt4SSV(FILE *fpout, struct optblkq *optblks,
    /*exit(0);*/
    return ;
 }
+#endif
 
 void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks,
                                     struct assmln *abase)
@@ -3864,7 +3867,20 @@ int main(int nargs, char **args)
  *
  *    NOTE: for speculative vectorization, unrolling is not implemented yet
  *===========================================================================*/
-   if (FKO_FLAG & IFF_VECTORIZE)
+/*
+ * we need to update vflag, varrs etc for HIL intrinsic vector loop
+ */
+   if (VECT_FLAG & VECT_INTRINSIC)
+   {
+      /*fprintf(stderr, "***********vec_intrinsic\n");*/
+      if (FKO_FLAG & IFF_VECTORIZE)
+         fko_warn(__LINE__, "Already vectorize by HIL intrinsic\n");
+      UpdateVecLoop(optloop);
+#if 0
+      PrintLoop(stderr, optloop);
+#endif
+   }
+   else if (FKO_FLAG & IFF_VECTORIZE)
    {
 #if 0
          fprintf(stdout, "LIL before speculation test \n");
@@ -3973,6 +3989,10 @@ int main(int nargs, char **args)
       FindLoops();
       CheckFlow(bbbase, __FILE__, __LINE__);
 #endif
+#if 0
+      fprintf(stdout, "LIL AFTER Vectorization \n");
+      PrintInst(stdout, bbbase);
+#endif
    }
 /*=============================================================================
  *    STATE3 : Transformation and optimization which should be applied after 
@@ -4029,7 +4049,8 @@ int main(int nargs, char **args)
          exit(0);
 #endif         
    }
-   else if (!DO_VECT(FKO_FLAG)) /* neither vectorize nor unrolled ! */
+   /* neither vectorize nor unrolled ! */
+   else if (!DO_VECT(FKO_FLAG) && !(VECT_FLAG & VECT_INTRINSIC) ) 
    {
       AddOptWithOptimizeLC(optloop); 
       /*OptimizeLoopControl(optloop, 1, 1, NULL);*/
@@ -4046,8 +4067,9 @@ int main(int nargs, char **args)
 #if 0 
          fprintf(stdout, "LIL after Unrolling \n");
          PrintInst(stdout, bbbase);
+         PrintLoop(stderr, optloop);
          //exit(0);
-         GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
+         //GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
          exit(0);
 #endif         
 
@@ -4109,7 +4131,8 @@ int main(int nargs, char **args)
  * NOTE: this is done after all the fundamental optimizations sothat we can 
  * keep them too in the duplicated loop. 
  */
-   if (VECT_FLAG && IsAlignLoopSpecNeeded(optloop))
+   if (VECT_FLAG && VECT_FLAG != VECT_INTRINSIC 
+         && IsAlignLoopSpecNeeded(optloop))
       UnalignLoopSpecialization(optloop);
 /*
  * Now, it's time to apply repeatable optimizations 
@@ -4121,10 +4144,8 @@ int main(int nargs, char **args)
             PrintST(stdout);
             exit(0);
          #else
-            //ShowFlow("cfg.dot",bbbase);
             GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
             KillAllGlobalData(); 
-            //exit(0);
          #endif
 #endif         
 
