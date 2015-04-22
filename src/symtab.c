@@ -195,7 +195,10 @@ short STdconstlookup(double f)
    for (i=0; i != N; i++)
    {
       if (IS_CONST(STflag[i]) && IS_DOUBLE(STflag[i]) && SToff[i].d == f)
-         return(i);
+/*
+ *    Majedul: FIXED: should return (i+1), instead of i
+ */
+         return(i+1);
    }
    sprintf(name, "_FPDC_%d", ndc);
    ndc++;
