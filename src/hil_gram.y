@@ -7,17 +7,16 @@
    #include "fko_h2l.h"
    #include "fko_arch.h"
    int WhereAt=0, lnno=1;
+   int VecIntr=0;
    static short *LMA[8] = {NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL};
 /*
  * Majedul: To store the LOOP MU (with no param)
- * Right now, there are two: 0. MUTUALLY_UNALIGNED 1. .... 
- * Need to generalize all markups in well design. 
  * nLMU is the number of those markup
  */
    static int nLMU = 2; 
    static short LMU[2] = {0,0};
 /*
- * For markup which has both list and an int, we keep 2 separate array of ptr
+ * For markups which have both list and an int, we keep 2 separate array of ptr
  * NOTE: following array of ptr stores ptr with element count at position 0,
  * unlike LMA
  */
@@ -42,13 +41,19 @@
    void HandleLoopMU(int which);
    void para_list();
    void declare_list(int flag);
+   void declare_vector(int flag, int vlen);
    void ConstInit(short id, short con);
+   void AddVElem2List(short id);
    void AddDim2List(short id);
    void AddUnroll2List(short id);
    void declare_array(int flag, short dim, char *name);
    short HandleArrayAccess(short id, short dim);
    void HandleUnrollFactor(short ptr, int ndim);
+   void HandleArith(short dest, short src0, char op, short src1);
    void HandleMove(short dest, short src);
+   void HandleVecInit(short id);
+   void HandleVecReduce(short sid, short vid, char op, short ic);
+   void HandleVecBroadcast(short vid, short ptrderef);
 %}
 %union
 {
@@ -64,6 +69,8 @@
 
 %token ROUT_NAME ROUT_LOCALS ROUT_BEGIN ROUT_END CONST_INIT RETURN
 %token DOUBLE FLOAT INT UINT DOUBLE_PTR FLOAT_PTR INT_PTR UINT_PTR 
+%token VDOUBLE VFLOAT
+%token VHADD VHMAX VHMIN VHSEL VBROADCAST
 %token DOUBLE_ARRAY FLOAT_ARRAY INT_ARRAY UINT_ARRAY UNROLL_ARRAY
 %token PARAMS LST ABST ME LOOP_BEGIN LOOP_BODY LOOP_END MAX_UNROLL IF GOTO
 %token <sh> LOOP_LIST_MU LOOP_INT_MU LOOP_MU LOOP_LIST_INT_MU
@@ -154,9 +161,9 @@ loopsm   : '{' PE '}'  { $$ = 1; }
          |             { $$ = 0; }
          ;
 loop_beg : LOOP_BEGIN ID '=' avar loopsm ',' avar loopsm ',' avar loopsm2
-         { $$ = DoLoop($2, $4, $7, $10, $5, $8, $11); }
+         { $$ = DoLoop($2, $4, $7, $10, $5, $8, $11); VecIntr = 0;}
          | LOOP_BEGIN ID '=' avar loopsm ',' avar loopsm
-         { $$ = DoLoop($2, $4, $7, STiconstlookup(1), $5, $8, 2); }
+         { $$ = DoLoop($2, $4, $7, STiconstlookup(1), $5, $8, 2); VecIntr = 0; }
          ;
 loop_markup : LOOP_LIST_MU LST idlist { HandleLoopListMU($1); }
             | LOOP_INT_MU LST icexpr  { HandleLoopIntMU($1, $3); }
@@ -188,17 +195,9 @@ typedec : INT LST idlist              { declare_list(T_INT); }
 	| FLOAT_ARRAY arraydim LST NAME {declare_array(T_FLOAT|PTR_BIT|ARRAY_BIT
         ,$2,$4); }
         | UNROLL_ARRAY LST unrollarraylist {}
+        | VDOUBLE '(' iconst ')' LST idlist {declare_vector(T_VDOUBLE, $3);}
+        | VFLOAT '(' iconst ')' LST idlist {declare_vector(T_VFLOAT, $3);}
         ;
-
-/*        | DOUBLE_ARRAY LST arraylist {fprintf(stderr, "DOUBLE_ARRAY :: arraylist\n");}
-	| FLOAT_ARRAY LST arraylist {fprintf(stderr, "FLOAT_ARRAY :: arraylist\n");}
-        ;*/
-/*NOTE: declaration for array, will handle later */
-/*arraylist : arraylist ',' arraydec {fprintf(stderr, "arraylist->arraylist , array\n");}
-          | arraydec               {fprintf(stderr, "arraylist -> array\n");}
-          ;*/
-/*arraydec : ID arraydim { fprintf(stderr, "array -> ID arraydim\n");}
-      ;*/
 
 arraydim : '[' ID ']' arraydim {$$=$4+1; AddDim2List($2);} 
          | '[' iconst ']' arraydim { $$=$4+1; AddDim2List($2);} 
@@ -234,7 +233,6 @@ inititem :  ID '=' iconst { ConstInit($1, $3); }
          |  ID '=' fconst { ConstInit($1, $3); }
          |  ID '=' dconst { ConstInit($1, $3); }
          ;
-
 comment : TCOMMENT { DoComment($1); }
         ;
 statements : statements statement
@@ -253,8 +251,25 @@ statement : arith ';'
           | NAME ':'              {DoLabel($1);}
           | GOTO NAME ';'         {DoGoto($2);}
           | ifstate ';'
-          /*| loop*/ /* added so that loop can be nested */
+          | vectorspecial ';'     {VecIntr = 1;} 
+          ;
+          
+vectorspecial :  ID '=' initvector {HandleVecInit($1);}
+          | ID '=' VBROADCAST '(' ptrderef ')' {HandleVecBroadcast($1, $5);}
+          | vectorreduce
 	  ;
+
+initvector : '{' vectorelem '}'  
+           ;
+vectorelem : vectorelem ',' ID       {AddVElem2List($3);}
+           | vectorelem ',' fpconst  {AddVElem2List($3);}
+           | ID                      {AddVElem2List($1);}
+           | fpconst                 {AddVElem2List($1);}
+           ;
+vectorreduce : ID '=' VHADD '(' ID ')'  {HandleVecReduce($1, $5,'A', 0);}
+          | ID '=' VHMAX '(' ID ')'  {HandleVecReduce($1, $5,'M', 0);}
+          | ID '=' VHMIN '(' ID ')'  {HandleVecReduce($1, $5,'N', 0);}
+          | ID '=' VHSEL '(' ID ',' iconst ')' {HandleVecReduce($1, $5,'S', $7);}
 
 icexpr  : icexpr '+' icexpr             {$$ = $1 + $3;}
         | icexpr '-' icexpr             {$$ = $1 - $3;}
@@ -333,7 +348,7 @@ avar : ID               {$$ = $1;}
      | dconst           {$$ = $1;}
      | iconst           {$$ = $1;}
      ;
-                /* need to change to if (ID op avar) goto LABEL */
+        /* need to change to if (ID op avar) goto LABEL */
         /* > < NE LE GE * +  / RSHIFT LSHIFT | & ^ */
 IFOP : '>'  {$$ = '>';}
      | '<'  {$$ = '<';}
@@ -346,17 +361,17 @@ IFOP : '>'  {$$ = '>';}
    
 ifstate : IF '(' ID IFOP avar ')' GOTO NAME         {DoIf($4, $3, $5, $8);} 
         ;
-arith : ID '=' ID '+' avar {DoArith($1, $3, '+', $5); }
-      | ID '=' ID '*' avar {DoArith($1, $3, '*', $5); }
-      | ID '=' ID '-' avar {DoArith($1, $3, '-', $5); }
-      | ID '=' ID '/' avar {DoArith($1, $3, '/', $5); }
-      | ID '=' ID '%' avar {DoArith($1, $3, '%', $5); }
-      | ID '=' ID RSHIFT avar {DoArith($1, $3, '>', $5); }
-      | ID '=' ID LSHIFT avar {DoArith($1, $3, '<', $5); }
-      | ID PE avar         {DoArith($1, $1, '+', $3); }
-      | ID '=' ABST avar   {DoArith($1, $4, 'a', 0); }
-      | ID '=' '-' ID      {DoArith($1, $4, 'n', 0); }
-      | ID PE ID '*' avar  {DoArith($1, $3, 'm', $5); }
+arith : ID '=' ID '+' avar {HandleArith($1, $3, '+', $5); }
+      | ID '=' ID '*' avar {HandleArith($1, $3, '*', $5); }
+      | ID '=' ID '-' avar {HandleArith($1, $3, '-', $5); }
+      | ID '=' ID '/' avar {HandleArith($1, $3, '/', $5); }
+      | ID '=' ID '%' avar {HandleArith($1, $3, '%', $5); }
+      | ID '=' ID RSHIFT avar {HandleArith($1, $3, '>', $5); }
+      | ID '=' ID LSHIFT avar {HandleArith($1, $3, '<', $5); }
+      | ID PE avar         {HandleArith($1, $1, '+', $3); }
+      | ID '=' ABST avar   {HandleArith($1, $4, 'a', 0); }
+      | ID '=' '-' ID      {HandleArith($1, $4, 'n', 0); }
+      | ID PE ID '*' avar  {HandleArith($1, $3, 'm', $5); }
       ;
 %%
 
@@ -455,6 +470,17 @@ struct idlist *ReverseList(struct idlist *base0)
    return(base);
 }
 #endif
+void HandleArith(short dest, short src0, char op, short src1)
+{
+/*
+ * check whether vector intrinsic is applied!
+ */ 
+   if (IS_VEC(STflag[dest-1]) || IS_VEC(STflag[src0-1]) || 
+       (src1 && IS_VEC(STflag[src1-1])))
+       VecIntr = 1;
+
+   DoArith(dest, src0, op, src1); 
+}
 
 void HandleMove(short dest, short src)
 /*
@@ -465,7 +491,15 @@ void HandleMove(short dest, short src)
    if (IS_ARRAY(STflag[dest-1]) || IS_ARRAY(STflag[src-1]))
       fko_error(__LINE__, "Array assignment not yet supoorted in HIL!");
    else
+   {
+/*
+ *    check for vector move before calling DoMove
+ */
+      if (IS_VEC(STflag[dest-1]) || IS_VEC(STflag[src-1])) 
+         VecIntr = 1;
+
       DoMove(dest,src);
+   }
 }
 
 short HandleArrayAccess(short ptr, short dim)
@@ -614,11 +648,27 @@ static void UpdateLoop(struct loopq *lp)
    int i, j, k, n, m;
    /*short *fptrs, *maptrs;*/
    short *spa, *spb;
+   extern VECT_FLAG;
+/*
+ * check for vector intrinsic
+ * If intrinsic HIL code is used, we set the flag VECT_INTRINSIC
+ * and update the vflag with appropriate type
+ */
+   if (VecIntr)
+   {
+      /*fprintf(stderr, "VecIntr used!\n");*/
+      fko_warn(__LINE__, "Vector intrinsic used in HIL code!");
+      VECT_FLAG = VECT_FLAG | VECT_INTRINSIC;
+      VecIntr = 0;
+   }
+
 /*
  * Handle markup with param  
  * ========================
- * Right now, we don't have meaningful markup with empty param
+ *    0. NO_CLEANUP
  */
+   if (LMU[0])
+      lp->LMU_flag = lp->LMU_flag | LMU_NO_CLEANUP;
    LMU[0] = LMU[1] = 0;
 /*
  * Handle markup with ival param    
@@ -787,9 +837,8 @@ void HandleLoopMU(int which)
  * Handles loop markup that doesn't have any parameter. The markups are 
  * encoded by which:
  * 
- * 0 : mutually_unaligned ... that means, all ptr can't be aligned with simple 
-       loop peeling ---- not used anymore
- * 1 : ... ... ...   
+ * 0 : no cleanup 
+ * 1 : ... ... ... not defined yet  
  */
 {
    switch(which)
@@ -797,9 +846,10 @@ void HandleLoopMU(int which)
    case 0: 
       LMU[0] = 1;
       break;
-   case 1:
+/*  case 1:
       LMU[1] = 1;
       break;
+*/      
    default:
       fko_error(__LINE__, "Unknown which=%d, file %s", which, __FILE__);
    }
@@ -1058,6 +1108,156 @@ void declare_list(int flag)
    KillIDs();
 }
 
+void declare_vector(int flag, int vlen)
+{
+   unsigned short si;
+   struct idlist *id;
+   int i, n, vl;
+/*
+ * FIXME: if a variable is in param list but not declare in typedec, there is
+ * no way to ctach this in existing implementation, will get seg fault in 
+ * later stage (like: create prologue )
+ */
+/*
+ * NOTE: right now, we only support vector code where veclen is directly match 
+ * with the vlen of the system. We will relax this restriction later!!! 
+ */
+   vlen = SToff[vlen-1].i;
+   vl = vtype2elem(flag);
+   if (vlen != vl )
+      fko_error(__LINE__, "VLEN not match with the system : %d, %d!!\n", 
+                vlen, vl);
+
+   if (WhereAt == 1) /* declared as parameter */
+   {
+      for (id=idhead, n=0; id; id=id->next, n++);
+      while(idhead)
+      {
+         si = STstrlookup(idhead->name);
+         if (!si) yyerror("Undeclared parameter");
+         STsetflag(si, PARA_BIT | flag);
+         idhead = idhead->next;
+      }
+   }
+   else /* declared as local */
+   {
+      while(idhead)
+      {
+         STdef(idhead->name, LOCAL_BIT | flag, 0);
+         idhead = idhead->next;
+      }
+   }
+   KillIDs();
+}
+
+void AddVElem2List(short id)
+/*
+ * taking ST index this function add lda into list
+ */
+{
+/*
+ * add extra checking, if needed
+ */ 
+   AddST2List(id);
+}
+
+void HandleVecInit(short vid)
+{
+   int i,n;
+   int stp, vtp, tchk;
+   struct slist *sl;
+   short si;
+/*
+ * checking for the type of vector (to be initialized)
+ */
+   if (IS_VDOUBLE(STflag[vid-1]))
+   {
+      vtp = T_VDOUBLE;
+      stp = T_DOUBLE;
+   }
+   else if (IS_VFLOAT(STflag[vid-1]))
+   {
+      vtp = T_VFLOAT;
+      stp = T_FLOAT;
+   }
+   else yyerror("unknown vector type");
+/*
+ * check the type of scalar which must be similar with vector type
+ */
+   tchk = 0;
+   for (sl=shead,n=0; sl; sl=sl->next)
+   {
+      tchk += (FLAG2TYPE(STflag[sl->id-1]) & stp) ? 0: 1 ;
+#if 0
+      fprintf(stderr, "%s\n", STname[sl->id-1]);
+#endif
+      n++;
+   }
+   if (tchk)
+      yyerror("type mismatch!!");
+      
+   if (n != vtype2elem(vtp))
+      yyerror("elem count mismatch with vector type");
+/*
+ * add LIL for this statement
+ */
+
+   DoVecInit(vid, shead); 
+
+#if 0
+   fprintf(stderr, "%s : %d\n", STname[vid-1], vtp);
+   //exit(0);
+#endif
+   KillSlist();
+}
+
+void HandleVecReduce(short sid, short vid, char op, short ic)
+{
+   int stp, vtp, pos;
+/*
+ * checking for the type of vector and scalar
+ */
+   if (IS_VDOUBLE(STflag[vid-1]))
+   {
+      vtp = T_VDOUBLE;
+      stp = T_DOUBLE;
+   }
+   else if (IS_VFLOAT(STflag[vid-1]))
+   {
+      vtp = T_VFLOAT;
+      stp = T_FLOAT;
+   }
+   else yyerror("unknown vector type");
+   
+   if (!(stp & FLAG2TYPE(STflag[sid-1])))
+      yyerror("type mismatch!");
+   
+   if (ic) 
+      pos = SToff[ic-1].i;
+   else pos = 0;
+
+   if (op == 'S' )
+   {
+      if (pos < 0 || pos > (vtype2elem(vtp)-1) )
+         yyerror("incorrect position param for VHSEL operation!");
+   }
+
+   DoReduce(sid, vid, op, ic);
+}
+
+void HandleVecBroadcast(short vid, short ptrderef)
+{
+   short vtype, ptype;
+   ptype = FLAG2TYPE(STflag[SToff[ptrderef-1].sa[0]-1]);
+   vtype = FLAG2TYPE(STflag[vid-1]);
+   
+   if ( (IS_VFLOAT(vtype) && !IS_FLOAT(ptype)) 
+       || (IS_VDOUBLE(vtype) && !IS_DOUBLE(ptype)) )
+       //yyerror("type mismatch!");
+       fko_error(__LINE__,"type mismatch[%d,%d] !", vtype, ptype);
+   
+   DoArrayBroadcast(vid, ptrderef);
+}
 void declare_array(int flag, short dim, char *name)
 {
    int i;

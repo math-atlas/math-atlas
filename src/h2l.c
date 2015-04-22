@@ -36,7 +36,7 @@ static int LocalLoad(short id)
       inst = LD;
       reg = GetReg(T_INT);
    }
-   else
+   else /* variable load */
    {
       typ = FLAG2TYPE(STflag[id]);
       reg = GetReg(typ);
@@ -51,11 +51,56 @@ static int LocalLoad(short id)
       case T_DOUBLE:
          inst = FLDD;
          break;
+/*
+ *    added to support VEC HIL code
+ */
+#if 1
+      case T_VFLOAT:
+         inst = VFLD;
+         break;
+      case T_VDOUBLE:
+         inst = VDLD;
+         break;
+#endif
       default:
          fprintf(stderr, "type=%d!!\n\n", typ);
       }
    }
    InsNewInst(NULL, NULL, NULL, inst, -reg, SToff[id].sa[2], 0);
+   return(reg);
+}
+
+static int Scalar2VRegLoad(short sid)
+/*
+ * this function loads a scalar variable into vector register 
+ */
+{
+   short reg, typ, vtyp;
+   enum inst inst;
+   sid--;
+   vtyp = 0;
+   typ = FLAG2TYPE(STflag[sid]);
+   if (!IS_CONST(STflag[sid]) && !IS_PTR(STflag[sid]))
+   {
+      switch(typ)
+      {
+         case T_FLOAT:
+            vtyp = T_VFLOAT;
+            inst = VFLDS;
+            break;
+         case T_DOUBLE:
+            vtyp = T_VDOUBLE;
+            inst = VDLDS;
+            break;
+         default:
+            fko_error(__LINE__, "type not supported!!");
+      }
+   }
+   else
+      fko_error(__LINE__, "not supported for const/ptr!!");
+   
+   reg = GetReg(vtyp);
+   InsNewInst(NULL, NULL, NULL, inst, -reg, SToff[sid].sa[2], 0);
    return(reg);
 }
 
@@ -74,6 +119,17 @@ static void LocalStore(short id, short sreg)
    case T_DOUBLE:
       inst = FSTD;
       break;
+/*
+ *    added to support VEC HIL code
+ */
+#if 1
+      case T_VFLOAT:
+         inst = VFST;
+         break;
+      case T_VDOUBLE:
+         inst = VDST;
+         break;
+#endif
    default:
       fko_error(__LINE__, "Unknown type!\n");
    }
@@ -225,9 +281,27 @@ void DoArrayStore(short ptr, short id)
               STname[SToff[k].sa[0]-1], STflag[SToff[k].sa[0]-1], 
               STname[id-1], STflag[id-1]);
    #endif
-
    lreg = LocalLoad(id);
+/*
+ * NOTE: we added vector store where the array type and variable type
+ * may not exactly match. we may have DOUBLE pointer but the variable is 
+ * T_VDOUBLE.
+ */
+#if 0   
    assert(FLAG2TYPE(STflag[SToff[k].sa[0]-1]) == type);
+#else
+   if (IS_VEC(STflag[id-1]))
+   {
+      if ( (IS_VDOUBLE(STflag[id-1]) && !IS_DOUBLE(STflag[SToff[ptr-1].sa[0]-1]))
+        || (IS_VFLOAT(STflag[id-1]) && !IS_FLOAT(STflag[SToff[ptr-1].sa[0]-1])) )
+         fko_error(__LINE__, "type mismatch for vector store!");
+   }
+   else
+   {
+      if (FLAG2TYPE(STflag[SToff[k].sa[0]-1]) != type)
+         fko_error(__LINE__, "type mismatch for store!");
+   }
+#endif
    FixDeref(ptr);
    switch(type)
    {
@@ -245,6 +319,14 @@ void DoArrayStore(short ptr, short id)
    case T_DOUBLE:
       InsNewInst(NULL, NULL, NULL, FSTD, ptr, -lreg, 0);
       break;
+#if 1
+   case T_VFLOAT:
+      InsNewInst(NULL, NULL, NULL, VFST, ptr, -lreg, 0);
+      break;
+   case T_VDOUBLE:
+      InsNewInst(NULL, NULL, NULL, VDST, ptr, -lreg, 0);
+      break;
+#endif
    default:
       fko_error(__LINE__, "Unknown type %d\n", type);
    }
@@ -291,6 +373,14 @@ void DoArrayLoad(short id, short ptr)
    case T_DOUBLE:
       ld = FLDD;
       break;
+#if 1
+   case T_VFLOAT:
+      ld = VFLD;
+      break;
+   case T_VDOUBLE:
+      ld = VDLD;
+      break;
+#endif
    default:
       fko_error(__LINE__, "Unknown type %d\n", type);
    }
@@ -299,6 +389,36 @@ void DoArrayLoad(short id, short ptr)
    LocalStore(id, areg);
    GetReg(-1);
 }
+
+void DoArrayBroadcast(short id, short ptr)
+/*
+ * special load which load scalar element from memory and broadcast it through
+ * vector register;
+ * id : ST index of vector variable, ptr: DT entry
+ */
+{
+   short k, ireg=0, areg, type, ld;
+
+   FixDeref(ptr);
+
+   type = FLAG2TYPE(STflag[id-1]); 
+   switch(type)
+   {
+      case T_VFLOAT:
+         ld = VFLDSB;
+         break;
+      case T_VDOUBLE:
+         ld = VDLDSB;
+         break;
+      default:
+         fko_error(__LINE__, "Unknown type %d\n", type);
+   }
+   areg = GetReg(type);
+   InsNewInst(NULL, NULL, NULL, ld, -areg, ptr, 0);
+   LocalStore(id, areg);
+   GetReg(-1);
+}
+
 void HandlePtrArithNoSizeofUpate(short dest, short src0, char op, short src1)
 /*
  * this function is similar to HandlePtrArith but doesn't multiply lda with 
@@ -521,6 +641,14 @@ void DoArith(short dest, short src0, char op, short src1)
       case T_DOUBLE:
          inst = FADDD;
          break;
+#if 1
+      case T_VFLOAT:
+         inst = VFADD;
+         break;
+      case T_VDOUBLE:
+         inst = VDADD;
+         break;
+#endif
       }
       break;
    case '-': /* dest = src0 - src1 */
@@ -535,6 +663,14 @@ void DoArith(short dest, short src0, char op, short src1)
       case T_DOUBLE:
          inst = FSUBD;
          break;
+#if 1
+      case T_VFLOAT:
+         inst = VFSUB;
+         break;
+      case T_VDOUBLE:
+         inst = VDSUB;
+         break;
+#endif
       }
       break;
    case '*': /* dest = src0 * src1 */
@@ -549,6 +685,14 @@ void DoArith(short dest, short src0, char op, short src1)
       case T_DOUBLE:
          inst = FMULD;
          break;
+#if 1
+      case T_VFLOAT:
+         inst = VFMUL;
+         break;
+      case T_VDOUBLE:
+         inst = VDMUL;
+         break;
+#endif
       }
       break;
    case '/': /* dest = src0 / src1 */
@@ -563,6 +707,14 @@ void DoArith(short dest, short src0, char op, short src1)
       case T_DOUBLE:
          inst = FDIVD;
          break;
+#if 1
+      case T_VFLOAT:
+         inst = VFDIV;
+         break;
+      case T_VDOUBLE:
+         inst = VDDIV;
+         break;
+#endif
       }
       break;
    case '%': /* dest = src0 % src1 */
@@ -575,23 +727,54 @@ void DoArith(short dest, short src0, char op, short src1)
       if (type == T_INT) inst = SHL;
       break;
    case 'm': /* dest += src0 * src1 */
-      if (type == T_FLOAT || type == T_DOUBLE)
+      /*if (type == T_FLOAT || type == T_DOUBLE)*/
+      if (type == T_FLOAT || type == T_DOUBLE || type == T_VFLOAT 
+            || type == T_VDOUBLE)
       {
          #ifdef ArchHasMAC
             rd = LocalLoad(dest);
             if (type == T_FLOAT) inst = FMAC;
+#if 1            
+            else if (type == T_DOUBLE) inst = FMACD;
+            else if (type == T_VFLOAT) inst = VFMAC;
+            else if (type == T_VDOUBLE) inst = VDMAC;
+            else 
+               fko_error(__LINE__, "MAC not supported with this type!");
+#else
             else inst = FMACD; /*Majedul: was a typo, corrected it. */
+#endif
          #else
             if (type == T_FLOAT)
             {
                InsNewInst(NULL, NULL, NULL, FMUL, -rs0, -rs0, -rs1);
                inst = FADD;
             }
+#if 1
+            else if (type == T_DOUBLE)
+            {
+               InsNewInst(NULL, NULL, NULL, FMULD, -rs0, -rs0, -rs1);
+               inst = FADDD;
+            }
+            else if (type == T_VFLOAT)
+            {
+               InsNewInst(NULL, NULL, NULL, VFMUL, -rs0, -rs0, -rs1);
+               inst = VFADD;
+            }
+            else if (type == T_VDOUBLE)
+            {
+               InsNewInst(NULL, NULL, NULL, VDMUL, -rs0, -rs0, -rs1);
+               inst = VDADD;
+            }
+            else
+               fko_error(__LINE__, "MAC not supported with this type!");
+
+#else
             else
             {
                InsNewInst(NULL, NULL, NULL, FMULD, -rs0, -rs0, -rs1);
                inst = FADDD;
             }
+#endif            
             rs1 = rs0;
             rs0 = rd = LocalLoad(dest);
          #endif
@@ -637,7 +820,7 @@ void DoArith(short dest, short src0, char op, short src1)
    }
    InsNewInst(NULL, NULL, NULL, inst, -rd, -rs0, -rs1);
 /*
- * Majedul: rd should be stored to dest (not rs0) to be consistant though
+ * Majedul: rd should be stored to dest (not rs0). 
  * without FMAC it doesn't create any problem. In case of FMAC, rs0 and rd 
  * are different. 
  */
@@ -1284,3 +1467,301 @@ short AddOpt2dArrayDeref(short base, short hdm, short ldm, int unroll)
    return dt;
 }
 
+/*=============================================================================
+ *    To Manage User Guided Vectorization
+ *
+ * ===========================================================================*/
+
+void DoVecInit(short vid, struct slist *elem)
+{
+   int i,k,n;
+   int flag;
+   int stp, vtp;
+   struct slist *sl;
+   short svar;
+   short st0;
+   short reg;
+   enum inst vshuf, vzero;
+
+/*
+ * For now, we will only implement two cases:
+ *    1. Vx = {a, a, a, a};
+ *    2. Vx = {0.0, 0.0, 0.0, a};
+ *    3. Vx = {0,0, 0.0, 0.0, 0.0};
+ */
+
+/*
+ * 1st elem will always be a scalar var considering only the above two cases
+ */
+   sl = elem;
+   svar = sl->id;
+   sl=sl->next;
+   flag = STflag[sl->id-1];
+   if (IS_CONST(flag))
+   {
+      if (IS_FLOAT(flag))
+      {
+         st0 = STfconstlookup(0.0);
+         vzero = VFZERO;
+      }
+      else 
+      {
+         st0 = STdconstlookup(0.0);
+         vzero = VDZERO;
+      }
+      for (; sl; sl=sl->next)
+      {
+         if (st0 != sl->id)
+            fko_error(__LINE__, "this vec init pattern not supported yet\n");
+      }
+/*
+ *    case 2: Vx = {0.0,0.0,0.0,a};
+ *    NOTE: both avx/sse, automatically zerod the upper elements while loading
+ *    single element from memory (vmovss/vmovsd). So, we don't need to 
+ *    explicitly xor them. 
+ *    FIXME: this is for genral LIL. should we consider doing xor the reg???
+ */
+      if (IS_CONST(STflag[svar-1])) /* case 3*/
+      {
+         reg = GetReg(FLAG2TYPE(STflag[vid-1]));
+         InsNewInst(NULL, NULL, NULL, vzero, -reg, -reg, 0);
+      }
+      else 
+         reg = Scalar2VRegLoad(svar);       
+      LocalStore(vid, reg);
+      GetReg(-1);
+   }
+   else
+   {
+      for (; sl; sl=sl->next)
+         if (svar != sl->id)
+            fko_error(__LINE__, "this vec init pattern not supported yet\n");
+/*
+ *    case 1: Vx = {a,a,a,a};
+ */
+      vtp = FLAG2TYPE(STflag[vid-1]);
+      if (vtp == T_VFLOAT)
+         vshuf = VFSHUF;
+      else
+         vshuf = VDSHUF;
+
+      k = STiconstlookup(0);
+      reg = Scalar2VRegLoad(svar); 
+      InsNewInst(NULL, NULL, NULL, vshuf, -reg, -reg, k);
+      LocalStore(vid, reg);
+   }
+}
+
+void DoReduce(short sid, short vid, char op, short iconst)
+{
+   int i, k;
+   int flag, ne, lgne, mask;
+   int *sfcode;
+   short r0, r1;
+   enum inst vinst, vadd, vmax, vmin, vsld, vsst, vld, vst, vshuf;
+/*
+ * select based on type
+ */
+   flag = STflag[vid-1];
+   if (IS_VFLOAT(flag))
+   {
+      vadd = VFADD;
+      vmax = VFMAX;
+      vmin = VFMIN;
+      vsld = VFLDS;
+      vsst = VFSTS;
+      vld = VFLD;
+      vst = VFST;
+      vshuf = VFSHUF;
+   }
+   else if (IS_VDOUBLE(flag))
+   {
+      vadd = VDADD;
+      vmax = VDMAX;
+      vmin = VDMIN;
+      vsld = VDLDS;
+      vsst = VDSTS;
+      vld = VDLD;
+      vst = VDST;
+      vshuf = VDSHUF;
+   }
+   else
+      fko_error(__LINE__, "unknown vector type for HIL!");
+/*
+ * NOTE: reduction depends on the element in vector:
+ *       number of operation = lgN
+ *       2:    op = 1
+ *             dest = (1,0) src = (2,3)
+ *             shuffle = 0x33 (actually X3, X for don't care)
+ *
+ *       4:    op = 2
+ *             dest = (3,2,1,0) src = (7,6,5,4)
+ *             shuffle = 0xXX76  (or, 0x3276)
+ *                       0xXXX5  (or, 0x3215)
+ *       8:    op = 3
+ *             dest = (7,6,5,4,3,2,1,0) src = (F,E,D,C,B,A,9,8)
+ *             shuffle = 0xXXXXFEDC (or, 0x7654FEDC)
+ *                       0xXXXXXXBA (or, 0x765432BA)
+ *                       0xXXXXXXX9 (or, 0x76543219)
+ *       
+ */
+   ne = vtype2elem(FLAG2TYPE(flag));
+   for (i=(ne>>1), lgne=0; i; i=i>>1) lgne++;
+   
+   if (op != 'S')
+   {
+      sfcode = malloc(lgne*sizeof(int));
+      assert(sfcode);
+/*
+ *    figure out right shuffle code 
+ */
+      switch(lgne)
+      {
+         case 1:
+            sfcode[0] = 0x33;
+            break;
+         case 2:
+            sfcode[0] = 0x3276;
+            sfcode[1] = 0x3715; /*0x3215;*/ /*need to check for float in sse*/
+            break;
+         case 3:
+            sfcode[0] = 0x7654FEDC;
+            sfcode[1] = 0x765432BA;
+            sfcode[2] = 0x76CD3289; /*0x76543219;*/
+            break;
+         default:
+            fko_error(__LINE__, 
+                  "more than eight elements in vector!!!");
+      }
+/*
+ *    select instruction for operation
+ */
+      switch (op)
+      {
+         case 'A':
+            vinst = vadd;
+            break;
+         case 'M':
+            vinst = vmax;
+            break;
+         case 'N':
+            vinst = vmin;
+            break;
+         default: 
+            fko_error(__LINE__,"unknown vector reduction!");
+      }
+/*
+ *    LIL for reduction
+ */
+      r0 = GetReg(FLAG2TYPE(flag));
+      r1 = GetReg(FLAG2TYPE(flag));
+      
+      InsNewInst(NULL, NULL, NULL, vld, -r0, SToff[vid-1].sa[2], 0);
+      
+      for (i=0; i < lgne; i++)
+      {
+         InsNewInst(NULL, NULL, NULL, vshuf, -r1, -r0, 
+                    STiconstlookup(sfcode[i]));
+         InsNewInst(NULL, NULL, NULL, vinst, -r0, -r0, -r1);
+      }
+      InsNewInst(NULL, NULL, NULL, vsst, SToff[sid-1].sa[2], -r0, 0);
+      free(sfcode);
+      GetReg(-1);
+   }
+   else /* VHSEL operation*/
+   {
+/*
+ *    dest = 0x10, 0x3210, 0x76543210
+ *    src  = 0x32, 0x7654, 0xFEDCBA98
+ */    
+      i = SToff[iconst-1].i;
+#if 0      
+      switch(ne)
+      {
+         case 2:
+            k = 0x10;
+
+            break;
+         case 4:
+            k = 0x3210;
+            break;
+         case 8:
+            k = 0x76543210;
+            break;
+         default:
+            fko_error(__LINE__, 
+                  "more than eight elements in vector!!!");
+      }
+#if 0      
+      mask = ~(0xF << (i*4)); /* mask with all 1 but 0 in the desired position*/
+      k = k & mask;           /* zerod the desired location in k */
+      mask = (i+ne) <<(i*4);  /* shift val in desired position */
+      k = k | mask;           /* insert the val in desired position of k */
+      /*k = (~(0xF << (i*4) & k ) |  ((i+ne) << (i*4) | k);*/
+#endif
+      i = i + ne;
+      k = k | i;
+#else
+#if 0      
+      switch(ne)
+      {
+         case 2:
+            k = 0x10; 
+
+            break;
+         case 4:
+            k = 0x3210;
+            break;
+         case 8:
+            k = 0x76543210;
+            break;
+         default:
+            fko_error(__LINE__, 
+                  "supported element count in vector: 2,4,8!!!");
+      }
+      
+#endif
+/*
+ *    NOTE: FIXME: we will make it more general by introducing 'don't care' 
+ *    symbol. We don't need to check for the architecture at that level of 
+ *    code then.
+ */
+      if (ne == 2)
+      {
+         k = 0x10;
+         if (i==1)
+            k = k | i;
+      }
+      else if (ne == 4)
+      {
+         k = 0x3210;
+      #if defined(AVX) && !defined(AVX2)
+         if (i > 1)
+            k = 0x3230;
+      #endif
+         k = k | i;
+      }
+      else if (ne == 8)
+      {
+         k = 0x76543210;
+      #if defined(AVX) && !defined(AVX2)
+         if (i > 3)
+            k = 0x76547650;
+      #endif
+         k = k | i;
+      }
+      else
+         fko_error(__LINE__, 
+                  "supported element count in vector: 2,4,8!!!");
+#endif
+#if 1
+      fprintf(stderr, "0x%x\n", k);
+#endif
+      r0 = GetReg(FLAG2TYPE(flag));
+      InsNewInst(NULL, NULL, NULL, vld, -r0, SToff[vid-1].sa[2], 0);
+      if (i)
+         InsNewInst(NULL, NULL, NULL, vshuf, -r0, -r0, STiconstlookup(k));
+      InsNewInst(NULL, NULL, NULL, vsst, SToff[sid-1].sa[2], -r0, 0);
+      GetReg(-1); 
+   }
+}

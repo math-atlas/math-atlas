@@ -32,6 +32,8 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "[" |
 "]" |
 ":" |
+"{" |
+"}" |
 "="	{ return(yytext[0]); }
 "-="    { return(ME); }
 "+="    { return(PE); }
@@ -56,7 +58,7 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "ALIGNED"          { yylval.sh = 0; return(LOOP_LIST_INT_MU); }
 "MUTUALLY_ALIGNED" { yylval.sh = 1; return(LOOP_LIST_INT_MU); }
 "FORCE_ALIGN"      { yylval.sh = 2; return(LOOP_LIST_INT_MU); }
-"DUMMY_MARKUP_WITH_NOPARAM"   { yylval.sh = 0; return(LOOP_MU); }
+"NO_CLEANUP"   { yylval.sh = 0; return(LOOP_MU); }
 "LOOP"  { return(LOOP_BEGIN); }
 "DOUBLE" { return(DOUBLE); }
 "FLOAT" { return(FLOAT); }
@@ -81,6 +83,13 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "ABS"      { return(ABST); }
 "IF"       { return(IF); }
 "GOTO"     { return(GOTO); }
+"VDOUBLE"    { return(VDOUBLE); }
+"VFLOAT"    { return(VFLOAT); }
+"VHADD"    { return(VHADD); }
+"VHMAX"    { return(VHMAX); }
+"VHMIN"    { return(VHMIN); }
+"VHSEL"    { return(VHSEL); }
+"VBROADCAST"    { return(VBROADCAST); }
 {ID}      { sprintf(yylval.str, "%s", yytext); return(NAME); }
 
 %%
