@@ -120,7 +120,6 @@
  */
 #define IFF_ST1_RC  0x1
 #define IFF_ST1_MMR 0x2
-
 #define IFF_ST3_SE 0x1
 #define IFF_ST3_PREF 0x2
 
