@@ -520,16 +520,12 @@ int Mjoin(PATL,ammmNMK)
     TYPE*,ATL_CSZT);
 #endif  /* end include file guard */
 @ROUT emit_uamm
-   @define up @u@
-   @define UP @U@
-@extract -b @(topd)/cw.inc lang=C -def cwdate 2013 -def cwdate 2015
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2012 -def cwdate 2013  -def cwdate 2014 
 #include "atlas_misc.h"
 #define ATL_JKMDEF 1
 #include "atlas_mmparse.h"
 #include "atlas_sys.h"
-
-static int UID=0, UIL=1;
-
+   static int UID=0, UIL=1;
 void PrintUsage(char *name, int ierr, char *flag)
 {
    if (ierr > 0)
@@ -1597,59 +1593,6 @@ void SpewForthKernArray(FILE *fp, char pre, ATL_mmnode_t *mmb,
 }
 
 /*
- * RETURNS: new list of K-cleanup kernels for mmb taken from mmk;
- * mmb & mmk not changed
- */
-ATL_mmnode_t *GetUniqueK1Kerns
-(
-   char pre,            /* z,c,d,s */
-   ATL_mmnode_t *mmb,   /* list of kernels requiring K-cleanup */
-   ATL_mmnode_t *mmk,   /* list of K-cleanup kernels */
-   char *outd
-)
-{
-   ATL_mmnode_t *kcb=NULL, *prev, *mp;
-   for (mp=mmb; mp; mp = mp->next)
-   {
-      ATL_mmnode_t *kc;
-      for (kc=mmk; kc; kc = kc->next) /* search for matching cleanup routine */
-         if (kc->mu == mp->mu && kc->nu == mp->nu && kc->kmaj == mp->kmaj)
-            break;
-      if (!kc)  /* cleanup routine must be in original list! */
-      {
-         if (mp->ku == 1 && FLAG_IS_SET(mp->flag, MMF_KRUNTIME) &&
-             (!mp->kbmin || mp->kbmin == 1))
-            kc = mp;
-         else
-         {
-            for (kc=mmb; kc; kc = kc->next)
-               if (kc->mu == mp->mu && kc->nu == mp->nu && kc->kmaj == mp->kmaj
-                   && kc->ku == 1 && FLAG_IS_SET(kc->flag, MMF_KRUNTIME) &&
-                   (!kc->kbmin || kc->kbmin == 1) &&
-                   (!kc->kbmax || kc->kbmax >= mp->kbB))
-                  break;
-            assert(kc);
-         }
-      }
-      assert(kc);
-      kc = CloneMMNode(kc);
-      kc->mbB = mp->mbB;
-      kc->nbB = mp->nbB;
-      kc->kbB = mp->kbB;
-      if (kcb)
-      {
-         prev->next = kc;
-         prev = prev->next;
-      }
-      else
-         prev = kcb = kc;
-
-   }
-   FillInGenStrings(pre, kcb, outd);
-   return(kcb);
-}
-
-/*
  * RETURNS: possibly updated list of all unique mu/nu comboes
  */
 typedef struct mnur mnur_t;
@@ -1872,7 +1815,7 @@ void GenAmmSwapH(char pre, ATL_mmnode_t *mmb, char *outd)
    fclose(fp);
 }
 
-int MMKernsSame1(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
+int KernelIsSame(ATL_mmnode_t *p0, ATL_mmnode_t *p1)
 /*
  * RETURNS: 1 if kernels are the same except for blocking, 0 otherwise
  */
@@ -1979,7 +1922,7 @@ void GenRankKH
          else
          {
             for (p=rkb; p != mp; p = p->next)
-               if (MMKernsSame(mp, p))
+               if (KernelIsSame(mp, p))
                   break;
          }
          if (mp == p)
@@ -2031,10 +1974,9 @@ void GenRankKH
    fclose(fp);
 }
 
-void GenKernH(char pre, char *pfx, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
-              ATL_mmnode_t *kcb, char *outd)
+void GenSquareKH(char pre, ATL_mmnode_t *mmb, char *outd)
 /*
- * 5. atlas_<pre>_<pfx>kern.h
+ * 5. atlas_<pre>amm_kerns.h
  *    defines: ATL_AMM_NCASES
  *    prototypes all kernels, including K-cleanup
  *    1 indexible array gives kernel to use for each case as func ptr
@@ -2045,12 +1987,36 @@ void GenKernH(char pre, char *pfx, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
 /*
  * Dump out standard header start and kernel prototypes
  */
-   if (pfx)
-      pfx = NewMergedString(pfx, "kern");
-   else
-      pfx = DupString("kern");
-   fp = StandHStart(pre, mmb, outd, pfx);
-   free(pfx);
+   fp = StandHStart(pre, mmb, outd, "sqkern");
+   fprintf(fp, "\n");
+   SpewForthKernProtos(fp, pre, mmb, 3);
+   fprintf(fp, "\n");
+/*
+ * Dump out kernel ptr arrays
+ */
+   SpewForthKernArray(fp, pre, mmb, "SQKERN_b0", '0');
+   SpewForthKernArray(fp, pre, mmb, "SQKERN_b1", '1');
+   SpewForthKernArray(fp, pre, mmb, "SQKERN_bn", 'n');
+
+   fprintf(fp, "\n#endif  /* end include file guard */\n");
+   fclose(fp);
+}
+
+void GenKernH(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
+              ATL_mmnode_t *kcb, char *outd)
+/*
+ * 5. atlas_<pre>amm_kerns.h
+ *    defines: ATL_AMM_NCASES
+ *    prototypes all kernels, including K-cleanup
+ *    1 indexible array gives kernel to use for each case as func ptr
+ *    1 indexible array gives K-clean kernel
+ */
+{
+   FILE *fp;
+/*
+ * Dump out standard header start and kernel prototypes
+ */
+   fp = StandHStart(pre, mmb, outd, "kern");
    fprintf(fp, "\n");
    SpewForthKernProtos(fp, pre, mmb, 3);
    if (ukb)
@@ -2117,7 +2083,6 @@ void GenHeaderFiles(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
  *X   -> 3*4 = 12 indexible arrays total
  */
 {
-   ATL_mmnode_t *mp;
    if (rkb)
       GenAmmSum(pre, mmb, rkb, outd);
    GenAmmSwapH(pre, mmb, outd);
@@ -2126,9 +2091,7 @@ void GenHeaderFiles(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
    GenFlagH(pre, mmb, outd, "flag");
    GenCMAJ2AMAJ(pre, mmb, outd, NULL);
    GenC2BLK(pre, mmb, outd, NULL);
-   mp = GetUniqueK1Kerns(pre, mmb, ukb, outd);
-   GenKernH(pre, NULL, mmb, ukb, mp, outd);
-   KillAllMMNodes(mp);
+   GenKernH(pre, mmb, ukb, kcb, outd);
    if (rkb)
    {
       GenBlockingFile(pre, rkb, outd, "rkkblk");
@@ -2139,15 +2102,11 @@ void GenHeaderFiles(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *ukb,
    }
    if (sqb)
    {
-      GenBlockingFile(pre, sqb, outd, "sqblk");
-      GenPerfFile(pre, sqb, outd, "sqperf");
-      GenFlagH(pre, sqb, outd, "sqflag");
-      GenCMAJ2AMAJ(pre, sqb, outd, "sq");
-      GenC2BLK(pre, sqb, outd, "_sq");
-      mp = GetUniqueK1Kerns(pre, sqb, ukb, outd);
-      GenKernH(pre, "sq", mmb, ukb, mp, outd);
-      KillAllMMNodes(mp);
-
+      GenBlockingFile(pre, rkb, outd, "sqblk");
+      GenFlagH(pre, rkb, outd, "sqflag");
+      GenCMAJ2AMAJ(pre, rkb, outd, "sq");
+      GenC2BLK(pre, rkb, outd, "_sq");
+      GenSquareKH(pre, sqb, outd);
    }
 }
 
@@ -2877,7 +2836,7 @@ int KernelInList(ATL_mmnode_t *mmb, ATL_mmnode_t *p)
    if (!p || !mmb)
       return(0);
    for (mp=mmb; mp; mp = mp->next)
-      if (MMKernsSame1(mp, p))
+      if (KernelIsSame(mp, p))
          return(1);
     return(0);
 }
@@ -2957,7 +2916,7 @@ ATL_mmnode_t *RemoveNonUniqueKernels(ATL_mmnode_t *mmb)
       ATL_mmnode_t *p=mp->next, *prev=mp;
       while (p)
       {
-         if (MMKernsSame1(mp, p))
+         if (KernelIsSame(mp, p))
             prev->next = p = KillMMNode(p);
          else
          {
@@ -3027,7 +2986,6 @@ int main(int nargs, char **args)
    KillAllMMNodes(rkb);
    exit(0);
 }
-
 @ROUT emit_amm
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2012 -def cwdate 2013 -def cwdate 2015
 #include "atlas_misc.h"
@@ -7398,7 +7356,6 @@ ATL_mmnode_t *GetUniqueUserKerns(ATL_mmnode_t *rb)
    return(ub);
 }
 
-@ROUT ammsearch
 static int SelfKClean(ATL_mmnode_t *mp)
 {
    if (FLAG_IS_SET(mp->flag, MMF_KRUNTIME))
@@ -7602,7 +7559,6 @@ ATL_mmnode_t *FindAllUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
       printf("DONE FINDING FULL LIST OF K-CLEANERS\n");
    return(clnb);
 }
-@ROUT ammsearch uammsearch
 
 ATL_mmnode_t *FindMUNU(ATL_mmnode_t *mb, int mu, int nu)
 {
@@ -7811,7 +7767,7 @@ ATL_mmnode_t *SpecializeKClean
    return(b);
 }
 @ROUT uammsearch
-void ComputeKClean(int verb, char pre)
+void ComputeKClean(int verb, char pre, ATL_mmnode_t *mmb)
 {
 }
 @ROUT ammsearch
