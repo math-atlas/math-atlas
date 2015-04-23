@@ -35476,7 +35476,19 @@ gemm(...)
 
 #define CINT const int
 
-#ifdef TCPLX
+#ifdef TIME_TRMVK
+   #ifdef TCPLX
+      #error "Complex TRSM kernel timing not yet supported!"
+   #else
+      #ifdef SD_Right
+         #error "Side=Right not yet supported!"
+      #else
+      void Mjoin(PATL,ktrsmLLN_rk4)
+         (ATL_CINT M, ATL_CINT N, const SCALAR alpha, 
+          const TYPE *T, TYPE *B, ATL_CINT ldb, TYPE *W);
+      #endif
+   #endif
+#elif defined(TCPLX)
    size_t rszA, rszB, rszC;
    void CAMM_b0(ATL_CSZT mblks, ATL_CSZT nblks, ATL_CSZT K, const TYPE *A,
                 const TYPE *B, TYPE *C, const TYPE *pAn, const TYPE *pBn,
@@ -35705,8 +35717,12 @@ double GetKmmMflop
    t0 = ATL_walltime();
    for (j=0,i=reps; i; i--)
    {
-      KMM(mblks, nblks, kb, a, b, c, movA ? a+incA : a, 
-          movB ? b+incB : b, movC ? c+incC : c);
+      #ifdef TIME_TRMVK
+         Mjoin(PATL,ktrsmLLN_rk4)(mb, nb, 1.0, A, c, mb, B);
+      #else
+         KMM(mblks, nblks, kb, a, b, c, movA ? a+incA : a, 
+             movB ? b+incB : b, movC ? c+incC : c);
+      #endif
       if (++j != nset)
       {
          a += incA;
@@ -35720,7 +35736,12 @@ double GetKmmMflop
       }
    }
    t1 = ATL_walltime() - t0;
-   mf = (2.0*reps*mb*nb*kb) / (t1*1000000.0);
+   mf = reps;
+   #ifdef TIME_TRMVK
+      mf = (1.0*reps*mb*mb*nb) / (t1*1000000.0);
+   #else
+      mf = (2.0*reps*mb*nb*kb) / (t1*1000000.0);
+   #endif
    #ifdef TCPLX
       mf *= 4.0;
    #endif
