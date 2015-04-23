@@ -35455,14 +35455,23 @@ gemm(...)
    else if (K == 1)      /* possible ger */
 }
 @ROUT mmtime_pt
-#define _GNU_SOURCE 1 /* what manpage says you need to get CPU_SET */
-#define __USE_GNU   1 /* what you actually have to set on linuxes I've seen */
-#include <sched.h>    /* must include this before pthreads */
-#include <pthread.h>
+#ifdef ATL_NCPU
+   #if ATL_NCPU < 2
+      #undef ATL_NCPU
+   #endif
+#endif
+#ifdef ATL_NCPU
+   #define _GNU_SOURCE 1 /* what manpage says you need to get CPU_SET */
+   #define __USE_GNU   1 /* what you actually need set on linuxes I've seen */
+   #include <sched.h>    /* must include this before pthreads */
+   #include <pthread.h>
+   #define dumb_prand(is_) ( 0.5 - ((double)rand_r(is_))/((double)RAND_MAX) )
+#else
+   #define dumb_prand(is_) ( 0.5 - ((double)rand())/((double)RAND_MAX) )
+#endif
 #include "atlas_misc.h"
 #include <assert.h>
 #include <string.h>
-#define dumb_prand(is_) ( 0.5 - ((double)rand_r(is_))/((double)RAND_MAX) )
 
 
 #define CINT const int
@@ -35750,15 +35759,32 @@ void *TimeOnCore(void *vp)
  * We wait on chkin array to have all non-zero entries.  Even on weakly-ordered
  * caches this should work, though the delay may be long.
  */
-   chkin[kp->iam] = 1;
-   for (i=0; i < P; i++)
-      while(!chkin[i]);
+   #ifdef ATL_NCPU
+      chkin[kp->iam] = 1;
+      for (i=0; i < P; i++)
+         while(!chkin[i]);
+   #endif
    kp->mf = GetKmmMflop(kp->mb, kp->nb, kp->kb, kp->mu, kp->nu, kp->ku, 
                         kp->movA, kp->movB, kp->movC, kp->FLSIZE, kp->reps, 0);
    return(NULL);
 }
 
 
+#ifndef ATL_NCPU
+double *TimeOnCores(struct kmm_struct *kb)
+{
+   double *mflops;
+   int i, p;
+
+   mflops = malloc(sizeof(double));
+   assert(mflops);
+   p = kb->p;
+   kb->iam = 0;
+   TimeOnCore(kb);
+   mflops[0] = kb->mf;
+   return(mflops);
+}
+#else
 double *TimeOnCores(struct kmm_struct *kb)
 {
    struct kmm_struct *kp;
@@ -35804,6 +35830,7 @@ double *TimeOnCores(struct kmm_struct *kb)
    free(attr);
    return(mflops);
 }
+#endif
 
 void GetStat(int n, double *d, double *min, double *max, double *avg)
 {
@@ -36012,6 +36039,9 @@ int main(int nargs, char **args)
 
    kp = GetFlags(nargs, args, &fpout);
    p = kp->p;
+   #ifndef ATL_NCPU
+      assert(p < 2);
+   #endif
    dp = TimeOnCores(kp);
    free(kp);
    GetStat(p, dp, &min, &max, &avg);
