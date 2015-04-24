@@ -3008,6 +3008,7 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "   -g <rect kern file> <geKCleanFile>\n");
    fprintf(stderr, "   -r <rank-K kernel file> \n");
    fprintf(stderr, "   -s <square-case kernel file> <sqKCleanFile>\n");
+   fprintf(stderr, "   -t <trsm file> : should match -s\n");
    exit(ierr ? ierr : -1);
 }
 
@@ -3017,12 +3018,12 @@ void PrintUsage(char *name, int ierr, char *flag)
 char GetFlags(int nargs, char **args, char **DOUT, 
               ATL_mmnode_t **GEMM, ATL_mmnode_t **GEK1,
               ATL_mmnode_t **SQMM, ATL_mmnode_t **SQK1,
-              ATL_mmnode_t **RKMM)
+              ATL_mmnode_t **RKMM, ATL_mmnode_t **TRSM)
 {
    int i, j=0, n, k;
    char pre='d';
    ATL_mmnode_t *gemm=NULL, *gek1=NULL, *sqmm=NULL, *sqk1=NULL, *rkmm=NULL;
-   ATL_mmnode_t *mmb=NULL, *mmp, *mp;
+   ATL_mmnode_t *trsm=NULL, *mmb=NULL, *mmp, *mp;
 
    *DOUT = NULL;
    for (i=1; i < nargs; i++)
@@ -3048,6 +3049,11 @@ char GetFlags(int nargs, char **args, char **DOUT,
         gek1 = ReadMMFile(args[i]);
         assert(gek1);
         break;
+      case 't':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        trsm = ReadMMFile(args[i]);
+        assert(trsm);
       case 's':
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
@@ -3101,6 +3107,11 @@ char GetFlags(int nargs, char **args, char **DOUT,
       sqk1 = ReadMMFileWithPath(pre, "res", "sqAMMKCLEAN.sum");
       assert(sqk1);
    }
+   if (!trsm)
+   {
+      trsm = ReadMMFileWithPath(pre, "res", "tsAMMRES.sum");
+      assert(trsm);
+   }
    if (!rkmm)
    {
       rkmm = ReadMMFileWithPath(pre, "res", "rkAMMRES.sum");
@@ -3113,6 +3124,7 @@ char GetFlags(int nargs, char **args, char **DOUT,
    *SQMM = sqmm;
    *SQK1 = sqk1;
    *RKMM = rkmm;
+   *TRSM = trsm;
    return(pre);
 }
 
@@ -3189,7 +3201,7 @@ void FillInGenStrings
    }
 }
 
-void PrintBegBlock(char pre, ATL_mmnode_t *mmb, char *nam, FILE *fp)
+void PrintBegBlock(char pre, ATL_mmnode_t *mmb, char *pfx, char *nam, FILE *fp)
 {
    ATL_mmnode_t *mp;
    char PRE = toupper(pre);
@@ -3197,8 +3209,13 @@ void PrintBegBlock(char pre, ATL_mmnode_t *mmb, char *nam, FILE *fp)
 
    if (nam)
    {
-      fprintf(fp, "#ifndef ATLAS_%cAMM_%s_H\n   #define ATLAS_%cAMM_%s_H\n\n",
-              PRE, nam, PRE, nam);
+      if (pfx)
+         fprintf(fp,
+         "#ifndef ATLAS_%c%sAMM_%s_H\n   #define ATLAS_%c%sAMM_%s_H\n\n",
+                 PRE, pfx, nam, PRE, pfx, nam);
+      else
+         fprintf(fp,"#ifndef ATLAS_%cAMM_%s_H\n   #define ATLAS_%cAMM_%s_H\n\n",
+                 PRE, nam, PRE, nam);
       fprintf(fp, "#include \"atlas_amm.h\"\n");
    }
    else
@@ -3207,10 +3224,11 @@ void PrintBegBlock(char pre, ATL_mmnode_t *mmb, char *nam, FILE *fp)
 /*
  * Count mmb, and print def of NCASES
  */
-   if (!nam || strstr(nam, "RANKK") == NULL)
+   for (mp=mmb,i=0; mp; i++, mp = mp->next);
+   if (pfx)
+      fprintf(fp, "#define ATL_%c%sAMM_NCASES %d\n", pre, pfx, i);
+   else if (!nam || strstr(nam, "RANKK") == NULL)
    {
-      for (mp=mmb,i=0; mp; i++, mp = mp->next);
-   
       fprintf(fp, "#ifdef ATL_AMM_NCASES\n");
       fprintf(fp, "   #if ATL_AMM_NCASES != %d\n", i);
       fprintf(fp, "      #error \"NCASES MISMATCH!\"\n");
@@ -3257,10 +3275,13 @@ FILE *StandHStart(char pre, ATL_mmnode_t *mmb, char *pfx,
       for (i=0; bnam[i]; i++)
          fnam[i] = toupper(bnam[i]);
       fnam[i] = '\0';
-      PrintBegBlock(pre, mmb, fnam, fp);
+      if (strstr(bnam, "perf"))
+         PrintBegBlock(pre, mmb, pfx, fnam, fp);
+      else
+         PrintBegBlock(pre, mmb, NULL, fnam, fp);
    }
    else
-      PrintBegBlock(pre, mmb, NULL, fp);
+      PrintBegBlock(pre, mmb, NULL, NULL, fp);
    free(fnam);
    return(fp);
 }
@@ -3368,7 +3389,8 @@ void GenAmmSum(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *rkb,
    fclose(fp);
 }
 
-void GenPerfFile(char pre, ATL_mmnode_t *mmb, char *pfx, char *outd)
+void GenPerfFile(char pre, ATL_mmnode_t *mmb, char *pfx, char *outd, 
+                 double mfMax)
 {
    ATL_mmnode_t *mp;
    #define NTHRSH 11
@@ -3378,58 +3400,78 @@ void GenPerfFile(char pre, ATL_mmnode_t *mmb, char *pfx, char *outd)
    char *fnam;
    FILE *fp;
    char *type = "float";
-   double mfMax=0.0;
    int i, j, n, maxb, maxNB, maxMB, maxKB, maxkmaj, idxMax=0;
+   const int FNDMAX = (mfMax == 0.0);
    char PRE = toupper(pre), bc[3] = {'M', 'N', 'K'};
 
-   for (i=0; i < NTHRSH; i++)
-      mpT[i] = NULL;
    fp = StandHStart(pre, mmb, pfx, outd, "perf");
-   for (n=0,mp=mmb; mp; n++, mp = mp->next)
+
+   if (FNDMAX)
    {
-      if (mp->mflop[0] > mfMax)
-      {
-         mfMax = mp->mflop[0];
-         idxMax = n;
-      }
-   }
-   fprintf(fp, "#define ATL_AMM_MAXMFLOP %le /* (%.2f)*/ \n", 
-           mfMax, mfMax);
-   fprintf(fp, "#define ATL_AMM_MAXMFLOPIDX %d\n\n", idxMax);
-   for (n=0,mp=mmb; mp; mp = mp->next, n++)
-   {
-      double mf = mp->mflop[0] / mfMax;
       for (i=0; i < NTHRSH; i++)
+         mpT[i] = NULL;
+      for (n=0,mp=mmb; mp; n++, mp = mp->next)
       {
-         if (!mpT[i] && THRSH[i]*0.01*mfMax < mp->mflop[0])
+         if (mp->mflop[0] > mfMax)
          {
-            mpT[i] = mp;
-            idxT[i] = n;
+            mfMax = mp->mflop[0];
+            idxMax = n;
          }
       }
    }
-   for (i=0; i < NTHRSH; i++)
+   else
    {
-      mp = mpT[i];
-   @multidef fd
-      idxT[i] mp->mbB mp->nbB mp->kbB Mylcm(mp->mu,mp->nu) 
-      Mylcm(Mylcm(mp->mu,mp->nu),mp->ku)
-   @endmultidef
-   @whiledef nm IDX MB NB KB LCMMN LCMU
-      fprintf(fp, "#define ATL_AMM_%d@(nm) %d\n", THRSH[i],
-              @(fd));
-      @undef fd
-   @endwhile
+      for (n=0,mp=mmb; mp; n++, mp = mp->next);
+      idxMax = -1;
    }
-   fprintf(fp, "\n");
+   fprintf(fp, "#define ATL_%sAMM_DENOM %le /* (%.2f)*/ \n", pfx,
+           mfMax, mfMax);
+   fprintf(fp, "#define ATL_%sAMM_MAXMFLOPIDX %d\n\n", pfx, idxMax);
+   if (FNDMAX)
+   {
+      for (n=0,mp=mmb; mp; mp = mp->next, n++)
+      {
+         double mf = mp->mflop[0] / mfMax;
+         for (i=0; i < NTHRSH; i++)
+         {
+            if (!mpT[i] && THRSH[i]*0.01*mfMax < mp->mflop[0])
+            {
+               mpT[i] = mp;
+               idxT[i] = n;
+            }
+         }
+      }
+      for (i=0; i < NTHRSH; i++)
+      {
+         mp = mpT[i];
+      @multidef fd
+         idxT[i] mp->mbB mp->nbB mp->kbB Mylcm(mp->mu,mp->nu) 
+         Mylcm(Mylcm(mp->mu,mp->nu),mp->ku)
+      @endmultidef
+      @whiledef nm IDX MB NB KB LCMMN LCMU
+         fprintf(fp, "#define ATL_AMM_%d@(nm) %d\n", THRSH[i],
+                 @(fd));
+         @undef fd
+      @endwhile
+      }
+      fprintf(fp, "\n");
+   }
 
-   fprintf(fp, "static const float ATL_AMM_PERF[%d] =", n);
+   fprintf(fp, "static const float ATL_%sAMM_PERF[%d] =", pfx, n);
    fprintf(fp, "   /* %% of performance of best kernel */\n{\n");
    for (j=0,mp=mmb; mp; j++,mp = mp->next)
       fprintf(fp, "   %f%c  /* IDX=%d, KB=%d */\n", mp->mflop[0]/mfMax,
               (mp->next)?',':' ', j, mp->kbB);
    fprintf(fp, "};\n\n");
 
+   fprintf(fp, "static const float ATL_%sAMM_TIME[%d] =", pfx, n);
+   fprintf(fp, "   /* %% of performance of best kernel */\n{\n");
+   for (j=0,mp=mmb; mp; j++,mp = mp->next)
+      fprintf(fp, "   %f%c  /* IDX=%d, KB=%d */\n", mfMax/mp->mflop[0],
+              (mp->next)?',':' ', j, mp->kbB);
+   fprintf(fp, "};\n\n");
+
+   #if 0   /* found no use for this yet, so don't waste mem wt it */
    fprintf(fp, "static const float ATL_AMM_SPDUPNXT[%d] =", n);
    fprintf(fp, "   /* speedup of next higher NB */\n{\n");
    for (j=0,mp=mmb; mp; j++,mp = mp->next)
@@ -3439,6 +3481,7 @@ void GenPerfFile(char pre, ATL_mmnode_t *mmb, char *pfx, char *outd)
               (mp->next)?',':' ', j, mp->kbB, mp->next?mp->next->kbB:mp->kbB);
    }
    fprintf(fp, "};\n\n");
+   #endif
 
    fprintf(fp, "#endif  /* end include file guard */\n");
    fclose(fp);
@@ -3781,7 +3824,7 @@ void GenAMAJ2CMAJ(char pre, ATL_mmnode_t *mmb, char *outd, char *suff)
       fp = fopen(fnam, "w");
       assert(fp);
       sp[1] = '\0';
-      PrintBegBlock(pre, mmb, np, fp);
+      PrintBegBlock(pre, mmb, NULL, np, fp);
       sp[1] = '.';
       fprintf(fp, "/*\n * mat2blk prototypes\n */\n");
       SpewForthRevCpProto(pre, fp, ac[ia], mmb->mu, kmaj);
@@ -3858,7 +3901,7 @@ void GenCMAJ2AMAJ(char pre, ATL_mmnode_t *mmb, char *pfx, char *outd)
       fp = fopen(fnam, "w");
       assert(fp);
       sp[1] = '\0';
-      PrintBegBlock(pre, mmb, np, fp);
+      PrintBegBlock(pre, mmb, NULL, np, fp);
       sp[1] = '.';
       fprintf(fp, "/*\n * mat2blk prototypes\n */\n");
       SpewForthCpProto(pre, fp, ac[ia], mmb->mu, kmaj);
@@ -4414,7 +4457,7 @@ void GenCmplxHeaders(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *rkb,
 void GenHeaderFiles(char pre, char *outd, 
                     ATL_mmnode_t *geb, ATL_mmnode_t *gek1b,
                     ATL_mmnode_t *sqb, ATL_mmnode_t *sqk1b,
-                    ATL_mmnode_t *rkb)
+                    ATL_mmnode_t *rkb, ATL_mmnode_t *trsmb)
 /*
  * Header files required to build full gemm (no timing):
  *X1. atlas_<pre>amm_blk.h : 
@@ -4450,7 +4493,7 @@ void GenHeaderFiles(char pre, char *outd,
    pfx = "ge";
    GenAmmSum(pre, geb, rkb, pfx, outd);
    GenBlockingFile(pre, geb, pfx, outd);
-   GenPerfFile(pre, geb, pfx, outd);
+   GenPerfFile(pre, geb, pfx, outd, 0.0);
    GenFlagH(pre, geb, pfx, outd);
    GenCMAJ2AMAJ(pre, geb, pfx, outd);
    GenC2BLK(pre, geb, pfx, outd);
@@ -4460,18 +4503,26 @@ void GenHeaderFiles(char pre, char *outd,
    pfx = "sq";
    GenAmmSum(pre, sqb, rkb, pfx, outd);
    GenBlockingFile(pre, sqb, pfx, outd);
-   GenPerfFile(pre, sqb, pfx, outd);
+   GenPerfFile(pre, sqb, pfx, outd, 0.0);
    GenFlagH(pre, sqb, pfx, outd);
    GenCMAJ2AMAJ(pre, sqb, pfx, outd);
    GenC2BLK(pre, sqb, pfx, outd);
    GenKernH(pre, outd, pfx, sqb, sqk1b);
 @skip   GenCmplxHeaders(pre=='s'?'c':'z', sqb, rkb, pfx, outd);
 
+   if (trsmb)
+   {
+      double maxMF=0.0;
+      for (mp=sqb; mp; mp = mp->next)
+         if (mp->mflop[0] > maxMF)
+             maxMF = mp->mflop[0];
+      GenPerfFile(pre, trsmb, "ts", outd, maxMF);
+   }
    if (rkb)
    {
       pfx = "rk";
       GenBlockingFile(pre, rkb, pfx, outd);
-      GenPerfFile(pre, rkb, pfx, outd);
+      GenPerfFile(pre, rkb, pfx, outd, 0.0);
       GenFlagH(pre, rkb, pfx, outd);
       GenCMAJ2AMAJ(pre, rkb, pfx, outd);
       GenC2BLK(pre, rkb, pfx, outd);
@@ -5253,12 +5304,13 @@ ATL_mmnode_t *RemoveNonUniqueKernels(ATL_mmnode_t *mmb)
 }
 
 void GenAllFiles(char pre, char *outd, ATL_mmnode_t *geb, ATL_mmnode_t *gek1b, 
-                 ATL_mmnode_t *sqb, ATL_mmnode_t *sqk1b, ATL_mmnode_t *rkb)
+                 ATL_mmnode_t *sqb, ATL_mmnode_t *sqk1b, ATL_mmnode_t *rkb,
+                 ATL_mmnode_t *trsmb)
 {
    ATL_mmnode_t *uge, *usq, *urk;  /* lists w/o object repeats */
    ATL_mmnode_t *mp;
 
-   GenHeaderFiles(pre, outd, geb, gek1b, sqb, sqk1b, rkb);
+   GenHeaderFiles(pre, outd, geb, gek1b, sqb, sqk1b, rkb, trsmb);
    GenMakefile(pre, outd, geb, gek1b, sqb, sqk1b, rkb);
    GenKerns(pre, outd, geb, gek1b, sqb, sqk1b, rkb);
 }
@@ -5269,13 +5321,13 @@ int main(int nargs, char **args)
    int verb=1;
    int *nbs;
    char *outd, *ukin, *kcin, *rkin, *sqin;
-   ATL_mmnode_t *geb, *gek1b, *sqb, *sqk1b, *rkb;
+   ATL_mmnode_t *geb, *gek1b, *sqb, *sqk1b, *rkb, *trsm;
 /*
  * We expect to get a list of rectangular blocking factor kernels for gemm,
  * K-cleanup kernels for gemm, and square kernels for building amm-based L3BLAS,
  * and their K-cleanup kernels, and finally a list of kernels for rank-K
  */
-   pre = GetFlags(nargs, args, &outd, &geb, &gek1b, &sqb, &sqk1b, &rkb);
+   pre = GetFlags(nargs, args, &outd, &geb, &gek1b, &sqb, &sqk1b, &rkb, &trsm);
    assert(geb && gek1b);
    assert(sqb && sqk1b);
    assert(rkb);
@@ -5295,13 +5347,14 @@ int main(int nargs, char **args)
    FillInGenStrings(pre, sqk1b, outd);
    FillInGenStrings(pre, rkb, outd);
 
-   GenAllFiles(pre, outd, geb, gek1b, sqb, sqk1b, rkb);
+   GenAllFiles(pre, outd, geb, gek1b, sqb, sqk1b, rkb, trsm);
 
    KillAllMMNodes(geb);
    KillAllMMNodes(gek1b);
    KillAllMMNodes(sqb);
    KillAllMMNodes(sqk1b);
    KillAllMMNodes(rkb);
+   KillAllMMNodes(trsm);
    return(0);
 }
 @ROUT ammsearch uammsearch
@@ -9080,6 +9133,27 @@ ATL_mmnode_t *DoSquare(char pre, int verb, int nregs, ATL_mmnode_t *mmb)
    return(mmSQ);
 }
 
+void DoTRSM(char pre, int verb)
+/*
+ * Later, may need to put trsm 'Right' timings in mflop[1]
+ */
+{
+   ATL_mmnode_t *tb, *tp, *sb;
+   if (pre == 'z' || pre == 'c')
+      return;
+   tb = ReadMMFileWithPath(pre, "res", "sqAMMRES.sum");
+   printf("\nFINDING PERFORMANCE OF TRSM KERNELS FOR SQUARE AMM:\n");
+   for (tp=tb; tp; tp = tp->next)
+   {
+      tp->mflop[0] = TimeTSKernel(verb, 0, pre, tp->mbB, tp->nbB, 0);
+      if (verb)
+         printf("   trsmKL %dx%d: %.2f\n", tp->mbB, tp->nbB, tp->mflop[0]);
+   }
+   WriteMMFileWithPath(pre, "res", "tsAMMRES.sum", tb);
+   printf("DONE TRSM TIMING.\n");
+   KillAllMMNodes(tb);
+}
+
 /*
  * Finds main amm kernels
  */
@@ -9340,6 +9414,10 @@ int main(int nargs, char **args)
  * Handle K-cleanup
  */
    ComputeKClean(verb, pre);
+/*
+ * Time TRSM kernels with matching block factors as square cases
+ */
+   DoTRSM(pre, verb);
 /*
  * Join mmb & rnkK to make master list of all kernels required in this search
  */
@@ -15198,13 +15276,7 @@ int Mjoin(PATL,GetRankKInfo)
  * RETURNS: mb to use, 0 if ATL_trsmKL_rk4 should be called instead.
  */
 #include "atlas_ttypes.h"
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_perf.h))
-/*
- * Need to time to detect this.  It is the best perf gotten by directly
- * calling ATL_trsmKL_rk4
- */
-#define ATL_SMRK4_MFLOP 13056
-@skip #define ATL_SMRK4_PERC (ATL_SMRK4_MFLOP / ATL_AMM_MAXMFLOP)   
+#include Mstr(Mjoin(Mjoin(atlas_,UPR),tsamm_perf.h))
 int Mjoin(PATL,GetTrsmInfo)
 (
    amminfo_t *out,
@@ -15215,131 +15287,72 @@ int Mjoin(PATL,GetTrsmInfo)
    const SCALAR beta
 )
 {
-   #ifdef ATL_CAMM_MAXINDX
-      #define MAXIDX ATL_CAMM_MAXINDX
-   #else
-      #define MAXIDX ATL_AMM_NCASES-1
-   #endif
+   #define MAXIDX ATL_AMM_NCASES-1
    int ik = MAXIDX;
-   int mu, nu, ku, nb, nnblks, mb, nmblks, mb0, ibest=0, bbest=4;
-   const double spd4 = ATL_AMM_PERF[0];
-   double trk4;   /* predicted time for rk-4 based TRSM */
+   int mu, nu, ku, nb, nnblks, mb, nmblks, mb0, ibest, bbest;
+   double tslv;   /* predicted time to solve whole prob wt trsmK */
    double tbest;  /* start it at time using nb=4 (ik=0) */
-   double smrk4;
 
-   trk4 = M;
-   smrk4 = trk4 = trk4*trk4*N;
-   tbest = trk4 = trk4 / spd4;
-   smrk4 = (smrk4*ATL_AMM_MAXMFLOP) / ATL_SMRK4_MFLOP;
 /*
- * Get a KB <= M/2
+ * First, find speed of trsmK by taking MB closest to M
  */
-   if (M >= 12)
+   if (M >= ATL_AMM_MAXKB)
+      tslv = ATL_tsAMM_TIME[MAXIDX];
+   else
    {
-      for (; ik > 0; ik--)   /* skip kernels that are too large */
-      {                      /* to provide square blocks! */
-         const int kb = ATL_AMM_KBs[ik];
-         if (kb+kb <= M)
+      int i;
+      for (i=MAXIDX; i > 0; i--)
+         if (ATL_AMM_KBs[i] <= M)
             break;
-      }
-      if (ik)
+      tslv = ATL_tsAMM_TIME[i];
+   }
+   tslv = ((1.0*M)*M*N) * tslv;
+   tbest = tslv;
+   ibest = -1;
+   bbest = -1;
+/*
+ * Now loop over all square block factors, and find the best predicted perf
+ */
+   for (ik=0; ik < ATL_AMM_NCASES; ik++)
+   {
+      const int kb = ATL_AMM_KBs[ik];
+      int mb, ndi, nsq;
+      double tim, tfl;
+      if (kb+kb >= M)  /* don't use blks leading to little amm */
+         break;
+      ndi = M/kb;              /* # of full diagonal blocks */
+      nsq = ((ndi-1)*ndi)>>1; /* # of full amm blks */
+      mb = M - ndi*kb;         /* partial block at beginning */
+      tfl = kb;                /* triangular flops are half  */
+      tfl = tfl*kb*N;          /* of amm flops for same kb */
+/*
+ *    Compute time to do full blocks portion of algorithm
+ */
+      tim = (ndi*tfl)*ATL_tsAMM_TIME[ik] +             /* slv time */
+            (nsq*(tfl+tfl))*ATL_sqAMM_TIME[ik];        /* amm time */
+      if (mb) /* need to find perf of partial block */
       {
-         ATL_INT ntr, nsq;
+         int i;
+         const double pfl=(1.0*mb)*kb*N, mmfl=(2.0*ndi)*ndi*N;
 
-         
-/*
- *       Find a kernel where mb can be set to kb; we know these exist, since we 
- *       insist on square problems of moderate size
- */
-         for (; ik > 0; ik--)
-         {
-            int kb, GOOD, ndi, nsq;
-            double tfl, gfl, tim;
-            kb = ATL_AMM_KBs[ik];
-            mu = ATL_AMM_MUs[ik];
-            mb = ATL_AMM_MBs[ik];
-
-/*
- *          Skip if kernel can't be used with MB == KB;
- *          If mb == kb already, then skip MB testing and go to time computing
- */
-            GOOD = (mb == kb);
-            if (!GOOD)
-               GOOD = ((kb/mu)*mu == kb);
-/*
- *          Must try more expensive test to find workable kb
- */
-#if ATL_AMM_MAXMB > ATL_AMM_MAXKB
-   #define MAXB ATL_AMM_MAXKB
-#else
-   #define MAXB ATL_AMM_MAXMB
-#endif
-            if (!GOOD)
-            {
-               int b, u;
-/*
- *             Only KRUNTIME kerns can vary their KB, and thus be made legal
- */
-               if (!ATL_AMM_KRUNTIME(ATL_AMM_KFLAG[ik]))
-                  continue;
-               u = ATL_AMM_KUs[ik];
-               u = ATL_lcm(ku, mu);  /* all b must be a mul of this */
-               kb = 0;
-               b = ((mb+u-1)/ku)*ku;
-               if (b < MAXB && b+b+b <= M)
-                  kb = b;
-               else
-               {
-                  b = ((nb+u-1)/ku)*ku;
-                  if (b < MAXB && b+b+b <= M)
-                     kb = b;
-                  else
-                  {
-                     kb = (mb/ku)*ku;
-                     if (!kb)
-                        kb = (nb/ku)*ku;
-                  }
-               }
-               if (!kb || kb < ATL_AMM_KBMINs[ik])
-                  continue;
-            }
-            if (kb+kb >= M)  /* Don't use huge blocks w/o significant amm */
-               continue;
-            ndi = M/kb;
-            nsq = ((ndi-1)*ndi)>>1;  /* full blocks */
-            mb = M - ndi*kb;
-            tfl = kb;
-            tfl = tfl*kb*N;
-            if (!mb)
-            {
-               tim = (ndi*tfl*ATL_AMM_MAXMFLOP)/ATL_SMRK4_MFLOP + /* slv time */
-                     (nsq*(tfl+tfl))/ATL_AMM_PERF[ik];            /* amm time */
-            }
-            else
-            {
-               tim = mb;
-               tim *= kb*N;     /* # of flops in partial blocks */
-               tim = (ndi*tfl+tim*ATL_AMM_MAXMFLOP)/ATL_SMRK4_MFLOP + 
-                     (nsq*(tfl+tfl)+ndi*(tim+tim))/ATL_AMM_PERF[ik];
-            }
-@beginskip
-            gfl = tfl+tfl;
-            ndi = (M+kb-1)/kb;
-            nsq = ((ndi-1)*ndi)>>1;
-            tim = (ndi*tfl)/spd4 + (nsq*(tfl+tfl))/ATL_AMM_PERF[ik];
-@endskip
-//          printf("idx=%d, kb=%d(%d), spdup=%e\n", ik, kb, ATL_AMM_KBs[ik], 
-//                 trk4/tim);
-            if (tim <= tbest)
-            {
-               tbest = tim;
-               ibest = ik;
-               bbest = kb;
-            }
-         }  /* end for over candidate blocking factors */
+         for (i=ik; i > 0; i--)
+            if (ATL_AMM_KBs[ik] <= mb)
+               break;
+         tim += pfl * ATL_tsAMM_TIME[i];   /* extra slvtime */
+         tim += mmfl * ATL_sqAMM_TIME[i];  /* extra mmtime */
+      }
+//    printf("idx=%d, kb=%d(%d), spdup=%e\n", ik, kb, ATL_AMM_KBs[ik], 
+//           trk4/tim);
+      if (tim <= tbest)
+      {
+         tbest = tim;
+         ibest = ik;
+         bbest = kb;
       }
    }
 // best=0;   /* FOR TESTING!!!!! */
+   if (ibest < 0)
+      return(0);
    ik = ibest;
 
    out->IDX = ik;
@@ -15370,10 +15383,8 @@ int Mjoin(PATL,GetTrsmInfo)
       out->Cblk2cm = (ialp) ? ATL_AMM_BLK2C_a1_bX[ik]:ATL_AMM_BLK2C_a1_b0[ik];
    out->Cblk2cm_b1 = ATL_AMM_BLK2C_a1_b1[ik];
    out->cm2Cblk = NULL;
-   if (smrk4 < tbest)
-       mb = 0;
-   printf("ik=%d, mb=%d(%d), nb=%d, pred spdup=%.2f,%.2f\n", ik, out->mb, mb, 
-          out->nb, trk4/tbest, smrk4/tbest);
+   printf("ik=%d, mb=%d(%d), nb=%d, pred spdup=%.2f\n", ik, out->mb, mb, 
+          out->nb, tslv/tbest);
    return(mb);
 }
 
