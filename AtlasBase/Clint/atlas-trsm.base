@@ -1,3 +1,74 @@
+@ROUT atlas_trsmK.h
+/*
+ * Prototypes trsm kernel routines used in gemm or amm-based BLAS routines
+ */
+#ifndef ATLAS_TRSMK_h
+#include "atlas_misc.h"
+#include "atlas_amm.h"
+
+@multidef typ double float
+@whiledef pre d s
+void ATL_@(pre)ktrsmLLN_rk4  /* rank-4 based trsm kernel */
+(
+   ATL_CINT  M,   /* size of orig triangular matrix A */
+   ATL_CINT  N,   /* number of RHS in B */
+   const @(typ) alpha,  /* scale factor for B */
+   const @(typ) *A, /* MxM lower matrix A, diag has inverse of original diag */
+   TYPE *B,       /* on input, B, on output X, of A x = b */
+   ATL_CINT  ldb, /* leading dim of B */
+   @(typ) *W        /* Mx4 workspace with good alignment */
+);
+
+int ATL_@(pre)trsmKL_amm  /* amm-based trsm kernel primitive */
+(
+   amminfo_t *mmp,      /* chosen amm kernel info */
+   enum ATLAS_DIAG Diag,
+   ATL_CUINT mb0,       /* sizeof first triangular block */
+   ATL_CUINT nmblks,    /* CEIL(M/mb); M = (nmblks-1)*b+mb0 */
+   ATL_CUINT nnblks,    /* FLOOR(N/nb) */
+   ATL_CUINT nr,        /* mod(N/nb) */
+   const SCALAR alpha,  /* scale factor for rhs */
+   const @(typ) *L,       /* L, already copied to row-panel storage as above */
+   size_t incL,         /* distance between blocks in L */
+   @(typ) *R,             /* ptr to col-major rhs (B on input, X on output */
+   size_t ldr,          /* leading dim of RHS matrix R */
+   ATL_CUINT nmu,       /* nmu = mb/mu, assume mod(mb/mu) == 0 */
+   ATL_CUINT nnu,       /* nnu = NB/nu, assume mod(NB/nu) == 0 */
+   TYPE *c,             /* bxNB with trailing readable space for amm */
+   TYPE *W,             /* aligned workspace for amm's B blocks */
+   size_t incW          /* stride between b*NB blocks */
+);
+
+int ATL_@(pre)trsmL_amm      /* general Left amm-based trsm */
+(                       /* RETURNS: 0 on success, non-0 if op not done */
+   enum ATLAS_SIDE Side,
+   enum ATLAS_UPLO Uplo,
+   enum ATLAS_TRANS TA,
+   enum ATLAS_DIAG Diag,
+   ATL_CINT  M,         /* size of triangular matrix A */
+   ATL_CINT  N,         /* number of RHS in B */
+   const SCALAR alpha,  /* scale factor for B */
+   const @(typ) *T,     /* MxM triangular matrix A */
+   ATL_CINT  ldt,       /* leading dim of T */
+   @(typ) *R,           /* on input, B, on output X, of A x = b */
+   ATL_CINT  ldr        /* leading dim of R */
+);
+
+void Mjoin(PATL,trsmK_L2blk)   /* takes data in col-maj Lower format */
+(                              /* puts in format required by trsmL_amm */
+   enum ATLAS_DIAG Diag,
+   const int mb0,   /* size of first triangular block */
+   const int b,     /* size of all other blocks */
+   int nmblks,      /* number of blocks of size b (not incl mb0) */
+   const TYPE *L,   /* lower triang mat of x = inv(L) b */
+   size_t ldl,      /* leading dim of L */
+   TYPE *W,         /* wrkspc to copy blocks to */
+   size_t incW,     /* stride between blocks (incW >= MAX(b,mb0)^2) */
+   cm2am_t a2blk    /* copy rect blks to amm storage */
+);
+   @undef typ
+@endwhile
+#endif
 @ROUT ATL_trsmKL_rk4 ATL_trsmKR_rk4 ATL_ctrsmKL_rk2 ATL_ctrsmKR_rk2
 #include "atlas_misc.h"
 #include "atlas_prefetch.h"
@@ -4656,8 +4727,7 @@ void Mjoin(PATL,trsmK_LLNU_a1)
 @ROUT ATL_trsmKL_amm
 //   #define DEBUG 1
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2015
-#include "atlas_misc.h"
-#include "atlas_amm.h"
+#include "atlas_trsmK.h"
 #ifdef DEBUG
    #include "atlas_tst.h"
 #endif
@@ -4858,12 +4928,15 @@ int Mjoin(PATL,trsmKL_amm)
    }
    return(0);
 }
+
+@ROUT ATL_trsmK_L2blk
+#include "atlas_trsmK.h"
 /*
  * Take column major L, put it in block-major/amm form for use in trsm_amm.
  * In particular, diagonal blocks are copied and padded to match rank-4-based
  * trsm kernel, while blocks below the diagonal are copied to amm format.
  */
-static void L2blk
+void Mjoin(PATL,trsmK_L2blk)
 (
    enum ATLAS_DIAG Diag,
    const int mb0,   /* size of first triangular block */
@@ -4903,7 +4976,8 @@ static void L2blk
       L += b;
    }
 }
-
+@ROUT ATL_trsmKL_amm
+#define L2blk Mjoin(PATL,trsmK_L2blk)
 int Mjoin(PATL,trsmL_amm)
 (
    enum ATLAS_SIDE Side,
