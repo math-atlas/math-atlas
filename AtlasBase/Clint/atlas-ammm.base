@@ -4427,6 +4427,7 @@ void GenKernH
 {
    FILE *fp;
    ATL_mmnode_t *ukb;
+   const char upr = (pre == 'z' || pre == 'd') ? 'd' : 's';
 
    fp = StandHStart(pre, mmb, pfx, outd, "kern");
    fprintf(fp, "\n");
@@ -4436,20 +4437,20 @@ void GenKernH
  */
    ukb = AddUniqueMMKernCompList(NULL, mmb);
    ukb = AddUniqueMMKernCompList(ukb, k1b);
-   SpewForthKernProtos(fp, pre, "AMMM", ukb, 3);
+   SpewForthKernProtos(fp, upr, "AMMM", ukb, 3);
    fprintf(fp, "\n");
    KillAllMMNodes(ukb);
 /*
  * Dump out kernel ptr arrays
  */
-   SpewForthKernArray(fp, pre, mmb, "KERN_b0", '0');
-   SpewForthKernArray(fp, pre, mmb, "KERN_b1", '1');
-   SpewForthKernArray(fp, pre, mmb, "KERN_bn", 'n');
+   SpewForthKernArray(fp, upr, mmb, "KERN_b0", '0');
+   SpewForthKernArray(fp, upr, mmb, "KERN_b1", '1');
+   SpewForthKernArray(fp, upr, mmb, "KERN_bn", 'n');
    if (k1b)
    {
-      SpewForthKernArray(fp, pre, k1b, "KERN_K1", '0');
-      SpewForthKernArray(fp, pre, k1b, "KERN_K1_b1", '1');
-      SpewForthKernArray(fp, pre, k1b, "KERN_K1_bn", 'n');
+      SpewForthKernArray(fp, upr, k1b, "KERN_K1", '0');
+      SpewForthKernArray(fp, upr, k1b, "KERN_K1_b1", '1');
+      SpewForthKernArray(fp, upr, k1b, "KERN_K1_bn", 'n');
    }
 
    fprintf(fp, "\n#endif  /* end include file guard */\n");
@@ -4513,7 +4514,7 @@ void GenHeaderFiles(char pre, char *outd,
    GenCMAJ2AMAJ(pre, geb, pfx, outd);
    GenC2BLK(pre, geb, pfx, outd);
    GenKernH(pre, outd, pfx, geb, gek1b);
-   GenCmplxHeaders(pre=='s'?'c':'z', geb, rkb, pfx, outd);
+@skip   GenCmplxHeaders(pre=='s'?'c':'z', geb, rkb, pfx, outd);
 
    pfx = "sq";
    GenAmmSum(pre, sqb, rkb, pfx, outd);
@@ -5355,6 +5356,28 @@ void GenAllFiles(char pre, char *outd, ATL_mmnode_t *geb, ATL_mmnode_t *gek1b,
    KillAllMMNodes(trsmb);
 }
 
+void Cplx2RealMM(char pre, ATL_mmnode_t *mmb, char *outd)
+{
+   ATL_mmnode_t *mp;
+   const int mask = ~(1<<MMF_COMPLEX);
+   char pfx[8];
+   const char cpr = (pre == 'd') ? 'z' : 'c';
+   pfx[0] = 'A'; pfx[1] = 'T'; pfx[2] = 'L'; pfx[3] = '_';
+   pfx[4] = cpr; pfx[5] = 0;
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      char *sp;
+      mp->flag &= mask;
+      if (mp->rout)
+      {
+         sp = strstr(mp->rout, pfx);
+         if (sp)
+            sp[4] = pre;
+      }
+   }
+   FillInGenStrings(pre, mmb, outd);
+}
+
 int main(int nargs, char **args)
 {
    char pre='d';
@@ -5388,11 +5411,11 @@ int main(int nargs, char **args)
    FillInGenStrings(pre, sqb, outd);
    FillInGenStrings(pre, sqk1b, outd);
    FillInGenStrings(pre, rkb, outd);
-   FillInGenStrings(pre, cgeb, outd);
-   FillInGenStrings(pre, cgek1b, outd);
-   FillInGenStrings(pre, csqb, outd);
-   FillInGenStrings(pre, csqk1b, outd);
-   FillInGenStrings(pre, crkb, outd);
+   Cplx2RealMM(pre, cgeb, outd);
+   Cplx2RealMM(pre, cgek1b, outd);
+   Cplx2RealMM(pre, csqb, outd);
+   Cplx2RealMM(pre, csqk1b, outd);
+   Cplx2RealMM(pre, crkb, outd);
 
    GenAllFiles(pre, outd, geb, gek1b, sqb, sqk1b, rkb, trsm, 
                cgeb, cgek1b, csqb, csqk1b, crkb, ctrsm);
@@ -6179,7 +6202,12 @@ ATL_mmnode_t *FindDefMUNU(int verb, char pre, int nreg, int lat, int nb, int ku,
    mmp->muladd = (lat != 0);
    mmp->lat = lat;
    mmp->rout = DupString("ATL_Xamm_munu.c");
-   mmp->rout[4] = pre;
+   if (pre == 'z')
+      mmp->rout[4] = 'd';
+   else if (pre == 'c')
+      mmp->rout[4] = 's';
+   else
+      mmp->rout[4] = pre;
    mmp->mbB = mmp->nbB = mmp->kbB = nb;
    mmp->vlen = VLEN[VECi];
 /*
@@ -10413,7 +10441,7 @@ int Mjoin(PATL,ammmABC)
    @define rt @Mjoin(PATL,ammm_IP)@
 #include "atlas_misc.h"
 #include "atlas_amm.h"
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_sum.h))
+#include Mstr(Mjoin(AMM_PRE,_sum.h))
 @ROUT ATL_ammm_IP ATL_cammm_IP
 /*
  * This routine handles M <= MAXM && N <= MAXN && very long K, or
@@ -10424,27 +10452,27 @@ int Mjoin(PATL,ammmABC)
  */
 @ROUT ATL_ammm_rkK0
 #include "atlas_misc.h"
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),rkamm_kern.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),rkamm_blk.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),rkamm_flag.h))
+#include Mstr((Mjoin(ATLAS_PRE,rkamm_kern.h)
+#include Mstr(Mjoin(ATLAS_PRE,rkamm_blk.h))
+#include Mstr(Mjoin(ATLAS_PRE,rkamm_flag.h))
 @ROUT ATL_cammm_1b ATL_ammm_rkK ATL_cammm_rkK
 #include "atlas_misc.h"
 #include "atlas_amm.h"
 #include "atlas_level1.h"
 #include "atlas_lvl2.h"
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_sum.h))
+#include Mstr(Mjoin(AMM_PRE,_sum.h))
 @ROUT ATL_ammm_1b ATL_ammmKNM
 #include "atlas_misc.h"
 #include "atlas_amm.h"
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_sum.h))
+#include Mstr(Mjoin(AMM_PRE,_sum.h))
 @ROUT ATL_ammm ATL_cammm
 #include "atlas_misc.h"
 #include "atlas_lvl2.h"
 #include "atlas_level1.h"
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_sum.h))
+#include Mstr(Mjoin(AMM_PRE,_sum.h))
    @define rt @Mjoin(PATL,ammm)@
 @ROUT ATL_cammm_rkK ATL_cammm_tN ATL_cammmMNK
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_sum.h))
+#include Mstr(Mjoin(AMM_PRE,_sum.h))
 #ifdef ATL_CAMM_MAXMB
    #define MY_MAXMB ATL_CAMM_MAXMB
    #define MY_MAXNB ATL_CAMM_MAXNB
@@ -13624,7 +13652,7 @@ int Mjoin(PATL,ammm_rk2)
 }
 @ROUT ATL_ammmREC
 #include "atlas_misc.h"
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_sum.h))
+#include Mstr(Mjoin(AMM_PRE,_sum.h))
 
 typedef struct ammrec ammrec_t;
 struct ammrec
@@ -14107,7 +14135,7 @@ int Mjoin(PATL,ammmREC)
 }
 @ROUT ATL_ammmNMK
 #include "atlas_misc.h"
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_sum.h))
+#include Mstr(Mjoin(AMM_PRE,_sum.h))
 
 int Mjoin(PATL,ammmNMK)
 (
@@ -14439,7 +14467,7 @@ int Mjoin(PATL,ammmNMK)
 }
 @ROUT ATL_cammmNMK
 #include "atlas_misc.h"
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_sum.h))
+#include Mstr(Mjoin(AMM_PRE,_sum.h))
 
 int Mjoin(PATL,ammmNMK)
 (
@@ -14993,13 +15021,13 @@ main(int nargs, char **args)
 
 @ROUT ATL_GetAmmAlg.c
 #include "atlas_amm.h"
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_blk.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_ablk2cmat.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_a1.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_an.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_aX.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_flag.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_kern.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_blk.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_ablk2cmat.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_cm2am_a1.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_cm2am_an.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_cm2am_aX.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_flag.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_kern.h))
 
 void GetAmmNMKDetails
 (
@@ -15341,9 +15369,9 @@ int main(int nargs, char **args)
 #define ATL_NOAMM 1
 #include "atlas_misc.h"
 #undef ATL_NOAMM
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),rkamm_kern.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),rkamm_blk.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),rkamm_flag.h))
+#include Mstr(Mjoin(ATLAS_PRE,rkamm_kern.h))
+#include Mstr(Mjoin(ATLAS_PRE,rkamm_blk.h))
+#include Mstr(Mjoin(ATLAS_PRE,rkamm_flag.h))
 
 int Mjoin(PATL,GetRankKInfo)
 (
@@ -15362,14 +15390,14 @@ int Mjoin(PATL,GetRankKInfo)
    ATL_assert(K > 2 && K <= ATL_MAXK_RKK);
 @ROUT ATL_GetAmmmInfoSQ
 #include "atlas_misc.h"
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),sqamm_blk.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),sqamm_ablk2cmat.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),sqamm_cm2am_a1.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),sqamm_cm2am_an.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),sqamm_cm2am_aX.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),sqamm_flag.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),sqamm_kern.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),sqamm_perf.h))
+#include Mstr(Mjoin(ATLAS_PRE,sqamm_blk.h))
+#include Mstr(Mjoin(ATLAS_PRE,sqamm_ablk2cmat.h))
+#include Mstr(Mjoin(ATLAS_PRE,sqamm_cm2am_a1.h))
+#include Mstr(Mjoin(ATLAS_PRE,sqamm_cm2am_an.h))
+#include Mstr(Mjoin(ATLAS_PRE,sqamm_cm2am_aX.h))
+#include Mstr(Mjoin(ATLAS_PRE,sqamm_flag.h))
+#include Mstr(Mjoin(ATLAS_PRE,sqamm_kern.h))
+#include Mstr(Mjoin(ATLAS_PRE,sqamm_perf.h))
 
 #ifdef ATL_CAMM_MAXINDX
    #define ATL_MAXIDX ATL_CAMM_MAXINDX
@@ -15388,7 +15416,7 @@ int Mjoin(PATL,GetRankKInfo)
  * RETURNS: mb to use, 0 if ATL_trsmKL_rk4 should be called instead.
  */
 #include "atlas_ttypes.h"
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),tsamm_perf.h))
+#include Mstr(Mjoin(ATLAS_PRE,tsamm_perf.h))
 int Mjoin(PATL,GetTrsmInfo)
 (
    amminfo_t *out,
@@ -15815,13 +15843,13 @@ ablk2cmat_t Mjoin(PATL,tGetSyammInfo_K)
 #endif
 @ROUT ATL_GetAmmmInfo
 #include "atlas_misc.h"
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_blk.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_ablk2cmat.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_a1.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_an.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_aX.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_flag.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_kern.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_blk.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_ablk2cmat.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_cm2am_a1.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_cm2am_an.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_cm2am_aX.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_flag.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_kern.h))
 
 int Mjoin(PATL,GetAmmmInfo)
 (
@@ -16077,12 +16105,7 @@ int Mjoin(PATL,GetAmmmInfo)
 /*
  * Following routines help pick NB for parallel routines
  */
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_sum.h))
-#ifdef ATL_CAMM_MAXINDX
-   #define ATL_MAXIDX ATL_CAMM_MAXINDX
-#elif defined(ATL_AMM_98IDX) && !defined(ATL_AMM_66IDX)
-   #define ATL_MAXIDX ATL_AMM_98IDX
-#endif
+#include Mstr(Mjoin(AMM_PRE,_sum.h))
 #ifndef ATL_MAXIDX
    #define ATL_MAXIDX ATL_AMM_NCASES-1
 #endif
@@ -16396,13 +16419,13 @@ size_t GetAmmmNthr(ATL_CSZT M, ATL_CSZT N, ATL_CSZT K)
 }
 @ROUT cnbtune
 #include "atlas_misc.h"
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_blk.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_ablk2cmat.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_a1.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_an.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_aX.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_flag.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_kern.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_blk.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_ablk2cmat.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_cm2am_a1.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_cm2am_an.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_cm2am_aX.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_flag.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_kern.h))
 
 static int IK=ATL_AMM_NCASES-1, MB=0, NB=0, KB=0;
 #ifdef DCPLX
@@ -16805,13 +16828,13 @@ int main(int nargs, char **args)
 }
 @ROUT ATL_GetSqMNAmmmInfo
 #include "atlas_misc.h"
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_blk.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_ablk2cmat.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_a1.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_an.h))
-#include Mstr(Mjoin(Mjoin(atlas_,PRE),geamm_cm2am_aX.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_flag.h))
-#include Mstr(Mjoin(Mjoin(atlas_,UPR),geamm_kern.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_blk.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_ablk2cmat.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_cm2am_a1.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_cm2am_an.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_cm2am_aX.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_flag.h))
+#include Mstr(Mjoin(ATLAS_PRE,geamm_kern.h))
 
 /*
  * Chooses good square M & N blocking; starts from size that gets 98% of
