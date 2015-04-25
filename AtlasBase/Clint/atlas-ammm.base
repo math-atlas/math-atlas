@@ -7846,6 +7846,21 @@ void ComputeKClean(int verb, char pre)
  */
 {
    ATL_mmnode_t *mkb, *mmGE, *mmSQ, *mp, *mmGEk=NULL, *mmSQk=NULL;
+   mmGEk = TimeMMFileWithPath(pre, "res", "geAMMKCLEAN.sum", 
+                              0, verb, 0, 0, 0, -1);
+   mmSQk = TimeMMFileWithPath(pre, "res", "sqAMMKCLEAN.sum", 
+                              0, verb, 0, 0, 0, -1);
+   if (mmGEk && mmSQk)
+   {
+      KillAllMMNodes(mmGEk);
+      KillAllMMNodes(mmSQk);
+      return;
+   }
+   if (mmGEk)
+      KillAllMMNodes(mmGEk);
+   if (mmSQk)
+      KillAllMMNodes(mmSQk);
+   mmGEk = mmSQk = NULL;
 @skip   if (verb)
 @skip      printf("FINDING K-CLEANUP FOR EACH KB:");
 /*
@@ -8237,6 +8252,7 @@ ATL_mmnode_t *FindCacheBudgetCasesByKB
  */
 {
    ATL_mmnode_t *mm3b, *mp;
+   const char upr = (pre == 'z' || pre == 'd') ? 'd' : 's';
 /*
  * See if we just need to rerun cases
  */
@@ -9094,6 +9110,12 @@ ATL_mmnode_t *DoMKB_findNB(char pre, int verb, ATL_mmnode_t *mmb)
 ATL_mmnode_t *DoSquare(char pre, int verb, int nregs, ATL_mmnode_t *mmb)
 {
    ATL_mmnode_t *mmSQ;
+   const char upr = (pre == 'z' || pre == 'd') ? 'd' : 's';
+
+   mmSQ = TimeMMFileWithPath(pre, "res", "sqAMMRES.sum", 0, verb, 0, 1, 0, -1);
+   if (mmSQ)
+      return(mmSQ);
+@beginskip
    mmSQ = ReadMMFileWithPath(pre, "res", "sqAMMRES.sum");
    if (mmSQ)
    {
@@ -9111,6 +9133,7 @@ ATL_mmnode_t *DoSquare(char pre, int verb, int nregs, ATL_mmnode_t *mmb)
          WriteMMFileWithPath(pre, "res", "sqAMMRES.sum", mmSQ);
       }
    }
+@endskip
    else
    {
       int maxNB=0;
@@ -9124,7 +9147,7 @@ ATL_mmnode_t *DoSquare(char pre, int verb, int nregs, ATL_mmnode_t *mmb)
           if (mp->nbB > maxNB)
              maxNB = mp->nbB;
       }
-      mmb = GetWorkingUserCases(verb, pre);
+      mmb = GetWorkingUserCases(verb, upr);
 @skip      mmb = GetUniqueUserKerns(mmb);
       mmSQ = FindBestSquareCases(pre, verb, nregs, maxNB, mmb);
       KillAllMMNodes(mmb);
@@ -9141,6 +9164,22 @@ void DoTRSM(char pre, int verb)
    ATL_mmnode_t *tb, *tp, *sb;
    if (pre == 'z' || pre == 'c')
       return;
+   tb = ReadMMFileWithPath(pre, "res", "tsAMMRES.sum");
+   if (tb)  /* already ran! */
+   {
+      for (tp=tb; tp; tp = tp->next)
+      {
+         if (tp->mflop[0] <= 0.0)
+         {
+            tp->mflop[0] = TimeTSKernel(verb, 0, pre, tp->mbB, tp->nbB, 0);
+            if (verb)
+               printf("   trsmKL %dx%d: %.2f\n", tp->mbB,tp->nbB, tp->mflop[0]);
+         }
+      }
+      KillAllMMNodes(tb);
+      return;
+   }
+
    tb = ReadMMFileWithPath(pre, "res", "sqAMMRES.sum");
    printf("\nFINDING PERFORMANCE OF TRSM KERNELS FOR SQUARE AMM:\n");
    for (tp=tb; tp; tp = tp->next)
@@ -9160,6 +9199,11 @@ void DoTRSM(char pre, int verb)
 ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS)
 {
    ATL_mmnode_t *mmb, *sqmmb, *mp;
+   const char upr = (pre == 'z' || pre == 'd') ? 'd' : 's';
+   mmb = TimeMMFileWithPath(pre, "res", "geAMMRES.sum", 0, verb, 0, 1, 0, -1);
+   if (mmb)
+      return(mmb);
+@beginskip
    mmb = ReadMMFileWithPath(pre, "res", "geAMMRES.sum");
    if (mmb)
    {
@@ -9174,10 +9218,11 @@ ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS)
       }
       return(mmb);
    }
+@endskip
 /*
  * Find which kernels can compile on this platform
  */
-   mmb = GetWorkingUserCases(verb, pre);
+   mmb = GetWorkingUserCases(verb, upr);
 /*
  * Find decent generator case and find correct vectorization settings, add
  * this case to default list to be searched.
@@ -9188,7 +9233,7 @@ ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS)
 /*
  * Find the best user-supplied cases for the three common cache blking cases
  */
-   mmb = FindCacheBudgetCasesByKB(verb, pre, CS, mmb);
+   mmb = FindCacheBudgetCasesByKB(verb, upr, CS, mmb);
 /*
  * Now find best square cases
  */
@@ -9358,6 +9403,10 @@ ATL_mmnode_t *DoRankK(char pre, int verb, int nregs, const ATL_mmnode_t *mainb)
    ATL_mmnode_t *rkb=NULL, *mp, *mmb;
    const ATL_mmnode_t *cmp;
    int maxB=0, b;
+   const char upr = (pre == 'z' || pre == 'd') ? 'd' : 's';
+   rkb = TimeMMFileWithPath(pre, "res", "rkAMMRES.sum", 0, verb, 0, 1, 0, -1);
+   if (rkb)
+      return(rkb);
 /*
  * Find largest KB used by main kernels; we will time all near-square kernels
  * of this size and below
@@ -9371,7 +9420,7 @@ ATL_mmnode_t *DoRankK(char pre, int verb, int nregs, const ATL_mmnode_t *mainb)
  * All we need main kerns for is to find maxB, so now reuse the ptr to hold
  * all user cases that work on this platform
  */
-   mmb = GetWorkingUserCases(verb, pre);
+   mmb = GetWorkingUserCases(verb, upr);
    mp = DecentGenCase(verb, pre, nregs);
    assert(mp);
    mp->next = mmb;
@@ -9385,6 +9434,7 @@ ATL_mmnode_t *DoRankK(char pre, int verb, int nregs, const ATL_mmnode_t *mainb)
       rkb = mp;
    }
    WriteMMFileWithPath(pre, "res", "rkAMMRES.sum", rkb);
+   return(rkb);
 }
 
 int main(int nargs, char **args)
@@ -9396,8 +9446,10 @@ int main(int nargs, char **args)
    ATL_mmnode_t *mmb, *rnkK, *grnkK, *emb, *mp, *mmSQ;
 
    nbs = GetFlags(nargs, args, &pre, &verb, &nregs, &nb, &CS);
+#if 0
    if (pre == 'c' || pre == 'z')
       return(DoComplex(pre, verb));
+#endif
    mmb = DoMainMM(pre, verb, nregs, CS);
    emb = TimeExtraBlockings(pre, verb);
    if (emb)

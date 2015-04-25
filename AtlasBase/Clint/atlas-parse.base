@@ -3418,6 +3418,134 @@ double TimeMMKernel
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+int TimeNegMMKernels            /* RET: 0 if no retiming required */
+(
+   int imf,                     /* index of mflop array to check/set */
+   int verb,                    /* 0: no output, 1 min output, 2: full output */
+   int FORCETIME,               /* 1: ignore any prior output file */
+   ATL_mmnode_t *mmb,           /* ptr to mmkern struct queue */
+   char pre,                    /* type/prec prefix: z,c,d,s */
+   int beta,                    /* beta to time */
+   int mflop,                   /* >0: force mflop MFLOPs in each time interv */
+   int cflush                   /* >0: size of cache flush, else ignored */
+)
+{
+   ATL_mmnode_t *mp;
+   int RETIME=0;
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      if (mp->mflop[imf] <= 0.0)
+      {
+         RETIME++;
+         mp->mflop[imf] = TimeMMKernel(verb, FORCETIME, mp, pre, 
+                                       mp->mbB, mp->nbB, mp->kbB,
+                                       mp->kbB, mp->kbB, mp->mbB, 
+                                       beta, mflop, cflush);
+      }
+   }
+   return(RETIME);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static char *GetVecStrMM(pre, vlen)
+{
+   if (vlen == 1)
+      return("scalar");
+   #ifdef ATL_AVX
+      if (pre == 'd' || pre == 'z')
+      {
+         if (vlen == 4)
+            return("avx");
+         else if (vlen == 2)
+            return("sse");
+      }
+      else if (pre == 's' || pre == 'c')
+      {
+         if (vlen == 8)
+            return("avx");
+         else if (vlen == 4)
+            return("sse");
+      }
+   #elif defined(ATL_SSE1)
+      #ifdef ATL_SSE2
+         if ((pre == 'd' || pre == 'z') && vlen == 2)
+               return("sse");
+      #endif
+      if ((pre == 's' || pre == 'c') && vlen == 4)
+         return("sse");
+   #endif
+/*
+ * Any vector length > 1 that isn't one of our known cases uses gnuvec
+ */
+   return("gvec");
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static void FillInMMGenStrings
+(
+   char pre,
+   ATL_mmnode_t *mmb,  /* queue to look through */
+   char *dir           /* output directory to generate into */
+)
+/*
+ * Creates GenString for any ID=0 in mmb
+ */
+{
+   ATL_mmnode_t *mp;
+   char *frm="make gen_amm_%s lat=%d mu=%d nu=%d ku=%d kb=%d vlen=%d rt=%s/%s kmaj=%d";
+   int frml;
+
+   frml = strlen(frm);
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      if (mp->ID == 0)  /* is generated file */
+      {
+         int ll;
+         char *sp, *vec;
+         int vlen = mp->vlen;
+
+         assert(mp->rout);  /* should have been filled in by search */
+         ll = frml + strlen(dir) + strlen(mp->rout) + 8;
+         sp = malloc(ll*sizeof(char));
+         assert(sp);
+
+         vec = GetVecStrMM(pre, mp->vlen);
+
+         sprintf(sp, frm, vec, mp->lat, mp->mu, mp->nu,
+                 mp->ku, FLAG_IS_SET(mp->flag, MMF_KRUNTIME) ? 0 : mp->kbB,
+                 vlen, dir, mp->rout, mp->kmaj);
+         mp->genstr = sp;
+      }
+   }
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+static ATL_mmnode_t *TimeMMFileWithPath
+(
+   char pre, 
+   char *path, 
+   char *file, 
+   int imf,                     /* index of mflop array to check/set */
+   int verb,                    /* 0: no output, 1 min output, 2: full output */
+   int FORCETIME,               /* 1: ignore any prior output file */
+   int beta,                    /* beta to time */
+   int mflop,                   /* >0: force mflop MFLOPs in each time interv */
+   int cflush                   /* >0: size of cache flush, else ignored */
+)
+{
+   ATL_mmnode_t *mmb;
+   mmb = ReadMMFileWithPath(pre, path, file);
+   FillInMMGenStrings(pre, mmb, "");
+   if (TimeNegMMKernels(imf, verb, FORCETIME, mmb, pre, beta, mflop, cflush))
+      WriteMMFileWithPath(pre, path, file, mmb);
+   return(mmb);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 void TimeAllMMKernels
 (
    int itime,                   /* index of mflop array to set */
