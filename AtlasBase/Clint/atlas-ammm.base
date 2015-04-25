@@ -3018,10 +3018,13 @@ void PrintUsage(char *name, int ierr, char *flag)
 char GetFlags(int nargs, char **args, char **DOUT, 
               ATL_mmnode_t **GEMM, ATL_mmnode_t **GEK1,
               ATL_mmnode_t **SQMM, ATL_mmnode_t **SQK1,
-              ATL_mmnode_t **RKMM, ATL_mmnode_t **TRSM)
+              ATL_mmnode_t **RKMM, ATL_mmnode_t **TRSM,
+              ATL_mmnode_t **cGEMM, ATL_mmnode_t **cGEK1,
+              ATL_mmnode_t **cSQMM, ATL_mmnode_t **cSQK1,
+              ATL_mmnode_t **cRKMM, ATL_mmnode_t **cTRSM)
 {
    int i, j=0, n, k;
-   char pre='d';
+   char pre='d', cpre;
    ATL_mmnode_t *gemm=NULL, *gek1=NULL, *sqmm=NULL, *sqk1=NULL, *rkmm=NULL;
    ATL_mmnode_t *trsm=NULL, *mmb=NULL, *mmp, *mp;
 
@@ -3119,6 +3122,13 @@ char GetFlags(int nargs, char **args, char **DOUT,
    }
    if (!(*DOUT))
       *DOUT = DupString("KERNEL");
+   cpre = (pre == 'd') ? 'z' : 'c';
+   *cGEMM = ReadMMFileWithPath(cpre, "res", "geAMMRES.sum");
+   *cGEK1 = ReadMMFileWithPath(cpre, "res", "geAMMKCLEAN.sum");
+   *cSQMM = ReadMMFileWithPath(cpre, "res", "sqAMMRES.sum");
+   *cSQK1 = ReadMMFileWithPath(cpre, "res", "sqAMMKCLEAN.sum");
+   *cRKMM = ReadMMFileWithPath(cpre, "res", "rkAMMRES.sum");
+   *cTRSM = ReadMMFileWithPath(cpre, "res", "tsAMMRES.sum");
    *GEMM = gemm;
    *GEK1 = gek1;
    *SQMM = sqmm;
@@ -3174,6 +3184,11 @@ void FillInGenStrings
    ATL_mmnode_t *mp;
    char *frm="make gen_amm_%s lat=%d mu=%d nu=%d ku=%d kb=%d vlen=%d rt=%s/%s kmaj=%d";
    int frml;
+
+   if (pre == 'z')
+      pre = 'd';
+   else if (pre == 'c')
+      pre = 's';
 
    frml = strlen(frm);
    for (mp=mmb; mp; mp = mp->next)
@@ -5305,14 +5320,39 @@ ATL_mmnode_t *RemoveNonUniqueKernels(ATL_mmnode_t *mmb)
 
 void GenAllFiles(char pre, char *outd, ATL_mmnode_t *geb, ATL_mmnode_t *gek1b, 
                  ATL_mmnode_t *sqb, ATL_mmnode_t *sqk1b, ATL_mmnode_t *rkb,
-                 ATL_mmnode_t *trsmb)
+                 ATL_mmnode_t *trsmb, ATL_mmnode_t *cgeb, ATL_mmnode_t *cgek1b,
+                 ATL_mmnode_t *csqb, ATL_mmnode_t *csqk1b, ATL_mmnode_t *crkb,
+                 ATL_mmnode_t *ctrsmb)
 {
    ATL_mmnode_t *uge, *usq, *urk;  /* lists w/o object repeats */
    ATL_mmnode_t *mp;
+   const char cpr = (pre == 'd') ? 'z' : 'c';
 
+   if (!ctrsmb)
+      ctrsmb = trsmb;
    GenHeaderFiles(pre, outd, geb, gek1b, sqb, sqk1b, rkb, trsmb);
+   GenHeaderFiles(cpr, outd, cgeb, cgek1b, csqb, csqk1b, crkb, ctrsmb);
+/*
+ * Link complex and real together: real/cplx don't matter for generation
+ * or compiling
+ */
+   ATL_LastMMNode(geb)->next = cgeb;
+   ATL_LastMMNode(gek1b)->next = cgek1b;
+   ATL_LastMMNode(sqb)->next = csqb;
+   ATL_LastMMNode(sqk1b)->next = csqk1b;
+   mp = AddUniqueMMKernCompList(NULL, rkb);
+   KillAllMMNodes(rkb);
+   rkb = AddUniqueMMKernCompList(mp, crkb);
+   KillAllMMNodes(crkb);
+
    GenMakefile(pre, outd, geb, gek1b, sqb, sqk1b, rkb);
    GenKerns(pre, outd, geb, gek1b, sqb, sqk1b, rkb);
+   KillAllMMNodes(geb);
+   KillAllMMNodes(gek1b);
+   KillAllMMNodes(sqb);
+   KillAllMMNodes(sqk1b);
+   KillAllMMNodes(rkb);
+   KillAllMMNodes(trsmb);
 }
 
 int main(int nargs, char **args)
@@ -5322,12 +5362,14 @@ int main(int nargs, char **args)
    int *nbs;
    char *outd, *ukin, *kcin, *rkin, *sqin;
    ATL_mmnode_t *geb, *gek1b, *sqb, *sqk1b, *rkb, *trsm;
+   ATL_mmnode_t *cgeb, *cgek1b, *csqb, *csqk1b, *crkb, *ctrsm;
 /*
  * We expect to get a list of rectangular blocking factor kernels for gemm,
  * K-cleanup kernels for gemm, and square kernels for building amm-based L3BLAS,
  * and their K-cleanup kernels, and finally a list of kernels for rank-K
  */
-   pre = GetFlags(nargs, args, &outd, &geb, &gek1b, &sqb, &sqk1b, &rkb, &trsm);
+   pre = GetFlags(nargs, args, &outd, &geb, &gek1b, &sqb, &sqk1b, &rkb, &trsm,
+                  &cgeb, &cgek1b, &csqb, &csqk1b, &crkb, &ctrsm);
    assert(geb && gek1b);
    assert(sqb && sqk1b);
    assert(rkb);
@@ -5346,15 +5388,15 @@ int main(int nargs, char **args)
    FillInGenStrings(pre, sqb, outd);
    FillInGenStrings(pre, sqk1b, outd);
    FillInGenStrings(pre, rkb, outd);
+   FillInGenStrings(pre, cgeb, outd);
+   FillInGenStrings(pre, cgek1b, outd);
+   FillInGenStrings(pre, csqb, outd);
+   FillInGenStrings(pre, csqk1b, outd);
+   FillInGenStrings(pre, crkb, outd);
 
-   GenAllFiles(pre, outd, geb, gek1b, sqb, sqk1b, rkb, trsm);
+   GenAllFiles(pre, outd, geb, gek1b, sqb, sqk1b, rkb, trsm, 
+               cgeb, cgek1b, csqb, csqk1b, crkb, ctrsm);
 
-   KillAllMMNodes(geb);
-   KillAllMMNodes(gek1b);
-   KillAllMMNodes(sqb);
-   KillAllMMNodes(sqk1b);
-   KillAllMMNodes(rkb);
-   KillAllMMNodes(trsm);
    return(0);
 }
 @ROUT ammsearch uammsearch
@@ -5956,6 +5998,12 @@ char *GenString(char pre, int lat, int nb, int mu, int nu, int ku,
       "make gen_amm_%s lat=%d mu=%d nu=%d ku=%d kb=%d vlen=%d rt=%s kmaj=%d"; 
    char *ln;
    int l;
+
+   if (pre == 'z')
+      pre = 'd';
+   else if (pre == 'c')
+      pre = 's';
+
    l = strlen(frm) + strlen(VECs[VECi]) + strlen(rt) + 8;
    ln = malloc(l*sizeof(char));
    assert(ln);
@@ -5975,6 +6023,12 @@ char *GenString(char pre, int lat, int nb, int mu, int nu, int ku,
 void FillInGenStrings(char pre, ATL_mmnode_t *mmb)
 {
    ATL_mmnode_t *mp;
+
+   if (pre == 'z')
+      pre = 'd';
+   else if (pre == 'c')
+      pre = 's';
+
    for (mp=mmb; mp; mp = mp->next)
    {
       if (mp->ID == 0 && !mp->genstr)
@@ -6023,12 +6077,13 @@ ATL_mmnode_t *GetNewGenNode(char pre, int nb, int lat, int mu, int nu, int ku,
 {
    ATL_mmnode_t *np;
    char *ln;
+   const char upr = (pre == 'z' || pre == 'd') ? 'd' : 's';
    if (kmaj < 2)
       kmaj = 0;
    np = GetMMNode();
    np->rout = malloc(sizeof(char)*27);
    assert(np->rout);
-   sprintf(np->rout, "ATL_%cgamm%d_%dx%d_nb%d.c", pre, kmaj, mu, nu, nb);
+   sprintf(np->rout, "ATL_%cgamm%d_%dx%d_nb%d.c", upr, kmaj, mu, nu, nb);
    np->vlen = VLEN[VECi];
    np->nbB = np->mbB = np->kbB = nb;
    if (kmaj)
@@ -6040,7 +6095,7 @@ ATL_mmnode_t *GetNewGenNode(char pre, int nb, int lat, int mu, int nu, int ku,
    np->muladd = VECi;  /* stores what vector ISA to use */
    np->lat = lat;
    np->kmaj = kmaj;
-   np->genstr = GenString(pre, lat, nb, mu, nu, ku, kmaj, np->rout);
+   np->genstr = GenString(upr, lat, nb, mu, nu, ku, kmaj, np->rout);
    ApplyMoves2Flag(np, IMVS);
 @skip   if (MOVES)
 @skip      np->moves = DupString(MOVES);
@@ -8254,6 +8309,11 @@ ATL_mmnode_t *FindCacheBudgetCasesByKB
    ATL_mmnode_t *mm3b, *mp;
    const char upr = (pre == 'z' || pre == 'd') ? 'd' : 's';
 /*
+ * We want number of real elts, not # of cplx elts!
+ */
+   if (pre == 'c' || pre == 'z')
+      CS += CS;
+/*
  * See if we just need to rerun cases
  */
    mm3b = ReadMMFileWithPath(pre, "res", "bAMMRES.sum");
@@ -9233,7 +9293,7 @@ ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS)
 /*
  * Find the best user-supplied cases for the three common cache blking cases
  */
-   mmb = FindCacheBudgetCasesByKB(verb, upr, CS, mmb);
+   mmb = FindCacheBudgetCasesByKB(verb, pre, CS, mmb);
 /*
  * Now find best square cases
  */
