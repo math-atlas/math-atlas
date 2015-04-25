@@ -26,6 +26,11 @@
 #else
    #error "This file requires x86 assembly!"
 #endif
+#ifdef SCPLX
+   #define SREAL 1
+#elif defined(DCPLX)
+   #define DREAL 1
+#endif
 #ifdef SREAL
    #define fmull fmuls
    #define fstpl fstps
