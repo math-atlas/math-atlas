@@ -15369,6 +15369,7 @@ int main(int nargs, char **args)
 #include Mstr(Mjoin(ATLAS_PRE,rkamm_kern.h))
 #include Mstr(Mjoin(ATLAS_PRE,rkamm_blk.h))
 #include Mstr(Mjoin(ATLAS_PRE,rkamm_flag.h))
+#include Mstr(Mjoin(ATLAS_PRE,rkamm_perf.h))
 
 int Mjoin(PATL,GetRankKInfo)
 (
@@ -16353,6 +16354,148 @@ int Mjoin(PATL,tGetAmmmInfo)
    return(appAl);
 }
 
+@ROUT ATL_GetRankKInfo555
+typedef struct rkinfo rkinfo_t
+{
+   cm2am_t a2blk, b2blk;      /* full-KB A/B copy routs */
+   cm2am_t a2blkR, b2blkR;    /* K remainder A/B copy routs */
+   ablk2cmat_t blk2c, blk2cR;
+   unsigned short IDX, mb, nb, kb;
+   unsigned short IDXR, mbR, nbR, kbR;
+   unsigned char flag, mu, nu, KR;
+   unsigned char flagR, muR, nuR;
+};
+
+ATL_mmnode_t *GetBestKBInfo  /* amm info to use for K%kb */
+(
+   rkinfo_t *out,            
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   ATL_CSZT M,
+   ATL_CSZT N,
+   ATL_CSZT K,
+   const SCALAR alpha,
+   const SCALAR beta
+)
+{
+   int idx;        /* amm index to use for full kb calls */
+   int idr;        /* amm index for final colpan (-1: use ger1/2) */
+   int KR;         /* K%kb */
+
+   if (K <= ATL_AMM_MAXKB)
+   {
+      idx = -1;
+      KR = K;
+   }
+   else
+   {
+      int ibest=0;
+      double btim=M*N*K*ATL_rkAMM_TIME[0];
+      for (i=0; i < ATL_drkAMM_NCASES; i++)
+      {
+         ATL_CINT kb=ATL_AMM_KBs[i], nkb=K/kb, kr=K-nkb*kb;
+         ATL_CINT mb=ATL_AMM_MBs[i], nb=ATL_AMM_MBs[i], nmb=M/mb, nnb=N/nb;
+         ATL_CINT mu = ATL_AMM_MUs[i], mr = M - (M/mu)*mu;
+         ATL_CINT nu = ATL_AMM_NUs[i], nr = N - (N/nu)*nu;
+         double nfcblks, tkr;
+
+         if (kr > 2)
+            tkr = ATL_rkAMM_TIME[kr-3];
+         else if (!kr)
+            tkr = 0.0;
+         else if (kr == 1)
+            tkr = ATL_rkAMM_TIME[0] * 2.0;
+         else
+            tkr = ATL_rkAMM_TIME[0] * 1.2;
+         tpan = nkb*ATL_rkAMM_time[i] + tkr;
+         tim = nfcblks*tpan;
+         tpe = ATL_rkAMM_TIME[i] / (1.0*mb*nb);  /* time per elt of C */
+/*
+ *       Rank-K perf not much affected by MB, so M cleanup only reduced
+ *       by extra computation
+ */
+         if (mr)
+            tim += (nmb+mu)*tpan / (M*nb);
+/*
+ *       Small N drastically affects rank-K perf, so estimate it's speed
+ *       as being equal to the mininum of rank-K or rank-nr
+ *       We ignore kr for this, shouldn't be a big deal.
+ */
+         if (nr)
+         {
+            if (nr < K)
+            {
+               const int kk = (nr >= 3) ? nr-3 : 0;
+               double tpe = ATL_rkAMM_TIME[kk];        /* time per element */
+               tpe /= ((double)ATL_AMM_MBs[i])*ATL_AMM_NBs[i]*ATL_AMM_KBs[i];
+               tim += tpe*nr*nmblks*mb*K;
+            }
+            else
+               tim += tpan;
+         }
+         if (tim < timB)
+         {
+            timB = tim;
+            ibest = i;
+            KR = kr;
+         }
+      }
+   }
+   out->IDX = idx;
+   out->IDXR = idr;
+   idx = (idx >= 2) idx : 0;
+   idr = (idr >= 2) idx : 0;
+   if (SCALAR_IS_ZERO(beta))
+   {
+      out->blk2c  = ATL_RKK_BLK2C_a1_b0[idx];
+      out->blk2cR = ATL_RKK_BLK2C_a1_b0[idr];
+   }
+   else if (SCALAR_IS_ONE(beta))
+   {
+      out->blk2c  = ATL_RKK_BLK2C_a1_b1[idx];
+      out->blk2cR = ATL_RKK_BLK2C_a1_b1[idr];
+   }
+   else
+   {
+      out->blk2c  = SCALAR_IS_NONE(beta) ? 
+                    ATL_RKK_BLK2C_a1_bn[idx]:ATL_RKK_BLK2C_a1_bX[idx];
+      out->blk2cR = SCALAR_IS_NONE(beta) ? 
+                    ATL_RKK_BLK2C_a1_bn[idr]:ATL_RKK_BLK2C_a1_bX[idr];
+   }
+   if (TB == AtlasNoTrans)
+   {
+      const int i = (idx >= 0) idx : 0, r = (idr >= 0) idr : 0;
+
+      if (SCALAR_IS_ONE(alpha))
+      {
+         out->b2blk  = ATL_RKK_B2BLK_a1[i];
+         out->b2blkR = ATL_RKK_B2BLK_a1[r];
+      }
+      else if (SCALAR_IS_NONE(alpha))
+      {
+         out->b2blk  = ATL_RKK_B2BLK_an[i];
+         out->b2blkR = ATL_RKK_B2BLK_an[r];
+      }
+      else /* alpha = X */
+      {
+         out->b2blk  = ATL_RKK_B2BLK_aX[i];
+         out->b2blk  = ATL_RKK_B2BLK_aX[r];
+      }
+   }
+   #ifdef TCPLX
+   else if (TB == AtlasConjTrans)
+   {
+   }
+   else if (TB == AtlasConj)
+   {
+   }
+   #endif
+   else  /* TB == AtlasTrans */
+   {
+   }
+   return(0);
+}
+
 @ROUT ATL_GetRankKInfo0000 
 /*
  * This function provides an estimate on max number of threads to use to
@@ -17075,4 +17218,59 @@ int Mjoin(PATL,GetSqMNAmmmInfo)
       }
    }
    return(appAl);
+}
+@ROUT ATL_ammm_cpanC
+#include "atlas_amm.h"
+/*
+ * Computes one column-panel of C using the rank-kb update amm.
+ * if A2blk non-NULL, copy A, else assume already available in a.
+ */
+void Mjoin(PATL,ammm_cpanC)
+(
+   ATL_CINT nfmb,      /* FLOOR(M/mb) */
+   ATL_CINT mb,        /* block size for M dim */
+   ATL_CINT nmu,       /* mb/mu */
+   ATL_CINT mbL,       /* M-nfmb*mb */
+   ATL_CINT nmuL,      /* CEIL(mbL/mu) */
+   ATL_CINT nb,        /* block size for N dim */
+   ATL_CINT nnu,       /* nb/nnu */
+   ATL_CINT kb,        /* block size for K dim */
+   TYPE *a,            /* workspace for A */
+   ATL_CINT inca,      /* gap between blocks (>= mb*kb) */
+   const TYPE *b,      /* access-major kbXnb workspace for B */
+   TYPE *c,            /* access-major mbXnb workspace for C */
+   const TYPE *A,      /* col/row-major (original) A */
+   size_t lda,         /* stride between non-cont elts in row/col-maj A */
+   size_t incA,        /* mb*lda for row-maj A, mb for col-maj */
+   TYPE *C,            /* col-major (original) C */
+   size_t ldc,         /* stride between row elts in col-maj C */
+   TYPE beta,          /* scale factor for C */
+   ammkern_t amm,      /* amm (beta=0) kern to use for this mb/nb/kb */
+   cm2am_t A2blk,      /* copy from row/col major A to access-maj */
+   ablk2cmat_t blk2C   /* copies frm C's access-maj storage to col-maj */
+)
+{
+   TYPE *af=a;
+   ATL_INT i;
+
+   for (i=0; i < nfmb; i++)
+   {
+      TYPE *an = a + inca;
+
+      if (A2blk)
+         a2blk(kb, mb, ATL_rone, A, lda, a);
+      amm(nmu, nnu, kb, a, b, c, an, b, c);
+      blk2C(mb, nb, ATL_rone, c, beta, C, ldc);
+
+      a = an;
+      C += mb;
+      A += incA;
+   }
+   if (mbL)
+   {
+      if (A2blk)
+         a2blk(kb, mbL, ATL_rone, A, lda, a);
+      amm(nmuL, nnu, kb, a, b, c, af, b, c);
+      blk2C(mbL, nb, ATL_rone, c, beta, C, ldc);
+   }
 }
