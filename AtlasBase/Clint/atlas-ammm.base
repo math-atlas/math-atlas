@@ -525,6 +525,7 @@ void Mjoin(PATL,ammm)
 int Mjoin(PATL,ammm_rk2)
    (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT, const SCALAR,
     const TYPE*,ATL_CSZT,const TYPE*,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT);
+@multidef rt ammmNKM
 @whiledef rt ammm_1b ammm_rkK ammm_IP ammm_tN ammm_aliased_rkK ammmMNK ammmREC
 int Mjoin(PATL,@(rt))
    (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,ATL_CSZT, const SCALAR,
@@ -17325,20 +17326,21 @@ int Mjoin(PATL,GetSqMNAmmmInfo)
    }
    return(appAl);
 }
-@ROUT ATL_ammm_cpanC
+@ROUT ATL_ammmNKM
 #include "atlas_amm.h"
 /*
- * Computes one column-panel of C using the rank-kb update amm.
- * if A2blk non-NULL, copy A, else assume already available in a.
+ * This function loops only over M.  Therefore, it updates 1 column-panel
+ * of C using a rank-kb update of a column-panel of A * colpan of B
+ * If A2blk non-NULL, copy A, else assume already available in a.
  */
-void Mjoin(PATL,ammm_cpanC)
+void Mjoin(PATL,ammmM) /* C <= beta*C + A*B, B/C nb-wide colpan */
 (
    rkinfo_t *rkinf,
    TYPE *a,            /* workspace for A */
    ATL_CINT inca,      /* gap between blocks (>= mb*kb) */
    const TYPE *b,      /* access-major kbXnb workspace for B */
    TYPE *c,            /* access-major mbXnb workspace for C */
-   ATL_CINT incc,      /* 0: write to C, else: write only to c */
+   ATL_CINT incc,      /* gap between M blocks (0 or >=mb*nb) */
    const TYPE *A,      /* col/row-major (original) A */
    TYPE *C,            /* col-major (original) C */
    TYPE beta           /* scale factor for C */
@@ -17360,7 +17362,7 @@ void Mjoin(PATL,ammm_cpanC)
       if (a2blk)
          a2blk(kb, mb, ATL_rone, A, lda, a);
       amm(nmu, nnu, kb, a, b, c, an, b, cn);
-      if (!incc)
+      if (blk2C)
       {
          blk2C(mb, nb, ATL_rone, c, beta, C, ldc);
          C += mb;
@@ -17375,12 +17377,92 @@ void Mjoin(PATL,ammm_cpanC)
       if (a2blk)
          a2blk(kb, mbL, ATL_rone, A, lda, a);
       amm(rkinf->nmuL, nnu, kb, a, b, c, af, b, c);
-      if (!incc)
+      if (blk2C)
          blk2C(mbL, nb, ATL_rone, c, beta, C, ldc);
    }
 }
 
-void Mjoin(PATL,ammmKNM)
+void Mjoin(PATL,ammmKM)/* computes full answer for one column-panel of C */
+(                      /* by looping over both M&K */
+   rkinfo_t *rkinf,    /* amm info for kb-width cols */
+   rkinfo_t *krinf,    /* amm info for K remainder cols */
+   ATL_CINT nfkblks,   /* FLOOR(K/kb) */
+   TYPE *a,            /* workspace for A */
+   ATL_CINT incam,     /* gap between blocks (>= mb*kb) */
+   ATL_CINT incak,     /* 0: reuse same col of a, else a M*K in size */
+   TYPE *b,            /* access-major kbXnb workspace for B */
+   TYPE *c,            /* access-major mbXnb workspace for C */
+   ATL_CINT inccm,     /* 0: write to C, else: write only to c */
+   const TYPE *A,      /* col/row-major (original) A */
+   const TYPE *B,      /* col/row-major (original) B */
+   TYPE *C,            /* col-major (original) C */
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   ATL_CSZT M,
+   ATL_CSZT N,
+   const SCALAR alpha, /* scale factor for B */
+   const SCALAR beta   /* scale factor for C */
+)
+{
+   const size_t incAk=rkinf->incAk, incBk=rkinf->incBk;
+   const size_t ldb=rkinf->ldb;
+   cm2am_t b2blk=rkinf->b2blk;
+   ablk2cmat_t blk2c=rkinf->blk2c;
+   ATL_CINT KR=rkinf->KR, nk=(KR > 2)?nfkblks:nfkblks-1;
+   ATL_CINT kb=rkinf->kb, nb=rkinf->nb;
+   ATL_INT k;
+
+   ATL_assert(rkinf->idx == -1);  /* don't call w/o more than 1 K block */
+   rkinf->blk2c = NULL;           /* don't write C out until K loop done */
+   for (k=0; k < nk; k++, A += incAk, B += incBk)
+   {
+      b2blk(kb, nb, alpha, B, ldb, b);
+      Mjoin(PATL,ammmM)(rkinf, a, incam, b, c, inccm, A, C, beta);
+      a += incak;
+   }
+   rkinf->blk2c = blk2c;
+/*
+ * If KR==0, 1(use GER), 2(use GER2), then we do a last full rank-KB update
+ * where we write the answer out to C, followed by nothing or rank-1/2 update
+ */
+   if (KR < 3)
+   {
+      b2blk(kb, nb, alpha, B, ldb, b);
+      Mjoin(PATL,ammmM)(rkinf, a, incam, b, c, inccm, A, C, beta);
+      a += incak;
+      B += incBk;
+      A += incAk;
+/*
+ *    For rank1/2 update, BETA has already been applied
+ */
+      if (KR == 1)       /* final rank-1 update applied directly to C */
+      {
+         #ifdef TCPLX
+            ATL_CINT incA = (TA==AtlasNoTrans || TA==AtlasConj) ? 1:rkinf->lda;
+            ATL_CINT incB = (TA==AtlasNoTrans || TA==AtlasConj) ? ldb:1;
+         #else
+            ATL_CINT incA = (TA==AtlasNoTrans) ? 1:rkinf->lda;
+            ATL_CINT incB = (TA==AtlasNoTrans) ? ldb:1;
+         #endif
+         Mjoin(PATL,ger)(M, nb, A, incA, B, incB, C, rkinf->ldc);
+      }
+      else if (KR == 2)  /* final rank-2 update applied directly to C */
+         Mjoin(PATL,ammm_rk2)(TA, TB, M, N, alpha, A, rkinf->lda, B, ldb, 
+                              ATL_rone, C, rkinf->ldc);
+   }
+/*
+ * If KR > 2 exists, then final rank-KR update done with amm_rkK, and this
+ * version is always the last of K applied, so we write ans out to C 
+ */
+   else if (KR) 
+   {
+      ATL_assert(krinf->idx != -1);
+      krinf->b2blk(KR, nb, alpha, B, ldb, b);
+      Mjoin(PATL,ammmM)(krinf, a, incam, b, c, inccm, A, C, beta);
+   }
+}
+
+int Mjoin(PATL,ammmNKM)
 (
    enum ATLAS_TRANS TA,
    enum ATLAS_TRANS TB,
@@ -17483,9 +17565,10 @@ void Mjoin(PATL,ammmKNM)
             krinf.nb = nb;
          }
          b2blk(kb, nb, alpha, B, ldb, b);
-         Mjoin(PATL,ammm_cpanC)(&krinf, a, inca, b, c, 0, A, C, beta);
+         Mjoin(PATL,ammmM)(&krinf, a, inca, b, c, 0, A, C, beta);
          krinf.a2blk = NULL;
       }
    }
    free(vp);
+   return(0);
 }
