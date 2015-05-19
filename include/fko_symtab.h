@@ -125,5 +125,6 @@ short FindLocalFromDT(short dt);
 short FindVarFromName(char *name);
 short InsertNewLocal(char *name, int type );
 short STarrlookup(short id);
+short STarrColPtrlookup(short colptr);
 short STarrlookupByname(char *name);
 #endif

@@ -29,7 +29,7 @@ struct arrayinfo
    short ptr;     /* ST index of the array ptr */
    short ndim;    /* dimension of the array */
    short *ldas;   /* list of ST index of lda (higher to lower dim), size dim-1*/
-   short *urlist; /* unroll factor for array (higher to lower dim), size dim */
+   short *urlist; /* st of unroll factor for array (high to low dim), size dim*/
 /* special list to manage 2D array only; for higher dimension need to expand */
    short *colptrs; /* column pointers only supported for 2D array now */
    short *cldas;  /* custom ldas like: lda, -lda, 3*lda to optimize in X86 */
