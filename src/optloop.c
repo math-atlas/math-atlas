@@ -2069,7 +2069,7 @@ int UnrollLoop(LOOPQ *lp, int unroll)
    else
    {
       OL_NEINC = STdef("OL_NEINC", CONST_BIT | T_INT, 1);
-      fprintf(stderr, "Force no cleanup!\n");
+      /*fprintf(stderr, "Force no cleanup!\n");*/
    }
 
    URbase = (lp->flag & L_FORWARDLC_BIT) ? 0 : UR-1;
@@ -2250,15 +2250,201 @@ int UnrollLoop(LOOPQ *lp, int unroll)
    return(0);
 }
 
+void findDTentry(BLIST *scope, short ptr)
+{
+   BLIST *bl;
+   BBLOCK *bp;
+   INSTQ *ip, *ipn;
+   short op;
+   
+   for (bl=scope; bl; bl=bl->next)
+   {
+      bp = bl->blk;
+      for (ip=bp->ainst1; ip; ip=ip->next)
+      {
+         if (IS_LOAD(ip->inst[0]) && ip->inst[2]==SToff[ptr-1].sa[2])
+         {
+/*
+ *          How to diff : memory access vs variable load
+ *          check SToff[].sa[1] ...
+ *          variable load: sa[1] always point to the ST index of the var
+ *          memory load: sa[1] always be <= 0 (depends on index/lda)
+ */
+            ipn = ip;
+            while (IS_LOAD(ipn->inst[0]))
+            {
+               PrintThisInst(stderr,ipn);
+               op = ipn->inst[2];
+               if (SToff[op-1].sa[1] <= 0)
+               {
+                  fprintf(stderr, "DT(%d): %4d%4d%4d%4d\n",op, SToff[op-1].sa[0],
+                        SToff[op-1].sa[1],
+                        SToff[op-1].sa[2],
+                        SToff[op-1].sa[3]);
+               }
+               ipn=ipn->next; 
+            }
+            fprintf(stderr, "%s: ", STname[ptr-1]);
+            PrintThisInst(stderr,ip);
+         }
+      }
+   }
+
+}
+
+int CountMemDT(BLIST *scope, short sta)
+/*
+ * count memory access using the 2d array
+ */
+{
+   int ct;
+   BLIST *bl;
+   INSTQ *ip;
+   
+   ct = 0;
+
+   for (bl=scope; bl; bl=bl->next)
+   {
+      for (ip=bl->blk->ainst1; ip; ip=ip->next)
+      {
+         if (IS_LOAD(ip->inst[0]) 
+               && SToff[ip->inst[2]-1].sa[1] <= 0  /* dt for mem access */
+               && FindInShortList(STarr[sta-1].colptrs[0], 
+                                  STarr[sta-1].colptrs+1, 
+                                  STpts2[ip->inst[2]-1]))
+            ct++;
+      }
+   }
+   return ct;
+}
+
+
+ILIST **AddPrefInsIlistFromDT(LOOPQ *lp, short sta, int pid, int npf,
+                        enum inst inst, short ireg1, short ireg2, int ur, 
+                        int *ic)
+/*
+ * given the STarr index of the 2D array, findout all the column access and add
+ * prefetch for each for them
+ */
+{
+   int i, j, pf, urc, dtc;
+   short colptr;
+   BLIST *bl;
+   BBLOCK *bp;
+   INSTQ *ip, *ipn, *ip0, *ip1, *ipp;
+   ILIST **ils2d;
+
+   short op, dt, lvl;
+/*
+ * allocate space to save the prefetch inst.. 
+ * NOTE: assuming one column is accessed only once, max number of 
+ * mem access = unroll * outer-loop-unroll factor. is it a reasonable 
+ * assumption??? we need to count the memory access at first!
+ */
+   dtc = CountMemDT(lp->blocks, sta);
+#if 1
+   dtc = dtc / ur; 
+#endif
+   ils2d = calloc(sizeof(ILIST*), dtc); /* logical assumption!!! */
+   assert(ils2d);
+   j=0; 
+
+   lvl = lp->pfflag[pid] & 0x7;
+   ipp = NULL;
+
+   for (bl=lp->blocks; bl; bl=bl->next)
+   {
+      bp = bl->blk;
+      for (ip=bp->ainst1; ip; ip=ip->next)
+      {
+/*
+ *       checking ptr in load:
+ *       SToff[ptr-1].sa[2] ==> refers DT enrty of a variable
+ *       STpts2[dt-1] ==> refers ptr of all dt entry, even the dt for mem access
+ *       Here, we are looking for only those dt entry for mem access
+ */
+         if (IS_LOAD(ip->inst[0]) 
+               && SToff[ip->inst[2]-1].sa[1] <= 0 /* dt for mem access */
+               && FindInShortList(STarr[sta-1].colptrs[0], 
+                                  STarr[sta-1].colptrs+1, 
+                                  STpts2[ip->inst[2]-1]))
+         {
+            op = ip->inst[2];
+            colptr = STpts2[ip->inst[2]-1];
+#if 0
+            PrintThisInst(stderr, ip);
+            fprintf(stderr, "colptr=%s\n",STname[colptr-1]);
+#endif
+            ipn = ip;
+            ip1 = ip->prev;
+            ip0 = ip->prev->prev;
+/*
+ *          ip0 = load of _A_
+ *          ip1 = load of ldas or NULL
+ */
+            if (IS_LOAD(ip1->inst[0]) 
+                  && IS_LOAD(ip0->inst[0]))   /* we have lda to load */
+            {
+               /*for (i=0; i < npf; i++)*/
+               for (i=npf-1; i >= 0; i--)
+               {
+                  ipp = NewInst(NULL, NULL, NULL, LD, -ireg1, ip0->inst[2],0);
+                  ipp->next = NewInst(NULL, ipp, NULL, LD, -ireg2, 
+                                      ip1->inst[2],0);
+                  dt = AddDerefEntry(-ireg1, -ireg2, SToff[op-1].sa[2], 
+                                     lp->pfdist[pid]+i*LINESIZE[lvl], colptr);
+                  ipp->next->next = NewInst(NULL, ipp->next, NULL, inst, 0, dt, 
+                                            STiconstlookup(lvl));
+                  ils2d[j] = NewIlist(ipp, ils2d[j]);
+               }
+            }
+            else if(IS_LOAD(ip1->inst[0]))
+            {
+               ip0 = ip1;
+               /*for (i=0; i < npf; i++)*/
+               for (i=npf-1; i >= 0; i--)
+               {
+                  ipp = NewInst(NULL, NULL, NULL, LD, -ireg1, ip0->inst[2],0);
+                  dt = AddDerefEntry(-ireg1, 0, SToff[op-1].sa[2], 
+                                     lp->pfdist[pid]+i*LINESIZE[lvl], colptr);
+                  ipp->next = NewInst(NULL, ipp, NULL, inst, 0, dt, 
+                                      STiconstlookup(lvl));
+                  ils2d[j] = NewIlist(ipp, ils2d[j]);
+               }
+            }
+            else assert(0);
+            j++;
+#if 1
+            if ( j == dtc )
+            {
+               *ic = j;
+               return ils2d;
+            }
+#endif
+#if 0
+            fprintf(stderr, "DT(%d): %4d%4d%4d%4d\n",op, SToff[dt-1].sa[0],
+                        SToff[dt-1].sa[1],
+                        SToff[dt-1].sa[2],
+                        SToff[dt-1].sa[3]);
+            PrintThisInstQ(stderr, ipp);
+#endif
+         }
+      }
+   }
+   *ic = j;
+   return ils2d;
+}
+
 ILIST *GetPrefetchInst(LOOPQ *lp, int unroll)
 {
    BBLOCK *bp;
    INSTQ *ipp;
    BLIST *bl;
    ILIST *il, *ilbase=NULL;
-   ILIST **ils;
+   ILIST **ils, **ils2d;
    short ir, ptr, lvl;
-   int i, j, n, npf, STc;
+   short ir2, sta;   
+   int i, j, k, p, n, m, ncptr, npf, STc, nils2d;
    int flag;
    enum inst inst;
    char ln[1024];
@@ -2266,6 +2452,7 @@ ILIST *GetPrefetchInst(LOOPQ *lp, int unroll)
    bp = lp->header;
    assert(bp->ilab == lp->body_label);
    ir = GetReg(T_INT);
+   ir2 = GetReg(T_INT);
 /*
  * Find vars set in loop
  */
@@ -2283,11 +2470,111 @@ ILIST *GetPrefetchInst(LOOPQ *lp, int unroll)
  * Get an ILIST for each array
  */
    n = lp->pfarrs[0];
-   ils = calloc(sizeof(ILIST*), n);
-   assert(ils);
-   for (i=1; i <= n; i++)
+#if 1
+   /*m = n;*/
+   m=0;
+   for (i=1; i<=n; i++)
    {
       ptr = lp->pfarrs[i];
+      sta = STarrlookup(ptr);  
+      if (sta && STarr[sta-1].ndim > 1)
+      {
+         /*m += STarr[sta-1].colptrs[0];*/
+         assert(STarr[sta-1].ndim == 2); /* considering only 2D array */
+         m += SToff[STarr[sta-1].urlist[0]-1].i;
+      }
+      else m++;
+   }
+   ils = calloc(sizeof(ILIST*), m);
+#else
+   ils = calloc(sizeof(ILIST*), n);
+#endif
+   assert(ils);
+   for (i=1, p=1; i <= n; i++)
+   {
+      ptr = lp->pfarrs[i];
+#if 1
+      flag = STflag[ptr-1];
+      inst = BitVecCheck(lp->sets, lp->pfarrs[i]-1+TNREG) ? PREFW : PREFR;
+      lvl = lp->pfflag[i] & 0x7;
+/*
+ *    # of pref to issue is CEIL(unroll*sizeof(), LINESIZE)
+ */
+      npf = unroll > 1 ? unroll : 1;
+      npf *= type2len(FLAG2TYPE(flag));
+      if (!IS_VEC(flag) && IS_VEC(lp->vflag))
+         npf *= Type2Vlen(lp->vflag);
+      npf = (npf + LINESIZE[lvl]-1) / LINESIZE[lvl];
+      sta = STarrlookup(ptr);   
+/*
+ *    for opt 2D array, we don't have pointers for all columns but we want to
+ *    add prefetch for all of them. So, *ils[] should keep prefetch inst for all
+ *    the columns. Need to redesign to manage that.
+ *    
+ */
+      if (sta && STarr[sta-1].ndim > 1)
+      {
+         ils2d = AddPrefInsIlistFromDT(lp, sta, i, npf, inst, ir, ir2, unroll, 
+                                       &nils2d);  
+/*
+ *       keep only 1 set of prefetch inst from unrolled loop
+ */
+   #if 0         
+         for(j=0; j < nils2d/unroll; j++)
+         {
+            for(k=0; k < npf; k++) 
+            {
+               ils[p-1] = NewIlist(ils2d[j]->inst, ils[p-1]);
+               ils2d[j] = KillIlist(ils2d[j]);
+            }
+            p++;
+         }
+/*
+ *       delete all other inst and Ilist
+ */
+         for (j=nils2d/unroll; j < nils2d; j++)
+         {
+            for (k=0; k < npf; k++)
+            {
+               KillAllInst(ils2d[j]->inst);
+               ils2d[j] = KillIlist(ils2d[j]);
+            }
+         }
+         free(ils2d);
+   #else
+/*
+ *       right now, we don't consider more than one access of column in rolled
+ *       loop. we allocate ils based on this!
+ */
+         assert(nils2d <= SToff[STarr[sta-1].urlist[0]-1].i);
+/*
+ *       copy the prefetch inst to main list, in ils.
+ */
+         for(j=0; j < nils2d; j++)
+         {
+            for(k=0; k < npf; k++) 
+            {
+               ils[p-1] = NewIlist(ils2d[j]->inst, ils[p-1]);
+               ils2d[j] = KillIlist(ils2d[j]);
+            }
+            p++;
+         }
+         free(ils2d);
+   #endif
+      }
+      else
+      {
+         for (j=0; j < npf; j++)
+         {
+            ipp = NewInst(NULL, NULL, NULL, LD, -ir, SToff[ptr-1].sa[2], 0);
+            ipp->next = NewInst(NULL, ipp, NULL, inst, 0, 
+                  AddDerefEntry(-ir, 0, 0, lp->pfdist[i]+j*LINESIZE[lvl], ptr),
+                                STiconstlookup(lvl));
+            ils[p-1] = NewIlist(ipp, ils[p-1]);
+         }
+         p++;
+      }
+#else
       flag = STflag[ptr-1];
       inst = BitVecCheck(lp->sets, lp->pfarrs[i]-1+TNREG) ? PREFW : PREFR;
       lvl = lp->pfflag[i] & 0x7;
@@ -2307,12 +2594,46 @@ ILIST *GetPrefetchInst(LOOPQ *lp, int unroll)
                              STiconstlookup(lvl));
          ils[i-1] = NewIlist(ipp, ils[i-1]);
       }
+#endif      
    }
    GetReg(-1);
+
+#if 0
+/*
+ *    print and check before copying them to final list
+ */   
+   fprintf(stderr, "Printing the prefetch insts: \n");
+   fprintf(stderr, "=============================\n");
+   fprintf(stderr, "m=%d, npf=%d \n", m, npf);
+   for (i=0; i < m; i++)
+   {
+      ilbase = ils[i]; 
+      fprintf(stderr, "mem-access=%d",i);
+      while(ilbase)
+      {
+         PrintThisInstQ(stderr, ilbase->inst);
+         ilbase=ilbase->next;
+      }
+   }
+   //exit(0);
+#endif
+
 /*
  * Create master list of pref inst, ordering by taking one pref from
  * each array in ascending order
  */
+#if 1
+   for (j=0; j < npf; j++)
+   {
+      /*for (i=m-1; i >= 0; i--)*/
+      for (i=p-2; i >= 0; i--)
+      {
+         ilbase = NewIlist(ils[i]->inst, ilbase);
+         ils[i] = KillIlist(ils[i]);
+      }
+   }
+   free(ils);
+#else
    for (j=0; j < npf; j++)
    {
       for (i=n-1; i >= 0; i--)
@@ -2322,6 +2643,7 @@ ILIST *GetPrefetchInst(LOOPQ *lp, int unroll)
       }
    }
    free(ils);
+#endif   
    return(ilbase);
 }
 
@@ -2483,11 +2805,7 @@ static BLIST *GetSchedInfo(LOOPQ *lp, ILIST *ilbase, short inst, int *NPF,
    return(atake);
 }
 
-int FindUnusedIRegInList(BLIST *scope, int ir)
-/*
- * Finds integer register not set or used in scope.  Returns ir if it has
- * not been used, and another, unused register, if it has
- */
+INT_BVI FindUseSetInScope(BLIST *scope)
 {
    BLIST *bl;
    INSTQ *ip;
@@ -2511,6 +2829,41 @@ int FindUnusedIRegInList(BLIST *scope, int ir)
             BitVecComb(bv, bv, ip->use, '|');
       }
    }
+   return(bv);
+}
+
+int FindUnusedIRegInList(BLIST *scope, int ir)
+/*
+ * Finds integer register not set or used in scope.  Returns ir if it has
+ * not been used, and another, unused register, if it has
+ */
+{
+   BLIST *bl;
+   INSTQ *ip;
+   INT_BVI bv;
+   extern INT_BVI FKO_BVTMP;
+#if 0
+/*
+ * Find all regs used in this range
+ */
+   if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(32);
+   else SetVecAll(FKO_BVTMP, 0);
+   bv = FKO_BVTMP;
+   for (bl=scope; bl; bl = bl->next)
+   {
+      if (!INUSETU2D)
+         CalcUseSet(bl->blk); 
+      for (ip=bl->blk->ainst1; ip; ip = ip->next)
+      {
+         if (ip->set)
+            BitVecComb(bv, bv, ip->set, '|');
+         if (ip->use)
+            BitVecComb(bv, bv, ip->use, '|');
+      }
+   }
+#else
+   bv = FindUseSetInScope(scope); 
+#endif
 /*
  * If previous register already used, get one that isn't
  */
@@ -2520,7 +2873,24 @@ int FindUnusedIRegInList(BLIST *scope, int ir)
       ir = GetReg(T_INT);
    return(ir);
 }
+void FindUnusedTwoIRegInList(BLIST *scope, int ir0, int irn0, int *ir, int *irn)
+{
+   INT_BVI bv;
+   bv = FindUseSetInScope(scope);
+   if (!ir0)
+      ir0 = GetReg(T_INT);
+   if (!irn0)
+      irn0 = GetReg(T_INT);
+   
+   while(BitVecCheckComb(bv, Reg2Regstate(ir0), '&'))
+      ir0 = GetReg(T_INT);
+   *ir = ir0;
 
+   while(BitVecCheckComb(bv, Reg2Regstate(irn0), '&'))
+      irn0 = GetReg(T_INT);
+   *irn = irn0;
+   GetReg(-1);
+}
 static void ChangeRegInPF(int ir, ILIST *ilbase)
 /*
  * Update all pref inst with new reg, if necessary
@@ -2538,6 +2908,55 @@ static void ChangeRegInPF(int ir, ILIST *ilbase)
    }
 }
 
+static void ChangeBothRegInPF(int ir0, int ir1, ILIST *ilbase)
+{
+   ILIST *il;
+   for (il=ilbase; il; il=il->next)
+   {
+      il->inst->inst[1] = -ir0;
+      if (IS_LOAD(il->inst->next->inst[0])) /* has ldas load */
+      {
+         il->inst->next->inst[1] = -ir1;
+         SToff[il->inst->next->next->inst[2]-1].sa[0] = -ir0;
+         SToff[il->inst->next->next->inst[2]-1].sa[1] = -ir1;
+      }
+      else
+      {
+         SToff[il->inst->next->inst[2]-1].sa[0] = -ir0;
+      }
+   }
+}
+
+int IsPrefInsNeedTwoRegs(ILIST *ilbase, int *reg0, int *reg1)
+/*
+ * check whether pref inst loads lda and needs more than one regs; if true,
+ * registers are saved in parameter
+ */
+{
+   int regs2; 
+   short r0, r1;
+   ILIST *il;
+
+   *reg0 = *reg1 = 0;
+   for(il=ilbase; il; il=il->next)
+   {
+/*
+ *    first inst is always a load; load of pointer... 2nd load inst is to load 
+ *    the ldas
+ */
+      if (il->inst->next && IS_LOAD(il->inst->next->inst[0]))
+      {
+         if (il->inst->inst[1] != il->inst->next->inst[1])
+         {
+            *reg0 = -il->inst->inst[1];
+            *reg1 = -il->inst->next->inst[1];
+            return(1);
+         }
+      }
+   }
+   return(0);
+}
+
 void SchedPrefInLoop1(LOOPQ *lp, ILIST *ilbase, int dist, int chunk)
 /*
  * Adds the inst in ilbase to loop, one ILIST chunk scheduled at a time.
@@ -2548,13 +2967,15 @@ void SchedPrefInLoop1(LOOPQ *lp, ILIST *ilbase, int dist, int chunk)
    BLIST *atake, *bl;
    INSTQ *ip, *ipp, *ipn, *ipf, *ipfn;
    int N, skip, sk, i, j, k, npf, ir, ir0, dt;
+   int irn, irn0;
    INT_BVI bv;
    ILIST *il;
    extern INT_BVI FKO_BVTMP;
 
    atake = GetSchedInfo(lp, ilbase, -1, &npf, &N);
-   ir0 = -ilbase->inst->inst[1];
-   ir = FindUnusedIRegInList(atake, ir0);
+#if 0
+   fprintf(stderr, "\nnpf=%d, N=%d\n", npf, N);
+#endif
 
    N -= dist;
    assert(N > 0);
@@ -2566,9 +2987,25 @@ void SchedPrefInLoop1(LOOPQ *lp, ILIST *ilbase, int dist, int chunk)
    sk = dist ? dist : skip;
 /*
  * Update all pref inst with new inst, if necessary
+ * FIXED: there may have two loads pior to the prefetch instruction. So, we
+ * need to update regs for both of them
  */
-   if (ir0 != ir)
-      ChangeRegInPF(ir, ilbase);
+   if (IsPrefInsNeedTwoRegs(ilbase, &ir0, &irn0))
+   {
+      FindUnusedTwoIRegInList(atake, ir0, irn0, &ir, &irn);
+      if (ir0 != ir || irn0 != irn)
+         ChangeBothRegInPF(ir, irn, ilbase);
+   }
+   else
+   {
+/*
+ *    Update all pref inst with new inst, if necessary
+ */
+      ir0 = -ilbase->inst->inst[1];
+      ir = FindUnusedIRegInList(atake, ir0);
+      if (ir0 != ir)
+         ChangeRegInPF(ir, ilbase);
+   }
 /*
  * Insert the prefetch inst
  */
@@ -2660,6 +3097,7 @@ void SchedPrefInLoop2(LOOPQ *lp, ILIST *ilbase, int iskip, int chunk,
    BLIST *atake, *bl;
    INSTQ *ip, *ipp, *ipn, *ipf, *ipfn;
    int N, skip, sk, i, j, k, npf, ir, ir0, dt;
+   int irn, irn0;
    INT_BVI bv;
    ILIST *il;
 
@@ -2677,12 +3115,22 @@ void SchedPrefInLoop2(LOOPQ *lp, ILIST *ilbase, int iskip, int chunk,
    atake = GetSchedInfo(lp, ilbase, inst, &npf, &N);
 /*
  * Update all pref inst with new inst, if necessary
+ * FIXED: there may have two loads pior to the prefetch instruction. So, we
+ * need to update regs for both of them
  */
-   ir0 = -ilbase->inst->inst[1];
-   ir = FindUnusedIRegInList(atake, ir0);
-   if (ir0 != ir)
-      ChangeRegInPF(ir, ilbase);
-
+   if (IsPrefInsNeedTwoRegs(ilbase, &ir0, &irn0))
+   {
+      FindUnusedTwoIRegInList(atake, ir0, irn0, &ir, &irn);
+      if (ir0 != ir || irn0 != irn)
+         ChangeBothRegInPF(ir, irn, ilbase);
+   }
+   else
+   {
+      ir0 = -ilbase->inst->inst[1];
+      ir = FindUnusedIRegInList(atake, ir0);
+      if (ir0 != ir)
+         ChangeRegInPF(ir, ilbase);
+   }
    N -= iskip;
    iskip++;
    assert(N > 0);
@@ -2813,7 +3261,7 @@ void AddPrefetch(LOOPQ *lp, int unroll)
 #endif
 
 #if 1
-   ILIST *il;
+   ILIST *il, *pi;
    il = GetPrefetchInst(lp, unroll);
    SchedPrefInLoop(lp, il);
 #else
@@ -3499,14 +3947,15 @@ short *FindAllScalarVars(BLIST *scope)
 
 void PrintMovingPtrAnalysis(FILE *fpout)
 {
-   int i, j, k, ns, N;
+   int i, j, k, m, n, ns, N, npt, nst, nus;
    INT_BVI set, use, var;
-   short *sp;
+   short *sp, *aptr;
    char pre;
    struct ptrinfo *pi, *pi0;
    BLIST *bl;
    INSTQ *ip;
    LOOPQ *lp;
+   short sta, ptr;
    extern short STderef;
    
 /*
@@ -3532,6 +3981,77 @@ void PrintMovingPtrAnalysis(FILE *fpout)
    for (N=0,pi=pi0; pi; pi = pi->next)
       if (IS_FP(STflag[pi->ptr-1]))
          N++;
+#if 1
+/*
+ * FIXED: if we have 2D array access, we won't return column ptr as
+ * they are compiler's internal var/ptr. We will return the 2D ptr
+ * but in prefetch opt, we will prefetch all the columns.
+ */
+   aptr = malloc(sizeof(short)*(N+1)); /* ptr from 0 */
+   assert(aptr);
+   npt = 0;
+
+   for (pi=pi0; pi; pi=pi->next)
+   {
+      i = pi->ptr;
+      if (IS_FP(STflag[i-1]))
+      {
+         sta = STarrColPtrlookup(i);
+         if (sta && STarr[sta-1].ndim > 1)
+            i = STarr[sta-1].ptr;
+         if (!FindInShortList(npt, aptr, i))
+         {
+            npt = AddToShortList(npt, aptr, i);
+         }
+      }
+   }
+   fprintf(fpout, "   Moving FP Pointers: %d\n", npt);
+   for (i=0; i < npt; i++)
+   {
+      ptr = aptr[i];
+      sta = STarrlookup(ptr);
+      fprintf(fpout, "      '%s': type=%c", STname[ptr-1]?STname[ptr-1]:"NULL",
+              IS_FLOAT(STflag[ptr-1]) ? 's' : 'd');
+      if (!sta)
+      {
+         pi = FindPtrinfo(pi0, ptr);
+         j = ((pi->flag | PTRF_CONTIG | PTRF_INC) == pi->flag);
+         if (lp->nopf)
+            if (FindInShortList(lp->nopf[0], lp->nopf+1, ptr))
+               j = 0;
+         fprintf(fpout, " prefetch=%d", j);
+         CountArrayAccess(lp->blocks, ptr, &k, &j);
+         fprintf(fpout, " sets=%d uses=%d\n", j, k);
+      }
+      else if(STarr[sta-1].ndim > 1)
+      {
+         if (lp->nopf && FindInShortList(lp->nopf[0], lp->nopf+1, ptr))
+               j = 0;
+         else
+         {
+            j = 1;
+            nst = 0; nus = 0;
+/*
+ *          compute from all internally created column pointers
+ */
+            for (k=1, N=STarr[sta-1].colptrs[0]; k <= N; k++ )
+            {
+               ptr = STarr[sta-1].colptrs[k];
+               pi = FindPtrinfo(pi0, ptr);
+               j = ((pi->flag | PTRF_CONTIG | PTRF_INC) == pi->flag) & j;
+               CountArrayAccess(lp->blocks, ptr, &m, &n);
+               nst += n;
+               nus += m;
+            }
+         }
+         fprintf(fpout, " prefetch=%d", j);
+         fprintf(fpout, " sets=%d uses=%d", nst, nus);
+         fprintf(fpout, " arr=%dd ur=%d\n", STarr[sta-1].ndim, 
+                 SToff[STarr[sta-1].urlist[0]-1].i); 
+      }
+   }
+   free(aptr);
+#else
    fprintf(fpout, "   Moving FP Pointers: %d\n", N);
    for (pi=pi0; pi; pi = pi->next)
    {
@@ -3539,7 +4059,7 @@ void PrintMovingPtrAnalysis(FILE *fpout)
       if (IS_FP(STflag[i]))
       {
          fprintf(fpout, "      '%s': type=%c", STname[i]?STname[i]:"NULL",
-               IS_FLOAT(STflag[i]) ? 's' : 'd');
+                IS_FLOAT(STflag[i]) ? 's' : 'd');
          j = ((pi->flag | PTRF_CONTIG | PTRF_INC) == pi->flag);
          if (lp->nopf)
             if (FindInShortList(lp->nopf[0], lp->nopf+1, i+1))
@@ -3549,6 +4069,7 @@ void PrintMovingPtrAnalysis(FILE *fpout)
          fprintf(fpout, " sets=%d uses=%d\n", j, k);
       }
    }
+#endif
 /*
  *    sets + use - regs - ptrs = scalars in loop
  */
@@ -5021,7 +5542,7 @@ void UnrollCleanup2(LOOPQ *lp, int unroll)
  * If flag's loop control not set, compute it, then set boolean based on flag
  */
 /*
- * Majedul: it is used in many places. So, I use that a function. 
+ * Majedul: it is used in many places. So, I use that as a function. 
  */
    SetLoopControlFlag(lp, 0);
    FORWARDLOOP = L_FORWARDLC_BIT & lp->flag;

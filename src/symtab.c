@@ -322,6 +322,25 @@ short STarrlookup(short ptr)
    return(0);
 }
 
+short STarrColPtrlookup(short colptr)
+/*
+ * searches column pointers and return STarr id+1 if found, 0 otherwise
+ */
+{
+   int i, j;
+   int n;
+   for (i=0; i != Narr; i++)
+   {
+      n = STarr[i].colptrs[0];
+      for (j=1; j <= n; j++)
+      {
+         if (colptr == STarr[i].colptrs[j])
+            return(i+1);
+      }
+   }
+   return(0);
+}
+
 short STarrlookupByname(char *name)
 /*
  * searches for the array from STarr table, returns STarr index+1 if found, 

@@ -2928,8 +2928,10 @@ short *NamesToSTs(int n, char **names, int N, short *pool)
 
 void UpdateNamedLoopInfo()
 {
-   int n, i, j, k, N;
+   int n, np, i, j, k, N, ncp;
    short *sp;
+   short *aptrs;
+   short sta, ptr;
 
    if (!optloop)
       return;
@@ -2946,11 +2948,30 @@ void UpdateNamedLoopInfo()
          optloop->pfarrs[0] = n-1;
          for (i=1; i < n; i++)
          {
-            k = FindNameMatch(optloop->varrs[0],optloop->varrs+1,PFARR[i-1]);
 #if 1
-            fprintf(stderr, "match: %d, %s\n", optloop->varrs[0], PFARR[i-1]);
-#endif
+/*
+ *          special checking for 2D array. varrs has column ptrs
+ */
+            sta = STarrlookupByname(PFARR[i-1]);
+            if (sta && STarr[sta-1].ndim > 1)
+            {
+               for (j=1, ncp=STarr[sta-1].colptrs[0]; j <= ncp; j++ )
+               {
+                  k = FindInShortList(optloop->varrs[0], optloop->varrs+1, 
+                                    STarr[sta-1].colptrs[j]);
+                  assert(k);
+               }
+               k = STarr[sta-1].ptr;
+            }
+            else
+            {
+               k = FindNameMatch(optloop->varrs[0],optloop->varrs+1,PFARR[i-1]);
+               assert(k);
+            }
+#else
+            k = FindNameMatch(optloop->varrs[0],optloop->varrs+1,PFARR[i-1]);
             assert(k);
+#endif
             optloop->pfarrs[i] = k;
          }
          optloop->pfdist = PFDST;
@@ -2962,6 +2983,45 @@ void UpdateNamedLoopInfo()
  */
       else
       {
+#if 1
+/*
+ *       FIXME: in case of 2D arrays, varrs saves the moving column pointers
+ *       But we should add the array pointer here instead of column ptrs!
+ */
+         n = optloop->varrs[0];
+         aptrs = malloc(sizeof(short)*(n+1));
+         assert(aptrs);
+         np = 0;
+         for (i=1; i <= n; i++)
+         {
+            ptr = optloop->varrs[i];
+            sta = STarrColPtrlookup(ptr);
+            if (sta && STarr[sta-1].ndim > 1)
+               ptr = STarr[sta-1].ptr;
+            if (!FindInShortList(np, aptrs, ptr))
+               np = AddToShortList(np, aptrs, ptr);
+         }
+   #if 0
+         for (i=0; i < np; i++)
+            fprintf(stderr, "%s, ", STname[aptrs[i]-1]);
+         fprintf(stderr, "\n");
+   #endif
+         
+         optloop->pfarrs = malloc(sizeof(short)*(np+1));
+         optloop->pfdist = malloc(sizeof(short)*(np+1));
+         optloop->pfflag = malloc(sizeof(short)*(np+1));
+         optloop->pfarrs[0] = optloop->pfdist[0] = optloop->pfflag[0] = np;
+/*
+ *       Set default prefetch info for each moving pointer
+ */
+         for (i=1; i <=np; i++)
+         {
+            optloop->pfarrs[i] = aptrs[i-1];
+            optloop->pfdist[i] = PFDST[1];
+            optloop->pfflag[i] = PFLVL[1];
+         }
+         
+#else
          n = optloop->varrs[0];
          optloop->pfarrs = malloc(sizeof(short)*(n+1));
          optloop->pfdist = malloc(sizeof(short)*(n+1));
@@ -2976,6 +3036,7 @@ void UpdateNamedLoopInfo()
             optloop->pfdist[i] = PFDST[1];
             optloop->pfflag[i] = PFLVL[1];
          }
+#endif
 /*
  *       Override default for non-def arrays
  */
@@ -3004,7 +3065,7 @@ void UpdateNamedLoopInfo()
  *    (level == -1)
  */
 /*
- *    FIXME: invalid read when applied following flags for sin:
+ *    FIXED: invalid read when applied following flags for sin:
  *    -Ps b A 0 3 -P all 0 128 -P X -1 0 -P Y -1 0 -P iY -1 0 
  */
       sp = optloop->pfflag+1;
@@ -3661,7 +3722,9 @@ int main(int nargs, char **args)
  *       1. Generate 1st LIL after parsing the HIL (Simple ld/st LIL).
  *       2. No CFG, No Prolgue/Epilogue, no extra info
  *==========================================================================*/
-
+#if 1
+   FKO_FLAG |= IFF_OPT2DPTR; /* applying optimize 2d array access */
+#endif
    yyin = fpin;
    bp = bbbase = NewBasicBlock(NULL, NULL);
    bp->inst1 = bp->instN = NULL;

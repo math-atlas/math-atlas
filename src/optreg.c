@@ -1436,7 +1436,7 @@ int DoIGRegAsg(int N, IGNODE **igs)
 #endif
       }
       else
-#if 0         
+#if 1         
          fko_warn(__LINE__, "NO FREE REGISTER FOR LR %d of VAR %s!!!\n", 
                ig->ignum, STname[ig->var-1]);
 #else
