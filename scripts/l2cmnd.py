@@ -2,6 +2,7 @@ import os
 import sys
 import re
 import gc
+import kernels
 
 WALLTIME = 1
 GEMVTdir = '/tune/blas/gemv/MNVTCASES/'
@@ -49,7 +50,8 @@ def test(ATLdir, ARCH, pre, blas, N, M, lda, rout, cc=None, ccf=None, opt=""):
 #
 #   set parameters based on kernela
 #
-    if blas.find('gemvt') != -1:
+    #if blas.find('gemvt') != -1 or blas.find('gemvt4_2d') != -1 :
+    if blas in kernels.GetAllFKOGEMVT():
         tdir = '/tune/blas/gemv/'
         target = pre + 'mvtktest'
         rout = 'mvtrout=' + rout
@@ -59,7 +61,8 @@ def test(ATLdir, ARCH, pre, blas, N, M, lda, rout, cc=None, ccf=None, opt=""):
         if (cc != None):
             opt = pre + 'MVFLAGS="' + ccf +'" ' + opt
             opt = pre + 'MVCC=' + cc +' ' + opt
-    elif blas.find('gemvn') != -1:
+    #elif blas.find('gemvn') != -1:
+    elif blas in kernels.GetAllFKOGEMVN():
         tdir = '/tune/blas/gemv/'
         target = pre + 'mvnktest'
         rout = 'mvnrout=' + rout
@@ -69,7 +72,8 @@ def test(ATLdir, ARCH, pre, blas, N, M, lda, rout, cc=None, ccf=None, opt=""):
         if (cc != None):
             opt = pre + 'MVFLAGS="' + ccf +'" ' + opt
             opt = pre + 'MVCC=' + cc +' ' + opt
-    elif blas.find('ger1') != -1:
+    #elif blas.find('ger1') != -1:
+    elif blas in kernels.GetAllFKOGER1():
         tdir = '/tune/blas/ger/'
         target = pre + 'r1ktest'
         rout = 'r1rout=' + rout
@@ -79,7 +83,8 @@ def test(ATLdir, ARCH, pre, blas, N, M, lda, rout, cc=None, ccf=None, opt=""):
         if (cc != None):
             opt = pre + 'R1CFLAGS="' + ccf +'" ' + opt
             opt = pre + 'R1CC=' + cc +' ' + opt
-    elif blas.find('ger2') != -1:
+    #elif blas.find('ger2') != -1:
+    elif blas in kernels.GetAllFKOGER2():
         tdir = '/tune/blas/ger/'
         target = pre + 'r2ktest'
         rout = 'r2rout=' + rout
@@ -137,7 +142,8 @@ def time(ATLdir, ARCH, pre, blas, N, M, lda, rout, cc=None, ccf=None, opt=""):
     else:
       opt = 'align="-Fx 32 -Fy 32"'
     
-    if blas.find('gemvt') != -1:
+    #if blas.find('gemvt') != -1:
+    if blas in kernels.GetAllFKOGEMVT():
         tdir = '/tune/blas/gemv/'
         target = pre + 'mvtktime'
         rout = 'mvtrout=' + rout

@@ -75,6 +75,7 @@ def NewInfo(fko, routine):
    pref = []
    sets = []
    uses = []
+   arr_ur = []
    vec = 0
    #ol = int(lines[2][8:])
    ol = int(lines[2][lines[2].find('=')+1:])
@@ -137,6 +138,7 @@ def NewInfo(fko, routine):
       i = 0;
       while (i < mfp):
          words = lines[lineNum].split()
+         k = len(words)
          j = len(words[0])
          arrs.append(words[0][1:j-2])
          j = words[1].rfind('=')
@@ -147,8 +149,17 @@ def NewInfo(fko, routine):
          sets.append(int(words[3][j+1:]))
          j = words[4].rfind("=")
          uses.append(int(words[4][j+1:]))
+#
+#        if array dim == 2, save the unroll factor   
+#
+         if k > 5 : # word[5] arr=2d
+             j = words[6].rfind("=")
+             arr_ur.insert(i, int(words[6][j+1:]))
+         else:
+             arr_ur.insert(i, 1)
          lineNum += 1
          i += 1;
+      #print arr_ur
 #
 #     info about scalars 
 #
@@ -183,10 +194,11 @@ def NewInfo(fko, routine):
 #  compatibilty
 #
    return [nc, LS, ol, maxunroll, lnf, vec, arrs, pref, sets, uses, scalinf, \
-           npath, red2onePath, vecMethod, vpathinfo, arrtypes]
+           npath, red2onePath, vecMethod, vpathinfo, arrtypes, arr_ur]
 
 #
 # returns info from fko's analysis using -i
+# Majedul: this is the old version and now obsolete
 #
 def info(fko, routine):
    cmnd = fko + ' -i stdout ' + routine
@@ -281,6 +293,15 @@ def RemoveFilesFromFlags(blas, flags):
          nf = nf + flag + " "
    return nf
 
+def GetSchPF(npf, pfurs):
+    schpf = npf
+    i = 0
+    while (i < npf):
+        schpf = schpf + pfurs[i] - 1
+        i = i + 1
+    return schpf
+
+
 def SetDefaultPFD(KFLAG0, inf):
 #
 #  Remove all prefetch flags
@@ -298,9 +319,14 @@ def SetDefaultPFD(KFLAG0, inf):
 #  add default prefetch flags
 #
    LS  = inf[1][0]
-   (pfarrs, pfsets, pfuses) = GetFPInfo(inf)
+   (pfarrs, pfsets, pfuses, pfurs) = GetFPInfo(inf)
+#
+#   if we have 2D array, we will look into the unroll factor
+#
    npf = len(pfarrs)
-   KFLAG = KFLAG + " -Ps b A 0 " + str(npf) + " -P all 0 " + str(LS*2) 
+   schpf = GetSchPF(npf, pfurs)
+   #KFLAG = KFLAG + " -Ps b A 0 " + str(npf) + " -P all 0 " + str(LS*2) 
+   KFLAG = KFLAG + " -Ps b A 0 " + str(schpf) + " -P all 0 " + str(LS*2) 
    return KFLAG
 
 def RemoveRedundantPrefFlags(flags, pfarrs):
@@ -333,13 +359,17 @@ def GetFPInfo(inf):
    pfarrs = []
    pfsets = []
    pfuses = []
+   pfurs = []
+   #print inf
+   #print na
    while(i < na):
       if (inf[7][i] != 0):
          pfarrs.append(inf[6][i])
          pfsets.append(inf[8][i])
          pfuses.append(inf[9][i])
+         pfurs.append(inf[16][i])
       i += 1
-   return(pfarrs, pfsets, pfuses)
+   return(pfarrs, pfsets, pfuses, pfurs)
 
 def BuildFKO(IFKOdir):
    cmnd = 'cd ' + IFKOdir + '/bin ; make fko'
@@ -351,7 +381,7 @@ def BuildFKO(IFKOdir):
 
 def callfko(fko, flag):
    cmnd = fko + ' ' + flag
-#   print cmnd
+   #print cmnd
    fo = os.popen(cmnd, 'r')
    err = fo.close()
    if (err != None):
@@ -363,14 +393,21 @@ def callfko(fko, flag):
 def GetOptStdFlags(fko, rout, pre, VEC, SB=0, URF=0):
    newinfo = NewInfo(fko, rout)
    inf = [newinfo[i] for i in range(11) ]
+   #inf = newinfo
    vec = inf[5]
    if vec and VEC:
       VEC = 1
    else:
       VEC = 0
    LS  = inf[1][0]
-   (pfarrs, pfsets, pfuses) = GetFPInfo(inf)
+   #(pfarrs, pfsets, pfuses, pfurs) = GetFPInfo(inf)
+   (pfarrs, pfsets, pfuses, pfurs) = GetFPInfo(newinfo)
    npf = len(pfarrs)
+#
+#   consider unroll factor of 2d array to schedule pref inst
+#
+   schpf = GetSchPF(npf, pfurs)
+   #print schpf
    if (VEC == 0):
       if (pre == 's'): psiz = 4
       else: psiz = 8
@@ -398,17 +435,20 @@ def GetOptStdFlags(fko, rout, pre, VEC, SB=0, URF=0):
             UR = LS / 32      ## for AVX 
             UF = " -U %d" %UR
       VF = " -V"
-   KFLAG = VF + " -Ps b A 0 " + str(npf) + " -P all 0 " + str(LS*2) + UF
+   #KFLAG = VF + " -Ps b A 0 " + str(npf) + " -P all 0 " + str(LS*2) + UF
+   KFLAG = VF + " -Ps b A 0 " + str(schpf) + " -P all 0 " + str(LS*2) + UF
    return KFLAG 
 
 def GetStandardFlags(fko, rout, pre):
    #inf = info(fko, rout)
    newinfo = NewInfo(fko, rout)
    inf = [newinfo[i] for i in range(11) ]
+   #inf = newinfo
 
    VEC = inf[5]
    LS  = inf[1][0]
-   (pfarrs, pfsets, pfuses) = GetFPInfo(inf)
+   #(pfarrs, pfsets, pfuses, pfurs) = GetFPInfo(inf)
+   (pfarrs, pfsets, pfuses, pfurs) = GetFPInfo(newinfo)
    npf = len(pfarrs)
    if (VEC == 0):
       if (pre == 's'): psiz = 4
@@ -420,7 +460,10 @@ def GetStandardFlags(fko, rout, pre):
       UR = LS / 32      ## for AVX 
       VF = " -V"
    assert(UR > 0)
-   KFLAG = VF + " -Ps b A 0 " + str(npf) + " -P all 0 " + str(LS*2) + " -U " \
+   #KFLAG = VF + " -Ps b A 0 " + str(npf) + " -P all 0 " + str(LS*2) + " -U " \
+   #        + str(UR)
+   schpf = GetSchPF(npf, pfurs)
+   KFLAG = VF + " -Ps b A 0 " + str(schpf) + " -P all 0 " + str(LS*2) + " -U " \
            + str(UR)
    return KFLAG 
 

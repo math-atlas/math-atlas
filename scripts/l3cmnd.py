@@ -83,7 +83,7 @@ def test(ATLdir, ARCH, pre, blas, NB, beta, rout, cc=None, ccf=None, opt=""):
     cmnd = 'cd %s%s ; make %s %s %s %s %s ' % \
           (ATLdir, tdir, target, NB, rout, opt, beta)
   
-    #print cmnd 
+    print cmnd 
     #try: 
     #  fo = os.popen(cmnd, 'r')
     #  lines = fo.readlines()
@@ -215,6 +215,7 @@ def time(ATLdir, ARCH, pre, blas, NB, beta, rout, cc=None, ccf=None, opt=""):
 #    except OSError:
 #      pass
 
+   print cmnds
    proc = subprocess.Popen(cmnds, shell=True, stderr=subprocess.PIPE, 
           stdout=subprocess.PIPE)
    return_codes = proc.wait()

@@ -21,6 +21,7 @@ forceOpt = [] ## sv, vrc, vmmx : only used to force a vector method now
 SB = 0 # temporary global just to test
 URF = 0 # forced UR, tuned with fixed UR
 isSV = 0 # special flag for speculation applied!
+isVRC = 0 # special flag for vrc !
 
 #
 # Given set of arrs that are write-only (no uses), tries using non-temporal
@@ -774,7 +775,8 @@ def ifko0(l1bla, pre, N, M=None, lda=None):
    
    ncache = info[0]
    vec = info[5]
-   (fparrs, fpsets, fpuses) = fkocmnd.GetFPInfo(info)
+   #(fparrs, fpsets, fpuses, fpurs) = fkocmnd.GetFPInfo(info)
+   (fparrs, fpsets, fpuses, fpurs) = fkocmnd.GetFPInfo(newinfo)
    nfp = len(fparrs)
 #
 #  Findout the default flags (it includes vector, default prefetch and unroll)
@@ -834,6 +836,9 @@ def ifko0(l1bla, pre, N, M=None, lda=None):
       KFv = fkocmnd.GetOptStdFlags(fko, rout, pre, 1, SB, URF)
    else:
       KFv = fkocmnd.GetOptStdFlags(fko, rout, pre, 1, 0, URF)
+   
+   print "\n   Standad Flag for Vect = " + KFv
+   
    KFv = KFv + " -o " + str(outf) + " " + rout
    if vec:
       if 'v' in skipOpt:
@@ -985,6 +990,8 @@ def ifko0(l1bla, pre, N, M=None, lda=None):
       print '\n   SKIPPING SCALAR EXPANSION'
    elif isSV:
       print '\n   SKIPPING SCALAR EXPANSION: NOT SUPPORTED WITH SV'
+   elif l1bla.find("iamax") != -1:
+      print '\n   SKIPPING SCALAR EXPANSION FOR IAMAX'
    else:
       if nacc > 0 and nacc < 3:
          [mf,KFLAGS] = FindSE(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N, 
@@ -1019,8 +1026,8 @@ def ifko0(l1bla, pre, N, M=None, lda=None):
    pfarrs = fparrs
    pfsets = fpsets
    for arr in pfarrs:
-      [mf,KFLAGS] = FindPFD(ATLdir, ARCH, KFLAGS, fko, rout, pre,l1bla, N, 
-                            info, arr)
+      [mf,KFLAGS] = FindPFD(ATLdir, ARCH, KFLAGS, fko, rout, pre,l1bla, N, M, 
+                            lda, info, arr)
    mflist.append(mf)
    testlist.append("pfdist")
    KFLAGS = fkocmnd.RemoveRedundantPrefFlags(KFLAGS, pfarrs)
@@ -1032,13 +1039,14 @@ def ifko0(l1bla, pre, N, M=None, lda=None):
    mflist.append(mf)
    testlist.append("pftype")
    print "\n   FLAGS so far =", fkocmnd.RemoveFilesFromFlags(l1bla, KFLAGS)
-  """
+   """
 #
 #  tesing: re-tune the prefetch distance!
 #  NOTE:  this re-tuning can be omitted just by enabling the comment
 #
    #"""
-   KFLAGS = fkocmnd.SetDefaultPFD(KFLAGS, info)
+   #KFLAGS = fkocmnd.SetDefaultPFD(KFLAGS, info)
+   KFLAGS = fkocmnd.SetDefaultPFD(KFLAGS, newinfo)
    #print "default PFD: ", KFLAGS
    print "\n   TUNING PFD AGAIN: "
    for arr in pfarrs:
@@ -1309,11 +1317,11 @@ def ParseArgv(argv):
                   URF = int(argv[i+1])
                   i = i + 2
                elif argv[i].find('-atlopt') != -1:
-                  print argv
+                  #print argv
                   #print argv[j]
                   atlopt = ' '.join([argv[j] for j in range(i+1, nargs)])
-            #argument with ' ' behave differently with system to system
-                  print atlopt
+                  #argument with ' ' behave differently with system to system
+                  #print atlopt
                   if atlopt.find('\'') != -1:
                      atlopt = atlopt.split('\'')[1]
                      i = i + 2
