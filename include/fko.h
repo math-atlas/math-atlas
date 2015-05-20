@@ -11,9 +11,8 @@
    #define Mstr2(m) # m
    #define Mstr(m) Mstr2(m)
 /*
- * Majedul: It will create a dangling-if problem (if there is no braces). 
- * Consider the following
- * example: 
+ * Majedul: It may create a dangling-if problem (if there is no braces around 
+ * if statement). Consider the following example: 
  *          if (exp1) assert();
  *          else statement1;
  * this will expand as :
@@ -23,8 +22,19 @@
  *             ....
  *             }
  *             else .....
+ * NOTE: Here, the previous implementation would work because of the braces 
+ * around the if statement. the above statement will expand, like:
+ *          if (exp1)
+ *          {
+ *             if (!arg)
+ *             {
+ *             ....
+ *             }
+ *          }
+ *          else .....
+ *
  */
-#if 0
+#if 1
    #define MyAssert(arg_) \
    { \
       if (!(arg_)) \
