@@ -1,15 +1,16 @@
 ROUTINE ATL_USERMM;
-   PARAMS :: M, N, K, alpha, A0, lda, B, ldb, beta, C, ldc;
+   PARAMS :: M, N, K, alpha, A, lda, B, ldb, beta, C, ldc;
    INT    :: M, N, K, lda, ldb, ldc;
    DOUBLE :: alpha, beta;
-   DOUBLE_PTR :: A0, B, C;
+   DOUBLE_PTR :: A, B, C;
 ROUT_LOCALS
    INT    :: i, j, k;
    DOUBLE :: a0, b0, c00;
-   DOUBLE_PTR :: A;
+   DOUBLE_PTR :: A0;
 ROUT_BEGIN
+   A0 = A;
    ldc = ldc - M;
-   lda = lda - M;
+   lda = lda - K;
    j = N;
    NLOOP:
       A = A0;
@@ -26,7 +27,7 @@ ROUT_BEGIN
          LOOP_END
          C[0] = c00;
          A += lda;
-         B = B - M;
+         B = B - K;
          C += 1;
          i = i - 1;
       IF (i > 0) GOTO MLOOP;

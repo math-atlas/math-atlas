@@ -30,7 +30,7 @@ ROUT_BEGIN
    N = M - 2;
    
    LOOP i =  0, N
-   MUTUALLY_ALIGNED_FOR :: 32;
+   MUTUALLY_ALIGNED(32) :: *;
    LOOP_BODY
       t0 = A0[0];
       t1 = A1[0];

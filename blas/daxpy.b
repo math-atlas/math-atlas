@@ -11,8 +11,7 @@ ROUT_BEGIN
    LOOP_BODY
       x = X[0];
       y = Y[0];
-      x = x * alpha;
-      y += x;
+      y += x * alpha;
       Y[0] = y;
       X += 1;
       Y += 1;

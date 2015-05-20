@@ -7,14 +7,10 @@ ROUT_LOCALS
    DOUBLE :: x, amax;
    CONST_INIT :: amax = 0.0, imax=0;
 ROUT_BEGIN
-//   N = N - 1;
-   LOOP i = N, 0, -1
+   LOOP i = 0, N, 1
    LOOP_BODY
-//    Load x
       x = X[0];
-//    x = abs(x)
       x = ABS x;
-//    Branch if we have a new maximum
       IF (x > amax) GOTO NEWMAX;
 ENDOFLOOP:
       X += 1;
@@ -23,6 +19,6 @@ ENDOFLOOP:
 
 NEWMAX:
    amax = x;
-   imax = N-i;
+   imax = i;
    GOTO ENDOFLOOP;
 ROUT_END
