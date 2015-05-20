@@ -1369,15 +1369,17 @@ IGNODE **SortIG(int *N, int thresh)
    return(igarr);
 }
 
-int DoIGRegAsg(int N, IGNODE **igs)
+int DoIGRegAsg(int N, IGNODE **igs, int *nspill)
 /*
  * Given an N-length array of sorted IGNODEs, perform register assignment
  * Right now, use simple algorithm for assignment, improve later.
  * RETURNS: # of IG assigned.
+ * Majedul: nspill saves the number of spilling of the registers  
  */
 {
    int i, j, n;
    int iret = 0;
+   int spill;
    IGNODE *ig, *ig2;
    short *sp;
    INT_BVI iv, ivused;
@@ -1386,6 +1388,7 @@ int DoIGRegAsg(int N, IGNODE **igs)
    if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(TNREG);
    iv = FKO_BVTMP;
 
+   spill = 0;
    for (i=0; i < N; i++)
    {
       ig = igs[i];
@@ -1437,8 +1440,11 @@ int DoIGRegAsg(int N, IGNODE **igs)
       }
       else
 #if 1         
+      {
          fko_warn(__LINE__, "NO FREE REGISTER FOR LR %d of VAR %s!!!\n", 
                ig->ignum, STname[ig->var-1]);
+         spill++;
+      }
 #else
       {
          fprintf(stderr, "No Free Reg for LR %d of var %s!!!\n", ig->ignum, 
@@ -1446,6 +1452,7 @@ int DoIGRegAsg(int N, IGNODE **igs)
       }
 #endif
    }
+   *nspill = spill;
    return(iret);
 }
 
@@ -1787,11 +1794,13 @@ int DoRegAsgTransforms(IGNODE *ig)
    return(CHANGE);
 }
 
-int DoScopeRegAsg(BLIST *scope, int thresh, int *tnig)
+int DoScopeRegAsg(BLIST *scope, int thresh, int *tnig, int *nspill)
 /*
  * Performs interference graph-based register assignment on blocks listed in
  * scope.  tnig is output para giving total number of IG we found.
  * RETURNS: # of IG applied.
+ * Majedul: tnig is unused in caller though I add one parameter to save the 
+ * number of spilling.
  */
 {
    IGNODE **igs;
@@ -1814,7 +1823,11 @@ int DoScopeRegAsg(BLIST *scope, int thresh, int *tnig)
    DumpIG(stderr, NIG, IG);
 #endif
    igs = SortIG(&N, thresh);
-   nret = DoIGRegAsg(N, igs);
+   nret = DoIGRegAsg(N, igs, nspill);
+#if 0
+   fprintf(stderr, "scope=%s\n", PrintBlockList(scope));
+   fprintf(stderr, "no. of spilling = %d\n", *nspill);
+#endif
    CheckIG(N, igs);
 #if 0
    fprintf(stderr, "NIG=%d N=%d\n", *tnig, N);

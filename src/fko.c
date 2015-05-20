@@ -69,6 +69,9 @@ void PrintUsageN(char *name)
 #endif
    fprintf(stderr, 
          "  -p [#]: path to speculate in speculative vectirization\n");
+   fprintf(stderr, "  -rc : apply redundant computation to reduce path\n");
+   fprintf(stderr, "  -mmr : apply max/min var reduction to reduce path\n");
+   fprintf(stderr, "  -ra : report the status of register assignment back\n");
    fprintf(stderr, "  -W <name> : use cache write-through stores\n");
    fprintf(stderr, "  -P <all/name> <cache level> <dist(bytes)>\n");
    fprintf(stderr, 
@@ -109,6 +112,11 @@ struct optblkq *NewOptBlock(ushort bnum, ushort maxN, ushort nopt, ushort flag)
  * FIXME: should have option to update that from argument
  */
    op->blocks = NULL;
+/*
+ * added nspill to keep track of resgister spilling (# of live-range which 
+ * doesn't get register), -1 means not calculated yet
+ */
+   op->nspill = -1;
 
    if (nopt > 0)
    {
@@ -241,6 +249,7 @@ void PrintOptTree(struct optblkq *optree)
          fprintf(stderr, "(OPTLOOP) :");
       for(i=0; i<optree->nopt; i++)
          fprintf(stderr, "%s ", optabbr[optree->opts[i]]);
+      fprintf(stderr, "(%d)\n", optree->nspill);
    }
 
    if (optree->next)
@@ -675,12 +684,17 @@ ERR:
 /*
  *    Majedul:
  *       -rc = redundant computation
- *       -mmc = max/min reduction
+ *       -mmr = max/min reduction
+ *    NOTE: new flag -ra is added to find out the register/value spilling
  */
          case 'r':
             if (args[i][2] && args[i][2] == 'c')
             {
                STATE1_FLAG |= IFF_ST1_RC; 
+            }
+            else if (args[i][2] && args[i][2] == 'a')
+            {
+               FKO_FLAG |= IFF_RA_ONLY; 
             }
             else
             {
@@ -1690,10 +1704,14 @@ void SaveFKOState0()
 }
 
 
-int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
+int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int scstate, int *nsp)
 /*
  * Performs the nopt optimization in the sequence given by ops, returning
  * 0 if no transformations applied, nonzero if some changes were made
+ * Now, we have three different scopes (instead of global & optloop) in scstate:
+ *    1. IOPT_GLOB = all blocks inside the routine
+ *    2. IOP_SCOP = blk list specified in optblks->blocks
+ *    3. 0  =  optloop
  */
 {
    BLIST *scope;
@@ -1707,46 +1725,44 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
  * Form scope based on global setting
  */
    scope = NULL;
-   if (!global)
+   *nsp = 0;
+   if (!scstate) /* optloop as scope*/
    {
       if (!optloop)
          return(0);
 /*
- *    Recalculate all optloop info if it has changed due to previous opt
+ *    Recalculate optloop info if it has changed due to previous opt
  */
       if (!CFLOOP)
          FindLoops();
       scope = CopyBlockList(optloop->blocks);
-      //scope = optloop->blocks;
+      /*scope = optloop->blocks;*/
    }
-   else
+   else /* IOPT_SCOP || IOPT_GLOB */
    {
 /*
  *    NOTE: optimization may change the CFG anyway...
+ *    HERE HERE !!! we recalculated the scopes only for the IOPT_SCOP
+ *    so, we need to recalcute the scope here for all other case
  */
-#if 1
-      if (global & IOPT_SCOP)
+      if (scstate & IOPT_SCOP) /* scope is specified in scope0*/
 /*
- *       FIXME: the repeatable optimization itself may change the CFG. So, scope
- *       calculated prior that would not be valid!!! We can't use any 
- *       precalculated scope like below: 
+ *       FIXED: the repeatable optimization itself may change the CFG. So, scope
+ *       calculated prior that would not be valid!!! 
+ *       NOTE: we recalculate the scope in optblks if any changes of CFG 
+ *       occurred (see DoOptBlock function).
  */
          scope = CopyBlockList(scope0);
-         //scope = CopyBlockList(optloop->blocks);
-      else
+      else /* global scope, add all blks in CFG */
       {
          for (scope=NULL,bp=bbbase; bp; bp = bp->down)
             scope = AddBlockToList(scope, bp);
       }
-#else
-      for (scope=NULL,bp=bbbase; bp; bp = bp->down)
-         scope = AddBlockToList(scope, bp);
-#endif
    }
 #if 0
-   if (global & IOPT_GLOB)
+   if (scstate & IOPT_GLOB)
       fprintf(stderr, "global scope : " );
-   else if (global & IOPT_SCOP)
+   else if (scstate & IOPT_SCOP)
       fprintf(stderr, "scope : " );
    else
       fprintf(stderr, "optloop : " );
@@ -1772,9 +1788,10 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
       case GlobRegAsg:
 /*
  *       NOTE: it is normally not used when vect is applied !!!!!! 
- *       I made this obsolete for scalar too. 
+ *       I made this obsolete for scalar code too. So, this opt has no longer
+ *       been used!
  */
-         assert(!global);
+         assert(scstate & IOPT_GLOB);
          fko_error(__LINE__, "\n\n Global Reg ASg used!!!\n\n");
          nchanges += DoLoopGlobalRegAssignment(optloop);  
          break;
@@ -1782,7 +1799,7 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
 
          #if 0
             fprintf(stderr, "IG REG ASG: ");
-            if (global)
+            if (scstate)
                fprintf(stderr, " GLOBAL\n");
             else
                fprintf(stderr, " LOCAL\n");
@@ -1797,7 +1814,7 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
          fprintf(stderr, "\nAPPLYING IG-RA ON BLKS: [%s]\n", PrintBlockList(scope));
          fprintf(stderr, "----------------------------------------------\n");
 #endif         
-         nchanges += DoScopeRegAsg(scope, global ? 2:1, &j); 
+         nchanges += DoScopeRegAsg(scope, scstate ? 2:1, &j, nsp); 
          #if 0 
          if (nchanges)
          {
@@ -1850,7 +1867,7 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
          fko_error(__LINE__, "Unknown optimization %d\n", ops[i]);
       }
       optchng[noptrec] = nchanges - nc0;
-      optrec[noptrec++] = global ? k+MaxOpt : k;
+      optrec[noptrec++] = scstate ? k+MaxOpt : k;
 #if 0
       CheckUseSet();
       //exit(0);
@@ -1858,7 +1875,7 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int global)
 #if 0
       if (nchanges-nc0)
       {
-         PrintOptInst(stdout, ++iopt, k, scope, global, nchanges-nc0);
+         PrintOptInst(stdout, ++iopt, k, scope, scstate, nchanges-nc0);
          fflush(stdout);  
       }
 #if 0
@@ -2060,18 +2077,16 @@ void UpdateOptsNewScope(struct optblkq *op)
    extern LOOPQ *loopq;
 
 /*
- *                Need to recalculate the scope for this. bbbase is already 
- *                changed
- *                NOTE: whenever CFG is changed, recalculate scope for all 
- *                scope based optimizations. 
- *                For now, scope based optimization starts with IOPT_SCOP flag
- *                just check that and recalculate for next of them
+ * Need to recalculate the scope for this. bbbase is already changed
+ * NOTE: whenever CFG is changed, recalculate scope for all scope based 
+ * optimizations. 
+ * For now, scope based optimization starts with IOPT_SCOP flag just check 
+ * that and recalculate for next of them
  *                
- *                Assumption:
- *                   1. All the optimizations, which change the CFG, wouldn't 
- *                      be mixed with scoped based optimizations
- *                   2. there would be a packet of repeatable opts applied on 
- *                      global scope 
+ * Assumption:
+ * 1. All the optimizations, which change the CFG, wouldn't be mixed with 
+ *    scoped based optimizations
+ * 2. There would be a packet of repeatable opts applied on global scope 
  *
  */
    for (obp = op; obp; obp=obp->next)
@@ -2085,18 +2100,18 @@ void UpdateOptsNewScope(struct optblkq *op)
    if (obp) /* scope start from next block */
    {
 /*
- *                   As CFG is changed, all the loop info also becomes invalid
- *                   calculate them again.
- *                   FIXME: number of scopes may change... we need to recreate
- *                   optblks based on that. 
- *                   delete all those and recreate new list
+ *    As CFG is changed, all the loop info also becomes invalid calculate them \
+ *    again.
+ *    FIXED: number of scopes may change... we need to recreate optblks based 
+ *    on that. 
+ *    delete all those and recreate new list
  */
       for (obp0=obp; obp0->next && (obp0->next->flag & IOPT_SCOP); )
       {
          if (obp0->next->opts) free(obp0->next->opts);
          if (obp0->next->blocks) KillBlockList(obp0->next->blocks);
          obp1 = obp0->next->next;
-         //fprintf(stderr, "deleting = %d\n", obp0->next->bnum);
+         /*fprintf(stderr, "deleting = %d\n", obp0->next->bnum);*/
          free(obp0->next);
          obp0->next = obp1;
       }
@@ -2253,8 +2268,9 @@ int DoOptBlock(BLIST *gscope, BLIST *lscope, struct optblkq *op)
  * Returns: nchanges applied
  */
 {
-   int i, j, k, nc, tnc=0, global;
+   int i, j, k, nc, tnc=0, scstate;
    int maxN;
+   int nspill;
    struct optblkq *dp;
    struct optblkq *obp, *obp0, *obp1;
    BLIST *scope = NULL;
@@ -2266,37 +2282,41 @@ int DoOptBlock(BLIST *gscope, BLIST *lscope, struct optblkq *op)
  * So, added extra checking
  */
 #if 0   
-   global = op->flag & (IOPT_GLOB | IOPT_SCOP);
+   scstate = op->flag & (IOPT_GLOB | IOPT_SCOP);
    if (op->flag & IOPT_SCOP)
    {
       scope = op->blocks;
       fprintf(stderr, "op->blocks = %s\n", PrintBlockList(scope));
    }
    else
-      scope = global ? gscope : lscope;
+      scope = scstate ? gscope : lscope;
 #else
-   global = 0;
+   scstate = 0;
    if (!op->flag) /* 0 means scope is optloop*/
    {
-      scope = lscope; /* FIXME: i'm wondering if optloop is changed!!! */
+      scope = lscope; /* scope is recalculated if optloop is changed!!! */
    }
    else if (op->flag & IOPT_SCOP)
    {
       scope = op->blocks;
-      global = IOPT_SCOP;
+      scstate = IOPT_SCOP;
    }
    else if (op->flag & IOPT_GLOB)
    {
       scope = gscope;
-      global = IOPT_GLOB;
+      scstate = IOPT_GLOB;
    }
 #endif
 #if 0
-   fprintf(stderr, "gl = %d\n", global);
+   fprintf(stderr, "gl = %d\n", scstate);
    fprintf(stderr, "scope = %s\n", PrintBlockList(scope));
 #endif
 /*
  * if we have conditional optimization block, handle it
+ * FIXME: some optimizations may change the CFG which may invalidate the 
+ * precalculated CFG. I considered and fixed this issue in normal 
+ * while(changes) optblk scheme, but not here; since it is not applied in my
+ * test cases
  */
    if (op->ifblk)
    {
@@ -2312,17 +2332,50 @@ int DoOptBlock(BLIST *gscope, BLIST *lscope, struct optblkq *op)
 /*
  * If we've got a one-time list, handle it
  */
+#if 0   
    else if (!op->maxN)
-      nc = DoOptList(op->nopt, op->opts, scope, global);
+      nc = DoOptList(op->nopt, op->opts, scope, scstate, &nspill);
+#else
+   else if (!op->maxN)
+   {
+      nc = DoOptList(op->nopt, op->opts, scope, scstate, &nspill);
+      for (j=0; j < op->nopt; j++)
+      {
+         if (op->opts[j] == RegAsg )
+         {
+            op->nspill = nspill;
+            break;
+         }
+      }
+   }
+#endif
 /*
  * Otherwise, we have normal while(changes) optblk
+ * NOTE: this is the case we apply always. Recalculated the scope if CFG 
+ * changes.
  */
    else
    {
       maxN = op->maxN;      
       for (i=0; i < maxN; i++)
       {
-         nc = DoOptList(op->nopt, op->opts, scope, global);
+         nc = DoOptList(op->nopt, op->opts, scope, scstate, &nspill);
+#if 1
+/*
+ *       updated nspill inside loop, overwirtten with latest nspill everytime
+ *       NOTE: updated right after the DoOptList function call, may be optimized
+ *       it by updating outside of the loop... did it here to avoid redirection
+ *       caused by recursion!!
+ */
+         for (j=0; j < op->nopt; j++)
+         {
+            if (op->opts[j] == RegAsg )
+            {
+               op->nspill = nspill;
+               break;
+            }
+         }
+#endif
          for (dp=op->down; dp; dp = dp->down)
             nc += DoOptBlock(gscope, lscope, op);
          if (!nc)
@@ -2334,7 +2387,7 @@ int DoOptBlock(BLIST *gscope, BLIST *lscope, struct optblkq *op)
                  maxN, nc);
 #if 1
 /*
- *    FIXME: scope may be changed due to the change of CFG
+ *    FIXED: scope may be changed due to the change of CFG
  *    CFG can be changed for following optimizations: 
  *       UselessLabElim, UselessJmpElim, BranchChaining
  *    Track whether those changes the CFG using the global variables : 
@@ -2453,6 +2506,7 @@ int PerformOpt(int SAVESP)
  * Returns 0 on success, non-zero on failure
  */
 {
+   int nspill;
    BLIST *bl, *lbase;
    BBLOCK *bp;
    int i, j, KeepOn, k;
@@ -2467,7 +2521,7 @@ int PerformOpt(int SAVESP)
       optrec[noptrec++] = GlobRegAsg;
       do
       {
-         j = DoScopeRegAsg(optloop->blocks, 1, &i);   
+         j = DoScopeRegAsg(optloop->blocks, 1, &i, &nspill);   
          KeepOn = j != i;
          KeepOn &= DoCopyProp(optloop->blocks); 
          if (KeepOn)
@@ -2488,7 +2542,7 @@ int PerformOpt(int SAVESP)
 /*
  *    Do reg asg on whole function
  */
-      j = DoScopeRegAsg(lbase, 2, &i);   
+      j = DoScopeRegAsg(lbase, 2, &i, &nspill);   
       KeepOn = DoCopyProp(lbase);
       if (KeepOn)
         fprintf(stderr, "\n\nREAPPLYING GLOBAL OPTIMIZATIONS!!\n\n");
@@ -2500,7 +2554,7 @@ int PerformOpt(int SAVESP)
    INDEADU2D = CFUSETU2D = 0;
    return(0);
 }
-
+#if 0
 int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
 {
    int i, j;
@@ -2634,7 +2688,7 @@ int GoToTown(int SAVESP, int unroll, struct optblkq *optblks)
    CheckFlow(bbbase, __FILE__, __LINE__);
    return(0);
 }
-
+#endif
 void DumpOptsPerformed(FILE *fpout, int verbose)
 {
    int i, k, j=1;
@@ -3397,6 +3451,36 @@ void GenAssenblyApplyingOpt4SSV(FILE *fpout, struct optblkq *optblks,
 }
 #endif
 
+void PrintLValSpill(struct optblkq *optblks)
+{
+   int optc, globc, tc;
+   FILE *fpout=stdout;
+   struct optblkq *op;
+/*
+ * we are only examining the next to find out the nspill; may need to explore
+ * down and ifblk if those are used later!
+ */
+   for (op=optblks; op; op=op->next)
+   {
+      if (!op->flag && op->nspill != -1) /* optloop with ra optimization */
+      {
+         optc = op->nspill;
+         break;
+      }
+   }
+/*
+ * last one must be global scope
+ */
+   for(; op->next; op=op->next);
+   globc = op->nspill;
+
+   tc = globc + optc;
+
+   fprintf(fpout, "TOTAL LIVE-RANGE SPILLING: %d\n", tc);
+   fprintf(fpout, " OPTLOOP=%d\n", optc);
+   fprintf(fpout, " GLOBAL=%d\n", globc);
+}
+
 void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks,
                                     struct assmln *abase)
 /*
@@ -3410,8 +3494,8 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks,
    CalcInsOuts(bbbase);
    CalcAllDeadVariables();
 /*
- * NOTE: repeateble optimization now depends on the updated CFG. So, we shifted
- * the optblks generation after all fundamental optimizations
+ * NOTE: optblks for repeateble optimization now depends on the updated CFG. 
+ * So, we shifted the optblks generation after all fundamental optimizations
  */
    if (!optblks)
       optblks = DefaultOptBlocks();
@@ -3442,6 +3526,22 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks,
 #endif  
 
    PerformOptN(0, optblks);
+/*
+ * if -ra is applied, send back the live-range spilling info and die/return
+ */
+   if (FKO_FLAG & IFF_RA_ONLY)
+   {
+      PrintLValSpill(optblks);
+      if(ParaDerefQ) KillAllLocinit(ParaDerefQ);
+      ParaDerefQ=NULL;
+      KillAllBasicBlocks(bbbase);
+      bbbase=NULL;
+      return;
+   }
+
+#if 0
+   PrintOptTree(optblks);
+#endif
 
 #if 0
    fprintf(stderr, "BVEC after OPTN\n\n");
@@ -3627,7 +3727,8 @@ int main(int nargs, char **args)
  * State 1:  
  *    a) Generate initial Prologue/Epilogue, so that we can create CFG and 
  *       update optloop info
- *    b) We will apply some optimization which is the pre-requisit for some 
+ *    b) Fall-thru optimization, if requested
+ *    c) We will apply some optimization which is the pre-requisit for some 
  *       some vectorization method. e.g.- 
  *       i) If conversion with Redundant Computation
  *       ii) Max/Min variable reduction.
@@ -3643,6 +3744,10 @@ int main(int nargs, char **args)
  *    b) Scalar Expansion (supports Accumulator, Max/Min expansion)
  *    c) Prefetching
  *
+ * State 3.1:
+ *    a) Loop specialization for vector alignment: done after doing all the 
+ *    fundamental opts to keep them intact in duplicated loops too.
+ *
  * State 4: (Common Optimization State)
  *    a) Reveal Architectural memory usage (Enable or disable)
  *    b) Repeatable Optimization
@@ -3655,7 +3760,7 @@ int main(int nargs, char **args)
  * NOTE: 
  * I will fix the Save/Restore function for states. Initial plan: all states
  * are completely separate and the complete program states for each can be 
- * saved and restored.
+ * saved and restored. Right now, only state0 can be saved and restored.
  *===========================================================================
  */
 {
@@ -3671,7 +3776,8 @@ int main(int nargs, char **args)
    extern BBLOCK *bbbase;
 /*
  * Later: will keep a flag to figure out how many and what opt is applied so far
- * now, just kept a flag to keep status of RC 
+ * now, just kept a flag to keep status of RC
+ * NOTE: Not used anymore; can be used to debug differet implementations 
  */
    RCapp = 0;  /* RC applied? not yet */
 /*
@@ -3723,7 +3829,7 @@ int main(int nargs, char **args)
  *       2. No CFG, No Prolgue/Epilogue, no extra info
  *==========================================================================*/
 #if 1
-   FKO_FLAG |= IFF_OPT2DPTR; /* applying optimize 2d array access */
+   FKO_FLAG |= IFF_OPT2DPTR; /* applying optimize 2d array access by default */
 #endif
    yyin = fpin;
    bp = bbbase = NewBasicBlock(NULL, NULL);
@@ -3771,8 +3877,9 @@ int main(int nargs, char **args)
 /*===========================================================================
  *    STATE 1:
  *       1. Generate initial prologue/epilogue, CFG, find loops
- *       2. If conversion with Redundant computation if requested
- *       3. Max/Min Reduction, if requested
+ *       2. Fall-thru optimization, if requested
+ *       3. If conversion with Redundant computation if requested
+ *       4. Max/Min Reduction, if requested
  *
  * NOTE: introduce new 2 command line flags: -rc, -mmr 
  *==========================================================================*/
@@ -3859,7 +3966,7 @@ int main(int nargs, char **args)
  *       for determing the max/min. We will extend this to figure out the 
  *       max/min var and strip it out from the loop. 
  */
-         //MovMaxMinVarsOut();
+         /*MovMaxMinVarsOut();*/
          ElimMaxMinIf();
 #if 0 
          fprintf(stdout, "LIL after ElimMax/MinIf\n");
@@ -3971,7 +4078,7 @@ int main(int nargs, char **args)
          FindLoops();
          CheckFlow(bbbase, __FILE__, __LINE__);
 /*
- *       Want to reshape the vector code always
+ *       Want to make the vector code fall-thru always
  */
          ReshapeFallThruCode(); 
 #if 0
@@ -4120,7 +4227,7 @@ int main(int nargs, char **args)
    }
    else ;
 /*
- * reconstruct for next opt
+ * reconstruct CFG for next opt
  */
    InvalidateLoopInfo();
    bbbase = NewBasicBlocks(bbbase);

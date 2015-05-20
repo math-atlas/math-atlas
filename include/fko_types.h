@@ -383,8 +383,12 @@ struct optblkq
                           * if nonzero, do at most that many applications    */
    ushort bnum;          /* number of this block                             */
    ushort flag;
-   BLIST *blocks;         /* added this to specify the scope, an optimization 
+   BLIST *blocks;        /* added this to specify the scope, an optimization 
                             is applied.. only used when flag is 0            */
+   int nspill;           /* number of spilling after this optblk is done, 
+                            more precisely, number of live-range which don't get
+                            register calculated in RegAsg; 
+                            -1 if not related to RegAsg */
 };
 
 #endif

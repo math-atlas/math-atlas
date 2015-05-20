@@ -3360,9 +3360,24 @@ int VarIsAccumulator(BLIST *scope, int var)
       mac = UNIMP; /* INT MAC is not implemented yet */
       break;
    default:
+#if 0      
    case T_VFLOAT:
    case T_VDOUBLE:
       fko_error(__LINE__, "Unknown type=%d, file=%s", i, __FILE__);
+#else
+   case T_VFLOAT:
+      ld = VFLD;
+      st = VFST;
+      add = VFADD;
+      mac = VFMAC;
+      break;
+   case T_VDOUBLE:
+      ld = VDLD;
+      st = VDST;
+      add = VDADD;
+      mac = VDMAC;
+      break;
+#endif
    }
    for (bl=scope; bl; bl = bl->next)
    {
@@ -3508,10 +3523,16 @@ int VarIsMax(BLIST *scope, short var)
       cmp = CMP;
       break;
    default:
+#if 0
    case T_VFLOAT:
    case T_VDOUBLE:
       fko_error(__LINE__,"Unknown type=%d, file=%s. Should be done before Vect",
                 i, __FILE__);
+#else
+   case T_VFLOAT:
+   case T_VDOUBLE:
+      return(0);
+#endif
    }
 
    for (bl = scope; bl; bl = bl->next)
@@ -3590,11 +3611,17 @@ int VarIsMin(BLIST *scope, short var)
       st = ST;
       cmp = CMP;
       break;
+#if 0      
    default:
    case T_VFLOAT:
    case T_VDOUBLE:
       fko_error(__LINE__,"Unknown type=%d, file=%s. Should be done before Vect",
                 i, __FILE__);
+#else
+   case T_VFLOAT:
+   case T_VDOUBLE:
+      return(0);
+#endif
    }
 
    for (bl = scope; bl; bl = bl->next)
@@ -3832,20 +3859,50 @@ void CountArrayAccess(BLIST *scope, int ptr, int *nread, int *nwrite)
       st = ST;
       ld = LD;
    }
+#if 0   
    else
    {
       assert(IS_DOUBLE(i));
       st = FSTD;
       ld = FLDD;
    }
+#else
+/*
+ * now, we have VFLOAT and VDOUBLE in vector-intrinsic code
+ */
+   else if (IS_DOUBLE(i))
+   {
+      st = FSTD;
+      ld = FLDD;
+   }
+   else if (IS_VFLOAT(i))
+   {
+      st = VFST;
+      ld = VFLD;
+   }
+   else if (IS_VDOUBLE(i))
+   {
+      st = VDST;
+      ld = VDLD;
+   }
+   else fko_error(__LINE__, "unknown type = %d for var=%s\n", i, STname[ptr-1]);
+#endif
+
    for (bl=scope; bl; bl = bl->next)
    {
       for (ip=bl->blk->ainst1; ip; ip = ip->next)
       {
+#if 0         
          if (ip->inst[0] == st && STpts2[ip->inst[1]-1] == ptr)
             nw++;
          else if (ip->inst[0] == ld && STpts2[ip->inst[2]-1] == ptr)
             nr++;
+#else
+         if (IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]-1] == ptr)
+            nw++;
+         else if (IS_LOAD(ip->inst[0]) && STpts2[ip->inst[2]-1] == ptr)
+            nr++;
+#endif
       }
    }
    *nread = nr;
@@ -4015,6 +4072,10 @@ void PrintMovingPtrAnalysis(FILE *fpout)
       if (!sta)
       {
          pi = FindPtrinfo(pi0, ptr);
+/*
+ *       NOTE: prefetch not applicable for outer loop unrolled kernel by this 
+ *       condition
+ */
          j = ((pi->flag | PTRF_CONTIG | PTRF_INC) == pi->flag);
          if (lp->nopf)
             if (FindInShortList(lp->nopf[0], lp->nopf+1, ptr))
