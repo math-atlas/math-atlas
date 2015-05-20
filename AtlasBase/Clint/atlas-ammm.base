@@ -17462,6 +17462,68 @@ void Mjoin(PATL,ammmKM)/* computes full answer for one column-panel of C */
    }
 }
 
+
+static int ATL_ammm_rkK
+(
+   rkinfo_t *krinf,
+   ATL_CSZT N,
+   const SCALAR alpha,
+   const TYPE *A,
+   const TYPE *B,
+   TYPE *C,
+   const SCALAR beta
+)
+{
+   const size_t ldb=krinf->ldb, ldc=krinf->ldc;
+   ATL_CINT NB=krinf->nb, mu=krinf->mu, MB=krinf->mb, kb=krinf->kb;
+   ATL_INT mbL, inca, j;
+   const size_t incC=NB*ldc, incBn=krinf->incBn;
+   size_t szA, szB, szC;
+   cm2am_t b2blk = krinf->b2blk;
+   TYPE *a, *b, *c;
+   void *vp;
+
+   mbL = krinf->nmuL * mu;
+   if (N > NB)
+   {
+      szA = MB*krinf->nfmb + mbL*kb;
+      inca = MB*kb;
+   }
+   else
+   {
+      szA = MB*kb;
+      inca = 0;
+   }
+   szB = krinf->NB*kb;
+   szC = Mmax(MB,mbL);
+   szC *= krinf->NB;
+   vp = malloc(3*ATL_Cachelen + ATL_MulBySize(szA+szB+szC));
+   ATL_assert(vp);
+   if (!vp)
+      return(1);
+   a = ATL_AlignPtr(vp);
+   b = a + szA;
+   b = ATL_AlignPtr(b);
+   c = b + szB;
+   c = ATL_AlignPtr(c);
+
+   for (j=0; j < N; j += NB, C += incC, B += incBn)
+   {
+      ATL_INT nb = N-j;
+      if (nb >= NB)
+         nb = NB;
+      else
+      {
+         const int nu=krinf->nu;
+         krinf->nnu = (nb+nu-1)/nu;
+         krinf->nb = nb;
+      }
+      b2blk(kb, nb, alpha, B, ldb, b);
+      Mjoin(PATL,ammmM)(krinf, a, inca, b, c, 0, A, C, beta);
+      krinf->a2blk = NULL;
+   }
+}
+
 int Mjoin(PATL,ammmNKM)
 (
    enum ATLAS_TRANS TA,
@@ -17480,8 +17542,8 @@ int Mjoin(PATL,ammmNKM)
 )
 {
    rkinfo_t kbinf, krinf;
-   ATL_INT mb, nfmb, nb, mbL, kb, RCPYA=0;
-   size_t szA, szB, szC, inca, incc;
+   size_t szA, szB, szC, incak, incc;
+   ATL_INT mb, nfmb, nb, mbL, kb, incam, RCPYA=0;
    TYPE *a, *b, *c;
    void *vp;
    void GetBestKBInfo(rkinfo_t*, rkinfo_t*, enum ATLAS_TRANS, enum ATLAS_TRANS,
@@ -17489,33 +17551,35 @@ int Mjoin(PATL,ammmNKM)
                       const SCALAR, const SCALAR);
 
    GetBestKBInfo(&kbinf, &krinf, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta);
-   if (kbinf.idx != -1)
+   if (kbinf.idx == -1)
+      return(ATL_ammm_rkK(&krinf, N, alpha, A, B, C, beta));
+
+   if (N > kfinf.nb)
    {
-      mb = kbinf.MB;
-      nfmb = kbinf.nfmb;
-      nb = kbinf.NB;
-      mbL = kbinf.mbL;
-      kb = kbinf.kb;
-      if (krinf.idx != -1)
-      {
-         RCPYA = krinf.a2blk != kbinf.a2blk;
-         nfmb = Mmax(nfmb, krinf.nfmb);
-         mb = Mmax(mb, krinf.MB);
-         mbL = Mmax(mbL, krinf.mbL);
-         nb = Mmax(nb, krinf.NB);
-      }
-      szC = (nfmb*mb+mbL)*nb;
+      incam = kbinf.MB*kbinf.kb;
+      incak = (kbinf.nmuL*kbinf.mu+incam*kbinf.nfmb)*kbinf.kb;
+      szA = ((K+kbinf.kb-1)/kbinf.kb)*incak;
    }
-   else  /* only have partial kb */
+   else
    {
-      mbL = krinf.nmuL * krinf.mu;
-      mb = Mmax(krinf.MB, mbL);
-      nb = krinf.NB;
-      kb = krinf.kb;
-      nfmb = krinf.nfmb;
-      szC = mb * nb;
-      RCPYA = 1;
+      incam = incak = 0;
+      szA = kbinf.MB*kbinfo.kb;
    }
+
+   mb = kbinf.MB;
+   nfmb = kbinf.nfmb;
+   nb = kbinf.NB;
+   mbL = kbinf.mbL;
+   kb = kbinf.kb;
+   if (krinf.idx != -1)
+   {
+      RCPYA = krinf.a2blk != kbinf.a2blk;
+      nfmb = Mmax(nfmb, krinf.nfmb);
+      mb = Mmax(mb, krinf.MB);
+      mbL = Mmax(mbL, krinf.mbL);
+      nb = Mmax(nb, krinf.NB);
+   }
+   szC = (nfmb*mb+mbL)*nb;
    if (N >= krinf.nb)
    {
       inca = mb * kb;
@@ -17534,24 +17598,11 @@ int Mjoin(PATL,ammmNKM)
    b = ATL_AlignPtr(b);
    c = b + szB;
    c = ATL_AlignPtr(c);
-   if (kbinf.idx != -1)
+   if (1)
    {
-//      Mjoin(PATL,ammmKM)(&rkinf, &krinf, nfkblks, a, incam, incak, b,
-//                         c, inccm, A, B, C, TA, TB, M, N, alpha, beta);
-      ATL_assert(0);
-   }
-/*
- * Have a partial K panel that will be handled by true rank-K update
- */
-   else
-   {
-      ATL_CINT NB=krinf.nb;
-      const size_t incC=NB*ldc, incBn=krinf.incBn;
-      cm2am_t b2blk = krinf.b2blk;
+      ATL_CINT NB=kbinf.nb, nfkblks=K/kbinf.kb;
+      const size_t incC=NB*ldc, incBn=kbinf.incBn;
       ATL_INT j;
-
-      if (!RCPYA)
-         krinf.a2blk = NULL;
       for (j=0; j < N; j += nb, C += incC, B += incBn)
       {
          ATL_INT nb = N-j;
@@ -17559,13 +17610,12 @@ int Mjoin(PATL,ammmNKM)
             nb = NB;
          else
          {
-            const int nu=krinf.nu;
-            krinf.nnu = (nb+nu-1)/nu;
-            krinf.nb = nb;
+            const int nu=kbinf.nu;
+            kbinf.nnu = (nb+nu-1)/nu;
+            kbinf.nb = nb;
          }
-         b2blk(kb, nb, alpha, B, ldb, b);
-         Mjoin(PATL,ammmM)(&krinf, a, inca, b, c, 0, A, C, beta);
-         krinf.a2blk = NULL;
+         Mjoin(PATL,ammmKM)(&kbinf, &krinf, nfkblks, a, inca, incak, b,
+                            c, inccm, A, B, C, TA, TB, M, N, alpha, beta);
       }
    }
    free(vp);
