@@ -159,7 +159,6 @@ static char *GetSregOrDeref(short id)
 {
    if (id < 0)
    {
-      //fprintf(stderr, "id = %d\n", id);
       return(archsregs[-IREGBEG-id]);
    }
    else if (id)
@@ -1237,14 +1236,14 @@ struct assmln *lil2ass(BBLOCK *bbase)
    #ifdef X86_64
       case CVTSI: /* convert 32bit to 64 bit int*/
 /*
- *    Majedul: we will use movslq for this 
+ *    Majedul: we are using  movslq for this 
  */
-   #if 0         
+      #if 0         
          k = -iName2Reg("@rax");
          assert(op1 == k && op2 == k);
          ap->next = PrintAssln("\tcltq\n");
 /*         ap->next = PrintAssln("\tcdqe\n"); */
-   #else
+      #else
          if (op1 < 0)
             ap->next = PrintAssln("\tmovslq\t%s, %s\n", 
                                   GetSregOrDeref(op2),  
@@ -1254,7 +1253,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                    archsregs[-IREGBEG-op2], 
                                    GetIregOrDeref(op1));  
 
-   #endif
+      #endif
          break;
       case CVTIS:
          ap->next = PrintAssln("movl\t%s,%s\n", archiregs[-IREGBEG-op2],
@@ -2713,7 +2712,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
 
       case COMMENT:
          #ifdef X86
-            //continue; /* skip comments temporary for testing with ATLAS*/
+            /*continue;*/ /* skip comments temporary for testing with ATLAS*/
             ap->next = PrintAssln("#%s\n", op1 ? STname[op1-1] : "");
          #elif defined(SPARC)
             ap->next = PrintAssln("!%s\n", op1 ? STname[op1-1] : "");
@@ -2755,7 +2754,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
  *    FIXME: vpinsrd works on 32 bit ireg like: eax instead of rax...
  *    Only 8 of the 16 IREG has 32 bit version. If we don't make SREG visible,
  *    it will eventually cause problem. 
- *    sirk3amax => -rc -V -Ps b A 0 4 -P all 0 128 -U 2 
+ *    sirk3amax => -rc -V -Ps b A 0 4 -P all 0 128 -U 2
+ *    NOTE: added an assertion here
  */
       case VGR2VR32:
          op1 = -op1;
@@ -4781,13 +4781,9 @@ struct assmln *lil2ass(BBLOCK *bbase)
  *          FIXME
  */
          cp = imap2cmap(SToff[op3-1].i); /* return hex char */
-#if 0
-         fprintf(stderr, "%x%x%x%x%x%x%x%x\n",cp[7],cp[6],cp[5],cp[4],cp[3],
-                 cp[2],cp[1],cp[0]);
-         //fflush(stderr);
-#endif
          #if defined(AVX) && !defined(AVX2)
-            fko_error(__LINE__, "vishuf is not implemented in AVX,AVX2 needed!\n"); 
+            fko_error(__LINE__, 
+                      "vishuf is not implemented in AVX. AVX2 needed!\n"); 
          
          #elif defined(AVX2)   
             if (!SToff[op3-1].i)
@@ -4981,7 +4977,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
 /*
  *       NOTE: we are implementing this using vpblendvb (AVX2) but use imm!!
  *       let's use vpblendvb... should work with the mask
- *       this inst selecls byte values from mask specified in the high bit of 
+ *       this inst selects byte values from mask specified in the high bit of 
  *       each byte. Here, we use mask with all 1's or 0's in each 32bit/64bit. 
  *       so, it should work.
  *       NOTE: we support no memory operation now.
