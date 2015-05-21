@@ -1392,27 +1392,11 @@ int DoIGRegAsg(int N, IGNODE **igs, int *nspill)
    for (i=0; i < N; i++)
    {
       ig = igs[i];
-#if 1
-      /*fprintf(stderr, "**********reg assignment for: %s\n", STname[ig->var-1]);*/
-      /*fprintf(stderr, "liveregs = %s\n", BV2VarNames(ig->liveregs));*/
-      ig->reg = GetRegForAsg(FLAG2PTYPE(STflag[ig->var-1]), iv, ig->liveregs);
-#else
-      SetVecAll(iv, 0);
-      SetAllTypeReg(iv, FLAG2PTYPE(STflag[ig->var-1]));
-      BitVecComb(iv, iv, ig->liveregs, '-');
-      SetVecBit(iv, REG_SP-1, 0);
-/*
- *    Don't use [f,d]retreg (%sp) for x86-32
- */
-      #ifdef X86_32
-         SetVecBit(iv, FRETREG-1, 0);
-         SetVecBit(iv, DRETREG-1, 0);
-      #endif
-/*
- *    If we have a register left, assign it
- */
-      ig->reg = AnyBitsSet(iv);
+#if 0
+      fprintf(stderr, "**********reg assignment for: %s\n", STname[ig->var-1]);
+      fprintf(stderr, "liveregs = %s\n", BV2VarNames(ig->liveregs));
 #endif
+      ig->reg = GetRegForAsg(FLAG2PTYPE(STflag[ig->var-1]), iv, ig->liveregs);
       if (ig->reg)
       {
          ivused = Reg2Regstate(ig->reg);
@@ -1433,10 +1417,6 @@ int DoIGRegAsg(int N, IGNODE **igs, int *nspill)
          }
          ig->reg++;
          iret++;
-#if 0
-         if (ig->reg >= VDREGBEG && ig->reg < VDREGEND)
-         fprintf(stderr, "REG ASSIGNED = %d\n", ig->reg-VDREGBEG );
-#endif
       }
       else
 #if 1         
@@ -1608,11 +1588,15 @@ int DoRegAsgTransforms(IGNODE *ig)
 {
    INSTQ *ip;
    BLIST *bl, *lp;
-   enum inst mov, ld, st, inst;
+   enum inst mov, ld, st, inst, sts, movs;
    int i, CHANGE=0;
 
    if (!ig->reg)  /* return if their was no available register */
       return(0);
+/*
+ * NOTE: In vector-to-scalar reduction, scalar value may be stored by a 
+ * V2SST (vector to scalar store inst). so, we need sts for scalar value type.
+ */
    i = STflag[ig->var-1];
    switch(FLAG2PTYPE(i))
    {
@@ -1621,22 +1605,30 @@ int DoRegAsgTransforms(IGNODE *ig)
       mov = MOVS;
       ld  = LDS;
       st  = STS;
+      sts = VSSTS;
+      movs = VSMOVS;
       break;
 #endif
    case T_INT:
       mov = MOV;
       ld  = LD;
       st  = ST;
+      sts = VISTS;
+      movs = VIMOVS;
       break;
    case T_FLOAT:
       mov = FMOV;
       ld  = FLD;
       st  = FST;
+      sts = VFSTS;
+      movs = VFMOVS;
       break;
    case T_DOUBLE:
       mov = FMOVD;
       ld  = FLDD;
       st  = FSTD;
+      sts = VDSTS;
+      movs = VDMOVS;
       break;
    case T_VDOUBLE:
       mov = VDMOV;
@@ -1669,7 +1661,6 @@ int DoRegAsgTransforms(IGNODE *ig)
  *    NOTE: we have no memory-output instructions, so assert set is ST
  */
       ip = bl->ptr;
-/*    Majedul: let's check ip to NULL ??! */
       assert(ip);
       if (ip && BitVecCheck(ip->set, ig->var+TNREG-1))
       {
@@ -1692,6 +1683,14 @@ int DoRegAsgTransforms(IGNODE *ig)
             ip->inst[1] = -ig->reg;
          }
 /*
+ *       Majedul: If we have vector to scalar store, we can use movs 
+ */
+         else if (IS_V2SST(inst) && inst == sts)
+         {
+            ip->inst[0] = movs;
+            ip->inst[1] = -ig->reg;
+         }
+/*
  *       If Store is of different type than variable (eg., fpconst init),
  *       we must insert a ld inst to the LR register
  */
@@ -1700,8 +1699,9 @@ int DoRegAsgTransforms(IGNODE *ig)
             ip = PrintComment(bl->blk, ip, NULL, "Inserted LD from %s",
                               STname[ig->var-1] ? STname[ig->var-1] : "NULL");
             #if IFKO_DEBUG_LEVEL > 1
-               fprintf(stderr, "ireg=%s getting LD ip=%d, nr=%d, nw=%d!\n\n", 
-                       STname[ig->var-1], ip, ig->nread, ig->nwrite);
+            fprintf(stderr, "var=%s ireg=%d getting LD ip=%p," 
+                            "nr=%d, nw=%d!\n\n", 
+                       STname[ig->var-1], ig->reg, ip, ig->nread, ig->nwrite);
             #endif
             ip = InsNewInst(bl->blk, ip, NULL, ld, -ig->reg, ig->deref, 0);
             if (ip->next) bl->ptr = ip->next;
