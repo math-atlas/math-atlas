@@ -270,7 +270,8 @@ enum inst
 
 /*
  * Majedul: Vector int inst... V_INT type
- * We consider 2 versions 32 bit and 64 bit integer
+ * We consider 2 versions: 32 bit and 64 bit integer
+ * NOTE: vector loads are same; so, we use VLD instead of VILD and VSLD
  */
 /* 32bit or long word version */   
    /*VSMOV,*/
@@ -642,9 +643,9 @@ char *instmnem[] =
 /* 32bit or long word version */   
    //"VSMOV",
    "VSMOVS",
-   //"VSLD",
+   /*"VSLD",*/
    "VSLDS",
-   //"VSST",
+   /*"VSST",*/
    "VSSTS",
    "VSSHUF",
    "VGR2VR32",
@@ -654,11 +655,11 @@ char *instmnem[] =
    "VSMIN",
    "VSZERO",
 /* 64 bit version */
-   //"VIMOV",
+   /*"VIMOV",*/
    "VIMOVS",
-   //"VILD",
+   /*"VILD",*/
    "VILDS",
-   //"VIST",
+   /*"VIST",*/
    "VISTS",
    "VISHUF",
    "VGR2VR64",
@@ -831,7 +832,8 @@ char *instmnem[] =
                                (i_) == VLDU )
 /*
  * Although VFLDSB/VDLDSB loads into vector register, they are essentially 
- * scalar load
+ * scalar load.
+ * NOTE: Should we consider VFLDS/VFSTS as vector or scalar load/store?
  */
 #define IS_VLOAD(i_)  ((i_) == VFLD || (i_) == VDLD || \
                       (i_) == VFLDS || (i_) == VDLDS || \
@@ -842,8 +844,8 @@ char *instmnem[] =
                       (i_) == VDLDU || (i_) == VLDU )
 
 #define IS_MOVE(i_) ((i_) == MOV || (i_) == FMOV || (i_) == FMOVD || \
-                     (i_) == VFMOV || (i_) == VDMOV || \
-                     (i_) == VMOV)
+                     (i_) == VFMOV || (i_) == VDMOV || (i_) == VMOV || \
+                     (i_) == VFMOVS || (i_) == VDMOVS)
 
 #define IS_MAC(i_) ((i_) == FMAC || (i_) == FMACD || (i_) == VFMAC || \
                     (i_) == VDMAC)
@@ -854,6 +856,16 @@ char *instmnem[] =
                        (i_) == VST || (i_) == VSSTS || \
                        (i_) == VISTS || (i_) == VFSTU || \
                        (i_) == VDSTU || (i_) == VSTU )
+
+#define IS_VSTORE(i_)  ((i_) == VFST || (i_) == VDST || \
+                       (i_) == VFSTS || (i_) == VDSTS || \
+                       (i_) == VFSTNT || (i_) == VDSTNT || \
+                       (i_) == VST || (i_) == VSSTS || \
+                       (i_) == VISTS || (i_) == VFSTU || \
+                       (i_) == VDSTU || (i_) == VSTU )
+
+#define IS_V2SST(i_)  ((i_) == VFSTS || (i_) == VDSTS || \
+                       (i_) == VISTS || (i_) == VSSTS)
 
 #define IS_UNALIGNED_VSTORE(i_) ((i_) == VFSTU || (i_) == VDSTU || \
                                  (i_) == VSTU )
