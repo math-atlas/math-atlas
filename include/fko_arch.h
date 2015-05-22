@@ -27,13 +27,13 @@
    #define AVX2       /* avx2 is needed for VINT operations */ 
 #endif
 /*
- * AVX2 inlcudes AVX
+ * AVX2 includes AVX
  */
 #ifdef AVX2
    #define AVX
 #endif
 
-#if !defined(ArchHasMac)
+#if !defined(ArchHasMAC)
    #define ArchHasMAC
    /*#define FMA4*/
    #define FMA3
