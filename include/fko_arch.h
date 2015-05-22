@@ -18,24 +18,28 @@
 #endif
 
 /*
- * Majedul: SIMD Vector related 
+ * SIMD vectorization
+ * Default vector unit = SSE4.1 
  */
-#if !defined(ARCH_VEC) && 1
-     #define AVX2       /* avx2 is needed for VINT operations */ 
-     #define ArchHasMAC
-     //#define FMA4
-     #define FMA3
+#if !defined(ArchHasVec) 
+   #define ArchHasVec
+   /*#define AVX*/
+   #define AVX2       /* avx2 is needed for VINT operations */ 
 #endif
 /*
- * NOTE: avx2 supports everything of AVX plus extra functionality for integer 
- * vector. So, to minimize the code change, we use following definition.  
+ * AVX2 inlcudes AVX
  */
 #ifdef AVX2
    #define AVX
 #endif
+
+#if !defined(ArchHasMac)
+   #define ArchHasMAC
+   /*#define FMA4*/
+   #define FMA3
+#endif
 /*
- * Majedul: as VLEN depends on the system, this is shifted here. Otherwise, we
- * can't ensure that AVX is defined before VLEN
+ * Defines vlen based on SIMD unit
  */
 #ifdef AVX
    #define FKO_DVLEN 4  

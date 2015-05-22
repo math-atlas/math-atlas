@@ -4208,7 +4208,7 @@ void PrintMovingPtrAnalysis(FILE *fpout)
       }
       else j = 0;
 
-      fprintf(fpout, " ScalarExpandable=%d", j);
+      fprintf(fpout, " ReduceExpandable=%d", j);
 #endif
       fprintf(fpout, "\n");
    }
@@ -4486,7 +4486,8 @@ OPTLOOP=1
       NewBasicBlocks(bbbase);
       FindLoops(); 
       CheckFlow(bbbase, __FILE__, __LINE__);
-      
+
+#if defined(ArchHasVec)
       if (IsSpeculationNeeded())
       {
          Vspec = !(SpeculativeVectorAnalysis()); /*it is the most general */
@@ -4526,6 +4527,9 @@ OPTLOOP=1
       }
       else
          fprintf(fpout, "   VECTORIZABLE=%d\n",0);
+#else
+      fprintf(fpout, "   VECTORIZABLE=%d\n",0);
+#endif
       /*
        *    Start checking for moving ptr
        */
