@@ -486,14 +486,16 @@ struct rkinfo
    size_t incAm, incAk;
    size_t incBn, incBk;
    size_t lda, ldb, ldc;
-   ammkern_t amm;             /* beta=0 ammm kern */
-   cm2am_t a2blk, b2blk;      /* full-KB A/B copy routs */
+   ammkern_t amm;                 /* beta=0 ammm kern */
+   cm2am_t a2blk, b2blk;          /* full-KB A/B copy routs */
    ablk2cmat_t blk2c;
-   ATL_INT nfmb;              /* FLOOR(M/mb) */
+   ATL_INT nfmb, nfnb, nfkb;      /* FLOOR(D/db) */
    short idx;
-   unsigned short MB, NB;     /* nmu*mu, nnu*nu */
-   unsigned short mb, nb, kb, nmu, nnu, nmuL, mbL;
-   unsigned char flag, mu, nu, KR;
+   unsigned short mbL, nb;        /* D-nfdb*db */
+   unsigned short MBL, NBL, KBL;  /* nmu*mu, nnu*nu, nku*ku */
+   unsigned short mb, nb, kb;     /* blk fact, always mul of unrolling */
+   unsigned short nmu, nnu, nmuL, nnuL; /* # U for normal & last blks */
+   unsigned char flag, mu, nu, ku;
 };
 
 enum ATL_AMMALG {ATL_amm1b, ATL_ammrkK, ATL_NMK};
@@ -16381,42 +16383,29 @@ static INLINE void FillInRankKInf
    int mb = ATL_AMM_MBs[idx], nb = ATL_AMM_NBs[idx], kb = ATL_AMM_KBs[idx];
    const int mu=ATL_AMM_MUs[idx], nu=ATL_AMM_NUs[idx], ku=ATL_AMM_KUs[idx];
 
-   if (M > mb)
-   {
-      out->MB = out->mb = mb;
-      out->nmu = mb/mu;
-      out->nfmb = M/mb;
-      out->mbL = M - out->nfmb*mb;
-   }
-   else
-   {
-      mb = out->mbL = out->mb = M;
-      out->nmu = (mb+mu-1)/mu;
-      out->MB = out->nmu * mu;
-      out->nfmb = 0;
-   }
-   out->nmuL = (out->mbL+mu-1)/mu;
-   out->amm = ATL_AMM_KERN_RKK[idx];
-
-   if (N > nb)
-   {
-      out->NB = out->nb = nb;
-      out->nnu = nb/nu;
-   }
-   else
-   {
-      nb = out->nb = N;
-      out->nnu = (nb+nu-1)/nu;
-      out->NB = out->nnu*nu;
-   }
-   out->kb = kb;
-   out->flag = ATL_AMM_KFLAG[idx];
+   out->nfmb = M/mb;
+   out->nfnb = N/nb;
+   out->nfkb = K/kb;
    out->mu = mu;
    out->nu = nu;
-   out->KR = K - (K/ku)*ku;
+   out->ku = ku;
    out->lda = lda;
    out->ldb = ldb;
    out->ldc = ldc;
+   out->mb = mb;
+   out->nb = nb;
+   out->kb = kb;
+   out->amm = ATL_AMM_KERN_RKK[idx];
+   out->flag = ATL_AMM_KFLAG[idx];
+   out->mbL = M - out->nfmb*mb;
+   out->nbL = N - out->nfnb*nb;
+   out->kbL = K - out->nfkb*kb;
+   out->nmuL = (out->mbL+mu-1)/mu;
+   out->nnuL = (out->nbL+nu-1)/nu;
+   out->nkuL = (out->kbL+ku-1)/ku;
+   out->MBL = out->nmuL*mu;
+   out->NBL = out->nnuL*nu;
+   out->KBL = out->nkuL*ku;
    if (TA == AtlasNoTrans)
    {
       out->a2blk  = ATL_RKK_AT2BLK_a1[idx];
@@ -16515,7 +16504,7 @@ void GetBestKBInfo
 )
 {
    int idx;        /* amm index to use for full kb calls */
-   int idr;        /* amm index for final colpan (-1: use ger1/2) */
+   int idr=(-1);   /* amm index for final colpan (-1: use ger1/2) */
    int KR;         /* K%kb */
    int i;
 
@@ -16538,13 +16527,19 @@ void GetBestKBInfo
          double nfcblks, tkr, tpan, tim, tpe;
 
          if (kr > 2)
+         {
             tkr = ATL_rkAMM_TIME[kr-3];
+            idr = kr-3;
+         }
          else if (!kr)
+         {
+            idr = -2;
             tkr = 0.0;
-         else if (kr == 1)
-            tkr = ATL_rkAMM_TIME[0] * 2.0;
-         else
-            tkr = ATL_rkAMM_TIME[0] * 1.2;
+         }
+         else if (kr == 1)                 /* strongly penalize K=1,2 */
+            tkr = ATL_rkAMM_TIME[0] * 8.0; /* since these cases require */
+         else                              /* write C twice in addition to */
+            tkr = ATL_rkAMM_TIME[0] * 6.0; /* using ger/ger2 rather than amm */
          tpan = nkb*ATL_rkAMM_TIME[i] + tkr;
          tim = nfcblks*tpan;
          tpe = ATL_rkAMM_TIME[i] / (1.0*mb*nb);  /* time per elt of C */
@@ -16583,58 +16578,74 @@ void GetBestKBInfo
    if (idx != -1)
       FillInRankKInf(out, idx, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta);
    outR->idx = idr;
-   if (idr != -1)
+   if (idr != -2)
    {
       const int mu=out->mu, nu=out->nu;
+      int GOLOOK=(idr == -1);  /* should we look for kern wt same MU/NU? */
+
+      if (!GOLOOK)
+         GOLOOK = (mu != ATL_AMM_MUs[idr] || nu != ATL_AMM_NUs[idr]);
 /*
  *    If present K-clean candidate doesn't have same C format, search
- *    for one that will
+ *    for one that does
  */
-      if (mu != ATL_AMM_MUs[idr] || nu != ATL_AMM_NUs[idr])
+      if (idx != -1 && GOLOOK)
       {
          int kbmin = ATL_AMM_KBMINs[idx];
 /*
  *       See if present kernel can perform K-cleanup itself
  */
-         if (ATL_AMM_KRUNTIME(idx) && (ATL_AMM_KBMINs[idx] <= KR)
+         if (ATL_AMM_KRUNTIME(idx) && ATL_AMM_KBMINs[idx] <= KR)
             idr = idx;
 /*
- *       Look thru all available kernels for one that matches MU/NU & handle KR
+ *       Look thru all avail kerns for one that matches MU/NU & can handle KR
  */
          else
          {
+            int nidr=(-1);
             for (i=0; i < ATL_AMM_NCASES; i++)
-               if (ATL_AMM_KRUNTIME(i) && (ATL_AMM_KBMINs[i] <= KR)
-                  break;
-            #if 0
-            if (i == ATL_AMM_NCASES)
             {
-               i = sqFindrkKClean(outR, mu, nu, KR);
-               if (i == -1)
+               if (ATL_AMM_KRUNTIME(i) && ATL_AMM_KBMINs[i] <= KR)
                {
-                  i = geFindrkKClean(outR, mu, nu, KR);
-                  i = (i == -1) ? ATL_AMM_NCASES : i;
+                  nidr = i;
+                  if (!ATL_AMM_KMAJOR(i)) /* K-vect kerns slow for small KR */
+                     break;               /* so only quit if not K-vect */
                }
             }
+/*
+ *          May later want to search thru sq/ge KClean kerns for matching kerns.
+ *          This will complicate things slighly, since the idx will be for
+ *          the wrong header files.  For now, call present search OK
+ */
+            #if 0
+            if (nidr == -1)
+            {
+               nidr = sqFindrkKClean(outR, mu, nu, KR);
+               if (nidr == -1)
+                  nidr = geFindrkKClean(outR, mu, nu, KR);
+            }
             #endif
-            if (i != ATL_AMM_NCASES)
-               idr = i;
+            if (nidr != -1)
+               idr = nidr;
          }
       }
-      FillInRankKInf(outR, idr, TA, TB, M, N, KR, lda, ldb, ldc, alpha, beta);
-      if (idx != -1)  /* override K-clean mb/nb wt main kernel's! */
+      if (idr > 0)
       {
-         int u, b;
-         b = outR->mb = out->mb;
-         u = outR->mu;
-         outR->nmu = (b+u-1)/u;
-         outR->MB = outR->nmu * u;
-         b = outR->mbL = out->mbL;
-         outR->nmuL = (b+u-1)/u;
-         b = outR->nb = out->nb;
-         u = outR->nu;
-         outR->nnu = (b+u-1)/u;
-         outR->NB = outR->nnu * u;
+         FillInRankKInf(outR, idr, TA, TB, M, N, KR, lda, ldb, ldc,alpha,beta);
+         if (idx != -1)  /* override K-clean mb/nb wt main kernel's! */
+         {
+            int u, b;
+            b = outR->mb = out->mb;
+            u = outR->mu;
+            outR->nmu = (b+u-1)/u;
+            outR->MB = outR->nmu * u;
+            b = outR->mbL = out->mbL;
+            outR->nmuL = (b+u-1)/u;
+            b = outR->nb = out->nb;
+            u = outR->nu;
+            outR->nnu = (b+u-1)/u;
+            outR->NB = outR->nnu * u;
+         }
       }
    }
 }
@@ -17444,11 +17455,13 @@ void Mjoin(PATL,ammmKM)/* computes full answer for one column-panel of C */
    const size_t ldb=rkinf->ldb;
    cm2am_t b2blk=rkinf->b2blk;
    ablk2cmat_t blk2c=rkinf->blk2c;
-   ATL_CINT KR=rkinf->KR, nk=(KR > 2)?nfkblks:nfkblks-1;
+   ATL_CINT KR=rkinf->KR, idr=rkinf->idx;
    ATL_CINT kb=rkinf->kb, nb=rkinf->nb;
-   ATL_INT k;
-
-   ATL_assert(rkinf->idx == -1);  /* don't call w/o more than 1 K block */
+   ATL_INT k, nk=nfkblks;
+   
+   ATL_assert(rkinf->idx != -1);  /* don't call w/o more than 1 K block */
+   if (KR == 0 || idr == -1)
+      nk--;
    rkinf->blk2c = NULL;           /* don't write C out until K loop done */
    for (k=0; k < nk; k++, A += incAk, B += incBk)
    {
@@ -17461,7 +17474,7 @@ void Mjoin(PATL,ammmKM)/* computes full answer for one column-panel of C */
  * If KR==0, 1(use GER), 2(use GER2), then we do a last full rank-KB update
  * where we write the answer out to C, followed by nothing or rank-1/2 update
  */
-   if (KR < 3)
+   if (!KR || idr == -1)
    {
       b2blk(kb, nb, alpha, B, ldb, b);
       Mjoin(PATL,ammmM)(rkinf, a, incam, b, c, inccm, A, C, beta);
@@ -17487,12 +17500,13 @@ void Mjoin(PATL,ammmKM)/* computes full answer for one column-panel of C */
                               ATL_rone, C, rkinf->ldc);
    }
 /*
- * If KR > 2 exists, then final rank-KR update done with amm_rkK, and this
- * version is always the last of K applied, so we write ans out to C 
+ * Otherwise, we are using K-cleanup compatible with original C, so all
+ * full K blocks have been written to workspace, so call K cleaner, and have
+ * it do final write-out of C
  */
    else if (KR) 
    {
-      ATL_assert(krinf->idx != -1);
+      ATL_assert(krinf->idx != -1 && idr != -1);
       krinf->b2blk(KR, nb, alpha, B, ldb, b);
       Mjoin(PATL,ammmM)(krinf, a, incam, b, c, inccm, A, C, beta);
    }
@@ -17579,7 +17593,7 @@ int Mjoin(PATL,ammmNKM)
 {
    rkinfo_t kbinf, krinf;
    size_t szA, szB, szC, incak, incc;
-   ATL_INT mb, nfmb, nb, mbL, kb, incam, RCPYA=0;
+   ATL_INT mb, nfmb, nb, mbL, kb, incam, nfkblks, RCPYA=0;
    TYPE *a, *b, *c;
    void *vp;
    void GetBestKBInfo(rkinfo_t*, rkinfo_t*, enum ATLAS_TRANS, enum ATLAS_TRANS,
@@ -17590,16 +17604,49 @@ int Mjoin(PATL,ammmNKM)
    if (kbinf.idx == -1)
       return(ATL_ammm_rkK(&krinf, N, alpha, A, B, C, beta));
 
-   if (N > kfinf.nb)
+   mb = kbinf.mb;
+   kb = kbinf.kb;
+   nb = kbinf.kb;
+   if (N > nb)
    {
-      incam = kbinf.MB*kbinf.kb;
-      incak = (kbinf.nmuL*kbinf.mu+incam*kbinf.nfmb)*kbinf.kb;
-      szA = ((K+kbinf.kb-1)/kbinf.kb)*incak;
+      incam = mb*kb;        /* must be recomputed for last N col */
+      szA = incam * nfmb;   /* size of col-panel ignoring poss partial M blk */
+      if (out->mbL)         /* for partial blk, make full size so its inc */
+         szA += incam;      /* doesn't have to be specialized */
+      nfkblks = K/kb;
+      szA *= nfkblks;       /* szA excepting last K-panel */
+      kbL = K - nfkblks*kb;
+      if (kbL)
+      {
+         int i = (nfmb*mb == M) ? 0 : 1;
+         incamL = ((kbL+ku-1)/ku)*ku*mb;
+         incamL *= (nfmb+i);
+      }
    }
    else
    {
       incam = incak = 0;
-      szA = kbinf.MB*kbinfo.kb;
+      szA = Mmax(mb, kbinf.MB);
+      if (krinf.idx == -1)
+         szA *= kb;
+      else
+         szA *= Mmax(kb, krinf.kb);
+   }
+   if (krinf.idx != -1)
+   {
+      mb = Mmax(mb, krinf.MB);
+      kb = Mmax(kb, krinf.kb);
+   }
+   if (N > kbinf.nb)
+   {
+      incam = mb*kb;
+      incak = (kbinf.nmuL*kbinf.mu+incam*kbinf.nfmb)*kb;
+      szA = ((K+kb-1)/kb)*incak;
+   }
+   else
+   {
+      incam = incak = 0;
+      szA = mb*kb;
    }
 
    mb = kbinf.MB;
@@ -17616,16 +17663,6 @@ int Mjoin(PATL,ammmNKM)
       nb = Mmax(nb, krinf.NB);
    }
    szC = (nfmb*mb+mbL)*nb;
-   if (N >= krinf.nb)
-   {
-      inca = mb * kb;
-      szA = inca*nfmb + mbL*kb;
-   }
-   else
-   {
-      szA = mb * kb;
-      inca = 0;
-   }
    szB = kb*nb;
    vp = malloc(3*ATL_Cachelen + ATL_MulBySize(szA+szB+szC));
    ATL_assert(vp);
