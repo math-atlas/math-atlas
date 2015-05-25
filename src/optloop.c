@@ -4461,8 +4461,16 @@ OPTLOOP=1
  *       NOTE: we can apply shadow VRC for AVX2.
  */
 #ifdef AVX
-         RC = !(IterativeRedCom());
-         fprintf(fpout, "      RedCompReducesToOnePath=%d\n",RC);
+         if (optloop->LMU_flag & LMU_UNSAFE_RC)
+         {
+            RC = 0;
+            fprintf(fpout, "      RedCompReducesToOnePath=%d\n",0);
+         }
+         else
+         {
+            RC = !(IterativeRedCom());
+            fprintf(fpout, "      RedCompReducesToOnePath=%d\n",RC);
+         }
 #else
 /*
  *       Right now, RC is only supported in AVX 
@@ -4544,7 +4552,7 @@ OPTLOOP=1
 
    if (fpout != stdout && fpout != stderr)
       fclose(fpout);
-
+#if 0   
    if (fpLOOPINFO)
    {
 /*
@@ -4553,6 +4561,8 @@ OPTLOOP=1
       /*KillAllGlobalData();*/
       exit(0);
    }
+#endif
+   return;   
 }
 #if 0
 void PrintLoopInfo()
@@ -5783,7 +5793,7 @@ int CheckMaxMinReduceConstraints(BLIST *scope, short var, short label)
  *    Assumption: if blk starts with active inst LABEL
  */
       ip0 = bp->ainst1;
-      if (ip0->inst[0] == LABEL && ip0->inst[1] == label)
+      if (ip0 && ip0->inst[0] == LABEL && ip0->inst[1] == label)
       {
          for (ip = ip0; ip; ip=ip->next)
          {
@@ -6048,8 +6058,7 @@ int ElimIFBlkWithMin(short minvar)
          }
       }
    }
-   return (0);
-   
+   return (0); 
 }
 
 
@@ -8077,12 +8086,13 @@ int IterativeRedCom()
  *    FIXME: Chicken and egg problem: lp->blocks no longer consistant as blk
  *    may be deleted, but OptimizeLoopControl would use that!!! can't call
  *    invalidate loop control before fixing the loop control!!!
+ *    FIXED: update optloop->blocks just after deleting the blks in DelRcBlk
  */
       lp = optloop; /* optloop info may be changed! */
 #if 0
       PrintLoop(stderr, optloop);
 #endif      
-      //pi0 = FindMovingPointers(lp->tails);
+      /*pi0 = FindMovingPointers(lp->tails);*/
       pi0 = FindMovingPointers(optloop->tails);
       ippu = KillPointerUpdates(pi0,1);
       /*OptimizeLoopControl(lp, 1, 0, NULL);*/

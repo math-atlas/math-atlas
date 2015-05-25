@@ -59,6 +59,7 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "MUTUALLY_ALIGNED" { yylval.sh = 1; return(LOOP_LIST_INT_MU); }
 "FORCE_ALIGN"      { yylval.sh = 2; return(LOOP_LIST_INT_MU); }
 "NO_CLEANUP"   { yylval.sh = 0; return(LOOP_MU); }
+"UNSAFE_RC"   { yylval.sh = 1; return(LOOP_MU); }
 "LOOP"  { return(LOOP_BEGIN); }
 "DOUBLE" { return(DOUBLE); }
 "FLOAT" { return(FLOAT); }

@@ -663,12 +663,15 @@ static void UpdateLoop(struct loopq *lp)
    }
 
 /*
- * Handle markup with param  
+ * Handle markup with no param  
  * ========================
  *    0. NO_CLEANUP
+ *    1. UNSAFE_RC
  */
    if (LMU[0])
       lp->LMU_flag = lp->LMU_flag | LMU_NO_CLEANUP;
+   if (LMU[1])
+      lp->LMU_flag = lp->LMU_flag | LMU_UNSAFE_RC;
    LMU[0] = LMU[1] = 0;
 /*
  * Handle markup with ival param    
@@ -838,7 +841,7 @@ void HandleLoopMU(int which)
  * encoded by which:
  * 
  * 0 : no cleanup 
- * 1 : ... ... ... not defined yet  
+ * 1 : unsafe rc due to exceptions 
  */
 {
    switch(which)
@@ -846,10 +849,9 @@ void HandleLoopMU(int which)
    case 0: 
       LMU[0] = 1;
       break;
-/*  case 1:
+  case 1:
       LMU[1] = 1;
-      break;
-*/      
+      break;    
    default:
       fko_error(__LINE__, "Unknown which=%d, file %s", which, __FILE__);
    }
