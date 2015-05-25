@@ -4220,6 +4220,23 @@ void PrintMovingPtrAnalysis(FILE *fpout)
    KillBitVec(var);
    free(sp);
 }
+int FindNumIFs(BLIST *scope)
+{
+   int count;
+   BLIST *bl;
+   INSTQ *ip;
+
+   count = 0;
+   for (bl = scope; bl; bl = bl->next)
+   {
+      for (ip = bl->blk->ainst1; ip; ip = ip->next)
+      {
+         if (IS_COND_BRANCH(ip->inst[0]))
+            count++;
+      }
+   }
+   return(count);
+}
 
 void FeedbackLoopInfo()
 /*=============================================================================
@@ -4249,7 +4266,7 @@ OPTLOOP=1
       ... ... ... 
  *============================================================================*/
 {
-   int i, j, N, npaths;
+   int i, j, N, npaths, nifs;
    LOOPQ *lp;
    ILIST *il;
    BLIST *bl;
@@ -4372,6 +4389,8 @@ OPTLOOP=1
  */
       npaths = FindNumPaths(optloop);
       fprintf(fpout, "   NUMPATHS=%d\n",npaths);
+      nifs = FindNumIFs(optloop->blocks);
+      fprintf(fpout, "   NUMIFS=%d\n",nifs-1); /* 1 for loop itself */
 
       if (npaths > 1)
       {
@@ -4387,7 +4406,7 @@ OPTLOOP=1
  */
 
          UpdateOptLoopWithMaxMinVars1(optloop);
-
+#if 0
          scal = FindAllScalarVars(optloop->blocks);
          for (N = scal[0], i=1; i <= N; i++)
          {
@@ -4406,36 +4425,29 @@ OPTLOOP=1
             }
          }
          if(scal) free(scal);
+#endif
+         MaxR = ElimMaxIf();
+         MinR = ElimMaxMinIf();
 /*
  *       haven't checked MaxMin... no imp yet 
  *       NOTE: SpeculativeVectorAnalysis also works if there are multiple 
  *       paths still. So, it's a design decision whether we need to apply 
  *       SpeculativeVectorAnalysis ... ... 
  */
-         if (MaxMinR)
-         {
-            VmaxminR = !(SpeculativeVectorAnalysis()); /* the most general */
-/*
- *          Normally, during vectorization, we killed the path tables. 
- *          Must kill all before applying path based analysis again
- */
-            KillPathTable();
-         }
-         else if (MaxR)
+         if (MaxR)
          {
             VmaxR = !(SpeculativeVectorAnalysis()); /*it is the most general */
             KillPathTable();
          }
-         else if (MinR)
+         if (MinR)
          {
             VminR = !(SpeculativeVectorAnalysis()); /*it is the most general */
             KillPathTable();
          }
          else;
 
-         fprintf(fpout, "      MaxMinReducesToOnePath=%d\n",MaxMinR);/*not yet*/
-         fprintf(fpout, "      MaxReducesToOnePath=%d\n",MaxR);
-         fprintf(fpout, "      MinReducesToOnePath=%d\n",MinR);
+         fprintf(fpout, "      MaxEliminatedIfs=%d\n",MaxR);
+         fprintf(fpout, "      MinEliminatedIfs=%d\n",MinR);
 /*
  *       Check whether RedundantComputation Transformation can be applied
  *       NOTE: right now, we can apply RC only for 2 paths! if or if-else
@@ -4517,7 +4529,6 @@ OPTLOOP=1
          fprintf(fpout, "   VECTORIZABLE=%d\n",1);
          if (npaths > 1)
          { 
-            fprintf(fpout, "      MaxMinOK=%d\n",VmaxminR);
             fprintf(fpout, "      MaxOK=%d\n",VmaxR);
             fprintf(fpout, "      MinOK=%d\n",VminR);
             fprintf(fpout, "      RedCompOK=%d\n",Vrc);
@@ -6179,6 +6190,48 @@ int ElimIFBlkWithMax(short maxvar)
    return (0);
    
 }
+
+int ElimMaxIf()
+{
+   int i, j, N;
+   short *scal;
+   LOOPQ *lp;
+   int changes;
+
+   changes = 0;
+   lp = optloop;
+/*
+ * NOTE: find all fp scalar variables
+ */
+   scal = FindAllScalarVars(lp->blocks);   
+   for (N = scal[0], i=1; i <= N; i++)
+   {
+      if (VarIsMax(lp->blocks, scal[i]))
+      {
+         #if 0
+            fprintf(stderr, "Max var = %s\n", STname[scal[i]-1]);  
+         #endif
+         changes += ElimIFBlkWithMax(scal[i]);
+      }
+   }
+   if (scal) free(scal);
+/*
+ * re-construct the CFG 
+ */
+   if (changes)
+   {
+      CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = CFLOOP = 0;
+      InvalidateLoopInfo();
+      bbbase = NewBasicBlocks(bbbase);
+      CheckFlow(bbbase, __FILE__, __LINE__);
+      FindLoops();
+      CheckFlow(bbbase, __FILE__, __LINE__);
+      return (changes);
+   }
+
+   return (0);  
+}
+
 int ElimMaxMinIf()
 {
    int i, j, N;
