@@ -5,6 +5,7 @@
 #include "fko_loop.h"
 
 FILE *fpST=NULL, *fpIG=NULL, *fpLIL=NULL, *fpOPT=NULL, *fpLOOPINFO=NULL;
+FILE *fpLRSINFO=NULL;
 int FUNC_FLAG=0; 
 int DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0, DTx87=0, DTx87d=0;
 int DTnzerods=0, DTabsds=0, DTnzeros=0, DTabss=0;
@@ -46,32 +47,28 @@ void PrintUsageN(char *name)
    fprintf(stderr, 
            "  -I <LIL> <symtab> <misc> : start from intermediate files\n");
    fprintf(stderr, "  -v : verbose output\n");
-   fprintf(stderr, "  -c <LIL> <symtab> <misc> : generate files and quit\n");
    fprintf(stderr, "  -i <file> : generate loop info file and quit\n");
+   fprintf(stderr, "  -ilrs <file> : generate LR spilling info and quit\n");
    fprintf(stderr, "  -o <outfile> : assembly output file\n");
    fprintf(stderr, "  -R [d,n] <directory/name> : restore path & base name\n");
    fprintf(stderr, "  -K 0 : suppress comments\n");
+/*
+ * Majedul: not tested with new program states 
+ */
+   /*fprintf(stderr, "  -c <LIL> <symtab> <misc> : generate files and quit\n");
    fprintf(stderr, "  -t [S,I,L,o] : generate temporary files:\n");
    fprintf(stderr, "     S : dump symbol table to <file>.ST\n");
    fprintf(stderr, "     I : dump interference graph info to <file>.IG\n");
    fprintf(stderr, "     L : dump LIL <file>.L\n");
-   fprintf(stderr, "     o : dump opt sequence to <file>.opt\n");
+   fprintf(stderr, "     o : dump opt sequence to <file>.opt\n");*/
    fprintf(stderr, "  -U <#> : Unroll main loop # of times\n");
    fprintf(stderr, "  -V : Vectorize (SIMD) main loop\n");
    fprintf(stderr, "  -B : Stronger Bet unrolling for SV\n");
    fprintf(stderr, "  -M : Maximum paths to be analyzed in SV\n");
-#if 0
-   fprintf(stderr, 
-"  -Vm [SSV,VRC,VEM]: Vectorize (SIMD) main loop with control flow\n");
-   fprintf(stderr, "     SSV : Speculative vectorization \n");
-   fprintf(stderr, "     VRC : Vector Redundant Computation \n");
-   fprintf(stderr, "     VEM : Vector after elim of control flow for max\n");
-#endif
    fprintf(stderr, 
          "  -p [#]: path to speculate in speculative vectirization\n");
    fprintf(stderr, "  -rc : apply redundant computation to reduce path\n");
    fprintf(stderr, "  -mmr : apply max/min var reduction to reduce path\n");
-   fprintf(stderr, "  -ra : report the status of register assignment back\n");
    fprintf(stderr, "  -W <name> : use cache write-through stores\n");
    fprintf(stderr, "  -P <all/name> <cache level> <dist(bytes)>\n");
    fprintf(stderr, 
@@ -99,6 +96,7 @@ void PrintUsageN(char *name)
 
 struct optblkq *NewOptBlock(ushort bnum, ushort maxN, ushort nopt, ushort flag)
 {
+   int i;
    struct optblkq *op;
    op = calloc(1, sizeof(struct optblkq));
    assert(op);
@@ -116,7 +114,11 @@ struct optblkq *NewOptBlock(ushort bnum, ushort maxN, ushort nopt, ushort flag)
  * added nspill to keep track of resgister spilling (# of live-range which 
  * doesn't get register), -1 means not calculated yet
  */
-   op->nspill = -1;
+   //op->nspill = -1;
+   op->nspill = malloc(NTYPES*sizeof(int));
+   assert(op->nspill);
+   for (i = 0; i < NTYPES; i++)
+      op->nspill[i] = -1;
 
    if (nopt > 0)
    {
@@ -141,6 +143,8 @@ struct optblkq *FindOptBlockUsingDown(struct optblkq *head, ushort bnum)
 
 void KillAllOptBlocks(struct optblkq *head)
 {
+   if (!head) return;
+
    if (head->next)
       KillAllOptBlocks(head->next);
    if (head->down)
@@ -153,6 +157,8 @@ void KillAllOptBlocks(struct optblkq *head)
  */
    if (head->blocks)
       KillBlockList(head->blocks); /*kill blist without killing the blks itself*/
+   if (head->nspill)
+      free(head->nspill);
    free(head);
 }
 
@@ -232,42 +238,46 @@ struct optblkq *SproutNode(struct optblkq *head, struct optblkq *seed)
 /*
  * Majedul: to print out the structure of opttree
  */
-void PrintOptTree(struct optblkq *optree)
+void PrintOptTree(FILE *fpout, struct optblkq *optree)
 {
    int i;
    struct optblkq *opb;
    
    if (optree)
    {
-      fprintf(stderr, "[%d,%d,%d,%d] ",optree->bnum, optree->maxN, 
+      fprintf(fpout, "[%d,%d,%d,%d] ",optree->bnum, optree->maxN, 
             optree->nopt, optree->flag);
       if (optree->flag & IOPT_GLOB)
-         fprintf(stderr, "(GLOBAL) :");
+         fprintf(fpout, "(GLOBAL) :");
       else if (optree->flag & IOPT_SCOP)
-         fprintf(stderr, "(%s) :", PrintBlockList(optree->blocks));
+         fprintf(fpout, "(%s) :", PrintBlockList(optree->blocks));
       else if (!optree->flag)
-         fprintf(stderr, "(OPTLOOP) :");
+         fprintf(fpout, "(OPTLOOP) :");
       for(i=0; i<optree->nopt; i++)
-         fprintf(stderr, "%s ", optabbr[optree->opts[i]]);
-      fprintf(stderr, "(%d)\n", optree->nspill);
+         fprintf(fpout, "%s ", optabbr[optree->opts[i]]);
+      
+      fprintf(fpout, "(");
+      for (i=0; i < NTYPES; i++)
+         fprintf(fpout, "%d,", optree->nspill[i]);
+      fprintf(fpout, ")\n");
    }
 
    if (optree->next)
    {
-      fprintf(stderr, " -> ");
-      PrintOptTree(optree->next);
+      fprintf(fpout, " -> ");
+      PrintOptTree(fpout, optree->next);
    }
    if (optree->down)
    {
-      fprintf(stderr, "%d -^ ",optree->bnum);
-      PrintOptTree(optree->down);
-      fprintf(stderr, " %d ^  ",optree->bnum);
+      fprintf(fpout, "%d -^ ",optree->bnum);
+      PrintOptTree(fpout, optree->down);
+      fprintf(fpout, " %d ^  ",optree->bnum);
    }
    if (optree->ifblk)
    {
-      fprintf(stderr, "%d ? ",optree->bnum);
-      PrintOptTree(optree->ifblk);
-      fprintf(stderr, " %d -?  ",optree->bnum);
+      fprintf(fpout, "%d ? ",optree->bnum);
+      PrintOptTree(fpout, optree->ifblk);
+      fprintf(fpout, " %d -?  ",optree->bnum);
    }
 }
 
@@ -367,6 +377,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
 {
    char ln[256];
    FILE *fpin, *fpout;
+   FILE **fpp;
    char *fin=NULL, *fout=NULL;
    struct optblkq *obq=NULL, *op;
    struct ptrinfo *pf, *pfb=NULL, *pf0, *pfK, *pfP, *aeb=NULL;
@@ -374,12 +385,6 @@ struct optblkq *GetFlagsN(int nargs, char **args,
    struct idlist  *id, *idb=NULL, *idP, *idK;
    char *sp, *rpath=NULL, *rname=NULL;
    int i, j, k, n;
-#if 0
-/*
- * set optimized 2d array access as default for testing
- */
-   FKO_FLAG |= IFF_OPT2DPTR; /* optimize 2d array access */
-#endif
 
    for (i=1; i < nargs; i++)
    {
@@ -562,14 +567,22 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             FKO_FLAG |= IFF_GENINTERM;
             break;
          case 'i':
+            if (!args[i][2])
+               fpp = &fpLOOPINFO;
+            else if (args[i][2] && args[i][2]=='l' && args[i][3]=='r' 
+                     && args[i][4]=='s')
+               fpp = &fpLRSINFO;
+            else PrintUsageN(args[0]);
+
             i++;
             if (!strcmp(args[i], "stderr"))
-               fpLOOPINFO = stderr;
+               *fpp = stderr;
             else if (!strcmp(args[i], "stdout"))
-               fpLOOPINFO = stdout;
+               *fpp = stdout;
             else
-               fpLOOPINFO = fopen(args[i], "w");
-            assert(fpLOOPINFO);
+               *fpp = fopen(args[i], "w");
+            assert(*fpp);
+
             break;
          case 'I':
             fpIG = fpST = fpLIL = fpOPT = (FILE*) 1;
@@ -691,10 +704,6 @@ ERR:
             if (args[i][2] && args[i][2] == 'c')
             {
                STATE1_FLAG |= IFF_ST1_RC; 
-            }
-            else if (args[i][2] && args[i][2] == 'a')
-            {
-               FKO_FLAG |= IFF_RA_ONLY; 
             }
             else
             {
@@ -1400,7 +1409,7 @@ static void ReadState0MiscFromFile(char *name)
 
 }
 
-void KillAllGlobalData()
+void KillAllGlobalData(struct optblkq *optblks)
 /*
  * This function is called at the exit of the program to free all memory, 
  * by this way, we can check whether there is any memory leak using Valgrind.
@@ -1410,12 +1419,12 @@ void KillAllGlobalData()
    extern struct locinit *ParaDerefQ;
    extern struct locinit *LIhead;
 
+   KillAllOptBlocks(optblks); /* delete optblkq*/ 
    if (ParaDerefQ)
    {
       KillAllLocinit(ParaDerefQ);
       ParaDerefQ = NULL;
    }
-   
    KillAllLI(LIhead);
    LIhead = NULL;
    
@@ -2270,7 +2279,6 @@ int DoOptBlock(BLIST *gscope, BLIST *lscope, struct optblkq *op)
 {
    int i, j, k, nc, tnc=0, scstate;
    int maxN;
-   int nspill;
    struct optblkq *dp;
    struct optblkq *obp, *obp0, *obp1;
    BLIST *scope = NULL;
@@ -2338,7 +2346,8 @@ int DoOptBlock(BLIST *gscope, BLIST *lscope, struct optblkq *op)
 #else
    else if (!op->maxN)
    {
-      nc = DoOptList(op->nopt, op->opts, scope, scstate, &nspill);
+      nc = DoOptList(op->nopt, op->opts, scope, scstate, op->nspill);
+#if 0      
       for (j=0; j < op->nopt; j++)
       {
          if (op->opts[j] == RegAsg )
@@ -2347,6 +2356,7 @@ int DoOptBlock(BLIST *gscope, BLIST *lscope, struct optblkq *op)
             break;
          }
       }
+#endif      
    }
 #endif
 /*
@@ -2359,8 +2369,8 @@ int DoOptBlock(BLIST *gscope, BLIST *lscope, struct optblkq *op)
       maxN = op->maxN;      
       for (i=0; i < maxN; i++)
       {
-         nc = DoOptList(op->nopt, op->opts, scope, scstate, &nspill);
-#if 1
+         nc = DoOptList(op->nopt, op->opts, scope, scstate, op->nspill);
+#if 0
 /*
  *       updated nspill inside loop, overwirtten with latest nspill everytime
  *       NOTE: updated right after the DoOptList function call, may be optimized
@@ -2506,12 +2516,14 @@ int PerformOpt(int SAVESP)
  * Returns 0 on success, non-zero on failure
  */
 {
-   int nspill;
+   int *nspill;
    BLIST *bl, *lbase;
    BBLOCK *bp;
    int i, j, KeepOn, k;
    extern BBLOCK *bbbase;
 
+   nspill = malloc(NTYPES*sizeof(int));
+   assert(nspill);
 /*
  * Perform optimizations on special loop first
  */
@@ -2521,7 +2533,7 @@ int PerformOpt(int SAVESP)
       optrec[noptrec++] = GlobRegAsg;
       do
       {
-         j = DoScopeRegAsg(optloop->blocks, 1, &i, &nspill);   
+         j = DoScopeRegAsg(optloop->blocks, 1, &i, nspill);   
          KeepOn = j != i;
          KeepOn &= DoCopyProp(optloop->blocks); 
          if (KeepOn)
@@ -2542,7 +2554,7 @@ int PerformOpt(int SAVESP)
 /*
  *    Do reg asg on whole function
  */
-      j = DoScopeRegAsg(lbase, 2, &i, &nspill);   
+      j = DoScopeRegAsg(lbase, 2, &i, nspill);   
       KeepOn = DoCopyProp(lbase);
       if (KeepOn)
         fprintf(stderr, "\n\nREAPPLYING GLOBAL OPTIMIZATIONS!!\n\n");
@@ -3451,34 +3463,68 @@ void GenAssenblyApplyingOpt4SSV(FILE *fpout, struct optblkq *optblks,
 }
 #endif
 
-void PrintLValSpill(struct optblkq *optblks)
+void FeedbackLValSpill(FILE *fpout, struct optblkq *optblks)
 {
-   int optc, globc, tc;
-   FILE *fpout=stdout;
+   int i;
    struct optblkq *op;
-/*
- * we are only examining the next to find out the nspill; may need to explore
- * down and ifblk if those are used later!
- */
+   const int nreg = 6;
+   char *treg[] = {"i","f", "d", "vi", "vf", "vd"}; 
+   enum tregs { R_INT, R_FLOAT, R_DOUBLE, R_VINT, R_VFLOAT, R_VDOUBLE}; 
+   int ropt[nreg];
+   int rglob[nreg];
+   int nropt, nrglob, tnr;
+
    for (op=optblks; op; op=op->next)
    {
-      if (!op->flag && op->nspill != -1) /* optloop with ra optimization */
-      {
-         optc = op->nspill;
+      if (!op->flag && op->opts[0] == RegAsg) /* optloop */
+      {  
+         /*int,short,char */
+         ropt[R_INT] = op->nspill[T_INT] + op->nspill[T_SHORT] + 
+                       op->nspill[T_CHAR];
+         ropt[R_FLOAT] = op->nspill[T_FLOAT];
+         ropt[R_DOUBLE] = op->nspill[T_DOUBLE];
+         ropt[R_VINT] = op->nspill[T_VINT];
+         ropt[R_VFLOAT] = op->nspill[T_VFLOAT];
+         ropt[R_VDOUBLE] = op->nspill[T_VDOUBLE];
+         nropt = ropt[R_INT] + ropt[R_FLOAT] + ropt[R_DOUBLE] + ropt[R_VINT] 
+                 + ropt[R_VFLOAT] + ropt[R_VDOUBLE];
          break;
       }
    }
+   assert(op);
 /*
  * last one must be global scope
  */
    for(; op->next; op=op->next);
-   globc = op->nspill;
+   
+   rglob[R_INT] = op->nspill[T_INT] + op->nspill[T_SHORT] + op->nspill[T_CHAR];
+   rglob[R_FLOAT] = op->nspill[T_FLOAT];
+   rglob[R_DOUBLE] = op->nspill[T_DOUBLE];
+   rglob[R_VINT] = op->nspill[T_VINT];
+   rglob[R_VFLOAT] = op->nspill[T_VFLOAT];
+   rglob[R_VDOUBLE] = op->nspill[T_VDOUBLE];
+   tnr = nrglob = rglob[R_INT] + rglob[R_FLOAT] + rglob[R_DOUBLE] 
+      + rglob[R_VINT] + rglob[R_VFLOAT] + rglob[R_VDOUBLE];
+/*
+ * print all info
+ */
+   fprintf(fpout, "LRSPILLS=%d\n",tnr);
+   if (tnr)
+   {
+      fprintf(fpout, "   OPTLOOP: total=%d",nropt);
+      if (nropt)
+      {
+         for (i=0; i < nreg; i++)
+            if(ropt[i]) fprintf(fpout, " %s=%d", treg[i], ropt[i]);
+      }
+      fprintf(fpout, "\n");
 
-   tc = globc + optc;
-
-   fprintf(fpout, "TOTAL LIVE-RANGE SPILLING: %d\n", tc);
-   fprintf(fpout, " OPTLOOP=%d\n", optc);
-   fprintf(fpout, " GLOBAL=%d\n", globc);
+      fprintf(fpout, "   GLOBAL: total=%d",nrglob);
+      for (i=0; i < nreg; i++)
+         if(rglob[i]) fprintf(fpout, " %s=%d", treg[i], rglob[i]);
+      fprintf(fpout, "\n");
+   }
+   
 }
 
 void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks,
@@ -3529,19 +3575,18 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks,
 /*
  * if -ra is applied, send back the live-range spilling info and die/return
  */
-   if (FKO_FLAG & IFF_RA_ONLY)
+   if (fpLRSINFO)
    {
-      PrintLValSpill(optblks);
-      if(ParaDerefQ) KillAllLocinit(ParaDerefQ);
-      ParaDerefQ=NULL;
-      KillAllBasicBlocks(bbbase);
-      bbbase=NULL;
+      FeedbackLValSpill(stdout, optblks);
+      /*KillAllOptBlocks(optblks);*/ /* kill in KillAllGlobalData */
+#if 0
+      fprintf(stdout, "\n Scope by scope:\n");
+      fprintf(stdout, "------------------\n");
+      PrintOptTree(stdout, optblks);
+#endif
       return;
    }
 
-#if 0
-   PrintOptTree(optblks);
-#endif
 
 #if 0
    fprintf(stderr, "BVEC after OPTN\n\n");
@@ -3862,6 +3907,7 @@ int main(int nargs, char **args)
    if (fpLOOPINFO)
    {
       FeedbackLoopInfo();
+      KillAllGlobalData(optblks); 
       exit(0);
    }
 #endif
@@ -3910,7 +3956,7 @@ int main(int nargs, char **args)
    if (!optloop)
    {
       GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
-      KillAllGlobalData(); 
+      KillAllGlobalData(optblks); 
       return(0);
    }
 
@@ -4315,7 +4361,7 @@ int main(int nargs, char **args)
             exit(0);
          #else
             GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
-            KillAllGlobalData(); 
+            KillAllGlobalData(optblks); 
          #endif
 #endif         
 

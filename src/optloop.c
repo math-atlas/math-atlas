@@ -4550,7 +4550,7 @@ OPTLOOP=1
 /*
  *    Just to kill every thing
  */
-      KillAllGlobalData();
+      /*KillAllGlobalData();*/
       exit(0);
    }
 }

@@ -1388,7 +1388,12 @@ int DoIGRegAsg(int N, IGNODE **igs, int *nspill)
    if (!FKO_BVTMP) FKO_BVTMP = NewBitVec(TNREG);
    iv = FKO_BVTMP;
 
-   spill = 0;
+/*
+ * init nspills with 0
+ */
+   for (i=0; i < NTYPES; i++)
+      nspill[i] = 0;
+
    for (i=0; i < N; i++)
    {
       ig = igs[i];
@@ -1423,7 +1428,7 @@ int DoIGRegAsg(int N, IGNODE **igs, int *nspill)
       {
          fko_warn(__LINE__, "NO FREE REGISTER FOR LR %d of VAR %s!!!\n", 
                ig->ignum, STname[ig->var-1]);
-         spill++;
+         nspill[FLAG2PTYPE(STflag[ig->var-1])]++; /* update spilling */
       }
 #else
       {
@@ -1432,7 +1437,6 @@ int DoIGRegAsg(int N, IGNODE **igs, int *nspill)
       }
 #endif
    }
-   *nspill = spill;
    return(iret);
 }
 
