@@ -120,7 +120,6 @@
 #define IFF_3DNOWW       0x200 /* use 3DNow! for L1 write prefetch */
 #define IFF_VERBOSE      0x400 /* verbose output */
 #define IFF_OPT2DPTR     0x800 /* optimize 2d array access with min reg & ptr */
-#define IFF_RA_ONLY      0x1000 /* report register assignment and NOASS */
 /*
  * Majedul: 
  *    As we will introduce more and more new optimizations, I will keep 

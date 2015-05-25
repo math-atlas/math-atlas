@@ -166,6 +166,7 @@ struct blist
  * flag for Loop markups
  */
 #define LMU_NO_CLEANUP  0x1
+#define LMU_UNSAFE_RC  0x2
 /*
  * NOTE: when even we add/update any element of this data structure, we need to
  * check following functions whether it affects or not:
@@ -370,6 +371,7 @@ struct iglist
 enum FKOOPT {DoNothing, RegAsg, CopyProp, GlobRegAsg, UselessJmpElim, 
              UselessLabElim, BranchChain, EnforceLoadStore, 
              RemoveOneUseLoads, LastUseLoadRemoval, ReverseCopyProp, MaxOpt};
+
 struct optblkq
 {
    enum FKOOPT *opts;    /* list of ordered opts to perform                  */
@@ -385,9 +387,9 @@ struct optblkq
    ushort flag;
    BLIST *blocks;        /* added this to specify the scope, an optimization 
                             is applied.. only used when flag is 0            */
-   int nspill;           /* number of spilling after this optblk is done, 
-                            more precisely, number of live-range which don't get
-                            register calculated in RegAsg; 
+   int *nspill;   /* number of spilling in each type after this optblk 
+                             is done, more precisely, number of live-range 
+                             which don't get register calculated in RegAsg; 
                             -1 if not related to RegAsg */
 };
 

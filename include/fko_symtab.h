@@ -1,6 +1,8 @@
 #ifndef FKO_SYMTAB_H
 #define FKO_SYMTAB_H
 
+#define NTYPES 9           /* number of types suported here */
+
 #define T_INT        0x0
 #define T_SHORT      0x1
 #define T_FLOAT      0x2
