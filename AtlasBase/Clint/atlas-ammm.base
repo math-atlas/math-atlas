@@ -491,7 +491,7 @@ struct rkinfo
    ablk2cmat_t blk2c;
    ATL_INT nfmb, nfnb, nfkb;      /* FLOOR(D/db) */
    short idx;
-   unsigned short mbL, nb;        /* D-nfdb*db */
+   unsigned short mbL, nbL, kbL;  /* D-nfdb*db */
    unsigned short MBL, NBL, KBL;  /* nmu*mu, nnu*nu, nku*ku */
    unsigned short mb, nb, kb;     /* blk fact, always mul of unrolling */
    unsigned short nmu, nnu, nmuL, nnuL; /* # U for normal & last blks */
@@ -16378,11 +16378,15 @@ int Mjoin(PATL,tGetAmmmInfo)
 static INLINE void FillInRankKInf
    (rkinfo_t *out, int idx, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB, 
     ATL_CSZT M, ATL_CSZT N, ATL_CSZT K, size_t lda, size_t ldb, size_t ldc,
-    const SCALAR alpha, const SCALAR beta)
+    const SCALAR alpha, const SCALAR beta, int mb, int nb)
 {
-   int mb = ATL_AMM_MBs[idx], nb = ATL_AMM_NBs[idx], kb = ATL_AMM_KBs[idx];
+   int kb = ATL_AMM_KBs[idx];
    const int mu=ATL_AMM_MUs[idx], nu=ATL_AMM_NUs[idx], ku=ATL_AMM_KUs[idx];
 
+   if (!mb)
+      mb = ATL_AMM_MBs[idx];
+   if (!nb)
+      nb = ATL_AMM_NBs[idx];
    out->nfmb = M/mb;
    out->nfnb = N/nb;
    out->nfkb = K/kb;
@@ -16395,6 +16399,8 @@ static INLINE void FillInRankKInf
    out->mb = mb;
    out->nb = nb;
    out->kb = kb;
+   out->nmu = mb / mu;
+   out->nnu = nb / nu;
    out->amm = ATL_AMM_KERN_RKK[idx];
    out->flag = ATL_AMM_KFLAG[idx];
    out->mbL = M - out->nfmb*mb;
@@ -16402,35 +16408,34 @@ static INLINE void FillInRankKInf
    out->kbL = K - out->nfkb*kb;
    out->nmuL = (out->mbL+mu-1)/mu;
    out->nnuL = (out->nbL+nu-1)/nu;
-   out->nkuL = (out->kbL+ku-1)/ku;
    out->MBL = out->nmuL*mu;
    out->NBL = out->nnuL*nu;
-   out->KBL = out->nkuL*ku;
+   out->KBL = ((out->kbL+ku-1)/ku)*ku;
    if (TA == AtlasNoTrans)
    {
       out->a2blk  = ATL_RKK_AT2BLK_a1[idx];
       out->incAm = mb;
-      out->incAk = mb * (lda SHIFT);
+      out->incAk = kb * (lda SHIFT);
    }
    #ifdef TCPLX
    else if (TA == AtlasConj)
    {
       out->a2blk  = ATL_RKK_AH2BLK_a1[idx];
       out->incAm = mb+mb;
-      out->incAk = mb * (lda+lda);
+      out->incAk = kb * (lda+lda);
    }
    else if (TA == AtlasConjTrans)
    {
       out->a2blk  = ATL_RKK_AC2BLK_a1[idx];
       out->incAm = mb*(lda+lda);
-      out->incAk = mb+mb;
+      out->incAk = kb+kb;
    }
    #endif
    else
    {
       out->a2blk  = ATL_RKK_A2BLK_a1[idx];
       out->incAm = mb*(lda SHIFT);
-      out->incAk = mb SHIFT;
+      out->incAk = kb SHIFT;
    }
 
    if (SCALAR_IS_ZERO(beta))
@@ -16573,10 +16578,15 @@ void GetBestKBInfo
             KR = kr;
          }
       }
+      idx = ibest;
+      if (KR > 2)
+         idr = KR-3;
+      else
+         idr = (KR == 0) ? -2 : -1;
    }
    out->idx = idx;
    if (idx != -1)
-      FillInRankKInf(out, idx, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta);
+      FillInRankKInf(out, idx, TA, TB, M, N, K, lda, ldb, ldc,alpha,beta,0,0);
    outR->idx = idr;
    if (idr != -2)
    {
@@ -16629,23 +16639,21 @@ void GetBestKBInfo
                idr = nidr;
          }
       }
-      if (idr > 0)
+      if (idr >= 0)
       {
-         FillInRankKInf(outR, idr, TA, TB, M, N, KR, lda, ldb, ldc,alpha,beta);
-         if (idx != -1)  /* override K-clean mb/nb wt main kernel's! */
+/*
+ *       If we want to use this, will need to change amminstall to ensure
+ *       this.  For now, simply assert it so we can assume compatible C
+ */
+         if (idx > 0)
          {
-            int u, b;
-            b = outR->mb = out->mb;
-            u = outR->mu;
-            outR->nmu = (b+u-1)/u;
-            outR->MB = outR->nmu * u;
-            b = outR->mbL = out->mbL;
-            outR->nmuL = (b+u-1)/u;
-            b = outR->nb = out->nb;
-            u = outR->nu;
-            outR->nnu = (b+u-1)/u;
-            outR->NB = outR->nnu * u;
+            FillInRankKInf(outR, idr, TA, TB, M, N, KR, lda, ldb, ldc, 
+                           alpha, beta, out->mb, out->nb);
+            ATL_assert(outR->mu == mu && outR->nu == nu);
          }
+         else
+            FillInRankKInf(outR, idr, TA, TB, M, N, KR, lda, ldb, ldc, 
+                           alpha, beta, 0, 0);
       }
    }
 }
@@ -17455,13 +17463,26 @@ void Mjoin(PATL,ammmKM)/* computes full answer for one column-panel of C */
    const size_t ldb=rkinf->ldb;
    cm2am_t b2blk=rkinf->b2blk;
    ablk2cmat_t blk2c=rkinf->blk2c;
-   ATL_CINT KR=rkinf->KR, idr=rkinf->idx;
-   ATL_CINT kb=rkinf->kb, nb=rkinf->nb;
-   ATL_INT k, nk=nfkblks;
+   ATL_CINT idr=rkinf->idx;
+   ATL_CINT kb=rkinf->kb, kbL=rkinf->kbL, nb=rkinf->nb;
+   ATL_INT k, nk=rkinf->nfkb, DOPEEL=1;
    
    ATL_assert(rkinf->idx != -1);  /* don't call w/o more than 1 K block */
-   if (KR == 0 || idr == -1)
+/*
+ * The last block must be peeled to write C unless the last block is actually
+ * a partial K-block, which isn't handled here anyway.  We also must peel and
+ * write C if the K-block doesn't use the same C storage, which requires
+ * an additional write to the original C to handle.  So, the only time we
+ * don't peel an iteration is when the K-cleaner exists, and uses the 
+ * the same format as the mainline K
+ */
+   if (kbL == 0 || idr == -1) /* no K-clean or GER/GER2 clean forces peel */
       nk--;
+   else if (krinf->mu != rkinf->mu || krinf->nu != rkinf->nu)
+      nk--;
+   else
+      DOPEEL=0;
+
    rkinf->blk2c = NULL;           /* don't write C out until K loop done */
    for (k=0; k < nk; k++, A += incAk, B += incBk)
    {
@@ -17469,46 +17490,44 @@ void Mjoin(PATL,ammmKM)/* computes full answer for one column-panel of C */
       Mjoin(PATL,ammmM)(rkinf, a, incam, b, c, inccm, A, C, beta);
       a += incak;
    }
-   rkinf->blk2c = blk2c;
+   rkinf->blk2c = blk2c;  /* next ammmM call should write to C */
 /*
- * If KR==0, 1(use GER), 2(use GER2), then we do a last full rank-KB update
- * where we write the answer out to C, followed by nothing or rank-1/2 update
+ * If we peeled to write C, do that along with last full M block
  */
-   if (!KR || idr == -1)
+   if (DOPEEL)
    {
       b2blk(kb, nb, alpha, B, ldb, b);
       Mjoin(PATL,ammmM)(rkinf, a, incam, b, c, inccm, A, C, beta);
       a += incak;
       B += incBk;
       A += incAk;
-/*
- *    For rank1/2 update, BETA has already been applied
- */
-      if (KR == 1)       /* final rank-1 update applied directly to C */
-      {
-         #ifdef TCPLX
-            ATL_CINT incA = (TA==AtlasNoTrans || TA==AtlasConj) ? 1:rkinf->lda;
-            ATL_CINT incB = (TA==AtlasNoTrans || TA==AtlasConj) ? ldb:1;
-         #else
-            ATL_CINT incA = (TA==AtlasNoTrans) ? 1:rkinf->lda;
-            ATL_CINT incB = (TA==AtlasNoTrans) ? ldb:1;
-         #endif
-         Mjoin(PATL,ger)(M, nb, A, incA, B, incB, C, rkinf->ldc);
-      }
-      else if (KR == 2)  /* final rank-2 update applied directly to C */
-         Mjoin(PATL,ammm_rk2)(TA, TB, M, N, alpha, A, rkinf->lda, B, ldb, 
-                              ATL_rone, C, rkinf->ldc);
    }
 /*
- * Otherwise, we are using K-cleanup compatible with original C, so all
- * full K blocks have been written to workspace, so call K cleaner, and have
- * it do final write-out of C
+ * For rank1/2 update, BETA has already been applied by above peeled writeout
  */
-   else if (KR) 
+   if (kbL == 1)       /* final rank-1 update applied directly to C */
    {
-      ATL_assert(krinf->idx != -1 && idr != -1);
-      krinf->b2blk(KR, nb, alpha, B, ldb, b);
-      Mjoin(PATL,ammmM)(krinf, a, incam, b, c, inccm, A, C, beta);
+      #ifdef TCPLX
+         ATL_CINT incA = (TA==AtlasNoTrans || TA==AtlasConj) ? 1:rkinf->lda;
+         ATL_CINT incB = (TA==AtlasNoTrans || TA==AtlasConj) ? ldb:1;
+      #else
+         ATL_CINT incA = (TA==AtlasNoTrans) ? 1:rkinf->lda;
+         ATL_CINT incB = (TA==AtlasNoTrans) ? ldb:1;
+      #endif
+      Mjoin(PATL,ger)(M, nb, A, incA, B, incB, C, rkinf->ldc);
+   }
+   else if (kbL == 2)  /* final rank-2 update applied directly to C */
+      Mjoin(PATL,ammm_rk2)(TA, TB, M, N, alpha, A, rkinf->lda, B, ldb, 
+                           ATL_rone, C, rkinf->ldc);
+/*
+ * Otherwise, call ammmM with K cleaning kern, and write out final C
+ */
+   else if (kbL) 
+   {
+      ATL_assert(idr != -1);
+      krinf->b2blk(kbL, nb, alpha, B, ldb, b);
+      Mjoin(PATL,ammmM)(krinf, a, incam, b, c, inccm, A, C, 
+                        (DOPEEL)?ATL_rone:beta);
    }
 }
 
@@ -17526,17 +17545,17 @@ static int ATL_ammm_rkK
 {
    const size_t ldb=krinf->ldb, ldc=krinf->ldc;
    ATL_CINT NB=krinf->nb, mu=krinf->mu, MB=krinf->mb, kb=krinf->kb;
-   ATL_INT mbL, inca, j;
+   ATL_CINT mbL=krinf->mbL, nfnb=krinf->nfnb;
+   ATL_INT inca, j;
    const size_t incC=NB*ldc, incBn=krinf->incBn;
    size_t szA, szB, szC;
    cm2am_t b2blk = krinf->b2blk;
    TYPE *a, *b, *c;
    void *vp;
 
-   mbL = krinf->nmuL * mu;
    if (N > NB)
    {
-      szA = MB*krinf->nfmb + mbL*kb;
+      szA = (MB*krinf->nfmb + krinf->MBL)*kb;
       inca = MB*kb;
    }
    else
@@ -17544,9 +17563,8 @@ static int ATL_ammm_rkK
       szA = MB*kb;
       inca = 0;
    }
-   szB = krinf->NB*kb;
-   szC = Mmax(MB,mbL);
-   szC *= krinf->NB;
+   szB = NB*kb;
+   szC = MB*NB;
    vp = malloc(3*ATL_Cachelen + ATL_MulBySize(szA+szB+szC));
    ATL_assert(vp);
    if (!vp)
@@ -17557,21 +17575,27 @@ static int ATL_ammm_rkK
    c = b + szB;
    c = ATL_AlignPtr(c);
 
-   for (j=0; j < N; j += NB, C += incC, B += incBn)
+   if (nfnb)
    {
-      ATL_INT nb = N-j;
-      if (nb >= NB)
-         nb = NB;
-      else
-      {
-         const int nu=krinf->nu;
-         krinf->nnu = (nb+nu-1)/nu;
-         krinf->nb = nb;
-      }
-      b2blk(kb, nb, alpha, B, ldb, b);
+      b2blk(kb, NB, alpha, B, ldb, b);
       Mjoin(PATL,ammmM)(krinf, a, inca, b, c, 0, A, C, beta);
       krinf->a2blk = NULL;
+      C += incC;
+      B += incBn;
+      for (j=1; j < nfnb; j++, C += incC, B += incBn)
+      {
+         b2blk(kb, NB, alpha, B, ldb, b);
+         Mjoin(PATL,ammmM)(krinf, a, inca, b, c, 0, A, C, beta);
+      }
    }
+   if (krinf->nbL)
+   {
+      b2blk(kb, krinf->nbL, alpha, B, ldb, b);
+      krinf->nb = krinf->nbL;
+      krinf->nnu = krinf->nnuL;
+      Mjoin(PATL,ammmM)(krinf, a, inca, b, c, 0, A, C, beta);
+   }
+   free(vp);
 }
 
 int Mjoin(PATL,ammmNKM)
@@ -17592,76 +17616,52 @@ int Mjoin(PATL,ammmNKM)
 )
 {
    rkinfo_t kbinf, krinf;
-   size_t szA, szB, szC, incak, incc;
-   ATL_INT mb, nfmb, nb, mbL, kb, incam, nfkblks, RCPYA=0;
+   size_t szA, szB, szC, incak, inccm;
+   ATL_INT mb, nfmb, nb, mbL, kb, kbL, incam, nfkb, RCPYA=0;
+   ATL_INT nmblks, nkblks;
    TYPE *a, *b, *c;
    void *vp;
    void GetBestKBInfo(rkinfo_t*, rkinfo_t*, enum ATLAS_TRANS, enum ATLAS_TRANS,
                       ATL_CSZT, ATL_CSZT, ATL_CSZT, size_t, size_t, size_t,
                       const SCALAR, const SCALAR);
 
+   if (K < 3)
+   {
+      Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+      return(0);
+   }
    GetBestKBInfo(&kbinf, &krinf, TA, TB, M, N, K, lda, ldb, ldc, alpha, beta);
    if (kbinf.idx == -1)
       return(ATL_ammm_rkK(&krinf, N, alpha, A, B, C, beta));
 
    mb = kbinf.mb;
    kb = kbinf.kb;
-   nb = kbinf.kb;
-   if (N > nb)
-   {
-      incam = mb*kb;        /* must be recomputed for last N col */
-      szA = incam * nfmb;   /* size of col-panel ignoring poss partial M blk */
-      if (out->mbL)         /* for partial blk, make full size so its inc */
-         szA += incam;      /* doesn't have to be specialized */
-      nfkblks = K/kb;
-      szA *= nfkblks;       /* szA excepting last K-panel */
-      kbL = K - nfkblks*kb;
-      if (kbL)
-      {
-         int i = (nfmb*mb == M) ? 0 : 1;
-         incamL = ((kbL+ku-1)/ku)*ku*mb;
-         incamL *= (nfmb+i);
-      }
-   }
-   else
-   {
-      incam = incak = 0;
-      szA = Mmax(mb, kbinf.MB);
-      if (krinf.idx == -1)
-         szA *= kb;
-      else
-         szA *= Mmax(kb, krinf.kb);
-   }
-   if (krinf.idx != -1)
-   {
-      mb = Mmax(mb, krinf.MB);
-      kb = Mmax(kb, krinf.kb);
-   }
-   if (N > kbinf.nb)
-   {
-      incam = mb*kb;
-      incak = (kbinf.nmuL*kbinf.mu+incam*kbinf.nfmb)*kb;
-      szA = ((K+kb-1)/kb)*incak;
-   }
-   else
-   {
-      incam = incak = 0;
-      szA = mb*kb;
-   }
-
-   mb = kbinf.MB;
-   nfmb = kbinf.nfmb;
-   nb = kbinf.NB;
+   nb = kbinf.nb;
    mbL = kbinf.mbL;
    kb = kbinf.kb;
-   if (krinf.idx != -1)
+   kbL = kbinf.kbL;
+   nfmb = kbinf.nfmb;
+   nfkb = kbinf.nfkb;
+   nmblks = (mbL) ? nfmb+1 : nfmb;
+   nkblks = (kbL) ? nfkb+1 : nfkb;
+   if (K > kb)
+      inccm = mb*nb;
+   else
+      inccm = 0;
+   if (N > nb)
    {
-      RCPYA = krinf.a2blk != kbinf.a2blk;
-      nfmb = Mmax(nfmb, krinf.nfmb);
-      mb = Mmax(mb, krinf.MB);
-      mbL = Mmax(mbL, krinf.mbL);
-      nb = Mmax(nb, krinf.NB);
+      incam = mb*kb;        
+      incak = incam*nmblks;
+      szA = incak * nkblks;
    }
+   else
+   {
+      incam = incak = 0;
+      szA = mb * kb;
+   }
+
+   if (krinf.idx >= 0)
+      RCPYA = krinf.a2blk != kbinf.a2blk;
    szC = (nfmb*mb+mbL)*nb;
    szB = kb*nb;
    vp = malloc(3*ATL_Cachelen + ATL_MulBySize(szA+szB+szC));
@@ -17687,7 +17687,7 @@ int Mjoin(PATL,ammmNKM)
             kbinf.nnu = (nb+nu-1)/nu;
             kbinf.nb = nb;
          }
-         Mjoin(PATL,ammmKM)(&kbinf, &krinf, nfkblks, a, inca, incak, b,
+         Mjoin(PATL,ammmKM)(&kbinf, &krinf, nfkblks, a, incam, incak, b,
                             c, inccm, A, B, C, TA, TB, M, N, alpha, beta);
       }
    }
