@@ -16514,7 +16514,7 @@ void Mjoin(PATL,GetBestKBInfo)
    int KR;         /* K%kb */
    int i;
 
-   #if 0
+   #if 1
    if (K <= ATL_AMM_MAXKB)
    {
       idx = -1;
@@ -16534,6 +16534,8 @@ void Mjoin(PATL,GetBestKBInfo)
          ATL_CINT nu = ATL_AMM_NUs[i], nr = N - (N/nu)*nu;
          double nfcblks, tkr, tpan, tim, tpe;
 
+         nfcblks = nmb;
+         nfcblks *= nnb;
          if (kr > 2)
          {
             tkr = ATL_rkAMM_TIME[kr-3];
@@ -16581,9 +16583,12 @@ void Mjoin(PATL,GetBestKBInfo)
             KR = kr;
          }
       }
-#if 1
+#if 0
       ibest = 1;
       KR = K%4;
+#elif 0
+      ibest = 17;
+      KR = K%20;
 #endif
       idx = ibest;
       if (KR > 2)
@@ -17408,6 +17413,8 @@ int Mjoin(PATL,GetSqMNAmmmInfo)
 void Mjoin(PATL,ammmM) /* C <= beta*C + A*B, B/C nb-wide colpan */
 (
    rkinfo_t *rkinf,
+   int nb,             /* # of cols to do */
+   int nnu,            /* CEIL(NB/nu) */
    ammkern_t amm,      /* amm kern to use for this kb */
    TYPE *a,            /* workspace for A */
    ATL_CINT inca,      /* gap between blocks (>= mb*kb) */
@@ -17423,7 +17430,7 @@ void Mjoin(PATL,ammmM) /* C <= beta*C + A*B, B/C nb-wide colpan */
    ablk2cmat_t blk2C=rkinf->blk2c;/* frm C's access-maj storage to col-maj */
    TYPE *af=a;
    ATL_CINT nfmb=rkinf->nfmb, mb=rkinf->mb, nmu=rkinf->nmu, mbL=rkinf->mbL;
-   ATL_CINT kb=rkinf->kb, nb=rkinf->nb, nnu=rkinf->nnu;
+   ATL_CINT kb=rkinf->kb;
    const size_t lda=rkinf->lda, ldc=rkinf->ldc, incAm=rkinf->incAm;
    ATL_INT i;
 
@@ -17458,7 +17465,8 @@ void Mjoin(PATL,ammmKM)/* computes full answer for one column-panel of C */
 (                      /* by looping over both M&K */
    rkinfo_t *rkinf,    /* amm info for kb-width cols */
    rkinfo_t *krinf,    /* amm info for K remainder cols */
-   ATL_CINT nfkblks,   /* FLOOR(K/kb) */
+   int nb,             /* # of cols to do */
+   int nnu,            /* NB/nu */
    TYPE *a,            /* workspace for A */
    ATL_CINT incam,     /* gap between blocks (>= mb*kb) */
    ATL_CINT incak,     /* 0: reuse same col of a, else a M*K in size */
@@ -17482,7 +17490,7 @@ void Mjoin(PATL,ammmKM)/* computes full answer for one column-panel of C */
    ablk2cmat_t blk2c=rkinf->blk2c;
    ammkern_t amm=rkinf->amm_b0, amm_b1=rkinf->amm_b1;
    ATL_CINT idr=krinf->idx;
-   ATL_CINT kb=rkinf->kb, kbL=rkinf->kbL, nb=rkinf->nb;
+   ATL_CINT kb=rkinf->kb, kbL=rkinf->kbL, nfkblks=rkinf->nfkb;
    ATL_INT k, nk=rkinf->nfkb, DOPEEL=1;
    
    ATL_assert(rkinf->idx != -1);  /* don't call w/o more than 1 K block */
@@ -17505,7 +17513,7 @@ void Mjoin(PATL,ammmKM)/* computes full answer for one column-panel of C */
    for (k=0; k < nk; k++, A += incAk, B += incBk)
    {
       b2blk(kb, nb, alpha, B, ldb, b);
-      Mjoin(PATL,ammmM)(rkinf, amm, a, incam, b, c, inccm, A, C, beta);
+      Mjoin(PATL,ammmM)(rkinf, nb, nnu, amm, a, incam, b, c, inccm, A, C, beta);
       amm = amm_b1;
       a += incak;
    }
@@ -17516,37 +17524,40 @@ void Mjoin(PATL,ammmKM)/* computes full answer for one column-panel of C */
    if (DOPEEL)
    {
       b2blk(kb, nb, alpha, B, ldb, b);
-      Mjoin(PATL,ammmM)(rkinf, amm, a, incam, b, c, inccm, A, C, beta);
+      Mjoin(PATL,ammmM)(rkinf, nb, nnu, amm, a, incam, b, c, inccm, A, C, beta);
       a += incak;
       A += incAk;
       B += incBk;
    }
 /*
- * For rank1/2 update, BETA has already been applied by above peeled writeout
+ * Do we have K-cleanup to do?
  */
-   if (kbL == 1)       /* final rank-1 update applied directly to C */
+   if (kbL)
    {
-      #ifdef TCPLX
-         ATL_CINT incA = (TA==AtlasNoTrans || TA==AtlasConj) ? 1:rkinf->lda;
-         ATL_CINT incB = (TA==AtlasNoTrans || TA==AtlasConj) ? ldb:1;
-      #else
-         ATL_CINT incA = (TA==AtlasNoTrans) ? 1:rkinf->lda;
-         ATL_CINT incB = (TA==AtlasNoTrans) ? ldb:1;
-      #endif
-      Mjoin(PATL,ger)(M, nb, A, incA, B, incB, C, rkinf->ldc);
-   }
-   else if (kbL == 2)  /* final rank-2 update applied directly to C */
-      Mjoin(PATL,ammm_rk2)(TA, TB, M, N, alpha, A, rkinf->lda, B, ldb, 
-                           ATL_rone, C, rkinf->ldc);
+      if (idr >= 0)  /* K cleanup uses gemm kernel */
+      {
+         krinf->kb = kbL;
+         krinf->b2blk(kbL, nb, alpha, B, ldb, b);
+         Mjoin(PATL,ammmM)(krinf, nb, nnu, krinf->amm_b1, a, incam, b, 
+                           c, inccm, A, C, (DOPEEL)?ATL_rone:beta);
+      }
 /*
- * Otherwise, call ammmM with K cleaning kern, and write out final C
+ *    If we use GER1/GER2 for cleanup, beta has already been applied above
  */
-   else if (kbL) 
-   {
-      ATL_assert(idr != -1);
-      krinf->b2blk(kbL, nb, alpha, B, ldb, b);
-      Mjoin(PATL,ammmM)(krinf, krinf->amm_b0, a, incam, b, c, inccm, A, C, 
-                        (DOPEEL)?ATL_rone:beta);
+      else if (kbL == 2)  /* use GER2 to clean up */
+         Mjoin(PATL,ammm_rk2)(TA, TB, M, nb, alpha, A, rkinf->lda, B, ldb, 
+                              ATL_rone, C, rkinf->ldc);
+      else /* kbL == 1, use GER1 */
+      {
+         #ifdef TCPLX
+            ATL_CINT incA = (TA==AtlasNoTrans || TA==AtlasConj) ? 1:rkinf->lda;
+            ATL_CINT incB = (TB==AtlasNoTrans || TB==AtlasConj) ? ldb:1;
+         #else
+            ATL_CINT incA = (TA==AtlasNoTrans) ? 1:rkinf->lda;
+            ATL_CINT incB = (TB==AtlasNoTrans) ? ldb:1;
+         #endif
+         Mjoin(PATL,ger)(M, nb, alpha, A, incA, B, incB, C, rkinf->ldc);
+      }
    }
 }
 
@@ -17564,7 +17575,7 @@ static int ATL_ammm_rkK
 {
    const size_t ldb=krinf->ldb, ldc=krinf->ldc;
    ATL_CINT NB=krinf->nb, mu=krinf->mu, MB=krinf->mb, kb=krinf->kb;
-   ATL_CINT mbL=krinf->mbL, nfnb=krinf->nfnb;
+   ATL_CINT mbL=krinf->mbL, nfnb=krinf->nfnb, nnu=krinf->nnu;
    ATL_INT inca, j;
    const size_t incC=NB*ldc, incBn=krinf->incBn;
    size_t szA, szB, szC;
@@ -17597,22 +17608,23 @@ static int ATL_ammm_rkK
    if (nfnb)
    {
       b2blk(kb, NB, alpha, B, ldb, b);
-      Mjoin(PATL,ammmM)(krinf, krinf->amm_b0, a, inca, b, c, 0, A, C, beta);
+      Mjoin(PATL,ammmM)(krinf, NB, nnu, krinf->amm_b0, a, inca, b, c, 0, A, 
+                        C, beta);
       krinf->a2blk = NULL;
       C += incC;
       B += incBn;
       for (j=1; j < nfnb; j++, C += incC, B += incBn)
       {
          b2blk(kb, NB, alpha, B, ldb, b);
-         Mjoin(PATL,ammmM)(krinf, krinf->amm_b0, a, inca, b, c, 0, A, C, beta);
+         Mjoin(PATL,ammmM)(krinf, NB, nnu, krinf->amm_b0, a, inca, b, c, 0, A, 
+                           C, beta);
       }
    }
    if (krinf->nbL)
    {
       b2blk(kb, krinf->nbL, alpha, B, ldb, b);
-      krinf->nb = krinf->nbL;
-      krinf->nnu = krinf->nnuL;
-      Mjoin(PATL,ammmM)(krinf, krinf->amm_b0, a, inca, b, c, 0, A, C, beta);
+      Mjoin(PATL,ammmM)(krinf, krinf->nbL, krinf->nnuL, krinf->amm_b0, a, inca,
+                        b, c, 0, A, C, beta);
    }
    free(vp);
 }
@@ -17637,7 +17649,7 @@ int Mjoin(PATL,ammmNKM)
    rkinfo_t kbinf, krinf;
    size_t szA, szB, szC, incak, inccm, incBn, incC;
    ATL_INT j, mb, nfmb, nb, mbL, kb, kbL, incam, nfnb, nfkb, RCPYA=0;
-   ATL_INT nmblks, nkblks;
+   ATL_INT nnu, nmblks, nkblks;
    TYPE *a, *b, *c;
    void *vp;
    void Mjoin(PATL,GetBestKBInfo)
@@ -17665,6 +17677,7 @@ int Mjoin(PATL,ammmNKM)
    nfkb = kbinf.nfkb;
    nmblks = (mbL) ? nfmb+1 : nfmb;
    nkblks = (kbL) ? nfkb+1 : nfkb;
+   nnu = kbinf.nnu;
    incBn = kbinf.incBn;
    incC = nb*ldc;
    if (K > kb)
@@ -17700,14 +17713,12 @@ int Mjoin(PATL,ammmNKM)
    c = b + szB;
    c = ATL_AlignPtr(c);
    for (j=0; j < nfnb; j++, C += incC, B += incBn)
-      Mjoin(PATL,ammmKM)(&kbinf, &krinf, nfkb, a, incam, incak, b,
+      Mjoin(PATL,ammmKM)(&kbinf, &krinf, nb, nnu, a, incam, incak, b,
                          c, inccm, A, B, C, TA, TB, M, N, alpha, beta);
    if (kbinf.nbL)
    {
-      kbinf.nnu = kbinf.nnuL;
-      kbinf.nb = kbinf.nbL;
-      Mjoin(PATL,ammmKM)(&kbinf, &krinf, nfkb, a, incam, incak, b,
-                         c, inccm, A, B, C, TA, TB, M, N, alpha, beta);
+      Mjoin(PATL,ammmKM)(&kbinf, &krinf, kbinf.nbL, kbinf.nnuL, a, incam, incak,
+                         b, c, inccm, A, B, C, TA, TB, M, N, alpha, beta);
    }
    free(vp);
    return(0);
