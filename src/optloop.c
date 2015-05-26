@@ -3429,24 +3429,11 @@ int CheckMaxMinConstraints(BLIST *scope, short var, short label)
       st = FSTD;
    else if (i == T_INT)
       st = ST;
+/*
+ * not suppported for anyother type, like: vector
+ */
    else
-      fko_error(__LINE__,"Unknown type=%d, file=%s", i, __FILE__);
-
-#if 0   
-   switch(i)
-   {
-   case T_FLOAT:
-      st = FST;
-      break;
-   case T_DOUBLE:
-      st = FSTD;
-      break;
-   case T_INT:
-      st = ST;
-      break;
-   default:;
-   }
-#endif   
+      return(0);
    
 /*
  * check in the if blk, found by label. var should be set only once
@@ -3465,13 +3452,11 @@ int CheckMaxMinConstraints(BLIST *scope, short var, short label)
       {
          for ( ; ip; ip=ip->next)
          {
-            /*fprintf(stderr," %s %d \n", instmnem[ip->inst[0]], ip->inst[1]);*/
 /*
- *          Figure out when to use STpts2 and SToff[].sa[2] ???
  *          FIXED: amax/amin is set by x not after some operations
  */
             if (ip->inst[0] == st && STpts2[ip->inst[1]-1] == var 
-                  && IS_LOAD(ip->prev->inst[0]))
+                  && ip->prev && IS_LOAD(ip->prev->inst[0]))
                isetcount++;
          }
       }
@@ -3485,7 +3470,7 @@ int CheckMaxMinConstraints(BLIST *scope, short var, short label)
       }
    }
 /*
- * condition to be max is: update only once inside if-blk, not in other blk
+ * condition to be max/min: update only once inside if-blk, not in other blk
  */
    if (isetcount == 1 && !osetcount)
       return (1);
@@ -3493,6 +3478,128 @@ int CheckMaxMinConstraints(BLIST *scope, short var, short label)
    return (0);
 }
 
+int VarIsMaxOrMin(BLIST *scope, short var, int maxcheck, int mincheck)
+/*
+ * want to use same function to verify max or min variable simultaneously 
+ * Assumption: scope is the blist of a loop, we don't check loop here
+ * maxcheck = 1, check for max variable
+ * mincheck = 1, check for min variable
+ * if both set, return 1 if either max or min
+ */
+{
+   int i, j, istrue;
+   short reg0, reg1, regv;
+   enum inst inst, ld, st, br, cmp;
+   BBLOCK *bp;
+   INSTQ *ip, *ip0, *ip1;
+   BLIST *bl;
+
+   i = FLAG2TYPE(STflag[var-1]);
+   switch(i)
+   {
+   case T_FLOAT:
+      ld = FLD;
+      st = FST;
+      cmp = FCMP;
+      break;
+   case T_DOUBLE:
+      ld = FLDD;
+      st = FSTD;
+      cmp = FCMPD;
+      break;
+   case T_INT:
+      ld = LD;
+      st = ST;
+      cmp = CMP;
+      break;
+   default:
+   case T_VFLOAT:
+   case T_VDOUBLE:
+/*
+ *    not applicable for vector intrinsic code
+ */
+      return(0);
+   }
+  
+   istrue = 0;
+   for (bl = scope; bl; bl = bl->next)
+   {
+      bp = bl->blk;
+      for (ip = bp-> ainst1; ip; ip = ip->next)
+      {
+/*
+ *       FORMAT: cmp fcc, reg0, reg1
+ *               JLT/JGT PC, fcc, LABEL
+ *       There would be exactly two ld of 2 vars/const
+ */
+         if (IS_COND_BRANCH(ip->inst[0]) && ip->prev
+               && (ip->prev->inst[0]== cmp))
+         {
+/*
+ *          registers to compare
+ */
+            reg0 = ip->prev->inst[2];
+            reg1 = ip->prev->inst[3];
+            br = ip->inst[0];
+/*
+ *          FIXED: what if we use a condition with const!!! skipped that 
+ */
+            ip0 = NULL;
+            ip1 = ip->prev->prev;           /* 2nd ld */
+            if(ip1) 
+                  ip0 = ip->prev->prev->prev;     /* 1st ld */
+            if (ip0 && ip1 && IS_LOAD(ip0->inst[0]) && IS_LOAD(ip1->inst[0]))
+            {
+/*
+ *             for load, inst[2] must be a var 
+ */
+               if (STpts2[ip0->inst[2]-1] == var)
+                  regv = ip0->inst[1];
+               else if (STpts2[ip1->inst[2]-1] == var)
+                  regv = ip1->inst[1];
+               else 
+                  regv = 0;
+/*
+ *             checking for max var
+ */
+               if (maxcheck)
+               {
+/*
+ *                check the branch condition for max var
+ */
+                  if ( ((regv == reg0) && (br == JLT)) ||  
+                       ((regv == reg1) && (br == JGT)) )
+                  {
+/*
+ *                   check whether var is only set in if-blk, not else blk
+ */
+                     if (CheckMaxMinConstraints(scope, var, ip->inst[3]))
+                        istrue = 1;
+                  }
+               }
+/*
+ *             check for min var
+ */
+               if (mincheck)
+               {
+                  if ( ((regv == reg0) && (br == JGT)) ||  
+                       ((regv == reg1) && (br == JLT)) )
+                  {
+                     if (CheckMaxMinConstraints(scope, var, ip->inst[3]))
+                        istrue = 1;;
+                  }
+
+               }
+               if (istrue) /* either max or min, no need to check further */
+                  break; 
+            }
+         }
+      }
+   }
+   return(istrue);
+}
+
+#if 0
 int VarIsMax(BLIST *scope, short var)
 /*
  * Figure out whether a var is Max varibale
@@ -3533,6 +3640,9 @@ int VarIsMax(BLIST *scope, short var)
 #else
    case T_VFLOAT:
    case T_VDOUBLE:
+/*
+ *    not applicable for vector intrinsic code
+ */
       return(0);
 #endif
    }
@@ -3547,33 +3657,40 @@ int VarIsMax(BLIST *scope, short var)
  *               JLT/JGT PC, fcc, LABEL
  *       There would be exactly two ld of 2 vars/const
  */
-         if (IS_COND_BRANCH(ip->inst[0]) && (ip->prev->inst[0]== cmp))
+         if (IS_COND_BRANCH(ip->inst[0]) && ip->prev
+               && (ip->prev->inst[0]== cmp))
          {
             reg0 = ip->prev->inst[2];
             reg1 = ip->prev->inst[3];
             br = ip->inst[0];
 /*
- *          FIXME: what if we use a condition with const!!! 
+ *          FIXED: what if we use a condition with const!!! skipped that 
  */
-            ip0 = ip->prev->prev->prev;     /* 1st ld */
-            assert((ip0->inst[0] == ld));
+            ip0 = NULL;
             ip1 = ip->prev->prev;           /* 2nd ld */
-            assert((ip1->inst[0] == ld));
-/*
- *          for load, inst[2] must be a var 
- */
-            if (STpts2[ip0->inst[2]-1] == var)
-               regv = ip0->inst[1];
-            else if (STpts2[ip1->inst[2]-1] == var)
-               regv = ip1->inst[1];
-            else 
-               regv = 0;
-            if ( ((regv == reg0) && (br == JLT)) ||  
-                 ((regv == reg1) && (br == JGT)) )
+            if(ip1) 
+                  ip0 = ip->prev->prev->prev;     /* 1st ld */
+            /*assert((ip1->inst[0] == ld));
+            assert((ip0->inst[0] == ld));*/
+            
+            if (ip0 && ip1 && IS_LOAD(ip0->inst[0]) && IS_LOAD(ip1->inst[0]))
             {
+/*
+ *             for load, inst[2] must be a var 
+ */
+               if (STpts2[ip0->inst[2]-1] == var)
+                  regv = ip0->inst[1];
+               else if (STpts2[ip1->inst[2]-1] == var)
+                  regv = ip1->inst[1];
+               else 
+                  regv = 0;
+               if ( ((regv == reg0) && (br == JLT)) ||  
+                    ((regv == reg1) && (br == JGT)) )
+               {
                /* check for single set inside if-blk and not set where else*/
-               if (CheckMaxMinConstraints(scope, var, ip->inst[3]))
-                  return (1);
+                  if (CheckMaxMinConstraints(scope, var, ip->inst[3]))
+                     return (1);
+               }
             }
          }
       }
@@ -3671,6 +3788,8 @@ int VarIsMin(BLIST *scope, short var)
    }
    return (0);
 }
+#endif
+
 #if 0
 void UpdateOptLoopWithMaxMinVars()
 /*
@@ -3782,13 +3901,18 @@ void UpdateOptLoopWithMaxMinVars1()
 
    for (i=1, m=0, n=0; i <= N; i++)
    {
-      /*fprintf(stderr, " var = %s(%d)\n",STname[scal[i]-1], scal[i] );*/
-      if (VarIsMax(lp->blocks, scal[i]))
+/*
+ *    checking for maxvar 
+ */
+      if (VarIsMaxOrMin(lp->blocks, scal[i], 1, 0))
       {
          spmax[++m] = scal[i];
          /*fprintf(stderr, " Max var = %s\n",STname[scal[i]-1] );*/
       }
-      else if (VarIsMin(lp->blocks, scal[i]))
+/*
+ *    checking for min var 
+ */
+      else if (VarIsMaxOrMin(lp->blocks, scal[i], 0, 1))
       {
          spmin[++n] = scal[i];
          /*fprintf(stderr, " Min var = %s\n",STname[scal[i]-1] );*/
@@ -4202,9 +4326,7 @@ void PrintMovingPtrAnalysis(FILE *fpout)
       {
          if (VarIsAccumulator(lp->blocks, sp[i]))
             j = 1;
-         else if (VarIsMax(lp->blocks, sp[i]))
-            j = 1;
-         else if (VarIsMin(lp->blocks, sp[i]))
+         else if (VarIsMaxOrMin(lp->blocks, sp[i], 1, 1))
             j = 1;
          else j = 0;   
       }
@@ -4408,28 +4530,8 @@ OPTLOOP=1
  */
 
          UpdateOptLoopWithMaxMinVars1(optloop);
-#if 0
-         scal = FindAllScalarVars(optloop->blocks);
-         for (N = scal[0], i=1; i <= N; i++)
-         {
-            if (VarIsMax(optloop->blocks, scal[i]))
-            {
-               MaxR = ElimMaxMinIf(scal[i]);
-               if (MaxR) break;
-            }
-         }         
-         for (N = scal[0], i=1; i <= N; i++)
-         {
-            if (VarIsMin(optloop->blocks, scal[i]))
-            {
-               MinR = ElimMaxMinIf(scal[i]); /* this only support max now */
-               if (MinR) break;
-            }
-         }
-         if(scal) free(scal);
-#endif
-         MaxR = ElimMaxIf();
-         MinR = ElimMaxMinIf(); /*rule out all maxs before  */
+         MaxR = ElimMaxMinIf(1,0);
+         MinR = ElimMaxMinIf(0,1); /*rule out all maxs before  */
 /*
  *       does max/min eliminate all paths
  */   
@@ -5779,7 +5881,7 @@ int CheckMaxMinReduceConstraints(BLIST *scope, short var, short label)
 /*
  * this function checks the ifblk whether anyother variable is set inside that
  * blk. That means, this if blk is only to compute the max/min var; then we can
- * reduce the ifblk with single max/min inst.
+ * reduce the ifblk with single max/min inst. And also no nested if-blk  
  */
 {
    int i, j; 
@@ -5804,123 +5906,17 @@ int CheckMaxMinReduceConstraints(BLIST *scope, short var, short label)
  *          Need to check for all stores, not just one type      
  */
             if ( IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]-1]!= var)
-               return 0;
+               return(0);
+/*
+ *          if-blk shouldn't have nested if; check for the conditional if-blk
+ */
+            if (IS_COND_BRANCH(ip->inst[0]))
+               return(0);
          }
       }
    }
    return 1;
 }
-
-#if 0
-int CheckElimIFBlk(short maxvar)
-/*
- * Assuming single occurrance first 
- */
-{
-   int i, j;
-   short reg0, reg1, regv, regx;
-   short xvar, label;
-   enum inst inst, ld, st, br, cmp, max;
-   BBLOCK *bp;
-   INSTQ *ip, *ip0, *ip1;
-   BLIST *bl, *scope;
-
-   i = FLAG2TYPE(STflag[maxvar-1]);
-   switch(i)
-   {
-   case T_FLOAT:
-      ld = FLD;
-      st = FST;
-      cmp = FCMP;
-      max = FMAX;
-      break;
-   case T_DOUBLE:
-      ld = FLDD;
-      st = FSTD;
-      cmp = FCMPD;
-      max = FMAXD;
-      break;
-   default:
-   case T_VFLOAT:
-   case T_VDOUBLE:
-      fko_error(__LINE__,"Unknown type=%d, file=%s. Should be done before Vect",
-                i, __FILE__);
-   }
-/*
- * Primarily, we are concern about the optloop blks, but need to extend to
- * all blocks in bbbase later
- */   
-   scope = optloop->blocks;
-
-   for (bl = scope; bl; bl = bl->next)
-   {
-      bp = bl->blk;
-      for (ip = bp-> ainst1; ip; ip = ip->next)
-      {
-/*
- *       FORMAT: cmp fcc, reg0, reg1
- *               JLT/JGT PC, fcc, LABEL
- *       There would be exactly two ld of 2 vars/const
- */
-         if (IS_COND_BRANCH(ip->inst[0]) && (ip->prev->inst[0]== cmp))
-         {
-            reg0 = ip->prev->inst[2];
-            reg1 = ip->prev->inst[3];
-            br = ip->inst[0];
-
-            ip0 = ip->prev->prev->prev;     /* 1st ld */
-            assert((ip0->inst[0] == ld));
-            ip1 = ip->prev->prev;           /* 2nd ld */
-            assert((ip1->inst[0] == ld));
-/*
- *          for load, inst[2] must be a var 
- */
-            if (STpts2[ip0->inst[2]-1] == maxvar)
-            {
-               regv = ip0->inst[1];
-               xvar = ip1->inst[2];
-               regx = ip1->inst[1];
-            }
-            else if (STpts2[ip1->inst[2]-1] == maxvar)
-            {
-               regv = ip1->inst[1];
-               xvar = ip0->inst[2];
-               regx = ip0->inst[1];
-            }
-            else 
-               regv = 0;
-            if ( ((regv == reg0) && (br == JLT)) ||  
-                 ((regv == reg1) && (br == JGT)) )
-            {
-               label = ip->inst[3];
-               /* check for single set inside if-blk and not set anywhere else*/
-               if (CheckMaxMinConstraints(scope, maxvar, label) && 
-                   CheckMaxMinReduceConstraints(scope, maxvar, label))
-               {
-                  // Now, it's time to eliminiate ifblk inserting max inst
-                  /*fprintf(stderr, "elim blks for max var = %s\n", 
-                          STname[maxvar-1]);*/
-                  assert(ip0->prev->inst[0] != ld);
-                  ip1 = InsNewInst(bp, ip1, NULL, max, regv, regv, regx);
-                  ip1 = InsNewInst(bp, ip1, NULL, st, SToff[maxvar-1].sa[2],
-                                   regv, 0);
-                  ip1 = ip1->next;
-                  while (ip1 && !IS_COND_BRANCH(ip1->inst[0])) 
-                     ip1 = RemoveInstFromQ(ip1);
-                  assert(IS_COND_BRANCH(ip1->inst[0]));
-                  ip1 = RemoveInstFromQ(ip1); /* delete the branch itself */
-                  // it's time to delete the if blk
-                  RemoveInstFromLabel2Br(scope, label);
-                  return 1; /* elim is successful */
-               }
-            }
-         }
-      }
-   }
-   return (0);
-   
-}
-#endif
 
 void RemoveInstFromLabel2Br(BLIST *scope, short label)
 {
@@ -5949,241 +5945,116 @@ void RemoveInstFromLabel2Br(BLIST *scope, short label)
    
 }
 
-int ElimIFBlkWithMin(short minvar)
+int ElimIFBlkWithMaxMin(BLIST *scope, short var, int ismax)
 /*
- * Assuming single occurrance first
- * NOTE: we will combine the func with Max later!!
+ * var can be maxvar or minvar depending on ismax. 
+ * eliminate the if-blk with max/min inst; returns 1 if successful, 0 otherwise
+ * ASSUMPTION: scope is the blist of the loop
  */
 {
-   int i, j;
-   short reg0, reg1, regv, regx;
-   short xvar, label;
-   enum inst inst, ld, st, br, cmp, min;
-   BBLOCK *bp;
+   int i, succ;
+   short regv, regx, label;
+   enum inst inst, ld, st, cmp;
    INSTQ *ip, *ip0, *ip1;
-   BLIST *bl, *scope;
+   BLIST *bl;
+   BBLOCK *bp;
 
-   i = FLAG2TYPE(STflag[minvar-1]);
+   i = FLAG2TYPE(STflag[var-1]);
    switch(i)
    {
-   case T_FLOAT:
-      ld = FLD;
-      st = FST;
-      cmp = FCMP;
-      min = FMIN;
-      break;
-   case T_DOUBLE:
-      ld = FLDD;
-      st = FSTD;
-      cmp = FCMPD;
-      min = FMIND;
-      break;
-   default:
-   case T_VFLOAT:
-   case T_VDOUBLE:
-      fko_error(__LINE__,"Unknown type=%d, file=%s. Should be done before Vect",
-                i, __FILE__);
+      case T_FLOAT:
+         ld = FLD;
+         st = FST;
+         cmp = FCMP;
+         inst = ismax? FMAX : FMIN;
+         break;
+      case T_DOUBLE:
+         ld = FLDD;
+         st = FSTD;
+         cmp = FCMPD;
+         inst = ismax? FMAXD : FMIND;
+         break;
+/*
+ *    not support for vector intrinsic
+ */
+      case T_VFLOAT:
+      case T_VDOUBLE:
+         fko_warn(__LINE__, 
+            "MAX/MIN var can't be vector type: not supported for intrinsic\n");
+         return(0);
    }
 /*
- * Primarily, we are concern about the optloop blks, but need to extend to
- * all blocks in bbbase later
- */   
-   scope = optloop->blocks;
-
+ * NOTE:
+ * we have already tested whether the var is max/min. So, we don't need to 
+ * retest it. But we need to test one extra condition to reduce the if-blk: 
+ * no other var cannot be set in if-blk; that means, this if-blk is only to
+ * compute the max/min. 
+ */
    for (bl = scope; bl; bl = bl->next)
    {
       bp = bl->blk;
-      for (ip = bp-> ainst1; ip; ip = ip->next)
+      for (ip = bp->ainst1; ip; ip = ip->next)
       {
-/*
- *       FORMAT: cmp fcc, reg0, reg1
- *               JLT/JGT PC, fcc, LABEL
- *       There would be exactly two ld of 2 vars/const
- */
-         if (IS_COND_BRANCH(ip->inst[0]) && (ip->prev->inst[0]== cmp))
+         if (IS_COND_BRANCH(ip->inst[0]) 
+               && ip->prev && ip->prev->inst[0] == cmp)
          {
-            reg0 = ip->prev->inst[2];
-            reg1 = ip->prev->inst[3];
-            br = ip->inst[0];
-
-            ip0 = ip->prev->prev->prev;     /* 1st ld */
-            assert((ip0->inst[0] == ld));
+            ip0 = NULL;
             ip1 = ip->prev->prev;           /* 2nd ld */
-            assert((ip1->inst[0] == ld));
+            if(ip1) 
+                  ip0 = ip->prev->prev->prev;     /* 1st ld */
 /*
- *          for load, inst[2] must be a var 
+ *          the cond branch is to check x and max/min var without any arithmatic
+ *          in between them
  */
-            if (STpts2[ip0->inst[2]-1] == minvar)
+            if (ip0 && ip1 && IS_LOAD(ip0->inst[0]) && IS_LOAD(ip1->inst[0]))
             {
-               regv = ip0->inst[1];
-               xvar = ip1->inst[2];
-               regx = ip1->inst[1];
-            }
-            else if (STpts2[ip1->inst[2]-1] == minvar)
-            {
-               regv = ip1->inst[1];
-               xvar = ip0->inst[2];
-               regx = ip0->inst[1];
-            }
-            else 
-               regv = 0;
-            if ( ((regv == reg0) && (br == JGT)) ||  
-                 ((regv == reg1) && (br == JLT)) )
-            {
-               label = ip->inst[3];
-               /* check for single set inside if-blk and not set where else*/
-/*
- *             There are two checks:
- *                1. Max/Min var is only set inside the ifblk, nowhere else. It
- *                   needed for the reduction at posttails
- *                2. No other var but max/min is set inside ifblk
- */
-               if (CheckMaxMinConstraints(scope, minvar, label) && 
-                   CheckMaxMinReduceConstraints(scope, minvar, label))
+               if (STpts2[ip0->inst[2]-1] == var)
                {
-                  // Now, it's time to eliminiate ifblk inserting max inst
-                  /*fprintf(stderr, "elim blks for max var = %s\n", 
-                          STname[maxvar-1]);*/
-                  assert(ip0->prev->inst[0] != ld);
-                  ip1 = InsNewInst(bp, ip1, NULL, min, regv, regv, regx);
-                  ip1 = InsNewInst(bp, ip1, NULL, st, SToff[minvar-1].sa[2],
+                  regv = ip0->inst[1];
+                  regx = ip1->inst[1];
+               }
+               else if (STpts2[ip1->inst[2]-1] == var)
+               {
+                  regv = ip1->inst[1];
+                  regx = ip0->inst[1];
+               }
+               else 
+                  continue; /* not a cond with var, continue to next ip */
+               label =  ip->inst[3]; 
+               if (CheckMaxMinReduceConstraints(scope, var, label)) 
+               {
+/*
+ *                insert inst after ip1 but before ip1->next
+ */
+                  ip1 = InsNewInst(bp, ip1, NULL, inst, regv, regv, regx);
+                  ip1 = InsNewInst(bp, ip1, NULL, st, SToff[var-1].sa[2],
                                    regv, 0);
-                  ip1 = ip1->next;
+/*
+ *                delete inst upto the cond branch
+ */
+                  ip1 = ip1->next; /* old ip1->next */
                   while (ip1 && !IS_COND_BRANCH(ip1->inst[0])) 
                      ip1 = RemoveInstFromQ(ip1);
                   assert(IS_COND_BRANCH(ip1->inst[0]));
                   ip1 = RemoveInstFromQ(ip1); /* delete the branch itself */
-                  // it's time to delete the if blk
+/*
+ *                delete the if-blk altogether
+ */
                   RemoveInstFromLabel2Br(scope, label);
-                  return(1);
+                  return(1); 
                }
             }
          }
       }
    }
-   return (0); 
+   return(0);
 }
 
-
-int ElimIFBlkWithMax(short maxvar)
+int ElimMaxMinIf(int maxelim, int minelim)
 /*
- * Assuming single occurrance first
- *
- * NOTE: need to restructure the codes of this function for better 
- * understanding
+ * Depending on the ismaxvar/isminvar, we will eliminate 'if' for that var. 
+ * if both set, we will try to eliminate 'if' for both type of var. 
  */
-{
-   int i, j;
-   short reg0, reg1, regv, regx;
-   short xvar, label;
-   enum inst inst, ld, st, br, cmp, max;
-   BBLOCK *bp;
-   INSTQ *ip, *ip0, *ip1;
-   BLIST *bl, *scope;
-
-   i = FLAG2TYPE(STflag[maxvar-1]);
-   switch(i)
-   {
-   case T_FLOAT:
-      ld = FLD;
-      st = FST;
-      cmp = FCMP;
-      max = FMAX;
-      break;
-   case T_DOUBLE:
-      ld = FLDD;
-      st = FSTD;
-      cmp = FCMPD;
-      max = FMAXD;
-      break;
-   default:
-   case T_VFLOAT:
-   case T_VDOUBLE:
-      fko_error(__LINE__,"Unknown type=%d, file=%s. Should be done before Vect",
-                i, __FILE__);
-   }
-/*
- * Primarily, we are concern about the optloop blks, but need to extend to
- * all blocks in bbbase later
- */   
-   scope = optloop->blocks;
-
-   for (bl = scope; bl; bl = bl->next)
-   {
-      bp = bl->blk;
-      for (ip = bp-> ainst1; ip; ip = ip->next)
-      {
-/*
- *       FORMAT: cmp fcc, reg0, reg1
- *               JLT/JGT PC, fcc, LABEL
- *       There would be exactly two ld of 2 vars/const
- */
-         if (IS_COND_BRANCH(ip->inst[0]) && (ip->prev->inst[0]== cmp))
-         {
-            reg0 = ip->prev->inst[2];
-            reg1 = ip->prev->inst[3];
-            br = ip->inst[0];
-
-            ip0 = ip->prev->prev->prev;     /* 1st ld */
-            assert((ip0->inst[0] == ld));
-            ip1 = ip->prev->prev;           /* 2nd ld */
-            assert((ip1->inst[0] == ld));
-/*
- *          for load, inst[2] must be a var 
- */
-            if (STpts2[ip0->inst[2]-1] == maxvar)
-            {
-               regv = ip0->inst[1];
-               xvar = ip1->inst[2];
-               regx = ip1->inst[1];
-            }
-            else if (STpts2[ip1->inst[2]-1] == maxvar)
-            {
-               regv = ip1->inst[1];
-               xvar = ip0->inst[2];
-               regx = ip0->inst[1];
-            }
-            else 
-               regv = 0;
-            if ( ((regv == reg0) && (br == JLT)) ||  
-                 ((regv == reg1) && (br == JGT)) )
-            {
-               label = ip->inst[3];
-               /* check for single set inside if-blk and not set where else*/
-/*
- *             There are two checks:
- *                1. Max/Min var is only set inside the ifblk, nowhere else. It
- *                   needed for the reduction at posttails
- *                2. No other var but max/min is set inside ifblk
- */
-               if (CheckMaxMinConstraints(scope, maxvar, label) && 
-                   CheckMaxMinReduceConstraints(scope, maxvar, label))
-               {
-                  // Now, it's time to eliminiate ifblk inserting max inst
-                  /*fprintf(stderr, "elim blks for max var = %s\n", 
-                          STname[maxvar-1]);*/
-                  assert(ip0->prev->inst[0] != ld);
-                  ip1 = InsNewInst(bp, ip1, NULL, max, regv, regv, regx);
-                  ip1 = InsNewInst(bp, ip1, NULL, st, SToff[maxvar-1].sa[2],
-                                   regv, 0);
-                  ip1 = ip1->next;
-                  while (ip1 && !IS_COND_BRANCH(ip1->inst[0])) 
-                     ip1 = RemoveInstFromQ(ip1);
-                  assert(IS_COND_BRANCH(ip1->inst[0]));
-                  ip1 = RemoveInstFromQ(ip1); /* delete the branch itself */
-                  // it's time to delete the if blk
-                  RemoveInstFromLabel2Br(scope, label);
-                  return(1);
-               }
-            }
-         }
-      }
-   }
-   return (0);
-   
-}
-
-int ElimMaxIf()
 {
    int i, j, N;
    short *scal;
@@ -6196,16 +6067,27 @@ int ElimMaxIf()
  * NOTE: find all fp scalar variables
  */
    scal = FindAllScalarVars(lp->blocks);   
-   for (N = scal[0], i=1; i <= N; i++)
+
+/*
+ *  check for max elim
+ */
+   if (maxelim)
    {
-      if (VarIsMax(lp->blocks, scal[i]))
-      {
-         #if 0
-            fprintf(stderr, "Max var = %s\n", STname[scal[i]-1]);  
-         #endif
-         changes += ElimIFBlkWithMax(scal[i]);
-      }
+      for (N = scal[0], i=1; i <= N; i++)
+         if ( VarIsMaxOrMin(lp->blocks, scal[i], 1, 0) )
+            changes += ElimIFBlkWithMaxMin(lp->blocks, scal[i], 1);
    }
+
+/*
+ *  check for min elim
+ */
+   if (minelim)
+   {
+      for (N = scal[0], i=1; i <= N; i++)
+         if ( VarIsMaxOrMin(lp->blocks, scal[i], 0, 1) )
+            changes += ElimIFBlkWithMaxMin(lp->blocks, scal[i], 0);
+   }
+
    if (scal) free(scal);
 /*
  * re-construct the CFG 
@@ -6224,299 +6106,195 @@ int ElimMaxIf()
    return (0);  
 }
 
-int ElimMaxMinIf()
-{
-   int i, j, N;
-   short *scal;
-   LOOPQ *lp;
-   int changes;
-
-   changes = 0;
-   lp = optloop;
-/*
- * NOTE: find all fp scalar variables
- */
-   scal = FindAllScalarVars(lp->blocks);   
-   for (N = scal[0], i=1; i <= N; i++)
-   {
-      if (VarIsMax(lp->blocks, scal[i]))
-      {
-         #if 0
-            fprintf(stderr, "Max var = %s\n", STname[scal[i]-1]);  
-         #endif
-         changes += ElimIFBlkWithMax(scal[i]);
-      }
-      else if (VarIsMin(lp->blocks, scal[i]))
-      {
-         #if 0
-            fprintf(stderr, "Min var = %s\n", STname[scal[i]-1]);
-         #endif
-         changes += ElimIFBlkWithMin(scal[i]);
-      }
-   }
-   if (scal) free(scal);
-/*
- * re-construct the CFG 
- */
-   if (changes)
-   {
-      CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = CFLOOP = 0;
-      InvalidateLoopInfo();
-      bbbase = NewBasicBlocks(bbbase);
-      CheckFlow(bbbase, __FILE__, __LINE__);
-      FindLoops();
-      CheckFlow(bbbase, __FILE__, __LINE__);
-      return (changes);
-   }
-
-   return (0);  
-}
-/*
- * mov max/min var from if condition, useful when their are some other vars
- * and if-conditinal can't be moved
- */
-void AddMaxInst(BBLOCK *bp, INSTQ *ipnext, short MaxVar, short xvar)
+int AddMaxMinInst(BBLOCK *bp, INSTQ *ipnext, short mvar, short xvar, int ismax)
 {
    int type;
    short reg0, reg1;
-   enum inst ld, st, max;
+   enum inst ld, st, inst;
    INSTQ *ip;
 
-   type = FLAG2TYPE(STflag[MaxVar-1]);
+   type = FLAG2TYPE(STflag[mvar-1]);
    switch(type)
    {
    case T_FLOAT:
       ld = FLD;
       st = FST;
-      max = FMAX;
+      inst = ismax ? FMAX: FMIN;
       break;
    case T_DOUBLE:
       ld = FLDD;
       st = FSTD;
-      max = FMAXD;
+      inst = ismax ? FMAXD: FMIND;
       break;
    default:
    case T_VFLOAT:
    case T_VDOUBLE:
-      fko_error(__LINE__,"Unknown type=%d, file=%s. Should be done before Vect",
+      fko_warn(__LINE__,"Unknown type=%d, file=%s. Should be done before Vect",
                 type, __FILE__);
+      return(0);
    }
    
    reg0 = GetReg(type);
    reg1 = GetReg(type);
   
-   assert(ipnext);
-#if 0
-   ip = InsNewInst(bp, NULL, ipnext, ld, -reg0, 
-         SToff[MaxVar-1].sa[2], 0); 
-   ip = InsNewInst(bp, NULL, ipnext, ld, -reg1, 
-         SToff[xvar-1].sa[2], 0);
-   ip = InsNewInst(bp, NULL, ipnext, max, -reg0, -reg0, -reg1);
-   ip = InsNewInst(bp, NULL, ipnext, st, SToff[MaxVar-1].sa[2],
-         -reg0, 0);
-#else
    InsNewInst(bp, NULL, ipnext, ld, -reg0, 
-         SToff[MaxVar-1].sa[2], 0); 
+         SToff[mvar-1].sa[2], 0); 
    InsNewInst(bp, NULL, ipnext, ld, -reg1, 
          SToff[xvar-1].sa[2], 0);
-   InsNewInst(bp, NULL, ipnext, max, -reg0, -reg0, -reg1);
-   InsNewInst(bp, NULL, ipnext, st, SToff[MaxVar-1].sa[2],
+   InsNewInst(bp, NULL, ipnext, inst, -reg0, -reg0, -reg1);
+   InsNewInst(bp, NULL, ipnext, st, SToff[mvar-1].sa[2],
          -reg0, 0);
-#endif
    GetReg(-1);
-
+   return(1);
 }
 
-void RemoveIfMaxVar(BBLOCK *ifblk, short MaxVar)
+int RemoveVarFromIFBlk(BBLOCK *ifblk, short var)
 {
-   int used;
    INSTQ *ip, *ip1, *ip2;
-
-   used = 0;
+   
    for (ip = ifblk->ainst1; ip; ip = ip->next)
    {
-      if (IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]-1] == MaxVar)
+      if (IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]-1] == var)
       {
 /* 
  *       Just a plain assignment, no other operation
  */
-         assert(IS_LOAD(ip->prev->inst[0]));
-         //assert(IS_LOAD(ip->prev->prev->inst[0]));
-         //assert(!IS_LOAD(ip->prev->prev->prev->inst[0]));
-         ip1 = ip->prev;
-         while (IS_LOAD(ip1->inst[0]))
+         if (ip->prev && IS_LOAD(ip->prev->inst[0]))
          {
-            ip2 = ip1->prev;
-            RemoveInstFromQ(ip1);
-            ip1 = ip2;
+            ip1 = ip->prev;
+            while (IS_LOAD(ip1->inst[0]))
+            {
+               ip2 = ip1->prev;
+               RemoveInstFromQ(ip1);
+               ip1 = ip2;
+            }
+/*
+ *          remove this assignment inst
+ */
+            ip = RemoveInstFromQ(ip);
+            return(1);
          }
-/*
- *       remove this assignment inst
- */
-         ip = RemoveInstFromQ(ip);
-/*
- *       should have only one instance
- */
-         break;
       }
    }
-/*
- * NOTE: Right now,  use a tight restriction here is simplify the implementation:
- * Restriction: maxvar shouldn't be used any here in any where inside if-blk 
- * so that we can mov max inst before/after the blk.
- * Later, we will relax the restriction
- */
-   for (ip = ifblk->ainst1; ip; ip = ip->next)
-   {
-      if (IS_LOAD(ip->inst[0]) && ( ip->inst[1] > 0 && 
-                                    STpts2[ip->inst[1]-1] == MaxVar ) )
-      {
-         fprintf(stderr, "Can't perform the reduction" 
-                         " if maxvar is used for other purpose");
-         assert(0);
-      }
-   }
+   return(0);
 }
 
-int MovMaxVarOut(short MaxVar, BLIST *scope)
+int MovOneMaxMinVarOut(BLIST *scope, short mvar, int ismax)
 {
-   int i, j;
-   int type;
-   short reg0, reg1, regv, regx;
-   short xvar, label;
-   enum inst inst, ld, st, br, cmp, max;
-   BBLOCK *bp, *splitblk, *ifblk, *elseblk, *mergeblk;
-   INSTQ *ip, *ip0, *ip1, *ipprev;
+   int i, succ;
+   short regv, regx, label, xvar;
+   enum inst inst, ld, st, cmp;
+   INSTQ *ip, *ip0, *ip1;
    BLIST *bl;
+   BBLOCK *bp, *splitblk, *ifblk, *elseblk, *mergeblk;
 
-   type = FLAG2TYPE(STflag[MaxVar-1]);
-   switch(type)
+   i = FLAG2TYPE(STflag[mvar-1]);
+   switch(i)
    {
-   case T_FLOAT:
-      ld = FLD;
-      st = FST;
-      cmp = FCMP;
-      max = FMAX;
-      break;
-   case T_DOUBLE:
-      ld = FLDD;
-      st = FSTD;
-      cmp = FCMPD;
-      max = FMAXD;
-      break;
-   default:
-   case T_VFLOAT:
-   case T_VDOUBLE:
-      fko_error(__LINE__,"Unknown type=%d, file=%s. Should be done before Vect",
-                i, __FILE__);
+      case T_FLOAT:
+         ld = FLD;
+         st = FST;
+         cmp = FCMP;
+         inst = ismax? FMAX : FMIN;
+         break;
+      case T_DOUBLE:
+         ld = FLDD;
+         st = FSTD;
+         cmp = FCMPD;
+         inst = ismax? FMAXD : FMIND;
+         break;
+/*
+ *    not support for vector intrinsic
+ */
+      case T_VFLOAT:
+      case T_VDOUBLE:
+         fko_warn(__LINE__, 
+            "MAX/MIN var can't be vector type: not supported for intrinsic\n");
+         return(0);
    }
-   
+/*
+ * NOTE:
+ * we have already tested whether the var is max/min. So, we don't need to 
+ * retest it. But we need to test one extra condition to reduce the if-blk: 
+ * no other var cannot be set in if-blk; that means, this if-blk is only to
+ * compute the max/min. 
+ */
    for (bl = scope; bl; bl = bl->next)
    {
       bp = bl->blk;
-      for (ip = bp-> ainst1; ip; ip = ip->next)
+      for (ip = bp->ainst1; ip; ip = ip->next)
       {
-/*
- *       FORMAT: cmp fcc, reg0, reg1
- *               JLT/JGT PC, fcc, LABEL
- *       There would be exactly two ld of 2 vars/const
- */
-         if (IS_COND_BRANCH(ip->inst[0]) && (ip->prev->inst[0]== cmp))
+         if (IS_COND_BRANCH(ip->inst[0]) 
+               && ip->prev && ip->prev->inst[0] == cmp)
          {
-            reg0 = ip->prev->inst[2];
-            reg1 = ip->prev->inst[3];
-            br = ip->inst[0];
-
-            ip0 = ip->prev->prev->prev;     /* 1st ld */
-            assert((ip0->inst[0] == ld));
+            ip0 = NULL;
             ip1 = ip->prev->prev;           /* 2nd ld */
-            assert((ip1->inst[0] == ld));
+            if(ip1) 
+                  ip0 = ip->prev->prev->prev;     /* 1st ld */
 /*
- *          for load, inst[2] must be a var 
+ *          the cond branch is to check x and max/min var without any arithmatic
+ *          in between them
  */
-            if (STpts2[ip0->inst[2]-1] == MaxVar)
+            if (ip0 && ip1 && IS_LOAD(ip0->inst[0]) && IS_LOAD(ip1->inst[0]))
             {
-               regv = ip0->inst[1];
-               xvar = ip1->inst[2];
-               regx = ip1->inst[1];
-            }
-            else if (STpts2[ip1->inst[2]-1] == MaxVar)
-            {
-               regv = ip1->inst[1];
-               xvar = ip0->inst[2];
-               regx = ip0->inst[1];
-            }
-            else 
-               regv = 0;
-            if ( ((regv == reg0) && (br == JLT)) ||  
-                 ((regv == reg1) && (br == JGT)) )
-            {
-               label = ip->inst[3];
-               /* check for single set inside if-blk and not set where else*/
-/*
- *             There are two checks:
- *                1. Max/Min var is only set inside the ifblk, nowhere else. It
- *                   needed for the reduction at posttails
- *             not needed here ...2. No other var but max/min is set inside ifblk
- */
-               if (CheckMaxMinConstraints(scope, MaxVar, label) )
+               if (STpts2[ip0->inst[2]-1] == mvar)
                {
-                  // Now, it's time to mov instruction ..
-                  /*fprintf(stderr, "elim blks for max var = %s\n", 
-                          STname[maxvar-1]);*/
-                  assert(ip0->prev->inst[0] != ld);
+                  regv = ip0->inst[1];
+                  xvar = ip1->inst[2];
+                  regx = ip1->inst[1];
+               }
+               else if (STpts2[ip1->inst[2]-1] == mvar)
+               {
+                  regv = ip1->inst[1];
+                  xvar = ip0->inst[2];
+                  regx = ip0->inst[1];
+               }
+               else 
+                  continue; /* not a cond with var, continue to next ip */
+               label =  ip->inst[3];
 /*
- *                find conditinal blk structure 
+ *             max/min var is already tested before. so, we don't test here 
+ *             find conditional blk structure
  */
-                  splitblk = bp;
-                  ifblk = splitblk->csucc;
-                  if (ifblk->usucc != splitblk->usucc)
-                  {
-                     elseblk = splitblk->usucc;
-                     mergeblk = elseblk->usucc;
-                  }
-                  else 
-                  {
-                     elseblk = NULL;
-                     mergeblk = splitblk->usucc;
-                  }
-                  assert(mergeblk == ifblk->usucc);
+               splitblk = bp;
+               ifblk = splitblk->csucc;
+               if (ifblk->usucc != splitblk->usucc)
+               {
+                  elseblk = splitblk->usucc;
+                  mergeblk = elseblk->usucc;
+               }
+               else 
+               {
+                  elseblk = NULL;
+                  mergeblk = splitblk->usucc;
+               }
+               if (mergeblk != ifblk->usucc)
+               {
+                  fko_warn(__LINE__,
+                        "Doesn't follow required if-else structure\n");
+                  continue;
+               }
 /*
- *                Remove Max var set instruciton from if-blk
+ *             have required structure. now time to remove the var
  */
-                  RemoveIfMaxVar(ifblk, MaxVar);
-/*
- *                Add vmax instruction at merge blk... we assume that max var
- *                is not used and xvar is not set in if-blk before the max  is 
- *                set inside ... not tested for xvar!!! 
- */
-#if 0
-                  fprintf(stderr, "maxvar=%s, xvar=%s\n", STname[MaxVar-1],
-                        STname[STpts2[xvar-1]-1]);
-                  PrintThisBlockInst(stderr, mergeblk);
-#endif
-                  AddMaxInst(mergeblk, 
-                     (mergeblk->ainst1->inst[0]==LABEL)?
-                     mergeblk->ainst1->next : mergeblk->ainst1 , 
-                        MaxVar, STpts2[xvar-1]);
-#if 0
-                  PrintInst(stderr, bbbase);
-#endif
-                  return 1;                         
+               if (RemoveVarFromIFBlk(ifblk, mvar))
+               {
+                  if (AddMaxMinInst(mergeblk, 
+                                    (mergeblk->ainst1->inst[0]==LABEL)?
+                                    mergeblk->ainst1->next : mergeblk->ainst1 , 
+                                    mvar, STpts2[xvar-1], ismax))
+                     return(1);
+                  
                }
             }
          }
       }
    }
-   return (0);
+   return(0);
+
 }
 
-int MovMinVarOut(short MinVar, BLIST *scope)
-{
-   return 0;
-}
-
-int MovMaxMinVarsOut()
+int MovMaxMinVarsOut(int movmax, int movmin)
 {
    int i, j, N;
    short *scal;
@@ -6529,19 +6307,19 @@ int MovMaxMinVarsOut()
    scal = FindAllScalarVars(lp->blocks);   
    for (N = scal[0], i=1; i <= N; i++)
    {
-      if (VarIsMax(lp->blocks, scal[i]))
+      if (movmax && VarIsMaxOrMin(lp->blocks, scal[i], 1, 0))
       {
          #if 0
             fprintf(stderr, "Max var = %s\n", STname[scal[i]-1]);  
          #endif
-         changes += MovMaxVarOut(scal[i],lp->blocks);
+         changes += MovOneMaxMinVarOut(lp->blocks, scal[i], 1);
       }
-      else if (VarIsMin(lp->blocks, scal[i]))
+      else if (movmin && VarIsMaxOrMin(lp->blocks, scal[i], 0, 1))
       {
          #if 0
             fprintf(stderr, "Min var = %s\n", STname[scal[i]-1]);
          #endif
-         changes += MovMinVarOut(scal[i], lp->blocks);
+         changes += MovOneMaxMinVarOut(lp->blocks, scal[i], 0);
       }
    }
    if (scal) free(scal);

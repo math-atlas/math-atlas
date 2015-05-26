@@ -3330,12 +3330,12 @@ void AddOptST4SE()
  *    max/min testing will not work. 
  */
 #if 0         
-         else if (VarIsMax(optloop->blocks, st))
+         else if (VarIsMaxOrMin(optloop->blocks, st, 1, 0))
          {
             scf[i] = SC_MAX;
             ses[i-1] = DeclareMaxE(VEC, SEn[i], st);
          }
-         else if (VarIsMin(optloop->blocks, st))
+         else if (VarIsMaxOrMin(optloop->blocks, st, 0, 1))
          {
             scf[i] = SC_MIN;
             ses[i-1] = DeclareMinE(VEC, SEn[i], st);
@@ -3899,7 +3899,7 @@ int main(int nargs, char **args)
    {
       PrintLoopInfo();
    }
-#else   
+#else 
    SaveFKOState0(); /* this function works for state0. */
 /*
  * if we need information for tunning, generate and return those info.
@@ -4012,8 +4012,7 @@ int main(int nargs, char **args)
  *       for determing the max/min. We will extend this to figure out the 
  *       max/min var and strip it out from the loop. 
  */
-         /*MovMaxMinVarsOut();*/
-         ElimMaxMinIf();
+         ElimMaxMinIf(1,1); /* both max and min */
 #if 0 
          fprintf(stdout, "LIL after ElimMax/MinIf\n");
          PrintInst(stdout, bbbase);
@@ -4033,7 +4032,7 @@ int main(int nargs, char **args)
 /*
  *       testing.... for iamax
  */
-         MovMaxMinVarsOut();
+         MovMaxMinVarsOut(1,1); /* both max/min */
 #if 0
          fprintf(stdout, "LIL after MaxMin\n");
          PrintInst(stdout, bbbase);
