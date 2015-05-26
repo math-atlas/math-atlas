@@ -521,6 +521,15 @@ ablk2cmat_t Mjoin(PATL,tGetSyammInfo_K)
    (amminfo_t *out, const int P, enum ATLAS_TRANS TA, ATL_CSZT N, ATL_CSZT K);
 
 
+void Mjoin(PATL,ammmK)
+   (amminfo_t*, const int mb, const int nmu, const int nb, const int nnu, 
+    ATL_CINT nfkblks, const int kb, const int kb0, const int KB0, const TYPE *A,
+    const size_t lda, const size_t incAk, const TYPE*B, const size_t ldb, 
+    const size_t incBk, const ablk2cmat_t blkc2c, TYPE*, const size_t ldc, 
+    TYPE *a, ATL_CINT inca, TYPE *b, ATL_CINT incb,
+    TYPE *c, const SCALAR alpA, const SCALAR alpB, const SCALAR alpC,
+    const SCALAR beta);
+
 void Mjoin(PATL,ammm)
    (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,ATL_CSZT, const SCALAR,
     const TYPE*,ATL_CSZT,const TYPE*,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT);
@@ -17722,4 +17731,89 @@ int Mjoin(PATL,ammmNKM)
    }
    free(vp);
    return(0);
+}
+@ROUT ATL_ammmK
+#include "atlas_misc.h"
+#include "atlas_amm.h"
+
+void Mjoin(PATL,ammmK)
+(
+   amminfo_t *mminf,
+   const int mb,           /* # of rows of C to compute */
+   const int nmu,          /* CEIL(mb/mu) */
+   const int nb,  
+   const int nnu,
+   ATL_CINT nfkblks, /* FLOOR(K/kb) */
+   const int kb,
+   const int kb0,
+   const int KB0,
+   const TYPE *A,
+   const size_t lda,   
+   const size_t incAk, /* 0: no need to copy A, else incK for cpying A */
+   const TYPE *B,
+   const size_t ldb,   
+   const size_t incBk, /* 0: no need to copy B, else incK for cpying A */
+   const ablk2cmat_t blk2c,
+   TYPE *C,
+   const size_t ldc,   
+   TYPE *a,
+   ATL_CINT inca,      /* size of blocks of A, or 0 to reuse space */
+   TYPE *b,
+   ATL_CINT incb,      /* size of blocks of B, or 0 to reuse space */
+   TYPE *c, 
+   const SCALAR alpA,
+   const SCALAR alpB,
+   const SCALAR alpC,
+   const SCALAR beta
+)
+{
+   cm2am_t a2blk=mminf->a2blk, b2blk=mminf->b2blk;
+   ammkern_t amm=mminf->amm_b0;
+   TYPE *an=a+inca, *bn=b+incb;
+   ATL_INT k;
+/*
+ * Peel first iteration to handle KR and use beta=0
+ */
+   if (kb0 != kb)
+   {
+      const int ku=mminf->ku;
+      amm = mminf->amm_k1_b0;
+      if (((mminf->flag)&1) && (mminf->kbmin <= KB0) && 
+          ( ((mminf->flag)&2) || (KB0 == kb0) ) )
+         amm = mminf->amm_b0;
+   }
+   if (incAk)
+   {
+      a2blk(kb0, mb, alpA, A, lda, a);
+      A += incAk;
+   }
+   if (incBk)
+   {
+      b2blk(kb0, nb, alpB, B, ldb, b);
+      B += incBk;
+   }
+   amm(nmu, nnu, KB0, a, b, c, an, bn, c);
+   amm = mminf->amm_b1;
+   a = an;
+   b = bn;
+   for (k=0; k < nfkblks; k++)
+   {
+      if (incAk)
+      {
+         a2blk(kb, mb, alpA, A, lda, a);
+         A += incAk;
+      }
+      if (incBk)
+      {
+         b2blk(kb, nb, alpB, B, ldb, b);
+         B += incBk;
+      }
+      an = a + inca;
+      bn = b + inca;
+      amm(nmu, nnu, kb, a, b, c, an, bn, c);
+      a = an;
+      b = bn;
+   }
+   if (blk2c)
+      blk2c(mb, nb, alpC, c, beta, C, ldc);
 }
