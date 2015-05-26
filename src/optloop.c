@@ -3467,9 +3467,11 @@ int CheckMaxMinConstraints(BLIST *scope, short var, short label)
          {
             /*fprintf(stderr," %s %d \n", instmnem[ip->inst[0]], ip->inst[1]);*/
 /*
- *          Figure out when to use STpts2 and SToff[].sa[2] ??? 
+ *          Figure out when to use STpts2 and SToff[].sa[2] ???
+ *          FIXED: amax/amin is set by x not after some operations
  */
-            if (ip->inst[0] == st && STpts2[ip->inst[1]-1] == var)
+            if (ip->inst[0] == st && STpts2[ip->inst[1]-1] == var 
+                  && IS_LOAD(ip->prev->inst[0]))
                isetcount++;
          }
       }
@@ -4274,13 +4276,13 @@ OPTLOOP=1
    int SimpleLC=0, UR;
    short *scal;
    int MaxR, MinR, MaxMinR, RC, pv;
-   int VmaxR, VminR, VmaxminR, Vrc, Vspec, Vn;
+   int VmaxminR, Vrc, Vspec, Vn;
    extern FILE *fpLOOPINFO;
    extern short STderef;
    extern BBLOCK *bbbase;
 
    MaxR=0; MinR=0; MaxMinR=0; RC=0; pv =0;
-   VmaxR=0; VminR=0; VmaxminR=0; Vrc=0; Vspec=0; Vn=0;
+   VmaxminR=0; Vrc=0; Vspec=0; Vn=0;
    if (fpLOOPINFO)
       fpout = fpLOOPINFO;
 /*
@@ -4389,8 +4391,8 @@ OPTLOOP=1
  */
       npaths = FindNumPaths(optloop);
       fprintf(fpout, "   NUMPATHS=%d\n",npaths);
-      nifs = FindNumIFs(optloop->blocks);
-      fprintf(fpout, "   NUMIFS=%d\n",nifs-1); /* 1 for loop itself */
+      nifs = FindNumIFs(optloop->blocks) - 1; /* 1 for loop itself */
+      fprintf(fpout, "   NUMIFS=%d\n",nifs);
 
       if (npaths > 1)
       {
@@ -4427,24 +4429,20 @@ OPTLOOP=1
          if(scal) free(scal);
 #endif
          MaxR = ElimMaxIf();
-         MinR = ElimMaxMinIf();
+         MinR = ElimMaxMinIf(); /*rule out all maxs before  */
 /*
- *       haven't checked MaxMin... no imp yet 
+ *       does max/min eliminate all paths
+ */   
+/*
  *       NOTE: SpeculativeVectorAnalysis also works if there are multiple 
  *       paths still. So, it's a design decision whether we need to apply 
  *       SpeculativeVectorAnalysis ... ... 
  */
-         if (MaxR)
+         if (FindNumPaths(optloop) == 1 && (MaxR || MinR) )
          {
-            VmaxR = !(SpeculativeVectorAnalysis()); /*it is the most general */
+            VmaxminR = !(SpeculativeVectorAnalysis()); 
             KillPathTable();
          }
-         if (MinR)
-         {
-            VminR = !(SpeculativeVectorAnalysis()); /*it is the most general */
-            KillPathTable();
-         }
-         else;
 
          fprintf(fpout, "      MaxEliminatedIfs=%d\n",MaxR);
          fprintf(fpout, "      MinEliminatedIfs=%d\n",MinR);
@@ -4474,28 +4472,23 @@ OPTLOOP=1
  */
 #ifdef AVX
          if (optloop->LMU_flag & LMU_UNSAFE_RC)
-         {
             RC = 0;
-            fprintf(fpout, "      RedCompReducesToOnePath=%d\n",0);
-         }
          else
-         {
             RC = !(IterativeRedCom());
-            fprintf(fpout, "      RedCompReducesToOnePath=%d\n",RC);
-         }
 #else
 /*
  *       Right now, RC is only supported in AVX 
  */
          RC = 0;
-         fprintf(fpout, "      RedCompReducesToOnePath=%d\n",0);
 #endif
          if (RC)
          {
-            //Vrc = !(SpeculativeVectorAnalysis()); /*it is the most general */
+            fprintf(fpout, "      RedCompEliminatedIfs=%d\n",nifs);
             Vrc = !(RcVectorAnalysis()); /* checking for shadow RC too */
             KillPathTable();
          }
+         else
+            fprintf(fpout, "      RedCompEliminatedIfs=%d\n",0);
       }
 /*
  *    Now, we will check the vectorization 
@@ -4524,13 +4517,12 @@ OPTLOOP=1
          KillPathTable();
       }
       
-      if (Vn || Vrc || VmaxR || VminR || VmaxminR || Vspec)
+      if (Vn || Vrc || VmaxminR || Vspec)
       {
          fprintf(fpout, "   VECTORIZABLE=%d\n",1);
          if (npaths > 1)
          { 
-            fprintf(fpout, "      MaxOK=%d\n",VmaxR);
-            fprintf(fpout, "      MinOK=%d\n",VminR);
+            fprintf(fpout, "      MaxMinOK=%d\n",VmaxminR);
             fprintf(fpout, "      RedCompOK=%d\n",Vrc);
             fprintf(fpout, "      SpeculationOK=%d\n",Vspec);
             if (Vspec)
