@@ -41,4 +41,7 @@ BBLOCK *DupCFScope(INT_BVI ivscp0, INT_BVI ivscp, BBLOCK *head);
 BLIST *CF2BlockList(BLIST *bl, INT_BVI bvblks, BBLOCK *head);
 INSTQ *FindCompilerFlag(BBLOCK *bp, short flag);
 BBLOCK *DupBlock(BBLOCK *bold);
+int VarIsMaxOrMin(BLIST *scope, short var, int maxcheck, int mincheck);
+int MovMaxMinVarsOut(int movmax, int movmin);
+int ElimMaxMinIf(int maxelim, int minelim);
 #endif
