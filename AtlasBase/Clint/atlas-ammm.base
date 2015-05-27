@@ -526,9 +526,8 @@ void Mjoin(PATL,ammmK)
     ATL_CINT nfkblks, const int kb, const int kb0, const int KB0, const TYPE *A,
     const size_t lda, const size_t incAk, const TYPE*B, const size_t ldb, 
     const size_t incBk, const ablk2cmat_t blkc2c, TYPE*, const size_t ldc, 
-    TYPE *a, ATL_CINT inca, TYPE *b, ATL_CINT incb,
-    TYPE *c, const SCALAR alpA, const SCALAR alpB, const SCALAR alpC,
-    const SCALAR beta);
+    TYPE *a, ATL_CINT inca, TYPE *b, ATL_CINT incb, TYPE *rC, TYPE *iC, 
+    const SCALAR alpA, const SCALAR alpB, const SCALAR alpC, const SCALAR beta);
 
 void Mjoin(PATL,ammm)
    (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,ATL_CSZT, const SCALAR,
@@ -10711,10 +10710,10 @@ static int ATL_ammm
  */
 int Mjoin(PATL,ammm_tN)
 @ROUT ATL_ammm_1b  ATL_ammm_rkK ATL_cammm_1b ATL_ammmMNK ATL_cammmMNK @\
-      ATL_cammm_rkK  ATL_ammm_IP ATL_cammm_IP ATL_ammmKNM
+      ATL_cammm_rkK ATL_cammm_IP ATL_ammmKNM
 int @(rt)
 @ROUT ATL_ammm ATL_ammm_1b  ATL_ammm_rkK ATL_cammm ATL_cammm_1b ATL_ammmMNK @\
-      ATL_cammm_rkK  ATL_ammm_IP ATL_cammm_IP ATL_ammm_tN ATL_cammm_tN @\
+      ATL_cammm_rkK  ATL_cammm_IP ATL_ammm_tN ATL_cammm_tN @\
       ATL_ammmKNM ATL_cammmMNK
 (
    enum ATLAS_TRANS TA,
@@ -12216,7 +12215,7 @@ int Mjoin(PATL,ammm_aliased_rkK)
    free(vp);
    return(0);
 }
-@ROUT ATL_ammm_IP
+@ROUT ATL_ammm_IP_0
 {
    ablk2cmat_t blk2c;
    cm2am_t a2blk, b2blk;
@@ -12313,6 +12312,105 @@ int Mjoin(PATL,ammm_aliased_rkK)
    }
    blk2c(M, N, alpC, pC, beta, C, ldc);
 
+   free(vp);
+   return(0);
+}
+@ROUT ATL_ammm_IP
+int Mjoin(PATL,ammm_IP)
+(
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   ATL_CSZT M,
+   ATL_CSZT N,
+   ATL_CSZT K,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CSZT lda,
+   const TYPE *B,
+   ATL_CSZT ldb,
+   const SCALAR beta,
+   TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   #ifdef TCPLX
+      const TYPE ONE[2]={ATL_rone,ATL_rzero}, ZERO[2]={ATL_rzero,ATL_rzero};
+      const TYPE *alpA=ONE, *alpB=ONE, *alpC=ONE;
+   #else
+      #define ONE ATL_rone
+      TYPE alpA=ATL_rone, alpB=ATL_rone, alpC=ATL_rone;
+   #endif
+   TYPE *a, *b, *rC, *iC;
+   void *vp;
+   size_t sz, incAk, incBk;
+   ATL_INT lenA, lenB, lenC;
+   int mu, nu, ku, nmu, nnu, kb, MB, NB, KB, kb0, KB0;
+   ATL_INT nfkblks;
+   amminfo_t mminf;
+
+
+   mu = Mjoin(PATL,GetAmmmInfo)(&mminf, TA, TB, M, N, K, alpha, beta);
+   if (!mu)
+      alpA = alpha;
+   else if (mu == 1)
+      alpB = alpha;
+   else
+      alpC = alpha;
+
+   mu = mminf.mu;
+   nu = mminf.nu;
+   ku = mminf.ku;
+   nmu = (M+mu-1)/mu;
+   nnu = (N+nu-1)/nu;
+   KB = kb = mminf.kb;
+   nfkblks = K / kb;
+   MB = nmu * mu;
+   NB = nnu * nu;
+   kb0 = K - nfkblks*kb;
+   if (!kb0)
+   {
+      kb0 = KB0 = kb;
+      nfkblks--;
+   }
+   else
+   {
+      #if ATL_AMM_MAXKMAJ > 1
+         if (ATL_AMMFLG_KMAJOR(mminf.flag))
+         {
+            KB0 = ((kb0+ku-1)/ku)*ku;
+            KB = Mmax(KB, KB0);
+         }
+         else
+      #endif
+      KB0 = kb0;
+   }
+   lenA = MB*KB;
+   lenB = KB*NB;
+   lenC = MB*NB;
+   sz = lenA + lenB + lenC + 2*mu*nu;
+   sz = ATL_MulBySize(sz) + 4*ATL_Cachelen;
+   vp = malloc(sz);
+   ATL_assert(vp);
+   a = ATL_AlignPtr(vp);
+   b = a + (lenA SHIFT);
+   b = ATL_AlignPtr(b);
+   iC = b + (lenB SHIFT);
+   iC = ATL_AlignPtr(iC);
+   #ifdef TCPLX
+      rC = iC + lenC;
+      rC = ATL_AlignPtr(rC);
+   #else
+      rC = iC;
+   #endif
+   incAk = (IS_COLMAJ(TA)) ? lda*kb : kb;
+   incBk = (IS_COLMAJ(TB)) ? kb : kb*ldb;
+   #ifdef TCPLX
+      incAk += incAk;
+      incBk += incBk;
+   #endif
+   Mjoin(PATL,ammmK)(&mminf, M, nmu, N, nnu, nfkblks, kb, kb0, KB0, A, lda,
+                     incAk, B, ldb, incBk, mminf.Cblk2cm, C, ldc, a, 0, b, 0,
+                     rC, iC, alpA, alpB, alpC, beta);
    free(vp);
    return(0);
 }
@@ -17732,9 +17830,10 @@ int Mjoin(PATL,ammmNKM)
    free(vp);
    return(0);
 }
-@ROUT ATL_ammmK
+@ROUT ATL_ammmK ATL_cammmK
 #include "atlas_misc.h"
 #include "atlas_amm.h"
+#include Mstr(Mjoin(AMM_PRE,_sum.h))
 
 void Mjoin(PATL,ammmK)
 (
@@ -17760,12 +17859,14 @@ void Mjoin(PATL,ammmK)
    ATL_CINT inca,      /* size of blocks of A, or 0 to reuse space */
    TYPE *b,
    ATL_CINT incb,      /* size of blocks of B, or 0 to reuse space */
-   TYPE *c, 
+   TYPE *rC, 
+   TYPE *iC, 
    const SCALAR alpA,
    const SCALAR alpB,
    const SCALAR alpC,
    const SCALAR beta
 )
+@ROUT ATL_ammmK
 {
    cm2am_t a2blk=mminf->a2blk, b2blk=mminf->b2blk;
    ammkern_t amm=mminf->amm_b0;
@@ -17778,24 +17879,33 @@ void Mjoin(PATL,ammmK)
    {
       const int ku=mminf->ku;
       amm = mminf->amm_k1_b0;
-      if (((mminf->flag)&1) && (mminf->kbmin <= KB0) && 
-          ( ((mminf->flag)&2) || (KB0 == kb0) ) )
+      if ( ATL_AMMFLG_KRUNTIME(mminf->flag) && (mminf->kbmin <= KB0) && 
+           (ATL_AMMFLG_KMAJOR(mminf->flag) || (KB0 == kb0)) )
          amm = mminf->amm_b0;
+      if (incAk)
+         a2blk(kb0, mb, alpA, A+incAk*nfkblks, lda, a);
+      if (incBk)
+         b2blk(kb0, nb, alpB, B+incBk*nfkblks, ldb, b);
+      amm(nmu, nnu, KB0, a, b, rC, an, bn, rC);
    }
-   if (incAk)
+   else
    {
-      a2blk(kb0, mb, alpA, A, lda, a);
-      A += incAk;
+      if (incAk)
+      {
+         a2blk(kb0, mb, alpA, A, lda, a);
+         A += incAk;
+      }
+      if (incBk)
+      {
+         b2blk(kb0, nb, alpB, B, ldb, b);
+         B += incBk;
+      }
+      amm(nmu, nnu, KB0, a, b, rC, an, bn, rC);
    }
-   if (incBk)
-   {
-      b2blk(kb0, nb, alpB, B, ldb, b);
-      B += incBk;
-   }
-   amm(nmu, nnu, KB0, a, b, c, an, bn, c);
    amm = mminf->amm_b1;
    a = an;
    b = bn;
+
    for (k=0; k < nfkblks; k++)
    {
       if (incAk)
@@ -17810,10 +17920,341 @@ void Mjoin(PATL,ammmK)
       }
       an = a + inca;
       bn = b + inca;
-      amm(nmu, nnu, kb, a, b, c, an, bn, c);
+      amm(nmu, nnu, kb, a, b, rC, an, bn, rC);
       a = an;
       b = bn;
    }
    if (blk2c)
-      blk2c(mb, nb, alpC, c, beta, C, ldc);
+      blk2c(mb, nb, alpC, rC, beta, C, ldc);
+}
+@ROUT ATL_cammmK
+{
+   cm2am_t a2blk=mminf->a2blk, b2blk=mminf->b2blk;
+   ammkern_t amm_b0=mminf->amm_b0, amm_b1=mminf->amm_b1, amm_bn=mminf->amm_bn;
+   ATL_CINT inca2=inca+inca, incb2=incb+incb;
+   ATL_INT szA = inca, szB = incb;
+   TYPE *iA=a, *iB=b, *rA, *rB;
+   TYPE *an=iA+inca2, *bn=iB+incb2;
+   ATL_INT k;
+   if (!szA)
+      szA = nmu*mminf->mu*Mmax(kb,KB0);
+   if (!szB)
+      szB = nnu*mminf->nu*Mmax(kb,KB0);
+   rA = iA + szA;
+   rB = iB + szB;
+/*
+ * Peel first iteration to handle KR and use beta=0
+ */
+   if (kb0 != kb)
+   {
+      amm_b0 = mminf->amm_k1_b0;
+      if ( ATL_AMMFLG_KRUNTIME(mminf->flag) && (mminf->kbmin <= KB0) && 
+           (ATL_AMMFLG_KMAJOR(mminf->flag) || (KB0 == kb0)) )
+         amm_b0 = mminf->amm_b0;
+      if (amm_b0 != mminf->amm_b0)
+      {
+         amm_b1 = mminf->amm_k1_b1;
+         amm_bn = mminf->amm_k1_bn;
+      }
+      if (incAk)
+         a2blk(kb0, mb, alpA, A+incAk*nfkblks, lda, rA, iA);
+      if (incBk)
+         b2blk(kb0, nb, alpB, B+incBk*nfkblks, ldb, rB, iB);
+
+      amm_b0(nmu, nnu, KB0, iA, iB, rC, rA, iB, iC);
+      amm_b0(nmu, nnu, KB0, rA, iB, iC, rA, rB, rC);
+      amm_bn(nmu, nnu, KB0, rA, rB, rC, iA, rB, iC);
+      amm_b1(nmu, nnu, KB0, iA, rB, iC, an, bn, rC);
+
+      amm_b1 = mminf->amm_b1;
+      amm_bn = mminf->amm_bn;
+   }
+   else
+   {
+      if (incAk)
+      {
+         a2blk(kb, mb, alpA, A, lda, rA, iA);
+         A += incAk;
+      }
+      if (incBk)
+      {
+         b2blk(kb, nb, alpB, B, ldb, rB, iB);
+         B += incBk;
+      }
+      amm_b0(nmu, nnu, kb, iA, iB, rC, rA, iB, iC);
+      amm_b0(nmu, nnu, kb, rA, iB, iC, rA, rB, rC);
+      amm_bn(nmu, nnu, kb, rA, rB, rC, iA, rB, iC);
+      amm_b1(nmu, nnu, kb, iA, rB, iC, an, bn, rC);
+   }
+
+   for (k=0; k < nfkblks; k++)
+   {
+      iA = an;
+      iB = bn;
+      rA = iA + szA;
+      rB = iB + szB;
+      an = iA + inca2;
+      bn = iB + incb2;
+      if (incAk)
+      {
+         a2blk(kb, mb, alpA, A, lda, rA, iA);
+         A += incAk;
+      }
+      if (incBk)
+      {
+         b2blk(kb, nb, alpB, B, ldb, rB, iB);
+         B += incBk;
+      }
+      amm_bn(nmu, nnu, kb, iA, iB, rC, rA, iB, iC);
+      amm_b1(nmu, nnu, kb, rA, iB, iC, rA, rB, rC);
+      amm_bn(nmu, nnu, kb, rA, rB, rC, iA, rB, iC);
+      amm_b1(nmu, nnu, kb, iA, rB, iC, an, bn, rC);
+   }
+   if (blk2c)
+      blk2c(mb, nb, alpC, rC, iC, beta, C, ldc);
+}
+@ROUT ATL_ammmKNMK
+#include "atlas_misc.h"
+#include "atlas_amm.h"
+#include Mstr(Mjoin(AMM_PRE,_sum.h))
+
+static void ATL_ammmMK
+(
+   amminfo_t *mminf,
+   ATL_CSZT nfmblks,         /* FLOOR(M/mb) */
+   const int mbL,            /* mbL=M%mb */
+   const int nmuL,
+   const int nb,
+   const int nnu,
+   ATL_CSZT nfkblks,         /* FLOOR(K/kb) */
+   const int kb0,
+   const int KB0,
+   const TYPE *A,
+   const size_t lda,
+   const size_t incAk,       /* 0: no need to copy A, else incK for cpying A */
+   const size_t incAm,
+   const TYPE *B,
+   const size_t ldb,
+   const size_t incBk,       /* 0: no need to copy B, else incK for cpying A */
+   TYPE *C,
+   const size_t ldc,
+   const size_t incCm,
+   TYPE *a,
+   ATL_CINT inca,      /* size of blocks of A, or 0 to reuse space */
+   ATL_CSZT incam,
+   TYPE *b,
+   ATL_CINT incb,      /* size of blocks of B, or 0 to reuse space */
+   TYPE *rC,
+   TYPE *iC,
+   const SCALAR alpA,
+   const SCALAR alpB,
+   const SCALAR alpC,
+   const SCALAR beta
+)
+{
+   ATL_SZT i;
+   const int mu=mminf->mu, mb=mminf->mb, nmu=(mb+mu-1)/mu; 
+   const int kb=mminf->kb;
+   ablk2cmat_t blk2c=mminf->Cblk2cm;
+
+   for (i=0; i < nfmblks; i++, A += incAm, C += incCm, a += incam)
+   {
+      Mjoin(PATL,ammmK)(mminf, mb, nmu, nb, nnu, nfkblks, kb, kb0, KB0, 
+                        A, lda, incAk, B, ldb, incBk, blk2c, C, ldc, 
+                        a, inca, b, inca, rC, iC, alpA, alpB, alpC, beta);
+   }
+   if (mbL)
+      Mjoin(PATL,ammmK)(mminf, mbL, nmuL, nb, nnu, nfkblks, kb, kb0, KB0, 
+                        A, lda, incAk, B, ldb, incBk, blk2c, C, ldc, 
+                        a, inca, b, inca, rC, iC, alpA, alpB, alpC, beta);
+}
+
+static void ATL_ammmNMK
+(
+   amminfo_t *mminf,
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   ATL_CSZT M,
+   ATL_CSZT N,
+   ATL_CSZT K,
+   const TYPE *A,
+   ATL_CSZT lda,
+   const TYPE *B,
+   ATL_CSZT ldb,
+   TYPE *C,
+   ATL_CSZT ldc,
+   ATL_SZT nmblks,            /* CEIL(M/mb) */
+   ATL_SZT nkblks,            /* CEIL(K/kb) */
+   TYPE *a,
+   TYPE *b, 
+   TYPE *c,
+   const SCALAR alpA,
+   const SCALAR alpB,
+   const SCALAR alpC,
+   const SCALAR beta
+)
+{
+   const int mb=mminf->mb, nb=mminf->nb, kb=mminf->kb;
+   const int mu=mminf->mu, nu=mminf->nu, ku=mminf->ku;
+   const int nmu=(mb+mu-1)/mu, nnu=(nb+nu-1)/nu;
+   const int inca=mb*kb, incb=kb*nb;
+   int mbL=0, nmuL=0, nbF=nb, nnuF=nnu, KB0, kb0;
+   ATL_CSZT incam = nkblks*(inca SHIFT), incCn = nb*(ldc SHIFT);
+   ATL_SZT j, incAm, incAk, incBk, incBn, incBnF;
+   ATL_SZT nnblks = (N-1)/nb;
+   #ifdef TCPLX
+      TYPE *iC=c, *rC=c+mb*nb;
+      const int mb2=mb+mb;
+   #else
+      #define rC c
+      #define iC c
+      #define mb2 mb
+   #endif
+
+   j = nmblks*mb;
+   if (j != M)
+   {
+      nmblks--;
+      mbL = M - j + mb;
+      nmuL = (mbL+mu-1)/mu;
+   }
+   j = nnblks*nb;
+   nbF = N - j;
+   if (nbF != nb)
+      nnuF = (nbF+nu-1)/nu;
+   nkblks--;
+   j = nkblks*kb;
+   KB0 = kb0 = K - j;
+   #if ATL_AMM_MAXKMAJ > 1
+      if (kb0 != kb && ATL_AMMFLG_KMAJOR(mminf->flag))
+         KB0 = ((kb0+ku-1)/ku)*ku;
+   #endif
+   if (IS_COLMAJ(TA))
+   {
+      incAk = kb*lda;
+      incAm = mb;
+   }
+   else
+   {
+      incAk = kb;
+      incAm = mb*lda;
+   }
+   if (IS_COLMAJ(TB))
+   {
+      incBk = kb;
+      incBn = nb*ldb;
+      incBnF = nbF*ldb;
+   }
+   else
+   {
+      incBk = kb*ldb;
+      incBn = nb;
+      incBnF = nbF;
+   }
+   #ifdef TCPLX
+      incAk += incAk;
+      incAm += incAm;
+      incBk += incBk;
+      incBn += incBn;
+      incBnF += incBnF;
+   #endif
+/*
+ * In first nbF-wide panel, we copy all of A into workspace
+ */
+   ATL_ammmMK(mminf, nmblks, mbL, nmuL, nbF, nnuF, nkblks, kb0, KB0,
+              A, lda, incAk, incAm, B, ldb, incBk, C, ldc, mb2,
+              a, inca, incam, b, incb, rC, iC, alpA, alpB, alpC, beta);
+   C += ldc*(nbF SHIFT);
+   B += incBnF;
+/*
+ * In all other N-panel computation, reuse previously copied A!
+ */
+   incAk = 0;
+   if (nnblks)
+   {
+      for (j=0; j < nnblks; j++, C += incCn, B += incBn)
+         ATL_ammmMK(mminf, nmblks, mbL, nmuL, nb, nnu, nkblks, kb0, KB0,
+                    A, lda, incAk, incAm, B, ldb, incBk, C, ldc, mb2,
+                    a, inca, incam, b, incb, rC, iC, alpA, alpB, alpC, beta);
+   }
+}
+#ifndef TCPLX
+   #undef rC
+   #undef iC
+   #undef mb2
+#endif
+
+int Mjoin(PATL,ammmKNMK)
+(
+   enum ATLAS_TRANS TA,
+   enum ATLAS_TRANS TB,
+   ATL_CSZT M,
+   ATL_CSZT N,
+   ATL_CSZT K,
+   const SCALAR alpha,
+   const TYPE *A,
+   ATL_CSZT lda,
+   const TYPE *B,
+   ATL_CSZT ldb,
+   const SCALAR beta,
+   TYPE *C,
+   ATL_CSZT ldc
+)
+{
+   #ifdef TCPLX
+      const TYPE ONE[2]={ATL_rone,ATL_rzero}, ZERO[2]={ATL_rzero,ATL_rzero};
+      const TYPE *alpA=ONE, *alpB=ONE, *alpC=ONE;
+   #else
+      #define ONE ATL_rone
+      TYPE alpA=ATL_rone, alpB=ATL_rone, alpC=ATL_rone;
+   #endif
+   void *vp;
+   TYPE *a, *b, *c;
+   ATL_SZT szA, szB, szC, sz, nmblks, nkblks, nkblksP, k;
+   ATL_INT nkP=0;
+   int mu, nu, mb, nb, kb, incak, incbk;
+   amminfo_t mminf;
+
+
+   mu = Mjoin(PATL,GetAmmmInfo)(&mminf, TA, TB, M, N, K, alpha, beta);
+   if (!mu)
+      alpA = alpha;
+   else if (mu == 1)
+      alpB = alpha;
+   else
+      alpC = alpha;
+
+   mu = mminf.mu;
+   nu = mminf.nu;
+   mb = mminf.mb;
+   nb = mminf.nb;
+   kb = mminf.kb;
+   nmblks = (M+mb-1)/mb;
+   nkblksP = nkblks = (K+kb-1)/kb;
+   incak = mb*kb;
+   incbk = kb*nb;
+   szC = mb*nb;
+   do
+   {
+      nkP++;
+      szA = nkblksP*nmblks*incak;
+      szB = nkblksP*incbk;
+      sz = ATL_MulBySize(szA+szB+szC+(mu+mu)*nu) + 2*ATL_Cachelen;
+      if (sz <= ATL_MaxMalloc)
+         vp = malloc(sz);
+      nkblksP >>= 1;
+   }
+   while (!vp && nkblksP > 3);
+   if (!vp)
+      return(1);
+
+   a = ATL_AlignPtr(vp);
+   b = a + (szA SHIFT);
+   c = b + (szB SHIFT);
+   
+   ATL_assert(nkblksP == nkblks>>1);  /* just for now */
+   ATL_ammmNMK(&mminf, TA, TB, M, N, K, A, lda, B, ldb, C, ldc, nmblks, nkblks,
+               a, b, c, alpA, alpB, alpC, beta);
+   free(vp);
+   return(0);
 }
