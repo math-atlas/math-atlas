@@ -1,12 +1,10 @@
 #ifndef FKO_ARCH_H
 #define FKO_ARCH_H
 
-/* 
- * for archiregs: 
- * (1) first entry is always stack pointer
- * (2) Second entry is scratch register that can be modified without savin
- *     (for use in prologue)
- */
+/*============================================================================= 
+ * Define architecure here:
+ *
+ *============================================================================*/
 #if !defined(LINUX_PPC) && !defined(OSX_PPC) && !defined(LINUX_X86_32) && \
     !defined(LINUX_X86_64) && !defined(SOLARIS_SPARC)
 /*   #define FKO_ANSIC32 */
@@ -15,40 +13,6 @@
 /*   #define LINUX_X86_32 */
 /*   #define SOLARIS_SPARC  */
 /*   #define OSX_PPC  */
-#endif
-
-/*
- * SIMD vectorization
- * Default vector unit = SSE4.1 
- */
-#if !defined(ArchHasVec) 
-   #define ArchHasVec
-   /*#define AVX*/
-   #define AVX2       /* avx2 is needed for VINT operations */ 
-#endif
-/*
- * AVX2 includes AVX
- */
-#ifdef AVX2
-   #define AVX
-#endif
-
-#if !defined(ArchHasMAC)
-   #define ArchHasMAC
-   /*#define FMA4*/
-   #define FMA3
-#endif
-/*
- * Defines vlen based on SIMD unit
- */
-#ifdef AVX
-   #define FKO_DVLEN 4  
-   #define FKO_SVLEN 8  
-   #define FKO_IVLEN 8  
-#else
-   #define FKO_DVLEN 2  
-   #define FKO_SVLEN 4  
-   #define FKO_IVLEN 4  
 #endif
 
 #if defined(FKO_ANSIC32) || defined(FKO_ANSIC64)
@@ -73,6 +37,10 @@
    #define SPARC
 #endif
 
+/*============================================================================
+ * Addressing Mode (load/store memory):
+ * Multiplying factor in addressing mode of different architecturses
+ *============================================================================*/
 #ifdef PPC
    #define ArchHasLoadMul(mul_) ((mul_) == 0 || (mul_) == 1 || (mul_) == -1)
 #elif defined(SPARC)
@@ -82,14 +50,164 @@
       ( ((mul_) == 1) || ((mul_) == 2) || ((mul_) == 4) || ((mul_) == 8) || \
         ((mul_) == 0) || ((mul_) == -1) )
    #if defined(X86_64)
-/*
- *    Majedul:ArchPtrIsLong was only used in arch.c which isn't used currently.
- */
       #define ArchPtrIsLong 1
    #endif
    #define ArchConstAndIndex
 #endif
 
+/*=============================================================================
+ * vector unit:
+ * 1. supported types
+ * 2. vector length 
+ *============================================================================*/
+#ifdef PPC
+   #ifdef ArchHasVec
+      #undef ArchHasVec  /* vec not supported in fko*/
+   #endif
+
+#elif defined(SPARC)
+   #ifdef ArchHasVec
+      #undef ArchHasVec /* vec not supported in fko*/
+   #endif
+
+#elif defined(X86)
+   #if !defined(ArchHasVec)
+      #define ArchHasVec
+   #endif
+   #define AVX2
+   //#define AVX
+   //#define SSE41
+   #ifdef AVX2
+      #define AVX /* AVX2 includes AVX plus some extra inst */
+      #define VINT_CMOV
+      #define INT_VEC
+      #define FKO_IVLEN 8
+   #endif
+   #ifdef AVX
+      #define FP_VEC
+      #define FKO_SVLEN 8
+      #define DP_VEC
+      #define FKO_DVLEN 4
+   /*#elif defined(SSE41)*/ 
+   #else /* by default SSE4.1*/
+      #define INT_VEC
+      #define FKO_IVLEN 4
+      #define FP_VEC
+      #define FKO_SVLEN 4
+      #define DP_VEC
+      #define FKO_DVLEN 2
+   #endif
+#endif
+
+/*=============================================================================
+ * FMAC inst
+ * 1. supported types
+ *============================================================================*/
+#ifdef PPC
+   #define ArhcHasMAC
+   #define FP_MAC
+   #define DP_MAC
+
+#elif defined(SPARC)
+   #ifdef ArchHasMAc
+      #undef ArchHasMAC
+   #endif
+
+#elif defined(X86)
+   #define ArchHasMAC
+   #define FMA3
+   /*#define FMA4*/
+   #define FP_MAC
+   #define DP_MAC
+   #define VFP_MAC
+   #define VDP_MAC
+#endif
+
+/*=============================================================================
+ * SELECT/CMOV inst
+ * 1. supported types
+ *============================================================================*/
+
+#ifdef PPC
+   #ifdef ArchHasSelect
+      #undef ArchHasSelect  /* select not supported in fko for this arch */
+   #endif
+
+#elif defined(SPARC)
+   #ifdef ArchHasSelect
+      #undef ArchHasSelect /* select not supported in fko for this arch */
+   #endif
+
+#elif defined(X86)
+   #if !defined(ArchHasSelect)
+      #define ArchHasSelect
+   #endif
+
+   #define INT_CMOV
+
+   #ifdef AVX2 /* includes AVX too*/
+      #define VINT_CMOV
+   #endif
+
+   #ifdef AVX
+      #define FP_CMOV
+      #define DP_CMOV
+      #define VFP_CMOV
+      #define VDP_CMOV
+   #endif
+#endif
+
+/*=============================================================================
+ * Max/Min inst
+ * 1. supported types
+ *============================================================================*/
+#ifdef PPC
+   #ifdef ArchHasMaxMin
+      #undef ArchHasMaxMin  /* select not supported in fko for this arch */
+   #endif
+
+#elif defined(SPARC)
+   #ifdef ArchHasMaxMin
+      #undef ArchHasMaxMin /* select not supported in fko for this arch */
+   #endif
+
+#elif defined(X86)
+   #if !defined(ArchHasMaxMin)
+      #define ArchHasMaxMin
+   #endif
+   
+   #ifdef AVX2 /* includes AVX too*/
+      #define VINT_MAX /* only for 32bit int, not for 64bit int */
+      #define VINT_MIN /* only for 32bit int, not for 64bit int */
+   #endif
+/*
+ * max/min supported in both AVX and SSE4.1
+ */
+   #define VFP_MAX
+   #define VFP_MIN
+   #define VDP_MAX
+   #define VDP_MIN
+#endif
+
+/*=============================================================================
+ * FPU PIPE LINE
+ * NOTE: 
+ *============================================================================*/
+#ifdef PPC
+#elif defined(SPARC)
+#elif defined(X86)
+   #if !defined(FPUPIPELINED)
+      #define FPUPIPELINED
+   #endif
+   #define FPPIPE 4    /* just an example, not actual value*/
+   #define DPPIPE 6
+#endif
+
+
+/*=============================================================================
+ * REGISTER INFO
+ *
+ *============================================================================*/
 /*
  * 1st ireg is always stack pointer.  The next NSIR iregs are registers that
  * can be used by the caller without saving, and the first such register is
@@ -175,13 +293,11 @@
    #define DREGBEG  (FREGBEG+TNFR)
    #define VFREGBEG (DREGBEG+TNDR)
    #define VDREGBEG (VFREGBEG+NVFR)
-#if 1
 /*
  * Majedul: adding VIR (vector Int reg bank)
  */
    #define NVIR 8
    #define VIREGBEG (VDREGBEG+NVDR)
-#endif
    #define IRETREG 4
    #define FRETREG (TNFR+FREGBEG-1)
    #define DRETREG (TNDR+DREGBEG-1)
@@ -213,9 +329,7 @@
    #define archvfregs archfregs
    #define archvdregs archfregs
    #define archdregs archfregs
-#if 1
    #define archviregs archfregs
-#endif
    #define dcallersave fcallersave
    #define dcalleesave fcalleesave
 #endif
@@ -237,13 +351,11 @@
    #define DREGBEG  (FREGBEG+NFR)
    #define VFREGBEG (DREGBEG+NDR)
    #define VDREGBEG (VFREGBEG+NVFR)
-#if 1
 /*
  * Majedul: adding VIR (vector Int reg bank)
  */
    #define NVIR 16
    #define VIREGBEG (VDREGBEG+NVDR)
-#endif
    #define IRETREG 4
    #define FRETREG FREGBEG
    #define DRETREG DREGBEG
@@ -285,12 +397,7 @@
    #define archvdregs archfregs
    #define archvfregs archfregs
    #define archdregs archfregs
-#if 1
-/*
- * Majedul: adding VIR (vector Int reg bank)
- */
    #define archviregs archfregs
-#endif
    #define dcallersave fcallersave
    #define dcalleesave fcalleesave
 #endif
