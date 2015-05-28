@@ -2721,3 +2721,271 @@ void GenPrologueEpilogueStubs(BBLOCK *bbase, int rsav)
    InsNewInst(blk, NULL, NULL, CMPFLAG, CF_REGRESTORE, 0, 0);
    InsNewInst(blk, NULL, NULL, RET, 0, use, 0);
 }
+
+void FeedbackArchInfo(FILE *fpout)
+{
+   int i, j, k;
+   const int nr = 6;   /* num of type of regs */
+   const int nbt = 3;  /* num of basic types, */
+   const int next = 4; /* num of ext inst */
+   char *ctypes[] = {"i", "f", "d", "vi", "vf", "vd"}; /* basic types first */
+   /*char *cbtypes[] = {"i", "f", "d"};*/
+   char *cextinst[] = {"MAXINST", "MININST", "CONDMOV", "FMACINST"};
+   int maxinst[]  = {0, 0, 0, 0, 0, 0}; 
+   int mininst[]  = {0, 0, 0, 0, 0, 0}; 
+   int cmovinst[] = {0, 0, 0, 0, 0, 0}; 
+   int macinst[]  = {0, 0, 0, 0, 0, 0}; 
+   int *extinst[] = {maxinst, mininst, cmovinst, macinst};
+   int ne;
+   char **archregs[] ={archiregs, archfregs, archdregs, archviregs, 
+                      archvfregs, archvdregs} ;
+   enum tregs {IR, FR, DR, VIR, VFR, VDR};
+   enum btypes {INT, FLOAT, DOUBLE};
+   int nregs[nr];
+   int vlen[nbt];
+   int tr, vt; 
+
+/*
+ * fp pipeline info
+ */
+   #ifdef FPUPIPELINED
+      fprintf(fpout, "FPUPIPE=1\n");
+      fprintf(fpout, "   PIPELEN:");
+      #ifdef FPPIPE
+         fprintf(fpout, " f=%d", FPPIPE);
+      #endif
+      #ifdef DPPIPE
+         fprintf(fpout, " d=%d", DPPIPE);
+      #endif
+      fprintf(fpout, "\n");
+   #else
+      fprintf(fpout, "FPUPIPE=0\n");
+   #endif
+/*
+ * Register info
+ */
+  
+   tr =  0;
+   for ( i=0; i < nr; i++)
+      nregs[i] = 0;
+
+   #ifdef NIR
+      if (NIR > 0)
+      {
+         nregs[IR] = NIR - 1; /*1st ireg is always sp and not usable*/
+         tr++;
+      }
+   #endif
+   #ifdef NFR
+      if (NFR > 0)
+      {
+         nregs[FR] = NFR;
+         tr++;
+      }
+   #endif
+   #ifdef NDR
+      if (NDR > 0)
+      {
+         nregs[DR] = NDR;
+         tr++;
+      }
+   #endif
+   #ifdef NVIR
+      if (NVIR > 0)
+      {
+         nregs[VIR] = NVIR;
+         tr++;
+      }
+   #endif
+   #ifdef NVFR
+      if (NVFR > 0)
+      {
+         nregs[VFR] = NVFR;
+         tr++;
+      }
+   #endif
+   #ifdef NVDR
+      if (NVDR > 0)
+      {
+         nregs[VDR] = NVDR;
+         tr++;
+      }
+   #endif
+   
+   fprintf(fpout, "REGTYPES=%d\n",tr);
+   if (tr)
+   {
+      fprintf(fpout, "   NUMREGS:");
+      for (i=0; i < nr; i++)
+         if (nregs[i]) fprintf(fpout, " %s=%d", ctypes[i], nregs[i] );
+      fprintf(fpout, "\n");
+   }
+/*
+ * register alias info
+ */
+
+/*
+ * Print cache information  
+ */
+   fprintf(fpout, "NCACHES=%d\n", NCACHE);
+   fprintf(fpout, "   LINESIZES :");
+   for (i=0; i < NCACHE; i++)
+      fprintf(fpout, " %d", LINESIZE[i]);
+   fprintf(fpout, "\n");
+/*
+ * vect types
+ */
+   vt = 0;
+   for (i=0; i < nbt; i++)
+      vlen[i] = 0;
+   #ifdef INT_VEC
+      vlen[INT] = FKO_IVLEN;
+      vt++;
+   #endif
+   #ifdef FP_VEC
+      vlen[FLOAT] = FKO_SVLEN;
+      vt++;
+   #endif
+   #ifdef DP_VEC
+      vlen[DOUBLE] = FKO_DVLEN;
+      vt++;
+   #endif
+   fprintf(fpout, "VECTYPES=%d\n", vt);
+   if (vt)
+   {
+      fprintf(fpout, "   VECLEN:");
+      for (i=0; i < nbt; i++)
+         if (vlen[i]) fprintf(fpout, " %s=%d", ctypes[i], vlen[i]);
+      fprintf(fpout, "\n");
+   }
+/*
+ * extended inst 
+ */
+   ne = 0;
+   #ifdef ArchHasMaxMin
+      ne++;
+      #ifdef INT_MAX
+         maxinst[IR] = 1;
+      #endif
+      #ifdef FP_MAX
+         maxinst[FR] = 1;
+      #endif
+      #ifdef DP_MAX
+         maxinst[DR] = 1;
+      #endif
+      #ifdef VINT_MAX
+         maxinst[VIR] = 1;
+      #endif
+      #ifdef VFP_MAX
+         maxinst[VFR] = 1;
+      #endif
+      #ifdef VDP_MAX
+         maxinst[VDR] = 1;
+      #endif
+      
+      ne++; 
+      
+      #ifdef INT_MIN
+         mininst[IR] = 1;
+      #endif
+      #ifdef FP_MIN
+         mininst[FR] = 1;
+      #endif
+      #ifdef DP_MIN
+         mininst[DR] = 1;
+      #endif
+      #ifdef VINT_MIN
+         mininst[VIR] = 1;
+      #endif
+      #ifdef VFP_MIN
+         mininst[VFR] = 1;
+      #endif
+      #ifdef VDP_MIN
+         mininst[VDR] = 1;
+      #endif
+   #endif
+/*
+ * cond mov inst
+ */
+   #ifdef ArchHasSelect
+      ne++;
+      #ifdef INT_CMOV
+         cmovinst[IR] = 1;
+      #endif
+      #ifdef FP_CMOV
+         cmovinst[FR] = 1;
+      #endif
+      #ifdef DP_CMOV
+         cmovinst[DR] = 1;
+      #endif
+      #ifdef VINT_CMOV
+         cmovinst[VIR] = 1;
+      #endif
+      #ifdef VFP_CMOV
+         cmovinst[VFR] = 1;
+      #endif
+      #ifdef VDP_CMOV
+         cmovinst[VDR] = 1;
+      #endif
+   #endif
+
+/*
+ * fmac mov inst
+ */
+   #ifdef ArchHasMAC
+      ne++;
+      #ifdef INT_MAC
+         macinst[IR] = 1;
+      #endif
+      #ifdef FP_MAC
+         macinst[FR] = 1;
+      #endif
+      #ifdef DP_MAC
+         macinst[DR] = 1;
+      #endif
+      #ifdef VINT_MAC
+         macinst[VIR] = 1;
+      #endif
+      #ifdef VFP_MAC
+         macinst[VFR] = 1;
+      #endif
+      #ifdef VDP_MAC
+         macinst[VDR] = 1;
+      #endif
+   #endif
+/*
+ * print ext inst
+ */
+   fprintf(fpout, "EXTENDEDINST=%d\n", ne);
+   if (ne)
+   {
+      for (i=0; i < next; i++)
+      {
+         k = 0;
+         for (j=0; j < nr; j++)
+         {
+            if ( (extinst + i)[j] )
+            { 
+               k = 1;
+               break;
+            }
+         }
+         if (k)
+         {
+            fprintf(fpout, "   %s:", cextinst[i]);
+            for (j=0; j < nr; j++)
+               if ( (extinst + i)[j] ) fprintf(fpout, " %s", ctypes[j]);
+            fprintf(fpout, "\n"); 
+         }
+      }
+   }
+
+}
+
+
+
+
+
+
+
+

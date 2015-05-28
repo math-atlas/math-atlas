@@ -5,7 +5,7 @@
 #include "fko_loop.h"
 
 FILE *fpST=NULL, *fpIG=NULL, *fpLIL=NULL, *fpOPT=NULL, *fpLOOPINFO=NULL;
-FILE *fpLRSINFO=NULL;
+FILE *fpLRSINFO=NULL, *fpARCHINFO=NULL;
 int FUNC_FLAG=0; 
 int DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0, DTx87=0, DTx87d=0;
 int DTnzerods=0, DTabsds=0, DTnzeros=0, DTabss=0;
@@ -567,11 +567,24 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             FKO_FLAG |= IFF_GENINTERM;
             break;
          case 'i':
+/*
+ *          -i : loop info
+ */
             if (!args[i][2])
                fpp = &fpLOOPINFO;
+/*
+ *          -ilrs : live range spilling info
+ */
             else if (args[i][2] && args[i][2]=='l' && args[i][3]=='r' 
                      && args[i][4]=='s')
                fpp = &fpLRSINFO;
+/*
+ *          -iarch : architecture info
+ */   
+            else if (args[i][2] && args[i][2]=='a' && args[i][3]=='r' 
+                     && args[i][4]=='c' && args[i][5]=='h')
+               fpp = &fpARCHINFO;
+            
             else PrintUsageN(args[0]);
 
             i++;
@@ -582,6 +595,14 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             else
                *fpp = fopen(args[i], "w");
             assert(*fpp);
+/*
+ *          no need to parse remaining flags, if we get -iarch
+ */
+            if (fpARCHINFO)
+            {
+               FeedbackArchInfo(fpARCHINFO);
+               exit(0);
+            }
 
             break;
          case 'I':
@@ -712,8 +733,8 @@ ERR:
             }
             break;
          case 'm':
-            assert(args[i][2] && args[i][3]);
-            if (args[i][2] == 'm' && args[i][3] == 'r')
+            if (args[i][2] && args[i][3] 
+                  && args[i][2] == 'm' && args[i][3] == 'r')
             {
                STATE1_FLAG |= IFF_ST1_MMR; 
             }
@@ -729,6 +750,7 @@ ERR:
          }
       }
    }
+
    if (idb)
    {
 /*
@@ -3577,7 +3599,7 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks,
  */
    if (fpLRSINFO)
    {
-      FeedbackLValSpill(stdout, optblks);
+      FeedbackLValSpill(fpLRSINFO, optblks);
       /*KillAllOptBlocks(optblks);*/ /* kill in KillAllGlobalData */
 #if 0
       fprintf(stdout, "\n Scope by scope:\n");
@@ -3820,17 +3842,23 @@ int main(int nargs, char **args)
    extern FILE *yyin;
    extern BBLOCK *bbbase;
 /*
- * Later: will keep a flag to figure out how many and what opt is applied so far
- * now, just kept a flag to keep status of RC
- * NOTE: Not used anymore; can be used to debug differet implementations 
- */
-   RCapp = 0;  /* RC applied? not yet */
-/*
  * Update flags using command line options and create Optimization block 
  * structures. Note: It's not CFG block, it's block for opts and will be used
  * later in repeatable optimization.
  */
    optblks = GetFlagsN(nargs, args, &fin, &fpin, &fpout);
+
+#if 0    /* done inside GetFlagsN function */
+/*
+ * if arch info is requested, we will provide that and exit
+ */
+   if (fpARCHINFO)
+   {
+      FeedbackArchInfo(fpARCHINFO);
+      KillAllGlobalData(optblks); 
+      return(0);
+   }
+#endif
 /*
  * NOTE: Repeatable optimization is now going to be applied on arbriatry scope of 
  * block list of CFG. It is shifted in GenerateAssembly function where we do 
@@ -4044,7 +4072,7 @@ int main(int nargs, char **args)
          PrintInst(stdout, bbbase);
          exit(0);
 #endif
-         RCapp = 1; /* for debug */
+         /*RCapp = 1;*/ /* for debug */
 #if 0 
          fprintf(stdout, "LIL after RC\n");
          PrintInst(stdout, bbbase);
