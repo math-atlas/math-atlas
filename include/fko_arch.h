@@ -75,8 +75,8 @@
       #define ArchHasVec
    #endif
    #define AVX2
-   //#define AVX
-   //#define SSE41
+   /*#define AVX*/
+   /*#define SSE41*/
    #ifdef AVX2
       #define AVX /* AVX2 includes AVX plus some extra inst */
       #define VINT_CMOV
@@ -88,6 +88,7 @@
       #define FKO_SVLEN 8
       #define DP_VEC
       #define FKO_DVLEN 4
+      #define FKO_IVLEN 8
    /*#elif defined(SSE41)*/ 
    #else /* by default SSE4.1*/
       #define INT_VEC
@@ -393,6 +394,7 @@
       extern char *archiregs[NIR], *archfregs[NFR], *archsregs[NSR];
       extern int iparareg[NIR], icalleesave[NIR], icallersave[NIR], 
                  fcalleesave[NFR], fcallersave[NFR];
+      /*extern char *archxmmregs[NFR];*/
    #endif
    #define archvdregs archfregs
    #define archvfregs archfregs
@@ -400,6 +402,7 @@
    #define archviregs archfregs
    #define dcallersave fcallersave
    #define dcalleesave fcalleesave
+   
 #endif
 
 #ifdef PPC
