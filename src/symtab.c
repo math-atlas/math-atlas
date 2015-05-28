@@ -694,13 +694,13 @@ void UpdateLocalDerefs(int isize)
  */
          switch(FLAG2PTYPE(fl))
          {
+      #ifdef ArchHasVec            
          case T_VFLOAT:
             off = SToff[k].sa[1]*FKO_SVLEN*4 + nvdloc*FKO_DVLEN*8;
             break;
          case T_VDOUBLE:
             off = SToff[k].sa[1]*FKO_DVLEN*8;
             break;
-#if 1
          case T_VINT:
             off = SToff[k].sa[1]*FKO_IVLEN*4 + nvdloc*FKO_DVLEN*8 + 
                   nvfloc*FKO_SVLEN*4;
@@ -718,19 +718,17 @@ void UpdateLocalDerefs(int isize)
                   nvfloc*FKO_SVLEN*4 + nviloc*FKO_IVLEN*4 + ndloc*8 + 
                   niloc*isize;
             break;
-#else
+      #else
          case T_DOUBLE:
-            off = SToff[k].sa[1]*8 + nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4;
+            off = SToff[k].sa[1]*8;
             break;
          case T_INT:
-            off = SToff[k].sa[1]*isize + ndloc*8 + 
-                  nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4;
+            off = SToff[k].sa[1]*isize + ndloc*8;
             break;
          case T_FLOAT:
-            off = SToff[k].sa[1]*4 + nvdloc*FKO_DVLEN*8 + 
-                  nvfloc*FKO_SVLEN*4 + ndloc*8 + niloc*isize;
+            off = SToff[k].sa[1]*4 + ndloc*8 + niloc*isize;
             break;
-#endif
+      #endif
          default:
             fprintf(stderr, "%d: Unknown type %d!\n", __LINE__, FLAG2PTYPE(fl));
             exit(-1);
@@ -738,15 +736,13 @@ void UpdateLocalDerefs(int isize)
          SToff[SToff[k].sa[2]-1].sa[3] = off;
       }
    }
-#if 1
    LOCALIGN = GetArchAlign(nvdloc, nvfloc, nviloc, ndloc, nfloc, nlloc, niloc);
+#if ArchHasVec
    LOCSIZE = nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4 + nviloc*FKO_IVLEN*4 + 
              ndloc*8 + niloc*isize + nfloc*4;
 #else
-   LOCALIGN = GetArchAlign(nvdloc, nvfloc, ndloc, nfloc, nlloc, niloc);
-   LOCSIZE = nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4 + 
-             ndloc*8 + niloc*isize + nfloc*4;
-#endif   
+   LOCSIZE = ndloc*8 + niloc*isize + nfloc*4;
+#endif
 }
 
 void CorrectLocalOffsets(int ldist)
@@ -1494,7 +1490,7 @@ void CreateArrColPtrs()
          STarr[i].colptrs = CreateAllColPtrs(ptr,ldaS, ur);
       }  
    #else /* no optimized scheme for non-x86 based system */
-         STarr[i].cldas = CreateLDAs(ldas, ptr);
+         STarr[i].cldas = CreateLDAs(lda, ptr);
          ldaS = STarr[i].cldas[1]; /* always lda*size first */
          STarr[i].colptrs = CreateAllColPtrs(ptr,ldaS, ur);
    #endif

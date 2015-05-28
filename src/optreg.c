@@ -145,6 +145,7 @@ void SetAllTypeReg(INT_BVI iv, int type)
       ibeg = FREGBEG;
       iend = FREGEND;
       break;
+#ifdef ArchHasVec
    case T_VFLOAT:
       ibeg = VFREGBEG;
       iend = VFREGEND;
@@ -161,6 +162,7 @@ void SetAllTypeReg(INT_BVI iv, int type)
       ibeg = VIREGBEG;
       iend = VIREGEND;
       break;
+#endif
    default:
       fko_error(__LINE__, "unknown type %d, file=%s\n", type, __FILE__);
    }

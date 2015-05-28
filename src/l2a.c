@@ -1474,6 +1474,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
       case FMACD:
          #ifdef X86
             #if defined(ArchHasMAC) && defined(FMA4)
+               #ifdef AVX
                if (op3 < 0)   /* FMA4: only src2 can be mem */
                   ap->next = PrintAssln("\tvfmaddsd\t%s,%s,%s,%s\n", 
 	                                archxmmregs[-DREGBEG-op1],
@@ -1486,10 +1487,25 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                         GetDregOrDeref(op3),
 	                                archxmmregs[-DREGBEG-op2],
                                         archxmmregs[-DREGBEG-op1]);
+               #else
+               if (op3 < 0)   /* FMA4: only src2 can be mem */
+                  ap->next = PrintAssln("\tvfmaddsd\t%s,%s,%s,%s\n", 
+	                                archdregs[-DREGBEG-op1],
+                                        archdregs[GetDregID(op3)],
+	                                archdregs[-DREGBEG-op2],
+                                        archdregs[-DREGBEG-op1]);
+               else   
+                  ap->next = PrintAssln("\tvfmaddsd\t%s,%s,%s,%s\n", 
+	                                archdregs[-DREGBEG-op1],
+                                        GetDregOrDeref(op3),
+	                                archdregs[-DREGBEG-op2],
+                                        archdregs[-DREGBEG-op1]);
+               #endif
             #elif defined(ArchHasMAC) && defined(FMA3)
 /*
  *          Note: we only implement FMA with op1 += op2 * op3 style 
  */
+               #ifdef AVX
                if (op3 < 0)   /* FMA4: only src2 can be mem */
                   ap->next = PrintAssln("\tvfmadd231sd\t%s,%s,%s\n", 
                                         archxmmregs[GetDregID(op3)],
@@ -1500,6 +1516,18 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                         GetDregOrDeref(op3),
 	                                archxmmregs[-DREGBEG-op2],
                                         archxmmregs[-DREGBEG-op1]);
+               #else
+               if (op3 < 0)   /* FMA4: only src2 can be mem */
+                  ap->next = PrintAssln("\tvfmadd231sd\t%s,%s,%s\n", 
+                                        archdregs[GetDregID(op3)],
+	                                archdregs[-DREGBEG-op2],
+                                        archdregs[-DREGBEG-op1]);
+               else   
+                  ap->next = PrintAssln("\tvfmadd231sd\t%s,%s,%s\n", 
+                                        GetDregOrDeref(op3),
+	                                archdregs[-DREGBEG-op2],
+                                        archdregs[-DREGBEG-op1]);
+               #endif
             #else
                ap->next = PrintAssln("\tUNIMP\n");
 	       fko_error(__LINE__, "FMACD Not found in this x86 arch!");
@@ -1519,7 +1547,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
          break;
       case FMAC:
          #ifdef X86
-            #if defined(ArchHasMAC) && defined(FMA4) 
+            #if defined(ArchHasMAC) && defined(FMA4)
+               #ifdef AVX
                if (op3 < 0) /*FMA4: only src2 can be used as mem */
                   ap->next = PrintAssln("\tvfmaddss\t%s,%s,%s,%s\n", 
 	                                archxmmregs[-FREGBEG-op1],
@@ -1532,7 +1561,22 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                         GetDregOrDeref(op3),
 	                                archxmmregs[-FREGBEG-op2],
 	                                archxmmregs[-FREGBEG-op1]);
+               #else
+               if (op3 < 0) /*FMA4: only src2 can be used as mem */
+                  ap->next = PrintAssln("\tvfmaddss\t%s,%s,%s,%s\n", 
+	                                archfregs[-FREGBEG-op1],
+                                        archfregs[GetDregID(op3)],
+	                                archfregs[-FREGBEG-op2],
+	                                archfregs[-FREGBEG-op1]);
+               else
+                  ap->next = PrintAssln("\tvfmaddss\t%s,%s,%s,%s\n", 
+	                                archfregs[-FREGBEG-op1],
+                                        GetDregOrDeref(op3),
+	                                archfregs[-FREGBEG-op2],
+	                                archfregs[-FREGBEG-op1]);
+               #endif
             #elif defined(ArchHasMAC) && defined(FMA3)
+               #ifdef AVX
                if (op3 < 0) 
                   ap->next = PrintAssln("\tvfmadd231ss\t%s,%s,%s\n", 
                                         archxmmregs[GetDregID(op3)],
@@ -1543,6 +1587,18 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                         GetDregOrDeref(op3),
 	                                archxmmregs[-FREGBEG-op2],
 	                                archxmmregs[-FREGBEG-op1]);
+               #else
+               if (op3 < 0) 
+                  ap->next = PrintAssln("\tvfmadd231ss\t%s,%s,%s\n", 
+                                        archfregs[GetDregID(op3)],
+	                                archfregs[-FREGBEG-op2],
+	                                archfregs[-FREGBEG-op1]);
+               else
+                  ap->next = PrintAssln("\tvfmadd231ss\t%s,%s,%s\n", 
+                                        GetDregOrDeref(op3),
+	                                archfregs[-FREGBEG-op2],
+	                                archfregs[-FREGBEG-op1]);
+               #endif
             #else
                ap->next = PrintAssln("\tUNIMP\n");
 	       fko_error(__LINE__, "FMAC Not found in this x86 arch!");
@@ -2749,7 +2805,6 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                archiregs[-IREGBEG-op2],archdregs[-DREGBEG-op1]);
          #endif
          break;
-#endif
 /*
  *    FIXME: vpinsrd works on 32 bit ireg like: eax instead of rax...
  *    Only 8 of the 16 IREG has 32 bit version. If we don't make SREG visible,
@@ -2768,19 +2823,30 @@ struct assmln *lil2ass(BBLOCK *bbase)
          else if (op1 >= VIREGBEG && op1 < VIREGEND)
             op1 = op1 - VIREGBEG + DREGBEG;
          op1 = -op1;
-         assert((-op2) >= IREGBEG && (-op2) < (IREGBEG + NSR) );
+         #ifdef X8664
+            assert((-op2) >= IREGBEG && (-op2) < (IREGBEG + NSR) );
+         #endif
          #ifdef AVX
             /*ap->next = PrintAssln("\tpinsrw\t%s,%s,%s\n", GetIregOrConst(op3),
                                   archiregs[-IREGBEG-op2],
                                   archxmmregs[-DREGBEG-op1]);*/
             ap->next = PrintAssln("\tvpinsrd\t%s,%s,%s,%s\n", 
                                   GetIregOrConst(op3),
+                              #ifdef X8664
                                   archsregs[-IREGBEG-op2],
+                              #else
+                                  archiregs[-IREGBEG-op2],
+                              #endif
                                   archxmmregs[-DREGBEG-op1],
                                   archxmmregs[-DREGBEG-op1]);
          #else
             ap->next = PrintAssln("\tpinsrd\t%s,%s,%s\n", GetIregOrConst(op3),
-                               archsregs[-IREGBEG-op2],archdregs[-DREGBEG-op1]);
+                           #ifdef X8664
+                               archsregs[-IREGBEG-op2],
+                           #else
+                               archiregs[-IREGBEG-op2],
+                           #endif
+                               archdregs[-DREGBEG-op1]);
          #endif
          break;
 /*
@@ -2811,6 +2877,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                archiregs[-IREGBEG-op2],archdregs[-DREGBEG-op1]);
          #endif
          break;
+#endif
 /*
  * Only x86 has double precision SIMD inst
  */
@@ -3696,7 +3763,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
  */
       case VFMAC:
          #ifdef X86
-            #if defined(ArchHasMAC) && defined(FMA4) 
+            #if defined(ArchHasMAC) && defined(FMA4)
                assert( (op1 < 0) && (op2 < 0));
                if (op3 < 0) /*FMA4: only src2(here op3) can be mem */
                   ap->next = PrintAssln("\tvfmaddps\t%s,%s,%s,%s\n", 
@@ -4418,6 +4485,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
  * NOTE: scalar version of VFSBTI and VDSBTI. Don't find the scalar inst... 
  * so, implement with composit inst. LSB bit of ireg has the result
  */
+#ifdef X86
       case CVTMASKFI:
          #ifdef AVX
             ap->next = PrintAssln("\tvmovmskps\t%s,%s\n",
@@ -4485,14 +4553,26 @@ struct assmln *lil2ass(BBLOCK *bbase)
             op1 = -op1;
             op2 = -op2;
          #ifdef AVX
+            #if X8664
             assert((-op1) <= (IREGBEG+NSR));
             ap->next = PrintAssln("\tvmovd\t%s, %s\n", 
                                   archxmmregs[-VIREGBEG-op2],
                                   archsregs[-IREGBEG-op1]);
+            #else
+            ap->next = PrintAssln("\tvmovd\t%s, %s\n", 
+                                  archxmmregs[-VIREGBEG-op2],
+                                  archiregs[-IREGBEG-op1]);
+            #endif
          #else
+            #ifdef X8664
             ap->next = PrintAssln("\tmovd\t%s, %s\n", 
                                   archviregs[-VIREGBEG-op2],
                                   archsregs[-IREGBEG-op1]);
+            #else
+            ap->next = PrintAssln("\tmovd\t%s, %s\n", 
+                                  archviregs[-VIREGBEG-op2],
+                                  archiregs[-IREGBEG-op1]);
+            #endif
          #endif
          }
          else if ( (op1 >= VIREGBEG && op1 < VIREGEND) 
@@ -4501,13 +4581,25 @@ struct assmln *lil2ass(BBLOCK *bbase)
             op1 = -op1;
             op2 = -op2;
          #ifdef AVX
+            #ifdef X8664
             ap->next = PrintAssln("\tvmovd\t%s, %s\n", 
                                   archsregs[-IREGBEG-op2],
                                   archxmmregs[-VIREGBEG-op1]);
+            #else
+            ap->next = PrintAssln("\tvmovd\t%s, %s\n", 
+                                  archiregs[-IREGBEG-op2],
+                                  archxmmregs[-VIREGBEG-op1]);
+            #endif
          #else
+            #ifdef X8664
             ap->next = PrintAssln("\tmovd\t%s, %s\n", 
                                   archsregs[-IREGBEG-op2],
                                   archviregs[-VIREGBEG-op1]);
+            #else
+            ap->next = PrintAssln("\tmovd\t%s, %s\n", 
+                                  archiregs[-IREGBEG-op2],
+                                  archviregs[-VIREGBEG-op1]);
+            #endif
          #endif
          }
          else 
@@ -4959,7 +5051,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
                               archiregs[-IREGBEG-op1]);
          break;
 /* --------------------------------------------------------------------*/      
-#ifdef AVX2  
+   #ifdef AVX2  
 /*
  * Read this note before using following two instructions
  * =========================== NOTE ===========================================
@@ -5450,7 +5542,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
           
          break;
 #endif         
-   
+   #endif
 #endif
 /*
  *  HERE HERE HERE:

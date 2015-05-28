@@ -9199,7 +9199,7 @@ int RcVecTransform(LOOPQ *lp)
 #if defined (X86) && defined(AVX)
       vlen = 8;
 #else
-      veln = 4;
+      vlen = 4;
 #endif
    }
    else
@@ -9212,7 +9212,7 @@ int RcVecTransform(LOOPQ *lp)
 #if defined (X86) && defined(AVX)
       vlen = 4;
 #else
-      veln = 2;
+      vlen = 2;
 #endif
    }
 /*

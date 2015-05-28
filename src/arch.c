@@ -315,11 +315,7 @@ int GetRegSaveList(int rstart, int nr, int *regs)
    }
    return(j);
 }
-#if 1
 int GetArchAlign(int nvd, int nvf, int nvi, int nd, int nf, int nl, int ni)
-#else
-int GetArchAlign(int nvd, int nvf, int nd, int nf, int nl, int ni)
-#endif
 /*
  *  Returns required architectural alignment given the number of
  *  vector double, vector float, double, float, long, and ints you
@@ -336,9 +332,9 @@ int GetArchAlign(int nvd, int nvf, int nd, int nf, int nl, int ni)
          int align = 0;
          if (nvd) align = FKO_DVLEN*8;
          else if (nvf) align = FKO_SVLEN*4;
-#if 1
-         else if (nvi) align = FKO_IVLEN*4;
-#endif
+         #ifdef FKO_IVELN
+            else if (nvi) align = FKO_IVLEN*4;
+         #endif
          else align = 16;
          return (align);
       #else
@@ -346,17 +342,26 @@ int GetArchAlign(int nvd, int nvf, int nd, int nf, int nl, int ni)
       #endif
    #else
    int align = 0;
-   if (nvd) align = FKO_DVLEN*8;
-   else if (nvf) align = FKO_SVLEN*4;
-#if 1
-   else if (nvi) align = FKO_IVLEN*4;
-#endif
-   #ifdef X86_32
-      else if (nd || nf || nl || ni) align = 4;
-   #else
-      else if (nd || nl) align = 8;
-      else if (nf || ni) align = 4;
-   #endif
+      #ifdef ArchHasVec
+         if (nvd) align = FKO_DVLEN*8;
+         else if (nvf) align = FKO_SVLEN*4;
+         #ifdef FKO_IVLEN
+            else if (nvi) align = FKO_IVLEN*4;
+         #endif
+         #ifdef X86_32
+            else if (nd || nf || nl || ni) align = 4;
+         #else
+         else if (nd || nl) align = 8;
+         else if (nf || ni) align = 4;
+         #endif
+      #else
+         #ifdef X86_32
+            if (nd || nf || nl || ni) align = 4;
+         #else
+            if (nd || nl) align = 8;
+            else if (nf || ni) align = 4;
+         #endif
+      #endif
    return(align);
    #endif
 }
@@ -2737,8 +2742,11 @@ void FeedbackArchInfo(FILE *fpout)
    int macinst[]  = {0, 0, 0, 0, 0, 0}; 
    int *extinst[] = {maxinst, mininst, cmovinst, macinst};
    int ne;
-   char **archregs[] ={archiregs, archfregs, archdregs, archviregs, 
-                      archvfregs, archvdregs} ;
+   /*char **archregs[] ={archiregs, archfregs, archdregs, archviregs, 
+                      archvfregs, archvdregs} ;*/
+   char **archregs[nr];  /* arrays of pointer to pointer */
+   unsigned int aliasgp[] = {0, 0, 0, 0, 0, 0}; /* each int is a group */
+   unsigned int tempgp[] = {0, 0, 0, 0, 0, 0}; /* each int is a group */
    enum tregs {IR, FR, DR, VIR, VFR, VDR};
    enum btypes {INT, FLOAT, DOUBLE};
    int nregs[nr];
@@ -2822,7 +2830,69 @@ void FeedbackArchInfo(FILE *fpout)
    }
 /*
  * register alias info
+ * we always have iregs, fregs and dregs; but vector regs are optional
  */
+   archregs[0] = archiregs; 
+   archregs[1] = archfregs; 
+   archregs[2] = archdregs;
+   #ifdef INT_VEC
+      archregs[3] = archviregs;
+   #else
+      archregs[3] = NULL;
+   #endif
+   #ifdef FP_VEC
+      archregs[4] = archvfregs;
+   #else
+      archregs[4] = NULL;
+   #endif
+   #ifdef DP_VEC
+      archregs[5] = archvdregs;
+   #else
+      archregs[5] = NULL;
+   #endif
+
+#if 0
+   for(i=0; i < nr; i++)
+      fprintf(stderr, "%s : %p\n",ctypes[i], archregs[i]);
+#endif
+/*
+ * figuring out register aliasing
+ *
+ */
+   for (i=0; i < nr; i++)
+      for (j=0; j < nr; j++)
+         if (archregs[i] == archregs[j])
+            tempgp[i] |= (1 << j);
+  
+   for (i=0, k=0; i < nr; i++)
+   {
+      if ( !((tempgp[i]!=0) && !(tempgp[i] & (tempgp[i]-1))) )/*not power of 2*/
+      {
+         for (j=0; j < k; j++)
+            if (tempgp[i] == aliasgp[j])
+               break;
+         if (j==k) /* no match */
+         {
+            aliasgp[k++] = tempgp[i];
+         }
+      }
+   }
+#if 0   
+   for (i=0; i < k; i++)
+      fprintf(stderr, "%d -> 0x%x\n", i,  aliasgp[i]);
+#endif
+   if (k)
+   {
+      fprintf(fpout,"   ALIASGROUPS=%d\n", k);
+      for (i=0; i < k; i++)
+      {
+         fprintf(fpout, "      ALIAS:");
+         for (j=0; j < nr; j++)
+            if (aliasgp[i] & (1 << j))
+               fprintf(fpout, " %s", ctypes[j]);
+         fprintf(fpout, "\n");
+      }
+   }
 
 /*
  * Print cache information  
@@ -2956,6 +3026,18 @@ void FeedbackArchInfo(FILE *fpout)
 /*
  * print ext inst
  */
+#if 0
+         fprintf(stderr, "max: ");
+         for (i=0; i < nr; i++)
+            if(maxinst[i]) fprintf(stderr, " %s", ctypes[i]);
+         fprintf(stderr, "\n");
+         
+         fprintf(stderr, "cmov: ");
+         for (i=0; i < nr; i++)
+            if(cmovinst[i]) fprintf(stderr, " %s", ctypes[i]);
+         fprintf(stderr, "\n");
+#endif
+
    fprintf(fpout, "EXTENDEDINST=%d\n", ne);
    if (ne)
    {
@@ -2964,7 +3046,7 @@ void FeedbackArchInfo(FILE *fpout)
          k = 0;
          for (j=0; j < nr; j++)
          {
-            if ( (extinst + i)[j] )
+            if ( extinst[i][j] )
             { 
                k = 1;
                break;
@@ -2974,7 +3056,7 @@ void FeedbackArchInfo(FILE *fpout)
          {
             fprintf(fpout, "   %s:", cextinst[i]);
             for (j=0; j < nr; j++)
-               if ( (extinst + i)[j] ) fprintf(fpout, " %s", ctypes[j]);
+               if ( extinst[i][j] ) fprintf(fpout, " %s", ctypes[j]);
             fprintf(fpout, "\n"); 
          }
       }
