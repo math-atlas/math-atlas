@@ -2857,8 +2857,22 @@ void FeedbackArchInfo(FILE *fpout)
 #endif
 /*
  * figuring out register aliasing
+ * Algorithm:
+ * ==========
+ *    consider nr x nr matrix of bits
+ *    each row (here unsigned int) represents each type of register
+ *
+ *     i f d vi vf vd
+ *     ---------------
+ *  i |1 0 0 0 0 0  --> skip, power of 2; means no pair
+ *  f |0 1 1 1 0 0  --> 0X1C   |
+ *  d |0 1 1 1 0 0  --> 0X1C   |  one group
+ *  vi|0 1 1 1 0 0  --> 0X1C   |
+ *  vf|0 0 0 0 1 1  --> 0X03     |  2nd group
+ *  vd|0 0 0 0 1 1  --> 0X03     | 
  *
  */
+   assert(nr <= (sizeof(unsigned int)*8));
    for (i=0; i < nr; i++)
       for (j=0; j < nr; j++)
          if (archregs[i] == archregs[j])
