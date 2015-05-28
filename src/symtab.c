@@ -737,7 +737,7 @@ void UpdateLocalDerefs(int isize)
       }
    }
    LOCALIGN = GetArchAlign(nvdloc, nvfloc, nviloc, ndloc, nfloc, nlloc, niloc);
-#if ArchHasVec
+#ifdef ArchHasVec
    LOCSIZE = nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4 + nviloc*FKO_IVLEN*4 + 
              ndloc*8 + niloc*isize + nfloc*4;
 #else
