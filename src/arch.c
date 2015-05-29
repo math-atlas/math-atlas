@@ -2751,21 +2751,84 @@ void FeedbackArchInfo(FILE *fpout)
    enum btypes {INT, FLOAT, DOUBLE};
    int nregs[nr];
    int vlen[nbt];
-   int tr, vt; 
+   int tr, vt;
+   const int npipe = 3;
+   int nfp;
+   char *cpipe[] = {"FADDPIPELEN", "FMULPIPELEN", "FMACPIPELEN"};
+   int faddpipe[] = {0, 0, 0, 0, 0, 0};
+   int fmulpipe[] = {0, 0, 0, 0, 0, 0};
+   int fmacpipe[] = {0, 0, 0, 0, 0, 0};
+   int *fpipe[] = {faddpipe, fmulpipe, fmacpipe};
+
 
 /*
  * fp pipeline info
+      #define FADDPIPELEN 4
+      #define DADDPIPELEN 4
+      #define FMULPIPELEN 4
+      #define DMULPIPELEN 4
+      #define FMACPIPELEN 6
+      #define DMACPIPELEN 6
  */
    #ifdef FPUPIPELINED
-      fprintf(fpout, "FPUPIPE=1\n");
-      fprintf(fpout, "   PIPELEN:");
-      #ifdef FPPIPE
-         fprintf(fpout, " f=%d", FPPIPE);
+      nfp = 0;
+
+      #if defined(FADDPIPELEN) || defined(DADDPIPELEN)
+         nfp++;
       #endif
-      #ifdef DPPIPE
-         fprintf(fpout, " d=%d", DPPIPE);
+      #ifdef FADDPIPELEN
+         faddpipe[FR] = FADDPIPELEN;
       #endif
-      fprintf(fpout, "\n");
+      #ifdef DADDPIPELEN
+         faddpipe[DR] = DADDPIPELEN;
+      #endif
+
+      #if defined(FMULPIPELEN) || defined(DMULPIPELEN)
+         nfp++;
+      #endif
+      #ifdef FMULPIPELEN
+         fmulpipe[FR] = FMULPIPELEN;
+      #endif
+      #ifdef DMULPIPELEN
+         fmulpipe[DR] = DMULPIPELEN;
+      #endif
+
+      #if defined(FMACPIPELEN) || defined(DMACPIPELEN)
+         nfp++;
+      #endif
+      #ifdef FMACPIPELEN
+         fmacpipe[FR] = FMACPIPELEN;
+      #endif
+      #ifdef DMACPIPELEN
+         fmacpipe[DR] = DMACPIPELEN;
+      #endif
+      
+      fprintf(fpout, "FPUPIPE=%d\n", nfp);
+      if (nfp)
+      {
+         for (i=0; i < npipe; i++)
+         {
+            k = 0;
+            for (j=0; j < nr; j++)
+            {
+               if (fpipe[i][j])
+               {
+                  k = 1;
+                  break;
+               }
+            }
+            if (k)
+            {
+               fprintf(fpout, "   %s:", cpipe[i]);
+               for (j=0; j < nr; j++)
+                  if ( fpipe[i][j] ) 
+                     fprintf(fpout, " %s=%d", ctypes[j], fpipe[i][j]); 
+               fprintf(fpout, "\n"); 
+            }
+         }
+      }
+      else /* machine not upiped, but not defined!! */
+         fprintf(fpout, "FPUPIPE=0\n");
    #else
       fprintf(fpout, "FPUPIPE=0\n");
    #endif
@@ -3012,7 +3075,7 @@ void FeedbackArchInfo(FILE *fpout)
          cmovinst[VDR] = 1;
       #endif
    #endif
-
+#if 0
 /*
  * fmac mov inst
  */
@@ -3037,6 +3100,7 @@ void FeedbackArchInfo(FILE *fpout)
          macinst[VDR] = 1;
       #endif
    #endif
+#endif
 /*
  * print ext inst
  */
