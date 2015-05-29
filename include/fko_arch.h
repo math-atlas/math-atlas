@@ -3,7 +3,6 @@
 
 /*============================================================================= 
  * Define architecure here:
- *
  *============================================================================*/
 #if !defined(LINUX_PPC) && !defined(OSX_PPC) && !defined(LINUX_X86_32) && \
     !defined(LINUX_X86_64) && !defined(SOLARIS_SPARC)
@@ -13,6 +12,23 @@
 /*   #define LINUX_X86_32 */
 /*   #define SOLARIS_SPARC  */
 /*   #define OSX_PPC  */
+#endif
+/*
+ * Provide detailed system-level information here.  Will be set using guesswork
+ * later if not defined here
+ */
+#if 0
+/*
+ * SSE1 or SSE2 not sufficient.  Need SSE3 for vertical add.
+ * If overridng vector type here, (eg, AVX2), also define VECDEF
+ */
+   #define AVX2/AVX/SSE41/SSE3
+   #define VECDEF 1
+   #define FADDPIPELEN 4
+   #define FMULPIPELEN 4
+   #define FMACPIPELEN 6
+   #define NCACHES 2
+   short LINESIZE[NCACHE] = {32,32};
 #endif
 
 #if defined(FKO_ANSIC32) || defined(FKO_ANSIC64)
@@ -60,16 +76,10 @@
  * 1. supported types
  * 2. vector length 
  *============================================================================*/
-#ifdef PPC
+#if defined(PPC) || defined(SPARC)
    #ifdef ArchHasVec
       #undef ArchHasVec  /* vec not supported in fko*/
    #endif
-
-#elif defined(SPARC)
-   #ifdef ArchHasVec
-      #undef ArchHasVec /* vec not supported in fko*/
-   #endif
-
 #elif defined(X86)
    #if !defined(ArchHasVec)
       #define ArchHasVec
