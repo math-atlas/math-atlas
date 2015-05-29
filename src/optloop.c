@@ -4233,8 +4233,9 @@ void PrintMovingPtrAnalysis(FILE *fpout)
          }
          fprintf(fpout, " prefetch=%d", j);
          fprintf(fpout, " sets=%d uses=%d", nst, nus);
-         fprintf(fpout, " arr=%dd ur=%d\n", STarr[sta-1].ndim, 
-                 SToff[STarr[sta-1].urlist[0]-1].i); 
+         fprintf(fpout, " arr=%dd ur=%d nr=%d\n", STarr[sta-1].ndim, 
+                 SToff[STarr[sta-1].urlist[0]-1].i,
+                 STarr[sta-1].colptrs[0] + STarr[sta-1].cldas[0]); 
       }
    }
    free(aptr);
@@ -4407,6 +4408,7 @@ OPTLOOP=1
    VmaxminR=0; Vrc=0; Vspec=0; Vn=0;
    if (fpLOOPINFO)
       fpout = fpLOOPINFO;
+#if 0
 /*
  * Print cache information  
  */
@@ -4415,6 +4417,7 @@ OPTLOOP=1
    for (i=0; i < NCACHE; i++)
       fprintf(fpout, " %d", LINESIZE[i]);
    fprintf(fpout, "\n");
+#endif
 /*
  * NOTE: Saving and Restoring FKO State don't re-initiate some global data
  * like: bitvect. So, if we restore any states (other than just after state0)
