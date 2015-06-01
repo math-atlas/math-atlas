@@ -588,7 +588,8 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             else PrintUsageN(args[0]);
 
             i++;
-            if (!strcmp(args[i], "stderr"))
+            if (!args[i] ) PrintUsageN(args[0]);
+            else if (!strcmp(args[i], "stderr"))
                *fpp = stderr;
             else if (!strcmp(args[i], "stdout"))
                *fpp = stdout;
