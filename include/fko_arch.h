@@ -17,18 +17,34 @@
  * Provide detailed system-level information here.  Will be set using guesswork
  * later if not defined here
  */
-#if 0
+#if 1
 /*
  * SSE1 or SSE2 not sufficient.  Need SSE3 for vertical add.
  * If overridng vector type here, (eg, AVX2), also define VECDEF
  */
-   #define AVX2/AVX/SSE41/SSE3
+   /*#define AVX2/AVX/SSE41/SSE3*/
+   #define AVX2
    #define VECDEF 1
+      
    #define FADDPIPELEN 4
+   #define DADDPIPELEN 4
    #define FMULPIPELEN 4
+   #define DMULPIPELEN 4
    #define FMACPIPELEN 6
-   #define NCACHES 2
-   short LINESIZE[NCACHE] = {32,32};
+   #define DMACPIPELEN 6
+   #define FPUPIPEDEF 1
+   
+   #ifndef NCACHE
+      #define NCACHE 2
+/*
+ *    linesize can also be set in command line
+ */
+      #ifdef ARCH_DECLARE
+         short LINESIZE[NCACHE] = {32,32};
+      #else
+         extern short LINESIZE[NCACHE];
+      #endif
+   #endif
 #endif
 
 #if defined(FKO_ANSIC32) || defined(FKO_ANSIC64)
@@ -84,9 +100,11 @@
    #if !defined(ArchHasVec)
       #define ArchHasVec
    #endif
-   #define AVX2
-   /*#define AVX*/
-   /*#define SSE41*/
+   #ifndef VECDEF        /* if not defined by user at top */
+      #define AVX2
+      /*#define AVX*/
+      /*#define SSE41*/
+   #endif
    #ifdef AVX2
       #define AVX /* AVX2 includes AVX plus some extra inst */
       #define VINT_CMOV
@@ -210,8 +228,16 @@
    #if !defined(FPUPIPELINED)
       #define FPUPIPELINED
    #endif
-   #define FPPIPE 4    /* just an example, not actual value*/
-   #define DPPIPE 6
+   //#define FPPIPE 4    /* just an example, not actual value*/
+   //#define DPPIPE 6
+   #ifndef FPUPIPEDEF
+      #define FADDPIPELEN 4
+      #define DADDPIPELEN 4
+      #define FMULPIPELEN 4
+      #define DMULPIPELEN 4
+      #define FMACPIPELEN 6
+      #define DMACPIPELEN 6
+   #endif
 #endif
 
 
