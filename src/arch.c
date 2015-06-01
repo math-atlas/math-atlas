@@ -2827,8 +2827,6 @@ void FeedbackArchInfo(FILE *fpout)
             }
          }
       }
-      else /* machine not upiped, but not defined!! */
-         fprintf(fpout, "FPUPIPE=0\n");
    #else
       fprintf(fpout, "FPUPIPE=0\n");
    #endif
