@@ -4365,29 +4365,25 @@ int FindNumIFs(BLIST *scope)
 
 void FeedbackLoopInfo()
 /*=============================================================================
-NCACHES=N
-   LINESIZES: X1 X2 ... XN
 OPTLOOP=1
    MaxUnroll=0
    LoopNormalForm=1/0
+   NUMIFS=1
    NUMPATHS=2
-      MaxMinReducesToOnePath=1
-      MaxReducesToOnePath=0
-      MinReducesToOnePath=0
-      RedCompReducesToOnePath=1
+      MaxEliminatedIfs=1
+      MinEliminatedIfs=1
+      RedCompEliminatedIfs=1
    VECTORIZABLE=1
       MaxMinOK=0/1
-      MaxOK=0/1
-      MinOK=0/1
       RedCompOK=0/1
       SpeculationOK=1
          path-1Vect=1/0
          path-2Vect=1/0
    Moving FP Pointers: N
-      'X': type=s/d prefetch=1/0 sets=1/0 uses=1/0
+      'A': type=s/d prefetch=1/0 sets=2 uses=8 arr=2d ur=8 nr=4 
       ... ... ...
    Scalars Used in Loop: N
-      'X': type=s/d sets=1/0 uses=1/0 ScalarExpandable=1/0
+      'x': type=s/d sets=1 uses=1 ReduceExpandable=1/0
       ... ... ... 
  *============================================================================*/
 {
