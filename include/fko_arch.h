@@ -648,6 +648,15 @@
 /* 
  * Setup cache info
  */
+/*
+ * MAJEDUL: delete me!
+#ifdef NCACHE
+   #if NCACHE == 2
+      
+   #elif NCACHE == 3
+         short LINESIZE[NCACHE] = {CLSZ1,CLSZ2, CLSZ3};
+   #endif
+*/
 #ifndef NCACHE
    #ifdef X86_64
       #define HAMMER
