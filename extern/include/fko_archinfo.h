@@ -30,7 +30,7 @@ int FKO_InststrToInt(char *inst);
  * file.  They are not thead safe.
  */
 void FKO_GetArchInfo(FILE *fpin);  /* "stdin" reads from standard in */
-void FKO_DestroyArchInfo(int handle);
+void FKO_DestroyArchInfo(void);
 
 /* 
  * Functions describing registers
