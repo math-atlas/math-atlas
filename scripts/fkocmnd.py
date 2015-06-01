@@ -26,6 +26,47 @@ def FindAtlas(FKOdir):
       sys.exit(-1);
    fi.close()
    return(ATLdir, ARCH) 
+
+def GetArchInfo(fko):
+    """ i'll only return the cache info frist to make the existing script 
+    runnable, will parse the whole file later
+    """
+#
+#  getting the optloop info by using -i fko argument
+#
+    cmnd = fko + ' -iarch stdout ' 
+    fi = os.popen(cmnd, 'r')
+    lines = fi.readlines()
+    err = fi.close()
+
+    ln = 0; # line number
+    fpipe = int(lines[ln][lines[ln].find('=')+1:])
+    if (fpipe !=0):
+        ln += fpipe
+    ln += 1
+    #print lines[ln]
+    regt = int(lines[ln][lines[ln].find('=')+1:])
+    if (regt !=0):
+        ln += 2 # skip the num of regs for now
+        while (lines[ln].find("ALIASGROUP") != -1):
+            ln += 2
+    else:
+        ln += 1
+    #print lines[ln]
+    nc = int(lines[ln][8:])
+    ln += 1
+    words = lines[ln].split()
+    #print nc
+    #print words
+    i = 0
+    LS = []
+    while (i < nc):
+       LS.append(int(words[i+1]))
+       i += 1
+    #print nc, LS
+    return [nc, LS]
+
+
 #
 #  Majedul: this is for new fko's analysis
 #
@@ -54,14 +95,16 @@ def NewInfo(fko, routine):
 #
 #  find the cache info 
 #
-   nc = int(lines[0][8:])
-   words = lines[1].split()
-   #print nc
-   i = 0
-   LS = []
-   while (i < nc):
-      LS.append(int(words[i+2]))
-      i += 1
+#   nc = int(lines[0][8:])
+#   words = lines[1].split()
+#   #print nc
+#   i = 0
+#   LS = []
+#   while (i < nc):
+#      LS.append(int(words[i+2]))
+#      i += 1
+    
+   [nc, LS] = GetArchInfo(fko)
    lineNum = 2
 #
 #  initialize  all the data returns ...
@@ -77,8 +120,10 @@ def NewInfo(fko, routine):
    uses = []
    arr_ur = []
    vec = 0
+   nifs = 0
    #ol = int(lines[2][8:])
-   ol = int(lines[2][lines[2].find('=')+1:])
+   lineNum = 0
+   ol = int(lines[lineNum][lines[lineNum].find('=')+1:])
    lineNum += 1
 #
 #  If it has an optloop to perform optimization
@@ -89,6 +134,11 @@ def NewInfo(fko, routine):
       lnf = int(lines[lineNum+1][lines[lineNum+1].find('=')+1:])
       npath = int(lines[lineNum+2][lines[lineNum+2].find('=')+1:])
       lineNum += 3
+#
+#        number of if statements
+#
+      nifs = int(lines[lineNum][lines[lineNum].find('=')+1:])
+      lineNum += 1
 #
 #     has multiple loop paths?
 #
@@ -102,10 +152,12 @@ def NewInfo(fko, routine):
 #
 #        using the syntax of list comprehension 
 #
+         #print lines[lineNum]
          red2onePath = [int(lines[i][lines[i].find('=')+1:]) \
-                        for i in range(lineNum, lineNum+4)]
-         vec = int(lines[lineNum+4][lines[lineNum+4].find('=')+1:])
-         lineNum += 5
+                        for i in range(lineNum, lineNum+3)]
+         #print red2onePath
+         vec = int(lines[lineNum+3][lines[lineNum+3].find('=')+1:])
+         lineNum += 4
 #        
 #        update vectorization method 
 #
@@ -115,9 +167,9 @@ def NewInfo(fko, routine):
 #        syntax of list comprehension
 #
          vecMethod = [int(lines[i][lines[i].find('=')+1:]) \
-                      for i in range(lineNum, lineNum+5)]
+                      for i in range(lineNum, lineNum+3)]
          vspec = vecMethod[-1] # -1 indicate the last eliment 
-         lineNum += 5
+         lineNum += 3
 #
 #        if Vspec can be applied, findout the path info for vec
 #
@@ -155,6 +207,9 @@ def NewInfo(fko, routine):
          if k > 5 : # word[5] arr=2d
              j = words[6].rfind("=")
              arr_ur.insert(i, int(words[6][j+1:]))
+#
+#            need to scope out for nr (ptr+ldas)
+#
          else:
              arr_ur.insert(i, 1)
          lineNum += 1
@@ -193,6 +248,7 @@ def NewInfo(fko, routine):
 #  returning the whole list of info, maintain previous order to keep backward
 #  compatibilty
 #
+   #print pref
    return [nc, LS, ol, maxunroll, lnf, vec, arrs, pref, sets, uses, scalinf, \
            npath, red2onePath, vecMethod, vpathinfo, arrtypes, arr_ur]
 

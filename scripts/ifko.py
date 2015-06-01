@@ -330,7 +330,7 @@ def FindSE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, M, lda, acc, maxlen=6):
       KFN = KFN + " " + word
    #KF0 = KFN ## don't! lost the previous -U 
    
-   print "   Finding ScalarExpan, UR=%d, mflop= %.2f" % (ur, m0)
+   print "   Finding ReduceExpan, UR=%d, mflop= %.2f" % (ur, m0)
    mfB = 0.0
    urB = ur
    aeB = 1
@@ -520,10 +520,13 @@ def ifko_PathXform(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N, M, lda,
 #
 #  apply various reduction methods
 #  [mmr, maxr, minr, rc] => [mmr, rc]
+#  newinfo = [maxr, minr, rc] => [mmr, rc]
 #
-   if red1p[0] or red1p[1] or red1p[2] or red1p[3]:
+   #if red1p[0] or red1p[1] or red1p[2] or red1p[3]:
+   if red1p[0] or red1p[1] or red1p[2]:
       print "\n   Finding best path reduction:"
-   if red1p[0] or red1p[1] or red1p[2] :
+   #if red1p[0] or red1p[1] or red1p[2] :
+   if red1p[0] or red1p[1] :
       if 'mmr' in skipOpt:
          print '      SKIPPING MMR'
       else:
@@ -536,7 +539,8 @@ def ifko_PathXform(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N, M, lda,
             m0 = mf
             t0 = t
             KFn = KF1 
-   if red1p[3] :
+   #if red1p[3] :
+   if red1p[2] :
 #
 #     skipping rc for cos kernel, there is a problem in cos!
 #
@@ -598,12 +602,14 @@ def ifko_Vec(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N, M, lda,
    print "\n   Finding best vectorization:"
 #
 #  check with other xforms
+#  new vec info = maxmin, redcom, spec
 #
    m0 = 0
    t0 = 0
    KFn = KF0
    if npath > 1:
-      if vm[0] or vm[1] or vm[2]:
+      #if vm[0] or vm[1] or vm[2]:
+      if vm[0] :
          if 'mmr' in skipOpt or 'vrc' in forceOpt or 'sv' in forceOpt:
             print '      SKIPPING MMR+V'
          else:
@@ -616,7 +622,8 @@ def ifko_Vec(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N, M, lda,
                m0 = mf
                t0 = t
                KFn = KF1
-      if vm[3] :
+      #if vm[3] :
+      if vm[1] :
          if 'rc' in skipOpt or 'vmmr' in forceOpt or 'sv' in forceOpt:
             print '      SKIPPING RC+V'
          else:
@@ -632,7 +639,8 @@ def ifko_Vec(ATLdir, ARCH, KF0, ncache, fko, rout, pre, blas, N, M, lda,
 #
 #     check for speculative 
 #
-      if vm[4] :
+      #if vm[4] :
+      if vm[2] :
          if 'sv' in skipOpt or 'vmmr' in forceOpt or 'vrc' in forceOpt:
             print '      SKIPPING SPECULATIVE VECTORIZATION'
          else:
@@ -783,7 +791,7 @@ def ifko0(l1bla, pre, N, M=None, lda=None):
 #
    #KFLAGS = fkocmnd.GetStandardFlags(fko, rout, pre) 
    KFLAGS = fkocmnd.GetOptStdFlags(fko, rout, pre, 1, URF) 
-   #print "\n   Default Flag = " + KFLAGS 
+   print "\n   Default Flag = " + KFLAGS 
    KFLAGS = KFLAGS + " -o " + str(outf) + " " + rout
    mflist = []
    testlist = []
@@ -997,7 +1005,7 @@ def ifko0(l1bla, pre, N, M=None, lda=None):
          [mf,KFLAGS] = FindSE(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N, 
                               M, lda, acc)
       mflist.append(mf)
-      testlist.append("sclexp")
+      testlist.append("rdexp")
 #
 #  Majedul: shifted it here to test
 #
@@ -1086,7 +1094,7 @@ def ifko0(l1bla, pre, N, M=None, lda=None):
    return(res, KFLAGS, mf, tst, testlist, mflist)
 
 
-def ifko(routs, pres, N, M=None, lda=None):
+def ifko(routs, pres, N, M=None, lda=None, fpout=None):
    """ This function figures out the best parameter after tunning and print this
        out.
    """
@@ -1124,11 +1132,13 @@ def ifko(routs, pres, N, M=None, lda=None):
    tstlist = []
    ideclist = []
    idecmflist = []
+   flaglist = []
    for l1bla in routlist:
       for pre in prelist:
          print "\niFKO TUNING %s" % (pre + l1bla)
          (res,flags,mf,tst,dec,decmf) = ifko0(l1bla, pre, N, M, lda)
          reslist.append(res)
+         flaglist.append(fkocmnd.RemoveFilesFromFlags(l1bla, flags))
          blalist.append(pre + l1bla)
          mflist.append(mf)
          tstlist.append(tst)
@@ -1237,20 +1247,47 @@ def ifko(routs, pres, N, M=None, lda=None):
             j += 1
          print st
          i += 1
+#
+#   write the final flag into output file, if specified
+#
+   if fpout:
+       f = open(fpout, 'w')
+       f.write("NKERNS="+ str(n)+"\n")
+       i = 0
+       while i < n : 
+          f.write("   " + blalist[i] + ": " + flaglist[i] + "\n")
+          i += 1
+              
+
+
 
 def PrintUsage():
-   print 'usage: '
-   print 'Style1: ./ifko.py [asum, s]'
-   print 'Style2: ./ifko.py default [s]'
-   print 'Style3: ./ifko.py default default'
-   print 'Style4: ./ifko.py (b1,b2,..) (s,d)'
-   print 'Style5: ./ifko.py (b1,b2,..) (s,d) N'
-   print 'Style6: ./ifko.py (b1,b2,..) (s,d) -n val'
-   print 'Style7: ./ifko.py (b1,b2,..) (s,d) N --no <opt1,opt2,..>'
-   print '        --force <sv, vrc, vmmx> atlopt=\'opt-str-for-atlas\' '
-   print 'Style8: ./ifko.py (b1,b2,..) (s,d) -N val --no <opt1,opt2,..> ',
-   print '-atlopt \'opt-str-for-atlas\' '
-   print 'note that -atlopt \'opt-str-for-atlas\' should be last argument '
+   print 'USAGE:'
+   print 'ARGUMENT SYTLES : '
+   print '   Style1:   ./ifko.py  kernel_list precision_list N, option_list'
+   print '   Example: ./ifko.py dot,iamax s,d 16000 --no rc,mmr --force sv' ,
+   print '   Style2:   ./ifko.py  kernel_group precision_group N, option_list'
+   print '   Example: ./ifko.py l1blas default 16000 --no rc,mmr --force sv' ,
+   print '-o output_file'
+   print 'OPTIONS: '
+   print '   -n N: val of N'
+   print '   -m M: val of M'
+   print '   -lda LDA: val of LDA'
+   print '   -u UR : fixed unroll factor, no tunning for unrolling'
+   print '   -o filename : output filename for final result'
+   print '   --no opt_list : skip optimizations [mmr, rc, v, sv, se, P, ps, par, p] '
+   print '   --force vect : force vectorization method (option: sv, vrc, vmmr ) '
+   print '   -atlopt \'opt-str-for-atlas\' : flags for atlas. must be the last one'
+   #print 'Style2: ./ifko.py default [s]'
+   #print 'Style3: ./ifko.py default default'
+   #print 'Style4: ./ifko.py (b1,b2,..) (s,d)'
+   #print 'Style5: ./ifko.py (b1,b2,..) (s,d) N'
+   #print 'Style6: ./ifko.py (b1,b2,..) (s,d) -n val'
+   #print 'Style7: ./ifko.py (b1,b2,..) (s,d) N --no <opt1,opt2,..>'
+   #print '        --force <sv, vrc, vmmx> atlopt=\'opt-str-for-atlas\' '
+   #print 'Style8: ./ifko.py (b1,b2,..) (s,d) -N val --no <opt1,opt2,..> ',
+   #print '-atlopt \'opt-str-for-atlas\' '
+   #print 'note that -atlopt \'opt-str-for-atlas\' should be last argument '
    return
 
 def ParseArgv(argv):
@@ -1265,6 +1302,7 @@ def ParseArgv(argv):
    atlopt = None
    noOpt = []
    frOpt = []
+   fpout = None 
 
    nargs = len(argv)
 #
@@ -1286,6 +1324,9 @@ def ParseArgv(argv):
 #  keep backward compatibility sothat it works with old arguments
 #
    if nargs > 1:
+      if argv[1].find('help') :
+         PrintUsage()
+         sys.exit(1)
       blas = argv[1]
       if nargs > 2:
          pre = argv[2]
@@ -1316,11 +1357,15 @@ def ParseArgv(argv):
                elif argv[i].find('-u') != -1:
                   URF = int(argv[i+1])
                   i = i + 2
+               elif argv[i].find('-o') != -1:
+                  fpout = argv[i+1]
+                  i = i + 2
                elif argv[i].find('-atlopt') != -1:
                   #print argv
                   #print argv[j]
                   atlopt = ' '.join([argv[j] for j in range(i+1, nargs)])
                   #argument with ' ' behave differently with system to system
+                  # test it whether it works for your system!
                   #print atlopt
                   if atlopt.find('\'') != -1:
                      atlopt = atlopt.split('\'')[1]
@@ -1339,7 +1384,7 @@ def ParseArgv(argv):
 #   else:
 #      print [blas, pre, N, noOpt, atlopt]
    
-   return(blas,pre,N,M,lda,noOpt,frOpt,atlopt) 
+   return(blas,pre,N,M,lda,noOpt,frOpt,atlopt, fpout) 
 #
 #  Majedul: create a main function to increase the readability
 #
@@ -1361,7 +1406,7 @@ def main(argv):
 #
 #  parse the commnad line argument 
 #
-   (blas, pre, N, M, lda, noOpt, frOpt, uopt) = ParseArgv(argv)
+   (blas, pre, N, M, lda, noOpt, frOpt, uopt, fpout) = ParseArgv(argv)
 #
 #  Generate opt for altas  based on the argument 
 #
@@ -1396,7 +1441,7 @@ def main(argv):
    #print [blas, pre, N, noOpt, opt]
    #sys.exit(0)
    print N, M, lda, opt
-   ifko(blas, pre, N, M, lda)
+   ifko(blas, pre, N, M, lda, fpout)
 
 #
 # Majedul: If the program is being run by itself and not imported by others, 
