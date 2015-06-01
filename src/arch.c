@@ -2973,7 +2973,7 @@ void FeedbackArchInfo(FILE *fpout)
  * Print cache information  
  */
    fprintf(fpout, "NCACHES=%d\n", NCACHE);
-   fprintf(fpout, "   LINESIZES :");
+   fprintf(fpout, "   LINESIZES:");
    for (i=0; i < NCACHE; i++)
       fprintf(fpout, " %d", LINESIZE[i]);
    fprintf(fpout, "\n");
