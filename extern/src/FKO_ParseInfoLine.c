@@ -90,7 +90,8 @@ static fko_word_t *FKO_NewWord(char *sp, int len, short eqpos)
       wp->word = malloc(len+1);
       wp->len = len;
       wp->eqpos = eqpos;
-      strcpy(wp->word, sp);
+      strncpy(wp->word, sp, len);
+      wp->word[len] = '\0';
 
    }
    else
@@ -121,8 +122,9 @@ void FKO_FreeAllWords(fko_word_t *wp)
       wp = FKO_FreeWord(wp);
 }
 
-static fko_word_t *FKO_GetNextWord(char *sp)
+static fko_word_t *FKO_GetNextWord(char **SP)
 {
+   char *sp = *SP;
    if (sp)
    {
       int i, eq=0, q=0;
@@ -147,6 +149,7 @@ static fko_word_t *FKO_GetNextWord(char *sp)
       }
       if (!i)
          return(NULL);
+      *SP = sp + i;
       return(FKO_NewWord(sp, i, q?q-i:eq));
    }
    return(NULL);
@@ -158,15 +161,14 @@ static fko_word_t *FKO_SplitLineIntoWords(int *NW, char *sp)
    fko_word_t *wb=NULL;
    if (sp)
    {
-      wb = FKO_GetNextWord(sp);
+      wb = FKO_GetNextWord(&sp);
       if (wb)
       {
          fko_word_t *wp=wb;
          do
          {
             nw++;
-            sp += wp->len;
-            wp->next = FKO_GetNextWord(sp);
+            wp->next = FKO_GetNextWord(&sp);
             wp = wp->next;
          }
          while(wp);
@@ -192,7 +194,7 @@ int FKO_GetIntFromEqWord(fko_word_t *wp)
 {
    int i;
    assert(wp->eqpos > 0);
-   assert(scanf(wp->word+8, "%d", &i) == 1);
+   assert(sscanf(wp->word+wp->eqpos+1, "%d", &i) == 1);
    return(i);
 }
 
@@ -212,7 +214,6 @@ short *FKO_GetShortArrayFromTypeList(fko_word_t *wp)
       int k;
       char *sp;
 
-      assert(wp);
       sp = wp->word;
       if (sp[0] == 'v') /* vector type */
       {
