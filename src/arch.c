@@ -2752,57 +2752,59 @@ void FeedbackArchInfo(FILE *fpout)
    int nregs[nr];
    int vlen[nbt];
    int tr, vt;
-   const int npipe = 3;
+   const int npipe = 4;
    int nfp;
-   char *cpipe[] = {"FADDPIPELEN", "FMULPIPELEN", "FMACPIPELEN"};
+   char *cpipe[] = {"PIPELEN_FADD", "PIPELEN_FMUL", "PIPELEN_FDIV", 
+                    "PIPELEN_FMAC"};
    int faddpipe[] = {0, 0, 0, 0, 0, 0};
    int fmulpipe[] = {0, 0, 0, 0, 0, 0};
    int fmacpipe[] = {0, 0, 0, 0, 0, 0};
-   int *fpipe[] = {faddpipe, fmulpipe, fmacpipe};
+   int fdivpipe[] = {0, 0, 0, 0, 0, 0};
+   int *fpipe[] = {faddpipe, fmulpipe, fmacpipe, fdivpipe};
 
 
-/*
- * fp pipeline info
-      #define FADDPIPELEN 4
-      #define DADDPIPELEN 4
-      #define FMULPIPELEN 4
-      #define DMULPIPELEN 4
-      #define FMACPIPELEN 6
-      #define DMACPIPELEN 6
- */
-   #ifdef FPUPIPELINED
+   #ifdef FPU
       nfp = 0;
-
-      #if defined(FADDPIPELEN) || defined(DADDPIPELEN)
+#if 0
+      #if defined(PIPELEN_FADD) || defined(PIPELEN_DADD)
          nfp++;
       #endif
-      #ifdef FADDPIPELEN
-         faddpipe[FR] = FADDPIPELEN;
+      #ifdef PIPELEN_FADD
+         faddpipe[FR] = PIPELEN_FADD;
       #endif
-      #ifdef DADDPIPELEN
-         faddpipe[DR] = DADDPIPELEN;
-      #endif
-
-      #if defined(FMULPIPELEN) || defined(DMULPIPELEN)
-         nfp++;
-      #endif
-      #ifdef FMULPIPELEN
-         fmulpipe[FR] = FMULPIPELEN;
-      #endif
-      #ifdef DMULPIPELEN
-         fmulpipe[DR] = DMULPIPELEN;
+      #ifdef PIPELEN_DADD
+         faddpipe[DR] = PIPELEN_DADD;
       #endif
 
-      #if defined(FMACPIPELEN) || defined(DMACPIPELEN)
+      #if defined(PIPELEN_FMUL) || defined(PIPELEN_DMUL)
          nfp++;
       #endif
-      #ifdef FMACPIPELEN
-         fmacpipe[FR] = FMACPIPELEN;
+      #ifdef PIPELEN_FMUL
+         fmulpipe[FR] = PIPELEN_FMUL;
       #endif
-      #ifdef DMACPIPELEN
-         fmacpipe[DR] = DMACPIPELEN;
+      #ifdef PIPELEN_DMUL
+         fmulpipe[DR] = PIPELEN_DMUL;
+      #endif
+
+      #if defined(PIPELEN_FMAC) || defined(PIPELEN_DMAC)
+         nfp++;
+      #endif
+      #ifdef PIPELEN_FMAC
+         fmacpipe[FR] = PIPELEN_FMAC;
+      #endif
+      #ifdef PIPELEN_DMAC
+         fmacpipe[DR] = PIPELEN_DMAC;
       #endif
       
+      #if defined(PIPELEN_FDIV) || defined(PIPELEN_DDIV)
+         nfp++;
+      #endif
+      #ifdef PIPELEN_FDIV
+         fdivpipe[FR] = PIPELEN_FDIV;
+      #endif
+      #ifdef PIPELEN_DDIV
+         fdivpipe[DR] = PIPELEN_DDIV;
+      #endif
       fprintf(fpout, "FPUPIPE=%d\n", nfp);
       if (nfp)
       {
@@ -2826,6 +2828,46 @@ void FeedbackArchInfo(FILE *fpout)
                fprintf(fpout, "\n"); 
             }
          }
+      }
+#else
+      nfp = 3;
+      #ifdef PIPELEN_FADD
+         faddpipe[FR] = PIPELEN_FADD;
+      #endif
+      #ifdef PIPELEN_DADD
+         faddpipe[DR] = PIPELEN_DADD;
+      #endif
+      #ifdef PIPELEN_FMUL
+         fmulpipe[FR] = PIPELEN_FMUL;
+      #endif
+      #ifdef PIPELEN_DMUL
+         fmulpipe[DR] = PIPELEN_DMUL;
+      #endif
+      #ifdef PIPELEN_FDIV
+         fdivpipe[FR] = PIPELEN_FDIV;
+      #endif
+      #ifdef PIPELEN_DDIV
+         fdivpipe[DR] = PIPELEN_DDIV;
+      #endif
+      #if defined(ARCH_HAS_MAC) 
+         #if ARCH_HAS_MAC != 0 
+            nfp++;
+            #ifdef PIPELEN_FMAC
+               fmacpipe[FR] = PIPELEN_FMAC;
+            #endif
+            #ifdef PIPELEN_DMAC
+               fmacpipe[DR] = PIPELEN_DMAC;
+            #endif
+         #endif
+      #endif
+#endif 
+      fprintf(fpout, "FPUPIPE=%d\n", nfp);
+      for (i=0; i < nfp; i++)
+      {
+         fprintf(fpout, "   %s:", cpipe[i]);
+         for (j=1; j < 3; j++) /* only consider f and d; not vf vd yet??? */
+            fprintf(fpout, " %s=%d", ctypes[j], fpipe[i][j]); 
+         fprintf(fpout, "\n"); 
       }
    #else
       fprintf(fpout, "FPUPIPE=0\n");
