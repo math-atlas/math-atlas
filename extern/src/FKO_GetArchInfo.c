@@ -36,55 +36,58 @@ fko_archinfo_t *FKO_GetArchInfoC(char *fnin)
       switch(wp->eqpos)        /* avoid many strcmp */
       {
                /* 012345678901 */
-      case 7:  /* FPUPIPE, NCACHES */
-         if (!strncmp(wp->word, "FPUPIPE=", 7))
-         {
-            n = FKO_GetIntFromEqWord(wp);
-            ap->nfpupipes = n;
-            for (i=0; i < n; i++)      /* FxxxPIPELEN: */
-            {                          /* 012345678901 */
-               short *nr;
-               FKO_FreeAllWords(wp);
-               assert(FKO_ParseInfoLine(&il, fpin));
-               wp = il.words;
-               sp = wp->word;
-               assert(wp->len == 12);
-               assert(!strcmp(sp+4, "PIPELEN:"));
-               assert(sp[0] == 'F');
-               wp = wp->next;
-               assert(wp);
-               nr = FKO_GetShortArrayFromTypeList(wp);
-               if (sp[1] == 'A')
+      case 9:  /* PIPELINES= */
+         assert(!strncmp(wp->word, "PIPELINES=", 9))
+         n = FKO_GetIntFromEqWord(wp);
+         ap->nfpupipes = n;
+         for (i=0; i < n; i++)      /* PIPELEN_xxx: */
+         {                          /* 012345678901 */
+            short *nr;
+            FKO_FreeAllWords(wp);
+            assert(FKO_ParseInfoLine(&il, fpin));
+            wp = il.words;
+            sp = wp->word;
+            assert(wp->len == 12);
+            assert(!strncmp(sp, "PIPELEN_", 8));
+            assert(sp[0] == 'F');
+            wp = wp->next;
+            assert(wp);
+            nr = FKO_GetShortArrayFromTypeList(wp);
+            sp += 9;
+            if (*sp == 'A')
+            {
+               assert(sp[1] == 'D' && sp[2] == 'D');
+               ap->pipelen_add = nr;
+            }
+            else if (*sp == 'D')
+            {
+               assert(sp[1] == 'I' && sp[2] == 'V');
+               ap->pipelen_div = nr;
+            }
+            else
+            {
+               assert(*sp == 'M');
+               if (sp[1] == 'U')
                {
-                  assert(sp[2] == 'D' && sp[3] == 'D');
-                  ap->pipelen_add = nr;
+                  assert(sp[2] == 'L');
+                  ap->pipelen_mul = nr;
                }
                else
                {
-                  assert(sp[1] == 'M');
-                  if (sp[2] == 'U')
-                  {
-                     assert(sp[3] == 'L');
-                     ap->pipelen_mul = nr;
-                  }
-                  else
-                  {
-                     assert(sp[2] == 'A');
-                     assert(sp[3] == 'C');
-                     ap->pipelen_mac = nr;
-                  }
+                  assert(sp[1] == 'A');
+                  assert(sp[2] == 'C');
+                  ap->pipelen_mac = nr;
                }
             }
          }
-         else
+         break;
+      case 7:  /* NCACHES= */
+         assert(!strncmp(wp->word, "NCACHES=", 7));
+         n = FKO_GetIntFromEqWord(wp);
+         for (i=0; i < n; i++)
          {
-            assert(!strncmp(wp->word, "NCACHES=", 7));
-            n = FKO_GetIntFromEqWord(wp);
-            for (i=0; i < n; i++)
-            {
-               FKO_FreeAllWords(il.words);
-               assert(FKO_ParseInfoLine(&il, fpin));
-            }
+            FKO_FreeAllWords(il.words);
+            assert(FKO_ParseInfoLine(&il, fpin));
          }
          break;
       case 8:  /* REGTYPES, VECTYPES */
