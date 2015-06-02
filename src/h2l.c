@@ -228,7 +228,8 @@ static void FixDeref(short ptr)
 
    ptr--;
    type = FLAG2TYPE(STflag[SToff[ptr].sa[0]-1]);
-/* fprintf(stderr, "FixDeref: [%d, %d, %d, %d]\n", SToff[ptr].sa[0], SToff[ptr].sa[1], SToff[ptr].sa[2], SToff[ptr].sa[3]); */
+/* fprintf(stderr, "FixDeref: [%d, %d, %d, %d]\n", SToff[ptr].sa[0], 
+ *         SToff[ptr].sa[1], SToff[ptr].sa[2], SToff[ptr].sa[3]); */
 /*
  * Load beginning of array
  */
@@ -417,6 +418,18 @@ void DoArrayBroadcast(short id, short ptr)
    InsNewInst(NULL, NULL, NULL, ld, -areg, ptr, 0);
    LocalStore(id, areg);
    GetReg(-1);
+}
+
+void DoArrayPrefetch(short lvl, short ptrderef, int wpf)
+{
+   short k, ireg=0, areg, type, inst;
+
+   FixDeref(ptrderef);
+   
+   if (wpf) inst = PREFW;
+   else inst = PREFR;
+   
+   InsNewInst(NULL, NULL, NULL, inst, 0 , ptrderef, lvl);
 }
 
 void HandlePtrArithNoSizeofUpate(short dest, short src0, char op, short src1)

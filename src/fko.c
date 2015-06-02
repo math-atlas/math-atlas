@@ -1065,6 +1065,7 @@ static void WriteState0MiscToFile(char *name)
 /*
  *    need to save all list coming from markup while parsing, like:
  *    aaligned, abalign, falign
+ *    nopf is added now
  */
       n = optloop->aaligned ? optloop->aaligned[0]: 0;
       WriteShortArrayToFile(fp, n, optloop->aaligned+1);
@@ -1081,6 +1082,8 @@ static void WriteState0MiscToFile(char *name)
       n = optloop->fbalign ? optloop->fbalign[0]: 0;
       WriteShortArrayToFile(fp, n, optloop->fbalign+1);
 
+      n = optloop->nopf ? optloop->nopf[0]: 0;
+      WriteShortArrayToFile(fp, n, optloop->nopf+1);
    }
    else
    {
@@ -1296,6 +1299,7 @@ static void ReadState0MiscFromFile(char *name)
       optloop->mbalign = ReadShortArrayFromFile(fp);
       optloop->faalign = ReadShortArrayFromFile(fp);
       optloop->fbalign = ReadShortArrayFromFile(fp);
+      optloop->nopf = ReadShortArrayFromFile(fp);
 /*
  * Need to check whether all the information is loaded successfully
  * Ofcourse, need to mark all pointers as NULL
@@ -1353,7 +1357,6 @@ static void ReadState0MiscFromFile(char *name)
       optloop->vvscal = NULL;
       optloop->bvvscal = NULL;
       optloop->vvinit = NULL;
-      optloop->nopf = NULL;
       optloop->pfarrs = NULL;
       optloop->pfdist = NULL;
       optloop->pfflag = NULL;
@@ -3914,6 +3917,7 @@ int main(int nargs, char **args)
 /*
  * check the parsing and quit
  */
+   PrintInst(stdout, bbbase);
    exit(0);
 #endif
 /*

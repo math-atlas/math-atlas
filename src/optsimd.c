@@ -9603,7 +9603,8 @@ int RcVecTransform(LOOPQ *lp)
                }
 
             }
-            else if ( IS_BRANCH(inst) || inst == LABEL)
+            else if ( IS_BRANCH(inst) || inst == LABEL || inst == PREFR 
+                      || inst == PREFW)
             {
                // do nothing !
             }

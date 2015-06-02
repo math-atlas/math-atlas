@@ -54,6 +54,7 @@
    void HandleVecInit(short id);
    void HandleVecReduce(short sid, short vid, char op, short ic);
    void HandleVecBroadcast(short vid, short ptrderef);
+   void HandlePrefetch(short lvl, short ptrderef, int wpf);
 %}
 %union
 {
@@ -71,6 +72,7 @@
 %token DOUBLE FLOAT INT UINT DOUBLE_PTR FLOAT_PTR INT_PTR UINT_PTR 
 %token VDOUBLE VFLOAT
 %token VHADD VHMAX VHMIN VHSEL VBROADCAST
+%token PREFETCHR PREFETCHW
 %token DOUBLE_ARRAY FLOAT_ARRAY INT_ARRAY UINT_ARRAY UNROLL_ARRAY
 %token PARAMS LST ABST ME LOOP_BEGIN LOOP_BODY LOOP_END MAX_UNROLL IF GOTO
 %token <sh> LOOP_LIST_MU LOOP_INT_MU LOOP_MU LOOP_LIST_INT_MU
@@ -251,9 +253,12 @@ statement : arith ';'
           | NAME ':'              {DoLabel($1);}
           | GOTO NAME ';'         {DoGoto($2);}
           | ifstate ';'
-          | vectorspecial ';'     {VecIntr = 1;} 
+          | vectorspecial ';'     {VecIntr = 1;}
+          | prefetch ';'      
           ;
-          
+prefetch :  PREFETCHR '(' iconst  ',' ptrderef ')' {HandlePrefetch($3, $5, 0);} 
+         |  PREFETCHW '(' iconst  ',' ptrderef ')' {HandlePrefetch($3, $5, 1);} 
+         ;
 vectorspecial :  ID '=' initvector {HandleVecInit($1);}
           | ID '=' VBROADCAST '(' ptrderef ')' {HandleVecBroadcast($1, $5);}
           | vectorreduce
@@ -698,6 +703,10 @@ static void UpdateLoop(struct loopq *lp)
    lp->varrs = LMA[3];
 #endif
    lp->nopf     = LMA[4];
+#if 0
+   for (i=1, n=lp->nopf[0]; i <=n ; i++)
+      fprintf(stderr, "%s \n", STname[lp->nopf[i]-1]);
+#endif
    LMA[0] = LMA[1] = LMA[2] = LMA[3] = LMA[4] = NULL;
 
 /*
@@ -743,95 +752,6 @@ static void UpdateLoop(struct loopq *lp)
       fprintf(stderr, " *[%d]\n", spb[1]);
    }
 #endif
-
-#if 0
-/*
- * Majedul: if there is a LOOP MARKUP for alignment, update the loopq 
- * structure. check all the markup one by one. after updating re-init to 0.
- * look into fko_types.h for the macro.
- * alignment should be for a number of byte!!!
- */
-
-   if (LMA[5]) /* force align ptr */
-   {
-      fptrs = LMA[5];
-      if (fptrs[0] != 1)
-         fko_error(__LINE__, "More than one ptr to force align!");
-      /*fprintf(stderr, "Force Align (%d) = %s\n", 
-                fptrs[0], STname[fptrs[1]-1]);*/
-      lp->falign = fptrs;
-   }
-   LMA[5] = NULL;
-
-   if (LMU[1]) /* mutually not aligned!! */
-   {
-      /*fprintf(stderr, "mutually unaligned!!!\n");*/
-      if (lp->malign)
-        fko_error(__LINE__, "Inconsistancy in malign declaration!\n"); 
-      lp->malign = -1;
-   }
-/*
- * mutually_aligned has the higest priority... I may skip mutually unaligned 
- * later
- */
-   if (LMAU[0])  /* mutually_aligned (byte ) :: id, id */
-   {
-      /*lp->malign = malign */
-      fptrs = LMAU[0];
-      if (lp->falign) /* we have a ptr to force */
-      {
-         for (n=fptrs[0],i=1; i<=n; i++)
-         {
-            if (lp->falign[1] == fptrs[i])
-               break;
-         }
-         if (i<=n ) /* found force ptr in mutually align ptrs */
-         {
-/*
- *          add all the mutually aligned ptrs in falign but place force ptr in 
- *          fligned[1] position
- */
-            maptrs = malloc(sizeof(short)*(n+1));
-            maptrs[0] = n;
-            m = 1;
-            maptrs[m++] = lp->falign[1];
-            for (j=1; j < i; j++) /* add first set of ptrs */
-            {
-               maptrs[m++] = fptrs[j];
-            }
-            for (k=i+1; k <=n; k++) /* last set of ptrs */
-            {
-               maptrs[m++] = fptrs[k];
-            }
-            free(fptrs);
-            lp->falign = maptrs;
-         }
-      }
-      else /* no ptr to force */
-      {
-         /*lp->falign = fptrs;*/ // the list is reserved 
-         n = fptrs[0];
-         maptrs = malloc(sizeof(short)*(n+1));
-         maptrs[0] = n;
-         for (i=n,j=1; i >= 1; i--,j++)
-            maptrs[j] = fptrs[i];
-         free(fptrs);
-         lp->falign = maptrs;
-      }
-#if 0
-      fprintf(stderr, "maptrs=");
-      for (i=1,n=lp->falign[0]; i<=n; i++)
-         fprintf(stderr, " %s", STname[lp->falign[i]-1]);
-      fprintf(stderr, "\n");
-#endif
-   }
-/*
- * If Mutually_aligned (32) :: * is specify, lp->malign is updated with byte 
- * size; though it doesn't change the lp->falign
- */
-   /*else*/
-   LMAU[0] = NULL;
-#endif   
    FinishLoop(lp);
 }
 
@@ -865,7 +785,6 @@ void HandleLoopIntMU(int which, int ival)
  * 0 : Max_unroll - maximum unrolling to try
  * 1 : Write_dep_dist - loop unroll at which a loop-carried write dependence
  *                      will be discovered (0 means there are none)
- * 2 : mutually_aligned_for 
  */
 {
    switch(which)
@@ -876,11 +795,6 @@ void HandleLoopIntMU(int which, int ival)
    case 1:
       writedd = ival;
       break;
-/*
-   case 2:
-      malign = ival;
-      break;
-*/      
    default:
       fko_error(__LINE__, "Unknown which=%d, file %s", which, __FILE__);
    }
@@ -893,10 +807,7 @@ void HandleLoopListMU(int which)
  *   1: Live_scalars_out
  *   2: Dead_arrays_in
  *   3: Dead_arrays_in
- *   4: No_prefetch
- *   following are not used anymore
- *   //5: Force_aligned
- *   //100: Array_aligned
+ *   4: No_prefetch  ..... only no_prefetch is active! 
  */
 {
    int i, n;
@@ -904,29 +815,11 @@ void HandleLoopListMU(int which)
    short *cp;
    struct idlist *id;
    for (id=idhead,n=0; id; id=id->next) n++;
-#if 0
-   if (which == 100)
-   {
-      assert(!aalign && !balign);
-      n >>= 1;
-      sp = malloc(sizeof(short)*(n+1));
-      cp = malloc(sizeof(uchar)*n);
-      assert(sp && cp);
-      *sp++ = n;
-      for (i=0,id=idhead; i != n; i++)
-      {
-         sp[i] = STstrlookup(id->name);
-         if (!sp[i])
-            fko_error(__LINE__, "Unknown ID: %s which=%d\n", id->name, which);
-         id = id->next;
-         cp[i] = atoi(id->name);
-         id = id->next;
-      }
-      aalign = sp - 1;
-      balign = cp;
-   }
-   else
-#endif   
+/*
+ * FIXME: need to figure out a way to support '*' for all moving ptr, just like
+ * alignment markup. 
+ */
+   if (n)
    {
       assert(!LMA[which]);
       sp = malloc(sizeof(short)*(n+1));
@@ -1260,6 +1153,16 @@ void HandleVecBroadcast(short vid, short ptrderef)
    
    DoArrayBroadcast(vid, ptrderef);
 }
+
+void HandlePrefetch(short lvl, short ptrderef, int wpf)
+{
+/*
+ * call h2l function to insert instructions
+ */
+
+   DoArrayPrefetch(lvl, ptrderef, wpf);
+}
+
 void declare_array(int flag, short dim, char *name)
 {
    int i;

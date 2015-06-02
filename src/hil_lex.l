@@ -91,6 +91,8 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "VHMIN"    { return(VHMIN); }
 "VHSEL"    { return(VHSEL); }
 "VBROADCAST"    { return(VBROADCAST); }
+"PREFETCHR"    { return(PREFETCHR); }
+"PREFETCHW"    { return(PREFETCHW); }
 {ID}      { sprintf(yylval.str, "%s", yytext); return(NAME); }
 
 %%
