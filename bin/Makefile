@@ -1,7 +1,5 @@
-SHELL = /bin/tcsh
-CC = gcc
-#CCFLAGS = -g -O0 -save-temps
-CCFLAGS = -g -O0 
+include ../Make.inc
+
 objs = y.tab.o lex.yy.o h2l.o l2a.o inst.o symtab.o arch.o misc.o flow.o \
        bvec.o vars.o optreg.o optflow.o optsimd.o optloop.o optmisc.o
 HDIR = ../include

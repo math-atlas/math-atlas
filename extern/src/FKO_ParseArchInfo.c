@@ -1,11 +1,11 @@
 #include "fko_parseinfo.h"
 #include "fko_archinfoC.h"
 
-int NumRegs(fko_archinfo_t *ap, int typ)
+int NumRegs(FKO_archinfo_t *ap, int typ)
 {
    return(0);
 }
-int TypesAliased(fko_archinfo_t *ap, int t1, int t2)
+int TypesAliased(FKO_archinfo_t *ap, int t1, int t2)
 {
    int max=t2, min=t1;
    if (!ap)
@@ -21,7 +21,7 @@ int TypesAliased(fko_archinfo_t *ap, int t1, int t2)
       return(0);
    return(ap->aliased[min] & (1 << max));
 }
-void fko_ParseArch
+void FKO_ParseArch
 (
    int *REGTYPES,
    int **NUMREGS

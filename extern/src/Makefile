@@ -1,15 +1,16 @@
-shell = /bin/bash
+include ../../Make.inc
+
 libd = ../lib
 incd = ../include
 
 CC = gcc
-CCFLAGS = -Wall -g -O0 -I$(incd)
+CCFL = $(CCFLAGS) -Wall -I$(incd)
 AR = ar
 ARF = r
 RANLIB = echo
 
 lib = $(libd)/libfkoinfo.a
-obj = fko_ParseArchInfo.o fko_ParseInfoLine.o
+obj = FKO_GetArchInfo.o FKO_ParseInfoLine.o
 incs = $(libd)/fko_parseinfo.h $(libd)/fko_archinfoC.h
 
 lib : $(lib)
@@ -21,4 +22,4 @@ clean :
 	- rm -f $(obj)
 
 .c.o: 
-	$(CC) $(CCFLAGS) -c $<
+	$(CC) $(CCFL) -c $<

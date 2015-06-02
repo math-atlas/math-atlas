@@ -79,7 +79,7 @@ static char *FKO_ReadLine(FILE *fp)
    return(ln);
 }
 
-static fko_word_t *FKO_NewWord(char *sp, int len)
+static fko_word_t *FKO_NewWord(char *sp, int len, short eqpos)
 {
    fko_word_t *wp;
    wp = malloc(sizeof(fko_word_t));
@@ -88,7 +88,10 @@ static fko_word_t *FKO_NewWord(char *sp, int len)
    if (sp && len > 0)
    {
       wp->word = malloc(len+1);
+      wp->len = len;
+      wp->eqpos = eqpos;
       strcpy(wp->word, sp);
+
    }
    else
    {
@@ -122,16 +125,29 @@ static fko_word_t *FKO_GetNextWord(char *sp)
 {
    if (sp)
    {
-      int i;
+      int i, eq=0, q=0;
 
       while (isspace(*sp))  /* skip leading whitespace */
          sp++;
       if (*sp == '\0')
          return(NULL);
-      for (i=0; sp[i] && !isspace(sp[i]); i++);
+      for (i=0; sp[i] && !isspace(sp[i]); i++)
+      {
+         if (sp[i] == '=')
+            eq = i;
+/*
+ *       If we find a ', look for no other chars until we find end '
+ */
+         else if (sp[i] == '\'')
+         {
+             for (i++; sp[i] != '\0' && sp[i] != '\''; i++);
+             assert(sp[i] == '\'');
+             q = i;
+         }
+      }
       if (!i)
          return(NULL);
-      return(FKO_NewWord(sp, i));
+      return(FKO_NewWord(sp, i, q?q-i:eq));
    }
    return(NULL);
 }
@@ -170,4 +186,64 @@ int FKO_ParseInfoLine(fko_infoline_t *ip, FILE *fp)
    ip->words = FKO_SplitLineIntoWords(&nw, ln);
    ip->nwords = nw;
    return(nw);
+}
+
+int FKO_GetIntFromEqWord(fko_word_t *wp)
+{
+   int i;
+   assert(wp->eqpos > 0);
+   assert(scanf(wp->word+8, "%d", &i) == 1);
+   return(i);
+}
+
+/*
+ * RETURNS: FKO_NTYPES len short array, with 0 (type not mentioned in list)
+ *    or value provided by word.
+ */
+short *FKO_GetShortArrayFromTypeList(fko_word_t *wp)
+{
+   short *va;
+
+   va = calloc(FKO_NTYPES, sizeof(short));
+   assert(va);
+
+   while (wp)
+   {
+      int k;
+      char *sp;
+
+      assert(wp);
+      sp = wp->word;
+      if (sp[0] == 'v') /* vector type */
+      {
+         assert(sp[2] == '=');
+         if (sp[1] == 'f')
+            k = FKO_TVFLT;
+         else if (sp[2] == 'd')
+            k = FKO_TVDBL;
+         else 
+         {
+            assert(sp[2] == 'i');
+            k = FKO_TVINT;
+         }
+         assert(sscanf(sp+3, "%hi", va+k) == 1);
+      }
+      else              /* scalar type */
+      {
+         assert(sp[1] == '=');
+         if (*sp == 'f')
+            k = FKO_TFLT;
+         else if (*sp == 'd')
+            k = FKO_TDBL;
+         else 
+         {
+            k = FKO_TINT;
+            assert(*sp == 'i');
+         }
+         assert(sscanf(sp+2, "%hi", va+k) == 1);
+      }
+      wp = wp->next;
+   }
+
+   return(va);
 }

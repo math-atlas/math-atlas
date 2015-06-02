@@ -9,6 +9,17 @@
  */
 #ifndef FKO_INFO_H
    #define FKO_INFO_H
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
+#include "fko_archinfoC.h"
+#ifdef DECL_
+   fko_archinfo_t *FKO_ARCHINF=NULL;
+#else
+   extern fko_archinfo_t *FKO_ARCHINF;
+#endif
 /*
  * Translates a string describing the FKO type into an integer for use
  * in the querying functions that that take type arguments.  str should
@@ -29,7 +40,7 @@ int FKO_InststrToInt(char *inst);
  * These functions must be called prior to any other funcs specified in this
  * file.  They are not thead safe.
  */
-void FKO_GetArchInfo(FILE *fpin);  /* "stdin" reads from standard in */
+void FKO_GetArchInfo(char *fname);  /* "stdin" reads from standard in */
 void FKO_DestroyArchInfo(void);
 
 /* 
