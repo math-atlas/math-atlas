@@ -2753,125 +2753,153 @@ void FeedbackArchInfo(FILE *fpout)
    int vlen[nbt];
    int tr, vt;
    const int npipe = 4;
-   int nfp;
-   char *cpipe[] = {"PIPELEN_FADD", "PIPELEN_FMUL", "PIPELEN_FDIV", 
-                    "PIPELEN_FMAC"};
-   int faddpipe[] = {0, 0, 0, 0, 0, 0};
-   int fmulpipe[] = {0, 0, 0, 0, 0, 0};
-   int fmacpipe[] = {0, 0, 0, 0, 0, 0};
-   int fdivpipe[] = {0, 0, 0, 0, 0, 0};
-   int *fpipe[] = {faddpipe, fmulpipe, fmacpipe, fdivpipe};
-
-
-   #ifdef FPU
-      nfp = 0;
-#if 0
-      #if defined(PIPELEN_FADD) || defined(PIPELEN_DADD)
-         nfp++;
-      #endif
-      #ifdef PIPELEN_FADD
-         faddpipe[FR] = PIPELEN_FADD;
-      #endif
-      #ifdef PIPELEN_DADD
-         faddpipe[DR] = PIPELEN_DADD;
-      #endif
-
-      #if defined(PIPELEN_FMUL) || defined(PIPELEN_DMUL)
-         nfp++;
-      #endif
-      #ifdef PIPELEN_FMUL
-         fmulpipe[FR] = PIPELEN_FMUL;
-      #endif
-      #ifdef PIPELEN_DMUL
-         fmulpipe[DR] = PIPELEN_DMUL;
-      #endif
-
-      #if defined(PIPELEN_FMAC) || defined(PIPELEN_DMAC)
-         nfp++;
-      #endif
-      #ifdef PIPELEN_FMAC
-         fmacpipe[FR] = PIPELEN_FMAC;
-      #endif
-      #ifdef PIPELEN_DMAC
-         fmacpipe[DR] = PIPELEN_DMAC;
-      #endif
+   int np;
+   char *cpipe[] = {"PIPELEN_ADD", "PIPELEN_MUL", "PIPELEN_DIV", 
+                    "PIPELEN_MAC"};
+/*
+ * initialized with invalid value which tells us 'undefined' 
+ */
+   const int inv = -2;  /* -2 is not a valid value for pipeline */
+   int addpipe[] = {inv, inv, inv, inv, inv, inv};
+   int mulpipe[] = {inv, inv, inv, inv, inv, inv};
+   int divpipe[] = {inv, inv, inv, inv, inv, inv};
+   int macpipe[] = {inv, inv, inv, inv, inv, inv};
+   int *pipe[] = {addpipe, mulpipe, macpipe, divpipe};
+/*
+ * print pipeline info 
+ * 
+ */
+   np = 0;
+   #if defined(PIPELEN_IADD) || defined(PIPELEN_FADD) || defined(PIPELEN_DADD) \
+      || defined(PIPELEN_VIADD) || defined(PIPELEN_VFADD) \
+      || defined(PIPELEN_VDADD) 
       
-      #if defined(PIPELEN_FDIV) || defined(PIPELEN_DDIV)
-         nfp++;
+      np++;  
+      #ifdef PIPELEN_IADD
+         addpipe[IR] = PIPELEN_IADD;
       #endif
-      #ifdef PIPELEN_FDIV
-         fdivpipe[FR] = PIPELEN_FDIV;
-      #endif
-      #ifdef PIPELEN_DDIV
-         fdivpipe[DR] = PIPELEN_DDIV;
-      #endif
-      fprintf(fpout, "FPUPIPE=%d\n", nfp);
-      if (nfp)
-      {
-         for (i=0; i < npipe; i++)
-         {
-            k = 0;
-            for (j=0; j < nr; j++)
-            {
-               if (fpipe[i][j])
-               {
-                  k = 1;
-                  break;
-               }
-            }
-            if (k)
-            {
-               fprintf(fpout, "   %s:", cpipe[i]);
-               for (j=0; j < nr; j++)
-                  if ( fpipe[i][j] ) 
-                     fprintf(fpout, " %s=%d", ctypes[j], fpipe[i][j]); 
-               fprintf(fpout, "\n"); 
-            }
-         }
-      }
-#else
-      nfp = 3;
       #ifdef PIPELEN_FADD
-         faddpipe[FR] = PIPELEN_FADD;
+         addpipe[FR] = PIPELEN_FADD;
       #endif
       #ifdef PIPELEN_DADD
-         faddpipe[DR] = PIPELEN_DADD;
+         addpipe[DR] = PIPELEN_DADD;
+      #endif
+      #ifdef PIPELEN_VIADD
+         addpipe[VIR] = PIPELEN_VIADD;
+      #endif
+      #ifdef PIPELEN_VFADD
+         addpipe[VFR] = PIPELEN_VFADD;
+      #endif
+      #ifdef PIPELEN_VDADD
+         addpipe[VDR] = PIPELEN_VDADD;
+      #endif
+   #endif
+
+   #if defined(PIPELEN_IMUL) || defined(PIPELEN_FMUL) || defined(PIPELEN_DMUL) \
+      || defined(PIPELEN_VIMUL) || defined(PIPELEN_VFMUL) \
+      || defined(PIPELEN_VDMUL) 
+      
+      np++;  
+      #ifdef PIPELEN_IMUL
+         mulpipe[IR] = PIPELEN_IMUL;
       #endif
       #ifdef PIPELEN_FMUL
-         fmulpipe[FR] = PIPELEN_FMUL;
+         mulpipe[FR] = PIPELEN_FMUL;
       #endif
       #ifdef PIPELEN_DMUL
-         fmulpipe[DR] = PIPELEN_DMUL;
+         mulpipe[DR] = PIPELEN_DMUL;
+      #endif
+      #ifdef PIPELEN_VIMUL
+         mulpipe[VIR] = PIPELEN_VIMUL;
+      #endif
+      #ifdef PIPELEN_VFMUL
+         mulpipe[VFR] = PIPELEN_VFMUL;
+      #endif
+      #ifdef PIPELEN_VDMUL
+         mulpipe[VDR] = PIPELEN_VDMUL;
+      #endif
+   #endif
+   
+   #if defined(PIPELEN_IDIV) || defined(PIPELEN_FDIV) || defined(PIPELEN_DDIV) \
+      || defined(PIPELEN_VIDIV) || defined(PIPELEN_VFDIV) \
+      || defined(PIPELEN_VDDIV) 
+      
+      np++;  
+      #ifdef PIPELEN_IDIV
+         divpipe[IR] = PIPELEN_IDIV;
       #endif
       #ifdef PIPELEN_FDIV
-         fdivpipe[FR] = PIPELEN_FDIV;
+         divpipe[FR] = PIPELEN_FDIV;
       #endif
       #ifdef PIPELEN_DDIV
-         fdivpipe[DR] = PIPELEN_DDIV;
+         divpipe[DR] = PIPELEN_DDIV;
       #endif
-      #if defined(ARCH_HAS_MAC) 
-         #if ARCH_HAS_MAC != 0 
-            nfp++;
+      #ifdef PIPELEN_VIDIV
+         divpipe[VIR] = PIPELEN_VIDIV;
+      #endif
+      #ifdef PIPELEN_VFDIV
+         divpipe[VFR] = PIPELEN_VFDIV;
+      #endif
+      #ifdef PIPELEN_VDDIV
+         divpipe[VDR] = PIPELEN_VDDIV;
+      #endif
+   #endif
+
+   #if defined(ARCH_HAS_MAC) 
+      #if ARCH_HAS_MAC != 0 
+         #if defined(PIPELEN_IMAC) || defined(PIPELEN_FMAC) \
+            || defined(PIPELEN_DMAC) || defined(PIPELEN_VIMAC) \
+            || defined(PIPELEN_VFMAC) || defined(PIPELEN_VDMAC) 
+            np++;
+            #ifdef PIPELEN_IMAC
+               macpipe[IR] = PIPELEN_IMAC;
+            #endif
             #ifdef PIPELEN_FMAC
-               fmacpipe[FR] = PIPELEN_FMAC;
+               macpipe[FR] = PIPELEN_FMAC;
             #endif
             #ifdef PIPELEN_DMAC
-               fmacpipe[DR] = PIPELEN_DMAC;
+               macpipe[DR] = PIPELEN_DMAC;
+            #endif
+            #ifdef PIPELEN_VIMAC
+               macpipe[VIR] = PIPELEN_VIMAC;
+            #endif
+            #ifdef PIPELEN_VFMAC
+               macpipe[VFR] = PIPELEN_VFMAC;
+            #endif
+            #ifdef PIPELEN_VDMAC
+               macpipe[VDR] = PIPELEN_VDMAC;
             #endif
          #endif
       #endif
-#endif 
-      fprintf(fpout, "FPUPIPE=%d\n", nfp);
-      for (i=0; i < nfp; i++)
-      {
-         fprintf(fpout, "   %s:", cpipe[i]);
-         for (j=1; j < 3; j++) /* only consider f and d; not vf vd yet??? */
-            fprintf(fpout, " %s=%d", ctypes[j], fpipe[i][j]); 
-         fprintf(fpout, "\n"); 
-      }
-   #else
-      fprintf(fpout, "FPUPIPE=0\n");
    #endif
+
+   if (np)
+   {
+      fprintf(fpout, "PIPELINES=%d\n", np);
+      for (i=0; i < npipe; i++)
+      {
+         k = 0;
+         for (j=0; j < nr; j++)
+         {
+            if (pipe[i][j] != inv)
+            {
+               k = 1;
+               break;
+            }
+         }
+         if (k)
+         {
+            fprintf(fpout, "   %s:", cpipe[i]);
+            for (j=0; j < nr; j++)
+               if ( pipe[i][j] != inv ) 
+                  fprintf(fpout, " %s=%d", ctypes[j], pipe[i][j]); 
+            fprintf(fpout, "\n"); 
+         }
+      }
+   }
+   else
+      fprintf(fpout, "PIPELINES=0\n");
+
 /*
  * Register info
  */
