@@ -1,6 +1,8 @@
 #ifndef FKO_ARCH_H
 #define FKO_ARCH_H
 
+#include "fko_settings.h"
+
 /*============================================================================= 
  * Define architecure here:
  *============================================================================*/
@@ -17,7 +19,7 @@
  * Provide detailed system-level information here.  Will be set using guesswork
  * later if not defined here
  */
-#if 1
+#if 0
 /*
  * SSE1 or SSE2 not sufficient.  Need SSE3 for vertical add.
  * If overridng vector type here, (eg, AVX2), also define VECDEF
@@ -133,23 +135,27 @@
  * 1. supported types
  *============================================================================*/
 #ifdef PPC
-   #define ArhcHasMAC
-   #define FP_MAC
-   #define DP_MAC
+   #ifdef ARCH_HAS_MAC
+      #define ArchHasMAC
+      #define FP_MAC
+      #define DP_MAC
+   #endif
 
 #elif defined(SPARC)
-   #ifdef ArchHasMAc
-      #undef ArchHasMAC
+   #ifdef ARCH_HAS_MAC
+      #undef ArchHasMAC   /* not supported in fko yet */
    #endif
 
 #elif defined(X86)
-   #define ArchHasMAC
-   #define FMA3
-   /*#define FMA4*/
-   #define FP_MAC
-   #define DP_MAC
-   #define VFP_MAC
-   #define VDP_MAC
+   #ifdef ARCH_HAS_MAC     /* defiend in fko_settings.h */    
+      #define ArchHasMAC   /* defined internally */
+      #define FMA3
+      /*#define FMA4*/     /* get retarded */
+      #define FP_MAC
+      #define DP_MAC
+      #define VFP_MAC
+      #define VDP_MAC
+   #endif
 #endif
 
 /*=============================================================================
@@ -218,6 +224,7 @@
    #define VDP_MIN
 #endif
 
+#if 0         
 /*=============================================================================
  * FPU PIPE LINE
  * NOTE: 
@@ -239,7 +246,7 @@
       #define DMACPIPELEN 6
    #endif
 #endif
-
+#endif
 
 /*=============================================================================
  * REGISTER INFO
@@ -648,16 +655,33 @@
 /* 
  * Setup cache info
  */
-/*
- * MAJEDUL: delete me!
-#ifdef NCACHE
-   #if NCACHE == 2
-      
+#ifdef NCACHE     /* defined in fko_settings.h */
+   #if NCACHE == 1
+      #ifdef ARCH_DECLARE 
+         short LINESIZE[NCACHE] = {CLSZ1};
+      #else
+         extern short LINESIZE[NCACHE];
+      #endif 
+   #elif NCACHE == 2
+      #ifdef ARCH_DECLARE 
+         short LINESIZE[NCACHE] = {CLSZ1,CLSZ2};
+      #else
+         extern short LINESIZE[NCACHE];
+      #endif 
    #elif NCACHE == 3
+      #ifdef ARCH_DECLARE 
          short LINESIZE[NCACHE] = {CLSZ1,CLSZ2, CLSZ3};
+      #else
+         extern short LINESIZE[NCACHE];
+      #endif
+   #elif NCACHE == 4
+      #ifdef ARCH_DECLARE 
+         short LINESIZE[NCACHE] = {CLSZ1,CLSZ2, CLSZ3, CLSZ4};
+      #else
+         extern short LINESIZE[NCACHE];
+      #endif
    #endif
-*/
-#ifndef NCACHE
+#else
    #ifdef X86_64
       #define HAMMER
    #endif
