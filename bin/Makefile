@@ -3,6 +3,9 @@ include ../Make.inc
 objs = y.tab.o lex.yy.o h2l.o l2a.o inst.o symtab.o arch.o misc.o flow.o \
        bvec.o vars.o optreg.o optflow.o optsimd.o optloop.o optmisc.o
 HDIR = ../include
+extd = ../extern
+exthd = $(extd)/include
+extsd = $(extd)/src
 heads= $(HDIR)/fko_arch.h $(HDIR)/fko_inst.h $(HDIR)/fko_misc.h \
        $(HDIR)/fko_types.h $(HDIR)/fko_h2l.h $(HDIR)/fko_l2a.h \
        $(HDIR)/fko_symtab.h $(HDIR)/fko.h $(HDIR)/fko_flow.h \
@@ -13,6 +16,12 @@ fko : $(heads) fko.o $(objs)
 	$(CC) $(CCFLAGS) -o $@ fko.o $(objs) -lfl
 #	$(CC) $(CCFLAGS) -o $@ fko.o $(objs) -ll
 
+exth = $(exthd)/fko_archinfoC.h $(exthd)/fko_archinfo.h
+force_build :
+archquery : force_build
+	cd $(extsd) ; make
+	$(CC) $(CCFLAGS) -I$(exthd) -o $@ ../extern/src/archquery.c \
+              $(extd)/lib/libfkoinfo.a
 xprintinst : ../include/fko.h ../include/fko_inst.h ../src/printinst.c
 	$(CC) $(CCFLAGS) -I../include -o $@ ../src/printinst.c
 xprintregs : $(heads) ../src/printregs.c
