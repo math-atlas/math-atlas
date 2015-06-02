@@ -1266,15 +1266,16 @@ def PrintUsage():
    print 'ARGUMENT SYTLES : '
    print '   Style1:   ./ifko.py  kernel_list precision_list N, option_list'
    print '   Example: ./ifko.py dot,iamax s,d 16000 --no rc,mmr --force sv' ,
+   print '-oF output_file'
    print '   Style2:   ./ifko.py  kernel_group precision_group N, option_list'
    print '   Example: ./ifko.py l1blas default 16000 --no rc,mmr --force sv' ,
-   print '-o output_file'
+   print '-oF output_file'
    print 'OPTIONS: '
    print '   -n N: val of N'
    print '   -m M: val of M'
    print '   -lda LDA: val of LDA'
    print '   -u UR : fixed unroll factor, no tunning for unrolling'
-   print '   -o filename : output filename for final result'
+   print '   -oF filename : output filename for final result'
    print '   --no opt_list : skip optimizations [mmr, rc, v, sv, se, P, ps, par, p] '
    print '   --force vect : force vectorization method (option: sv, vrc, vmmr ) '
    print '   -atlopt \'opt-str-for-atlas\' : flags for atlas. must be the last one'
@@ -1324,7 +1325,7 @@ def ParseArgv(argv):
 #  keep backward compatibility sothat it works with old arguments
 #
    if nargs > 1:
-      if argv[1].find('help') :
+      if argv[1].find('help') != -1:
          PrintUsage()
          sys.exit(1)
       blas = argv[1]
@@ -1357,7 +1358,7 @@ def ParseArgv(argv):
                elif argv[i].find('-u') != -1:
                   URF = int(argv[i+1])
                   i = i + 2
-               elif argv[i].find('-o') != -1:
+               elif argv[i].find('-oF') != -1:
                   fpout = argv[i+1]
                   i = i + 2
                elif argv[i].find('-atlopt') != -1:
@@ -1377,6 +1378,7 @@ def ParseArgv(argv):
                         #atlopt = atlopt[atlopt.find('=')+1:]
                      break; ## stop checking any other argment
                else:
+                  print argv[i]
                   PrintUsage()
                   sys.exit(1)
 #   if atlopt is None:
