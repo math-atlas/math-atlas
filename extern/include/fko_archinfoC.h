@@ -27,6 +27,7 @@ struct fko_archinfo
       short *pipelen_add;
       short *pipelen_mul;
       short *pipelen_mac;
+      short *pipelen_div;
    int regtypes;
       short *numregs;  /* # of regs of each type */
       short *aliased;  /* array of BV, 1 per type */

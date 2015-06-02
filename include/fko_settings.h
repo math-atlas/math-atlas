@@ -22,21 +22,40 @@
  */
 #define ARCH_HAS_MAC 1 
 /*
- * Always define FPU if machine has one
- * Replace the 0's below with the length of your FPU pipeline.
- * If the FPU is unpipelined for that operation, make it -1.
- * If you are unsure, leave it zero. 
+ * Uncomment any definition where you know the pipelen for your architecture
+ * for that type (including vector types), and set the 0 to the number of
+ * latency stages.  The FPU is unpipelined, make it -1.  
+ * If you are unsure, leave it undefined.
  */
 #define FPU 1
-#define PIPELEN_FADD 0
-#define PIPELEN_FMUL 0
-#define PIPELEN_FDIV 0
-#define PIPELEN_DADD 0
-#define PIPELEN_DMUL 0
-#define PIPELEN_DDIV 0
-#ifdef ARCH_HAS_MAC
-   #define PIPELEN_FMAC 0
-   #define PIPELEN_DMAC 0
+#if 0
+   #define PIPELEN_FADD  0
+   #define PIPELEN_FMUL  0
+   #define PIPELEN_FDIV  0
+   #define PIPELEN_DADD  0
+   #define PIPELEN_DMUL  0
+   #define PIPELEN_DDIV  0
+   #define PIPELEN_IDIV  0
+   #ifdef ARCH_HAS_MAC
+      #define PIPELEN_FMAC  0
+      #define PIPELEN_DMAC  0
+      #define PIPELEN_IMAC  0
+   #endif
+/*
+ * Piplength defines for vector types
+ */
+   #define PIPELEN_VIDIV 0
+   #define PIPELEN_VFADD 0
+   #define PIPELEN_VFMUL 0
+   #define PIPELEN_VFDIV 0
+   #define PIPELEN_VDADD 0
+   #define PIPELEN_VDMUL 0
+   #define PIPELEN_VDDIV 0
+   #ifdef ARCH_HAS_MAC
+      #define PIPELEN_VFMAC 0
+      #define PIPELEN_VDMAC 0
+      #define PIPELEN_VIMAC 0
+   #endif
 #endif
 /*
  * SSE1 or SSE2 not sufficient.  Need SSE3 for vertical add.

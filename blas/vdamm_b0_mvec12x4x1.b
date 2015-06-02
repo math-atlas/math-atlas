@@ -32,7 +32,7 @@ ROUT_BEGIN
          NO_CLEANUP;
          LOOP_BODY
             
-            VrB = VBROADCAST(pB[0]);
+            VrB = _VBROADCAST(pB[0]);
             VrA0 = pA[0];
             VrC00 += VrA0 * VrB;
             
