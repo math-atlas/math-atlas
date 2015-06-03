@@ -37,7 +37,7 @@ fko_archinfo_t *FKO_GetArchInfoC(char *fnin)
       {
                /* 012345678901 */
       case 9:  /* PIPELINES= */
-         assert(!strncmp(wp->word, "PIPELINES=", 9))
+         assert(!strncmp(wp->word, "PIPELINES=", 9));
          n = FKO_GetIntFromEqWord(wp);
          ap->nfpupipes = n;
          for (i=0; i < n; i++)      /* PIPELEN_xxx: */
@@ -49,11 +49,10 @@ fko_archinfo_t *FKO_GetArchInfoC(char *fnin)
             sp = wp->word;
             assert(wp->len == 12);
             assert(!strncmp(sp, "PIPELEN_", 8));
-            assert(sp[0] == 'F');
             wp = wp->next;
             assert(wp);
             nr = FKO_GetShortArrayFromTypeList(wp);
-            sp += 9;
+            sp += 8;
             if (*sp == 'A')
             {
                assert(sp[1] == 'D' && sp[2] == 'D');
@@ -84,36 +83,95 @@ fko_archinfo_t *FKO_GetArchInfoC(char *fnin)
       case 7:  /* NCACHES= */
          assert(!strncmp(wp->word, "NCACHES=", 7));
          n = FKO_GetIntFromEqWord(wp);
-         for (i=0; i < n; i++)
+         ap->ncaches = n;
+         if (n)
          {
             FKO_FreeAllWords(il.words);
             assert(FKO_ParseInfoLine(&il, fpin));
+            assert(il.nwords == n+1);
+            wp = il.words;
+            assert(!strcmp(wp->word, "LINESIZES:"));
+            ap->clsz = FKO_GetShortArrayFromWords(n, wp->next);
          }
          break;
       case 8:  /* REGTYPES, VECTYPES */
+         sp = wp->word;
          if (*sp == 'R') 
          {
-            FKO_FreeAllWords(il.words);
-            assert(FKO_ParseInfoLine(&il, fpin));
-            wp = il.words;
-            sp = wp->word;
-            if (*sp == 'N') /* NUMREGS: */
-               ap->numregs = FKO_GetShortArrayFromTypeList(wp->next);
-            else            /* ALIASGROUPS= */
+            int k;
+            assert(!strncmp(sp, "REGTYPES=", 9));
+            n = FKO_GetIntFromEqWord(wp);
+            ap->regtypes = n;
+            for (k=0; k < 2; k++)  /* need ALIASGROUPS & NUMREGS! */
             {
-               assert(!strncmp(sp, "ALIASGROUPS=", 12));
-               n = FKO_GetIntFromEqWord(wp);
-               for (i=0; i < n; i++)
+               FKO_FreeAllWords(il.words);
+               assert(FKO_ParseInfoLine(&il, fpin));
+               wp = il.words;
+               sp = wp->word;
+               if (*sp == 'N') /* NUMREGS: */
                {
-                  FKO_FreeAllWords(il.words);
-                  assert(FKO_ParseInfoLine(&il, fpin));
+                  assert(!strcmp(sp, "NUMREGS:"));
+                  assert(n+1 == il.nwords);
+                  ap->numregs = FKO_GetShortArrayFromTypeList(wp->next);
+               }
+               else            /* ALIASGROUPS= */
+               {
+                  int ng;        /* number of alias groups */
+                  short *agBV, *typBV;
+                  assert(!strncmp(sp, "ALIASGROUPS=", 12));
+                  ng = FKO_GetIntFromEqWord(wp);
+                  agBV = calloc(ng, sizeof(short));
+                  assert(agBV);
+/*
+ *                Read in a bitvec for each aliasgroup
+ */
+                  for (i=0; i < ng; i++)
+                  {
+                     FKO_FreeAllWords(il.words);
+                     assert(FKO_ParseInfoLine(&il, fpin));
+                     wp = il.words;
+                     assert(!strcmp(wp->word, "ALIASED:"));
+                     agBV[i] = FKO_GetBVFromTypeList(wp->next);
+                  }
+/*
+ *                Now create an array of NTYPE-len bitvecs which shows 
+ *                all aliased registers for that type
+ */
+                  typBV = calloc(FKO_NTYPES, sizeof(short));
+                  ap->aliased = typBV;
+                  for (i=0; i < FKO_NTYPES; i++)
+                  {
+                     const int tbit = 1<<i;
+                     int k;
+                     typBV[i] = tbit;  /* always aliased with itself */
+                     for (k=0; k < ng; k++)
+                     {
+                        const int bv=agBV[k];
+                        if (bv & tbit)     /* this type in alias list: */
+                           typBV[i] |= bv; /* all ali types ali wt this one */
+                     }
+                  }
+                  free(agBV);
                }
             }
          }
          else /* VECTYPES */
          {
-            FKO_FreeAllWords(il.words);
-            assert(FKO_ParseInfoLine(&il, fpin));
+            assert(!strncmp(sp, "VECTYPES=", 9));
+            n = FKO_GetIntFromEqWord(wp);
+            ap->vectypes = n;
+            if (n)
+            {
+               FKO_FreeAllWords(wp);
+               assert(FKO_ParseInfoLine(&il, fpin));
+               assert (n+1 == il.nwords);
+               wp = il.words;
+               sp = wp->word;
+               assert(!strcmp(sp, "VECLEN:"));
+               wp = wp->next;
+               assert(wp);
+               ap->vlen = FKO_GetShortArrayFromTypeList(wp);
+            }
          }
          break;
       case 12: /* EXTENDEDINST */

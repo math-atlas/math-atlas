@@ -199,6 +199,46 @@ int FKO_GetIntFromEqWord(fko_word_t *wp)
 }
 
 /*
+ * RETURNS: a short with a bit set for each type that appears in word list
+ */
+short FKO_GetBVFromTypeList(fko_word_t *wp)
+{
+   short bv=0;
+   while(wp)
+   {
+      char *sp=wp->word;
+      char ch=(*sp);
+      if (ch == 'v')
+      {
+         assert (sp[2] == '\0');
+         ch = sp[1];
+         if (ch == 'i')
+            bv |= 1 << FKO_TVINT;
+         else if (ch == 'f')
+            bv |= 1 << FKO_TVFLT;
+         else if (ch == 'd')
+            bv |= 1 << FKO_TVDBL;
+         else
+            assert(0);
+      }
+      else
+      {
+         assert (sp[1] == '\0');
+         if (ch == 'i')
+            bv |= 1 << FKO_TINT;
+         else if (ch == 'f')
+            bv |= 1 << FKO_TFLT;
+         else if (ch == 'd')
+            bv |= 1 << FKO_TDBL;
+         else
+            assert(0);
+      }
+      wp = wp->next;
+   }
+   return(bv);
+}
+
+/*
  * RETURNS: FKO_NTYPES len short array, with 0 (type not mentioned in list)
  *    or value provided by word.
  */
@@ -220,11 +260,11 @@ short *FKO_GetShortArrayFromTypeList(fko_word_t *wp)
          assert(sp[2] == '=');
          if (sp[1] == 'f')
             k = FKO_TVFLT;
-         else if (sp[2] == 'd')
+         else if (sp[1] == 'd')
             k = FKO_TVDBL;
          else 
          {
-            assert(sp[2] == 'i');
+            assert(sp[1] == 'i');
             k = FKO_TVINT;
          }
          assert(sscanf(sp+3, "%hi", va+k) == 1);
@@ -248,3 +288,22 @@ short *FKO_GetShortArrayFromTypeList(fko_word_t *wp)
 
    return(va);
 }
+
+/*
+ * Gets nw-len short array from wp (must be at least nw long!)
+ */
+short *FKO_GetShortArrayFromWords(int nw, fko_word_t *wp)
+{
+   short *va;
+   int i;
+
+   va = malloc(nw*sizeof(short));
+   assert(va);
+   for (i=0; i < nw; i++, wp = wp->next)
+   {
+      assert(wp);
+      assert(sscanf(wp->word, "%hi", va+i) == 1);
+   }
+   return(va);
+}
+

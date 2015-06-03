@@ -28,12 +28,14 @@
  * If you are unsure, leave it undefined.
  */
 #define FPU 1
+#define PIPELEN_FADD  6
+#define PIPELEN_FMUL  8
+#define PIPELEN_DADD  6
+#define PIPELEN_DMUL  8
 #if 0
-   #define PIPELEN_FADD  0
    #define PIPELEN_FMUL  0
    #define PIPELEN_FDIV  0
    #define PIPELEN_DADD  0
-   #define PIPELEN_DMUL  0
    #define PIPELEN_DDIV  0
    #define PIPELEN_IDIV  0
    #ifdef ARCH_HAS_MAC

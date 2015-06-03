@@ -35,6 +35,7 @@ struct fko_archinfo
    int ncaches;
       short *clsz;
    int vectypes;
+      short *vlen;
    int nextinst;
 };
 

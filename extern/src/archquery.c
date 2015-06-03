@@ -12,13 +12,24 @@ void PrintShortArray(char *lab, int n, short *sa)
 }
 void PrintArchInfo(fko_archinfo_t *ap)
 {
-   printf("NFPUPIPES=%d\n", ap->nfpupipes);
+   printf("PIPELINES=%d\n", ap->nfpupipes);
    if (ap->pipelen_add)
-      PrintShortArray("   pipelenADD: ", FKO_NTYPES, ap->pipelen_add);
+      PrintShortArray("   pipelen_add: ", FKO_NTYPES, ap->pipelen_add);
    if (ap->pipelen_mul)
-      PrintShortArray("   pipelenMUL: ", FKO_NTYPES, ap->pipelen_mul);
+      PrintShortArray("   pipelen_mul: ", FKO_NTYPES, ap->pipelen_mul);
    if (ap->pipelen_mac)
-      PrintShortArray("   pipelenMAC: ", FKO_NTYPES, ap->pipelen_mac);
+      PrintShortArray("   pipelen_mac: ", FKO_NTYPES, ap->pipelen_mac);
+   printf("regtypes=%d\n", ap->regtypes);
+   if (ap->numregs)
+      PrintShortArray("   numregs: ", FKO_NTYPES, ap->numregs);
+   if (ap->aliased)
+      PrintShortArray("   aliased: ", FKO_NTYPES, ap->aliased);
+   printf("ncaches=%d\n", ap->ncaches);
+   if (ap->clsz)
+      PrintShortArray("   clsz: ", ap->ncaches, ap->clsz);
+   printf("vectypes=%d\n", ap->vectypes);
+   if (ap->vlen)
+      PrintShortArray("   veclen: ", ap->vectypes, ap->vlen);
 }
 
 int main(int nargs, char **args)

@@ -23,6 +23,9 @@ int FKO_ParseInfoLine(fko_infoline_t *ip, FILE *fp);
 void FKO_FreeAllWords(fko_word_t *wp);
 int FKO_GetIntFromEqWord(fko_word_t *wp);
 short *FKO_GetShortArrayFromTypeList(fko_word_t *wp);
+short FKO_GetBVFromTypeList(fko_word_t *wp);
+short *FKO_GetShortArrayFromWords(int nw, fko_word_t *wp);
+
 
 
 #endif
