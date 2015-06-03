@@ -48,6 +48,7 @@ void PrintUsageN(char *name)
            "  -I <LIL> <symtab> <misc> : start from intermediate files\n");
    fprintf(stderr, "  -v : verbose output\n");
    fprintf(stderr, "  -i <file> : generate loop info file and quit\n");
+   fprintf(stderr, "  -iarch <file> : generate architectural info and quit\n");
    fprintf(stderr, "  -ilrs <file> : generate LR spilling info and quit\n");
    fprintf(stderr, "  -o <outfile> : assembly output file\n");
    fprintf(stderr, "  -R [d,n] <directory/name> : restore path & base name\n");
@@ -459,6 +460,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
          case 'a':
             FKO_FLAG |= IFF_OPT2DPTR; /* optimize 2d array access */
             break;
+#if 0
 /*
  *       Acc expansion using the old implementation
  */
@@ -466,6 +468,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             aeb = NewPtrinfo(i+1, atoi(args[i+2]), aeb);
             i += 2;
             break;
+#endif
 /*
  *       stronger bet unrolling for SV
  */
@@ -476,23 +479,34 @@ struct optblkq *GetFlagsN(int nargs, char **args,
          case 'M':
             FKO_MaxPaths = atoi(args[++i]);
             break;
+#if 0
 /*
  *       Majedul: To generalize the AccumExpansion with Scalar Expansion
- *       -SE var # 
+ *       -SE var #
+ *       changed it to -RE 
  */
          case 'S':
             assert(args[i][2]=='E');
             seb = NewPtrinfo(i+1, atoi(args[i+2]), seb);
             i += 2;
             break;
+#endif
          case 'W':
             id = malloc(sizeof(struct idlist));
             id->name = args[++i];
             id->next = idb;
             idb = id;
             break;
+/*
+ *       changed -SE to -RE. 
+ *       options:
+ *          -RE : Reduce Expandable
+ *          -R [d/n]: not tested by me recently
+ */
          case 'R':
-            if (args[i+1][0] == 'd')
+            if (args[i][2] && args[i][2] == 'E')
+               seb = NewPtrinfo(i+1, atoi(args[i+2]), seb);
+            else if (args[i+1][0] == 'd')
                rpath = args[i+2];
             else 
                rname = args[i+2];
