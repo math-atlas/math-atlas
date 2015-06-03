@@ -305,12 +305,12 @@ def FindUR(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, M, lda, info, UR0=1, URN=
    print "\n   BEST Unroll Factor = %d" %URB
    return [mf0,KF0]
 
-def FindSE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, M, lda, acc, maxlen=6):
+def FindRE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, M, lda, acc, maxlen=6):
    """ Exactly same as FindAE but the fko command is changed 
    """
 #
 #  Time the default case
-#  FIXED: need to save the default flag also. If SE is no better than previous
+#  FIXED: need to save the default flag also. If RE is no better than previous
 #  one, restore the default flag
 #
    fkocmnd.callfko(fko, KF0)
@@ -339,11 +339,11 @@ def FindSE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, M, lda, acc, maxlen=6):
       i = 2
       while i <= maxlen:
          if ur >= i :
-            KFLAG = KFN + " -U %d -SE %s %d" % (ur, ac, i)
+            KFLAG = KFN + " -U %d -RE %s %d" % (ur, ac, i)
             fkocmnd.callfko(fko, KFLAG)
             [t,mf] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                                  "gcc", "-x assembler-with-cpp", opt=opt)
-            print "      '%s' SE=%d, UR=%d, mflop= %.2f" % (ac, i, ur, mf)
+            print "      '%s' RE=%d, UR=%d, mflop= %.2f" % (ac, i, ur, mf)
             if mf > mfB:
                mfB = mf
                urB = ur
@@ -351,11 +351,11 @@ def FindSE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, M, lda, acc, maxlen=6):
          if i < ur or ur%i :
             j = ((ur+i-1) / i)*i
             if j != ur:
-               KFLAG = KFN + " -U %d -SE %s %d" % (j, ac, i)
+               KFLAG = KFN + " -U %d -RE %s %d" % (j, ac, i)
                fkocmnd.callfko(fko, KFLAG)
                [t,mf] = cmnd.time(ATLdir, ARCH, pre, blas, N, M, lda, "fkorout.s", 
                                     "gcc", "-x assembler-with-cpp", opt=opt)
-               print "      '%s' SE=%d, UR=%d, mflop= %.2f" % (ac, i, j, mf)
+               print "      '%s' RE=%d, UR=%d, mflop= %.2f" % (ac, i, j, mf)
                if mf > mfB:
                   mfB = mf
                   urB = j
@@ -363,11 +363,11 @@ def FindSE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, M, lda, acc, maxlen=6):
 
             j = (ur / i) * i
             if j  and j != ur:
-               KFLAG = KFN + " -U %d -SE %s %d" % (j, ac, i)
+               KFLAG = KFN + " -U %d -RE %s %d" % (j, ac, i)
                fkocmnd.callfko(fko, KFLAG)
                [t,mf] = cmnd.time(ATLdir, ARCH, pre, blas, N,M,lda, "fkorout.s", 
                                     "gcc", "-x assembler-with-cpp", opt=opt)
-               print "      '%s' SE=%d, UR=%d, mflop= %.2f" % (ac, i, j, mf)
+               print "      '%s' RE=%d, UR=%d, mflop= %.2f" % (ac, i, j, mf)
             if mf > mfB:
                mfB = mf
                urB = j
@@ -375,7 +375,7 @@ def FindSE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, M, lda, acc, maxlen=6):
          i += 1
 
       if mfB > mf0*1.001:
-         KFN = KFN + " -U %d -SE %s %d" % (urB, ac, aeB)
+         KFN = KFN + " -U %d -RE %s %d" % (urB, ac, aeB)
          mf0 = mfB
 #
 #  check for altimate result
@@ -384,7 +384,7 @@ def FindSE(ATLdir, ARCH, KF0, fko, rout, pre, blas, N, M, lda, acc, maxlen=6):
    #print mf0, KF0
 
    if mfB > m0*1.001:
-      print "   SE=%d, UR=%d, mfB=%2.f, KFN=%s" % (aeB, urB, mfB, KFN)
+      print "   RE=%d, UR=%d, mfB=%2.f, KFN=%s" % (aeB, urB, mfB, KFN)
    else:
       KFN = KF0         ## restore original flags
       mfB = m0
@@ -994,7 +994,7 @@ def ifko0(l1bla, pre, N, M=None, lda=None):
 #
    acc = fkocmnd.GetFPAccum(info)
    nacc = len(acc)
-   if 'se' in skipOpt:
+   if 're' in skipOpt:
       print '\n   SKIPPING SCALAR EXPANSION'
    elif isSV:
       print '\n   SKIPPING SCALAR EXPANSION: NOT SUPPORTED WITH SV'
@@ -1002,7 +1002,7 @@ def ifko0(l1bla, pre, N, M=None, lda=None):
       print '\n   SKIPPING SCALAR EXPANSION FOR IAMAX'
    else:
       if nacc > 0 and nacc < 3:
-         [mf,KFLAGS] = FindSE(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N, 
+         [mf,KFLAGS] = FindRE(ATLdir, ARCH, KFLAGS, fko, rout, pre, l1bla, N, 
                               M, lda, acc)
       mflist.append(mf)
       testlist.append("rdexp")

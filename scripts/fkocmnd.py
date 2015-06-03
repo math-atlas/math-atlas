@@ -381,8 +381,13 @@ def SetDefaultPFD(KFLAG0, inf):
 #
    npf = len(pfarrs)
    schpf = GetSchPF(npf, pfurs)
-   #KFLAG = KFLAG + " -Ps b A 0 " + str(npf) + " -P all 0 " + str(LS*2) 
-   KFLAG = KFLAG + " -Ps b A 0 " + str(schpf) + " -P all 0 " + str(LS*2) 
+   #KFLAG = KFLAG + " -Ps b A 0 " + str(npf) + " -P all 0 " + str(LS*2)
+   #KFLAG = KFLAG + " -Ps b A 0 " + str(schpf) + " -P all 0 " + str(LS*2)
+#
+#   don't add prefetch flags if no ptr is prefetch-able
+#
+   if (npf != 0 and schpf != 0):
+       KFLAG = KFLAG + " -Ps b A 0 " + str(schpf) + " -P all 0 " + str(LS*2)  
    return KFLAG
 
 def RemoveRedundantPrefFlags(flags, pfarrs):
@@ -492,7 +497,11 @@ def GetOptStdFlags(fko, rout, pre, VEC, SB=0, URF=0):
             UF = " -U %d" %UR
       VF = " -V"
    #KFLAG = VF + " -Ps b A 0 " + str(npf) + " -P all 0 " + str(LS*2) + UF
-   KFLAG = VF + " -Ps b A 0 " + str(schpf) + " -P all 0 " + str(LS*2) + UF
+   if (npf != 0 and schpf != 0):
+       KFLAG = VF + " -Ps b A 0 " + str(schpf) + " -P all 0 " + str(LS*2) + UF
+   else:
+       KFLAG = VF + UF
+
    return KFLAG 
 
 def GetStandardFlags(fko, rout, pre):
@@ -519,8 +528,12 @@ def GetStandardFlags(fko, rout, pre):
    #KFLAG = VF + " -Ps b A 0 " + str(npf) + " -P all 0 " + str(LS*2) + " -U " \
    #        + str(UR)
    schpf = GetSchPF(npf, pfurs)
-   KFLAG = VF + " -Ps b A 0 " + str(schpf) + " -P all 0 " + str(LS*2) + " -U " \
-           + str(UR)
+   if (npf !=0  and schpf != 0):
+       KFLAG = VF + " -Ps b A 0 " + str(schpf) + " -P all 0 " + str(LS*2) \
+               + " -U " + str(UR)
+   else:
+       KFLAG = VF + " -U " + str(UR)
+
    return KFLAG 
 
 #
