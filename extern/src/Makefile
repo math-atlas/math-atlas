@@ -10,7 +10,10 @@ ARF = r
 RANLIB = echo
 
 lib = $(libd)/libfkoinfo.a
-obj = FKO_GetArchInfo.o FKO_ParseInfoLine.o
+obj = FKO_GetArchInfo.o FKO_DestroyArchInfo.o FKO_NumRegs.o \
+      FKO_RegtypesAliased.o FKO_CachelineSize.o \
+      FKO_PipelenADD.o FKO_PipelenMUL.o FKO_PipelenMAC.o FKO_PipelenDIV.o \
+      FKO_ParseInfoLine.o
 incs = $(libd)/fko_parseinfo.h $(libd)/fko_archinfoC.h
 
 lib : $(lib)

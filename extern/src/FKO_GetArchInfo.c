@@ -39,11 +39,11 @@ fko_archinfo_t *FKO_GetArchInfoC(char *fnin)
       case 9:  /* PIPELINES= */
          assert(!strncmp(wp->word, "PIPELINES=", 9));
          n = FKO_GetIntFromEqWord(wp);
-         ap->nfpupipes = n;
+         ap->npipes = n;
          for (i=0; i < n; i++)      /* PIPELEN_xxx: */
          {                          /* 012345678901 */
             short *nr;
-            FKO_FreeAllWords(wp);
+            FKO_FreeAllWords(il.words);
             assert(FKO_ParseInfoLine(&il, fpin));
             wp = il.words;
             sp = wp->word;
@@ -159,7 +159,7 @@ fko_archinfo_t *FKO_GetArchInfoC(char *fnin)
          {
             assert(!strncmp(sp, "VECTYPES=", 9));
             n = FKO_GetIntFromEqWord(wp);
-            ap->vectypes = n;
+            ap->nvtyp = n;
             if (n)
             {
                FKO_FreeAllWords(wp);
@@ -177,10 +177,51 @@ fko_archinfo_t *FKO_GetArchInfoC(char *fnin)
       case 12: /* EXTENDEDINST */
          assert(!strncmp(wp->word, "EXTENDEDINST=", 12));
          n = FKO_GetIntFromEqWord(wp);
-         for (i=0; i < n; i++)
+         if (n)
          {
-            FKO_FreeAllWords(il.words);
-            assert(FKO_ParseInfoLine(&il, fpin));
+            short *bvs;
+            bvs = ap->spcinst = calloc(FKO_NTYPES, sizeof(short));
+            assert(bvs);
+            for (i=0; i < n; i++)
+            {
+               short ibv, k;
+               FKO_FreeAllWords(il.words);
+               assert(FKO_ParseInfoLine(&il, fpin));
+               wp = il.words;
+               assert(wp);
+               sp = wp->word;
+               assert(wp->next);
+               ibv = FKO_GetBVFromTypeList(wp->next);
+               if (*sp == 'M')
+               {
+                  if (!strcmp(sp, "MININST:"))
+                     k = FKO_SIMIN;
+                  else
+                  {
+                     assert(!strcmp(sp, "MAXINST:"));
+                     k = FKO_SIMAX;
+                  }
+               }
+               else
+               {
+                  assert(!strcmp(sp, "CONDMOV:"));
+                  k = FKO_SICMOV;
+               }
+               k = 1 << k;
+               if (ibv & (1<<FKO_TINT))
+                  bvs[FKO_TINT] |= k;
+               if (ibv & (1<<FKO_TFLT))
+                  bvs[FKO_TFLT] |= k;
+               if (ibv & (1<<FKO_TDBL))
+                  bvs[FKO_TDBL] |= k;
+
+               if (ibv & (1<<FKO_TVINT))
+                  bvs[FKO_TVINT] |= k;
+               if (ibv & (1<<FKO_TVFLT))
+                  bvs[FKO_TVFLT] |= k;
+               if (ibv & (1<<FKO_TVDBL))
+                  bvs[FKO_TVDBL] |= k;
+            }
          }
          break;
       default:

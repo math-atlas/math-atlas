@@ -12,7 +12,7 @@ void PrintShortArray(char *lab, int n, short *sa)
 }
 void PrintArchInfo(fko_archinfo_t *ap)
 {
-   printf("PIPELINES=%d\n", ap->nfpupipes);
+   printf("PIPELINES=%d\n", ap->npipes);
    if (ap->pipelen_add)
       PrintShortArray("   pipelen_add: ", FKO_NTYPES, ap->pipelen_add);
    if (ap->pipelen_mul)
@@ -27,9 +27,12 @@ void PrintArchInfo(fko_archinfo_t *ap)
    printf("ncaches=%d\n", ap->ncaches);
    if (ap->clsz)
       PrintShortArray("   clsz: ", ap->ncaches, ap->clsz);
-   printf("vectypes=%d\n", ap->vectypes);
+   printf("nvectypes=%d\n", ap->nvtyp);
    if (ap->vlen)
-      PrintShortArray("   veclen: ", ap->vectypes, ap->vlen);
+      PrintShortArray("   veclen: ", ap->nvtyp, ap->vlen);
+   printf("nspcinst=%d\n", ap->nspcinst);
+   if (ap->spcinst)
+      PrintShortArray("   spcinst: ", FKO_NTYPES, ap->spcinst);
 }
 
 int main(int nargs, char **args)
@@ -39,5 +42,6 @@ int main(int nargs, char **args)
       fnam = args[1];
    FKO_GetArchInfo(fnam);
    PrintArchInfo(FKO_ARCHINF);
+   FKO_DestroyArchInfo();
    return(0);
 }
