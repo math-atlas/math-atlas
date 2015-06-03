@@ -3031,7 +3031,7 @@ void FeedbackArchInfo(FILE *fpout)
       fprintf(fpout,"   ALIASGROUPS=%d\n", k);
       for (i=0; i < k; i++)
       {
-         fprintf(fpout, "      ALIAS:");
+         fprintf(fpout, "      ALIASED:");
          for (j=0; j < nr; j++)
             if (aliasgp[i] & (1 << j))
                fprintf(fpout, " %s", ctypes[j]);
