@@ -86,13 +86,13 @@ ROUTNAM "ROUTINE"[ \t\v]+ID
 "GOTO"     { return(GOTO); }
 "VDOUBLE"    { return(VDOUBLE); }
 "VFLOAT"    { return(VFLOAT); }
-"VHADD"    { return(VHADD); }
-"VHMAX"    { return(VHMAX); }
-"VHMIN"    { return(VHMIN); }
-"VHSEL"    { return(VHSEL); }
-"VBROADCAST"    { return(VBROADCAST); }
-"PREFETCHR"    { return(PREFETCHR); }
-"PREFETCHW"    { return(PREFETCHW); }
+"_VHADD"    { return(VHADD); }
+"_VHMAX"    { return(VHMAX); }
+"_VHMIN"    { return(VHMIN); }
+"_VHSEL"    { return(VHSEL); }
+"_VBROADCAST"    { return(VBROADCAST); }
+"_PREFETCHR"    { return(PREFETCHR); }
+"_PREFETCHW"    { return(PREFETCHW); }
 {ID}      { sprintf(yylval.str, "%s", yytext); return(NAME); }
 
 %%
