@@ -32,7 +32,7 @@ ROUT_BEGIN
          NO_CLEANUP;
          LOOP_BODY
             
-            VrB = VBROADCAST(pB[0]);
+            VrB = _VBROADCAST(pB[0]);
             VrA0 = pA[0];
             VrC00 += VrA0 * VrB;
             
@@ -42,17 +42,17 @@ ROUT_BEGIN
             VrA2 = pA[8];
             VrC20 += VrA2 * VrB;
 
-            VrB = VBROADCAST(pB[1]);
+            VrB = _VBROADCAST(pB[1]);
             VrC01 += VrA0 * VrB;
             VrC11 += VrA1 * VrB;
             VrC21 += VrA2 * VrB;
             
-            VrB = VBROADCAST(pB[2]);
+            VrB = _VBROADCAST(pB[2]);
             VrC02 += VrA0 * VrB;
             VrC12 += VrA1 * VrB;
             VrC22 += VrA2 * VrB;
 
-            VrB = VBROADCAST(pB[3]);
+            VrB = _VBROADCAST(pB[3]);
             VrC03 += VrA0 * VrB;
             VrC13 += VrA1 * VrB;
             VrC23 += VrA2 * VrB;
