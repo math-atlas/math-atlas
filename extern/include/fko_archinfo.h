@@ -53,7 +53,7 @@ int FKO_RegtypesAliased(int typ1, int typ2);  /* 1 if types aliased, else 0 */
  * Functions describing cache info iFKO was compiled with.
  */
 int FKO_NumCaches(void);  /* how many cache lvls iFKO knows about */
-int FKO_CacheLinesize(int lvl);  /* linesize for lvl [0,NC-1] */
+int FKO_CachelineSize(int lvl);  /* linesize for lvl [0,NC-1] */
 
 /*
  * Functions concerned primarily with vectorization

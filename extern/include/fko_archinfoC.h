@@ -23,8 +23,10 @@
 typedef struct fko_archinfo fko_archinfo_t;
 struct fko_archinfo
 {
-   int nfpupipes;
-      short *pipelen_add;
+   int ncaches;                /* # of caches FKO knows about */
+      short *clsz;             /* cacheline size for each cache level */
+   int npipes;                 /* number of pipelined units FKO knows */
+      short *pipelen_add;      /* pipelen for each type */
       short *pipelen_mul;
       short *pipelen_mac;
       short *pipelen_div;
@@ -32,10 +34,11 @@ struct fko_archinfo
       short *numregs;  /* # of regs of each type */
       short *aliased;  /* array of BV, 1 per type */
 
-   int ncaches;
-      short *clsz;
-   int vectypes;
+   int nvtyp;
       short *vlen;
+   int nspcinst;       /* # of special instructions */
+      short *spcinst;
+
    int nextinst;
 };
 
@@ -46,11 +49,13 @@ int FKO_NumRegsC(fko_archinfo_t *ap, int typ1);
 int FKO_RegtypesAliasedC(fko_archinfo_t *ap, int typ1, int typ2);
 
 int FKO_NumCachesC(fko_archinfo_t *ap);
-int FKO_CacheLinesizeC(fko_archinfo_t *ap, int cachelvl);
+int FKO_CachelineSizeC(fko_archinfo_t *ap, int cachelvl);
 
 int FKO_PipelenADDC(fko_archinfo_t *ap, int typ);
 int FKO_PipelenMULC(fko_archinfo_t *ap, int typ);
 int FKO_PipelenMACC(fko_archinfo_t *ap, int typ);
+int FKO_PipelenDIVC(fko_archinfo_t *ap, int typ);
+
 
 int FKO_VeclenC(fko_archinfo_t *ap, int typ);
 int FKO_HasSpecialInstC(fko_archinfo_t *ap, int typ, int inst);
