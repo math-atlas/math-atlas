@@ -4,10 +4,10 @@
 
 BLIST *NewBlockList(BBLOCK *blk, BLIST *next);
 BLIST *AddBlockToList(BLIST *list, BBLOCK *blk);
-static BLIST *KillBlockListEntry(BLIST *lp);
 BLIST *RemoveBlockFromList(BLIST *list, BBLOCK *blk);
 BLIST *RemoveBlksFromList(BLIST *l1, BLIST *l2); /* delete l2 from l1 */
 INT_BVI BlockList2BitVec(BLIST *lp);
+INT_BVI BlockList2BitVecFlagged(BLIST *lp, int init);
 BLIST *BitVec2BlockList(INT_BVI iv);
 BLIST *FindInList(BLIST *lp, BBLOCK *blk);
 BBLOCK *FindBlockInList(BLIST *lp, BBLOCK *blk);
@@ -33,9 +33,11 @@ BBLOCK *FindBlockByNumber(BBLOCK *bp, const short bnum);
 BBLOCK *FindBlockWithLabel(BBLOCK *bp, int ilab);
 char *PrintBlockList(BLIST *lp);
 BBLOCK *DelBlock(BBLOCK *delblk);
-
 void InvalidateLoopInfo(void);
-
+void FindLoops();
+void TransformFallThruPath(int path);
+void ReshapeFallThruCode();
+BBLOCK *KillBlock(BBLOCK *base, BBLOCK *killme);
 #if IFKO_DEBUG_LEVEL > 0
    void CheckFlow(BBLOCK *bbase, char *file, int line);
 #else

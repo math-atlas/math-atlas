@@ -732,6 +732,8 @@ void GenPrologueEpilogueStubs(BBLOCK *bbase, int rsav);
 int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav);
 short type2len(int type);
 short type2shift(int type);
-
-
+void FeedbackArchInfo(FILE *fpout);
+int RevealArchMemUses(void);
+short vtype2elem(int type);
+short iName2Reg(char *rname);
 #endif

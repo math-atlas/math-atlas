@@ -8,5 +8,7 @@ void AddSetUseComments(BBLOCK *base);
 void AddDeadComments(BBLOCK *base);
 void CalcBlocksDeadVariables(BBLOCK *bp);
 void CalcAllDeadVariables();
+void CheckUseSet();
+void CalcUseSet(BBLOCK *bp);
 
 #endif

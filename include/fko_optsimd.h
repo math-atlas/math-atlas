@@ -17,4 +17,16 @@
 int Type2Vlen(int type);
 BLIST *AddLoopDupBlks(LOOPQ *lp, BBLOCK *up, BBLOCK *down);
 void UnalignLoopSpecialization(LOOPQ *lp);
+short FindReadUseType(INSTQ *ip, short var, INT_BVI blkvec);
+void UpdateVecLoop(LOOPQ *lp);
+int IsSpeculationNeeded();
+int IsSIMDalignLoopPeelable(LOOPQ *lp);
+int SpeculativeVectorAnalysis();
+int SpecSIMDLoop(int SB_UR);
+int RcVectorAnalysis();
+int RcVectorization();
+void FindPaths(BBLOCK *head, BLIST *loopblocks, LOOPQ *lp, BLIST *blkstack);
+void KillPathTable();
+int PathVectorizable(int pnum);
+int FindNumPaths(LOOPQ *lp);
 #endif

@@ -978,5 +978,10 @@ INSTQ *RemoveInstFromQ(INSTQ *del);
 INSTQ *KillThisInst(INSTQ *kp);
 void KillAllInst(INSTQ *base);
 char *op2str(short op);
-
+void WriteLILToBinFile(char *fname, BBLOCK *bbase);
+void ReadLILFromBinFile(char *fname);
+void PrintInst(FILE *fpout, BBLOCK *bbase);
+void PrintThisInst(FILE *fpout, int i, INSTQ *ip);
+INSTQ *InsertInstBeforeQEntry(INSTQ *list, INSTQ *add);
+int FindInstNum(BBLOCK *blk, INSTQ *inst);
 #endif

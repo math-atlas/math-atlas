@@ -16,9 +16,11 @@ ILIST *NewIlist(INSTQ *inst, ILIST *next);
 ILIST *KillIlist(ILIST *ip);
 void KillAllIlist(ILIST *ilist);
 struct ptrinfo *FindPtrinfo(struct ptrinfo *base, short ptr);
+void KillAllPtrinfo(struct ptrinfo *base);
 struct ptrinfo *NewPtrinfo(short ptr, short flag, struct ptrinfo *next);
 struct locinit *NewLI(short id, short con, struct locinit *next);
 void KillAllLI(struct locinit *die);
 int FindInShortList(int n, short *sp, short val);
+int AddToShortList(int n, short *sp, short val);
 
 #endif

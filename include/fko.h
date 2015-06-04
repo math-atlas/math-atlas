@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>  /* Majedul: just to avoid the warning by compiler */
+#include <ctype.h>
 
 #define IFKO_DEBUG_LEVEL 1 /* to see all the msg */
 
@@ -80,6 +81,7 @@
 #include "fko_optmisc.h"
 #include "fko_optsimd.h"  
 #include "fko_optreg.h"
+#include "fko_h2l.h"
 
 #ifdef IFKO_DECLARE
    BBLOCK *bbbase=NULL;
@@ -148,5 +150,7 @@
  */
 int GetPtrType(void);
 void UpdatePrefetchInfo();
+void RestoreFKOState0();
+void SaveFKOState0();
 
 #endif
