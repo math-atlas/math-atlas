@@ -18,6 +18,10 @@ fko : $(heads) fko.o $(objs)
 
 exth = $(exthd)/fko_archinfoC.h $(exthd)/fko_archinfo.h
 force_build :
+oloopquery : force_build
+	cd $(extsd) ; make
+	$(CC) $(CCFLAGS) -I$(exthd) -o $@ ../extern/src/oloopquery.c \
+              $(extd)/lib/libfkoinfo.a
 archquery : force_build
 	cd $(extsd) ; make
 	$(CC) $(CCFLAGS) -I$(exthd) -o $@ ../extern/src/archquery.c \
