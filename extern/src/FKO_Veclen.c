@@ -1,4 +1,4 @@
-#include "fko_archinfo.h"
+#include "fko_info.h"
 
 int FKO_VeclenC(fko_archinfo_t *ap, int typ)
 {

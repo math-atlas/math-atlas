@@ -13,8 +13,9 @@ lib = $(libd)/libfkoinfo.a
 obj = FKO_GetArchInfo.o FKO_DestroyArchInfo.o FKO_NumRegs.o FKO_Veclen.o \
       FKO_RegtypesAliased.o FKO_CachelineSize.o FKO_HasSpecialInst.o \
       FKO_PipelenADD.o FKO_PipelenMUL.o FKO_PipelenMAC.o FKO_PipelenDIV.o \
-      FKO_TypestrToInt.o  FKO_InststrToInt.o FKO_ParseInfoLine.o
-incs = $(libd)/fko_parseinfo.h $(libd)/fko_archinfoC.h
+      FKO_TypestrToInt.o  FKO_InststrToInt.o FKO_ParseInfoLine.o \
+      FKO_GetOptLoopInfo.o
+incs = $(libd)/fko_parseinfo.h $(libd)/fko_hinfoC.h $(libd)/fko_hinfo.h
 
 lib : $(lib)
 $(lib) : $(obj)
@@ -24,5 +25,5 @@ $(lib) : $(obj)
 clean :
 	- rm -f $(obj)
 
-.c.o: 
+.c.o: $(incs)
 	$(CC) $(CCFL) -c $<

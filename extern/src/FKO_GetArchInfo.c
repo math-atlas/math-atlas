@@ -1,6 +1,6 @@
 #define DECL_ 1
 #include "fko_parseinfo.h"
-#include "fko_archinfo.h"
+#include "fko_info.h"
 
 fko_archinfo_t *FKO_NewArchInfo(void)
 {

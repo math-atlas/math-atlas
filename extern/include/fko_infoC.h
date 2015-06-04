@@ -1,5 +1,5 @@
-#ifndef FKO_ARCHINFOC_H
-   #define FKO_ARCHINFOC_H 1
+#ifndef FKO_INFOC_H
+   #define FKO_INFOC_H 1
 /*
  * These constants used to query for information about types
  */
@@ -60,4 +60,37 @@ int FKO_PipelenDIVC(fko_archinfo_t *ap, int typ);
 int FKO_VeclenC(fko_archinfo_t *ap, int typ);
 int FKO_HasSpecialInstC(fko_archinfo_t *ap, int typ, int inst);
 
+typedef struct fko_olpinfo fko_olpinfo_t;
+struct fko_olpinfo
+{
+   int maxunroll;
+   int LNF;
+   int npaths;           /* for now, assume 64 paths at most */
+   int nifs;
+      int MaxElimIfs;
+      int MinElimIfs;
+      int redcElimIfs;
+   int vec;
+      int vmaxmin;
+      int vredcomp;
+      int specvec;
+         char *svpath;   /* npaths-len bool, says whether path can be vec */
+   int nmfptrs;     /* # of moving fp ptrs */
+      char **fptrs;
+      short *fsets;
+      short *fuses;
+      char *ftyp;
+      int npref;      /* number of fptrs that are prefetchable */
+         short *pffp; /* index of prefetchable ptrs */
+   int nscal;
+      short *ssets;
+      short *suses;
+      char **scnam;
+      int nexpand;
+         short *rexp;
+      char *styp;
+};
+
+fko_olpinfo_t *FKO_GetOptLoopInfoC(char *filename);
+void FKO_DestroyOptLoopInfoC(fko_olpinfo_t *die);
 #endif

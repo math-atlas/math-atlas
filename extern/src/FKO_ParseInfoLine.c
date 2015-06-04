@@ -4,7 +4,7 @@
 #include <ctype.h>
 #include <assert.h>
 #include "fko_parseinfo.h"
-#include "fko_archinfoC.h"
+#include "fko_infoC.h"
 
 /*
  * Get a line with at least one non-whitespace character from file fp.
@@ -307,3 +307,58 @@ short *FKO_GetShortArrayFromWords(int nw, fko_word_t *wp)
    return(va);
 }
 
+char FKO_GetBoolFromWord(fko_word_t *wp)
+{
+   int len=wp->len;
+   char ch=1;
+   assert(len > 2);
+   assert(wp->word[len-2] == '=');
+   if (wp->word[len-1] == '0')
+      ch = 0;
+   else
+      assert(wp->word[len-1] == '1');
+   return(ch);
+}
+
+int FKO_TypeStrToInt(char *st)
+{
+   int ty;
+   char ch = *st;
+   
+   if (ch == 'v')
+   {
+      ch = st[1];
+      if (ch == 'i')
+         ty = FKO_TVINT;
+      else if (ch == 'd')
+         ty = FKO_TVDBL;
+      else if (ch == 'f')
+         ty = FKO_TVFLT;
+   }
+   else if (ch == 'i')
+      ty = FKO_TINT;
+   else if (ch == 'd')
+      ty = FKO_TDBL;
+   else if (ch == 'f')
+      ty = FKO_TFLT;
+   return(ty);
+}
+
+char *FKO_Word2Name(fko_word_t *wp)
+{
+   char *sin, *sout;
+   int i, len = wp->len;
+
+   sin = wp->word;
+   assert(*sin == '\'' && sin[len-2] == '\'' && sin[len-1] == ':');
+   sout = malloc(len-2);
+   assert(sout);
+
+   len -= 3;
+   sin++;
+   for (i=0; i < len; i++)
+      sout[i] = sin[i];
+   sout[len] = '\0';
+
+   return(sout);
+}

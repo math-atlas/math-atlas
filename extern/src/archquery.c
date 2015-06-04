@@ -1,4 +1,4 @@
-#include "fko_archinfo.h"
+#include "fko_info.h"
 
 void PrintShortArray(char *lab, int n, short *sa)
 {

@@ -14,11 +14,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-#include "fko_archinfoC.h"
+#include "fko_infoC.h"
 #ifdef DECL_
    fko_archinfo_t *FKO_ARCHINF=NULL;
 #else
    extern fko_archinfo_t *FKO_ARCHINF;
+#endif
+#ifdef DECL_OL_
+   fko_olpinfo_t *FKO_OLOOPINF=NULL;
+#else
+   extern fko_olpinfo_t *FKO_OLOOPINF;
 #endif
 /*
  * Translates a string describing the FKO type into an integer for use
@@ -71,4 +76,11 @@ int FKO_PipelenMAC(int typ);
  * Misc functions
  */
 int FKO_HasSpecialInst(int typ, int inst);  /* arch has max/min/cmov? */
+/*
+ *****************************************************************************
+ * Below this line are optloop functions                                     *
+ *****************************************************************************
+ */
+void FKO_GetOptLoopInfo(char *fname);  /* "stdin" reads from standard in */
+void FKO_DestroyOptLoopInfo(void);
 #endif

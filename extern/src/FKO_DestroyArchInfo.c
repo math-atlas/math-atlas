@@ -1,4 +1,4 @@
-#include "fko_archinfo.h"
+#include "fko_info.h"
 
 void FKO_DestroyArchInfoC(fko_archinfo_t *dp)
 {
