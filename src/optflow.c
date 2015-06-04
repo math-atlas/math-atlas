@@ -25,7 +25,6 @@ ILIST *FindAllLabels(BLIST *scope)
  *       set, and assumes label is 1st active instruction.
  */
 {
-   INSTQ *ip;
    BLIST *bl, *freeme=NULL;
    ILIST *ilbase=NULL;
 
@@ -177,7 +176,7 @@ ILIST *FindChainDest(ILIST *jumps, ILIST *labs, INSTQ *jump)
  * RETURNS: final destination of jump chain
  */
 {
-   ILIST *jl, *ll, *lret=NULL;
+   ILIST *ll, *lret=NULL;
    INSTQ *ip;
    short k;
 /*
@@ -207,7 +206,7 @@ int DeadCodeElim(BBLOCK *base)
    int ndel;
 
    ndel =0;
-   if (!base) return;
+   if (!base) return(0);
    for (bp=base->down; bp; bp = bnext)
    {
 /*
@@ -259,8 +258,8 @@ int DoBranchChaining(void)
 {
    int n=0;
    ILIST *jl, *jumps;
-   ILIST *ll, *labs, *ldest;
-   short inst, k;
+   ILIST *labs, *ldest;
+   short k;
    if (!CFU2D)
       NewBasicBlocks(bbbase);
    jumps = FindAllJumps(NULL, 1);
@@ -308,7 +307,6 @@ int DoUselessLabelElim(int nkeep, short *keeps)
 {
    ILIST *jl, *jumps;
    BBLOCK *bp;
-   INSTQ *ip;
    int i, ndel=0;
    short k, lab, nlab;
 

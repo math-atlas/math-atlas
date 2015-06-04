@@ -17,7 +17,7 @@ BBLOCK *DupBlock(BBLOCK *bold)
 {
    BBLOCK *nb;
    INSTQ *ip;
-   short *sp, i, k;
+   short i, k;
 
    nb = NewBasicBlock(NULL, NULL);
    nb->bnum = bold->bnum;
@@ -52,7 +52,6 @@ BLIST *DupBlockList(BLIST *scope, INT_BVI ivscope)
 {
    BLIST *bl, *lbase=NULL, *lp;
    BBLOCK *nb, *ob;
-   INSTQ *ip;
 
    for (bl=scope; bl; bl = bl->next)
    {
@@ -223,9 +222,8 @@ void InsUnrolledCode(int unroll, BLIST **dupblks, BBLOCK *head,
  * a path. If an usucc of a csucc has csucc, it doesn't work!!! 
  */
 {
-   BBLOCK *prev, *bpN, *bp0, bplast;
+   BBLOCK *prev, *bpN, *bp0;
    int i, k, n;
-   static int II=0;
 
 /*
  * Return if head not in loop or if we've already handled it
@@ -291,7 +289,7 @@ void InsUnrolledBlksInCode(int unroll, BLIST **dupblks, BBLOCK *head,
  * UnrollLoop, at-least the LIL where SV is applied before.
  */
 {
-   BBLOCK *prev, *bpN, *bp0, bplast;
+   BBLOCK *prev, *bpN, *bp0;
    int i, k, n;
 /*
  * nothing to do if this blk is not inside the loop 
@@ -488,7 +486,7 @@ struct ptrinfo *FindMovingPointers(BLIST *scope)
    struct ptrinfo *pbase=NULL, *p;
    BLIST *bl;
    INSTQ *ip;
-   short k, i, j;
+   short k, j;
    int flag;
    for (bl=scope; bl; bl = bl->next)
    {
@@ -572,9 +570,7 @@ INSTQ *KillPointerUpdates(struct ptrinfo *pbase, int UR)
  */
 {
    struct ptrinfo *pi;
-   ILIST *il;
    INSTQ *ipbase=NULL, *ip, *ipN;
-   int reg;
    short inc;
 
 /*
@@ -592,7 +588,6 @@ INSTQ *KillPointerUpdates(struct ptrinfo *pbase, int UR)
  * same format expected by FindMovingPointers().  Also, build list of
  * instructions to add to end of loop
  */
-   reg = GetReg(T_INT);
    for (pi=pbase; pi; pi = pi->next)
    {
 /*
@@ -641,7 +636,6 @@ INSTQ *KillPointerUpdates(struct ptrinfo *pbase, int UR)
       KillAllIlist(pi->ilist);
       pi->ilist = NULL;
    }
-   GetReg(-1);
    return(ipbase);
 }
 
@@ -706,7 +700,7 @@ void UpdatePointerLoads(BLIST *scope, struct ptrinfo *pbase, int UR)
    struct ptrinfo *pi;
    short *pst, *sp;
    int i, n, inc;
-   short k, kk;
+   short k;
 
    if (!pbase || !scope)
       return;
@@ -1339,11 +1333,9 @@ void OptimizeLoopControl(LOOPQ *lp, /* Loop whose control should be opt */
  *       we would call this routine with unroll=1
  */
 {
-   INSTQ *ipinit, *ipupdate, *iptest, *ip;
-   ILIST *il;
-   int I, beg, end, inc, i;
-   int CHANGE=0;
-   short ur;
+   INSTQ *ipinit, *ipupdate, *iptest;
+   /*ILIST *il;*/
+   /*int I, beg, end, inc, i;*/
 
    if (unroll <= 1) unroll = 0;
 /*
@@ -1890,7 +1882,6 @@ void UnrollCleanup(LOOPQ *lp, int unroll)
 {
    BBLOCK *bp;
    INSTQ *ipnext;
-   ILIST *il;
    int FORWARDLOOP;
    short r0, r1;
 
@@ -2273,7 +2264,7 @@ void findDTentry(BLIST *scope, short ptr)
             ipn = ip;
             while (IS_LOAD(ipn->inst[0]))
             {
-               PrintThisInst(stderr,ipn);
+               PrintThisInst(stderr, 0, ipn);
                op = ipn->inst[2];
                if (SToff[op-1].sa[1] <= 0)
                {
@@ -2285,7 +2276,7 @@ void findDTentry(BLIST *scope, short ptr)
                ipn=ipn->next; 
             }
             fprintf(stderr, "%s: ", STname[ptr-1]);
-            PrintThisInst(stderr,ip);
+            PrintThisInst(stderr, 0, ip);
          }
       }
    }
@@ -2327,11 +2318,11 @@ ILIST **AddPrefInsIlistFromDT(LOOPQ *lp, short sta, int pid, int npf,
  * prefetch for each for them
  */
 {
-   int i, j, pf, urc, dtc;
+   int i, j, dtc;
    short colptr;
    BLIST *bl;
    BBLOCK *bp;
-   INSTQ *ip, *ipn, *ip0, *ip1, *ipp;
+   INSTQ *ip, *ip0, *ip1, *ipp;
    ILIST **ils2d;
 
    short op, dt, lvl;
@@ -2375,7 +2366,7 @@ ILIST **AddPrefInsIlistFromDT(LOOPQ *lp, short sta, int pid, int npf,
             PrintThisInst(stderr, ip);
             fprintf(stderr, "colptr=%s\n",STname[colptr-1]);
 #endif
-            ipn = ip;
+            /*ipn = ip;*/
             ip1 = ip->prev;
             ip0 = ip->prev->prev;
 /*
@@ -2440,14 +2431,14 @@ ILIST *GetPrefetchInst(LOOPQ *lp, int unroll)
    BBLOCK *bp;
    INSTQ *ipp;
    BLIST *bl;
-   ILIST *il, *ilbase=NULL;
+   ILIST *ilbase=NULL;
    ILIST **ils, **ils2d;
    short ir, ptr, lvl;
    short ir2, sta;   
-   int i, j, k, p, n, m, ncptr, npf, STc, nils2d;
+   int i, j, k, p, n, m, npf, nils2d;
+   /*int ncptr, STc;*/
    int flag;
    enum inst inst;
-   char ln[1024];
 
    bp = lp->header;
    assert(bp->ilab == lp->body_label);
@@ -2713,7 +2704,6 @@ void SchedPrefInLoop0(LOOPQ *lp, ILIST *ilbase)
  */
 {
    BBLOCK *bp;
-   ILIST *il;
    INSTQ *ipp, *ip, *ipn;
 
    bp = lp->header;
@@ -2838,10 +2828,10 @@ int FindUnusedIRegInList(BLIST *scope, int ir)
  * not been used, and another, unused register, if it has
  */
 {
-   BLIST *bl;
-   INSTQ *ip;
    INT_BVI bv;
    extern INT_BVI FKO_BVTMP;
+   /*INSTQ *ip;*/
+   /*BLIST *bl;*/
 #if 0
 /*
  * Find all regs used in this range
@@ -2933,10 +2923,7 @@ int IsPrefInsNeedTwoRegs(ILIST *ilbase, int *reg0, int *reg1)
  * registers are saved in parameter
  */
 {
-   int regs2; 
-   short r0, r1;
    ILIST *il;
-
    *reg0 = *reg1 = 0;
    for(il=ilbase; il; il=il->next)
    {
@@ -2966,10 +2953,8 @@ void SchedPrefInLoop1(LOOPQ *lp, ILIST *ilbase, int dist, int chunk)
 {
    BLIST *atake, *bl;
    INSTQ *ip, *ipp, *ipn, *ipf, *ipfn;
-   int N, skip, sk, i, j, k, npf, ir, ir0, dt;
+   int N, skip, sk, i, j, k, npf, ir, ir0;
    int irn, irn0;
-   INT_BVI bv;
-   ILIST *il;
    extern INT_BVI FKO_BVTMP;
 
    atake = GetSchedInfo(lp, ilbase, -1, &npf, &N);
@@ -3066,7 +3051,6 @@ INSTQ *FindNthInstInList(BLIST *scope, INSTQ *ip0, int inst, int N)
  * Starting at ip0, find Nth occurance of instruction inst
  */
 {
-   int i;
    BLIST *bln;
    INSTQ *ip;
 
@@ -3084,6 +3068,8 @@ INSTQ *FindNthInstInList(BLIST *scope, INSTQ *ip0, int inst, int N)
       ip0 = bln->blk->inst1;
    }
    while(N);
+
+   return(NULL);
 }
 
 void SchedPrefInLoop2(LOOPQ *lp, ILIST *ilbase, int iskip, int chunk,
@@ -3096,10 +3082,8 @@ void SchedPrefInLoop2(LOOPQ *lp, ILIST *ilbase, int iskip, int chunk,
 {
    BLIST *atake, *bl;
    INSTQ *ip, *ipp, *ipn, *ipf, *ipfn;
-   int N, skip, sk, i, j, k, npf, ir, ir0, dt;
+   int N, skip, sk, j, k, npf, ir, ir0;
    int irn, irn0;
-   INT_BVI bv;
-   ILIST *il;
 
    if (iskip < 0)
    {
@@ -3261,7 +3245,7 @@ void AddPrefetch(LOOPQ *lp, int unroll)
 #endif
 
 #if 1
-   ILIST *il, *pi;
+   ILIST *il;
    il = GetPrefetchInst(lp, unroll);
    SchedPrefInLoop(lp, il);
 #else
@@ -3335,7 +3319,7 @@ int VarIsAccumulator(BLIST *scope, int var)
 {
    BLIST *bl;
    INSTQ *ip;
-   enum inst inst, ld, st, add, mac;
+   enum inst ld, st, add, mac;
    int i;
 
    i = FLAG2TYPE(STflag[var-1]);
@@ -3415,7 +3399,7 @@ int CheckMaxMinConstraints(BLIST *scope, short var, short label)
  * and from no other location inside the loop.
  */
 {
-   int i, j;
+   int i;
    int isetcount, osetcount;
    BLIST *bl;
    BBLOCK *bp;
@@ -3487,9 +3471,9 @@ int VarIsMaxOrMin(BLIST *scope, short var, int maxcheck, int mincheck)
  * if both set, return 1 if either max or min
  */
 {
-   int i, j, istrue;
+   int i, istrue;
    short reg0, reg1, regv;
-   enum inst inst, ld, st, br, cmp;
+   enum inst br, cmp;
    BBLOCK *bp;
    INSTQ *ip, *ip0, *ip1;
    BLIST *bl;
@@ -3498,18 +3482,12 @@ int VarIsMaxOrMin(BLIST *scope, short var, int maxcheck, int mincheck)
    switch(i)
    {
    case T_FLOAT:
-      ld = FLD;
-      st = FST;
       cmp = FCMP;
       break;
    case T_DOUBLE:
-      ld = FLDD;
-      st = FSTD;
       cmp = FCMPD;
       break;
    case T_INT:
-      ld = LD;
-      st = ST;
       cmp = CMP;
       break;
    default:
@@ -3879,14 +3857,14 @@ void UpdateOptLoopWithMaxMinVars()
 }
 #endif
 
-void UpdateOptLoopWithMaxMinVars1()
+void UpdateOptLoopWithMaxMinVars()
 /*
  * This function is used in state1 to keep track of all the max/min vars
  * there is an other version of it which is kept for backward compability and
  * will be deleted later.
  */
 {
-   int i, j, N, n, m;
+   int i, N, n, m;
    short *scal, *spmax, *spmin;
    LOOPQ *lp;
    
@@ -3960,73 +3938,62 @@ void UpdateOptLoopWithMaxMinVars1()
    if (spmin) free(spmin);
 }
 
-void CountArrayAccess(BLIST *scope, int ptr, int *nread, int *nwrite)
-/*
- * Finds number of read/write to *ptr in scope, 
- * *ptr is float or double (not vec)
- * NOTE: assumes LD/ST only array access, may want to run DoEnforceLoadStore()
- *       to make sure this is true
- */
+void CountVarAccess(BLIST *scope, int ptr, int *nread, int *nwrite)
 {
    BLIST *bl;
    INSTQ *ip;
-   int nr=0, nw=0, i;
-   enum inst st, ld;
-
-   i = STflag[ptr-1];
-   i = FLAG2TYPE(i);
-   if (IS_FLOAT(i))
-   {
-      st = FST;
-      ld = FLD;
-   }
-   else if (IS_INT(i))
-   {
-      st = ST;
-      ld = LD;
-   }
-#if 0   
-   else
-   {
-      assert(IS_DOUBLE(i));
-      st = FSTD;
-      ld = FLDD;
-   }
-#else
-/*
- * now, we have VFLOAT and VDOUBLE in vector-intrinsic code
- */
-   else if (IS_DOUBLE(i))
-   {
-      st = FSTD;
-      ld = FLDD;
-   }
-   else if (IS_VFLOAT(i))
-   {
-      st = VFST;
-      ld = VFLD;
-   }
-   else if (IS_VDOUBLE(i))
-   {
-      st = VDST;
-      ld = VDLD;
-   }
-   else fko_error(__LINE__, "unknown type = %d for var=%s\n", i, STname[ptr-1]);
-#endif
-
+   int nr=0, nw=0;
    for (bl=scope; bl; bl = bl->next)
    {
       for (ip=bl->blk->ainst1; ip; ip = ip->next)
       {
-#if 0         
-         if (ip->inst[0] == st && STpts2[ip->inst[1]-1] == ptr)
+/*
+ *       IF we count variable access, not mem
+ */
+         if (IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]-1] == ptr 
+               && SToff[ip->inst[1]-1].sa[1] > 0 ) /* not mem */
             nw++;
-         else if (ip->inst[0] == ld && STpts2[ip->inst[2]-1] == ptr)
+         else if (IS_LOAD(ip->inst[0]) && STpts2[ip->inst[2]-1] == ptr 
+               && SToff[ip->inst[2]-1].sa[1] > 0 ) /* not mem */
+            nr++;
+      }
+   }
+   *nread = nr;
+   *nwrite = nw;
+}
+
+
+void CountArrayAccess(BLIST *scope, int ptr, int *nread, int *nwrite)
+/*
+ * Finds number of read/write to *ptr (memory access) in scope.
+ */
+{
+   BLIST *bl;
+   INSTQ *ip;
+   int nr=0, nw=0;
+   
+   for (bl=scope; bl; bl = bl->next)
+   {
+      for (ip=bl->blk->ainst1; ip; ip = ip->next)
+      {
+#if 1         
+ /*
+  *       IF we count only the memory access
+  *       NOTE: for mem access sa[1] of DT entry would be a reg or 0 ( <= 0)
+  */
+         if (IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]-1] == ptr 
+               && SToff[ip->inst[1]-1].sa[1] <= 0 ) /* mem */
+            nw++;
+         else if (IS_LOAD(ip->inst[0]) && STpts2[ip->inst[2]-1] == ptr 
+               && SToff[ip->inst[2]-1].sa[1] <= 0 ) /* mem */
             nr++;
 #else
-         if (IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]-1] == ptr)
+ /*
+  *       IF we count the pointer access = memory access + pointer updates
+  */
+         if (IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]-1] == ptr ) 
             nw++;
-         else if (IS_LOAD(ip->inst[0]) && STpts2[ip->inst[2]-1] == ptr)
+         else if (IS_LOAD(ip->inst[0]) && STpts2[ip->inst[2]-1] == ptr ) 
             nr++;
 #endif
       }
@@ -4314,7 +4281,8 @@ void PrintMovingPtrAnalysis(FILE *fpout)
       }
 
       fprintf(fpout, "      '%s': type=%c", STname[k], pre);
-      CountArrayAccess(lp->blocks, sp[i], &k, &j);
+      /*CountArrayAccess(lp->blocks, sp[i], &k, &j);*/
+      CountVarAccess(lp->blocks, sp[i], &k, &j);
       fprintf(fpout, " sets=%d uses=%d", j, k);
 #if 0      
       if (j == k)
@@ -4387,20 +4355,18 @@ OPTLOOP=1
       ... ... ... 
  *============================================================================*/
 {
-   int i, j, N, npaths, nifs;
+   int i, npaths, nifs;
    LOOPQ *lp;
    ILIST *il;
-   BLIST *bl;
    FILE *fpout=stdout;
    int SimpleLC=0, UR;
-   short *scal;
-   int MaxR, MinR, MaxMinR, RC, pv;
+   int MaxR, MinR, RC, pv;
    int VmaxminR, Vrc, Vspec, Vn;
    extern FILE *fpLOOPINFO;
    extern short STderef;
    extern BBLOCK *bbbase;
 
-   MaxR=0; MinR=0; MaxMinR=0; RC=0; pv =0;
+   MaxR=0; MinR=0; RC=0; pv =0;
    VmaxminR=0; Vrc=0; Vspec=0; Vn=0;
    if (fpLOOPINFO)
       fpout = fpLOOPINFO;
@@ -4528,7 +4494,7 @@ OPTLOOP=1
  *       Check Whether it is reducable by Max/Min
  */
 
-         UpdateOptLoopWithMaxMinVars1(optloop);
+         UpdateOptLoopWithMaxMinVars(optloop);
          MaxR = ElimMaxMinIf(1,0);
          MinR = ElimMaxMinIf(0,1); /*rule out all maxs before  */
 /*
@@ -4567,7 +4533,7 @@ OPTLOOP=1
  *       We will need an analyzer for RC later
  */
          /*fprintf(fpout, "      RedCompReducesToOnePath=%d\n",1);*/
-         UpdateOptLoopWithMaxMinVars1(optloop);
+         UpdateOptLoopWithMaxMinVars(optloop);
 /*
  *       NOTE: we can apply shadow VRC for AVX2.
  */
@@ -5045,8 +5011,8 @@ INSTQ *GetAEHeadTail(LOOPQ *lp, short ae, short ne, short *aes, int vec)
  */
 {
    enum inst zero, add, ld, st;
-   INSTQ *ibase, *ip, *ipb;
-   int i, j, k, i1, i2, n, type;
+   INSTQ *ibase, *ip;
+   int i, j, k, i1, i2, type;
    short r0, r1;
 
    ibase = NewInst(NULL, NULL, NULL, 0, 0, 0, 0);
@@ -5320,9 +5286,9 @@ INSTQ *GetSEHeadTail(LOOPQ *lp, short se, short ne, short *ses, int vec,
  *          inst[0] is type, inst[1] is dummy reg1, inst[2] dummy reg2
  */
 {
-   enum inst zero, inst, ld, st, vsld, vsst, vshuf;
-   INSTQ *ibase, *ip, *ipb;
-   int i, j, k, i1, i2, n, type;
+   enum inst zero, inst, ld, st, vsld, vshuf;
+   INSTQ *ibase, *ip;
+   int i, j, k, i1, i2, type;
    short r0, r1;
 
    ibase = NewInst(NULL, NULL, NULL, 0, 0, 0, 0);
@@ -5359,7 +5325,6 @@ INSTQ *GetSEHeadTail(LOOPQ *lp, short se, short ne, short *ses, int vec,
       ld = VFLD;
       vsld = VFLDS;
       st = VFST;
-      vsst = VFSTS;
       vshuf = VFSHUF;
       if (sflag & SC_ACC) inst = VFADD;
       else if (sflag & SC_MAX) inst = VFMAX;
@@ -5371,7 +5336,6 @@ INSTQ *GetSEHeadTail(LOOPQ *lp, short se, short ne, short *ses, int vec,
       ld = VDLD;
       vsld = VDLDS;
       st = VDST;
-      vsst = VDSTS;
       vshuf = VDSHUF;
       if (sflag & SC_ACC) inst = VDADD;
       else if (sflag & SC_MAX) inst = VDMAX;
@@ -5623,7 +5587,6 @@ void FinalizeVectorCleanup(LOOPQ *lp, int unroll)
 {
    BBLOCK *bp;
    INSTQ *ipnext;
-   ILIST *il;
    int FORWARDLOOP;
    short r0, r1;
 
@@ -5702,7 +5665,6 @@ void UnrollCleanup2(LOOPQ *lp, int unroll)
 {    
    BBLOCK *bp;
    INSTQ *ipnext, *ip;
-   ILIST *il;
    int FORWARDLOOP;
    short r0, r1;
    extern int VECT_FLAG;
@@ -5821,7 +5783,6 @@ void PrintLoop(FILE *fpout, LOOPQ *lp)
  */
 {
    int i, nlp;
-   BLIST *bl;
    extern LOOPQ *loopq;
    LOOPQ *lpq; 
    
@@ -5883,7 +5844,6 @@ int CheckMaxMinReduceConstraints(BLIST *scope, short var, short label)
  * reduce the ifblk with single max/min inst. And also no nested if-blk  
  */
 {
-   int i, j; 
    BLIST *bl;
    BBLOCK *bp;
    INSTQ *ip, *ip0;
@@ -5919,7 +5879,6 @@ int CheckMaxMinReduceConstraints(BLIST *scope, short var, short label)
 
 void RemoveInstFromLabel2Br(BLIST *scope, short label)
 {
-   int i, j;
    BLIST *bl;
    BBLOCK *bp;
    INSTQ *ip;
@@ -5951,9 +5910,9 @@ int ElimIFBlkWithMaxMin(BLIST *scope, short var, int ismax)
  * ASSUMPTION: scope is the blist of the loop
  */
 {
-   int i, succ;
+   int i;
    short regv, regx, label;
-   enum inst inst, ld, st, cmp;
+   enum inst inst, st, cmp;
    INSTQ *ip, *ip0, *ip1;
    BLIST *bl;
    BBLOCK *bp;
@@ -5962,13 +5921,11 @@ int ElimIFBlkWithMaxMin(BLIST *scope, short var, int ismax)
    switch(i)
    {
       case T_FLOAT:
-         ld = FLD;
          st = FST;
          cmp = FCMP;
          inst = ismax? FMAX : FMIN;
          break;
       case T_DOUBLE:
-         ld = FLDD;
          st = FSTD;
          cmp = FCMPD;
          inst = ismax? FMAXD : FMIND;
@@ -6055,7 +6012,7 @@ int ElimMaxMinIf(int maxelim, int minelim)
  * if both set, we will try to eliminate 'if' for both type of var. 
  */
 {
-   int i, j, N;
+   int i, N;
    short *scal;
    LOOPQ *lp;
    int changes;
@@ -6110,7 +6067,6 @@ int AddMaxMinInst(BBLOCK *bp, INSTQ *ipnext, short mvar, short xvar, int ismax)
    int type;
    short reg0, reg1;
    enum inst ld, st, inst;
-   INSTQ *ip;
 
    type = FLAG2TYPE(STflag[mvar-1]);
    switch(type)
@@ -6180,9 +6136,11 @@ int RemoveVarFromIFBlk(BBLOCK *ifblk, short var)
 
 int MovOneMaxMinVarOut(BLIST *scope, short mvar, int ismax)
 {
-   int i, succ;
-   short regv, regx, label, xvar;
-   enum inst inst, ld, st, cmp;
+   int i;
+   short xvar;
+   /*short label;*/
+   enum inst cmp;
+   /*enum inst inst, ld, st;*/
    INSTQ *ip, *ip0, *ip1;
    BLIST *bl;
    BBLOCK *bp, *splitblk, *ifblk, *elseblk, *mergeblk;
@@ -6191,16 +6149,16 @@ int MovOneMaxMinVarOut(BLIST *scope, short mvar, int ismax)
    switch(i)
    {
       case T_FLOAT:
-         ld = FLD;
-         st = FST;
          cmp = FCMP;
-         inst = ismax? FMAX : FMIN;
+         /*ld = FLD;
+         st = FST;
+         inst = ismax? FMAX : FMIN;*/
          break;
       case T_DOUBLE:
-         ld = FLDD;
-         st = FSTD;
          cmp = FCMPD;
-         inst = ismax? FMAXD : FMIND;
+         /*ld = FLDD;
+         st = FSTD;
+         inst = ismax? FMAXD : FMIND;*/
          break;
 /*
  *    not support for vector intrinsic
@@ -6238,19 +6196,15 @@ int MovOneMaxMinVarOut(BLIST *scope, short mvar, int ismax)
             {
                if (STpts2[ip0->inst[2]-1] == mvar)
                {
-                  regv = ip0->inst[1];
                   xvar = ip1->inst[2];
-                  regx = ip1->inst[1];
                }
                else if (STpts2[ip1->inst[2]-1] == mvar)
                {
-                  regv = ip1->inst[1];
                   xvar = ip0->inst[2];
-                  regx = ip0->inst[1];
                }
                else 
                   continue; /* not a cond with var, continue to next ip */
-               label =  ip->inst[3];
+               /*label =  ip->inst[3];*/
 /*
  *             max/min var is already tested before. so, we don't test here 
  *             find conditional blk structure
@@ -6295,7 +6249,7 @@ int MovOneMaxMinVarOut(BLIST *scope, short mvar, int ismax)
 
 int MovMaxMinVarsOut(int movmax, int movmin)
 {
-   int i, j, N;
+   int i, N;
    short *scal;
    LOOPQ *lp;
    int changes;
@@ -6432,13 +6386,12 @@ short RemoveBranchWithMask(BBLOCK *sblk)
  * removes conditional branches from a split blk with appropriate CMP and mask 
  */
 {
-   int i, j, k;
+   int k;
    INSTQ *ip, *ip0;
    short mask;
    static int maskid = 0;
    char *cmask;
    int type;
-   int freg0;
    enum inst fst;
 /*
  * NOTE: Although SSE doesn't support GT and GE, we can implement those with
@@ -7102,21 +7055,21 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
  * to reduce nested if-else.
  */
 {
-   int i, j, k, n, N;
+   int i, k, N;
    int type, err;
    int *vpos;
-   INT_BVI iv, iv1;
+   INT_BVI iv;
    short *sp;
    
    short *isetvars, *esetvars, *icmvars, *ecmvars; /* i=if, e=else */
    short *inewvars, *enewvars;
 
-   short nv, sv, nv1, nv2, mask, imask, codemask;
+   short nv1, nv2, mask, codemask;
    short reg0, reg1, reg2, ireg;
-   enum inst cmov1, cmov2, ld, st, cvtmask, mskld, movmsk; 
-   BBLOCK *bp, *bo0, *mergeblk;
-   INSTQ *ip, *ip0;
-   BLIST *bl;
+   enum inst cmov1, cmov2, ld, st, mskld, movmsk; 
+   BBLOCK *bp;
+   /*BBLOCK *mergeblk;*/
+   INSTQ *ip;
    extern short STderef;
    extern INT_BVI FKO_BVTMP;
 
@@ -7140,7 +7093,7 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
    assert(bp); 
    if (bp == ifblk->usucc)
    {
-      mergeblk = bp;
+      /*mergeblk = bp;*/
 #if 0
       fprintf(stderr, "mergeblk=%d\n", mergeblk->bnum);
 #endif
@@ -7702,7 +7655,6 @@ void DelIfElseBlk(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
 void DelRcBlk(BBLOCK *delblk, BBLOCK *splitblk)
 {
    BBLOCK *bp;
-   BLIST *bl;
 /*
  * there must be a delblk and splitblk 
  */
@@ -7790,10 +7742,9 @@ int IterativeRedCom()
  * yet. All memory writes need to be shifted at the tail of loop. 
  */
 {
-   int i, err, CHANGES;
+   int err, CHANGES;
    int ivtails;
    int isdel;
-   char ln[128];
    LOOPQ *lp;
    INSTQ *ippu;
    BLIST *bl, *splitblks;
@@ -7815,7 +7766,6 @@ int IterativeRedCom()
  * change the CFG. So, to be U2D, we must recompute the CFG and all variable
  * analysis.
  */
-   i = 1;
    do
    {
       CHANGES = 0; 

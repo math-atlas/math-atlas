@@ -8,19 +8,20 @@ int DoStoreNT(BLIST *scope)
    BLIST *bl;
    int i;
    int nchanges=0;
-   short k, st;
+   short st;
    INSTQ *ip;
    enum inst store;
    extern int NWNT;
    extern char **ARRWNT;
    BLIST *killme;
+   /*short k;*/
 
    if (!scope)
       killme = scope = GetGlobalScope();
    for (i=0; i < NWNT; i++)
    {
       st = FindVarFromName(ARRWNT[i]);
-      k = st + TNREG - 1;
+      /*k = st + TNREG - 1;*/
       assert(st);
       for (bl=scope; bl; bl = bl->next)
       {

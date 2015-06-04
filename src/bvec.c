@@ -80,7 +80,7 @@ static INT_BVI GetUnusedBVI()
  * the bvec table to update this table. It should reduce the computation time.
  */
 {
-   INT_BVI i, n;
+   INT_BVI i;
    for (i=0; i < nvused; i++)
       if (!ni[i]) return(i);
    if (nvused == nvalloc) NewVecChunk(CHUNKSIZE);
@@ -236,7 +236,7 @@ void SetVecBit(INT_BVI iv, int ibit, int val)
  */
 {
    INT32 *v;
-   INT32 i, j, k;
+   INT32 i;
 #if 1   
    assert(iv); /* should applied on existing one */
 #else
@@ -564,7 +564,7 @@ short *BitVec2StaticArray(INT_BVI iv)
     * RETURNS: (N+1) length short static array
     */
 {
-   int i, j, n;
+   int i, n;
    static int N=0;
    static short *vals=NULL;
 
@@ -605,7 +605,7 @@ short *BitVec2Array(INT_BVI iv, int off)
  * RETURNS: (N+1) length integer array
  */
 {
-   int i, j, n;
+   int i, n;
    short *vals;
 
    n = CountBitsSet(iv);

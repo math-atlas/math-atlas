@@ -39,7 +39,6 @@ int AddPath2Table(LOOPPATH *path)
 LOOPPATH *NewLoopPath(BLIST *blks)
 {
    BLIST *bl;
-   BBLOCK *bp;
    LOOPPATH *new;
    new = malloc(sizeof(LOOPPATH));
    assert(new);
@@ -707,7 +706,7 @@ int DoLoopSimdAnal(LOOPQ *lp)
 INSTQ *AddAlignTest(LOOPQ *lp, BBLOCK *bp, INSTQ *ip, short fptr, int fa_label)
 {
    int k;
-   int r0, r1;
+   int r0;
    int hconst; 
 /*
  * we need to populate the const correctly irrespectively
@@ -872,14 +871,14 @@ void AddLoopPeeling(LOOPQ *lp, int jblabel, int falabel, short Np,
 {
    BBLOCK *bp0, *bp;
    BLIST *bl, *dupblks;
-   INSTQ *ip, *iip;
-   ILIST *il, *iref;
-   int lnum;
+   INSTQ *ip;
    short oldN;
    int k, r0, r1;
    LOOPQ *lpn;
    extern BBLOCK *bbbase;
    extern INT_BVI FKO_BVTMP;
+   /*int lnum;*/
+   /*ILIST *il, *iref;*/
 
 /*
  * Find last block, add loop peeling after it
@@ -1158,7 +1157,6 @@ short FindPtrToForceAlign(LOOPQ *lp)
  * return ST index of ptr to force align
  */
 {
-   int i;
    short ptr;
 /*
  * if there exist a ptr from FORCE_ALIGN markup
@@ -1203,14 +1201,12 @@ void GenForceAlignedPeeling(LOOPQ *lp)
  * called before GenCleanupLoop and FinalizeVectorCleanup for consistancy
  */
 {
-   int i, j;
    int jBlabel, fAlabel;
    BBLOCK *bp;
    INSTQ *ip;
    short Np, Nv;
    short fptr;    /* array which needs to be forced aligned */
-   int r0, r1;
-   LOOPQ *lpn;
+   int r0;
    extern BBLOCK *bbbase;
 /*
  * Need to create 2 new var for peel and vector loop control
@@ -1290,7 +1286,6 @@ void GenForceAlignedPeeling(LOOPQ *lp)
  * called after cleanup, otherwise after ret)
  */
    AddLoopPeeling(lp, jBlabel, fAlabel, Np, Nv, fptr);
-  /* KillLoop(lpn); */
 }
 
 int IsSIMDalignLoopPeelable(LOOPQ *lp)
@@ -1393,10 +1388,12 @@ int IsSIMDalignLoopPeelable(LOOPQ *lp)
 
    return(1); /* no known case which prohibits loop peeling; so do it */
 }
-
+#if 0
+/*
+ * old SIMD vectorization implementation
+ */
 int SimdLoop(LOOPQ *lp)
 {
-   short *sp;
    BLIST *bl;
    static enum inst 
      sfinsts[] = {FLD,      FST,      FMUL,     FMAC,     FADD,     FSUB,    
@@ -1416,17 +1413,18 @@ int SimdLoop(LOOPQ *lp)
                   VDCMPWEQ, VDCMPWNE, VDCMPWLT, VDCMPWLE, VDCMPWGT, VDCMPWGE};
    
    const int nvinst=18;
-   enum inst sld, vld, sst, vst, smul, vmul, smac, vmac, sadd, vadd, ssub, vsub, 
-             sabs, vabs, smov, vmov, szero, vzero, inst;
+   enum inst vst, vld, inst;
    short r0, r1, op;
    enum inst *sinst, *vinst;
    int i, j, n, k, nfr=0;
-   char ln[512];
-   struct ptrinfo *pi0, *pi;
+   struct ptrinfo *pi0;
    INSTQ *ip, *ippu, *iph, *iptp, *iptn;
    short vlen;
-   enum inst vsld, vsst, vshuf;
+   enum inst vsld, vshuf;
    short sregs[TNFR], vregs[TNFR];
+   /*enum inst vsst, vzero, szero, vmov, smov, vabs, sabs, vsub, vadd, sadd,
+    *          vmac, smac, vmul, smul, sst, sld;*/
+   /*short *sp;*/
 
 /*
  * Figure out what type of insts to translate
@@ -1441,7 +1439,7 @@ int SimdLoop(LOOPQ *lp)
          vlen = 4;
       #endif
       vsld = VFLDS;
-      vsst = VFSTS;
+      /*vsst = VFSTS;*/
       vshuf = VFSHUF;
       vld = VFLD;
       vst = VFST;
@@ -1449,7 +1447,7 @@ int SimdLoop(LOOPQ *lp)
    else
    {
       vsld = VDLDS;
-      vsst = VDSTS;
+      /*vsst = VDSTS;*/
       vshuf = VDSHUF;
       sinst = sdinsts;
       vinst = vdinsts;
@@ -1716,7 +1714,6 @@ int SimdLoop(LOOPQ *lp)
 #endif
    return(0);
 }
-
 int VectorizeStage1(void)
 /*
  * Assuming we have a correct scalar LIL (stage 0), creates a scalar LIL,
@@ -1855,7 +1852,7 @@ int VectorizeStage3(int savesp, int SVSTATE)
       SaveFKOState(3);
    return(0);
 }
-
+#endif
 int IsSpeculationNeeded()
 /*
  * check wether speculative vectorization is needed.
@@ -1932,7 +1929,6 @@ void FindPaths(BBLOCK *head, BLIST *loopblocks, LOOPQ *lp, BLIST *blkstack)
  * data structure (PATHS).
  */
 {
-   BLIST *bl;
    extern int FKO_MaxPaths;
 
    if (head == lp->tails->blk)
@@ -2012,8 +2008,6 @@ void FindLoopPaths(LOOPQ *lp)
  */
 {
    BLIST *bl;
-   int i;
-   BBLOCK *blk;
    
    bl = NULL; /* serves as a temporary ptr in recusion */
 /*
@@ -2071,7 +2065,6 @@ void FindLoopPaths(LOOPQ *lp)
 int FindNumPaths(LOOPQ *lp)
 {
    int i;
-   BLIST *bl;
    
 /*
  * Only one tails right now
@@ -2128,7 +2121,7 @@ int CheckVarInBitvec(int vid, INT_BVI iv)
  */
 {
    short *sp;
-   int i, n, N;
+   int i, N;
    extern short STderef;
 /*
  * skip registers 
@@ -2138,7 +2131,7 @@ int CheckVarInBitvec(int vid, INT_BVI iv)
    SetVecBit(iv, STderef+TNREG-1, 0);
 
    sp = BitVec2Array(iv, 1-TNREG);
-   for (N=sp[0],n=0,i=1; i <= N; i++)
+   for (N=sp[0],i=1; i <= N; i++)
    {
       if (vid == (sp[i]-1))
       {
@@ -2165,14 +2158,13 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
 
    int errcode;
    INT_BVI iv, iv1, blkvec;
-   int i, j, k, n, N, vid;
+   int i, j, k, n, N;
    int vflag;
    LOOPQ *lp;
    BLIST *scope, *bl, *blTmp;
-   ILIST *il, *ib;
    INSTQ *ip;
-   char ln[1024];
    struct ptrinfo *pbase, *p;
+   /*ILIST *il, *ib;*/
 /*
  * all these arrays element count is at position 0.
  */
@@ -2870,13 +2862,14 @@ int SpeculativeVectorAnalysis()
  * incremental algorithm without explicitly figuring out all the paths
  */
 {
-   int i, j, n, k, N;
+   int i, j, n, k;
    LOOPPATH *vpath;
    LOOPQ *lp;
-   short *sp, *sc, *sf;
+   short *sp;
    char ln[512];
    int *err;
    extern int path;
+   /*short *sc, *sf;*/
 
    lp = optloop;
 /*
@@ -3249,7 +3242,7 @@ void AddVectorInitReduction(LOOPQ *lp)
 
 void AddVectorBackup(LOOPQ *lp)
 {
-   int i, j, N;
+   int i, N;
    BBLOCK *bp;
    INSTQ *ip;
    short vreg;
@@ -3296,7 +3289,7 @@ void AddVectorBackup(LOOPQ *lp)
 }
 void SpecVecPathXform(BLIST *scope, LOOPQ *lp)
 {
-   int i, j, n, k, m, mskval, nfr;
+   int i, j, k, m, mskval, nfr;
    INSTQ *ip;
    BLIST *bl;
    static enum inst
@@ -3319,20 +3312,22 @@ void SpecVecPathXform(BLIST *scope, LOOPQ *lp)
                          VFCMPWGE},
          vdcmpinsts[] = {VDCMPWEQ, VDCMPWNE, VDCMPWLT, VDCMPWLE, VDCMPWGT, 
                          VDCMPWGE};
+#if 0
 /*
  * vector memory aligned and unaligned load/store
+ * NOTE: not needed in updated implementation
  */
    static enum inst 
       valign[] = {VFLD, VDLD, VLD, VFST, VDST, VST},
       vualign[] = {VFLDU, VDLDU, VLDU, VFSTU, VDSTU, VSTU};
-
+   const int nvalign = 6; /* number of align/unalign inst */
+#endif
    enum inst inst, binst, mskinst;
    short sregs[TNFR], vregs[TNFR];
    short op, ir, vrd;
    enum inst *sinst, *vinst, *vcmpinst;
    const int nbr = 6;
    const int nvinst = 11;
-   const int nvalign = 6; /* number of align/unalign inst */
 
    nfr = 0;
 /*
@@ -3636,7 +3631,7 @@ INSTQ *DupVecPathInst(BLIST *scope, BBLOCK *bp0, LOOPQ *lp)
 
 BLIST *UnrollLargerBet(BBLOCK *bp0, LOOPQ *lp, struct ptrinfo *pi,  int unroll)
 {
-   int i, j, nbr;
+   int i, nbr;
    short imask;
    short r0, r1;
    INSTQ *ip, *ip1, *ipCB, *ipnext;
@@ -3949,10 +3944,10 @@ int SpecVecXform(LOOPQ *lp, int unroll)
 {
    BBLOCK *bp;
    BLIST *scope, *dupblks;
-   INSTQ *ippu, *ip0, *ip;
-   struct ptrinfo *pi0, *pi;
+   INSTQ *ippu;
+   struct ptrinfo *pi0;
    short vlen, URbase;
-   
+   /*INSTQ *ip0, *ip;*/ 
 /*
  * Need at least one path to vectorize
  */
@@ -3993,15 +3988,17 @@ int SpecVecXform(LOOPQ *lp, int unroll)
  * ***********************************************************
  */
    bp = NewBasicBlock(NULL, NULL);
+#if 0
    ip0 = DupVecPathInst(scope, bp, lp); 
    dupblks = UnrollLargerBet(bp, lp, pi0,  unroll);
-   
-   KillAllPtrinfo(pi0); /* pi0 is needed in unroll. So, kill after that */
-
-#if 0
    PrintThisInstQ(stderr, ip0);
    PrintThisBlockInst(stderr, bp);
-#endif
+#else
+   DupVecPathInst(scope, bp, lp); 
+   dupblks = UnrollLargerBet(bp, lp, pi0,  unroll);
+#endif 
+   KillAllPtrinfo(pi0); /* pi0 is needed in unroll. So, kill after that */
+
 /*
  * Put back loop control and pointer updates
  */
@@ -4030,7 +4027,6 @@ int SpeculativeVecTransform(LOOPQ *lp)
  *
  */
 {
-   short *sp;
    BLIST *bl, *scope;
    static enum inst
       sfinsts[]= {FLD,  FST,  FMUL, FDIV,  FMAC, FADD,  FSUB,  FABS,  FMOV,  
@@ -4110,14 +4106,13 @@ static enum inst
    const int nbr = 6;
 
    const int nvinst = 11;
-   enum inst sld, vld, sst, vst, smul, vmul, sdiv, vdiv, smac, vmac, sadd, vadd,
-             ssub, vsub, sabs, vabs, smov, vmov, szero, vzero, inst, binst, 
-             mskinst;
+   enum inst vld, vst, inst, binst, mskinst;
+   /*enum inst vzero, szero, vmov, smov, vabs, sabs, vsub, ssub, vadd, sadd, vmac,
+             smac, vdiv, sdiv, vmul, smul, sst, sld;*/
    short r0, r1, op, ir, vrd;
    enum inst *sinst, *vinst, *vcmpinst;
    int i, j, n, k, m, mskval, nfr=0;
-   char ln[512];
-   struct ptrinfo *pi0, *pi;
+   struct ptrinfo *pi0;
    INSTQ *ip, *ippu, *iph, *iptp, *iptn;
    short vlen;
    enum inst vsld, vsst, vshuf;
@@ -4600,7 +4595,6 @@ int RedundantVectorTransform(LOOPQ *lp)
  * transfer later. 
  */
 {
-   short *sp;
    BLIST *bl;
    static enum inst 
      sfinsts[] = {FLD,      FST,      FMUL,     FMAC,     FADD,     FSUB,    
@@ -4624,17 +4618,18 @@ int RedundantVectorTransform(LOOPQ *lp)
                   VDMAX,    VDMIN };
    
    const int nvinst=20;
-   enum inst sld, vld, sst, vst, smul, vmul, smac, vmac, sadd, vadd, ssub, vsub, 
-             sabs, vabs, smov, vmov, szero, vzero, inst;
+   enum inst vld, vst, inst;
+   /*enum inst vzero, szero, vmov, smov, vabs, sabs, vsub, ssub, vadd, sadd, vmac,
+             smac, vmul, smul, sst, sld;*/
    short r0, r1, op;
    enum inst *sinst, *vinst;
    int i, j, n, k, nfr=0;
-   char ln[512];
-   struct ptrinfo *pi0, *pi;
+   struct ptrinfo *pi0;
    INSTQ *ip, *ippu, *iph, *iptp, *iptn;
    short vlen;
    enum inst vsld, vsst, vshuf;
    short sregs[TNFR], vregs[TNFR];
+   /*short *sp;*/
 
 /*
  * Figure out what type of insts to translate
@@ -5161,9 +5156,8 @@ int IsBackupCandidate(short var, short vpflag, int chcom)
  * vpflag represent the flag got from vector path
  */
 {
-   int i, j, check, nbr;
+   int i, nbr;
    BLIST *bl, *scope;
-   BBLOCK *bp;
    INSTQ *ip;
 /*
  * private var need no backup/recovery
@@ -5236,7 +5230,6 @@ void AddVectorRecover(LOOPQ *lp, BBLOCK *bp0, int chcom)
 {
    int i, j, N, n, k;
    short *sc, *vvsc, *sf, *bvvscal;
-   BLIST *scope;
    INSTQ *ip;
    enum inst vld, vst;
    short vreg;
@@ -5367,12 +5360,12 @@ void AddScalarUpdate(LOOPQ *lp, BBLOCK *bp0)
  * inst is added at the end of the block bp0
  */
 {
-   int i, j, k, N;
-   short r0, r1, op;
-   short scal, spsflag, vpsflag, vscal, vvflag;
+   int i, N;
+   short r0, r1;
+   short vpsflag, vscal, vvflag;
    INSTQ *ip;
-   BLIST *bl;
    LOOPPATH *vp;
+   /*short scal, spsflag;*/
 
    vp = PATHS[VPATH];
 
@@ -5509,19 +5502,20 @@ void AddVectorUpdate(LOOPQ *lp, BBLOCK *blk)
  * let's get rid of spath!!!
  */
 {
-   BLIST *bl;
    INSTQ *ip;
-   int i, j, k, N, N1, found;
+   int i, N;
    int isScSet;
-   short scal, spsflag, vpsflag, vscal, vsflag;
-   short vlen;
-   LOOPPATH *vp, *sp;
-   BBLOCK *bp;
-   enum inst vsld, vshuf, vst, fst;
+   short vpsflag, vscal;
+   LOOPPATH *vp;
+   enum inst vsld, vshuf, vst;
    short r0;
-   INT_BVI iv;
    extern short STderef;
    extern INT_BVI FKO_BVTMP;
+   /*INT_BVI iv;*/
+   /*enum inst fst;*/
+   /*LOOPPATH *sp;*/
+   /*short vlen;*/
+   /*short vsflag, spsflag, scal;*/
 
    vp = PATHS[VPATH];
 
@@ -5530,24 +5524,28 @@ void AddVectorUpdate(LOOPQ *lp, BBLOCK *blk)
       vsld = VFLDS;
       vshuf = VFSHUF;
       vst = VFST;
-      fst = FST;     /* to check the recovery vars */
-      #if defined(X86) && defined(AVX)
+      /*fst = FST;*/     /* to check the recovery vars */
+#if 0
+   #if defined(X86) && defined(AVX)
          vlen = 8;
       #else
          vlen = 4;
       #endif
+#endif
    }
    else
    {
       vsld = VDLDS;
       vshuf = VDSHUF;
       vst = VDST;
-      fst = FSTD;
+      /*fst = FSTD;*/
+#if 0
       #if defined(X86) && defined(AVX)
          vlen = 4;
       #else
          vlen = 2;
       #endif
+#endif
    }
 #if 0
    fprintf(stderr, "\nFigure out all vars in each path\n");
@@ -5576,10 +5574,10 @@ void AddVectorUpdate(LOOPQ *lp, BBLOCK *blk)
    for (i=1, N=vp->vscal[0]; i <= N; i++)
    {
       isScSet = 0;            /* is set in scalar path ? */
-      //scal = vp->scal[i];   /* scal and vscal are same for vector path */
+      /*scal = vp->scal[i];*/   /* scal and vscal are same for vector path */
       vscal = vp->vscal[i];
       vpsflag = vp->sflag[i]; /* flags for the vars */
-      vsflag = vp->vsflag[i]; /* lp->vsflag[i]*/
+      /*vsflag = vp->vsflag[i];*/ /* used lp->vsflag[i]*/
 /*
  *    if it is private vector variable, nothing to do.
  */
@@ -5830,8 +5828,8 @@ void DupBlkPathWithOpt(LOOPQ *lp, BLIST **dupblks, int islpopt, int UsesIndex,
  * optimization if valid
  */
 {
-   int i, j;
-   int vlen, URbase, cflag;
+   int i;
+   int URbase, cflag;
    INT_BVI iv;
    BBLOCK *newCF, *bp;
    INSTQ *ip, *ipn;
@@ -5839,7 +5837,8 @@ void DupBlkPathWithOpt(LOOPQ *lp, BLIST **dupblks, int islpopt, int UsesIndex,
    char ln[512];
    struct ptrinfo *pi;
    extern INT_BVI FKO_BVTMP;
-   static int fid = 1;
+   /*int vlen;*/
+   /*static int fid = 1;*/
 #if 0
    vlen = Type2Vlen(lp->vflag);
    URbase = (lp->flag & L_FORWARDLC_BIT) ? 0 :vlen-1;
@@ -5949,7 +5948,7 @@ void DupBlkPathWithOpt(LOOPQ *lp, BLIST **dupblks, int islpopt, int UsesIndex,
 BBLOCK *GenScalarRestartPathCode(LOOPQ *lp, int path, int dups, BLIST *ftheads, 
                                  INT_BVI ivtails)
 {
-   int i, j;
+   int i;
    char ln[512];
    int cflag;
    BBLOCK *bp0, *bp, *bptop, *bpi;
@@ -6145,7 +6144,6 @@ BBLOCK *CreateSclResBlk(BBLOCK *fromBlk, BBLOCK *toBlk, int path)
 {
    int label;
    BBLOCK *bp;
-   BLIST *bl;
    char ln[512];
    extern BBLOCK *bbbase;
    for (bp=bbbase; bp; bp=bp->down)
@@ -6283,7 +6281,6 @@ void RepairLoopPaths(int srlb, LOOPQ* lp)
  * anywhere.
  */
 {
-   int i;
    BBLOCK *bp;
    BLIST *bl, *delblks, *pbl;
    INSTQ *ip;
@@ -6455,12 +6452,10 @@ int SpecSIMDLoop(int SB_UR)
 {
    int unroll;    /* stronger bet unroll */
    LOOPQ *lp;
-   INSTQ *ippu;
-   struct ptrinfo *pi0;
-   BLIST *bl;
    extern int path;
    lp = optloop;
    int lbSclRes;
+   /*INSTQ *ippu;*/
 /*
  * see our accepted paper in PACT'13 for steps
  */
@@ -6875,6 +6870,10 @@ void VectorizeElimIFwithMaxMin()
  * Many of the functions of this file will be obsolete after the completion 
  * of this section.
  *============================================================================*/
+#if 0
+/*
+ * NOT USED ANYMORE 
+ */
 int VectorAnalysis()
 {  
    int i, j, n, k, N;
@@ -6965,6 +6964,7 @@ int VectorAnalysis()
       return(1);
    }
 }
+#endif
 /*
  * Normal vectorization with single path
  */
@@ -7007,14 +7007,13 @@ int RcPathVectorAnalysis(LOOPPATH *path)
 
    int errcode;
    INT_BVI iv, iv1, blkvec;
-   int i, j, k, n, N, vid;
+   int i, j, k, n, N;
    int vflag;
    LOOPQ *lp;
    BLIST *scope, *bl, *blTmp;
-   ILIST *il, *ib;
    INSTQ *ip;
-   char ln[1024];
    struct ptrinfo *pbase, *p;
+   /*ILIST *il, *ib;*/
 /*
  * all these arrays element count is at position 0.
  */
@@ -7745,7 +7744,7 @@ return errcode;
 
 int IsOnlyUseAsDTindex(short var, short flag, BLIST *scope)
 {
-   int i, ret;
+   int ret;
    short op, fl;
    INSTQ *ip, *ipDT;
    BLIST *bl;
@@ -7815,6 +7814,201 @@ int IsOnlyUseAsDTindex(short var, short flag, BLIST *scope)
 
    return ret;
 }
+
+int isUpByInduction(LOOPQ *lp, BLIST *scope, short var)
+{
+   BLIST *bl;
+   INSTQ *ip, *ip0;
+   
+   //check =1;
+   for (bl = scope; bl; bl = bl->next)
+   {
+      for (ip = bl->blk->ainst1; ip; ip = ip->next)
+      {
+         if (IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]-1] == var)
+         {
+            //PrintThisInst(stderr, 0, ip);
+            ip0 = ip->prev;
+            while(!IS_STORE(ip0->inst[0]) && !IS_BRANCH(ip0->inst[0]))
+            {
+/*
+ *          FIXED: there can be a constant, like: imax = i+1. It still does
+ *          satisfy, but need to keep track of that. we need that in vector
+ *          initialiation stage.
+ */
+#if 0
+               assert(ip0);
+               PrintThisInst(stderr,ip0);
+#endif
+               if (IS_LOAD(ip0->inst[0]))
+               {
+                  if (STpts2[ip0->inst[2]-1] != var)
+                  {
+/*
+ *                   NOTE: to make it simple, I only consider imax = i + const 
+ *                   case, don't support even imax = N - i;
+ */
+#if 0                  
+                     if ( !IS_CONST(STflag[lp->beg-1]) 
+                        && STpts2[ip0->inst[2]-1] == lp->beg 
+                     || !IS_CONST(STflag[lp->end-1]) 
+                        && STpts2[ip0->inst[2]-1] == lp->end 
+                     || !IS_CONST(STflag[lp->I-1]) 
+                        && STpts2[ip0->inst[2]-1] == lp->I )
+#else
+                     if ( STpts2[ip0->inst[2]-1] == lp->I) 
+
+#endif
+                     {
+                        //fprintf(stderr, "INDUCTION!!!\n");
+                        //check = 1
+                     }
+                     else
+                     {
+                        //fprintf(stderr, "NOT INDUCTION\n!!!");
+                        //check = 0;
+                        //break;
+                        fko_warn(__LINE__, "Shadow VRC not possible: "
+                                 "use of %s to update %s\n", 
+                                 STname[STpts2[ip0->inst[2]-1]-1], STname[var-1]);
+                     
+                        return(0);
+                     }
+                  }
+               }
+               else if (ip0->inst[0]!=ADD && ip0->inst[0]!=SUB)
+               {
+                  fko_warn(__LINE__, "Shadow VRC not possible: "
+                           "Use of instruction %s with shadow var\n", 
+                            instmnem[ip0->inst[0]]);
+                  return 0;
+                     
+               }
+               ip0 = ip0->prev;
+            }
+         }
+      }
+   }
+   return 1;
+}
+
+short FindReadVarCMOV(BLIST *scope, short var)
+/*
+ * provided a destination var of select operation and block list, this func 
+ * returns other var which is used in select/cmov op
+ */
+{
+   short reg, rdvar;
+   INSTQ *ip, *ip0;
+   BLIST *bl;
+
+   rdvar = 0;  /* init with no var */
+   for (bl = scope; bl; bl = bl->next)
+   {
+      for (ip = bl->blk->ainst1; ip; ip = ip->next)
+      {
+         if (ip->inst[0] == CMOV1 || ip->inst[0] == CMOV2)
+         {
+            assert(ip->inst[2] < 0); /* 2nd opn is reg*/
+            reg = ip->inst[2];
+            ip0 = ip->prev; /* check backward */
+            while (IS_LOAD(ip0->inst[0]))
+            {
+               if (ip0->inst[1] == reg)
+               {
+                  rdvar = STpts2[ip0->inst[2]-1];
+                  break;
+               }
+               ip0 = ip0->prev;
+            }
+         }
+         if (rdvar) break;
+      }
+      if (rdvar) break;
+   }
+   return (rdvar);
+}
+
+int isShadowPossible(LOOPQ *lp)
+/*
+ * identify the shadow element (imax = i or N-i) and update lp->vvscal 
+ * accordingly: Vimax_1, Vvlen. it will only work when we have max cmp like: 
+ * x > amax
+ */
+{
+/*
+ * NOTE: we need to recognize pattern for shadowing...
+ *       
+ *       RESTRICTION: if there is a variable which is asigned with 
+ *       index/induction variable and used in CMOV operation.. we can use 
+ *       shadow trick. No other integer operation is supported inside loop 
+ *       right now - (relax it later!)
+ *
+ *       CONDITION:
+ *          1. an integer variable is live out (imax)
+ *          2. an integer variable is assigned with index/induction varible (imax_1)
+ *          3. first variable is updated with a CMOV operation using these two
+ *             varaible ....
+ *          4. No other integer operations!!! (without updating loop index)
+ */
+   int i,j,n;
+   int isPos, count;
+   short scal, rdvar;
+
+   isPos = 1; count = 0;
+   for (n=lp->vscal[0],i=0; i < n; i++)
+   {
+      scal = lp->vscal[i+1];
+      if (IS_INT(STflag[scal-1]))
+      {
+         count++;
+         if (lp->vsflag[i+1] & VS_LIVEOUT) /* var liveout ? */
+         {
+            /*fprintf(stderr, "Live Out scal = %s\n", STname[scal-1]);*/
+            if (lp->vsflag[i+1] & VS_SELECT) /* updated in select/cmov inst ? */
+            {
+               /*fprintf(stderr, "SEL scal = %s\n", STname[scal-1]);*/
+               rdvar = FindReadVarCMOV(lp->blocks, scal); /* find other src */
+               /*assert(rdvar);*/
+               /*fprintf(stderr, "RDVAR = %s\n", STname[rdvar-1]);*/
+               if (!rdvar || !FindInShortList(lp->vscal[0], lp->vscal+1, rdvar))
+               {
+                  isPos = 0;
+                  fko_warn(__LINE__, "Shadow VRC not possible: "
+                           "Liveout Int must be updated using CMOV\n");
+               }
+               else /* if exist, must be updated by induction variable */
+               {
+                  if (!isUpByInduction(lp, lp->blocks, rdvar))
+                  {
+                     isPos = 0;
+                     fko_warn(__LINE__, "Shadow VRC not possible: "
+                              "Int scalar updated by other than index var\n");
+                  }
+                  else /* rdvar is our shadow variable */
+                  {
+                     j = FindInShortList(lp->vscal[0], lp->vscal+1, rdvar);
+                     lp->vsflag[j] = lp->vsflag[j] | VS_SHADOW;
+                  }
+                  /*else fprintf(stderr, "possible by induction check!!\n");*/
+               }
+            }
+         }
+      }
+   }
+/*
+ * expect exactly 2 int vars
+ */
+   if (count != 2)
+   {
+      fko_warn(__LINE__, "Shadow VRC not possible: "
+               "must have two integers in RC \n");
+      isPos = 0;
+   }
+
+   return(isPos);
+}
+
 /*
  * Need to make this Vector analysis general for all VRC
  */
@@ -7992,200 +8186,6 @@ int RcVectorAnalysis()
  */
    return(errcode);
 }
-short FindReadVarCMOV(BLIST *scope, short var)
-/*
- * provided a destination var of select operation and block list, this func 
- * returns other var which is used in select/cmov op
- */
-{
-   short reg, rdvar;
-   INSTQ *ip, *ip0;
-   BLIST *bl;
-   BBLOCK *bp;
-
-   rdvar = 0;  /* init with no var */
-   for (bl = scope; bl; bl = bl->next)
-   {
-      for (ip = bl->blk->ainst1; ip; ip = ip->next)
-      {
-         if (ip->inst[0] == CMOV1 || ip->inst[0] == CMOV2)
-         {
-            assert(ip->inst[2] < 0); /* 2nd opn is reg*/
-            reg = ip->inst[2];
-            ip0 = ip->prev; /* check backward */
-            while (IS_LOAD(ip0->inst[0]))
-            {
-               if (ip0->inst[1] == reg)
-               {
-                  rdvar = STpts2[ip0->inst[2]-1];
-                  break;
-               }
-               ip0 = ip0->prev;
-            }
-         }
-         if (rdvar) break;
-      }
-      if (rdvar) break;
-   }
-   return (rdvar);
-}
-int isUpByInduction(LOOPQ *lp, BLIST *scope, short var)
-{
-   int check;
-   BLIST *bl;
-   INSTQ *ip, *ip0;
-   
-   //check =1;
-   for (bl = scope; bl; bl = bl->next)
-   {
-      for (ip = bl->blk->ainst1; ip; ip = ip->next)
-      {
-         if (IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]-1] == var)
-         {
-            //PrintThisInst(stderr, 0, ip);
-            ip0 = ip->prev;
-            while(!IS_STORE(ip0->inst[0]) && !IS_BRANCH(ip0->inst[0]))
-            {
-/*
- *          FIXED: there can be a constant, like: imax = i+1. It still does
- *          satisfy, but need to keep track of that. we need that in vector
- *          initialiation stage.
- */
-#if 0
-               assert(ip0);
-               PrintThisInst(stderr,ip0);
-#endif
-               if (IS_LOAD(ip0->inst[0]))
-               {
-                  if (STpts2[ip0->inst[2]-1] != var)
-                  {
-/*
- *                   NOTE: to make it simple, I only consider imax = i + const 
- *                   case, don't support even imax = N - i;
- */
-#if 0                  
-                     if ( !IS_CONST(STflag[lp->beg-1]) 
-                        && STpts2[ip0->inst[2]-1] == lp->beg 
-                     || !IS_CONST(STflag[lp->end-1]) 
-                        && STpts2[ip0->inst[2]-1] == lp->end 
-                     || !IS_CONST(STflag[lp->I-1]) 
-                        && STpts2[ip0->inst[2]-1] == lp->I )
-#else
-                     if ( STpts2[ip0->inst[2]-1] == lp->I) 
-
-#endif
-                     {
-                        //fprintf(stderr, "INDUCTION!!!\n");
-                        //check = 1
-                     }
-                     else
-                     {
-                        //fprintf(stderr, "NOT INDUCTION\n!!!");
-                        //check = 0;
-                        //break;
-                        fko_warn(__LINE__, "Shadow VRC not possible: "
-                                 "use of %s to update %s\n", 
-                                 STname[STpts2[ip0->inst[2]-1]-1], STname[var-1]);
-                     
-                        return(0);
-                     }
-                  }
-               }
-               else if (ip0->inst[0]!=ADD && ip0->inst[0]!=SUB)
-               {
-                  fko_warn(__LINE__, "Shadow VRC not possible: "
-                           "Use of instruction %s with shadow var\n", 
-                            instmnem[ip0->inst[0]]);
-                  return 0;
-                     
-               }
-               ip0 = ip0->prev;
-            }
-         }
-      }
-   }
-   return 1;
-}
-int isShadowPossible(LOOPQ *lp)
-/*
- * identify the shadow element (imax = i or N-i) and update lp->vvscal 
- * accordingly: Vimax_1, Vvlen. it will only work when we have max cmp like: 
- * x > amax
- */
-{
-/*
- * NOTE: we need to recognize pattern for shadowing...
- *       
- *       RESTRICTION: if there is a variable which is asigned with 
- *       index/induction variable and used in CMOV operation.. we can use 
- *       shadow trick. No other integer operation is supported inside loop 
- *       right now - (relax it later!)
- *
- *       CONDITION:
- *          1. an integer variable is live out (imax)
- *          2. an integer variable is assigned with index/induction varible (imax_1)
- *          3. first variable is updated with a CMOV operation using these two
- *             varaible ....
- *          4. No other integer operations!!! (without updating loop index)
- */
-   int i,j,n;
-   int isPos, count;
-   short scal, rdvar;
-
-   isPos = 1; count = 0;
-   for (n=lp->vscal[0],i=0; i < n; i++)
-   {
-      scal = lp->vscal[i+1];
-      if (IS_INT(STflag[scal-1]))
-      {
-         count++;
-         if (lp->vsflag[i+1] & VS_LIVEOUT) /* var liveout ? */
-         {
-            //fprintf(stderr, "Live Out scal = %s\n", STname[scal-1]);
-            if (lp->vsflag[i+1] & VS_SELECT) /* updated in select/cmov inst ? */
-            {
-               //fprintf(stderr, "SEL scal = %s\n", STname[scal-1]);
-               rdvar = FindReadVarCMOV(lp->blocks, scal); /* find other src */
-               //assert(rdvar);
-               //fprintf(stderr, "RDVAR = %s\n", STname[rdvar-1]);
-               if (!rdvar || !FindInShortList(lp->vscal[0], lp->vscal+1, rdvar))
-               {
-                  isPos = 0;
-                  fko_warn(__LINE__, "Shadow VRC not possible: "
-                           "Liveout Int must be updated using CMOV\n");
-               }
-               else /* if exist, must be updated by induction variable */
-               {
-                  if (!isUpByInduction(lp, lp->blocks, rdvar))
-                  {
-                     isPos = 0;
-                     fko_warn(__LINE__, "Shadow VRC not possible: "
-                              "Int scalar updated by other than index var\n");
-                  }
-                  else /* rdvar is our shadow variable */
-                  {
-                     j = FindInShortList(lp->vscal[0], lp->vscal+1, rdvar);
-                     lp->vsflag[j] = lp->vsflag[j] | VS_SHADOW;
-                  }
-                  /*else fprintf(stderr, "possible by induction check!!\n");*/
-               }
-            }
-         }
-      }
-   }
-/*
- * expect exactly 2 int vars
- */
-   if (count != 2)
-   {
-      fko_warn(__LINE__, "Shadow VRC not possible: "
-               "must have two integers in RC \n");
-      isPos = 0;
-   }
-
-   return(isPos);
-}
-
 
 void AddCodeAdjustment(LOOPQ *lp)
 /*
@@ -8198,11 +8198,12 @@ void AddCodeAdjustment(LOOPQ *lp)
    int initconst;
    INSTQ *ip, *ip0;
    BLIST *bl;
-   short sivlen, cvlen, dt;
-   short svar, vlen; /* shadow int var */
+   short sivlen;
+   short svar; /* shadow int var */
    short reg0, reg1;
    short *vscal, *vvscal, *vsflag, *vsoflag, *vvinit;
    char ln[512];
+   /*short vlen;, dt*/
 /*
  * checking for shadow variable, there should be only one such variable
  */
@@ -8387,16 +8388,15 @@ INSTQ *AddIntShadowPrologue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iph, short scal,
    initialization of imax.
  *
  */
-   int i, vlen, sinit;
+   int vlen, sinit;
    short flag;
-   short ireg, sireg, r1, r2 ;
-   enum inst vld, vst, vgr2vr, vshuf;
+   short ireg, r1, r2 ;
+   enum inst vst, vgr2vr, vshuf;
+   /*enum inst vld;*/
 
    if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
    {
-      //vld = VSLD;
-      //vst = VSST;
-      vld = VLD;
+      /*vld = VLD;*/
       vst = VST;
       vshuf = VSSHUF;
       vgr2vr = VGR2VR32;
@@ -8404,9 +8404,7 @@ INSTQ *AddIntShadowPrologue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iph, short scal,
    }
    else if (IS_DOUBLE(lp->vflag) || IS_VDOUBLE(lp->vflag))
    {
-      //vld = VSLD;
-      //vst = VSST;
-      vld = VLD;
+      /*vld = VLD;*/
       vst = VST;
       vshuf = VISHUF;
       vgr2vr = VGR2VR64;
@@ -8533,9 +8531,9 @@ INSTQ *AddIntShadowEpilogue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iptp, INSTQ *iptn,
    short flag;
    short mvar, vmvar, vmask; 
    short r0, r1, ireg, vireg0, vireg1,vireg2, type;
-   enum inst mfinst, rminst, vld, vst, vsld, vsst, vshuf, vfcmpweq;
-   enum inst vild, vilds, vist, vists, vgr2vr, vishuf, vicmov1, vicmov2, vimin,
-             vimax;
+   enum inst mfinst, rminst, vld, vst, vsld, vshuf, vfcmpweq;
+   enum inst vild, vist, vists, vgr2vr, vishuf, vicmov2, vimin, vimax;
+   /*enum inst vicomv1, vilds, vsst;*/
 
    flag = lp->vsflag[index];
 /*
@@ -8544,7 +8542,7 @@ INSTQ *AddIntShadowEpilogue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iptp, INSTQ *iptn,
    if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
    {
       vsld = VFLDS;
-      vsst = VFSTS;
+      /*vsst = VFSTS;*/
       vld = VFLD;
       vst = VFST;
       vshuf = VFSHUF;
@@ -8553,23 +8551,21 @@ INSTQ *AddIntShadowEpilogue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iptp, INSTQ *iptn,
 /*
  *    for float, we will consider 32 bit INT inside vector
  */
-      //vild = VSLD;
       vild = VLD;
-      vilds = VSLDS;
-      //vist = VSST;
+      /*vilds = VSLDS;*/
       vist = VST;
       vists = VSSTS;
       vishuf = VSSHUF;
       vgr2vr = VGR2VR32;
       vimin = VSMIN;
       vimax = VSMAX;
-      vicmov1 = VSCMOV1;
+      /*vicmov1 = VSCMOV1;*/
       vicmov2 = VSCMOV2;
    }
    else
    {
       vsld = VDLDS;
-      vsst = VDSTS;
+      /*vsst = VDSTS;*/
       vld = VDLD;
       vst = VDST;
       vshuf = VDSHUF;
@@ -8578,17 +8574,15 @@ INSTQ *AddIntShadowEpilogue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iptp, INSTQ *iptn,
 /*
  *    for float, we will consider 32 bit INT inside vector
  */
-      //vild = VILD;
       vild = VLD;
-      vilds = VILDS;
-      //vist = VIST;
+      /*vilds = VILDS;*/
       vist = VST;
       vists = VISTS;
       vishuf = VISHUF;
       vgr2vr = VGR2VR64;
       vimin = VIMIN;
       vimax = VIMAX;
-      vicmov1 = VICMOV1;
+      /*vicmov1 = VICMOV1;*/
       vicmov2 = VICMOV2;
    }
 
@@ -8834,22 +8828,24 @@ INSTQ *AddIntShadowEpilogue(LOOPQ *lp, BBLOCK *bp0, INSTQ *iptp, INSTQ *iptn,
 void AddVectorPrologueEpilogue(LOOPQ *lp)
 {
    int i, j, k, n;
-   int vlen;
    INSTQ *iph, *iptp, *iptn;
    short r0, r1;
    enum inst inst;
    enum inst vld, vst, vsld, vsst, vshuf;
+   /*int vlen;*/
    
 /*
  * Figure out what type of insts to translate
  */
    if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
    {
+#if 0       
       #if defined(X86) && defined(AVX)
          vlen = 8;
       #else
          vlen = 4;
       #endif
+#endif
       vsld = VFLDS;
       vsst = VFSTS;
       vshuf = VFSHUF;
@@ -8862,11 +8858,13 @@ void AddVectorPrologueEpilogue(LOOPQ *lp)
       vsst = VDSTS;
       vshuf = VDSHUF;
       vld = VDLD;
+#if 0     
       #if defined(X86) && defined(AVX)
          vlen = 4;
       #else
          vlen = 2;
       #endif
+#endif
       vst = VDST;
    }
 /* 
@@ -9133,7 +9131,6 @@ int RcVecTransform(LOOPQ *lp)
  * transfer later. 
  */
 {
-   short *sp;
    BLIST *bl;
    static enum inst 
      sfinsts[] = {FLD,      FST,      FMUL,     FMAC,     FADD,     FSUB,    
@@ -9166,28 +9163,30 @@ int RcVecTransform(LOOPQ *lp)
                    CVTFI, BTC};
 /*
  *    vector memory aligned and unaligned memory load
+ *    NOTE: Not needed in updated implementation!
  */
+#if 0   
    static enum inst 
       valign[] = {VFLD, VDLD, VLD, VFST, VDST, VST},
       vualign[] = {VFLDU, VDLDU, VLDU, VFSTU, VDSTU, VSTU};
-   /*assert(0);*/
-
+   const int nvalign = 6; /* number of align/unalign inst */
+#endif
    const int nvinst=21;   /* number of scalar to vector float inst */
    const int nivinst = 10;
-   const int nvalign = 6; /* number of align/unalign inst */
-   enum inst sld, vld, sst, vst, smul, vmul, smac, vmac, sadd, vadd, ssub, vsub, 
-             sabs, vabs, smov, vmov, szero, vzero, inst, vcmov1, vcmov2;
-   short r0, r1, op;
+   enum inst inst, vcmov1;
+   /*enum inst vzero, szero, vmov, smov, vabs, sabs, vsub, ssub, vadd, sadd, vmac,
+             smac, vmul, smul, vst, sst, vld, sld;*/
+   /*enum inst vcmov2;*/
+   short op;
    short vmask;
    enum inst *sinst, *vinst, *viinsts;
-   int i, j, n, k, nfr=0, nir=0;
-   char ln[512];
-   struct ptrinfo *pi0, *pi;
-   INSTQ *ip, *ip0, *ippu, *iph, *iptp, *iptn;
+   int i, j, k, nfr=0, nir=0;
+   struct ptrinfo *pi0;
+   INSTQ *ip, *ip0, *ippu;
    short vlen;
    short sregs[TNFR], vregs[TNFR];
    short siregs[TNIR], viregs[TNIR];
-   short ldvir1, ldvir2, ldvir3;
+   short ldvir1, ldvir2;
 
    if (IS_FLOAT(lp->vflag) || IS_VFLOAT(lp->vflag))
    {
@@ -9195,7 +9194,7 @@ int RcVecTransform(LOOPQ *lp)
       vinst = vfinsts;
       viinsts = vs_insts;
       vcmov1 = VSCMOV1;
-      vcmov2 = VSCMOV2;
+      /*vcmov2 = VSCMOV2;*/
 #if defined (X86) && defined(AVX)
       vlen = 8;
 #else
@@ -9208,7 +9207,7 @@ int RcVecTransform(LOOPQ *lp)
       vinst = vdinsts;
       viinsts = vi_insts;
       vcmov1 = VICMOV1;
-      vcmov2 = VICMOV2;
+      /*vcmov2 = VICMOV2;*/
 #if defined (X86) && defined(AVX)
       vlen = 4;
 #else
@@ -9908,7 +9907,6 @@ static void ConvertAlign2Unalign(short *aptrs, BLIST *scope)
    int i,j,k;
    short op;
    INSTQ *ip;
-   BBLOCK *bp;
    BLIST *bl;
    LOOPQ *lp;
    extern LOOPQ *optloop;
@@ -9954,8 +9952,7 @@ void UnalignLoopSpecialization(LOOPQ *lp)
    short rvar;
    INSTQ *ip;
    BBLOCK *bp0, *bp, *bpN;
-   BLIST *bl, *dupblks, *tails;
-   LOOPQ *lpn;
+   BLIST *bl, *dupblks;
    extern BBLOCK *bbbase;
 /*
  * ptr which is already been aligned
@@ -9977,7 +9974,7 @@ void UnalignLoopSpecialization(LOOPQ *lp)
  * aligned after aplying loop peeling. make a list of them
  */
 #if 0
-/* no need to consider this case, it is checked by IsAlignLoopSpecNeeded()
+/* no need to consider this case, it is checked by IsAlignLoopSpecNeeded() */
    if (!lp->maaligned && lp->mbaligned) /* means all ptrs are malign */
       aptrs = lp->varrs; 
    else 
@@ -10225,7 +10222,7 @@ void UpdateVecLoop(LOOPQ *lp)
  * this function updates data for HIL intrinsic-vectorized loop  
  */
 {
-   int i, j, n, N;
+   int i, n, N;
    struct ptrinfo *pbase, *p;
    INT_BVI iv;
    BLIST *bl;

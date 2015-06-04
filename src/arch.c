@@ -486,7 +486,10 @@ void CreateSysLocals()
  */
 {
 #ifdef X86
-   extern int DTnzerod, DTabsd, DTnzero, DTabs, DTx87, DTx87d;
+   extern int DTnzerod, DTabsd, DTnzero, DTabs;
+   #ifdef X86_32
+      extern int DTx87, DTx87d;
+   #endif
    int k;
    if (DTnzerod)
    {
@@ -627,7 +630,8 @@ void bitload(INSTQ *next, int reg, int nbits, int I)
       InsNewInst(NULL, NULL, next, MOV, -reg, STiconstlookup(b), 0);
       I ^= b << (j-r);
       j -= r;
-      for (k; k; k--)
+      /*for (k; k; k--)*/
+      for (; k; k--)
       {
          j -= nbits;
          b = I >> j;
@@ -715,14 +719,18 @@ void FPConstStore(INSTQ *next, short id, short con,
 {
    int flag;
    int *ip;
-   short *sp;
    double d;
-   short i, k;
    float f;
-#ifdef X86_64
-   long *lp;
-#endif
-   extern short STderef;
+   #ifdef X86_64
+      long *lp;
+   #endif
+   #if defined(PPC) || defined(SPARC)
+      short i;
+   #endif
+   #ifndef X86
+      short k;
+      extern short STderef;
+   #endif
 
    flag = STflag[id-1];
    if (IS_VDOUBLE(flag) || IS_VFLOAT(flag))
@@ -743,9 +751,12 @@ void FPConstStore(INSTQ *next, short id, short con,
             k = AddDerefEntry(-REG_SP, STderef, -STderef, i, con);
             InsNewInst(NULL, NULL, next, XOR, -reg, -reg, -reg);
             InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
-            InsNewInst(NULL, NULL, next, ST, 
+            /*InsNewInst(NULL, NULL, next, ST, 
                        AddDerefEntry(-REG_SP, STderef, -STderef, i+4), -reg, 0,
-                                     con);
+                                     con);*/
+            InsNewInst(NULL, NULL, next, ST, 
+                       AddDerefEntry(-REG_SP, STderef, -STderef, i+4, con), 
+                                     -reg, 0); /* fixed compile error */
             SignalSet(next, id, k, dreg);
          #endif
       }
@@ -754,7 +765,7 @@ void FPConstStore(INSTQ *next, short id, short con,
          #ifdef X86_32
             ip = (int*) &d; 
             InsNewInst(NULL, NULL, next, MOV, -reg, STiconstlookup(*ip), 0);
-            i = SToff[SToff[id-1].sa[2]-1].sa[3];
+            /*i = SToff[SToff[id-1].sa[2]-1].sa[3];*/
             InsNewInst(NULL, NULL, next, VGR2VR16, -dreg, -reg, 
                        STiconstlookup(0));
             InsNewInst(NULL, NULL, next, SHR, -reg, -reg, STiconstlookup(16));
@@ -794,9 +805,12 @@ void FPConstStore(INSTQ *next, short id, short con,
             bitload(next, reg, 16, *ip);
             InsNewInst(NULL, NULL, next, ST, k, -reg, 0);
             bitload(next, reg, 16, ip[1]);
-            InsNewInst(NULL, NULL, next, ST,
+            /*InsNewInst(NULL, NULL, next, ST,
                        AddDerefEntry(-REG_SP, STderef, -STderef, i+4), -reg, 0,
-                                     con);
+                                     con);*/
+            InsNewInst(NULL, NULL, next, ST,
+                       AddDerefEntry(-REG_SP, STderef, -STderef, i+4, con), 
+                                     -reg, 0); /* fixed compile error */
          #endif
          #ifndef X86
             SignalSet(next, id, k, dreg);
@@ -823,8 +837,10 @@ void FPConstStore(INSTQ *next, short id, short con,
       else
       {
          ip = (int*) &f;
-         k = AddDerefEntry(-REG_SP, STderef, -STderef, 
-                           SToff[SToff[id-1].sa[2]-1].sa[3], con);
+         #ifndef X86
+            k = AddDerefEntry(-REG_SP, STderef, -STderef, 
+                              SToff[SToff[id-1].sa[2]-1].sa[3], con);
+         #endif
          #ifdef X86
             InsNewInst(NULL, NULL, next, MOV, -reg, STiconstlookup(*ip), 0);
             InsNewInst(NULL, NULL, next, VGR2VR16, -dreg, -reg, 
@@ -853,8 +869,6 @@ void FPConstStore(INSTQ *next, short id, short con,
 
 void IConstStore(INSTQ *next, short id, short con, short reg)
 {
-   int i, j;
-
    #ifdef X86_32
       InsNewInst(NULL, NULL, next, MOV, -reg, con, 0);
 /*
@@ -906,23 +920,26 @@ void Extern2Local(INSTQ *next, int rsav)
 {
    extern int NPARA, DTnzerod, DTnzero, DTabsd, DTabs; 
    extern int        DTnzerods, DTnzeros, DTabsds, DTabss;
-   short ii, i, j=0, flag, ir, k, kk, reg1=0, freg, dreg, vfreg, vdreg;
+   short i, j=0, flag, ir, k, kk, reg1=0, freg, dreg, vfreg, vdreg;
    int USED;
    #ifdef X86_64
-      int nof, ni, nd, dr, dreg1;
+      int nof, ni, nd, dr;
       char *rpara[6] = {"@rdi", "@rsi", "@rdx", "@rcx", "@r8", "@r9"};
       char fnam[8];
    #elif defined(FKO_ANSIC)
       int ld, st;
    #endif
-   int nbytes=0;
+   #if defined(SPARC) || defined(PPC)
+      char nam[8];
+      int ii;
+      extern short STderef;
+   #endif
    short *paras;
-   char nam[8];
+   /*char nam[8];*/
    #ifdef PPC
       char fnam[8];
       int fc, fr=0;
    #endif
-   extern short STderef;
 
    assert(!ParaDerefQ);
    dreg = GetReg(T_DOUBLE);
@@ -1727,9 +1744,10 @@ void FinalizeEpilogue(BBLOCK *bbase,
                       int *dr     /* double regs saved */
                       )
 {
-   int i, k;
+   int i;
    INSTQ *next;
    BBLOCK *blk;
+   /*int k;*/
 
    i = STlabellookup("_IFKO_EPILOGUE");
    blk = FindBlockWithLabel(bbase, i);
@@ -1833,7 +1851,8 @@ int FindUsedParaRegs(BBLOCK *bp, int *ir)
    #endif
    return(ni);
 }
-/*
+#if 0
+/* NOT USED ANYMORE!!!
  * FIXME:
  * Majedul: FinalizePrologueEpilogue is called after the repeatable 
  * optimization. So, some param reg to stack store may be deleted. Analyzing
@@ -1851,13 +1870,13 @@ static int GimmeRegSave(BBLOCK *bp, int *savedregs)
  *          0     : no available register
  */
 {
-   int ir[TNIR], ni;
+   int ir[TNIR];
    int i;
 /*
  * FIXME: need to skip the used parameter too. Following function doesn't 
  * ensure to scope out all 
  */
-   ni = FindUsedParaRegs(bp, ir);
+   FindUsedParaRegs(bp, ir);
    for (i=1; i < TNIR; i++)
       if (!ir[i] && !icalleesave[i])
          return(i+1);
@@ -1866,7 +1885,6 @@ static int GimmeRegSave(BBLOCK *bp, int *savedregs)
          return(-i-1);
    return(0);
 }
-
 static INSTQ *LastIntLd(BBLOCK *blk, INSTQ *ipstart)
 /*
  * Finds first load of integer register from memory starting from ipstart and
@@ -2005,6 +2023,7 @@ if (KeepOn)
    if (icalleesave[k-1]) k = -k;
    return(k);
 }
+#endif
 
 int FindRegToSaveSP(BBLOCK *blk)
 /*
@@ -2033,14 +2052,14 @@ int FindRegToSaveSP(BBLOCK *blk)
  *    Currently, this is no way to catch them in compile time. like: 
  */
 {
-   int i, j, k, n;
+   int i, j, k;
    int rsav = 0;
    INSTQ *ip;
    INT_BVI liveregs, iv;
-   short *vals;
    struct locinit *li;
    extern INT_BVI FKO_BVTMP;
    extern BBLOCK *bbbase;
+   /*short *vals;*/
 /*
  * Methodology, Find the last parameter load to copy parameter in stack which 
  * uses stack pointer, skip all live-in register and select a caller-saved one
@@ -2198,7 +2217,6 @@ void FixParamLoad(BBLOCK *headblk, int rsav, int spderef)
  * for all cases. Moreover, this case doesn't occur frequently.  
  */
 {
-   int i;
    short ireg;
    INSTQ *ip;
 /*
@@ -2258,8 +2276,8 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
 {
    INSTQ *ip, *oldhead;
    int LOAD1=0;          /* load old SP to register after reg save? */
-   int k, i, nir, nfr, ndr;
-   int ir[TNIR], fr[TNFR], dr[TNDR], irsav[TNIR];
+   int i, nir, nfr, ndr;
+   int ir[TNIR], fr[TNFR], dr[TNDR]; /*, irsav[TNIR];*/
    int Aoff;  /* offset to arguments, from frame pointer */
    int Soff=0; /* system-dependant skip offset */
    int Loff;   /* called routines frame size excluding locals */
@@ -2268,9 +2286,10 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
    int align;        /* local area required byte alignment */
    int lsize;        /* size of all required locals */
    int tsize;        /* total frame size */
-   int maxalign, ssize=0;
+   int maxalign;
    int csize=0;/* call parameter area size */
    extern int LOCALIGN, LOCSIZE;
+   /*int k; */
 /*
  * FIXME: is LOCSIZE updated? considering the vectorization!!!
  * LOCSIZE is generated before vectorization at GenPrologueEpilogueStubs. So,
@@ -2319,9 +2338,12 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
       ir[rsav-1]++;
 #endif
    }
+#if 0 
    for (i=0; i < TNIR; i++) 
       irsav[i] = ir[i];
-   k = RemoveNosaveregs(IREGBEG, TNIR, ir, icalleesave);
+#endif
+   /*k = RemoveNosaveregs(IREGBEG, TNIR, ir, icalleesave);*/
+   RemoveNosaveregs(IREGBEG, TNIR, ir, icalleesave);
    nir = GetRegSaveList(IREGBEG, TNIR, ir);
    RemoveNosaveregs(FREGBEG, TNFR, fr, fcalleesave);
    nfr = GetRegSaveList(FREGBEG, TNFR, fr);
@@ -2416,7 +2438,6 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
    #elif defined(LINUX_PPC)
       Aoff = 8;
    #endif
-/*   tsize = Aoff + csize + ssize + lsize; */
    Soff += csize;
    #ifdef X86_64
       Loff = 8*(nir+ndr) + 4*nfr;
@@ -2658,9 +2679,8 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
 
 void CreatePrologue(BBLOCK *bbase, int rsav)
 {
-   short prog, k;
-   int i;
-   INSTQ *ip, *oldhead;
+   short prog;
+   INSTQ *oldhead;
    BBLOCK *bp;
 
    if (!bbase) return;
@@ -3209,11 +3229,4 @@ void FeedbackArchInfo(FILE *fpout)
    }
 
 }
-
-
-
-
-
-
-
 

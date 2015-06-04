@@ -2,7 +2,7 @@
 #include "fko.h"
 
 /*
- * Majedul: FIXME: all the 4 pointers for symbol table are global and visible
+ * Majedul: FIXED: all the 4 pointers for symbol table are global and visible
  * from anyother files. any lookup function can overflow the size and change
  * the glabal pointers. So, using a statement where these pointers are accessed
  * while calling the lookup/add function is potentially dangarous.
@@ -23,16 +23,13 @@ struct arrayinfo *STarr; /* to save information of multi-dim array*/
 
 static int N=0, Nalloc=0; /* for Symbol table */
 static int Narr=0, TNarr=0; /* for array table */
-
-/*int opt2d = 0;*/  /* omitted by FKO_OPT2DPTR */
-
-
 static int niloc=0, nlloc=0, nfloc=0, ndloc=0, nvfloc=0, nvdloc=0;
+
 #if 1
 static int nviloc=0;
 #endif
 
-int    LOCSIZE=0, LOCALIGN=0, NPARA=0;
+int LOCSIZE=0, LOCALIGN=0, NPARA=0;
 
 #define STCHUNK 1024    /* increased for safety ...*/
 #define DTCHUNK 1024
@@ -441,7 +438,6 @@ void PrintSTarr(FILE *fpout)
 {
    int i, j, dim, count;
    short lda, ur;
-   char ln[64];
    assert(fpout);
    fprintf(fpout, "   PTR        DIMENSION          LDA              UNROLL");
    fprintf(fpout, "                NEWPTR    \n");
@@ -536,7 +532,8 @@ void CreateFPLocals()
  * and takes const value from there.
  */
 {
-   short k, n=0, i;
+   /*int i;*/
+   short k, n=0;
    int fl;
    char ln[256];
 
@@ -546,7 +543,8 @@ void CreateFPLocals()
       if (IS_CONST(fl) && (IS_DOUBLE(fl) || IS_FLOAT(fl)))
       {
          sprintf(ln, "_FPC_%d\n", n++);
-         i = STdef(ln, (fl & (!GLOB_BIT)) | LOCAL_BIT, k+1);
+         /*i = STdef(ln, (fl & (!GLOB_BIT)) | LOCAL_BIT, k+1);*/
+         STdef(ln, (fl & (!GLOB_BIT)) | LOCAL_BIT, k+1);
       }
    }
 }
@@ -625,8 +623,7 @@ void CreateLocalDerefs()
  */
 {
    short k;
-   int fl, nl=0, i;
-   extern int NPARA;
+   int fl;
    for (k=0; k != N; k++)
    {
       fl = STflag[k];
@@ -667,7 +664,7 @@ void UpdateLocalDerefs(int isize)
  * isize is the size in bytes of an integer on the arch in question.
  */
 {
-   short k, off, h, i;
+   short k, off;
    int fl;
 #if 1
    int GetArchAlign(int nvd, int nvf, int nvi, int nd, int nf, int nl, int ni);
@@ -961,7 +958,6 @@ void PrintST(FILE *fpout)
 {
    int flag;
    short k;
-   char pre;
    char *what;
 
    fprintf(fpout, "\n                                  SYMBOL TABLE:\n");
@@ -973,7 +969,6 @@ void PrintST(FILE *fpout)
       flag = STflag[k];
       fprintf(fpout, "%5d %5d %34.34s", k+1, flag, 
               STname[k] ? STname[k] : "NULL");
-      pre = '?';
       if (IS_DEREF(flag))
          fprintf(fpout, "   DEREF %4d,%4d,%4d,%4d\n",
                  SToff[k].sa[0],SToff[k].sa[1],SToff[k].sa[2],SToff[k].sa[3]);
@@ -1003,11 +998,7 @@ void PrintST(FILE *fpout)
          fprintf(fpout, " UNKNOWN UNKNOWN\n");
    }
 }
-#if 0
-static void KillSTStrings()
-#else
 void KillSTStrings()
-#endif
 {
    int i;
    if (STname)
@@ -1230,9 +1221,8 @@ short *CreateOptLDAs(short *ldas, short ptr, short unroll)
  * 
  */
 {
-   int i, nl;
+   int nl;
    short *cldas;
-   char ln[512];
 
    switch(unroll)
    {
@@ -1317,7 +1307,7 @@ short *CreateOptColPtrs(short base, short lda, short unroll)
  * returns list of colptrs
  */
 {
-   int i, np;
+   int np;
    short *colptrs;
    short tmlda;
    char ln[512];
@@ -1449,13 +1439,11 @@ void CreateArrColPtrs()
  * sa[3] for parameter only be available after this function!!!
  */
 {
-   int i, j;
+   int i;
    short ptr, nd;
    short *lda;
-   short ldaS, con;
-   char ln[512];
+   short ldaS;
    short ur;
-   extern BBLOCK *bbbase;
    extern int FKO_FLAG;
    
    DoComment("Create ldas = lda * sizeof ");
@@ -1463,6 +1451,7 @@ void CreateArrColPtrs()
    {
       ptr = STarr[i].ptr;
       nd = STarr[i].ndim;
+      assert(nd <= 2); /* we don't support 3D arrays yet */
       lda = STarr[i].ldas;
       if (STarr[i].urlist)
       {

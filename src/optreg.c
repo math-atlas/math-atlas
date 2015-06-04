@@ -178,9 +178,10 @@ int Reg2Regstate(int k)
  */
 {
    static INT_BVI iv=0;
-   int i;
+   #ifdef SPARC
+      int i;
+   #endif
 
-//fprintf(stderr, "%s(%d)\n", __FILE__,__LINE__);
    if (k <= 0)
    {
       if (iv) KillBitVec(iv);
@@ -273,8 +274,7 @@ int FindLiveregs(INSTQ *here)
  */
 {
    INSTQ *ip;
-   int i, j, k;
-   INT_BVI iv;
+   int i, k;
    static INT_BVI liveregs=0, mask, vtmp;
 
    if (here)
@@ -318,7 +318,7 @@ int FindLiveregs(INSTQ *here)
 /*
  *    FIXME: Reg2Regstate() always set all the alias regs
  */
-      for (i=1; k = GetSetBitX(vtmp, i); i++)
+      for (i=1; (k = GetSetBitX(vtmp, i)); i++)
          BitVecComb(liveregs, liveregs, Reg2Regstate(k), '|');
       for (ip=here->myblk->inst1; ip != here; ip = ip->next)
       {
@@ -330,7 +330,7 @@ int FindLiveregs(INSTQ *here)
          if (ip->deads)
          {
             BitVecComb(vtmp, ip->deads, mask, '&');
-            for (i=1; k = GetSetBitX(vtmp, i); i++)
+            for (i=1; (k = GetSetBitX(vtmp, i)); i++)
                BitVecComb(liveregs, liveregs, Reg2Regstate(k), '-');
          }
 /*
@@ -339,7 +339,7 @@ int FindLiveregs(INSTQ *here)
          if (ip->set)
          {
             BitVecComb(vtmp, ip->set, mask, '&');
-            for (i=1; k = GetSetBitX(vtmp, i); i++)
+            for (i=1; (k = GetSetBitX(vtmp, i)); i++)
                BitVecComb(liveregs, liveregs, Reg2Regstate(k), '|');
          }
       }
@@ -772,8 +772,7 @@ void CombineLiveRanges(BLIST *scope, BBLOCK *pred, int pig,
  */
 {
    IGNODE *pnode, *snode, *node;
-   BLIST *bl, *lp;
-   INSTQ *ip;
+   BLIST *bl;
    short *vals;
    int i, n;
 
@@ -1051,7 +1050,6 @@ int CalcScopeIG(BLIST *scope)
 {
    static INT_BVI blkvec=0;
    BLIST *bl, *lp;
-   short *sp;
    int i, j;
 
    if (scope)
@@ -1242,7 +1240,7 @@ void KillUnusedIG(int N, IGNODE **igs)
  * Kills all IGNODEs in IG that do not also appear in igs
  */
 {
-   IGNODE *node, *save;
+   IGNODE *node;
    int n, i, j;
    BLIST *bl;
    short *sp;
@@ -1300,7 +1298,7 @@ IGNODE **SortIG(int *N, int thresh)
  * be worth assigning.
  */
 {
-   int n, ncon, i, j, nref;
+   int n, ncon, i, j;
    INT_BVI iv;
    IGNODE *ig;
    IGNODE **igarr;
@@ -1381,7 +1379,6 @@ int DoIGRegAsg(int N, IGNODE **igs, int *nspill)
 {
    int i, j, n;
    int iret = 0;
-   int spill;
    IGNODE *ig, *ig2;
    short *sp;
    INT_BVI iv, ivused;
@@ -1448,7 +1445,7 @@ int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
  * instructions (inclusive).  If either is NULL, we take instbeg/end.
  */
 {
-   INSTQ *ip, *ip1;
+   INSTQ *ip;
    int CHANGE=0;
    short k;
 
@@ -1581,7 +1578,7 @@ int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
    }
    while(ip != instend);
    if (CHANGE) 
-      INDEADU2D = CFUSETU2D = CFUSETU2D = 0;
+      INDEADU2D = CFUSETU2D = 0;
    return(CHANGE);
 }
 
@@ -1593,7 +1590,7 @@ int DoRegAsgTransforms(IGNODE *ig)
  */
 {
    INSTQ *ip;
-   BLIST *bl, *lp;
+   BLIST *bl;
    enum inst mov, ld, st, inst, sts, movs;
    int i, CHANGE=0;
 
@@ -1985,14 +1982,13 @@ int AsgGlobalLoopVars(LOOPQ *loop, short *iregs, short *fregs, short *dregs)
  * RETURNS: 0 on success, non-zero on failure.
  */
 {
-   int i, j, k, n, m;
+   int i, k, n, m;
    BLIST *bl;
    INSTQ *ip;
    short *sa, *s;
    INT_BVI iv;
    extern INT_BVI FKO_BVTMP;
-   short id;
-
+   /*int j; */
 /*
  * Find all variables set in list
  */
@@ -2024,7 +2020,7 @@ int AsgGlobalLoopVars(LOOPQ *loop, short *iregs, short *fregs, short *dregs)
    SetVecBit(iv, k+TNREG-1, 0);
 
    sa = BitVec2Array(iv, 1);
-   for (n=0, j=i=1; i <= sa[0]; i++) 
+   for (n=0, i=1; i <= sa[0]; i++) 
    {
       k = sa[i];
 /*
@@ -2219,7 +2215,6 @@ int LoadStoreToMove(BLIST *blocks, int n, short *vars, short *regs)
    short is;
    BLIST *bl;
    INSTQ *ip;
-   INT_BVI iv;
    extern INT_BVI FKO_BVTMP;
    enum inst *movs;
 
@@ -2306,7 +2301,6 @@ int DoLoopGlobalRegAssignment(LOOPQ *loop)
  * in the loop, and live on loop entry or exit
  */
 {
-   short *sp;
    int i, j, n, iret;
    short k;
    short iregs[NIR], fregs[NFR], dregs[NDR]; 
@@ -2588,7 +2582,7 @@ int CopyPropTrans0(int SRCLIVE, BLIST *scope, INT_BVI scopeblks, BBLOCK *blk,
  */
 {
    INSTQ *ip;
-   int FoundIt, i, j, LIVEDONE=0;
+   int FoundIt, j, LIVEDONE=0;
    int change=0;
    BLIST *bl;
    INT_BVI ivsrc, ivdst;
@@ -2810,12 +2804,9 @@ INSTQ *CopyPropTrans(BLIST *scope, INT_BVI scopeblks, BBLOCK *blk, INSTQ *ipret)
  *          transform is done.
  */
 {
-   INSTQ *ip;
-   char *sp;
-   int i;
-   INT_BVI iv;
    int change;
    short dest, src, mov;
+   /*INSTQ *ip; */
 
    dest = -ipret->inst[1];
    src = -ipret->inst[2];
@@ -3138,8 +3129,8 @@ int DoEnforceLoadStore(BLIST *scope)
    int nchanges=0;
    short op;
    extern INT_BVI FKO_BVTMP;
-   extern int DTabs, DTabsd, DTnzero, DTnzerod;
-   extern int DTabss, DTabsds, DTnzeros, DTnzerods;
+   /*extern int DTabs, DTabsd, DTnzero, DTnzerod;*/
+   /*extern int DTabss, DTabsds, DTnzeros, DTnzerods;*/
 
    if (!FKO_BVTMP)
       FKO_BVTMP = NewBitVec(TNREG);
@@ -3274,11 +3265,11 @@ int DoRemoveOneUseLoads(BLIST *scope)
 {
    INSTQ *ip, *ipn, *ipuse;
    BLIST *bl;
-   int nchanges=0, reg;
+   int nchanges=0;
    enum inst inst;
    short k;
-   INT_BVI iv;
-   extern INT_BVI FKO_BVTMP;
+   /*INT_BVI iv;*/
+   /*extern INT_BVI FKO_BVTMP;*/
 
 /*
  * Only x86 has these from-memory operations
@@ -3290,9 +3281,9 @@ int DoRemoveOneUseLoads(BLIST *scope)
       CalcAllDeadVariables();
    else if (!CFUSETU2D || !CFU2D || !INUSETU2D)
       CalcInsOuts(bbbase);
-   if (!FKO_BVTMP)
+   /*if (!FKO_BVTMP)
       FKO_BVTMP = NewBitVec(TNREG);
-   iv = FKO_BVTMP;
+   iv = FKO_BVTMP;*/
 
    for (bl=scope; bl; bl = bl->next)
    {
@@ -3369,7 +3360,7 @@ int DoLastUseLoadRemoval(BLIST *scope)
 {
    BLIST *bl;
    INSTQ *ipld, *ip, *ipn, *ipN;
-   int nchanges=0, i, j, k, typ;
+   int nchanges=0, j, k, typ;
    enum inst inst;
 /*
  * Only x86 has these from-memory operations

@@ -129,7 +129,6 @@ void InsInstInBlockList(BLIST *blist, int FIRST, enum inst ins,
  * insert as last
  */
 {
-   INSTQ *next = NULL;
    for(; blist; blist = blist->next)
    {
       if (FIRST)
@@ -149,6 +148,7 @@ INSTQ *InsertInstBeforeQEntry(INSTQ *list, INSTQ *add)
    add->next = list;
    list->prev->next = add;
    list->prev = add;
+   return(add);
 }
 
 INSTQ *RemoveInstFromQ(INSTQ *del)
@@ -216,10 +216,12 @@ INSTQ *DelInst(INSTQ *del)
 static
 char *head0a="INUM INSTRUCT   DESTINATION       SOURCE 1       SOURCE 2      ",
      *head1a="==== ======== =============== =============== ===============  ",
+#if 0
      *head0b="      USES              SETS              DEADS\n",
      *head1b="================= ================= =================\n\n",
      *form=
      "%4d %8.8s %4d,%10.10s %4d,%10.10s %4d,%10.10s  %17.17s %17.17s %17.17s\n",
+#endif
      *shortform=
      "%4d %8.8s %4d,%10.10s %4d,%10.10s %4d,%10.10s\n";
 
@@ -238,6 +240,7 @@ int FindInstNum(BBLOCK *blk, INSTQ *inst)
    for (ip=blk->inst1; ip != inst; ip = ip->next) i++;
    return(i);
 }
+#if 0
 static char *BV2NumList(int iv)
 {
    static char lns[3][32];
@@ -272,7 +275,7 @@ static char *BV2NumList(int iv)
    }
    return(sptr);
 }
-
+#endif
 char *op2str(short op)
 /*
  * Translates op to expanded mneumonic
@@ -539,7 +542,6 @@ void PrintOptInst(FILE *fpout, int iopt, int op, BLIST *scope,
  * after the last opt, etc.
  */ 
 {
-   int i, j, k;
    BLIST *iscope;
 
    fprintf(fpout,"%s",mark);

@@ -42,7 +42,6 @@ void CalcThisUseSet(INSTQ *ip)
  */
 {
    short inst, except;
-   short op1, op2, op3;
 
    inst = ip->inst[0];
    except = inst >> 14;
@@ -92,7 +91,7 @@ void CalcThisUseSet(INSTQ *ip)
 /*
  *    A XOR op with src1 == src2 does not really use the src
  */
-      if (inst != XOR && inst != XORS || ip->inst[2] != ip->inst[3])
+      if ( (inst != XOR && inst != XORS) || (ip->inst[2] != ip->inst[3]) )
       {
          HandleUseSet(ip->use, ip->use, ip->inst[2]);
          HandleUseSet(ip->use, ip->use, ip->inst[3]);
@@ -121,7 +120,6 @@ void CalcThisUseSet(INSTQ *ip)
 void CalcUseSet(BBLOCK *bp)
 {
    INSTQ *ip;
-   int flag;
 
    for (ip=bp->inst1; ip; ip = ip->next)
       CalcThisUseSet(ip);
@@ -206,7 +204,6 @@ void CalcBlocksDeadVariables(BBLOCK *bp)
  * static vars if it is called by NULL.
  */
 {
-   BBLOCK *bb;
    static INT_BVI mask=0;
    INT_BVI seenwrite;
    short inst;
@@ -387,7 +384,7 @@ void FindThisInstUseSet(INSTQ *ip, INT_BVI use, INT_BVI set)
          /*
           *    A XOR op with src1 == src2 does not really use the src
           */
-         if (inst != XOR && inst != XORS || ip->inst[2] != ip->inst[3])
+         if ( (inst != XOR && inst != XORS) || ip->inst[2] != ip->inst[3])
          {
             HandleUseSet(use, use, ip->inst[2]);
             HandleUseSet(use, use, ip->inst[3]);
@@ -424,9 +421,8 @@ void CheckUseSet()
 {
    int check;
    BBLOCK *bp;
-   BLIST *bl;
    INSTQ *ip; 
-   short inst, except;
+   short inst;
    INT_BVI use, set;
    extern BBLOCK *bbbase;
    extern INT_BVI FKO_BVTMP; 
@@ -443,7 +439,7 @@ void CheckUseSet()
       for (ip=bp->ainst1; ip; ip=ip->next)
       {
          inst = ip->inst[0];
-         except = inst >> 14;
+         /*except = inst >> 14;*/
          inst &= 0x3FFF;
 
          SetVecAll(use, 0);
@@ -457,7 +453,7 @@ void CheckUseSet()
             check = BitVecCheckComb(ip->use, use, '-');
             if (check)
             {
-               PrintThisInst(stderr, ip);
+               PrintThisInst(stderr, 0, ip);
                fprintf(stderr, "USE=%s\n", BV2VarNames(use));
                fprintf(stderr, "IP->USE=%s\n", BV2VarNames(ip->use));
                assert(!check);

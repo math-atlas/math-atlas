@@ -13,7 +13,7 @@
  * Majedul: To store the LOOP MU (with no param)
  * nLMU is the number of those markup
  */
-   static int nLMU = 2; 
+   /*static int nLMU = 2; */
    static short LMU[2] = {0,0};
 /*
  * For markups which have both list and an int, we keep 2 separate array of ptr
@@ -32,6 +32,8 @@
 */
    static short maxunroll=0, writedd=1;
    extern short STderef;
+   int yylex(void);
+   void yyerror(char *msg);
 
    struct idlist *NewID(char *name);
    static void UpdateLoop(struct loopq *lp);
@@ -127,7 +129,7 @@ stateflag: ROUT_NAME NAME
             WhereAt = 1;
             strcpy(rout_name, $2);
             STdef(rout_name, T_FUNC | GLOB_BIT, 0);
-            STderef = STderef = STdef("_NONLOCDEREF", PTR_BIT|DEREF_BIT, 0);
+            STderef = STdef("_NONLOCDEREF", PTR_BIT|DEREF_BIT, 0);
          }
          | ROUT_LOCALS
          {
@@ -380,7 +382,7 @@ arith : ID '=' ID '+' avar {HandleArith($1, $3, '+', $5); }
       ;
 %%
 
-static struct idlist *idhead=NULL, *paras=NULL;
+static struct idlist *idhead=NULL;
 static struct slist *shead=NULL;
 
 struct idlist *NewID(char *name)
@@ -509,8 +511,7 @@ void HandleMove(short dest, short src)
 
 short HandleArrayAccess(short ptr, short dim)
 {
-   int i, val, ur;
-   struct slist *sl;
+   int val, ur;
    short rt, hdm, ldm, arrid;
    short ptr1d;
    extern int FKO_FLAG; /* global flag for opt array access */
@@ -650,10 +651,10 @@ void HandleUnrollFactor(short ptr, int ndim)
 
 static void UpdateLoop(struct loopq *lp)
 {
-   int i, j, k, n, m;
+   extern int VECT_FLAG;
+   /*int i, n;*/
    /*short *fptrs, *maptrs;*/
-   short *spa, *spb;
-   extern VECT_FLAG;
+   /*short *spa, *spb;*/
 /*
  * check for vector intrinsic
  * If intrinsic HIL code is used, we set the flag VECT_INTRINSIC
@@ -812,7 +813,7 @@ void HandleLoopListMU(int which)
 {
    int i, n;
    short *sp;
-   short *cp;
+   /*short *cp;*/
    struct idlist *id;
    for (id=idhead,n=0; id; id=id->next) n++;
 /*
@@ -955,7 +956,7 @@ void HandleLoopListIntMU(int which, int ival)
 
 void para_list()
 {
-   short i=0, n, k;
+   short i=0, n;
    struct idlist *id;
    extern int NPARA;
 
@@ -974,7 +975,7 @@ void declare_list(int flag)
 {
    unsigned short si;
    struct idlist *id;
-   int i, n;
+   int n;
 /*
  * FIXME: if a variable is in param list but not declare in typedec, there is
  * no way to ctach this in existing implementation, will get seg fault in 
@@ -1007,7 +1008,7 @@ void declare_vector(int flag, int vlen)
 {
    unsigned short si;
    struct idlist *id;
-   int i, n, vl;
+   int n, vl;
 /*
  * FIXME: if a variable is in param list but not declare in typedec, there is
  * no way to ctach this in existing implementation, will get seg fault in 
@@ -1058,10 +1059,9 @@ void AddVElem2List(short id)
 
 void HandleVecInit(short vid)
 {
-   int i,n;
+   int n;
    int stp, vtp, tchk;
    struct slist *sl;
-   short si;
 /*
  * checking for the type of vector (to be initialized)
  */
@@ -1230,7 +1230,7 @@ void ConstInit(short id, short con)
    LIhead = NewLI(id, con, LIhead);
 }
 
-yyerror(char *msg)
+void yyerror(char *msg)
 {
    fprintf(stderr, "\n\nERROR: Line %d: %s\n\n", lnno, msg);
    exit(-1);

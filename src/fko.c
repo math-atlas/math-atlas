@@ -169,7 +169,7 @@ struct optblkq *SproutNode(struct optblkq *head, struct optblkq *seed)
  */
 {
    struct optblkq *new, *op;
-   int n, nlist, i, j, k;
+   int i, n;
 /*
  * Handle conditional blocks seperately
  */
@@ -242,7 +242,6 @@ struct optblkq *SproutNode(struct optblkq *head, struct optblkq *seed)
 void PrintOptTree(FILE *fpout, struct optblkq *optree)
 {
    int i;
-   struct optblkq *opb;
    
    if (optree)
    {
@@ -290,8 +289,10 @@ struct optblkq *OptBlockQtoTree(struct optblkq *head)
  * NOTE: deletes sequential queue when done
  */
 {
+#if 0   
    int i;
    struct optblkq *op;
+#endif
    struct optblkq *root;
    root = FindOptBlockUsingNext(head, 1);
    assert(root);
@@ -381,7 +382,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
    FILE **fpp;
    char *fin=NULL, *fout=NULL;
    struct optblkq *obq=NULL, *op;
-   struct ptrinfo *pf, *pfb=NULL, *pf0, *pfK, *pfP, *aeb=NULL;
+   struct ptrinfo *pf, *pfb=NULL, *pf0, *aeb=NULL;
    struct ptrinfo *seb=NULL;    /* this is to generalize the scalar expansion */
    struct idlist  *id, *idb=NULL, *idP, *idK;
    char *sp, *rpath=NULL, *rname=NULL;
@@ -1051,7 +1052,7 @@ static void WriteState0MiscToFile(char *name)
 {
    FILE *fp;
    short *sp;
-   short i, n;
+   short n;
    struct locinit *lp;
    extern struct locinit *LIhead;
 
@@ -1146,7 +1147,7 @@ static void WriteMiscToFile(char *name)
 {
    FILE *fp;
    short *sp;
-   short i, n;
+   short n;
    struct locinit *lp;
    extern struct locinit *LIhead;
 
@@ -1257,7 +1258,6 @@ static void ReadState0MiscFromFile(char *name)
    int i;
    short n;
    FILE *fp;
-   LOOPQ *lp;
    short *sp, *s;
    extern struct locinit *LIhead;
    extern LOOPQ *loopq;
@@ -1510,7 +1510,6 @@ static void ReadMiscFromFile(char *name)
    int i;
    short n;
    FILE *fp;
-   LOOPQ *lp;
    short *sp, *s;
    extern struct locinit *LIhead;
 
@@ -1767,8 +1766,7 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int scstate, int *nsp)
    BBLOCK *bp;
    int i, j, k, nchanges=0, nc0;
    static short nlab=0, labs[4];
-   static int iopt = 0, bv = 0; /* Majedul: for opt logger, bv -> */
-   BLIST *bl;
+   /*static int iopt = 0, bv = 0;*/ /* Majedul: for opt logger, bv -> */
    extern LOOPQ *optloop;
 /*
  * Form scope based on global setting
@@ -1996,7 +1994,7 @@ BLIST *FindBlksInBetween(BBLOCK *frblk, BBLOCK *toblk, BLIST *scope)
    return(bln);
 }
 #endif
-
+#if 0
 LOOPQ *LoopOrder()
 {
    int i;
@@ -2019,8 +2017,9 @@ LOOPQ *LoopOrder()
       }
       lp0 = lp;
    }
+   return(lp0);
 }
-
+#endif
 
 BLIST **SplitScope(int *N)
 {
@@ -2116,14 +2115,14 @@ BLIST **SplitScope(int *N)
 
 void UpdateOptsNewScope(struct optblkq *op)
 {
-   int id, i, j, k, n;
-   int maxdep;
-   BLIST *scope, **lpscope, **scopes;
-   BBLOCK *bp;
+   int id, i, k, n;
+   /*int maxdep;*/
+   BLIST **scopes;
+   /*BLIST *scope, **lpscope;*/
    struct optblkq *obp, *obp0, *obp1;
-   BLIST *bl, *bl0;
-   LOOPQ *lpq, *lpq0, *nlp, *lp;
-   extern LOOPQ *loopq;
+   BLIST *bl;
+   /*LOOPQ *lpq, *lpq0, *nlp, *lp;*/
+   /*extern LOOPQ *loopq;*/
 
 /*
  * Need to recalculate the scope for this. bbbase is already changed
@@ -2320,11 +2319,11 @@ int DoOptBlock(BLIST *gscope, BLIST *lscope, struct optblkq *op)
    int i, j, k, nc, tnc=0, scstate;
    int maxN;
    struct optblkq *dp;
-   struct optblkq *obp, *obp0, *obp1;
    BLIST *scope = NULL;
-   LOOPQ *lpq, *lpq0;
-   BLIST *bl, *bl0;
    extern LOOPQ *loopq;
+   /*struct optblkq *obp, *obp0, *obp1;*/
+   /*LOOPQ *lpq, *lpq0;*/
+   /*BLIST *bl, *bl0;*/
 /*
  * Scopes are now three: global, optloop, and Scoped
  * So, added extra checking
@@ -2524,7 +2523,7 @@ int PerformOptN(int SAVESP, struct optblkq *optblks)
  * Returns: # of changes
  */
 {
-   BLIST *bl, *lbase;
+   BLIST *lbase;
    extern BBLOCK *bbbase;
    extern LOOPQ *optloop;
    BBLOCK *bp;
@@ -2557,9 +2556,9 @@ int PerformOpt(int SAVESP)
  */
 {
    int *nspill;
-   BLIST *bl, *lbase;
+   BLIST *lbase;
    BBLOCK *bp;
-   int i, j, KeepOn, k;
+   int i, j, KeepOn;
    extern BBLOCK *bbbase;
 
    nspill = malloc(NTYPES*sizeof(int));
@@ -2787,10 +2786,8 @@ struct optblkq *DefaultOptBlocks(void)
 {
    int i, id, n;
    struct optblkq *base, *op;
-   BLIST *bl0, *bl;
+   BLIST *bl;
    BLIST **scopes;
-   LOOPQ *lpq, *lpq0;
-   BBLOCK *bp;
    extern LOOPQ *loopq;
 /*
  * FIXED: there are two kind of register assignment: 
@@ -3567,14 +3564,14 @@ void FeedbackLValSpill(FILE *fpout, struct optblkq *optblks)
    
 }
 
-void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks,
-                                    struct assmln *abase)
+void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks)
 /*
  * NOTE: this is used temporarily to genarate assembly and test the output
  * will formalize later ... fpout, optblks, abase
  */
 {
    int i; 
+   struct assmln *abase;
    extern struct locinit *ParaDerefQ;
 
    CalcInsOuts(bbbase);
@@ -3705,7 +3702,7 @@ void AddOptWithOptimizeLC(LOOPQ *lp)
  */
 {
    struct ptrinfo *pi, *pi0;
-   int i, n, k;
+   int i, n;
    short *sp;
 
    if (!lp) return;
@@ -3849,14 +3846,11 @@ int main(int nargs, char **args)
  *===========================================================================
  */
 {
-   FILE *fpin, *fpout, *fpl;
+   FILE *fpin, *fpout;
    char *fin;
-   char ln[512];
-   struct assmln *abase;
    struct optblkq *optblks;
    BBLOCK *bp;
-   int i;
-   int RCapp;
+   /*int RCapp;*/
    extern FILE *yyin;
    extern BBLOCK *bbbase;
 /*
@@ -4002,7 +3996,7 @@ int main(int nargs, char **args)
  */
    if (!optloop)
    {
-      GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
+      GenerateAssemblyWithCommonOpts(fpout, optblks );
       KillAllGlobalData(optblks); 
       return(0);
    }
@@ -4051,7 +4045,7 @@ int main(int nargs, char **args)
  *    After this state, the structure of Max/Min will be lost. So, update 
  *    optloop with that. We can use this info later (both in this state and SE )
  */
-      UpdateOptLoopWithMaxMinVars1(optloop);
+      UpdateOptLoopWithMaxMinVars(optloop);
       if (STATE1_FLAG & IFF_ST1_MMR)
       {
 /*
@@ -4063,7 +4057,7 @@ int main(int nargs, char **args)
 #if 0 
          fprintf(stdout, "LIL after ElimMax/MinIf\n");
          PrintInst(stdout, bbbase);
-         GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
+         GenerateAssemblyWithCommonOpts(fpout, optblks );
 #endif
       }
 
@@ -4096,7 +4090,7 @@ int main(int nargs, char **args)
          fprintf(stdout, "LIL after RC\n");
          PrintInst(stdout, bbbase);
          exit(0);
-         GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
+         GenerateAssemblyWithCommonOpts(fpout, optblks );
 #endif         
       } 
    }
@@ -4181,7 +4175,7 @@ int main(int nargs, char **args)
 #endif         
          #if 0
             //GenAssenblyApplyingOpt4SSV(fpout, optblks, abase);
-            GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
+            GenerateAssemblyWithCommonOpts(fpout, optblks );
             exit(0);
          #endif
 /*
@@ -4331,7 +4325,7 @@ int main(int nargs, char **args)
          PrintInst(stdout, bbbase);
          PrintLoop(stderr, optloop);
          //exit(0);
-         //GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
+         //GenerateAssemblyWithCommonOpts(fpout, optblks );
          exit(0);
 #endif         
 
@@ -4406,7 +4400,7 @@ int main(int nargs, char **args)
             PrintST(stdout);
             exit(0);
          #else
-            GenerateAssemblyWithCommonOpts(fpout, optblks, abase );
+            GenerateAssemblyWithCommonOpts(fpout, optblks );
             KillAllGlobalData(optblks); 
          #endif
 #endif         

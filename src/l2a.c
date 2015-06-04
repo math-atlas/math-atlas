@@ -49,7 +49,7 @@ static char *GetDeref(short id)
  */
 {
    static char ln[128];
-   short ptr, reg, mul, con, HC;
+   short ptr, reg, mul, con;
    id--;
 /*
  * NOTE: fpconst must be initialize in CONST_INIT before using in expression,
@@ -157,12 +157,18 @@ static char *GetSregOrDeref(short id)
  * or a properly formated deref entry if greater than zero
  */
 {
+#if 0   
    if (id < 0)
    {
       return(archsregs[-IREGBEG-id]);
    }
    else if (id)
       return(GetDeref(id));
+#endif
+   assert(id);
+   if (id < 0)
+      return(archsregs[-IREGBEG-id]);
+   return(GetDeref(id));
 }
 #endif
 
@@ -172,6 +178,7 @@ static char *GetIregOrDeref(short id)
  * or a properly formated deref entry if greater than zero
  */
 {
+#if 0   
    if (id < 0)
       return(archiregs[-IREGBEG-id]);
    else if (id)
@@ -179,6 +186,12 @@ static char *GetIregOrDeref(short id)
       assert(IS_DEREF(STflag[id]));
       return(GetDeref(id));
    }
+#endif
+   assert(id);
+   if (id < 0)
+      return(archiregs[-IREGBEG-id]);
+   assert(IS_DEREF(STflag[id]));
+   return(GetDeref(id));
 }
 
 static int GetDregID(short id)
@@ -215,6 +228,7 @@ static char *GetDregOrDeref(short id)
  * or a properly formated deref entry if greater than zero
  */
 {
+#if 0
    if (id < 0)
    {
       #ifdef VIREGBEG
@@ -236,6 +250,28 @@ static char *GetDregOrDeref(short id)
    }
    else if (id)
       return(GetDeref(id));
+#endif
+   assert(id);
+   if (id < 0)
+   {
+      #ifdef VIREGBEG
+         if(-id >= VIREGBEG)
+            return(archviregs[-VIREGBEG-id]);
+      #endif
+      #ifdef VDREGBEG
+         if(-id >= VDREGBEG)
+            return(archvdregs[-VDREGBEG-id]);
+      #endif
+      #ifdef VFREGBEG
+         if(-id >= VFREGBEG)
+            return(archvfregs[-VFREGBEG-id]);
+      #endif
+      if (-id >= DREGBEG)
+         return(archdregs[-DREGBEG-id]);
+      else
+         return(archfregs[-FREGBEG-id]);
+   }
+   return(GetDeref(id));
 }
 
 #ifdef X86_64
@@ -368,12 +404,15 @@ struct assmln *lil2ass(BBLOCK *bbase)
    BBLOCK *bp;
    uchar *cp;
    struct assmln *ahead=NULL, *ap;
-   short inst, op1, op2, op3, k;
+   short inst, op1, op2, op3;
    #ifdef SPARC
       int SeenSave=0;
    #endif
+   #ifdef PPC
+      int k;
+   #endif
    int i, j;
-   char ln[1024], *sptr;
+   char *sptr;
    extern int DTabsd, DTnzerod, DTabs, DTnzero, DTx87, DTx87d;
    extern int DTabsds, DTnzerods, DTabss, DTnzeros;
    /* End of declaration */

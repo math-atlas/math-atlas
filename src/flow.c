@@ -120,7 +120,7 @@ BLIST *GetGlobalScope()
 {
    BBLOCK *bp;
    extern BBLOCK *bbbase;
-   BLIST *blb=NULL, *bl;
+   BLIST *blb=NULL;
    if (bbbase)
    {
       for (bp=bbbase; bp->down; bp = bp->down);
@@ -454,7 +454,7 @@ BBLOCK *FindBasicBlocks(BBLOCK *base0)
  */
 {
    BBLOCK *bbase=NULL, *bp, *bn;
-   INSTQ *ip, *inst1=NULL;
+   INSTQ *ip;
    int j=2;
 
    if (!base0) return(NULL);
@@ -584,7 +584,6 @@ void FindPredSuccBlocks(BBLOCK *bbase)
  * by examining successors only.
  */
 {
-   BLIST *lp, *lp0;
    BBLOCK *bp;
    short inst;
 
@@ -1446,7 +1445,6 @@ void FinalizeLoops()
    int maxdep, i;
    INT_BVI phbv, iv;
    BLIST *bl;
-   INSTQ *ip;
    extern INT_BVI FKO_BVTMP;
 
    for (lp=loopq; lp; lp = lp->next)
@@ -1675,7 +1673,7 @@ static BLIST *FindFallThruPath(BLIST *scope, BBLOCK *head, BBLOCK *tail,
 
 BLIST *FindFallThruPathBlks(BLIST *scope, BBLOCK *head, BLIST *tails)
 {
-   BLIST *bl, *ftblks; 
+   BLIST *ftblks; 
    ftblks = NULL;
 /*
  * consider one tail right now.
@@ -1794,9 +1792,8 @@ void SwapSuccessor(BBLOCK *blk, BBLOCK *csucc, BBLOCK *usucc)
  * the block structure. After this conversion, the cfg becomes messed-up
  */
 {
-   int i, k;
-   BBLOCK *bp;
-   INSTQ *ip, *ipu;
+   int k;
+   INSTQ *ip;
    enum inst prebr[] = {JEQ, JNE, JLT, JLE, JGT, JGE};
    enum inst abr[]   = {JNE, JEQ, JGE, JGT, JLE, JLT};
    const int nbr = 6;
@@ -1867,9 +1864,6 @@ static BBLOCK *NewFallThruBasicBlocks(int *count, BBLOCK *head, BBLOCK *tail,
  * NOTE: this algorithm is not costly, acts like DFS
  */
 {
-   int i;
-   BBLOCK *bp;
-   INSTQ *ip;
    extern BBLOCK *bbbase;
 
    static BBLOCK *end = NULL;
@@ -2007,12 +2001,12 @@ void RemakeWithNewFallThru(LOOPQ *lp)
  * this function will change fall-thru only for the optloop 
  */
 {
-   int i, count;
-   BLIST *bl, *ftblks, *allblks;
+   int count;
+   BLIST *bl;
    BBLOCK *bp;
    BBLOCK *end, *endnext; /* end: RET blk, endnext: other flow [if cleanup] */
-   INSTQ *ip;
    extern BBLOCK *bbbase;
+   /*BLIST *ftblks, *allblks;*/
 /*
  * Assume single tail for loop now
  */   
@@ -2127,13 +2121,11 @@ void TransformFallThruPath(int path)
  * after the SB of SV. cost of finding all paths would be 2^n 
  */
 {
-   int i, np;
+   int np;
    LOOPQ *lp;
-   BBLOCK *bp;
    BLIST **paths;
-   BLIST *bl, *ftblks, *blInvExpBlks;
+   BLIST *bl, *blInvExpBlks;
    extern LOOPQ *optloop;
-   extern BBLOCK *bbase;
    
    paths = NULL;
    bl = NULL;

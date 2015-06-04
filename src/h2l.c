@@ -144,10 +144,7 @@ void DoConvert(short dest, short src)
 
 void DoFpConstLoad(short dest, short src)
 {
-   char *ln;
    int type;
-   
-fprintf(stderr, "Handling fpconst!\n");
 /*
  * Encode fp const load as special case of FMOV.
  */
@@ -224,7 +221,7 @@ static void FixDeref(short ptr)
  * at a time, resulting in an additional add.
  */
 {
-   short k, type;
+   short type;
 
    ptr--;
    type = FLAG2TYPE(STflag[SToff[ptr].sa[0]-1]);
@@ -272,8 +269,7 @@ static void FixDeref(short ptr)
 
 void DoArrayStore(short ptr, short id)
 {
-   INSTQ *ip;
-   short lreg, ireg=0, preg, k, type;
+   short lreg, k, type;
 
    k = ptr-1;
    type = FLAG2TYPE(STflag[id-1]);
@@ -339,9 +335,11 @@ void DoArrayLoad(short id, short ptr)
  * id is ST index, ptr is DT index
  */
 {
-   short k, ireg=0, areg, type, ld;
-
-   k = (ptr-1)<<2;
+   short areg, type, ld;
+   #ifdef X86_64   
+      short k;
+      k = (ptr-1)<<2;
+   #endif
    type = FLAG2TYPE(STflag[id-1]);
    FixDeref(ptr);
    switch(type)
@@ -398,7 +396,7 @@ void DoArrayBroadcast(short id, short ptr)
  * id : ST index of vector variable, ptr: DT entry
  */
 {
-   short k, ireg=0, areg, type, ld;
+   short areg, type, ld;
 
    FixDeref(ptr);
 
@@ -422,7 +420,7 @@ void DoArrayBroadcast(short id, short ptr)
 
 void DoArrayPrefetch(short lvl, short ptrderef, int wpf)
 {
-   short k, ireg=0, areg, type, inst;
+   enum inst inst;
 
    FixDeref(ptrderef);
    
@@ -438,18 +436,18 @@ void HandlePtrArithNoSizeofUpate(short dest, short src0, char op, short src1)
  * size to fix the offset. 
  */
 {
-   short rd, rs0, rs1, flag, type, dflag, k;
+   short rs0, rs1, flag;
    if (op != '+' && op != '-')
-      yyerror("pointers may take only + and - operators");
+      fko_error(__LINE__,"pointers may take only + and - operators");
    if (!IS_PTR(STflag[src0-1]))
-      yyerror("Expecting <ptr> = <ptr> + <int>");
+      fko_error(__LINE__,"Expecting <ptr> = <ptr> + <int>");
       
    rs0 = LocalLoad(src0); /* load src0 */ 
    flag = STflag[src1-1];
    if (!IS_CONST(flag))
       rs1 = LocalLoad(src1); /* load src1 */
    else
-      yyerror("expecting var as 2nd src as a special case");
+      fko_error(__LINE__,"expecting var as 2nd src as a special case");
 
    InsNewInst(NULL, NULL, NULL, op == '+' ? ADD : SUB, -rs0, -rs0, -rs1);
    LocalStore(dest, rs0);
@@ -461,13 +459,14 @@ void HandlePtrArith(short dest, short src0, char op, short src1)
  * Ptr arithmetic must be of form <ptr> = <ptr> [+,-] <int/const>
  */
 {
-   short rd, rs0, rs1, flag, type, dflag, k;
-   short nvar;
-
+   short rs0, rs1, flag, type, dflag;
+   #ifdef X86_64
+      short k;
+   #endif
    if (op != '+' && op != '-')
-      yyerror("pointers may take only + and - operators");
+      fko_error(__LINE__,"pointers may take only + and - operators");
    if (!IS_PTR(STflag[src0-1]))
-      yyerror("Expecting <ptr> = <ptr> + <int>");
+      fko_error(__LINE__,"Expecting <ptr> = <ptr> + <int>");
    
 /*
  * Majedul: The concept of LIL as three address code violets here. We have 
@@ -501,7 +500,7 @@ void HandlePtrArith(short dest, short src0, char op, short src1)
          rs1 = -STiconstlookup(SToff[src1-1].i*type2len(type));
       #endif
       else
-         yyerror("Pointers may only be incremented by integers");
+         fko_error(__LINE__,"Pointers may only be incremented by integers");
    }
    else
    {
@@ -555,7 +554,7 @@ void Handle2dArrayPtrArith(short dest, short src0, char op, short src1)
  */
 {
    int i;
-   short arrid, lda, ur, arrN;
+   short arrid, ur, arrN;
 /*
  * only supported where src0 and dest are same....
  */
@@ -639,7 +638,7 @@ void DoArith(short dest, short src0, char op, short src1)
    else rs1 = 0;
    if ( (op == '%' || op == '>' || op == '<') && 
         (type != T_INT && type != T_SHORT) )
-      yyerror("modulo and shift not defined for non-integer types");
+      fko_error(__LINE__,"modulo and shift not defined for non-integer types");
    switch(op)
    {
    case '+': /* dest = src0 + src1 */
@@ -731,7 +730,7 @@ void DoArith(short dest, short src0, char op, short src1)
       }
       break;
    case '%': /* dest = src0 % src1 */
-      yyerror("% not yet supported");
+      fko_error(__LINE__,"% not yet supported");
       break;
    case '>': /* dest = src0 >> src1 */
       if (type == T_INT) inst = SHR;
@@ -792,7 +791,7 @@ void DoArith(short dest, short src0, char op, short src1)
             rs0 = rd = LocalLoad(dest);
          #endif
       }
-      else yyerror("MAC available for floating point operands only!");
+      else fko_error(__LINE__,"MAC available for floating point operands only!");
       break;
    case 'n': /* dest = -src0 */
       switch(type)
@@ -849,9 +848,12 @@ void DoEmptyReturn()
 }
 void DoReturn(short rret)
 {
-   int retreg, srcreg;
+   int retreg;
+   /*int srcreg;*/
    int mov, ld, type;
-   extern int DTx87, DTx87d;
+   #ifdef X86_32
+      extern int DTx87, DTx87d;
+   #endif
    if (rret)
    {
       type = FLAG2PTYPE(STflag[rret-1]);
@@ -1040,7 +1042,7 @@ void DoLabel(char *name)
 void DoIf(char op, short id, short avar, char *labnam)
 {
    int flag, type;
-   short k, cmp, ireg, ireg1, freg0, freg1, br, label;
+   short cmp, ireg, ireg1, freg0, freg1, br, label;
 
    label = STlabellookup(labnam);
    assert(id > 0 && label > 0 && avar > 0);
@@ -1181,7 +1183,6 @@ short AddOpt2dArrayDeref(short base, short hdm, short ldm, int unroll)
  * unroll = unroll factor
  */
 {
-   int i;
    int hdmi, ldmi, dsize;
    short dt, ptr1, ptr2, ptr3;
    short flag;
@@ -1487,9 +1488,9 @@ short AddOpt2dArrayDeref(short base, short hdm, short ldm, int unroll)
 
 void DoVecInit(short vid, struct slist *elem)
 {
-   int i,k,n;
+   int k;
    int flag;
-   int stp, vtp;
+   int vtp;
    struct slist *sl;
    short svar;
    short st0;
@@ -1568,10 +1569,10 @@ void DoVecInit(short vid, struct slist *elem)
 void DoReduce(short sid, short vid, char op, short iconst)
 {
    int i, k;
-   int flag, ne, lgne, mask;
+   int flag, ne, lgne;
    int *sfcode;
    short r0, r1;
-   enum inst vinst, vadd, vmax, vmin, vsld, vsst, vld, vst, vshuf;
+   enum inst vinst, vadd, vmax, vmin, vsst, vld, vshuf;
 /*
  * select based on type
  */
@@ -1581,10 +1582,8 @@ void DoReduce(short sid, short vid, char op, short iconst)
       vadd = VFADD;
       vmax = VFMAX;
       vmin = VFMIN;
-      vsld = VFLDS;
       vsst = VFSTS;
       vld = VFLD;
-      vst = VFST;
       vshuf = VFSHUF;
    }
    else if (IS_VDOUBLE(flag))
@@ -1592,10 +1591,8 @@ void DoReduce(short sid, short vid, char op, short iconst)
       vadd = VDADD;
       vmax = VDMAX;
       vmin = VDMIN;
-      vsld = VDLDS;
       vsst = VDSTS;
       vld = VDLD;
-      vst = VDST;
       vshuf = VDSHUF;
    }
    else
