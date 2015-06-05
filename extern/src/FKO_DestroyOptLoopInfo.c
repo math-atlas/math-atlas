@@ -11,6 +11,8 @@ static void FKO_FreeAllStrings(int n, char **sa)
 
 void FKO_DestroyOptLoopInfoC(fko_olpinfo_t *p)
 {
+   if (p->vpath)
+      free(p->vpath);
    if (p->pnam)
    {
       FKO_FreeAllStrings(p->nmptrs, p->pnam);

@@ -18,13 +18,17 @@ fko : $(heads) fko.o $(objs)
 
 exth = $(exthd)/fko_archinfoC.h $(exthd)/fko_archinfo.h
 force_build :
-oloopquery : force_build
+queryoloop : force_build
 	cd $(extsd) ; make
-	$(CC) $(CCFLAGS) -I$(exthd) -o $@ ../extern/src/oloopquery.c \
+	$(CC) $(CCFLAGS) -I$(exthd) -o $@ ../extern/src/queryoloop.c \
               $(extd)/lib/libfkoinfo.a
-archquery : force_build
+queryinst : force_build
 	cd $(extsd) ; make
-	$(CC) $(CCFLAGS) -I$(exthd) -o $@ ../extern/src/archquery.c \
+	$(CC) $(CCFLAGS) -I$(exthd) -o $@ ../extern/src/queryinst.c \
+              $(extd)/lib/libfkoinfo.a
+queryarch : force_build
+	cd $(extsd) ; make
+	$(CC) $(CCFLAGS) -I$(exthd) -o $@ ../extern/src/queryarch.c \
               $(extd)/lib/libfkoinfo.a
 xprintinst : ../include/fko.h ../include/fko_inst.h ../src/printinst.c
 	$(CC) $(CCFLAGS) -I../include -o $@ ../src/printinst.c

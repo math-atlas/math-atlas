@@ -339,6 +339,7 @@ char *FKO_GetBoolValsFromWords(int nw, fko_word_t *wp)
       else
          assert(0);
    }
+   return(bp);
 }
 
 int FKO_TypeStrToInt(char *st)

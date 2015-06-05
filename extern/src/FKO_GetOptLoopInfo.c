@@ -327,7 +327,7 @@ fko_olpinfo_t *FKO_GetOptLoopInfoC(char *fnin)
       }
       else if (il.nwords == 2 || il.nwords == 3) /* VECTORIZATION: op1 [op2] */
       {
-         assert(!strcmp(sp, "VECTORIZATION:"));
+         assert(!strcmp(wp->word, "VECTORIZATION:"));
          sp = wp->next->word;
          lp->vec = 0;
          if (!strcmp(sp, "NONE"))

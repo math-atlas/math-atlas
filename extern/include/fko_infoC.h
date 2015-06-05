@@ -106,4 +106,20 @@ struct fko_olpinfo
 
 fko_olpinfo_t *FKO_GetOptLoopInfoC(char *filename);
 void FKO_DestroyOptLoopInfoC(fko_olpinfo_t *die);
+
+/*
+ * typedef and functions for getting details about the generated instructions
+ * Currently, just gives the number of live range spills for optloop & global
+ */
+typedef struct fko_instinfo fko_instinfo_t;
+struct fko_instinfo
+{
+   int lrspills;  /* number of scopes where we see spills */
+      short *ospills;
+      short *gspills;
+};
+
+fko_instinfo_t *FKO_GetInstInfoC(char *filename);
+void FKO_DestroyInstInfoC(fko_instinfo_t *die);
+
 #endif

@@ -25,6 +25,11 @@
 #else
    extern fko_olpinfo_t *FKO_OLOOPINF;
 #endif
+#ifdef DECL_II_
+   fko_instinfo_t *FKO_INSTINF=NULL;
+#else
+   extern fko_instinfo_t *FKO_INSTINF;
+#endif
 /*
  * Translates a string describing the FKO type into an integer for use
  * in the querying functions that that take type arguments.  str should
@@ -83,4 +88,11 @@ int FKO_HasSpecialInst(int typ, int inst);  /* arch has max/min/cmov? */
  */
 void FKO_GetOptLoopInfo(char *fname);  /* "stdin" reads from standard in */
 void FKO_DestroyOptLoopInfo(void);
+/*
+ *****************************************************************************
+ * Below this line are instinfo functions                                    *
+ *****************************************************************************
+ */
+void FKO_GetInstInfo(char *fname);  /* "stdin" reads from standard in */
+void FKO_DestroyInstInfo(void);
 #endif
