@@ -4231,11 +4231,11 @@ void PrintMovingPtrAnalysis(FILE *fpout)
             if (lp->nopf)
                if (FindInShortList(lp->nopf[0], lp->nopf+1, ptr))
                   j = 0;
-            fprintf(fpout, " prefetch=%d", j);
-            CountVarAccess(lp->blocks, ptr, &j, &k);
-            fprintf(fpout, " uses=%d sets=%d", j, k);
-            CountArrayAccess(lp->blocks, ptr, &j, &k);
-            fprintf(fpout, " lds=%d sts=%d\n", j, k);
+            CountVarAccess(lp->blocks, ptr, &m, &n);
+            fprintf(fpout, " uses=%d sets=%d", m, n);
+            CountArrayAccess(lp->blocks, ptr, &m, &n);
+            fprintf(fpout, " lds=%d sts=%d", m, n);
+            fprintf(fpout, " prefetch=%d\n", j);
          }
       }
    }
