@@ -4098,6 +4098,8 @@ short *FindAllScalarVars(BLIST *scope)
 void PrintMovingPtrAnalysis(FILE *fpout)
 {
    int i, j, k, m, n, ns, N, npt, nst, nus;
+   int nlds, nsts;
+   int n1d, n2d;
    INT_BVI set, use, var;
    short *sp, *aptr;
    char pre;
@@ -4131,7 +4133,6 @@ void PrintMovingPtrAnalysis(FILE *fpout)
    for (N=0,pi=pi0; pi; pi = pi->next)
       if (IS_FP(STflag[pi->ptr-1]))
          N++;
-#if 1
 /*
  * FIXED: if we have 2D array access, we won't return column ptr as
  * they are compiler's internal var/ptr. We will return the 2D ptr
@@ -4155,76 +4156,90 @@ void PrintMovingPtrAnalysis(FILE *fpout)
          }
       }
    }
-   fprintf(fpout, "   Moving FP Pointers: %d\n", npt);
+   n1d = 0; n2d =0;
    for (i=0; i < npt; i++)
    {
       ptr = aptr[i];
       sta = STarrlookup(ptr);
-      fprintf(fpout, "      '%s': type=%c", STname[ptr-1]?STname[ptr-1]:"NULL",
-              IS_FLOAT(STflag[ptr-1]) ? 's' : 'd');
       if (!sta)
+         n1d++;
+      else if( sta && STarr[sta-1].ndim > 1)
+         n2d++;
+   }
+   if (n2d)
+   {
+      fprintf(fpout, "   Moving 2D Pointers: %d\n", n2d);
+      for (i=0; i < npt; i++)
       {
-         pi = FindPtrinfo(pi0, ptr);
-/*
- *       NOTE: prefetch not applicable for outer loop unrolled kernel by this 
- *       condition
- */
-         j = ((pi->flag | PTRF_CONTIG | PTRF_INC) == pi->flag);
-         if (lp->nopf)
-            if (FindInShortList(lp->nopf[0], lp->nopf+1, ptr))
-               j = 0;
-         fprintf(fpout, " prefetch=%d", j);
-         CountArrayAccess(lp->blocks, ptr, &k, &j);
-         fprintf(fpout, " sets=%d uses=%d\n", j, k);
-      }
-      else if(STarr[sta-1].ndim > 1)
-      {
-         if (lp->nopf && FindInShortList(lp->nopf[0], lp->nopf+1, ptr))
-               j = 0;
-         else
+         ptr = aptr[i];
+         sta = STarrlookup(ptr);
+         if( sta && STarr[sta-1].ndim > 1)
          {
-            j = 1;
-            nst = 0; nus = 0;
-/*
- *          compute from all internally created column pointers
- */
-            for (k=1, N=STarr[sta-1].colptrs[0]; k <= N; k++ )
+            fprintf(fpout, "      '%s': type=%c", 
+                    STname[ptr-1]?STname[ptr-1]:"NULL",
+                    IS_FLOAT(STflag[ptr-1]) ? 's' : 'd');
+            if (lp->nopf && FindInShortList(lp->nopf[0], lp->nopf+1, ptr))
+                  j = 0;
+            else
             {
-               ptr = STarr[sta-1].colptrs[k];
-               pi = FindPtrinfo(pi0, ptr);
-               j = ((pi->flag | PTRF_CONTIG | PTRF_INC) == pi->flag) & j;
-               CountArrayAccess(lp->blocks, ptr, &m, &n);
-               nst += n;
-               nus += m;
+               j = 1;
+               nst = 0; nus = 0; nsts = 0; nlds = 0;
+/*
+ *             compute from all internally created column pointers
+ */
+               for (k=1, N=STarr[sta-1].colptrs[0]; k <= N; k++ )
+               {
+                  ptr = STarr[sta-1].colptrs[k];
+                  pi = FindPtrinfo(pi0, ptr);
+                  j = ((pi->flag | PTRF_CONTIG | PTRF_INC) == pi->flag) & j;
+                  CountArrayAccess(lp->blocks, ptr, &m, &n);
+                  nsts += n;
+                  nlds += m;
+                  CountVarAccess(lp->blocks, ptr, &m, &n);
+                  nst += n;
+                  nus += m;
+               }
             }
+            fprintf(fpout, " uses=%d sets=%d", nus, nst);
+            fprintf(fpout, " lds=%d sts=%d", nlds, nsts);
+            fprintf(fpout, " prefetch=%d", j);
+            fprintf(fpout, " ncol=%dd nreg=%d nptr=%d\n", 
+                    SToff[STarr[sta-1].urlist[0]-1].i,
+                    STarr[sta-1].colptrs[0] + STarr[sta-1].cldas[0],
+                    STarr[sta-1].colptrs[0]); 
          }
-         fprintf(fpout, " prefetch=%d", j);
-         fprintf(fpout, " sets=%d uses=%d", nst, nus);
-         fprintf(fpout, " arr=%dd ur=%d nr=%d\n", STarr[sta-1].ndim, 
-                 SToff[STarr[sta-1].urlist[0]-1].i,
-                 STarr[sta-1].colptrs[0] + STarr[sta-1].cldas[0]); 
+      }
+   }
+   if (n1d)
+   {
+      fprintf(fpout, "   Moving 1D Pointers: %d\n", n1d);
+      for (i=0; i < npt; i++)
+      {
+         ptr = aptr[i];
+         sta = STarrlookup(ptr);
+         if (!sta)
+         {
+            fprintf(fpout, "      '%s': type=%c", 
+                    STname[ptr-1]?STname[ptr-1]:"NULL",
+                    IS_FLOAT(STflag[ptr-1]) ? 's' : 'd');
+            pi = FindPtrinfo(pi0, ptr);
+/*
+ *          NOTE: prefetch not applicable for outer loop unrolled kernel by this 
+ *          condition
+ */
+            j = ((pi->flag | PTRF_CONTIG | PTRF_INC) == pi->flag);
+            if (lp->nopf)
+               if (FindInShortList(lp->nopf[0], lp->nopf+1, ptr))
+                  j = 0;
+            fprintf(fpout, " prefetch=%d", j);
+            CountVarAccess(lp->blocks, ptr, &j, &k);
+            fprintf(fpout, " uses=%d sets=%d", j, k);
+            CountArrayAccess(lp->blocks, ptr, &j, &k);
+            fprintf(fpout, " lds=%d sts=%d\n", j, k);
+         }
       }
    }
    free(aptr);
-#else
-   fprintf(fpout, "   Moving FP Pointers: %d\n", N);
-   for (pi=pi0; pi; pi = pi->next)
-   {
-      i = pi->ptr-1;
-      if (IS_FP(STflag[i]))
-      {
-         fprintf(fpout, "      '%s': type=%c", STname[i]?STname[i]:"NULL",
-                IS_FLOAT(STflag[i]) ? 's' : 'd');
-         j = ((pi->flag | PTRF_CONTIG | PTRF_INC) == pi->flag);
-         if (lp->nopf)
-            if (FindInShortList(lp->nopf[0], lp->nopf+1, i+1))
-               j = 0;
-         fprintf(fpout, " prefetch=%d", j);
-         CountArrayAccess(lp->blocks, i+1, &k, &j);
-         fprintf(fpout, " sets=%d uses=%d\n", j, k);
-      }
-   }
-#endif
 /*
  *    sets + use - regs - ptrs = scalars in loop
  */
@@ -4283,7 +4298,7 @@ void PrintMovingPtrAnalysis(FILE *fpout)
       fprintf(fpout, "      '%s': type=%c", STname[k], pre);
       /*CountArrayAccess(lp->blocks, sp[i], &k, &j);*/
       CountVarAccess(lp->blocks, sp[i], &k, &j);
-      fprintf(fpout, " sets=%d uses=%d", j, k);
+      fprintf(fpout, " uses=%d sets=%d", k, j);
 #if 0      
       if (j == k)
          j = VarIsAccumulator(lp->blocks, sp[i]);
@@ -4334,40 +4349,50 @@ int FindNumIFs(BLIST *scope)
 void FeedbackLoopInfo()
 /*=============================================================================
 OPTLOOP=1
-   MaxUnroll=0
-   LoopNormalForm=1/0
-   NUMIFS=1
    NUMPATHS=2
-      MaxEliminatedIfs=1
-      MinEliminatedIfs=1
-      RedCompEliminatedIfs=1
-   VECTORIZABLE=1
-      MaxMinOK=0/1
-      RedCompOK=0/1
-      SpeculationOK=1
-         path-1Vect=1/0
-         path-2Vect=1/0
-   Moving FP Pointers: N
-      'A': type=s/d prefetch=1/0 sets=2 uses=8 arr=2d ur=8 nr=4 
-      ... ... ...
-   Scalars Used in Loop: N
-      'x': type=s/d sets=1 uses=1 ReduceExpandable=1/0
-      ... ... ... 
+      VECTORIZABLE: 1 0
+      EliminateAllBranches: [NO,MaxMin,RedComp, MaxMin RedComp]
+      NUMIFS=1
+         MaxEliminatedIfs=1
+         MinEliminatedIfs=0
+         RedCompEliminatedIfs=1
+   VECTORIZATION: [NONE, LoopLvl, SpecVec, LoopLvl SpecVec]
+   Moving 2D Pointers: 1
+      'A': type=d sets=1 uses=3 lds=X sts=Y prefetch=1 ncol=W nreg=X nptr=Y
+   Moving 1D Pointers: 1
+      'X': type=d sets=1 uses=3 lds=X sts=Y prefetch=1
+   Scalars Used in Loop: 2
+      'amax': type=d sets=1 uses=1 ReduceExpandable=1
+      'x': type=d sets=2 uses=3 ReduceExpandable=0
  *============================================================================*/
 {
    int i, npaths, nifs;
    LOOPQ *lp;
-   ILIST *il;
    FILE *fpout=stdout;
-   int SimpleLC=0, UR;
-   int MaxR, MinR, RC, pv;
+   int MaxR, MinR, RC;
    int VmaxminR, Vrc, Vspec, Vn;
+   int *pvec;
+   const int nelimbr = 3;
+   char *cElimBr[] = {"NO", "MaxMin", "RedComp"};
+   int iElimBr[] = {0, 0, 0};
+   enum eElimBr {NO, MAXMIN, REDCOMP};
+   const int nvec = 3;
+   char *cVecMethod[] = {"NONE", "LoopLvl", "SpecVec"};
+   enum eVecMethod {NONE, LOOPLVL, SPECVEC};
+   int iVecMethod[] = {0, 0, 0};
    extern FILE *fpLOOPINFO;
    extern short STderef;
    extern BBLOCK *bbbase;
-
-   MaxR=0; MinR=0; RC=0; pv =0;
+   extern int FKO_MaxPaths;
+   /*int SimpleLC=0, UR;*/
+   /*ILIST *il;*/
+   
+   MaxR=0; MinR=0; RC=0;
    VmaxminR=0; Vrc=0; Vspec=0; Vn=0;
+
+   pvec = calloc(FKO_MaxPaths, sizeof(int));
+   assert(pvec);
+
    if (fpLOOPINFO)
       fpout = fpLOOPINFO;
 #if 0
@@ -4407,17 +4432,20 @@ OPTLOOP=1
    if (optloop)
    {
       fprintf(fpout, "OPTLOOP=1\n");
+#if 0
 /*
  *    HERE HERE, what is the significance of MaxUnroll ??? 
  *    It is derived from the annotation 
  */
       UR = optloop->maxunroll;
       fprintf(fpout, "   MaxUnroll=%d\n", UR);
+#endif
 /*
  *    figure out the loop structure    
  */
       lp = optloop;
       KillLoopControl(lp);
+#if 0
       il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
       if (il)
       {
@@ -4428,6 +4456,7 @@ OPTLOOP=1
       else
          SimpleLC = 1;
       fprintf(fpout, "   LoopNormalForm=%d\n", SimpleLC);
+#endif
 /*
  *    Restoring state0 ... ... ...
  */
@@ -4477,9 +4506,7 @@ OPTLOOP=1
  *    done inside FindNumPaths() function
  */
       npaths = FindNumPaths(optloop);
-      fprintf(fpout, "   NUMPATHS=%d\n",npaths);
       nifs = FindNumIFs(optloop->blocks) - 1; /* 1 for loop itself */
-      fprintf(fpout, "   NUMIFS=%d\n",nifs);
 
       if (npaths > 1)
       {
@@ -4505,14 +4532,14 @@ OPTLOOP=1
  *       paths still. So, it's a design decision whether we need to apply 
  *       SpeculativeVectorAnalysis ... ... 
  */
-         if (FindNumPaths(optloop) == 1 && (MaxR || MinR) )
+         iElimBr[MAXMIN] = MaxR | MinR;
+         if (FindNumPaths(optloop) == 1 && iElimBr[MAXMIN] )
          {
             VmaxminR = !(SpeculativeVectorAnalysis()); 
+            iVecMethod[LOOPLVL] = VmaxminR; 
             KillPathTable();
          }
 
-         fprintf(fpout, "      MaxEliminatedIfs=%d\n",MaxR);
-         fprintf(fpout, "      MinEliminatedIfs=%d\n",MinR);
 /*
  *       Check whether RedundantComputation Transformation can be applied
  *       NOTE: right now, we can apply RC only for 2 paths! if or if-else
@@ -4548,14 +4575,13 @@ OPTLOOP=1
  */
          RC = 0;
 #endif
+         iElimBr[REDCOMP] = RC;
          if (RC)
          {
-            fprintf(fpout, "      RedCompEliminatedIfs=%d\n",nifs);
             Vrc = !(RcVectorAnalysis()); /* checking for shadow RC too */
+            iVecMethod[LOOPLVL] = Vrc;
             KillPathTable();
          }
-         else
-            fprintf(fpout, "      RedCompEliminatedIfs=%d\n",0);
       }
 /*
  *    Now, we will check the vectorization 
@@ -4571,6 +4597,7 @@ OPTLOOP=1
       if (IsSpeculationNeeded())
       {
          Vspec = !(SpeculativeVectorAnalysis()); /*it is the most general */
+         iVecMethod[SPECVEC] = Vspec;
 /*
  *       Kill path after getting vectorization info
  */
@@ -4580,34 +4607,66 @@ OPTLOOP=1
       {
          Vspec = 0;
          Vn = !(RcVectorAnalysis()); /* checking for shadow RC too */
+         iVecMethod[LOOPLVL] = Vn;
          /*Vn = !(SpeculativeVectorAnalysis());*/ /*it is the most general */ 
          KillPathTable();
       }
       
       if (Vn || Vrc || VmaxminR || Vspec)
       {
-         fprintf(fpout, "   VECTORIZABLE=%d\n",1);
+         pvec[0] = 1;
          if (npaths > 1)
          { 
-            fprintf(fpout, "      MaxMinOK=%d\n",VmaxminR);
-            fprintf(fpout, "      RedCompOK=%d\n",Vrc);
-            fprintf(fpout, "      SpeculationOK=%d\n",Vspec);
             if (Vspec)
             {
                for (i=0; i < npaths; i++)
                {
-                  pv = PathVectorizable(i+1);
-                  fprintf(fpout, "         path-%dVect=%d\n", i+1, pv);
+                  pvec[i] = PathVectorizable(i+1);
                }               
                KillPathTable();
             }
          }
       }
-      else
-         fprintf(fpout, "   VECTORIZABLE=%d\n",0);
-#else
-      fprintf(fpout, "   VECTORIZABLE=%d\n",0);
 #endif
+/*
+ *    set none, if no other is applicable
+ */
+      iElimBr[NO] = 1; /* NO is the first one */
+      for (i=1; i < nelimbr; i++)
+         if (iElimBr[i])
+            iElimBr[NO] = 0;
+      iVecMethod[NONE] = 1;
+      for (i=0; i < nvec; i++)
+         if (iVecMethod[i]) 
+            iVecMethod[NONE] = 0; 
+/*
+ *    Now print all information related paths
+ */
+      fprintf(fpout, "   NUMPATHS=%d\n",npaths);
+      if (npaths > 1)
+      {
+         fprintf(fpout, "      VECTORIZABLE:");
+         for (i=0; i < npaths; i++)
+            fprintf(fpout, " %d", pvec[i]);
+         fprintf(fpout, "\n");
+         fprintf(fpout, "      EliminatedAllBranches:");
+         for (i=0; i < nelimbr; i++)
+            if (iElimBr[i]) 
+               fprintf(fpout, " %s", cElimBr[i]);
+         fprintf(fpout, "\n");
+         fprintf(fpout, "      NUMIFS=%d\n",nifs);
+         if (nifs)
+         {
+            fprintf(fpout, "         MaxEliminatedIfs=%d\n",MaxR);
+            fprintf(fpout, "         MinEliminatedIfs=%d\n",MinR);
+            fprintf(fpout, "         RedCompEliminatedIfs=%d\n",nifs);
+         }
+      }
+      fprintf(fpout, "   VECTORIZATION:");
+      for (i=0; i < nvec; i++)
+         if (iVecMethod[i]) 
+            fprintf(fpout, " %s", cVecMethod[i]);
+      fprintf(fpout, "\n");
       /*
        *    Start checking for moving ptr
        */
@@ -4617,7 +4676,6 @@ OPTLOOP=1
       FindLoops(); 
       CheckFlow(bbbase, __FILE__, __LINE__);
       PrintMovingPtrAnalysis(fpout);     
-
    }
 
    if (fpout != stdout && fpout != stderr)
