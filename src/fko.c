@@ -3502,7 +3502,7 @@ void GenAssenblyApplyingOpt4SSV(FILE *fpout, struct optblkq *optblks,
 
 void FeedbackLValSpill(FILE *fpout, struct optblkq *optblks)
 {
-   int i;
+   int i, ln;
    struct optblkq *op;
    const int nreg = 6;
    char *treg[] = {"i","f", "d", "vi", "vf", "vd"}; 
@@ -3545,21 +3545,24 @@ void FeedbackLValSpill(FILE *fpout, struct optblkq *optblks)
 /*
  * print all info
  */
-   fprintf(fpout, "LRSPILLS=%d\n",tnr);
+   ln = (nropt > 0) + (nrglob > 0);
+   fprintf(fpout, "LRSPILLS=%d\n",ln);
    if (tnr)
    {
-      fprintf(fpout, "   OPTLOOP: total=%d",nropt);
       if (nropt)
       {
+         fprintf(fpout, "   OPTLOOP:");
          for (i=0; i < nreg; i++)
             if(ropt[i]) fprintf(fpout, " %s=%d", treg[i], ropt[i]);
+         fprintf(fpout, "\n");
       }
-      fprintf(fpout, "\n");
-
-      fprintf(fpout, "   GLOBAL: total=%d",nrglob);
-      for (i=0; i < nreg; i++)
-         if(rglob[i]) fprintf(fpout, " %s=%d", treg[i], rglob[i]);
-      fprintf(fpout, "\n");
+      if (nrglob)
+      {
+         fprintf(fpout, "   GLOBAL:");
+         for (i=0; i < nreg; i++)
+            if(rglob[i]) fprintf(fpout, " %s=%d", treg[i], rglob[i]);
+         fprintf(fpout, "\n");
+      }
    }
    
 }
