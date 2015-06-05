@@ -65,7 +65,9 @@
    #define X86_64
 #endif
 #if defined(LINUX_X86_32) || defined(LINUX_X86_64)
-   #define X86
+   #ifndef X86
+      #define X86 1
+   #endif
 #endif
 #ifdef SOLARIS_SPARC
    #define SPARC
