@@ -36,9 +36,20 @@
       #define SSE41 1
       #define AVX 1
       #define AVX2 1
-      #define VECDEF 1 /* uncomment this line, if you uncomm earlier line */
    #endif
 
+   #ifdef SSE3
+      #define VECDEF 1
+   #endif
+   #ifdef SSE41
+      #define VECDEF 1
+   #endif
+   #ifdef AVX
+      #define VECDEF 1
+   #endif
+   #ifdef AVX2
+      #define VECDEF 1
+   #endif
    #ifndef VECDEF
       #define AVX2
       #define VECDEF 1
