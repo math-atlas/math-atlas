@@ -2,8 +2,8 @@ ROUTINE ATL_UGEMV;
    PARAMS :: M, N, A, lda, X, Y;
    INT :: M, N, lda;
    DOUBLE_PTR :: X, Y;
-   DOUBLE_ARRAY[lda][*] :: A;
-   UNROLL_ARRAY :: A(2,*);
+   DOUBLE_ARRAY[*][lda] :: A;
+   UNROLL_ARRAY :: A(*,2);
 ROUT_LOCALS
    INT :: i, j, ldam;
    DOUBLE :: y0, y1, a0, a1, a2, x0;
@@ -23,7 +23,7 @@ ROUT_BEGIN
          a0 = A[0][0];
          y0 += a0 * x0;
 
-         a1 = A[1][0];
+         a1 = A[0][1];
          y1 += a1 * x0;
 
          A += 1; 
