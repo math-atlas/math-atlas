@@ -53,6 +53,7 @@ void PrintUsageN(char *name)
    fprintf(stderr, "  -o <outfile> : assembly output file\n");
    fprintf(stderr, "  -R [d,n] <directory/name> : restore path & base name\n");
    fprintf(stderr, "  -K 0 : suppress comments\n");
+   fprintf(stderr, "  -o <outfile> : assembly output file\n");
 /*
  * Majedul: not tested with new program states 
  */
@@ -63,13 +64,20 @@ void PrintUsageN(char *name)
    fprintf(stderr, "     L : dump LIL <file>.L\n");
    fprintf(stderr, "     o : dump opt sequence to <file>.opt\n");*/
    fprintf(stderr, "  -U <#> : Unroll main loop # of times\n");
-   fprintf(stderr, "  -V : Vectorize (SIMD) main loop\n");
-   fprintf(stderr, "  -B : Stronger Bet unrolling for SV\n");
+   /*fprintf(stderr, "  -V : Vectorize (SIMD) main loop\n");*/
+   fprintf(stderr, "  -LNZV : loop level no hazard vectorization\n");
+   fprintf(stderr, "  -SV <path#> <nvlens> :" 
+                   "Apply SpecVec to path# using nvlens bet\n" );
+   /*fprintf(stderr, "  -B : Stronger Bet unrolling for SV\n");*/
    fprintf(stderr, "  -M : Maximum paths to be analyzed in SV\n");
+   /*fprintf(stderr, 
+         "  -p [#]: path to speculate in speculative vectirization\n");*/
    fprintf(stderr, 
-         "  -p [#]: path to speculate in speculative vectirization\n");
-   fprintf(stderr, "  -rc : apply redundant computation to reduce path\n");
-   fprintf(stderr, "  -mmr : apply max/min var reduction to reduce path\n");
+         "  -FPC [#]: path to make fall-through \n");
+   /*fprintf(stderr, "  -rc : apply redundant computation to reduce path\n");
+   fprintf(stderr, "  -mmr : apply max/min var reduction to reduce path\n");*/
+   fprintf(stderr, "  -RC : apply redundant computation to reduce path\n");
+   fprintf(stderr, "  -MMR : apply max/min var reduction to reduce path\n");
    fprintf(stderr, "  -W <name> : use cache write-through stores\n");
    fprintf(stderr, "  -P <all/name> <cache level> <dist(bytes)>\n");
    fprintf(stderr, 
@@ -470,15 +478,25 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             i += 2;
             break;
 #endif
+#if 0
 /*
  *       stronger bet unrolling for SV
+ *       NOTE: added it to -SV flag
  */
          case 'B':
             FKO_SB = atoi(args[++i]);
             break;
-         
+#endif        
+/*
+ *       -M <#> :  max paths to be analyzed in SV and/or FPC
+ *       -MMR : apply max/min reduction
+ */
          case 'M':
-            FKO_MaxPaths = atoi(args[++i]);
+            if (args[i][2] && args[i][3] 
+                  && args[i][2] == 'M' && args[i][3] == 'R')
+               STATE1_FLAG |= IFF_ST1_MMR; 
+            else
+               FKO_MaxPaths = atoi(args[++i]);
             break;
 #if 0
 /*
@@ -492,6 +510,26 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             i += 2;
             break;
 #endif
+         case 'S':
+            if (args[i][2] && args[i][2]=='V')
+            {
+               FKO_FLAG |= IFF_VECTORIZE;
+               if (args[i+1] && args[i+2])
+               {
+                  path = atoi(args[++i]);
+                  FKO_SB = atoi(args[++i]);
+               }
+               else 
+                  PrintUsageN(args[0]);
+              if (!path || !FKO_SB) 
+              {
+                 fprintf(stderr, "Invalid path and/or nvlens!\n");
+               PrintUsageN(args[0]);
+              }
+            }
+            else
+               PrintUsageN(args[0]);
+            break;
          case 'W':
             id = malloc(sizeof(struct idlist));
             id->name = args[++i];
@@ -501,17 +539,28 @@ struct optblkq *GetFlagsN(int nargs, char **args,
 /*
  *       changed -SE to -RE. 
  *       options:
- *          -RE : Reduce Expandable
+ *          -RE : Reduce Expandable -RE <var> <#>
+ *          -RC : redcomp optimization
  *          -R [d/n]: not tested by me recently
  */
          case 'R':
             if (args[i][2] && args[i][2] == 'E')
+            {
                seb = NewPtrinfo(i+1, atoi(args[i+2]), seb);
-            else if (args[i+1][0] == 'd')
+               i += 2;
+            }
+            else if (args[i][2] && args[i][2] == 'C')
+               STATE1_FLAG |= IFF_ST1_RC; 
+            else if (args[i+1] && args[i+1][0] == 'd')
+            {
                rpath = args[i+2];
-            else 
+               i += 2;
+            }
+            else /* no error check! */
+            {
                rname = args[i+2];
-            i += 2;
+               i += 2;
+            }
             break;
          case 'v':
             FKO_FLAG |= IFF_VERBOSE;
@@ -520,6 +569,7 @@ struct optblkq *GetFlagsN(int nargs, char **args,
  *       specify the path to speculate for speculative vectorization, this is
  *       optional.
  */
+#if 0            
          case 'p' :
             if (args[i+1])
                path = atoi(args[i+1]);
@@ -531,13 +581,40 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             assert(path>0);
             i++;
             break;
+#endif
+         case 'F':
+            if (args[i][2] && args[i][3] && args[i][2] == 'P' 
+                && args[i][3] == 'C')
+            {
+               if (args[i+1])
+                  path = atoi(args[i+1]);
+               else 
+               {
+                  fprintf(stderr, "Specify path number. \n");
+                  PrintUsageN(args[0]);
+               }
+               if (path <= 0) /* must started from 1*/
+               {
+                  fprintf(stderr, "Invalid path number. \n");
+                  PrintUsageN(args[0]); 
+               }
+               i++;
+            }
+            else
+               PrintUsageN(args[0]);
+            break;    
+#if 0
+/*
+ *       NOTE: splited the vectorization into two separate flags:
+ *       -LNZV and -SV 
+ */
          case 'V':
             FKO_FLAG |= IFF_VECTORIZE;
 /*
  *          Majedul: Recognize different vector methods from command line
  *          changed the concept!
  */
-#if 0            
+   #if 0            
             if (args[i][2])
             {
                if (args[i][2] == 'm')
@@ -575,8 +652,9 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             {
                VECT_FLAG |= VECT_NCONTRL;
             }
-#endif            
+   #endif            
             break;
+#endif
          case 'c':
             fpIG = fpST = fpLIL = fpOPT = (FILE*) 1;
             FKO_FLAG |= IFF_GENINTERM;
@@ -659,6 +737,15 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             if (!j) FKO_FLAG |= IFF_KILLCOMMENTS;
             break;
          case 'L':
+            if (args[i][2] && args[i][3] && args[i][4] && args[i][2] == 'N' 
+                && args[i][3] == 'Z' && args[i][4] == 'V')
+            {
+               FKO_FLAG |= IFF_VECTORIZE;
+               break;
+            }
+            /*
+             * else do what 'G' does
+             */
          case 'G':
             op = NewOptBlock(atoi(args[i+1]), atoi(args[i+2]), atoi(args[i+3]),
                              args[i][1] == 'G' ? IOPT_GLOB : 0);
@@ -736,7 +823,9 @@ ERR:
  *       -rc = redundant computation
  *       -mmr = max/min reduction
  *    NOTE: new flag -ra is added to find out the register/value spilling
+ *    NOTE: changed them to upper case, like: RC and MMR
  */
+#if 0             
          case 'r':
             if (args[i][2] && args[i][2] == 'c')
             {
@@ -760,6 +849,7 @@ ERR:
                PrintUsageN(args[0]);
             }
             break;
+#endif
          default:
             fprintf(stderr, "Unknown flag '%s'\n", args[i]);
             PrintUsageN(args[0]);
