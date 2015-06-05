@@ -32,6 +32,7 @@
 */
    static short maxunroll=0, writedd=1;
    extern short STderef;
+   
    int yylex(void);
    void yyerror(char *msg);
 
@@ -203,11 +204,18 @@ typedec : INT LST idlist              { declare_list(T_INT); }
         | VFLOAT '(' iconst ')' LST idlist {declare_vector(T_VFLOAT, $3);}
         ;
 
-arraydim : '[' ID ']' arraydim {$$=$4+1; AddDim2List($2);} 
+/*arraydim : '[' ID ']' arraydim {$$=$4+1; AddDim2List($2);} 
          | '[' iconst ']' arraydim { $$=$4+1; AddDim2List($2);} 
          | '[' '*' ']' { $$=1; }
          | '[' ']' { $$=1; }
+         ;*/
+
+arraydim : arraydim '[' ID ']' {$$=$1+1; AddDim2List($3); } 
+         | arraydim '[' iconst ']' { $$=$1+1; AddDim2List($3); } 
+         | '[' '*' ']' { $$=1; }
+         | '[' ']' { $$=1; }
          ;
+
 /*arrayid : NAME  {fprintf(stderr, "arrayid->NAME\n");}
         ;*/
 
@@ -216,7 +224,11 @@ unrollarraylist : unrollarray ',' unrollarraylist
         ;
 unrollarray : ID '(' unrollfactor ')' {HandleUnrollFactor($1, $3);} 
             ;
-unrollfactor : iconst ',' unrollfactor {$$=$3+1; AddUnroll2List($1);}
+/*unrollfactor : iconst ',' unrollfactor {$$=$3+1; AddUnroll2List($1);}
+             | iconst   { $$=1; AddUnroll2List($1);}
+             | '*'      { $$=1; AddUnroll2List(STiconstlookup(1));}
+             ;*/
+unrollfactor : unrollfactor ',' iconst {$$=$1+1; AddUnroll2List($3);}
              | iconst   { $$=1; AddUnroll2List($1);}
              | '*'      { $$=1; AddUnroll2List(STiconstlookup(1));}
              ;
@@ -337,8 +349,13 @@ ptrderef : ID array_access { $$ = HandleArrayAccess($1, $2);}
          | ID '[' ID '+' icexpr ']' { $$ = AddArrayDeref($1, $3, $5); }
          | ID '[' ID '-' icexpr ']' { $$ = AddArrayDeref($1, $3, -$5); }
          ;
-array_access : '[' ID ']' array_access {$$=$4+1; AddDim2List($2);} 
+/*array_access : '[' ID ']' array_access {$$=$4+1; AddDim2List($2);} 
          | '[' iconst ']' array_access { $$=$4+1; AddDim2List($2);} 
+         | '[' ID ']' { $$=1; AddDim2List($2);}
+         | '[' iconst ']' { $$=1; AddDim2List($2);}
+         ;*/
+array_access : array_access '[' ID ']' {$$=$1+1; AddDim2List($3);} 
+         | array_access '[' iconst ']' { $$=$1+1; AddDim2List($3);} 
          | '[' ID ']' { $$=1; AddDim2List($2);}
          | '[' iconst ']' { $$=1; AddDim2List($2);}
          ;
