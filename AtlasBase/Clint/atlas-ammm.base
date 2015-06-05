@@ -12691,6 +12691,7 @@ int Mjoin(PATL,ammm_IP)
  * Next two loop orderings are general case, so use whichever uses least
  * workspace
  */
+#if 0
    if (M >= N)
       return(Mjoin(PATL,ammmMNK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                                  beta, C, ldc));
@@ -12700,6 +12701,13 @@ int Mjoin(PATL,ammm_IP)
  */
    return(Mjoin(PATL,ammmNMK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
                               beta, C, ldc));
+#else
+   if (M > N)
+      return(Mjoin(PATL,ammmKMNK)(TA, TB, M, N, K, alpha, A, lda, B, ldb,
+                                  beta, C, ldc));
+   return(Mjoin(PATL,ammmKNMK)(TA, TB, M, N, K, alpha, A, lda, B, ldb, 
+                               beta, C, ldc));
+#endif
 }
 @ROUT ATL_cammm
 {
@@ -16783,35 +16791,44 @@ void Mjoin(PATL,GetBestKBInfo)
       {
          ATL_CINT kb=ATL_AMM_KBs[i], nkb=K/kb, kr=K-nkb*kb;
          ATL_CINT mb=ATL_AMM_MBs[i], nb=ATL_AMM_MBs[i], nmb=M/mb, nnb=N/nb;
-         ATL_CINT mu = ATL_AMM_MUs[i], mr = M - (M/mu)*mu;
-         ATL_CINT nu = ATL_AMM_NUs[i], nr = N - (N/nu)*nu;
-         double nfcblks, tkr, tpan, tim, tpe;
+         ATL_CINT mu = ATL_AMM_MUs[i], mr = M-nmb*mb;
+         ATL_CINT nu = ATL_AMM_NUs[i], nr = N-nnb*nb;
+         double nfcblks, tkr, tpan, tim;
 
          nfcblks = nmb;
          nfcblks *= nnb;
          if (kr > 2)
          {
-            tkr = ATL_rkAMM_TIME[kr-3];
             idr = kr-3;
+            tkr = ATL_rkAMM_TIME[idr];
+            tkr /= ((double)ATL_AMM_KBs[idr])*ATL_AMM_MBs[idr]*ATL_AMM_KBs[idr];
+            tkr *= ((double)mb)*nb*kb;
          }
          else if (!kr)
          {
             idr = -2;
             tkr = 0.0;
          }
-         else if (kr == 1)                 /* strongly penalize K=1,2 */
-            tkr = ATL_rkAMM_TIME[0] * 8.0; /* since these cases require */
-         else                              /* write C twice in addition to */
-            tkr = ATL_rkAMM_TIME[0] * 6.0; /* using ger/ger2 rather than amm */
+/*
+ *       Strongly penalize kr==1,2, since they require double write of C
+ */
+         else
+         {
+            if (kr == 1)
+               tkr = ATL_rkAMM_TIME[0] * 8.0;
+            else 
+               tkr = ATL_rkAMM_TIME[0] * 6.0;
+            tkr *= (0.015625*mb)*nb*kb;  /* b^3/4^3 */
+         }
          tpan = nkb*ATL_rkAMM_TIME[i] + tkr;
          tim = nfcblks*tpan;
-         tpe = ATL_rkAMM_TIME[i] / (1.0*mb*nb);  /* time per elt of C */
 /*
  *       Rank-K perf not much affected by MB, so M cleanup only reduced
  *       by extra computation
  */
          if (mr)
-            tim += (nmb+mu)*tpan / (M*nb);
+            tim += nmb*tpan*mr / (double)mb;
+#if 1
 /*
  *       Small N drastically affects rank-K perf, so estimate it's speed
  *       as being equal to the mininum of rank-K or rank-nr
@@ -16823,12 +16840,14 @@ void Mjoin(PATL,GetBestKBInfo)
             {
                const int kk = (nr >= 3) ? nr-3 : 0;
                double tpe = ATL_rkAMM_TIME[kk];        /* time per element */
-               tpe /= ((double)ATL_AMM_MBs[i])*ATL_AMM_NBs[i]*ATL_AMM_KBs[i];
-               tim += tpe*nr*nmb*mb*K;
+               tpe /= ((double)ATL_AMM_MBs[kk])*ATL_AMM_NBs[kk]*ATL_AMM_KBs[kk];
+               tpe *= ((double)mb)*nr*kb;
+               tim += tpe*nmb;
             }
             else
                tim += tpan;
          }
+#endif
          if (tim < timB)
          {
             timB = tim;
@@ -18595,10 +18614,9 @@ static void ATL_ammmMNK
  */
    if (nmblks)
    {
-      incBk = 0;
-      for (j=0; j < nnblks; j++, C += mb2, A += incAm)
+      for (j=0; j < nmblks; j++, C += mb2, A += incAm)
          ATL_ammmNK(mminf, mb, nmu, nnblks, nbL, nnuL, nkblks, kb0, KB0,
-                    A, lda, incAk, B, ldb, incBk, incBn, C, ldc, incCn,
+                    A, lda, incAk, B, ldb, 0, incBn, C, ldc, incCn,
                     a, inca, b, incb, incbn, rC, iC, alpA, alpB, alpC, beta);
    }
 }
@@ -18711,55 +18729,6 @@ int Mjoin(PATL,ammmKMNK)
 #include "atlas_amm.h"
 #include Mstr(Mjoin(AMM_PRE,_sum.h))
 
-@beginskip
-static void ATL_syrkNK
-(
-   amminfo_t *mminf,
-   ATL_CSZT nfnblks,   /* FLOOR(N/nb) */
-   int nbL,            /* nbL = N%nb */
-   int nnuL,           /* CEIL(nb/nu) */
-   ATL_CSZT nfkblks,   /* FLOOR(K/kb) */
-   const int kb0,
-   const int KB0,
-   const TYPE *A,      /* set to NULL if not copying */
-   ATL_CSZT lda,
-   ATL_CSZT incAk,
-   ATL_CSZT incAn,
-   const TYPE *B,      /* set to NULL if not copying */
-   const TYPE *C
-   ATL_CSZT ldc,
-   ATL_CINT incw,      /* nb*nb */
-   TYPE *wa,
-   TYPE *wb,
-   TYPE *wc,
-   TYPE *wC,
-   const SCALAR alpha,
-   const SCALAR beta
-)
-{
-   const int NB=((mminf->nb)SHIFT);
-   #ifdef TCPLX
-      const TYPE ONE[2] = {ATL_rone, ATL_rzero};
-      TYPE *rC = wc+incw;
-   #else
-      #define ONE ATL_rone
-      #define rC wc
-   #endif
-
-   for (i=0; i < nfnblks; i++, A += incAn, C += NB, a += incw)
-   {
-      Mjoin(PATL,ammmK)(mminf, nb, nmu, nb, nnu, nfkblks, kb, kb0, KB0,
-                        A, lda, incAk, B, lda, incBk, blk2c, C, ldc,
-                        a, incw, b, incw, rC, wc, ONE, alpha, ONE, beta);
-      incBk = 0; /* reuse B for rest of C column panel */
-   }
-   if (nbL)
-      Mjoin(PATL,ammmK)(mminf, nbL, nnuL, nb, nnu, nfkblks, kb, kb0, KB0,
-                        A, lda, incAk, B, lda, incBk, blk2c, C, ldc,
-                        a, incw, b, incw, rC, wc, ONE, alpha, ONE, beta);
-}
-@endskip
-
 int Mjoin(PATL,ammm_syrk)
 (
    const enum ATLAS_UPLO  Uplo,
@@ -18799,6 +18768,7 @@ int Mjoin(PATL,ammm_syrk)
    amminfo_t mminf;
 
 
+//   printf("UP=%c, N=%d, K=%d\n", Uplo==AtlasLower?'L':'U', (int)N, (int)K);
    if (SCALAR_IS_NONE(alpha))
       ialp = -1;
    else if (!SCALAR_IS_ONE(alpha))
@@ -18874,51 +18844,86 @@ int Mjoin(PATL,ammm_syrk)
       incAnF = incAn * nbF;
       incAn *= nb;
    }
-/*
- * Peel first column of C computation, which will handle all partial blocks
- */
-/*
- * First panel of row-panel of A not reused, so set inca=0
- */
-   Mjoin(PATL,ammmK)(&mminf, nbF, nmuF, nbF, nnuF, nkblks, nb, kb0, KB0,
-                     A, lda, incAk, B, lda, incAk, blk2c_b0, wC, nb,
-                     wa, 0, wb, incw, rC, wc, ONE, alpha, ONE, ZERO);
-   Mjoin(PATL,tradd)(Uplo, nbF, wC, nb, beta, C, ldc);
-   if (ISHERK)
-      Mjoin(PATLU,zero)(nbF, C+1, ldcp1);
-   c = C + (nbF SHIFT);
-   A += incAnF;
-   B += incAnF;
-   C += nbF*ldcp1;
    incCn = nb*ldcp1;
-   ar = wa;
-   for (i=0; i < nnblks; i++, c += nb2, A += incAn, ar += pansz)
-      Mjoin(PATL,ammmK)(&mminf, nb, nmu, nbF, nnuF, nkblks, nb, kb0, KB0,
-                        A, lda, incAk, B, lda, 0, blk2c, c, ldc,
-                        ar, incw, wb, incw, rC, wc, ONE, alpha, ONE, beta);
-   for (j=0; j < nnblks; j++, B += incAn, C += incCn, wa += pansz)
+   if (Uplo == AtlasLower)
    {
-      Mjoin(PATL,ammmK)(&mminf, nb, nmu, nb, nnu, nkblks, nb, kb0, KB0,
-                        A, lda, 0, B, lda, incAk, blk2c_b0, wC, nb,
-                        wa, incw, wb, incw, rC, wc, ONE, alpha, ONE, ZERO);
-      Mjoin(PATL,tradd)(Uplo, nb, wC, nb, beta, C, ldc);
-      if (ISHERK)
-         Mjoin(PATLU,zero)(nb, C+1, ldcp1);
-      c = C + nb2;
-      ar = wa + pansz;
-      for (i=j+1; i < nnblks; i++, c += nb2, ar += pansz)
-         Mjoin(PATL,ammmK)(&mminf, nb, nmu, nb, nnu, nkblks, nb, kb0, KB0,
-                           A, lda, 0, B, lda, 0, blk2c, c, ldc,
-                           ar, incw, wb, incw, rC, wc, ONE, alpha, ONE, beta);
-   }
-@beginskip
 /*
- * If we are doing HERK, then must zero the imaginary part of the diagonal
+ *    Peel first column of C computation, which will handle all partial blocks
+ *    First rowpan of A not reused, so set inca=0
  */
-   if (TA == AtlasConj || TA == AtlasConjTrans)
-      Mjoin(PATLU,zero)(N, CC+1, ldcp1);
-@endskip
-   free(vp);
+      Mjoin(PATL,ammmK)(&mminf, nbF, nmuF, nbF, nnuF, nkblks, nb, kb0, KB0,
+                        A, lda, incAk, B, lda, incAk, blk2c_b0, wC, nb,
+                        wa, 0, wb, incw, rC, wc, ONE, alpha, ONE, ZERO);
+      Mjoin(PATL,tradd)(Uplo, nbF, wC, nb, beta, C, ldc);
+      if (ISHERK)
+         Mjoin(PATLU,zero)(nbF, C+1, ldcp1);
+      c = C + (nbF SHIFT);
+      A += incAnF;
+      B += incAnF;
+      C += nbF*ldcp1;
+      ar = wa;
+      for (i=0; i < nnblks; i++, c += nb2, A += incAn, ar += pansz)
+         Mjoin(PATL,ammmK)(&mminf, nb, nmu, nbF, nnuF, nkblks, nb, kb0, KB0,
+                           A, lda, incAk, B, lda, 0, blk2c, c, ldc,
+                           ar, incw, wb, incw, rC, wc, ONE, alpha, ONE, beta);
+      for (j=0; j < nnblks; j++, B += incAn, C += incCn, wa += pansz)
+      {
+         Mjoin(PATL,ammmK)(&mminf, nb, nmu, nb, nnu, nkblks, nb, kb0, KB0,
+                           A, lda, 0, B, lda, incAk, blk2c_b0, wC, nb,
+                           wa, incw, wb, incw, rC, wc, ONE, alpha, ONE, ZERO);
+         Mjoin(PATL,tradd)(Uplo, nb, wC, nb, beta, C, ldc);
+         if (ISHERK)
+            Mjoin(PATLU,zero)(nb, C+1, ldcp1);
+         c = C + nb2;
+         ar = wa + pansz;
+         for (i=j+1; i < nnblks; i++, c += nb2, ar += pansz)
+            Mjoin(PATL,ammmK)(&mminf, nb, nmu, nb, nnu, nkblks, nb, kb0, KB0,
+                              A, lda, 0, B, lda, 0, blk2c, c, ldc, ar, incw,
+                              wb, incw, rC, wc, ONE, alpha, ONE, beta);
+      }
+   }
+/*
+ * Upper runs backwards: start from last (partial) colpan, go left.  This
+ * allows col-major access on Upper, avoiding TLB problems on C access.
+ * Within the panel, start at diag on bottom and go up.  This allows us to
+ * use less A storage, as with lower.  
+ */
+   else /* if (TA == AtlasUpper) */
+   {
+      C += nnblks*incCn;
+      A += nnblks*incAn;
+      B = A;
+      Mjoin(PATL,ammmK)(&mminf, nbF, nmuF, nbF, nnuF, nkblks, nb, kb0, KB0,
+                        A, lda, incAk, B, lda, incAk, blk2c_b0, wC, nb,
+                        wa, 0, wb, incw, rC, wc, ONE, alpha, ONE, ZERO);
+      Mjoin(PATL,tradd)(Uplo, nbF, wC, nb, beta, C, ldc);
+      if (ISHERK)
+         Mjoin(PATLU,zero)(nbF, C+1, ldcp1);
+      c = C - nb2;
+      C -= incCn;
+      A -= incAn;
+      B -= incAn;
+      ar = wa;
+      for (i=0; i < nnblks; i++, c -= nb2, A -= incAn, ar += pansz)
+         Mjoin(PATL,ammmK)(&mminf, nb, nmu, nbF, nnuF, nkblks, nb, kb0, KB0,
+                           A, lda, incAk, B, lda, 0, blk2c, c, ldc,
+                           ar, incw, wb, incw, rC, wc, ONE, alpha, ONE, beta);
+      for (j=0; j < nnblks; j++, B -= incAn, C -= incCn, wa += pansz)
+      {
+         Mjoin(PATL,ammmK)(&mminf, nb, nmu, nb, nnu, nkblks, nb, kb0, KB0,
+                           A, lda, 0, B, lda, incAk, blk2c_b0, wC, nb,
+                           wa, incw, wb, incw, rC, wc, ONE, alpha, ONE, ZERO);
+         Mjoin(PATL,tradd)(Uplo, nb, wC, nb, beta, C, ldc);
+         if (ISHERK)
+            Mjoin(PATLU,zero)(nb, C+1, ldcp1);
+         c = C - nb2;
+         ar = wa + pansz;
+         for (i=j+1; i < nnblks; i++, c -= nb2, ar += pansz)
+            Mjoin(PATL,ammmK)(&mminf, nb, nmu, nb, nnu, nkblks, nb, kb0, KB0,
+                              A, lda, 0, B, lda, 0, blk2c, c, ldc, ar, incw,
+                              wb, incw, rC, wc, ONE, alpha, ONE, beta);
+      }
+   }
    return(0);
 }
 #ifndef TCPLX
