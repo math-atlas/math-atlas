@@ -1,10 +1,69 @@
+@ROUT Make.bin
+include ../Make.inc
+objs = y.tab.o lex.yy.o h2l.o l2a.o inst.o symtab.o arch.o misc.o flow.o \
+       bvec.o vars.o optreg.o optflow.o optsimd.o optloop.o optmisc.o
+
+incd=$(TOPdir)/include
+srcd=$(TOPdir)/src
+@multidef hd
+   settings arch types symtab bvec loop inst h2l vars optsimd 
+   misc l2a flow optreg optmisc
+@endmultidef
+@declare "heads = " y n
+   $(incd)/fko.h
+   @whiledef hd
+      $(incd)/fko_@(hd).h
+   @endwhile
+@enddeclare
+
+fko : $(heads) fko.o $(objs)
+	$(CC) $(CCFLAGS) -o $@ fko.o $(objs) -lfl
+
+xprintinst : $(incd)/fko.h $(incd)/fko_inst.h $(srcd)/printinst.c
+	$(CC) $(CCFLAGS) -o $@ $(srcd)/src/printinst.c
+xprintregs : $(heads) $(srcd)/printregs.c
+	$(CC) $(CCFLAGS) -o $@ $(srcd)/printregs.c
+
+y.tab.h : $(heads) $(srcd)/hil_gram.y
+	yacc -d -v $(srcd)/hil_gram.y
+y.tab.c : $(heads) $(srcd)/hil_gram.y
+	yacc -v $(srcd)/hil_gram.y
+lex.yy.c : y.tab.h $(srcd)/hil_lex.l
+	lex $(srcd)/hil_lex.l
+lex.yy.o : $(heads) y.tab.h lex.yy.c
+	$(CC) -I./ $(CCFLAGS) -c lex.yy.c
+y.tab.o : $(heads) y.tab.h
+	$(CC) $(CCFLAGS) -c y.tab.c
+
+@multidef rt
+   optmisc optflow optsimd optreg optloop
+   vars bvec flow misc arch symtab inst l2a h2l fko
+@endmultidef
+@whiledef rt
+@(rt).o : $(heads) $(srcd)/@(rt).c
+	$(CC) $(CCFLAGS) -c  $(srcd)/@(rt).c
+@endwhile
+
+force_build:
+@whiledef rt oloop inst arch
+query@(rt) : force_build
+	cd $(BLDdir)/extern/src ; make
+	$(CC) $(CCFLAGS) -o $@ $(TOPdir)/extern/src/query@(rt).c \
+           $(BLDdir)/extern/lib/libfkoinfo.a
+@endwhile
+
+clean :
+	- rm -f $(objs) y.tab.h y.tab.c lex.yy.c fko.o y.output
+
+Makefile : $(TOPdir)/ifko.base
+	$(EXTRACT) -b $(TOPdir)/ifko.base -langM -o Makefile rout=Make.bin
 @ROUT Make.extern
 include ../../Make.inc
 
+incd = $(TOPdir)/extern/include
+srcd = $(TOPdir)/extern/src
 libd = ../lib
-incd = ../include
-CCFL = $(CCFLAGS) -Wall -I$(incd)
-ext = extract
+ext = $(EXTRACT)
 
 @multidef rt
    FKO_GetArchInfo FKO_DestroyArchInfo FKO_NumRegs FKO_Veclen 
@@ -33,14 +92,14 @@ clean :
 	- rm -f $(obj)
 
 @whiledef rt1
-@(rt1).o : $(incs) @(rt1).c
-	$(CC) $(CCFL) -o @(rt1).o -c @(rt1).c
+@(rt1).o : $(incs) $(srcd)/@(rt1).c
+	$(CC) $(CCFLAGS) -o @(rt1).o -c $(srcd)/@(rt1).c
 @endwhile
 @skip .c.o: $(incs)
 @skip	$(CC) $(CCFL) -c $<
 
-Makefile : ../../ifko.base
-	$(ext) -b ../../ifko.base -langM -o Makefile rout=Make.extern
+Makefile : $(TOPdir)/ifko.base
+	$(ext) -b $(TOPdir)/ifko.base -langM -o Makefile rout=Make.extern
 @ROUT make.test
 SHELL = /bin/tcsh
 CC = gcc

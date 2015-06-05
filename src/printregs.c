@@ -31,7 +31,6 @@ char *Int2Reg(int i)
 int main(int nargs, char **args)
 {
    int i;
-   char *sp;
 
    if (nargs > 1)
    {
@@ -43,4 +42,5 @@ int main(int nargs, char **args)
       for (i=1; i <= TNREG; i++)
          printf("Register %d = %s\n",  i, Int2Reg(i));
    }
+   return(0);
 }
