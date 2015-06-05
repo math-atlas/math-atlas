@@ -4203,7 +4203,7 @@ void PrintMovingPtrAnalysis(FILE *fpout)
             fprintf(fpout, " uses=%d sets=%d", nus, nst);
             fprintf(fpout, " lds=%d sts=%d", nlds, nsts);
             fprintf(fpout, " prefetch=%d", j);
-            fprintf(fpout, " ncol=%dd nreg=%d nptr=%d\n", 
+            fprintf(fpout, " ncol=%d nreg=%d nptr=%d\n", 
                     SToff[STarr[sta-1].urlist[0]-1].i,
                     STarr[sta-1].colptrs[0] + STarr[sta-1].cldas[0],
                     STarr[sta-1].colptrs[0]); 
