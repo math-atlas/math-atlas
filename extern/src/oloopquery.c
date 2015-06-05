@@ -36,35 +36,32 @@ void PrintLoopInfo(fko_olpinfo_t *lp)
    printf("MAXUNROLL=%d\n", lp->maxunroll);
    printf("LNF=%d\n", lp->LNF);
    printf("NPATHS=%d\n", lp->npaths);
-   printf("NIFS=%d\n", lp->nifs);
-   if (lp->nifs > 0)
+   if (lp->npaths > 1)
    {
-      printf("   MaxElim=%d\n", lp->MaxElimIfs);
-      printf("   MinElim=%d\n", lp->MinElimIfs);
-      printf("   RedCompElim=%d\n", lp->redcElimIfs);
+      PrintCharArray("   vecpathOK=", lp->npaths, lp->vpath);
+      printf("   mmrElimBR=%d\n", lp->mmElim);
+      printf("    rcElimBR=%d\n", lp->rcElim);
+      printf("\n   NIFS=%d\n", lp->nifs);
+      printf("      MaxElim=%d\n", lp->MaxElimIfs);
+      printf("      MinElim=%d\n", lp->MinElimIfs);
+      printf("      RedCompElim=%d\n", lp->rcElimIfs);
    }
    printf("VEC=%d\n", lp->vec);
-   if (lp->vec > 0)
-   {
-      printf("   vmaxmin=%d\n", lp->vmaxmin);
-      printf("   vredcomp=%d\n", lp->vredcomp);
-      printf("   vspec=%d\n", lp->specvec);
-      if (lp->specvec)
-         PrintCharArray("   pathOK=", lp->npaths, lp->svpath);
-   }
 
-   n = lp->nmfptrs;
+   n = lp->nmptrs;
    printf("NMOVFPPTRS=%d\n", n);
    if (n > 0)
    {
-       PrintStringArray("   names: ", n, lp->fptrs);
-       PrintShortArray("   sets  : ", n, lp->fsets);
-       PrintShortArray("   uses  : ", n, lp->fuses);
-       PrintCharArray("   types : ", n, lp->ftyp);
+       PrintStringArray("   names: ", n, lp->pnam);
+       PrintShortArray("   sets  : ", n, lp->psets);
+       PrintShortArray("   uses  : ", n, lp->puses);
+       PrintShortArray("   lds   : ", n, lp->plds);
+       PrintShortArray("   sts   : ", n, lp->psts);
+       PrintCharArray("   types : ", n, lp->ptyp);
        n = lp->npref;
        printf("   number of prefetchable ptrs: %d\n", n);
        if (n > 0)
-          PrintShortArray("      pfindxs: ", n, lp->pffp);
+          PrintShortArray("      pfidx: ", n, lp->ppf);
    }
    n = lp->nscal;
    printf("NSCALARS=%d\n", n);
@@ -75,9 +72,9 @@ void PrintLoopInfo(fko_olpinfo_t *lp)
        PrintShortArray("   uses  : ", n, lp->suses);
        PrintCharArray("   types : ", n, lp->styp);
        n = lp->nexpand;
-       printf("   Number Reducable Expansion: %d\n", n);
+       printf("   Number Reducible Expansion: %d\n", n);
        if (n)
-          PrintShortArray("      expidxs: ", n, lp->pffp);
+          PrintShortArray("      expidxs: ", n, lp->rexp);
    }
 }
 
@@ -88,6 +85,6 @@ int main(int nargs, char **args)
       fnam = args[1];
    FKO_GetOptLoopInfo(fnam);
    PrintLoopInfo(FKO_OLOOPINF);
-   FKO_DestroyArchInfo();
+   FKO_DestroyOptLoopInfo();
    return(0);
 }

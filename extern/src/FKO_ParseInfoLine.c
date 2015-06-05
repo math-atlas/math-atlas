@@ -319,6 +319,27 @@ char FKO_GetBoolFromWord(fko_word_t *wp)
       assert(wp->word[len-1] == '1');
    return(ch);
 }
+/*
+ * Gets nw-len from wp words; each word must be just '1' or '0'
+ */
+char *FKO_GetBoolValsFromWords(int nw, fko_word_t *wp)
+{
+   char *bp;
+   int i;
+   bp = malloc(nw);
+   assert(bp);
+   for (i=0; i < nw; i++, wp=wp->next);
+   {
+      assert(wp);
+      assert(wp->len == 1);
+      if (wp->word[0] == '0')
+         bp[i] = 0;
+      else if (wp->word[0] == '1')
+         bp[i] = 1;
+      else
+         assert(0);
+   }
+}
 
 int FKO_TypeStrToInt(char *st)
 {

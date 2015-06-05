@@ -26,6 +26,7 @@ short *FKO_GetShortArrayFromTypeList(fko_word_t *wp);
 short FKO_GetBVFromTypeList(fko_word_t *wp);
 short *FKO_GetShortArrayFromWords(int nw, fko_word_t *wp);
 char FKO_GetBoolFromWord(fko_word_t *wp);
+char *FKO_GetBoolValsFromWords(int nw, fko_word_t *wp);
 int FKO_TypeStrToInt(char *st);
 char *FKO_Word2Name(fko_word_t *wp);
 

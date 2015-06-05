@@ -66,29 +66,42 @@ struct fko_olpinfo
    int maxunroll;
    int LNF;
    int npaths;           /* for now, assume 64 paths at most */
+         char *vpath;    /* npaths-len bool, says whether path can be vec */
+         int mmElim;     /* can -MMR eliminate all branches? */
+         int rcElim;     /* can -RC eliminate all branches? */
    int nifs;
       int MaxElimIfs;
       int MinElimIfs;
-      int redcElimIfs;
-   int vec;
-      int vmaxmin;
-      int vredcomp;
-      int specvec;
-         char *svpath;   /* npaths-len bool, says whether path can be vec */
-   int nmfptrs;     /* # of moving fp ptrs */
-      char **fptrs;
-      short *fsets;
-      short *fuses;
-      char *ftyp;
-      int npref;      /* number of fptrs that are prefetchable */
-         short *pffp; /* index of prefetchable ptrs */
+      int rcElimIfs;
+   int vec;              /* 0:no, 1:SV, 2:LNHV */
+   int nmptrs;     /* # of moving fp ptrs */
+      char **pnam;
+      char *ptyp;
+      short *psets;
+      short *puses;
+      short *plds;
+      short *psts;
+      int npref;      /* number of ptrs that are prefetchable */
+         short *ppf; /* index of prefetchable ptrs */
+   int n2ptrs;     /* # of moving fp ptrs */
+      char **p2nam;
+      char *p2typ;
+      short *p2sets;
+      short *p2uses;
+      short *p2lds;
+      short *p2sts;
+      int n2pref;      /* number of ptrs that are prefetchable */
+         short *p2pf;  /* index of prefetchable 2-D ptrs */
+      short *p2cols;
+      short *p2regs;
+      short *p2ptrs;
    int nscal;
+      char **scnam;
+      char *styp;
       short *ssets;
       short *suses;
-      char **scnam;
       int nexpand;
          short *rexp;
-      char *styp;
 };
 
 fko_olpinfo_t *FKO_GetOptLoopInfoC(char *filename);
