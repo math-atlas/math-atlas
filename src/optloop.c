@@ -747,7 +747,8 @@ void UpdatePointerLoads(BLIST *scope, struct ptrinfo *pbase, int UR)
 /*
  *          NOTE: i can be 0, then pi = pbase
  */
-            for (pi=pbase; i && pi->ptr != k; pi=pi->next,i--);
+            for (pi=pbase; i && pi->ptr != k; pi=pi->next,i--)
+               ;
             assert(pi);
 #if 1
 /*
@@ -4521,7 +4522,7 @@ OPTLOOP=1
  *       Check Whether it is reducable by Max/Min
  */
 
-         UpdateOptLoopWithMaxMinVars(optloop);
+         UpdateOptLoopWithMaxMinVars();
          MaxR = ElimMaxMinIf(1,0);
          MinR = ElimMaxMinIf(0,1); /*rule out all maxs before  */
 /*
@@ -4560,7 +4561,7 @@ OPTLOOP=1
  *       We will need an analyzer for RC later
  */
          /*fprintf(fpout, "      RedCompReducesToOnePath=%d\n",1);*/
-         UpdateOptLoopWithMaxMinVars(optloop);
+         UpdateOptLoopWithMaxMinVars();
 /*
  *       NOTE: we can apply shadow VRC for AVX2.
  */
@@ -6481,8 +6482,7 @@ short RemoveBranchWithMask(BBLOCK *sblk)
    enum inst *cmpinsts;      
    int nbr;
 
-   nbr = 6;
-   
+   nbr = 6; mask = 0;  
    for (ip=sblk->ainst1; ip; ip=ip->next)
    {
       if (IS_COND_BRANCH(ip->inst[0]))

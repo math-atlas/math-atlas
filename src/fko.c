@@ -4048,7 +4048,7 @@ int main(int nargs, char **args)
  *    After this state, the structure of Max/Min will be lost. So, update 
  *    optloop with that. We can use this info later (both in this state and SE )
  */
-      UpdateOptLoopWithMaxMinVars(optloop);
+      UpdateOptLoopWithMaxMinVars();
       if (STATE1_FLAG & IFF_ST1_MMR)
       {
 /*

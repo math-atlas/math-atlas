@@ -512,7 +512,7 @@ void HandleMove(short dest, short src)
 short HandleArrayAccess(short ptr, short dim)
 {
    int val, ur;
-   short rt, hdm, ldm, arrid;
+   short rt = 0, hdm, ldm, arrid;
    short ptr1d;
    extern int FKO_FLAG; /* global flag for opt array access */
 /*
@@ -1108,7 +1108,7 @@ void HandleVecInit(short vid)
 
 void HandleVecReduce(short sid, short vid, char op, short ic)
 {
-   int stp, vtp, pos;
+   int stp=0, vtp, pos;
 /*
  * checking for the type of vector and scalar
  */
