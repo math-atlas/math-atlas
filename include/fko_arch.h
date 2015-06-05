@@ -72,6 +72,9 @@
 #ifdef SOLARIS_SPARC
    #define SPARC
 #endif
+#if X86 == 0
+   #undef X86
+#endif
 
 /*============================================================================
  * Addressing Mode (load/store memory):
