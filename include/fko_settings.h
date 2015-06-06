@@ -13,10 +13,21 @@
    #define LINUX_X86_32
    #define ARCH_ 1  /* uncomment this line, if you uncomm earlier line */
 #endif
+/*
+ * If arch isn't defined, scope if ATLAS's flags are being used, else default
+ */
 #ifndef ARCH_
    #if !defined(LINUX_X86_64) && !defined(LINUX_X86_32) && \
        !defined(SOLARIS_SPARC) && !defined(OSX_PPC)
-      #define LINUX_X86_64 1
+      #ifdef ATL_OS_Linux
+         #ifdef ATL_GAS_x8632
+            #define LINUX_X86_32 1
+         #else
+            #define LINUX_X86_64 1
+         #endif
+      #else
+         #define LINUX_X86_64 1
+      #endif
    #endif
    #define ARCH_ 1
 #endif
@@ -50,8 +61,21 @@
    #ifdef AVX2
       #define VECDEF 1
    #endif
+/* 
+ * For default, see if we've got ATLAS-style defs, else default to AVX2
+ * This is newest that iFKO supports, and will run fastest.  It will error
+ * on old machine, and the installer should be alerted to fix!
+ */
    #ifndef VECDEF
-      #define AVX2
+      #if defined(ATL_AVXMAC) || defined(ATL_AVXFMA4)
+         #define AVX2 1
+      #elif defined(ATL_AVX)
+         #define AVX 1
+      #elif defined(ATL_SSE3)
+         #define SSE3
+      #else
+         #define AVX2 1
+      #endif
       #define VECDEF 1
    #endif
 #endif
