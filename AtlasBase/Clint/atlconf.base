@@ -1,5 +1,21 @@
 @extract -b @(topd)/gen.inc what=crsetup
 @ROUT GetFlags
+/*
+ * Defined some macros for checking booleans passed by -Si
+ */
+#define SI_FKO 0
+#define SI_BOZOL1 1
+#define SI_ARCHDEF 2
+#define SI_IEEE 3
+#define SI_LATUNE 4
+#define SI_NOF77  5
+#define SI_NOCYGWIN 6
+#define SI_OMP 6
+#define SI_LAREF 7
+#define SI_IS_TRUE(bv_, b_) (((bv_)>>(b_))&1)
+#define SI_SET_BIT(bv_, b_) (bv_) |= 1 << (b_)
+#define SI_UNSET_BIT(bv_, b_) (bv_) &= ~(1 << (b_))
+
    @ifdef allflags
       @define -t @-t@
       @define -t2 @-t2@
@@ -29,6 +45,7 @@
       @define -flapack @-flapack@
       @define -f77lib @-f77lib@
       @define -maflags @-maflags@
+      @define -fko @-fko@
    @endifdef
 void PrintUsage(char *name, int iarg, char *arg)
 {
@@ -139,8 +156,10 @@ void PrintUsage(char *name, int iarg, char *arg)
    @ifdef -t2
       fprintf(stderr, 
         "      -Si omp <0/1> : don'tuse/use OpenMP for threading\n");
+#if 0
       fprintf(stderr,
 "      -Si antthr <0/1/2> : nobuild/build/use Antoine's code for threading\n");
+#endif
    @endifdef
    @ifdef -lapackref
       fprintf(stderr, 
@@ -227,10 +246,6 @@ void GetFlags(int nargs,                /* nargs as passed into main */
    @ifdef -t3
               int **tids,              /* thread affinity ID list */
    @endifdef
-   @ifdef -t2
-              int *omp,                /* Build OpenMP version of threading? */
-              int *AntThr,             /* Build Antoine's threads? */
-   @endifdef
 @endifdef
 @ifdef -C
               char **comps,
@@ -245,23 +260,8 @@ void GetFlags(int nargs,                /* nargs as passed into main */
               char **srcdir,          /* path to top of source directory */
               char **bindir,          /* path to top of binary directory */
 @endifdef
-@ifdef -ad
-              int *bozol1,            /* Use untuned L1 */
-              int *UseArchDef,        /* Use arch defaults */
-              int *IEEE,              /* enforce IEEE FP standard? */
-              int *latune,            /* Tune LAPACK? */
-@endifdef
-@ifdef -nof77
-              int *NoF77, 
-@endifdef
-@ifdef -nocygwin
-              int *NoCygwin,
-@endifdef
-@ifdef -thrchk
-              int *ThrChk,
-@endifdef
-@ifdef -lapackref
-              int *lapackref,
+@ifdef -S
+              int *SIflag,
 @endifdef
 @ifdef -d2
               char **archdefs,
@@ -322,10 +322,6 @@ void GetFlags(int nargs,                /* nargs as passed into main */
 @ifdef -r
     *NREGS = 0;
 @endifdef
-@ifdef -ad
-    *bozol1 = 0;
-    *IEEE = *latune = *UseArchDef = 1;
-@endifdef
 @ifdef -flapack
     *flapack = NULL;
 @endifdef
@@ -367,23 +363,17 @@ void GetFlags(int nargs,                /* nargs as passed into main */
 @whiledef ivar2
    @define ivar @@(ivar2)@
 @endwhile
-@ifdef -nocygwin
-   *NoCygwin = 0;
-@endifdef
-@ifdef -nof77
-   *NoF77 = 0;
-@endifdef
-@ifdef -thrchk
-   *ThrChk = 1;
+@ifdef -S
+   *SIflag = 0;
+   SI_SET_BIT(*SIflag, SI_IEEE);
+   SI_SET_BIT(*SIflag, SI_LATUNE);
+   SI_SET_BIT(*SIflag, SI_ARCHDEF);
 @endifdef
 @ifdef -t
    *nthreads = -1;
 @endifdef
 @ifdef -t3
    *tids = NULL;
-@endifdef
-@ifdef -t2
-   *omp = *AntThr = 0;
 @endifdef
 @ifdef -pmake
    *pmake = NULL;
@@ -454,33 +444,88 @@ void GetFlags(int nargs,                /* nargs as passed into main */
    @define else @@
    @ifdef -ad
          if (!strcmp(sp0, "archdef"))
-            *UseArchDef = k;
+         {
+            if (k)
+               SI_SET_BIT(*SIflag, SI_ARCHDEF);
+            else
+               SI_UNSET_BIT(*SIflag, SI_ARCHDEF);
+         }
          else if (!strcmp(sp0, "ieee"))
-            *IEEE = k;
+         {
+            if (k)
+               SI_SET_BIT(*SIflag, SI_IEEE);
+            else
+               SI_UNSET_BIT(*SIflag, SI_IEEE);
+         }
          else if (!strcmp(sp0, "bozol1"))
-            *bozol1 = k;
+         {
+            if (k)
+               SI_SET_BIT(*SIflag, SI_BOZOL1);
+            else
+               SI_UNSET_BIT(*SIflag, SI_BOZOL1);
+         }
          else if (!strcmp(sp0, "latune"))
-            *latune = k;
+         {
+            if (k)
+               SI_SET_BIT(*SIflag, SI_LATUNE);
+            else
+               SI_UNSET_BIT(*SIflag, SI_LATUNE);
+         }
          @define else @else@
    @endifdef
    @ifdef -t2
          @(else) if (!strcmp(sp0, "omp"))
-            *omp = k;
-         @(else) if (!strcmp(sp0, "antthr"))
-            *AntThr = k;
+         {
+            if (k)
+               SI_SET_BIT(*SIflag, SI_OMP);
+            else
+               SI_UNSET_BIT(*SIflag, SI_OMP);
+         }
+         else if (!strcmp(sp0, "latune"))
+         {
+            if (k)
+               SI_SET_BIT(*SIflag, SI_LATUNE);
+            else
+               SI_UNSET_BIT(*SIflag, SI_LATUNE);
+         }
    @endifdef
    @ifdef -lapackref
          @(else) if (!strcmp(sp0, "lapackref"))
-            *lapackref = k;
+         {
+            if (k)
+               SI_SET_BIT(*SIflag, SI_LAREF);
+            else
+               SI_UNSET_BIT(*SIflag, SI_LAREF);
+         }
+   @endifdef
+   @ifdef -fko
+         @(else) if (!strcmp(sp0, "fko"))
+         {
+            if (k)
+               SI_SET_BIT(*SIflag, SI_FKO);
+            else
+               SI_UNSET_BIT(*SIflag, SI_FKO);
+         }
+      @define else @else@
    @endifdef
    @ifdef -nof77
          @(else) if (!strcmp(sp0, "nof77"))
-            *NoF77 = k;
+         {
+            if (k)
+               SI_SET_BIT(*SIflag, SI_NOF77);
+            else
+               SI_UNSET_BIT(*SIflag, SI_NOF77);
+         }
       @define else @else@
    @endifdef
    @ifdef -nocygwin
          @(else) if (!strcmp(sp0, "nocygwin"))
-            *NoCygwin = k;
+         {
+            if (k)
+               SI_SET_BIT(*SIflag, SI_NOCYGWIN);
+            else
+               SI_UNSET_BIT(*SIflag, SI_NOCYGWIN);
+         }
       @define else @else@
    @endifdef
    @ifdef -thrchk
@@ -689,9 +734,6 @@ void GetFlags(int nargs,                /* nargs as passed into main */
 @ifdef -b
    if (*ptrbits != 32 && *ptrbits != -32 && *ptrbits != 64)
       *ptrbits = 0;
-@endifdef
-@ifdef -ad
-@skip   *latune = *latune && *LAsrc;   /* can't tune LAPACK w/o LAPACK source */
 @endifdef
 }
 @endextract
@@ -6404,7 +6446,9 @@ int main(int nargs, char **args)
    enum F2CSTRING f2cstr;
 
    GetFlags(nargs, args, &verb, &OS, &vecexts, &mach, &ptrbits, usrcomps, 
-            &outfile, &srcdir, &bindir, &nof77, &nocygwin, &targ);
+            &outfile, &srcdir, &bindir, &i, &targ);
+   nof77 = SI_IS_TRUE(i,SI_NOF77);
+   nocygwin = SI_IS_TRUE(i,SI_NOCYGWIN);
 /*
  * Fully qualify any usr-override compilers
  */
@@ -8103,12 +8147,12 @@ char *ProbePmake(int verb, enum OSTYPE OS, int ncpu)
 }
 
 
+@extract -b @(basd)/atlconf.base rout=GetFlags -def allflags "1" -def -thrchk "1" -def -nocygwin "1"
+
 void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
                  enum ASMDIA asmb, int vecexts, int ptrbits, int nreg,
-                 int ncpu, int *tids, int omp, int AntThr,
-                 int l2size, char *srcdir, char *bindir, int bozol1, 
-                 int archdef, int IEEE, int latune, int nof77, int lapackref,
-                 char **comps, char *gccflags,
+                 int ncpu, int *tids, int l2size, char *srcdir, char *bindir,
+                 int SIflag, char **comps, char *gccflags,
                  char *f2cdefs, char *cdefs, char *pmake, char *flapack, 
                  char *smaflags, char *dmaflags, char *f77libs, char *ADd)
 /*
@@ -8139,7 +8183,9 @@ void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
    assert(ln);
    i = sprintf(ln, frm, verb, OS, arch, mhz, asmb, vecexts, ptrbits, l2size,
                srcdir, bindir, cdefs ? cdefs:"", f2cdefs? f2cdefs : "", 
-               compsflags, archdef, IEEE, bozol1, latune, nof77);
+               compsflags, SI_IS_TRUE(SIflag,SI_ARCHDEF), 
+               SI_IS_TRUE(SIflag,SI_IEEE), SI_IS_TRUE(SIflag,SI_BOZOL1), 
+               SI_IS_TRUE(SIflag,SI_LATUNE), SI_IS_TRUE(SIflag,SI_NOF77));
    free(compsflags);
    if (tids)
    {
@@ -8164,12 +8210,13 @@ void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
       ln = NewAppendedString_SFLAG(ln, "-Ss f77lib", f77libs);
    if (ADd)
       ln = NewAppendedString_SFLAG(ln, "-Ss ADdir", ADd);
-   if (omp)
-      ln = NewAppendedString_IFLAG(ln, "-Si omp", omp);
-   if (AntThr)
-      ln = NewAppendedString_IFLAG(ln, "-Si antthr", AntThr);
-   if (lapackref)
-      ln = NewAppendedString_IFLAG(ln, "-Si lapackref", lapackref);
+   if (SI_IS_TRUE(SIflag,SI_OMP))
+      ln = NewAppendedString_IFLAG(ln, "-Si omp", SI_IS_TRUE(SIflag,SI_OMP));
+@skip   if (AntThr)
+@skip      ln = NewAppendedString_IFLAG(ln, "-Si antthr", AntThr);
+   if (SI_IS_TRUE(SIflag,SI_LAREF))
+      ln = NewAppendedString_IFLAG(ln, "-Si lapackref", 
+                                   SI_IS_TRUE(SIflag,SI_LAREF));
    if (gccflags)
       ln = NewAppendedString_SFLAG(ln, "-Fa gc", gccflags);
    if (verb > 1)
@@ -8178,16 +8225,14 @@ void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
    free(ln);
 }
 
-@extract -b @(basd)/atlconf.base rout=GetFlags -def allflags "1" -def -thrchk "1" -def -nocygwin "1"
-
 int main(int nargs, char **args)
 {
    enum OSTYPE OS;
    enum MACHTYPE mach;
    int i, verb, asmb, f2cname, f2cint, f2cstr, ncpu, nof77, nocygwin;
-   int thrchk, mhz, omp, AntThr, lapackref, nreg;
+   int thrchk, mhz, omp, AntThr, nreg;
    int j, k, h, vecexts;
-   int ptrbits, l2size, bozol1, latune, archdef, ieee;
+   int ptrbits, l2size, SIflag;
    int *tids;
    char *targ, *f2cdefs, *cdefs, *srcdir, *bindir, *outfile, *sp;
    char targarg[256];
@@ -8196,11 +8241,12 @@ int main(int nargs, char **args)
 @skip   char *archdefs[NARDEF], *ad2[NARDEF];
 
    GetFlags(nargs, args, &verb, &OS, (enum ASMDIA*) &asmb, &vecexts, &mach, 
-            &mhz, &ptrbits, &nreg, &ncpu, &tids, &omp, &AntThr, comps, 
-            &gccflags, &outfile, &srcdir, &bindir, &bozol1, &archdef, &ieee, 
-            &latune, &nof77, &nocygwin, &thrchk, &lapackref, &f2cdefs, &cdefs,
-            &pmake, &flapack, &smaflags, &dmaflags, &f77libs, &ADd, 
+            &mhz, &ptrbits, &nreg, &ncpu, &tids, comps, &gccflags, &outfile, 
+            &srcdir, &bindir, &SIflag, &f2cdefs, 
+            &cdefs, &pmake, &flapack, &smaflags, &dmaflags, &f77libs, &ADd, 
             &l2size, &targ);
+   nof77 = SI_IS_TRUE(SIflag,SI_NOF77);
+   nocygwin = SI_IS_TRUE(SIflag,SI_NOCYGWIN);
    if (targ)
       sprintf(targarg, "-T %s", targ);
    else
@@ -8271,53 +8317,10 @@ int main(int nargs, char **args)
 /*
  * If user has not specified muladd flags (which are suffixed to kernel flags),
  * add flags to keep gcc 4 from hanging, if necessary
-@beginskip
- *
- * On UltraSPARCs cannot turn on optimization masearch gives nonsensical vals.
- * I have individually turned off *every* optimization that O1 enables, and
- * it still produces nonsensical values, so gcc at -O1 is doing something
- * that -O0 does not that you cannot turn off
-@endskip
  */
-@beginskip
-   if (!smaflags)
-   {
-      if (CompIsGcc(comps[SKC_]))
-      {
-         GetGccVers(comps[SKC_], &h, &i, &j, &k);
-         if (i == 4 && j > 4 && MachIsUS(mach))
-            smaflags = "-O0";   /* see above */
-         else if (i >= 4)
-            smaflags = "-fno-tree-loop-optimize";
-         else if (i == 3) /* reduce opt to avoid compiler hang */
-            smaflags = "-O0";
-      }
-      else 
-      if ((OS == OSIRIX && CompIsMIPSpro(comps[SKC_])) || 
-               CompIsPathScale(comps[SKC_]))
-         smaflags = " -O2";
-   }
-   if (!dmaflags)
-   {
-      if (CompIsGcc(comps[DKC_]))
-      {
-         GetGccVers(comps[DKC_], &h, &i, &j, &k);
-         if (i == 4 && j > 4 && MachIsUS(mach))
-            dmaflags = "-O0";   /* see above */
-         else if (i >= 4)
-            dmaflags = "-fno-tree-loop-optimize";
-         else if (i == 3) /* reduce opt to avoid compiler hang */
-            dmaflags = "-O0";
-      }
-      else if (OS == OSIRIX && CompIsMIPSpro(comps[DKC_]) ||
-               CompIsPathScale(comps[DKC_]))
-         dmaflags = " -O2";
-   }
-@endskip
    SpewItForth(verb, OS, mach, mhz, asmb, vecexts, ptrbits, nreg, ncpu, tids,
-               omp, AntThr, l2size, srcdir, bindir, bozol1, archdef, ieee, 
-               latune, nof77, lapackref, comps, gccflags, f2cdefs, cdefs, pmake,
-               flapack, smaflags, dmaflags, f77libs, ADd);
+               l2size, srcdir, bindir, SIflag, comps, gccflags, f2cdefs, cdefs, 
+               pmake, flapack, smaflags, dmaflags, f77libs, ADd);
    for (i=0; i < 3*NCOMP; i++)
       if (comps[i])
          free(comps[i]);
@@ -8401,6 +8404,8 @@ flapack=ATL_NoOverride
 flapacktar=ATL_NoOverride
 f77=1
 fulllapack=0
+usefko=0
+fkosrc=
 #
 # path is configure path without trailing configure :)
 #
@@ -8488,6 +8493,7 @@ do
       echo "             this will disallow building the F77 interface, and"
       echo "             some of the tests (eg, standard BLAS testers)"
       echo "  --with-netlib-lapack-tarfile=<path to lapack tarfile>"
+      echo "  --with-fko-src=<path to FKO source tree>"
 @beginskip
       echo "  --with-netlib-lapack=<path to lapack.a>"
       echo "     Use this library to build a mixed netlib/ATLAS LAPACK."
@@ -8635,6 +8641,14 @@ do
 @skip      pass="$pass -Ss lasrc $blddir/src/lapack/reference/src/"
       handled=1
       fulllapack=1
+   fi
+   flag=`echo "$arg" | sed -e "s/--with-fko-src=//"`
+   if test "$flag" != "$arg"
+   then
+      usefko=1
+      fkosrc="$flag"
+      pass="$pass -Si fko 1"
+      handled=1
    fi
 #
 @beginskip
@@ -9027,6 +9041,10 @@ then
 fi
 cat lib/Make.tmp >> lib/Makefile
 rm -f lib/Make.tmp
+if test $usefko -eq 1
+then
+   $fkosrc/fko_atlconf
+fi
 echo "DONE configure"
 #
 @ROUT SpewMakeInc
@@ -9047,7 +9065,7 @@ int main(int nargs, char **args)
    int nreg=0;
    int Use3DNow=0;  /* this needs to come from getflags */
    int ncpu, omp, AntThr, lapackref;
-   int USEDEFL1, USEARCHDEF, LATUNE, USEIEEE, USEMINGW;
+   int SIflag, USEDEFL1, USEMINGW;
    int *tids;
    #define NPREC 4
    char pres[NPREC] = {'s', 'd', 'c', 'z'};
@@ -9059,10 +9077,12 @@ int main(int nargs, char **args)
    char *adnames[NARDEF] = {"sKERNDEF", "dKERNDEF", "sMMDEF", "dMMDEF"};
 
    GetFlags(nargs, args, &verb, &OS, (enum ASMDIA*) &asmb, &vecexts, &mach, 
-            &mhz, &ptrbits, &nreg, &ncpu, &tids, &omp, &AntThr, comps, 
-            &gccflags, &outfile, &srcdir, &blddir, &USEDEFL1, &USEARCHDEF, 
-            &USEIEEE, &LATUNE, &nof77, &lapackref, &f2cdefs, &cdefs, &pmake, 
+            &mhz, &ptrbits, &nreg, &ncpu, &tids, comps, &gccflags, 
+            &outfile, &srcdir, &blddir, &SIflag, &f2cdefs, &cdefs, &pmake, 
             &flapack, &smaflags, &dmaflags, &f77lib, &ADd, &l2size, &targ);
+   USEDEFL1 = SI_IS_TRUE(SIflag,SI_BOZOL1);
+   nof77 = SI_IS_TRUE(SIflag,SI_NOF77);
+   lapackref = SI_IS_TRUE(SIflag,SI_LAREF);
    if (ncpu > 1) THREADS = 1;
    if (!outfile)
       fpout = stdout;
@@ -9163,7 +9183,7 @@ int main(int nargs, char **args)
    #endif
    if (ISAX)
       fprintf(fpout, "%s", ISAXNAM[ISAX]);
-   if (!USEIEEE)
+   if (!SI_IS_TRUE(SIflag,SI_IEEE))
       fprintf(fpout, "NONIEEE");
    fprintf(fpout, "\n\n");
 
@@ -9320,7 +9340,9 @@ int main(int nargs, char **args)
    else
       fprintf(fpout, "   NPROC=%d\n", ncpu);
    fprintf(fpout, "   CDEFS = $(L2SIZE) $(INCLUDES) $(F2CDEFS) $(ARCHDEFS)");
-   if (!USEIEEE)
+   if (SI_IS_TRUE(SIflag,SI_FKO))
+      fprintf(fpout, " -DATL_FKO=1");
+   if (!SI_IS_TRUE(SIflag,SI_IEEE))
       fprintf(fpout, " -DATL_NONIEEE=1");
 /*
  * Dump -m32/-m64 to CDEFS if it is in normal flags, so that generic flags
@@ -9530,10 +9552,12 @@ int main(int nargs, char **args)
    }
    if (!nreg)
       fprintf(fpout, "   INSTFLAGS = -1 %d -a %d -l %d\n\n", 
-              USEDEFL1, USEARCHDEF, LATUNE);
+              USEDEFL1, SI_IS_TRUE(SIflag,SI_ARCHDEF), 
+              SI_IS_TRUE(SIflag,SI_LATUNE));
    else
       fprintf(fpout, "   INSTFLAGS = -1 %d -a %d -l %d -r %d\n\n", 
-              USEDEFL1, USEARCHDEF, LATUNE, nreg);
+              USEDEFL1, SI_IS_TRUE(SIflag,SI_ARCHDEF), 
+              SI_IS_TRUE(SIflag,SI_LATUNE), nreg);
 @beginskip
    fprintf(fpout,
       "#  --------------------------------------------------------\n");
@@ -9541,7 +9565,8 @@ int main(int nargs, char **args)
       "#  ATLAS install flags (controlling architectural defaults)
    fprintf(fpout,
       "#  --------------------------------------------------------\n");
-   fprintf(fpout, "   INSTFLAGS = -1 %d -a %d\n\n", USEDEFL1, USEARCHDEF);
+   fprintf(fpout, "   INSTFLAGS = -1 %d -a %d\n\n", USEDEFL1, 
+           SI_IS_TRUE(SIflag,SI_ARCHDEF));
 @endskip
 
 fprintf(fpout,
