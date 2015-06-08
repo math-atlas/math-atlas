@@ -1310,8 +1310,9 @@ int IsSIMDalignLoopPeelable(LOOPQ *lp)
  */
 /*
  * 1. NO moving ptr !!!, not peelable 
+ * FIXED: varrs may not be null but element count is zeor
  */
-   if (!lp->varrs) 
+   if (!lp->varrs || !lp->varrs[0]) /* FIXED */
    {
       fko_warn(__LINE__, "NOT PEELABLE: NO moving ptr!!! \n");
       return 0; 
