@@ -1,5 +1,6 @@
 #ifndef FKO_INFOC_H
    #define FKO_INFOC_H 1
+   #include <stdarg.h>
 /*
  * These constants used to query for information about types
  */
@@ -122,4 +123,8 @@ struct fko_instinfo
 fko_instinfo_t *FKO_GetInstInfoC(char *filename);
 void FKO_DestroyInstInfoC(fko_instinfo_t *die);
 
+/*
+ * Some handy commands for search
+ */
+int FKO_system(char *outs, int len, const char *frm, ...);
 #endif
