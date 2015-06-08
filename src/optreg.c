@@ -1699,9 +1699,9 @@ int DoRegAsgTransforms(IGNODE *ig)
  */
          else
          {
-            #if IFKO_DEBUG_LEVEL > 1
             ip = PrintComment(bl->blk, ip, NULL, "Inserted LD from %s",
                               STname[ig->var-1] ? STname[ig->var-1] : "NULL");
+            #if IFKO_DEBUG_LEVEL > 1
             fprintf(stderr, "var=%s ireg=%d getting LD ip=%p," 
                             "nr=%d, nw=%d!\n\n", 
                        STname[ig->var-1], ig->reg, ip, ig->nread, ig->nwrite);

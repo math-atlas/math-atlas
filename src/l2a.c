@@ -2808,7 +2808,15 @@ struct assmln *lil2ass(BBLOCK *bbase)
       case COMMENT:
          #ifdef X86
             /*continue;*/ /* skip comments temporary for testing with ATLAS*/
-            ap->next = PrintAssln("#%s\n", op1 ? STname[op1-1] : "");
+/*
+ *          NOTE: I skip the repeated lines of Inserted LD from ... comments,
+ *          can't get rid of that right now since it is used to keep track the 
+ *          fpconst load. see DoRegAsgTransforms in optreg.c  
+ */
+            if (op1 && STname[op1-1] 
+                  && !strstr(STname[op1-1],"Inserted LD from"))
+               ap->next = PrintAssln("#%s\n", op1 ? STname[op1-1] : "");
+            else continue;
          #elif defined(SPARC)
             ap->next = PrintAssln("!%s\n", op1 ? STname[op1-1] : "");
 	 #elif defined(PPC)
