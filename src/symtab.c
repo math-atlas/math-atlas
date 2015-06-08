@@ -1445,8 +1445,9 @@ void CreateArrColPtrs()
    short ldaS;
    short ur;
    extern int FKO_FLAG;
-   
-   DoComment("Create ldas = lda * sizeof ");
+  
+   if (Narr)
+      DoComment("Create ldas = lda * sizeof ");
    for (i=0; i < Narr; i++)
    {
       ptr = STarr[i].ptr;
@@ -1484,7 +1485,8 @@ void CreateArrColPtrs()
          STarr[i].colptrs = CreateAllColPtrs(ptr,ldaS, ur);
    #endif
    }
-   DoComment("End ldas creation");
+   if (Narr)
+      DoComment("End ldas creation");
 /*
  * based on unroll factor, we will create pointers to point the columns 
  * NOTE: we only support 2D array to create column pointers ... 
