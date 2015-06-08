@@ -54,12 +54,12 @@
 @endifdef
 @WHAT acw cw acw!
 @define nmln @(C) Copyright @(cdate) @(author)@
-@(cb)             Automatically Tuned Linear Algebra Software v@(ver)
-@(cb)@75c@(nmln)
+@(cb) Automatically Tuned Linear Algebra Software v@(ver)
+@(cb) @(nmln)
 @ifdef contrib
-@(cb)
 @(cb) Code contributers : @(author), @(contrib)
 @endifdef
+@beginskip
 @(cb)
 @(cb) Redistribution and use in source and binary forms, with or without
 @(cb) modification, are permitted provided that the following conditions
@@ -85,6 +85,7 @@
 @(cb) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 @(cb) POSSIBILITY OF SUCH DAMAGE. 
 @(cb)
+@endskip
 @WHAT cw
 @ifdef NEED_START
  */

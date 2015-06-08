@@ -12,7 +12,7 @@
 @ifdef ! cwauth
    @define cwauth @R. Clint Whaley@
 @endifdef
-@(cb)             Automatically Tuned Linear Algebra Software v@(ver)
+@(cb) Automatically Tuned Linear Algebra Software v@(ver)
 @ifdef cwdate
    @define nmln @ Copyright (C) @(cwdate)@
    @undef cwdate
@@ -60,9 +60,9 @@
    @endiif
 @endifdef
 @ifdef contrib
-@(cb)
 @(cb) Code contributers : @(cwauth), @(contrib)
 @endifdef
+@beginskip
 @(cb)
 @(cb) Redistribution and use in source and binary forms, with or without
 @(cb) modification, are permitted provided that the following conditions
@@ -89,6 +89,7 @@
 @(cb) POSSIBILITY OF SUCH DAMAGE. 
 @(cb)
 @LANG C
+@endskip
  */
 @undef cwauth
 @ifdef contrib
