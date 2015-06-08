@@ -1,3 +1,8 @@
+/*
+ * Copyright (C) 2004, 2015 R. Clint Whaley.
+ * Code contributers : R. Clint Whaley, Majedul Sujon.
+ * See iFKO/LICENSE.txt for software licence (3-clause BSD).
+ */
 #include "fko.h"
 
 BLIST *FindGlobalBlockList(void)

@@ -42,8 +42,8 @@
  * at least SSE3, though past fko worked fine with SSE2.
  */
 #if X86
-   #if 0
       #define SSE3 1
+   #if 0
       #define SSE41 1
       #define AVX 1
       #define AVX2 1
