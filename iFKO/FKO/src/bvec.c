@@ -1,4 +1,8 @@
 /*
+ * Copyright (C) 2003, 2004, 2015 R. Clint Whaley.
+ * Code contributers : R. Clint Whaley, Majedul Sujon.
+ */
+/*
  * This file contains the routines necessary to manipulate the basic block
  * bit vectors
  */

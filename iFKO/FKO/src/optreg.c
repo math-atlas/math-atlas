@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2004, 2015 R. Clint Whaley.
+ * Copyright (C) 2003, 2004, 2015 R. Clint Whaley.
  * Code contributers : R. Clint Whaley, Majedul Sujon.
  */
 #include <fko.h>
