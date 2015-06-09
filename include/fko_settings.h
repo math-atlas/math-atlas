@@ -56,9 +56,12 @@
       #define VECDEF 1
    #endif
    #ifdef AVX
+      /*#define ARCH_HAS_MAC 1 */ /*In some AMD processors, like: FX-4100 */
+      /*#define FMA4 1 */ /* In some AMD processors, like: FX-4100 */
       #define VECDEF 1
    #endif
    #ifdef AVX2
+      #define ARCH_HAS_MAC 1
       #define VECDEF 1
    #endif
 /* 
@@ -69,6 +72,10 @@
    #ifndef VECDEF
       #if defined(ATL_AVXMAC) || defined(ATL_AVXFMA4)
          #define AVX2 1
+         #define ARCH_HAS_MAC 1
+         #if defined(ATL_AVXFMA4)
+            #define FMA4 1
+         #endif
       #elif defined(ATL_AVX)
          #define AVX 1
       #elif defined(ATL_SSE3)

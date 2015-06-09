@@ -154,8 +154,10 @@
 #elif defined(X86)
    #ifdef ARCH_HAS_MAC     /* defiend in fko_settings.h */    
       #define ArchHasMAC   /* defined internally */
-      #define FMA3
       /*#define FMA4*/     /* get retarded */
+      #ifndef FMA4
+         #define FMA3
+      #endif
       #define FP_MAC
       #define DP_MAC
       #define VFP_MAC
