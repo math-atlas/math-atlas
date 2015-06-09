@@ -1,0 +1,7 @@
+ROUTINE iconstret;
+ROUT_LOCALS;
+   INT :: neg1;
+   CONST_INIT :: neg1=0x8FFFFFFF;
+ROUT_BEGIN
+   RETURN neg1;
+ROUT_END

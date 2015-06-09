@@ -1,0 +1,272 @@
+@ROUT Make.bin
+include ../Make.inc
+objs = y.tab.o lex.yy.o h2l.o l2a.o inst.o symtab.o arch.o misc.o flow.o \
+       bvec.o vars.o optreg.o optflow.o optsimd.o optloop.o optmisc.o
+
+incd=$(TOPdir)/include
+srcd=$(TOPdir)/src
+@multidef hd
+   settings arch types symtab bvec loop inst h2l vars optsimd 
+   misc l2a flow optreg optmisc
+@endmultidef
+@declare "heads = " y n
+   $(incd)/fko.h
+   @whiledef hd
+      $(incd)/fko_@(hd).h
+   @endwhile
+@enddeclare
+
+fko : $(heads) fko.o $(objs)
+	$(CC) $(CCFLAGS) -o $@ fko.o $(objs) -lfl
+
+xprintinst : $(incd)/fko.h $(incd)/fko_inst.h $(srcd)/printinst.c
+	$(CC) $(CCFLAGS) -o $@ $(srcd)/src/printinst.c
+xprintregs : $(heads) $(srcd)/printregs.c
+	$(CC) $(CCFLAGS) -o $@ $(srcd)/printregs.c
+
+extC :
+	$(EXTRACT) -langC -b $(TOPdir)/$(basf)
+
+y.tab.h : $(heads) $(srcd)/hil_gram.y
+	yacc -d -v $(srcd)/hil_gram.y
+y.tab.c : $(heads) $(srcd)/hil_gram.y
+	yacc -v $(srcd)/hil_gram.y
+lex.yy.c : y.tab.h $(srcd)/hil_lex.l
+	lex $(srcd)/hil_lex.l
+lex.yy.o : $(heads) y.tab.h lex.yy.c
+	$(CC) -I./ $(CCFLAGS) -c lex.yy.c
+y.tab.o : $(heads) y.tab.h
+	$(CC) $(CCFLAGS) -c y.tab.c
+
+@multidef rt
+   optmisc optflow optsimd optreg optloop
+   vars bvec flow misc arch symtab inst l2a h2l fko
+@endmultidef
+@whiledef rt
+@(rt).o : $(heads) $(srcd)/@(rt).c
+	$(CC) $(CCFLAGS) -c  $(srcd)/@(rt).c
+@endwhile
+
+force_build:
+@whiledef rt oloop inst arch
+query@(rt) : force_build
+	cd $(BLDdir)/extern/src ; make
+	$(CC) $(CCFLAGS) -o $@ $(TOPdir)/extern/src/query@(rt).c \
+           $(BLDdir)/extern/lib/libfkoinfo.a
+@endwhile
+
+clean :
+	- rm -f $(objs) y.tab.h y.tab.c lex.yy.c fko.o y.output
+
+Makefile : $(TOPdir)/ifko.base
+	$(EXTRACT) -b $(TOPdir)/ifko.base -langM -o Makefile rout=Make.bin
+@ROUT Make.extern
+include ../../Make.inc
+
+incd = $(TOPdir)/extern/include
+srcd = $(TOPdir)/extern/src
+libd = ../lib
+ext = $(EXTRACT)
+
+@multidef rt
+   FKO_GetArchInfo FKO_DestroyArchInfo FKO_NumRegs FKO_Veclen 
+   FKO_RegtypesAliased FKO_CachelineSize FKO_HasSpecialInst 
+   FKO_PipelenADD FKO_PipelenMUL FKO_PipelenMAC FKO_PipelenDIV 
+   FKO_TypestrToInt  FKO_InststrToInt FKO_ParseInfoLine 
+   FKO_GetOptLoopInfo FKO_DestroyOptLoopInfo
+   FKO_GetInstInfo FKO_DestroyInstInfo
+   FKO_system
+@endmultidef
+incs = $(incd)/fko_parseinfo.h $(incd)/fko_infoC.h $(incd)/fko_info.h
+lib = $(libd)/libfkoinfo.a
+@declare "obj = " y y
+   @whiledef rt
+      @(rt).o
+      @define rt1 @@(rt)@
+   @endwhile
+@enddeclare
+
+$(lib) : $(obj)
+	$(AR) $(ARF) $(lib) $(obj)
+	$(RANLIB) $(lib)
+
+lib : $(lib)
+
+clean :
+	- rm -f $(obj)
+
+@whiledef rt1
+@(rt1).o : $(incs) $(srcd)/@(rt1).c
+	$(CC) $(CCFLAGS) -o @(rt1).o -c $(srcd)/@(rt1).c
+@endwhile
+@skip .c.o: $(incs)
+@skip	$(CC) $(CCFL) -c $<
+
+Makefile : $(TOPdir)/ifko.base
+	$(ext) -b $(TOPdir)/ifko.base -langM -o Makefile rout=Make.extern
+@ROUT make.test
+SHELL = /bin/tcsh
+CC = gcc
+CCFLAGS = -g
+IFKO = ../bin/fko
+KFLAGS = -U 2
+
+all : ibuild fbuild dbuild hbuild irun frun drun hrun
+
+@beginskip
+hbuild : xhtst0 xhtst1 xhtst1
+hrun : hbuild
+	./xhtst0
+	./xhtst1
+	./xhtst2
+
+@endskip
+@multidef N   17 12 12 5
+@whiledef pre i d f h
+   @declare "@(pre)build :" y n
+      @define i @0@
+      @iwhile i < N
+          x@(pre)tst@(i)
+         @iexp i 1 @(i) +
+      @endiwhile
+      @undef i
+   @enddeclare
+@(pre)run:
+   @define i @0@
+   @iwhile i < N
+	./x@(pre)tst@(i)
+      @iexp i 1 @(i) +
+   @endiwhile
+   @undef i
+
+   @define i @0@
+   @iwhile i < N
+x@(pre)tst@(i) : m@(pre)tst@(i).o @(pre)tst@(i).o
+	$(CC) $(CCFLAGS) -o $@ m@(pre)tst@(i).o @(pre)tst@(i).o
+      @iexp i 1 @(i) +
+   @endiwhile
+   @undef i
+   @undef N
+
+@endwhile
+
+mitst3.c : mitst0.c
+	ln -s mitst0.c mitst3.c
+clean:
+	rm -f x* *.o *.s
+build_comp:
+	cd ../bin ; $(MAKE) fko
+
+%.o : %.s
+	$(CC) $(CCFLAGS) -c -o $@ $<
+%.s : %.b
+	$(MAKE) build_comp
+	$(IFKO) $(KFLAGS) $< > $@
+%.o : %.c
+	$(CC) $(CCFLAGS) -c -o $@ $<
+@ROUT make.crap
+CC = gcc
+CCFLAGS = -g
+objs = y.tab.o lex.yy.o h2l.o l2a.o inst.o symtab.o arch.o misc.o
+HDIR = ../include
+heads= $(HDIR)/fko_arch.h $(HDIR)/fko_inst.h $(HDIR)/fko_misc.h \
+       $(HDIR)/fko_types.h $(HDIR)/fko_h2l.h $(HDIR)/fko_l2a.h \
+       $(HDIR)/fko_symtab.h $(HDIR)/ifko.h
+
+ifko : $(heads) ifko.o $(objs)
+	$(CC) $(CCFLAGS) -o $@ ifko.o $(objs) -ll
+
+xtst :  tst.c
+	$(CC) $(CCFLAGS) -o $@ tst.c
+#arch.o : $(heads) arch.c $(heads)
+#	$(CC) $(CCFLAGS) -c arch.c
+
+y.tab.c : y.tab.h
+y.tab.h : ../src/hil_gram.y $(heads)
+	yacc -v -d ../src/hil_gram.y
+lex.yy.c : y.tab.h ../src/hil_lex.l
+	lex ../src/hil_lex.l
+lex.yy.o : $(heads) lex.yy.c
+	$(CC) -I../include $(CCFLAGS) -c lex.yy.c
+y.tab.o : $(heads) y.tab.c
+	$(CC) -I../include $(CCFLAGS) -c y.tab.c
+
+@whiledef rout ifko h2l l2a inst symtab arch misc
+@(rout).o : $(heads) ../src/@(rout).c
+	$(CC) -I../include $(CCFLAGS) -c ../src/@(rout).c
+@endwhile
+
+clean :
+	rm -f $(objs) y.tab.h y.tab.c lex.yy.c ifko.o y.output
+@ROUT fko_settings.h
+#ifndef FKO_SETTINGS_H
+   #define FKO_SETTINGS_H 1
+/*
+ * Choose one of the supported assemblies/ABIs, default will be Linux/AMD64.
+ * If you manually set one of these, set ARCH_ as well so default won't be used.
+ */
+#if 0
+@whiledef abi LINUX_X86_32 SOLARIS_SPARC OSX_PPC
+   #define LINUX_X86_64 1
+   #define @(abi)
+@endwhile
+   #define ARCH_ 1  /* uncomment this line, if you uncomm earlier line */
+#endif
+#ifndef ARCH_
+   #if !defined(LINUX_X86_64) && !defined(LINUX_X86_32) && \
+       !defined(SOLARIS_SPARC) && !defined(OSX_PPC)
+      #define LINUX_X86_64 1
+   #endif
+   #define ARCH_ 1
+#endif
+#if defined(LINUX_X86_64) || defined(LINUX_X86_32)
+   #define X86 1
+#else 
+   #define X86 0
+#endif
+
+/*
+ * For x86, define what SIMD vector support you've got.  Presently must have
+ * at least SSE3, though past fko worked fine with SSE2.
+ */
+#if X86
+   #if 0
+@whiledef isa AVX2 AVX SSE41 SSE3
+      #define @(isa) 1
+@endwhile
+   #endif
+
+@whiledef isa AVX2 AVX SSE41 SSE3
+   #ifdef @(isa)
+      #define VECDEF 1
+   #endif
+@endwhile
+   #ifndef VECDEF
+      #define AVX2
+      #define VECDEF 1
+   #endif
+#endif
+/*
+ * If you know it, can set the pipeline length of various FPU operations
+ * to limit the need to search.  This can also be auto-detected by FKO,
+ * UPDATE WITH HOW.
+ */
+@whiledef op ADD MUL MAC
+   @whiledef pr F D VF VD
+#ifndef PIPELINE_@(pr)@(op)
+   #define PIPELINE_@(pr)@(op) 0
+#endif
+   @endwhile
+@endwhile
+/*
+ * Present searches don't care at all about these settings
+ */
+@whiledef op MUL MAC
+   @whiledef pr VI VI
+#ifndef  PIPELINE_@(pr)@(op)
+   #define PIPELINE_@(pr)@(op) 0
+#endif
+   @endwhile
+@endwhile
+
+#endif  /* end multiple inclusion guard */

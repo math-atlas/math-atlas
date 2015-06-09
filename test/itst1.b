@@ -1,0 +1,6 @@
+ROUTINE simple;
+PARAMS :: i1;
+INT    :: i1;
+ROUT_BEGIN
+   RETURN i1;
+ROUT_END
