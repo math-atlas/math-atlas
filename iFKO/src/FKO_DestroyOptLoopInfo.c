@@ -1,3 +1,6 @@
+/*
+ * Copyright (C) 2015 R. Clint Whaley.
+ */
 #include "fko_info.h"
 static void FKO_FreeAllStrings(int n, char **sa)
 {

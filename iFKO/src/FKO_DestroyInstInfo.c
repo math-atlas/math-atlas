@@ -1,3 +1,6 @@
+/*
+ * Copyright (C) 2015 R. Clint Whaley.
+ */
 #include "fko_info.h"
 
 void FKO_DestroyInstInfoC(fko_instinfo_t *dp)

@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2004, 2015 R. Clint Whaley.
+ * Code contributers : R. Clint Whaley, Majedul Sujon.
+ */
 #define ARCH_DECLARE
 #include "fko.h"
 struct locinit *LIhead=NULL,       /* Locals to be init to constant vals */

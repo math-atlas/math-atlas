@@ -1,3 +1,6 @@
+/*
+ * Copyright (C) 2015 R. Clint Whaley.
+ */
 #define DECL_II_ 1
 #include "fko_parseinfo.h"
 #include "fko_info.h"

@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2004, 2015 R. Clint Whaley.
+ * Code contributers : R. Clint Whaley, Majedul Sujon.
+ */
 #include "fko.h"
 
 /*FIXED: considered OL_NEINC as special purpose const in symbol table */

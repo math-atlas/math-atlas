@@ -1,3 +1,6 @@
+/*
+ * Copyright (C) 2015 R. Clint Whaley.
+ */
 #include "fko_info.h"
 
 int FKO_CachelineSizeC(fko_archinfo_t *ap, int lvl)

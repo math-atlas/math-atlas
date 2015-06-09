@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2004, 2015 R. Clint Whaley.
+ * Code contributers : R. Clint Whaley, Majedul Sujon.
+ */
 #include "fko.h"
 
 BLIST *NewBlockList(BBLOCK *blk, BLIST *next)

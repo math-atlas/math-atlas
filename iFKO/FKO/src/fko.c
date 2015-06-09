@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2004, 2015 R. Clint Whaley.
+ * Code contributers : R. Clint Whaley, Majedul Sujon.
+ */
 #define IFKO_DECLARE
 #include "fko.h"
 #include "fko_arch.h"

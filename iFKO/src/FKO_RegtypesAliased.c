@@ -1,3 +1,6 @@
+/*
+ * Copyright (C) 2015 R. Clint Whaley.
+ */
 #include "fko_info.h"
 
 int FKO_RegtypesAliasedC(fko_archinfo_t *ap, int typ1, int typ2)
