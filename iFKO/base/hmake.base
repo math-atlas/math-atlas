@@ -1,23 +1,12 @@
 @ROUT Make.bin
-include ../Make.inc
-objs = y.tab.o lex.yy.o h2l.o l2a.o inst.o symtab.o arch.o misc.o flow.o \
-       bvec.o vars.o optreg.o optflow.o optsimd.o optloop.o optmisc.o
+include Make.inc
 
 incd=$(TOPdir)/include
 srcd=$(TOPdir)/src
-@multidef hd
-   settings arch types symtab bvec loop inst h2l vars optsimd 
-   misc l2a flow optreg optmisc
-@endmultidef
-@declare "heads = " y n
-   $(incd)/fko.h
-   @whiledef hd
-      $(incd)/fko_@(hd).h
-   @endwhile
-@enddeclare
 
-fko : $(heads) fko.o $(objs)
-	$(CC) $(CCFLAGS) -o $@ fko.o $(objs) -lfl
+force_build:
+fko: force_build
+	cd FKOsrc ; make ../fko
 
 xprintinst : $(incd)/fko.h $(incd)/fko_inst.h $(srcd)/printinst.c
 	$(CC) $(CCFLAGS) -o $@ $(srcd)/src/printinst.c
@@ -27,27 +16,6 @@ xprintregs : $(heads) $(srcd)/printregs.c
 extC :
 	$(EXTRACT) -langC -b $(TOPdir)/$(basf)
 
-y.tab.h : $(heads) $(srcd)/hil_gram.y
-	yacc -d -v $(srcd)/hil_gram.y
-y.tab.c : $(heads) $(srcd)/hil_gram.y
-	yacc -v $(srcd)/hil_gram.y
-lex.yy.c : y.tab.h $(srcd)/hil_lex.l
-	lex $(srcd)/hil_lex.l
-lex.yy.o : $(heads) y.tab.h lex.yy.c
-	$(CC) -I./ $(CCFLAGS) -c lex.yy.c
-y.tab.o : $(heads) y.tab.h
-	$(CC) $(CCFLAGS) -c y.tab.c
-
-@multidef rt
-   optmisc optflow optsimd optreg optloop
-   vars bvec flow misc arch symtab inst l2a h2l fko
-@endmultidef
-@whiledef rt
-@(rt).o : $(heads) $(srcd)/@(rt).c
-	$(CC) $(CCFLAGS) -c  $(srcd)/@(rt).c
-@endwhile
-
-force_build:
 @whiledef rt oloop inst arch
 query@(rt) : force_build
 	cd $(BLDdir)/extern/src ; make
@@ -55,16 +23,59 @@ query@(rt) : force_build
            $(BLDdir)/extern/lib/libfkoinfo.a
 @endwhile
 
+
+Makefile : $(TOPdir)/base/hmake.base
+	$(EXTRACT) -langM -b $(TOPdir)/base/hmake.base rout=Make.bin -o Makefile
+@ROUT Make.fsrc
+include ../Make.inc
+incd = $(TOPdir)/FKO/include
+srcd = $(TOPdir)/FKO/src
+
+objs = y.tab.o lex.yy.o h2l.o l2a.o inst.o symtab.o arch.o misc.o flow.o \
+       bvec.o vars.o optreg.o optflow.o optsimd.o optloop.o optmisc.o
+
+@multidef hd
+   arch types symtab bvec loop inst h2l vars optsimd 
+   misc l2a flow optreg optmisc
+@endmultidef
+@declare "heads = " y n
+   $(incd)/fko.h
+   $(BLDdir)/include/fko_settings.h
+   @whiledef hd
+      $(incd)/fko_@(hd).h
+   @endwhile
+@enddeclare
+
+../fko : $(heads) fko.o $(objs)
+	$(CC) $(CCFLAGS) -o $@ fko.o $(objs) -lfl
+
+@multidef rt
+   optmisc optflow optsimd optreg optloop
+   vars bvec flow misc arch symtab inst l2a h2l fko
+@endmultidef
+@whiledef rt
+@(rt).o : $(heads) $(srcd)/@(rt).c
+	$(CC) $(CCFLAGS) $(fINCs) -c  $(srcd)/@(rt).c
+@endwhile
+
+y.tab.h : $(heads) $(srcd)/hil_gram.y
+	yacc -d -v $(srcd)/hil_gram.y
+y.tab.c : $(heads) $(srcd)/hil_gram.y
+	yacc -v $(srcd)/hil_gram.y
+lex.yy.c : y.tab.h $(srcd)/hil_lex.l
+	lex $(srcd)/hil_lex.l
+lex.yy.o : $(heads) y.tab.h lex.yy.c
+	$(CC) -I./ $(CCFLAGS) $(fINCs) -c lex.yy.c
+y.tab.o : $(heads) y.tab.h
+	$(CC) $(CCFLAGS) $(fINCs) -c y.tab.c
+
 clean :
 	- rm -f $(objs) y.tab.h y.tab.c lex.yy.c fko.o y.output
+@ROUT Make.isrc
+include ../Make.inc
 
-Makefile : $(TOPdir)/ifko.base
-	$(EXTRACT) -b $(TOPdir)/ifko.base -langM -o Makefile rout=Make.bin
-@ROUT Make.extern
-include ../../Make.inc
-
-incd = $(TOPdir)/extern/include
-srcd = $(TOPdir)/extern/src
+incd = $(TOPdir)/include
+srcd = $(TOPdir)/src
 libd = ../lib
 ext = $(EXTRACT)
 
@@ -97,13 +108,13 @@ clean :
 
 @whiledef rt1
 @(rt1).o : $(incs) $(srcd)/@(rt1).c
-	$(CC) $(CCFLAGS) -o @(rt1).o -c $(srcd)/@(rt1).c
+	$(CC) $(CCFLAGS) $(iINCs) -o @(rt1).o -c $(srcd)/@(rt1).c
 @endwhile
 @skip .c.o: $(incs)
 @skip	$(CC) $(CCFL) -c $<
 
-Makefile : $(TOPdir)/ifko.base
-	$(ext) -b $(TOPdir)/ifko.base -langM -o Makefile rout=Make.extern
+Makefile : $(TOPdir)/base/hmake.base
+	$(ext) -b $(TOPdir)/base/hmake.base -langM -o Makefile rout=@(@rout)
 @ROUT make.test
 SHELL = /bin/tcsh
 CC = gcc
@@ -212,10 +223,21 @@ clean :
 @endwhile
    #define ARCH_ 1  /* uncomment this line, if you uncomm earlier line */
 #endif
+/*
+ * If arch isn't defined, scope if ATLAS's flags are being used, else default
+ */
 #ifndef ARCH_
    #if !defined(LINUX_X86_64) && !defined(LINUX_X86_32) && \
        !defined(SOLARIS_SPARC) && !defined(OSX_PPC)
-      #define LINUX_X86_64 1
+      #ifdef ATL_OS_Linux
+         #ifdef ATL_GAS_x8632
+            #define LINUX_X86_32 1
+         #else
+            #define LINUX_X86_64 1
+         #endif
+      #else
+         #define LINUX_X86_64 1
+      #endif
    #endif
    #define ARCH_ 1
 #endif
@@ -234,16 +256,45 @@ clean :
 @whiledef isa AVX2 AVX SSE41 SSE3
       #define @(isa) 1
 @endwhile
+      #define ARCH_HAS_MAC 1 /* AVX2 & AMD with FMA4 */
+      #define FMA4 1         /* only for AMD wt FMA4 but w/o FMA3 */
+      #define FMA4 0         /* true for all but AMD with FMA4 but w/o FMA3 */
+      #define ARCH_HAS_MAC 0 /* everything else */
    #endif
 
 @whiledef isa AVX2 AVX SSE41 SSE3
    #ifdef @(isa)
       #define VECDEF 1
+      @mif isa = "AVX2
+      #define ARCH_HAS_MAC 1
+      @endmif
    #endif
 @endwhile
+/* 
+ * For default, see if we've got ATLAS-style defs, else default to AVX2
+ * This is newest that iFKO supports, and will run fastest.  It will error
+ * on old machine, and the installer should be alerted to fix!
+ */
    #ifndef VECDEF
-      #define AVX2
+      #if defined(ATL_AVXMAC) || defined(ATL_AVXFMA4)
+         #define AVX2 1
+         #define ARCH_HAS_MAC 1
+         #if defined(ATL_AVXFMA4) && !defined(ATL_AVXMAC)
+            #define FMA4 1
+         #endif
+      #elif defined(ATL_AVX)
+         #define AVX 1
+      #elif defined(ATL_SSE3)
+         #define SSE3
+      #else
+         #define AVX2 1
+      #endif
       #define VECDEF 1
+   #endif
+#endif
+#ifdef FMA4
+   #if FMA4 == 0
+      #undef FMA4
    #endif
 #endif
 /*

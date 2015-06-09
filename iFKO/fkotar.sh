@@ -1,6 +1,11 @@
 #!/bin/sh
-rm -f ../fko.tar.bz2
+rm -f ../ifko.tar.bz2
 cd .. 
-tar cvf fko.tar FKO/bin/Makefile FKO/blas/*.b  FKO/blas/Makefile \
-   extern/include/*.h \
-   extern/src/FKO_*.c extern/src/query*.c extern/src/Makefile
+cp -f extract.c iFKO/src/.
+tar cvf ifko.tar iFKO/configure iFKO/fko_atlconf iFKO/LICENSE.txt \
+    iFKO/base/*.base iFKO/include/*.h iFKO/src/*c \
+    iFKO/FKO/README iFKO/FKO/include/*.h iFKO/FKO/src/*.c \
+    iFKO/FKO/src/hil_gram.y iFKO/FKO/src/hil_lex.l 
+bzip2 ifko.tar
+mv ifko.tar.bz2 iFKO/.
+cd iFKO
