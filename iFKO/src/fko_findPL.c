@@ -87,6 +87,8 @@ int main(int nargs, char **args)
    else
       rout = "macPL";
    assert(!FKO_system(LN, LNLEN, 
-           "make extC basf=kern.base args=\"-o PL.b type=%s rout=%s\"",
+           "make extC basf=l1kern.base args=\"-o PL.b type=%s rout=%s\"",
            typ, rout));
+   assert(!FKO_system(LN, LNLEN, "make archinfo.out"));
+   assert(!FKO_system(LN, LNLEN, "make oloopinfo.out frt=PL.b"));
 }
