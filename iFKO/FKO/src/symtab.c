@@ -702,23 +702,37 @@ void UpdateLocalDerefs(int isize)
          case T_VDOUBLE:
             off = SToff[k].sa[1]*FKO_DVLEN*8;
             break;
-         case T_VINT:
-            off = SToff[k].sa[1]*FKO_IVLEN*4 + nvdloc*FKO_DVLEN*8 + 
-                  nvfloc*FKO_SVLEN*4;
-            break;
-         case T_DOUBLE:
-            off = SToff[k].sa[1]*8 + nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4 +
-                  nviloc*FKO_IVLEN*4 ;
-            break;
-         case T_INT:
-            off = SToff[k].sa[1]*isize + ndloc*8 + 
-                  nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4 + nviloc*FKO_IVLEN*4;
-            break;
-         case T_FLOAT:
-            off = SToff[k].sa[1]*4 + nvdloc*FKO_DVLEN*8 + 
-                  nvfloc*FKO_SVLEN*4 + nviloc*FKO_IVLEN*4 + ndloc*8 + 
-                  niloc*isize;
-            break;
+         #ifdef INT_VEC
+            case T_VINT:
+               off = SToff[k].sa[1]*FKO_IVLEN*4 + nvdloc*FKO_DVLEN*8 + 
+                     nvfloc*FKO_SVLEN*4;
+               break;
+            case T_DOUBLE:
+               off = SToff[k].sa[1]*8 + nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4 +
+                     nviloc*FKO_IVLEN*4 ;
+               break;
+            case T_INT:
+               off = SToff[k].sa[1]*isize + ndloc*8 + 
+                     nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4 + nviloc*FKO_IVLEN*4;
+               break;
+            case T_FLOAT:
+               off = SToff[k].sa[1]*4 + nvdloc*FKO_DVLEN*8 + 
+                     nvfloc*FKO_SVLEN*4 + nviloc*FKO_IVLEN*4 + ndloc*8 + 
+                     niloc*isize;
+               break;
+         #else
+            case T_DOUBLE:
+               off = SToff[k].sa[1]*8 + nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4;
+               break;
+            case T_INT:
+               off = SToff[k].sa[1]*isize + ndloc*8 + 
+                     nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4;
+               break;
+            case T_FLOAT:
+               off = SToff[k].sa[1]*4 + nvdloc*FKO_DVLEN*8 + 
+                     nvfloc*FKO_SVLEN*4 + ndloc*8 + niloc*isize;
+               break;
+         #endif
       #else
          case T_DOUBLE:
             off = SToff[k].sa[1]*8;
@@ -739,8 +753,13 @@ void UpdateLocalDerefs(int isize)
    }
    LOCALIGN = GetArchAlign(nvdloc, nvfloc, nviloc, ndloc, nfloc, nlloc, niloc);
 #ifdef ArchHasVec
-   LOCSIZE = nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4 + nviloc*FKO_IVLEN*4 + 
-             ndloc*8 + niloc*isize + nfloc*4;
+   #ifdef INT_VEC
+      LOCSIZE = nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4 + nviloc*FKO_IVLEN*4 + 
+                ndloc*8 + niloc*isize + nfloc*4;
+   #else
+      LOCSIZE = nvdloc*FKO_DVLEN*8 + nvfloc*FKO_SVLEN*4 + ndloc*8 + 
+                niloc*isize + nfloc*4;
+   #endif
 #else
    LOCSIZE = ndloc*8 + niloc*isize + nfloc*4;
 #endif
