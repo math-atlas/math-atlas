@@ -2119,6 +2119,38 @@ void PrintPtrInfo(FILE *out, struct ptrinfo *ptrs)
    }
 }
 
+int IsRefOnlyInArray(BLIST *scope, short vdt) 
+{
+   int macc;
+   BLIST *bl;
+   INSTQ *ip, *ip1;
+   short ireg, dt;
+   macc = 0; 
+
+   for (bl=scope; bl; bl = bl->next)
+   {
+      for (ip=bl->blk->ainstN; ip; ip = ip->prev)
+      {
+         if (ip->inst[0] == LD && ip->inst[2] == vdt)
+         {
+            macc = 0;
+            ireg = ip->inst[1];
+            ip1 = ip->next;
+            while(IS_LOAD(ip1->inst[0]))
+            {
+               dt = ip1->inst[2]; 
+               if (NonLocalDeref(dt) && ireg == SToff[dt-1].sa[1]) 
+                     macc = 1;
+               ip1 = ip1->next;
+            }
+            if (!macc)
+               return(0);
+         }
+      }
+   }
+   return(1);
+}
+
 int CheckVarInBitvec(int vid, INT_BVI iv)
 /*
  * check whether this var is set in the bit vector,
@@ -2169,6 +2201,7 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
    BLIST *scope, *bl, *blTmp;
    INSTQ *ip;
    struct ptrinfo *pbase, *p;
+   ILIST *il;
    /*ILIST *il, *ib;*/
 /*
  * all these arrays element count is at position 0.
@@ -2239,8 +2272,6 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
 
 /*
  * Skip all non-fp variables, valid entries upto n (included) 
- * NOTE: No action for INT var in vector but need to consider complex case 
- * with index var update later!!!
  * NOTE: As our vector path never uses/sets integer variable (except index)
  * we don't have to worry about this in Backup/Recovery stage. So, we just 
  * skip int here.
@@ -2257,30 +2288,56 @@ int PathFlowVectorAnalysis(LOOPPATH *path)
       else if (sp[i] != lp->I && sp[i] != lp->end &&
                sp[i] != lp->inc)
       {
-         fko_warn(__LINE__, "Bailing out Path%d on vect due to var %d,%s\n",
+/*
+ *       it's okay if the variable is not set and only used to calculate
+ *       the address of array access (like: lda); otherwise not vectorizable
+ */
+         if ( CheckVarInBitvec(sp[i]-1, path->defs) || 
+              !IsRefOnlyInArray(scope, SToff[sp[i]-1].sa[2]) )
+         {
+            fko_warn(__LINE__, "Bailing out Path%d on vect due to var %d,%s\n",
                   path->pnum,sp[i],STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
-         errcode += 1;
+            errcode += 1;
+         }
       }
 /*
- *    Use of index variable [need to check by condtion? ]
  *    NOTE: need to check the index var variable whether it is set outside
  *    of the loop control. Make sure loop control is killed before.
+ *    NOTE: use of loop control variable is okay as long as they are not set 
+ *    and not used to set any other integer variable.
  */
       else 
       {
          if (CheckVarInBitvec(sp[i]-1, path->defs))
          {
             fko_warn(__LINE__,
-                     "Index variable = %d is updated outside loop control\n",
+                 "Loop Control variable = %d is updated outside loop control\n",
                      STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
             lpflag &= ~(LP_OPT_LCONTROL);
 /*
- *          FIXME: if loop control is updated inside loop, loop is not countable.
+ *          FIXED: if loop control is updated inside loop, loop is not countable.
  *          we cann't vectorize loop in that case. we have to return this and 
  *          skip any kind of vectorization in that case. Right now, we just 
  *          stop executiong the code.
  */
-            assert(0);
+            errcode += 1;
+         }
+         else if (sp[i] == lp->I)
+         {
+/*
+ *          NOTE: use of index variable inside loop (out of loop control zone)
+ *          and to access memory (like: A[i]) prohibits current vectorization 
+ *          method. It can easily be vectorized after adding an additional 
+ *          transformation stage which would transform those access into A[0]
+ *          / *A and update the pointer by A + inc.
+ *          Not implemented yet!!!
+ */
+            if ( ( il=FindIndexRef(scope, SToff[lp->I-1].sa[2]) ) )
+            {
+               fko_warn(__LINE__, "Use of index variable out of loop control");
+               errcode += 1;
+               KillIlist(il);
+            }
          }
       }
    }   
@@ -2877,6 +2934,7 @@ int SpeculativeVectorAnalysis()
    /*short *sc, *sf;*/
 
    lp = optloop;
+   VPATH = -1;
 /*
  * Find paths from optloop
  */
@@ -2913,6 +2971,9 @@ int SpeculativeVectorAnalysis()
    for (i=0; i < NPATH; i++)
    {
       err[i] = PathFlowVectorAnalysis(PATHS[i]);
+      if (err[i]) 
+         fko_warn(__LINE__, "Path-%d not vectorizable (error-code=%d)\n",
+                  i+1, err[i]);
    }
 /*
  * Loop Control should be re-inserted 
@@ -7018,6 +7079,7 @@ int RcPathVectorAnalysis(LOOPPATH *path)
    BLIST *scope, *bl, *blTmp;
    INSTQ *ip;
    struct ptrinfo *pbase, *p;
+   ILIST *il;
    /*ILIST *il, *ib;*/
 /*
  * all these arrays element count is at position 0.
@@ -7124,14 +7186,9 @@ int RcPathVectorAnalysis(LOOPPATH *path)
  *       NOTE: we don't need to vectorize index variable of any DT entry
  *       This is scoped out lated  
  */
-#if 1
          sp[n++] = sp[i];
-#endif
-         fko_warn(__LINE__, "NON FP Scalar: %d,%s\n",
-                  sp[i],STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
-         //fko_warn(__LINE__, "Bailing out Path%d on vect due to var %d,%s\n",
-         //         path->pnum,sp[i],STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
-         //errcode += 1;
+         /*fko_warn(__LINE__, "NON FP Scalar: %d,%s\n",
+                  sp[i],STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");*/
       }
 /*
  *    set of index variable [need to check by condtion? ]
@@ -7147,12 +7204,26 @@ int RcPathVectorAnalysis(LOOPPATH *path)
                      STname[sp[i]-1] ? STname[sp[i]-1] : "NULL");
             lpflag &= ~(LP_OPT_LCONTROL);
 /*
- *          FIXME: if loop control is updated inside loop, loop is not countable.
- *          we cann't vectorize loop in that case. we have to return this and 
- *          skip any kind of vectorization in that case. Right now, we just 
- *          stop executiong the code.
+ *          NOTE: if loop control is updated inside loop, loop is not countable.
+ *          we can't vectorize loop in that case. 
  */
-            assert(0);
+            errcode += 1;
+         }
+         else if (sp[i] == lp->I)
+         {
+/*
+ *          NOTE: use of index variable to access memory (like: A[i]) prohibits
+ *          current vectorization method. It can easily be vectorized after 
+ *          adding an additional transformation stage which would transform 
+ *          those access into A[0] / *A and update the pointer by A + inc.
+ *          Not implemented yet!!!
+ */
+            if ( ( il=FindIndexRefInArray(scope, SToff[lp->I-1].sa[2]) ) )
+            {
+               fko_warn(__LINE__, "Use of index variable to access array");
+               errcode += 1;
+               KillIlist(il);
+            }
          }
       }
    }   
@@ -7569,7 +7640,6 @@ int RcPathVectorAnalysis(LOOPPATH *path)
                   scf[i] |= SC_MIXED;
 #else
 /*
- *                testing ... ... 
  *                Only used variable can be treated like the VS_MUL
  */
                   s[i] |= VS_MUL;
@@ -8090,7 +8160,7 @@ int RcVectorAnalysis()
  *          skip the variable, not need to vectorize it
  *          NOTE: vpindx saves the index of the list
  */
-            //fprintf(stderr, "USE only as DT index\n");
+            /*fprintf(stderr, "USE only as DT index\n");*/
 
          }
          else
@@ -8174,17 +8244,19 @@ int RcVectorAnalysis()
    if (isIscal) 
    {
       if (isShadowPossible(lp))
+      {
          VECT_FLAG |= VECT_SHADOW_VRC;  /* shadow vrc will be applied */
+         fko_warn(__LINE__, "Shadow RC possible!\n");
+      }
       else
          errcode = 1024; /* code for unmanagable Int Scalar */
    }
-#elif defined(AVX)
+/*#elif defined(AVX)*/
+#else
    if (isIscal)
    {
       errcode = 1024;
    }
-#else
-   //errcode = 1024;
 #endif
 /*
  * return error code 
@@ -9413,10 +9485,15 @@ int RcVecTransform(LOOPQ *lp)
                         else /* do we need to check again for DT index */
                         {
                            if (lp->I == STpts2[ip->inst[2]-1])
-                              fko_error(__LINE__, "use of index variable " 
-                                       "prohibits vectorization\n");
+                           {
+                              #if IFKO_DEBUG_LEVEL > 1
+                                 fko_warn(__LINE__, "use of index variable " 
+                                          "prohibits vectorization\n");
+                              #endif
                            /*fprintf(stderr, "######### %s \n", 
                                  STname[STpts2[ip->inst[2]-1]-1]);*/
+                              return(-1);
+                           }
                         }
 #endif
                      }
@@ -9862,17 +9939,24 @@ int RcVecTransform(LOOPQ *lp)
 
 int RcVectorization()
 {
+   int fstat; 
    LOOPQ *lp;
    extern LOOPQ *optloop;
 
    lp = optloop;
+   fstat = 1;
 #if 0
    //PrintLoopInfo();
    fprintf(stdout, "Before RC VEC\n");
    PrintInst(stdout,bbbase);
    //exit(0);
 #endif
-   assert(!RcVecTransform(lp));
+/*
+ * we may fail to vectorize the loop after RC. Due to shadow RC, we relax our
+ * analysis. Be sure to check error after transformation. 
+ */
+   if (!RcVecTransform(lp))
+      fstat = 0;
    KillPathTable();
 #if 0
 /*
@@ -9890,7 +9974,7 @@ int RcVectorization()
 
    exit(0);
 #endif
-   return(0);
+   return (fstat);
 }
 
 /*============================================================================
@@ -10212,7 +10296,7 @@ void UnalignLoopSpecialization(LOOPQ *lp)
    CheckFlow(bbbase, __FILE__,__LINE__);
    FindLoops();
    CheckFlow(bbbase, __FILE__,__LINE__); 
-   //ShowFlow("lscfg.dot",bbbase);
+   /*ShowFlow("lscfg.dot",bbbase);*/
 #if 0
    fprintf(stdout, "LIL after loop specialiazation\n");
    PrintInst(stdout, bbbase);

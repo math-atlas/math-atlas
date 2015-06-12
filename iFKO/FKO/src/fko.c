@@ -4283,7 +4283,7 @@ int main(int nargs, char **args)
          VECT_FLAG &= ~VECT_SV;
          VECT_FLAG |= VECT_NCONTRL;
          assert(!RcVectorAnalysis());
-         RcVectorization();
+         assert(!RcVectorization());
          FinalizeVectorCleanup(optloop, 1);
       }
 #if 0      
