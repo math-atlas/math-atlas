@@ -65,6 +65,30 @@ FILE *GetFlags(int nargs, char **args, char *PRE, char *OP)
    return(fpout);
 }
 
+int findPL(char *srcf, char pre, char op)
+{
+   fko_archinfo_t *ai;
+   int plen, typ;
+   assert(!FKO_system(LN, LNLEN, "make archinfo.out"));
+   assert(!FKO_system(LN, LNLEN, "make oloopinfo.out frt=PL.b"));
+   ai = FKO_GetArchInfoC("archinfo.out");
+   if (pre == 'd')
+      typ = FKO_TDBL;
+   else if (pre == 'D')
+      typ = FKO_TVDBL;
+   else if (pre == 'S')
+      typ = FKO_TVFLT;
+   else if (pre == 's')
+      typ = FKO_TFLT;
+   else if (pre == 'i')
+      typ = FKO_TINT;
+   else if (pre == 'I')
+      typ = FKO_TVINT;
+   else
+      assert(0);
+   plen = ai->numregs[
+}
+
 int main(int nargs, char **args)
 {
    FILE *fpout;
@@ -89,6 +113,4 @@ int main(int nargs, char **args)
    assert(!FKO_system(LN, LNLEN, 
            "make extC basf=l1kern.base args=\"-o PL.b type=%s rout=%s\"",
            typ, rout));
-   assert(!FKO_system(LN, LNLEN, "make archinfo.out"));
-   assert(!FKO_system(LN, LNLEN, "make oloopinfo.out frt=PL.b"));
 }
