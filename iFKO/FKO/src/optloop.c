@@ -2313,9 +2313,9 @@ void findDTentry(BLIST *scope, short ptr)
                PrintThisInst(stderr, 0, ipn);
                op = ipn->inst[2];
 #if 0               
-               if (SToff[op-1].sa[1] <= 0)
+               if (SToff[op-1].sa[1] <= 0 && SToff[op-1].sa[0] != -REG_SP)
 #else
-               if (SToff[op-1].sa[0] != -REG_SP)
+               if (NonLocalDeref(op))
 #endif
                {
                   fprintf(stderr, "DT(%d): %4d%4d%4d%4d\n",op, SToff[op-1].sa[0],
@@ -2356,7 +2356,7 @@ int CountMemDT(BLIST *scope, short sta)
                                   STpts2[ip->inst[2]-1]))
 #else
          if (IS_LOAD(ip->inst[0]) 
-               && SToff[ip->inst[2]-1].sa[0] != -REG_SP  /* dt for mem access */
+               && NonLocalDeref(ip->inst[2])  /* dt for mem access */
                && FindInShortList(STarr[sta-1].colptrs[0], 
                                   STarr[sta-1].colptrs+1, 
                                   STpts2[ip->inst[2]-1]))
@@ -4698,7 +4698,7 @@ OPTLOOP=1
          {
             fprintf(fpout, "         MaxEliminatedIfs=%d\n",MaxR);
             fprintf(fpout, "         MinEliminatedIfs=%d\n",MinR);
-            fprintf(fpout, "         RedCompEliminatedIfs=%d\n",nifs);
+            fprintf(fpout, "         RedCompEliminatedIfs=%d\n",RC);
          }
       }
       fprintf(fpout, "   VECTORIZATION:");
