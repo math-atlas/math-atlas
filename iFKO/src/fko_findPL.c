@@ -86,7 +86,7 @@ int findPL(char *srcf, char pre, char op)
       typ = FKO_TVINT;
    else
       assert(0);
-   plen = ai->numregs[
+   plen = ai->numregs[typ];
 }
 
 int main(int nargs, char **args)
