@@ -1546,13 +1546,10 @@ int SimdLoop(LOOPQ *lp)
                  STname[lp->vscal[i+1]-1], lp->vsflag[i+1]);
 #endif   
 /*
- *       Majedul: FIXME: for accumulator init, shouldn't we need an Xor
- *       though most of the time it works as vmoss/vmosd automatically
- *       zerod the upper element. but what if the optimization transforms it
- *       into reg-reg move. vmovss/vmosd for reg-reg doesn't make the upper 
- *       element zero!!! 
- *       NOTE: so far, it works. as temp reg normally uses a move from mem
- *       before reg-reg move, which makes the upper element zero.
+ *       NOTE: later this V[F/D/I]LDS will be changed into two inst in ra:
+ *           V[F/D/I]ZERO vr
+ *           V[F/D/I]MOVS vr, r, vr
+ *           so, upper elements of vector will be zerod. 
  */
          if (VS_ACC & lp->vsflag[i+1])
             PrintComment(lp->preheader, NULL, iph, 
@@ -4824,13 +4821,10 @@ int RedundantVectorTransform(LOOPQ *lp)
                  STname[lp->vscal[i+1]-1], lp->vsflag[i+1]);
 #endif   
 /*
- *       Majedul: FIXME: for accumulator init, shouldn't we need an Xor
- *       though most of the time it works as vmoss/vmosd automatically
- *       zerod the upper element. but what if the optimization transforms it
- *       into reg-reg move. vmovss/vmosd for reg-reg doesn't make the upper 
- *       element zero!!! 
- *       NOTE: so far, it works. as temp reg normally uses a move from mem
- *       before reg-reg move, which makes the upper element zero.
+ *       NOTE: later this V[F/D/I]LDS will be changed into two inst in ra:
+ *           V[F/D/I]ZERO vr
+ *           V[F/D/I]MOVS vr, r, vr
+ *           so, upper elements of vector will be zerod. 
  */
          if (VS_ACC & lp->vsflag[i+1])
             PrintComment(lp->preheader, NULL, iph, 
@@ -5737,13 +5731,10 @@ void AddVectorUpdate(LOOPQ *lp, BBLOCK *blk)
          if (!ip)
             ip = InsNewInst(blk, NULL, NULL, CMPFLAG, CF_SSV_VUPDATE, 0, 0);      
 /*
- *       Majedul: FIXME: for accumulator init, shouldn't we need an VXOR
- *       though most of the time it works as vmoss/vmosd automatically
- *       zerod the upper element. but what if the optimization transforms it
- *       into reg-reg move. vmovss/vmosd for reg-reg doesn't make the upper 
- *       element zero!!! 
- *       NOTE: so far, it works. as temp reg normally uses a move from mem
- *       before reg-reg move, which makes the upper element zero.
+ *       NOTE: later this V[F/D/I]LDS will be changed into two inst in ra:
+ *           V[F/D/I]ZERO vr
+ *           V[F/D/I]MOVS vr, r, vr
+ *           so, upper elements of vector will be zerod. 
  */
          if (VS_ACC & lp->vsflag[i])
             ip = PrintComment(blk, ip, NULL,
@@ -8331,13 +8322,10 @@ void AddCodeAdjustment(LOOPQ *lp)
             ip0 = ip->prev;
             while (!IS_STORE(ip0->inst[0]) && !IS_BRANCH(ip0->inst[0]) )
             {
-               //PrintThisInst(stderr, 0, ip0); 
                if (ip0->inst[0] == ADD)
                {
                   if (IS_CONST(STflag[ip0->inst[3]-1]))
                   {
-                     //PrintThisInst(stderr, 0, ip0);
-                     //fprintf(stderr, "value=%d\n", SToff[ip0->inst[3]-1].i);
                      initconst = SToff[ip0->inst[3]-1].i;
                   }
                   else fko_error(__LINE__,"Can only be updated with const");
@@ -8346,8 +8334,6 @@ void AddCodeAdjustment(LOOPQ *lp)
                {
                   if (IS_CONST(STflag[ip0->inst[3]-1]))
                   {
-                     //PrintThisInst(stderr, 0, ip0);
-                     //fprintf(stderr, "value=%d\n", -SToff[ip0->inst[3]-1].i);
                      initconst = -SToff[ip0->inst[3]-1].i; 
                   }
                   else fko_error(__LINE__,"Can only be updated with const");
@@ -8356,18 +8342,14 @@ void AddCodeAdjustment(LOOPQ *lp)
                DelInst(ip0->next);
             }
             ip = DelInst(ip0->next);
-            //PrintThisInst(stderr, 0, ip); 
 /*
  *          insert new instruction for this candidate
  *          imax_1 = imax_1 + vlen
  *          FIXME: need to support imax = i + const. need to keep track that. 
  */
             ip = ip->prev; /* point back and inst after this*/
-            //PrintThisInst(stderr, 0, ip);
             reg0 = GetReg(T_INT);
             reg1 = GetReg(T_INT);
-            //assert(FLAG2TYPE(STflag[svar-1]) & (T_INT | T_VINT));
-                    //SToff[lp->vvscal[i+1]-1].sa[2], -r0, 0);
             ip = InsNewInst(bl->blk,ip, NULL, LD, -reg0, SToff[svar-1].sa[2], 0);
             ip = InsNewInst(bl->blk, ip, NULL, LD, -reg1, SToff[sivlen-1].sa[2],
                             0);
@@ -8398,7 +8380,6 @@ void AddCodeAdjustment(LOOPQ *lp)
             lp->vsoflag = calloc(n+2, sizeof(short));
             lp->vvinit = calloc(n+2, sizeof(short));
             assert(lp->vscal && lp->vvscal && lp->vsflag && lp->vsoflag);
-            //fprintf(stderr, "%p -> %p\n\n", vscal, lp->vscal);
             lp->vscal[0] = n+1;
             lp->vvscal[0] = n+1;
             lp->vsflag[0] = n+1;
@@ -8416,7 +8397,6 @@ void AddCodeAdjustment(LOOPQ *lp)
             lp->vscal[n+1] = sivlen;
             lp->vsflag[n+1] = VS_LIVEIN | VS_VLEN;
             sprintf(ln, "_V%d_%s", n+2, STname[sivlen-1] );
-            //fprintf(stderr, "%s\n", ln);
             lp->vvscal[n+1] = InsertNewLocal(ln,T_VINT);
             
             free(vscal);
@@ -9013,13 +8993,10 @@ void AddVectorPrologueEpilogue(LOOPQ *lp)
             r0 = GetReg(FLAG2TYPE(lp->vflag));
             r1 = GetReg(FLAG2TYPE(lp->vflag));
 /*
- *          Majedul: FIXME: for accumulator init, shouldn't we need an Xor
- *          though most of the time it works as vmoss/vmosd automatically
- *          zerod the upper element. but what if the optimization transforms it
- *          into reg-reg move. vmovss/vmosd for reg-reg doesn't make the upper
- *          element zero!!! 
- *          NOTE: so far, it works. as temp reg normally uses a move from mem
- *          before reg-reg move, which makes the upper element zero.
+ *       NOTE: later this V[F/D/I]LDS will be changed into two inst in ra:
+ *           V[F/D/I]ZERO vr
+ *           V[F/D/I]MOVS vr, r, vr
+ *           so, upper elements of vector will be zerod. 
  */
             if (VS_ACC & lp->vsflag[i+1])
                PrintComment(lp->preheader, NULL, iph, 
@@ -9047,7 +9024,6 @@ void AddVectorPrologueEpilogue(LOOPQ *lp)
          {
             iptp = AddIntShadowEpilogue(lp, lp->posttails->blk, iptp, iptn, 
                                  lp->vscal[i+1], i+1);
-            //fprintf(stderr, "LIVEOUT INT!!!\n");
          }
          else
          {
@@ -9238,6 +9214,7 @@ int RcVecTransform(LOOPQ *lp)
                    CVTFI, BTC},
       vi_insts[] = {VLD, VST, VIADD, VISUB, VICMOV1, VICMOV2, CVTBDI, 
                    CVTFI, BTC};
+   const int nivinst = 9;
 /*
  *    vector memory aligned and unaligned memory load
  *    NOTE: Not needed in updated implementation!
@@ -9249,7 +9226,6 @@ int RcVecTransform(LOOPQ *lp)
    const int nvalign = 6; /* number of align/unalign inst */
 #endif
    const int nvinst=21;   /* number of scalar to vector float inst */
-   const int nivinst = 10;
    enum inst inst, vcmov1;
    /*enum inst vzero, szero, vmov, smov, vabs, sabs, vsub, ssub, vadd, sadd, vmac,
              smac, vmul, smul, vst, sst, vld, sld;*/
