@@ -173,7 +173,12 @@ enum inst
    VDSTU,                      /* [memU], vr0    : unaligned mem = vr0 */
    VDSTS,                      /* [mem], [vr0]  :  mem = vr[0] */   
    VDMOV,                      /* [vr0], [vr1]   : vr0 = vr1 */
-   VDMOVS,                     /* [vr0], [vr1]   : vr0[0] = vr1[0] */
+/*
+ * Majedul: made v[i,f,d]movs 3 operands operation too.
+ *  1. VDMOVS vr0, r0, vr1  // vr0[0] = r0, vr0[vlen-1: 1] = vr1[vlen-1: 1]
+ *  2. VDMOVS r0, vr0, 0    // r0 = vr0[0]  
+ */
+   VDMOVS,                     /* [vr0], [vr1], [vr2] */
    VDADD,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 + vr2 */
    VDSUB,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 - vr2 */
    VDMUL,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
@@ -215,7 +220,12 @@ enum inst
    VFSTU,                      /* [memU], vr0    : unaligned mem = vr0 */
    VFSTS,                      /* [mem], [vr0]  :  mem = vr[0] */
    VFMOV,                      /* [vr0], [vr1]   : vr0 = vr1 */
-   VFMOVS,                     /* [vr0], [vr1]   : vr0[0] = vr1[0] */
+/*
+ * Majedul: made v[i,f,d]movs 3 operands operation too.
+ *  1. VFMOVS vr0, r0, vr1  // vr0[0] = r0, vr0[vlen-1: 1] = vr1[vlen-1: 1]
+ *  2. VFMOVS r0, vr0, 0    // r0 = vr0[0]  
+ */
+   VFMOVS,                     /* [vr0], [vr1], [vr2] */
    VFADD,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 + vr2 */
    VFSUB,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 - vr2 */
    VFMUL,                      /* [vr0], [vr1], [vr2] : vr0 = vr1 * vr2 */
@@ -275,6 +285,11 @@ enum inst
  */
 /* 32bit or long word version */   
    /*VSMOV,*/
+/*
+ * Majedul: made v[i,f,d]movs 3 operands operation too.
+ *  1. VSMOVS vr0, r0, vr1  // vr0[0] = r0, vr0[vlen-1: 1] = vr1[vlen-1: 1]
+ *  2. VSMOVS r0, vr0, 0    // r0 = vr0[0]  
+ */
    VSMOVS,
    /*VSLD,*/
    VSLDS,
@@ -289,6 +304,11 @@ enum inst
    VSZERO,
 /* 64 bit version */
    /*VIMOV,*/
+/*
+ * Majedul: made v[i,f,d]movs 3 operands operation too.
+ *  1. VIMOVS vr0, r0, vr1  // vr0[0] = r0, vr0[vlen-1: 1] = vr1[vlen-1: 1]
+ *  2. VIMOVS r0, vr0, 0    // r0 = vr0[0]  
+ */
    VIMOVS,
    /*VILD,*/
    VILDS,
@@ -571,7 +591,7 @@ char *instmnem[] =
 /*
  * Majedul: intorducing special load instruction with broadcast ability
  */
-   "VDLDSB"
+   "VDLDSB",
 /*
  * blend operation
  */
@@ -641,7 +661,6 @@ char *instmnem[] =
  * Majedul: instruction for V_INT
  */
 /* 32bit or long word version */   
-   //"VSMOV",
    "VSMOVS",
    /*"VSLD",*/
    "VSLDS",
@@ -845,7 +864,8 @@ char *instmnem[] =
 
 #define IS_MOVE(i_) ((i_) == MOV || (i_) == FMOV || (i_) == FMOVD || \
                      (i_) == VFMOV || (i_) == VDMOV || (i_) == VMOV || \
-                     (i_) == VFMOVS || (i_) == VDMOVS)
+                     (i_) == VFMOVS || (i_) == VDMOVS || (i_) == VIMOVS ||\
+                     (i_) == VSMOVS )
 
 #define IS_MAC(i_) ((i_) == FMAC || (i_) == FMACD || (i_) == VFMAC || \
                     (i_) == VDMAC)
@@ -937,7 +957,8 @@ char *instmnem[] =
                                       (i_) == CMOV1 || (i_) == CMOV2 || \
                                       (i_) == VSCMOV1 || (i_) == VSCMOV2 || \
                                       (i_) == VICMOV1 || (i_) == VICMOV2 || \
-                                      IS_SHUFFLE_OP(i_) || IS_IREG2VREG_OP(i_) ) 
+                                      IS_SHUFFLE_OP(i_) || IS_IREG2VREG_OP(i_) )
+                                   /*|| IS_MOVS(i_) ) */
 
 #define IS_SELECT_OP(i_) ((i_) == CMOV1   || (i_) == CMOV2  || \
                           (i_) == FCMOV1  || (i_) == FCMOV2 || \
@@ -964,6 +985,8 @@ char *instmnem[] =
 
 #define IS_IREG2VREG_OP(i_) ( (i_) == VGR2VR16 || (i_) == VGR2VR32 || \
                               (i_) == VGR2VR64 )
+
+/*#define IS_MOVS(i_) ( (i_) == VDMOVS || (i_) == VFMOVS )*/
 
 INSTQ *NewInst(BBLOCK *myblk, INSTQ *prev, INSTQ *next, enum inst ins,
                short dest, short src1, short src2);
