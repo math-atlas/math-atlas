@@ -764,7 +764,12 @@ void UpdatePointerLoads(BLIST *scope, struct ptrinfo *pbase, int UR)
          if (IS_LOAD(ip->inst[0]))
          {
             k = ip->inst[2];
-            assert(k > 0);
+            //assert(k > 0);
+            if (k <= 0)
+            {
+               PrintThisInst(stderr,0,ip);
+               assert(k > 0);
+            }
             k = STpts2[k-1];
             if (!k) continue;
 /*
@@ -4474,6 +4479,7 @@ OPTLOOP=1
    extern BBLOCK *bbbase;
    extern int FKO_MaxPaths;
    extern LOOPQ *optloop;
+   extern int VECT_FLAG;
    /*int SimpleLC=0, UR;*/
    /*ILIST *il;*/
    
@@ -4596,15 +4602,22 @@ OPTLOOP=1
 #        endif
          iElimBr[REDCOMP] = RC;
          #if defined(ArchHasVec)
-            if (RC)
+            if (RC && !(VECT_FLAG & VECT_INTRINSIC) )
             {
 /*
  *             We make RcVec analysis relax to support shadow RC. Make sure to
  *             call RcVectorization too to check error
+ *             NOTE: shadow RC only works in X86_64 now, not in 32 bit
  */
                Vrc = !(RcVectorAnalysis()); /* checking for shadow RC too */
-               if (Vrc)
-                  Vrc = !RcVectorization();
+               #ifdef X86_32
+                  if (Vrc && (VECT_FLAG & VECT_SHADOW_VRC) )
+                     Vrc = 0; /* can't vect on X86_32*/
+                  else if (Vrc)
+               #else
+                  if (Vrc)
+               #endif
+                     Vrc = !RcVectorization();
                iVecMethod[LOOPLVL] = Vrc;
                KillPathTable();
             }
@@ -4619,36 +4632,42 @@ OPTLOOP=1
       NewBasicBlocks(bbbase);
       FindLoops(); 
       CheckFlow(bbbase, __FILE__, __LINE__);
-      
+     
       #if defined(ArchHasVec)
          if (IsSpeculationNeeded())
          {
-            Vspec = !(SpeculativeVectorAnalysis()); /*it is the most general */
-            iVecMethod[SPECVEC] = Vspec;
-            if (Vspec)
-               for (i=0; i < npaths; i++)
-                  pvec[i] = PathVectorizable(i+1);
-            KillPathTable();
+            if ( !(VECT_FLAG & VECT_INTRINSIC) )
+            {
+               Vspec = !(SpeculativeVectorAnalysis()); /* most general */
+               iVecMethod[SPECVEC] = Vspec;
+               if (Vspec)
+                  for (i=0; i < npaths; i++)
+                     pvec[i] = PathVectorizable(i+1);
+               KillPathTable();
+            }
          }
          else
-         {
+         {  
+            if ( !(VECT_FLAG & VECT_INTRINSIC) )
+            {
 /*
- *          FIXED: Restore the state 0 code. SpecVec analysis may change the 
- *          original code
+ *             FIXED: Restore the state 0 code. SpecVec analysis may change the 
+ *             original code
  */
-            RestoreFKOState0();
-            GenPrologueEpilogueStubs(bbbase,0);
-            NewBasicBlocks(bbbase);
-            FindLoops(); 
-            CheckFlow(bbbase, __FILE__, __LINE__);
+               RestoreFKOState0();
+               GenPrologueEpilogueStubs(bbbase,0);
+               NewBasicBlocks(bbbase);
+               FindLoops(); 
+               CheckFlow(bbbase, __FILE__, __LINE__);
 /*
- *          use SpeculativeVectorAnalysis to analyse the loop with one path
- *          if you use RcVectorAnalysis, be sure to apply RcVectorization and
- *          check for error too.
+ *             use SpeculativeVectorAnalysis to analyse the loop with one path
+ *             if you use RcVectorAnalysis, be sure to apply RcVectorization and
+ *             check for error too.
  */
             /*Vn = !(RcVectorAnalysis());*/ /* checking for shadow RC too */
-            Vn = !(SpeculativeVectorAnalysis()); /*more restrictive tesdt */
-            iVecMethod[LOOPLVL] = Vn;
+               Vn = !(SpeculativeVectorAnalysis()); /*more restrictive tesdt */
+               iVecMethod[LOOPLVL] = Vn;
+            }
          }
       
          if (Vn || Vrc || VmaxminR )
@@ -5517,9 +5536,6 @@ INSTQ *GetSEHeadTail(LOOPQ *lp, short se, short ne, short *ses, int vec,
  */
    assert(ses[0] == ne-1);
    ses[0] = se;
-   for (j=0, i=ne; i; i >>= 1) j++;
-   if (1<<(j-1) == ne)
-      j--;
 
    if (sflag & SC_ACC) 
       ibase->next = NewInst(NULL, NULL, NULL, COMMENT, 
@@ -5531,11 +5547,23 @@ INSTQ *GetSEHeadTail(LOOPQ *lp, short se, short ne, short *ses, int vec,
       ibase->next = NewInst(NULL, NULL, NULL, COMMENT, 
                            STstrconstlookup("Begin shadow min reduce"), 0, 0);
    else;
-
+/*
+ * FIXED: Majedul: there was a problem with the reduction. It wasn't work with
+ * ne >= 8. I fixed that by changing the condition of inner loop. 
+ */
+#if 0
+   for (j=0, i=ne; i; i >>= 1) j++;
+   if (1<<(j-1) == ne)
+      j--;
+#endif
    ip = ibase->next;
-   for (i=1; i <= ne; i <<= 1, j--)
+   j = 1;
+   /*for (i=1; i <= ne; i <<= 1, j--)*/
+   for (i=1; i < ne; i <<= 1, j--)
    {
-      for (k=0; k < j; k++)
+      /*for (k=0; k <= j; k++)*/
+      j = j << 1;
+      for (k=0; k < ne/j; k++)
       {
          i1 = k*(i+i);
          i2 = i1 + i;
@@ -7338,7 +7366,7 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
  * KEEP IN MIND: 
  * convention of select: 
  * dest = (mask==0) ? src1 : src2   
- * that means, dest = mask? scr1: src2
+ * that means, dest = mask? scr2 src1
  *
  * LIL:
  * FCMOV1   :  dest = (mask==0) ? dest : src   # dest is aliased with src1 
@@ -7375,7 +7403,7 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
          type = T_DOUBLE;
          codemask = mask;
       }
-      else  /* can't handle integer yet */
+      else if (IS_INT(STflag[sp[i]-1]))/* for int */
       {
 /*
  *       statement with index variable can be 
@@ -7481,6 +7509,12 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
    #endif
 #endif
       }
+      else
+         fko_error(__LINE__, "Unsupported type for RC: var=%s, flag=%d\n", 
+               STname[sp[i]-1], STflag[sp[i]-1]);
+/*
+ *    Insert blend/insert inst
+ */
       switch(vpos[i])
       {
          case IN_IF_ONLY:  /* if blks*/ 
@@ -7488,6 +7522,7 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
  *          findout corrsponding new vars
  */
             k = FindInShortList(isetvars[0], isetvars+1, sp[i]);
+            assert(k);
             nv1 = inewvars[k];
 /*
  *          Now time to insert select inst
@@ -7514,7 +7549,8 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
  *          findout corrsponding new vars
  */
             k = FindInShortList(esetvars[0], esetvars+1, sp[i]);
-            nv2 = inewvars[k];
+            assert(k);
+            nv2 = enewvars[k];
 /*
  *          Now time to insert select inst
  *          New var in else: nv2
@@ -7524,12 +7560,22 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
             reg2 = GetReg(type);
             ip = InsNewInst(bp, ip, NULL, ld, -reg0, SToff[sp[i]-1].sa[2], 0);
             ip = InsNewInst(bp, ip, NULL, ld, -reg1, SToff[nv2-1].sa[2], 0);
+/*
+ *             FIXED: cmov1 vs cmov2: 
+ *             cmov1: 
+ *                   dest = (mask==0)? dest: src
+ *                   desk = mask? src: dest
+ *             cmov2: 
+ *                   dest = (mask==0)? src: dest
+ *                   desk = mask? dest: src
+ *
+ */
             if (IS_INT(type))
-               ip = InsNewInst(bp, ip, NULL, cmov1, -reg0, -reg1, -ICC0 );
+               ip = InsNewInst(bp, ip, NULL, cmov2, -reg0, -reg1, -ICC0 );
             else
             {
                ip = InsNewInst(bp, ip, NULL, mskld, -reg2, SToff[codemask-1].sa[2], 0);
-               ip = InsNewInst(bp, ip, NULL, cmov1, -reg0, -reg1, -reg2 );
+               ip = InsNewInst(bp, ip, NULL, cmov2, -reg0, -reg1, -reg2 );
             }
             ip = InsNewInst(bp, ip, NULL, st, SToff[sp[i]-1].sa[2], -reg0, 0);
             GetReg(-1);
@@ -7545,7 +7591,9 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
  */
             k = FindInShortList(isetvars[0], isetvars+1, sp[i]);
             nv1 = inewvars[k];
+            assert(k);
             k = FindInShortList(esetvars[0], esetvars+1, sp[i]);
+            assert(k);
             nv2 = enewvars[k];
 /*
  *          Now time to insert select inst
@@ -7993,8 +8041,9 @@ int IterativeRedCom()
    }
    while (CHANGES);
 #if 0
-   fprintf(stderr, "Final LIL after RC\n");
+   fprintf(stdout, "Final LIL after RC\n");
    PrintInst(stdout, bbbase);
+   exit(0);
 #endif
    return(err);
 }
