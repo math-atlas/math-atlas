@@ -730,7 +730,8 @@
    #else /* P4/P4E defaults */
       #define NCACHE 1
       #ifdef ARCH_DECLARE
-         short LINESIZE[NCACHE] = {128};
+         /*short LINESIZE[NCACHE] = {128};*/
+         short LINESIZE[NCACHE] = {64};
       #else
          extern short LINESIZE[NCACHE];
       #endif
