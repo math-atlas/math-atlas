@@ -53,4 +53,5 @@ int IterativeRedCom();
 void FinalizeVectorCleanup(LOOPQ *lp, int unroll);
 int DoAllScalarExpansion(LOOPQ *lp, int unroll, int vec);
 void UpdateUnrolledIndices(BLIST *scope, short I, int UR);
+int NonLocalDeref(short dt);
 #endif
