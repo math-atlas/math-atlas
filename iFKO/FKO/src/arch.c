@@ -78,10 +78,10 @@ short vtype2elem(int type)
       fko_error(__LINE__, "Must be a vector type!");
    return nelem;
 }
-
+#ifdef X86
 int RevealArchMemUses(void)
 /*
- * reveals all the mem uses for DTabs/DTnzeros, 
+ * reveals all the mem uses for DTabs/DTnzero, 
  * returns number of changes
  * Note: Do we need the LD of those ABSVAL??? Otherwise format of LIL 
  * may be violated!!
@@ -90,10 +90,11 @@ int RevealArchMemUses(void)
    BBLOCK *bp;
    INSTQ *ip, *ipN;
    enum inst inst;
-   short op, ir;
+   /*short op, ir;*/
+   short op3, vr;
    int nchanges, arinst, j;
    extern int DTabs, DTabsd, DTnzero, DTnzerod;
-   extern int DTabss, DTabsds, DTnzeros, DTnzerods;
+   /*extern int DTabss, DTabsds, DTnzeros, DTnzerods;*/
    extern BBLOCK *bbbase;
 
    nchanges = 0;
@@ -101,107 +102,119 @@ int RevealArchMemUses(void)
    {
       for (ip=bp->ainst1; ip; ip = ip->next)
       {
-            #if defined(X86)  
-               inst = ip->inst[0];
-               arinst = 0;
-               if (ip->inst[3] >= 0)
-               {
-                  if (inst == FABS)
-                  {
-                     ip->inst[3] = op = SToff[DTabss-1].sa[2];
-                     arinst = 1;
-                  }
-                  else if (inst == VFABS)
-                  {
-                     ip->inst[3] = op = SToff[DTabs-1].sa[2];
-                     arinst = 1;
-                  }
-                  else if (inst == FABSD)
-                  {
-                     ip->inst[3] = op = SToff[DTabsds-1].sa[2];
-                     arinst = 1;
-                  }
-                  else if (inst == VDABS)
-                  {
-                     ip->inst[3] = op = SToff[DTabsd-1].sa[2];
-                     arinst = 1;
-                  }
-                  else if (inst == FNEG)
-                  {
-                     ip->inst[3] = op = SToff[DTnzeros-1].sa[2];
-                     arinst = 1;
-                  }
-                  else if (inst == FNEGD)
-                  {
-                     ip->inst[3] = op = SToff[DTnzerods-1].sa[2];
-                     arinst = 1;
-                  }
-                  else if (inst == VFNEG)
-                  {
-                     ip->inst[3] = op = SToff[DTnzero-1].sa[2];
-                     arinst = 1;
-                  }
-                  else if (inst == VDNEG)
-                  {
-                     ip->inst[3] = op = SToff[DTnzerod-1].sa[2];
-                     arinst = 1;
-                  }
-               }
-               if (arinst)
-               {
-                  assert((ip->inst[2] < 0) && (ip->inst[1] < 0)); /*mustbe reg*/
+         inst = ip->inst[0];
 /*
- *                Need to Load the the mem first to maintain the structure of 
- *                LIL. following block ensure this format. 
- */               
-               #if 1
-                  j = ireg2type(-ip->inst[1]);
-                  ir = GetReg(j);
-                  while (ir == -ip->inst[1] || ir == -ip->inst[2])
-                     ir = GetReg(j);
-                  /*fprintf(stderr, "avail reg = %d\n",ir);*/
-                  
-                  if (ir)
-                  {
-                     switch(j)
-                     {
-                     case T_INT:
-                        inst = LD;
-                        break;
-                     case T_FLOAT:
-                        inst = FLD;
-                        break;
-                     case T_DOUBLE:
-                        inst = FLDD;
-                        break;
-                     case T_VFLOAT:
-                        inst = VFLD;
-                        break;
-                     case T_VDOUBLE:
-                        inst = VDLD;
-                        break;
-                     }
-                     ipN = InsNewInst(NULL, NULL, ip, inst, -ir, op, 0);
-                     ip->inst[3] = -ir;
-                  }
-                  GetReg(-1);
-                  CalcThisUseSet(ipN);
-               #endif  
-
-                  CalcThisUseSet(ip);
-                  nchanges++;
-               }
-            #endif
+ *       Since x86 only supports vector operation for and/xor, we always change
+ *       following instructions into compatible x86 inst.
+ */
+         /*if (ip->inst[3] >= 0)*/
+         switch(inst)
+         {
+            case FABS:
+               op3 = SToff[DTabs-1].sa[2];
+               vr = GetReg(T_VFLOAT);
+               ipN = InsNewInst(NULL, NULL, ip, VFLD, -vr, op3, 0);
+               ip->inst[0] = VFSABS;
+               ip->inst[3] = -vr;
+               GetReg(-1);
+               CalcThisUseSet(ipN);
+               CalcThisUseSet(ip);
+               nchanges++;
+               break;
+            case FABSD:
+               op3 = SToff[DTabsd-1].sa[2];
+               vr = GetReg(T_VDOUBLE);
+               ipN = InsNewInst(NULL, NULL, ip, VDLD, -vr, op3, 0);
+               ip->inst[0] = VDSABS;
+               ip->inst[3] = -vr;
+               GetReg(-1);
+               CalcThisUseSet(ipN);
+               CalcThisUseSet(ip);
+               nchanges++;
+               break;
+            case FNEG:
+               op3 = SToff[DTnzero-1].sa[2];
+               vr = GetReg(T_VFLOAT);
+               ipN = InsNewInst(NULL, NULL, ip, VFLD, -vr, op3, 0);
+               ip->inst[0] = VFSNEG;
+               ip->inst[3] = -vr;
+               GetReg(-1);
+               CalcThisUseSet(ipN);
+               CalcThisUseSet(ip);
+               nchanges++;
+               break;
+            case FNEGD:
+               op3 = SToff[DTnzerod-1].sa[2];
+               vr = GetReg(T_VDOUBLE);
+               ipN = InsNewInst(NULL, NULL, ip, VDLD, -vr, op3, 0);
+               ip->inst[0] = VDSNEG;
+               ip->inst[3] = -vr;
+               GetReg(-1);
+               CalcThisUseSet(ipN);
+               CalcThisUseSet(ip);
+               nchanges++;
+               break;
+            case VFABS:
+               op3 = SToff[DTabs-1].sa[2];
+               j = T_VFLOAT;
+               vr = GetReg(j);
+               while (vr == -ip->inst[1] || vr == -ip->inst[2])
+                  vr = GetReg(j);
+               ipN = InsNewInst(NULL, NULL, ip, VFLD, -vr, op3, 0);
+               ip->inst[3] = -vr;
+               GetReg(-1);
+               CalcThisUseSet(ipN);
+               CalcThisUseSet(ip);
+               nchanges++;
+                  break;
+            case VDABS:
+               op3 = SToff[DTabsd-1].sa[2];
+               j = T_VDOUBLE;
+               vr = GetReg(j);
+               while (vr == -ip->inst[1] || vr == -ip->inst[2])
+                  vr = GetReg(j);
+               ipN = InsNewInst(NULL, NULL, ip, VDLD, -vr, op3, 0);
+               ip->inst[3] = -vr;
+               GetReg(-1);
+               CalcThisUseSet(ipN);
+               CalcThisUseSet(ip);
+               nchanges++;
+               break;
+            case VFNEG:
+               op3 = SToff[DTnzero-1].sa[2];
+               j = T_VFLOAT;
+               vr = GetReg(j);
+               while (vr == -ip->inst[1] || vr == -ip->inst[2])
+                  vr = GetReg(j);
+               ipN = InsNewInst(NULL, NULL, ip, VFLD, -vr, op3, 0);
+               ip->inst[3] = -vr;
+               GetReg(-1);
+               CalcThisUseSet(ipN);
+               CalcThisUseSet(ip);
+               nchanges++;
+               break;
+            case VDNEG:
+               op3 = SToff[DTnzerod-1].sa[2];
+               j = T_VDOUBLE;
+               vr = GetReg(j);
+               while (vr == -ip->inst[1] || vr == -ip->inst[2])
+                  vr = GetReg(j);
+               ipN = InsNewInst(NULL, NULL, ip, VDLD, -vr, op3, 0);
+               ip->inst[3] = -vr;
+               GetReg(-1);
+               CalcThisUseSet(ipN);
+               CalcThisUseSet(ip);
+               nchanges++;
+               break;   
+         }
       }
    }
-#if 0
-   PrintInst(stdout,bbbase);
-#endif   
    if (nchanges)
       CFUSETU2D = INDEADU2D = 0;
 
    return nchanges;
 }
+#endif
 
 void FindRegUsage(BBLOCK *bbase, int *ni0, int *iregs, 
                   int *nf0, int *fregs, int *nd0, int *dregs)
@@ -487,6 +500,8 @@ short GetReg(short type)
 void CreateSysLocals()
 /*
  *  If required, creates any locals needed to support instructions
+ *  NOTE: only the vectors are created, because x86 only supports vector and op
+ *  for floating point.
  */
 {
 #ifdef X86
@@ -500,8 +515,8 @@ void CreateSysLocals()
       if (DTnzerod == -1)
       {
          DTnzerod = STdef("_NEGZEROD", T_VDOUBLE | LOCAL_BIT, 0);
-         SToff[DTnzerod-1].sa[2] = AddDerefEntry(-REG_SP, DTnzerod, -DTnzerod,
-                                                 0, DTnzerod);
+         k =AddDerefEntry(-REG_SP, DTnzerod, -DTnzerod, 0, DTnzerod);
+         SToff[DTnzerod-1].sa[2] = k; 
       }
       else
       {
@@ -517,8 +532,8 @@ void CreateSysLocals()
       if (DTabsd == -1)
       {
          DTabsd = STdef("_ABSVLD", T_VDOUBLE | LOCAL_BIT, 0);
-         SToff[DTabsd-1].sa[2] = AddDerefEntry(-REG_SP, DTabsd, -DTabsd, 0,
-                                               DTabsd);
+         k = AddDerefEntry(-REG_SP, DTabsd, -DTabsd, 0, DTabsd);
+         SToff[DTabsd-1].sa[2] = k; 
       }
       else
       {
@@ -569,8 +584,8 @@ void CreateSysLocals()
       if (DTx87 == -1)
       {
          DTx87 = STdef("_x87f", T_FLOAT | LOCAL_BIT, 0);
-         SToff[DTx87-1].sa[2] = AddDerefEntry(-REG_SP, DTx87, -DTx87, 0,
-                                              DTx87);
+         k = AddDerefEntry(-REG_SP, DTx87, -DTx87, 0, DTx87);
+         SToff[DTx87-1].sa[2] = k; 
       }
       else
       {
@@ -586,8 +601,8 @@ void CreateSysLocals()
       if (DTx87d == -1)
       {
          DTx87d = STdef("_x87d", T_DOUBLE | LOCAL_BIT, 0);
-         SToff[DTx87d-1].sa[2] = AddDerefEntry(-REG_SP, DTx87d, -DTx87d, 0,
-                                               DTx87d);
+         k = AddDerefEntry(-REG_SP, DTx87d, -DTx87d, 0, DTx87d);
+         SToff[DTx87d-1].sa[2] = k; 
       }
       else
       {
@@ -652,7 +667,7 @@ void bitload(INSTQ *next, int reg, int nbits, int I)
 /*
  * These funcs generate FP vector consts using iregs
  */
-void VSConstGen(INSTQ *next, int ir, int fr, long iconst)
+   void VSConstGen(INSTQ *next, int ir, int fr, long iconst)
 {
    #ifdef X86_64
       InsNewInst(NULL, NULL, next, MOV, -ir, STlconstlookup(iconst), 0);
@@ -665,6 +680,9 @@ void VSConstGen(INSTQ *next, int ir, int fr, long iconst)
    InsNewInst(NULL, NULL, next, VFSHUF, -fr, -fr, STiconstlookup(0));
 }
 
+/*
+ *    Majedul: no longer use to gen vector const but scalar one
+ */
 #ifdef X86_64
 void VDConstGen(INSTQ *next, int ir, int fr, long icon0)
 #else
@@ -687,7 +705,6 @@ void VDConstGen(INSTQ *next, int ir, int fr, long icon0, long icon1)
    InsNewInst(NULL, NULL, next, VGR2VR16, -fr, -ir, STiconstlookup(2));
    InsNewInst(NULL, NULL, next, SHR, -ir, -ir, STiconstlookup(16));
    InsNewInst(NULL, NULL, next, VGR2VR16, -fr, -ir, STiconstlookup(3));
-
    InsNewInst(NULL, NULL, next, VDSHUF, -fr, -fr, STiconstlookup(0));
 }
 #endif
@@ -923,7 +940,8 @@ void Extern2Local(INSTQ *next, int rsav)
  */
 {
    extern int NPARA, DTnzerod, DTnzero, DTabsd, DTabs; 
-   extern int        DTnzerods, DTnzeros, DTabsds, DTabss;
+   /*extern int        DTnzerods, DTnzeros, DTabsds, DTabss;*/
+   extern int FKO_FLAG;
    short i, j=0, flag, ir, k, kk, reg1=0, freg, dreg, vfreg, vdreg;
    int USED;
    #ifdef X86_64
@@ -1018,9 +1036,6 @@ void Extern2Local(INSTQ *next, int rsav)
  */
       assert(reg1 <= NSR);
             
-#if 0
-         fprintf(stderr, "\n\nreg1 = %d, rsav = %d\n\n", reg1, rsav);
-#endif
       #ifdef AVX   
          fnam[0] = '@';
          fnam[1] = 'y';
@@ -1153,153 +1168,38 @@ void Extern2Local(INSTQ *next, int rsav)
                  0, 0);
       ir = reg1;
 /*
- *    Majedul: Consider DTnzerod, DTnzero, DTabsd and DTabs; 
- *    If SIMD vectorization is not applied, we need not generate vector
- *    constant. It creates problem in stack alignment.
+ *    FIXED: Consider DTnzerod, DTnzero, DTabsd and DTabs; 
+ *    In x86, we don't have scalar AND/XOR operation, like: andss / andsd
+ *    So, we will always create vectors, even though we don't apply 
+ *    vectorization. Need to handle it specially in finalizing function
+ *    prologue and epilogue.
+ *    NOTE: don't use following DT entry anymore:
+ *          DTabss, DTabsds, DTnzeros, DTnzerods
  */
 
       if (DTnzerod > 0)
       {
-         if (FKO_FLAG & IFF_VECTORIZE)
-         {
-            PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
-            VDConstGen(next, ir, vdreg, 0x8000000000000000);
-            InsNewInst(NULL, NULL, next, VDST, SToff[DTnzerod-1].sa[2], 
-                       -vdreg, 0);
-            k = SToff[DTnzerod-1].sa[2] - 1;
-
-            DTnzerods = STdef("_NEGZERODs", T_DOUBLE | LOCAL_BIT, 0);
-            SToff[DTnzerods-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTnzerods,
-                        -DTnzerods, SToff[k].sa[3], DTnzerods);
-            k = vdreg - VDREGBEG + DREGBEG;
-            InsNewInst(NULL, NULL, next, VDMOVS, -k, -vdreg, 0);
-            InsNewInst(NULL, NULL, next, FSTD, SToff[DTnzerods-1].sa[2], -k, 0);
-         }
-         else
-         {
-/*
- *          Majedul: Need to improve by rewriting the ConstGen function.
- *          Why DTnzerod && DTnzerods ??? 
- */            
-            PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
-            VDConstGen(next, ir, vdreg, 0x8000000000000000);
-            k = vdreg - VDREGBEG + DREGBEG;
-            InsNewInst(NULL, NULL, next, FSTD, SToff[DTnzerod-1].sa[2], -k, 0);
-            kk = SToff[DTnzerod-1].sa[2] - 1;
-
-            DTnzerods = STdef("_NEGZERODs", T_DOUBLE | LOCAL_BIT, 0);
-            SToff[DTnzerods-1].sa[2] = AddDerefEntry(SToff[kk].sa[0], DTnzerods,
-                        -DTnzerods, SToff[kk].sa[3], DTnzerods);
-            InsNewInst(NULL, NULL, next, FSTD, SToff[DTnzerods-1].sa[2], -k, 0);
-         }
+         PrintComment(NULL, NULL, next, "Writing -0 as a vector for negation");
+         VDConstGen(next, ir, vdreg, 0x8000000000000000);
+         InsNewInst(NULL, NULL, next, VDST, SToff[DTnzerod-1].sa[2], -vdreg, 0);
       }
       if (DTnzero > 0)
       {
-         if (FKO_FLAG & IFF_VECTORIZE)
-         {
-            PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
-            VSConstGen(next, ir, vfreg, 0x80000000);
-            InsNewInst(NULL, NULL, next, VFST, SToff[DTnzero-1].sa[2], 
-                       -vfreg, 0);
-            k = SToff[DTnzero-1].sa[2] - 1;
-            DTnzeros = STdef("_NEGZEROs", T_FLOAT | LOCAL_BIT, 0);
-            SToff[DTnzeros-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTnzeros,
-                        -DTnzeros, SToff[k].sa[3], DTnzeros);
-            k = vfreg - VFREGBEG + FREGBEG;
-            InsNewInst(NULL, NULL, next, VFMOVS, -k, -vfreg, 0);
-            InsNewInst(NULL, NULL, next, FST, SToff[DTnzeros-1].sa[2], -k, 0);
-         }
-         else
-         {
-/*
- *          Majedul: can improve by rewriting ConstGen function for scalar
- *          Do we need to have both DTnzero && DTnzeros
- */
-            PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
-            VSConstGen(next, ir, vfreg, 0x80000000);
-            k = vfreg - VFREGBEG + FREGBEG;
-            InsNewInst(NULL, NULL, next, FST, SToff[DTnzero-1].sa[2], -k, 0);
-            kk = SToff[DTnzero-1].sa[2] - 1;
-            DTnzeros = STdef("_NEGZEROs", T_FLOAT | LOCAL_BIT, 0);
-            SToff[DTnzeros-1].sa[2] = AddDerefEntry(SToff[kk].sa[0], DTnzeros,
-                        -DTnzeros, SToff[kk].sa[3], DTnzeros);
-            InsNewInst(NULL, NULL, next, FST, SToff[DTnzeros-1].sa[2], -k, 0);
-
-         }
+         PrintComment(NULL, NULL, next, "Writing -0 for negation");
+         VSConstGen(next, ir, vfreg, 0x80000000);
+         InsNewInst(NULL, NULL, next, VFST, SToff[DTnzero-1].sa[2], -vfreg, 0);
       }
       if (DTabsd)
       {
-         if(FKO_FLAG & IFF_VECTORIZE)
-         {
-            PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for absd");
-            VDConstGen(next, ir, vdreg, 0x7FFFFFFFFFFFFFFF);
-            InsNewInst(NULL, NULL, next, VDST, SToff[DTabsd-1].sa[2], 
-                       -vdreg, 0);
-            k = SToff[DTabsd-1].sa[2] - 1;
-            DTabsds = STdef("_ABSVALs", T_DOUBLE | LOCAL_BIT, 0);
-            SToff[DTabsds-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTabsds,
-                        -DTabsds, SToff[k].sa[3], DTabsds);
-            k = vdreg - VDREGBEG + DREGBEG;
-            InsNewInst(NULL, NULL, next, VDMOVS, -k, -vdreg, 0);
-            InsNewInst(NULL, NULL, next, FSTD, SToff[DTabsds-1].sa[2], -k, 0);
-         }
-         else
-         {
-/*
- *          Majedul: Works now but can improve the output code by rewriting 
- *          the ConnstGen function and eliminating the shuffle for scalar.
- */
-            PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for absd");
-            VDConstGen(next, ir, vdreg, 0x7FFFFFFFFFFFFFFF);
-            k = vdreg - VDREGBEG + DREGBEG;
-            InsNewInst(NULL, NULL, next, FSTD, SToff[DTabsd-1].sa[2], -k, 0);
-            kk = SToff[DTabsd-1].sa[2] - 1;
-            DTabsds = STdef("_ABSVALs", T_DOUBLE | LOCAL_BIT, 0);
-            SToff[DTabsds-1].sa[2] = AddDerefEntry(SToff[kk].sa[0], DTabsds,
-                        -DTabsds, SToff[kk].sa[3], DTabsds);
-            InsNewInst(NULL, NULL, next, FSTD, SToff[DTabsds-1].sa[2], -k, 0);
-         }
+         PrintComment(NULL, NULL, next, "Writing ~(-0) as a vector for absd");
+         VDConstGen(next, ir, vdreg, 0x7FFFFFFFFFFFFFFF);
+         InsNewInst(NULL, NULL, next, VDST, SToff[DTabsd-1].sa[2], -vdreg, 0);
       }
       if (DTabs)
       {
-         if (FKO_FLAG & IFF_VECTORIZE)
-         {
-            PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for abss");
-            VSConstGen(next, ir, vfreg, 0x7fffffff);
-            InsNewInst(NULL, NULL, next, VFST, SToff[DTabs-1].sa[2], -vfreg, 0);
-
-            k = SToff[DTabs-1].sa[2] - 1;
-            DTabss = STdef("_ABSVALs", T_FLOAT | LOCAL_BIT, 0);
-            SToff[DTabss-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTabss,
-                        -DTabss, SToff[k].sa[3], DTabss);
-#if 0
-            fprintf(stderr, "Dtabs_off=%d\n",SToff[k].sa[3]);
-#endif
-            k = vfreg - VFREGBEG + FREGBEG;
-            InsNewInst(NULL, NULL, next, VFMOVS, -k, -vfreg, 0);
-            InsNewInst(NULL, NULL, next, FST, SToff[DTabss-1].sa[2], -k, 0);
-         }
-         else
-         {
-/*
- *          Majedul: Need to check why DTabss is used along with DTabs. 
- *          Can reduce the computation further, No need to use shuffle here
- *          Need to rewrite ConstGen function for scalar. 
- *          Right now, the problem is solved but more efficient code can be
- *          produced.
- */
-            PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for abss");
-            VSConstGen(next, ir, vfreg, 0x7fffffff);
-           
-            k = vfreg - VFREGBEG + FREGBEG;
-            InsNewInst(NULL, NULL, next, FST, SToff[DTabs-1].sa[2], -k, 0);
-
-            kk = SToff[DTabs-1].sa[2] - 1;
-            DTabss = STdef("_ABSVALs", T_FLOAT | LOCAL_BIT, 0);
-            SToff[DTabss-1].sa[2] = AddDerefEntry(SToff[kk].sa[0], DTabss,
-                        -DTabss, SToff[kk].sa[3], DTabss);
-            InsNewInst(NULL, NULL, next, FST, SToff[DTabss-1].sa[2], -k, 0);
-         }         
+         PrintComment(NULL, NULL, next, "Writing ~(-0) for abss");
+         VSConstGen(next, ir, vfreg, 0x7fffffff);
+         InsNewInst(NULL, NULL, next, VFST, SToff[DTabs-1].sa[2], -vfreg, 0);
       }
       InsNewInst(NULL, NULL, next, COMMENT, STstrconstlookup("done archspec"), 
                  0, 0);
@@ -1349,150 +1249,41 @@ void Extern2Local(INSTQ *next, int rsav)
       }
       InsNewInst(NULL, NULL, next, COMMENT, STstrconstlookup("done paras"),
                  0, 0);
+/*
+ *    FIXED: Consider DTnzerod, DTnzero, DTabsd and DTabs; 
+ *    In x86, we don't have scalar AND/XOR operation, like: andss / andsd
+ *    So, we will always create vectors, even though we don't apply 
+ *    vectorization. Need to handle it specially in finalizing function
+ *    prologue and epilogue.
+ *    NOTE: don't use following DT entry anymore:
+ *          DTabss, DTabsds, DTnzeros, DTnzerods
+ */
       if (DTnzerod > 0)
       {
-         if (FKO_FLAG & IFF_VECTORIZE)
-         {         
-            PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
-            VDConstGen(next, ir, vdreg, 0x0, 0x80000000);
-            InsNewInst(NULL, NULL, next, VDST, SToff[DTnzerod-1].sa[2], 
-                       -vdreg, 0);
-            k = SToff[DTnzerod-1].sa[2] - 1;
-
-            DTnzerods = STdef("_NEGZERODs", T_DOUBLE | LOCAL_BIT, 0);
-            SToff[DTnzerods-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTnzerods, 
-                -DTnzerods, SToff[k].sa[3], DTnzerods);
-            k = vdreg - VDREGBEG + DREGBEG;
-            InsNewInst(NULL, NULL, next, VDMOVS, -k, -vdreg, 0);
-            InsNewInst(NULL, NULL, next, FSTD, SToff[DTnzerods-1].sa[2], -k, 0);
-         }
-         else
-         {
-/*
- *          Majedul: Works now but can improve the output code by rewriting 
- *          the ConnstGen function and eliminating the shuffle for scalar.
- */
-            PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
-            VDConstGen(next, ir, vdreg, 0x0, 0x80000000);
-            k = vdreg - VDREGBEG + DREGBEG;
-            InsNewInst(NULL, NULL, next, FSTD, SToff[DTnzerod-1].sa[2], 
-                       -k, 0);
-            kk = SToff[DTnzerod-1].sa[2] - 1;
-
-            DTnzerods = STdef("_NEGZERODs", T_DOUBLE | LOCAL_BIT, 0);
-            SToff[DTnzerods-1].sa[2] = AddDerefEntry(SToff[kk].sa[0], 
-                  DTnzerods, -DTnzerods, SToff[kk].sa[3], DTnzerods);
-            InsNewInst(NULL, NULL, next, FSTD, SToff[DTnzerods-1].sa[2], -k, 0);
-         }
+         PrintComment(NULL, NULL, next, "Writing -0 as a vector for negation");
+         VDConstGen(next, ir, vdreg, 0x0, 0x80000000);
+         InsNewInst(NULL, NULL, next, VDST, SToff[DTnzerod-1].sa[2], -vdreg, 0);
       }
       if (DTnzero > 0)
       {
-         if (FKO_FLAG & IFF_VECTORIZE)
-         {
-            PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
-            VSConstGen(next, ir, vfreg, 0x80000000);
-            InsNewInst(NULL, NULL, next, VFST, SToff[DTnzero-1].sa[2], 
-                       -vfreg, 0);
-
-            k = SToff[DTnzero-1].sa[2] - 1;
-            DTnzeros = STdef("_NEGZEROs", T_FLOAT | LOCAL_BIT, 0);
-            SToff[DTnzeros-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTnzeros, 
-               -DTnzeros, SToff[k].sa[3], DTnzeros);
-            k = vfreg - VFREGBEG + FREGBEG;
-            InsNewInst(NULL, NULL, next, VFMOVS, -k, -vfreg, 0);
-            InsNewInst(NULL, NULL, next, FST, SToff[DTnzeros-1].sa[2], -k, 0);
-         }
-         else
-         {
-/*
- *          Majedul: Works now but can improve the output code by rewriting 
- *          the ConnstGen function and eliminating the shuffle for scalar.
- */
-            PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
-            VSConstGen(next, ir, vfreg, 0x80000000);
-            k = vfreg - VFREGBEG + FREGBEG;
-            InsNewInst(NULL, NULL, next, FST, SToff[DTnzero-1].sa[2], 
-                       -k, 0);
-
-            kk = SToff[DTnzero-1].sa[2] - 1;
-            DTnzeros = STdef("_NEGZEROs", T_FLOAT | LOCAL_BIT, 0);
-            SToff[DTnzeros-1].sa[2] = AddDerefEntry(SToff[kk].sa[0], DTnzeros, 
-               -DTnzeros, SToff[kk].sa[3], DTnzeros);
-            InsNewInst(NULL, NULL, next, FST, SToff[DTnzeros-1].sa[2], -k, 0);
-         }
+         PrintComment(NULL, NULL, next, "Writing -0 to memory for negation");
+         VSConstGen(next, ir, vfreg, 0x80000000);
+         InsNewInst(NULL, NULL, next, VFST, SToff[DTnzero-1].sa[2], -vfreg, 0);
       }
       if (DTabsd)
       {
-         if (FKO_FLAG & IFF_VECTORIZE)
-         {
-            PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for absd");
-            VDConstGen(next, ir, vdreg, 0xffffffff, 0x7fffffff);
-            InsNewInst(NULL, NULL, next, VDST, SToff[DTabsd-1].sa[2], 
-                       -vdreg, 0);
-
-            k = SToff[DTabsd-1].sa[2] - 1;
-            DTabsds = STdef("_ABSVALs", T_DOUBLE | LOCAL_BIT, 0);
-            SToff[DTabsds-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTabsds, 
-               -DTabsds, SToff[k].sa[3], DTabsds);
-            k = vdreg - VDREGBEG + DREGBEG;
-            InsNewInst(NULL, NULL, next, VDMOVS, -k, -vdreg, 0);
-            InsNewInst(NULL, NULL, next, FSTD, SToff[DTabsds-1].sa[2], -k, 0);
-         }
-         else
-         {
-/*
- *          Majedul: Works now but can improve the output code by rewriting 
- *          the ConnstGen function and eliminating the shuffle for scalar.
- */
-            PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for absd");
-            VDConstGen(next, ir, vdreg, 0xffffffff, 0x7fffffff);
-            k = vdreg - VDREGBEG + DREGBEG;
-            InsNewInst(NULL, NULL, next, FSTD, SToff[DTabsd-1].sa[2], 
-                       -k, 0);
-
-            kk = SToff[DTabsd-1].sa[2] - 1;
-            DTabsds = STdef("_ABSVALs", T_DOUBLE | LOCAL_BIT, 0);
-            SToff[DTabsds-1].sa[2] = AddDerefEntry(SToff[kk].sa[0], DTabsds, 
-               -DTabsds, SToff[kk].sa[3], DTabsds);
-            InsNewInst(NULL, NULL, next, FSTD, SToff[DTabsds-1].sa[2], -k, 0);
-         }
+         PrintComment(NULL, NULL, next, "Writing ~(-0) as a vector for absd");
+         VDConstGen(next, ir, vdreg, 0xffffffff, 0x7fffffff);
+         InsNewInst(NULL, NULL, next, VDST, SToff[DTabsd-1].sa[2], -vdreg, 0);
       }
       if (DTabs)
       {
-         if (FKO_FLAG & IFF_VECTORIZE)
-         {
-            PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for abss");
-            k = SToff[SToff[DTabs-1].sa[2]-1].sa[3];
-            VSConstGen(next, ir, vfreg, 0x7fffffff);
-            InsNewInst(NULL, NULL, next, VFST, SToff[DTabs-1].sa[2], -vfreg, 0);
-
-            k = SToff[DTabs-1].sa[2] - 1;
-            DTabss = STdef("_ABSVALs", T_FLOAT | LOCAL_BIT, 0);
-            SToff[DTabss-1].sa[2] = AddDerefEntry(SToff[k].sa[0], DTabss, 
-               -DTabss, SToff[k].sa[3], DTabss);
-            k = vfreg - VFREGBEG + FREGBEG;
-            InsNewInst(NULL, NULL, next, VFMOVS, -k, -vfreg, 0);
-            InsNewInst(NULL, NULL, next, FST, SToff[DTabss-1].sa[2], -k, 0);
-         }
-         else
-         {
-/*
- *          Majedul: Works now but can improve the output code by rewriting 
- *          the ConnstGen function and eliminating the shuffle for scalar.
- */
-            PrintComment(NULL, NULL, next, "Writing ~(-0) to memory for abss");
-            k = vfreg - VFREGBEG + FREGBEG;
-            VSConstGen(next, ir, vfreg, 0x7fffffff);
-            InsNewInst(NULL, NULL, next, FST, SToff[DTabs-1].sa[2], -k, 0);
-
-            kk = SToff[DTabs-1].sa[2] - 1;
-            DTabss = STdef("_ABSVALs", T_FLOAT | LOCAL_BIT, 0);
-            SToff[DTabss-1].sa[2] = AddDerefEntry(SToff[kk].sa[0], DTabss, 
-               -DTabss, SToff[kk].sa[3], DTabss);
-            InsNewInst(NULL, NULL, next, FST, SToff[DTabss-1].sa[2], -k, 0);
-         }
+         PrintComment(NULL, NULL, next, "Writing ~(-0) as a vector for abss");
+         VSConstGen(next, ir, vfreg, 0x7fffffff);
+         InsNewInst(NULL, NULL, next, VFST, SToff[DTabs-1].sa[2], -vfreg, 0);
       }
-      InsNewInst(NULL, NULL, next, COMMENT, STstrconstlookup("done archspec"), 0, 0);
+      InsNewInst(NULL, NULL, next, COMMENT, STstrconstlookup("done archspec"), 
+            0, 0);
    #endif
    #ifdef SPARC
       nam[0] = '@';
@@ -1740,6 +1531,9 @@ void FinalizeEpilogue(BBLOCK *bbase,
                       int fsize,  /* frame size of returning func */
                       int Soff,   /* start of reg save area in frame */
                       int savesp, /* offset we saved sp at */
+#ifdef X86_64
+                      int saverbp, /* need to restore rbp? */
+#endif
                       int nir,    /* number of int regs saved */
                       int *ir,    /* int regs saved */
                       int nfr,    /* number of single regs saved */
@@ -1751,7 +1545,7 @@ void FinalizeEpilogue(BBLOCK *bbase,
    int i;
    INSTQ *next;
    BBLOCK *blk;
-   /*int k;*/
+   int k;
 
    i = STlabellookup("_IFKO_EPILOGUE");
    blk = FindBlockWithLabel(bbase, i);
@@ -1790,14 +1584,16 @@ void FinalizeEpilogue(BBLOCK *bbase,
       InsNewInst(blk, NULL, next, ADD, -REG_SP, -REG_SP,
                  STiconstlookup(fsize));
 
-#if defined(X86_64) && 0
+#if defined(X86_64) && 1
 /*
  * Majedul: restore back the rbp
  */
-   k = iName2Reg("@rbp");
-   InsNewInst(blk, NULL, next, LD, -k, 
-                    AddDerefEntry(-REG_SP, 0, 0, 0, 0), 0);
-
+   if (saverbp)
+   {
+      k = iName2Reg("@rbp");
+      InsNewInst(blk, NULL, next, LD, -k, 
+                    AddDerefEntry(-REG_SP, 0, 0, -8, 0), 0);
+   }
 #endif   
 }
 
@@ -2050,10 +1846,10 @@ int FindRegToSaveSP(BBLOCK *blk)
  * KNOWN ISSUES:
  * =============
  *
- * 1. If we have variables which are inconnectly used before defined, it may 
+ * 1. If we have variables which are incorrectly used before defined, it may 
  * treat them as live in at the beginning of the function and hence may return 0
  * indicating no available registers!!! 
- *    Currently, this is no way to catch them in compile time. like: 
+ *    Currently, this is no way to catch them in compile time. 
  */
 {
    int i, j, k;
@@ -2147,7 +1943,7 @@ int FindRegToSaveSP(BBLOCK *blk)
       if (ip->inst[0]==CMPFLAG && 
           ip->inst[1]==CF_PARASAVE && ip->inst[2]==2)
       {
-         //PrintThisInst(stderr, ip);
+         /*PrintThisInst(stderr, ip);*/
          break;
       }
       for (j=1; j <=3; j++)
@@ -2159,7 +1955,6 @@ int FindRegToSaveSP(BBLOCK *blk)
             if (k >= IREGBEG && k < IREGEND) /* int reg */
             {
                /*fprintf(stderr, "reg[%d] = %s\n", j, archiregs[k-IREGBEG]);*/
-               //fprintf(stderr, "reg[%d] = %s\n", j, archiregs[k-IREGBEG]);
                SetVecBit(liveregs, k-1, 1);
             }
          }
@@ -2170,7 +1965,6 @@ int FindRegToSaveSP(BBLOCK *blk)
                if (k == li->id) /* so, now this an inst which loads param */
                {
                   /*PrintThisInst(stderr, ip);*/
-                 // PrintThisInst(stderr, ip);
                   iv = BitVecComb(iv, iv , liveregs, '|');
                   SetVecAll(liveregs, 0);
                }
@@ -2293,24 +2087,30 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
    int maxalign;
    int csize=0;/* call parameter area size */
    extern int LOCALIGN, LOCSIZE;
-   /*int k; */
+   #ifdef X86_64
+      int k; 
+      int SaveRBP = 0;
+   #endif
 /*
- * FIXME: is LOCSIZE updated? considering the vectorization!!!
+ * FIXED: is LOCSIZE updated? considering the vectorization!!!
  * LOCSIZE is generated before vectorization at GenPrologueEpilogueStubs. So,
  * it only has information of the ABSVAL and salar local variable but not the 
  * vector (neither any vector constant and vector temporary)!!!
- * NOTE: We can solve this issue by re-counting the locals and updaeting the 
+ * NOTE: We can solve this issue by re-counting the locals and updating the 
  * deref here again.
  */
 #if 1
 /*
  * This is the final stage before converting assembly from LIL. So, re-count
  * all the locals and update local derefs accordingly.
- * NOTE: the stack is unnecessary large now. Not all locals is required to 
- * save. need to optimize the size of stack frame.
+ * FIXED: optimized based on actual usage of local DT using 
+ * MarkFinalUnusedLocals. 
+ * NOTE: this is must because we have some system constants which only be 
+ * exposed after some transformations.
  */
    extern BBLOCK *bbbase;
-   MarkUnusedLocals(bbbase);
+   /*MarkUnusedLocals(bbbase);*/
+   MarkFinalUnusedLocals(bbbase); /* handle DTX87, DTX87d separately */
    NumberLocalsByType();
    #ifdef X86_64
       UpdateLocalDerefs(8);
@@ -2318,7 +2118,6 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
       UpdateLocalDerefs(4);
    #endif
 #endif 
-
    maxalign = align = LOCALIGN;
    lsize = LOCSIZE;
 /*
@@ -2327,6 +2126,7 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
    FindRegUsage(bbase, &nir, ir, &nfr, fr, &ndr, dr);
 /*
  * If we have mandated an SAVESP register, need to save it if it is callee-saved
+ * NOTE: not used anymore : rsav is 0
  */
    if (rsav && icalleesave[rsav-1])
    {
@@ -2401,26 +2201,26 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
    assert(ip);
    oldhead = ip;
 /*
- * For x86-64, save %rbp, if necessary, to the reserved location of 0(%rsp)
- * Majedul: FIXME: I skipped that now. We don't use rbp as base pointer to 
- * keep it free to use inside the routine. 'rbp' is treated like any general 
- * purpose register here. But convensionally, rbp is saved right after the 
- * 'return address' that means at 0%(rsp) position and the value of rsp is 
+ * For x86-64, save %rbp, if necessary, to the reserved location of -8(%rsp)
+ * Majedul: FIXED: We don't use rbp as base pointer to keep it free to use it
+ * inside the routine. 'rbp' is treated like any other general 
+ * purpose register here. But conventional rbp is saved right after the 
+ * 'return address' that means at -8(%rsp) position and the value of rsp is 
  * saved in rbp when it is used as base pointer. and it is both for x86-32 and
  * x86-64.
- * But I got an idea that it is optional and as we always omit frame pointer to
- * have one extra register, I skipped that here. A wonderful discussion can be
- * found here: 
- * http://eli.thegreenplace.net/2011/09/06/stack-frame-layout-on-x86-64/
+ * But I got an idea that it is optional and we always omit frame pointer to
+ * have one extra register. I saved rbp at -8(%rsp) though. It can also be 
+ * skipped by disabling the following code.
  *
  */
-   #if defined(X86_64) && 0 
+   #if defined(X86_64) && 1
       k = iName2Reg("@rbp"); /* FIXED: @rbp from %rbp*/
       for (i=0; i < nir && ir[i] != k; i++);
       if (i < nir)
       {
+         SaveRBP = 1;
          InsNewInst(NULL, NULL, oldhead, ST,
-                    AddDerefEntry(-REG_SP, 0, 0, 0, 0), -k, 0);
+                    AddDerefEntry(-REG_SP, 0, 0, -8, 0), -k, 0);
          for (nir--; i < nir; i++) ir[i] = ir[i+1];
       }
    #endif
@@ -2473,6 +2273,8 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
          if (Loff % ASPALIGN) Loff = (Loff/ASPALIGN)*ASPALIGN + ASPALIGN;
          Loff += Soff; /* to make 16 byte align, we need to add this 8 byte */  
       }
+      if (SaveRBP)
+         lsize += 8;
       tsize = Loff + lsize;
 /*
  *       Majedul: lsize may only be multiple of 4 byte. We need 8 byte alignment
@@ -2521,6 +2323,22 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
       if (Loff%align) Loff = (Loff/align)*align + align;
       tsize = Loff + lsize;
       if (tsize % ASPALIGN) tsize = (tsize/ASPALIGN)*ASPALIGN + ASPALIGN;
+#if 0
+      fprintf(stderr, "Stack Offset related\n");
+      fprintf(stderr, "--------------------\n");
+      fprintf(stderr, "Loff = %d\n",Loff);
+      fprintf(stderr, "Soff = %d\n",Soff);
+      fprintf(stderr, "Aoff = %d\n",Aoff);
+      fprintf(stderr, "align = %d\n",align);
+      fprintf(stderr, "ASPALIGN = %d\n",ASPALIGN);
+      fprintf(stderr, "maxalign = %d\n",maxalign);
+      fprintf(stderr, "lsize = %d\n",lsize);
+      fprintf(stderr, "tsize = %d\n",tsize);
+      fprintf(stderr, "SAVESP = %d\n",SAVESP);
+      
+      extern void PrintSymtabStaticMember(FILE *fpout);
+      PrintSymtabStaticMember(stderr);
+#endif
    #endif
 /*
  *    Majedul: now we consider sp save for both 32 bit and 64 bit.
@@ -2641,7 +2459,7 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
       spderef = AddDerefEntry(-REG_SP, 0, 0, SAVESP, 0);
       InsNewInst(NULL, NULL, oldhead, ST, spderef, rsav, 0);
 /*
- *    NOTE: mark as an invalid one... correct letter!! 
+ *    NOTE: mark as an invalid one... correct later!! 
  */
       if (LOAD1)
          rsav = -LOAD1;
@@ -2672,11 +2490,18 @@ int FinalizePrologueEpilogue(BBLOCK *bbase, int rsav)
  */
    if (LOAD1)
    {
-      //InsNewInst(NULL, NULL, oldhead, LD, rsav, spderef, 0);
+      /*InsNewInst(NULL, NULL, oldhead, LD, rsav, spderef, 0);*/
       FixParamLoad(oldhead->myblk, rsav, spderef);
    }
    GetReg(-1);
+
+#ifdef X86_64
+   FinalizeEpilogue(bbase, tsize, Soff, SAVESP, SaveRBP, nir, ir, nfr, fr, ndr, 
+                    dr);
+#else
    FinalizeEpilogue(bbase, tsize, Soff, SAVESP, nir, ir, nfr, fr, ndr, dr);
+#endif
+   
    CFU2D = CFDOMU2D = CFUSETU2D = INUSETU2D = INDEADU2D = 0;
    return(0);
 }
