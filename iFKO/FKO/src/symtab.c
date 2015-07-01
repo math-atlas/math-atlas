@@ -604,15 +604,15 @@ void NumberLocalsByType()
          case T_DOUBLE:
             SToff[k].sa[1] = ndloc++;
             break;
-#if 1
+      #ifdef INT_VEC
          case T_VINT:
             SToff[k].sa[1] = nviloc++;
             break;
-#endif
+      #endif
          }
          #if IFKO_DEBUG_LEVEL > 1
-            fprintf(stderr, "%c: %s gets slot %d\n", IS_PARA(fl) ? 'P' : 'L', 
-                    STname[k], SToff[k].sa[1]);
+            fprintf(stderr, "%c: %s(t=%d) gets slot %d\n", IS_PARA(fl) ? 'P' : 'L', 
+                    STname[k], type, SToff[k].sa[1]);
          #endif
       }
    }
@@ -748,6 +748,9 @@ void UpdateLocalDerefs(int isize)
             fprintf(stderr, "%d: Unknown type %d!\n", __LINE__, FLAG2PTYPE(fl));
             exit(-1);
          }
+#if 0
+         fprintf(stderr, "%s = %d\n", STname[k], off);
+#endif
          SToff[SToff[k].sa[2]-1].sa[3] = off;
       }
    }
@@ -780,7 +783,10 @@ void CorrectLocalOffsets(int ldist)
       if (IS_DEREF(STflag[i]) && SToff[i].sa[0] == -REG_SP && 
           SToff[i].sa[1] > 0 && SToff[i].sa[2] < 0)
       {
-/* fprintf(stderr, "correcting local %d, off=%d+%d!\n", i+1, SToff[i].sa[3], ldist); */
+         #if IFKO_DEBUG_LEVEL > 1
+            fprintf(stderr, 
+               "correcting local %d, off=%d+%d!\n", i+1, SToff[i].sa[3], ldist); 
+         #endif
          SToff[i].sa[2] = 1;
          SToff[i].sa[3] += ldist;
       }
@@ -800,7 +806,10 @@ void CorrectParamDerefs(struct locinit *libase, int rsav, int fsize)
    for (lp = libase; lp; lp = lp->next)
    {
       k = lp->id-1;
-/* fprintf(stderr, "correcting para %d, off=%d+%d!\n", lp->id, SToff[k].sa[3], fsize); */
+      #if IFKO_DEBUG_LEVEL > 1
+         fprintf(stderr, 
+            "correcting para %d, off=%d+%d!\n", lp->id, SToff[k].sa[3], fsize);
+      #endif
       SToff[k].sa[0] = rsav;
       SToff[k].sa[2] = 1;
       SToff[k].sa[3] += fsize;
@@ -838,13 +847,6 @@ void MarkUnusedLocals(BBLOCK *bbase)
          for (k=1; k <= 3; k++)
          {
             i = ip->inst[k]-1;
-#if 0
-            if (i==1)
-            {
-               fprintf(stderr, "i=%d, k=%d\n",i,k);
-               PrintST(stderr);
-            }
-#endif            
             if (i >= 0 && IS_DEREF(STflag[i]) && !SToff[i].sa[0] && 
                 SToff[i].sa[2] < 0)
             {
@@ -853,15 +855,57 @@ void MarkUnusedLocals(BBLOCK *bbase)
          }
       }
    }
+}
+
+void MarkFinalUnusedLocals(BBLOCK *bbase)
 /*
- * Mark all vector locals & their scalars as used
+ * applied at FinalizePrologueEpilogue function, after repeatable optimization
  */
-   if (DO_VECT(FKO_FLAG) && optloop && optloop->vvscal)
+{
+   INSTQ *ip;
+   short k, i;
+   enum inst inst;
+   BBLOCK *bp;
+   extern int DTabsd, DTnzerod, DTabs, DTnzero, DTx87, DTx87d;
+   extern int DTabsds, DTnzerods, DTabss, DTnzeros;
+
+/*
+ * Start out by marking all locals as unused, except the system const
+ */
+   for (k=0; k != N; k++)
    {
-      for(k=optloop->vscal[0],i=1; i <= k; i++)
+      if (IS_DEREF(STflag[k]) && SToff[k].sa[0] == -REG_SP &&
+          SToff[k].sa[2] < 0)
       {
-         SToff[SToff[optloop->vvscal[i]-1].sa[2]-1].sa[0] = -REG_SP;
-         SToff[SToff[optloop->vscal[i]-1].sa[2]-1].sa[0] = -REG_SP;
+      #ifdef X86_32      
+            if ( (DTx87 && k == SToff[DTx87-1].sa[2]-1)   
+                 || (DTx87d && k == SToff[DTx87d-1].sa[2]-1) 
+               )  
+            ; /* do nothing for these system const */
+         else
+      #endif
+/*
+ *       register assignment is already done. so, no need to opt them out
+ */
+         SToff[k].sa[0] = 0;
+      }
+   }
+/*
+ * mark the used local DT by setting SToff[].sa[0] = -REG_SP 
+ */
+   for (bp=bbase; bp; bp = bp->down)
+   {
+      for (ip=bp->inst1; ip; ip = ip->next)
+      {
+         for (k=1; k <= 3; k++)
+         {
+            i = ip->inst[k]-1;
+            if (i >= 0 && IS_DEREF(STflag[i]) && !SToff[i].sa[0] && 
+                SToff[i].sa[2] < 0)
+            {
+               SToff[i].sa[0] = -REG_SP;
+            }
+         }
       }
    }
 }
@@ -928,8 +972,7 @@ short AddDerefEntry(short ptr, short reg, short mul, short con, short pts2)
 {
    int i;
 /*
- * Majedul: pts2 can be 0, see FinalizeEpilogue. It will create some invalid
- * read (Valgrind).
+ * Majedul: pts2 can be 0, see FinalizeEpilogue. 
  */
    if (pts2 > 0)
       i = STdef("DT", DEREF_BIT | FLAG2TYPE(STflag[pts2-1]) | 
@@ -1040,8 +1083,6 @@ void ReadSTFromFile(char *fname)
       extern int DTnzerod, DTabsd, DTnzero, DTabs, DTx87, DTx87d;
    #endif
    extern short STderef;
-
-   /*fprintf(stdout, "ST file name: %s\n", fname);*/
 
    fp = fopen(fname, "rb");
    assert(fp);
@@ -1168,6 +1209,7 @@ void PrintSymtabStaticMember(FILE *fpout)
  *                TO MANAGE 2D ARRAY ACCESS 
  *
  *===========================================================================*/
+
 short NewLDAS(short lda, short ptr, int mul)
 /*
  * create new varibale _lda_s=lda*mul*size generating the statement/expression
