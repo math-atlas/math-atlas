@@ -159,6 +159,16 @@ enum inst
    FCMOVD1,                        /* fr0 = ireg? fr0 : fr1 */
    FCMOVD2,                        /* fr0 = ireg? fr1 : fr0 */
 /*
+ * special instruction to support FABS and FNEG in x86 using VAND/VXOR  
+ * it's ugly but x86 doesn't have andss/xorss inst
+ * So, these are hybrid instructions which has both scalar and vector
+ * operands
+ */
+   VFSABS,                        /* fr0 = fr1 & vfr2/mem */
+   VFSNEG,                        /* fr0 = fr1 xor vfr2/mem */ 
+   VDSABS,                        /* fr0 = fr1 & vfr2/mem */
+   VDSNEG,                        /* fr0 = fr1 xor vfr2/mem */ 
+/*
  * Double precision vector instructions
  * [memA] is a vector-aligned mem @ [mem] is any alignment
  */
@@ -564,6 +574,13 @@ char *instmnem[] =
    "FMOVD",
    "FCMOVD1",
    "FCMOVD2",
+/*
+ * special hybrid inst to support fabs and fneg in x86
+ */
+   "VFSABS",
+   "VFSNEG",
+   "VDSABS",
+   "VDSNEG",
 /*
  * Double precision vector inst
  */
