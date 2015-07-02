@@ -124,6 +124,7 @@ void UpdateLocalDerefs(int);
 void AddStaticData(char *name, short align, short len, void *vbytarr);
 void KillStaticData(void);
 void MarkUnusedLocals(BBLOCK *bbase);
+void MarkFinalUnusedLocals(BBLOCK *bbase);
 void CorrectParamDerefs(struct locinit *libase, int rsav, int fsize);
 short FindLocalFromDT(short dt);
 short FindVarFromName(char *name);

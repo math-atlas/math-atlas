@@ -127,7 +127,6 @@ struct optblkq *NewOptBlock(ushort bnum, ushort maxN, ushort nopt, ushort flag)
  * added nspill to keep track of resgister spilling (# of live-range which 
  * doesn't get register), -1 means not calculated yet
  */
-   //op->nspill = -1;
    op->nspill = malloc(NTYPES*sizeof(int));
    assert(op->nspill);
    for (i = 0; i < NTYPES; i++)
@@ -2180,7 +2179,6 @@ BLIST **SplitScope(int *N)
       for (lp=loopq; lp; lp=lp->next)
          if (lp->depth == i)
          {
-            //fprintf(stderr, "loops[%d] = %s\n", i, PrintBlockList(lp->blocks));
             bl = CopyBlockList(lp->blocks);
             scopes[k++] = bl;
          }
@@ -2188,14 +2186,12 @@ BLIST **SplitScope(int *N)
             break;
       bl = CopyBlockList(lpscope[i-1]);
       bl = RemoveBlksFromList(bl, lpscope[i]);
-      //scopes[k++] = bl;
+      /*scopes[k++] = bl;*/
       scopes[k++] = NULL; /* testing ... ....!!!!!!!!!!!!!! */
-      //fprintf(stderr, "remblks[%d] = %s\n", i, PrintBlockList(bl));
 
    }
    bl = CopyBlockList(lpscope[0]);
    scopes[k] = bl;
-   //fprintf(stderr, "allblks = %s\n", PrintBlockList(lpscope[0]));
 /*
  * free all temporary
  */
@@ -4287,7 +4283,7 @@ int main(int nargs, char **args)
          VECT_FLAG &= ~VECT_SV;
          VECT_FLAG |= VECT_NCONTRL;
          assert(!RcVectorAnalysis());
-         RcVectorization();
+         assert(!RcVectorization());
          FinalizeVectorCleanup(optloop, 1);
       }
 #if 0      

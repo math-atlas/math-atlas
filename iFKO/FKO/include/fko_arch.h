@@ -97,7 +97,14 @@
 /*=============================================================================
  * vector unit:
  * 1. supported types
- * 2. vector length 
+ * 2. vector length
+ * 
+ * NOTE: FKO supports vector integer (both for 32bit and 64 bit integer) 
+ * operations only for internal transformation purpose so far (like: shadow RC). 
+ * NOTE: Only AVX2 supports vector integer operation, since it adds instructions 
+ * like: vpaddd, vpaddq.
+ * AVX2 has vpminsd/vpminsd but doesn't have any for 64bit. We ignore them here.
+ *
  *============================================================================*/
 #if defined(PPC) || defined(SPARC)
    #ifdef ArchHasVec
@@ -123,11 +130,12 @@
       #define FKO_SVLEN 8
       #define DP_VEC
       #define FKO_DVLEN 4
-      #define FKO_IVLEN 8
+      /*#define INT_VEC*/
+      /*#define FKO_IVLEN 8*/
    /*#elif defined(SSE41)*/ 
    #else /* by default SSE4.1*/
-      #define INT_VEC
-      #define FKO_IVLEN 4
+      /*#define INT_VEC*/
+      /*#define FKO_IVLEN 4*/
       #define FP_VEC
       #define FKO_SVLEN 4
       #define DP_VEC
@@ -152,16 +160,18 @@
    #endif
 
 #elif defined(X86)
-   #ifdef ARCH_HAS_MAC     /* defiend in fko_settings.h */    
-      #define ArchHasMAC   /* defined internally */
-      /*#define FMA4*/     /* get retarded */
-      #ifndef FMA4
-         #define FMA3
+   #ifdef ARCH_HAS_MAC   /* defiend in fko_settings.h */    
+      #if ARCH_HAS_MAC == 1
+         #define ArchHasMAC   /* defined internally */
+         /*#define FMA4*/     /* get retarded */
+         #ifndef FMA4
+            #define FMA3
+         #endif
+         #define FP_MAC
+         #define DP_MAC
+         #define VFP_MAC
+         #define VDP_MAC
       #endif
-      #define FP_MAC
-      #define DP_MAC
-      #define VFP_MAC
-      #define VDP_MAC
    #endif
 #endif
 
@@ -225,6 +235,10 @@
 /*
  * max/min supported in both AVX and SSE4.1
  */
+   #define FP_MAX
+   #define FP_MIN
+   #define DP_MAX
+   #define DP_MIN
    #define VFP_MAX
    #define VFP_MIN
    #define VDP_MAX
@@ -716,7 +730,8 @@
    #else /* P4/P4E defaults */
       #define NCACHE 1
       #ifdef ARCH_DECLARE
-         short LINESIZE[NCACHE] = {128};
+         /*short LINESIZE[NCACHE] = {128};*/
+         short LINESIZE[NCACHE] = {64};
       #else
          extern short LINESIZE[NCACHE];
       #endif

@@ -1522,6 +1522,7 @@ int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
             #endif
             ip->inst[0] = VDMOVS;
             ip->inst[2] = -ig->reg;
+            ip->inst[3] = ip->inst[1]; /* made dest in use too */
             break;
          case VFLDS:
             #ifdef X86
@@ -1534,6 +1535,7 @@ int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
             #endif
             ip->inst[0] = VFMOVS;
             ip->inst[2] = -ig->reg;
+            ip->inst[3] = ip->inst[1]; /* made dest in use too */
             break;
       #ifdef VIREGBEG
 /*
@@ -1567,6 +1569,7 @@ int VarUse2RegUse(IGNODE *ig, BBLOCK *blk, INSTQ *instbeg, INSTQ *instend)
             #endif
             ip->inst[0] = VIMOVS;
             ip->inst[2] = -ig->reg;
+            ip->inst[3] = ip->inst[1];
             break;
       #endif
          default:
@@ -1668,7 +1671,6 @@ int DoRegAsgTransforms(IGNODE *ig)
  *    NOTE: we have no memory-output instructions, so assert set is ST
  */
       ip = bl->ptr;
-      assert(ip);
       if (ip && BitVecCheck(ip->set, ig->var+TNREG-1))
       {
          inst = GET_INST(ip->inst[0]);
@@ -1690,13 +1692,15 @@ int DoRegAsgTransforms(IGNODE *ig)
             ip->inst[1] = -ig->reg;
          }
 /*
- *       Majedul: If we have vector to scalar store, we can use movs 
+ *       Majedul: If we have vector to scalar store, we can use movs
  */
+#if 1         
          else if (IS_V2SST(inst) && inst == sts)
          {
             ip->inst[0] = movs;
             ip->inst[1] = -ig->reg;
          }
+#endif
 /*
  *       If Store is of different type than variable (eg., fpconst init),
  *       we must insert a ld inst to the LR register
@@ -3157,24 +3161,24 @@ int DoEnforceLoadStore(BLIST *scope)
             else if (!IS_DEREF(STflag[op-1]))
                op = 0;
 /*
- *          Majedul: Right now, I skipped the update of the 2nd src operand
+ *          Majedul: I skipped the update of the 2nd src operand
  *          from here, added a new function to reveal this kind of arch event
  */
             #if defined(X86) && 0 
                if (ip->inst[3] >= 0)
                {
                if (inst == FABS)
-                  ip->inst[3] = op = SToff[DTabss-1].sa[2];
+                  ip->inst[3] = op = SToff[DTabs-1].sa[2];
                else if (inst == VFABS)
                   ip->inst[3] = op = SToff[DTabs-1].sa[2];
                else if (inst == FABSD)
-                  ip->inst[3] = op = SToff[DTabsds-1].sa[2];
+                  ip->inst[3] = op = SToff[DTabsd-1].sa[2];
                else if (inst == VDABS)
                   ip->inst[3] = op = SToff[DTabsd-1].sa[2];
                else if (inst == FNEG)
-                  ip->inst[3] = op = SToff[DTnzeros-1].sa[2];
+                  ip->inst[3] = op = SToff[DTnzero-1].sa[2];
                else if (inst == FNEGD)
-                  ip->inst[3] = op = SToff[DTnzerods-1].sa[2];
+                  ip->inst[3] = op = SToff[DTnzerod-1].sa[2];
                }
             #endif
             if (!op)
