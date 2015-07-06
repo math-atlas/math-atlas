@@ -8,13 +8,17 @@
 static short OL_NEINC=0;
 
 int NonLocalDeref(short dt)
+/*
+ * Returns 1 if this is deref entry to access array, not local variable
+ */
 {
    dt--;
-   if (!IS_DEREF(STflag[dt]))
+   if (!IS_DEREF(STflag[dt])) /* not a DT entry */
       return(0);
-   if (SToff[dt].sa[0] == -REG_SP && SToff[dt].sa[1] >= 0)
+   else if (SToff[dt].sa[0] == -REG_SP && SToff[dt].sa[1] >= 0) /*local deref */
       return(0);
-   return(1);
+   else /* no other way, it's a DT for array access */ 
+      return(1);
 }
 
 BBLOCK *DupBlock(BBLOCK *bold)
@@ -478,6 +482,40 @@ ILIST *FindIndexRef(BLIST *scope, short I)
    return(ilbase);
 }
 
+ILIST *FindIndexRefInArray(BLIST *scope, short I)
+/*
+ * Majedul: Finds all index refs to access memory in a given scope.
+ * returns list of inst where this access occurs
+ */
+{
+   BLIST *bl;
+   INSTQ *ip, *ip1;
+   short ireg, dt;
+   ILIST *ilbase=NULL;
+   for (bl=scope; bl; bl = bl->next)
+   {
+      for (ip=bl->blk->ainstN; ip; ip = ip->prev)
+      {
+         if (ip->inst[0] == LD && ip->inst[2] == I)
+         {
+            ireg = ip->inst[1];
+            ip1 = ip->next;
+            while(IS_LOAD(ip1->inst[0]))
+            {
+               dt = ip1->inst[2]; 
+               if (NonLocalDeref(dt)) /* dt for array access */
+               {
+                  if (ireg == SToff[dt-1].sa[0] || ireg == SToff[dt-1].sa[1])
+                     ilbase = NewIlist(ip, ilbase);
+               }
+               ip1 = ip1->next;
+            }
+         }
+      }
+   }
+   return(ilbase);
+}
+
 struct ptrinfo *FindMovingPointers(BLIST *scope)
 /*
  * Finds pointers that are inc/decremented in scope
@@ -726,7 +764,12 @@ void UpdatePointerLoads(BLIST *scope, struct ptrinfo *pbase, int UR)
          if (IS_LOAD(ip->inst[0]))
          {
             k = ip->inst[2];
-            assert(k > 0);
+            //assert(k > 0);
+            if (k <= 0)
+            {
+               PrintThisInst(stderr,0,ip);
+               assert(k > 0);
+            }
             k = STpts2[k-1];
             if (!k) continue;
 /*
@@ -2265,13 +2308,20 @@ void findDTentry(BLIST *scope, short ptr)
  *          check SToff[].sa[1] ...
  *          variable load: sa[1] always point to the ST index of the var
  *          memory load: sa[1] always be <= 0 (depends on index/lda)
+ *          used this tick in PrintIns func in inst.c
+ *          NOTE: a better way to identify memory access, when base ptr sa[0] 
+ *          is not REG_SP. It would work for any arch for sure.
  */
             ipn = ip;
             while (IS_LOAD(ipn->inst[0]))
             {
                PrintThisInst(stderr, 0, ipn);
                op = ipn->inst[2];
-               if (SToff[op-1].sa[1] <= 0)
+#if 0               
+               if (SToff[op-1].sa[1] <= 0 && SToff[op-1].sa[0] != -REG_SP)
+#else
+               if (NonLocalDeref(op))
+#endif
                {
                   fprintf(stderr, "DT(%d): %4d%4d%4d%4d\n",op, SToff[op-1].sa[0],
                         SToff[op-1].sa[1],
@@ -2303,11 +2353,19 @@ int CountMemDT(BLIST *scope, short sta)
    {
       for (ip=bl->blk->ainst1; ip; ip=ip->next)
       {
+#if 0         
          if (IS_LOAD(ip->inst[0]) 
                && SToff[ip->inst[2]-1].sa[1] <= 0  /* dt for mem access */
                && FindInShortList(STarr[sta-1].colptrs[0], 
                                   STarr[sta-1].colptrs+1, 
                                   STpts2[ip->inst[2]-1]))
+#else
+         if (IS_LOAD(ip->inst[0]) 
+               && NonLocalDeref(ip->inst[2])  /* dt for mem access */
+               && FindInShortList(STarr[sta-1].colptrs[0], 
+                                  STarr[sta-1].colptrs+1, 
+                                  STpts2[ip->inst[2]-1]))
+#endif
             ct++;
       }
    }
@@ -2359,11 +2417,24 @@ ILIST **AddPrefInsIlistFromDT(LOOPQ *lp, short sta, int pid, int npf,
  *       STpts2[dt-1] ==> refers ptr of all dt entry, even the dt for mem access
  *       Here, we are looking for only those dt entry for mem access
  */
+#if 0         
          if (IS_LOAD(ip->inst[0]) 
                && SToff[ip->inst[2]-1].sa[1] <= 0 /* dt for mem access */
                && FindInShortList(STarr[sta-1].colptrs[0], 
                                   STarr[sta-1].colptrs+1, 
                                   STpts2[ip->inst[2]-1]))
+#else
+/*
+ *       better to find mem access: sa[0] != -REG_SP
+ *       use NonLocalDeref function.
+ */
+         if (IS_LOAD(ip->inst[0]) 
+               && NonLocalDeref(ip->inst[2]) /* dt for array access */
+               && FindInShortList(STarr[sta-1].colptrs[0], 
+                                  STarr[sta-1].colptrs+1, 
+                                  STpts2[ip->inst[2]-1]))
+
+#endif
          {
             op = ip->inst[2];
             colptr = STpts2[ip->inst[2]-1];
@@ -3955,12 +4026,26 @@ void CountVarAccess(BLIST *scope, int ptr, int *nread, int *nwrite)
 /*
  *       IF we count variable access, not mem
  */
+#if 0         
          if (IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]-1] == ptr 
                && SToff[ip->inst[1]-1].sa[1] > 0 ) /* not mem */
             nw++;
          else if (IS_LOAD(ip->inst[0]) && STpts2[ip->inst[2]-1] == ptr 
                && SToff[ip->inst[2]-1].sa[1] > 0 ) /* not mem */
             nr++;
+#else
+/*
+ *       better way to check var, but not mem access
+ */
+         if (IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]-1] == ptr 
+               && SToff[ip->inst[1]-1].sa[0] == -REG_SP 
+               && SToff[ip->inst[1]-1].sa[1] >= 0 ) /* not mem */
+            nw++;
+         else if (IS_LOAD(ip->inst[0]) && STpts2[ip->inst[2]-1] == ptr 
+               && SToff[ip->inst[2]-1].sa[0] == -REG_SP 
+               && SToff[ip->inst[2]-1].sa[1] >= -REG_SP ) /* not mem */
+            nr++;
+#endif
       }
    }
    *nread = nr;
@@ -3981,10 +4066,11 @@ void CountArrayAccess(BLIST *scope, int ptr, int *nread, int *nwrite)
    {
       for (ip=bl->blk->ainst1; ip; ip = ip->next)
       {
-#if 1         
+#if 0         
  /*
   *       IF we count only the memory access
-  *       NOTE: for mem access sa[1] of DT entry would be a reg or 0 ( <= 0)
+  *       for mem access sa[1] of DT entry would be a reg or 0 ( <= 0)
+  *       Better way: sa[0] != -REG_SP
   */
          if (IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]-1] == ptr 
                && SToff[ip->inst[1]-1].sa[1] <= 0 ) /* mem */
@@ -3993,12 +4079,15 @@ void CountArrayAccess(BLIST *scope, int ptr, int *nread, int *nwrite)
                && SToff[ip->inst[2]-1].sa[1] <= 0 ) /* mem */
             nr++;
 #else
- /*
-  *       IF we count the pointer access = memory access + pointer updates
-  */
-         if (IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]-1] == ptr ) 
+/*
+ *       better way to check : sa[0] != -REG_SP
+ *       use NonLocalDeref function
+ */
+         if (IS_STORE(ip->inst[0]) && STpts2[ip->inst[1]-1] == ptr 
+               && NonLocalDeref(ip->inst[1]) ) /* array access */
             nw++;
-         else if (IS_LOAD(ip->inst[0]) && STpts2[ip->inst[2]-1] == ptr ) 
+         else if (IS_LOAD(ip->inst[0]) && STpts2[ip->inst[2]-1] == ptr 
+               && NonLocalDeref(ip->inst[2]) ) /* array access */
             nr++;
 #endif
       }
@@ -4389,6 +4478,8 @@ OPTLOOP=1
    extern short STderef;
    extern BBLOCK *bbbase;
    extern int FKO_MaxPaths;
+   extern LOOPQ *optloop;
+   extern int VECT_FLAG;
    /*int SimpleLC=0, UR;*/
    /*ILIST *il;*/
    
@@ -4400,30 +4491,11 @@ OPTLOOP=1
 
    if (fpLOOPINFO)
       fpout = fpLOOPINFO;
-#if 0
 /*
- * Print cache information  
- */
-   fprintf(fpout, "NCACHES=%d\n", NCACHE);
-   fprintf(fpout, "   LINESIZES :");
-   for (i=0; i < NCACHE; i++)
-      fprintf(fpout, " %d", LINESIZE[i]);
-   fprintf(fpout, "\n");
-#endif
-/*
- * NOTE: Saving and Restoring FKO State don't re-initiate some global data
- * like: bitvect. So, if we restore any states (other than just after state0)
- * there would be existing bit vectors. 
- * FIXME: there can be 2 ways:
- *    1. Save all global data structures and restore all of them while 
- *       restoring states (need to keep track and delete some).
- *    2. Delete/free all the global data structures and re-calculate them while
- *       restoring states (need to free some);
- */
-
-/* 
- * Right now, will call this function just after state0, we don't need to call
- * the restore function. 
+ * NOTE: Saving and Restoring FKO's State won't re-initiate some global data
+ * (like: bitvect), if we restore from any states other than state 0.
+ * Majedul: I redesigned save and restore function for state 0 so that there 
+ * would be no memory leak.
  */
    /*RestoreFKOState(0);*/
    RestoreFKOState0();
@@ -4439,18 +4511,11 @@ OPTLOOP=1
       fprintf(fpout, "OPTLOOP=1\n");
 #if 0
 /*
- *    HERE HERE, what is the significance of MaxUnroll ??? 
- *    It is derived from the annotation 
- */
-      UR = optloop->maxunroll;
-      fprintf(fpout, "   MaxUnroll=%d\n", UR);
-#endif
-/*
- *    figure out the loop structure    
+ *    figure out the loop structure. 
+ *    NOTE: Assume optloop as a simple loop using HIL LOOP syntrax     
  */
       lp = optloop;
       KillLoopControl(lp);
-#if 0
       il = FindIndexRef(lp->blocks, SToff[lp->I-1].sa[2]);
       if (il)
       {
@@ -4461,7 +4526,6 @@ OPTLOOP=1
       else
          SimpleLC = 1;
       fprintf(fpout, "   LoopNormalForm=%d\n", SimpleLC);
-#endif
 /*
  *    Restoring state0 ... ... ...
  */
@@ -4470,44 +4534,10 @@ OPTLOOP=1
       NewBasicBlocks(bbbase);
       FindLoops(); 
       CheckFlow(bbbase, __FILE__, __LINE__);
-#if 0
-/*
- *    Check all loop info 
- */
-      lp = optloop;
-      fprintf(stderr, "\n LOOP BLOCKS: \n");
-      if(!lp->blocks) fprintf(stderr, "NO LOOP BLK!!!\n");
-      for (bl = lp->blocks; bl ; bl = bl->next)
-      {
-         assert(bl->blk);
-         fprintf(stderr, "%d ",bl->blk->bnum);
-      }
-      fprintf(stderr,"\n");
-      fprintf(stderr, "\n LOOP BLOCKS: \n");
-      if(lp->header) fprintf(stderr, "loop header: %d\n",lp->header->bnum);
-      if(lp->preheader) fprintf(stderr, "loop preheader: %d\n",
-                                lp->preheader->bnum);
-   
-      fprintf(stderr,"loop tails: ");
-      for (bl = lp->tails; bl ; bl = bl->next)
-      {
-         assert(bl->blk);
-         fprintf(stderr, "%d ",bl->blk->bnum);
-      }
-      fprintf(stderr,"\n");
-   
-      fprintf(stderr,"loop posttails: ");
-      for (bl = lp->posttails; bl ; bl = bl->next)
-      {
-         assert(bl->blk);
-         fprintf(stderr, "%d ",bl->blk->bnum);
-      }
-      fprintf(stderr,"\n");
 #endif      
-
 /*
  *    Findout Path information.
- *    NOTE: always kill path table after doing the analysis. Here, it is 
+ *    NOTE: always kill path table after doing the path analysis. Here, it is 
  *    done inside FindNumPaths() function
  */
       npaths = FindNumPaths(optloop);
@@ -4515,17 +4545,9 @@ OPTLOOP=1
 
       if (npaths > 1)
       {
-#if 0         
-         RestoreFKOState0();
-         GenPrologueEpilogueStubs(bbbase,0);
-         NewBasicBlocks(bbbase);
-         FindLoops(); 
-         CheckFlow(bbbase, __FILE__, __LINE__);
-#endif         
 /*
  *       Check Whether it is reducable by Max/Min
  */
-
          UpdateOptLoopWithMaxMinVars();
          MaxR = ElimMaxMinIf(1,0);
          MinR = ElimMaxMinIf(0,1); /*rule out all maxs before  */
@@ -4533,21 +4555,20 @@ OPTLOOP=1
  *       does max/min eliminate all paths
  */   
 /*
- *       NOTE: SpeculativeVectorAnalysis also works if there are multiple 
- *       paths still. So, it's a design decision whether we need to apply 
- *       SpeculativeVectorAnalysis ... ... 
+ *       NOTE: SpeculativeVectorAnalysis can be applied on single path too.  
  */
          iElimBr[MAXMIN] = MaxR | MinR;
-         if (FindNumPaths(optloop) == 1 && iElimBr[MAXMIN] )
-         {
-            VmaxminR = !(SpeculativeVectorAnalysis()); 
-            iVecMethod[LOOPLVL] = VmaxminR; 
-            KillPathTable();
-         }
-
+      
+         #if defined(ArchHasVec)
+            if (FindNumPaths(optloop) == 1 && iElimBr[MAXMIN] )
+            {
+               VmaxminR = !(SpeculativeVectorAnalysis()); 
+               iVecMethod[LOOPLVL] = VmaxminR; 
+               KillPathTable();
+            }
+         #endif
 /*
- *       Check whether RedundantComputation Transformation can be applied
- *       NOTE: right now, we can apply RC only for 2 paths! if or if-else
+ *       Restore to state 0 to perform next transformation 
  */
          RestoreFKOState0();
          GenPrologueEpilogueStubs(bbbase,0);
@@ -4561,35 +4582,49 @@ OPTLOOP=1
             CalcAllDeadVariables();
          }
 /*
- *       Right now, VRC only can be performed if all paths are vectorizable
- *       We will need an analyzer for RC later
+ *       update loop info 
  */
-         /*fprintf(fpout, "      RedCompReducesToOnePath=%d\n",1);*/
          UpdateOptLoopWithMaxMinVars();
 /*
+ *       Apply Redundant Computation to eliminate branches
  *       NOTE: we can apply shadow VRC for AVX2.
  */
-#ifdef AVX
-         if (optloop->LMU_flag & LMU_UNSAFE_RC)
-            RC = 0;
-         else
-            RC = !(IterativeRedCom());
-#else
+         #ifdef AVX
+            if (optloop->LMU_flag & LMU_UNSAFE_RC) /* UNSAFE_RC mark up*/
+               RC = 0;
+            else
+               RC = !(IterativeRedCom());
+         #else
 /*
- *       Right now, RC is only supported in AVX 
+ *          Not supported on SSE now, although SSE4.1 introduce blend operation.
  */
-         RC = 0;
-#endif
+            RC = 0;
+#        endif
          iElimBr[REDCOMP] = RC;
-         if (RC)
-         {
-            Vrc = !(RcVectorAnalysis()); /* checking for shadow RC too */
-            iVecMethod[LOOPLVL] = Vrc;
-            KillPathTable();
-         }
+         #if defined(ArchHasVec)
+            if (RC && !(VECT_FLAG & VECT_INTRINSIC) )
+            {
+/*
+ *             We make RcVec analysis relax to support shadow RC. Make sure to
+ *             call RcVectorization too to check error
+ *             NOTE: shadow RC only works in X86_64 now, not in 32 bit
+ */
+               Vrc = !(RcVectorAnalysis()); /* checking for shadow RC too */
+               #ifdef X86_32
+                  if (Vrc && (VECT_FLAG & VECT_SHADOW_VRC) )
+                     Vrc = 0; /* can't vect on X86_32*/
+                  else if (Vrc)
+               #else
+                  if (Vrc)
+               #endif
+                     Vrc = !RcVectorization();
+               iVecMethod[LOOPLVL] = Vrc;
+               KillPathTable();
+            }
+         #endif
       }
 /*
- *    Now, we will check the vectorization 
+ *    Now, we will check other vectorization methods 
  *    Restoring to state0
  */
       RestoreFKOState0();
@@ -4597,53 +4632,71 @@ OPTLOOP=1
       NewBasicBlocks(bbbase);
       FindLoops(); 
       CheckFlow(bbbase, __FILE__, __LINE__);
-
-#if defined(ArchHasVec)
-      if (IsSpeculationNeeded())
-      {
-         Vspec = !(SpeculativeVectorAnalysis()); /*it is the most general */
-         iVecMethod[SPECVEC] = Vspec;
-/*
- *       Kill path after getting vectorization info
- */
-         /*KillPathTable();*/
-      }
-      else
-      {
-         Vspec = 0;
-         Vn = !(RcVectorAnalysis()); /* checking for shadow RC too */
-         iVecMethod[LOOPLVL] = Vn;
-         /*Vn = !(SpeculativeVectorAnalysis());*/ /*it is the most general */ 
-         KillPathTable();
-      }
-      
-      if (Vn || Vrc || VmaxminR || Vspec)
-      {
-         pvec[0] = 1;
-         if (npaths > 1)
-         { 
-            if (Vspec)
+     
+      #if defined(ArchHasVec)
+         if (IsSpeculationNeeded())
+         {
+            if ( !(VECT_FLAG & VECT_INTRINSIC) )
             {
-               for (i=0; i < npaths; i++)
-               {
-                  pvec[i] = PathVectorizable(i+1);
-               }               
+               Vspec = !(SpeculativeVectorAnalysis()); /* most general */
+               iVecMethod[SPECVEC] = Vspec;
+               if (Vspec)
+                  for (i=0; i < npaths; i++)
+                     pvec[i] = PathVectorizable(i+1);
                KillPathTable();
             }
          }
-      }
-#endif
+         else
+         {  
+            if ( !(VECT_FLAG & VECT_INTRINSIC) )
+            {
+/*
+ *             FIXED: Restore the state 0 code. SpecVec analysis may change the 
+ *             original code
+ */
+               RestoreFKOState0();
+               GenPrologueEpilogueStubs(bbbase,0);
+               NewBasicBlocks(bbbase);
+               FindLoops(); 
+               CheckFlow(bbbase, __FILE__, __LINE__);
+/*
+ *             use SpeculativeVectorAnalysis to analyse the loop with one path
+ *             if you use RcVectorAnalysis, be sure to apply RcVectorization and
+ *             check for error too.
+ */
+            /*Vn = !(RcVectorAnalysis());*/ /* checking for shadow RC too */
+               Vn = !(SpeculativeVectorAnalysis()); /*more restrictive tesdt */
+               iVecMethod[LOOPLVL] = Vn;
+            }
+         }
+      
+         if (Vn || Vrc || VmaxminR )
+         {
+            if (!Vspec)
+               pvec[0] = 1; /* vectorizable, so default 1 for first path */
+         }
+      #endif
 /*
  *    set none, if no other is applicable
  */
       iElimBr[NO] = 1; /* NO is the first one */
       for (i=1; i < nelimbr; i++)
+      {
          if (iElimBr[i])
+         {
             iElimBr[NO] = 0;
+            break;
+         }
+      }
       iVecMethod[NONE] = 1;
-      for (i=0; i < nvec; i++)
+      for (i=1; i < nvec; i++)
+      {
          if (iVecMethod[i]) 
+         {
             iVecMethod[NONE] = 0; 
+            break;
+         }
+      }
 /*
  *    Now print all information related paths
  */
@@ -4664,7 +4717,7 @@ OPTLOOP=1
          {
             fprintf(fpout, "         MaxEliminatedIfs=%d\n",MaxR);
             fprintf(fpout, "         MinEliminatedIfs=%d\n",MinR);
-            fprintf(fpout, "         RedCompEliminatedIfs=%d\n",nifs);
+            fprintf(fpout, "         RedCompEliminatedIfs=%d\n",RC);
          }
       }
       fprintf(fpout, "   VECTORIZATION:");
@@ -5483,9 +5536,6 @@ INSTQ *GetSEHeadTail(LOOPQ *lp, short se, short ne, short *ses, int vec,
  */
    assert(ses[0] == ne-1);
    ses[0] = se;
-   for (j=0, i=ne; i; i >>= 1) j++;
-   if (1<<(j-1) == ne)
-      j--;
 
    if (sflag & SC_ACC) 
       ibase->next = NewInst(NULL, NULL, NULL, COMMENT, 
@@ -5497,11 +5547,23 @@ INSTQ *GetSEHeadTail(LOOPQ *lp, short se, short ne, short *ses, int vec,
       ibase->next = NewInst(NULL, NULL, NULL, COMMENT, 
                            STstrconstlookup("Begin shadow min reduce"), 0, 0);
    else;
-
+/*
+ * FIXED: Majedul: there was a problem with the reduction. It wasn't work with
+ * ne >= 8. I fixed that by changing the condition of inner loop. 
+ */
+#if 0
+   for (j=0, i=ne; i; i >>= 1) j++;
+   if (1<<(j-1) == ne)
+      j--;
+#endif
    ip = ibase->next;
-   for (i=1; i <= ne; i <<= 1, j--)
+   j = 1;
+   /*for (i=1; i <= ne; i <<= 1, j--)*/
+   for (i=1; i < ne; i <<= 1, j--)
    {
-      for (k=0; k < j; k++)
+      /*for (k=0; k <= j; k++)*/
+      j = j << 1;
+      for (k=0; k < ne/j; k++)
       {
          i1 = k*(i+i);
          i2 = i1 + i;
@@ -7304,7 +7366,7 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
  * KEEP IN MIND: 
  * convention of select: 
  * dest = (mask==0) ? src1 : src2   
- * that means, dest = mask? scr1: src2
+ * that means, dest = mask? scr2 src1
  *
  * LIL:
  * FCMOV1   :  dest = (mask==0) ? dest : src   # dest is aliased with src1 
@@ -7341,7 +7403,7 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
          type = T_DOUBLE;
          codemask = mask;
       }
-      else  /* can't handle integer yet */
+      else if (IS_INT(STflag[sp[i]-1]))/* for int */
       {
 /*
  *       statement with index variable can be 
@@ -7447,6 +7509,12 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
    #endif
 #endif
       }
+      else
+         fko_error(__LINE__, "Unsupported type for RC: var=%s, flag=%d\n", 
+               STname[sp[i]-1], STflag[sp[i]-1]);
+/*
+ *    Insert blend/insert inst
+ */
       switch(vpos[i])
       {
          case IN_IF_ONLY:  /* if blks*/ 
@@ -7454,6 +7522,7 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
  *          findout corrsponding new vars
  */
             k = FindInShortList(isetvars[0], isetvars+1, sp[i]);
+            assert(k);
             nv1 = inewvars[k];
 /*
  *          Now time to insert select inst
@@ -7480,7 +7549,8 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
  *          findout corrsponding new vars
  */
             k = FindInShortList(esetvars[0], esetvars+1, sp[i]);
-            nv2 = inewvars[k];
+            assert(k);
+            nv2 = enewvars[k];
 /*
  *          Now time to insert select inst
  *          New var in else: nv2
@@ -7490,12 +7560,22 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
             reg2 = GetReg(type);
             ip = InsNewInst(bp, ip, NULL, ld, -reg0, SToff[sp[i]-1].sa[2], 0);
             ip = InsNewInst(bp, ip, NULL, ld, -reg1, SToff[nv2-1].sa[2], 0);
+/*
+ *             FIXED: cmov1 vs cmov2: 
+ *             cmov1: 
+ *                   dest = (mask==0)? dest: src
+ *                   desk = mask? src: dest
+ *             cmov2: 
+ *                   dest = (mask==0)? src: dest
+ *                   desk = mask? dest: src
+ *
+ */
             if (IS_INT(type))
-               ip = InsNewInst(bp, ip, NULL, cmov1, -reg0, -reg1, -ICC0 );
+               ip = InsNewInst(bp, ip, NULL, cmov2, -reg0, -reg1, -ICC0 );
             else
             {
                ip = InsNewInst(bp, ip, NULL, mskld, -reg2, SToff[codemask-1].sa[2], 0);
-               ip = InsNewInst(bp, ip, NULL, cmov1, -reg0, -reg1, -reg2 );
+               ip = InsNewInst(bp, ip, NULL, cmov2, -reg0, -reg1, -reg2 );
             }
             ip = InsNewInst(bp, ip, NULL, st, SToff[sp[i]-1].sa[2], -reg0, 0);
             GetReg(-1);
@@ -7511,7 +7591,9 @@ int ReduceBlkWithSelect(BBLOCK *ifblk, BBLOCK *elseblk, BBLOCK *splitblk)
  */
             k = FindInShortList(isetvars[0], isetvars+1, sp[i]);
             nv1 = inewvars[k];
+            assert(k);
             k = FindInShortList(esetvars[0], esetvars+1, sp[i]);
+            assert(k);
             nv2 = enewvars[k];
 /*
  *          Now time to insert select inst
@@ -7959,8 +8041,9 @@ int IterativeRedCom()
    }
    while (CHANGES);
 #if 0
-   fprintf(stderr, "Final LIL after RC\n");
+   fprintf(stdout, "Final LIL after RC\n");
    PrintInst(stdout, bbbase);
+   exit(0);
 #endif
    return(err);
 }
