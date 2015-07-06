@@ -20746,49 +20746,43 @@ float SECOND(void) { return((float)time00()); }
 #include "ATL_walltime.c"
 #include "ATL_cputime.c"
 @ROUT ATL_walltime
-@extract -b @(topd)/gen.inc what=cw
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2015 -def cwdate 1997
 
-#ifdef PentiumCPS  /* this code supplied by Phil Mucci */
-@skip   #include <sys/time.h>
-@skip   #include <sys/types.h>
-   #include <stdlib.h>
-   #include <stdio.h>
-
-   static const double CPS = 1.0 / (PentiumCPS*1.0E6);
-   static unsigned usec, sec;
-   static unsigned tusec, tsec;
-   static unsigned start=0, startu;
-   static long long foo;
-   
-   static inline void microtime(unsigned *lo, unsigned *hi)
-   {
-@beginskip
-     __asm __volatile (
-           ".byte 0x0f; .byte 0x31   # RDTSC instruction "
-           movl    %%edx,%0          # High order 32 bits
-           movl    %%eax,%1          # Low order 32 bits
-                   : "=g" (*hi), "=g" (*lo) :: "eax", "edx");
-@endskip
-     __asm __volatile (
-           ".byte 0x0f; .byte 0x31; movl    %%edx,%0; movl    %%eax,%1"
-                   : "=g" (*hi), "=g" (*lo) :: "eax", "edx");
-   }
-   
-   double ATL_walltime(void)
-   {
-     if (!start)
-     {
-        microtime(&startu, &start);
-        return(0.0);
-     }
-     microtime(&usec, &sec);
-
-     foo = sec;
-     foo -= start;
-     foo = (foo << 32) + usec;
-     foo -= startu;
-     return(((double)foo)*CPS);
-   }
+#ifdef PentiumCPS
+   #ifdef __LP64__
+      #define ATL_GetCycleCount(ll_) __asm__ __volatile__ \
+      ("xorq %%rax, %%rax ; .byte 0x0f ; .byte 0x31 ; " \
+       "shlq $32, %%rdx ; orq %%rdx, %%rax " \
+       : "=a"(ll_)      /* output */ \
+       :                /* no input params */ \
+       : "%rdx"  /* clobber list */ \
+      );
+      double ATL_walltime(void)
+      {
+         long long cycnt;
+         static double mul=1.0 / ((double)PentiumCPS);
+         ATL_GetCycleCount(cycnt)
+         return(mul*cycnt);
+      }
+   #else
+      #define ATL_GetCycleCount(hi_, lo_) __asm__ __volatile__ \
+      (".byte 0x0f ; .byte 0x31 ; " \
+       : "=a"(lo_), "=d"(hi_)     /* output */ \
+       :                          /* no input params */ \
+       :                          /* clobber list */ \
+      );
+      double ATL_walltime(void)
+      {
+         long long cyc;
+         int hi, lo;
+         double d;
+         static double mul=1.0 / ((double)PentiumCPS);
+         ATL_GetCycleCount(hi, lo);
+         cyc = hi;
+         cyc = (cyc << 32) + lo;
+         return(mul*cyc);
+      }
+   #endif
 #elif defined(ATL_OS_WinNT) /* special code for windows */
    #include <windows.h>
    double ATL_walltime(void)
@@ -20796,6 +20790,10 @@ float SECOND(void) { return((float)time00()); }
       static double freqRecip = 0.0;
       LARGE_INTEGER msout;
       unsigned long long myout;
+/*
+ *    Not thread-safe, but shouldn't cause problems, since all cores
+ *    should hopefully get the same answer
+ */
       if (freqRecip == 0.0)
       {
          QueryPerformanceFrequency(&msout);
@@ -20831,20 +20829,11 @@ float SECOND(void) { return((float)time00()); }
    double ATL_walltime(void)
    {
       struct timespec ts;
-      static double t0;
       double res;
-      static int INIT = 0;
 
-      if (INIT)
-      {
-         clock_gettime(CLOCK_REALTIME, &ts);
-         res = ts.tv_sec + 1.0e-9 * ts.tv_nsec;
-         return(res - t0);
-      }
       clock_gettime(CLOCK_REALTIME, &ts);
-      t0 = ts.tv_sec + 1.0e-9 * ts.tv_nsec;
-      INIT = 1;
-      return(0.0);
+      res = ts.tv_sec + 1.0e-9 * ts.tv_nsec;
+      return(res);
    }
 /*
  * Without gcc, I know no standard Windows wall-timer, so use cputime
@@ -20854,21 +20843,9 @@ float SECOND(void) { return((float)time00()); }
    #include <time.h>
    double ATL_walltime(void)
    {
-      clock_t t1;
-      static int INIT=0;
-      static clock_t t0;
       static const double CPS = 1.0 / (1.0*CLOCKS_PER_SEC);
-      double d;
    
-      if (INIT)
-      {
-         t1 = clock() - t0;
-         d = t1 * CPS;
-         return(d);
-      }
-      INIT = 1;
-      t0 = clock();
-      return(0.0);
+      return(clock() * CPS);
    }
 #else
    #include <stdlib.h>
@@ -20877,16 +20854,8 @@ float SECOND(void) { return((float)time00()); }
    double ATL_walltime(void)
    {
       struct timeval tp;
-      static long start=0, startu;
-      if (!start)
-      {
-         gettimeofday(&tp, NULL);
-         start = tp.tv_sec;
-         startu = tp.tv_usec;
-         return(0.0);
-      }
       gettimeofday(&tp, NULL);
-      return( ((double) (tp.tv_sec - start)) + (tp.tv_usec-startu)/1000000.0 );
+      return( ((double) tp.tv_sec) + (tp.tv_usec*1.0e-6) );
    }
 #endif
 
