@@ -20748,7 +20748,13 @@ float SECOND(void) { return((float)time00()); }
 @ROUT ATL_walltime
 @extract -b @(topd)/cw.inc lang=C -def cwdate 2015 -def cwdate 1997
 
+/*
+ * Cycle-accurate timers not quite thread safe, but all cores should
+ * almost always be the same in upper 11 bits, which we need to mask
+ * of to avoid losing precision going from long long -> double
+ */
 #ifdef PentiumCPS
+   #include <assert.h>
    #ifdef __LP64__
       #define ATL_GetCycleCount(ll_) __asm__ __volatile__ \
       ("xorq %%rax, %%rax ; .byte 0x0f ; .byte 0x31 ; " \
@@ -20757,11 +20763,21 @@ float SECOND(void) { return((float)time00()); }
        :                /* no input params */ \
        : "%rdx"  /* clobber list */ \
       );
+      #define MASK11 (0xFFE0<<48)
       double ATL_walltime(void)
       {
+         const static double mul=1.0 / ((double)PentiumCPS);
+         static long long top11bits=1, t11;
          long long cycnt;
-         static double mul=1.0 / ((double)PentiumCPS);
+
          ATL_GetCycleCount(cycnt)
+         t11 = cycnt & MASK11;
+         if (top11bits != t11)
+         {
+            assert(top11bits == 1);
+            top11bits = t11;
+         }
+         cycnt &= ~MASK11;
          return(mul*cycnt);
       }
    #else
@@ -20771,14 +20787,21 @@ float SECOND(void) { return((float)time00()); }
        :                          /* no input params */ \
        :                          /* clobber list */ \
       );
+      #define MASK11 (0xFFE0<<16)
       double ATL_walltime(void)
       {
+         const static double mul=1.0 / ((double)PentiumCPS);
+         static int top11bits=1, t11;
          long long cyc;
          int hi, lo;
-         double d;
-         static double mul=1.0 / ((double)PentiumCPS);
          ATL_GetCycleCount(hi, lo);
-         cyc = hi;
+         t11 = hi & MASK11;
+         if (t11 != top11bits)
+         {
+            assert(top11bits == 1);
+            top11bits = t11;
+         }
+         cyc = hi & (~MASK11);
          cyc = (cyc << 32) + lo;
          return(mul*cyc);
       }
