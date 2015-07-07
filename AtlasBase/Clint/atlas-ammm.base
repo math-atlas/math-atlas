@@ -13031,7 +13031,33 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
  * extensions in a very simplified way in a type-independent manner.
  * First argument is always destination.
  */
-#if defined(ATL_AVXMAC) || defined(ATL_AVX)
+#if defined(ATL_VSX)
+   #include <altivec.h>
+   #if defined(SREAL) || defined(SCPLX)
+      #if defined(ATL_VLEN) && ATL_VLEN != 4  /* VLEN OVERRIDE! */
+         #error "Only VLEN==4 supported for single precision VSX!"
+      #else
+         #define ATL_VTYPE vector float
+         #define ATL_VLEN 4
+      #endif
+   #else        /* double precision */
+      #if defined(ATL_VLEN) && ATL_VLEN != 2  /* VLEN OVERRIDE! */
+         #error "Only VLEN==2 supported for double precision VSX!"
+      #else
+         #define ATL_VTYPE vector double
+         #define ATL_VLEN 2
+      #endif
+   #endif
+   #define ATL_vzero(v_) v_ = vec_splats(ATL_rzero);
+   #define ATL_vbcast(v_, p_) v_ =  vec_splat(*((TYPE*)(p_)));
+   #define ATL_vuld(v_, p_) v_ = vec_vsx_ld(0, p_)
+   #define ATL_vld(v_, p_) v_ = vec_ld(0, p_)
+   #define ATL_vust(p_, v_) vec_vsx_st(v_, 0, p_)
+   #define ATL_vst(p_, v_)  vec_st(v_, 0, p_)
+   #define ATL_vadd(d_, s1_, s2_) d_ =  vec_add(s1_, s2_)
+   #define ATL_vmul(d_, s1_, s2_) d_ =  vec_mul(s1_, s2_)
+   #define ATL_vmac(d_, s1_, s2_) d_ = vec_madd(s1_, s2_, d_)
+#elif defined(ATL_AVXMAC) || defined(ATL_AVX)
    #include <immintrin.h>
    #if defined(SREAL) || defined(SCPLX)
       #if defined(ATL_VLEN) && ATL_VLEN != 8  /* VLEN OVERRIDE! */
@@ -13092,28 +13118,6 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
             d_ = _mm256_add_pd(t_, d_); \
          }
       #endif
-   #endif
-#elif defined(ATL_VSX)
-   #include <altivec.h>
-   #if defined(SREAL) || defined(SCPLX)
-      #if defined(ATL_VLEN) && ATL_VLEN != 4  /* VLEN OVERRIDE! */
-         #error "Only VLEN==4 supported for single precision VSX!"
-      #else
-         #define ATL_VTYPE vector float
-         #define ATL_VLEN 4
-      #endif
-      #define ATL_vzero(v_) v_ = vec_splats(0.0);
-      #define ATL_vbcast(v_, p_) \
-         v_ =  vec_splat(*((float*)(p_)));
-      #define ATL_vuld(v_, p_) v_ = vec_vsx_ld(0, p_)
-      #define ATL_vld(v_, p_) v_ = vec_ld(0, p_)
-      #define ATL_vust(p_, v_) vec_vsx_st(v_, 0, p_)
-      #define ATL_vst(p_, v_)  vec_st(v_, 0, p_)
-      #define ATL_vadd(d_, s1_, s2_) d_ =  vec_add(s1_, s2_)
-      #define ATL_vmul(d_, s1_, s2_) d_ =  vec_mul(s1_, s2_)
-      #define ATL_vmac(d_, s1_, s2_) \
-         d_ = vec_madd(s1_, s2_, d_)
-   #else        /* double precision */
    #endif
 #elif defined(ATL_SSE2) && (defined(DREAL) || defined(DCPLX))
    #include <xmmintrin.h>
