@@ -13029,54 +13029,202 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 /*
  * This header files contains wrappers to allow you to use SIMD vector
  * extensions in a very simplified way in a type-independent manner.
- * First argument is always destination.
+ * ATL_VLEN is treated differently, depending on whether we are using
+ * system-dependent vectorization (eg., AVX, VSX, etc.) or gnu vectorization:
+ * - For gnu vectorization, ATL_VLEN must be defined as a power of 2.
+ * - For non-gnu vectorization ATL_VLEN:
+ *   + If undefined, it will be defined as system simd vec size for this type.
+ *   + If defined, it must be <= system vecsz.  If it is <, then all loads 
+ *     may become unaligned (slow), and peak is not usually achievable
+* All macro funcs first arg is the destination.  vr stands for vector register.
+ * We support the following miscellaneous instructions:
+ *    ATL_vzero(vr)       : zero all vr entries
+ *    ATL_vcopy(vrd, vrs) : vrd = vrs
+ *
+ * We support 5 load/store operations (where p is a pointer):
+ *    ATL_vbcast(vr, p) : broadcast pointed-to scalar to all vr entries
+ *    ATL_vuld(vr, p)   : unaligned load from ptr to vr
+ *    ATL_vld(vr, p)    : aligned load from ptr to vr
+ *    ATL_vust(p, vr)   : unaligned store to ptr from vr
+ *    ATL_vst(p, vr)    : aligned store to ptr from vr
+ * NOTE: if VLEN < native length, all  usually assume unaligned data,
+ *       and (except bcast) become a series of instructions rather than one.
+ *
+ * We support 3 computational macros:
+ * ATL_vadd(vrd, vrs1, vrs2) : vrd = vrs1 + vrs2
+ * ATL_vmul(vrd, vrs1, vrs2) : vrd = vrs1 * vrs2
+ * ATL_vmac(vrd, vrs1, vrs2) : vrd += vrs1 * vrs2
+ *
+ * We support only summation for reduction, with varying # of src operands:
+ * NOTE: (1) vrd should not be alised with src regs, 
+ *       (2) all source regs may be overwritten:
+ *    ATL_vrsum1(vrd, vrs)        : vrd[0] = sum(vrs[:])
+ *    ATL_vrsum2(vrd, vrs1, vrs2) : vrd[0] = sum(vrs1[:])+sum(vrs2[:])
+ *    ATL_vrsum4(vrd, vrs1, vrs2, vrs3, vrs4) : 
+ *         vrd[0] = sum(vrs1[:])+sum(vrs2[:])+sum(vrs3[:])+sum(vrs4[:])
+ *    ATL_vrsum8(vrd, vrs1, vrs2, vrs3, vrs4, vrs5, vrs6, vrs7, vrs8)
+ *    ATL_vrsum16(vrd, vrs1, vrs2, vrs3, vrs4, vrs5, vrs6, vrs7, vrs8,
+                  vsr9, vsr10, vsr11, vsr12, vsr13, vsr14, vsr15, vsr16)
+ *
+ */
+
+/*
+ * Compute ATL_VLEN based on SIMD extension & TYPE, if not already set
+ */
+#ifndef ATL_VLEN
+   #ifdef ATL_VSX
+      #if defined(SREAL) || defined(SCPLX)
+         #define ATL_VLEN 4
+      #else
+         #define ATL_VLEN 2
+      #endif
+@multidef vl    2   2    4      4
+@whiledef sv SSE1 SSE2 AVX AVXMAC
+   @iexp vl2 @(vl) @(vl) +
+   #elif defined(ATL_@(sv))
+      #if defined(SREAL) || defined(SCPLX)
+         #define ATL_VLEN @(vl2)
+      #else
+         #define ATL_VLEN @(vl)
+      #endif
+   @undef vl
+@endwhile
+   #endif
+#endif
+/*
+ * Derive ATL_VLENb (veclen in bytes) from ATL_VLEN
+ */
+#ifndef ATL_VLEN
+   #error "ATL_VLEN not defined!"
+#else
+   #if ATL_VLEN == 1
+      #define ATL_DivByVLEN(i_) (i_)
+      #define ATL_MulByVLEN(i_) (i_)
+      #if defined(SREAL) || defined(SCPLX)
+         #define ATL_VLENb 4
+      #else
+         #define ATL_VLENb 8
+      #endif
+   @define i @1@
+   @define p @2@
+   @iwhile i < 6
+   #elif ATL_VLEN == @(p)
+      #define ATL_DivByVLEN(i_) ((i_)>>@(i))
+      #define ATL_MulByVLEN(i_) ((i_)<<@(i))
+      @iexp vl @(p) 4 *
+      @iexp vl2 @(p) 8 *
+      #if defined(SREAL) || defined(SCPLX)
+         #define ATL_VLENb @(vl)
+      #else
+         #define ATL_VLENb @(vl2)
+      #endif
+      @iexp p @(p) 2 *
+      @iexp i @(i) 1 +
+   @endiwhile
+   #else
+      #define ATL_DivByVLEN(i_) ((i_)/ATL_VLEN)
+      #define ATL_MulByVLEN(i_) ((i_)*ATL_VLEN)
+      #if defined(SREAL) || defined(SCPLX)
+         #define ATL_VLENb (ATL_VLEN*4)
+      #else
+         #define ATL_VLENb (ATL_VLEN*8)
+      #endif
+   #endif
+#endif
+/*
+ * We may want to force use of GNU vectorization on any platform.  If so,
+ * undefine any defined system-specific vectorization.  
+ * Undefine all vectorization if VLEN=1 (scalar code)!
+ */
+#if defined(ATL_FRCGNUVEC) || ATL_VLEN < 2
+@whiledef sv VSX AVXMAC AVX SSE2 SSE1
+   #ifdef ATL_@(sv)
+      #undef ATL_@(sv)
+   #endif
+@endwhile
+   #if ATL_VLEN < 2 && defined(ATL_FRCGNUVEC)
+       #undef ATL_FRCGNUVEC
+   #endif
+#endif
+/*
+ * Now set computational macros based on ATL_VLEN & SIMD defines
  */
 #if defined(ATL_VSX)
    #include <altivec.h>
    #if defined(SREAL) || defined(SCPLX)
-      #if defined(ATL_VLEN) && ATL_VLEN != 4  /* VLEN OVERRIDE! */
-         #error "Only VLEN==4 supported for single precision VSX!"
-      #else
-         #define ATL_VTYPE vector float
-         #define ATL_VLEN 4
+      #define ATL_VTYPE vector float
+      #if ATL_VLEN > 4
+         #error "VSX supports max VLEN = 4 for floats!"
+      #elif ATL_VLEN < 4 
+         #define SHORT_VEC 1
       #endif
    #else        /* double precision */
-      #if defined(ATL_VLEN) && ATL_VLEN != 2  /* VLEN OVERRIDE! */
-         #error "Only VLEN==2 supported for double precision VSX!"
-      #else
-         #define ATL_VTYPE vector double
-         #define ATL_VLEN 2
+      #define ATL_VTYPE vector double
+      #if ATL_VLEN > 2
+         #error "VSX supports max VLEN = 2 for doubles!"
       #endif
    #endif
-   #define ATL_vzero(v_) v_ = vec_splats(ATL_rzero);
-   #define ATL_vbcast(v_, p_) v_ =  vec_splat(*((TYPE*)(p_)));
-   #define ATL_vuld(v_, p_) v_ = vec_vsx_ld(0, p_)
-   #define ATL_vld(v_, p_) v_ = vec_ld(0, p_)
-   #define ATL_vust(p_, v_) vec_vsx_st(v_, 0, p_)
-   #define ATL_vst(p_, v_)  vec_st(v_, 0, p_)
+   #define ATL_vzero(v_) v_ = vec_splats(ATL_rzero)
+   #define ATL_vcopy(d_, s_) d_ = s_
+   #define ATL_vbcast(v_, p_) v_ =  vec_splats(*((TYPE*)(p_)))
+   #ifdef SHORT_VEC
+      #if !defined(SREAL) && !defined(SCPLX)
+         #error "Can't have short vector for double VSX!"
+      #endif
+      #error "SHORTVECs not supported due to Endian problems in VSX!"
+   #else
+      #define ATL_vuld(v_, p_) v_ = vec_vsx_ld(0, p_)
+      #define ATL_vld(v_, p_) v_ = vec_ld(0, p_)
+      #define ATL_vust(p_, v_) vec_vsx_st(v_, 0, p_)
+      #define ATL_vst(p_, v_)  vec_st(v_, 0, p_)
+   #endif
    #define ATL_vadd(d_, s1_, s2_) d_ =  vec_add(s1_, s2_)
    #define ATL_vmul(d_, s1_, s2_) d_ =  vec_mul(s1_, s2_)
    #define ATL_vmac(d_, s1_, s2_) d_ = vec_madd(s1_, s2_, d_)
+   #if defined(SREAL) || defined(SCPLX)
+      #define ATL_vrsum1(d_, s_) \
+      { \
+         VTYPE t_; \
+         d_ = vec_splat(s_, 1); \
+         d_ = vec_add(d_, s_) ; \
+         t_ = vec_splat(s_, 2); \
+         d_ = vec_add(d_, t_) ; \
+         t_ = vec_splat(s_, 3); \
+         d_ = vec_add(d_, t_) ; \
+      }
+   #else
+      #define ATL_vrsum1(d_, s_) \
+      { \
+         d_ = vec_splat(s_, 1); \
+         d_ = vec_add(d_, s_) ; \
+      }
+   #endif
 #elif defined(ATL_AVXMAC) || defined(ATL_AVX)
    #include <immintrin.h>
    #if defined(SREAL) || defined(SCPLX)
-      #if defined(ATL_VLEN) && ATL_VLEN != 8  /* VLEN OVERRIDE! */
-         #if ATL_VLEN == 4
-            #define ATL_VTYPE __m128
-         #else
-            #error "Only VLEN==4 or 8 supported for single precision AVX!"
+      #if ATL_VLEN > 8
+         #error "VLEN > 8 not supported for AVX or AVX2!"
+      #elif ATL_VLEN > 4
+         #define ATL_VTYPE __m256
+         #if ATL_VLEN < 8
+            #define SHORT_VEC 1
          #endif
       #else
-         #define ATL_VTYPE __m256
-         #define ATL_VLEN 8
+         #define ATL_VTYPE __m128
+         #if ATL_VLEN < 4
+            #define SHORT_VEC 1
+         #endif
       #endif
       #define ATL_vzero(v_) v_ = _mm256_setzero_ps()
-      #define ATL_vbcast(v_, p_) \
-         v_ =  _mm256_broadcast_ss(p_);
-      #define ATL_vuld(v_, p_) v_ = _mm256_loadu_ps(p_)
-      #define ATL_vld(v_, p_) v_ = _mm256_load_ps(p_)
-      #define ATL_vust(p_, v_) _mm256_storeu_ps(p_, v_)
-      #define ATL_vst(p_, v_) _mm256_store_ps(p_, v_)
+      #define ATL_vbcast(v_, p_) v_ =  _mm256_broadcast_ss(p_)
+      #ifdef SHORT_VEC
+         #error "SHORT VEC presently unsupported!"
+      #else
+         #define ATL_vuld(v_, p_) v_ = _mm256_loadu_ps(p_)
+         #define ATL_vld(v_, p_) v_ = _mm256_load_ps(p_)
+         #define ATL_vust(p_, v_) _mm256_storeu_ps(p_, v_)
+         #define ATL_vst(p_, v_) _mm256_store_ps(p_, v_)
+      #endif
       #define ATL_vadd(d_, s1_, s2_) d_ =  _mm256_add_ps(s1_, s2_)
       #define ATL_vmul(d_, s1_, s2_) d_ =  _mm256_mul_ps(s1_, s2_)
       #ifdef ATL_AVXMAC
@@ -13089,23 +13237,37 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
             d_ = _mm256_add_ps(t_, d_); \
          }
       #endif
+      #define ATL_vrsum1(d_, s_) \
+      { \
+         d_ = _mm256_extractf128_ps(s_, 1); \
+         d_ = _mm256_add_ps(d_, s_) ; \
+         d_ = _mm256_hadd_ps(d_, d_) ; \
+         d_ = _mm256_hadd_ps(d_, d_) ; \
+      }
    #else        /* double precision */
-      #if defined(ATL_VLEN) && ATL_VLEN != 4  /* VLEN OVERRIDE! */
-         #if (ATL_VLEN == 2)
-            #define ATL_VTYPE __m128d
-         #else
-            #error "Only VLEN==2 or 4 supported for double precision AVX!"
+      #if ATL_VLEN > 4
+         #error "VLEN CANNOT BE > 4 FOR DOUBLE AVX!"
+      #elif ATL_VLEN > 2
+         #define ATL_VTYPE __m256d
+         #if ATL_VLEN != 4
+            #define SHORT_VEC 1
          #endif
       #else
-         #define ATL_VTYPE __m256d
-         #define ATL_VLEN 4
+         #define ATL_VTYPE __m128d
+         #if ATL_VLEN != 2
+            #error "ILLEGAL ATL_VLEN"
+         #endif
       #endif
       #define ATL_vzero(v_) v_ = _mm256_setzero_pd()
       #define ATL_vbcast(v_, p_) v_ =  _mm256_broadcast_sd(p_)
-      #define ATL_vuld(v_, p_) v_ = _mm256_loadu_pd(p_)
-      #define ATL_vld(v_, p_) v_ = _mm256_load_pd(p_)
-      #define ATL_vust(p_, v_) _mm256_storeu_pd(p_, v_)
-      #define ATL_vst(p_, v_) _mm256_store_pd(p_, v_)
+      #ifdef SHORT_VEC
+         #error "AVX SHORT VEC UNSUPPORTED!"
+      #else
+         #define ATL_vuld(v_, p_) v_ = _mm256_loadu_pd(p_)
+         #define ATL_vld(v_, p_) v_ = _mm256_load_pd(p_)
+         #define ATL_vust(p_, v_) _mm256_storeu_pd(p_, v_)
+         #define ATL_vst(p_, v_) _mm256_store_pd(p_, v_)
+      #endif
       #define ATL_vadd(d_, s1_, s2_) d_ =  _mm256_add_pd(s1_, s2_)
       #define ATL_vmul(d_, s1_, s2_) d_ =  _mm256_mul_pd(s1_, s2_)
       #ifdef ATL_AVXMAC
@@ -13118,14 +13280,18 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
             d_ = _mm256_add_pd(t_, d_); \
          }
       #endif
+      #define ATL_vrsum1(d_, s_) \
+      { \
+         d_ = _mm256_extractf128_pd(s_, 1); \
+         d_ = _mm256_add_pd(d_, s_) ; \
+         d_ = _mm256_hadd_pd(d_, d_) ; \
+      }
    #endif
 #elif defined(ATL_SSE2) && (defined(DREAL) || defined(DCPLX))
    #include <xmmintrin.h>
    #define ATL_VTYPE __m128d
-   #if defined(ATL_VLEN) && ATL_VLEN != 2
+   #if ATL_VLEN != 2
       #error "VLEN == 2 only supported size for double precision SSE!"
-   #elif !defined(ATL_VLEN)
-      #define ATL_VLEN 2
    #endif
    #define ATL_vzero(v_) v_ = _mm_setzero_pd()
    #define ATL_vbcast(v_, p_) v_ =  _mm_load1_pd(p_)
@@ -13140,6 +13306,15 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       t_ = _mm_mul_pd(s1_, s2_); \
       d_ = _mm_add_pd(t_, d_); \
    }
+   #ifdef ATL_SSE3
+      #define ATL_vrsum1(d_, s_) d_ = _mm_hadd_pd(s_, s_)
+   #else
+      #define ATL_vrsum1(d_, s_) \
+      { \
+         d_ = _mm_unpackhi_pd(s_, s_); \
+         d_ = _mm_add_pd(d_, s_); \
+      }
+   #endif
 #elif defined(ATL_SSE1)
    #include <xmmintrin.h>
    #define ATL_VTYPE __m128
@@ -13161,6 +13336,31 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       t_ = _mm_mul_ps(s1_, s2_); \
       d_ = _mm_add_ps(t_, d_); \
    }
+   #ifdef ATL_SSE3
+      #define ATL_vrsum1(d_, s_) \
+      { \
+         d_ = _mm_hadd_ps(s_, s_); \
+         d_ = _mm_hadd_ps(d_, s_); \
+      }
+   #else
+      #define ATL_vrsum1(d_, s_) \
+      { \
+         ATL_VTYPE t_;
+         d_ = _mm_movhl_ps(s_, s_); \
+         d_ = _mm_add_ps(d_, s_); \
+         t_ = _mm_shuffle_ps(s_, s_, 1);
+         d_ = _mm_add_ps(d_, t_); \
+      }
+   #endif
+#elif ATL_VLEN > 1  /* use gnuvec when atlas knows no VEC ISA */
+@skip   typedef TYPE ATL_gnuvec_t  __attribute__ ((vector_size (ATL_VLENb)))
+@skip   #define ATL_VTYPE ATL_gnuvec_t
+   #define ATL_VTYPE TYPE __attribute__ ((vector_size (ATL_VLENb)))
+   #if defined(SREAL) || defined(SCPLX)
+      #define ATL_VITYPE int  __attribute__ ((vector_size (ATL_VLENb)))
+   #else
+      #define ATL_VITYPE long long  __attribute__ ((vector_size (ATL_VLENb)))
+   #endif
 #else
    #if defined(ATL_VLEN) && ATL_VLEN != 1
       #error "For systems without vector support, only ATL_VLEN=1 supported!"
@@ -13168,14 +13368,50 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #define ATL_VLEN 1
    #endif
    #define ATL_VTYPE TYPE
-   #define ATL_vbcast(v_, p_) v_ =  *(p_)
-   #define ATL_vuld(v_, p_) v_ = *(p_)
-   #define ATL_vld(v_, p_) v_ = *(p_)
-   #define ATL_vust(p_, v_) *(p_) =  v_
-   #define ATL_vst(p_, v_) *(p_) =  v_
+   #define ATL_vzero(d_) d_ = (ATL_VTYPE)(((ATL_VITYPE)(d_))^((ATL_VITYPE)(d_)))
+   #define ATL_vcopy(d_, s_) d_ = s_
+   #ifndef ATL_vbcast
+   #if 1
+      #define ATL_vbcast(v_, p_) v_ = *((TYPE*)(p_));
+   #else
+      #define ATL_vbcast(v_, p_) \
+      { \
+         v_ = p_; \
+         v_ =  __builtin_shuffle(v_, (ATL_VITYPE){0}); \
+      }
+   #endif
+   #endif
+   #define ATL_vuld(v_, p_) v_ = *((ATL_VTYPE*)(p_))
+   #define ATL_vld(v_, p_) \
+      v_ = *(__builtin_assume_aligned((ATL_VTYPE*)(p_),ATL_VLENb))
+   #define ATL_vust(p_, v_) *((ATL_VTYPE*)(p_)) = v_
+   #define ATL_vst(p_, v_) \
+      *(__builtin_assume_aligned((ATL_VTYPE*)(p_),ATL_VLENb)) = v_
    #define ATL_vadd(d_, s1_, s2_) d_ =  s1_ + s2_
    #define ATL_vmul(d_, s1_, s2_) d_ =  s1_ * s2_
    #define ATL_vmac(d_, s1_, s2_) d_ += s1_ * s2_
+   #if ATL_VLEN == 1
+      #define ATL_vrsum1(d_, s_) d_ = (s_)
+   #elif ATL_VLEN == 2
+      #define ATL_vrsum1(d_, s_) d_ = ((s_)[0] + (s_)[1])
+   #elif ATL_VLEN == 4
+      #define ATL_vrsum1(d_, s_) d_ = ((s_)[0] + (s_)[1] + (s_)[2] + (s_)[3])
+   #elif ATL_VLEN == 8
+      #define ATL_vrsum1(d_, s_) d_ = ((s_)[0] + (s_)[1] + (s_)[2] + (s_)[3] \ 
+                                       (s_)[4] + (s_)[5] + (s_)[6] + (s_)[7])
+   #elif ATL_VLEN == 16
+      #define ATL_vrsum1(d_, s_) d_ = \
+      ((s_)[0]+(s_)[1]+(s_)[2]+(s_)[3]+(s_)[4]+(s_)[5]+(s_)[6]+(s_)[7] \
+       (s_)[ 8]+(s_)[ 9]+(s_)[10]+(s_)[11]+(s_)[12]+(s_)[13]+(s_)[14]+(s_)[15])
+   #elif ATL_VLEN == 32
+      #define ATL_vrsum1(d_, s_) d_ = \
+      ((s_)[0]+(s_)[1]+(s_)[2]+(s_)[3]+(s_)[4]+(s_)[5]+(s_)[6]+(s_)[7] \
+       (s_)[ 8]+(s_)[ 9]+(s_)[10]+(s_)[11]+(s_)[12]+(s_)[13]+(s_)[14]+(s_)[15] \
+       (s_)[16]+(s_)[17]+(s_)[18]+(s_)[19]+(s_)[20]+(s_)[21]+(s_)[22]+(s_)[23] \
+       (s_)[24]+(s_)[25]+(s_)[26]+(s_)[27]+(s_)[28]+(s_)[29]+(s_)[30]+(s_)[31])
+   #else
+      #error "Unsupported ATL_VLEN"
+   #endif
 #endif
 @iexp p 1 0 +
 @iexp j 0 0 +
@@ -13193,6 +13429,50 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    @iexp j @(j) 1 +
    @iexp p @(p) 2 *
 @endiwhile
+#ifndef ATL_vrsum1
+   #error "No reduction possible!"
+#endif
+@beginskip
+/*
+ * If no special case, do vrsum2/4 slow way by calling vrsum1
+ * THESE ARE WRONG: vrsum2 should put 1st ans in d[0], 2nd in d[1], so on,
+ *                  not add them all up!  Leave until needed (kvec).
+ */
+#ifndef ATL_vrsum2
+   #define ATL_vrsum2(d_, s1_, s2_) \
+   { \
+      ATL_VTYPE t0_; \
+      ATL_vrsum1(d_, s1_); \
+      ATL_vrsum1(s1_, s2_); \
+      ATL_vadd(d_, d_, s1_); \
+   }
+#endif
+#ifndef ATL_vrsum4
+   #define ATL_vrsum4(d_, s1_, s2_, s3_, s4_) \
+   { \
+      ATL_vrsum2(d_, s1_, s2_); \
+      ATL_vrsum2(s1_, s3_, s4_); \
+      ATL_vadd(d_, d_, s1_); \
+   }
+#endif
+#ifndef ATL_vrsum8
+   #define ATL_vrsum8(d_, s1_, s2_, s3_, s4_, s5_), s6_, s7_, s8_) \
+   { \
+      ATL_vrsum4(d_, s1_, s2_, s3_, s4); \
+      ATL_vrsum4(s1_, s3_, s5_, s6_, s7_, s8_); \
+      ATL_vadd(d_, d_, s1_); \
+   }
+#endif
+#ifndef ATL_vrsum16
+   #define ATL_vrsum16(d_, s1_, s2_, s3_, s4_, s5_), s6_, s7_, s8_, \
+                           s9_, s10_, s11_, s12_, s13_, s14_, s15_, s16_) \
+   { \
+      ATL_vrsum8(d_, s1_, s2_, s3_, s4_, s5_, s6_, s7_, s8_); \
+      ATL_vrsum8(s1_, s9_, s10_, s11_, s12_ s13_, s14_, s15_); \
+      ATL_vadd(d_, d_, s1_); \
+   }
+#endif
+@endskip
 
 #endif  /* end multiple-inclusion guard */
 @ROUT ATL_rk4n4
