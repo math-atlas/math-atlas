@@ -13026,6 +13026,15 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 @ROUT atlas_simd.h
 #ifndef ATLAS_SIMD_H
    #define  ATLAS_SIMD_H 1
+#undef ATL_AVX
+#undef ATL_SSE3
+#undef ATL_SSE2
+#undef ATL_SSE1
+#if defined(SREAL) || defined(SCPLX)
+   #define ATL_VLEN 8
+#else
+   #define ATL_VLEN 4
+#endif
 /*
  * This header files contains wrappers to allow you to use SIMD vector
  * extensions in a very simplified way in a type-independent manner.
@@ -13056,15 +13065,17 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
  * ATL_vmac(vrd, vrs1, vrs2) : vrd += vrs1 * vrs2
  *
  * We support only summation for reduction, with varying # of src operands:
- * NOTE: (1) vrd should not be alised with src regs, 
+ * NOTE: (1) srd must be a scalar reg
  *       (2) all source regs may be overwritten:
- *    ATL_vrsum1(vrd, vrs)        : vrd[0] = sum(vrs[:])
- *    ATL_vrsum2(vrd, vrs1, vrs2) : vrd[0] = sum(vrs1[:])+sum(vrs2[:])
- *    ATL_vrsum4(vrd, vrs1, vrs2, vrs3, vrs4) : 
- *         vrd[0] = sum(vrs1[:])+sum(vrs2[:])+sum(vrs3[:])+sum(vrs4[:])
- *    ATL_vrsum8(vrd, vrs1, vrs2, vrs3, vrs4, vrs5, vrs6, vrs7, vrs8)
- *    ATL_vrsum16(vrd, vrs1, vrs2, vrs3, vrs4, vrs5, vrs6, vrs7, vrs8,
-                  vsr9, vsr10, vsr11, vsr12, vsr13, vsr14, vsr15, vsr16)
+ *    ATL_vrsum1(srd, vrs)        : srd = sum(vrs[:])
+@beginskip
+ *    ATL_vrsum2(srd, vrs1, vrs2) : srd = sum(vrs1[:])+sum(vrs2[:])
+ *    ATL_vrsum4(srd, vrs1, vrs2, vrs3, vrs4) : 
+ *         srd[0] = sum(vrs1[:])+sum(vrs2[:])+sum(vrs3[:])+sum(vrs4[:])
+ *    ATL_vrsum8(srd, vrs1, vrs2, vrs3, vrs4, vrs5, vrs6, vrs7, vrs8)
+ *    ATL_vrsum16(srd, vrs1, vrs2, vrs3, vrs4, vrs5, vrs6, vrs7, vrs8,
+ *                vsr9, vsr10, vsr11, vsr12, vsr13, vsr14, vsr15, vsr16)
+@endskip
  *
  */
 
@@ -13238,11 +13249,12 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          }
       #endif
       #define ATL_vrsum1(d_, s_) \
-      { \
-         d_ = _mm256_extractf128_ps(s_, 1); \
-         d_ = _mm256_add_ps(d_, s_) ; \
-         d_ = _mm256_hadd_ps(d_, d_) ; \
-         d_ = _mm256_hadd_ps(d_, d_) ; \
+      {  __m128 t_; \
+         t_ = _mm_add_ps(_mm256_extractf128_ps(s_, 0), \
+                         _mm256_extractf128_ps(s_, 1)); \
+         t_ = _mm_hadd_ps(t_, t_); \
+         t_ = _mm_hadd_ps(t_, t_); \
+         d_ = _mm_cvtss_f32(t_); \
       }
    #else        /* double precision */
       #if ATL_VLEN > 4
@@ -13281,14 +13293,18 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          }
       #endif
       #define ATL_vrsum1(d_, s_) \
-      { \
-         d_ = _mm256_extractf128_pd(s_, 1); \
-         d_ = _mm256_add_pd(d_, s_) ; \
-         d_ = _mm256_hadd_pd(d_, d_) ; \
+      {  __m128d t_; \
+         t_ = _mm_add_pd(_mm256_extractf128_pd(s_, 0), \
+                         _mm256_extractf128_pd(s_, 1)); \
+         t_ = _mm_hadd_pd(t_, t_); \
+         d_ = _mm_cvtsd_f64(t_); \
       }
    #endif
 #elif defined(ATL_SSE2) && (defined(DREAL) || defined(DCPLX))
    #include <xmmintrin.h>
+   #if defined(ATL_SSE3)
+      #include <tmmintrin.h>
+   #endif
    #define ATL_VTYPE __m128d
    #if ATL_VLEN != 2
       #error "VLEN == 2 only supported size for double precision SSE!"
@@ -13307,23 +13323,23 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       d_ = _mm_add_pd(t_, d_); \
    }
    #ifdef ATL_SSE3
-      #define ATL_vrsum1(d_, s_) d_ = _mm_hadd_pd(s_, s_)
+      #define ATL_vrsum1(d_, s_) d_ = _mm_cvtsd_f64(_mm_hadd_pd(s_, s_))
    #else
       #define ATL_vrsum1(d_, s_) \
-      { \
-         d_ = _mm_unpackhi_pd(s_, s_); \
-         d_ = _mm_add_pd(d_, s_); \
-      }
+         d_ = _mm_cvtsd_f64(_mm_add_sd(_mm_unpackhi_pd(s_, s_), s_))
    #endif
 #elif defined(ATL_SSE1)
    #include <xmmintrin.h>
+   #if defined(ATL_SSE3)
+      #include <tmmintrin.h>
+   #endif
    #define ATL_VTYPE __m128
    #if defined(ATL_VLEN) && ATL_VLEN != 4
       #error "VLEN == 4 only supported size for single precision SSE!"
    #elif !defined(ATL_VLEN)
       #define ATL_VLEN 4
    #endif
-   #define ATL_vzero(v_) v_ = _mm_setzero_pd()
+   #define ATL_vzero(v_) v_ = _mm_setzero_ps()
    #define ATL_vbcast(v_, p_) v_ =  _mm_load1_ps(p_)
    #define ATL_vuld(v_, p_) v_ = _mm_loadu_ps(p_)
    #define ATL_vld(v_, p_) v_ = _mm_load_ps(p_)
@@ -13338,18 +13354,18 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    }
    #ifdef ATL_SSE3
       #define ATL_vrsum1(d_, s_) \
-      { \
-         d_ = _mm_hadd_ps(s_, s_); \
-         d_ = _mm_hadd_ps(d_, s_); \
+      {  ATL_VTYPE t_; \
+         t_ = _mm_hadd_ps(s_, s_); \
+         d_ = _mm_cvtss_f32(_mm_hadd_ps(t_, t_)); \
       }
    #else
       #define ATL_vrsum1(d_, s_) \
       { \
-         ATL_VTYPE t_;
-         d_ = _mm_movhl_ps(s_, s_); \
-         d_ = _mm_add_ps(d_, s_); \
-         t_ = _mm_shuffle_ps(s_, s_, 1);
-         d_ = _mm_add_ps(d_, t_); \
+         ATL_VTYPE t_; \
+         t_ = _mm_movehl_ps(s_, s_); \
+         t_ = _mm_add_ps(t_, s_); \
+         t_ = _mm_add_ps(t_, _mm_shuffle_ps(t_, t_, 1)); \
+         d_ = _mm_cvtss_f32(t_); \
       }
    #endif
 #elif ATL_VLEN > 1  /* use gnuvec when atlas knows no VEC ISA */
@@ -13361,6 +13377,77 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    #else
       #define ATL_VITYPE long long  __attribute__ ((vector_size (ATL_VLENb)))
    #endif
+   #define ATL_vzero(d_) d_ = (ATL_VTYPE)(((ATL_VITYPE)(d_))^((ATL_VITYPE)(d_)))
+   #define ATL_vcopy(d_, s_) d_ = s_
+   #ifndef ATL_vbcast
+   #if 0
+      #define ATL_vbcast(v_, p_) v_ = *((TYPE*)(p_));
+   #elif 0
+      #define ATL_vbcast(v_, p_) \
+      { \
+         (v_)[0] = p_; \
+         v_ =  __builtin_shuffle(v_, (ATL_VITYPE){0}); \
+      }
+   #endif
+   #endif
+   #define ATL_vld(v_, p_) \
+      v_ = *((ATL_VTYPE*)__builtin_assume_aligned(p_,ATL_VLENb))
+   #define ATL_vust(p_, v_) *((ATL_VTYPE*)(p_)) = v_
+   #define ATL_vst(p_, v_) \
+      *((ATL_VTYPE*)__builtin_assume_aligned(p_,ATL_VLENb)) = v_
+   #define ATL_vadd(d_, s1_, s2_) d_ =  s1_ + s2_
+   #define ATL_vmul(d_, s1_, s2_) d_ =  s1_ * s2_
+   #define ATL_vmac(d_, s1_, s2_) d_ += s1_ * s2_
+   #if ATL_VLEN == 1
+      #define ATL_vbcast(v_, p_) v_ = *(p_)
+      #define ATL_vuld(v_, p_) v_ = {*(p_)}
+      #ifndef ATL_vrsum1
+         #define ATL_vrsum1(d_, s_) d_ = (s_)
+      #endif
+   #elif ATL_VLEN == 2
+      #define ATL_vbcast(v_, p_) v_ = {*(p_), *(p_)}
+      #define ATL_vuld(v_, p_) v_ = {*(p_), (p_)[1]}
+      #ifndef ATL_vrsum1
+         #define ATL_vrsum1(d_, s_) d_ = ((s_)[0] + (s_)[1])
+      #endif
+   #elif ATL_VLEN == 4
+      #define ATL_vbcast(v_, p_) v_ = (ATL_VTYPE){*(p_), *(p_), *(p_), *(p_)}
+      #define ATL_vuld(v_, p_) v_ = (ATL_VTYPE){*(p_),(p_)[1],(p_)[2],(p_)[3]}
+      #ifndef ATL_vrsum1
+         #define ATL_vrsum1(d_, s_) d_ = ((s_)[0] + (s_)[1] + (s_)[2] + (s_)[3])
+      #endif
+   #elif ATL_VLEN == 8
+      #define ATL_vuld(v_, p_) v_ = (ATL_VTYPE) \
+         {*(p_), (p_)[1], (p_)[2], (p_)[3], (p_)[4], (p_)[5], (p_)[6], (p_)[7]}
+      #define ATL_vbcast(v_, p_) v_ = (ATL_VTYPE){*(p_), *(p_), *(p_), *(p_), \
+               *(p_), *(p_), *(p_), *(p_)}
+      #ifndef ATL_vrsum1
+      #define ATL_vrsum1(d_, s_) d_ = ((s_)[0] + (s_)[1] + (s_)[2] + (s_)[3] + \
+                                       (s_)[4] + (s_)[5] + (s_)[6] + (s_)[7])
+      #endif
+   #elif ATL_VLEN == 16
+      #define ATL_vuld(v_, p_) v_ = (ATL_VTYPE) \
+         {*(p_),(p_)[1],(p_)[2],(p_)[3],(p_)[4],(p_)[5],(p_)[6],(p_)[7], \
+          (p_)[8],(p_)[9],(p_)[10],(p_)[11],(p_)[12],(p_)[13],(p_)[14],(p_)[15]}
+      #ifndef ATL_vrsum1
+      #define ATL_vrsum1(d_, s_) d_ = \
+      ((s_)[0]+(s_)[1]+(s_)[2]+(s_)[3]+(s_)[4]+(s_)[5]+(s_)[6]+(s_)[7] +\
+       (s_)[ 8]+(s_)[ 9]+(s_)[10]+(s_)[11]+(s_)[12]+(s_)[13]+(s_)[14]+(s_)[15])
+      #endif
+   #elif ATL_VLEN == 32
+      #define ATL_vuld(v_, p_) v_ = (ATL_VTYPE) \
+      {*(p_),(p_)[1],(p_)[2],(p_)[3],(p_)[4],(p_)[5],(p_)[6],(p_)[7], \
+       (p_)[8],(p_)[9],(p_)[10],(p_)[11],(p_)[12],(p_)[13],(p_)[14],(p_)[15],
+       (p_)[16],(p_)[17],(p_)[18],(p_)[19],(p_)[20],(p_)[21],(p_)[22],(p_)[23],
+       (p_)[24],(p_)[25],(p_)[26],(p_)[27],(p_)[28],(p_)[29],(p_)[30],(p_)[31]}
+      #define ATL_vrsum1(d_, s_) d_ = \
+      ((s_)[0]+(s_)[1]+(s_)[2]+(s_)[3]+(s_)[4]+(s_)[5]+(s_)[6]+(s_)[7] \
+      +(s_)[ 8]+(s_)[ 9]+(s_)[10]+(s_)[11]+(s_)[12]+(s_)[13]+(s_)[14]+(s_)[15] \
+      +(s_)[16]+(s_)[17]+(s_)[18]+(s_)[19]+(s_)[20]+(s_)[21]+(s_)[22]+(s_)[23] \
+      +(s_)[24]+(s_)[25]+(s_)[26]+(s_)[27]+(s_)[28]+(s_)[29]+(s_)[30]+(s_)[31])
+   #else
+      #error "Unsupported ATL_VLEN"
+   #endif
 #else
    #if defined(ATL_VLEN) && ATL_VLEN != 1
       #error "For systems without vector support, only ATL_VLEN=1 supported!"
@@ -13368,50 +13455,18 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #define ATL_VLEN 1
    #endif
    #define ATL_VTYPE TYPE
-   #define ATL_vzero(d_) d_ = (ATL_VTYPE)(((ATL_VITYPE)(d_))^((ATL_VITYPE)(d_)))
+
+   #define ATL_vzero(d_) d_ = ATL_rzero
    #define ATL_vcopy(d_, s_) d_ = s_
-   #ifndef ATL_vbcast
-   #if 1
-      #define ATL_vbcast(v_, p_) v_ = *((TYPE*)(p_));
-   #else
-      #define ATL_vbcast(v_, p_) \
-      { \
-         v_ = p_; \
-         v_ =  __builtin_shuffle(v_, (ATL_VITYPE){0}); \
-      }
-   #endif
-   #endif
-   #define ATL_vuld(v_, p_) v_ = *((ATL_VTYPE*)(p_))
-   #define ATL_vld(v_, p_) \
-      v_ = *(__builtin_assume_aligned((ATL_VTYPE*)(p_),ATL_VLENb))
-   #define ATL_vust(p_, v_) *((ATL_VTYPE*)(p_)) = v_
-   #define ATL_vst(p_, v_) \
-      *(__builtin_assume_aligned((ATL_VTYPE*)(p_),ATL_VLENb)) = v_
+   #define ATL_vbcast(d_, p_) d_ = *(p_)
+   #define ATL_vuld(v_, p_) v_ = *(p_)
+   #define ATL_vld(v_, p_) v_ = *(p_)
+   #define ATL_vust(p_, s_) (*p_) = s_
+   #define ATL_vst(p_, s_) (*p_) = s_
    #define ATL_vadd(d_, s1_, s2_) d_ =  s1_ + s2_
    #define ATL_vmul(d_, s1_, s2_) d_ =  s1_ * s2_
    #define ATL_vmac(d_, s1_, s2_) d_ += s1_ * s2_
-   #if ATL_VLEN == 1
-      #define ATL_vrsum1(d_, s_) d_ = (s_)
-   #elif ATL_VLEN == 2
-      #define ATL_vrsum1(d_, s_) d_ = ((s_)[0] + (s_)[1])
-   #elif ATL_VLEN == 4
-      #define ATL_vrsum1(d_, s_) d_ = ((s_)[0] + (s_)[1] + (s_)[2] + (s_)[3])
-   #elif ATL_VLEN == 8
-      #define ATL_vrsum1(d_, s_) d_ = ((s_)[0] + (s_)[1] + (s_)[2] + (s_)[3] \ 
-                                       (s_)[4] + (s_)[5] + (s_)[6] + (s_)[7])
-   #elif ATL_VLEN == 16
-      #define ATL_vrsum1(d_, s_) d_ = \
-      ((s_)[0]+(s_)[1]+(s_)[2]+(s_)[3]+(s_)[4]+(s_)[5]+(s_)[6]+(s_)[7] \
-       (s_)[ 8]+(s_)[ 9]+(s_)[10]+(s_)[11]+(s_)[12]+(s_)[13]+(s_)[14]+(s_)[15])
-   #elif ATL_VLEN == 32
-      #define ATL_vrsum1(d_, s_) d_ = \
-      ((s_)[0]+(s_)[1]+(s_)[2]+(s_)[3]+(s_)[4]+(s_)[5]+(s_)[6]+(s_)[7] \
-       (s_)[ 8]+(s_)[ 9]+(s_)[10]+(s_)[11]+(s_)[12]+(s_)[13]+(s_)[14]+(s_)[15] \
-       (s_)[16]+(s_)[17]+(s_)[18]+(s_)[19]+(s_)[20]+(s_)[21]+(s_)[22]+(s_)[23] \
-       (s_)[24]+(s_)[25]+(s_)[26]+(s_)[27]+(s_)[28]+(s_)[29]+(s_)[30]+(s_)[31])
-   #else
-      #error "Unsupported ATL_VLEN"
-   #endif
+   #define ATL_vrsum1(d_, s_) d_ = s_;
 #endif
 @iexp p 1 0 +
 @iexp j 0 0 +
