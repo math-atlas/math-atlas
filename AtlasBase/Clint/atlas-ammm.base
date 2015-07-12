@@ -13026,15 +13026,16 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 @ROUT atlas_simd.h
 #ifndef ATLAS_SIMD_H
    #define  ATLAS_SIMD_H 1
-#undef ATL_AVX
-#undef ATL_SSE3
-#undef ATL_SSE2
-#undef ATL_SSE1
-#if defined(SREAL) || defined(SCPLX)
-   #define ATL_VLEN 8
-#else
-   #define ATL_VLEN 4
-#endif
+//#undef ATL_AVX
+//#undef ATL_SSE3
+//#undef ATL_SSE2
+//#undef ATL_SSE1
+// #define ATL_FRCGNUVEC 1
+//#if defined(SREAL) || defined(SCPLX)
+//   #define ATL_VLEN 8
+//#else
+//   #define ATL_VLEN 4
+//#endif
 /*
  * This header files contains wrappers to allow you to use SIMD vector
  * extensions in a very simplified way in a type-independent manner.
@@ -13148,7 +13149,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
  * Undefine all vectorization if VLEN=1 (scalar code)!
  */
 #if defined(ATL_FRCGNUVEC) || ATL_VLEN < 2
-@whiledef sv VSX AVXMAC AVX SSE2 SSE1
+@whiledef sv VSX AVXMAC AVX SSE3 SSE2 SSE1
    #ifdef ATL_@(sv)
       #undef ATL_@(sv)
    #endif
@@ -13184,10 +13185,10 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #endif
       #error "SHORTVECs not supported due to Endian problems in VSX!"
    #else
-      #define ATL_vuld(v_, p_) v_ = vec_vsx_ld(0, p_)
-      #define ATL_vld(v_, p_) v_ = vec_ld(0, p_)
-      #define ATL_vust(p_, v_) vec_vsx_st(v_, 0, p_)
-      #define ATL_vst(p_, v_)  vec_st(v_, 0, p_)
+      #define ATL_vuld(v_, p_) v_ = vec_vsx_ld(0, (ATL_VTYPE*)(p_))
+      #define ATL_vld(v_, p_) v_ = vec_ld(0, (ATL_VTYPE*)(p_))
+      #define ATL_vust(p_, v_) vec_vsx_st(v_, 0, (ATL_VTYPE*)(p_))
+      #define ATL_vst(p_, v_)  vec_st(v_, 0, (ATL_VTYPE*)(p_))
    #endif
    #define ATL_vadd(d_, s1_, s2_) d_ =  vec_add(s1_, s2_)
    #define ATL_vmul(d_, s1_, s2_) d_ =  vec_mul(s1_, s2_)
@@ -13303,6 +13304,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 #elif defined(ATL_SSE2) && (defined(DREAL) || defined(DCPLX))
    #include <xmmintrin.h>
    #if defined(ATL_SSE3)
+      #include <pmmintrin.h>
       #include <tmmintrin.h>
    #endif
    #define ATL_VTYPE __m128d
@@ -13372,6 +13374,8 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 @skip   typedef TYPE ATL_gnuvec_t  __attribute__ ((vector_size (ATL_VLENb)))
 @skip   #define ATL_VTYPE ATL_gnuvec_t
    #define ATL_VTYPE TYPE __attribute__ ((vector_size (ATL_VLENb)))
+@skip   #define ATL_UPVTYPE TYPE __attribute__ ((vector_size (ATL_VLENb))) \
+@skip                           __attribute__ ((aligned(8)))
    #if defined(SREAL) || defined(SCPLX)
       #define ATL_VITYPE int  __attribute__ ((vector_size (ATL_VLENb)))
    #else
@@ -13380,16 +13384,18 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    #define ATL_vzero(d_) d_ = (ATL_VTYPE)(((ATL_VITYPE)(d_))^((ATL_VITYPE)(d_)))
    #define ATL_vcopy(d_, s_) d_ = s_
    #ifndef ATL_vbcast
-   #if 0
-      #define ATL_vbcast(v_, p_) v_ = *((TYPE*)(p_));
-   #elif 0
-      #define ATL_vbcast(v_, p_) \
-      { \
-         (v_)[0] = p_; \
-         v_ =  __builtin_shuffle(v_, (ATL_VITYPE){0}); \
-      }
+      #if 0
+         #define ATL_vbcast(v_, p_) v_ = *((TYPE*)(p_));
+      #elif 0
+         #define ATL_vbcast(v_, p_) \
+         { \
+            (v_)[0] = p_; \
+            v_ =  __builtin_shuffle(v_, (ATL_VITYPE){0}); \
+         }
+      #endif
    #endif
-   #endif
+@skip   #define ATL_vuld(v_, p_) \
+@skip      v_ = *((ATL_UPVTYPE*)(p_))
    #define ATL_vld(v_, p_) \
       v_ = *((ATL_VTYPE*)__builtin_assume_aligned(p_,ATL_VLENb))
    #define ATL_vust(p_, v_) *((ATL_VTYPE*)(p_)) = v_
@@ -13400,25 +13406,33 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    #define ATL_vmac(d_, s1_, s2_) d_ += s1_ * s2_
    #if ATL_VLEN == 1
       #define ATL_vbcast(v_, p_) v_ = *(p_)
-      #define ATL_vuld(v_, p_) v_ = {*(p_)}
+      #ifndef ATL_vuld
+         #define ATL_vuld(v_, p_) v_ = {*(p_)}
+      #endif
       #ifndef ATL_vrsum1
          #define ATL_vrsum1(d_, s_) d_ = (s_)
       #endif
    #elif ATL_VLEN == 2
       #define ATL_vbcast(v_, p_) v_ = {*(p_), *(p_)}
-      #define ATL_vuld(v_, p_) v_ = {*(p_), (p_)[1]}
+      #ifndef ATL_vuld
+         #define ATL_vuld(v_, p_) v_ = {*(p_), (p_)[1]}
+      #endif
       #ifndef ATL_vrsum1
          #define ATL_vrsum1(d_, s_) d_ = ((s_)[0] + (s_)[1])
       #endif
    #elif ATL_VLEN == 4
       #define ATL_vbcast(v_, p_) v_ = (ATL_VTYPE){*(p_), *(p_), *(p_), *(p_)}
+      #ifndef ATL_vuld
       #define ATL_vuld(v_, p_) v_ = (ATL_VTYPE){*(p_),(p_)[1],(p_)[2],(p_)[3]}
+      #endif
       #ifndef ATL_vrsum1
          #define ATL_vrsum1(d_, s_) d_ = ((s_)[0] + (s_)[1] + (s_)[2] + (s_)[3])
       #endif
    #elif ATL_VLEN == 8
+      #ifndef ATL_vuld
       #define ATL_vuld(v_, p_) v_ = (ATL_VTYPE) \
          {*(p_), (p_)[1], (p_)[2], (p_)[3], (p_)[4], (p_)[5], (p_)[6], (p_)[7]}
+      #endif
       #define ATL_vbcast(v_, p_) v_ = (ATL_VTYPE){*(p_), *(p_), *(p_), *(p_), \
                *(p_), *(p_), *(p_), *(p_)}
       #ifndef ATL_vrsum1
@@ -13426,20 +13440,24 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
                                        (s_)[4] + (s_)[5] + (s_)[6] + (s_)[7])
       #endif
    #elif ATL_VLEN == 16
+      #ifndef ATL_vuld
       #define ATL_vuld(v_, p_) v_ = (ATL_VTYPE) \
          {*(p_),(p_)[1],(p_)[2],(p_)[3],(p_)[4],(p_)[5],(p_)[6],(p_)[7], \
           (p_)[8],(p_)[9],(p_)[10],(p_)[11],(p_)[12],(p_)[13],(p_)[14],(p_)[15]}
+      #endif
       #ifndef ATL_vrsum1
       #define ATL_vrsum1(d_, s_) d_ = \
       ((s_)[0]+(s_)[1]+(s_)[2]+(s_)[3]+(s_)[4]+(s_)[5]+(s_)[6]+(s_)[7] +\
        (s_)[ 8]+(s_)[ 9]+(s_)[10]+(s_)[11]+(s_)[12]+(s_)[13]+(s_)[14]+(s_)[15])
       #endif
    #elif ATL_VLEN == 32
+      #ifndef ATL_vuld
       #define ATL_vuld(v_, p_) v_ = (ATL_VTYPE) \
       {*(p_),(p_)[1],(p_)[2],(p_)[3],(p_)[4],(p_)[5],(p_)[6],(p_)[7], \
        (p_)[8],(p_)[9],(p_)[10],(p_)[11],(p_)[12],(p_)[13],(p_)[14],(p_)[15],
        (p_)[16],(p_)[17],(p_)[18],(p_)[19],(p_)[20],(p_)[21],(p_)[22],(p_)[23],
        (p_)[24],(p_)[25],(p_)[26],(p_)[27],(p_)[28],(p_)[29],(p_)[30],(p_)[31]}
+      #endif
       #define ATL_vrsum1(d_, s_) d_ = \
       ((s_)[0]+(s_)[1]+(s_)[2]+(s_)[3]+(s_)[4]+(s_)[5]+(s_)[6]+(s_)[7] \
       +(s_)[ 8]+(s_)[ 9]+(s_)[10]+(s_)[11]+(s_)[12]+(s_)[13]+(s_)[14]+(s_)[15] \
@@ -13530,6 +13548,384 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 @endskip
 
 #endif  /* end multiple-inclusion guard */
+@ROUT atlas_cplxsimd.h
+#ifndef ATLAS_CPLXSIMD_H
+   #define ATLAS_CPLXSIMD_H 1
+
+#include "atlas_simd.h"
+/*
+ ******************************************************************************
+ * This file provides macros for doing complex multiplication for two types
+ * of computations: axpy-based and dot-based.  It handles all permutations
+ * necessary to do these computations in the (hopefully) most efficient way
+ * for each data type.  This requires linked macros, see the axpy/dot sections.
+ ******************************************************************************
+ */
+
+/*
+ * ============================================================================
+ * AXPY-based computation has the following features:
+ * (1) Performance limited by load/store of Y, so ops permuted to keep Y in
+ *     natural order
+ * (2) X is split into real & imaginary components
+ * (3) alpha is scaled & permuted to allow for MAC-based computation
+ *
+ * AXPY-BASED MACROS:
+ *    ATL_cxaxp_ldALP(alpN, alpP, pALP)   : ld alpN, perm & scale alpP 
+ *    ATL_cxaxp_spltX(realX, imagX, pX)   : split X into real/imag wt dup
+ *    ATL_cxaxp_spltX_UA(realX, imagX, pX): above, assume pX is unaligned 
+ *       Assuming n = VLEN/2:
+ *       realX={real(Xn),real(Xn),...real(X1),real(X1),real(X0),real(X0)}
+ *       imagX={imag(Xn),imag(Xn),...imag(X1),imag(X1),imag(X0),imag(X0)}
+ * ============================================================================
+ */
+#if defined(ATL_VSX)
+   #ifdef SCPLX
+      #if 0   /* not supported by gcc 4.8.2 */
+         #define ATL_cxaxp_spltX(rXr_, rXi_, pX_) \
+         { \
+            ATL_vld(rXi_, pX_); \
+            rXr_ = vec_mergee(rXi_, rXi); \
+            rXi_ = vec_mergeo(rXi_, rXi); \
+         }
+         #define ATL_cxaxp_spltX_UA(rXr_, rXi_, pX_) \
+         { \
+            ATL_vuld(rXi_, pX_); \
+            rXr_ = vec_mergee(rXi_, rXi); \
+            rXi_ = vec_mergeo(rXi_, rXi); \
+         }
+      #else
+/*
+ *       Using these guys as constants isn't so great: gcc 4.8.2 pulls
+ *       the formation of the first iperm vector out of a loop, but then leaves
+ *       the formation of the second (in terms of the first) inside the loop.
+ *       The fix is to have this file define DECL/INIT macros, where we manually
+ *       declare the perm vector, create it, and hoist it ourselves. 
+ *       For now, we'll keep with crap way, since later gcc should switch
+ *       to mergee/mergeo anyway.
+ */
+         #define ATL_MERGEE (vector unsigned char) \
+            {0, 1, 2, 3, 0, 1, 2, 3, 8, 9, 10, 11, 8, 9, 10, 11}
+         #define ATL_MERGEO (vector unsigned char) \
+            {4, 5, 6, 7, 4, 5, 6, 7, 12, 13, 14, 15, 12, 13, 14, 15}
+         #define ATL_cxaxp_spltX(rXr_, rXi_, pX_) \
+         { \
+            ATL_vld(rXi_, pX_); \
+            rXr_ = vec_perm(rXi_, rXi, ATL_MERGEE); \
+            rXi_ = vec_perm(rXi_, rXi, ATL_MERGEO); \
+         }
+         #define ATL_cxaxp_spltX_UA(rXr_, rXi_, pX_) \
+         { \
+            ATL_vuld(rXi_, pX_); \
+            rXr_ = vec_perm(rXi_, rXi, ATL_MERGEE); \
+            rXi_ = vec_perm(rXi_, rXi, ATL_MERGEO); \
+         }
+      #endif
+   #else
+      #define ATL_CXAXP_ALGX 8
+      #define ATL_cxaxp_spltX(rXr_, rXi_, pX_) \
+      { \
+         rXr_ = vec_splats(*(pX_)); \
+         rXi_ = vec_splats(*((pX_)+1)); \
+      }
+      #define ATL_cxaxp_spltX_UA ATL_cxaxp_spltX /* only need native algn */
+   #endif
+#elif defined(ATL_AVXMAC) || defined(ATL_AVX)
+   #ifdef SCPLX
+      #define ATL_cxaxp_spltX(rXr_, rXi_, pX_) \
+      { \
+         ATL_vld(rXi_, pX_); \
+         rXr_ = _mm256_moveldup_ps(rXi); \
+         rXi_ = _mm256_movehdup_ps(rXi); \
+      }
+      #define ATL_cxaxp_spltX_UA(rXr_, rXi_, pX_) \
+      { \
+         ATL_vuld(rXi_, pX_); \
+         rXr_ = _mm256_moveldup_ps(rXi); \
+         rXi_ = _mm256_movehdup_ps(rXi); \
+      }
+   #else /* double precision */
+      #define ATL_cxaxp_spltX(rXr_, rXi_, pX_) \
+      { \
+         ATL_vld(rXi_, pX_); \
+         rXr_ = _mm256_movedup_pd(rXi); \
+         rXi_ = _mm256_shuffle_pd(rXi, rXi, 0xF); \
+      }
+      #define ATL_cxaxp_spltX_UA(rXr_, rXi_, pX_) \
+      { \
+         ATL_vuld(rXi_, pX_); \
+         rXr_ = _mm256_movedup_pd(rXi); \
+         rXi_ = _mm256_shuffle_pd(rXi, rXi, 0xF); \
+      }
+   #endif
+#elif defined(ATL_SSE3)
+   #ifdef SCPLX
+      #define ATL_cxaxp_spltX(rXr_, rXi_, pX_) \
+      { \
+         ATL_vld(rXi_, pX_); \
+         rXr_ = _mm_moveldup_ps(rXi); \
+         rXi_ = _mm_movehdup_ps(rXi); \
+      }
+      #define ATL_cxaxp_spltX_UA(rXr_, rXi_, pX_) \
+      { \
+         ATL_vuld(rXi_, pX_); \
+         rXr_ = _mm_moveldup_ps(rXi); \
+         rXi_ = _mm_movehdup_ps(rXi); \
+      }
+   #else /* double precision */
+      #define ATL_CXAXP_ALGX 8
+      #define ATL_cxaxp_spltX(rXr_, rXi_, pX_) \
+      { \
+         rXr_ = _mm_loaddup_pd(pX_); \
+         rXi_ = _mm_loaddup_pd(((TYPE*)(pX_))+1); \
+      }
+      #define ATL_cxaxp_spltX_UA ATL_cxaxp_spltX /* only need native algn */
+   #endif
+#elif defined(ATL_SSE2) && defined(DCPLX)
+      #define ATL_cxaxp_spltX(rXr_, rXi_, pX_) \
+      { \
+         ATL_vld(rXi_, pX_); \
+         rXr_ = _mm_unpacklo_pd(rXi, rXi); \
+         rXi_ = _mm_unpackhi_pd(rXi, rXi); \
+      }
+      #define ATL_cxaxp_spltX_UA(rXr_, rXi_, pX_) \
+      { \
+         ATL_vuld(rXi_, pX_); \
+         rXr_ = _mm_unpacklo_pd(rXi, rXi); \
+         rXi_ = _mm_unpackhi_pd(rXi, rXi); \
+      }
+#elif defined(ATL_SSE1) && defined(SCPLX)
+      #define ATL_cxaxp_spltX(rXr_, rXi_, pX_) \
+      { \
+         ATL_vld(rXi_, pX_); \
+         rXr_ = _mm_shuffle_ps(rXi, rXi, 0xA0); \
+         rXi_ = _mm_shuffle_ps(rXi, rXi, 0xF5); \
+      }
+      #define ATL_cxaxp_spltX_UA(rXr_, rXi_, pX_) \
+      { \
+         ATL_vuld(rXi_, pX_); \
+         rXr_ = _mm_shuffle_ps(rXi, rXi, 0xA0); \
+         rXi_ = _mm_shuffle_ps(rXi, rXi, 0xF5); \
+      }
+#else /* if all else fails, use gnu built vector  */
+   #if ATL_VLEN == 2
+      #define ATL_VIPERMR (ATL_VITYPE){0, 0}
+      #define ATL_VIPERMI (ATL_VITYPE){1, 1}
+      #define ATL_cxaxp_spltX_UA(rR_, rI_, p_) \
+      { \
+         rR_ = (ATL_VTYPE){*(p_),*(p_)}; \
+         rI_ = (ATL_VTYPE){(p_)[1],(p_)[1]}; \
+      }
+   #elif ATL_VLEN == 4
+      #define ATL_VIPERMR (ATL_VITYPE){0, 0, 2, 2}
+      #define ATL_VIPERMI (ATL_VITYPE){1, 1, 3, 3}
+      #define ATL_cxaxp_spltX_UA(rR_, rI_, p_) \
+      { \
+         rR_ = (ATL_VTYPE){*(p_),*(p_),(p_)[2],(p_)[2]}; \
+         rI_ = (ATL_VTYPE){(p_)[1],(p_)[1],(p_)[3],(p_)[3]}; \
+      }
+   #elif ATL_VLEN == 8
+      #define ATL_VIPERMR (ATL_VITYPE){0, 0, 2, 2, 4, 4, 6, 6}
+      #define ATL_VIPERMI (ATL_VITYPE){1, 1, 3, 3, 5, 5, 7, 7}
+      #define ATL_cxaxp_spltX_UA(rR_, rI_, p_) \
+      { \
+         rR_ = (ATL_VTYPE){*(p_),*(p_),(p_)[2],(p_)[2], \
+                           (p_)[4],(p_)[4],(p_)[6],(p_)[6]}; \
+         rI_ = (ATL_VTYPE){(p_)[1],(p_)[1],(p_)[3],(p_)[3], \
+                           (p_)[5],(p_)[5],(p_)[7],(p_)[7]}; \
+      }
+   #elif ATL_VLEN == 16
+      #define ATL_VIPERMR (ATL_VITYPE){0, 0, 2, 2, 4, 4, 6, 6, \
+                                       8, 8, 10, 10, 12, 12, 14, 14};
+      #define ATL_VIPERMI (ATL_VITYPE){1, 1, 3, 3, 5, 5, 7, 7, \
+                                       9, 9, 11, 11, 13, 13, 15, 15};
+      #define ATL_cxaxp_spltX_UA(rR_, rI_, p_) \
+      { \
+         rR_ = (ATL_VTYPE){*(p_),*(p_),(p_)[2],(p_)[2], \
+                           (p_)[4],(p_)[4],(p_)[6],(p_)[6], \
+                           (p_)[8],(p_)[8],(p_)[10],(p_)[10], \
+                           (p_)[12],(p_)[12],(p_)[14],(p_)[14]}; \
+         rI_ = (ATL_VTYPE){(p_)[1],(p_)[1],(p_)[3],(p_)[3], \
+                           (p_)[5],(p_)[5],(p_)[7],(p_)[7], \
+                           (p_)[9],(p_)[9],(p_)[11],(p_)[11], \
+                           (p_)[13],(p_)[13],(p_)[15],(p_)[15]}; \
+      }
+   #elif ATL_VLEN == 32
+       #define ATL_VIPERMR (ATL_VITYPE) \
+        { 0,  0,  2,  2,  4,  4,  6,  6,  8,  8, 10, 10, 12, 12, 14, 14, \
+         16, 16, 18, 18, 20, 20, 22, 22, 24, 24, 26, 26, 28, 28, 30, 30}; \
+       #define ATL_VIPERMI (ATL_VITYPE) \
+        { 1,  1,  3,  3,  5,  5,  7,  7,  9,  9, 11, 11, 13, 13, 15, 15, \
+         17, 17, 19, 19, 21, 21, 23, 23, 25, 25, 27, 27, 29, 29, 31, 31}; \
+      #define ATL_cxaxp_spltX_UA(rR_, rI_, p_) \
+      { \
+         rR_ = (ATL_VTYPE){*(p_),*(p_),(p_)[2],(p_)[2], \
+                           (p_)[4],(p_)[4],(p_)[6],(p_)[6], \
+                           (p_)[8],(p_)[8],(p_)[10],(p_)[10], \
+                           (p_)[12],(p_)[12],(p_)[14],(p_)[14], \
+                           (p_)[16],(p_)[18],(p_)[20],(p_)[22], \
+                           (p_)[24],(p_)[24],(p_)[26],(p_)[26], \
+                           (p_)[28],(p_)[28],(p_)[30],(p_)[30]}; \
+         rI_ = (ATL_VTYPE){(p_)[1],(p_)[1],(p_)[3],(p_)[3], \
+                           (p_)[5],(p_)[5],(p_)[7],(p_)[7], \
+                           (p_)[9],(p_)[9],(p_)[11],(p_)[11], \
+                           (p_)[13],(p_)[13],(p_)[15],(p_)[15], \
+                           (p_)[17],(p_)[19],(p_)[21],(p_)[23], \
+                           (p_)[25],(p_)[25],(p_)[27],(p_)[27], \
+                           (p_)[29],(p_)[29],(p_)[31],(p_)[31]};
+      }
+   #else
+      #error "VLEN != {2,4,8,16,32} unsupported "
+   #endif
+   #define ATL_cxaxp_spltX(rXr_, rXi_, pX_) \
+   {  ATL_VTYPE t_; \
+      ATL_vld(rXi_, pX_); \
+      rXr_ = __builtin_shuffle(rXi_, ATL_VIPERMR); \
+      rXi_ = __builtin_shuffle(rXi_, ATL_VIPERMI); \
+   }
+#endif
+/*
+ * natural default alignment is default X/y align
+ */
+#ifndef ATL_CXAXP_ALGY
+   #define ATL_CXAXP_ALGY ATL_VLENb
+#endif
+#ifndef ATL_CXAXP_ALGX
+   #define ATL_CXAXP_ALGX ATL_VLENb
+#endif
+#ifndef ATL_cxaxp_ldALP
+/*
+ * rAn = {ialpha,  ralpha} repeated VLEN/2 times
+ * rAs = {ralpha, -ialpha} repeated VLEN/2 times
+ * Not written efficiently for portability.  Assumed called outside optloop.
+ * System-specific code can provide more efficient version, then this generic
+ * implementation won't be used.
+ */
+   #define ATL_cxaxp_ldALP(rAn_, rAs_, alp_) \
+   {  TYPE al_[ATL_VLEN]; \
+      int i;\
+      const register TYPE ralp=(*(alp_)), ialp=(alp_)[1], ialpn=-ialp; \
+      for (i=0; i < ATL_VLEN; i += 2) \
+      { \
+         al_[i] = ralp; \
+         al_[i+1] = ialp; \
+      } \
+      ATL_vuld(rAn_, al_); \
+      for (i=0; i < ATL_VLEN; i += 2) \
+      { \
+         al_[i] = ialpn; \
+         al_[i+1] = ralp; \
+      } \
+      ATL_vuld(rAs_, al_); \
+   }
+#endif
+/*
+ * Convenience function for cleanup.  If vectorized cleanup not provided,
+ * just use this scalar loop
+ */
+#ifndef ATL_cxaxp_clean
+   #define ATL_cxaxp_clean(n_, pX_, pY_, alp_) \
+   { \
+      if (n_) \
+      { \
+         const TYPE *px_ = (pX_); \
+         TYPE *py_ = (pY_); \
+         const register TYPE ra_ = *(alp_), ia_ = (alp_)[1]; \
+         int i_=n_; \
+         do \
+         { \
+            const register TYPE rx_=(*px_), ix_=px_[1]; \
+            *py_   += ra_*rx_ - ia_*ix_; \
+            py_[1] += ra_*ix_ + ia_*rx_; \
+            py_ += 2; \
+            px_ += 2; \
+         } \
+         while(--i_); \
+      } \
+   }
+#endif
+/*
+ * ============================================================================
+ * The DOT-based compution is based on the idea of using separate accumulators
+ * for real and imaginary computation, and using vector reduction to produce
+ * the complete answer from partial results.
+ * Doing this requires two macros specifically for dot/cplx:
+ *    ATL_cxdot_riswap(rd, rs) : rd gets rs, with even/odd words swapped
+ *    ATL_cxdot_comb(rR, rI): combine (rR,iR), ans in low 2 wrds rR, 0 upper
+ *    ATL_cxdot_cxldR(r_,p_, n_): low n_ cplx elts from aligned p_, rest 0
+ *    ATL_cxdot_cxuldR(r_,p_, n_): low n_ cplx elts from unaligned p_, rest 0
+ *    -> used for cleanup, n_ < VLEN!
+ * ============================================================================
+ */
+#if defined(ATL_AVXMAC) || defined(ATL_AVX)
+   #ifdef SCPLX
+      #define ATL_cxdot_riswap(rd_, rs_) rd_ = _mm256_shuffle_ps(rs_, rs_, 0xB1)
+      #define ATL_cxdot_comb(p_, rR_, rI_) \
+      {  __m256 h_; __m128 t0_, t1_;\
+         ATL_vmul(h_, rR_, ((ATL_VTYPE){1.0f, -1.0f, 1.0f, -1.0f, \
+                                        1.0f, -1.0f, 1.0f, -1.0f})); \
+         h_ = _mm256_hadd_ps(h_, rI_); \
+         h_ = _mm256_hadd_ps(h_, h_); \
+         t0_ =  _mm256_extractf128_ps(h_, 1); \
+         t0_ = _mm_add_ps(t0_, _mm256_extractf128_ps(h_, 0)); \
+         _mm_store_ss(p_, t0_); \
+         t0_ = _mm_shuffle_ps(t0_, t0_, 0xE5); \
+         _mm_store_ss(((p_)+1), t0_); \
+      }
+      #define ATL_cxdot_cxldR(r_, p_, n_) 
+      #define ATL_cxdot_cxuldR(r_, p_, n_) \
+      { \
+         if (n_ == 2) \
+         { \
+            ATL_vzero(r_); \
+            r_ = _mm256_insertf128_ps(r_, _mm_loadu_ps(p_), 0); \
+         } \
+         else  /* use maskmov for other cases */ \
+         { \
+             __m256i msk; \
+             __m128i mskh; \
+             mskh = _mm_setzero_si128(); \
+             mskh = _mm_insert_epi64(mskh,(long long)0xFFFFFFFFFFFFFFFF,0);\
+             if (n_ == 1) \
+             { \
+                msk = _mm256_setzero_si256(); \
+                msk = _mm256_insertf128_si256(msk, mskh, 0); \
+             } \
+             else /* n == 3 */ \
+             { \
+                msk = _mm256_insertf128_si256(msk, mskh, 1); \
+                mskh = _mm_unpacklo_epi64(mskh, mskh); \
+                msk = _mm256_insertf128_si256(msk, mskh, 0); \
+             } \
+             r_ = _mm256_maskload_ps(p_, msk); \
+         } \
+      }
+   #else
+      #define ATL_cxdot_riswap(rd_, rs_) rd_ = _mm256_shuffle_pd(rs_, rs_, 5)
+      #define ATL_cxdot_comb(p_, rR_, rI_) \
+      { __m256d h_; __m128d t0_;\
+         ATL_vmul(h_, rR_, ((ATL_VTYPE){1.0, -1.0, 1.0, -1.0})); \
+         h_ = _mm256_hadd_pd(h_, rI_); \
+         t0_ =  _mm256_extractf128_pd(h_, 1); \
+         t0_ = _mm_add_pd(t0_, _mm256_extractf128_pd(h_, 0)); \
+         _mm_storeu_pd(p_, t0_); \
+      }
+      #define ATL_cxdot_cxldR(r_, p_, n_) \
+      { \
+         r_ = ATL_vzero(r_); \
+         r_ = _mm256_insertf128_pd(r_, _mm_load_pd(p_), 0); \
+      }
+      #define ATL_cxdot_cxuldR(r_, p_, n_) \
+      { \
+         r_ = ATL_vzero(r_); \
+         r_ = _mm256_insertf128_pd(r_, _mm_loadu_pd(p_), 0); \
+      }
+   #endif
+#else
+   #error "WTF?"
+#endif
+
+#endif  /* end multiple inclusion guard */
 @ROUT ATL_rk4n4
 #include "atlas_misc.h"
 #include "atlas_simd.h"
