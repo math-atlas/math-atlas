@@ -13163,6 +13163,17 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
  */
 #if defined(ATL_VSX)
    #include <altivec.h>
+/*
+ * Older gcc don't support don't support xxpermdi, merge[o,e], xxsel
+ */
+   #if (__GNUC__ > 4) || (__GNUC__ == 4 && __GNUC_MINOR__ > 9) || \
+        (__GNUC__ == 4 && __GNUC_MINOR__ == 9 && __GNU_PATHLEVEL__ > 1) || \
+        !defined(__GNUC__)
+      #define ATL_FULLGCCVSX 1
+   #else
+      #define ATL_FULLGCCVSX 0
+         #error "WTF"
+   #endif
    #if defined(SREAL) || defined(SCPLX)
       #define ATL_VTYPE vector float
       #if ATL_VLEN > 4
@@ -13581,18 +13592,22 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
  */
 #if defined(ATL_VSX)
    #ifdef SCPLX
-      #if 0   /* not supported by gcc 4.8.2 */
+      #if ATL_FULLGCCVSX   /* not supported by older gcc (eg. 4.8) */
          #define ATL_cxaxp_spltX(rXr_, rXi_, pX_) \
          { \
             ATL_vld(rXi_, pX_); \
-            rXr_ = vec_mergee(rXi_, rXi); \
-            rXi_ = vec_mergeo(rXi_, rXi); \
+            rXr_ = (ATL_VTYPE) vec_mergee((vector unsigned int)(rXi_), \
+                                          (vector unsigned int) (rXi_)); \
+            rXi_ = (ATL_VTYPE) vec_mergeo((vector unsigned int)(rXi_),\
+                                          (vector unsigned int)(rXi_)); \
          }
          #define ATL_cxaxp_spltX_UA(rXr_, rXi_, pX_) \
          { \
             ATL_vuld(rXi_, pX_); \
-            rXr_ = vec_mergee(rXi_, rXi); \
-            rXi_ = vec_mergeo(rXi_, rXi); \
+            rXr_ = (ATL_VTYPE) vec_mergee((vector unsigned int)(rXi_),\
+                                          (vector unsigned int) (rXi_)); \
+            rXi_ = (ATL_VTYPE) vec_mergeo((vector unsigned int)(rXi_), \
+                                          (vector unsigned int)(rXi_)); \
          }
       #else
 /*
@@ -13857,15 +13872,9 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
  *    -> used for cleanup, n_ < VLEN!
  * ============================================================================
  */
-#if (__GNUC__ > 4) || (__GNUC__ == 4 && __GNUC_MINOR__ > 9) || \
-    (__GNUC__ == 4 && __GNUC_MINOR__ == 9 && __GNU_PATHLEVEL__ > 2)
-   #define ATL_GCCVSX 1
-#else
-   #define ATL_GCCVSX 0
-#endif
 #if defined(ATL_VSX)
    #ifdef SCPLX
-      #if ATL_GCCVSX
+      #if ATL_FULLGCCVSX
          #define ATL_cxdot_cxldR(r_, p_, n_) \
          {  ATL_VTYPE zr_;\
             ATL_vld(r_, p_); /* no seg fault VLEN < CL */ \
@@ -13890,13 +13899,17 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #define ATL_RISWAPV (vector unsigned char) \
           {4, 5, 6, 7, 0, 1, 2, 3, 12, 13, 14, 15, 8, 9, 10, 11}
    #else
+      #if ATL_FULLGCCVSX
+         #define ATL_cxdot_riswap(rd_, rs_) rd_ = vec_xxpermdi(rs_, rs_, 2)
+      #else
+         #define ATL_RISWAPV (vector unsigned char) \
+             {8, 9, 10, 11, 12, 13, 14, 15, 0, 1, 2, 3, 4, 5, 6, 7}
+      #endif
       #define ATL_cxdot_cxldR(r_, p_, n_) ATL_vld(r_, p_)
       #define ATL_cxdot_cxuldR(r_, p_, n_) ATL_vuld(r_, p_)
-      #define ATL_RISWAPV (vector unsigned char) \
-          {8, 9, 10, 11, 12, 13, 14, 15, 0, 1, 2, 3, 4, 5, 6, 7}
    #endif
 /*
- * If we don't have access to VSX permutes, use vec_perm
+ * If we don't have access to better solution use vec_perm for real/imag swap
  */
    #ifndef ATL_cxdot_riswap
       #define ATL_cxdot_riswap(rd_, rs_) rd_ = vec_perm(rs_, rs_, ATL_RISWAPV)
