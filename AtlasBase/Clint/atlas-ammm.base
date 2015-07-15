@@ -13562,16 +13562,691 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 @ROUT atlas_cplxsimd.h
 #ifndef ATLAS_CPLXSIMD_H
    #define ATLAS_CPLXSIMD_H 1
-
 #include "atlas_simd.h"
 /*
- ******************************************************************************
- * This file provides macros for doing complex multiplication for two types
- * of computations: axpy-based and dot-based.  It handles all permutations
- * necessary to do these computations in the (hopefully) most efficient way
- * for each data type.  This requires linked macros, see the axpy/dot sections.
- ******************************************************************************
+ *                          FUNCTIONALITY SUMMARY
+ * ============================================================================
+ * Constant integers: ATL_CXVLEN, ATL_CXSPLDb
+ * Load/store for partial vecs (replace I with 0 < I < VLEN/2, 1 always there):
+ *    ATL_vcxldI, ATL_vcxuldI, ATL_vcxustI, ATL_vcxustI
+ * Macros for axpy-based computation:
+ *    ATL_cxsplitld, ATL_cxsplit, ATL_cxPrepAlpha
+ * Macros for dot-based computation:
+ *    ATL_cxriswap, ATL_cxdotcomb
+ * ============================================================================
  */
+/*
+ * ============================================================================
+ * This file provides macros for doing the types complex computations 
+ * needed by ATLAS in a machine, precision and VLEN-independent manner
+ * (i.e., this file changes based on VLEN/SIMD ISA, float/double, VLEN,
+ *  but kernels implemented using work unchanged regardless of these variables).
+ * ATLAS essentially does dot-product based computations (dot,GEMVT,GEMM)
+ * and AXPY-based (AXPY,GER,GER2).  Both types of computation need both
+ * load and stores.  We just use the real load/store for full VLEN ops.
+ * However, we also need the ability to load/store a single complex number, 
+ * which means the ability to load/store pairs of real numbers.  In addition,
+ * if we want to be able perform vector cleanup, we need the ability to
+ * load/store I complex numbers (0 < I < ATL_VLEN/2), with loads zeroing any
+ * elements above the loaded values.  Therefore, this file provides 
+ * (ATL_VLEN/2 - 1)*4 routines for loading/store complex numbers:
+ *    ATL_vcxldI(r_, p_) : load lower 2*I elts of aligned p_ to r_, zero rest
+ *    ATL_vcxuldI(r_, p_): load lower 2*I elts of unaligned p_ to r_, zero rest
+ *    ATL_vcxstI(p_, r_) : store lower 2*I real elts of r_ to aligned p_
+ *    ATL_vcxustI(p_, r_): store lower 2*I real elts of r_ to unaligned p_
+ *
+ * There are numerous ways to do complex computations, but this file provides
+ * a particular approach for both dot- and axpy-based computations.  
+ *
+ * For AXPY-based computations, we are performance limited by load/store of Y,
+ * so we permute all other ops to allow us to keep Y in natural order.
+ * Not all SIMD ISAs allow one to do different operations to different
+ * vector elements (eg., ADDSUB), so instead we manipulate alpha outside
+ * the main loop so that it is is permuted and scaled appropriately to allow
+ * us to do MAC-based AXPY calculations.  We will split X into two vectors
+ * with duplicated entries:
+ *   {Xr, Xr}*(VLEN/2)          {Xi, Xi}*(VLEN/2)
+ * This permutation must be done inside the loop, and is thus expensive.
+ * We provide the following functions to accomplish this:
+ *    ATL_cxsplitRIld(rR_, rI, p_): split&dup cplx #s from aligned p_
+      ATL_vcxsplitRI(rXr_, rXi_)  : split&dup from natural-order reg rXi_
+ * ATL_cxsplitld can be built out of ATL_vld & ATL_cxsplit, which is how
+ * it is done for cleanup, but on some systems it is more efficient to
+ * do it directly from memory, so we provide a specialized high-performance
+ * version.  On most systems, the alignment restrictions for this operation
+ * are lower than full VLEN, so we also provide the const macro:
+ *    ATL_CXSPLDb : required byte alignment for ATL_cxsplitld.
+ * We use ATL_cxsplit for vector cleanup & when X is not aligned to ATL_CXSPLDb.
+ * axpy-based calcs are doing Y += alpha * X.  Alpha is loop-invariant, so we
+ * can manipulate it outside the loop, even if that manipulation is relatively
+ * inefficient.  In order to perform the two real MACs required for cplx MAC,
+ * alpha is split into two vectors that match up with our X vecs as in:
+ *   {Xr,   Xr}*(VLEN/2)          {Xi,    Xi}*(VLEN/2)
+ *   {ALi, Alr}*(VLEN/2)          {ALr, -ALi}*(VLEN/2
+ * The first of these is the natural order alpha (alN), and the second scaled 
+ * and permuted (alS).  First the scalar complex number is loaded to the
+ * register using ATL_cx[u]ld1, then it is transformed with:
+ *    ATL_cxPrepAlpha(alN, alS): alN is input & output, alS output only
+ * 
+ * The naive approach to performing complex MAC (multiply and accumulate)
+ * requires permuting both X and Y inside the loop, which is very expensive.
+ * However, we notice that DOT (the accumulator) is loop invariant, so we
+ * can instead keep it in permuted & scaled form throughout the loop.  This
+ * allows us to avoid either the permute of X or Y (but not both).
+ * For DOT-based there is no performance difference between X and Y, so we
+ * can choose to permute either one (one must be computed to build the complex
+ * multiply and accumulate (MAC) out of real MACs).  In general you can only
+ * force one vector to be aligned (vecs may be mutually misaligned), and that
+ * load will be cheaper than the unaligned load.  We therefore perform loop
+ * peeling to force X to be aligned whenever that is possible, and then
+ * permute X rather than Y.  The permute adds to the dependence chain in the
+ * loop, so you want dependent it on the fastest load.
+ *
+ * The technique for DOT-based calculations is that the two half of the MACs
+ * are stored in two different dot variables throughout the loop, one storing
+ * partial results for the real result, and one for the imaginary result.
+ * The real/imag dot vectors must be internally summed up to produce the
+ * final answer (this operation performed outside the loop).  The imaginary
+ * dot looks like: {Xr*Yi, Xi*Yr}*(VLEN/2), so we add all elts to get the ans.
+ * Real looks:     {Xi*Yi, Xr*Yr}*(VLEN/2), so we must subtract the odd elts
+ * from the even.  We provide this macro to accomplish this:
+ *    ATL_cxdotcomb(rR, rI) : put final ans in low 2 elts of rR
+ *
+ * Inside the loop, we keep Y in natural order, and have X in both natural
+ * order (rN) and with imaginary and complex swapped (rS).  We provide:
+ *    ATL_cxriswap(rS, rN): swap imag & real components of rN, store in rS
+ *
+ * ============================================================================
+ */
+#define ATL_CXVLEN (ATL_VLEN>>1)  /* # complex elts half real elts */
+
+/*
+ * Define ld/st I, 0 < I < VLEN/2, I=1 always present (scalar complex ld/st)
+ */
+#if ATL_VLEN == 2  /* 1 vec == 1 complex number: DCPLX&(SSE2||SVX) or gnuvec */
+   #define ATL_vcxld1(r_, p_) ATL_vld(r_, p_)
+   #define ATL_vcxuld1(r_, p_) ATL_vuld(r_, p_)
+   #define ATL_vcxst1(p_, r_) ATL_vst(p_, r_)
+   #define ATL_vcxust1(p_, r_) ATL_vust(p_, r_)
+#elif ATL_VLEN >= 4   /* gnuvec or DCPLX & AVX or SCPLX & (SVX || SSE) */
+   #if defined(ATL_SVX) && defined(ATL_SREAL)
+      #define ATL_vcxld1(r_, p_)
+      #define ATL_vcxuld1(r_, p_)
+      #define ATL_vcxst1(p_, r_)
+      #define ATL_vcxust1(p_, r_)
+   #elif defined(ATL_AVX) && defined(DCPLX)
+      #define ATL_vcxld1(r_, p_) \
+      { \
+         ATL_vzero(r_); \
+         r_ = _mm256_insert128_pd(r_, _mm_load_pd(p_)); \
+      }
+      #define ATL_vcxuld1(r_, p_) \
+      { \
+         ATL_vzero(r_); \
+         r_ = _mm256_insert128_pd(r_, _mm_loadu_pd(p_)); \
+      }
+      #define ATL_vcxst1(p_, r_) _mm_store_pd(p_, _mm256_extractf128_pd(r_, 0))
+      #define ATL_vcxust1(p_, r_) _mm_storeu_pd(p_, _mm256_extractf128_pd(r_,0))
+   #elif defined(ATL_SSE1) && defined(SCPLX)
+      #define ATL_vcxld1(r_, p_) \
+      { \
+         ATL_vzero(r_); \
+         r_ = _mm_loadl_pi(r_, ((void*)(p_))); \
+      }
+      #define ATL_vcxuld1(r_, p_) \
+      {  ATL_VTYPE t_;\
+         r_ = _mm_load_ss(p_); \
+         t_ = _mm_load_ss((p_)+1); \
+         r_ = _mm_unpacklo_ps(r_, t_); \
+      }
+      #define ATL_vcxst1(p_, r_) _mm_storel_pi((void*)(p_), r_)
+      #define ATL_vcxust1(p_, r_) \
+      { \
+         _mm_store_ss(p_, r_); \
+         _mm_store_ss((p_)+1, _mm_shuffle_ps(r_, r_, 1)); \
+      }
+   #else  /* gnuvec */
+      #define ATL_vcxuld1(r_, p_) r_ = (ATL_VTYPE){*(p_), (p_)[1]}
+      #define ATL_vcxust1(p_, r_) \
+      { \
+         *(p_) = (r_)[0]; \
+         (p_)[1] = (r_)[1]; \
+      }
+      #define ATL_vcxld1 ATL_vcxuld1
+      #define ATL_vcxst1 ATL_vcxust1
+   #endif
+/*
+ * For VL == 8, is gnuvec or SCPLX&AVX or DCPLX&AVX512
+ * For VL > 8, can only be SCPLX&AVX512 or gnuvec
+ */
+   #if ATL_VLEN >= 8  /* VL>=8, must define add op[2,3] */
+      #if defined(SCPLX) && defined(ATL_AVX)
+         #define ATL_vcxld2(r_, p_) \
+         { \
+            ATL_vzero(r_); \
+            r_ = _mm256_insert128_ps(r_, _mm_load_ps(p_), 0); \
+         }
+         #define ATL_vcxuld2(r_, p_) \
+         { \
+            ATL_vzero(r_); \
+            r_ = _mm256_insert128_ps(r_, _mm_loadu_ps(p_), 0); \
+         }
+         #define ATL_vcxld3(r_, p_) \
+         { __m128 t_; \
+            r_ = _mm256_insert128_ps(r_, _mm_load_ps(p_), 0); \
+            t_ = _mm_setzero_ps(t_); \
+            t_ = _mm_loadl_pi(t_, ((void*)((p_)+4))); \
+            r_ = _mm256_insert128_ps(r_, t_, 1); \
+         }
+         #define ATL_vcxuld3(r_, p_) \
+         { __m128 t0_, t1_; \
+            r_ = _mm256_insert128_ps(r_, _mm_loadu_ps(p_), 0); \
+            t0_ = _mm_load_ss((p_)+4); \
+            t1_ = _mm_load_ss((p_)+5); \
+            t0_ = _mm_unpacklo_ps(t0_, t1_); \
+            r_ = _mm256_insert128_ps(r_, t0_, 1); \
+         }
+         #define ATL_vcxst2(p_, r_) \
+            _mm_store_ps(p_, _mm256_extractf128_ps(r_, 0))
+         #define ATL_vcxust2(p_, r_) \
+             _mm_storeu_ps(p_, _mm256_extractf128_ps(r_,0))
+         #define ATL_vcxst3(p_, r_) \
+         {  _mm128 t_; \
+            ATL_vcxst2(p_, r_); \
+            t_ = _mm256_extractf128_ps(r_, 0);
+            _mm_storel_pi((void*)((p_)+4), t_) ; \
+         }
+         #define ATL_vcxust3(p_, r_) \
+         {  _mm128 t_; \
+            ATL_vcxust2(p_, r_); \
+            t_ = _mm256_extractf128_ps(r_, 0); \
+            _mm_store_ss((p_)+4, t_); \
+            _mm_store_ss((p_)+5, _mm_shuffle_ps(t_, t_, 1)); \
+         }
+      #elif defined(DCPLX) &&  defined(ATL_AVX512)
+         #error "AVX512 not presently supported"
+      #elif defined(SCPLX) &&  defined(ATL_AVX512)
+         #error "AVX512 not presently supported"
+      #else /* gnuvec */
+         #define ATL_vcxuld2(r_, p_) \
+            r_ = (ATL_VTYPE){*(p_), (p_)[1], (p_)[2], (p_)[3]}
+         #define ATL_vcxust2(p_, r_) \
+         { \
+            *(p_) = (r_)[0]; \
+         @iexp i 1 0 +
+         @iwhile i < 4
+            (p_)[@(i)] = (r_)[@(i)]; \
+            @iexp i @(i) 1 +
+         @endiwhile
+         }
+         #define ATL_vcxuld3(r_, p_) \
+            r_ = (ATL_VTYPE){*(p_), (p_)[1], (p_)[2], (p_)[3], (p_)[4], (p_)[5]}
+         #define ATL_vcxust3(p_, r_) \
+         { \
+            *(p_) = (r_)[0]; \
+         @iexp i 1 0 +
+         @iwhile i < 6
+            (p_)[@(i)] = (r_)[@(i)]; \
+            @iexp i @(i) 1 +
+         @endiwhile
+         }
+
+         @iexp i 2 0 +
+         @iwhile i < 4
+         #define ATL_vcxld@(i) ATL_vcxuld@(i)
+         #define ATL_vcxst@(i) ATL_vcxust@(i)
+            @iexp i @(i) 1 +
+         @endiwhile
+      #endif
+      #if ATL_VLEN >= 16  /* need [4-7]: gnuvec or SREAL&AVX512 */
+         #if defined(SCPLX) &&  defined(ATL_AVX512)
+         #else /* gnuvec */
+            #define ATL_vcxuld4(r_, p_) r_ = (ATL_VTYPE)\
+               {*(p_), (p_)[1], (p_)[2], (p_)[3], \
+                 (p_)[4],(p_)[5],(p_)[6],(p_)[7]}
+            #define ATL_vcxuld5(r_, p_) r_ = (ATL_VTYPE)\
+               {*(p_), (p_)[1], (p_)[2], (p_)[3], \
+                 (p_)[4],(p_)[5],(p_)[6],(p_)[7], \
+                 (p_)[8],(p_)[9]}
+            #define ATL_vcxuld6(r_, p_) r_ = (ATL_VTYPE)\
+               {*(p_), (p_)[1], (p_)[2], (p_)[3], \
+                 (p_)[4],(p_)[5],(p_)[6],(p_)[7], \
+                 (p_)[8],(p_)[9],(p_)[10],(p_)[11]}
+            #define ATL_vcxuld7(r_, p_) r_ = (ATL_VTYPE)\
+               {*(p_), (p_)[1], (p_)[2], (p_)[3], \
+                 (p_)[4],(p_)[5],(p_)[6],(p_)[7], \
+                 (p_)[8],(p_)[9],(p_)[10],(p_)[11], \
+                 (p_)[12],(p_)[13]}
+   @iexp j 3 1 +
+   @iwhile j < 8
+            #define ATL_vcxust@(j)(p_, r_) \
+            { \
+               *(p_) = (r_)[0]; \
+         @iexp h @(j) @(j) +
+         @iexp i 1 0 +
+         @iwhile i < @(h)
+               (p_)[@(i)] = (r_)[@(i)]; \
+            @iexp i @(i) 1 +
+         @endiwhile
+            }
+      @iexp j @(j) 1 +
+   @endiwhile
+
+         @iexp i 4 0 +
+         @iwhile i < 8
+            #define ATL_vcxld@(i) ATL_vcxuld@(i)
+            #define ATL_vcxst@(i) ATL_vcxust@(i)
+            @iexp i @(i) 1 +
+         @endiwhile
+         #endif
+         #if ATL_VLEN == 32 /* VLEN == 32, gnuvec only */
+         #else
+            #error "Unsupported VLEN > 32"
+         #endif
+      #endif
+   #endif
+#endif
+/*
+ * Define ATL_vcxswapRI, ATL_vcxsplitRI and ATL_vcxdotcomb.
+ * Define ATL_vcxsplitRIld if you dont want vld/splitRI version.
+ * Define ATL_cxdotcomb if you don't want to use system-indep (slow) version.
+ */
+#ifdef ATL_VSX
+   #ifdef SCPLX
+      #define ATL_vcxswapRI(d_, s_) d_ = vec_perm(s_, (vector unsigned char) \
+         {4, 5, 6, 7, 0, 1, 2, 3, 12, 13, 14, 15, 8, 9, 10, 11})
+      #if ATL_FULLGCCVSX   /* not supported by older gcc (eg. 4.8) */
+         #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */ \
+         { \
+            rXr_ = (ATL_VTYPE) vec_mergee((vector unsigned int)(rXi_), \
+                                          (vector unsigned int) (rXi_)); \
+            rXi_ = (ATL_VTYPE) vec_mergeo((vector unsigned int)(rXi_),\
+                                          (vector unsigned int)(rXi_)); \
+         }
+      #else
+/*
+ *       Using these guys as constants isn't so great: gcc 4.8.2 pulls
+ *       the formation of the first iperm vector out of a loop, but then leaves
+ *       the formation of the second (in terms of the first) inside the loop.
+ *       The fix is to have this file define DECL/INIT macros, where we manually
+ *       declare the perm vector, create it, and hoist it ourselves.
+ *       We'll keep with crap way, since later gcc supports mergee/mergeo.
+ */
+         #define ATL_MERGEE (vector unsigned char) \
+            {0, 1, 2, 3, 0, 1, 2, 3, 8, 9, 10, 11, 8, 9, 10, 11}
+         #define ATL_MERGEO (vector unsigned char) \
+            {4, 5, 6, 7, 4, 5, 6, 7, 12, 13, 14, 15, 12, 13, 14, 15}
+         #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */ \
+         { \
+            rXr_ = vec_perm(rXi_, rXi, ATL_MERGEE); \
+            rXi_ = vec_perm(rXi_, rXi, ATL_MERGEO); \
+         }
+      #endif
+   #else /* DCPLX */
+      #define ATL_vcxswapRI(d_, s_) d_ = vec_xxpermdi(s_, s_, 2)
+      #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */ \
+      { \
+         rXr_ = vec_xxpermdi(rXi_, rXi_, 0); \
+         rXi_ = vec_xxpermdi(rXi_, rXi_, 3); \
+      }
+      #define ATL_CXSPLDb ATL_VLENb
+      #define ATL_vcxsplitRIld(rXr_, rXi_, pX_) \
+      { \
+         rXr_ = vec_splats(*(pX_)); \
+         rXi_ = vec_splats(*((pX_)+1)); \
+      }
+   #endif
+#elif defined(ATL_AVXMAC) || defined(ATL_AVX)
+   #ifdef SCPLX
+      #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */  \
+      { \
+         rXr_ = _mm256_moveldup_ps(rXi); \
+         rXi_ = _mm256_movehdup_ps(rXi); \
+      }
+      #define ATL_vcxswapRI(d_, s_) d_ = _mm256_shuffle_ps(s_, s_, 0xB1)
+      #define ATL_vcxdotcomb(rR_, rI_) /* low 2 elts rR_ gets ans */ \
+      {  __m128 t0_, t1_;\
+         ATL_vmul(rR_, rR_, ((ATL_VTYPE){1.0f, -1.0f, 1.0f, -1.0f, \
+                                         1.0f, -1.0f, 1.0f, -1.0f})); \
+         rR_ = _mm256_hadd_ps(rR_, rI_); \
+         rR_ = _mm256_hadd_ps(rR_, rR_); \
+         t0_ =  _mm256_extractf128_ps(rR_, 1); \
+         t0_ = _mm_add_ps(t0_, _mm256_extractf128_ps(rR_, 0)); \
+         rR_ = _mm256_insertf128_ps(rR_, t0_, 0); \
+      }
+   #else  /* DCPLX */
+      #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */  \
+      { \
+         rXr_ = _mm256_movedup_pd(rXi); \
+         rXi_ = _mm256_shuffle_pd(rXi, rXi, 0xF); \
+      }
+      #define ATL_vcxswapRI(d_, s_) d_ = _mm256_shuffle_pd(s_, s_, 5)
+      #define ATL_vcxdotcomb(rR_, rI_) /* low 2 elts rR_ gets ans */ \
+      {  __m128d t0_;\
+         ATL_vmul(rR_, rR_, ((ATL_VTYPE){1.0, -1.0, 1.0, -1.0})); \
+         rR_ = _mm256_hadd_pd(rR_, rI_); \
+         t0_ =  _mm256_extractf128_pd(rR_, 1); \
+         t0_ =  _mm_add_pd(t0_, _mm256_extractf128_pd(rR_, 0)); \
+         rR_ = _mm256_insertf128_pd(rR_, t0_, 0); \
+      }
+   #endif
+#elif defined(ATL_SSE2) && defined(DCPLX)
+   #ifdef ATL_SSE3
+      #define ATL_CXSPLDb 8
+      #define ATL_vcxsplitRIld(rXr_, rXi_, pX_) \
+      { \
+         rXr = _mm_loaddup_pd(pX_);
+         rXi = _mm_loaddup_pd((pX_)+1);
+      }
+      #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */  \
+      { \
+         rXr_ = _mm_moveldup_ps(rXi); \
+         rXi_ = _mm_movehdup_ps(rXi); \
+      }
+      #define ATL_vcxdotcomb(rR_, rI_) /* low 2 elts rR_ gets ans */ \
+      { \
+         ATL_vmul(rR_, rR_, ((ATL_VTYPE){1.0, -1.0})); \
+         rR_ = _mm_hadd_pd(rR_, rI_);
+      }
+   #else
+      #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */  \
+      { \
+         rXr_ = _mm_unpacklo_pd(rXi, rXi); \
+         rXi_ = _mm_unpackhi_pd(rXi, rXi); \
+      }
+      #define ATL_vcxdotcomb(rR_, rI_) /* low 2 elts rR_ gets ans */ \
+      {  __m128d t1_;\
+         ATL_vmul(rR_, rR_, ((ATL_VTYPE){1.0, -1.0})); \
+         t1_ = _mm_unpacklo_pd(rR_, rI_); \
+         rR_ = _mm_unpackhi_pd(rR_, rI_); \
+         ATL_vadd(rR_, rR_, t1_); \
+      }
+   #endif
+   #define ATL_vcxswapRI(d_, s_) /* real(d_)=imag(s_); imag(d_)=real(s_); */ 
+   #define ATL_vcxdotcomb(rR_, rI_) /* low 2 elts rR_ gets ans */
+#elif defined(ATL_SSE1) && defined(SCPLX)
+   #ifdef ATL_SSE3
+      #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */ 
+      { \
+         rXr_ = _mm_moveldup_ps(rXi); \
+         rXi_ = _mm_movehdup_ps(rXi); \
+      }
+      #define ATL_vcxdotcomb(rR_, rI_) /* low 2 elts rR_ gets ans */ \
+      { \
+         ATL_vmul(rR_, rR_, ((ATL_VTYPE){1.0f, -1.0f, 1.0f, -1.0f})); \
+         rR_ = _mm_hadd_ps(rR_, rI_); \
+         rR_ = _mm_hadd_ps(rR_, t0_); \
+      }
+   #else
+      #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */  \
+      { \
+         rXr_ = _mm_shuffle_ps(rXi, rXi, 0xA0); \
+         rXi_ = _mm_shuffle_ps(rXi, rXi, 0xF5); \
+      }
+      #define ATL_vcxdotcomb(rR_, rI_) /* low 2 elts rR_ gets ans */ \
+      {  __m128 t1_;\
+         ATL_vmul(rR_, rR_, ((ATL_VTYPE){1.0f, -1.0f, 1.0f, -1.0f})); \
+         t1_ = _mm_unpacklo_ps(rR_, rI_); \
+         rR_ = _mm_unpackhi_ps(rR_, rI_); \
+         ATL_vadd(rR_, rR_, t1_); \
+         t1_ = _mm_movehl_ps(t1_, rR_); \
+         ATL_vadd(rR_, rR_, t1_); \
+      }
+   #endif
+   #define ATL_vcxswapRI(d_, s_) /* real(d_)=imag(s_); imag(d_)=real(s_); */ 
+#else  /* gnuvec */
+   #if ATL_VLEN == 2
+      #define ATL_VIPERMR (ATL_VITYPE){0, 0}
+      #define ATL_VIPERMI (ATL_VITYPE){1, 1}
+      #define ATL_vcxswapRI(rd_, rs_) \
+         rd_ = __builtin_shuffle(rs_, (ATL_VITYPE){1,0})
+      #define ATL_vcxdotcomb(rR_, rI_) \
+      { \
+         (rR_)[0] -= (rR_)[1]; \
+         (rR_)[1] = (rI_)[0] + (rI_)[1]; \
+      }
+   #elif  ATL_VLEN == 4
+      #define ATL_vcxswapRI(rd_, rs_) \
+         rd_ = __builtin_shuffle(rs_, (ATL_VITYPE){1,0,3,2})
+      #define ATL_vcxdotcomb(rR_, rI_) \
+      { \
+         rR_[0] += (rR_)[2] - (rR_)[1] - (rR_)[3]; \
+         (rR_)[1] = (rI_)[0] + (rI_)[1] + (rI_)[2] + (rI_)[3]; \
+      }
+      #define ATL_VIPERMR (ATL_VITYPE){0, 0, 2, 2}
+      #define ATL_VIPERMI (ATL_VITYPE){1, 1, 3, 3}
+   #elif  ATL_VLEN == 8
+      #define ATL_vcxswapRI(rd_, rs_) \
+         rd_ = __builtin_shuffle(rs_, (ATL_VITYPE){1,0,3,2,5,4,7,6})
+      #define ATL_vcxdotcomb(rR_, rI_) \
+      { \
+         (rR_)[0] += (rR_)[2]+(rR_)[4]+(rR_)[6] \
+               - (rR_)[1]-(rR_)[3]-(rR_)[5]-(rR_)[7]; \
+         (rR_)[1] = (rI_)[0] + (rI_)[1] + (rI_)[2] + (rI_)[3] \
+                  + (rI_)[4] + (rI_)[5] + (rI_)[6] + (rI_)[7]; \
+      }
+      #define ATL_VIPERMR (ATL_VITYPE){0, 0, 2, 2, 4, 4, 6, 6}
+      #define ATL_VIPERMI (ATL_VITYPE){1, 1, 3, 3, 5, 5, 7, 7}
+   #elif  ATL_VLEN == 16
+      #define ATL_vcxswapRI(rd_, rs_) \
+         rd_ = __builtin_shuffle(rs_, (ATL_VITYPE){1,0,3,2,5,4,7,6, \
+                                                   9,8,11,10,13,12,15,14})
+      #define ATL_VIPERMR (ATL_VITYPE){0, 0, 2, 2, 4, 4, 6, 6, \
+                                       8, 8, 10, 10, 12, 12, 14, 14};
+      #define ATL_VIPERMI (ATL_VITYPE){1, 1, 3, 3, 5, 5, 7, 7, \
+                                       9, 9, 11, 11, 13, 13, 15, 15};
+   #elif  ATL_VLEN == 32
+      #define ATL_vcxswapRI(rd_, rs_) \
+         rd_ = __builtin_shuffle(rs_, (ATL_VITYPE){1,0,3,2,5,4,7,6, \
+                                                   9,8,11,10,13,12,15,14, \
+                                                   17,16,19,18,21,20,23,22,
+                                                   25,24,27,26,29,28,31,30})
+       #define ATL_VIPERMR (ATL_VITYPE) \
+        { 0,  0,  2,  2,  4,  4,  6,  6,  8,  8, 10, 10, 12, 12, 14, 14, \
+         16, 16, 18, 18, 20, 20, 22, 22, 24, 24, 26, 26, 28, 28, 30, 30}; \
+       #define ATL_VIPERMI (ATL_VITYPE) \
+        { 1,  1,  3,  3,  5,  5,  7,  7,  9,  9, 11, 11, 13, 13, 15, 15, \
+         17, 17, 19, 19, 21, 21, 23, 23, 25, 25, 27, 27, 29, 29, 31, 31}; \
+   #else
+      #error "unsupported ATL_VLEN!"
+   #endif
+   #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */  \
+   { \
+      rXr_ = __builtin_shuffle(rXi_, ATL_VIPERMR); \
+      rXi = __builtin_shuffle(rXi_, ATL_VIPERMI); \
+   }
+#endif
+/*
+ * brute force combine that will work on any gcc-compatible compiler/vec ISA
+ */
+#ifndef ATL_vcxdotcomb
+   #define ATL_vcxdotcomb(rR_, rI_) /* low 2 elts rR gets ans */ \
+   { \
+      TYPE mr_[ATL_VLEN] __attribute__ ((aligned (ATL_VLENb)));\
+      TYPE mi_[ATL_VLEN] __attribute__ ((aligned (ATL_VLENb)));\
+      int i_;  \
+      register TYPE dr_=ATL_rzero, di_=ATL_rzero; \
+      ATL_vst(mr_, rR_); \
+      ATL_vst(mi_, rI_); \
+      for (i_=0; i_ < ATL_VLEN; i_ += 2) \
+      { \
+         dr_ += mr_[i_] - mr_[i_+1]; \
+         di_ += mi_[i_] + mi_[i_+1]; \
+      } \
+      mr_[0] = dr_; \
+      mr_[0] = di_; \
+      ATL_vld(rR_, mr_); \
+   }
+#endif
+/*
+ * Default vcxsplitRIld that uses ATL_vld & ATL_vcxsplitRI
+ */
+#ifndef ATL_CXSPLDb
+   #define ATL_CXSPLDb ATL_VLENb
+#endif
+#ifndef ATL_vcxsplitRIld
+   #define ATL_vcxsplitRIld(rXr_, rXi_, pX_) \
+   { \
+      ATL_vld(rXi_, pX_); \
+      ATL_vcxsplitRI(rXr_, rXi_); \
+   }
+#endif
+/*
+ * Convenience funcs for one vector iteration of DOT product, aligned &
+ * unaligned Y. rX_ comes in already preloaded so that it can be used across mul
+ * cols, as in GEMVT.  vX is natural order, vXs real/imag swapped (cxriswap).
+ */
+#define ATL_vcxdotA(dotR_, dotI_, vX_, vXs_, pY_) \
+{\
+   register ATL_VTYPE vY_; \
+   ATL_vld(vY_, pY_); \
+   ATL_vmac(dotR_, vX_, vY_); \
+   ATL_vmac(dotI_, vXs_, vY); \
+}
+
+#define ATL_vcxdotU(dotR_, dotI_, vX_, vXs_, pY_) \
+{\
+   register ATL_VTYPE vY_; \
+   ATL_vuld(vY_, pY_); \
+   ATL_vmac(dotR_, vX_, vY_); \
+   ATL_vmac(dotI_, vXs_, vY); \
+}
+/*
+ * Convenience funcs for one vector iteration of AXPLY, [Un]&Aligned pY_
+ * X comes in already split into vXr_ (real elts) and vXi_ (imag elts) so
+ * that the same X values can be used across multiple Y vecs (which are
+ * actually A columns for GER.
+ */
+#define ATL_vcxaxpyA(pY_, vXr_, vXi_, vALn_, vALs_) \
+{                                      /* ALs={ALr,-iAL}; */ \
+   register ATL_VTYPE vY_, vXr_, vXi_; /* ALn={iAL,rAL} */ \
+   ATL_vld(vY_, pY_);                  /* vY = {iY,rY, ...} */ \
+   ATL_vmac(vY_, vXi_, vALs_);         /* vY += {iX*rAL, -iX*iAL} */ \
+   ATL_vmac(vY_, vXr_, vALn_);         /* vY += {rX*iAL, rX*rAL} */ \
+   ATL_vst(pY_, vY_); \
+}
+
+#define ATL_vcxaxpyU(pY_, vXr_, vXi_, vALn_, vALs_) \
+{                                      /* ALs={ALr,-iAL}; */ \
+   register ATL_VTYPE vY_, vXr_, vXi_; /* ALn={iAL,rAL} */ \
+   ATL_vuld(vY_, pY_);                 /* vY = {iY,rY, ...} */ \
+   ATL_vmac(vY_, vXi_, vALs_);         /* vY += {iX*rAL, -iX*iAL} */ \
+   ATL_vmac(vY_, vXr_, vALn_);         /* vY += {rX*iAL, rX*rAL} */ \
+   ATL_vst(pY_, vY_); \
+}
+/*
+ * Remainder load/store functions.  They take 0 < n_ < (ATL_VLEN/2), which
+ * is the number of complex elts to load/store from/to the ptr
+ */
+
+#if ATL_VLEN <= 4
+   #define ATL_vcxldR(r_, p_, n_) ATL_vcxld1(r_, p_)
+   #define ATL_vcxuldR(r_, p_, n_) ATL_vcxuld1(r_, p_)
+   #define ATL_vcxstR(p_, r_, n_) ATL_vcxst1(p_, r_)
+   #define ATL_vcxustR(p_, r_, n_) ATL_vcxust1(p_, r_)
+   #define ATL_vcxldXYR(rX_, pX_, rY_, pY_) \
+   { \
+      ATL_cxld1(rX_, pX_); \
+      ATL_cxld1(rY_, pY_); \
+   }
+   #define ATL_vcxldXuYR(rX_, pX_, rY_, pY_) \
+   { \
+      ATL_cxld1(rX_, pX_); \
+      ATL_cxuld1(rY_, pY_); \
+   }
+   #define ATL_vcxlduXuYR(rX_, pX_, rY_, pY_) \
+   { \
+      ATL_cxuld1(rX_, pX_); \
+      ATL_cxuld1(rY_, pY_); \
+   }
+@BEGINPROC ldR2 nm nm1 arg1 nm2 arg2
+   #define ATL_vcx@(nm)R(@(arg1),@(arg2),n_) \
+   { \
+      switch(n_) \
+      { \
+   @iexp k 2 @(j) /
+   @iexp k @(k) -1 +
+   @iexp i 1 0 +
+   @iwhile i < @(k)
+      case @(i) : \
+         ATL_vcx@(nm1)@(i)(@(arg1)); \
+         ATL_vcx@(nm2)@(i)(@(arg2)); \
+         break; \
+      @iexp i @(i) 1 +
+   @endiwhile
+      default: \
+         ATL_vcx@(nm1)@(i)(@(arg1)); \
+         ATL_vcx@(nm2)@(i)(@(arg2)); \
+      } \
+   }
+@ENDPROC
+@BEGINPROC ldstR1 nm arg
+   #define ATL_vcx@(nm)R(@(arg),n_) \
+   { \
+      switch(n_) \
+      { \
+   @iexp k 2 @(j) /
+   @iexp k @(k) -1 +
+   @iexp i 1 0 +
+   @iwhile i < @(k)
+      case @(i) : \
+         ATL_vcx@(nm)@(i)(@(arg)); \
+         break; \
+      @iexp i @(i) 1 +
+   @endiwhile
+      default: \
+         ATL_vcx@(nm)@(i)(@(arg)); \
+      } \
+   }
+@ENDPROC
+@iexp j 4 4 +
+@iwhile j < 64
+#elif ATL_VLEN == @(j)
+   @CALLPROC ldR2 ldXY ld rX_,pX_ ld rY_,pY_
+   @CALLPROC ldR2 ldXuY ld rX_,pX_ uld rY_,pY_
+   @CALLPROC ldR2 lduXuY uld rX_,pX_ uld rY_,pY_
+   @CALLPROC ldstR1 ld r_,p_
+   @CALLPROC ldstR1 st p_,r_
+   @CALLPROC ldstR1 uld r_,p_
+   @CALLPROC ldstR1 ust p_,r_
+   @iexp j @(j) @(j) +
+@endiwhile
+#endif   /* end multiple inclusion guard */
+@ROUT atlas_cplxsimd.h00
+/*
+ * Now define the remainder terms, which depend only on VLEN and prior ld/st
+ * For VLEN == 2, they should be empty, but we have them call the scalar
+ * code so that it is always safe to use them for peeling.
+ */
+#if ATL_VLEN == 2
+   #define ATL_vcxldR(r_, p_, n_) ATL_vcxld1(r_, p_)
+   #define ATL_vcxuldR(r_, p_, n_) ATL_vcxuld1(r_, p_)
+   #define ATL_vcxstR(p_, r_, n_) ATL_vcxst(p_, r_)
+   #define ATL_vcxustR(p_, r_, n_) ATL_vcxst(p_, r_)
+@iexp i 4 0 +
+@iwhile i < 64
+#elif ATL_VLEN == @(i)
+   #define ATL_vcxuldR(r_, p_, n_) \
+   { \
+      switch(n_) \
+      { \
+   @iexp j 1 0 +
+   @iexp h @(i) -1 +
+   @iwhile j < @(h)
+      case @(j): \
+         ATL_vcxuld@(j)(r_, p_); \
+         break; \
+      @iexp j @(j) 1 +
+   @endiwhile
+      default: \
+         ATL_vcxuld@(h)(r_, p_); \
+      } \
+   }
+   @iexp i @(i) 2 *
+@endiwhile
+#else
+   #error "unsupported ATL_VLEN!"
+#endif
 
 /*
  * ============================================================================
