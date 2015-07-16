@@ -13026,6 +13026,9 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 @ROUT atlas_simd.h
 #ifndef ATLAS_SIMD_H
    #define  ATLAS_SIMD_H 1
+#ifdef ATL_ARCH_ARM64
+   #define ATL_VARM1
+#endif
 //#undef ATL_AVX
 //#undef ATL_SSE3
 //#undef ATL_SSE2
@@ -13038,10 +13041,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
  * ATL_VLEN is treated differently, depending on whether we are using
  * system-dependent vectorization (eg., AVX, VSX, etc.) or gnu vectorization:
  * - For gnu vectorization, ATL_VLEN must be defined as a power of 2.
- * - For non-gnu vectorization ATL_VLEN:
- *   + If undefined, it will be defined as system simd vec size for this type.
- *   + If defined, it must be <= system vecsz.  If it is <, then all loads 
- *     may become unaligned (slow), and peak is not usually achievable
+ * - For non-gnu vec ATL_VLEN should match the system, or be undefined.
 * All macro funcs first arg is the destination.  vr stands for vector register.
  * We support the following miscellaneous instructions:
  *    ATL_vzero(vr)       : zero all vr entries
@@ -13065,14 +13065,6 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
  * NOTE: (1) srd must be a scalar reg
  *       (2) all source regs may be overwritten:
  *    ATL_vrsum1(srd, vrs)        : srd = sum(vrs[:])
-@beginskip
- *    ATL_vrsum2(srd, vrs1, vrs2) : srd = sum(vrs1[:])+sum(vrs2[:])
- *    ATL_vrsum4(srd, vrs1, vrs2, vrs3, vrs4) : 
- *         srd[0] = sum(vrs1[:])+sum(vrs2[:])+sum(vrs3[:])+sum(vrs4[:])
- *    ATL_vrsum8(srd, vrs1, vrs2, vrs3, vrs4, vrs5, vrs6, vrs7, vrs8)
- *    ATL_vrsum16(srd, vrs1, vrs2, vrs3, vrs4, vrs5, vrs6, vrs7, vrs8,
- *                vsr9, vsr10, vsr11, vsr12, vsr13, vsr14, vsr15, vsr16)
-@endskip
  *
  */
 
@@ -13086,8 +13078,8 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #else
          #define ATL_VLEN 2
       #endif
-@multidef vl    2   2    4      4
-@whiledef sv SSE1 SSE2 AVX AVXMAC
+@multidef vl    2   2    4      4     2
+@whiledef sv SSE1 SSE2 AVX AVXMAC VARM1
    @iexp vl2 @(vl) @(vl) +
    #elif defined(ATL_@(sv))
       #if defined(SREAL) || defined(SCPLX)
@@ -13106,6 +13098,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    #error "ATL_VLEN not defined!"
 #else
    #if ATL_VLEN == 1
+      #define ATL_VLSH 0
       #define ATL_DivByVLEN(i_) (i_)
       #define ATL_MulByVLEN(i_) (i_)
       #if defined(SREAL) || defined(SCPLX)
@@ -13117,6 +13110,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    @define p @2@
    @iwhile i < 6
    #elif ATL_VLEN == @(p)
+      #define ATL_VLSH @(i)
       #define ATL_DivByVLEN(i_) ((i_)>>@(i))
       #define ATL_MulByVLEN(i_) ((i_)<<@(i))
       @iexp vl @(p) 4 *
@@ -13168,7 +13162,6 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #define ATL_FULLGCCVSX 1
    #else
       #define ATL_FULLGCCVSX 0
-         #error "WTF"
    #endif
    #if defined(SREAL) || defined(SCPLX)
       #define ATL_VTYPE vector float
@@ -13218,6 +13211,38 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          d_ = vec_add(d_, s_) ; \
       }
    #endif
+#elif defined(ATL_VARM1)
+   #if defined(SREAL) || defined(SCPLX)
+      #define ATL_VTYPE float32x4
+   #else
+      #define ATL_VTYPE float64x2
+   #endif
+   #if defined(SREAL) || defined(SCPLX)
+      #define ATL_vzero(v_) v_ = vdup_n_f32(ATL_rzero)
+      #define ATL_vbcast(v_, p_) v_ =  vld1q_f32(p_)
+      #define ATL_vld(v_, p_) v_ = vld1q_f32_x4(p_)
+      #define ATL_vst(p_, v_) vst1q_f32_x4(p_, v_)
+      #define ATL_vadd(d_, s1_, s2_) d_ = vaddq_f32(s1_, s2_)
+      #define ATL_vmul(d_, s1_, s2_) d_ = vmulq_f32(s1_, s2_)
+      #define ATL_vmac(d_, s1_, s2_) d_ = vfmaq_f32(d_, s1_, s2_)
+      #define ATL_vrsum1(d_, s_) \
+      {  __m128 t_; \
+         t_ = _mm_add_ps(_mm256_extractf128_ps(s_, 0), \
+                         _mm256_extractf128_ps(s_, 1)); \
+         t_ = _mm_hadd_ps(t_, t_); \
+         t_ = _mm_hadd_ps(t_, t_); \
+         d_ = _mm_cvtss_f32(t_); \
+      }
+   #else  /* double */
+      #define ATL_vzero(v_) v_ = vdup_n_f64(ATL_rzero)
+      #define ATL_vbcast(v_, p_) v_ =  vld1q_f64(p_)
+      #define ATL_vld(v_, p_) v_ = vld1q_f64_x2(p_)
+      #define ATL_vadd(d_, s1_, s2_) d_ = vaddq_f64(s1_, s2_)
+      #define ATL_vmul(d_, s1_, s2_) d_ = vmulq_f64(s1_, s2_)
+      #define ATL_vmac(d_, s1_, s2_) d_ = vfmaq_f64(d_, s1_, s2_)
+   #endif
+   #define ATL_vuld(v_, p_) ATL_vld(v_, p_)
+   #define ATL_vust(p_, v_) ATL_vst(p_, v_)
 #elif defined(ATL_AVXMAC) || defined(ATL_AVX)
    #include <immintrin.h>
    #if defined(SREAL) || defined(SCPLX)
@@ -13493,6 +13518,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    #define ATL_vmac(d_, s1_, s2_) d_ += (s1_) * (s2_)
    #define ATL_vrsum1(d_, s_) d_ = s_;
 #endif
+@beginskip
 @iexp p 1 0 +
 @iexp j 0 0 +
 @iwhile p < 64
@@ -13509,8 +13535,20 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    @iexp j @(j) 1 +
    @iexp p @(p) 2 *
 @endiwhile
+@endskip
+/*
+ * If we don't have one defined, write slow version that should work with
+ * any gcc-compatible compiler
+ */
 #ifndef ATL_vrsum1
-   #error "No reduction possible!"
+   #define ATL_vrsum1(d_, s_) \
+   {  TYPE mem_[ATL_VLEN] __attribute__ ((aligned (ATL_VLENb)));\
+      int i_; \
+      ATL_vst(mem_, s_); \
+      d_ = *mem_; \
+      for (i_=1; i_ < ATL_VLEN; i_++) \
+         d_ += mem_[i_]; \
+   }
 #endif
 @beginskip
 /*
@@ -13566,9 +13604,9 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
  * Load/store for partial vecs (replace I with 0 < I < VLEN/2, 1 always there):
  *    ATL_vcxldI, ATL_vcxuldI, ATL_vcxustI, ATL_vcxustI
  * Macros for axpy-based computation:
- *    ATL_cxsplitld, ATL_cxsplit, ATL_cxPrepAlpha
+ *    ATL_vcxsplitRIld,  ATL_vcxsplitRI, ATL_vcxPrepAlpha
  * Macros for dot-based computation:
- *    ATL_cxriswap, ATL_cxdotcomb
+ *    ATL_vcxswapRI, ATL_vcxdotcomb
  * ============================================================================
  */
 /*
@@ -13604,14 +13642,14 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
  *   {Xr, Xr}*(VLEN/2)          {Xi, Xi}*(VLEN/2)
  * This permutation must be done inside the loop, and is thus expensive.
  * We provide the following functions to accomplish this:
- *    ATL_cxsplitRIld(rR_, rI, p_): split&dup cplx #s from aligned p_
+ *    ATL_vcxsplitRIld(rR_, rI, p_): split&dup cplx #s from aligned p_
       ATL_vcxsplitRI(rXr_, rXi_)  : split&dup from natural-order reg rXi_
- * ATL_cxsplitld can be built out of ATL_vld & ATL_cxsplit, which is how
+ * ATL_vcxsplitRIld can be built out of ATL_vld & ATL_vcxsplitRI, which is how
  * it is done for cleanup, but on some systems it is more efficient to
  * do it directly from memory, so we provide a specialized high-performance
- * version.  On most systems, the alignment restrictions for this operation
+ * version.  On some systems, the alignment restrictions for this operation
  * are lower than full VLEN, so we also provide the const macro:
- *    ATL_CXSPLDb : required byte alignment for ATL_cxsplitld.
+ *    ATL_CXSPLDb : required byte alignment for ATL_vcxsplitRIld.
  * We use ATL_cxsplit for vector cleanup & when X is not aligned to ATL_CXSPLDb.
  * axpy-based calcs are doing Y += alpha * X.  Alpha is loop-invariant, so we
  * can manipulate it outside the loop, even if that manipulation is relatively
@@ -13663,21 +13701,15 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    #define ATL_CXVLEN 1
    #define ATL_CXVLSH 0
    #define ATL_VONEPN ((ATL_VTYPE){ATL_rone, ATL_rnone})
-@skip   #define ATL_VONENP (ATL_VTYPE){ATL_rnone, ATL_rone}
 #elif ATL_VLEN == 4
    #define ATL_CXVLEN 2
    #define ATL_CXVLSH 1
    #define ATL_VONEPN ((ATL_VTYPE){ATL_rone, ATL_rnone,ATL_rone, ATL_rnone})
-@skip   #define ATL_VONENP (ATL_VTYPE){ATL_rnone, ATL_rone,ATL_rnone, ATL_rone}
 #elif ATL_VLEN == 8
    #define ATL_CXVLEN 4
    #define ATL_CXVLSH 2
    #define ATL_VONEPN ((ATL_VTYPE){ATL_rone, ATL_rnone,ATL_rone, ATL_rnone,\
                                    ATL_rone, ATL_rnone,ATL_rone, ATL_rnone})
-@beginskip
-   #define ATL_VONENP ((ATL_VTYPE){ATL_rnone, ATL_rone,ATL_rnone, ATL_rone,\
-                                   ATL_rnone, ATL_rone,ATL_rnone, ATL_rone})
-@endskip
 #elif ATL_VLEN == 16
    #define ATL_CXVLEN 8
    #define ATL_CXVLSH 3
@@ -13685,12 +13717,6 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
                                    ATL_rone, ATL_rnone,ATL_rone, ATL_rnone, \
                                    ATL_rone, ATL_rnone,ATL_rone, ATL_rnone, \
                                    ATL_rone, ATL_rnone,ATL_rone, ATL_rnone})
-@beginskip
-   #define ATL_VONENP (ATL_VTYPE){ATL_rnone, ATL_rone,ATL_rnone, ATL_rone,\
-                                  ATL_rnone, ATL_rone,ATL_rnone, ATL_rone, \
-                                  ATL_rnone, ATL_rone,ATL_rnone, ATL_rone, \
-                                  ATL_rnone, ATL_rone,ATL_rnone, ATL_rone}
-@endskip
 #elif ATL_VLEN == 32
    #define ATL_CXVLEN 16
    #define ATL_CXVLSH 4
@@ -13702,14 +13728,6 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
                                   ATL_rone, ATL_rnone,ATL_rone, ATL_rnone, \
                                   ATL_rone, ATL_rnone,ATL_rone, ATL_rnone, \
                                   ATL_rone, ATL_rnone,ATL_rone, ATL_rnone}
-   #define ATL_VONENP (ATL_VTYPE){ATL_rnone, ATL_rone,ATL_rnone, ATL_rone,\
-                                  ATL_rnone, ATL_rone,ATL_rnone, ATL_rone, \
-                                  ATL_rnone, ATL_rone,ATL_rnone, ATL_rone, \
-                                  ATL_rnone, ATL_rone,ATL_rnone, ATL_rone, \
-                                  ATL_rnone, ATL_rone,ATL_rnone, ATL_rone, \
-                                  ATL_rnone, ATL_rone,ATL_rnone, ATL_rone, \
-                                  ATL_rnone, ATL_rone,ATL_rnone, ATL_rone, \
-                                  ATL_rnone, ATL_rone,ATL_rnone, ATL_rone}
 #else
    #error "unsupported VLEN!"
 #endif
@@ -13717,17 +13735,24 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 /*
  * Define ld/st I, 0 < I < VLEN/2, I=1 always present (scalar complex ld/st)
  */
-#if ATL_VLEN == 2  /* 1 vec == 1 complex number: DCPLX&(SSE2||SVX) or gnuvec */
+#if ATL_VLEN == 2  /* 1 vec == 1 complex number: DCPLX&(SSE2||VSX) or gnuvec */
    #define ATL_vcxld1(r_, p_) ATL_vld(r_, p_)
    #define ATL_vcxuld1(r_, p_) ATL_vuld(r_, p_)
    #define ATL_vcxst1(p_, r_) ATL_vst(p_, r_)
    #define ATL_vcxust1(p_, r_) ATL_vust(p_, r_)
-#elif ATL_VLEN >= 4   /* gnuvec or DCPLX & AVX or SCPLX & (SVX || SSE) */
-   #if defined(ATL_SVX) && defined(ATL_SREAL)
-      #define ATL_vcxld1(r_, p_)
-      #define ATL_vcxuld1(r_, p_)
-      #define ATL_vcxst1(p_, r_)
-      #define ATL_vcxust1(p_, r_)
+#elif ATL_VLEN >= 4   /* gnuvec or DCPLX & AVX or SCPLX & (VSX || SSE) */
+   #if defined(ATL_VSX00) && defined(SCPLX) /* gnuvec wrks, better perf */
+      #define ATL_vcxuld1(r_, p_) \
+      {  ATL_VTYPE t0_, t1_;\
+         t0_ = vec_splats(*(p_)); \
+         t1_ = vec_splats((p_)[1]); \
+         t0_ = vec_vmrglw(t0_, t1_); \
+         ATL_vzero(r_); \
+         r_ = vec_xxpermdi(t0_, r_, 0); \
+      }
+      #define ATL_vcxld1(r_, p_) ATL_vcxuld1(r_, p_)
+      #define ATL_vcxust1(p_, r_) { *(p_) = r_[0]; (p_)[1] = r_[1]; }
+      #define ATL_vcxst1(p_, r_) ATL_vcxust1(p_, r_)
    #elif defined(ATL_AVX) && defined(DCPLX)
       #define ATL_vcxld1(r_, p_) \
       { \
@@ -13953,14 +13978,15 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    #endif
 #endif
 /*
- * Define ATL_vcxswapRI, ATL_vcxsplitRI and ATL_vcxdotcomb.
+ * Define ATL_vcxswapRI, ATL_vcxsplitRI.
  * Define ATL_vcxsplitRIld if you dont want vld/splitRI version.
  * Define ATL_vcxdotcomb & ATL_vcxPrepAlpha if you don't want to use 
- * system-indep (slow) versions.
+ * system-indep (slow) versions.  ATL_vcxdotcomb has a fast sys-indep
+ * version for VLEN==2.
  */
 #ifdef ATL_VSX
    #ifdef SCPLX
-      #define ATL_vcxswapRI(d_, s_) d_ = vec_perm(s_, (vector unsigned char) \
+      #define ATL_vcxswapRI(d_, s_) d_ = vec_perm(s_,s_,(vector unsigned char) \
          {4, 5, 6, 7, 0, 1, 2, 3, 12, 13, 14, 15, 8, 9, 10, 11})
       #if ATL_FULLGCCVSX   /* not supported by older gcc (eg. 4.8) */
          #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */ \
@@ -13969,6 +13995,15 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
                                           (vector unsigned int) (rXi_)); \
             rXi_ = (ATL_VTYPE) vec_mergeo((vector unsigned int)(rXi_),\
                                           (vector unsigned int)(rXi_)); \
+         }
+         #define ATL_vcxdotcomb(rR_, rI_) /* low 2 elts rR_ gets ans */ \
+         {  ATL_VTYPE t1_;\
+            ATL_vmul(rR_, rR_, ATL_VONEPN); \
+            t1_ = vec_vmrglw(rR_, rI_); \
+            rR_ = vec_vmrghw(rR_, rI_); \
+            ATL_vadd(rR_, rR_, t1_); \
+            t1_ = vec_xxpermdi(rR_, rR_, 2); \
+            ATL_vadd(rR_, rR_, t1_); \
          }
       #else
 /*
@@ -14084,11 +14119,6 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       }
    #endif
    #define ATL_vcxswapRI(d_, s_) d_ = _mm_shuffle_pd(s_, s_, 5);
-   #define ATL_vcxPrepAlpha(rALn_, rALs_) /* rALs={ral,-ial}*(VLEN/2) */ \
-   { \
-      ATL_vmul(rALs_, rALn_, ATL_VONEPN); \
-      ATL_vcxswapRI(rALs_, rALs_); \
-   }
 #elif defined(ATL_SSE1) && defined(SCPLX)
    #ifdef ATL_SSE3
       #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */ \
@@ -14220,20 +14250,28 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
  * brute-force alpha prep works on any gcc-compat compiler & vec ISA
  */
 #ifndef ATL_vcxPrepAlpha
-   #define ATL_vcxPrepAlpha(rALn_, rALs_) /* rALs={ral,-ial}*(VLEN/2) */ \
-   { \
-      TYPE mr_[ATL_VLEN] __attribute__ ((aligned (ATL_VLENb)));\
-      TYPE a0_, a1_; int i_; \
-      ATL_vst(mr_, rALn_); \
-      a0_ = *(mr_); a1_ = mr_[1]; \
-      for (i_=2; i_ < ATL_VLEN; i_ += 2) \
-      { mr_[i_] = a0_; mr_[i_+1] = a1_; } \
-      ATL_vld(rALn_, mr_); \
-      a0_ = -a1_; a1_ = *(mr_); \
-      for (i_=0; i_ < ATL_VLEN; i_ += 2) \
-      { mr_[i_] = a0_; mr_[i_+1] = a1_; } \
-      ATL_vld(rALs_, mr_); \
-   }
+   #if ATL_VLEN == 2  /* case that can be vec wt predef ops */
+      #define ATL_vcxPrepAlpha(rALn_, rALs_) /* rALs={ral,-ial}*(VLEN/2) */ \
+      { \
+         ATL_vmul(rALs_, rALn_, ATL_VONEPN); \
+         ATL_vcxswapRI(rALs_, rALs_); \
+      }
+   #else
+      #define ATL_vcxPrepAlpha(rALn_, rALs_) /* rALs={ral,-ial}*(VLEN/2) */ \
+      { \
+         TYPE mr_[ATL_VLEN] __attribute__ ((aligned (ATL_VLENb)));\
+         TYPE a0_, a1_; int i_; \
+         ATL_vst(mr_, rALn_); \
+         a0_ = *(mr_); a1_ = mr_[1]; \
+         for (i_=2; i_ < ATL_VLEN; i_ += 2) \
+         { mr_[i_] = a0_; mr_[i_+1] = a1_; } \
+         ATL_vld(rALn_, mr_); \
+         a0_ = -a1_; a1_ = *(mr_); \
+         for (i_=0; i_ < ATL_VLEN; i_ += 2) \
+         { mr_[i_] = a0_; mr_[i_+1] = a1_; } \
+         ATL_vld(rALs_, mr_); \
+      }
+   #endif
 #endif
 /*
  * brute force combine that will work on any gcc-compatible compiler/vec ISA
