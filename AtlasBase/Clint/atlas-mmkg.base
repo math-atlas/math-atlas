@@ -3,14 +3,130 @@ Should be called with VEC=[NO,MDIM,KDIM], and following defines:
    mu : m (scalar) unrolling
    nu : n (scalar) unrolling
    ku : k (scalar) unrolling
-   VL : vector length to use
+   vl : vector length to use
 The following can be optionally defined:
-   kb : [runtime] run-time constant K loop bound to use
+   kb : compile-time constant K loop bound to use
+   kp : # of kits to peel, must be a multiple of vku!
 @endkip
-@ifdef mu
-   @VEC MDIM
-      
-   @define mu 
-@VEC NO MDIM KDIM
-#define ATL_VLEN @(VL)
+@ifdef ! vl
+   @error "vl must be defined!"
+@endifdef
+@ifdef ! mu
+   @error "mu must be defined!"
+@endifdef
+@ifdef ! nu
+   @error "nu must be defined!"
+@endifdef
+@ifdef ! ku
+   @error "ku must be defined!"
+@endifdef
+@ifdef ! kb
+   @define kb @0@
+@endifdef
+@iexp vku @(ku) 0 +
+@iexp vmu @(mu) 0 +
+@iexp vnu @(nu) 0 +
+@VEC MDIM
+   @iexp vmu @(vl) @(mu) /
+   @iexp kk @(vmu) @(vl) *
+   @iif kk ! mu
+      @error "MU=@(mu) illegal with VLEN=@(vl)!"
+   @endiif
+@VEC KDIM
+   @iexp vku @(vl) @(ku) /
+   @iexp kk @(vku) @(vl) *
+   @iif kk ! ku
+      @error "KU=@(ku) illegal with VLEN=@(vl)!"
+   @endiif
+@VEC NO
+   @iif vl ! 1
+      @error "vl must be 1 for scalar code!"
+   @endiif
+@VEC !
+@define KB @K@
+@ifdef ! kp
+   @define kp @@(vku)@
+@endifdef
+@iif kp < 1
+   @error "K-peel (kp) must be >= 1!"
+@endiif
+@iexp kk @(ku) @(kp) /
+@iexp kk @(kk) @(ku) *
+@iif kp ! kk
+   @error "K-peel (@(kp)) must be a multiple of KU=@(ku)!"
+@endiif
+@iif kb ! 0
+   @undef KB
+   @define KB @(kb)
+   @iexp kk @(vku) @(kb) /
+   @iexp kk @(kk) @(vku) *
+   @iif kk ! @(kb)
+      @error "VKU=@(vku) must be multiple of @(ku)!"
+   @endiif
+@endiif
+@iif kb = 0
+#ifndef ATL_MM_KB 
+   #ifdef KB
+      #if KB == 0
+         #define ATL_KBCONST 0
+         #define ATL_MM_KB K
+      #else
+         #define ATL_KBCONST 1
+         #define ATL_MM_KB KB
+      #endif
+   #else
+      #define ATL_KBCONST 0
+      #define ATL_MM_KB K
+   #endif
+#else
+   #define ATL_KBCONST 1
+#endif
+@endiif
+#define ATL_VLEN @(vl)
 #include "atlas_simd.h"
+void ATL_USERMM
+(
+   ATL_CSZT nmus,
+   ATL_CSZT nnus,
+   ATL_CSZT K,
+   const TYPE *pA,    /* @(mu)*KB*nmus-length access-major array of A */
+   const TYPE *pB,    /* @(nu)*KB*nnus-length access-major array of B */
+   TYPE *pC,          /* @(mu)*@(nu)*nnus*nmus-length access-major array of C */
+   const TYPE *pAn,   /* next block of A */
+   const TYPE *pBn,   /* next block of B */
+   const TYPE *pCn    /* next block of C */
+)
+/*
+ * Performs a GEMM operation on a @(mu)x@(nu) (@(vmu)x@(vnu)) unrll&jammed GEMM,
+ * with K loop unrolled by @(ku) (@(vku)).
+@iif kb = 0
+ * You may set compile-time constant K dim by defining ATL_MM_KB.
+@endiif
+ */
+{
+   @declare "   register TYPE " y n ";"
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         rB@(j)
+         @iexp i 0 0 +
+         @iwhile i < @(mu)
+            rC@(i)@(j)
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+      @iexp i 0 0 +
+      @iwhile i < @(mu)
+         rA@(i)
+         @iexp i @(i) 1 +
+      @endiwhile
+   @enddeclare
+   const TYPE *pB0 = pB;
+   const TYPE *pfA;
+   size_t incPF;
+   size_t i, j, k;
+   #if ATL_KBCONST == 0
+      size_t incAm = @(mu)*K;
+   #else
+      #define incAm (@(mu)*ATL_MM_KB)
+   #endif

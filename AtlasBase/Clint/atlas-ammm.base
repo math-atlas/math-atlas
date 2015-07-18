@@ -13027,7 +13027,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 #ifndef ATLAS_SIMD_H
    #define  ATLAS_SIMD_H 1
 #ifdef ATL_ARCH_ARM64
-   #define ATL_VARM1
+   #define ATL_VECARM1 1
 #endif
 //#undef ATL_AVX
 //#undef ATL_SSE3
@@ -13079,7 +13079,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          #define ATL_VLEN 2
       #endif
 @multidef vl    2   2    4      4     2
-@whiledef sv SSE1 SSE2 AVX AVXMAC VARM1
+@whiledef sv SSE1 SSE2 AVX AVXMAC VECARM1
    @iexp vl2 @(vl) @(vl) +
    #elif defined(ATL_@(sv))
       #if defined(SREAL) || defined(SCPLX)
@@ -13211,7 +13211,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          d_ = vec_add(d_, s_) ; \
       }
    #endif
-#elif defined(ATL_VARM1)
+#elif defined(ATL_VECARM1)
    #include "arm_neon.h"
    #if defined(SREAL) || defined(SCPLX)
       #define ATL_VTYPE float32x4_t
@@ -13220,22 +13220,29 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    #endif
    #if defined(SREAL) || defined(SCPLX)
       #define ATL_vzero(v_) v_ = vdupq_n_f32(ATL_rzero)
-      #define ATL_vbcast(v_, p_) v_ =  vdupq_n_f32(*(p_))
+      #define ATL_vbcast(v_, p_) v_ =  vld1q_f32(p_)
       #define ATL_vld(v_, p_) v_ = vld1q_f32(p_)
       #define ATL_vst(p_, v_) vst1q_f32(p_, v_)
       #define ATL_vadd(d_, s1_, s2_) d_ = vaddq_f32(s1_, s2_)
       #define ATL_vmul(d_, s1_, s2_) d_ = vmulq_f32(s1_, s2_)
       #define ATL_vmac(d_, s1_, s2_) d_ = vfmaq_f32(d_, s1_, s2_)
-      /* #define ATL_vrsum1(d_, s_)  */
+      #define ATL_vrsum1(d_, s_) \
+      {  ATL_VTYPE t4_; float32x2_t t2_; \
+         t4_ = vpaddq_f32(s_, s_); \
+         t2_ = vget_low_f32(t4_); \
+         t2_ = vpadd_f32(t2_, t2_); \
+         d_ = vget_lane_f32(t2_, 0); \
+      }
    #else  /* double */
       #define ATL_vzero(v_) v_ = vdupq_n_f64(ATL_rzero)
-      #define ATL_vbcast(v_, p_) v_ =  vdupq_n_f64((*p_))
+@skip      #define ATL_vbcast(v_, p_) v_ =  vdupq_n_f64((*p_))
+      #define ATL_vbcast(v_, p_) v_ =  vld1q_f64(p_)
       #define ATL_vld(v_, p_) v_ = vld1q_f64(p_)
       #define ATL_vst(p_, v_) vst1q_f64(p_, v_)
       #define ATL_vadd(d_, s1_, s2_) d_ = vaddq_f64(s1_, s2_)
       #define ATL_vmul(d_, s1_, s2_) d_ = vmulq_f64(s1_, s2_)
       #define ATL_vmac(d_, s1_, s2_) d_ = vfmaq_f64(d_, s1_, s2_)
-      /* #define ATL_vrsum1(d_, s_)  */
+      #define ATL_vrsum1(d_, s_) d_ = vget_low_f64(vpaddq_f64(s_, s_));
    #endif
    #define ATL_vuld(v_, p_) ATL_vld(v_, p_)
    #define ATL_vust(p_, v_) ATL_vst(p_, v_)
@@ -13731,7 +13738,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 /*
  * Define ld/st I, 0 < I < VLEN/2, I=1 always present (scalar complex ld/st)
  */
-#if ATL_VLEN == 2  /* 1 vec == 1 complex number: DCPLX&(SSE2||VSX) or gnuvec */
+#if ATL_VLEN == 2  /* 1 vec == 1 complex: DCPLX&(SSE2||VSX||ARM) or gnuvec */
    #define ATL_vcxld1(r_, p_) ATL_vld(r_, p_)
    #define ATL_vcxuld1(r_, p_) ATL_vuld(r_, p_)
    #define ATL_vcxst1(p_, r_) ATL_vst(p_, r_)
@@ -13748,6 +13755,12 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       }
       #define ATL_vcxld1(r_, p_) ATL_vcxuld1(r_, p_)
       #define ATL_vcxust1(p_, r_) { *(p_) = r_[0]; (p_)[1] = r_[1]; }
+      #define ATL_vcxst1(p_, r_) ATL_vcxust1(p_, r_)
+   #elif defined(ATL_VECARM1) && defined (SCPLX)
+      #define ATL_vcxuld1(r_, p_) \
+         r_ = vcombine_f32(vld1_f32(p_), vdup_n_f32(0.0f))
+      #define ATL_vcxust1(p_, r_) vst1_f32(p_, vget_low_f32(r_))
+      #define ATL_vcxld1(r_, p_) ATL_vcxuld1(r_, p_)
       #define ATL_vcxst1(p_, r_) ATL_vcxust1(p_, r_)
    #elif defined(ATL_AVX) && defined(DCPLX)
       #define ATL_vcxld1(r_, p_) \
@@ -14032,6 +14045,67 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       { \
          rXr_ = vec_splats(*(pX_)); \
          rXi_ = vec_splats(*((pX_)+1)); \
+      }
+   #endif
+#elif defined(ATL_VECARM1)
+   #ifdef SCPLX
+      #if 0
+      #define ATL_vcxsplitRIld(rXr_, rXi_, pX_) \
+      { unsigned long long *lp_=(void*)(pX_), l0_, l1_, rl0_, il0_, rl1_, il1_;\
+         l0_ = *lp_;                /* l0 = {i0, r0}   :: cycle 0 */\
+         l1_ = lp_[1];              /* l1 = {i1, r1}   :: cycle 0 */\
+         rl0_ = l0_ << 32;          /* rl0= {r0,  0}   :: cycle 1 */\
+         il0_ = l0_ >> 32;          /* il0= { 0, i0}   :: cycle 1*/\
+         rl1_ = l1_ << 32;          /* rl1= {r1,  0}   :: cycle 2*/\
+         il1_ = l1_ >> 32;          /* il1= { 0, i1}   :: cycle 2*/\
+         rl0_ |= (rl0_>> 32);       /* rl0= {r0, r0}   :: cycle 3*/\
+         il0_ |= (il0_<< 32);       /* il0= {i0, i0}   :: cycle 3*/\
+         rl1_ |= (rl1_>> 32);       /* rl1= {r1, r1}   :: cycle 4*/\
+         il1_ |= (il1_<< 32);       /* il1= {i1, i1}   :: cycle 4*/\
+         rXr_ = vcombine_f32(vreinterpret_f32_u64(rl0_), \
+                             vreinterpret_f32_u64(rl1_)); /* cycle 5 */\
+         rXi_ = vcombine_f32(vreinterpret_f32_u64(il0_), \
+                             vreinterpret_f32_u64(il1_)); /* cycle 6 */\
+      }
+      #endif
+
+      #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */  \
+      {  \
+         rXr_ = vtrn1q_f32(rXi_, rXi_); \
+         rXi_ = vtrn2q_f32(rXi_, rXi_); \
+      }
+      #define ATL_vcxswapRI(d_, s_) \
+         d_ = vreinterpretq_f32_s32(vrev64q_s32(vreinterpretq_s32_f32(s_)))
+      #define ATL_vcxdotcomb(rR_, rI_) /* low 2 elts rR_ gets ans */ \
+      { \
+         ATL_vmul(rR_, rR_, ATL_VONEPN); \
+         rR_ = vpaddq_f32(rR_, rI_); \
+         rR_ = vpaddq_f32(rR_, rR_); \
+      }
+      #define ATL_vcxPrepAlpha(rALn_, rALs_) /* rALs={ral,-ial}*(VLEN/2) */ \
+      { \
+         rALn_ = vreinterpretq_f32_u64(vdupq_lane_u64(\
+                    vreinterpret_u64_f32(vget_low_f32(rALn_)),0)); \
+         ATL_vmul(rALs_, rALn_, ATL_VONEPN); \
+         ATL_vcxswapRI(rALs_, rALs_); \
+      }
+   #else
+      #define ATL_vcxsplitRI(rXr_, rXi_)  /* rXi input & output */  \
+      { \
+         rXr_ = vdupq_laneq_f64(rXi_, 0); \
+         rXi_ = vdupq_laneq_f64(rXi_, 1); \
+      }
+      #define ATL_vcxswapRI(d_, s_) \
+         d_ = vcombine_f64(vget_high_f64(s_),vget_low_f64(s_))
+      #define ATL_vcxdotcomb(rR_, rI_) /* low 2 elts rR_ gets ans */ \
+      { \
+         ATL_vmul(rR_, rR_, ATL_VONEPN); \
+         rR_ = vpaddq_f64(rR_, rI_); \
+      }
+      #define ATL_vcxPrepAlpha(rALn_, rALs_) /* rALs={ral,-ial}*(VLEN/2) */ \
+      { \
+         ATL_vmul(rALs_, rALn_, ATL_VONEPN); \
+         ATL_vcxswapRI(rALs_, rALs_); \
       }
    #endif
 #elif defined(ATL_AVXMAC) || defined(ATL_AVX)
