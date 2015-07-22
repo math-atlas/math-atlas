@@ -1,5 +1,23 @@
+@PRE S C
+   @define typ @float@
+@PRE D Z
+   @define typ @double@
+@PRE !
+#define ATL_VLEN @(vl)
+#if !defined(SREAL) && !defined(DREAL) && !defined(SCPLX) && !defined(DCPLX)
+@PRE C `   #define SCPLX 1`
+@PRE S `   #define SREAL 1`
+@PRE D `   #define DREAL 1`
+@PRE Z `   #define DCPLX 1`
+#endif
+#ifndef TYPE
+   #define TYPE @(typ)
+#endif
+#include "atlas_simd.h"
+@skip #include "atlas_prefetch.h"
 @beginskip
-Should be called with VEC=[NO,MDIM,KDIM], and following defines:
+Should be called with VEC=[NO,MDIM,KDIM], TYPE=[SREAL,DREAL] and 
+following defines:
    mu : m (scalar) unrolling
    nu : n (scalar) unrolling
    ku : k (scalar) unrolling
@@ -7,22 +25,28 @@ Should be called with VEC=[NO,MDIM,KDIM], and following defines:
 The following can be optionally defined:
    kb : compile-time constant K loop bound to use
    kp : # of kits to peel, must be a multiple of vku!
-@endkip
+@endskip
 @ifdef ! vl
-   @error "vl must be defined!"
+   @abort "vl must be defined!"
 @endifdef
 @ifdef ! mu
-   @error "mu must be defined!"
+   @abort "mu must be defined!"
 @endifdef
 @ifdef ! nu
-   @error "nu must be defined!"
+   @abort "nu must be defined!"
 @endifdef
 @ifdef ! ku
-   @error "ku must be defined!"
+   @abort "ku must be defined!"
 @endifdef
 @ifdef ! kb
    @define kb @0@
 @endifdef
+@iif kb = 0
+   @addkeys KCON=no
+@endiif
+@iif kb ! 0
+   @addkeys KCON=yes
+@endiif
 @iexp vku @(ku) 0 +
 @iexp vmu @(mu) 0 +
 @iexp vnu @(nu) 0 +
@@ -30,30 +54,53 @@ The following can be optionally defined:
    @iexp vmu @(vl) @(mu) /
    @iexp kk @(vmu) @(vl) *
    @iif kk ! mu
-      @error "MU=@(mu) illegal with VLEN=@(vl)!"
+      @abort "MU=@(mu) illegal with VLEN=@(vl)!"
    @endiif
 @VEC KDIM
    @iexp vku @(vl) @(ku) /
    @iexp kk @(vku) @(vl) *
    @iif kk ! ku
-      @error "KU=@(ku) illegal with VLEN=@(vl)!"
+      @abort "KU=@(ku) illegal with VLEN=@(vl)!"
+   @endiif
+   @iexp kk @(mu) @(nu) *
+   @iexp jj @(vl) @(kk) /
+   @iexp jj @(vl) @(jj) *
+   @iif kk ! jj
+      @abort "MU*NU (@(mu)*@(nu)) must be a multiple of VLEN (@(vl))!"
    @endiif
 @VEC NO
    @iif vl ! 1
-      @error "vl must be 1 for scalar code!"
+      @abort "vl must be 1 for scalar code!"
    @endiif
+@VEC !
+@ifdef ! kp
+   @VEC KDIM `@define kp @@(vl)@`
+   @VEC ! KDIM `@define kp @1@`
+@endifdef
+@VEC KDIM 
+   @iexp vkp @(vl) @(kp) /
+   @iexp kk @(vkp) @(vl) *
+   @iif kk != ku
+      @abort "KP (@(kp)) must be a multiple of ku*VLEN (@(ku)*@(vl))"
+   @endiif
+@VEC ! KDIM
+   @define vkp @@(kp)@
 @VEC !
 @define KB @K@
 @ifdef ! kp
-   @define kp @@(vku)@
+   @VEC KDIM
+      @define kp @@(vl)@
+   @VEC ! KDIM
+      @define kp @@(vku)@
+   @VEC !
 @endifdef
-@iif kp < 1
-   @error "K-peel (kp) must be >= 1!"
+@iif vkp < 1
+   @abort "K-peel (kp) must be >= 1!"
 @endiif
 @iexp kk @(ku) @(kp) /
 @iexp kk @(kk) @(ku) *
 @iif kp ! kk
-   @error "K-peel (@(kp)) must be a multiple of KU=@(ku)!"
+   @abort "K-peel (@(kp)) must be a multiple of KU=@(ku)!"
 @endiif
 @iif kb ! 0
    @undef KB
@@ -61,7 +108,7 @@ The following can be optionally defined:
    @iexp kk @(vku) @(kb) /
    @iexp kk @(kk) @(vku) *
    @iif kk ! @(kb)
-      @error "VKU=@(vku) must be multiple of @(ku)!"
+      @abort "VKU=@(vku) must be multiple of @(ku)!"
    @endiif
 @endiif
 @iif kb = 0
@@ -82,19 +129,114 @@ The following can be optionally defined:
    #define ATL_KBCONST 1
 #endif
 @endiif
-#define ATL_VLEN @(vl)
-#include "atlas_simd.h"
+@VEC ! NO
+#ifdef BETA1
+   #define ATL_vbeta(p_, d_) \
+   { \
+      ATL_vld(rA0, p_); \
+      ATL_vadd(d_, d_, rA0); \
+      ATL_vst(p_, d_); \
+   }
+#elif defined(BETA0)
+   #define ATL_vbeta(p_, d_) ATL_vst(p_, d_)
+#else
+   #define ATL_vbeta(p_, d_) \
+   { \
+      ATL_vld(rA0, p_); \
+      ATL_vsub(d_, d_, rA0); \
+      ATL_vst(p_, d_); \
+   }
+#endif
+@VEC NO KDIM
+   @define ldB @ATL_vld@
+   @iexp bmul @(vl) 0 +
+@VEC MDIM
+   @define ldB @ATL_vbcast@
+   @iexp bmul 1 0 +
+@VEC NO
+   @BEGINPROC storeC spc
+   @beginindent 1 @(spc)
+      @iexp kk 0 0 +
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @iexp i 0 0 +
+         @iwhile i < @(vmu)
+   #ifdef BETA0
+      pC[@(kk)] = rC@(i)_@(j);
+   #elif defined(BETA1)
+      pC[@(kk)] += rC@(i)_@(j);
+   #else
+      pC[@(kk)] = rC@(i)_@(j) - pC[@(kk)];
+   #endif
+            @iexp kk @(kk) 1 +
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+   @endindent
+   @ENDPROC
+@VEC MDIM
+   @BEGINPROC storeC spc
+   @beginindent 1 @(spc)
+      @iexp kk 0 0 +
+      @iexp j 0 0 +
+      @iwhile j < @(nu)
+         @iexp i 0 0 +
+         @iwhile i < @(vmu)
+   ATL_vbeta(pC+@(kk), rC@(i)_@(j));
+            @iexp kk @(kk) @(vl) +
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+   @endindent
+   @ENDPROC
+@VEC KDIM
+   @BEGINPROC storeC spc
+   @beginindent 1 @(spc)
+      @iexp kN @(mu) @(nu) *
+      @iexp k 0 0 +
+      @iwhile k < kN
+         @iexp j @(mu) @(k) /
+         @iexp i @(mu) @(k) %
+         @iexp nn @(k) @(vl) +
+         @declare "   ATL_vvrsum@(vl)(" y n ")"
+            rB0,
+            @iwhile k < @(nn)
+               @iexp jj @(mu) @(k) /
+               @iexp ii @(mu) @(k) %
+               rC@(ii)_@(jj)
+               @iexp k @(k) 1 +
+            @endiwhile
+         @enddeclare
+         @iexp kk @(j) @(mu) *
+         @iexp kk @(kk) @(i) +
+   ATL_vbeta(pC+@(kk), rB0);
+      @endiwhile
+   @endindent
+   @ENDPROC
+@VEC KDIM
+   @iexp incAk @(mu) @(ku) *
+   @iexp incBk @(nu) @(ku) *
+@VEC MDIM NO
+   @iexp incAk @(mu)
+   @iexp incBk @(nu)
+@VEC !
+#ifndef ATL_CSZT
+   #include <stddef.h>
+   #define ATL_CSZT const size_t
+#endif
 void ATL_USERMM
 (
    ATL_CSZT nmus,
    ATL_CSZT nnus,
    ATL_CSZT K,
-   const TYPE *pA,    /* @(mu)*KB*nmus-length access-major array of A */
-   const TYPE *pB,    /* @(nu)*KB*nnus-length access-major array of B */
-   TYPE *pC,          /* @(mu)*@(nu)*nnus*nmus-length access-major array of C */
-   const TYPE *pAn,   /* next block of A */
-   const TYPE *pBn,   /* next block of B */
-   const TYPE *pCn    /* next block of C */
+   const @(typ) *pA, /* @(mu)*KB*nmus-length access-major array of A */
+   const @(typ) *pB, /* @(nu)*KB*nnus-length access-major array of B */
+   @(typ) *pC,   /* @(mu)*@(nu)*nnus*nmus-length access-major array of C */
+   const @(typ) *pAn, /* next block of A */
+   const @(typ) *pBn, /* next block of B */
+   const @(typ) *pCn  /* next block of C */
 )
 /*
  * Performs a GEMM operation on a @(mu)x@(nu) (@(vmu)x@(vnu)) unrll&jammed GEMM,
@@ -104,29 +246,148 @@ void ATL_USERMM
 @endiif
  */
 {
-   @declare "   register TYPE " y n ";"
+   @declare "   register ATL_VTYPE " y n ";"
       @iexp j 0 0 +
-      @iwhile j < @(nu)
+      @iwhile j < @(vnu)
          rB@(j)
          @iexp i 0 0 +
-         @iwhile i < @(mu)
-            rC@(i)@(j)
+         @iwhile i < @(vmu)
+            rC@(i)_@(j)
             @iexp i @(i) 1 +
          @endiwhile
          @iexp j @(j) 1 +
       @endiwhile
       @iexp i 0 0 +
-      @iwhile i < @(mu)
+      @iwhile i < @(vmu)
          rA@(i)
          @iexp i @(i) 1 +
       @endiwhile
    @enddeclare
-   const TYPE *pB0 = pB;
-   const TYPE *pfA;
-   size_t incPF;
-   size_t i, j, k;
+   const @(typ) *pB0 = pB, *pA0 = pA;
+@skip   const @(typ) *pfA;
+   int i, j, k;
    #if ATL_KBCONST == 0
-      size_t incAm = @(mu)*K;
+      size_t incAm = @(mu)*K, incBn = @(nu)*K;
    #else
       #define incAm (@(mu)*ATL_MM_KB)
+      #define incBn (@(nu)*ATL_MM_KB)
    #endif
+
+   @iexp jl @(vnu) -1 +
+   @iexp il @(vmu) -1 +
+   @iif vnu > 2
+      @iexp jpf 0 1 +
+   @endiif
+   @iif vnu < 3
+      @iexp jpf 0 -1 +
+   @endiif
+   @iexp jpf 0 -1 +
+   for (i=0; i < nmus; i++)
+   {
+      @iexp j 0 0 +
+      @iwhile j < @(jl)
+         @iexp kk @(j) @(bmul) *
+      @(ldB)(rB@(j), pB+@(kk));
+         @iexp j @(j) 1 +
+      @endiwhile
+      for (j=0; j < nnus; j++)
+      {
+/*
+ *       Peel K=1 iteration to avoid zero of rCxx and extra add 
+ */
+         ATL_vld(rA0, pA);
+         @iif vmu = 1
+         @(ldB)(rB0, pB);
+         @endiif
+         @iexp i 0 1 +
+         @iwhile i < @(vmu)
+            @iexp kk @(i) @(vl) *
+         ATL_vld(rA@(i), pA+@(kk));
+            @iexp i @(i) 1 +
+         @endiwhile
+            @iexp kk @(jl) @(bmul) *
+         @(ldB)(rB@(jl), pB+@(kk));
+         pA += @(incAk);
+         pB += @(incBk);
+         @iexp j 0 0 +
+         @iwhile j < @(vnu)
+            @iexp i 0 0 +
+            @iwhile i < @(vmu)
+         ATL_vmul(rC@(i)_@(j), rA@(i), rB@(j));
+               @iif j = jl
+                  @iexp kk @(i) @(vl) *
+            ATL_vld(rA@(i), pA+@(kk));
+                  @iif i = il
+            pA += @(incAk);
+                  @endiif
+               @endiif
+               @iif i = il
+                  @iif vnu = 1
+                     @iexp kk @(j) @(bmul) *
+            @(ldB)(rB0, pB);
+            pB += @(bmul);
+                  @endiif
+                  @iif vnu > 1
+                     @iif j ! jl
+                     @iexp kk @(j) @(bmul) *
+            @(ldB)(rB@(j), pB+@(kk));
+                     @endiif
+                  @endiif
+               @endiif
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+         for (k=@(kp); k < K; k += @(ku))
+         {
+         @iexp j 0 0 +
+         @iwhile j < @(vnu)
+            @iexp i 0 0 +
+            @iwhile i < @(vmu)
+            ATL_vmac(rC@(i)_@(j), rA@(i), rB@(j));
+               @iif i = 0
+                  @iif j = 0
+                     @iif vnu > 1
+                        @iexp kk @(jl) @(bmul) *
+               @(ldB)(rB@(jl), pB+@(kk));
+                        @iexp kk @(kk) @(bmul) +
+               pB += @(kk);
+                     @endiif
+                  @endiif
+               @endiif
+               @iif j = jpf
+                  @iif i = 0
+                  ATL_pfl1R(pB+incBn);
+                  @endiif
+                  @iif i = 1
+                  ATL_pfl2R(pA+incAm);
+                  @endiif
+               @endiif
+               @iif j = jl
+                  @iexp kk @(i) @(vl) *
+               ATL_vld(rA@(i), pA+@(kk));
+                  @iif i = il
+               pA += @(incAk);
+                  @endiif
+               @endiif
+               @iif j ! jl
+                  @iif i = il
+                     @iexp kk @(j) @(bmul) *
+               @(ldB)(rB@(j), pB+@(kk));
+                  @endiif
+               @endiif
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+         }
+         @CALLPROC storeC 6
+         @iexp kk @(mu) @(nu) *
+         pC += @(kk);
+         pA = pA0;
+      }  /* end of loop over N */
+      pB = pB0;
+      pA0 += incAm;
+      pA = pA0;
+   }  /* end of loop over M */
+}
