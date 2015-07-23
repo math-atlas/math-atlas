@@ -114,19 +114,25 @@ The following can be optionally defined:
 @iif kb = 0
 #ifndef ATL_MM_KB 
    #ifdef KB
-      #if KB == 0
-         #define ATL_KBCONST 0
-         #define ATL_MM_KB K
-      #else
+      #if KB > 0
          #define ATL_KBCONST 1
          #define ATL_MM_KB KB
+      #else
+         #define ATL_KBCONST 0
+         #define ATL_MM_KB K
       #endif
    #else
       #define ATL_KBCONST 0
       #define ATL_MM_KB K
    #endif
 #else
-   #define ATL_KBCONST 1
+   #if ATL_MM_KB > 0
+      #define ATL_KBCONST 1
+   #else
+      #undef ATL_MM_KB
+      #define ATL_MM_KB K
+      #define ATL_KBCONST 0
+   #endif
 #endif
 @endiif
 @VEC ! NO
@@ -200,8 +206,7 @@ The following can be optionally defined:
          @iexp j @(mu) @(k) /
          @iexp i @(mu) @(k) %
          @iexp nn @(k) @(vl) +
-         @declare "   ATL_vvrsum@(vl)(" y n ")"
-            rB0,
+         @declare "   ATL_vvrsum@(vl)(" y n ");"
             @iwhile k < @(nn)
                @iexp jj @(mu) @(k) /
                @iexp ii @(mu) @(k) %
@@ -211,7 +216,7 @@ The following can be optionally defined:
          @enddeclare
          @iexp kk @(j) @(mu) *
          @iexp kk @(kk) @(i) +
-   ATL_vbeta(pC+@(kk), rB0);
+   ATL_vbeta(pC+@(kk), rC@(i)_@(j));
       @endiwhile
    @endindent
    @ENDPROC
@@ -222,10 +227,193 @@ The following can be optionally defined:
    @iexp incAk @(mu)
    @iexp incBk @(nu)
 @VEC !
+@iexp TWOD 1 0 +
+@iif vmu = 1
+   @iexp TWOD 0 0 +
+@endiif
+@iif vnu = 1
+   @iexp TWOD 0 0 +
+@endiif
+
 #ifndef ATL_CSZT
    #include <stddef.h>
    #define ATL_CSZT const size_t
 #endif
+@beginskip
+Perform initial iteration use vmul.  1-D scheduled to make it obvious
+the non-unit dimension can be directly loaded from memory, rather than
+really using registers.  This allows total number of registers to be:
+   MAX(MU,NU) + 1
+ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
+@endskip
+@BEGINPROC DoIter0
+@SKIP define internal vars, so they can popped off to leave caller unchanged
+   @define DN @0@
+   @define i @0@
+   @define j @0@
+   @define kk @0@
+@SKIP 1-D with NU=1
+   @iif vnu = 1
+      @iexp DN 1 0 +
+         @(ldB)(rB0, pB);
+         pB += @(incBk);
+         @iexp i 0 0 +
+         @iwhile i < @(vmu)
+            @iexp kk @(i) @(vl) *
+         ATL_vld(rC@(i)_0, pA+@(kk));
+         ATL_vmul(rC@(i)_0, rC@(i)_0, rB0);
+            @iexp i @(i) 1 +
+         @endiwhile
+         pA += @(incAk);
+   @endiif
+@SKIP 1-D with MU=1
+   @iif DN = 0
+      @iif vmu = 1
+         @iexp DN 1 0 +
+         ATL_vld(rA0, pA);
+         pA += @(incAk);
+         @iexp j 0 0 +
+         @iwhile j < @(vnu)
+            @iexp kk @(j) @(bmul) *
+         @(ldB)(rC0_@(j), pB+@(kk));
+         ATL_vmul(rC0_@(j), rC0_@(j), rA0);
+            @iexp j @(j) 1 +
+         @endiwhile
+         pB += @(incBk);
+      @endiif
+   @endiif
+@SKIP 2-D case assumes all but last rB already loaded
+   @iif DN = 0
+         ATL_vld(rA0, pA);
+      @iexp i 0 1 +
+      @iwhile i < @(vmu)
+         @iexp kk @(i) @(vl) *
+         ATL_vld(rA@(i), pA+@(kk));
+         @iexp i @(i) 1 +
+      @endiwhile
+            @iexp kk @(jl) @(bmul) *
+         @(ldB)(rB@(jl), pB+@(kk));
+         pA += @(incAk);
+         pB += @(incBk);
+      @iexp j 0 0 +
+      @iwhile j < @(vnu)
+         @iexp i 0 0 +
+         @iwhile i < @(vmu)
+         ATL_vmul(rC@(i)_@(j), rA@(i), rB@(j));
+            @iif j = jl
+                  @iexp kk @(i) @(vl) *
+            ATL_vld(rA@(i), pA+@(kk));
+                  @iif i = il
+            pA += @(incAk);
+                  @endiif
+            @endiif
+            @iif i = il
+               @iif vnu = 1
+                  @iexp kk @(j) @(bmul) *
+            @(ldB)(rB0, pB);
+            pB += @(bmul);
+               @endiif
+               @iif vnu > 1
+                  @iif j ! jl
+                     @iexp kk @(j) @(bmul) *
+            @(ldB)(rB@(j), pB+@(kk));
+                  @endiif
+               @endiif
+            @endiif
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+@SKIP pop our defs so caller's macros of same name aren't changed
+   @undef DN
+   @undef i
+   @undef j
+   @undef kk
+@ENDPROC
+@SKIP Do normal iteration
+@SKIP ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl, jpf
+@BEGINPROC DoIter
+@SKIP define internal vars, so they can popped off to leave caller unchanged
+   @define DN @0@
+   @define i @0@
+   @define j @0@
+   @define kk @0@
+@SKIP 1-D with NU=1
+   @iif vnu = 1
+      @iexp DN 1 0 +
+            @(ldB)(rB0, pB);
+            pB += @(incBk);
+         @iexp i 0 0 +
+         @iwhile i < @(vmu)
+            @iexp kk @(i) @(vl) *
+            ATL_vld(rA0, pA+@(kk));
+            ATL_vmac(rC@(i)_0, rA0, rB0);
+            @iexp i @(i) 1 +
+         @endiwhile
+            pA += @(incAk);
+   @endiif
+@SKIP 1-D with MU=1
+   @iif DN = 0
+      @iif vmu = 1
+         @iexp DN 1 0 +
+            ATL_vld(rA0, pA);
+            pA += @(incAk);
+         @iexp j 0 0 +
+         @iwhile j < @(vnu)
+            @iexp kk @(j) @(bmul) *
+            @(ldB)(rB0, pB+@(kk));
+            ATL_vmac(rC0_@(j), rA0, rB0);
+            @iexp j @(j) 1 +
+         @endiwhile
+            pB += @(incBk);
+      @endiif
+   @endiif
+@SKIP 2-D case assumes all but last rB already loaded
+   @iif DN = 0
+      @iexp j 0 0 +
+      @iwhile j < @(vnu)
+         @iexp i 0 0 +
+         @iwhile i < @(vmu)
+            ATL_vmac(rC@(i)_@(j), rA@(i), rB@(j));
+            @iif i = 0
+               @iif j = 0
+                  @iexp kk @(jl) @(bmul) *
+               @(ldB)(rB@(jl), pB+@(kk));
+               pB += @(incBk);
+               @endiif
+            @endiif
+            @iif j = jpf
+               @iif i = 0
+                  ATL_pfl1R(pB+incBn);
+               @endiif
+               @iif i = 1
+                  ATL_pfl2R(pA+incAm);
+               @endiif
+            @endiif
+            @iif j = jl
+               @iexp kk @(i) @(vl) *
+               ATL_vld(rA@(i), pA+@(kk));
+               @iif i = il
+               pA += @(incAk);
+               @endiif
+            @endiif
+            @iif j ! jl
+               @iif i = il
+                  @iexp kk @(j) @(bmul) *
+               @(ldB)(rB@(j), pB+@(kk));
+               @endiif
+            @endiif
+            @iexp i @(i) 1 +
+         @endiwhile
+         @iexp j @(j) 1 +
+      @endiwhile
+   @endiif
+@SKIP pop our defs so caller's macros of same name aren't changed
+   @undef DN
+   @undef i
+   @undef j
+   @undef kk
+@ENDPROC
 void ATL_USERMM
 (
    ATL_CSZT nmus,
@@ -239,8 +427,10 @@ void ATL_USERMM
    const @(typ) *pCn  /* next block of C */
 )
 /*
- * Performs a GEMM operation on a @(mu)x@(nu) (@(vmu)x@(vnu)) unrll&jammed GEMM,
- * with K loop unrolled by @(ku) (@(vku)).
+ * Performs a GEMM with M,N,K unrolling (& jam) of (@(mu),@(nu),@(ku)).
+@VEC KDIM ` * Vectorization of VLEN=@(vl) along K dim, vec unroll=(@(vmu),@(vnu),@(vku)).`
+@VEC MDIM ` * Vectorization of VLEN=@(vl) along M dim, vec unroll=(@(vmu),@(vnu),@(vku)).`
+@VEC NO   ` * Code is not vectorized (VLEN=@(vl)).`
 @iif kb = 0
  * You may set compile-time constant K dim by defining ATL_MM_KB.
 @endiif
@@ -249,7 +439,9 @@ void ATL_USERMM
    @declare "   register ATL_VTYPE " y n ";"
       @iexp j 0 0 +
       @iwhile j < @(vnu)
-         rB@(j)
+         @iif TWOD ! 0
+            rB@(j)
+         @endiif
          @iexp i 0 0 +
          @iwhile i < @(vmu)
             rC@(i)_@(j)
@@ -257,17 +449,22 @@ void ATL_USERMM
          @endiwhile
          @iexp j @(j) 1 +
       @endiwhile
-      @iexp i 0 0 +
-      @iwhile i < @(vmu)
-         rA@(i)
-         @iexp i @(i) 1 +
-      @endiwhile
+      @iif TWOD = 0
+         rA0 rB0
+      @endiif
+      @iif TWOD ! 0
+         @iexp i 0 0 +
+         @iwhile i < @(vmu)
+            rA@(i)
+            @iexp i @(i) 1 +
+         @endiwhile
+      @endiif
    @enddeclare
    const @(typ) *pB0 = pB, *pA0 = pA;
 @skip   const @(typ) *pfA;
    int i, j, k;
    #if ATL_KBCONST == 0
-      size_t incAm = @(mu)*K, incBn = @(nu)*K;
+      int incAm = @(mu)*K, incBn = @(nu)*K;
    #else
       #define incAm (@(mu)*ATL_MM_KB)
       #define incBn (@(nu)*ATL_MM_KB)
@@ -284,102 +481,23 @@ void ATL_USERMM
    @iexp jpf 0 -1 +
    for (i=0; i < nmus; i++)
    {
+   @iif vmu > 1
       @iexp j 0 0 +
       @iwhile j < @(jl)
          @iexp kk @(j) @(bmul) *
       @(ldB)(rB@(j), pB+@(kk));
          @iexp j @(j) 1 +
       @endiwhile
+   @endiif
       for (j=0; j < nnus; j++)
       {
 /*
  *       Peel K=1 iteration to avoid zero of rCxx and extra add 
  */
-         ATL_vld(rA0, pA);
-         @iif vmu = 1
-         @(ldB)(rB0, pB);
-         @endiif
-         @iexp i 0 1 +
-         @iwhile i < @(vmu)
-            @iexp kk @(i) @(vl) *
-         ATL_vld(rA@(i), pA+@(kk));
-            @iexp i @(i) 1 +
-         @endiwhile
-            @iexp kk @(jl) @(bmul) *
-         @(ldB)(rB@(jl), pB+@(kk));
-         pA += @(incAk);
-         pB += @(incBk);
-         @iexp j 0 0 +
-         @iwhile j < @(vnu)
-            @iexp i 0 0 +
-            @iwhile i < @(vmu)
-         ATL_vmul(rC@(i)_@(j), rA@(i), rB@(j));
-               @iif j = jl
-                  @iexp kk @(i) @(vl) *
-            ATL_vld(rA@(i), pA+@(kk));
-                  @iif i = il
-            pA += @(incAk);
-                  @endiif
-               @endiif
-               @iif i = il
-                  @iif vnu = 1
-                     @iexp kk @(j) @(bmul) *
-            @(ldB)(rB0, pB);
-            pB += @(bmul);
-                  @endiif
-                  @iif vnu > 1
-                     @iif j ! jl
-                     @iexp kk @(j) @(bmul) *
-            @(ldB)(rB@(j), pB+@(kk));
-                     @endiif
-                  @endiif
-               @endiif
-               @iexp i @(i) 1 +
-            @endiwhile
-            @iexp j @(j) 1 +
-         @endiwhile
-         for (k=@(kp); k < K; k += @(ku))
+         @CALLPROC DoIter0
+         for (k=@(kp); k < ATL_MM_KB; k += @(ku))
          {
-         @iexp j 0 0 +
-         @iwhile j < @(vnu)
-            @iexp i 0 0 +
-            @iwhile i < @(vmu)
-            ATL_vmac(rC@(i)_@(j), rA@(i), rB@(j));
-               @iif i = 0
-                  @iif j = 0
-                     @iif vnu > 1
-                        @iexp kk @(jl) @(bmul) *
-               @(ldB)(rB@(jl), pB+@(kk));
-                        @iexp kk @(kk) @(bmul) +
-               pB += @(kk);
-                     @endiif
-                  @endiif
-               @endiif
-               @iif j = jpf
-                  @iif i = 0
-                  ATL_pfl1R(pB+incBn);
-                  @endiif
-                  @iif i = 1
-                  ATL_pfl2R(pA+incAm);
-                  @endiif
-               @endiif
-               @iif j = jl
-                  @iexp kk @(i) @(vl) *
-               ATL_vld(rA@(i), pA+@(kk));
-                  @iif i = il
-               pA += @(incAk);
-                  @endiif
-               @endiif
-               @iif j ! jl
-                  @iif i = il
-                     @iexp kk @(j) @(bmul) *
-               @(ldB)(rB@(j), pB+@(kk));
-                  @endiif
-               @endiif
-               @iexp i @(i) 1 +
-            @endiwhile
-            @iexp j @(j) 1 +
-         @endiwhile
+            @CALLPROC DoIter
          }
          @CALLPROC storeC 6
          @iexp kk @(mu) @(nu) *
