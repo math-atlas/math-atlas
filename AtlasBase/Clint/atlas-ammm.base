@@ -10326,17 +10326,24 @@ int main(int nargs, char **args)
    return(0);
 }
 @ROUT gmmsearch
+@extract -b @(topd)/cw.inc lang=C -def cwdate 2015
+#include "atlas_misc.h"
+#include "atlas_mmtesttime.h"
 
-ATL_mmnode_t *FindVecVL(char pre, int nb)
+ATL_mmnode_t *FindVecVL(int verb, char pre, int NB)
 /*
  * This search attempts to find both the best VLEN for this platform, and
  * if vectorizing K or M dimension provides the best performance for a problem
  * of roughly nb square.
  */
 {
-   int vl, vlB, kvecB=0;
+   int vl, vlB, kvecB=0, mb, nb, kb, mu=2, nu=2;
    double mf, mfB;
+   char *vtyp;
    ATL_mmnode_t *mmB, *mmN;
+   printf("\nSEARCHING FOR VEC TYPE AND LEN FOR PRE='%c':\n", pre);
+   printf("    MB  NB  KB  VTYP  VLEN            MFLOP\n");
+   printf("   === === ===  ====  ====  ===============\n");
 /*
  * If we know the VLEN based on CPP defined, take that as our minimal VLEN.
  * We don't assume VLEN can't be larger, due to backwards compatability
@@ -10346,29 +10353,39 @@ ATL_mmnode_t *FindVecVL(char pre, int nb)
  */
    vl = GetNativeVLEN(pre);
    vl = Mmax(vl, 2);
-   mmB = GetMMNode();
-   mmB->mu = Mmin(vl, 6);
-   mmB->ku = mmB->nu = 1;
-   MMGetGenString
+   mb = (NB/mu)*mu;
+   nb = (NB/nu)*nu;
+   kb = NB;
+   mmB = MMGetNodeGEN(pre, 0, kb, mu, nu, 1, 1, 0);
+   mfB = TimeMMKernel(2, 3, mmB, pre, mb, nb, kb, 1, 0, 0);
+   printf("  %4d %3d %3d  %4s %5d  %15.0f\n", mb, nb, kb, "SCLR", 1, mfB);
    do
    {
    }
-   while ();
+   while(0);
+   if (mmB->vlen < 2)
+      vtyp = "SCALAR";
+   else if (FLAG_IS_SET(mmB->flag, MMF_KVEC))
+      vtyp = "VEC-K";
+   else 
+      vtyp = "VEC-M";
+   mmB->mflop[3] = mfB;
+   printf("BEST VEC IS '%s', VLEN=%d, MFLOP=%e\n", vtyp, mmB->vlen, mfB);
+   return(mmB);
 }
-@extract -b @(topd)/cw.inc lang=C -def cwdate 2015
-#include "atlas_misc.h"
-#include "atlas_mmtesttime.h"
+
 void GetFlags(int nargs, char **args, char *PRE)
 {
-   *PRE = d;
+   *PRE = 'd';
 }
 int main(int nargs, char **args)
 {
    char pre;
+   int verb=1;
    ATL_mmnode_t *mmb;
 
    GetFlags(nargs, args, &pre);
-   mmb = FindVecVL(char pre, 40);
+   mmb = FindVecVL(verb, pre, 60);
 }
 @ROUT ATL_ammmABC
 #include "atlas_misc.h"
