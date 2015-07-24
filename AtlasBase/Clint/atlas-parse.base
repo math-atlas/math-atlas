@@ -2894,6 +2894,17 @@ void MMvecKFix(ATL_mmnode_t *mp)
 }
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+char *MMGetGenName(char pre, int kb, ATL_mmnode_t *mp)
+{
+   char *rout;
+   rout = malloc(32);
+   assert(rout);
+   /* ATL_<pre>amm<kb>_<vlen>[k,m]_<mu>x<nu>x<ku>.c */
+   sprintf(rout, "ATL_%camm%d_%d%c_%dx%dx%d.c", pre, kb, mp->vlen, 
+           FLAG_IS_SET(mp->flag,MMF_KVEC)?'k':'m', mp->mu, mp->nu, mp->ku);
+   return(rout);
+}
+
 char *MMGetGenString
 (
    char pre,                    /* precision/type prefix */
@@ -2915,14 +2926,39 @@ char *MMGetGenString
       assert(mp->kmaj == mp->vlen);
       assert(mp->ku % mp->vlen == 0);
    }
+   else if (FLAG_IS_SET(mp->flag, MMF_KVEC))
+   {
+      vec = "kdim";
+      assert(mp->ku % mp->vlen == 0);
+   }
    else 
       assert(mp->mu % mp->vlen == 0);
    sprintf(gs, frm, pre, mp->rout, vec, mp->vlen, mp->mu, mp->nu, mp->ku);
    return(gs);
 }
 
+void MMFillInGenStrings(char pre, ATL_mmnode_t *mmb)
+{
+   ATL_mmnode_t *mp;
+
+   if (pre == 'z')
+      pre = 'd';
+   else if (pre == 'c')
+      pre = 's';
+
+   for (mp=mmb; mp; mp = mp->next)
+   {
+      if (mp->ID == 0 && !mp->genstr)
+         mp->genstr = MMGetGenString(pre, mp);
+   }
+}
+
+/*
+ATL_mmnode_t *GetNewGenNode(char pre, int nb, int lat, int mu, int nu, int ku,
+                            int kmaj)
+ */
 ATL_mmnode_t *MMGetNodeGEN(char pre, int flag, int kb, int mu, int nu, int ku, 
-                           int vlen, int KVEC)
+                           int vlen, int KVEC, char *rt)
 {
    ATL_mmnode_t *mp;
 
@@ -2947,11 +2983,9 @@ ATL_mmnode_t *MMGetNodeGEN(char pre, int flag, int kb, int mu, int nu, int ku,
    }
    else if (vlen < 2)
       KVEC=1;
-   /* ATL_<pre>amm<kb>_<vlen>[k,m]_<mu>x<nu>x<ku>.c */
-   mp->rout = malloc(32);
-   assert(mp->rout);
-   sprintf(mp->rout, "ATL_%camm%d_%d%c_%dx%dx%d.c", pre, kb, vlen, KVEC?'k':'m',
-           mu, nu, ku);
+   if (!rt)
+      rt = MMGetGenName(pre, kb, mp);
+   mp->rout = rt;
    mp->genstr = MMGetGenString(pre, mp);
    return(mp);
 }
