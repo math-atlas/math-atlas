@@ -10194,17 +10194,76 @@ ATL_mmnode_t *FindVecVL(int verb, char pre, int NB)
 }
 @endskip
 
+ATL_mmnode_t *SrchMUNUp2(int verb, char pre, int nreg, int nb, int VL, int KVEC)
+{
+   ATL_mmnode_t *mmp;
+   double mf, mfB=0.0;
+   const ku = (KVEC) ? VL : 1;
+   int n, i, j, kb, muB=1, nuB=1;
+
+   assert(nb%VL == 0);
+   mmp = MMGetNodeGEN(pre, 0, nb, 1, 1, ku, 1, KVEC, 
+                      DupString("ATL_Xamm_munu.c"));
+   mmp->rout[4] = pre;
+   mmp->mbB = mmp->nbB = mmp->kbB = nb;
+   mmp->vlen = VL;
+   if (KVEC)
+      mmp->flag |= (1<<MMF_KVEC);
+/*
+ * Try all powers of 2 MU/NU unrollings
+ */
+   printf("Finding best MUxNU case for nb=%d, VLEN=%d, KVEC=%d\n",nb,VL,KVEC);
+   for (i=1; i < nreg; i += i)
+   {
+      for (j=1; j < nreg; j += j)
+      {
+         int mbu, nbu, mu, nu;
+         if (i*j+i+1 > nreg)
+            continue;
+         if (KVEC)  /* vec on K needs mu*nu mult of VLEN */
+         {
+            if ((i*j)%VL)
+               continue;
+            mu = i;
+         }
+         else /* vect on M dim need mu multiple of VLEN */
+         {
+            if (i%VL)
+               continue;
+            mu = i*VL;
+         }
+         nu = j;
+         mmp->mu = mu;
+         mmp->nu = nu;
+         if (mmp->genstr)
+           free(mmp->genstr);
+         mmp->genstr = MMGetGenString(pre, mmp);
+         mf = TimeMMKernel(verb, 1, mmp, pre, nb, nb, nb, 1, 0, -1);
+         printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
+         if (mf > mfB)
+         {
+            muB = mu;
+            nuB = nu;
+            mfB = mf;
+         }
+      }
+   }
+   KillMMNode(mmp);
+   mmp = MMGetNodeGEN(pre, 0, nb, muB, nuB, ku, VL, KVEC, NULL);
+   mmp->mbB = mmp->nbB = mmp->kbB = nb;
+   mmp->mflop[0] = mfB;
+@skip   WriteMMFileWithPath(pre, "res", "gAMMMUNUp2.sum", mmp);
+   printf("BEST POW2 CASE IS MU=%d, NU=%d, MFLOP=%.2f\n\n", 
+          KVEC?muB:muB/VL, nuB, mfB);
+   return(mmp);
+}
+
 ATL_mmnode_t *SrchMUNU(int verb, char pre, int nreg, int nb, int VL, int KVEC)
 {
    ATL_mmnode_t *mmp;
    double mf, mfB=0.0;
    const ku = (KVEC) ? VL : 1;
    int n, i, j, kb, mbB, nbB, kbB, muB=1, nuB=1;
-
-   if (pre == 'z')
-      pre = 'd';
-   else if (pre == 'c')
-      pre = 's';
 
    mmp = MMGetNodeGEN(pre, 0, nb, 1, 1, ku, 1, KVEC, 
                       DupString("ATL_Xamm_munu.c"));
@@ -10341,7 +10400,6 @@ ATL_mmnode_t *FindDefMUNU(int verb, char pre, int nb)
       #endif
       chkNR = 1;
    }
-nreg=8; chkNR=1;
    VL = GetNativeVLEN(pre);
    if (VL < 2)
    {
@@ -10385,6 +10443,7 @@ nreg=8; chkNR=1;
             break;
          KillMMNode(mmM);
          mmM = mp;
+         nreg = nr;
          nr += nr;
       }
    }
@@ -10394,6 +10453,20 @@ nreg=8; chkNR=1;
    if (chkVL)
    {
    }
+   mmK = SrchMUNUp2(verb, pre, nreg, 128, VL, FLAG_IS_SET(mmM->flag,MMF_KVEC));
+   printf("NRML: B=(%d,%d,%d) mu=%d, nu=%d, MFLOP=%.0f\n",
+          mmM->mbB,  mmM->nbB,  mmM->kbB, mmM->mu, mmM->nu, mmM->mflop[0]);
+   printf("POW2: B=(%d,%d,%d) mu=%d, nu=%d, MFLOP=%.0f\n",
+          mmK->mbB,  mmK->nbB,  mmK->kbB, mmK->mu, mmK->nu, mmK->mflop[0]);
+   if (mmK->mflop[0] >= mmM->mflop[0])
+   {
+      printf("TAKING POW2 CASE (%.0f) OVER NEAR-SQUARE SRCH (%.0f).\n",
+             mmK->mflop[0], mmM->mflop[0]);
+      KillMMNode(mmM);
+      mmM = mmK;
+   }
+   else
+      KillMMNode(mmK);
    return(mmM);
 }
 
