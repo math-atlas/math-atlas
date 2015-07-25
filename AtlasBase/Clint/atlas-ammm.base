@@ -10194,13 +10194,30 @@ ATL_mmnode_t *FindVecVL(int verb, char pre, int NB)
 }
 @endskip
 
-ATL_mmnode_t *SrchMUNUp2(int verb, char pre, int nreg, int nb, int VL, int KVEC)
+ATL_mmnode_t *FullSrchMUNU(int flg, int verb, char pre, int nreg, int nb, 
+                           int VL, int KVEC)
 {
+   char fn[32];
    ATL_mmnode_t *mmp;
    double mf, mfB=0.0;
-   const ku = (KVEC) ? VL : 1;
-   int n, i, j, kb, muB=1, nuB=1;
+   const int CHK=(flg&1), ku = (KVEC) ? VL : 1;
+   int n, i, j, mbB, nbB, kbB, muB=1, nuB=1;
+   char ch;
 
+   assert(VL < 1000 && nreg < 1000);  /* don't overflow fn len */
+   if (VL < 2)
+      ch = 'U';
+   else
+      ch = (KVEC) ? 'K':'M';
+   sprintf(fn, "gAMMUR_%c%d_%d.sum", ch, VL, nreg);
+   mmp = ReadMMFileWithPath(pre, "res", fn);
+   if (mmp)
+   {
+      MMFillInGenStrings(pre, mmp);
+      TimeNegMMKernels(0, verb, 0, mmp, pre, 1, 0, -1);
+      WriteMMFileWithPath(pre, "res", fn, mmp);
+      return(mmp);
+   }
    assert(nb%VL == 0);
    mmp = MMGetNodeGEN(pre, 0, nb, 1, 1, ku, 1, KVEC, 
                       DupString("ATL_Xamm_munu.c"));
@@ -10212,13 +10229,14 @@ ATL_mmnode_t *SrchMUNUp2(int verb, char pre, int nreg, int nb, int VL, int KVEC)
 /*
  * Try all powers of 2 MU/NU unrollings
  */
-   printf("Finding best MUxNU case for nb=%d, VLEN=%d, KVEC=%d\n",nb,VL,KVEC);
-   for (i=1; i < nreg; i += i)
+   printf("Finding best MUxNU case for nb=%d, VLEN=%d, KVEC=%d\n",
+          nb, VL, KVEC);
+   for (i=1; i < nreg; i++)
    {
-      for (j=1; j < nreg; j += j)
+      for (j=1; j < nreg; j++)
       {
          int mbu, nbu, mu, nu;
-         if (i*j+i+1 > nreg)
+         if (i*j+Mmin(i,j)+1 > nreg)
             continue;
          if (KVEC)  /* vec on K needs mu*nu mult of VLEN */
          {
@@ -10237,11 +10255,22 @@ ATL_mmnode_t *SrchMUNUp2(int verb, char pre, int nreg, int nb, int VL, int KVEC)
          mmp->nu = nu;
          if (mmp->genstr)
            free(mmp->genstr);
+         mbu = (nb >= mu) ? (nb/mu)*mu : mu;
+         nbu = (nb >= nu) ? (nb/nu)*nu : nu;
          mmp->genstr = MMGetGenString(pre, mmp);
-         mf = TimeMMKernel(verb, 1, mmp, pre, nb, nb, nb, 1, 0, -1);
+         mf = TimeMMKernel(verb, 1, mmp, pre, mbu, nbu, nb, 1, 0, -1);
          printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
+         if (CHK)
+         {
+            assert(!MMKernelFailsTest(pre, mbu, nbu, nb, 1, mmp));
+            assert(!MMKernelFailsTest(pre, mbu, nbu, nb, 0, mmp));
+            assert(!MMKernelFailsTest(pre, mbu, nbu, nb, -1, mmp));
+         }
          if (mf > mfB)
          {
+            mbB = mbu;
+            nbB = nbu;
+            kbB = nb;
             muB = mu;
             nuB = nu;
             mfB = mf;
@@ -10250,21 +10279,136 @@ ATL_mmnode_t *SrchMUNUp2(int verb, char pre, int nreg, int nb, int VL, int KVEC)
    }
    KillMMNode(mmp);
    mmp = MMGetNodeGEN(pre, 0, nb, muB, nuB, ku, VL, KVEC, NULL);
-   mmp->mbB = mmp->nbB = mmp->kbB = nb;
+   mmp->mbB = mbB;
+   mmp->nbB = nbB;
+   mmp->kbB = kbB;
    mmp->mflop[0] = mfB;
-@skip   WriteMMFileWithPath(pre, "res", "gAMMMUNUp2.sum", mmp);
-   printf("BEST POW2 CASE IS MU=%d, NU=%d, MFLOP=%.2f\n\n", 
-          KVEC?muB:muB/VL, nuB, mfB);
+   printf("BEST FULL-SEARCH CASE IS B=(%d,%d,%d), U=%d,%d) MFLOP=%.2f\n\n", 
+          mbB, nbB, kbB, KVEC?muB:muB/VL, nuB, mfB);
+   WriteMMFileWithPath(pre, "res", fn, mmp);
+   return(mmp);
+}
+ATL_mmnode_t *SrchMUNUp2(int flg, int verb, char pre, int nreg, int nb,
+                         int VL, int KVEC)
+{
+   char fn[32];
+   ATL_mmnode_t *mmp;
+   double mf, mfB=0.0;
+   const int CHK=(flg&1), ku = (KVEC) ? VL : 1;
+   int n, i, j, mbB, nbB, kbB, muB=1, nuB=1;
+   char ch;
+
+   if (VL < 2)
+      ch = 'U';
+   else
+      ch = (KVEC) ? 'K':'M';
+   sprintf(fn, "gAMMURP2_%c%d_%d.sum", ch, VL, nreg);
+   mmp = ReadMMFileWithPath(pre, "res", fn);
+   if (mmp)
+   {
+      MMFillInGenStrings(pre, mmp);
+      TimeNegMMKernels(0, verb, 0, mmp, pre, 1, 0, -1);
+      WriteMMFileWithPath(pre, "res", fn, mmp);
+      return(mmp);
+   }
+   mmp = MMGetNodeGEN(pre, 0, nb, 1, 1, ku, 1, KVEC, 
+                      DupString("ATL_Xamm_munu.c"));
+   mmp->rout[4] = pre;
+   mmp->mbB = mmp->nbB = mmp->kbB = nb;
+   mmp->vlen = VL;
+   if (KVEC)
+      mmp->flag |= (1<<MMF_KVEC);
+/*
+ * Try all powers of 2 MU/NU unrollings
+ */
+   printf("Finding best PWR-2 MUxNU case for nb=%d, VLEN=%d, KVEC=%d\n",
+          nb, VL, KVEC);
+   for (i=1; i < nreg; i += i)
+   {
+      for (j=1; j < nreg; j += j)
+      {
+         int mbu, nbu, mu, nu;
+         if (i*j+Mmin(i,j)+1 > nreg)
+            continue;
+         if (KVEC)  /* vec on K needs mu*nu mult of VLEN */
+         {
+            if ((i*j)%VL)
+               continue;
+            mu = i;
+         }
+         else /* vect on M dim need mu multiple of VLEN */
+         {
+            if (i%VL)
+               continue;
+            mu = i*VL;
+         }
+         nu = j;
+         mmp->mu = mu;
+         mmp->nu = nu;
+         if (mmp->genstr)
+           free(mmp->genstr);
+         mbu = (nb >= mu) ? (nb/mu)*mu : mu;
+         nbu = (nb >= nu) ? (nb/nu)*nu : nu;
+         mmp->genstr = MMGetGenString(pre, mmp);
+         mf = TimeMMKernel(verb, 1, mmp, pre, mbu, nbu, nb, 1, 0, -1);
+         printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
+         if (CHK)
+         {
+            assert(!MMKernelFailsTest(pre, mbu, nbu, nb, 1, mmp));
+            assert(!MMKernelFailsTest(pre, mbu, nbu, nb, 0, mmp));
+            assert(!MMKernelFailsTest(pre, mbu, nbu, nb, -1, mmp));
+         }
+         if (mf > mfB)
+         {
+            mbB = mbu;
+            nbB = nbu;
+            kbB = nb;
+            muB = mu;
+            nuB = nu;
+            mfB = mf;
+         }
+      }
+   }
+   KillMMNode(mmp);
+   mmp = MMGetNodeGEN(pre, 0, nb, muB, nuB, ku, VL, KVEC, NULL);
+   mmp->mbB = mbB;
+   mmp->nbB = nbB;
+   mmp->kbB = kbB;
+   mmp->mflop[0] = mfB;
+   printf("BEST POW2 CASE IS B=(%d,%d,%d) U=(%d,%d), MFLOP=%.2f\n\n", 
+          mbB, nbB, kbB, KVEC?muB:muB/VL, nuB, mfB);
+   WriteMMFileWithPath(pre, "res", fn, mmp);
    return(mmp);
 }
 
-ATL_mmnode_t *SrchMUNU(int verb, char pre, int nreg, int nb, int VL, int KVEC)
+ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb, 
+                       int VL, int KVEC)
 {
-   ATL_mmnode_t *mmp;
+   ATL_mmnode_t *mmp, *mmp2;
+   char fn[32];
    double mf, mfB=0.0;
-   const ku = (KVEC) ? VL : 1;
+   const int CHK=(flg&1), ku = (KVEC) ? VL : 1;
    int n, i, j, kb, mbB, nbB, kbB, muB=1, nuB=1;
+   char ch;
 
+   if (flg&2)
+      return(FullSrchMUNU(flg, verb, pre, nreg, nb, VL, KVEC));
+   mmp2 = SrchMUNUp2(flg, verb, pre, nreg, nb, VL, KVEC);
+   assert(VL < 1000 && nreg < 1000);  /* don't overflow fn len */
+   if (VL < 2)
+      ch = 'U';
+   else
+      ch = (KVEC) ? 'K':'M';
+   sprintf(fn, "gAMMUR_%c%d_%d.sum", ch, VL, nreg);
+   mmp = ReadMMFileWithPath(pre, "res", fn);
+   if (mmp)
+   {
+      mmp->next = mmp2;
+      MMFillInGenStrings(pre, mmp);
+      TimeNegMMKernels(0, verb, 0, mmp, pre, 1, 0, -1);
+      WriteMMFileWithPath(pre, "res", fn, mmp);
+      return(mmp);
+   }
    mmp = MMGetNodeGEN(pre, 0, nb, 1, 1, ku, 1, KVEC, 
                       DupString("ATL_Xamm_munu.c"));
    mmp->rout[4] = pre;
@@ -10304,6 +10448,12 @@ ATL_mmnode_t *SrchMUNU(int verb, char pre, int nreg, int nb, int VL, int KVEC)
       mmp->genstr = MMGetGenString(pre, mmp);
       mf = TimeMMKernel(verb, 1, mmp, pre, mbu, nbu, nb, 1, 0, -1);
       printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
+      if (CHK)
+      {
+         assert(!MMKernelFailsTest(pre, mbu, nbu, nb, 1, mmp));
+         assert(!MMKernelFailsTest(pre, mbu, nbu, nb, 0, mmp));
+         assert(!MMKernelFailsTest(pre, mbu, nbu, nb, -1, mmp));
+      }
       if (mf > mfB)
       {
          mbB = mbu;
@@ -10336,6 +10486,12 @@ ATL_mmnode_t *SrchMUNU(int verb, char pre, int nreg, int nb, int VL, int KVEC)
          nbu = (nb >= nu) ? (nb/nu)*nu : nu;
          mf = TimeMMKernel(verb, 1, mmp, pre, mbu, nbu, nb, 1, 0, -1);
          printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
+         if (CHK)
+         {
+            assert(!MMKernelFailsTest(pre, mbu, nbu, nb, 1, mmp));
+            assert(!MMKernelFailsTest(pre, mbu, nbu, nb, 0, mmp));
+            assert(!MMKernelFailsTest(pre, mbu, nbu, nb, -1, mmp));
+         }
          if (mf > mfB)
          {
             muB = i;
@@ -10352,6 +10508,12 @@ ATL_mmnode_t *SrchMUNU(int verb, char pre, int nreg, int nb, int VL, int KVEC)
          mmp->genstr = MMGetGenString(pre, mmp);
          mf = TimeMMKernel(verb, 1, mmp, pre, mbu, nbu, nb, 1, 0, -1);
          printf("   MU=%2d, NU=%2d, MFLOP=%.2f\n", i, j, mf);
+         if (CHK)
+         {
+            assert(!MMKernelFailsTest(pre, mbu, nbu, nb, 1, mmp));
+            assert(!MMKernelFailsTest(pre, mbu, nbu, nb, 0, mmp));
+            assert(!MMKernelFailsTest(pre, mbu, nbu, nb, -1, mmp));
+         }
          if (mf > mfB)
          {
             muB = i;
@@ -10367,30 +10529,83 @@ ATL_mmnode_t *SrchMUNU(int verb, char pre, int nreg, int nb, int VL, int KVEC)
    mmp->nbB = nbB;
    mmp->kbB = kbB;
    mmp->mflop[0] = mfB;
-@skip   WriteMMFileWithPath(pre, "res", "gAMMMUNU.sum", mmp);
-@skip   KillMMNode(mmp);
-   printf("BEST CASE IS MU=%d, NU=%d, MFLOP=%.2f\n\n", 
-          KVEC?muB:muB/VL, nuB, mfB);
+   if (mmp->mflop[0]*1.01 < mmp2->mflop[0])
+   {
+      printf("Taking pow2 srch (%d,%d:%.0f) over square (%d,%d:%.0f)\n",
+             mmp2->mu, mmp2->nu, mmp2->mflop[0],
+             mmp->mu, mmp->nu, mmp->mflop[0]);
+      KillMMNode(mmp);
+      mmp = mmp2;
+   }
+   else
+      mmp->next = mmp2;
+   WriteMMFileWithPath(pre, "res", fn, mmp);
+   printf("BEST CASE IS B=(%d,%d,%d), U=(%d,%d), MFLOP=%.2f\n\n", 
+          mmp->mbB, mmp->nbB, mmp->kbB, 
+          KVEC?mmp->mu:(mmp->mu/VL), mmp->nu, mmp->mflop[0]);
    return(mmp);
 }
 
-ATL_mmnode_t *FindDefMUNU(int verb, char pre, int nb)
+#if 0
+/* this idea doesn't really work */
+int FindKvecXover(int flg, int verb, char pre, int nreg, int VL, int nb)
+/*
+ * On some machines, vectorizing the M dim will win for small problems,
+ * due to not needing to the summation at the end of the K-loop.  However,
+ * once this cost is dominated by the K-loop, K dim vectorization can
+ * start to win, possibly by reducing the C write traffic, as well as
+ * avoiding vec bcast inside the K-loop.
+ *
+ * For finding this crossover, we use best pw2 M/K, since we can be sure
+ * they can always use a pwr2 block factor for direct comparison.  If pwr2
+ * cases are much different than normal, this may cause problems!
+ * IDEA: Read in normal MUNU results, and don't use this test if gap is wide.
+ */
+{
+   ATL_mmnode_t *mmM, *mmK; 
+   double mfM, mfK;
+   int b, b0;
+
+   mmM = SrchMUNUp2(flg, verb, pre, nreg, nb, VL, 0);
+   mmK = SrchMUNUp2(flg, verb, pre, nreg, nb, VL, 1);
+   printf("FINDING NB CROSSOVER FOR M- AND K-VECTORIZATION:");
+   b = Mmax(mmM->mu, mmK->mu);
+   b = Mmax(b, mmM->nu);
+   b = Mmax(b, mmK->nu);
+   b = Mmax(b,16);
+   b0 = b;
+   while (b < 512)
+   {
+      mfM = TimeMMKernel(verb, 0, mmM, pre, b, b, b, 1, 0, -1);
+      mfK = TimeMMKernel(verb, 0, mmK, pre, b, b, b, 1, 0, -1);
+      printf("   B=%d, mflopM=%.0f, mflopK=%.0f\n", b, mfM, mfK);
+      if (mfK > mfM*1.02)
+         break;
+      b += b;
+   }
+   if (b == b0)
+   {
+      printf("K-VECTORIZATION BETTER FROM FIRST BLOCK!\n");
+      b = 1;            /* Kvec always better */
+   }
+   else if (b == 512)
+   {
+      printf("M-VECTORIZATION ALWAYS BETTER\n");
+      b = 0;            /* Kvec never better */
+   }
+   else
+      printf("K-VEC BEGINS WINNING AROUND %d\n", b);
+   return(b);
+}
+#endif
+
+void FindDefMUNU(int flg, int verb, char pre, int nb, int *NREG, int *VLEN)
 {
    ATL_mmnode_t *mp, *mmM, *mmK;
-   int nreg, VL, chkNR=0, chkVL=0;
+   int nreg=(*NREG), VL=(*VLEN), chkNR=0, chkVL=0;
 
-//   mp = ReadMMFileWithPath(pre, "res", "gAMMMUNU.sum");
-   mp = NULL;
-   if (mp)
-   {
-      if (!mp->genstr)
-         mp->genstr = MMGetGenString(pre, mp);
-      if (mp->mflop[0] < 0.0)
-         mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB,mp->kbB,
-                                     1, 0, -1);
-      return(mp);
-   }
-   nreg = GetNumVecRegs(pre);
+   if (nreg < 1)
+      nreg = GetNumVecRegs(pre);
    if (nreg < 1)
    {
       #ifdef ATL_GAS_x8632
@@ -10400,14 +10615,20 @@ ATL_mmnode_t *FindDefMUNU(int verb, char pre, int nb)
       #endif
       chkNR = 1;
    }
-   VL = GetNativeVLEN(pre);
+   if (VL < 1)
+      VL = GetNativeVLEN(pre);
    if (VL < 2)
    {
       VL = (pre == 'c' || pre == 's') ? 4:2;
       chkVL = 1;
    }
-   mmM = SrchMUNU(verb, pre, nreg, nb, VL, 0);
-   mmK = SrchMUNU(verb, pre, nreg, nb, VL, 1);
+/* 
+ * Always do full search for low number of registers, where this is only search
+ */
+   if (!chkNR && nreg > 0 && nreg < 20)
+      flg |= 2;
+   mmM = SrchMUNU(flg, verb, pre, nreg, nb, VL, 0);
+   mmK = SrchMUNU(flg, verb, pre, nreg, nb, VL, 1);
    printf("MVEC: B=(%d,%d,%d) mu=%d, nu=%d, MFLOP=%.0f\n",
           mmM->mbB,  mmM->nbB,  mmM->kbB, mmM->mu, mmM->nu, mmM->mflop[0]);
    printf("KVEC: B=(%d,%d,%d) mu=%d, nu=%d, MFLOP=%.0f\n",
@@ -10421,7 +10642,7 @@ ATL_mmnode_t *FindDefMUNU(int verb, char pre, int nb)
       mmK = mmM;
       mmM = mp;
    }
-   KillMMNode(mmK);
+   KillAllMMNodes(mmK);
 /*
  * If we only guessed a lower bound on # regs, try some searches with
  * increasing regs
@@ -10434,7 +10655,7 @@ ATL_mmnode_t *FindDefMUNU(int verb, char pre, int nb)
              nreg, mmM->mu, mmM->nu, mmM->mflop[0]);
       for (i=0; i < 4; i++)  /* sanity check for stopping */
       {
-         mp = SrchMUNU(verb, pre, nr, nb, VL, KVEC);
+         mp = SrchMUNU(flg, verb, pre, nr, nb, VL, KVEC);
          printf("NREG=%d, U=(%d,%d): MFLOP=%.0f\n", 
                 nr, mp->mu, mp->nu, mp->mflop[0]);
          if (mp->mu*mp->nu + mp->mu + 1 <= (nr>>1)) /* did not use more regs */
@@ -10453,36 +10674,119 @@ ATL_mmnode_t *FindDefMUNU(int verb, char pre, int nb)
    if (chkVL)
    {
    }
-   mmK = SrchMUNUp2(verb, pre, nreg, 128, VL, FLAG_IS_SET(mmM->flag,MMF_KVEC));
-   printf("NRML: B=(%d,%d,%d) mu=%d, nu=%d, MFLOP=%.0f\n",
-          mmM->mbB,  mmM->nbB,  mmM->kbB, mmM->mu, mmM->nu, mmM->mflop[0]);
-   printf("POW2: B=(%d,%d,%d) mu=%d, nu=%d, MFLOP=%.0f\n",
-          mmK->mbB,  mmK->nbB,  mmK->kbB, mmK->mu, mmK->nu, mmK->mflop[0]);
-   if (mmK->mflop[0] >= mmM->mflop[0])
-   {
-      printf("TAKING POW2 CASE (%.0f) OVER NEAR-SQUARE SRCH (%.0f).\n",
-             mmK->mflop[0], mmM->mflop[0]);
-      KillMMNode(mmM);
-      mmM = mmK;
-   }
-   else
-      KillMMNode(mmK);
-   return(mmM);
+   *NREG = nreg;
+   *VLEN = VL;
+#if 0
+/*
+ * Now see if K-vec has a crossover with M-vec
+ */
+   FindKvecXover(flg, verb, pre, nreg, VL, nb);
+#endif
+   KillAllMMNodes(mmM);
 }
 
-void GetFlags(int nargs, char **args, char *PRE)
+void PrintUsage(char *name, int ierr, char *flag)
 {
-   *PRE = 'd';
+   if (ierr > 0)
+      fprintf(stderr, "Bad argument #%d: '%s'\n", ierr,
+              flag?flag:"OUT-OF_ARGUMENTS");
+   else if (ierr < 0)
+      fprintf(stderr, "ERROR: %s\n", flag);
+   fprintf(stderr, "USAGE: %s [flags:\n", name);
+   fprintf(stderr, "   -p [s,d,c,z]: set type/precision prefix (d) \n");
+   fprintf(stderr, "   -r <nreg> : set max # of registers to try\n");
+   fprintf(stderr, "   -V <vlen> : force vector length\n");
+   fprintf(stderr, "   -b <nb>   : set initial block factor to try\n");
+   fprintf(stderr, "   -v <verb> : set verbosity (1)\n");
+   fprintf(stderr, 
+           "   -f <flg>  : bitvec for srch control, add vals you want set:\n");
+   fprintf(stderr, "        1: test all generated kernels\n");
+   fprintf(stderr, "        2: do full MUxNU search\n");
+   fprintf(stderr, "      DEFAULT: all bits unset\n");
+   exit(ierr ? ierr : -1);
 }
+
+void GetFlags(int nargs, char **args, int *FLG, int *VERB, char *PRE, int *NREG,
+              int *VLEN, int *NB)
+{
+   int i, flg=0, nreg=0;
+   char pre = 'd';
+
+   *VERB = 0;
+   *NB = 120;
+   *VLEN = 0;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+
+      switch(args[i][1])
+      {
+      case 'p':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+        pre = tolower(args[i][0]);
+        assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
+        break;
+      case 'V':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         *VLEN = atoi(args[i]);
+         break;
+      case 'f':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         flg = atoi(args[i]);
+         break;
+      case 'r':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         nreg = atoi(args[i]);
+         break;
+      case 'v':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         *VERB = atoi(args[i]);
+         break;
+      case 'b':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         *NB = atoi(args[i]);
+         break;
+      default:
+         PrintUsage(args[0], i, args[i]);
+      }
+   }
+   if (!nreg)
+      nreg = GetNumVecRegs(pre);
+   *PRE = pre;
+   *FLG = flg;
+   *NREG = nreg;
+}
+
 int main(int nargs, char **args)
 {
    char pre;
-   int verb=1, nreg=16, NB=120, VL, muM, nuN, muK, nuK;
-   ATL_mmnode_t *mmM, *mmK;
+   int flg, verb, nreg, VLEN, NB=120, muM, nuN, muK, nuK;
+   ATL_mmnode_t *mp;
 
-   GetFlags(nargs, args, &pre);
+   GetFlags(nargs, args, &flg, &verb, &pre, &nreg, &VLEN, &NB);
 
-   KillMMNode(FindDefMUNU(verb, pre, 120));
+   FindDefMUNU(flg, verb, pre, NB, &nreg, &VLEN);
+   printf("\nNREG=%d, VLEN=%d\n", nreg, VLEN);
+/*
+ * With nreg & vlen set, create output with best K- & M- vectorized code
+ * in standard names with nreg in mp->ivar
+ */
+   mp = SrchMUNU(flg, verb, pre, nreg, NB, VLEN, 0);
+   mp->ivar = nreg;
+   WriteMMFileWithPath(pre, "res", "gmvAMMUR.sum", mp);
+   KillAllMMNodes(mp);
+
+   mp = SrchMUNU(flg, verb, pre, nreg, NB, VLEN, 0);
+   mp->ivar = nreg;
+   WriteMMFileWithPath(pre, "res", "gkvAMMUR.sum", mp);
+   KillAllMMNodes(mp);
 
    return(0);
 }
