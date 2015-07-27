@@ -22,9 +22,9 @@
 #include <stdarg.h>
 
 #define NAMLEN 1024
-#define LNLEN  2048
+#define LNLEN  8192
 #define HANLEN 1024
-#define SUBLEN 1024
+#define SUBLEN 8192
 
 #define F_nFlags     16
 #define F_Case        0
@@ -3193,7 +3193,7 @@ void Extract(EXTENV *OldEnv, WORDS *wp)
 /*
  * Store where my macros begin
  */
-   sprintf(line, "@__MyMacBeg__%d", &EE);
+   sprintf(line, "@__MyMacBeg__%d", (int) &EE);
    PushMacro2(&EE, 0, line, "");
    EE.MyMacBeg = MacroBase;
 
@@ -3249,7 +3249,7 @@ void Extract(EXTENV *OldEnv, WORDS *wp)
 /*
  * Pop MyMacBeg
  */
-   sprintf(line, "__MyMagBeg__%d", &EE);
+   sprintf(line, "__MyMagBeg__%d", (int)&EE);
    PopMacro2(&EE, line);
 
 /*
