@@ -35468,11 +35468,43 @@ gemm(...)
 #else
    #define dumb_prand(is_) ( 0.5 - ((double)rand())/((double)RAND_MAX) )
 #endif
-#include "atlas_misc.h"
+#include <stdio.h>
+#include <stdlib.h>
 #include <assert.h>
 #include <string.h>
 
 
+#ifdef TIME_TRMVK
+   #include "atlas_misc.h"
+#else
+   double ATL_walltime(void);
+   #define ATL_CSZT const size_t
+   #if defined(SREAL) || defined(SCPLX)
+      #define TYPE float
+   #elif defined(DREAL) || defined(DCPLX)
+      #define TYPE double
+   #endif
+   #ifdef SREAL
+      #define ATL_MulBySize(i_) ((i_)<<2)
+      #define ATL_DivBySize(i_) ((i_)>>2)
+   #elif defined(DREAL) || defined(SCPLX)
+      #define ATL_MulBySize(i_) ((i_)<<3)
+      #define ATL_DivBySize(i_) ((i_)>>3)
+   #else
+      #define ATL_MulBySize(i_) ((i_)<<4)
+      #define ATL_DivBySize(i_) ((i_)>>4)
+   #endif
+   #if defined(SCPLX) || defined(DCPLX)
+      #define SHIFT << 1
+      #define TCPLX 1
+   #else
+      #define TREAL 1
+      #define SHIFT
+   #endif
+   #define ATL_Cachelen 128
+   #define ATL_AlignPtr(vp) \
+      (void*) ( ATL_Cachelen + ((((size_t) (vp))>>7)<<7) ) 
+#endif
 #define CINT const int
 
 #ifdef TIME_TRMVK
@@ -35615,7 +35647,7 @@ double GetKmmMflop
    {
       setsz = (mb * nb + kb*(mb+nb));
       vp = malloc(2*ATL_Cachelen + ATL_MulBySize(setsz+EXTRA));
-      ATL_assert(vp);
+      assert(vp);
       A = ATL_AlignPtr(vp);
       B = A + (mb*kb SHIFT);
       C = B + (kb*nb SHIFT);
@@ -35635,7 +35667,7 @@ double GetKmmMflop
          FLSIZE = nset*(setsz+ATL_Cachelen);
          setsz = mb*nb + kb*(mb+nb) + ATL_DivBySize(ATL_Cachelen);
          vp = malloc(ATL_Cachelen + ATL_MulBySize(nset*setsz+EXTRA));
-         ATL_assert(vp);
+         assert(vp);
          setsz = setsz SHIFT;
          A = ATL_AlignPtr(vp);
          B = A + (kb*mb*nset SHIFT);
@@ -35701,7 +35733,7 @@ double GetKmmMflop
          nset = (FLSIZE+i-1)/i;
          FLSIZE = nset * i;
          vp = malloc(6*ATL_Cachelen + ATL_MulBySize(extra+EXTRA) + FLSIZE);
-         ATL_assert(vp);
+         assert(vp);
          ep = ATL_AlignPtr(vp);
          dp = (TYPE*)(((char*)ep) + 2*ATL_Cachelen + ATL_MulBySize(extra));
          if (movA)
@@ -35843,7 +35875,7 @@ double *TimeOnCores(struct kmm_struct *kb)
    attr = malloc(sizeof(pthread_attr_t)*p);
    mflops = malloc(sizeof(double)*p);
    chkin = malloc(sizeof(char)*p);
-   ATL_assert(kp && threads && attr && mflops && chkin);
+   assert(kp && threads && attr && mflops && chkin);
    for (i=0; i < p; i++)   /* init chkin to 0 before starting any threads */
       chkin[i] = 0;        /* when all entries non-zero, all thrds started */
    for (i=0; i < p; i++)
@@ -35917,7 +35949,7 @@ struct kmm_struct *GetFlags(int nargs, char **args, FILE **fpout)
    
    *fpout = NULL;
    kp = malloc(sizeof(struct kmm_struct));
-   ATL_assert(kp);
+   assert(kp);
    kp->pids = NULL;
    kp->p = 1;
    kp->mb = kp->nb = kp->kb = 40;

@@ -545,7 +545,7 @@ void Mjoin(PATL,ammm)
 int Mjoin(PATL,ammm_rk2)
    (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT, const SCALAR,
     const TYPE*,ATL_CSZT,const TYPE*,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT);
-@multidef rt ammmNKM
+@multidef rt ammmNKM ammmKNMK ammmKMNK
 @whiledef rt ammm_1b ammm_rkK ammm_IP ammm_tN ammm_aliased_rkK ammmMNK ammmREC
 int Mjoin(PATL,@(rt))
    (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,ATL_CSZT, const SCALAR,
@@ -5491,7 +5491,7 @@ ATL_mmnode_t *GetGenCases(char pre)
    if (!mb)
    {
       sprintf(ln, "make res/%cgmvAMMUR.sum", pre);
-      system(ln);
+      assert(!system(ln));
       mb = ReadMMFileWithPath(pre, "res", "gmvAMMUR.sum");
       assert(mb);
    }
@@ -5500,7 +5500,7 @@ ATL_mmnode_t *GetGenCases(char pre)
    if (!mp->next)
    {
       sprintf(ln, "make res/%cgkvAMMUR.sum", pre);
-      system(ln);
+      assert(!system(ln));
       mp->next = ReadMMFileWithPath(pre, "res", "gkvAMMUR.sum");
       assert(mp->next);
    }
@@ -5991,12 +5991,6 @@ ATL_mmnode_t *GetNewKCleanGenNode
       ku = vl = kmaj;
       assert((mu*nu)%vl == 0);  /* impossible for legal code */
    }
-   else if (FLAG_IS_SET(kp->flag, MMF_KVEC))
-   {
-      kvec = 1;
-      ku = vl = kp->vlen;
-      assert((mu*nu)%vl == 0);  /* impossible for legal code */
-   }
    else
    {
       if (kp->vlen)
@@ -6007,6 +6001,7 @@ ATL_mmnode_t *GetNewKCleanGenNode
       else
          vl = 1;
    }
+   printf("  TRY: mu=%d, nu=%d, ku=%d, vl=%d, kvec=%d\n", mu, nu, ku, vl, kvec);
    p = MMGetNodeGEN(pre, 0, 0, mu, nu, ku, vl, kvec, NULL);
    p->mbB = mb;
    p->nbB = nb;
@@ -7412,12 +7407,13 @@ ATL_mmnode_t *FindAllKCleaners(ATL_mmnode_t *clnb, ATL_mmnode_t *kp)
       gdb->kbB = kp->kbB;
       while ((mp = FindKCleaner(mp->next, kp)))
       {
-         mp = CloneMMNode(mp);
-         mp->mbB = kp->mbB;
-         mp->nbB = kp->nbB;
-         mp->kbB = kp->kbB;
-         mp->next = gdb;
-         gdb = mp;
+         ATL_mmnode_t *p;
+         p = CloneMMNode(mp);
+         p->mbB = kp->mbB;
+         p->nbB = kp->nbB;
+         p->kbB = kp->kbB;
+         p->next = gdb;
+         gdb = p;
       }
       return(gdb);
    }
@@ -8590,7 +8586,7 @@ ATL_mmnode_t *FindBestSquareCases(char pre, int verb, ATL_mmnode_t *mmb)
 ATL_mmnode_t *FindBestSquareCases(char pre, int verb, int nregs, int maxNB, 
                                   ATL_mmnode_t *mmb)
 {
-   ATL_mmnode_t *mmp, *mmSQ=NULL, *prev=NULL, *gmm;
+   ATL_mmnode_t *mmp, *mmSQ=NULL, *prev=NULL;
    int maxU=0, i;
 
    for (mmp=mmb; mmp; mmp = mmp->next)
@@ -8614,7 +8610,7 @@ ATL_mmnode_t *FindBestSquareCases(char pre, int verb, int nregs, int maxNB,
 
    for (i=4; i <= maxNB; i++)
    {
-      mmp = BestForThisNB(verb, pre, gmm, i, i-1, i+1, 1);
+      mmp = BestForThisNB(verb, pre, mmb, i, i-1, i+1, 1);
       if (mmSQ)
       {
          if (prev->mflop[0] >= mmp->mflop[0])
@@ -10639,6 +10635,7 @@ void PrintUsage(char *name, int ierr, char *flag)
            "   -f <flg>  : bitvec for srch control, add vals you want set:\n");
    fprintf(stderr, "        1: test all generated kernels\n");
    fprintf(stderr, "        2: do full MUxNU search\n");
+   fprintf(stderr, "        4: print # of regs to res/<pre>nreg\n");
    fprintf(stderr, "      DEFAULT: all bits unset\n");
    exit(ierr ? ierr : -1);
 }
@@ -10710,7 +10707,7 @@ int GetMaxNB(int flag, int verb, char pre, ATL_mmnode_t *mp)
    int inc, i, bB=0, badrow=0;
    double mf, mfB=0.0;
 
-   printf("FINDING RANGE OF NB FOR GENKERN MU=%d, N=%d, %cVEC=%d:\n",
+   printf("FINDING RANGE OF NB FOR GENKERN MU=%d, NU=%d, %cVEC=%d:\n",
           mp->mu, mp->nu, FLAG_IS_SET(mp->flag, MMF_KVEC)?'K':'M', mp->vlen);
    inc = Mylcm(mp->mu, mp->nu);
    inc = Mylcm(inc,mp->ku);
@@ -10738,6 +10735,7 @@ int GetMaxNB(int flag, int verb, char pre, ATL_mmnode_t *mp)
 
 void FindInfo(int flag, int verb, char pre, int NB, int *NREG, int *VLEN)
 {
+   const int WNR=(flag&4);
    int nreg=(*NREG), vlen=(*VLEN);
    ATL_mmnode_t *mp, *mpN;
 
@@ -10776,6 +10774,15 @@ void FindInfo(int flag, int verb, char pre, int NB, int *NREG, int *VLEN)
    mp = ReverseMMQ(mp);
    WriteMMFileWithPath(pre, "res", "gkvAMMUR.sum", mp);
    KillAllMMNodes(mp);
+   if (WNR)
+   {
+      FILE *fp;
+      char fn[12];
+      sprintf(fn, "res/%cnreg", pre);
+      fp = fopen(fn, "w");
+      fprintf(fp, "%d\n", nreg);
+      fclose(fp);
+   }
    *VLEN = vlen;
    *NREG = nreg;
 }
@@ -10826,7 +10833,7 @@ int main(int nargs, char **args)
    char pre;
    GetFlags(nargs, args, &flg, &verb, &pre, &nreg, &VLEN, &NB);
    FindInfo(flg, verb, pre, NB, &nreg, &VLEN);
-   DoSquare(flg, verb, pre, nreg, VLEN);
+@skip   DoSquare(flg, verb, pre, nreg, VLEN);
    return(0);
 }
 @ROUT ATL_ammmABC
@@ -13658,7 +13665,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
  * Undefine all vectorization if VLEN=1 (scalar code)!
  */
 #if defined(ATL_FRCGNUVEC) || ATL_VLEN < 2
-@whiledef sv VSX AVXMAC AVX SSE3 SSE2 SSE1
+@whiledef sv VSX AVXMAC AVX SSE3 SSE2 SSE1 VECARM1
    #ifdef ATL_@(sv)
       #undef ATL_@(sv)
    #endif
@@ -13739,11 +13746,11 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    #endif
    #if defined(SREAL) || defined(SCPLX)
       #define ATL_vzero(v_) v_ = vdupq_n_f32(0.0f)
-      #define ATL_vbcast(v_, p_) v_ =  vld1q_f32(p_)
+      #define ATL_vbcast(v_, p_) v_ =  vld1q_dup_f32(p_)
       #define ATL_vld(v_, p_) v_ = vld1q_f32(p_)
       #define ATL_vst(p_, v_) vst1q_f32(p_, v_)
       #define ATL_vadd(d_, s1_, s2_) d_ = vaddq_f32(s1_, s2_)
-      #define ATL_vadd(d_, s1_, s2_) d_ = vsubq_f32(s1_, s2_)
+      #define ATL_vsub(d_, s1_, s2_) d_ = vsubq_f32(s1_, s2_)
       #define ATL_vmul(d_, s1_, s2_) d_ = vmulq_f32(s1_, s2_)
       #define ATL_vmac(d_, s1_, s2_) d_ = vfmaq_f32(d_, s1_, s2_)
       #define ATL_vrsum1(d_, s_) \
@@ -13762,7 +13769,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    #else  /* double */
       #define ATL_vzero(v_) v_ = vdupq_n_f64(0.0)
 @skip      #define ATL_vbcast(v_, p_) v_ =  vdupq_n_f64((*p_))
-      #define ATL_vbcast(v_, p_) v_ =  vld1q_f64(p_)
+      #define ATL_vbcast(v_, p_) v_ =  vld1q_dup_f64(p_)
       #define ATL_vld(v_, p_) v_ = vld1q_f64(p_)
       #define ATL_vst(p_, v_) vst1q_f64(p_, v_)
       #define ATL_vadd(d_, s1_, s2_) d_ = vaddq_f64(s1_, s2_)
@@ -13886,9 +13893,17 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    }
    #ifdef ATL_SSE3
       #define ATL_vrsum1(d_, s_) d_ = _mm_cvtsd_f64(_mm_hadd_pd(s_, s_))
+      #define ATL_vvrsum2(s0_, s1_) s0_ = _mm_hadd_pd(s0_, s1_)
    #else
       #define ATL_vrsum1(d_, s_) \
          d_ = _mm_cvtsd_f64(_mm_add_sd(_mm_unpackhi_pd(s_, s_), s_))
+      #define ATL_vvrsum2(s0_, s1_) \
+      { \
+         __m128d t0_; \
+         t0_ = _mm_unpackhi_pd(s0_, s1_); \
+         s0_ = _mm_unpacklo_pd(s0_, s1_); \
+         ATL_vadd(s0_, s0_, t0_); \
+      }
    #endif
 #elif defined(ATL_SSE1)
    #include <xmmintrin.h>
@@ -13935,6 +13950,19 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          t_ = _mm_add_ps(t_, s_); \
          t_ = _mm_add_ps(t_, _mm_shuffle_ps(t_, t_, 1)); \
          d_ = _mm_cvtss_f32(t_); \
+      }
+      #define ATL_vvrsum4(s0_, s1_, s2_, s3_) \
+      {                                      /*{sXd,  sXc,  sXb,  sXa}*/ \
+         ATL_VTYPE t0_; \
+         t0_ = _mm_unpackhi_ps(s0_,s1_);     /*{s1d,  s0d,  s1c,  s0c}*/\
+         s0_ = _mm_unpacklo_ps(s0_,s1_);     /*{s1b,  s0b,  s1a,  s0a}*/\
+         s1_ = _mm_unpackhi_ps(s2_,s3_);     /*{s3d,  s2d,  s3c,  s2c}*/\
+         ATL_vadd(s0_, s0_, t0_);            /*{s1bd, s0bd, s1ac, s0ac}*/\
+         s2_ = _mm_unpacklo_ps(s2_,s3_);     /*{s3b,  s2b,  s3a,  s2a}*/\
+         ATL_vadd(s2_, s2_, s1_);            /*{s3bd, s2bd, s3ac, s2ac}*/\
+         t0_ = _mm_shuffle_ps(s0_,s2_,0xEE); /*{s3bd, s2bd, s1bd, s0bd}*/\
+         s0_ = _mm_shuffle_ps(s0_,s2_,0x44); /*{s3ac, s2ac, s1ac, s0ac}*/\
+         ATL_vadd(s0_,s0_,t0_);              /*{s3a-d,s2a-d,s1a-d,s0a-d}*/\
       }
    #endif
 #elif ATL_VLEN > 1  /* use gnuvec when atlas knows no VEC ISA */
