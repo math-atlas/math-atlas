@@ -233,45 +233,125 @@ ATL_USERMM:
       mr pB, pB0
       mr NNU, NN0
       NLOOP:
-         lxvd2x rC00, 0, pC
-         lxvd2x rC10, i16, pC
-         lxvd2x rC20, i16_2, pC
-         lxvd2x rC30, i16_3, pC
-         lxvd2x rC40, i16_4, pC
-         lxvd2x rC50, i16_5, pC
-         lxvd2x rC01, i16_6, pC
-         lxvd2x rC11, i16_7, pC
-         lxvd2x rC21, i16_8, pC
-         lxvd2x rC31, i16_9, pC
-         lxvd2x rC41, i16_10, pC
-         lxvd2x rC51, i16_11, pC
-         lxvd2x rC02, i16_12, pC
-         lxvd2x rC12, i16_13, pC
-         lxvd2x rC22, i16_14, pC
-         lxvd2x rC32, i16_15, pC
-         addi pC, pC, 256
-         lxvd2x rC42, 0, pC
-         lxvd2x rC52, i16_1, pC
-         lxvd2x rC03, i16_2, pC
-         lxvd2x rC13, i16_3, pC
-         lxvd2x rC23, i16_4, pC
-         lxvd2x rC33, i16_5, pC
-         lxvd2x rC43, i16_6, pC
-         lxvd2x rC53, i16_7, pC
-         lxvd2x rC04, i16_8, pC
-         lxvd2x rC14, i16_9, pC
-         lxvd2x rC24, i16_10, pC
-         lxvd2x rC34, i16_11, pC
-         lxvd2x rC44, i16_12, pC
-         lxvd2x rC54, i16_13, pC
-         lxvd2x rC05, i16_14, pC
-         lxvd2x rC15, i16_15, pC
-         addi pC, pC, 256
-         lxvd2x rC25, 0, pC
-         lxvd2x rC35, i16_1, pC
-         lxvd2x rC45, i16_2, pC
-         lxvd2x rC55, i16_3, pC
-         addi pC, pC, -512
+/*
+ *       Need to peel to handle beta=0,-1, but I'm too lazy to do it yet
+ */
+         #ifdef BETA0
+            xxlxor rC00, rC00, rC00
+            xxlxor rC10, rC10, rC10
+            xxlxor rC20, rC20, rC20
+            xxlxor rC30, rC30, rC30
+            xxlxor rC40, rC40, rC40
+            xxlxor rC50, rC50, rC50
+            xxlxor rC01, rC01, rC01
+            xxlxor rC11, rC11, rC11
+            xxlxor rC21, rC21, rC21
+            xxlxor rC31, rC31, rC31
+            xxlxor rC41, rC41, rC41
+            xxlxor rC51, rC51, rC51
+            xxlxor rC02, rC02, rC02
+            xxlxor rC12, rC12, rC12
+            xxlxor rC22, rC22, rC22
+            xxlxor rC32, rC32, rC32
+            xxlxor rC42, rC42, rC42
+            xxlxor rC52, rC52, rC52
+            xxlxor rC03, rC03, rC03
+            xxlxor rC13, rC13, rC13
+            xxlxor rC23, rC23, rC23
+            xxlxor rC33, rC33, rC33
+            xxlxor rC43, rC43, rC43
+            xxlxor rC53, rC53, rC53
+            xxlxor rC04, rC04, rC04
+            xxlxor rC14, rC14, rC14
+            xxlxor rC24, rC24, rC24
+            xxlxor rC34, rC34, rC34
+            xxlxor rC44, rC44, rC44
+            xxlxor rC54, rC54, rC54
+            xxlxor rC05, rC05, rC05
+            xxlxor rC15, rC15, rC15
+            xxlxor rC25, rC25, rC25
+            xxlxor rC35, rC35, rC35
+            xxlxor rC45, rC45, rC45
+            xxlxor rC55, rC55, rC55
+         #else
+            lxvd2x rC00, 0, pC
+            lxvd2x rC10, i16, pC
+            lxvd2x rC20, i16_2, pC
+            lxvd2x rC30, i16_3, pC
+            lxvd2x rC40, i16_4, pC
+            lxvd2x rC50, i16_5, pC
+            lxvd2x rC01, i16_6, pC
+            lxvd2x rC11, i16_7, pC
+            lxvd2x rC21, i16_8, pC
+            lxvd2x rC31, i16_9, pC
+            lxvd2x rC41, i16_10, pC
+            lxvd2x rC51, i16_11, pC
+            lxvd2x rC02, i16_12, pC
+            lxvd2x rC12, i16_13, pC
+            lxvd2x rC22, i16_14, pC
+            lxvd2x rC32, i16_15, pC
+            addi pC, pC, 256
+            lxvd2x rC42, 0, pC
+            lxvd2x rC52, i16_1, pC
+            lxvd2x rC03, i16_2, pC
+            lxvd2x rC13, i16_3, pC
+            lxvd2x rC23, i16_4, pC
+            lxvd2x rC33, i16_5, pC
+            lxvd2x rC43, i16_6, pC
+            lxvd2x rC53, i16_7, pC
+            lxvd2x rC04, i16_8, pC
+            lxvd2x rC14, i16_9, pC
+            lxvd2x rC24, i16_10, pC
+            lxvd2x rC34, i16_11, pC
+            lxvd2x rC44, i16_12, pC
+            lxvd2x rC54, i16_13, pC
+            lxvd2x rC05, i16_14, pC
+            lxvd2x rC15, i16_15, pC
+            addi pC, pC, 256
+            lxvd2x rC25, 0, pC
+            lxvd2x rC35, i16_1, pC
+            lxvd2x rC45, i16_2, pC
+            lxvd2x rC55, i16_3, pC
+            addi pC, pC, -512
+            #ifndef BETA1
+               xvnegdp rC00, rC00
+               xvnegdp rC10, rC10
+               xvnegdp rC20, rC20
+               xvnegdp rC30, rC30
+               xvnegdp rC40, rC40
+               xvnegdp rC50, rC50
+               xvnegdp rC01, rC01
+               xvnegdp rC11, rC11
+               xvnegdp rC21, rC21
+               xvnegdp rC31, rC31
+               xvnegdp rC41, rC41
+               xvnegdp rC51, rC51
+               xvnegdp rC02, rC02
+               xvnegdp rC12, rC12
+               xvnegdp rC22, rC22
+               xvnegdp rC32, rC32
+               xvnegdp rC42, rC42
+               xvnegdp rC52, rC52
+               xvnegdp rC03, rC03
+               xvnegdp rC13, rC13
+               xvnegdp rC23, rC23
+               xvnegdp rC33, rC33
+               xvnegdp rC43, rC43
+               xvnegdp rC53, rC53
+               xvnegdp rC04, rC04
+               xvnegdp rC14, rC14
+               xvnegdp rC24, rC24
+               xvnegdp rC34, rC34
+               xvnegdp rC44, rC44
+               xvnegdp rC54, rC54
+               xvnegdp rC05, rC05
+               xvnegdp rC15, rC15
+               xvnegdp rC25, rC25
+               xvnegdp rC35, rC35
+               xvnegdp rC45, rC45
+               xvnegdp rC55, rC55
+            #endif
+         #endif
          lxvd2x rA0, 0, pA
          lxvd2x rA1, i16_1, pA
          lxvd2x rA2, i16_2, pA

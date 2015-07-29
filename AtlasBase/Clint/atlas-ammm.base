@@ -149,6 +149,9 @@ ID=45 MU=8 NU=1 KU=2 AUTH="R. Clint Whaley" ROUT='ATL_kmmm8x1x256_L1pf.S' \
 ID=46 MU=8 NU=6 KU=2 AUTH="R. Clint Whaley" ROUT='ATL_damm8x6x2_fma3.S' \
      SSE=3 VLEN=4 ASM=GAS_x8664 KRUNTIME=1 LDCTOP=1 \
      COMP='gcc' CFLAGS='-x assembler-with-cpp -mavx -mfma'
+ID=47 MU=12 NU=6 KU=2 AUTH="R. Clint Whaley" ROUT='ATL_dammm12x6x2_vsx.S' \
+     VLEN=2 ASM=GAS_PPC KRUNTIME=1 LDCTOP=1 \
+     COMP='gcc' CFLAGS='-x assembler-with-cpp -mcpu=power8 -mvsx'
 @ROUT samcases.idx
 @ROUT samcases.idx
 ID=1 MU=16 NU=4 VLEN=4 KU=1 AUTH="R. Clint Whaley" ROUT='ATL_samm16x4x1_av.c' \
@@ -441,6 +444,7 @@ ID=45 MU=8 NU=1 KU=4 AUTH="R. Clint Whaley" ROUT='ATL_kmmm8x1x256_L1pf.S' \
 @ROUT atlas_amm.h
 #ifndef ATLAS_AMM_H
    #define ATLAS_AMM_H
+#include "atlas_misc.h"
 
 #ifndef ATL_MaxMalloc_MB
    #define ATL_MaxMalloc_MB 2048UL
@@ -510,6 +514,11 @@ struct rkinfo
 
 enum ATL_AMMALG {ATL_amm1b, ATL_ammrkK, ATL_NMK};
 
+void Mjoin(PATL,GetBestKBInfo)
+   (rkinfo_t*,rkinfo_t*,enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,
+    ATL_CSZT,ATL_CSZT,size_t,size_t,size_t,const SCALAR,const SCALAR);
+int Mjoin(PATL,GetSyrkInfo)
+   (amminfo_t*,int, enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,int);
 @whiledef info GetAmmmInfo GetRankKInfo
 int Mjoin(PATL,@(info))
    (amminfo_t *out, enum ATLAS_TRANS TA, enum ATLAS_TRANS TB, ATL_CSZT M, 
@@ -531,6 +540,9 @@ ablk2cmat_t Mjoin(PATL,tGetSyammInfo_K)
    (amminfo_t *out, const int P, enum ATLAS_TRANS TA, ATL_CSZT N, ATL_CSZT K);
 
 
+int Mjoin(PATL,ammm_syrk)
+   (const enum ATLAS_UPLO, const enum ATLAS_TRANS, ATL_CSZT,ATL_CSZT,
+    const SCALAR,const TYPE*,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT);
 void Mjoin(PATL,ammmK)
    (amminfo_t*, const int mb, const int nmu, const int nb, const int nnu, 
     ATL_CINT nfkblks, const int kb, const int kb0, const int KB0, const TYPE *A,
@@ -539,9 +551,19 @@ void Mjoin(PATL,ammmK)
     TYPE *a, ATL_CINT inca, TYPE *b, ATL_CINT incb, TYPE *rC, TYPE *iC, 
     const SCALAR alpA, const SCALAR alpB, const SCALAR alpC, const SCALAR beta);
 
+void Mjoin(PATL,gemm)
+   (const enum ATLAS_TRANS,const enum ATLAS_TRANS,ATL_CINT,ATL_CINT,ATL_CINT, 
+    const SCALAR, const TYPE*,ATL_CINT,const TYPE*,ATL_CINT,const SCALAR,
+    TYPE*,ATL_CINT);
 void Mjoin(PATL,ammm)
    (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT,ATL_CSZT, const SCALAR,
     const TYPE*,ATL_CSZT,const TYPE*,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT);
+#ifdef TREAL
+void Mjoin(PATL,ammmM)(rkinfo_t*,int,int,ammkern_t,TYPE*,ATL_CINT,const TYPE*,
+                       TYPE*,ATL_CINT,const TYPE*,TYPE*,TYPE);
+int Mjoin(PATL,rk4n4)(enum ATLAS_TRANS,ATL_CSZT,const SCALAR,const TYPE*,
+                      ATL_CSZT,const TYPE*,ATL_CSZT,TYPE*,ATL_CSZT);
+#endif
 int Mjoin(PATL,ammm_rk2)
    (enum ATLAS_TRANS,enum ATLAS_TRANS,ATL_CSZT,ATL_CSZT, const SCALAR,
     const TYPE*,ATL_CSZT,const TYPE*,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT);
@@ -10092,8 +10114,8 @@ ATL_mmnode_t *FullSrchMUNU(int flg, int verb, char pre, int nreg, int nb,
 /*
  * Try all MU/NU unrollings
  */
-   printf("Finding best MUxNU case for nb=%d, VLEN=%d, KVEC=%d\n",
-          nb, VL, KVEC);
+   printf("Full search on MUxNU for nb=%d, NREG=%d, VLEN=%d, KVEC=%d\n",
+          nb, nreg, VL, KVEC);
    for (i=1; i < nreg; i++)
    {
       for (j=1; j < nreg; j++)
@@ -10179,8 +10201,8 @@ ATL_mmnode_t *SrchNU(int flg, int verb, char pre, int nreg, int nb, int VL,
 /*
  * Try all powers of 2 MU/NU unrollings
  */
-   printf("Finding best M-VEC MU=%d xNU case for mb=%d, kb=%d, VLEN=%d\n",
-          I, mbu, nb, VL);
+   printf("Searching M-VEC MU=%d xNU case for mb=%d, kb=%d, NREG=%d, VLEN=%d\n",
+          I, mbu, nb, nreg, VL);
    for (j=1; j < nreg; j++)
    {
       int nbu, nu;
@@ -10259,8 +10281,8 @@ ATL_mmnode_t *SrchMUNUp2(int flg, int verb, char pre, int nreg, int nb,
 /*
  * Try all powers of 2 MU/NU unrollings
  */
-   printf("Finding best PWR-2 MUxNU case for nb=%d, VLEN=%d, KVEC=%d\n",
-          nb, VL, KVEC);
+   printf("Searching PWR-2 MUxNU cases for nb=%d, NREG=%d, VLEN=%d, KVEC=%d\n",
+          nb, nreg, VL, KVEC);
    for (i=1; i < nreg; i += i)
    {
       for (j=1; j < nreg; j += j)
@@ -10353,7 +10375,8 @@ ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb,
 /*
  * Try all near-square register blocking cases
  */
-   printf("Finding best MUxNU case for nb=%d, VLEN=%d, KVEC=%d\n",nb,VL,KVEC);
+   printf("Finding best MUxNU case for nb=%d, NREG=%d, VLEN=%d, KVEC=%d\n",
+          nb, nreg, VL, KVEC);
    for (n=4; n < nreg; n++)
    {
       int mbu, nbu, mu, nu;
@@ -13518,9 +13541,9 @@ void Mjoin(PATL,ammm)
 }
 
 void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
-                      const int M, const int N, const int K, const SCALAR alpha,
-                      const TYPE *A, const int lda, const TYPE *B, 
-                      const int ldb, const SCALAR beta, TYPE *C, const int ldc)
+                      ATL_CINT M, ATL_CINT N, ATL_CINT K, const SCALAR alpha,
+                      const TYPE *A, ATL_CINT lda, const TYPE *B, 
+                      ATL_CINT ldb, const SCALAR beta, TYPE *C, ATL_CINT ldc)
 {
    Mjoin(PATL,ammm)(TA, TB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
 }
@@ -13733,7 +13756,8 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          {  ATL_VTYPE t_;\
             t_ =  vec_xxpermdi(s0_, s1_, 0); \
             s0_ = vec_xxpermdi(s0_, s1_, 3); \
-            ATL_vadd(s0_, s0, t_); \
+            ATL_vadd(s0_, s0_, t_); \
+            s0_ = vec_xxpermdi(s0_, s0_, 2); /* pwr8 endian-insanity */ \
          }
       #endif
    #endif
@@ -15776,6 +15800,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 #endif  /* end multiple inclusion guard */
 @ROUT ATL_rk4n4
 #include "atlas_misc.h"
+#include "atlas_amm.h"
 #include "atlas_simd.h"
 #if defined(__GNUC__) || \
     (defined(__STDC_VERSION__) && (__STDC_VERSION__/100 >= 1999))
@@ -16066,6 +16091,7 @@ int Mjoin(PATL,rk4n4)
    return(0);
 }
 @ROUT ATL_ammm_rk2
+#include "atlas_amm.h"
 #include "atlas_misc.h"
 #include "atlas_lvl2.h"
 #include "atlas_level1.h"
@@ -16188,6 +16214,7 @@ int Mjoin(PATL,ammm_rk2)
    return(0);
 }
 @ROUT ATL_cammm_rk2
+#include "atlas_amm.h"
 #include "atlas_misc.h"
 #include "atlas_lvl2.h"
 #include "atlas_level1.h"
@@ -20348,7 +20375,7 @@ void Mjoin(PATL,ammmM) /* C <= beta*C + A*B, B/C nb-wide colpan */
    }
 }
 
-void Mjoin(PATL,ammmKM)/* computes full answer for one column-panel of C */
+static void Mjoin(PATL,ammmKM)/* computes full answer for one col-panel of C */
 (                      /* by looping over both M&K */
    rkinfo_t *rkinf,    /* amm info for kb-width cols */
    rkinfo_t *krinf,    /* amm info for K remainder cols */
@@ -20729,9 +20756,17 @@ void Mjoin(PATL,ammmK)
    if (kb0 != kb)
    {
       amm_b0 = mminf->amm_k1_b0;
-      if ( ATL_AMMFLG_KRUNTIME(mminf->flag) && (mminf->kbmin <= KB0) && 
-           (ATL_AMMFLG_KMAJOR(mminf->flag) || (KB0 == kb0)) )
-         amm_b0 = mminf->amm_b0;
+      if (ATL_AMMFLG_KRUNTIME(mminf->flag) && (mminf->kbmin <= KB0))
+      {
+         int ku = mminf->ku;
+         #if ATL_AMM_MAXKMAJ > 1
+         if (ATL_AMMFLG_KMAJOR(mminf->flag))
+            amm_b0 = mminf->amm_b0;
+         else
+         #endif
+         if ((kb0/ku)*ku == kb0)
+            amm_b0 = mminf->amm_b0;
+      }
       if (amm_b0 != mminf->amm_b0)
       {
          amm_b1 = mminf->amm_k1_b1;
