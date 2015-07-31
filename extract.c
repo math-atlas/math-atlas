@@ -2098,11 +2098,11 @@ int icalc(EXTENV *EE, char line[])
             k--;
             break;
          case 'e': /* less than or equal boolean comparison */
-            istack[k-1] = (istack[k] > istack[k-1]);
+            istack[k-1] = (istack[k] >= istack[k-1]);
             k--;
             break;
          case 'E': /* greater than or equal boolean comparison */
-            istack[k-1] = (istack[k] > istack[k-1]);
+            istack[k-1] = (istack[k] >= istack[k-1]);
             k--;
             break;
          case '&': /* bitwise and */
