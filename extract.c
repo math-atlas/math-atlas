@@ -233,7 +233,7 @@ int WstrcmpN(char *p1, char *p2, int N)
 /*  RETURNS: nonzero if they are equal, else 0                               */
 /*****************************************************************************/
 {
-   while( (*p1++ == *p2++) && (N) ) N--;
+   while( N && (*p1++ == *p2++) ) N--;
    return(!N);
 }
 
@@ -2019,7 +2019,7 @@ void HandleKeyLn(EXTENV *EE, char *line, KEYS *Key)
 void FindKeyMatch(EXTENV *EE, KEYS *Key)
 {
    int j, k, argmatch=0;
-   char line[LNLEN], tline[LNLEN];
+   static char line[LNLEN], tline[LNLEN];
 
    j = Key->HanLen + 1;
    k = EE->Joining;
