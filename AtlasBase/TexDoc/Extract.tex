@@ -592,8 +592,8 @@ extract -b tst2.b -def sub1 joe -def sub2 joe
 \end{verbatim}
 
 
-\subsection{Integer arithmetic ({\tt @iexp})}
-Performs integer arithmetic, and defines a macro which expands to the result.
+\subsection{Integer expressions ({\tt @iexp})}
+Performs integral operations, and defines a macro which expands to the result.  
 The syntax is {\tt @iexp$\diamond$<exp>}, where {\tt <exp>} is a mathematical
 expression given in reverse Polish notation (i.e., stack based).
 For example, {\tt @iexp bob 1 4 -}, creates a macro {\tt bob} defined as 3.
@@ -606,12 +606,44 @@ The following integer operations are supported:
 \item[$/$:]  X and Y are popped from stack, and stack receives $X / Y$.
 \item[\%:]  X and Y are popped from stack, and stack receives MOD(X, Y).
 \item[A:]  X is popped from stack, and stack receives ABS(X).
+\item[$|$:]  X and Y are popped from stack, and stack receives $X | Y$.
+\item[$\&$:]  X and Y are popped from stack, and stack receives $X \& Y$.
+\item[$\wedge$:] X and Y are popped from stack, and stack receives $X \wedge Y$.
+\item[R:]  X and Y are popped from stack, and stack receives $X >> Y$.
+\item[L:]  X and Y are popped from stack, and stack receives $X << Y$.
+\end{itemize}
+
+\noindent
+In addition, {\tt @iexp} also can perform comparisons, which result in 1
+if true, or 0 if false:
+\begin{itemize}
+\item[$=$:]  X and Y are popped from stack, and stack receives $X == Y$.
+\item[$!$:]  X and Y are popped from stack, and stack receives $X \ne Y$.
+\item[e:]  X and Y are popped from stack, and stack receives $X \le Y$.
+\item[E:]  X and Y are popped from stack, and stack receives $X \ge Y$.
 \end{itemize}
 
 Note that expressions result in macros, which are usually defined on a stack.  
 However, {\tt @iexp} macro definitions always result in replacements, and
 thus do not build up a stack as normal.
 
+If you want to do only one operation at a time (as opposed to utilizing the
+reverse polish notation to do multiple operations), then the operand
+order can be summarized as:
+%operations are summarized in Table~\ref{tab-iexp}.
+
+\begin{tabular}{||l|r||}\hline\hline
+   OPERATION   & RESULT \\\hline
+{\tt @iexp RES Y X OP} & RES = X OP Y \\\hline\hline
+\end{tabular}
+
+See Section~\ref{sec-iexp-arith} for arithmetic examples, and 
+\S\ref{sec-iexp-if} for examples of using the comparisons and bit-level
+operations to build complicated if conditionals.
+
+\subsubsection{Arithmetic examples}
+\label{sec-iexp-arith}
+{\samepage
 \noindent
 Here is a simplistic example:
 \begin{verbatim}
@@ -624,7 +656,9 @@ Here is a simplistic example:
    @iexp num3 @(num2) @(num1) /
 @(num1) / @(num2) = @(num3)
 \end{verbatim}
+}
 
+{\samepage
 \noindent
 Extracted code:
 \begin{verbatim}
@@ -632,6 +666,7 @@ Extracted code:
 6 % 8 = 6
 8 / 6 = 1
 \end{verbatim}
+}
 
 Here is an example of using @iexp and macro formatting to print a table of
 powers of numbers:
@@ -682,10 +717,13 @@ and {\tt comp} is one of the options shown in the table below:\\
 {\tt comp} & MEANING\\\hline
 $=$   & integer indicated by {\tt mac1} is equal to that of {\tt mac2}\\\hline
 !     & integer indicated by {\tt mac1} is not equal to that of {\tt mac2}\\\hline
-$>$ & integer indicated by {\tt mac1} is greater than that of {\tt mac2}\\\hline
 $<$ & integer indicated by {\tt mac1} is less than that of {\tt mac2}\\\hline
+e   & integer indicated by {\tt mac1} is $\le$ than that of {\tt mac2}\\\hline
+$>$ & integer indicated by {\tt mac1} is greater than that of {\tt mac2}\\\hline
+E   & integer indicated by {\tt mac1} is $\ge$ than that of {\tt mac2}\\\hline
 \end{tabular} \\
 
+\subsubsection{Simple examples}
 So, if we have the basefile:
 \begin{verbatim}
 num = @(num)
@@ -719,6 +757,39 @@ num = -1
    num is less than 20
    num is not 10
 \end{verbatim}
+
+\subsubsection{Complex conditionals using @iexp}
+\label{sec-iexp-if}
+Unfortunately, {\tt @iif} takes only a single comparison.  So how do you
+accomplish something like:
+\begin{verbatim}
+   if ((x == 5 && y == 6)) || z == -1
+\end{verbatim}
+
+Since {\tt @iif} can handle only a single comparison, you can instead use
+{\tt @iexp}'s comparison and bit-level operations to do this.  We could
+write this in the dumbest way possible as:
+\begin{verbatim}
+iexp k @(x) 5 =
+@iexp j @(y) 6 =
+@iexp k @(k) @(j) &
+@iexp j @(z) -1 =
+@iexp k @(k) @(j) |
+@iif k = 1
+   TRUE: ((x == 5 && y == 6)) || z == -1
+@endiif
+\end{verbatim}
+
+Or we can express these same operations more concisely using reverse polish
+notation:
+\begin{verbatim}
+@iexp k @(x) 5 = @(y) 6 = & @(z) -1 = |
+@iif k = 1
+   TRUE: ((x == 5 && y == 6)) || z == -1
+@endiif
+\end{verbatim}
+
+Is it possible to more straightforward and obvious than this?
 
 \subsection{Looping}
 

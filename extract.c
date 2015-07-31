@@ -1,6 +1,6 @@
 /************************************************************************/
 /*                        Extract v4.0.0                                */
-/*  (C) Copyright 1994 R. Clint Whaley (rwhaley@cs.utk.edu).            */
+/*  (C) Copyright 1994,2015 R. Clint Whaley (rwhaley@cs.utk.edu).       */
 /*  This program is distributed under the terms of the Gnu              */
 /*  General Public License (GPL), with the following two exceptions:    */
 /*  (1) Clause (9), dealing with updating the GPL automatically, is     */
@@ -13,7 +13,7 @@
 /*  The full, unaltered, text of the GPL is included at the end of      */
 /*  the program source listing.                                         */
 /*  ------------------------------------------------------------------  */
-/*  Last modified by the author on  10/04/10.                           */
+/*  Last modified by the author on  07/31/15.                           */
 /************************************************************************/
 
 #include <stdio.h>
@@ -2081,6 +2081,50 @@ int icalc(EXTENV *EE, char line[])
             istack[k-1] = istack[k] % istack[k-1];
             k--;
             break;
+         case '=': /* boolean comparison */
+            istack[k-1] = (istack[k] == istack[k-1]);
+            k--;
+            break;
+         case '!': /* boolean comparison */
+            istack[k-1] = (istack[k] != istack[k-1]);
+            k--;
+            break;
+         case '<': /* less than boolean comparison */
+            istack[k-1] = (istack[k] < istack[k-1]);
+            k--;
+            break;
+         case '>': /* greater than boolean comparison */
+            istack[k-1] = (istack[k] > istack[k-1]);
+            k--;
+            break;
+         case 'e': /* less than or equal boolean comparison */
+            istack[k-1] = (istack[k] > istack[k-1]);
+            k--;
+            break;
+         case 'E': /* greater than or equal boolean comparison */
+            istack[k-1] = (istack[k] > istack[k-1]);
+            k--;
+            break;
+         case '&': /* bitwise and */
+            istack[k-1] = (istack[k] & istack[k-1]);
+            k--;
+            break;
+         case '|': /* bitwise or */
+            istack[k-1] = (istack[k] | istack[k-1]);
+            k--;
+            break;
+         case '^': /* bitwise exclusive or */
+            istack[k-1] = (istack[k] ^ istack[k-1]);
+            k--;
+            break;
+         case 'L': /* bitwise left shift */
+            istack[k-1] = (istack[k] << istack[k-1]);
+            k--;
+            break;
+         case 'R': /* bitwise right shift */
+            istack[k-1] = (istack[k] >> istack[k-1]);
+            k--;
+            break;
          case 'a':  /* absolute value */
             if (istack[k] < 0) istack[k] = -istack[k];
             break;
@@ -2542,6 +2586,8 @@ char GetIntComp(EXTENV *EE, char *ln, int *A1CONST, int *A2CONST,
    if (wp->next->word[0] == '>') { wp1 = wp; wp0 = wp->next->next; }
    else if (wp->next->word[0] == '=') comp = '=';
    else if (wp->next->word[0] == '!') comp = '!';
+   else if (wp->next->word[0] == 'e') comp = 'e';
+   else if (wp->next->word[0] == 'E') comp = 'E';
    else if (wp->next->word[0] != '<')
       ExtErr(EE, "Invalid integer condition: '%s'\n", ln);
 
@@ -2660,6 +2706,8 @@ void HandleIIf(EXTENV *EE, char *ln)
    if (ch == '=') i = (ia1 == ia2);
    else if (ch == '!') i = (ia1 != ia2);
    else if (ch == '<') i = (ia1 < ia2);
+   else if (ch == 'e') i = (ia1 <= ia2);
+   else if (ch == 'E') i = (ia1 >= ia2);
    if (!i) /* skip */
       DumpSkip(EE, NULL, "@iif ", "@endiif ");
    else
