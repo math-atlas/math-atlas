@@ -2040,13 +2040,13 @@ void FindKeyMatch(EXTENV *EE, KEYS *Key)
 
 
 /*===========================================================================*/
-/* Rest of file is misc catagory :-)                                         */
+/* Rest of file is misc category :-)                                         */
 /*===========================================================================*/
 
 int icalc(EXTENV *EE, char line[])
 {
    int i, k=0;
-   int istack[100];
+   int istack[128];
 
    if ( Mcisnum(line[0]) || (line[0] == '-' && Mcisnum(line[1])) )
       i = Wstr2int(line, &istack[k]);
@@ -2116,6 +2116,9 @@ int icalc(EXTENV *EE, char line[])
          case '^': /* bitwise exclusive or */
             istack[k-1] = (istack[k] ^ istack[k-1]);
             k--;
+            break;
+         case '~':  /* bitwise complement */
+            istack[k] = ~(istack[k]);
             break;
          case 'L': /* bitwise left shift */
             istack[k-1] = (istack[k] << istack[k-1]);

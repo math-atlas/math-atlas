@@ -10031,6 +10031,22 @@ int main(int nargs, char **args)
 #include "atlas_mmtesttime.h"
 
 @extract -b @(basd)/atlas.base rout=Mylcm
+
+int NumberBetaFails(char pre, int nb, ATL_mmnode_t *p)
+{
+   const int mu = p->mu, nu = p->nu, ku = p->ku;
+   int mb = ((nb+mu-1)/mu)*mb, kb = ((nb+ku-1)/ku)*ku;
+   int i, nfail = 0;
+
+   if (kb < p->kbmin)
+      kb = p->kbmin;
+   if (p->kbmax && kb > p->kbmax)
+      kb = p->kbmax;
+   nb = ((nb+nu-1)/nu)*nu;
+   for (i=-1; i < 2; i++)
+      nfail += MMKernelFailsTest(pre, mb, nb, kb, i, p);
+   return(nfail);
+}
 @beginskip
 ATL_mmnode_t *FindVecVL(int verb, char pre, int NB)
 /*
@@ -10654,6 +10670,7 @@ void PrintUsage(char *name, int ierr, char *flag)
    fprintf(stderr, "   -V <vlen> : force vector length\n");
    fprintf(stderr, "   -b <nb>   : set initial block factor to try\n");
    fprintf(stderr, "   -v <verb> : set verbosity (1)\n");
+   fprintf(stderr, "   -T 1      : test all legal kerns, and exit\n");
    fprintf(stderr, 
            "   -f <flg>  : bitvec for srch control, add vals you want set:\n");
    fprintf(stderr, "        1: test all generated kernels\n");
@@ -10664,7 +10681,7 @@ void PrintUsage(char *name, int ierr, char *flag)
 }
 
 void GetFlags(int nargs, char **args, int *FLG, int *VERB, char *PRE, int *NREG,
-              int *VLEN, int *NB)
+              int *VLEN, int *NB, int *TEST)
 {
    int i, flg=0, nreg=0;
    char pre = 'd';
@@ -10672,6 +10689,7 @@ void GetFlags(int nargs, char **args, int *FLG, int *VERB, char *PRE, int *NREG,
    *VERB = 0;
    *NB = 120;
    *VLEN = 0;
+   *TEST = 0;
    for (i=1; i < nargs; i++)
    {
       if (args[i][0] != '-')
@@ -10685,6 +10703,11 @@ void GetFlags(int nargs, char **args, int *FLG, int *VERB, char *PRE, int *NREG,
         pre = tolower(args[i][0]);
         assert(pre == 's' || pre == 'd' || pre == 'z' || pre == 'c');
         break;
+      case 'T':
+        if (++i >= nargs)
+            PrintUsage(args[0], i-1, NULL);
+         *TEST = atoi(args[i]);
+         break;
       case 'V':
         if (++i >= nargs)
             PrintUsage(args[0], i-1, NULL);
@@ -10850,11 +10873,61 @@ void DoSquare(int flag, int verb, char pre, int nreg, int VL)
    maxNB = GetMaxNB(flag, verb, pre, mp);
 }
 
+int CountFails(int flg, int verb, char pre, int NB, int nreg, int VL)
+{
+   int i, j, ntest=0, nfail=0;
+   char *frm="%8d %4d %3d %3d %2d   %c %2d %5d\n";
+   assert(VL);
+   assert(nreg);
+   assert(NB > 0);
+   printf("     NUM   B   MU  NU VL VEC BC  NPASS\n");
+   printf("======== ==== === === == === ==  =====\n");
+   for (i=0; i < nreg; i++)
+   {
+      for (j=0; j < nreg; j++)
+      {
+         ATL_mmnode_t *mp;
+         int nf;
+         if (i*j+1 > nreg)
+            continue;
+         mp = MMGetNodeGEN(pre, 0, NB, i*VL, j, 1, VL, 0, NULL);
+         nf = NumberBetaFails(pre, NB, mp);
+         printf(frm, ntest, NB, mp->mu, mp->nu, VL, 'M', 0, 3-nf);
+         mp = KillMMNode(mp);
+         nfail += nf;
+         ntest += 3;
+         if (j%VL == 0)  /* try k-vec w/o bcast */
+         {
+            mp = MMGetNodeGEN(pre, 1, NB, i, j, 1, VL, 1, NULL);
+            nf = NumberBetaFails(pre, NB, mp);
+            mp = KillMMNode(mp);
+            nfail += nf;
+            ntest += 3;
+         }
+         if ((i*j)%VL == 0) /* try k-vec wt bcast */
+         {
+            mp = MMGetNodeGEN(pre, 0, NB, i, j, 1, VL, 1, NULL);
+            nf = NumberBetaFails(pre, NB, mp);
+            mp = KillMMNode(mp);
+            nfail += nf;
+            ntest += 3;
+         }
+      }
+   }
+   if (!nfail)
+      printf("ALL TESTS PASS!\n");
+   else
+      printf("FAILED %d OF %d TESTS!!\n\n", nfail, ntest);
+   return(nfail);
+}
+
 int main(int nargs, char **args)
 {
-   int flg, verb, nreg, VLEN, NB;
+   int flg, verb, nreg, VLEN, NB, TEST;
    char pre;
-   GetFlags(nargs, args, &flg, &verb, &pre, &nreg, &VLEN, &NB);
+   GetFlags(nargs, args, &flg, &verb, &pre, &nreg, &VLEN, &NB, &TEST);
+   if (TEST)
+      return(CountFails(flg, verb, pre, NB, nreg, VLEN));
    FindInfo(flg, verb, pre, NB, &nreg, &VLEN);
 @skip   DoSquare(flg, verb, pre, nreg, VLEN);
    return(0);
@@ -14154,12 +14227,32 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    @undef at
    @undef i
 @ENDPROC
+@BEGINPROC asgarr n nm
+   @define i @1@
+   @define at @@(nm)[0]@
+   @iwhile i < @(n)
+      @define nat @@(at)@
+      @undef at
+      @define at @@(nat)=@(nm)[@(i)]@
+      @undef nat
+      @iexp i @(i) 1 +
+   @endiwhile
+   @define asgarr @@(at)@
+   @undef at
+   @undef i
+@ENDPROC
 /*
- * If it isn't defined already (fast sys-spec vers), define vvrsumVL using
- * vector indexing.  This may be horribly slow or great, depending on how
- * smart the compiler is.
+ * If it isn't defined already (fast sys-spec vers), define vvrsumVL & 
+ * vsplatI (0 <= I < VL) using vector indexing.  
+ * This may be horribly slow or great, depending on how smart the compiler is.
  */
 #if ATL_VLEN == 2
+   #ifndef ATL_vsplat0
+   #define ATL_vsplat0(d_, s_) d_[0] = d_[1] = s_[0]
+   #endif
+   #ifndef ATL_vsplat1
+   #define ATL_vsplat1(d_, s_) d_[0] = d_[1] = s_[1]
+   #endif
    #ifndef ATL_vvrsum2
    #define ATL_vvrsum2(s0_, s1_) \
    { \
@@ -14170,6 +14263,15 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
 @iexp vl 2 2 +
 @iwhile vl < 64
 #elif ATL_VLEN == @(vl)
+   @iexp k 0 0 +
+   @iwhile k < @(vl)
+      @CALLPROC asgarr @(vl) d_ s_[@(k)]
+   #ifndef ATL_vsplat@(k)
+   #define ATL_vsplat@(k)(d_, s_) \
+      @(asgarr) = s_[@(k)]
+      @iexp k @(k) 1 +
+   #endif
+   @endiwhile
    @CALLPROC arglst @(vl) s _
    #ifndef ATL_vvrsum@(vl)
    #define ATL_vvrsum@(vl)(@(arglst))\
