@@ -1,3 +1,20 @@
+@beginskip
+Should be called with VEC=[NO,MDIM,KDIM], TYPE=[SREAL,DREAL] and 
+following defines:
+   mu : m (scalar) unrolling
+   nu : n (scalar) unrolling
+   ku : k (scalar) unrolling
+   vl : vector length to use
+The following can be optionally defined:
+   kb : compile-time constant K loop bound to use
+   kp : # of kits to peel, must be a multiple of vku!
+   bc : don't define or set to 1 to use ATL_vbcast, 0 to use vld/vsplat
+@endskip
+@ifdef ! bc
+   @iexp bc 0 1 +
+@endifdef
+@skip if (nu%vl) bc = 1 -> can't use vld/vsplat unless nu%vl == 0!
+@iexp bc @(bc) @(vl) @(nu) % 0 ! |
 @PRE S C
    @define typ @float@
 @PRE D Z
@@ -15,17 +32,6 @@
 #endif
 #include "atlas_simd.h"
 @skip #include "atlas_prefetch.h"
-@beginskip
-Should be called with VEC=[NO,MDIM,KDIM], TYPE=[SREAL,DREAL] and 
-following defines:
-   mu : m (scalar) unrolling
-   nu : n (scalar) unrolling
-   ku : k (scalar) unrolling
-   vl : vector length to use
-The following can be optionally defined:
-   kb : compile-time constant K loop bound to use
-   kp : # of kits to peel, must be a multiple of vku!
-@endskip
 @ifdef ! vl
    @abort "vl must be defined!"
 @endifdef
@@ -62,10 +68,8 @@ The following can be optionally defined:
    @iif kk ! ku
       @abort "KU=@(ku) illegal with VLEN=@(vl)!"
    @endiif
-   @iexp kk @(mu) @(nu) *
-   @iexp jj @(vl) @(kk) /
-   @iexp jj @(vl) @(jj) *
-   @iif kk ! jj
+   @iexp kk @(vl) @(mu) @(nu) * %
+   @iif kk ! 0
       @abort "MU*NU (@(mu)*@(nu)) must be a multiple of VLEN (@(vl))!"
    @endiif
 @VEC NO
@@ -105,9 +109,8 @@ The following can be optionally defined:
 @iif kb ! 0
    @undef KB
    @define KB @(kb)
-   @iexp kk @(vku) @(kb) /
-   @iexp kk @(kk) @(vku) *
-   @iif kk ! @(kb)
+   @iexp kk @(vku) @(kb) %
+   @iif kk ! 0
       @abort "VKU=@(vku) must be multiple of @(ku)!"
    @endiif
 @endiif
@@ -153,6 +156,35 @@ The following can be optionally defined:
       ATL_vst(p_, d_); \
    }
 #endif
+@VEC MDIM
+   @iif bc = 0
+      @BEGINPROC ldB spc d i_
+      @beginindent 1 @(spc)
+         @define j @@
+         @iexp j @(vl) @(i_) /
+         @iexp i_ @(vl) @(j) * @(i_) -
+   ATL_vsplat@(i_)(@(d), vB@(j));
+         @skip if (i == vl-1) lb = j+1  -> lb = (j+1)*(i == vl-1)
+         @iexp lb @(vl) -1 + @(i_) = @(j) 1 + *
+         @iexp nlb @(nlb) 1 +
+         @undef j
+      @endindent
+      @ENDPROC
+   @endiif
+   @iif bc ! 0
+      @BEGINPROC ldB spc d i
+      @beginindent 1 @(spc)
+   ATL_vbcast(@(d), pB+@(i));
+      @endindent
+      @ENDPROC
+   @endiif
+@VEC KDIM
+   @BEGINPROC ldB spc d i
+   @beginindent 1 @(spc)
+      @iexp i @(vl) @(i) *
+   ATL_vld(@(d), pB+@(i));
+   @endindent
+   @ENDPROC
 @VEC NO KDIM
    @define ldB @ATL_vld@
    @iexp bmul @(vl) 0 +
@@ -234,6 +266,7 @@ The following can be optionally defined:
 @iif vnu = 1
    @iexp TWOD 0 0 +
 @endiif
+@iexp nlb 0 0 +
 
 #ifndef ATL_CSZT
    #include <stddef.h>
@@ -274,10 +307,16 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
          pA += @(incAk);
          @iexp j 0 0 +
          @iwhile j < @(vnu)
-            @iexp kk @(j) @(bmul) *
-         @(ldB)(rC0_@(j), pB+@(kk));
+            @callproc ldB 6 rC0_@(j) @(j)
          ATL_vmul(rC0_@(j), rC0_@(j), rA0);
             @iexp j @(j) 1 +
+            @skip if (bc==0 && j%vl==0)
+            @iexp kk @(bc) 0 = @(vl) @(j) % 0 = &
+            @iif kk ! 0
+               @iexp kk @(vl) @(j) / -1 +
+               @iexp jj @(kk) @(vl) *
+             ATL_vld(vB@(kk), pB+@(jj));
+            @endiif
          @endiwhile
          pB += @(incBk);
       @endiif
@@ -291,15 +330,27 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
          ATL_vld(rA@(i), pA+@(kk));
          @iexp i @(i) 1 +
       @endiwhile
-            @iexp kk @(jl) @(bmul) *
-         @(ldB)(rB@(jl), pB+@(kk));
+         @callproc ldB 6 rB@(jl) @(jl)
          pA += @(incAk);
+      @iif bc = 0
+         @iexp kk @(vl) @(vnu) -1 + /
+         @iexp jj @(vl) @(kk) *
+         ATL_vld(vB@(kk), pB+@(jj));
+      @endiif
          pB += @(incBk);
+      @iexp lb 0 0 +
       @iexp j 0 0 +
       @iwhile j < @(vnu)
          @iexp i 0 0 +
          @iwhile i < @(vmu)
-         ATL_vmul(rC@(i)_@(j), rA@(i), rB@(j));
+         ATL_vmul(rC@(i)_@(j), rA@(i), rB@(j)); /* (@(i),@(j)) */
+            @print A: @(i) @(j)
+            @iif lb ! 0
+               @iexp lb @(lb) -1 +
+               @iexp kk @(lb) @(vl) *
+            ATL_vld(vB@(lb), pB+@(kk));
+            @endiif
+            @print B: @(i) @(j)
             @iif j = jl
                   @iexp kk @(i) @(vl) *
             ATL_vld(rA@(i), pA+@(kk));
@@ -307,19 +358,17 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
             pA += @(incAk);
                   @endiif
             @endiif
+            @print C: @(i) @(j)
             @iif i = il
-               @iif vnu = 1
+               @iif j ! jl
                   @iexp kk @(j) @(bmul) *
-            @(ldB)(rB0, pB);
-            pB += @(bmul);
-               @endiif
-               @iif vnu > 1
-                  @iif j ! jl
-                     @iexp kk @(j) @(bmul) *
-            @(ldB)(rB@(j), pB+@(kk));
-                  @endiif
+            @print c: @(i) @(j)
+            @callproc ldB 9 rB@(j) @(j)
+            @print d: @(i) @(j)
                @endiif
             @endiif
+            @print D: @(i) @(j)
+            @print ---
             @iexp i @(i) 1 +
          @endiwhile
          @iexp j @(j) 1 +
@@ -360,10 +409,16 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
             pA += @(incAk);
          @iexp j 0 0 +
          @iwhile j < @(vnu)
-            @iexp kk @(j) @(bmul) *
-            @(ldB)(rB0, pB+@(kk));
+            @callproc ldB 9 rB0 @(j)
             ATL_vmac(rC0_@(j), rA0, rB0);
             @iexp j @(j) 1 +
+            @skip if (bc==0 && j%vl==0)
+            @iexp kk @(bc) 0 = @(vl) @(j) % 0 = &
+            @iif kk ! 0
+               @iexp kk @(vl) @(j) / -1 +
+               @iexp jj @(kk) @(vl) *
+             ATL_vld(vB@(kk), pB+@(jj));
+            @endiif
          @endiwhile
             pB += @(incBk);
       @endiif
@@ -374,11 +429,18 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
       @iwhile j < @(vnu)
          @iexp i 0 0 +
          @iwhile i < @(vmu)
+            @iexp nlb 0 0 +
             ATL_vmac(rC@(i)_@(j), rA@(i), rB@(j));
             @iif i = 0
                @iif j = 0
                   @iexp kk @(jl) @(bmul) *
-               @(ldB)(rB@(jl), pB+@(kk));
+               @callproc ldB 12 rB@(jl) @(jl)
+               @iif lb ! 0
+                  @iexp lb @(lb) -1 +
+                  @iexp kk @(lb) @(vl) *
+               ATL_vld(vB@(lb), pB+@(kk));
+                  @iexp lb 0 0 +
+               @endiif
                pB += @(incBk);
                @endiif
             @endiif
@@ -400,7 +462,15 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
             @iif j ! jl
                @iif i = il
                   @iexp kk @(j) @(bmul) *
-               @(ldB)(rB@(j), pB+@(kk));
+               @callproc ldB 12 rB@(j) @(j)
+               @endiif
+            @endiif
+            @iif nlb = 0
+               @iif lb ! 0
+                  @iexp lb @(lb) -1 +
+                  @iexp kk @(lb) @(vl) *
+               ATL_vld(vB@(lb), pB+@(kk));
+                  @iexp lb 0 0 +
                @endiif
             @endiif
             @iexp i @(i) 1 +
@@ -437,6 +507,14 @@ void ATL_USERMM
  */
 {
    @declare "   register ATL_VTYPE " y n ";"
+      @iif bc = 0
+         @iexp kk @(vl) @(vnu) /
+         @iexp j 0 0 +
+         @iwhile j < @(kk)
+            vB@(j)
+            @iexp j @(j) 1 +
+         @endiwhile
+      @endiif
       @iexp j 0 0 +
       @iwhile j < @(vnu)
          @iif TWOD ! 0
@@ -481,11 +559,26 @@ void ATL_USERMM
    @iexp jpf 0 -1 +
    for (i=0; i < nmus; i++)
    {
+   @iif bc = 0
+      @iexp j 0 0 +
+      @iwhile j < @(vnu)
+         @iexp kk @(vl) @(j) /
+      ATL_vld(vB@(kk), pB+@(j));
+         @iexp j @(j) @(vl) +
+      @endiwhile
+      pB += @(incBk);
+   @endiif
    @iif vmu > 1
       @iexp j 0 0 +
       @iwhile j < @(jl)
-         @iexp kk @(j) @(bmul) *
-      @(ldB)(rB@(j), pB+@(kk));
+         @callproc ldB 3 rB@(j) @(j)
+         @skip if ((j+1)%vl == 0 && TWOD && bc=0)
+         @iexp kk @(bc) 0 = @(TWOD) & @(vl) @(j) 1 + % 0 = &
+         @iif kk ! 0
+            @iexp kk @(vl) @(j) /
+            @iexp jj @(kk) @(vl) *
+      ATL_vld(vB@(kk), pB+@(jj));
+         @endiif
          @iexp j @(j) 1 +
       @endiwhile
    @endiif
