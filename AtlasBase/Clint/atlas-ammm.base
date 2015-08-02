@@ -10032,10 +10032,10 @@ int main(int nargs, char **args)
 
 @extract -b @(basd)/atlas.base rout=Mylcm
 
-int NumberBetaFails(char pre, int nb, ATL_mmnode_t *p)
+int NumberBetaFails(FILE *fperr, char pre, int nb, ATL_mmnode_t *p)
 {
    const int mu = p->mu, nu = p->nu, ku = p->ku;
-   int mb = ((nb+mu-1)/mu)*mb, kb = ((nb+ku-1)/ku)*ku;
+   int mb = ((nb+mu-1)/mu)*mu, kb = ((nb+ku-1)/ku)*ku;
    int i, nfail = 0;
 
    if (kb < p->kbmin)
@@ -10043,8 +10043,23 @@ int NumberBetaFails(char pre, int nb, ATL_mmnode_t *p)
    if (p->kbmax && kb > p->kbmax)
       kb = p->kbmax;
    nb = ((nb+nu-1)/nu)*nu;
-   for (i=-1; i < 2; i++)
-      nfail += MMKernelFailsTest(pre, mb, nb, kb, i, p);
+   for (i=(-1); i < 2; i++)
+   {
+      if (MMKernelFailsTest(pre, mb, nb, kb, i, p))
+      {
+         if (fperr)
+         {
+            char *sp;
+            fprintf(fperr, "FAIL: B=(%d,%d,%d), rout='%s', genstr='%s'\n", 
+                    mb, nb, kb, p->rout?p->rout:"NULL", 
+                    p->genstr?p->genstr:"NULL");
+            sp = MMGetTestString(pre, mb, nb, kb, i, p);
+            fprintf(fperr,"   '%s'\n", sp);
+            free(sp);
+         }
+         nfail++;
+      }
+   }
    return(nfail);
 }
 @beginskip
@@ -10095,6 +10110,48 @@ ATL_mmnode_t *FindVecVL(int verb, char pre, int NB)
 }
 @endskip
 
+/*
+ * RETURNS: 0 if bcast slower than ld/splat combo
+ */
+int UseBcast(int flg, int verb, char pre, int kb, int nreg, int VL)
+{
+   int nu=VL, mu, mb, nb, TEST=flg&1;
+   ATL_mmnode_t *mpBC, *mpNO;
+   double mfBC, mfNO;
+
+   mu = (nreg-nu-1) / (nu+1);
+   if (mu < 2)
+      mu = (nreg - 2) / (nu+1);
+   mu = (mu) ? mu : 1;
+   mb = ((kb+mu-1)/mu)*mu;
+   nb = ((kb+nu-1)/nu)*nu;
+   mpBC = MMGetNodeGEN(pre, 0, nb, mu*VL, nu, 1, VL, 0, NULL);
+   mpNO = MMGetNodeGEN(pre, 1, nb, mu*VL, nu, 1, VL, 0, NULL);
+   printf("TIMING BCAST VS SPLAT MVEC WITH: B=(%d,%d,%d) U=(%d,%d,1)\n",
+          mb, nb, kb, mu, nu);
+   mfBC = TimeMMKernel(verb, 1, mpBC, pre, mb, nb, kb, 1, 0, -1);
+   printf("   BCAST = %.0f MFLOP\n", mfBC);
+   mfNO = TimeMMKernel(verb, 1, mpNO, pre, mb, nb, kb, 1, 0, -1);
+   printf("   SPLAT = %.0f MFLOP\n", mfNO);
+   if (TEST)
+   {
+      printf("   TESTING . . .");
+      assert(!NumberBetaFails(stderr, pre, nb, mpBC));
+      printf("  . . . ");
+      assert(!NumberBetaFails(stderr, pre, nb, mpNO));
+      printf("   PASS!\n");
+   }
+   KillMMNode(mpBC);
+   KillMMNode(mpNO);
+   if (mfNO > mfBC)
+   {
+      printf("VLD/VSPLAT PROVIDES %.4f SPEEDUP\n", mfNO/mfBC);
+      return(0);
+   }
+   printf("VBCAST PROVIDES %.4f SPEEDUP\n", mfBC/mfNO);
+   return(1);
+}
+
 ATL_mmnode_t *FullSrchMUNU(int flg, int verb, char pre, int nreg, int nb, 
                            int VL, int KVEC)
 {
@@ -10127,6 +10184,8 @@ ATL_mmnode_t *FullSrchMUNU(int flg, int verb, char pre, int nreg, int nb,
    mmp->vlen = VL;
    if (KVEC)
       mmp->flag |= (1<<MMF_KVEC);
+   else if (!UseBcast(flg, verb, pre, nb, nreg, VL))
+      mmp->flag |= (1<<MMF_NOBCAST);
 /*
  * Try all MU/NU unrollings
  */
@@ -10174,8 +10233,9 @@ ATL_mmnode_t *FullSrchMUNU(int flg, int verb, char pre, int nreg, int nb,
          }
       }
    }
+   i = FLAG_IS_SET(mmp->flag, MMF_NOBCAST);
    KillMMNode(mmp);
-   mmp = MMGetNodeGEN(pre, 0, nb, muB, nuB, ku, VL, KVEC, NULL);
+   mmp = MMGetNodeGEN(pre, i, nb, muB, nuB, ku, VL, KVEC, NULL);
    mmp->mbB = mbB;
    mmp->nbB = nbB;
    mmp->kbB = kbB;
@@ -10214,6 +10274,8 @@ ATL_mmnode_t *SrchNU(int flg, int verb, char pre, int nreg, int nb, int VL,
    mmp->vlen = VL;
    mmp->mu = mu;
    mbu = (nb >= mu) ? (nb/mu)*mu : mu;
+   if (!UseBcast(flg, verb, pre, nb, nreg, VL))
+      mmp->flag |= (1<<MMF_NOBCAST);
 /*
  * Try all powers of 2 MU/NU unrollings
  */
@@ -10247,13 +10309,14 @@ ATL_mmnode_t *SrchNU(int flg, int verb, char pre, int nreg, int nb, int VL,
          mfB = mf;
       }
    }
+   i = FLAG_IS_SET(mmp->flag, MMF_NOBCAST);
    KillMMNode(mmp);
    if (mfB == 0.0)  /* no legal kern found! */
    {
       printf("NO LEGAL KERNS FOR MU=%d!\n", I);
       return(NULL);
    }
-   mmp = MMGetNodeGEN(pre, 0, nb, mu, nuB, 1, VL, 0, NULL);
+   mmp = MMGetNodeGEN(pre, i, nb, mu, nuB, 1, VL, 0, NULL);
    mmp->mbB = mbB;
    mmp->nbB = nbB;
    mmp->kbB = kbB;
@@ -10294,6 +10357,8 @@ ATL_mmnode_t *SrchMUNUp2(int flg, int verb, char pre, int nreg, int nb,
    mmp->vlen = VL;
    if (KVEC)
       mmp->flag |= (1<<MMF_KVEC);
+   else if (!UseBcast(flg, verb, pre, nb, nreg, VL))
+      mmp->flag |= (1<<MMF_NOBCAST);
 /*
  * Try all powers of 2 MU/NU unrollings
  */
@@ -10341,8 +10406,9 @@ ATL_mmnode_t *SrchMUNUp2(int flg, int verb, char pre, int nreg, int nb,
          }
       }
    }
+   i = FLAG_IS_SET(mmp->flag, MMF_NOBCAST);
    KillMMNode(mmp);
-   mmp = MMGetNodeGEN(pre, 0, nb, muB, nuB, ku, VL, KVEC, NULL);
+   mmp = MMGetNodeGEN(pre, i, nb, muB, nuB, ku, VL, KVEC, NULL);
    mmp->mbB = mbB;
    mmp->nbB = nbB;
    mmp->kbB = kbB;
@@ -10388,6 +10454,8 @@ ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb,
    mmp->vlen = VL;
    if (KVEC)
       mmp->flag |= (1<<MMF_KVEC);
+   else if (!UseBcast(flg, verb, pre, nb, nreg, VL))
+      mmp->flag |= (1<<MMF_NOBCAST);
 /*
  * Try all near-square register blocking cases
  */
@@ -10496,8 +10564,9 @@ ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb,
       }
    #endif
 
+   i = FLAG_IS_SET(mmp->flag, MMF_NOBCAST);
    KillMMNode(mmp);
-   mmp = MMGetNodeGEN(pre, 0, nb, muB, nuB, ku, VL, KVEC, NULL);
+   mmp = MMGetNodeGEN(pre, i, nb, muB, nuB, ku, VL, KVEC, NULL);
    mmp->mbB = mbB;
    mmp->nbB = nbB;
    mmp->kbB = kbB;
@@ -10876,38 +10945,45 @@ void DoSquare(int flag, int verb, char pre, int nreg, int VL)
 int CountFails(int flg, int verb, char pre, int NB, int nreg, int VL)
 {
    int i, j, ntest=0, nfail=0;
-   char *frm="%8d %4d %3d %3d %2d   %c %2d %5d\n";
+   char *frm="%8d %4d %3d %3d %2d   %c %2d  %5d\n";
+   FILE *fperr;
+
+   fperr = fopen("res/FAIL.OUT", "w");
+   assert(fperr);
+
    assert(VL);
    assert(nreg);
    assert(NB > 0);
    printf("     NUM   B   MU  NU VL VEC BC  NPASS\n");
    printf("======== ==== === === == === ==  =====\n");
-   for (i=0; i < nreg; i++)
+   for (i=1; i < nreg; i++)
    {
-      for (j=0; j < nreg; j++)
+      for (j=1; j < nreg; j++)
       {
          ATL_mmnode_t *mp;
          int nf;
          if (i*j+1 > nreg)
             continue;
          mp = MMGetNodeGEN(pre, 0, NB, i*VL, j, 1, VL, 0, NULL);
-         nf = NumberBetaFails(pre, NB, mp);
+         nf = NumberBetaFails(fperr, pre, NB, mp);
          printf(frm, ntest, NB, mp->mu, mp->nu, VL, 'M', 0, 3-nf);
          mp = KillMMNode(mp);
          nfail += nf;
          ntest += 3;
-         if (j%VL == 0)  /* try k-vec w/o bcast */
+         if (j%VL == 0)  /* try m-vec w/o bcast */
          {
-            mp = MMGetNodeGEN(pre, 1, NB, i, j, 1, VL, 1, NULL);
-            nf = NumberBetaFails(pre, NB, mp);
+            mp = MMGetNodeGEN(pre, 1, NB, i*VL, j, 1, VL, 0, NULL);
+            nf = NumberBetaFails(fperr, pre, NB, mp);
+            printf(frm, ntest, NB, mp->mu, mp->nu, VL, 'M', 0, 3-nf);
             mp = KillMMNode(mp);
             nfail += nf;
             ntest += 3;
          }
          if ((i*j)%VL == 0) /* try k-vec wt bcast */
          {
-            mp = MMGetNodeGEN(pre, 0, NB, i, j, 1, VL, 1, NULL);
-            nf = NumberBetaFails(pre, NB, mp);
+            mp = MMGetNodeGEN(pre, 0, NB, i, j, VL, VL, 1, NULL);
+            nf = NumberBetaFails(fperr, pre, NB, mp);
+            printf(frm, ntest, NB, mp->mu, mp->nu, VL, 'K', 0, 3-nf);
             mp = KillMMNode(mp);
             nfail += nf;
             ntest += 3;
@@ -10915,9 +10991,16 @@ int CountFails(int flg, int verb, char pre, int NB, int nreg, int VL)
       }
    }
    if (!nfail)
-      printf("ALL TESTS PASS!\n");
+   {
+      printf("ALL %d TESTS PASS!\n", ntest);
+      fprintf(fperr, "ALL %d TESTS PASS!\n", ntest);
+   }
    else
+   {
       printf("FAILED %d OF %d TESTS!!\n\n", nfail, ntest);
+      fprintf(fperr, "FAILED %d OF %d TESTS!!\n\n", nfail, ntest);
+   }
+   fclose(fperr);
    return(nfail);
 }
 
@@ -13818,6 +13901,11 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          t_ = vec_splat(s_, 3); \
          d_ = vec_add(d_, t_) ; \
       }
+   @iexp i 0 0 +
+   @iwhile i < 4
+      #define ATL_vsplat@(i)(d_, s_) d_ = vec_splat(s_, @(i))
+      @iexp i @(i) 1 +
+   @endiwhile
    #else
       #define ATL_vrsum1(d_, s_) \
       { \
@@ -13833,6 +13921,11 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
             s0_ = vec_xxpermdi(s0_, s0_, 2); /* pwr8 endian-insanity */ \
          }
       #endif
+   @iexp i 0 0 +
+   @iwhile i < 2
+      #define ATL_vsplat@(i)(d_, s_) d_ = vec_splat(s_, @(i))
+      @iexp i @(i) 1 +
+   @endiwhile
    #endif
 #elif defined(ATL_VECARM1)
    #include "arm_neon.h"
@@ -13863,6 +13956,11 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          s2_ = vpaddq_f32(s2_, s3_); \
          s0_ = vpaddq_f32(s0_, s2_); \
       }
+   @iexp i 0 0 +
+   @iwhile i < 4
+      #define ATL_vsplat@(i)(d_, s_) d_ = vdupq_laneq_f32(s_, @(i))
+      @iexp i @(i) 1 +
+   @endiwhile
    #else  /* double */
       #define ATL_vzero(v_) v_ = vdupq_n_f64(0.0)
 @skip      #define ATL_vbcast(v_, p_) v_ =  vdupq_n_f64((*p_))
@@ -13875,6 +13973,11 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #define ATL_vmac(d_, s1_, s2_) d_ = vfmaq_f64(d_, s1_, s2_)
       #define ATL_vrsum1(d_, s_) d_ = vget_low_f64(vpaddq_f64(s_, s_))
       #define ATL_vvrsum2(s0_, s1_) s0_ = vpaddq_f64(s0_, s1_)
+   @iexp i 0 0 +
+   @iwhile i < 2
+      #define ATL_vsplat@(i)(d_, s_) d_ = vdupq_laneq_f64(s_, @(i))
+      @iexp i @(i) 1 +
+   @endiwhile
    #endif
    #define ATL_vuld(v_, p_) ATL_vld(v_, p_)
    #define ATL_vust(p_, v_) ATL_vst(p_, v_)
@@ -13924,6 +14027,46 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
             /*{s7a-d,s6a-d,s5a-d,s4a-d,s3a-d,s2a-d,s1a-d,s0a-d}*/\
          ATL_vadd(s0_, s0_, s1_); \
       }
+      #define ATL_vsplat0(d_, s_) \
+      { \
+         d_ = _mm256_shuffle_ps(s_, s_, 0); \
+         d_ = _mm256_insertf128_ps(d_, _mm256_extractf128_ps(d_,0), 1); \
+      }
+      #define ATL_vsplat1(d_, s_) \
+      { \
+         d_ = _mm256_shuffle_ps(s_, s_, 0x55); \
+         d_ = _mm256_insertf128_ps(d_, _mm256_extractf128_ps(d_,0), 1); \
+      }
+      #define ATL_vsplat2(d_, s_) \
+      { \
+         d_ = _mm256_shuffle_ps(s_, s_, 0xAA); \
+         d_ = _mm256_insertf128_ps(d_, _mm256_extractf128_ps(d_,0), 1); \
+      }
+      #define ATL_vsplat3(d_, s_) \
+      { \
+         d_ = _mm256_shuffle_ps(s_, s_, 0xFF); \
+         d_ = _mm256_insertf128_ps(d_, _mm256_extractf128_ps(d_,0), 1); \
+      }
+      #define ATL_vsplat4(d_, s_) \
+      { \
+         d_ = _mm256_shuffle_ps(s_, s_, 0); \
+         d_ = _mm256_insertf128_ps(d_, _mm256_extractf128_ps(d_,1), 0); \
+      }
+      #define ATL_vsplat5(d_, s_) \
+      { \
+         d_ = _mm256_shuffle_ps(s_, s_, 0x55); \
+         d_ = _mm256_insertf128_ps(d_, _mm256_extractf128_ps(d_,1), 0); \
+      }
+      #define ATL_vsplat6(d_, s_) \
+      { \
+         d_ = _mm256_shuffle_ps(s_, s_, 0xAA); \
+         d_ = _mm256_insertf128_ps(d_, _mm256_extractf128_ps(d_,1), 0); \
+      }
+      #define ATL_vsplat7(d_, s_) \
+      { \
+         d_ = _mm256_shuffle_ps(s_, s_, 0xFF); \
+         d_ = _mm256_insertf128_ps(d_, _mm256_extractf128_ps(d_,1), 0); \
+      }
    #else        /* double precision */
       #if ATL_VLEN != 4
          #error "AVX SUPPORTS ONLY VLEN=4 FOR DOUBLE!"
@@ -13962,6 +14105,26 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          s1_ = _mm256_permute2f128_pd(s0_, s2_,0x31);/*{s3cd,s2cd,s1cd,s0cd}*/ \
          s0_ = _mm256_permute2f128_pd(s0_, s2_,0x20);/*{s3ab,s2ab,s1ab,s0ab}*/ \
          ATL_vadd(s0_, s0_, s1_); \
+      }
+      #define ATL_vsplat0(d_, s_) \
+      { \
+         d_ = _mm256_unpacklo_pd(s_, s_); \
+         d_ = _mm256_insertf128_pd(d_, _mm256_extractf128_pd(d_,0), 1); \
+      }
+      #define ATL_vsplat2(d_, s_) \
+      { \
+         d_ = _mm256_unpacklo_pd(s_, s_); \
+         d_ = _mm256_insertf128_pd(d_, _mm256_extractf128_pd(d_,1), 0); \
+      }
+      #define ATL_vsplat1(d_, s_) \
+      { \
+         d_ = _mm256_unpackhi_pd(s_, s_); \
+         d_ = _mm256_insertf128_pd(d_, _mm256_extractf128_pd(d_,0), 1); \
+      }
+      #define ATL_vsplat3(d_, s_) \
+      { \
+         d_ = _mm256_unpackhi_pd(s_, s_); \
+         d_ = _mm256_insertf128_pd(d_, _mm256_extractf128_pd(d_,1), 0); \
       }
    #endif
 #elif defined(ATL_SSE2) && (defined(DREAL) || defined(DCPLX))

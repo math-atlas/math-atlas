@@ -1390,7 +1390,7 @@ static ATL_@(rt)node_t *Parse@up@(rt)Line(char *ln)
    }
 @multidef fl 
    X87 LDCTOP KRUNTIME AOUTER PFACOLS PFABLK PFBCOLS PFCELTS L14NB KVEC
-   KUISKB
+   KUISKB NOBCAST
 @endmultidef
 
 @ROUT mvread
@@ -1520,7 +1520,7 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
    @define kwd @@
    @multidef kw
       X87 LDCTOP KRUNTIME AOUTER PFACOLS PFABLK PFBCOLS PFCELTS L14NB KVEC
-      KUISKB
+      KUISKB NOBCAST
    @endmultidef
 @ROUT r1read 
    @define kwd @X87 INCYISONE FNU ADDCFLAGS ALIGNX2A PFTUNABLE@
@@ -1534,7 +1534,7 @@ static void Print@up@(rt)Line(FILE *fpout, ATL_@(rt)node_t *np)
 @endwhile
 @ROUT mvread r1read mmread
 @whiledef kw @(kwd)
-   if (i > 70) { fprintf(fpout, " \\\n   "); i = 3; }
+   if (i+@len@(kw) > 72) { fprintf(fpout, " \\\n   "); i = 3; }
    i += fprintf(fpout, "@(kw)=%d ", FLAG_IS_SET(np->flag, @up@(rt)F_@(kw)));
 @endwhile
 
@@ -2983,6 +2983,113 @@ ATL_mmnode_t *MMGetNodeGEN(char pre, int flag, int kb, int mu, int nu, int ku,
 
 @iexp ip @(ip) 1 +
 /* procedure @(ip) */
+int MMDoGenString(int verb, char *genstr)
+{
+   int err=0;
+   if (!genstr)
+      err=1;
+   else if (verb < 3) /* want to redirect output */
+   {
+      char *ln;
+      ln = NewMergedString(genstr, " > /dev/null 2>&1");
+      err = system(ln);
+      free(ln);
+   }
+   else
+      err = system(genstr);
+   if (err)
+      fprintf(stderr, "UNABLE TO GENERATE WITH COMMAND: '%s'\n", 
+              genstr ? genstr : "NULL");
+   return(err);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
+char *MMGetTestString
+(
+   char pre,                    /* precision/type prefix */
+   int mb, int nb, int kb,      /* dimensions to test */
+   int beta,                    /* beta case to test */
+   ATL_mmnode_t *umm            /* mmkern ptr */
+)
+{
+   int i, k, lnlen, Dd, Ud, Vd;
+   int len0, len1, len2, len3, len4, len5;
+   char *ln;
+/*
+ * Horrific code so we don't have to rely on snprintf, which some ancient
+ * compiler may lack
+ */
+   Ud = NumDecDigits(umm->mu);
+   i = NumDecDigits(umm->nu);
+   Ud = Mmax(Ud,i);
+   i = NumDecDigits(umm->ku);
+   Ud = Mmax(Ud,i);
+   Dd = NumDecDigits(mb);
+   i = NumDecDigits(mb);
+   Dd = Mmax(Dd,i);
+   i = NumDecDigits(kb);
+   Dd = Mmax(Dd,i);
+   Vd = NumDecDigits(umm->vlen);
+   len0 = 64+strlen(umm->rout) + 3*Dd; /* guess for first print */
+   len1 = 8 + Vd;  /* kmaj */
+   len2 = 22;      /* beta */
+   if (umm->comp)
+      len3 = 24 + strlen(umm->comp) + strlen(umm->cflags);
+   else 
+      len3 = 0;
+   len4 = 40 + 3*(Dd+Ud);  /* dim/unroll print */
+   len5 = 20; /* redirect */
+   lnlen = len0 + len1 + len2 + len3 + len4 + len5;
+   ln = malloc(lnlen);
+   assert(ln);
+
+   if (umm->ID > 0)
+      i = sprintf(ln, "make %cammmtst mmrout=AMMCASES/%s mu=%d nu=%d ku=%d ",
+                  pre, umm->rout, umm->mu, umm->nu, umm->ku);
+   else
+      i = sprintf(ln, "make %cammmtst mmrout=%s mu=%d nu=%d ku=%d ",
+                  pre, umm->rout, umm->mu, umm->nu, umm->ku);
+   assert(i < len0);
+   if (FLAG_IS_SET(umm->flag, MMF_KVEC))
+   {
+      k = sprintf(ln+i, "kmaj=%d ", umm->vlen);
+      i += k;
+      assert(k < len1);
+   }
+   if (beta != 1)
+   {
+      if (beta == -1)
+         k = sprintf(ln+i, "beta=-1 betan=\"N1\" ");
+      else if (beta == 0)
+         k = sprintf(ln+i, "beta=%d ", beta);
+      else
+         assert(0);
+      assert(k < len2);
+      i += k;
+   }
+   if (umm->comp)
+   {
+      char ch = (pre == 'c' || pre == 's') ? 'S' : 'D';
+      k = sprintf(ln+i, "%cMC=\"%s\" %cMCFLAGS=\"%s\" ",
+                  ch, umm->comp, ch, umm->cflags);
+      assert(k < len3);
+      i += k;
+   }
+   k = sprintf(ln+i, "pre=%c M=%d N=%d K=%d mb=%d nb=%d kb=%d ",
+               pre, mb, nb, kb, 0, 0,
+               FLAG_IS_SET(umm->flag, MMF_KRUNTIME) ? 0 : kb);
+   assert(k < len4);
+   i += k;
+   k = sprintf(ln+i, " > /dev/null 2>&1\n");
+   assert(k < len5);
+   i += k;
+   assert(i < lnlen);
+   return(ln);
+}
+
+@iexp ip @(ip) 1 +
+/* procedure @(ip) */
 int MMKernelFailsTest
 (
    char pre,                    /* precision/type prefix */
@@ -2994,7 +3101,7 @@ int MMKernelFailsTest
  * RETURNS: 0 on success, non-zero on failure
  */
 {
-   char ln[4096];
+   char *ln;
    int i;
    char ch;
 
@@ -3004,43 +3111,8 @@ int MMKernelFailsTest
    if (umm->ID == 0 && !umm->genstr)
       umm->genstr = MMGetGenString(pre, umm);
    if (umm->genstr)
-   {
-      assert(strlen(umm->genstr) < 4032);
-      sprintf(ln, "%s > /dev/null 2>&1", umm->genstr);
-      if (system(ln))
-      {
-         fprintf(stderr, "ERROR, LINE %d of %s\n", __LINE__, __FILE__);
-         fprintf(stderr, "UNABLE TO GENERATE WITH COMMAND: %s\n", umm->genstr);
-         exit(-1);
-      }
-   }
-   if (umm->ID > 0)
-      i = sprintf(ln, "make %cammmtst mmrout=AMMCASES/%s mu=%d nu=%d ku=%d ",
-                  pre, umm->rout, umm->mu, umm->nu, umm->ku);
-   else
-      i = sprintf(ln, "make %cammmtst mmrout=%s mu=%d nu=%d ku=%d ",
-                  pre, umm->rout, umm->mu, umm->nu, umm->ku);
-   if (FLAG_IS_SET(umm->flag, MMF_KVEC))
-      i += sprintf(ln+i, "kmaj=%d ", umm->vlen);
-   if (beta != 1)
-   {
-      if (beta == -1)
-         i += sprintf(ln+i, "beta=-1 betan=\"N1\" ");
-      else if (beta == 0)
-         i += sprintf(ln+i, "beta=%d ", beta);
-      else
-         assert(0);
-   }
-   if (umm->comp)
-   {
-      ch = (pre == 'c' || pre == 's') ? 'S' : 'D';
-      i += sprintf(ln+i, "%cMC=\"%s\" %cMCFLAGS=\"%s\" ",
-                   ch, umm->comp, ch, umm->cflags);
-   }
-   i += sprintf(ln+i, "pre=%c M=%d N=%d K=%d mb=%d nb=%d kb=%d ",
-                pre, mb, nb, kb, 0, 0,
-                FLAG_IS_SET(umm->flag, MMF_KRUNTIME) ? 0 : kb);
-   i += sprintf(ln+i, " > /dev/null 2>&1\n");
+      assert(!MMDoGenString(0, umm->genstr));
+   ln = MMGetTestString(pre, mb, nb, kb, beta, umm);
    i = system(ln);
    if (i)
    {
@@ -3048,6 +3120,7 @@ int MMKernelFailsTest
       if (umm->genstr)
          fprintf(stderr, "   genstr was = '%s'\n", umm->genstr);
    }
+   free(ln);
    return(i);
 }
 
@@ -3288,7 +3361,7 @@ double TimeMMKernel
  *    1 : time in serial rather than parallel
  */
 {
-   char fnam[128], ln[2048];
+   char fnam[128], ln[4096];  /* security from 1991 */
    const char *LO = FLAG_IS_SET(mmp->flag, MMF_AOUTER) ? "IJK": "JIK";
    const int ku=mmp->ku;
    const int KB = (!FLAG_IS_SET(mmp->flag,MMF_KVEC)) ? kb : ((kb+ku-1)/ku)*ku;
@@ -3310,17 +3383,9 @@ double TimeMMKernel
  * If the file is generated, call generator to create it
  */
    if (mmp->genstr)
-   {
-      i = sprintf(ln, "%s", mmp->genstr);
-      if (verb < 3)
-         i += sprintf(ln+i, " > /dev/null 2>&1\n");
-      if (system(ln))
-      {
-         fprintf(stderr, "ERROR, LINE %d of %s\n", __LINE__, __FILE__);
-         fprintf(stderr, "UNABLE TO GENERATE WITH COMMAND: %s\n", mmp->genstr);
-         exit(-1);
-      }
-   }
+      assert(!MMDoGenString(verb, mmp->genstr));
+   else if (verb > 2)
+      printf("NO genstr\n");
    #ifndef ATL_SERIAL_INSTALL
       #define RESACT 2   /* want average frm ReadResultsFile for parallel */
 /*
