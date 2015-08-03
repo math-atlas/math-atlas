@@ -10859,6 +10859,26 @@ void FindInfo(int flag, int verb, char pre, int NB, int *NREG, int *VLEN)
    else if (pre == 'c')
       pre = 's';
 
+   mp = ReadMMFileWithPath(pre, "res", "gmvAMMUR.sum");
+   mpN = ReadMMFileWithPath(pre, "res", "gkvAMMUR.sum");
+   if (mp && mpN)
+   {
+      *VLEN = mp->vlen;
+      *NREG = mp->ivar;
+      MMFillInGenStrings(pre, mp);
+      MMFillInGenStrings(pre, mpN);
+      TimeNegMMKernels(0, verb, 0, mp, pre, 1, 0, -1);
+      TimeNegMMKernels(0, verb, 0, mpN, pre, 1, 0, -1);
+      WriteMMFileWithPath(pre, "res", "gmvAMMUR.sum", mp);
+      WriteMMFileWithPath(pre, "res", "gkvAMMUR.sum", mpN);
+      KillAllMMNodes(mp);
+      KillAllMMNodes(mpN);
+      return;
+   }
+   else if (mp)
+      KillAllMMNodes(mp);
+   else if (mpN)
+      KillAllMMNodes(mpN);
    FindDefMUNU(flag, verb, pre, NB, &nreg, &vlen);
    printf("\nNREG=%d, VLEN=%d\n", nreg, vlen);
 /*
@@ -13901,6 +13921,21 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          t_ = vec_splat(s_, 3); \
          d_ = vec_add(d_, t_) ; \
       }
+      #if ATL_FULLGCCVSX
+         #define ATL_vvrsum4(s0_, s1_, s2_, s3_) \
+         {  ATL_VTYPE t_, h_;                    /*{s0d,s0c,s0b,s0a}*/\
+            t_ = vec_vmrghw(s0_, s1_);           /*{s1b,s0b,s1a,s0a}*/\
+            s0_ = vec_vmrglw(s0_, s1_);          /* s1d,s0d,s1c,s0c}*/ \
+            s0_ = ATL_vadd(s0_, s0_, t_);        /*{s1bd,s0bd,s1ac,s0ac}*/\
+            h_ = vec_vmrghw(s2_, s3_);           /*{s3b,s2b,s3a,s2a}*/\
+            s2_ = vec_vmrglw(s2_, s3_);          /* s3d,s2d,s3c,s2c}*/ \
+            s2_ = ATL_vadd(s2_, s2_, h_);        /*{s3bd,s2bd,s3ac,s2ac}*/\
+            t_ =  vec_xxpermdi(s0_, s2_, 0);     /*{s3ac,s2ac,s1ac,s0ac}*/\
+            s0_ = vec_xxpermdi(s0_, s2_, 3);     /*{s3bd,s2bd,s1bd,s0bd}*/ \
+            ATL_vadd(s0_, s0_, t_); \
+            s0_ = vec_xxpermdi(s0_, s0_, 2);     /* pwr8 endian-insanity */ \
+         }
+      #endif
    @iexp i 0 0 +
    @iwhile i < 4
       #define ATL_vsplat@(i)(d_, s_) d_ = vec_splat(s_, @(i))
