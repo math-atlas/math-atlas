@@ -2097,11 +2097,11 @@ int icalc(EXTENV *EE, char line[])
             istack[k-1] = (istack[k] > istack[k-1]);
             k--;
             break;
-         case 'e': /* less than or equal boolean comparison */
+         case '{': /* less than or equal boolean comparison */
             istack[k-1] = (istack[k] >= istack[k-1]);
             k--;
             break;
-         case 'E': /* greater than or equal boolean comparison */
+         case '}': /* greater than or equal boolean comparison */
             istack[k-1] = (istack[k] >= istack[k-1]);
             k--;
             break;
@@ -2120,11 +2120,11 @@ int icalc(EXTENV *EE, char line[])
          case '~':  /* bitwise complement */
             istack[k] = ~(istack[k]);
             break;
-         case 'L': /* bitwise left shift */
+         case 'l': /* bitwise left shift */
             istack[k-1] = (istack[k] << istack[k-1]);
             k--;
             break;
-         case 'R': /* bitwise right shift */
+         case 'r': /* bitwise right shift */
             istack[k-1] = (istack[k] >> istack[k-1]);
             k--;
             break;
@@ -2700,7 +2700,7 @@ void HandleMIf(EXTENV *EE, char *ln)
 
 void HandleIIf(EXTENV *EE, char *ln)
 /*
- * Expects ln of @iif int1 [<,>,=,!] int2
+ * Expects ln of @iif int1 [<,>,},{,=,] int2
  */
 {
    char ch;
@@ -2709,8 +2709,8 @@ void HandleIIf(EXTENV *EE, char *ln)
    if (ch == '=') i = (ia1 == ia2);
    else if (ch == '!') i = (ia1 != ia2);
    else if (ch == '<') i = (ia1 < ia2);
-   else if (ch == 'e') i = (ia1 <= ia2);
-   else if (ch == 'E') i = (ia1 >= ia2);
+   else if (ch == '{') i = (ia1 <= ia2);
+   else if (ch == '}') i = (ia1 >= ia2);
    if (!i) /* skip */
       DumpSkip(EE, NULL, "@iif ", "@endiif ");
    else
