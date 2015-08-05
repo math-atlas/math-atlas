@@ -1,3 +1,10 @@
+@PRE S C
+   @define typ @float@
+   @define sz @4@
+@PRE D Z
+   @define sz @8@
+   @define typ @double@
+@PRE !
 @beginskip
 Should be called with VEC=[NO,MDIM,KDIM], TYPE=[SREAL,DREAL] and 
 following defines:
@@ -9,17 +16,67 @@ The following can be optionally defined:
    kb : compile-time constant K loop bound to use
    kp : # of kits to peel, must be a multiple of vku!
    bc : don't define or set to 1 to use ATL_vbcast, 0 to use vld/vsplat
+   pf : bit vec describing prefetch strategy
+   pfLS : line size to assume for prefetch (64 bytes by default)
+
+pf bit location meanings:
+   prefC always done as just next mu*nu block
+   pfA/B : can prefetch next mu/nu A/B within K-loop
+   nA/nB : can prefetch next block outside K-loop 
+   take pf integer bitvec bit/additive means:
+      0/1  : prefetch C before K-loop
+      1/2  : prefetch next block of A before K-loop
+      2/4  : prefetch next block of B before K-loop
+      3/8  : prefetch next mu*K iter of A inside K-loop
+      4/16 : prefetch next nu*K iter of B inside K-loop
+      5/32 : pref of C should use ATL_pfl1 instead of ATL_pfl2
+      6/64 : K-loop prefs should be ATL_pfl1 instead of ATL_pfl2
+      7/128: outer-loop prefs shouldbe ATL_pfl1 instead of ATL_pfl2
+   We'll put pf bitvec in rout name, and then the search will find that
+   we want to pref everything to L1 for small NB, only C &  block of A for
+   medium size, and no pref for large, for instance.
 @endskip
 @ifdef ! bc
    @iexp bc 0 1 +
 @endifdef
+@ifdef ! pf
+   @define pf @1@
+@endifdef
+@ifdef ! pfLS
+   @define pfLS @64@
+@endifdef
+@iexp pfLS @(sz) @(pfLS) /
+@iexp kk @(pf) 32 &
+@iif kk = 0
+   @define pfC @ATL_pfl2W@
+@endiif
+@ifdef ! pfC
+   @define pfC @ATL_pfl1W@
+@endifdef
+@iexp kk @(mu) @(nu) 1 @(pf) & * *
+@iif kk > pfLS
+   @iexp npfC @(pfLS) @(kk) /
+@endiif
+@ifdef ! npfC
+   @iif kk = 0
+      @iexp npfC 0 0 +
+   @endiif
+   @iif kk ! 0
+      @iexp npfC 1 0 +
+   @endiif
+@endifdef
+@iexp npfA @(pfLS) 1 @(pf) r 1 & @(mu) @(nu) * * /
+@iexp npfB @(pfLS) 2 @(pf) r 1 & @(mu) @(nu) * * /
+@iexp npf @(npfC) @(npfA) +
+@iif npfA ! 0
+   @iexp npfA @(npfA) @(npfC) +
+@endiif
+@iif npfB ! 0
+   @iexp npf @(npf) @(npfB) +
+   @iexp npfB @(npf) 0 +
+@endiif
 @skip if (nu%vl) bc = 1 -> can't use vld/vsplat unless nu%vl == 0!
 @iexp bc @(bc) @(vl) @(nu) % 0 ! |
-@PRE S C
-   @define typ @float@
-@PRE D Z
-   @define typ @double@
-@PRE !
 #define ATL_VLEN @(vl)
 #if !defined(SREAL) && !defined(DREAL) && !defined(SCPLX) && !defined(DCPLX)
 @PRE C `   #define SCPLX 1`
@@ -31,7 +88,15 @@ The following can be optionally defined:
    #define TYPE @(typ)
 #endif
 #include "atlas_simd.h"
-@skip #include "atlas_prefetch.h"
+@iexp pf @(pf) 31 &
+@iexp pfnA @(pf) 2 &
+@iexp pfnB @(pf) 4 &
+@iexp pfnb @(pfnA) @(pfnB) |
+@iexp pfA @(pf) 8 &
+@iexp pfB @(pf) 16 &
+@iif pf ! 0
+#include "atlas_prefetch.h"
+@endiif
 @ifdef ! vl
    @abort "vl must be defined!"
 @endifdef
@@ -160,6 +225,7 @@ The following can be optionally defined:
    @iif bc = 0
       @BEGINPROC ldB spc d i_
       @beginindent 1 @(spc)
+         @iexp mo @(mo) 1 +
          @define j @@
          @iexp j @(vl) @(i_) /
          @iexp i_ @(vl) @(j) * @(i_) -
@@ -174,6 +240,7 @@ The following can be optionally defined:
    @iif bc ! 0
       @BEGINPROC ldB spc d i_
       @beginindent 1 @(spc)
+         @iexp mo @(mo) 1 +
    ATL_vbcast(@(d), pB+@(i_));
       @endindent
       @ENDPROC
@@ -182,6 +249,7 @@ The following can be optionally defined:
    @BEGINPROC ldB spc d i_
    @beginindent 1 @(spc)
       @iexp i_ @(vl) @(i_) *
+      @iexp mo @(mo) 1 +
    ATL_vld(@(d), pB+@(i_));
    @endindent
    @ENDPROC
@@ -344,14 +412,17 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
          @iexp i 0 0 +
          @iwhile i < @(vmu)
          ATL_vmul(rC@(i)_@(j), rA@(i), rB@(j));
+            @iexp mo 0 0 +
             @iif lb ! 0
                @iexp lb @(lb) -1 +
                @iexp kk @(lb) @(vl) *
             ATL_vld(vB@(lb), pB+@(kk));
+               @iexp mo @(mo) 1 +
             @endiif
             @iif j = jl
-                  @iexp kk @(i) @(vl) *
+               @iexp kk @(i) @(vl) *
             ATL_vld(rA@(i), pA+@(kk));
+               @iexp mo @(mo) 1 +
                   @iif i = il
             pA += @(incAk);
                   @endiif
@@ -360,6 +431,38 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
                @iif j ! jl
                   @iexp kk @(j) @(bmul) *
             @callproc ldB 9 rB@(j) @(j)
+               @endiif
+            @endiif
+            @skip kk = (mo == 0 || (mu == 2 && nu == 2))
+            @iexp kk @(nu) 2 = @(mu) 2 = & @(mo) 0 = |
+            @iif kk ! 0
+               @iif ipf < npfC
+                  @iexp kk @(ipf) @(pfLS) *
+            @(pfC)(pC+@(kk));
+                  @iexp ipf @(ipf) 1 +
+                  @iexp mo @(mo) 1 +
+               @endiif
+               @skip if (mo = 0 && ipf < npfA)
+               @iexp kk @(mo) 0 = @(npfA) @(ipf) < &
+               @iif kk ! 0
+                  @iexp kk @(ipf) @(pfLS) *
+            @(pfA)(pAn+@(kk));
+                  @iexp ipf @(ipf) 1 +
+                  @iif ipf = npfA
+                     pAn += incAn;
+                  @endiif
+                  @iexp mo @(mo) 1 +
+               @endiif
+               @skip if (mo == 0 && ipf < npfB)
+               @iexp kk @(mo) 0 = @(npfB) @(ipf) < &
+               @iif kk ! 0
+                  @iexp kk @(ipf) @(pfLS) *
+            @(pfB)(pBn+@(kk));
+                  @iexp ipf @(ipf) 1 +
+                  @iif ipf = npfB
+                     pBn += incBn;
+                  @endiif
+                  @iexp mo @(mo) 1 +
                @endiif
             @endiif
             @iexp i @(i) 1 +
@@ -531,7 +634,15 @@ void ATL_USERMM
          @endiwhile
       @endiif
    @enddeclare
-   const @(typ) *pB0 = pB, *pA0 = pA;
+   @declare "   const @(typ) " y n ";"
+    *pB0=pB *pA0=pA
+   @enddeclare
+   @iif npfA > 0
+   const int incAn = (ATL_MM_KB * @(mu)) / nnu;
+   @endiif
+   @iif npfB > 0
+   const int incBn = (ATL_MM_KB * @(nu)) / nmu;
+   @endiif
 @skip   const @(typ) *pfA;
    int i, j, k;
    #if ATL_KBCONST == 0
@@ -541,6 +652,8 @@ void ATL_USERMM
       #define incBn (@(nu)*ATL_MM_KB)
    #endif
 
+   @iexp mo 0 0 +
+   @iexp ipf 0 0 +
    @iexp jl @(vnu) -1 +
    @iexp il @(vmu) -1 +
    @iif vnu > 2
@@ -585,6 +698,10 @@ void ATL_USERMM
          {
             @CALLPROC DoIter
          }
+@iexp npeel 0 0 +
+@iif npeel > 1
+KDONE:
+@endiif
          @CALLPROC storeC 6
          @iexp kk @(mu) @(nu) *
          pC += @(kk);
