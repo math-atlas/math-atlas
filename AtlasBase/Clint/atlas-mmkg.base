@@ -30,11 +30,22 @@ pf bit location meanings:
       3/8  : prefetch next mu*K iter of A inside K-loop
       4/16 : prefetch next nu*K iter of B inside K-loop
       5/32 : pref of C should use ATL_pfl1 instead of ATL_pfl2
-      6/64 : K-loop prefs should be ATL_pfl1 instead of ATL_pfl2
-      7/128: outer-loop prefs shouldbe ATL_pfl1 instead of ATL_pfl2
+      6/64 : pref of next blk of A should use ATL_pfl1 not ATL_pfl2
+      7/128: pref of next blk of B should use ATL_pfl1 not ATL_pfl2
+      8/256: K-loop pref of A use ATL_pfl1 not ATL_pfl2
+      9/512: K-loop pref of B use ATL_pfl1 not ATL_pfl2
    We'll put pf bitvec in rout name, and then the search will find that
    we want to pref everything to L1 for small NB, only C &  block of A for
    medium size, and no pref for large, for instance.
+
+During tuning, think about several regions for prefetch:
+1. pref pfnA&B to L1:  m*n + 2*k*(m+n) < L1
+   -> n^2 + 4n^2 < L2 ==> nb <= sqrt(L1/5)
+2. pref B to L1, A to L2: m*n + 2*k*n + m*k < L1
+   -> n^2 + 2n^2 + n^2 < L1 ==> nb <= sqrt(L1/4)
+3. pref A&B to L2 so long as all 5 blocks fit (L2 size not known)
+4. pref only one of nA/B to L2
+5. No prefetch of next blocks (maybe internal prefetch)
 @endskip
 @ifdef ! bc
    @iexp bc 0 1 +
@@ -52,6 +63,20 @@ pf bit location meanings:
 @endiif
 @ifdef ! pfC
    @define pfC @ATL_pfl1W@
+@endifdef
+@iexp kk @(pf) 64 &
+@iif kk ! 0
+   @define pfA @ATL_pfl1R@
+@endiif
+@ifdef ! pfA
+   @define pfA @ATL_pfl2R@
+@endifdef
+@iexp kk @(pf) 128 &
+@iif kk ! 0
+   @define pfB @ATL_pfl1R@
+@endiif
+@ifdef ! pfB
+   @define pfB @ATL_pfl2R@
 @endifdef
 @iexp kk @(mu) @(nu) 1 @(pf) & * *
 @iif kk > pfLS
@@ -89,11 +114,6 @@ pf bit location meanings:
 #endif
 #include "atlas_simd.h"
 @iexp pf @(pf) 31 &
-@iexp pfnA @(pf) 2 &
-@iexp pfnB @(pf) 4 &
-@iexp pfnb @(pfnA) @(pfnB) |
-@iexp pfA @(pf) 8 &
-@iexp pfB @(pf) 16 &
 @iif pf ! 0
 #include "atlas_prefetch.h"
 @endiif
@@ -340,6 +360,45 @@ pf bit location meanings:
    #include <stddef.h>
    #define ATL_CSZT const size_t
 #endif
+@skip Helper func for DoIter[0].  
+@skip IN: pfLS,npfA,npfB, npfC, mu, nu; 
+@skip IN/OUT: mo, ipf
+@BEGINPROC DoPref
+   @define kk @dum@
+   @skip kk = (mo == 0 || (mu == 2 && nu == 2))
+   @iexp kk @(nu) 2 = @(mu) 2 = & @(mo) 0 = |
+   @iif kk ! 0
+      @iif ipf < npfC
+         @iexp kk @(ipf) @(pfLS) *
+               @(pfC)(pC+@(kk));
+         @iexp ipf @(ipf) 1 +
+         @iexp mo @(mo) 1 +
+      @endiif
+      @skip if (mo = 0 && ipf < npfA)
+      @iexp kk @(mo) 0 = @(npfA) @(ipf) < &
+      @iif kk ! 0
+         @iexp kk @(npfC) @(ipf) - @(pfLS) *
+               @(pfA)(pAn+@(kk));
+         @iexp ipf @(ipf) 1 +
+         @iif ipf = npfA
+               pAn += incAN;
+         @endiif
+         @iexp mo @(mo) 1 +
+      @endiif
+      @skip if (mo == 0 && ipf < npfB)
+      @iexp kk @(mo) 0 = @(npfB) @(ipf) < &
+      @iif kk ! 0
+         @iexp kk @(npfA) @(ipf) - @(pfLS) *
+               @(pfB)(pBn+@(kk));
+         @iexp ipf @(ipf) 1 +
+         @iif ipf = npfB
+               pBn += incBN;
+         @endiif
+         @iexp mo @(mo) 1 +
+      @endiif
+   @endiif
+   @undef kk
+@ENDPROC
 @beginskip
 Perform initial iteration use vmul.  1-D scheduled to make it obvious
 the non-unit dimension can be directly loaded from memory, rather than
@@ -433,38 +492,7 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
             @callproc ldB 9 rB@(j) @(j)
                @endiif
             @endiif
-            @skip kk = (mo == 0 || (mu == 2 && nu == 2))
-            @iexp kk @(nu) 2 = @(mu) 2 = & @(mo) 0 = |
-            @iif kk ! 0
-               @iif ipf < npfC
-                  @iexp kk @(ipf) @(pfLS) *
-            @(pfC)(pC+@(kk));
-                  @iexp ipf @(ipf) 1 +
-                  @iexp mo @(mo) 1 +
-               @endiif
-               @skip if (mo = 0 && ipf < npfA)
-               @iexp kk @(mo) 0 = @(npfA) @(ipf) < &
-               @iif kk ! 0
-                  @iexp kk @(ipf) @(pfLS) *
-            @(pfA)(pAn+@(kk));
-                  @iexp ipf @(ipf) 1 +
-                  @iif ipf = npfA
-                     pAn += incAn;
-                  @endiif
-                  @iexp mo @(mo) 1 +
-               @endiif
-               @skip if (mo == 0 && ipf < npfB)
-               @iexp kk @(mo) 0 = @(npfB) @(ipf) < &
-               @iif kk ! 0
-                  @iexp kk @(ipf) @(pfLS) *
-            @(pfB)(pBn+@(kk));
-                  @iexp ipf @(ipf) 1 +
-                  @iif ipf = npfB
-                     pBn += incBn;
-                  @endiif
-                  @iexp mo @(mo) 1 +
-               @endiif
-            @endiif
+            @callproc DoPref
             @iexp i @(i) 1 +
          @endiwhile
          @iexp j @(j) 1 +
@@ -525,6 +553,7 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
       @iwhile j < @(vnu)
          @iexp i 0 0 +
          @iwhile i < @(vmu)
+            @iexp mo 0 0 +
             @iexp nlb 0 0 +
             ATL_vmac(rC@(i)_@(j), rA@(i), rB@(j));
             @iif i = 0
@@ -535,22 +564,16 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
                   @iexp lb @(lb) -1 +
                   @iexp kk @(lb) @(vl) *
                ATL_vld(vB@(lb), pB+@(kk));
+                  @iexp mo 1 0 +
                   @iexp lb 0 0 +
                @endiif
                pB += @(incBk);
                @endiif
             @endiif
-            @iif j = jpf
-               @iif i = 0
-                  ATL_pfl1R(pB+incBn);
-               @endiif
-               @iif i = 1
-                  ATL_pfl2R(pA+incAm);
-               @endiif
-            @endiif
             @iif j = jl
                @iexp kk @(i) @(vl) *
                ATL_vld(rA@(i), pA+@(kk));
+               @iexp mo 1 0 +
                @iif i = il
                pA += @(incAk);
                @endiif
@@ -566,9 +589,11 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
                   @iexp lb @(lb) -1 +
                   @iexp kk @(lb) @(vl) *
                ATL_vld(vB@(lb), pB+@(kk));
+                  @iexp mo 1 0 +
                   @iexp lb 0 0 +
                @endiif
             @endiif
+            @callproc DoPref
             @iexp i @(i) 1 +
          @endiwhile
          @iexp j @(j) 1 +
@@ -638,10 +663,10 @@ void ATL_USERMM
     *pB0=pB *pA0=pA
    @enddeclare
    @iif npfA > 0
-   const int incAn = (ATL_MM_KB * @(mu)) / nnu;
+   const int incAN = (ATL_MM_KB * @(mu)) / nnus;
    @endiif
    @iif npfB > 0
-   const int incBn = (ATL_MM_KB * @(nu)) / nmu;
+   const int incBN = (ATL_MM_KB * @(nu)) / nmus;
    @endiif
 @skip   const @(typ) *pfA;
    int i, j, k;
@@ -691,14 +716,27 @@ void ATL_USERMM
       for (j=0; j < nnus; j++)
       {
 /*
- *       Peel K=1 iteration to avoid zero of rCxx and extra add 
+ *       Peel K=0 iteration to avoid zero of rCxx and extra add 
  */
+         @iexp npeel 1 0 +
          @CALLPROC DoIter0
-         for (k=@(kp); k < ATL_MM_KB; k += @(ku))
+      @iwhile ipf < npf
+/*
+ *       Peel K=@(npeel) it to allow prefetch of C or next blocks of A&B
+ */
+         @VEC KDIM `@iexp kk @(npeel) @(vl)`
+         @VEC ! KDIM `@iexp kk @(npeel) 0 +`
+         if (k == @(kk))
+            goto KDONE;
+            @CALLPROC DoIter
+         @iexp npeel @(npeel) 1 +
+      @endiwhile
+         @VEC KDIM `@iexp kk @(npeel) @(vl)`
+         @VEC ! KDIM `@iexp kk @(npeel) 0 +`
+         for (k=@(kk); k < ATL_MM_KB; k += @(ku))
          {
             @CALLPROC DoIter
          }
-@iexp npeel 0 0 +
 @iif npeel > 1
 KDONE:
 @endiif
