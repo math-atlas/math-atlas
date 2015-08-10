@@ -78,6 +78,24 @@ During tuning, think about several regions for prefetch:
 @ifdef ! pfB
    @define pfB @ATL_pfl2R@
 @endifdef
+@iexp kk @(pf) 8 &
+@iif kk ! 0
+   @define pfAk @ATL_pfl2R@
+   @iexp kk @(pf) 256 &
+   @iif kk ! 0
+      @undef pfAk
+      @define pfAk @ATL_pfl1R@
+   @endiif
+@endiif
+@iexp kk @(pf) 16 &
+@iif kk ! 0
+   @define pfBk @ATL_pfl2R@
+   @iexp kk @(pf) 512 &
+   @iif kk ! 0
+      @undef pfBk
+      @define pfBk @ATL_pfl1R@
+   @endiif
+@endiif
 @iexp kk @(mu) @(nu) 1 @(pf) & * *
 @iif kk > pfLS
    @iexp npfC @(pfLS) @(kk) /
@@ -361,12 +379,13 @@ During tuning, think about several regions for prefetch:
    #define ATL_CSZT const size_t
 #endif
 @skip Helper func for DoIter[0].  
-@skip IN: pfLS,npfA,npfB, npfC, mu, nu; 
+@skip IN: pfLS,npfA,npfB, npfC, mu, nu, IN_K; 
 @skip IN/OUT: mo, ipf
 @BEGINPROC DoPref
    @define kk @dum@
-   @skip kk = (mo == 0 || (mu == 2 && nu == 2))
-   @iexp kk @(nu) 2 = @(mu) 2 = & @(mo) 0 = |
+   @skip kk = (mo == 0 || (vmu == 2 && vnu == 2))
+   @iexp kk @(vnu) 2 = @(vmu) 2 = & @(mo) 0 = |
+@print kk=@(kk), mo=@(mo) ipf=@(ipf), npfC=@(npfC), npfA=@(npfA), npfB=@(npfB)
    @iif kk ! 0
       @iif ipf < npfC
          @iexp kk @(ipf) @(pfLS) *
@@ -396,6 +415,22 @@ During tuning, think about several regions for prefetch:
          @endiif
          @iexp mo @(mo) 1 +
       @endiif
+      @iif IN_K ! 0
+         @ifdef pfBk
+            @iif mo = 0
+            @(pfBk)(pB+incBn);
+               @undef pfBk
+               @iexp mo @(mo) 1 +
+            @endiif
+         @endifdef
+         @ifdef pfAk
+            @iif mo = 0
+            @(pfAk)(pA+incAm);
+               @undef pfAk
+               @iexp mo @(mo) 1 +
+            @endiif
+         @endifdef
+      @endiif
    @endiif
    @undef kk
 @ENDPROC
@@ -422,11 +457,13 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
             @iexp kk @(i) @(vl) *
          ATL_vld(rC@(i)_0, pA+@(kk));
          ATL_vmul(rC@(i)_0, rC@(i)_0, rB0);
+            @iexp mo 0 0 +
+            @callproc DoPref
             @iexp i @(i) 1 +
          @endiwhile
          pA += @(incAk);
    @endiif
-@SKIP 1-D with MU=1
+@SKIP 1-D with VMU=1
    @iif DN = 0
       @iif vmu = 1
          @iexp DN 1 0 +
@@ -436,6 +473,8 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
          @iwhile j < @(vnu)
             @callproc ldB 6 rC0_@(j) @(j)
          ATL_vmul(rC0_@(j), rC0_@(j), rA0);
+            @iexp mo 0 0 +
+            @callproc DoPref
             @iexp j @(j) 1 +
             @skip if (bc==0 && j%vl==0)
             @iexp kk @(bc) 0 = @(vl) @(j) % 0 = &
@@ -521,6 +560,8 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
             @iexp kk @(i) @(vl) *
             ATL_vld(rA0, pA+@(kk));
             ATL_vmac(rC@(i)_0, rA0, rB0);
+            @iexp mo 0 0 +
+            @callproc DoPref
             @iexp i @(i) 1 +
          @endiwhile
             pA += @(incAk);
@@ -535,6 +576,8 @@ ASSUMES DEFINED: ldB, incBk, bmul, incAk, vmu, vnu, vl
          @iwhile j < @(vnu)
             @callproc ldB 9 rB0 @(j)
             ATL_vmac(rC0_@(j), rA0, rB0);
+            @iexp mo 0 0 +
+            @callproc DoPref
             @iexp j @(j) 1 +
             @skip if (bc==0 && j%vl==0)
             @iexp kk @(bc) 0 = @(vl) @(j) % 0 = &
@@ -715,6 +758,7 @@ void ATL_USERMM
    @endiif
       for (j=0; j < nnus; j++)
       {
+         @iexp IN_K 0 0 +
 /*
  *       Peel K=0 iteration to avoid zero of rCxx and extra add 
  */
@@ -735,6 +779,7 @@ void ATL_USERMM
          @VEC ! KDIM `@iexp kk @(npeel) 0 +`
          for (k=@(kk); k < ATL_MM_KB; k += @(ku))
          {
+            @iexp IN_K 0 1 +
             @CALLPROC DoIter
          }
 @iif npeel > 1
