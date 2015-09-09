@@ -10954,7 +10954,7 @@ static char *atlsys_1L(char *targ, char *cmnd, int verb, int CWS)
    return(ln);
 }
 #endif
-@ROUT gnuccw gnuf90w gcc3p
+@ROUT gnuccw gnuf90w gcc3p fkoc
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -10964,6 +10964,38 @@ static char *atlsys_1L(char *targ, char *cmnd, int verb, int CWS)
 #ifdef DEBUG
    FILE *fplog=NULL;
 #endif
+@ROUT fkoc
+#ifndef MYPP 
+   #define MYPP "xextract"
+#endif
+#ifndef MYFKO
+   #define MYFKO "fko"
+#endif
+#ifndef MYASM 
+   #define MYASM "gcc"
+#endif
+/*
+ * This is a helper wrapper for fko (floating point kernel optimizer) to make
+ * it act more like a compiler, with an option to apply a preprocessor.
+ * fko takes only one source file, and output assembly, whereas most
+ * build processes assume that multiple files can be passed, with the
+ * output being an object file.  This wrapper does *not* support linking.
+ * This wrapper does:
+ * (1) For files ending in .B, run MYPP (extract) as preprocessor to create
+ *     an FKO HIL file (ending in .b) for compiling by fko
+ * (2) Run MYFKO fko on all .b files to produce assembly (.s)
+ * (3) Run MYASM on all .s files to produce an object file (.o)
+ * The script itself takes flags of (ones w/o -- are standard unix flags):
+ * --<flag> : as shown in PrintUsage
+ * -Dhand=def -D hand=def -> only used for .B files, passed as -def to extract
+ * -o file.[o,obj] -> output object file name (must not contain ., or end 
+ *    in .o or .obj)
+ * -@[extract flag] : eg. -@type=sreal -@-langC -@'-def type double'
+ *                    embedded spaces muse be surrounded by '' (not "")
+ * -s : produce assembly rather than object file
+ * NOTE: any arg not beginning with - and ending in ".b" or ".B" is assumed to
+ *       be a file to be compiled.
+ */
 @ROUT gcc3p
 #ifndef MYGCC
    #define MYGCC "gcc"
@@ -11010,7 +11042,7 @@ static char *atlsys_1L(char *targ, char *cmnd, int verb, int CWS)
  *
  * Compiles with "-c" as a flag do only steps 1-2.
  */
-
+@ROUT gnuccw gnuf90w gcc3p fkoc
 char *CatStrs(char *s1, char *s2)
 {
    int i1, i2, i;
@@ -11209,8 +11241,319 @@ int PrintAllArgsToStr(ATL_arg_t *ab, char *str)
    }
    return(i);
 }
+@ROUT fkoc
+char *ParseCompFlags(int nargs, char **args, int *BITS, ATL_arg_t **files,
+                     ATL_arg_t **LNK, ATL_arg_t **CMP, ATL_arg_t **ASM,
+                     int *CPPONLY)
+{
+   int i, nfiles=0, DOPP=1, DOASM=1, DOLNK=1;
+   ATL_arg_t *ppb, *pp, *cmpb, *cp, *asmb, *ap, *filb, *fp, *an;
+   char *outn=NULL, *sp;
+/*
+ * Go through compiler flags and separate them into flags affecting
+ * preprocessing, compilation, and assembling
+ */
+   cmpb = cp = NewArg(MYGCC);
+   asmb = ap = NewArg(MYASM);
+   ppb = pp = NewArg(MYLNK);
+   filb = NULL;
+   for (i=1; i < nargs; i++)
+   {
+      ATL_arg_t *at;
+      at = NewArg(args[i]);
+      if (at->arg[0] == '-')  /* flag */
+      {
+         switch (at->arg[1])
+         {
+         case 'o' :  /* -o : found name of output file */
+/*
+ *          If this is just -o, then actual name is given in the next arg
+ */
+            if (at->len == 2)
+            {
+               assert(++i < nargs);
+               outn = args[i];
+            }
+/*
+ *          is of form -o<name>
+ */
+            else
+               outn = args[i]+2;
+            break;
+         case '@' : /* -@ args go only to preprocessor (extract)  */
+            if (at->len == 2) /* next arg has extract command */
+            {
+               assert(++i < nargs);
+               sp = args[i];
+            }
+            else  /* rest of line has extract command */
+               sp = at->arg+2;
+            pp->next = NewArg(args[i]);
+            pp = pp->next;
+            KillArg(at);
+            break;
+         case 'x' :  /* I only use -x asg-with-cpp, so pass to comp only */
+            *CPPONLY = 1;
+            cp->next = at;
+            assert(++i < nargs);
+            assert(!strcmp(args[i], "assembler-with-cpp"));
+            cp = at->next = NewArg(args[i]);
+            break;
+         case 'c' :
+            DOLNK = 0;
+            break;
+         case 'S' :
+            DOASM = DOLNK = 0;
+            break;
+         case 'E':
+         case 'X':
+         case 'T':
+         case 'u':
+            fprintf(stderr, "FLAG '-%c' NOT HANDLED, DYING\n", at->arg[1]);
+            assert(0); /* not implemented at moment */
+         case 'W': /* possible linker/assembler pass-thru */
+           if (at->len > 3)
+           {
+              if (at->arg[2] == 'a' && at->arg[3] == ',') /* asm pass-thru */
+              {
+@ROUT gcc3p 
+                 strcpy(at->arg, at->arg+4);
+                 at->len -= 4;
+@ROUT gnuccw gnuf90w gcc3p
+                 ap->next = at;
+                 ap = at;
+              }
+              else if (at->arg[2] == 'l' && at->arg[3] == ',') /* lnk pass */
+              {
+@ROUT gcc3p 
+@skip                 strcpy(at->arg, at->arg+4);
+@skip                 at->len -= 4;
+@ROUT gnuccw gnuf90w gcc3p
+                 lp->next = at;
+                 lp = at;
+              }
+           }
+           /* else fall-thru to default */
+         default:  /* everything else assumed to be a compiler-only flag */
+/*
+ *          In default, compare against all known linker options
+ */
+            if ( (at->len == 13 && !strcmp(at->arg, "-nostartfiles")) ||
+                 (at->len == 14 && !strcmp(at->arg, "-nodefaultlibs")) ||
+                 (at->len == 9 && !strcmp(at->arg, "-nostdlib")) ||
+                 (at->len == 4 && !strcmp(at->arg, "-pie")) ||
+                 (at->len == 9 && !strcmp(at->arg, "-rdynamic")) ||
+                 (at->len == 2 && at->arg[1] == 's') ||
+                 (at->len == 7 && !strcmp(at->arg, "-static")) ||
+                 (at->len == 14 && !strcmp(at->arg, "-static-libgcc")) ||
+                 (at->len == 9 && !strcmp(at->arg, "-symbolic"))
+               )
+            {
+               lp->next = at;
+               lp = at;
+            }
+            else if (at->len == 8 && !strcmp(at->arg, "-Xlinker"))
+            {
+               assert(++i < nargs);
+@skip @ROUT gcc3p 
+@skip               lp->next = NewArg(args[i]);
+@ROUT gnuccw gnuf90w gcc3p
+               lp->next = at;
+               lp = at->next = NewArg(args[i]);
+@ROUT gnuccw gnuf90w gcc3p
+            }
+            else if (at->len == 11 && !strcmp(at->arg, "-Xassembler"))
+            {
+               assert(++i < nargs);
+@ROUT gcc3p 
+              ap->next = NewArg(args[i]);
+@ROUT gnuccw gnuf90w
+               ap->next = at;
+               ap = at->next = NewArg(args[i]);
+@ROUT gnuccw gnuf90w gcc3p
+            }
+/*
+ *          -m64/32 args get passed to comp, asm & linker
+ */
+            else if (at->len == 4 && 
+                     (!strcmp(at->arg, "-m64") || !strcmp(at->arg, "-mx32") ||
+                      !strcmp(at->arg, "-m32")))
+            {
+@ROUT gcc3p
+               if (at->arg[2] == '6')
+               {
+                  ap->next = NewArg("--64");
+                  *BITS = 64;
+               }
+               else
+               {
+                  ap->next = NewArg("--32");
+                  *BITS = 32;
+               }
+@ROUT gcc3p
+               lp->next = DupArg(at);
+               lp = lp->next;
+@ROUT gnuccw gnuf90w
+               if (at->arg[2] == '6')
+                  *BITS = 64;
+               else 
+                  *BITS = 32;
+               lp->next = DupArg(at);
+               lp = lp->next;
+               ap->next = DupArg(at);
+               ap = ap->next;
+@ROUT gnuccw gnuf90w gcc3p
+               cp->next = at;
+               cp = at;
+            }
+            else if (at->len == 9 && !strcmp(at->arg, "--version"))
+            {
+               char *sp;
+               int i;
+               i = strlen(MYGCC);
+               sp = malloc(i + 12);
+               strcpy(sp, MYGCC);
+               strcpy(sp+i, " --version");
+               system(sp);
+               free(sp);
+               #ifdef DEBUG
+                  fclose(fplog);
+               #endif
+               exit(0);  /* ugly uncleaned-up exit; live with it */
+            }
+            else
+            {
+               cp->next = at;
+               cp = at;
+            }
+         }
+      }
+@skip      if (at->arg[0] != '-')  /* must be filename */
+      else  /* anything not beginning with - must be a filename */
+      {
+         char ch;
+@ROUT gnuf90w `         int F90=0;`
+         int len = at->len;
 
-
+         assert(len > 2);
+         ch = at->arg[len-1];
+         nfiles++;
+@ROUT gnuf90w
+         if (at->arg[len-2] == '.') /* .f or .F */
+            assert(ch == 'f' || ch == 'F' || ch == 'o' || ch == 'a');
+         else  /* .f90 */
+         {
+            F90 = 1;
+            ch = at->arg[len-3];
+            assert(len > 4)
+            assert(at->arg[len-4] == '.' && 
+                   (ch == 'f' || ch == 'F') ||
+                   (at->arg[len-2] == '9'));
+         }
+@ROUT gnuccw gcc3p
+         assert(at->arg[len-2] == '.' && 
+            (ch == 'c' || ch == 'S' || ch == 's' || ch == 'o' || ch == 'a'));
+@ROUT gnuccw gnuf90w gcc3p
+/*
+ *       If it isn't already an object file, add it to list of files to be
+ *       renamed during compilation
+ */
+         if (ch != 'o' && ch != 'a')
+         {
+            if (!filb)
+               filb = fp = at;
+            else
+            {
+               fp->next = at;
+               fp = at;
+            }
+/*
+ *          Put empty node in linker options to indicate where to put in the 
+ *          generated file names
+ */
+            lp->next = NewArg(NULL);
+            lp = lp->next;
+         }
+/*
+ *       If it is a object/archive file, just add it to link line and forget it
+ */
+         else
+         {
+            lp->next = NewArg(at->arg);
+            lp = lp->next;
+         }
+/*
+ *       If the file is already an object file, add it to linker
+ */
+@beginskip
+/*
+ *       Put file on link line with language extension replaced by ".o"
+ */
+         lp->next = NewArg(at->arg);
+         lp = lp->next;
+@ROUT gnuccw gcc3p
+         lp->arg[len-1] = 'o';
+@ROUT gnuf90w
+         if (!F90)
+            lp->arg[len-1] = 'o';
+         else
+         {
+            lp->arg[len-3] = 'o';
+            lp->arg[len-2] = '\0';
+            lp->len = len - 2;
+         }
+@ROUT gnuccw gnuf90w gcc3p
+@endskip
+      }
+   }
+   if (outn)  /* must use particular output name */
+   {
+      ATL_arg_t *tp;
+      tp = (DOLNK) ? lp : ap;
+      tp->next = NewArg("-o");
+      tp->next->next = NewArg(outn);
+      tp = tp->next->next;
+   }
+   if (outn && !DOLNK)
+      assert(nfiles == 1);
+   else
+      assert(nfiles > 0);
+/*
+ * If there are no files in filb, that means nothing need be compiled, so
+ * the only thing we are doing is linking
+ */
+   if (!filb)
+   {
+      assert(DOLNK);
+      if (cmpb)
+         KillAllArgs(cmpb);
+      if (asmb)
+         KillAllArgs(asmb);
+      *CMP = NULL;
+      *ASM = NULL;
+   }
+   else
+   {
+      *CMP = cmpb;
+      if (DOASM)
+         *ASM = asmb;
+      else
+      {
+         *ASM = NULL;
+         KillAllArgs(asmb);
+      }
+   }
+   if (DOLNK)
+      *LNK = lnkb;
+   else
+   {
+      *LNK = NULL;
+      KillAllArgs(lnkb);
+   }
+   *files = filb;
+   return(outn);
+}
+@ROUT gnuccw gnuf90w gcc3p
 char *ParseCompFlags(int nargs, char **args, int *BITS, ATL_arg_t **files,
                      ATL_arg_t **CMP, ATL_arg_t **ASM, ATL_arg_t **LNK,
                      int *CPPONLY)
