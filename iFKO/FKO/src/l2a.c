@@ -3257,7 +3257,8 @@ struct assmln *lil2ass(BBLOCK *bbase)
          
             op1 = -op1;
             op2 = -op2;
-
+            //fprintf(stderr, "********* VDMOVS %d %d %d\n", -VDREGBEG-op1, 
+            //      -VDREGBEG-op2, op3);
             #ifdef AVX
 /*
  *             vmovsd is expensive. as dreg and vdreg are aliased, we use VDMOV
@@ -3579,6 +3580,40 @@ struct assmln *lil2ass(BBLOCK *bbase)
  */
       case VDSHUF:
          cp = imap2cmap(SToff[op3-1].i);
+#if defined(AVX) && 1
+/*
+ *          handle as special case first.... later will check whether prior 
+ *          implementation can handle it
+ */
+           if (cp[3] == 3 && cp[2] == 2 && cp[1] == 4 && cp[0] == 0)
+           {
+               ap->next = PrintAssln("\tunpcklpd\t%s,%s\n", 
+                                     archxmmregs[-VDREGBEG-op2],
+                                     archxmmregs[-VDREGBEG-op1]);
+           }
+           else if (cp[3] == 5 && cp[2] == 4 && cp[1] == 1 && cp[0] == 0)
+           {
+               ap->next = PrintAssln("\tvinsertf128\t$1, %s, %s, %s\n", 
+                                     archxmmregs[-VDREGBEG-op2],
+                                     archvdregs[-VDREGBEG-op1],
+                                     archvdregs[-VDREGBEG-op1]);
+           }
+           else if ( op1 == op2 && 
+                     cp[3] == 3 && cp[2] == 2 && cp[1] == 1 && cp[0] == 1)
+           {
+               ap->next = PrintAssln("\tunpckhpd\t%s,%s\n", 
+                                     archxmmregs[-VDREGBEG-op2],
+                                     archxmmregs[-VDREGBEG-op1]); 
+           }
+           else if ( op1 == op2 && 
+                     cp[3] == 3 && cp[2] == 2 && cp[1] == 3 && cp[0] == 2)
+           {
+               ap->next = PrintAssln("\tvextractf128\t$1, %s, %s\n", 
+                                     archvdregs[-VDREGBEG-op1],
+                                     archxmmregs[-VDREGBEG-op2]);
+           }
+           else
+#endif
          #ifdef AVX2
          if (op1 == op2 || (cp[3] > 3 && cp[2] > 3 && cp[1] > 3 && cp[0] > 3)) 
          {
@@ -3617,7 +3652,7 @@ struct assmln *lil2ass(BBLOCK *bbase)
  *             0x0000  => rd[255:192,191:128,127:64,63:0] = rd[63:0] 
  *             0x2200  => rd[127:64,63:0]=rd[63:0]; 
  *                        rd[255:192,191:128]=rd[191:128] 
- */          
+ */         
             if (cp[3]==0 && cp[2]==0 &&cp[1]==0 && cp[0]==0) 
             {
                assert(op1 == op2);
@@ -3649,6 +3684,13 @@ struct assmln *lil2ass(BBLOCK *bbase)
                                      archvdregs[-VDREGBEG-op1], /* src2*/ 
                                      archvdregs[-VDREGBEG-op2], 
                                      archvdregs[-VDREGBEG-op1]);
+            else if (cp[3] == 3 && cp[2] == 2 && cp[1] == 4 && cp[0] == 0)
+            {
+               ap->next = PrintAssln("\tunpcklpd\t%s,%s\n", 
+                                     archxmmregs[-VDREGBEG-op2],
+                                     archxmmregs[-VDREGBEG-op1]);
+            
+            }
             else if (cp[3] == 3 && cp[2] == 2 && cp[1] == 1 && cp[0] == 5)
             {
                ap->next = PrintAssln("ERROR:\t%s %d %d %d\n", 
