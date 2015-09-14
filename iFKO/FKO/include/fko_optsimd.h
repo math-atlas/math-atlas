@@ -6,8 +6,9 @@
  */
 #define VECT_NCONTRL 0x1      /* simple loop with no control flow */
 #define VECT_SV 0x2           /* speculative vectorization */
-#define VECT_SHADOW_VRC 0x4   /* speculative vectorization */
+#define VECT_SHADOW_VRC 0x4   /* shadow vrc vectorization  */
 #define VECT_INTRINSIC  0x8   /* user defined intrinsic vectorization*/
+#define VECT_SLP  0x10        /* SLP vctorization */
 
 #if 0
    #define VECT_VRC 0x4       /* vector redundant computation */

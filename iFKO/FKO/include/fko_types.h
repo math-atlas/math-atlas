@@ -344,6 +344,43 @@ struct looppath    /* data structure for paths in loop */
    short *vsoflag;              /* info array for output vscal */
 };
 
+#define PK_INIT 1
+#define PK_INIT_ACTIVE  2
+#define PK_INIT_SCATTER 4
+#define PK_MEM_LOAD 8
+#define PK_MEM_STORE 16
+#define PK_ARITH_OP 32
+
+typedef struct pack PACK;
+struct pack     /* data structure to manage pack in SLP vectorization */
+{
+   int pnum;         /* pack id */
+   short vflag;      /* type? */
+   int vlen;         /* elements in vector */
+   int isVec;        /* pack vectorizable? */
+   int pktype;       /* pack type based on operation */
+   ILIST *sil;       /* scalar/original instruction list */
+   ILIST *vil;       /* vector instruction list */
+   ILIST *depil;     /* point to the inst which this pack depends on */     
+   INT_BVI uses;     /* uses in pack */
+   INT_BVI defs;     /* defs in pack */
+   short *scdef;     /* scalar vars which defs in sil */
+   short *scuse;     /* scalar vars which in use in sil */
+   short *vsc;       /* created vectors: dest, src1, src2 */
+};
+
+typedef struct slpvector SLP_VECTOR;
+struct slpvector
+{
+   int flag;          /* type, livein, liveout */
+   int islivein;      /* need to create it in pre-header */
+   int islive;        /* reached lived or dead by scalar update */
+   short vec;
+   int vlen;
+   short *svars;
+   struct slpvector *next;
+};
+
 #if 0
 typedef struct iglist IGLIST;
 struct iglist

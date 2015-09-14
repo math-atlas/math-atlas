@@ -126,6 +126,7 @@
       #define FKO_IVLEN 8
    #endif
    #ifdef AVX
+      #define ArchHasMemBroadcast
       #define FP_VEC
       #define FKO_SVLEN 8
       #define DP_VEC
