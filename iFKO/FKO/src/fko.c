@@ -12,7 +12,7 @@ FILE *fpST=NULL, *fpIG=NULL, *fpLIL=NULL, *fpOPT=NULL, *fpLOOPINFO=NULL;
 FILE *fpLRSINFO=NULL, *fpARCHINFO=NULL;
 int FUNC_FLAG=0; 
 int DTnzerod=0, DTabsd=0, DTnzero=0, DTabs=0, DTx87=0, DTx87d=0;
-int DTnzerods=0, DTabsds=0, DTnzeros=0, DTabss=0;
+/*int DTnzerods=0, DTabsds=0, DTnzeros=0, DTabss=0;*/ /*not used anymore */
 int FKO_FLAG;
 int VECT_FLAG=0;  /* Majedul: for different vectorization methods */
 /*
@@ -72,6 +72,7 @@ void PrintUsageN(char *name)
    fprintf(stderr, "  -LNZV : loop level no hazard vectorization\n");
    fprintf(stderr, "  -SV <path#> <nvlens> :" 
                    "Apply SpecVec to path# using nvlens bet\n" );
+   //fprintf(stderr, "  -SLPV : basic block level no hazard vectorization\n");
    /*fprintf(stderr, "  -B : Stronger Bet unrolling for SV\n");*/
    fprintf(stderr, "  -M : Maximum paths to be analyzed in SV\n");
    /*fprintf(stderr, 
@@ -513,6 +514,10 @@ struct optblkq *GetFlagsN(int nargs, char **args,
             i += 2;
             break;
 #endif
+/*
+ *       SV path sbunroll 
+ *       SLPV = SLP vectorization, at first we only applied to loop
+ */
          case 'S':
             if (args[i][2] && args[i][2]=='V')
             {
@@ -529,6 +534,12 @@ struct optblkq *GetFlagsN(int nargs, char **args,
                  fprintf(stderr, "Invalid path and/or nvlens!\n");
                PrintUsageN(args[0]);
               }
+            }
+            else if (args[i][2] && args[i][3] && args[i][2] == 'L' 
+                     && args[i][3] == 'P')
+            {
+               FKO_FLAG |= IFF_VECTORIZE;
+               VECT_FLAG |= VECT_SLP;
             }
             else
                PrintUsageN(args[0]);
@@ -1861,6 +1872,7 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int scstate, int *nsp)
    static short nlab=0, labs[4];
    /*static int iopt = 0, bv = 0;*/ /* Majedul: for opt logger, bv -> */
    extern LOOPQ *optloop;
+   BLIST *bl;
 /*
  * Form scope based on global setting
  */
@@ -1885,6 +1897,7 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int scstate, int *nsp)
  *    HERE HERE !!! we recalculated the scopes only for the IOPT_SCOP
  *    so, we need to recalcute the scope here for all other case
  */
+#if 1      
       if (scstate & IOPT_SCOP) /* scope is specified in scope0*/
 /*
  *       FIXED: the repeatable optimization itself may change the CFG. So, scope
@@ -1898,6 +1911,25 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int scstate, int *nsp)
          for (scope=NULL,bp=bbbase; bp; bp = bp->down)
             scope = AddBlockToList(scope, bp);
       }
+#else
+/*
+ *    remove the 1st block (prologue of function) to calc scope
+ *    just for testing ... ... 
+ */
+      if (scstate & IOPT_SCOP)
+      {
+         for (scope=NULL, bl=scope0; bl; bl=bl->next)
+         {
+            if (bl->blk != bbbase)
+               scope = AddBlockToList(scope, bl->blk);
+         }
+      }
+      else /* global scope, add all blks in CFG */
+      {
+         for (scope=NULL,bp=bbbase->down; bp; bp = bp->down)
+            scope = AddBlockToList(scope, bp);
+      }
+#endif
    }
 #if 0
    if (scstate & IOPT_GLOB)
@@ -3678,24 +3710,23 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks)
    optblks = OptBlockQtoTree(optblks);
 
 #if 0
+   PrintST(stdout);
    fprintf(stdout, "LIL before Reveal ARCH MEM  \n");
    PrintInst(stdout, bbbase);
    //exit(0);
 #endif  
-   
+
+#ifdef X86 
    RevealArchMemUses(); /* to handle ABS in X86 */
    if (!CFUSETU2D)
    {
-#if 0
-      bbbase = NewBasicBlocks(bbbase);
-      CheckFlow(bbbase, __FILE__, __LINE__);
-      FindLoops();
-      CheckFlow(bbbase, __FILE__, __LINE__);
-#endif
       CalcInsOuts(bbbase);
       CalcAllDeadVariables();
    }
+#endif
+
 #if 0
+   PrintST(stdout);
    fprintf(stdout, "LIL before Repeatable Opt \n");
    PrintInst(stdout, bbbase);
    //exit(0);
@@ -3724,7 +3755,7 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks)
 #endif   
 
 #if 0
-   //PrintST(stdout);
+   PrintST(stdout);
    fprintf(stdout, "LIL after Repeatable Opt \n");
    PrintInst(stdout, bbbase);
    exit(0);
@@ -3753,9 +3784,10 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks)
    AddLoopComments();   
 #endif   
 #if 0
+      //PrintST(stderr);
       fprintf(stdout, "\n LIL Before FinalizePrologueEpilogue\n");
       PrintInst(stdout,bbbase);
-      exit(0);
+      //exit(0);
 #endif
    i = FinalizePrologueEpilogue(bbbase,0 );
    KillAllLocinit(ParaDerefQ);
@@ -3764,7 +3796,7 @@ void GenerateAssemblyWithCommonOpts(FILE *fpout, struct optblkq *optblks)
       fprintf(stderr, "ERR from PrologueEpilogue\n");
    CheckFlow(bbbase, __FILE__,__LINE__);
 #if 0
-   PrintST(stdout);
+   //PrintST(stdout);
    fprintf(stdout, "Final LIL \n");
    PrintInst(stdout, bbbase);
    exit(0);
@@ -3837,7 +3869,7 @@ int IsAlignLoopSpecNeeded(LOOPQ *lp)
  * we don't need loop specialization for alignment if there is only one ptr
  * loop peeling would make it aligned to vlen
  */
-   if (lp->varrs[0] < 2)
+   if (!lp->varrs || lp->varrs[0] < 2)
    {
       fko_warn(__LINE__, "NO SPECIALIZATION FOR ALIGNMENT: "
                      "we only have one PTR to manage");
@@ -4076,9 +4108,9 @@ int main(int nargs, char **args)
    FindLoops();
    CheckFlow(bbbase,__FILE__,__LINE__);
 #if 0
+   PrintST(stdout);
    fprintf(stdout, "1st LIL\n");
    PrintInst(stdout, bbbase);
-   //PrintST(stdout);
    //ShowFlow("cfg.dot", bbbase);
    //PrintLoop(stderr,optloop);
    exit(0);
@@ -4225,9 +4257,13 @@ int main(int nargs, char **args)
       if (FKO_FLAG & IFF_VECTORIZE)
          fko_warn(__LINE__, "Already vectorize by HIL intrinsic\n");
       UpdateVecLoop(optloop);
-#if 0
-      PrintLoop(stderr, optloop);
-#endif
+   }
+   else if ( (FKO_FLAG & IFF_VECTORIZE) && (VECT_FLAG & VECT_SLP) )
+   {
+/*
+ *    implementing slp here.. finalize after done.
+ */
+      SLPvectorization();
    }
    else if (FKO_FLAG & IFF_VECTORIZE)
    {
