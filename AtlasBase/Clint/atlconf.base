@@ -11241,13 +11241,25 @@ int PrintAllArgsToStr(ATL_arg_t *ab, char *str)
    }
    return(i);
 }
+char *ArgsToStr(ATL_arg_t *ab, ATL_arg_t *ab1)
+{
+   char *sp;
+   int i0, i1;
+
+   i0 = FindTotLen(ab);
+   i1 = FindTotLen(ab1);
+   sp = malloc(i0+i1+1);
+   assert(sp);
+   PrintAllArgsToStr(ab, sp);
+   PrintAllArgsToStr(ab1, sp+i1);
+   return(sp);
+}
 @ROUT fkoc
 #define FKO_DOCMP 0
 #define FKO_DOASM 1
 #define FKO_SVTMP 2
 char *ParseCompFlags(int nargs, char **args, int *FLAG, ATL_arg_t **files,
-                     ATL_arg_t **PP, ATL_arg_t **CMP, ATL_arg_t **ASM,
-                     int *CPPONLY)
+                     ATL_arg_t **PP, ATL_arg_t **CMP, ATL_arg_t **ASM)
 {
    int i, nfiles=0, DOCMP=1, DOASM=1, SVTMP=0, flg;
    ATL_arg_t *ppb, *pp, *cmpb, *cp, *asmb, *ap, *filb, *outb=NULL;
@@ -11257,14 +11269,33 @@ char *ParseCompFlags(int nargs, char **args, int *FLAG, ATL_arg_t **files,
  * preprocessing, compilation, and assembling
  */
    ppb = pp = NewArg(MYPP);
-   cmpb = cp = NewArg(MYGCC);
+   cmpb = cp = NewArg(MYFKO);
    asmb = ap = NewArg(MYASM);
    filb = NULL;
    for (i=1; i < nargs; i++)
    {
       ATL_arg_t *at;
       at = NewArg(args[i]);
-      if (at->arg[0] == '-')  /* flag */
+      if (at->arg[0] != '-')  /* file name or arg to flag */
+      {
+         flg = 1;  /* by default assume flag */
+         if (at->len > 2 && at->arg[at->len-2] == '.') /* poss filename */
+         {
+            char ch = at->arg[at->len-1];
+            if (ch == 's' || ch == 'B' || ch == 'b')
+            {
+               flg = 0;
+               at->next = filb;
+               filb = at;
+            }
+         }
+         if (flg)
+         {
+            cp->next = at;
+            cp = cp->next;
+         }
+      }
+      else /* if (at->arg[0] == '-')  */ 
       {
          switch (at->arg[1])
          {
@@ -11341,7 +11372,8 @@ char *ParseCompFlags(int nargs, char **args, int *FLAG, ATL_arg_t **files,
          case 'c' :      /* -c is flag meaning same thing as default */
             KillArg(at); /* so don't remember seeing it, and continue */
             break;   
-         default:  /* fko flag or file name */
+         default:  /* fko flag */
+@beginskip
             flg = 1;  /* by default, say it's a flag */
             if (at->arg[0] != '-' && at->len > 2 &&
                 at->arg[at->len-2] == '.')           /* possible filename */
@@ -11356,9 +11388,10 @@ char *ParseCompFlags(int nargs, char **args, int *FLAG, ATL_arg_t **files,
             }
             if (flg)
             {
-               cp->next = at;
-               cp = cp->next;
-            }
+@endskip
+            cp->next = at;
+            cp = cp->next;
+@skip            }
          }
       }
    }
@@ -11389,6 +11422,19 @@ char *ParseCompFlags(int nargs, char **args, int *FLAG, ATL_arg_t **files,
    return(NULL);
 }
 
+char GetNextFileExt(ATL_arg_t *ap)
+{
+   int i = ap->len - 1;
+   char ch = ap->arg[i];
+   assert(ap->arg[i-1] == '.');
+   if (ch == 'B')
+      return('b');
+   else if (ch == 'b')
+      return('s');
+   else if (ch == 's')
+      return('o');
+   return(0);
+}
 /*
  * ap->arg should be a file name that ends in ".[B,b,s]".  We will create
  * a temporary file that has the same name plus a random integer (in hex),
@@ -11427,7 +11473,7 @@ char *GetTempFile(ATL_arg_t *ap, FILE **FPOUT, char extc)
       int k;
       k = rand();
       cnt++;
-      sprintf(sp, "%08.8x.%c", k, extc);
+      sprintf(sp, "%8.8x.%c", k, extc);
       fp = fopen(fn, "r");
       if (fp)            /* if file already exists */
       {
@@ -11445,7 +11491,43 @@ char *GetTempFile(ATL_arg_t *ap, FILE **FPOUT, char extc)
 
 int main(int narg, char **args)
 {
+   int flag, DOCOMP, DOASM, SVTMP;
+   ATL_arg_t *fileb, *ppb, *cmpb, *asmb, *fp;
+   ParseCompFlags(narg, args, &flag, &fileb, &ppb, &cmpb, &asmb);
+   printf("flag=%x\n", flag);
+   DOCOMP = flag & (1<<FKO_DOCMP);
+   DOASM = flag & (1<<FKO_DOASM);
+   SVTMP = flag & (1<<FKO_SVTMP);
+   for (fp=fileb; fp; fp = fp->next)
+   {
+      char extc, *bf=NULL, *sf=NULL, *of=NULL;
+      FILE *fpout;
+      extc = GetNextFileExt(fp);
+      if (extc == 'b')
+      {
+         bf = GetTempFile(fp, &fpout, extc);
+         extc = (DOCOMP) ? 's' : 0;
+      }
+      if (extc == 's')
+      {
+         sf = GetTempFile(fp, &fpout, extc);
+         extc = (DOASM) ? 'o' : 0;
+      }
+      if (extc == 'o')
+      {
+         of = GetTempFile(fp, &fpout, extc);
+      }
+      printf("bf='%s', sf='%s', of='%s'\n", 
+             bf?bf:"NULL", sf?sf:"NULL", of?of:"NULL");
+      if (bf)
+         free(bf);
+      if (sf)
+         free(sf);
+      if (of)
+         free(of);
+   }
 }
+
 @ROUT gnuccw gnuf90w gcc3p
 char *ParseCompFlags(int nargs, char **args, int *BITS, ATL_arg_t **files,
                      ATL_arg_t **CMP, ATL_arg_t **ASM, ATL_arg_t **LNK,
