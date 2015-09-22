@@ -11281,7 +11281,7 @@ char *ArgsToStrNQ(ATL_arg_t *ab, ATL_arg_t *ab1)
 char *ParseCompFlags(int nargs, char **args, int *FLAG, ATL_arg_t **files,
                      ATL_arg_t **PP, ATL_arg_t **CMP, ATL_arg_t **ASM)
 {
-   int i, nfiles=0, DOCMP=1, DOASM=1, SVTMP=0, flg;
+   int i, nfiles=0, DOCMP=1, DOASM=1, SVTMP=0, flg, k;
    ATL_arg_t *ppb, *pp, *cmpb, *cp, *asmb, *ap, *filb;
    char *sp, *ks;
    char *outnm=NULL;
@@ -11351,6 +11351,28 @@ char *ParseCompFlags(int nargs, char **args, int *FLAG, ATL_arg_t **files,
                cp->next = at;
                cp = cp->next;
             }
+            break;
+         case 'D' :  /* -Dhan=def or -D han=def are extract arg */
+            if (at->len == 2)  /* next arg has definition */
+            {
+               assert(++i < nargs);
+               sp = args[i];
+            }
+            else  /* is -Dhan=def */
+               sp = at->arg + 2;
+            for (k=0; sp[k] && sp[k] != '='; k++);  /* find = */
+            pp->next = NewArg("-def");
+            pp = pp->next;
+            pp->next = NewArg(sp);
+            pp = pp->next;
+            if (sp[k] == '\0') /* if no = in def, define it to 1 */
+            {
+               pp->next = NewArg("1");
+               pp = pp->next;
+            }
+            else
+               pp->arg[k] = ' ';  /* change = to space */
+            break;
          case '@' : /* -@ args go only to preprocessor (extract)  */
             if (at->len == 2) /* next arg has extract command */
             {
@@ -11493,6 +11515,23 @@ char *NewNameWithPath(char *ptnm, char *nam)
    return(new);
 }
 @endskip
+char *GetOutFileName(ATL_arg_t *ap, char extc)
+{
+   char *sp, *fn;
+   int i;
+
+   sp = FindNameInPath(ap->arg);  /* ignore path of input file */
+   i = strlen(sp);
+   assert(i > 2);         /* must end in .[B,b,S] */
+   fn = malloc(i+1);
+   assert(fn);
+   i -= 2;               /* get past [.B,b,S] */
+   assert(sp[i] == '.'); /* must be '.' for proper fkoc file extension */
+   strncpy(fn, sp, i+1);   /* copy everything except extension */
+   fn[i+1] = extc;
+   fn[i+2] = '\0';
+   return(fn);
+}
 /*
  * ap->arg should be a file name that ends in ".[B,b,s]".  We will create
  * a temporary file that has the same name plus a random integer (in hex),
@@ -11553,7 +11592,7 @@ char *GetTempFile(ATL_arg_t *ap, FILE **FPOUT, char extc)
 int main(int narg, char **args)
 {
    int flag, DOCOMP, DOASM, SVTMP;
-   ATL_arg_t *fileb, *ppb, *cmpb, *asmb, *fp;
+   ATL_arg_t *fileb, *ppb, *cmpb, *asmb, *fp, *inf;
    char *outnm;
 
    outnm = ParseCompFlags(narg, args, &flag, &fileb, &ppb, &cmpb, &asmb);
@@ -11566,6 +11605,7 @@ int main(int narg, char **args)
       char extc, *bf=NULL, *sf=NULL, *of=NULL, *pf=NULL;
       FILE *fpout;
       extc = GetNextFileExt(fp);
+      pf = fp->arg;
       if (extc == 'b')
       {
          char *sp;
@@ -11591,14 +11631,57 @@ int main(int narg, char **args)
                           bf, outnm);
                   exit(-1);
                }
+               free(outnm);
             }
+            else  /* final stage w/o renaming gets orig filename .b */
+            {
+               sp = GetOutFileName(fp, 'b');
+               assert(!rename(bf, sp));
+               free(sp);
+            }
+            free(bf);
+            return(0);
          }
-         extc = (DOCOMP) ? 's' : 0;
+         else
+            extc = 's';
       }
       if (extc == 's')
       {
-         sf = GetTempFile(fp, &fpout, extc);
-         extc = (DOASM) ? 'o' : 0;
+         char *sp;
+         ATL_arg_t *at;
+
+         at = NewArg(pf);
+         at->next = NewArg("-o");
+         if (!DOASM)  /* this is final stage */
+         {
+            if (outnm)
+               sp = outnm;
+            else 
+               sp = GetOutFileName(fp, 's');
+            fpout = fopen(sp, "w");
+            at->next->next = NewArg(sp);
+            free(sp);
+         }
+         else
+         {
+            sf = GetTempFile(fp, &fpout, extc);
+            at->next->next = NewArg(sf);
+         }
+         sp = ArgsToStrNQ(cmpb, at);
+         printf("FKO='%s'\n", sp);
+         assert(!system(sp));
+         KillAllArgs(at);
+         fclose(fpout);
+         if (bf)
+         {
+            if (!SVTMP)
+               assert(!remove(bf));  /* delete temporary file */
+            free(bf);
+         }
+         if (!DOASM)  /* if this is final stage */
+            return(0);
+         else
+            extc = 'o';
       }
       if (extc == 'o')
       {
