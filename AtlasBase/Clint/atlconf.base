@@ -8170,13 +8170,13 @@ void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
  * Calls xspew with correct arguments to build required Make.inc
  */
 {
-   char *frm = "./xspew -v %d -O %d -A %d -m %d -s %d -V %d -b %d -f %d -d s '%s' -d b '%s' -D c '%s' -D f '%s' %s -Si archdef %d -Si ieee %d -Si bozol1 %d -Si latune %d -Si nof77 %d -o Make.inc";
+   char *frm = "./xspew -v %d -O %d -A %d -m %d -s %d -V %d -b %d -f %d -d s '%s' -d b '%s' -D c '%s' -D f '%s' %s -Si archdef %d -Si ieee %d -Si bozol1 %d -Si latune %d -Si nof77 %d -Si fko %d -o Make.inc";
    char *ln, *compsflags, archflags[1024];
    int i;
 
    assert(!system("make xspew"));
    compsflags = Comps2Flags(comps);  /* Xlate comp/flag array to xspew flags */
-   i = strlen(frm) + 11*13 + strlen(srcdir) + strlen(bindir);
+   i = strlen(frm) + 11*14 + strlen(srcdir) + strlen(bindir);
    if (cdefs)
       i += strlen(cdefs);
    if (nreg)
@@ -8196,7 +8196,8 @@ void SpewItForth(int verb, enum OSTYPE OS, enum MACHTYPE arch, int mhz,
                srcdir, bindir, cdefs ? cdefs:"", f2cdefs? f2cdefs : "", 
                compsflags, SI_IS_TRUE(SIflag,SI_ARCHDEF), 
                SI_IS_TRUE(SIflag,SI_IEEE), SI_IS_TRUE(SIflag,SI_BOZOL1), 
-               SI_IS_TRUE(SIflag,SI_LATUNE), SI_IS_TRUE(SIflag,SI_NOF77));
+               SI_IS_TRUE(SIflag,SI_LATUNE), SI_IS_TRUE(SIflag,SI_NOF77),
+               SI_IS_TRUE(SIflag,SI_FKO));
    free(compsflags);
    if (tids)
    {
@@ -9065,6 +9066,9 @@ then
       cd $blddir
    fi
    $topdir/iFKO/fko_atlconf
+   cd $blddir/iFKO
+   make fkoc
+   cd $blddir
 fi
 echo "DONE configure"
 #
@@ -9086,7 +9090,7 @@ int main(int nargs, char **args)
    int nreg=0;
    int Use3DNow=0;  /* this needs to come from getflags */
    int ncpu, omp=0, AntThr=0, lapackref;
-   int SIflag, USEDEFL1, USEMINGW;
+   int SIflag, USEDEFL1, USEMINGW, FKO;
    int *tids;
    #define NPREC 4
    char pres[NPREC] = {'s', 'd', 'c', 'z'};
@@ -9104,6 +9108,7 @@ int main(int nargs, char **args)
    USEDEFL1 = SI_IS_TRUE(SIflag,SI_BOZOL1);
    nof77 = SI_IS_TRUE(SIflag,SI_NOF77);
    lapackref = SI_IS_TRUE(SIflag,SI_LAREF);
+   FKO = SI_IS_TRUE(SIflag,SI_FKO);
    if (ncpu > 1) THREADS = 1;
    if (!outfile)
       fpout = stdout;
@@ -9239,6 +9244,11 @@ int main(int nargs, char **args)
       fprintf(fpout, "   ADdir  = %s\n", ADd);
    else
       fprintf(fpout, "   ADdir  = $(SRCdir)/CONFIG/ARCHS\n");
+   if (FKO)
+   {
+      fprintf(fpout, "   FKOSRCdir = $(SRCdir)/iFKO\n");
+      fprintf(fpout, "   FKOBLDdir = $(BLDdir)/iFKO\n");
+   }
    fprintf(fpout, "\n");
 
    fprintf(fpout,
@@ -9447,6 +9457,11 @@ int main(int nargs, char **args)
          fprintf(fpout, " -fPIC");
    #endif
    fprintf(fpout, "\n");
+   if (FKO)
+   {
+      fprintf(fpout, "   FKO = $(FKOBLDdir)/fko\n");
+      fprintf(fpout, "   FKOC = $(FKOBLDdir)/fkoc\n");
+   }
    fprintf(fpout, "   KC = $(DKC)\n   KCFLAGS = $(CDEFS) $(DKCFLAGS)\n");
 
    fprintf(fpout, "   LDFLAGS =");
@@ -11345,7 +11360,10 @@ char *ParseCompFlags(int nargs, char **args, int *FLAG, ATL_arg_t **files,
             break;
          case 's' : /* possible -save-temps */
             if (at->len == 11 && !strcmp(at->arg, "-save-temps"))
+            {
                SVTMP = 1;
+               KillArg(at);
+            }
             else /* fko flag */
             {
                cp->next = at;
@@ -11372,6 +11390,7 @@ char *ParseCompFlags(int nargs, char **args, int *FLAG, ATL_arg_t **files,
             }
             else
                pp->arg[k] = ' ';  /* change = to space */
+            KillArg(at);
             break;
          case '@' : /* -@ args go only to preprocessor (extract)  */
             if (at->len == 2) /* next arg has extract command */
@@ -11406,7 +11425,10 @@ char *ParseCompFlags(int nargs, char **args, int *FLAG, ATL_arg_t **files,
             break;
          case 'S' :  /* I only use -x asg-with-cpp, so pass to comp only */
             if (at->len == 2) /* -S alone means emit assembly, not object */
+            {
                DOASM = 0;
+               KillArg(at);
+            }
             else  /* otherwise, must be an fko flag */
             {
                cp->next = at;
@@ -11415,7 +11437,10 @@ char *ParseCompFlags(int nargs, char **args, int *FLAG, ATL_arg_t **files,
             break;
          case 'E' :  /* I only use -x asg-with-cpp, so pass to comp only */
             if (at->len == 2) /* -E alone means emit assembly, not object */
+            {
                DOCMP = 0;
+               KillArg(at);
+            }
             else  /* otherwise, must be an fko flag */
             {
                cp->next = at;
@@ -11619,6 +11644,7 @@ int main(int narg, char **args)
          sp = ArgsToStrNQ(ppb, at);
          printf("BPP='%s'\n", sp);
          assert(!system(sp));
+         free(sp);
          KillAllArgs(at);
          fclose(fpout);
          if (!DOCOMP)  /* if this is final stage */
@@ -11640,7 +11666,7 @@ int main(int narg, char **args)
                free(sp);
             }
             free(bf);
-            return(0);
+            continue;
          }
          else
             extc = 's';
@@ -11670,6 +11696,7 @@ int main(int narg, char **args)
          sp = ArgsToStrNQ(cmpb, at);
          printf("FKO='%s'\n", sp);
          assert(!system(sp));
+         free(sp);
          KillAllArgs(at);
          fclose(fpout);
          if (bf)
@@ -11679,7 +11706,7 @@ int main(int narg, char **args)
             free(bf);
          }
          if (!DOASM)  /* if this is final stage */
-            return(0);
+            continue;
          extc = 'o';
       }
       if (extc == 'o')
@@ -11699,6 +11726,7 @@ int main(int narg, char **args)
          KillAllArgs(at);
          printf("ASM='%s'\n", sp);
          assert(!system(sp));
+         free(sp);
          if (pf != fp->arg)
          {
             assert(!remove(pf));
@@ -11706,6 +11734,11 @@ int main(int narg, char **args)
          }
       }
    }
+   KillAllArgs(ppb);
+   KillAllArgs(cmpb);
+   KillAllArgs(asmb);
+   KillAllArgs(fileb);
+   return(0);
 }
 
 @ROUT gnuccw gnuf90w gcc3p
