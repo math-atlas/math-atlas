@@ -1,4 +1,3 @@
-@define BETA1 @1@
 @PRE S C
    @define typ @FLOAT@
    @define sz @4@
@@ -155,38 +154,40 @@ During tuning, think about several regions for prefetch:
       @abort "MU*NU (@(mu)*@(nu)) must be a multiple of VLEN (@(vl))!"
    @endiif
 @VEC !
-@ifdef ! BETA1
-   @ifdef ! BETA0
-       @define ibet @-1@
-   @endifdef
-@endifdef
-@ifdef BETA1
-    @define ibet @1@
-@endifdef
-@ifdef BETA0
-   @define ibet @0@
-@endifdef
+@echo @ifdef ! BETA1
+@echo    @ifdef ! BETA0
+@echo        @define ibet @-1@
+@echo    @endifdef
+@echo @endifdef
+@echo @ifdef BETA1
+@echo     @define ibet @1@
+@echo @endifdef
+@echo @ifdef BETA0
+@echo    @define ibet @0@
+@echo @endifdef
 @BEGINPROC DoPref
 @ENDPROC
 @BEGINPROC DoIter0
 @SKIP define internal vars, so they can popped off to leave caller unchanged
-   @define DN @0@
    @define i @0@
    @define j @0@
    @define kk @0@ 
 @SKIP 1-D with NU=1
    @iif nu = 1
          rB0 = pB[@(ib)];
+         pB += 1;
          @iexp ib @(ib) 1 +
          @iexp i 0 0 +
          @iwhile i < @(mu)
-         rC@(i)_0 = pA[@ia];
-            @iexp ia @(ia) @(1) +
+         rC@(i)_0 = pA[@(ia)];
+            @iexp ia @(ia) 1 +
          rC@(i)_0 = rC@(i)_0 * rB0;
             @iexp mo 0 0 +
             @callproc DoPref
             @iexp i @(i) 1 +
          @endiwhile
+         pA += @(ia);
+         @iexp ia 0 0 +
    @endiif
    @iif nu > 1
 @SKIP 1-D with MU=1, NU > 1
@@ -195,10 +196,11 @@ During tuning, think about several regions for prefetch:
          pA += 1;
          @iexp j 0 0 +
          @iwhile j < @(nu)
-            rC0_@(j) = pB[@(j)];
-            rC0_@(j) = rC0_@(j) * rA0;
+         rC0_@(j) = pB[@(j)];
+         rC0_@(j) = rC0_@(j) * rA0;
             @iexp mo 0 0 +
-            @callproc DoPref
+         @callproc DoPref
+            @iexp j @(j) 1 +
          @endiwhile
          pB += @(nu);
       @endiif
@@ -211,8 +213,10 @@ During tuning, think about several regions for prefetch:
             @iexp i @(i) 1 +
          @endiwhile
             pA += @(mu);
+            @iexp ia 0 0 +
             rB@(jl) = pB[@(jl)];
             pB += @(nu);
+            @iexp ib 0 0 +
          @iexp j 0 0 +
          @iwhile j < @(nu)
             @iexp i 0 0 +
@@ -235,6 +239,80 @@ During tuning, think about several regions for prefetch:
             @iexp j @(j) 1 +
          @endiwhile
       @endiif
+@SKIP pop our defs so caller's macros of same name aren't changed
+   @undef i
+   @undef j
+   @undef kk
+@ENDPROC
+@BEGINPROC DoIter
+@SKIP define internal vars, so they can popped off to leave caller unchanged
+   @define i @0@
+   @define j @0@
+   @define kk @0@ 
+@SKIP 1-D with NU=1
+   @iif nu = 1
+            rB0 = pB[0];
+            pB += 1;
+         @iexp i 0 0 +
+         @iwhile i < @(mu)
+            rA@(i) = pA[@(i)];
+            rC@(i)_0 += rA@(i) * rB0;
+            @iexp mo 0 0 +
+            @callproc DoPref
+            @iexp i @(i) 1 +
+         @endiwhile
+            pA += @(mu);
+   @endiif
+   @iif nu > 1
+      @iif mu = 1
+            rA0 = pA[0];
+            pA += 1;
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            rB@(j) = pB[@(j)];
+            rC0_@(j) += rA0 * rB@(j);
+            @iexp mo 0 0 +
+            @callproc DoPref
+            @iexp j @(j) 1 +
+         @endiwhile
+         pB += @(nu);
+      @endiif
+@SKIP 2-D case assumes all but last rB already loaded, pA & pB must be updated
+      @iif mu > 1
+         @iexp mo 0 0 +
+         @iexp i 0 0 +
+         @iexp j 0 0 +
+         @iwhile j < @(nu)
+            @iexp i 0 0 +
+            @iwhile i < @(mu)
+            rC@(i)_@(j) += rA@(i) * rB@(j);
+         @iexp kk @(j) @(i) |
+         @iif kk = 0
+               rB@(jl) = pB[@(jl)];
+               pA += @(mu);
+            @iexp mo @(mo) 1 +
+         @endiif
+         @iexp kk @(j) @(nu) * @(i) +
+         @iif kk = 1
+               pB += @(nu);
+         @endiif
+         @iif j = jl
+               rA@(i) = pA[@(i)];
+            @iexp mo @(mo) 1 +
+         @endiif
+         @iif i = il
+            @iif j ! jl
+               rB@(j) = pB[@(j)];
+               @iexp mo @(mo) 1 +
+            @endiif
+         @endiif
+            @callproc DoPref
+               @iexp i @(i) 1 +
+            @endiwhile
+            @iexp j @(j) 1 +
+         @endiwhile
+      @endiif
+   @endiif
 @SKIP pop our defs so caller's macros of same name aren't changed
    @undef i
    @undef j
@@ -269,19 +347,25 @@ ROUT_LOCALS
          rB@(j)
          @iexp j @(j) 1 +
       @endiwhile
-      @iexp j 0 0 +
-      @iwhile j < @(nu)
-         @iexp i 0 0 +
-         @iwhile i < @(mu)
-            rC@(i)_@(j)
-            @iif ibet ! 0
-            rC@(i)_@(j)m
-            @endiif
-            @iexp i @(i) 1 +
-         @endiwhile
-         @iexp j @(j) 1 +
-      @endiwhile
    @enddeclare
+   @whiledef i
+   @endwhile
+   @whiledef j
+   @endwhile
+@echo   @declare "   @(typ) :: " y n ";"
+@echo      @iexp j 0 0 +
+@echo      @iwhile j < @(nu)
+@echo         @iexp i 0 0 +
+@echo         @iwhile i < @(mu)
+@echo            rC@(i)_@(j)
+@echo             @iif ibet ! 0
+@echo             rC@(i)_@(j)m
+@echo             @endiif
+@echo            @iexp i @(i) 1 +
+@echo         @endiwhile
+@echo         @iexp j @(j) 1 +
+@echo      @endiwhile
+@echo   @enddeclare
 ROUT_BEGIN
    @iexp mo 0 0 +
    @iexp ipf 0 0 +
@@ -308,26 +392,27 @@ ROUT_BEGIN
    @iexp IN_K 0 0 +
    @iexp npeel 1 0 +
    @callproc DoIter0
-   @BEGINSKIP
+         IF (K < 1) GOTO KDONE;
          LOOP k = 0, K
          LOOP_BODY
+            @callproc DoIter
          LOOP_END
-   @ENDSKIP
+KDONE:
    @iexp k 0 0 +
    @iexp j 0 0 +
    @iwhile j < @(nu)
       @iexp i 0 0 +
       @iwhile i < @(mu)
-         @iif ibet ! 0
-            rC@(i)_@(j)m = pC[@(k)];
-            @iif ibet = 1
-            rC@(i)_@(j) += rC@(i)_@(j)m;
-            @endiif
-            @iif ibet = -1
-            rC@(i)_@(j) = rC@(i)_@(j) - rC@(i)_@(j)m;
-            @endiif
-         @endiif
-            pC[@(k)] = rC@(i)_@(j);
+@echo         @iif ibet ! 0
+@echo         rC@(i)_@(j)m = pC[@(k)];
+@echo            @iif ibet = 1
+@echo         rC@(i)_@(j) += rC@(i)_@(j)m;
+@echo            @endiif
+@echo            @iif ibet = -1
+@echo         rC@(i)_@(j) = rC@(i)_@(j) - rC@(i)_@(j)m;
+@echo            @endiif
+@echo         @endiif
+         pC[@(k)] = rC@(i)_@(j);
          @iexp k @(k) 1 +
          @iexp i @(i) 1 +
       @endiwhile
@@ -338,7 +423,8 @@ ROUT_BEGIN
          pB += incBn;
    @endiif
    @iif ku ! kb
-         pA = pA0;
+              pA = pA0;
+//              pA = pA - incAm;
    @endiif
          j = j - 1;
       IF (j > 0) GOTO NLOOP;
