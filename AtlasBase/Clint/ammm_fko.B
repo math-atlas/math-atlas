@@ -56,41 +56,41 @@ During tuning, think about several regions for prefetch:
 @iexp pfLS @(sz) @(pfLS) /
 @iexp kk @(pf) 32 &
 @iif kk = 0
-   @define pfC @ATL_pfl2W@
+   @define pCl @2@
 @endiif
-@ifdef ! pfC
-   @define pfC @ATL_pfl1W@
+@ifdef ! pCl
+   @define pCl @1@
 @endifdef
 @iexp kk @(pf) 64 &
 @iif kk ! 0
-   @define pfA @ATL_pfl1R@
+   @define pAl @1@
 @endiif
-@ifdef ! pfA
-   @define pfA @ATL_pfl2R@
+@ifdef ! pAl
+   @define pAl @2@
 @endifdef
 @iexp kk @(pf) 128 &
 @iif kk ! 0
-   @define pfB @ATL_pfl1R@
+   @define pBl @1@
 @endiif
-@ifdef ! pfB
-   @define pfB @ATL_pfl2R@
+@ifdef ! pBl
+   @define pBl @2@
 @endifdef
 @iexp kk @(pf) 8 &
 @iif kk ! 0
-   @define pfAk @ATL_pfl2R@
+   @define pAlk @2@
    @iexp kk @(pf) 256 &
    @iif kk ! 0
-      @undef pfAk
-      @define pfAk @ATL_pfl1R@
+      @undef pAlk
+      @define pAlk @1@
    @endiif
 @endiif
 @iexp kk @(pf) 16 &
 @iif kk ! 0
-   @define pfBk @ATL_pfl2R@
+   @define pBlk @2@
    @iexp kk @(pf) 512 &
    @iif kk ! 0
-      @undef pfBk
-      @define pfBk @ATL_pfl1R@
+      @undef pBlk
+      @define pBlk @1@
    @endiif
 @endiif
 @iexp kk @(mu) @(nu) 1 @(pf) & * *
@@ -165,7 +165,61 @@ During tuning, think about several regions for prefetch:
 @echo @ifdef BETA0
 @echo    @define ibet @0@
 @echo @endifdef
+@skip Helper func for DoIter[0].
+@skip IN: pAl,pBl,pCl,pfLS,npfA,npfB, npfC, mu, nu, IN_K;
+@skip IN/OUT: mo, ipf
 @BEGINPROC DoPref
+   @define kk @dum@
+   @skip kk = (mo == 0 || (mu == 2 && nu == 2))
+   @iexp kk @(nu) 2 = @(mu) 2 = & @(mo) 0 = |
+   @iif kk ! 0
+      @iif ipf < npfC
+         @iexp kk @(ipf) @(pfLS) *
+                     _PREFETCHW(@(pCl), pC[@(kk)]);
+         @iexp ipf @(ipf) 1 +
+         @iexp mo @(mo) 1 +
+      @endiif
+      @skip if (mo = 0 && ipf < npfA)
+      @iexp kk @(mo) 0 = @(npfA) @(ipf) < &
+      @iif kk ! 0
+         @iexp kk @(npfC) @(ipf) - @(pfLS) *
+               _PREFETCHR(@(pAl),pAn[@(kk)]);
+         @iexp ipf @(ipf) 1 +
+         @iif ipf = npfA
+               pAn += incAN;
+         @endiif
+         @iexp mo @(mo) 1 +
+      @endiif
+      @skip if (mo == 0 && ipf < npfB)
+      @iexp kk @(mo) 0 = @(npfB) @(ipf) < &
+      @iif kk ! 0
+         @iexp kk @(npfA) @(ipf) - @(pfLS) *
+               _PREFETCHR(@(pBl), pBn[@(kk)]);
+         @iexp ipf @(ipf) 1 +
+         @iif ipf = npfB
+               pBn += incBN;
+         @endiif
+         @iexp mo @(mo) 1 +
+      @endiif
+      @iif IN_K ! 0
+         @ifdef pBlk
+            @iif mo = 0
+            _PREFETCHR(@(pBlk), pB[incBn]);
+               @undef pfBk
+               @iexp mo @(mo) 1 +
+            @endiif
+         @endifdef
+         @ifdef pAlk
+            @iif mo = 0
+            _PREFETCHR(@(pAlk), pA[incAm]);
+               @undef pfAk
+               @iexp mo @(mo) 1 +
+            @endiif
+         @endifdef
+      @endiif
+   @endiif
+   @define kk @dum@
+   @undef kk
 @ENDPROC
 @BEGINPROC DoIter0
 @SKIP define internal vars, so they can popped off to leave caller unchanged
