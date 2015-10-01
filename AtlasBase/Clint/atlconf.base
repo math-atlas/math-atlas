@@ -12,6 +12,7 @@
 #define SI_NOCYGWIN 6
 #define SI_OMP 6
 #define SI_LAREF 7
+#define SI_ADCLOSEP 8
 #define SI_IS_TRUE(bv_, b_) (((bv_)>>(b_))&1)
 #define SI_SET_BIT(bv_, b_) (bv_) |= 1 << (b_)
 #define SI_UNSET_BIT(bv_, b_) (bv_) &= ~(1 << (b_))
@@ -461,7 +462,11 @@ void GetFlags(int nargs,                /* nargs as passed into main */
          if (!strcmp(sp0, "archdef"))
          {
             if (k)
+            {
                SI_SET_BIT(*SIflag, SI_ARCHDEF);
+               if (k == 2)
+                  SI_SET_BIT(*SIflag, SI_ADCLOSEP);
+            }
             else
                SI_UNSET_BIT(*SIflag, SI_ARCHDEF);
          }
@@ -9093,6 +9098,79 @@ echo "DONE configure"
 @extract -b @(basd)/atlconf.base rout=GetFlags -punymac -def allflags ""
 @extract -b @(basd)/atlconf.base rout=getptrbits -punymac
 
+char *GetArch(enum MACHTYPE mach, int ISAX, int SIflag)
+{
+   char *ap;
+   int i, k;
+
+   i = strlen(machnam[mach]);
+   #if defined(__powerpc64__) && defined(__ORDER_LITTLE_ENDIAN__)
+      i += 2 /* LE */
+   #endif
+   i += 2;   /* 64/32 */
+   if (ISAX)
+      i += strlen(ISAXNAM[ISAX]);
+   if (!SI_IS_TRUE(SIflag,SI_IEEE))
+      i += 7;  /* NONIEEE */
+   ap = malloc(i+1);
+   assert(ap);
+   k = sprintf(ap, "%s", machnam[mach]);
+   #if defined(__powerpc64__) && defined(__ORDER_LITTLE_ENDIAN__)
+      k += sprintf(ap+k, "%dLE", ptrbits);
+   #else
+      k += sprintf(ap+k, "%d", ptrbits);
+   #endif
+   if (ISAX)
+      k += sprintf(ap+k, "%s", ISAXNAM[ISAX]);
+   if (!SI_IS_TRUE(SIflag,SI_IEEE))
+      sprintf(ap+k, "NONIEEE");
+   assert (k <= i);
+   return(ap);
+}
+/*
+ * RETURNS: string with path to archdef to use.  If np was exact match,
+ *   *BAD is zeroed, else set non-zero.
+ */
+char *GetArchDef(char *srcd, char *mach, int np, int *BAD)
+{
+   char *ap;
+   int i, l;
+   *BAD = 0;
+   l = strlen(srcd) + 1;
+   l += strlen(mach);
+   l += 4 + 8;        /* 4 digits np, 8 for .tar.bz2 */
+   ap = malloc(l+1);
+   assert(ap);
+   assert(np < 10000);
+   i = sprintf(ap, "%s/%sp%d.tar.bz2", srcd, mach, np);
+   assert(i < l);
+   if (!FileIsThere(ap))
+   {
+      int d;
+      for (d=1; d < 64; d++)
+      {
+         int p;
+         *BAD = 1;
+         p = np + d;
+         if (p < 10000)
+         {
+            i = sprintf(ap, "%s/%sp%d.tar.bz2", srcd, mach, p);
+            assert(i < l);
+            if (FileIsThere(ap))
+               return(ap);
+         }
+         p = np - d;
+         if (p > 0)
+         {
+            i = sprintf(ap, "%s/%sp%d.tar.bz2", srcd, mach, p);
+            assert(i < l);
+            if (FileIsThere(ap))
+               return(ap);
+         }
+      }
+   }
+   return(NULL);
+}
 int main(int nargs, char **args)
 {
    enum OSTYPE OS;
@@ -9105,13 +9183,14 @@ int main(int nargs, char **args)
    int nreg=0;
    int Use3DNow=0;  /* this needs to come from getflags */
    int ncpu, omp=0, AntThr=0, lapackref;
-   int SIflag, USEDEFL1, USEMINGW, FKO;
+   int SIflag, USEDEFL1, USEMINGW, FKO, NOMATCH;
    int *tids;
    #define NPREC 4
    char pres[NPREC] = {'s', 'd', 'c', 'z'};
    char *targ, *sp, *pmake, *flapack, *ADd;
    char *comps[3*NCOMP], *comp, *flags, *srcdir, *blddir, *f2cdefs, *cdefs;
    char *outfile, *smaflags, *dmaflags, *f77lib, *gccflags, *goodgcc;
+   char *arch, *archdef;
    char targarg[256], ln[1024];
    FILE *fpout;
    char *adnames[NARDEF] = {"sKERNDEF", "dKERNDEF", "sMMDEF", "dMMDEF"};
@@ -9131,6 +9210,18 @@ int main(int nargs, char **args)
       fpout = fopen(outfile, "w");
    assert(fpout);
    assert(srcdir && blddir);
+/*
+ * If archdef directory not given, default to srcdir/CONFIG/ARCHS
+ */
+   if (!ADd)
+   {
+      int l;
+      l = strlen(srcdir) + 16;
+      ADd = malloc(l);
+      assert(ADd);
+      i = sprintf("%s/CONFIG/ARCHS", srcdir);
+      assert(i < l);
+   }
 /*
  * Update l2size, and set f2cdefs/cdefs if they are null 
  */
@@ -9217,6 +9308,11 @@ int main(int nargs, char **args)
    fprintf(fpout, "#  -------------------------------------------------\n");
    fprintf(fpout, "#  Name indicating the platform to configure BLAS to\n");
    fprintf(fpout, "#  -------------------------------------------------\n");
+   arch = GetArch(MACHTYPE mach, ISAX, SIflag);
+   archdef = GetArchDef(ADd, arch, ncpu, &NOMATCH);
+   fprintf(fpout, "   ARCH = %s\n\n", arch);
+   free(arch);
+@beginskip
    fprintf(fpout, "   ARCH = %s", machnam[mach]);
    fprintf(fpout, "%d", ptrbits);
    #if defined(__powerpc64__) && defined(__ORDER_LITTLE_ENDIAN__)
@@ -9227,6 +9323,7 @@ int main(int nargs, char **args)
    if (!SI_IS_TRUE(SIflag,SI_IEEE))
       fprintf(fpout, "NONIEEE");
    fprintf(fpout, "\n\n");
+@endskip
 
    fprintf(fpout, "#  ----------------------------\n");
    fprintf(fpout, "#  Paths to various directories\n");
@@ -9255,10 +9352,11 @@ int main(int nargs, char **args)
    fprintf(fpout, "   L1Tdir = $(BLDdir)/tune/blas/level1\n");
    fprintf(fpout, "   L3Tdir = $(BLDdir)/tune/blas/level3\n");
    fprintf(fpout, "   FLAdir = $(BLDdir)/src/lapack/reference\n");
-   if (ADd)
-      fprintf(fpout, "   ADdir  = %s\n", ADd);
-   else
-      fprintf(fpout, "   ADdir  = $(SRCdir)/CONFIG/ARCHS\n");
+@skip   if (ADd)
+   fprintf(fpout, "   ADdir  = %s\n", ADd);
+@skip   else
+@skip      fprintf(fpout, "   ADdir  = $(SRCdir)/CONFIG/ARCHS\n");
+   free(ADd);
    if (FKO)
    {
       fprintf(fpout, "   FKOSRCdir = $(SRCdir)/iFKO\n");
@@ -9564,11 +9662,11 @@ int main(int nargs, char **args)
 @skip   if (!OSIsWin(OS))
 
    fprintf(fpout, 
-   "#  --------------------------------------------------------------------\n");
+   "#  -----------------------------------------------------------\n");
    fprintf(fpout, 
-   "#  Compiler names for architectural defaults and flags to atlas_install\n");
+   "#  Infoo for architectural defaults and flags to atlas_install\n");
    fprintf(fpout, 
-   "#  --------------------------------------------------------------------\n");
+   "#  -----------------------------------------------------------\n");
    for (i=0; i < NCOMP; i++)
    {
       sp = NewStringCopy(COMPNAME[i]);
@@ -9601,6 +9699,18 @@ int main(int nargs, char **args)
       fprintf(fpout, "%s\n", sp);
       free(sp);
    }
+   fprintf(fpout, "   ARCHDEF = %s\n", archdef?archdef:"");
+   if (!SI_IS_TRUE(SIflag,SI_ARCHDEF) || !archdef)
+   {
+      if (USEDEFL1)
+         fprintf(fpout, "   ADTARG = do_bozoL1\n")
+      else
+         fprintf(fpout, "   ADTARG = do_nothing\n")
+   }
+   else if (NOMATCH && !SI_IS_TRUE(SIflag,SI_ADCLOSEP))
+      fprintf(fpout, "   ADTARG = do_basic\n");
+   else
+      fprintf(fpout, "   ADTARG = do_full\n");
    if (!nreg)
       fprintf(fpout, "   INSTFLAGS = -1 %d -a %d -l %d\n\n", 
               USEDEFL1, SI_IS_TRUE(SIflag,SI_ARCHDEF), 
@@ -12293,4 +12403,32 @@ int main(int nargs, char **args)
       fclose(fplog);
    #endif
    return(0);
+}
+@ROUT GetArchDefs
+void PrintUsage(char *name, int iarg, char *arg)
+{
+   fprintf(stderr, "\nERROR around arg %d (%s).\n", iarg,
+           arg ? arg : "unknown");
+   fprintf(stderr, 
+      "USAGE: %s [flags] where flags are ($ vars from Make.inc):\n", name);
+   fprintf("   -A $ARCH \n");
+   fprintf("   -A $ARCH \n");
+
+}
+int GetFlags(int nargs, char **args, char *ASRCD, char *ADSTD, char *MACH, 
+             int FLAG)
+{
+   char *srcd=NULL, *dstd=NULL, *mach=NULL;
+   for (i=1; i < nargs; i++)
+   {
+      if (args[i][0] != '-')
+         PrintUsage(args[0], i, args[i]);
+   }
+}
+
+int main(int nargs, char **args)
+{
+   int np, flag;
+   char *asrcd, *adstd, *mach;
+   np = GetFlags(nargs, args, &asrcd, &adstd, &mach, &flag);
 }
