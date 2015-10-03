@@ -7460,9 +7460,17 @@ ATL_mmnode_t *FindAllUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
  * RETURNS: list of all unique kernels required to do K-cleanup
  */
 {
-   ATL_mmnode_t *clnb=NULL, *mkb, *kp;
+   ATL_mmnode_t *clnb, *mkb, *kp;
    if (verb)
       printf("FINDING K CLEANERS FOR ALL KERNELS:\n");
+   clnb = ReadMMFileWithPath(pre, "res", "k1AMM.sum");
+   if (clnb)
+   {
+      MMFillInGenStrings(pre, clnb);
+      TimeNegMMKernels(0, verb, 0, clnb, pre, 1, 0, -1);
+      WriteMMFileWithPath(pre, "res", "k1AMM.sum", clnb);
+      return(clnb);
+   }
 /*
  * mkb is the list of all candidate cleanup codes
  */
@@ -7560,6 +7568,7 @@ ATL_mmnode_t *FindAllUniqueKClean(int verb, char pre, ATL_mmnode_t *mmb)
    KillAllMMNodes(mkb);
    if (verb)
       printf("DONE FINDING FULL LIST OF K-CLEANERS\n");
+   WriteMMFileWithPath(pre, "res", "k1AMM.sum", clnb);
    return(clnb);
 }
 
@@ -7828,7 +7837,6 @@ void ComputeKClean(int verb, char pre)
    for (mp=mmGE; mp->next; mp = mp->next);
    mp->next = mmSQ;
    mkb = FindAllUniqueKClean(verb, pre, mmGE);
-   WriteMMFileWithPath(pre, "res", "k1AMM.sum", mkb);
    mp->next = NULL;  /* go back to separate lists */
 /*
  * Use reversed lists to build lists of cleanup, which will be in correct
@@ -8211,20 +8219,25 @@ ATL_mmnode_t *FindCacheBudgetCasesByKB
    mm3b = ReadMMFileWithPath(pre, "res", "bAMMRES.sum");
    if (mm3b)
    {
-      int i=0;
+      int i=0, WRT=0;
       printf("READING IN LARGE KERNEL CASES FROM res/<pre>bAMMRES:\n");
       MMFillInGenStrings(pre, mm3b);
       for (mp=mm3b; mp; mp = mp->next)
       {
          if (mp->mflop[0] <= 0.0)
+         {
             mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB, 
                                         mp->kbB, 1, 0, -1);
+            WRT=1;
+         }
          printf("   ID=%d, %s: MB=%d, NB=%d, KB=%d, KRUN=%d, MFLOP=%.2f\n",
                 mp->ID, mp->rout ? mp->rout : "Gennedkern",
                 mp->mbB, mp->nbB, mp->kbB, FLAG_IS_SET(mp->flag, MMF_KRUNTIME),
                 mp->mflop[0]);
          i++;
       }
+      if (WRT)
+         WriteMMFileWithPath(pre, "res", "bAMMRES.sum", mm3b);
       printf("DONE %d CASES.\n\n", i);
       return(mm3b);
    }
@@ -8993,6 +9006,7 @@ void DoTRSM(char pre, int verb)
                printf("   trsmKL %dx%d: %.2f\n", tp->mbB,tp->nbB, tp->mflop[0]);
          }
       }
+      WriteMMFileWithPath(pre, "res", "tsAMMRES.sum", tb);
       KillAllMMNodes(tb);
       return;
    }
@@ -9018,8 +9032,14 @@ ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS,ATL_mmnode_t *mmGE)
    ATL_mmnode_t *mmb, *sqmmb, *mp;
    const char upr = (pre == 'z' || pre == 'd') ? 'd' : 's';
    mmb = TimeMMFileWithPath(pre, "res", "geAMMRES.sum", 0, verb, 0, 1, 0, -1);
+/* 
+ * If we are quick returning, still must possibly retime subsearches
+ */
    if (mmb)
+   {
+      KillAllMMNodes(DoSquare(pre, verb, nregs, mmb));
       return(mmb);
+   }
 @beginskip
    mmb = ReadMMFileWithPath(pre, "res", "geAMMRES.sum");
    if (mmb)
@@ -9271,7 +9291,6 @@ int main(int nargs, char **args)
 {
    char pre='d';
    int verb, nregs, nb, CS, gmu, gnu;
-   int *nbs;
    char *fnout;
    ATL_mmnode_t *mmb, *rnkK, *grnkK, *emb, *mp, *mmSQ, *mmGN;
 
@@ -9308,7 +9327,6 @@ int main(int nargs, char **args)
    KillAllMMNodes(mmb);
    WriteMMFileWithPath(pre, "res", "AMMFRCLST.sum", mp);
    KillAllMMNodes(mp);
-   free(nbs);
    exit(0);
 }
 @ROUT uammsearch
