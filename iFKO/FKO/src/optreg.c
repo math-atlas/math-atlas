@@ -652,9 +652,6 @@ void CalcBlockIG(BBLOCK *bp)
  *          Find ignode associated with var
  */
             k += 1 - TNREG;
-#if 0
-            fprintf(stderr, "dead var = %s\n", STname[k-1]);
-#endif
             for (j=nn-1; j >= 0; j--)
                if (myIG[j] && myIG[j]->var == k) break;
             assert(j >= 0);
@@ -705,9 +702,6 @@ void CalcBlockIG(BBLOCK *bp)
          if (k >= TNREG) /* variable is being set */
          {
             k += 1 - TNREG;
-#if 0
-            fprintf(stderr, "set var = %s\n", STname[k-1]);
-#endif
             for (j=nn-1; j >= 0; j--)
                if (myIG[j] && myIG[j]->var == k) break;
 /*
@@ -727,18 +721,33 @@ void CalcBlockIG(BBLOCK *bp)
                   if (myIG[j])
                      SetVecBit(myIG[j]->conflicts, node->ignum, 1);
                node->conflicts = BitVecCopy(node->conflicts, bp->conout);
-#if 0
-               fprintf(stderr, "%d ", node->ignum);   
-#endif   
                SetVecBit(bp->conout, node->ignum, 1);
                node->liveregs = BitVecCopy(node->liveregs, liveregs);
                node->blkbeg = AddBlockToList(node->blkbeg, bp);
                node->blkbeg->ptr = ip;
                SetVecBit(bp->ignodes, node->ignum, 1);
                node->nwrite++;
+            }
+/*
+ *          FIXME: already live but set, there may be no read of the live-range.
+ *          When the value is set before being used, node->nread is zero. RegAsg
+ *          may incorrectly skip that ig node. 
+ *          useless expression elimination should delete them.
+ */
+            else
+            {
+               if (myIG[j]->var 
+                     && strcmp(STname[myIG[j]->var-1], "_NONLOCDEREF")
+                     && !myIG[j]->nread)
+               {
 #if 0
-            fprintf(stderr, "nwrite var = %s\n", STname[k-1]);
+                  fprintf(stderr, "%s(%d) set already exists, ignode = %d\n",
+                          STname[myIG[j]->var-1], myIG[j]->var, j);
 #endif
+                  fko_error(__LINE__, "Live range of %s is set again without "
+                           "being used! Need to apply useless expression "
+                           "elimination first!", STname[myIG[j]->var-1]);
+               }
             }
          }
 /*
@@ -842,9 +851,6 @@ void CombineLiveRanges(BLIST *scope, BBLOCK *pred, int pig,
  */
    for (bl=scope; bl; bl = bl->next)
    {
-/*
- *    Majedul: invalid read is reported from Valgrind !!
- */
       if (BitVecCheck(bl->blk->ignodes, sig))
       {
          SetVecBit(bl->blk->ignodes, sig, 0);
@@ -873,14 +879,15 @@ void CombineBlockIG(BLIST *scope, INT_BVI scopeblks, BBLOCK *pred, BBLOCK *succ)
    int i, j, n, nn;
    short *sig, *pig, svar;
    short k, kk;
+   BLIST *bl;
 /*
  * If both blocks are in scope, attempt to combine their live ranges
  */
-
-//fprintf(stderr, "scoping pred=%d, succ=%d\n", pred->bnum, succ->bnum);
-//fprintf(stderr, "pred->conout=%s\n", PrintVecList(pred->conout, 0));
-//fprintf(stderr, "succ->conin=%s\n", PrintVecList(pred->conin, 0));
-
+#if 0
+   fprintf(stderr, "scoping pred=%d, succ=%d\n", pred->bnum, succ->bnum);
+   fprintf(stderr, "pred->conout=%s\n", PrintVecList(pred->conout, 0));
+   fprintf(stderr, "succ->conin=%s\n", PrintVecList(pred->conin, 0));
+#endif
    if (BitVecCheck(scopeblks, succ->bnum-1) && 
        BitVecCheck(scopeblks, pred->bnum-1) )
    {
@@ -898,9 +905,6 @@ void CombineBlockIG(BLIST *scope, INT_BVI scopeblks, BBLOCK *pred, BBLOCK *succ)
  *          HERE, HERE: put this in to protect when sig is joined to pig
  */
             if (!IG[kk] || !IG[k]) continue;
-/*
- *          Majedul: need to check!!
- */
             if (k != kk && svar == IG[kk]->var)
                CombineLiveRanges(scope, pred, kk, succ, k);
          }
@@ -916,32 +920,27 @@ void CombineBlockIG(BLIST *scope, INT_BVI scopeblks, BBLOCK *pred, BBLOCK *succ)
    else if (BitVecCheck(scopeblks, pred->bnum-1))
    {
       pig = BitVec2StaticArray(pred->conout);
+/*
+ *    NOTE: successor must be a posttail; that means, successor can't have
+ *    predeccessor other than this pred blk. 
+ */
+      if (succ->preds->next) /* has other preds */
+         fko_error(__LINE__, "Posttail error: posttail has other preds than tail");
+      
       for (n=pig[0], i=1; i <= n; i++)
       {
          node = IG[pig[i]];
-#if 0
-         //PrintIGNode(stderr, node);
-
-         if (BitVecCheck(succ->ins, node->var+TNREG-1))
-            fprintf(stderr, "liveout var = %s\n", STname[node->var-1]);
-         
-         //if (node->nwrite)
-         //   fprintf(stderr, "nwrite var = %s\n", STname[node->var-1]);
-#endif
 /*
- *       FIXME: nwrite doesn't reflect the whole scope but just the combining 
- *       blks... so, may provide wrong result!!!
+ *       nwrite doesn't reflect the whole scope but just the combining 
+ *       blks... so, we should not count this now !!!
  *       But if a variable is not set inside the scope, we don't need to 
  *       push it outside as the variable is not changed at all!
  *       NOTE: we can consider it for stpush now but scope out after combining
  *       all the IG nodes!!!
  */
-         //if (node->nwrite && BitVecCheck(succ->ins, node->var+TNREG-1) )
+         /*if (node->nwrite && BitVecCheck(succ->ins, node->var+TNREG-1) )*/
          if (BitVecCheck(succ->ins, node->var+TNREG-1))
          {
-#if 0
-         fprintf(stderr, "############## stpush = %s\n", STname[node->var-1]);
-#endif
             node->stpush = AddBlockToList(node->stpush, succ);
             if (succ->ainst1)
             {
@@ -960,6 +959,23 @@ void CombineBlockIG(BLIST *scope, INT_BVI scopeblks, BBLOCK *pred, BBLOCK *succ)
    else /* if (BitVecCheck(scopeblks, succ->bnum-1, 1)) */
    {
       sig = BitVec2StaticArray(succ->conin);
+/*
+ *    Preheader: 
+ *    1. head should be the only successor
+ *    2. head shouldn't have any pred other than prehead out of the scope
+ */
+      if ( (pred->csucc && pred->csucc != succ)
+            || (pred->usucc && pred->usucc != succ) )
+         fko_error(__LINE__, "Prehead error: " 
+                   "prehead has successor other than head");
+     
+      for (bl=succ->preds; bl; bl=bl->next)
+      {
+         if (bl->blk != pred && !BitVecCheck(scopeblks, bl->blk->bnum-1))
+            fko_error(__LINE__, "Prehead error: "
+                   "head can't have other predecessor out of scope than prehead");
+      }
+
       for (n=sig[0], i=1; i <= n; i++)
       {
          node = IG[sig[i]];
@@ -1058,12 +1074,6 @@ int CalcScopeIG(BLIST *scope)
 
    if (scope)
    {
-#if 0
-/*
- * just testing ... ... ...
- */
-      scope = NewReverseBlockList(scope);
-#endif
       if (!INDEADU2D)
          CalcAllDeadVariables();
       else if (!CFUSETU2D || !CFU2D || !INUSETU2D)
@@ -1089,9 +1099,9 @@ int CalcScopeIG(BLIST *scope)
             CombineBlockIG(scope, blkvec, bl->blk, bl->blk->usucc);
 /*
  *       Majedul: 
- *       NOTE: should not assume any order of execution!!! 
+ *       NOTE: we should not assume any order of execution!!! 
  *       stpush depends on the nwrite... which may not be seen in a 
- *       specific order!!!
+ *       specific order!!! 
  */
          if (bl->blk->csucc)
             CombineBlockIG(scope, blkvec, bl->blk, bl->blk->csucc);
@@ -1103,11 +1113,12 @@ int CalcScopeIG(BLIST *scope)
          }
       }
 /*
+ *       FIXED:
  *       only !nwrite should have stpush!! 
- *       variable those are not updated inside the scope, not a candidate for
- *       stpush, but we can't have updated nwrite until all blks are explored. 
- *       so, check for the updated nwrite here... It will solved all issues 
- *       related with the missing stpush for some cases!!! 
+ *       variables, those are not updated inside the scope, are not a candidate 
+ *       for stpush, but we can't have updated nwrite until all blks are 
+ *       explored. so, check for the updated nwrite here... It will solve all 
+ *       issues related with the missing stpush for some cases!!! 
  */
 #if 1
       for (i=0; i < NIG; i++)
