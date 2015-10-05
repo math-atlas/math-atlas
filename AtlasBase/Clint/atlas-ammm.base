@@ -13799,8 +13799,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #endif
       #define ATL_VLEN 1
    #else
-      #define ATL_VECARM1 1
-      #define ATL_VACARM1_32 1
+      #define ATL_NEON 1
    #endif
 #endif
 //#undef ATL_AVX
@@ -13856,8 +13855,8 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
           ((defined(DREAL) || defined(DCPLX)) && ATL_VLEN != 2)
          #define ATL_FRCGNUVEC
       #endif
-@multidef vl    2   2    4      4     2
-@whiledef sv SSE1 SSE2 AVX AVXMAC VECARM1
+@multidef vl    2   2    4      4    1       2
+@whiledef sv SSE1 SSE2 AVX AVXMAC NEON VECARM1
    @iexp vl2 @(vl) @(vl) +
    #elif defined(ATL_@(sv))
       #if ((defined(SREAL) || defined(SCPLX)) && ATL_VLEN != @(vl2)) || \
@@ -13877,8 +13876,8 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       #else
          #define ATL_VLEN 2
       #endif
-@multidef vl    2   2    4      4     2
-@whiledef sv SSE1 SSE2 AVX AVXMAC VECARM1
+@multidef vl    2   2    4      4    1       2
+@whiledef sv SSE1 SSE2 AVX AVXMAC NEON VECARM1
    @iexp vl2 @(vl) @(vl) +
    #elif defined(ATL_@(sv))
       #if defined(SREAL) || defined(SCPLX)
@@ -13938,7 +13937,7 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
  * Undefine all vectorization if VLEN=1 (scalar code)!
  */
 #if defined(ATL_FRCGNUVEC) || ATL_VLEN < 2
-@whiledef sv VSX AVXMAC AVX SSE3 SSE2 SSE1 VECARM1
+@whiledef sv VSX AVXMAC AVX SSE3 SSE2 SSE1 VECARM1 NEON
    #ifdef ATL_@(sv)
       #undef ATL_@(sv)
    #endif
@@ -14036,6 +14035,32 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       @iexp i @(i) 1 +
    @endiwhile
    #endif
+#elif defined(ATL_NEON) && (defined(SREAL) || defined(SCPLX))
+   #include "arm_neon.h"
+   #define ATL_VTYPE float32x2_t
+
+   #define ATL_vzero(v_) v_ = vdup_n_f32(0.0f)
+   #define ATL_vbcast(v_, p_) v_ =  vdup_n_f32(*(p_));
+   #define ATL_vld(v_, p_) v_ = vld1_f32(p_)
+   #define ATL_vst(p_, v_) vst1_f32(p_, v_)
+   #define ATL_vadd(d_, s1_, s2_) d_ = vadd_f32(s1_, s2_)
+   #define ATL_vsub(d_, s1_, s2_) d_ = vsub_f32(s1_, s2_)
+   #define ATL_vmul(d_, s1_, s2_) d_ = vmul_f32(s1_, s2_)
+   #define ATL_vmac(d_, s1_, s2_) d_ = vmla_f32(d_, s1_, s2_)
+   #define ATL_vrsum1(d_, s_) \
+   {  TYPE t0_; \
+      t0_ = vget_high_f32(s_); \
+      d_ = vget_low_f32(s_); \
+      d_ += t0_; \
+   } 
+   #define ATL_vvrsum2(s0_, s1_) s0_ = vpadd_f32(s0_, s1_)
+   @iexp i 0 0 +
+   @iwhile i < 2
+   #define ATL_vsplat@(i)(d_, s_) d_ = vdup_lane_f32(s_, @(i))
+      @iexp i @(i) 1 +
+   @endiwhile
+   #define ATL_vuld(v_, p_) ATL_vld(v_, p_)
+   #define ATL_vust(p_, v_) ATL_vst(p_, v_)
 #elif defined(ATL_VECARM1)
    #include "arm_neon.h"
    #if defined(SREAL) || defined(SCPLX)
