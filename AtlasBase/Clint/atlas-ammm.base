@@ -3722,7 +3722,33 @@ void GenC2BLK(char pre, ATL_mmnode_t *mmb, char *pfx, char *outd)
 
 void SpewForthRevCpProto(char pre, FILE *fp, char alp, int u, int kmaj)
 {
-   assert(0);
+   const int G = (pre == 'c' || pre == 'z') ? 2 : 1;
+   const char *cst[2] = {"", "C"};
+   int g;
+
+   for (g=0; g < G; g++)
+   {
+      if (kmaj > 1)
+         fprintf(fp, "void ATL_%cam2cm_a%c_%dx%d%s\n",
+                 pre, alp, kmaj, u, cst[g]);
+      else
+         fprintf(fp, "void ATL_%cam2cm_a%c_%d%s\n",pre, alp, u, cst[g]);
+      if (pre == 'z' || pre == 'c')
+         fprintf(fp, "   (ATL_CSZT,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT,const TYPE*,const TYPE*);\n");
+      else
+         fprintf(fp,
+         "   (ATL_CSZT,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT,const TYPE*);\n");
+      if (kmaj > 1)
+         fprintf(fp, "void ATL_%cam2rm_a%c_%dx%d%s\n",
+                 pre, alp, kmaj, u, cst[g]);
+      else
+         fprintf(fp, "void ATL_%cam2rm_a%c_%d%s\n",pre, alp, u, cst[g]);
+      if (pre == 'z' || pre == 'c')
+         fprintf(fp, "   (ATL_CSZT,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT,const TYPE*,const TYPE*);\n");
+      else
+         fprintf(fp,
+         "   (ATL_CSZT,ATL_CSZT,const SCALAR,TYPE*,ATL_CSZT,const TYPE*);\n");
+   }
 }
 
 void SpewForthCpProto(char pre, FILE *fp, char alp, int u, int kmaj)
@@ -3810,7 +3836,7 @@ void SpewForthCpDecl(char pre, int REVERSE, ATL_mmnode_t *mmb, FILE *fp,
 
 
 @define len @23@
-void GenAMAJ2CMAJ(char pre, ATL_mmnode_t *mmb, char *outd, char *suff)
+void GenAMAJ2CMAJ(char pre, ATL_mmnode_t *mmb, char *suff, char *outd)
 /*
  * 3. atlas_<pre>amm_am2cm_a[1,X,n]: 
  *    defines: ATL_AMM_NCASES
@@ -3828,7 +3854,7 @@ void GenAMAJ2CMAJ(char pre, ATL_mmnode_t *mmb, char *outd, char *suff)
    ia = strlen(outd) + strlen(suff) + @(len);
    fnam = malloc(ia*sizeof(char));
    assert(fnam);
-   sprintf(fnam, "%s/atlas_%camm%s_am2cm_a1.h", outd, pre, suff);
+   sprintf(fnam, "%s/atlas_%c%samm_am2cm_a1.h", outd, pre, suff);
    np = fnam+ia-23+12;
    assert(*np == 'a' && np[1] == 'm');
    sp = fnam+ia-4;
@@ -4531,10 +4557,12 @@ void GenKernH
 void GenCmplxHeaders(char pre, ATL_mmnode_t *mmb, ATL_mmnode_t *rkb, 
                      char *pfx, char *outd)
 {
+@skip   GenAMAJ2CMAJ(pre, mmb, pfx, outd);
    GenCMAJ2AMAJ(pre, mmb, pfx, outd);
    GenC2BLK(pre, mmb, pfx, outd);
    if (rkb)
    {
+@skip      GenAMAJ2CMAJ(pre, mmb, pfx, outd);
       GenCMAJ2AMAJ(pre, rkb, "rk", outd);
       GenC2BLK(pre, rkb, "rk", outd);
       GenRankKH(pre, mmb, rkb, outd);
@@ -4592,6 +4620,7 @@ void GenHeaderFiles(char pre, char *outd,
    GenBlockingFile(pre, sqb, pfx, outd);
    GenPerfFile(pre, sqb, pfx, outd, 0.0);
    GenFlagH(pre, sqb, pfx, outd);
+   GenAMAJ2CMAJ(pre, sqb, pfx, outd);
    GenCMAJ2AMAJ(pre, sqb, pfx, outd);
    GenC2BLK(pre, sqb, pfx, outd);
    GenKernH(pre, outd, pfx, sqb, sqk1b);
@@ -4816,21 +4845,43 @@ void GenMakefile
          for (j=0; j < 3; j++)
          {
             if (up->kmaj > 1)
+            {
                fprintf(fp, 
  " \\\n       ATL_%crm2am_a%c_%dx%d.o ATL_%ccm2am_a%c_%dx%d.o",
                        pre, al[j], up->kmaj, u, pre, al[j], up->kmaj, u);
+               fprintf(fp, 
+ " \\\n       ATL_%cam2rm_a%c_%dx%d.o ATL_%cam2cm_a%c_%dx%d.o",
+                       pre, al[j], up->kmaj, u, pre, al[j], up->kmaj, u);
+            }
             else
-               fprintf(fp, " \\\n       ATL_%crm2am_a%c_%d.o ATL_%ccm2am_a%c_%d.o",
+            {
+               fprintf(fp, 
+                       " \\\n       ATL_%crm2am_a%c_%d.o ATL_%ccm2am_a%c_%d.o",
                        pre, al[j], u, pre, al[j], u);
+               fprintf(fp, 
+                       " \\\n       ATL_%cam2rm_a%c_%d.o ATL_%cam2cm_a%c_%d.o",
+                       pre, al[j], u, pre, al[j], u);
+            }
             if (pre == 'c' || pre == 'z')
             {
                if (up->kmaj > 1)
+               {
                   fprintf(fp, 
  " \\\n       ATL_%crm2am_a%c_%dx%dC.o ATL_%ccm2am_a%c_%dx%dC.o",
                           pre, al[j], up->kmaj, u, pre, al[j], up->kmaj, u);
+                  fprintf(fp, 
+ " \\\n       ATL_%cam2rm_a%c_%dx%dC.o ATL_%cam2cm_a%c_%dx%dC.o",
+                          pre, al[j], up->kmaj, u, pre, al[j], up->kmaj, u);
+               }
                else
-                  fprintf(fp, " \\\n       ATL_%crm2am_a%c_%dC.o ATL_%ccm2am_a%c_%dC.o",
+               {
+                  fprintf(fp, 
+                     " \\\n       ATL_%crm2am_a%c_%dC.o ATL_%ccm2am_a%c_%dC.o",
                           pre, al[j], u, pre, al[j], u);
+                  fprintf(fp, 
+                     " \\\n       ATL_%cam2rm_a%c_%dC.o ATL_%cam2cm_a%c_%dC.o",
+                          pre, al[j], u, pre, al[j], u);
+               }
             }
          }
       }
@@ -4962,20 +5013,25 @@ void GenMakefile
             const int G = (pre == 'c' || pre == 'z') ? 2:1;
             for (g=0; g < G; g++)
             {
-               int kk;
+               int kk, r;
                const int nmI = 5;
                char rout[32];
-               if (kmaj > 1)
-                  sprintf(rout, "ATL_%crm2am_a%c_%dx%d", pre, al[j], kmaj, u);
-               else
-                  sprintf(rout, "ATL_%crm2am_a%c_%d", pre, al[j], u);
-               for (kk=0; kk < 2; kk++)
+               char *routs[4] = {"rm2am", "cm2am", "am2rm", "am2cm"};
+               for (r=0; r < 4; r++)
                {
-                  if (kk == 1)
-                     rout[5] = 'c';
-                  fprintf(fp, "%s%s.o : %s.c\n", rout, cst[g], rout);
-                  fprintf(fp, "\t%s %s $(CDEFS) %s%s -o %s%s.o -c %s.c\n", 
-                          dcomp, dflags, cdef[g], styp, rout, cst[g], rout);
+                  if (kmaj > 1)
+                     sprintf(rout, "ATL_%c%s_a%c_%dx%d", 
+                             pre, routs[r], al[j], kmaj, u);
+                  else
+                     sprintf(rout, "ATL_%c%s_a%c_%d", pre, routs[r], al[j], u);
+                  for (kk=0; kk < 2; kk++)
+                  {
+                     if (kk == 1)
+                        rout[5] = 'c';
+                     fprintf(fp, "%s%s.o : %s.c\n", rout, cst[g], rout);
+                     fprintf(fp, "\t%s %s $(CDEFS) %s%s -o %s%s.o -c %s.c\n", 
+                             dcomp, dflags, cdef[g], styp, rout, cst[g], rout);
+                  }
                }
             }
          }
@@ -5185,7 +5241,16 @@ void GenKerns(char pre, char *outd, ATL_mmnode_t *geb, ATL_mmnode_t *gek1b,
                fprintf(stderr, "FAILED CMND='%s'\n", ln);
                exit(ierr);
             }
-   @whiledef rt cm2am rm2am
+            sprintf(ln, "make ATL_%cam2rm_a%c_%d.c ATL_%cam2cm_a%c_%d.c "
+                    "pre=%c UR=%d alpha=%d al=%c kmaj=%d",
+                    pre, al[j], u, pre, al[j], u, pre, u, ial[j], al[j], kmaj);
+            ierr = system(ln);
+            if (ierr)
+            {
+               fprintf(stderr, "FAILED CMND='%s'\n", ln);
+               exit(ierr);
+            }
+   @whiledef rt cm2am rm2am am2cm am2rm
             if (kmaj > 1)
                sprintf(ln, 
                        "mv ATL_%c@(rt)_a%c_%d.c %s/ATL_%c@(rt)_a%c_%dx%d.c",
