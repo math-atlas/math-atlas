@@ -457,20 +457,11 @@ ID=49 MU=24 NU=4 KU=1 AUTH="Rakib Hasan" ROUT='ATL_damm12x4x1_aarch64-A53.S' \
 #ifndef ATLAS_AMM_H
    #define ATLAS_AMM_H
 #include "atlas_misc.h"
-
-#ifndef ATL_MaxMalloc_MB
-   #ifdef ATL_PTR32
-      #define ATL_MaxMalloc_MB 512UL
-   #else
-      #define ATL_MaxMalloc_MB 2048UL
-   #endif
+#ifndef ATL_MaxMalloc
+   #include "atlas_maxmalloc.h"
 #endif
 #ifndef ATL_MaxMalloc
-   #ifdef ATL_MaxMalloc_MB
-      #define ATL_MaxMalloc (ATL_MaxMalloc_MB<<20)
-   #else
-      #define ATL_MaxMalloc (1<<27)   /* 128 MB */
-   #endif
+   #define ATL_MaxMalloc 268435456UL
 #endif
 #include "atlas_misc.h"
 
@@ -10287,16 +10278,23 @@ ATL_mmnode_t *FullSrchMUNU(int flg, int verb, char pre, int nreg, int nb,
  */
    printf("Full search on MUxNU for nb=%d, NREG=%d, VLEN=%d, KVEC=%d\n",
           nb, nreg, VL, KVEC);
-   for (i=1; i < nreg; i++)
+   for (i=1; i <= nreg; i++)
    {
-      for (j=1; j < nreg; j++)
+      for (j=1; j <= nreg; j++)
       {
+         int ONETIME=0;
          int mbu, nbu, mu, nu;
          if (i*j+Mmin(i,j)+1 > nreg)
             continue;
          if (KVEC)  /* vec on K needs mu*nu mult of VLEN */
          {
-            if ((i*j)%VL)
+            if (VL >= nreg)
+            {
+               ONETIME=1;
+               i = VL;
+               j = 1;
+            }
+            else if ((i*j)%VL)
                continue;
             mu = i;
          }
@@ -10327,8 +10325,12 @@ ATL_mmnode_t *FullSrchMUNU(int flg, int verb, char pre, int nreg, int nb,
             nuB = nu;
             mfB = mf;
          }
+         if (ONETIME)
+            goto DONE;
       }
    }
+DONE:
+   assert(mfB > 0.0);
    i = FLAG_IS_SET(mmp->flag, MMF_NOBCAST);
    KillMMNode(mmp);
    mmp = MMGetNodeGEN(pre, i, nb, muB, nuB, ku, VL, KVEC, NULL);
@@ -10377,7 +10379,7 @@ ATL_mmnode_t *SrchNU(int flg, int verb, char pre, int nreg, int nb, int VL,
  */
    printf("Searching M-VEC MU=%d xNU case for mb=%d, kb=%d, NREG=%d, VLEN=%d\n",
           I, mbu, nb, nreg, VL);
-   for (j=1; j < nreg; j++)
+   for (j=1; j <= nreg; j++)
    {
       int nbu, nu;
       if (I*j+Mmin(I,j)+1 > nreg)
@@ -10417,6 +10419,7 @@ ATL_mmnode_t *SrchNU(int flg, int verb, char pre, int nreg, int nb, int VL,
    mmp->nbB = nbB;
    mmp->kbB = kbB;
    mmp->mflop[0] = mfB;
+   assert(mfB > 0.0);
    printf("BEST MU=%d CASE IS B=(%d,%d,%d) U=(%d,%d), MFLOP=%.2f\n\n", 
           I, mbB, nbB, kbB, mu, nuB, mfB);
    WriteMMFileWithPath(pre, "res", fn, mmp);
@@ -10460,16 +10463,27 @@ ATL_mmnode_t *SrchMUNUp2(int flg, int verb, char pre, int nreg, int nb,
  */
    printf("Searching PWR-2 MUxNU cases for nb=%d, NREG=%d, VLEN=%d, KVEC=%d\n",
           nb, nreg, VL, KVEC);
-   for (i=1; i < nreg; i += i)
+/*
+ * Long VLEN with small NREG can be impossible to do with mu*nu%VLEN==0,
+ * so force at least one case even if it overruns registers
+ */
+   for (i=1; i <= nreg; i += i)
    {
-      for (j=1; j < nreg; j += j)
+      for (j=1; j <= nreg; j += j)
       {
+         int ONETIME=0;
          int mbu, nbu, mu, nu;
          if (i*j+Mmin(i,j)+1 > nreg)
             continue;
          if (KVEC)  /* vec on K needs mu*nu mult of VLEN */
          {
-            if ((i*j)%VL)
+            if (VL >= nreg)
+            {
+               ONETIME = 1;
+               i=VL;
+               j=1;
+            }
+            else if ((i*j)%VL)
                continue;
             mu = i;
          }
@@ -10500,8 +10514,12 @@ ATL_mmnode_t *SrchMUNUp2(int flg, int verb, char pre, int nreg, int nb,
             nuB = nu;
             mfB = mf;
          }
+         if (ONETIME)
+            goto DONE;
       }
    }
+DONE:
+   assert(mfB != 0.0);
    i = FLAG_IS_SET(mmp->flag, MMF_NOBCAST);
    KillMMNode(mmp);
    mmp = MMGetNodeGEN(pre, i, nb, muB, nuB, ku, VL, KVEC, NULL);
@@ -10522,6 +10540,11 @@ ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb,
    char fn[32];
    double mf, mfB=0.0;
    const int CHK=(flg&1), ku = (KVEC) ? VL : 1;
+   #if (defined(ATL_GAS_x8664) || defined(ATL_GAS_x8632)) && !defined(ATL_AVX)
+      int DO1D=1;
+   #else
+      int DO1D=(nreg < 9 || nreg < VL);
+   #endif
    int n, i, j, kb, mbB, nbB, kbB, muB=1, nuB=1;
    char ch;
 
@@ -10557,8 +10580,9 @@ ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb,
  */
    printf("Finding best MUxNU case for nb=%d, NREG=%d, VLEN=%d, KVEC=%d\n",
           nb, nreg, VL, KVEC);
-   for (n=4; n < nreg; n++)
+   for (n=4; n <= nreg; n++)
    {
+      int ONETIME=0;
       int mbu, nbu, mu, nu;
       for (j=1; j*j < n; j++);
       i = n / j;
@@ -10566,7 +10590,13 @@ ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb,
          continue;
       if (KVEC)
       {
-         if ((i*j)%VL)
+         if (VL >= nreg)
+         {
+            ONETIME = 1;
+            i = VL;
+            j = 1;
+         }
+         else if ((i*j)%VL)
             continue;
          mu = i;
          nu = j;
@@ -10600,15 +10630,19 @@ ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb,
          nuB = nu;
          mfB = mf;
       }
+      if (ONETIME)
+         break;
    }
 /*
- * For non-AVX x86, try 1-D cases since they are 2-operand assemblies
+ * For non-AVX x86, try 1-D cases since they are 2-operand assemblies; always
+ * try 1-D for low registers
  */
-   #if (defined(ATL_GAS_x8664) || defined(ATL_GAS_x8632)) && !defined(ATL_AVX)
+   if (DO1D)
+   {
       printf("BEST NEAR-SQUARE CASE IS MU=%d, NU=%d, MFLOP=%.2f\n\n", 
              muB, nuB, mfB);
       printf("Finding best 1-D outer loop unrolling for nb=%d\n", nb);
-      for (n=2; n < nreg; n++)
+      for (n=2; n <= nreg; n++)
       {
          int mbu, nbu, mu, nu;
          i = 1; j = n;
@@ -10658,8 +10692,9 @@ ATL_mmnode_t *SrchMUNU(int flg, int verb, char pre, int nreg, int nb,
             mfB = mf;
          }
       }
-   #endif
+   }
 
+   assert(mfB > 0.0);
    i = FLAG_IS_SET(mmp->flag, MMF_NOBCAST);
    KillMMNode(mmp);
    mmp = MMGetNodeGEN(pre, i, nb, muB, nuB, ku, VL, KVEC, NULL);
