@@ -9000,25 +9000,6 @@ ATL_mmnode_t *DoSquare(char pre, int verb, int nregs, ATL_mmnode_t *mmb)
    mmSQ = TimeMMFileWithPath(pre, "res", "sqAMMRES.sum", 0, verb, 0, 1, 0, -1);
    if (mmSQ)
       return(mmSQ);
-@beginskip
-   mmSQ = ReadMMFileWithPath(pre, "res", "sqAMMRES.sum");
-   if (mmSQ)
-   {
-      MMFillInGenStrings(pre, mmSQ);
-      if (mmSQ->mflop[0] < 0.0)
-      {
-         ATL_mmnode_t *mp;
-         for (mp=mmSQ; mp; mp = mp->next)
-         {
-            int nb=mp->kbB;
-            if (mp->mflop[0] < 0.0)
-               mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, nb, nb, nb, 
-                                           1, 0, -1);
-         }
-         WriteMMFileWithPath(pre, "res", "sqAMMRES.sum", mmSQ);
-      }
-   }
-@endskip
    else
    {
       int maxNB=0;
@@ -9032,10 +9013,10 @@ ATL_mmnode_t *DoSquare(char pre, int verb, int nregs, ATL_mmnode_t *mmb)
           if (mp->nbB > maxNB)
              maxNB = mp->nbB;
       }
-      mmb = GetWorkingUserCases(verb, upr);
+@skip      mmb = GetWorkingUserCases(verb, upr);
 @skip      mmb = GetUniqueUserKerns(mmb);
       mmSQ = FindBestSquareCases(pre, verb, nregs, maxNB, mmb);
-      KillAllMMNodes(mmb);
+@skip      KillAllMMNodes(mmb);
       WriteMMFileWithPath(pre, "res", "sqAMMRES.sum", mmSQ);
    }
    return(mmSQ);
@@ -9084,7 +9065,7 @@ void DoTRSM(char pre, int verb)
  */
 ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS,ATL_mmnode_t *mmGE)
 {
-   ATL_mmnode_t *mmb, *sqmmb, *mp;
+   ATL_mmnode_t *mmb, *sqmmb, *mp, *mmGEN;
    const char upr = (pre == 'z' || pre == 'd') ? 'd' : 's';
    mmb = TimeMMFileWithPath(pre, "res", "geAMMRES.sum", 0, verb, 0, 1, 0, -1);
 /* 
@@ -9095,22 +9076,10 @@ ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS,ATL_mmnode_t *mmGE)
       KillAllMMNodes(DoSquare(pre, verb, nregs, mmb));
       return(mmb);
    }
-@beginskip
-   mmb = ReadMMFileWithPath(pre, "res", "geAMMRES.sum");
-   if (mmb)
-   {
-      MMFillInGenStrings(pre, mmb);
-      if (mmb->mflop[0] < 0.0)
-      {
-         ATL_mmnode_t *mp;
-         for (mp=mmb; mp; mp = mp->next)
-            mp->mflop[0] = TimeMMKernel(verb, 0, mp, pre, mp->mbB, mp->nbB,
-                                        mp->kbB, 1, 0, -1);
-         WriteMMFileWithPath(pre, "res", "geAMMRES.sum", mmb);
-      }
-      return(mmb);
-   }
-@endskip
+/*
+ * Make copy of original generated kernels in case they get eliminated
+ */
+   mmGEN = CloneMMQueue(mmGE);
 /*
  * Find which kernels can compile on this platform
  */
@@ -9121,15 +9090,6 @@ ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS,ATL_mmnode_t *mmGE)
    mp = ATL_LastMMNode(mmGE);
    mp->next = mmb;
    mmb = mmGE;
-@beginskip
-/*
- * Find decent generator case and find correct vectorization settings, add
- * this case to default list to be searched.
- */
-   mp = DecentGenCase(verb, pre, nregs);
-   mp->next = mmb;
-   mmb = mp;
-@endskip
 /*
  * Find the best user-supplied cases for the three common cache blking cases
  */
@@ -9137,6 +9097,8 @@ ATL_mmnode_t *DoMainMM(char pre, int verb, int nregs, int CS,ATL_mmnode_t *mmGE)
 /*
  * Now find best square cases
  */
+   mmb = AddUniqueMMKernCompList(mmb, mmGEN);
+   KillAllMMNodes(mmGEN);
    sqmmb = DoSquare(pre, verb, nregs, mmb);
 /*
  * Now add small-case kernels back in, and write it out
@@ -14165,10 +14127,26 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
       d_ += vget_lane_f32(t2_, 1); \
    }
    #define ATL_vvrsum4(s0_, s1_, s2_, s3_) \
-   { \
-      s0_ = vaddq_f32(s0_, s1_); \
-      s2_ = vaddq_f32(s2_, s3_); \
-      s0_ = vaddq_f32(s0_, s2_); \
+   { ATL_VTYPE t0_, t1_; \
+      t0_[0] = s0_[0]; \
+      t0_[1] = s1_[0]; \
+      t0_[2] = s2_[0]; \
+      t0_[3] = s3_[0]; \
+      t1_[0] = s0_[1]; \
+      t1_[1] = s1_[1]; \
+      t1_[2] = s2_[1]; \
+      t1_[3] = s3_[1]; \
+      t0_ = vaddq_f32(t0_, t1_); \
+      t1_[0] = s0_[2]; \
+      t1_[1] = s1_[2]; \
+      t1_[2] = s2_[2]; \
+      t1_[3] = s3_[2]; \
+      t0_ = vaddq_f32(t0_, t1_); \
+      t1_[0] = s0_[3]; \
+      t1_[1] = s1_[3]; \
+      t1_[2] = s2_[3]; \
+      t1_[3] = s3_[3]; \
+      s0_ = vaddq_f32(t0_, t1_); \
    }
    @beginskip
    #define ATL_vsplat0(d_, s_) d_[0] = d_[1] = d_[2] = d_[3] = s_[0]
@@ -14176,10 +14154,10 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
    #define ATL_vsplat2(d_, s_) d_[0] = d_[1] = d_[2] = d_[3] = s_[2]
    #define ATL_vsplat3(d_, s_) d_[0] = d_[1] = d_[2] = d_[3] = s_[3]
    @endskip
-   #define ATL_vsplat0(d_, s_) vmovq_n_f32(vgetq_lane_f32(s_, 0))
-   #define ATL_vsplat1(d_, s_) vmovq_n_f32(vgetq_lane_f32(s_, 1))
-   #define ATL_vsplat2(d_, s_) vmovq_n_f32(vgetq_lane_f32(s_, 2))
-   #define ATL_vsplat3(d_, s_) vmovq_n_f32(vgetq_lane_f32(s_, 3))
+   #define ATL_vsplat0(d_, s_) d_ = vmovq_n_f32(vgetq_lane_f32(s_, 0))
+   #define ATL_vsplat1(d_, s_) d_ = vmovq_n_f32(vgetq_lane_f32(s_, 1))
+   #define ATL_vsplat2(d_, s_) d_ = vmovq_n_f32(vgetq_lane_f32(s_, 2))
+   #define ATL_vsplat3(d_, s_) d_ = vmovq_n_f32(vgetq_lane_f32(s_, 3))
    #define ATL_vuld(v_, p_) ATL_vld(v_, p_)
    #define ATL_vust(p_, v_) ATL_vst(p_, v_)
 #elif defined(ATL_VECARM1)
@@ -14207,10 +14185,26 @@ void Mjoin(PATL,gemm)(const enum ATLAS_TRANS TA, const enum ATLAS_TRANS TB,
          d_ += vget_lane_f32(t2_, 1); \
       }
       #define ATL_vvrsum4(s0_, s1_, s2_, s3_) \
-      { \
-         s0_ = vpaddq_f32(s0_, s1_); \
-         s2_ = vpaddq_f32(s2_, s3_); \
-         s0_ = vpaddq_f32(s0_, s2_); \
+      { ATL_VTYPE t0_, t1_; \
+         t0_[0] = s0_[0]; \
+         t0_[1] = s1_[0]; \
+         t0_[2] = s2_[0]; \
+         t0_[3] = s3_[0]; \
+         t1_[0] = s0_[1]; \
+         t1_[1] = s1_[1]; \
+         t1_[2] = s2_[1]; \
+         t1_[3] = s3_[1]; \
+         t0_ = vaddq_f32(t0_, t1_); \
+         t1_[0] = s0_[2]; \
+         t1_[1] = s1_[2]; \
+         t1_[2] = s2_[2]; \
+         t1_[3] = s3_[2]; \
+         t0_ = vaddq_f32(t0_, t1_); \
+         t1_[0] = s0_[3]; \
+         t1_[1] = s1_[3]; \
+         t1_[2] = s2_[3]; \
+         t1_[3] = s3_[3]; \
+         s0_ = vaddq_f32(t0_, t1_); \
       }
    @iexp i 0 0 +
    @iwhile i < 4
