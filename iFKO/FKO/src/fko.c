@@ -1925,6 +1925,9 @@ int CheckPreheaderPosttails(BLIST *scope)
 }
 
 void AddPredBlk(INT_BVI scopeblks, BBLOCK *blk)
+/*
+ * Add preheader block in CFG if there is no preheader in the scope
+ */
 {
    short lb;
    INSTQ *ip;
@@ -1932,8 +1935,11 @@ void AddPredBlk(INT_BVI scopeblks, BBLOCK *blk)
    char label[64];
    extern BBLOCK *bbbase;
    
-   assert(blk->ilab);
-   
+/*
+ * label of the header is unique. add PH_ as a prefix with this label to create'
+ * the unique label of preheader
+ */
+   assert(blk->ilab); 
    sprintf(label, "PH_%s", STname[blk->ilab-1]);
    lb = STlabellookup(label);
    
@@ -2005,7 +2011,7 @@ void FixPreheaderPosttails(BLIST *scope)
          AddPredBlk(blkvec, bp);
       }
 /*
- *    checking for posttails
+ *    checking for posttails: if they are usucc of tails
  */
       if (bp->usucc && !BitVecCheck(blkvec, bp->usucc->bnum-1))/*not in scope*/
       {
@@ -2015,22 +2021,29 @@ void FixPreheaderPosttails(BLIST *scope)
                   bp->usucc->bnum);*/
             fko_warn(__LINE__, "Adding blk after %d before %d\n", bp->bnum, 
                   bp->usucc->bnum);
+/*
+ *          label of the tail is unique. add PT_ as a prefix with this label to
+ *          create the unique label of posttail
+ */
             assert(bp->usucc->ilab);
             sprintf(label, "PT_%s", STname[bp->usucc->ilab-1]);
             bnew = NewBasicBlock(bp, bp->usucc);
             InsNewInst(bnew, NULL, NULL, LABEL, STlabellookup(label), 0, 0);
             bp->usucc->up = bnew;
-            // bp->usucc ?? bp->uscc->pred??
             bp->down = bnew;
          }
       }
-      
+/*
+ *    posttail can be a csucc of tail, but we won't have any usecase of it 
+ *    right now. So, I skipped that. Creating posttail of such case would be
+ *    similar like the above.
+ */
       if (bp->csucc && !BitVecCheck(blkvec, bp->csucc->bnum-1))/*not in scope*/
       {
          if (bp->csucc->preds->next) // bp->usucc->preds->blk != bp 
          {
             fko_error(__LINE__, 
-                  "Posttail error: not created posttail for this case");
+                  "Posttail error: need to create posttail for this case");
          }
       }
 
@@ -2045,7 +2058,7 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int scstate, int *nsp)
  * Now, we have three different scopes (instead of global & optloop) in scstate:
  *    1. IOPT_GLOB = all blocks inside the routine
  *    2. IOP_SCOP = blk list specified in optblks->blocks
- *    3. 0  =  optloop
+ *    3. 0  =  optloop // not used anymore
  */
 {
    BLIST *scope;
@@ -2093,15 +2106,6 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int scstate, int *nsp)
             scope = AddBlockToList(scope, bp);
       }
    }
-#if 0
-   if (scstate & IOPT_GLOB)
-      fprintf(stderr, "global scope : " );
-   else if (scstate & IOPT_SCOP)
-      fprintf(stderr, "scope : " );
-   else
-      fprintf(stderr, "optloop : " );
-   fprintf(stderr, "%s\n", PrintBlockList(scope));
-#endif
 /*
  * NOTE: Need a way to eliminate _IFKO_EPILOGUE iff this is last optimization
  */
@@ -2130,35 +2134,9 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int scstate, int *nsp)
          nchanges += DoLoopGlobalRegAssignment(optloop);  
          break;
       case RegAsg:
-
-         #if 0
-            fprintf(stderr, "IG REG ASG: ");
-            if (scstate)
-               fprintf(stderr, " GLOBAL\n");
-            else
-               fprintf(stderr, " LOCAL\n");
-         #endif
-
-         #if 0 
-            fprintf(stderr, "%d: \n", ++bv);
-            fprintf(stderr, "Before : ");
-            PrintBVecInfo(stderr);
-         #endif
-#if 0            
-         fprintf(stderr, "\nAPPLYING IG-RA ON BLKS: [%s]\n", PrintBlockList(scope));
-         fprintf(stderr, "----------------------------------------------\n");
-#endif      
          
          nchanges += DoScopeRegAsg(scope, scstate ? 2:1, &j, nsp); 
-         #if 0 
-         if (nchanges)
-         {
-            fprintf(stdout, "\n\nAFTER APPLYING IG-RA ON BLKS: [%s]," 
-                  " changes=%d\n", PrintBlockList(scope), nchanges);
-         fprintf(stdout, "*****************************************************\n\n");
-            PrintInst(stdout, bbbase);
-         }
-         #endif
+         
          break;
       case CopyProp:
          nchanges += DoCopyProp(scope);
@@ -2204,30 +2182,15 @@ int DoOptList(int nopt, enum FKOOPT *ops, BLIST *scope0, int scstate, int *nsp)
       optchng[noptrec] = nchanges - nc0;
       optrec[noptrec++] = scstate ? k+MaxOpt : k;
 #if 0
-      CheckUseSet();
-      //exit(0);
-#endif
-#if 1
       if (nchanges-nc0)
-      {
          PrintOptInst(stdout, ++iopt, k, scope, scstate, nchanges-nc0);
-         fflush(stdout);  
-      }
-#if 0
-      if (k == RegAsg)
-      {
-         ShowFlow("cfg.dot", bbbase);
-         exit(0);
-      }
-#endif      
-      /*char file[20];*/
-      /*sprintf(file, "cfg/%s%d.dot", "cfg", iopt);*/
-      /*ShowFlow(file,bbbase);*/
 #endif
    }
    if (scope) KillBlockList(scope);
    return(nchanges);
 }
+
+
 #if 0
 /*
  * Majedul: to find out scope for register assignment
@@ -2309,6 +2272,38 @@ LOOPQ *LoopOrder()
 }
 #endif
 
+BLIST **LoopBlocks(int *N)
+/*
+ * returns the blocklist of each loop: from depth most to upper 
+ * (staring with optloop)
+ */
+{
+   int i;
+   LOOPQ *lpq;
+   BLIST **scopes;
+   extern LOOPQ *loopq;
+   
+   if (!CFLOOP)
+      FindLoops();
+
+   lpq = loopq;
+   i = 0;
+   while(lpq)
+   {
+      i++;
+      lpq = lpq->next;
+   }
+   *N = i;
+
+   scopes = malloc((*N)*sizeof(BLIST*));
+   assert(scopes);
+
+   for (i=0, lpq=loopq; i < *N; i++, lpq=lpq->next)
+      scopes[i] = CopyBlockList(lpq->blocks);
+   
+   return(scopes);
+}
+
 BLIST **SplitScope(int *N)
 {
    int i, k, maxdep, lpcount;
@@ -2331,6 +2326,10 @@ BLIST **SplitScope(int *N)
       *N = 0;
       return NULL;
    }
+#if 0
+   PrintLoop(stderr, loopq);
+   exit(0);
+#endif
 /*
  * Order of the scope:
  * optloop, all loops of the same depth as optloop, blocks are not in optloop
@@ -2372,6 +2371,7 @@ BLIST **SplitScope(int *N)
    for (i=maxdep; i > 0; i--)
    {
       for (lp=loopq; lp; lp=lp->next)
+      {
          if (lp->depth == i)
          {
             bl = CopyBlockList(lp->blocks);
@@ -2379,14 +2379,23 @@ BLIST **SplitScope(int *N)
          }
          else if (lp->depth < i)
             break;
+      }
       bl = CopyBlockList(lpscope[i-1]);
       bl = RemoveBlksFromList(bl, lpscope[i]);
       /*scopes[k++] = bl;*/
+      //scopes[k++] = bl;
       scopes[k++] = NULL; /* testing ... ....!!!!!!!!!!!!!! */
 
    }
    bl = CopyBlockList(lpscope[0]);
    scopes[k] = bl;
+
+#if 1
+   fprintf(stderr, "scopes: \n");
+   for (i=0; i < *N; i++)
+      fprintf(stderr, "%d: %s\n", i, PrintBlockList(scopes[i]));
+#endif
+   
 /*
  * free all temporary
  */
@@ -2617,9 +2626,9 @@ int DoScopedOptBlock(int nopt, enum FKOOPT *ops, int maxN, int *nspill)
  *
  */
 {
-   int i, j, n;
+   int i, j, k;
    int nc, tnc;
-   int nsp[NTYPES];
+   int *nsp;
    int nsc; /* count of scope */
    BLIST *scope;
    BLIST **scopes;
@@ -2627,14 +2636,17 @@ int DoScopedOptBlock(int nopt, enum FKOOPT *ops, int maxN, int *nspill)
 /*
  * create space for reg info temporarily
  */
+   nsp = malloc(NTYPES*sizeof(int)); 
+   assert(nsp);
    for (i=0; i < NTYPES; i++)
       nsp[i] = -1;
    
-   scopes = SplitScope(&nsc);
-   
+   scopes = LoopBlocks(&nsc);
+
    for (i=0; i < nsc; i++)
    {
       scope = scopes[i];
+      if (!scope) continue;
       if (HasScopeIGReg(nopt, ops) && CheckPreheaderPosttails(scope))
       {
          FixPreheaderPosttails(scope);
@@ -2647,12 +2659,12 @@ int DoScopedOptBlock(int nopt, enum FKOOPT *ops, int maxN, int *nspill)
          FindLoops();
          CheckFlow(bbbase, __FILE__, __LINE__);
 /*
- *       delete the previous scoeps and recompute them
+ *       delete the previous scopes and recompute them
  */
-         for (j=0; j<n; j++)
+         for (j=0; j<nsc; j++)
             if (scopes[j]) free(scopes[j]);
          if (scopes) free(scopes);
-         scopes = SplitScope(&nsc);
+         scopes = LoopBlocks(&nsc);
          scope = scopes[i];   
       }
 /*
@@ -2668,7 +2680,7 @@ int DoScopedOptBlock(int nopt, enum FKOOPT *ops, int maxN, int *nspill)
          fprintf(stderr, "On last (%d) iteration, still had %d changes " 
                  "on scope id =%d!\n", maxN, nc, i);
 /*
- *    stored only the optloop (1st one) 
+ *    stored only for the optloop (1st one) 
  */
       if (!i)
       {
@@ -2678,10 +2690,11 @@ int DoScopedOptBlock(int nopt, enum FKOOPT *ops, int maxN, int *nspill)
    }
 
 /*
- * delete scopes
+ * delete nsp and scopes
  */
-   for (j=0; j<n; j++)
-   if (scopes[j]) free(scopes[j]);
+   if(nsp) free(nsp);
+   for (j=0; j<nsc; j++)
+      if (scopes[j]) free(scopes[j]);
    if (scopes) free(scopes);
    
    return(nc);
@@ -2862,13 +2875,13 @@ int ApplyOptBlockList(struct optblkq *op, int maxN)
 {
    int i;
    int nc;
-   int *nspill;
+   //int *nspill;
 /*
  * apply opt list in global scope 
  */
    if (op->flag & IOPT_GLOB)
    {
-      //maxN = op->maxN;      
+      /*maxN = op->maxN;*/
       for (i=0; i < maxN; i++)
       {
          nc = DoOptList(op->nopt, op->opts, NULL, op->flag, op->nspill);
@@ -2917,13 +2930,12 @@ int DoOptBlock(struct optblkq *op)
    {
       maxN = op->maxN;
       //for (i=0; i < maxN; i++)
-      for (i=0; i < 1; i++)
       {
          nc = ApplyOptBlockList(op, maxN);
          for (dp=op->down; dp; dp = dp->down)
             nc += DoOptBlock(dp);
-         if (!nc)
-            break;
+      //   if (!nc)
+      //      break;
          tnc += nc;
       }
       if (nc && (FKO_FLAG & IFF_VERBOSE))

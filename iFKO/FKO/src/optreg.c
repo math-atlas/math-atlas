@@ -2967,8 +2967,12 @@ int DoRevCopyPropTrans(INSTQ *ipsrc,  /* inst where src is set */
    assert(ipsrc && ipdst)
    src = -ipdst->inst[2];
    dest = -ipdst->inst[1];
-   for (ip = ipsrc; ip != ipdst && nseen < nuse; ip = ip->next)
+   
+   for (ip = ipsrc; ip && ip != ipdst && nseen < nuse; ip = ip->next)
    {
+      if (!ACTIVE_INST(ip->inst[0]))
+         continue;
+
       if (ip->use && (BitVecCheck(ip->use, src-1)||BitVecCheck(ip->set,src-1)))
       {
          for (i=1; i < 4; i++)
@@ -2993,9 +2997,8 @@ int DoRevCopyPropTrans(INSTQ *ipsrc,  /* inst where src is set */
          nseen++;
       }
    }
-//      ipdst->inst[2] = -dest;
-//      CalcThisUseSet(ipdst);
-//      
+/*      ipdst->inst[2] = -dest;
+        CalcThisUseSet(ipdst); */      
 #if 0
       fprintf(stderr, "DEL:[%p] ",ipdst);
       PrintThisInst(stderr, ipdst);
@@ -3003,7 +3006,6 @@ int DoRevCopyPropTrans(INSTQ *ipsrc,  /* inst where src is set */
       //CalcAllDeadVariables();
 #endif
       DelInst(ipdst);
-   //}
    return(1);
 }
 
